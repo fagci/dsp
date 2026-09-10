@@ -160,45 +160,93 @@ def({ id:'sweep', title:'Свип / джаммер', cat:'Источники', o
 // объявлен с channelCount:2, а второй физический вход сводится ChannelMergerNode(2). Чтобы
 // снимать N микрофонов, пришлось бы менять сам движок (динамический мерджер, N слотов вместо
 // двух фиксированных буферов), это не косметика поверх этого узла.
+// Режим "стерео-устройство" — не второй способ подключить два девайса, а честное разделение
+// L/R одного устройства (см. Eng.enableStereoMic: один getUserMedia + ChannelSplitterNode),
+// для случаев когда одно физическое устройство и есть оба канала (напр. встроенный массив
+// микрофонов ноутбука вроде ThinkPad T480).
+// частота — просьба к getUserMedia (ideal), браузер может дать не точно её; 'авто' — без constraint
+const SRATE_OPTS=['авто','8000','16000','22050','44100','48000','96000'];
+function srOf(n){ return n.p.srate==='авто' ? undefined : +n.p.srate; }
+
 def({ id:'mic', title:'Микрофон (A+Б)', cat:'Источники',
   outs:[{n:'a',t:'sig'},{n:'b',t:'sig'}],
   ins:[{n:'gainA',t:'num'},{n:'gainB',t:'num'},{n:'echo',t:'num'},{n:'ns',t:'num'},{n:'agc',t:'num'}],
-  params:[{n:'devA',t:'select',d:'по умолчанию',label:'вход A',
+  params:[{n:'unlock',t:'button',label:'показать имена устройств',fn:n=>Eng.unlockLabels()},
+          {n:'mode',t:'select',d:'раздельно',label:'режим',
+           opts:()=>['раздельно','стерео-устройство'], fn:n=>armAll(n)},
+          {n:'devA',t:'select',d:'по умолчанию',label:'вход A',
            opts:()=>['по умолчанию',...Eng.devices.map(d=>d.label)],
-           fn:n=>{ const d=Eng.devices.find(x=>x.label===n.p.devA);
-                   n.armedA=true; micFx(n); Eng.enableMic(d?d.id:undefined,0); }},
+           fn:n=>{ n.armed=true; micFx(n);
+                   if(n.p.mode==='стерео-устройство') armStereo(n);
+                   else{ const d=Eng.devices.find(x=>x.label===n.p.devA);
+                         Eng.enableMic(d?d.id:undefined,0,srOf(n)).then(()=>reportSettings(n)); } }},
           {n:'gainA',t:'range',min:0,max:8,step:.1,d:1,label:'усиление A'},
-          {n:'devB',t:'select',d:'по умолчанию',label:'вход Б',
+          {n:'devB',t:'select',d:'по умолчанию',label:'вход Б (только режим "раздельно")',
            opts:()=>['по умолчанию',...Eng.devices.map(d=>d.label)],
-           fn:n=>{ const d=Eng.devices.find(x=>x.label===n.p.devB);
-                   n.armedB=true; micFx(n); Eng.enableMic(d?d.id:undefined,1); }},
+           fn:n=>{ if(n.p.mode==='стерео-устройство') return;   // в стерео Б берётся из devA
+                   n.armed=true; micFx(n);
+                   const d=Eng.devices.find(x=>x.label===n.p.devB);
+                   Eng.enableMic(d?d.id:undefined,1,srOf(n)).then(()=>reportSettings(n)); }},
           {n:'gainB',t:'range',min:0,max:8,step:.1,d:1,label:'усиление Б'},
-          // эффекты — это constraints getUserMedia, общие на оба входа (см. Eng.fx), применяются переподключением потока
+          {n:'srate',t:'select',d:'авто',label:'частота дискр.', opts:()=>SRATE_OPTS, fn:n=>armAll(n)},
+          // эффекты — это constraints getUserMedia, общие на оба входа (см. Eng.fx); сперва
+          // пробуем применить живьём (applyConstraints), без пересоздания потока
           {n:'echo',t:'check',d:false,label:'эхоподавление',fn:n=>reapplyFx(n)},
           {n:'ns',t:'check',d:false,label:'шумодав',fn:n=>reapplyFx(n)},
           {n:'agc',t:'check',d:false,label:'авторегулировка',fn:n=>reapplyFx(n)}],
-  init:n=>{ n.armedA=false; n.armedB=false; },
+  init:n=>{ n.armed=false; n.status=''; },
   process(n,I){
     if(typeof I.gainA==='number') setMod(n,'gainA',I.gainA);
     if(typeof I.gainB==='number') setMod(n,'gainB',I.gainB);
     for(const k of ['echo','ns','agc']) if(typeof I[k]==='number') setMod(n,k,I[k]>=0.5);
-    // отдельной кнопки "Вкл" нет — включаем сами при первом же тике движка, отдельно на каждый канал
-    if(!n.armedA){ n.armedA=true;
-      const d=Eng.devices.find(x=>x.label===n.p.devA); micFx(n); Eng.enableMic(d?d.id:undefined,0); }
-    if(!n.armedB){ n.armedB=true;
-      const d=Eng.devices.find(x=>x.label===n.p.devB); micFx(n); Eng.enableMic(d?d.id:undefined,1); }
-    if(n.armedA && n.armedB) micFx(n);
+    // отдельной кнопки "Вкл" нет — включаем сами при первом же тике движка
+    if(!n.armed) armAll(n);
     const oa=buf(n,'a'), ob=buf(n,'b'), ga=n.p.gainA, gb=n.p.gainB;
     for(let i=0;i<BLOCK;i++){ oa[i]=Eng.micBuf[i]*ga; ob[i]=Eng.micB[i]*gb; }
-    return {a:oa, b:ob}; }});
+    return {a:oa, b:ob}; },
+  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.status||''; }});
 
 function micFx(n){ Eng.fx={echo:n.p.echo, ns:n.p.ns, agc:n.p.agc}; }
-// переподключаем оба потока только если они уже включены — иначе чекбокс до первого
-// тика (когда узел ещё не заармлен) не должен сам просить разрешение на запись
-function reapplyFx(n){
+
+// что реально согласовал браузер — ideal частота/каналы могут не совпасть с запрошенным
+function reportSettings(n){
+  const s = n.p.mode==='стерео-устройство' ? Eng.stereoSettings() : Eng.micSettings(0);
+  n.status = s ? [s.sampleRate&&s.sampleRate+' Гц', s.channelCount&&s.channelCount+' кан.']
+                    .filter(Boolean).join(', ') : '';
+}
+
+// стерео-устройство: канал Б в выходе узла — это правый канал того же потока, что и А
+// (Eng.micB приходит из ChannelSplitter), gainB продолжает работать как обычно
+function armStereo(n){
+  const d=Eng.devices.find(x=>x.label===n.p.devA);
+  Eng.enableStereoMic(d?d.id:undefined, srOf(n)).then(()=>reportSettings(n));
+}
+function armAll(n){
+  n.armed=true; micFx(n);
+  if(n.p.mode==='стерео-устройство') armStereo(n);
+  else{
+    const dA=Eng.devices.find(x=>x.label===n.p.devA);
+    const dB=Eng.devices.find(x=>x.label===n.p.devB);
+    Promise.all([
+      Eng.enableMic(dA?dA.id:undefined,0,srOf(n)),
+      Eng.enableMic(dB?dB.id:undefined,1,srOf(n))
+    ]).then(()=>reportSettings(n));
+  }
+}
+// переподключаем поток только если уже заармлен — иначе чекбокс до первого тика
+// не должен сам просить разрешение на запись. Сначала пробуем applyConstraints — если браузер
+// откажется (не все это поддерживают), тогда уже переподключаемся.
+async function reapplyFx(n){
   micFx(n);
-  if(Eng.mics[0]) Eng.enableMic(Eng.micIds[0]||undefined,0);
-  if(Eng.mics[1]) Eng.enableMic(Eng.micIds[1]||undefined,1);
+  if(!n.armed) return;
+  const ok = await Eng.applyFx();
+  if(!ok){
+    if(n.p.mode==='стерео-устройство') armStereo(n);
+    else{
+      if(Eng.mics[0]) Eng.enableMic(Eng.micIds[0]||undefined,0,srOf(n));
+      if(Eng.mics[1]) Eng.enableMic(Eng.micIds[1]||undefined,1,srOf(n));
+    }
+  }
 }
 
 def({ id:'file', title:'Аудиофайл', cat:'Источники',

@@ -573,20 +573,22 @@ def({ id:'hfdlM1Match', title:'HFDL: детектор M1 (скорость)', ca
       n.L=n.taps[P-1]+1; n.ring=new Float32Array(n.L); n.w=0; n.ss=0; n.P=P;
     }
     const P=n.P, L=n.L, ring=n.ring, taps=n.taps;
-    let bestOverBlock=0, bestIdxOverBlock=n.curIdx;
+    let bestOverBlock=0, bestIdxOverBlock=n.curIdx, rawAccMax=0, rmsLast=0;
     for(let i=0;i<BLOCK;i++){
       const old=ring[n.w], nv=I.in?I.in[i]:0;
       n.ss += nv*nv - old*old;
       ring[n.w]=nv;
       const rms=Math.sqrt(Math.max(0,n.ss)/L);
-      let bestC=0, bestIdx=0;
+      rmsLast=rms;
+      let bestC=0, bestIdx=0, bestRawAcc=0;
       for(let sIdx=0;sIdx<8;sIdx++){
         const pat=n.tmpl[sIdx];
         let acc=0;
         for(let k=0;k<P;k++) acc+=ring[(n.w-taps[k]+L*2)%L]*pat[P-1-k];
         const c=clamp(Math.abs(acc/(P*rms+1e-9)),0,2);   // ЗАЩИТА: без неё при просадке rms→0 значение улетало в тысячи
-        if(c>bestC){ bestC=c; bestIdx=sIdx; }
+        if(c>bestC){ bestC=c; bestIdx=sIdx; bestRawAcc=Math.abs(acc); }
       }
+      if(bestRawAcc>rawAccMax) rawAccMax=bestRawAcc;
       oc[i]=bestC;
       if(bestC>bestOverBlock){ bestOverBlock=bestC; bestIdxOverBlock=bestIdx; }
       let hit=(n.m1>=n.p.thr && n.m1>n.m2 && n.m1>=bestC);
@@ -599,8 +601,11 @@ def({ id:'hfdlM1Match', title:'HFDL: детектор M1 (скорость)', ca
     }
     n.curC=n.curC*.8+bestOverBlock*.2; n.curIdx=bestIdxOverBlock;   // сглаженная "текущая" оценка для живого статуса
     n.hist.push(bestOverBlock); if(n.hist.length>200) n.hist.shift();
-    n.txt='сейчас: '+n.curC.toFixed(2)+' (M1='+n.curIdx+')  ·  последний hit: M1='+n.m1out+
-      ' пик '+n.peak.toFixed(2);
+    // rms/rawAcc — для диагностики: если rms не реагирует на всплеск, сигнал не доходит с амплитудой
+    // (проблема раньше по цепочке); если rms реагирует, а rawAcc/rms(=corr) — нет, значит демодулированные
+    // биты не совпадают ни с одним шаблоном M1 (Костас/RRC/Гарднер дают не то, что ожидается).
+    n.txt='сейчас: '+n.curC.toFixed(2)+' (M1='+n.curIdx+')  ·  RMS='+rmsLast.toFixed(4)+
+      '  ·  сыр.корр='+rawAccMax.toFixed(2)+'  ·  последний hit: M1='+n.m1out+' пик '+n.peak.toFixed(2);
     return { go:og, m1:n.m1out, peak:n.peak, corr:oc };
   },
   draw(n,cv,cx){
@@ -615,9 +620,69 @@ def({ id:'hfdlM1Match', title:'HFDL: детектор M1 (скорость)', ca
     n.el.querySelector('.readout').textContent=n.txt;
   }});
 
+// Планировщик схемы модуляции для costas.order: та же самая state-machine кадра
+// (M2→9×тренировка→[данные+тренировка]), что в hfdlSymToBits, но выдаёт ТОЛЬКО номер
+// текущей схемы (1=BPSK/2=QPSK/3=8PSK) как sig — Костас переключается синхронно с фреймером,
+// а не молотит один и тот же (обычно неверный для преамбулы/тренировки) режим весь кадр.
+// Держи ОБА узла (этот и hfdlSymToBits) на одних и тех же go/m1 — иначе разъедутся по времени.
+def({ id:'hfdlOrderSched', title:'HFDL: план. схемы модуляции', cat:'Декодеры', readout:true,
+  ins:[{n:'clk',t:'sig'},{n:'go',t:'sig'},{n:'m1',t:'num'}],
+  outs:[{n:'order',t:'sig'}],
+  params:[{n:'m1',t:'range',min:0,max:7,step:1,d:3,label:'M1 (если go/m1 не подключены)'}],
+  init:n=>{ n.prevClk=0; n.prevGo=0; n.armed=false; n.state='idle'; n.symCtr=0; n.trainRep=0; n.cur=1; n.txt='ждём кадр'; },
+  process(n,I){
+    const o=buf(n,'order');
+    for(let i=0;i<BLOCK;i++){
+      const go=I.go?I.go[i]:0;
+      if(go>0.5 && n.prevGo<=0.5) n.armed=true;
+      n.prevGo=go;
+      const c=I.clk?I.clk[i]:0;
+      if(c>.5 && n.prevClk<=.5){
+        if(n.armed){
+          n.armed=false;
+          const m1=typeof I.m1==='number'?(I.m1|0):n.p.m1;
+          const p=HFDL_FRAME_PARAMS[clamp(m1,0,7)];
+          n.bps=HFDL_SCHEME_BITS[p.scheme];
+          n.dataSegLeft=p.dataSegmentCnt;
+          n.state='M2'; n.symCtr=0; n.cur=1;
+        }
+        if(n.state!=='idle'){
+          n.symCtr++;
+          switch(n.state){
+            case 'M2':
+              if(n.symCtr>=M2_LEN){ n.state='EQTRAIN'; n.symCtr=0; n.trainRep=1; n.cur=1; }
+              break;
+            case 'EQTRAIN':
+              if(n.symCtr>=T_LEN){
+                n.symCtr=0;
+                if(n.trainRep<9){ n.trainRep++; }
+                else { n.state = n.dataSegLeft>0 ? 'DATA' : 'idle'; n.cur = n.state==='DATA'?n.bps:1; }
+              }
+              break;
+            case 'DATA':
+              if(n.symCtr>=DATA_FRAME_LEN){ n.symCtr=0; n.state='TRAIN'; n.cur=1; }
+              break;
+            case 'TRAIN':
+              if(n.symCtr>=T_LEN){
+                n.symCtr=0; n.dataSegLeft--;
+                n.state = n.dataSegLeft>0 ? 'DATA' : 'idle';
+                n.cur = n.state==='DATA'?n.bps:1;
+              }
+              break;
+          }
+        }
+      }
+      n.prevClk=c;
+      o[i]=n.cur;
+    }
+    n.txt=n.state+' · order='+n.cur;
+    return { order:o };
+  },
+  draw(n){ n.el.querySelector('.readout').textContent=n.txt; }});
+
 def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фреймером)', cat:'Декодеры', readout:true, resize:true,
   ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'clk',t:'sig'},{n:'go',t:'sig'},{n:'m1',t:'num'}],
-  outs:[{n:'blk',t:'blk'}],
+  outs:[{n:'blk',t:'blk'},{n:'m1',t:'num'}],
   params:[{n:'m1',t:'range',min:0,max:7,step:1,d:3,label:'M1 (0-7, если go/m1 не подключены)'},
           {n:'descramble',t:'check',d:true,label:'дескремблировать (LFSR по символу)'}],
   // Между M1 и данными в реальном кадре НЕ сплошной поток payload-символов (см. hfdl.c):
@@ -628,8 +693,16 @@ def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фрей
   // 'go' — sig-импульс от hfdlM1Match (не num!), фронт ищется посэмпловo и "вооружает"
   // сброс состояния, который реально срабатывает на ближайшем такте 'clk' — иначе
   // фреймер стартовал бы не в границе символа.
+  //
+  // Выход 'm1' — СВОЙ, синхронизированный с текущим кадром (то M1, с которым этот кадр
+  // реально начался), а НЕ проксирование hfdlM1Match.m1 напрямую. Это важно: hfdlM1Match.m1 —
+  // "живой" сигнал, который может успеть смениться на СЛЕДУЮЩИЙ кадр, пока текущий кадр ещё
+  // копится здесь и идёт через hfdlDeint — на практике это давало hfdlChipAvg (и любому
+  // другому узлу ниже по цепочке, который сам не фреймирует) СТАРОЕ/чужое M1, не совпадающее
+  // с реально обрабатываемым blk. Бери m1 отсюда, а не из hfdlM1Match, для всего, что стоит
+  // ПОСЛЕ этого узла.
   init:n=>{ n.prevClk=0; n.prevGo=0; n.armed=false; n.bits=[]; n.bid=0; n.txt='ждём кадр (go)';
-    n.state='idle'; n.symCtr=0; n.trainRep=0; n.hf=0; },
+    n.state='idle'; n.symCtr=0; n.trainRep=0; n.hf=0; n.curM1=0; },
   process(n,I){
     if(!n.hseq) n.hseq=hfdlLfsr();
     for(let i=0;i<BLOCK;i++){
@@ -642,6 +715,7 @@ def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фрей
         if(n.armed){
           n.armed=false;
           const m1=typeof I.m1==='number'?(I.m1|0):n.p.m1;
+          n.curM1=m1;                                    // фиксируем M1 именно на старте ЭТОГО кадра
           const p=HFDL_FRAME_PARAMS[clamp(m1,0,7)];
           n.bps=HFDL_SCHEME_BITS[p.scheme];
           n.dataSegLeft=p.dataSegmentCnt;
@@ -699,7 +773,7 @@ def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фрей
       n.bid++;
       blk={ d, n:d.length, id:n.bid };
     } else if(n.state!=='idle') n.txt=n.state+' ('+n.symCtr+'), данных собрано: '+n.bits.length;
-    return { blk };
+    return { blk, m1:n.curM1 };
   },
   draw(n){ n.el.querySelector('.readout').textContent=n.txt; }});
 
@@ -707,6 +781,19 @@ def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фрей
 // передан дважды, нужно попарно усреднить ПЕРЕД Витерби (иначе решётка получает вдвое
 // больше "бит", чем реально закодировано, и разъезжается независимо от всего остального).
 // Для codeRate=2 (QPSK/8PSK) — просто пропускает как есть, без усреднения.
+// Крошечный мост: M1 -> нужный сдвиг push для hfdlDeint (17 один слот / 23 два слота).
+// Та же таблица HFDL_FRAME_PARAMS, что и везде — держит одно место истины по параметрам M1.
+def({ id:'hfdlShiftFromM1', title:'HFDL: сдвиг деперемежителя по M1', cat:'Декодеры', readout:true,
+  ins:[{n:'m1',t:'num'}], outs:[{n:'shiftCols',t:'num'}],
+  params:[{n:'m1',t:'range',min:0,max:7,step:1,d:3,label:'M1 (если вход не подключён)'}],
+  process(n,I){
+    const m1=typeof I.m1==='number'?(I.m1|0):n.p.m1;
+    const s=HFDL_FRAME_PARAMS[clamp(m1,0,7)].deintPushShift;
+    n.txt='M1='+m1+' → сдвиг '+s;
+    return { shiftCols:s };
+  },
+  draw(n){ n.el.querySelector('.readout').textContent=n.txt||''; }});
+
 def({ id:'hfdlChipAvg', title:'HFDL: усреднение chip-пар (rate 1/4)', cat:'Декодеры', readout:true,
   ins:[{n:'blk',t:'blk'},{n:'m1',t:'num'}],
   outs:[{n:'blk',t:'blk'}],
@@ -738,14 +825,36 @@ def({ id:'hfdlChipAvg', title:'HFDL: усреднение chip-пар (rate 1/4)
   },
   draw(n){ n.el.querySelector('.readout').textContent=n.txt; }});
 
+// Наземные станции HFDL: ID -> координаты (публичные данные, hfdl.observer, сверено 09.09.2026).
+const HFDL_GS_STATIONS = {
+  1:{name:'San Francisco',lat:38.384587,lon:-121.759647},
+  2:{name:'Molokai',lat:21.184428,lon:-157.186846},
+  3:{name:'Reykjavik',lat:63.847168,lon:-22.455754},
+  4:{name:'Riverhead',lat:40.881922,lon:-72.63762},
+  5:{name:'Auckland',lat:-37.015757,lon:174.809637},
+  6:{name:'Hat Yai',lat:6.937536,lon:100.388451},
+  7:{name:'Shannon',lat:52.744089,lon:-8.926752},
+  8:{name:'Johannesburg',lat:-26.129658,lon:28.206078},
+  9:{name:'Barrow',lat:71.25849,lon:-156.577447},
+  10:{name:'Muan',lat:35.032377,lon:126.238644},
+  11:{name:'Albrook',lat:9.084681,lon:-79.373969},
+  13:{name:'Santa Cruz',lat:-17.671199,lon:-63.157088},
+  14:{name:'Krasnoyarsk',lat:56.152603,lon:92.583337},
+  15:{name:'Al Muharraq',lat:26.268773,lon:50.648978},
+  16:{name:'Agana',lat:13.488833,lon:144.828233},
+  17:{name:'Canarias',lat:27.960945,lon:-15.405608},
+};
+
 def({ id:'hfdlStack', title:'HFDL: LPDU→HFNPDU→ACARS→ADS-C', cat:'Декодеры', readout:true, resize:true,
   ins:[{n:'blk',t:'blk'},{n:'freq',t:'num'}],
-  outs:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'trig',t:'num'},{n:'id',t:'txt'}],
+  outs:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'trig',t:'num'},{n:'id',t:'txt'},
+        {n:'gsLat',t:'num'},{n:'gsLon',t:'num'},{n:'gsTrig',t:'num'},{n:'gsName',t:'txt'}],
   params:[{n:'freq',t:'num',d:11384,label:'частота, кГц'}],
-  init:n=>{ n.bid=-1; n.lastLat=0; n.lastLon=0; n.lastId=''; n.log='нет данных'; },
+  init:n=>{ n.bid=-1; n.lastLat=0; n.lastLon=0; n.lastId=''; n.log='нет данных';
+    n.gsLat=0; n.gsLon=0; n.gsName=''; },
   process(n,I){
     const b=I.blk;
-    let trig=0;
+    let trig=0, gsTrig=0;
     if(b && b.id!==n.bid){
       n.bid=b.id;
       const freq=typeof I.freq==='number'?I.freq:n.p.freq;
@@ -757,7 +866,13 @@ def({ id:'hfdlStack', title:'HFDL: LPDU→HFNPDU→ACARS→ADS-C', cat:'Деко
         const mres=mpduParse(bytes, freq);
         if(!mres.err){
           for(const lpdu of mres.lpdus){
-            if(lpdu.err || !lpdu.hfnpduPayload) continue;
+            if(lpdu.err) continue;
+            // ID наземной станции всегда на "GS"-стороне линка, независимо от направления —
+            // uplink: srcId это GS; downlink: dstId это GS. Показываем на карте, если знаем координаты.
+            const gsId = lpdu.mpduHeader.direction==='uplink' ? lpdu.mpduHeader.srcId : lpdu.mpduHeader.dstId;
+            const gs = HFDL_GS_STATIONS[gsId];
+            if(gs){ n.gsLat=gs.lat; n.gsLon=gs.lon; n.gsName='📡 '+gs.name; gsTrig=1; }
+            if(!lpdu.hfnpduPayload) continue;
             const h=hfnpduParse(lpdu.hfnpduPayload);
             if(!h || h.err) continue;
             let posInfo=null;
@@ -790,7 +905,8 @@ def({ id:'hfdlStack', title:'HFDL: LPDU→HFNPDU→ACARS→ADS-C', cat:'Деко
         } else n.log='MPDU: '+mres.reason;
       }catch(e){ n.log='ошибка: '+e.message; }
     }
-    return { lat:n.lastLat, lon:n.lastLon, trig, id:n.lastId };
+    return { lat:n.lastLat, lon:n.lastLon, trig, id:n.lastId,
+             gsLat:n.gsLat, gsLon:n.gsLon, gsTrig, gsName:n.gsName };
   },
   draw(n){ n.el.querySelector('.readout').textContent=n.log; }});
 

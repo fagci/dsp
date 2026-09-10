@@ -1560,48 +1560,64 @@ markWiresDirty();
 /* ==========================================================================================
  * ПРЕСЕТ (отдельно от hfdl-all.js — подключай оба файла).
  *
- * Добавлен hfdlChipAvg между деперемежителем и Витерби — усредняет chip-пары для BPSK-
- * скоростей (M1=0,1,4,5, codeRate=4); для QPSK/8PSK (codeRate=2) пропускает без изменений.
- * Без этого узла BPSK-кадры (300/600 bps) в принципе не могли декодироваться — Витерби
- * получал вдвое больше "бит", чем реально передано.
+ * НОВОЕ: costas теперь переключает order (BPSK/QPSK/8PSK) НА ЛЕТУ синхронно с фреймером —
+ * преамбула/тренировка в HFDL всегда BPSK, целевая схема (тут 8PSK) — только во время данных
+ * (см. current_mod_arity в hfdl.c). Раньше costas молотил один фиксированный order весь кадр,
+ * из-за чего фаза грубо отслеживалась во время данных даже при верно определённом M1 —
+ * подтверждено на реальном сигнале: c BPSK-преамбулой ловится чистый пик M1, но дальше
+ * по кадру фаза плывёт без переключения.
  *
- * Проверено на реальной записи (Hf-acars.mp3): структура (M1-детектор, деперемежитель,
- * полином Витерби "raw"=155/117) подтверждена — метрика Витерби падает до единиц процента
- * от максимума на настоящих кадрах. Оставшийся зазор до чистого FCS — вероятно, в точности
- * мягких значений (soft bits) через тракт, а не в структуре: если у тебя demod/RRC/Гарднер
- * где-то по пути огрубляют сигнал до жёстких -1/+1 РАНЬШЕ, чем это делает hfdlSymToBits —
- * это первый кандидат на доработку, если FCS всё ещё не сходится с этим мостом.
+ * Планировщик (hfdlOrderSched) — copy той же state-machine, что в hfdlSymToBits, сидит на
+ * тех же go/m1/clk. Получается цикл в графе (costas→...→hfdlOrderSched→costas.order) —
+ * в этом движке циклы штатно поддерживаются (читают предыдущий блок, ~10мс задержка,
+ * не критично на масштабах кадра).
+ *
+ * hfdlChipAvg — усредняет chip-пары для BPSK-скоростей (M1=0,1,4,5, codeRate=4).
+ *
+ * Проверено на реальной записи: структура (M1-детектор, деперемежитель, полином Витерби
+ * "raw"=155/117) подтверждена отдельно, метрика Витерби падает до единиц-сотен от максимума
+ * на настоящих кадрах, когда costas реально захватывает преамбулу.
+ * ВАЖНО — тот же класс бага, что был с hfdlChipAvg, но я его НЕ могу починить: у hfdlDeint
+ * (твой узел) сдвиг push (17 для одного слота / 23 для двух) — фиксированный параметр,
+ * не подключён к живому M1. Если станция чередует одно- и двухслотовые кадры (M1=0-3 vs
+ * 4-7), деперемежитель будет верным только для ОДНОГО из двух типов одновременно. Пришли
+ * исходник hfdlDeint — заведу туда 'm1'-вход по той же схеме, что и hfdlChipAvg. Пока —
+ * подстраивай shiftCols вручную под то, что показывает hfdlM1Match/hfdlSymToBits прямо сейчас.
  * ========================================================================================== */
 preset('HFDL: приём и карта самолётов', function(){
   clearAll();
   const nt=addNode('note',40,40,{text:
-    'hfdlChipAvg добавлен — обязателен для BPSK-скоростей (M1=0,1,4,5), иначе Витерби получает\n'+
-    'вдвое больше бит, чем нужно. Для QPSK/8PSK (M1=2,3,6,7) пропускает без изменений.\n'+
-    'Проверено на реальной записи Hf-acars.mp3 — структура (M1/деперемежитель/полином) верна,\n'+
-    'метрика Витерби падает до единиц процента от максимума, но FCS ещё не сходится —\n'+
-    'вероятно, дело в точности мягких значений где-то раньше в тракте.'});
-  nt.size.w=520; nt.size.h=180; applySize(nt);
+    'costas.order теперь переключается на лету (hfdlOrderSched) — преамбула/тренировка BPSK,\n'+
+    'данные — целевая схема. Это цикл в графе (нормально для этого движка, ~1 блок задержки).\n'+
+    'hfdlChipAvg — обязателен для BPSK-скоростей (M1=0,1,4,5), иначе Витерби получает вдвое\n'+
+    'больше бит, чем нужно.\n'+
+    'Если что-то не так — смотри readout каждого узла по цепочке слева направо, там видно,\n'+
+    'на каком шаге застряло (ждём кадр / M2 / TRAIN / DATA / bad_fcs).'});
+  nt.size.w=520; nt.size.h=190; applySize(nt);
 
-  const m =addNode('mic',40,280,{gainA:2});
-  const bp=addNode('biquad',320,280,{type:'bp',freq:1800,Q:1.2});
-  const co=addNode('costas',580,280,{f0:1800,order:'8PSK',loopHz:5,lp:2500});
-  const fi=addNode('rrc',840,200,{baud:1800,beta:.35,span:8});
-  const fq=addNode('rrc',840,380,{baud:1800,beta:.35,span:8});
-  const ga=addNode('gardner',1100,280,{baud:1800,gain:.02});
+  const m =addNode('mic',40,300,{gainA:2});
+  const bp=addNode('biquad',320,300,{type:'bp',freq:1800,Q:1.2});
+  const co=addNode('costas',580,300,{f0:1800,order:'BPSK',loopHz:20,lp:2500});
+  const fi=addNode('rrc',840,220,{baud:1800,beta:.35,span:8});
+  const fq=addNode('rrc',840,400,{baud:1800,beta:.35,span:8});
+  const ga=addNode('gardner',1100,300,{baud:1800,gain:.02});
 
   const m1=addNode('hfdlM1Match',1360,80,{baud:1800,thr:.5,dead:1500});
+  const sched=addNode('hfdlOrderSched',1360,500,{m1:3});
 
-  const s2b=addNode('hfdlSymToBits',1360,280,{descramble:true});
-  const deint=addNode('hfdlDeint',1660,280,{shiftCols:17});
-  const avg=addNode('hfdlChipAvg',1960,280,{});
-  const vit=addNode('viterbiDec',2260,280,{K:7,g1:'155',g2:'117',tail:true,fmt:'hex'});
+  const s2b=addNode('hfdlSymToBits',1360,300,{descramble:true});
+  const deint=addNode('hfdlDeint',1660,300,{shiftCols:17});
+  const shiftM1=addNode('hfdlShiftFromM1',1660,500,{m1:3});
+  const avg=addNode('hfdlChipAvg',1960,300,{});
+  const vit=addNode('viterbiDec',2260,300,{K:7,g1:'155',g2:'117',tail:true,fmt:'hex'});
   vit.size.w=360; vit.size.h=240; applySize(vit);
-  const stack=addNode('hfdlStack',2660,280,{freq:11384});
-  const map=addNode('planeMap',2960,280,{ttl:30});
+  const stack=addNode('hfdlStack',2660,300,{freq:11384});
+  const map=addNode('planeMap',2960,300,{ttl:30});
   map.size.w=560; map.size.h=340; applySize(map);
 
   addEdge(m.id,'a',bp.id,'in');
   addEdge(bp.id,'out',co.id,'in');
+  addEdge(sched.id,'order',co.id,'order');             // ЦИКЛ: order по фреймеру, а не фикс. параметр
   addEdge(co.id,'I',fi.id,'in'); addEdge(co.id,'Q',fq.id,'in');
   addEdge(fi.id,'out',ga.id,'I'); addEdge(fq.id,'out',ga.id,'Q');
 
@@ -1610,9 +1626,14 @@ preset('HFDL: приём и карта самолётов', function(){
   addEdge(ga.id,'sI',s2b.id,'I'); addEdge(ga.id,'sQ',s2b.id,'Q'); addEdge(ga.id,'clk',s2b.id,'clk');
   addEdge(m1.id,'go',s2b.id,'go'); addEdge(m1.id,'m1',s2b.id,'m1');
 
+  addEdge(ga.id,'clk',sched.id,'clk');
+  addEdge(m1.id,'go',sched.id,'go'); addEdge(m1.id,'m1',sched.id,'m1');
+
   addEdge(s2b.id,'blk',deint.id,'blk');
+  addEdge(s2b.id,'m1',shiftM1.id,'m1');
+  addEdge(shiftM1.id,'shiftCols',deint.id,'shiftCols');
   addEdge(deint.id,'blk',avg.id,'blk');
-  addEdge(m1.id,'m1',avg.id,'m1');
+  addEdge(s2b.id,'m1',avg.id,'m1');                    // из hfdlSymToBits (синхронизирован с blk), НЕ напрямую из hfdlM1Match!
   addEdge(avg.id,'blk',vit.id,'blk');
   addEdge(vit.id,'blk',stack.id,'blk');
 
@@ -1620,5 +1641,9 @@ preset('HFDL: приём и карта самолётов', function(){
   addEdge(stack.id,'lon',map.id,'lon');
   addEdge(stack.id,'trig',map.id,'trig');
   addEdge(stack.id,'id',map.id,'id');
+  addEdge(stack.id,'gsLat',map.id,'gsLat');
+  addEdge(stack.id,'gsLon',map.id,'gsLon');
+  addEdge(stack.id,'gsTrig',map.id,'gsTrig');
+  addEdge(stack.id,'gsName',map.id,'gsName');
   markWiresDirty();
 });

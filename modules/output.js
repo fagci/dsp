@@ -917,11 +917,12 @@ function dl(blob,name){ const a=document.createElement('a');
   setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
 
 def({ id:'planeMap', title:'Карта самолётов', cat:'Вывод',
-  ins:[{n:'trig',t:'num'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'id',t:'txt'}],
+  ins:[{n:'trig',t:'num'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'id',t:'txt'},
+       {n:'gsTrig',t:'num'},{n:'gsLat',t:'num'},{n:'gsLon',t:'num'},{n:'gsName',t:'txt'}],
   view:{h:300}, resize:true,
   params:[{n:'ttl',t:'range',min:1,max:120,step:1,d:30,label:'хранить, мин'},
-          {n:'clr',t:'button',label:'Очистить',fn:n=>{n.tracks={};}}],
-  init:n=>{n.tracks={}; n.prevTrig=0;},
+          {n:'clr',t:'button',label:'Очистить',fn:n=>{n.tracks={}; n.stations={};}}],
+  init:n=>{n.tracks={}; n.stations={}; n.prevTrig=0; n.prevGsTrig=0;},
   process(n,I){
     // num-порты в этом движке — обычные числа, не поблочные буферы (в отличие от 'sig')
     const trig=typeof I.trig==='number'?I.trig:0;
@@ -932,6 +933,15 @@ def({ id:'planeMap', title:'Карта самолётов', cat:'Вывод',
         n.tracks[id]={lat,lon,t:Date.now()};
     }
     n.prevTrig=trig;
+    // наземные станции — координаты фиксированные (справочник), просто держим "живой" отметкой
+    const gsTrig=typeof I.gsTrig==='number'?I.gsTrig:0;
+    if(gsTrig>0.5 && n.prevGsTrig<=0.5){
+      const lat=typeof I.gsLat==='number'?I.gsLat:null, lon=typeof I.gsLon==='number'?I.gsLon:null;
+      const name=(typeof I.gsName==='string'&&I.gsName)?I.gsName:'📡 ?';
+      if(typeof lat==='number'&&typeof lon==='number'&&isFinite(lat)&&isFinite(lon))
+        n.stations[name]={lat,lon,t:Date.now()};
+    }
+    n.prevGsTrig=gsTrig;
     return {};
   },
   draw(n,cv,cx){
@@ -945,6 +955,18 @@ def({ id:'planeMap', title:'Карта самолётов', cat:'Вывод',
     cx.strokeStyle='rgba(255,255,255,.35)';               // экватор и нулевой меридиан ярче
     cx.beginPath(); cx.moveTo(W/2,0); cx.lineTo(W/2,H); cx.moveTo(0,H/2); cx.lineTo(W,H/2); cx.stroke();
     const now=Date.now(), ttl=n.p.ttl*60000;
+    // станции — квадратик, фикс. цвет, не протухают по ttl (их положение не меняется,
+    // просто убираем совсем старые, если станция давно не упоминалась в трафике)
+    for(const name in n.stations){
+      const t=n.stations[name];
+      if(now-t.t>ttl*4){ delete n.stations[name]; continue; }
+      const x=(t.lon+180)/360*W, y=(90-t.lat)/180*H;
+      cx.fillStyle='#5cc0e0';
+      cx.fillRect(x-4,y-4,8,8);
+      cx.fillStyle='#5cc0e0'; cx.font='11px monospace';
+      cx.fillText(name,x+7,y-6);
+    }
+    // самолёты — кружок, гаснет с возрастом
     for(const id in n.tracks){
       const t=n.tracks[id];
       if(now-t.t>ttl){ delete n.tracks[id]; continue; }    // протухшие цели убираем

@@ -10,7 +10,8 @@ const CAT_ORDER = ['Источники','Музыка','Обработка','М�
 const Eng = {
   ctx:null, sr:48000, running:false, node:null, mic:null,
   micBuf:new Float32Array(BLOCK), micB:new Float32Array(BLOCK),
-  mics:[null,null], streams:[null,null], micIds:[null,null], merger:null,
+  mics:[null,null], streams:[null,null], micIds:[null,null], micSr:[null,null], merger:null,
+  stereoSrc:null, stereoSplitter:null, stereoStream:null, stereoDeviceId:null, stereoSr:null,
   outL:new Float32Array(BLOCK), outR:new Float32Array(BLOCK),
   devices:[], micId:null, blocks:0, t:0,
   targetSr:null,               // желаемая частота; null — как даст браузер
@@ -48,7 +49,9 @@ const Eng = {
     this.node = new AudioWorkletNode(this.ctx,'io'+BLOCK,{numberOfInputs:1,numberOfOutputs:1,
       outputChannelCount:[2], channelCount:2, channelCountMode:'explicit',
       channelInterpretation:'discrete'});
+    const node=this.node;               // локальная ссылка: отличаем «своё» сообщение от эха старого воркета
     this.node.port.onmessage = e => {
+      if(this.node!==node) return;      // движок уже пересоздан/остановлен (setBlock/setSampleRate/stop) — это хвост от старого
       this.micBuf.set(e.data.subarray(0,BLOCK));
       this.micB.set(e.data.subarray(BLOCK));
       this.tick(); };
@@ -64,14 +67,33 @@ const Eng = {
       this.streams[slot]?.getTracks().forEach(t=>t.stop());
       this.mics[slot]=null; this.streams[slot]=null;
     }
+    this.stopStereoMic();
+  },
+  stopStereoMic(){
+    this.stereoSrc?.disconnect(); this.stereoSplitter?.disconnect();
+    this.stereoStream?.getTracks().forEach(t=>t.stop());
+    this.stereoSrc=null; this.stereoSplitter=null; this.stereoStream=null; this.stereoDeviceId=null;
+  },
+  // Полный останов (в отличие от toggle-паузы — закрывает AudioContext). ctx.close() сам по
+  // себе НЕ останавливает треки getUserMedia (микрофон продолжает физически захватываться,
+  // индикатор в браузере горит) — поэтому stopMics() здесь обязателен и идёт первым.
+  async stop(){
+    this.stopMics();
+    try{ await this.ctx?.close(); }catch(e){}
+    this.running=false; this.paused=false; this.node=null; this.merger=null;
+    this.mic=null; this.micId=null;
+    this.onRunChange?.();
   },
   async toggle(){
     if(!this.running){ await this.start(); return true; }
     if(this.paused){
       await this.ctx.resume(); this.paused=false;
       // переподключаем входы, которые были активны до паузы
-      for(let slot=0;slot<2;slot++) if(this.wasMic?.[slot]) await this.enableMic(this.micIds[slot]||undefined, slot);
+      if(this.wasStereo) await this.enableStereoMic(this.stereoDeviceId||undefined, this.stereoSr||undefined);
+      else for(let slot=0;slot<2;slot++)
+        if(this.wasMic?.[slot]) await this.enableMic(this.micIds[slot]||undefined, slot, this.micSr[slot]||undefined);
     } else {
+      this.wasStereo=!!this.stereoSrc;
       this.wasMic=[!!this.mics[0], !!this.mics[1]];
       await this.ctx.suspend(); this.paused=true;
       this.stopMics();
@@ -79,14 +101,16 @@ const Eng = {
     this.onRunChange?.();
     return !this.paused;
   },
-  async enableMic(deviceId, slot){
+  async enableMic(deviceId, slot, sr){
     slot=slot|0;
     if(!this.running) await this.start();
     else if(this.paused){ await this.ctx.resume(); this.paused=false; this.onRunChange?.(); }
-    if(this.mics[slot] && deviceId===undefined) return;
+    if(this.mics[slot] && deviceId===undefined && sr===undefined) return;
+    this.stopStereoMic();                             // ручная настройка отдельного входа — выходим из стерео-режима
     const fx=this.fx||{};
     const a={echoCancellation:!!fx.echo, noiseSuppression:!!fx.ns, autoGainControl:!!fx.agc};
     if(deviceId) a.deviceId={exact:deviceId};
+    if(sr) a.sampleRate={ideal:sr};                   // ideal, не exact — иначе OverconstrainedError на несовпадающей частоте
     let st;
     try{ st = await navigator.mediaDevices.getUserMedia({audio:a}); }
     catch(e){                                        // нет доступа/устройства — не роняем страницу молча
@@ -99,12 +123,70 @@ const Eng = {
       this.merger.connect(this.node); }
     if(this.mics[slot]){ this.mics[slot].disconnect();
       this.streams[slot]?.getTracks().forEach(t=>t.stop()); }
-    this.streams[slot]=st; this.micIds[slot]=deviceId||null;
+    this.streams[slot]=st; this.micIds[slot]=deviceId||null; this.micSr[slot]=sr||null;
     this.mics[slot]=this.ctx.createMediaStreamSource(st);
     this.mics[slot].connect(this.merger,0,slot);
     this.mic=this.mics[0]; this.micId=this.micIds[0];
     await this.listDevices();
   },
+  // Стерео с ОДНОГО физического устройства (например, встроенный микрофонный массив ноутбука,
+  // как на ThinkPad T480) — один getUserMedia с channelCount:2 и честное разделение каналов
+  // ChannelSplitterNode, а не два отдельных getUserMedia на один и тот же deviceId (это давало
+  // одинаковый моно-даунмикс в обоих слотах вместо реального L/R).
+  async enableStereoMic(deviceId, sr){
+    if(!this.running) await this.start();
+    else if(this.paused){ await this.ctx.resume(); this.paused=false; this.onRunChange?.(); }
+    this.stopMics();                                  // единый поток на оба канала — отдельные mono-входы не нужны
+    const fx=this.fx||{};
+    const a={echoCancellation:!!fx.echo, noiseSuppression:!!fx.ns, autoGainControl:!!fx.agc,
+             channelCount:{exact:2}};
+    if(deviceId) a.deviceId={exact:deviceId};
+    if(sr) a.sampleRate={ideal:sr};
+    let st;
+    try{ st = await navigator.mediaDevices.getUserMedia({audio:a}); }
+    catch(e){
+      console.error('стерео-микрофон:',e);
+      if(typeof stat!=='undefined') stat.textContent='не удалось включить стерео-микрофон: '+e.message;
+      return;
+    }
+    if(!this.merger){ this.merger=this.ctx.createChannelMerger(2); this.merger.connect(this.node); }
+    this.stereoStream=st; this.stereoDeviceId=deviceId||null; this.stereoSr=sr||null;
+    this.stereoSrc=this.ctx.createMediaStreamSource(st);
+    this.stereoSplitter=this.ctx.createChannelSplitter(2);
+    this.stereoSrc.connect(this.stereoSplitter);
+    this.stereoSplitter.connect(this.merger,0,0);
+    this.stereoSplitter.connect(this.merger,1,1);
+    this.micIds=[deviceId||null,deviceId||null];
+    this.mic=this.stereoSrc; this.micId=deviceId||null;
+    await this.listDevices();
+  },
+  // Один раз молча запросить/освободить доступ, чтобы enumerateDevices() отдал настоящие
+  // названия устройств вместо generic "вход N" — до разрешения браузер их скрывает.
+  // Всё равно спросит разрешение у пользователя, если оно ещё не выдано — не обходит consent.
+  async unlockLabels(){
+    try{ const st=await navigator.mediaDevices.getUserMedia({audio:true});
+      st.getTracks().forEach(t=>t.stop()); }
+    catch(e){ console.error('разблокировка имён устройств:',e); }
+    await this.listDevices();
+  },
+  // Живое применение echo/ns/agc на уже открытых треках, без пересоздания потока
+  // (пересоздание — это щелчок/обрыв звука на пару блоков). Поддержано не всеми браузерами/
+  // устройствами — при неудаче возвращает false, вызывающий сам решает, переподключаться ли.
+  async applyFx(){
+    const fx=this.fx||{};
+    const c={echoCancellation:!!fx.echo, noiseSuppression:!!fx.ns, autoGainControl:!!fx.agc};
+    const tracks=[];
+    for(let slot=0;slot<2;slot++){ const t=this.streams[slot]?.getAudioTracks?.()[0]; if(t) tracks.push(t); }
+    const st=this.stereoStream?.getAudioTracks?.()[0]; if(st) tracks.push(st);
+    let ok=true;
+    for(const t of tracks){
+      try{ await t.applyConstraints(c); } catch(e){ ok=false; console.error('applyConstraints:',e); }
+    }
+    return ok;
+  },
+  // Что реально согласовал браузер (частота/каналы могут отличаться от запрошенного ideal)
+  micSettings(slot){ const t=this.streams[slot|0]?.getAudioTracks?.()[0]; return t?t.getSettings():null; },
+  stereoSettings(){ const t=this.stereoStream?.getAudioTracks?.()[0]; return t?t.getSettings():null; },
   async listDevices(){
     try{ const d=await navigator.mediaDevices.enumerateDevices();
       this.devices=d.filter(x=>x.kind==='audioinput')
@@ -115,6 +197,7 @@ const Eng = {
   turbo:1,
   load:0,                              // сглаженная доля бюджета реального времени, съеденная обработкой
   tick(){
+    if(!this.node) return;              // движок остановлен посреди обработки — не падаем
     const t0 = performance.now();
     const reps=Math.max(1,this.turbo|0);
     for(let r=0;r<reps;r++){                        // ускоренный прогон: несколько блоков за такт
@@ -168,6 +251,9 @@ const Eng = {
     }
   }
 };
+// список устройств протухает при подключении/отключении железа — обновляем сам, без ручного повторного скана
+if(navigator.mediaDevices?.addEventListener)
+  navigator.mediaDevices.addEventListener('devicechange', ()=>Eng.listDevices());
 
 function portsOf(n,side){                            // ins/outs могут быть функцией от узла
   const d=MOD[n.type]; if(!d) return [];

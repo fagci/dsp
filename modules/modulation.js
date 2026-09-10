@@ -254,7 +254,7 @@ function pLine(n){                                 // следующая стр�
 
 
 def({ id:'costas', title:'Захват несущей', cat:'Модуляция',
-  ins:[{n:'in',t:'sig'},{n:'f0',t:'num'},{n:'loopHz',t:'num'},{n:'lp',t:'num'}],
+  ins:[{n:'in',t:'sig'},{n:'f0',t:'num'},{n:'loopHz',t:'num'},{n:'lp',t:'num'},{n:'order',t:'sig'}],
   outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'ferr',t:'num'},{n:'lock',t:'num'}],
   view:{h:40}, readout:true,
   params:[{n:'f0',t:'range',min:100,max:20000,step:1,d:1800,log:true},
@@ -269,20 +269,30 @@ def({ id:'costas', title:'Захват несущей', cat:'Модуляция'
     const a=Math.exp(-2*Math.PI*n.p.lp/Eng.sr);
     const Bn=n.p.loopHz/Eng.sr, dmp=.707;           // петля второго порядка
     const den=1+2*dmp*Bn+Bn*Bn, al=4*dmp*Bn/den, be=4*Bn*Bn/den;
-    const M=n.p.order==='BPSK'?2:(n.p.order==='QPSK'?4:8);
-    let e=0;
+    const Mparam=n.p.order==='BPSK'?2:(n.p.order==='QPSK'?4:8);
+    // 'order' — sig, посэмпловый (нужна точность на границе символа, а не раз в блок как num):
+    // 1→BPSK(2), 2→QPSK(4), 3→8PSK(8). Если вход не подключён — берём фиксированный параметр.
+    // Это позволяет переключать демодулятор на лету синхронно с фреймером (преамбула/тренировка
+    // в HFDL всегда BPSK, реальная схема — только во время данных, см. hfdl.c current_mod_arity).
+    let e=0, errSum=0;
     for(let i=0;i<BLOCK;i++){
       const x=I.in?I.in[i]:0, w=2*Math.PI*n.ph;
       n.li=n.li*a+x*Math.cos(w)*(1-a); n.lq=n.lq*a-x*Math.sin(w)*(1-a);
       const Ii=n.li, Qq=n.lq;
+      const M = I.order ? (I.order[i]<=1.5?2:(I.order[i]<=2.5?4:8)) : Mparam;
       if(M===2) e=Qq*Math.sign(Ii);
       else if(M===4) e=Math.sign(Ii)*Qq-Math.sign(Qq)*Ii;
       else { const ang=Math.atan2(Qq,Ii), st=2*Math.PI/M;   // ошибка до ближайшего луча
              let d=ang-Math.round(ang/st)*st; e=d*Math.hypot(Ii,Qq); }
       const mag=Math.hypot(Ii,Qq)+1e-9; e/=mag;
+      errSum+=Math.abs(e);
       n.fo+=be*e; n.ph=(n.ph+f0/Eng.sr+n.fo+al*e)%1; if(n.ph<0) n.ph+=1;
       oi[i]=Ii; oq[i]=Qq; }
-    n.lk=n.lk*.98+(1-Math.min(1,Math.abs(e)))*.02;
+    // Усреднено по всему блоку (не последний сэмпл, как было раньше) — но это по-прежнему
+    // не честный SNR-детектор, просто индикатор фазовой ошибки. Для решения "есть кадр или
+    // нет" ориентируйся на hfdlM1Match — он не зависит от этого узла.
+    const errAvg=errSum/BLOCK;
+    n.lk=n.lk*.9+(1-Math.min(1,errAvg))*.1;
     n.hist.push(n.fo*Eng.sr); if(n.hist.length>120) n.hist.shift();
     return {I:oi,Q:oq,ferr:n.fo*Eng.sr,lock:n.lk}; },
   draw(n,cv,cx){
