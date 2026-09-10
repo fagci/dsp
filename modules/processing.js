@@ -1399,6 +1399,8 @@ def({ id:'denoiser', title:'Шумоподавитель (спектральны
       n.w = 0;
       n.noiseProfile = new Float32Array(N/2);
       n.profileCnt = 0;
+      n.re = new Float32Array(N); n.im = new Float32Array(N);   // переиспользуем — раньше аллоцировались на каждый БПФ
+      n.win = window_('hann', N);
     }
     const dt = BLOCK / Eng.sr;
     
@@ -1410,9 +1412,7 @@ def({ id:'denoiser', title:'Шумоподавитель (спектральны
     
     // БПФ каждые N/2 отсчётов (перекрытие 50%)
     if(n.w % (N/2) < BLOCK){
-      const re = new Float32Array(N);
-      const im = new Float32Array(N);
-      const win = window_('hann', N);
+      const re = n.re, im = n.im, win = n.win;
       const start = (n.w - N + N*2) % (N*2);
       
       for(let i=0;i<N;i++){

@@ -15,50 +15,123 @@ const Eng = {
   outL:new Float32Array(BLOCK), outR:new Float32Array(BLOCK),
   devices:[], micId:null, blocks:0, t:0,
   targetSr:null,               // желаемая частота; null — как даст браузер
+  preload:12,                  // сколько тишины отдаём воркету на старте: больше — устойчивей к подвисаниям, но больше задержка
+  maxQ:24,                     // ёмкость внутренней очереди воркета, см. комментарий в start()
+  sab:false,                   // используется ли SharedArrayBuffer-путь (решается в start(), зависит от COOP/COEP)
   onRunChange:null,            // колбэк для UI: дергается при старте/паузе/резюме
   async start(){
     if(this.running) return;
-    const opts = this.targetSr ? {sampleRate:this.targetSr} : {};
+    const opts = {latencyHint:'interactive', ...(this.targetSr?{sampleRate:this.targetSr}:{})};
     this.ctx = new (window.AudioContext||window.webkitAudioContext)(opts);
     this.sr = this.ctx.sampleRate;   // браузер может не дать точную запрошенную частоту
-    const src = `
-      class IO extends AudioWorkletProcessor{
-        constructor(){super();this.B=${BLOCK};
-          this.aL=new Float32Array(this.B);this.aR=new Float32Array(this.B);this.n=0;
-          this.q=[];this.cur=null;this.ci=0;
-          // Ёмкость очереди: чем больше, тем устойчивей к временным подвисаниям основного
-          // потока (GC, тяжёлый рендер и т.п.) ценой чуть большей задержки звука — если tick()
-          // на секунду отстанет, тут запас на MAXQ*B/sr секунд, прежде чем реально станет тихо.
-          this.MAXQ=24;
-          this.port.onmessage=e=>{this.q.push(e.data);if(this.q.length>this.MAXQ)this.q.shift();};}
-        process(inp,outp){
-          const i0=inp[0][0], i1=inp[0][1], o=outp[0][0], o1=outp[0][1]||o, L=o.length;
-          for(let i=0;i<L;i++){
-            this.aL[this.n]=i0?i0[i]:0; this.aR[this.n]=i1?i1[i]:0; this.n++;
-            if(this.n===this.B){
-              const m=new Float32Array(this.B*2); m.set(this.aL,0); m.set(this.aR,this.B);
-              this.port.postMessage(m); this.n=0;}}
-          for(let i=0;i<L;i++){
-            if(!this.cur||this.ci>=this.B){this.cur=this.q.shift()||null;this.ci=0;}
-            if(this.cur){ o[i]=this.cur[this.ci]; o1[i]=this.cur[this.B+this.ci]; this.ci++; }
-            else { o[i]=0; o1[i]=0; }}
-          return true;}}
-      registerProcessor('io${BLOCK}',IO);`;
+
+    // SharedArrayBuffer доступен только в cross-origin-isolated контексте (нужны заголовки
+    // COOP/COEP на сервере) — если их нет, typeof SharedArrayBuffer просто 'undefined' и мы
+    // тихо остаёмся на старом postMessage-пути ниже, ничего не ломая.
+    this.sab = typeof SharedArrayBuffer==='function' &&
+               (typeof crossOriginIsolated==='undefined' || crossOriginIsolated);
+
+    let src, procOpts;
+    if(this.sab){
+      // Кольцо в общей памяти: воркет пишет вход (микрофон) и читает выход (посчитанный звук)
+      // напрямую по индексу, без postMessage с данными — port.postMessage используется только
+      // как лёгкий "пинг"-будильник раз в BLOCK семплов, чтобы разбудить tick() на основном
+      // потоке. Даёт поквантовую (128 сэмплов) выдачу звука вместо ожидания целого BLOCK,
+      // и убирает аллокацию/передачу Float32Array на каждый тик.
+      this.RING = pow2ge(Math.max(this.maxQ,this.preload,4)*BLOCK*4);   // степень двойки — модуло через маску, не %
+      this._ctrlBuf=new SharedArrayBuffer(2*4);           // [0]=inWrite,[1]=outWrite, оба монотонно растущие int32
+      this._ctrl=new Int32Array(this._ctrlBuf);
+      this._inLBuf=new SharedArrayBuffer(this.RING*4); this._inRBuf=new SharedArrayBuffer(this.RING*4);
+      this._outLBuf=new SharedArrayBuffer(this.RING*4); this._outRBuf=new SharedArrayBuffer(this.RING*4);
+      this._inL=new Float32Array(this._inLBuf); this._inR=new Float32Array(this._inRBuf);
+      this._outL=new Float32Array(this._outLBuf); this._outR=new Float32Array(this._outRBuf);
+      this._inRead=0; this._outWrite=0;
+      procOpts={ctrl:this._ctrlBuf, inL:this._inLBuf, inR:this._inRBuf, outL:this._outLBuf, outR:this._outRBuf,
+                 ring:this.RING, block:BLOCK};
+      src = `
+        class IOS extends AudioWorkletProcessor{
+          constructor(opt){super();const o=opt.processorOptions;
+            this.B=o.block; this.RING=o.ring; this.MASK=this.RING-1;
+            this.ctrl=new Int32Array(o.ctrl);
+            this.inL=new Float32Array(o.inL); this.inR=new Float32Array(o.inR);
+            this.outL=new Float32Array(o.outL); this.outR=new Float32Array(o.outR);
+            this.inWrite=0; this.outRead=0; this.sinceNotify=0; }
+          process(inp,outp){
+            const i0=inp[0][0], i1=inp[0][1], o=outp[0][0], o1=outp[0][1]||o, L=o.length;
+            let iw=this.inWrite;
+            for(let i=0;i<L;i++){ const p=iw&this.MASK; this.inL[p]=i0?i0[i]:0; this.inR[p]=i1?i1[i]:0; iw++; }
+            this.inWrite=iw; Atomics.store(this.ctrl,0,iw);
+            this.sinceNotify+=L;
+            if(this.sinceNotify>=this.B){ this.sinceNotify-=this.B; this.port.postMessage(0); } // пинг, без данных
+            let or_=this.outRead; const ow=Atomics.load(this.ctrl,1);
+            for(let i=0;i<L;i++){
+              if(or_<ow){ const p=or_&this.MASK; o[i]=this.outL[p]; o1[i]=this.outR[p]; or_++; }
+              else { o[i]=0; o1[i]=0; }}     // недобор — тишина, не блокируемся (Atomics.wait тут нельзя)
+            this.outRead=or_;
+            return true; }}
+        registerProcessor('io${BLOCK}sab',IOS);`;
+    } else {
+      src = `
+        class IO extends AudioWorkletProcessor{
+          constructor(){super();this.B=${BLOCK};
+            this.aL=new Float32Array(this.B);this.aR=new Float32Array(this.B);this.n=0;
+            this.q=[];this.cur=null;this.ci=0;
+            // Ёмкость очереди: чем больше, тем устойчивей к временным подвисаниям основного
+            // потока (GC, тяжёлый рендер и т.п.) ценой чуть большей задержки звука — если tick()
+            // на секунду отстанет, тут запас на MAXQ*B/sr секунд, прежде чем реально станет тихо.
+            this.MAXQ=${this.maxQ};
+            this.port.onmessage=e=>{this.q.push(e.data);if(this.q.length>this.MAXQ)this.q.shift();};}
+          process(inp,outp){
+            const i0=inp[0][0], i1=inp[0][1], o=outp[0][0], o1=outp[0][1]||o, L=o.length;
+            for(let i=0;i<L;i++){
+              this.aL[this.n]=i0?i0[i]:0; this.aR[this.n]=i1?i1[i]:0; this.n++;
+              if(this.n===this.B){
+                const m=new Float32Array(this.B*2); m.set(this.aL,0); m.set(this.aR,this.B);
+                this.port.postMessage(m); this.n=0;}}
+            for(let i=0;i<L;i++){
+              if(!this.cur||this.ci>=this.B){this.cur=this.q.shift()||null;this.ci=0;}
+              if(this.cur){ o[i]=this.cur[this.ci]; o1[i]=this.cur[this.B+this.ci]; this.ci++; }
+              else { o[i]=0; o1[i]=0; }}
+            return true;}}
+        registerProcessor('io${BLOCK}',IO);`;
+    }
     const url = URL.createObjectURL(new Blob([src],{type:'text/javascript'}));
     await this.ctx.audioWorklet.addModule(url); URL.revokeObjectURL(url);
-    this.node = new AudioWorkletNode(this.ctx,'io'+BLOCK,{numberOfInputs:1,numberOfOutputs:1,
-      outputChannelCount:[2], channelCount:2, channelCountMode:'explicit',
-      channelInterpretation:'discrete'});
+    this.node = new AudioWorkletNode(this.ctx, this.sab?('io'+BLOCK+'sab'):('io'+BLOCK), {
+      numberOfInputs:1, numberOfOutputs:1, outputChannelCount:[2],
+      channelCount:2, channelCountMode:'explicit', channelInterpretation:'discrete',
+      processorOptions:procOpts });
     const node=this.node;               // локальная ссылка: отличаем «своё» сообщение от эха старого воркета
-    this.node.port.onmessage = e => {
-      if(this.node!==node) return;      // движок уже пересоздан/остановлен (setBlock/setSampleRate/stop) — это хвост от старого
-      this.micBuf.set(e.data.subarray(0,BLOCK));
-      this.micB.set(e.data.subarray(BLOCK));
-      this.tick(); };
+    if(this.sab){
+      this.node.port.onmessage = () => {  // тут теперь только пинг-будильник, без полезной нагрузки
+        if(this.node!==node) return;
+        this.pumpSAB(); };
+      // тишина уже лежит в буфере (SharedArrayBuffer зануляется при создании) — предзаполнение
+      // это просто сдвиг указателя чтения воркета вперёд на preload блоков, без единой записи
+      this._outWrite=this.preload*BLOCK; Atomics.store(this._ctrl,1,this._outWrite);
+    } else {
+      this.node.port.onmessage = e => {
+        if(this.node!==node) return;      // движок уже пересоздан/остановлен (setBlock/setSampleRate/stop) — это хвост от старого
+        this.micBuf.set(e.data.subarray(0,BLOCK));
+        this.micB.set(e.data.subarray(BLOCK));
+        this.tick(); };
+    }
     this.node.connect(this.ctx.destination);
-    for(let i=0;i<12;i++) this.node.port.postMessage(new Float32Array(BLOCK*2)); // преднаполнение — было 3
+    if(!this.sab) for(let i=0;i<this.preload;i++) this.node.port.postMessage(new Float32Array(BLOCK*2));
     this.running = true; this.paused = false;
     this.onRunChange?.();
+  },
+  // SAB-режим: пришёл пинг от воркета — забираем накопленный им вход из кольца и считаем tick()
+  // на каждый полный BLOCK, что успел накопиться (обычно один; если основной поток отставал —
+  // несколько подряд, а не теряем звук молча).
+  pumpSAB(){
+    const iw=Atomics.load(this._ctrl,0), mask=this.RING-1;
+    if(iw-this._inRead > this.RING-BLOCK) this._inRead=iw-BLOCK;   // кольцо переполнилось — догоняем, роняя старьё
+    while(iw-this._inRead>=BLOCK){
+      for(let i=0;i<BLOCK;i++){ const p=(this._inRead+i)&mask; this.micBuf[i]=this._inL[p]; this.micB[i]=this._inR[p]; }
+      this._inRead+=BLOCK;
+      this.tick();
+    }
   },
   // Останавливает микрофоны и освобождает железо (иначе индикатор записи в браузере висит вечно).
   stopMics(){
@@ -194,6 +267,19 @@ const Eng = {
     }catch(e){ this.devices=[]; }
     return this.devices;
   },
+  // Оценка суммарной задержки: аппаратная часть — то, что реально даёт браузер/ОС/устройство
+  // (baseLatency+outputLatency, недоступно до start()), плюс наш буфер — preload блоков,
+  // отданных воркету при старте (в установившемся режиме очередь обычно держится около этого
+  // уровня; в худшем случае, если tick() отставал, доходит до maxQ). В SAB-режиме сама формула
+  // та же, но воркет потребляет из кольца поквантово (128 сэмплов), а не ждёт целый BLOCK через
+  // postMessage — на практике это позволяет держать preload заметно меньше без щелчков.
+  latencyMs(){
+    if(!this.ctx) return null;
+    const hw=((this.ctx.baseLatency||0)+(this.ctx.outputLatency||0))*1000;
+    const queueMs=this.preload*BLOCK/this.sr*1000;
+    const queueMaxMs=this.maxQ*BLOCK/this.sr*1000;
+    return {hardwareMs:hw, queueMs, queueMaxMs, totalMs:hw+queueMs, sab:this.sab};
+  },
   turbo:1,
   load:0,                              // сглаженная доля бюджета реального времени, съеденная обработкой
   tick(){
@@ -204,11 +290,17 @@ const Eng = {
       this.outL.fill(0); this.outR.fill(0);
       for(const n of Graph.order) evalNode(n);
       this.blocks++; }
-    // Отдаём буфер воркету через transfer — без .slice() тут была лишняя копия:
-    // postMessage и так клонирует данные, если их не передать как transferable.
-    const out=new Float32Array(BLOCK*2);
-    out.set(this.outL,0); out.set(this.outR,BLOCK);
-    this.node.port.postMessage(out, [out.buffer]);
+    // В SAB-режиме — прямая запись в общую память (см. pumpSAB/start). Иначе — transfer воркету,
+    // как раньше: без .slice() тут нет лишней копии, postMessage и так клонирует то, что не transferable.
+    if(this.sab){
+      const mask=this.RING-1; let ow=this._outWrite;
+      for(let i=0;i<BLOCK;i++){ const p=(ow+i)&mask; this._outL[p]=this.outL[i]; this._outR[p]=this.outR[i]; }
+      ow+=BLOCK; this._outWrite=ow; Atomics.store(this._ctrl,1,ow);
+    } else {
+      const out=new Float32Array(BLOCK*2);
+      out.set(this.outL,0); out.set(this.outR,BLOCK);
+      this.node.port.postMessage(out, [out.buffer]);
+    }
     this.t = performance.now()-t0;
     // budgetMs — сколько реального времени есть на обработку reps блоков до следующего такта воркета.
     // load>1 при turbo=1 означает реальные подвисания звука (очередь воркета не успевает наполняться).
@@ -263,12 +355,14 @@ function portsOf(n,side){                            // ins/outs могут бы
 function evalNode(n, ctx){
   const d = MOD[n.type]; if(!d) return;
   const g = ctx || Graph;
-  const I = {};
+  const I = n._I || (n._I={});         // переиспользуем — раньше {} аллоцировался заново на каждый узел каждый блок
   // g.inIndex — карта "узел+порт → провод", строится в retopo(). Без неё пришлось бы
   // на каждый вход каждого узла линейно перебирать все рёбра графа — и так каждый аудио-блок.
   const idx = g.inIndex;
+  const keys = n._pk || (n._pk={});    // кэш строкового ключа на узел+порт — от топологии не зависит, только от имени порта
   for(const p of portsOf(n,'ins')){
-    const e = idx ? idx.get(n.id+'\u0001'+p.n) : g.edges.find(e=>e.to===n.id && e.tp===p.n);
+    const key = keys[p.n] || (keys[p.n]=n.id+'\u0001'+p.n);
+    const e = idx ? idx.get(key) : g.edges.find(e=>e.to===n.id && e.tp===p.n);
     I[p.n] = e ? (g.map[e.from]?.out?.[e.fp] ?? null) : null;
   }
   try{ n.out = d.process(n, I, g) || {}; }catch(err){ n.err = err; }
@@ -289,6 +383,7 @@ function topoOrder(nodes,edges,map){                 // топосорт, цик
 function buf(n,name){ (n.b||(n.b={})); return n.b[name] || (n.b[name] = new Float32Array(BLOCK)); }
 function pv(n,I,name){ const v=I[name]; return (typeof v==='number' && isFinite(v)) ? v : n.p[name]; }
 function clamp(v,a,b){ return v<a?a:v>b?b:v; }
+function pow2ge(n){ let p=1; while(p<n) p<<=1; return p; }
 function rms(a){ let s=0; for(let i=0;i<a.length;i++) s+=a[i]*a[i]; return Math.sqrt(s/a.length); }
 
 function fft(re,im){

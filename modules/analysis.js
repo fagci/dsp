@@ -65,7 +65,7 @@ def({ id:'birdSong', title:'Анализатор пения птиц', cat:'Ан
       n.currentSyllable = {
         id: n.syllableId++,
         start: performance.now(),
-        samples: [],
+        chunks: [], len: 0,        // копим блоками, а не поэлементно — склеим в один Float32Array при завершении слога
         freq: 0,
         bandwidth: 0,
         duration: 0
@@ -75,7 +75,9 @@ def({ id:'birdSong', title:'Анализатор пения птиц', cat:'Ан
     if(n.birdActive){
       // Добавляем отсчёты в текущий слог
       if(n.currentSyllable){
-        n.currentSyllable.samples.push(...(I.in ? I.in.slice(0, BLOCK) : new Float32Array(BLOCK)));
+        const chunk = I.in ? I.in.slice(0, BLOCK) : new Float32Array(BLOCK);
+        n.currentSyllable.chunks.push(chunk);
+        n.currentSyllable.len += chunk.length;
       }
       n.lastActivity = 0;
     } else {
@@ -84,10 +86,11 @@ def({ id:'birdSong', title:'Анализатор пения птиц', cat:'Ан
     
     // Конец слога (тишина или слишком долго)
     if(n.birdActive && (!isActive || n.lastActivity > maxGapSamples/Eng.sr)){
-      if(n.currentSyllable && n.currentSyllable.samples.length > minDurSamples){
+      if(n.currentSyllable && n.currentSyllable.len > minDurSamples){
         // Анализируем слог
         const syl = n.currentSyllable;
-        const data = new Float32Array(syl.samples);
+        const data = new Float32Array(syl.len);
+        let off=0; for(const c of syl.chunks){ data.set(c,off); off+=c.length; }
         
         // БПФ для определения частоты
         const M = 512;
@@ -939,6 +942,7 @@ def({ id:'sa', title:'Спектроанализатор', cat:'Анализ',
       if(!n.off||n.off.width!==Wp||n.off.height!==hwP){
         n.off=document.createElement('canvas'); n.off.width=Wp; n.off.height=hwP;
         n.ocx=n.off.getContext('2d',{willReadFrequently:true});
+        n._line=n.ocx.createImageData(Wp,1);          // строка водопада — переиспользуем, размер завязан на ту же канву
         n._lastRev=undefined; n._lastSpecRef=null;    // канва пересоздана — продавить свежую строку ниже
       }
       const m=n.s.mag,N=m.length;
@@ -976,7 +980,7 @@ def({ id:'sa', title:'Спектроанализатор', cat:'Анализ',
       if(fresh || !n._wfInited){
         ox.drawImage(n.off,0,1);                     // сдвигаем водопад на строку только на новых данных
         const binXwf=n._binXwf;
-        const line=ox.createImageData(Wp,1), d=line.data;
+        const line=n._line, d=line.data;
         for(let x=0;x<Wp;x++){
           const v=clamp((20*Math.log10(magAt(m,binXwf[x])+1e-12)-n.p.floor)/((n.p.top-n.p.floor)||1),0,1);
           const hk=heatIdx(v)*3, k=x*4;
@@ -1425,6 +1429,8 @@ def({ id:'scanner', title:'Авто-сканер частот', cat:'Анали�
       n.buf = new Float32Array(N);
       n.w = 0;
       n.levels = [];
+      n.re = new Float32Array(N); n.im = new Float32Array(N);   // переиспользуем — раньше аллоцировались на каждый БПФ
+      n.win = window_('hann', N);
     }
     
     for(let i=0;i<BLOCK;i++){
@@ -1434,9 +1440,8 @@ def({ id:'scanner', title:'Авто-сканер частот', cat:'Анали�
     
     // БПФ каждые 512 отсчётов
     if(n.w % 512 < BLOCK){
-      const re = new Float32Array(N);
-      const im = new Float32Array(N);
-      const win = window_('hann', N);
+      const re = n.re, im = n.im, win = n.win;
+      im.fill(0);                                    // im мог остаться грязным с прошлого БПФ (fft считает in-place)
       for(let i=0;i<N;i++){
         re[i] = n.buf[(n.w+i)%N] * win[i];
       }
@@ -1522,7 +1527,9 @@ def({ id:'signalID', title:'Распознавание сигнала', cat:'А�
     const N = 2048;
     
     // Накопление буфера
-    if(!n.buf){ n.buf = new Float32Array(N); n.w=0; }
+    if(!n.buf){ n.buf = new Float32Array(N); n.w=0;
+      n.re = new Float32Array(N); n.im = new Float32Array(N);   // переиспользуем — раньше аллоцировались на каждый БПФ
+      n.win = window_('hann', N); }
     for(let i=0;i<Math.min(BLOCK,N);i++){
       n.buf[n.w] = I.in ? I.in[i] : 0;
       n.w = (n.w+1) % N;
@@ -1531,9 +1538,8 @@ def({ id:'signalID', title:'Распознавание сигнала', cat:'А�
     // Анализ каждые 2048 отсчётов
     if(n.w % 512 < BLOCK){
       // 1. БПФ для анализа спектра
-      const re = new Float32Array(N);
-      const im = new Float32Array(N);
-      const win = window_('hann', N);
+      const re = n.re, im = n.im, win = n.win;
+      im.fill(0);                                    // im мог остаться грязным с прошлого БПФ (fft считает in-place)
       for(let i=0;i<N;i++) re[i] = n.buf[(n.w+i)%N] * win[i];
       fft(re, im);
       
