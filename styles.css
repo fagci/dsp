@@ -1,0 +1,376 @@
+:root{
+  --bg:#0e1113; --panel:#161a1d; --panel2:#1d2226; --line:#2a3136;
+  --txt:#c8d2d6; --dim:#6c7a80; --acc:#e0b23c; --acc2:#4ec9b0;
+  --t-sig:#4ec9b0; --t-num:#e0b23c; --t-spec:#c586c0; --t-img:#569cd6;
+  --dot:#20272b; --hi:#fff; --scrim:#0009;
+  --note-bg:#1c1a14; --note-head:#241f14; --note-line:#3a3320;
+  --screen:#0a0d0e; --screen-fg:#4ec9b0; --pin:13px; --pov:8px;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+/* светлая системная тема — для читаемости на солнце */
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#eef0f2; --panel:#ffffff; --panel2:#e6e9ec; --line:#c7ccd1;
+    --txt:#1c2226; --dim:#5c6670; --acc:#a8720f; --acc2:#0f9488;
+    --t-sig:#0f9488; --t-num:#a8720f; --t-spec:#9333ea; --t-img:#2563eb;
+    --dot:#d7dbde; --hi:#000; --scrim:#0004;
+    --note-bg:#fff8e1; --note-head:#fbecc3; --note-line:#e3cf95;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--txt);
+  font:12px/1.4 var(--mono);-webkit-font-smoothing:antialiased;overscroll-behavior:none;
+  -webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%}
+button,select,input{font:inherit;color:inherit}
+#app{display:flex;height:100%}
+
+/* ---- палитра ---- */
+#side{width:235px;flex:0 0 235px;background:var(--panel);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;overflow:hidden}
+#side h1{margin:0;padding:12px 12px 10px;font-size:12px;letter-spacing:.06em;font-weight:600;
+  color:var(--txt);border-bottom:1px solid var(--line)}
+#side h1 small{display:block;color:var(--dim);font-size:10px;margin-top:4px}
+#sideTabs{display:flex;flex:none;border-bottom:1px solid var(--line)}
+#sideTabs button{flex:1;background:var(--panel);border:0;border-bottom:2px solid transparent;
+  padding:9px 6px;cursor:pointer;color:var(--dim);font-size:11px}
+#sideTabs button:hover{color:var(--txt)}
+#sideTabs button.on{color:var(--txt);border-bottom-color:var(--acc)}
+.sidepanel{display:none;flex-direction:column;overflow:hidden;flex:1;min-height:0}
+.sidepanel.on{display:flex}
+#patchTools{display:flex;gap:5px;padding:8px;border-bottom:1px solid var(--line)}
+#patchSearch{width:100%;min-width:0;background:var(--bg);border:1px solid var(--line);
+  border-radius:3px;padding:7px 8px;outline:none}
+#patchSearch:focus{border-color:var(--acc)}
+#patchTools button{flex:0 0 30px;background:var(--panel2);border:1px solid var(--line);
+  border-radius:3px;cursor:pointer;color:var(--dim);font-size:14px;line-height:1}
+#patchTools button:hover{border-color:var(--acc);color:var(--txt)}
+#patchList{overflow:auto;flex:1;padding:6px 0 20px;background:var(--bg)}
+#patchList .pitem.on{background:var(--panel2);border-left-color:var(--acc)}
+#palette{overflow:auto;overscroll-behavior:contain;flex:1;padding:0 0 20px;background:var(--bg)}
+#palette .pcat:first-child{margin-top:6px}
+#paletteTools{display:flex;gap:5px;padding:8px;border-bottom:1px solid var(--line);background:var(--panel);
+  position:relative;z-index:1}
+#paletteSearch{width:100%;min-width:0;background:var(--bg);border:1px solid var(--line);
+  border-radius:3px;padding:7px 8px;outline:none}
+#paletteSearch:focus{border-color:var(--acc)}
+#paletteClear{flex:0 0 30px;background:var(--panel2);border:1px solid var(--line);
+  border-radius:3px;color:var(--dim);cursor:pointer;font-size:17px;line-height:1}
+#paletteClear:hover{border-color:var(--acc);color:var(--txt)}
+#palette.empty:after,#patchList.empty:after{content:'Ничего не найдено';display:block;padding:18px 12px;color:var(--dim)}
+.pcat{border-bottom:1px solid var(--line)}
+.pcat summary{display:flex;align-items:center;gap:7px;padding:9px 12px;
+  color:var(--dim);font-size:10px;letter-spacing:.06em;cursor:pointer;
+  list-style:none;user-select:none;
+  position:sticky;top:0;z-index:1;background:var(--panel);
+  box-shadow:0 1px 0 var(--panel),0 -1px 0 var(--panel)}
+.pcat summary::-webkit-details-marker{display:none}
+.pcat summary::before{content:'▸';flex:none;font-size:9px;transition:transform .12s}
+.pcat[open] summary::before{transform:rotate(90deg)}
+.pcat summary:hover{color:var(--txt)}
+.pcat summary .cnt{margin-left:auto;color:var(--dim);font-size:9px}
+.pitem{display:flex;align-items:flex-start;width:100%;text-align:left;background:none;
+  border:0;padding:6px 12px;cursor:grab;color:var(--txt);border-left:2px solid transparent}
+.pitem:hover{background:var(--panel2);border-left-color:var(--acc)}
+.pitem.dragging{opacity:.4}
+#canvas.dropok{outline:2px dashed var(--acc);outline-offset:-2px}
+.pitem .ptxt{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.pitem .pdel{flex:0 0 auto;margin-left:6px;padding:2px 6px;border-radius:4px;
+  color:var(--dim);font-size:11px;line-height:1.6;opacity:.55;cursor:pointer}
+.pitem .pdel:hover{opacity:1;color:var(--txt);background:var(--panel2)}
+.pitem b{font-weight:500;overflow-wrap:anywhere}
+.pitem i{font-style:normal;color:var(--dim);font-size:9px}
+.pitem .prow{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 8px}
+.pitem .pio{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-left:auto}
+.pitem .pio .grp{display:flex;align-items:center;gap:3px;font-size:8px;
+  color:var(--dim);text-transform:uppercase;letter-spacing:.03em}
+.pitem .pio .pin{width:5px;height:5px;border-radius:50%;flex:0 0 5px}
+.pitem .pio .arr{color:var(--dim);font-size:8px}
+
+/* тонкий тёмный скроллбар — палитра, панельный холст, textarea, readout */
+#palette,#canvas.panel,.prm textarea,.readout.tall{
+  scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+#palette::-webkit-scrollbar,#canvas.panel::-webkit-scrollbar,
+.prm textarea::-webkit-scrollbar,.readout.tall::-webkit-scrollbar{width:8px;height:8px}
+#palette::-webkit-scrollbar-track,#canvas.panel::-webkit-scrollbar-track,
+.prm textarea::-webkit-scrollbar-track,.readout.tall::-webkit-scrollbar-track{background:transparent}
+#palette::-webkit-scrollbar-thumb,#canvas.panel::-webkit-scrollbar-thumb,
+.prm textarea::-webkit-scrollbar-thumb,.readout.tall::-webkit-scrollbar-thumb{
+  background:var(--line);border-radius:3px;border:2px solid var(--panel)}
+#palette::-webkit-scrollbar-thumb:hover,#canvas.panel::-webkit-scrollbar-thumb:hover,
+.prm textarea::-webkit-scrollbar-thumb:hover,.readout.tall::-webkit-scrollbar-thumb:hover{background:var(--dim)}
+
+/* ---- рабочая область ---- */
+#main{flex:1;display:flex;flex-direction:column;min-width:0}
+#bar{display:flex;gap:6px;align-items:center;padding:8px;background:var(--panel);
+  border-bottom:1px solid var(--line);flex-wrap:wrap}
+#bar .sep{width:1px;height:20px;background:var(--line);margin:0 2px}
+#bar button{background:var(--panel2);border:1px solid var(--line);padding:5px 10px;
+  border-radius:3px;cursor:pointer}
+#bar button:hover{border-color:var(--acc);color:var(--hi)}
+#bar button.on{background:var(--acc);border-color:var(--acc);color:#111;font-weight:600}
+#bar .sp{flex:1}
+#stat{color:var(--dim);font-size:11px}
+#stat.warn{color:var(--acc)}
+#stat.crit{color:#e05c5c;font-weight:600}
+
+#canvas{flex:1;position:relative;overflow:hidden;cursor:grab;touch-action:none;
+  background-image:radial-gradient(circle,var(--dot) 1px,transparent 1px);
+  background-size:24px 24px}
+#menu{display:none}
+/* приборный режим: узлы-показометры в столбик, без холста и проводов */
+#canvas.panel{overflow-y:auto;overflow-x:hidden;cursor:default;background:none;touch-action:pan-y}
+#canvas.panel #wires,#canvas.panel #wiresFront{display:none}
+#canvas.panel #content{position:static;transform:none!important;padding:10px;
+  display:flex;flex-direction:column;gap:10px}
+#canvas.panel .node{position:static!important;width:100%!important;max-width:760px;
+  margin:0 auto;box-shadow:none;transform:none!important}
+#canvas.panel .node.hidden{display:none}
+#canvas.panel .io3 .col{display:none}
+#canvas.panel .nhead{cursor:default}
+#canvas.panel .rz{display:none}
+#scrim{display:none;position:fixed;inset:0;background:var(--scrim);z-index:9}
+#toast{position:fixed;top:14px;left:50%;transform:translate(-50%,-8px);z-index:20;
+  background:var(--panel2);border:1px solid var(--acc);color:var(--txt);
+  padding:6px 14px;border-radius:6px;font-size:12px;white-space:nowrap;
+  opacity:0;pointer-events:none;transition:opacity .15s ease,transform .15s ease}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+
+@media (max-width:820px), (pointer:coarse){
+  :root{--pin:17px}
+  #menu{display:inline-block}
+  #side{position:fixed;left:0;right:0;top:auto;bottom:0;z-index:10;width:auto;max-width:none;
+    height:70vh;max-height:70vh;border-right:0;border-top:1px solid var(--line);
+    border-radius:14px 14px 0 0;transform:translateY(102%);transition:transform .18s ease}
+  #side.open{transform:none}
+  #side::before{content:'';display:block;flex:0 0 auto;width:36px;height:4px;border-radius:2px;
+    background:var(--line);margin:8px auto 2px}
+  #scrim.open{display:block}
+  #main{flex-direction:column}
+  #bar{order:2;flex-wrap:nowrap;overflow-x:auto;gap:5px;padding:7px;padding-bottom:calc(7px + env(safe-area-inset-bottom));
+    scrollbar-width:none;border-bottom:0;border-top:1px solid var(--line)}
+  #canvas{order:1}
+  #bar::-webkit-scrollbar{display:none}
+  #bar button,#bar select{flex:0 0 auto;padding:8px 11px}
+  #bar .sp{display:none}
+  #stat{flex:0 0 auto;padding-right:8px}
+  #hint{display:none}
+  .pitem{padding:10px 12px}
+  /* на тач-устройствах hover недоступен — держим крестик крупнее и заметным всегда */
+  .pitem .pdel{padding:6px 10px;font-size:14px;opacity:.8}
+  .prm{flex-wrap:wrap;gap:2px}
+  .prm label{flex:1 0 100%;font-size:10px}
+  .prm input[type=range]{height:40px;flex:1 1 60%}
+  .prm .val{flex:0 0 52px;padding:3px 0}
+  .prm input[type=checkbox]{width:19px;height:19px}
+  .prm input[type=checkbox]:checked::after{left:5px;top:2px;width:5px;height:10px}
+  .slidernum{height:34px}
+  .slidernum input[type=number]{font-size:14px}
+  .nhead{padding:8px}
+  .nhead .x{padding:0 6px;font-size:14px}
+  .rz{width:22px;height:22px}
+}
+/* ---- мобильный UX: карточки не выходят за ширину экрана ---- */
+@media (max-width:600px){
+  #canvas:not(.panel) #content .node{
+    max-width:calc(100vw - 24px);
+    min-width:0;
+  }
+  #canvas:not(.panel) #content .node .mid{padding-left:7px;padding-right:7px}
+  #canvas.panel #content{padding:8px;gap:8px}
+  #canvas.panel .node{max-width:none!important}
+  #canvas.panel .nhead{position:sticky;top:0;z-index:1}
+}
+#canvas.grab{cursor:grabbing}
+#content{position:absolute;left:0;top:0;transform-origin:0 0}
+#wires{position:absolute;left:-8000px;top:-8000px;width:16000px;height:16000px;overflow:visible;pointer-events:none}
+#wires path{pointer-events:stroke}
+#wiresFront{position:absolute;left:-8000px;top:-8000px;width:16000px;height:16000px;overflow:visible;
+  pointer-events:none}
+
+/* ---- узел ---- */
+.node{position:absolute;left:0;top:0;width:212px;background:var(--panel);
+  border-radius:3px;user-select:none;isolation:isolate}
+/* ---- карточная вёрстка узлов ----
+   Порты выведены из потока (position:absolute) и не отжимают контент —
+   .mid занимает всю высоту от заголовка до низа, точки просто плавают поверх. */
+  #canvas:not(.panel) #content .node .io3{position:relative}
+  #canvas:not(.panel) #content .node .io3>.col{
+    position:absolute;top:10px;bottom:10px;left:0;width:var(--pov);
+    max-width:none;min-height:0;flex-direction:column;justify-content:flex-start;
+    gap:10px;padding:0;background:none;border:0;overflow:visible;pointer-events:none}
+  #canvas:not(.panel) #content .node .io3>.col.o{
+    left:auto;right:0;justify-content:flex-start}
+  #canvas:not(.panel) #content .node .io3>.mid{display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));gap:11px 10px;padding:10px 14px}
+  #canvas:not(.panel) #content .node .io3>.mid>.prm.wide,
+  #canvas:not(.panel) #content .node .io3>.mid>canvas.view,
+  #canvas:not(.panel) #content .node .io3>.mid>.readout,
+  #canvas:not(.panel) #content .node .io3>.mid>.copy,
+  #canvas:not(.panel) #content .node .io3>.mid>.swatch{grid-column:1/-1}
+  #canvas:not(.panel) #content .node .io3>.mid>.prm{min-width:0}
+  #canvas:not(.panel) #content .node .io3>.mid>.prm label{flex-basis:46px}
+  /* В спектроанализаторе чекбоксы занимают свободную ячейку
+     напротив «доли спектра», а не переносятся на следующую строку. */
+  #canvas:not(.panel) #content .node[data-type="sa"] .io3>.mid>.prm.wide.checkrow{
+    grid-column:auto}
+  /* В «Микрофоне» выбор устройства и соответствующая кнопка стоят парой. */
+  #canvas:not(.panel) #content .node[data-type="mic"] .io3>.mid>.prm.mic-button{
+    grid-column:auto}
+  #canvas.panel #content .node[data-type="mic"] .io3>.mid{
+    display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px 10px}
+  #canvas.panel #content .node[data-type="mic"] .io3>.mid>.prm.wide,
+  #canvas.panel #content .node[data-type="mic"] .io3>.mid>canvas.view,
+  #canvas.panel #content .node[data-type="mic"] .io3>.mid>.readout{
+    grid-column:1/-1}
+.node.sel{box-shadow:0 0 0 1px var(--acc)}
+.node.note{background:var(--note-bg)}
+.node.note .nhead{background:var(--note-head)}
+#sel{position:absolute;border:1px solid var(--acc);background:#e0b23c18;pointer-events:none;display:none}
+.nhead{display:flex;align-items:center;gap:6px;padding:5px 7px;cursor:move;
+  background:var(--panel2);border-radius:3px 3px 0 0}
+.nhead .dot{width:6px;height:6px;border-radius:50%;flex:0 0 6px}
+.nhead .ttl{flex:1;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nhead .x{cursor:pointer;color:var(--dim);padding:0 2px}
+.nhead .x:hover{color:#e05c5c}
+.nbody{padding:0}
+.io{display:flex;justify-content:space-between;gap:8px}
+.io3{display:flex;gap:0;align-items:stretch;margin:0}
+.io3 .col:empty{display:none}
+.mid{flex:1;min-width:0;padding:9px 13px 10px}
+.nhead .cl{cursor:pointer;color:var(--dim);padding:0 4px;font-size:10px}
+.nhead .cl:hover{color:var(--acc)}
+.node.folded .nbody{display:none}
+.node.folded{width:auto!important;min-width:150px}
+.node.folded .nhead{border-bottom:0;border-radius:3px}
+.seg{display:flex;gap:3px;flex:1;min-width:0}
+.seg button{flex:1;min-width:0;padding:3px 0;background:var(--bg);border:1px solid var(--line);
+  border-radius:3px;cursor:pointer;font-size:10px;color:var(--dim)}
+.seg button.on{background:var(--acc);border-color:var(--acc);color:#111;font-weight:600}
+.seg button:hover{border-color:var(--acc)}
+.col{display:flex;flex-direction:column;gap:10px;min-width:0}
+.col.o{align-items:stretch}
+.port{position:relative;height:var(--pin);width:var(--pov);cursor:crosshair;
+  pointer-events:auto;flex:none}
+.port .pin{position:absolute;top:50%;transform:translateY(-50%);
+  min-height:var(--pin);min-width:var(--pin);
+  display:flex;align-items:center;justify-content:center;border-radius:999px;flex:none;
+  padding:2px 6px;font-size:8px;font-weight:600;color:#111;white-space:nowrap;
+  border:2px solid var(--line)}
+.col:not(.o) .port .pin{right:0}   /* контейнер сам шириной --pov у края узла — точка просто у его дальней стороны */
+.col.o .port .pin{left:0}
+.port:hover .pin{box-shadow:0 0 0 1px var(--acc)}
+.port.lit .pin{box-shadow:0 0 0 3px var(--acc)}
+.prm input[type=range]{flex:1;min-width:0;height:32px;accent-color:var(--acc);background:none;
+  cursor:pointer;touch-action:none}
+.prm input[type=range]::-webkit-slider-runnable-track{height:5px;background:var(--line);border-radius:3px}
+.prm input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;
+  margin-top:-7.5px;border:2px solid var(--acc);border-radius:50%;background:var(--panel2)}
+.prm input[type=range]::-moz-range-track{height:5px;background:var(--line);border-radius:3px}
+.prm input[type=range]::-moz-range-progress{height:5px;background:var(--acc);border-radius:3px}
+.prm input[type=range]::-moz-range-thumb{width:16px;height:16px;border:2px solid var(--acc);
+  border-radius:50%;background:var(--panel2)}
+.prm textarea{width:100%;min-height:120px;resize:vertical;background:var(--bg);
+  border:1px solid transparent;border-radius:3px;padding:4px 5px;font:11px/1.45 var(--mono);
+  color:var(--txt);white-space:pre;overflow:auto}
+.prm textarea:focus{outline:none;border-color:var(--acc)}
+.prm select,.prm input[type=number],.prm input[type=text]{height:26px;line-height:20px}
+.prm input[type=number]{flex:0 1 92px;min-width:92px;width:92px;
+  font-variant-numeric:tabular-nums}
+.prm input[type=number]:focus{outline:none;border-color:var(--acc)}
+.prm .val{flex:0 0 44px;text-align:right;font-size:10px;color:var(--txt);cursor:text}
+.prm .val:hover{color:var(--hi)}
+.prm .val input{width:52px;background:var(--bg);border:1px solid var(--acc);border-radius:3px;
+  padding:1px 3px;text-align:right;font-size:10px;color:var(--hi)}
+/* Material-подобная подпись: label лежит прямо на верхней границе поля. */
+.prm{display:flex;flex-direction:column;align-items:stretch;gap:0;margin-top:2px;padding-top:3px;
+  position:relative;align-self:start}
+/* единая линия-подложка под label для всех типов полей, не только текстовых */
+.prm:not(.wide){min-height:26px;border-bottom:1px solid var(--line)}
+.prm:not(.wide):has(>input[type=checkbox]){border-bottom:0}   /* галочкам подчёркивание ни к чему */
+.prm:not(.wide):has(.slidernum){border-bottom:0}
+.prm:not(.wide):has(>input[type=number]){border-bottom:0}
+.prm:not(.wide):has(>select){border-bottom:0}
+  /* у числовых полей вместо подчёркивания — заливка на самом поле */
+.prm:focus-within:not(.wide){border-bottom-color:var(--acc)}
+.prm label{display:block;flex:none;min-height:0;width:max-content;max-width:calc(100% - 8px);
+  position:absolute;left:0;top:-.9em;padding:0;margin:0;
+  background:none;color:var(--dim);font-size:9px;line-height:1.1;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prm input[type=text]{
+  width:100%;min-width:0;height:26px;flex:1 1 auto;border:0;
+  border-radius:0;padding:2px 0;background:transparent}
+.prm select,.prm input[type=number]{width:100%;min-width:0;height:26px;flex:1 1 auto;border:0;
+  border-radius:3px;padding:2px 6px;background:var(--bg)}
+.slidernum{position:relative;width:100%;height:26px;display:flex;align-items:center;
+  overflow:hidden;cursor:ew-resize;user-select:none;touch-action:none;
+  background:var(--bg);border-radius:3px;padding:2px 6px}
+.slidernum .sn-fill{position:absolute;left:0;top:0;bottom:0;background:var(--acc);
+  opacity:.16;pointer-events:none}
+.slidernum:hover .sn-fill{opacity:.26}
+.slidernum .sn-val{position:relative;z-index:1;font-variant-numeric:tabular-nums;
+  pointer-events:none;white-space:nowrap}
+.slidernum input[type=number]{position:absolute;inset:0;z-index:2;width:100%;height:100%;
+  border:0;border-radius:3px;background:var(--bg);padding:2px 6px;cursor:text}
+.range2{display:flex;align-items:center;gap:4px;width:100%}
+.range2 .slidernum{width:auto;flex:1;min-width:0}
+.range2 .r2dash{flex:none;color:var(--dim);font-size:11px}
+.prm select:focus,.prm input[type=number]:focus,.prm input[type=text]:focus{
+  outline:none;box-shadow:none}
+/* чекбокс — не отдельное плавающее поле, а строка «галочка + подпись» */
+.prm:has(>input[type=checkbox]){flex-direction:row;align-items:center;gap:6px;
+  min-height:29px}
+.prm:has(>input[type=checkbox]) label{position:static;order:2;top:auto;left:auto;
+  max-width:none;color:var(--txt);font-size:10px}
+.prm input[type=checkbox]{appearance:none;-webkit-appearance:none;order:1;flex:none;
+  width:15px;height:15px;margin:0;border:1px solid var(--line);border-radius:3px;
+  background:var(--bg);cursor:pointer;position:relative}
+.prm input[type=checkbox]:hover{border-color:var(--acc)}
+.prm input[type=checkbox]:checked{background:var(--acc);border-color:var(--acc)}
+.prm input[type=checkbox]:checked::after{content:'';position:absolute;left:4px;top:1px;
+  width:4px;height:8px;border:solid #111;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.prm input[type=checkbox]:focus-visible{outline:none;border-color:var(--acc)}
+/* общий ряд для всех галочек узла — не растягиваются на всю колонку, идут подряд и переносятся при нехватке места */
+.prm.wide.checkrow{display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;
+  justify-content:flex-start;column-gap:18px;row-gap:8px}
+.checkrow>.prm{width:auto;flex:0 0 auto;min-height:0;padding-top:0;margin-top:0;align-self:auto}
+/* поле перебито проводом на одноимённый вход — гасим и блокируем, крутить его сейчас бессмысленно */
+.prm.linked label,.prm.linked .slidernum,.prm.linked select,.prm.linked input,.prm.linked .seg{opacity:.45}
+.prm.linked:not(.wide){border-bottom-color:var(--acc2)}
+.prm.linked .slidernum,.prm.linked select,.prm.linked input,.prm.linked .seg{pointer-events:none}
+.slidernum.linked .sn-fill,.slidernum.linked .sn-val{opacity:.45}
+.slidernum.linked{pointer-events:none}
+.slidernum.linked .pin.mpin{pointer-events:auto}
+.prm.wide{display:block}
+/* пин модуляции лежит на поле (верхний правый угол), а не сбоку — ширина строки не меняется */
+.pin.mpin{position:absolute;top:3px;right:4px;transform:translateY(-50%);z-index:3;width:9px;height:9px;
+  border-radius:50%;cursor:crosshair;border:1px solid var(--line);background:var(--panel2)}
+.pin.mpin:hover{box-shadow:0 0 0 3px var(--acc)}
+.prm.wide label{margin-bottom:.5em}
+.checkrow>.prm label{margin-bottom:0}
+.node .io3>.mid{row-gap:11px}
+.prm button{width:100%;background:var(--panel2);border:1px solid var(--line);padding:4px;
+  border-radius:3px;cursor:pointer}
+.prm button:hover{border-color:var(--acc)}
+.btnrow{display:flex;gap:6px}
+.btnrow button{flex:1 1 0;width:auto;min-width:0;white-space:normal;
+  font-size:10px;line-height:1.25}
+.prm input[type=file]{width:100%;font-size:10px;color:var(--dim)}
+canvas.view{display:block;width:100%;background:var(--screen);
+  border-radius:3px;margin-top:5px;cursor:default}
+.readout{margin-top:5px;padding:6px;background:var(--screen);
+  border-radius:3px;font-size:12px;color:var(--screen-fg);text-align:center;overflow:hidden;
+  white-space:nowrap;text-overflow:ellipsis;user-select:text;cursor:pointer}
+.readout.copied{outline:1px solid var(--acc)}
+.rz{position:absolute;right:2px;bottom:2px;width:10px;height:10px;cursor:nwse-resize;
+  border-right:2px solid var(--line);border-bottom:2px solid var(--line)}
+.rz:hover{border-color:var(--acc)}
+canvas.view.pick{cursor:crosshair}
+.readout.tall{font-size:12px;text-align:left;white-space:pre-wrap;word-break:break-word;
+  height:96px;overflow:auto;line-height:1.5;color:var(--txt);resize:vertical}
+.copy{width:100%;margin-top:4px;background:var(--panel2);border:1px solid var(--line);
+  border-radius:3px;padding:3px;cursor:pointer;color:var(--dim);font-size:10px}
+.copy:hover{border-color:var(--acc);color:var(--txt)}
+.swatch{margin-top:5px;height:44px;border-radius:3px}
+#bar select{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padding:5px 6px;
+  max-width:170px}
+#hint{position:absolute;right:10px;bottom:8px;color:var(--dim);font-size:10px;pointer-events:none}

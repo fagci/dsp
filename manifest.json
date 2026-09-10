@@ -1,0 +1,13 @@
+{
+  "name": "DSP верстак",
+  "short_name": "DSP",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0e1113",
+  "theme_color": "#161a1d",
+  "icons": [
+    {"src": "icons/favicon-32.png", "sizes": "32x32", "type": "image/png"},
+    {"src": "icons/apple-touch-icon.png", "sizes": "180x180", "type": "image/png"}
+  ]
+}
