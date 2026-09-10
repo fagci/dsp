@@ -260,8 +260,14 @@ def({ id:'costas', title:'Захват несущей', cat:'Модуляция'
   params:[{n:'f0',t:'range',min:100,max:20000,step:1,d:1800,log:true},
           {n:'order',t:'select',opts:['BPSK','QPSK','8PSK'],d:'QPSK'},
           {n:'loopHz',t:'range',min:.5,max:200,step:.5,d:20,log:true},
-          {n:'lp',t:'range',min:50,max:8000,step:10,d:1500,log:true}],
-  init:n=>{n.ph=0;n.fo=0;n.li=0;n.lq=0;n.lk=0;n.hist=[];},
+          {n:'lp',t:'range',min:50,max:8000,step:10,d:1500,log:true},
+          {n:'capture',t:'range',min:10,max:1000,step:1,d:150,log:true,label:'диапазон захвата, Гц'}],
+  // БЕЗ ограничения n.fo (интегратор петли) может уйти сколь угодно далеко от f0 —
+  // на тишине/шуме error-сигнал не нулевой, петля дрейфует и может "осесть" на
+  // произвольной частоте (в т.ч. ровно -f0, т.е. на DC/утечке в полосе biquad) и
+  // застрять там навсегда — оттуда и не возвращается, т.к. ничего её туда не тянет.
+  // capture — жёсткая граница дрейфа НЧО вокруг f0 (не подбор AFC, а просто поводок).
+  init:n=>{n.ph=0;n.fo=0;n.li=0;n.lq=0;n.lk=0;n.hist=[];n.magFast=0;n.magPeak=0;},
   process(n,I){
     if(typeof I.loopHz==='number') setMod(n,'loopHz',I.loopHz);
     if(typeof I.lp==='number') setMod(n,'lp',I.lp);
@@ -274,7 +280,8 @@ def({ id:'costas', title:'Захват несущей', cat:'Модуляция'
     // 1→BPSK(2), 2→QPSK(4), 3→8PSK(8). Если вход не подключён — берём фиксированный параметр.
     // Это позволяет переключать демодулятор на лету синхронно с фреймером (преамбула/тренировка
     // в HFDL всегда BPSK, реальная схема — только во время данных, см. hfdl.c current_mod_arity).
-    let e=0, errSum=0;
+    let e=0, errSum=0, magSum=0;
+    const foMax=n.p.capture/Eng.sr;
     for(let i=0;i<BLOCK;i++){
       const x=I.in?I.in[i]:0, w=2*Math.PI*n.ph;
       n.li=n.li*a+x*Math.cos(w)*(1-a); n.lq=n.lq*a-x*Math.sin(w)*(1-a);
@@ -285,14 +292,26 @@ def({ id:'costas', title:'Захват несущей', cat:'Модуляция'
       else { const ang=Math.atan2(Qq,Ii), st=2*Math.PI/M;   // ошибка до ближайшего луча
              let d=ang-Math.round(ang/st)*st; e=d*Math.hypot(Ii,Qq); }
       const mag=Math.hypot(Ii,Qq)+1e-9; e/=mag;
-      errSum+=Math.abs(e);
-      n.fo+=be*e; n.ph=(n.ph+f0/Eng.sr+n.fo+al*e)%1; if(n.ph<0) n.ph+=1;
+      errSum+=Math.abs(e); magSum+=mag;
+      n.fo+=be*e;
+      if(n.fo>foMax) n.fo=foMax; else if(n.fo<-foMax) n.fo=-foMax;   // не даём НЧО уйти дальше capture Гц от f0
+      n.ph=(n.ph+f0/Eng.sr+n.fo+al*e)%1; if(n.ph<0) n.ph+=1;
       oi[i]=Ii; oq[i]=Qq; }
-    // Усреднено по всему блоку (не последний сэмпл, как было раньше) — но это по-прежнему
-    // не честный SNR-детектор, просто индикатор фазовой ошибки. Для решения "есть кадр или
-    // нет" ориентируйся на hfdlM1Match — он не зависит от этого узла.
-    const errAvg=errSum/BLOCK;
-    n.lk=n.lk*.9+(1-Math.min(1,errAvg))*.1;
+    // errAvg сам по себе не отличает "фаза точно поймана" от "сигнала нет, делить не на что" —
+    // e нормируется на mag, и на тишине оба числителя и знаменатель крохотные, ошибка выглядит
+    // "маленькой" чисто по масштабу. Поэтому lock дополнительно гейтится присутствием сигнала:
+    // сравниваем быструю и медленную (много секунд) огибающую mag — если сигнал не выше своего
+    // же долгого фона, реального захвата быть не может, чем бы ни выглядела errAvg.
+    const errAvg=errSum/BLOCK, magAvg=magSum/BLOCK;
+    n.magFast=n.magFast*.95+magAvg*.05;
+    // недавний пик амплитуды: мгновенно ловит рост (max), медленно забывает (decay) —
+    // раньше здесь было две скользящих средних (быстрая/медленная), но при коротких
+    // всплесках (секунды) медленная просто не успевала подняться до уровня сигнала,
+    // и потом отношение fast/slow оставалось задранным ещё очень долго (геометрический
+    // спад с одной скоростью сохраняет пропорцию — соотношение НЕ сходится само).
+    n.magPeak=Math.max(n.magPeak*.9995, n.magFast);
+    const sigPresent = n.magFast > n.magPeak*.25;
+    n.lk=n.lk*.9+(sigPresent?(1-Math.min(1,errAvg)):0)*.1;
     n.hist.push(n.fo*Eng.sr); if(n.hist.length>120) n.hist.shift();
     return {I:oi,Q:oq,ferr:n.fo*Eng.sr,lock:n.lk}; },
   draw(n,cv,cx){
@@ -352,17 +371,24 @@ def({ id:'gardner', title:'Синхр. символов', cat:'Модуляци�
   outs:[{n:'sI',t:'sig'},{n:'sQ',t:'sig'},{n:'clk',t:'sig'},{n:'err',t:'num'}],
   params:[{n:'baud',t:'range',min:10,max:4800,step:.01,d:1800,log:true},
           {n:'gain',t:'range',min:0,max:.1,step:.0005,d:.005},
+          {n:'rateGain',t:'range',min:0,max:.001,step:.00001,d:.0002,label:'усиление по скорости (интеграл)'},
           {n:'free',t:'check',d:false}],
-  init:n=>{n.ph=0;n.h=[[0,0],[0,0],[0,0]];n.k=0;n.sI=0;n.sQ=0;n.e=0;n.pw=1e-6;},
+  // Раньше корректировалась ТОЛЬКО фаза (n.ph, пропорционально). Если реальный символьный
+  // темп чуть отличается от заданного baud (уход частоты дискретизации/приёмника), фаза
+  // должна непрерывно уходить в одну сторону — а пропорциональная поправка такую утечку
+  // не ловит, только гасит мгновенный джиттер вокруг номинала. Нужен ещё интегратор по
+  // скорости (rateAdj), как у costas (n.fo) — без него на кадре в несколько секунд clk
+  // просто уезжает мимо символа целиком, а train-BER стоит на ~50% при любой стартовой фазе.
+  init:n=>{n.ph=0;n.h=[[0,0],[0,0],[0,0]];n.k=0;n.sI=0;n.sQ=0;n.e=0;n.pw=1e-6;n.rateAdj=0;},
   process(n,I){
     if(typeof I.baud==='number') setMod(n,'baud',I.baud);
     if(typeof I.gain==='number') setMod(n,'gain',I.gain);
     if(typeof I.free==='number') setMod(n,'free',I.free>=0.5);
     const oi=buf(n,'sI'), oq=buf(n,'sQ'), ok=buf(n,'clk');
-    const inc=2*n.p.baud/Eng.sr;                    // тики каждые полсимвола
+    const base=2*n.p.baud/Eng.sr;                    // тики каждые полсимвола
     for(let i=0;i<BLOCK;i++){
       const xi=I.I?I.I[i]:0, xq=I.Q?I.Q[i]:0;
-      n.ph+=inc; let clk=0;
+      n.ph+=base*(1+n.rateAdj); let clk=0;
       if(n.ph>=1){
         n.ph-=1;
         n.h[0]=n.h[1]; n.h[1]=n.h[2]; n.h[2]=[xi,xq];
@@ -372,7 +398,10 @@ def({ id:'gardner', title:'Синхр. символов', cat:'Модуляци�
           n.pw=n.pw*.99+(n.h[2][0]*n.h[2][0]+n.h[2][1]*n.h[2][1])*.01;
           const eN=clamp(e/(n.pw+1e-9),-2,2);        // нормировка по мощности: усиление не зависит от уровня
           n.e=n.e*.9+eN*.1;
-          if(!n.p.free) n.ph=clamp(n.ph-n.p.gain*eN,-.45,.45);
+          if(!n.p.free){
+            n.rateAdj=clamp(n.rateAdj+n.p.rateGain*eN,-.01,.01);   // интеграл: догоняет уход темпа символов
+            n.ph=clamp(n.ph-n.p.gain*eN,-.45,.45);
+          }
           n.sI=n.h[2][0]; n.sQ=n.h[2][1]; clk=1; } }
       oi[i]=n.sI; oq[i]=n.sQ; ok[i]=clk; }
     return {sI:oi,sQ:oq,clk:ok,err:n.e}; }});

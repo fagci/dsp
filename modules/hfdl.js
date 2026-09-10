@@ -33,12 +33,11 @@
  *                         это отдельный кубик под замену твоего hfdlDeint, если он не совпадает
  *   [ГОТОВО из hfdl.c]  averageChipPairs() — теперь ПОДКЛЮЧЕНО (узел hfdlChipAvg,
  *                         между hfdlDeint и Витерби, автоматически по M1)
- *   [ЧАСТИЧНО]           soft-значения (не hard-quantized) — сделано ТОЛЬКО для BPSK
- *                         в hfdlSymToBits (проекция I напрямую, без округления до ±1).
- *                         ВАЖНО: не знаю, пропускает ли твой hfdlDeint произвольные float
- *                         не искажая (или он квантует внутри себя в hard 0/1/±1) — если
- *                         внутри хранение как Uint8Array/boolean, весь выигрыш здесь
- *                         теряется на следующем же узле. Проверь/пришли его исходник.
+ *   [ГОТОВО]              soft-значения (не hard-quantized) — BPSK: проекция I напрямую;
+ *                         QPSK/8PSK: symbolToSoftBits() — дистанция до ближайших точек
+ *                         созвездия с bit=0/1 (эвристический масштаб, не строгий LLR).
+ *                         hfdlDeint (protocols.js) хранит блок как Float32Array и не
+ *                         квантует — soft проходит через деперемежитель без потерь.
  *   [НЕ ХВАТАЕТ]         CPDLC (AT1/CR1/CC1/DR1) — для позиций не нужен, не портировал
  *   [НЕ ХВАТАЕТ]         SPDU-разбор не подключён к диспетчеру (нет DSP-узла, только функция spduParse
  *                         в отдельном файле spdu.js — не перенесена сюда)
@@ -476,6 +475,7 @@ const HFDL_FRAME_PARAMS = [
 const HFDL_SCHEME_BITS = { BPSK:1, QPSK:2, '8PSK':3 };
 const DEINTERLEAVER_ROW_CNT=40, DEINTERLEAVER_POP_ROW_SHIFT=9, DATA_FRAME_LEN=30;
 const M2_LEN=15, T_LEN=15;                            // длины участков M2-пропуска и тренировочной BPSK-последовательности
+const T_REF=0x9AF;                                    // эталонная 15-битная T-последовательность (hfdl.c), не зависит от FEC-стека
 
 function reverseByte(b){                              // REVERSE_BYTE — ОБЯЗАТЕЛЕН после Витерби, до mpduParse
   b=((b&0xF0)>>4)|((b&0x0F)<<4);
@@ -521,6 +521,27 @@ function symbolToBits(angleRad, bitsPerSym){          // угол → секто
   for(let b=0;b<bitsPerSym;b++) bits[b]=(kGray>>(bitsPerSym-1-b))&1;
   return bits;
 }
+// мягкая версия symbolToBits: та же геометрия созвездия (Грей, тот же offset),
+// но вместо одного сектора — расстояние до ближайших точек с bit=0/1 на каждой
+// позиции. Эвристический масштаб (/2), не строгий LLR, но даёт Витерби запас
+// метрики вместо жёсткого ±1 на QPSK/8PSK (раньше был именно жёсткий вариант).
+function symbolToSoftBits(ii, qq, bitsPerSym){
+  const M=1<<bitsPerSym, st=2*Math.PI/M, off=pskPhaseOffset(M);
+  const d0=new Array(bitsPerSym).fill(Infinity), d1=new Array(bitsPerSym).fill(Infinity);
+  for(let k=0;k<M;k++){
+    const a=off+k*st, px=Math.cos(a), py=Math.sin(a);
+    const dist=(ii-px)*(ii-px)+(qq-py)*(qq-py);
+    const g=grayEncode(k);
+    for(let b=0;b<bitsPerSym;b++){
+      const bit=(g>>(bitsPerSym-1-b))&1;
+      const arr=bit?d1:d0;
+      if(dist<arr[b]) arr[b]=dist;
+    }
+  }
+  const out=new Array(bitsPerSym);
+  for(let b=0;b<bitsPerSym;b++) out[b]=clamp((d0[b]-d1[b])/2,-1,1);   // >0 → бит=1
+  return out;
+}
 
 function hfdlLfsr(){                                 // та же 120-битная фикс. последовательность, что и в hfdlDescr
   let state=0x4d4b; const g=0x4001, mask=(1<<15)-1, out=[];
@@ -552,12 +573,16 @@ function hfdlM1Bits(shift){                           // ±1, как и оста
 // корреляция уверенно выше порога — так что заранее знать скорость станции НЕ нужно.
 def({ id:'hfdlM1Match', title:'HFDL: детектор M1 (скорость)', cat:'Протоколы', readout:true,
   ins:[{n:'in',t:'sig'},{n:'baud',t:'num'},{n:'thr',t:'num'}],
-  outs:[{n:'go',t:'sig'},{n:'m1',t:'num'},{n:'peak',t:'num'},{n:'corr',t:'sig'}],
+  outs:[{n:'go',t:'sig'},{n:'m1',t:'num'},{n:'peak',t:'num'},{n:'corr',t:'sig'},{n:'flip',t:'num'}],
   view:{h:80}, resize:true,
   params:[{n:'baud',t:'range',min:1,max:4800,step:.01,d:1800,log:true},
           {n:'thr',t:'range',min:.1,max:1,step:.01,d:.5,label:'порог'},
           {n:'dead',t:'range',min:0,max:5000,step:1,d:1500,label:'мёртвое время, мс'}],
-  init:n=>{ n.m1=0; n.m2=0; n.dead=0; n.peak=0; n.m1out=0; n.txt='ищу M1…'; n.hist=[]; n.curIdx=0; n.curC=0; },
+  // 'flip' — знак сырой (не abs) корреляции в момент пика: BPSK-Костас ловит фазу
+  // с точностью до 180°, знак говорит, в какую именно из двух он попал (см. hfdl.c:
+  // c->bitmask = corr_A1 > 0 ? 0 : ~0, применяется как доп. инверсия ко всем data-символам).
+  init:n=>{ n.m1=0; n.m2=0; n.dead=0; n.peak=0; n.m1out=0; n.flipOut=0; n.lastSign=0;
+    n.txt='ищу M1…'; n.hist=[]; n.curIdx=0; n.curC=0; },
   process(n,I){
     if(typeof I.baud==='number') setMod(n,'baud',I.baud);
     if(typeof I.thr==='number') setMod(n,'thr',I.thr);
@@ -580,13 +605,13 @@ def({ id:'hfdlM1Match', title:'HFDL: детектор M1 (скорость)', ca
       ring[n.w]=nv;
       const rms=Math.sqrt(Math.max(0,n.ss)/L);
       rmsLast=rms;
-      let bestC=0, bestIdx=0, bestRawAcc=0;
+      let bestC=0, bestIdx=0, bestRawAcc=0, bestAcc=0;
       for(let sIdx=0;sIdx<8;sIdx++){
         const pat=n.tmpl[sIdx];
         let acc=0;
         for(let k=0;k<P;k++) acc+=ring[(n.w-taps[k]+L*2)%L]*pat[P-1-k];
         const c=clamp(Math.abs(acc/(P*rms+1e-9)),0,2);   // ЗАЩИТА: без неё при просадке rms→0 значение улетало в тысячи
-        if(c>bestC){ bestC=c; bestIdx=sIdx; bestRawAcc=Math.abs(acc); }
+        if(c>bestC){ bestC=c; bestIdx=sIdx; bestRawAcc=Math.abs(acc); bestAcc=acc; }
       }
       if(bestRawAcc>rawAccMax) rawAccMax=bestRawAcc;
       oc[i]=bestC;
@@ -595,8 +620,8 @@ def({ id:'hfdlM1Match', title:'HFDL: детектор M1 (скорость)', ca
       if(n.dead>0){ n.dead--; hit=false; }
       else if(hit) n.dead=Math.round(n.p.dead*Eng.sr/1000);
       og[i]=hit?1:0;
-      if(hit){ n.m1out=n.lastIdx; n.peak=n.m1; }
-      n.m2=n.m1; n.m1=bestC; n.lastIdx=bestIdx;
+      if(hit){ n.m1out=n.lastIdx; n.peak=n.m1; n.flipOut=n.lastSign<0?1:0; }
+      n.m2=n.m1; n.m1=bestC; n.lastIdx=bestIdx; n.lastSign=bestAcc;
       n.w=(n.w+1)%L;
     }
     n.curC=n.curC*.8+bestOverBlock*.2; n.curIdx=bestIdxOverBlock;   // сглаженная "текущая" оценка для живого статуса
@@ -606,7 +631,7 @@ def({ id:'hfdlM1Match', title:'HFDL: детектор M1 (скорость)', ca
     // биты не совпадают ни с одним шаблоном M1 (Костас/RRC/Гарднер дают не то, что ожидается).
     n.txt='сейчас: '+n.curC.toFixed(2)+' (M1='+n.curIdx+')  ·  RMS='+rmsLast.toFixed(4)+
       '  ·  сыр.корр='+rawAccMax.toFixed(2)+'  ·  последний hit: M1='+n.m1out+' пик '+n.peak.toFixed(2);
-    return { go:og, m1:n.m1out, peak:n.peak, corr:oc };
+    return { go:og, m1:n.m1out, peak:n.peak, corr:oc, flip:n.flipOut };
   },
   draw(n,cv,cx){
     const W=cv.width,H=cv.height; cx.clearRect(0,0,W,H);
@@ -681,10 +706,11 @@ def({ id:'hfdlOrderSched', title:'HFDL: план. схемы модуляции'
   draw(n){ n.el.querySelector('.readout').textContent=n.txt; }});
 
 def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фреймером)', cat:'Декодеры', readout:true, resize:true,
-  ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'clk',t:'sig'},{n:'go',t:'sig'},{n:'m1',t:'num'}],
+  ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'clk',t:'sig'},{n:'go',t:'sig'},{n:'m1',t:'num'},{n:'flip',t:'num'}],
   outs:[{n:'blk',t:'blk'},{n:'m1',t:'num'}],
   params:[{n:'m1',t:'range',min:0,max:7,step:1,d:3,label:'M1 (0-7, если go/m1 не подключены)'},
-          {n:'descramble',t:'check',d:true,label:'дескремблировать (LFSR по символу)'}],
+          {n:'descramble',t:'check',d:true,label:'дескремблировать (LFSR по символу)'},
+          {n:'eqBw',t:'range',min:0,max:.5,step:.005,d:.05,label:'скорость адаптации эквалайзера'}],
   // Между M1 и данными в реальном кадре НЕ сплошной поток payload-символов (см. hfdl.c):
   // M2(15, пропуск) → EQ_TRAIN(15×9, пропуск, BPSK для эквалайзера) →
   // [ДАННЫЕ 30][TRAIN 15] × dataSegmentCnt раз. Без этого фреймера тренировочные символы
@@ -701,8 +727,20 @@ def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фрей
   // другому узлу ниже по цепочке, который сам не фреймирует) СТАРОЕ/чужое M1, не совпадающее
   // с реально обрабатываемым blk. Бери m1 отсюда, а не из hfdlM1Match, для всего, что стоит
   // ПОСЛЕ этого узла.
+  // Между Костас/Гарднер и решением по биту в оригинале стоит ещё адаптивный LMS-эквалайзер
+  // (eqlms_cccf, 15 отводов) — обучается прямо на известной T-последовательности во время
+  // EQTRAIN/TRAIN и компенсирует КВ-канал (многолучевость/ISI) ПЕРЕД демодуляцией. Без него
+  // Костас с Гарднером могут быть идеально захвачены, а посимвольное решение всё равно
+  // мусор — именно это и наблюдалось на реальных записях (M1 находится матч-фильтром по
+  // 127 символам, устойчивым к лёгкому ISI, а единичное решение по символу — нет).
+  // T-обучение continuous: тренировка есть и в преамбуле (9×EQTRAIN), и после каждого
+  // DATA-сегмента (TRAIN) — эквалайзер переобучается весь кадр, отслеживая уход канала.
   init:n=>{ n.prevClk=0; n.prevGo=0; n.armed=false; n.bits=[]; n.bid=0; n.txt='ждём кадр (go)';
-    n.state='idle'; n.symCtr=0; n.trainRep=0; n.hf=0; n.curM1=0; },
+    n.state='idle'; n.symCtr=0; n.trainRep=0; n.hf=0; n.curM1=0; n.curFlip=0;
+    n.trainAcc=0; n.trainErr=0; n.trainTot=0;
+    n.eqHr=new Float32Array(15); n.eqHi=new Float32Array(15);   // история (raw, до эквализации)
+    n.eqTr=new Float32Array(15); n.eqTi=new Float32Array(15);   // отводы фильтра
+    n.eqTr[7]=1; },                                             // старт как пропускающий фильтр (единичный центр. отвод)
   process(n,I){
     if(!n.hseq) n.hseq=hfdlLfsr();
     for(let i=0;i<BLOCK;i++){
@@ -716,19 +754,46 @@ def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фрей
           n.armed=false;
           const m1=typeof I.m1==='number'?(I.m1|0):n.p.m1;
           n.curM1=m1;                                    // фиксируем M1 именно на старте ЭТОГО кадра
+          n.curFlip=typeof I.flip==='number'?(I.flip|0):0; // 180°-неоднозначность BPSK-Костас, тоже на старте кадра
           const p=HFDL_FRAME_PARAMS[clamp(m1,0,7)];
           n.bps=HFDL_SCHEME_BITS[p.scheme];
           n.dataSegLeft=p.dataSegmentCnt;
-          n.state='M2'; n.symCtr=0; n.hf=0; n.bits.length=0;
+          n.state='M2'; n.symCtr=0; n.hf=0; n.bits.length=0; n.trainAcc=0; n.trainErr=0; n.trainTot=0;
+          n.eqHr.fill(0); n.eqHi.fill(0); n.eqTr.fill(0); n.eqTi.fill(0); n.eqTr[7]=1;
           n.txt='кадр начат, M1='+m1+' ('+p.scheme+')';
         }
         if(n.state!=='idle'){
           let ii=I.I?I.I[i]:0, qq=I.Q?I.Q[i]:0;
           const isData=(n.state==='DATA');
+          const isTrain=(n.state==='EQTRAIN'||n.state==='TRAIN');
+          if(isData||isTrain){
+            const Hr=n.eqHr, Hi=n.eqHi, Tr=n.eqTr, Ti=n.eqTi;
+            for(let k=14;k>0;k--){ Hr[k]=Hr[k-1]; Hi[k]=Hi[k-1]; }
+            Hr[0]=ii; Hi[0]=qq;
+            let eqI=0, eqQ=0;
+            for(let k=0;k<15;k++){ eqI+=Tr[k]*Hr[k]-Ti[k]*Hi[k]; eqQ+=Tr[k]*Hi[k]+Ti[k]*Hr[k]; }
+            if(isTrain){
+              const tBit=(T_REF>>(14-n.symCtr))&1;                // T_REF: см. ниже, бит по позиции внутри T-блока
+              const desired=(tBit^n.curFlip)?1:-1;                // train всегда BPSK, эталон чисто вещественный
+              const errRe=desired-eqI, errIm=-eqQ;
+              let pow=1e-6; for(let k=0;k<15;k++) pow+=Hr[k]*Hr[k]+Hi[k]*Hi[k];
+              const mu=n.p.eqBw/pow;                              // NLMS: без этого отводы просто росли по амплитуде,
+              for(let k=0;k<15;k++){                               // "уверенность" метрики росла, а реальный BER — нет
+                Tr[k]+=mu*(Hr[k]*errRe+Hi[k]*errIm);
+                Ti[k]+=mu*(Hr[k]*errIm-Hi[k]*errRe);
+              }
+            }
+            ii=eqI; qq=eqQ;
+          }
+          // train-BER: жёсткий бит тренировки (уже после эквалайзера) против известного T=0x9AF —
+          // независимый от деперемежителя/Витерби замер, hfdl.c: bit ^= bitmask&1
+          if(isTrain) n.trainAcc=((n.trainAcc<<1)|((ii>0?1:0)^n.curFlip))&0x7fff;
           // ЛФСР сдвигается только на data-символах (descrambler_advance вызывается
           // только внутри decode_user_data в оригинале — не на train/M2)
           if(isData){
-            if(n.p.descramble && n.hseq[n.hf]){ ii=-ii; qq=-qq; }
+            let flip=n.curFlip;                          // hfdl.c: phase_flip[descrambler_bit]*phase_flip[bitmask&1]
+            if(n.p.descramble && n.hseq[n.hf]) flip^=1;
+            if(flip){ ii=-ii; qq=-qq; }
             n.hf=(n.hf+1)%120;
           }
           n.symCtr++;
@@ -739,6 +804,7 @@ def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фрей
             case 'EQTRAIN':
               if(n.symCtr>=T_LEN){
                 n.symCtr=0;
+                let x=n.trainAcc^T_REF, e=0; while(x){ e+=x&1; x>>=1; } n.trainErr+=e; n.trainTot+=T_LEN;
                 if(n.trainRep<9){ n.trainRep++; }
                 else n.state = n.dataSegLeft>0 ? 'DATA' : 'idle';
               }
@@ -750,16 +816,18 @@ def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фрей
                 // огрубление здесь до жёсткого решения съедало запас по метрике Витерби.
                 n.bits.push(clamp(ii,-1,1));
               } else {
-                const bits=symbolToBits(Math.atan2(qq,ii), n.bps);
-                for(const b of bits) n.bits.push(b?1:-1);   // QPSK/8PSK — пока жёстко, см. коммент в статусе файла
+                const sb=symbolToSoftBits(ii, qq, n.bps);
+                for(const v of sb) n.bits.push(v);          // мягкие биты, не жёсткое решение
               }
               if(n.symCtr>=DATA_FRAME_LEN){ n.symCtr=0; n.state='TRAIN'; }
               break;
             case 'TRAIN':
               if(n.symCtr>=T_LEN){
                 n.symCtr=0; n.dataSegLeft--;
+                let x=n.trainAcc^T_REF, e=0; while(x){ e+=x&1; x>>=1; } n.trainErr+=e; n.trainTot+=T_LEN;
                 n.state = n.dataSegLeft>0 ? 'DATA' : 'idle';
-                if(n.state==='idle') n.txt='кадр собран: '+n.bits.length+' бит';
+                if(n.state==='idle') n.txt='кадр собран: '+n.bits.length+' бит · train-BER '+
+                  (100*n.trainErr/n.trainTot).toFixed(1)+'% ('+n.trainErr+'/'+n.trainTot+')';
               }
               break;
           }
@@ -810,13 +878,19 @@ def({ id:'hfdlChipAvg', title:'HFDL: усреднение chip-пар (rate 1/4)
       // формулой из hfdl.c, затем обратно в -1..1.
       const nOut=b.n>>1;
       const out=new Float32Array(nOut);
+      let agree=0;                                             // диагностика: пара — это правда повтор одного бита?
       for(let i=0;i<nOut;i++){
+        const s1=b.d[2*i]>0, s2=b.d[2*i+1]>0;
+        if(s1===s2) agree++;
         const a=(b.d[2*i]+1)*127.5, c=(b.d[2*i+1]+1)*127.5;   // -1..1 -> 0..255
         const avg=(a&c)+((a^c)>>1);
         out[i]=avg/127.5-1;                                    // обратно в -1..1
       }
       n.blkOut={ d:out, n:nOut, id:b.id };
-      n.txt='rate 1/4: '+b.n+' -> '+nOut+' (усреднено)';
+      // если пары chip'ов — правда повтор одного и того же кодового бита, согласие
+      // знаков должно быть заметно выше 50%. Около 50% — сигнал, что пары (2i,2i+1)
+      // после деперемежителя НЕ соответствуют друг другу (пары не рядом, как думали).
+      n.txt='rate 1/4: '+b.n+' -> '+nOut+' (усреднено) · согласие пар '+(100*agree/nOut).toFixed(1)+'%';
     } else {
       n.blkOut=b;
       n.txt='rate 1/2: без усреднения, '+b.n+' бит';
