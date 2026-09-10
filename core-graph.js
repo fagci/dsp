@@ -495,8 +495,10 @@ const inp=document.createElement('input'); inp.type='number';
 inp.value=Math.round(n.p[key]); inp.step=step||'any';
 inp.addEventListener('pointerdown',ev=>ev.stopPropagation());
 box.append(inp); inp.focus(); inp.select();
-const done=ok=>{ inp.remove();
-if(ok){ const v=parseFloat(String(inp.value).replace(',','.')); if(isFinite(v)) setV(v); } };
+let finished=false;
+const done=ok=>{ if(finished) return; finished=true;
+if(ok){ const v=parseFloat(String(inp.value).replace(',','.')); if(isFinite(v)) setV(v); }
+inp.remove(); };
 inp.addEventListener('keydown',ev=>{ ev.stopPropagation();
 if(ev.key==='Enter') done(true); if(ev.key==='Escape') done(false); });
 inp.addEventListener('blur',()=>done(true)); }
@@ -556,7 +558,9 @@ if(span.querySelector('input')) return;
 const old=span.textContent;
 const i=document.createElement('input'); i.value=cur; i.title=`${s.min} … ${s.max}`;
 span.textContent=''; span.append(i); i.focus(); i.select();
-const done=ok=>{ const v=parseFloat(String(i.value).replace(',','.').replace(/k$/i,'e3'));
+let finished=false;
+const done=ok=>{ if(finished) return; finished=true;
+const v=parseFloat(String(i.value).replace(',','.').replace(/k$/i,'e3'));
 span.textContent=old; if(ok&&isFinite(v)) setV(v); };
 i.addEventListener('keydown',e=>{ e.stopPropagation();
 if(e.key==='Enter') done(true); if(e.key==='Escape') done(false); });
@@ -1194,3 +1198,4 @@ i.title='Стрелки ↑↓ или колесо мыши — изменить
 old.replaceWith(i);
 });
 requestAnimationFrame(frame);
+
