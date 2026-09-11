@@ -444,11 +444,19 @@ def({ id:'hfdlViterbi', title:'Витерби K=7 r=1/2 (HFDL FEC)', cat:'Дек
       const v=b.d[i];
       syms[i]=Math.max(0,Math.min(255, Math.round((v+1)*127.5)));
     }
-    const nbits=nSteps-6;                              // последние 6 пар символов — хвост кодера
+    const nbits=nSteps;                                 // HFDL НЕ добавляет хвостовые нули кодера
+                                                          // (сверено с hfdl.c: viterbi_output_len =
+                                                          // viterbi_input_len/CONV_CODE_RATE, без -6).
+                                                          // НО v27Chainback физически требует ещё 6 шагов
+                                                          // запаса в решётке (decisions[6+n]) — паддинг
+                                                          // нейтральными (128) символами, чтобы получить
+                                                          // все nSteps бит без выхода за границы массива.
     if(nbits<=0){ n.txt='блок слишком короткий'; return { blk:n.blkOut||null }; }
+    const symsPadded=new Uint8Array((nSteps+6)*2);
+    symsPadded.set(syms); symsPadded.fill(128, nSteps*2);
     const vp=v27Create(polys);
     v27Init(vp,0);
-    v27UpdateBlk(vp,syms);
+    v27UpdateBlk(vp,symsPadded);
     const bytes=v27Chainback(vp, nbits, n.p.endstate|0);
     const outBits=new Float32Array(nbits);
     for(let i=0;i<nbits;i++) outBits[i]=((bytes[i>>3]>>(7-(i%8)))&1)?1:-1;
@@ -562,6 +570,15 @@ const HFDL_M1_BITS=[0,1,1,1,0,1,1,0,1,1,1,1,0,1,0,0,0,1,0,1,1,0,0,
   1,1,1,0,0,1,0,0,0,1,1,0,1,0,1,0,0,0,0,1,1,1,1,1,1,1];
 const HFDL_M1_SHIFTS=[72,82,113,123,61,103,93,9];
 const HFDL_M1_LEN=127;
+// A-последовательность (127 бит) — идёт ДВАЖДЫ перед M1 в реальном кадре (A1, затем A2 через
+// 127 символов), взята из настоящего hfdl.c (dumphfdl) как есть. У нас раньше её не было вообще —
+// Костас шёл прямо в поиск M1 без предварительного разгона/проверки. Сверено с исходником,
+// но узла-детектора и подключения в граф ЕЩЁ НЕТ — сама по себе константа decode не чинит
+// (проверено: наивный гейт "M1 доверяем только если недавно была A1" не снизил train-BER,
+// потому что наша A-корреляция страдает от той же слабости демода, что и M1). Нужен более
+// качественный front-end (Гарднер/Костас), не просто использование этой константы. См. SESSION_NOTES.md.
+const HFDL_A_LEN=127;
+const HFDL_A_BITS=[-1,1,-1,1,1,-1,1,1,1,-1,1,1,1,1,-1,-1,-1,1,1,1,-1,1,-1,-1,-1,1,-1,1,-1,1,1,1,-1,-1,-1,-1,-1,-1,1,1,1,1,-1,1,1,-1,-1,1,1,-1,-1,-1,1,-1,-1,1,-1,-1,1,1,1,-1,-1,1,1,1,1,1,-1,-1,1,-1,-1,-1,-1,-1,1,-1,-1,-1,1,1,-1,1,-1,1,-1,1,-1,-1,1,1,-1,1,1,-1,1,-1,-1,1,-1,1,-1,-1,-1,-1,1,-1,1,1,-1,-1,-1,-1,1,1,-1,-1,1,-1,1,1,1,1,1,1,1];
 function hfdlM1Bits(shift){                           // ±1, как и остальные образцы в corr
   const out=new Int8Array(HFDL_M1_LEN);
   for(let j=0;j<HFDL_M1_LEN;j++) out[j]=HFDL_M1_BITS[(shift+j)%HFDL_M1_LEN]?1:-1;
@@ -710,7 +727,7 @@ def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фрей
   outs:[{n:'blk',t:'blk'},{n:'m1',t:'num'}],
   params:[{n:'m1',t:'range',min:0,max:7,step:1,d:3,label:'M1 (0-7, если go/m1 не подключены)'},
           {n:'descramble',t:'check',d:true,label:'дескремблировать (LFSR по символу)'},
-          {n:'eqBw',t:'range',min:0,max:.5,step:.005,d:.05,label:'скорость адаптации эквалайзера'}],
+          {n:'eqBw',t:'range',min:0,max:.5,step:.005,d:.1,label:'скорость адаптации эквалайзера'}],
   // Между M1 и данными в реальном кадре НЕ сплошной поток payload-символов (см. hfdl.c):
   // M2(15, пропуск) → EQ_TRAIN(15×9, пропуск, BPSK для эквалайзера) →
   // [ДАННЫЕ 30][TRAIN 15] × dataSegmentCnt раз. Без этого фреймера тренировочные символы
@@ -750,8 +767,9 @@ def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фрей
 
       const c=I.clk?I.clk[i]:0;
       if(c>.5 && n.prevClk<=.5){
+        let justArmed=false;
         if(n.armed){
-          n.armed=false;
+          n.armed=false; justArmed=true;
           const m1=typeof I.m1==='number'?(I.m1|0):n.p.m1;
           n.curM1=m1;                                    // фиксируем M1 именно на старте ЭТОГО кадра
           n.curFlip=typeof I.flip==='number'?(I.flip|0):0; // 180°-неоднозначность BPSK-Костас, тоже на старте кадра
@@ -762,7 +780,12 @@ def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фрей
           n.eqHr.fill(0); n.eqHi.fill(0); n.eqTr.fill(0); n.eqTi.fill(0); n.eqTr[7]=1;
           n.txt='кадр начат, M1='+m1+' ('+p.scheme+')';
         }
-        if(n.state!=='idle'){
+        // symCtr должен стартовать СО СЛЕДУЮЩЕГО тика после 'go' — сам тик, на котором сработал
+        // armed, ещё "принадлежит" концу M1, а не M2. Раньше он ошибочно засчитывался первым
+        // символом M2, из-за чего вся граница M2→EQTRAIN→DATA была сдвинута на 1 символ раньше
+        // истинной (проверено побитово против настоящего dumphfdl: наши DATA-биты совпадали
+        // с истинными 30/30 только при искусственном сдвиге +1 — вот его источник).
+        if(n.state!=='idle' && !justArmed){
           let ii=I.I?I.I[i]:0, qq=I.Q?I.Q[i]:0;
           const isData=(n.state==='DATA');
           const isTrain=(n.state==='EQTRAIN'||n.state==='TRAIN');
