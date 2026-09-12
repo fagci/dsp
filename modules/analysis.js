@@ -1,16 +1,16 @@
 // ---
-def({ id:'birdSong', title:'Анализатор пения птиц', cat:'Анализ',
+def({ id:'birdSong', title:'Bird Song Analyzer', cat:'Analysis',
   ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'sensitivity',t:'num'},
        {n:'minDuration',t:'num'},{n:'maxGap',t:'num'},{n:'clusters',t:'num'}],
   outs:[{n:'syllable',t:'txt'},{n:'frequency',t:'num'},{n:'activity',t:'num'}],
   view:{h:200}, resize:true, readout:true,
-  params:[{n:'fmin',t:'range',min:500,max:10000,step:50,d:1000,label:'мин. частота, Гц'},
-          {n:'fmax',t:'range',min:1000,max:()=>Eng.sr/2,step:50,d:8000,label:'макс. частота, Гц'},
-          {n:'sensitivity',t:'range',min:0.01,max:0.5,step:0.01,d:0.05,label:'чувствительность'},
-          {n:'minDuration',t:'range',min:10,max:200,step:5,d:30,label:'мин. длительность, мс'},
-          {n:'maxGap',t:'range',min:20,max:500,step:10,d:100,label:'макс. пауза, мс'},
-          {n:'clusters',t:'range',min:2,max:16,step:1,d:8,label:'количество кластеров'},
-          {n:'display',t:'select',opts:['водопад','граф','оба'],d:'оба'}],
+  params:[{n:'fmin',t:'range',min:500,max:10000,step:50,d:1000,label:'min frequency, Hz'},
+          {n:'fmax',t:'range',min:1000,max:()=>Eng.sr/2,step:50,d:8000,label:'max frequency, Hz'},
+          {n:'sensitivity',t:'range',min:0.01,max:0.5,step:0.01,d:0.05,label:'sensitivity'},
+          {n:'minDuration',t:'range',min:10,max:200,step:5,d:30,label:'min duration, ms'},
+          {n:'maxGap',t:'range',min:20,max:500,step:10,d:100,label:'max gap, ms'},
+          {n:'clusters',t:'range',min:2,max:16,step:1,d:8,label:'number of clusters'},
+          {n:'display',t:'select',opts:['waterfall','graph','both'],d:'both'}],
   init:n=>{
     n.syllables = [];
     n.currentSyllable = null;
@@ -176,7 +176,7 @@ def({ id:'birdSong', title:'Анализатор пения птиц', cat:'Ан
     const display = n.p.display;
     
     // --- 1. Водопад / спектрограмма (слева) ---
-    if(display === 'водопад' || display === 'оба'){
+    if(display === 'waterfall' || display === 'both'){
       // Рисуем спектрограмму из истории слогов
       const colors = ['#4ec9b0', '#e0b23c', '#e05c5c', '#569cd6', '#d18ad1', '#7fd17f'];
       
@@ -221,7 +221,7 @@ def({ id:'birdSong', title:'Анализатор пения птиц', cat:'Ан
         // Длительность
         cx.fillStyle = '#6c7a80';
         cx.font = '8px monospace';
-        cx.fillText(`${s.duration.toFixed(0)} мс`, x-20, H-y-16);
+        cx.fillText(`${s.duration.toFixed(0)} ms`, x-20, H-y-16);
       }
       
       // Шкала частот
@@ -235,9 +235,9 @@ def({ id:'birdSong', title:'Анализатор пения птиц', cat:'Ан
     }
     
     // --- 2. Граф переходов (справа) ---
-    if(display === 'граф' || display === 'оба'){
-      const gx = display === 'оба' ? wfW : 0;
-      const gw = display === 'оба' ? graphW : W;
+    if(display === 'graph' || display === 'both'){
+      const gx = display === 'both' ? wfW : 0;
+      const gw = display === 'both' ? graphW : W;
       
       cx.fillStyle = '#0a0d0e';
       cx.fillRect(gx, 0, gw, H);
@@ -306,21 +306,21 @@ def({ id:'birdSong', title:'Анализатор пения птиц', cat:'Ан
           cx.globalAlpha = 1;
           cx.fillStyle = '#6c7a80';
           cx.font = '7px monospace';
-          cx.fillText(`${(freq*100).toFixed(0)} Гц`, pos.x-20, pos.y+4);
+          cx.fillText(`${(freq*100).toFixed(0)} Hz`, pos.x-20, pos.y+4);
         }
         
         cx.globalAlpha = 1;
       } else {
         cx.fillStyle = '#2a3136';
         cx.font = '10px monospace';
-        cx.fillText('⏳ накопление\nпаттернов...', gx+10, H/2-10);
+        cx.fillText('⏳ accumulating\npatterns...', gx+10, H/2-10);
       }
     }
     
     // --- 3. Информация ---
     cx.fillStyle = '#6c7a80';
     cx.font = '8px monospace';
-    const info = `Слогов: ${n.syllables.length}  |  Паттернов: ${Object.keys(n.graph).length}`;
+    const info = `Syllables: ${n.syllables.length}  |  Patterns: ${Object.keys(n.graph).length}`;
     cx.fillText(info, 4, H-4);
     
     // Распознанный паттерн (сверху)
@@ -405,12 +405,12 @@ function recognizePattern(syllables){
     const repeats = (pattern.match(/(\d+ \d+ \d+)/g) || []).length;
     if(repeats > 1){
       const names = {
-        '1000 1200 1500': '🎵 трель',
-        '800 1200 800': '🎶 колокольчик',
-        '1000 800 1000 800': '🔔 звоночек',
-        '1500 1200 1500': '🎵 свист',
-        '2000 1500 1000': '⬇️ нисходящая',
-        '1000 1500 2000': '⬆️ восходящая'
+        '1000 1200 1500': '🎵 trill',
+        '800 1200 800': '🎶 chime',
+        '1000 800 1000 800': '🔔 tinkle',
+        '1500 1200 1500': '🎵 whistle',
+        '2000 1500 1000': '⬇️ descending',
+        '1000 1500 2000': '⬆️ ascending'
       };
       return names[pattern] || `🎵 ${pattern.replace(/ /g, '→')}`;
     }
@@ -423,7 +423,7 @@ function recognizePattern(syllables){
     const short = durations.filter(d => d < 50).length;
     const long = durations.filter(d => d > 100).length;
     if(short > 2 && long > 1){
-      return '📯 перелив (короткие+длинные)';
+      return '📯 warble (short+long)';
     }
   }
   
@@ -435,7 +435,7 @@ function recognizePattern(syllables){
 
 
 
-def({ id:'persist', title:'Персистентный спектр', cat:'Анализ',
+def({ id:'persist', title:'Persistence Spectrum', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'log',t:'num'},
        {n:'floor',t:'num'},{n:'top',t:'num'},{n:'decay',t:'num'},{n:'gain',t:'num'}],
   outs:[{n:'fsel',t:'num'}], view:{h:220}, resize:true, pick:true,
@@ -444,9 +444,9 @@ def({ id:'persist', title:'Персистентный спектр', cat:'Ана
           {n:'log',t:'check',d:false},
           {n:'floor',t:'range',min:-140,max:-20,step:1,d:-120},
           {n:'top',t:'range',min:-60,max:20,step:1,d:0},
-          {n:'decay',t:'range',min:.9,max:.9999,step:.0001,d:.995,label:'затухание'},
-          {n:'gain',t:'range',min:.5,max:20,step:.1,d:4,label:'яркость'},
-          {n:'rst',t:'button',label:'Сбросить',fn:n=>{n.acc&&n.acc.fill(0);}}],
+          {n:'decay',t:'range',min:.9,max:.9999,step:.0001,d:.995,label:'decay'},
+          {n:'gain',t:'range',min:.5,max:20,step:.1,d:4,label:'brightness'},
+          {n:'rst',t:'button',label:'Reset',fn:n=>{n.acc&&n.acc.fill(0);}}],
   init:n=>{n.acc=null;n.pickT=null;n.fsel=0;},
   process(n,I){
     for(const k of ['fmin','fmax','floor','top','decay','gain']) if(typeof I[k]==='number') setMod(n,k,I[k]);
@@ -482,27 +482,27 @@ def({ id:'persist', title:'Персистентный спектр', cat:'Ана
       const x=Math.round(clamp(t,0,1)*cv.width);       // putImageData игнорирует transform — маркер после него
       cx.strokeStyle='#e0b23c'; cx.beginPath(); cx.moveTo(x+.5,0); cx.lineTo(x+.5,cv.height); cx.stroke();
       cx.font='10px monospace';
-      const s2=n.fsel.toFixed(0)+' Гц', tw=cx.measureText(s2).width, tx=clamp(x+4,2,cv.width-tw-4);
+      const s2=n.fsel.toFixed(0)+' Hz', tw=cx.measureText(s2).width, tx=clamp(x+4,2,cv.width-tw-4);
       cx.fillStyle='#0e1113dd'; cx.fillRect(tx-3,2,tw+6,12);
       cx.fillStyle='#e0b23c'; cx.fillText(s2,tx,11); } }});
 
 function persLogF(n,t){ const lo=Math.max(10,n.p.fmin); return lo*Math.pow(n.p.fmax/lo,t); }
 
-def({ id:'cfar', title:'Детектор сигналов (CFAR)', cat:'Анализ',
+def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'guard',t:'num'},
        {n:'train',t:'num'},{n:'thr',t:'num'},{n:'minW',t:'num'},{n:'top',t:'num'},{n:'hold',t:'num'}],
   outs:[{n:'count',t:'num'},{n:'f1',t:'num'},{n:'l1',t:'num'},{n:'f2',t:'num'},{n:'l2',t:'num'},
         {n:'f3',t:'num'},{n:'l3',t:'num'},{n:'f4',t:'num'},{n:'l4',t:'num'}],
   readout:true, tall:true,
-  params:[{n:'auto',t:'check',d:false,label:'авто-диапазон (весь охват источника)'},
+  params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)'},
           {n:'fmin',t:'range',min:1,max:6e9,step:1,log:true,d:100},
           {n:'fmax',t:'range',min:1,max:6e9,step:1,log:true,d:6000},
-          {n:'guard',t:'range',min:1,max:32,step:1,d:4,label:'защитных бинов'},
-          {n:'train',t:'range',min:4,max:128,step:1,d:32,label:'обучающих бинов'},
-          {n:'thr',t:'range',min:1,max:30,step:.5,d:8,label:'порог, дБ'},
-          {n:'minW',t:'range',min:1,max:64,step:1,d:2,label:'мин. ширина'},
-          {n:'top',t:'range',min:1,max:30,step:1,d:10,label:'сколько показывать'},
-          {n:'hold',t:'range',min:0,max:5000,step:50,d:500,label:'удержание, мс'}],
+          {n:'guard',t:'range',min:1,max:32,step:1,d:4,label:'guard bins'},
+          {n:'train',t:'range',min:4,max:128,step:1,d:32,label:'training bins'},
+          {n:'thr',t:'range',min:1,max:30,step:.5,d:8,label:'threshold, dB'},
+          {n:'minW',t:'range',min:1,max:64,step:1,d:2,label:'min width'},
+          {n:'top',t:'range',min:1,max:30,step:1,d:10,label:'how many to show'},
+          {n:'hold',t:'range',min:0,max:5000,step:50,d:500,label:'hold time, ms'}],
   init:n=>{n.list=[];n.text='';n.tracks=[];},
   process(n,I){
     const s=I.spec;
@@ -556,9 +556,9 @@ def({ id:'cfar', title:'Детектор сигналов (CFAR)', cat:'Анал
     const [specLo0,specHi0]=specSpan(s);
     n.tracks=n.tracks.filter(t=>t.f>=specLo0 && t.f<=specHi0);
     n.list=n.tracks.slice().sort((a,b)=>b.db-a.db).slice(0,n.p.top);
-    n.text='найдено '+n.list.length+'\n'+n.list.map(v=>
-      fmtHz(v.f).padStart(8)+'Гц  ширина '+fmtHz(v.w).padStart(4)+
-      'Гц  '+v.db.toFixed(0).padStart(4)+' dB  '+((now-v.t0)/1000).toFixed(1)+' с').join('\n');
+    n.text='found '+n.list.length+'\n'+n.list.map(v=>
+      fmtHz(v.f).padStart(8)+'Hz  width '+fmtHz(v.w).padStart(4)+
+      'Hz  '+v.db.toFixed(0).padStart(4)+' dB  '+((now-v.t0)/1000).toFixed(1)+' s').join('\n');
     const [a,b,c,d]=n.list;
     return {count:n.list.length,
       f1:a?a.f:null, l1:a?a.db:null, f2:b?b.f:null, l2:b?b.db:null,
@@ -567,7 +567,7 @@ def({ id:'cfar', title:'Детектор сигналов (CFAR)', cat:'Анал
     if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
 
-def({ id:'chsnr', title:'SNR канала', cat:'Анализ',
+def({ id:'chsnr', title:'Channel SNR', cat:'Analysis',
   // Считает SNR прямо по спектру (native-rate FFT из rtlsdr/fft), а не по 'sig'-пинам — так
   // не упирается в Eng.sr движка: реальная полоса RTL (сотни кГц — единицы МГц) через 'sig'
   // всё равно не протащить без алиасинга, а спектр её видит целиком.
@@ -576,11 +576,11 @@ def({ id:'chsnr', title:'SNR канала', cat:'Анализ',
   ins:[{n:'spec',t:'spec'},{n:'f',t:'num'},{n:'bw',t:'num'},{n:'guard',t:'num'},{n:'train',t:'num'}],
   outs:[{n:'snr',t:'num'},{n:'sigDb',t:'num'},{n:'noiseDb',t:'num'}],
   readout:true,
-  params:[{n:'f',t:'num',d:100000000,label:'частота канала, Гц'},
-          {n:'bw',t:'range',min:100,max:200000,step:100,d:12500,log:true,label:'полоса канала, Гц'},
-          {n:'guard',t:'range',min:0,max:200000,step:100,d:3000,log:true,label:'защитный интервал, Гц'},
-          {n:'train',t:'range',min:1000,max:500000,step:500,d:50000,log:true,label:'обучающая полоса, Гц'},
-          {n:'smooth',t:'range',min:0,max:.95,step:.01,d:.3,label:'сглаживание'}],
+  params:[{n:'f',t:'num',d:100000000,label:'channel frequency, Hz'},
+          {n:'bw',t:'range',min:100,max:200000,step:100,d:12500,log:true,label:'channel bandwidth, Hz'},
+          {n:'guard',t:'range',min:0,max:200000,step:100,d:3000,log:true,label:'guard interval, Hz'},
+          {n:'train',t:'range',min:1000,max:500000,step:500,d:50000,log:true,label:'training band, Hz'},
+          {n:'smooth',t:'range',min:0,max:.95,step:.01,d:.3,label:'smoothing'}],
   init:n=>{n.snr=null;n.sigDb=null;n.noiseDb=null;},
   process(n,I){
     for(const k of ['f','bw','guard','train','smooth']) if(typeof I[k]==='number') setMod(n,k,I[k]);
@@ -605,7 +605,7 @@ def({ id:'chsnr', title:'SNR канала', cat:'Анализ',
     return {snr:n.snr, sigDb:n.sigDb, noiseDb:n.noiseDb}; },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     r.textContent = n.snr==null?'—':
-      `SNR ${n.snr.toFixed(1)} дБ · сигнал ${n.sigDb.toFixed(1)} · шум ${n.noiseDb.toFixed(1)}`; }});
+      `SNR ${n.snr.toFixed(1)} dB · signal ${n.sigDb.toFixed(1)} · noise ${n.noiseDb.toFixed(1)}`; }});
 
 
 const OCT_CENTERS=(()=>{ const a=[];
@@ -620,10 +620,10 @@ function weightC(f){
   const r=(12194*12194*f2)/((f2+20.6*20.6)*(f2+12194*12194));
   return 20*Math.log10(r)+0.06;
 }
-def({ id:'octave', title:'Третьоктавы', cat:'Анализ', ins:[{n:'spec',t:'spec'},{n:'fmin',t:'num'},{n:'fmax',t:'num'}],
+def({ id:'octave', title:'Third-Octaves', cat:'Analysis', ins:[{n:'spec',t:'spec'},{n:'fmin',t:'num'},{n:'fmax',t:'num'}],
   outs:[{n:'spec',t:'spec'},{n:'total',t:'num'}], readout:true,
-  params:[{n:'width',t:'select',opts:['1/3 октавы','1/1 октавы'],d:'1/3 октавы'},
-          {n:'weight',t:'select',opts:['без','A','C'],d:'A'},
+  params:[{n:'width',t:'select',opts:['1/3 octave','1/1 octave'],d:'1/3 octave'},
+          {n:'weight',t:'select',opts:['none','A','C'],d:'A'},
           {n:'fmin',t:'range',min:10,max:1000,step:1,d:20,log:true},
           {n:'fmax',t:'range',min:1000,max:()=>Eng.sr/2,step:100,d:20000,log:true}],
   init:n=>{n.key='';},
@@ -631,7 +631,7 @@ def({ id:'octave', title:'Третьоктавы', cat:'Анализ', ins:[{n:'
     if(typeof I.fmin==='number') setMod(n,'fmin',I.fmin);
     if(typeof I.fmax==='number') setMod(n,'fmax',I.fmax);
     const s=I.spec; if(!s) return {spec:null,total:-120};
-    const third=n.p.width==='1/3 октавы';
+    const third=n.p.width==='1/3 octave';
     const key=n.p.width+'/'+n.p.fmin+'/'+n.p.fmax+'/'+n.p.weight;
     if(n.key!==key){
       n.key=key;
@@ -653,17 +653,17 @@ def({ id:'octave', title:'Третьоктавы', cat:'Анализ', ins:[{n:'
     n.sp.rev=(n.sp.rev|0)+1;
     return {spec:n.sp, total:n.tot}; },
   draw(n){ n.el.querySelector('.readout').textContent =
-    'суммарный '+(n.tot||-120).toFixed(1)+' dBFS'+(n.p.weight!=='без'?' ('+n.p.weight+')':''); }});
+    'total '+(n.tot||-120).toFixed(1)+' dBFS'+(n.p.weight!=='none'?' ('+n.p.weight+')':''); }});
 
 
-def({ id:'ir', title:'Импульсная и RT60', cat:'Анализ',
+def({ id:'ir', title:'Impulse Response & RT60', cat:'Analysis',
   ins:[{n:'ref',t:'sig'},{n:'meas',t:'sig'}],
   outs:[{n:'rt60',t:'num'},{n:'delayMs',t:'num'}],
   view:{h:150}, resize:true, readout:true,
   params:[{n:'size',t:'select',opts:['8192','16384','32768','65536'],d:'32768'},
-          {n:'go',t:'button',label:'Измерить',fn:n=>irMeasure(n)},
+          {n:'go',t:'button',label:'Measure',fn:n=>irMeasure(n)},
           {n:'range',t:'select',opts:['T20','T30'],d:'T20'}],
-  init:n=>{n.N=0;n.text='нажмите «Измерить»';},
+  init:n=>{n.N=0;n.text='press «Measure»';},
   process(n,I){
     const N=+n.p.size;
     if(n.N!==N){ n.N=N; n.rx=new Float32Array(N); n.ry=new Float32Array(N); n.w=0; }
@@ -686,16 +686,16 @@ def({ id:'ir', title:'Импульсная и RT60', cat:'Анализ',
 
 
 /* ---------- анализ ---------- */
-def({ id:'scope', title:'Осциллограф', cat:'Анализ',
+def({ id:'scope', title:'Oscilloscope', cat:'Analysis',
   ins:[{n:'in1',t:'sig'},{n:'in2',t:'sig'},{n:'in3',t:'sig'},{n:'in4',t:'sig'},
        {n:'span',t:'num'},{n:'gain',t:'num'},{n:'ofs',t:'num'},{n:'trig',t:'num'},{n:'stack',t:'num'}],
   view:{h:110},
-  params:[{n:'span',t:'range',min:64,max:480000,step:64,d:1024,log:true,label:'окно, отсч.'},
+  params:[{n:'span',t:'range',min:64,max:480000,step:64,d:1024,log:true,label:'window, samples'},
           {n:'gain',t:'range',min:.05,max:50,step:.05,d:1},
           {n:'ofs',t:'range',min:-1,max:1,step:.01,d:0},
           {n:'trig',t:'check',d:true},
           {n:'stack',t:'check',d:false},
-          {n:'grid',t:'check',d:true,label:'сетка'}],
+          {n:'grid',t:'check',d:true,label:'grid'}],
   init:n=>{ n.L=16384; n.ring=[0,1,2,3].map(()=>new Float32Array(n.L)); n.w=0; },
   process(n,I){
     // буфер вмещает MAXSEC секунд при текущей sr — пересчитываем размер, только если sr поменялась
@@ -726,7 +726,7 @@ def({ id:'scope', title:'Осциллограф', cat:'Анализ',
       for(let i=0;i<=10;i++){
         const x=Math.round(i*W/10)+.5, t=i/10*totalMs;
         cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke();
-        const lbl=(t<10?t.toFixed(1):Math.round(t))+' мс';
+        const lbl=(t<10?t.toFixed(1):Math.round(t))+' ms';
         cx.fillText(lbl, clamp(x-14,2,W-2-lbl.length*5), 9); }
       // уровень в дБ относительно полного размаха — отдельно на каждую активную полосу
       const dbSteps=[0,-6,-12,-18,-24];
@@ -740,7 +740,7 @@ def({ id:'scope', title:'Осциллограф', cat:'Анализ',
         cx.stroke();
         for(const db of dbSteps){
           const a=Math.pow(10,db/20), y1=yc-a*amp;
-          cx.fillText(db+' дБ', 2, y1-2>8?y1-2:y1+9); } } }
+          cx.fillText(db+' dB', 2, y1-2>8?y1-2:y1+9); } } }
     cx.strokeStyle='#1e2529';
     for(let k=0,shown=0;k<4;k++){ if(!act[k]) continue;
       const yc = n.p.stack ? H*(shown+.5)/nA : H/2; shown++;
@@ -806,7 +806,7 @@ function axisT(bin,N,log){ return log ? Math.log(bin+1)/Math.log(N) : bin/(N-1);
 
 const MK_COL=['#e0b23c','#4ec9b0','#e05c5c','#569cd6'];
 
-def({ id:'sa', title:'Спектроанализатор', cat:'Анализ',
+def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'m1',t:'num'},{n:'m2',t:'num'},{n:'m3',t:'num'},{n:'m4',t:'num'},
        {n:'bLo',t:'num'},{n:'bHi',t:'num'},{n:'floor',t:'num'},{n:'top',t:'num'},
        {n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'split',t:'num'},{n:'tol',t:'num'},
@@ -815,21 +815,21 @@ def({ id:'sa', title:'Спектроанализатор', cat:'Анализ',
         {n:'f3',t:'num'},{n:'l3',t:'num'},{n:'f4',t:'num'},{n:'l4',t:'num'},
         {n:'fr1',t:'num'},{n:'fr2',t:'num'},{n:'fr3',t:'num'},{n:'fr4',t:'num'}],
   view:{h:280}, pick:true, resize:true,
-  params:[{n:'auto',t:'check',d:false,label:'авто-диапазон (весь охват источника)'},
-          {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[0,4000],label:'диапазон, Гц'},
-          {n:'dbrange',t:'range2',keys:['floor','top'],min:-140,max:20,step:1,d:[-100,-20],label:'диапазон, дБ'},
-          {n:'split',t:'range',min:.15,max:.85,step:.01,d:.4,label:'доля спектра'},
+  params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)'},
+          {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[0,4000],label:'range, Hz'},
+          {n:'dbrange',t:'range2',keys:['floor','top'],min:-140,max:20,step:1,d:[-100,-20],label:'range, dB'},
+          {n:'split',t:'range',min:.15,max:.85,step:.01,d:.4,label:'spectrum split'},
           {n:'log',t:'check',d:false},
           {n:'grid',t:'check',d:true},
-          {n:'mode',t:'select',opts:['амплитуда','фаза','мощность','СПМ'],d:'амплитуда',label:'вид спектра'},
-          {n:'active',t:'buttons',opts:['1','2','3','4'],d:'1',label:'маркер'},
-          {n:'tol',t:'range',min:5,max:50000,step:5,log:true,d:50,label:'окно уровня, Гц'},
-          {n:'band',t:'select',opts:['нет','по входам','1–2','3–4'],d:'по входам',label:'полоса'},
-          {n:'ref',t:'select',opts:['нет','показать','разность'],d:'нет',label:'эталон'},
-          {n:'take',t:'button',label:'Снять эталон',fn:n=>{
+          {n:'mode',t:'select',opts:['amplitude','phase','power','PSD'],d:'amplitude',label:'spectrum view'},
+          {n:'active',t:'buttons',opts:['1','2','3','4'],d:'1',label:'marker'},
+          {n:'tol',t:'range',min:5,max:50000,step:5,log:true,d:50,label:'level window, Hz'},
+          {n:'band',t:'select',opts:['none','by inputs','1–2','3–4'],d:'by inputs',label:'band'},
+          {n:'ref',t:'select',opts:['none','show','diff'],d:'none',label:'reference'},
+          {n:'take',t:'button',label:'Capture reference',fn:n=>{
             if(n.s) n.refMag=Float32Array.from(n.s.mag); }},
-          {n:'clr',t:'button',label:'Снять активный маркер',fn:n=>{n.mk[+n.p.active-1]=null;}},
-          {n:'clrAll',t:'button',label:'Снять все',fn:n=>{n.mk=[null,null,null,null];}}],
+          {n:'clr',t:'button',label:'Clear active marker',fn:n=>{n.mk[+n.p.active-1]=null;}},
+          {n:'clrAll',t:'button',label:'Clear all',fn:n=>{n.mk=[null,null,null,null];}}],
   // Номер маркера выбирается кнопками (active), тап по графику ставит/двигает именно его.
   // mkPhase/mkBin/mkRev — состояние фазового уточнения частоты (fr1..fr4): сравниваем фазу
   // пика с предыдущим кадром спектра и по сдвигу фазы меряем частоту точнее ширины бина —
@@ -990,8 +990,8 @@ def({ id:'sa', title:'Спектроанализатор', cat:'Анализ',
       }
       if(n.p.grid) saGrid(n,cx,W,hs,H);
       const R=n.refMag&&n.refMag.length===N? n.refMag : null;
-      const diff=R&&n.p.ref==='разность';
-      if(R&&n.p.ref==='показать'){                    // эталон бледной линией под текущим
+      const diff=R&&n.p.ref==='diff';
+      if(R&&n.p.ref==='show'){                    // reference as a faint line under the current one
         cx.strokeStyle='#8ab4f8'; cx.globalAlpha=.55; cx.beginPath();
         for(let x=0;x<W;x++){
           const y=hs-clamp((20*Math.log10(magAt(R,binX[x])+1e-12)-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(hs-2)-1;
@@ -1000,7 +1000,7 @@ def({ id:'sa', title:'Спектроанализатор', cat:'Анализ',
       if(!n.colTS || ((n.colFrame=(n.colFrame||0)+1)%30===0))  // цвет темы — тоже не каждый кадр
         n.colTS=getComputedStyle(document.body).getPropertyValue('--t-spec');
       const mode=n.p.mode;
-      if(mode==='фаза' && n.s.phase){
+      if(mode==='phase' && n.s.phase){
         // фаза бина — то же значение, что использует фазовое уточнение fr1..fr4, просто нарисованное.
         // Скачки на стыке ±π — это заворачивание фазы (принцип. значение), а не баг отрисовки:
         // так её везде рисуют, для развёрнутой (unwrap) фазы нужен отдельный режим.
@@ -1013,7 +1013,7 @@ def({ id:'sa', title:'Спектроанализатор', cat:'Анализ',
         cx.stroke();
         cx.strokeStyle='#ffffff18'; cx.beginPath();               // ось 0 рад — для ориентира
         cx.moveTo(0,hs/2); cx.lineTo(W,hs/2); cx.stroke();
-      } else if(mode==='СПМ' && n.s.psd){
+      } else if(mode==='PSD' && n.s.psd){
         // спектральная плотность мощности — та же кривая, что и амплитуда, только своя нормировка
         // (Вт/Гц вместо просто амплитуды): шумовой пол не гуляет при смене размера окна БПФ,
         // амплитуда/мощность (в дБ) — гуляет, это и есть разница между ними по сути, а не по картинке
@@ -1066,7 +1066,7 @@ const HEAT_LUT=(()=>{
 function heatIdx(v){ return (clamp(v,0,1)*255)|0; }   // индекс в HEAT_LUT, без аллокаций
 function heat(v){ const k=heatIdx(v)*3; return [HEAT_LUT[k],HEAT_LUT[k+1],HEAT_LUT[k+2]]; } // на случай внешних вызовов
 
-def({ id:'const2', title:'Созвездие', cat:'Анализ', ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'dec',t:'num'},{n:'scale',t:'num'},{n:'fade',t:'num'}],
+def({ id:'const2', title:'Constellation', cat:'Analysis', ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'dec',t:'num'},{n:'scale',t:'num'},{n:'fade',t:'num'}],
   view:{h:150},
   params:[{n:'dec',t:'range',min:1,max:64,step:1,d:8},
           {n:'scale',t:'range',min:.2,max:10,step:.1,d:2},
@@ -1091,7 +1091,7 @@ def({ id:'const2', title:'Созвездие', cat:'Анализ', ins:[{n:'I',t
       cx.fillRect(x,y,1.5,1.5); } }});
 
 
-def({ id:'peak', title:'Пик частоты', cat:'Анализ',
+def({ id:'peak', title:'Frequency Peak', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'fc',t:'num'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},
        {n:'floor',t:'num'},{n:'top',t:'num'},{n:'thr',t:'num'},{n:'hold',t:'num'},
        {n:'track',t:'num'},{n:'tol',t:'num'}],
@@ -1149,8 +1149,8 @@ def({ id:'peak', title:'Пик частоты', cat:'Анализ',
     for(let i=0;i<n.hist.length;i++){ const x=i/200*W,y=H-n.hist[i]*H; i?cx.lineTo(x,y):cx.moveTo(x,y); }
     cx.stroke();
     n.el.querySelector('.readout').textContent =
-      (n.lock||n.f).toFixed(1)+' Гц · '+n.db.toFixed(0)+' dB'+
-      (n.win?' · окно '+n.win[0].toFixed(0)+'–'+n.win[1].toFixed(0):''); }});
+      (n.lock||n.f).toFixed(1)+' Hz · '+n.db.toFixed(0)+' dB'+
+      (n.win?' · window '+n.win[0].toFixed(0)+'–'+n.win[1].toFixed(0):''); }});
 
 
 const MORSE={'.-':'A','-...':'B','-.-.':'C','-..':'D','.':'E','..-.':'F','--.':'G','....':'H',
@@ -1160,14 +1160,14 @@ const MORSE={'.-':'A','-...':'B','-.-.':'C','-..':'D','.':'E','..-.':'F','--.':'
 '---..':'8','----.':'9','.-.-.-':'.','--..--':',','..--..':'?','-..-.':'/','-....-':'-',
 '-.--.':'(','-.--.-':')','---...':':','.-.-.':'+','.--.-.':'@','...-.-':'<SK>','-...-':'='};
 
-def({ id:'morseRx', title:'Морзе: приём', cat:'Декодеры',
+def({ id:'morseRx', title:'Morse: Receive', cat:'Decoders',
   ins:[{n:'level',t:'num'},{n:'sig',t:'sig'},{n:'thr',t:'num'},{n:'auto',t:'num'},{n:'minRun',t:'num'}],
   outs:[{n:'gate',t:'num'},{n:'wpm',t:'num'}],
   readout:true, tall:true, view:{h:44},
   params:[{n:'thr',t:'range',min:.05,max:.95,step:.01,d:.5},
           {n:'auto',t:'check',d:true},
           {n:'minRun',t:'range',min:0,max:120,step:1,d:20},
-          {n:'clr',t:'button',label:'Очистить текст',fn:n=>{n.text='';n.cur=[];n.pool=[];n.gaps=[];}}],
+          {n:'clr',t:'button',label:'Clear text',fn:n=>{n.text='';n.cur=[];n.pool=[];n.gaps=[];}}],
   init:n=>{ n.on=false; n.t=0; n.candT=0; n.pool=[]; n.gaps=[]; n.cur=[]; n.text=''; n.space=false;
             n.mn=0; n.mx=1; n.hist=[]; n.thrShow=.5; },
   process(n,I){
@@ -1200,7 +1200,7 @@ def({ id:'morseRx', title:'Морзе: приём', cat:'Декодеры',
     for(let i=0;i<hs.length;i++){ const x=i/240*W,y=H-clamp(hs[i][0],0,1)*H; i?cx.lineTo(x,y):cx.moveTo(x,y); }
     cx.stroke();
     const u=mEst(n.pool).unit, r=n.el.querySelector('.readout');
-    const txt=(n.text||'…')+`\n[точка ${u.toFixed(0)} мс · ${(1200/u).toFixed(1)} WPM]`;
+    const txt=(n.text||'…')+`\n[dot ${u.toFixed(0)} ms · ${(1200/u).toFixed(1)} WPM]`;
     if(r.textContent!==txt){ r.textContent=txt; r.scrollTop=r.scrollHeight; } }});
 
 
@@ -1238,7 +1238,7 @@ function mIdle(n){                                 // добить символ,
   if(!n.space && t>g*5 && n.text && !n.text.endsWith(' ')){ n.text+=' '; n.space=true; }
 }
 
-def({ id:'meter', title:'Уровень', cat:'Анализ', ins:[{n:'in',t:'sig'}], outs:[{n:'db',t:'num'}],
+def({ id:'meter', title:'Level', cat:'Analysis', ins:[{n:'in',t:'sig'}], outs:[{n:'db',t:'num'}],
   view:{h:26}, readout:true,
   init:n=>{n.db=-120;},
   process(n,I){ const r=I.in?rms(I.in):0;
@@ -1251,15 +1251,15 @@ def({ id:'meter', title:'Уровень', cat:'Анализ', ins:[{n:'in',t:'si
     n.el.querySelector('.readout').textContent=n.db.toFixed(1)+' dB'; }});
 
 
-def({ id:'numview', title:'Число', cat:'Анализ', ins:[{n:'in',t:'num'},{n:'digits',t:'num'}], readout:true,
+def({ id:'numview', title:'Number', cat:'Analysis', ins:[{n:'in',t:'num'},{n:'digits',t:'num'}], readout:true,
   params:[{n:'digits',t:'range',min:0,max:6,step:1,d:2}],
   process(n,I){ if(typeof I.digits==='number') setMod(n,'digits',I.digits); n.v=I.in; return {}; },
   draw(n){ n.el.querySelector('.readout').textContent =
     (typeof n.v==='number'? n.v.toFixed(n.p.digits) : '—'); }});
 
 
-def({ id:'imgview', title:'Кадр', cat:'Анализ', ins:[{n:'img',t:'img'}], view:{h:110}, resize:true,
-  params:[{n:'png',t:'button',label:'Сохранить снимок',fn:n=>{
+def({ id:'imgview', title:'Frame', cat:'Analysis', ins:[{n:'img',t:'img'}], view:{h:110}, resize:true,
+  params:[{n:'png',t:'button',label:'Save snapshot',fn:n=>{
     n.tmp && n.tmp.toBlob(b=>dl(b,'frame-'+Date.now()+'.png'),'image/png'); }}],
   process(n,I){ n.i=I.img; return {}; },
   draw(n,cv,cx){ if(!n.i) return;
@@ -1276,14 +1276,14 @@ def({ id:'imgview', title:'Кадр', cat:'Анализ', ins:[{n:'img',t:'img'}
     cx.drawImage(n.tmp,0,0,cv.width,cv.height); }});
 
 
-def({ id:'specstat', title:'Статистика спектра', cat:'Анализ', ins:[{n:'spec',t:'spec'},{n:'thr',t:'num'},{n:'tau',t:'num'},{n:'floor',t:'num'},{n:'log',t:'num'}],
+def({ id:'specstat', title:'Spectrum Statistics', cat:'Analysis', ins:[{n:'spec',t:'spec'},{n:'thr',t:'num'},{n:'tau',t:'num'},{n:'floor',t:'num'},{n:'log',t:'num'}],
   outs:[{n:'stat',t:'spec'}], view:{h:120}, pick:true, resize:true,
-  params:[{n:'mode',t:'select',opts:['среднее','максимум','занятость'],d:'занятость'},
+  params:[{n:'mode',t:'select',opts:['average','max','occupancy'],d:'occupancy'},
           {n:'thr',t:'range',min:-140,max:-20,step:1,d:-85},
           {n:'tau',t:'range',min:1,max:600,step:1,d:60},
           {n:'floor',t:'range',min:-140,max:-20,step:1,d:-110},
           {n:'log',t:'check',d:false},
-          {n:'rst',t:'button',label:'Сбросить накопление',fn:n=>{n.acc=null;n.frames=0;}}],
+          {n:'rst',t:'button',label:'Reset accumulation',fn:n=>{n.acc=null;n.frames=0;}}],
   init:n=>{n.acc=null;n.frames=0;n.pickT=null;n.fsel=0;},
   process(n,I){
     for(const k of ['thr','tau','floor']) if(typeof I[k]==='number') setMod(n,k,I[k]);
@@ -1294,8 +1294,8 @@ def({ id:'specstat', title:'Статистика спектра', cat:'Анал�
     const dt=BLOCK/Eng.sr, k=Math.exp(-dt/n.p.tau);   // постоянная времени в секундах
     for(let i=0;i<N;i++){
       const db=20*Math.log10(s.mag[i]+1e-12);
-      if(n.p.mode==='максимум') n.acc[i]=Math.max(n.acc[i]||n.p.floor, db);
-      else if(n.p.mode==='среднее') n.acc[i]=n.acc[i]*k+db*(1-k);
+      if(n.p.mode==='max') n.acc[i]=Math.max(n.acc[i]||n.p.floor, db);
+      else if(n.p.mode==='average') n.acc[i]=n.acc[i]*k+db*(1-k);
       else n.acc[i]=n.acc[i]*k+(db>n.p.thr?1:0)*(1-k); }
     n.frames++; n.s=s;
     n.stat=n.stat||{}; n.stat.mag=n.acc; n.stat.sr=s.sr; n.stat.size=s.size; n.stat.stat=true;
@@ -1304,7 +1304,7 @@ def({ id:'specstat', title:'Статистика спектра', cat:'Анал�
   draw(n,cv,cx){
     const W=cv.width,H=cv.height; cx.clearRect(0,0,W,H);
     if(!n.acc||!n.s) return;
-    const N=n.acc.length, occ=n.p.mode==='занятость';
+    const N=n.acc.length, occ=n.p.mode==='occupancy';
     cx.fillStyle='#4ec9b033'; cx.strokeStyle=getComputedStyle(document.body)
       .getPropertyValue(occ?'--t-sig':'--t-spec');
     cx.beginPath(); cx.moveTo(0,H);
@@ -1314,21 +1314,21 @@ def({ id:'specstat', title:'Статистика спектра', cat:'Анал�
       cx.lineTo(x,H-v*H); }
     cx.lineTo(W,H); cx.fill(); cx.stroke();
     cx.fillStyle='#6c7a80'; cx.font='9px monospace';
-    cx.fillText(n.p.mode+' · '+(n.frames*BLOCK/Eng.sr).toFixed(0)+' с',3,10);
+    cx.fillText(n.p.mode+' · '+(n.frames*BLOCK/Eng.sr).toFixed(0)+' s',3,10);
     if(n.pickT!=null){ const x=n.pickT*W;
       cx.strokeStyle='#e0b23c'; cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke();
-      const t=n.fsel.toFixed(0)+' Гц', tw=cx.measureText(t).width;
+      const t=n.fsel.toFixed(0)+' Hz', tw=cx.measureText(t).width;
       const tx=clamp(x+4,2,W-tw-4);
       cx.fillStyle='#0e1113cc'; cx.fillRect(tx-3,H-15,tw+6,13);
       cx.fillStyle='#e0b23c'; cx.fillText(t,tx,H-5); } }});
 
 
-def({ id:'goertzel', title:'Гёрцель', cat:'Анализ',
+def({ id:'goertzel', title:'Goertzel', cat:'Analysis',
   ins:[{n:'in',t:'sig'},{n:'f',t:'num'},{n:'ms',t:'num'},{n:'floor',t:'num'},{n:'top',t:'num'}],
   outs:[{n:'mag',t:'num'},{n:'db',t:'num'},{n:'env',t:'sig'},{n:'level',t:'sig'}],
   view:{h:40}, readout:true,
   params:[{n:'f',t:'range',min:20,max:()=>Eng.sr/2,step:1,d:1000,log:true},
-          {n:'ms',t:'range',min:2,max:200,step:1,d:20,label:'окно, мс'},
+          {n:'ms',t:'range',min:2,max:200,step:1,d:20,label:'window, ms'},
           {n:'floor',t:'range',min:-140,max:-20,step:1,d:-90},
           {n:'top',t:'range',min:-60,max:20,step:1,d:0}],
   init:n=>{n.s1=0;n.s2=0;n.k=0;n.mag=0;n.db=-120;n.hist=[];},
@@ -1357,13 +1357,13 @@ def({ id:'goertzel', title:'Гёрцель', cat:'Анализ',
     n.el.querySelector('.readout').textContent=n.db.toFixed(1)+' dB'; }});
 
 
-def({ id:'autocorr', title:'Автокоррелятор', cat:'Анализ', ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'norm',t:'num'}],
+def({ id:'autocorr', title:'Autocorrelator', cat:'Analysis', ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'norm',t:'num'}],
   outs:[{n:'f',t:'num'},{n:'lagMs',t:'num'},{n:'conf',t:'num'}],
   view:{h:120}, resize:true, readout:true,
-  params:[{n:'win',t:'select',opts:['0.05','0.1','0.25','0.5','1','2','4'],d:'0.1',label:'окно, с'},
+  params:[{n:'win',t:'select',opts:['0.05','0.1','0.25','0.5','1','2','4'],d:'0.1',label:'window, s'},
           {n:'fmin',t:'range',min:10,max:5000,step:1,d:50,log:true},
           {n:'fmax',t:'range',min:50,max:()=>Eng.sr/2,step:1,d:5000,log:true},
-          {n:'norm',t:'check',d:true,label:'нормировать'}],
+          {n:'norm',t:'check',d:true,label:'normalize'}],
   init:n=>{n.ring=null;n.w=0;n.filled=0;n.r=null;n.f=0;n.conf=0;n.lag=0;n.cnt=0;},
   process(n,I){
     if(typeof I.fmin==='number') setMod(n,'fmin',I.fmin);
@@ -1389,21 +1389,21 @@ def({ id:'autocorr', title:'Автокоррелятор', cat:'Анализ', i
       const x=clamp(t,0,1)*W;
       cx.strokeStyle='#e0b23c'; cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke(); }
     n.el.querySelector('.readout').textContent =
-      (n.f? n.f.toFixed(2)+' Гц · '+(n.lag/Eng.sr*1000).toFixed(2)+' мс':'—')+
+      (n.f? n.f.toFixed(2)+' Hz · '+(n.lag/Eng.sr*1000).toFixed(2)+' ms':'—')+
       ' ('+(n.conf*100).toFixed(0)+'%)'; }});
 
 
-def({ id:'scanner', title:'Авто-сканер частот', cat:'Анализ',
+def({ id:'scanner', title:'Auto Frequency Scanner', cat:'Analysis',
   ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'step',t:'num'},
        {n:'threshold',t:'num'},{n:'hold',t:'num'},{n:'speed',t:'num'}],
   outs:[{n:'freq',t:'num'},{n:'level',t:'num'},{n:'active',t:'num'}],
   readout:true, tall:true,
   params:[{n:'fmin',t:'range',min:100,max:()=>Eng.sr/2,step:100,d:1000,log:true},
           {n:'fmax',t:'range',min:200,max:()=>Eng.sr/2,step:100,d:3000,log:true},
-          {n:'step',t:'range',min:50,max:1000,step:50,d:100,label:'шаг, Гц'},
-          {n:'threshold',t:'range',min:0.001,max:0.1,step:0.001,d:0.01,label:'чувствительность'},
-          {n:'hold',t:'range',min:0.1,max:5,step:0.1,d:1,label:'удержание, с'},
-          {n:'speed',t:'range',min:1,max:100,step:1,d:20,label:'скорость сканирования'}],
+          {n:'step',t:'range',min:50,max:1000,step:50,d:100,label:'step, Hz'},
+          {n:'threshold',t:'range',min:0.001,max:0.1,step:0.001,d:0.01,label:'sensitivity'},
+          {n:'hold',t:'range',min:0.1,max:5,step:0.1,d:1,label:'hold time, s'},
+          {n:'speed',t:'range',min:1,max:100,step:1,d:20,label:'scan speed'}],
   init:n=>{ 
     n.freq = 0;
     n.hits = [];
@@ -1486,14 +1486,14 @@ def({ id:'scanner', title:'Авто-сканер частот', cat:'Анали�
     }
     
     // Формируем текст для вывода
-    let text = `🔍 Сканирование: ${Math.round(n.currentFreq)} Гц\n`;
-    text += `📊 Уровень: ${(n.signalLevel*1000).toFixed(0)} мВ\n`;
-    text += n.scanning ? '⏳ Поиск...\n' : '🔒 Удержание\n';
-    text += '\n📡 Найдено сигналов:\n';
+    let text = `🔍 Scanning: ${Math.round(n.currentFreq)} Hz\n`;
+    text += `📊 Level: ${(n.signalLevel*1000).toFixed(0)} mV\n`;
+    text += n.scanning ? '⏳ Searching...\n' : '🔒 Holding\n';
+    text += '\n📡 Signals found:\n';
     const now = Date.now();
     const recent = n.hits.filter(h => now - h.time < 60000);
     recent.slice(-10).forEach(h => {
-      text += `  ${h.freq} Гц  (${(h.level*1000).toFixed(0)} мВ)\n`;
+      text += `  ${h.freq} Hz  (${(h.level*1000).toFixed(0)} mV)\n`;
     });
     n.text = text;
     
@@ -1505,21 +1505,21 @@ def({ id:'scanner', title:'Авто-сканер частот', cat:'Анали�
   },
   draw(n){
     const r = n.el.querySelector('.readout');
-    if(r.textContent !== n.text) r.textContent = n.text || 'сканирование...';
+    if(r.textContent !== n.text) r.textContent = n.text || 'scanning...';
   }
 });
 
 
-def({ id:'signalID', title:'Распознавание сигнала', cat:'Анализ',
+def({ id:'signalID', title:'Signal Recognition', cat:'Analysis',
   ins:[{n:'in',t:'sig'},{n:'sensitivity',t:'num'}],
   outs:[{n:'type',t:'txt'},{n:'prob',t:'num'}],
   readout:true,
-  params:[{n:'sensitivity',t:'range',min:0.1,max:2,step:0.1,d:1,label:'чувствительность'}],
+  params:[{n:'sensitivity',t:'range',min:0.1,max:2,step:0.1,d:1,label:'sensitivity'}],
   init:n=>{ 
     n.history=[];
     n.lastType='';
     n.prob=0;
-    n.text='ожидание...';
+    n.text='waiting...';
   },
   process(n,I){
     if(typeof I.sensitivity==='number') setMod(n,'sensitivity',I.sensitivity);
@@ -1592,50 +1592,50 @@ def({ id:'signalID', title:'Распознавание сигнала', cat:'А�
       
       // 3. Классификация
       const s = n.p.sensitivity;
-      let type = 'неизвестно';
+      let type = 'unknown';
       let prob = 0;
       
-      // CW: узкая полоса, много гармоник, высокий пик/шум
+      // CW: narrow band, many harmonics, high peak/noise ratio
       if(peakAmp > mean*10 && bandwidth < 200 && peakFreq < 3000){
         if(harmonics > 3 && peakFreq > 300 && peakFreq < 2000){
-          type = '📡 CW (морзе)';
+          type = '📡 CW (Morse)';
           prob = 0.9;
         } else {
-          type = '🔊 Тон';
+          type = '🔊 Tone';
           prob = 0.8;
         }
       }
-      // RTTY/FSK: два пика
+      // RTTY/FSK: two peaks
       else if(peakCount > 1 && peakCount < 4 && bandwidth > 100 && bandwidth < 500){
         type = '📟 RTTY / FSK';
         prob = 0.8;
       }
-      // PSK: спектр с двумя боковыми
+      // PSK: spectrum with two sidebands
       else if(peakCount > 2 && peakCount < 6 && variance > 1000){
         type = '📶 PSK / QPSK';
         prob = 0.75;
       }
-      // Голос: широкий спектр, плавный спад
+      // Voice: wide spectrum, smooth rolloff
       else if(energy > 0.1 && bandwidth > 1000 && bandwidth < 4000 && variance < 10000){
-        type = '🎤 Голос / музыка';
+        type = '🎤 Voice / music';
         prob = 0.85;
       }
-      // Шум: плоский спектр
+      // Noise: flat spectrum
       else if(energy < 0.01 && variance < 100){
-        type = '❄️ Шум / тишина';
+        type = '❄️ Noise / silence';
         prob = 0.9;
       }
-      // SSTV: периодические пики
+      // SSTV: periodic peaks
       else if(peakCount > 5 && peakCount < 15 && variance > 10000 && bandwidth > 1000){
-        type = '🖼️ SSTV / факс';
+        type = '🖼️ SSTV / fax';
         prob = 0.7;
       }
-      // Модулированный сигнал (AM/FM)
+      // Modulated signal (AM/FM)
       else if(bandwidth > 3000 && bandwidth < 8000 && peakAmp > mean*5){
         type = '📻 AM / FM';
         prob = 0.75;
       }
-      // OFDM (DRM/DAB): множество пиков
+      // OFDM (DRM/DAB): many peaks
       else if(peakCount > 10 && bandwidth > 5000){
         type = '📶 OFDM (DRM/DAB)';
         prob = 0.8;
@@ -1650,7 +1650,7 @@ def({ id:'signalID', title:'Распознавание сигнала', cat:'А�
       for(const h of n.history){
         types[h.type] = (types[h.type] || 0) + h.prob;
       }
-      let bestType = 'неизвестно';
+      let bestType = 'unknown';
       let bestProb = 0;
       for(const [t,p] of Object.entries(types)){
         if(p > bestProb){ bestProb = p; bestType = t; }
@@ -1665,18 +1665,18 @@ def({ id:'signalID', title:'Распознавание сигнала', cat:'А�
   },
   draw(n){
     const r = n.el.querySelector('.readout');
-    if(r.textContent !== n.text) r.textContent = n.text || 'ожидание...';
+    if(r.textContent !== n.text) r.textContent = n.text || 'waiting...';
   }
 });
 
 
-def({ id:'xcorr', title:'Взаимная корреляция', cat:'Анализ',
+def({ id:'xcorr', title:'Cross-Correlation', cat:'Analysis',
   ins:[{n:'A',t:'sig'},{n:'B',t:'sig'},{n:'maxMs',t:'num'},{n:'smooth',t:'num'}],
   outs:[{n:'lagMs',t:'num'},{n:'lagN',t:'num'},{n:'peak',t:'num'}],
   view:{h:110}, resize:true, readout:true,
-  params:[{n:'maxMs',t:'range',min:.1,max:200,step:.1,d:10,label:'диапазон, мс'},
-          {n:'win',t:'select',opts:['0.05','0.1','0.25','0.5'],d:'0.1',label:'окно, с'},
-          {n:'smooth',t:'range',min:0,max:.99,step:.01,d:.7,label:'усреднение'}],
+  params:[{n:'maxMs',t:'range',min:.1,max:200,step:.1,d:10,label:'range, ms'},
+          {n:'win',t:'select',opts:['0.05','0.1','0.25','0.5'],d:'0.1',label:'window, s'},
+          {n:'smooth',t:'range',min:0,max:.99,step:.01,d:.7,label:'averaging'}],
   init:n=>{n.a=null;n.b=null;n.w=0;n.r=null;n.lag=0;n.peak=0;n.cnt=0;},
   process(n,I){
     if(typeof I.maxMs==='number') setMod(n,'maxMs',I.maxMs);
@@ -1700,7 +1700,7 @@ def({ id:'xcorr', title:'Взаимная корреляция', cat:'Анали
     const M=n.M||1, x=(n.lag+M)/(2*M)*W;
     cx.strokeStyle='#e0b23c'; cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke();
     n.el.querySelector('.readout').textContent =
-      (n.lag/Eng.sr*1000).toFixed(3)+' мс · '+n.lag.toFixed(1)+' отсч · r='+n.peak.toFixed(2); }});
+      (n.lag/Eng.sr*1000).toFixed(3)+' ms · '+n.lag.toFixed(1)+' samp · r='+n.peak.toFixed(2); }});
 
 
 function xcCompute(n){
@@ -1733,13 +1733,13 @@ function xcCompute(n){
   n.peak=best;
 }
 
-def({ id:'tf', title:'АЧХ / когерентность', cat:'Анализ',
+def({ id:'tf', title:'Frequency Response / Coherence', cat:'Analysis',
   ins:[{n:'ref',t:'sig'},{n:'meas',t:'sig'},{n:'avg',t:'num'}],
   outs:[{n:'H',t:'spec'},{n:'coh',t:'spec'},{n:'delayMs',t:'num'}],
   readout:true,
   params:[{n:'size',t:'select',opts:['512','1024','2048','4096','8192'],d:'2048'},
-          {n:'avg',t:'range',min:.5,max:.999,step:.001,d:.95,label:'усреднение'},
-          {n:'rst',t:'button',label:'Сбросить накопление',fn:n=>{n.N=0;}}],
+          {n:'avg',t:'range',min:.5,max:.999,step:.001,d:.95,label:'averaging'},
+          {n:'rst',t:'button',label:'Reset accumulation',fn:n=>{n.N=0;}}],
   init:n=>{n.N=0;},
   process(n,I){
     if(typeof I.avg==='number') setMod(n,'avg',I.avg);
@@ -1758,17 +1758,17 @@ def({ id:'tf', title:'АЧХ / когерентность', cat:'Анализ',
     n.sp2=n.sp2||{}; n.sp2.mag=n.C; n.sp2.sr=Eng.sr; n.sp2.size=N; n.sp2.freqs=null;
     return {H:n.sp1, coh:n.sp2, delayMs:n.dl||0}; },
   draw(n){ n.el.querySelector('.readout').textContent =
-    'усреднено кадров: '+(n.frames||0)+' · средняя когерентность '+(n.cavg||0).toFixed(2); }});
+    'frames averaged: '+(n.frames||0)+' · average coherence '+(n.cavg||0).toFixed(2); }});
 
 
-def({ id:'harm', title:'Гармоники и КНИ', cat:'Анализ',
+def({ id:'harm', title:'Harmonics & THD', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'f0',t:'num'},{n:'auto',t:'num'},{n:'nh',t:'num'},{n:'tol',t:'num'}],
   outs:[{n:'thd',t:'num'},{n:'f0',t:'num'},{n:'h2',t:'num'},{n:'h3',t:'num'}],
   readout:true, tall:true,
   params:[{n:'f0',t:'range',min:20,max:5000,step:.1,d:1000,log:true},
-          {n:'auto',t:'check',d:true,label:'искать основную'},
-          {n:'nh',t:'range',min:2,max:16,step:1,d:8,label:'сколько гармоник'},
-          {n:'tol',t:'range',min:2,max:200,step:1,d:20,label:'окно, Гц'}],
+          {n:'auto',t:'check',d:true,label:'find fundamental'},
+          {n:'nh',t:'range',min:2,max:16,step:1,d:8,label:'how many harmonics'},
+          {n:'tol',t:'range',min:2,max:200,step:1,d:20,label:'window, Hz'}],
   init:n=>{n.text='';n.thd=0;},
   process(n,I){
     if(typeof I.auto==='number') setMod(n,'auto',I.auto>=0.5);
@@ -1794,21 +1794,21 @@ def({ id:'harm', title:'Гармоники и КНИ', cat:'Анализ',
     n.thd=a1>0? Math.sqrt(sq)/a1*100 : 0;
     n.f0v=f0; n.h2=hs[0]||0; n.h3=hs[1]||0;
     const db=v=>20*Math.log10(v+1e-12);
-    n.text='f0 = '+f0.toFixed(1)+' Гц   КНИ = '+n.thd.toFixed(2)+' %\n'+
-      '  1  '+(f0).toFixed(0).padStart(6)+' Гц  '+db(a1).toFixed(1).padStart(7)+' dB   0.0 dBc\n'+
-      hs.map((v,i)=>('  '+(i+2)).slice(-3)+' '+(f0*(i+2)).toFixed(0).padStart(6)+' Гц  '+
+    n.text='f0 = '+f0.toFixed(1)+' Hz   THD = '+n.thd.toFixed(2)+' %\n'+
+      '  1  '+(f0).toFixed(0).padStart(6)+' Hz  '+db(a1).toFixed(1).padStart(7)+' dB   0.0 dBc\n'+
+      hs.map((v,i)=>('  '+(i+2)).slice(-3)+' '+(f0*(i+2)).toFixed(0).padStart(6)+' Hz  '+
         db(v).toFixed(1).padStart(7)+' dB  '+(db(v)-db(a1)).toFixed(1).padStart(6)+' dBc').join('\n');
     return {thd:n.thd, f0:f0, h2:n.h2, h3:n.h3}; },
   draw(n){ const r=n.el.querySelector('.readout');
     if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
 
-def({ id:'stats', title:'Статистика уровня', cat:'Анализ', ins:[{n:'in',t:'sig'},{n:'tau',t:'num'}],
+def({ id:'stats', title:'Level Statistics', cat:'Analysis', ins:[{n:'in',t:'sig'},{n:'tau',t:'num'}],
   outs:[{n:'rms',t:'num'},{n:'peak',t:'num'},{n:'crest',t:'num'},{n:'dbfs',t:'num'}],
   view:{h:100}, resize:true, readout:true, tall:true,
-  params:[{n:'tau',t:'range',min:.05,max:10,step:.05,d:1,label:'постоянная, с'},
+  params:[{n:'tau',t:'range',min:.05,max:10,step:.05,d:1,label:'time constant, s'},
           {n:'bins',t:'select',opts:['32','64','128','256'],d:'64'},
-          {n:'rst',t:'button',label:'Сбросить',fn:n=>{n.h&&n.h.fill(0);n.pk=0;}}],
+          {n:'rst',t:'button',label:'Reset',fn:n=>{n.h&&n.h.fill(0);n.pk=0;}}],
   init:n=>{n.h=null;n.ms=0;n.pk=0;n.text='';},
   process(n,I){
     if(typeof I.tau==='number') setMod(n,'tau',I.tau);
@@ -1826,8 +1826,8 @@ def({ id:'stats', title:'Статистика уровня', cat:'Анализ',
     n.ms=n.ms*a+ms*(1-a);
     n.pk=Math.max(pk,n.pk*0.999);
     const rms=Math.sqrt(n.ms), crest=rms>0? n.pk/rms : 0;
-    n.text='RMS '+(20*Math.log10(rms+1e-12)).toFixed(1)+' dBFS   пик '+
-      (20*Math.log10(n.pk+1e-12)).toFixed(1)+' dBFS\nкрест-фактор '+crest.toFixed(2)+
+    n.text='RMS '+(20*Math.log10(rms+1e-12)).toFixed(1)+' dBFS   peak '+
+      (20*Math.log10(n.pk+1e-12)).toFixed(1)+' dBFS\ncrest factor '+crest.toFixed(2)+
       ' ('+(20*Math.log10(crest+1e-12)).toFixed(1)+' dB)';
     return {rms, peak:n.pk, crest, dbfs:20*Math.log10(rms+1e-12)}; },
   draw(n,cv,cx){
@@ -1842,13 +1842,13 @@ def({ id:'stats', title:'Статистика уровня', cat:'Анализ',
     if(r.textContent!==n.text) r.textContent=n.text; }});
 
 
-def({ id:'eye', title:'Глазковая диаграмма', cat:'Анализ',
+def({ id:'eye', title:'Eye Diagram', cat:'Analysis',
   ins:[{n:'in',t:'sig'},{n:'clk',t:'sig'},{n:'spans',t:'num'},{n:'gain',t:'num'},{n:'fade',t:'num'},{n:'baud',t:'num'}],
   view:{h:180}, resize:true,
-  params:[{n:'spans',t:'range',min:1,max:4,step:1,d:2,label:'символов в окне'},
+  params:[{n:'spans',t:'range',min:1,max:4,step:1,d:2,label:'symbols in window'},
           {n:'gain',t:'range',min:.1,max:10,step:.1,d:1},
-          {n:'fade',t:'range',min:.01,max:.5,step:.01,d:.06,label:'затухание'},
-          {n:'baud',t:'range',min:1,max:4800,step:.01,d:1200,label:'бод (без clk)'}],
+          {n:'fade',t:'range',min:.01,max:.5,step:.01,d:.06,label:'decay'},
+          {n:'baud',t:'range',min:1,max:4800,step:.01,d:1200,label:'baud (no clk)'}],
   init:n=>{n.ring=new Float32Array(65536);n.w=0;n.traces=[];n.prev=0;n.acc=0;},
   process(n,I){
     for(const k of ['spans','gain','fade','baud']) if(typeof I[k]==='number') setMod(n,k,I[k]);
@@ -1881,7 +1881,7 @@ def({ id:'eye', title:'Глазковая диаграмма', cat:'Анализ
     cx.globalAlpha=1; }});
 
 
-def({ id:'freqmeter', title:'Частотомер', cat:'Анализ', ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'digits',t:'num'}],
+def({ id:'freqmeter', title:'Frequency Meter', cat:'Analysis', ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'digits',t:'num'}],
   outs:[{n:'f',t:'num'},{n:'conf',t:'num'}], readout:true, view:{h:30},
   params:[{n:'fmin',t:'range',min:10,max:5000,step:1,d:100,log:true},
           {n:'fmax',t:'range',min:50,max:()=>Eng.sr/2,step:1,d:5000,log:true},
@@ -1901,31 +1901,31 @@ def({ id:'freqmeter', title:'Частотомер', cat:'Анализ', ins:[{n:
     cx.fillStyle=getComputedStyle(document.body).getPropertyValue('--t-sig');
     cx.fillRect(0,0,W*clamp(n.conf,0,1),H);
     n.el.querySelector('.readout').textContent =
-      (n.f? n.f.toFixed(n.p.digits)+' Гц' : '—')+'  ('+(n.conf*100).toFixed(0)+'%)'; }});
+      (n.f? n.f.toFixed(n.p.digits)+' Hz' : '—')+'  ('+(n.conf*100).toFixed(0)+'%)'; }});
 
 
-def({ id:'blkview', title:'Просмотр блока', cat:'Анализ',
+def({ id:'blkview', title:'Block Viewer', cat:'Analysis',
   ins:[{n:'blk',t:'blk'},{n:'wrap',t:'num'}], outs:[{n:'text',t:'txt'},{n:'len',t:'num'}],
   readout:true, tall:true,
-  params:[{n:'fmt',t:'select',opts:['hex','биты','мягкие','текст'],d:'hex'},
-          {n:'wrap',t:'range',min:8,max:128,step:8,d:64,label:'символов в строке'}],
+  params:[{n:'fmt',t:'select',opts:['hex','bits','soft','text'],d:'hex'},
+          {n:'wrap',t:'range',min:8,max:128,step:8,d:64,label:'characters per line'}],
   init:n=>{n.bid=-1;n.text='';},
   process(n,I){
     if(typeof I.wrap==='number') setMod(n,'wrap',I.wrap);
     const b=I.blk; if(!b||b.id===n.bid) return {text:n.text,len:b?b.n:0};
     n.bid=b.id;
     let str='';
-    if(n.p.fmt==='мягкие') str=[...b.d].slice(0,600).map(v=>v.toFixed(2)).join(' ');
+    if(n.p.fmt==='soft') str=[...b.d].slice(0,600).map(v=>v.toFixed(2)).join(' ');
     else { let bits='';
       for(let i=0;i<b.n;i++) bits+= b.d[i]>0?'1':'0';
-      if(n.p.fmt==='биты') str=bits;
+      if(n.p.fmt==='bits') str=bits;
       else if(n.p.fmt==='hex'){ for(let i=0;i<bits.length;i+=4)
         str+=parseInt(bits.substr(i,4).padEnd(4,'0'),2).toString(16); }
       else { for(let i=0;i+8<=bits.length;i+=8){ const c=parseInt(bits.substr(i,8),2);
         str+= (c>=32&&c<127)? String.fromCharCode(c):'·'; } } }
     const w=n.p.wrap, lines=[];
     for(let i=0;i<str.length;i+=w) lines.push(str.substr(i,w));
-    n.text='блок #'+b.id+' · '+b.n+'\n'+lines.join('\n');
+    n.text='block #'+b.id+' · '+b.n+'\n'+lines.join('\n');
     return {text:n.text,len:b.n}; },
   draw(n){ const r=n.el.querySelector('.readout');
     if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
@@ -1975,10 +1975,10 @@ function loudHop(n){
   }
 }
 
-def({ id:'loud', title:'Громкость (LUFS-подобная)', cat:'Анализ', ins:[{n:'in',t:'sig'}],
+def({ id:'loud', title:'Loudness (LUFS-like)', cat:'Analysis', ins:[{n:'in',t:'sig'}],
   outs:[{n:'m',t:'num'},{n:'s',t:'num'},{n:'i',t:'num'}],
   readout:true, view:{h:60},
-  params:[{n:'rst',t:'button',label:'Сбросить интегральную',fn:n=>{n.gated=[];}}],
+  params:[{n:'rst',t:'button',label:'Reset integrated',fn:n=>{n.gated=[];}}],
   init:n=>{
     n.k1={x1:0,x2:0,y1:0,y2:0}; n.k2={x1:0,x2:0,y1:0,y2:0};
     n.sr=0; n.hopSum=0; n.hopN=0;
@@ -2011,14 +2011,14 @@ def({ id:'loud', title:'Громкость (LUFS-подобная)', cat:'Ана
       'M '+n.mL.toFixed(1)+' · S '+n.sL.toFixed(1)+' · I '+n.iL.toFixed(1)+' LUFS'; }});
 
 
-def({ id:'spectral', title:'Спектральные дескрипторы', cat:'Анализ',
+def({ id:'spectral', title:'Spectral Descriptors', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'rolloff',t:'num'}],
   outs:[{n:'centroid',t:'num'},{n:'spread',t:'num'},{n:'flux',t:'num'},{n:'rolloff',t:'num'}],
   readout:true,
-  params:[{n:'fmin',t:'range',min:20,max:5000,step:1,d:20,log:true,label:'нижняя граница, Гц'},
-          {n:'fmax',t:'range',min:500,max:()=>Eng.sr/2,step:1,d:8000,log:true,label:'верхняя граница, Гц'},
-          {n:'rolloff',t:'range',min:.5,max:.99,step:.01,d:.85,label:'порог rolloff, доля энергии'},
-          {n:'smooth',t:'range',min:0,max:.99,step:.01,d:.3,label:'сглаживание'}],
+  params:[{n:'fmin',t:'range',min:20,max:5000,step:1,d:20,log:true,label:'lower bound, Hz'},
+          {n:'fmax',t:'range',min:500,max:()=>Eng.sr/2,step:1,d:8000,log:true,label:'upper bound, Hz'},
+          {n:'rolloff',t:'range',min:.5,max:.99,step:.01,d:.85,label:'rolloff threshold, energy fraction'},
+          {n:'smooth',t:'range',min:0,max:.99,step:.01,d:.3,label:'smoothing'}],
   init:n=>{n.prevMag=null; n.centroid=0; n.spread=0; n.flux=0; n.rolloff=0;},
   process(n,I){
     for(const k of ['fmin','fmax','rolloff']) if(typeof I[k]==='number') setMod(n,k,I[k]);
@@ -2047,5 +2047,5 @@ def({ id:'spectral', title:'Спектральные дескрипторы', ca
     n.rolloff=n.rolloff*a+rf*(1-a);
     return {centroid:n.centroid, spread:n.spread, flux:n.flux, rolloff:n.rolloff}; },
   draw(n){ n.el.querySelector('.readout').textContent =
-    'центр '+n.centroid.toFixed(0)+' Гц · разброс '+n.spread.toFixed(0)+' Гц · flux '+
-    n.flux.toFixed(3)+' · rolloff '+n.rolloff.toFixed(0)+' Гц'; }});
+    'centroid '+n.centroid.toFixed(0)+' Hz · spread '+n.spread.toFixed(0)+' Hz · flux '+
+    n.flux.toFixed(3)+' · rolloff '+n.rolloff.toFixed(0)+' Hz'; }});

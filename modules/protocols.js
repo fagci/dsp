@@ -7,35 +7,35 @@ function mseq(n,poly,len){                          // м-последовате
   return out;
 }
 const PATTERNS={
-  'Баркер 7'    :'1110010',
-  'Баркер 11'   :'11100010010',
-  'Баркер 13'   :'1111100110101',
-  'М-послед. 31':null, 'М-послед. 63':null, 'М-послед. 127':null,
-  'HFDL: преамбула A':null, 'HFDL: M1 (скорость)':null, 'свой':null
+  'Barker 7'    :'1110010',
+  'Barker 11'   :'11100010010',
+  'Barker 13'   :'1111100110101',
+  'PN sequence 31':null, 'PN sequence 63':null, 'PN sequence 127':null,
+  'HFDL: preamble A':null, 'HFDL: M1 (rate)':null, 'custom':null
 };
 function patBits(n){
   const k=n.p.pat;
-  if(k==='М-послед. 31')  return mseq(5,0b10111,31);
-  if(k==='М-послед. 63')  return mseq(6,0b100001,63);
-  if(k==='М-послед. 127') return mseq(7,0b1000001,127);
-  if(k==='HFDL: преамбула A') return hfdlA();
-  if(k==='HFDL: M1 (скорость)') return hfdlM1(clamp(n.p.shift|0,0,7));
-  const src=(k==='свой'? n.p.bits : PATTERNS[k])||'';
+  if(k==='PN sequence 31')  return mseq(5,0b10111,31);
+  if(k==='PN sequence 63')  return mseq(6,0b100001,63);
+  if(k==='PN sequence 127') return mseq(7,0b1000001,127);
+  if(k==='HFDL: preamble A') return hfdlA();
+  if(k==='HFDL: M1 (rate)') return hfdlM1(clamp(n.p.shift|0,0,7));
+  const src=(k==='custom'? n.p.bits : PATTERNS[k])||'';
   const out=[];
   for(const c of String(src)) if(c==='1'||c==='+') out.push(1); else if(c==='0'||c==='-') out.push(-1);
   return out.length? out : [1];
 }
 
-def({ id:'corr', title:'Коррелятор образца', cat:'Протоколы',
+def({ id:'corr', title:'Pattern Correlator', cat:'Protocols',
   ins:[{n:'in',t:'sig'},{n:'baud',t:'num'},{n:'thr',t:'num'},{n:'abs',t:'num'},{n:'dead',t:'num'},{n:'shift',t:'num'}], outs:[{n:'corr',t:'sig'},{n:'sync',t:'sig'},{n:'peak',t:'num'}],
   view:{h:80}, resize:true, readout:true,
-  params:[{n:'pat',t:'select',opts:Object.keys(PATTERNS),d:'Баркер 13'},
-          {n:'bits',t:'text',d:'11100010010',label:'свой образец'},
+  params:[{n:'pat',t:'select',opts:Object.keys(PATTERNS),d:'Barker 13'},
+          {n:'bits',t:'text',d:'11100010010',label:'custom pattern'},
           {n:'baud',t:'range',min:1,max:4800,step:.01,d:1200,log:true},
-          {n:'thr',t:'range',min:.1,max:1,step:.01,d:.8,label:'порог'},
-          {n:'abs',t:'check',d:true,label:'без учёта знака'},
-          {n:'dead',t:'range',min:0,max:1000,step:1,d:0,label:'мёртвое время, мс'},
-          {n:'shift',t:'range',min:0,max:7,step:1,d:0,label:'вариант M1 (HFDL)'}],
+          {n:'thr',t:'range',min:.1,max:1,step:.01,d:.8,label:'threshold'},
+          {n:'abs',t:'check',d:true,label:'ignore sign'},
+          {n:'dead',t:'range',min:0,max:1000,step:1,d:0,label:'dead time, ms'},
+          {n:'shift',t:'range',min:0,max:7,step:1,d:0,label:'M1 variant (HFDL)'}],
   init:n=>{n.key='';n.hist=[];n.peak=0;n.cnt=0;n.m1=0;n.m2=0;n.dead=0;},
   process(n,I){
     for(const k of ['baud','thr','dead','shift']) if(typeof I[k]==='number') setMod(n,k,I[k]);
@@ -82,8 +82,8 @@ def({ id:'corr', title:'Коррелятор образца', cat:'Проток�
       i?cx.lineTo(x,y):cx.moveTo(x,y); }
     cx.stroke();
     n.el.querySelector('.readout').textContent =
-      'пик '+n.peak.toFixed(2)+' · длина '+(n.P||0)+' · совпадений '+n.cnt+
-      (n.p.pat==='HFDL: M1 (скорость)'? '\n'+HFDL_RATES[clamp(n.p.shift|0,0,7)] : ''); }});
+      'peak '+n.peak.toFixed(2)+' · length '+(n.P||0)+' · hits '+n.cnt+
+      (n.p.pat==='HFDL: M1 (rate)'? '\n'+HFDL_RATES[clamp(n.p.shift|0,0,7)] : ''); }});
 
 
 /* ---------- чирп-модем (chirp spread spectrum, идея как у LoRa) ----------
@@ -92,14 +92,14 @@ def({ id:'corr', title:'Коррелятор образца', cat:'Проток�
    сдвиг ПО ВРЕМЕНИ пика, а не в потерю сигнала) и к переотражениям (у ЛЧМ узкая
    автокорреляция — лучи с разной задержкой видны как отдельные пики, а не каша). */
 
-def({ id:'chirpTx', title:'Чирп-модем: передатчик', cat:'Протоколы',
+def({ id:'chirpTx', title:'Chirp Modem: Transmitter', cat:'Protocols',
   ins:[{n:'sym',t:'num'}], outs:[{n:'out',t:'sig'}],
-  params:[{n:'sf',t:'select',opts:['4','5','6','7','8','9','10'],d:'6',label:'SF (бит/символ)'},
-          {n:'bw',t:'range',min:200,max:8000,step:10,d:2000,log:true,label:'полоса, Гц'},
-          {n:'f0',t:'range',min:100,max:()=>Eng.sr/2-8000,step:10,d:1000,log:true,label:'база, Гц'},
+  params:[{n:'sf',t:'select',opts:['4','5','6','7','8','9','10'],d:'6',label:'SF (bits/symbol)'},
+          {n:'bw',t:'range',min:200,max:8000,step:10,d:2000,log:true,label:'bandwidth, Hz'},
+          {n:'f0',t:'range',min:100,max:()=>Eng.sr/2-8000,step:10,d:1000,log:true,label:'base, Hz'},
           {n:'amp',t:'range',min:0,max:1,step:.01,d:.5},
-          {n:'preN',t:'range',min:0,max:32,step:1,d:8,label:'преамбула, символов (0 — выкл.)'},
-          {n:'dataN',t:'range',min:1,max:64,step:1,d:16,label:'кадр данных, символов'}],
+          {n:'preN',t:'range',min:0,max:32,step:1,d:8,label:'preamble, symbols (0 = off)'},
+          {n:'dataN',t:'range',min:1,max:64,step:1,d:16,label:'data frame, symbols'}],
   // Кадр: [preN символов "0" подряд] → [1 период тишины — граница кадра] → [dataN символов данных] → повтор.
   // Приёмник ловит преамбулу по её ПЕРИОДИЧНОСТИ (стабильный пик БПФ на любом сдвиге фазы —
   // так корректно измерить МОЖНО, даже не зная точного начала символа), а границу кадра — по
@@ -132,15 +132,15 @@ def({ id:'chirpTx', title:'Чирп-модем: передатчик', cat:'Пр
       } }
     return {out:o}; }});
 
-def({ id:'chirpRx', title:'Чирп-модем: приёмник (де-чирп + БПФ)', cat:'Декодеры', readout:true,
+def({ id:'chirpRx', title:'Chirp Modem: Receiver (de-chirp + FFT)', cat:'Decoders', readout:true,
   ins:[{n:'in',t:'sig'}], outs:[{n:'sym',t:'num'},{n:'level',t:'num'},{n:'locked',t:'num'}],
-  params:[{n:'sf',t:'select',opts:['4','5','6','7','8','9','10'],d:'6',label:'SF (бит/символ)'},
-          {n:'bw',t:'range',min:200,max:8000,step:10,d:2000,log:true,label:'полоса, Гц'},
-          {n:'f0',t:'range',min:100,max:()=>Eng.sr/2-8000,step:10,d:1000,log:true,label:'база, Гц'},
-          {n:'preN',t:'range',min:0,max:32,step:1,d:8,label:'преамбула, символов (0 — выкл., см. resync)'},
-          {n:'shift',t:'range',min:-50,max:50,step:.5,d:0,label:'ручная поправка синхр., мс (если преамбула выкл.)'},
-          {n:'squelch',t:'range',min:0,max:1,step:.01,d:.85,label:'порог уверенности (держать предыдущий символ ниже него)'},
-          {n:'resync',t:'button',label:'Синхронизировать вручную сейчас',fn:n=>{
+  params:[{n:'sf',t:'select',opts:['4','5','6','7','8','9','10'],d:'6',label:'SF (bits/symbol)'},
+          {n:'bw',t:'range',min:200,max:8000,step:10,d:2000,log:true,label:'bandwidth, Hz'},
+          {n:'f0',t:'range',min:100,max:()=>Eng.sr/2-8000,step:10,d:1000,log:true,label:'base, Hz'},
+          {n:'preN',t:'range',min:0,max:32,step:1,d:8,label:'preamble, symbols (0 = off, see resync)'},
+          {n:'shift',t:'range',min:-50,max:50,step:.5,d:0,label:'manual sync offset, ms (if preamble is off)'},
+          {n:'squelch',t:'range',min:0,max:1,step:.01,d:.85,label:'confidence threshold (hold previous symbol below it)'},
+          {n:'resync',t:'button',label:'Sync manually now',fn:n=>{
             const M=1<<clamp(n.p.sf|0,4,10), T=M/n.p.bw;
             let t=-(n.p.shift/1000)%T; if(t<0) t+=T;
             n.ph=0; n.gi=0; n.w2=0; n.tPos=t; n.mode='locked'; n.gapSeen=false;
@@ -242,8 +242,8 @@ def({ id:'chirpRx', title:'Чирп-модем: приёмник (де-чирп 
     return {sym:n.sym, level:n.lvl, locked:n.mode==='locked'?1:0}; },
   draw(n){
     n.el.querySelector('.readout').textContent =
-      (n.mode==='locked'? 'символ '+n.sym+' / '+((1<<clamp(n.p.sf|0,4,10))-1)+' · уверенность '+(n.lvl*100).toFixed(0)+'%'
-                         : 'поиск преамбулы… ('+(n.gapSeen||'жду стабильный пик')+')'); }});
+      (n.mode==='locked'? 'symbol '+n.sym+' / '+((1<<clamp(n.p.sf|0,4,10))-1)+' · confidence '+(n.lvl*100).toFixed(0)+'%'
+                         : 'searching preamble… ('+(n.gapSeen||'waiting for a stable peak')+')'); }});
 
 
 /* ---------- кадры и блочные коды ---------- */
@@ -287,11 +287,11 @@ function bytesToBlk(bytes,id){
   return {d:o,n:o.length,id};
 }
 
-def({ id:'crcAdd', title:'CRC: добавить', cat:'Протоколы',
+def({ id:'crcAdd', title:'CRC: Add', cat:'Protocols',
   ins:[{n:'blk',t:'blk'},{n:'msb',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'text',t:'txt'}],
   readout:true,
   params:[{n:'kind',t:'select',opts:Object.keys(CRCS),d:'CRC-16/X.25 (HDLC)'},
-          {n:'msb',t:'check',d:true,label:'старший бит первым'}],
+          {n:'msb',t:'check',d:true,label:'MSB first'}],
   init:n=>{n.bid=-1;n.text='';},
   process(n,I){
     if(typeof I.msb==='number') setMod(n,'msb',I.msb>=0.5);
@@ -302,16 +302,16 @@ def({ id:'crcAdd', title:'CRC: добавить', cat:'Протоколы',
     const c=crcCalc(bytes,spec), ext=bytes.slice();
     for(let i=W-1;i>=0;i--) ext.push((c>>>(8*i))&0xff);
     n.blkOut=bytesToBlk(ext,b.id);
-    n.text='добавлен '+n.p.kind+' = '+c.toString(16);
+    n.text='added '+n.p.kind+' = '+c.toString(16);
     return {blk:n.blkOut,text:n.text}; },
   draw(n){ n.el.querySelector('.readout').textContent=n.text||'…'; }});
 
 
-def({ id:'crcCheck', title:'CRC: проверить', cat:'Декодеры',
+def({ id:'crcCheck', title:'CRC: Check', cat:'Decoders',
   ins:[{n:'blk',t:'blk'},{n:'msb',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'ok',t:'num'},{n:'text',t:'txt'}],
   readout:true,
   params:[{n:'kind',t:'select',opts:Object.keys(CRCS),d:'CRC-16/X.25 (HDLC)'},
-          {n:'msb',t:'check',d:true,label:'старший бит первым'}],
+          {n:'msb',t:'check',d:true,label:'MSB first'}],
   init:n=>{n.bid=-1;n.text='';n.ok=0;},
   process(n,I){
     if(typeof I.msb==='number') setMod(n,'msb',I.msb>=0.5);
@@ -323,8 +323,8 @@ def({ id:'crcCheck', title:'CRC: проверить', cat:'Декодеры',
     let g=0; for(const x of got) g=((g<<8)|x)>>>0;
     const want=crcCalc(body,spec);
     n.ok=(g>>>0)===(want>>>0)?1:0;
-    n.text=(n.ok?'✓ CRC совпал ':'✗ CRC не сходится ')+
-      'принят '+g.toString(16)+' ожидался '+want.toString(16)+' · байт '+bytes.length;
+    n.text=(n.ok?'✓ CRC matches ':'✗ CRC mismatch ')+
+      'got '+g.toString(16)+' expected '+want.toString(16)+' · bytes '+bytes.length;
     n.blkOut=bytesToBlk(body,b.id);
     return {blk:n.blkOut,ok:n.ok,text:n.text}; },
   draw(n){ n.el.querySelector('.readout').textContent=n.text||'…'; }});
@@ -333,11 +333,11 @@ def({ id:'crcCheck', title:'CRC: проверить', cat:'Декодеры',
 // Самосинхронизирующийся скремблер: TX прогоняет через регистр СВОЙ выход,
 // RX — ПРИНЯТЫЙ бит; отсюда самосинхронизация (регистр сам восстанавливается
 // из входного потока, не требуя отдельной привязки фазы к передатчику).
-def({ id:'scrambleTx', title:'Скремблер: передача', cat:'Протоколы',
+def({ id:'scrambleTx', title:'Scrambler: Transmit', cat:'Protocols',
   ins:[{n:'in',t:'sig'},{n:'len',t:'num'},{n:'tap',t:'num'},{n:'baud',t:'num'}], outs:[{n:'out',t:'sig'}],
-  params:[{n:'additive',t:'check',d:false,label:'аддитивный (не самосинхр.)'},
-          {n:'len',t:'range',min:5,max:23,step:1,d:17,label:'длина регистра'},
-          {n:'tap',t:'range',min:1,max:22,step:1,d:12,label:'второй отвод'},
+  params:[{n:'additive',t:'check',d:false,label:'additive (not self-sync.)'},
+          {n:'len',t:'range',min:5,max:23,step:1,d:17,label:'register length'},
+          {n:'tap',t:'range',min:1,max:22,step:1,d:12,label:'second tap'},
           {n:'baud',t:'range',min:1,max:9600,step:.01,d:1200,log:true}],
   init:n=>{n.reg=1;n.ph=0;n.cur=1;},
   process(n,I){
@@ -357,11 +357,11 @@ def({ id:'scrambleTx', title:'Скремблер: передача', cat:'Про
     return {out:o}; }});
 
 
-def({ id:'scrambleRx', title:'Скремблер: приём (дескремблер)', cat:'Декодеры',
+def({ id:'scrambleRx', title:'Scrambler: Receive (descrambler)', cat:'Decoders',
   ins:[{n:'in',t:'sig'},{n:'len',t:'num'},{n:'tap',t:'num'},{n:'baud',t:'num'}], outs:[{n:'out',t:'sig'}],
-  params:[{n:'additive',t:'check',d:false,label:'аддитивный (не самосинхр.)'},
-          {n:'len',t:'range',min:5,max:23,step:1,d:17,label:'длина регистра'},
-          {n:'tap',t:'range',min:1,max:22,step:1,d:12,label:'второй отвод'},
+  params:[{n:'additive',t:'check',d:false,label:'additive (not self-sync.)'},
+          {n:'len',t:'range',min:5,max:23,step:1,d:17,label:'register length'},
+          {n:'tap',t:'range',min:1,max:22,step:1,d:12,label:'second tap'},
           {n:'baud',t:'range',min:1,max:9600,step:.01,d:1200,log:true}],
   init:n=>{n.reg=1;n.ph=0;n.cur=1;},
   process(n,I){
@@ -386,7 +386,7 @@ def({ id:'scrambleRx', title:'Скремблер: приём (дескрембл
 // нужен, когда 'in' — это уже готовый биполярный поток (например, звук с дискриминатора FM),
 // а не квадратурный сигнал (для него — 'gardner').
 
-def({ id:'nrzclk', title:'Такт NRZ (edge-lock)', cat:'Протоколы',
+def({ id:'nrzclk', title:'NRZ Clock (edge-lock)', cat:'Protocols',
   ins:[{n:'in',t:'sig'},{n:'baud',t:'num'},{n:'invert',t:'num'}],
   outs:[{n:'clk',t:'sig'},{n:'bit',t:'sig'}],
   params:[{n:'baud',t:'range',min:1,max:9600,step:.01,d:1200,log:true},
@@ -414,14 +414,14 @@ def({ id:'nrzclk', title:'Такт NRZ (edge-lock)', cat:'Протоколы',
 // на котором реально совпало слово — кадр съезжает на случайное число бит от раза к разу.
 // Здесь совпадение и сбор кадра — в одном побитовом цикле, без этого зазора.
 
-def({ id:'syncFrame', title:'Синхрослово → кадр', cat:'Протоколы',
+def({ id:'syncFrame', title:'Sync Word → Frame', cat:'Protocols',
   ins:[{n:'in',t:'sig'},{n:'clk',t:'sig'}],
   outs:[{n:'blk',t:'blk'},{n:'sync',t:'num'},{n:'errs',t:'num'}],
   readout:true, tall:true,
-  params:[{n:'word',t:'text',d:'85CFAB45',label:'синхрослово (hex)'},
-          {n:'tol',t:'range',min:0,max:8,step:1,d:0,label:'допуск ошибок'},
-          {n:'len',t:'range',min:8,max:8192,step:1,d:64,label:'длина кадра, бит'},
-          {n:'fmt',t:'select',opts:['hex','текст'],d:'текст'}],
+  params:[{n:'word',t:'text',d:'85CFAB45',label:'sync word (hex)'},
+          {n:'tol',t:'range',min:0,max:8,step:1,d:0,label:'error tolerance'},
+          {n:'len',t:'range',min:8,max:8192,step:1,d:64,label:'frame length, bits'},
+          {n:'fmt',t:'select',opts:['hex','text'],d:'text'}],
   init:n=>{n.reg=0n; n.state=0; n.k=0; n.buf=null; n.text=''; n.bid=0; n.err=0;},
   process(n,I){
     const hex=String(n.p.word).replace(/[^0-9a-fA-F]/g,'')||'85CFAB45';
@@ -453,19 +453,19 @@ function sfText(n){
   if(n.p.fmt==='hex'){ for(let i=0;i<bits.length;i+=4) str+=parseInt(bits.substr(i,4).padEnd(4,'0'),2).toString(16); }
   else { for(let i=0;i+8<=bits.length;i+=8){ const c=parseInt(bits.substr(i,8),2);
     str+=(c>=32&&c<127)?String.fromCharCode(c):'·'; } }
-  n.text='кадр #'+n.frame.id+'\n'+str+'\n'+n.text;
+  n.text='frame #'+n.frame.id+'\n'+str+'\n'+n.text;
   if(n.text.length>4000) n.text=n.text.slice(0,3000);
 }
 
 
-def({ id:'syncword', title:'Поиск синхрослова', cat:'Протоколы',
+def({ id:'syncword', title:'Sync Word Search', cat:'Protocols',
   ins:[{n:'in',t:'sig'},{n:'clk',t:'sig'},{n:'tol',t:'num'},{n:'baud',t:'num'},{n:'inv',t:'num'}],
   outs:[{n:'sync',t:'num'},{n:'errs',t:'num'},{n:'bits',t:'sig'}],
   readout:true,
-  params:[{n:'word',t:'text',d:'7E',label:'слово (hex)'},
-          {n:'tol',t:'range',min:0,max:8,step:1,d:0,label:'допуск ошибок'},
+  params:[{n:'word',t:'text',d:'7E',label:'word (hex)'},
+          {n:'tol',t:'range',min:0,max:8,step:1,d:0,label:'error tolerance'},
           {n:'baud',t:'range',min:1,max:9600,step:.01,d:1200,log:true},
-          {n:'inv',t:'check',d:false,label:'инверсия'}],
+          {n:'inv',t:'check',d:false,label:'invert'}],
   init:n=>{n.reg=0n;n.ph=0;n.prevC=0;n.cnt=0;n.pulse=0;n.err=0;},
   process(n,I){
     if(typeof I.tol==='number') setMod(n,'tol',I.tol);
@@ -493,7 +493,7 @@ def({ id:'syncword', title:'Поиск синхрослова', cat:'Прото�
     n.pulse=pulse;
     return {sync:pulse, errs:n.err, bits:ob}; },
   draw(n){ n.el.querySelector('.readout').textContent =
-    'найдено '+n.cnt+' · ошибок в последнем '+n.err; }});
+    'found '+n.cnt+' · errors in last '+n.err; }});
 
 
 function syncTxQueue(n){
@@ -501,17 +501,17 @@ function syncTxQueue(n){
   const bits=[]; for(const ch of hex){ const v=parseInt(ch,16); for(let k=3;k>=0;k--) bits.push((v>>k)&1); }
   const payload=[...n.lastBlk.d].map(v=>v>0?1:0);
   n.q=[...bits,...payload];
-  n.text='кадр: слово '+bits.length+' бит + данные '+payload.length+' бит';
+  n.text='frame: word '+bits.length+' bits + data '+payload.length+' bits';
 }
 // Пара к syncword/syncFrame: там ищут синхрослово на приёме, здесь его вставляют
 // перед кадром на передаче — раньше вставлять было нечем.
-def({ id:'syncTx', title:'Синхрослово: вставка перед кадром', cat:'Протоколы', readout:true,
+def({ id:'syncTx', title:'Sync Word: Insert Before Frame', cat:'Protocols', readout:true,
   ins:[{n:'blk',t:'blk'},{n:'go',t:'num'},{n:'baud',t:'num'},{n:'loop',t:'num'}], outs:[{n:'bit',t:'sig'},{n:'busy',t:'num'}],
-  params:[{n:'word',t:'text',d:'85CFAB45',label:'синхрослово (hex)'},
+  params:[{n:'word',t:'text',d:'85CFAB45',label:'sync word (hex)'},
           {n:'baud',t:'range',min:1,max:9600,step:.01,d:1200,log:true},
           {n:'loop',t:'check',d:false},
-          {n:'send',t:'button',label:'Передать',fn:n=>{n.trig=true;}}],
-  init:n=>{n.q=[];n.cur=0;n.left=0;n.bid=-1;n.prevGo=0;n.trig=false;n.text='ожидание';},
+          {n:'send',t:'button',label:'Send',fn:n=>{n.trig=true;}}],
+  init:n=>{n.q=[];n.cur=0;n.left=0;n.bid=-1;n.prevGo=0;n.trig=false;n.text='waiting';},
   process(n,I){
     if(typeof I.baud==='number') setMod(n,'baud',I.baud);
     if(typeof I.loop==='number') setMod(n,'loop',I.loop>=0.5);
@@ -527,18 +527,18 @@ def({ id:'syncTx', title:'Синхрослово: вставка перед ка
         else n.left=spb; }
       n.left--; o[i]=n.cur?1:-1; }
     return {bit:o, busy:n.q.length?1:0}; },
-  draw(n){ n.el.querySelector('.readout').textContent=n.text||'ожидание'; }});
+  draw(n){ n.el.querySelector('.readout').textContent=n.text||'waiting'; }});
 
 
-def({ id:'ax25Rx', title:'Приём AX.25/HDLC', cat:'Декодеры',
+def({ id:'ax25Rx', title:'Receive AX.25/HDLC', cat:'Decoders',
   ins:[{n:'in',t:'sig'},{n:'clk',t:'sig'},{n:'baud',t:'num'},{n:'nrzi',t:'num'},{n:'inv',t:'num'},{n:'ax25',t:'num'}],
   outs:[{n:'blk',t:'blk'},{n:'text',t:'txt'},{n:'frames',t:'num'},{n:'crcOk',t:'num'}],
   readout:true, tall:true,
   params:[{n:'baud',t:'range',min:50,max:9600,step:.01,d:1200,log:true},
           {n:'nrzi',t:'check',d:true,label:'NRZI'},
-          {n:'inv',t:'check',d:false,label:'инверсия'},
-          {n:'ax25',t:'check',d:true,label:'разбирать AX.25'},
-          {n:'clr',t:'button',label:'Очистить',fn:n=>{n.text='';n.ok=0;n.bad=0;}}],
+          {n:'inv',t:'check',d:false,label:'invert'},
+          {n:'ax25',t:'check',d:true,label:'parse AX.25'},
+          {n:'clr',t:'button',label:'Clear',fn:n=>{n.text='';n.ok=0;n.bad=0;}}],
   init:n=>{ n.ph=0; n.prevLvl=0; n.lastS=1; n.prevC=0; n.sr=0; n.bitc=0; n.ones=0;
             n.bytes=[]; n.cur=0; n.nb=0; n.inFrame=false; n.text=''; n.ok=0; n.bad=0; n.bid=0; },
   process(n,I){
@@ -572,7 +572,7 @@ def({ id:'ax25Rx', title:'Приём AX.25/HDLC', cat:'Декодеры',
     }
     return {blk:n.frame||null, text:n.text, frames:n.ok, crcOk:n.lastOk?1:0}; },
   draw(n){ const r=n.el.querySelector('.readout');
-    const t='кадров '+n.ok+' / брак '+n.bad+'\n'+n.text;
+    const t='frames '+n.ok+' / bad '+n.bad+'\n'+n.text;
     if(r.textContent!==t){ r.textContent=t; r.scrollTop=r.scrollHeight; } }});
 
 
@@ -591,7 +591,7 @@ function hdlcFrame(n){
   if(n.text.length>4000) n.text=n.text.slice(-3000);
 }
 function ax25(b){                                   // адреса по 7 байт, сдвиг влево на 1
-  if(b.length<15) return '(короткий кадр)';
+  if(b.length<15) return '(short frame)';
   const addr=i=>{
     let s='';
     for(let k=0;k<6;k++){ const c=(b[i+k]>>1)&0x7f; if(c!==32) s+=String.fromCharCode(c); }
@@ -605,16 +605,16 @@ function ax25(b){                                   // адреса по 7 ба�
   return src+'>'+dst+(path.length?','+path.join(','):'')+':'+info;
 }
 
-def({ id:'frame', title:'Кадр', cat:'Протоколы',
+def({ id:'frame', title:'Frame', cat:'Protocols',
   ins:[{n:'in',t:'sig'},{n:'clk',t:'sig'},{n:'trig',t:'num'},{n:'len',t:'num'},{n:'skip',t:'num'},{n:'auto',t:'num'}],
   outs:[{n:'blk',t:'blk'},{n:'ready',t:'num'},{n:'text',t:'txt'}],
   readout:true, tall:true,
-  params:[{n:'len',t:'range',min:8,max:8192,step:1,d:174,label:'длина кадра'},
-          {n:'src',t:'select',opts:['по clk','каждый отсчёт'],d:'по clk'},
-          {n:'skip',t:'range',min:0,max:1024,step:1,d:0,label:'пропустить символов'},
-          {n:'fmt',t:'select',opts:['биты','hex','мягкие'],d:'hex'},
-          {n:'auto',t:'check',d:true,label:'ждать триггер снова'},
-          {n:'go',t:'button',label:'Собрать кадр сейчас',fn:n=>{n.state=1;n.k=0;n.sk=n.p.skip;}}],
+  params:[{n:'len',t:'range',min:8,max:8192,step:1,d:174,label:'frame length'},
+          {n:'src',t:'select',opts:['on clk','every sample'],d:'on clk'},
+          {n:'skip',t:'range',min:0,max:1024,step:1,d:0,label:'skip symbols'},
+          {n:'fmt',t:'select',opts:['bits','hex','soft'],d:'hex'},
+          {n:'auto',t:'check',d:true,label:'wait for trigger again'},
+          {n:'go',t:'button',label:'Capture frame now',fn:n=>{n.state=1;n.k=0;n.sk=n.p.skip;}}],
   init:n=>{n.state=0;n.k=0;n.sk=0;n.buf=null;n.prevT=0;n.prevC=0;n.blkOut=null;n.text='';n.bid=0;},
   process(n,I){
     if(typeof I.len==='number') setMod(n,'len',I.len);
@@ -628,7 +628,7 @@ def({ id:'frame', title:'Кадр', cat:'Протоколы',
     if(n.state===1){
       for(let i=0;i<BLOCK;i++){
         let tick=true;
-        if(n.p.src==='по clk'){ const c=I.clk?I.clk[i]:0; tick=(c>.5&&n.prevC<=.5); n.prevC=c; }
+        if(n.p.src==='on clk'){ const c=I.clk?I.clk[i]:0; tick=(c>.5&&n.prevC<=.5); n.prevC=c; }
         if(!tick) continue;
         if(n.sk>0){ n.sk--; continue; }
         n.buf[n.k++]=I.in?I.in[i]:0;
@@ -638,21 +638,21 @@ def({ id:'frame', title:'Кадр', cat:'Протоколы',
     }
     return {blk:n.frame||null, ready:n.state===0&&n.frame?1:0, text:n.text}; },
   draw(n){ const r=n.el.querySelector('.readout');
-    const t=(n.state===1? 'сбор '+n.k+'/'+n.p.len+'\n':'')+n.text;
+    const t=(n.state===1? 'capturing '+n.k+'/'+n.p.len+'\n':'')+n.text;
     if(r.textContent!==t) r.textContent=t||'…'; }});
 
 
 function frText(n){
   const d=n.frame.d, f=n.p.fmt;
-  if(f==='мягкие') n.text=[...d].slice(0,400).map(v=>v.toFixed(2)).join(' ');
+  if(f==='soft') n.text=[...d].slice(0,400).map(v=>v.toFixed(2)).join(' ');
   else {
     let bits='';
     for(let i=0;i<d.length;i++) bits+= d[i]>0?'1':'0';
-    if(f==='биты') n.text=bits;
+    if(f==='bits') n.text=bits;
     else { let h='';
       for(let i=0;i<bits.length;i+=4) h+=parseInt(bits.substr(i,4).padEnd(4,'0'),2).toString(16);
       n.text=h; } }
-  n.text='кадр #'+n.frame.id+' ('+n.frame.n+')\n'+n.text;
+  n.text='frame #'+n.frame.id+' ('+n.frame.n+')\n'+n.text;
 }
 
 function interleavePerm(d,R,C,forward){
@@ -663,7 +663,7 @@ function interleavePerm(d,R,C,forward){
   return o;
 }
 
-def({ id:'interleaveTx', title:'Перемежитель: передача', cat:'Протоколы',
+def({ id:'interleaveTx', title:'Interleaver: Transmit', cat:'Protocols',
   ins:[{n:'blk',t:'blk'},{n:'rows',t:'num'},{n:'cols',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'text',t:'txt'}],
   readout:true,
   params:[{n:'rows',t:'range',min:1,max:256,step:1,d:9},
@@ -674,12 +674,12 @@ def({ id:'interleaveTx', title:'Перемежитель: передача', cat
     const b=I.blk; if(!b||b.id===n.bid) return {blk:n.blkOut||null,text:n.txt};
     n.bid=b.id;
     n.blkOut={d:interleavePerm(b.d,n.p.rows,n.p.cols,true),n:b.n,id:b.id};
-    n.txt='блок '+b.n+' → '+n.p.rows+'×'+n.p.cols;
+    n.txt='block '+b.n+' → '+n.p.rows+'×'+n.p.cols;
     return {blk:n.blkOut,text:n.txt}; },
   draw(n){ n.el.querySelector('.readout').textContent=n.txt||'…'; }});
 
 
-def({ id:'interleaveRx', title:'Перемежитель: приём (восстановление)', cat:'Декодеры',
+def({ id:'interleaveRx', title:'Interleaver: Receive (deinterleave)', cat:'Decoders',
   ins:[{n:'blk',t:'blk'},{n:'rows',t:'num'},{n:'cols',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'text',t:'txt'}],
   readout:true,
   params:[{n:'rows',t:'range',min:1,max:256,step:1,d:9},
@@ -690,17 +690,17 @@ def({ id:'interleaveRx', title:'Перемежитель: приём (восст
     const b=I.blk; if(!b||b.id===n.bid) return {blk:n.blkOut||null,text:n.txt};
     n.bid=b.id;
     n.blkOut={d:interleavePerm(b.d,n.p.rows,n.p.cols,false),n:b.n,id:b.id};
-    n.txt='блок '+b.n+' ← '+n.p.rows+'×'+n.p.cols;
+    n.txt='block '+b.n+' ← '+n.p.rows+'×'+n.p.cols;
     return {blk:n.blkOut,text:n.txt}; },
   draw(n){ n.el.querySelector('.readout').textContent=n.txt||'…'; }});
 
 
-def({ id:'convEnc', title:'Свёрточный кодер', cat:'Протоколы',
+def({ id:'convEnc', title:'Convolutional Encoder', cat:'Protocols',
   ins:[{n:'blk',t:'blk'},{n:'K',t:'num'},{n:'tail',t:'num'}], outs:[{n:'blk',t:'blk'}],
-  params:[{n:'K',t:'range',min:3,max:9,step:1,d:7,label:'длина кодового ограничения'},
-          {n:'g1',t:'text',d:'171',label:'полином 1 (8с)'},
-          {n:'g2',t:'text',d:'133',label:'полином 2 (8с)'},
-          {n:'tail',t:'check',d:true,label:'хвост нулей'}],
+  params:[{n:'K',t:'range',min:3,max:9,step:1,d:7,label:'constraint length'},
+          {n:'g1',t:'text',d:'171',label:'polynomial 1 (octal)'},
+          {n:'g2',t:'text',d:'133',label:'polynomial 2 (octal)'},
+          {n:'tail',t:'check',d:true,label:'zero tail'}],
   init:n=>{n.bid=-1;},
   process(n,I){
     if(typeof I.K==='number') setMod(n,'K',I.K);
@@ -720,14 +720,14 @@ def({ id:'convEnc', title:'Свёрточный кодер', cat:'Протоко
 
 function par(v){ let p=0; while(v){ p^=v&1; v>>=1; } return p; }
 
-def({ id:'viterbiDec', title:'Витерби (декодер свёрточного кода)', cat:'Протоколы',
+def({ id:'viterbiDec', title:'Viterbi (convolutional decoder)', cat:'Protocols',
   ins:[{n:'blk',t:'blk'},{n:'K',t:'num'},{n:'tail',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'text',t:'txt'},{n:'metric',t:'num'}],
   readout:true, tall:true,
-  params:[{n:'K',t:'range',min:3,max:9,step:1,d:7,label:'длина кодового ограничения'},
-          {n:'g1',t:'text',d:'171',label:'полином 1 (8с)'},
-          {n:'g2',t:'text',d:'133',label:'полином 2 (8с)'},
-          {n:'tail',t:'check',d:true,label:'хвост нулей'},
-          {n:'fmt',t:'select',opts:['hex','биты','текст'],d:'hex'}],
+  params:[{n:'K',t:'range',min:3,max:9,step:1,d:7,label:'constraint length'},
+          {n:'g1',t:'text',d:'171',label:'polynomial 1 (octal)'},
+          {n:'g2',t:'text',d:'133',label:'polynomial 2 (octal)'},
+          {n:'tail',t:'check',d:true,label:'zero tail'},
+          {n:'fmt',t:'select',opts:['hex','bits','text'],d:'hex'}],
   init:n=>{n.bid=-1;n.text='';},
   process(n,I){
     if(typeof I.K==='number') setMod(n,'K',I.K);
@@ -771,7 +771,7 @@ def({ id:'viterbiDec', title:'Витерби (декодер свёрточно�
     n.blkOut={d:o,n:L,id:b.id};
     let str='';
     for(let i=0;i<L;i++) str+=bits[i];
-    if(n.p.fmt==='биты') n.text=str;
+    if(n.p.fmt==='bits') n.text=str;
     else if(n.p.fmt==='hex'){ let h='';
       for(let i=0;i<str.length;i+=4) h+=parseInt(str.substr(i,4).padEnd(4,'0'),2).toString(16);
       n.text=h; }
@@ -779,7 +779,7 @@ def({ id:'viterbiDec', title:'Витерби (декодер свёрточно�
       for(let i=0;i+8<=str.length;i+=8){ const c=parseInt(str.substr(i,8),2);
         s2+= (c>=32&&c<127)? String.fromCharCode(c) : '·'; }
       n.text=s2; }
-    n.text='метрика '+n.m.toFixed(1)+' · бит '+L+'\n'+n.text;
+    n.text='metric '+n.m.toFixed(1)+' · bits '+L+'\n'+n.text;
     return {blk:n.blkOut,text:n.text,metric:n.m}; },
   draw(n){ const r=n.el.querySelector('.readout');
     if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
@@ -791,24 +791,24 @@ const ITA2_L=['','E','\n','A',' ','S','I','U','\r','D','R','J','N','F','C','K',
 const ITA2_F=['','3','\n','-',' ',"'",'8','7','\r','$','4','',',','!',':','(',
   '5','"',')','2','#','6','0','1','9','?','&','','.','/',';',''];
 function ita2(code,figs){ return (figs?ITA2_F:ITA2_L)[code]||''; }
-function ita2enc(ch){                              // символ → [нужен ли регистр цифр, код]
+function ita2enc(ch){                              // char → [needs figures shift, code]
   let i=ITA2_L.indexOf(ch); if(i>0&&i!==27&&i!==31) return [false,i];
   i=ITA2_F.indexOf(ch); if(i>0&&i!==27&&i!==31) return [true,i];
   return null;
 }
 
-def({ id:'serialRx', title:'Приём знаков (async serial)', cat:'Декодеры', ins:[{n:'soft',t:'sig'},{n:'baud',t:'num'},{n:'invert',t:'num'}],
+def({ id:'serialRx', title:'Receive Chars (async serial)', cat:'Decoders', ins:[{n:'soft',t:'sig'},{n:'baud',t:'num'},{n:'invert',t:'num'}],
   outs:[{n:'busy',t:'num'}], readout:true, tall:true,
   params:[{n:'baud',t:'range',min:10,max:2400,step:.01,d:45.45,log:true},
-          {n:'code',t:'select',opts:['Бодо (RTTY)','ASCII 8N1','ASCII 7N1'],d:'Бодо (RTTY)'},
+          {n:'code',t:'select',opts:['Baudot (RTTY)','ASCII 8N1','ASCII 7N1'],d:'Baudot (RTTY)'},
           {n:'invert',t:'check',d:false},
-          {n:'clr',t:'button',label:'Очистить',fn:n=>{n.text='';}}],
+          {n:'clr',t:'button',label:'Clear',fn:n=>{n.text='';}}],
   init:n=>{n.st=0;n.prev=true;n.pos=0;n.bi=0;n.acc=0;n.sum=0;n.figs=false;n.text='';},
   process(n,I){
     if(typeof I.baud==='number') setMod(n,'baud',I.baud);
     if(typeof I.invert==='number') setMod(n,'invert',I.invert>=0.5);
     const spb=Eng.sr/Math.max(1,n.p.baud);
-    const bits=n.p.code==='Бодо (RTTY)'?5:(n.p.code==='ASCII 7N1'?7:8);
+    const bits=n.p.code==='Baudot (RTTY)'?5:(n.p.code==='ASCII 7N1'?7:8);
     for(let i=0;i<BLOCK;i++){
       let v=I.soft?I.soft[i]:0; if(n.p.invert) v=-v;
       const mark=v>0;
@@ -844,14 +844,14 @@ function uartEmit(n,code,bits){
   n.text+=ch; if(n.text.length>4000) n.text=n.text.slice(-3000);
 }
 
-def({ id:'serialTx', title:'Передача знаков (async serial)', cat:'Протоколы', outs:[{n:'bit',t:'sig'}],
+def({ id:'serialTx', title:'Transmit Chars (async serial)', cat:'Protocols', outs:[{n:'bit',t:'sig'}],
   ins:[{n:'go',t:'num'},{n:'text',t:'txt'},{n:'baud',t:'num'},{n:'loop',t:'num'}], readout:true,
   params:[{n:'text',t:'text',d:'RYRY DE TEST'},
           {n:'baud',t:'range',min:10,max:2400,step:.01,d:45.45,log:true},
-          {n:'code',t:'select',opts:['Бодо (RTTY)','ASCII 8N1'],d:'Бодо (RTTY)'},
+          {n:'code',t:'select',opts:['Baudot (RTTY)','ASCII 8N1'],d:'Baudot (RTTY)'},
           {n:'stop',t:'select',opts:['1','1.5','2'],d:'1.5'},
           {n:'loop',t:'check',d:false},
-          {n:'send',t:'button',label:'Передать',fn:n=>uartQueue(n)}],
+          {n:'send',t:'button',label:'Send',fn:n=>uartQueue(n)}],
   init:n=>{n.q=[];n.left=0;n.cur=1;n.prevGo=0;},
   process(n,I){
     if(typeof I.baud==='number') setMod(n,'baud',I.baud);
@@ -867,7 +867,7 @@ def({ id:'serialTx', title:'Передача знаков (async serial)', cat:'
       n.left--; o[i]=n.cur; }
     return {bit:o}; },
   draw(n){ n.el.querySelector('.readout').textContent =
-    n.q.length? 'передача… '+n.q.length : 'ожидание'; }});
+    n.q.length? 'sending… '+n.q.length : 'waiting'; }});
 
 
 /* ---------- авто-декодер aFSK ---------- */
@@ -908,16 +908,16 @@ function afskBaudEst(n,dr){                            // NSDF-автокорр�
   if(best>0.3){ n.baud=n.baud*.7+(dr/bl)*.3; n.lock=n.lock*.8+best*.2; } else n.lock*=.8;
 }
 
-def({ id:'afskRx', title:'aFSK: авто-приём (auto)', cat:'Декодеры', readout:true, tall:true, view:{h:44},
+def({ id:'afskRx', title:'aFSK: Auto-Receive (auto)', cat:'Decoders', readout:true, tall:true, view:{h:44},
   ins:[{n:'in',t:'sig'}],
   outs:[{n:'soft',t:'sig'},{n:'fMark',t:'num'},{n:'fSpace',t:'num'},{n:'baud',t:'num'},{n:'lock',t:'num'}],
   params:[{n:'fmin',t:'range',min:100,max:5000,step:1,d:300,log:true},
           {n:'fmax',t:'range',min:200,max:10000,step:1,d:3000,log:true},
           {n:'baudMin',t:'range',min:5,max:600,step:1,d:20,log:true},
           {n:'baudMax',t:'range',min:5,max:1200,step:1,d:300,log:true},
-          {n:'code',t:'select',opts:['Бодо (RTTY)','ASCII 8N1','ASCII 7N1'],d:'ASCII 8N1'},
+          {n:'code',t:'select',opts:['Baudot (RTTY)','ASCII 8N1','ASCII 7N1'],d:'ASCII 8N1'},
           {n:'invert',t:'check',d:false},
-          {n:'clr',t:'button',label:'Очистить',fn:n=>{n.text='';}}],
+          {n:'clr',t:'button',label:'Clear',fn:n=>{n.text='';}}],
   init:n=>{
     n.ring=new Float32Array(8192); n.rw=0; n.rn=0; n.scanCd=0;
     n.fMark=1000; n.fSpace=800; n.m=[0,0]; n.s=[0,0]; n.p1=0; n.p2=0;
@@ -949,8 +949,8 @@ def({ id:'afskRx', title:'aFSK: авто-приём (auto)', cat:'Декодер
     if(++n.scanCd>=Math.round(.2*Eng.sr/BLOCK)){ n.scanCd=0; afskScan(n); }
     if(++n.baudCd>=Math.round(.4*Eng.sr/BLOCK)){ n.baudCd=0; afskBaudEst(n,Eng.sr/DECIM); }
     const spb=Eng.sr/Math.max(1,n.baud);
-    const bits=n.p.code==='Бодо (RTTY)'?5:(n.p.code==='ASCII 7N1'?7:8);
-    for(let i=0;i<BLOCK;i++){                          // приём знаков — как в uartRx, на автободрейте
+    const bits=n.p.code==='Baudot (RTTY)'?5:(n.p.code==='ASCII 7N1'?7:8);
+    for(let i=0;i<BLOCK;i++){                          // char decode — same as uartRx, on auto-baud
       const v=so[i], mark=v>0;
       if(!n.st){ if(n.prev&&!mark){ n.st=1; n.pos=0; n.bi=0; n.acc=0; n.sum=0; } }
       else {
@@ -974,10 +974,10 @@ def({ id:'afskRx', title:'aFSK: авто-приём (auto)', cat:'Декодер
     bar(n.hs,0,getComputedStyle(document.body).getPropertyValue('--t-num'));
     bar(n.hm,H/2,getComputedStyle(document.body).getPropertyValue('--t-sig'));
     cx.fillStyle='#6c7a80'; cx.font='9px monospace';
-    cx.fillText('спейс '+n.fSpace.toFixed(0),3,10);
-    cx.fillText('марк  '+n.fMark.toFixed(0),3,H/2+10);
+    cx.fillText('space '+n.fSpace.toFixed(0),3,10);
+    cx.fillText('mark  '+n.fMark.toFixed(0),3,H/2+10);
     const r=n.el.querySelector('.readout');
-    const info=`${n.baud.toFixed(1)} бод · захват ${(n.lock*100).toFixed(0)}%`;
+    const info=`${n.baud.toFixed(1)} baud · lock ${(n.lock*100).toFixed(0)}%`;
     const full=info+'\n'+(n.text||'…');
     if(r.textContent!==full){ r.textContent=full; r.scrollTop=r.scrollHeight; } }});
 
@@ -1004,13 +1004,13 @@ function decB64(str){
 // Бодо ITA2 и PSK31 varicode отсюда убраны — это представление текста в БИТАХ,
 // и им место в общем слое txt2bits/bits2txt (там же и переиспользуются с FEC).
 // Здесь остались только представления-для-чтения-глазами и текстовые шифры.
-const CODINGS=['Морзе','ASCII двоичный','ASCII hex','Base64','ROT13'];
+const CODINGS=['Morse','ASCII binary','ASCII hex','Base64','ROT13'];
 function textEncode(t,mode){
   t=String(t);
   switch(mode){
-    case 'Морзе': return t.toUpperCase().split('').map(c=>
+    case 'Morse': return t.toUpperCase().split('').map(c=>
       c===' '?'/':(MORSE_TX[c]||'')).filter(Boolean).join(' ');
-    case 'ASCII двоичный': return t.split('').map(c=>
+    case 'ASCII binary': return t.split('').map(c=>
       c.charCodeAt(0).toString(2).padStart(8,'0')).join(' ');
     case 'ASCII hex': return t.split('').map(c=>
       c.charCodeAt(0).toString(16).padStart(2,'0')).join(' ');
@@ -1023,41 +1023,41 @@ function textEncode(t,mode){
 function textDecode(t,mode){
   t=String(t);
   switch(mode){
-    case 'Морзе': return t.trim().split(/\s+/).map(c=>
+    case 'Morse': return t.trim().split(/\s+/).map(c=>
       c==='/'?' ':(MORSE[c]||'')).join('');
-    case 'ASCII двоичный': return t.trim().split(/\s+/).map(b=>
+    case 'ASCII binary': return t.trim().split(/\s+/).map(b=>
       String.fromCharCode(parseInt(b,2)||0)).join('');
     case 'ASCII hex': return t.trim().replace(/0x/gi,'').split(/[\s,]+/).map(h=>
       String.fromCharCode(parseInt(h,16)||0)).join('');
-    case 'Base64': try{ return decB64(t); }catch(e){ return '(не Base64)'; }
+    case 'Base64': try{ return decB64(t); }catch(e){ return '(not Base64)'; }
     case 'ROT13': return textEncode(t,'ROT13');
   }
   return t;
 }
 
-def({ id:'textcode', title:'Текст: шифры/представления', cat:'Прочее',
+def({ id:'textcode', title:'Text: Ciphers/Representations', cat:'Misc',
   ins:[{n:'text',t:'txt'}], outs:[{n:'out',t:'txt'}], readout:true, tall:true,
   params:[{n:'text',t:'text',d:'SOS'},
-          {n:'mode',t:'select',opts:['кодировать','декодировать'],d:'кодировать'},
-          {n:'coding',t:'select',opts:CODINGS,d:'Морзе'}],
+          {n:'mode',t:'select',opts:['encode','decode'],d:'encode'},
+          {n:'coding',t:'select',opts:CODINGS,d:'Morse'}],
   init:n=>{n.res='';},
   process(n,I){
     const src=(typeof I.text==='string'&&I.text)? I.text : n.p.text;
     if(src!==n.src||n.m!==n.p.mode||n.c!==n.p.coding){
       n.src=src; n.m=n.p.mode; n.c=n.p.coding;
-      n.res = n.p.mode==='кодировать'? textEncode(src,n.p.coding) : textDecode(src,n.p.coding); }
+      n.res = n.p.mode==='encode'? textEncode(src,n.p.coding) : textDecode(src,n.p.coding); }
     return {out:n.res}; },
   draw(n){ const r=n.el.querySelector('.readout');
     if(r.textContent!==n.res) r.textContent=n.res||'…'; }});
 
 
-def({ id:'morseTx', title:'Морзе: передача', cat:'Протоколы',
+def({ id:'morseTx', title:'Morse: Transmit', cat:'Protocols',
   ins:[{n:'go',t:'num'},{n:'text',t:'txt'},{n:'wpm',t:'num'},{n:'loop',t:'num'}],
   outs:[{n:'bit',t:'sig'},{n:'key',t:'num'}], readout:true,
   params:[{n:'text',t:'text',d:'CQ CQ DE TEST'},
           {n:'wpm',t:'range',min:3,max:60,step:.5,d:15},
           {n:'loop',t:'check',d:false},
-          {n:'send',t:'button',label:'Передать',fn:n=>morseQueue(n)}],
+          {n:'send',t:'button',label:'Send',fn:n=>morseQueue(n)}],
   init:n=>{n.q=[];n.left=0;n.cur=-1;n.prevGo=0;},
   process(n,I){
     if(typeof I.wpm==='number') setMod(n,'wpm',I.wpm);
@@ -1073,7 +1073,7 @@ def({ id:'morseTx', title:'Морзе: передача', cat:'Протокол�
       n.left--; o[i]=n.cur; }
     return {bit:o, key:n.cur>0?1:0}; },
   draw(n){ n.el.querySelector('.readout').textContent =
-    n.q.length? 'передача… '+n.q.length : 'ожидание'; }});
+    n.q.length? 'sending… '+n.q.length : 'waiting'; }});
 
 
 const MORSE_TX={}; for(const k in MORSE) MORSE_TX[MORSE[k]]=k;
@@ -1088,19 +1088,19 @@ function morseQueue(n){
 }
 
 const SSTV={
-  'Martin M1'   :{lineMs:446.446,width:'960',height:'256',rgb:true, sync:'по фронту'},
-  'Martin M2'   :{lineMs:226.798,width:'480',height:'256',rgb:true, sync:'по фронту'},
-  'Scottie S1'  :{lineMs:428.22, width:'960',height:'256',rgb:true, sync:'по фронту'},
-  'Scottie S2'  :{lineMs:277.692,width:'640',height:'256',rgb:true, sync:'по фронту'},
-  'Scottie DX'  :{lineMs:1050.3, width:'960',height:'256',rgb:true, sync:'по фронту'},
-  'Robot 36'    :{lineMs:150.0,  width:'480',height:'240',rgb:false,sync:'по фронту'},
-  'WEFAX 120 lpm IOC576':{lineMs:500,    width:'1810',height:'600',rgb:false,sync:'свободно'},
-  'WEFAX 120 lpm IOC288':{lineMs:500,    width:'905', height:'600',rgb:false,sync:'свободно'},
-  'WEFAX 90 lpm'        :{lineMs:666.667,width:'1810',height:'600',rgb:false,sync:'свободно'},
-  'WEFAX 60 lpm'        :{lineMs:1000,   width:'1810',height:'600',rgb:false,sync:'свободно'},
-  'NOAA APT'            :{lineMs:500,    width:'2080',height:'600',rgb:false,sync:'свободно'},
-  'Feld Hell'           :{lineMs:114.2857,width:'640', height:'14', rgb:false,sync:'свободно',
-                          dir:'столбцы',palette:'серый'}
+  'Martin M1'   :{lineMs:446.446,width:'960',height:'256',rgb:true, sync:'edge'},
+  'Martin M2'   :{lineMs:226.798,width:'480',height:'256',rgb:true, sync:'edge'},
+  'Scottie S1'  :{lineMs:428.22, width:'960',height:'256',rgb:true, sync:'edge'},
+  'Scottie S2'  :{lineMs:277.692,width:'640',height:'256',rgb:true, sync:'edge'},
+  'Scottie DX'  :{lineMs:1050.3, width:'960',height:'256',rgb:true, sync:'edge'},
+  'Robot 36'    :{lineMs:150.0,  width:'480',height:'240',rgb:false,sync:'edge'},
+  'WEFAX 120 lpm IOC576':{lineMs:500,    width:'1810',height:'600',rgb:false,sync:'free'},
+  'WEFAX 120 lpm IOC288':{lineMs:500,    width:'905', height:'600',rgb:false,sync:'free'},
+  'WEFAX 90 lpm'        :{lineMs:666.667,width:'1810',height:'600',rgb:false,sync:'free'},
+  'WEFAX 60 lpm'        :{lineMs:1000,   width:'1810',height:'600',rgb:false,sync:'free'},
+  'NOAA APT'            :{lineMs:500,    width:'2080',height:'600',rgb:false,sync:'free'},
+  'Feld Hell'           :{lineMs:114.2857,width:'640', height:'14', rgb:false,sync:'free',
+                          dir:'columns',palette:'gray'}
 };
 
 const DTMF_ROWS=[697,770,852,941], DTMF_COLS=[1209,1336,1477,1633], DTMF_KEYS='123A456B789C*0#D';
@@ -1110,17 +1110,17 @@ function dtmfQueue(n){                               // строка → оче�
   const tone=Math.round(n.p.toneMs/1000*Eng.sr), gap=Math.round(n.p.gapMs/1000*Eng.sr);
   n.q=[];
   for(const c of digits){ n.q.push([DTMF_KEYS.indexOf(c),tone]); n.q.push([-1,gap]); }
-  n.text='набор: '+digits.join('');
+  n.text='dialed: '+digits.join('');
 }
-def({ id:'dtmfTx', title:'DTMF: передача', cat:'Протоколы', readout:true,
+def({ id:'dtmfTx', title:'DTMF: Transmit', cat:'Protocols', readout:true,
   ins:[{n:'go',t:'num'},{n:'text',t:'txt'},{n:'toneMs',t:'num'},{n:'gapMs',t:'num'},{n:'loop',t:'num'}], outs:[{n:'out',t:'sig'}],
   params:[{n:'text',t:'text',d:'123A'},
           {n:'toneMs',t:'range',min:20,max:500,step:5,d:100},
           {n:'gapMs',t:'range',min:20,max:500,step:5,d:60},
           {n:'amp',t:'range',min:0,max:1,step:.01,d:.3},
           {n:'loop',t:'check',d:false},
-          {n:'send',t:'button',label:'Передать',fn:n=>dtmfQueue(n)}],
-  init:n=>{n.q=[];n.idx=-1;n.left=0;n.p1=0;n.p2=0;n.prevGo=0;n.text='ожидание';},
+          {n:'send',t:'button',label:'Send',fn:n=>dtmfQueue(n)}],
+  init:n=>{n.q=[];n.idx=-1;n.left=0;n.p1=0;n.p2=0;n.prevGo=0;n.text='waiting';},
   process(n,I){
     for(const k of ['toneMs','gapMs']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     if(typeof I.loop==='number') setMod(n,'loop',I.loop>=0.5);
@@ -1139,21 +1139,21 @@ def({ id:'dtmfTx', title:'DTMF: передача', cat:'Протоколы', rea
         v=(Math.sin(2*Math.PI*n.p1)+Math.sin(2*Math.PI*n.p2))*.5*n.p.amp; }
       n.left--; o[i]=v; }
     return {out:o}; },
-  draw(n){ n.el.querySelector('.readout').textContent=n.text||'ожидание'; }});
+  draw(n){ n.el.querySelector('.readout').textContent=n.text||'waiting'; }});
 
 
-def({ id:'dtmfRx', title:'DTMF: приём', cat:'Декодеры', ins:[{n:'in',t:'sig'},{n:'thr',t:'num'},{n:'minMs',t:'num'}],
+def({ id:'dtmfRx', title:'DTMF: Receive', cat:'Decoders', ins:[{n:'in',t:'sig'},{n:'thr',t:'num'},{n:'minMs',t:'num'}],
   outs:[{n:'digit',t:'num'},{n:'gate',t:'num'}], readout:true, tall:true,
   params:[{n:'thr',t:'range',min:1.5,max:30,step:.1,d:6},
           {n:'minMs',t:'range',min:20,max:200,step:5,d:40},
-          {n:'clr',t:'button',label:'Очистить',fn:n=>{n.text='';}}],
+          {n:'clr',t:'button',label:'Clear',fn:n=>{n.text='';}}],
   init:n=>{n.text='';n.cur='';n.run=0;n.last='';n.gap=0;},
   process(n,I){
     if(typeof I.thr==='number') setMod(n,'thr',I.thr);
     if(typeof I.minMs==='number') setMod(n,'minMs',I.minMs);
     const dt=BLOCK/Eng.sr*1000;
     const rows=[697,770,852,941], cols=[1209,1336,1477,1633];
-    const g=f=>{                                     // Гёрцель на длину блока
+    const g=f=>{                                     // Goertzel over the block length
       const k=2*Math.cos(2*Math.PI*f/Eng.sr);
       let s1=0,s2=0;
       for(let i=0;i<BLOCK;i++){ const s0=(I.in?I.in[i]:0)+k*s1-s2; s2=s1; s1=s0; }
@@ -1203,27 +1203,27 @@ function imgResample(img,W,H,rgb){                   // источник про�
   return out;
 }
 
-def({ id:'paintTx', title:'Растр (передача)', cat:'Видео',
+def({ id:'paintTx', title:'Raster (transmit)', cat:'Video',
   ins:[{n:'img',t:'img'},{n:'lineMs',t:'num'},{n:'slant',t:'num'},{n:'shift',t:'num'}],
   outs:[{n:'level',t:'sig'},{n:'sync',t:'sig'}],
   view:{h:40}, readout:true,
-  params:[{n:'std',t:'select',opts:['вручную',...Object.keys(SSTV)],d:'вручную',
+  params:[{n:'std',t:'select',opts:['manual',...Object.keys(SSTV)],d:'manual',
            fn:n=>{ const p=SSTV[n.p.std]; if(!p) return; Object.assign(n.p,p); n.tbuf=null; }},
           {n:'lineMs',t:'range',min:1,max:2000,step:.001,d:500},
           {n:'slant',t:'range',min:-20,max:20,step:.001,d:0},
           {n:'shift',t:'range',min:0,max:1,step:.0005,d:0},
           {n:'width',t:'select',opts:['160','256','320','480','512','640','800','905','960','1024','1810','2080'],d:'1810'},
           {n:'height',t:'select',opts:['14','28','56','120','160','240','256','320','480','600'],d:'600'},
-          {n:'dir',t:'select',opts:['строки','столбцы'],d:'строки'},
+          {n:'dir',t:'select',opts:['rows','columns'],d:'rows'},
           {n:'rgb',t:'check',d:false},
           {n:'invert',t:'check',d:false},
-          {n:'loop',t:'check',d:true,label:'зациклить'},
-          {n:'restart',t:'button',label:'Начать с начала',fn:n=>{n.px=0;n.py=0;n.done=false;}}],
+          {n:'loop',t:'check',d:true,label:'loop'},
+          {n:'restart',t:'button',label:'Restart from beginning',fn:n=>{n.px=0;n.py=0;n.done=false;}}],
   init:n=>{n.px=0;n.py=0;n.W=0;n.H=0;n.cols=false;n.rgb=false;n.tbuf=null;n.srcImg=null;n.done=false;},
   process(n,I){
     for(const k of ['lineMs','slant','shift']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     const o=buf(n,'level'), os=buf(n,'sync');
-    const W=+n.p.width, H=+n.p.height, cols=n.p.dir==='столбцы', rgb=n.p.rgb;
+    const W=+n.p.width, H=+n.p.height, cols=n.p.dir==='columns', rgb=n.p.rgb;
     if(n.W!==W||n.H!==H||n.cols!==cols||n.rgb!==rgb){  // смена размера/ориентации/режима — пересчёт буфера и сброс луча
       n.W=W; n.H=H; n.cols=cols; n.rgb=rgb; n.tbuf=null; n.px=0; n.py=0; n.done=false; }
     const img=I.img;
@@ -1247,15 +1247,15 @@ def({ id:'paintTx', title:'Растр (передача)', cat:'Видео',
     }
     return {level:o, sync:os}; },
   draw(n){ const r=n.el.querySelector('.readout');
-    r.textContent = !n.tbuf ? 'нет изображения'
-      : n.done ? 'передача завершена'
-      : 'строка '+n.py+'/'+(n.cols?n.W:n.H); }});
+    r.textContent = !n.tbuf ? 'no image'
+      : n.done ? 'transmission complete'
+      : 'line '+n.py+'/'+(n.cols?n.W:n.H); }});
 
-def({ id:'paint', title:'Растр (построчно)', cat:'Видео',
+def({ id:'paint', title:'Raster (line by line)', cat:'Video',
   ins:[{n:'level',t:'sig'},{n:'sync',t:'sig'},{n:'lineMs',t:'num'},{n:'slant',t:'num'},
        {n:'offset',t:'num'},{n:'shift',t:'num'},{n:'rgb',t:'num'},{n:'invert',t:'num'}], outs:[{n:'img',t:'img'}],
   view:{h:200}, resize:true, pick:true, readout:true,
-  params:[{n:'std',t:'select',opts:['вручную',...Object.keys(SSTV)],d:'вручную',
+  params:[{n:'std',t:'select',opts:['manual',...Object.keys(SSTV)],d:'manual',
            fn:n=>{ const p=SSTV[n.p.std]; if(!p) return;
                    Object.assign(n.p,p); n.W=0; rebuildNode(n); }},
           {n:'lineMs',t:'range',min:1,max:2000,step:.001,d:446.446},
@@ -1264,14 +1264,14 @@ def({ id:'paint', title:'Растр (построчно)', cat:'Видео',
           {n:'shift',t:'range',min:0,max:1,step:.0005,d:0},
           {n:'width',t:'select',opts:['160','256','320','480','512','640','800','905','960','1024','1810','2080'],d:'320'},
           {n:'height',t:'select',opts:['14','28','56','120','160','240','256','320','480','600'],d:'256'},
-          {n:'sync',t:'select',opts:['свободно','по фронту'],d:'по фронту'},
-          {n:'dir',t:'select',opts:['строки','столбцы'],d:'строки'},
+          {n:'sync',t:'select',opts:['free','edge'],d:'edge'},
+          {n:'dir',t:'select',opts:['rows','columns'],d:'rows'},
           {n:'rgb',t:'check',d:false},
           {n:'invert',t:'check',d:false},
-          {n:'mirror',t:'check',d:false,label:'зеркально'},
-          {n:'palette',t:'select',opts:['серый','тепло','сине-жёлтый'],d:'серый'},
-          {n:'png',t:'button',label:'Сохранить снимок',fn:n=>paintSave(n)},
-          {n:'clr',t:'button',label:'Очистить растр',fn:n=>{
+          {n:'mirror',t:'check',d:false,label:'mirror'},
+          {n:'palette',t:'select',opts:['gray','heat','blue-yellow'],d:'gray'},
+          {n:'png',t:'button',label:'Save snapshot',fn:n=>paintSave(n)},
+          {n:'clr',t:'button',label:'Clear raster',fn:n=>{
             n.buf&&n.buf.fill(0); n.px=0; n.py=0; n.acc=0; n.accN=0; n.skip=0; }}],
   // px/py — позиция сканирующего луча (столбец/строка растра). НЕ n.x/n.y — те заняты
   // движком под координаты узла на холсте, совпадение имён двигало узел вместе с лучом.
@@ -1279,7 +1279,7 @@ def({ id:'paint', title:'Растр (построчно)', cat:'Видео',
   process(n,I){
     for(const k of ['lineMs','slant','offset','shift']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     for(const k of ['rgb','invert']) if(typeof I[k]==='number') setMod(n,k,I[k]>=0.5);
-    const W=+n.p.width, H=+n.p.height, cols=n.p.dir==='столбцы';
+    const W=+n.p.width, H=+n.p.height, cols=n.p.dir==='columns';
     if(n.W!==W||n.H!==H||n.cols!==cols){              // смена ориентации меняет адресацию буфера — нужен сброс, как при смене размера
       n.W=W; n.H=H; n.cols=cols; n.buf=new Float32Array(W*H);
       n.px=0; n.py=0; n.acc=0; n.accN=0; n.skip=0; n.id2=null; }
@@ -1289,14 +1289,14 @@ def({ id:'paint', title:'Растр (построчно)', cat:'Видео',
     for(let i=0;i<BLOCK;i++){
       let v=I.level?I.level[i]:0; if(n.p.invert) v=1-v;
       const sy=I.sync?I.sync[i]:0;
-      if(n.p.sync==='по фронту' && sy>.5 && n.prevSync<=.5){ pxFlush(n); n.px=0; n.skip=skipN; pLine(n); }
+      if(n.p.sync==='edge' && sy>.5 && n.prevSync<=.5){ pxFlush(n); n.px=0; n.skip=skipN; pLine(n); }
       n.prevSync=sy;
       if(n.skip>0){ n.skip--; continue; }             // площадка после синхроимпульса
       n.acc+=clamp(v,0,1); n.accN++;
       const nx=n.px+per;
       if(Math.floor(nx)>Math.floor(n.px)) pxFlush(n);
       n.px=nx;
-      if(n.px>=len){ n.px-=len; if(n.p.sync==='свободно') pLine(n); else n.px=len-1e-6; } }
+      if(n.px>=len){ n.px-=len; if(n.p.sync==='free') pLine(n); else n.px=len-1e-6; } }
     if(n.pickT!=null){                                // тап по растру = выровнять левый край
       const v=(n.p.shift+n.pickT)%1; n.pickT=null;
       if(n.set&&n.set.shift) n.set.shift(v); else n.p.shift=v; }
@@ -1308,12 +1308,12 @@ def({ id:'paint', title:'Растр (построчно)', cat:'Видео',
     cx.clearRect(0,0,cv.width,cv.height);
     cx.drawImage(c,0,0,cv.width,cv.height);
     cx.fillStyle='#e0b23c';
-    if(n.p.dir==='столбцы'){
+    if(n.p.dir==='columns'){
       const off=(n.p.shift||0)*n.W, x=(((n.py-off)%n.W)+n.W)%n.W;
       cx.fillRect(x/n.W*cv.width,0,1,cv.height);
     } else cx.fillRect(0,n.py/n.H*cv.height,cv.width,1);
     n.el.querySelector('.readout').textContent =
-      (60000/(n.p.lineMs+n.p.slant)).toFixed(2)+' стр/мин · сдвиг '+
+      (60000/(n.p.lineMs+n.p.slant)).toFixed(2)+' lines/min · shift '+
       (n.p.shift*100).toFixed(1)+'%'; }});
 
 
@@ -1335,14 +1335,14 @@ const VARICODE=('1010101011 1011011011 1011101101 1101110111 1011101011 11010111
 '11011111 1011101 111010101 1010110111 110111011 1010110101 1011010111 1110110101').split(/\s+/);
 const VARIMAP={}; VARICODE.forEach((c,i)=>{ if(!(c in VARIMAP)) VARIMAP[c]=i; });
 
-def({ id:'pskdec', title:'Слайсер PSK', cat:'Протоколы',
+def({ id:'pskdec', title:'PSK Slicer', cat:'Protocols',
   ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'clk',t:'sig'},{n:'diff',t:'num'}],
   outs:[{n:'sym',t:'num'},{n:'evm',t:'num'}],
   readout:true, tall:true,
   params:[{n:'order',t:'select',opts:['2','4','8'],d:'8'},
           {n:'diff',t:'check',d:true},
-          {n:'fmt',t:'select',opts:['символы','hex','биты','PSK31 varicode'],d:'hex'},
-          {n:'clr',t:'button',label:'Очистить',fn:n=>{n.text='';n.cnt=0;}}],
+          {n:'fmt',t:'select',opts:['symbols','hex','bits','PSK31 varicode'],d:'hex'},
+          {n:'clr',t:'button',label:'Clear',fn:n=>{n.text='';n.cnt=0;}}],
   init:n=>{n.prev=0;n.text='';n.sym=0;n.evm=0;n.cnt=0;n.prevClk=0;n.vc='';},
   process(n,I){
     if(typeof I.diff==='number') setMod(n,'diff',I.diff>=0.5);
@@ -1361,7 +1361,7 @@ def({ id:'pskdec', title:'Слайсер PSK', cat:'Протоколы',
       n.prevClk=c; }
     return {sym:n.sym, evm:n.evm}; },
   draw(n){ const r=n.el.querySelector('.readout');
-    const t=(n.text||'…')+'\nEVM '+(n.evm*100).toFixed(0)+'% · символов '+n.cnt;
+    const t=(n.text||'…')+'\nEVM '+(n.evm*100).toFixed(0)+'% · symbols '+n.cnt;
     if(r.textContent!==t){ r.textContent=t; r.scrollTop=r.scrollHeight; } }});
 
 
@@ -1369,7 +1369,7 @@ function pskPush(n,k,M){
   n.cnt++;
   const bits=Math.log2(M)|0;
   if(n.p.fmt==='PSK31 varicode'){ variPush(n,k?0:1); return; }   // реверс фазы = 0, её отсутствие = 1
-  if(n.p.fmt==='символы') n.text+=k;
+  if(n.p.fmt==='symbols') n.text+=k;
   else if(n.p.fmt==='hex') n.text+=k.toString(16);
   else { let s=''; for(let b=bits-1;b>=0;b--) s+=(k>>b)&1; n.text+=s; }
   if(n.text.length>3000) n.text=n.text.slice(-2400);
@@ -1500,14 +1500,14 @@ function ft8Unpack(b77){
       return s.trim(); }
     if(n3===5){ let h=''; for(let i=0;i<71;i+=4) h+=bitsNum(b77,i,4).toString(16);
       return 'TELEM '+h; }
-    return '(тип 0.'+n3+')'; }
+    return '(type 0.'+n3+')'; }
   if(i3===1||i3===2){
     const c1=bitsNum(b77,0,28), r1=b77[28], c2=bitsNum(b77,29,28), r2=b77[57];
     const R=b77[58], g15=bitsNum(b77,59,15);
     const s1=ft8Call(c1)+(r1?'/R':''), s2=ft8Call(c2)+(r2?'/R':'');
     const g=ft8Grid(g15,R);
     return (s1+' '+s2+(g?' '+g:'')).trim(); }
-  return '(тип i3='+i3+')';
+  return '(type i3='+i3+')';
 }
 
 /* ---------- FT8: поиск сигналов в 15-секундном слоте ---------- */
@@ -1528,7 +1528,7 @@ function ft8Payload(tones){                         // 79 тонов → 174 б�
   return {bits, hex, syms:data.length};
 }
 
-def({ id:'ft8Rx', title:'FT8: приём слотов', cat:'Декодеры',
+def({ id:'ft8Rx', title:'FT8: Receive Slots', cat:'Decoders',
   ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'top',t:'num'},{n:'thr',t:'num'},
        {n:'keep',t:'num'},{n:'tones',t:'num'},{n:'decode',t:'num'},{n:'budget',t:'num'}],
   outs:[{n:'f',t:'num'},{n:'score',t:'num'},{n:'dt',t:'num'},{n:'busy',t:'num'}],
@@ -1538,18 +1538,18 @@ def({ id:'ft8Rx', title:'FT8: приём слотов', cat:'Декодеры',
           {n:'top',t:'range',min:1,max:30,step:1,d:8},
           {n:'thr',t:'range',min:1,max:8,step:.1,d:1.6},
           {n:'keep',t:'range',min:1,max:60,step:1,d:12},
-          {n:'tones',t:'check',d:false,label:'показывать тоны'},
-          {n:'decode',t:'check',d:true,label:'декодировать (LDPC)'},
-          {n:'now',t:'button',label:'Разобрать сейчас',fn:n=>ft8Run(n,true)},
-          {n:'wav',t:'button',label:'Сохранить слот в WAV',fn:n=>{
+          {n:'tones',t:'check',d:false,label:'show tones'},
+          {n:'decode',t:'check',d:true,label:'decode (LDPC)'},
+          {n:'now',t:'button',label:'Parse now',fn:n=>ft8Run(n,true)},
+          {n:'wav',t:'button',label:'Save slot to WAV',fn:n=>{
             const L=n.buf.length, o=new Float32Array(L);
             for(let i=0;i<L;i++) o[i]=n.buf[(n.wp+i)%L];
             wavDownload([o],FT8_SR); }},
-          {n:'budget',t:'range',min:100,max:3000,step:50,d:800,label:'бюджет разбора, мс'},
-          {n:'save',t:'button',label:'Сохранить журнал',fn:n=>ft8Save(n)},
-          {n:'clr',t:'button',label:'Очистить журнал',fn:n=>{n.log=[];ft8Text(n);}}],
+          {n:'budget',t:'range',min:100,max:3000,step:50,d:800,label:'parse budget, ms'},
+          {n:'save',t:'button',label:'Save log',fn:n=>ft8Save(n)},
+          {n:'clr',t:'button',label:'Clear log',fn:n=>{n.log=[];ft8Text(n);}}],
   init:n=>{ n.buf=new Float32Array(FT8_SR*15); n.wp=0; n.acc=0; n.sum=0; n.cnt=0;
-            n.slot=-1; n.log=[]; n.text='ожидание границы слота…'; n.f=0; n.sc=0; n.dt=0; n.busy=0; },
+            n.slot=-1; n.log=[]; n.text='waiting for slot boundary…'; n.f=0; n.sc=0; n.dt=0; n.busy=0; },
   process(n,I){
     for(const k of ['fmin','fmax','top','thr','keep','budget']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     for(const k of ['tones','decode']) if(typeof I[k]==='number') setMod(n,k,I[k]>=0.5);
@@ -1586,7 +1586,7 @@ def({ id:'ft8Rx', title:'FT8: приём слотов', cat:'Декодеры',
 // обратно — тайминг, скремблирование, FEC, перемежение вешаются отдельными
 // узлами (scram/convenc/interleave/crc), как в остальной части патч-бея.
 
-const TXTCODINGS=['UTF-8','ASCII 8 бит','ASCII 7 бит','Бодо ITA2','PSK31 varicode'];
+const TXTCODINGS=['UTF-8','ASCII 8-bit','ASCII 7-bit','Baudot ITA2','PSK31 varicode'];
 
 function pushBits(arr,v,w){ for(let k=w-1;k>=0;k--) arr.push((v>>k)&1); }
 function bytesToBits(bytes,w){ const o=[]; for(const b of bytes) pushBits(o,b,w); return o; }
@@ -1599,8 +1599,8 @@ function bitsToBytesW(bits,w){
 function txtToBits(text,coding){
   switch(coding){
     case 'UTF-8': return bytesToBits(new TextEncoder().encode(text),8);
-    case 'ASCII 7 бит': return bytesToBits([...text].map(c=>c.charCodeAt(0)&0x7f),7);
-    case 'Бодо ITA2': { let figs=null,bits=[];
+    case 'ASCII 7-bit': return bytesToBits([...text].map(c=>c.charCodeAt(0)&0x7f),7);
+    case 'Baudot ITA2': { let figs=null,bits=[];
       for(const c of text.toUpperCase()){
         const e=ita2enc(c); if(!e) continue;
         if(figs===null||e[0]!==figs){ figs=e[0]; pushBits(bits,figs?27:31,5); }
@@ -1610,7 +1610,7 @@ function txtToBits(text,coding){
       for(const c of text){ const v=VARICODE[c.charCodeAt(0)]; if(!v) continue;
         for(const ch of v) bits.push(+ch); bits.push(0,0); }        // "00" — разделитель символов
       return bits; }
-    default: return bytesToBits([...text].map(c=>c.charCodeAt(0)&0xff),8);   // ASCII 8 бит
+    default: return bytesToBits([...text].map(c=>c.charCodeAt(0)&0xff),8);   // ASCII 8-bit
   }
 }
 
@@ -1618,8 +1618,8 @@ function bitsToTxt(bits,coding){
   switch(coding){
     case 'UTF-8': { const by=bitsToBytesW(bits,8);
       try{ return new TextDecoder().decode(new Uint8Array(by)); }catch(e){ return ''; } }
-    case 'ASCII 7 бит': return bitsToBytesW(bits,7).map(c=>String.fromCharCode(c)).join('');
-    case 'Бодо ITA2': { let figs=false,o='',i=0;
+    case 'ASCII 7-bit': return bitsToBytesW(bits,7).map(c=>String.fromCharCode(c)).join('');
+    case 'Baudot ITA2': { let figs=false,o='',i=0;
       while(i+5<=bits.length){ let v=0; for(let k=0;k<5;k++) v=(v<<1)|bits[i+k]; i+=5;
         if(v===27){ figs=true; continue; } if(v===31){ figs=false; continue; }
         o+=ita2(v,figs); }
@@ -1637,12 +1637,12 @@ function bitsToTxt(bits,coding){
   }
 }
 
-def({ id:'txt2bits', title:'Текст → биты', cat:'Протоколы',
+def({ id:'txt2bits', title:'Text → Bits', cat:'Protocols',
   ins:[{n:'text',t:'txt'},{n:'go',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'text',t:'txt'}],
   readout:true,
   params:[{n:'text',t:'text',d:'CQ CQ DE TEST'},
           {n:'coding',t:'select',opts:TXTCODINGS,d:'UTF-8'},
-          {n:'build',t:'button',label:'Собрать',fn:n=>{n.src=null;}}],
+          {n:'build',t:'button',label:'Build',fn:n=>{n.src=null;}}],
   init:n=>{n.bid=0;n.prevGo=0;},
   process(n,I){
     const src=(typeof I.text==='string'&&I.text)? I.text : n.p.text;
@@ -1653,16 +1653,16 @@ def({ id:'txt2bits', title:'Текст → биты', cat:'Протоколы',
       const d=new Float32Array(bits.length);
       for(let i=0;i<bits.length;i++) d[i]=bits[i]?1:-1;
       n.blk={d,n:d.length,id:++n.bid};
-      n.text=bits.length+' бит · '+n.p.coding; }
+      n.text=bits.length+' bits · '+n.p.coding; }
     return {blk:n.blk||null, text:n.text||''}; },
   draw(n){ n.el.querySelector('.readout').textContent=n.text||'…'; }});
 
 
-def({ id:'bits2txt', title:'Биты → текст', cat:'Декодеры',
+def({ id:'bits2txt', title:'Bits → Text', cat:'Decoders',
   ins:[{n:'blk',t:'blk'}], outs:[{n:'text',t:'txt'}], readout:true, tall:true,
   params:[{n:'coding',t:'select',opts:TXTCODINGS,d:'UTF-8'},
-          {n:'append',t:'check',d:true,label:'дописывать'},
-          {n:'clr',t:'button',label:'Очистить',fn:n=>{n.text='';}}],
+          {n:'append',t:'check',d:true,label:'append'},
+          {n:'clr',t:'button',label:'Clear',fn:n=>{n.text='';}}],
   init:n=>{n.bid=-1;n.text='';},
   process(n,I){
     const b=I.blk; if(!b||b.id===n.bid) return {text:n.text||''};
@@ -1719,22 +1719,22 @@ function ax25Queue(n){
   for(let i=0;i<Math.max(1,n.p.postamble);i++) bits.push(...flag);
   let lvl=0;                                         // NRZI: 0 в данных = смена уровня, 1 = без смены
   n.q=bits.map(b=>{ if(!b) lvl^=1; return [lvl,1]; });
-  n.text='кадр: '+bytes.length+' байт · '+bits.length+' бит на проводе';
+  n.text='frame: '+bytes.length+' bytes · '+bits.length+' bits on the wire';
 }
 
-def({ id:'ax25Tx', title:'Передача AX.25/APRS', cat:'Протоколы', readout:true, tall:true,
+def({ id:'ax25Tx', title:'Transmit AX.25/APRS', cat:'Protocols', readout:true, tall:true,
   ins:[{n:'go',t:'num'},{n:'text',t:'txt'},{n:'baud',t:'num'},{n:'loop',t:'num'}],
   outs:[{n:'bit',t:'sig'},{n:'busy',t:'num'}],
-  params:[{n:'dst',t:'text',d:'APRS',label:'адрес назначения'},
-          {n:'src',t:'text',d:'NOCALL-1',label:'позывной-SSID'},
-          {n:'path',t:'text',d:'WIDE1-1,WIDE2-1',label:'путь digipeater\'ов'},
-          {n:'text',t:'text',d:'!5540.00N/03730.00E>тест APRS',label:'информационное поле'},
+  params:[{n:'dst',t:'text',d:'APRS',label:'destination address'},
+          {n:'src',t:'text',d:'NOCALL-1',label:'callsign-SSID'},
+          {n:'path',t:'text',d:'WIDE1-1,WIDE2-1',label:'digipeater path'},
+          {n:'text',t:'text',d:'!5540.00N/03730.00E>test APRS',label:'information field'},
           {n:'baud',t:'range',min:50,max:9600,step:1,d:1200,log:true},
-          {n:'preamble',t:'range',min:1,max:60,step:1,d:20,label:'флагов преамбулы'},
-          {n:'postamble',t:'range',min:1,max:10,step:1,d:3,label:'флагов после кадра'},
+          {n:'preamble',t:'range',min:1,max:60,step:1,d:20,label:'preamble flags'},
+          {n:'postamble',t:'range',min:1,max:10,step:1,d:3,label:'flags after frame'},
           {n:'loop',t:'check',d:false},
-          {n:'send',t:'button',label:'Передать',fn:n=>ax25Queue(n)}],
-  init:n=>{n.q=[];n.cur=0;n.left=0;n.prevGo=0;n.text='ожидание';},
+          {n:'send',t:'button',label:'Send',fn:n=>ax25Queue(n)}],
+  init:n=>{n.q=[];n.cur=0;n.left=0;n.prevGo=0;n.text='waiting';},
   process(n,I){
     if(typeof I.baud==='number') setMod(n,'baud',I.baud);
     if(typeof I.loop==='number') setMod(n,'loop',I.loop>=0.5);
@@ -1748,7 +1748,7 @@ def({ id:'ax25Tx', title:'Передача AX.25/APRS', cat:'Протоколы'
         else n.left=spb; }
       n.left--; o[i]=n.cur?1:-1; }
     return {bit:o, busy:n.q.length?1:0}; },
-  draw(n){ n.el.querySelector('.readout').textContent=n.text||'ожидание'; }});
+  draw(n){ n.el.querySelector('.readout').textContent=n.text||'waiting'; }});
 
 
 /* ============================================================
@@ -1852,14 +1852,14 @@ function mfskTxProcess(n,I,BLOCK_){
   const go=I.go||0;
   if((go>.5&&n.prevGo<=.5)||n.trig){
     n.trig=false; n.q=oliviaTextToTones(n.p.text,M); n.qi=0; n.left=0;
-    n.text='блок символов: '+n.q.length+' ('+Math.ceil(n.q.length/64)+' FEC-блок(а))'; }
+    n.text='symbol block: '+n.q.length+' ('+Math.ceil(n.q.length/64)+' FEC block(s))'; }
   n.prevGo=go;
   const f0=n.p.f0-bw/2, spacing=bw/M;
   for(let i=0;i<BLOCK_;i++){
     if(n.left<=0){
       if(n.qi>=n.q.length){
         if(n.p.loop){ n.q=oliviaTextToTones(n.p.text,M); n.qi=0;
-          n.text='блок символов: '+n.q.length+' ('+Math.ceil(n.q.length/64)+' FEC-блок(а))'; }
+          n.text='symbol block: '+n.q.length+' ('+Math.ceil(n.q.length/64)+' FEC block(s))'; }
         if(!n.q.length){ o[i]=0; continue; } }
       n.cur=n.q[n.qi++]; n.left=spb; }
     const freq=f0+n.cur*spacing;
@@ -1913,29 +1913,29 @@ function mfskRxProcess(n,I,BLOCK_){
 }
 
 // Раздельные позывные узлы по спецификации Ялохи (Olivia).
-def({ id:'oliviaTx', title:'Olivia: передача', cat:'Протоколы', readout:true, tall:true,
+def({ id:'oliviaTx', title:'Olivia: Transmit', cat:'Protocols', readout:true, tall:true,
   ins:[{n:'go',t:'num'},{n:'text',t:'txt'},{n:'loop',t:'num'}], outs:[{n:'out',t:'sig'},{n:'busy',t:'num'}],
   params:[{n:'text',t:'text',d:'CQ CQ DE TEST OLIVIA'},
           {n:'tones',t:'select',opts:MFSK_TONES,d:'8'},
           {n:'bw',t:'select',opts:MFSK_BW,d:'250'},
-          {n:'f0',t:'range',min:200,max:3000,step:10,d:1000,label:'центр полосы, Гц'},
+          {n:'f0',t:'range',min:200,max:3000,step:10,d:1000,label:'band center, Hz'},
           {n:'amp',t:'range',min:0,max:1,step:.01,d:.5},
           {n:'loop',t:'check',d:false},
-          {n:'send',t:'button',label:'Передать',fn:n=>{n.trig=true;}}],
-  init:n=>{n.q=[];n.qi=0;n.cur=0;n.left=0;n.ph=0;n.prevGo=0;n.trig=false;n.text='ожидание';},
+          {n:'send',t:'button',label:'Send',fn:n=>{n.trig=true;}}],
+  init:n=>{n.q=[];n.qi=0;n.cur=0;n.left=0;n.ph=0;n.prevGo=0;n.trig=false;n.text='waiting';},
   process(n,I){ return mfskTxProcess(n,I,BLOCK); },
-  draw(n){ n.el.querySelector('.readout').textContent=n.text||'ожидание'; }});
+  draw(n){ n.el.querySelector('.readout').textContent=n.text||'waiting'; }});
 
-def({ id:'oliviaRx', title:'Olivia: приём', cat:'Декодеры', readout:true, tall:true,
+def({ id:'oliviaRx', title:'Olivia: Receive', cat:'Decoders', readout:true, tall:true,
   ins:[{n:'in',t:'sig'}], outs:[{n:'text',t:'txt'},{n:'sym',t:'num'},{n:'lock',t:'num'}],
   params:[{n:'tones',t:'select',opts:MFSK_TONES,d:'8'},
           {n:'bw',t:'select',opts:MFSK_BW,d:'250'},
-          {n:'f0',t:'range',min:200,max:3000,step:10,d:1000,label:'центр полосы, Гц'},
-          {n:'clr',t:'button',label:'Очистить',fn:n=>{n.text='';}}],
+          {n:'f0',t:'range',min:200,max:3000,step:10,d:1000,label:'band center, Hz'},
+          {n:'clr',t:'button',label:'Clear',fn:n=>{n.text='';}}],
   init:n=>{n.M=0;n.bw=0;n.text='';},
   process(n,I){ return mfskRxProcess(n,I,BLOCK); },
   draw(n){ const r=n.el.querySelector('.readout');
-    const t=(n.locked?'синхронизация есть':'ищу границу блока…')+'\n'+(n.text||'…');
+    const t=(n.locked?'synced':'searching for block boundary…')+'\n'+(n.text||'…');
     if(r.textContent!==t){ r.textContent=t; r.scrollTop=r.scrollHeight; } }});
 
 
@@ -1946,29 +1946,29 @@ def({ id:'oliviaRx', title:'Olivia: приём', cat:'Декодеры', readout
 // скрэмблирования) я подтвердить по открытым источникам не смог — считайте
 // этот узел «в семье Olivia», а не гарантированно байт-в-байт совместимым
 // с эфирным Contestia от MixW/fldigi.
-def({ id:'contestiaTx', title:'Contestia: передача', cat:'Протоколы', readout:true, tall:true,
+def({ id:'contestiaTx', title:'Contestia: Transmit', cat:'Protocols', readout:true, tall:true,
   ins:[{n:'go',t:'num'},{n:'text',t:'txt'},{n:'loop',t:'num'}], outs:[{n:'out',t:'sig'},{n:'busy',t:'num'}],
   params:[{n:'text',t:'text',d:'CQ CQ DE TEST CONTESTIA'},
           {n:'tones',t:'select',opts:MFSK_TONES,d:'8'},
           {n:'bw',t:'select',opts:MFSK_BW,d:'500'},
-          {n:'f0',t:'range',min:200,max:3000,step:10,d:1000,label:'центр полосы, Гц'},
+          {n:'f0',t:'range',min:200,max:3000,step:10,d:1000,label:'band center, Hz'},
           {n:'amp',t:'range',min:0,max:1,step:.01,d:.5},
           {n:'loop',t:'check',d:false},
-          {n:'send',t:'button',label:'Передать',fn:n=>{n.trig=true;}}],
-  init:n=>{n.q=[];n.qi=0;n.cur=0;n.left=0;n.ph=0;n.prevGo=0;n.trig=false;n.text='ожидание';},
+          {n:'send',t:'button',label:'Send',fn:n=>{n.trig=true;}}],
+  init:n=>{n.q=[];n.qi=0;n.cur=0;n.left=0;n.ph=0;n.prevGo=0;n.trig=false;n.text='waiting';},
   process(n,I){ return mfskTxProcess(n,I,BLOCK); },
-  draw(n){ n.el.querySelector('.readout').textContent=n.text||'ожидание'; }});
+  draw(n){ n.el.querySelector('.readout').textContent=n.text||'waiting'; }});
 
-def({ id:'contestiaRx', title:'Contestia: приём', cat:'Декодеры', readout:true, tall:true,
+def({ id:'contestiaRx', title:'Contestia: Receive', cat:'Decoders', readout:true, tall:true,
   ins:[{n:'in',t:'sig'}], outs:[{n:'text',t:'txt'},{n:'sym',t:'num'},{n:'lock',t:'num'}],
   params:[{n:'tones',t:'select',opts:MFSK_TONES,d:'8'},
           {n:'bw',t:'select',opts:MFSK_BW,d:'500'},
-          {n:'f0',t:'range',min:200,max:3000,step:10,d:1000,label:'центр полосы, Гц'},
-          {n:'clr',t:'button',label:'Очистить',fn:n=>{n.text='';}}],
+          {n:'f0',t:'range',min:200,max:3000,step:10,d:1000,label:'band center, Hz'},
+          {n:'clr',t:'button',label:'Clear',fn:n=>{n.text='';}}],
   init:n=>{n.M=0;n.bw=0;n.text='';},
   process(n,I){ return mfskRxProcess(n,I,BLOCK); },
   draw(n){ const r=n.el.querySelector('.readout');
-    const t=(n.locked?'синхронизация есть':'ищу границу блока…')+'\n'+(n.text||'…');
+    const t=(n.locked?'synced':'searching for block boundary…')+'\n'+(n.text||'…');
     if(r.textContent!==t){ r.textContent=t; r.scrollTop=r.scrollHeight; } }});
 
 
@@ -2021,20 +2021,20 @@ function ofdmBuildQueue(n){
   const bits=n.lastBlk? [...n.lastBlk.d].map(v=>v>0?1:0) : [];
   const symSamp=Math.round(Eng.sr/n.p.spacing), cpSamp=Math.round(symSamp*n.p.cp/100);
   n.queue=ofdmEncodePhases(bits,N,bpc); n.qi=0; n.curPhases=n.queue[0]; n.localIdx=-cpSamp;
-  n.text='OFDM-символов: '+n.queue.length+' ('+bits.length+' бит, '+N+' поднесущих, '+n.p.mod+')';
+  n.text='OFDM symbols: '+n.queue.length+' ('+bits.length+' bits, '+N+' subcarriers, '+n.p.mod+')';
 }
 
-def({ id:'ofdmTx', title:'OFDM: модулятор', cat:'Модуляция', readout:true, tall:true,
+def({ id:'ofdmTx', title:'OFDM: Modulator', cat:'Modulation', readout:true, tall:true,
   ins:[{n:'blk',t:'blk'},{n:'go',t:'num'},{n:'loop',t:'num'}], outs:[{n:'out',t:'sig'},{n:'busy',t:'num'}],
-  params:[{n:'carriers',t:'range',min:4,max:64,step:1,d:16,label:'поднесущих'},
-          {n:'spacing',t:'range',min:5,max:200,step:.25,d:31.25,log:true,label:'разнос поднесущих, Гц'},
-          {n:'f0',t:'range',min:0,max:4000,step:10,d:800,label:'нижняя граница полосы, Гц'},
-          {n:'cp',t:'range',min:0,max:50,step:1,d:25,label:'циклический префикс, % от символа'},
+  params:[{n:'carriers',t:'range',min:4,max:64,step:1,d:16,label:'subcarriers'},
+          {n:'spacing',t:'range',min:5,max:200,step:.25,d:31.25,log:true,label:'subcarrier spacing, Hz'},
+          {n:'f0',t:'range',min:0,max:4000,step:10,d:800,label:'band lower edge, Hz'},
+          {n:'cp',t:'range',min:0,max:50,step:1,d:25,label:'cyclic prefix, % of symbol'},
           {n:'mod',t:'select',opts:['BPSK','QPSK'],d:'BPSK'},
           {n:'amp',t:'range',min:0,max:1,step:.01,d:.5},
           {n:'loop',t:'check',d:true},
-          {n:'send',t:'button',label:'Передать',fn:n=>{n.trig=true;}}],
-  init:n=>{n.bid=-1;n.queue=[];n.qi=0;n.localIdx=Infinity;n.curPhases=null;n.prevGo=0;n.trig=false;n.text='ожидание блока бит';},
+          {n:'send',t:'button',label:'Send',fn:n=>{n.trig=true;}}],
+  init:n=>{n.bid=-1;n.queue=[];n.qi=0;n.localIdx=Infinity;n.curPhases=null;n.prevGo=0;n.trig=false;n.text='waiting for bit block';},
   process(n,I){
     const o=buf(n,'out');
     const N=n.p.carriers|0, df=n.p.spacing, f0=n.p.f0, amp=n.p.amp;
@@ -2056,15 +2056,15 @@ def({ id:'ofdmTx', title:'OFDM: модулятор', cat:'Модуляция', r
       for(let k=0;k<N;k++) s+=Math.cos(2*Math.PI*(f0+(k+1)*df)*t + n.curPhases[k]);
       o[i]=s*amp/N; n.localIdx++; }
     return {out:o, busy:n.qi<n.queue.length?1:0}; },
-  draw(n){ n.el.querySelector('.readout').textContent=n.text||'ожидание блока бит'; }});
+  draw(n){ n.el.querySelector('.readout').textContent=n.text||'waiting for bit block'; }});
 
 
-def({ id:'ofdmRx', title:'OFDM: демодулятор', cat:'Модуляция', readout:true,
+def({ id:'ofdmRx', title:'OFDM: Demodulator', cat:'Modulation', readout:true,
   ins:[{n:'in',t:'sig'}], outs:[{n:'blk',t:'blk'},{n:'lock',t:'num'}],
-  params:[{n:'carriers',t:'range',min:4,max:64,step:1,d:16,label:'поднесущих'},
-          {n:'spacing',t:'range',min:5,max:200,step:.25,d:31.25,log:true,label:'разнос поднесущих, Гц'},
-          {n:'f0',t:'range',min:0,max:4000,step:10,d:800,label:'нижняя граница полосы, Гц'},
-          {n:'cp',t:'range',min:0,max:50,step:1,d:25,label:'циклический префикс, % от символа'},
+  params:[{n:'carriers',t:'range',min:4,max:64,step:1,d:16,label:'subcarriers'},
+          {n:'spacing',t:'range',min:5,max:200,step:.25,d:31.25,log:true,label:'subcarrier spacing, Hz'},
+          {n:'f0',t:'range',min:0,max:4000,step:10,d:800,label:'band lower edge, Hz'},
+          {n:'cp',t:'range',min:0,max:50,step:1,d:25,label:'cyclic prefix, % of symbol'},
           {n:'mod',t:'select',opts:['BPSK','QPSK'],d:'BPSK'}],
   init:n=>{n.N=0;n.df=0;n.cpP=-1;},
   process(n,I){
@@ -2125,8 +2125,8 @@ def({ id:'ofdmRx', title:'OFDM: демодулятор', cat:'Модуляция
       }
       n.n++; }
     return {blk:n.blkOut, lock:n.locked?1:0}; },
-  draw(n){ n.el.querySelector('.readout').textContent=(n.locked?'синхронизация есть':'ищу границу символа…')+
-    (n.blkOut? ' · последний блок #'+n.blkOut.id : ''); }});
+  draw(n){ n.el.querySelector('.readout').textContent=(n.locked?'synced':'searching for symbol boundary…')+
+    (n.blkOut? ' · last block #'+n.blkOut.id : ''); }});
 
 
 /* ============================================================
@@ -2239,38 +2239,38 @@ function sigidAnalyzeOne(w,tight,sqBands,keying,mag,sr,N){
   const sq=bw>40 && sqBands.find(b=>Math.abs(b.centroid-2*w.centroid)<w.centroid*.08 && (b.freqHi-b.freqLo)<bw*.5);
   const sub=tight.filter(t=>t.centroid>=w.freqLo-5&&t.centroid<=w.freqHi+5).length;
   const flat=sigidFlatness(mag,sr,N,w.freqLo,w.freqHi);
-  if(sq) return {name:'BPSK (фаза ±180°, несущая подавлена)', conf:.6,
-    note:'несущая ~'+w.centroid.toFixed(0)+' Гц (узкий пик на удвоенной частоте после ×² — верный признак именно фазовой манипуляции)'};
+  if(sq) return {name:'BPSK (±180° phase, carrier suppressed)', conf:.6,
+    note:'carrier ~'+w.centroid.toFixed(0)+' Hz (narrow peak at 2× frequency after squaring — a reliable sign of phase keying)'};
   if(keying.onOff)
-    return {name:'Морзе (CW)', conf:.7, note:'тон '+w.centroid.toFixed(0)+' Гц, вкл/выкл-манипуляция (точки/тире — скорость не фиксирована)'};
+    return {name:'Morse (CW)', conf:.7, note:'tone '+w.centroid.toFixed(0)+' Hz, on/off keying (dots/dashes — speed not fixed)'};
   // FT8/FT4/JT65/WSPR — тоже MFSK, но полоса на порядок ýже, чем у Olivia/Contestia
   // (десятки Гц против сотен-тысяч) — это и есть их главная спектральная примета.
   // Проверяется ПОСЛЕ манипуляции вкл/выкл: в отличие от Морзе, здесь несущая светит
   // непрерывно весь слот, а по ширине узкий CW-тон и FT8-слот на глаз спектра похожи.
   if(bw>12 && bw<=80)
-    return {name:'FT8/FT4/JT65/WSPR-подобный (узкополосный слабосигнальный MFSK)', conf:.5,
-      note:'полоса всего ~'+bw.toFixed(0)+' Гц вокруг '+w.centroid.toFixed(0)+' Гц — характерная ширина для этого семейства, попробуйте ft8Rx'};
+    return {name:'FT8/FT4/JT65/WSPR-like (narrowband weak-signal MFSK)', conf:.5,
+      note:'bandwidth only ~'+bw.toFixed(0)+' Hz around '+w.centroid.toFixed(0)+' Hz — characteristic width for this family, try ft8Rx'};
   if(bw>80 && (sub>=3 || flat>.45))
-    return {name:'MFSK-семейство (Olivia/Contestia/подобное)', conf: sub>=3? .55:.4,
-      note:'полоса ~'+bw.toFixed(0)+' Гц вокруг '+w.centroid.toFixed(0)+' Гц'+(sub>=3?', внутри '+sub+' тонов':', энергия размазана — похоже на несколько тонов сразу')};
-  return {name:'Немодулированная несущая / AM / узкополосный SSB', conf:.3, note:'частота ~'+w.centroid.toFixed(0)+' Гц'};
+    return {name:'MFSK family (Olivia/Contestia/similar)', conf: sub>=3? .55:.4,
+      note:'bandwidth ~'+bw.toFixed(0)+' Hz around '+w.centroid.toFixed(0)+' Hz'+(sub>=3?', '+sub+' tones inside':', energy is spread out — looks like several tones at once')};
+  return {name:'Unmodulated carrier / AM / narrowband SSB', conf:.3, note:'frequency ~'+w.centroid.toFixed(0)+' Hz'};
 }
 
 function sigidClassify(feat){
   const {tight,wide,keying,dtmf,sqBands,mag,sr,N} = feat, out=[];
-  if(dtmf.active) out.push({name:'DTMF', conf:.9, note:'строка '+dtmf.row+' Гц / столбец '+dtmf.col+' Гц'});
-  if(!wide.length){ out.push({name:'сигнала не видно (тишина/шум)', conf:0}); return out; }
+  if(dtmf.active) out.push({name:'DTMF', conf:.9, note:'row '+dtmf.row+' Hz / column '+dtmf.col+' Hz'});
+  if(!wide.length){ out.push({name:'no signal visible (silence/noise)', conf:0}); return out; }
   // гипотеза «ровно 2 кластера — это на самом деле пара тонов ОДНОЙ 2-FSK передачи»,
   // а не два независимых сигнала — только в разумном для сдвига FSK диапазоне
   if(wide.length===2){
     const shift=Math.abs(wide[1].centroid-wide[0].centroid);
     if(shift>=50 && shift<=1200){
       if(keying.rate>500)
-        out.push({name:'Packet/AFSK (Bell202-подобный)', conf:.5,
-          note:'тона '+wide[0].centroid.toFixed(0)+'/'+wide[1].centroid.toFixed(0)+' Гц, сдвиг '+shift.toFixed(0)+' Гц, оценка ~'+keying.rate.toFixed(0)+' Бод'});
+        out.push({name:'Packet/AFSK (Bell202-like)', conf:.5,
+          note:'tones '+wide[0].centroid.toFixed(0)+'/'+wide[1].centroid.toFixed(0)+' Hz, shift '+shift.toFixed(0)+' Hz, est. ~'+keying.rate.toFixed(0)+' baud'});
       else
         out.push({name:'RTTY / 2-FSK', conf:.55,
-          note:'тона '+wide[0].centroid.toFixed(0)+'/'+wide[1].centroid.toFixed(0)+' Гц, сдвиг '+shift.toFixed(0)+' Гц, оценка ~'+keying.rate.toFixed(1)+' Бод'});
+          note:'tones '+wide[0].centroid.toFixed(0)+'/'+wide[1].centroid.toFixed(0)+' Hz, shift '+shift.toFixed(0)+' Hz, est. ~'+keying.rate.toFixed(1)+' baud'});
     }
   }
   // и в любом случае — независимая догадка по каждому кластеру (если их несколько,
@@ -2279,17 +2279,17 @@ function sigidClassify(feat){
   wide.slice(0,6).forEach((w,i)=>{
     const g=sigidAnalyzeOne(w,tight,sqBands,keying,mag,sr,N);
     out.push({ name:g.name, conf: many? g.conf*0.85 : g.conf,
-      note:(many? 'кластер '+(i+1)+' ('+w.centroid.toFixed(0)+' Гц): ':'')+g.note });
+      note:(many? 'cluster '+(i+1)+' ('+w.centroid.toFixed(0)+' Hz): ':'')+g.note });
   });
   out.sort((a,b)=>b.conf-a.conf);
   return out;
 }
 
-def({ id:'sigid', title:'Определитель типа сигнала', cat:'Анализ', readout:true, tall:true,
+def({ id:'sigid', title:'Signal Type Identifier', cat:'Analysis', readout:true, tall:true,
   ins:[{n:'in',t:'sig'}],
   params:[{n:'fftSize',t:'select',opts:['2048','4096','8192','16384'],d:'8192'},
-          {n:'period',t:'range',min:.5,max:5,step:.5,d:2,label:'период анализа, с'}],
-  init:n=>{n.buf=null;n.bi=0;n.text='накопление...';n.last=0;},
+          {n:'period',t:'range',min:.5,max:5,step:.5,d:2,label:'analysis period, s'}],
+  init:n=>{n.buf=null;n.bi=0;n.text='accumulating...';n.last=0;},
   process(n,I){
     const need=Math.round(Eng.sr*n.p.period);
     if(!n.buf || n.buf.length!==need){ n.buf=new Float32Array(need); n.bi=0; }

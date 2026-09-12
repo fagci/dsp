@@ -121,8 +121,8 @@ Graph.inIndex=idx;
 }
 /* ---- DOM узла ---- */
 function catColor(cat){                             // единый цвет категории — для узлов и палитры
-return cat==='Источники'?'var(--t-num)':cat==='Обработка'?'var(--t-sig)'
-: cat==='Анализ'?'var(--t-spec)':cat==='Прочее'?'var(--dim)':'var(--t-img)';
+return cat==='Sources'?'var(--t-num)':cat==='Processing'?'var(--t-sig)'
+: cat==='Analysis'?'var(--t-spec)':cat==='Misc'?'var(--dim)':'var(--t-img)';
 }
 function posNode(n){                                // position через transform, не left/top —
 n.el.style.transform=`translate3d(${n.x}px,${n.y}px,0)`;   // так двигаем узел без layout-reflow всей страницы
@@ -228,9 +228,9 @@ r.addEventListener('click',()=>{
 navigator.clipboard?.writeText(r.textContent);
 r.classList.add('copied'); setTimeout(()=>r.classList.remove('copied'),400); });
 if(d.tall){
-const cp=document.createElement('button'); cp.className='copy'; cp.textContent='Копировать';
+const cp=document.createElement('button'); cp.className='copy'; cp.textContent='Copy';
 cp.addEventListener('click',()=>{ navigator.clipboard?.writeText(r.textContent);
-cp.textContent='скопировано'; setTimeout(()=>cp.textContent='Копировать',900); });
+cp.textContent='copied'; setTimeout(()=>cp.textContent='Copy',900); });
 mid.append(cp); } }
 if(d.swatch){ const s=document.createElement('div'); s.className='swatch'; mid.append(s); }
 el.querySelector('.x').addEventListener('click',e=>{e.stopPropagation();
@@ -318,7 +318,7 @@ const modPort=s.t==='range2'? null : modIns?.get(s.n);   // range2 — джек�
 if(modPort){                                        // джек модуляции — вместо отдельной строки порта
 const pin=document.createElement('span'); pin.className='pin mpin';
 pin.style.setProperty('--pc',TYPE_COLOR[modPort.t]);
-pin.title='Перетащите сюда провод — параметр будет управляться извне';
+pin.title='Drag a wire here — the parameter will be controlled externally';
 row.classList.add('modable'); row.append(pin);
 n.ports.i[modPort.n]=pin; wire(pin,modPort,'i');
 }
@@ -326,7 +326,7 @@ row.append(lab);
 if(s.t==='range'){
 // Ползунок-число в духе Blender: тащить — меняет значение, клик — точный ввод текстом.
 const box=document.createElement('div'); box.className='slidernum'; box.tabIndex=0;
-box.title='Тащить ↔ — изменить, Shift — точнее, клик — ввести число, колесо — шаг';
+box.title='Drag left/right to change, Shift for fine control, click to type a number, wheel to step';
 // min/max можно задать числом или функцией n=>число (например, Eng.sr/2 — привязка к частоте
 // движка) — резолвим один раз при сборке; при смене sr узлы пересобираются (см. srSel.onchange).
 const smin=typeof s.min==='function'?s.min(n):s.min, smax=typeof s.max==='function'?s.max(n):s.max;
@@ -396,7 +396,7 @@ row.className='prm wide';
 const box=document.createElement('div'); box.className='knob'; box.tabIndex=0;
 box.style.cssText='width:48px;height:48px;border-radius:50%;background:#1a2024;'+
 'border:1px solid #333;position:relative;touch-action:none;cursor:grab;margin:2px auto';
-box.title='Тащить вверх/вниз — изменить, Shift — точнее, колесо — шаг ×10';
+box.title='Drag up/down to change, Shift for fine control, wheel to step ×10';
 const needle=document.createElement('div');
 needle.style.cssText='position:absolute;left:50%;top:3px;width:2px;height:18px;'+
 'background:var(--acc,#e0b23c);transform-origin:50% 21px;pointer-events:none';
@@ -450,7 +450,7 @@ const mkBox=(key,isLo)=>{
 const min=s.min,max=s.max,step=s.step,log=s.log;
 const box=document.createElement('div'); box.className='slidernum'; box.tabIndex=0;
 box.dataset.param=key;
-box.title='Тащить ↔ — изменить, клик — ввести число, колесо — шаг';
+box.title='Drag left/right to change, click to type a number, wheel to step';
 const fillEl=document.createElement('div'); fillEl.className='sn-fill';
 const valEl=document.createElement('span'); valEl.className='sn-val';
 box.append(fillEl,valEl);
@@ -458,7 +458,7 @@ const mp=modIns?.get(key);
 if(mp){                                         // своя точка на каждую половину — провод не может задать обе
 const pin=document.createElement('span'); pin.className='pin mpin';
 pin.style.setProperty('--pc',TYPE_COLOR[mp.t]);
-pin.title='Перетащите сюда провод — параметр будет управляться извне';
+pin.title='Drag a wire here — the parameter will be controlled externally';
 box.append(pin); n.ports.i[mp.n]=pin; wire(pin,mp,'i');
 }
 const pct=v=> log? clamp(Math.log(v/min)/Math.log(max/min),0,1)*100
@@ -660,7 +660,7 @@ return o; }),
 edges:Graph.edges.filter(e=>Sel.has(e.from) &&Sel.has(e.to)).map(e=>
 ({from:e.from,fp:e.fp,to:e.to,tp:e.tp}))
 };
-stat.textContent='скопировано узлов: '+clip.nodes.length;
+stat.textContent='copied nodes: '+clip.nodes.length;
 }
 let pasting=false;
 function pasteData(data,dx,dy){
@@ -769,7 +769,7 @@ if(pending){                                       // второй тап зав
 if(pending.dir!==dir){
 if(pending.dir==='o') addEdge(pending.n.id,pending.port,n.id,port);
 else addEdge(n.id,port,pending.n.id,pending.port);
-stat.textContent='связь создана'; }
+stat.textContent='connection created'; }
 clearPending(); return; }
 const el=dir==='o'?n.ports.o[port]:n.ports.i[port]; el.classList.add('lit');
 link={n,port,dir,el,x0:ev.clientX,y0:ev.clientY};
@@ -794,7 +794,7 @@ clearPending();
 clearPending();
 pending={n:link.n,port:link.port,dir:link.dir,el:link.el};
 link.el.classList.add('lit');
-stat.textContent='выбран порт '+link.port+' — коснитесь второго';
+stat.textContent='port selected: '+link.port+' — tap the second one';
 }
 cancelLink();
 }
@@ -864,12 +864,12 @@ document.getElementById('redo').onclick=()=>Undo.redo();
 document.getElementById('dup').onclick=()=>{ copySel(); pasteData(clip,30,30); };
 document.getElementById('turbo').onchange=e=>{
 Eng.turbo=+e.target.value;
-stat.textContent = Eng.turbo >1? 'прогон ×'+Eng.turbo+' — звук искажён' : 'реальное время'; };
+stat.textContent = Eng.turbo >1? 'running ×'+Eng.turbo+' — audio distorted' : 'real time'; };
 document.getElementById('blk').onchange=async e=>{
 const v=+e.target.value;
-stat.textContent='размер блока '+v+', движок перезапускается';
+stat.textContent='block size '+v+', engine restarting';
 await Eng.setBlock(v);
-stat.textContent='размер блока '+v+' · входы нужно включить заново '; };
+stat.textContent='block size '+v+' · inputs need to be re-enabled '; };
 window.addEventListener('keydown',ev=>{
 const t=ev.target;
 if(t &&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
@@ -932,7 +932,7 @@ const r=cv.getBoundingClientRect();
 addNode(m.id,(r.width/2)/view.k-view.x-100+Math.random()*50,
 (r.height/3)/view.k-view.y+Math.random()*120);
 markWiresDirty();
-if(isCoarse) showToast('добавлено: '+m.title);  // панель остаётся открытой — можно накидать несколько подряд
+if(isCoarse) showToast('added: '+m.title);  // панель остаётся открытой — можно накидать несколько подряд
 else closeSide();
 Undo.push(); });
 b.addEventListener('dragstart',e=>{ e.dataTransfer.setData('text/x-dsp-module',m.id);
@@ -966,7 +966,7 @@ pal.append(det);
 }
 if(Object.values(MOD).some(m=>m.legacy)){
 const t=document.createElement('button'); t.className='pitem';
-t.innerHTML=' <b>'+(showLegacy?'скрыть':'показать')+' устаревшие </b>';
+t.innerHTML=' <b>'+(showLegacy?'hide':'show')+' legacy </b>';
 t.addEventListener('click',()=>{ showLegacy=!showLegacy; buildPalette(); });
 pal.append(t); }
 pal.classList.toggle('empty',matches===0);
@@ -1022,8 +1022,8 @@ if((n.type==='mic'||n.type==='mic2') && (!n.p || n.p.devA===undefined)){
 const old=n.p||{}, oldSlot = n.type==='mic2' || old.slot==='B' ? 1 : 0;
 map[n.id]={type:'mic', ports:{out: oldSlot===0?'a':'b'}};
 n.type='mic';
-n.p={devA: oldSlot===0?(old.dev||'по умолчанию'):'по умолчанию', gainA: oldSlot===0?(old.gain??1):1,
-     devB: oldSlot===1?(old.dev||'по умолчанию'):'по умолчанию', gainB: oldSlot===1?(old.gain??1):1,
+n.p={devA: oldSlot===0?(old.dev||'default'):'default', gainA: oldSlot===0?(old.gain??1):1,
+     devB: oldSlot===1?(old.dev||'default'):'default', gainB: oldSlot===1?(old.gain??1):1,
      echo:!!old.echo, ns:!!old.ns, agc:!!old.agc};
 }
 }
@@ -1065,7 +1065,7 @@ document.getElementById('save').onclick=()=>
 dl(new Blob([JSON.stringify(serialize(),null,1)],{type:'application/json'}),'patch.json');
 document.getElementById('load').onclick=()=>document.getElementById('fpick').click();
 document.getElementById('fpick').onchange=e=>{ const f=e.target.files[0]; if(!f) return;
-const r=new FileReader(); r.onload=()=>{ try{ stashIfDirty(); deserialize(JSON.parse(r.result)); fitViewWhenReady(); graphDirty=false; }catch(err){ alert('Файл не читается: '+err.message); } };
+const r=new FileReader(); r.onload=()=>{ try{ stashIfDirty(); deserialize(JSON.parse(r.result)); fitViewWhenReady(); graphDirty=false; }catch(err){ alert('Could not read file: '+err.message); } };
 r.readAsText(f); e.target.value=''; };
 document.getElementById('clear').onclick=()=>{
 stashIfDirty();
@@ -1075,7 +1075,7 @@ clearAll(); markWiresDirty(); currentPatchName=''; buildPatchList(); graphDirty=
 // поэтому пресеты и патчи «не удаляются». Эта кнопка стирает именно данные сайта.
 // Кнопки нет в index.php (тестовая, только в index.html) — элемент может отсутствовать.
 document.getElementById('wipe')?.addEventListener('click',async()=>{
-if(!confirm('Стереть все пресеты, патчи и локальные данные приложения на этом сайте?')) return;
+if(!confirm('Erase all presets, patches and local app data on this site?')) return;
 try{ localStorage.clear(); }catch(e){}
 try{
 const names=indexedDB.databases ? (await indexedDB.databases()).map(d=>d.name) : ['dsp-samples','dsp-lists'];
@@ -1105,15 +1105,15 @@ runBtn.classList.toggle('on',on);
 Eng.onRunChange=syncRunBtn;
 runBtn.onclick=async()=>{
 const on=await Eng.toggle();
-if(!on){ stat.textContent='пауза'; stat.classList.remove('warn','crit'); }
+if(!on){ stat.textContent='paused'; stat.classList.remove('warn','crit'); }
 };
 const srSel=document.getElementById('sr');
 if(srSel) srSel.onchange=async e=>{
 const v=+e.target.value||null;
-stat.textContent=(v?'частота '+v+' Гц':'частота по умолчанию')+', движок перезапускается';
+stat.textContent=(v?'sample rate '+v+' Hz':'default sample rate')+', engine restarting';
 await Eng.setSampleRate(v);
 for(const n of Graph.nodes) rebuildNode(n);   // границы ползунков вида max:()=>Eng.sr/2 — освежить
-stat.textContent='частота '+Eng.sr+' Гц · входы нужно включить заново';
+stat.textContent='sample rate '+Eng.sr+' Hz · inputs need to be re-enabled';
 };
 function nodeH(n){                                   // высота узла: из DOM либо по составу
 const h=n.el &&n.el.offsetHeight;
@@ -1172,8 +1172,8 @@ if(Eng.running &&!Eng.paused){
 // пишем в DOM только если строка реально изменилась — иначе rAF (до 60 к/с) переписывает
 // textContent даже на кадрах, где Eng.tick() ещё не успел отработать заново
 const load=Math.round(Eng.load*100);
-const statText= `${Eng.sr} Гц · блок ${BLOCK}` +(Eng.turbo >1? `· ×${Eng.turbo}` :'')+
-`· ${Eng.t.toFixed(2)} мс · нагрузка ${load}% · узлов ${Graph.nodes.length}`;
+const statText= `${Eng.sr} Hz · block ${BLOCK}` +(Eng.turbo >1? `· ×${Eng.turbo}` :'')+
+`· ${Eng.t.toFixed(2)} ms · load ${load}% · nodes ${Graph.nodes.length}`;
 if(statText!==lastStatText){ stat.textContent=statText; lastStatText=statText; }
 // предупреждение имеет смысл только в реальном времени — при turbo>1 движок нарочно бежит быстрее звука
 stat.classList.toggle('warn', Eng.turbo===1 &&Eng.load>=.85 &&Eng.load<1);
@@ -1196,7 +1196,7 @@ currentPatchName='';
 document.querySelectorAll('#content input[type="range"]').forEach(old=>{
 const i=document.createElement('input'); i.type='number';
 for(const a of ['min','max','step','value']) if(old.hasAttribute(a)) i.setAttribute(a,old.getAttribute(a));
-i.title='Стрелки ↑↓ или колесо мыши — изменить значение';
+i.title='Arrow keys or mouse wheel to change the value';
 old.replaceWith(i);
 });
 requestAnimationFrame(frame);

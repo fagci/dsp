@@ -1,11 +1,11 @@
 /* ---------- обработка ---------- */
-def({ id:'gain', title:'Усиление', cat:'Обработка', ins:[{n:'in',t:'sig'},{n:'k',t:'num'}],
+def({ id:'gain', title:'Gain', cat:'Processing', ins:[{n:'in',t:'sig'},{n:'k',t:'num'}],
   outs:[{n:'out',t:'sig'}], params:[{n:'k',t:'range',min:0,max:256,step:.01,d:1}],
   process(n,I){ const o=buf(n,'out'), k=pv(n,I,'k'), x=I.in;
     for(let i=0;i<BLOCK;i++) o[i]=(x?x[i]:0)*k; return {out:o}; }});
 
 
-def({ id:'mul', title:'Умножитель', cat:'Обработка', ins:[{n:'a',t:'sig'},{n:'b',t:'sig'}],
+def({ id:'mul', title:'Multiplier', cat:'Processing', ins:[{n:'a',t:'sig'},{n:'b',t:'sig'}],
     params:[{n:'outGain', t:'range', min:0,max:8,step:.01,d:1}],
   outs:[{n:'out',t:'sig'}],
   process(n,I){ const o=buf(n,'out'),k=pv(n,I,'outGain');
@@ -13,8 +13,8 @@ def({ id:'mul', title:'Умножитель', cat:'Обработка', ins:[{n:
 
 def({
   id: 'superhet',
-  title: 'Супергетеродин',
-  cat: 'Обработка',
+  title: 'Superheterodyne',
+  cat: 'Processing',
 
   ins: [
     {n: 'in',   t: 'sig'},
@@ -31,19 +31,19 @@ def({
 
   params: [
     {n: 'rf',    t: 'range', min: 100, max: 24000, step: 1, d: 20190,
-     label: 'входная частота, Гц'},
+     label: 'input frequency, Hz'},
 
     {n: 'lo',    t: 'range', min: 100, max: 24000, step: 1, d: 12000,
-     label: 'гетеродин, Гц'},
+     label: 'local oscillator, Hz'},
 
     {n: 'Q',     t: 'range', min: 1, max: 100, step: .5, d: 12,
-     label: 'добротность ПЧ'},
+     label: 'IF Q factor'},
 
     {n: 'preQ',  t: 'range', min: 1, max: 50, step: .5, d: 4,
-     label: 'добротность преселектора (RF)'},
+     label: 'preselector Q factor (RF)'},
 
     {n: 'gain',  t: 'range', min: .1, max: 10, step: .1, d: 2,
-     label: 'усиление'}
+     label: 'gain'}
   ],
 
   init: n => {
@@ -176,14 +176,14 @@ def({
 });
 
 
-def({ id:'div', title:'Делитель', cat:'Обработка', ins:[{n:'a',t:'sig'},{n:'b',t:'sig'}],
+def({ id:'div', title:'Divider', cat:'Processing', ins:[{n:'a',t:'sig'},{n:'b',t:'sig'}],
   outs:[{n:'out',t:'sig'}], params:[{n:'eps',t:'num',d:1e-3}],
   process(n,I){ const o=buf(n,'out'), e=n.p.eps;
     for(let i=0;i<BLOCK;i++){ const b=I.b?I.b[i]:0;
       o[i]=clamp((I.a?I.a[i]:0)/(Math.abs(b)<e?(b<0?-e:e):b),-8,8); } return {out:o}; }});
 
 
-def({ id:'sum', title:'Сумматор', cat:'Обработка', ins:[{n:'a',t:'sig'},{n:'b',t:'sig'},{n:'ka',t:'num'},{n:'kb',t:'num'}],
+def({ id:'sum', title:'Summer', cat:'Processing', ins:[{n:'a',t:'sig'},{n:'b',t:'sig'},{n:'ka',t:'num'},{n:'kb',t:'num'}],
   outs:[{n:'out',t:'sig'}],
   params:[{n:'ka',t:'range',min:-2,max:2,step:.01,d:1},{n:'kb',t:'range',min:-2,max:2,step:.01,d:1}],
   process(n,I){ if(typeof I.ka==='number') setMod(n,'ka',I.ka);
@@ -195,23 +195,23 @@ def({ id:'sum', title:'Сумматор', cat:'Обработка', ins:[{n:'a',
 // Микшер на 4 входа со своим уровнем/панорамой/мьютом на канал — свести sum→sum→sum для
 // 4 источников (например, каналов rtlsdr) неудобно. Панорама — по закону равной мощности
 // (sin/cos), не линейная: иначе сигнал в центре звучит тише разведённых по краям.
-def({ id:'mixer4', title:'Микшер (4 канала)', cat:'Обработка',
+def({ id:'mixer4', title:'Mixer (4 channels)', cat:'Processing',
   ins:[{n:'a',t:'sig'},{n:'b',t:'sig'},{n:'c',t:'sig'},{n:'d',t:'sig'},
        {n:'ka',t:'num'},{n:'kb',t:'num'},{n:'kc',t:'num'},{n:'kd',t:'num'}],
   outs:[{n:'out',t:'sig'},{n:'L',t:'sig'},{n:'R',t:'sig'}],
   params:[
-    {n:'ka',t:'range',min:0,max:2,step:.01,d:1,label:'A уровень'},
-    {n:'pa',t:'range',min:-1,max:1,step:.01,d:-.6,label:'A панорама'},
-    {n:'ma',t:'check',d:false,label:'A выкл'},
-    {n:'kb',t:'range',min:0,max:2,step:.01,d:1,label:'B уровень'},
-    {n:'pb',t:'range',min:-1,max:1,step:.01,d:-.2,label:'B панорама'},
-    {n:'mb',t:'check',d:false,label:'B выкл'},
-    {n:'kc',t:'range',min:0,max:2,step:.01,d:1,label:'C уровень'},
-    {n:'pc',t:'range',min:-1,max:1,step:.01,d:.2,label:'C панорама'},
-    {n:'mc',t:'check',d:false,label:'C выкл'},
-    {n:'kd',t:'range',min:0,max:2,step:.01,d:1,label:'D уровень'},
-    {n:'pd',t:'range',min:-1,max:1,step:.01,d:.6,label:'D панорама'},
-    {n:'md',t:'check',d:false,label:'D выкл'}],
+    {n:'ka',t:'range',min:0,max:2,step:.01,d:1,label:'A level'},
+    {n:'pa',t:'range',min:-1,max:1,step:.01,d:-.6,label:'A pan'},
+    {n:'ma',t:'check',d:false,label:'A mute'},
+    {n:'kb',t:'range',min:0,max:2,step:.01,d:1,label:'B level'},
+    {n:'pb',t:'range',min:-1,max:1,step:.01,d:-.2,label:'B pan'},
+    {n:'mb',t:'check',d:false,label:'B mute'},
+    {n:'kc',t:'range',min:0,max:2,step:.01,d:1,label:'C level'},
+    {n:'pc',t:'range',min:-1,max:1,step:.01,d:.2,label:'C pan'},
+    {n:'mc',t:'check',d:false,label:'C mute'},
+    {n:'kd',t:'range',min:0,max:2,step:.01,d:1,label:'D level'},
+    {n:'pd',t:'range',min:-1,max:1,step:.01,d:.6,label:'D pan'},
+    {n:'md',t:'check',d:false,label:'D mute'}],
   process(n,I){
     for(const k of ['ka','kb','kc','kd']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     const o=buf(n,'out'), oL=buf(n,'L'), oR=buf(n,'R');
@@ -233,13 +233,13 @@ def({ id:'mixer4', title:'Микшер (4 канала)', cat:'Обработк�
 // 12 каналов — та же схема, что у mixer4, только каналы a..l генерируются циклом,
 // чтобы не расписывать вручную 36 параметров (уровень/панорама/мьют на каждый).
 const MIXER12_CH=Array.from({length:12},(_,i)=>String.fromCharCode(97+i));   // 'a'..'l'
-def({ id:'mixer12', title:'Микшер (12 каналов)', cat:'Обработка',
+def({ id:'mixer12', title:'Mixer (12 channels)', cat:'Processing',
   ins:[...MIXER12_CH.map(c=>({n:c,t:'sig'})), ...MIXER12_CH.map(c=>({n:'k'+c,t:'num'}))],
   outs:[{n:'out',t:'sig'},{n:'L',t:'sig'},{n:'R',t:'sig'}],
   params:MIXER12_CH.flatMap((c,i)=>[
-    {n:'k'+c,t:'range',min:0,max:2,step:.01,d:1,label:c.toUpperCase()+' уровень'},
-    {n:'p'+c,t:'range',min:-1,max:1,step:.01,d:+(i/11*2-1).toFixed(2),label:c.toUpperCase()+' панорама'},
-    {n:'m'+c,t:'check',d:false,label:c.toUpperCase()+' выкл'}]),
+    {n:'k'+c,t:'range',min:0,max:2,step:.01,d:1,label:c.toUpperCase()+' level'},
+    {n:'p'+c,t:'range',min:-1,max:1,step:.01,d:+(i/11*2-1).toFixed(2),label:c.toUpperCase()+' pan'},
+    {n:'m'+c,t:'check',d:false,label:c.toUpperCase()+' mute'}]),
   process(n,I){
     for(const c of MIXER12_CH) if(typeof I['k'+c]==='number') setMod(n,'k'+c,I['k'+c]);
     const o=buf(n,'out'), oL=buf(n,'L'), oR=buf(n,'R');
@@ -257,7 +257,7 @@ def({ id:'mixer12', title:'Микшер (12 каналов)', cat:'Обрабо�
     return {out:o, L:oL, R:oR}; }});
 
 
-def({ id:'biquad', title:'Фильтр', cat:'Обработка', ins:[{n:'in',t:'sig'},{n:'freq',t:'num'},{n:'Q',t:'num'}],
+def({ id:'biquad', title:'Filter', cat:'Processing', ins:[{n:'in',t:'sig'},{n:'freq',t:'num'},{n:'Q',t:'num'}],
   outs:[{n:'out',t:'sig'}],
   params:[{n:'type',t:'select',opts:['lp','hp','bp','notch','ap'],d:'lp'},
           {n:'freq',t:'range',min:20,max:()=>Eng.sr/2,step:1,d:1000,log:true},
@@ -272,7 +272,7 @@ def({ id:'biquad', title:'Фильтр', cat:'Обработка', ins:[{n:'in',
       x2=x1; x1=x; y2=y1; y1=y; o[i]=y; }
     n.z=[x1,x2,y1,y2]; return {out:o}; }});
 
-def({ id:'adsr', title:'Огибающая ADSR', cat:'Звук', ins:[{n:'gate',t:'sig'}],
+def({ id:'adsr', title:'ADSR Envelope', cat:'Audio', ins:[{n:'gate',t:'sig'}],
   outs:[{n:'out',t:'sig'}], readout:true,
   params:[{n:'attack',t:'range',min:.001,max:3,step:.001,d:.01,log:true,label:'A'},
           {n:'decay',t:'range',min:.001,max:3,step:.001,d:.1,log:true,label:'D'},
@@ -294,12 +294,12 @@ def({ id:'adsr', title:'Огибающая ADSR', cat:'Звук', ins:[{n:'gate'
     return {out:o}; },
   draw(n){ n.el.querySelector('.readout').textContent = n.stage+' · '+n.lvl.toFixed(2); }});
 
-def({ id:'dist', title:'Дисторшн', cat:'Звук', ins:[{n:'in',t:'sig'},{n:'drive',t:'num'}],
+def({ id:'dist', title:'Distortion', cat:'Audio', ins:[{n:'in',t:'sig'},{n:'drive',t:'num'}],
   outs:[{n:'out',t:'sig'}],
   params:[{n:'type',t:'select',opts:['tanh','hard','fold'],d:'tanh'},
           {n:'drive',t:'range',min:1,max:50,step:.1,d:4,log:true},
           {n:'mix',t:'range',min:0,max:1,step:.01,d:1},
-          {n:'out',t:'range',min:0,max:2,step:.01,d:.5,label:'уровень'}],
+          {n:'out',t:'range',min:0,max:2,step:.01,d:.5,label:'level'}],
   process(n,I){
     if(typeof I.drive==='number') setMod(n,'drive',I.drive);
     const o=buf(n,'out'), d=n.p.drive, mix=n.p.mix, og=n.p.out, ty=n.p.type;
@@ -312,10 +312,10 @@ def({ id:'dist', title:'Дисторшн', cat:'Звук', ins:[{n:'in',t:'sig'}
       o[i]=(x*(1-mix)+y*mix)*og; }
     return {out:o}; }});
 
-def({ id:'reverb', title:'Реверб', cat:'Звук', ins:[{n:'in',t:'sig'},{n:'mix',t:'num'}],
+def({ id:'reverb', title:'Reverb', cat:'Audio', ins:[{n:'in',t:'sig'},{n:'mix',t:'num'}],
   outs:[{n:'out',t:'sig'}],
-  params:[{n:'size',t:'range',min:.3,max:1.2,step:.01,d:.8,label:'размер'},
-          {n:'damp',t:'range',min:0,max:1,step:.01,d:.4,label:'демпфирование'},
+  params:[{n:'size',t:'range',min:.3,max:1.2,step:.01,d:.8,label:'size'},
+          {n:'damp',t:'range',min:0,max:1,step:.01,d:.4,label:'damping'},
           {n:'mix',t:'range',min:0,max:1,step:.01,d:.3}],
   init:n=>{
     const k=Eng.sr/44100;                              // масштаб длин линий под текущую sr
@@ -337,7 +337,7 @@ def({ id:'reverb', title:'Реверб', cat:'Звук', ins:[{n:'in',t:'sig'},{
     return {out:o}; }});
 
 
-def({ id:'iq', title:'Квадратурный сдвиг', cat:'Обработка',
+def({ id:'iq', title:'Quadrature Shift', cat:'Processing',
   ins:[{n:'in',t:'sig'},{n:'fc',t:'num'},{n:'bw',t:'num'},{n:'gain',t:'num'}], outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'}],
   params:[{n:'fc',t:'range',min:100,max:()=>Eng.sr/2,step:1,d:5000,log:true},
           {n:'bw',t:'range',min:50,max:8000,step:10,d:1500,log:true},
@@ -364,10 +364,10 @@ def({ id:'iq', title:'Квадратурный сдвиг', cat:'Обработ�
 // и сама БПФ дешевле (N меньше при равной детализации в Гц). 'fc' тут — то же значение, что
 // стоит в 'iq': нужно для подписи оси частот (спектр строится вокруг него, не вокруг нуля).
 // dec задавайте так, чтобы Eng.sr/dec было заметно больше bw в 'iq' — иначе алиасинг.
-def({ id:'zfft', title:'Zoom-БПФ (I/Q)', cat:'Обработка',
+def({ id:'zfft', title:'Zoom-FFT (I/Q)', cat:'Processing',
   ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'fc',t:'num'}], outs:[{n:'spec',t:'spec'}],
-  params:[{n:'fc',t:'range',min:0,max:()=>Eng.sr/2,step:1,d:5000,log:true,label:'несущая (как в iq), Гц'},
-          {n:'dec',t:'select',opts:['1','2','4','8','16','32','64'],d:'8',label:'прореживание'},
+  params:[{n:'fc',t:'range',min:0,max:()=>Eng.sr/2,step:1,d:5000,log:true,label:'carrier (same as iq), Hz'},
+          {n:'dec',t:'select',opts:['1','2','4','8','16','32','64'],d:'8',label:'decimation'},
           {n:'size',t:'select',opts:['256','512','1024','2048','4096','8192','16384'],d:'2048'},
           {n:'win',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann'}],
   init:n=>{ n.N=0; n.gi=0; n.absPos=0; n.lpDec=0; },
@@ -438,7 +438,7 @@ def({ id:'zfft', title:'Zoom-БПФ (I/Q)', cat:'Обработка',
     return {spec:n.sp}; }});
 
 
-def({ id:'polar', title:'Модуль/фаза (I/Q → полярные)', cat:'Обработка', ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'}],
+def({ id:'polar', title:'Magnitude/Phase (I/Q → polar)', cat:'Processing', ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'}],
   outs:[{n:'mag',t:'sig'},{n:'phase',t:'sig'},{n:'dphase',t:'sig'}],
   init:n=>{n.pp=0;},
   process(n,I){ const m=buf(n,'mag'), p=buf(n,'phase'), d=buf(n,'dphase');
@@ -464,9 +464,9 @@ function hilbertTaps(N){                    // N — нечётное число
   }
   return h;
 }
-def({ id:'hilbert', title:'Гильберт-преобразование', cat:'Обработка', ins:[{n:'in',t:'sig'}],
+def({ id:'hilbert', title:'Hilbert Transform', cat:'Processing', ins:[{n:'in',t:'sig'}],
   outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'}],
-  params:[{n:'taps',t:'range',min:31,max:255,step:2,d:127,label:'отводов (нечётно)'}],
+  params:[{n:'taps',t:'range',min:31,max:255,step:2,d:127,label:'taps (odd)'}],
   init:n=>{ n.N=0; },
   process(n,I){
     let N=n.p.taps|0; if(N%2===0) N++;
@@ -485,11 +485,11 @@ def({ id:'hilbert', title:'Гильберт-преобразование', cat:'
 
 // Фазоскоп: X-Y осциллограф (фигуры Лиссажу) + метр фазовой корреляции пары каналов.
 // +1 — каналы синфазны, −1 — в противофазе (взаимно гасят друг друга в моно), 0 — не связаны.
-def({ id:'xyscope', title:'Фазоскоп (X-Y)', cat:'Обработка', ins:[{n:'x',t:'sig'},{n:'y',t:'sig'}],
+def({ id:'xyscope', title:'Phase Scope (X-Y)', cat:'Processing', ins:[{n:'x',t:'sig'},{n:'y',t:'sig'}],
   outs:[{n:'corr',t:'num'}],
   view:{h:220}, resize:true, readout:true,
-  params:[{n:'gain',t:'range',min:.1,max:8,step:.1,d:1,label:'усиление'},
-          {n:'persist',t:'range',min:0,max:.98,step:.01,d:.85,label:'послесвечение'}],
+  params:[{n:'gain',t:'range',min:.1,max:8,step:.1,d:1,label:'gain'},
+          {n:'persist',t:'range',min:0,max:.98,step:.01,d:.85,label:'persistence'}],
   init:n=>{ n.corr=0; n._x=null; n._y=null; },
   process(n,I){
     const x=I.x, y=I.y;
@@ -520,8 +520,8 @@ def({ id:'xyscope', title:'Фазоскоп (X-Y)', cat:'Обработка', in
     cx.fillRect(Math.min(half,mx),plotH+2,Math.abs(mx-half),MH-4);
     cx.strokeStyle='rgba(255,255,255,.3)';
     cx.beginPath(); cx.moveTo(half,plotH+1); cx.lineTo(half,plotH+MH-1); cx.stroke();
-    n.el.querySelector('.readout').textContent='корреляция '+n.corr.toFixed(2)+
-      (n.corr>0.7?' · в фазе':n.corr<-0.7?' · противофаза':(n.corr<0.2&&n.corr>-0.2)?' · разбег':''); }});
+    n.el.querySelector('.readout').textContent='correlation '+n.corr.toFixed(2)+
+      (n.corr>0.7?' · in phase':n.corr<-0.7?' · out of phase':(n.corr<0.2&&n.corr>-0.2)?' · uncorrelated':''); }});
 
 
 // Моностатический сонар: тот же тракт (динамик+микрофон одного устройства) излучает
@@ -589,21 +589,21 @@ function sonarAnalyze(n,p,sr){
   } else n._havePrevPh=false;
   n.env=env;
 }
-def({ id:'sonar', title:'Моностатический сонар (чирп)', cat:'Радар', ins:[{n:'in',t:'sig'}],
+def({ id:'sonar', title:'Monostatic Sonar (chirp)', cat:'Radar', ins:[{n:'in',t:'sig'}],
   outs:[{n:'out',t:'sig'},
         {n:'range1',t:'num'},{n:'level1',t:'num'},{n:'motion1',t:'num'},
         {n:'range2',t:'num'},{n:'level2',t:'num'},
         {n:'range3',t:'num'},{n:'level3',t:'num'}],
   view:{h:200}, resize:true, readout:true,
   params:[
-    {n:'fLo',t:'range',min:15000,max:()=>Eng.sr/2,step:100,d:18000,label:'чирп: от, Гц'},
-    {n:'fHi',t:'range',min:15000,max:()=>Eng.sr/2,step:100,d:22000,label:'чирп: до, Гц'},
-    {n:'dur',t:'range',min:3,max:40,step:1,d:12,label:'длительность, мс'},
-    {n:'period',t:'range',min:30,max:300,step:1,d:100,label:'период, мс'},
-    {n:'maxDelay',t:'range',min:3,max:80,step:1,d:25,label:'окно поиска, мс'},
-    {n:'amp',t:'range',min:0,max:1,step:.01,d:.4,label:'громкость'},
-    {n:'thr',t:'range',min:.02,max:.9,step:.01,d:.15,label:'порог пика'},
-    {n:'speedSound',t:'range',min:300,max:360,step:1,d:343,label:'скорость звука, м/с'}],
+    {n:'fLo',t:'range',min:15000,max:()=>Eng.sr/2,step:100,d:18000,label:'chirp: from, Hz'},
+    {n:'fHi',t:'range',min:15000,max:()=>Eng.sr/2,step:100,d:22000,label:'chirp: to, Hz'},
+    {n:'dur',t:'range',min:3,max:40,step:1,d:12,label:'duration, ms'},
+    {n:'period',t:'range',min:30,max:300,step:1,d:100,label:'period, ms'},
+    {n:'maxDelay',t:'range',min:3,max:80,step:1,d:25,label:'search window, ms'},
+    {n:'amp',t:'range',min:0,max:1,step:.01,d:.4,label:'volume'},
+    {n:'thr',t:'range',min:.02,max:.9,step:.01,d:.15,label:'peak threshold'},
+    {n:'speedSound',t:'range',min:300,max:360,step:1,d:343,label:'speed of sound, m/s'}],
   init:n=>{ n._key=''; n.phase=0; n.motion=0; n._havePrevPh=false; n.env=null;
     n.peaks=[{lag:0,lvl:0},{lag:0,lvl:0},{lag:0,lvl:0}]; },
   process(n,I){
@@ -643,11 +643,11 @@ def({ id:'sonar', title:'Моностатический сонар (чирп)', 
     for(const pk of n.peaks) if(pk.lvl>0) cx.fillRect(pk.lag/N*W-1,0,2,H);
     const sr=Eng.sr||48000;
     n.el.querySelector('.readout').textContent =
-      n.peaks.filter(pk=>pk.lvl>0).map((pk,i)=>'#'+(i+1)+': '+(pk.lag/sr*n.p.speedSound/2).toFixed(2)+' м').join(' · ')
-      || 'эхо не найдено'; }});
+      n.peaks.filter(pk=>pk.lvl>0).map((pk,i)=>'#'+(i+1)+': '+(pk.lag/sr*n.p.speedSound/2).toFixed(2)+' m').join(' · ')
+      || 'no echo found'; }});
 
 
-def({ id:'env', title:'Огибающая', cat:'Обработка', ins:[{n:'in',t:'sig'},{n:'atk',t:'num'},{n:'rel',t:'num'}],
+def({ id:'env', title:'Envelope', cat:'Processing', ins:[{n:'in',t:'sig'},{n:'atk',t:'num'},{n:'rel',t:'num'}],
   outs:[{n:'out',t:'sig'},{n:'level',t:'num'}],
   params:[{n:'atk',t:'range',min:.1,max:200,step:.1,d:3},
           {n:'rel',t:'range',min:1,max:2000,step:1,d:80}],
@@ -661,7 +661,7 @@ def({ id:'env', title:'Огибающая', cat:'Обработка', ins:[{n:'i
     return {out:o,level:n.e}; }});
 
 
-def({ id:'delay', title:'Задержка', cat:'Звук', ins:[{n:'in',t:'sig'},{n:'ms',t:'num'},{n:'fb',t:'num'},{n:'mix',t:'num'}],
+def({ id:'delay', title:'Delay', cat:'Audio', ins:[{n:'in',t:'sig'},{n:'ms',t:'num'},{n:'fb',t:'num'},{n:'mix',t:'num'}],
   outs:[{n:'out',t:'sig'}],
   params:[{n:'ms',t:'range',min:1,max:1000,step:1,d:200},
           {n:'fb',t:'range',min:0,max:.95,step:.01,d:.3},
@@ -678,7 +678,7 @@ def({ id:'delay', title:'Задержка', cat:'Звук', ins:[{n:'in',t:'sig'
     return {out:o}; }});
 
 
-def({ id:'dc', title:'Убрать DC', cat:'Обработка', ins:[{n:'in',t:'sig'},{n:'freq',t:'num'}], outs:[{n:'out',t:'sig'}],
+def({ id:'dc', title:'Remove DC', cat:'Processing', ins:[{n:'in',t:'sig'},{n:'freq',t:'num'}], outs:[{n:'out',t:'sig'}],
   params:[{n:'freq',t:'range',min:1,max:400,step:1,d:20}],
   init:n=>{n.x1=0;n.y1=0;},
   process(n,I){ if(typeof I.freq==='number') setMod(n,'freq',I.freq);
@@ -688,7 +688,7 @@ def({ id:'dc', title:'Убрать DC', cat:'Обработка', ins:[{n:'in',t
     return {out:o}; }});
 
 
-def({ id:'fft', title:'БПФ', cat:'Обработка', ins:[{n:'in',t:'sig'}], outs:[{n:'spec',t:'spec'}],
+def({ id:'fft', title:'FFT', cat:'Processing', ins:[{n:'in',t:'sig'}], outs:[{n:'spec',t:'spec'}],
   params:[{n:'size',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'2048'},
           {n:'win',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann'}],
   init:n=>{n.N=0;},
@@ -720,7 +720,7 @@ def({ id:'fft', title:'БПФ', cat:'Обработка', ins:[{n:'in',t:'sig'}]
     return {spec:n.sp}; }});
 
 
-def({ id:'scan', title:'Строка кадра', cat:'Видео', ins:[{n:'img',t:'img'},{n:'row',t:'num'},{n:'gain',t:'num'}],
+def({ id:'scan', title:'Frame Line', cat:'Video', ins:[{n:'img',t:'img'},{n:'row',t:'num'},{n:'gain',t:'num'}],
   outs:[{n:'out',t:'sig'}],
   params:[{n:'row',t:'range',min:0,max:1,step:.01,d:.5},
           {n:'gain',t:'range',min:.1,max:10,step:.1,d:2}],
@@ -741,7 +741,7 @@ def({ id:'scan', title:'Строка кадра', cat:'Видео', ins:[{n:'img
     return {out:o}; }});
 
 
-def({ id:'bright', title:'Яркость области', cat:'Видео',
+def({ id:'bright', title:'Region Brightness', cat:'Video',
   ins:[{n:'img',t:'img'},{n:'x',t:'num'},{n:'y',t:'num'},{n:'w',t:'num'},{n:'h',t:'num'},
        {n:'auto',t:'num'},{n:'invert',t:'num'}],
   outs:[{n:'out',t:'num'},{n:'raw',t:'num'}], view:{h:46},
@@ -780,22 +780,22 @@ def({ id:'bright', title:'Яркость области', cat:'Видео',
       i?cx.lineTo(x,y):cx.moveTo(x,y); }
     cx.stroke();
     cx.fillStyle='#6c7a80'; cx.font='9px monospace';
-    cx.fillText(n.v.toFixed(3)+(n.p.auto?' авто':''),3,10); }});
+    cx.fillText(n.v.toFixed(3)+(n.p.auto?' auto':''),3,10); }});
 
 
-def({ id:'capture', title:'Захват и повтор', cat:'Обработка',
+def({ id:'capture', title:'Capture & Loop', cat:'Processing',
   ins:[{n:'in',t:'sig'},{n:'trig',t:'num'},{n:'sec',t:'num'},{n:'thr',t:'num'},{n:'rate',t:'num'},{n:'loop',t:'num'}],
   outs:[{n:'out',t:'sig'},{n:'pos',t:'num'},{n:'playing',t:'num'}],
   view:{h:90}, resize:true, readout:true,
-  params:[{n:'sec',t:'range',min:.2,max:30,step:.1,d:5,label:'длина, с'},
-          {n:'mode',t:'select',opts:['вручную','по триггеру','по уровню'],d:'вручную'},
-          {n:'thr',t:'range',min:.001,max:1,step:.001,d:.05,log:true,label:'порог'},
-          {n:'rate',t:'range',min:.1,max:4,step:.01,d:1,label:'скорость'},
+  params:[{n:'sec',t:'range',min:.2,max:30,step:.1,d:5,label:'length, s'},
+          {n:'mode',t:'select',opts:['manual','on trigger','on level'],d:'manual'},
+          {n:'thr',t:'range',min:.001,max:1,step:.001,d:.05,log:true,label:'threshold'},
+          {n:'rate',t:'range',min:.1,max:4,step:.01,d:1,label:'speed'},
           {n:'loop',t:'check',d:true},
-          {n:'idle',t:'select',opts:['вход','тишина'],d:'вход',label:'в простое'},
-          {n:'grab',t:'button',label:'Заморозить последние N с',fn:n=>capGrab(n)},
-          {n:'play',t:'button',label:'Играть / стоп',fn:n=>{ n.play=!n.play; n.pos=0; }},
-          {n:'wav',t:'button',label:'Сохранить WAV',fn:n=>{
+          {n:'idle',t:'select',opts:['input','silence'],d:'input',label:'when idle'},
+          {n:'grab',t:'button',label:'Freeze last N s',fn:n=>capGrab(n)},
+          {n:'play',t:'button',label:'Play / stop',fn:n=>{ n.play=!n.play; n.pos=0; }},
+          {n:'wav',t:'button',label:'Save WAV',fn:n=>{
             if(n.snap) wavDownload([n.snap],Eng.sr); }}],
   init:n=>{n.ring=null;n.w=0;n.snap=null;n.play=false;n.pos=0;n.prevT=0;n.armed=true;},
   process(n,I){
@@ -805,12 +805,12 @@ def({ id:'capture', title:'Захват и повтор', cat:'Обработк�
     const need=Math.max(BLOCK,Math.round(n.p.sec*Eng.sr));
     if(!n.ring||n.ring.length!==need){ n.ring=new Float32Array(need); n.w=0; }
     for(let i=0;i<BLOCK;i++){ n.ring[n.w]=I.in?I.in[i]:0; n.w=(n.w+1)%need; }
-    if(n.p.mode==='по триггеру'){                    // фронт на входе триггера
+    if(n.p.mode==='on trigger'){                    // edge on the trigger input
       const t=I.trig||0;
       if(t>.5&&n.prevT<=.5&&n.armed){ capGrab(n); n.armed=false; }
       if(t<=.5) n.armed=true;
       n.prevT=t;
-    } else if(n.p.mode==='по уровню'){
+    } else if(n.p.mode==='on level'){
       if(n.armed && I.in && rms(I.in)>n.p.thr){ n.armed=false; n.wait=need; }
       if(!n.armed && n.wait!=null){ n.wait-=BLOCK;   // дописываем окно после срабатывания
         if(n.wait<=0){ capGrab(n); n.wait=null; n.armed=true; } }
@@ -821,7 +821,7 @@ def({ id:'capture', title:'Захват и повтор', cat:'Обработк�
         if(n.pos>=L-1){ if(n.p.loop) n.pos=0; else { n.play=false; o[i]=0; continue; } }
         const i0=n.pos|0, fr=n.pos-i0;
         o[i]=S[i0]*(1-fr)+S[i0+1]*fr; n.pos+=r; }
-    } else if(n.p.idle==='вход'&&I.in) o.set(I.in);
+    } else if(n.p.idle==='input'&&I.in) o.set(I.in);
     else o.fill(0);
     return {out:o, pos:n.snap? n.pos/n.snap.length : 0, playing:n.play?1:0}; },
   draw(n,cv,cx){
@@ -841,8 +841,8 @@ def({ id:'capture', title:'Захват и повтор', cat:'Обработк�
         cx.strokeStyle='#e0b23c'; cx.lineWidth=2;
         cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke(); cx.lineWidth=1; } }
     n.el.querySelector('.readout').textContent = S
-      ? (S.length/Eng.sr).toFixed(2)+' с · '+(n.play?'играет':'стоп')
-      : (n.p.mode==='вручную'?'нет снимка':'ждёт срабатывания'); }});
+      ? (S.length/Eng.sr).toFixed(2)+' s · '+(n.play?'playing':'stopped')
+      : (n.p.mode==='manual'?'no snapshot':'waiting for trigger'); }});
 
 
 function capGrab(n){                                 // снимок последних N секунд из кольца
@@ -853,21 +853,21 @@ function capGrab(n){                                 // снимок после�
 }
 
 const BUILDER_DEMO=`{
-  // Полное определение модуля — как def({...}) в файлах движка.
-  // Типы портов: 'sig' (аудио-буфер), 'num' (число), 'spec' (спектр) и т.п.
+  // Full module definition — same shape as def({...}) in the engine files.
+  // Port types: 'sig' (audio buffer), 'num' (number), 'spec' (spectrum), etc.
   ins:  [{n:'I', t:'sig'}],
   outs: [{n:'O', t:'sig'}],
   params: [{n:'gain', t:'range', min:0, max:4, step:.01, d:1}],
   init: n => {},
   process: (n, I) => {
-    const O = buf(n,'O');                 // buf(n,имя) — постоянный буфер под выход
+    const O = buf(n,'O');                 // buf(n,name) — a persistent buffer for the output
     const src = I.I;
     for (let i = 0; i < O.length; i++) O[i] = (src ? src[i] : 0) * n.p.gain;
     return { O };
   }
 }`;
 const BUILDER_DEMO_SCOPE=`{
-  // Пример с графикой: свой canvas (view + draw), рисует форму сигнала на входе
+  // Example with graphics: its own canvas (view + draw), plots the input waveform
   ins:  [{n:'I', t:'sig'}],
   outs: [{n:'O', t:'sig'}],
   params: [{n:'gain', t:'range', min:.1, max:4, step:.01, d:1}],
@@ -877,10 +877,10 @@ const BUILDER_DEMO_SCOPE=`{
     const O = buf(n,'O');
     const src = I.I;
     for (let i = 0; i < O.length; i++) O[i] = (src ? src[i] : 0) * n.p.gain;
-    n.last = O;                            // запоминаем последний блок — draw() рисует не каждый сэмпл-блок, а кадр
+    n.last = O;                            // save the last block — draw() renders once per frame, not per sample block
     return { O };
   },
-  draw: n => {                             // n.cv — canvas узла, уже под нужный размер (view.h / ресайз)
+  draw: n => {                             // n.cv — the node's canvas, already sized (view.h / resize)
     const cx = n.cv.getContext('2d'), W = n.cv.width, H = n.cv.height;
     cx.clearRect(0, 0, W, H);
     const b = n.last; if (!b) return;
@@ -892,24 +892,24 @@ const BUILDER_DEMO_SCOPE=`{
     cx.stroke();
   }
 }`;
-const BUILDER_DEMOS={ 'усилитель':BUILDER_DEMO, 'осциллограф (view+draw)':BUILDER_DEMO_SCOPE };
-def({ id:'builder', title:'Конструктор модуля', cat:'Конструктор',
+const BUILDER_DEMOS={ 'amplifier':BUILDER_DEMO, 'oscilloscope (view+draw)':BUILDER_DEMO_SCOPE };
+def({ id:'builder', title:'Module Builder', cat:'Builder',
   readout:true, resize:true, w:340, h:280,
-  params:[{n:'demo',t:'select',opts:Object.keys(BUILDER_DEMOS),d:'усилитель',label:'пример',fn:n=>{
+  params:[{n:'demo',t:'select',opts:Object.keys(BUILDER_DEMOS),d:'amplifier',label:'example',fn:n=>{
             n.set.code(BUILDER_DEMOS[n.p.demo]); }},
           {n:'code',t:'code',d:BUILDER_DEMO},
-          {n:'apply',t:'button',label:'Применить / обновить тест-узлы',fn:async n=>{
-            n.err=''; n.status='компиляция…';
+          {n:'apply',t:'button',label:'Apply / update test nodes',fn:async n=>{
+            n.err=''; n.status='compiling…';
             let obj;
-            try{                                        // без eval/new Function — их блокирует CSP без unsafe-eval;
-              // blob: разрешён как источник скрипта, динамический import() — не eval, идёт по script-src
+            try{                                        // no eval/new Function — CSP blocks them without unsafe-eval;
+              // blob: is allowed as a script source, dynamic import() isn't eval, goes through script-src
               const blob=new Blob(['export default '+n.p.code+';'],{type:'text/javascript'});
               const url=URL.createObjectURL(blob);
               try{ obj=(await import(url)).default; } finally{ URL.revokeObjectURL(url); }
-            }catch(e){ n.err='ошибка компиляции: '+e.message; return; }
-            if(!obj||typeof obj!=='object'){ n.err='код должен возвращать объект модуля'; return; }
-            const key='custom:'+n.id;                 // тип завязан на id узла-конструктора
-            MOD[key]={ title:obj.title||('Кастом '+n.id), cat:obj.cat||'Конструктор',
+            }catch(e){ n.err='compile error: '+e.message; return; }
+            if(!obj||typeof obj!=='object'){ n.err='code must return a module object'; return; }
+            const key='custom:'+n.id;                 // type is tied to the builder node's id
+            MOD[key]={ title:obj.title||('Custom '+n.id), cat:obj.cat||'Builder',
               ins:obj.ins||[], outs:obj.outs||[], params:obj.params||[],
               view:obj.view, pick:obj.pick, resize:obj.resize, readout:obj.readout,
               tall:obj.tall, swatch:obj.swatch, w:obj.w, h:obj.h,
@@ -918,21 +918,21 @@ def({ id:'builder', title:'Конструктор модуля', cat:'Конст
             if(existing.length){
               const insN=new Set((MOD[key].ins||[]).map(p=>p.n)),
                     outsN=new Set((MOD[key].outs||[]).map(p=>p.n));
-              existing.forEach(x=>{                              // отвалившиеся порты — рвём провода, не падаем
+              existing.forEach(x=>{                              // dropped ports — cut their wires, don't crash
                 Graph.edges.filter(e=>(e.to===x.id&&!insN.has(e.tp))||(e.from===x.id&&!outsN.has(e.fp)))
                   .forEach(delEdge); });
               existing.forEach(rebuildNode);
-              n.status='обновлено, узлов: '+existing.length; }
-            else{ const t=addNode(key,n.x+240,n.y);                   // первый раз — создаём один рядом
-              n.status=t?'создан тестовый узел':'не удалось создать узел'; }
+              n.status='updated, nodes: '+existing.length; }
+            else{ const t=addNode(key,n.x+240,n.y);                   // first time — create one nearby
+              n.status=t?'test node created':'failed to create node'; }
           }}],
   init:n=>{n.err='';n.status='';},
   process(n,I){ return {}; },
   draw(n){ const el=n.el.querySelector('.readout');
-    el.textContent = n.err? '⚠ '+n.err : (n.status||'готов'); }});
+    el.textContent = n.err? '⚠ '+n.err : (n.status||'ready'); }});
 
-const SCRIPT_DEMO=`// вход: I1, I2 (массивы), a, b (числа), sr, N, p1..p4, s (состояние)
-// выход: O1, O2 (массивы), возврат числа → n1
+const SCRIPT_DEMO=`// in: I1, I2 (arrays), a, b (numbers), sr, N, p1..p4, s (state)
+// out: O1, O2 (arrays), return a number → n1
 s.ph = s.ph || 0;
 for (let i = 0; i < N; i++) {
   O1[i] = I1[i] * p1 + Math.sin(2 * Math.PI * s.ph) * p2;
@@ -940,7 +940,7 @@ for (let i = 0; i < N; i++) {
 }
 return s.ph;`;
 
-def({ id:'script', title:'Скрипт', cat:'Конструктор',
+def({ id:'script', title:'Script', cat:'Builder',
   ins:[{n:'I1',t:'sig'},{n:'I2',t:'sig'},{n:'a',t:'num'},{n:'b',t:'num'},
        {n:'p1',t:'num'},{n:'p2',t:'num'},{n:'p3',t:'num'},{n:'p4',t:'num'}],
   outs:[{n:'O1',t:'sig'},{n:'O2',t:'sig'},{n:'n1',t:'num'}],
@@ -975,34 +975,34 @@ def({ id:'script', title:'Скрипт', cat:'Конструктор',
     n.err? '⚠ '+n.err : 'n1 = '+n.n1.toFixed(4); }});
 
 
-def({ id:'cal', title:'Калибровка', cat:'Обработка',
+def({ id:'cal', title:'Calibration', cat:'Processing',
   ins:[{n:'in',t:'num'}], outs:[{n:'out',t:'num'}], readout:true,
-  params:[{n:'mode',t:'select',opts:['дБ смещение','линейный масштаб'],d:'дБ смещение'},
-          {n:'ofs',t:'num',d:0,label:'смещение'},
-          {n:'ref',t:'num',d:94,label:'опорное значение'},
-          {n:'unit',t:'text',d:'дБ SPL',label:'единицы'},
-          {n:'take',t:'button',label:'Принять текущее за опорное',fn:n=>{
+  params:[{n:'mode',t:'select',opts:['dB offset','linear scale'],d:'dB offset'},
+          {n:'ofs',t:'num',d:0,label:'offset'},
+          {n:'ref',t:'num',d:94,label:'reference value'},
+          {n:'unit',t:'text',d:'dB SPL',label:'units'},
+          {n:'take',t:'button',label:'Take current as reference',fn:n=>{
             if(typeof n.raw==='number'&&isFinite(n.raw)){
-              const v=n.p.mode==='дБ смещение'? n.p.ref-n.raw : n.p.ref/(n.raw||1e-9);
+              const v=n.p.mode==='dB offset'? n.p.ref-n.raw : n.p.ref/(n.raw||1e-9);
               if(n.set&&n.set.ofs) n.set.ofs(v); else n.p.ofs=v; } }}],
   init:n=>{n.raw=0;n.v=0;},
   process(n,I){
     n.raw=(typeof I.in==='number'&&isFinite(I.in))?I.in:0;
-    n.v = n.p.mode==='дБ смещение'? n.raw+n.p.ofs : n.raw*n.p.ofs;
+    n.v = n.p.mode==='dB offset'? n.raw+n.p.ofs : n.raw*n.p.ofs;
     return {out:n.v}; },
   draw(n){ n.el.querySelector('.readout').textContent =
-    n.v.toFixed(2)+' '+n.p.unit+'  (вход '+n.raw.toFixed(2)+')'; }});
+    n.v.toFixed(2)+' '+n.p.unit+'  (input '+n.raw.toFixed(2)+')'; }});
 
 
-def({ id:'nlms', title:'Адаптивный фильтр', cat:'Обработка',
+def({ id:'nlms', title:'Adaptive Filter', cat:'Processing',
   ins:[{n:'d',t:'sig'},{n:'x',t:'sig'},{n:'mu',t:'num'},{n:'leak',t:'num'},{n:'freeze',t:'num'}],
   outs:[{n:'out',t:'sig'},{n:'y',t:'sig'},{n:'err',t:'num'}],
   view:{h:40}, readout:true,
   params:[{n:'taps',t:'select',opts:['16','32','64','128','256','512'],d:'128'},
-          {n:'mu',t:'range',min:.001,max:1,step:.001,d:.2,log:true,label:'скорость'},
-          {n:'leak',t:'range',min:0,max:.01,step:.0001,d:0,label:'утечка'},
-          {n:'freeze',t:'check',d:false,label:'заморозить'},
-          {n:'rst',t:'button',label:'Сбросить веса',fn:n=>{n.w&&n.w.fill(0);}}],
+          {n:'mu',t:'range',min:.001,max:1,step:.001,d:.2,log:true,label:'speed'},
+          {n:'leak',t:'range',min:0,max:.01,step:.0001,d:0,label:'leakage'},
+          {n:'freeze',t:'check',d:false,label:'freeze'},
+          {n:'rst',t:'button',label:'Reset weights',fn:n=>{n.w&&n.w.fill(0);}}],
   init:n=>{n.N=0;n.hist=[];n.e=0;},
   process(n,I){
     if(typeof I.mu==='number') setMod(n,'mu',I.mu);
@@ -1036,19 +1036,19 @@ def({ id:'nlms', title:'Адаптивный фильтр', cat:'Обработ�
     for(let i=0;i<n.hist.length;i++){ const x=i/120*W, y=H-n.hist[i]/mx*H;
       i?cx.lineTo(x,y):cx.moveTo(x,y); }
     cx.stroke();
-    n.el.querySelector('.readout').textContent='остаток '+
+    n.el.querySelector('.readout').textContent='residual '+
       (20*Math.log10(n.e+1e-12)).toFixed(1)+' dBFS'; }});
 
 
-def({ id:'beam', title:'Формирователь луча', cat:'Радио',
+def({ id:'beam', title:'Beamformer', cat:'Radio',
   ins:[{n:'A',t:'sig'},{n:'B',t:'sig'},{n:'dist',t:'num'},{n:'ang',t:'num'},
        {n:'manual',t:'num'},{n:'useManual',t:'num'}],
   outs:[{n:'sum',t:'sig'},{n:'diff',t:'sig'},{n:'delayMs',t:'num'}],
   readout:true,
-  params:[{n:'dist',t:'range',min:1,max:100,step:.5,d:15,label:'база, см'},
-          {n:'ang',t:'range',min:-90,max:90,step:1,d:0,label:'угол, °'},
-          {n:'c',t:'num',d:343,label:'скорость звука, м/с'},
-          {n:'manual',t:'range',min:-5,max:5,step:.001,d:0,label:'ручная задержка, мс'},
+  params:[{n:'dist',t:'range',min:1,max:100,step:.5,d:15,label:'baseline, cm'},
+          {n:'ang',t:'range',min:-90,max:90,step:1,d:0,label:'angle, °'},
+          {n:'c',t:'num',d:343,label:'speed of sound, m/s'},
+          {n:'manual',t:'range',min:-5,max:5,step:.001,d:0,label:'manual delay, ms'},
           {n:'useManual',t:'check',d:false}],
   init:n=>{n.line=new Float32Array(4096);n.w=0;n.d=0;},
   process(n,I){
@@ -1069,16 +1069,16 @@ def({ id:'beam', title:'Формирователь луча', cat:'Радио',
     n.d=dSec*1000;
     return {sum:os, diff:od, delayMs:n.d}; },
   draw(n){ n.el.querySelector('.readout').textContent =
-    'задержка '+n.d.toFixed(3)+' мс'; }});
+    'delay '+n.d.toFixed(3)+' ms'; }});
 
 
-def({ id:'agc', title:'АРУ', cat:'Радио',
+def({ id:'agc', title:'AGC', cat:'Radio',
   ins:[{n:'in',t:'sig'},{n:'target',t:'num'},{n:'atk',t:'num'},{n:'rel',t:'num'},{n:'max',t:'num'}],
   outs:[{n:'out',t:'sig'},{n:'gain',t:'num'}], readout:true,
-  params:[{n:'target',t:'range',min:.01,max:1,step:.01,d:.3,label:'цель'},
-          {n:'atk',t:'range',min:1,max:500,step:1,d:20,label:'атака, мс'},
-          {n:'rel',t:'range',min:10,max:5000,step:10,d:500,label:'спад, мс'},
-          {n:'max',t:'range',min:1,max:1000,step:1,d:100,log:true,label:'макс. усиление'}],
+  params:[{n:'target',t:'range',min:.01,max:1,step:.01,d:.3,label:'target'},
+          {n:'atk',t:'range',min:1,max:500,step:1,d:20,label:'attack, ms'},
+          {n:'rel',t:'range',min:10,max:5000,step:10,d:500,label:'release, ms'},
+          {n:'max',t:'range',min:1,max:1000,step:1,d:100,log:true,label:'max gain'}],
   init:n=>{n.g=1;n.env=0;},
   process(n,I){
     for(const k of ['target','atk','rel','max']) if(typeof I[k]==='number') setMod(n,k,I[k]);
@@ -1092,23 +1092,23 @@ def({ id:'agc', title:'АРУ', cat:'Радио',
       o[i]=clamp(x*n.g,-1,1); }
     return {out:o, gain:n.g}; },
   draw(n){ n.el.querySelector('.readout').textContent =
-    'усиление '+(20*Math.log10(n.g+1e-9)).toFixed(1)+' dB'; }});
+    'gain '+(20*Math.log10(n.g+1e-9)).toFixed(1)+' dB'; }});
 
 
 // Сквелч — гейт аудио по уровню, с гистерезисом/удержанием и плавным откр./закр. (без щелчков).
 // Уровень можно взять извне (например, snr у 'chsnr' или db у 'meter' — для радио разумнее
 // гейтить по качеству RF-сигнала, а не по громкости демодулированного шума), либо, если 'level'
 // не подключён, узел сам считает огибающую входного аудио (как у 'agc') — для обычного VOX-сценария.
-def({ id:'squelch', title:'Сквелч', cat:'Радио',
+def({ id:'squelch', title:'Squelch', cat:'Radio',
   ins:[{n:'in',t:'sig'},{n:'level',t:'num'},{n:'thr',t:'num'},{n:'hys',t:'num'},{n:'hold',t:'num'}],
   outs:[{n:'out',t:'sig'},{n:'gate',t:'num'},{n:'db',t:'num'}],
   readout:true,
-  params:[{n:'thr',t:'range',min:-100,max:0,step:.5,d:-40,label:'порог, дБ'},
-          {n:'hys',t:'range',min:0,max:20,step:.5,d:3,label:'гистерезис, дБ'},
-          {n:'hold',t:'range',min:0,max:3000,step:10,d:300,label:'удержание, мс'},
-          {n:'atk',t:'range',min:1,max:200,step:1,d:10,label:'атака огибающей, мс'},
-          {n:'rel',t:'range',min:10,max:2000,step:10,d:150,label:'спад огибающей, мс'},
-          {n:'fade',t:'range',min:0,max:100,step:1,d:8,label:'плавность откр./закр., мс'}],
+  params:[{n:'thr',t:'range',min:-100,max:0,step:.5,d:-40,label:'threshold, dB'},
+          {n:'hys',t:'range',min:0,max:20,step:.5,d:3,label:'hysteresis, dB'},
+          {n:'hold',t:'range',min:0,max:3000,step:10,d:300,label:'hold, ms'},
+          {n:'atk',t:'range',min:1,max:200,step:1,d:10,label:'envelope attack, ms'},
+          {n:'rel',t:'range',min:10,max:2000,step:10,d:150,label:'envelope release, ms'},
+          {n:'fade',t:'range',min:0,max:100,step:1,d:8,label:'open/close smoothing, ms'}],
   init:n=>{n.env=0;n.open=false;n.hCount=0;n.g=0;n.db=-120;},
   process(n,I){
     for(const k of ['thr','hys','hold']) if(typeof I[k]==='number') setMod(n,k,I[k]);
@@ -1136,13 +1136,13 @@ def({ id:'squelch', title:'Сквелч', cat:'Радио',
     const gate=(n.open||n.hCount>0)?1:0;
     return {out:o, gate, db:n.db}; },
   draw(n){ n.el.querySelector('.readout').textContent =
-    (n.db>-119?n.db.toFixed(1):'—')+' дБ · '+((n.open||n.hCount>0)?'открыт':'закрыт'); }});
+    (n.db>-119?n.db.toFixed(1):'—')+' dB · '+((n.open||n.hCount>0)?'open':'closed'); }});
 
 
-def({ id:'notch', title:'Режектор сети', cat:'Обработка', ins:[{n:'in',t:'sig'},{n:'f0',t:'num'},{n:'n',t:'num'},{n:'Q',t:'num'}],
+def({ id:'notch', title:'Mains Notch', cat:'Processing', ins:[{n:'in',t:'sig'},{n:'f0',t:'num'},{n:'n',t:'num'},{n:'Q',t:'num'}],
   outs:[{n:'out',t:'sig'}],
   params:[{n:'f0',t:'range',min:10,max:400,step:.1,d:50},
-          {n:'n',t:'range',min:1,max:12,step:1,d:5,label:'гармоник'},
+          {n:'n',t:'range',min:1,max:12,step:1,d:5,label:'harmonics'},
           {n:'Q',t:'range',min:5,max:200,step:1,d:40}],
   init:n=>{n.key='';},
   process(n,I){
@@ -1189,18 +1189,18 @@ function irMeasure(n){
   n.sch=sch;
   const at=db=>{ for(let i=0;i<L;i++) if(sch[i]<=db) return i; return -1; };
   const i1=at(-5), i2=at(n.p.range==='T20'?-25:-35);
-  if(i1<0||i2<0||i2<=i1){ n.text='не хватает спада для оценки'; n.rt=0; return; }
+  if(i1<0||i2<0||i2<=i1){ n.text='not enough decay to estimate'; n.rt=0; return; }
   const mult=n.p.range==='T20'?3:2;
   n.rt=(i2-i1)/Eng.sr*mult;
-  n.text='RT60 ≈ '+n.rt.toFixed(3)+' с ('+n.p.range+') · задержка '+n.dl.toFixed(1)+' мс';
+  n.text='RT60 ≈ '+n.rt.toFixed(3)+' s ('+n.p.range+') · delay '+n.dl.toFixed(1)+' ms';
 }
 
-def({ id:'numsig', title:'Число → сигнал', cat:'Обработка',
+def({ id:'numsig', title:'Number → Signal', cat:'Processing',
   ins:[{n:'in',t:'num'},{n:'gain',t:'num'},{n:'dc',t:'num'},{n:'dcHz',t:'num'}], outs:[{n:'out',t:'sig'}],
   params:[{n:'gain',t:'range',min:.01,max:100,step:.01,d:1,log:true},
-          {n:'ofs',t:'num',d:0,label:'смещение'},
-          {n:'mode',t:'select',opts:['линейно','ступенькой'],d:'линейно'},
-          {n:'dc',t:'check',d:true,label:'убрать постоянную'},
+          {n:'ofs',t:'num',d:0,label:'offset'},
+          {n:'mode',t:'select',opts:['linear','stepped'],d:'linear'},
+          {n:'dc',t:'check',d:true,label:'remove DC'},
           {n:'dcHz',t:'range',min:.05,max:5,step:.01,d:.3,log:true}],
   init:n=>{n.prev=0;n.x1=0;n.y1=0;},
   process(n,I){
@@ -1209,7 +1209,7 @@ def({ id:'numsig', title:'Число → сигнал', cat:'Обработка'
     if(typeof I.dcHz==='number') setMod(n,'dcHz',I.dcHz);
     // блок = 10.7 мс реального времени, поэтому частоты сохраняются как есть
     const o=buf(n,'out'), v=((typeof I.in==='number'&&isFinite(I.in))?I.in:0)-n.p.ofs;
-    const g=n.p.gain, lin=n.p.mode==='линейно';
+    const g=n.p.gain, lin=n.p.mode==='linear';
     const R=1-2*Math.PI*n.p.dcHz/Eng.sr;
     for(let i=0;i<BLOCK;i++){
       const t=(i+1)/BLOCK;
@@ -1220,7 +1220,7 @@ def({ id:'numsig', title:'Число → сигнал', cat:'Обработка'
     return {out:o}; }});
 
 
-def({ id:'map', title:'Масштаб числа', cat:'Обработка', ins:[{n:'in',t:'num'},{n:'smooth',t:'num'}],
+def({ id:'map', title:'Number Scale', cat:'Processing', ins:[{n:'in',t:'num'},{n:'smooth',t:'num'}],
   outs:[{n:'out',t:'num'}],
   params:[{n:'inMin',t:'num',d:0},{n:'inMax',t:'num',d:1},
           {n:'outMin',t:'num',d:0},{n:'outMax',t:'num',d:1000},
@@ -1237,9 +1237,9 @@ def({ id:'map', title:'Масштаб числа', cat:'Обработка', ins
 function setMod(n,key,v){                            // применить внешнее значение к параметру: через n.set (с рендером),
   if(n.set?.[key]) n.set[key](v); else n.p[key]=v; }  // либо напрямую — если узел без DOM (группа)
 function saBands(n,cx,W,H){                        // закраска полосы приёма
-  const b=n.p.band; if(!b||b==='нет') return;
+  const b=n.p.band; if(!b||b==='none') return;
   let pair=null, col='#8ab4f8';
-  if(b==='по входам') pair=n.band;
+  if(b==='by inputs') pair=n.band;
   else if(b==='1–2'){ pair=[n.mk[0],n.mk[1]]; col=MK_COL[0]; }
   else if(b==='3–4'){ pair=[n.mk[2],n.mk[3]]; col=MK_COL[2]; }
   if(!pair||pair[0]==null||pair[1]==null) return;
@@ -1274,7 +1274,7 @@ function saMarkers(n,cx,W,H){
     cx.fillStyle='#000'; cx.font='bold 8px monospace';
     cx.fillText(String(k+1),x-2,7);
     cx.font='10px monospace';
-    const t=fmtHz(f)+'Гц '+(n.db[k]>-119?n.db[k].toFixed(0)+'dB':'');
+    const t=fmtHz(f)+'Hz '+(n.db[k]>-119?n.db[k].toFixed(0)+'dB':'');
     const tw=cx.measureText(t).width, tx=clamp(x+7,2,W-tw-5), ty=2+k*14;
     cx.fillStyle='#0e1113ee'; cx.fillRect(tx-3,ty,tw+6,12);
     cx.strokeStyle=MK_COL[k]; cx.lineWidth=1; cx.strokeRect(tx-2.5,ty+.5,tw+5,11);
@@ -1325,7 +1325,7 @@ function saGrid(n,cx,W,hs,H){                      // сетка частот с
     cx.beginPath(); cx.moveTo(0,y); cx.lineTo(W,y); cx.stroke(); }
 }
 
-def({ id:'thresh', title:'Порог', cat:'Обработка',
+def({ id:'thresh', title:'Threshold', cat:'Processing',
   ins:[{n:'num',t:'num'},{n:'sig',t:'sig'},{n:'thr',t:'num'},{n:'hys',t:'num'},{n:'hold',t:'num'},
        {n:'auto',t:'num'},{n:'invert',t:'num'}],
   outs:[{n:'num',t:'num'},{n:'sig',t:'sig'}],
@@ -1382,13 +1382,13 @@ function acCompute(n){
   n.lag=bl+clamp(d,-.5,.5); n.f=Eng.sr/n.lag; n.conf=clamp(r1,0,1);
 }
 
-def({ id:'denoiser', title:'Шумоподавитель (спектральный)', cat:'Звук',
+def({ id:'denoiser', title:'Denoiser (spectral)', cat:'Audio',
   ins:[{n:'in',t:'sig'},{n:'floor',t:'num'},{n:'alpha',t:'num'},{n:'gain',t:'num'},{n:'smooth',t:'num'}],
   outs:[{n:'out',t:'sig'}],
-  params:[{n:'floor',t:'range',min:0.01,max:0.5,step:0.01,d:0.1,label:'уровень шума'},
-          {n:'alpha',t:'range',min:0.1,max:0.99,step:0.01,d:0.9,label:'адаптация'},
-          {n:'gain',t:'range',min:0.1,max:4,step:0.1,d:1.5,label:'усиление'},
-          {n:'smooth',t:'range',min:0.1,max:0.99,step:0.01,d:0.7,label:'сглаживание'}],
+  params:[{n:'floor',t:'range',min:0.01,max:0.5,step:0.01,d:0.1,label:'noise level'},
+          {n:'alpha',t:'range',min:0.1,max:0.99,step:0.01,d:0.9,label:'adaptation'},
+          {n:'gain',t:'range',min:0.1,max:4,step:0.1,d:1.5,label:'gain'},
+          {n:'smooth',t:'range',min:0.1,max:0.99,step:0.01,d:0.7,label:'smoothing'}],
   init:n=>{ n.noiseProfile=null; n.alpha=0.9; n.N=0; },
   process(n,I){
     for(const k of ['floor','alpha','gain','smooth']) if(typeof I[k]==='number') setMod(n,k,I[k]);
@@ -1467,24 +1467,24 @@ def({ id:'denoiser', title:'Шумоподавитель (спектральны
 });
 
 
-def({ id:'wavelet', title:'Вейвлет (пост. Q)', cat:'Обработка',
+def({ id:'wavelet', title:'Wavelet (const. Q)', cat:'Processing',
   ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'Q',t:'num'},{n:'floor',t:'num'},{n:'top',t:'num'}],
   outs:[{n:'spec',t:'spec'},{n:'f',t:'num'},{n:'level',t:'num'}],
   params:[{n:'fmin',t:'range',min:20,max:5000,step:1,d:100,log:true},
           {n:'fmax',t:'range',min:100,max:()=>Eng.sr/2,step:1,d:5000,log:true},
           {n:'bands',t:'select',opts:['24','48','96','144','288'],d:'96'},
           {n:'Q',t:'range',min:2,max:48,step:.5,d:12},
-          {n:'decim',t:'select',opts:['авто','1','4','16','64','256'],d:'авто',
-           label:'прореживание'},
-          {n:'floor',t:'range',min:-140,max:-20,step:1,d:-90,label:'нуль уровня'},
-          {n:'top',t:'range',min:-60,max:20,step:1,d:-10,label:'верх уровня'}],
+          {n:'decim',t:'select',opts:['auto','1','4','16','64','256'],d:'auto',
+           label:'decimation'},
+          {n:'floor',t:'range',min:-140,max:-20,step:1,d:-90,label:'level floor'},
+          {n:'top',t:'range',min:-60,max:20,step:1,d:-10,label:'level top'}],
   init:n=>{n.key='';n.f=0;n.lv=0;n.acc=0;n.cnt=0;},
   process(n,I){
     for(const k of ['fmin','fmax','Q','floor','top']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     const B=+n.p.bands;
     const hiF=Math.max(n.p.fmin,n.p.fmax);
     let D=+n.p.decim;
-    if(n.p.decim==='авто'){                          // держим запас втрое над верхней полосой
+    if(n.p.decim==='auto'){                          // держим запас втрое над верхней полосой
       D=1; while(D*4<=256 && hiF*6 < Eng.sr/(D*4)) D*=4; }
     D=Math.max(1,Math.min(D, Math.floor(Eng.sr/(hiF*3))||1));
     const srE=Eng.sr/D;
@@ -1541,7 +1541,7 @@ function tfBlock(n){
   n.cavg=cs/(N/2); n.frames=(n.frames||0)+1;
 }
 
-def({ id:'cepstrum', title:'Кепстр', cat:'Обработка', ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'}],
+def({ id:'cepstrum', title:'Cepstrum', cat:'Processing', ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'}],
   outs:[{n:'spec',t:'spec'},{n:'f0',t:'num'},{n:'conf',t:'num'}],
   params:[{n:'size',t:'select',opts:['2048','4096','8192','16384'],d:'8192'},
           {n:'fmin',t:'range',min:10,max:2000,step:1,d:50,log:true},
@@ -1581,16 +1581,16 @@ def({ id:'cepstrum', title:'Кепстр', cat:'Обработка', ins:[{n:'in
     n.sp.rev=(n.sp.rev|0)+1;
     return {spec:n.sp, f0:n.f0, conf:n.conf}; }});
 
-def({ id:'comp', title:'Компрессор/лимитер', cat:'Звук', ins:[{n:'in',t:'sig'},{n:'thresh',t:'num'}],
+def({ id:'comp', title:'Compressor/Limiter', cat:'Audio', ins:[{n:'in',t:'sig'},{n:'thresh',t:'num'}],
   outs:[{n:'out',t:'sig'},{n:'gr',t:'num'}], readout:true,
-  params:[{n:'mode',t:'select',opts:['компрессор','лимитер'],d:'компрессор',fn:n=>{
-            if(n.p.mode==='лимитер'){ n.set.ratio?.(20); n.set.attack?.(.05); n.set.knee?.(0); } }},
-          {n:'threshold',t:'range',min:-60,max:0,step:.1,d:-18,label:'порог, дБ'},
+  params:[{n:'mode',t:'select',opts:['compressor','limiter'],d:'compressor',fn:n=>{
+            if(n.p.mode==='limiter'){ n.set.ratio?.(20); n.set.attack?.(.05); n.set.knee?.(0); } }},
+          {n:'threshold',t:'range',min:-60,max:0,step:.1,d:-18,label:'threshold, dB'},
           {n:'ratio',t:'range',min:1,max:20,step:.1,d:4,label:'ratio'},
-          {n:'knee',t:'range',min:0,max:24,step:.1,d:6,label:'колено, дБ'},
-          {n:'attack',t:'range',min:.1,max:200,step:.1,d:5,log:true,label:'атака, мс'},
-          {n:'release',t:'range',min:5,max:1000,step:1,d:80,log:true,label:'спад, мс'},
-          {n:'makeup',t:'range',min:0,max:24,step:.1,d:0,label:'makeup, дБ'}],
+          {n:'knee',t:'range',min:0,max:24,step:.1,d:6,label:'knee, dB'},
+          {n:'attack',t:'range',min:.1,max:200,step:.1,d:5,log:true,label:'attack, ms'},
+          {n:'release',t:'range',min:5,max:1000,step:1,d:80,log:true,label:'release, ms'},
+          {n:'makeup',t:'range',min:0,max:24,step:.1,d:0,label:'makeup, dB'}],
   init:n=>{ n.env=-100; n.grDb=0; },
   process(n,I){
     if(typeof I.thresh==='number') setMod(n,'threshold',I.thresh);
@@ -1610,7 +1610,7 @@ def({ id:'comp', title:'Компрессор/лимитер', cat:'Звук', in
       o[i]=xi*gain; }
     n.grDb=gr;
     return {out:o, gr:-gr}; },
-  draw(n){ n.el.querySelector('.readout').textContent = 'GR: -'+n.grDb.toFixed(1)+' дБ'; }});
+  draw(n){ n.el.querySelector('.readout').textContent = 'GR: -'+n.grDb.toFixed(1)+' dB'; }});
 
 
 // формулы Audio EQ Cookbook (RBJ): peak/shelf-биквады с усилением, которых нет в 'biquad'
@@ -1642,16 +1642,16 @@ function biStep(s,c,x){                                 // один шаг би�
   return y;
 }
 
-def({ id:'eq', title:'Эквалайзер (3 полосы)', cat:'Обработка',
+def({ id:'eq', title:'Equalizer (3 bands)', cat:'Processing',
   ins:[{n:'in',t:'sig'},{n:'loGain',t:'num'},{n:'midGain',t:'num'},{n:'hiGain',t:'num'}],
   outs:[{n:'out',t:'sig'}], readout:true,
-  params:[{n:'loFreq',t:'range',min:20,max:1000,step:1,d:150,log:true,label:'низкие, Гц'},
-          {n:'loGain',t:'range',min:-18,max:18,step:.1,d:0,label:'низкие, дБ'},
-          {n:'midFreq',t:'range',min:200,max:8000,step:1,d:1000,log:true,label:'средние, Гц'},
-          {n:'midGain',t:'range',min:-18,max:18,step:.1,d:0,label:'средние, дБ'},
-          {n:'midQ',t:'range',min:.3,max:5,step:.1,d:1,label:'средние, Q'},
-          {n:'hiFreq',t:'range',min:2000,max:20000,step:1,d:6000,log:true,label:'высокие, Гц'},
-          {n:'hiGain',t:'range',min:-18,max:18,step:.1,d:0,label:'высокие, дБ'}],
+  params:[{n:'loFreq',t:'range',min:20,max:1000,step:1,d:150,log:true,label:'low, Hz'},
+          {n:'loGain',t:'range',min:-18,max:18,step:.1,d:0,label:'low, dB'},
+          {n:'midFreq',t:'range',min:200,max:8000,step:1,d:1000,log:true,label:'mid, Hz'},
+          {n:'midGain',t:'range',min:-18,max:18,step:.1,d:0,label:'mid, dB'},
+          {n:'midQ',t:'range',min:.3,max:5,step:.1,d:1,label:'mid, Q'},
+          {n:'hiFreq',t:'range',min:2000,max:20000,step:1,d:6000,log:true,label:'high, Hz'},
+          {n:'hiGain',t:'range',min:-18,max:18,step:.1,d:0,label:'high, dB'}],
   init:n=>{n.s1={x1:0,x2:0,y1:0,y2:0}; n.s2={x1:0,x2:0,y1:0,y2:0}; n.s3={x1:0,x2:0,y1:0,y2:0};},
   process(n,I){
     for(const k of ['loGain','midGain','hiGain']) if(typeof I[k]==='number') setMod(n,k,I[k]);
@@ -1665,17 +1665,17 @@ def({ id:'eq', title:'Эквалайзер (3 полосы)', cat:'Обрабо�
       o[i]=x; }
     return {out:o}; },
   draw(n){ n.el.querySelector('.readout').textContent =
-    'НЧ '+n.p.loGain.toFixed(1)+' дБ · СЧ '+n.p.midGain.toFixed(1)+' дБ · ВЧ '+n.p.hiGain.toFixed(1)+' дБ'; }});
+    'low '+n.p.loGain.toFixed(1)+' dB · mid '+n.p.midGain.toFixed(1)+' dB · high '+n.p.hiGain.toFixed(1)+' dB'; }});
 
 
-def({ id:'chorus', title:'Хорус/Фленджер/Фейзер', cat:'Звук',
+def({ id:'chorus', title:'Chorus/Flanger/Phaser', cat:'Audio',
   ins:[{n:'in',t:'sig'},{n:'rate',t:'num'},{n:'depth',t:'num'},{n:'mix',t:'num'},{n:'fb',t:'num'}],
   outs:[{n:'out',t:'sig'}], readout:true,
-  params:[{n:'mode',t:'select',opts:['хорус','фленджер','фейзер'],d:'хорус'},
-          {n:'rate',t:'range',min:.05,max:10,step:.01,d:.5,log:true,label:'скорость LFO, Гц'},
+  params:[{n:'mode',t:'select',opts:['chorus','flanger','phaser'],d:'chorus'},
+          {n:'rate',t:'range',min:.05,max:10,step:.01,d:.5,log:true,label:'LFO rate, Hz'},
           {n:'depth',t:'range',min:0,max:1,step:.01,d:.5},
-          {n:'fb',t:'range',min:-.95,max:.95,step:.01,d:.3,label:'обратная связь'},
-          {n:'stages',t:'range',min:2,max:12,step:2,d:6,label:'ступени (фейзер)'},
+          {n:'fb',t:'range',min:-.95,max:.95,step:.01,d:.3,label:'feedback'},
+          {n:'stages',t:'range',min:2,max:12,step:2,d:6,label:'stages (phaser)'},
           {n:'mix',t:'range',min:0,max:1,step:.01,d:.5}],
   init:n=>{
     n.line=new Float32Array(Math.round(48000*0.05));   // 50 мс хватает и хорусу, и фленджеру
@@ -1683,7 +1683,7 @@ def({ id:'chorus', title:'Хорус/Фленджер/Фейзер', cat:'Зву
   process(n,I){
     for(const k of ['rate','depth','fb','mix']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     const o=buf(n,'out'), sr=Eng.sr, mode=n.p.mode;
-    if(mode==='фейзер'){
+    if(mode==='phaser'){
       const ns=n.p.stages;
       if(n.ap.length!==ns) n.ap=Array.from({length:ns},()=>({x1:0,y1:0}));
       for(let i=0;i<BLOCK;i++){
@@ -1697,7 +1697,7 @@ def({ id:'chorus', title:'Хорус/Фленджер/Фейзер', cat:'Зву
         n.fbv=v;
         o[i]=xin*(1-n.p.mix)+v*n.p.mix; }
     } else {
-      const L=n.line.length, flg=mode==='фленджер';
+      const L=n.line.length, flg=mode==='flanger';
       const baseMs=flg?1.5:15, spanMs=flg?4:8;
       for(let i=0;i<BLOCK;i++){
         const xin=I.in?I.in[i]:0;
@@ -1711,13 +1711,13 @@ def({ id:'chorus', title:'Хорус/Фленджер/Фейзер', cat:'Зву
         o[i]=xin*(1-n.p.mix)+y*n.p.mix; }
     }
     return {out:o}; },
-  draw(n){ n.el.querySelector('.readout').textContent = n.p.mode+' · '+n.p.rate.toFixed(2)+' Гц'; }});
+  draw(n){ n.el.querySelector('.readout').textContent = n.p.mode+' · '+n.p.rate.toFixed(2)+' Hz'; }});
 
 
-def({ id:'pitch', title:'Питч-шифтер', cat:'Звук', ins:[{n:'in',t:'sig'},{n:'semi',t:'num'},{n:'mix',t:'num'}],
+def({ id:'pitch', title:'Pitch Shifter', cat:'Audio', ins:[{n:'in',t:'sig'},{n:'semi',t:'num'},{n:'mix',t:'num'}],
   outs:[{n:'out',t:'sig'}], readout:true,
-  params:[{n:'semi',t:'range',min:-24,max:24,step:.1,d:0,label:'полутоны'},
-          {n:'grain',t:'range',min:20,max:200,step:1,d:80,label:'зерно, мс'},
+  params:[{n:'semi',t:'range',min:-24,max:24,step:.1,d:0,label:'semitones'},
+          {n:'grain',t:'range',min:20,max:200,step:1,d:80,label:'grain, ms'},
           {n:'mix',t:'range',min:0,max:1,step:.01,d:1}],
   init:n=>{n.line=new Float32Array(Math.round(48000*0.5)); n.wp=0; n.ph=[0,.5];},
   process(n,I){
@@ -1742,4 +1742,4 @@ def({ id:'pitch', title:'Питч-шифтер', cat:'Звук', ins:[{n:'in',t:
       o[i]=x*(1-n.p.mix)+y*n.p.mix; }
     return {out:o}; },
   draw(n){ n.el.querySelector('.readout').textContent =
-    n.p.semi.toFixed(1)+' полутонов · x'+Math.pow(2,n.p.semi/12).toFixed(3); }});
+    n.p.semi.toFixed(1)+' semitones · x'+Math.pow(2,n.p.semi/12).toFixed(3); }});

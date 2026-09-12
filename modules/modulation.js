@@ -1,5 +1,5 @@
 /* ---------- модуляция ---------- */
-def({ id:'mod', title:'Модулятор', cat:'Модуляция',
+def({ id:'mod', title:'Modulator', cat:'Modulation',
   ins:[{n:'bit',t:'sig'},{n:'key',t:'num'},{n:'f0',t:'num'},{n:'shift',t:'num'},{n:'amp',t:'num'},{n:'rise',t:'num'},{n:'invert',t:'num'}],
   outs:[{n:'out',t:'sig'}],
   params:[{n:'mode',t:'select',opts:['OOK','FSK','BPSK'],d:'FSK'},
@@ -28,7 +28,7 @@ def({ id:'mod', title:'Модулятор', cat:'Модуляция',
     return {out:o}; }});
 
 
-def({ id:'fsk', title:'Демодулятор FSK', cat:'Модуляция',
+def({ id:'fsk', title:'FSK Demodulator', cat:'Modulation',
   ins:[{n:'in',t:'sig'},{n:'f0',t:'num'},{n:'shift',t:'num'},{n:'bw',t:'num'},{n:'invert',t:'num'},{n:'center',t:'num'}],
   outs:[{n:'soft',t:'sig'},{n:'level',t:'num'},{n:'fLo',t:'num'},{n:'fHi',t:'num'},
         {n:'bLo',t:'num'},{n:'bHi',t:'num'},{n:'q',t:'num'}],
@@ -81,10 +81,10 @@ def({ id:'fsk', title:'Демодулятор FSK', cat:'Модуляция',
     cx.fillText('space '+(n.fLo||0).toFixed(0),3,10);
     cx.fillText('mark  '+(n.fHi||0).toFixed(0),3,H/2+10);
     n.el.querySelector('.readout').textContent =
-      'разделение '+(n.q*100).toFixed(0)+'%'; }});
+      'separation '+(n.q*100).toFixed(0)+'%'; }});
 
 
-def({ id:'demod', title:'Демодулятор AM/ЧМ/SSB', cat:'Модуляция',
+def({ id:'demod', title:'AM/FM/SSB Demodulator', cat:'Modulation',
   ins:[{n:'in',t:'sig'},{n:'freq',t:'num'},{n:'bw',t:'num'},{n:'gain',t:'num'}],
   outs:[{n:'out',t:'sig'},{n:'I',t:'sig'},{n:'Q',t:'sig'}],
   params:[{n:'mode',t:'select',opts:['AM','FM','WFM','SSB'],d:'FM'},
@@ -176,7 +176,7 @@ function freqMeasure(n){
   n.f=f;
 }
 
-def({ id:'sigmap', title:'Шкала сигнала', cat:'Модуляция', ins:[{n:'in',t:'sig'},{n:'clamp',t:'num'}],
+def({ id:'sigmap', title:'Signal Scale', cat:'Modulation', ins:[{n:'in',t:'sig'},{n:'clamp',t:'num'}],
   outs:[{n:'out',t:'sig'}],
   params:[{n:'inMin',t:'num',d:1500},{n:'inMax',t:'num',d:2300},
           {n:'outMin',t:'num',d:0},{n:'outMax',t:'num',d:1},
@@ -188,7 +188,7 @@ def({ id:'sigmap', title:'Шкала сигнала', cat:'Модуляция', 
     return {out:o}; }});
 
 
-def({ id:'sigwin', title:'Окно значений', cat:'Модуляция', ins:[{n:'in',t:'sig'},{n:'minMs',t:'num'}],
+def({ id:'sigwin', title:'Value Window', cat:'Modulation', ins:[{n:'in',t:'sig'},{n:'minMs',t:'num'}],
   outs:[{n:'out',t:'sig'},{n:'hit',t:'num'}],
   params:[{n:'lo',t:'num',d:1150},{n:'hi',t:'num',d:1350},
           {n:'minMs',t:'range',min:0,max:100,step:.5,d:3}],
@@ -222,8 +222,8 @@ function paintImage(n,force){                        // растр → canvas (�
     let r,g,bl;
     if(rgb){ r=at(y,0,sx)*255; g=at(y,1,sx)*255; bl=at(y,2,sx)*255; }
     else { const v=at(y,0,sx);
-      if(pal==='тепло'){ [r,g,bl]=heat(v); }
-      else if(pal==='сине-жёлтый'){ r=v*255; g=v*230; bl=(1-v)*200; }
+      if(pal==='heat'){ [r,g,bl]=heat(v); }
+      else if(pal==='blue-yellow'){ r=v*255; g=v*230; bl=(1-v)*200; }
       else r=g=bl=v*255; }
     d[j]=r; d[j+1]=g; d[j+2]=bl; d[j+3]=255; }
   n.tcx.putImageData(n.id2,0,0);
@@ -236,13 +236,13 @@ function paintSave(n){
 
 function pxFlush(n){                               // усреднённый отсчёт → пиксель
   if(!n.accN) return;
-  const cols=n.p.dir==='столбцы', len=cols?n.H:n.W;
+  const cols=n.p.dir==='columns', len=cols?n.H:n.W;
   const p=Math.min(len-1,Math.max(0,Math.floor(n.px)));
   n.buf[cols ? p*n.W+n.py : n.py*n.W+p]=n.acc/n.accN;
   n.acc=0; n.accN=0;
 }
 function pLine(n){                                 // следующая строка (или столбец) с прокруткой
-  const cols=n.p.dir==='столбцы';
+  const cols=n.p.dir==='columns';
   n.py++;
   if(cols){
     if(n.py>=n.W){                                 // сдвиг всего растра влево на столбец
@@ -253,7 +253,7 @@ function pLine(n){                                 // следующая стр�
 }
 
 
-def({ id:'costas', title:'Захват несущей', cat:'Модуляция',
+def({ id:'costas', title:'Carrier Acquisition', cat:'Modulation',
   ins:[{n:'in',t:'sig'},{n:'f0',t:'num'},{n:'loopHz',t:'num'},{n:'lp',t:'num'},{n:'order',t:'sig'}],
   outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'ferr',t:'num'},{n:'lock',t:'num'}],
   view:{h:40}, readout:true,
@@ -261,7 +261,7 @@ def({ id:'costas', title:'Захват несущей', cat:'Модуляция'
           {n:'order',t:'select',opts:['BPSK','QPSK','8PSK'],d:'QPSK'},
           {n:'loopHz',t:'range',min:.5,max:200,step:.5,d:20,log:true},
           {n:'lp',t:'range',min:50,max:8000,step:10,d:1500,log:true},
-          {n:'capture',t:'range',min:10,max:1000,step:1,d:150,log:true,label:'диапазон захвата, Гц'}],
+          {n:'capture',t:'range',min:10,max:1000,step:1,d:150,log:true,label:'capture range, Hz'}],
   // БЕЗ ограничения n.fo (интегратор петли) может уйти сколь угодно далеко от f0 —
   // на тишине/шуме error-сигнал не нулевой, петля дрейфует и может "осесть" на
   // произвольной частоте (в т.ч. ровно -f0, т.е. на DC/утечке в полосе biquad) и
@@ -323,10 +323,10 @@ def({ id:'costas', title:'Захват несущей', cat:'Модуляция'
       i?cx.lineTo(x,y):cx.moveTo(x,y); }
     cx.stroke();
     n.el.querySelector('.readout').textContent =
-      'расстройка '+(n.fo*Eng.sr).toFixed(1)+' Гц · захват '+(n.lk*100).toFixed(0)+'%'; }});
+      'offset '+(n.fo*Eng.sr).toFixed(1)+' Hz · lock '+(n.lk*100).toFixed(0)+'%'; }});
 
 
-def({ id:'rrc', title:'Согласованный фильтр', cat:'Модуляция', ins:[{n:'in',t:'sig'},{n:'baud',t:'num'},{n:'beta',t:'num'},{n:'span',t:'num'}],
+def({ id:'rrc', title:'Matched Filter', cat:'Modulation', ins:[{n:'in',t:'sig'},{n:'baud',t:'num'},{n:'beta',t:'num'},{n:'span',t:'num'}],
   outs:[{n:'out',t:'sig'}],
   params:[{n:'baud',t:'range',min:10,max:4800,step:.01,d:1800,log:true},
           {n:'beta',t:'range',min:.05,max:1,step:.01,d:.35},
@@ -366,12 +366,12 @@ function rrcTaps(sps,beta,span){                     // корень из при
   return h;
 }
 
-def({ id:'gardner', title:'Синхр. символов', cat:'Модуляция',
+def({ id:'gardner', title:'Symbol Sync', cat:'Modulation',
   ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'baud',t:'num'},{n:'gain',t:'num'},{n:'free',t:'num'}],
   outs:[{n:'sI',t:'sig'},{n:'sQ',t:'sig'},{n:'clk',t:'sig'},{n:'err',t:'num'}],
   params:[{n:'baud',t:'range',min:10,max:4800,step:.01,d:1800,log:true},
           {n:'gain',t:'range',min:0,max:.1,step:.0005,d:.005},
-          {n:'rateGain',t:'range',min:0,max:.001,step:.00001,d:.0002,label:'усиление по скорости (интеграл)'},
+          {n:'rateGain',t:'range',min:0,max:.001,step:.00001,d:.0002,label:'rate gain (integral)'},
           {n:'free',t:'check',d:false}],
   // Раньше корректировалась ТОЛЬКО фаза (n.ph, пропорционально). Если реальный символьный
   // темп чуть отличается от заданного baud (уход частоты дискретизации/приёмника), фаза
@@ -429,8 +429,8 @@ function wwvDecodeFrame(n){
   const day=wwvBcd(b,[30,31],[100,200])+wwvBcd(b,[25,26,27,28],[10,20,40,80])+wwvBcd(b,[20,21,22,23],[1,2,4,8]);
   const yr =wwvBcd(b,[50,51,52,53],[10,20,40,80])+wwvBcd(b,[45,46,47,48],[1,2,4,8]);
   const raw=b.map(x=>x==null?'.':x).join('');
-  const stamp=`${String(hr).padStart(2,'0')}:${String(min).padStart(2,'0')} UTC · день ${day} · 20${String(yr).padStart(2,'0')}`
-    +(markOk?'':' · СИНХРО НАРУШЕНА')+'\n  '+raw;
+  const stamp=`${String(hr).padStart(2,'0')}:${String(min).padStart(2,'0')} UTC · day ${day} · 20${String(yr).padStart(2,'0')}`
+    +(markOk?'':' · SYNC LOST')+'\n  '+raw;
   n.log.unshift(stamp);
   while(n.log.length>n.p.keep) n.log.pop();
   n.text=n.log.join('\n');
@@ -457,14 +457,14 @@ function wwvOnFall(n){
   n.pendingWidth=(n.samp-n.riseSamp)/Eng.sr*1000;
 }
 
-def({ id:'wwv', title:'Декодер WWV/WWVH/CHU', cat:'Декодеры',
+def({ id:'wwv', title:'WWV/WWVH/CHU Decoder', cat:'Decoders',
   ins:[{n:'in',t:'sig'}],
   outs:[{n:'bit',t:'num'},{n:'tick',t:'num'},{n:'sync',t:'num'}],
   readout:true, tall:true,
   params:[
-    {n:'station',t:'select',opts:['WWV/CHU 1000Гц','WWVH 1200Гц'],d:'WWV/CHU 1000Гц'},
-    {n:'keep',t:'range',min:1,max:60,step:1,d:20,label:'строк в логе'},
-    {n:'reset',t:'button',label:'сброс синхро',fn:n=>{ n.secIdx=-1; n.riseSamp=null; n.bits=new Array(60).fill(null); }}
+    {n:'station',t:'select',opts:['WWV/CHU 1000Hz','WWVH 1200Hz'],d:'WWV/CHU 1000Hz'},
+    {n:'keep',t:'range',min:1,max:60,step:1,d:20,label:'log lines'},
+    {n:'reset',t:'button',label:'reset sync',fn:n=>{ n.secIdx=-1; n.riseSamp=null; n.bits=new Array(60).fill(null); }}
   ],
   init:n=>{
     n.x1=0;n.x2=0;n.y1=0;n.y2=0;
@@ -473,7 +473,7 @@ def({ id:'wwv', title:'Декодер WWV/WWVH/CHU', cat:'Декодеры',
     n.pkDecay=Math.exp(-1/(Eng.sr*1.5));                 // пик держим ~1.5с
     n.samp=0; n.riseSamp=null; n.pendingWidth=null; n.high=false;
     n.secIdx=-1; n.bits=new Array(60).fill(null);
-    n.lastBit=-1; n.log=[]; n.text='ожидание синхро…';
+    n.lastBit=-1; n.log=[]; n.text='waiting for sync…';
     n.tickLevel=0;
     const f0=100, Q=8, w0=2*Math.PI*f0/Eng.sr, alpha=Math.sin(w0)/(2*Q);
     const a0=1+alpha;
@@ -509,7 +509,7 @@ def({ id:'wwv', title:'Декодер WWV/WWVH/CHU', cat:'Декодеры',
   draw(n){
     const el=n.el.querySelector('.readout');
     if(el){
-      el.textContent = (n.secIdx>=0?`сек ${n.secIdx}/59 · `:'нет синхро · ')+'\n'+n.text;
+      el.textContent = (n.secIdx>=0?`sec ${n.secIdx}/59 · `:'no sync · ')+'\n'+n.text;
     }
   }});
 
@@ -518,16 +518,16 @@ def({ id:'wwv', title:'Декодер WWV/WWVH/CHU', cat:'Декодеры',
 // Сюда подаётся сигнал с микрофона. Ищем пик в полосе вокруг f0, исключая
 // узкую зону вокруг нулевого сдвига (это прямой сигнал динамик→микрофон).
 
-def({ id:'doppler', title:'Допплеровский радар', cat:'Радар',
+def({ id:'doppler', title:'Doppler Radar', cat:'Radar',
   ins:[{n:'in',t:'sig'},{n:'f0',t:'num'}],
   outs:[{n:'shift',t:'num'},{n:'velocity',t:'num'}],
   view:{h:70}, resize:true, readout:true,
   params:[
-    {n:'f0',t:'range',min:1000,max:()=>Eng.sr/2,step:1,d:19000,log:true,label:'несущая, Гц'},
-    {n:'search',t:'range',min:20,max:500,step:1,d:150,label:'поиск ±Гц'},
-    {n:'step',t:'range',min:1,max:20,step:1,d:5,label:'шаг сетки, Гц'},
-    {n:'guard',t:'range',min:2,max:50,step:1,d:8,label:'мёртвая зона, Гц'},
-    {n:'thresh',t:'range',min:1,max:10,step:.1,d:2.5,label:'порог/медиана'},
+    {n:'f0',t:'range',min:1000,max:()=>Eng.sr/2,step:1,d:19000,log:true,label:'carrier, Hz'},
+    {n:'search',t:'range',min:20,max:500,step:1,d:150,label:'search ±Hz'},
+    {n:'step',t:'range',min:1,max:20,step:1,d:5,label:'grid step, Hz'},
+    {n:'guard',t:'range',min:2,max:50,step:1,d:8,label:'dead zone, Hz'},
+    {n:'thresh',t:'range',min:1,max:10,step:.1,d:2.5,label:'threshold/median'},
     {n:'smooth',t:'range',min:0,max:.99,step:.01,d:.6}
   ],
   init:n=>{
@@ -582,8 +582,8 @@ def({ id:'doppler', title:'Допплеровский радар', cat:'Рада
       cx.fillStyle='rgba(224,92,92,.15)'; cx.fillRect(gx,0,gx2-gx,H);
     }
     n.el.querySelector('.readout').textContent =
-      (n.conf>.3? '' : '(нет цели) ')+n.shift.toFixed(1)+' Гц · '+
-      (n.velocity*100).toFixed(1)+' см/с '+(n.shift>0?'← приближение':n.shift<0?'→ удаление':''); }});
+      (n.conf>.3? '' : '(no target) ')+n.shift.toFixed(1)+' Hz · '+
+      (n.velocity*100).toFixed(1)+' cm/s '+(n.shift>0?'← approaching':n.shift<0?'→ receding':''); }});
 
 
 /* ---------- Чирп-радар 2D (два микрофона) ---------- */
@@ -651,20 +651,20 @@ function chirpSolve(n,L1,L2){
   return {x,y};
 }
 
-def({ id:'chirpRadar', title:'Чирп-радар 2D', cat:'Радар',
+def({ id:'chirpRadar', title:'Chirp Radar 2D', cat:'Radar',
   ins:[{n:'A',t:'sig'},{n:'B',t:'sig'}],
   outs:[{n:'out',t:'sig'},{n:'x',t:'num'},{n:'y',t:'num'},{n:'range1',t:'num'},{n:'range2',t:'num'}],
   view:{h:160}, resize:true, readout:true,
   params:[
-    {n:'fLo',t:'range',min:5000,max:()=>Eng.sr/2,step:100,d:17000,log:true,label:'частота нач., Гц'},
-    {n:'fHi',t:'range',min:5000,max:()=>Eng.sr/2,step:100,d:20500,log:true,label:'частота кон., Гц'},
-    {n:'dur',t:'range',min:.5,max:20,step:.1,d:3,label:'длит. чирпа, мс'},
-    {n:'period',t:'range',min:10,max:500,step:1,d:60,label:'период, мс'},
-    {n:'baseline',t:'range',min:2,max:30,step:.5,d:12,label:'база микрофонов, см'},
-    {n:'guardMs',t:'range',min:.2,max:10,step:.1,d:1.5,label:'мёртвая зона, мс'},
-    {n:'maxRange',t:'range',min:.2,max:3,step:.05,d:1.2,label:'макс. дальность, м'},
-    {n:'thresh',t:'range',min:1,max:10,step:.1,d:3,label:'порог/медиана'},
-    {n:'amp',t:'range',min:0,max:1,step:.01,d:.5,label:'уровень излучения'},
+    {n:'fLo',t:'range',min:5000,max:()=>Eng.sr/2,step:100,d:17000,log:true,label:'start freq, Hz'},
+    {n:'fHi',t:'range',min:5000,max:()=>Eng.sr/2,step:100,d:20500,log:true,label:'end freq, Hz'},
+    {n:'dur',t:'range',min:.5,max:20,step:.1,d:3,label:'chirp duration, ms'},
+    {n:'period',t:'range',min:10,max:500,step:1,d:60,label:'period, ms'},
+    {n:'baseline',t:'range',min:2,max:30,step:.5,d:12,label:'mic baseline, cm'},
+    {n:'guardMs',t:'range',min:.2,max:10,step:.1,d:1.5,label:'dead zone, ms'},
+    {n:'maxRange',t:'range',min:.2,max:3,step:.05,d:1.2,label:'max range, m'},
+    {n:'thresh',t:'range',min:1,max:10,step:.1,d:3,label:'threshold/median'},
+    {n:'amp',t:'range',min:0,max:1,step:.01,d:.5,label:'emission level'},
     {n:'smooth',t:'range',min:0,max:.95,step:.01,d:.5}
   ],
   init:n=>{
@@ -732,8 +732,8 @@ def({ id:'chirpRadar', title:'Чирп-радар 2D', cat:'Радар',
     }
     const d=n.dbg;
     n.el.querySelector('.readout').textContent = d ?
-      (n.conf>.3?'':'(нет цели) ')+
+      (n.conf>.3?'':'(no target) ')+
       'confA='+d.confA.toFixed(2)+' confB='+d.confB.toFixed(2)+
       ' rmsA='+d.rmsA.toFixed(3)+' rmsB='+d.rmsB.toFixed(3)+
-      ' лагA='+(d.lagAms!=null?d.lagAms.toFixed(2):'-')+'мс лагB='+(d.lagBms!=null?d.lagBms.toFixed(2):'-')+'мс'
-      : 'жду первый цикл…'; }});
+      ' lagA='+(d.lagAms!=null?d.lagAms.toFixed(2):'-')+'ms lagB='+(d.lagBms!=null?d.lagBms.toFixed(2):'-')+'ms'
+      : 'waiting for first cycle…'; }});
