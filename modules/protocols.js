@@ -246,54 +246,6 @@ def({ id:'chirpRx', title:'Чирп-модем: приёмник (де-чирп 
                          : 'поиск преамбулы… ('+(n.gapSeen||'жду стабильный пик')+')'); }});
 
 
-/* ---------- HFDL: параметры физического уровня (из dumphfdl, GPLv3) ---------- */
-const HFDL_A=[0b01011011,0b10111100,0b01110100,0b01010111,0b00000011,0b11011001,
-  0b10001001,0b00111001,0b11110010,0b00001000,0b11010101,0b00110110,
-  0b10010100,0b00101100,0b00110010,0b11111110];
-const HFDL_M1=[0,1,1,1,0,1,1,0,1,1,1,1,0,1,0,0,0,1,0,1,1,0,0,
-  1,0,1,1,1,1,1,0,0,0,1,0,0,0,0,0,0,1,1,0,0,1,1,0,1,1,
-  0,0,0,1,1,1,0,0,1,1,1,0,1,0,1,1,1,0,0,0,0,1,0,0,1,1,
-  0,0,0,0,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,0,1,0,1,0,0,1,
-  1,1,1,0,0,1,0,0,0,1,1,0,1,0,1,0,0,0,0,1,1,1,1,1,1,1];
-const HFDL_SHIFTS=[72,82,113,123,61,103,93,9];      // сдвиг M1 кодирует скорость и слот
-const HFDL_RATES=['300 бод BPSK, 1 слот','600 бод BPSK, 1 слот','1200 QPSK, 1 слот',
-  '1800 8PSK, 1 слот','300 бод BPSK, 2 слота','600 бод BPSK, 2 слота',
-  '1200 QPSK, 2 слота','1800 8PSK, 2 слота'];
-function hfdlA(){                                    // 127 бит опорной последовательности A
-  const b=[];
-  for(const oct of HFDL_A) for(let k=7;k>=0;k--) b.push((oct>>k)&1);
-  return b.slice(0,127).map(v=>v?1:-1);
-}
-function hfdlM1(shift){
-  const out=[];
-  for(let j=0;j<127;j++) out.push(HFDL_M1[(HFDL_SHIFTS[shift]+j)%127]?1:-1);
-  return out;
-}
-function hfdlLfsr(){                                 // регистр как в liquid-dsp: g=0x4001, a=0x4d4b
-  let state=0x4d4b; const g=0x4001, n=(1<<15)-1, out=[];
-  for(let i=0;i<120;i++){
-    let x=state&g, b=0; while(x){ b^=x&1; x>>=1; }
-    state=((state<<1)|b)&n;
-    out.push(b); }
-  return out;
-}
-function hfdlDeintBits(bits,shiftCols){                  // 40 строк, сдвиг столбца при записи
-  const R=40, C=Math.floor(bits.length/R);
-  const t=Array.from({length:R},()=>new Float32Array(C));
-  let row=0,col=0;
-  for(let i=0;i<R*C;i++){
-    t[row][col]=bits[i];
-    if(++row===R){ row=0; col++; }
-    col-=shiftCols; if(col<0) col+=C; }
-  const out=new Float32Array(R*C);
-  row=0; col=0;
-  for(let i=0;i<R*C;i++){
-    out[i]=t[row][col];
-    row=(row+9)%R;                                   // чтение с шагом 9 строк
-    if(row===0) col++; }
-  return out;
-}
-
 /* ---------- кадры и блочные коды ---------- */
 const CRCS={
   'CRC-16/X.25 (HDLC)':{w:16,poly:0x1021,init:0xFFFF,refl:true,xor:0xFFFF},
@@ -425,29 +377,6 @@ def({ id:'scrambleRx', title:'Скремблер: приём (дескрембл
         const out=b^fb;
         n.reg=((n.reg<<1)|(n.p.additive?fb:b))&mask;
         n.cur=out?1:-1; }
-      o[i]=n.cur; }
-    return {out:o}; }});
-
-
-// HFDL использует фиксированную 120-битную последовательность вместо LFSR —
-// не частный случай самосинхр. скремблера, поэтому отдельный узел, а не режим.
-// НЕ используется в рабочей авто-цепочке ('HFDL: приём и карта самолётов') — там
-// дескремблинг встроен в hfdlSymToBits (по data-символам, а не по baud-такту).
-// Этот узел остался от раннего пресета 'HFDL: обнаружение и кадр' (без фреймера).
-def({ id:'hfdlDescr', title:'HFDL: дескремблер', cat:'Декодеры',
-  ins:[{n:'in',t:'sig'},{n:'baud',t:'num'}], outs:[{n:'out',t:'sig'}],
-  params:[{n:'baud',t:'range',min:1,max:9600,step:.01,d:1800,log:true}],
-  init:n=>{n.ph=0;n.cur=1;n.hf=0;},
-  process(n,I){
-    if(typeof I.baud==='number') setMod(n,'baud',I.baud);
-    const o=buf(n,'out'), inc=n.p.baud/Eng.sr;
-    if(!n.hseq) n.hseq=hfdlLfsr();
-    for(let i=0;i<BLOCK;i++){
-      n.ph+=inc;
-      if(n.ph>=1){ n.ph-=1;
-        const b=(I.in?I.in[i]:0)>0?1:0;
-        n.cur=(b^n.hseq[n.hf])?1:-1;
-        n.hf=(n.hf+1)%120; }
       o[i]=n.cur; }
     return {out:o}; }});
 
@@ -762,24 +691,6 @@ def({ id:'interleaveRx', title:'Перемежитель: приём (восст
     n.bid=b.id;
     n.blkOut={d:interleavePerm(b.d,n.p.rows,n.p.cols,false),n:b.n,id:b.id};
     n.txt='блок '+b.n+' ← '+n.p.rows+'×'+n.p.cols;
-    return {blk:n.blkOut,text:n.txt}; },
-  draw(n){ n.el.querySelector('.readout').textContent=n.txt||'…'; }});
-
-
-// HFDL перемежает по фиксированной схеме 40×N со сдвигом столбцов — не то же самое,
-// что общая построчная/постолбцовая матрица выше, поэтому отдельный специализированный узел.
-def({ id:'hfdlDeint', title:'HFDL: деперемежитель', cat:'Декодеры',
-  ins:[{n:'blk',t:'blk'},{n:'shiftCols',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'text',t:'txt'}],
-  readout:true,
-  params:[{n:'shiftCols',t:'range',min:1,max:64,step:1,d:17,label:'сдвиг столбца'}],
-  init:n=>{n.bid=-1;n.txt='';},
-  process(n,I){
-    if(typeof I.shiftCols==='number') setMod(n,'shiftCols',I.shiftCols);
-    const b=I.blk; if(!b||b.id===n.bid) return {blk:n.blkOut||null,text:n.txt};
-    n.bid=b.id;
-    const o=hfdlDeintBits(b.d,n.p.shiftCols);
-    n.blkOut={d:o,n:o.length,id:b.id};
-    n.txt='HFDL: 40×'+Math.floor(b.n/40)+', сдвиг '+n.p.shiftCols;
     return {blk:n.blkOut,text:n.txt}; },
   draw(n){ n.el.querySelector('.readout').textContent=n.txt||'…'; }});
 

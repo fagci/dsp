@@ -396,16 +396,19 @@ const m =addNode('mic',40,40,{gainA:2});
 const ff=addNode('fft',40,240,{size:'4096'});
 const wf=addNode('sa',40,400,{fmin:1000,fmax:2500,split:.4});
 wf.size.w=560; wf.size.h=300; applySize(wf);
-const pk=addNode('peak',340,40,{fmin:1300,fmax:2500,tol:150});
-const mp=addNode('sigmap',600,40,{inMin:1500,inMax:2300,outMin:0,outMax:1});
-const sy=addNode('sigwin',600,260,{lo:1100,hi:1300,minMs:3});
+// demod вместо fft+peak (см. пресет WEFAX): peak.freq — число раз в блок, а sigmap/sigwin
+// ждут sig (посэмплово) — раньше эти рёбра просто не создавались из-за несовпадения типов.
+const dmL=addNode('demod',340,40,{mode:'FM',freq:1900,bw:800,gain:1});      // 1500..2300 Гц → -1..1, яркость
+const mp=addNode('sigmap',600,40,{inMin:-1,inMax:1,outMin:0,outMax:1});
+const dmS=addNode('demod',340,260,{mode:'FM',freq:1200,bw:200,gain:1});     // 1100..1300 Гц → -1..1, синхро-тон
+const sy=addNode('sigwin',600,260,{lo:-1,hi:1,minMs:3});
 const pa=addNode('paint',880,40,{std:'Martin M1',lineMs:446.446,width:'960',height:'256',
 rgb:true,sync:'по фронту'});
 pa.size.w=420; pa.size.h=320; applySize(pa);
 addEdge(m.id,'a',ff.id,'in');
-addEdge(ff.id,'spec',wf.id,'spec'); addEdge(ff.id,'spec',pk.id,'spec');
-addEdge(pk.id,'freq',mp.id,'in');
-addEdge(pk.id,'freq',sy.id,'in');
+addEdge(ff.id,'spec',wf.id,'spec');                 // водопад — только для визуальной настройки
+addEdge(m.id,'a',dmL.id,'in'); addEdge(dmL.id,'out',mp.id,'in');
+addEdge(m.id,'a',dmS.id,'in'); addEdge(dmS.id,'out',sy.id,'in');
 addEdge(mp.id,'out',pa.id,'level');
 addEdge(sy.id,'out',pa.id,'sync');
 markWiresDirty();
@@ -416,13 +419,16 @@ const m =addNode('mic',40,40,{gainA:2});
 const ff=addNode('fft',300,40,{size:'4096'});
 const wf=addNode('sa',560,40,{fmin:0,fmax:4000,split:.4});
 wf.size.w=560; wf.size.h=300; applySize(wf);
-const pk=addNode('peak',300,340,{fmin:900,fmax:2900,tol:150});
-const mp=addNode('sigmap',560,340,{inMin:1000,inMax:2800,outMin:0,outMax:1});
+// demod вместо peak: тянет частоту посэмпльно, а не раз в блок; маркер f1 задаёт центр напрямую
+// через вход 'freq' (peak.fc так и не был совместим по типу с sigmap.in — sig, а не num).
+const dm=addNode('demod',300,340,{mode:'FM',freq:1900,bw:300,gain:1});      // bw=300 ~ прежний tol=150 в обе стороны
+const mp=addNode('sigmap',560,340,{inMin:-1,inMax:1,outMin:0,outMax:1});
 const pa=addNode('paint',840,340,{lineMs:500,width:'512',height:'256',sync:'свободно'});
 pa.size.w=440; pa.size.h=300; applySize(pa);
-addEdge(m.id,'a',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec'); addEdge(ff.id,'spec',pk.id,'spec');
-addEdge(wf.id,'f1',pk.id,'fc');
-addEdge(pk.id,'freq',mp.id,'in'); addEdge(mp.id,'out',pa.id,'level');
+addEdge(m.id,'a',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
+addEdge(wf.id,'f1',dm.id,'freq');
+addEdge(m.id,'a',dm.id,'in');
+addEdge(dm.id,'out',mp.id,'in'); addEdge(mp.id,'out',pa.id,'level');
 markWiresDirty();
 });
 preset('Морзе: кодер + декодер', function(){
