@@ -916,9 +916,10 @@ const r=cv.getBoundingClientRect();
 return { x:(clientX-r.left)/view.k-view.x, y:(clientY-r.top)/view.k-view.y };
 }
 const isCoarse=matchMedia('(pointer:coarse)').matches;
-const toastEl=document.getElementById('toast');
+const toastEl=document.getElementById('toast');       // нет в index.php — showToast тогда просто ничего не делает
 let toastTimer=null;
 function showToast(text){                            // короткое уведомление поверх канваса
+if(!toastEl) return;
 toastEl.textContent=text; toastEl.classList.add('show');
 clearTimeout(toastTimer);
 toastTimer=setTimeout(()=>toastEl.classList.remove('show'),1300);
@@ -1072,7 +1073,8 @@ clearAll(); markWiresDirty(); currentPatchName=''; buildPatchList(); graphDirty=
 };
 // Обычная очистка кэша браузера чистит HTTP-кэш, но не localStorage/IndexedDB —
 // поэтому пресеты и патчи «не удаляются». Эта кнопка стирает именно данные сайта.
-document.getElementById('wipe').onclick=async()=>{
+// Кнопки нет в index.php (тестовая, только в index.html) — элемент может отсутствовать.
+document.getElementById('wipe')?.addEventListener('click',async()=>{
 if(!confirm('Стереть все пресеты, патчи и локальные данные приложения на этом сайте?')) return;
 try{ localStorage.clear(); }catch(e){}
 try{
@@ -1083,7 +1085,7 @@ const rq=indexedDB.deleteDatabase(n); rq.onsuccess=rq.onerror=rq.onblocked=res; 
 try{ if('caches' in window) for(const k of await caches.keys()) await caches.delete(k); }catch(e){}
 try{ if(navigator.serviceWorker) for(const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); }catch(e){}
 location.href=location.pathname+'?_='+Date.now();
-};
+});
 // Автосейв раньше сериализовал весь граф по таймеру каждые 4с, даже если ничего не менялось —
 // на холостом ходу это лишняя нагрузка. Теперь сохраняем с задержкой после реального изменения.
 let autosaveTimer=null;

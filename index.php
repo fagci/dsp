@@ -81,6 +81,7 @@ sort($moduleFiles);
   </div>
 </div>
 <div id="scrim"></div>
+<div id="toast"></div>
 <input type="file" id="fpick" accept=".json" hidden>
 
 <script src="https://cdn.jsdelivr.net/npm/@panzoom/panzoom@4.6.2/dist/panzoom.min.js"></script>
