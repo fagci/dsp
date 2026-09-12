@@ -36,7 +36,7 @@
  *   [ГОТОВО]              soft-значения (не hard-quantized) — BPSK: проекция I напрямую;
  *                         QPSK/8PSK: symbolToSoftBits() — дистанция до ближайших точек
  *                         созвездия с bit=0/1 (эвристический масштаб, не строгий LLR).
- *                         hfdlDeint (protocols.js) хранит блок как Float32Array и не
+ *                         hfdlDeint хранит блок как Float32Array и не
  *                         квантует — soft проходит через деперемежитель без потерь.
  *   [НЕ ХВАТАЕТ]         CPDLC (AT1/CR1/CC1/DR1) — для позиций не нужен, не портировал
  *   [НЕ ХВАТАЕТ]         SPDU-разбор не подключён к диспетчеру (нет DSP-узла, только функция spduParse
@@ -551,7 +551,7 @@ function symbolToSoftBits(ii, qq, bitsPerSym){
   return out;
 }
 
-function hfdlLfsr(){                                 // та же 120-битная фикс. последовательность, что и в hfdlDescr
+function hfdlLfsr(){                                 // та же 120-битная фикс. последовательность используется в hfdlDescr
   let state=0x4d4b; const g=0x4001, mask=(1<<15)-1, out=[];
   for(let i=0;i<120;i++){
     let x=state&g, b=0; while(x){ b^=x&1; x>>=1; }
@@ -1009,3 +1009,199 @@ def({ id:'hfdlStack', title:'HFDL: LPDU→HFNPDU→ACARS→ADS-C', cat:'Деко
 
 // planeMap уже перенесён в output.js — здесь не дублирую, чтобы не ловить
 // предупреждение "дублирующийся id модуля".
+
+/* ==========================================================================================
+ * Ниже — узлы физического/канального уровня HFDL, которые раньше жили в общих файлах
+ * (protocols.js, modulation.js) вперемешку с неспецифичными узлами. Перенесены сюда, чтобы
+ * всё HFDL в одном месте.
+ * ========================================================================================== */
+
+/* ---------- параметры физического уровня (из dumphfdl, GPLv3) ---------- */
+const HFDL_A=[0b01011011,0b10111100,0b01110100,0b01010111,0b00000011,0b11011001,
+  0b10001001,0b00111001,0b11110010,0b00001000,0b11010101,0b00110110,
+  0b10010100,0b00101100,0b00110010,0b11111110];
+const HFDL_M1=[0,1,1,1,0,1,1,0,1,1,1,1,0,1,0,0,0,1,0,1,1,0,0,
+  1,0,1,1,1,1,1,0,0,0,1,0,0,0,0,0,0,1,1,0,0,1,1,0,1,1,
+  0,0,0,1,1,1,0,0,1,1,1,0,1,0,1,1,1,0,0,0,0,1,0,0,1,1,
+  0,0,0,0,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,0,1,0,1,0,0,1,
+  1,1,1,0,0,1,0,0,0,1,1,0,1,0,1,0,0,0,0,1,1,1,1,1,1,1];
+const HFDL_SHIFTS=[72,82,113,123,61,103,93,9];      // сдвиг M1 кодирует скорость и слот
+const HFDL_RATES=['300 бод BPSK, 1 слот','600 бод BPSK, 1 слот','1200 QPSK, 1 слот',
+  '1800 8PSK, 1 слот','300 бод BPSK, 2 слота','600 бод BPSK, 2 слота',
+  '1200 QPSK, 2 слота','1800 8PSK, 2 слота'];
+// используются извне (modules/protocols.js: узел 'corr', PATTERNS 'HFDL: преамбула A' / 'HFDL: M1')
+function hfdlA(){                                    // 127 бит опорной последовательности A
+  const b=[];
+  for(const oct of HFDL_A) for(let k=7;k>=0;k--) b.push((oct>>k)&1);
+  return b.slice(0,127).map(v=>v?1:-1);
+}
+function hfdlM1(shift){
+  const out=[];
+  for(let j=0;j<127;j++) out.push(HFDL_M1[(HFDL_SHIFTS[shift]+j)%127]?1:-1);
+  return out;
+}
+// hfdlLfsr() уже определена выше (используется и hfdlSymToBits, и hfdlDescr)
+function hfdlDeintBits(bits,shiftCols){                  // 40 строк, сдвиг столбца при записи
+  const R=40, C=Math.floor(bits.length/R);
+  const t=Array.from({length:R},()=>new Float32Array(C));
+  let row=0,col=0;
+  for(let i=0;i<R*C;i++){
+    t[row][col]=bits[i];
+    if(++row===R){ row=0; col++; }
+    col-=shiftCols; if(col<0) col+=C; }
+  const out=new Float32Array(R*C);
+  row=0; col=0;
+  for(let i=0;i<R*C;i++){
+    out[i]=t[row][col];
+    row=(row+9)%R;                                   // чтение с шагом 9 строк
+    if(row===0) col++; }
+  return out;
+}
+
+// HFDL использует фиксированную 120-битную последовательность вместо LFSR —
+// не частный случай самосинхр. скремблера (scrambleTx/Rx в protocols.js), поэтому отдельный узел.
+// НЕ используется в рабочей авто-цепочке ('HFDL: приём и карта самолётов') — там
+// дескремблинг встроен в hfdlSymToBits (по data-символам, а не по baud-такту).
+// Этот узел остался от раннего пресета 'HFDL: обнаружение и кадр' (без фреймера).
+def({ id:'hfdlDescr', title:'HFDL: дескремблер', cat:'Декодеры',
+  ins:[{n:'in',t:'sig'},{n:'baud',t:'num'}], outs:[{n:'out',t:'sig'}],
+  params:[{n:'baud',t:'range',min:1,max:9600,step:.01,d:1800,log:true}],
+  init:n=>{n.ph=0;n.cur=1;n.hf=0;},
+  process(n,I){
+    if(typeof I.baud==='number') setMod(n,'baud',I.baud);
+    const o=buf(n,'out'), inc=n.p.baud/Eng.sr;
+    if(!n.hseq) n.hseq=hfdlLfsr();
+    for(let i=0;i<BLOCK;i++){
+      n.ph+=inc;
+      if(n.ph>=1){ n.ph-=1;
+        const b=(I.in?I.in[i]:0)>0?1:0;
+        n.cur=(b^n.hseq[n.hf])?1:-1;
+        n.hf=(n.hf+1)%120; }
+      o[i]=n.cur; }
+    return {out:o}; }});
+
+// HFDL перемежает по фиксированной схеме 40×N со сдвигом столбцов — не то же самое,
+// что общая построчная/постолбцовая матрица (interleavePerm в protocols.js).
+def({ id:'hfdlDeint', title:'HFDL: деперемежитель', cat:'Декодеры',
+  ins:[{n:'blk',t:'blk'},{n:'shiftCols',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'text',t:'txt'}],
+  readout:true,
+  params:[{n:'shiftCols',t:'range',min:1,max:64,step:1,d:17,label:'сдвиг столбца'}],
+  init:n=>{n.bid=-1;n.txt='';},
+  process(n,I){
+    if(typeof I.shiftCols==='number') setMod(n,'shiftCols',I.shiftCols);
+    const b=I.blk; if(!b||b.id===n.bid) return {blk:n.blkOut||null,text:n.txt};
+    n.bid=b.id;
+    const o=hfdlDeintBits(b.d,n.p.shiftCols);
+    n.blkOut={d:o,n:o.length,id:b.id};
+    n.txt='HFDL: 40×'+Math.floor(b.n/40)+', сдвиг '+n.p.shiftCols;
+    return {blk:n.blkOut,text:n.txt}; },
+  draw(n){ n.el.querySelector('.readout').textContent=n.txt||'…'; }});
+
+// Символьная синхронизация через polyphase-фильтрбанк (порт symsync_crcf_create_kaiser
+// из liquid-dsp, см. src/filter/src/symsync.proto.c в исходниках dumphfdl/liquid-dsp).
+// В отличие от 'gardner' (ближайший отсчёт, без интерполяции) — здесь честная интерполяция
+// через M=16 полифазных веток Kaiser-фильтра + Mueller&Muller-подобная петля по производному
+// фильтру. САМ является согласованным фильтром — подавай на вход СЫРОЙ (не RRC-фильтрованный)
+// комплексный baseband, не соединяй последовательно с узлом 'rrc'.
+// НАЙДЕННЫЙ И ИСПРАВЛЕННЫЙ БАГ (сверка с реальным symsync_crcf на единичном импульсе):
+// коэффициенты фильтра нужно домножить на k*M (число веток * SPS), иначе выход занижен
+// ровно в это число раз — с этой правкой импульсный отклик совпадает с оригиналом день-в-день.
+// На реальных записях (Hf-acars.wav) даёт train-BER 5.8-9.7% против ~40-50% у 'gardner' —
+// подтверждено, не гипотеза. Подробности и как воспроизвести сравнение — SESSION_NOTES.md.
+function besselI0(x){
+  let sum=1, term=1;
+  for(let k=1;k<50;k++){ term*=(x/(2*k))*(x/(2*k)); sum+=term; if(term<1e-12*sum) break; }
+  return sum;
+}
+function kaiserWin(i,wlen,beta){
+  const t=i-(wlen-1)/2, r=2*t/(wlen-1);
+  return besselI0(beta*Math.sqrt(Math.max(0,1-r*r)))/besselI0(beta);
+}
+function kaiserBetaAs(as){
+  as=Math.abs(as);
+  if(as>50) return 0.1102*(as-8.7);
+  if(as>21) return 0.5842*Math.pow(as-21,0.4)+0.07886*(as-21);
+  return 0;
+}
+function symsyncSinc(x){ return Math.abs(x)<1e-8?1:Math.sin(Math.PI*x)/(Math.PI*x); }
+function symsyncBuildFilters(k,m,M){
+  const H_len=2*M*k*m+1, fc=0.75/(k*M), beta=kaiserBetaAs(40.0);
+  const H=new Float64Array(H_len);
+  for(let i=0;i<H_len;i++){
+    const t=i-(H_len-1)/2;
+    H[i]=symsyncSinc(2*fc*t)*kaiserWin(i,H_len,beta)*2*fc*(k*M); // ×kM — см. комментарий выше
+  }
+  const dH=new Float64Array(H_len);
+  let hdhMax=0;
+  for(let i=0;i<H_len;i++){
+    if(i===0) dH[i]=H[i+1]-H[H_len-1];
+    else if(i===H_len-1) dH[i]=H[0]-H[i-1];
+    else dH[i]=H[i+1]-H[i-1];
+    const v=Math.abs(H[i]*dH[i]); if(v>hdhMax||i===0) hdhMax=v;
+  }
+  for(let i=0;i<H_len;i++) dH[i]*=0.06/hdhMax;
+  const hSubLen=Math.floor(H_len/M), mfBranch=[], dmfBranch=[];
+  for(let br=0;br<M;br++){
+    const hb=new Float64Array(hSubLen), db=new Float64Array(hSubLen);
+    for(let n2=0;n2<hSubLen;n2++){ const idx=br+n2*M; hb[n2]=idx<H_len?H[idx]:0; db[n2]=idx<H_len?dH[idx]:0; }
+    mfBranch.push(hb); dmfBranch.push(db);
+  }
+  return {hSubLen, mfBranch, dmfBranch};
+}
+def({ id:'hfdlSymsync', title:'HFDL: символьный синхр. (polyphase)', cat:'Модуляция',
+  ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'baud',t:'num'}],
+  outs:[{n:'sI',t:'sig'},{n:'sQ',t:'sig'},{n:'clk',t:'sig'}],
+  params:[{n:'baud',t:'range',min:10,max:4800,step:.01,d:1800,log:true},
+          {n:'lfBw',t:'range',min:0.0001,max:.05,step:.0001,d:.001,label:'полоса петли тайминга'}],
+  init:n=>{ n.sI=0; n.sQ=0; n.resampPhase=0; n.prevI=0; n.prevQ=0; },
+  process(n,I){
+    if(typeof I.baud==='number') setMod(n,'baud',I.baud);
+    const k=3, m=3, M=16; // SPS=3 (внутренний), delay=3 символа, 16 веток — как в hfdl.c
+    const key=n.p.baud+'/'+Eng.sr;
+    if(n.key!==key){
+      n.key=key;
+      const f=symsyncBuildFilters(k,m,M);
+      n.hSubLen=f.hSubLen; n.mfBranch=f.mfBranch; n.dmfBranch=f.dmfBranch;
+      n.winRe=new Float64Array(n.hSubLen); n.winIm=new Float64Array(n.hSubLen); n.winPos=0;
+      n.kOut=2; n.rate=k/n.kOut; n.del=n.rate; n.tau=0; n.bf=0; n.b=0; n.decimCounter=0;
+      n.qPrev=0; n.qPrev2=0; n.qHatPrev=0; n.qHatPrev2=0;
+      const bt=n.p.lfBw, alpha=1-bt;
+      n.B=[0.22*bt,0,0]; n.A=[1-0.5*alpha,-0.495*alpha,0]; n.rateAdjustment=0.5*bt;
+      n.resampStep=(k*n.p.baud)/Eng.sr;
+      n.symsyncOutIdx=0;
+    }
+    const oi=buf(n,'sI'), oq=buf(n,'sQ'), ok=buf(n,'clk');
+    for(let i=0;i<BLOCK;i++){
+      const xi=I.I?I.I[i]:0, xq=I.Q?I.Q[i]:0;
+      n.resampPhase+=n.resampStep; let clk=0;
+      while(n.resampPhase>=1){
+        n.resampPhase-=1;
+        const frac=1-n.resampPhase/n.resampStep;
+        const rI=n.prevI+frac*(xi-n.prevI), rQ=n.prevQ+frac*(xq-n.prevQ);
+        // push в кольцевой буфер
+        n.winPos=(n.winPos+1)%n.hSubLen; n.winRe[n.winPos]=rI; n.winIm[n.winPos]=rQ;
+        while(n.b<M){
+          let mfRe=0, mfIm=0; const br=n.mfBranch[n.b];
+          for(let n2=0;n2<n.hSubLen;n2++){ const idx=(n.winPos-n2+n.hSubLen*4)%n.hSubLen; mfRe+=br[n2]*n.winRe[idx]; mfIm+=br[n2]*n.winIm[idx]; }
+          const symI=mfRe/k, symQ=mfIm/k;
+          if(n.decimCounter===n.kOut){
+            n.decimCounter=0;
+            let dmfRe=0, dmfIm=0; const dbr=n.dmfBranch[n.b];
+            for(let n2=0;n2<n.hSubLen;n2++){ const idx=(n.winPos-n2+n.hSubLen*4)%n.hSubLen; dmfRe+=dbr[n2]*n.winRe[idx]; dmfIm+=dbr[n2]*n.winIm[idx]; }
+            let q=mfRe*dmfRe/(k*k)+mfIm*dmfIm/(k*k); q=clamp(q,-1,1);
+            const qHat=n.B[0]*q+n.B[1]*n.qPrev+n.B[2]*n.qPrev2 - n.A[1]*n.qHatPrev - n.A[2]*n.qHatPrev2;
+            n.qPrev2=n.qPrev; n.qPrev=q; n.qHatPrev2=n.qHatPrev; n.qHatPrev=qHat;
+            n.rate+=n.rateAdjustment*qHat; n.del=n.rate+qHat;
+          }
+          n.decimCounter++;
+          n.tau+=n.del; n.bf=n.tau*M; n.b=Math.round(n.bf);
+          n.symsyncOutIdx++;
+          if(n.symsyncOutIdx&1){ n.sI=symI; n.sQ=symQ; clk=1; }  // держим каждый 2й (output_rate=2 → 1 симв/такт)
+        }
+        n.tau-=1; n.bf-=M; n.b-=M;
+        n.prevI=xi; n.prevQ=xq;
+      }
+      oi[i]=n.sI; oq[i]=n.sQ; ok[i]=clk;
+    }
+    return {sI:oi,sQ:oq,clk:ok};
+  }});
