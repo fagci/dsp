@@ -1,28 +1,28 @@
 /* ---------- группы (вложенные подграфы) ---------- */
 const PORT_TYPES=['sig','num','spec','img','txt','blk'];
 
-def({ id:'gin', title:'Вход группы', cat:'Прочее',
+def({ id:'gin', title:'Group Input', cat:'Misc',
   outs:n=>[{n:'out',t:n.p.type||'sig'}],
-  params:[{n:'name',t:'text',d:'in',label:'имя порта'},
+  params:[{n:'name',t:'text',d:'in',label:'port name'},
           {n:'type',t:'select',opts:PORT_TYPES,d:'sig'}],
   init:n=>{n.ext=null;},
   process(n){ return {out:n.ext}; }});
 
 
-def({ id:'gout', title:'Выход группы', cat:'Прочее',
+def({ id:'gout', title:'Group Output', cat:'Misc',
   ins:n=>[{n:'in',t:n.p.type||'sig'}],
-  params:[{n:'name',t:'text',d:'out',label:'имя порта'},
+  params:[{n:'name',t:'text',d:'out',label:'port name'},
           {n:'type',t:'select',opts:PORT_TYPES,d:'sig'}],
   init:n=>{n.val=null;},
   process(n,I){ n.val=I.in; return {}; }});
 
 
-def({ id:'group', title:'Группа', cat:'Прочее',
+def({ id:'group', title:'Group', cat:'Misc',
   ins:n=>(n.inst? n.inst.ins.map(x=>({n:x.name,t:x.node.p.type||'sig'})) : []),
   outs:n=>(n.inst? n.inst.outs.map(x=>({n:x.name,t:x.node.p.type||'sig'})) : []),
   readout:true,
-  params:[{n:'title',t:'text',d:'группа',label:'название'},
-          {n:'open',t:'button',label:'Открыть',fn:n=>enterGroup(n)}],
+  params:[{n:'title',t:'text',d:'group',label:'name'},
+          {n:'open',t:'button',label:'Open',fn:n=>enterGroup(n)}],
   init:n=>{ if(!n.sub) n.sub={nodes:[],edges:[]}; instGroup(n); },
   dispose:n=>{                                      // группа держит собственные live-инстансы (n.inst),
     n.inst?.nodes.forEach(c=>{                       // отдельные от того, что видно при входе внутрь —
@@ -37,7 +37,7 @@ def({ id:'group', title:'Группа', cat:'Прочее',
     return o; },
   draw(n){ const g=n.inst;
     n.el.querySelector('.readout').textContent =
-      (n.p.title||'группа')+' · узлов '+(g?g.nodes.length:0); }});
+      (n.p.title||'group')+' · nodes '+(g?g.nodes.length:0); }});
 
 
 function instGroup(n){                               // развернуть описание в живые экземпляры
@@ -88,12 +88,12 @@ function updCrumb(){
   const el=document.getElementById('crumb');
   if(!el) return;
   el.style.display=GStack.length?'inline-block':'none';
-  el.textContent='↑ выйти из группы ('+GStack.length+')';
+  el.textContent='↑ exit group ('+GStack.length+')';
 }
 
 function groupSel(){                                 // свернуть выделенное в группу
   const sel=Graph.nodes.filter(n=>Sel.has(n.id));
-  if(sel.length<1){ stat.textContent='сначала выделите узлы'; return; }
+  if(sel.length<1){ stat.textContent='select nodes first'; return; }
   const ids=new Set(sel.map(n=>n.id));
   const inner=Graph.edges.filter(e=>ids.has(e.from)&&ids.has(e.to));
   const inc=Graph.edges.filter(e=>!ids.has(e.from)&&ids.has(e.to));
@@ -116,14 +116,14 @@ function groupSel(){                                 // свернуть выд�
     nodes.push({id:gid,type:'gout',x:900,y:extOut.length*90,p:{name,type:t}});
     edges.push({from:e.from,fp:e.fp,to:gid,tp:'in'});
     extOut.push({name,dst:e.to,dp:e.tp}); }
-  const g=addNode('group',x0,y0,{title:'группа'});
+  const g=addNode('group',x0,y0,{title:'group'});
   g.sub={nodes,edges}; instGroup(g); rebuildNode(g);
   sel.forEach(delNode);
   for(const x of extIn) addEdge(x.src,x.sp,g.id,x.name);
   for(const x of extOut) addEdge(g.id,x.name,x.dst,x.dp);
   Sel.clear(); Sel.add(g.id); syncSel();
   drawWires(); Undo.push();
-  stat.textContent='свёрнуто узлов: '+sel.length;
+  stat.textContent='grouped nodes: '+sel.length;
 }
 function ungroupSel(){                               // развернуть обратно
   const g=Graph.nodes.find(n=>n.type==='group'&&Sel.has(n.id));
@@ -157,6 +157,6 @@ function ungroupSel(){                               // развернуть о�
   delNode(g); syncSel(); drawWires(); Undo.push();
 }
 
-def({ id:'note', title:'Заметка', cat:'Прочее', resize:true,
-  params:[{n:'text',t:'code',d:'Заметка: что делает эта часть патча'}],
+def({ id:'note', title:'Note', cat:'Misc', resize:true,
+  params:[{n:'text',t:'code',d:'Note: what this part of the patch does'}],
   process(){ return {}; }});

@@ -3,8 +3,8 @@ let BLOCK = 512;                   // размер блока обработки
 const TYPE_COLOR = {sig:'var(--t-sig)',num:'var(--t-num)',spec:'var(--t-spec)',
                     img:'var(--t-img)',txt:'#d18ad1',blk:'#7fd17f',val:'#e0b23c'};
 // порядок разделов в палитре — иначе порядок зависит от того, в каком файле модуль зарегистрирован
-const CAT_ORDER = ['Источники','Музыка','Обработка','Модуляция','Анализ','Радио','Радар',
-                    'Протоколы','Декодеры','Звук','Видео','Вывод','Управление','Конструктор','Прочее'];
+const CAT_ORDER = ['Sources','Music','Processing','Modulation','Analysis','Radio','Radar',
+                    'Protocols','Decoders','Audio','Video','Output','Control','Builder','Misc'];
 
 /* ============================ ДВИЖОК ============================ */
 const Eng = {
@@ -188,7 +188,7 @@ const Eng = {
     try{ st = await navigator.mediaDevices.getUserMedia({audio:a}); }
     catch(e){                                        // нет доступа/устройства — не роняем страницу молча
       console.error('микрофон:',e);
-      if(typeof stat!=='undefined') stat.textContent='не удалось включить микрофон: '+e.message;
+      if(typeof stat!=='undefined') stat.textContent='failed to enable microphone: '+e.message;
       return;
     }
     if(!this.merger){                                // два источника сводятся в два канала входа
@@ -219,7 +219,7 @@ const Eng = {
     try{ st = await navigator.mediaDevices.getUserMedia({audio:a}); }
     catch(e){
       console.error('стерео-микрофон:',e);
-      if(typeof stat!=='undefined') stat.textContent='не удалось включить стерео-микрофон: '+e.message;
+      if(typeof stat!=='undefined') stat.textContent='failed to enable stereo microphone: '+e.message;
       return;
     }
     if(!this.merger){ this.merger=this.ctx.createChannelMerger(2); this.merger.connect(this.node); }
@@ -263,7 +263,7 @@ const Eng = {
   async listDevices(){
     try{ const d=await navigator.mediaDevices.enumerateDevices();
       this.devices=d.filter(x=>x.kind==='audioinput')
-        .map((x,i)=>({id:x.deviceId,label:x.label||('вход '+(i+1))}));
+        .map((x,i)=>({id:x.deviceId,label:x.label||('input '+(i+1))}));
     }catch(e){ this.devices=[]; }
     return this.devices;
   },
@@ -321,7 +321,7 @@ const Eng = {
       try{ await this.start(); }
       catch(e){                                      // перезапуск не удался — сообщаем, а не молчим
         console.error('перезапуск после смены блока:',e);
-        if(typeof stat!=='undefined') stat.textContent='не удалось перезапустить движок: '+e.message;
+        if(typeof stat!=='undefined') stat.textContent='failed to restart engine: '+e.message;
       }
     }
   },
@@ -338,7 +338,7 @@ const Eng = {
       try{ await this.start(); }
       catch(e){
         console.error('перезапуск после смены частоты:',e);
-        if(typeof stat!=='undefined') stat.textContent='не удалось перезапустить движок: '+e.message;
+        if(typeof stat!=='undefined') stat.textContent='failed to restart engine: '+e.message;
       }
     }
   }

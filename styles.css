@@ -1,6 +1,6 @@
 :root{
   --bg:#0e1113; --panel:#161a1d; --panel2:#1d2226; --line:#2a3136;
-  --txt:#c8d2d6; --dim:#6c7a80; --acc:#e0b23c; --acc2:#4ec9b0;
+  --txt:#c8d2d6; --dim:#929fa7; --acc:#e0b23c; --acc2:#4ec9b0;
   --t-sig:#4ec9b0; --t-num:#e0b23c; --t-spec:#c586c0; --t-img:#569cd6;
   --dot:#20272b; --hi:#fff; --scrim:#0009;
   --note-bg:#1c1a14; --note-head:#241f14; --note-line:#3a3320;
@@ -56,7 +56,7 @@ button,select,input{font:inherit;color:inherit}
 #paletteClear{flex:0 0 30px;background:var(--panel2);border:1px solid var(--line);
   border-radius:3px;color:var(--dim);cursor:pointer;font-size:17px;line-height:1}
 #paletteClear:hover{border-color:var(--acc);color:var(--txt)}
-#palette.empty:after,#patchList.empty:after{content:'Ничего не найдено';display:block;padding:18px 12px;color:var(--dim)}
+#palette.empty:after,#patchList.empty:after{content:'Nothing found';display:block;padding:18px 12px;color:var(--dim)}
 .pcat{border-bottom:1px solid var(--line)}
 .pcat summary{display:flex;align-items:center;gap:7px;padding:9px 12px;
   color:var(--dim);font-size:10px;letter-spacing:.06em;cursor:pointer;

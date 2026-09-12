@@ -422,13 +422,13 @@ function v27Chainback(vp, nbits, endstate){           // nbits — данные,
  * НЕ поблочные буферы (в отличие от 'sig'). См. пример 'lfo': process возвращает
  * {out:число}, а не Float32Array.
  * ========================================================================================== */
-def({ id:'hfdlViterbi', title:'Витерби K=7 r=1/2 (HFDL FEC)', cat:'Декодеры', readout:true,
+def({ id:'hfdlViterbi', title:'Viterbi K=7 r=1/2 (HFDL FEC)', cat:'Decoders', readout:true,
   ins:[{n:'blk',t:'blk'}],
   outs:[{n:'blk',t:'blk'}],
-  params:[{n:'polyConv',t:'select',opts:['raw (без конвенции)','NASA-DSN','CCSDS'],d:'raw (без конвенции)',
-           label:'конвенция полиномов'},
-          {n:'endstate',t:'num',d:0,label:'конечное состояние (обычно 0 — хвост из нулей)'}],
-  init:n=>{ n.bid=-1; n.txt='нет данных'; },
+  params:[{n:'polyConv',t:'select',opts:['raw (no convention)','NASA-DSN','CCSDS'],d:'raw (no convention)',
+           label:'polynomial convention'},
+          {n:'endstate',t:'num',d:0,label:'end state (usually 0 — zero tail)'}],
+  init:n=>{ n.bid=-1; n.txt='no data'; },
   process(n,I){
     const b=I.blk;
     if(!b || b.id===n.bid) return { blk:n.blkOut||null };
@@ -451,7 +451,7 @@ def({ id:'hfdlViterbi', title:'Витерби K=7 r=1/2 (HFDL FEC)', cat:'Дек
                                                           // запаса в решётке (decisions[6+n]) — паддинг
                                                           // нейтральными (128) символами, чтобы получить
                                                           // все nSteps бит без выхода за границы массива.
-    if(nbits<=0){ n.txt='блок слишком короткий'; return { blk:n.blkOut||null }; }
+    if(nbits<=0){ n.txt='block too short'; return { blk:n.blkOut||null }; }
     const symsPadded=new Uint8Array((nSteps+6)*2);
     symsPadded.set(syms); symsPadded.fill(128, nSteps*2);
     const vp=v27Create(polys);
@@ -461,7 +461,7 @@ def({ id:'hfdlViterbi', title:'Витерби K=7 r=1/2 (HFDL FEC)', cat:'Дек
     const outBits=new Float32Array(nbits);
     for(let i=0;i<nbits;i++) outBits[i]=((bytes[i>>3]>>(7-(i%8)))&1)?1:-1;
     n.blkOut={ d:outBits, n:nbits, id:b.id };
-    n.txt='декодировано бит: '+nbits;
+    n.txt='bits decoded: '+nbits;
     return { blk:n.blkOut };
   },
   draw(n){ n.el.querySelector('.readout').textContent=n.txt; }});
@@ -588,18 +588,18 @@ function hfdlM1Bits(shift){                           // ±1, как и оста
 // Аналог match_sequence() из hfdl.c: пробует все 8 шаблонов M1 одновременно на одном
 // скользящем окне, выдаёт индекс победителя (m1) и импульс начала кадра (go), когда
 // корреляция уверенно выше порога — так что заранее знать скорость станции НЕ нужно.
-def({ id:'hfdlM1Match', title:'HFDL: детектор M1 (скорость)', cat:'Протоколы', readout:true,
+def({ id:'hfdlM1Match', title:'HFDL: M1 Detector (rate)', cat:'Protocols', readout:true,
   ins:[{n:'in',t:'sig'},{n:'baud',t:'num'},{n:'thr',t:'num'}],
   outs:[{n:'go',t:'sig'},{n:'m1',t:'num'},{n:'peak',t:'num'},{n:'corr',t:'sig'},{n:'flip',t:'num'}],
   view:{h:80}, resize:true,
   params:[{n:'baud',t:'range',min:1,max:4800,step:.01,d:1800,log:true},
-          {n:'thr',t:'range',min:.1,max:1,step:.01,d:.5,label:'порог'},
-          {n:'dead',t:'range',min:0,max:5000,step:1,d:1500,label:'мёртвое время, мс'}],
+          {n:'thr',t:'range',min:.1,max:1,step:.01,d:.5,label:'threshold'},
+          {n:'dead',t:'range',min:0,max:5000,step:1,d:1500,label:'dead time, ms'}],
   // 'flip' — знак сырой (не abs) корреляции в момент пика: BPSK-Костас ловит фазу
   // с точностью до 180°, знак говорит, в какую именно из двух он попал (см. hfdl.c:
   // c->bitmask = corr_A1 > 0 ? 0 : ~0, применяется как доп. инверсия ко всем data-символам).
   init:n=>{ n.m1=0; n.m2=0; n.dead=0; n.peak=0; n.m1out=0; n.flipOut=0; n.lastSign=0;
-    n.txt='ищу M1…'; n.hist=[]; n.curIdx=0; n.curC=0; },
+    n.txt='searching M1…'; n.hist=[]; n.curIdx=0; n.curC=0; },
   process(n,I){
     if(typeof I.baud==='number') setMod(n,'baud',I.baud);
     if(typeof I.thr==='number') setMod(n,'thr',I.thr);
@@ -646,8 +646,8 @@ def({ id:'hfdlM1Match', title:'HFDL: детектор M1 (скорость)', ca
     // rms/rawAcc — для диагностики: если rms не реагирует на всплеск, сигнал не доходит с амплитудой
     // (проблема раньше по цепочке); если rms реагирует, а rawAcc/rms(=corr) — нет, значит демодулированные
     // биты не совпадают ни с одним шаблоном M1 (Костас/RRC/Гарднер дают не то, что ожидается).
-    n.txt='сейчас: '+n.curC.toFixed(2)+' (M1='+n.curIdx+')  ·  RMS='+rmsLast.toFixed(4)+
-      '  ·  сыр.корр='+rawAccMax.toFixed(2)+'  ·  последний hit: M1='+n.m1out+' пик '+n.peak.toFixed(2);
+    n.txt='now: '+n.curC.toFixed(2)+' (M1='+n.curIdx+')  ·  RMS='+rmsLast.toFixed(4)+
+      '  ·  raw corr='+rawAccMax.toFixed(2)+'  ·  last hit: M1='+n.m1out+' peak '+n.peak.toFixed(2);
     return { go:og, m1:n.m1out, peak:n.peak, corr:oc, flip:n.flipOut };
   },
   draw(n,cv,cx){
@@ -667,11 +667,11 @@ def({ id:'hfdlM1Match', title:'HFDL: детектор M1 (скорость)', ca
 // текущей схемы (1=BPSK/2=QPSK/3=8PSK) как sig — Костас переключается синхронно с фреймером,
 // а не молотит один и тот же (обычно неверный для преамбулы/тренировки) режим весь кадр.
 // Держи ОБА узла (этот и hfdlSymToBits) на одних и тех же go/m1 — иначе разъедутся по времени.
-def({ id:'hfdlOrderSched', title:'HFDL: план. схемы модуляции', cat:'Декодеры', readout:true,
+def({ id:'hfdlOrderSched', title:'HFDL: Modulation Scheme Planner', cat:'Decoders', readout:true,
   ins:[{n:'clk',t:'sig'},{n:'go',t:'sig'},{n:'m1',t:'num'}],
   outs:[{n:'order',t:'sig'}],
-  params:[{n:'m1',t:'range',min:0,max:7,step:1,d:3,label:'M1 (если go/m1 не подключены)'}],
-  init:n=>{ n.prevClk=0; n.prevGo=0; n.armed=false; n.state='idle'; n.symCtr=0; n.trainRep=0; n.cur=1; n.txt='ждём кадр'; },
+  params:[{n:'m1',t:'range',min:0,max:7,step:1,d:3,label:'M1 (if go/m1 not connected)'}],
+  init:n=>{ n.prevClk=0; n.prevGo=0; n.armed=false; n.state='idle'; n.symCtr=0; n.trainRep=0; n.cur=1; n.txt='waiting for frame'; },
   process(n,I){
     const o=buf(n,'order');
     for(let i=0;i<BLOCK;i++){
@@ -722,12 +722,12 @@ def({ id:'hfdlOrderSched', title:'HFDL: план. схемы модуляции'
   },
   draw(n){ n.el.querySelector('.readout').textContent=n.txt; }});
 
-def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фреймером)', cat:'Декодеры', readout:true, resize:true,
+def({ id:'hfdlSymToBits', title:'HFDL: Symbol→Bits (I/Q, with framer)', cat:'Decoders', readout:true, resize:true,
   ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'clk',t:'sig'},{n:'go',t:'sig'},{n:'m1',t:'num'},{n:'flip',t:'num'}],
   outs:[{n:'blk',t:'blk'},{n:'m1',t:'num'}],
-  params:[{n:'m1',t:'range',min:0,max:7,step:1,d:3,label:'M1 (0-7, если go/m1 не подключены)'},
-          {n:'descramble',t:'check',d:true,label:'дескремблировать (LFSR по символу)'},
-          {n:'eqBw',t:'range',min:0,max:.5,step:.005,d:.1,label:'скорость адаптации эквалайзера'}],
+  params:[{n:'m1',t:'range',min:0,max:7,step:1,d:3,label:'M1 (0-7, if go/m1 not connected)'},
+          {n:'descramble',t:'check',d:true,label:'descramble (per-symbol LFSR)'},
+          {n:'eqBw',t:'range',min:0,max:.5,step:.005,d:.1,label:'equalizer adaptation rate'}],
   // Между M1 и данными в реальном кадре НЕ сплошной поток payload-символов (см. hfdl.c):
   // M2(15, пропуск) → EQ_TRAIN(15×9, пропуск, BPSK для эквалайзера) →
   // [ДАННЫЕ 30][TRAIN 15] × dataSegmentCnt раз. Без этого фреймера тренировочные символы
@@ -752,7 +752,7 @@ def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фрей
   // 127 символам, устойчивым к лёгкому ISI, а единичное решение по символу — нет).
   // T-обучение continuous: тренировка есть и в преамбуле (9×EQTRAIN), и после каждого
   // DATA-сегмента (TRAIN) — эквалайзер переобучается весь кадр, отслеживая уход канала.
-  init:n=>{ n.prevClk=0; n.prevGo=0; n.armed=false; n.bits=[]; n.bid=0; n.txt='ждём кадр (go)';
+  init:n=>{ n.prevClk=0; n.prevGo=0; n.armed=false; n.bits=[]; n.bid=0; n.txt='waiting for frame (go)';
     n.state='idle'; n.symCtr=0; n.trainRep=0; n.hf=0; n.curM1=0; n.curFlip=0;
     n.trainAcc=0; n.trainErr=0; n.trainTot=0;
     n.eqHr=new Float32Array(15); n.eqHi=new Float32Array(15);   // история (raw, до эквализации)
@@ -778,7 +778,7 @@ def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фрей
           n.dataSegLeft=p.dataSegmentCnt;
           n.state='M2'; n.symCtr=0; n.hf=0; n.bits.length=0; n.trainAcc=0; n.trainErr=0; n.trainTot=0;
           n.eqHr.fill(0); n.eqHi.fill(0); n.eqTr.fill(0); n.eqTi.fill(0); n.eqTr[7]=1;
-          n.txt='кадр начат, M1='+m1+' ('+p.scheme+')';
+          n.txt='frame started, M1='+m1+' ('+p.scheme+')';
         }
         // symCtr должен стартовать СО СЛЕДУЮЩЕГО тика после 'go' — сам тик, на котором сработал
         // armed, ещё "принадлежит" концу M1, а не M2. Раньше он ошибочно засчитывался первым
@@ -849,7 +849,7 @@ def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фрей
                 n.symCtr=0; n.dataSegLeft--;
                 let x=n.trainAcc^T_REF, e=0; while(x){ e+=x&1; x>>=1; } n.trainErr+=e; n.trainTot+=T_LEN;
                 n.state = n.dataSegLeft>0 ? 'DATA' : 'idle';
-                if(n.state==='idle') n.txt='кадр собран: '+n.bits.length+' бит · train-BER '+
+                if(n.state==='idle') n.txt='frame assembled: '+n.bits.length+' bits · train-BER '+
                   (100*n.trainErr/n.trainTot).toFixed(1)+'% ('+n.trainErr+'/'+n.trainTot+')';
               }
               break;
@@ -863,7 +863,7 @@ def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фрей
       const d=new Float32Array(n.bits); n.bits=[];
       n.bid++;
       blk={ d, n:d.length, id:n.bid };
-    } else if(n.state!=='idle') n.txt=n.state+' ('+n.symCtr+'), данных собрано: '+n.bits.length;
+    } else if(n.state!=='idle') n.txt=n.state+' ('+n.symCtr+'), data collected: '+n.bits.length;
     return { blk, m1:n.curM1 };
   },
   draw(n){ n.el.querySelector('.readout').textContent=n.txt; }});
@@ -874,22 +874,22 @@ def({ id:'hfdlSymToBits', title:'HFDL: символ→биты (I/Q, с фрей
 // Для codeRate=2 (QPSK/8PSK) — просто пропускает как есть, без усреднения.
 // Крошечный мост: M1 -> нужный сдвиг push для hfdlDeint (17 один слот / 23 два слота).
 // Та же таблица HFDL_FRAME_PARAMS, что и везде — держит одно место истины по параметрам M1.
-def({ id:'hfdlShiftFromM1', title:'HFDL: сдвиг деперемежителя по M1', cat:'Декодеры', readout:true,
+def({ id:'hfdlShiftFromM1', title:'HFDL: Deinterleaver Shift from M1', cat:'Decoders', readout:true,
   ins:[{n:'m1',t:'num'}], outs:[{n:'shiftCols',t:'num'}],
-  params:[{n:'m1',t:'range',min:0,max:7,step:1,d:3,label:'M1 (если вход не подключён)'}],
+  params:[{n:'m1',t:'range',min:0,max:7,step:1,d:3,label:'M1 (if input not connected)'}],
   process(n,I){
     const m1=typeof I.m1==='number'?(I.m1|0):n.p.m1;
     const s=HFDL_FRAME_PARAMS[clamp(m1,0,7)].deintPushShift;
-    n.txt='M1='+m1+' → сдвиг '+s;
+    n.txt='M1='+m1+' → shift '+s;
     return { shiftCols:s };
   },
   draw(n){ n.el.querySelector('.readout').textContent=n.txt||''; }});
 
-def({ id:'hfdlChipAvg', title:'HFDL: усреднение chip-пар (rate 1/4)', cat:'Декодеры', readout:true,
+def({ id:'hfdlChipAvg', title:'HFDL: Chip-Pair Averaging (rate 1/4)', cat:'Decoders', readout:true,
   ins:[{n:'blk',t:'blk'},{n:'m1',t:'num'}],
   outs:[{n:'blk',t:'blk'}],
-  params:[{n:'m1',t:'range',min:0,max:7,step:1,d:0,label:'M1 (0-7, если вход m1 не подключён)'}],
-  init:n=>{ n.bid=-1; n.txt='нет данных'; },
+  params:[{n:'m1',t:'range',min:0,max:7,step:1,d:0,label:'M1 (0-7, if m1 input not connected)'}],
+  init:n=>{ n.bid=-1; n.txt='no data'; },
   process(n,I){
     const b=I.blk;
     if(!b || b.id===n.bid) return { blk:n.blkOut||null };
@@ -913,10 +913,10 @@ def({ id:'hfdlChipAvg', title:'HFDL: усреднение chip-пар (rate 1/4)
       // если пары chip'ов — правда повтор одного и того же кодового бита, согласие
       // знаков должно быть заметно выше 50%. Около 50% — сигнал, что пары (2i,2i+1)
       // после деперемежителя НЕ соответствуют друг другу (пары не рядом, как думали).
-      n.txt='rate 1/4: '+b.n+' -> '+nOut+' (усреднено) · согласие пар '+(100*agree/nOut).toFixed(1)+'%';
+      n.txt='rate 1/4: '+b.n+' -> '+nOut+' (averaged) · pair agreement '+(100*agree/nOut).toFixed(1)+'%';
     } else {
       n.blkOut=b;
-      n.txt='rate 1/2: без усреднения, '+b.n+' бит';
+      n.txt='rate 1/2: no averaging, '+b.n+' bits';
     }
     return { blk:n.blkOut };
   },
@@ -942,12 +942,12 @@ const HFDL_GS_STATIONS = {
   17:{name:'Canarias',lat:27.960945,lon:-15.405608},
 };
 
-def({ id:'hfdlStack', title:'HFDL: LPDU→HFNPDU→ACARS→ADS-C', cat:'Декодеры', readout:true, resize:true,
+def({ id:'hfdlStack', title:'HFDL: LPDU→HFNPDU→ACARS→ADS-C', cat:'Decoders', readout:true, resize:true,
   ins:[{n:'blk',t:'blk'},{n:'freq',t:'num'}],
   outs:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'trig',t:'num'},{n:'id',t:'txt'},
         {n:'gsLat',t:'num'},{n:'gsLon',t:'num'},{n:'gsTrig',t:'num'},{n:'gsName',t:'txt'}],
-  params:[{n:'freq',t:'num',d:11384,label:'частота, кГц'}],
-  init:n=>{ n.bid=-1; n.lastLat=0; n.lastLon=0; n.lastId=''; n.log='нет данных';
+  params:[{n:'freq',t:'num',d:11384,label:'frequency, kHz'}],
+  init:n=>{ n.bid=-1; n.lastLat=0; n.lastLon=0; n.lastId=''; n.log='no data';
     n.gsLat=0; n.gsLon=0; n.gsName=''; },
   process(n,I){
     const b=I.blk;
@@ -1000,7 +1000,7 @@ def({ id:'hfdlStack', title:'HFDL: LPDU→HFNPDU→ACARS→ADS-C', cat:'Деко
             }
           }
         } else n.log='MPDU: '+mres.reason;
-      }catch(e){ n.log='ошибка: '+e.message; }
+      }catch(e){ n.log='error: '+e.message; }
     }
     return { lat:n.lastLat, lon:n.lastLon, trig, id:n.lastId,
              gsLat:n.gsLat, gsLon:n.gsLon, gsTrig, gsName:n.gsName };
@@ -1026,9 +1026,9 @@ const HFDL_M1=[0,1,1,1,0,1,1,0,1,1,1,1,0,1,0,0,0,1,0,1,1,0,0,
   0,0,0,0,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,0,1,0,1,0,0,1,
   1,1,1,0,0,1,0,0,0,1,1,0,1,0,1,0,0,0,0,1,1,1,1,1,1,1];
 const HFDL_SHIFTS=[72,82,113,123,61,103,93,9];      // сдвиг M1 кодирует скорость и слот
-const HFDL_RATES=['300 бод BPSK, 1 слот','600 бод BPSK, 1 слот','1200 QPSK, 1 слот',
-  '1800 8PSK, 1 слот','300 бод BPSK, 2 слота','600 бод BPSK, 2 слота',
-  '1200 QPSK, 2 слота','1800 8PSK, 2 слота'];
+const HFDL_RATES=['300 baud BPSK, 1 slot','600 baud BPSK, 1 slot','1200 QPSK, 1 slot',
+  '1800 8PSK, 1 slot','300 baud BPSK, 2 slots','600 baud BPSK, 2 slots',
+  '1200 QPSK, 2 slots','1800 8PSK, 2 slots'];
 // используются извне (modules/protocols.js: узел 'corr', PATTERNS 'HFDL: преамбула A' / 'HFDL: M1')
 function hfdlA(){                                    // 127 бит опорной последовательности A
   const b=[];
@@ -1063,7 +1063,7 @@ function hfdlDeintBits(bits,shiftCols){                  // 40 строк, сд�
 // НЕ используется в рабочей авто-цепочке ('HFDL: приём и карта самолётов') — там
 // дескремблинг встроен в hfdlSymToBits (по data-символам, а не по baud-такту).
 // Этот узел остался от раннего пресета 'HFDL: обнаружение и кадр' (без фреймера).
-def({ id:'hfdlDescr', title:'HFDL: дескремблер', cat:'Декодеры',
+def({ id:'hfdlDescr', title:'HFDL: Descrambler', cat:'Decoders',
   ins:[{n:'in',t:'sig'},{n:'baud',t:'num'}], outs:[{n:'out',t:'sig'}],
   params:[{n:'baud',t:'range',min:1,max:9600,step:.01,d:1800,log:true}],
   init:n=>{n.ph=0;n.cur=1;n.hf=0;},
@@ -1082,10 +1082,10 @@ def({ id:'hfdlDescr', title:'HFDL: дескремблер', cat:'Декодер�
 
 // HFDL перемежает по фиксированной схеме 40×N со сдвигом столбцов — не то же самое,
 // что общая построчная/постолбцовая матрица (interleavePerm в protocols.js).
-def({ id:'hfdlDeint', title:'HFDL: деперемежитель', cat:'Декодеры',
+def({ id:'hfdlDeint', title:'HFDL: Deinterleaver', cat:'Decoders',
   ins:[{n:'blk',t:'blk'},{n:'shiftCols',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'text',t:'txt'}],
   readout:true,
-  params:[{n:'shiftCols',t:'range',min:1,max:64,step:1,d:17,label:'сдвиг столбца'}],
+  params:[{n:'shiftCols',t:'range',min:1,max:64,step:1,d:17,label:'column shift'}],
   init:n=>{n.bid=-1;n.txt='';},
   process(n,I){
     if(typeof I.shiftCols==='number') setMod(n,'shiftCols',I.shiftCols);
@@ -1093,7 +1093,7 @@ def({ id:'hfdlDeint', title:'HFDL: деперемежитель', cat:'Деко�
     n.bid=b.id;
     const o=hfdlDeintBits(b.d,n.p.shiftCols);
     n.blkOut={d:o,n:o.length,id:b.id};
-    n.txt='HFDL: 40×'+Math.floor(b.n/40)+', сдвиг '+n.p.shiftCols;
+    n.txt='HFDL: 40×'+Math.floor(b.n/40)+', shift '+n.p.shiftCols;
     return {blk:n.blkOut,text:n.txt}; },
   draw(n){ n.el.querySelector('.readout').textContent=n.txt||'…'; }});
 
@@ -1148,11 +1148,11 @@ function symsyncBuildFilters(k,m,M){
   }
   return {hSubLen, mfBranch, dmfBranch};
 }
-def({ id:'hfdlSymsync', title:'HFDL: символьный синхр. (polyphase)', cat:'Модуляция',
+def({ id:'hfdlSymsync', title:'HFDL: Symbol Sync (polyphase)', cat:'Modulation',
   ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'baud',t:'num'}],
   outs:[{n:'sI',t:'sig'},{n:'sQ',t:'sig'},{n:'clk',t:'sig'}],
   params:[{n:'baud',t:'range',min:10,max:4800,step:.01,d:1800,log:true},
-          {n:'lfBw',t:'range',min:0.0001,max:.05,step:.0001,d:.001,label:'полоса петли тайминга'}],
+          {n:'lfBw',t:'range',min:0.0001,max:.05,step:.0001,d:.001,label:'timing loop bandwidth'}],
   init:n=>{ n.sI=0; n.sQ=0; n.resampPhase=0; n.prevI=0; n.prevQ=0; },
   process(n,I){
     if(typeof I.baud==='number') setMod(n,'baud',I.baud);

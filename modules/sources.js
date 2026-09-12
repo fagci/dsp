@@ -1,4 +1,4 @@
-def({ id:'osc', title:'Генератор', cat:'Источники',
+def({ id:'osc', title:'Oscillator', cat:'Sources',
   outs:[{n:'out',t:'sig'},{n:'sync',t:'sig'}],
   ins:[{n:'freq',t:'num'},{n:'amp',t:'num'},{n:'fmHz',t:'num'},{n:'phase',t:'num'},
        {n:'fm',t:'sig'},{n:'sync',t:'sig'}],
@@ -6,7 +6,7 @@ def({ id:'osc', title:'Генератор', cat:'Источники',
           {n:'freq',t:'range',min:1,max:()=>Eng.sr/2,step:1,d:440,log:true},
           {n:'amp',t:'range',min:0,max:1,step:.01,d:.2},
           {n:'fmHz',t:'range',min:0,max:()=>Eng.sr/2,step:1,d:0},
-          {n:'phase',t:'range',min:0,max:1,step:.001,d:0,label:'фаза'}],
+          {n:'phase',t:'range',min:0,max:1,step:.001,d:0,label:'phase'}],
   init:n=>{n.ph=0;n.f0=null;n.a0=null;n.pv=0;},
   process(n,I){
     const o=buf(n,'out'), os=buf(n,'sync');
@@ -43,19 +43,19 @@ function voiceWave(w,ph){
   return Math.random()*2-1;                            // noise
 }
 
-def({ id:'voice', title:'Синтезатор (2 осц)', cat:'Музыка',
+def({ id:'voice', title:'Synth (2 osc)', cat:'Music',
   ins:[{n:'freq',t:'num'},{n:'gate',t:'sig'},{n:'vel',t:'num'}],
   outs:[{n:'out',t:'sig'}], readout:true,
   params:[
-    {n:'freq',t:'range',min:20,max:5000,step:1,d:220,log:true,label:'частота'},
-    {n:'wave1',t:'select',opts:['sine','square','saw','tri','noise'],d:'saw',label:'осц.1 форма'},
-    {n:'semi1',t:'range',min:-24,max:24,step:1,d:0,label:'осц.1 полутоны'},
-    {n:'fine1',t:'range',min:-50,max:50,step:1,d:0,label:'осц.1 центы'},
-    {n:'level1',t:'range',min:0,max:1,step:.01,d:.6,label:'осц.1 уровень'},
-    {n:'wave2',t:'select',opts:['sine','square','saw','tri','noise'],d:'square',label:'осц.2 форма'},
-    {n:'semi2',t:'range',min:-24,max:24,step:1,d:-12,label:'осц.2 полутоны'},
-    {n:'fine2',t:'range',min:-50,max:50,step:1,d:7,label:'осц.2 центы'},
-    {n:'level2',t:'range',min:0,max:1,step:.01,d:.4,label:'осц.2 уровень'},
+    {n:'freq',t:'range',min:20,max:5000,step:1,d:220,log:true,label:'freq'},
+    {n:'wave1',t:'select',opts:['sine','square','saw','tri','noise'],d:'saw',label:'osc.1 wave'},
+    {n:'semi1',t:'range',min:-24,max:24,step:1,d:0,label:'osc.1 semitones'},
+    {n:'fine1',t:'range',min:-50,max:50,step:1,d:0,label:'osc.1 cents'},
+    {n:'level1',t:'range',min:0,max:1,step:.01,d:.6,label:'osc.1 level'},
+    {n:'wave2',t:'select',opts:['sine','square','saw','tri','noise'],d:'square',label:'osc.2 wave'},
+    {n:'semi2',t:'range',min:-24,max:24,step:1,d:-12,label:'osc.2 semitones'},
+    {n:'fine2',t:'range',min:-50,max:50,step:1,d:7,label:'osc.2 cents'},
+    {n:'level2',t:'range',min:0,max:1,step:.01,d:.4,label:'osc.2 level'},
     {n:'attack',t:'range',min:.001,max:3,step:.001,d:.01,log:true,label:'A'},
     {n:'decay',t:'range',min:.001,max:3,step:.001,d:.15,log:true,label:'D'},
     {n:'sustain',t:'range',min:0,max:1,step:.01,d:.6,label:'S'},
@@ -63,7 +63,7 @@ def({ id:'voice', title:'Синтезатор (2 осц)', cat:'Музыка',
   init:n=>{ n.ph1=0; n.ph2=0; n.stage='idle'; n.lvl=0; n.pv=0; n.relFrom=0; },
   process(n,I){
     const o=buf(n,'out'), g=I.gate, p=n.p, sr=Eng.sr;
-    const f0=pv(n,I,'freq'), velAmt=typeof I.vel==='number'?I.vel:1;   // vel не подключён — играем на полную
+    const f0=pv(n,I,'freq'), velAmt=typeof I.vel==='number'?I.vel:1;   // vel not connected — play at full
     const f1=f0*Math.pow(2,(p.semi1+p.fine1/100)/12);
     const f2=f0*Math.pow(2,(p.semi2+p.fine2/100)/12);
     for(let i=0;i<BLOCK;i++){
@@ -85,18 +85,18 @@ def({ id:'voice', title:'Синтезатор (2 осц)', cat:'Музыка',
 // один голос = осциллятор + ADSR, как у voice, но без второго осциллятора — чтобы 4 штуки
 // не были избыточно тяжёлыми. Берёт freq/gate..freq4/gate4 пиано-ролла напрямую, без
 // внешних osc+adsr+mixer — если голос не подключён (freq2 и т.п. отсутствуют), просто молчит.
-def({ id:'poly4', title:'Синтезатор (4 голоса)', cat:'Музыка',
+def({ id:'poly4', title:'Synth (4 voices)', cat:'Music',
   ins:[{n:'freq',t:'num'},{n:'gate',t:'sig'},{n:'freq2',t:'num'},{n:'gate2',t:'sig'},
        {n:'freq3',t:'num'},{n:'gate3',t:'sig'},{n:'freq4',t:'num'},{n:'gate4',t:'sig'}],
   outs:[{n:'out',t:'sig'},{n:'L',t:'sig'},{n:'R',t:'sig'}],
   readout:true,
   params:[
-    {n:'wave',t:'select',opts:['sine','square','saw','tri','noise'],d:'saw',label:'форма'},
+    {n:'wave',t:'select',opts:['sine','square','saw','tri','noise'],d:'saw',label:'wave'},
     {n:'attack',t:'range',min:.001,max:3,step:.001,d:.01,log:true,label:'A'},
     {n:'decay',t:'range',min:.001,max:3,step:.001,d:.15,log:true,label:'D'},
     {n:'sustain',t:'range',min:0,max:1,step:.01,d:.6,label:'S'},
     {n:'release',t:'range',min:.001,max:5,step:.001,d:.25,log:true,label:'R'},
-    {n:'spread',t:'range',min:0,max:1,step:.01,d:.6,label:'стерео-разброс'}],
+    {n:'spread',t:'range',min:0,max:1,step:.01,d:.6,label:'stereo spread'}],
   init:n=>{ n.v=[0,1,2,3].map(()=>({ph:0,stage:'idle',lvl:0,pv:0,relFrom:0})); },
   process(n,I){
     const o=buf(n,'out'), oL=buf(n,'L'), oR=buf(n,'R'), p=n.p, sr=Eng.sr;
@@ -115,17 +115,17 @@ def({ id:'poly4', title:'Синтезатор (4 голоса)', cat:'Музык
         else if(vs.stage==='r'){ vs.lvl-=vs.relFrom/(p.release*sr); if(vs.lvl<=0){ vs.lvl=0; vs.stage='idle'; } }
         const s=voiceWave(p.wave,vs.ph)*vs.lvl*0.6;
         vs.ph=(vs.ph+f/sr)%1; if(vs.ph<0) vs.ph+=1;
-        const ang=(pans[k]+1)*Math.PI/4;                    // панорама — по закону равной мощности
+        const ang=(pans[k]+1)*Math.PI/4;                    // pan — equal-power law
         m+=s; l+=s*Math.cos(ang); r+=s*Math.sin(ang);
       }
       o[i]=clamp(m,-2,2); oL[i]=clamp(l,-2,2); oR[i]=clamp(r,-2,2);
     }
     return {out:o, L:oL, R:oR}; },
   draw(n){ const active=n.v.filter(v=>v.stage!=='idle').length;
-    n.el.querySelector('.readout').textContent=active+'/4 голос'+(active===1?'':'а'); }});
+    n.el.querySelector('.readout').textContent=active+'/4 voice'+(active===1?'':'s'); }});
 
 
-def({ id:'sweep', title:'Свип / джаммер', cat:'Источники', outs:[{n:'out',t:'sig'},{n:'f',t:'num'}],
+def({ id:'sweep', title:'Sweep / Jammer', cat:'Sources', outs:[{n:'out',t:'sig'},{n:'f',t:'num'}],
   ins:[{n:'f0',t:'num'},{n:'f1',t:'num'},{n:'rate',t:'num'},{n:'amp',t:'num'}],
   params:[{n:'f0',t:'range',min:20,max:()=>Eng.sr/2,step:1,d:300,log:true},
           {n:'f1',t:'range',min:20,max:()=>Eng.sr/2,step:1,d:8000,log:true},
@@ -160,40 +160,40 @@ def({ id:'sweep', title:'Свип / джаммер', cat:'Источники', o
 // объявлен с channelCount:2, а второй физический вход сводится ChannelMergerNode(2). Чтобы
 // снимать N микрофонов, пришлось бы менять сам движок (динамический мерджер, N слотов вместо
 // двух фиксированных буферов), это не косметика поверх этого узла.
-// Режим "стерео-устройство" — не второй способ подключить два девайса, а честное разделение
+// Режим "stereo device" — не второй способ подключить два девайса, а честное разделение
 // L/R одного устройства (см. Eng.enableStereoMic: один getUserMedia + ChannelSplitterNode),
 // для случаев когда одно физическое устройство и есть оба канала (напр. встроенный массив
 // микрофонов ноутбука вроде ThinkPad T480).
-// частота — просьба к getUserMedia (ideal), браузер может дать не точно её; 'авто' — без constraint
-const SRATE_OPTS=['авто','8000','16000','22050','44100','48000','96000'];
-function srOf(n){ return n.p.srate==='авто' ? undefined : +n.p.srate; }
+// частота — просьба к getUserMedia (ideal), браузер может дать не точно её; 'auto' — без constraint
+const SRATE_OPTS=['auto','8000','16000','22050','44100','48000','96000'];
+function srOf(n){ return n.p.srate==='auto' ? undefined : +n.p.srate; }
 
-def({ id:'mic', title:'Микрофон (A+Б)', cat:'Источники',
+def({ id:'mic', title:'Microphone (A+B)', cat:'Sources',
   outs:[{n:'a',t:'sig'},{n:'b',t:'sig'}],
   ins:[{n:'gainA',t:'num'},{n:'gainB',t:'num'},{n:'echo',t:'num'},{n:'ns',t:'num'},{n:'agc',t:'num'}],
-  params:[{n:'unlock',t:'button',label:'показать имена устройств',fn:n=>Eng.unlockLabels()},
-          {n:'mode',t:'select',d:'раздельно',label:'режим',
-           opts:()=>['раздельно','стерео-устройство'], fn:n=>armAll(n)},
-          {n:'devA',t:'select',d:'по умолчанию',label:'вход A',
-           opts:()=>['по умолчанию',...Eng.devices.map(d=>d.label)],
+  params:[{n:'unlock',t:'button',label:'show device names',fn:n=>Eng.unlockLabels()},
+          {n:'mode',t:'select',d:'separate',label:'mode',
+           opts:()=>['separate','stereo device'], fn:n=>armAll(n)},
+          {n:'devA',t:'select',d:'default',label:'input A',
+           opts:()=>['default',...Eng.devices.map(d=>d.label)],
            fn:n=>{ n.armed=true; micFx(n);
-                   if(n.p.mode==='стерео-устройство') armStereo(n);
+                   if(n.p.mode==='stereo device') armStereo(n);
                    else{ const d=Eng.devices.find(x=>x.label===n.p.devA);
                          Eng.enableMic(d?d.id:undefined,0,srOf(n)).then(()=>reportSettings(n)); } }},
-          {n:'gainA',t:'range',min:0,max:8,step:.1,d:1,label:'усиление A'},
-          {n:'devB',t:'select',d:'по умолчанию',label:'вход Б (только режим "раздельно")',
-           opts:()=>['по умолчанию',...Eng.devices.map(d=>d.label)],
-           fn:n=>{ if(n.p.mode==='стерео-устройство') return;   // в стерео Б берётся из devA
+          {n:'gainA',t:'range',min:0,max:8,step:.1,d:1,label:'gain A'},
+          {n:'devB',t:'select',d:'default',label:'input B (mode "separate" only)',
+           opts:()=>['default',...Eng.devices.map(d=>d.label)],
+           fn:n=>{ if(n.p.mode==='stereo device') return;   // в стерео Б берётся из devA
                    n.armed=true; micFx(n);
                    const d=Eng.devices.find(x=>x.label===n.p.devB);
                    Eng.enableMic(d?d.id:undefined,1,srOf(n)).then(()=>reportSettings(n)); }},
-          {n:'gainB',t:'range',min:0,max:8,step:.1,d:1,label:'усиление Б'},
-          {n:'srate',t:'select',d:'авто',label:'частота дискр.', opts:()=>SRATE_OPTS, fn:n=>armAll(n)},
+          {n:'gainB',t:'range',min:0,max:8,step:.1,d:1,label:'gain B'},
+          {n:'srate',t:'select',d:'auto',label:'sample rate', opts:()=>SRATE_OPTS, fn:n=>armAll(n)},
           // эффекты — это constraints getUserMedia, общие на оба входа (см. Eng.fx); сперва
           // пробуем применить живьём (applyConstraints), без пересоздания потока
-          {n:'echo',t:'check',d:false,label:'эхоподавление',fn:n=>reapplyFx(n)},
-          {n:'ns',t:'check',d:false,label:'шумодав',fn:n=>reapplyFx(n)},
-          {n:'agc',t:'check',d:false,label:'авторегулировка',fn:n=>reapplyFx(n)}],
+          {n:'echo',t:'check',d:false,label:'echo cancellation',fn:n=>reapplyFx(n)},
+          {n:'ns',t:'check',d:false,label:'noise suppression',fn:n=>reapplyFx(n)},
+          {n:'agc',t:'check',d:false,label:'auto gain control',fn:n=>reapplyFx(n)}],
   init:n=>{ n.armed=false; n.status=''; },
   process(n,I){
     if(typeof I.gainA==='number') setMod(n,'gainA',I.gainA);
@@ -210,8 +210,8 @@ function micFx(n){ Eng.fx={echo:n.p.echo, ns:n.p.ns, agc:n.p.agc}; }
 
 // что реально согласовал браузер — ideal частота/каналы могут не совпасть с запрошенным
 function reportSettings(n){
-  const s = n.p.mode==='стерео-устройство' ? Eng.stereoSettings() : Eng.micSettings(0);
-  n.status = s ? [s.sampleRate&&s.sampleRate+' Гц', s.channelCount&&s.channelCount+' кан.']
+  const s = n.p.mode==='stereo device' ? Eng.stereoSettings() : Eng.micSettings(0);
+  n.status = s ? [s.sampleRate&&s.sampleRate+' Hz', s.channelCount&&s.channelCount+' ch.']
                     .filter(Boolean).join(', ') : '';
 }
 
@@ -223,7 +223,7 @@ function armStereo(n){
 }
 function armAll(n){
   n.armed=true; micFx(n);
-  if(n.p.mode==='стерео-устройство') armStereo(n);
+  if(n.p.mode==='stereo device') armStereo(n);
   else{
     const dA=Eng.devices.find(x=>x.label===n.p.devA);
     const dB=Eng.devices.find(x=>x.label===n.p.devB);
@@ -241,7 +241,7 @@ async function reapplyFx(n){
   if(!n.armed) return;
   const ok = await Eng.applyFx();
   if(!ok){
-    if(n.p.mode==='стерео-устройство') armStereo(n);
+    if(n.p.mode==='stereo device') armStereo(n);
     else{
       if(Eng.mics[0]) Eng.enableMic(Eng.micIds[0]||undefined,0,srOf(n));
       if(Eng.mics[1]) Eng.enableMic(Eng.micIds[1]||undefined,1,srOf(n));
@@ -249,7 +249,7 @@ async function reapplyFx(n){
   }
 }
 
-def({ id:'file', title:'Аудиофайл', cat:'Источники',
+def({ id:'file', title:'Audio File', cat:'Sources',
   outs:[{n:'out',t:'sig'},{n:'pos',t:'num'},{n:'done',t:'num'}],
   ins:[{n:'seek',t:'num'},{n:'rate',t:'num'},{n:'gain',t:'num'},{n:'loop',t:'num'}], view:{h:44}, resize:true, readout:true,
   params:[{n:'file',t:'file',accept:'audio/*',fn:(n,f)=>{
@@ -263,10 +263,10 @@ def({ id:'file', title:'Аудиофайл', cat:'Источники',
           {n:'rate',t:'range',min:.25,max:4,step:.01,d:1},
           {n:'gain',t:'range',min:0,max:4,step:.01,d:1},
           {n:'loop',t:'check',d:true},
-          {n:'seek',t:'range',min:0,max:1,step:.0001,d:0,label:'позиция',
+          {n:'seek',t:'range',min:0,max:1,step:.0001,d:0,label:'position',
            fn:n=>{ if(n.data) n.pos=n.p.seek*n.data.length; }},
-          {n:'pp',t:'button',label:'Пуск / пауза',fn:n=>{ n.play=!n.play; }},
-          {n:'home',t:'button',label:'В начало',fn:n=>{ n.pos=0; }}],
+          {n:'pp',t:'button',label:'Play / pause',fn:n=>{ n.play=!n.play; }},
+          {n:'home',t:'button',label:'To start',fn:n=>{ n.pos=0; }}],
   init:n=>{n.pos=0;n.play=true;n.data=null;},
   process(n,I){
     const o=buf(n,'out');
@@ -288,7 +288,7 @@ def({ id:'file', title:'Аудиофайл', cat:'Источники',
     return {out:o, pos:n.pos/d.length, done}; },
   draw(n,cv,cx){
     const W=cv.width,H=cv.height; cx.clearRect(0,0,W,H);
-    if(!n.data){ n.el.querySelector('.readout').textContent='файл не выбран'; return; }
+    if(!n.data){ n.el.querySelector('.readout').textContent='no file selected'; return; }
     if(!n.env||n.envW!==W){                          // огибающая всего файла, считаем один раз
       n.envW=W; n.env=new Float32Array(W);
       const step=Math.max(1,Math.floor(n.data.length/W));
@@ -305,12 +305,12 @@ def({ id:'file', title:'Аудиофайл', cat:'Источники',
     cx.beginPath(); cx.moveTo(px,0); cx.lineTo(px,H); cx.stroke(); cx.lineWidth=1;
     const sr=n.srcSr||Eng.sr, t=n.pos/sr, tot=n.data.length/sr;
     n.el.querySelector('.readout').textContent =
-      (n.name||'файл')+' · '+t.toFixed(1)+' / '+tot.toFixed(1)+' с'+(n.play?'':' · пауза'); }});
+      (n.name||'file')+' · '+t.toFixed(1)+' / '+tot.toFixed(1)+' s'+(n.play?'':' · paused'); }});
 
 
-def({ id:'accel', title:'Акселерометр', cat:'Источники',
+def({ id:'accel', title:'Accelerometer', cat:'Sources',
   outs:[{n:'x',t:'num'},{n:'y',t:'num'},{n:'z',t:'num'}],
-  params:[{n:'on',t:'button',label:'Разрешить датчик',fn:async n=>{
+  params:[{n:'on',t:'button',label:'Allow sensor',fn:async n=>{
     if(window.DeviceMotionEvent?.requestPermission) await DeviceMotionEvent.requestPermission();
     window.addEventListener('devicemotion',e=>{ const a=e.accelerationIncludingGravity||{};
       n.v=[a.x||0,a.y||0,a.z||0]; }); }}],
@@ -330,33 +330,33 @@ const GSENSOR_DEFS = {
 function gsensorFields(n){ return (GSENSOR_DEFS[n.p.type]||GSENSOR_DEFS.Accelerometer).fields; }
 function gsensorStop(n){
   if(n.sensor){ try{ n.sensor.stop(); }catch(e){} n.sensor=null; }
-  n.status='остановлено';
+  n.status='stopped';
 }
 function gsensorStart(n){
   gsensorStop(n);
   const Cls = window[n.p.type];
-  if(!Cls){ n.status='API недоступно (не Chrome/Edge на Android, либо не HTTPS)'; return; }
+  if(!Cls){ n.status='API unavailable (needs Chrome/Edge on Android, or HTTPS)'; return; }
   const def = GSENSOR_DEFS[n.p.type]||GSENSOR_DEFS.Accelerometer;
   try{
     const s = new Cls(def.opts);
-    s.addEventListener('reading', ()=>{ n.v = def.fields.map(f=>s[f]??0); n.status='читает'; });
-    s.addEventListener('error', e=>{ n.status='ошибка: '+(e.error?.message||e.error?.name||'?'); });
+    s.addEventListener('reading', ()=>{ n.v = def.fields.map(f=>s[f]??0); n.status='reading'; });
+    s.addEventListener('error', e=>{ n.status='error: '+(e.error?.message||e.error?.name||'?'); });
     s.start();
-    n.sensor=s; n.status='запуск…';
+    n.sensor=s; n.status='starting…';
   }catch(e){
-    n.status = e.name==='SecurityError' ? 'нет разрешения на датчик' : 'ошибка: '+e.message;
+    n.status = e.name==='SecurityError' ? 'sensor permission denied' : 'error: '+e.message;
   }
 }
-def({ id:'gsensor', title:'Датчик (Generic Sensor API)', cat:'Источники',
+def({ id:'gsensor', title:'Sensor (Generic Sensor API)', cat:'Sources',
   outs: n => gsensorFields(n).map(f=>({n:f,t:'num'})),
   readout:true,
   params:[
     {n:'type',t:'select',opts:Object.keys(GSENSOR_DEFS),d:'Accelerometer',
       fn:n=>{ gsensorStop(n); n.v=[0,0,0]; n.initialized=false; rebuildNode(n); markTopoDirty(); }},
-    {n:'go',t:'button',label:'Запустить',fn:n=>gsensorStart(n)},
-    {n:'stop',t:'button',label:'Стоп',fn:n=>gsensorStop(n)},
+    {n:'go',t:'button',label:'Start',fn:n=>gsensorStart(n)},
+    {n:'stop',t:'button',label:'Stop',fn:n=>gsensorStop(n)},
   ],
-  init:n=>{ n.sensor=null; n.status='не запущено'; n.v=[0,0,0]; },
+  init:n=>{ n.sensor=null; n.status='not started'; n.v=[0,0,0]; },
   dispose:n=>gsensorStop(n),
   process(n){
     const fields=gsensorFields(n), out={};
@@ -366,21 +366,21 @@ def({ id:'gsensor', title:'Датчик (Generic Sensor API)', cat:'Источн
   draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.status; }});
 
 
-def({ id:'cam', title:'Камера', cat:'Источники', outs:[{n:'img',t:'img'},{n:'bright',t:'num'}],
+def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'bright',t:'num'}],
   ins:[{n:'roiX',t:'num'},{n:'roiY',t:'num'},{n:'roiW',t:'num'},{n:'roiH',t:'num'}],
-  params:[{n:'on',t:'button',label:'Включить камеру',fn:async n=>{
+  params:[{n:'on',t:'button',label:'Turn on camera',fn:async n=>{
             n.video.srcObject?.getTracks?.().forEach(t=>t.stop());
             const s=await navigator.mediaDevices.getUserMedia({video:{width:320,height:240,
-              facingMode:n.p.cam==='задняя'?{ideal:'environment'}:'user'}});
+              facingMode:n.p.cam==='rear'?{ideal:'environment'}:'user'}});
             n.video.srcObject=s; n.video.play(); }},
-          {n:'cam',t:'select',opts:['передняя','задняя'],d:'задняя'},
+          {n:'cam',t:'select',opts:['front','rear'],d:'rear'},
           {n:'w',t:'select',opts:['80','160','320'],d:'160'},
-          {n:'roi',t:'check',d:false,label:'зона яркости'},
-          {n:'roiX',t:'range',min:0,max:1,step:.01,d:.35,label:'зона: x'},
-          {n:'roiY',t:'range',min:0,max:1,step:.01,d:.35,label:'зона: y'},
-          {n:'roiW',t:'range',min:.02,max:1,step:.01,d:.3,label:'зона: ширина'},
-          {n:'roiH',t:'range',min:.02,max:1,step:.01,d:.3,label:'зона: высота'},
-          {n:'roiAuto',t:'check',d:true,label:'зона: авто-контраст'}],
+          {n:'roi',t:'check',d:false,label:'brightness zone'},
+          {n:'roiX',t:'range',min:0,max:1,step:.01,d:.35,label:'zone: x'},
+          {n:'roiY',t:'range',min:0,max:1,step:.01,d:.35,label:'zone: y'},
+          {n:'roiW',t:'range',min:.02,max:1,step:.01,d:.3,label:'zone: width'},
+          {n:'roiH',t:'range',min:.02,max:1,step:.01,d:.3,label:'zone: height'},
+          {n:'roiAuto',t:'check',d:true,label:'zone: auto-contrast'}],
   init(n){ n.video=document.createElement('video'); n.video.playsInline=true; n.video.muted=true;
            n.capCv=document.createElement('canvas'); n.capCx=n.capCv.getContext('2d',{willReadFrequently:true});
            n.brMn=0; n.brMx=1; n.bright=0; },
@@ -418,13 +418,13 @@ def({ id:'cam', title:'Камера', cat:'Источники', outs:[{n:'img',t
 // <video> как источник кадров — файл или URL, в отличие от 'cam' не живая камера.
 // crossOrigin='anonymous' нужен, иначе getImageData на чужом URL кинет SecurityError
 // (canvas "запятнан") — сработает только если сервер видео отдаёт CORS-заголовки.
-def({ id:'vidsrc', title:'Видео (файл/URL)', cat:'Источники', outs:[{n:'img',t:'img'}],
+def({ id:'vidsrc', title:'Video (file/URL)', cat:'Sources', outs:[{n:'img',t:'img'}],
   params:[
     {n:'url',t:'text',d:'',label:'URL'},
-    {n:'load',t:'button',label:'Загрузить URL',fn:n=>{
+    {n:'load',t:'button',label:'Load URL',fn:n=>{
       if(!n.p.url) return; n.video.src=n.p.url; n.video.load(); }},
     {n:'file',t:'file',accept:'video/*',fn:(n,f)=>{ n.video.src=URL.createObjectURL(f); n.video.load(); }},
-    {n:'play',t:'button',label:'▶',fn:n=>n.video.play().catch(e=>{n.status='ошибка: '+e.message;})},
+    {n:'play',t:'button',label:'▶',fn:n=>n.video.play().catch(e=>{n.status='error: '+e.message;})},
     {n:'pause',t:'button',label:'⏸',fn:n=>n.video.pause()},
     {n:'loop',t:'check',d:true},
     {n:'w',t:'select',opts:['80','160','320'],d:'160'},
@@ -432,32 +432,32 @@ def({ id:'vidsrc', title:'Видео (файл/URL)', cat:'Источники', 
   init(n){ n.video=document.createElement('video'); n.video.playsInline=true; n.video.muted=true;
            n.video.crossOrigin='anonymous'; n.video.loop=true;
            n.capCv=document.createElement('canvas'); n.capCx=n.capCv.getContext('2d',{willReadFrequently:true});
-           n.status='нет источника'; },
+           n.status='no source'; },
   view:{h:100}, readout:true, always:true,
   process(n){ if(n.video.loop!==!!n.p.loop) n.video.loop=!!n.p.loop; return {img:n.img||null}; },
   draw(n,cv,cx){
     const r=n.el.querySelector('.readout');
-    if(r) r.textContent = n.video.error ? 'ошибка загрузки'
-      : n.video.readyState<2 ? n.status : (n.video.paused?'пауза':'играет');
+    if(r) r.textContent = n.video.error ? 'load error'
+      : n.video.readyState<2 ? n.status : (n.video.paused?'paused':'playing');
     if(!n.video?.videoWidth) return;
     const W=+n.p.w, H=Math.round(W*(n.video.videoHeight/n.video.videoWidth||3/4));
     if(n.capCv.width!==W||n.capCv.height!==H){ n.capCv.width=W; n.capCv.height=H; }
     n.capCx.drawImage(n.video,0,0,W,H);
     try{ n.img={data:n.capCx.getImageData(0,0,W,H),w:W,h:H,gray:false}; }
-    catch(e){ n.status='видео с чужого домена без CORS — кадр не читается'; }
+    catch(e){ n.status='cross-origin video without CORS — frame unreadable'; }
     cx.drawImage(n.capCv,0,0,cv.width,cv.height); }});
 
 
 
 
 
-def({ id:'const', title:'Константа', cat:'Управление', outs:[{n:'out',t:'num'}],
+def({ id:'const', title:'Constant', cat:'Control', outs:[{n:'out',t:'num'}],
   ins:[{n:'v',t:'num'}],
   params:[{n:'v',t:'range',min:-100,max:100,step:.1,d:1}],
   process(n,I){ if(typeof I.v==='number') setMod(n,'v',I.v); return {out:n.p.v}; }});
 
 
-def({ id:'lfo', title:'НЧ-модулятор', cat:'Управление', outs:[{n:'out',t:'num'}],
+def({ id:'lfo', title:'LFO', cat:'Control', outs:[{n:'out',t:'num'}],
   ins:[{n:'freq',t:'num'}],
   params:[{n:'freq',t:'range',min:.01,max:20,step:.01,d:.5},
           {n:'min',t:'num',d:0},{n:'max',t:'num',d:1},
@@ -473,7 +473,7 @@ def({ id:'lfo', title:'НЧ-модулятор', cat:'Управление', out
 
 
 function uartQueue(n){
-  const st=parseFloat(n.p.stop), baudot=n.p.code==='Бодо (RTTY)';
+  const st=parseFloat(n.p.stop), baudot=n.p.code==='Baudot (RTTY)';
   const q=[[1,8]];                                 // холостой марк на прогрев приёмника
   let figs=null;
   pushChar(q,31,baudot?5:8,st); pushChar(q,31,baudot?5:8,st);
@@ -489,17 +489,17 @@ function uartQueue(n){
   q.push([1,3]); n.q=q;
 }
 function pushChar(q,code,bits,st){
-  q.push([-1,1]);                                  // старт-бит (спейс)
+  q.push([-1,1]);                                  // start bit (space)
   for(let i=0;i<bits;i++) q.push([(code>>i)&1?1:-1,1]);
-  q.push([1,st]);                                  // стоп (марк)
+  q.push([1,st]);                                  // stop (mark)
 }
 
-def({ id:'textsrc', title:'Источник текста', cat:'Управление',
+def({ id:'textsrc', title:'Text Source', cat:'Control',
   outs:[{n:'text',t:'txt'},{n:'go',t:'num'}], readout:true, tall:true,
   ins:[{n:'repeat',t:'num'}],
   params:[{n:'text',t:'text',d:'CQ CQ DE R1ABC K'},
           {n:'repeat',t:'range',min:0,max:60,step:.5,d:0},
-          {n:'send',t:'button',label:'Передать',fn:n=>{n.pulse=2;}},
+          {n:'send',t:'button',label:'Send',fn:n=>{n.pulse=2;}},
           {n:'file',t:'file',accept:'.txt,text/plain',fn:(n,f)=>{
             const r=new FileReader();
             r.onload=()=>{ n.p.text=String(r.result).slice(0,20000);
@@ -526,7 +526,7 @@ async function serialTeardown(n){
   if(n.reader){ try{ await n.reader.cancel(); }catch(e){} n.reader=null; }
   if(n.port){ try{ await n.port.close(); }catch(e){} n.port=null; }
 }
-function serialDisconnect(n){ n.status='отключено'; serialTeardown(n); }
+function serialDisconnect(n){ n.status='disconnected'; serialTeardown(n); }
 
 // Границы чтения из порта не совпадают с границами строк — копим в буфер и режем по \n.
 async function serialReadLoop(n){
@@ -545,9 +545,9 @@ async function serialReadLoop(n){
         if(line){ n.lastLine=line; n.linePulse=2; }
       }
     }
-    if(n.reading) n.status='порт закрыт устройством';   // done без явного disconnect()
+    if(n.reading) n.status='port closed by device';   // done без явного disconnect()
   }catch(e){
-    n.status='ошибка чтения: '+e.message;
+    n.status='read error: '+e.message;
   }finally{
     n.reading=false;
   }
@@ -556,29 +556,29 @@ async function serialReadLoop(n){
 async function serialConnect(n){
   if(n.connecting) return;
   await serialTeardown(n);
-  if(!navigator.serial){ n.status='WebSerial недоступен (нужен Chrome/Edge, HTTPS)'; return; }
-  n.connecting=true; n.status='выберите порт…';
+  if(!navigator.serial){ n.status='WebSerial unavailable (needs Chrome/Edge, HTTPS)'; return; }
+  n.connecting=true; n.status='choose a port…';
   try{
     const port = await navigator.serial.requestPort();
     await port.open({baudRate:+n.p.baud||9600});
-    n.port=port; n.connecting=false; n.connected=true; n.status='подключено, '+n.p.baud+' бод';
+    n.port=port; n.connecting=false; n.connected=true; n.status='connected, '+n.p.baud+' baud';
     serialReadLoop(n);
   }catch(e){
     n.connecting=false; n.connected=false;
-    n.status = e.name==='NotFoundError' ? 'порт не выбран' : 'ошибка: '+e.message;
+    n.status = e.name==='NotFoundError' ? 'no port selected' : 'error: '+e.message;
   }
 }
 
-def({ id:'webserial', title:'Serial-порт (WebSerial)', cat:'Управление',
+def({ id:'webserial', title:'Serial Port (WebSerial)', cat:'Control',
   outs:[{n:'line',t:'txt'},{n:'go',t:'num'}], readout:true, tall:true,
   params:[
     {n:'baud',t:'select',opts:['4800','9600','19200','38400','57600','115200'],d:'9600'},
-    {n:'connect',t:'button',label:'Подключить',fn:n=>serialConnect(n)},
-    {n:'disconnect',t:'button',label:'Отключить',fn:n=>serialDisconnect(n)},
+    {n:'connect',t:'button',label:'Connect',fn:n=>serialConnect(n)},
+    {n:'disconnect',t:'button',label:'Disconnect',fn:n=>serialDisconnect(n)},
   ],
   init:n=>{
     n.port=null; n.reader=null; n.connected=false; n.connecting=false; n.reading=false;
-    n.lastLine=''; n.linePulse=0; n.status='не подключено';
+    n.lastLine=''; n.linePulse=0; n.status='not connected';
   },
   dispose:n=>{ serialTeardown(n).catch(e=>console.error('serial dispose:',e)); },
   process(n){
@@ -596,13 +596,13 @@ def({ id:'webserial', title:'Serial-порт (WebSerial)', cat:'Управлен
 function csvlineFields(n){
   return String(n.p.names||'value').split(',').map(s=>s.trim()||'value');
 }
-def({ id:'csvline', title:'Разбор CSV-строки', cat:'Управление',
+def({ id:'csvline', title:'Parse CSV Line', cat:'Control',
   ins:[{n:'line',t:'txt'}],
   outs: n => csvlineFields(n).map(f=>({n:f,t:'val'})),
   readout:true,
   params:[
-    {n:'names',t:'text',d:'a,b,c',label:'имена полей через запятую'},
-    {n:'apply',t:'button',label:'Применить поля',fn:n=>{ n.initialized=false; rebuildNode(n); markTopoDirty(); }},
+    {n:'names',t:'text',d:'a,b,c',label:'field names, comma-separated'},
+    {n:'apply',t:'button',label:'Apply fields',fn:n=>{ n.initialized=false; rebuildNode(n); markTopoDirty(); }},
   ],
   init:n=>{ n.lastLine=null; n.vals={}; },
   process(n,I){
@@ -613,7 +613,7 @@ def({ id:'csvline', title:'Разбор CSV-строки', cat:'Управлен
     }
     return {...n.vals};
   },
-  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent = n.lastLine||'нет данных'; }
+  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent = n.lastLine||'no data'; }
 });
 
 
@@ -628,19 +628,19 @@ function linefilterCompile(n){
     return re;
   }catch(e){
     n.reCache={src:n.p.pattern,flags:n.p.flags,re:null};
-    n.status='ошибка в regexp: '+e.message;
+    n.status='regexp error: '+e.message;
     return null;
   }
 }
-def({ id:'linefilter', title:'Фильтр строк (regexp)', cat:'Управление',
+def({ id:'linefilter', title:'Line Filter (regexp)', cat:'Control',
   ins:[{n:'line',t:'txt'}],
   outs:[{n:'line',t:'txt'},{n:'go',t:'num'}],
   readout:true,
   params:[
     {n:'pattern',t:'text',d:'^\\$GPGGA',label:'regexp'},
-    {n:'flags',t:'text',d:'',label:'флаги (i, g…)'},
-    {n:'group',t:'num',d:0,label:'группа (0 = вся строка)'},
-    {n:'invert',t:'check',d:false,label:'пропускать НЕ совпавшие'},
+    {n:'flags',t:'text',d:'',label:'flags (i, g…)'},
+    {n:'group',t:'num',d:0,label:'group (0 = whole line)'},
+    {n:'invert',t:'check',d:false,label:'pass NON-matching'},
   ],
   init:n=>{ n.lastIn=null; n.out=''; n.pulse=0; n.status=''; n.reCache=null; },
   process(n,I){
@@ -659,7 +659,7 @@ def({ id:'linefilter', title:'Фильтр строк (regexp)', cat:'Управ
     const go=n.pulse>0?1:0; if(n.pulse>0) n.pulse--;
     return {line:n.out, go};
   },
-  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent = n.status || (n.out||'нет совпадений'); }
+  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent = n.status || (n.out||'no matches'); }
 });
 
 
@@ -922,7 +922,7 @@ async function rtlOpenDevice(dev, ppm, gain){
   const xtalFreq=Math.floor(XTAL*(1+ppm/1e6));
   await com.i2c.open();
   const found=await rtlMakeR820T.detect(com);
-  if(!found){ await com.i2c.close(); throw new Error('тюнер не R820T/R828D — не поддерживается'); }
+  if(!found){ await com.i2c.close(); throw new Error('tuner is not R820T/R828D — unsupported'); }
   const tuner=rtlMakeR820T(com, xtalFreq, found.addr);
   const mult=-1*Math.floor(IF*(1<<22)/xtalFreq);
   await com.writeEach([
@@ -941,7 +941,7 @@ async function rtlOpenDevice(dev, ppm, gain){
     // а resampling-математика выше по стеку продолжит думать, что частота осталась запрошенной —
     // рассинхрон и "ускоренный голос". Явно отказываемся, а не тихо конфигурируем не то.
     const ratioRaw=XTAL*(1<<22)/rate;
-    if(ratioRaw>=(1<<28)) throw new Error('sample rate '+rate+' Гц слишком низкая для этого XTAL — минимум ~450000 Гц');
+    if(ratioRaw>=(1<<28)) throw new Error('sample rate '+rate+' Hz too low for this XTAL — minimum ~450000 Hz');
     const ratio=Math.floor(ratioRaw) & 0x0ffffffc;
     const real=Math.floor(XTAL*(1<<22)/ratio);
     const ppmOff=-1*Math.floor(ppm*(1<<24)/1e6);
@@ -1173,7 +1173,7 @@ async function rtlReadLoop(n){
       try{ buf=await n.dev.readSamples(CHUNK); errStreak=0; }
       catch(e){
         errStreak++;
-        n.status='ошибка чтения ('+errStreak+'/5): '+e.message;
+        n.status='read error ('+errStreak+'/5): '+e.message;
         if(errStreak>=5){ n.reading=false; break; }
         try{ await n.dev.resetBuffer(); }catch(e2){}
         await new Promise(r=>setTimeout(r,50));
@@ -1420,14 +1420,14 @@ function rtlReadChannelAudio(n, ch, o){
 }
 
 async function rtlConnect(n){
-  if(!navigator.usb){ n.status='WebUSB недоступен (нужен Chrome/Edge/Opera)'; return; }
+  if(!navigator.usb){ n.status='WebUSB unavailable (needs Chrome/Edge/Opera)'; return; }
   if(n.connected) return;
   try{
     const usbDev=await navigator.usb.requestDevice({filters:[{vendorId:0x0bda,productId:0x2832},{vendorId:0x0bda,productId:0x2838}]});
     const gain=n.p.auto?null:n.p.gainDb;
     n.dev=await rtlOpenDevice(usbDev, 0, gain);
     const srSafe=rtlSafeSr(n.p.sr);
-    if(srSafe!==+n.p.sr) n.status='sample rate в настройках устарел, использую '+srSafe+' Гц';
+    if(srSafe!==+n.p.sr) n.status='sample rate in settings is stale, using '+srSafe+' Hz';
     n.sourceRate=await n.dev.setSampleRate(srSafe);
     n.actualFreq=await n.dev.setCenterFrequency(+n.p.freq);
     n.appliedFreq=Math.round(n.p.freq); n.appliedGain=gain; n.appliedAuto=!!n.p.auto;
@@ -1436,7 +1436,7 @@ async function rtlConnect(n){
     // уже терминированы в rtlDisconnect, но на всякий случай подчистим прежде, чем ресайзить кольца
     for(const ch of n.ch){ if(ch.worker) ch.worker.terminate(); ch.worker=null; ch.aring=null; ch.active=false; }
     rtlResetRing(n);
-    rtlActivateChannel(n, 0);                        // канал 1 — всегда, как и раньше
+    rtlActivateChannel(n, 0);                        // channel 1 — always, as before
     // синхронизируем NCO канала 1 с уже выставленным (возможно, отличным от центра) значением
     const tf0=n.ch[0].tuneFreq==null?n.actualFreq:n.ch[0].tuneFreq;
     n.ch[0].appliedOffset=clamp(tf0, n.actualFreq-n.sourceRate/2, n.actualFreq+n.sourceRate/2)-n.actualFreq;
@@ -1444,10 +1444,10 @@ async function rtlConnect(n){
     if(n.specWorker) n.specWorker.terminate();
     n.specWorker=rtlMakeSpecWorker(); n.specBusy=false;
     n.connected=true; n.reading=true; n.underruns=0;
-    n.status='подключено ('+n.dev.tunerName+')';
+    n.status='connected ('+n.dev.tunerName+')';
     rtlReadLoop(n);
   }catch(e){
-    n.status='ошибка: '+e.message;
+    n.status='error: '+e.message;
     n.dev=null; n.connected=false;
   }
 }
@@ -1458,15 +1458,15 @@ async function rtlDisconnect(n){
   if(n.specWorker){ n.specWorker.terminate(); n.specWorker=null; }
   if(n.dev){ try{ await n.dev.close(); }catch(e){} n.dev=null; }
   n.connected=false; n.busy=false;
-  n.status='отключено';
+  n.status='disconnected';
 }
 
 // компактный формат частоты: 172300000 → "172.3М", 17500 → "17.5к"
 function fmtHz(v){
   const a=Math.abs(v);
-  if(a>=1e9) return (v/1e9).toFixed(1)+'Г';
-  if(a>=1e6) return (v/1e6).toFixed(1)+'М';
-  if(a>=1e3) return (v/1e3).toFixed(1)+'к';
+  if(a>=1e9) return (v/1e9).toFixed(1)+'G';
+  if(a>=1e6) return (v/1e6).toFixed(1)+'M';
+  if(a>=1e3) return (v/1e3).toFixed(1)+'k';
   return String(Math.round(v));
 }
 
@@ -1486,11 +1486,11 @@ async function rtlApplyPending(n){
   try{
     if(freqStale){ n.actualFreq=await n.dev.setCenterFrequency(wantFreq); n.appliedFreq=wantFreq; }
     if(gainStale){ await n.dev.setGain(wantGain); n.appliedGain=wantGain; n.appliedAuto=wantAuto; }
-  }catch(e){ n.status='ошибка перестройки: '+e.message; }
+  }catch(e){ n.status='retune error: '+e.message; }
   n.busy=false;
 }
 
-def({ id:'rtlsdr', title:'RTL-SDR', cat:'Источники',
+def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
   ins:[{n:'freq',t:'num'},{n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'},
        {n:'gainDb',t:'num'},{n:'bw',t:'num'}],
   outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},
@@ -1499,25 +1499,25 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Источники',
         {n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'}],
   readout:true,
   params:[
-    {n:'connect',t:'button',label:'Подключить',fn:async n=>{ await rtlConnect(n); }},
-    {n:'disconnect',t:'button',label:'Отключить',fn:async n=>{ await rtlDisconnect(n); }},
-    {n:'freq',t:'num',d:100000000,label:'центральная частота, Гц'},
+    {n:'connect',t:'button',label:'Connect',fn:async n=>{ await rtlConnect(n); }},
+    {n:'disconnect',t:'button',label:'Disconnect',fn:async n=>{ await rtlDisconnect(n); }},
+    {n:'freq',t:'num',d:100000000,label:'center frequency, Hz'},
     {n:'sr',t:'select',opts:['960000','1024000','1920000','2048000','2400000','3200000'],d:'1024000',label:'sample rate',
      fn:async n=>{ if(n.dev){ try{ n.sourceRate=await n.dev.setSampleRate(rtlSafeSr(n.p.sr)); rtlResetRing(n); }
-       catch(e){ n.status='ошибка смены sample rate: '+e.message; } } }},
+       catch(e){ n.status='sample rate change error: '+e.message; } } }},
     // режим демодуляции/полоса/де-эмфазис — ОБЩИЕ на все 4 канала (проще UI); частота у каждого своя
-    {n:'demod',t:'select',opts:['IQ','WFM','NFM','AM','USB','LSB'],d:'WFM',label:'демодуляция',
+    {n:'demod',t:'select',opts:['IQ','WFM','NFM','AM','USB','LSB'],d:'WFM',label:'demodulation',
      fn:n=>{ rtlResetRing(n); }},
-    {n:'bw',t:'range',min:500,max:16000,step:100,d:15000,log:true,label:'полоса аудио, Гц'},
-    {n:'deemph',t:'select',opts:['50','75','off'],d:'50',label:'де-эмфазис WFM, мкс'},
-    {n:'auto',t:'check',d:true,label:'авто-усиление'},
-    {n:'gainDb',t:'range',min:0,max:49.6,step:.1,d:20,label:'усиление, дБ'},
-    {n:'specSize',t:'select',opts:['512','1024','2048','4096','8192','16384'],d:'4096',label:'размер БПФ спектра'},
-    {n:'specWin',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann',label:'окно спектра'},
-    {n:'specAvg',t:'range',min:1,max:32,step:1,d:4,label:'усреднение, кадров'}
+    {n:'bw',t:'range',min:500,max:16000,step:100,d:15000,log:true,label:'audio bandwidth, Hz'},
+    {n:'deemph',t:'select',opts:['50','75','off'],d:'50',label:'WFM de-emphasis, µs'},
+    {n:'auto',t:'check',d:true,label:'auto gain'},
+    {n:'gainDb',t:'range',min:0,max:49.6,step:.1,d:20,label:'gain, dB'},
+    {n:'specSize',t:'select',opts:['512','1024','2048','4096','8192','16384'],d:'4096',label:'spectrum FFT size'},
+    {n:'specWin',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann',label:'spectrum window'},
+    {n:'specAvg',t:'range',min:1,max:32,step:1,d:4,label:'averaging, frames'}
   ],
   init:n=>{ n.dev=null; n.connected=false; n.reading=false; n.sourceRate=1024000;
-            n.underruns=0; n.status='не подключено'; n.busy=false; n.specWorker=null; n.specBusy=false;
+            n.underruns=0; n.status='not connected'; n.busy=false; n.specWorker=null; n.specBusy=false;
             n.appliedFreq=null; n.appliedGain=null; n.appliedAuto=null;
             // 4 канала демодуляции; канал 0 без цифрового суффикса в портах, активен всегда
             // (обратная совместимость), 1-3 поднимаются лениво при первом числе на их tuneFreqN.
@@ -1569,7 +1569,7 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Источники',
     if(typeof I.gainDb==='number') setMod(n,'gainDb',I.gainDb);
     if(typeof I.bw==='number') setMod(n,'bw',I.bw);
     const cf=n.actualFreq??n.p.freq, half=n.sourceRate/2;
-    rtlApplyPending(n); // не await — асинхронно применится, когда сможет (только 'freq'/усиление — через USB)
+    rtlApplyPending(n); // не await — асинхронно применится, когда сможет (только 'freq'/gain — через USB)
 
     // конфиг и дешёвая NCO-перестройка для всех АКТИВНЫХ каналов разом
     for(let ci=0;ci<4;ci++){
@@ -1614,8 +1614,8 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Источники',
     const chCount=n.ch.filter(c=>c.active).length;
     const r=n.el.querySelector('.readout');
     if(r) r.textContent = n.connected
-      ? `${n.dev?n.dev.tunerName:'?'} · ${n.p.demod} · центр ${fmtHz(cf)} · полоса ${fmtHz(n.sourceRate)} · настройка ${fmtHz(tune)} · `+
-        `каналов ${chCount} · ${(n.msps||0).toFixed(2)}Msps (I/O:${(n.mspsIo||0).toFixed(2)})`+(n.underruns?' · сбоев '+n.underruns:'')+(n.busy?' · …':'')
+      ? `${n.dev?n.dev.tunerName:'?'} · ${n.p.demod} · center ${fmtHz(cf)} · span ${fmtHz(n.sourceRate)} · tune ${fmtHz(tune)} · `+
+        `channels ${chCount} · ${(n.msps||0).toFixed(2)}Msps (I/O:${(n.mspsIo||0).toFixed(2)})`+(n.underruns?' · errors '+n.underruns:'')+(n.busy?' · …':'')
       : n.status;
   }});
 
@@ -1694,16 +1694,16 @@ function kiwiWsUrl(n,host,port,path){
 function kiwiConnect(n){
   if(n.connected||n.connecting) return;
   const {host,port}=kiwiParseHostPort(n.p.server);
-  if(!host){ n.status='не указан адрес сервера'; return; }
-  n.connecting=true; n.status='подключение…';
+  if(!host){ n.status='server address not set'; return; }
+  n.connecting=true; n.status='connecting…';
   let ws;
   try{ ws=new WebSocket(kiwiWsUrl(n,host,port,`${Date.now()}/SND`)); }
-  catch(e){ n.connecting=false; n.status='ошибка: '+e.message; return; }
+  catch(e){ n.connecting=false; n.status='error: '+e.message; return; }
   ws.binaryType='arraybuffer';
   n.ws=ws; n.audioRate=12000; n.rssi=0; kiwiResetRing(n);
   // если открытие вообще не произойдёт (недоступный хост, фаервол, нет прокси) — не виснуть
   const openTimeout=setTimeout(()=>{
-    if(n.connecting){ n.status='нет ответа от сервера (таймаут)'; try{ ws.close(); }catch(e){} }
+    if(n.connecting){ n.status='no response from server (timeout)'; try{ ws.close(); }catch(e){} }
   },8000);
   ws.onopen=()=>{
     clearTimeout(openTimeout);
@@ -1712,7 +1712,7 @@ function kiwiConnect(n){
     kiwiSetMod(n);
     kiwiSend(n,'SET agc=1 hang=0 thresh=-100 slope=6 decay=1000 manGain=50');
     n.appliedFreq=n.p.freq; n.appliedMod=n.p.mod; n.appliedBw=n.p.bw;
-    n.connecting=false; n.connected=true; n.status='подключено';
+    n.connecting=false; n.connected=true; n.status='connected';
     n.kaTimer=setInterval(()=>kiwiSend(n,'SET keepalive'),1000);
   };
   ws.onmessage=(ev)=>{
@@ -1726,10 +1726,10 @@ function kiwiConnect(n){
         const eq=pair.indexOf('=');
         const name=eq<0?pair:pair.slice(0,eq), value=eq<0?null:pair.slice(eq+1);
         if(name==='audio_rate'){ n.audioRate=+value||12000; kiwiResetRing(n); kiwiSend(n,`SET AR OK in=${n.audioRate} out=44100`); }
-        else if(name==='too_busy') n.status='сервер занят (все слоты заняты)';
-        else if(name==='badp') n.status='ошибка авторизации ('+value+')';
-        else if(name==='down') n.status='сервер сейчас недоступен';
-        else if(name==='redirect') n.status='сервер перенаправляет соединение';
+        else if(name==='too_busy') n.status='server busy (all slots taken)';
+        else if(name==='badp') n.status='auth error ('+value+')';
+        else if(name==='down') n.status='server currently unavailable';
+        else if(name==='redirect') n.status='server is redirecting connection';
       }
     } else if(tag==='SND'){
       if(body.length<7) return;
@@ -1747,34 +1747,34 @@ function kiwiConnect(n){
     }
   };
   ws.onclose=(ev)=>{ n.connected=false; n.connecting=false;
-    if(n.status==='подключено'||n.status==='подключение…') n.status=`отключено (код ${ev.code}${ev.reason?': '+ev.reason:''})`;
+    if(n.status==='connected'||n.status==='connecting…') n.status=`disconnected (code ${ev.code}${ev.reason?': '+ev.reason:''})`;
     if(n.kaTimer){ clearInterval(n.kaTimer); n.kaTimer=null; } };
-  ws.onerror=()=>{ n.status='ошибка соединения (подробности — в консоли браузера)'; };
+  ws.onerror=()=>{ n.status='connection error (see browser console for details)'; };
 }
 
 function kiwiDisconnect(n){
   if(n.kaTimer){ clearInterval(n.kaTimer); n.kaTimer=null; }
   if(n.ws){ try{ n.ws.close(); }catch(e){} n.ws=null; }
-  n.connected=false; n.connecting=false; n.status='отключено';
+  n.connected=false; n.connecting=false; n.status='disconnected';
 }
 
-def({ id:'kiwisdr', title:'KiwiSDR', cat:'Источники',
+def({ id:'kiwisdr', title:'KiwiSDR', cat:'Sources',
   ins:[{n:'freq',t:'num'}], outs:[{n:'audio',t:'sig'},{n:'rssi',t:'num'}],
   view:{h:40}, readout:true,
   params:[
-    {n:'preset',t:'select',opts:['— свой —',...KIWI_PUBLIC_LIST],d:'— свой —',label:'публичные приёмники',
-     fn:n=>{ if(n.p.preset!=='— свой —'){ n.p.server=n.p.preset; if(n.set&&n.set.server) n.set.server(n.p.server); } }},
+    {n:'preset',t:'select',opts:['— custom —',...KIWI_PUBLIC_LIST],d:'— custom —',label:'public receivers',
+     fn:n=>{ if(n.p.preset!=='— custom —'){ n.p.server=n.p.preset; if(n.set&&n.set.server) n.set.server(n.p.server); } }},
     {n:'server',t:'text',d:'sdr1.on1aff.be:8073',label:'host:port'},
-    {n:'proxy',t:'text',d:'/kiwiproxy',label:'wss-прокси (путь на своём сервере, см. nginx конфиг)'},
-    {n:'connect',t:'button',label:'Подключить',fn:n=>kiwiConnect(n)},
-    {n:'disconnect',t:'button',label:'Отключить',fn:n=>kiwiDisconnect(n)},
-    {n:'freq',t:'num',d:7000000,label:'частота, Гц'},
-    {n:'mod',t:'select',opts:['am','lsb','usb','cw','nbfm'],d:'am',label:'демодуляция',
+    {n:'proxy',t:'text',d:'/kiwiproxy',label:'wss proxy (path on your server, see nginx config)'},
+    {n:'connect',t:'button',label:'Connect',fn:n=>kiwiConnect(n)},
+    {n:'disconnect',t:'button',label:'Disconnect',fn:n=>kiwiDisconnect(n)},
+    {n:'freq',t:'num',d:7000000,label:'frequency, Hz'},
+    {n:'mod',t:'select',opts:['am','lsb','usb','cw','nbfm'],d:'am',label:'demodulation',
      fn:n=>{ if(n.connected) kiwiSetMod(n); }},
-    {n:'bw',t:'range',min:200,max:5400,step:100,d:4900,log:true,label:'полоса, Гц',
+    {n:'bw',t:'range',min:200,max:5400,step:100,d:4900,log:true,label:'bandwidth, Hz',
      fn:n=>{ if(n.connected) kiwiSetMod(n); }}
   ],
-  init:n=>{ n.ws=null; n.connected=false; n.connecting=false; n.status='не подключено';
+  init:n=>{ n.ws=null; n.connected=false; n.connecting=false; n.status='not connected';
             n.audioRate=12000; n.rssi=0; n.appliedFreq=null; kiwiResetRing(n); },
   dispose:n=>kiwiDisconnect(n),
   process(n,I){
@@ -1816,7 +1816,7 @@ def({ id:'kiwisdr', title:'KiwiSDR', cat:'Источники',
     return {audio:oa,rssi:n.rssi}; },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     r.textContent = n.connected
-      ? `${n.p.server} · ${n.p.mod} · ${fmtHz(n.p.freq)} · RSSI ${n.rssi.toFixed(0)} дБ`
+      ? `${n.p.server} · ${n.p.mod} · ${fmtHz(n.p.freq)} · RSSI ${n.rssi.toFixed(0)} dB`
       : n.status; }});
 
 const KBD_MAP={a:0,w:1,s:2,e:3,d:4,f:5,t:6,g:7,y:8,h:9,u:10,j:11,k:12,o:13,l:14,p:15};
@@ -1830,22 +1830,22 @@ function midiHandle(n,ev){
   else if(cmd===0xb0&&d1===n.p.ccNum) n.cc=d2/127;
 }
 
-def({ id:'midi', title:'MIDI-клавиатура', cat:'Музыка',
+def({ id:'midi', title:'MIDI Keyboard', cat:'Music',
   outs:[{n:'freq',t:'num'},{n:'gate',t:'sig'},{n:'vel',t:'num'},{n:'cc',t:'num'}],
   readout:true,
   params:[
-    {n:'dev',t:'select',d:'нет',label:'вход',
-     opts:()=>['нет',...(n=>n?[...n.inputs.values()].map(i=>i.name):[])(navigator._midiAccess)],
+    {n:'dev',t:'select',d:'none',label:'input',
+     opts:()=>['none',...(n=>n?[...n.inputs.values()].map(i=>i.name):[])(navigator._midiAccess)],
      fn:n=>{ const a=navigator._midiAccess; if(!a) return;
              for(const i of a.inputs.values()) i.onmidimessage=(i.name===n.p.dev)?(ev=>midiHandle(n,ev)):null; }},
-    {n:'on',t:'button',label:'Разрешить MIDI',fn:async n=>{
+    {n:'on',t:'button',label:'Allow MIDI',fn:async n=>{
        try{ const a=await navigator.requestMIDIAccess();
             navigator._midiAccess=a; if(n.set&&n.set.dev) n.set.dev(); }
-       catch(e){ n.status='нет доступа: '+e.message; } }},
-    {n:'kbd',t:'check',d:true,label:'клавиши компьютера (a-l = C-...)'},
-    {n:'oct',t:'range',min:-3,max:3,step:1,d:0,label:'октава'},
-    {n:'ccNum',t:'num',d:1,label:'CC номер'}],
-  init:n=>{ n.notes=[]; n.vel=0; n.cc=0; n.freqOut=440; n.kbdDown=new Set(); n.status='без MIDI-устройства';
+       catch(e){ n.status='no access: '+e.message; } }},
+    {n:'kbd',t:'check',d:true,label:'computer keys (a-l = C-...)'},
+    {n:'oct',t:'range',min:-3,max:3,step:1,d:0,label:'octave'},
+    {n:'ccNum',t:'num',d:1,label:'CC number'}],
+  init:n=>{ n.notes=[]; n.vel=0; n.cc=0; n.freqOut=440; n.kbdDown=new Set(); n.status='no MIDI device';
     if(!midi._kbdBound){                              // один глобальный слушатель на все midi-узлы
       midi._kbdBound=true;
       window.addEventListener('keydown',ev=>{
@@ -1866,17 +1866,17 @@ def({ id:'midi', title:'MIDI-клавиатура', cat:'Музыка',
     gate.fill(g);
     return {freq:n.freqOut, gate, vel:n.vel, cc:n.cc}; },
   draw(n){ n.el.querySelector('.readout').textContent =
-    n.notes.length ? 'нота '+n.notes[n.notes.length-1].note+' · '+n.notes.length+' держится' : n.status; }});
+    n.notes.length ? 'note '+n.notes[n.notes.length-1].note+' · '+n.notes.length+' held' : n.status; }});
 const midi={};                                          // общий флаг привязки клавиатурного слушателя
 
-def({ id:'clock', title:'Мастер-клок', cat:'Музыка',
+def({ id:'clock', title:'Master Clock', cat:'Music',
   outs:[{n:'pulse',t:'sig'},{n:'step',t:'num'},{n:'bpm',t:'num'}],
   readout:true,
   params:[
     {n:'bpm',t:'range',min:20,max:300,step:1,d:120},
     {n:'div',t:'select',opts:['1/4','1/8','1/16','1/32'],d:'1/16'},
-    {n:'run',t:'check',d:true,label:'играть'},
-    {n:'reset',t:'button',label:'Сброс',fn:n=>{ n.step=0; n.samplesLeft=0; }}],
+    {n:'run',t:'check',d:true,label:'play'},
+    {n:'reset',t:'button',label:'Reset',fn:n=>{ n.step=0; n.samplesLeft=0; }}],
   init:n=>{ n.step=0; n.samplesLeft=0; n.stepLen=0; },
   process(n){
     const pulse=buf(n,'pulse'), p=n.p;
@@ -1889,7 +1889,7 @@ def({ id:'clock', title:'Мастер-клок', cat:'Музыка',
       if(n.samplesLeft<=0){ n.step++; n.samplesLeft=n.stepLen; pulse[i]=1; }
       n.samplesLeft--; }
     return {pulse, step:n.step, bpm:p.bpm}; },
-  draw(n){ n.el.querySelector('.readout').textContent='шаг '+n.step+' · '+n.p.bpm+' BPM · '+n.p.div; }});
+  draw(n){ n.el.querySelector('.readout').textContent='step '+n.step+' · '+n.p.bpm+' BPM · '+n.p.div; }});
 
 // формат секций: "A:4,B:4,A:2,C:8" — банк:число тактов, через запятую
 function parseSongSeq(s){
@@ -1901,18 +1901,18 @@ function parseSongSeq(s){
   return out.length?out:[{bank:0,bars:4}];
 }
 function songBarsLabel(n){
-  return n+' такт'+(n%10===1&&n%100!==11?'':(n%10>=2&&n%10<=4&&(n%100<10||n%100>=20))?'а':'ов');
+  return n+' bar'+(n===1?'':'s');
 }
 
-def({ id:'song', title:'Аранжировка (плейлист)', cat:'Музыка',
+def({ id:'song', title:'Arrangement (Playlist)', cat:'Music',
   ins:[{n:'clk',t:'sig'}],
   outs:[{n:'bank',t:'num'},{n:'bar',t:'num'},{n:'section',t:'num'}],
   view:{h:90}, resize:true, readout:true,
   params:[
-    {n:'stepsPerBar',t:'range',min:1,max:64,step:1,d:16,label:'шагов в такте'},
-    {n:'loop',t:'check',d:true,label:'повторять'},
-    {n:'run',t:'check',d:true,label:'играть'},
-    {n:'reset',t:'button',label:'Сброс',fn:n=>{ n.step=0; n.secIdx=0; n.barInSec=0; n._queued=null; }}],
+    {n:'stepsPerBar',t:'range',min:1,max:64,step:1,d:16,label:'steps per bar'},
+    {n:'loop',t:'check',d:true,label:'loop'},
+    {n:'run',t:'check',d:true,label:'play'},
+    {n:'reset',t:'button',label:'Reset',fn:n=>{ n.step=0; n.secIdx=0; n.barInSec=0; n._queued=null; }}],
   init:n=>{ n.secs=parseSongSeq(n.p.seq); n.p.seq=n.secs.map(s=>'ABCD'[s.bank]+':'+s.bars).join(',');
     n.step=0; n.secIdx=0; n.barInSec=0; n._queued=null; n.drag=null; },
   process(n,I){
@@ -2028,8 +2028,8 @@ def({ id:'song', title:'Аранжировка (плейлист)', cat:'Муз�
       cx.fillStyle='rgba(255,255,255,.85)'; cx.fillRect(x-1,0,2,H); }
     const cur=secs[Math.min(n.secIdx,secs.length-1)];
     n.el.querySelector('.readout').textContent=
-      'секция '+(n.secIdx+1)+'/'+secs.length+' · банк '+'ABCD'[cur.bank]+
-      ' · такт '+(n.barInSec+1)+'/'+cur.bars+(n._queued!=null?' · очередь: #'+(n._queued+1):''); }});
+      'section '+(n.secIdx+1)+'/'+secs.length+' · bank '+'ABCD'[cur.bank]+
+      ' · bar '+(n.barInSec+1)+'/'+cur.bars+(n._queued!=null?' · queued: #'+(n._queued+1):''); }});
 
 // общий шаг для секвенсоров: свой bpm, либо внешний clk-вход (single-sample импульсы 0/1).
 // возвращает true в сэмпле начала нового шага; n.stepLen/n._pos — для расчёта длины ноты.
@@ -2053,38 +2053,38 @@ function seqTick(n,I,i,ownStepLen){
 
 const NOTE_NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const GEN_SCALES={
-  'мажор':[0,2,4,5,7,9,11],
-  'натуральный минор':[0,2,3,5,7,8,10],
-  'гармонический минор':[0,2,3,5,7,8,11],
-  'пентатоника, минор':[0,3,5,7,10],
-  'пентатоника, мажор':[0,2,4,7,9],
-  'лидийский':[0,2,4,6,7,9,11],
-  'дорийский':[0,2,3,5,7,9,10]};
+  'major':[0,2,4,5,7,9,11],
+  'natural minor':[0,2,3,5,7,8,10],
+  'harmonic minor':[0,2,3,5,7,8,11],
+  'minor pentatonic':[0,3,5,7,10],
+  'major pentatonic':[0,2,4,7,9],
+  'lydian':[0,2,4,6,7,9,11],
+  'dorian':[0,2,3,5,7,9,10]};
 
 function genDegrees(root,scaleName,octaves){              // ступени лада в MIDI-нотах на N октав вверх от root
-  const s=GEN_SCALES[scaleName]||GEN_SCALES['пентатоника, минор'];
+  const s=GEN_SCALES[scaleName]||GEN_SCALES['minor pentatonic'];
   const out=[];
   for(let o=0;o<octaves;o++) for(const semi of s) out.push(root+semi+12*o);
   return out;
 }
 // ближайшая нота лада (key — тоника 0..11) к произвольному MIDI-номеру; при равном расстоянии — вниз
 function quantizeToScale(note,key,scaleName){
-  const s=GEN_SCALES[scaleName]||GEN_SCALES['мажор'];
+  const s=GEN_SCALES[scaleName]||GEN_SCALES['major'];
   const rel=((note-key)%12+12)%12, oct=Math.floor((note-key)/12);
   let best=s[0], bestD=99;
   for(const deg of s){ const d=Math.abs(deg-rel); if(d<bestD){ bestD=d; best=deg; } }
   return key+oct*12+best;
 }
 
-def({ id:'seq', title:'Секвенсор', cat:'Музыка',
+def({ id:'seq', title:'Sequencer', cat:'Music',
   ins:[{n:'clk',t:'sig'}],
   outs:[{n:'freq',t:'num'},{n:'gate',t:'sig'},{n:'step',t:'num'}],
   readout:true,
-  params:[{n:'pattern',t:'code',d:'60,62,64,65,67,65,64,62',label:'ноты (x — пауза)'},
+  params:[{n:'pattern',t:'code',d:'60,62,64,65,67,65,64,62',label:'notes (x = rest)'},
           {n:'bpm',t:'range',min:20,max:300,step:1,d:120},
           {n:'div',t:'select',opts:['1/4','1/8','1/16'],d:'1/8'},
-          {n:'gatelen',t:'range',min:.05,max:1,step:.01,d:.6,label:'длина ноты'},
-          {n:'run',t:'check',d:true,label:'играть'}],
+          {n:'gatelen',t:'range',min:.05,max:1,step:.01,d:.6,label:'note length'},
+          {n:'run',t:'check',d:true,label:'play'}],
   init:n=>{ n.idx=-1; n.samplesLeft=0; n.stepLen=0; n.freqOut=440; n.curNote=null; },
   process(n,I){
     n._synced=!!I.clk;
@@ -2102,7 +2102,7 @@ def({ id:'seq', title:'Секвенсор', cat:'Музыка',
       gate[i]=(n.curNote!=null && n._pos<n.stepLen*p.gatelen)?1:0; }
     return {freq:n.freqOut, gate, step:n.idx}; },
   draw(n){ n.el.querySelector('.readout').textContent=
-    'шаг '+n.idx+' · '+(n._synced?'внеш. клок':n.p.bpm+' BPM'); }});
+    'step '+n.idx+' · '+(n._synced?'ext. clock':n.p.bpm+' BPM'); }});
 
 // формат ноты: {note,start,len,vel,voice}; храним в grid-строке как "note:start:len:vel:voice;...".
 // старые форматы (без voice, и совсем старый однонотный "note,note,...") распознаём и мигрируем.
@@ -2157,7 +2157,7 @@ function pianoBankIdx(p){ return {A:0,B:1,C:2,D:3}[p.bank]||0; }
 let PIANO_CLIPBOARD=null;                                       // буфер копипаста банка (не сохраняется в патч)
 
 
-def({ id:'pianoroll', title:'Пиано-ролл', cat:'Музыка',
+def({ id:'pianoroll', title:'Piano Roll', cat:'Music',
   ins:[{n:'clk',t:'sig'},{n:'bankSel',t:'num'}],
   outs:[{n:'freq',t:'num'},{n:'gate',t:'sig'},{n:'step',t:'num'},
         {n:'freq2',t:'num'},{n:'gate2',t:'sig'},
@@ -2165,20 +2165,20 @@ def({ id:'pianoroll', title:'Пиано-ролл', cat:'Музыка',
         {n:'freq4',t:'num'},{n:'gate4',t:'sig'},
         {n:'vel',t:'num'}],
   view:{h:180}, resize:true, readout:true,
-  params:[{n:'bank',t:'select',opts:['A','B','C','D'],d:'A',label:'банк'},
-          {n:'steps',t:'range',min:4,max:32,step:1,d:16,label:'шагов'},
+  params:[{n:'bank',t:'select',opts:['A','B','C','D'],d:'A',label:'bank'},
+          {n:'steps',t:'range',min:4,max:32,step:1,d:16,label:'steps'},
           {n:'bpm',t:'range',min:20,max:300,step:1,d:120},
           {n:'div',t:'select',opts:['1/4','1/8','1/16'],d:'1/16'},
-          {n:'gatelen',t:'range',min:.05,max:1,step:.01,d:.85,label:'длина ноты'},
-          {n:'key',t:'select',opts:NOTE_NAMES,d:'C',label:'тоника'},
-          {n:'scale',t:'select',opts:Object.keys(GEN_SCALES),d:'мажор',label:'лад'},
-          {n:'quantize',t:'check',d:false,label:'квантовать по ладу'},
-          {n:'run',t:'check',d:true,label:'играть'},
-          {n:'copy',t:'button',label:'Копировать',fn:n=>{ PIANO_CLIPBOARD=n.banks[n.bankIdx].map(nt=>({...nt})); }},
-          {n:'paste',t:'button',label:'Вставить',fn:n=>{
+          {n:'gatelen',t:'range',min:.05,max:1,step:.01,d:.85,label:'note length'},
+          {n:'key',t:'select',opts:NOTE_NAMES,d:'C',label:'key'},
+          {n:'scale',t:'select',opts:Object.keys(GEN_SCALES),d:'major',label:'scale'},
+          {n:'quantize',t:'check',d:false,label:'quantize to scale'},
+          {n:'run',t:'check',d:true,label:'play'},
+          {n:'copy',t:'button',label:'Copy',fn:n=>{ PIANO_CLIPBOARD=n.banks[n.bankIdx].map(nt=>({...nt})); }},
+          {n:'paste',t:'button',label:'Paste',fn:n=>{
             if(PIANO_CLIPBOARD){ n.banks[n.bankIdx]=PIANO_CLIPBOARD.map(nt=>({...nt}));
               n.p.grid=pianoEncodeAll(n.banks); } }},
-          {n:'clear',t:'button',label:'Очистить',fn:n=>{ n.banks[n.bankIdx].length=0; n.p.grid=pianoEncodeAll(n.banks); }}],
+          {n:'clear',t:'button',label:'Clear',fn:n=>{ n.banks[n.bankIdx].length=0; n.p.grid=pianoEncodeAll(n.banks); }}],
   init:n=>{ n.banks=pianoDecodeAll(n.p.grid); n.p.grid=pianoEncodeAll(n.banks);
     n.bankIdx=pianoBankIdx(n.p); n._prevBankIdx=n.bankIdx;
     n.pitchLo=60; n.rows=16; n.idx=-1; n.samplesLeft=0; n.stepLen=0;
@@ -2307,7 +2307,7 @@ def({ id:'pianoroll', title:'Пиано-ролл', cat:'Музыка',
       cx.fillText('ABCD'[b],b*bw+bw/2-3,TABH-4); }
     if(auto){ cx.fillStyle='rgba(224,178,60,.8)'; cx.fillRect(0,TABH-2,W,2); }  // банк задаётся song-узлом
     cx.save(); cx.translate(0,TABH);
-    const key=NOTE_NAMES.indexOf(n.p.key), scaleSet=new Set(GEN_SCALES[n.p.scale]||GEN_SCALES['мажор']);
+    const key=NOTE_NAMES.indexOf(n.p.key), scaleSet=new Set(GEN_SCALES[n.p.scale]||GEN_SCALES['major']);
     cx.fillStyle='rgba(255,255,255,.04)';
     for(let row=0;row<n.rows;row++){
       const note=n.pitchLo+(n.rows-1-row), rel=((note-key)%12+12)%12;
@@ -2332,26 +2332,26 @@ def({ id:'pianoroll', title:'Пиано-ролл', cat:'Музыка',
     if(n.idx>=0){ cx.fillStyle='rgba(224,178,60,.2)'; cx.fillRect(n.idx*cw,0,cw,gh); }
     cx.restore();
     n.el.querySelector('.readout').textContent =
-      'банк '+'ABCD'[n.bankIdx]+(n._bankSelLive?' (авто)':'')+' · шаг '+Math.max(n.idx,0)+'/'+steps+' · '+
-      (n._synced?'внеш. клок':n.p.bpm+' BPM')+' · нот: '+notes.length+
+      'bank '+'ABCD'[n.bankIdx]+(n._bankSelLive?' (auto)':'')+' · step '+Math.max(n.idx,0)+'/'+steps+' · '+
+      (n._synced?'ext. clock':n.p.bpm+' BPM')+' · notes: '+notes.length+
       (n.p.quantize?' · '+n.p.key+' '+n.p.scale:''); }});
 
 
-def({ id:'genseq', title:'Генеративная мелодия', cat:'Музыка',
+def({ id:'genseq', title:'Generative Melody', cat:'Music',
   ins:[{n:'clk',t:'sig'}],
   outs:[{n:'freq',t:'num'},{n:'gate',t:'sig'},{n:'step',t:'num'}],
   readout:true,
   params:[
-    {n:'scale',t:'select',opts:Object.keys(GEN_SCALES),d:'пентатоника, минор',label:'лад'},
-    {n:'root',t:'range',min:24,max:72,step:1,d:45,label:'база (нота)'},
-    {n:'octaves',t:'range',min:1,max:3,step:1,d:2,label:'октав'},
+    {n:'scale',t:'select',opts:Object.keys(GEN_SCALES),d:'minor pentatonic',label:'scale'},
+    {n:'root',t:'range',min:24,max:72,step:1,d:45,label:'root (note)'},
+    {n:'octaves',t:'range',min:1,max:3,step:1,d:2,label:'octaves'},
     {n:'bpm',t:'range',min:20,max:300,step:1,d:120},
     {n:'div',t:'select',opts:['1/4','1/8','1/16'],d:'1/8'},
-    {n:'gatelen',t:'range',min:.05,max:1,step:.01,d:.6,label:'длина ноты'},
-    {n:'restProb',t:'range',min:0,max:.9,step:.01,d:.2,label:'вероятность паузы'},
-    {n:'leapProb',t:'range',min:0,max:1,step:.01,d:.2,label:'вероятность скачка (±2)'},
-    {n:'run',t:'check',d:true,label:'играть'},
-    {n:'reseed',t:'button',label:'Заново',fn:n=>{
+    {n:'gatelen',t:'range',min:.05,max:1,step:.01,d:.6,label:'note length'},
+    {n:'restProb',t:'range',min:0,max:.9,step:.01,d:.2,label:'rest probability'},
+    {n:'leapProb',t:'range',min:0,max:1,step:.01,d:.2,label:'leap probability (±2)'},
+    {n:'run',t:'check',d:true,label:'play'},
+    {n:'reseed',t:'button',label:'Reseed',fn:n=>{
       n.melIdx=Math.floor(genDegrees(n.p.root,n.p.scale,n.p.octaves).length/2); }}],
   init:n=>{
     n.idx=-1; n.samplesLeft=0; n.stepLen=0; n.freqOut=440; n.curNote=null;
@@ -2373,7 +2373,7 @@ def({ id:'genseq', title:'Генеративная мелодия', cat:'Муз�
       gate[i]=(n.curNote!=null && n._pos<n.stepLen*p.gatelen)?1:0; }
     return {freq:n.freqOut, gate, step:n.idx}; },
   draw(n){ n.el.querySelector('.readout').textContent=
-    'шаг '+n.idx+' · нота '+(n.curNote??'—')+(n._synced?' · внеш. клок':''); }});
+    'step '+n.idx+' · note '+(n.curNote??'—')+(n._synced?' · ext. clock':''); }});
 
 
 // ---- Тюнер: одна большая крутилка + табло по разрядам (как у классических приёмников).
@@ -2384,7 +2384,7 @@ def({ id:'genseq', title:'Генеративная мелодия', cat:'Муз�
 // само переносит в старший разряд (99→100), поэтому отдельной carry-логики не нужно.
 const TUNER_DIGITS=10;                                  // до 9 999 999 999 Гц (~10 ГГц) с запасом
 
-def({ id:'tuner', title:'Тюнер', cat:'Музыка', outs:[{n:'freq',t:'num'}],
+def({ id:'tuner', title:'Tuner', cat:'Radio', outs:[{n:'freq',t:'num'}],
   view:{h:200}, resize:true,
   init:n=>{ n.p.freq=n.p.freq??100000000; n.sel=8; n.ang=0; },
   process(n){ return {freq:n.p.freq}; },
@@ -2469,7 +2469,7 @@ def({ id:'tuner', title:'Тюнер', cat:'Музыка', outs:[{n:'freq',t:'num
         cx.moveTo(i*cw+cw+.5,4); cx.lineTo(i*cw+cw+.5,TOP-4); cx.stroke(); }
     }
     cx.textAlign='left'; cx.font='10px monospace'; cx.fillStyle='#8a9298';
-    cx.fillText(fmtHz(n.p.freq)+'Гц · разряд ×'+fmtHz(Math.pow(10,TUNER_DIGITS-1-n.sel)), 4, H-4);
+    cx.fillText(fmtHz(n.p.freq)+'Hz · digit ×'+fmtHz(Math.pow(10,TUNER_DIGITS-1-n.sel)), 4, H-4);
     // крутилка
     const cx0=W/2, cy0=TOP+(H-TOP)/2, r=Math.min(W,H-TOP)/2-8;
     cx.strokeStyle='#333'; cx.fillStyle='#1a2024'; cx.lineWidth=2;
@@ -2479,7 +2479,7 @@ def({ id:'tuner', title:'Тюнер', cat:'Музыка', outs:[{n:'freq',t:'num
     cx.moveTo(0,-r+6); cx.lineTo(0,-r*0.4); cx.stroke();
     cx.restore();
     cx.fillStyle='#8a9298'; cx.font='9px monospace'; cx.textAlign='center';
-    cx.fillText('шаг ×'+fmtHz(stepHz()), cx0, cy0+r+12); }});
+    cx.fillText('step ×'+fmtHz(stepHz()), cx0, cy0+r+12); }});
 
 
 /* ---------- Хранилище семплов (IndexedDB) ---------- */
@@ -2618,7 +2618,7 @@ function syncCustomHeight(n, root, minH){
 /* ---------- Узел: Библиотека семплов ---------- */
 // Проигрывание идёт через сам узел графа (out:sig), как у обычного 'file' — чтобы услышать,
 // нужно подключить выход к чему-то вроде dac.
-def({ id:'sampleLib', title:'Библиотека семплов', cat:'Музыка',
+def({ id:'sampleLib', title:'Sample Library', cat:'Music',
   outs:[{n:'out',t:'sig'},{n:'clipId',t:'num'},{n:'pos',t:'num'}],
   ins:[{n:'clipId',t:'num'},{n:'play',t:'num'},{n:'rate',t:'num'},{n:'gain',t:'num'},{n:'loop',t:'num'}],
   h:340, resize:true, readout:true,
@@ -2669,8 +2669,8 @@ def({ id:'sampleLib', title:'Библиотека семплов', cat:'Музы
     if(!n.initialized && n.el){ libInit(n); n.initialized = true; }
     if(n.ui) libHighlight(n);
     if(n.ro) n.ro.textContent = n.selected!=null
-      ? (n.play?'▶ ':'⏸ ')+(n.armedName||'клип #'+n.selected)
-      : 'ничего не выбрано';
+      ? (n.play?'▶ ':'⏸ ')+(n.armedName||'clip #'+n.selected)
+      : 'nothing selected';
   }
 });
 
@@ -2717,8 +2717,8 @@ function libInit(n){
     'color:#c8d2d6;box-sizing:border-box;overflow:hidden;grid-column:1/-1;width:100%;min-width:0;';
   root.innerHTML = `
     <div class="lib-toolbar" style="display:flex;gap:4px;padding:2px 0;align-items:center;flex-shrink:0;">
-      <button class="lib-newfolder" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:10px;">+ папка</button>
-      <button class="lib-import" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:10px;">импорт</button>
+      <button class="lib-newfolder" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:10px;">+ folder</button>
+      <button class="lib-import" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:10px;">import</button>
       <input class="lib-file" type="file" accept="audio/*" multiple style="display:none;">
       <span class="lib-crumbs" style="flex:1;color:#6c7a80;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
     </div>
@@ -2736,7 +2736,7 @@ function libInit(n){
   };
 
   root.querySelector('.lib-newfolder').addEventListener('click', async ()=>{
-    const name = prompt('Название папки:');
+    const name = prompt('Folder name:');
     if(!name) return;
     await SampleDB.addFolder(name, n.folderId);
     libRefresh(n);
@@ -2772,7 +2772,7 @@ async function libImportFile(n, file){
       peaks: SampleDB.computePeaks(samples),
       duration: samples.length/sr,
     });
-  }catch(e){ console.warn('import error', e); alert('Не удалось прочитать файл: '+file.name); }
+  }catch(e){ console.warn('import error', e); alert('Failed to read file: '+file.name); }
 }
 
 async function libRefresh(n){
@@ -2794,7 +2794,7 @@ async function libBuildCrumbs(n){
     id = f.parentId;
   }
   n.path = path;
-  const parts = ['корень', ...path.map(f=>f.name)];
+  const parts = ['root', ...path.map(f=>f.name)];
   n.ui.crumbs.textContent = parts.join(' / ');
 }
 
@@ -2804,7 +2804,7 @@ function libRenderList(n, folders, clips){
 
   if(n.folderId!=null){
     const up = document.createElement('div');
-    up.textContent = '.. вверх';
+    up.textContent = '.. up';
     up.style.cssText = 'padding:3px 6px;cursor:pointer;color:#6c7a80;border-bottom:1px solid #121619;';
     up.addEventListener('click', ()=>{
       const parent = n.path.length>1 ? n.path[n.path.length-2].id : null;
@@ -2826,12 +2826,12 @@ function libRenderList(n, folders, clips){
     });
     row.querySelector('.lib-frename').addEventListener('click', async (ev)=>{
       ev.stopPropagation();
-      const name = prompt('Новое название:', f.name);
+      const name = prompt('New name:', f.name);
       if(name){ await SampleDB.renameFolder(f.id, name); libRefresh(n); }
     });
     row.querySelector('.lib-fdel').addEventListener('click', async (ev)=>{
       ev.stopPropagation();
-      if(!confirm('Удалить папку "'+f.name+'" со всем содержимым?')) return;
+      if(!confirm('Delete folder "'+f.name+'" and everything in it?')) return;
       await SampleDB.deleteFolder(f.id); libRefresh(n);
     });
     // перетаскивание клипов в папку
@@ -2851,7 +2851,7 @@ function libRenderList(n, folders, clips){
 
   if(!folders.length && !clips.length){
     const empty = document.createElement('div');
-    empty.textContent = 'пусто — импортируйте файл или запишите семпл';
+    empty.textContent = 'empty — import a file or record a sample';
     empty.style.cssText = 'padding:12px;text-align:center;color:#2a3136;';
     list.appendChild(empty);
   }
@@ -2899,7 +2899,7 @@ function libClipRow(n, c){
   renameBtn.textContent = '✎'; renameBtn.style.cssText='cursor:pointer;color:#6c7a80;';
   renameBtn.addEventListener('click', async ev=>{
     ev.stopPropagation();
-    const nm = prompt('Новое название:', c.name);
+    const nm = prompt('New name:', c.name);
     if(nm){ await SampleDB.updateClip(c.id, {name:nm}); libRefresh(n); }
   });
 
@@ -2907,7 +2907,7 @@ function libClipRow(n, c){
   delBtn.textContent = '🗑'; delBtn.style.cssText='cursor:pointer;color:#6c7a80;';
   delBtn.addEventListener('click', async ev=>{
     ev.stopPropagation();
-    if(!confirm('Удалить семпл "'+c.name+'"?')) return;
+    if(!confirm('Delete sample "'+c.name+'"?')) return;
     await SampleDB.deleteClip(c.id);
     if(n.selected===c.id){ n.selected=null; n.data=null; n.play=false; }
     libRefresh(n);
@@ -2981,10 +2981,10 @@ function libOpenTrim(n, clip){
   const controls = document.createElement('div');
   controls.style.cssText = 'display:flex;gap:4px;flex-shrink:0;';
   controls.innerHTML = `
-    <button class="trim-play" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:10px;">▶ отрезок</button>
+    <button class="trim-play" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:10px;">▶ clip</button>
     <span style="flex:1;"></span>
-    <button class="trim-save" style="background:#1d2226;border:1px solid #4ec9b0;color:#4ec9b0;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:10px;">сохранить</button>
-    <button class="trim-cancel" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:10px;">отмена</button>
+    <button class="trim-save" style="background:#1d2226;border:1px solid #4ec9b0;color:#4ec9b0;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:10px;">save</button>
+    <button class="trim-cancel" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:10px;">cancel</button>
   `;
   box.appendChild(controls);
 
@@ -3133,7 +3133,7 @@ function hostlistCoerce(v){
   return s;
 }
 
-def({ id:'hostlist', title:'Список (CSV/БД)', cat:'Источники',
+def({ id:'hostlist', title:'List (CSV/DB)', cat:'Sources',
   // порты формируются динамически по набору полей списка (n.p.fields) — движок уже
   // поддерживает ins/outs как функцию узла (см. portsOf в core-engine.js)
   ins: n => (n.p.fields||['value']).map(f=>({n:f,t:'val'})).concat([{n:'trig',t:'val'}]),
@@ -3141,7 +3141,7 @@ def({ id:'hostlist', title:'Список (CSV/БД)', cat:'Источники',
   h:260, resize:true, readout:true,
   params:[],   // весь UI — кастомный (hostlistInit), стандартные params не нужны
   init:n=>{
-    n.p.listName = n.p.listName || 'мой список';
+    n.p.listName = n.p.listName || 'my list';
     n.p.fields = (n.p.fields && n.p.fields.length) ? n.p.fields : ['value'];
     if(n.p.selectedId===undefined) n.p.selectedId = null;
     n.items=[]; n.selected=n.p.selectedId; n.selectedName='';
@@ -3161,7 +3161,7 @@ def({ id:'hostlist', title:'Список (CSV/БД)', cat:'Источники',
   draw(n){
     if(!n.initialized && n.el){ hostlistInit(n); n.initialized=true; }
     const r=n.el.querySelector('.readout');
-    if(r) r.textContent = n.selected!=null ? ('выбрано: '+n.selectedName) : 'ничего не выбрано';
+    if(r) r.textContent = n.selected!=null ? ('selected: '+n.selectedName) : 'nothing selected';
   }});
 
 // применяет выбранную запись к выходам узла
@@ -3189,8 +3189,8 @@ function hostlistApplyFields(n, newFields){
 async function hostlistCapture(n, askName){
   const fields={};
   for(const f of n.p.fields) fields[f] = n.lastIn[f];
-  let name = 'запись '+(n.items.length+1);
-  if(askName){ const nm=prompt('Название записи:', name); if(nm==null) return; name=nm; }
+  let name = 'entry '+(n.items.length+1);
+  if(askName){ const nm=prompt('Entry name:', name); if(nm==null) return; name=nm; }
   await ListDB.add(n.p.listName, name, fields);
   await hostlistRefresh(n);
 }
@@ -3222,7 +3222,7 @@ function hostlistExportCsv(n){
   const csv = rows.map(r=>r.map(csvCell).join(',')).join('\r\n');
   const blob = new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob); a.download=(n.p.listName||'список')+'.csv';
+  a.href=URL.createObjectURL(blob); a.download=(n.p.listName||'list')+'.csv';
   document.body.append(a); a.click(); a.remove();
   URL.revokeObjectURL(a.href);
 }
@@ -3238,16 +3238,16 @@ function hostlistInit(n){
   root.innerHTML = `
     <div class="hl-row" style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
       <select class="hl-select" style="flex:1;min-width:0;background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;font-size:10px;padding:1px 2px;"></select>
-      <span class="hl-new" title="новый список" style="cursor:pointer;color:#6c7a80;">＋</span>
-      <span class="hl-ren" title="переименовать список" style="cursor:pointer;color:#6c7a80;">✎</span>
-      <span class="hl-delL" title="удалить список" style="cursor:pointer;color:#6c7a80;">🗑</span>
+      <span class="hl-new" title="new list" style="cursor:pointer;color:#6c7a80;">＋</span>
+      <span class="hl-ren" title="rename list" style="cursor:pointer;color:#6c7a80;">✎</span>
+      <span class="hl-delL" title="delete list" style="cursor:pointer;color:#6c7a80;">🗑</span>
     </div>
     <div class="hl-fields" style="display:flex;gap:3px;flex-wrap:wrap;flex-shrink:0;font-size:10px;"></div>
     <div class="hl-row" style="display:flex;gap:4px;align-items:center;flex-shrink:0;flex-wrap:wrap;">
-      <button class="hl-add" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">+ запись</button>
-      <button class="hl-read" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;" title="сохранить текущие значения входов как запись">прочитать вход</button>
-      <button class="hl-import" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">импорт CSV</button>
-      <button class="hl-export" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">экспорт CSV</button>
+      <button class="hl-add" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">+ entry</button>
+      <button class="hl-read" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;" title="save current input values as an entry">read input</button>
+      <button class="hl-import" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">import CSV</button>
+      <button class="hl-export" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">export CSV</button>
       <input class="hl-file" type="file" accept=".csv,text/csv" style="display:none;">
       <span class="hl-count" style="flex:1;text-align:right;color:#6c7a80;font-size:10px;"></span>
     </div>
@@ -3268,27 +3268,27 @@ function hostlistInit(n){
     await hostlistRefresh(n);
   });
   root.querySelector('.hl-new').addEventListener('click', async ()=>{
-    const nm = prompt('Название нового списка:'); if(!nm) return;
+    const nm = prompt('New list name:'); if(!nm) return;
     n.p.listName = nm; n.p.fields=['value']; n.p.selectedId=null; n.selected=null; n.rowFields={};
     await hostlistRefresh(n);
   });
   root.querySelector('.hl-ren').addEventListener('click', async ()=>{
-    const nm = prompt('Новое имя списка:', n.p.listName); if(!nm || nm===n.p.listName) return;
+    const nm = prompt('New list name:', n.p.listName); if(!nm || nm===n.p.listName) return;
     await ListDB.renameList(n.p.listName, nm);
     n.p.listName = nm;
     await hostlistRefresh(n);
   });
   root.querySelector('.hl-delL').addEventListener('click', async ()=>{
-    if(!confirm('Удалить список "'+n.p.listName+'" целиком?')) return;
+    if(!confirm('Delete list "'+n.p.listName+'" entirely?')) return;
     await ListDB.deleteList(n.p.listName);
-    n.p.listName='мой список'; n.p.fields=['value']; n.p.selectedId=null; n.selected=null; n.rowFields={};
+    n.p.listName='my list'; n.p.fields=['value']; n.p.selectedId=null; n.selected=null; n.rowFields={};
     await hostlistRefresh(n);
   });
 
   root.querySelector('.hl-add').addEventListener('click', async ()=>{
-    const name = prompt('Название:'); if(!name) return;
+    const name = prompt('Name:'); if(!name) return;
     const fields={};
-    for(const f of n.p.fields) fields[f] = prompt('Значение поля "'+f+'":','') ?? '';
+    for(const f of n.p.fields) fields[f] = prompt('Value for field "'+f+'":','') ?? '';
     await ListDB.add(n.p.listName, name, fields);
     await hostlistRefresh(n);
   });
@@ -3323,15 +3323,15 @@ function hostlistRenderFields(n){
     chip.innerHTML = `<span>${escapeHtml(f)}</span><span class="hl-fdel" style="cursor:pointer;color:#6c7a80;">×</span>`;
     chip.querySelector('.hl-fdel').addEventListener('click', ()=>{
       if(n.p.fields.length<=1) return;                          // хотя бы одно поле должно остаться
-      if(!confirm('Убрать поле "'+f+'"? Значения в записях останутся в БД, но перестанут отображаться.')) return;
+      if(!confirm('Remove field "'+f+'"? Values in entries stay in the DB but won\'t be shown.')) return;
       hostlistApplyFields(n, n.p.fields.filter(x=>x!==f));
     });
     box.appendChild(chip);
   }
   const addBtn = document.createElement('span');
-  addBtn.textContent = '+ поле'; addBtn.style.cssText='cursor:pointer;color:#4ec9b0;';
+  addBtn.textContent = '+ field'; addBtn.style.cssText='cursor:pointer;color:#4ec9b0;';
   addBtn.addEventListener('click', ()=>{
-    const nm = prompt('Название нового поля:'); if(!nm) return;
+    const nm = prompt('New field name:'); if(!nm) return;
     if(n.p.fields.includes(nm)) return;
     hostlistApplyFields(n, n.p.fields.concat([nm]));
   });
@@ -3341,10 +3341,10 @@ function hostlistRenderFields(n){
 function hostlistRender(n){
   const list = n.ui.list;
   list.innerHTML = '';
-  n.ui.count.textContent = n.items.length+' записей';
+  n.ui.count.textContent = n.items.length+' entries';
   if(!n.items.length){
     const empty = document.createElement('div');
-    empty.textContent = 'пусто — добавьте запись или импортируйте CSV';
+    empty.textContent = 'empty — add an entry or import CSV';
     empty.style.cssText = 'padding:12px;text-align:center;color:#2a3136;';
     list.appendChild(empty);
     return;
@@ -3371,9 +3371,9 @@ function hostlistRow(n,it){
   renameBtn.textContent = '✎'; renameBtn.style.cssText='cursor:pointer;color:#6c7a80;';
   renameBtn.addEventListener('click', async ev=>{
     ev.stopPropagation();
-    const nm = prompt('Название:', it.name); if(nm==null) return;
+    const nm = prompt('Name:', it.name); if(nm==null) return;
     const fields={};
-    for(const f of n.p.fields) fields[f] = prompt('Значение поля "'+f+'":', hostlistFieldCell(it,n,f)) ?? hostlistFieldCell(it,n,f);
+    for(const f of n.p.fields) fields[f] = prompt('Value for field "'+f+'":', hostlistFieldCell(it,n,f)) ?? hostlistFieldCell(it,n,f);
     await ListDB.update(it.id, {name:nm, fields, value:fields.value??it.value});
     await hostlistRefresh(n);
   });
@@ -3382,7 +3382,7 @@ function hostlistRow(n,it){
   delBtn.textContent = '🗑'; delBtn.style.cssText='cursor:pointer;color:#6c7a80;';
   delBtn.addEventListener('click', async ev=>{
     ev.stopPropagation();
-    if(!confirm('Удалить запись "'+it.name+'"?')) return;
+    if(!confirm('Delete entry "'+it.name+'"?')) return;
     await ListDB.remove(it.id);
     if(n.selected===it.id){ n.selected=null; n.p.selectedId=null; n.rowFields={}; n.selectedName=''; }
     await hostlistRefresh(n);
@@ -3400,7 +3400,7 @@ function hostlistRow(n,it){
 function hostlistDedupFieldNames(names){
   const seen=new Map(), out=[];
   names.forEach((raw,i)=>{
-    let nm = String(raw||'').trim() || ('поле'+(i+1));
+    let nm = String(raw||'').trim() || ('field'+(i+1));
     if(seen.has(nm)){ const k=seen.get(nm)+1; seen.set(nm,k); nm=nm+'_'+k; }
     else seen.set(nm,0);
     out.push(nm);
@@ -3413,8 +3413,8 @@ function hostlistOpenCsv(n,file){
   reader.onload = ()=>{
     let rows;
     try{ rows = csvParse(String(reader.result)); }
-    catch(e){ alert('не удалось разобрать CSV: '+e.message); return; }
-    if(!rows.length){ alert('файл пуст'); return; }
+    catch(e){ alert('failed to parse CSV: '+e.message); return; }
+    if(!rows.length){ alert('file is empty'); return; }
     hostlistShowCsvPicker(n, rows);
   };
   reader.readAsText(file);
@@ -3432,18 +3432,18 @@ function hostlistShowCsvPicker(n, rows){
     const idx = header.findIndex(h=>names.includes(String(h).trim().toLowerCase()));
     return idx>=0 ? idx : 0;
   };
-  const nameIdx0 = guessCol(['name','название','имя']);
+  const nameIdx0 = guessCol(['name','название','имя']); // recognize Russian legacy CSV headers too
 
   const top = document.createElement('div');
   top.style.cssText = 'display:flex;flex-direction:column;gap:4px;font-size:10px;flex-shrink:0;';
-  top.innerHTML = `<label>колонка имени: <select class="hl-colname"></select></label>
+  top.innerHTML = `<label>name column: <select class="hl-colname"></select></label>
     <div class="hl-cols" style="display:flex;gap:6px;flex-wrap:wrap;"></div>`;
   box.appendChild(top);
   const selName = top.querySelector('.hl-colname'), colsBox = top.querySelector('.hl-cols');
   header.forEach((h,i)=>{
-    const o=document.createElement('option'); o.value=i; o.textContent=h||('колонка '+(i+1)); selName.append(o);
+    const o=document.createElement('option'); o.value=i; o.textContent=h||('column '+(i+1)); selName.append(o);
     const lab=document.createElement('label'); lab.style.cssText='display:flex;gap:2px;align-items:center;';
-    lab.innerHTML = `<input type="checkbox" class="hl-colcheck" data-idx="${i}" checked> ${escapeHtml(h||'колонка '+(i+1))}`;
+    lab.innerHTML = `<input type="checkbox" class="hl-colcheck" data-idx="${i}" checked> ${escapeHtml(h||'column '+(i+1))}`;
     colsBox.append(lab);
   });
   selName.value = nameIdx0;
@@ -3456,7 +3456,7 @@ function hostlistShowCsvPicker(n, rows){
     const vis=[...colsBox.querySelectorAll('.hl-colcheck:checked')].map(c=>+c.dataset.idx);
     preview.innerHTML = dataRows.slice(0,8).map(r=>
       `<div style="padding:2px 6px;border-bottom:1px solid #121619;">${escapeHtml(r[ni]||'')} → <span style="color:#4ec9b0;">${vis.map(i=>escapeHtml(r[i]||'')).join(' / ')}</span></div>`
-    ).join('') || '<div style="padding:8px;color:#6c7a80;">нет строк данных</div>';
+    ).join('') || '<div style="padding:8px;color:#6c7a80;">no data rows</div>';
   };
   renderPreview();
   selName.addEventListener('change', renderPreview);
@@ -3465,16 +3465,16 @@ function hostlistShowCsvPicker(n, rows){
   const controls = document.createElement('div');
   controls.style.cssText = 'display:flex;gap:4px;flex-shrink:0;align-items:center;';
   controls.innerHTML = `
-    <span style="flex:1;font-size:10px;color:#6c7a80;">строк: ${dataRows.length}</span>
-    <button class="hl-csv-ok" style="background:#1d2226;border:1px solid #4ec9b0;color:#4ec9b0;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:10px;">импортировать</button>
-    <button class="hl-csv-cancel" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:10px;">отмена</button>
+    <span style="flex:1;font-size:10px;color:#6c7a80;">rows: ${dataRows.length}</span>
+    <button class="hl-csv-ok" style="background:#1d2226;border:1px solid #4ec9b0;color:#4ec9b0;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:10px;">import</button>
+    <button class="hl-csv-cancel" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:10px;">cancel</button>
   `;
   box.appendChild(controls);
 
   controls.querySelector('.hl-csv-ok').addEventListener('click', async ()=>{
     const ni=+selName.value;
     const valIdx=[...colsBox.querySelectorAll('.hl-colcheck:checked')].map(c=>+c.dataset.idx);
-    if(!valIdx.length){ alert('выберите хотя бы одну колонку значений'); return; }
+    if(!valIdx.length){ alert('select at least one value column'); return; }
     const newFields = hostlistDedupFieldNames(valIdx.map(i=>header[i]));
     hostlistApplyFields(n, newFields);
     for(let ri=0; ri<dataRows.length; ri++){
@@ -3483,7 +3483,7 @@ function hostlistShowCsvPicker(n, rows){
       const fields={};
       valIdx.forEach((ci,k)=>{ fields[newFields[k]] = (r[ci]||'').trim(); });
       if(!name && Object.values(fields).every(v=>!v)) continue;
-      await ListDB.add(n.p.listName, name||('запись '+(ri+1)), fields);
+      await ListDB.add(n.p.listName, name||('entry '+(ri+1)), fields);
     }
     hostlistCloseCsv(n);
     await hostlistRefresh(n);
@@ -3513,8 +3513,8 @@ function csvsrcLoad(n, file){
   reader.onload = ()=>{
     let table;
     try{ table = csvParse(String(reader.result)); }
-    catch(e){ alert('не удалось разобрать CSV: '+e.message); return; }
-    if(!table.length){ alert('файл пуст'); return; }
+    catch(e){ alert('failed to parse CSV: '+e.message); return; }
+    if(!table.length){ alert('file is empty'); return; }
     const headers = hostlistDedupFieldNames(table[0]);
     n.rows = table.slice(1).map(r=>{ const o={}; headers.forEach((h,i)=>o[h]=r[i]??''); return o; });
     n.headers = headers.length ? headers : ['value'];
@@ -3524,17 +3524,17 @@ function csvsrcLoad(n, file){
   reader.readAsText(file);
 }
 
-def({ id:'csvsrc', title:'CSV (файл, построчно)', cat:'Источники',
+def({ id:'csvsrc', title:'CSV (File, Row-by-Row)', cat:'Sources',
   ins: n => [{n:'trig',t:'val'}],
   outs: n => (n.headers||['value']).map(f=>({n:f,t:'val'})),
   readout:true,
   params:[
     {n:'file',t:'file',accept:'.csv,text/csv',fn:(n,f)=>csvsrcLoad(n,f)},
-    {n:'rate',t:'range',min:0,max:50,step:.1,d:0,label:'строк/сек (0 = только по trig)'},
+    {n:'rate',t:'range',min:0,max:50,step:.1,d:0,label:'rows/sec (0 = trig only)'},
     {n:'loop',t:'check',d:true},
   ],
   init:n=>{
-    n.rows=[]; n.headers=['value']; n.idx=0; n.t=0; n.trigPrev=0; n.name='файл не выбран';
+    n.rows=[]; n.headers=['value']; n.idx=0; n.t=0; n.trigPrev=0; n.name='no file selected';
   },
   process(n,I){
     const trig = typeof I.trig==='number' ? I.trig : 0;
@@ -3550,7 +3550,7 @@ def({ id:'csvsrc', title:'CSV (файл, построчно)', cat:'Источн
     return out;
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
-    r.textContent = n.rows.length ? (n.name+' · строка '+(n.idx+1)+'/'+n.rows.length) : n.name; }
+    r.textContent = n.rows.length ? (n.name+' · row '+(n.idx+1)+'/'+n.rows.length) : n.name; }
 });
 
 
@@ -3597,10 +3597,10 @@ function streamTryLoad(audio, timeoutMs){
     const cleanup=()=>{ audio.removeEventListener('canplay',onOk); audio.removeEventListener('error',onErr); clearTimeout(t); };
     const onOk=()=>{ if(done) return; done=true; cleanup(); resolve(); };
     const onErr=()=>{ if(done) return; done=true; cleanup();
-      reject(new Error(audio.error ? 'код ошибки '+audio.error.code : 'не удалось загрузить источник')); };
+      reject(new Error(audio.error ? 'error code '+audio.error.code : 'failed to load source')); };
     audio.addEventListener('canplay',onOk,{once:true});
     audio.addEventListener('error',onErr,{once:true});
-    const t=setTimeout(()=>{ if(done) return; done=true; cleanup(); reject(new Error('таймаут загрузки')); }, timeoutMs||8000);
+    const t=setTimeout(()=>{ if(done) return; done=true; cleanup(); reject(new Error('load timeout')); }, timeoutMs||8000);
   });
 }
 
@@ -3621,8 +3621,8 @@ async function streamPlay(n){
   if(n.connecting) return;
   streamTeardown(n);
   const url=(n.p.url||'').trim();
-  if(!url){ n.status='укажите URL'; return; }
-  n.connecting=true; n.status='подключение…';
+  if(!url){ n.status='enter a URL'; return; }
+  n.connecting=true; n.status='connecting…';
   try{
     if(!Eng.running) await Eng.start();
     else if(Eng.paused) await Eng.ctx.resume();
@@ -3635,7 +3635,7 @@ async function streamPlay(n){
     catch(e){
       try{ audio.removeAttribute('src'); audio.load(); }catch(e2){}
       n.connecting=false; n.connected=false;
-      n.status='запрещено (сервер не отдаёт CORS-заголовки)';
+      n.status='blocked (server does not send CORS headers)';
       return;
     }
 
@@ -3649,18 +3649,18 @@ async function streamPlay(n){
     n.audioEl=audio; n.srcNode=srcNode; n.tapNode=tap; n.sink=sink; n.ctxRef=ctx;
     streamResetRing(n);
     await audio.play();
-    n.connected=true; n.connecting=false; n.status='играет';
+    n.connected=true; n.connecting=false; n.status='playing';
     icyMetadataStart(n, url);   // не ждём — читается фоном, пока не остановят поток
   }catch(e){
-    console.error('поток:',e);
+    console.error('stream:',e);
     n.connecting=false; n.connected=false;
-    n.status='ошибка: '+e.message;
+    n.status='error: '+e.message;
     streamTeardown(n);
   }
 }
 
 function streamStop(n){
-  n.status='остановлено';
+  n.status='stopped';
   streamTeardown(n);
 }
 
@@ -3680,7 +3680,7 @@ function icyMetadataApply(n, meta){
   if(parts.length>=2){ artist=parts[0].trim(); track=parts.slice(1).join(' - ').trim(); }
   n.icyArtist=artist; n.icyTitle=track;
   n.trackPulse=2;                             // фронт на выход trackChange, как go у textsrc
-  n.icyStatus=title || 'трек без названия';
+  n.icyStatus=title || 'untitled track';
 }
 
 // ICY-метаданные (Icecast/SHOUTcast) браузерный <audio> не отдаёт вообще — качаем поток
@@ -3695,7 +3695,7 @@ async function icyMetadataStart(n, url){
   try{
     const resp = await fetch(url, {headers:{'Icy-MetaData':'1'}, signal:ac.signal, mode:'cors'});
     const metaint = parseInt(resp.headers.get('icy-metaint')||'', 10);
-    if(!metaint || !resp.body){ n.icyStatus='метаданные недоступны (сервер их не отдаёт)'; return; }
+    if(!metaint || !resp.body){ n.icyStatus='metadata unavailable (server does not send it)'; return; }
     const reader = resp.body.getReader();
     let sinceMeta=0, mode='audio', metaLen=0, metaBuf=[];
     while(n.icyReading){
@@ -3718,25 +3718,25 @@ async function icyMetadataStart(n, url){
       }
     }
   }catch(e){
-    if(e.name!=='AbortError') n.icyStatus='метаданные недоступны (CORS/сеть)';
+    if(e.name!=='AbortError') n.icyStatus='metadata unavailable (CORS/network)';
   }finally{
     n.icyReading=false;
   }
 }
 
-def({ id:'stream', title:'Аудиопоток (URL)', cat:'Источники',
+def({ id:'stream', title:'Audio Stream (URL)', cat:'Sources',
   ins:[{n:'url',t:'txt'}],
   outs:[{n:'audio',t:'sig'},{n:'artist',t:'val'},{n:'title',t:'val'},{n:'trackChange',t:'val'}],
   readout:true,
   params:[
-    {n:'url',t:'text',d:'https://ice1.somafm.com/groovesalad-128-mp3',label:'URL потока'},
-    {n:'play',t:'button',label:'▶ Играть',fn:n=>streamPlay(n)},
-    {n:'stop',t:'button',label:'■ Стоп',fn:n=>streamStop(n)},
+    {n:'url',t:'text',d:'https://ice1.somafm.com/groovesalad-128-mp3',label:'stream URL'},
+    {n:'play',t:'button',label:'▶ Play',fn:n=>streamPlay(n)},
+    {n:'stop',t:'button',label:'■ Stop',fn:n=>streamStop(n)},
     {n:'gain',t:'range',min:0,max:4,step:.01,d:1},
   ],
   init:n=>{
     n.audioEl=null; n.srcNode=null; n.tapNode=null; n.sink=null; n.ctxRef=null;
-    n.connected=false; n.connecting=false; n.status='не подключено';
+    n.connected=false; n.connecting=false; n.status='not connected';
     n.icyAbort=null; n.icyReading=false; n.icyRaw=null;
     n.icyArtist=''; n.icyTitle=''; n.icyStatus=''; n.trackPulse=0;
     streamResetRing(n);
@@ -3749,7 +3749,7 @@ def({ id:'stream', title:'Аудиопоток (URL)', cat:'Источники',
     if(typeof I.gain==='number') setMod(n,'gain',I.gain);
     // AudioContext мог быть пересоздан движком (смена размера блока/частоты) — граф протух
     if(n.connected && n.ctxRef!==Eng.ctx){
-      n.status='контекст пересоздан — нажмите «Играть» заново';
+      n.status='context recreated — press «Play» again';
       streamTeardown(n);
     }
     const trackChange = n.trackPulse>0?1:0; if(n.trackPulse>0) n.trackPulse--;
@@ -3771,7 +3771,7 @@ def({ id:'stream', title:'Аудиопоток (URL)', cat:'Источники',
     return {audio:o, ...meta};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
-    r.textContent = n.icyRaw ? (n.status+' | трек: '+n.icyRaw) : n.status; }
+    r.textContent = n.icyRaw ? (n.status+' | track: '+n.icyRaw) : n.status; }
 });
 
 
@@ -3787,11 +3787,11 @@ function dispTeardown(n){
   if(n.srcNode){ try{ n.srcNode.disconnect(); }catch(e){} n.srcNode=null; }
   if(n.sink){ try{ n.sink.disconnect(); }catch(e){} n.sink=null; }
 }
-function dispStop(n){ n.status='остановлено'; dispTeardown(n); }
+function dispStop(n){ n.status='stopped'; dispTeardown(n); }
 async function dispCapture(n){
   if(n.connecting) return;
   dispTeardown(n);
-  n.connecting=true; n.status='выберите вкладку/экран…';
+  n.connecting=true; n.status='choose a tab/screen…';
   try{
     if(!Eng.running) await Eng.start();
     else if(Eng.paused) await Eng.ctx.resume();
@@ -3801,7 +3801,7 @@ async function dispCapture(n){
     const atrack = stream.getAudioTracks()[0];
     if(!atrack){
       stream.getTracks().forEach(t=>t.stop());
-      n.connecting=false; n.status='источник без звука — не отмечен пункт "Поделиться звуком"';
+      n.connecting=false; n.status='source has no audio — "Share audio" was not checked';
       return;
     }
     await streamRegisterWorklet(ctx);
@@ -3811,35 +3811,35 @@ async function dispCapture(n){
     tap.port.onmessage = e => streamPush(n, e.data);
     const sink = ctx.createGain(); sink.gain.value=0;
     srcNode.connect(tap); tap.connect(sink); sink.connect(ctx.destination);
-    atrack.addEventListener('ended', ()=>{ n.status='захват остановлен источником'; dispTeardown(n); });
+    atrack.addEventListener('ended', ()=>{ n.status='capture stopped by source'; dispTeardown(n); });
     n.stream=stream; n.srcNode=srcNode; n.tapNode=tap; n.sink=sink; n.ctxRef=ctx;
     streamResetRing(n);
-    n.connected=true; n.connecting=false; n.status='захват идёт';
+    n.connected=true; n.connecting=false; n.status='capturing';
   }catch(e){
     n.connecting=false; n.connected=false;
-    n.status = e.name==='NotAllowedError' ? 'отменено пользователем' : 'ошибка: '+e.message;
+    n.status = e.name==='NotAllowedError' ? 'cancelled by user' : 'error: '+e.message;
     dispTeardown(n);
   }
 }
 
-def({ id:'dispaudio', title:'Захват вкладки/экрана (звук)', cat:'Источники',
+def({ id:'dispaudio', title:'Capture Tab/Screen (Audio)', cat:'Sources',
   outs:[{n:'audio',t:'sig'}],
   readout:true,
   params:[
-    {n:'go',t:'button',label:'▶ Захватить',fn:n=>dispCapture(n)},
-    {n:'stop',t:'button',label:'■ Стоп',fn:n=>dispStop(n)},
+    {n:'go',t:'button',label:'▶ Capture',fn:n=>dispCapture(n)},
+    {n:'stop',t:'button',label:'■ Stop',fn:n=>dispStop(n)},
     {n:'gain',t:'range',min:0,max:4,step:.01,d:1},
   ],
   init:n=>{
     n.stream=null; n.srcNode=null; n.tapNode=null; n.sink=null; n.ctxRef=null;
-    n.connected=false; n.connecting=false; n.status='не захвачено';
+    n.connected=false; n.connecting=false; n.status='not captured';
     streamResetRing(n);
   },
   dispose:n=>dispTeardown(n),
   process(n,I){
     if(typeof I.gain==='number') setMod(n,'gain',I.gain);
     if(n.connected && n.ctxRef!==Eng.ctx){
-      n.status='контекст пересоздан — захватите заново';
+      n.status='context recreated — capture again';
       dispTeardown(n);
     }
     const o=buf(n,'audio'), ring=n.ring, g=n.p.gain;
@@ -3872,20 +3872,20 @@ def({ id:'dispaudio', title:'Захват вкладки/экрана (звук)
 /* ---------- acid-бас (303-style) ---------- */
 const ACID_MOD_KEYS=['accent','cutoff','reso','envAmt','decay','slide'];  // модулируемые извне параметры
 
-def({ id:'acid', title:'Кислотный бас (303)', cat:'Музыка',
+def({ id:'acid', title:'Acid Bass (303)', cat:'Music',
   ins:[{n:'freq',t:'num'},{n:'gate',t:'sig'},
        {n:'accent',t:'num'},{n:'cutoff',t:'num'},{n:'reso',t:'num'},
        {n:'envAmt',t:'num'},{n:'decay',t:'num'},{n:'slide',t:'num'}],
   outs:[{n:'out',t:'sig'}], readout:true,
   params:[
     {n:'wave',t:'select',opts:['saw','square'],d:'saw'},
-    {n:'freq',t:'range',min:20,max:2000,step:1,d:110,log:true,label:'частота'},
-    {n:'cutoff',t:'range',min:100,max:8000,step:1,d:600,log:true,label:'срез'},
-    {n:'reso',t:'range',min:0,max:.97,step:.01,d:.75,label:'резонанс'},
-    {n:'envAmt',t:'range',min:0,max:6000,step:10,d:2200,label:'глубина огибающей'},
-    {n:'decay',t:'range',min:.02,max:1.5,step:.01,d:.2,log:true,label:'спад'},
-    {n:'accent',t:'range',min:0,max:1,step:.01,d:0,label:'акцент'},
-    {n:'slide',t:'range',min:0,max:.3,step:.005,d:.06,label:'слайд, с'}],
+    {n:'freq',t:'range',min:20,max:2000,step:1,d:110,log:true,label:'freq'},
+    {n:'cutoff',t:'range',min:100,max:8000,step:1,d:600,log:true,label:'cutoff'},
+    {n:'reso',t:'range',min:0,max:.97,step:.01,d:.75,label:'resonance'},
+    {n:'envAmt',t:'range',min:0,max:6000,step:10,d:2200,label:'envelope depth'},
+    {n:'decay',t:'range',min:.02,max:1.5,step:.01,d:.2,log:true,label:'decay'},
+    {n:'accent',t:'range',min:0,max:1,step:.01,d:0,label:'accent'},
+    {n:'slide',t:'range',min:0,max:.3,step:.005,d:.06,label:'slide, s'}],
   init:n=>{ n.ph=0; n.f0=null; n.env=0; n.pv=0; n.z=[0,0,0,0]; },
   process(n,I){
     for(const k of ACID_MOD_KEYS) if(typeof I[k]==='number') setMod(n,k,I[k]);  // подхватить входы, если подключены
@@ -3916,12 +3916,12 @@ def({ id:'acid', title:'Кислотный бас (303)', cat:'Музыка',
 
 /* ---------- драм-секвенсор (техно) ---------- */
 const DRUM_VOICES=[
-  {key:'kick', label:'кик'},
-  {key:'snare',label:'снэр'},
-  {key:'clap', label:'хлоп'},
-  {key:'chh',  label:'зхэт'},
-  {key:'ohh',  label:'охэт'},
-  {key:'perc', label:'перк'}];
+  {key:'kick', label:'kick'},
+  {key:'snare',label:'snare'},
+  {key:'clap', label:'clap'},
+  {key:'chh',  label:'chh'},
+  {key:'ohh',  label:'ohh'},
+  {key:'perc', label:'perc'}];
 
 function drumDecode(s,rows){
   const g=new Uint8Array(rows*32);
@@ -3984,33 +3984,33 @@ function drumPerc(n,t){
   return Math.sin(2*Math.PI*n.ph[5])*Math.exp(-t/0.15);
 }
 
-def({ id:'drumseq', title:'Драм-секвенсор (техно)', cat:'Музыка',
+def({ id:'drumseq', title:'Drum Sequencer (Techno)', cat:'Music',
   ins:[{n:'clk',t:'sig'},{n:'bankSel',t:'num'}],
   outs:[{n:'out',t:'sig'},{n:'step',t:'num'}],
   view:{h:200}, resize:true, readout:true,
   params:[
-    {n:'bank',t:'select',opts:['A','B','C','D'],d:'A',label:'банк'},
-    {n:'steps',t:'range',min:4,max:32,step:1,d:16,label:'шагов'},
+    {n:'bank',t:'select',opts:['A','B','C','D'],d:'A',label:'bank'},
+    {n:'steps',t:'range',min:4,max:32,step:1,d:16,label:'steps'},
     {n:'bpm',t:'range',min:60,max:200,step:1,d:130},
     {n:'div',t:'select',opts:['1/8','1/16','1/32'],d:'1/16'},
-    {n:'swing',t:'range',min:0,max:.5,step:.01,d:0,label:'свинг'},
-    {n:'run',t:'check',d:true,label:'играть'},
-    {n:'kickTune',t:'range',min:30,max:120,step:1,d:55,label:'кик: тон'},
-    {n:'kickDecay',t:'range',min:.05,max:.8,step:.01,d:.3,label:'кик: спад'},
-    {n:'snareTone',t:'range',min:100,max:400,step:1,d:180,label:'снэр: тон'},
-    {n:'snareNoise',t:'range',min:0,max:1,step:.01,d:.6,label:'снэр: шум'},
-    {n:'hatDecayC',t:'range',min:.01,max:.15,step:.005,d:.05,label:'зхэт: спад'},
-    {n:'hatDecayO',t:'range',min:.05,max:.6,step:.01,d:.25,label:'охэт: спад'},
-    {n:'lvKick',t:'range',min:0,max:1.5,step:.01,d:1,label:'ур. кик'},
-    {n:'lvSnare',t:'range',min:0,max:1.5,step:.01,d:.8,label:'ур. снэр'},
-    {n:'lvClap',t:'range',min:0,max:1.5,step:.01,d:.7,label:'ур. хлоп'},
-    {n:'lvChh',t:'range',min:0,max:1.5,step:.01,d:.6,label:'ур. зхэт'},
-    {n:'lvOhh',t:'range',min:0,max:1.5,step:.01,d:.6,label:'ур. охэт'},
-    {n:'lvPerc',t:'range',min:0,max:1.5,step:.01,d:.5,label:'ур. перк'},
-    {n:'copy',t:'button',label:'Копировать',fn:n=>{ DRUM_CLIPBOARD=drumGrid(n).slice(); }},
-    {n:'paste',t:'button',label:'Вставить',fn:n=>{
+    {n:'swing',t:'range',min:0,max:.5,step:.01,d:0,label:'swing'},
+    {n:'run',t:'check',d:true,label:'play'},
+    {n:'kickTune',t:'range',min:30,max:120,step:1,d:55,label:'kick: tone'},
+    {n:'kickDecay',t:'range',min:.05,max:.8,step:.01,d:.3,label:'kick: decay'},
+    {n:'snareTone',t:'range',min:100,max:400,step:1,d:180,label:'snare: tone'},
+    {n:'snareNoise',t:'range',min:0,max:1,step:.01,d:.6,label:'snare: noise'},
+    {n:'hatDecayC',t:'range',min:.01,max:.15,step:.005,d:.05,label:'chh: decay'},
+    {n:'hatDecayO',t:'range',min:.05,max:.6,step:.01,d:.25,label:'ohh: decay'},
+    {n:'lvKick',t:'range',min:0,max:1.5,step:.01,d:1,label:'lvl kick'},
+    {n:'lvSnare',t:'range',min:0,max:1.5,step:.01,d:.8,label:'lvl snare'},
+    {n:'lvClap',t:'range',min:0,max:1.5,step:.01,d:.7,label:'lvl clap'},
+    {n:'lvChh',t:'range',min:0,max:1.5,step:.01,d:.6,label:'lvl chh'},
+    {n:'lvOhh',t:'range',min:0,max:1.5,step:.01,d:.6,label:'lvl ohh'},
+    {n:'lvPerc',t:'range',min:0,max:1.5,step:.01,d:.5,label:'lvl perc'},
+    {n:'copy',t:'button',label:'Copy',fn:n=>{ DRUM_CLIPBOARD=drumGrid(n).slice(); }},
+    {n:'paste',t:'button',label:'Paste',fn:n=>{
       if(DRUM_CLIPBOARD){ drumGrid(n).set(DRUM_CLIPBOARD); n.p.grid=drumEncodeAll(n.banks,n.rows); } }},
-    {n:'clear',t:'button',label:'Очистить',fn:n=>{ drumGrid(n).fill(0); n.p.grid=drumEncodeAll(n.banks,n.rows); }}],
+    {n:'clear',t:'button',label:'Clear',fn:n=>{ drumGrid(n).fill(0); n.p.grid=drumEncodeAll(n.banks,n.rows); }}],
   init:n=>{
     n.rows=DRUM_VOICES.length;
     n.banks=drumDecodeAll(n.p.grid,n.rows); n.p.grid=drumEncodeAll(n.banks,n.rows);
@@ -4114,21 +4114,21 @@ def({ id:'drumseq', title:'Драм-секвенсор (техно)', cat:'Му�
     for(let r=0;r<n.rows;r++) cx.fillText(DRUM_VOICES[r].label,3,r*rh+rh-3);
     cx.restore();
     n.el.querySelector('.readout').textContent=
-      'банк '+'ABCD'[n.bankIdx]+(n._bankSelLive?' (авто)':'')+' · шаг '+Math.max(n.idx,0)+'/'+steps+
-      ' · '+(n._synced?'внеш. клок':n.p.bpm+' BPM'); }});
-def({ id:'imgsrc', title:'Изображение (файл/URL)', cat:'Источники', outs:[{n:'img',t:'img'}],
+      'bank '+'ABCD'[n.bankIdx]+(n._bankSelLive?' (auto)':'')+' · step '+Math.max(n.idx,0)+'/'+steps+
+      ' · '+(n._synced?'ext. clock':n.p.bpm+' BPM'); }});
+def({ id:'imgsrc', title:'Image (file/URL)', cat:'Sources', outs:[{n:'img',t:'img'}],
   params:[
     {n:'url',t:'text',d:'',label:'URL'},
-    {n:'load',t:'button',label:'Загрузить URL',fn:n=>{
-      if(!n.p.url) return; n.status='загрузка…'; n.imgEl.src=n.p.url; }},
-    {n:'file',t:'file',accept:'image/*',fn:(n,f)=>{ n.status='загрузка…'; n.imgEl.src=URL.createObjectURL(f); }},
+    {n:'load',t:'button',label:'Load URL',fn:n=>{
+      if(!n.p.url) return; n.status='loading…'; n.imgEl.src=n.p.url; }},
+    {n:'file',t:'file',accept:'image/*',fn:(n,f)=>{ n.status='loading…'; n.imgEl.src=URL.createObjectURL(f); }},
     {n:'w',t:'select',opts:['80','160','320','640','960','1280'],d:'320'},
   ],
   init(n){
     n.imgEl=document.createElement('img'); n.imgEl.crossOrigin='anonymous';
     n.capCv=document.createElement('canvas'); n.capCx=n.capCv.getContext('2d',{willReadFrequently:true});
-    n.img=null; n.status='нет источника'; n.wCache=null;
-    n.imgEl.onerror=()=>{ n.status='ошибка загрузки'; };
+    n.img=null; n.status='no source'; n.wCache=null;
+    n.imgEl.onerror=()=>{ n.status='load error'; };
     n.imgEl.onload=()=>{ n.wCache=null; captureImgSrc(n); };
   },
   view:{h:100}, readout:true,
@@ -4144,6 +4144,6 @@ function captureImgSrc(n){                          // картинка стат
   n.wCache=n.p.w;
   n.capCv.width=W; n.capCv.height=H;
   n.capCx.drawImage(n.imgEl,0,0,W,H);
-  try{ n.img={data:n.capCx.getImageData(0,0,W,H),w:W,h:H,gray:false}; n.status='загружено'; }
-  catch(e){ n.img=null; n.status='чужой домен без CORS — кадр не читается'; }
+  try{ n.img={data:n.capCx.getImageData(0,0,W,H),w:W,h:H,gray:false}; n.status='loaded'; }
+  catch(e){ n.img=null; n.status='cross-origin without CORS — frame unreadable'; }
 }

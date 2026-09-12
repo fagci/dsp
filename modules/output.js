@@ -11,8 +11,8 @@ async function ensureRecorderFolder(){
   if(_recFolderPromise) return _recFolderPromise;
   _recFolderPromise = (async()=>{
     const existing = await SampleDB.listFolders(null);
-    const found = existing.find(f=>f.name==='Триггер-записи');
-    return found ? found.id : await SampleDB.addFolder('Триггер-записи', null);
+    const found = existing.find(f=>f.name==='Trigger recordings');
+    return found ? found.id : await SampleDB.addFolder('Trigger recordings', null);
   })();
   return _recFolderPromise;
 }
@@ -20,7 +20,7 @@ async function ensureRecorderFolder(){
 async function saveRecordingToDB(n, samples, peak, rms){
   const folderId = await ensureRecorderFolder();
   const id = await SampleDB.addClip({
-    name: 'запись ' + new Date().toLocaleTimeString(),
+    name: 'recording ' + new Date().toLocaleTimeString(),
     folderId, sr: Eng.sr, samples,
     peaks: SampleDB.computePeaks(samples),
     duration: samples.length / Eng.sr,
@@ -52,22 +52,22 @@ function recSelect(n, rec, autoplay){
   updateRecorderStatus(n);
 }
 
-def({ id:'triggerRecorder', title:'Рекордер с триггером', cat:'Вывод',
+def({ id:'triggerRecorder', title:'Trigger Recorder', cat:'Output',
   ins:[{n:'in',t:'sig'},{n:'trig',t:'num'},{n:'threshold',t:'num'},{n:'preTime',t:'num'},
        {n:'postTime',t:'num'},{n:'maxDuration',t:'num'},{n:'trigHold',t:'num'},
        {n:'clipId',t:'num'},{n:'play',t:'num'},{n:'rate',t:'num'},{n:'gain',t:'num'}],
   outs:[{n:'recording',t:'num'},{n:'out',t:'sig'},{n:'clipId',t:'num'}],
   h:280, resize:true, readout:true,
   params:[
-    {n:'mode',t:'select',opts:['вручную','по уровню','по фронту'],d:'вручную',label:'режим'},
-    {n:'threshold',t:'range',min:0.001,max:0.5,step:0.001,d:0.02,label:'порог'},
-    {n:'preTime',t:'range',min:0.1,max:5,step:0.1,d:0.5,label:'предзапись, с'},
-    {n:'postTime',t:'range',min:0.1,max:10,step:0.1,d:1,label:'постзапись, с'},
-    {n:'maxDuration',t:'range',min:1,max:60,step:0.5,d:10,label:'макс. длина, с'},
-    {n:'trigHold',t:'range',min:0.1,max:5,step:0.1,d:0.5,label:'удержание триггера, с'},
-    {n:'rate',t:'range',min:.25,max:4,step:.01,d:1,label:'скорость играть'},
-    {n:'gain',t:'range',min:0,max:4,step:.01,d:1,label:'громкость играть'},
-    {n:'loop',t:'check',d:false,label:'зациклить играть'},
+    {n:'mode',t:'select',opts:['manual','level','edge'],d:'manual',label:'mode'},
+    {n:'threshold',t:'range',min:0.001,max:0.5,step:0.001,d:0.02,label:'threshold'},
+    {n:'preTime',t:'range',min:0.1,max:5,step:0.1,d:0.5,label:'pre-record, s'},
+    {n:'postTime',t:'range',min:0.1,max:10,step:0.1,d:1,label:'post-record, s'},
+    {n:'maxDuration',t:'range',min:1,max:60,step:0.5,d:10,label:'max length, s'},
+    {n:'trigHold',t:'range',min:0.1,max:5,step:0.1,d:0.5,label:'trigger hold, s'},
+    {n:'rate',t:'range',min:.25,max:4,step:.01,d:1,label:'playback speed'},
+    {n:'gain',t:'range',min:0,max:4,step:.01,d:1,label:'playback volume'},
+    {n:'loop',t:'check',d:false,label:'loop playback'},
   ],
   init:n=>{
     n.ring = null;
@@ -122,11 +122,11 @@ def({ id:'triggerRecorder', title:'Рекордер с триггером', cat:
     level = Math.sqrt(level / BLOCK);
     
     switch(n.p.mode){
-      case 'вручную':
+      case 'manual':
         if(trig > 0.5 && !n.trigState){ triggered = true; n.trigState = true; }
         if(trig <= 0.5) n.trigState = false;
         break;
-      case 'по уровню':
+      case 'level':
         if(level > n.p.threshold && !n.trigState){
           triggered = true;
           n.trigState = true;
@@ -137,7 +137,7 @@ def({ id:'triggerRecorder', title:'Рекордер с триггером', cat:
           if(n.trigTimer > n.p.trigHold) n.trigState = false;
         }
         break;
-      case 'по фронту':
+      case 'edge':
         if(level > n.p.threshold && n.prevLevel <= n.p.threshold) triggered = true;
         n.prevLevel = level;
         break;
@@ -164,7 +164,7 @@ def({ id:'triggerRecorder', title:'Рекордер с триггером', cat:
       for(let i=0;i<BLOCK;i++) n.buffer.push(signal[i]);
       
       let stop = false;
-      if(n.p.mode === 'вручную'){
+      if(n.p.mode === 'manual'){
         stop = trig <= 0.5 && n.buffer.length > preNeed + Eng.sr*0.5;
       } else {
         const duration = (performance.now() - n.recordStart) / 1000;
@@ -235,8 +235,8 @@ def({ id:'triggerRecorder', title:'Рекордер с триггером', cat:
     if(!n.initialized && n.el){ initRecorderUI4(n); n.initialized = true; }
 
     if(n.ro) n.ro.textContent = n.recording
-      ? '🔴 запись ' + ((n.buffer.length||0)/Eng.sr).toFixed(1) + 'с'
-      : (n.selected>=0 ? (n.play?'▶ ':'⏸ ')+'запись #'+n.selected : 'ожидание');
+      ? '🔴 recording ' + ((n.buffer.length||0)/Eng.sr).toFixed(1) + 's'
+      : (n.selected>=0 ? (n.play?'▶ ':'⏸ ')+'recording #'+n.selected : 'waiting');
 
     // живая волна пишущегося буфера — свой маленький canvas, независимый от n.size.h
     if(!n.waveCv) return;
@@ -260,7 +260,7 @@ def({ id:'triggerRecorder', title:'Рекордер с триггером', cat:
     }
     if(n.recording){
       cx.fillStyle = '#e05c5c'; cx.font = 'bold 9px monospace';
-      cx.fillText('● '+((n.buffer.length||0)/Eng.sr).toFixed(1)+'с', W-55, 10);
+      cx.fillText('● '+((n.buffer.length||0)/Eng.sr).toFixed(1)+'s', W-55, 10);
     }
   }
 });
@@ -289,7 +289,7 @@ function initRecorderUI4(n){
 
   n.statusEl = document.createElement('div');
   n.statusEl.style.cssText = 'display:flex;gap:8px;padding:2px 0;font-size:11px;color:#6c7a80;flex-shrink:0;';
-  n.statusEl.textContent = '⏹ ожидание';
+  n.statusEl.textContent = '⏹ waiting';
   root.appendChild(n.statusEl);
   
   n.controlsEl = document.createElement('div');
@@ -300,7 +300,7 @@ function initRecorderUI4(n){
     <button class="rec-download" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 10px;border-radius:3px;cursor:pointer;font-size:10px;">⬇ WAV</button>
     <button class="rec-clear" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 10px;border-radius:3px;cursor:pointer;font-size:10px;">🗑</button>
     <span style="flex:1;"></span>
-    <span class="rec-info" style="color:#6c7a80;font-size:10px;">0 записей</span>
+    <span class="rec-info" style="color:#6c7a80;font-size:10px;">0 recordings</span>
   `;
   root.appendChild(n.controlsEl);
   
@@ -340,14 +340,13 @@ function updateRecorderStatus(n){
   if(!n.statusEl) return;
   if(n.recording){
     const dur = (n.buffer.length || 0) / Eng.sr;
-    n.statusEl.innerHTML = `🔴 <span style="color:#e05c5c;">ЗАПИСЬ</span> ${dur.toFixed(1)}с  (${n.buffer.length} отсч.)`;
+    n.statusEl.innerHTML = `🔴 <span style="color:#e05c5c;">RECORDING</span> ${dur.toFixed(1)}s  (${n.buffer.length} samples)`;
     n.statusEl.style.color = '#e05c5c';
   } else {
-    const mode = n.p.mode === 'вручную' ? 'ручной' : n.p.mode === 'по уровню' ? 'уровень' : 'фронт';
-    n.statusEl.innerHTML = `⏹ ${mode}  |  записей: ${n.recordings.length}`;
+    n.statusEl.innerHTML = `⏹ ${n.p.mode}  |  recordings: ${n.recordings.length}`;
     n.statusEl.style.color = '#6c7a80';
   }
-  if(n.infoEl) n.infoEl.textContent = `${n.recordings.length} записей`;
+  if(n.infoEl) n.infoEl.textContent = `${n.recordings.length} recordings`;
   if(n.playBtn) n.playBtn.textContent = n.play ? '⏸' : '▶';
 }
 
@@ -358,7 +357,7 @@ function updateRecordingList2(n){
   if(n.recordings.length === 0){
     const empty = document.createElement('div');
     empty.style.cssText = 'padding:12px;text-align:center;color:#2a3136;font-size:11px;';
-    empty.textContent = '⏳ нет записей';
+    empty.textContent = '⏳ no recordings';
     n.listContainer.appendChild(empty);
     return;
   }
@@ -401,7 +400,7 @@ function updateRecordingList2(n){
     item.appendChild(time);
     
     const dur = document.createElement('span');
-    dur.textContent = rec.duration.toFixed(1) + 'с';
+    dur.textContent = rec.duration.toFixed(1) + 's';
     dur.style.width = '34px';
     dur.style.color = '#4ec9b0';
     item.appendChild(dur);
@@ -490,7 +489,7 @@ function downloadRecording2(n){
 
 async function clearAllRecordings2(n){
   if(n.recordings.length === 0) return;
-  if(!confirm(`Удалить все ${n.recordings.length} записей?`)) return;
+  if(!confirm(`Delete all ${n.recordings.length} recordings?`)) return;
   for(const rec of n.recordings) await SampleDB.deleteClip(rec.id);
   n.selected = -1;
   n.data = null;
@@ -498,15 +497,15 @@ async function clearAllRecordings2(n){
   refreshRecorderList(n);
 }
 
-def({ id:'csv', title:'Журнал в CSV', cat:'Вывод',
+def({ id:'csv', title:'CSV Log', cat:'Output',
   ins:[{n:'a',t:'num'},{n:'b',t:'num'},{n:'c',t:'num'},{n:'d',t:'num'},{n:'period',t:'num'},{n:'max',t:'num'}],
   outs:[{n:'rows',t:'num'}], readout:true, tall:true,
-  params:[{n:'period',t:'range',min:.05,max:60,step:.05,d:1,label:'период, с'},
-          {n:'max',t:'range',min:100,max:100000,step:100,d:10000,label:'макс. строк'},
-          {n:'names',t:'text',d:'a,b,c,d',label:'заголовки'},
-          {n:'rec',t:'button',label:'Запись / стоп',fn:n=>{n.on=!n.on;}},
-          {n:'save',t:'button',label:'Сохранить CSV',fn:n=>csvSave(n)},
-          {n:'clr',t:'button',label:'Очистить',fn:n=>{n.rows=[];}}],
+  params:[{n:'period',t:'range',min:.05,max:60,step:.05,d:1,label:'period, s'},
+          {n:'max',t:'range',min:100,max:100000,step:100,d:10000,label:'max rows'},
+          {n:'names',t:'text',d:'a,b,c,d',label:'headers'},
+          {n:'rec',t:'button',label:'Record / stop',fn:n=>{n.on=!n.on;}},
+          {n:'save',t:'button',label:'Save CSV',fn:n=>csvSave(n)},
+          {n:'clr',t:'button',label:'Clear',fn:n=>{n.rows=[];}}],
   init:n=>{n.rows=[];n.on=false;n.t=0;n.t0=0;},
   process(n,I){
     if(typeof I.period==='number') setMod(n,'period',I.period);
@@ -524,7 +523,7 @@ def({ id:'csv', title:'Журнал в CSV', cat:'Вывод',
     return {rows:n.rows.length}; },
   draw(n){ const r=n.el.querySelector('.readout');
     const tail=n.rows.slice(-6).map(x=>x.join('  ')).join('\n');
-    const t=(n.on?'● запись':'стоп')+' · строк '+n.rows.length+'\n'+tail;
+    const t=(n.on?'● recording':'stopped')+' · rows '+n.rows.length+'\n'+tail;
     if(r.textContent!==t) r.textContent=t; }});
 
 function fmtN(v){ return (typeof v==='number'&&isFinite(v))? v.toFixed(6) : ''; }
@@ -535,20 +534,20 @@ function csvSave(n){
   dl(new Blob([head+'\n'+body],{type:'text/csv'}),'log-'+Date.now()+'.csv');
 }
 
-def({ id:'geiger', title:'Счётчик Гейгера', cat:'Вывод',
+def({ id:'geiger', title:'Geiger Counter', cat:'Output',
   ins:[{n:'in',t:'num'},{n:'minRate',t:'num'},{n:'maxRate',t:'num'},{n:'toneFreq',t:'num'},
        {n:'volume',t:'num'},{n:'smooth',t:'num'},{n:'invert',t:'num'}],
   outs:[{n:'audio',t:'sig'},{n:'rate',t:'num'}],
   readout:true,
   params:[
-    {n:'minVal',t:'num',d:0,label:'мин. значение'},
-    {n:'maxVal',t:'num',d:1,label:'макс. значение'},
-    {n:'minRate',t:'range',min:0.1,max:10,step:0.1,d:0.5,label:'мин. частота, Гц'},
-    {n:'maxRate',t:'range',min:1,max:50,step:0.5,d:20,label:'макс. частота, Гц'},
-    {n:'toneFreq',t:'range',min:500,max:4000,step:10,d:1800,label:'частота тона, Гц'},
-    {n:'volume',t:'range',min:0,max:1,step:0.01,d:0.3,label:'громкость'},
-    {n:'smooth',t:'range',min:0.01,max:0.99,step:0.01,d:0.5,label:'сглаживание'},
-    {n:'invert',t:'check',d:false,label:'инвертировать'}
+    {n:'minVal',t:'num',d:0,label:'min value'},
+    {n:'maxVal',t:'num',d:1,label:'max value'},
+    {n:'minRate',t:'range',min:0.1,max:10,step:0.1,d:0.5,label:'min rate, Hz'},
+    {n:'maxRate',t:'range',min:1,max:50,step:0.5,d:20,label:'max rate, Hz'},
+    {n:'toneFreq',t:'range',min:500,max:4000,step:10,d:1800,label:'tone frequency, Hz'},
+    {n:'volume',t:'range',min:0,max:1,step:0.01,d:0.3,label:'volume'},
+    {n:'smooth',t:'range',min:0.01,max:0.99,step:0.01,d:0.5,label:'smoothing'},
+    {n:'invert',t:'check',d:false,label:'invert'}
   ],
   init:n=>{
     n.smoothVal = 0;
@@ -656,7 +655,7 @@ def({ id:'geiger', title:'Счётчик Гейгера', cat:'Вывод',
     // Частота
     cx.fillStyle = '#6c7a80';
     cx.font = '10px monospace';
-    cx.fillText(`${(n.rate||0).toFixed(1)} кл/с`, 4, 12);
+    cx.fillText(`${(n.rate||0).toFixed(1)} clk/s`, 4, 12);
     
     // Шкала
     const minV = n.p.minVal || 0;
@@ -695,7 +694,7 @@ def({ id:'geiger', title:'Счётчик Гейгера', cat:'Вывод',
     
     cx.fillStyle = '#4ec9b0';
     cx.font = '9px monospace';
-    cx.fillText((n.rate||0) > 0.5 ? '⚡ активен' : '💤 тишина', 4, H-4);
+    cx.fillText((n.rate||0) > 0.5 ? '⚡ active' : '💤 silent', 4, H-4);
   }
 });
 
@@ -706,26 +705,26 @@ function ft8Stamp(ms){
   return p(d.getUTCHours())+':'+p(d.getUTCMinutes())+':'+p(d.getUTCSeconds())+'Z';
 }
 function ft8Text(n){
-  const head=(n.warn?'⚠ '+n.warn+'\n':'')+'слотов в журнале: '+n.log.length+
-    ' · передача занимает 12.64 с от начала слота +0.5 с\n'+
-    'синхро ниже 18/21 обычно не декодируется\n';
+  const head=(n.warn?'⚠ '+n.warn+'\n':'')+'slots in log: '+n.log.length+
+    ' · a transmission takes 12.64s from slot start +0.5s\n'+
+    'sync below 18/21 usually does not decode\n';
   n.text=head+n.log.map(e=>{
-    const lines=[e.stamp+'  '+(e.n?e.n+' сигн.':'пусто')+'  (разбор '+e.ms+' мс)'];
+    const lines=[e.stamp+'  '+(e.n?e.n+' sig.':'empty')+'  (parsed in '+e.ms+' ms)'];
     for(const c of e.list){
       const t0=0.5+c.dt;
-      lines.push('   '+c.f.toFixed(1).padStart(7)+' Гц  старт +'+t0.toFixed(2)+
-        ' с  конец +'+(t0+12.64).toFixed(2)+' с  сила '+c.sc.toFixed(2)+
-        '  синхро '+(c.sync!=null?c.sync:'?')+'/21');
+      lines.push('   '+c.f.toFixed(1).padStart(7)+' Hz  start +'+t0.toFixed(2)+
+        ' s  end +'+(t0+12.64).toFixed(2)+' s  strength '+c.sc.toFixed(2)+
+        '  sync '+(c.sync!=null?c.sync:'?')+'/21');
       if(c.msg) lines.push('     ► '+c.msg);
-      else if(c.hex) lines.push('     пакет '+c.hex);
-      if(c.syms) lines.push('     тоны  '+c.syms); }
+      else if(c.hex) lines.push('     packet '+c.hex);
+      if(c.syms) lines.push('     tones  '+c.syms); }
     return lines.join('\n');
   }).join('\n');
 }
 function ft8Save(n){
   const txt=n.log.map(e=>e.stamp+'\t'+e.list.map(c=>
-    c.f.toFixed(1)+' Гц\tdt '+c.dt.toFixed(2)+'\tсила '+c.sc.toFixed(2)+
-    '\tсинхро '+c.sync+'/21\t'+(c.msg||c.hex||'')+
+    c.f.toFixed(1)+' Hz\tdt '+c.dt.toFixed(2)+'\tstrength '+c.sc.toFixed(2)+
+    '\tsync '+c.sync+'/21\t'+(c.msg||c.hex||'')+
     (c.syms?'\t'+c.syms:'')).join('\n\t')).join('\n');
   dl(new Blob([txt],{type:'text/plain'}),'ft8-log-'+Date.now()+'.txt');
 }
@@ -749,7 +748,7 @@ function ft8Run(n,manual,slotMs){
   const hz=FT8_SR/FT8_FFT;                           // 3.125 Гц, тон = 2 бина
   const b0=Math.max(1,Math.floor(n.p.fmin/hz)), b1=Math.min(bins-9*FT8_TS,Math.ceil(n.p.fmax/hz));
   const maxOff=frames-4*FT8_SYMS-1;
-  if(maxOff<1){ n.text='мало данных'; return; }
+  if(maxOff<1){ n.text='not enough data'; return; }
   const budget=n.p.budget||800;
   const cand=[];
   for(let b=b0;b<=b1;b++) for(let t=0;t<=maxOff;t++){
@@ -818,19 +817,19 @@ function ft8Run(n,manual,slotMs){
     return e; });
   if(list.length){ n.f=list[0].f; n.sc=list[0].sc; n.dt=list[0].dt; }
   else { n.f=0; n.sc=0; }
-  if(Eng.turbo>1) n.warn='скорость ×'+Eng.turbo+' ломает привязку к слотам — верните ×1';
+  if(Eng.turbo>1) n.warn='speed ×'+Eng.turbo+' breaks slot alignment — set it back to ×1';
   else n.warn='';
-  n.log.unshift({stamp:ft8Stamp(slotMs!=null?slotMs:Date.now())+(manual?' (вручную)':''),
+  n.log.unshift({stamp:ft8Stamp(slotMs!=null?slotMs:Date.now())+(manual?' (manual)':''),
                  n:list.length, list, ms:(performance.now()-t0).toFixed(0)});
   while(n.log.length>n.p.keep) n.log.pop();
   ft8Text(n);
 }
 
 /* ---------- вывод ---------- */
-def({ id:'dac', title:'Звуковая карта', cat:'Вывод',
+def({ id:'dac', title:'Sound Card', cat:'Output',
   ins:[{n:'L',t:'sig'},{n:'R',t:'sig'},{n:'vol',t:'num'},{n:'pan',t:'num'},{n:'mute',t:'num'}],
   params:[{n:'vol',t:'range',min:0,max:1,step:.01,d:.3},
-          {n:'mode',t:'select',opts:['моно','стерео','L→оба','R→оба'],d:'моно'},
+          {n:'mode',t:'select',opts:['mono','stereo','L→both','R→both'],d:'mono'},
           {n:'pan',t:'range',min:-1,max:1,step:.01,d:0},
           {n:'mute',t:'check',d:false}],
   process(n,I){
@@ -843,17 +842,17 @@ def({ id:'dac', title:'Звуковая карта', cat:'Вывод',
     for(let i=0;i<BLOCK;i++){
       const a=L?L[i]:0, b=R?R[i]:0;
       let l,r;
-      if(m==='стерео'){ l=a; r=b; }
-      else if(m==='L→оба'){ l=r=a; }
-      else if(m==='R→оба'){ l=r=b; }
-      else { const x=a+b; l=x*gl*1.414; r=x*gr*1.414; }   // моно с панорамой
+      if(m==='stereo'){ l=a; r=b; }
+      else if(m==='L→both'){ l=r=a; }
+      else if(m==='R→both'){ l=r=b; }
+      else { const x=a+b; l=x*gl*1.414; r=x*gr*1.414; }   // mono with panning
       Eng.outL[i]+=clamp(l*v,-1,1); Eng.outR[i]+=clamp(r*v,-1,1); }
     return {}; }});
 
 
-def({ id:'flash', title:'Экран-передатчик', cat:'Вывод', ins:[{n:'in',t:'num'},{n:'lo',t:'num'},{n:'hi',t:'num'}],
+def({ id:'flash', title:'Screen Transmitter', cat:'Output', ins:[{n:'in',t:'num'},{n:'lo',t:'num'},{n:'hi',t:'num'}],
   swatch:true,
-  params:[{n:'on',t:'button',label:'Во весь экран',fn:n=>{
+  params:[{n:'on',t:'button',label:'Fullscreen',fn:n=>{
             if(!n.ov){ n.ov=document.createElement('div');
               n.ov.style.cssText='position:fixed;inset:0;z-index:99;background:#000';
               n.ov.addEventListener('pointerdown',()=>{ n.ov.remove(); n.vis=false; });
@@ -872,7 +871,7 @@ def({ id:'flash', title:'Экран-передатчик', cat:'Вывод', ins
     if(n.ov&&n.vis) n.ov.style.background=c; }});
 
 
-def({ id:'color', title:'Цвет', cat:'Вывод', ins:[{n:'in',t:'num'}], swatch:true,
+def({ id:'color', title:'Color', cat:'Output', ins:[{n:'in',t:'num'}], swatch:true,
   params:[{n:'min',t:'num',d:0},{n:'max',t:'num',d:1},
           {n:'mode',t:'select',opts:['hue','gray','heat'],d:'hue'}],
   process(n,I){ n.v=I.in||0; return {}; },
@@ -883,7 +882,7 @@ def({ id:'color', title:'Цвет', cat:'Вывод', ins:[{n:'in',t:'num'}], sw
       : `hsl(${t*300|0} 80% 55%)`; }});
 
 
-def({ id:'fmtview', title:'Индикатор (по шаблону)', cat:'Вывод', ins:[{n:'in',t:'num'},{n:'sig',t:'sig'}],
+def({ id:'fmtview', title:'Template Indicator', cat:'Output', ins:[{n:'in',t:'num'},{n:'sig',t:'sig'}],
   readout:true, params:[{n:'fmt',t:'text',d:'{v} | rms {r}'}],
   process(n,I){ n.v=I.in; n.r=I.sig?rms(I.sig):null; return {}; },
   draw(n){ n.el.querySelector('.readout').textContent = String(n.p.fmt)
@@ -891,13 +890,13 @@ def({ id:'fmtview', title:'Индикатор (по шаблону)', cat:'Вы�
     .replace('{r}', n.r!=null? n.r.toFixed(4):'—'); }});
 
 
-def({ id:'rec', title:'Запись WAV', cat:'Вывод', ins:[{n:'in',t:'sig'}], readout:true,
-  params:[{n:'go',t:'button',label:'Записать / остановить',fn:n=>{
+def({ id:'rec', title:'Record WAV', cat:'Output', ins:[{n:'in',t:'sig'}], readout:true,
+  params:[{n:'go',t:'button',label:'Record / stop',fn:n=>{
             n.on=!n.on; if(n.on) n.chunks=[]; else wavDownload(n.chunks,Eng.sr); }}],
   init:n=>{n.on=false;n.chunks=[];},
   process(n,I){ if(n.on&&I.in) n.chunks.push(I.in.slice()); return {}; },
   draw(n){ n.el.querySelector('.readout').textContent = n.on
-    ? '● '+(n.chunks.length*BLOCK/Eng.sr).toFixed(1)+' с' : 'готов'; }});
+    ? '● '+(n.chunks.length*BLOCK/Eng.sr).toFixed(1)+' s' : 'ready'; }});
 
 
 function wavDownload(chunks,sr){
@@ -916,12 +915,12 @@ function dl(blob,name){ const a=document.createElement('a');
   a.href=URL.createObjectURL(blob); a.download=name; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
 
-def({ id:'planeMap', title:'Карта самолётов', cat:'Вывод',
+def({ id:'planeMap', title:'Aircraft Map', cat:'Output',
   ins:[{n:'trig',t:'num'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'id',t:'txt'},
        {n:'gsTrig',t:'num'},{n:'gsLat',t:'num'},{n:'gsLon',t:'num'},{n:'gsName',t:'txt'}],
   view:{h:300}, resize:true,
-  params:[{n:'ttl',t:'range',min:1,max:120,step:1,d:30,label:'хранить, мин'},
-          {n:'clr',t:'button',label:'Очистить',fn:n=>{n.tracks={}; n.stations={};}}],
+  params:[{n:'ttl',t:'range',min:1,max:120,step:1,d:30,label:'keep, min'},
+          {n:'clr',t:'button',label:'Clear',fn:n=>{n.tracks={}; n.stations={};}}],
   init:n=>{n.tracks={}; n.stations={}; n.prevTrig=0; n.prevGsTrig=0;},
   process(n,I){
     // num-порты в этом движке — обычные числа, не поблочные буферы (в отличие от 'sig')
