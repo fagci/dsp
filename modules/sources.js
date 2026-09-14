@@ -1169,7 +1169,16 @@ async function rtlReadLoop(n){
   // местами, которая на слух звучит как случайные щелчки/затыки, а не как чистая тишина.
   let appendChain=Promise.resolve();
   let inFlight=0;
-  const MAX_INFLIGHT=6;   // бэкпрешер: не давать очереди демода расти бесконечно, если CPU не тянет
+  // Бэкпрешер НИКОГДА не тормозит само чтение USB — это живой АЦП, который передаёт данные
+  // независимо от того, готов ли софт их принять. Пауза здесь — это не "подождать немного",
+  // это реальная потеря сэмплов на стороне хоста/устройства, причём НЕЗАМЕЧЕННАЯ: n.written
+  // в кольце просто продолжит расти на cnt за чанк, как ни в чём не бывало, и потребитель
+  // (который переводит время через n.sourceRate) склеит разрыв как непрерывный поток — на слух
+  // это будет звучать не как затык, а как ускорение/писк (кусок реального времени пропал, но
+  // отсчитывается как будто прошёл). Поэтому вместо паузы, когда демод не поспевает, чанк
+  // просто НЕ уходит в воркер — на его место в кольцо честно пишется тишина той же длины
+  // (cnt), чтобы n.written по-прежнему отражал реальное время, а не альтернативную историю.
+  const MAX_INFLIGHT=6;
 
   // Два параллельных читателя USB — как в рабочей референсной реализации (radioreceiver /
   // @jtarrio/signals, PARALLEL_BUFFERS=2): пока один readSamples() в полёте, второй уже
@@ -1218,6 +1227,20 @@ async function rtlReadLoop(n){
       // передаётся воркеру с переносом, один и тот же ArrayBuffer нельзя transfer'ить дважды)
       const active=n.ch.filter(ch=>ch.active&&ch.worker);
       if(!active.length){ rtlTrackMsps(n, cnt, t1-t0, 0); continue; }
+      if(inFlight>=MAX_INFLIGHT){
+        // демод не поспевает за реальным временем (см. комментарий выше про MAX_INFLIGHT) —
+        // этот чанк в воркер не идёт, вместо него в кольцо каждого канала честно дописывается
+        // cnt сэмплов тишины, чтобы written не разошёлся с реальным временем.
+        for(const ch of active){
+          const aring=ch.aring; if(!aring) continue;
+          const A=aring.A, size=aring.size; let w=aring.w, filled=aring.filled;
+          for(let k=0;k<cnt;k++){ A[w]=0; w=(w+1)%size; if(filled<size) filled++; }
+          aring.w=w; aring.filled=filled; aring.written+=cnt;
+        }
+        n.underruns++;
+        rtlTrackMsps(n, cnt, t1-t0, 0);
+        continue;
+      }
       const demodPromise=Promise.all(active.map(ch=>ch.worker.demod(u8.slice().buffer, cnt)));
       let tDemodDone=0;
       demodPromise.then(()=>{ tDemodDone=performance.now(); }, ()=>{});
@@ -1245,7 +1268,6 @@ async function rtlReadLoop(n){
         }
         rtlTrackMsps(n, cnt, t1-t0, wms);
       });
-      while(inFlight>=MAX_INFLIGHT && n.reading) await new Promise(r=>setTimeout(r,5));
     }
   }
 
