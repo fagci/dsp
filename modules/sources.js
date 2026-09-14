@@ -1527,7 +1527,18 @@ function rtlUpdateSpec(n){
   if(ring.filled<N) return;
   const start=(ring.w-N+ring.size)%ring.size;
   const I=new Float32Array(N), Q=new Float32Array(N);
-  for(let i=0;i<N;i++){ const p=(start+i)%ring.size; I[i]=ring.I[p]; Q[i]=ring.Q[p]; }
+  let sumI=0, sumQ=0;
+  for(let i=0;i<N;i++){ const p=(start+i)%ring.size, iv=ring.I[p], qv=ring.Q[p];
+    I[i]=iv; Q[i]=qv; sumI+=iv; sumQ+=qv; }
+  // DC-спайк в центре спектра — не сигнал, а самосмешение гетеродина на нулевую ПЧ, типичная
+  // болячка RTL2832U (zero-IF архитектура), см. то же самое в gqrx/SDR++ ("DC removal"/"correct IQ").
+  // Вычитаем среднее блока — это ТОЧНО зануляет центральный бин БПФ (он и есть эта самая сумма/N),
+  // персистентный фильтр (как rawI0/rawQ0 в демод-воркере) тут не нужен: смещение почти константа
+  // между блоками, а прямое среднее убирает его сразу, без времени на сходимость IIR.
+  if(n.p.specDc){
+    const mI=sumI/N, mQ=sumQ/N;
+    for(let i=0;i<N;i++){ I[i]-=mI; Q[i]-=mQ; }
+  }
   n.specBusy=true;
   const centerFreq=n.actualFreq??n.p.freq, binHz=n.sourceRate/N, half=N>>1, win=n.p.specWin;
   n.specWorker.compute(I.buffer, Q.buffer, N, win).then(mag=>{
@@ -1719,9 +1730,10 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     {n:'deemph',t:'select',opts:['50','75','off'],d:'50',label:'WFM de-emphasis, µs'},
     {n:'auto',t:'check',d:true,label:'auto gain'},
     {n:'gainDb',t:'range',min:0,max:49.6,step:.1,d:20,label:'gain, dB'},
-    {n:'specSize',t:'select',opts:['512','1024','2048','4096','8192','16384'],d:'4096',label:'spectrum FFT size'},
+    {n:'specSize',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'4096',label:'spectrum FFT size'},
     {n:'specWin',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann',label:'spectrum window'},
-    {n:'specAvg',t:'range',min:1,max:32,step:1,d:4,label:'averaging, frames'}
+    {n:'specAvg',t:'range',min:1,max:32,step:1,d:4,label:'averaging, frames'},
+    {n:'specDc',t:'check',d:true,label:'remove DC spike'}
   ],
   init:n=>{ n.dev=null; n.connected=false; n.reading=false; n.sourceRate=1024000;
             n.underruns=0; n.status='not connected'; n.busy=false; n.specWorker=null; n.specBusy=false;
