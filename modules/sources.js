@@ -1155,6 +1155,22 @@ async function rtlReadLoop(n){
   let errStreak=0;
   n.mspsAcc=0; n.mspsIoMs=0; n.mspsWorkerMs=0; n.mspsWinStart=performance.now(); n.msps=0; n.mspsIo=0;
 
+  // Демодуляция чанка запускается в воркере и НЕ ждётся здесь же — иначе время round-trip'а
+  // до воркера (структурное клонирование буфера, планировщик, сама математика фильтра) прямо
+  // вычиталось бы из бюджета на следующее USB-чтение: любая заминка воркера (пауза GC, всплеск
+  // нагрузки от остального UI) била бы по непрерывности чтения из USB, а не только по итоговому
+  // звуку — и именно тут раньше рвался поток, хотя визуально спектр (снимается отдельно, чуть
+  // раньше, синхронно) успевал остаться на вид ровным.
+  // Запись демодулированного аудио в кольцо канала при этом всё равно СТРОГО по порядку прихода
+  // чанков, а не по порядку завершения демодуляции — appendChain навешивается на чанк сразу по
+  // приходу (пока порядок ещё гарантирован тем же аргументом про FIFO ниже), поэтому даже если
+  // демод чанка N закончится позже чанка N+1 (два воркера, разная сиюминутная загрузка), в кольцо
+  // они всё равно лягут в правильном порядке — без этого возможна перестановка кусков звука
+  // местами, которая на слух звучит как случайные щелчки/затыки, а не как чистая тишина.
+  let appendChain=Promise.resolve();
+  let inFlight=0;
+  const MAX_INFLIGHT=6;   // бэкпрешер: не давать очереди демода расти бесконечно, если CPU не тянет
+
   // Два параллельных читателя USB — как в рабочей референсной реализации (radioreceiver /
   // @jtarrio/signals, PARALLEL_BUFFERS=2): пока один readSamples() в полёте, второй уже
   // читает следующий чанк. Раньше у нас было строго последовательно (одно чтение — жду —
@@ -1201,11 +1217,25 @@ async function rtlReadLoop(n){
       // раздаём чанк всем активным каналам параллельно — каждому своя копия (владение буфером
       // передаётся воркеру с переносом, один и тот же ArrayBuffer нельзя transfer'ить дважды)
       const active=n.ch.filter(ch=>ch.active&&ch.worker);
-      if(active.length){
-        const results=await Promise.all(active.map(ch=>ch.worker.demod(u8.slice().buffer, cnt)));
-        const wms=performance.now()-t1;
+      if(!active.length){ rtlTrackMsps(n, cnt, t1-t0, 0); continue; }
+      const demodPromise=Promise.all(active.map(ch=>ch.worker.demod(u8.slice().buffer, cnt)));
+      let tDemodDone=0;
+      demodPromise.then(()=>{ tDemodDone=performance.now(); }, ()=>{});
+      inFlight++;
+      // .then() вешается СРАЗУ по приходу чанка (пока порядок ещё известен), но результат
+      // пишется в кольцо только после того, как это же самое сделает предыдущий чанк —
+      // appendChain и есть та самая гарантия порядка, о которой комментарий выше.
+      appendChain=appendChain.then(async ()=>{
+        let results;
+        try{ results=await demodPromise; }
+        catch(e){ inFlight--; return; }
+        inFlight--;
+        if(!n.reading) return;                    // отключились, пока чанк ждал своей очереди
+        const wms=tDemodDone-t1;                   // честное время воркера, без ожидания очереди записи
         for(let ci=0;ci<active.length;ci++){
-          const ch=active[ci], audio=new Float32Array(results[ci]);
+          const ch=active[ci];
+          if(!ch.active || !ch.aring){ ch.worker?.giveBuffer(results[ci]); continue; }  // канал сняли/пересобрали, пока чанк ждал
+          const audio=new Float32Array(results[ci]);
           const aring=ch.aring;
           let w=aring.w, filled=aring.filled;
           const A=aring.A, size=aring.size;
@@ -1214,9 +1244,8 @@ async function rtlReadLoop(n){
           ch.worker.giveBuffer(results[ci]);
         }
         rtlTrackMsps(n, cnt, t1-t0, wms);
-      } else {
-        rtlTrackMsps(n, cnt, t1-t0, 0);
-      }
+      });
+      while(inFlight>=MAX_INFLIGHT && n.reading) await new Promise(r=>setTimeout(r,5));
     }
   }
 
