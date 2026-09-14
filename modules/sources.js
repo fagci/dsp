@@ -1071,6 +1071,7 @@ if(msg.type==='offset'){ applyOffset(msg.hz); return; } // лёгкое обно
 if(msg.type==='reset'){ cI0=cI1=cI2=cQ0=cQ1=cQ2=prevI=prevQ=lp=de=ampDc=audDc=0; ssbPhI=1; ssbPhQ=0; offPhI=1; offPhQ=0; rawI0=0; rawQ0=0; decimCounter=1; return; }
 if(msg.type==='giveBuffer'){ bufPool.push(msg.buffer); return; } // главный поток вернул буфер — кладём в пул
 if(msg.type!=='demod') return;
+const tStart=performance.now();  // время ВНУТРИ воркера, не round-trip с главным потоком (см. workerMs ниже)
 const u8=new Uint8Array(msg.buffer), cnt=msg.cnt;
 // после децимации выходных отсчётов заметно меньше входных (см. decim выше) — maxOut с запасом
 // в +1 на случай, если decimCounter от прошлого чанка "донёс" фазу так, что отсчёт выпал на самый
@@ -1145,7 +1146,11 @@ if(deA!=null){ de=de*deA+outv*deA1; outv=de; }
 out[wIdx++]=outv;
 }
 }
-self.postMessage({type:'result', id:msg.id, buffer:out.buffer, cnt:wIdx}, [out.buffer]);
+// workerMs — ЧЕСТНОЕ время именно этого цикла внутри воркера, отдельно от round-trip'а через
+// главный поток (postMessage/структурное клонирование/ожидание в очереди сообщений) — тот
+// round-trip меряет readerLoop сам (wms=tDemodDone-t1), и эти два числа могут сильно разойтись,
+// если тормозит не сама математика, а именно доставка сообщений.
+self.postMessage({type:'result', id:msg.id, buffer:out.buffer, cnt:wIdx, workerMs:performance.now()-tStart}, [out.buffer]);
 };
 `;
 
@@ -1160,8 +1165,9 @@ function rtlMakeDemodWorker(){
       const resolve=pending.get(msg.id); pending.delete(msg.id);
       // buffer — сырой ArrayBuffer (вызывающий сам решает, когда вернуть его через giveBuffer());
       // cnt — сколько АУДИО-отсчётов в нём реально лежит после децимации внутри воркера (может
-      // быть заметно меньше числа входных IQ-отсчётов, см. decim в RTL_WORKER_SRC)
-      resolve({buffer:msg.buffer, cnt:msg.cnt});
+      // быть заметно меньше числа входных IQ-отсчётов, см. decim в RTL_WORKER_SRC);
+      // workerMs — честное время именно вычислений внутри воркера, см. комментарий там же
+      resolve({buffer:msg.buffer, cnt:msg.cnt, workerMs:msg.workerMs});
     }
   };
   return {
@@ -1307,9 +1313,16 @@ async function rtlReadLoop(n){
         catch(e){ inFlight--; return; }
         inFlight--;
         if(!n.reading) return;                    // отключились, пока чанк ждал своей очереди
-        const wms=tDemodDone-t1;                   // честное время воркера, без ожидания очереди записи
+        // wms — весь round-trip до воркера и обратно (структурное клонирование, доставка сообщения,
+        // ожидание, пока главный поток дойдёт до обработки ответа) — НЕ то же самое, что реальное
+        // время вычислений внутри воркера; для этого есть отдельно res.workerMs с каждого канала
+        // (честно измерено там же, см. RTL_WORKER_SRC) — если wms заметно больше max(workerMs),
+        // тормозит доставка/расписание, а не сама математика демодуляции.
+        const wms=tDemodDone-t1;
+        let workerMsMax=0;
         for(let ci=0;ci<active.length;ci++){
           const ch=active[ci], res=results[ci];
+          if(res.workerMs>workerMsMax) workerMsMax=res.workerMs;
           if(!ch.active || !ch.aring){ ch.worker?.giveBuffer(res.buffer); continue; }  // канал сняли/пересобрали, пока чанк ждал
           const outN=res.cnt;                       // уже децимированное число отсчётов, не cnt (сырых)
           const audio=new Float32Array(res.buffer, 0, outN);
@@ -1320,6 +1333,9 @@ async function rtlReadLoop(n){
           aring.w=w; aring.filled=filled; aring.written+=outN;
           ch.worker.giveBuffer(res.buffer);
         }
+        // сглаживаем — на глаз, не для точных измерений; резкий разовый выброс не должен дёргать цифру в статусе
+        n.workerMs = n.workerMs==null ? workerMsMax : n.workerMs*0.8+workerMsMax*0.2;
+        n.roundtripMs = n.roundtripMs==null ? wms : n.roundtripMs*0.8+wms*0.2;
         rtlTrackMsps(n, cnt, t1-t0, wms);
       });
     }
@@ -1625,6 +1641,7 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
   ],
   init:n=>{ n.dev=null; n.connected=false; n.reading=false; n.sourceRate=1024000;
             n.underruns=0; n.status='not connected'; n.busy=false; n.specWorker=null; n.specBusy=false;
+            n.workerMs=null; n.roundtripMs=null;
             n.appliedFreq=null; n.appliedGain=null; n.appliedAuto=null;
             // 4 канала демодуляции; канал 0 без цифрового суффикса в портах, активен всегда
             // (обратная совместимость), 1-3 поднимаются лениво при первом числе на их tuneFreqN.
@@ -1725,7 +1742,9 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     const r=n.el.querySelector('.readout');
     if(r) r.textContent = n.connected
       ? `${n.dev?n.dev.tunerName:'?'} · ${n.p.demod} · center ${fmtHz(cf)} · span ${fmtHz(n.sourceRate)} · tune ${fmtHz(tune)} · `+
-        `channels ${chCount} · ${(n.msps||0).toFixed(2)}Msps (I/O:${(n.mspsIo||0).toFixed(2)})`+(n.underruns?' · errors '+n.underruns:'')+(n.busy?' · …':'')
+        `channels ${chCount} · ${(n.msps||0).toFixed(2)}Msps (I/O:${(n.mspsIo||0).toFixed(2)})`+
+        (n.workerMs!=null?` · demod ${n.workerMs.toFixed(1)}ms/chunk (roundtrip ${(n.roundtripMs||0).toFixed(1)}ms)`:'')+
+        (n.underruns?' · errors '+n.underruns:'')+(n.busy?' · …':'')
       : n.status;
   }});
 
