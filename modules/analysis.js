@@ -952,18 +952,41 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       // до 3 бинарных поисков (specBin) на столбец за кадр. Пересчитываем только при смене параметров оси.
       // n.p.auto добавлен в ключ: в авто-режиме fmin/fmax не меняются, а реальные границы (specSpan)
       // могут — но при их смене меняется и ссылка n.s.freqs (см. rtlUpdateSpec), так что она это ловит.
-      // Два кэша: _binX — логический, под кривую спектра (векторная отрисовка); _binXwf — под водопад,
-      // на разрешении физического буфера (может быть в devicePixelRatio раз гуще).
+      // _binX — дробный бин ЦЕНТРА столбца (для фазы — там усреднение диапазона не имеет смысла).
+      // _binEdgeX/_binEdgeXwf — бины на СТЫКАХ столбцов (длина на 1 больше W/Wp), под амплитуду/
+      // водопад/PSD — см. magReduce ниже, зачем нужен именно диапазон, а не одна точка.
       if(n._bW!==W || n._bWp!==Wp || n._bN!==N || n._bLog!==n.p.log || n._bAuto!==n.p.auto ||
          n._bFmin!==n.p.fmin || n._bFmax!==n.p.fmax || n._bFreqs!==(n.s.freqs||null)){
         n._bW=W; n._bWp=Wp; n._bN=N; n._bLog=n.p.log; n._bAuto=n.p.auto;
         n._bFmin=n.p.fmin; n._bFmax=n.p.fmax; n._bFreqs=n.s.freqs||null;
         n._binX=new Float32Array(W);                  // дробный бин, не округляем — ниже линейная интерполяция
         for(let x=0;x<W;x++) n._binX[x]=clamp(specBin(n.s,saFreq(n,x/(W-1))),0,N-1);
-        n._binXwf=new Float32Array(Wp);
-        for(let x=0;x<Wp;x++) n._binXwf[x]=clamp(specBin(n.s,saFreq(n,x/(Wp-1))),0,N-1);
+        n._binEdgeX=new Float32Array(W+1);
+        for(let x=0;x<=W;x++) n._binEdgeX[x]=clamp(specBin(n.s,saFreq(n,(x-.5)/(W-1))),0,N-1);
+        n._binEdgeXwf=new Float32Array(Wp+1);
+        for(let x=0;x<=Wp;x++) n._binEdgeXwf[x]=clamp(specBin(n.s,saFreq(n,(x-.5)/(Wp-1))),0,N-1);
       }
-      const binX=n._binX;
+      const binX=n._binX, edgeX=n._binEdgeX, edgeXwf=n._binEdgeXwf;
+      // При крупном БПФ (много бинов) и небольшой ширине канвы на один столбец пикселей приходится
+      // много бинов (например, 16384 бина на ~1000px — по 16 бинов на столбец). Простая линейная
+      // интерполяция между 2 соседними бинами (как раньше) в этом случае регулярно "проваливает"
+      // узкополосный сигнал (NFM/CW — 1-3 бина шириной): большинство бинов столбца просто не
+      // сэмплируются, и пик виден лишь на редких столбцах, куда случайно попал ровно его бин —
+      // мигает или пропадает вовсе, в отличие от gqrx/SDR++, где столбец красится по МАКСИМУМУ
+      // всех бинов в его диапазоне. Поэтому: >1 бина на столбец — берём максимум по диапазону
+      // (edge[x]..edge[x+1]), иначе (БПФ мельче экрана, редкие бины) — прежняя линейная
+      // интерполяция для гладкой кривой без "лесенки".
+      const magReduce=(arr,b0,b1)=>{
+        const lo=b0<b1?b0:b1, hi=b0<b1?b1:b0;
+        if(hi-lo>1){
+          const i0=Math.max(0,Math.ceil(lo)), i1=Math.min(N-1,Math.floor(hi));
+          let mx=arr[clamp(Math.round((lo+hi)*.5),0,N-1)];
+          for(let i=i0;i<=i1;i++) if(arr[i]>mx) mx=arr[i];
+          return mx;
+        }
+        const bf=(lo+hi)*.5, i0=bf|0, i1=Math.min(N-1,i0+1), t=bf-i0;
+        return arr[i0]+(arr[i1]-arr[i0])*t;
+      };
       // при редких бинах (вейвлет/октавный анализатор) соседние пиксели часто попадают в один и
       // тот же бин, а на стыке — резко скачут в следующий; линейная интерполяция превращает
       // лесенку в гладкую кривую, для частых бинов (fft) эффекта почти не заметно
@@ -979,10 +1002,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       const fresh = n.s.rev!=null ? n.s.rev!==n._lastRev : n.s!==n._lastSpecRef;
       if(fresh || !n._wfInited){
         ox.drawImage(n.off,0,1);                     // сдвигаем водопад на строку только на новых данных
-        const binXwf=n._binXwf;
         const line=n._line, d=line.data;
         for(let x=0;x<Wp;x++){
-          const v=clamp((20*Math.log10(magAt(m,binXwf[x])+1e-12)-n.p.floor)/((n.p.top-n.p.floor)||1),0,1);
+          const v=clamp((20*Math.log10(magReduce(m,edgeXwf[x],edgeXwf[x+1])+1e-12)-n.p.floor)/((n.p.top-n.p.floor)||1),0,1);
           const hk=heatIdx(v)*3, k=x*4;
           d[k]=HEAT_LUT[hk]; d[k+1]=HEAT_LUT[hk+1]; d[k+2]=HEAT_LUT[hk+2]; d[k+3]=255; }
         ox.putImageData(line,0,0);
@@ -994,7 +1016,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       if(R&&n.p.ref==='show'){                    // reference as a faint line under the current one
         cx.strokeStyle='#8ab4f8'; cx.globalAlpha=.55; cx.beginPath();
         for(let x=0;x<W;x++){
-          const y=hs-clamp((20*Math.log10(magAt(R,binX[x])+1e-12)-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(hs-2)-1;
+          const y=hs-clamp((20*Math.log10(magReduce(R,edgeX[x],edgeX[x+1])+1e-12)-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(hs-2)-1;
           x?cx.lineTo(x,y):cx.moveTo(x,y); }
         cx.stroke(); cx.globalAlpha=1; }
       if(!n.colTS || ((n.colFrame=(n.colFrame||0)+1)%30===0))  // цвет темы — тоже не каждый кадр
@@ -1020,7 +1042,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         cx.strokeStyle='#4ec9b0'; cx.lineWidth=1; cx.beginPath();
         const psd=n.s.psd;
         for(let x=0;x<W;x++){
-          const v=10*Math.log10(magAt(psd,binX[x])+1e-20);
+          const v=10*Math.log10(magReduce(psd,edgeX[x],edgeX[x+1])+1e-20);
           const y=hs-clamp((v-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(hs-2)-1;
           x?cx.lineTo(x,y):cx.moveTo(x,y); }
         cx.stroke();
@@ -1030,8 +1052,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       cx.strokeStyle=n.colTS;
       cx.lineWidth=1; cx.beginPath();
       for(let x=0;x<W;x++){
-        const mv=magAt(m,binX[x]);
-        const v=diff? 20*Math.log10((mv+1e-12)/(magAt(R,binX[x])+1e-12))
+        const mv=magReduce(m,edgeX[x],edgeX[x+1]);
+        const v=diff? 20*Math.log10((mv+1e-12)/(magReduce(R,edgeX[x],edgeX[x+1])+1e-12))
                     : 20*Math.log10(mv+1e-12);
         const lo=diff? -40 : n.p.floor, hiv=diff? 40 : n.p.top;
         const y=hs-clamp((v-lo)/((hiv-lo)||1),0,1)*(hs-2)-1;
