@@ -977,6 +977,25 @@ async function rtlOpenDevice(dev, ppm, gain){
 
 // ---- узел графа: источник IQ ----
 
+// Во сколько раз воркер прореживает поток ПОСЛЕ канального фильтра, прежде чем считать
+// дорогую часть (см. decim в RTL_WORKER_SRC) — используется на главном потоке, чтобы правильно
+// посчитать размер аудио-кольца канала и шаг его чтения (сам воркер об этом не сообщает,
+// поэтому формула ЗДЕСЬ ДОЛЖНА ТОЧНО СОВПАДАТЬ с формулой decim внутри RTL_WORKER_SRC).
+// demod/bw общие на все 4 канала (не per-канальные параметры, см. комментарий у 'demod' в
+// params ниже) — поэтому decim тоже один на узел, а не на канал.
+function rtlDecimFor(mode, sr, bwAudio){
+  const chanBw=({WFM:200000,NFM:12500,AM:10000})[mode] || bwAudio;
+  return Math.max(1, Math.floor(sr/Math.max(chanBw*4, 8000)));
+}
+// (Пере)создаёт аудио-кольцо одного канала под ТЕКУЩИЙ n.decim — вызывается при первой
+// активации канала и при каждой смене decim на лету (demod/bw/sourceRate), иначе кольцо
+// остаётся размером под старую децимацию и гистерезис (проценты от size) снова начинает
+// значить не те доли секунды, для которых он посчитан — та же болезнь, которую decim лечит.
+function rtlResizeChannelRing(n, ch){
+  const asize=Math.max(50000, Math.round(n.ring.size/n.decim));
+  ch.aring={A:new Float32Array(asize), size:asize, w:0, filled:0, written:0};
+  ch.readPos=0; ch.readCount=0; ch.rebuffering=false;
+}
 function rtlResetRing(n){
   // размер кольца — под ~2с реального времени на ТЕКУЩЕМ sourceRate, а не фиксированное число
   // сэмплов: иначе на низком sample rate то же кольцо покрывает намного больше реального
@@ -987,12 +1006,13 @@ function rtlResetRing(n){
   const SPEC_SIZE=1<<16; // с запасом на любой выбранный размер БПФ; пишется независимо от режима демодуляции
   n.specRing={I:new Float32Array(SPEC_SIZE), Q:new Float32Array(SPEC_SIZE), size:SPEC_SIZE, w:0, filled:0};
   n.spec=null; n.specFreqs=null; n.lastSpec=0;
+  // аудио-кольца каналов живут на децимированной частоте (sourceRate/decim), а не sourceRate —
+  // без этого при большой децимации (узкий NFM на высоком sourceRate) кольцо размером "под 2с
+  // сырого потока" реально наполнялось бы эти же 2с×decim секунд, и звук не появлялся бы минутами.
+  n.decim=rtlDecimFor(n.p.demod, n.sourceRate, n.p.bw);
   // аудио-кольца УЖЕ АКТИВНЫХ каналов пересоздаём под новый размер — сами воркеры не трогаем,
   // их переконфигурирует hardKey-проверка в process() на следующем тике (sourceRate там учтён)
-  for(const ch of n.ch) if(ch.active){
-    ch.aring={A:new Float32Array(SIZE), size:SIZE, w:0, filled:0, written:0};
-    ch.readPos=0; ch.readCount=0; ch.rebuffering=false;
-  }
+  for(const ch of n.ch) if(ch.active) rtlResizeChannelRing(n, ch);
 }
 
 // Исходник воркера демодуляции — тяжёлая математика (канальный фильтр + atan2-дискриминатор)
@@ -1000,6 +1020,14 @@ function rtlResetRing(n){
 // и остальным движком/UI. Тот же приём Blob+createObjectURL, что и у AudioWorklet в core-engine.js.
 const RTL_WORKER_SRC = `
 let mode='WFM', sr=1024000, bwAudio=15000, deemphTau=null, devScale=75000, chanBw=200000;
+// Дискриминатор/audio-фильтры раньше считались на КАЖДЫЙ сырой IQ-отсчёт, то есть на частоте
+// приёмника (sr), а не на полосе канала — для NFM (12.5кГц) на sourceRate=2048000 это в ~80 раз
+// больше работы, чем реально нужно, и на слабом железе воркер физически не успевает в реальном
+// времени (см. SESSION_NOTES: 2048k давал ~0.26 факт. Msps при требуемых ~2.05 — обвал впятеро).
+// decim прореживает уже ПОСЛЕ канального ФНЧ (chA ниже) — тот уже ограничивает полосу до этой
+// точки, так что алиасинга от прореживания нет; дорогая часть (atan2/огибающая/audio-фильтры)
+// после этого считается на частоте ~4×chanBw, а не sr.
+let decim=1, decimCounter=1;
 let cI0=0,cI1=0,cI2=0, cQ0=0,cQ1=0,cQ2=0, prevI=0,prevQ=0, lp=0,de=0,ampDc=0,audDc=0;
 // Общий NCO "частоты настройки": сдвигает выбранную внутри захваченной полосы точку
 // (offsetHz относительно центра тюнера) на 0 Гц ДО канального фильтра — так демодулируется
@@ -1020,6 +1048,10 @@ deemphTau = mode==='WFM' ? tauMap[msg.deemph] : null;
 devScale = mode==='WFM'?75000:(mode==='NFM'?5000:1);
 // для USB/LSB нет записи в карте — попадаем в фолбэк и берём полосу канала равной аудио-полосе
 chanBw = ({WFM:200000,NFM:12500,AM:10000})[mode] || bwAudio;
+// ×4 — запас на неидеальный (не "кирпичный") срез простого каскадного IIR-фильтра ниже.
+// ФОРМУЛА ДОЛЖНА СОВПАДАТЬ с rtlDecimFor() на главном потоке — та по ней же считает размер
+// аудио-кольца и шаг чтения, не имея доступа к этому воркеру напрямую.
+decim = Math.max(1, Math.floor(sr/Math.max(chanBw*4, 8000)));
 // сдвиг NCO — половина полосы канала. USB сдвигаем вниз, LSB вверх (см. вывод у цикла ниже)
 const ssbDir = mode==='USB' ? -1 : (mode==='LSB' ? 1 : 0);
 const ssbInc = 2*Math.PI*(chanBw/2)*ssbDir/sr;
@@ -1036,20 +1068,26 @@ self.onmessage = function(e){
 const msg=e.data;
 if(msg.type==='config'){ applyConfig(msg); return; }
 if(msg.type==='offset'){ applyOffset(msg.hz); return; } // лёгкое обновление — без сброса фильтров/фазы
-if(msg.type==='reset'){ cI0=cI1=cI2=cQ0=cQ1=cQ2=prevI=prevQ=lp=de=ampDc=audDc=0; ssbPhI=1; ssbPhQ=0; offPhI=1; offPhQ=0; rawI0=0; rawQ0=0; return; }
+if(msg.type==='reset'){ cI0=cI1=cI2=cQ0=cQ1=cQ2=prevI=prevQ=lp=de=ampDc=audDc=0; ssbPhI=1; ssbPhQ=0; offPhI=1; offPhQ=0; rawI0=0; rawQ0=0; decimCounter=1; return; }
 if(msg.type==='giveBuffer'){ bufPool.push(msg.buffer); return; } // главный поток вернул буфер — кладём в пул
 if(msg.type!=='demod') return;
 const u8=new Uint8Array(msg.buffer), cnt=msg.cnt;
+// после децимации выходных отсчётов заметно меньше входных (см. decim выше) — maxOut с запасом
+// в +1 на случай, если decimCounter от прошлого чанка "донёс" фазу так, что отсчёт выпал на самый
+// первый сэмпл этого чанка
+const maxOut=Math.floor(cnt/decim)+1;
 // берём буфер из пула (вернули с прошлого раза), и только если пусто или размер не совпал — аллоцируем
 let outAB=null;
-while(bufPool.length){ const b=bufPool.pop(); if(b.byteLength===cnt*4){ outAB=b; break; } }
-const out=outAB ? new Float32Array(outAB) : new Float32Array(cnt);
-const lpA=Math.exp(-2*Math.PI*bwAudio/sr), lpA1=1-lpA; // настоящий ФНЧ на bwAudio
-const hpA=Math.exp(-2*Math.PI*20/sr), hpA1=1-hpA; // DC-блок аудио, фикс. 20 Гц
-const rawA=Math.exp(-2*Math.PI*150/sr), rawA1=1-rawA;
-const deA=deemphTau ? Math.exp(-1/(deemphTau*sr)) : null, deA1=deA!=null?1-deA:0;
-const chA=Math.exp(-2*Math.PI*(chanBw/2)/sr), chA1=1-chA;
-const discScale=sr/(2*Math.PI)/devScale, isAM=mode==='AM', isSSB=(mode==='USB'||mode==='LSB');
+while(bufPool.length){ const b=bufPool.pop(); if(b.byteLength===maxOut*4){ outAB=b; break; } }
+const out=outAB ? new Float32Array(outAB) : new Float32Array(maxOut);
+const outRate=sr/decim;                            // дорогая часть ниже считается на этой частоте, не на sr
+const lpA=Math.exp(-2*Math.PI*bwAudio/outRate), lpA1=1-lpA; // настоящий ФНЧ на bwAudio
+const hpA=Math.exp(-2*Math.PI*20/outRate), hpA1=1-hpA; // DC-блок аудио, фикс. 20 Гц
+const rawA=Math.exp(-2*Math.PI*150/sr), rawA1=1-rawA; // сырой DC-блок — на полной частоте, до децимации
+const deA=deemphTau ? Math.exp(-1/(deemphTau*outRate)) : null, deA1=deA!=null?1-deA:0;
+const chA=Math.exp(-2*Math.PI*(chanBw/2)/sr), chA1=1-chA; // канальный ФНЧ — тоже на полной частоте, до децимации
+const discScale=outRate/(2*Math.PI)/devScale, isAM=mode==='AM', isSSB=(mode==='USB'||mode==='LSB');
+let wIdx=0;
 for(let k=0;k<cnt;k++){
 const rawI=(u8[2*k]-127.5)/127.5, rawQ=(u8[2*k+1]-127.5)/127.5;
 // DC-блок сырых I/Q — всегда, до любых сдвигов (паразит неподвижен на 0 Гц захваченной полосы)
@@ -1077,6 +1115,11 @@ ssbPhI=nPhI*nrm; ssbPhQ=nPhQ*nrm;
 cI0=cI0*chA+i*chA1; cQ0=cQ0*chA+q*chA1;
 cI1=cI1*chA+cI0*chA1; cQ1=cQ1*chA+cQ0*chA1;
 cI2=cI2*chA+cI1*chA1; cQ2=cQ2*chA+cQ1*chA1;
+// Канальный фильтр выше уже ограничил полосу — дальше можно смело прореживать: дискриминатор
+// и все audio-фильтры (дорогая часть — atan2/sqrt на каждый отсчёт) считаются не на каждый
+// сырой сэмпл, а раз в decim сэмплов, на уже отфильтрованном cI2/cQ2.
+if(--decimCounter<=0){
+decimCounter=decim;
 let v;
 if(isSSB){
 // зеркальная боковая уже подавлена фильтром выше — но сам сигнал всё ещё сдвинут по
@@ -1088,6 +1131,8 @@ const env=Math.sqrt(cI2*cI2+cQ2*cQ2);
 ampDc+=(env-ampDc)*0.0005;
 v=(env-ampDc)*3;
 } else {
+// re/im — разность фаз между ЭТИМ и ПРЕДЫДУЩИМ ДЕЦИМИРОВАННЫМ отсчётом (шаг по времени —
+// decim/sr, отсюда discScale считается от outRate=sr/decim, а не от sr)
 const re=cI2*prevI+cQ2*prevQ, im=cQ2*prevI-cI2*prevQ;
 v=Math.atan2(im,re)*discScale;
 prevI=cI2; prevQ=cQ2;
@@ -1097,9 +1142,10 @@ const hp=v-audDc;
 lp=lp*lpA+hp*lpA1;
 let outv=lp;
 if(deA!=null){ de=de*deA+outv*deA1; outv=de; }
-out[k]=outv;
+out[wIdx++]=outv;
 }
-self.postMessage({type:'result', id:msg.id, buffer:out.buffer, cnt}, [out.buffer]);
+}
+self.postMessage({type:'result', id:msg.id, buffer:out.buffer, cnt:wIdx}, [out.buffer]);
 };
 `;
 
@@ -1112,7 +1158,10 @@ function rtlMakeDemodWorker(){
     const msg=e.data;
     if(msg.type==='result' && pending.has(msg.id)){
       const resolve=pending.get(msg.id); pending.delete(msg.id);
-      resolve(msg.buffer);               // сырой ArrayBuffer — вызывающий сам решает, когда вернуть его через giveBuffer()
+      // buffer — сырой ArrayBuffer (вызывающий сам решает, когда вернуть его через giveBuffer());
+      // cnt — сколько АУДИО-отсчётов в нём реально лежит после децимации внутри воркера (может
+      // быть заметно меньше числа входных IQ-отсчётов, см. decim в RTL_WORKER_SRC)
+      resolve({buffer:msg.buffer, cnt:msg.cnt});
     }
   };
   return {
@@ -1146,8 +1195,9 @@ function rtlActivateChannel(n, ci){
   ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph});
   ch.worker.reset();
   ch.hardKey=n.p.demod+'|'+n.sourceRate; ch.softKey=n.p.bw+'|'+n.p.deemph;
-  ch.aring={A:new Float32Array(n.ring.size), size:n.ring.size, w:0, filled:0, written:0};
-  ch.readPos=0; ch.readCount=0; ch.rebuffering=false; ch.appliedOffset=0;
+  n.decim=rtlDecimFor(n.p.demod, n.sourceRate, n.p.bw);
+  rtlResizeChannelRing(n, ch);
+  ch.appliedOffset=0;
   ch.active=true;
 }
 
@@ -1230,12 +1280,15 @@ async function rtlReadLoop(n){
       if(inFlight>=MAX_INFLIGHT){
         // демод не поспевает за реальным временем (см. комментарий выше про MAX_INFLIGHT) —
         // этот чанк в воркер не идёт, вместо него в кольцо каждого канала честно дописывается
-        // cnt сэмплов тишины, чтобы written не разошёлся с реальным временем.
+        // тишина ТОЙ ЖЕ длины, что дал бы демод — round(cnt/n.decim) децимированных отсчётов,
+        // а не cnt сырых, иначе written разойдётся с реальным временем ровно так же, как раньше
+        // расходился на паузе чтения (см. rtlDecimFor).
+        const silentN=Math.max(1, Math.round(cnt/(n.decim||1)));
         for(const ch of active){
           const aring=ch.aring; if(!aring) continue;
           const A=aring.A, size=aring.size; let w=aring.w, filled=aring.filled;
-          for(let k=0;k<cnt;k++){ A[w]=0; w=(w+1)%size; if(filled<size) filled++; }
-          aring.w=w; aring.filled=filled; aring.written+=cnt;
+          for(let k=0;k<silentN;k++){ A[w]=0; w=(w+1)%size; if(filled<size) filled++; }
+          aring.w=w; aring.filled=filled; aring.written+=silentN;
         }
         n.underruns++;
         rtlTrackMsps(n, cnt, t1-t0, 0);
@@ -1256,15 +1309,16 @@ async function rtlReadLoop(n){
         if(!n.reading) return;                    // отключились, пока чанк ждал своей очереди
         const wms=tDemodDone-t1;                   // честное время воркера, без ожидания очереди записи
         for(let ci=0;ci<active.length;ci++){
-          const ch=active[ci];
-          if(!ch.active || !ch.aring){ ch.worker?.giveBuffer(results[ci]); continue; }  // канал сняли/пересобрали, пока чанк ждал
-          const audio=new Float32Array(results[ci]);
+          const ch=active[ci], res=results[ci];
+          if(!ch.active || !ch.aring){ ch.worker?.giveBuffer(res.buffer); continue; }  // канал сняли/пересобрали, пока чанк ждал
+          const outN=res.cnt;                       // уже децимированное число отсчётов, не cnt (сырых)
+          const audio=new Float32Array(res.buffer, 0, outN);
           const aring=ch.aring;
           let w=aring.w, filled=aring.filled;
           const A=aring.A, size=aring.size;
-          for(let k=0;k<cnt;k++){ A[w]=audio[k]; w=(w+1)%size; if(filled<size) filled++; }
-          aring.w=w; aring.filled=filled; aring.written+=cnt;
-          ch.worker.giveBuffer(results[ci]);
+          for(let k=0;k<outN;k++){ A[w]=audio[k]; w=(w+1)%size; if(filled<size) filled++; }
+          aring.w=w; aring.filled=filled; aring.written+=outN;
+          ch.worker.giveBuffer(res.buffer);
         }
         rtlTrackMsps(n, cnt, t1-t0, wms);
       });
@@ -1447,7 +1501,9 @@ function rtlReadIQ(n, oi, oq){
 // и своё состояние чтения — читаются независимо друг от друга и от сырого IQ)
 function rtlReadChannelAudio(n, ch, o){
   if(!n.connected || !ch.active || !ch.aring || ch.aring.filled<ch.aring.size*0.2){ o.fill(0); return; }
-  const ring=ch.aring, step=n.sourceRate/Eng.sr, need=step*BLOCK;
+  // кольцо хранит уже децимированный воркером звук (см. n.decim/rtlDecimFor), не сырые IQ-отсчёты —
+  // шаг чтения считаем от реальной частоты содержимого кольца, а не от sourceRate приёмника.
+  const ring=ch.aring, step=(n.sourceRate/(n.decim||1))/Eng.sr, need=step*BLOCK;
   let lag=ring.written-ch.readCount;
   if(lag>ring.size*0.9){
     const delta=lag-ring.size*0.5;
@@ -1621,6 +1677,7 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     if(typeof I.bw==='number') setMod(n,'bw',I.bw);
     const cf=n.actualFreq??n.p.freq, half=n.sourceRate/2;
     rtlApplyPending(n); // не await — асинхронно применится, когда сможет (только 'freq'/gain — через USB)
+    n.decim=rtlDecimFor(n.p.demod, n.sourceRate, n.p.bw); // дёшево, держим свежим каждый тик — читает rtlReadChannelAudio и readerLoop
 
     // конфиг и дешёвая NCO-перестройка для всех АКТИВНЫХ каналов разом
     for(let ci=0;ci<4;ci++){
@@ -1632,11 +1689,13 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
         ch.hardKey=hardKey;
         ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph});
         ch.worker.reset();
+        rtlResizeChannelRing(n, ch);   // decim мог смениться вместе с mode — кольцо иначе рассинхронизируется со временем
       } else {
         const softKey=n.p.bw+'|'+n.p.deemph;
         if(softKey!==ch.softKey){
           ch.softKey=softKey;
           ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph});
+          rtlResizeChannelRing(n, ch);  // bw участвует в decim для SSB (там chanBw==bw) — тот же случай
         }
       }
       const wantTune=clamp(ch.tuneFreq==null?cf:ch.tuneFreq, cf-half, cf+half), wantOffset=wantTune-cf;
