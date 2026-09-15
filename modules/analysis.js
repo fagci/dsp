@@ -855,6 +855,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   outs:[{n:'f1',t:'num'},{n:'l1',t:'num'},{n:'f2',t:'num'},{n:'l2',t:'num'},
         {n:'f3',t:'num'},{n:'l3',t:'num'},{n:'f4',t:'num'},{n:'l4',t:'num'},
         {n:'fr1',t:'num'},{n:'fr2',t:'num'},{n:'fr3',t:'num'},{n:'fr4',t:'num'},
+        {n:'db1',t:'num'},{n:'db2',t:'num'},{n:'db3',t:'num'},{n:'db4',t:'num'},
         {n:'centerFreq',t:'num'}],
   view:{h:280}, pick:true, resize:true,
   params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)'},
@@ -926,11 +927,14 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     // за границу того, что приёмник физически захватил сейчас. Именно 'steerFreq', а НЕ tuneFreq
     // демод-каналов — у демод-каналов (в т.ч. маркеров f1-f4) реальный центр больше не переставляют
     // нарочно, иначе авто-найденный (например, cfar) сигнал мог утащить приёмник без спроса.
-    // n._dragCenter — НЕподрезанный центр, который просят при перетаскивании за край (см. drag
-    // в draw()); само окно (fmin/fmax) при этом клэмпится к реальной полосе — иначе saBounds()
-    // (общая для всех, не только для этого узла) не умеет корректно показать окно, у которого
-    // оба конца одновременно вылезли за один и тот же край, и картинка "разъезжается". Раз он
-    // есть — он и есть желаемый центр; иначе — просто центр (уже клэмпленного) окна просмотра.
+    // n._dragCenter — запрос на перестройку РОВНО на одну "страницу" (ширину полосы приёмника) в
+    // сторону, куда тащат окно за реально захваченный край (см. drag в draw() — там же почему не
+    // просто (fmin+fmax)/2: с почти полностью открытым auto-range окном это требовало бы тащить
+    // курсор на пол-канвы, прежде чем перестройка вообще случалась бы). Само окно (fmin/fmax) при
+    // этом клэмпится к реальной полосе — иначе saBounds() (общая для всех, не только для этого
+    // узла) не умеет корректно показать окно, у которого оба конца одновременно вылезли за один
+    // и тот же край, и картинка "разъезжается". Раз n._dragCenter задан (т.е. прямо сейчас тащат
+    // за край) — он и есть желаемый центр; иначе — просто центр (уже клэмпленного) окна просмотра.
     o.centerFreq = n._dragCenter!=null ? n._dragCenter
                  : (n.p.fmin!=null && n.p.fmax!=null ? (n.p.fmin+n.p.fmax)/2 : null);
     const N=sp? sp.mag.length : 0;
@@ -949,14 +953,20 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     }
     for(let k=0;k<4;k++){
       const f=n.mk[k];
-      if(f==null||!sp){ o['f'+(k+1)]=f==null?null:f; o['l'+(k+1)]=null; o['fr'+(k+1)]=null;
+      if(f==null||!sp){ o['f'+(k+1)]=f==null?null:f; o['l'+(k+1)]=null; o['fr'+(k+1)]=null; o['db'+(k+1)]=null;
                          n.mkRev[k]=-1; continue; }
       const lo=clamp(Math.floor(specBin(sp,f-n.p.tol)),0,N-1),
             hi=clamp(Math.ceil (specBin(sp,f+n.p.tol)),0,N-1);
       let mx=0, bin=lo; for(let i=lo;i<=hi;i++) if(sp.mag[i]>mx){ mx=sp.mag[i]; bin=i; }
       n.db[k]=20*Math.log10(mx+1e-12);
       n.lv[k]=clamp((n.db[k]-n.p.floor)/((n.p.top-n.p.floor)||1),0,1);
-      o['f'+(k+1)]=f; o['l'+(k+1)]=n.lv[k];
+      // l1..l4 — НОРМАЛИЗОВАННЫЙ (0..1 между floor/top) уровень, для UI/индикаторов; db1..db4 —
+      // тот же уровень в НАСТОЯЩИХ дБ, для узлов, которые сами работают в дБ (например, squelch:
+      // его 'level' сравнивается напрямую с порогом threshold в дБ — если туда по ошибке завести
+      // l1 вместо db1, порог сравнивается с числом 0..1, а не с дБ, и почти всегда либо всегда
+      // "открыт", либо всегда "закрыт", в зависимости от знака порога — так и выглядит "squelch
+      // показывает какую-то ерунду, хотя l1 показывает адекватный уровень").
+      o['f'+(k+1)]=f; o['l'+(k+1)]=n.lv[k]; o['db'+(k+1)]=n.db[k];
       // фазовое уточнение: только между соседними кадрами (rev не пропущен) и если пик
       // не перескочил больше чем на 1 бин — иначе это, скорее всего, другой сигнал, не дрейф
       let fr=specHz(sp,bin);
@@ -1020,10 +1030,21 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       // при чтении для отрисовки, а если оба конца одновременно улетают за один и тот же край
       // (ровно то, что раньше и уходило "за край" при перетаскивании), она честно откатывается на
       // весь охват — на глаз это будет выглядеть как "окно вдруг растягивается", а не как плавный
-      // упор в край. Поэтому "уйти за край" в fmin/fmax не даём, но ЖЕЛАЕМЫЙ (не подрезанный)
-      // центр всё равно копим отдельно в n._dragCenter — именно он идёт в o.centerFreq (см.
-      // process()), и именно это даёт "утащить окно за край — приёмник сам перестроится", не
-      // трогая при этом само отображение.
+      // упор в край. Поэтому "уйти за край" в fmin/fmax не даём.
+      //
+      // n._dragCenter — отдельный, НЕ клэмпленный сигнал для o.centerFreq (см. process()): как
+      // только окно упирается в реально захваченный край — просим ровно ОДНУ "страницу" (ширину
+      // полосы приёмника) в сторону перетаскивания, а не (fmin+fmax)/2 как раньше. Раньше окно
+      // (почти всегда показывающее ~всю захваченную полосу целиком, а не увеличенный кусок —
+      // так исторически настраивают auto-range) должно было утащиться на ПОЛОВИНУ ширины ПРИЁМНИКА
+      // (rtlsdr.sourceRate/2), прежде чем centerFreq вообще пересекал бы порог перестройки у
+      // rtlsdr (см. steerFreq в process() у rtlsdr) — то есть требовалось тащить курсор больше чем
+      // на половину ширины канвы, что и выглядело как "steer не крутит центр". Теперь любое, даже
+      // однопиксельное, превышение реально захваченного края сразу просит перестройку ровно на
+      // одну полосу (sourceRate) — так же, как перелистывание страницы: дотащил до края — приёмник
+      // перестроился, показанное окно (уже клэмпленное) на следующем кадре само подхватит новые
+      // данные. Держать курсор дальше за краем — снова и снова просит ту же (или следующую, если
+      // приёмник уже успел перестроиться) страницу, пока не отпустят.
       let drag=null;
       cv.addEventListener('pointerdown', ev=>{
         if(!n.s) return;
@@ -1046,14 +1067,15 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           const range=hi0-lo0;
           newLo=lo0-range*dt; newHi=hi0-range*dt;
         }
-        n._dragCenter=(newLo+newHi)/2;               // неподрезанный — см. комментарий выше и process()
-        const [fullLo,fullHi]=specSpan(n.s), range2=newHi-newLo;
-        if(newLo<fullLo){ newLo=fullLo; newHi=newLo+range2; }
-        if(newHi>fullHi){ newHi=fullHi; newLo=newHi-range2; }
+        const [fullLo,fullHi]=specSpan(n.s), range2=newHi-newLo, sr=n.s.sr||(fullHi-fullLo);
+        const cf0=(fullLo+fullHi)/2;                 // центр РЕАЛЬНО захваченной полосы — см. комментарий выше
+        if(newLo<fullLo){ n._dragCenter=cf0-sr; newLo=fullLo; newHi=fullLo+range2; }
+        else if(newHi>fullHi){ n._dragCenter=cf0+sr; newHi=fullHi; newLo=fullHi-range2; }
+        else n._dragCenter=null;                     // внутри полосы — просить перестройку не о чем
         saSetRange(n, newLo, newHi);
       }, {passive:false});
-      cv.addEventListener('pointerup', ()=>{ drag=null; });
-      cv.addEventListener('pointercancel', ()=>{ drag=null; });
+      cv.addEventListener('pointerup', ()=>{ drag=null; n._dragCenter=null; });
+      cv.addEventListener('pointercancel', ()=>{ drag=null; n._dragCenter=null; });
     }
     if(n.s){
       const dpr=(cv.pxW&&cv.width)?cv.pxW/cv.width:1, Wp=cv.pxW||W, hwP=Math.max(1,Math.round(hw*dpr));
