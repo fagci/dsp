@@ -822,6 +822,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'log',t:'check',d:false},
           {n:'grid',t:'check',d:true},
           {n:'mode',t:'select',opts:['amplitude','phase','power','PSD'],d:'amplitude',label:'spectrum view'},
+          {n:'palette',t:'select',opts:['default',...Object.keys(PALETTES)],d:'default',label:'waterfall palette'},
+          {n:'peakHold',t:'check',d:false,label:'peak hold'},
+          {n:'peakClr',t:'button',label:'Clear peak hold',fn:n=>{n.peak=null;}},
           {n:'active',t:'buttons',opts:['1','2','3','4'],d:'1',label:'marker'},
           {n:'tol',t:'range',min:5,max:50000,step:5,log:true,d:50,label:'level window, Hz'},
           {n:'band',t:'select',opts:['none','by inputs','1–2','3–4'],d:'by inputs',label:'band'},
@@ -835,7 +838,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   // пика с предыдущим кадром спектра и по сдвигу фазы меряем частоту точнее ширины бина —
   // работает, только если источник спектра отдаёт sp.phase/sp.hop ('fft'/'zfft' это делают).
   init:n=>{n.mk=[null,null,null,null];n.lv=[0,0,0,0];n.db=[-120,-120,-120,-120];
-           n.ext=[0,0,0,0];n.pickT=null;
+           n.ext=[0,0,0,0];n.pickT=null;n.peak=null;n.peakFreqs=null;
            n.mkPhase=[0,0,0,0];n.mkBin=[null,null,null,null];n.mkRev=[-1,-1,-1,-1];},
   process(n,I){
     const sp=I.spec;
@@ -874,6 +877,19 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     n.band=(typeof I.bLo==='number'&&typeof I.bHi==='number')?[I.bLo,I.bHi]:null;
     const o={};
     const N=sp? sp.mag.length : 0;
+    // peak hold — максимум по каждому бину за всё время, пока включено. Держим на mag из sp
+    // (что реально показывается — после averaging'а источника, если он есть), а не на "сырых"
+    // отсчётах до усреднения: это уже стандартная практика для простых (не hardware-based)
+    // анализаторов, и не требует лезть в rtlUpdateSpec за ещё одним, необычным, полем. Сброс —
+    // по кнопке (peakClr) или сам по себе при смене частотной оси (freqs) — старые максимумы
+    // иначе будут указывать не на те частоты, что сейчас.
+    if(sp && n.p.peakHold){
+      if(!n.peak || n.peak.length!==N || n.peakFreqs!==(sp.freqs||null)){
+        n.peak=Float32Array.from(sp.mag); n.peakFreqs=sp.freqs||null;
+      } else {
+        for(let i=0;i<N;i++) if(sp.mag[i]>n.peak[i]) n.peak[i]=sp.mag[i];
+      }
+    }
     for(let k=0;k<4;k++){
       const f=n.mk[k];
       if(f==null||!sp){ o['f'+(k+1)]=f==null?null:f; o['l'+(k+1)]=null; o['fr'+(k+1)]=null;
@@ -1001,12 +1017,18 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       // у кого rev нет (на всякий случай) — сверяем ссылку самого объекта.
       const fresh = n.s.rev!=null ? n.s.rev!==n._lastRev : n.s!==n._lastSpecRef;
       if(fresh || !n._wfInited){
+        // палитру не привязываем к триггеру "новая строка" — иначе смена палитры без новых
+        // данных продавила бы в водопад лишнюю (повторную) строку, как раз то, от чего защищает
+        // проверка fresh выше. Просто красим следующую НАСТОЯЩУЮ новую строку уже новой палитрой —
+        // старая история водопада хранит только готовые RGBA-пиксели, её перекрашивать задним
+        // числом не из чего (см. n.off ниже).
+        const pal=paletteLut(n.p.palette);
         ox.drawImage(n.off,0,1);                     // сдвигаем водопад на строку только на новых данных
         const line=n._line, d=line.data;
         for(let x=0;x<Wp;x++){
           const v=clamp((20*Math.log10(magReduce(m,edgeXwf[x],edgeXwf[x+1])+1e-12)-n.p.floor)/((n.p.top-n.p.floor)||1),0,1);
           const hk=heatIdx(v)*3, k=x*4;
-          d[k]=HEAT_LUT[hk]; d[k+1]=HEAT_LUT[hk+1]; d[k+2]=HEAT_LUT[hk+2]; d[k+3]=255; }
+          d[k]=pal[hk]; d[k+1]=pal[hk+1]; d[k+2]=pal[hk+2]; d[k+3]=255; }
         ox.putImageData(line,0,0);
         n._lastRev=n.s.rev; n._lastSpecRef=n.s; n._wfInited=true;
       }
@@ -1062,6 +1084,16 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       if(diff){ cx.strokeStyle='#ffffff22'; cx.beginPath();
         cx.moveTo(0,hs/2); cx.lineTo(W,hs/2); cx.stroke(); }
       }
+      // peak hold — тонкая линия максимума поверх обычной трассы (amplitude/power; для PSD своя
+      // нормировка, а n.peak копит обычную магнитуду — смешивать шкалы нельзя, поэтому там не рисуем)
+      if(n.p.peakHold && n.peak && n.peak.length===N && mode!=='phase' && mode!=='PSD'){
+        cx.strokeStyle='#ffd54a'; cx.lineWidth=1; cx.beginPath();
+        for(let x=0;x<W;x++){
+          const v=20*Math.log10(magReduce(n.peak,edgeX[x],edgeX[x+1])+1e-12);
+          const y=hs-clamp((v-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(hs-2)-1;
+          x?cx.lineTo(x,y):cx.moveTo(x,y); }
+        cx.stroke();
+      }
       cx.drawImage(n.off,0,hs,W,hw);       // без dw/dh источник (физ. пиксели) масштабируется на dpr лишний раз
     } else if(n.p.grid) saGrid(n,cx,W,hs,H);
     cx.strokeStyle='#2a3136'; cx.beginPath(); cx.moveTo(0,hs+.5); cx.lineTo(W,hs+.5); cx.stroke();
@@ -1087,6 +1119,28 @@ const HEAT_LUT=(()=>{
 })();
 function heatIdx(v){ return (clamp(v,0,1)*255)|0; }   // индекс в HEAT_LUT, без аллокаций
 function heat(v){ const k=heatIdx(v)*3; return [HEAT_LUT[k],HEAT_LUT[k+1],HEAT_LUT[k+2]]; } // на случай внешних вызовов
+
+// Выбираемые палитры водопада (PALETTES — см. modules/palettes.js) — списки опорных hex-цветов
+// из SDRangel/SDR++, ЛИНЕЙНО интерполируем в такой же 256-цветный LUT, как HEAT_LUT выше (а не
+// smoothstep между неравномерными точками, как у HEAT_STOPS — эти списки уже достаточно плотные,
+// сложная интерполяция им не нужна). Строим и кэшируем по требованию (32-64 палитры целиком
+// заранее — лишняя работа, если выбрана обычно одна и та же).
+const PALETTE_LUT_CACHE={};
+function hexToRgb(h){ const n=parseInt(h.slice(1),16); return [(n>>16)&255,(n>>8)&255,n&255]; }
+function buildPaletteLut(colors){
+  const rgb=colors.map(hexToRgb), segs=Math.max(1,rgb.length-1);
+  const lut=new Uint8ClampedArray(256*3);
+  for(let i=0;i<256;i++){
+    const t=i/255*segs, k=Math.min(segs-1,t|0), f=t-k;
+    const [r0,g0,b0]=rgb[k], [r1,g1,b1]=rgb[Math.min(rgb.length-1,k+1)];
+    lut[i*3]=r0+(r1-r0)*f; lut[i*3+1]=g0+(g1-g0)*f; lut[i*3+2]=b0+(b1-b0)*f;
+  }
+  return lut;
+}
+function paletteLut(name){
+  if(!name || name==='default' || !PALETTES[name]) return HEAT_LUT;
+  return PALETTE_LUT_CACHE[name] || (PALETTE_LUT_CACHE[name]=buildPaletteLut(PALETTES[name]));
+}
 
 def({ id:'const2', title:'Constellation', cat:'Analysis', ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'dec',t:'num'},{n:'scale',t:'num'},{n:'fade',t:'num'}],
   view:{h:150},
