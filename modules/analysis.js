@@ -880,7 +880,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   // пика с предыдущим кадром спектра и по сдвигу фазы меряем частоту точнее ширины бина —
   // работает, только если источник спектра отдаёт sp.phase/sp.hop ('fft'/'zfft' это делают).
   init:n=>{n.mk=[null,null,null,null];n.lv=[0,0,0,0];n.db=[-120,-120,-120,-120];
-           n.ext=[0,0,0,0];n.pickT=null;n.peak=null;n.peakFreqs=null;
+           n.ext=[0,0,0,0];n.pickT=null;n.peak=null;n.peakFreqs=null;n._dragCenter=null;
            n.mkPhase=[0,0,0,0];n.mkBin=[null,null,null,null];n.mkRev=[-1,-1,-1,-1];},
   process(n,I){
     const sp=I.spec;
@@ -925,7 +925,13 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     // по USB) происходит САМА, только когда пользователь утащит окно просмотра за границу того,
     // что приёмник физически захватил сейчас. Той же логике эта же 'tuneFreq' уже служит и для
     // маркеров — они не конфликтуют: один и тот же вход, просто выбирай, что к нему подключать.
-    o.centerFreq = n.p.fmin!=null && n.p.fmax!=null ? (n.p.fmin+n.p.fmax)/2 : null;
+    // n._dragCenter — НЕподрезанный центр, который просят при перетаскивании за край (см. drag
+    // в draw()); само окно (fmin/fmax) при этом клэмпится к реальной полосе — иначе saBounds()
+    // (общая для всех, не только для этого узла) не умеет корректно показать окно, у которого
+    // оба конца одновременно вылезли за один и тот же край, и картинка "разъезжается". Раз он
+    // есть — он и есть желаемый центр; иначе — просто центр (уже клэмпленного) окна просмотра.
+    o.centerFreq = n._dragCenter!=null ? n._dragCenter
+                 : (n.p.fmin!=null && n.p.fmax!=null ? (n.p.fmin+n.p.fmax)/2 : null);
     const N=sp? sp.mag.length : 0;
     // peak hold — максимум по каждому бину за всё время, пока включено. Держим на mag из sp
     // (что реально показывается — после averaging'а источника, если он есть), а не на "сырых"
@@ -984,7 +990,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         if(ev.shiftKey){
           const pan=curRange*0.15*(ev.deltaY>0?1:-1);
           const newLo=clamp(curLo+pan, fullLo, fullHi-curRange);
-          n.set.fmin?.(newLo); n.set.fmax?.(newLo+curRange);
+          saSetRange(n, newLo, newLo+curRange);
         } else {
           const zoom=ev.deltaY>0?1.09:1/1.09;         // втрое медленнее прежнего (1.3 → 1.3^(1/3))
           const newRange=clamp(curRange*zoom, 10, fullHi-fullLo);
@@ -994,7 +1000,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           let newLo=fAtCursor-ratio*newRange, newHi=newLo+newRange;
           if(newLo<fullLo){ newLo=fullLo; newHi=newLo+newRange; }
           if(newHi>fullHi){ newHi=fullHi; newLo=newHi-newRange; }
-          n.set.fmin?.(newLo); n.set.fmax?.(newHi);
+          saSetRange(n, newLo, newHi);
           if(Math.abs(newLo-fullLo)<1 && Math.abs(newHi-fullHi)<1) n.set.auto?.(true);
         }
       }, {passive:false});
@@ -1008,10 +1014,15 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       // иначе за десятки мелких pointermove накопилась бы ошибка округления. Порог в 6px — тот же,
       // которым core-graph.js отличает тап (ставит маркер, см. 'pick' в bindNode) от перетаскивания,
       // так что одно и то же движение не пытается быть одновременно и тем, и другим.
-      // НЕ клэмпим итог к реально захваченной приёмником полосе (в отличие от panning колесом выше) —
-      // сознательно: см. o.centerFreq в process(), это и даёт "утащить окно за край — приёмник сам
-      // перестроится", а если centerFreq никуда не подключён, process() сам вернёт окно на видимые
-      // данные, как только оно перестанет пересекаться с полосой источника (см. там же).
+      // Показанное окно (fmin/fmax) клэмпим к реально захваченной приёмником полосе — так же, как
+      // panning колесом выше — а не оставляем гулять свободно: saBounds() всё равно ре-клэмпит их
+      // при чтении для отрисовки, а если оба конца одновременно улетают за один и тот же край
+      // (ровно то, что раньше и уходило "за край" при перетаскивании), она честно откатывается на
+      // весь охват — на глаз это будет выглядеть как "окно вдруг растягивается", а не как плавный
+      // упор в край. Поэтому "уйти за край" в fmin/fmax не даём, но ЖЕЛАЕМЫЙ (не подрезанный)
+      // центр всё равно копим отдельно в n._dragCenter — именно он идёт в o.centerFreq (см.
+      // process()), и именно это даёт "утащить окно за край — приёмник сам перестроится", не
+      // трогая при этом само отображение.
       let drag=null;
       cv.addEventListener('pointerdown', ev=>{
         if(!n.s) return;
@@ -1034,7 +1045,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           const range=hi0-lo0;
           newLo=lo0-range*dt; newHi=hi0-range*dt;
         }
-        n.set.fmin?.(newLo); n.set.fmax?.(newHi);
+        n._dragCenter=(newLo+newHi)/2;               // неподрезанный — см. комментарий выше и process()
+        const [fullLo,fullHi]=specSpan(n.s), range2=newHi-newLo;
+        if(newLo<fullLo){ newLo=fullLo; newHi=newLo+range2; }
+        if(newHi>fullHi){ newHi=fullHi; newLo=newHi-range2; }
+        saSetRange(n, newLo, newHi);
       }, {passive:false});
       cv.addEventListener('pointerup', ()=>{ drag=null; });
       cv.addEventListener('pointercancel', ()=>{ drag=null; });
