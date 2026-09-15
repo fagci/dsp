@@ -559,7 +559,11 @@ sel.addEventListener('change',()=>{ n.p[s.n]=sel.value; s.fn &&s.fn(n); });
 row.append(sel);
 } else if(s.t==='num'){
 const i=document.createElement('input'); i.type='number'; i.step='any'; i.value=n.p[s.n];
-i.addEventListener('input',()=>n.p[s.n]=+i.value); row.append(i);
+// 'change', а не 'input': иначе КАЖДАЯ цифра при наборе (1, 10, 105, 1050, …) сразу же уходит в
+// n.p[s.n] — а для чего-то вроде частоты приёмника это на каждой цифре реальная (через USB)
+// перестройка на бессмысленное промежуточное значение. 'change' коммитит один раз — по Enter,
+// по клику на спиннер, или по потере фокуса — ровно то число, что реально ввели.
+i.addEventListener('change',()=>n.p[s.n]=+i.value); row.append(i);
 (n.set||(n.set={}))[s.n]=v=>{ n.p[s.n]=v; i.value=v; };
 } else if(s.t==='check'){
 const i=document.createElement('input'); i.type='checkbox'; i.checked=!!n.p[s.n];
