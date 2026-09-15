@@ -1709,7 +1709,7 @@ async function rtlApplyPending(n){
 }
 
 def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
-  ins:[{n:'freq',t:'num'},{n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'},
+  ins:[{n:'freq',t:'num'},{n:'steerFreq',t:'num'},{n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'},
        {n:'gainDb',t:'num'},{n:'bw',t:'num'}],
   outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},
         {n:'audio',t:'sig'},{n:'audio2',t:'sig'},{n:'audio3',t:'sig'},{n:'audio4',t:'sig'},
@@ -1766,26 +1766,30 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     const freqDriven=freqInputPresent && I.freq!==n._prevIFreq;
     if(freqInputPresent){ setMod(n,'freq',I.freq); n._prevIFreq=I.freq; }
     const cf0=n.actualFreq??n.p.freq, half0=n.sourceRate/2;
-    // канал 1 — единственный, кто «крутит штурвал»: тюнер крутят плавно, а центр (дорогая
-    // перестройка по USB) должен подтягиваться скачками — пока новая частота внутри захваченной
-    // полосы, просто дешёвая NCO-перестройка; вышли за край — сдвигаем центр на ширину полосы
-    // обзора в сторону тюнинга (как страница); а если частота совсем далеко (вбили руками) —
-    // не скакать полосами, а перетюнить центр сразу.
-    if(typeof I.tuneFreq==='number'){
-      const want=I.tuneFreq;
-      if(freqDriven){
-        n.ch[0].tuneFreq=want;
-      } else if(Math.abs(want-cf0) > n.sourceRate*2){
-        n.p.freq=want; n.set.freq?.(want); n.ch[0].tuneFreq=null;   // null = следует за новым центром
+    // steerFreq — единственный (не считая 'freq'/Тюнера) вход, которому разрешено дёргать
+    // РЕАЛЬНЫЙ центр приёмника: пока запрошенная частота внутри захваченной полосы — ничего не
+    // делаем (дорогая перестройка не нужна); вышли за край — сдвигаем центр на ширину полосы
+    // обзора в сторону запроса (как страница); а если совсем далеко — перетюнить центр сразу, не
+    // скача полосами. У него нет своего канала/звука — это чисто "куда смотрит приёмник", для
+    // ручной навигации (Тюнер уже 'freq', это — например, drag спектра, см. sa.centerFreq).
+    // НИ ОДИН демод-канал (tuneFreq..tuneFreq4 ниже) реальный центр больше не переставляет —
+    // раньше это умел канал 0, но тогда авто-найденный (cfar) или просто далёкий маркер на нём
+    // мог utащить приёмник без явной команды пользователя. Теперь все 4 канала — только NCO в
+    // пределах уже захваченного; сигнал вне текущей полосы у них просто пропадает, пока приёмник
+    // не перестроят явно через 'freq' или 'steerFreq'.
+    if(typeof I.steerFreq==='number' && !freqDriven){
+      const want=I.steerFreq;
+      if(Math.abs(want-cf0) > n.sourceRate*2){
+        n.p.freq=want; n.set.freq?.(want);
       } else if(want<cf0-half0 || want>cf0+half0){
         const newCf=cf0 + (want<cf0-half0 ? -n.sourceRate : n.sourceRate);
         n.p.freq=newCf; n.set.freq?.(newCf);
-        n.ch[0].tuneFreq=want;
-      } else {
-        n.ch[0].tuneFreq=want;
       }
     }
-    // каналы 2-4 — просто NCO-офсет в пределах УЖЕ захваченной полосы, центр не переставляют
+    // канал 0 — просто NCO-офсет в пределах уже захваченной полосы, как и 1-3 ниже (см. steerFreq
+    // выше про то, кто теперь отвечает за реальную перестройку).
+    if(typeof I.tuneFreq==='number') n.ch[0].tuneFreq=I.tuneFreq;
+    // каналы 2-4 — то же самое, плюс ленивая активация при первом же числе на их tuneFreqN
     // (одновременно можно слушать только то, что помещается в одну физически настроенную полосу)
     for(let ci=1;ci<4;ci++){
       const want=I['tuneFreq'+RTL_CH_SUFFIX[ci]];
