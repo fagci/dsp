@@ -881,10 +881,31 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   // пика с предыдущим кадром спектра и по сдвигу фазы меряем частоту точнее ширины бина —
   // работает, только если источник спектра отдаёт sp.phase/sp.hop ('fft'/'zfft' это делают).
   init:n=>{n.mk=[null,null,null,null];n.lv=[0,0,0,0];n.db=[-120,-120,-120,-120];
-           n.ext=[0,0,0,0];n.pickT=null;n.peak=null;n.peakFreqs=null;n._dragCenter=null;
+           n.ext=[0,0,0,0];n.pickT=null;n.peak=null;n.peakFreqs=null;n._dragCenter=null;n._dragPageDir=0;
            n.mkPhase=[0,0,0,0];n.mkBin=[null,null,null,null];n.mkRev=[-1,-1,-1,-1];},
   process(n,I){
     const sp=I.spec;
+    // отпускание мыши/пальца снимает n._dragCenter не сразу: реальная перестройка (USB, ~асинхронно)
+    // может ещё не успеть подхватиться, и тогда o.centerFreq на миг снова покажет СТАРЫЙ центр —
+    // steerFreq решит, что надо перестроиться назад ("частота периодически возвращается туда же").
+    // Снимаем n._dragCenter только когда реально захваченная полоса (specSpan) уже центрирована
+    // рядом с запрошенной целью — то есть перестройка действительно случилась. Заодно сдвигаем само
+    // окно (fmin/fmax) на ту же страницу (n._dragPageDir·sr) — иначе оно так и останется прижатым
+    // draw()'ом к краю ещё СТАРОЙ полосы (если отпустили мышь до того, как перестройка подхватилась,
+    // больше НИКТО его не сдвинет), и (fmin+fmax)/2 снова укажет на старое место — приёмник дёрнется
+    // обратно ("дрыгается туда-сюда и остаётся там же было"). Делаем это ДО общей проверки ниже
+    // ("диапазон не пересекается с данными — подхватить целиком") — иначе та сработает первой (узкое
+    // окно, прижатое к самому краю старой полосы, ровно тычется в новую) и схлопнет зум на весь охват.
+    if(sp && n._dragCenter!=null){
+      const [lo0,hi0]=specSpan(sp), cf0now=(lo0+hi0)/2, sr=sp.sr||(hi0-lo0);
+      if(Math.abs(n._dragCenter-cf0now) < sr*0.5){
+        if(n._dragPageDir && typeof n.p.fmin==='number' && typeof n.p.fmax==='number'){
+          const shift=n._dragPageDir*sr;
+          saSetRange(n, n.p.fmin+shift, n.p.fmax+shift);
+        }
+        n._dragCenter=null; n._dragPageDir=0;
+      }
+    }
     // ручной диапазон вообще не пересекается с реальными данными — источник сменил масштаб
     // (например, подключили RF-спектр rtlsdr вместо аудио с fft) — подхватываем его целиком,
     // иначе окно клэмпится в вырожденную точку у края, и клик по графику всегда даёт одну и ту
@@ -935,15 +956,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     // узла) не умеет корректно показать окно, у которого оба конца одновременно вылезли за один
     // и тот же край, и картинка "разъезжается". Раз n._dragCenter задан (т.е. прямо сейчас тащат
     // за край) — он и есть желаемый центр; иначе — просто центр (уже клэмпленного) окна просмотра.
-    // отпускание мыши/пальца снимает n._dragCenter не сразу: реальная перестройка (USB, ~асинхронно)
-    // может ещё не успеть подхватиться, и тогда o.centerFreq на миг снова покажет СТАРЫЙ центр —
-    // steerFreq решит, что надо перестроиться назад ("частота периодически возвращается туда же").
-    // Снимаем n._dragCenter только когда реально захваченная полоса (specSpan) уже центрирована
-    // рядом с запрошенной целью — то есть перестройка действительно случилась.
-    if(sp && n._dragCenter!=null){
-      const [lo0,hi0]=specSpan(sp), cf0now=(lo0+hi0)/2, sr=sp.sr||(hi0-lo0);
-      if(Math.abs(n._dragCenter-cf0now) < sr*0.5) n._dragCenter=null;
-    }
+    // Снятие n._dragCenter и связанный сдвиг fmin/fmax сделаны раньше, в самом начале process()
+    // (см. комментарий там) — до общей проверки auto/"диапазон не пересекается с данными", чтобы
+    // та не успела среагировать первой и схлопнуть узкое окно на весь охват.
     o.centerFreq = n._dragCenter!=null ? n._dragCenter
                  : (n.p.fmin!=null && n.p.fmax!=null ? (n.p.fmin+n.p.fmax)/2 : null);
     const N=sp? sp.mag.length : 0;
@@ -1078,9 +1093,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         }
         const [fullLo,fullHi]=specSpan(n.s), range2=newHi-newLo, sr=n.s.sr||(fullHi-fullLo);
         const cf0=(fullLo+fullHi)/2;                 // центр РЕАЛЬНО захваченной полосы — см. комментарий выше
-        if(newLo<fullLo){ n._dragCenter=cf0-sr; newLo=fullLo; newHi=fullLo+range2; }
-        else if(newHi>fullHi){ n._dragCenter=cf0+sr; newHi=fullHi; newLo=fullHi-range2; }
-        else n._dragCenter=null;                     // внутри полосы — просить перестройку не о чем
+        if(newLo<fullLo){ n._dragCenter=cf0-sr; n._dragPageDir=-1; newLo=fullLo; newHi=fullLo+range2; }
+        else if(newHi>fullHi){ n._dragCenter=cf0+sr; n._dragPageDir=1; newHi=fullHi; newLo=fullHi-range2; }
+        else { n._dragCenter=null; n._dragPageDir=0; } // внутри полосы — просить перестройку не о чем
         saSetRange(n, newLo, newHi);
       }, {passive:false});
       // n._dragCenter НЕ сбрасываем здесь: перестройка (USB) асинхронна и может ещё не подхватиться
