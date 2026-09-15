@@ -935,6 +935,15 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     // узла) не умеет корректно показать окно, у которого оба конца одновременно вылезли за один
     // и тот же край, и картинка "разъезжается". Раз n._dragCenter задан (т.е. прямо сейчас тащат
     // за край) — он и есть желаемый центр; иначе — просто центр (уже клэмпленного) окна просмотра.
+    // отпускание мыши/пальца снимает n._dragCenter не сразу: реальная перестройка (USB, ~асинхронно)
+    // может ещё не успеть подхватиться, и тогда o.centerFreq на миг снова покажет СТАРЫЙ центр —
+    // steerFreq решит, что надо перестроиться назад ("частота периодически возвращается туда же").
+    // Снимаем n._dragCenter только когда реально захваченная полоса (specSpan) уже центрирована
+    // рядом с запрошенной целью — то есть перестройка действительно случилась.
+    if(sp && n._dragCenter!=null){
+      const [lo0,hi0]=specSpan(sp), cf0now=(lo0+hi0)/2, sr=sp.sr||(hi0-lo0);
+      if(Math.abs(n._dragCenter-cf0now) < sr*0.5) n._dragCenter=null;
+    }
     o.centerFreq = n._dragCenter!=null ? n._dragCenter
                  : (n.p.fmin!=null && n.p.fmax!=null ? (n.p.fmin+n.p.fmax)/2 : null);
     const N=sp? sp.mag.length : 0;
@@ -1074,8 +1083,12 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         else n._dragCenter=null;                     // внутри полосы — просить перестройку не о чем
         saSetRange(n, newLo, newHi);
       }, {passive:false});
-      cv.addEventListener('pointerup', ()=>{ drag=null; n._dragCenter=null; });
-      cv.addEventListener('pointercancel', ()=>{ drag=null; n._dragCenter=null; });
+      // n._dragCenter НЕ сбрасываем здесь: перестройка (USB) асинхронна и может ещё не подхватиться
+      // к моменту отпускания — снятие происходит в process(), когда захват реально догонит цель
+      // (см. комментарий там же). Иначе краткий миг между отпусканием и подхватом отдаёт steerFreq
+      // устаревший центр, и приёмник дёргается обратно ("частота периодически возвращается туда же").
+      cv.addEventListener('pointerup', ()=>{ drag=null; });
+      cv.addEventListener('pointercancel', ()=>{ drag=null; });
     }
     if(n.s){
       const dpr=(cv.pxW&&cv.width)?cv.pxW/cv.width:1, Wp=cv.pxW||W, hwP=Math.max(1,Math.round(hw*dpr));

@@ -1776,6 +1776,16 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     const manualEdit=n._prevPFreq!=null && n.p.freq!==n._prevPFreq;
     const freqDriven=wireChanged || manualEdit;
     if(freqInputPresent){ setMod(n,'freq',I.freq); n._prevIFreq=I.freq; }
+    // Уступить steerFreq дорогу только на ОДИН тик (см. freqDriven выше) недостаточно: пока сам
+    // steerFreq не переменился (fmin/fmax у 'sa' не трогали — там всё ещё старая, уже неактуальная
+    // цель), он на СЛЕДУЮЩЕМ же тике возобновляет обычную работу и тащит центр обратно — снаружи
+    // это и есть "ввод частоты руками так и не чинится". Вместо одноразовой уступки запоминаем
+    // (n._steerFreqHold) само значение steerFreq в момент ручной правки/Тюнера и держим его
+    // подавленным, пока оно не изменится — то есть пока пользователь заново не потрогает спектр
+    // (drag/zoom подвинут sa.centerFreq). Как только цель реально другая — steerFreq возвращает
+    // себе право переставлять центр, никакого постоянного "замка".
+    if(freqDriven) n._steerFreqHold = typeof I.steerFreq==='number' ? I.steerFreq : undefined;
+    const steerSuppressed = n._steerFreqHold!==undefined && I.steerFreq===n._steerFreqHold;
     const cf0=n.actualFreq??n.p.freq, half0=n.sourceRate/2;
     // steerFreq — единственный (не считая 'freq'/Тюнера) вход, которому разрешено дёргать
     // РЕАЛЬНЫЙ центр приёмника: пока запрошенная частота внутри захваченной полосы — ничего не
@@ -1788,7 +1798,7 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     // мог утащить приёмник без явной команды пользователя. Теперь все 4 канала — только NCO в
     // пределах уже захваченного; сигнал вне текущей полосы у них просто пропадает, пока приёмник
     // не перестроят явно через 'freq' или 'steerFreq'.
-    if(typeof I.steerFreq==='number' && !freqDriven){
+    if(typeof I.steerFreq==='number' && !freqDriven && !steerSuppressed){
       const want=I.steerFreq;
       if(Math.abs(want-cf0) > n.sourceRate*2){
         n.p.freq=want; n.set.freq?.(want);
