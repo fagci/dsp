@@ -385,8 +385,20 @@ inp.addEventListener('blur',()=>done(true));
 }
 box.addEventListener('wheel',e=>{
 e.preventDefault(); e.stopPropagation();
+// троттлинг: трекпад на один "свайп" шлёт десятки-сотни wheel-событий подряд (не одно, как
+// нотч физического колеса), а шаг для лог-параметра — процент от ТЕКУЩЕГО значения за событие,
+// то есть множится на каждое из них. Только троттлинг интервала (без снижения шага) всё ещё
+// давал заметный разгон: на всплеске ~100 событий/с сквозь 40мс-троттлинг проходит ~1 из 3,
+// и даже так 640мс свайпа (реалистичная длительность одного жеста) давали ×2.2 — как раз то,
+// что и словили ("крутится сильно... за одну прокрутку"). Оба параметра снижены вместе — так
+// на типичный непрерывный жест (сотни мс — секунда) набегает разумных ~×1.3, а не ×2+, но
+// отдельные редкие нотчи настоящего колеса мыши (события заведомо реже троттлинга) всё ещё
+// шагают на полный процент за раз, не становясь медленнее.
+const now=performance.now();
+if(box._lastWheelT!=null && now-box._lastWheelT<80) return;
+box._lastWheelT=now;
 const v=n.p[s.n], step=s.log
-? Math.max(Math.abs(v)*.05,(smax-smin)/1000)
+? Math.max(Math.abs(v)*.03,(smax-smin)/1000)
 : (s.step||1);
 setV(v+(e.deltaY <0?step:-step));
 },{passive:false});
@@ -423,6 +435,11 @@ setV(getV()+dy*(e.shiftKey?s.step/10:s.step)); });
 const end=()=>{ pid=null; box.style.cursor='grab'; };
 box.addEventListener('pointerup',end); box.addEventListener('pointercancel',end);
 box.addEventListener('wheel',e=>{ e.preventDefault(); e.stopPropagation();
+// тот же троттлинг, что и у 'range'/'range2' — трекпад может прислать десятки событий на
+// один свайп; тут шаг фиксированный (не множится), но незачем позволять и ему разгоняться.
+const now=performance.now();
+if(box._lastWheelT!=null && now-box._lastWheelT<80) return;
+box._lastWheelT=now;
 setV(getV()+(e.deltaY <0?s.step:-s.step)*10); },{passive:false});
 row.append(box,valEl);
 } else if(s.t==='code'){
@@ -504,7 +521,12 @@ if(ev.key==='Enter') done(true); if(ev.key==='Escape') done(false); });
 inp.addEventListener('blur',()=>done(true)); }
 box.addEventListener('wheel',e=>{
 e.preventDefault(); e.stopPropagation();
-const v=n.p[key], st=log? Math.max(Math.abs(v)*.05,(max-min)/1000) : (step||1);
+// троттлинг + сниженный шаг — та же история и те же числа, что у обычного 'range' выше (см.
+// комментарий там подробно про то, почему троттлинга интервала одного было мало).
+const now=performance.now();
+if(box._lastWheelT!=null && now-box._lastWheelT<80) return;
+box._lastWheelT=now;
+const v=n.p[key], st=log? Math.max(Math.abs(v)*.03,(max-min)/1000) : (step||1);
 setV(v+(e.deltaY <0?st:-st)); },{passive:false});
 return box; };
 wrap.append(mkBox(s.keys[0],true));
