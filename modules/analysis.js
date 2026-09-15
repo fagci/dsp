@@ -854,7 +854,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
        {n:'log',t:'num'},{n:'grid',t:'num'}],
   outs:[{n:'f1',t:'num'},{n:'l1',t:'num'},{n:'f2',t:'num'},{n:'l2',t:'num'},
         {n:'f3',t:'num'},{n:'l3',t:'num'},{n:'f4',t:'num'},{n:'l4',t:'num'},
-        {n:'fr1',t:'num'},{n:'fr2',t:'num'},{n:'fr3',t:'num'},{n:'fr4',t:'num'}],
+        {n:'fr1',t:'num'},{n:'fr2',t:'num'},{n:'fr3',t:'num'},{n:'fr4',t:'num'},
+        {n:'centerFreq',t:'num'}],
   view:{h:280}, pick:true, resize:true,
   params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)'},
           {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[0,4000],label:'range, Hz'},
@@ -863,7 +864,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'log',t:'check',d:false},
           {n:'grid',t:'check',d:true},
           {n:'mode',t:'select',opts:['amplitude','phase','power','PSD'],d:'amplitude',label:'spectrum view'},
-          {n:'palette',t:'select',opts:['default',...Object.keys(PALETTES)],d:'default',label:'waterfall palette'},
+          {n:'palette',t:'select',opts:['default',...Object.keys(PALETTES)],d:'classic',label:'waterfall palette'},
           {n:'peakHold',t:'check',d:false,label:'peak hold'},
           {n:'peakClr',t:'button',label:'Clear peak hold',fn:n=>{n.peak=null;}},
           {n:'active',t:'buttons',opts:['1','2','3','4'],d:'1',label:'marker'},
@@ -917,6 +918,14 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     }
     n.band=(typeof I.bLo==='number'&&typeof I.bHi==='number')?[I.bLo,I.bHi]:null;
     const o={};
+    // centerFreq — центр ТЕКУЩЕГО окна просмотра (не привязан к маркерам f1..f4). Смысл — дать
+    // возможность "гулять" по спектру перетаскиванием/зумом (см. drag в draw() ниже), заведя этот
+    // выход на 'tuneFreq' приёмника: пока окно внутри уже захваченной приёмником полосы, там
+    // просто дешёвая NCO-подстройка (см. process() у rtlsdr) — реальная перестройка (дорогая,
+    // по USB) происходит САМА, только когда пользователь утащит окно просмотра за границу того,
+    // что приёмник физически захватил сейчас. Той же логике эта же 'tuneFreq' уже служит и для
+    // маркеров — они не конфликтуют: один и тот же вход, просто выбирай, что к нему подключать.
+    o.centerFreq = n.p.fmin!=null && n.p.fmax!=null ? (n.p.fmin+n.p.fmax)/2 : null;
     const N=sp? sp.mag.length : 0;
     // peak hold — максимум по каждому бину за всё время, пока включено. Держим на mag из sp
     // (что реально показывается — после averaging'а источника, если он есть), а не на "сырых"
@@ -993,6 +1002,42 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         ev.preventDefault();
         n.set.auto?.(true);                          // сброс зума — во всю полосу источника
       });
+      // перетаскивание — панорама простым зажатием и движением (без Shift/колеса), интуитивнее
+      // на трекпаде/touch. Якорим частоту под курсором и ширину окна В МОМЕНТ НАЖАТИЯ и на каждое
+      // движение пересчитываем окно заново от ЭТОЙ фиксированной точки, а не от прошлого кадра —
+      // иначе за десятки мелких pointermove накопилась бы ошибка округления. Порог в 6px — тот же,
+      // которым core-graph.js отличает тап (ставит маркер, см. 'pick' в bindNode) от перетаскивания,
+      // так что одно и то же движение не пытается быть одновременно и тем, и другим.
+      // НЕ клэмпим итог к реально захваченной приёмником полосе (в отличие от panning колесом выше) —
+      // сознательно: см. o.centerFreq в process(), это и даёт "утащить окно за край — приёмник сам
+      // перестроится", а если centerFreq никуда не подключён, process() сам вернёт окно на видимые
+      // данные, как только оно перестанет пересекаться с полосой источника (см. там же).
+      let drag=null;
+      cv.addEventListener('pointerdown', ev=>{
+        if(!n.s) return;
+        const rc=cv.getBoundingClientRect();
+        drag={x0:ev.clientX, w:rc.width, lo0:saFreq(n,0), hi0:saFreq(n,1)};
+      });
+      cv.addEventListener('pointermove', ev=>{
+        if(!drag || !n.s) return;
+        const dx=ev.clientX-drag.x0;
+        if(Math.abs(dx)<=6) return;                  // тот же порог, что у тапа — см. комментарий выше
+        ev.preventDefault();
+        if(n.p.auto) n.set.auto?.(false);
+        const {lo0,hi0,w}=drag, dt=dx/Math.max(1,w-1);
+        let newLo,newHi;
+        if(n.p.log){
+          const l0=Math.max(lo0,10), R=hi0/l0||1;    // R — во сколько раз охват шире низа (log-шаг)
+          const lB=l0/Math.pow(R,dt);
+          newLo=lB; newHi=lB*R;
+        } else {
+          const range=hi0-lo0;
+          newLo=lo0-range*dt; newHi=hi0-range*dt;
+        }
+        n.set.fmin?.(newLo); n.set.fmax?.(newHi);
+      }, {passive:false});
+      cv.addEventListener('pointerup', ()=>{ drag=null; });
+      cv.addEventListener('pointercancel', ()=>{ drag=null; });
     }
     if(n.s){
       const dpr=(cv.pxW&&cv.width)?cv.pxW/cv.width:1, Wp=cv.pxW||W, hwP=Math.max(1,Math.round(hw*dpr));
