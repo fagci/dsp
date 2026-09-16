@@ -25,11 +25,13 @@ function flush(){
   if (topoDirty)  { retopo();    topoDirty  = false; }
   if (wiresDirty) { drawWires(); wiresDirty = false; }
 }
-// Слой для наведённого провода: те же координаты, что у #wires, но стоит в DOM после #content —
-// поэтому рисуется поверх узлов. На проводе — клон path, сам провод остаётся кликабельным в #wires.
+// Слой для наведённого провода: те же координаты, что у #wires, но стоит в DOM после НЕГО —
+// толщина клона (см. ниже) должна быть видна поверх обычной линии, а не под ней. #wires сам
+// уже стоит после #content (см. index.html) — иначе провода, идущие к полям внутри тела ноды
+// (не только к портам по краю), просто пропадали бы под панелью на подходе к своему пину.
 const wiresFront=document.createElementNS('http://www.w3.org/2000/svg','svg');
 wiresFront.id='wiresFront';
-content.insertAdjacentElement('afterend',wiresFront);
+wires.insertAdjacentElement('afterend',wiresFront);
 function fillParamDefaults(n,d){                     // дефолты для параметров, которых ещё нет в n.p —
 for(const s of (d.params||[])){                     // при первом создании у зла и при смене состава параметров
 if(s.t==='button'||s.t==='file') continue;
@@ -815,7 +817,12 @@ link.tmp.remove(); link=null; }
 function dropLink(ev){                              // порт определяем по точке отпускания
 if(!link)  return;
 const moved=Math.hypot(ev.clientX-link.x0,ev.clientY-link.y0);
-const el=document.elementFromPoint(ev.clientX,ev.clientY)?.closest?.('.port,.mpin');
+// #wires теперь рисуется поверх узлов (см. index.html) — elementFromPoint мог бы вместо порта
+// нащупать чужой провод, случайно прошедший ровно над ним. elementsFromPoint отдаёт всю пачку
+// элементов в точке по z-порядку — берём первый, что реально порт, пропуская провода над ним.
+let el=null;
+for(const cand of document.elementsFromPoint(ev.clientX,ev.clientY)){
+const p=cand.closest?.('.port,.mpin'); if(p){ el=p; break; } }
 if(el  && el.dataset.dir  && el.dataset.dir!==link.dir){
 if(link.dir==='o') addEdge(link.n.id,link.port,el.dataset.node,el.dataset.port);
 else addEdge(el.dataset.node,el.dataset.port,link.n.id,link.port);
