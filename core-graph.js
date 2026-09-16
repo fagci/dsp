@@ -564,7 +564,11 @@ const i=document.createElement('input'); i.type='number'; i.step='any'; i.value=
 // перестройка на бессмысленное промежуточное значение. 'change' коммитит один раз — по Enter,
 // по клику на спиннер, или по потере фокуса — ровно то число, что реально ввели.
 i.addEventListener('change',()=>n.p[s.n]=+i.value); row.append(i);
-(n.set||(n.set={}))[s.n]=v=>{ n.p[s.n]=v; i.value=v; };
+// Пока поле в фокусе — программные обновления (например, непрерывно следующий steerFreq у
+// rtlsdr) не трогают i.value: иначе они стирают то, что человек ещё только печатает, СРАЗУ, даже
+// не дожидаясь commit'а по 'change' — "сбрасывается на текущую даже при начале ввода". n.p[s.n]
+// всё равно обновляем — как дойдёт до 'change' (blur/Enter), в него уйдёт то, что реально ввели.
+(n.set||(n.set={}))[s.n]=v=>{ n.p[s.n]=v; if(document.activeElement!==i) i.value=v; };
 } else if(s.t==='check'){
 const i=document.createElement('input'); i.type='checkbox'; i.checked=!!n.p[s.n];
 i.addEventListener('change',()=>n.p[s.n]=i.checked); row.append(i);
