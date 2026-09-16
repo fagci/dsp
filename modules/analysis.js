@@ -1032,33 +1032,49 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       // так что одно и то же движение не пытается быть одновременно и тем, и другим.
       // Пока окно (fmin/fmax) внутри реально захваченной полосы — просто панорама/зум, как обычно.
       // Как только упирается в реально захваченный край — окно "перелистывает" СРАЗУ, оптимистично,
-      // на одну целую "страницу" (ширину полосы приёмника, sourceRate) вперёд, НЕ дожидаясь, пока
+      // на целое число "страниц" (ширину полосы приёмника, sourceRate) вперёд, НЕ дожидаясь, пока
       // приёмник реально перестроится по USB (это асинхронно и может занять заметное время).
-      // drag.fullLo/fullHi — "виртуальная" граница реально захваченного (с точки зрения ЭТОГО же
-      // перетаскивания), стартует от настоящей specSpan() в момент нажатия и сама сдвигается на
-      // sourceRate при каждом перелистывании — так несколько страниц подряд в одном непрерывном
-      // движении мыши считаются правильно, не дожидаясь подтверждения между ними.
       //
-      // Раньше ждали, пока приёмник реально перестроится (specSpan подтвердит), и только потом
-      // двигали окно — но если мышь отпускали ДО подтверждения, окно так и оставалось прижатым к
-      // СТАРОМУ краю (двигать его было больше некому), (fmin+fmax)/2 снова указывал на старое место,
-      // и steerFreq тянул приёмник обратно — "дрыгается туда-сюда и остаётся там же было". Теперь
-      // окно двигается сразу и никогда само не откатывается; n._dragPending (см. process()) на время
-      // не даёт общей проверке "окно не пересекается с (ещё не подтверждёнными) данными" схлопнуть
-      // его обратно на весь охват, пока реальные данные не подтвердят страницу.
+      // pageShift считается КАЖДЫЙ РАЗ заново от ЗАФИКСИРОВАННЫХ в момент нажатия drag.fullLo0/
+      // fullHi0 и текущего dt — а не накапливается (fullLo/fullHi сдвигались бы на sr при КАЖДОМ
+      // срабатывании). Накопительный вариант ломался ровно на границе страницы: обычное дрожание
+      // руки/трекпада на пару пикселей туда-сюда у самого края раз за разом заново пересекало
+      // порог и КАЖДЫЙ РАЗ добавляло ещё one sourceRate поверх уже сдвинутого — окно улетало на
+      // много страниц вперёд почти сразу, приёмник не успевал угнаться, и всё это выглядело как
+      // "дрыгается, никак не прокрутить". Чистая функция от (текущая позиция мыши, исходная
+      // полоса) — идемпотентна: одно и то же положение мыши всегда даёт один и тот же pageShift,
+      // сколько бы раз событие ни повторилось.
+      //
+      // Раньше (до самого первого варианта этой фичи) ждали, пока приёмник реально перестроится
+      // (specSpan подтвердит), и только потом двигали окно — но если мышь отпускали ДО
+      // подтверждения, окно так и оставалось прижатым к СТАРОМУ краю, (fmin+fmax)/2 снова указывал
+      // на старое место, и steerFreq тянул приёмник обратно. Теперь окно двигается сразу и никогда
+      // само не откатывается; n._dragPending (см. process()) на время не даёт общей проверке "окно
+      // не пересекается с (ещё не подтверждёнными) данными" схлопнуть его обратно на весь охват,
+      // пока реальные данные не подтвердят страницу.
+      // setPointerCapture — без него, стоило увести курсор ЗА ГРАНИЦУ канвы (а она обычно куда
+      // уже, чем расстояние, которое реально нужно провести мышью, чтобы перелистнуть хоть одну
+      // страницу — см. комментарий про pageShift выше), pointermove просто переставали приходить
+      // на эту канву вообще: браузер шлёт их тому элементу, что сейчас под курсором, а это уже не
+      // канва. Драг застревал на месте до следующего случайного захода курсора обратно внутрь —
+      // выглядело как "не может прокрутиться, дрыгается", хотя сама логика перелистывания была
+      // уже верной. У ВСЕХ остальных подобных перетаскиваний в проекте (слайдеры, тюнер, другие
+      // канвы в sources.js) это уже стоит — только у этой, самой первой версии драга спектра,
+      // не было.
       let drag=null;
       cv.addEventListener('pointerdown', ev=>{
         if(!n.s) return;
-        const rc=cv.getBoundingClientRect(), [fullLo,fullHi]=specSpan(n.s);
-        drag={x0:ev.clientX, w:rc.width, lo0:saFreq(n,0), hi0:saFreq(n,1), fullLo, fullHi};
+        const rc=cv.getBoundingClientRect(), [fullLo0,fullHi0]=specSpan(n.s);
+        drag={x0:ev.clientX, w:rc.width, lo0:saFreq(n,0), hi0:saFreq(n,1), fullLo0, fullHi0, pid:ev.pointerId};
+        cv.setPointerCapture(ev.pointerId);
       });
       cv.addEventListener('pointermove', ev=>{
-        if(!drag || !n.s) return;
+        if(!drag || !n.s || ev.pointerId!==drag.pid) return;
         const dx=ev.clientX-drag.x0;
         if(Math.abs(dx)<=6) return;                  // тот же порог, что у тапа — см. комментарий выше
         ev.preventDefault();
         if(n.p.auto) n.set.auto?.(false);
-        const {lo0,hi0,w}=drag, dt=dx/Math.max(1,w-1);
+        const {lo0,hi0,w,fullLo0,fullHi0}=drag, dt=dx/Math.max(1,w-1);
         let newLo,newHi;
         if(n.p.log){
           const l0=Math.max(lo0,10), R=hi0/l0||1;    // R — во сколько раз охват шире низа (log-шаг)
@@ -1068,18 +1084,18 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           const range=hi0-lo0;
           newLo=lo0-range*dt; newHi=hi0-range*dt;
         }
-        const range2=newHi-newLo, sr=drag.fullHi-drag.fullLo||(n.s.sr||1);
-        if(newLo<drag.fullLo){
-          drag.fullLo-=sr; drag.fullHi-=sr; n._dragPending=true;
-          newLo=drag.fullLo; newHi=drag.fullLo+range2;
-        } else if(newHi>drag.fullHi){
-          drag.fullLo+=sr; drag.fullHi+=sr; n._dragPending=true;
-          newHi=drag.fullHi; newLo=drag.fullHi-range2;
-        }
+        const range2=newHi-newLo, sr=fullHi0-fullLo0||(n.s.sr||1);
+        let pageShift=0;
+        if(newHi>fullHi0) pageShift=Math.ceil((newHi-fullHi0)/sr);
+        else if(newLo<fullLo0) pageShift=-Math.ceil((fullLo0-newLo)/sr);
+        n._dragPending = pageShift!==0;
+        const curLo=fullLo0+pageShift*sr, curHi=fullHi0+pageShift*sr;
+        newLo=clamp(newLo, curLo, curHi-range2); newHi=newLo+range2;
         saSetRange(n, newLo, newHi);
       }, {passive:false});
-      cv.addEventListener('pointerup', ()=>{ drag=null; });
-      cv.addEventListener('pointercancel', ()=>{ drag=null; });
+      const endDrag=ev=>{ if(drag && ev.pointerId===drag.pid && cv.hasPointerCapture(ev.pointerId)) cv.releasePointerCapture(ev.pointerId); drag=null; };
+      cv.addEventListener('pointerup', endDrag);
+      cv.addEventListener('pointercancel', endDrag);
     }
     if(n.s){
       const dpr=(cv.pxW&&cv.width)?cv.pxW/cv.width:1, Wp=cv.pxW||W, hwP=Math.max(1,Math.round(hw*dpr));
