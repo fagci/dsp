@@ -1055,7 +1055,7 @@ let preStages=0;
 let ds1aP1I=0,ds1aP1Q=0,ds1aP2I=0,ds1aP2Q=0,ds1bP1I=0,ds1bP1Q=0,ds1bP2I=0,ds1bP2Q=0,ds1Phase=0;
 let ds2aP1I=0,ds2aP1Q=0,ds2aP2I=0,ds2aP2Q=0,ds2bP1I=0,ds2bP1Q=0,ds2bP2I=0,ds2bP2Q=0,ds2Phase=0;
 let ds3aP1I=0,ds3aP1Q=0,ds3aP2I=0,ds3aP2Q=0,ds3bP1I=0,ds3bP1Q=0,ds3bP2I=0,ds3bP2Q=0,ds3Phase=0;
-let cI0=0,cI1=0,cI2=0, cQ0=0,cQ1=0,cQ2=0, prevI=0,prevQ=0, lp=0,de=0,ampDc=0,audDc=0;
+let cI0=0,cI1=0,cI2=0, cQ0=0,cQ1=0,cQ2=0, prevI=0,prevQ=0, lp0=0,lp1=0,lp2=0,lp3=0,lp4=0,de=0,ampDc=0,audDc=0;
 // Общий NCO "частоты настройки": сдвигает выбранную внутри захваченной полосы точку
 // (offsetHz относительно центра тюнера) на 0 Гц ДО канального фильтра — так демодулируется
 // сигнал в любом месте полосы обзора без физической перестройки тюнера (без USB round-trip).
@@ -1101,7 +1101,7 @@ self.onmessage = function(e){
 const msg=e.data;
 if(msg.type==='config'){ applyConfig(msg); return; }
 if(msg.type==='offset'){ applyOffset(msg.hz); return; } // лёгкое обновление — без сброса фильтров/фазы
-if(msg.type==='reset'){ cI0=cI1=cI2=cQ0=cQ1=cQ2=prevI=prevQ=lp=de=ampDc=audDc=0; ssbPhI=1; ssbPhQ=0; offPhI=1; offPhQ=0; rawI0=0; rawQ0=0; decimCounter=1;
+if(msg.type==='reset'){ cI0=cI1=cI2=cQ0=cQ1=cQ2=prevI=prevQ=lp0=lp1=lp2=lp3=lp4=de=ampDc=audDc=0; ssbPhI=1; ssbPhQ=0; offPhI=1; offPhQ=0; rawI0=0; rawQ0=0; decimCounter=1;
 ds1aP1I=ds1aP1Q=ds1aP2I=ds1aP2Q=ds1bP1I=ds1bP1Q=ds1bP2I=ds1bP2Q=0;
 ds2aP1I=ds2aP1Q=ds2aP2I=ds2aP2Q=ds2bP1I=ds2bP1Q=ds2bP2I=ds2bP2Q=0;
 ds3aP1I=ds3aP1Q=ds3aP2I=ds3aP2Q=ds3bP1I=ds3bP1Q=ds3bP2I=ds3bP2Q=0;
@@ -1210,8 +1210,24 @@ prevI=cI2; prevQ=cQ2;
 }
 audDc=audDc*hpA+v*hpA1;
 const hp=v-audDc;
-lp=lp*lpA+hp*lpA1;
-let outv=lp;
+// Пять каскадных полюсов (тот же приём, что у канального chA выше, только длиннее), а не один —
+// WFM-дискриминатор после атан2 несёт не только звук, но и пилот-тон стерео (19кГц) и поднесущую
+// (23-53кГц, L-R разностный сигнал); один полюс на bwAudio=15кГц даёт склон всего 6дБ/окт — по
+// синтетическому тесту (verify_wfm_pilot_suppression.js) пилот на выходе дискриминатора глушится
+// им лишь на ~38дБ относительно программного звука, а на реальном эфире (см. спектрограмму
+// записи пользователя) виден и того сильнее — почти постоянная линия на 19кГц через всю запись.
+// Хуже того: этот сигнал ещё передискретизируется линейной интерполяцией до частоты движка
+// (Eng.sr, обычно 48кГц) в rtlReadChannelAudio — слабая антиалиасинг-фильтрация означает, что
+// недодавленные пилот/поднесущая (модулированные программой, а не чистый тон) заворачиваются
+// обратно в слышимую полосу как "трещащий" шум, меняющийся вместе с звуком — то самое "будто не
+// хватает буфера, слегка ускоряется/замедляется". Пять полюсов (~30дБ/окт) дают ~55дБ подавления
+// пилота в том же синтетическом тесте — заметный запас поверх трёх полюсов (~47дБ).
+lp0=lp0*lpA+hp*lpA1;
+lp1=lp1*lpA+lp0*lpA1;
+lp2=lp2*lpA+lp1*lpA1;
+lp3=lp3*lpA+lp2*lpA1;
+lp4=lp4*lpA+lp3*lpA1;
+let outv=lp4;
 if(deA!=null){ de=de*deA+outv*deA1; outv=de; }
 out[wIdx++]=outv;
 }
