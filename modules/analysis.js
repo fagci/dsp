@@ -916,10 +916,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       if(n._dragActive) n._dragPending=true;
       else if(n._dragPending && !(n.p.fmax<=lo0 || n.p.fmin>=hi0)) n._dragPending=false; // подтвердилось
       if(n.p.auto){                                   // авто — синхронизируем параметры с реальным охватом,
-        if(n.p.fmin!==lo0) n.set.fmin?.(lo0);          // иначе при снятии галочки слайдер откатится
-        if(n.p.fmax!==hi0) n.set.fmax?.(hi0);          // к старым ручным значениям, а не к видимому диапазону
-      } else if(!n._dragPending && (n.p.fmax<=lo0 || n.p.fmin>=hi0)){
-        n.set.fmin?.(lo0); n.set.fmax?.(hi0);
+        if(n.p.fmin!==lo0 || n.p.fmax!==hi0) saSetRange(n,lo0,hi0); // иначе при снятии галочки слайдер
+      } else if(!n._dragPending && (n.p.fmax<=lo0 || n.p.fmin>=hi0)){ // откатится к старым значениям
+        saSetRange(n,lo0,hi0);
       }
     }
     n.s=sp;
