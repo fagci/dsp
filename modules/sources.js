@@ -997,7 +997,11 @@ function rtlDecimFor(mode, sr, bwAudio){
 function rtlResizeChannelRing(n, ch){
   const asize=Math.max(50000, Math.round(n.ring.size/n.decim));
   ch.aring={A:new Float32Array(asize), size:asize, w:0, filled:0, written:0};
-  ch.readPos=0; ch.readCount=0; ch.rebuffering=false;
+  // rebuffering=true с самого начала — свежее кольцо пусто, и это ровно то же состояние, что и
+  // после настоящего провала в середине игры (см. rtlReadChannelAudio): пусть тот же самый,
+  // уже отлаженный механизм "молчим, пока не накопится безопасный запас" сработает и на самом
+  // первом чтении, без отдельного частного случая специально под старт.
+  ch.readPos=0; ch.readCount=0; ch.rebuffering=true;
 }
 function rtlResetRing(n){
   // размер кольца — под ~2с реального времени на ТЕКУЩЕМ sourceRate, а не фиксированное число
@@ -1005,7 +1009,9 @@ function rtlResetRing(n){
   // времени, и порог гистерезиса (в процентах от размера) превращается в секунды ожидания.
   const SIZE=Math.max(500000, Math.min(8000000, Math.round((n.sourceRate||1024000)*2)));
   n.ring={I:new Float32Array(SIZE), Q:new Float32Array(SIZE), size:SIZE, w:0, filled:0, written:0};
-  n.ringReadPos=0; n.ringReadCount=0; n.ringRebuffering=false;   // чтение сырого IQ — отдельно от каналов
+  // rebuffering=true с самого начала — то же "молчим, пока не накопится безопасный запас", что и
+  // после настоящего провала в середине игры (см. rtlReadIQ), без отдельного случая под старт.
+  n.ringReadPos=0; n.ringReadCount=0; n.ringRebuffering=true;   // чтение сырого IQ — отдельно от каналов
   const SPEC_SIZE=1<<16; // с запасом на любой выбранный размер БПФ; пишется независимо от режима демодуляции
   n.specRing={I:new Float32Array(SPEC_SIZE), Q:new Float32Array(SPEC_SIZE), size:SPEC_SIZE, w:0, filled:0};
   n.spec=null; n.specFreqs=null; n.lastSpec=0;
@@ -1600,8 +1606,15 @@ function rtlSafeSr(v){
 // чтения (readPos/readCount/rebuffering) отдельное от каналов демодуляции, у них своё кольцо
 function rtlReadIQ(n, oi, oq){
   const ring=n.ring;
-  if(!n.connected || ring.filled<ring.size*0.2){ oi.fill(0); oq.fill(0); return; }
+  if(!n.connected){ oi.fill(0); oq.fill(0); return; }
   const step=n.sourceRate/Eng.sr, need=step*BLOCK;
+  // rebufTarget — небольшое кратное need (блоков чтения), а не доля от ring.size целиком: кольцо
+  // нарочно огромное (~2с) на случай затыков USB, а не как желаемая задержка старта/восстановления
+  // — ждать 20% ОТ НЕГО означало бы ~400мс тишины на каждый пуск и на каждый, даже мгновенный,
+  // провал. Раньше это ещё и проверялось отдельно через ring.filled ДО первого чтения — то же
+  // самое, просто отдельным частным случаем; теперь один и тот же механизм ниже (rebuffering,
+  // изначально true — см. rtlResetRing) покрывает и старт, и восстановление после провала.
+  const rebufTarget = need*8;
   // честная (несворачиваемая) проверка — ring.written и n.ringReadCount растут монотонно
   // и никогда не оборачиваются, в отличие от круговых индексов w/readPos.
   let lag=ring.written-n.ringReadCount;
@@ -1611,7 +1624,7 @@ function rtlReadIQ(n, oi, oq){
     lag=ring.written-n.ringReadCount;
   }
   if(n.ringRebuffering){
-    if(lag<ring.size*0.2){ oi.fill(0); oq.fill(0); return; }
+    if(lag<rebufTarget){ oi.fill(0); oq.fill(0); return; }
     n.ringRebuffering=false;
   }
   if(lag<need){ n.ringRebuffering=true; n.underruns++; oi.fill(0); oq.fill(0); return; }
@@ -1627,7 +1640,7 @@ function rtlReadIQ(n, oi, oq){
 // то же самое, но для одного демодулированного аудио-канала (у каждого канала своё кольцо
 // и своё состояние чтения — читаются независимо друг от друга и от сырого IQ)
 function rtlReadChannelAudio(n, ch, o){
-  if(!n.connected || !ch.active || !ch.aring || ch.aring.filled<ch.aring.size*0.2){ o.fill(0); return; }
+  if(!n.connected || !ch.active || !ch.aring){ o.fill(0); return; }
   // кольцо хранит уже децимированный воркером звук (см. n.decim/rtlDecimFor), не сырые IQ-отсчёты —
   // шаг чтения считаем от реальной частоты содержимого кольца, а не от sourceRate приёмника.
   const ring=ch.aring, step=(n.sourceRate/(n.decim||1))/Eng.sr, need=step*BLOCK;
@@ -1639,9 +1652,15 @@ function rtlReadChannelAudio(n, ch, o){
   }
   // гистерезис вместо порога впритык: однажды провалившись, не возвращаемся к воспроизведению
   // по первому же блоку, где данных ровно хватило — иначе на границе "впритык" получается
-  // частое мигание тишина/звук вместо редких, но нормальных провалов. Ждём приличный запас.
+  // частое мигание тишина/звук вместо редких, но нормальных провалов. Ждём приличный запас —
+  // небольшое кратное need (блоков чтения), а не долю от ring.size целиком: кольцо нарочно
+  // огромное (~2с) на случай затыков USB, а не желаемая задержка старта/восстановления — раньше
+  // это давало ~400мс тишины на КАЖДУЮ активацию канала (первый пуск, смена демода/sourceRate) и
+  // на каждый, даже мгновенный, провал ("трещит и как будто пропадает на треть секунды").
+  // rebuffering изначально true (см. rtlResizeChannelRing) — старт идёт тем же путём.
+  const rebufTarget = need*8;
   if(ch.rebuffering){
-    if(lag<ring.size*0.2){ o.fill(0); return; }
+    if(lag<rebufTarget){ o.fill(0); return; }
     ch.rebuffering=false;
   }
   if(lag<need){ ch.rebuffering=true; n.underruns++; o.fill(0); return; }
