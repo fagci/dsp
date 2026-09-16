@@ -86,17 +86,17 @@ button,select,input{font:inherit;color:inherit}
 .pitem .pio .pin{width:5px;height:5px;border-radius:50%;flex:0 0 5px}
 .pitem .pio .arr{color:var(--dim);font-size:8px}
 
-/* тонкий тёмный скроллбар — палитра, панельный холст, textarea, readout */
-#palette,#canvas.panel,.prm textarea,.readout.tall{
+/* тонкий тёмный скроллбар — палитра, список патчей, панельный холст, textarea, readout */
+#palette,#patchList,#canvas.panel,.prm textarea,.readout.tall{
   scrollbar-width:thin;scrollbar-color:var(--line) transparent}
-#palette::-webkit-scrollbar,#canvas.panel::-webkit-scrollbar,
+#palette::-webkit-scrollbar,#patchList::-webkit-scrollbar,#canvas.panel::-webkit-scrollbar,
 .prm textarea::-webkit-scrollbar,.readout.tall::-webkit-scrollbar{width:8px;height:8px}
-#palette::-webkit-scrollbar-track,#canvas.panel::-webkit-scrollbar-track,
+#palette::-webkit-scrollbar-track,#patchList::-webkit-scrollbar-track,#canvas.panel::-webkit-scrollbar-track,
 .prm textarea::-webkit-scrollbar-track,.readout.tall::-webkit-scrollbar-track{background:transparent}
-#palette::-webkit-scrollbar-thumb,#canvas.panel::-webkit-scrollbar-thumb,
+#palette::-webkit-scrollbar-thumb,#patchList::-webkit-scrollbar-thumb,#canvas.panel::-webkit-scrollbar-thumb,
 .prm textarea::-webkit-scrollbar-thumb,.readout.tall::-webkit-scrollbar-thumb{
   background:var(--line);border-radius:3px;border:2px solid var(--panel)}
-#palette::-webkit-scrollbar-thumb:hover,#canvas.panel::-webkit-scrollbar-thumb:hover,
+#palette::-webkit-scrollbar-thumb:hover,#patchList::-webkit-scrollbar-thumb:hover,#canvas.panel::-webkit-scrollbar-thumb:hover,
 .prm textarea::-webkit-scrollbar-thumb:hover,.readout.tall::-webkit-scrollbar-thumb:hover{background:var(--dim)}
 
 /* ---- рабочая область ---- */
