@@ -881,7 +881,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   // пика с предыдущим кадром спектра и по сдвигу фазы меряем частоту точнее ширины бина —
   // работает, только если источник спектра отдаёт sp.phase/sp.hop ('fft'/'zfft' это делают).
   init:n=>{n.mk=[null,null,null,null];n.lv=[0,0,0,0];n.db=[-120,-120,-120,-120];
-           n.ext=[0,0,0,0];n.pickT=null;n.peak=null;n.peakFreqs=null;n._dragPending=false;
+           n.ext=[0,0,0,0];n.pickT=null;n.peak=null;n.peakFreqs=null;n._dragPending=false;n._dragActive=false;
            n.mkPhase=[0,0,0,0];n.mkBin=[null,null,null,null];n.mkRev=[-1,-1,-1,-1];},
   process(n,I){
     const sp=I.spec;
@@ -900,9 +900,21 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     // никогда само не откатывается — а эта проверка, которая иначе увидела бы "окно не пересекается
     // с (ещё старыми) данными" и схлопнула бы зум обратно на весь охват, временно отключена на всё
     // время перетаскивания и чуть дольше — пока реальный захват не подтвердит текущее положение.
+    //
+    // n._dragActive (истинно, ПОКА мышь реально зажата — см. draw()) форсирует n._dragPending=true
+    // БЕЗУСЛОВНО, не полагаясь на "подтвердилось/не подтвердилось". При непрерывном следовании
+    // (см. sources.js) приёмник теперь гоняется за курсором постоянно, а не ждёт одного дискретного
+    // прыжка — во время активного перетаскивания реально захваченная полоса то и дело СЛУЧАЙНО
+    // пересекается с текущим (тоже постоянно движущимся) окном на долю секунды, "подтверждение"
+    // мигает true/false по многу раз за одну секунду драга, а saBounds() (см. processing.js) на
+    // каждое такое "не подтверждено" клэмпит fmin/fmax к ещё не полностью актуальной полосе —
+    // видимая ширина шкалы на экране дёргается ("расширяется и сужается") в такт этому миганию.
+    // Проверку подтверждения включаем обратно только ПОСЛЕ отпускания мыши — там она и нужна
+    // (ждать реального захвата после финальной позиции), а во время самого драга просто не нужна.
     if(sp){
       const [lo0,hi0]=specSpan(sp);
-      if(n._dragPending && !(n.p.fmax<=lo0 || n.p.fmin>=hi0)) n._dragPending=false; // подтвердилось
+      if(n._dragActive) n._dragPending=true;
+      else if(n._dragPending && !(n.p.fmax<=lo0 || n.p.fmin>=hi0)) n._dragPending=false; // подтвердилось
       if(n.p.auto){                                   // авто — синхронизируем параметры с реальным охватом,
         if(n.p.fmin!==lo0) n.set.fmin?.(lo0);          // иначе при снятии галочки слайдер откатится
         if(n.p.fmax!==hi0) n.set.fmax?.(hi0);          // к старым ручным значениям, а не к видимому диапазону
@@ -1073,10 +1085,13 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           const range=hi0-lo0;
           newLo=lo0-range*dt; newHi=hi0-range*dt;
         }
-        n._dragPending=true;
+        n._dragPending=true; n._dragActive=true;
         saSetRange(n, newLo, newHi);
       }, {passive:false});
-      const endDrag=ev=>{ if(drag && ev.pointerId===drag.pid && cv.hasPointerCapture(ev.pointerId)) cv.releasePointerCapture(ev.pointerId); drag=null; };
+      const endDrag=ev=>{
+        if(drag && ev.pointerId===drag.pid && cv.hasPointerCapture(ev.pointerId)) cv.releasePointerCapture(ev.pointerId);
+        drag=null; n._dragActive=false;
+      };
       cv.addEventListener('pointerup', endDrag);
       cv.addEventListener('pointercancel', endDrag);
     }
