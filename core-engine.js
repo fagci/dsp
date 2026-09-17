@@ -39,8 +39,12 @@ const Eng = {
       // потоке. Даёт поквантовую (128 сэмплов) выдачу звука вместо ожидания целого BLOCK,
       // и убирает аллокацию/передачу Float32Array на каждый тик.
       this.RING = pow2ge(Math.max(this.maxQ,this.preload,4)*BLOCK*4);   // степень двойки — модуло через маску, не %
-      this._ctrlBuf=new SharedArrayBuffer(2*4);           // [0]=inWrite,[1]=outWrite, оба монотонно растущие int32
+      // [0]=inWrite,[1]=outWrite (монотонно растущие int32), [2]=cumulative недобор сэмплов на
+      // выходе (audio thread не дождался очередного outWrite) — для диагностики "прерываний
+      // звука", которые сам движок раньше никак не считал (см. pumpSAB).
+      this._ctrlBuf=new SharedArrayBuffer(3*4);
       this._ctrl=new Int32Array(this._ctrlBuf);
+      this._lastUnderrun=0; this.audioUnderruns=0;
       this._inLBuf=new SharedArrayBuffer(this.RING*4); this._inRBuf=new SharedArrayBuffer(this.RING*4);
       this._outLBuf=new SharedArrayBuffer(this.RING*4); this._outRBuf=new SharedArrayBuffer(this.RING*4);
       this._inL=new Float32Array(this._inLBuf); this._inR=new Float32Array(this._inRBuf);
@@ -63,11 +67,12 @@ const Eng = {
             this.inWrite=iw; Atomics.store(this.ctrl,0,iw);
             this.sinceNotify+=L;
             if(this.sinceNotify>=this.B){ this.sinceNotify-=this.B; this.port.postMessage(0); } // пинг, без данных
-            let or_=this.outRead; const ow=Atomics.load(this.ctrl,1);
+            let or_=this.outRead; const ow=Atomics.load(this.ctrl,1); let miss=0;
             for(let i=0;i<L;i++){
               if(or_<ow){ const p=or_&this.MASK; o[i]=this.outL[p]; o1[i]=this.outR[p]; or_++; }
-              else { o[i]=0; o1[i]=0; }}     // недобор — тишина, не блокируемся (Atomics.wait тут нельзя)
+              else { o[i]=0; o1[i]=0; miss++; }}     // недобор — тишина, не блокируемся (Atomics.wait тут нельзя)
             this.outRead=or_;
+            if(miss) Atomics.add(this.ctrl,2,miss);  // копится в SAB — главный поток вычитывает в pumpSAB
             return true; }}
         registerProcessor('io${BLOCK}sab',IOS);`;
     } else {
@@ -79,7 +84,7 @@ const Eng = {
             // Ёмкость очереди: чем больше, тем устойчивей к временным подвисаниям основного
             // потока (GC, тяжёлый рендер и т.п.) ценой чуть большей задержки звука — если tick()
             // на секунду отстанет, тут запас на MAXQ*B/sr секунд, прежде чем реально станет тихо.
-            this.MAXQ=${this.maxQ};
+            this.MAXQ=${this.maxQ}; this.underrun=0;
             this.port.onmessage=e=>{this.q.push(e.data);if(this.q.length>this.MAXQ)this.q.shift();};}
           process(inp,outp){
             const i0=inp[0][0], i1=inp[0][1], o=outp[0][0], o1=outp[0][1]||o, L=o.length;
@@ -87,11 +92,13 @@ const Eng = {
               this.aL[this.n]=i0?i0[i]:0; this.aR[this.n]=i1?i1[i]:0; this.n++;
               if(this.n===this.B){
                 const m=new Float32Array(this.B*2); m.set(this.aL,0); m.set(this.aR,this.B);
-                this.port.postMessage(m); this.n=0;}}
+                this.port.postMessage(m);
+                if(this.underrun){ this.port.postMessage({u:this.underrun}); this.underrun=0; } // недобор — отдельным сообщением, только когда есть что сказать
+                this.n=0;}}
             for(let i=0;i<L;i++){
               if(!this.cur||this.ci>=this.B){this.cur=this.q.shift()||null;this.ci=0;}
               if(this.cur){ o[i]=this.cur[this.ci]; o1[i]=this.cur[this.B+this.ci]; this.ci++; }
-              else { o[i]=0; o1[i]=0; }}
+              else { o[i]=0; o1[i]=0; this.underrun++; }}
             return true;}}
         registerProcessor('io${BLOCK}',IO);`;
     }
@@ -112,12 +119,26 @@ const Eng = {
     } else {
       this.node.port.onmessage = e => {
         if(this.node!==node) return;      // движок уже пересоздан/остановлен (setBlock/setSampleRate/stop) — это хвост от старого
+        if(!(e.data instanceof Float32Array)){                // {u:N} — отчёт о недоборе от воркета, см. IO выше
+          this.audioUnderruns+=e.data.u;
+          console.warn(`[Eng] audio worklet queue underrun +${e.data.u} samples (всего ${this.audioUnderruns}) @ ${performance.now().toFixed(0)}ms`);
+          return;
+        }
         this.micBuf.set(e.data.subarray(0,BLOCK));
         this.micB.set(e.data.subarray(BLOCK));
         this.tick(); };
     }
     this.node.connect(this.ctx.destination);
     if(!this.sab) for(let i=0;i<this.preload;i++) this.node.port.postMessage(new Float32Array(BLOCK*2));
+    // Сторожевой таймер главного потока — независимо от RTL/аудио-кольца, просто ловит сам факт
+    // "главный поток на сколько-то мс не отдавал управление событийному циклу" (GC, тяжёлый код,
+    // что угодно). setInterval(20мс) сам по себе не гарантирует точность — именно отклонение
+    // ОТ ожидаемого периода и есть сигнал, а не абсолютное время между тиками.
+    this._stallLastT=performance.now();
+    this._stallTimer=setInterval(()=>{
+      const now=performance.now(), over=(now-this._stallLastT)-20; this._stallLastT=now;
+      if(over>15) console.warn(`[Eng] main-thread stall ~${over.toFixed(0)}ms @ ${now.toFixed(0)}ms`);
+    }, 20);
     this.running = true; this.paused = false;
     this.onRunChange?.();
   },
@@ -131,6 +152,13 @@ const Eng = {
       for(let i=0;i<BLOCK;i++){ const p=(this._inRead+i)&mask; this.micBuf[i]=this._inL[p]; this.micB[i]=this._inR[p]; }
       this._inRead+=BLOCK;
       this.tick();
+    }
+    // недобор на выходе (audio thread не дождался outWrite) копится в ctrl[2] самим воркетом —
+    // здесь просто читаем дельту с прошлого пинга, см. объявление ctrl в start().
+    const u=Atomics.load(this._ctrl,2);
+    if(u!==this._lastUnderrun){
+      const delta=u-this._lastUnderrun; this._lastUnderrun=u; this.audioUnderruns=u;
+      console.warn(`[Eng] audio worklet ring underrun +${delta} samples (всего ${u}) @ ${performance.now().toFixed(0)}ms`);
     }
   },
   // Останавливает микрофоны и освобождает железо (иначе индикатор записи в браузере висит вечно).
@@ -152,6 +180,7 @@ const Eng = {
   // индикатор в браузере горит) — поэтому stopMics() здесь обязателен и идёт первым.
   async stop(){
     this.stopMics();
+    clearInterval(this._stallTimer);
     try{ await this.ctx?.close(); }catch(e){}
     this.running=false; this.paused=false; this.node=null; this.merger=null;
     this.mic=null; this.micId=null;
@@ -310,6 +339,7 @@ const Eng = {
   async setBlock(v){
     const was=this.running&&!this.paused;
     this.stopMics();                                 // раньше треки не останавливались — микрофон висел включённым
+    clearInterval(this._stallTimer);                  // иначе старый таймер продолжит тикать поверх нового от start()
     try{ await this.ctx?.close(); }catch(e){}
     this.running=false; this.paused=false; this.node=null;
     this.streams=[null,null]; this.micIds=[null,null]; this.merger=null; this.mic=null;
@@ -329,6 +359,7 @@ const Eng = {
   async setSampleRate(v){
     const was=this.running&&!this.paused;
     this.stopMics();
+    clearInterval(this._stallTimer);                  // иначе старый таймер продолжит тикать поверх нового от start()
     try{ await this.ctx?.close(); }catch(e){}
     this.running=false; this.paused=false; this.node=null;
     this.streams=[null,null]; this.micIds=[null,null]; this.merger=null; this.mic=null;

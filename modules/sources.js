@@ -1369,6 +1369,7 @@ async function rtlReadLoop(n){
 
   // Порядок данных не теряется: bulk-эндпоинт USB FIFO по своей природе — какой бы читатель
   // ни забрал следующий чанк, это всегда хронологически следующий кусок потока.
+  let prevReadEnd=null;   // для диагностики: разрыв ДО чтения = главный поток был занят чем-то другим
   async function readerLoop(){
     while(n.reading && n.dev){
       // размер чтения — sourceRate/READS_PER_SEC на КАЖДОГО читателя, округлено вверх до кратного 512.
@@ -1376,6 +1377,13 @@ async function rtlReadLoop(n){
       const CHUNK=chunkSamples*2; // байт: 1 байт I + 1 байт Q на комплексный отсчёт
       let buf;
       const t0=performance.now();
+      // Гэп ДО вызова readSamples (а не время самого чтения, см. ioMs) — если он большой, значит
+      // между предыдущей итерацией и этой главный поток был занят чем-то посторонним (GC, другой
+      // код), а не самим RTL-путём. Порог — половина номинального периода чтения.
+      if(prevReadEnd!=null){
+        const gap=t0-prevReadEnd, nominalMs=1000/READS_PER_SEC;
+        if(gap>nominalMs*1.5) console.warn(`[rtlsdr] gap перед USB-чтением ${gap.toFixed(1)}ms (ожидалось ~${nominalMs.toFixed(0)}ms) @ ${t0.toFixed(0)}ms`);
+      }
       try{ buf=await n.dev.readSamples(CHUNK); errStreak=0; }
       catch(e){
         errStreak++;
@@ -1386,6 +1394,7 @@ async function rtlReadLoop(n){
         continue;
       }
       const t1=performance.now();
+      prevReadEnd=t1;   // см. gap-проверку в начале итерации выше
       const u8=new Uint8Array(buf), cnt=u8.length>>1, mode=n.p.demod, specRing=n.specRing;
       for(let k=0;k<cnt;k++){
         specRing.I[specRing.w]=(u8[2*k]-127.5)/127.5;
@@ -1422,6 +1431,7 @@ async function rtlReadLoop(n){
           aring.w=w; aring.filled=filled; aring.written+=silentN;
         }
         n.underrunsWorker++;   // демод-воркер не успел — вход, не выход (см. readout)
+        console.warn(`[rtlsdr] demod backpressure (inFlight=${inFlight}>=${MAX_INFLIGHT}) @ ${t1.toFixed(0)}ms`);
         rtlTrackMsps(n, cnt, t1-t0, 0);
         continue;
       }
@@ -1637,13 +1647,16 @@ function rtlReadIQ(n, oi, oq){
     // прыжком вперёд (роняем старые сэмплы), а не читаем их с опозданием
     const delta=lag-ring.size*0.5;
     n.ringReadPos=(n.ringReadPos+delta)%ring.size; n.ringReadCount+=delta; n.underrunsOverflow++;
+    console.warn(`[rtlsdr] IQ ring overflow, dropped ${delta.toFixed(0)} samples @ ${performance.now().toFixed(0)}ms`);
     lag=ring.written-n.ringReadCount;
   }
   if(n.ringRebuffering){
     if(lag<rebufTarget){ oi.fill(0); oq.fill(0); return; }
     n.ringRebuffering=false;
   }
-  if(lag<need){ n.ringRebuffering=true; n.underrunsStarve++; oi.fill(0); oq.fill(0); return; } // producer не успел — кольцо пусто, тишина
+  if(lag<need){ n.ringRebuffering=true; n.underrunsStarve++; oi.fill(0); oq.fill(0);
+    console.warn(`[rtlsdr] IQ ring starve, lag=${lag.toFixed(0)} need=${need.toFixed(0)} @ ${performance.now().toFixed(0)}ms`);
+    return; } // producer не успел — кольцо пусто, тишина
   for(let k=0;k<BLOCK;k++){
     const p0=Math.floor(n.ringReadPos)%ring.size, p1=(p0+1)%ring.size, fr=n.ringReadPos-Math.floor(n.ringReadPos);
     oi[k]=ring.I[p0]*(1-fr)+ring.I[p1]*fr;
@@ -1666,6 +1679,7 @@ function rtlReadChannelAudio(n, ch, o){
     // прыжком вперёд (роняем старые сэмплы), а не читаем их с опозданием
     const delta=lag-ring.size*0.5;
     ch.readPos=(ch.readPos+delta)%ring.size; ch.readCount+=delta; n.underrunsOverflow++;
+    console.warn(`[rtlsdr] audio ring overflow, dropped ${delta.toFixed(0)} samples @ ${performance.now().toFixed(0)}ms`);
     lag=ring.written-ch.readCount;
   }
   // гистерезис вместо порога впритык: однажды провалившись, не возвращаемся к воспроизведению
@@ -1678,7 +1692,9 @@ function rtlReadChannelAudio(n, ch, o){
     if(lag<rebufTarget){ o.fill(0); return; }
     ch.rebuffering=false;
   }
-  if(lag<need){ ch.rebuffering=true; n.underrunsStarve++; o.fill(0); return; } // producer (демод) не успел — кольцо пусто, тишина
+  if(lag<need){ ch.rebuffering=true; n.underrunsStarve++; o.fill(0);
+    console.warn(`[rtlsdr] audio ring starve, lag=${lag.toFixed(0)} need=${need.toFixed(0)} @ ${performance.now().toFixed(0)}ms`);
+    return; } // producer (демод) не успел — кольцо пусто, тишина
   for(let k=0;k<BLOCK;k++){
     const p0=Math.floor(ch.readPos)%ring.size, p1=(p0+1)%ring.size, fr=ch.readPos-Math.floor(ch.readPos);
     o[k]=ring.A[p0]*(1-fr)+ring.A[p1]*fr;
