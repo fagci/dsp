@@ -1403,7 +1403,7 @@ async function rtlReadLoop(n){
           for(let k=0;k<silentN;k++){ A[w]=0; w=(w+1)%size; if(filled<size) filled++; }
           aring.w=w; aring.filled=filled; aring.written+=silentN;
         }
-        n.underruns++;
+        n.underrunsWorker++;   // демод-воркер не успел — вход, не выход (см. readout)
         rtlTrackMsps(n, cnt, t1-t0, 0);
         continue;
       }
@@ -1619,15 +1619,17 @@ function rtlReadIQ(n, oi, oq){
   // и никогда не оборачиваются, в отличие от круговых индексов w/readPos.
   let lag=ring.written-n.ringReadCount;
   if(lag>ring.size*0.9){
+    // consumer (Eng.tick) надолго отстал от продюсера — кольцо почти заполнилось, догоняем
+    // прыжком вперёд (роняем старые сэмплы), а не читаем их с опозданием
     const delta=lag-ring.size*0.5;
-    n.ringReadPos=(n.ringReadPos+delta)%ring.size; n.ringReadCount+=delta; n.underruns++;
+    n.ringReadPos=(n.ringReadPos+delta)%ring.size; n.ringReadCount+=delta; n.underrunsOverflow++;
     lag=ring.written-n.ringReadCount;
   }
   if(n.ringRebuffering){
     if(lag<rebufTarget){ oi.fill(0); oq.fill(0); return; }
     n.ringRebuffering=false;
   }
-  if(lag<need){ n.ringRebuffering=true; n.underruns++; oi.fill(0); oq.fill(0); return; }
+  if(lag<need){ n.ringRebuffering=true; n.underrunsStarve++; oi.fill(0); oq.fill(0); return; } // producer не успел — кольцо пусто, тишина
   for(let k=0;k<BLOCK;k++){
     const p0=Math.floor(n.ringReadPos)%ring.size, p1=(p0+1)%ring.size, fr=n.ringReadPos-Math.floor(n.ringReadPos);
     oi[k]=ring.I[p0]*(1-fr)+ring.I[p1]*fr;
@@ -1646,8 +1648,10 @@ function rtlReadChannelAudio(n, ch, o){
   const ring=ch.aring, step=(n.sourceRate/(n.decim||1))/Eng.sr, need=step*BLOCK;
   let lag=ring.written-ch.readCount;
   if(lag>ring.size*0.9){
+    // consumer (Eng.tick) надолго отстал от продюсера — кольцо почти заполнилось, догоняем
+    // прыжком вперёд (роняем старые сэмплы), а не читаем их с опозданием
     const delta=lag-ring.size*0.5;
-    ch.readPos=(ch.readPos+delta)%ring.size; ch.readCount+=delta; n.underruns++;
+    ch.readPos=(ch.readPos+delta)%ring.size; ch.readCount+=delta; n.underrunsOverflow++;
     lag=ring.written-ch.readCount;
   }
   // гистерезис вместо порога впритык: однажды провалившись, не возвращаемся к воспроизведению
@@ -1663,7 +1667,7 @@ function rtlReadChannelAudio(n, ch, o){
     if(lag<rebufTarget){ o.fill(0); return; }
     ch.rebuffering=false;
   }
-  if(lag<need){ ch.rebuffering=true; n.underruns++; o.fill(0); return; }
+  if(lag<need){ ch.rebuffering=true; n.underrunsStarve++; o.fill(0); return; } // producer (демод) не успел — кольцо пусто, тишина
   for(let k=0;k<BLOCK;k++){
     const p0=Math.floor(ch.readPos)%ring.size, p1=(p0+1)%ring.size, fr=ch.readPos-Math.floor(ch.readPos);
     o[k]=ring.A[p0]*(1-fr)+ring.A[p1]*fr;
@@ -1696,7 +1700,8 @@ async function rtlConnect(n){
     n.ch[0].worker.setOffset(n.ch[0].appliedOffset);
     if(n.specWorker) n.specWorker.terminate();
     n.specWorker=rtlMakeSpecWorker(); n.specBusy=false;
-    n.connected=true; n.reading=true; n.underruns=0;
+    n.connected=true; n.reading=true;
+    n.underrunsWorker=0; n.underrunsOverflow=0; n.underrunsStarve=0;
     n.status='connected ('+n.dev.tunerName+')';
     rtlReadLoop(n);
   }catch(e){
@@ -1771,7 +1776,8 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     {n:'specDc',t:'check',d:true,label:'remove DC spike'}
   ],
   init:n=>{ n.dev=null; n.connected=false; n.reading=false; n.sourceRate=1024000;
-            n.underruns=0; n.status='not connected'; n.busy=false; n.specWorker=null; n.specBusy=false;
+            n.underrunsWorker=0; n.underrunsOverflow=0; n.underrunsStarve=0;
+            n.status='not connected'; n.busy=false; n.specWorker=null; n.specBusy=false;
             n.workerMs=null; n.roundtripMs=null;
             n.appliedFreq=null; n.appliedGain=null; n.appliedAuto=null;
             // 4 канала демодуляции; канал 0 без цифрового суффикса в портах, активен всегда
@@ -1913,7 +1919,12 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
       ? `${n.dev?n.dev.tunerName:'?'} · ${n.p.demod} · center ${fmtHz(cf)} · span ${fmtHz(n.sourceRate)} · tune ${fmtHz(tune)} · `+
         `channels ${chCount} · ${(n.msps||0).toFixed(2)}Msps (I/O:${(n.mspsIo||0).toFixed(2)})`+
         (n.workerMs!=null?` · demod ${n.workerMs.toFixed(1)}ms/chunk (roundtrip ${(n.roundtripMs||0).toFixed(1)}ms)`:'')+
-        (n.underruns?' · errors '+n.underruns:'')+(n.busy?' · …':'')
+        // разбивка по стадии, где реально теряются данные: demod — воркер не успел (вход),
+        // ovf — consumer (Eng.tick) отстал, кольцо переполнилось и пришлось прыгнуть вперёд,
+        // dry — consumer остался без данных (кольцо опустело быстрее, чем producer его наполнял)
+        ((n.underrunsWorker||n.underrunsOverflow||n.underrunsStarve)?
+          ` · errors demod:${n.underrunsWorker||0} ovf:${n.underrunsOverflow||0} dry:${n.underrunsStarve||0}`:'')+
+        (n.busy?' · …':'')
       : n.status;
   }});
 
