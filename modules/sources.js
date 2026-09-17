@@ -1120,6 +1120,14 @@ applyOffset(offsetHz); // sr мог смениться — приращение 
 }
 function applyOffset(hz){
 offsetHz=hz;
+// Точно 0 — самый частый случай (один канал ровно в центре полосы): схлопываем фазор к
+// единице, а не просто останавливаем вращение. Без этого при возврате с ненулевого офсета
+// обратно в 0 фазор застревал бы там, где оказался, и молча крутил бы сигнал остаточным
+// поворотом вечно — вращение остановится, но накопленный сдвиг не уйдёт. А раз при hz===0
+// фазор гарантированно единичный, весь NCO-поворот в цикле ниже можно просто пропускать
+// (см. offZero) — экономит комплексное умножение+обновление фазы на КАЖДОМ сыром отсчёте,
+// а это самая частая ситуация (один канал, без offset-подстройки внутри полосы).
+if(hz===0){ offPhI=1; offPhQ=0; }
 const inc=-2*Math.PI*hz/sr; // минус — переносим выбранную частоту настройки на 0 (даунконверсия)
 offCos=Math.cos(inc); offSin=Math.sin(inc);
 }
@@ -1154,6 +1162,12 @@ const rawA=Math.exp(-2*Math.PI*150/sr), rawA1=1-rawA; // сырой DC-блок 
 const deA=deemphTau ? Math.exp(-1/(deemphTau*outRate)) : null, deA1=deA!=null?1-deA:0;
 const chA=Math.exp(-2*Math.PI*(chanBw/2)/srMid), chA1=1-chA; // канальный ФНЧ — теперь на srMid, не на sr
 const discScale=outRate/(2*Math.PI)/devScale, isAM=mode==='AM', isSSB=(mode==='USB'||mode==='LSB');
+// offZero — самый частый случай (один канал ровно в центре полосы, без offset-подстройки):
+// фазор гарантированно единичный (см. applyOffset), поворот НИЧЕГО не меняет — пропускаем его
+// целиком. Комплексное умножение+обновление+ренормализация фазы — это ~16 операций на КАЖДЫЙ
+// сырой отсчёт, а на высоком sourceRate (напр. 3.2Msps) именно эта "всегда включённая" часть
+// оказалась самой тяжёлой статьёй расхода воркера — тяжелее канального фильтра chA.
+const offZero = offsetHz===0;
 let wIdx=0;
 for(let k=0;k<cnt;k++){
 const rawI=(u8[2*k]-127.5)/127.5, rawQ=(u8[2*k+1]-127.5)/127.5;
@@ -1161,12 +1175,14 @@ const rawI=(u8[2*k]-127.5)/127.5, rawQ=(u8[2*k+1]-127.5)/127.5;
 rawI0=rawI0*rawA+rawI*rawA1; rawQ0=rawQ0*rawA+rawQ*rawA1;
 let i=rawI-rawI0, q=rawQ-rawQ0;
 // общий сдвиг NCO на выбранную внутри полосы частоту настройки (offsetHz)
+if(!offZero){
 const oPI=offPhI, oPQ=offPhQ;
 const oi=i*oPI-q*oPQ, oq=i*oPQ+q*oPI;
 i=oi; q=oq;
 const nOPI=oPI*offCos-oPQ*offSin, nOPQ=oPI*offSin+oPQ*offCos;
 const oNrm=1.5-0.5*(nOPI*nOPI+nOPQ*nOPQ);
 offPhI=nOPI*oNrm; offPhQ=nOPQ*oNrm;
+}
 let pI=1, pQ=0; // фазор SSB-сдвига этого сэмпла, нужен ниже для обратного вращения
 if(isSSB){
 // умножаем на фазор NCO — сдвигаем спектр так, чтобы нужная боковая оказалась вокруг нуля.
