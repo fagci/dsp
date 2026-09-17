@@ -1299,6 +1299,14 @@ function rtlActivateChannel(n, ci){
   ch.active=true;
 }
 
+// Вынесены на уровень модуля — rtlReadIQ/rtlReadChannelAudio согласуют свой запас буфера
+// с тем же порогом, что и backpressure на входе (раньше это были две несвязанные константы).
+const RTL_MAX_INFLIGHT=6;
+const RTL_READS_PER_SEC=20;
+// Запас на восстановление после провала, в секундах реального времени (не в "блоках движка",
+// как было раньше — то не зависело от sourceRate и потому не лечилось подъёмом Msps).
+const RTL_REBUF_S = RTL_MAX_INFLIGHT/RTL_READS_PER_SEC;
+
 async function rtlReadLoop(n){
   let errStreak=0;
   n.mspsAcc=0; n.mspsIoMs=0; n.mspsWorkerMs=0; n.mspsWinStart=performance.now(); n.msps=0; n.mspsIo=0;
@@ -1326,7 +1334,7 @@ async function rtlReadLoop(n){
   // отсчитывается как будто прошёл). Поэтому вместо паузы, когда демод не поспевает, чанк
   // просто НЕ уходит в воркер — на его место в кольцо честно пишется тишина той же длины
   // (cnt), чтобы n.written по-прежнему отражал реальное время, а не альтернативную историю.
-  const MAX_INFLIGHT=6;
+  const MAX_INFLIGHT=RTL_MAX_INFLIGHT;
 
   // Два параллельных читателя USB имеют смысл, только когда узкое место — само чтение USB
   // (см. IQ-режим ниже: там нет воркера вообще, тянуть данные непрерывно реально важно). Как
@@ -1346,7 +1354,7 @@ async function rtlReadLoop(n){
   // на порядки меньше отсчётов), возвращаем частые мелкие чтения, оставляя ОДНОГО читателя —
   // так получаем и запас по CPU, и мелкую (менее заметную) гранулярность возможных затыков разом.
   const isIQ=n.p.demod==='IQ';
-  const READS_PER_SEC=20;
+  const READS_PER_SEC=RTL_READS_PER_SEC;
   const READERS=isIQ?2:1;
 
   // Порядок данных не теряется: bulk-эндпоинт USB FIFO по своей природе — какой бы читатель
@@ -1608,13 +1616,9 @@ function rtlReadIQ(n, oi, oq){
   const ring=n.ring;
   if(!n.connected){ oi.fill(0); oq.fill(0); return; }
   const step=n.sourceRate/Eng.sr, need=step*BLOCK;
-  // rebufTarget — небольшое кратное need (блоков чтения), а не доля от ring.size целиком: кольцо
-  // нарочно огромное (~2с) на случай затыков USB, а не как желаемая задержка старта/восстановления
-  // — ждать 20% ОТ НЕГО означало бы ~400мс тишины на каждый пуск и на каждый, даже мгновенный,
-  // провал. Раньше это ещё и проверялось отдельно через ring.filled ДО первого чтения — то же
-  // самое, просто отдельным частным случаем; теперь один и тот же механизм ниже (rebuffering,
-  // изначально true — см. rtlResetRing) покрывает и старт, и восстановление после провала.
-  const rebufTarget = need*8;
+  // rebufTarget — RTL_REBUF_S секунд реального времени, не доля от ring.size (кольцо огромное
+  // специально про запас на затыки USB, не как желаемая задержка старта/восстановления).
+  const rebufTarget = Math.max(need, n.sourceRate*RTL_REBUF_S);
   // честная (несворачиваемая) проверка — ring.written и n.ringReadCount растут монотонно
   // и никогда не оборачиваются, в отличие от круговых индексов w/readPos.
   let lag=ring.written-n.ringReadCount;
@@ -1656,13 +1660,10 @@ function rtlReadChannelAudio(n, ch, o){
   }
   // гистерезис вместо порога впритык: однажды провалившись, не возвращаемся к воспроизведению
   // по первому же блоку, где данных ровно хватило — иначе на границе "впритык" получается
-  // частое мигание тишина/звук вместо редких, но нормальных провалов. Ждём приличный запас —
-  // небольшое кратное need (блоков чтения), а не долю от ring.size целиком: кольцо нарочно
-  // огромное (~2с) на случай затыков USB, а не желаемая задержка старта/восстановления — раньше
-  // это давало ~400мс тишины на КАЖДУЮ активацию канала (первый пуск, смена демода/sourceRate) и
-  // на каждый, даже мгновенный, провал ("трещит и как будто пропадает на треть секунды").
-  // rebuffering изначально true (см. rtlResizeChannelRing) — старт идёт тем же путём.
-  const rebufTarget = need*8;
+  // частое мигание тишина/звук вместо редких, но нормальных провалов. rebufTarget —
+  // RTL_REBUF_S секунд реального времени (не "need*8" — то не зависело от sourceRate/decim,
+  // поэтому подъём Msps не лечил провалы). rebuffering изначально true — см. rtlResizeChannelRing.
+  const rebufTarget = Math.max(need, (n.sourceRate/(n.decim||1))*RTL_REBUF_S);
   if(ch.rebuffering){
     if(lag<rebufTarget){ o.fill(0); return; }
     ch.rebuffering=false;
