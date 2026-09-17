@@ -563,14 +563,22 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
           hi=clamp(Math.ceil (specBin(s,specHi)),1,N-2);
     const db=n.dbBuf&&n.dbBuf.length===N? n.dbBuf : (n.dbBuf=new Float32Array(N));
     for(let i=lo;i<=hi;i++) db[i]=20*Math.log10(s.mag[i]+1e-12);
+    // Префиксные суммы db[lo..hi] — сумма любого диапазона обучающих бинов тогда O(1) вместо
+    // O(train) пересчёта на каждый i (был O(N×train): при 64k FFT и train=128 — счётчик на
+    // 64k×128×2 сложений НА КАЖДЫЙ тик движка). prefix[j] = сумма db[lo..j-1].
+    const prefix=n.cfarPrefix&&n.cfarPrefix.length===N+1? n.cfarPrefix : (n.cfarPrefix=new Float32Array(N+1));
+    prefix[lo]=0;
+    for(let i=lo;i<=hi;i++) prefix[i+1]=prefix[i]+db[i];
     const hits=[];
     let run=null;
     for(let i=lo;i<=hi;i++){
-      let sum=0,c=0;                                 // среднее по «обучающим» бинам вокруг цели
-      for(let k=G+1;k<=G+T;k++){
-        const a=i-k, b=i+k;
-        if(a>=lo){ sum+=db[a]; c++; }
-        if(b<=hi){ sum+=db[b]; c++; } }
+      // среднее по «обучающим» бинам вокруг цели — левое окно [i-G-T,i-G-1], правое [i+G+1,i+G+T],
+      // обрезанные до [lo,hi] (та же логика, что раньше, просто суммой диапазона, а не циклом по k)
+      let sum=0,c=0;
+      const lb=i-G-1;
+      if(lb>=lo){ const la=Math.max(lo,i-G-T); sum+=prefix[lb+1]-prefix[la]; c+=lb-la+1; }
+      const ra=i+G+1;
+      if(ra<=hi){ const rb=Math.min(hi,i+G+T); sum+=prefix[rb+1]-prefix[ra]; c+=rb-ra+1; }
       const noise=c? sum/c : -120;
       if(db[i]-noise>=n.p.thr){
         if(!run) run={a:i,b:i,peak:db[i],pi:i};
