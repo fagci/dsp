@@ -1062,6 +1062,12 @@ let ds1aP1I=0,ds1aP1Q=0,ds1aP2I=0,ds1aP2Q=0,ds1bP1I=0,ds1bP1Q=0,ds1bP2I=0,ds1bP2
 let ds2aP1I=0,ds2aP1Q=0,ds2aP2I=0,ds2aP2Q=0,ds2bP1I=0,ds2bP1Q=0,ds2bP2I=0,ds2bP2Q=0,ds2Phase=0;
 let ds3aP1I=0,ds3aP1Q=0,ds3aP2I=0,ds3aP2Q=0,ds3bP1I=0,ds3bP1Q=0,ds3bP2I=0,ds3bP2Q=0,ds3Phase=0;
 let cI0=0,cI1=0,cI2=0, cQ0=0,cQ1=0,cQ2=0, prevI=0,prevQ=0, lp0=0,lp1=0,lp2=0,lp3=0,lp4=0,de=0,ampDc=0,audDc=0;
+// Notch на 19кГц (пилот-тон стерео WFM) — узкополосный биквад поверх дискриминатора, ДО
+// lp0..lp4 (те режут по bwAudio, у пользователя может доходить до 16кГц — вплотную к пилоту,
+// и одних лишь 5 полюсов там мало, см. wfm_pilot_check.js: суппрессия пилота от них ~21дБ,
+// а с добавленным notch — глубокая яма ровно на 19кГц и НОЛЬ влияния на 15-18кГц звука).
+// pnOn включается только для WFM (см. applyConfig) — в NFM/AM/SSB пилота нет и notch не нужен.
+let pnOn=false, pnB1=0, pnA1=0, pnA2=0, pnX1=0, pnX2=0, pnY1=0, pnY2=0;
 // Общий NCO "частоты настройки": сдвигает выбранную внутри захваченной полосы точку
 // (offsetHz относительно центра тюнера) на 0 Гц ДО канального фильтра — так демодулируется
 // сигнал в любом месте полосы обзора без физической перестройки тюнера (без USB round-trip).
@@ -1091,6 +1097,11 @@ preStages = Math.max(0, Math.min(3, Math.floor(Math.log2(Math.max(1, Math.floor(
 // потоке — та по ней же считает размер аудио-кольца и шаг чтения, не имея доступа к воркеру.
 const srMid=sr/Math.pow(2,preStages);
 decim = Math.max(1, Math.floor(srMid/Math.max(chanBw*4, 8000)));
+pnOn = mode==='WFM';
+if(pnOn){
+  const outRateCfg=srMid/decim, w0=2*Math.PI*19000/outRateCfg, r=Math.exp(-2*Math.PI*150/outRateCfg);
+  pnB1=-2*Math.cos(w0); pnA1=-2*r*Math.cos(w0); pnA2=r*r;
+}
 // сдвиг NCO — половина полосы канала. USB сдвигаем вниз, LSB вверх (см. вывод у цикла ниже)
 const ssbDir = mode==='USB' ? -1 : (mode==='LSB' ? 1 : 0);
 const ssbInc = 2*Math.PI*(chanBw/2)*ssbDir/sr;
@@ -1107,7 +1118,7 @@ self.onmessage = function(e){
 const msg=e.data;
 if(msg.type==='config'){ applyConfig(msg); return; }
 if(msg.type==='offset'){ applyOffset(msg.hz); return; } // лёгкое обновление — без сброса фильтров/фазы
-if(msg.type==='reset'){ cI0=cI1=cI2=cQ0=cQ1=cQ2=prevI=prevQ=lp0=lp1=lp2=lp3=lp4=de=ampDc=audDc=0; ssbPhI=1; ssbPhQ=0; offPhI=1; offPhQ=0; rawI0=0; rawQ0=0; decimCounter=1;
+if(msg.type==='reset'){ cI0=cI1=cI2=cQ0=cQ1=cQ2=prevI=prevQ=lp0=lp1=lp2=lp3=lp4=de=ampDc=audDc=0; ssbPhI=1; ssbPhQ=0; offPhI=1; offPhQ=0; rawI0=0; rawQ0=0; decimCounter=1; pnX1=pnX2=pnY1=pnY2=0;
 ds1aP1I=ds1aP1Q=ds1aP2I=ds1aP2Q=ds1bP1I=ds1bP1Q=ds1bP2I=ds1bP2Q=0;
 ds2aP1I=ds2aP1Q=ds2aP2I=ds2aP2Q=ds2bP1I=ds2bP1Q=ds2bP2I=ds2bP2Q=0;
 ds3aP1I=ds3aP1Q=ds3aP2I=ds3aP2Q=ds3bP1I=ds3bP1Q=ds3bP2I=ds3bP2Q=0;
@@ -1213,21 +1224,20 @@ v=(env-ampDc)*3;
 const re=cI2*prevI+cQ2*prevQ, im=cQ2*prevI-cI2*prevQ;
 v=Math.atan2(im,re)*discScale;
 prevI=cI2; prevQ=cQ2;
+if(pnOn){                            // notch на 19кГц — см. объявление pnOn/pnX../pnY.. выше
+  const y=v+pnB1*pnX1+pnX2-pnA1*pnY1-pnA2*pnY2;
+  pnX2=pnX1; pnX1=v; pnY2=pnY1; pnY1=y; v=y;
+}
 }
 audDc=audDc*hpA+v*hpA1;
 const hp=v-audDc;
-// Пять каскадных полюсов (тот же приём, что у канального chA выше, только длиннее), а не один —
-// WFM-дискриминатор после атан2 несёт не только звук, но и пилот-тон стерео (19кГц) и поднесущую
-// (23-53кГц, L-R разностный сигнал); один полюс на bwAudio=15кГц даёт склон всего 6дБ/окт — по
-// синтетическому тесту (verify_wfm_pilot_suppression.js) пилот на выходе дискриминатора глушится
-// им лишь на ~38дБ относительно программного звука, а на реальном эфире (см. спектрограмму
-// записи пользователя) виден и того сильнее — почти постоянная линия на 19кГц через всю запись.
-// Хуже того: этот сигнал ещё передискретизируется линейной интерполяцией до частоты движка
-// (Eng.sr, обычно 48кГц) в rtlReadChannelAudio — слабая антиалиасинг-фильтрация означает, что
-// недодавленные пилот/поднесущая (модулированные программой, а не чистый тон) заворачиваются
-// обратно в слышимую полосу как "трещащий" шум, меняющийся вместе с звуком — то самое "будто не
-// хватает буфера, слегка ускоряется/замедляется". Пять полюсов (~30дБ/окт) дают ~55дБ подавления
-// пилота в том же синтетическом тесте — заметный запас поверх трёх полюсов (~47дБ).
+// Пять каскадных полюсов режут по bwAudio (обычно 15кГц), но их реальная суппрессия пилота
+// (19кГц) сильно зависит от outRate: при decim=1 (типично для WFM на sourceRate~1МГц — см.
+// rtlDecimFor, там preStages/decim для WFM почти всегда 0/1) outRate остаётся ~1МГц, и те же
+// 5 полюсов дают там лишь ~21дБ вместо ожидаемых ~55дБ (при outRate ближе к 48-96кГц) — пилот
+// и поднесущая (23-53кГц) слышны как "трещащий" шум, меняющийся вместе со звуком, именно в
+// этом случае. Поэтому отдельно — notch ровно на 19кГц (pnOn/pnB1/pnA1/pnA2 выше, применяется
+// до этого каскада), не зависящий от bwAudio и от decim/outRate.
 lp0=lp0*lpA+hp*lpA1;
 lp1=lp1*lpA+lp0*lpA1;
 lp2=lp2*lpA+lp1*lpA1;
