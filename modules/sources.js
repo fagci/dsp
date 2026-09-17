@@ -1694,6 +1694,17 @@ function rtlReadChannelAudio(n, ch, o){
   // шаг чтения считаем от реальной частоты содержимого кольца, а не от sourceRate приёмника.
   const ring=ch.aring, step=(n.sourceRate/(n.decim||1))/Eng.sr, need=step*BLOCK;
   let lag=ring.written-ch.readCount;
+  // Тренд запаса кольца раз в ~3с — независимо от того, был ли провал: чтобы отличить резкий
+  // провал (см. дальше) от медленного, монотонного сноса (реальная скорость USB чуть ниже
+  // номинального sourceRate, и т.п.) — по одним только событиями провала это не видно, они
+  // просто говорят "кончилось", а не "как долго и как быстро кончалось". mspsIo — для сверки:
+  // если он стабильно ниже sourceRate/1e6, это прямое подтверждение нехватки реальной скорости.
+  const nowLog=performance.now();
+  if(!ch.lastLagLogT || nowLog-ch.lastLagLogT>3000){
+    ch.lastLagLogT=nowLog;
+    const targetForLog=Math.max(need, (n.sourceRate/(n.decim||1))*RTL_REBUF_S);
+    console.log(`[rtlsdr] ring trend: lag=${lag.toFixed(0)}/${targetForLog.toFixed(0)} (${(100*lag/targetForLog).toFixed(0)}%) mspsIo=${(n.mspsIo||0).toFixed(3)} nominal=${(n.sourceRate/1e6).toFixed(3)} @ ${nowLog.toFixed(0)}ms`);
+  }
   if(lag>ring.size*0.9){
     // consumer (Eng.tick) надолго отстал от продюсера — кольцо почти заполнилось, догоняем
     // прыжком вперёд (роняем старые сэмплы), а не читаем их с опозданием
