@@ -1314,8 +1314,10 @@ function rtlActivateChannel(n, ci){
 const RTL_MAX_INFLIGHT=6;
 const RTL_READS_PER_SEC=20;
 // Запас на восстановление после провала, в секундах реального времени (не в "блоках движка",
-// как было раньше — то не зависело от sourceRate и потому не лечилось подъёмом Msps).
-const RTL_REBUF_S = RTL_MAX_INFLIGHT/RTL_READS_PER_SEC;
+// как было раньше — то не зависело от sourceRate и потому не лечилось подъёмом Msps). 0.5с, а не
+// MAX_INFLIGHT/READS_PER_SEC(=0.3с) — по логам видно, что провалы кольца случаются не от одного
+// длинного стопора, а от ПАЧКИ мелких (десятки мс каждый) подряд за доли секунды — 0.3с недостаточно.
+const RTL_REBUF_S = 0.5;
 
 async function rtlReadLoop(n){
   let errStreak=0;
@@ -1435,7 +1437,13 @@ async function rtlReadLoop(n){
         rtlTrackMsps(n, cnt, t1-t0, 0);
         continue;
       }
-      const demodPromise=Promise.all(active.map(ch=>ch.worker.demod(u8.slice().buffer, cnt)));
+      // .slice() нужен только чтобы дать КАЖДОМУ каналу свою копию (один ArrayBuffer нельзя
+      // transfer'ить дважды) — последнему каналу отдаём оригинал без копии: он и так последний
+      // потребитель buf/u8 в этой итерации (при активном канале ровно 1 — самый частый случай —
+      // это убирает лишнюю ~100КБ-аллокацию на каждый чанк, то есть на каждые ~50мс, целиком).
+      const lastIdx=active.length-1;
+      const demodPromise=Promise.all(active.map((ch,i)=>
+        ch.worker.demod(i===lastIdx ? buf : u8.slice().buffer, cnt)));
       let tDemodDone=0;
       demodPromise.then(()=>{ tDemodDone=performance.now(); }, ()=>{});
       inFlight++;
@@ -1540,7 +1548,10 @@ self.onmessage=function(e){
   const mag=new Float32Array(N);
   const half=N>>1;
   for(let i=0;i<N;i++){ const src=(i+half)%N; mag[i]=Math.hypot(re[src],im[src])/N; }
-  self.postMessage({type:'result', mag:mag.buffer}, [mag.buffer]);
+  // I/Q, в отличие от mag, дальше никому не нужны — отдаём буферы обратно главному потоку, чтобы
+  // rtlUpdateSpec не аллоцировал два новых Float32Array(N) на каждый расчёт (~12 раз/с, лишний
+  // источник мусора на главном потоке, см. takeBuffers ниже).
+  self.postMessage({type:'result', mag:mag.buffer, I:I.buffer, Q:Q.buffer}, [mag.buffer, I.buffer, Q.buffer]);
 };
 `;
 
@@ -1548,13 +1559,21 @@ function rtlMakeSpecWorker(){
   const url=URL.createObjectURL(new Blob([RTL_SPEC_WORKER_SRC], {type:'application/javascript'}));
   const worker=new Worker(url);
   let pendingResolve=null;
+  let bufPool=[];   // {I,Q} буферы, отданные воркером обратно после расчёта — переиспользуем
   worker.onmessage=(e)=>{
     if(e.data.type==='result' && pendingResolve){
       const resolve=pendingResolve; pendingResolve=null;
+      if(e.data.I && e.data.Q) bufPool.push({I:e.data.I, Q:e.data.Q});
       resolve(new Float32Array(e.data.mag));
     }
   };
   return {
+    // буферы нужного размера из пула (или null, если пул пуст/размер сменился, напр. specSize) —
+    // вызывающий сам решает, аллоцировать ли в этом случае свежие
+    takeBuffers(N){
+      while(bufPool.length){ const b=bufPool.pop(); if(b.I.byteLength===N*4) return b; }
+      return null;
+    },
     compute(iBuf, qBuf, N, win){
       return new Promise((resolve)=>{
         pendingResolve=resolve;
@@ -1576,7 +1595,8 @@ function rtlUpdateSpec(n){
   const N=+n.p.specSize, ring=n.specRing;
   if(ring.filled<N) return;
   const start=(ring.w-N+ring.size)%ring.size;
-  const I=new Float32Array(N), Q=new Float32Array(N);
+  const reuse=n.specWorker.takeBuffers(N);
+  const I=reuse?new Float32Array(reuse.I):new Float32Array(N), Q=reuse?new Float32Array(reuse.Q):new Float32Array(N);
   let sumI=0, sumQ=0;
   for(let i=0;i<N;i++){ const p=(start+i)%ring.size, iv=ring.I[p], qv=ring.Q[p];
     I[i]=iv; Q[i]=qv; sumI+=iv; sumQ+=qv; }
