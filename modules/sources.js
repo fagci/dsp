@@ -977,18 +977,14 @@ async function rtlOpenDevice(dev, ppm, gain){
 
 // ---- узел графа: источник IQ ----
 
-// Во сколько раз воркер суммарно прореживает поток (дешёвые ступени preStages ДО канального
-// фильтра, потом decim ПОСЛЕ него — см. RTL_WORKER_SRC) — используется на главном потоке, чтобы
-// правильно посчитать размер аудио-кольца канала и шаг его чтения (сам воркер об этом не
-// сообщает, поэтому формула ЗДЕСЬ ДОЛЖНА ТОЧНО СОВПАДАТЬ с preStages+decim внутри RTL_WORKER_SRC).
-// demod/bw общие на все 4 канала (не per-канальные параметры, см. комментарий у 'demod' в
-// params ниже) — поэтому decim тоже один на узел, а не на канал.
+// Во сколько раз воркер прореживает поток (decim ПОСЛЕ канального фильтра chA — см. RTL_WORKER_SRC)
+// — используется на главном потоке, чтобы правильно посчитать размер аудио-кольца канала и шаг
+// его чтения (сам воркер об этом не сообщает, поэтому формула ЗДЕСЬ ДОЛЖНА ТОЧНО СОВПАДАТЬ с decim
+// внутри RTL_WORKER_SRC). demod/bw общие на все 4 канала (не per-канальные параметры, см.
+// комментарий у 'demod' в params ниже) — поэтому decim тоже один на узел, а не на канал.
 function rtlDecimFor(mode, sr, bwAudio){
   const chanBw=({WFM:200000,NFM:12500,AM:10000})[mode] || bwAudio;
-  const preStages=Math.max(0, Math.min(3, Math.floor(Math.log2(Math.max(1, Math.floor(sr/Math.max(chanBw*8, 16000)))))));
-  const srMid=sr/Math.pow(2,preStages);
-  const decim=Math.max(1, Math.floor(srMid/Math.max(chanBw*4, 8000)));
-  return Math.pow(2,preStages)*decim;
+  return Math.max(1, Math.floor(sr/Math.max(chanBw*4, 8000)));
 }
 // (Пере)создаёт аудио-кольцо одного канала под ТЕКУЩИЙ n.decim — вызывается при первой
 // активации канала и при каждой смене decim на лету (demod/bw/sourceRate), иначе кольцо
@@ -1029,38 +1025,16 @@ function rtlResetRing(n){
 // и остальным движком/UI. Тот же приём Blob+createObjectURL, что и у AudioWorklet в core-engine.js.
 const RTL_WORKER_SRC = `
 let mode='WFM', sr=1024000, bwAudio=15000, deemphTau=null, devScale=75000, chanBw=200000;
-// Дискриминатор/audio-фильтры раньше считались на КАЖДЫЙ сырой IQ-отсчёт, то есть на частоте
-// приёмника (sr), а не на полосе канала — для NFM (12.5кГц) на sourceRate=2048000 это в ~80 раз
-// больше работы, чем реально нужно, и на слабом железе воркер физически не успевает в реальном
-// времени (см. SESSION_NOTES: 2048k давал ~0.26 факт. Msps при требуемых ~2.05 — обвал впятеро).
-// decim прореживает уже ПОСЛЕ канального ФНЧ (chA ниже) — тот уже ограничивает полосу до этой
-// точки, так что алиасинга от прореживания нет; дорогая часть (atan2/огибающая/audio-фильтры)
-// после этого считается на частоте ~4×chanBw, а не sr.
+// Дискриминатор/audio-фильтры считаются не на КАЖДЫЙ сырой IQ-отсчёт, а после decim (после
+// канального ФНЧ chA ниже — тот уже ограничивает полосу, так что алиасинга от прореживания нет).
 let decim=1, decimCounter=1;
-// Многоступенчатая децимация: раньше decim прореживал ПОСЛЕ дорогого 3-полюсного канального
-// фильтра (chA ниже), а сам фильтр всё равно считался на полной sr — для узкого канала (NFM)
-// на высоком sourceRate это оказалось ОСНОВНЫМ расходом (подтверждено измерением workerMs на
-// реальном железе: одна лишь эта часть съедает большую часть времени, decim после неё почти
-// ничего не менял). Теперь ДО канального фильтра стоит до 3 дешёвых ступеней "прорежь вдвое"
-// (ds1/ds2/ds3 ниже) — каждая снижает частоту вдвое ПЕРЕД тем, как отдать сэмплы дальше, поэтому
-// дорогой chA и финальный decim после него видят на порядки меньше отсчётов при той же суммарной
-// децимации. Каждая ступень — треугольный FIR (x[n]+2x[n-1]+x[n-2])/4 перед прореживанием.
-// Однополюсный IIR и даже простое 2-точечное среднее пробовали раньше — оба провалили тест на
-// синтетическом сигнале: у однополюсного затухание на границе Найквиста всего ~-3.7дБ (6дБ/окт),
-// у 2-точечного среднего ноль есть, но только одинарный — для NFM этого мало, потому что
-// atan2-дискриминатор дальше ОГРОМНО усиливает любую уцелевшую вне полосы помеху (это не сам
-// сигнал, а изменение фазы — там, где помеха доминирует, скачки фазы дают дикий "шум" на выходе).
-// Треугольный FIR даёт |cos(w/2)|² — двойной ноль на границе сгиба. Меряли одиночный такой фильтр
-// тестом с синт. дальней помехой (500кГц) через atan2: подавление амплитуды получилось ~-79дБ —
-// заметно хуже, чем ~-114дБ у СТАРОГО канального фильтра (тот стоял на полной sr, до всякого
-// прореживания, поэтому алиасинга вообще не было). atan2 сравнивает не абсолютный уровень, а фазу —
-// даже слабый, но некогерентный остаток даёт "шум" не хуже отсутствия сигнала вовсе (порог-эффект
-// FM-дискриминатора). Поэтому на каждой ступени треугольный FIR применяем ДВАЖДЫ подряд (свои линии
-// задержки на каждый проход) — это |cos(w/2)|⁴, что и вернуло запас подавления с лихвой.
-let preStages=0;
-let ds1aP1I=0,ds1aP1Q=0,ds1aP2I=0,ds1aP2Q=0,ds1bP1I=0,ds1bP1Q=0,ds1bP2I=0,ds1bP2Q=0,ds1Phase=0;
-let ds2aP1I=0,ds2aP1Q=0,ds2aP2I=0,ds2aP2Q=0,ds2bP1I=0,ds2bP1Q=0,ds2bP2I=0,ds2bP2Q=0,ds2Phase=0;
-let ds3aP1I=0,ds3aP1Q=0,ds3aP2I=0,ds3aP2Q=0,ds3bP1I=0,ds3bP1Q=0,ds3bP2I=0,ds3bP2Q=0,ds3Phase=0;
+// Раньше здесь была ещё многоступенчатая "дешёвая" предедецимация (до 3 ступеней треугольного
+// FIR перед chA) — идея была снизить число отсчётов, которые видит дорогой 3-полюсный chA.
+// Реальный бенчмарк (rtl_worker_bench.js в scratchpad) на настоящем коде воркера показал обратное:
+// эти ступени ВЕЗДЕ медленнее, чем просто отдать chA все сырые отсчёты — и на WFM (3.2Msps: 42мс→
+// 28мс без них), и на NFM/AM/SSB (в 1.5-2 раза быстрее без них на всех проверенных sourceRate).
+// Скорее всего дело не в арифметике самих ступеней (она дешёвая), а в branch-per-sample (continue
+// внутри цикла) — JIT явно не любит такой паттерн. Убраны целиком, decim делает всю децимацию сам.
 let cI0=0,cI1=0,cI2=0, cQ0=0,cQ1=0,cQ2=0, prevI=0,prevQ=0, lp0=0,lp1=0,lp2=0,lp3=0,lp4=0,de=0,ampDc=0,audDc=0;
 // Notch на 19кГц (пилот-тон стерео WFM) — узкополосный биквад поверх дискриминатора, ДО
 // lp0..lp4 (те режут по bwAudio, у пользователя может доходить до 16кГц — вплотную к пилоту,
@@ -1095,23 +1069,17 @@ deemphTau = mode==='WFM' ? tauMap[msg.deemph] : null;
 devScale = mode==='WFM'?75000:(mode==='NFM'?5000:1);
 // для USB/LSB нет записи в карте — попадаем в фолбэк и берём полосу канала равной аудио-полосе
 chanBw = ({WFM:200000,NFM:12500,AM:10000})[mode] || bwAudio;
-// preStages — сколько дешёвых ступеней /2 ставим ДО канального фильтра (см. объявление ds1..ds3
-// выше). Запас x8 (не x4, как у финального decim ниже) — у ступеней всего один полюс, срез
-// более пологий, чем у 3-полюсного chA, нужен больший отступ от alias. Не больше 3 ступеней —
-// дальше выигрыш в CPU падает, а сложность растёт; остаток "добирает" финальный decim.
-preStages = Math.max(0, Math.min(3, Math.floor(Math.log2(Math.max(1, Math.floor(sr/Math.max(chanBw*8, 16000)))))));
-// srMid — частота ПОСЛЕ preStages ступеней; и канальный фильтр (chA), и финальный decim
-// теперь считаются от неё, а не от sr. ФОРМУЛА ДОЛЖНА СОВПАДАТЬ с rtlDecimFor() на главном
-// потоке — та по ней же считает размер аудио-кольца и шаг чтения, не имея доступа к воркеру.
-const srMid=sr/Math.pow(2,preStages);
-decim = Math.max(1, Math.floor(srMid/Math.max(chanBw*4, 8000)));
+// decim — во сколько раз прореживаем ПОСЛЕ канального фильтра chA (тот работает на полной sr —
+// см. комментарий у объявления decim выше про снятые preStages). ФОРМУЛА ДОЛЖНА СОВПАДАТЬ с
+// rtlDecimFor() на главном потоке — та по ней же считает размер аудио-кольца и шаг чтения.
+decim = Math.max(1, Math.floor(sr/Math.max(chanBw*4, 8000)));
 pnOn = mode==='WFM';
 if(pnOn){
-  const outRateCfg=srMid/decim, w0=2*Math.PI*19000/outRateCfg, r=Math.exp(-2*Math.PI*150/outRateCfg);
+  const outRateCfg=sr/decim, w0=2*Math.PI*19000/outRateCfg, r=Math.exp(-2*Math.PI*150/outRateCfg);
   pnB1=-2*Math.cos(w0); pnA1=-2*r*Math.cos(w0); pnA2=r*r;
 }
 fcOn = mode==='WFM';
-if(fcOn){ const outRateCfg=srMid/decim; fcA=Math.exp(-2*Math.PI*21000/outRateCfg); }
+if(fcOn){ const outRateCfg=sr/decim; fcA=Math.exp(-2*Math.PI*21000/outRateCfg); }
 // сдвиг NCO — половина полосы канала. USB сдвигаем вниз, LSB вверх (см. вывод у цикла ниже)
 const ssbDir = mode==='USB' ? -1 : (mode==='LSB' ? 1 : 0);
 const ssbInc = 2*Math.PI*(chanBw/2)*ssbDir/sr;
@@ -1136,31 +1104,23 @@ self.onmessage = function(e){
 const msg=e.data;
 if(msg.type==='config'){ applyConfig(msg); return; }
 if(msg.type==='offset'){ applyOffset(msg.hz); return; } // лёгкое обновление — без сброса фильтров/фазы
-if(msg.type==='reset'){ cI0=cI1=cI2=cQ0=cQ1=cQ2=prevI=prevQ=lp0=lp1=lp2=lp3=lp4=de=ampDc=audDc=0; ssbPhI=1; ssbPhQ=0; offPhI=1; offPhQ=0; rawI0=0; rawQ0=0; decimCounter=1; pnX1=pnX2=pnY1=pnY2=0; fc0=fc1=fc2=fc3=0;
-ds1aP1I=ds1aP1Q=ds1aP2I=ds1aP2Q=ds1bP1I=ds1bP1Q=ds1bP2I=ds1bP2Q=0;
-ds2aP1I=ds2aP1Q=ds2aP2I=ds2aP2Q=ds2bP1I=ds2bP1Q=ds2bP2I=ds2bP2Q=0;
-ds3aP1I=ds3aP1Q=ds3aP2I=ds3aP2Q=ds3bP1I=ds3bP1Q=ds3bP2I=ds3bP2Q=0;
-ds1Phase=ds2Phase=ds3Phase=0; return; }
+if(msg.type==='reset'){ cI0=cI1=cI2=cQ0=cQ1=cQ2=prevI=prevQ=lp0=lp1=lp2=lp3=lp4=de=ampDc=audDc=0; ssbPhI=1; ssbPhQ=0; offPhI=1; offPhQ=0; rawI0=0; rawQ0=0; decimCounter=1; pnX1=pnX2=pnY1=pnY2=0; fc0=fc1=fc2=fc3=0; return; }
 if(msg.type==='giveBuffer'){ bufPool.push(msg.buffer); return; } // главный поток вернул буфер — кладём в пул
 if(msg.type!=='demod') return;
 const tStart=performance.now();  // время ВНУТРИ воркера, не round-trip с главным потоком (см. workerMs ниже)
 const u8=new Uint8Array(msg.buffer), cnt=msg.cnt;
-// суммарная децимация — preStages дешёвых ступеней /2, потом ещё decim после канального фильтра;
-// maxOut с запасом +2 на перенос фазы между чанками сразу по всем ступеням (каждая может "доесть"
-// до 1 входного сэмпла этого чанка, не выдав на выходе ничего)
-const totalDecim=Math.pow(2,preStages)*decim;
-const maxOut=Math.floor(cnt/totalDecim)+2;
+// maxOut с запасом +2 на перенос фазы decim между чанками
+const maxOut=Math.floor(cnt/decim)+2;
 // берём буфер из пула (вернули с прошлого раза), и только если пусто или размер не совпал — аллоцируем
 let outAB=null;
 while(bufPool.length){ const b=bufPool.pop(); if(b.byteLength===maxOut*4){ outAB=b; break; } }
 const out=outAB ? new Float32Array(outAB) : new Float32Array(maxOut);
-const srMid=sr/Math.pow(2,preStages);               // частота ПОСЛЕ дешёвых ступеней предварительной децимации
-const outRate=srMid/decim;                          // дорогая часть ниже считается на этой частоте
+const outRate=sr/decim;                             // дорогая часть ниже считается на этой частоте
 const lpA=Math.exp(-2*Math.PI*bwAudio/outRate), lpA1=1-lpA; // настоящий ФНЧ на bwAudio
 const hpA=Math.exp(-2*Math.PI*20/outRate), hpA1=1-hpA; // DC-блок аудио, фикс. 20 Гц
 const rawA=Math.exp(-2*Math.PI*150/sr), rawA1=1-rawA; // сырой DC-блок — на полной частоте, до децимации
 const deA=deemphTau ? Math.exp(-1/(deemphTau*outRate)) : null, deA1=deA!=null?1-deA:0;
-const chA=Math.exp(-2*Math.PI*(chanBw/2)/srMid), chA1=1-chA; // канальный ФНЧ — теперь на srMid, не на sr
+const chA=Math.exp(-2*Math.PI*(chanBw/2)/sr), chA1=1-chA; // канальный ФНЧ — на полной sr (без preStages)
 const discScale=outRate/(2*Math.PI)/devScale, isAM=mode==='AM', isSSB=(mode==='USB'||mode==='LSB');
 // offZero — самый частый случай (один канал ровно в центре полосы, без offset-подстройки):
 // фазор гарантированно единичный (см. applyOffset), поворот НИЧЕГО не меняет — пропускаем его
@@ -1195,37 +1155,6 @@ const nPhI=pI*ssbCos-pQ*ssbSin, nPhQ=pI*ssbSin+pQ*ssbCos;
 const nrm=1.5-0.5*(nPhI*nPhI+nPhQ*nPhQ); // дешёвая ренормализация вместо sqrt, держит |ph|≈1
 ssbPhI=nPhI*nrm; ssbPhQ=nPhQ*nrm;
 }
-// ---- дешёвые ступени предварительной децимации (см. preStages/ds1../треугольный FIR выше) ----
-// Каждая ступень: треугольный FIR (x[n]+2x[n-1]+x[n-2])/4 применяем ДВАЖДЫ подряд (свои линии
-// задержки на каждый проход, итого |cos(w/2)|⁴) на каждом сэмпле — 4 умножения и 4 сложения,
-// а прореживание вдвое — просто берём результат через раз. NCO-сдвиги выше остаются на полной sr —
-// они дешёвые сами по себе, и полоса ступеней (>> chanBw) их не обрежет.
-let live=true;
-if(preStages>=1){
-const y1I=0.25*i+0.5*ds1aP1I+0.25*ds1aP2I, y1Q=0.25*q+0.5*ds1aP1Q+0.25*ds1aP2Q;
-ds1aP2I=ds1aP1I; ds1aP2Q=ds1aP1Q; ds1aP1I=i; ds1aP1Q=q;
-const y2I=0.25*y1I+0.5*ds1bP1I+0.25*ds1bP2I, y2Q=0.25*y1Q+0.5*ds1bP1Q+0.25*ds1bP2Q;
-ds1bP2I=ds1bP1I; ds1bP2Q=ds1bP1Q; ds1bP1I=y1I; ds1bP1Q=y1Q;
-ds1Phase^=1;
-if(ds1Phase) live=false; else { i=y2I; q=y2Q; }
-}
-if(live && preStages>=2){
-const y1I=0.25*i+0.5*ds2aP1I+0.25*ds2aP2I, y1Q=0.25*q+0.5*ds2aP1Q+0.25*ds2aP2Q;
-ds2aP2I=ds2aP1I; ds2aP2Q=ds2aP1Q; ds2aP1I=i; ds2aP1Q=q;
-const y2I=0.25*y1I+0.5*ds2bP1I+0.25*ds2bP2I, y2Q=0.25*y1Q+0.5*ds2bP1Q+0.25*ds2bP2Q;
-ds2bP2I=ds2bP1I; ds2bP2Q=ds2bP1Q; ds2bP1I=y1I; ds2bP1Q=y1Q;
-ds2Phase^=1;
-if(ds2Phase) live=false; else { i=y2I; q=y2Q; }
-}
-if(live && preStages>=3){
-const y1I=0.25*i+0.5*ds3aP1I+0.25*ds3aP2I, y1Q=0.25*q+0.5*ds3aP1Q+0.25*ds3aP2Q;
-ds3aP2I=ds3aP1I; ds3aP2Q=ds3aP1Q; ds3aP1I=i; ds3aP1Q=q;
-const y2I=0.25*y1I+0.5*ds3bP1I+0.25*ds3bP2I, y2Q=0.25*y1Q+0.5*ds3bP1Q+0.25*ds3bP2Q;
-ds3bP2I=ds3bP1I; ds3bP2Q=ds3bP1Q; ds3bP1I=y1I; ds3bP1Q=y1Q;
-ds3Phase^=1;
-if(ds3Phase) live=false; else { i=y2I; q=y2Q; }
-}
-if(!live) continue;   // сэмпл поглощён одной из ступеней прореживания — до канального фильтра не доходит
 cI0=cI0*chA+i*chA1; cQ0=cQ0*chA+q*chA1;
 cI1=cI1*chA+cI0*chA1; cQ1=cQ1*chA+cQ0*chA1;
 cI2=cI2*chA+cI1*chA1; cQ2=cQ2*chA+cQ1*chA1;
@@ -1264,7 +1193,7 @@ audDc=audDc*hpA+v*hpA1;
 const hp=v-audDc;
 // Пять каскадных полюсов режут по bwAudio (обычно 15кГц), но их реальная суппрессия пилота
 // (19кГц) сильно зависит от outRate: при decim=1 (типично для WFM на sourceRate~1МГц — см.
-// rtlDecimFor, там preStages/decim для WFM почти всегда 0/1) outRate остаётся ~1МГц, и те же
+// rtlDecimFor) outRate остаётся ~1МГц, и те же
 // 5 полюсов дают там лишь ~21дБ вместо ожидаемых ~55дБ (при outRate ближе к 48-96кГц) — пилот
 // и поднесущая (23-53кГц) слышны как "трещащий" шум, меняющийся вместе со звуком, именно в
 // этом случае. Поэтому отдельно — notch ровно на 19кГц под пилот и доп. ФНЧ на фиксированных
