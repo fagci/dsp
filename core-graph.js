@@ -623,20 +623,49 @@ if(typeof panelMode!=='undefined'  && panelMode) return;
 // браузер вынужден на каждой итерации форсировать синхронный reflow, чтобы отдать актуальный offset.
 wires.style.transform=content.style.transform ;        // держим в синхроне на каждый вызов, а не только по panzoomchange
 wiresFront.style.transform=content.style.transform;
+// боксы узлов — для огибания: провод, идущий по прямой между портами, не должен резать
+// чужой узел, оказавшийся между ними. Считаем один раз на весь drawWires, не на каждый провод.
+const boxes=Graph.nodes.map(n=>{
+const w=n.el.offsetWidth||n.size.w, h=n.el.offsetHeight||n.size.h;
+return {n,x0:n.x,y0:n.y,x1:n.x+w,y1:n.y+h};
+});
 const jobs=[];
 for(const e of Graph.edges){
 const a= Graph.map[e.from], b=Graph.map[e.to]; if(!a||!b) continue;
 const p1=portPos(a,a.ports.o[e.fp],'o'), p2=portPos(b,b.ports.i[e.tp],'i');
-jobs.push([e,curve(p1,p2)]);
+const obstacles=boxes.filter(bx=>bx.n!==a && bx.n!==b);
+jobs.push([e,curve(p1,p2,obstacles)]);
 }
 for(const [e,d ] of jobs){
 e.path.setAttribute('d',d); e.hit.setAttribute('d',d);
 if(e.hoverClone) e.hoverClone.setAttribute('d',d);
 }
 }
-function curve(p1,p2){
-const dx=Math.max(40,Math.abs(p2.x-p1.x)*.5);
-return  `M${p1.x+8000},${p1.y+8000} C${p1.x+dx+8000},${p1.y+8000} ${p2.x-dx+8000},${p2.y+8000} ${p2.x+8000},${p2.y+8000}` ;
+function hSeg(from,to){                              // кубик с горизонтальной касательной в обеих концевых точках
+const d=Math.max(24,Math.abs(to.x-from.x)*.6)*(to.x>=from.x?1:-1);
+return `C${from.x+d+8000},${from.y+8000} ${to.x-d+8000},${to.y+8000} ${to.x+8000},${to.y+8000}`;
+}
+function curve(p1,p2,obstacles){
+if(obstacles && obstacles.length){
+const x0=Math.min(p1.x,p2.x), x1=Math.max(p1.x,p2.x);
+const y0=Math.min(p1.y,p2.y), y1=Math.max(p1.y,p2.y);
+const margin=16;
+let top=Infinity, bot=-Infinity, left=Infinity, right=-Infinity;
+for(const ob of obstacles){                       // узел реально лежит на пути, не просто рядом с портом
+if(ob.x1<=x0||ob.x0>=x1||ob.y1<=y0||ob.y0>=y1) continue;
+if(ob.y0<top) top=ob.y0; if(ob.y1>bot) bot=ob.y1;
+if(ob.x0<left) left=ob.x0; if(ob.x1>right) right=ob.x1;
+}
+if(top<Infinity){                                  // огибаем сверху или снизу — что ближе к прямой,
+const midY=(p1.y+p2.y)/2, overTop=top-margin, underBot=bot+margin;   // и обходим весь X-диапазон препятствия по плоской "полке",
+const bulge=Math.abs(overTop-midY)<=Math.abs(underBot-midY) ? overTop : underBot; // а не только в средней точке — иначе провод
+let xa=Math.max(x0,left-margin), xb=Math.min(x1,right+margin);       // задевает угол препятствия ближе к концу кривой
+if(xa>xb){ const t=xa; xa=xb; xb=t; }
+const entry={x:p1.x<=p2.x?xa:xb,y:bulge}, exit={x:p1.x<=p2.x?xb:xa,y:bulge};
+return `M${p1.x+8000},${p1.y+8000} `+hSeg(p1,entry)+` L${exit.x+8000},${exit.y+8000} `+hSeg(exit,p2);
+}
+}
+return `M${p1.x+8000},${p1.y+8000} `+hSeg(p1,p2);
 }
 /* ---- история, выделение, буфер обмена ---- */
 let graphDirty=false;                                // есть ли несохранённые изменения с последней загрузки/сохранения патча
