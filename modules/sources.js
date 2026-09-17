@@ -1068,6 +1068,14 @@ let cI0=0,cI1=0,cI2=0, cQ0=0,cQ1=0,cQ2=0, prevI=0,prevQ=0, lp0=0,lp1=0,lp2=0,lp3
 // а с добавленным notch — глубокая яма ровно на 19кГц и НОЛЬ влияния на 15-18кГц звука).
 // pnOn включается только для WFM (см. applyConfig) — в NFM/AM/SSB пилота нет и notch не нужен.
 let pnOn=false, pnB1=0, pnA1=0, pnA2=0, pnX1=0, pnX2=0, pnY1=0, pnY2=0;
+// Доп. ФНЧ на фиксированных 21кГц (4 полюса, НЕ завязан на bwAudio) — сам notch бьёт точно
+// в пилот (19кГц), но стерео-поднесущая (23-53кГц, DSB-SC с программным звуком, а не чистый
+// тон) — широкая полоса, notch её не берёт. Без этого фильтра суппрессия на границе поднесущей
+// (23кГц) — единицы+десятки дБ, мало для реального эфира: остаток после грубой линейной
+// интерполяции в rtlReadChannelAudio звучит как "хрип"/рассинхрон, коррелирующий с программой
+// (см. wfm_pilot_check.js: +12-25дБ в полосе 21-53кГц). Фиксированный, а не от bwAudio — иначе
+// пользователь, подняв полосу звука, снова терял бы этот запас.
+let fcOn=false, fcA=0, fc0=0, fc1=0, fc2=0, fc3=0;
 // Общий NCO "частоты настройки": сдвигает выбранную внутри захваченной полосы точку
 // (offsetHz относительно центра тюнера) на 0 Гц ДО канального фильтра — так демодулируется
 // сигнал в любом месте полосы обзора без физической перестройки тюнера (без USB round-trip).
@@ -1102,6 +1110,8 @@ if(pnOn){
   const outRateCfg=srMid/decim, w0=2*Math.PI*19000/outRateCfg, r=Math.exp(-2*Math.PI*150/outRateCfg);
   pnB1=-2*Math.cos(w0); pnA1=-2*r*Math.cos(w0); pnA2=r*r;
 }
+fcOn = mode==='WFM';
+if(fcOn){ const outRateCfg=srMid/decim; fcA=Math.exp(-2*Math.PI*21000/outRateCfg); }
 // сдвиг NCO — половина полосы канала. USB сдвигаем вниз, LSB вверх (см. вывод у цикла ниже)
 const ssbDir = mode==='USB' ? -1 : (mode==='LSB' ? 1 : 0);
 const ssbInc = 2*Math.PI*(chanBw/2)*ssbDir/sr;
@@ -1118,7 +1128,7 @@ self.onmessage = function(e){
 const msg=e.data;
 if(msg.type==='config'){ applyConfig(msg); return; }
 if(msg.type==='offset'){ applyOffset(msg.hz); return; } // лёгкое обновление — без сброса фильтров/фазы
-if(msg.type==='reset'){ cI0=cI1=cI2=cQ0=cQ1=cQ2=prevI=prevQ=lp0=lp1=lp2=lp3=lp4=de=ampDc=audDc=0; ssbPhI=1; ssbPhQ=0; offPhI=1; offPhQ=0; rawI0=0; rawQ0=0; decimCounter=1; pnX1=pnX2=pnY1=pnY2=0;
+if(msg.type==='reset'){ cI0=cI1=cI2=cQ0=cQ1=cQ2=prevI=prevQ=lp0=lp1=lp2=lp3=lp4=de=ampDc=audDc=0; ssbPhI=1; ssbPhQ=0; offPhI=1; offPhQ=0; rawI0=0; rawQ0=0; decimCounter=1; pnX1=pnX2=pnY1=pnY2=0; fc0=fc1=fc2=fc3=0;
 ds1aP1I=ds1aP1Q=ds1aP2I=ds1aP2Q=ds1bP1I=ds1bP1Q=ds1bP2I=ds1bP2Q=0;
 ds2aP1I=ds2aP1Q=ds2aP2I=ds2aP2Q=ds2bP1I=ds2bP1Q=ds2bP2I=ds2bP2Q=0;
 ds3aP1I=ds3aP1Q=ds3aP2I=ds3aP2Q=ds3bP1I=ds3bP1Q=ds3bP2I=ds3bP2Q=0;
@@ -1228,6 +1238,11 @@ if(pnOn){                            // notch на 19кГц — см. объяв
   const y=v+pnB1*pnX1+pnX2-pnA1*pnY1-pnA2*pnY2;
   pnX2=pnX1; pnX1=v; pnY2=pnY1; pnY1=y; v=y;
 }
+if(fcOn){                            // доп. ФНЧ 21кГц/4 полюса — см. объявление fcOn/fcA.. выше
+  fc0=fc0*fcA+v*(1-fcA); fc1=fc1*fcA+fc0*(1-fcA);
+  fc2=fc2*fcA+fc1*(1-fcA); fc3=fc3*fcA+fc2*(1-fcA);
+  v=fc3;
+}
 }
 audDc=audDc*hpA+v*hpA1;
 const hp=v-audDc;
@@ -1236,8 +1251,8 @@ const hp=v-audDc;
 // rtlDecimFor, там preStages/decim для WFM почти всегда 0/1) outRate остаётся ~1МГц, и те же
 // 5 полюсов дают там лишь ~21дБ вместо ожидаемых ~55дБ (при outRate ближе к 48-96кГц) — пилот
 // и поднесущая (23-53кГц) слышны как "трещащий" шум, меняющийся вместе со звуком, именно в
-// этом случае. Поэтому отдельно — notch ровно на 19кГц (pnOn/pnB1/pnA1/pnA2 выше, применяется
-// до этого каскада), не зависящий от bwAudio и от decim/outRate.
+// этом случае. Поэтому отдельно — notch ровно на 19кГц под пилот и доп. ФНЧ на фиксированных
+// 21кГц под поднесущую (pnOn/fcOn выше, применяются до этого каскада), не зависящие от bwAudio.
 lp0=lp0*lpA+hp*lpA1;
 lp1=lp1*lpA+lp0*lpA1;
 lp2=lp2*lpA+lp1*lpA1;
