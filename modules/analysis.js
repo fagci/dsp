@@ -1039,6 +1039,13 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         const rc=cv.getBoundingClientRect(), x=(ev.clientX-rc.left)/rc.width;
         const fAtCursor=saFreq(n,x);                 // курсор — по текущей (лог или линейной) шкале
         if(n.p.auto) n.set.auto?.(false);
+        // n._dragPending — как у обычного драга (см. большой комментарий в process() выше): окно
+        // после зума/панорамы колесом точно так же может на мгновение оказаться ЗА пределами уже
+        // реально захваченной приёмником полосы (steerFreq перестраивает его асинхронно, по USB) —
+        // без этого флага process() увидел бы "окно не пересекается с данными" и тут же откатил бы
+        // зум обратно на весь охват на следующем же тике: колесом крутнули — картинка на миг
+        // масштабируется — и тут же сбрасывается назад. У драга это уже было учтено, у колеса — нет.
+        n._dragPending=true;
         if(ev.shiftKey){
           const pan=curRange*0.15*(ev.deltaY>0?1:-1);
           const newLo=clamp(curLo+pan, fullLo, fullHi-curRange);
