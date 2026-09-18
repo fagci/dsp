@@ -1466,6 +1466,20 @@ def({ id:'bookmarks', title:'Bookmarks (freq list)', cat:'Analysis',
     if(r) r.textContent = n.lastFreq!=null ? ('freq: '+fmtHz(n.lastFreq)+'Hz') : 'no freq wired';
   }});
 
+// 'sa' принимает только один вход 'bands' — этот узел склеивает несколько источников (bandplan +
+// bookmarks и т.д.) в один массив, чтобы можно было подключить оба сразу.
+def({ id:'bandsmerge', title:'Merge Band Plans', cat:'Analysis',
+  ins:[{n:'a',t:'bands'},{n:'b',t:'bands'},{n:'c',t:'bands'},{n:'d',t:'bands'}],
+  outs:[{n:'bands',t:'bands'}],
+  readout:true,
+  process(n,I){
+    const out=[];
+    for(const k of ['a','b','c','d']) if(Array.isArray(I[k])) out.push(...I[k]);
+    n.count=out.length;
+    return {bands:out};
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=(n.count||0)+' entries'; }});
+
 
 // Опорные точки палитры водопада (t от 0 до 1) — та же цветовая идея, что у gqrx/SDR++
 // (тёмный → синий → голубой → зелёный → жёлтый → оранжевый → белый), но переходы между
