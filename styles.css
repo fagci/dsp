@@ -387,3 +387,4 @@ canvas.view.pick{cursor:crosshair}
 #bar select{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padding:5px 6px;
   max-width:170px}
 #hint{position:absolute;right:10px;bottom:8px;color:var(--dim);font-size:10px;pointer-events:none}
+
