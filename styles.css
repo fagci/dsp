@@ -128,19 +128,35 @@ button,select,input{font:inherit;color:inherit}
 #canvas.panel .io3 .col{display:none}
 #canvas.panel .nhead{cursor:default}
 #canvas.panel .rz{display:none}
-/* ---- дашборд: тайловая раскладка закреплённых (📌) узлов через GridStack ---- */
-#dashGrid{display:none;width:100%;height:100%;overflow:auto;padding:10px;box-sizing:border-box}
-#canvas.dashboard{overflow:hidden;cursor:default;background:none;touch-action:pan-y}
+/* ---- дашборд: тайловая раскладка закреплённых (📌) узлов, дерево произвольных сплитов (как в tiling WM) ---- */
+#dashGrid{display:none;width:100%;height:100%;overflow:hidden;box-sizing:border-box}
+#dashGrid>*{width:100%;height:100%}
+#canvas.dashboard{overflow:hidden;cursor:default;background:none;touch-action:none}
 #canvas.dashboard #content,#canvas.dashboard #wires,#canvas.dashboard #wiresFront{display:none}
-#canvas.dashboard #dashGrid{display:block}
-.grid-stack-item-content{overflow:auto!important;background:var(--panel);border-radius:3px}
-.grid-stack-item-content .node{position:static!important;width:100%!important;height:100%!important;
-  max-width:none!important;box-shadow:none;transform:none!important}
-.grid-stack-item-content .node .io3>.col{display:none}
-.grid-stack-item-content .node .rz{display:none}
-.grid-stack-item-content .nhead{cursor:move}
+#canvas.dashboard #dashGrid{display:flex}
 .nhead .dash{cursor:pointer;color:var(--dim);padding:0 4px;font-size:11px}
 .nhead .dash.on{color:var(--acc)}
+.dash-split{display:flex;width:100%;height:100%;min-width:0;min-height:0}
+.dash-split.row{flex-direction:row}
+.dash-split.col{flex-direction:column}
+.dash-resizer{flex:none;background:var(--line);z-index:1}
+.dash-split.row>.dash-resizer{width:6px;cursor:col-resize}
+.dash-split.col>.dash-resizer{height:6px;cursor:row-resize}
+.dash-resizer:hover,.dash-resizer.active{background:var(--acc)}
+.dash-pane{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--panel);border-radius:3px;overflow:hidden}
+.dash-tools{flex:none;display:flex;justify-content:flex-end;gap:3px;padding:3px 4px;
+  background:var(--panel2);border-bottom:1px solid var(--line)}
+.dash-tools button{background:var(--panel);border:1px solid var(--line);border-radius:2px;color:var(--dim);
+  cursor:pointer;font-size:12px;padding:1px 6px;line-height:1.5}
+.dash-tools button:hover{color:var(--acc);border-color:var(--acc)}
+.dash-body{flex:1 1 auto;min-height:0;overflow:auto}
+.dash-body .node{position:static!important;width:100%!important;height:100%!important;
+  max-width:none!important;box-shadow:none;transform:none!important}
+.dash-body .node .io3>.col{display:none}
+.dash-body .node .rz{display:none}
+.dash-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+  width:100%;height:100%;padding:10px;box-sizing:border-box;color:var(--dim);font-size:12px;text-align:center}
+.dash-empty select{max-width:90%}
 #scrim{display:none;position:fixed;inset:0;background:var(--scrim);z-index:9}
 #toast{position:fixed;top:14px;left:50%;transform:translate(-50%,-8px);z-index:20;
   background:var(--panel2);border:1px solid var(--acc);color:var(--txt);

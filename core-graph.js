@@ -1,4 +1,4 @@
-const Graph = { nodes:[], edges:[], map:{}, order:[], seq:1, sel:null };
+const Graph = { nodes:[], edges:[], map:{}, order:[], seq:1, sel:null, dashTree:null };
 const content = document.getElementById('content');
 const wires = document.getElementById('wires');
 const view = {x:60,y:40,k:1};
@@ -66,8 +66,8 @@ try{ d?.dispose?.(n); }catch(e){ console.error('dispose '+n.type+':',e); }
 n.roCv?.disconnect();                               // иначе ResizeObserver держит канву живой
 Graph.edges.filter(e=>e.from===n.id||e.to===n.id).forEach(delEdge);
 Graph.nodes=Graph.nodes.filter(x=>x!==n); delete Graph.map[n.id];
-if(n._dashWrap) dashGrid?.removeWidget(n._dashWrap,true);   // иначе в дашборде останется пустой тайл
-else n.el.remove();
+const dlf=dashLeafOf(n.id); if(dlf){ dlf.node=null; if(dashMode) dashRenderRoot(); }
+n.el.remove();
 markTopoDirty();
 }
 function addEdge(from,fp,to,tp){
@@ -897,68 +897,154 @@ if(!on){ cv.scrollTop=0; cv.scrollLeft=0;
 for(const n of Graph.nodes) applySize(n); markWiresDirty(); }
 }
 document.getElementById('panel').onclick=()=>setPanel(!panelMode);
-/* ---- дашборд: тайловая раскладка закреплённых (📌) узлов, через GridStack ---- */
-// Один экземпляр GridStack на всю сессию (лениво) — переключение режима туда-обратно просто
-// прячет/показывает #dashGrid через CSS и добавляет/убирает виджеты, без пере-init.
-// dashGridEl/dashBtn могут отсутствовать, если у пользователя закэширован старый index.html без
-// них (index.html, в отличие от .js/.css, не версионируется query-параметром) — тогда просто тихо
-// не заводим дашборд, вместо необработанного исключения, роняющего остальную инициализацию.
+/* ---- дашборд: тайловая раскладка закреплённых (📌) узлов, дерево произвольных сплитов (как в tiling WM) ---
+   Graph.dashTree — либо null, либо {t:'leaf',id,node} с id узла или null (пустой слот),
+   либо {t:'split',id,dir:'row'|'col',children:[...],sizes:[...]} (проценты, sum=100).
+   dashGridEl/dashBtn могут отсутствовать, если у пользователя закэширован старый index.html без
+   них (index.html, в отличие от .js/.css, не версионируется query-параметром) — тогда просто тихо
+   не заводим дашборд, вместо необработанного исключения, роняющего остальную инициализацию. */
 const dashGridEl=document.getElementById('dashGrid');
 const dashBtn=document.getElementById('dash');
-let dashGrid=null;
-function ensureDashGrid(){
-  if(dashGrid) return dashGrid;
-  if(!dashGridEl) return null;
-  dashGrid=GridStack.init({column:12,cellHeight:70,margin:8,handle:'.nhead',
-    columnOpts:{breakpoints:[{w:700,c:1}]}}, dashGridEl);   // 1 колонка на мобиле — тот же брейкпоинт, что и остальной UI
-  // it.id — свой node.id, заведённый при makeWidget ниже: GridStack не гарантирует it.el в change-
-  // событии (в частности, save() у него сам зачищает el), а id — как раз для такой сверки и есть
-  dashGrid.on('change',(ev,items)=>{                        // подвинули/растянули тайл — запомнить в узле
-    for(const it of items||[]){
-      const n=Graph.map[it.id]; if(!n) continue;
-      n.dash={x:it.x,y:it.y,w:it.w,h:it.h};
+let dashSeq=1;
+function dashId(){ return 'd'+(dashSeq++); }
+function dashLeaf(nodeId){ return {t:'leaf', id:dashId(), node:nodeId??null}; }
+function dashEnsureTree(){ if(!Graph.dashTree) Graph.dashTree=dashLeaf(null); return Graph.dashTree; }
+function dashFind(t,id,parent,idx){                  // {leaf,parent,idx} по id узла дерева, либо null
+  if(!t) return null;
+  if(t.id===id) return {leaf:t,parent,idx};
+  if(t.t==='split') for(let i=0;i<t.children.length;i++){ const r=dashFind(t.children[i],id,t,i); if(r) return r; }
+  return null;
+}
+function dashLeaves(t,out){ out=out||[];
+  if(!t) return out;
+  if(t.t==='leaf') out.push(t); else t.children.forEach(c=>dashLeaves(c,out));
+  return out;
+}
+function dashLeafOf(nodeId){ return dashLeaves(Graph.dashTree).find(l=>l.node===nodeId)||null; }
+function dashAutoPlace(n){                            // первый пустой лист (обход в глубину)
+  const empty=dashLeaves(dashEnsureTree()).find(l=>l.node==null);
+  if(empty){ empty.node=n.id; return true; } return false;
+}
+function dashSplit(leafId,dir){
+  const f=dashFind(Graph.dashTree,leafId); if(!f) return;
+  const split={t:'split', id:dashId(), dir, children:[dashLeaf(f.leaf.node),dashLeaf(null)], sizes:[50,50]};
+  if(f.parent) f.parent.children[f.idx]=split; else Graph.dashTree=split;
+  dashRenderRoot(); Undo.push();
+}
+function dashCollapse(t){                             // сплит с 1 ребёнком → сам этот ребёнок (рекурсивно)
+  if(!t||t.t!=='split') return t;
+  t.children=t.children.map(dashCollapse);
+  return t.children.length===1? t.children[0] : t;
+}
+function dashRemoveLeaf(leafId){                       // убрать пустой слот, отдав его место соседям
+  const f=dashFind(Graph.dashTree,leafId); if(!f) return;
+  if(!f.parent){ Graph.dashTree=null; dashRenderRoot(); Undo.push(); return; }
+  f.parent.children.splice(f.idx,1); f.parent.sizes.splice(f.idx,1);
+  const sum=f.parent.sizes.reduce((a,b)=>a+b,0)||1;
+  f.parent.sizes=f.parent.sizes.map(s=>s*100/sum);
+  Graph.dashTree=dashCollapse(Graph.dashTree);
+  dashRenderRoot(); Undo.push();
+}
+function dashRenderRoot(){
+  dashGridEl.innerHTML='';
+  if(!Graph.dashTree){
+    const hint=document.createElement('div'); hint.className='dash-empty';
+    hint.textContent="No pinned modules — click 📌 in a node's header to pin it";
+    dashGridEl.append(hint); return;
+  }
+  dashGridEl.append(dashRenderNode(Graph.dashTree));
+}
+function dashRenderNode(t){
+  if(t.t==='leaf') return dashRenderLeaf(t);
+  const wrap=document.createElement('div'); wrap.className='dash-split '+t.dir;
+  t.children.forEach((c,i)=>{
+    const el=dashRenderNode(c); el.style.flex='0 0 '+t.sizes[i]+'%';
+    wrap.append(el);
+    if(i<t.children.length-1){
+      const rz=document.createElement('div'); rz.className='dash-resizer';
+      bindDashResizer(rz,t,i); wrap.append(rz);
     }
-    Undo.push();
   });
-  return dashGrid;
+  return wrap;
 }
-// заворачивает n.el в стандартную разметку тайла GridStack (.grid-stack-item>.grid-stack-item-content)
-// и регистрирует её в сетке — n.el просто переезжает (append), не отрывается от документа
-function dashAdd(n){
-  const grid=ensureDashGrid();
-  const wrap=document.createElement('div'); wrap.className='grid-stack-item';
-  const box=document.createElement('div'); box.className='grid-stack-item-content';
-  box.appendChild(n.el); wrap.appendChild(box);
-  dashGridEl.appendChild(wrap);
-  grid.makeWidget(wrap, {...(n.dash||{w:4,h:4}), id:n.id});
-  const gn=wrap.gridstackNode;
-  if(gn) n.dash={x:gn.x,y:gn.y,w:gn.w,h:gn.h};
-  n._dashWrap=wrap;
+function dashRenderLeaf(t){
+  const pane=document.createElement('div'); pane.className='dash-pane';
+  const tools=document.createElement('div'); tools.className='dash-tools';
+  const bRow=document.createElement('button'); bRow.textContent='⬌'; bRow.title='Split right';
+  bRow.onclick=()=>dashSplit(t.id,'row');
+  const bCol=document.createElement('button'); bCol.textContent='⬍'; bCol.title='Split down';
+  bCol.onclick=()=>dashSplit(t.id,'col');
+  tools.append(bRow,bCol);
+  const n=t.node!=null?Graph.map[t.node]:null;
+  if(!n){
+    const bx=document.createElement('button'); bx.textContent='✕'; bx.title='Remove pane';
+    bx.onclick=()=>dashRemoveLeaf(t.id);
+    tools.append(bx);
+  }
+  pane.append(tools);
+  const body=document.createElement('div'); body.className='dash-body';
+  if(n){ body.append(n.el); }
+  else {
+    const ph=document.createElement('div'); ph.className='dash-empty';
+    const pinned=Graph.nodes.filter(x=>x.dash && !dashLeafOf(x.id));
+    if(!pinned.length){ ph.textContent='No pinned modules available'; }
+    else {
+      const sel=document.createElement('select');
+      sel.append(new Option('— pick module —',''));
+      for(const pn of pinned) sel.append(new Option(MOD[pn.type].title+' #'+pn.id, pn.id));
+      sel.onchange=()=>{ if(!sel.value) return; t.node=sel.value; dashRenderRoot(); Undo.push(); };
+      ph.append(sel);
+    }
+    body.append(ph);
+  }
+  pane.append(body);
+  return pane;
 }
-function dashRemove(n){
-  if(!n._dashWrap) return;
-  content.appendChild(n.el);                    // сначала узел выезжает обратно на обычный холст —
-  dashGrid?.removeWidget(n._dashWrap,true);      // потом опустевшую обёртку можно спокойно убирать
-  n._dashWrap=null;
+function bindDashResizer(rz,t,i){                       // тащим границу между t.children[i] и [i+1]
+  rz.addEventListener('pointerdown',ev=>{
+    ev.preventDefault(); rz.setPointerCapture(ev.pointerId); rz.classList.add('active');
+    const wrap=rz.parentElement, horiz=t.dir==='row';
+    const total=horiz?wrap.getBoundingClientRect().width:wrap.getBoundingClientRect().height;
+    const s0=t.sizes[i], s1=t.sizes[i+1], start=horiz?ev.clientX:ev.clientY;
+    const panes=[...wrap.children].filter(el=>el!==rz && !el.classList.contains('dash-resizer'));
+    const move=e=>{
+      const d=((horiz?e.clientX:e.clientY)-start)/total*100, min=5;
+      const a=clamp(s0+d,min,s0+s1-min), b=s0+s1-a;
+      t.sizes[i]=a; t.sizes[i+1]=b;
+      panes[i].style.flex='0 0 '+a+'%'; panes[i+1].style.flex='0 0 '+b+'%';
+    };
+    const up=()=>{ rz.classList.remove('active');
+      window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); Undo.push(); };
+    window.addEventListener('pointermove',move); window.addEventListener('pointerup',up);
+  });
 }
 function toggleDash(n){
-  n.dash = n.dash? null : {w:4,h:4};
-  const btn=n.el.querySelector('.dash'); if(btn) btn.classList.toggle('on', !!n.dash);
-  if(!dashMode) return;                          // вне режима — просто запомнили флаг, тайл заведём при входе
-  if(n.dash) dashAdd(n); else dashRemove(n);
+  n.dash=!n.dash;
+  const btn=n.el.querySelector('.dash'); if(btn) btn.classList.toggle('on', n.dash);
+  if(n.dash){ if(dashMode) dashAutoPlace(n); }
+  else {
+    const leaf=dashLeafOf(n.id);
+    if(leaf){ leaf.node=null; if(dashMode) content.appendChild(n.el); }
+  }
+  if(dashMode) dashRenderRoot();
 }
 function setDash(on){
-  if(on && !dashGridEl) return;                       // старый закэшированный index.html без #dashGrid — тихо выходим
-  if(on && panelMode) setPanel(false);                // режимы взаимоисключающие — разные контейнеры узлов
+  if(on && !dashGridEl) return;                        // старый закэшированный index.html без #dashGrid — тихо выходим
+  if(on && panelMode) setPanel(false);                 // режимы взаимоисключающие — разные контейнеры узлов
   dashMode=on;
   cv.classList.toggle('dashboard',on);
   dashBtn?.classList.toggle('on',on);
   document.getElementById('fit').disabled=on||panelMode;
   if(on){
-    ensureDashGrid();
-    for(const n of Graph.nodes) if(n.dash && !n._dashWrap) dashAdd(n);
+    dashEnsureTree();
+    for(const n of Graph.nodes) if(n.dash && !dashLeafOf(n.id)) dashAutoPlace(n);
+    dashRenderRoot();
   } else {
-    for(const n of Graph.nodes) if(n._dashWrap) dashRemove(n);
+    for(const l of dashLeaves(Graph.dashTree)){
+      const n=l.node!=null?Graph.map[l.node]:null;
+      if(n) content.appendChild(n.el);
+    }
+    dashGridEl.innerHTML='';
   }
 }
 if(dashBtn) dashBtn.onclick=()=>setDash(!dashMode);
@@ -1104,9 +1190,10 @@ flush();                                            // ← синхронизи�
 return {v:1, view:{...view},
 nodes:Graph.nodes.map(n=>{ const o={id:n.id,type:n.type,x:n.x,y:n.y,
 w:n.size.w,h:n.size.h,p:{...n.p},f:n.folded?1:0};
-if(n.dash) o.dash={...n.dash};                      // позиция/размер тайла в дашборде, если закреплён
+if(n.dash) o.dash=1;                                // закреплён (📌) для дашборда
 return o; }),
-edges:Graph.edges.map(e=>({from:e.from,fp:e.fp,to:e.to,tp:e.tp}))};
+edges:Graph.edges.map(e=>({from:e.from,fp:e.fp,to:e.to,tp:e.tp})),
+dashTree:Graph.dashTree};                           // раскладка тайлов дашборда (дерево сплитов)
 }
 const MIGRATE={                                     // старые узлы → их замена
 water:   {type:'sa', ports:{fsel:'f1'}},
@@ -1148,10 +1235,11 @@ for(const n of o.nodes){ const nn=addNode(n.type,n.x,n.y,n.p,n.id);
 if(nn &&n.f) foldNode(nn,true);
 if(nn &&n.w){ nn.size.w=n.w; nn.size.h=n.h||nn.size.h; applySize(nn); }
 // n.dash задаётся уже ПОСЛЕ addNode (buildNodeEl успел завести кнопку 📌 без него) — досаживаем
-// класс .on руками, а не через toggleDash (та ещё и добавила бы тайл в сетку прямо сейчас)
-if(nn &&n.dash){ nn.dash={...n.dash}; nn.el.querySelector('.dash')?.classList.add('on'); }
+// класс .on руками, а не через toggleDash (та ещё и разместила бы узел в дереве прямо сейчас)
+if(nn &&n.dash){ nn.dash=true; nn.el.querySelector('.dash')?.classList.add('on'); }
 max=Math.max(max,+String(n.id).slice(1)||0); }
 Graph.seq=max+1;
+Graph.dashTree=o.dashTree||null;                    // раскладка тайлов дашборда (дерево сплитов)
 for(const e of o.edges) addEdge(e.from,e.fp,e.to,e.tp);
 if(o.view){ Object.assign(view,o.view); applyView(); }
 markWiresDirty();
@@ -1167,7 +1255,7 @@ function clearAll(){
 content.querySelectorAll(':scope > .node').forEach(el=>el.remove());
 // По той же причине чистим SVG-провода, оставшиеся в статическом снимке.
 while(wires.firstChild) wires.firstChild.remove();
-Graph.nodes=[]; Graph.edges=[]; Graph.map={}; Graph.seq=1;
+Graph.nodes=[]; Graph.edges=[]; Graph.map={}; Graph.seq=1; Graph.dashTree=null;
 }
 document.getElementById('save').onclick=()=>
 dl(new Blob([JSON.stringify(serialize(),null,1)],{type:'application/json'}),'patch.json');
