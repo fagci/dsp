@@ -1273,7 +1273,7 @@ function saBandPlan(n,cx,W,H){
       ranges.push({lo:a,hi:c,label:b.label,color:b.color});
     }
   }
-  // ---- полосы: дорожки снизу вверх (флажки маркеров — сверху, см. saMarkers) ----
+  // ---- полосы: дорожки сверху вниз (внизу — подписи оси частот от saGrid, пересекались) ----
   if(ranges.length){
     ranges.sort((x,y)=>x.lo-y.lo);
     const laneEnd=[];                                   // laneEnd[i] — правая граница последней полосы в дорожке i
@@ -1286,12 +1286,15 @@ function saBandPlan(n,cx,W,H){
     cx.font='9px monospace';
     for(const r of ranges){
       const x1=Math.round(saPos(n,r.lo)*W), x2=Math.round(saPos(n,r.hi)*W), w=Math.max(1,x2-x1);
-      const y=H-2-(r._lane+1)*LANE_H, col=r.color||'#5fb8d1';
+      const y=2+r._lane*LANE_H, col=r.color||'#5fb8d1';
       cx.globalAlpha=.28; cx.fillStyle=col; cx.fillRect(x1,y,w,LANE_H-1);
       cx.globalAlpha=.8; cx.strokeStyle=col; cx.lineWidth=1; cx.strokeRect(x1+.5,y+.5,w-1,LANE_H-2);
       const label=r.label||(fmtHz(r.lo)+'-'+fmtHz(r.hi));
       const tw=cx.measureText(label).width;
-      if(tw+4<=w){ cx.globalAlpha=1; cx.fillStyle='#000'; cx.fillText(label,x1+3,y+LANE_H-2); }
+      if(tw+4<=w){                                       // тёмная подложка под текстом — читается на любом цвете полосы
+        cx.globalAlpha=1; cx.fillStyle='#0e1113cc'; cx.fillRect(x1+1,y+1,tw+4,LANE_H-3);
+        cx.fillStyle='#fff'; cx.fillText(label,x1+3,y+LANE_H-3);
+      }
     }
     cx.globalAlpha=1;
   }
