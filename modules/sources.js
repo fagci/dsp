@@ -1792,7 +1792,8 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
   outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},
         {n:'audio',t:'sig'},{n:'audio2',t:'sig'},{n:'audio3',t:'sig'},{n:'audio4',t:'sig'},
         {n:'spec',t:'spec'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},
-        {n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'}],
+        {n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'},
+        {n:'demod',t:'val'},{n:'bw',t:'num'}],
   readout:true,
   params:[
     {n:'connect',t:'button',label:'Connect',fn:async n=>{ await rtlConnect(n); }},
@@ -1946,7 +1947,8 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     for(let ci=0;ci<4;ci++) rtlReadChannelAudio(n, n.ch[ci], oa[ci]);
 
     n._prevPFreq=n.p.freq; // снимок на конец тика — см. manualEdit в начале process()
-    return {I:oi, Q:oq, audio:oa[0], audio2:oa[1], audio3:oa[2], audio4:oa[3], spec:n.spec, ...bounds}; },
+    return {I:oi, Q:oq, audio:oa[0], audio2:oa[1], audio3:oa[2], audio4:oa[3], spec:n.spec,
+      demod:n.p.demod, bw:n.p.bw, ...bounds}; },
   // Собственная отрисовка спектра/водопада убрана — для этого универсальный узел 'sa'
   // (Спектроанализатор), подключаемый к выходу 'spec'. Здесь остаётся только статус-строка.
   draw(n){

@@ -1375,16 +1375,26 @@ function bmSelect(n,it,rerender){
 // исчезнувших пинов
 function bmApplyFields(n,newFields){
   n.p.fields=newFields;
+  const validIn=new Set(['freq',...n.p.fields]);
   const validOut=new Set(['bands','freq',...n.p.fields]);
-  Graph.edges.filter(e=>e.from===n.id && !validOut.has(e.fp)).forEach(delEdge);
+  Graph.edges.filter(e=>(e.to===n.id && !validIn.has(e.tp)) || (e.from===n.id && !validOut.has(e.fp)))
+    .forEach(delEdge);
   n.initialized=false;
   rebuildNode(n);
   markTopoDirty();
 }
+// добавляет закладку на текущей частоте (n.lastFreq) и захватывает текущие значения всех доп.полей
+// с их входных проводов (n.lastIn) — так "+ add" разом сохраняет не только частоту, но и вид
+// модуляции/bw/что угодно ещё, подключённое с 'rtlsdr' (см. его demod/bw на выходах)
 async function bmAdd(n){
   if(typeof n.lastFreq!=='number' || isNaN(n.lastFreq)) return;
   const name=n.p.bmLabel || fmtHz(n.lastFreq)+'Hz';
-  await ListDB.add(n.p.listName, name, {lo:n.lastFreq, hi:n.lastFreq, color:''});
+  const fields={lo:n.lastFreq, hi:n.lastFreq, color:''};
+  for(const f of n.p.fields){
+    const v=n.lastIn[f];
+    if(v!==null && v!==undefined) fields[f]=v;
+  }
+  await ListDB.add(n.p.listName, name, fields);
   await bmRefresh(n);
 }
 function bmExportCsv(n){
@@ -1548,7 +1558,7 @@ function bmInit(n){
     </div>
     <div class="bm-fields" style="display:flex;gap:3px;flex-wrap:wrap;flex-shrink:0;font-size:10px;"></div>
     <div class="bm-row" style="display:flex;gap:4px;align-items:center;flex-shrink:0;flex-wrap:wrap;">
-      <button class="bm-add" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;" title="uses the wired 'freq' input">+ add at freq</button>
+      <button class="bm-add" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;" title="uses 'freq' plus whatever's wired into any custom fields">+ add at freq</button>
       <button class="bm-import" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">import CSV</button>
       <button class="bm-export" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">export CSV</button>
       <input class="bm-file" type="file" accept=".csv,text/csv" style="display:none;">
@@ -1589,19 +1599,23 @@ function bmInit(n){
   bmRefresh(n);
 }
 def({ id:'bookmarks', title:'Bookmarks (freq list)', cat:'Analysis',
-  ins:[{n:'freq',t:'num'}],
-  outs: n => [{n:'bands',t:'bands'},{n:'freq',t:'num'}].concat((n.p.fields||[]).map(f=>({n:f,t:'val'}))),
+  // доп.поля — входные пины ТОЖЕ (не только выходные, см. outs) — чтобы "+ add" мог захватить не
+  // только частоту, но и текущий вид модуляции/bw и т.п., подключенные с 'rtlsdr' (у него теперь
+  // есть выходы demod/bw специально под это) — так же, как 'hostlist' захватывает текущие входы.
+  ins: n => [{n:'freq',t:'num'}].concat((n.p.fields||[]).filter(f=>f!=='freq').map(f=>({n:f,t:'val'}))),
+  outs: n => [{n:'bands',t:'bands'},{n:'freq',t:'num'}].concat((n.p.fields||[]).filter(f=>f!=='freq').map(f=>({n:f,t:'val'}))),
   h:260, resize:true, readout:true,
   params:[{n:'bmLabel',t:'text',d:'',label:'label for next bookmark'}],
   init:n=>{
     n.p.listName=n.p.listName||'bookmarks';
     n.p.fields=n.p.fields||[];
     if(n.p.selectedId===undefined) n.p.selectedId=null;
-    n.items=[]; n.loadedListName=null; n.lastFreq=null; n.initialized=false;
+    n.items=[]; n.loadedListName=null; n.lastFreq=null; n.lastIn={}; n.initialized=false;
     n.selFreq=null; n.selFields={};
     n.onResize=ln=>{ if(ln.ui) syncCustomHeight(ln, ln.ui.root, 130); };
   },
   process(n,I){
+    n.lastIn=I;
     if(typeof I.freq==='number') n.lastFreq=I.freq;
     if(n.p.listName!==n.loadedListName) bmRefresh(n);   // список сменили извне (десериализация/undo)
     const o={bands:n.items, freq:n.selFreq};
