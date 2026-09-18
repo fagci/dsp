@@ -1272,12 +1272,13 @@ function saBands(n,cx,W,H){                        // закраска поло�
   cx.globalAlpha=1;
 }
 
-// Полосы (band plan) и точечные закладки — из узла 'bandplan' (CSV), список {lo,hi,label,color}.
+// Полосы (band plan) и точечные закладки — из узла 'bandplan'/'bookmarks', список {lo,hi,label,color}.
 // hi===lo — точка (закладка), иначе — полоса. Пересекающиеся полосы раскладываем по "дорожкам"
 // (жадная раскраска интервального графа, как в календарях) — иначе перекрытие сливалось бы в
-// нечитаемое пятно. Рисуем только в переданной H (вызывающий передаёт hs — зону спектра, не полную
-// высоту канваса), водопад ни здесь, ни в вызывающем draw() не трогаем.
-function saBandPlan(n,cx,W,H){
+// нечитаемое пятно. H — вся зона спектра (для вертикальных линий точек), plotH — она же БЕЗ
+// зоны подписей оси частот снизу (см. AXIS_H в draw()) — именно от неё дорожки полос растут вверх,
+// вплотную над осью, но не поверх её подписей. Водопад ни здесь, ни в вызывающем draw() не трогаем.
+function saBandPlan(n,cx,W,H,plotH){
   const list=n.bandsData; if(!list||!list.length) return;
   const [lo0,hi0]=saBounds(n);
   const ranges=[], points=[];
@@ -1293,11 +1294,12 @@ function saBandPlan(n,cx,W,H){
       ranges.push({lo:a,hi:c,label:b.label,color:b.color});
     }
   }
-  // ---- полосы: дорожки сверху вниз (внизу — подписи оси частот от saGrid, пересекались) ----
+  // ---- полосы: дорожки СНИЗУ ВВЕРХ от границы зоны оси частот (plotH) — единой лентой прямо над
+  // подписями оси, не наползая на них ----
   if(ranges.length){
     ranges.sort((x,y)=>x.lo-y.lo);
     const laneEnd=[];                                   // laneEnd[i] — правая граница последней полосы в дорожке i
-    const LANE_H=17, MAX_LANES=4;                        // ×1.5 от прежних 11px — подписи просторнее
+    const LANE_H=17, MAX_LANES=4;
     for(const r of ranges){
       let lane=laneEnd.findIndex(e=>e<=r.lo);
       if(lane<0){ if(laneEnd.length>=MAX_LANES) lane=laneEnd.length-1; else { lane=laneEnd.length; laneEnd.push(-Infinity); } }
@@ -1307,7 +1309,7 @@ function saBandPlan(n,cx,W,H){
     for(const r of ranges){
       const x1=Math.round(saPos(n,r.lo)*W), x2=Math.round(saPos(n,r.hi)*W);
       if(x2<0||x1>W) continue;                            // целиком вне канвы — сам прямоугольник не рисуем
-      const w=Math.max(1,x2-x1), y=2+r._lane*LANE_H, col=r.color||'#5fb8d1';
+      const w=Math.max(1,x2-x1), y=plotH-(r._lane+1)*LANE_H, col=r.color||'#5fb8d1';
       cx.globalAlpha=.28; cx.fillStyle=col; cx.fillRect(x1,y,w,LANE_H-1);
       cx.globalAlpha=.8; cx.strokeStyle=col; cx.lineWidth=1; cx.strokeRect(x1+.5,y+.5,w-1,LANE_H-2);
       const label=r.label||(fmtHz(r.lo)+'-'+fmtHz(r.hi));
@@ -1328,8 +1330,8 @@ function saBandPlan(n,cx,W,H){
     }
     cx.globalAlpha=1; cx.textBaseline='alphabetic';        // вернуть дефолт — ниже (точки) рассчитывают на него
   }
-  // ---- точки: штриховая линия во всю H + подпись по центру высоты (не пересекается ни с
-  // флажками маркеров сверху, ни с дорожками полос снизу) ----
+  // ---- точки (закладки): штриховая линия во всю H + подпись у ПОТОЛКА спектра — не сливается ни
+  // с полосами снизу, ни с флажками маркеров, которые теперь тоже снизу (см. saMarkers) ----
   if(points.length){
     cx.font='9px monospace'; cx.setLineDash([3,3]);
     for(const p of points){
@@ -1338,7 +1340,7 @@ function saBandPlan(n,cx,W,H){
       cx.strokeStyle=col; cx.lineWidth=1; cx.globalAlpha=.7;
       cx.beginPath(); cx.moveTo(x+.5,0); cx.lineTo(x+.5,H); cx.stroke();
       cx.globalAlpha=1;
-      const t=p.label||fmtHz(p.lo), ty=Math.round(H*0.5);
+      const t=p.label||fmtHz(p.lo), ty=12;
       const tw=cx.measureText(t).width, tx=clamp(x+3,2,W-tw-3);
       cx.fillStyle='#0e1113cc'; cx.fillRect(tx-2,ty-9,tw+4,11);
       cx.fillStyle=col; cx.fillText(t,tx,ty);
@@ -1383,13 +1385,16 @@ function saMarkers(n,cx,W,H){
     cx.globalAlpha=1;
     cx.strokeStyle=MK_COL[k]; cx.lineWidth=act?1.5:1;
     cx.beginPath(); cx.moveTo(x+.5,0); cx.lineTo(x+.5,H); cx.stroke();
-    cx.fillStyle=MK_COL[k];                                            // флажок сверху
-    cx.beginPath(); cx.moveTo(x-6,0); cx.lineTo(x+6,0); cx.lineTo(x,9); cx.closePath(); cx.fill();
+    cx.fillStyle=MK_COL[k];                       // флажок теперь СНИЗУ, поверх зоны оси частот (saGrid) —
+    cx.beginPath(); cx.moveTo(x-6,H); cx.lineTo(x+6,H); cx.lineTo(x,H-9); cx.closePath(); cx.fill(); // ceiling теперь у точечных закладок (см. saBandPlan)
     cx.fillStyle='#000'; cx.font='bold 8px monospace';
-    cx.fillText(String(k+1),x-2,7);
+    cx.fillText(String(k+1),x-2,H-2);
     cx.font='10px monospace';
-    const t=fmtHz(f)+'Hz '+(n.db[k]>-119?n.db[k].toFixed(0)+'dB':'');
-    const tw=cx.measureText(t).width, tx=clamp(x+7,2,W-tw-5), ty=2+k*14;
+    // 3 знака после запятой (fmtHz(f,3)) — иначе у двух маркеров, стоящих близко (в пределах
+    // ~kHz), подпись после округления до 1 знака совпадает и выглядит так, будто это одна и та
+    // же частота
+    const t=fmtHz(f,3)+'Hz '+(n.db[k]>-119?n.db[k].toFixed(0)+'dB':'');
+    const tw=cx.measureText(t).width, tx=clamp(x+7,2,W-tw-5), ty=H-14-k*14;
     cx.fillStyle='#0e1113ee'; cx.fillRect(tx-3,ty,tw+6,12);
     cx.strokeStyle=MK_COL[k]; cx.lineWidth=1; cx.strokeRect(tx-2.5,ty+.5,tw+5,11);
     cx.fillStyle=MK_COL[k]; cx.fillText(t,tx,ty+9); }
@@ -1440,7 +1445,7 @@ function saSetRange(n,newLo,newHi){
   if(newLo>=n.p.fmin){ n.set.fmax?.(newHi); n.set.fmin?.(newLo); }
   else { n.set.fmin?.(newLo); n.set.fmax?.(newHi); }
 }
-function saGrid(n,cx,W,hs,H){                      // сетка частот с подписями
+function saGrid(n,cx,W,hs,H,plotH){                 // сетка частот с подписями
   const lo=saFreq(n,0), hi=saFreq(n,1);
   cx.lineWidth=1; cx.globalAlpha=1;
   cx.strokeStyle='#20272b'; cx.fillStyle='#6c7a80'; cx.font='9px monospace';
@@ -1461,9 +1466,11 @@ function saGrid(n,cx,W,hs,H){                      // сетка частот с
     const x=Math.round(saPos(n,f)*W)+.5;
     cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke();
     const t=fmtHz(f);                                 // сама разберётся Гц/кГц/МГц/ГГц
-    cx.fillText(t,Math.min(x+2,W-cx.measureText(t).width-2),hs-2); }
-  for(let i=1;i<4;i++){                            // горизонтальные деления уровня
-    const y=Math.round(hs*i/4)+.5;
+    // подпись — в зарезервированной зоне снизу (см. AXIS_H в draw()), ниже plotH — сама трасса
+    // спектра туда не заходит (см. plotH в амплитуде/фазе/PSD), так что подпись не замазывает
+    cx.fillText(t,Math.min(x+2,W-cx.measureText(t).width-2),hs-4); }
+  for(let i=1;i<4;i++){                            // горизонтальные деления уровня — в пределах plotH
+    const y=Math.round(plotH*i/4)+.5;
     cx.beginPath(); cx.moveTo(0,y); cx.lineTo(W,y); cx.stroke(); }
 }
 
