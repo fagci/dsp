@@ -878,6 +878,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'peakClr',t:'button',label:'Clear peak hold',fn:n=>{n.peak=null;}},
           {n:'active',t:'buttons',opts:['1','2','3','4'],d:'1',label:'marker'},
           {n:'tol',t:'range',min:5,max:50000,step:5,log:true,d:50,label:'level window, Hz'},
+          {n:'snap',t:'range',min:0,max:30,step:1,d:8,label:'snap to band plan, px (0=off)'},
           {n:'band',t:'select',opts:['none','by inputs','1–2','3–4'],d:'by inputs',label:'band'},
           {n:'ref',t:'select',opts:['none','show','diff'],d:'none',label:'reference'},
           {n:'take',t:'button',label:'Capture reference',fn:n=>{
@@ -1035,6 +1036,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     return o; },
   draw(n,cv,cx){
     const W=cv.width,H=cv.height;
+    n._lastW=W;                                      // для snap к bandplan в saTake — тап может случиться и в process()
     const hs=Math.round(H*n.p.split), hw=H-hs;
     saTake(n);                                       // маркер ставится и без запущенного звука
     cx.clearRect(0,0,W,H);
