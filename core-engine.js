@@ -1,7 +1,7 @@
 "use strict";
 let BLOCK = 512;                   // размер блока обработки (меняется на ходу)
 const TYPE_COLOR = {sig:'var(--t-sig)',num:'var(--t-num)',spec:'var(--t-spec)',
-                    img:'var(--t-img)',txt:'#d18ad1',blk:'#7fd17f',val:'#e0b23c'};
+                    img:'var(--t-img)',txt:'#d18ad1',blk:'#7fd17f',val:'#e0b23c',bands:'#5fb8d1'};
 // порядок разделов в палитре — иначе порядок зависит от того, в каком файле модуль зарегистрирован
 const CAT_ORDER = ['Sources','Music','Processing','Modulation','Analysis','Radio','Radar',
                     'Protocols','Decoders','Audio','Video','Output','Control','Builder','Misc'];
