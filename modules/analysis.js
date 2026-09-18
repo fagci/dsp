@@ -1148,25 +1148,43 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       // близко стоящие подписи иначе перекрывают друг друга), клик по подписи — не по произвольной
       // точке спектра — переставляет активный маркер точно на её частоту, в обход обычного
       // клика-по-позиции (см. n.pickT/saTake) и его snap: тут частота и так уже bandplan'овская.
-      const bmHit=ev=>{
-        const boxes=n._bmBoxes; if(!boxes||!boxes.length) return null;
+      const hitIn=(boxes,ev)=>{
+        if(!boxes||!boxes.length) return null;
         const rc=cv.getBoundingClientRect();
         const x=(ev.clientX-rc.left)/rc.width*cv.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
         for(let i=boxes.length-1;i>=0;i--){ const b=boxes[i];         // с конца — верхняя (последняя нарисованная) первой
           if(x>=b.x0&&x<=b.x1&&y>=b.y0&&y<=b.y1) return b; }
         return null;
       };
-      let bmDown=null;
-      cv.addEventListener('pointerdown', ev=>{ bmDown={x:ev.clientX,y:ev.clientY}; });
+      const bmHit=ev=>hitIn(n._bmBoxes,ev), mkHit=ev=>hitIn(n._mkBoxes,ev);
+      let spTap=null;
+      cv.addEventListener('pointerdown', ev=>{ spTap={x:ev.clientX,y:ev.clientY}; });
       cv.addEventListener('pointerup', ev=>{
-        const d=bmDown; bmDown=null;
+        const d=spTap; spTap=null;
         if(!d || Math.hypot(ev.clientX-d.x,ev.clientY-d.y)>6) return;  // перетаскивание, не клик
-        const hit=bmHit(ev); if(!hit) return;
-        const k=+n.p.active-1;
-        if(!n.ext[k]){ n.mk[k]=hit.freq; n.pickT=null; }
+        const bm=bmHit(ev);
+        if(bm){ const k=+n.p.active-1; if(!n.ext[k]){ n.mk[k]=bm.freq; n.pickT=null; } return; }
+        // Маркеры — как закладки: клик по НЕактивному просто выбирает его (см. 'active' кнопки),
+        // клик по УЖЕ активному — второй клик — предлагает ввести точную частоту вручную (Гц),
+        // не пиксель-в-пиксель тапом по спектру. n.pickT чистим В ЛЮБОМ случае — иначе тот же тап
+        // уже поставил его generic pick-механизмом (core-graph.js), и следующий saTake() тут же
+        // затрёт то, что мы только что аккуратно выставили (или активный маркер вообще другой).
+        const mk=mkHit(ev); if(!mk) return;
+        n.pickT=null;
+        if(+n.p.active-1===mk.idx){
+          if(n.ext[mk.idx]) return;
+          const cur=n.mk[mk.idx];
+          const nv=prompt('Marker '+(mk.idx+1)+' frequency, Hz:', cur!=null?String(Math.round(cur)):'');
+          if(nv==null) return;
+          const f=parseFloat(nv);
+          if(!isNaN(f)) n.mk[mk.idx]=f;
+        } else n.set.active?.(String(mk.idx+1));
       });
-      cv.addEventListener('pointermove', ev=>{ n._bmHoverFreq = bmHit(ev)?.freq ?? null; });
-      cv.addEventListener('pointerleave', ()=>{ n._bmHoverFreq=null; });
+      cv.addEventListener('pointermove', ev=>{
+        n._bmHoverFreq = bmHit(ev)?.freq ?? null;
+        n._mkHoverIdx = n._bmHoverFreq==null ? (mkHit(ev)?.idx ?? null) : null;
+      });
+      cv.addEventListener('pointerleave', ()=>{ n._bmHoverFreq=null; n._mkHoverIdx=null; });
     }
     if(n.s){
       const dpr=(cv.pxW&&cv.width)?cv.pxW/cv.width:1, Wp=cv.pxW||W, hwP=Math.max(1,Math.round(hw*dpr));
