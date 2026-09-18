@@ -1353,9 +1353,8 @@ function saBandPlan(n,cx,W,H,plotH){
       const t=p.label||fmtHz(p.lo), ty=12;
       const tw=cx.measureText(t).width;
       const tx=clamp(Math.round(x-tw/2), 2, W-tw-2);           // по центру линии, не сбоку
-      cx.globalAlpha=hovered?.85:.55; cx.fillStyle=col; cx.fillRect(tx-3,ty-9,tw+6,12);
-      cx.globalAlpha=1; cx.strokeStyle=col; cx.lineWidth=hovered?1.5:1; cx.strokeRect(tx-2.5,ty-8.5,tw+5,11);
-      cx.fillStyle='#fff'; cx.fillText(t,tx,ty);
+      cx.globalAlpha=hovered?1:.85; cx.fillStyle=col; cx.fillRect(tx-3,ty-9,tw+6,12);
+      cx.globalAlpha=1; cx.fillStyle=contrastText(col); cx.fillText(t,tx,ty);
       boxes.push({x0:tx-3,y0:ty-9,x1:tx+tw+3,y1:ty+3,freq:p.lo});
     }
     cx.setLineDash([]);
@@ -1387,30 +1386,48 @@ function saTake(n){                                  // применить на�
   if(!n.ext[k]) n.mk[k]=saSnapFreq(n, saFreq(n,n.pickT));
   n.pickT=null;
 }
+// цвет текста, контрастный заданному фону (упрощённая перцептивная яркость) — общее правило для
+// маркеров и точечных закладок: фон залит своим цветом, текст поверх — чёрный или белый, что
+// контрастнее, обводка не нужна (см. использование ниже и в saBandPlan)
+function contrastText(hex){
+  const [r,g,b]=hexToRgb(hex);
+  return (r*0.299+g*0.587+b*0.114)>150 ? '#000' : '#fff';
+}
+// n._mkBoxes — прямоугольники подписей маркеров в пикселях канвы (читает sa's draw() в analysis.js
+// для клика/наведения), n._mkHoverIdx — номер наведённого (0-3), рисуется последним (поверх
+// соседних), как и у точечных закладок в saBandPlan.
 function saMarkers(n,cx,W,H){
   cx.lineWidth=1; cx.globalAlpha=1; cx.font='10px monospace';
-  for(let k=0;k<4;k++){
-    const f=n.mk[k]; if(f==null) continue;
+  const boxes=n._mkBoxes=(n._mkBoxes||[]); boxes.length=0;
+  const hoverK=n._mkHoverIdx;
+  const present=[0,1,2,3].filter(k=>n.mk[k]!=null);
+  const order = hoverK!=null && present.includes(hoverK)
+    ? [...present.filter(k=>k!==hoverK), hoverK]
+    : present;
+  for(const k of order){
+    const f=n.mk[k];
     const x=Math.round(saPos(n,f)*W); if(x<-2||x>W+2) continue;
-    const act=(+n.p.active-1)===k;
+    const act=(+n.p.active-1)===k, hovered=hoverK===k;
     cx.strokeStyle='#000'; cx.lineWidth=act?3:2; cx.globalAlpha=.55;   // тёмная обводка под линией
     cx.beginPath(); cx.moveTo(x+.5,0); cx.lineTo(x+.5,H); cx.stroke();
     cx.globalAlpha=1;
     cx.strokeStyle=MK_COL[k]; cx.lineWidth=act?1.5:1;
     cx.beginPath(); cx.moveTo(x+.5,0); cx.lineTo(x+.5,H); cx.stroke();
-    cx.fillStyle=MK_COL[k];                       // флажок теперь СНИЗУ, поверх зоны оси частот (saGrid) —
-    cx.beginPath(); cx.moveTo(x-6,H); cx.lineTo(x+6,H); cx.lineTo(x,H-9); cx.closePath(); cx.fill(); // ceiling теперь у точечных закладок (см. saBandPlan)
-    cx.fillStyle='#000'; cx.font='bold 8px monospace';
-    cx.fillText(String(k+1),x-2,H-2);
     cx.font='10px monospace';
-    // 3 знака после запятой (fmtHz(f,3)) — иначе у двух маркеров, стоящих близко (в пределах
-    // ~kHz), подпись после округления до 1 знака совпадает и выглядит так, будто это одна и та
-    // же частота
-    const t=fmtHz(f,3)+'Hz '+(n.db[k]>-119?n.db[k].toFixed(0)+'dB':'');
-    const tw=cx.measureText(t).width, tx=clamp(x+7,2,W-tw-5), ty=H-14-k*14;
-    cx.fillStyle='#0e1113ee'; cx.fillRect(tx-3,ty,tw+6,12);
-    cx.strokeStyle=MK_COL[k]; cx.lineWidth=1; cx.strokeRect(tx-2.5,ty+.5,tw+5,11);
-    cx.fillStyle=MK_COL[k]; cx.fillText(t,tx,ty+9); }
+    // "1. 433.075 M -75" — номер, частота (3 знака — см. коммент у fmtHz, иначе близкие маркеры
+    // выглядят как одна и та же частота), уровень — одной строкой вместо отдельного флажка с цифрой
+    const fv=fmtHz(f,3).replace(/([kMG])$/,' $1');
+    const t=(k+1)+'. '+fv+(n.db[k]>-119?' '+n.db[k].toFixed(0):'');
+    const tw=cx.measureText(t).width;
+    // по центру линии маркера; дорожка стека — по НОМЕРУ маркера (k), а не по порядку рисования —
+    // иначе позиции соседних подписей "прыгали" бы при каждой смене наведения
+    const tx=clamp(Math.round(x-tw/2), 2, W-tw-2), ty=H-14-k*14;
+    cx.globalAlpha=hovered?1:(act?.95:.75); cx.fillStyle=MK_COL[k];
+    cx.fillRect(tx-3,ty,tw+6,12);
+    cx.globalAlpha=1; cx.fillStyle=contrastText(MK_COL[k]);
+    cx.fillText(t,tx,ty+9);
+    boxes.push({x0:tx-3,y0:ty,x1:tx+tw+3,y1:ty+12,idx:k});
+  }
   cx.lineWidth=1;
 }
 
