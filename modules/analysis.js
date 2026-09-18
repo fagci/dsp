@@ -859,7 +859,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'m1',t:'num'},{n:'m2',t:'num'},{n:'m3',t:'num'},{n:'m4',t:'num'},
        {n:'bLo',t:'num'},{n:'bHi',t:'num'},{n:'floor',t:'num'},{n:'top',t:'num'},
        {n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'split',t:'num'},{n:'tol',t:'num'},
-       {n:'log',t:'num'},{n:'grid',t:'num'}],
+       {n:'log',t:'num'},{n:'grid',t:'num'},{n:'bands',t:'bands'}],
   outs:[{n:'f1',t:'num'},{n:'l1',t:'num'},{n:'f2',t:'num'},{n:'l2',t:'num'},
         {n:'f3',t:'num'},{n:'l3',t:'num'},{n:'f4',t:'num'},{n:'l4',t:'num'},
         {n:'fr1',t:'num'},{n:'fr2',t:'num'},{n:'fr3',t:'num'},{n:'fr4',t:'num'},
@@ -930,6 +930,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       }
     }
     n.s=sp;
+    // список полос/закладок с узла 'bandplan' (или совместимого) — держим последний известный,
+    // если сейчас не подключено (или на секунду пропало между тиками), а не мигаем пустым списком
+    if(Array.isArray(I.bands)) n.bandsData=I.bands;
     saTake(n);                                       // тап мог случиться между блоками
     for(const k of ['fmin','fmax','floor','top','split','tol'])   // прямая передача значения
       if(typeof I[k]==='number') setMod(n,k,I[k]);
@@ -1247,7 +1250,70 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     } else if(n.p.grid) saGrid(n,cx,W,hs,H);
     cx.strokeStyle='#2a3136'; cx.beginPath(); cx.moveTo(0,hs+.5); cx.lineTo(W,hs+.5); cx.stroke();
     saBands(n,cx,W,H);
+    saBandPlan(n,cx,W,hs);                            // полосы/закладки — только в зоне спектра, водопад не трогаем
     saMarkers(n,cx,W,hs); }});
+
+
+// "100.7M" / "88500k" / "433920000" / "433920000Hz" → Гц. Пусто/не число → NaN (вызывающий фильтрует).
+function parseHzCell(s){
+  if(typeof s==='number') return s;
+  const m=String(s??'').trim().match(/^([\d.]+)\s*([kKmMgG]?)\s*(?:Hz|hz)?$/);
+  if(!m) return NaN;
+  const mul={k:1e3,K:1e3,m:1e6,M:1e6,g:1e9,G:1e9,'':1}[m[2]];
+  return parseFloat(m[1])*mul;
+}
+function bandplanLoad(n,file){
+  const reader=new FileReader();
+  reader.onload=()=>{
+    let table;
+    try{ table=csvParse(String(reader.result)); }
+    catch(e){ alert('failed to parse CSV: '+e.message); return; }
+    if(!table.length){ alert('file is empty'); return; }
+    // необязательный заголовок: если первая ячейка первой строки не парсится как частота — это
+    // заголовок (lo,hi,label,color), а не данные, пропускаем её
+    const rows=isNaN(parseHzCell(table[0][0])) ? table.slice(1) : table;
+    n.items=rows.map(r=>{
+      const lo=parseHzCell(r[0]);
+      const hiRaw=r[1]!==undefined && r[1]!=='' ? parseHzCell(r[1]) : lo;
+      return {lo, hi:isNaN(hiRaw)?lo:hiRaw, label:r[2]||'', color:r[3]||''};
+    }).filter(b=>!isNaN(b.lo));
+    n.name=file.name;
+  };
+  reader.readAsText(file);
+}
+function bandplanAdd(n){
+  if(typeof n.lastFreq!=='number' || isNaN(n.lastFreq)) return;
+  n.items.push({lo:n.lastFreq, hi:n.lastFreq, label:n.p.bmLabel||'', color:''});
+}
+function bandplanSave(n){
+  const header='lo,hi,label,color\n';
+  const body=n.items.map(b=>[b.lo,b.hi,csvCell(b.label||''),csvCell(b.color||'')].join(',')).join('\n');
+  dl(new Blob([header+body],{type:'text/csv'}), 'bandplan-'+Date.now()+'.csv');
+}
+def({ id:'bandplan', title:'Band Plan / Bookmarks (CSV)', cat:'Analysis',
+  // Один и тот же список {lo,hi,label,color} обслуживает и статичные полосы (band plan — грузятся
+  // из CSV: lo,hi,label,color), и точечные закладки (hi===lo — добавляются кнопкой 'add' на текущей
+  // частоте, приходящей проводом от 'sa' f1..f4, и сохраняются кнопкой 'save' в тот же CSV-формат).
+  // 'source' сознательно CSV, а не скрытое хранилище (в отличие от 'hostlist') — список живёт,
+  // пока открыта страница; кто хочет сохранить между сессиями — жмёт 'save' и хранит файл сам.
+  ins:[{n:'freq',t:'num'}],
+  outs:[{n:'bands',t:'bands'}],
+  readout:true,
+  params:[
+    {n:'file',t:'file',accept:'.csv,text/csv',fn:(n,f)=>bandplanLoad(n,f)},
+    {n:'bmLabel',t:'text',d:'',label:'label for next bookmark'},
+    {n:'add',t:'button',label:'Add bookmark at freq',fn:n=>bandplanAdd(n)},
+    {n:'save',t:'button',label:'Save as CSV',fn:n=>bandplanSave(n)},
+    {n:'clrAll',t:'button',label:'Clear all',fn:n=>{n.items=[];}},
+  ],
+  init:n=>{ n.items=[]; n.name='no file loaded'; n.lastFreq=null; },
+  process(n,I){
+    if(typeof I.freq==='number') n.lastFreq=I.freq;
+    return {bands:n.items};
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const t=n.name+' · '+n.items.length+' entries'+(n.lastFreq!=null?' · freq '+fmtHz(n.lastFreq)+'Hz':'');
+    if(r.textContent!==t) r.textContent=t; }});
 
 
 // Опорные точки палитры водопада (t от 0 до 1) — та же цветовая идея, что у gqrx/SDR++

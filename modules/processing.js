@@ -1252,6 +1252,67 @@ function saBands(n,cx,W,H){                        // закраска поло�
   cx.globalAlpha=1;
 }
 
+// Полосы (band plan) и точечные закладки — из узла 'bandplan' (CSV), список {lo,hi,label,color}.
+// hi===lo — точка (закладка), иначе — полоса. Пересекающиеся полосы раскладываем по "дорожкам"
+// (жадная раскраска интервального графа, как в календарях) — иначе перекрытие сливалось бы в
+// нечитаемое пятно. Рисуем только в переданной H (вызывающий передаёт hs — зону спектра, не полную
+// высоту канваса), водопад ни здесь, ни в вызывающем draw() не трогаем.
+function saBandPlan(n,cx,W,H){
+  const list=n.bandsData; if(!list||!list.length) return;
+  const [lo0,hi0]=saBounds(n);
+  const ranges=[], points=[];
+  for(const b of list){
+    if(!b || typeof b.lo!=='number' || isNaN(b.lo)) continue;
+    const hi=(typeof b.hi==='number' && !isNaN(b.hi)) ? b.hi : b.lo;
+    if(hi===b.lo){
+      if(b.lo<lo0-1 || b.lo>hi0+1) continue;            // точка вне окна — не рисуем вовсе
+      points.push(b);
+    } else {
+      const a=Math.min(b.lo,hi), c=Math.max(b.lo,hi);
+      if(c<lo0 || a>hi0) continue;                      // полоса целиком вне окна
+      ranges.push({lo:a,hi:c,label:b.label,color:b.color});
+    }
+  }
+  // ---- полосы: дорожки снизу вверх (флажки маркеров — сверху, см. saMarkers) ----
+  if(ranges.length){
+    ranges.sort((x,y)=>x.lo-y.lo);
+    const laneEnd=[];                                   // laneEnd[i] — правая граница последней полосы в дорожке i
+    const LANE_H=11, MAX_LANES=4;
+    for(const r of ranges){
+      let lane=laneEnd.findIndex(e=>e<=r.lo);
+      if(lane<0){ if(laneEnd.length>=MAX_LANES) lane=laneEnd.length-1; else { lane=laneEnd.length; laneEnd.push(-Infinity); } }
+      laneEnd[lane]=r.hi; r._lane=lane;
+    }
+    cx.font='9px monospace';
+    for(const r of ranges){
+      const x1=Math.round(saPos(n,r.lo)*W), x2=Math.round(saPos(n,r.hi)*W), w=Math.max(1,x2-x1);
+      const y=H-2-(r._lane+1)*LANE_H, col=r.color||'#5fb8d1';
+      cx.globalAlpha=.28; cx.fillStyle=col; cx.fillRect(x1,y,w,LANE_H-1);
+      cx.globalAlpha=.8; cx.strokeStyle=col; cx.lineWidth=1; cx.strokeRect(x1+.5,y+.5,w-1,LANE_H-2);
+      const label=r.label||(fmtHz(r.lo)+'-'+fmtHz(r.hi));
+      const tw=cx.measureText(label).width;
+      if(tw+4<=w){ cx.globalAlpha=1; cx.fillStyle='#000'; cx.fillText(label,x1+3,y+LANE_H-2); }
+    }
+    cx.globalAlpha=1;
+  }
+  // ---- точки: штриховая линия во всю H + подпись по центру высоты (не пересекается ни с
+  // флажками маркеров сверху, ни с дорожками полос снизу) ----
+  if(points.length){
+    cx.font='9px monospace'; cx.setLineDash([3,3]);
+    for(const p of points){
+      const x=Math.round(saPos(n,p.lo)*W); if(x<-2||x>W+2) continue;
+      const col=p.color||'#c9c9c9';
+      cx.strokeStyle=col; cx.lineWidth=1; cx.globalAlpha=.7;
+      cx.beginPath(); cx.moveTo(x+.5,0); cx.lineTo(x+.5,H); cx.stroke();
+      cx.globalAlpha=1;
+      const t=p.label||fmtHz(p.lo), ty=Math.round(H*0.5);
+      const tw=cx.measureText(t).width, tx=clamp(x+3,2,W-tw-3);
+      cx.fillStyle='#0e1113cc'; cx.fillRect(tx-2,ty-9,tw+4,11);
+      cx.fillStyle=col; cx.fillText(t,tx,ty);
+    }
+    cx.setLineDash([]);
+  }
+}
 function saTake(n){                                  // применить накопленный тап — в выбранный маркер
   if(n.pickT==null) return;
   const k=+n.p.active-1;
