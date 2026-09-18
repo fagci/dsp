@@ -1788,7 +1788,7 @@ async function rtlApplyPending(n){
 
 def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
   ins:[{n:'freq',t:'num'},{n:'steerFreq',t:'num'},{n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'},
-       {n:'gainDb',t:'num'},{n:'bw',t:'num'}],
+       {n:'gainDb',t:'num'},{n:'bw',t:'num'},{n:'demod',t:'val'}],
   outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},
         {n:'audio',t:'sig'},{n:'audio2',t:'sig'},{n:'audio3',t:'sig'},{n:'audio4',t:'sig'},
         {n:'spec',t:'spec'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},
@@ -1802,7 +1802,7 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
      fn:async n=>{ if(n.dev){ try{ n.sourceRate=await n.dev.setSampleRate(rtlSafeSr(n.p.sr)); rtlResetRing(n); }
        catch(e){ n.status='sample rate change error: '+e.message; } } }},
     // режим демодуляции/полоса/де-эмфазис — ОБЩИЕ на все 4 канала (проще UI); частота у каждого своя
-    {n:'demod',t:'select',opts:['IQ','WFM','NFM','AM','USB','LSB'],d:'WFM',label:'demodulation',
+    {n:'demod',t:'select',opts:DEMOD_OPTS,d:'WFM',label:'demodulation',
      fn:n=>{ rtlResetRing(n); }},
     {n:'bw',t:'range',min:500,max:16000,step:100,d:15000,log:true,label:'audio bandwidth, Hz'},
     {n:'deemph',t:'select',opts:['50','75','off'],d:'50',label:'WFM de-emphasis, µs'},
@@ -1904,6 +1904,7 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     }
     if(typeof I.gainDb==='number') setMod(n,'gainDb',I.gainDb);
     if(typeof I.bw==='number') setMod(n,'bw',I.bw);
+    if(typeof I.demod==='string' && DEMOD_OPTS.includes(I.demod) && I.demod!==n.p.demod) setMod(n,'demod',I.demod);
     const cf=n.actualFreq??n.p.freq, half=n.sourceRate/2;
     rtlApplyPending(n); // не await — асинхронно применится, когда сможет (только 'freq'/gain — через USB)
     n.decim=rtlDecimFor(n.p.demod, n.sourceRate, n.p.bw); // дёшево, держим свежим каждый тик — читает rtlReadChannelAudio и readerLoop

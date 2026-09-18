@@ -1349,11 +1349,37 @@ def({ id:'bandplan', title:'Band Plan (Presets/CSV)', cat:'Analysis',
 // справочник, а личные закладки). Хранение — IndexedDB через уже существующий ListDB (см. sources.js,
 // тот же слой, что и у 'hostlist'), так закладки переживают перезагрузку страницы сами по себе, без
 // обязательного явного сохранения в файл — CSV импорт/экспорт есть отдельно, для переноса/бэкапа.
+//
+// Плюс, как у 'hostlist' — произвольные доп.поля (n.p.fields): клик по закладке делает её
+// "выбранной", и значения её доп.полей идут на одноимённые выходные пины (val), поверх всегда
+// доступных freq (частота закладки) и bands (весь список — для оверлея на 'sa'). Так к закладке
+// можно привязать, например, вид модуляции и полосу демодулятора и подключить их прямо на 'rtlsdr' —
+// выбор закладки настраивает приёмник целиком, а не только частоту.
+const DEMOD_OPTS=['IQ','WFM','NFM','AM','USB','LSB'];             // как у rtlsdr.demod (sources.js)
 async function bmRefresh(n){
   n.loadedListName=n.p.listName;
-  n.items=(await ListDB.list(n.p.listName)).map(it=>({
-    lo:+it.fields.lo, hi:+it.fields.hi, label:it.name, color:it.fields.color||'', id:it.id}));
+  const items=await ListDB.list(n.p.listName);
+  n.items=items.map(it=>({
+    lo:+it.fields.lo, hi:+it.fields.hi, label:it.name, color:it.fields.color||'', id:it.id, raw:it.fields}));
+  if(n.p.selectedId!=null){
+    const it=n.items.find(x=>x.id===n.p.selectedId);
+    if(it) bmSelect(n,it,false); else { n.p.selectedId=null; n.selFreq=null; n.selFields={}; }
+  }
   if(n.ui) bmRenderAll(n);
+}
+function bmSelect(n,it,rerender){
+  n.p.selectedId=it.id; n.selFreq=it.lo; n.selFields=it.raw||{};
+  if(rerender!==false && n.ui) bmRenderList(n);
+}
+// смена состава доп.полей — как hostlistApplyFields: пересобирает порты узла, отвязывает провода от
+// исчезнувших пинов
+function bmApplyFields(n,newFields){
+  n.p.fields=newFields;
+  const validOut=new Set(['bands','freq',...n.p.fields]);
+  Graph.edges.filter(e=>e.from===n.id && !validOut.has(e.fp)).forEach(delEdge);
+  n.initialized=false;
+  rebuildNode(n);
+  markTopoDirty();
 }
 async function bmAdd(n){
   if(typeof n.lastFreq!=='number' || isNaN(n.lastFreq)) return;
@@ -1362,7 +1388,8 @@ async function bmAdd(n){
   await bmRefresh(n);
 }
 function bmExportCsv(n){
-  const rows=[['lo','hi','label','color'], ...n.items.map(it=>[it.lo,it.hi,it.label,it.color||''])];
+  const rows=[['lo','hi','label','color',...n.p.fields],
+    ...n.items.map(it=>[it.lo,it.hi,it.label,it.color||'',...n.p.fields.map(f=>it.raw[f]??'')])];
   const csv=rows.map(r=>r.map(csvCell).join(',')).join('\r\n');
   dl(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'}), (n.p.listName||'bookmarks')+'.csv');
 }
@@ -1372,24 +1399,58 @@ function bmImportCsv(n,file){
     let table; try{ table=csvParse(String(reader.result)); }
     catch(e){ alert('failed to parse CSV: '+e.message); return; }
     if(!table.length){ alert('file is empty'); return; }
-    const rows=isNaN(parseHzCell(table[0][0])) ? table.slice(1) : table;
+    const hasHeader=isNaN(parseHzCell(table[0][0]));
+    const header=hasHeader ? table[0] : null;
+    const rows=hasHeader ? table.slice(1) : table;
+    // колонки за lo,hi,label,color в заголовке — имена доп.полей, подхватываем их автоматически
+    // (без ручного выбора колонок, как у hostlist — тут набор колонок уже более-менее фиксирован)
+    if(header && header.length>4){
+      const extra=header.slice(4).map(h=>String(h||'').trim()).filter(Boolean);
+      const missing=extra.filter(f=>!n.p.fields.includes(f));
+      if(missing.length) n.p.fields=n.p.fields.concat(missing);
+    }
     for(const r of rows){
       const lo=parseHzCell(r[0]); if(isNaN(lo)) continue;
       const hiRaw=r[1]!==undefined && r[1]!=='' ? parseHzCell(r[1]) : lo;
-      await ListDB.add(n.p.listName, r[2]||(fmtHz(lo)+'Hz'), {lo, hi:isNaN(hiRaw)?lo:hiRaw, color:r[3]||''});
+      const fields={lo, hi:isNaN(hiRaw)?lo:hiRaw, color:r[3]||''};
+      n.p.fields.forEach((f,i)=>{ const v=r[4+i]; if(v!==undefined) fields[f]=v; });
+      await ListDB.add(n.p.listName, r[2]||(fmtHz(lo)+'Hz'), fields);
     }
+    bmApplyFields(n, n.p.fields);   // пересоберёт порты, если появились новые поля, и перерисует
     await bmRefresh(n);
   };
   reader.readAsText(file);
 }
 function bmRenderAll(n){
-  const names=n._listNamesCache||[n.p.listName];
   ListDB.listNames().then(ns=>{
     n._listNamesCache = ns.includes(n.p.listName) ? ns : ns.concat([n.p.listName]);
     const sel=n.ui.select;
     sel.innerHTML=n._listNamesCache.map(nm=>`<option value="${escapeHtml(nm)}"${nm===n.p.listName?' selected':''}>${escapeHtml(nm)}</option>`).join('');
   });
+  bmRenderFields(n);
   bmRenderList(n);
+}
+function bmRenderFields(n){
+  const box=n.ui.fields;
+  box.innerHTML='';
+  for(const f of n.p.fields){
+    const chip=document.createElement('span');
+    chip.style.cssText='background:#1d2226;border:1px solid #2a3136;border-radius:3px;padding:0 4px;display:flex;align-items:center;gap:3px;';
+    chip.innerHTML=`<span>${escapeHtml(f)}</span><span class="bm-fdel" style="cursor:pointer;color:#6c7a80;">×</span>`;
+    chip.querySelector('.bm-fdel').addEventListener('click', ()=>{
+      if(!confirm('Remove field "'+f+'"? Values in entries stay in the DB but won\'t be shown.')) return;
+      bmApplyFields(n, n.p.fields.filter(x=>x!==f));
+    });
+    box.appendChild(chip);
+  }
+  const addBtn=document.createElement('span');
+  addBtn.textContent='+ field'; addBtn.style.cssText='cursor:pointer;color:#4ec9b0;';
+  addBtn.addEventListener('click', ()=>{
+    const nm=prompt('New field name (e.g. demod, bw):'); if(!nm) return;
+    if(n.p.fields.includes(nm)) return;
+    bmApplyFields(n, n.p.fields.concat([nm]));
+  });
+  box.appendChild(addBtn);
 }
 function bmRenderList(n){
   const list=n.ui.list;
@@ -1405,23 +1466,71 @@ function bmRenderList(n){
 }
 function bmRow(n,it){
   const row=document.createElement('div');
-  row.style.cssText='display:flex;align-items:center;gap:5px;padding:2px 6px;'+
-    'border-bottom:1px solid #121619;min-width:0;';
+  const isSel=n.p.selectedId===it.id;
+  row.style.cssText=`display:flex;align-items:center;gap:5px;padding:2px 6px;cursor:pointer;
+    border-bottom:1px solid #121619;background:${isSel?'#1d2226':'transparent'};min-width:0;`;
   const name=document.createElement('span');
   name.textContent=it.label; name.style.cssText='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
   const val=document.createElement('span');
   val.textContent=it.hi>it.lo ? (fmtHz(it.lo)+'-'+fmtHz(it.hi)+'Hz') : (fmtHz(it.lo)+'Hz');
   val.style.cssText='color:#4ec9b0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%;';
+  const editBtn=document.createElement('span');
+  editBtn.textContent='✎'; editBtn.style.cssText='cursor:pointer;color:#6c7a80;';
+  editBtn.addEventListener('click', ev=>{ ev.stopPropagation(); bmEditRow(n,it,row); });
   const delBtn=document.createElement('span');
   delBtn.textContent='🗑'; delBtn.style.cssText='cursor:pointer;color:#6c7a80;';
   delBtn.addEventListener('click', async ev=>{
     ev.stopPropagation();
     if(!confirm('Delete bookmark "'+it.label+'"?')) return;
     await ListDB.remove(it.id);
+    if(n.p.selectedId===it.id){ n.p.selectedId=null; n.selFreq=null; n.selFields={}; }
     await bmRefresh(n);
   });
-  row.append(name,val,delBtn);
+  row.append(name,val,editBtn,delBtn);
+  row.addEventListener('click', ()=>bmSelect(n,it));
   return row;
+}
+// заменяет строку закладки инлайн-формой редактирования (имя, границы частоты, цвет, доп.поля —
+// поле 'demod' получает выпадающий список DEMOD_OPTS, остальные — обычный текст)
+function bmEditRow(n,it,row){
+  const form=document.createElement('div');
+  form.style.cssText='display:flex;flex-direction:column;gap:2px;padding:3px 6px;border-bottom:1px solid #121619;background:#161b1e;';
+  const mk=(label,input)=>{ const l=document.createElement('label');
+    l.style.cssText='display:flex;gap:4px;align-items:center;font-size:10px;color:#6c7a80;';
+    input.style.cssText='flex:1;min-width:0;background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;font-size:10px;padding:1px 3px;';
+    l.append(label,input); return l; };
+  const nameIn=document.createElement('input'); nameIn.value=it.label;
+  const loIn=document.createElement('input'); loIn.value=fmtHz(it.lo);
+  const hiIn=document.createElement('input'); hiIn.value=it.hi>it.lo?fmtHz(it.hi):'';
+  const colorIn=document.createElement('input'); colorIn.value=it.color||''; colorIn.placeholder='#rrggbb (optional)';
+  form.append(mk('name',nameIn), mk('lo',loIn), mk('hi',hiIn), mk('color',colorIn));
+  const fieldIns={};
+  for(const f of n.p.fields){
+    let input;
+    if(f.toLowerCase()==='demod'){
+      input=document.createElement('select');
+      for(const o of DEMOD_OPTS){ const opt=document.createElement('option'); opt.value=o; opt.textContent=o; input.append(opt); }
+      input.value=it.raw[f]||DEMOD_OPTS[0];
+    } else { input=document.createElement('input'); input.value=it.raw[f]??''; }
+    fieldIns[f]=input;
+    form.append(mk(f,input));
+  }
+  const btns=document.createElement('div'); btns.style.cssText='display:flex;gap:4px;justify-content:flex-end;margin-top:2px;';
+  const saveBtn=document.createElement('button'); saveBtn.textContent='save';
+  saveBtn.style.cssText='background:#1d2226;border:1px solid #4ec9b0;color:#4ec9b0;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:10px;';
+  const cancelBtn=document.createElement('button'); cancelBtn.textContent='cancel';
+  cancelBtn.style.cssText='background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:10px;';
+  btns.append(saveBtn,cancelBtn); form.append(btns);
+  saveBtn.addEventListener('click', async ()=>{
+    const lo=parseHzCell(loIn.value); if(isNaN(lo)){ alert('bad lo frequency'); return; }
+    const hiRaw=hiIn.value.trim() ? parseHzCell(hiIn.value) : lo;
+    const fields={lo, hi:isNaN(hiRaw)?lo:hiRaw, color:colorIn.value.trim()};
+    for(const f of n.p.fields) fields[f]=fieldIns[f].value;
+    await ListDB.update(it.id, {name:nameIn.value||it.label, fields});
+    await bmRefresh(n);
+  });
+  cancelBtn.addEventListener('click', ()=>bmRenderList(n));
+  row.replaceWith(form);
 }
 function bmInit(n){
   const mid=n.el.querySelector('.mid');
@@ -1434,7 +1543,10 @@ function bmInit(n){
     <div class="bm-row" style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
       <select class="bm-select" style="flex:1;min-width:0;background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;font-size:10px;padding:1px 2px;"></select>
       <span class="bm-new" title="new list" style="cursor:pointer;color:#6c7a80;">＋</span>
+      <span class="bm-ren" title="rename list" style="cursor:pointer;color:#6c7a80;">✎</span>
+      <span class="bm-delL" title="delete list" style="cursor:pointer;color:#6c7a80;">🗑</span>
     </div>
+    <div class="bm-fields" style="display:flex;gap:3px;flex-wrap:wrap;flex-shrink:0;font-size:10px;"></div>
     <div class="bm-row" style="display:flex;gap:4px;align-items:center;flex-shrink:0;flex-wrap:wrap;">
       <button class="bm-add" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;" title="uses the wired 'freq' input">+ add at freq</button>
       <button class="bm-import" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">import CSV</button>
@@ -1445,12 +1557,29 @@ function bmInit(n){
     <div class="bm-list" style="flex:1;overflow-y:auto;border:1px solid #1d2226;border-radius:3px;background:#0e1113;"></div>
   `;
   mid.append(root);
-  syncCustomHeight(n, root, 110);
-  n.ui={root, list:root.querySelector('.bm-list'), count:root.querySelector('.bm-count'), select:root.querySelector('.bm-select')};
-  n.ui.select.addEventListener('change', async ()=>{ n.p.listName=n.ui.select.value; await bmRefresh(n); });
+  syncCustomHeight(n, root, 130);
+  n.ui={root, list:root.querySelector('.bm-list'), count:root.querySelector('.bm-count'),
+    select:root.querySelector('.bm-select'), fields:root.querySelector('.bm-fields')};
+  n.ui.select.addEventListener('change', async ()=>{
+    n.p.listName=n.ui.select.value; n.p.selectedId=null; n.selFreq=null; n.selFields={};
+    await bmRefresh(n);
+  });
   root.querySelector('.bm-new').addEventListener('click', async ()=>{
     const nm=prompt('New list name:'); if(!nm) return;
-    n.p.listName=nm; await bmRefresh(n);
+    n.p.listName=nm; n.p.selectedId=null; n.selFreq=null; n.selFields={};
+    await bmRefresh(n);
+  });
+  root.querySelector('.bm-ren').addEventListener('click', async ()=>{
+    const nm=prompt('New list name:', n.p.listName); if(!nm || nm===n.p.listName) return;
+    await ListDB.renameList(n.p.listName, nm);
+    n.p.listName=nm;
+    await bmRefresh(n);
+  });
+  root.querySelector('.bm-delL').addEventListener('click', async ()=>{
+    if(!confirm('Delete list "'+n.p.listName+'" entirely?')) return;
+    await ListDB.deleteList(n.p.listName);
+    n.p.listName='bookmarks'; n.p.selectedId=null; n.selFreq=null; n.selFields={};
+    await bmRefresh(n);
   });
   root.querySelector('.bm-add').addEventListener('click', ()=>bmAdd(n));
   const fileInput=root.querySelector('.bm-file');
@@ -1461,23 +1590,29 @@ function bmInit(n){
 }
 def({ id:'bookmarks', title:'Bookmarks (freq list)', cat:'Analysis',
   ins:[{n:'freq',t:'num'}],
-  outs:[{n:'bands',t:'bands'}],
-  h:220, resize:true, readout:true,
+  outs: n => [{n:'bands',t:'bands'},{n:'freq',t:'num'}].concat((n.p.fields||[]).map(f=>({n:f,t:'val'}))),
+  h:260, resize:true, readout:true,
   params:[{n:'bmLabel',t:'text',d:'',label:'label for next bookmark'}],
   init:n=>{
     n.p.listName=n.p.listName||'bookmarks';
+    n.p.fields=n.p.fields||[];
+    if(n.p.selectedId===undefined) n.p.selectedId=null;
     n.items=[]; n.loadedListName=null; n.lastFreq=null; n.initialized=false;
-    n.onResize=ln=>{ if(ln.ui) syncCustomHeight(ln, ln.ui.root, 110); };
+    n.selFreq=null; n.selFields={};
+    n.onResize=ln=>{ if(ln.ui) syncCustomHeight(ln, ln.ui.root, 130); };
   },
   process(n,I){
     if(typeof I.freq==='number') n.lastFreq=I.freq;
     if(n.p.listName!==n.loadedListName) bmRefresh(n);   // список сменили извне (десериализация/undo)
-    return {bands:n.items};
+    const o={bands:n.items, freq:n.selFreq};
+    for(const f of n.p.fields) o[f]=hostlistCoerce(n.selFields[f] ?? '');
+    return o;
   },
   draw(n){
     if(!n.initialized && n.el){ bmInit(n); n.initialized=true; }
     const r=n.el.querySelector('.readout');
-    if(r) r.textContent = n.lastFreq!=null ? ('freq: '+fmtHz(n.lastFreq)+'Hz') : 'no freq wired';
+    const sel=n.p.selectedId!=null ? (' · sel: '+(n.items.find(x=>x.id===n.p.selectedId)?.label||'')) : '';
+    if(r) r.textContent = (n.lastFreq!=null ? ('freq: '+fmtHz(n.lastFreq)+'Hz') : 'no freq wired')+sel;
   }});
 
 // 'sa' принимает только один вход 'bands' — этот узел склеивает несколько источников (bandplan +
