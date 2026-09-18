@@ -1142,6 +1142,31 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       };
       cv.addEventListener('pointerup', endDrag);
       cv.addEventListener('pointercancel', endDrag);
+
+      // Закладки (bookmark-точки band plan'а, см. saBandPlan/processing.js): наведение поднимает
+      // подпись под курсором над соседними (n._bmHoverFreq, читает saBandPlan на следующий кадр —
+      // близко стоящие подписи иначе перекрывают друг друга), клик по подписи — не по произвольной
+      // точке спектра — переставляет активный маркер точно на её частоту, в обход обычного
+      // клика-по-позиции (см. n.pickT/saTake) и его snap: тут частота и так уже bandplan'овская.
+      const bmHit=ev=>{
+        const boxes=n._bmBoxes; if(!boxes||!boxes.length) return null;
+        const rc=cv.getBoundingClientRect();
+        const x=(ev.clientX-rc.left)/rc.width*cv.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
+        for(let i=boxes.length-1;i>=0;i--){ const b=boxes[i];         // с конца — верхняя (последняя нарисованная) первой
+          if(x>=b.x0&&x<=b.x1&&y>=b.y0&&y<=b.y1) return b; }
+        return null;
+      };
+      let bmDown=null;
+      cv.addEventListener('pointerdown', ev=>{ bmDown={x:ev.clientX,y:ev.clientY}; });
+      cv.addEventListener('pointerup', ev=>{
+        const d=bmDown; bmDown=null;
+        if(!d || Math.hypot(ev.clientX-d.x,ev.clientY-d.y)>6) return;  // перетаскивание, не клик
+        const hit=bmHit(ev); if(!hit) return;
+        const k=+n.p.active-1;
+        if(!n.ext[k]){ n.mk[k]=hit.freq; n.pickT=null; }
+      });
+      cv.addEventListener('pointermove', ev=>{ n._bmHoverFreq = bmHit(ev)?.freq ?? null; });
+      cv.addEventListener('pointerleave', ()=>{ n._bmHoverFreq=null; });
     }
     if(n.s){
       const dpr=(cv.pxW&&cv.width)?cv.pxW/cv.width:1, Wp=cv.pxW||W, hwP=Math.max(1,Math.round(hw*dpr));

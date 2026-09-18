@@ -1279,7 +1279,8 @@ function saBands(n,cx,W,H){                        // закраска поло�
 // зоны подписей оси частот снизу (см. AXIS_H в draw()) — именно от неё дорожки полос растут вверх,
 // вплотную над осью, но не поверх её подписей. Водопад ни здесь, ни в вызывающем draw() не трогаем.
 function saBandPlan(n,cx,W,H,plotH){
-  const list=n.bandsData; if(!list||!list.length) return;
+  const list=n.bandsData;
+  if(!list||!list.length){ if(n._bmBoxes) n._bmBoxes.length=0; return; }
   const [lo0,hi0]=saBounds(n);
   const ranges=[], points=[];
   for(const b of list){
@@ -1330,23 +1331,35 @@ function saBandPlan(n,cx,W,H,plotH){
     }
     cx.globalAlpha=1; cx.textBaseline='alphabetic';        // вернуть дефолт — ниже (точки) рассчитывают на него
   }
-  // ---- точки (закладки): штриховая линия во всю H + подпись у ПОТОЛКА спектра — не сливается ни
-  // с полосами снизу, ни с флажками маркеров, которые теперь тоже снизу (см. saMarkers) ----
+  // ---- точки (закладки): штриховая линия во всю H + подпись у ПОТОЛКА спектра, залитая своим
+  // цветом и отцентрированная НА линии (не сбоку от неё) — не сливается ни с полосами снизу, ни с
+  // флажками маркеров, которые теперь тоже снизу (см. saMarkers). n._bmBoxes — прямоугольники
+  // подписей в пикселях канвы, читает sa's draw() (analysis.js) для клика/наведения; наведённая
+  // (n._bmHoverFreq) рисуется ПОСЛЕДНЕЙ, поверх соседних — иначе близко стоящие подписи
+  // перекрывают друг друга и не разобрать, на какую навели.
   if(points.length){
     cx.font='9px monospace'; cx.setLineDash([3,3]);
-    for(const p of points){
+    const boxes=n._bmBoxes=(n._bmBoxes||[]); boxes.length=0;
+    const hoverF=n._bmHoverFreq;
+    const ordered = hoverF!=null && points.some(p=>p.lo===hoverF)
+      ? [...points.filter(p=>p.lo!==hoverF), ...points.filter(p=>p.lo===hoverF)]
+      : points;
+    for(const p of ordered){
       const x=Math.round(saPos(n,p.lo)*W); if(x<-2||x>W+2) continue;
-      const col=p.color||'#c9c9c9';
+      const col=p.color||'#c9c9c9', hovered=hoverF===p.lo;
       cx.strokeStyle=col; cx.lineWidth=1; cx.globalAlpha=.7;
       cx.beginPath(); cx.moveTo(x+.5,0); cx.lineTo(x+.5,H); cx.stroke();
       cx.globalAlpha=1;
       const t=p.label||fmtHz(p.lo), ty=12;
-      const tw=cx.measureText(t).width, tx=clamp(x+3,2,W-tw-3);
-      cx.fillStyle='#0e1113cc'; cx.fillRect(tx-2,ty-9,tw+4,11);
-      cx.fillStyle=col; cx.fillText(t,tx,ty);
+      const tw=cx.measureText(t).width;
+      const tx=clamp(Math.round(x-tw/2), 2, W-tw-2);           // по центру линии, не сбоку
+      cx.globalAlpha=hovered?.85:.55; cx.fillStyle=col; cx.fillRect(tx-3,ty-9,tw+6,12);
+      cx.globalAlpha=1; cx.strokeStyle=col; cx.lineWidth=hovered?1.5:1; cx.strokeRect(tx-2.5,ty-8.5,tw+5,11);
+      cx.fillStyle='#fff'; cx.fillText(t,tx,ty);
+      boxes.push({x0:tx-3,y0:ty-9,x1:tx+tw+3,y1:ty+3,freq:p.lo});
     }
     cx.setLineDash([]);
-  }
+  } else if(n._bmBoxes) n._bmBoxes.length=0;
 }
 // snap клика к сетке каналов полосы из bandplan (n.bandsData) — НЕ к пикселям, а к шагу канала в
 // Гц (поле 'step' у полосы: например, LPD433 — 25кГц, HF Broadcast — 5кГц; см. BANDPLAN_PRESETS в
