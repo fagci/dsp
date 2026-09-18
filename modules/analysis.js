@@ -1522,6 +1522,8 @@ function bmRow(n,it){
   const isSel=n.p.selectedId===it.id;
   row.style.cssText=`display:flex;align-items:center;gap:5px;padding:2px 6px;cursor:pointer;
     border-bottom:1px solid #121619;background:${isSel?'#1d2226':'transparent'};min-width:0;`;
+  const swatch=document.createElement('span');
+  swatch.style.cssText=`width:9px;height:9px;border-radius:2px;flex-shrink:0;background:${it.color||'#c9c9c9'};`;
   const name=document.createElement('span');
   name.textContent=it.label; name.style.cssText='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
   const val=document.createElement('span');
@@ -1539,7 +1541,7 @@ function bmRow(n,it){
     if(n.p.selectedId===it.id){ n.p.selectedId=null; n.selFreq=null; n.selFields={}; }
     await bmRefresh(n);
   });
-  row.append(name,val,editBtn,delBtn);
+  row.append(swatch,name,val,editBtn,delBtn);
   row.addEventListener('click', ()=>bmSelect(n,it));
   return row;
 }
@@ -1555,8 +1557,9 @@ function bmEditRow(n,it,row){
   const nameIn=document.createElement('input'); nameIn.value=it.label;
   const loIn=document.createElement('input'); loIn.value=fmtHz(it.lo);
   const hiIn=document.createElement('input'); hiIn.value=it.hi>it.lo?fmtHz(it.hi):'';
-  const colorIn=document.createElement('input'); colorIn.value=it.color||''; colorIn.placeholder='#rrggbb (optional)';
+  const colorIn=document.createElement('input'); colorIn.type='color'; colorIn.value=it.color||'#c9c9c9';
   form.append(mk('name',nameIn), mk('lo',loIn), mk('hi',hiIn), mk('color',colorIn));
+  colorIn.style.cssText='flex:0 0 44px;height:16px;padding:0;background:none;border:1px solid #2a3136;';
   const fieldIns={};
   for(const f of n.p.fields){
     let input;
