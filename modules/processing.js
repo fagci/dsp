@@ -1303,7 +1303,7 @@ function saBandPlan(n,cx,W,H){
       if(lane<0){ if(laneEnd.length>=MAX_LANES) lane=laneEnd.length-1; else { lane=laneEnd.length; laneEnd.push(-Infinity); } }
       laneEnd[lane]=r.hi; r._lane=lane;
     }
-    cx.font='9px monospace';
+    cx.font='9px monospace'; cx.textBaseline='middle';    // middle — подпись по центру дорожки, не к низу
     for(const r of ranges){
       const x1=Math.round(saPos(n,r.lo)*W), x2=Math.round(saPos(n,r.hi)*W);
       if(x2<0||x1>W) continue;                            // целиком вне канвы — сам прямоугольник не рисуем
@@ -1321,12 +1321,12 @@ function saBandPlan(n,cx,W,H){
       // это не добавляет.
       const vx1=Math.max(x1,0), vx2=Math.min(x2,W), vw=vx2-vx1;
       if(tw+4<=vw){                                       // тёмная подложка под текстом — читается на любом цвете полосы
-        const tx=clamp(Math.round((vx1+vx2)/2-tw/2), x1+2, x2-tw-2);
-        cx.globalAlpha=1; cx.fillStyle='#0e1113cc'; cx.fillRect(tx-2,y+1,tw+4,LANE_H-3);
-        cx.fillStyle='#fff'; cx.fillText(label,tx,y+LANE_H-3);
+        const tx=clamp(Math.round((vx1+vx2)/2-tw/2), x1+2, x2-tw-2), ty=y+LANE_H/2;
+        cx.globalAlpha=1; cx.fillStyle='#0e1113cc'; cx.fillRect(tx-2,y+3,tw+4,LANE_H-6);
+        cx.fillStyle='#fff'; cx.fillText(label,tx,ty);
       }
     }
-    cx.globalAlpha=1;
+    cx.globalAlpha=1; cx.textBaseline='alphabetic';        // вернуть дефолт — ниже (точки) рассчитывают на него
   }
   // ---- точки: штриховая линия во всю H + подпись по центру высоты (не пересекается ни с
   // флажками маркеров сверху, ни с дорожками полос снизу) ----
