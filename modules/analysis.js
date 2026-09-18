@@ -1281,39 +1281,190 @@ function bandplanLoad(n,file){
   };
   reader.readAsText(file);
 }
-function bandplanAdd(n){
-  if(typeof n.lastFreq!=='number' || isNaN(n.lastFreq)) return;
-  n.items.push({lo:n.lastFreq, hi:n.lastFreq, label:n.p.bmLabel||'', color:''});
-}
-function bandplanSave(n){
+function bandplanSaveCsv(n){
   const header='lo,hi,label,color\n';
   const body=n.items.map(b=>[b.lo,b.hi,csvCell(b.label||''),csvCell(b.color||'')].join(',')).join('\n');
-  dl(new Blob([header+body],{type:'text/csv'}), 'bandplan-'+Date.now()+'.csv');
+  dl(new Blob([header+body],{type:'text/csv'}), (n.p.preset||'bandplan').replace(/[^\w-]+/g,'_')+'.csv');
 }
-def({ id:'bandplan', title:'Band Plan / Bookmarks (CSV)', cat:'Analysis',
-  // Один и тот же список {lo,hi,label,color} обслуживает и статичные полосы (band plan — грузятся
-  // из CSV: lo,hi,label,color), и точечные закладки (hi===lo — добавляются кнопкой 'add' на текущей
-  // частоте, приходящей проводом от 'sa' f1..f4, и сохраняются кнопкой 'save' в тот же CSV-формат).
-  // 'source' сознательно CSV, а не скрытое хранилище (в отличие от 'hostlist') — список живёт,
-  // пока открыта страница; кто хочет сохранить между сессиями — жмёт 'save' и хранит файл сам.
-  ins:[{n:'freq',t:'num'}],
+// Несколько готовых band plan'ов, чтобы узел показывал что-то полезное сразу при создании, без
+// поиска/составления CSV вручную (границы намеренно приблизительные/общемировые — не заменяют
+// официальный региональный band plan там, где точность важна).
+const BANDPLAN_PRESETS={
+  'ISM / license-free':[
+    [6765000,6795000,'ISM 6.78MHz'],[13553000,13567000,'ISM 13.56MHz'],
+    [26957000,27283000,'ISM 27MHz'],[40660000,40700000,'ISM 40.68MHz'],
+    [433050000,434790000,'ISM/SRD 433MHz (EU)'],[902000000,928000000,'ISM 915MHz (US)'],
+    [2400000000,2483500000,'ISM 2.4GHz'],[5725000000,5875000000,'ISM 5.8GHz']],
+  'FM broadcast':[[87500000,108000000,'FM broadcast']],
+  'Airband':[[118000000,137000000,'Airband (AM voice)']],
+  'Marine VHF':[[156000000,162025000,'Marine VHF']],
+  'Amateur radio (simplified)':[
+    [1800000,2000000,'160m'],[3500000,3800000,'80m'],[7000000,7200000,'40m'],
+    [10100000,10150000,'30m'],[14000000,14350000,'20m'],[18068000,18168000,'17m'],
+    [21000000,21450000,'15m'],[24890000,24990000,'12m'],[28000000,29700000,'10m'],
+    [50000000,54000000,'6m'],[144000000,146000000,'2m'],[430000000,440000000,'70cm']],
+};
+def({ id:'bandplan', title:'Band Plan (Presets/CSV)', cat:'Analysis',
+  // Статичный справочный band plan — либо один из встроенных пресетов (показывает что-то полезное
+  // сразу, без поиска CSV), либо свой CSV (lo,hi,label,color — тот же формат, что и у 'bookmarks',
+  // оба выхода одинаково подключаются во вход 'bands' узла 'sa'). За живыми, редактируемыми
+  // закладками — см. узел 'bookmarks': это два разных сценария (справочник vs личный список).
   outs:[{n:'bands',t:'bands'}],
   readout:true,
   params:[
+    {n:'preset',t:'select',opts:['none','custom (CSV)',...Object.keys(BANDPLAN_PRESETS)],
+     d:'ISM / license-free',label:'preset'},
     {n:'file',t:'file',accept:'.csv,text/csv',fn:(n,f)=>bandplanLoad(n,f)},
-    {n:'bmLabel',t:'text',d:'',label:'label for next bookmark'},
-    {n:'add',t:'button',label:'Add bookmark at freq',fn:n=>bandplanAdd(n)},
-    {n:'save',t:'button',label:'Save as CSV',fn:n=>bandplanSave(n)},
-    {n:'clrAll',t:'button',label:'Clear all',fn:n=>{n.items=[];}},
+    {n:'save',t:'button',label:'Export current as CSV',fn:n=>bandplanSaveCsv(n)},
   ],
-  init:n=>{ n.items=[]; n.name='no file loaded'; n.lastFreq=null; },
+  init:n=>{ n.items=[]; n._appliedPreset=null; n.name=''; },
   process(n,I){
-    if(typeof I.freq==='number') n.lastFreq=I.freq;
+    if(n.p.preset!==n._appliedPreset && n.p.preset!=='custom (CSV)'){
+      n._appliedPreset=n.p.preset;
+      const p=BANDPLAN_PRESETS[n.p.preset];
+      n.items = p ? p.map(([lo,hi,label])=>({lo,hi,label,color:''})) : [];
+      n.name = n.p.preset==='none' ? '' : n.p.preset;
+    }
     return {bands:n.items};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
-    const t=n.name+' · '+n.items.length+' entries'+(n.lastFreq!=null?' · freq '+fmtHz(n.lastFreq)+'Hz':'');
+    const t=(n.name||'empty')+' · '+n.items.length+' entries';
     if(r.textContent!==t) r.textContent=t; }});
+
+// ---- Bookmarks: живой, редактируемый список сохранённых частот (в отличие от 'bandplan' — не
+// справочник, а личные закладки). Хранение — IndexedDB через уже существующий ListDB (см. sources.js,
+// тот же слой, что и у 'hostlist'), так закладки переживают перезагрузку страницы сами по себе, без
+// обязательного явного сохранения в файл — CSV импорт/экспорт есть отдельно, для переноса/бэкапа.
+async function bmRefresh(n){
+  n.loadedListName=n.p.listName;
+  n.items=(await ListDB.list(n.p.listName)).map(it=>({
+    lo:+it.fields.lo, hi:+it.fields.hi, label:it.name, color:it.fields.color||'', id:it.id}));
+  if(n.ui) bmRenderAll(n);
+}
+async function bmAdd(n){
+  if(typeof n.lastFreq!=='number' || isNaN(n.lastFreq)) return;
+  const name=n.p.bmLabel || fmtHz(n.lastFreq)+'Hz';
+  await ListDB.add(n.p.listName, name, {lo:n.lastFreq, hi:n.lastFreq, color:''});
+  await bmRefresh(n);
+}
+function bmExportCsv(n){
+  const rows=[['lo','hi','label','color'], ...n.items.map(it=>[it.lo,it.hi,it.label,it.color||''])];
+  const csv=rows.map(r=>r.map(csvCell).join(',')).join('\r\n');
+  dl(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'}), (n.p.listName||'bookmarks')+'.csv');
+}
+function bmImportCsv(n,file){
+  const reader=new FileReader();
+  reader.onload=async ()=>{
+    let table; try{ table=csvParse(String(reader.result)); }
+    catch(e){ alert('failed to parse CSV: '+e.message); return; }
+    if(!table.length){ alert('file is empty'); return; }
+    const rows=isNaN(parseHzCell(table[0][0])) ? table.slice(1) : table;
+    for(const r of rows){
+      const lo=parseHzCell(r[0]); if(isNaN(lo)) continue;
+      const hiRaw=r[1]!==undefined && r[1]!=='' ? parseHzCell(r[1]) : lo;
+      await ListDB.add(n.p.listName, r[2]||(fmtHz(lo)+'Hz'), {lo, hi:isNaN(hiRaw)?lo:hiRaw, color:r[3]||''});
+    }
+    await bmRefresh(n);
+  };
+  reader.readAsText(file);
+}
+function bmRenderAll(n){
+  const names=n._listNamesCache||[n.p.listName];
+  ListDB.listNames().then(ns=>{
+    n._listNamesCache = ns.includes(n.p.listName) ? ns : ns.concat([n.p.listName]);
+    const sel=n.ui.select;
+    sel.innerHTML=n._listNamesCache.map(nm=>`<option value="${escapeHtml(nm)}"${nm===n.p.listName?' selected':''}>${escapeHtml(nm)}</option>`).join('');
+  });
+  bmRenderList(n);
+}
+function bmRenderList(n){
+  const list=n.ui.list;
+  list.innerHTML='';
+  n.ui.count.textContent=n.items.length+' entries';
+  if(!n.items.length){
+    const empty=document.createElement('div');
+    empty.textContent='empty — add a bookmark or import CSV';
+    empty.style.cssText='padding:12px;text-align:center;color:#2a3136;';
+    list.appendChild(empty); return;
+  }
+  for(const it of n.items) list.appendChild(bmRow(n,it));
+}
+function bmRow(n,it){
+  const row=document.createElement('div');
+  row.style.cssText='display:flex;align-items:center;gap:5px;padding:2px 6px;'+
+    'border-bottom:1px solid #121619;min-width:0;';
+  const name=document.createElement('span');
+  name.textContent=it.label; name.style.cssText='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  const val=document.createElement('span');
+  val.textContent=it.hi>it.lo ? (fmtHz(it.lo)+'-'+fmtHz(it.hi)+'Hz') : (fmtHz(it.lo)+'Hz');
+  val.style.cssText='color:#4ec9b0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%;';
+  const delBtn=document.createElement('span');
+  delBtn.textContent='🗑'; delBtn.style.cssText='cursor:pointer;color:#6c7a80;';
+  delBtn.addEventListener('click', async ev=>{
+    ev.stopPropagation();
+    if(!confirm('Delete bookmark "'+it.label+'"?')) return;
+    await ListDB.remove(it.id);
+    await bmRefresh(n);
+  });
+  row.append(name,val,delBtn);
+  return row;
+}
+function bmInit(n){
+  const mid=n.el.querySelector('.mid');
+  if(!mid || mid.querySelector('.bm-ui')) return;
+  const root=document.createElement('div');
+  root.className='bm-ui';
+  root.style.cssText='position:relative;display:flex;flex-direction:column;font-size:11px;'+
+    'color:#c8d2d6;box-sizing:border-box;overflow:hidden;grid-column:1/-1;width:100%;min-width:0;gap:2px;';
+  root.innerHTML=`
+    <div class="bm-row" style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
+      <select class="bm-select" style="flex:1;min-width:0;background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;font-size:10px;padding:1px 2px;"></select>
+      <span class="bm-new" title="new list" style="cursor:pointer;color:#6c7a80;">＋</span>
+    </div>
+    <div class="bm-row" style="display:flex;gap:4px;align-items:center;flex-shrink:0;flex-wrap:wrap;">
+      <button class="bm-add" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;" title="uses the wired 'freq' input">+ add at freq</button>
+      <button class="bm-import" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">import CSV</button>
+      <button class="bm-export" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">export CSV</button>
+      <input class="bm-file" type="file" accept=".csv,text/csv" style="display:none;">
+      <span class="bm-count" style="flex:1;text-align:right;color:#6c7a80;font-size:10px;"></span>
+    </div>
+    <div class="bm-list" style="flex:1;overflow-y:auto;border:1px solid #1d2226;border-radius:3px;background:#0e1113;"></div>
+  `;
+  mid.append(root);
+  syncCustomHeight(n, root, 110);
+  n.ui={root, list:root.querySelector('.bm-list'), count:root.querySelector('.bm-count'), select:root.querySelector('.bm-select')};
+  n.ui.select.addEventListener('change', async ()=>{ n.p.listName=n.ui.select.value; await bmRefresh(n); });
+  root.querySelector('.bm-new').addEventListener('click', async ()=>{
+    const nm=prompt('New list name:'); if(!nm) return;
+    n.p.listName=nm; await bmRefresh(n);
+  });
+  root.querySelector('.bm-add').addEventListener('click', ()=>bmAdd(n));
+  const fileInput=root.querySelector('.bm-file');
+  root.querySelector('.bm-import').addEventListener('click', ()=>fileInput.click());
+  fileInput.addEventListener('change', ()=>{ const f=fileInput.files[0]; fileInput.value=''; if(f) bmImportCsv(n,f); });
+  root.querySelector('.bm-export').addEventListener('click', ()=>bmExportCsv(n));
+  bmRefresh(n);
+}
+def({ id:'bookmarks', title:'Bookmarks (freq list)', cat:'Analysis',
+  ins:[{n:'freq',t:'num'}],
+  outs:[{n:'bands',t:'bands'}],
+  h:220, resize:true, readout:true,
+  params:[{n:'bmLabel',t:'text',d:'',label:'label for next bookmark'}],
+  init:n=>{
+    n.p.listName=n.p.listName||'bookmarks';
+    n.items=[]; n.loadedListName=null; n.lastFreq=null; n.initialized=false;
+    n.onResize=ln=>{ if(ln.ui) syncCustomHeight(ln, ln.ui.root, 110); };
+  },
+  process(n,I){
+    if(typeof I.freq==='number') n.lastFreq=I.freq;
+    if(n.p.listName!==n.loadedListName) bmRefresh(n);   // список сменили извне (десериализация/undo)
+    return {bands:n.items};
+  },
+  draw(n){
+    if(!n.initialized && n.el){ bmInit(n); n.initialized=true; }
+    const r=n.el.querySelector('.readout');
+    if(r) r.textContent = n.lastFreq!=null ? ('freq: '+fmtHz(n.lastFreq)+'Hz') : 'no freq wired';
+  }});
 
 
 // Опорные точки палитры водопада (t от 0 до 1) — та же цветовая идея, что у gqrx/SDR++
