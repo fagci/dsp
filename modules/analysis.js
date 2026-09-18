@@ -872,13 +872,12 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'split',t:'range',min:.15,max:.85,step:.01,d:.4,label:'spectrum split'},
           {n:'log',t:'check',d:false},
           {n:'grid',t:'check',d:true},
-          {n:'mode',t:'select',opts:['amplitude','phase','power','PSD'],d:'amplitude',label:'spectrum view'},
+          {n:'snap',t:'check',d:true,label:'snap to band plan step'},
           {n:'palette',t:'select',opts:['default',...Object.keys(PALETTES)],d:'classic',label:'waterfall palette'},
-          {n:'peakHold',t:'check',d:false,label:'peak hold'},
-          {n:'peakClr',t:'button',label:'Clear peak hold',fn:n=>{n.peak=null;}},
+          // выключить — тот же жест, что и "очистить": незачем отдельная кнопка (см. fn у 'check' в core-graph.js)
+          {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold) n.peak=null; }},
           {n:'active',t:'buttons',opts:['1','2','3','4'],d:'1',label:'marker'},
           {n:'tol',t:'range',min:5,max:50000,step:5,log:true,d:50,label:'level window, Hz'},
-          {n:'snap',t:'check',d:true,label:'snap to band plan channel step'},
           {n:'band',t:'select',opts:['none','by inputs','1–2','3–4'],d:'by inputs',label:'band'},
           {n:'ref',t:'select',opts:['none','show','diff'],d:'none',label:'reference'},
           {n:'take',t:'button',label:'Capture reference',fn:n=>{
@@ -1159,21 +1158,18 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       // до 3 бинарных поисков (specBin) на столбец за кадр. Пересчитываем только при смене параметров оси.
       // n.p.auto добавлен в ключ: в авто-режиме fmin/fmax не меняются, а реальные границы (specSpan)
       // могут — но при их смене меняется и ссылка n.s.freqs (см. rtlUpdateSpec), так что она это ловит.
-      // _binX — дробный бин ЦЕНТРА столбца (для фазы — там усреднение диапазона не имеет смысла).
-      // _binEdgeX/_binEdgeXwf — бины на СТЫКАХ столбцов (длина на 1 больше W/Wp), под амплитуду/
-      // водопад/PSD — см. magReduce ниже, зачем нужен именно диапазон, а не одна точка.
+      // _binEdgeX/_binEdgeXwf — бины на СТЫКАХ столбцов (длина на 1 больше W/Wp) — см. magReduce
+      // ниже, зачем нужен именно диапазон, а не одна точка.
       if(n._bW!==W || n._bWp!==Wp || n._bN!==N || n._bLog!==n.p.log || n._bAuto!==n.p.auto ||
          n._bFmin!==n.p.fmin || n._bFmax!==n.p.fmax || n._bFreqs!==(n.s.freqs||null)){
         n._bW=W; n._bWp=Wp; n._bN=N; n._bLog=n.p.log; n._bAuto=n.p.auto;
         n._bFmin=n.p.fmin; n._bFmax=n.p.fmax; n._bFreqs=n.s.freqs||null;
-        n._binX=new Float32Array(W);                  // дробный бин, не округляем — ниже линейная интерполяция
-        for(let x=0;x<W;x++) n._binX[x]=clamp(specBin(n.s,saFreq(n,x/(W-1))),0,N-1);
         n._binEdgeX=new Float32Array(W+1);
         for(let x=0;x<=W;x++) n._binEdgeX[x]=clamp(specBin(n.s,saFreq(n,(x-.5)/(W-1))),0,N-1);
         n._binEdgeXwf=new Float32Array(Wp+1);
         for(let x=0;x<=Wp;x++) n._binEdgeXwf[x]=clamp(specBin(n.s,saFreq(n,(x-.5)/(Wp-1))),0,N-1);
       }
-      const binX=n._binX, edgeX=n._binEdgeX, edgeXwf=n._binEdgeXwf;
+      const edgeX=n._binEdgeX, edgeXwf=n._binEdgeXwf;
       // При крупном БПФ (много бинов) и небольшой ширине канвы на один столбец пикселей приходится
       // много бинов (например, 16384 бина на ~1000px — по 16 бинов на столбец). Простая линейная
       // интерполяция между 2 соседними бинами (как раньше) в этом случае регулярно "проваливает"
@@ -1194,11 +1190,6 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         const bf=(lo+hi)*.5, i0=bf|0, i1=Math.min(N-1,i0+1), t=bf-i0;
         return arr[i0]+(arr[i1]-arr[i0])*t;
       };
-      // при редких бинах (вейвлет/октавный анализатор) соседние пиксели часто попадают в один и
-      // тот же бин, а на стыке — резко скачут в следующий; линейная интерполяция превращает
-      // лесенку в гладкую кривую, для частых бинов (fft) эффекта почти не заметно
-      const magAt=(arr,bf)=>{ const i0=bf|0, i1=Math.min(N-1,i0+1), t=bf-i0;
-        return arr[i0]+(arr[i1]-arr[i0])*t; };
 
       // спектр может обновляться медленнее кадров отрисовки (например, у rtlsdr — раз в ~80мс,
       // а draw идёт на каждый rAF) — без проверки свежести один и тот же спектр продавливался бы
@@ -1234,34 +1225,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         cx.stroke(); cx.globalAlpha=1; }
       if(!n.colTS || ((n.colFrame=(n.colFrame||0)+1)%30===0))  // цвет темы — тоже не каждый кадр
         n.colTS=getComputedStyle(document.body).getPropertyValue('--t-spec');
-      const mode=n.p.mode;
-      if(mode==='phase' && n.s.phase){
-        // фаза бина — то же значение, что использует фазовое уточнение fr1..fr4, просто нарисованное.
-        // Скачки на стыке ±π — это заворачивание фазы (принцип. значение), а не баг отрисовки:
-        // так её везде рисуют, для развёрнутой (unwrap) фазы нужен отдельный режим.
-        cx.strokeStyle='#e0b23c'; cx.lineWidth=1; cx.beginPath();
-        const ph=n.s.phase;
-        for(let x=0;x<W;x++){
-          const pv=magAt(ph,binX[x]);
-          const y=plotH-((pv+Math.PI)/(2*Math.PI))*(plotH-2)-1;
-          x?cx.lineTo(x,y):cx.moveTo(x,y); }
-        cx.stroke();
-        cx.strokeStyle='#ffffff18'; cx.beginPath();               // ось 0 рад — для ориентира
-        cx.moveTo(0,plotH/2); cx.lineTo(W,plotH/2); cx.stroke();
-      } else if(mode==='PSD' && n.s.psd){
-        // спектральная плотность мощности — та же кривая, что и амплитуда, только своя нормировка
-        // (Вт/Гц вместо просто амплитуды): шумовой пол не гуляет при смене размера окна БПФ,
-        // амплитуда/мощность (в дБ) — гуляет, это и есть разница между ними по сути, а не по картинке
-        cx.strokeStyle='#4ec9b0'; cx.lineWidth=1; cx.beginPath();
-        const psd=n.s.psd;
-        for(let x=0;x<W;x++){
-          const v=10*Math.log10(magReduce(psd,edgeX[x],edgeX[x+1])+1e-20);
-          const y=plotH-clamp((v-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
-          x?cx.lineTo(x,y):cx.moveTo(x,y); }
-        cx.stroke();
-      } else {
-      // 'амплитуда' и 'мощность' — буквально одна и та же кривая (20·log|X| ≡ 10·log|X|²),
-      // разница только в подписи единиц, отдельного кода для 'мощность' поэтому нет
+      // обычный спектр по уровню (20·log|X|) — раньше тут ещё были режимы 'фаза'/'PSD' с отдельным
+      // селектором, убрали как лишний выбор: уровень — то, что нужно почти всегда
       cx.strokeStyle=n.colTS;
       cx.lineWidth=1; cx.beginPath();
       for(let x=0;x<W;x++){
@@ -1274,10 +1239,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       cx.stroke();
       if(diff){ cx.strokeStyle='#ffffff22'; cx.beginPath();
         cx.moveTo(0,plotH/2); cx.lineTo(W,plotH/2); cx.stroke(); }
-      }
-      // peak hold — тонкая линия максимума поверх обычной трассы (amplitude/power; для PSD своя
-      // нормировка, а n.peak копит обычную магнитуду — смешивать шкалы нельзя, поэтому там не рисуем)
-      if(n.p.peakHold && n.peak && n.peak.length===N && mode!=='phase' && mode!=='PSD'){
+      // peak hold — тонкая линия максимума поверх обычной трассы
+      if(n.p.peakHold && n.peak && n.peak.length===N){
         cx.strokeStyle='#ffd54a'; cx.lineWidth=1; cx.beginPath();
         for(let x=0;x<W;x++){
           const v=20*Math.log10(magReduce(n.peak,edgeX[x],edgeX[x+1])+1e-12);
