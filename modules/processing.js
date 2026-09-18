@@ -1346,26 +1346,25 @@ function saBandPlan(n,cx,W,H){
     cx.setLineDash([]);
   }
 }
-// snap клика к ближайшей границе полосы или точке из bandplan/bookmarks (n.bandsData) — в пределах
-// n.p.snap пикселей (0 — выключено). Кандидаты: у полосы обе границы (lo и hi отдельно, не центр —
-// клик у левого/правого края частой полосы типа ISM должен цепляться именно за край, а не тянуть к
-// середине); у точечной закладки — она сама (единственный кандидат), так что клик рядом с пунктирной
-// линией закладки в спектре ставит маркер ровно на неё — тот же snap, отдельного кода не нужно.
+// snap клика к сетке каналов полосы из bandplan (n.bandsData) — НЕ к пикселям, а к шагу канала в
+// Гц (поле 'step' у полосы: например, LPD433 — 25кГц, HF Broadcast — 5кГц; см. BANDPLAN_PRESETS в
+// analysis.js). Полоса без step (не channelized — обычный ISM-диапазон, любительский участок и
+// т.п.) не снапает вообще — там непрерывная настройка. Клик должен попасть в саму полосу (плюс
+// пол-шага за край — чтобы не мазать мимо крайнего канала из-за огрубления клика до пикселя);
+// канал считается от lo с фиксированным шагом, а не от произвольной точки клика — иначе один и тот
+// же канал давал бы разные частоты в зависимости от того, где именно внутри него кликнули.
 function saSnapFreq(n,f){
-  const W=n._lastW, list=n.bandsData;
-  if(!n.p.snap || !W || !list || !list.length) return f;
-  const t0=saPos(n,f);
-  let best=null, bestPx=n.p.snap;
+  const list=n.bandsData;
+  if(!n.p.snap || !list || !list.length) return f;
   for(const b of list){
-    if(!b || typeof b.lo!=='number' || isNaN(b.lo)) continue;
+    const step=+b?.step;
+    if(!b || typeof b.lo!=='number' || isNaN(b.lo) || !step || step<=0) continue;
     const hi=(typeof b.hi==='number' && !isNaN(b.hi)) ? b.hi : b.lo;
-    const cands = hi===b.lo ? [b.lo] : [b.lo,hi];
-    for(const c of cands){
-      const px=Math.abs(saPos(n,c)-t0)*W;
-      if(px<bestPx){ bestPx=px; best=c; }
-    }
+    const lo=Math.min(b.lo,hi), hiB=Math.max(b.lo,hi);
+    if(f<lo-step/2 || f>hiB+step/2) continue;           // клик не по этой полосе
+    return clamp(lo+Math.round((f-lo)/step)*step, lo, hiB);
   }
-  return best!=null ? best : f;
+  return f;
 }
 function saTake(n){                                  // применить накопленный тап — в выбранный маркер
   if(n.pickT==null) return;
