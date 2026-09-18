@@ -1584,39 +1584,20 @@ function rtlUpdateSpec(n){
   // болячка RTL2832U (zero-IF архитектура), см. то же самое в gqrx/SDR++ ("DC removal"/"correct IQ").
   // Вычитаем среднее блока — это ТОЧНО зануляет центральный бин БПФ (он и есть эта самая сумма/N),
   // персистентный фильтр (как rawI0/rawQ0 в демод-воркере) тут не нужен: смещение почти константа
-  // между блоками, а прямое среднее убирает его сразу, без времени на сходимость IIR.
-  if(n.p.specDc){
-    const mI=sumI/N, mQ=sumQ/N;
-    for(let i=0;i<N;i++){ I[i]-=mI; Q[i]-=mQ; }
-  }
+  // между блоками, а прямое среднее убирает его сразу, без времени на сходимость IIR. Всегда
+  // включено — переключатель убрали, отключать его незачем (спайк — не сигнал ни при каких условиях).
+  const mI=sumI/N, mQ=sumQ/N;
+  for(let i=0;i<N;i++){ I[i]-=mI; Q[i]-=mQ; }
   n.specBusy=true;
   const centerFreq=n.actualFreq??n.p.freq, binHz=n.sourceRate/N, half=N>>1, win=n.p.specWin;
   n.specWorker.compute(I.buffer, Q.buffer, N, win).then(mag=>{
     n.specBusy=false;
-    let freqsChanged=false;
     if(!n.specFreqs || n.specFreqs.length!==N || n.specFreqsCenter!==centerFreq || n.specFreqsSr!==n.sourceRate){
       const fr=new Float32Array(N);
       for(let i=0;i<N;i++) fr[i]=centerFreq+(i-half)*binHz;
       n.specFreqs=fr; n.specFreqsCenter=centerFreq; n.specFreqsSr=n.sourceRate;
-      freqsChanged=true;                              // центр/размер БПФ сменился — бин i теперь другая частота
     }
-    // усреднение — по МОЩНОСТИ (mag^2), а не по амплитуде: так шумовой пол сходится к честному
-    // среднему, а не занижается, как при бленде линейной амплитуды. specAvg — число кадров,
-    // экспон. IIR с коэффициентом 1-1/N приближает N-кадровое окно. При смене центра/размера
-    // бин i указывает на другую частоту — сбрасываем накопленное.
-    const N_avg=Math.max(1,+n.p.specAvg|0), avgK=1-1/N_avg;
-    let outMag=mag;
-    if(N_avg>1){
-      if(freqsChanged || !n.specAvgPow || n.specAvgPow.length!==N){
-        n.specAvgPow=new Float32Array(N);
-        for(let i=0;i<N;i++) n.specAvgPow[i]=mag[i]*mag[i];
-      } else {
-        for(let i=0;i<N;i++) n.specAvgPow[i]=n.specAvgPow[i]*avgK+mag[i]*mag[i]*(1-avgK);
-      }
-      outMag=new Float32Array(N);
-      for(let i=0;i<N;i++) outMag[i]=Math.sqrt(n.specAvgPow[i]);
-    }
-    n.spec={mag:outMag, sr:n.sourceRate, size:N, freqs:n.specFreqs,
+    n.spec={mag, sr:n.sourceRate, size:N, freqs:n.specFreqs,
             rev:(n.specRev=(n.specRev|0)+1)};
     n.lastSpec=performance.now();
   }).catch(()=>{ n.specBusy=false; });
@@ -1799,7 +1780,6 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
   params:[
     {n:'connect',t:'button',label:'Connect',fn:async n=>{ await rtlConnect(n); }},
     {n:'disconnect',t:'button',label:'Disconnect',fn:async n=>{ await rtlDisconnect(n); }},
-    {n:'freq',t:'num',d:100000000,label:'center frequency, Hz'},
     {n:'sr',t:'select',opts:['960000','1024000','1920000','2048000','2400000','3200000'],d:'1024000',label:'sample rate',
      fn:async n=>{ if(n.dev){ try{ n.sourceRate=await n.dev.setSampleRate(rtlSafeSr(n.p.sr)); rtlResetRing(n); }
        catch(e){ n.status='sample rate change error: '+e.message; } } }},
@@ -1811,9 +1791,7 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     {n:'auto',t:'check',d:true,label:'auto gain'},
     {n:'gainDb',t:'range',min:0,max:49.6,step:.1,d:20,label:'gain, dB'},
     {n:'specSize',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'4096',label:'spectrum FFT size'},
-    {n:'specWin',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann',label:'spectrum window'},
-    {n:'specAvg',t:'range',min:1,max:32,step:1,d:4,label:'averaging, frames'},
-    {n:'specDc',t:'check',d:true,label:'remove DC spike'}
+    {n:'specWin',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann',label:'spectrum window'}
   ],
   init:n=>{ n.dev=null; n.connected=false; n.reading=false; n.sourceRate=1024000;
             n.underrunsWorker=0; n.underrunsOverflow=0; n.underrunsStarve=0;
@@ -1956,6 +1934,25 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
   // Собственная отрисовка спектра/водопада убрана — для этого универсальный узел 'sa'
   // (Спектроанализатор), подключаемый к выходу 'spec'. Здесь остаётся только статус-строка.
   draw(n){
+    // Крутилка ввода центральной частоты (та же, что у узла 'tuner', см. drawFreqDial выше) — вместо
+    // обычного текстового поля с числом. Не через стандартный d.view (тот канвас движок кладёт
+    // ПОСЛЕ всех params — а частота тут самое важное поле, ей место сверху), поэтому канва
+    // заводится и позиционируется вручную, первым элементом .mid, с тем же hiDPICanvas для
+    // чёткости на ретине/мобиле, что и у обычных view-канвасов.
+    // isConnected — не просто "уже создан": rebuildNode (смена sr, и т.п.) выкидывает старый .el
+    // целиком и строит новый, а n._dialCv остался бы указывать на канву, которой больше нет в DOM
+    if((!n._dialCv || !n._dialCv.isConnected) && n.el){
+      const mid=n.el.querySelector('.mid');
+      if(mid){
+        const cv=document.createElement('canvas'); cv.className='view';
+        const dcx=cv.getContext('2d',{willReadFrequently:true});
+        mid.insertBefore(cv, mid.firstChild);
+        cv.width=200; cv.height=170; cv.style.height='170px';
+        hiDPICanvas(cv,dcx,n);
+        n._dialCv=cv; n._dialCx=dcx; n._dial={};
+      }
+    }
+    if(n._dialCv) drawFreqDial(n.el, n._dialCv, n._dialCx, n._dial, ()=>n.p.freq, v=>{ n.p.freq=v; });
     const cf=n.actualFreq??n.p.freq;
     const tune=clamp(n.ch[0].tuneFreq==null?cf:n.ch[0].tuneFreq, cf-n.sourceRate/2, cf+n.sourceRate/2);
     const chCount=n.ch.filter(c=>c.active).length;
@@ -2738,102 +2735,115 @@ def({ id:'genseq', title:'Generative Melody', cat:'Music',
 // само переносит в старший разряд (99→100), поэтому отдельной carry-логики не нужно.
 const TUNER_DIGITS=10;                                  // до 9 999 999 999 Гц (~10 ГГц) с запасом
 
+// Общая крутилка+табло ввода частоты (изначально была только внутри узла 'tuner') — теперь общий
+// виджет, используемый и в 'rtlsdr' для его центральной частоты (см. draw() у 'rtlsdr' выше), вместо
+// обычного текстового поля: то же вращение/тап по разряду/клавиатура/колесо, включая мобильную
+// поддержку (скрытый text-input под тап по цифре — иначе на мобиле нечем вызвать цифровую
+// клавиатуру у canvas). state — объект, который хранит caller (НЕ n.sel/n.ang напрямую) — так одной
+// функцией можно завести несколько независимых крутилок на разных узлах без коллизий состояния.
+// get/set — доступ к самому значению частоты, el — элемент для фокуса/клавиатуры (обычно n.el).
+function drawFreqDial(el,cv,cx,state,get,set){
+  if(state.sel==null){ state.sel=8; state.ang=0; }
+  const W=cv.width, H=cv.height, TOP=46, maxV=Math.pow(10,TUNER_DIGITS)-1;
+  const stepHz=()=>Math.pow(10,TUNER_DIGITS-1-state.sel);   // шаг = вес выбранного разряда
+  const bumpDigit=d=>{ set(clamp(Math.round(get()+stepHz()*d),0,maxV)); };
+  const DRAG_SENS=0.6;                                  // чуть медленнее, чем 1px = 1 шаг
+  if(!state.wired){
+    state.wired=true;
+    el.tabIndex=0;                                      // фокус нужен, чтобы ловить стрелки/цифры клавиатуры
+    cv.style.touchAction='none';                         // без этого мобилка скроллит страницу вместо вращения крутилки
+    // скрытый инпут — только чтобы на тап по цифре мобилка показала цифровую клавиатуру
+    const numInput=document.createElement('input');
+    numInput.type='tel'; numInput.inputMode='numeric'; numInput.autocomplete='off';
+    numInput.style.cssText='position:absolute;opacity:0;width:1px;height:1px;padding:0;border:0;pointer-events:none;';
+    el.appendChild(numInput);
+    numInput.addEventListener('input',()=>{
+      const ch=numInput.value.replace(/\D/g,'').slice(-1);
+      numInput.value='';
+      if(!ch) return;
+      const digits=String(Math.round(get())).padStart(TUNER_DIGITS,'0').split('');
+      digits[state.sel]=ch;
+      set(clamp(+digits.join(''),0,maxV));
+      state.sel=clamp(state.sel+1,0,TUNER_DIGITS-1); });
+    el.addEventListener('keydown',ev=>{
+      if(/^[0-9]$/.test(ev.key)){                        // ввод цифры прямо в выбранный разряд
+        ev.preventDefault(); ev.stopPropagation();
+        const digits=String(Math.round(get())).padStart(TUNER_DIGITS,'0').split('');
+        digits[state.sel]=ev.key;
+        set(clamp(+digits.join(''),0,maxV));
+        state.sel=clamp(state.sel+1,0,TUNER_DIGITS-1);    // и сразу на разряд ниже, как на калькуляторе
+        return;
+      }
+      if(!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(ev.key)) return;
+      ev.preventDefault(); ev.stopPropagation();
+      if(ev.key==='ArrowLeft') state.sel=clamp(state.sel-1,0,TUNER_DIGITS-1);
+      else if(ev.key==='ArrowRight') state.sel=clamp(state.sel+1,0,TUNER_DIGITS-1);
+      else if(ev.key==='ArrowUp') bumpDigit(1);
+      else if(ev.key==='ArrowDown') bumpDigit(-1); });
+    cv.addEventListener('pointerdown',ev=>{
+      ev.stopPropagation(); ev.preventDefault();          // preventDefault и тут — иначе браузер после тапа сам фокусирует canvas и закрывает клавиатуру
+      const r=cv.getBoundingClientRect(), y=(ev.clientY-r.top)/r.height*H;
+      if(y<TOP){                                        // клик по табло — выбрать разряд под стрелки
+        const x=(ev.clientX-r.left)/r.width*W, cw=W/TUNER_DIGITS;
+        state.sel=clamp(Math.floor(x/cw),0,TUNER_DIGITS-1);
+        if(ev.pointerType==='touch') numInput.focus(); else el.focus();
+      } else {                                          // клик по крутилке — начать вращение
+        state.dragY0=ev.clientY; state.dragFreq0=get();   // запоминаем старт драга, а не только предыдущую точку
+        state.dragLastY=ev.clientY; state.dragPtr=ev.pointerId; state.dragTouch=ev.pointerType==='touch';
+        cv.setPointerCapture(ev.pointerId);
+      } });
+    cv.addEventListener('pointermove',ev=>{
+      if(state.dragY0==null || ev.pointerId!==state.dragPtr) return;
+      ev.preventDefault();
+      // частота считается от точки СТАРТА драга (не от предыдущего события) — так не плывёт от
+      // того, сколько именно move-событий прислал браузер. Тач заметно менее чувствительный, чем
+      // мышь: палец физически проезжает по экрану куда больше при том же "ощущаемом" усилии.
+      const sens=state.dragTouch?DRAG_SENS/8:DRAG_SENS;
+      const stepDy=state.dragLastY-ev.clientY; state.dragLastY=ev.clientY;   // только для вращения стрелки
+      state.ang=(state.ang+stepDy*4*sens)%360;
+      // округляем именно КОЛИЧЕСТВО ШАГОВ, а не итоговую частоту — иначе Math.round бьёт
+      // до целого герца, а не до кратного весу разряда, и в младших разрядах остаётся мусор
+      const steps=Math.round((state.dragY0-ev.clientY)*sens);
+      set(clamp(state.dragFreq0+steps*stepHz(),0,maxV)); },{passive:false});
+    const endDrag=()=>{ state.dragY0=null; state.dragPtr=null; };
+    cv.addEventListener('pointerup',endDrag); cv.addEventListener('pointercancel',endDrag);
+    cv.addEventListener('wheel',ev=>{ ev.preventDefault(); ev.stopPropagation();
+      set(clamp(Math.round(get()+(ev.deltaY<0?stepHz():-stepHz())),0,maxV)); },{passive:false});
+  }
+  cx.clearRect(0,0,W,H);
+  // табло
+  const digStr=String(Math.round(get())).padStart(TUNER_DIGITS,'0'), cw=W/TUNER_DIGITS;
+  cx.font='bold '+Math.round(Math.min(34,cw*.78))+'px monospace'; cx.textAlign='center'; cx.textBaseline='middle';
+  for(let i=0;i<TUNER_DIGITS;i++){
+    if(i===state.sel){ cx.fillStyle='#e0b23c33'; cx.fillRect(i*cw+1,2,cw-2,TOP-4); }
+    cx.fillStyle= i===state.sel? '#e0b23c' : '#cfd6db';
+    cx.fillText(digStr[i], i*cw+cw/2, TOP/2);
+    if((TUNER_DIGITS-1-i)%3===0 && i<TUNER_DIGITS-1){    // разделитель разрядов по 3 (тысячи/миллионы/…)
+      cx.strokeStyle='#333'; cx.beginPath();
+      cx.moveTo(i*cw+cw+.5,4); cx.lineTo(i*cw+cw+.5,TOP-4); cx.stroke(); }
+  }
+  cx.textAlign='left'; cx.font='10px monospace'; cx.fillStyle='#8a9298';
+  cx.fillText(fmtHz(get())+'Hz · digit ×'+fmtHz(Math.pow(10,TUNER_DIGITS-1-state.sel)), 4, H-4);
+  // крутилка
+  const cx0=W/2, cy0=TOP+(H-TOP)/2, r=Math.min(W,H-TOP)/2-8;
+  cx.strokeStyle='#333'; cx.fillStyle='#1a2024'; cx.lineWidth=2;
+  cx.beginPath(); cx.arc(cx0,cy0,r,0,2*Math.PI); cx.fill(); cx.stroke();
+  cx.save(); cx.translate(cx0,cy0); cx.rotate(state.ang*Math.PI/180);
+  cx.strokeStyle='#e0b23c'; cx.lineWidth=3; cx.beginPath();
+  cx.moveTo(0,-r+6); cx.lineTo(0,-r*0.4); cx.stroke();
+  cx.restore();
+  cx.fillStyle='#8a9298'; cx.font='9px monospace'; cx.textAlign='center';
+  cx.fillText('step ×'+fmtHz(stepHz()), cx0, cy0+r+12);
+}
+
 def({ id:'tuner', title:'Tuner', cat:'Radio', outs:[{n:'freq',t:'num'}],
   view:{h:200}, resize:true,
-  init:n=>{ n.p.freq=n.p.freq??100000000; n.sel=8; n.ang=0; },
+  init:n=>{ n.p.freq=n.p.freq??100000000; n._dial={}; },
   process(n){ return {freq:n.p.freq}; },
-  draw(n){
-    const cv=n.cv, cx=n.cx; if(!cv) return;
-    const W=cv.width, H=cv.height, TOP=46, maxV=Math.pow(10,TUNER_DIGITS)-1;
-    const stepHz=()=>Math.pow(10,TUNER_DIGITS-1-n.sel);   // шаг = вес выбранного разряда
-    const bumpDigit=d=>{ n.p.freq=clamp(Math.round(n.p.freq+stepHz()*d),0,maxV); };
-    const DRAG_SENS=0.6;                                  // чуть медленнее, чем 1px = 1 шаг
-    if(!n._wired){
-      n._wired=true;
-      n.el.tabIndex=0;                                  // фокус нужен, чтобы ловить стрелки/цифры клавиатуры
-      cv.style.touchAction='none';                       // без этого мобилка скроллит страницу вместо вращения крутилки
-      // скрытый инпут — только чтобы на тап по цифре мобилка показала цифровую клавиатуру
-      const numInput=document.createElement('input');
-      numInput.type='tel'; numInput.inputMode='numeric'; numInput.autocomplete='off';
-      numInput.style.cssText='position:absolute;opacity:0;width:1px;height:1px;padding:0;border:0;pointer-events:none;';
-      n.el.appendChild(numInput);
-      numInput.addEventListener('input',()=>{
-        const ch=numInput.value.replace(/\D/g,'').slice(-1);
-        numInput.value='';
-        if(!ch) return;
-        const digits=String(Math.round(n.p.freq)).padStart(TUNER_DIGITS,'0').split('');
-        digits[n.sel]=ch;
-        n.p.freq=clamp(+digits.join(''),0,maxV);
-        n.sel=clamp(n.sel+1,0,TUNER_DIGITS-1); });
-      n.el.addEventListener('keydown',ev=>{
-        if(/^[0-9]$/.test(ev.key)){                      // ввод цифры прямо в выбранный разряд
-          ev.preventDefault(); ev.stopPropagation();
-          const digits=String(Math.round(n.p.freq)).padStart(TUNER_DIGITS,'0').split('');
-          digits[n.sel]=ev.key;
-          n.p.freq=clamp(+digits.join(''),0,maxV);
-          n.sel=clamp(n.sel+1,0,TUNER_DIGITS-1);          // и сразу на разряд ниже, как на калькуляторе
-          return;
-        }
-        if(!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(ev.key)) return;
-        ev.preventDefault(); ev.stopPropagation();
-        if(ev.key==='ArrowLeft') n.sel=clamp(n.sel-1,0,TUNER_DIGITS-1);
-        else if(ev.key==='ArrowRight') n.sel=clamp(n.sel+1,0,TUNER_DIGITS-1);
-        else if(ev.key==='ArrowUp') bumpDigit(1);
-        else if(ev.key==='ArrowDown') bumpDigit(-1); });
-      cv.addEventListener('pointerdown',ev=>{
-        ev.stopPropagation(); ev.preventDefault();          // preventDefault и тут — иначе браузер после тапа сам фокусирует canvas и закрывает клавиатуру
-        const r=cv.getBoundingClientRect(), y=(ev.clientY-r.top)/r.height*H;
-        if(y<TOP){                                      // клик по табло — выбрать разряд под стрелки
-          const x=(ev.clientX-r.left)/r.width*W, cw=W/TUNER_DIGITS;
-          n.sel=clamp(Math.floor(x/cw),0,TUNER_DIGITS-1);
-          if(ev.pointerType==='touch') numInput.focus(); else n.el.focus();
-        } else {                                        // клик по крутилке — начать вращение
-          n._dragY0=ev.clientY; n._dragFreq0=n.p.freq;     // запоминаем старт драга, а не только предыдущую точку
-          n._dragLastY=ev.clientY; n._dragPtr=ev.pointerId; n._dragTouch=ev.pointerType==='touch';
-          cv.setPointerCapture(ev.pointerId);
-        } });
-      cv.addEventListener('pointermove',ev=>{
-        if(n._dragY0==null || ev.pointerId!==n._dragPtr) return;
-        ev.preventDefault();
-        // частота считается от точки СТАРТА драга (не от предыдущего события) — так не плывёт от
-        // того, сколько именно move-событий прислал браузер. Тач заметно менее чувствительный, чем
-        // мышь: палец физически проезжает по экрану куда больше при том же "ощущаемом" усилии.
-        const sens=n._dragTouch?DRAG_SENS/8:DRAG_SENS;
-        const stepDy=n._dragLastY-ev.clientY; n._dragLastY=ev.clientY;   // только для вращения стрелки
-        n.ang=(n.ang+stepDy*4*sens)%360;
-        // округляем именно КОЛИЧЕСТВО ШАГОВ, а не итоговую частоту — иначе Math.round бьёт
-        // до целого герца, а не до кратного весу разряда, и в младших разрядах остаётся мусор
-        const steps=Math.round((n._dragY0-ev.clientY)*sens);
-        n.p.freq=clamp(n._dragFreq0+steps*stepHz(),0,maxV); },{passive:false});
-      const endDrag=()=>{ n._dragY0=null; n._dragPtr=null; };
-      cv.addEventListener('pointerup',endDrag); cv.addEventListener('pointercancel',endDrag);
-      cv.addEventListener('wheel',ev=>{ ev.preventDefault(); ev.stopPropagation();
-        n.p.freq=clamp(Math.round(n.p.freq+(ev.deltaY<0?stepHz():-stepHz())),0,maxV); },{passive:false});
-    }
-    cx.clearRect(0,0,W,H);
-    // табло
-    const digStr=String(Math.round(n.p.freq)).padStart(TUNER_DIGITS,'0'), cw=W/TUNER_DIGITS;
-    cx.font='bold '+Math.round(Math.min(34,cw*.78))+'px monospace'; cx.textAlign='center'; cx.textBaseline='middle';
-    for(let i=0;i<TUNER_DIGITS;i++){
-      if(i===n.sel){ cx.fillStyle='#e0b23c33'; cx.fillRect(i*cw+1,2,cw-2,TOP-4); }
-      cx.fillStyle= i===n.sel? '#e0b23c' : '#cfd6db';
-      cx.fillText(digStr[i], i*cw+cw/2, TOP/2);
-      if((TUNER_DIGITS-1-i)%3===0 && i<TUNER_DIGITS-1){  // разделитель разрядов по 3 (тысячи/миллионы/…)
-        cx.strokeStyle='#333'; cx.beginPath();
-        cx.moveTo(i*cw+cw+.5,4); cx.lineTo(i*cw+cw+.5,TOP-4); cx.stroke(); }
-    }
-    cx.textAlign='left'; cx.font='10px monospace'; cx.fillStyle='#8a9298';
-    cx.fillText(fmtHz(n.p.freq)+'Hz · digit ×'+fmtHz(Math.pow(10,TUNER_DIGITS-1-n.sel)), 4, H-4);
-    // крутилка
-    const cx0=W/2, cy0=TOP+(H-TOP)/2, r=Math.min(W,H-TOP)/2-8;
-    cx.strokeStyle='#333'; cx.fillStyle='#1a2024'; cx.lineWidth=2;
-    cx.beginPath(); cx.arc(cx0,cy0,r,0,2*Math.PI); cx.fill(); cx.stroke();
-    cx.save(); cx.translate(cx0,cy0); cx.rotate(n.ang*Math.PI/180);
-    cx.strokeStyle='#e0b23c'; cx.lineWidth=3; cx.beginPath();
-    cx.moveTo(0,-r+6); cx.lineTo(0,-r*0.4); cx.stroke();
-    cx.restore();
-    cx.fillStyle='#8a9298'; cx.font='9px monospace'; cx.textAlign='center';
-    cx.fillText('step ×'+fmtHz(stepHz()), cx0, cy0+r+12); }});
+  draw(n,cv,cx){
+    if(!cv) return;
+    drawFreqDial(n.el,cv,cx,n._dial, ()=>n.p.freq, v=>{ n.p.freq=v; });
+  }});
 
 
 /* ---------- Хранилище семплов (IndexedDB) ---------- */
