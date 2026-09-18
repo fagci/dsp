@@ -1758,11 +1758,12 @@ async function rtlDisconnect(n){
 }
 
 // компактный формат частоты: 172300000 → "172.3М", 17500 → "17.5к"
-function fmtHz(v){
+function fmtHz(v,dp){                               // dp — знаков после запятой (по умолчанию 1)
   const a=Math.abs(v);
-  if(a>=1e9) return (v/1e9).toFixed(1)+'G';
-  if(a>=1e6) return (v/1e6).toFixed(1)+'M';
-  if(a>=1e3) return (v/1e3).toFixed(1)+'k';
+  dp=dp??1;
+  if(a>=1e9) return (v/1e9).toFixed(dp)+'G';
+  if(a>=1e6) return (v/1e6).toFixed(dp)+'M';
+  if(a>=1e3) return (v/1e3).toFixed(dp)+'k';
   return String(Math.round(v));
 }
 

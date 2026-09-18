@@ -1037,6 +1037,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   draw(n,cv,cx){
     const W=cv.width,H=cv.height;
     const hs=Math.round(H*n.p.split), hw=H-hs;
+    // AXIS_H — зона под подписи оси частот снизу зоны спектра: сама трасса (амплитуда/фаза/PSD/
+    // peak hold/reference) рисуется в пределах plotH, а не hs, и туда не заходит — раньше подписи
+    // оси и низ трассы визуально сливались. Границу hs/hw (водопад) и полную высоту H (вертикальные
+    // линии сетки, маркеров, точек bandplan) это не трогает — только диапазон значений амплитуды.
+    const AXIS_H=14, plotH=Math.max(1,hs-AXIS_H);
     saTake(n);                                       // маркер ставится и без запущенного звука
     cx.clearRect(0,0,W,H);
     if(!n._zoomWired){
@@ -1218,13 +1223,13 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         ox.putImageData(line,0,0);
         n._lastRev=n.s.rev; n._lastSpecRef=n.s; n._wfInited=true;
       }
-      if(n.p.grid) saGrid(n,cx,W,hs,H);
+      if(n.p.grid) saGrid(n,cx,W,hs,H,plotH);
       const R=n.refMag&&n.refMag.length===N? n.refMag : null;
       const diff=R&&n.p.ref==='diff';
       if(R&&n.p.ref==='show'){                    // reference as a faint line under the current one
         cx.strokeStyle='#8ab4f8'; cx.globalAlpha=.55; cx.beginPath();
         for(let x=0;x<W;x++){
-          const y=hs-clamp((20*Math.log10(magReduce(R,edgeX[x],edgeX[x+1])+1e-12)-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(hs-2)-1;
+          const y=plotH-clamp((20*Math.log10(magReduce(R,edgeX[x],edgeX[x+1])+1e-12)-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
           x?cx.lineTo(x,y):cx.moveTo(x,y); }
         cx.stroke(); cx.globalAlpha=1; }
       if(!n.colTS || ((n.colFrame=(n.colFrame||0)+1)%30===0))  // цвет темы — тоже не каждый кадр
@@ -1238,11 +1243,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         const ph=n.s.phase;
         for(let x=0;x<W;x++){
           const pv=magAt(ph,binX[x]);
-          const y=hs-((pv+Math.PI)/(2*Math.PI))*(hs-2)-1;
+          const y=plotH-((pv+Math.PI)/(2*Math.PI))*(plotH-2)-1;
           x?cx.lineTo(x,y):cx.moveTo(x,y); }
         cx.stroke();
         cx.strokeStyle='#ffffff18'; cx.beginPath();               // ось 0 рад — для ориентира
-        cx.moveTo(0,hs/2); cx.lineTo(W,hs/2); cx.stroke();
+        cx.moveTo(0,plotH/2); cx.lineTo(W,plotH/2); cx.stroke();
       } else if(mode==='PSD' && n.s.psd){
         // спектральная плотность мощности — та же кривая, что и амплитуда, только своя нормировка
         // (Вт/Гц вместо просто амплитуды): шумовой пол не гуляет при смене размера окна БПФ,
@@ -1251,7 +1256,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         const psd=n.s.psd;
         for(let x=0;x<W;x++){
           const v=10*Math.log10(magReduce(psd,edgeX[x],edgeX[x+1])+1e-20);
-          const y=hs-clamp((v-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(hs-2)-1;
+          const y=plotH-clamp((v-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
           x?cx.lineTo(x,y):cx.moveTo(x,y); }
         cx.stroke();
       } else {
@@ -1264,11 +1269,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         const v=diff? 20*Math.log10((mv+1e-12)/(magReduce(R,edgeX[x],edgeX[x+1])+1e-12))
                     : 20*Math.log10(mv+1e-12);
         const lo=diff? -40 : n.p.floor, hiv=diff? 40 : n.p.top;
-        const y=hs-clamp((v-lo)/((hiv-lo)||1),0,1)*(hs-2)-1;
+        const y=plotH-clamp((v-lo)/((hiv-lo)||1),0,1)*(plotH-2)-1;
         x?cx.lineTo(x,y):cx.moveTo(x,y); }
       cx.stroke();
       if(diff){ cx.strokeStyle='#ffffff22'; cx.beginPath();
-        cx.moveTo(0,hs/2); cx.lineTo(W,hs/2); cx.stroke(); }
+        cx.moveTo(0,plotH/2); cx.lineTo(W,plotH/2); cx.stroke(); }
       }
       // peak hold — тонкая линия максимума поверх обычной трассы (amplitude/power; для PSD своя
       // нормировка, а n.peak копит обычную магнитуду — смешивать шкалы нельзя, поэтому там не рисуем)
@@ -1276,15 +1281,15 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         cx.strokeStyle='#ffd54a'; cx.lineWidth=1; cx.beginPath();
         for(let x=0;x<W;x++){
           const v=20*Math.log10(magReduce(n.peak,edgeX[x],edgeX[x+1])+1e-12);
-          const y=hs-clamp((v-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(hs-2)-1;
+          const y=plotH-clamp((v-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
           x?cx.lineTo(x,y):cx.moveTo(x,y); }
         cx.stroke();
       }
       cx.drawImage(n.off,0,hs,W,hw);       // без dw/dh источник (физ. пиксели) масштабируется на dpr лишний раз
-    } else if(n.p.grid) saGrid(n,cx,W,hs,H);
+    } else if(n.p.grid) saGrid(n,cx,W,hs,H,plotH);
     cx.strokeStyle='#2a3136'; cx.beginPath(); cx.moveTo(0,hs+.5); cx.lineTo(W,hs+.5); cx.stroke();
     saBands(n,cx,W,H);
-    saBandPlan(n,cx,W,hs);                            // полосы/закладки — только в зоне спектра, водопад не трогаем
+    saBandPlan(n,cx,W,hs,plotH);                      // полосы/закладки — зона спектра, водопад не трогаем
     saMarkers(n,cx,W,hs); }});
 
 
