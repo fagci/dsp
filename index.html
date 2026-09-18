@@ -8,6 +8,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' http: https: ws: wss: data: blob: 'unsafe-inline'">
 <title>DSP</title>
 <link rel="stylesheet" href="styles.css?v=3">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@10/dist/gridstack.min.css">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -39,6 +40,7 @@
       <button id="menu" title="Menu">☰</button>
       <button id="run" title="Run / stop">▶</button>
       <button id="panel" title="Panel view / graph">▤</button>
+      <button id="dash" title="Dashboard view — pin nodes with 📌 in their header, then drag/resize tiles here">▦</button>
       <button id="fit" title="Fit to screen">⤢</button>
       <button id="undo" title="Undo (Ctrl+Z)" disabled>↶</button>
       <button id="redo" title="Redo (Ctrl+Shift+Z)" disabled>↷</button>
@@ -75,6 +77,7 @@
     <div id="canvas" class="grab">
       <svg id="wires"></svg>
       <div id="content"></div>
+      <div id="dashGrid" class="grid-stack"></div>
       <div id="hint">Shift+click — select multiple · D duplicate · Ctrl+Z undo · Del delete</div>
     </div>
   </div>
@@ -85,6 +88,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@panzoom/panzoom@4.6.2/dist/panzoom.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/interactjs@1.10.28/dist/interact.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gridstack@10/dist/gridstack-all.js"></script>
 <script src="core-engine.js?v=3"></script>
 <!-- modules are listed here by hand, no auto-discovery: add a file under modules/ — add its line here too -->
 <script src="modules/analysis.js?v=3"></script>
