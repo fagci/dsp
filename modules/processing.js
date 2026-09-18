@@ -1398,6 +1398,7 @@ function contrastText(hex){
 // соседних), как и у точечных закладок в saBandPlan.
 function saMarkers(n,cx,W,H){
   cx.lineWidth=1; cx.globalAlpha=1; cx.font='10px monospace';
+  const TOP_H=16;                                    // потолок с подписями закладок (см. saBandPlan) — не залезаем
   const boxes=n._mkBoxes=(n._mkBoxes||[]); boxes.length=0;
   const hoverK=n._mkHoverIdx;
   const present=[0,1,2,3].filter(k=>n.mk[k]!=null);
@@ -1408,16 +1409,18 @@ function saMarkers(n,cx,W,H){
     const f=n.mk[k];
     const x=Math.round(saPos(n,f)*W); if(x<-2||x>W+2) continue;
     const act=(+n.p.active-1)===k, hovered=hoverK===k;
+    // линия начинается НИЖЕ потолка (см. TOP_H) — там теперь подписи закладок (см. saBandPlan), и
+    // полоса маркера не должна наезжать на них своим цветом поверх
     cx.strokeStyle='#000'; cx.lineWidth=act?3:2; cx.globalAlpha=.55;   // тёмная обводка под линией
-    cx.beginPath(); cx.moveTo(x+.5,0); cx.lineTo(x+.5,H); cx.stroke();
+    cx.beginPath(); cx.moveTo(x+.5,TOP_H); cx.lineTo(x+.5,H); cx.stroke();
     cx.globalAlpha=1;
     cx.strokeStyle=MK_COL[k]; cx.lineWidth=act?1.5:1;
-    cx.beginPath(); cx.moveTo(x+.5,0); cx.lineTo(x+.5,H); cx.stroke();
+    cx.beginPath(); cx.moveTo(x+.5,TOP_H); cx.lineTo(x+.5,H); cx.stroke();
     cx.font='10px monospace';
-    // "1. 433.075 M -75" — номер, частота (3 знака — см. коммент у fmtHz, иначе близкие маркеры
-    // выглядят как одна и та же частота), уровень — одной строкой вместо отдельного флажка с цифрой
-    const fv=fmtHz(f,3).replace(/([kMG])$/,' $1');
-    const t=(k+1)+'. '+fv+(n.db[k]>-119?' '+n.db[k].toFixed(0):'');
+    // "1: 433.075 -75" — номер, частота (3 знака — см. коммент у fmtHz, иначе близкие маркеры
+    // выглядят как одна и та же частота, без буквы единицы — компактнее), уровень — одной строкой
+    const fv=fmtHz(f,3).replace(/[kMG]$/,'');
+    const t=(k+1)+': '+fv+(n.db[k]>-119?' '+n.db[k].toFixed(0):'');
     const tw=cx.measureText(t).width;
     // по центру линии маркера; дорожка стека — по НОМЕРУ маркера (k), а не по порядку рисования —
     // иначе позиции соседних подписей "прыгали" бы при каждой смене наведения
