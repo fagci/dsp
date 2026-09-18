@@ -1297,7 +1297,7 @@ function saBandPlan(n,cx,W,H){
   if(ranges.length){
     ranges.sort((x,y)=>x.lo-y.lo);
     const laneEnd=[];                                   // laneEnd[i] — правая граница последней полосы в дорожке i
-    const LANE_H=11, MAX_LANES=4;
+    const LANE_H=17, MAX_LANES=4;                        // ×1.5 от прежних 11px — подписи просторнее
     for(const r of ranges){
       let lane=laneEnd.findIndex(e=>e<=r.lo);
       if(lane<0){ if(laneEnd.length>=MAX_LANES) lane=laneEnd.length-1; else { lane=laneEnd.length; laneEnd.push(-Infinity); } }
@@ -1305,15 +1305,25 @@ function saBandPlan(n,cx,W,H){
     }
     cx.font='9px monospace';
     for(const r of ranges){
-      const x1=Math.round(saPos(n,r.lo)*W), x2=Math.round(saPos(n,r.hi)*W), w=Math.max(1,x2-x1);
-      const y=2+r._lane*LANE_H, col=r.color||'#5fb8d1';
+      const x1=Math.round(saPos(n,r.lo)*W), x2=Math.round(saPos(n,r.hi)*W);
+      if(x2<0||x1>W) continue;                            // целиком вне канвы — сам прямоугольник не рисуем
+      const w=Math.max(1,x2-x1), y=2+r._lane*LANE_H, col=r.color||'#5fb8d1';
       cx.globalAlpha=.28; cx.fillStyle=col; cx.fillRect(x1,y,w,LANE_H-1);
       cx.globalAlpha=.8; cx.strokeStyle=col; cx.lineWidth=1; cx.strokeRect(x1+.5,y+.5,w-1,LANE_H-2);
       const label=r.label||(fmtHz(r.lo)+'-'+fmtHz(r.hi));
       const tw=cx.measureText(label).width;
-      if(tw+4<=w){                                       // тёмная подложка под текстом — читается на любом цвете полосы
-        cx.globalAlpha=1; cx.fillStyle='#0e1113cc'; cx.fillRect(x1+1,y+1,tw+4,LANE_H-3);
-        cx.fillStyle='#fff'; cx.fillText(label,x1+3,y+LANE_H-3);
+      // подпись — по центру ВИДИМОЙ (обрезанной канвой) части полосы, а не всей полосы целиком:
+      // у широкой полосы, уходящей за край экрана (например, целый ISM-диапазон при зуме внутрь
+      // него), подпись раньше рисовалась у её левого края — который мог быть далеко за пределами
+      // канвы и потому невидим, хотя сама полоса на экране есть. Простой min/max от границ канвы,
+      // без доп. состояния между кадрами — при скролле/зуме подпись сама "едет" вместе с видимой
+      // частью, лишней нагрузки (пересчёт всего раз в кадр на полосу, тех же операций что и раньше)
+      // это не добавляет.
+      const vx1=Math.max(x1,0), vx2=Math.min(x2,W), vw=vx2-vx1;
+      if(tw+4<=vw){                                       // тёмная подложка под текстом — читается на любом цвете полосы
+        const tx=clamp(Math.round((vx1+vx2)/2-tw/2), x1+2, x2-tw-2);
+        cx.globalAlpha=1; cx.fillStyle='#0e1113cc'; cx.fillRect(tx-2,y+1,tw+4,LANE_H-3);
+        cx.fillStyle='#fff'; cx.fillText(label,tx,y+LANE_H-3);
       }
     }
     cx.globalAlpha=1;
