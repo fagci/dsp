@@ -1346,10 +1346,31 @@ function saBandPlan(n,cx,W,H){
     cx.setLineDash([]);
   }
 }
+// snap клика к ближайшей границе полосы или точке из bandplan/bookmarks (n.bandsData) — в пределах
+// n.p.snap пикселей (0 — выключено). Кандидаты: у полосы обе границы (lo и hi отдельно, не центр —
+// клик у левого/правого края частой полосы типа ISM должен цепляться именно за край, а не тянуть к
+// середине); у точечной закладки — она сама (единственный кандидат), так что клик рядом с пунктирной
+// линией закладки в спектре ставит маркер ровно на неё — тот же snap, отдельного кода не нужно.
+function saSnapFreq(n,f){
+  const W=n._lastW, list=n.bandsData;
+  if(!n.p.snap || !W || !list || !list.length) return f;
+  const t0=saPos(n,f);
+  let best=null, bestPx=n.p.snap;
+  for(const b of list){
+    if(!b || typeof b.lo!=='number' || isNaN(b.lo)) continue;
+    const hi=(typeof b.hi==='number' && !isNaN(b.hi)) ? b.hi : b.lo;
+    const cands = hi===b.lo ? [b.lo] : [b.lo,hi];
+    for(const c of cands){
+      const px=Math.abs(saPos(n,c)-t0)*W;
+      if(px<bestPx){ bestPx=px; best=c; }
+    }
+  }
+  return best!=null ? best : f;
+}
 function saTake(n){                                  // применить накопленный тап — в выбранный маркер
   if(n.pickT==null) return;
   const k=+n.p.active-1;
-  if(!n.ext[k]) n.mk[k]=saFreq(n,n.pickT);
+  if(!n.ext[k]) n.mk[k]=saSnapFreq(n, saFreq(n,n.pickT));
   n.pickT=null;
 }
 function saMarkers(n,cx,W,H){
