@@ -128,6 +128,19 @@ button,select,input{font:inherit;color:inherit}
 #canvas.panel .io3 .col{display:none}
 #canvas.panel .nhead{cursor:default}
 #canvas.panel .rz{display:none}
+/* ---- дашборд: тайловая раскладка закреплённых (📌) узлов через GridStack ---- */
+#dashGrid{display:none;width:100%;height:100%;overflow:auto;padding:10px;box-sizing:border-box}
+#canvas.dashboard{overflow:hidden;cursor:default;background:none;touch-action:pan-y}
+#canvas.dashboard #content,#canvas.dashboard #wires,#canvas.dashboard #wiresFront{display:none}
+#canvas.dashboard #dashGrid{display:block}
+.grid-stack-item-content{overflow:auto!important;background:var(--panel);border-radius:3px}
+.grid-stack-item-content .node{position:static!important;width:100%!important;height:100%!important;
+  max-width:none!important;box-shadow:none;transform:none!important}
+.grid-stack-item-content .node .io3>.col{display:none}
+.grid-stack-item-content .node .rz{display:none}
+.grid-stack-item-content .nhead{cursor:move}
+.nhead .dash{cursor:pointer;color:var(--dim);padding:0 4px;font-size:11px}
+.nhead .dash.on{color:var(--acc)}
 #scrim{display:none;position:fixed;inset:0;background:var(--scrim);z-index:9}
 #toast{position:fixed;top:14px;left:50%;transform:translate(-50%,-8px);z-index:20;
   background:var(--panel2);border:1px solid var(--acc);color:var(--txt);

@@ -66,7 +66,9 @@ try{ d?.dispose?.(n); }catch(e){ console.error('dispose '+n.type+':',e); }
 n.roCv?.disconnect();                               // иначе ResizeObserver держит канву живой
 Graph.edges.filter(e=>e.from===n.id||e.to===n.id).forEach(delEdge);
 Graph.nodes=Graph.nodes.filter(x=>x!==n); delete Graph.map[n.id];
-n.el.remove(); markTopoDirty();
+if(n._dashWrap) dashGrid?.removeWidget(n._dashWrap,true);   // иначе в дашборде останется пустой тайл
+else n.el.remove();
+markTopoDirty();
 }
 function addEdge(from,fp,to,tp){
 if(from===to) return;
@@ -167,7 +169,7 @@ matchMedia(`(resolution:${window.devicePixelRatio}dppx)`).addEventListener('chan
 function buildNodeEl(n){
 const d=MOD[n.type];
 const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type;
-el.innerHTML=`<div class="nhead"><span class="dot" style="background:${catColor(d.cat)}"></span> <span class="ttl">${d.title}</span><span class="cl">▾</span><span class="x">✕</span></div> <div class="nbody"></div>`;
+el.innerHTML=`<div class="nhead"><span class="dot" style="background:${catColor(d.cat)}"></span> <span class="ttl">${d.title}</span><span class="dash" title="Pin to dashboard">📌</span><span class="cl">▾</span><span class="x">✕</span></div> <div class="nbody"></div>`;
 const body=el.querySelector('.nbody');
 const io=document.createElement('div'); io.className='io3';
 const ci=document.createElement('div'); ci.className='col';
@@ -239,6 +241,10 @@ const cl=el.querySelector('.cl');
 cl.addEventListener('click',e=>{ e.stopPropagation(); foldNode(n,!n.folded); Undo.push(); });
 cl.addEventListener('pointerdown',e=>e.stopPropagation());
 if(n.folded) foldNode(n,true);
+const dashBtn=el.querySelector('.dash');
+dashBtn.classList.toggle('on', !!n.dash);
+dashBtn.addEventListener('click',e=>{ e.stopPropagation(); toggleDash(n); Undo.push(); });
+dashBtn.addEventListener('pointerdown',e=>e.stopPropagation());
 bindDrag(el.querySelector('.nhead'),n);
 el.addEventListener('pointerdown',ev=>{
 if(!Sel.has(n.id)||ev.shiftKey) selSet(n.id,ev.shiftKey); });
@@ -615,7 +621,7 @@ const cx = dir==='o' ? px+pin.offsetWidth-r  : px+r;
 return {x:n.x+cx, y:n.y+py+el.offsetHeight/2};
 }
 function drawWires(){
-if(typeof panelMode!=='undefined'  && panelMode) return;
+if(typeof panelMode!=='undefined'  && uiLocked()) return;
 // Сначала все чтения геометрии (portPos читает offsetLeft/offsetParent — это layout reads),
 // и только потом все записи атрибута d. Если чередовать чтение и запись по одному проводу за раз,
 // браузер вынужден на каждой итерации форсировать синхронный reflow, чтобы отдать актуальный offset.
@@ -767,13 +773,13 @@ syncGridBg();                                         // синхронизир�
 /* ---- перетаскивание и ресайз узлов — отдано interact.js ---- */
 function bindDrag(headEl,n){
 interact(headEl).draggable({ ignoreFrom:'.x,.cl', listeners:{
-start(ev){ if(panelMode){ ev.interaction.stop(); return; }
+start(ev){ if(uiLocked()){ ev.interaction.stop(); return; }
 if(!Sel.has(n.id)) selSet(n.id,ev.shiftKey);
 const group=[...Sel].map(id=>Graph.map[id]).filter(Boolean);
 group.forEach(g=>g.el.style.zIndex=++zCounter);
 n.__x0=n.x; n.__y0=n.y;                        // абсолютный отсчёт от старта — без накопления ошибки округления
 n.__grp=group.map(g=>({g,ox:g.x-n.x,oy:g.y-n.y})); n.__moved=false; activeInteractions++; },
-move(ev){ if(panelMode) return;
+move(ev){ if(uiLocked()) return;
 n.x=Math.round(n.__x0+(ev.clientX-ev.clientX0)/view.k);
 n.y=Math.round(n.__y0+(ev.clientY-ev.clientY0)/view.k);
 for(const it of n.__grp){ it.g.x=n.x+it.ox; it.g.y=n.y+it.oy;
@@ -784,16 +790,16 @@ end(){ activeInteractions--; if(n.__moved) Undo.push(); n.__grp=null; }
 }
 function bindResize(rzEl,n){
 interact(rzEl).draggable({ listeners:{
-start(ev){ if(panelMode){ ev.interaction.stop(); return; }
+start(ev){ if(uiLocked()){ ev.interaction.stop(); return; }
 n.__rw=n.size.w; n.__rh=n.size.h; activeInteractions++; },
-move(ev){ if(panelMode) return;
+move(ev){ if(uiLocked()) return;
 n.size.w=clamp(Math.round(n.__rw+(ev.clientX-ev.clientX0)/view.k),160,1400);
 n.size.h=clamp(Math.round(n.__rh+(ev.clientY-ev.clientY0)/view.k),40,2000);
 applySize(n); drawWires(); },
 end(){ activeInteractions--; Undo.push(); }
 }});
 }
-function startLink(ev,n,port,dir){ if(panelMode) return;
+function startLink(ev,n,port,dir){ if(uiLocked()) return;
 ev.preventDefault(); ev.stopPropagation();
 if(pending){                                       // второй тап завершает связь
 if(pending.dir!==dir){
@@ -829,13 +835,13 @@ stat.textContent='port selected: '+link.port+' — tap the second one';
 cancelLink();
 }
 cv.addEventListener('pointerdown',ev=>{
-if(panelMode) return;
+if(uiLocked()) return;
 if(ev.target===cv||ev.target===content){
 if(!ev.shiftKey &&Sel.size){ Sel.clear(); syncSel(); }
 clearPending(); }
 },true);                                              // capture — отработать раньше Panzoom
 window.addEventListener('pointermove',ev=>{
-if(panelMode) return;
+if(uiLocked()) return;
 if(link){ const p=toCanvas(ev), a=portPos(link.n,link.el,link.dir);
 link.tmp.setAttribute('d', link.dir==='o'?curve(a,p):curve(p,a)); }
 },{passive:false});
@@ -870,7 +876,8 @@ function fitViewWhenReady(){
 requestAnimationFrame(()=>requestAnimationFrame(fitView));
 }
 document.getElementById('fit').onclick=fitView;
-let panelMode=false;
+let panelMode=false, dashMode=false;
+function uiLocked(){ return panelMode||dashMode; }   // свободное перетаскивание/связи узлов выключены
 function markPanel(){                                // прибор = узел, которому есть что показать
 for(const n of Graph.nodes){
 const d=MOD[n.type];
@@ -879,6 +886,7 @@ n.el.classList.toggle('hidden', panelMode  && !show);
 }
 }
 function setPanel(on){
+if(on && dashMode) setDash(false);                  // режимы взаимоисключающие — разные контейнеры узлов
 panelMode=on;
 cv.classList.toggle('panel',on);
 document.getElementById('panel').classList.toggle('on',on);
@@ -889,6 +897,65 @@ if(!on){ cv.scrollTop=0; cv.scrollLeft=0;
 for(const n of Graph.nodes) applySize(n); markWiresDirty(); }
 }
 document.getElementById('panel').onclick=()=>setPanel(!panelMode);
+/* ---- дашборд: тайловая раскладка закреплённых (📌) узлов, через GridStack ---- */
+// Один экземпляр GridStack на всю сессию (лениво) — переключение режима туда-обратно просто
+// прячет/показывает #dashGrid через CSS и добавляет/убирает виджеты, без пере-init.
+const dashGridEl=document.getElementById('dashGrid');
+let dashGrid=null;
+function ensureDashGrid(){
+  if(dashGrid) return dashGrid;
+  dashGrid=GridStack.init({column:12,cellHeight:70,margin:8,handle:'.nhead',
+    columnOpts:{breakpoints:[{w:700,c:1}]}}, dashGridEl);   // 1 колонка на мобиле — тот же брейкпоинт, что и остальной UI
+  // it.id — свой node.id, заведённый при makeWidget ниже: GridStack не гарантирует it.el в change-
+  // событии (в частности, save() у него сам зачищает el), а id — как раз для такой сверки и есть
+  dashGrid.on('change',(ev,items)=>{                        // подвинули/растянули тайл — запомнить в узле
+    for(const it of items||[]){
+      const n=Graph.map[it.id]; if(!n) continue;
+      n.dash={x:it.x,y:it.y,w:it.w,h:it.h};
+    }
+    Undo.push();
+  });
+  return dashGrid;
+}
+// заворачивает n.el в стандартную разметку тайла GridStack (.grid-stack-item>.grid-stack-item-content)
+// и регистрирует её в сетке — n.el просто переезжает (append), не отрывается от документа
+function dashAdd(n){
+  const grid=ensureDashGrid();
+  const wrap=document.createElement('div'); wrap.className='grid-stack-item';
+  const box=document.createElement('div'); box.className='grid-stack-item-content';
+  box.appendChild(n.el); wrap.appendChild(box);
+  dashGridEl.appendChild(wrap);
+  grid.makeWidget(wrap, {...(n.dash||{w:4,h:4}), id:n.id});
+  const gn=wrap.gridstackNode;
+  if(gn) n.dash={x:gn.x,y:gn.y,w:gn.w,h:gn.h};
+  n._dashWrap=wrap;
+}
+function dashRemove(n){
+  if(!n._dashWrap) return;
+  content.appendChild(n.el);                    // сначала узел выезжает обратно на обычный холст —
+  dashGrid?.removeWidget(n._dashWrap,true);      // потом опустевшую обёртку можно спокойно убирать
+  n._dashWrap=null;
+}
+function toggleDash(n){
+  n.dash = n.dash? null : {w:4,h:4};
+  const btn=n.el.querySelector('.dash'); if(btn) btn.classList.toggle('on', !!n.dash);
+  if(!dashMode) return;                          // вне режима — просто запомнили флаг, тайл заведём при входе
+  if(n.dash) dashAdd(n); else dashRemove(n);
+}
+function setDash(on){
+  if(on && panelMode) setPanel(false);                // режимы взаимоисключающие — разные контейнеры узлов
+  dashMode=on;
+  cv.classList.toggle('dashboard',on);
+  document.getElementById('dash').classList.toggle('on',on);
+  document.getElementById('fit').disabled=on||panelMode;
+  if(on){
+    ensureDashGrid();
+    for(const n of Graph.nodes) if(n.dash && !n._dashWrap) dashAdd(n);
+  } else {
+    for(const n of Graph.nodes) if(n._dashWrap) dashRemove(n);
+  }
+}
+document.getElementById('dash').onclick=()=>setDash(!dashMode);
 document.getElementById('undo').onclick=()=>Undo.undo();
 document.getElementById('redo').onclick=()=>Undo.redo();
 document.getElementById('dup').onclick=()=>{ copySel(); pasteData(clip,30,30); };
@@ -1031,6 +1098,7 @@ flush();                                            // ← синхронизи�
 return {v:1, view:{...view},
 nodes:Graph.nodes.map(n=>{ const o={id:n.id,type:n.type,x:n.x,y:n.y,
 w:n.size.w,h:n.size.h,p:{...n.p},f:n.folded?1:0};
+if(n.dash) o.dash={...n.dash};                      // позиция/размер тайла в дашборде, если закреплён
 return o; }),
 edges:Graph.edges.map(e=>({from:e.from,fp:e.fp,to:e.to,tp:e.tp}))};
 }
@@ -1073,12 +1141,16 @@ let max=1;
 for(const n of o.nodes){ const nn=addNode(n.type,n.x,n.y,n.p,n.id);
 if(nn &&n.f) foldNode(nn,true);
 if(nn &&n.w){ nn.size.w=n.w; nn.size.h=n.h||nn.size.h; applySize(nn); }
+// n.dash задаётся уже ПОСЛЕ addNode (buildNodeEl успел завести кнопку 📌 без него) — досаживаем
+// класс .on руками, а не через toggleDash (та ещё и добавила бы тайл в сетку прямо сейчас)
+if(nn &&n.dash){ nn.dash={...n.dash}; nn.el.querySelector('.dash')?.classList.add('on'); }
 max=Math.max(max,+String(n.id).slice(1)||0); }
 Graph.seq=max+1;
 for(const e of o.edges) addEdge(e.from,e.fp,e.to,e.tp);
 if(o.view){ Object.assign(view,o.view); applyView(); }
 markWiresDirty();
 if(panelMode) setPanel(true);
+if(dashMode) setDash(true);
 Undo.busy=wasBusy;
 if(!wasBusy) Undo.push();
 }
