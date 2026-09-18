@@ -878,7 +878,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'peakClr',t:'button',label:'Clear peak hold',fn:n=>{n.peak=null;}},
           {n:'active',t:'buttons',opts:['1','2','3','4'],d:'1',label:'marker'},
           {n:'tol',t:'range',min:5,max:50000,step:5,log:true,d:50,label:'level window, Hz'},
-          {n:'snap',t:'range',min:0,max:30,step:1,d:8,label:'snap to band plan, px (0=off)'},
+          {n:'snap',t:'check',d:true,label:'snap to band plan channel step'},
           {n:'band',t:'select',opts:['none','by inputs','1–2','3–4'],d:'by inputs',label:'band'},
           {n:'ref',t:'select',opts:['none','show','diff'],d:'none',label:'reference'},
           {n:'take',t:'button',label:'Capture reference',fn:n=>{
@@ -1036,7 +1036,6 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     return o; },
   draw(n,cv,cx){
     const W=cv.width,H=cv.height;
-    n._lastW=W;                                      // для snap к bandplan в saTake — тап может случиться и в process()
     const hs=Math.round(H*n.p.split), hw=H-hs;
     saTake(n);                                       // маркер ставится и без запущенного звука
     cx.clearRect(0,0,W,H);
@@ -1305,25 +1304,29 @@ function bandplanLoad(n,file){
     catch(e){ alert('failed to parse CSV: '+e.message); return; }
     if(!table.length){ alert('file is empty'); return; }
     // необязательный заголовок: если первая ячейка первой строки не парсится как частота — это
-    // заголовок (lo,hi,label,color), а не данные, пропускаем её
+    // заголовок (lo,hi,label,color,step), а не данные, пропускаем её
     const rows=isNaN(parseHzCell(table[0][0])) ? table.slice(1) : table;
     n.items=rows.map(r=>{
       const lo=parseHzCell(r[0]);
       const hiRaw=r[1]!==undefined && r[1]!=='' ? parseHzCell(r[1]) : lo;
-      return {lo, hi:isNaN(hiRaw)?lo:hiRaw, label:r[2]||'', color:r[3]||''};
+      const step=r[4]!==undefined && r[4]!=='' ? parseHzCell(r[4]) : 0;
+      return {lo, hi:isNaN(hiRaw)?lo:hiRaw, label:r[2]||'', color:r[3]||'', step:isNaN(step)?0:step};
     }).filter(b=>!isNaN(b.lo));
     n.name=file.name;
   };
   reader.readAsText(file);
 }
 function bandplanSaveCsv(n){
-  const header='lo,hi,label,color\n';
-  const body=n.items.map(b=>[b.lo,b.hi,csvCell(b.label||''),csvCell(b.color||'')].join(',')).join('\n');
+  const header='lo,hi,label,color,step\n';
+  const body=n.items.map(b=>[b.lo,b.hi,csvCell(b.label||''),csvCell(b.color||''),b.step||''].join(',')).join('\n');
   dl(new Blob([header+body],{type:'text/csv'}), (n.p.preset||'bandplan').replace(/[^\w-]+/g,'_')+'.csv');
 }
 // Несколько готовых band plan'ов, чтобы узел показывал что-то полезное сразу при создании, без
 // поиска/составления CSV вручную (границы намеренно приблизительные/общемировые — не заменяют
-// официальный региональный band plan там, где точность важна).
+// официальный региональный band plan там, где точность важна). 4-й элемент кортежа — необязательный
+// шаг канала в Гц (см. saSnapFreq в processing.js: клик по такой полосе в 'sa' снапает к сетке
+// каналов, а не только внутрь границ) — для channelized полос вроде LPD433/HF Broadcast; у
+// непрерывно настраиваемых (ISM, радиолюбительские участки и т.п.) шага нет — не снапают.
 const BANDPLAN_PRESETS={
   'ISM / license-free':[
     [6765000,6795000,'ISM 6.78MHz'],[13553000,13567000,'ISM 13.56MHz'],
@@ -1331,19 +1334,27 @@ const BANDPLAN_PRESETS={
     [433050000,434790000,'ISM/SRD 433MHz (EU)'],[902000000,928000000,'ISM 915MHz (US)'],
     [2400000000,2483500000,'ISM 2.4GHz'],[5725000000,5875000000,'ISM 5.8GHz']],
   'FM broadcast':[[87500000,108000000,'FM broadcast']],
-  'Airband':[[118000000,137000000,'Airband (AM voice)']],
-  'Marine VHF':[[156000000,162025000,'Marine VHF']],
+  'Airband':[[118000000,137000000,'Airband (AM voice)',25000]],
+  'Marine VHF':[[156000000,162025000,'Marine VHF',25000]],
   'Amateur radio (simplified)':[
     [1800000,2000000,'160m'],[3500000,3800000,'80m'],[7000000,7200000,'40m'],
     [10100000,10150000,'30m'],[14000000,14350000,'20m'],[18068000,18168000,'17m'],
     [21000000,21450000,'15m'],[24890000,24990000,'12m'],[28000000,29700000,'10m'],
     [50000000,54000000,'6m'],[144000000,146000000,'2m'],[430000000,440000000,'70cm']],
+  'LPD433 / PMR446 (license-free voice)':[
+    [433075000,434775000,'LPD433',25000], [446000000,446200000,'PMR446',12500]],
+  'HF Broadcast (5kHz channels)':[
+    [5900000,6200000,'49m broadcast',5000], [7200000,7450000,'41m broadcast',5000],
+    [9400000,9900000,'31m broadcast',5000], [11600000,12100000,'25m broadcast',5000],
+    [13570000,13870000,'22m broadcast',5000], [15100000,15800000,'19m broadcast',5000],
+    [17480000,17900000,'16m broadcast',5000], [21450000,21850000,'13m broadcast',5000]],
 };
 def({ id:'bandplan', title:'Band Plan (Presets/CSV)', cat:'Analysis',
   // Статичный справочный band plan — либо один из встроенных пресетов (показывает что-то полезное
-  // сразу, без поиска CSV), либо свой CSV (lo,hi,label,color — тот же формат, что и у 'bookmarks',
-  // оба выхода одинаково подключаются во вход 'bands' узла 'sa'). За живыми, редактируемыми
-  // закладками — см. узел 'bookmarks': это два разных сценария (справочник vs личный список).
+  // сразу, без поиска CSV), либо свой CSV (lo,hi,label,color,step — step необязателен, тот же
+  // формат, что и у экспорта; оба выхода одинаково подключаются во вход 'bands' узла 'sa'). За
+  // живыми, редактируемыми закладками — см. узел 'bookmarks': это два разных сценария (справочник
+  // vs личный список).
   outs:[{n:'bands',t:'bands'}],
   readout:true,
   params:[
@@ -1357,7 +1368,7 @@ def({ id:'bandplan', title:'Band Plan (Presets/CSV)', cat:'Analysis',
     if(n.p.preset!==n._appliedPreset && n.p.preset!=='custom (CSV)'){
       n._appliedPreset=n.p.preset;
       const p=BANDPLAN_PRESETS[n.p.preset];
-      n.items = p ? p.map(([lo,hi,label])=>({lo,hi,label,color:''})) : [];
+      n.items = p ? p.map(([lo,hi,label,step])=>({lo,hi,label,color:'',step:step||0})) : [];
       n.name = n.p.preset==='none' ? '' : n.p.preset;
     }
     return {bands:n.items};
