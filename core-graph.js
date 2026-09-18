@@ -900,10 +900,15 @@ document.getElementById('panel').onclick=()=>setPanel(!panelMode);
 /* ---- дашборд: тайловая раскладка закреплённых (📌) узлов, через GridStack ---- */
 // Один экземпляр GridStack на всю сессию (лениво) — переключение режима туда-обратно просто
 // прячет/показывает #dashGrid через CSS и добавляет/убирает виджеты, без пере-init.
+// dashGridEl/dashBtn могут отсутствовать, если у пользователя закэширован старый index.html без
+// них (index.html, в отличие от .js/.css, не версионируется query-параметром) — тогда просто тихо
+// не заводим дашборд, вместо необработанного исключения, роняющего остальную инициализацию.
 const dashGridEl=document.getElementById('dashGrid');
+const dashBtn=document.getElementById('dash');
 let dashGrid=null;
 function ensureDashGrid(){
   if(dashGrid) return dashGrid;
+  if(!dashGridEl) return null;
   dashGrid=GridStack.init({column:12,cellHeight:70,margin:8,handle:'.nhead',
     columnOpts:{breakpoints:[{w:700,c:1}]}}, dashGridEl);   // 1 колонка на мобиле — тот же брейкпоинт, что и остальной UI
   // it.id — свой node.id, заведённый при makeWidget ниже: GridStack не гарантирует it.el в change-
@@ -943,10 +948,11 @@ function toggleDash(n){
   if(n.dash) dashAdd(n); else dashRemove(n);
 }
 function setDash(on){
+  if(on && !dashGridEl) return;                       // старый закэшированный index.html без #dashGrid — тихо выходим
   if(on && panelMode) setPanel(false);                // режимы взаимоисключающие — разные контейнеры узлов
   dashMode=on;
   cv.classList.toggle('dashboard',on);
-  document.getElementById('dash').classList.toggle('on',on);
+  dashBtn?.classList.toggle('on',on);
   document.getElementById('fit').disabled=on||panelMode;
   if(on){
     ensureDashGrid();
@@ -955,7 +961,7 @@ function setDash(on){
     for(const n of Graph.nodes) if(n._dashWrap) dashRemove(n);
   }
 }
-document.getElementById('dash').onclick=()=>setDash(!dashMode);
+if(dashBtn) dashBtn.onclick=()=>setDash(!dashMode);
 document.getElementById('undo').onclick=()=>Undo.undo();
 document.getElementById('redo').onclick=()=>Undo.redo();
 document.getElementById('dup').onclick=()=>{ copySel(); pasteData(clip,30,30); };
