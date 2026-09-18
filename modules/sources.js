@@ -1904,8 +1904,22 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
       }
     }
     if(typeof I.gainDb==='number') setMod(n,'gainDb',I.gainDb);
-    if(typeof I.bw==='number') setMod(n,'bw',I.bw);
-    if(typeof I.demod==='string' && DEMOD_OPTS.includes(I.demod) && I.demod!==n.p.demod) setMod(n,'demod',I.demod);
+    // demod/bw — тот же класс проблемы, что и freq/steerFreq выше: если что-то (например, выбранная
+    // закладка) держит эти пины подключёнными к фиксированному значению, ручной выбор в панели узла
+    // без этой проверки тут же откатывается обратно на следующем тике — провод ведь не в курсе, что
+    // значение поменяли руками, и просто продолжает настаивать на своём. n._prevPDemod/n._prevPBw —
+    // снимки на конец ПРЕДЫДУЩЕГО тика; если сейчас отличаются, а этот тик их ещё не трогал — значит,
+    // сменили руками, и держим провод подавленным (n._demodHold/n._bwHold), пока его значение само не
+    // изменится (сменили закладку) — тогда провод возвращает себе право задавать параметр.
+    const demodManualEdit=n._prevPDemod!=null && n.p.demod!==n._prevPDemod;
+    if(demodManualEdit) n._demodHold = typeof I.demod==='string' ? I.demod : undefined;
+    const demodSuppressed = n._demodHold!==undefined && I.demod===n._demodHold;
+    if(typeof I.demod==='string' && DEMOD_OPTS.includes(I.demod) && !demodSuppressed && I.demod!==n.p.demod)
+      setMod(n,'demod',I.demod);
+    const bwManualEdit=n._prevPBw!=null && n.p.bw!==n._prevPBw;
+    if(bwManualEdit) n._bwHold = typeof I.bw==='number' ? I.bw : undefined;
+    const bwSuppressed = n._bwHold!==undefined && I.bw===n._bwHold;
+    if(typeof I.bw==='number' && !bwSuppressed && I.bw!==n.p.bw) setMod(n,'bw',I.bw);
     const cf=n.actualFreq??n.p.freq, half=n.sourceRate/2;
     rtlApplyPending(n); // не await — асинхронно применится, когда сможет (только 'freq'/gain — через USB)
     n.decim=rtlDecimFor(n.p.demod, n.sourceRate, n.p.bw); // дёшево, держим свежим каждый тик — читает rtlReadChannelAudio и readerLoop
@@ -1946,7 +1960,7 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     if(n.p.demod==='IQ') rtlReadIQ(n, oi, oq); else { oi.fill(0); oq.fill(0); }
     for(let ci=0;ci<4;ci++) rtlReadChannelAudio(n, n.ch[ci], oa[ci]);
 
-    n._prevPFreq=n.p.freq; // снимок на конец тика — см. manualEdit в начале process()
+    n._prevPFreq=n.p.freq; n._prevPDemod=n.p.demod; n._prevPBw=n.p.bw; // снимки на конец тика — см. manualEdit выше
     return {I:oi, Q:oq, audio:oa[0], audio2:oa[1], audio3:oa[2], audio4:oa[3], spec:n.spec,
       demod:n.p.demod, bw:n.p.bw, ...bounds}; },
   // Собственная отрисовка спектра/водопада убрана — для этого универсальный узел 'sa'
