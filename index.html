@@ -7,7 +7,7 @@
 <meta name="theme-color" content="#161a1d">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' http: https: ws: wss: data: blob: 'unsafe-inline'">
 <title>DSP</title>
-<link rel="stylesheet" href="styles.css?v=5">
+<link rel="stylesheet" href="styles.css?v=6">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -85,19 +85,20 @@
 <div id="toast"></div>
 <input type="file" id="fpick" accept=".json" hidden>
 
-<script src="https://cdn.jsdelivr.net/npm/@panzoom/panzoom@4.6.2/dist/panzoom.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/interactjs@1.10.28/dist/interact.min.js"></script>
-<script src="core-engine.js?v=5"></script>
+<!-- panzoom/interactjs vendored locally (vendor/) — CDN dependency was breaking the whole app offline -->
+<script src="vendor/panzoom.min.js?v=4.6.2"></script>
+<script src="vendor/interact.min.js?v=1.10.28"></script>
+<script src="core-engine.js?v=6"></script>
 <!-- modules are listed here by hand, no auto-discovery: add a file under modules/ — add its line here too -->
-<script src="modules/analysis.js?v=5"></script>
-<script src="modules/misc.js?v=5"></script>
-<script src="modules/modulation.js?v=5"></script>
-<script src="modules/output.js?v=5"></script>
-<script src="modules/processing.js?v=5"></script>
-<script src="modules/protocols.js?v=5"></script>
-<script src="modules/sources.js?v=5"></script>
-<script src="modules/hfdl.js?v=5"></script>
-<script src="presets.js?v=5"></script>
-<script src="core-graph.js?v=5"></script>
+<script src="modules/analysis.js?v=6"></script>
+<script src="modules/misc.js?v=6"></script>
+<script src="modules/modulation.js?v=6"></script>
+<script src="modules/output.js?v=6"></script>
+<script src="modules/processing.js?v=6"></script>
+<script src="modules/protocols.js?v=6"></script>
+<script src="modules/sources.js?v=6"></script>
+<script src="modules/hfdl.js?v=6"></script>
+<script src="presets.js?v=6"></script>
+<script src="core-graph.js?v=6"></script>
 </body></html>
 
