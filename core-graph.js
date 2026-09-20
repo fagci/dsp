@@ -851,8 +851,14 @@ return link.dir==='o' ? cn.ports.i[param] : cn.ports.o[param];   // ищем п�
 function dropLink(ev){                              // порт определяем по точке отпускания
 if(!link)  return;
 const moved=Math.hypot(ev.clientX-link.x0,ev.clientY-link.y0);
-let el=document.elementFromPoint(ev.clientX,ev.clientY)?.closest?.('.port,.mpin');
-if(!el) el=controlPortEl(document.elementFromPoint(ev.clientX,ev.clientY)?.closest?.('.prm[data-param],.slidernum[data-param]'));
+const hit=document.elementFromPoint(ev.clientX,ev.clientY);
+let el=hit?.closest?.('.port,.mpin');
+// у контрола может быть сразу два джека (вход и выход) в одной строке — если попали точно на
+// «не тот» (или вообще мимо любого пина), пробуем найти нужный по всей строке контрола.
+if(!el || el.dataset.dir===link.dir){
+const alt=controlPortEl(hit?.closest?.('.prm[data-param],.slidernum[data-param]'));
+if(alt) el=alt;
+}
 if(el  && el.dataset.dir  && el.dataset.dir!==link.dir){
 if(link.dir==='o') addEdge(link.n.id,link.port,el.dataset.node,el.dataset.port);
 else addEdge(el.dataset.node,el.dataset.port,link.n.id,link.port);
