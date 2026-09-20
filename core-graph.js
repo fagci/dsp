@@ -92,27 +92,25 @@ e.hoverClone.style.pointerEvents='none'; wiresFront.append(e.hoverClone); });
 hit.addEventListener('pointerleave',()=>{ e.hoverClone?.remove(); e.hoverClone=null; });
 wires.append(hit,path); e.path=path; e.hit=hit;
 Graph.edges.push(e); markTopoDirty(); markWiresDirty();
-syncLinkedParams(Graph.map[to]);
+syncLinkedParams(Graph.map[to]); syncLinkedParams(Graph.map[from]);
 if(!Undo.busy  && !pasting) Undo.push();
 }
 function delEdge(e){ e.path?.remove(); e.hit?.remove(); e.hoverClone?.remove();
 Graph.edges=Graph.edges.filter(x=>x!==e); markTopoDirty(); markWiresDirty();
-syncLinkedParams(Graph.map[e.to]); }
-function syncLinkedParams(n){                        // гасим поле параметра, если его перебивает провод
-const d=n &&MOD[n.type]; if(!d) return;
+syncLinkedParams(Graph.map[e.to]); syncLinkedParams(Graph.map[e.from]); }
+function syncLinkedParams(n){                        // гасим поле параметра, если его перебивает провод (linked),
+const d=n &&MOD[n.type]; if(!d) return;             // и подсвечиваем пин выхода контрола, если он куда-то подключён (linkedOut)
 const insNames=new Set(portsOf(n,'ins').map(p=>p.n));
+const outsNames=new Set(portsOf(n,'outs').map(p=>p.n));
+const mark=(el,key)=>{ if(!el) return;
+if(insNames.has(key)) el.classList.toggle('linked', Graph.edges.some(e=>e.to===n.id  && e.tp===key));
+if(outsNames.has(key)) el.classList.toggle('linkedOut', Graph.edges.some(e=>e.from===n.id  && e.fp===key)); };
 for(const s of (d.params||[])){
 if(s.t==='range2'){
-for(const key of s.keys){
-if(!insNames.has(key)) continue;
-const box=n.el?.querySelector( `.slidernum[data-param="${key}"]` ); if(!box) continue;
-box.classList.toggle('linked', Graph.edges.some(e=>e.to===n.id  && e.tp===key));
-}
+for(const key of s.keys) mark(n.el?.querySelector( `.slidernum[data-param="${key}"]` ),key);
 continue;
 }
-if(!insNames.has(s.n)) continue;
-const row=n.el?.querySelector( `.prm[data-param="${s.n}"]` ); if(!row) continue;
-row.classList.toggle('linked', Graph.edges.some(e=>e.to===n.id  && e.tp===s.n));
+mark(n.el?.querySelector( `.prm[data-param="${s.n}"]` ),s.n);
 }
 }
 function retopo(){
@@ -168,7 +166,7 @@ matchMedia(`(resolution:${window.devicePixelRatio}dppx)`).addEventListener('chan
 }
 function buildNodeEl(n){
 const d=MOD[n.type];
-const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type;
+const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
 el.innerHTML=`<div class="nhead"><span class="dot" style="background:${catColor(d.cat)}"></span> <span class="ttl">${d.title}</span><span class="dash" title="Pin to dashboard">📌</span><span class="cl">▾</span><span class="x">✕</span></div> <div class="nbody"></div>`;
 const body=el.querySelector('.nbody');
 const io=document.createElement('div'); io.className='io3';
@@ -178,14 +176,17 @@ const co=document.createElement('div'); co.className='col o';
 n.ports={i:{},o:{}}; n.set={};
 const wire=(e,p,dir)=>{ e.dataset.node=n.id; e.dataset.port=p.n; e.dataset.dir=dir;
 e.addEventListener('pointerdown',ev=>startLink(ev,n,p.n,dir)); };
-// Вход с именем как у параметра — не отдельная строка порта, а джек прямо в строке параметра (см. paramEl).
+// Вход/выход с именем как у параметра — не отдельная строка порта, а джек прямо в строке параметра (см. paramEl).
 // Для range2 совпадение проверяем по обоим ключам (fmin/fmax), не по имени всей строки.
-const paramNames=new Set((d.params||[]).flatMap(s=> s.t==='range2'? s.keys : [s.n]));
+const paramNames=mergeableParamNames(d);
 const modIns=new Map(portsOf(n,'ins').filter(p=>paramNames.has(p.n)).map(p=>[p.n,p]));
+const modOuts=new Map(portsOf(n,'outs').filter(p=>paramNames.has(p.n)).map(p=>[p.n,p]));
 for(const p of portsOf(n,'ins')){
 if(modIns.has(p.n)) continue;
 const e=portEl(p,'i'); ci.append(e); n.ports.i[p.n]=e; wire(e,p,'i'); }
-for(const p of portsOf(n,'outs')){ const e=portEl(p,'o'); co.append(e); n.ports.o[p.n]=e; wire(e,p,'o'); }
+for(const p of portsOf(n,'outs')){
+if(modOuts.has(p.n)) continue;
+const e=portEl(p,'o'); co.append(e); n.ports.o[p.n]=e; wire(e,p,'o'); }
 io.append(ci,mid,co); body.append(io); n.mid=mid;
 { const params=d.params||[]; let i=0;                // подряд идущие кнопки/галочки — в один ряд
 while(i <params.length){
@@ -195,9 +196,9 @@ while(i <params.length  && params[i].t==='button'){ grp.append(paramBtn(n,params
 mid.append(grp);
 } else if(params[i].t==='check'){
 const grp=document.createElement('div'); grp.className='prm  wide checkrow';
-while(i <params.length  && params[i].t==='check'){ grp.append(paramEl(n,params[i],modIns,wire)); i++; }
+while(i <params.length  && params[i].t==='check'){ grp.append(paramEl(n,params[i],modIns,modOuts,wire)); i++; }
 mid.append(grp);
-} else { mid.append(paramEl(n,params[i],modIns,wire)); i++; }
+} else { mid.append(paramEl(n,params[i],modIns,modOuts,wire)); i++; }
 } }
 if(d.view){ const  c=document.createElement('canvas'); c.className='view'+(d.pick?' pick':'');
 mid.append(c); n.cv=c; n.cx=c.getContext('2d',{willReadFrequently:true});
@@ -251,11 +252,16 @@ if(!Sel.has(n.id)||ev.shiftKey) selSet(n.id,ev.shiftKey); });
 n.el=el; content.append(el); el.style.zIndex=++zCounter; posNode(n); applySize(n); // новый узел сразу поверх остальных
 if(typeof panelMode!=='undefined' &&panelMode) markPanel();
 }
+function mergeableParamNames(d){                     // имена параметров, что могут слиться со строкой порта —
+return new Set((d.params||[]).flatMap(s=>            // кроме button/file: у них своя разметка без места под джек (см. paramEl)
+s.t==='range2' ? s.keys : (s.t==='button'||s.t==='file') ? [] : [s.n]));
+}
 function midWidth(n){
 const d=MOD[n.type];
-const paramNames=new Set((d.params||[]).flatMap(s=> s.t==='range2'? s.keys : [s.n]));
+const paramNames=mergeableParamNames(d);
 const insShown=portsOf(n,'ins').some(p=>!paramNames.has(p.n));
-const lw=insShown?58:0, rw=portsOf(n,'outs').length?58:0;
+const outsShown=portsOf(n,'outs').some(p=>!paramNames.has(p.n));
+const lw=insShown?58:0, rw=outsShown?58:0;
 return Math.max(90, n.size.w-2-lw-rw-18);
 }
 function foldNode(n,v){
@@ -309,8 +315,8 @@ document.head.append(m); };
 document.head.append(s); });
 return cmReady;
 }
-function paramEl(n,s,modIns,wire){
-const row=document.createElement('div'); row.className='prm'; row.dataset.param=s.n;
+function paramEl(n,s,modIns,modOuts,wire){
+const row=document.createElement('div'); row.className='prm'; row.dataset.param=s.n; row.dataset.node=n.id;
 const lab=document.createElement('label'); lab.textContent=s.label||s.n;
 lab.title=s.label||s.n;
 if(s.t==='button'){
@@ -320,13 +326,22 @@ row.append(paramBtn(n,s)); return row;
 if(s.t==='file'){ row.className='prm wide';
 const f=document.createElement('input'); f.type='file'; f.accept=s.accept||'';
 f.addEventListener('change',()=>{ if(f.files[0]) s.fn(n,f.files[0]); }); row.append(f); return row; }
-const modPort=s.t==='range2'? null : modIns?.get(s.n);   // range2 — джеки внутри mkBox, по ключам
-if(modPort){                                        // джек модуляции — вместо отдельной строки порта
-const pin=document.createElement('span'); pin.className='pin mpin';
-pin.style.setProperty('--pc',TYPE_COLOR[modPort.t]);
+// range2 — джеки внутри mkBox, по ключам
+const modPortIn=s.t==='range2'? null : modIns?.get(s.n);
+const modPortOut=s.t==='range2'? null : modOuts?.get(s.n);
+if(modPortIn){                                      // джек входа — вместо отдельной строки порта; невидим, пока не подключён (см. styles.css)
+const pin=document.createElement('span'); pin.className='pin mpin mpin-i';
+pin.style.setProperty('--pc',TYPE_COLOR[modPortIn.t]);
 pin.title='Drag a wire here — the parameter will be controlled externally';
 row.classList.add('modable'); row.append(pin);
-n.ports.i[modPort.n]=pin; wire(pin,modPort,'i');
+n.ports.i[modPortIn.n]=pin; wire(pin,modPortIn,'i');
+}
+if(modPortOut){                                     // джек выхода — значение контрола наружу
+const pinO=document.createElement('span'); pinO.className='pin mpin mpin-o';
+pinO.style.setProperty('--pc',TYPE_COLOR[modPortOut.t]);
+pinO.title='Drag a wire from here — or drop an input pin onto the control to read its value';
+row.classList.add('modable'); row.append(pinO);
+n.ports.o[modPortOut.n]=pinO; wire(pinO,modPortOut,'o');
 }
 row.append(lab);
 if(s.t==='range'){
@@ -472,17 +487,24 @@ const wrap=document.createElement('div'); wrap.className='range2';
 const mkBox=(key,isLo)=>{
 const min=s.min,max=s.max,step=s.step,log=s.log;
 const box=document.createElement('div'); box.className='slidernum'; box.tabIndex=0;
-box.dataset.param=key;
+box.dataset.param=key; box.dataset.node=n.id;
 box.title='Drag left/right to change, click to type a number, wheel to step';
 const fillEl=document.createElement('div'); fillEl.className='sn-fill';
 const valEl=document.createElement('span'); valEl.className='sn-val';
 box.append(fillEl,valEl);
-const mp=modIns?.get(key);
-if(mp){                                         // своя точка на каждую половину — провод не может задать обе
-const pin=document.createElement('span'); pin.className='pin mpin';
+const mp=modIns?.get(key);                      // своя точка на каждую половину — провод не может задать обе
+if(mp){
+const pin=document.createElement('span'); pin.className='pin mpin mpin-i';
 pin.style.setProperty('--pc',TYPE_COLOR[mp.t]);
 pin.title='Drag a wire here — the parameter will be controlled externally';
 box.append(pin); n.ports.i[mp.n]=pin; wire(pin,mp,'i');
+}
+const mpo=modOuts?.get(key);
+if(mpo){
+const pinO=document.createElement('span'); pinO.className='pin mpin mpin-o';
+pinO.style.setProperty('--pc',TYPE_COLOR[mpo.t]);
+pinO.title='Drag a wire from here — or drop an input pin onto the control to read its value';
+box.append(pinO); n.ports.o[mpo.n]=pinO; wire(pinO,mpo,'o');
 }
 const pct=v=> log? clamp(Math.log(v/min)/Math.log(max/min),0,1)*100
 : clamp((v-min)/((max-min)||1),0,1)*100;
@@ -809,6 +831,7 @@ stat.textContent='connection created'; }
 clearPending(); return; }
 const el=dir==='o'?n.ports.o[port]:n.ports.i[port]; el.classList.add('lit');
 link={n,port,dir,el,x0:ev.clientX,y0:ev.clientY};
+content.classList.add('linking-'+dir);              // подсветить джеки контролов, на которые можно бросить провод
 const t=document.createElementNS('http://www.w3.org/2000/svg','path');
 t.setAttribute('fill','none'); t.setAttribute('stroke','var(--acc)');
 t.setAttribute('stroke-dasharray','4 3'); t.setAttribute('stroke-width','1.5');
@@ -817,11 +840,19 @@ let pending=null;
 function clearPending(){ if(pending){ pending.el.classList.remove('lit'); pending=null; } }
 function cancelLink(){ if(!link) return;
 if(link.el!==(pending &&pending.el)) link.el.classList.remove('lit');
+content.classList.remove('linking-i','linking-o');
 link.tmp.remove(); link=null; }
+function controlPortEl(el){                          // бросили провод не на пин, а прямо на контрол — свой ли это узел
+if(!el) return null;
+const nodeId=el.dataset.node, param=el.dataset.param; if(!nodeId||!param) return null;
+const cn=Graph.map[nodeId]; if(!cn) return null;
+return link.dir==='o' ? cn.ports.i[param] : cn.ports.o[param];   // ищем пин противоположного направления
+}
 function dropLink(ev){                              // порт определяем по точке отпускания
 if(!link)  return;
 const moved=Math.hypot(ev.clientX-link.x0,ev.clientY-link.y0);
-const el=document.elementFromPoint(ev.clientX,ev.clientY)?.closest?.('.port,.mpin');
+let el=document.elementFromPoint(ev.clientX,ev.clientY)?.closest?.('.port,.mpin');
+if(!el) el=controlPortEl(document.elementFromPoint(ev.clientX,ev.clientY)?.closest?.('.prm[data-param],.slidernum[data-param]'));
 if(el  && el.dataset.dir  && el.dataset.dir!==link.dir){
 if(link.dir==='o') addEdge(link.n.id,link.port,el.dataset.node,el.dataset.port);
 else addEdge(el.dataset.node,el.dataset.port,link.n.id,link.port);
