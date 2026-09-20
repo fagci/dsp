@@ -967,36 +967,36 @@ function dashRenderNode(t){
   });
   return wrap;
 }
+function dashDetach(n){                                 // узел уезжает из своей панели обратно на холст, 📌 не трогаем
+  const leaf=dashLeafOf(n.id); if(leaf) leaf.node=null;
+  if(dashMode) content.appendChild(n.el);
+}
 function dashRenderLeaf(t){
   const pane=document.createElement('div'); pane.className='dash-pane';
   const tools=document.createElement('div'); tools.className='dash-tools';
+  const n=t.node!=null?Graph.map[t.node]:null;
+  // выбор/смена модуля в этом слоте — всегда доступен, не только для пустых панелей
+  const sel=document.createElement('select'); sel.className='dash-pick';
+  sel.append(new Option(n?'— clear —':'— pick module —',''));
+  const cand=Graph.nodes.filter(x=>x.dash && (x===n || !dashLeafOf(x.id)));
+  for(const pn of cand) sel.append(new Option(MOD[pn.type].title+' #'+pn.id, pn.id));
+  if(n) sel.value=n.id;
+  sel.addEventListener('pointerdown',e=>e.stopPropagation());
+  sel.onchange=()=>{ if(n) dashDetach(n); t.node=sel.value||null; dashRenderRoot(); Undo.push(); };
+  tools.append(sel);
   const bRow=document.createElement('button'); bRow.textContent='⬌'; bRow.title='Split right';
   bRow.onclick=()=>dashSplit(t.id,'row');
   const bCol=document.createElement('button'); bCol.textContent='⬍'; bCol.title='Split down';
   bCol.onclick=()=>dashSplit(t.id,'col');
-  tools.append(bRow,bCol);
-  const n=t.node!=null?Graph.map[t.node]:null;
-  if(!n){
-    const bx=document.createElement('button'); bx.textContent='✕'; bx.title='Remove pane';
-    bx.onclick=()=>dashRemoveLeaf(t.id);
-    tools.append(bx);
-  }
+  const bx=document.createElement('button'); bx.textContent='✕'; bx.title='Remove pane';
+  bx.onclick=()=>{ if(n) dashDetach(n); dashRemoveLeaf(t.id); };
+  tools.append(bRow,bCol,bx);
   pane.append(tools);
   const body=document.createElement('div'); body.className='dash-body';
-  if(n){ body.append(n.el); }
-  else {
-    const ph=document.createElement('div'); ph.className='dash-empty';
-    const pinned=Graph.nodes.filter(x=>x.dash && !dashLeafOf(x.id));
-    if(!pinned.length){ ph.textContent='No pinned modules available'; }
-    else {
-      const sel=document.createElement('select');
-      sel.append(new Option('— pick module —',''));
-      for(const pn of pinned) sel.append(new Option(MOD[pn.type].title+' #'+pn.id, pn.id));
-      sel.onchange=()=>{ if(!sel.value) return; t.node=sel.value; dashRenderRoot(); Undo.push(); };
-      ph.append(sel);
-    }
-    body.append(ph);
-  }
+  if(n) body.append(n.el);
+  else { const ph=document.createElement('div'); ph.className='dash-empty';
+    ph.textContent=cand.length? 'Pick a module above' : 'No pinned modules available';
+    body.append(ph); }
   pane.append(body);
   return pane;
 }
@@ -1022,10 +1022,7 @@ function toggleDash(n){
   n.dash=!n.dash;
   const btn=n.el.querySelector('.dash'); if(btn) btn.classList.toggle('on', n.dash);
   if(n.dash){ if(dashMode) dashAutoPlace(n); }
-  else {
-    const leaf=dashLeafOf(n.id);
-    if(leaf){ leaf.node=null; if(dashMode) content.appendChild(n.el); }
-  }
+  else dashDetach(n);
   if(dashMode) dashRenderRoot();
 }
 function setDash(on){
