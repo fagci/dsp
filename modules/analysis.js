@@ -1271,14 +1271,21 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       // обычный спектр по уровню (20·log|X|) — раньше тут ещё были режимы 'фаза'/'PSD' с отдельным
       // селектором, убрали как лишний выбор: уровень — то, что нужно почти всегда
       cx.strokeStyle=n.colTS;
-      cx.lineWidth=1; cx.beginPath();
+      cx.lineWidth=1;
+      const traceY=new Float32Array(W);
       for(let x=0;x<W;x++){
         const mv=magReduce(m,edgeX[x],edgeX[x+1]);
         const v=diff? 20*Math.log10((mv+1e-12)/(magReduce(R,edgeX[x],edgeX[x+1])+1e-12))
                     : 20*Math.log10(mv+1e-12);
         const lo=diff? -40 : n.p.floor, hiv=diff? 40 : n.p.top;
-        const y=plotH-clamp((v-lo)/((hiv-lo)||1),0,1)*(plotH-2)-1;
-        x?cx.lineTo(x,y):cx.moveTo(x,y); }
+        traceY[x]=plotH-clamp((v-lo)/((hiv-lo)||1),0,1)*(plotH-2)-1; }
+      // заливка под трассой — чуть плотнее (темнее), чем у полос band plan/приёма (там alpha .14)
+      cx.beginPath(); cx.moveTo(0,traceY[0]);
+      for(let x=1;x<W;x++) cx.lineTo(x,traceY[x]);
+      cx.lineTo(W-1,plotH); cx.lineTo(0,plotH); cx.closePath();
+      cx.fillStyle=n.colTS; cx.globalAlpha=.22; cx.fill(); cx.globalAlpha=1;
+      cx.beginPath(); cx.moveTo(0,traceY[0]);
+      for(let x=1;x<W;x++) cx.lineTo(x,traceY[x]);
       cx.stroke();
       if(diff){ cx.strokeStyle='#ffffff22'; cx.beginPath();
         cx.moveTo(0,plotH/2); cx.lineTo(W,plotH/2); cx.stroke(); }
