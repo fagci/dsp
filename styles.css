@@ -369,24 +369,11 @@ button,select,input{font:inherit;color:inherit}
 .prm.linked .slidernum,.prm.linked select,.prm.linked input,.prm.linked .seg{pointer-events:none}
 .slidernum.linked .sn-fill,.slidernum.linked .sn-val{opacity:.45}
 .slidernum.linked{pointer-events:none}
-.slidernum.linked .pin.mpin{pointer-events:auto}
 .prm.wide{display:block}
-/* Пины контролов лежат прямо на поле (верхние углы), а не отдельной строкой — ширина не меняется.
-   По умолчанию невидимы (движок сам создаёт провод по перетаскиванию, отдельный пин не нужен, пока
-   ничего не подключено) — появляются при наведении на поле (подсказка, куда бросить провод) и
-   остаются видимыми, пока провод подключён (.linked — вход, .linkedOut — выход). */
-.pin.mpin{position:absolute;top:3px;transform:translateY(-50%);z-index:3;width:9px;height:9px;
-  border-radius:50%;cursor:crosshair;border:1px solid var(--line);background:var(--panel2);
-  opacity:0;pointer-events:none;transition:opacity .12s}
-.pin.mpin-i{left:4px}
-.pin.mpin-o{right:4px}
-.prm:hover .pin.mpin,.slidernum:hover .pin.mpin{opacity:.55;pointer-events:auto}
-.prm.linked .pin.mpin-i,.slidernum.linked .pin.mpin-i,
-.prm.linkedOut .pin.mpin-o,.slidernum.linkedOut .pin.mpin-o{opacity:1;pointer-events:auto}
-.pin.mpin:hover{opacity:1;box-shadow:0 0 0 3px var(--acc)}
-/* пока тянем провод — подсвечиваем все подходящие (по направлению) джеки контролов на холсте */
-#content.linking-o .pin.mpin-i{opacity:.55;pointer-events:auto}
-#content.linking-i .pin.mpin-o{opacity:.55;pointer-events:auto}
+/* Пин контрола (число/галочка без явного ins/outs в модуле) — тот же .port, что и у обычных
+   пинов, в той же колонке (слева вход, справа выход — провод всегда в привычном месте), просто
+   схлопнут в 0, пока ничего не подключено, чтобы не есть место у свободных параметров. */
+.port.ctrl:not(.wired){display:none}
 .prm.wide label{margin-bottom:.5em}
 .checkrow>.prm label{margin-bottom:0}
 .node .io3>.mid{row-gap:11px}
