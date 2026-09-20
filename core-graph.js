@@ -188,11 +188,15 @@ e.addEventListener('pointerdown',ev=>startLink(ev,n,p.n,dir)); };
 // Порт с именем как у параметра — тот же пин в колонке ci/co, что и у обычных портов (слева —
 // вход, справа — выход: провода всегда в привычном месте), но пока не подключён — схлопнут
 // (см. styles.css .port.ctrl) и не ест место. Строка параметра остаётся простым полем без джека.
+// Базовые (всегда видимые) порты — всегда сверху колонки, контрольные — под ними: иначе
+// появление/исчезновение пина параметра сдвигало бы соседние базовые порты туда-сюда.
 const paramNames=mergeableParamNames(d);
-for(const p of portsOf(n,'ins')){
+// .sort() стабилен (ES2019+) — внутри каждой группы относительный порядок из module.ins/outs сохраняется
+const baseFirst=ps=>[...ps].sort((a,b)=>paramNames.has(a.n)-paramNames.has(b.n));
+for(const p of baseFirst(portsOf(n,'ins'))){
 const e=portEl(p,'i'); ci.append(e); n.ports.i[p.n]=e; wire(e,p,'i');
 if(paramNames.has(p.n)) e.classList.add('ctrl'); }
-for(const p of portsOf(n,'outs')){
+for(const p of baseFirst(portsOf(n,'outs'))){
 const e=portEl(p,'o'); co.append(e); n.ports.o[p.n]=e; wire(e,p,'o');
 if(paramNames.has(p.n)) e.classList.add('ctrl'); }
 io.append(ci,mid,co); body.append(io); n.mid=mid;
