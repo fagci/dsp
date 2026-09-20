@@ -1307,9 +1307,32 @@ function parseHzCell(s){
   const mul={k:1e3,K:1e3,m:1e6,M:1e6,g:1e9,G:1e9,'':1}[m[2]];
   return parseFloat(m[1])*mul;
 }
-function bandplanLoad(n,file){
+// ---- Editable band plan: та же связка ListDB + инлайн-редактор, что и у 'bookmarks' (bm*
+// функции ниже), но без выбора/живого вывода одной записи — узлу нужен весь список целиком,
+// как есть у пресетов. Импорт CSV собирает уже существующий парсер (parseHzCell/csvParse) —
+// он просто добавляет строки в сохранённый список, а не заменяет его одноразово.
+async function bpRefresh(n){
+  n.loadedListName=n.p.listName;
+  const items=await ListDB.list(n.p.listName);
+  n.items=items.map(it=>({lo:+it.fields.lo||0, hi:+it.fields.hi||0, label:it.name,
+    color:it.fields.color||'', step:+it.fields.step||0, id:it.id}));
+  if(n.ui) bpRenderAll(n);
+}
+async function bpAdd(n){
+  const id=await ListDB.add(n.p.listName,'new band',{lo:0,hi:0,color:'',step:0});
+  await bpRefresh(n);
+  const it=n.items.find(x=>x.id===id);
+  const row=it && n.ui?.list.querySelector(`[data-id="${id}"]`);
+  if(it && row) bpEditRow(n,it,row);
+}
+function bpExportCsv(n){
+  const header='lo,hi,label,color,step\n';
+  const body=n.items.map(b=>[b.lo,b.hi,csvCell(b.label||''),csvCell(b.color||''),b.step||''].join(',')).join('\n');
+  dl(new Blob([header+body],{type:'text/csv'}), (n.p.listName||'bandplan').replace(/[^\w-]+/g,'_')+'.csv');
+}
+function bpImportCsv(n,file){
   const reader=new FileReader();
-  reader.onload=()=>{
+  reader.onload=async ()=>{
     let table;
     try{ table=csvParse(String(reader.result)); }
     catch(e){ alert('failed to parse CSV: '+e.message); return; }
@@ -1317,20 +1340,150 @@ function bandplanLoad(n,file){
     // необязательный заголовок: если первая ячейка первой строки не парсится как частота — это
     // заголовок (lo,hi,label,color,step), а не данные, пропускаем её
     const rows=isNaN(parseHzCell(table[0][0])) ? table.slice(1) : table;
-    n.items=rows.map(r=>{
-      const lo=parseHzCell(r[0]);
+    for(const r of rows){
+      const lo=parseHzCell(r[0]); if(isNaN(lo)) continue;
       const hiRaw=r[1]!==undefined && r[1]!=='' ? parseHzCell(r[1]) : lo;
       const step=r[4]!==undefined && r[4]!=='' ? parseHzCell(r[4]) : 0;
-      return {lo, hi:isNaN(hiRaw)?lo:hiRaw, label:r[2]||'', color:r[3]||'', step:isNaN(step)?0:step};
-    }).filter(b=>!isNaN(b.lo));
-    n.name=file.name;
+      await ListDB.add(n.p.listName, r[2]||(fmtHz(lo)+'Hz'),
+        {lo, hi:isNaN(hiRaw)?lo:hiRaw, color:r[3]||'', step:isNaN(step)?0:step});
+    }
+    await bpRefresh(n);
   };
   reader.readAsText(file);
 }
-function bandplanSaveCsv(n){
-  const header='lo,hi,label,color,step\n';
-  const body=n.items.map(b=>[b.lo,b.hi,csvCell(b.label||''),csvCell(b.color||''),b.step||''].join(',')).join('\n');
-  dl(new Blob([header+body],{type:'text/csv'}), (n.p.preset||'bandplan').replace(/[^\w-]+/g,'_')+'.csv');
+function bpRenderAll(n){
+  ListDB.listNames().then(ns=>{
+    const names=ns.includes(n.p.listName) ? ns : ns.concat([n.p.listName]);
+    const sel=n.ui.select;
+    sel.innerHTML=names.map(nm=>`<option value="${escapeHtml(nm)}"${nm===n.p.listName?' selected':''}>${escapeHtml(nm)}</option>`).join('');
+  });
+  bpRenderList(n);
+}
+function bpRenderList(n){
+  const list=n.ui.list;
+  list.innerHTML='';
+  n.ui.count.textContent=n.items.length+' bands';
+  if(!n.items.length){
+    const empty=document.createElement('div');
+    empty.textContent='empty — add a band or import CSV';
+    empty.style.cssText='padding:12px;text-align:center;color:#2a3136;';
+    list.appendChild(empty); return;
+  }
+  for(const it of n.items) list.appendChild(bpRow(n,it));
+}
+function bpRow(n,it){
+  const row=document.createElement('div');
+  row.dataset.id=it.id;
+  row.style.cssText='display:flex;align-items:center;gap:5px;padding:2px 6px;'+
+    'border-bottom:1px solid #121619;min-width:0;';
+  const swatch=document.createElement('span');
+  swatch.style.cssText=`width:9px;height:9px;border-radius:2px;flex-shrink:0;background:${it.color||'#c9c9c9'};`;
+  const name=document.createElement('span');
+  name.textContent=it.label; name.style.cssText='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  const val=document.createElement('span');
+  val.textContent=it.hi>it.lo ? (fmtHz(it.lo)+'-'+fmtHz(it.hi)+'Hz') : (fmtHz(it.lo)+'Hz');
+  val.style.cssText='color:#4ec9b0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%;';
+  const editBtn=document.createElement('span');
+  editBtn.textContent='✎'; editBtn.style.cssText='cursor:pointer;color:#6c7a80;';
+  editBtn.addEventListener('click', ()=>bpEditRow(n,it,row));
+  const delBtn=document.createElement('span');
+  delBtn.textContent='🗑'; delBtn.style.cssText='cursor:pointer;color:#6c7a80;';
+  delBtn.addEventListener('click', async ()=>{
+    if(!confirm('Delete band "'+it.label+'"?')) return;
+    await ListDB.remove(it.id);
+    await bpRefresh(n);
+  });
+  row.append(swatch,name,val,editBtn,delBtn);
+  return row;
+}
+// заменяет строку полосы инлайн-формой редактирования (имя, границы частоты, шаг канала, цвет)
+function bpEditRow(n,it,row){
+  const form=document.createElement('div');
+  form.style.cssText='display:flex;flex-direction:column;gap:2px;padding:3px 6px;'+
+    'border-bottom:1px solid #121619;background:#161b1e;';
+  const mk=(label,input)=>{ const l=document.createElement('label');
+    l.style.cssText='display:flex;gap:4px;align-items:center;font-size:10px;color:#6c7a80;';
+    input.style.cssText='flex:1;min-width:0;background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;font-size:10px;padding:1px 3px;';
+    l.append(label,input); return l; };
+  const nameIn=document.createElement('input'); nameIn.value=it.label;
+  const loIn=document.createElement('input'); loIn.value=fmtHz(it.lo);
+  const hiIn=document.createElement('input'); hiIn.value=it.hi>it.lo?fmtHz(it.hi):'';
+  const stepIn=document.createElement('input'); stepIn.value=it.step||'';
+  stepIn.title='channel step, Hz — optional, only for channelized bands';
+  const colorIn=document.createElement('input'); colorIn.type='color'; colorIn.value=it.color||'#c9c9c9';
+  form.append(mk('name',nameIn), mk('lo',loIn), mk('hi',hiIn), mk('step',stepIn), mk('color',colorIn));
+  colorIn.style.cssText='flex:0 0 44px;height:16px;padding:0;background:none;border:1px solid #2a3136;';
+  const btns=document.createElement('div'); btns.style.cssText='display:flex;gap:4px;justify-content:flex-end;margin-top:2px;';
+  const saveBtn=document.createElement('button'); saveBtn.textContent='save';
+  saveBtn.style.cssText='background:#1d2226;border:1px solid #4ec9b0;color:#4ec9b0;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:10px;';
+  const cancelBtn=document.createElement('button'); cancelBtn.textContent='cancel';
+  cancelBtn.style.cssText='background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:10px;';
+  btns.append(saveBtn,cancelBtn); form.append(btns);
+  saveBtn.addEventListener('click', async ()=>{
+    const lo=parseHzCell(loIn.value); if(isNaN(lo)){ alert('bad lo frequency'); return; }
+    const hiRaw=hiIn.value.trim() ? parseHzCell(hiIn.value) : lo;
+    const step=stepIn.value.trim() ? parseHzCell(stepIn.value) : 0;
+    await ListDB.update(it.id, {name:nameIn.value||it.label,
+      fields:{lo, hi:isNaN(hiRaw)?lo:hiRaw, color:colorIn.value.trim(), step:isNaN(step)?0:step}});
+    await bpRefresh(n);
+  });
+  cancelBtn.addEventListener('click', ()=>bpRenderList(n));
+  row.replaceWith(form);
+}
+function bpInit(n){
+  const mid=n.el.querySelector('.mid');
+  if(!mid || mid.querySelector('.bp-ui')) return;
+  const root=document.createElement('div');
+  root.className='bp-ui';
+  root.style.cssText='position:relative;display:flex;flex-direction:column;font-size:11px;'+
+    'color:#c8d2d6;box-sizing:border-box;overflow:hidden;grid-column:1/-1;width:100%;min-width:0;gap:2px;';
+  root.innerHTML=`
+    <div class="bp-row" style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
+      <select class="bp-select" style="flex:1;min-width:0;background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;font-size:10px;padding:1px 2px;"></select>
+      <span class="bp-new" title="new list" style="cursor:pointer;color:#6c7a80;">＋</span>
+      <span class="bp-ren" title="rename list" style="cursor:pointer;color:#6c7a80;">✎</span>
+      <span class="bp-delL" title="delete list" style="cursor:pointer;color:#6c7a80;">🗑</span>
+    </div>
+    <div class="bp-row" style="display:flex;gap:4px;align-items:center;flex-shrink:0;flex-wrap:wrap;">
+      <button class="bp-add" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">+ add band</button>
+      <button class="bp-import" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">import CSV</button>
+      <button class="bp-export" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">export CSV</button>
+      <input class="bp-file" type="file" accept=".csv,text/csv" style="display:none;">
+      <span class="bp-count" style="flex:1;text-align:right;color:#6c7a80;font-size:10px;"></span>
+    </div>
+    <div class="bp-list" style="flex:1;overflow-y:auto;border:1px solid #1d2226;border-radius:3px;background:#0e1113;"></div>
+  `;
+  mid.append(root);
+  syncCustomHeight(n, root, 110);
+  n.ui={root, list:root.querySelector('.bp-list'), count:root.querySelector('.bp-count'),
+    select:root.querySelector('.bp-select')};
+  n.ui.select.addEventListener('change', async ()=>{
+    n.p.listName=n.ui.select.value;
+    await bpRefresh(n);
+  });
+  root.querySelector('.bp-new').addEventListener('click', async ()=>{
+    const nm=prompt('New list name:'); if(!nm) return;
+    n.p.listName=nm;
+    await bpRefresh(n);
+  });
+  root.querySelector('.bp-ren').addEventListener('click', async ()=>{
+    const nm=prompt('New list name:', n.p.listName); if(!nm || nm===n.p.listName) return;
+    await ListDB.renameList(n.p.listName, nm);
+    n.p.listName=nm;
+    await bpRefresh(n);
+  });
+  root.querySelector('.bp-delL').addEventListener('click', async ()=>{
+    if(!confirm('Delete list "'+n.p.listName+'" entirely?')) return;
+    await ListDB.deleteList(n.p.listName);
+    n.p.listName='bandplan';
+    await bpRefresh(n);
+  });
+  root.querySelector('.bp-add').addEventListener('click', ()=>bpAdd(n));
+  const fileInput=root.querySelector('.bp-file');
+  root.querySelector('.bp-import').addEventListener('click', ()=>fileInput.click());
+  fileInput.addEventListener('change', ()=>{ const f=fileInput.files[0]; fileInput.value=''; if(f) bpImportCsv(n,f); });
+  root.querySelector('.bp-export').addEventListener('click', ()=>bpExportCsv(n));
+  bpRefresh(n);
 }
 // Несколько готовых band plan'ов, чтобы узел показывал что-то полезное сразу при создании, без
 // поиска/составления CSV вручную (границы намеренно приблизительные/общемировые — не заменяют
@@ -1360,23 +1513,30 @@ const BANDPLAN_PRESETS={
     [13570000,13870000,'22m broadcast',5000], [15100000,15800000,'19m broadcast',5000],
     [17480000,17900000,'16m broadcast',5000], [21450000,21850000,'13m broadcast',5000]],
 };
-def({ id:'bandplan', title:'Band Plan (Presets/CSV)', cat:'Analysis',
-  // Статичный справочный band plan — либо один из встроенных пресетов (показывает что-то полезное
-  // сразу, без поиска CSV), либо свой CSV (lo,hi,label,color,step — step необязателен, тот же
-  // формат, что и у экспорта; оба выхода одинаково подключаются во вход 'bands' узла 'sa'). За
-  // живыми, редактируемыми закладками — см. узел 'bookmarks': это два разных сценария (справочник
-  // vs личный список).
+def({ id:'bandplan', title:'Band Plan (Presets/Editable)', cat:'Analysis',
+  // Справочный band plan: либо один из встроенных пресетов (показывает что-то полезное сразу,
+  // без составления CSV вручную), либо свой список — 'editable (saved list)' держит его в
+  // ListDB (та же браузерная БД, что и у 'bookmarks') и редактируется тем же приёмом: инлайн
+  // добавление/правка/удаление строк прямо в узле, плюс импорт/экспорт CSV (см. bp* выше). В
+  // отличие от 'bookmarks' тут нет "выбранной" записи с живым выводом — узлу нужен весь список
+  // целиком, как есть у пресетов.
   outs:[{n:'bands',t:'bands'}],
-  readout:true,
+  readout:true, w:320, h:200, resize:true,
   params:[
-    {n:'preset',t:'select',opts:['none','custom (CSV)',...Object.keys(BANDPLAN_PRESETS)],
+    {n:'preset',t:'select',opts:['none','editable (saved list)',...Object.keys(BANDPLAN_PRESETS)],
      d:'ISM / license-free',label:'preset'},
-    {n:'file',t:'file',accept:'.csv,text/csv',fn:(n,f)=>bandplanLoad(n,f)},
-    {n:'save',t:'button',label:'Export current as CSV',fn:n=>bandplanSaveCsv(n)},
   ],
-  init:n=>{ n.items=[]; n._appliedPreset=null; n.name=''; },
+  init:n=>{
+    n.items=[]; n._appliedPreset=null; n.name='';
+    n.p.listName=n.p.listName||'bandplan'; n.loadedListName=null;
+    n.onResize=ln=>{ if(ln.ui) syncCustomHeight(ln, ln.ui.root, 110); };
+  },
   process(n,I){
-    if(n.p.preset!==n._appliedPreset && n.p.preset!=='custom (CSV)'){
+    if(n.p.preset==='editable (saved list)'){
+      if(n.p.listName!==n.loadedListName) bpRefresh(n);   // список сменили извне (десериализация/undo) или первый заход
+      return {bands:n.items};
+    }
+    if(n.p.preset!==n._appliedPreset){
       n._appliedPreset=n.p.preset;
       const p=BANDPLAN_PRESETS[n.p.preset];
       n.items = p ? p.map(([lo,hi,label,step])=>({lo,hi,label,color:'',step:step||0})) : [];
@@ -1384,8 +1544,13 @@ def({ id:'bandplan', title:'Band Plan (Presets/CSV)', cat:'Analysis',
     }
     return {bands:n.items};
   },
-  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
-    const t=(n.name||'empty')+' · '+n.items.length+' entries';
+  draw(n){
+    const editable=n.p.preset==='editable (saved list)';
+    if(editable){ if(!n.ui) bpInit(n); }
+    else if(n.ui){ n.ui.root.remove(); n.ui=null; }
+    const r=n.el.querySelector('.readout'); if(!r) return;
+    r.style.display=editable?'none':'';                // список сам показывает счётчик — readout лишний
+    const t=editable ? '' : (n.name||'empty')+' · '+n.items.length+' entries';
     if(r.textContent!==t) r.textContent=t; }});
 
 // ---- Bookmarks: живой, редактируемый список сохранённых частот (в отличие от 'bandplan' — не
