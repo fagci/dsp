@@ -99,12 +99,21 @@ function delEdge(e){ e.path?.remove(); e.hit?.remove(); e.hoverClone?.remove();
 Graph.edges=Graph.edges.filter(x=>x!==e); markTopoDirty(); markWiresDirty();
 syncLinkedParams(Graph.map[e.to]); syncLinkedParams(Graph.map[e.from]); }
 function syncLinkedParams(n){                        // гасим поле параметра, если его перебивает провод (linked),
-const d=n &&MOD[n.type]; if(!d) return;             // и подсвечиваем пин выхода контрола, если он куда-то подключён (linkedOut)
+const d=n &&MOD[n.type]; if(!d) return;             // и раскрываем схлопнутый пин контрола в ci/co, если он подключён (см. .port.ctrl)
 const insNames=new Set(portsOf(n,'ins').map(p=>p.n));
 const outsNames=new Set(portsOf(n,'outs').map(p=>p.n));
-const mark=(el,key)=>{ if(!el) return;
-if(insNames.has(key)) el.classList.toggle('linked', Graph.edges.some(e=>e.to===n.id  && e.tp===key));
-if(outsNames.has(key)) el.classList.toggle('linkedOut', Graph.edges.some(e=>e.from===n.id  && e.fp===key)); };
+const mark=(rowEl,key)=>{
+if(insNames.has(key)){
+const wired=Graph.edges.some(e=>e.to===n.id  && e.tp===key);
+rowEl?.classList.toggle('linked', wired);
+n.ports?.i?.[key]?.classList.toggle('wired', wired);
+}
+if(outsNames.has(key)){
+const wired=Graph.edges.some(e=>e.from===n.id  && e.fp===key);
+rowEl?.classList.toggle('linkedOut', wired);
+n.ports?.o?.[key]?.classList.toggle('wired', wired);
+}
+};
 for(const s of (d.params||[])){
 if(s.t==='range2'){
 for(const key of s.keys) mark(n.el?.querySelector( `.slidernum[data-param="${key}"]` ),key);
@@ -176,17 +185,16 @@ const co=document.createElement('div'); co.className='col o';
 n.ports={i:{},o:{}}; n.set={};
 const wire=(e,p,dir)=>{ e.dataset.node=n.id; e.dataset.port=p.n; e.dataset.dir=dir;
 e.addEventListener('pointerdown',ev=>startLink(ev,n,p.n,dir)); };
-// Вход/выход с именем как у параметра — не отдельная строка порта, а джек прямо в строке параметра (см. paramEl).
-// Для range2 совпадение проверяем по обоим ключам (fmin/fmax), не по имени всей строки.
+// Порт с именем как у параметра — тот же пин в колонке ci/co, что и у обычных портов (слева —
+// вход, справа — выход: провода всегда в привычном месте), но пока не подключён — схлопнут
+// (см. styles.css .port.ctrl) и не ест место. Строка параметра остаётся простым полем без джека.
 const paramNames=mergeableParamNames(d);
-const modIns=new Map(portsOf(n,'ins').filter(p=>paramNames.has(p.n)).map(p=>[p.n,p]));
-const modOuts=new Map(portsOf(n,'outs').filter(p=>paramNames.has(p.n)).map(p=>[p.n,p]));
 for(const p of portsOf(n,'ins')){
-if(modIns.has(p.n)) continue;
-const e=portEl(p,'i'); ci.append(e); n.ports.i[p.n]=e; wire(e,p,'i'); }
+const e=portEl(p,'i'); ci.append(e); n.ports.i[p.n]=e; wire(e,p,'i');
+if(paramNames.has(p.n)) e.classList.add('ctrl'); }
 for(const p of portsOf(n,'outs')){
-if(modOuts.has(p.n)) continue;
-const e=portEl(p,'o'); co.append(e); n.ports.o[p.n]=e; wire(e,p,'o'); }
+const e=portEl(p,'o'); co.append(e); n.ports.o[p.n]=e; wire(e,p,'o');
+if(paramNames.has(p.n)) e.classList.add('ctrl'); }
 io.append(ci,mid,co); body.append(io); n.mid=mid;
 { const params=d.params||[]; let i=0;                // подряд идущие кнопки/галочки — в один ряд
 while(i <params.length){
@@ -196,9 +204,9 @@ while(i <params.length  && params[i].t==='button'){ grp.append(paramBtn(n,params
 mid.append(grp);
 } else if(params[i].t==='check'){
 const grp=document.createElement('div'); grp.className='prm  wide checkrow';
-while(i <params.length  && params[i].t==='check'){ grp.append(paramEl(n,params[i],modIns,modOuts,wire)); i++; }
+while(i <params.length  && params[i].t==='check'){ grp.append(paramEl(n,params[i])); i++; }
 mid.append(grp);
-} else { mid.append(paramEl(n,params[i],modIns,modOuts,wire)); i++; }
+} else { mid.append(paramEl(n,params[i])); i++; }
 } }
 if(d.view){ const  c=document.createElement('canvas'); c.className='view'+(d.pick?' pick':'');
 mid.append(c); n.cv=c; n.cx=c.getContext('2d',{willReadFrequently:true});
@@ -315,7 +323,7 @@ document.head.append(m); };
 document.head.append(s); });
 return cmReady;
 }
-function paramEl(n,s,modIns,modOuts,wire){
+function paramEl(n,s){
 const row=document.createElement('div'); row.className='prm'; row.dataset.param=s.n; row.dataset.node=n.id;
 const lab=document.createElement('label'); lab.textContent=s.label||s.n;
 lab.title=s.label||s.n;
@@ -326,23 +334,7 @@ row.append(paramBtn(n,s)); return row;
 if(s.t==='file'){ row.className='prm wide';
 const f=document.createElement('input'); f.type='file'; f.accept=s.accept||'';
 f.addEventListener('change',()=>{ if(f.files[0]) s.fn(n,f.files[0]); }); row.append(f); return row; }
-// range2 — джеки внутри mkBox, по ключам
-const modPortIn=s.t==='range2'? null : modIns?.get(s.n);
-const modPortOut=s.t==='range2'? null : modOuts?.get(s.n);
-if(modPortIn){                                      // джек входа — вместо отдельной строки порта; невидим, пока не подключён (см. styles.css)
-const pin=document.createElement('span'); pin.className='pin mpin mpin-i';
-pin.style.setProperty('--pc',TYPE_COLOR[modPortIn.t]);
-pin.title='Drag a wire here — the parameter will be controlled externally';
-row.classList.add('modable'); row.append(pin);
-n.ports.i[modPortIn.n]=pin; wire(pin,modPortIn,'i');
-}
-if(modPortOut){                                     // джек выхода — значение контрола наружу
-const pinO=document.createElement('span'); pinO.className='pin mpin mpin-o';
-pinO.style.setProperty('--pc',TYPE_COLOR[modPortOut.t]);
-pinO.title='Drag a wire from here — or drop an input pin onto the control to read its value';
-row.classList.add('modable'); row.append(pinO);
-n.ports.o[modPortOut.n]=pinO; wire(pinO,modPortOut,'o');
-}
+if(s.t!=='range2') bindPendingComplete(row,n,s.n);   // второй тап (клик-клик) — довязать провод прямо на строку контрола
 row.append(lab);
 if(s.t==='range'){
 // Ползунок-число в духе Blender: тащить — меняет значение, клик — точный ввод текстом.
@@ -489,23 +481,10 @@ const min=s.min,max=s.max,step=s.step,log=s.log;
 const box=document.createElement('div'); box.className='slidernum'; box.tabIndex=0;
 box.dataset.param=key; box.dataset.node=n.id;
 box.title='Drag left/right to change, click to type a number, wheel to step';
+bindPendingComplete(box,n,key);                  // второй тап — довязать провод прямо на половину диапазона
 const fillEl=document.createElement('div'); fillEl.className='sn-fill';
 const valEl=document.createElement('span'); valEl.className='sn-val';
 box.append(fillEl,valEl);
-const mp=modIns?.get(key);                      // своя точка на каждую половину — провод не может задать обе
-if(mp){
-const pin=document.createElement('span'); pin.className='pin mpin mpin-i';
-pin.style.setProperty('--pc',TYPE_COLOR[mp.t]);
-pin.title='Drag a wire here — the parameter will be controlled externally';
-box.append(pin); n.ports.i[mp.n]=pin; wire(pin,mp,'i');
-}
-const mpo=modOuts?.get(key);
-if(mpo){
-const pinO=document.createElement('span'); pinO.className='pin mpin mpin-o';
-pinO.style.setProperty('--pc',TYPE_COLOR[mpo.t]);
-pinO.title='Drag a wire from here — or drop an input pin onto the control to read its value';
-box.append(pinO); n.ports.o[mpo.n]=pinO; wire(pinO,mpo,'o');
-}
 const pct=v=> log? clamp(Math.log(v/min)/Math.log(max/min),0,1)*100
 : clamp((v-min)/((max-min)||1),0,1)*100;
 const disp=v=> Math.abs(v) >=1000? (Math.round(v/10)/100)+'k' : String(Math.round(v));
@@ -831,16 +810,26 @@ stat.textContent='connection created'; }
 clearPending(); return; }
 const el=dir==='o'?n.ports.o[port]:n.ports.i[port]; el.classList.add('lit');
 link={n,port,dir,el,x0:ev.clientX,y0:ev.clientY};
-content.classList.add('linking-'+dir);              // подсветить джеки контролов, на которые можно бросить провод
 const t=document.createElementNS('http://www.w3.org/2000/svg','path');
 t.setAttribute('fill','none'); t.setAttribute('stroke','var(--acc)');
 t.setAttribute('stroke-dasharray','4 3'); t.setAttribute('stroke-width','1.5');
 wires.append(t); link.tmp=t; }
 let pending=null;
 function clearPending(){ if(pending){ pending.el.classList.remove('lit'); pending=null; } }
+function bindPendingComplete(el,n,param){            // второй тап (клик-клик, без удержания) — довязать провод прямо
+el.addEventListener('pointerdown',ev=>{              // на контрол; ловим в capture — раньше, чем свой драг поля у box
+if(!pending) return;
+const target = pending.dir==='o' ? n.ports.i[param] : n.ports.o[param];
+if(!target) return;
+ev.preventDefault(); ev.stopPropagation();
+if(pending.dir==='o') addEdge(pending.n.id,pending.port,n.id,param);
+else addEdge(n.id,param,pending.n.id,pending.port);
+stat.textContent='connection created';
+clearPending();
+},true);
+}
 function cancelLink(){ if(!link) return;
 if(link.el!==(pending &&pending.el)) link.el.classList.remove('lit');
-content.classList.remove('linking-i','linking-o');
 link.tmp.remove(); link=null; }
 function controlPortEl(el){                          // бросили провод не на пин, а прямо на контрол — свой ли это узел
 if(!el) return null;
@@ -852,9 +841,10 @@ function dropLink(ev){                              // порт определя
 if(!link)  return;
 const moved=Math.hypot(ev.clientX-link.x0,ev.clientY-link.y0);
 const hit=document.elementFromPoint(ev.clientX,ev.clientY);
-let el=hit?.closest?.('.port,.mpin');
-// у контрола может быть сразу два джека (вход и выход) в одной строке — если попали точно на
-// «не тот» (или вообще мимо любого пина), пробуем найти нужный по всей строке контрола.
+let el=hit?.closest?.('.port');
+// у контрола (схлопнутого в ci/co, пока не подключён — см. .port.ctrl) может быть сразу два пина
+// в одной колонке; если попали точно на «не тот» (или вообще мимо любого пина), пробуем найти
+// нужный по всей строке контрола, на которой он висит.
 if(!el || el.dataset.dir===link.dir){
 const alt=controlPortEl(hit?.closest?.('.prm[data-param],.slidernum[data-param]'));
 if(alt) el=alt;
