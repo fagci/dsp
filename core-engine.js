@@ -378,10 +378,48 @@ const Eng = {
 if(navigator.mediaDevices?.addEventListener)
   navigator.mediaDevices.addEventListener('devicechange', ()=>Eng.listDevices());
 
+// Контролы (range/knob/num/check/range2) — провод можно тянуть прямо на них без явного ins/outs
+// в модуле: см. controlParamsOf — каждый такой параметр всегда доступен как виртуальный пин
+// «num» в обе стороны (пин просто не показывается в UI, пока провод не подключён).
+const CONTROL_KINDS = new Set(['range','knob','num','check','range2']);
+function controlParamsOf(n){
+  const d=MOD[n.type]; if(!d) return [];
+  if(d._cp) return d._cp;                             // params статичны для типа модуля — считаем один раз на тип
+  const out=[];
+  for(const s of (d.params||[])){
+    if(s.t==='range2'){ out.push({n:s.keys[0],kind:'range2'},{n:s.keys[1],kind:'range2'}); continue; }
+    if(s.t==='knob' && s.get) continue;               // читает/пишет не n.p — программной записи не даём (см. paramEl)
+    if(CONTROL_KINDS.has(s.t)) out.push({n:s.n,kind:s.t});
+  }
+  return d._cp=out;
+}
 function portsOf(n,side){                            // ins/outs могут быть функцией от узла
   const d=MOD[n.type]; if(!d) return [];
   const v=d[side];
-  return typeof v==='function' ? (v(n)||[]) : (v||[]);
+  const base = typeof v==='function' ? (v(n)||[]) : (v||[]);
+  const have=new Set(base.map(p=>p.n));
+  let extra=null;
+  for(const cp of controlParamsOf(n)){
+    if(have.has(cp.n)) continue;
+    (extra||(extra=[])).push({n:cp.n, t:'num'});
+  }
+  return extra ? base.concat(extra) : base;
+}
+function applyControlWires(n,I){                     // провод на контрол всегда перебивает его значение
+  for(const cp of controlParamsOf(n)){
+    const raw=I[cp.n];
+    if(typeof raw!=='number' || !isFinite(raw)) continue;
+    const v = cp.kind==='check' ? (raw>=0.5) : raw;
+    if(n.p[cp.n]===v) continue;                      // без изменений — не дёргать n.set/fn каждый блок впустую
+    if(n.set?.[cp.n]) n.set[cp.n](v); else n.p[cp.n]=v;
+  }
+}
+function fillControlOuts(n){                          // значение контрола наружу — если модуль сам не выставил такой out
+  for(const cp of controlParamsOf(n)){
+    if(n.out[cp.n]!==undefined) continue;
+    const v=n.p[cp.n];
+    n.out[cp.n] = typeof v==='boolean' ? (v?1:0) : v;
+  }
 }
 function evalNode(n, ctx){
   const d = MOD[n.type]; if(!d) return;
@@ -396,7 +434,9 @@ function evalNode(n, ctx){
     const e = idx ? idx.get(key) : g.edges.find(e=>e.to===n.id && e.tp===p.n);
     I[p.n] = e ? (g.map[e.from]?.out?.[e.fp] ?? null) : null;
   }
+  applyControlWires(n,I);
   try{ n.out = d.process(n, I, g) || {}; }catch(err){ n.err = err; }
+  fillControlOuts(n);
 }
 function topoOrder(nodes,edges,map){                 // топосорт, циклы читают прошлый блок
   const indeg={}, out={};
