@@ -1866,6 +1866,68 @@ def({ id:'bandsmerge', title:'Merge Band Plans', cat:'Analysis',
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=(n.count||0)+' entries'; }});
 
+// Автосканер полос: гуляет по списку диапазонов ('bands' — с 'bandplan'/'bandsmerge') окном
+// ширины span (реальная захваченная полоса приёмника — freqLo/freqHi c 'rtlsdr'), проверяя
+// на каждой позиции активность ('active' — обычно cfar.count). Есть активность — держим центр
+// (до timeout, даже если активность не пропадает — иначе можно залипнуть на постоянной несущей
+// навсегда), нет — сдвигаемся на span-overlap и, если окно уже дошло до края диапазона, берём
+// следующий. freq выводится на rtlsdr.freq (жёсткая перестройка, в отличие от steerFreq).
+def({ id:'bandscan', title:'Band Scanner', cat:'Analysis',
+  ins:[{n:'bands',t:'bands'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},{n:'active',t:'num'},
+       {n:'overlap',t:'num'},{n:'timeout',t:'num'},{n:'settle',t:'num'}],
+  outs:[{n:'freq',t:'num'},{n:'listening',t:'num'},{n:'idx',t:'num'}],
+  readout:true, tall:true,
+  params:[{n:'overlap',t:'range',min:0,max:2000000,step:1000,log:true,d:0,label:'overlap, Hz'},
+          {n:'timeout',t:'range',min:100,max:30000,step:100,d:3000,label:'listen timeout, ms'},
+          {n:'settle',t:'range',min:0,max:2000,step:50,d:200,label:'settle time, ms'},
+          {n:'loop',t:'check',d:true,label:'loop back to first range'}],
+  init:n=>{ n.state='seek'; n.idx=0; n.curFreq=null; n.text=''; },
+  process(n,I){
+    for(const k of ['overlap','timeout','settle']) if(typeof I[k]==='number') setMod(n,k,I[k]);
+    const bands=(Array.isArray(I.bands)?I.bands:[]).filter(b=>b && b.hi>b.lo).slice().sort((a,b)=>a.lo-b.lo);
+    if(!bands.length){ n.state='idle'; n.curFreq=null; n.text='no bands'; return {freq:0,listening:0,idx:-1}; }
+    // список диапазонов сменился целиком (другой пресет/правка) — сканируем заново с первого
+    if(bands.length!==n._bandsLen || bands[0].lo!==n._firstLo || bands[0].hi!==n._firstHi){
+      n._bandsLen=bands.length; n._firstLo=bands[0].lo; n._firstHi=bands[0].hi;
+      n.idx=0; n.curFreq=null; n.state='seek';
+    }
+    const span=(typeof I.freqLo==='number' && typeof I.freqHi==='number')? Math.max(1,I.freqHi-I.freqLo) : 2e6;
+    const half=span/2, now=performance.now();
+    if(n.curFreq==null){
+      n.idx=clamp(n.idx,0,bands.length-1);
+      n.curFreq=bands[n.idx].lo+half;
+      n.settleUntil=now+n.p.settle; n.state='seek';
+    }
+    const band=bands[n.idx];
+    const active=typeof I.active==='number' && I.active>0;
+    const advance=()=>{
+      if(n.curFreq+half>=band.hi){                     // окно уже дошло до конца текущего диапазона
+        if(n.idx+1>=bands.length){
+          if(n.p.loop) n.idx=0; else { n.state='done'; return; }   // idx остаётся на последнем валидном диапазоне
+        } else n.idx++;
+        n.curFreq=bands[n.idx].lo+half;
+      } else {
+        const step=Math.max(span*0.05, span-n.p.overlap);
+        n.curFreq+=step;
+      }
+      n.settleUntil=now+n.p.settle; n.state='seek';
+    };
+    if(n.state==='listen'){
+      if(!active || now>=n.listenUntil) advance();
+    } else if(n.state==='seek'){
+      if(now>=n.settleUntil){                           // ждём, пока спектр обновится на новом центре, прежде чем решать
+        if(active){ n.state='listen'; n.listenUntil=now+n.p.timeout; }
+        else advance();
+      }
+    }
+    const curBand=bands[n.idx];                          // не 'band': advance() выше мог сдвинуть n.idx на новый диапазон
+    n.text=n.state+' · range '+(n.idx+1)+'/'+bands.length+' "'+(curBand.label||'')+'"\n'+
+      'freq '+fmtHz(n.curFreq)+'Hz'+
+      (n.state==='listen'? '  · listening '+((n.listenUntil-now)/1000).toFixed(1)+'s left' : '');
+    return {freq:n.curFreq, listening:n.state==='listen'?1:0, idx:n.idx};
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(r && r.textContent!==n.text) r.textContent=n.text||'…'; }});
+
 
 // Опорные точки палитры водопада (t от 0 до 1) — та же цветовая идея, что у gqrx/SDR++
 // (тёмный → синий → голубой → зелёный → жёлтый → оранжевый → белый), но переходы между
