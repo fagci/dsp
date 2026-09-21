@@ -616,6 +616,7 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
     if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
 
+const NO_SIGNAL_DB=-140;                              // 'chandet': уровень пустого слота (сигнала нет) — заведомо ниже пола шума RTL-SDR
 // Общая оценка сигнал/шум одного канала: средняя мощность в полосе bw вокруг f0 — против средней
 // по двум обучающим полосам train за guard-интервалом по краям канала. Используется в 'chsnr'
 // (один фиксированный канал) и в 'chandet' (сетка каналов сразу).
@@ -669,8 +670,8 @@ def({ id:'chandet', title:'Channel Grid Detector', cat:'Analysis',
   // (step<=0, диапазон без канального шага) — один "канал" на всю видимую полосу спектра.
   ins:[{n:'spec',t:'spec'},{n:'lo',t:'num'},{n:'step',t:'num'},{n:'bw',t:'num'},
        {n:'guard',t:'num'},{n:'train',t:'num'},{n:'thr',t:'num'},{n:'top',t:'num'},{n:'hold',t:'num'}],
-  outs:[{n:'count',t:'num'},{n:'f1',t:'num'},{n:'l1',t:'num'},{n:'f2',t:'num'},{n:'l2',t:'num'},
-        {n:'f3',t:'num'},{n:'l3',t:'num'},{n:'f4',t:'num'},{n:'l4',t:'num'}],
+  outs:[{n:'count',t:'num'},{n:'f1',t:'num'},{n:'db1',t:'num'},{n:'f2',t:'num'},{n:'db2',t:'num'},
+        {n:'f3',t:'num'},{n:'db3',t:'num'},{n:'f4',t:'num'},{n:'db4',t:'num'}],
   readout:true, tall:true,
   params:[{n:'bw',t:'range',min:100,max:200000,step:100,d:12500,log:true,label:'channel bandwidth, Hz'},
           {n:'guard',t:'range',min:0,max:50000,step:100,d:1000,log:true,label:'guard interval, Hz'},
@@ -681,7 +682,8 @@ def({ id:'chandet', title:'Channel Grid Detector', cat:'Analysis',
   init:n=>{n.list=[];n.text='';n.tracks=[];},
   process(n,I){
     for(const k of ['bw','guard','train','thr','top','hold']) if(typeof I[k]==='number') setMod(n,k,I[k]);
-    const s=I.spec; if(!s) return {count:0};
+    const s=I.spec; if(!s) return {count:0,f1:null,db1:NO_SIGNAL_DB,f2:null,db2:NO_SIGNAL_DB,
+      f3:null,db3:NO_SIGNAL_DB,f4:null,db4:NO_SIGNAL_DB};
     const [specLo,specHi]=specSpan(s);
     const step=typeof I.step==='number' && I.step>0 ? I.step : 0;
     const lo=typeof I.lo==='number' ? I.lo : specLo;
@@ -718,8 +720,8 @@ def({ id:'chandet', title:'Channel Grid Detector', cat:'Analysis',
       fmtHz(v.f).padStart(8)+'Hz  '+v.db.toFixed(0).padStart(4)+' dB  '+((now-v.t0)/1000).toFixed(1)+' s').join('\n');
     const [a,b,c,d]=n.list;
     return {count:n.list.length,
-      f1:a?a.f:null, l1:a?a.db:null, f2:b?b.f:null, l2:b?b.db:null,
-      f3:c?c.f:null, l3:c?c.db:null, f4:d?d.f:null, l4:d?d.db:null}; },
+      f1:a?a.f:null, db1:a?a.db:NO_SIGNAL_DB, f2:b?b.f:null, db2:b?b.db:NO_SIGNAL_DB,
+      f3:c?c.f:null, db3:c?c.db:NO_SIGNAL_DB, f4:d?d.f:null, db4:d?d.db:NO_SIGNAL_DB}; },
   draw(n){ const r=n.el.querySelector('.readout');
     if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
