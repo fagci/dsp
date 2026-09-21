@@ -616,12 +616,28 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
     if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
 
+// Общая оценка сигнал/шум одного канала: средняя мощность в полосе bw вокруг f0 — против средней
+// по двум обучающим полосам train за guard-интервалом по краям канала. Используется в 'chsnr'
+// (один фиксированный канал) и в 'chandet' (сетка каналов сразу).
+function chanSigNoise(s,f0,bw,guard,train){
+  const N=s.mag.length, halfBw=bw/2, halfGuard=halfBw+guard;
+  const sLo=clamp(Math.round(specBin(s,f0-halfBw)),0,N-1), sHi=clamp(Math.round(specBin(s,f0+halfBw)),0,N-1);
+  let sigPow=0,sc=0;
+  for(let i=sLo;i<=sHi;i++){ sigPow+=s.mag[i]*s.mag[i]; sc++; }
+  sigPow=sc?sigPow/sc:0;
+  const gLo=clamp(Math.round(specBin(s,f0-halfGuard)),0,N-1), gHi=clamp(Math.round(specBin(s,f0+halfGuard)),0,N-1);
+  const tLo=clamp(Math.round(specBin(s,f0-halfGuard-train)),0,N-1);
+  const tHi=clamp(Math.round(specBin(s,f0+halfGuard+train)),0,N-1);
+  let noisePow=0,nc=0;
+  for(let i=tLo;i<gLo;i++){ noisePow+=s.mag[i]*s.mag[i]; nc++; }
+  for(let i=gHi+1;i<=tHi;i++){ noisePow+=s.mag[i]*s.mag[i]; nc++; }
+  noisePow=nc?noisePow/nc:1e-12;
+  return {sigDb:10*Math.log10(sigPow+1e-24), noiseDb:10*Math.log10(noisePow+1e-24)};
+}
 def({ id:'chsnr', title:'Channel SNR', cat:'Analysis',
   // Считает SNR прямо по спектру (native-rate FFT из rtlsdr/fft), а не по 'sig'-пинам — так
   // не упирается в Eng.sr движка: реальная полоса RTL (сотни кГц — единицы МГц) через 'sig'
   // всё равно не протащить без алиасинга, а спектр её видит целиком.
-  // Мощность сигнала — среднее |mag|^2 в полосе канала вокруг f. Шум — среднее |mag|^2 по двум
-  // обучающим полосам за пределами защитного интервала (тот же приём, что у CFAR-детектора).
   ins:[{n:'spec',t:'spec'},{n:'f',t:'num'},{n:'bw',t:'num'},{n:'guard',t:'num'},{n:'train',t:'num'}],
   outs:[{n:'snr',t:'num'},{n:'sigDb',t:'num'},{n:'noiseDb',t:'num'}],
   readout:true,
@@ -634,19 +650,7 @@ def({ id:'chsnr', title:'Channel SNR', cat:'Analysis',
   process(n,I){
     for(const k of ['f','bw','guard','train','smooth']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     const s=I.spec; if(!s) return {snr:n.snr,sigDb:n.sigDb,noiseDb:n.noiseDb};
-    const N=s.mag.length, f0=n.p.f, halfBw=n.p.bw/2, halfGuard=halfBw+n.p.guard;
-    const sLo=clamp(Math.round(specBin(s,f0-halfBw)),0,N-1), sHi=clamp(Math.round(specBin(s,f0+halfBw)),0,N-1);
-    let sigPow=0,sc=0;
-    for(let i=sLo;i<=sHi;i++){ sigPow+=s.mag[i]*s.mag[i]; sc++; }
-    sigPow=sc?sigPow/sc:0;
-    const gLo=clamp(Math.round(specBin(s,f0-halfGuard)),0,N-1), gHi=clamp(Math.round(specBin(s,f0+halfGuard)),0,N-1);
-    const tLo=clamp(Math.round(specBin(s,f0-halfGuard-n.p.train)),0,N-1);
-    const tHi=clamp(Math.round(specBin(s,f0+halfGuard+n.p.train)),0,N-1);
-    let noisePow=0,nc=0;
-    for(let i=tLo;i<gLo;i++){ noisePow+=s.mag[i]*s.mag[i]; nc++; }
-    for(let i=gHi+1;i<=tHi;i++){ noisePow+=s.mag[i]*s.mag[i]; nc++; }
-    noisePow=nc?noisePow/nc:1e-12;
-    const sigDb=10*Math.log10(sigPow+1e-24), noiseDb=10*Math.log10(noisePow+1e-24), raw=sigDb-noiseDb;
+    const {sigDb,noiseDb}=chanSigNoise(s,n.p.f,n.p.bw,n.p.guard,n.p.train), raw=sigDb-noiseDb;
     const k=n.p.smooth;
     n.snr = n.snr==null?raw:n.snr*k+raw*(1-k);
     n.sigDb = n.sigDb==null?sigDb:n.sigDb*k+sigDb*(1-k);
@@ -655,6 +659,69 @@ def({ id:'chsnr', title:'Channel SNR', cat:'Analysis',
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     r.textContent = n.snr==null?'—':
       `SNR ${n.snr.toFixed(1)} dB · signal ${n.sigDb.toFixed(1)} · noise ${n.noiseDb.toFixed(1)}`; }});
+
+
+def({ id:'chandet', title:'Channel Grid Detector', cat:'Analysis',
+  // Как 'cfar', но кандидаты — не произвольные пробеги бинов, а частоты по сетке каналов
+  // (канал 1 = lo, канал 2 = lo+step, …, без сдвига на пол-шага) — соседние занятые каналы
+  // не заплывают друг в друга и не путают детектор с шириной "пробега" CFAR. lo/step обычно
+  // приходят с 'bandscan' (текущий диапазон), но можно и вручную/с 'bandplan'. Без сетки
+  // (step<=0, диапазон без канального шага) — один "канал" на всю видимую полосу спектра.
+  ins:[{n:'spec',t:'spec'},{n:'lo',t:'num'},{n:'step',t:'num'},{n:'bw',t:'num'},
+       {n:'guard',t:'num'},{n:'train',t:'num'},{n:'thr',t:'num'},{n:'top',t:'num'},{n:'hold',t:'num'}],
+  outs:[{n:'count',t:'num'},{n:'f1',t:'num'},{n:'l1',t:'num'},{n:'f2',t:'num'},{n:'l2',t:'num'},
+        {n:'f3',t:'num'},{n:'l3',t:'num'},{n:'f4',t:'num'},{n:'l4',t:'num'}],
+  readout:true, tall:true,
+  params:[{n:'bw',t:'range',min:100,max:200000,step:100,d:12500,log:true,label:'channel bandwidth, Hz'},
+          {n:'guard',t:'range',min:0,max:50000,step:100,d:1000,log:true,label:'guard interval, Hz'},
+          {n:'train',t:'range',min:500,max:200000,step:500,d:20000,log:true,label:'training band, Hz'},
+          {n:'thr',t:'range',min:1,max:30,step:.5,d:8,label:'threshold, dB'},
+          {n:'top',t:'range',min:1,max:30,step:1,d:10,label:'how many to show'},
+          {n:'hold',t:'range',min:0,max:5000,step:50,d:500,label:'hold time, ms'}],
+  init:n=>{n.list=[];n.text='';n.tracks=[];},
+  process(n,I){
+    for(const k of ['bw','guard','train','thr','top','hold']) if(typeof I[k]==='number') setMod(n,k,I[k]);
+    const s=I.spec; if(!s) return {count:0};
+    const [specLo,specHi]=specSpan(s);
+    const step=typeof I.step==='number' && I.step>0 ? I.step : 0;
+    const lo=typeof I.lo==='number' ? I.lo : specLo;
+    const hits=[];
+    if(step>0){
+      // bw/guard/train ужаты в бюджет половины шага сетки — иначе на частой сетке (25кГц и
+      // меньше) обучающая полоса заходит за середину промежутка до соседнего канала и завышает
+      // оценку шума, если сосед занят.
+      const halfSlot=step/2, bw=Math.min(n.p.bw,step*.8);
+      const budget=Math.max(0,halfSlot-bw/2), guard=Math.min(n.p.guard,budget*.3),
+            train=Math.min(n.p.train,Math.max(0,budget-guard));
+      const k0=Math.max(0,Math.ceil((specLo-lo)/step)), k1=Math.floor((specHi-lo)/step);
+      for(let k=k0;k<=k1;k++){
+        const f=lo+k*step;
+        const {sigDb,noiseDb}=chanSigNoise(s,f,bw,guard,train);
+        if(sigDb-noiseDb>=n.p.thr) hits.push({f,db:sigDb});
+      }
+    } else {
+      const f=(specLo+specHi)/2, bw=Math.min(n.p.bw, specHi-specLo);
+      const {sigDb,noiseDb}=chanSigNoise(s,f,bw,n.p.guard,n.p.train);
+      if(sigDb-noiseDb>=n.p.thr) hits.push({f,db:sigDb});
+    }
+    hits.sort((a,b)=>b.db-a.db);
+    const now=performance.now();
+    n.tracks=n.tracks||[];
+    const tol=step>0? step/2 : 15;                      // не даём двум соседним каналам слипнуться в один трек
+    for(const h of hits){
+      let tr=n.tracks.find(t=>Math.abs(t.f-h.f)<=tol);
+      if(tr){ tr.db=h.db; tr.t=now; } else n.tracks.push({f:h.f,db:h.db,t0:now,t:now}); }
+    n.tracks=n.tracks.filter(t=>now-t.t<=n.p.hold);
+    n.tracks=n.tracks.filter(t=>t.f>=specLo && t.f<=specHi);   // трек мог остаться от уже покинутого окна приёма
+    n.list=n.tracks.slice().sort((a,b)=>b.db-a.db).slice(0,n.p.top);
+    n.text='found '+n.list.length+'\n'+n.list.map(v=>
+      fmtHz(v.f).padStart(8)+'Hz  '+v.db.toFixed(0).padStart(4)+' dB  '+((now-v.t0)/1000).toFixed(1)+' s').join('\n');
+    const [a,b,c,d]=n.list;
+    return {count:n.list.length,
+      f1:a?a.f:null, l1:a?a.db:null, f2:b?b.f:null, l2:b?b.db:null,
+      f3:c?c.f:null, l3:c?c.db:null, f4:d?d.f:null, l4:d?d.db:null}; },
+  draw(n){ const r=n.el.querySelector('.readout');
+    if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
 
 const OCT_CENTERS=(()=>{ const a=[];
@@ -1875,7 +1942,7 @@ def({ id:'bandsmerge', title:'Merge Band Plans', cat:'Analysis',
 def({ id:'bandscan', title:'Band Scanner', cat:'Analysis',
   ins:[{n:'bands',t:'bands'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},{n:'active',t:'num'},
        {n:'overlap',t:'num'},{n:'timeout',t:'num'},{n:'settle',t:'num'}],
-  outs:[{n:'freq',t:'num'},{n:'listening',t:'num'},{n:'idx',t:'num'}],
+  outs:[{n:'freq',t:'num'},{n:'listening',t:'num'},{n:'idx',t:'num'},{n:'bandLo',t:'num'},{n:'step',t:'num'}],
   readout:true, tall:true,
   params:[{n:'overlap',t:'range',min:0,max:2000000,step:1000,log:true,d:0,label:'overlap, Hz'},
           {n:'timeout',t:'range',min:100,max:30000,step:100,d:3000,label:'listen timeout, ms'},
@@ -1885,7 +1952,7 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Analysis',
   process(n,I){
     for(const k of ['overlap','timeout','settle']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     const bands=(Array.isArray(I.bands)?I.bands:[]).filter(b=>b && b.hi>b.lo).slice().sort((a,b)=>a.lo-b.lo);
-    if(!bands.length){ n.state='idle'; n.curFreq=null; n.text='no bands'; return {freq:0,listening:0,idx:-1}; }
+    if(!bands.length){ n.state='idle'; n.curFreq=null; n.text='no bands'; return {freq:0,listening:0,idx:-1,bandLo:0,step:0}; }
     // список диапазонов сменился целиком (другой пресет/правка) — сканируем заново с первого
     if(bands.length!==n._bandsLen || bands[0].lo!==n._firstLo || bands[0].hi!==n._firstHi){
       n._bandsLen=bands.length; n._firstLo=bands[0].lo; n._firstHi=bands[0].hi;
@@ -1907,8 +1974,8 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Analysis',
         } else n.idx++;
         n.curFreq=bands[n.idx].lo+half;
       } else {
-        const step=Math.max(span*0.05, span-n.p.overlap);
-        n.curFreq+=step;
+        const winStep=Math.max(span*0.05, span-n.p.overlap);
+        n.curFreq+=winStep;
       }
       n.settleUntil=now+n.p.settle; n.state='seek';
     };
@@ -1924,7 +1991,10 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Analysis',
     n.text=n.state+' · range '+(n.idx+1)+'/'+bands.length+' "'+(curBand.label||'')+'"\n'+
       'freq '+fmtHz(n.curFreq)+'Hz'+
       (n.state==='listen'? '  · listening '+((n.listenUntil-now)/1000).toFixed(1)+'s left' : '');
-    return {freq:n.curFreq, listening:n.state==='listen'?1:0, idx:n.idx};
+    // bandLo/step — начало текущего диапазона и его сетка каналов (канал 1 = bandLo, канал 2 =
+    // bandLo+step, …), для узлов вроде 'chandet', которым нужно знать сетку, а не только freq.
+    return {freq:n.curFreq, listening:n.state==='listen'?1:0, idx:n.idx,
+      bandLo:curBand.lo, step:curBand.step||0};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(r && r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
