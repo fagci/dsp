@@ -392,6 +392,11 @@ inp.value=s.step? cur : (Math.round(cur*1000)/1000);
 inp.step=s.step||'any';
 inp.addEventListener('pointerdown',ev=>ev.stopPropagation());
 box.append(inp); inp.focus(); inp.select();
+// применяем прямо по мере ввода — на мобильном виртуальная клавиатура часто не даёт Enter,
+// а тап "мимо", чтобы убрать её, не всегда доходит до blur так, как на десктопе. Без этого
+// правка технически вводилась, но эффективно "не применялась", пока как-то не поймать blur.
+inp.addEventListener('input',()=>{
+const v=parseFloat(String(inp.value).replace(',','.')); if(isFinite(v)) setV(v); });
 let finished=false;
 const done=ok=>{ if(finished) return; finished=true;
 if(ok){ const v=parseFloat(String(inp.value).replace(',','.')); if(isFinite(v)) setV(v); }
@@ -523,6 +528,9 @@ const inp=document.createElement('input'); inp.type='number';
 inp.value=Math.round(n.p[key]); inp.step=step||'any';
 inp.addEventListener('pointerdown',ev=>ev.stopPropagation());
 box.append(inp); inp.focus(); inp.select();
+// применяем прямо по мере ввода — см. комментарий у openEdit() в 'range' выше (та же причина)
+inp.addEventListener('input',()=>{
+const v=parseFloat(String(inp.value).replace(',','.')); if(isFinite(v)) setV(v); });
 let finished=false;
 const done=ok=>{ if(finished) return; finished=true;
 if(ok){ const v=parseFloat(String(inp.value).replace(',','.')); if(isFinite(v)) setV(v); }
