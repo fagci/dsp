@@ -1378,19 +1378,25 @@ async function rtlReadLoop(n){
       prevReadEnd=t1;   // см. gap-проверку в начале итерации выше
       kickRead();        // следующий трансфер — сразу, не дожидаясь обработки текущего буфера ниже
       const u8=new Uint8Array(buf), cnt=u8.length>>1, mode=n.p.demod, specRing=n.specRing;
-      for(let k=0;k<cnt;k++){
-        specRing.I[specRing.w]=(u8[2*k]-127.5)/127.5;
-        specRing.Q[specRing.w]=(u8[2*k+1]-127.5)/127.5;
-        specRing.w=(specRing.w+1)%specRing.size;
-        if(specRing.filled<specRing.size) specRing.filled++;
-      }
+      // Циклический индекс — сравнение+обнуление, а не % на каждый отсчёт: при типичных chunkSamples
+      // (десятки тысяч на USB-чтение, READS_PER_SEC раз в секунду) деление в modulo было заметной
+      // главно-поточной нагрузкой ровно там, где конкурирует с чтением USB/сообщениями демод-воркеру.
+      { let w=specRing.w, filled=specRing.filled; const I=specRing.I, Q=specRing.Q, size=specRing.size;
+        for(let k=0;k<cnt;k++){
+          I[w]=(u8[2*k]-127.5)/127.5; Q[w]=(u8[2*k+1]-127.5)/127.5;
+          w++; if(w>=size) w=0;
+          if(filled<size) filled++;
+        }
+        specRing.w=w; specRing.filled=filled; }
       if(mode==='IQ'){
         const ring=n.ring;
-        for(let k=0;k<cnt;k++){
-          ring.I[ring.w]=(u8[2*k]-127.5)/127.5; ring.Q[ring.w]=(u8[2*k+1]-127.5)/127.5;
-          ring.w=(ring.w+1)%ring.size;
-          if(ring.filled<ring.size) ring.filled++;
-        }
+        { let w=ring.w, filled=ring.filled; const I=ring.I, Q=ring.Q, size=ring.size;
+          for(let k=0;k<cnt;k++){
+            I[w]=(u8[2*k]-127.5)/127.5; Q[w]=(u8[2*k+1]-127.5)/127.5;
+            w++; if(w>=size) w=0;
+            if(filled<size) filled++;
+          }
+          ring.w=w; ring.filled=filled; }
         ring.written+=cnt;
         rtlTrackMsps(n, cnt, t1-kickT, 0);
         continue;
@@ -1577,9 +1583,14 @@ function rtlUpdateSpec(n){
   const start=(ring.w-N+ring.size)%ring.size;
   const reuse=n.specWorker.takeBuffers(N);
   const I=reuse?new Float32Array(reuse.I):new Float32Array(N), Q=reuse?new Float32Array(reuse.Q):new Float32Array(N);
+  // .set() из непрерывных (максимум двух, на стыке кольца) подмассивов вместо ручного цикла
+  // с делением по модулю на КАЖДЫЙ отсчёт — при specSize вроде 32768 это заметная главная-поточная
+  // работа на каждый снимок спектра (раз в ~80мс), а TypedArray.set — оптимизированный memmove.
+  const first=Math.min(N, ring.size-start);
+  I.set(ring.I.subarray(start,start+first)); Q.set(ring.Q.subarray(start,start+first));
+  if(first<N){ I.set(ring.I.subarray(0,N-first),first); Q.set(ring.Q.subarray(0,N-first),first); }
   let sumI=0, sumQ=0;
-  for(let i=0;i<N;i++){ const p=(start+i)%ring.size, iv=ring.I[p], qv=ring.Q[p];
-    I[i]=iv; Q[i]=qv; sumI+=iv; sumQ+=qv; }
+  for(let i=0;i<N;i++){ sumI+=I[i]; sumQ+=Q[i]; }
   // DC-спайк в центре спектра — не сигнал, а самосмешение гетеродина на нулевую ПЧ, типичная
   // болячка RTL2832U (zero-IF архитектура), см. то же самое в gqrx/SDR++ ("DC removal"/"correct IQ").
   // Вычитаем среднее блока — это ТОЧНО зануляет центральный бин БПФ (он и есть эта самая сумма/N),
