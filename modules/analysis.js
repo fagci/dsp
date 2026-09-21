@@ -1190,7 +1190,12 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       const dpr=(cv.pxW&&cv.width)?cv.pxW/cv.width:1, Wp=cv.pxW||W, hwP=Math.max(1,Math.round(hw*dpr));
       if(!n.off||n.off.width!==Wp||n.off.height!==hwP){
         n.off=document.createElement('canvas'); n.off.width=Wp; n.off.height=hwP;
-        n.ocx=n.off.getContext('2d',{willReadFrequently:true});
+        // без willReadFrequently: эта канва только пишется (drawImage-сдвиг + putImageData новой
+        // строки), getImageData сюда никогда не зовётся — а флаг форсирует программный (CPU)
+        // рендер, из-за чего drawImage(n.off,0,1) (сдвиг ВСЕГО водопада на 1px на каждой новой
+        // строке спектра) на крупных канвах (большой specSize/широкий водопад) становится основным
+        // потребителем главного потока и топит звук rtlsdr не хуже самой отрисовки графа.
+        n.ocx=n.off.getContext('2d');
         n._line=n.ocx.createImageData(Wp,1);          // строка водопада — переиспользуем, размер завязан на ту же канву
         n._lastRev=undefined; n._lastSpecRef=null;    // канва пересоздана — продавить свежую строку ниже
       }
