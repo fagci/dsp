@@ -74,7 +74,7 @@ def({ id:'corr', title:'Pattern Correlator', cat:'Protocols',
     return {corr:oc, sync:os, peak:best}; },
   draw(n,cv,cx){
     const W=cv.width,H=cv.height; cx.clearRect(0,0,W,H);
-    cx.strokeStyle='#e05c5c66'; cx.beginPath();
+    cx.strokeStyle=themeColor('--err')+'66'; cx.beginPath();
     const ty=H-n.p.thr*H; cx.moveTo(0,ty); cx.lineTo(W,ty); cx.stroke();
     cx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--t-sig');
     cx.beginPath();
@@ -973,7 +973,7 @@ def({ id:'afskRx', title:'aFSK: Auto-Receive (auto)', cat:'Decoders', readout:tr
       cx.stroke(); };
     bar(n.hs,0,getComputedStyle(document.body).getPropertyValue('--t-num'));
     bar(n.hm,H/2,getComputedStyle(document.body).getPropertyValue('--t-sig'));
-    cx.fillStyle='#6c7a80'; cx.font='9px monospace';
+    cx.fillStyle=themeColor('--axis'); cx.font='9px monospace';
     cx.fillText('space '+n.fSpace.toFixed(0),3,10);
     cx.fillText('mark  '+n.fMark.toFixed(0),3,H/2+10);
     const r=n.el.querySelector('.readout');
@@ -1307,7 +1307,7 @@ def({ id:'paint', title:'Raster (line by line)', cat:'Video',
     cx.imageSmoothingEnabled=false;
     cx.clearRect(0,0,cv.width,cv.height);
     cx.drawImage(c,0,0,cv.width,cv.height);
-    cx.fillStyle='#e0b23c';
+    cx.fillStyle=themeColor('--acc');
     if(n.p.dir==='columns'){
       const off=(n.p.shift||0)*n.W, x=(((n.py-off)%n.W)+n.W)%n.W;
       cx.fillRect(x/n.W*cv.width,0,1,cv.height);

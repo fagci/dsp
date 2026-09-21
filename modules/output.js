@@ -246,7 +246,7 @@ def({ id:'triggerRecorder', title:'Trigger Recorder', cat:'Output',
     const signal = n.buffer;
     if(signal && signal.length > 0){
       const step = Math.max(1, Math.floor(signal.length / W));
-      cx.strokeStyle = n.recording ? '#e05c5c' : '#4ec9b0';
+      cx.strokeStyle = n.recording ? themeColor('--err') : themeColor('--acc2');
       cx.lineWidth = 1;
       cx.beginPath();
       const halfH = H/2;
@@ -259,7 +259,7 @@ def({ id:'triggerRecorder', title:'Trigger Recorder', cat:'Output',
       cx.stroke();
     }
     if(n.recording){
-      cx.fillStyle = '#e05c5c'; cx.font = 'bold 9px monospace';
+      cx.fillStyle = themeColor('--err'); cx.font = 'bold 9px monospace';
       cx.fillText('● '+((n.buffer.length||0)/Eng.sr).toFixed(1)+'s', W-55, 10);
     }
   }
@@ -634,7 +634,7 @@ def({ id:'geiger', title:'Geiger Counter', cat:'Output',
     cx.clearRect(0,0,W,H);
     
     // История частоты
-    cx.strokeStyle = '#4ec9b0';
+    cx.strokeStyle = themeColor('--acc2');
     cx.lineWidth = 1.5;
     cx.beginPath();
     const maxRate = (n.p.maxRate || 20) + 5;
@@ -647,13 +647,13 @@ def({ id:'geiger', title:'Geiger Counter', cat:'Output',
     
     // Текущее значение
     const val = n.smoothVal || 0;
-    cx.fillStyle = '#e0b23c';
+    cx.fillStyle = themeColor('--acc');
     cx.font = 'bold 18px monospace';
     const valStr = val.toFixed(3);
     cx.fillText(valStr, W - cx.measureText(valStr).width - 4, 22);
     
     // Частота
-    cx.fillStyle = '#6c7a80';
+    cx.fillStyle = themeColor('--axis');
     cx.font = '10px monospace';
     cx.fillText(`${(n.rate||0).toFixed(1)} clk/s`, 4, 12);
     
@@ -664,35 +664,35 @@ def({ id:'geiger', title:'Geiger Counter', cat:'Output',
     
     const barH = 6;
     const barY = H - barH - 2;
-    cx.fillStyle = '#1d2226';
+    cx.fillStyle = themeColor('--scr-panel');
     cx.fillRect(2, barY, W-4, barH);
     
     const grad = cx.createLinearGradient(0,0,W,0);
-    grad.addColorStop(0, '#2a3136');
-    grad.addColorStop(0.3, '#4ec9b0');
-    grad.addColorStop(0.7, '#e0b23c');
-    grad.addColorStop(1, '#e05c5c');
+    grad.addColorStop(0, themeColor('--grid'));
+    grad.addColorStop(0.3, themeColor('--acc2'));
+    grad.addColorStop(0.7, themeColor('--acc'));
+    grad.addColorStop(1, themeColor('--err'));
     cx.fillStyle = grad;
     cx.fillRect(2, barY, (W-4) * norm, barH);
     
-    cx.fillStyle = '#2a3136';
+    cx.fillStyle = themeColor('--grid');
     cx.font = '8px monospace';
     cx.fillText(minV.toFixed(2), 2, barY-1);
     cx.fillText(maxV.toFixed(2), W-36, barY-1);
     
     // Индикатор клика
     if(n.pulse > 0){
-      cx.fillStyle = '#e05c5c';
+      cx.fillStyle = themeColor('--err');
       cx.fillRect(W-20, 4, 8, 8);
       cx.globalAlpha = 0.2;
-      cx.fillStyle = '#e05c5c';
+      cx.fillStyle = themeColor('--err');
       cx.beginPath();
       cx.arc(W-16, 8, 16, 0, 2*Math.PI);
       cx.fill();
       cx.globalAlpha = 1;
     }
     
-    cx.fillStyle = '#4ec9b0';
+    cx.fillStyle = themeColor('--acc2');
     cx.font = '9px monospace';
     cx.fillText((n.rate||0) > 0.5 ? '⚡ active' : '💤 silent', 4, H-4);
   }
@@ -945,7 +945,7 @@ def({ id:'planeMap', title:'Aircraft Map', cat:'Output',
   },
   draw(n,cv,cx){
     const W=cv.width,H=cv.height;
-    cx.fillStyle='#0b0f14'; cx.fillRect(0,0,W,H);
+    cx.fillStyle=themeColor('--screen'); cx.fillRect(0,0,W,H);
     cx.strokeStyle='rgba(255,255,255,.12)'; cx.lineWidth=1;
     for(let lon=-180;lon<=180;lon+=30){ const x=(lon+180)/360*W;
       cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke(); }
@@ -960,9 +960,9 @@ def({ id:'planeMap', title:'Aircraft Map', cat:'Output',
       const t=n.stations[name];
       if(now-t.t>ttl*4){ delete n.stations[name]; continue; }
       const x=(t.lon+180)/360*W, y=(90-t.lat)/180*H;
-      cx.fillStyle='#5cc0e0';
+      cx.fillStyle=themeColor('--t-img');
       cx.fillRect(x-4,y-4,8,8);
-      cx.fillStyle='#5cc0e0'; cx.font='11px monospace';
+      cx.fillStyle=themeColor('--t-img'); cx.font='11px monospace';
       cx.fillText(name,x+7,y-6);
     }
     // самолёты — кружок, гаснет с возрастом
@@ -972,7 +972,7 @@ def({ id:'planeMap', title:'Aircraft Map', cat:'Output',
       const x=(t.lon+180)/360*W, y=(90-t.lat)/180*H, age=(now-t.t)/ttl;
       cx.fillStyle=`rgba(224,178,60,${1-age*.7})`;
       cx.beginPath(); cx.arc(x,y,4,0,2*Math.PI); cx.fill();
-      cx.fillStyle='#e0b23c'; cx.font='11px monospace';
+      cx.fillStyle=themeColor('--acc'); cx.font='11px monospace';
       cx.fillText(id,x+6,y-6);
     }
   }});

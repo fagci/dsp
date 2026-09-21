@@ -219,10 +219,10 @@ def({ id:'birdSong', title:'Bird Song Analyzer', cat:'Analysis',
     // --- 1. Водопад / спектрограмма (слева) ---
     if(display === 'waterfall' || display === 'both'){
       // Рисуем спектрограмму из истории слогов
-      const colors = ['#4ec9b0', '#e0b23c', '#e05c5c', '#569cd6', '#d18ad1', '#7fd17f'];
+      const colors = ['--acc2','--acc','--err','--t-img','--t-txt','--t-blk'].map(themeColor);
       
       // Фон
-      cx.fillStyle = '#0a0d0e';
+      cx.fillStyle = themeColor('--screen');
       cx.fillRect(0, 0, wfW, H);
       
       // Рисуем слоги
@@ -249,24 +249,24 @@ def({ id:'birdSong', title:'Bird Song Analyzer', cat:'Analysis',
         const s = n.currentSyllable;
         const x = wfW - 10;
         const y = (s.freq - n.p.fmin) / (n.p.fmax - n.p.fmin) * H;
-        cx.strokeStyle = '#ffffff';
+        cx.strokeStyle = themeColor('--scr-hi');
         cx.lineWidth = 2;
         cx.beginPath();
         cx.arc(x, H - y, 12, 0, 2*Math.PI);
         cx.stroke();
-        cx.fillStyle = '#ffffff44';
+        cx.fillStyle = themeColor('--scr-hi')+'44';
         cx.beginPath();
         cx.arc(x, H - y, 8, 0, 2*Math.PI);
         cx.fill();
         
         // Длительность
-        cx.fillStyle = '#6c7a80';
+        cx.fillStyle = themeColor('--axis');
         cx.font = '8px monospace';
         cx.fillText(`${s.duration.toFixed(0)} ms`, x-20, H-y-16);
       }
       
       // Шкала частот
-      cx.fillStyle = '#2a3136';
+      cx.fillStyle = themeColor('--grid');
       cx.font = '8px monospace';
       const fStep = Math.round((n.p.fmax - n.p.fmin) / 4);
       for(let f=n.p.fmin; f<=n.p.fmax; f+=fStep){
@@ -280,7 +280,7 @@ def({ id:'birdSong', title:'Bird Song Analyzer', cat:'Analysis',
       const gx = display === 'both' ? wfW : 0;
       const gw = display === 'both' ? graphW : W;
       
-      cx.fillStyle = '#0a0d0e';
+      cx.fillStyle = themeColor('--screen');
       cx.fillRect(gx, 0, gw, H);
       
       // Рисуем граф переходов
@@ -328,7 +328,7 @@ def({ id:'birdSong', title:'Bird Song Analyzer', cat:'Analysis',
         for(const [key, pos] of Object.entries(nodePos)){
           const [freq, bw] = key.split('_').map(Number);
           const colorIdx = Math.floor((freq*100) / 1000) % 6;
-          const colors = ['#4ec9b0', '#e0b23c', '#e05c5c', '#569cd6', '#d18ad1', '#7fd17f'];
+          const colors = ['--acc2','--acc','--err','--t-img','--t-txt','--t-blk'].map(themeColor);
           
           // Размер = популярность
           let degree = 0;
@@ -345,28 +345,28 @@ def({ id:'birdSong', title:'Bird Song Analyzer', cat:'Analysis',
           
           // Частота
           cx.globalAlpha = 1;
-          cx.fillStyle = '#6c7a80';
+          cx.fillStyle = themeColor('--axis');
           cx.font = '7px monospace';
           cx.fillText(`${(freq*100).toFixed(0)} Hz`, pos.x-20, pos.y+4);
         }
         
         cx.globalAlpha = 1;
       } else {
-        cx.fillStyle = '#2a3136';
+        cx.fillStyle = themeColor('--grid');
         cx.font = '10px monospace';
         cx.fillText('⏳ accumulating\npatterns...', gx+10, H/2-10);
       }
     }
     
     // --- 3. Информация ---
-    cx.fillStyle = '#6c7a80';
+    cx.fillStyle = themeColor('--axis');
     cx.font = '8px monospace';
     const info = `Syllables: ${n.syllables.length}  |  Patterns: ${Object.keys(n.graph).length}`;
     cx.fillText(info, 4, H-4);
     
     // Распознанный паттерн (сверху)
     if(n.matchedPattern){
-      cx.fillStyle = '#e0b23c';
+      cx.fillStyle = themeColor('--acc');
       cx.font = 'bold 10px monospace';
       cx.fillText(`🎵 ${n.matchedPattern}`, 4, 14);
     }
@@ -536,11 +536,11 @@ def({ id:'persist', title:'Persistence Spectrum', cat:'Analysis',
     if(n.fsel){ const t=n.p.log? Math.log(n.fsel/Math.max(1,n.p.fmin||10))/
         Math.log(n.p.fmax/Math.max(1,n.p.fmin||10)) : (n.fsel-n.p.fmin)/(n.p.fmax-n.p.fmin);
       const x=Math.round(clamp(t,0,1)*cv.width);       // putImageData игнорирует transform — маркер после него
-      cx.strokeStyle='#e0b23c'; cx.beginPath(); cx.moveTo(x+.5,0); cx.lineTo(x+.5,cv.height); cx.stroke();
+      cx.strokeStyle=themeColor('--acc'); cx.beginPath(); cx.moveTo(x+.5,0); cx.lineTo(x+.5,cv.height); cx.stroke();
       cx.font='10px monospace';
       const s2=n.fsel.toFixed(0)+' Hz', tw=cx.measureText(s2).width, tx=clamp(x+4,2,cv.width-tw-4);
-      cx.fillStyle='#0e1113dd'; cx.fillRect(tx-3,2,tw+6,12);
-      cx.fillStyle='#e0b23c'; cx.fillText(s2,tx,11); } }});
+      cx.fillStyle=themeColor('--screen')+'dd'; cx.fillRect(tx-3,2,tw+6,12);
+      cx.fillStyle=themeColor('--acc'); cx.fillText(s2,tx,11); } }});
 
 function persLogF(n,t){ const lo=Math.max(10,n.p.fmin); return lo*Math.pow(n.p.fmax/lo,t); }
 
@@ -873,7 +873,7 @@ def({ id:'ir', title:'Impulse Response & RT60', cat:'Analysis',
         const y=H-clamp((n.sch[k]+60)/60,0,1)*H;
         x?cx.lineTo(x,y):cx.moveTo(x,y); }
       cx.stroke();
-      cx.strokeStyle='#e05c5c55';
+      cx.strokeStyle=themeColor('--err')+'55';
       for(const db of [-5,-25,-35]){ const y=H-clamp((db+60)/60,0,1)*H;
         cx.beginPath(); cx.moveTo(0,y); cx.lineTo(W,y); cx.stroke(); } }
     n.el.querySelector('.readout').textContent=n.text; }});
@@ -915,7 +915,7 @@ def({ id:'scope', title:'Oscilloscope', cat:'Analysis',
     const act=(n.act||[true]).map((v,i)=>v||i===0), nA=Math.max(1,act.filter(Boolean).length);
     if(n.p.grid){
       const totalMs=span/(Eng.sr||48000)*1000;
-      cx.strokeStyle='#1e2529'; cx.font='8px monospace'; cx.fillStyle='#5a6469';
+      cx.strokeStyle=themeColor('--grid'); cx.font='8px monospace'; cx.fillStyle=themeColor('--axis');
       // время слева направо: 0 мс — старый край окна, totalMs — текущий момент
       for(let i=0;i<=10;i++){
         const x=Math.round(i*W/10)+.5, t=i/10*totalMs;
@@ -935,7 +935,7 @@ def({ id:'scope', title:'Oscilloscope', cat:'Analysis',
         for(const db of dbSteps){
           const a=Math.pow(10,db/20), y1=yc-a*amp;
           cx.fillText(db+' dB', 2, y1-2>8?y1-2:y1+9); } } }
-    cx.strokeStyle='#1e2529';
+    cx.strokeStyle=themeColor('--grid');
     for(let k=0,shown=0;k<4;k++){ if(!act[k]) continue;
       const yc = n.p.stack ? H*(shown+.5)/nA : H/2; shown++;
       cx.beginPath(); cx.moveTo(0,yc); cx.lineTo(W,yc); cx.stroke(); }
@@ -998,7 +998,8 @@ function specSpan(s){                               // границы оси с�
 }
 function axisT(bin,N,log){ return log ? Math.log(bin+1)/Math.log(N) : bin/(N-1); }
 
-const MK_COL=['#e0b23c','#4ec9b0','#e05c5c','#569cd6'];
+const MK_COL_VARS=['--acc','--acc2','--err','--t-img'];
+const MK_COL=k=>themeColor(MK_COL_VARS[k]);
 
 // GPU-водопад для 'sa': кольцевой буфер в текстуре вместо сдвига всей истории на 1px на канве
 // при каждой новой строке спектра (был O(Wp×hwP) software-composite на каждый новый кадр спектра).
@@ -1477,7 +1478,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       const R=n.refMag&&n.refMag.length===N? n.refMag : null;
       const diff=R&&n.p.ref==='diff';
       if(R&&n.p.ref==='show'){                    // reference as a faint line under the current one
-        cx.strokeStyle='#8ab4f8'; cx.globalAlpha=.55; cx.beginPath();
+        cx.strokeStyle=themeColor('--t-img'); cx.globalAlpha=.55; cx.beginPath();
         for(let x=0;x<W;x++){
           const y=plotH-clamp((20*Math.log10(magReduce(R,edgeX[x],edgeX[x+1])+1e-12)-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
           x?cx.lineTo(x,y):cx.moveTo(x,y); }
@@ -1503,11 +1504,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       cx.beginPath(); cx.moveTo(0,traceY[0]);
       for(let x=1;x<W;x++) cx.lineTo(x,traceY[x]);
       cx.stroke();
-      if(diff){ cx.strokeStyle='#ffffff22'; cx.beginPath();
+      if(diff){ cx.strokeStyle=themeColor('--scr-hi')+'22'; cx.beginPath();
         cx.moveTo(0,plotH/2); cx.lineTo(W,plotH/2); cx.stroke(); }
       // peak hold — тонкая линия максимума поверх обычной трассы
       if(n.p.peakHold && n.peak && n.peak.length===N){
-        cx.strokeStyle='#ffd54a'; cx.lineWidth=1; cx.beginPath();
+        cx.strokeStyle=themeColor('--acc'); cx.lineWidth=1; cx.beginPath();
         for(let x=0;x<W;x++){
           const v=20*Math.log10(magReduce(n.peak,edgeX[x],edgeX[x+1])+1e-12);
           const y=plotH-clamp((v-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
@@ -1517,7 +1518,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       const wfSrc = n.wfGl ? saWfGlRender(n.wfGl,Wp,hwP) : n.off;
       cx.drawImage(wfSrc,0,hs,W,hw);       // без dw/dh источник (физ. пиксели) масштабируется на dpr лишний раз
     } else if(n.p.grid) saGrid(n,cx,W,hs,H,plotH);
-    cx.strokeStyle='#2a3136'; cx.beginPath(); cx.moveTo(0,hs+.5); cx.lineTo(W,hs+.5); cx.stroke();
+    cx.strokeStyle=themeColor('--grid'); cx.beginPath(); cx.moveTo(0,hs+.5); cx.lineTo(W,hs+.5); cx.stroke();
     saBands(n,cx,W,H);
     saBandPlan(n,cx,W,hs,plotH);                      // полосы/закладки — зона спектра, водопад не трогаем
     saMarkers(n,cx,W,hs); }});
@@ -2201,7 +2202,7 @@ def({ id:'const2', title:'Constellation', cat:'Analysis', ins:[{n:'I',t:'sig'},{
   draw(n,cv,cx){
     const W=cv.width,H=cv.height,R=Math.min(W,H)/2*.9;
     cx.fillStyle=`rgba(10,13,14,${n.p.fade})`; cx.fillRect(0,0,W,H);
-    cx.strokeStyle='#1e2529'; cx.beginPath();
+    cx.strokeStyle=themeColor('--grid'); cx.beginPath();
     cx.moveTo(W/2,0);cx.lineTo(W/2,H);cx.moveTo(0,H/2);cx.lineTo(W,H/2);cx.stroke();
     cx.fillStyle=getComputedStyle(document.body).getPropertyValue('--t-num');
     const s=n.p.scale;
@@ -2261,7 +2262,7 @@ def({ id:'peak', title:'Frequency Peak', cat:'Analysis',
   draw(n,cv,cx){
     const W=cv.width,H=cv.height; cx.clearRect(0,0,W,H);
     const thrN=clamp((n.p.thr-n.p.floor)/((n.p.top-n.p.floor)||1),0,1);
-    cx.strokeStyle='#e05c5c55'; cx.beginPath();
+    cx.strokeStyle=themeColor('--err')+'55'; cx.beginPath();
     cx.moveTo(0,H-thrN*H); cx.lineTo(W,H-thrN*H); cx.stroke();
     cx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--t-spec');
     cx.beginPath();
@@ -2310,9 +2311,9 @@ def({ id:'morseRx', title:'Morse: Receive', cat:'Decoders',
     return {gate:n.on?1:0, wpm:1200/mEst(n.pool).unit}; },
   draw(n,cv,cx){
     const W=cv.width,H=cv.height,hs=n.hist; cx.clearRect(0,0,W,H);
-    cx.fillStyle='#4ec9b022';
+    cx.fillStyle=themeColor('--acc2')+'22';
     for(let i=0;i<hs.length;i++) if(hs[i][2]) cx.fillRect(i/240*W,0,W/240+.6,H);
-    cx.strokeStyle='#e05c5c88'; cx.beginPath();
+    cx.strokeStyle=themeColor('--err')+'88'; cx.beginPath();
     for(let i=0;i<hs.length;i++){ const x=i/240*W,y=H-clamp(hs[i][1],0,1)*H; i?cx.lineTo(x,y):cx.moveTo(x,y); }
     cx.stroke();
     cx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--t-num'); cx.beginPath();
@@ -2365,7 +2366,7 @@ def({ id:'meter', title:'Level', cat:'Analysis', ins:[{n:'in',t:'sig'}], outs:[{
   draw(n,cv,cx){ const W=cv.width,H=cv.height,v=clamp((n.db+80)/80,0,1);
     cx.clearRect(0,0,W,H);
     const g=cx.createLinearGradient(0,0,W,0);
-    g.addColorStop(0,'#4ec9b0'); g.addColorStop(.75,'#e0b23c'); g.addColorStop(1,'#e05c5c');
+    g.addColorStop(0,themeColor('--acc2')); g.addColorStop(.75,themeColor('--acc')); g.addColorStop(1,themeColor('--err'));
     cx.fillStyle=g; cx.fillRect(0,0,W*v,H);
     n.el.querySelector('.readout').textContent=n.db.toFixed(1)+' dB'; }});
 
@@ -2395,8 +2396,6 @@ def({ id:'trend', title:'Trend Chart', cat:'Analysis', ins:[{n:'in',t:'num'},{n:
     return {}; },
   draw(n,cv,cx){
     const W=cv.width,H=cv.height;
-    if(!n.col || ((n.colFrame=(n.colFrame||0)+1)%30===0))
-      n.col=getComputedStyle(document.body).getPropertyValue('--t-num');
     cx.clearRect(0,0,W,H);
     if(!n.ring) return;
     const rate=(Eng.sr||48000)/BLOCK, L=n.L;
@@ -2410,7 +2409,7 @@ def({ id:'trend', title:'Trend Chart', cat:'Analysis', ins:[{n:'in',t:'num'},{n:
     } else { lo=n.p.lo; hi=n.p.hi; if(hi<=lo) hi=lo+1e-6; }
     const rng=(hi-lo)||1;
     if(n.p.grid){
-      cx.strokeStyle='#1e2529'; cx.font='8px monospace'; cx.fillStyle='#5a6469';
+      cx.strokeStyle=themeColor('--grid'); cx.font='8px monospace'; cx.fillStyle=themeColor('--axis');
       for(let i=0;i<=4;i++){
         const y=Math.round(i*H/4)+.5, v=hi-(hi-lo)*i/4;
         cx.beginPath(); cx.moveTo(0,y); cx.lineTo(W,y); cx.stroke();
@@ -2420,7 +2419,7 @@ def({ id:'trend', title:'Trend Chart', cat:'Analysis', ins:[{n:'in',t:'num'},{n:
         const x=Math.round(i*W/4)+.5;
         cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke();
         cx.fillText('-'+(totalS*(1-i/4)).toFixed(totalS<10?1:0)+'s', clamp(x-12,2,W-24), H-2); } }
-    cx.strokeStyle=n.col||'#4ec9b0'; cx.lineWidth=1; cx.beginPath();
+    cx.strokeStyle=themeColor('--t-num'); cx.lineWidth=1; cx.beginPath();
     const spp=span/W;
     if(spp<=1){
       for(let k=0;k<=span;k++){
@@ -2487,7 +2486,7 @@ def({ id:'specstat', title:'Spectrum Statistics', cat:'Analysis', ins:[{n:'spec'
     const W=cv.width,H=cv.height; cx.clearRect(0,0,W,H);
     if(!n.acc||!n.s) return;
     const N=n.acc.length, occ=n.p.mode==='occupancy';
-    cx.fillStyle='#4ec9b033'; cx.strokeStyle=getComputedStyle(document.body)
+    cx.fillStyle=themeColor('--acc2')+'33'; cx.strokeStyle=getComputedStyle(document.body)
       .getPropertyValue(occ?'--t-sig':'--t-spec');
     cx.beginPath(); cx.moveTo(0,H);
     for(let x=0;x<W;x++){
@@ -2495,14 +2494,14 @@ def({ id:'specstat', title:'Spectrum Statistics', cat:'Analysis', ins:[{n:'spec'
       const v=occ? clamp(n.acc[b],0,1) : clamp((n.acc[b]-n.p.floor)/(0-n.p.floor),0,1);
       cx.lineTo(x,H-v*H); }
     cx.lineTo(W,H); cx.fill(); cx.stroke();
-    cx.fillStyle='#6c7a80'; cx.font='9px monospace';
+    cx.fillStyle=themeColor('--axis'); cx.font='9px monospace';
     cx.fillText(n.p.mode+' · '+(n.frames*BLOCK/Eng.sr).toFixed(0)+' s',3,10);
     if(n.pickT!=null){ const x=n.pickT*W;
-      cx.strokeStyle='#e0b23c'; cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke();
+      cx.strokeStyle=themeColor('--acc'); cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke();
       const t=n.fsel.toFixed(0)+' Hz', tw=cx.measureText(t).width;
       const tx=clamp(x+4,2,W-tw-4);
-      cx.fillStyle='#0e1113cc'; cx.fillRect(tx-3,H-15,tw+6,13);
-      cx.fillStyle='#e0b23c'; cx.fillText(t,tx,H-5); } }});
+      cx.fillStyle=themeColor('--screen')+'cc'; cx.fillRect(tx-3,H-15,tw+6,13);
+      cx.fillStyle=themeColor('--acc'); cx.fillText(t,tx,H-5); } }});
 
 
 def({ id:'goertzel', title:'Goertzel', cat:'Analysis',
@@ -2560,7 +2559,7 @@ def({ id:'autocorr', title:'Autocorrelator', cat:'Analysis', ins:[{n:'in',t:'sig
   draw(n,cv,cx){
     const W=cv.width,H=cv.height; cx.clearRect(0,0,W,H);
     if(!n.r) return;
-    cx.strokeStyle='#1e2529'; cx.beginPath(); cx.moveTo(0,H/2); cx.lineTo(W,H/2); cx.stroke();
+    cx.strokeStyle=themeColor('--grid'); cx.beginPath(); cx.moveTo(0,H/2); cx.lineTo(W,H/2); cx.stroke();
     cx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--t-spec');
     cx.lineWidth=1; cx.beginPath();
     for(let i=0;i<n.r.length;i++){ const x=i/(n.r.length-1)*W, y=H/2-clamp(n.r[i],-1,1)*H/2*.95;
@@ -2569,7 +2568,7 @@ def({ id:'autocorr', title:'Autocorrelator', cat:'Analysis', ins:[{n:'in',t:'sig
     if(n.lag){                                       // отметка найденного периода
       const t=(n.lag-n.lo)/Math.max(1,n.hi-n.lo);
       const x=clamp(t,0,1)*W;
-      cx.strokeStyle='#e0b23c'; cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke(); }
+      cx.strokeStyle=themeColor('--acc'); cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke(); }
     n.el.querySelector('.readout').textContent =
       (n.f? n.f.toFixed(2)+' Hz · '+(n.lag/Eng.sr*1000).toFixed(2)+' ms':'—')+
       ' ('+(n.conf*100).toFixed(0)+'%)'; }});
@@ -2872,7 +2871,7 @@ def({ id:'xcorr', title:'Cross-Correlation', cat:'Analysis',
   draw(n,cv,cx){
     const W=cv.width,H=cv.height; cx.clearRect(0,0,W,H);
     if(!n.r) return;
-    cx.strokeStyle='#1e2529';
+    cx.strokeStyle=themeColor('--grid');
     cx.beginPath(); cx.moveTo(W/2,0); cx.lineTo(W/2,H); cx.moveTo(0,H/2); cx.lineTo(W,H/2); cx.stroke();
     cx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--t-spec');
     cx.beginPath();
@@ -2880,7 +2879,7 @@ def({ id:'xcorr', title:'Cross-Correlation', cat:'Analysis',
       i?cx.lineTo(x,y):cx.moveTo(x,y); }
     cx.stroke();
     const M=n.M||1, x=(n.lag+M)/(2*M)*W;
-    cx.strokeStyle='#e0b23c'; cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke();
+    cx.strokeStyle=themeColor('--acc'); cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke();
     n.el.querySelector('.readout').textContent =
       (n.lag/Eng.sr*1000).toFixed(3)+' ms · '+n.lag.toFixed(1)+' samp · r='+n.peak.toFixed(2); }});
 
@@ -3050,7 +3049,7 @@ def({ id:'eye', title:'Eye Diagram', cat:'Analysis',
   draw(n,cv,cx){
     const W=cv.width,H=cv.height;
     cx.fillStyle='rgba(10,13,14,'+n.p.fade+')'; cx.fillRect(0,0,W,H);
-    cx.strokeStyle='#1e2529'; cx.beginPath();
+    cx.strokeStyle=themeColor('--grid'); cx.beginPath();
     cx.moveTo(0,H/2); cx.lineTo(W,H/2); cx.moveTo(W/2,0); cx.lineTo(W/2,H); cx.stroke();
     cx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--t-sig');
     cx.globalAlpha=.35;
