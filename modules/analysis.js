@@ -510,14 +510,29 @@ def({ id:'persist', title:'Persistence Spectrum', cat:'Analysis',
     return {fsel:n.fsel||null}; },
   draw(n,cv,cx){
     const W=cv.pxW||cv.width, H=cv.pxH||cv.height;   // пишем ImageData в физический размер буфера — резче картинка
-    if(n.aw!==W||n.ah!==H){ n.aw=W; n.ah=H; n.acc=new Float32Array(W*H); n.id2=null; }
-    if(!n.id2) n.id2=cx.createImageData(W,H);
-    const d=n.id2.data, a=n.acc, g=n.p.gain;
+    if(n.aw!==W||n.ah!==H){ n.aw=W; n.ah=H; n.acc=new Float32Array(W*H); n.id2=null; n.glp=null; n.glTried=false; }
+    const a=n.acc, g=n.p.gain;
     let mx=1e-6; for(let i=0;i<a.length;i++) if(a[i]>mx) mx=a[i];
-    for(let i=0;i<a.length;i++){
-      const v=clamp(a[i]/mx*g,0,1), k=heatIdx(v)*3, j=i*4;
-      d[j]=HEAT_LUT[k]; d[j+1]=HEAT_LUT[k+1]; d[j+2]=HEAT_LUT[k+2]; d[j+3]=255; }
-    cx.putImageData(n.id2,0,0);
+    if(!n.glTried){ n.glTried=true;
+      try{ n.glp = (W>0&&H>0) ? persGlInit(W,H) : null; }
+      catch(e){ n.glp=null; console.warn('persist: WebGL недоступен, откат на CPU-путь',e); } }
+    let drawn=false;
+    if(n.glp){
+      try{
+        const src=persGlRender(n.glp,W,H,a,mx,g);
+        cx.save(); cx.setTransform(1,0,0,1,0,0);          // drawImage учитывает transform, putImageData — нет; тут копируем 1:1 физическими пикселями, как раньше
+        cx.drawImage(src,0,0); cx.restore();
+        drawn=true;
+      }catch(e){ n.glp=null; console.warn('persist: рендер WebGL упал, откат на CPU-путь',e); }
+    }
+    if(!drawn){
+      if(!n.id2) n.id2=cx.createImageData(W,H);
+      const d=n.id2.data;
+      for(let i=0;i<a.length;i++){
+        const v=clamp(a[i]/mx*g,0,1), k=heatIdx(v)*3, j=i*4;
+        d[j]=HEAT_LUT[k]; d[j+1]=HEAT_LUT[k+1]; d[j+2]=HEAT_LUT[k+2]; d[j+3]=255; }
+      cx.putImageData(n.id2,0,0);
+    }
     if(n.fsel){ const t=n.p.log? Math.log(n.fsel/Math.max(1,n.p.fmin||10))/
         Math.log(n.p.fmax/Math.max(1,n.p.fmin||10)) : (n.fsel-n.p.fmin)/(n.p.fmax-n.p.fmin);
       const x=Math.round(clamp(t,0,1)*cv.width);       // putImageData игнорирует transform — маркер после него
@@ -528,6 +543,67 @@ def({ id:'persist', title:'Persistence Spectrum', cat:'Analysis',
       cx.fillStyle='#e0b23c'; cx.fillText(s2,tx,11); } }});
 
 function persLogF(n,t){ const lo=Math.max(10,n.p.fmin); return lo*Math.pow(n.p.fmax/lo,t); }
+
+// GPU-путь для 'persist': сама аккумуляция (decay+hit-count) остаётся на CPU в process() —
+// это дешёвый проход по W×H раз в тик движка. А вот перекраска W×H ячеек в HEAT_LUT + запись
+// ImageData каждый кадр отрисовки — CPU-цикл на полный размер канвы (водопад крупный, до 60
+// к/с) — переносим на GPU: акк-буфер грузится как R32F-текстура, палитра — как 256×1 LUT-
+// текстура, цвет каждого пикселя — один texture() в фрагментном шейдере вместо JS-цикла.
+// Рендерим в OffscreenCanvas (не в видимый canvas узла) и одним drawImage переносим на него —
+// так маркер/подпись поверх (см. draw() ниже) остаются обычным 2D-кодом, без переписывания.
+function persGlInit(W,H){
+  const oc = typeof OffscreenCanvas!=='undefined' ? new OffscreenCanvas(W,H)
+    : Object.assign(document.createElement('canvas'),{width:W,height:H});
+  const gl = oc.getContext('webgl2',{antialias:false,alpha:false,depth:false,stencil:false});
+  if(!gl) return null;
+  const compile=(type,src)=>{ const sh=gl.createShader(type); gl.shaderSource(sh,src); gl.compileShader(sh);
+    if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS)){ const log=gl.getShaderInfoLog(sh); gl.deleteShader(sh); throw new Error(log); }
+    return sh; };
+  const prog=gl.createProgram();
+  gl.attachShader(prog,compile(gl.VERTEX_SHADER,
+    '#version 300 es\nin vec2 aPos;out vec2 vUv;'+
+    'void main(){vUv=vec2(aPos.x*.5+.5,.5-aPos.y*.5);gl_Position=vec4(aPos,0.,1.);}'));
+  gl.attachShader(prog,compile(gl.FRAGMENT_SHADER,
+    '#version 300 es\nprecision highp float;uniform sampler2D uAcc;uniform sampler2D uPal;'+
+    'uniform float uMax;uniform float uGain;in vec2 vUv;out vec4 o;'+
+    'void main(){float v=clamp(texture(uAcc,vUv).r/uMax*uGain,0.,1.);o=texture(uPal,vec2(v,.5));}'));
+  gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog,gl.LINK_STATUS)){ const log=gl.getProgramInfoLog(prog); throw new Error(log); }
+  const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
+  const vbuf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,vbuf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1, 1,-1, -1,1, 1,1]),gl.STATIC_DRAW);
+  const aPos=gl.getAttribLocation(prog,'aPos');
+  gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,0,0);
+  gl.activeTexture(gl.TEXTURE0);
+  const accTex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,accTex);
+  for(const p of [gl.TEXTURE_MIN_FILTER,gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D,p,gl.NEAREST);
+  for(const p of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D,p,gl.CLAMP_TO_EDGE);
+  // палитра — на отдельный texture unit (1), иначе следующий bindTexture (тот же unit 0)
+  // перекрывает акк-текстуру, и сэмплер uPal читает пустой (нулевой) юнит — сплошной чёрный
+  gl.activeTexture(gl.TEXTURE1);
+  const palTex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,palTex);
+  for(const p of [gl.TEXTURE_MIN_FILTER,gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D,p,gl.LINEAR);
+  for(const p of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D,p,gl.CLAMP_TO_EDGE);
+  const pal=new Uint8Array(256*4);
+  for(let i=0;i<256;i++){ pal[i*4]=HEAT_LUT[i*3]; pal[i*4+1]=HEAT_LUT[i*3+1]; pal[i*4+2]=HEAT_LUT[i*3+2]; pal[i*4+3]=255; }
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,256,1,0,gl.RGBA,gl.UNSIGNED_BYTE,pal);
+  gl.useProgram(prog);
+  gl.uniform1i(gl.getUniformLocation(prog,'uAcc'),0);
+  gl.uniform1i(gl.getUniformLocation(prog,'uPal'),1);
+  return {canvas:oc, gl, prog, vao, accTex,
+    uMax:gl.getUniformLocation(prog,'uMax'), uGain:gl.getUniformLocation(prog,'uGain')};
+}
+// один кадр: залить акк-буфер в текстуру, прогнать шейдер, отдать канву для drawImage
+function persGlRender(glp,W,H,acc,mx,gain){
+  const {gl}=glp;
+  gl.viewport(0,0,W,H);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,glp.accTex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.R32F,W,H,0,gl.RED,gl.FLOAT,acc);
+  gl.useProgram(glp.prog); gl.bindVertexArray(glp.vao);
+  gl.uniform1f(glp.uMax,mx); gl.uniform1f(glp.uGain,gain);
+  gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+  return glp.canvas;
+}
 
 def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'guard',t:'num'},
@@ -2232,6 +2308,69 @@ def({ id:'numview', title:'Number', cat:'Analysis', ins:[{n:'in',t:'num'},{n:'di
   process(n,I){ if(typeof I.digits==='number') setMod(n,'digits',I.digits); n.v=I.in; return {}; },
   draw(n){ n.el.querySelector('.readout').textContent =
     (typeof n.v==='number'? n.v.toFixed(n.p.digits) : '—'); }});
+
+
+def({ id:'trend', title:'Trend Chart', cat:'Analysis', ins:[{n:'in',t:'num'},{n:'span',t:'num'}],
+  view:{h:100}, resize:true, readout:true,
+  params:[{n:'span',t:'range',min:1,max:120,step:1,d:20,log:true,label:'window, s'},
+          {n:'auto',t:'check',d:true,label:'auto range'},
+          {n:'lo',t:'range',min:-1e6,max:1e6,step:.01,d:0,label:'range: min'},
+          {n:'hi',t:'range',min:-1e6,max:1e6,step:.01,d:1,label:'range: max'},
+          {n:'grid',t:'check',d:true}],
+  init:n=>{ n.L=0; n.ring=null; n.w=0; n.last=null; },
+  process(n,I){
+    if(typeof I.span==='number') setMod(n,'span',I.span);
+    // буфер держит MAXSEC секунд при текущей частоте тиков (Eng.sr/BLOCK) — пересчитываем
+    // только при смене sr/BLOCK, как в 'scope'; span лишь выбирает видимый хвост буфера
+    const MAXSEC=600, rate=(Eng.sr||48000)/BLOCK, need=Math.max(64,Math.ceil(rate*MAXSEC));
+    if(need!==n.L){ n.L=need; n.ring=new Float32Array(need); n.w=0; }
+    if(typeof I.in==='number'){ n.ring[n.w]=I.in; n.w=(n.w+1)%n.L; n.last=I.in; }
+    return {}; },
+  draw(n,cv,cx){
+    const W=cv.width,H=cv.height;
+    if(!n.col || ((n.colFrame=(n.colFrame||0)+1)%30===0))
+      n.col=getComputedStyle(document.body).getPropertyValue('--t-num');
+    cx.clearRect(0,0,W,H);
+    if(!n.ring) return;
+    const rate=(Eng.sr||48000)/BLOCK, L=n.L;
+    const span=clamp(Math.round(n.p.span*rate),2,L), start=(n.w-span+L)%L;
+    let lo,hi;
+    if(n.p.auto){
+      lo=Infinity; hi=-Infinity;
+      for(let k=0;k<span;k++){ const v=n.ring[(start+k)%L]; if(v<lo)lo=v; if(v>hi)hi=v; }
+      if(!isFinite(lo)){ lo=0; hi=1; }
+      const pad=(hi-lo)*.08||.5; lo-=pad; hi+=pad;
+    } else { lo=n.p.lo; hi=n.p.hi; if(hi<=lo) hi=lo+1e-6; }
+    const rng=(hi-lo)||1;
+    if(n.p.grid){
+      cx.strokeStyle='#1e2529'; cx.font='8px monospace'; cx.fillStyle='#5a6469';
+      for(let i=0;i<=4;i++){
+        const y=Math.round(i*H/4)+.5, v=hi-(hi-lo)*i/4;
+        cx.beginPath(); cx.moveTo(0,y); cx.lineTo(W,y); cx.stroke();
+        cx.fillText(v.toFixed(2), 2, clamp(y-2,8,H-2)); }
+      const totalS=span/rate;
+      for(let i=0;i<=4;i++){
+        const x=Math.round(i*W/4)+.5;
+        cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke();
+        cx.fillText('-'+(totalS*(1-i/4)).toFixed(totalS<10?1:0)+'s', clamp(x-12,2,W-24), H-2); } }
+    cx.strokeStyle=n.col||'#4ec9b0'; cx.lineWidth=1; cx.beginPath();
+    const spp=span/W;
+    if(spp<=1){
+      for(let k=0;k<=span;k++){
+        const v=n.ring[(start+Math.min(k,span-1))%L];
+        const x=k/spp, y=H-clamp((v-lo)/rng,0,1)*H;
+        k===0? cx.moveTo(x,y) : cx.lineTo(x,y); }
+    } else {
+      for(let x=0;x<W;x++){
+        const i0=(x*spp)|0, i1=Math.max(i0+1,((x+1)*spp)|0);
+        let mn=Infinity,mx=-Infinity;
+        for(let i=i0;i<i1;i++){ const v=n.ring[(start+i)%L]; if(v<mn)mn=v; if(v>mx)mx=v; }
+        const y1=H-clamp((mn-lo)/rng,0,1)*H, y2=H-clamp((mx-lo)/rng,0,1)*H;
+        x===0? cx.moveTo(x,y1) : cx.lineTo(x,y1);
+        cx.lineTo(x,y2); }
+    }
+    cx.stroke();
+    n.el.querySelector('.readout').textContent = typeof n.last==='number'? n.last.toFixed(3) : '—'; }});
 
 
 def({ id:'imgview', title:'Frame', cat:'Analysis', ins:[{n:'img',t:'img'}], view:{h:110}, resize:true,
