@@ -1079,18 +1079,18 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'split',t:'range',min:.15,max:.85,step:.01,d:.4,label:'spectrum split'},
           {n:'log',t:'check',d:false},
           {n:'grid',t:'check',d:true},
-          {n:'snap',t:'check',d:true,label:'snap to band plan step'},
+          {n:'snap',t:'check',d:true,label:'snap to band plan step',adv:true},
           // выключить — тот же жест, что и "очистить": незачем отдельная кнопка (см. fn у 'check' в core-graph.js)
           {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold) n.peak=null; }},
-          {n:'palette',t:'select',opts:['default',...Object.keys(PALETTES)],d:'classic',label:'waterfall palette'},
+          {n:'palette',t:'select',opts:['default',...Object.keys(PALETTES)],d:'classic',label:'waterfall palette',adv:true},
           {n:'active',t:'buttons',opts:['1','2','3','4'],d:'1',label:'marker'},
-          {n:'tol',t:'range',min:5,max:50000,step:5,log:true,d:50,label:'level window, Hz'},
-          {n:'band',t:'select',opts:['none','by inputs','1–2','3–4'],d:'by inputs',label:'band'},
-          {n:'ref',t:'select',opts:['none','show','diff'],d:'none',label:'reference'},
-          {n:'take',t:'button',label:'Capture reference',fn:n=>{
+          {n:'tol',t:'range',min:5,max:50000,step:5,log:true,d:50,label:'level window, Hz',adv:true},
+          {n:'band',t:'select',opts:['none','by inputs','1–2','3–4'],d:'by inputs',label:'band',adv:true},
+          {n:'ref',t:'select',opts:['none','show','diff'],d:'none',label:'reference',adv:true},
+          {n:'take',t:'button',label:'Capture reference',adv:true,fn:n=>{
             if(n.s) n.refMag=Float32Array.from(n.s.mag); }},
-          {n:'clr',t:'button',label:'Clear active marker',fn:n=>{n.mk[+n.p.active-1]=null;}},
-          {n:'clrAll',t:'button',label:'Clear all',fn:n=>{n.mk=[null,null,null,null];}}],
+          {n:'clr',t:'button',label:'Clear active marker',adv:true,fn:n=>{n.mk[+n.p.active-1]=null;}},
+          {n:'clrAll',t:'button',label:'Clear all',adv:true,fn:n=>{n.mk=[null,null,null,null];}}],
   // Номер маркера выбирается кнопками (active), тап по графику ставит/двигает именно его.
   // mkPhase/mkBin/mkRev — состояние фазового уточнения частоты (fr1..fr4): сравниваем фазу
   // пика с предыдущим кадром спектра и по сдвигу фазы меряем частоту точнее ширины бина —

@@ -204,17 +204,21 @@ for(const p of baseFirst(portsOf(n,'outs'))){
 const e=portEl(p,'o'); co.append(e); n.ports.o[p.n]=e; wire(e,p,'o');
 if(paramNames.has(p.n)) e.classList.add('ctrl'); }
 io.append(ci,mid,co); body.append(io); n.mid=mid;
-{ const params=d.params||[]; let i=0;                // подряд идущие кнопки/галочки — в один ряд
-while(i <params.length){
-if(params[i].t==='button'  && params[i+1]  && params[i+1].t==='button'){
-const grp=document.createElement('div'); grp.className='prm wide btnrow';
-while(i <params.length  && params[i].t==='button'){ grp.append(paramBtn(n,params[i])); i++; }
-mid.append(grp);
-} else if(params[i].t==='check'){
-const grp=document.createElement('div'); grp.className='prm  wide checkrow';
-while(i <params.length  && params[i].t==='check'){ grp.append(paramEl(n,params[i])); i++; }
-mid.append(grp);
-} else { mid.append(paramEl(n,params[i])); i++; }
+{ const params=d.params||[];
+// params с adv:true — редко трогаемые настройки (палитра водопада, tol, capture/clear...) —
+// у "богатых" узлов (sa — 16 контролов, drumseq — 21) иначе съедают экран ещё до собственно
+// холста/readout. Прячем их за один сворачиваемый хедер, а не превращаем в отдельный узел —
+// логика/значения не меняются, только то, что показано сразу.
+const main=params.filter(p=>!p.adv), adv=params.filter(p=>p.adv);
+renderParamRows(mid,n,main);
+if(adv.length){
+const tgl=document.createElement('div'); tgl.className='prm wide advToggle';
+tgl.innerHTML=`<span class="advLbl">${n.advOpen?'▾':'▸'} advanced (${adv.length})</span>`;
+const wrap=document.createElement('div'); wrap.className='advWrap'; wrap.hidden=!n.advOpen;
+wrap.dataset.count=adv.length;
+renderParamRows(wrap,n,adv);
+tgl.addEventListener('click',()=>setAdvOpen(n,!n.advOpen));
+mid.append(tgl,wrap);
 } }
 if(d.view){ const  c=document.createElement('canvas'); c.className='view'+(d.pick?' pick':'');
 // без willReadFrequently — этот канвас только пишут (drawImage/putImageData), ни один draw()
@@ -289,6 +293,27 @@ n.folded=!!v;
 n.el.classList.toggle('folded',n.folded);
 const cl=n.el.querySelector('.cl'); if(cl) cl.textContent=n.folded?'▸':'▾';
 markWiresDirty();
+}
+// подряд идущие кнопки/галочки — в один ряд; общая раскладка для основных и adv-параметров
+function renderParamRows(container,n,params){
+let i=0;
+while(i<params.length){
+if(params[i].t==='button' && params[i+1] && params[i+1].t==='button'){
+const grp=document.createElement('div'); grp.className='prm wide btnrow';
+while(i<params.length && params[i].t==='button'){ grp.append(paramBtn(n,params[i])); i++; }
+container.append(grp);
+} else if(params[i].t==='check'){
+const grp=document.createElement('div'); grp.className='prm  wide checkrow';
+while(i<params.length && params[i].t==='check'){ grp.append(paramEl(n,params[i])); i++; }
+container.append(grp);
+} else { container.append(paramEl(n,params[i])); i++; }
+} }
+function setAdvOpen(n,v){
+n.advOpen=!!v;
+const wrap=n.el?.querySelector('.advWrap'); if(!wrap) return;
+wrap.hidden=!n.advOpen;
+const lbl=n.el.querySelector('.advToggle .advLbl');
+if(lbl) lbl.textContent=(n.advOpen?'▾':'▸')+' advanced ('+wrap.dataset.count+')';
 }
 function applySize(n){
 const d=MOD[n.type];
@@ -1241,7 +1266,7 @@ function serialize(){
 flush();                                            // ← синхронизируем граф перед сериализацией
 return {v:1, view:{...view},
 nodes:Graph.nodes.map(n=>{ const o={id:n.id,type:n.type,x:n.x,y:n.y,
-w:n.size.w,h:n.size.h,p:{...n.p},f:n.folded?1:0};
+w:n.size.w,h:n.size.h,p:{...n.p},f:n.folded?1:0,a:n.advOpen?1:0};
 if(n.dash) o.dash=1;                                // закреплён (📌) для дашборда
 return o; }),
 edges:Graph.edges.map(e=>({from:e.from,fp:e.fp,to:e.to,tp:e.tp})),
@@ -1285,6 +1310,7 @@ clearAll();
 let max=1;
 for(const n of o.nodes){ const nn=addNode(n.type,n.x,n.y,n.p,n.id);
 if(nn &&n.f) foldNode(nn,true);
+if(nn &&n.a) setAdvOpen(nn,true);
 if(nn &&n.w){ nn.size.w=n.w; nn.size.h=n.h||nn.size.h; applySize(nn); }
 // n.dash задаётся уже ПОСЛЕ addNode (buildNodeEl успел завести кнопку 📌 без него) — досаживаем
 // класс .on руками, а не через toggleDash (та ещё и разместила бы узел в дереве прямо сейчас)
