@@ -2,7 +2,16 @@
   --bg:#0e1113; --panel:#161a1d; --panel2:#1d2226; --line:#2a3136;
   --txt:#c8d2d6; --dim:#929fa7; --acc:#e0b23c; --acc2:#4ec9b0;
   --t-sig:#4ec9b0; --t-num:#e0b23c; --t-spec:#c586c0; --t-img:#569cd6;
-  --dot:#20272b; --hi:#fff; --scrim:#0009;
+  --t-txt:#d18ad1; --t-blk:#7fd17f; --t-bands:#5fb8d1; --err:#e05c5c;
+  /* --grid/--axis — сетка/подписи осей на canvas.view. Тот canvas всегда на тёмном --screen
+     (см. ниже — --screen НЕ переопределён в светлой теме, экран прибора тёмный в обеих темах),
+     так что и эти двое — не по теме, а константа, как --screen/--screen-fg сами; если сделать
+     их светлыми в светлой теме, сетка станет ярче на том же тёмном фоне, а не тише, как задумано. */
+  --grid:#1e2529; --axis:#6c7a80;
+  /* --scr-panel/--scr-hi — тот же случай: заливка-«подложка»/яркий highlight-акцент поверх
+     canvas.view, тоже всегда на тёмном --screen, тоже не по теме */
+  --scr-panel:#1d2226; --scr-hi:#ffffff;
+  --dot:#20272b; --hi:#ffffff; --scrim:#0009;
   --note-bg:#1c1a14; --note-head:#241f14; --note-line:#3a3320;
   --screen:#0a0d0e; --screen-fg:#4ec9b0; --pin:13px; --pov:8px;
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
@@ -13,7 +22,8 @@
     --bg:#eef0f2; --panel:#ffffff; --panel2:#e6e9ec; --line:#c7ccd1;
     --txt:#1c2226; --dim:#5c6670; --acc:#a8720f; --acc2:#0f9488;
     --t-sig:#0f9488; --t-num:#a8720f; --t-spec:#9333ea; --t-img:#2563eb;
-    --dot:#d7dbde; --hi:#000; --scrim:#0004;
+    --t-txt:#a83fa8; --t-blk:#2f9e4f; --t-bands:#1b7f96; --err:#c23b3b;
+    --dot:#d7dbde; --hi:#000000; --scrim:#0004;
     --note-bg:#fff8e1; --note-head:#fbecc3; --note-line:#e3cf95;
   }
 }

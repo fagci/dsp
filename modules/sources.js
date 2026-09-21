@@ -301,7 +301,7 @@ def({ id:'file', title:'Audio File', cat:'Sources',
       cx.moveTo(x+.5,H/2-h); cx.lineTo(x+.5,H/2+h); }
     cx.stroke();
     const px=Math.round(n.pos/n.data.length*W);
-    cx.strokeStyle='#e0b23c'; cx.lineWidth=2;
+    cx.strokeStyle=themeColor('--acc'); cx.lineWidth=2;
     cx.beginPath(); cx.moveTo(px,0); cx.lineTo(px,H); cx.stroke(); cx.lineWidth=1;
     const sr=n.srcSr||Eng.sr, t=n.pos/sr, tot=n.data.length/sr;
     n.el.querySelector('.readout').textContent =
@@ -2436,12 +2436,12 @@ def({ id:'song', title:'Arrangement (Playlist)', cat:'Music',
       cx.fillStyle=bankColors[s.bank]; cx.fillRect(x0+1,1,w-2,H-2);
       cx.globalAlpha=1;
       if(isQueued){ cx.strokeStyle='rgba(224,178,60,.9)'; cx.lineWidth=2; cx.strokeRect(x0+1,1,w-2,H-2); }
-      cx.fillStyle='#0b0d0e'; cx.font='bold 11px monospace'; cx.textAlign='left';
+      cx.fillStyle=themeColor('--screen'); cx.font='bold 11px monospace'; cx.textAlign='left';
       cx.fillText('ABCD'[s.bank], x0+4, 13);
       cx.fillStyle='rgba(0,0,0,.65)'; cx.font='10px monospace';
       cx.fillText(songBarsLabel(s.bars), x0+4, H-6);
       if(w>CLOSE+4){ cx.fillStyle='rgba(0,0,0,.3)'; cx.fillRect(x0+w-CLOSE,1,CLOSE-1,CLOSE-1);
-        cx.fillStyle='#fff'; cx.textAlign='center'; cx.fillText('×', x0+w-CLOSE/2, CLOSE-4); cx.textAlign='left'; }
+        cx.fillStyle=themeColor('--scr-hi'); cx.textAlign='center'; cx.fillText('×', x0+w-CLOSE/2, CLOSE-4); cx.textAlign='left'; }
       cx.fillStyle='rgba(255,255,255,.25)'; cx.fillRect(x0+w-HANDLE,0,HANDLE-1,H); }
     if(secs.length && n.secIdx<secs.length){                               // плейхед — прогресс по всей аранжировке
       const x=(offs[n.secIdx]+n.barInSec)*px;
@@ -2564,7 +2564,8 @@ function pianoFreeVoice(notes,start,len){                   // первая до
   const free=busy.indexOf(false);
   return free<0?0:free;
 }
-const VOICE_COL=['#8ab4f8','#7fd17f','#e0b23c','#d18ad1'];  // цвет = дорожка = выход freq/freq2/freq3/freq4
+const VOICE_COL_VARS=['--t-img','--t-blk','--acc','--t-txt'];  // цвет = дорожка = выход freq/freq2/freq3/freq4
+const VOICE_COL=k=>themeColor(VOICE_COL_VARS[k]);
 // 4 банка паттернов через '|' — как у drumseq. Старый однобанковый grid (без '|') читается как банк A.
 function pianoDecodeAll(s){
   const parts=(s||'').split('|');
@@ -2723,7 +2724,7 @@ def({ id:'pianoroll', title:'Piano Roll', cat:'Music',
     for(let b=0;b<4;b++){
       cx.fillStyle = b===bi ? 'rgba(138,180,248,.35)' : 'rgba(255,255,255,.05)';
       cx.fillRect(b*bw,0,bw-1,TABH-1);
-      cx.font='9px monospace'; cx.fillStyle = b===bi ? '#c9dcff' : '#6c7a80';
+      cx.font='9px monospace'; cx.fillStyle = b===bi ? themeColor('--t-img') : themeColor('--axis');
       cx.fillText('ABCD'[b],b*bw+bw/2-3,TABH-4); }
     if(auto){ cx.fillStyle='rgba(224,178,60,.8)'; cx.fillRect(0,TABH-2,W,2); }  // банк задаётся song-узлом
     cx.save(); cx.translate(0,TABH);
@@ -2740,8 +2741,8 @@ def({ id:'pianoroll', title:'Piano Roll', cat:'Music',
       if(nt.start>=steps) continue;
       const len=Math.min(nt.len,steps-nt.start);
       const row=n.rows-1-(nt.note-n.pitchLo); if(row<0||row>=n.rows) continue;
-      const col=VOICE_COL[nt.voice|0];
-      cx.fillStyle = sounding.has(nt) ? '#ffffff' : col;
+      const col=VOICE_COL(nt.voice|0);
+      cx.fillStyle = sounding.has(nt) ? themeColor('--scr-hi') : col;
       cx.globalAlpha = sounding.has(nt) ? 1 : (0.35+0.55*(nt.vel/127));
       cx.fillRect(nt.start*cw+1,row*rh+1,len*cw-2,rh-2);
       cx.globalAlpha=1;
@@ -2884,24 +2885,26 @@ function drawFreqDial(el,cv,cx,state,get,set){
   const digStr=String(Math.round(get())).padStart(TUNER_DIGITS,'0'), cw=W/TUNER_DIGITS;
   cx.font='bold '+Math.round(Math.min(34,cw*.78))+'px monospace'; cx.textAlign='center'; cx.textBaseline='middle';
   for(let i=0;i<TUNER_DIGITS;i++){
-    if(i===state.sel){ cx.fillStyle='#e0b23c33'; cx.fillRect(i*cw+1,2,cw-2,TOP-4); }
-    cx.fillStyle= i===state.sel? '#e0b23c' : '#cfd6db';
+    if(i===state.sel){ cx.fillStyle=themeColor('--acc')+'33'; cx.fillRect(i*cw+1,2,cw-2,TOP-4); }
+    // #cfd6db — не по теме нарочно: табло всегда на тёмном --screen (см. --grid/--axis в
+    // styles.css), а --txt для контраста с чёрным экраном в светлой теме уходит в почти чёрный
+    cx.fillStyle= i===state.sel? themeColor('--acc') : '#cfd6db';
     cx.fillText(digStr[i], i*cw+cw/2, TOP/2);
     if((TUNER_DIGITS-1-i)%3===0 && i<TUNER_DIGITS-1){    // разделитель разрядов по 3 (тысячи/миллионы/…)
-      cx.strokeStyle='#333'; cx.beginPath();
+      cx.strokeStyle=themeColor('--grid'); cx.beginPath();
       cx.moveTo(i*cw+cw+.5,4); cx.lineTo(i*cw+cw+.5,TOP-4); cx.stroke(); }
   }
-  cx.textAlign='left'; cx.font='10px monospace'; cx.fillStyle='#8a9298';
+  cx.textAlign='left'; cx.font='10px monospace'; cx.fillStyle=themeColor('--axis');
   cx.fillText(fmtHz(get())+'Hz · digit ×'+fmtHz(Math.pow(10,TUNER_DIGITS-1-state.sel)), 4, H-4);
   // крутилка
   const cx0=W/2, cy0=TOP+(H-TOP)/2, r=Math.min(W,H-TOP)/2-8;
-  cx.strokeStyle='#333'; cx.fillStyle='#1a2024'; cx.lineWidth=2;
+  cx.strokeStyle=themeColor('--grid'); cx.fillStyle=themeColor('--scr-panel'); cx.lineWidth=2;
   cx.beginPath(); cx.arc(cx0,cy0,r,0,2*Math.PI); cx.fill(); cx.stroke();
   cx.save(); cx.translate(cx0,cy0); cx.rotate(state.ang*Math.PI/180);
-  cx.strokeStyle='#e0b23c'; cx.lineWidth=3; cx.beginPath();
+  cx.strokeStyle=themeColor('--acc'); cx.lineWidth=3; cx.beginPath();
   cx.moveTo(0,-r+6); cx.lineTo(0,-r*0.4); cx.stroke();
   cx.restore();
-  cx.fillStyle='#8a9298'; cx.font='9px monospace'; cx.textAlign='center';
+  cx.fillStyle=themeColor('--axis'); cx.font='9px monospace'; cx.textAlign='center';
   cx.fillText('step ×'+fmtHz(stepHz()), cx0, cy0+r+12);
 }
 
@@ -3376,7 +3379,7 @@ function libDrawPeaks(canvas, peaks){
   cx.clearRect(0,0,W,H);
   if(!peaks || !peaks.length) return;
   const n = peaks.length/2;
-  cx.strokeStyle = '#4ec9b0'; cx.lineWidth = 1;
+  cx.strokeStyle = themeColor('--acc2'); cx.lineWidth = 1;
   cx.beginPath();
   for(let i=0;i<n;i++){
     const x = i/n*W;
@@ -3425,7 +3428,7 @@ function libOpenTrim(n, clip){
   const redraw = ()=>{
     const W=canvas.width, H=canvas.height, half=H/2, s=clip.samples;
     cx.clearRect(0,0,W,H);
-    cx.strokeStyle = '#4ec9b0'; cx.lineWidth = 1; cx.beginPath();
+    cx.strokeStyle = themeColor('--acc2'); cx.lineWidth = 1; cx.beginPath();
     const step = Math.max(1, Math.floor(s.length/W));
     for(let x=0;x<W;x++){
       const idx = Math.min(x*step, s.length-1);
@@ -3435,7 +3438,7 @@ function libOpenTrim(n, clip){
     cx.stroke();
     const ax = state.a/s.length*W, bx = state.b/s.length*W;
     cx.fillStyle = 'rgba(224,178,60,.12)'; cx.fillRect(ax,0,bx-ax,H);
-    cx.strokeStyle = '#e0b23c'; cx.lineWidth = 2;
+    cx.strokeStyle = themeColor('--acc'); cx.lineWidth = 2;
     cx.beginPath(); cx.moveTo(ax,0); cx.lineTo(ax,H); cx.stroke();
     cx.beginPath(); cx.moveTo(bx,0); cx.lineTo(bx,H); cx.stroke();
     header.querySelector('.trim-range').textContent =
@@ -4529,7 +4532,7 @@ def({ id:'drumseq', title:'Drum Sequencer (Techno)', cat:'Music',
     for(let b=0;b<4;b++){
       cx.fillStyle = b===bi ? 'rgba(138,180,248,.35)' : 'rgba(255,255,255,.05)';
       cx.fillRect(b*bw,0,bw-1,TABH-1);
-      cx.font='9px monospace'; cx.fillStyle = b===bi ? '#c9dcff' : '#6c7a80';
+      cx.font='9px monospace'; cx.fillStyle = b===bi ? themeColor('--t-img') : themeColor('--axis');
       cx.fillText('ABCD'[b],b*bw+bw/2-3,TABH-4); }
     if(n._bankSelLive){ cx.fillStyle='rgba(224,178,60,.8)'; cx.fillRect(0,TABH-2,W,2); }  // банк задаётся song-узлом
     cx.save(); cx.translate(0,TABH);
@@ -4538,12 +4541,12 @@ def({ id:'drumseq', title:'Drum Sequencer (Techno)', cat:'Music',
     cx.strokeStyle='rgba(255,255,255,.08)'; cx.lineWidth=1;
     for(let c=0;c<=steps;c++){ cx.beginPath(); cx.moveTo(c*cw+.5,0); cx.lineTo(c*cw+.5,gh); cx.stroke(); }
     for(let r=0;r<=n.rows;r++){ cx.beginPath(); cx.moveTo(0,r*rh+.5); cx.lineTo(W,r*rh+.5); cx.stroke(); }
-    cx.fillStyle='#8ab4f8';
+    cx.fillStyle=themeColor('--t-img');
     const g=drumGrid(n);
     for(let r=0;r<n.rows;r++) for(let c=0;c<steps;c++) if(g[r*32+c])
       cx.fillRect(c*cw+1,r*rh+1,cw-2,rh-2);
     if(n.idx>=0){ cx.fillStyle='rgba(224,178,60,.2)'; cx.fillRect(n.idx*cw,0,cw,gh); }
-    cx.font='9px monospace'; cx.fillStyle='#6c7a80';
+    cx.font='9px monospace'; cx.fillStyle=themeColor('--axis');
     for(let r=0;r<n.rows;r++) cx.fillText(DRUM_VOICES[r].label,3,r*rh+rh-3);
     cx.restore();
     n.el.querySelector('.readout').textContent=

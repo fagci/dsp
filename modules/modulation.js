@@ -77,7 +77,7 @@ def({ id:'fsk', title:'FSK Demodulator', cat:'Modulation',
       cx.stroke(); };
     bar(n.hs,0,getComputedStyle(document.body).getPropertyValue('--t-num'));
     bar(n.hm,H/2,getComputedStyle(document.body).getPropertyValue('--t-sig'));
-    cx.fillStyle='#6c7a80'; cx.font='9px monospace';
+    cx.fillStyle=themeColor('--axis'); cx.font='9px monospace';
     cx.fillText('space '+(n.fLo||0).toFixed(0),3,10);
     cx.fillText('mark  '+(n.fHi||0).toFixed(0),3,H/2+10);
     n.el.querySelector('.readout').textContent =
@@ -317,7 +317,7 @@ def({ id:'costas', title:'Carrier Acquisition', cat:'Modulation',
   draw(n,cv,cx){
     const W=cv.width,H=cv.height; cx.clearRect(0,0,W,H);
     const mx=Math.max(20,...n.hist.map(Math.abs));
-    cx.strokeStyle='#1e2529'; cx.beginPath(); cx.moveTo(0,H/2); cx.lineTo(W,H/2); cx.stroke();
+    cx.strokeStyle=themeColor('--grid'); cx.beginPath(); cx.moveTo(0,H/2); cx.lineTo(W,H/2); cx.stroke();
     cx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--t-sig'); cx.beginPath();
     for(let i=0;i<n.hist.length;i++){ const x=i/120*W, y=H/2-n.hist[i]/mx*H/2*.9;
       i?cx.lineTo(x,y):cx.moveTo(x,y); }
@@ -717,10 +717,10 @@ def({ id:'chirpRadar', title:'Chirp Radar 2D', cat:'Radar',
   draw(n,cv,cx){
     const W=cv.width,H=cv.height; cx.clearRect(0,0,W,H);
     const R=n.p.maxRange, toPx=(x,y)=>[W/2+x/R*(W/2-4), H-4-y/R*(H-8)];
-    cx.strokeStyle='#2a3136'; cx.beginPath();
+    cx.strokeStyle=themeColor('--grid'); cx.beginPath();
     cx.arc(W/2,H-4,Math.min(W,H*2)/2-4,Math.PI,2*Math.PI); cx.stroke();
     const [sx,sy]=toPx(0,0);
-    cx.fillStyle='#6c7a80'; cx.fillRect(sx-2,sy-2,4,4);
+    cx.fillStyle=themeColor('--axis'); cx.fillRect(sx-2,sy-2,4,4);
     cx.strokeStyle='rgba(138,180,248,.4)';
     for(let j=0;j<n.trail.length;j++){
       const [px,py]=toPx(n.trail[j][0],n.trail[j][1]);
@@ -728,7 +728,7 @@ def({ id:'chirpRadar', title:'Chirp Radar 2D', cat:'Radar',
     cx.stroke();
     if(n.conf>.3){
       const [tx,ty]=toPx(n.tx,n.ty);
-      cx.fillStyle='#e05c5c'; cx.beginPath(); cx.arc(tx,ty,4,0,7); cx.fill();
+      cx.fillStyle=themeColor('--err'); cx.beginPath(); cx.arc(tx,ty,4,0,7); cx.fill();
     }
     const d=n.dbg;
     n.el.querySelector('.readout').textContent = d ?

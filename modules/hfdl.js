@@ -652,7 +652,7 @@ def({ id:'hfdlM1Match', title:'HFDL: M1 Detector (rate)', cat:'Protocols', reado
   },
   draw(n,cv,cx){
     const W=cv.width,H=cv.height; cx.clearRect(0,0,W,H);
-    cx.strokeStyle='#e05c5c66'; cx.beginPath();
+    cx.strokeStyle=themeColor('--err')+'66'; cx.beginPath();
     const ty=H-Math.min(1,n.p.thr/2)*H; cx.moveTo(0,ty); cx.lineTo(W,ty); cx.stroke();
     cx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--t-sig');
     cx.beginPath();

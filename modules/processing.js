@@ -509,14 +509,14 @@ def({ id:'xyscope', title:'Phase Scope (X-Y)', cat:'Processing', ins:[{n:'x',t:'
     cx.beginPath(); cx.moveTo(0,cym); cx.lineTo(W,cym); cx.moveTo(cxm,0); cx.lineTo(cxm,plotH); cx.stroke();
     const x=n._x, y=n._y;
     if(x&&y){
-      cx.fillStyle='#8ab4f8';
+      cx.fillStyle=themeColor('--t-img');
       for(let i=0;i<x.length;i+=2){                                  // через сэмпл — экономим отрисовку
         const px=cxm+clamp(x[i],-2,2)*s, py=cym-clamp(y[i],-2,2)*s;
         cx.fillRect(px,py,1.4,1.4); } }
-    cx.fillStyle='#0b0d0e'; cx.fillRect(0,plotH,W,MH);
+    cx.fillStyle=themeColor('--screen'); cx.fillRect(0,plotH,W,MH);
     const half=W/2, mx=half+n.corr*half;
     cx.fillStyle='rgba(255,255,255,.08)'; cx.fillRect(0,plotH+2,W,MH-4);
-    cx.fillStyle = n.corr<0 ? '#e05a5a' : '#7fd17f';
+    cx.fillStyle = n.corr<0 ? themeColor('--err') : themeColor('--t-blk');
     cx.fillRect(Math.min(half,mx),plotH+2,Math.abs(mx-half),MH-4);
     cx.strokeStyle='rgba(255,255,255,.3)';
     cx.beginPath(); cx.moveTo(half,plotH+1); cx.lineTo(half,plotH+MH-1); cx.stroke();
@@ -635,7 +635,7 @@ def({ id:'sonar', title:'Monostatic Sonar (chirp)', cat:'Radar', ins:[{n:'in',t:
     const W=cv.width, H=cv.height;
     cx.clearRect(0,0,W,H);
     const N=n.env.length, mx=Math.max(1e-6,...n.env);
-    cx.strokeStyle='#8ab4f8'; cx.lineWidth=1.2; cx.beginPath();
+    cx.strokeStyle=themeColor('--t-img'); cx.lineWidth=1.2; cx.beginPath();
     for(let i=0;i<N;i++){ const x=i/N*W, y=H-2-(n.env[i]/mx)*(H-6);
       i===0?cx.moveTo(x,y):cx.lineTo(x,y); }
     cx.stroke();
@@ -779,7 +779,7 @@ def({ id:'bright', title:'Region Brightness', cat:'Video',
     for(let i=0;i<L;i++){ const x=i/200*W, y=H-hs[i]*H;
       i?cx.lineTo(x,y):cx.moveTo(x,y); }
     cx.stroke();
-    cx.fillStyle='#6c7a80'; cx.font='9px monospace';
+    cx.fillStyle=themeColor('--axis'); cx.font='9px monospace';
     cx.fillText(n.v.toFixed(3)+(n.p.auto?' auto':''),3,10); }});
 
 
@@ -827,7 +827,7 @@ def({ id:'capture', title:'Capture & Loop', cat:'Processing',
   draw(n,cv,cx){
     const W=cv.width,H=cv.height; cx.clearRect(0,0,W,H);
     const S=n.snap;
-    cx.strokeStyle='#1e2529'; cx.beginPath(); cx.moveTo(0,H/2); cx.lineTo(W,H/2); cx.stroke();
+    cx.strokeStyle=themeColor('--grid'); cx.beginPath(); cx.moveTo(0,H/2); cx.lineTo(W,H/2); cx.stroke();
     if(S){                                           // огибающая снимка
       const step=Math.max(1,Math.floor(S.length/W));
       cx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--t-sig');
@@ -838,7 +838,7 @@ def({ id:'capture', title:'Capture & Loop', cat:'Processing',
         cx.moveTo(x+.5,H/2-mx*H/2*.95); cx.lineTo(x+.5,H/2+mx*H/2*.95); }
       cx.stroke();
       if(n.play){ const x=Math.round(n.pos/S.length*W);
-        cx.strokeStyle='#e0b23c'; cx.lineWidth=2;
+        cx.strokeStyle=themeColor('--acc'); cx.lineWidth=2;
         cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke(); cx.lineWidth=1; } }
     n.el.querySelector('.readout').textContent = S
       ? (S.length/Eng.sr).toFixed(2)+' s · '+(n.play?'playing':'stopped')
@@ -884,7 +884,7 @@ const BUILDER_DEMO_SCOPE=`{
     const cx = n.cv.getContext('2d'), W = n.cv.width, H = n.cv.height;
     cx.clearRect(0, 0, W, H);
     const b = n.last; if (!b) return;
-    cx.strokeStyle = '#e0b23c'; cx.lineWidth = 1.5; cx.beginPath();
+    cx.strokeStyle = themeColor('--acc'); cx.lineWidth = 1.5; cx.beginPath();
     for (let x = 0; x < W; x++) {
       const v = b[Math.floor(x / W * b.length)] || 0, y = H/2 - v*H*0.45;
       x ? cx.lineTo(x, y) : cx.moveTo(x, y);
@@ -1260,8 +1260,8 @@ function saBands(n,cx,W,H){                        // закраска поло�
   const b=n.p.band; if(!b||b==='none') return;
   let pair=null, col='#8ab4f8';
   if(b==='by inputs') pair=n.band;
-  else if(b==='1–2'){ pair=[n.mk[0],n.mk[1]]; col=MK_COL[0]; }
-  else if(b==='3–4'){ pair=[n.mk[2],n.mk[3]]; col=MK_COL[2]; }
+  else if(b==='1–2'){ pair=[n.mk[0],n.mk[1]]; col=MK_COL(0); }
+  else if(b==='3–4'){ pair=[n.mk[2],n.mk[3]]; col=MK_COL(2); }
   if(!pair||pair[0]==null||pair[1]==null) return;
   const x1=saPos(n,Math.min(pair[0],pair[1]))*W, x2=saPos(n,Math.max(pair[0],pair[1]))*W;
   cx.globalAlpha=.14; cx.fillStyle=col;
@@ -1415,10 +1415,10 @@ function saMarkers(n,cx,W,H){
     const act=(+n.p.active-1)===k, hovered=hoverK===k;
     // линия начинается НИЖЕ потолка (см. TOP_H) — там теперь подписи закладок (см. saBandPlan), и
     // полоса маркера не должна наезжать на них своим цветом поверх
-    cx.strokeStyle='#000'; cx.lineWidth=act?3:2; cx.globalAlpha=.55;   // тёмная обводка под линией
+    cx.strokeStyle=themeColor('--screen'); cx.lineWidth=act?3:2; cx.globalAlpha=.55;   // тёмная обводка под линией
     cx.beginPath(); cx.moveTo(x+.5,TOP_H); cx.lineTo(x+.5,H); cx.stroke();
     cx.globalAlpha=1;
-    cx.strokeStyle=MK_COL[k]; cx.lineWidth=act?1.5:1;
+    cx.strokeStyle=MK_COL(k); cx.lineWidth=act?1.5:1;
     cx.beginPath(); cx.moveTo(x+.5,TOP_H); cx.lineTo(x+.5,H); cx.stroke();
     cx.font='10px monospace';
     // "1: 433.075 -75" — номер, частота (3 знака — см. коммент у fmtHz, иначе близкие маркеры
@@ -1429,9 +1429,9 @@ function saMarkers(n,cx,W,H){
     // по центру линии маркера; дорожка стека — по НОМЕРУ маркера (k), а не по порядку рисования —
     // иначе позиции соседних подписей "прыгали" бы при каждой смене наведения
     const tx=clamp(Math.round(x-tw/2), 2, W-tw-2), ty=H-14-k*14;
-    cx.globalAlpha=hovered?1:(act?.95:.75); cx.fillStyle=MK_COL[k];
+    cx.globalAlpha=hovered?1:(act?.95:.75); cx.fillStyle=MK_COL(k);
     cx.fillRect(tx-3,ty,tw+6,12);
-    cx.globalAlpha=1; cx.fillStyle=contrastText(MK_COL[k]);
+    cx.globalAlpha=1; cx.fillStyle=contrastText(MK_COL(k));
     cx.fillText(t,tx,ty+9);
     boxes.push({x0:tx-3,y0:ty,x1:tx+tw+3,y1:ty+12,idx:k});
   }
@@ -1485,7 +1485,7 @@ function saSetRange(n,newLo,newHi){
 function saGrid(n,cx,W,hs,H,plotH){                 // сетка частот с подписями
   const lo=saFreq(n,0), hi=saFreq(n,1);
   cx.lineWidth=1; cx.globalAlpha=1;
-  cx.strokeStyle='#20272b'; cx.fillStyle='#6c7a80'; cx.font='9px monospace';
+  cx.strokeStyle=themeColor('--grid'); cx.fillStyle=themeColor('--axis'); cx.font='9px monospace';
   const marks=[];
   if(n.p.log){
     for(let d=1;d<=1e10;d*=10) for(const m of [1,2,5]){ const f=d*m;   // до ~10 ГГц — с запасом под RF

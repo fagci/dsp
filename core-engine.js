@@ -1,7 +1,17 @@
 "use strict";
 let BLOCK = 512;                   // размер блока обработки (меняется на ходу)
 const TYPE_COLOR = {sig:'var(--t-sig)',num:'var(--t-num)',spec:'var(--t-spec)',
-                    img:'var(--t-img)',txt:'#d18ad1',blk:'#7fd17f',val:'#e0b23c',bands:'#5fb8d1'};
+                    img:'var(--t-img)',txt:'var(--t-txt)',blk:'var(--t-blk)',val:'var(--acc)',bands:'var(--t-bands)'};
+// Canvas 2D (в отличие от SVG/CSS) не резолвит var(...) сам — цвет для fillStyle/strokeStyle
+// нужен уже вычисленным. Общий кэш на все модули разом: одна getComputedStyle раз в 0.5с на
+// переменную, а не по разу на каждый canvas-узел на каждый кадр (их десятки, кадров 60/с).
+const ThemeColorCache={vals:{},t:0};
+function themeColor(name){
+  const now=performance.now();
+  if(now-ThemeColorCache.t>500){ ThemeColorCache.vals={}; ThemeColorCache.t=now; }
+  return ThemeColorCache.vals[name] ||
+    (ThemeColorCache.vals[name]=getComputedStyle(document.body).getPropertyValue(name).trim());
+}
 // порядок разделов в палитре — иначе порядок зависит от того, в каком файле модуль зарегистрирован
 const CAT_ORDER = ['Sources','Music','Processing','Modulation','Analysis','Radio','Radar',
                     'Protocols','Decoders','Audio','Video','Output','Control','Builder','Misc'];
