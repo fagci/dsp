@@ -80,10 +80,14 @@ Graph.edges.filter(e=>e.to===to &&e.tp===tp).forEach(delEdge);   // один в�
 const e={id:'e'+(Graph.seq++),from,fp,to,tp};
 const path=document.createElementNS('http://www.w3.org/2000/svg','path');
 path.setAttribute('fill','none'); path.setAttribute('stroke',TYPE_COLOR[ft]);
+// non-scaling-stroke — иначе на зуме (view.k до 2.5×) толщина провода растёт вместе с
+// содержимым канвы, а не остаётся постоянной в экранных пикселях, как остальной UI
+path.setAttribute('vector-effect','non-scaling-stroke');
 path.setAttribute('stroke-width','1.6'); path.style.cursor='pointer';
 path.addEventListener('click',()=>{ delEdge(e); Undo.push(); });
 const hit=document.createElementNS('http://www.w3.org/2000/svg','path');
 hit.setAttribute('fill','none'); hit.setAttribute('stroke','transparent');
+hit.setAttribute('vector-effect','non-scaling-stroke');    // так и хитбокс не "худеет" при отдалении
 hit.setAttribute('stroke-width','10'); hit.style.cursor='pointer';
 hit.addEventListener('click',()=>{ delEdge(e); Undo.push(); });
 hit.addEventListener('pointerenter',()=>{                        // клон поверх узлов, сам провод не трогаем
@@ -656,8 +660,15 @@ if(e.hoverClone) e.hoverClone.setAttribute('d',d);
 }
 }
 function curve(p1,p2){
-const dx=Math.max(40,Math.abs(p2.x-p1.x)*.5);
-return  `M${p1.x+8000},${p1.y+8000} C${p1.x+dx+8000},${p1.y+8000} ${p2.x-dx+8000},${p2.y+8000} ${p2.x+8000},${p2.y+8000}` ;
+const ddx=p2.x-p1.x, dx=Math.max(40,Math.abs(ddx)*.5);
+// "обратная" связь (вход левее выхода) — чисто горизонтальный вылет контрольных точек не
+// разводит кривую, они почти сходятся, и провод петлёй ложится прямо на узлы между портами.
+// back растёт от 0 (обычная связь) до 1 (полностью назад) — на этот вес добавляем ОБЕИМ
+// контрольным точкам одинаковый вертикальный вынос (в ту сторону, куда уже идёт связь по Y) —
+// вместо тесной петли провод обходит узлы дугой сверху/снизу.
+const back=clamp(1-ddx/120,0,1);
+const dy=back*(60+Math.abs(p2.y-p1.y)*.3)*(p2.y>=p1.y?1:-1);
+return  `M${p1.x+8000},${p1.y+8000} C${p1.x+dx+8000},${p1.y+dy+8000} ${p2.x-dx+8000},${p2.y+dy+8000} ${p2.x+8000},${p2.y+8000}` ;
 }
 /* ---- история, выделение, буфер обмена ---- */
 let graphDirty=false;                                // есть ли несохранённые изменения с последней загрузки/сохранения патча
@@ -828,6 +839,7 @@ const el=dir==='o'?n.ports.o[port]:n.ports.i[port]; el.classList.add('lit');
 link={n,port,dir,el,x0:ev.clientX,y0:ev.clientY};
 const t=document.createElementNS('http://www.w3.org/2000/svg','path');
 t.setAttribute('fill','none'); t.setAttribute('stroke','var(--acc)');
+t.setAttribute('vector-effect','non-scaling-stroke');
 t.setAttribute('stroke-dasharray','4 3'); t.setAttribute('stroke-width','1.5');
 wires.append(t); link.tmp=t; }
 let pending=null;
