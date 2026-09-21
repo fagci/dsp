@@ -1282,6 +1282,7 @@ const RTL_REBUF_S = 0.5;
 async function rtlReadLoop(n){
   let errStreak=0;
   n.mspsAcc=0; n.mspsIoMs=0; n.mspsWorkerMs=0; n.mspsWinStart=performance.now(); n.msps=0; n.mspsIo=0;
+  n.mspsSlow=null;   // свежее подключение/новый sourceRate — старая оценка реальной скорости не годится, см. rtlEffRate
 
   // Демодуляция чанка запускается в воркере и НЕ ждётся здесь же — иначе время round-trip'а
   // до воркера (структурное клонирование буфера, планировщик, сама математика фильтра) прямо
@@ -1483,8 +1484,28 @@ function rtlTrackMsps(n, cnt, ioMs, workerMs){
     const totalMs=n.mspsIoMs+n.mspsWorkerMs;
     n.msps=totalMs>0 ? (n.mspsAcc/totalMs/1000) : 0;
     n.mspsIo=n.mspsIoMs>0 ? (n.mspsAcc/n.mspsIoMs/1000) : 0;
+    // Медленная EMA (постоянная времени ~десяток секунд) от mspsIo — реальная устойчивая скорость
+    // продюсера, в отличие от n.sourceRate (то, что мы ЗАПРОСИЛИ у тюнера). У RTL-SDR делитель
+    // тюнера не всегда даёт точно попасть в произвольный sourceRate — реальный поток стабильно на
+    // единицы процентов ниже номинала (см. [rtlsdr] ring trend в консоли: mspsIo стабильно ниже
+    // nominal). Раньше это только логировалось; rtlEffRate() ниже — та же самая честная скорость,
+    // применённая к темпу чтения кольца, иначе кольцо медленно, но неизбежно опустошается за
+    // десятки секунд даже без единого сбоя главного потока. Гейн маленький — единичный провал
+    // ioMs (главный поток стормознул) почти не двигает оценку, а устойчивый снос сходится за
+    // несколько таких окон, быстрее типичного цикла "долив-опустошение" в логах (~15-20с).
+    if(n.mspsIo>0) n.mspsSlow = n.mspsSlow==null ? n.mspsIo : n.mspsSlow+(n.mspsIo-n.mspsSlow)*0.04;
     n.mspsAcc=0; n.mspsIoMs=0; n.mspsWorkerMs=0; n.mspsWinStart=now;
   }
+}
+
+// Реальная устойчивая скорость продюсера (Гц) для темпа чтения колец — n.sourceRate, если ещё нет
+// достаточно данных, иначе mspsSlow (см. rtlTrackMsps), зажатая в разумный диапазон вокруг
+// номинала: вниз до 15% (реальный дефицит хуже — это уже не рассинхрон часов, а честный overflow/
+// backpressure, тут подстройка темпа не поможет и не должна маскировать проблему), вверх — только
+// на 1% (mspsIo физически не может стабильно ПРЕВЫШАТЬ то, что мы просили у тюнера).
+function rtlEffRate(n){
+  const m=n.mspsSlow;
+  return (m>0) ? clamp(m*1e6, n.sourceRate*0.85, n.sourceRate*1.01) : n.sourceRate;
 }
 
 // снэпшот спектра сырого IQ: fftshift, ось частот вокруг центра настройки.
@@ -1627,10 +1648,10 @@ function rtlSafeSr(v){
 function rtlReadIQ(n, oi, oq){
   const ring=n.ring;
   if(!n.connected){ oi.fill(0); oq.fill(0); return; }
-  const step=n.sourceRate/Eng.sr, need=step*BLOCK;
+  const rate=rtlEffRate(n), step=rate/Eng.sr, need=step*BLOCK;
   // rebufTarget — RTL_REBUF_S секунд реального времени, не доля от ring.size (кольцо огромное
   // специально про запас на затыки USB, не как желаемая задержка старта/восстановления).
-  const rebufTarget = Math.max(need, n.sourceRate*RTL_REBUF_S);
+  const rebufTarget = Math.max(need, rate*RTL_REBUF_S);
   // честная (несворачиваемая) проверка — ring.written и n.ringReadCount растут монотонно
   // и никогда не оборачиваются, в отличие от круговых индексов w/readPos.
   let lag=ring.written-n.ringReadCount;
@@ -1664,7 +1685,7 @@ function rtlReadChannelAudio(n, ch, o){
   if(!n.connected || !ch.active || !ch.aring){ o.fill(0); return; }
   // кольцо хранит уже децимированный воркером звук (см. n.decim/rtlDecimFor), не сырые IQ-отсчёты —
   // шаг чтения считаем от реальной частоты содержимого кольца, а не от sourceRate приёмника.
-  const ring=ch.aring, step=(n.sourceRate/(n.decim||1))/Eng.sr, need=step*BLOCK;
+  const rate=rtlEffRate(n), ring=ch.aring, step=(rate/(n.decim||1))/Eng.sr, need=step*BLOCK;
   let lag=ring.written-ch.readCount;
   // Тренд запаса кольца раз в ~3с — независимо от того, был ли провал: чтобы отличить резкий
   // провал (см. дальше) от медленного, монотонного сноса (реальная скорость USB чуть ниже
@@ -1674,8 +1695,8 @@ function rtlReadChannelAudio(n, ch, o){
   const nowLog=performance.now();
   if(!ch.lastLagLogT || nowLog-ch.lastLagLogT>3000){
     ch.lastLagLogT=nowLog;
-    const targetForLog=Math.max(need, (n.sourceRate/(n.decim||1))*RTL_REBUF_S);
-    console.log(`[rtlsdr] ring trend: lag=${lag.toFixed(0)}/${targetForLog.toFixed(0)} (${(100*lag/targetForLog).toFixed(0)}%) mspsIo=${(n.mspsIo||0).toFixed(3)} nominal=${(n.sourceRate/1e6).toFixed(3)} @ ${nowLog.toFixed(0)}ms`);
+    const targetForLog=Math.max(need, (rate/(n.decim||1))*RTL_REBUF_S);
+    console.log(`[rtlsdr] ring trend: lag=${lag.toFixed(0)}/${targetForLog.toFixed(0)} (${(100*lag/targetForLog).toFixed(0)}%) mspsIo=${(n.mspsIo||0).toFixed(3)} eff=${(rate/1e6).toFixed(3)} nominal=${(n.sourceRate/1e6).toFixed(3)} @ ${nowLog.toFixed(0)}ms`);
   }
   if(lag>ring.size*0.9){
     // consumer (Eng.tick) надолго отстал от продюсера — кольцо почти заполнилось, догоняем
@@ -1690,7 +1711,7 @@ function rtlReadChannelAudio(n, ch, o){
   // частое мигание тишина/звук вместо редких, но нормальных провалов. rebufTarget —
   // RTL_REBUF_S секунд реального времени (не "need*8" — то не зависело от sourceRate/decim,
   // поэтому подъём Msps не лечил провалы). rebuffering изначально true — см. rtlResizeChannelRing.
-  const rebufTarget = Math.max(need, (n.sourceRate/(n.decim||1))*RTL_REBUF_S);
+  const rebufTarget = Math.max(need, (rate/(n.decim||1))*RTL_REBUF_S);
   if(ch.rebuffering){
     if(lag<rebufTarget){ o.fill(0); return; }
     ch.rebuffering=false;
