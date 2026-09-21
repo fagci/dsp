@@ -1000,6 +1000,68 @@ function axisT(bin,N,log){ return log ? Math.log(bin+1)/Math.log(N) : bin/(N-1);
 
 const MK_COL=['#e0b23c','#4ec9b0','#e05c5c','#569cd6'];
 
+// GPU-водопад для 'sa': кольцевой буфер в текстуре вместо сдвига всей истории на 1px на канве
+// при каждой новой строке спектра (был O(Wp×hwP) software-composite на каждый новый кадр спектра).
+// Новая строка льётся в текущую позицию кольца (O(Wp) upload через texSubImage2D), а "прокрутка" —
+// сдвиг UV при сэмплинге (TEXTURE_WRAP_T=REPEAT) — существующие строки физически не копируются.
+// Тот же приём, что у 'persist': GPU только красит уже посчитанное на CPU, рендерится в
+// OffscreenCanvas и одним drawImage уходит на обычную 2D-канву узла — трасса/сетка/маркеры/драг
+// в остальной отрисовке sa не тронуты.
+function saWfGlInit(W,H){
+  const oc = typeof OffscreenCanvas!=='undefined' ? new OffscreenCanvas(W,H)
+    : Object.assign(document.createElement('canvas'),{width:W,height:H});
+  const gl = oc.getContext('webgl2',{antialias:false,alpha:false,depth:false,stencil:false});
+  if(!gl) return null;
+  const compile=(type,src)=>{ const sh=gl.createShader(type); gl.shaderSource(sh,src); gl.compileShader(sh);
+    if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS)){ const log=gl.getShaderInfoLog(sh); gl.deleteShader(sh); throw new Error(log); }
+    return sh; };
+  const prog=gl.createProgram();
+  gl.attachShader(prog,compile(gl.VERTEX_SHADER,
+    '#version 300 es\nin vec2 aPos;out vec2 vUv;'+
+    'void main(){vUv=vec2(aPos.x*.5+.5,.5-aPos.y*.5);gl_Position=vec4(aPos,0.,1.);}'));
+  gl.attachShader(prog,compile(gl.FRAGMENT_SHADER,
+    // uHead — нормированная позиция самой свежей строки в кольце; fract(uHead-vUv.y) идёт
+    // от головы (новое, верх) в сторону роста возраста (вниз), с переносом через край кольца
+    '#version 300 es\nprecision highp float;uniform sampler2D uHist;uniform float uHead;'+
+    'in vec2 vUv;out vec4 o;'+
+    'void main(){o=texture(uHist,vec2(vUv.x,fract(uHead-vUv.y)));}'));
+  gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog,gl.LINK_STATUS)){ const log=gl.getProgramInfoLog(prog); throw new Error(log); }
+  const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
+  const vbuf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,vbuf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1, 1,-1, -1,1, 1,1]),gl.STATIC_DRAW);
+  const aPos=gl.getAttribLocation(prog,'aPos');
+  gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,0,0);
+  gl.activeTexture(gl.TEXTURE0);
+  const tex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);      // вся суть трюка — кольцо по вертикали
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,W,H,0,gl.RGBA,gl.UNSIGNED_BYTE,null);  // инициализация чёрным, не мусором
+  gl.useProgram(prog);
+  gl.uniform1i(gl.getUniformLocation(prog,'uHist'),0);
+  return {canvas:oc, gl, prog, vao, tex, w:W, h:H, pos:-1,
+    uHead:gl.getUniformLocation(prog,'uHead')};
+}
+// новая строка — единственное, что льётся в текстуру (O(Wp)); история физически не двигается
+function saWfGlWrite(glp,W,line){
+  glp.pos=(glp.pos+1)%glp.h;
+  const {gl}=glp;
+  gl.bindTexture(gl.TEXTURE_2D,glp.tex);
+  gl.texSubImage2D(gl.TEXTURE_2D,0,0,glp.pos,W,1,gl.RGBA,gl.UNSIGNED_BYTE,line);
+}
+// кадр отрисовки: полноэкранный квад, сэмплирующий кольцевую текстуру со сдвигом на голову кольца
+function saWfGlRender(glp,W,H){
+  const {gl}=glp;
+  gl.viewport(0,0,W,H);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,glp.tex);
+  gl.useProgram(glp.prog); gl.bindVertexArray(glp.vao);
+  gl.uniform1f(glp.uHead,(glp.pos+.5)/glp.h);
+  gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+  return glp.canvas;
+}
+
 def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'m1',t:'num'},{n:'m2',t:'num'},{n:'m3',t:'num'},{n:'m4',t:'num'},
        {n:'bLo',t:'num'},{n:'bHi',t:'num'},{n:'floor',t:'num'},{n:'top',t:'num'},
@@ -1333,19 +1395,23 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     }
     if(n.s){
       const dpr=(cv.pxW&&cv.width)?cv.pxW/cv.width:1, Wp=cv.pxW||W, hwP=Math.max(1,Math.round(hw*dpr));
-      if(!n.off||n.off.width!==Wp||n.off.height!==hwP){
-        n.off=document.createElement('canvas'); n.off.width=Wp; n.off.height=hwP;
-        // без willReadFrequently: эта канва только пишется (drawImage-сдвиг + putImageData новой
-        // строки), getImageData сюда никогда не зовётся — а флаг форсирует программный (CPU)
-        // рендер, из-за чего drawImage(n.off,0,1) (сдвиг ВСЕГО водопада на 1px на каждой новой
-        // строке спектра) на крупных канвах (большой specSize/широкий водопад) становится основным
-        // потребителем главного потока и топит звук rtlsdr не хуже самой отрисовки графа.
-        n.ocx=n.off.getContext('2d');
-        n._line=n.ocx.createImageData(Wp,1);          // строка водопада — переиспользуем, размер завязан на ту же канву
+      if(!n.wfW||n.wfW!==Wp||n.wfH!==hwP){
+        n.wfW=Wp; n.wfH=hwP;
+        // GPU-кольцевой буфер вместо drawImage-сдвига ВСЕЙ истории на 1px на каждой новой строке
+        // спектра — на крупных канвах (большой specSize/широкий водопад) этот сдвиг был основным
+        // потребителем главного потока, топил звук rtlsdr не хуже самой отрисовки графа. Новая
+        // строка льётся в текущую позицию кольца текстуры (O(Wp) upload), "прокрутка" — просто
+        // сдвиг UV при сэмплинге (TEXTURE_WRAP_T=REPEAT, см. saWfGlInit) — история никуда не едет.
+        try{ n.wfGl=(Wp>0&&hwP>0)?saWfGlInit(Wp,hwP):null; }
+        catch(e){ n.wfGl=null; console.warn('sa: WebGL недоступен, откат на CPU-водопад',e); }
+        if(!n.wfGl){                                  // тот же CPU-путь, что и раньше, без изменений
+          n.off=document.createElement('canvas'); n.off.width=Wp; n.off.height=hwP;
+          n.ocx=n.off.getContext('2d');
+        } else n.off=n.ocx=null;
+        n._line=new Uint8ClampedArray(Wp*4);          // строка водопада — общий буфер для GPU- и CPU-пути
         n._lastRev=undefined; n._lastSpecRef=null;    // канва пересоздана — продавить свежую строку ниже
       }
       const m=n.s.mag,N=m.length;
-      const ox=n.ocx;
 
       // индекс бина на столбец пикселя раньше считался заново для водопада, эталона и кривой спектра —
       // до 3 бинарных поисков (specBin) на столбец за кадр. Пересчитываем только при смене параметров оси.
@@ -1398,13 +1464,13 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         // старая история водопада хранит только готовые RGBA-пиксели, её перекрашивать задним
         // числом не из чего (см. n.off ниже).
         const pal=paletteLut(n.p.palette);
-        ox.drawImage(n.off,0,1);                     // сдвигаем водопад на строку только на новых данных
-        const line=n._line, d=line.data;
+        const line=n._line;
         for(let x=0;x<Wp;x++){
           const v=clamp((20*Math.log10(magReduce(m,edgeXwf[x],edgeXwf[x+1])+1e-12)-n.p.floor)/((n.p.top-n.p.floor)||1),0,1);
           const hk=heatIdx(v)*3, k=x*4;
-          d[k]=pal[hk]; d[k+1]=pal[hk+1]; d[k+2]=pal[hk+2]; d[k+3]=255; }
-        ox.putImageData(line,0,0);
+          line[k]=pal[hk]; line[k+1]=pal[hk+1]; line[k+2]=pal[hk+2]; line[k+3]=255; }
+        if(n.wfGl) saWfGlWrite(n.wfGl,Wp,line);
+        else { n.ocx.drawImage(n.off,0,1); n.ocx.putImageData(new ImageData(line,Wp,1),0,0); }
         n._lastRev=n.s.rev; n._lastSpecRef=n.s; n._wfInited=true;
       }
       if(n.p.grid) saGrid(n,cx,W,hs,H,plotH);
@@ -1448,7 +1514,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           x?cx.lineTo(x,y):cx.moveTo(x,y); }
         cx.stroke();
       }
-      cx.drawImage(n.off,0,hs,W,hw);       // без dw/dh источник (физ. пиксели) масштабируется на dpr лишний раз
+      const wfSrc = n.wfGl ? saWfGlRender(n.wfGl,Wp,hwP) : n.off;
+      cx.drawImage(wfSrc,0,hs,W,hw);       // без dw/dh источник (физ. пиксели) масштабируется на dpr лишний раз
     } else if(n.p.grid) saGrid(n,cx,W,hs,H,plotH);
     cx.strokeStyle='#2a3136'; cx.beginPath(); cx.moveTo(0,hs+.5); cx.lineTo(W,hs+.5); cx.stroke();
     saBands(n,cx,W,H);
