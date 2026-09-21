@@ -1511,11 +1511,16 @@ function rtlTrackMsps(n, cnt, ioMs, workerMs){
   }
 }
 
-// Реальная устойчивая скорость продюсера (Гц) для темпа чтения колец — n.sourceRate, если ещё нет
-// достаточно данных, иначе mspsSlow (см. rtlTrackMsps), зажатая в разумный диапазон вокруг
-// номинала: вниз до 15% (реальный дефицит хуже — это уже не рассинхрон часов, а честный overflow/
-// backpressure, тут подстройка темпа не поможет и не должна маскировать проблему), вверх — только
-// на 1% (mspsIo физически не может стабильно ПРЕВЫШАТЬ то, что мы просили у тюнера).
+// ТОЛЬКО для диагностики (лог [rtlsdr] ring trend, поле eff) — НЕ используется для темпа чтения
+// колец. Раньше использовалась (см. git-историю), чтобы подстраивать playback под реально
+// достижимую скорость USB, если она устойчиво ниже n.sourceRate, и это действительно убирало
+// периодические audio ring starve. Но это означает МЕДЛЕННОЕ, но непрерывное растягивание/сжатие
+// времени продецимированного потока во столько же раз — на слух это лёгкий, но постоянный уход
+// высоты/скорости звука, а для декодера цифровых протоколов (DMR и т.п.) — постоянное искажение
+// тайминга символов, а не редкая, локализованная потеря данных. Для этого проекта точность важнее
+// частоты обрывов (декодирование DMR), поэтому шаг чтения кольца всегда считается от НОМИНАЛЬНОГО
+// n.sourceRate (см. rtlReadIQ/rtlReadChannelAudio) — обрыв звука при реальной нехватке скорости
+// USB это честная точечная потеря, а не растянутая по всему потоку порча тайминга.
 function rtlEffRate(n){
   const m=n.mspsSlow;
   return (m>0) ? clamp(m*1e6, n.sourceRate*0.85, n.sourceRate*1.01) : n.sourceRate;
@@ -1661,7 +1666,9 @@ function rtlSafeSr(v){
 function rtlReadIQ(n, oi, oq){
   const ring=n.ring;
   if(!n.connected){ oi.fill(0); oq.fill(0); return; }
-  const rate=rtlEffRate(n), step=rate/Eng.sr, need=step*BLOCK;
+  // Темп — от НОМИНАЛЬНОГО n.sourceRate, не от rtlEffRate (см. её комментарий): точность важнее
+  // редкости обрывов при декодировании цифровых протоколов поверх этого потока.
+  const rate=n.sourceRate, step=rate/Eng.sr, need=step*BLOCK;
   // rebufTarget — RTL_REBUF_S секунд реального времени, не доля от ring.size (кольцо огромное
   // специально про запас на затыки USB, не как желаемая задержка старта/восстановления).
   const rebufTarget = Math.max(need, rate*RTL_REBUF_S);
@@ -1698,7 +1705,8 @@ function rtlReadChannelAudio(n, ch, o){
   if(!n.connected || !ch.active || !ch.aring){ o.fill(0); return; }
   // кольцо хранит уже децимированный воркером звук (см. n.decim/rtlDecimFor), не сырые IQ-отсчёты —
   // шаг чтения считаем от реальной частоты содержимого кольца, а не от sourceRate приёмника.
-  const rate=rtlEffRate(n), ring=ch.aring, step=(rate/(n.decim||1))/Eng.sr, need=step*BLOCK;
+  // Номинальный n.sourceRate, не rtlEffRate — см. её комментарий: тайминг важнее редкости обрывов.
+  const rate=n.sourceRate, ring=ch.aring, step=(rate/(n.decim||1))/Eng.sr, need=step*BLOCK;
   let lag=ring.written-ch.readCount;
   // Тренд запаса кольца раз в ~3с — независимо от того, был ли провал: чтобы отличить резкий
   // провал (см. дальше) от медленного, монотонного сноса (реальная скорость USB чуть ниже
@@ -1709,7 +1717,9 @@ function rtlReadChannelAudio(n, ch, o){
   if(!ch.lastLagLogT || nowLog-ch.lastLagLogT>3000){
     ch.lastLagLogT=nowLog;
     const targetForLog=Math.max(need, (rate/(n.decim||1))*RTL_REBUF_S);
-    console.log(`[rtlsdr] ring trend: lag=${lag.toFixed(0)}/${targetForLog.toFixed(0)} (${(100*lag/targetForLog).toFixed(0)}%) mspsIo=${(n.mspsIo||0).toFixed(3)} eff=${(rate/1e6).toFixed(3)} nominal=${(n.sourceRate/1e6).toFixed(3)} @ ${nowLog.toFixed(0)}ms`);
+    // eff — чисто диагностика (см. rtlEffRate): чем сильнее он отличается от nominal, тем больше
+    // реального дефицита скорости USB ждать в виде обрывов — playback от него больше не зависит.
+    console.log(`[rtlsdr] ring trend: lag=${lag.toFixed(0)}/${targetForLog.toFixed(0)} (${(100*lag/targetForLog).toFixed(0)}%) mspsIo=${(n.mspsIo||0).toFixed(3)} eff=${(rtlEffRate(n)/1e6).toFixed(3)} nominal=${(n.sourceRate/1e6).toFixed(3)} @ ${nowLog.toFixed(0)}ms`);
   }
   if(lag>ring.size*0.9){
     // consumer (Eng.tick) надолго отстал от продюсера — кольцо почти заполнилось, догоняем
