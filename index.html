@@ -100,5 +100,10 @@
 <script src="modules/hfdl.js?v=7"></script>
 <script src="presets.js?v=7"></script>
 <script src="core-graph.js?v=7"></script>
+<script>
+// офлайн-шелл — без него установленный PWA (иконка на главном экране) без сети показывает
+// нативный экран «нет подключения» вместо приложения, хотя весь DSP считается локально
+if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+</script>
 </body></html>
 
