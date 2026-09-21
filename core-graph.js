@@ -213,7 +213,11 @@ mid.append(grp);
 } else { mid.append(paramEl(n,params[i])); i++; }
 } }
 if(d.view){ const  c=document.createElement('canvas'); c.className='view'+(d.pick?' pick':'');
-mid.append(c); n.cv=c; n.cx=c.getContext('2d',{willReadFrequently:true});
+// без willReadFrequently — этот канвас только пишут (drawImage/putImageData), ни один draw()
+// не читает его обратно через getImageData (это отдельный n.capCx у видео-узлов, см. sources.js).
+// Флаг форсирует программный (CPU) рендер канвы вместо GPU-композитинга — на крупных канвах
+// (водопад/спектр) это заметно медленнее и не даёт main thread'у обслуживать USB/демод rtlsdr.
+mid.append(c); n.cv=c; n.cx=c.getContext('2d');
 hiDPICanvas(c,n.cx,n);
 if(d.pick){
 let tap=null;
