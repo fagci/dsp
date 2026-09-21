@@ -1298,7 +1298,11 @@ function saBandPlan(n,cx,W,H,plotH){
   // ---- полосы: дорожки СНИЗУ ВВЕРХ от границы зоны оси частот (plotH) — единой лентой прямо над
   // подписями оси, не наползая на них ----
   if(ranges.length){
-    ranges.sort((x,y)=>x.lo-y.lo);
+    // сортируем по убыванию ширины (широкие — в первую очередь), затем по lo — жадное
+    // распределение по дорожкам тогда само отдаёт широким полосам нижние дорожки, а более
+    // узким (специфичным), перекрывающим их по частоте, — верхние: они оказываются НАД
+    // широкими, а не под ними/вперемешку.
+    ranges.sort((x,y)=>(y.hi-y.lo)-(x.hi-x.lo) || x.lo-y.lo);
     const laneEnd=[];                                   // laneEnd[i] — правая граница последней полосы в дорожке i
     const LANE_H=17, MAX_LANES=4;
     for(const r of ranges){
@@ -1312,7 +1316,7 @@ function saBandPlan(n,cx,W,H,plotH){
       if(x2<0||x1>W) continue;                            // целиком вне канвы — сам прямоугольник не рисуем
       const w=Math.max(1,x2-x1), y=plotH-(r._lane+1)*LANE_H, col=r.color||'#5fb8d1';
       cx.globalAlpha=.28; cx.fillStyle=col; cx.fillRect(x1,y,w,LANE_H-1);
-      cx.globalAlpha=.8; cx.strokeStyle=col; cx.lineWidth=1; cx.strokeRect(x1+.5,y+.5,w-1,LANE_H-2);
+      cx.globalAlpha=1;
       const label=r.label||(fmtHz(r.lo)+'-'+fmtHz(r.hi));
       const tw=cx.measureText(label).width;
       // подпись — по центру ВИДИМОЙ (обрезанной канвой) части полосы, а не всей полосы целиком:
@@ -1323,10 +1327,9 @@ function saBandPlan(n,cx,W,H,plotH){
       // частью, лишней нагрузки (пересчёт всего раз в кадр на полосу, тех же операций что и раньше)
       // это не добавляет.
       const vx1=Math.max(x1,0), vx2=Math.min(x2,W), vw=vx2-vx1;
-      if(tw+4<=vw){                                       // тёмная подложка под текстом — читается на любом цвете полосы
+      if(tw+4<=vw){
         const tx=clamp(Math.round((vx1+vx2)/2-tw/2), x1+2, x2-tw-2), ty=y+LANE_H/2;
-        cx.globalAlpha=1; cx.fillStyle='#0e1113cc'; cx.fillRect(tx-2,y+3,tw+4,LANE_H-6);
-        cx.fillStyle='#fff'; cx.fillText(label,tx,ty);
+        cx.fillStyle=contrastText(col); cx.fillText(label,tx,ty);           // контраст к цвету полосы — как у закладок
       }
     }
     cx.globalAlpha=1; cx.textBaseline='alphabetic';        // вернуть дефолт — ниже (точки) рассчитывают на него
