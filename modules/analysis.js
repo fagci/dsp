@@ -1077,7 +1077,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)'},
           {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[0,4000],label:'range, Hz'},
           {n:'dbrange',t:'range2',keys:['floor','top'],min:-140,max:20,step:1,d:[-100,-20],label:'range, dB'},
-          {n:'split',t:'range',min:.15,max:.85,step:.01,d:.4,label:'spectrum split'},
+          // слайдера больше нет — граница спектр/водопад тащится прямо на графике (см. resize в drag ниже)
+          {n:'split',t:'range',min:.15,max:.85,step:.01,d:.4,label:'spectrum split',hidden:true},
           {n:'log',t:'check',d:false},
           {n:'grid',t:'check',d:true},
           {n:'snap',t:'check',d:true,label:'snap to band plan step',adv:true},
@@ -1339,7 +1340,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         if(drag.resize){
           ev.preventDefault();
           const dy=ev.clientY-drag.y0;
-          n.set.split?.(clamp(drag.split0+dy/drag.h,.15,.85));
+          setMod(n,'split',clamp(drag.split0+dy/drag.h,.15,.85));
           return;
         }
         if(!n.s) return;

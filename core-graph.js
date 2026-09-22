@@ -205,11 +205,15 @@ const e=portEl(p,'o'); co.append(e); n.ports.o[p.n]=e; wire(e,p,'o');
 if(paramNames.has(p.n)) e.classList.add('ctrl'); }
 io.append(ci,mid,co); body.append(io); n.mid=mid;
 { const params=d.params||[];
-// params с adv:true — редко трогаемые настройки (палитра водопада, tol, capture/clear...) —
-// у "богатых" узлов (sa — 16 контролов, drumseq — 21) иначе съедают экран ещё до собственно
-// холста/readout. Прячем их за один сворачиваемый хедер, а не превращаем в отдельный узел —
-// логика/значения не меняются, только то, что показано сразу.
-const main=params.filter(p=>!p.adv), adv=params.filter(p=>p.adv);
+// params с hidden:true вообще не рисуются рядом — значение/дефолт/провод (mergeableParamNames
+// её всё равно видит) остаются рабочими, просто узел сам управляет им иначе (см. 'split' у sa —
+// это теперь перетаскивание границы спектр/водопад прямо на графике, отдельный слайдер лишний).
+// adv:true — редко трогаемые настройки (палитра водопада, tol, capture/clear...) — у "богатых"
+// узлов (sa — 16 контролов, drumseq — 21) иначе съедают экран ещё до собственно холста/readout.
+// Прячем их за один сворачиваемый хедер, а не превращаем в отдельный узел — логика/значения не
+// меняются, только то, что показано сразу.
+const shown=params.filter(p=>!p.hidden);
+const main=shown.filter(p=>!p.adv), adv=shown.filter(p=>p.adv);
 renderParamRows(mid,n,main);
 if(adv.length){
 const tgl=document.createElement('div'); tgl.className='prm wide advToggle';
