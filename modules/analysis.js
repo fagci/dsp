@@ -1084,19 +1084,19 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           // выключить — тот же жест, что и "очистить": незачем отдельная кнопка (см. fn у 'check' в core-graph.js)
           {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold) n.peak=null; }},
           {n:'palette',t:'select',opts:['default',...Object.keys(PALETTES)],d:'classic',label:'waterfall palette',adv:true},
-          {n:'active',t:'buttons',opts:['1','2','3','4'],d:'1',label:'marker'},
           {n:'tol',t:'range',min:5,max:50000,step:5,log:true,d:50,label:'level window, Hz',adv:true},
           {n:'band',t:'select',opts:['none','by inputs','1–2','3–4'],d:'by inputs',label:'band',adv:true},
           {n:'ref',t:'select',opts:['none','show','diff'],d:'none',label:'reference',adv:true},
           {n:'take',t:'button',label:'Capture reference',adv:true,fn:n=>{
-            if(n.s) n.refMag=Float32Array.from(n.s.mag); }},
-          {n:'clr',t:'button',label:'Clear active marker',adv:true,fn:n=>{n.mk[+n.p.active-1]=null;}},
-          {n:'clrAll',t:'button',label:'Clear all',adv:true,fn:n=>{n.mk=[null,null,null,null];}}],
-  // Номер маркера выбирается кнопками (active), тап по графику ставит/двигает именно его.
+            if(n.s) n.refMag=Float32Array.from(n.s.mag); }}],
+  // Активный маркер/очистка — больше не отдельные параметры (были 'active'/'clr'/'clrAll'):
+  // теперь это вкладки 1-4 прямо на графике (см. saMarkerTabs в processing.js) — n.active
+  // (обычное поле узла, не n.p.*, специально: это чисто UI-фокус "куда упадёт следующий тап",
+  // сохранять между перезагрузками не нужно). Тап по графику ставит/двигает выбранный маркер.
   // mkPhase/mkBin/mkRev — состояние фазового уточнения частоты (fr1..fr4): сравниваем фазу
   // пика с предыдущим кадром спектра и по сдвигу фазы меряем частоту точнее ширины бина —
   // работает, только если источник спектра отдаёт sp.phase/sp.hop ('fft'/'zfft' это делают).
-  init:n=>{n.mk=[null,null,null,null];n.lv=[0,0,0,0];n.db=[-120,-120,-120,-120];
+  init:n=>{n.mk=[null,null,null,null];n.lv=[0,0,0,0];n.db=[-120,-120,-120,-120];n.active=1;
            n.ext=[0,0,0,0];n.pickT=null;n.peak=null;n.peakFreqs=null;n._dragPending=false;n._dragActive=false;
            n.mkPhase=[0,0,0,0];n.mkBin=[null,null,null,null];n.mkRev=[-1,-1,-1,-1];},
   process(n,I){
@@ -1244,6 +1244,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   draw(n,cv,cx){
     const W=cv.width,H=cv.height;
     const hs=Math.round(H*n.p.split), hw=H-hs;
+    n._hs=hs;                                          // для перетаскивания границы — см. pointerdown ниже
     // AXIS_H — зона под подписи оси частот снизу зоны спектра: сама трасса (амплитуда/фаза/PSD/
     // peak hold/reference) рисуется в пределах plotH, а не hs, и туда не заходит — раньше подписи
     // оси и низ трассы визуально сливались. Границу hs/hw (водопад) и полную высоту H (вертикальные
@@ -1318,15 +1319,30 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       // как "не может прокрутиться, дрыгается". У ВСЕХ остальных подобных перетаскиваний в проекте
       // (слайдеры, Тюнер, другие канвы в sources.js) это уже стоит — только у этой, самой первой
       // версии драга спектра, не было.
+      // Тот же pointerdown ещё и перетаскивает границу спектр/водопад (n.p.split), если начался
+      // рядом с линией — см. n._hs (пишет draw() каждый кадр). Общий drag-объект с обычной
+      // панорамой: pointermove просто проверяет drag.resize и ведёт себя как одно или другое —
+      // два независимых состояния драга на одном канвасе только путали бы друг друга.
       let drag=null;
       cv.addEventListener('pointerdown', ev=>{
-        if(!n.s) return;
         const rc=cv.getBoundingClientRect();
-        drag={x0:ev.clientX, w:rc.width, lo0:saFreq(n,0), hi0:saFreq(n,1), pid:ev.pointerId};
+        const y=(ev.clientY-rc.top)/rc.height*cv.height;
+        const resize=Math.abs(y-(n._hs||0))<=6;
+        if(!resize && !n.s) return;
+        drag={x0:ev.clientX, y0:ev.clientY, w:rc.width, h:rc.height,
+              lo0:n.s?saFreq(n,0):0, hi0:n.s?saFreq(n,1):0,
+              pid:ev.pointerId, resize, split0:n.p.split};
         cv.setPointerCapture(ev.pointerId);
       });
       cv.addEventListener('pointermove', ev=>{
-        if(!drag || !n.s || ev.pointerId!==drag.pid) return;
+        if(!drag || ev.pointerId!==drag.pid) return;
+        if(drag.resize){
+          ev.preventDefault();
+          const dy=ev.clientY-drag.y0;
+          n.set.split?.(clamp(drag.split0+dy/drag.h,.15,.85));
+          return;
+        }
+        if(!n.s) return;
         const dx=ev.clientX-drag.x0;
         if(Math.abs(dx)<=6) return;                  // тот же порог, что у тапа — см. комментарий выше
         ev.preventDefault();
@@ -1365,32 +1381,53 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         return null;
       };
       const bmHit=ev=>hitIn(n._bmBoxes,ev), mkHit=ev=>hitIn(n._mkBoxes,ev);
+      // вкладки маркеров (см. saMarkerTabs) — сначала весь их прямоугольник, потом только
+      // маленький "×"-бейдж внутри него (если есть); tabHit возвращает, какой из двух задет
+      const tabHit=ev=>{
+        const boxes=n._tabBoxes; if(!boxes||!boxes.length) return null;
+        const rc=cv.getBoundingClientRect();
+        const x=(ev.clientX-rc.left)/rc.width*cv.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
+        for(const b of boxes){
+          if(b.cl && x>=b.cl.x0&&x<=b.cl.x1&&y>=b.cl.y0&&y<=b.cl.y1) return {idx:b.idx,clear:true};
+          if(x>=b.x0&&x<=b.x1&&y>=b.y0&&y<=b.y1) return {idx:b.idx,clear:false};
+        }
+        return null;
+      };
+      const nearBoundary=ev=>{
+        const rc=cv.getBoundingClientRect();
+        const y=(ev.clientY-rc.top)/rc.height*cv.height;
+        return Math.abs(y-(n._hs||0))<=6;
+      };
       let spTap=null;
       cv.addEventListener('pointerdown', ev=>{ spTap={x:ev.clientX,y:ev.clientY}; });
       cv.addEventListener('pointerup', ev=>{
         const d=spTap; spTap=null;
         if(!d || Math.hypot(ev.clientX-d.x,ev.clientY-d.y)>6) return;  // перетаскивание, не клик
+        const tab=tabHit(ev);
+        if(tab){ n.pickT=null; if(tab.clear) n.mk[tab.idx]=null; else n.active=tab.idx+1; return; }
+        if(nearBoundary(ev)){ n.pickT=null; return; }   // клик (без протаскивания) по границе split — не маркер
         const bm=bmHit(ev);
-        if(bm){ const k=+n.p.active-1; if(!n.ext[k]){ n.mk[k]=bm.freq; n.pickT=null; } return; }
-        // Маркеры — как закладки: клик по НЕактивному просто выбирает его (см. 'active' кнопки),
+        if(bm){ const k=n.active-1; if(!n.ext[k]){ n.mk[k]=bm.freq; n.pickT=null; } return; }
+        // Маркеры — как закладки: клик по НЕактивному просто выбирает его (см. вкладки выше),
         // клик по УЖЕ активному — второй клик — предлагает ввести точную частоту вручную (Гц),
         // не пиксель-в-пиксель тапом по спектру. n.pickT чистим В ЛЮБОМ случае — иначе тот же тап
         // уже поставил его generic pick-механизмом (core-graph.js), и следующий saTake() тут же
         // затрёт то, что мы только что аккуратно выставили (или активный маркер вообще другой).
         const mk=mkHit(ev); if(!mk) return;
         n.pickT=null;
-        if(+n.p.active-1===mk.idx){
+        if(n.active-1===mk.idx){
           if(n.ext[mk.idx]) return;
           const cur=n.mk[mk.idx];
           const nv=prompt('Marker '+(mk.idx+1)+' frequency, Hz:', cur!=null?String(Math.round(cur)):'');
           if(nv==null) return;
           const f=parseFloat(nv);
           if(!isNaN(f)) n.mk[mk.idx]=f;
-        } else n.set.active?.(String(mk.idx+1));
+        } else n.active=mk.idx+1;
       });
       cv.addEventListener('pointermove', ev=>{
         n._bmHoverFreq = bmHit(ev)?.freq ?? null;
         n._mkHoverIdx = n._bmHoverFreq==null ? (mkHit(ev)?.idx ?? null) : null;
+        if(!drag) cv.style.cursor = nearBoundary(ev) ? 'ns-resize' : '';
       });
       cv.addEventListener('pointerleave', ()=>{ n._bmHoverFreq=null; n._mkHoverIdx=null; });
     }
@@ -1521,7 +1558,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     cx.strokeStyle=themeColor('--grid'); cx.beginPath(); cx.moveTo(0,hs+.5); cx.lineTo(W,hs+.5); cx.stroke();
     saBands(n,cx,W,H);
     saBandPlan(n,cx,W,hs,plotH);                      // полосы/закладки — зона спектра, водопад не трогаем
-    saMarkers(n,cx,W,hs); }});
+    saMarkers(n,cx,W,hs);
+    saMarkerTabs(n,cx,W); }});
 
 
 // "100.7M" / "88500k" / "433920000" / "433920000Hz" → Гц. Пусто/не число → NaN (вызывающий фильтрует).

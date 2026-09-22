@@ -1386,7 +1386,7 @@ function saSnapFreq(n,f){
 }
 function saTake(n){                                  // применить накопленный тап — в выбранный маркер
   if(n.pickT==null) return;
-  const k=+n.p.active-1;
+  const k=n.active-1;
   if(!n.ext[k]) n.mk[k]=saSnapFreq(n, saFreq(n,n.pickT));
   n.pickT=null;
 }
@@ -1412,7 +1412,7 @@ function saMarkers(n,cx,W,H){
   for(const k of order){
     const f=n.mk[k];
     const x=Math.round(saPos(n,f)*W); if(x<-2||x>W+2) continue;
-    const act=(+n.p.active-1)===k, hovered=hoverK===k;
+    const act=(n.active-1)===k, hovered=hoverK===k;
     // линия начинается НИЖЕ потолка (см. TOP_H) — там теперь подписи закладок (см. saBandPlan), и
     // полоса маркера не должна наезжать на них своим цветом поверх
     cx.strokeStyle=themeColor('--screen'); cx.lineWidth=act?3:2; cx.globalAlpha=.55;   // тёмная обводка под линией
@@ -1436,6 +1436,34 @@ function saMarkers(n,cx,W,H){
     boxes.push({x0:tx-3,y0:ty,x1:tx+tw+3,y1:ty+12,idx:k});
   }
   cx.lineWidth=1;
+}
+// Вкладки-переключатели активного маркера (1-4) в правом верхнем углу графика — замена
+// прежнего отдельного ряда кнопок 'active' в панели узла: активная вкладка ярче, у занятых
+// маркеров — кружок "×" в углу для точечной очистки. n._tabBoxes читает pointerup в draw()
+// (analysis.js): сначала пробует b.cl (крестик), потом сам прямоугольник (выбор активного).
+function saMarkerTabs(n,cx,W){
+  const TW=20, TH=15, GAP=3, right=W-4;
+  const boxes=n._tabBoxes=(n._tabBoxes||[]); boxes.length=0;
+  cx.font='10px monospace'; cx.textAlign='center'; cx.textBaseline='middle';
+  for(let k=0;k<4;k++){
+    const x1=right-k*(TW+GAP), x0=x1-TW, y0=2, y1=2+TH;
+    const act=(n.active-1)===k, has=n.mk[k]!=null;
+    cx.globalAlpha=act?1:.45; cx.fillStyle=MK_COL(k);
+    cx.fillRect(x0,y0,TW,TH);
+    cx.globalAlpha=1; cx.fillStyle=contrastText(MK_COL(k));
+    cx.fillText(String(k+1),x0+TW/2,y0+TH/2+1);
+    let cl=null;
+    if(has){                                          // маленький бейдж "×" — своя, отдельная зона клика
+      const cs=8, cx0=x1-cs+2, cy0=y0-3;
+      cx.fillStyle=themeColor('--err'); cx.beginPath(); cx.arc(cx0+cs/2,cy0+cs/2,cs/2,0,7); cx.fill();
+      cx.fillStyle=themeColor('--scr-hi'); cx.font='8px monospace';
+      cx.fillText('×',cx0+cs/2,cy0+cs/2+1);
+      cx.font='10px monospace';
+      cl={x0:cx0-2,y0:cy0-2,x1:cx0+cs+2,y1:cy0+cs+2};
+    }
+    boxes.push({x0,y0,x1,y1,idx:k,cl});
+  }
+  cx.textAlign='left'; cx.textBaseline='alphabetic'; cx.globalAlpha=1;
 }
 
 function saBounds(n){                              // границы отображаемой оси — либо ручные fmin/fmax
