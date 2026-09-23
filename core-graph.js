@@ -1048,10 +1048,33 @@ function dashRenderRoot(){
   dashGridEl.innerHTML='';
   if(!Graph.dashTree){
     const hint=document.createElement('div'); hint.className='dash-empty';
-    hint.textContent="No pinned modules — click 📌 in a node's header to pin it";
+    hint.textContent="No panes";
     dashGridEl.append(hint); return;
   }
   dashGridEl.append(dashRenderNode(Graph.dashTree));
+  dashFitSoon();
+}
+// основная канва (или список bandplan/bookmarks) узла в панели — до низа панели: контролы над ней
+// переносятся по ширине, поэтому её верх плавает и чистым CSS высоту не задать
+const DASH_FILL='canvas.view.main, .bp-ui, .bm-ui';
+function dashFit(){
+  if(!dashMode) return;
+  for(const body of dashGridEl.querySelectorAll('.dash-body')){
+    const el=body.querySelector(DASH_FILL); if(!el) continue;
+    const h=Math.max(110, Math.floor(body.getBoundingClientRect().bottom-el.getBoundingClientRect().top-12));
+    if(Math.abs((parseFloat(el.style.height)||0)-h)>1) el.style.height=h+'px';
+  }
+}
+let dashFitRaf=0;
+function dashFitSoon(){ if(!dashFitRaf) dashFitRaf=requestAnimationFrame(()=>{ dashFitRaf=0; dashFit(); dashObserve(); }); }
+const dashRO=typeof ResizeObserver!=='undefined' ? new ResizeObserver(()=>dashFitSoon()) : null;
+function dashObserve(){                                 // панель и сам узел (ширина -> перенос контролов, advanced)
+  if(!dashRO) return;
+  dashRO.disconnect();
+  for(const body of dashGridEl.querySelectorAll('.dash-body')){
+    dashRO.observe(body);
+    const mid=body.querySelector('.mid'); if(mid) dashRO.observe(mid);
+  }
 }
 function dashRenderNode(t){
   if(t.t==='leaf') return dashRenderLeaf(t);
@@ -1068,7 +1091,7 @@ function dashRenderNode(t){
 }
 function dashDetach(n){                                 // узел уезжает из своей панели обратно на холст, 📌 не трогаем
   const leaf=dashLeafOf(n.id); if(leaf) leaf.node=null;
-  if(dashMode) content.appendChild(n.el);
+  if(dashMode){ content.appendChild(n.el); applySize(n); n.onResize?.(n); }
 }
 function dashRenderLeaf(t){
   const pane=document.createElement('div'); pane.className='dash-pane';
@@ -1132,9 +1155,10 @@ function setDash(on){
   } else {
     for(const l of dashLeaves(Graph.dashTree)){
       const n=l.node!=null?Graph.map[l.node]:null;
-      if(n) content.appendChild(n.el);
+      if(n){ content.appendChild(n.el); applySize(n); n.onResize?.(n); }   // вернуть высоты холстового режима
     }
     dashGridEl.innerHTML='';
+    dashRO?.disconnect();
   }
 }
 if(dashBtn) dashBtn.onclick=()=>setDash(!dashMode);
