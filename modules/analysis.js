@@ -1349,9 +1349,24 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       // панорамой: pointermove просто проверяет drag.resize и ведёт себя как одно или другое —
       // два независимых состояния драга на одном канвасе только путали бы друг друга.
       let drag=null;
+      // край шторки канала rtlsdr (spec.chans) под курсором в зоне спектра, ±5px
+      const chanEdgeAt=ev=>{
+        const list=n.s&&n.s.chans; if(!list||!list.length||!n.s.setChanBw) return null;
+        const rc=cv.getBoundingClientRect();
+        const x=(ev.clientX-rc.left)/rc.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
+        if(y>(n._hs||0)-6) return null;
+        const px=5/Math.max(1,rc.width);
+        for(const c of list) for(const side of ['lo','hi']){
+          if(c.mode==='USB'&&side==='lo' || c.mode==='LSB'&&side==='hi') continue;   // у SSB край на частоте канала неподвижен
+          if(Math.abs(saPos(n,c[side])-x)<=px) return {c,side};
+        }
+        return null;
+      };
       cv.addEventListener('pointerdown', ev=>{
         const rc=cv.getBoundingClientRect();
         const y=(ev.clientY-rc.top)/rc.height*cv.height;
+        const edge=chanEdgeAt(ev);
+        if(edge){ drag={edge, pid:ev.pointerId, w:rc.width, left:rc.left}; cv.setPointerCapture(ev.pointerId); return; }
         const resize=Math.abs(y-(n._hs||0))<=6;
         if(!resize && !n.s) return;
         drag={x0:ev.clientX, y0:ev.clientY, w:rc.width, h:rc.height,
@@ -1361,6 +1376,13 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       });
       cv.addEventListener('pointermove', ev=>{
         if(!drag || ev.pointerId!==drag.pid) return;
+        if(drag.edge){                               // ширина полосы ПЧ — от частоты канала до курсора
+          ev.preventDefault();
+          const {c}=drag.edge, f=saFreq(n,clamp((ev.clientX-drag.left)/Math.max(1,drag.w),0,1));
+          const w = c.mode==='USB' ? f-c.f : c.mode==='LSB' ? c.f-f : 2*Math.abs(f-c.f);
+          n.s.setChanBw?.(c.mode, w);
+          return;
+        }
         if(drag.resize){
           ev.preventDefault();
           const dy=ev.clientY-drag.y0;
@@ -1452,7 +1474,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       cv.addEventListener('pointermove', ev=>{
         n._bmHoverFreq = bmHit(ev)?.freq ?? null;
         n._mkHoverIdx = n._bmHoverFreq==null ? (mkHit(ev)?.idx ?? null) : null;
-        if(!drag) cv.style.cursor = nearBoundary(ev) ? 'ns-resize' : '';
+        if(!drag) cv.style.cursor = nearBoundary(ev) ? 'ns-resize' : chanEdgeAt(ev) ? 'ew-resize' : '';
       });
       cv.addEventListener('pointerleave', ()=>{ n._bmHoverFreq=null; n._mkHoverIdx=null; });
     }
