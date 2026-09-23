@@ -1276,22 +1276,24 @@ function saBands(n,cx,W,H){                        // закраска поло�
 // каждого канала, цветом маркера с тем же номером, подпись — режим и ширина полосы
 function saChannels(n,cx,W,H){
   const list=n.s&&n.s.chans; if(!list||!list.length) return;
-  cx.font='9px monospace';
+  cx.font='bold 10px monospace'; cx.textBaseline='middle';
   for(const c of list){
     const x1=saPos(n,c.lo)*W, x2=saPos(n,c.hi)*W;
     if(x2<0||x1>W) continue;
     const col=MK_COL(c.idx);
-    cx.globalAlpha=.13; cx.fillStyle=col; cx.fillRect(x1,16,Math.max(1,x2-x1),H-16);
-    cx.globalAlpha=.6; cx.strokeStyle=col; cx.lineWidth=1;
+    cx.globalAlpha=.16; cx.fillStyle=col; cx.fillRect(x1,16,Math.max(1,x2-x1),H-16);
+    cx.globalAlpha=.9; cx.strokeStyle=col; cx.lineWidth=1;
     cx.beginPath(); cx.moveTo(x1+.5,16); cx.lineTo(x1+.5,H); cx.moveTo(x2-.5,16); cx.lineTo(x2-.5,H); cx.stroke();
+    // подпись — режим и полоса на плашке цвета канала; не влезает в шторку — выносим вбок от неё
     const bw=c.hi-c.lo, t=c.mode+' '+fmtHz(bw, bw%1000?1:0);
-    const tw=cx.measureText(t).width;
-    if(x2-x1>tw+6){
-      cx.globalAlpha=.85; cx.fillStyle=col;
-      cx.fillText(t, clamp((x1+x2-tw)/2, 2, W-tw-2), 27+c.idx*11);
-    }
+    const tw=cx.measureText(t).width, ty=26+c.idx*15;
+    let tx=(x1+x2-tw)/2;
+    if(x2-x1<tw+8) tx = x2+4+tw<=W ? x2+4 : x1-tw-4;
+    tx=clamp(Math.round(tx), 3, W-tw-3);
+    cx.globalAlpha=.9; cx.fillStyle=col; cx.fillRect(tx-3,ty-7,tw+6,14);
+    cx.globalAlpha=1; cx.fillStyle=contrastText(col); cx.fillText(t,tx,ty);
   }
-  cx.globalAlpha=1;
+  cx.globalAlpha=1; cx.textBaseline='alphabetic';
 }
 
 // Полосы (band plan) и точечные закладки — из узла 'bandplan'/'bookmarks', список {lo,hi,label,color}.
@@ -1327,33 +1329,36 @@ function saBandPlan(n,cx,W,H,plotH){
     // перекрывающая её от той же точки, уйдёт выше — не наоборот.
     ranges.sort((x,y)=>x.lo-y.lo || (y.hi-y.lo)-(x.hi-x.lo));
     const laneEnd=[];                                   // laneEnd[i] — правая граница последней полосы в дорожке i
-    const LANE_H=17, MAX_LANES=4;
+    const LANE_H=16, MAX_LANES=4;
     for(const r of ranges){
       let lane=laneEnd.findIndex(e=>e<=r.lo);
       if(lane<0){ if(laneEnd.length>=MAX_LANES) lane=laneEnd.length-1; else { lane=laneEnd.length; laneEnd.push(-Infinity); } }
       laneEnd[lane]=r.hi; r._lane=lane;
     }
-    cx.font='9px monospace'; cx.textBaseline='middle';    // middle — подпись по центру дорожки, не к низу
+    cx.font='bold 10px monospace'; cx.textBaseline='middle';    // middle — подпись по центру дорожки
+    const scr=hexToRgb(themeColor('--screen')||'#0a0d0e'), FILL_A=.5;
     for(const r of ranges){
       const x1=Math.round(saPos(n,r.lo)*W), x2=Math.round(saPos(n,r.hi)*W);
       if(x2<0||x1>W) continue;                            // целиком вне канвы — сам прямоугольник не рисуем
       const w=Math.max(1,x2-x1), y=plotH-(r._lane+1)*LANE_H, col=r.color||'#5fb8d1';
-      cx.globalAlpha=.28; cx.fillStyle=col; cx.fillRect(x1,y,w,LANE_H-1);
-      cx.globalAlpha=1;
-      const label=r.label||(fmtHz(r.lo)+'-'+fmtHz(r.hi));
-      const tw=cx.measureText(label).width;
-      // подпись — по центру ВИДИМОЙ (обрезанной канвой) части полосы, а не всей полосы целиком:
-      // у широкой полосы, уходящей за край экрана (например, целый ISM-диапазон при зуме внутрь
-      // него), подпись раньше рисовалась у её левого края — который мог быть далеко за пределами
-      // канвы и потому невидим, хотя сама полоса на экране есть. Простой min/max от границ канвы,
-      // без доп. состояния между кадрами — при скролле/зуме подпись сама "едет" вместе с видимой
-      // частью, лишней нагрузки (пересчёт всего раз в кадр на полосу, тех же операций что и раньше)
-      // это не добавляет.
+      cx.globalAlpha=FILL_A; cx.fillStyle=col; cx.fillRect(x1,y,w,LANE_H-1);
+      cx.globalAlpha=1; cx.fillRect(x1,y,w,2);            // яркий верхний кант — граница полосы видна на любом шуме
+      cx.fillStyle=themeColor('--screen');                 // тёмные разделители — соседние сегменты не сливаются
+      cx.fillRect(x1,y,1,LANE_H-1); cx.fillRect(x2-1,y,1,LANE_H-1);
+      // подпись — по центру ВИДИМОЙ (обрезанной канвой) части полосы: у широкой полосы, уходящей
+      // за край экрана, подпись иначе уезжала бы за канву. Не влезает — обрезаем с '…'.
       const vx1=Math.max(x1,0), vx2=Math.min(x2,W), vw=vx2-vx1;
-      if(tw+4<=vw){
-        const tx=clamp(Math.round((vx1+vx2)/2-tw/2), x1+2, x2-tw-2), ty=y+LANE_H/2;
-        cx.fillStyle=contrastText(col); cx.fillText(label,tx,ty);           // контраст к цвету полосы — как у закладок
+      let label=r.label||(fmtHz(r.lo)+'-'+fmtHz(r.hi)), tw=cx.measureText(label).width;
+      if(tw+6>vw){
+        const cw=cx.measureText('M').width, k=Math.floor((vw-6)/cw)-1;
+        if(k<2) continue;
+        label=label.slice(0,k)+'…'; tw=cx.measureText(label).width;
       }
+      const tx=clamp(Math.round((vx1+vx2)/2-tw/2), x1+3, x2-tw-3), ty=y+LANE_H/2+1;
+      // цвет текста — по фактическому фону (полоса с FILL_A поверх тёмного экрана), а не по цвету полосы
+      const [cr,cg,cb]=hexToRgb(col), mix=v=>Math.round(v).toString(16).padStart(2,'0');
+      const bg='#'+[cr,cg,cb].map((v,i)=>mix(v*FILL_A+scr[i]*(1-FILL_A))).join('');
+      cx.fillStyle=contrastText(bg); cx.fillText(label,tx,ty);
     }
     cx.globalAlpha=1; cx.textBaseline='alphabetic';        // вернуть дефолт — ниже (точки) рассчитывают на него
   }
@@ -1396,15 +1401,16 @@ function saBandPlan(n,cx,W,H,plotH){
 function saSnapFreq(n,f){
   const list=n.bandsData;
   if(!n.p.snap || !list || !list.length) return f;
+  let best=null, bestW=Infinity;                      // вложенные полосы — берём самую узкую (сегмент внутри диапазона)
   for(const b of list){
     const step=+b?.step;
     if(!b || typeof b.lo!=='number' || isNaN(b.lo) || !step || step<=0) continue;
     const hi=(typeof b.hi==='number' && !isNaN(b.hi)) ? b.hi : b.lo;
     const lo=Math.min(b.lo,hi), hiB=Math.max(b.lo,hi);
     if(f<lo-step/2 || f>hiB+step/2) continue;           // клик не по этой полосе
-    return clamp(lo+Math.round((f-lo)/step)*step, lo, hiB);
+    if(hiB-lo<bestW){ bestW=hiB-lo; best=clamp(lo+Math.round((f-lo)/step)*step, lo, hiB); }
   }
-  return f;
+  return best??f;
 }
 function saTake(n){                                  // применить накопленный тап — в выбранный маркер
   if(n.pickT==null) return;
