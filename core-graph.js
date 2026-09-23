@@ -1061,7 +1061,8 @@ function dashFit(){
   if(!dashMode) return;
   for(const body of dashGridEl.querySelectorAll('.dash-body')){
     const el=body.querySelector(DASH_FILL); if(!el) continue;
-    const h=Math.max(110, Math.floor(body.getBoundingClientRect().bottom-el.getBoundingClientRect().top-12));
+    const mid=el.closest('.mid'), padB=mid?parseFloat(getComputedStyle(mid).paddingBottom)||0:12;
+    const h=Math.max(110, Math.floor(body.getBoundingClientRect().bottom-el.getBoundingClientRect().top-padB));
     if(Math.abs((parseFloat(el.style.height)||0)-h)>1) el.style.height=h+'px';
   }
 }
@@ -1113,6 +1114,13 @@ function dashRenderLeaf(t){
   const bx=document.createElement('button'); bx.textContent='✕'; bx.title='Remove pane';
   bx.onclick=()=>{ if(n) dashDetach(n); dashRemoveLeaf(t.id); };
   tools.append(bRow,bCol,bx);
+  if(n?.cv){                                            // только канва: контролы и заголовок узла спрятаны
+    const bb=document.createElement('button'); bb.textContent='⛶'; bb.title='Canvas only (hide controls)';
+    bb.classList.toggle('on',!!t.bare);
+    bb.onclick=()=>{ t.bare=!t.bare; dashRenderRoot(); Undo.push(); };
+    tools.insertBefore(bb,bRow);
+    pane.classList.toggle('bare',!!t.bare);
+  }
   pane.append(tools);
   const body=document.createElement('div'); body.className='dash-body';
   if(n) body.append(n.el);
