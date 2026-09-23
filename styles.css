@@ -407,9 +407,10 @@ button,select,input{font:inherit;color:inherit}
 .prm input[type=file]{width:100%;font-size:10px;color:var(--dim)}
 canvas.view{display:block;width:100%;background:var(--screen);
   border-radius:3px;margin-top:5px;cursor:default}
-.readout{margin-top:5px;padding:6px;background:var(--screen);
-  border-radius:3px;font-size:12px;color:var(--screen-fg);text-align:center;overflow:hidden;
-  white-space:nowrap;text-overflow:ellipsis;user-select:text;cursor:pointer}
+/* мелкий шрифт и перенос по словам (до 6 строк) — длинные статусы не обрезаются многоточием */
+.readout{margin-top:5px;padding:5px 6px;background:var(--screen);
+  border-radius:3px;font-size:10px;line-height:1.35;color:var(--screen-fg);text-align:center;overflow:hidden;
+  white-space:normal;overflow-wrap:anywhere;max-height:calc(6 * 1.35em + 10px);user-select:text;cursor:pointer}
 .readout.copied{outline:1px solid var(--acc)}
 .rz{position:absolute;right:2px;bottom:2px;width:10px;height:10px;cursor:nwse-resize;
   border-right:2px solid var(--line);border-bottom:2px solid var(--line)}
