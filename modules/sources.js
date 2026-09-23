@@ -1141,7 +1141,7 @@ function rtlChanBands(n, cf, half){
 // значить не те доли секунды, для которых он посчитан — та же болезнь, которую decim лечит.
 function rtlResizeChannelRing(n, ch){
   const asize=Math.max(50000, Math.round(n.ring.size/n.decim));
-  ch.aring={A:new Float32Array(asize), size:asize, w:0, filled:0, written:0};
+  ch.aring={A:new Float32Array(asize), B:new Float32Array(asize), size:asize, w:0, filled:0, written:0};   // A — левый, B — правый
   // rebuffering=true с самого начала — свежее кольцо пусто, и это ровно то же состояние, что и
   // после настоящего провала в середине игры (см. rtlReadChannelAudio): пусть тот же самый,
   // уже отлаженный механизм "молчим, пока не накопится безопасный запас" сработает и на самом
@@ -1196,8 +1196,20 @@ function mkDec(h, D, cplx){
   return {h, N, D, pos:0, cnt:D, bi:new Float32Array(2*N), bq:cplx?new Float32Array(2*N):null};
 }
 
-let plan=null, mode='WFM', sr=1024000, bw=15000, deemph='50', agcOn=true;
-let decA=null, decB=null, ssbHr=null, ssbHi=null, ssbN=0;
+let plan=null, mode='WFM', sr=1024000, bw=15000, deemph='50', agcOn=true, stereoOn=true, isWFM=false;
+let decA=null, decB=null, decS=null, decR=null, ssbHr=null, ssbHi=null, ssbN=0;
+// WFM-стерео и RDS считаются на ir по MPX (выход дискриминатора). Пилот 19 кГц ловит ФАПЧ на
+// фазоре p=e^{jφ} (без sin/cos на отсчёт): поднесущая L-R — sin 2φ, RDS 57 кГц — 3φ.
+let pbB0=0,pbA1=0,pbA2=0, pbX1=0,pbX2=0,pbY1=0,pbY2=0;           // полосовой биквад на 19 кГц
+let plRe=1, plIm=0, plW0c=1, plW0s=0, plInt=0, plKp=0, plKi=0, plAmp=0.05, plAmpA=0, plLock=0, plLockA=0;
+let stG=0, deR=0, audDcR=0;                                        // плавное включение стерео, состояния правого канала
+// RDS: смеситель на 57 кГц → комплексный ФНЧ с прореживанием → оценка фазы BPSK → согласованный
+// фильтр бифазного символа → тактовая синхронизация → дифференциальное декодирование → блоки/группы
+let rdsFs=0, rdsH=5, rdsTb=10, rdsY=null, rdsYi=0, rdsN=0, rdsM=null, rdsNext=0;
+let rdsCII=0, rdsCQQ=0, rdsCIQ=0, rdsPrevBit=0, rdsReg=0, rdsSync=false, rdsLastHit=-1, rdsLastOff=-1, rdsBitN=0;
+let rdsExp=0, rdsBlk=[0,0,0,0], rdsOk=[false,false,false,false], rdsErr=[], rdsPI=-1, rdsPTY=0, rdsTP=0;
+let rdsPS=new Array(8).fill(' '), rdsRT=new Array(64).fill(' '), rdsAB=-1, rdsDirty=false, rdsPostT=0;
+const RDS_OFF=[0x0FC,0x198,0x168,0x1B4], RDS_OFFC2=0x350;           // A B C D, C'
 let isAM=false, isSSB=false, isFM=false, discScale=1, deA=null, deA1=0, hpA=0, hpA1=0, rawA=0, rawA1=0;
 let rawI0=0, rawQ0=0, prevI=0, prevQ=0, ampDc=0, audDc=0, de=0;
 // АРУ для SSB: мгновенная атака по пику, удержание, затем спад; предел усиления — чтобы шум не раздувать бесконечно
@@ -1206,12 +1218,100 @@ let agcPk=AGC_TARGET/AGC_MAXGAIN, agcHold=0, agcHoldN=0, agcRel=0;
 let offsetHz=0, offCos=1, offSin=0, offPhI=1, offPhQ=0;
 let bufPool=[];
 
+function rdsSyn(w){ let r=0; for(let i=25;i>=0;i--){ r=(r<<1)|((w>>>i)&1); if(r&0x400) r^=0x5B9; } return r&0x3FF; }
+function rdsReset(){
+  rdsYi=0; rdsN=0; rdsNext=rdsTb; rdsCII=rdsCQQ=rdsCIQ=0; rdsPrevBit=0; rdsReg=0; rdsSync=false; rdsLastHit=-1; rdsLastOff=-1; rdsBitN=0;
+  rdsErr=[]; rdsPI=-1; rdsPTY=0; rdsTP=0; rdsPS.fill(' '); rdsRT.fill(' '); rdsAB=-1; rdsDirty=true;
+  if(rdsY) rdsY.fill(0); if(rdsM) rdsM.fill(0);
+}
+function rdsChar(c){ return c>=0x20&&c<0x7f ? String.fromCharCode(c) : c===0x0d ? '\\r' : ' '; }
+function rdsGroup(){
+  const [a,b,c,d]=rdsBlk;
+  if(rdsOk[0] && rdsPI!==a){ rdsPI=a; rdsDirty=true; }
+  if(!rdsOk[1]) return;
+  const type=b>>>12, ver=(b>>>11)&1;
+  const pty=(b>>>5)&0x1f, tp=(b>>>10)&1;
+  if(pty!==rdsPTY||tp!==rdsTP){ rdsPTY=pty; rdsTP=tp; rdsDirty=true; }
+  if(type===0 && rdsOk[3]){                                       // 0A/0B — название станции (PS), по 2 символа
+    const i=(b&3)*2; rdsPS[i]=rdsChar(d>>>8); rdsPS[i+1]=rdsChar(d&0xff); rdsDirty=true;
+  } else if(type===2){                                            // 2A/2B — радиотекст
+    const ab=(b>>>4)&1;
+    if(ab!==rdsAB){ rdsAB=ab; rdsRT.fill(' '); }
+    const addr=b&0xf;
+    if(ver===0 && rdsOk[2] && rdsOk[3]){
+      const t=[c>>>8,c&0xff,d>>>8,d&0xff];
+      for(let k=0;k<4;k++) rdsRT[addr*4+k]=rdsChar(t[k]);
+    } else if(ver===1 && rdsOk[3]){
+      rdsRT[addr*2]=rdsChar(d>>>8); rdsRT[addr*2+1]=rdsChar(d&0xff);
+    }
+    rdsDirty=true;
+  }
+}
+// очередной бит после дифференциального декодирования: поиск/удержание синхронизации блоков
+function rdsBit(bit){
+  rdsReg=((rdsReg<<1)|bit)&0x3FFFFFF; rdsBitN++;
+  if(!rdsSync){
+    const sy=rdsSyn(rdsReg);
+    let off=RDS_OFF.indexOf(sy); if(off<0 && sy===RDS_OFFC2) off=2;
+    if(off<0) return;
+    // два блока подряд на правильном расстоянии и в правильном порядке — синхронизация есть
+    if(rdsLastHit>=0){
+      const dist=rdsBitN-rdsLastHit, steps=((off-rdsLastOff)+4)%4||4;
+      if(dist===steps*26){ rdsSync=true; rdsExp=(off+1)%4; rdsBitN=0; rdsErr=[];
+        rdsBlk[off]=(rdsReg>>>10)&0xffff; rdsOk.fill(false); rdsOk[off]=true; rdsLastHit=-1; return; }
+    }
+    rdsLastHit=rdsBitN; rdsLastOff=off; return;
+  }
+  if(rdsBitN<26) return;
+  rdsBitN=0;
+  const sy=rdsSyn(rdsReg), want=RDS_OFF[rdsExp];
+  const ok = sy===want || (rdsExp===2 && sy===RDS_OFFC2);
+  rdsBlk[rdsExp]=(rdsReg>>>10)&0xffff; rdsOk[rdsExp]=ok;
+  rdsErr.push(ok?0:1); if(rdsErr.length>50) rdsErr.shift();
+  if(rdsExp===3){ rdsGroup(); rdsOk.fill(false); }
+  rdsExp=(rdsExp+1)%4;
+  if(rdsErr.length>=10 && rdsErr.reduce((x,y)=>x+y,0)>rdsErr.length*0.4){ rdsSync=false; rdsLastHit=-1; }
+}
+// отсчёт RDS-бейзбенда на rdsFs: фаза BPSK → согласованный бифазный фильтр → тактовая синхронизация
+function rdsSample(ri,rq){
+  const a=0.002;
+  rdsCII+=(ri*ri-rdsCII)*a; rdsCQQ+=(rq*rq-rdsCQQ)*a; rdsCIQ+=(ri*rq-rdsCIQ)*a;
+  const th=0.5*Math.atan2(2*rdsCIQ, rdsCII-rdsCQQ);
+  const y=ri*Math.cos(th)+rq*Math.sin(th);
+  const L=2*rdsH;
+  rdsY[rdsYi]=y; rdsYi=(rdsYi+1)%L;
+  // m[n] = сумма первой половины бита минус сумма второй (бифазный символ +,-)
+  let m=0; for(let k=0;k<L;k++){ const v=rdsY[(rdsYi+k)%L]; m += k<rdsH ? v : -v; }
+  rdsM[rdsN%3]=m; rdsN++;
+  if(rdsN<rdsNext+1) return;
+  // решение по m в момент rdsNext, подстройка такта по разнице соседних |m| (ранний/поздний)
+  const mc=rdsM[(rdsN-2)%3], me=rdsM[(rdsN-3+3)%3], ml=rdsM[(rdsN-1)%3];
+  const err=(Math.abs(ml)-Math.abs(me))/(Math.abs(mc)+1e-12);
+  rdsNext+=rdsTb+Math.max(-0.5,Math.min(0.5,0.25*err));
+  const bit=mc>0?1:0, dbit=bit^rdsPrevBit; rdsPrevBit=bit;
+  rdsBit(dbit);
+}
+
 function applyConfig(msg){
-  mode=msg.mode; sr=msg.sr; bw=msg.bw; deemph=msg.deemph; agcOn=msg.agc!==false;
+  mode=msg.mode; sr=msg.sr; bw=msg.bw; deemph=msg.deemph; agcOn=msg.agc!==false; stereoOn=msg.stereo!==false;
   plan=rtlPlan(mode, sr, bw);
   isAM=mode==='AM'; isSSB=(mode==='USB'||mode==='LSB'); isFM=!isAM&&!isSSB;
   decA=mkDec(makeLP(sr, plan.pass, plan.stop, 2047), plan.d1, true);
   decB=isSSB ? null : mkDec(makeLP(plan.ir, plan.aPass, plan.aStop, 1023), plan.d2, false);
+  isWFM=mode==='WFM';
+  if(isWFM){
+    decS=mkDec(decB.h, plan.d2, false);                            // L-R — тот же аудиофильтр, что у L+R: задержки совпадают
+    const ir=plan.ir, w0=2*Math.PI*19000/ir, Q=12, al=Math.sin(w0)/(2*Q), a0=1+al;
+    pbB0=al/a0; pbA1=-2*Math.cos(w0)/a0; pbA2=(1-al)/a0;
+    plW0c=Math.cos(w0); plW0s=Math.sin(w0);
+    const wn=2*Math.PI*15/ir, z=0.707;                             // полоса ФАПЧ ~15 Гц
+    plKp=2*z*wn/0.5; plKi=wn*wn/0.5;
+    plAmpA=Math.exp(-1/(0.05*ir)); plLockA=Math.exp(-1/(0.2*ir));
+    const rD=Math.max(1,Math.round(ir/12000));
+    decR=mkDec(makeLP(ir, 2400, 4500, 1023), rD, true);
+    rdsFs=ir/rD; rdsTb=rdsFs/1187.5; rdsH=Math.max(2,Math.round(rdsFs/2375));
+    rdsY=new Float32Array(2*rdsH); rdsM=new Float32Array(3); rdsReset();
+  } else { decS=null; decR=null; }
   if(isSSB){
     // комплексный полосовой: ФНЧ bw/2 (переход 300 Гц у нуля), сдвинутый на ±bw/2 → одна боковая
     const lp=makeLP(plan.ir, bw/2-150, bw/2+150, 1023), N=lp.length, M=(N-1)/2;
@@ -1239,7 +1339,9 @@ function applyOffset(hz){
 }
 function resetState(){
   rawI0=rawQ0=prevI=prevQ=ampDc=audDc=de=0; offPhI=1; offPhQ=0; agcPk=AGC_TARGET/AGC_MAXGAIN; agcHold=0;
-  for(const d of [decA,decB]) if(d){ d.bi.fill(0); if(d.bq) d.bq.fill(0); d.pos=0; d.cnt=d.D; }
+  for(const d of [decA,decB,decS,decR]) if(d){ d.bi.fill(0); if(d.bq) d.bq.fill(0); d.pos=0; d.cnt=d.D; }
+  pbX1=pbX2=pbY1=pbY2=0; plRe=1; plIm=0; plInt=0; plAmp=0.05; plLock=0; stG=0; deR=0; audDcR=0;
+  if(isWFM) rdsReset();
 }
 
 self.onmessage=function(e){
@@ -1247,20 +1349,24 @@ self.onmessage=function(e){
   if(msg.type==='config'){ applyConfig(msg); return; }
   if(msg.type==='offset'){ applyOffset(msg.hz); return; }
   if(msg.type==='reset'){ resetState(); return; }
+  if(msg.type==='rdsReset'){ if(isWFM) rdsReset(); return; }
   if(msg.type==='giveBuffer'){ bufPool.push(msg.buffer); return; }
   if(msg.type!=='demod' || !plan) return;
   const tStart=performance.now();
   const u8=new Uint8Array(msg.buffer), cnt=msg.cnt;
   const maxOut=Math.floor(cnt/plan.decim)+3;
   let outAB=null;
-  while(bufPool.length){ const b=bufPool.pop(); if(b.byteLength===maxOut*4){ outAB=b; break; } }
-  const out=outAB ? new Float32Array(outAB) : new Float32Array(maxOut);
+  while(bufPool.length){ const b=bufPool.pop(); if(b.byteLength===maxOut*8){ outAB=b; break; } }
+  const outBuf=outAB ? new Float32Array(outAB) : new Float32Array(2*maxOut);
+  const out=outBuf.subarray(0,maxOut), outR=outBuf.subarray(maxOut);
   const offZero=offsetHz===0;
   // локальные копии горячего состояния
   const hA=decA.h, NA=decA.N, DA=decA.D, biA=decA.bi, bqA=decA.bq;
   let posA=decA.pos, cntA=decA.cnt;
   const B=decB, hB=B.h, NB=B.N, DB=B.D, biB=B.bi, bqB=B.bq;
   let posB=B.pos, cntB=B.cnt;
+  const S=decS, biS=S?S.bi:null, R=decR, hR=R?R.h:null, NR=R?R.N:0, DR=R?R.D:0, biR=R?R.bi:null, bqR=R?R.bq:null;
+  let posR=R?R.pos:0, cntR=R?R.cnt:0, vS=0;
   let wIdx=0;
   for(let k=0;k<cnt;k++){
     const rawI=(u8[2*k]-127.5)/127.5, rawQ=(u8[2*k+1]-127.5)/127.5;
@@ -1296,6 +1402,34 @@ self.onmessage=function(e){
         v=Math.atan2(im,re)*discScale;
         prevI=ci; prevQ=cq;
       }
+      if(isWFM){
+        // ФАПЧ по пилоту: биквад 19 кГц → нормировка → фазовый детектор pb·cosφ → ПИ-фильтр
+        const pb=pbB0*v-pbB0*pbX2-pbA1*pbY1-pbA2*pbY2;
+        pbX2=pbX1; pbX1=v; pbY2=pbY1; pbY1=pb;
+        plAmp=plAmp*plAmpA+(pb<0?-pb:pb)*(1-plAmpA);
+        const pn=pb/(plAmp*1.5708+1e-9), e=pn*plRe;
+        plLock=plLock*plLockA+pn*plIm*(1-plLockA);
+        // sin2φ, cos3φ, sin3φ — из фазора ЭТОГО отсчёта, до шага вперёд (иначе опережение на отсчёт:
+        // на 38 кГц это ~50° и почти половина разделения каналов)
+        const c2=plRe*plRe-plIm*plIm, s2=2*plRe*plIm, c3=c2*plRe-s2*plIm, s3=s2*plRe+c2*plIm;
+        plInt+=plKi*e;
+        const d=plKp*e+plInt;                                      // поправка фазы к номинальным 19 кГц
+        let nr=plRe*plW0c-plIm*plW0s, ni=plRe*plW0s+plIm*plW0c;
+        const dr=1-d*d*0.5; const tr=nr*dr-ni*d; ni=nr*d+ni*dr; nr=tr;
+        const nn=1.5-0.5*(nr*nr+ni*ni); plRe=nr*nn; plIm=ni*nn;
+        vS=v*2*s2;
+        biS[S.pos]=vS; biS[S.pos+NB]=vS; if(++S.pos===NB) S.pos=0;
+        // RDS
+        const ri=v*c3, rq=v*s3;
+        biR[posR]=ri; biR[posR+NR]=ri; bqR[posR]=rq; bqR[posR+NR]=rq;
+        if(++posR===NR) posR=0;
+        if(--cntR<=0){
+          cntR=DR;
+          let si=0, sq=0;
+          for(let t=0;t<NR;t++){ const c=hR[t]; si+=c*biR[posR+t]; sq+=c*bqR[posR+t]; }
+          rdsSample(si,sq);
+        }
+      }
       biB[posB]=v; biB[posB+NB]=v;
       if(++posB===NB) posB=0;
       if(--cntB>0) continue;
@@ -1303,6 +1437,24 @@ self.onmessage=function(e){
       let y=0;
       for(let t=0;t<NB;t++) y+=hB[t]*biB[posB+t];
       v=y;
+      if(isWFM){
+        let ys=0;
+        for(let t=0;t<NB;t++) ys+=hB[t]*biS[S.pos+t];
+        // стерео — только при захваченном пилоте, включается/выключается плавно
+        const want=(stereoOn && plLock>0.3 && plAmp>0.01)?1:0;
+        stG+=(want-stG)*0.002;
+        vS=ys*stG;
+      }
+    }
+    let oR;
+    if(isWFM){
+      // L = M+S, R = M-S; у каждого канала свой DC-блок и де-эмфазис
+      const l=v+vS, r=v-vS;
+      audDc=audDc*hpA+l*hpA1; audDcR=audDcR*hpA+r*hpA1;
+      let ol=l-audDc, orr=r-audDcR;
+      if(deA!=null){ de=de*deA+ol*deA1; ol=de; deR=deR*deA+orr*deA1; orr=deR; }
+      out[wIdx]=ol; outR[wIdx++]=orr;
+      continue;
     }
     audDc=audDc*hpA+v*hpA1;
     let o=v-audDc;
@@ -1314,11 +1466,21 @@ self.onmessage=function(e){
       else agcPk=Math.max(AGC_TARGET/AGC_MAXGAIN, agcPk*agcRel);
       o*=AGC_TARGET/agcPk;
     }
-    out[wIdx++]=o;
+    out[wIdx]=o; outR[wIdx++]=o;
   }
   decA.pos=posA; decA.cnt=cntA; B.pos=posB; B.cnt=cntB;
+  if(R){ R.pos=posR; R.cnt=cntR; }
+  if(isWFM){
+    const now=performance.now();
+    if(rdsDirty && now-rdsPostT>250){
+      rdsDirty=false; rdsPostT=now;
+      self.postMessage({type:'rds', pi:rdsPI, pty:rdsPTY, tp:rdsTP, ps:rdsPS.join(''),
+        rt:rdsRT.join('').split('\\r')[0].replace(/\\s+$/,''), sync:rdsSync});
+    }
+    if(now-(self._stPostT||0)>500){ self._stPostT=now; self.postMessage({type:'stereo', stereo:stG>0.5, pilot:plLock}); }
+  }
   // workerMs — время самого цикла, без доставки сообщений (её меряет readerLoop отдельно)
-  self.postMessage({type:'result', id:msg.id, buffer:out.buffer, cnt:wIdx, workerMs:performance.now()-tStart}, [out.buffer]);
+  self.postMessage({type:'result', id:msg.id, buffer:outBuf.buffer, cnt:wIdx, stride:maxOut, workerMs:performance.now()-tStart}, [outBuf.buffer]);
 };
 `;
 
@@ -1327,21 +1489,24 @@ function rtlMakeDemodWorker(){
   const worker=new Worker(url);
   let nextId=1;
   const pending=new Map(); // несколько чанков могут ждать ответа одновременно
+  const api={onInfo:null};
   worker.onmessage=(e)=>{
     const msg=e.data;
+    if(msg.type==='rds' || msg.type==='stereo'){ api.onInfo?.(msg); return; }
     if(msg.type==='result' && pending.has(msg.id)){
       const resolve=pending.get(msg.id); pending.delete(msg.id);
       // buffer — сырой ArrayBuffer (вызывающий сам решает, когда вернуть его через giveBuffer());
       // cnt — сколько АУДИО-отсчётов в нём реально лежит после децимации внутри воркера (может
       // быть заметно меньше числа входных IQ-отсчётов, см. decim в RTL_WORKER_SRC);
       // workerMs — честное время именно вычислений внутри воркера, см. комментарий там же
-      resolve({buffer:msg.buffer, cnt:msg.cnt, workerMs:msg.workerMs});
+      resolve({buffer:msg.buffer, cnt:msg.cnt, stride:msg.stride, workerMs:msg.workerMs});
     }
   };
-  return {
+  return Object.assign(api, {
     config(cfg){ worker.postMessage({type:'config', ...cfg}); },
     reset(){ worker.postMessage({type:'reset'}); },
     setOffset(hz){ worker.postMessage({type:'offset', hz}); }, // дешёвая перестройка частоты настройки — без сброса фильтров/фазы
+    rdsReset(){ worker.postMessage({type:'rdsReset'}); },
     demod(u8buffer, cnt){                 // buffer передаётся с переносом владения (zero-copy)
       return new Promise((resolve)=>{
         const id=nextId++;
@@ -1351,7 +1516,7 @@ function rtlMakeDemodWorker(){
     },
     giveBuffer(buffer){ worker.postMessage({type:'giveBuffer', buffer}, [buffer]); }, // вернуть буфер воркеру для переиспользования
     terminate(){ worker.terminate(); URL.revokeObjectURL(url); }
-  };
+  });
 }
 
 // Многоканальный приём: до 4 независимых NCO-демодуляторов над одним сырым потоком USB.
@@ -1366,9 +1531,11 @@ function rtlActivateChannel(n, ci){
   const ch=n.ch[ci];
   if(ch.active && ch.worker) return;
   ch.worker=rtlMakeDemodWorker();
-  ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false});
+  ch.rds=null; ch.stereo=false;
+  ch.worker.onInfo=m=>{ if(m.type==='rds') ch.rds=m; else ch.stereo=m.stereo; };
+  ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false, stereo:n.p.stereo!==false});
   ch.worker.reset();
-  ch.hardKey=n.p.demod+'|'+n.sourceRate; ch.softKey=n.p.bw+'|'+n.p.deemph+'|'+n.p.agc;
+  ch.hardKey=n.p.demod+'|'+n.sourceRate; ch.softKey=n.p.bw+'|'+n.p.deemph+'|'+n.p.agc+'|'+n.p.stereo;
   n.decim=rtlDecimFor(n.p.demod, n.sourceRate, n.p.bw);
   rtlResizeChannelRing(n, ch);
   ch.appliedOffset=0;
@@ -1489,8 +1656,8 @@ async function rtlReadLoop(n){
         const silentN=Math.max(1, Math.round(cnt/(n.decim||1)));
         for(const ch of active){
           const aring=ch.aring; if(!aring) continue;
-          const A=aring.A, size=aring.size; let w=aring.w, filled=aring.filled;
-          for(let k=0;k<silentN;k++){ A[w]=0; w=(w+1)%size; if(filled<size) filled++; }
+          const A=aring.A, Bq=aring.B, size=aring.size; let w=aring.w, filled=aring.filled;
+          for(let k=0;k<silentN;k++){ A[w]=0; Bq[w]=0; w=(w+1)%size; if(filled<size) filled++; }
           aring.w=w; aring.filled=filled; aring.written+=silentN;
         }
         n.underrunsWorker++;   // демод-воркер не успел — вход, не выход (см. readout)
@@ -1529,11 +1696,11 @@ async function rtlReadLoop(n){
           if(res.workerMs>workerMsMax) workerMsMax=res.workerMs;
           if(!ch.active || !ch.aring){ ch.worker?.giveBuffer(res.buffer); continue; }  // канал сняли/пересобрали, пока чанк ждал
           const outN=res.cnt;                       // уже децимированное число отсчётов, не cnt (сырых)
-          const audio=new Float32Array(res.buffer, 0, outN);
+          const audio=new Float32Array(res.buffer, 0, outN), audioR=new Float32Array(res.buffer, res.stride*4, outN);
           const aring=ch.aring;
           let w=aring.w, filled=aring.filled;
-          const A=aring.A, size=aring.size;
-          for(let k=0;k<outN;k++){ A[w]=audio[k]; w=(w+1)%size; if(filled<size) filled++; }
+          const A=aring.A, Bq=aring.B, size=aring.size;
+          for(let k=0;k<outN;k++){ A[w]=audio[k]; Bq[w]=audioR[k]; w=(w+1)%size; if(filled<size) filled++; }
           aring.w=w; aring.filled=filled; aring.written+=outN;
           ch.worker.giveBuffer(res.buffer);
         }
@@ -1793,8 +1960,10 @@ function rtlReadIQ(n, oi, oq){
 }
 
 // то же для одного демодулированного канала; кольцо хранит уже децимированный звук (sourceRate/decim)
-function rtlReadChannelAudio(n, ch, o){
-  if(!n.connected || !ch.active || !ch.aring){ o.fill(0); return; }
+// o — моно (L+R)/2; oL/oR (необязательные) — стерео-пара для канала с выходами audioL/audioR
+function rtlReadChannelAudio(n, ch, o, oL, oR){
+  const mute=()=>{ o.fill(0); oL?.fill(0); oR?.fill(0); };
+  if(!n.connected || !ch.active || !ch.aring){ mute(); return; }
   const rate=n.sourceRate/(n.decim||1), ring=ch.aring, need=rate/Eng.sr*BLOCK+3;   // +3 — хвост для 4-точечной интерполяции
   const lag=ring.written-ch.readCount;
   const {k, drop}=rtlPace(n, ch, lag, rate, need, 'audio');
@@ -1804,17 +1973,20 @@ function rtlReadChannelAudio(n, ch, o){
     ch.lastLagLogT=nowLog;
     console.log(`[rtlsdr] ring trend: lag=${(1000*lag/rate).toFixed(0)}мс avg=${(1000*(ch.lagAvg||0)/rate).toFixed(0)}мс target=${(1000*RTL_TARGET_S).toFixed(0)}мс servo=${(ch.ppm||0).toFixed(0)}ppm mspsIo=${(n.mspsIo||0).toFixed(3)} nominal=${(n.sourceRate/1e6).toFixed(3)} @ ${nowLog.toFixed(0)}ms`);
   }
-  if(!k){ o.fill(0); return; }
+  if(!k){ mute(); return; }
   const step=rate/Eng.sr*k;
   // Катмулл-Ром по 4 точкам: звук в кольце уже ограничен аудио-FIR, линейная интерполяция
   // заметно заваливала верх и давала зеркала при небольшом запасе ar над Eng.sr
-  const A=ring.A, size=ring.size;
+  const A=ring.A, Bq=ring.B, size=ring.size;
+  const cr=(X,im,i0,i1,i2,f)=>{ const xm=X[im], x0=X[i0], x1=X[i1], x2=X[i2];
+    const c1=0.5*(x1-xm), c2=xm-2.5*x0+2*x1-0.5*x2, c3=0.5*(x2-xm)+1.5*(x0-x1);
+    return ((c3*f+c2)*f+c1)*f+x0; };
   for(let k2=0;k2<BLOCK;k2++){
     const fl=Math.floor(ch.readPos), f=ch.readPos-fl;
     const i0=fl%size, im=(i0+size-1)%size, i1=(i0+1)%size, i2=(i0+2)%size;
-    const xm=A[im], x0=A[i0], x1=A[i1], x2=A[i2];
-    const c1=0.5*(x1-xm), c2=xm-2.5*x0+2*x1-0.5*x2, c3=0.5*(x2-xm)+1.5*(x0-x1);
-    o[k2]=((c3*f+c2)*f+c1)*f+x0;
+    const l=cr(A,im,i0,i1,i2,f), r=cr(Bq,im,i0,i1,i2,f);
+    o[k2]=(l+r)*0.5;
+    if(oL){ oL[k2]=l; oR[k2]=r; }
     ch.readPos+=step; ch.readCount+=step;
   }
   ch.readPos%=ring.size;
@@ -1906,6 +2078,7 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
        {n:'gainDb',t:'num'},{n:'bw',t:'num'},{n:'demod',t:'val'}],
   outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},
         {n:'audio',t:'sig'},{n:'audio2',t:'sig'},{n:'audio3',t:'sig'},{n:'audio4',t:'sig'},
+        {n:'audioL',t:'sig'},{n:'audioR',t:'sig'},{n:'ps',t:'val'},{n:'rt',t:'val'},
         {n:'spec',t:'spec'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},
         {n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'},
         {n:'demod',t:'val'},{n:'bw',t:'num'}],
@@ -1923,6 +2096,7 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     {n:'bw',t:'range',min:500,max:300000,step:100,d:190000,log:true,label:'bandwidth, Hz'},
     {n:'deemph',t:'select',opts:['50','75','off'],d:'50',label:'WFM de-emphasis, µs'},
     {n:'agc',t:'check',d:true,label:'AM/SSB AGC'},
+    {n:'stereo',t:'check',d:true,label:'WFM stereo'},
     // запомненная ширина для каждого режима — при смене режима ползунок bw переключается на неё
     ...['WFM','NFM','AM','USB','LSB'].map(m=>({n:'if'+m,t:'range',min:500,max:300000,d:RTL_BW_DEF[m],hidden:true})),
     {n:'auto',t:'check',d:true,label:'auto gain'},
@@ -2022,14 +2196,14 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
       const hardKey=n.p.demod+'|'+n.sourceRate;
       if(hardKey!==ch.hardKey){
         ch.hardKey=hardKey;
-        ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false});
+        ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false, stereo:n.p.stereo!==false});
         ch.worker.reset();
         rtlResizeChannelRing(n, ch);   // decim мог смениться вместе с mode — кольцо иначе рассинхронизируется со временем
       } else {
-        const softKey=n.p.bw+'|'+n.p.deemph+'|'+n.p.agc;
+        const softKey=n.p.bw+'|'+n.p.deemph+'|'+n.p.agc+'|'+n.p.stereo;
         if(softKey!==ch.softKey){
           ch.softKey=softKey;
-          ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false});
+          ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false, stereo:n.p.stereo!==false});
           // кольцо — только если сменилась децимация (bw у SSB, широкая полоса ПЧ у WFM); иначе
           // при перетаскивании края шторки звук обрывался бы на каждом шаге
           if(ch.ringDecim!==n.decim) rtlResizeChannelRing(n, ch);
@@ -2039,6 +2213,11 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
       if(Math.abs(wantOffset-ch.appliedOffset)>0.5){
         ch.worker.setOffset(wantOffset);
         ch.appliedOffset=wantOffset;
+      }
+      // другая станция — RDS прежней больше не показываем, декодер начинает с нуля
+      if(ch._rdsF==null || Math.abs(wantTune-ch._rdsF)>2000){
+        ch._rdsF=wantTune;
+        if(ch.rds){ ch.rds=null; ch.worker.rdsReset(); }
       }
     }
 
@@ -2058,10 +2237,14 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
       tuneFreq:tf[0], tuneFreq2:tf[1], tuneFreq3:tf[2], tuneFreq4:tf[3]};
 
     if(n.p.demod==='IQ') rtlReadIQ(n, oi, oq); else { oi.fill(0); oq.fill(0); }
-    for(let ci=0;ci<4;ci++) rtlReadChannelAudio(n, n.ch[ci], oa[ci]);
+    const oL=buf(n,'audioL'), oR=buf(n,'audioR');
+    rtlReadChannelAudio(n, n.ch[0], oa[0], oL, oR);  // канал 1 — ещё и стерео
+    for(let ci=1;ci<4;ci++) rtlReadChannelAudio(n, n.ch[ci], oa[ci]);
+    const rds=n.ch[0].rds;
 
     n._prevPFreq=n.p.freq; // снимок на конец тика — см. manualEdit в начале process() (demod/bw/gainDb — через setModWired)
-    return {I:oi, Q:oq, audio:oa[0], audio2:oa[1], audio3:oa[2], audio4:oa[3], spec:n.spec,
+    return {I:oi, Q:oq, audio:oa[0], audio2:oa[1], audio3:oa[2], audio4:oa[3], audioL:oL, audioR:oR,
+      ps:rds&&rds.sync!==undefined&&rds.ps.trim()?rds.ps.trim():null, rt:rds&&rds.rt?rds.rt:null, spec:n.spec,
       demod:n.p.demod, bw:n.p.bw, ...bounds}; },
   // Собственная отрисовка спектра/водопада убрана — для этого универсальный узел 'sa'
   // (Спектроанализатор), подключаемый к выходу 'spec'. Здесь остаётся только статус-строка.
@@ -2092,6 +2275,9 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     if(r) r.textContent = n.connected
       ? `${n.dev?n.dev.tunerName:'?'} · ${n.p.demod} · center ${fmtHz(cf)} · span ${fmtHz(n.sourceRate)} · tune ${fmtHz(tune)} · `+
         `channels ${chCount} · ${(n.msps||0).toFixed(2)}Msps (I/O:${(n.mspsIo||0).toFixed(2)})`+
+        (n.p.demod==='WFM' ? (n.ch[0].stereo?' · ST':' · mono') : '')+
+        (n.p.demod==='WFM' && n.ch[0].rds && n.ch[0].rds.pi>=0
+          ? ` · RDS ${n.ch[0].rds.pi.toString(16).toUpperCase().padStart(4,'0')} "${n.ch[0].rds.ps.trim()}"`+(n.ch[0].rds.rt?` ${n.ch[0].rds.rt}`:'') : '')+
         (n.workerMs!=null?` · demod ${n.workerMs.toFixed(1)}ms/chunk (roundtrip ${(n.roundtripMs||0).toFixed(1)}ms)`:'')+
         // разбивка по стадии, где реально теряются данные: demod — воркер не успел (вход),
         // ovf — consumer (Eng.tick) отстал, кольцо переполнилось и пришлось прыгнуть вперёд,
