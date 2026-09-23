@@ -1304,6 +1304,14 @@ function saChannelLabels(n,cx,W){
     cx.fillStyle=contrastText(col); cx.fillText(t,tx,ty+11);
   }
 }
+function saBandPlanLabels(n,cx){
+  const list=n._bpLabels; if(!list||!list.length) return;
+  cx.font=BP_FONT; cx.globalAlpha=1;
+  for(const l of list){
+    cx.fillStyle=l.bg; cx.fillRect(l.x-2,l.top,Math.ceil(l.w)+4,l.h);   // подложка цвета полосы — линия маркера не просвечивает сквозь текст
+    cx.fillStyle=l.col; cx.fillText(l.t,l.x,l.y);
+  }
+}
 // шрифт подписей полос/каналов: обычное начертание — bold моноширинный на 10-11px мажется
 const BP_FONT='11px monospace';
 
@@ -1315,9 +1323,10 @@ const BP_FONT='11px monospace';
 // вплотную над осью, но не поверх её подписей. Водопад ни здесь, ни в вызывающем draw() не трогаем.
 function saBandPlan(n,cx,W,H,plotH){
   const list=n.bandsData;
-  if(!list||!list.length){ if(n._bmBoxes) n._bmBoxes.length=0; return; }
+  if(!list||!list.length){ if(n._bmBoxes) n._bmBoxes.length=0; if(n._bpLabels) n._bpLabels.length=0; return; }
   const [lo0,hi0]=saBounds(n);
   const ranges=[], points=[];
+  const labels=n._bpLabels=(n._bpLabels||[]); labels.length=0;   // подписи полос — рисует saBandPlanLabels поверх маркеров
   for(const b of list){
     if(!b || typeof b.lo!=='number' || isNaN(b.lo)) continue;
     const hi=(typeof b.hi==='number' && !isNaN(b.hi)) ? b.hi : b.lo;
@@ -1369,7 +1378,7 @@ function saBandPlan(n,cx,W,H,plotH){
       // цвет текста — по фактическому фону (полоса с FILL_A поверх тёмного экрана), а не по цвету полосы
       const [cr,cg,cb]=hexToRgb(col), mix=v=>Math.round(v).toString(16).padStart(2,'0');
       const bg='#'+[cr,cg,cb].map((v,i)=>mix(v*FILL_A+scr[i]*(1-FILL_A))).join('');
-      cx.fillStyle=contrastText(bg); cx.fillText(label,tx,ty);
+      labels.push({t:label,x:tx,y:ty,w:tw,top:y+2,h:LANE_H-3,bg,col:contrastText(bg)});
     }
     cx.globalAlpha=1;
   }
