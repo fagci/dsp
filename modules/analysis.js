@@ -1075,6 +1075,16 @@ function saWfGlWrite(glp,W,line,lo,hi){
   gl.texSubImage2D(gl.TEXTURE_2D,0,0,glp.pos,1,1,gl.RG,gl.FLOAT,new Float32Array([lo-glp.ref,hi-glp.ref]));
   gl.activeTexture(gl.TEXTURE0);
 }
+// начальное содержимое кольца из готовой картинки (верх — новое): голова в последней строке,
+// картинка переворачивается при загрузке, пересчёт окна для этих строк выключен (map = 0,0)
+function saWfGlLoad(glp,img){
+  const {gl}=glp;
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,glp.tex);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);
+  glp.pos=glp.h-1;
+}
 // кадр отрисовки: полноэкранный квад, сэмплирующий кольцевую текстуру со сдвигом на голову кольца
 function saWfGlRender(glp,W,H,lo,hi,lin){
   const {gl}=glp;
@@ -1082,7 +1092,7 @@ function saWfGlRender(glp,W,H,lo,hi,lin){
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,glp.map);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,glp.tex);
   gl.useProgram(glp.prog); gl.bindVertexArray(glp.vao);
-  gl.uniform1f(glp.uHead,(glp.pos+.5)/glp.h);
+  gl.uniform1f(glp.uHead,(glp.pos+1)/glp.h);        // +1: пиксель j попадает в центр строки кольца, а не на стык двух (LINEAR их смешивал)
   const ref=glp.ref??lo;
   gl.uniform1f(glp.uLo,lo-ref); gl.uniform1f(glp.uHi,hi-ref); gl.uniform1f(glp.uLin,lin?1:0);
   gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
@@ -1518,6 +1528,15 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     if(n.s){
       const dpr=(cv.pxW&&cv.width)?cv.pxW/cv.width:1, Wp=cv.pxW||W, hwP=Math.max(1,Math.round(hw*dpr));
       if(!n.wfW||n.wfW!==Wp||n.wfH!==hwP){
+        // история водопада: при смене размера буфера (ресайз, зум холста) переносим старую картинку
+        let prev=null;
+        if(n.wfGl){ const [pl,ph]=saBounds(n); prev=saWfGlRender(n.wfGl,n.wfW,n.wfH,pl,ph,!n.p.log); }
+        else if(n.off) prev=n.off;
+        if(prev){
+          const tmp=document.createElement('canvas'); tmp.width=Wp; tmp.height=hwP;
+          tmp.getContext('2d').drawImage(prev,0,0,Wp,hwP); prev=tmp;
+        }
+        n.wfGl?.gl.getExtension('WEBGL_lose_context')?.loseContext();   // не копить живые WebGL-контексты
         n.wfW=Wp; n.wfH=hwP;
         // GPU-кольцевой буфер вместо drawImage-сдвига ВСЕЙ истории на 1px на каждой новой строке
         // спектра — на крупных канвах (большой specSize/широкий водопад) этот сдвиг был основным
@@ -1530,6 +1549,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           n.off=document.createElement('canvas'); n.off.width=Wp; n.off.height=hwP;
           n.ocx=n.off.getContext('2d');
         } else n.off=n.ocx=null;
+        if(prev){
+          if(n.wfGl) saWfGlLoad(n.wfGl,prev); else n.ocx.drawImage(prev,0,0);
+        }
         n._line=new Uint8ClampedArray(Wp*4);          // строка водопада — общий буфер для GPU- и CPU-пути
         n._lastRev=undefined; n._lastSpecRef=null;    // канва пересоздана — продавить свежую строку ниже
       }

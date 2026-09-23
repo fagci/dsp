@@ -148,18 +148,27 @@ n.el.style.transform=`translate3d(${n.x}px,${n.y}px,0)`;   // так двига�
 // под капотом в devicePixelRatio раз крупнее, и матрица контекста это компенсирует.
 // Настоящий размер буфера (нужен для putImageData/getImageData — водопады sa/persist)
 // доступен через cv.pxW/cv.pxH.
+const HiDPICanvases=new Map();                      // канва -> restretch
 function hiDPICanvas(cv,cx,n){
 const nativeW=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'width');
 const nativeH=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'height');
 let logW=cv.width, logH=cv.height;
-const restretch=()=>{ const dpr=window.devicePixelRatio||1;
-nativeW.set.call(cv, cv.pxW=Math.max(1,Math.round(logW*dpr)));
-nativeH.set.call(cv, cv.pxH=Math.max(1,Math.round(logH*dpr)));
-cx.setTransform(dpr,0,0,dpr,0,0); };
+// плотность буфера = devicePixelRatio × масштаб холста (panzoom, по фактической ширине на экране),
+// иначе на зуме браузер растягивает битмап и всё мылится. Потолок — по числу пикселей.
+const restretch=force=>{ const dpr=window.devicePixelRatio||1;
+const rw=cv.isConnected?cv.getBoundingClientRect().width:0;
+let s=Math.max(.5, dpr*(rw>0&&logW>0 ? rw/logW : 1));
+if(logW*logH*s*s>8e6) s=Math.sqrt(8e6/(logW*logH));
+const pw=Math.max(1,Math.round(logW*s)), ph=Math.max(1,Math.round(logH*s));
+if(!force && pw===cv.pxW && ph===cv.pxH) return;     // смена размера буфера стирает канву — только по делу
+nativeW.set.call(cv, cv.pxW=pw);
+nativeH.set.call(cv, cv.pxH=ph);
+cx.setTransform(pw/logW,0,0,ph/logH,0,0); };
+HiDPICanvases.set(cv,restretch);
 Object.defineProperty(cv,'width',{configurable:true, get:()=>logW,
-set:v=>{ logW=v; restretch(); }});
+set:v=>{ logW=v; restretch(true); }});
 Object.defineProperty(cv,'height',{configurable:true, get:()=>logH,
-set:v=>{ logH=v; restretch(); }});
+set:v=>{ logH=v; restretch(true); }});
 // В панельном режиме canvas.view растянут через CSS (width:100%), а ширина .node
 // плавает вслед за окном — attribute-размер (и DPR-буфер) этого не видит, отсюда
 // размытие при ресайзе. ResizeObserver держит logW/logH в реальном CSS-размере.
@@ -783,10 +792,15 @@ let panzooming=false;
 const panzoom=Panzoom(content,{canvas:true,maxScale:2.5,minScale:.25,step:.1,excludeClass:'panzoom-exclude'});
 content.addEventListener('panzoomstart',()=>{ panzooming=true; cv.classList.add('grab'); });
 content.addEventListener('panzoomend',  ()=>{ panzooming=false; cv.classList.remove('grab'); });
+let rescaleT=0, rescaleK=null;
 content.addEventListener('panzoomchange',ev=>{
 view.x=ev.detail.x; view.y=ev.detail.y; view.k=ev.detail.scale;
+if(view.k!==rescaleK){ rescaleK=view.k; clearTimeout(rescaleT); rescaleT=setTimeout(rescaleCanvases,250); }
 wires.style.transform=content.style.transform; wiresFront.style.transform=content.style.transform;
 syncGridBg(); });
+function rescaleCanvases(){                          // буферы канв под новый масштаб холста
+for(const [c,f] of HiDPICanvases){ if(c.isConnected) f(); else HiDPICanvases.delete(c); }   // отсоединённые — удалённые/пересобранные узлы
+}
 function syncGridBg(){                                // точки фона двигаются и масштабируются вместе с холстом
 cv.style.backgroundSize=(24*view.k)+'px '+(24*view.k)+'px';
 cv.style.backgroundPosition=(view.x*view.k)+'px '+(view.y*view.k)+'px';
