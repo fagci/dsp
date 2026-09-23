@@ -970,10 +970,13 @@ async function rtlOpenDevice(dev, ppm, gain){
     await com.writeEach([[RTL_CMD.DEMODREG,1,0x01,0x14,1],[RTL_CMD.DEMODREG,1,0x01,0x10,1]]);
     return real;
   }
+  // эпоха перестройки: трансферы, запущенные до её конца, несут отсчёты старой частоты
+  let tuneEpoch=0;
   async function setCenterFrequency(freq){
     await com.i2c.open();
     const actual=await tuner.setFrequency(freq+IF, freq);
     await com.i2c.close();
+    tuneEpoch++;
     return actual-IF;
   }
   async function setGain(g){
@@ -990,7 +993,7 @@ async function rtlOpenDevice(dev, ppm, gain){
     await com.iface.release();
     await dev.close();
   }
-  return {setSampleRate, setCenterFrequency, setGain, resetBuffer, readSamples, close, tunerName:found.name};
+  return {setSampleRate, setCenterFrequency, setGain, resetBuffer, readSamples, close, tunerName:found.name, epoch:()=>tuneEpoch};
 }
 
 // ---- чтение USB в отдельном воркере ----
@@ -1011,7 +1014,7 @@ let usb=null, api=null, rate=1024000, streaming=false;
 async function stream(readsPerSec, depth){
   const q=[];
   const chunk=()=>Math.max(512, Math.min(131072, 512*Math.ceil(rate/readsPerSec/512)));
-  const fill=()=>{ while(streaming && api && q.length<depth) q.push(api.readSamples(chunk()*2).then(b=>({b}), err=>({err}))); };
+  const fill=()=>{ while(streaming && api && q.length<depth){ const e=api.epoch(); q.push(api.readSamples(chunk()*2).then(b=>({b,e}), err=>({err}))); } };
   fill();
   while(streaming && q.length){
     const p=q.shift(); fill();
@@ -1025,7 +1028,7 @@ async function stream(readsPerSec, depth){
       fill();
       continue;
     }
-    self.postMessage({type:'chunk', buf:r.b}, [r.b]);
+    self.postMessage({type:'chunk', buf:r.b, epoch:r.e}, [r.b]);
   }
   while(q.length) await q.shift();
 }
@@ -1043,7 +1046,7 @@ self.onmessage=async e=>{
       r={tunerName:api.tunerName};
     }
     else if(cmd==='setSampleRate'){ rate=await api.setSampleRate(args.rate); r=rate; }
-    else if(cmd==='setCenterFrequency') r=await api.setCenterFrequency(args.freq);
+    else if(cmd==='setCenterFrequency'){ const f=await api.setCenterFrequency(args.freq); r={f, epoch:api.epoch()}; }
     else if(cmd==='setGain') await api.setGain(args.gain);
     else if(cmd==='resetBuffer') await api.resetBuffer();
     else if(cmd==='start'){ if(!streaming){ streaming=true; stream(args.readsPerSec, args.depth); } }
@@ -1059,7 +1062,7 @@ async function rtlOpenInWorker(usbDev, gain){
   if(typeof Worker==='undefined') return null;
   const url=URL.createObjectURL(new Blob([RTL_USB_WORKER_SRC], {type:'application/javascript'}));
   const w=new Worker(url);
-  let seq=1, onChunk=null;
+  let seq=1, onChunk=null, epoch=0;
   const pend=new Map();
   w.onmessage=e=>{
     const m=e.data;
@@ -1077,7 +1080,8 @@ async function rtlOpenInWorker(usbDev, gain){
   return {
     worker:true, tunerName:info.tunerName,
     setSampleRate:rate=>call('setSampleRate',{rate}),
-    setCenterFrequency:freq=>call('setCenterFrequency',{freq}),
+    setCenterFrequency:async freq=>{ const r=await call('setCenterFrequency',{freq}); epoch=r.epoch; return r.f; },
+    epoch:()=>epoch,
     setGain:gain=>call('setGain',{gain}),
     resetBuffer:()=>call('resetBuffer'),
     // cb получает {buf} | {err} | {end}
@@ -1428,6 +1432,9 @@ async function rtlReadLoop(n){
       // Циклический индекс — сравнение+обнуление, а не % на каждый отсчёт: при типичных chunkSamples
       // (десятки тысяч на USB-чтение, READS_PER_SEC раз в секунду) деление в modulo было заметной
       // главно-поточной нагрузкой ровно там, где конкурирует с чтением USB/сообщениями демод-воркеру.
+      // чанк, запущенный до последней перестройки, несёт отсчёты старой частоты — в спектр его не пускаем,
+      // иначе картинка мечется между старым и новым местом, а за ней и окно 'sa' со steerFreq
+      if(res.epoch==null || res.epoch>=(n._specEpoch||0))
       { let w=specRing.w, filled=specRing.filled; const I=specRing.I, Q=specRing.Q, size=specRing.size;
         for(let k=0;k<cnt;k++){
           I[w]=(u8[2*k]-127.5)/127.5; Q[w]=(u8[2*k+1]-127.5)/127.5;
@@ -1529,7 +1536,8 @@ function rtlLocalSource(n){
   const fill=()=>{
     while(n.reading && n.dev && queue.length<RTL_USB_QUEUE){
       const cs=Math.max(512, Math.min(131072, 512*Math.ceil(n.sourceRate/RTL_READS_PER_SEC/512)));
-      queue.push(n.dev.readSamples(cs*2).then(buf=>({buf}), err=>({err})));
+      const epoch=n.dev.epoch();
+      queue.push(n.dev.readSamples(cs*2).then(buf=>({buf, epoch}), err=>({err})));
     }
   };
   fill();
@@ -1550,7 +1558,7 @@ function rtlWorkerSource(n){
   const push=r=>{ if(waiters.length) waiters.shift()(r); else ready.push(r); };
   n.dev.startStream(RTL_READS_PER_SEC, RTL_USB_QUEUE, m=>{
     if(m.end) push(null);
-    else push(m.err ? {err:new Error(m.err)} : {buf:m.buf});
+    else push(m.err ? {err:new Error(m.err)} : {buf:m.buf, epoch:m.epoch});
   }).catch(e=>push({err:e}));
   return {
     next(){ return ready.length ? Promise.resolve(ready.shift()) : new Promise(r=>waiters.push(r)); },
@@ -1811,6 +1819,7 @@ async function rtlConnect(n){
     // уже терминированы в rtlDisconnect, но на всякий случай подчистим прежде, чем ресайзить кольца
     for(const ch of n.ch){ if(ch.worker) ch.worker.terminate(); ch.worker=null; ch.aring=null; ch.active=false; }
     rtlResetRing(n);
+    n._specEpoch=0;
     rtlActivateChannel(n, 0);                        // channel 1 — always, as before
     // синхронизируем NCO канала 1 с уже выставленным (возможно, отличным от центра) значением
     const tf0=n.ch[0].tuneFreq==null?n.actualFreq:n.ch[0].tuneFreq;
@@ -1861,7 +1870,11 @@ async function rtlApplyPending(n){
   if(!freqStale && !gainStale) return;
   n.busy=true;
   try{
-    if(freqStale){ n.actualFreq=await n.dev.setCenterFrequency(wantFreq); n.appliedFreq=wantFreq; }
+    if(freqStale){
+      n.actualFreq=await n.dev.setCenterFrequency(wantFreq); n.appliedFreq=wantFreq;
+      // спектр — только с отсчётов новой частоты: кольцо с нуля, старые чанки отсекает эпоха
+      n._specEpoch=n.dev.epoch?.()||0; n.specRing.filled=0;
+    }
     if(gainStale){ await n.dev.setGain(wantGain); n.appliedGain=wantGain; n.appliedAuto=wantAuto; }
   }catch(e){ n.status='retune error: '+e.message; }
   n.busy=false;
@@ -1909,78 +1922,50 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
             rtlResetRing(n); },
   dispose:n=>{ rtlDisconnect(n).catch(e=>console.error('rtlsdr dispose:',e)); },
   process(n,I){
-    const freqInputPresent=typeof I.freq==='number';
-    // freqDriven — это факт, что 'freq' СЕЙЧАС МЕНЯЕТСЯ (значение отличается от прошлого тика),
-    // а не просто факт, что провод подключён. Раньше было наоборот (freqDriven=подключён), и это
-    // мешало пользоваться Тюнером и перетаскиванием спектра ОДНОВРЕМЕННО: как только Тюнер хоть
-    // раз подключают к 'freq', tuneFreq (в т.ч. от sa.centerFreq при драге спектра — см. модуль
-    // analysis.js) НАВСЕГДА лишался права переставить реальный центр по краю — Тюнер, даже стоя
-    // смирно, вечно "побеждал". Раз сравниваем с прошлым тиком: пока Тюнер НЕ крутят (I.freq не
-    // меняется), он никому не мешает — tuneFreq свободно постранично переставляет центр сам (см.
-    // ниже); а вот в САМ момент, когда Тюнер реально крутят, на этот тик действительно уступаем
-    // ему дорогу — иначе 'freq' на следующем же тике перетрёт скачок tuneFreq обратно, и получится
-    // бесконечное перетягивание (см. комментарий у самого if(freqDriven) ниже). Значение 'freq'
-    // по-прежнему применяется каждый тик, пока провод подключён — Тюнер остаётся единственным
-    // хозяином центра, когда сам того хочет.
-    const wireChanged=freqInputPresent && I.freq!==n._prevIFreq;
-    // 'freq' МОГЛИ подвинуть и без провода вообще — вручную потаскав/вписав число прямо в панели
-    // параметров узла (то же самое n.p.freq, тот же setV в core-graph.js). steerFreq об этом
-    // никак не узнал бы (у него нет понятия "вход изменился", т.к. это не его вход) и на
-    // СЛЕДУЮЩЕМ же тике попробовал бы вернуть частоту к своей же цели — снаружи это выглядит
-    // как "не могу ввести центральную частоту руками, она тут же откатывается обратно" (ровно
-    // так и сообщили). n._prevPFreq — снимок n.p.freq на конец ПРЕДЫДУЩЕГО тика (пишем в самом
-    // низу process()); если сейчас он отличается, а сам этот тик его ещё не трогал — значит,
-    // сменили руками между тиками, и на этот тик тоже уступаем дорогу, как и активно крутящемуся
-    // Тюнеру.
-    const manualEdit=n._prevPFreq!=null && n.p.freq!==n._prevPFreq;
-    const freqDriven=wireChanged || manualEdit;
-    if(freqInputPresent){ setMod(n,'freq',I.freq); n._prevIFreq=I.freq; }
-    // Уступить steerFreq дорогу только на ОДИН тик (см. freqDriven выше) недостаточно: пока сам
-    // steerFreq не переменился (fmin/fmax у 'sa' не трогали — там всё ещё старая, уже неактуальная
-    // цель), он на СЛЕДУЮЩЕМ же тике возобновляет обычную работу и тащит центр обратно — снаружи
-    // это и есть "ввод частоты руками так и не чинится". Вместо одноразовой уступки запоминаем
-    // (n._steerFreqHold) само значение steerFreq в момент ручной правки/Тюнера и держим его
-    // подавленным, пока оно не изменится — то есть пока пользователь заново не потрогает спектр
-    // (drag/zoom подвинут sa.centerFreq). Как только цель реально другая — steerFreq возвращает
-    // себе право переставлять центр, никакого постоянного "замка".
-    if(freqDriven) n._steerFreqHold = typeof I.steerFreq==='number' ? I.steerFreq : undefined;
-    const steerSuppressed = n._steerFreqHold!==undefined && I.steerFreq===n._steerFreqHold;
-    const cf0=n.actualFreq??n.p.freq;
-    // steerFreq — единственный (не считая 'freq'/Тюнера) вход, которому разрешено дёргать
-    // РЕАЛЬНЫЙ центр приёмника: следует за запрошенной целью НЕПРЕРЫВНО (перестраивается на неё
-    // напрямую, а не полосами/страницами приёмника) — у него нет своего канала/звука, это чисто
-    // "куда смотрит приёмник", для ручной навигации (Тюнер уже занимает 'freq', это — например,
-    // drag спектра, см. sa.centerFreq). Раньше сдвигали центр целыми "страницами" (шириной полосы
-    // приёмника) при выходе за край — задумывалось как экономия на дорогой USB-перестройке, но на
-    // практике ощущалось как рывок/скачок вместо плавной прокрутки (в SDR++/gqrx частота при драге
-    // "наматывается" плавно).
-    // Троттлинг (тот же интервал, что у rtlUpdateSpec) — ощутимая перестройка PLL тюнера (R820T)
-    // требует времени на реколибровку/устаканивание DC-смещения; без троттлинга при непрерывном
-    // перетаскивании приёмник перестраивался БЕЗ ПЕРЕРЫВА, одна команда сразу за другой (rtlApply-
-    // Pending не шлёт больше одной разом, но как только шина освобождается — тут же летит
-    // следующая, свежее значение уже накопилось) — тюнер физически не успевал устаканиться между
-    // перестройками ни на миг, и это лезло в поток IQ прямо во время демодуляции ("трещащий звук,
-    // будто underflow/overflow" на WFM). Даём тюнеру хотя бы паузу между реальными перестройками;
-    // на плавность самой картинки (sa.centerFreq/окно) это не влияет — они по-прежнему обновляются
-    // каждый тик, троттлится только физическая перестройка приёмника.
-    if(typeof I.steerFreq==='number' && !freqDriven && !steerSuppressed && I.steerFreq!==cf0){
-      const now=performance.now();
-      if(n._lastSteerRetune==null || now-n._lastSteerRetune>=80){
-        n._lastSteerRetune=now;
-        n.p.freq=I.steerFreq; n.set.freq?.(I.steerFreq);
+    // Центр приёмника (n.p.freq) меняют четыре источника, по приоритету:
+    //   1. ручной ввод (крутилка/поле узла);
+    //   2. вход 'freq' — только в момент смены значения;
+    //   3. 'steerFreq' (перетаскивание спектра в 'sa') — только при смене значения;
+    //   4. 'tuneFreq..4' — смена значения за пределами захваченной полосы.
+    // Все срабатывают по фронту, а не каждый тик: держащий старое значение провод не тянет центр обратно.
+    const cf0=n.actualFreq??n.p.freq, half0=n.sourceRate/2, now=performance.now();
+    const binHz=n.sourceRate/(+n.p.specSize||4096);
+    let target=null, prio=0;
+    if(n._prevPFreq!=null && n.p.freq!==n._prevPFreq){ target=n.p.freq; prio=1; }
+    const freqEdge=typeof I.freq==='number' && I.freq!==n._inFreq;
+    n._inFreq=I.freq;
+    if(freqEdge && !target){ target=I.freq; prio=2; }
+    // steerFreq: отсекаем эхо — 'sa' сам сдвигает окно вслед за новым спектром после перестройки
+    // (центр окна отличается от центра приёмника на доли бина), и паузу после приоритетов 1-2,
+    // пока спектр со старой частотой ещё может встретиться в 'sa'
+    if(typeof I.steerFreq==='number' && I.steerFreq!==n._inSteer){
+      const first=n._inSteer===undefined;             // первое значение после загрузки — точка отсчёта, не команда
+      n._inSteer=I.steerFreq;
+      if(first) n._steerPending=null;
+      else {
+        const echo=Math.abs(I.steerFreq-(n.p.freq??cf0))<=Math.max(2*binHz, 50);
+        n._steerPending = (echo || now<(n._steerMuteUntil||0)) ? null : I.steerFreq;
       }
+    } else if(typeof I.steerFreq!=='number') n._inSteer=I.steerFreq;
+    if(!target && n._steerPending!=null && now-(n._lastSteerRetune||0)>=80){
+      target=n._steerPending; prio=3; n._steerPending=null; n._lastSteerRetune=now;   // троттлинг физической перестройки при драге
     }
-    // канал 0 — просто NCO-офсет в пределах уже захваченной полосы, как и 1-3 ниже (см. steerFreq
-    // выше про то, кто теперь отвечает за реальную перестройку).
-    if(typeof I.tuneFreq==='number') n.ch[0].tuneFreq=I.tuneFreq;
-    // каналы 2-4 — то же самое, плюс ленивая активация при первом же числе на их tuneFreqN
-    // (одновременно можно слушать только то, что помещается в одну физически настроенную полосу)
-    for(let ci=1;ci<4;ci++){
-      const want=I['tuneFreq'+RTL_CH_SUFFIX[ci]];
-      if(typeof want==='number'){
-        if(!n.ch[ci].active) rtlActivateChannel(n,ci);
-        n.ch[ci].tuneFreq=want;
-      }
+    // tuneFreq: смена значения — новая частота канала; за пределами полосы — ещё и перестройка центра
+    for(let ci=0;ci<4;ci++){
+      const ch=n.ch[ci], v=I['tuneFreq'+RTL_CH_SUFFIX[ci]];
+      if(v===ch._inTune) continue;
+      ch._inTune=v;
+      if(typeof v==='number'){
+        if(ci>0 && !ch.active) rtlActivateChannel(n,ci);
+        ch.tuneFreq=v;
+        if(!target && Math.abs(v-cf0)>half0){ target=v; prio=4; }
+      } else ch.tuneFreq=null;                       // маркер сняли — канал снова следует за центром
+    }
+    if(target!=null){
+      if(target!==n.p.freq){ n.p.freq=target; n.set.freq?.(target); }
+      if(prio<=2) n._steerMuteUntil=now+600;
+      // каналы, чья частота не попадает в новую полосу, возвращаем к центру
+      for(const ch of n.ch) if(ch.tuneFreq!=null && Math.abs(ch.tuneFreq-target)>half0) ch.tuneFreq=null;
     }
     // gainDb/demod/bw — часто одновременно и подключены (например, с выбранной закладки), и хочется
     // покрутить руками поверх — setModWired (processing.js) даёт ручной правке победить, пока сам
