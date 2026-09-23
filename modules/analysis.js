@@ -1673,6 +1673,7 @@ async function bpRefresh(n){
   const items=await ListDB.list(n.p.listName);
   n.items=items.map(it=>({lo:+it.fields.lo||0, hi:+it.fields.hi||0, label:it.name,
     color:it.fields.color||'', step:+it.fields.step||0, id:it.id}));
+  n._sel=null;
   if(n.ui) bpRenderAll(n);
 }
 async function bpAdd(n){
@@ -1683,9 +1684,10 @@ async function bpAdd(n){
   if(it && row) bpEditRow(n,it,row);
 }
 function bpExportCsv(n){
+  const fname=bpEditable(n) ? n.p.listName||'bandplan' : n.p.preset;
   const header='lo,hi,label,color,step\n';
   const body=n.items.map(b=>[b.lo,b.hi,csvCell(b.label||''),csvCell(b.color||''),b.step||''].join(',')).join('\n');
-  dl(new Blob([header+body],{type:'text/csv'}), (n.p.listName||'bandplan').replace(/[^\w-]+/g,'_')+'.csv');
+  dl(new Blob([header+body],{type:'text/csv'}), fname.replace(/[^\w-]+/g,'_')+'.csv');
 }
 function bpImportCsv(n,file){
   const reader=new FileReader();
@@ -1716,41 +1718,57 @@ function bpRenderAll(n){
   });
   bpRenderList(n);
 }
+const bpEditable=n=>n.p.preset==='editable (saved list)';
+const bpKey=it=>it.id!=null ? 'id'+it.id : it.lo+'|'+it.hi+'|'+it.label;
 function bpRenderList(n){
-  const list=n.ui.list;
+  const list=n.ui.list, q=(n.ui.filter.value||'').trim().toLowerCase();
   list.innerHTML='';
-  n.ui.count.textContent=n.items.length+' bands';
-  if(!n.items.length){
+  const words=it=>(it.label||'').toLowerCase().split(/[\s/()]+/);   // с начала слова: '20m' не находит '120m'
+  const shown=q ? n.items.filter(it=>words(it).some(w=>w.startsWith(q)) || (it.label||'').toLowerCase().startsWith(q)) : n.items;
+  n.ui.count.textContent=(q?shown.length+'/':'')+n.items.length+' bands';
+  if(!shown.length){
     const empty=document.createElement('div');
-    empty.textContent='empty — add a band or import CSV';
+    empty.textContent=n.items.length ? 'nothing matches' : bpEditable(n) ? 'empty — add a band or import CSV' : 'empty';
     empty.style.cssText='padding:12px;text-align:center;color:#2a3136;';
     list.appendChild(empty); return;
   }
-  for(const it of n.items) list.appendChild(bpRow(n,it));
+  for(const it of shown) list.appendChild(bpRow(n,it));
+}
+// клик по строке — выбор полосы: её lo/mid/hi/span/step уходят на выходы узла
+function bpSelect(n,it){
+  n.p.selKey=bpKey(it); n._sel=it;
+  n._gap=true;                                        // такт без значений: повторный клик — снова фронт для rtlsdr.freq
+  n.ui?.list.querySelectorAll('[data-key]').forEach(r=>r.style.background=r.dataset.key===n.p.selKey?'#1f3a36':'');
 }
 function bpRow(n,it){
   const row=document.createElement('div');
-  row.dataset.id=it.id;
-  row.style.cssText='display:flex;align-items:center;gap:5px;padding:2px 6px;'+
-    'border-bottom:1px solid #121619;min-width:0;';
+  row.dataset.key=bpKey(it);
+  const sel=row.dataset.key===n.p.selKey;
+  row.style.cssText='display:flex;align-items:center;gap:5px;padding:2px 6px;cursor:pointer;'+
+    'border-bottom:1px solid #121619;min-width:0;'+(sel?'background:#1f3a36;':'');
+  row.addEventListener('click', ()=>bpSelect(n,it));
   const swatch=document.createElement('span');
   swatch.style.cssText=`width:9px;height:9px;border-radius:2px;flex-shrink:0;background:${it.color||'#c9c9c9'};`;
   const name=document.createElement('span');
   name.textContent=it.label; name.style.cssText='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
   const val=document.createElement('span');
-  val.textContent=it.hi>it.lo ? (fmtHz(it.lo)+'-'+fmtHz(it.hi)+'Hz') : (fmtHz(it.lo)+'Hz');
-  val.style.cssText='color:#4ec9b0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%;';
-  const editBtn=document.createElement('span');
-  editBtn.textContent='✎'; editBtn.style.cssText='cursor:pointer;color:#6c7a80;';
-  editBtn.addEventListener('click', ()=>bpEditRow(n,it,row));
-  const delBtn=document.createElement('span');
-  delBtn.textContent='🗑'; delBtn.style.cssText='cursor:pointer;color:#6c7a80;';
-  delBtn.addEventListener('click', async ()=>{
-    if(!confirm('Delete band "'+it.label+'"?')) return;
-    await ListDB.remove(it.id);
-    await bpRefresh(n);
-  });
-  row.append(swatch,name,val,editBtn,delBtn);
+  val.textContent=it.hi>it.lo ? (fmtHz(it.lo,3)+'-'+fmtHz(it.hi,3)) : fmtHz(it.lo,3);
+  val.style.cssText='color:#4ec9b0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:50%;';
+  row.append(swatch,name,val);
+  if(bpEditable(n)){
+    const editBtn=document.createElement('span');
+    editBtn.textContent='✎'; editBtn.style.cssText='cursor:pointer;color:#6c7a80;';
+    editBtn.addEventListener('click', e=>{ e.stopPropagation(); bpEditRow(n,it,row); });
+    const delBtn=document.createElement('span');
+    delBtn.textContent='🗑'; delBtn.style.cssText='cursor:pointer;color:#6c7a80;';
+    delBtn.addEventListener('click', async e=>{
+      e.stopPropagation();
+      if(!confirm('Delete band "'+it.label+'"?')) return;
+      await ListDB.remove(it.id);
+      await bpRefresh(n);
+    });
+    row.append(editBtn,delBtn);
+  }
   return row;
 }
 // заменяет строку полосы инлайн-формой редактирования (имя, границы частоты, шаг канала, цвет)
@@ -1795,13 +1813,14 @@ function bpInit(n){
   root.style.cssText='position:relative;display:flex;flex-direction:column;font-size:11px;'+
     'color:#c8d2d6;box-sizing:border-box;overflow:hidden;grid-column:1/-1;width:100%;min-width:0;gap:2px;';
   root.innerHTML=`
-    <div class="bp-row" style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
+    <div class="bp-row bp-lists" style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
       <select class="bp-select" style="flex:1;min-width:0;background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;font-size:10px;padding:1px 2px;"></select>
       <span class="bp-new" title="new list" style="cursor:pointer;color:#6c7a80;">＋</span>
       <span class="bp-ren" title="rename list" style="cursor:pointer;color:#6c7a80;">✎</span>
       <span class="bp-delL" title="delete list" style="cursor:pointer;color:#6c7a80;">🗑</span>
     </div>
     <div class="bp-row" style="display:flex;gap:4px;align-items:center;flex-shrink:0;flex-wrap:wrap;">
+      <input class="bp-filter" placeholder="filter" style="flex:1 1 60px;min-width:40px;background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;font-size:10px;padding:1px 3px;">
       <button class="bp-add" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">+ add band</button>
       <button class="bp-import" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">import CSV</button>
       <button class="bp-export" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;">export CSV</button>
@@ -1813,7 +1832,9 @@ function bpInit(n){
   mid.append(root);
   syncCustomHeight(n, root, 110);
   n.ui={root, list:root.querySelector('.bp-list'), count:root.querySelector('.bp-count'),
-    select:root.querySelector('.bp-select')};
+    select:root.querySelector('.bp-select'), filter:root.querySelector('.bp-filter'), mode:null};
+  n.ui.filter.addEventListener('input', ()=>bpRenderList(n));
+  n.ui.filter.addEventListener('keydown', e=>e.stopPropagation());
   n.ui.select.addEventListener('change', async ()=>{
     n.p.listName=n.ui.select.value;
     await bpRefresh(n);
@@ -1840,7 +1861,15 @@ function bpInit(n){
   root.querySelector('.bp-import').addEventListener('click', ()=>fileInput.click());
   fileInput.addEventListener('change', ()=>{ const f=fileInput.files[0]; fileInput.value=''; if(f) bpImportCsv(n,f); });
   root.querySelector('.bp-export').addEventListener('click', ()=>bpExportCsv(n));
-  bpRefresh(n);
+  bpMode(n);
+}
+// вшитые пресеты — только чтение: без управления списками, добавления, импорта и правки строк
+function bpMode(n){
+  const ed=bpEditable(n), key=ed?'edit':n.p.preset;
+  if(!n.ui || n.ui.mode===key) return;
+  n.ui.mode=key;
+  for(const c of ['.bp-lists','.bp-add','.bp-import']) n.ui.root.querySelector(c).style.display=ed?'':'none';
+  if(ed) bpRefresh(n); else bpRenderList(n);
 }
 // Готовые band plan'ы (ориентир для РФ/IARU Region 1, не замена официальным документам).
 // Запись: [lo, hi, label, step, color]; частоты в кГц (переводятся в Гц в bpK). step — шаг канала
@@ -1949,44 +1978,53 @@ const BANDPLAN_PRESETS={
     [433075,434775,'LPD433',25000,'SRD'],[446006.25,446193.75,'PMR446',12500,'SRD']]),
   'HF Broadcast (5kHz channels)':BP_BC.filter(b=>b[3]===5000),
 };
+// пресет -> n.items; и из process, и из draw — список нужен и при остановленном движке
+function bpApplyPreset(n){
+  if(bpEditable(n)){ n._appliedPreset=null; if(n.p.listName!==n.loadedListName) bpRefresh(n); return; }
+  n.loadedListName=null;                              // вернёмся в editable — перечитать список из БД
+  if(n.p.preset===n._appliedPreset) return;
+  n._appliedPreset=n.p.preset;
+  const p=BANDPLAN_PRESETS[n.p.preset];
+  n.items = p ? p.map(([lo,hi,label,step,color])=>({lo,hi,label,color:color||'',step:step||0})) : [];
+  n.name = n.p.preset==='none' ? '' : n.p.preset;
+  n._sel=null;
+}
 def({ id:'bandplan', title:'Band Plan (Presets/Editable)', cat:'Analysis',
-  // Справочный band plan: либо один из встроенных пресетов (показывает что-то полезное сразу,
-  // без составления CSV вручную), либо свой список — 'editable (saved list)' держит его в
-  // ListDB (та же браузерная БД, что и у 'bookmarks') и редактируется тем же приёмом: инлайн
-  // добавление/правка/удаление строк прямо в узле, плюс импорт/экспорт CSV (см. bp* выше). В
-  // отличие от 'bookmarks' тут нет "выбранной" записи с живым выводом — узлу нужен весь список
-  // целиком, как есть у пресетов.
-  outs:[{n:'bands',t:'bands'}],
+  // Справочный band plan: либо один из встроенных пресетов (только чтение и экспорт CSV), либо
+  // свой список — 'editable (saved list)' держит его в ListDB (та же браузерная БД, что и у
+  // 'bookmarks'): инлайн добавление/правка/удаление строк, импорт/экспорт CSV (см. bp* выше).
+  // Список виден всегда; клик по строке выбирает полосу — её границы, середина, ширина и шаг
+  // уходят на выходы (mid -> частота rtlsdr, lo/hi -> fmin/fmax у 'sa' для зума на полосу).
+  outs:[{n:'bands',t:'bands'},{n:'lo',t:'num'},{n:'mid',t:'num'},{n:'hi',t:'num'},
+        {n:'span',t:'num'},{n:'step',t:'num'}],
   readout:true, w:320, h:200, resize:true,
   params:[
     {n:'preset',t:'select',opts:['none','editable (saved list)',...Object.keys(BANDPLAN_PRESETS)],
      d:'ISM / license-free',label:'preset'},
   ],
   init:n=>{
-    n.items=[]; n._appliedPreset=null; n.name='';
+    n.items=[]; n._appliedPreset=null; n.name=''; n._sel=null;
     n.p.listName=n.p.listName||'bandplan'; n.loadedListName=null;
     n.onResize=ln=>{ if(ln.ui) syncCustomHeight(ln, ln.ui.root, 110); };
   },
   process(n,I){
-    if(n.p.preset==='editable (saved list)'){
-      if(n.p.listName!==n.loadedListName) bpRefresh(n);   // список сменили извне (десериализация/undo) или первый заход
-      return {bands:n.items};
-    }
-    if(n.p.preset!==n._appliedPreset){
-      n._appliedPreset=n.p.preset;
-      const p=BANDPLAN_PRESETS[n.p.preset];
-      n.items = p ? p.map(([lo,hi,label,step,color])=>({lo,hi,label,color:color||'',step:step||0})) : [];
-      n.name = n.p.preset==='none' ? '' : n.p.preset;
-    }
-    return {bands:n.items};
+    bpApplyPreset(n);
+    if(!n._sel && n.p.selKey) n._sel=n.items.find(it=>bpKey(it)===n.p.selKey)||null;
+    const b=n._sel;
+    if(!b || n._gap){ n._gap=false; return {bands:n.items}; }
+    const hi=Math.max(b.lo,b.hi);
+    return {bands:n.items, lo:b.lo, mid:(b.lo+hi)/2, hi, span:hi-b.lo, step:b.step||0};
   },
   draw(n){
-    const editable=n.p.preset==='editable (saved list)';
-    if(editable){ if(!n.ui) bpInit(n); }
-    else if(n.ui){ n.ui.root.remove(); n.ui=null; }
+    bpApplyPreset(n);
+    if(!n.ui) bpInit(n);
+    bpMode(n);
+    if(!bpEditable(n) && n.ui._items!==n.items){ n.ui._items=n.items; bpRenderList(n); }
+    if(!n._sel && n.p.selKey) n._sel=n.items.find(it=>bpKey(it)===n.p.selKey)||null;
     const r=n.el.querySelector('.readout'); if(!r) return;
-    r.style.display=editable?'none':'';                // список сам показывает счётчик — readout лишний
-    const t=editable ? '' : (n.name||'empty')+' · '+n.items.length+' entries';
+    const b=n._sel, hi=b?Math.max(b.lo,b.hi):0;
+    const t=b ? b.label+' · mid '+fmtHz((b.lo+hi)/2,4)+'Hz'+(hi>b.lo?' · '+fmtHz(hi-b.lo,1)+'Hz wide':'')
+              : 'click a band to select';
     if(r.textContent!==t) r.textContent=t; }});
 
 // ---- Bookmarks: живой, редактируемый список сохранённых частот (в отличие от 'bandplan' — не
