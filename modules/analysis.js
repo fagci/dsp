@@ -1308,12 +1308,15 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           let newLo=fAtCursor-ratio*newRange, newHi=newLo+newRange;
           if(newLo<fullLo){ newLo=fullLo; newHi=newLo+newRange; }
           if(newHi>fullHi){ newHi=fullHi; newLo=newHi-newRange; }
-          n.zoom = (Math.abs(newLo-fullLo)<1 && Math.abs(newHi-fullHi)<1) ? null : [newLo,newHi];
+          // отзум до упора — весь текущий диапазон приёма: auto, а не старые ручные fmin/fmax,
+          // которые после драга/перестройки уже не совпадают с полосой
+          if(Math.abs(newLo-fullLo)<1 && Math.abs(newHi-fullHi)<1){ n.zoom=null; if(!n.p.auto) n.set.auto?.(true); }
+          else n.zoom=[newLo,newHi];
         }
       }, {passive:false});
       cv.addEventListener('dblclick', ev=>{
         ev.preventDefault();
-        n.zoom=null;                                 // сброс зума — во всю полосу источника
+        n.zoom=null; if(!n.p.auto) n.set.auto?.(true);   // сброс зума — во всю полосу источника
       });
       // перетаскивание — панорама простым зажатием и движением (без Shift/колеса), интуитивнее
       // на трекпаде/touch. Якорим частоту под курсором и ширину окна В МОМЕНТ НАЖАТИЯ и на каждое
