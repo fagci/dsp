@@ -1280,6 +1280,7 @@ const RTL_USB_QUEUE=8;       // трансферов в полёте, ~200мс �
 const RTL_TARGET_S=0.08;
 const RTL_DROP_S=0.3;
 const RTL_SERVO_PPM=500;
+const RTL_EXCESS=2;         // средний запас выше target×RTL_EXCESS — сброс до target
 const RTL_SERVO_G=0.01;      // EMA уровня кольца на блок движка, τ ≈ 1с при BLOCK=512/48к
 
 async function rtlReadLoop(n){
@@ -1618,6 +1619,15 @@ function rtlPace(n, st, lag, rateIn, need, tag){
     return {k:0, drop};
   }
   st.lagAvg=(st.lagAvg??lag)+(lag-(st.lagAvg??lag))*RTL_SERVO_G;
+  // устойчивый избыток (стопор при старте и т.п.) серво съедал бы минутами — роняем сразу
+  if(st.lagAvg>target*RTL_EXCESS){
+    const d=lag-target;
+    if(d>0){
+      drop+=d; n.underrunsOverflow++;
+      console.warn(`[rtlsdr] ${tag} ring: устойчивый запас ${(1000*st.lagAvg/rateIn).toFixed(0)}мс, сброшено до ${(1000*target/rateIn).toFixed(0)}мс @ ${performance.now().toFixed(0)}ms`);
+    }
+    st.lagAvg=target;
+  }
   const err=clamp((st.lagAvg-target)/target, -1, 1);
   st.ppm=err*RTL_SERVO_PPM;
   return {k:1+st.ppm*1e-6, drop};
