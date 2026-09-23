@@ -611,7 +611,7 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
   outs:[{n:'count',t:'num'},{n:'f1',t:'num'},{n:'l1',t:'num'},{n:'f2',t:'num'},{n:'l2',t:'num'},
         {n:'f3',t:'num'},{n:'l3',t:'num'},{n:'f4',t:'num'},{n:'l4',t:'num'}],
   readout:true, tall:true,
-  params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)'},
+  params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)',fn:n=>{ if(n.p.auto) n.zoom=null; }},
           {n:'fmin',t:'range',min:1,max:6e9,step:1,log:true,d:100},
           {n:'fmax',t:'range',min:1,max:6e9,step:1,log:true,d:6000},
           {n:'guard',t:'range',min:1,max:32,step:1,d:4,label:'guard bins'},
@@ -1074,7 +1074,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         {n:'db1',t:'num'},{n:'db2',t:'num'},{n:'db3',t:'num'},{n:'db4',t:'num'},
         {n:'centerFreq',t:'num'}],
   view:{h:280}, pick:true, resize:true,
-  params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)'},
+  params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)',fn:n=>{ if(n.p.auto) n.zoom=null; }},
           {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[0,4000],label:'range, Hz'},
           {n:'dbrange',t:'range2',keys:['floor','top'],min:-140,max:20,step:1,d:[-100,-20],label:'range, dB'},
           // слайдера больше нет — граница спектр/водопад тащится прямо на графике (см. resize в drag ниже)
@@ -1099,9 +1099,17 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   // работает, только если источник спектра отдаёт sp.phase/sp.hop ('fft'/'zfft' это делают).
   init:n=>{n.mk=[null,null,null,null];n.lv=[0,0,0,0];n.db=[-120,-120,-120,-120];n.active=1;
            n.ext=[0,0,0,0];n.pickT=null;n.peak=null;n.peakFreqs=null;n._dragPending=false;n._dragActive=false;
-           n.mkPhase=[0,0,0,0];n.mkBin=[null,null,null,null];n.mkRev=[-1,-1,-1,-1];},
+           n.mkPhase=[0,0,0,0];n.mkBin=[null,null,null,null];n.mkRev=[-1,-1,-1,-1];
+           n.zoom=null;n._steer=null;n._srcCenter=null;n._lastRange=null;},
   process(n,I){
     const sp=I.spec;
+    for(const k of ['fmin','fmax']) if(typeof I[k]==='number') setMod(n,k,I[k]);
+    // границы поменяли не мы (поле диапазона или провод) — это ручной ввод: auto выключаем,
+    // зум сбрасываем, центр введённого диапазона — цель для приёмника (centerFreq)
+    if(n._lastRange && (n.p.fmin!==n._lastRange[0] || n.p.fmax!==n._lastRange[1])){
+      n.zoom=null; n._steer=(n.p.fmin+n.p.fmax)/2;
+      if(n.p.auto) n.set.auto?.(false);
+    }
     // ручной диапазон вообще не пересекается с реальными данными — источник сменил масштаб
     // (например, подключили RF-спектр rtlsdr вместо аудио с fft) — подхватываем его целиком,
     // иначе окно клэмпится в вырожденную точку у края, и клик по графику всегда даёт одну и ту
@@ -1139,15 +1147,33 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       // видимый скачок. Этим объяснялось, почему скачок был воспроизводим именно "сразу после
       // отпускания" перетаскивания (перестройка ещё не устаканилась) и пропадал, если подождать
       // чуть дольше перед отпусканием — устаканиться она как раз успевала.
-      else if(n._dragPending && n.p.fmin>=lo0 && n.p.fmax<=hi0) n._dragPending=false;
+      else if(n._dragPending){
+        const w=n.zoom||[n.p.fmin,n.p.fmax];
+        const src=sp.freqs&&sp.freqs.length ? sp.freqs[sp.freqs.length>>1] : (lo0+hi0)/2;
+        const tol=Math.max(2*(hi0-lo0)/Math.max(1,(sp.freqs?sp.freqs.length:2)-1), 50);
+        // у RF-источника (есть freqs) ждём, пока центр приёмника дойдёт до цели драга; если за 1.5 с
+        // после драга не дошёл (centerFreq никуда не подключён) — окно больше не держим
+        const reached=!sp.freqs || n._steer==null || Math.abs(src-n._steer)<=tol;
+        if((w[0]>=lo0 && w[1]<=hi0 && reached) || (!n._dragActive && performance.now()-(n._dragT||0)>1500)) n._dragPending=false;
+      }
+      // центр источника сменился не из-за нашего драга (ручной ввод, провод, закладка) —
+      // зум и цель драга сбрасываем: окно снова во весь новый диапазон
+      if(sp.freqs && sp.freqs.length){
+        const src=sp.freqs[sp.freqs.length>>1];
+        if(n._srcCenter!=null && src!==n._srcCenter && !n._dragPending){
+          const tol=Math.max(2*(hi0-lo0)/(sp.freqs.length-1), 50);
+          if(n._steer==null || Math.abs(src-n._steer)>tol){ n.zoom=null; n._steer=null; }
+        }
+        n._srcCenter=src;
+      }
       if(n.p.auto){                                   // авто — синхронизируем параметры с реальным охватом,
         // dragPending нужен и тут: колесо, зумируя обратно к полному охвату, само включает auto
         // (см. wheel в draw()) — без этой проверки auto тут же форсировал бы sync на ещё не факт
         // что актуальный lo0/hi0 (та же гонка, что и выше) — был заметен лишний скачок именно при
         // выходе зумом в auto-режим.
-        if(!n._dragPending && (n.p.fmin!==lo0 || n.p.fmax!==hi0)) saSetRange(n,lo0,hi0); // иначе при снятии галочки слайдер
+        if(!n._dragPending && (n.p.fmin!==lo0 || n.p.fmax!==hi0)){ saSetRange(n,lo0,hi0); n._lastRange=[n.p.fmin,n.p.fmax]; } // иначе при снятии галочки слайдер
       } else if(!n._dragPending && (n.p.fmax<=lo0 || n.p.fmin>=hi0)){ // откатится к старым значениям
-        saSetRange(n,lo0,hi0);
+        saSetRange(n,lo0,hi0); n._lastRange=[n.p.fmin,n.p.fmax];
       }
     }
     n.s=sp;
@@ -1155,7 +1181,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     // если сейчас не подключено (или на секунду пропало между тиками), а не мигаем пустым списком
     if(Array.isArray(I.bands)) n.bandsData=I.bands;
     saTake(n);                                       // тап мог случиться между блоками
-    for(const k of ['fmin','fmax','floor','top','split','tol'])   // прямая передача значения
+    for(const k of ['floor','top','split','tol'])   // прямая передача значения
       if(typeof I[k]==='number') setMod(n,k,I[k]);
     if(typeof I.log==='number')  setMod(n,'log', I.log>=0.5);     // галочки — порог 0.5
     if(typeof I.grid==='number') setMod(n,'grid',I.grid>=0.5);
@@ -1196,9 +1222,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     // всегда равен centerFreq источника ТОЧНО, без усреднения — берём его в auto напрямую. В ручном
     // зуме/драге такой привязки к сетке бинов нет (fmin/fmax — произвольное окно просмотра, не
     // обязательно совпадающее с бинами), там центр окна по-прежнему (fmin+fmax)/2, как и задумано.
-    o.centerFreq = n.p.auto && sp && sp.freqs && sp.freqs.length
-      ? sp.freqs[sp.freqs.length>>1]
+    // Приёмник двигают только драг/панорама и ручной ввод границ (n._steer); зум колесом — нет
+    o.centerFreq = n._steer!=null ? n._steer
+      : sp && sp.freqs && sp.freqs.length ? sp.freqs[sp.freqs.length>>1]
       : (n.p.fmin!=null && n.p.fmax!=null ? (n.p.fmin+n.p.fmax)/2 : null);
+    n._lastRange=[n.p.fmin,n.p.fmax];
     const N=sp? sp.mag.length : 0;
     // peak hold — максимум по каждому бину за всё время, пока включено. Держим на mag из sp
     // (что реально показывается — после averaging'а источника, если он есть), а не на "сырых"
@@ -1265,18 +1293,12 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         const curLo=saFreq(n,0), curHi=saFreq(n,1), curRange=curHi-curLo||1;
         const rc=cv.getBoundingClientRect(), x=(ev.clientX-rc.left)/rc.width;
         const fAtCursor=saFreq(n,x);                 // курсор — по текущей (лог или линейной) шкале
-        if(n.p.auto) n.set.auto?.(false);
-        // n._dragPending — как у обычного драга (см. большой комментарий в process() выше): окно
-        // после зума/панорамы колесом точно так же может на мгновение оказаться ЗА пределами уже
-        // реально захваченной приёмником полосы (steerFreq перестраивает его асинхронно, по USB) —
-        // без этого флага process() увидел бы "окно не пересекается с данными" и тут же откатил бы
-        // зум обратно на весь охват на следующем же тике: колесом крутнули — картинка на миг
-        // масштабируется — и тут же сбрасывается назад. У драга это уже было учтено, у колеса — нет.
-        n._dragPending=true;
+        // зум — только окно просмотра (n.zoom): auto не трогает и приёмник не перестраивает;
+        // Shift+колесо — панорама, она как драг двигает и центр приёмника
         if(ev.shiftKey){
           const pan=curRange*0.15*(ev.deltaY>0?1:-1);
-          const newLo=clamp(curLo+pan, fullLo, fullHi-curRange);
-          saSetRange(n, newLo, newLo+curRange);
+          n.zoom=[curLo+pan, curHi+pan];
+          n._steer=(n.zoom[0]+n.zoom[1])/2; n._dragPending=true; n._dragT=performance.now();
         } else {
           const zoom=ev.deltaY>0?1.09:1/1.09;         // втрое медленнее прежнего (1.3 → 1.3^(1/3))
           const newRange=clamp(curRange*zoom, 10, fullHi-fullLo);
@@ -1286,13 +1308,12 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           let newLo=fAtCursor-ratio*newRange, newHi=newLo+newRange;
           if(newLo<fullLo){ newLo=fullLo; newHi=newLo+newRange; }
           if(newHi>fullHi){ newHi=fullHi; newLo=newHi-newRange; }
-          saSetRange(n, newLo, newHi);
-          if(Math.abs(newLo-fullLo)<1 && Math.abs(newHi-fullHi)<1) n.set.auto?.(true);
+          n.zoom = (Math.abs(newLo-fullLo)<1 && Math.abs(newHi-fullHi)<1) ? null : [newLo,newHi];
         }
       }, {passive:false});
       cv.addEventListener('dblclick', ev=>{
         ev.preventDefault();
-        n.set.auto?.(true);                          // сброс зума — во всю полосу источника
+        n.zoom=null;                                 // сброс зума — во всю полосу источника
       });
       // перетаскивание — панорама простым зажатием и движением (без Shift/колеса), интуитивнее
       // на трекпаде/touch. Якорим частоту под курсором и ширину окна В МОМЕНТ НАЖАТИЯ и на каждое
@@ -1347,7 +1368,6 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         const dx=ev.clientX-drag.x0;
         if(Math.abs(dx)<=6) return;                  // тот же порог, что у тапа — см. комментарий выше
         ev.preventDefault();
-        if(n.p.auto) n.set.auto?.(false);
         const {lo0,hi0,w}=drag, dt=dx/Math.max(1,w-1);
         let newLo,newHi;
         if(n.p.log){
@@ -1359,7 +1379,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           newLo=lo0-range*dt; newHi=hi0-range*dt;
         }
         n._dragPending=true; n._dragActive=true;
-        saSetRange(n, newLo, newHi);
+        n.zoom=[newLo,newHi]; n._steer=(newLo+newHi)/2;   // драг двигает и окно, и центр приёмника
+        n._dragT=performance.now();
       }, {passive:false});
       const endDrag=ev=>{
         if(drag && ev.pointerId===drag.pid && cv.hasPointerCapture(ev.pointerId)) cv.releasePointerCapture(ev.pointerId);
@@ -1458,10 +1479,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       // могут — но при их смене меняется и ссылка n.s.freqs (см. rtlUpdateSpec), так что она это ловит.
       // _binEdgeX/_binEdgeXwf — бины на СТЫКАХ столбцов (длина на 1 больше W/Wp) — см. magReduce
       // ниже, зачем нужен именно диапазон, а не одна точка.
+      const [bLo,bHi]=saBounds(n);                   // окно зума тоже меняет границы, без fmin/fmax
       if(n._bW!==W || n._bWp!==Wp || n._bN!==N || n._bLog!==n.p.log || n._bAuto!==n.p.auto ||
-         n._bFmin!==n.p.fmin || n._bFmax!==n.p.fmax || n._bFreqs!==(n.s.freqs||null)){
+         n._bFmin!==bLo || n._bFmax!==bHi || n._bFreqs!==(n.s.freqs||null)){
         n._bW=W; n._bWp=Wp; n._bN=N; n._bLog=n.p.log; n._bAuto=n.p.auto;
-        n._bFmin=n.p.fmin; n._bFmax=n.p.fmax; n._bFreqs=n.s.freqs||null;
+        n._bFmin=bLo; n._bFmax=bHi; n._bFreqs=n.s.freqs||null;
         n._binEdgeX=new Float32Array(W+1);
         for(let x=0;x<=W;x++) n._binEdgeX[x]=clamp(specBin(n.s,saFreq(n,(x-.5)/(W-1))),0,N-1);
         n._binEdgeXwf=new Float32Array(Wp+1);
