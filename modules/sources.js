@@ -975,6 +975,103 @@ async function rtlOpenDevice(dev, ppm, gain){
   return {setSampleRate, setCenterFrequency, setGain, resetBuffer, readSamples, close, tunerName:found.name};
 }
 
+// ---- чтение USB в отдельном воркере ----
+// Драйвер целиком (регистры, тюнер, очередь transferIn) живёт в dedicated worker: подвисания главного
+// потока (GC, отрисовка, граф) больше не задерживают перезапуск трансферов — чанки просто копятся
+// в очереди сообщений. Главный поток видит прокси с тем же интерфейсом, что у rtlOpenDevice.
+// Доступ к устройству воркер получает через getDevices() — разрешение уже выдано requestDevice().
+const RTL_USB_WORKER_SRC = `
+const RTL_CMD=${JSON.stringify(RTL_CMD)}, RTL_BLOCK=${JSON.stringify(RTL_BLOCK)}, RTL_REG=${JSON.stringify(RTL_REG)};
+${rtlNumToBuf}
+${rtlBufToNum}
+${rtlMakeCom}
+${rtlMakeR820T}
+rtlMakeR820T.checkAt=${rtlMakeR820T.checkAt};
+rtlMakeR820T.detect=${rtlMakeR820T.detect};
+${rtlOpenDevice}
+let usb=null, api=null, rate=1024000, streaming=false;
+async function stream(readsPerSec, depth){
+  const q=[];
+  const chunk=()=>Math.max(512, Math.min(131072, 512*Math.ceil(rate/readsPerSec/512)));
+  const fill=()=>{ while(streaming && api && q.length<depth) q.push(api.readSamples(chunk()*2).then(b=>({b}), err=>({err}))); };
+  fill();
+  while(streaming && q.length){
+    const p=q.shift(); fill();
+    const r=await p;
+    if(!streaming) break;
+    if(r.err){
+      self.postMessage({type:'chunk', err:r.err.message});
+      while(q.length) await q.shift();       // остаток очереди после сбоя не нужен
+      try{ await api.resetBuffer(); }catch(e){}
+      await new Promise(s=>setTimeout(s,50));
+      fill();
+      continue;
+    }
+    self.postMessage({type:'chunk', buf:r.b}, [r.b]);
+  }
+  while(q.length) await q.shift();
+}
+self.onmessage=async e=>{
+  const {id, cmd, args}=e.data;
+  try{
+    let r;
+    if(cmd==='probe') r=!!(self.navigator && navigator.usb && navigator.usb.getDevices);
+    else if(cmd==='open'){
+      const devs=await navigator.usb.getDevices();
+      usb=devs.find(d=>d.vendorId===args.vendorId && d.productId===args.productId && (!args.serial || d.serialNumber===args.serial));
+      if(!usb) throw new Error('device is not visible from the worker');
+      try{ api=await rtlOpenDevice(usb, 0, args.gain); }
+      catch(err){ try{ await usb.close(); }catch(e2){} usb=null; throw err; }
+      r={tunerName:api.tunerName};
+    }
+    else if(cmd==='setSampleRate'){ rate=await api.setSampleRate(args.rate); r=rate; }
+    else if(cmd==='setCenterFrequency') r=await api.setCenterFrequency(args.freq);
+    else if(cmd==='setGain') await api.setGain(args.gain);
+    else if(cmd==='resetBuffer') await api.resetBuffer();
+    else if(cmd==='start'){ if(!streaming){ streaming=true; stream(args.readsPerSec, args.depth); } }
+    else if(cmd==='stop') streaming=false;
+    else if(cmd==='close'){ streaming=false; if(api){ const a=api; api=null; await a.close(); } }
+    self.postMessage({id, ok:true, r});
+  }catch(err){ self.postMessage({id, ok:false, err:err.message}); }
+};
+`;
+
+// null — WebUSB в воркере недоступен (старый браузер), тогда вызывающий открывает донгл сам
+async function rtlOpenInWorker(usbDev, gain){
+  if(typeof Worker==='undefined') return null;
+  const url=URL.createObjectURL(new Blob([RTL_USB_WORKER_SRC], {type:'application/javascript'}));
+  const w=new Worker(url);
+  let seq=1, onChunk=null;
+  const pend=new Map();
+  w.onmessage=e=>{
+    const m=e.data;
+    if(m.type==='chunk'){ onChunk?.(m); return; }
+    const p=pend.get(m.id); if(!p) return;
+    pend.delete(m.id); m.ok ? p.res(m.r) : p.rej(new Error(m.err));
+  };
+  const call=(cmd,args)=>new Promise((res,rej)=>{ const id=seq++; pend.set(id,{res,rej}); w.postMessage({id,cmd,args}); });
+  const drop=()=>{ w.terminate(); URL.revokeObjectURL(url); };
+  let info;
+  try{
+    if(!await call('probe')){ drop(); return null; }
+    info=await call('open', {vendorId:usbDev.vendorId, productId:usbDev.productId, serial:usbDev.serialNumber, gain});
+  }catch(e){ drop(); throw e; }
+  return {
+    worker:true, tunerName:info.tunerName,
+    setSampleRate:rate=>call('setSampleRate',{rate}),
+    setCenterFrequency:freq=>call('setCenterFrequency',{freq}),
+    setGain:gain=>call('setGain',{gain}),
+    resetBuffer:()=>call('resetBuffer'),
+    // cb получает {buf} | {err} | {end}
+    startStream(readsPerSec, depth, cb){ onChunk=cb; return call('start',{readsPerSec, depth}); },
+    stopStream:()=>call('stop'),
+    async close(){
+      try{ await call('close'); }
+      finally{ const cb=onChunk; onChunk=null; cb?.({end:true}); drop(); }
+    }
+  };
+}
+
 // ---- узел графа: источник IQ ----
 
 // План децимации демод-воркера: sr → ir (канальный FIR, прореживание d1) → демодуляция →
@@ -1274,40 +1371,29 @@ async function rtlReadLoop(n){
   const chunkPeriodMs=1000/READS_PER_SEC;
   let prevReadEnd=null;   // для диагностики: разрыв ДО чтения = главный поток был занят чем-то другим
   async function readerLoop(){
-    const queue=[];
-    function kickRead(){
-      const chunkSamples=Math.max(512, Math.min(131072, 512*Math.ceil(n.sourceRate/READS_PER_SEC/512)));
-      queue.push(n.dev.readSamples(chunkSamples*2).then(buf=>({buf}), err=>({err})));
-    }
-    function fillQueue(){ while(n.reading && n.dev && queue.length<RTL_USB_QUEUE) kickRead(); }
-    fillQueue();
-    while(n.reading && n.dev && queue.length){
+    const src=n.dev.worker ? rtlWorkerSource(n) : rtlLocalSource(n);
+    while(n.reading && n.dev){
       const t0=performance.now();
-      // разрыв, близкий к ёмкости очереди, = главный поток был занят так долго, что донгл мог потерять данные
-      if(prevReadEnd!=null){
+      // на локальном пути разрыв, близкий к ёмкости очереди, = донгл мог потерять данные
+      if(prevReadEnd!=null && !n.dev.worker){
         const gap=t0-prevReadEnd;
         if(gap>chunkPeriodMs*(RTL_USB_QUEUE-1)) console.warn(`[rtlsdr] gap перед USB-чтением ${gap.toFixed(1)}ms (ожидалось ~${chunkPeriodMs.toFixed(0)}ms) @ ${t0.toFixed(0)}ms`);
       }
-      const res=await queue.shift();
+      const res=await src.next();
+      if(!res) break;
       if(res.err){
         errStreak++;
         n.status='read error ('+errStreak+'/5): '+res.err.message;
         if(errStreak>=5){ n.reading=false; break; }
-        // остальные трансферы очереди после сбоя не нужны — дожидаемся и выбрасываем
-        while(queue.length) await queue.shift();
-        try{ await n.dev.resetBuffer(); }catch(e2){}
-        await new Promise(r=>setTimeout(r,50));
+        await src.recover();
         prevReadEnd=null;
-        fillQueue();
         continue;
       }
       errStreak=0;
       const buf=res.buf, t1=performance.now();
-      // ioMs — интервал между завершениями трансферов, в среднем = реальное время чанка;
-      // от момента запуска мерить нельзя: с очередью туда входит ожидание в ней
+      // ioMs — интервал между приходами чанков, в среднем = реальное время чанка
       const ioMs=prevReadEnd!=null ? t1-prevReadEnd : chunkPeriodMs;
       prevReadEnd=t1;
-      fillQueue();       // сразу пополняем очередь, до обработки текущего буфера
       const u8=new Uint8Array(buf), cnt=u8.length>>1, mode=n.p.demod, specRing=n.specRing;
       // Циклический индекс — сравнение+обнуление, а не % на каждый отсчёт: при типичных chunkSamples
       // (десятки тысяч на USB-чтение, READS_PER_SEC раз в секунду) деление в modulo было заметной
@@ -1402,7 +1488,44 @@ async function rtlReadLoop(n){
   }
 
   await readerLoop();
+  if(n.dev?.worker) n.dev.stopStream().catch(()=>{});
   n.connected=false;
+}
+
+// Источники чанков для readerLoop: next() → {buf} | {err} | null (конец), recover() — после ошибки.
+// Локальный: очередь RTL_USB_QUEUE трансферов на главном потоке (браузер без WebUSB в воркерах).
+function rtlLocalSource(n){
+  const queue=[];
+  const fill=()=>{
+    while(n.reading && n.dev && queue.length<RTL_USB_QUEUE){
+      const cs=Math.max(512, Math.min(131072, 512*Math.ceil(n.sourceRate/RTL_READS_PER_SEC/512)));
+      queue.push(n.dev.readSamples(cs*2).then(buf=>({buf}), err=>({err})));
+    }
+  };
+  fill();
+  return {
+    next(){ const p=queue.shift(); fill(); return p || Promise.resolve(null); },
+    async recover(){
+      while(queue.length) await queue.shift();       // остаток очереди после сбоя не нужен
+      try{ await n.dev?.resetBuffer(); }catch(e){}
+      await new Promise(r=>setTimeout(r,50));
+      fill();
+    }
+  };
+}
+// Воркерный: очередь трансферов крутит сам воркер, сюда приходят готовые чанки; сбой он тоже
+// обрабатывает сам, поэтому recover() пустой.
+function rtlWorkerSource(n){
+  const ready=[], waiters=[];
+  const push=r=>{ if(waiters.length) waiters.shift()(r); else ready.push(r); };
+  n.dev.startStream(RTL_READS_PER_SEC, RTL_USB_QUEUE, m=>{
+    if(m.end) push(null);
+    else push(m.err ? {err:new Error(m.err)} : {buf:m.buf});
+  }).catch(e=>push({err:e}));
+  return {
+    next(){ return ready.length ? Promise.resolve(ready.shift()) : new Promise(r=>waiters.push(r)); },
+    async recover(){}
+  };
 }
 
 // скользящее окно ~0.5с: честная сквозная скорость, раздельно I/O (само USB-чтение)
@@ -1644,7 +1767,10 @@ async function rtlConnect(n){
   try{
     const usbDev=await navigator.usb.requestDevice({filters:[{vendorId:0x0bda,productId:0x2832},{vendorId:0x0bda,productId:0x2838}]});
     const gain=n.p.auto?null:n.p.gainDb;
-    n.dev=await rtlOpenDevice(usbDev, 0, gain);
+    // сначала пробуем открыть донгл в USB-воркере; без WebUSB в воркерах — по-старому, на главном потоке
+    n.dev=await rtlOpenInWorker(usbDev, gain).catch(e=>{
+      console.warn('[rtlsdr] USB-воркер не открыл донгл, читаем с главного потока:', e.message); return null; })
+      || await rtlOpenDevice(usbDev, 0, gain);
     const srSafe=rtlSafeSr(n.p.sr);
     if(srSafe!==+n.p.sr) n.status='sample rate in settings is stale, using '+srSafe+' Hz';
     n.sourceRate=await n.dev.setSampleRate(srSafe);
@@ -1664,7 +1790,7 @@ async function rtlConnect(n){
     n.specWorker=rtlMakeSpecWorker(); n.specBusy=false;
     n.connected=true; n.reading=true;
     n.underrunsWorker=0; n.underrunsOverflow=0; n.underrunsStarve=0;
-    n.status='connected ('+n.dev.tunerName+')';
+    n.status='connected ('+n.dev.tunerName+(n.dev.worker?', USB in worker':'')+')';
     rtlReadLoop(n);
   }catch(e){
     n.status='error: '+e.message;
