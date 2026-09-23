@@ -1269,35 +1269,22 @@ function rtlActivateChannel(n, ci){
   ch.active=true;
 }
 
-// Вынесены на уровень модуля — rtlReadIQ/rtlReadChannelAudio согласуют свой запас буфера
-// с тем же порогом, что и backpressure на входе (раньше это были две несвязанные константы).
-const RTL_MAX_INFLIGHT=6;
-const RTL_READS_PER_SEC=20;
-const RTL_USB_QUEUE=4;       // трансферов в полёте, ~200мс запаса на стопор главного потока
-// Запас на восстановление после провала, в секундах реального времени (не в "блоках движка",
-// как было раньше — то не зависело от sourceRate и потому не лечилось подъёмом Msps). 0.5с, а не
-// MAX_INFLIGHT/READS_PER_SEC(=0.3с) — по логам видно, что провалы кольца случаются не от одного
-// длинного стопора, а от ПАЧКИ мелких (десятки мс каждый) подряд за доли секунды — 0.3с недостаточно.
-//
-// 1.2с, не 0.5с: playback теперь намеренно НЕ подстраивается под реальную скорость USB (см.
-// rtlReadIQ/rtlReadChannelAudio и комментарий у rtlEffRate) — точность тайминга важнее для
-// декодеров цифровых протоколов поверх этого потока. А раз мы больше не растягиваем время, чтобы
-// компенсировать типичный ~1-3% дефицит реальной скорости USB относительно запрошенного sourceRate
-// (см. eff/nominal в логах), кольцо неизбежно сохнет с постоянной скоростью и обрыв рано или поздно
-// наступит при любом размере буфера — но БОЛЬШИЙ буфер держит его РЕЖЕ (запас пропорционален
-// RTL_REBUF_S), не жертвуя точностью ни одного сэмпла между обрывами.
-// Кольца сайзятся под ~2с при ЛЮБОМ доступном в UI sourceRate (960к..3.2М, см. опции 'sr' ниже —
-// 2×sourceRate там не упирается в потолок в 8_000_000, см. rtlResetRing/rtlResizeChannelRing).
-// rebufTarget ОБЯЗАН оставаться заметно ниже overflow-порога (0.9×ring.size = 1.8с) — если lag,
-// пока идёт добор до цели, дорастает до порога раньше, чем до самой цели, overflow откатывает его
-// вниз, цель никогда не достигается, и rebuffering зависает навсегда (бесконечная тишина вместо
-// редких обрывов). 1.2с — заметный (2.4×) запас против 0.5с с комфортным зазором до 1.8с.
-const RTL_REBUF_S = 1.2;
+const RTL_MAX_INFLIGHT=8;
+const RTL_READS_PER_SEC=40;  // чанк 25мс — меньше пила уровня кольца, можно держать меньший запас
+const RTL_USB_QUEUE=8;       // трансферов в полёте, ~200мс запаса на стопор главного потока
+// Темп чтения колец (rtlPace): держим запас около RTL_TARGET_S — это и есть задержка звука от кольца.
+// Дрейф часов донгла относительно звуковой карты (десятки ppm) выбирается подстройкой шага чтения
+// в пределах ±RTL_SERVO_PPM — тайминг символов цифровых протоколов это не ломает. Если запас вырос
+// выше RTL_DROP_S (стопор главного потока, после которого данные накопились), лишнее роняем сразу,
+// иначе сервоприводу пришлось бы съедать его минутами.
+const RTL_TARGET_S=0.08;
+const RTL_DROP_S=0.3;
+const RTL_SERVO_PPM=500;
+const RTL_SERVO_G=0.01;      // EMA уровня кольца на блок движка, τ ≈ 1с при BLOCK=512/48к
 
 async function rtlReadLoop(n){
   let errStreak=0;
   n.mspsAcc=0; n.mspsIoMs=0; n.mspsWorkerMs=0; n.mspsWinStart=performance.now(); n.msps=0; n.mspsIo=0;
-  n.mspsSlow=null; n.mspsSlowN=0;   // свежее подключение/новый sourceRate — старая оценка не годится, см. rtlEffRate
 
   // Демодуляция чанка запускается в воркере и НЕ ждётся здесь же — иначе время round-trip'а
   // до воркера (структурное клонирование буфера, планировщик, сама математика фильтра) прямо
@@ -1341,10 +1328,10 @@ async function rtlReadLoop(n){
     fillQueue();
     while(n.reading && n.dev && queue.length){
       const t0=performance.now();
-      // большой разрыв = главный поток был занят посторонним; с очередью это уже не потеря данных
+      // разрыв, близкий к ёмкости очереди, = главный поток был занят так долго, что донгл мог потерять данные
       if(prevReadEnd!=null){
         const gap=t0-prevReadEnd;
-        if(gap>chunkPeriodMs*1.5) console.warn(`[rtlsdr] gap перед USB-чтением ${gap.toFixed(1)}ms (ожидалось ~${chunkPeriodMs.toFixed(0)}ms) @ ${t0.toFixed(0)}ms`);
+        if(gap>chunkPeriodMs*(RTL_USB_QUEUE-1)) console.warn(`[rtlsdr] gap перед USB-чтением ${gap.toFixed(1)}ms (ожидалось ~${chunkPeriodMs.toFixed(0)}ms) @ ${t0.toFixed(0)}ms`);
       }
       const res=await queue.shift();
       if(res.err){
@@ -1472,46 +1459,8 @@ function rtlTrackMsps(n, cnt, ioMs, workerMs){
     const totalMs=n.mspsIoMs+n.mspsWorkerMs;
     n.msps=totalMs>0 ? (n.mspsAcc/totalMs/1000) : 0;
     n.mspsIo=n.mspsIoMs>0 ? (n.mspsAcc/n.mspsIoMs/1000) : 0;
-    // Медленная EMA (постоянная времени ~десяток секунд) от mspsIo — реальная устойчивая скорость
-    // продюсера, в отличие от n.sourceRate (то, что мы ЗАПРОСИЛИ у тюнера). У RTL-SDR делитель
-    // тюнера не всегда даёт точно попасть в произвольный sourceRate — реальный поток стабильно на
-    // единицы процентов ниже номинала (см. [rtlsdr] ring trend в консоли: mspsIo стабильно ниже
-    // nominal). Раньше это только логировалось; rtlEffRate() ниже — та же самая честная скорость,
-    // применённая к темпу чтения кольца, иначе кольцо медленно, но неизбежно опустошается за
-    // десятки секунд даже без единого сбоя главного потока. Гейн маленький — единичный провал
-    // ioMs (главный поток стормознул) почти не двигает оценку, а устойчивый снос сходится за
-    // несколько таких окон, быстрее типичного цикла "долив-опустошение" в логах (~15-20с).
-    //
-    // Гейн — адаптивный (1/N первые ~25 окон, дальше фикс. 0.04), а не сразу фиксированный:
-    // с фиксированным гейном ПЕРВОЕ же окно (n.mspsSlow==null) целиком, без усреднения, задаёт
-    // стартовую оценку — а самые первые окна после connect() как раз наименее показательны
-    // (прогрев, ещё не устаканившийся темп чтения). Один неудачный первый замер надолго "отравлял"
-    // оценку (минуты на восстановление при гейне 0.04) — и всё это время кольцо, наоборот,
-    // ПЕРЕполнялось (см. audio ring overflow в логах), т.к. темп чтения занижался вслед за заниженной
-    // оценкой. 1/N в начале — это честное среднее по всем виденным окнам, не смещённое в пользу
-    // первого; после ~25 окон (~12с) переходит на обычную EMA для отслеживания медленного дрейфа.
-    if(n.mspsIo>0){
-      n.mspsSlowN=(n.mspsSlowN||0)+1;
-      const g=Math.min(0.04, 1/n.mspsSlowN);
-      n.mspsSlow = n.mspsSlow==null ? n.mspsIo : n.mspsSlow+(n.mspsIo-n.mspsSlow)*g;
-    }
     n.mspsAcc=0; n.mspsIoMs=0; n.mspsWorkerMs=0; n.mspsWinStart=now;
   }
-}
-
-// ТОЛЬКО для диагностики (лог [rtlsdr] ring trend, поле eff) — НЕ используется для темпа чтения
-// колец. Раньше использовалась (см. git-историю), чтобы подстраивать playback под реально
-// достижимую скорость USB, если она устойчиво ниже n.sourceRate, и это действительно убирало
-// периодические audio ring starve. Но это означает МЕДЛЕННОЕ, но непрерывное растягивание/сжатие
-// времени продецимированного потока во столько же раз — на слух это лёгкий, но постоянный уход
-// высоты/скорости звука, а для декодера цифровых протоколов (DMR и т.п.) — постоянное искажение
-// тайминга символов, а не редкая, локализованная потеря данных. Для этого проекта точность важнее
-// частоты обрывов (декодирование DMR), поэтому шаг чтения кольца всегда считается от НОМИНАЛЬНОГО
-// n.sourceRate (см. rtlReadIQ/rtlReadChannelAudio) — обрыв звука при реальной нехватке скорости
-// USB это честная точечная потеря, а не растянутая по всему потоку порча тайминга.
-function rtlEffRate(n){
-  const m=n.mspsSlow;
-  return (m>0) ? clamp(m*1e6, n.sourceRate*0.85, n.sourceRate*1.01) : n.sourceRate;
 }
 
 // снэпшот спектра сырого IQ: fftshift, ось частот вокруг центра настройки.
@@ -1649,90 +1598,71 @@ function rtlSafeSr(v){
   return (isFinite(n) && n>450000) ? n : 1024000;
 }
 
+// Общий регулятор чтения кольца. st: {rebuffering, lagAvg}; lag и need — в отсчётах кольца,
+// rateIn — их частота. Возвращает {k, drop}: k — множитель шага (0 = отдать тишину),
+// drop — сколько отсчётов пропустить перед чтением.
+function rtlPace(n, st, lag, rateIn, need, tag){
+  const target=Math.max(need*2, rateIn*RTL_TARGET_S);
+  let drop=0;
+  if(lag>Math.max(target*2, rateIn*RTL_DROP_S)){
+    drop=lag-target; lag=target; st.lagAvg=target; n.underrunsOverflow++;
+    console.warn(`[rtlsdr] ${tag} ring: запас ${(1000*(lag+drop)/rateIn).toFixed(0)}мс, сброшено до ${(1000*target/rateIn).toFixed(0)}мс @ ${performance.now().toFixed(0)}ms`);
+  }
+  if(st.rebuffering){
+    if(lag<target) return {k:0, drop};
+    st.rebuffering=false; st.lagAvg=lag;
+  }
+  if(lag<need){
+    st.rebuffering=true; n.underrunsStarve++;
+    console.warn(`[rtlsdr] ${tag} ring starve, lag=${lag.toFixed(0)} need=${need.toFixed(0)} @ ${performance.now().toFixed(0)}ms`);
+    return {k:0, drop};
+  }
+  st.lagAvg=(st.lagAvg??lag)+(lag-(st.lagAvg??lag))*RTL_SERVO_G;
+  const err=clamp((st.lagAvg-target)/target, -1, 1);
+  st.ppm=err*RTL_SERVO_PPM;
+  return {k:1+st.ppm*1e-6, drop};
+}
+
 // чтение сырого широкополосного IQ (режим demod==='IQ') с интерполяцией под Eng.sr — состояние
-// чтения (readPos/readCount/rebuffering) отдельное от каналов демодуляции, у них своё кольцо
+// чтения отдельное от каналов демодуляции, у них своё кольцо
 function rtlReadIQ(n, oi, oq){
   const ring=n.ring;
   if(!n.connected){ oi.fill(0); oq.fill(0); return; }
-  // Темп — от НОМИНАЛЬНОГО n.sourceRate, не от rtlEffRate (см. её комментарий): точность важнее
-  // редкости обрывов при декодировании цифровых протоколов поверх этого потока.
-  const rate=n.sourceRate, step=rate/Eng.sr, need=step*BLOCK;
-  // rebufTarget — RTL_REBUF_S секунд реального времени, не доля от ring.size (кольцо огромное
-  // специально про запас на затыки USB, не как желаемая задержка старта/восстановления).
-  const rebufTarget = Math.max(need, rate*RTL_REBUF_S);
-  // честная (несворачиваемая) проверка — ring.written и n.ringReadCount растут монотонно
-  // и никогда не оборачиваются, в отличие от круговых индексов w/readPos.
-  let lag=ring.written-n.ringReadCount;
-  if(lag>ring.size*0.9){
-    // consumer (Eng.tick) надолго отстал от продюсера — кольцо почти заполнилось, догоняем
-    // прыжком вперёд (роняем старые сэмплы), а не читаем их с опозданием
-    const delta=lag-ring.size*0.5;
-    n.ringReadPos=(n.ringReadPos+delta)%ring.size; n.ringReadCount+=delta; n.underrunsOverflow++;
-    console.warn(`[rtlsdr] IQ ring overflow, dropped ${delta.toFixed(0)} samples @ ${performance.now().toFixed(0)}ms`);
-    lag=ring.written-n.ringReadCount;
-  }
-  if(n.ringRebuffering){
-    if(lag<rebufTarget){ oi.fill(0); oq.fill(0); return; }
-    n.ringRebuffering=false;
-  }
-  if(lag<need){ n.ringRebuffering=true; n.underrunsStarve++; oi.fill(0); oq.fill(0);
-    console.warn(`[rtlsdr] IQ ring starve, lag=${lag.toFixed(0)} need=${need.toFixed(0)} @ ${performance.now().toFixed(0)}ms`);
-    return; } // producer не успел — кольцо пусто, тишина
-  for(let k=0;k<BLOCK;k++){
+  const rate=n.sourceRate, need=rate/Eng.sr*BLOCK;
+  // ring.written и n.ringReadCount растут монотонно, в отличие от круговых индексов
+  const lag=ring.written-n.ringReadCount;
+  const st=n.iqPace||(n.iqPace={rebuffering:n.ringRebuffering, lagAvg:null});
+  if(n.ringRebuffering){ st.rebuffering=true; n.ringRebuffering=false; }  // сброс из rtlResetRing
+  const {k, drop}=rtlPace(n, st, lag, rate, need, 'IQ');
+  if(drop){ n.ringReadPos=(n.ringReadPos+drop)%ring.size; n.ringReadCount+=drop; }
+  if(!k){ oi.fill(0); oq.fill(0); return; }
+  const step=rate/Eng.sr*k;
+  for(let k2=0;k2<BLOCK;k2++){
     const p0=Math.floor(n.ringReadPos)%ring.size, p1=(p0+1)%ring.size, fr=n.ringReadPos-Math.floor(n.ringReadPos);
-    oi[k]=ring.I[p0]*(1-fr)+ring.I[p1]*fr;
-    oq[k]=ring.Q[p0]*(1-fr)+ring.Q[p1]*fr;
+    oi[k2]=ring.I[p0]*(1-fr)+ring.I[p1]*fr;
+    oq[k2]=ring.Q[p0]*(1-fr)+ring.Q[p1]*fr;
     n.ringReadPos+=step; n.ringReadCount+=step;
   }
   n.ringReadPos%=ring.size;
 }
 
-// то же самое, но для одного демодулированного аудио-канала (у каждого канала своё кольцо
-// и своё состояние чтения — читаются независимо друг от друга и от сырого IQ)
+// то же для одного демодулированного канала; кольцо хранит уже децимированный звук (sourceRate/decim)
 function rtlReadChannelAudio(n, ch, o){
   if(!n.connected || !ch.active || !ch.aring){ o.fill(0); return; }
-  // кольцо хранит уже децимированный воркером звук (см. n.decim/rtlDecimFor), не сырые IQ-отсчёты —
-  // шаг чтения считаем от реальной частоты содержимого кольца, а не от sourceRate приёмника.
-  // Номинальный n.sourceRate, не rtlEffRate — см. её комментарий: тайминг важнее редкости обрывов.
-  const rate=n.sourceRate, ring=ch.aring, step=(rate/(n.decim||1))/Eng.sr, need=step*BLOCK;
-  let lag=ring.written-ch.readCount;
-  // Тренд запаса кольца раз в ~3с — независимо от того, был ли провал: чтобы отличить резкий
-  // провал (см. дальше) от медленного, монотонного сноса (реальная скорость USB чуть ниже
-  // номинального sourceRate, и т.п.) — по одним только событиями провала это не видно, они
-  // просто говорят "кончилось", а не "как долго и как быстро кончалось". mspsIo — для сверки:
-  // если он стабильно ниже sourceRate/1e6, это прямое подтверждение нехватки реальной скорости.
+  const rate=n.sourceRate/(n.decim||1), ring=ch.aring, need=rate/Eng.sr*BLOCK;
+  const lag=ring.written-ch.readCount;
+  const {k, drop}=rtlPace(n, ch, lag, rate, need, 'audio');
+  if(drop){ ch.readPos=(ch.readPos+drop)%ring.size; ch.readCount+=drop; }
   const nowLog=performance.now();
   if(!ch.lastLagLogT || nowLog-ch.lastLagLogT>3000){
     ch.lastLagLogT=nowLog;
-    const targetForLog=Math.max(need, (rate/(n.decim||1))*RTL_REBUF_S);
-    // eff — чисто диагностика (см. rtlEffRate): чем сильнее он отличается от nominal, тем больше
-    // реального дефицита скорости USB ждать в виде обрывов — playback от него больше не зависит.
-    console.log(`[rtlsdr] ring trend: lag=${lag.toFixed(0)}/${targetForLog.toFixed(0)} (${(100*lag/targetForLog).toFixed(0)}%) mspsIo=${(n.mspsIo||0).toFixed(3)} eff=${(rtlEffRate(n)/1e6).toFixed(3)} nominal=${(n.sourceRate/1e6).toFixed(3)} @ ${nowLog.toFixed(0)}ms`);
+    console.log(`[rtlsdr] ring trend: lag=${(1000*lag/rate).toFixed(0)}мс avg=${(1000*(ch.lagAvg||0)/rate).toFixed(0)}мс target=${(1000*RTL_TARGET_S).toFixed(0)}мс servo=${(ch.ppm||0).toFixed(0)}ppm mspsIo=${(n.mspsIo||0).toFixed(3)} nominal=${(n.sourceRate/1e6).toFixed(3)} @ ${nowLog.toFixed(0)}ms`);
   }
-  if(lag>ring.size*0.9){
-    // consumer (Eng.tick) надолго отстал от продюсера — кольцо почти заполнилось, догоняем
-    // прыжком вперёд (роняем старые сэмплы), а не читаем их с опозданием
-    const delta=lag-ring.size*0.5;
-    ch.readPos=(ch.readPos+delta)%ring.size; ch.readCount+=delta; n.underrunsOverflow++;
-    console.warn(`[rtlsdr] audio ring overflow, dropped ${delta.toFixed(0)} samples @ ${performance.now().toFixed(0)}ms`);
-    lag=ring.written-ch.readCount;
-  }
-  // гистерезис вместо порога впритык: однажды провалившись, не возвращаемся к воспроизведению
-  // по первому же блоку, где данных ровно хватило — иначе на границе "впритык" получается
-  // частое мигание тишина/звук вместо редких, но нормальных провалов. rebufTarget —
-  // RTL_REBUF_S секунд реального времени (не "need*8" — то не зависело от sourceRate/decim,
-  // поэтому подъём Msps не лечил провалы). rebuffering изначально true — см. rtlResizeChannelRing.
-  const rebufTarget = Math.max(need, (rate/(n.decim||1))*RTL_REBUF_S);
-  if(ch.rebuffering){
-    if(lag<rebufTarget){ o.fill(0); return; }
-    ch.rebuffering=false;
-  }
-  if(lag<need){ ch.rebuffering=true; n.underrunsStarve++; o.fill(0);
-    console.warn(`[rtlsdr] audio ring starve, lag=${lag.toFixed(0)} need=${need.toFixed(0)} @ ${performance.now().toFixed(0)}ms`);
-    return; } // producer (демод) не успел — кольцо пусто, тишина
-  for(let k=0;k<BLOCK;k++){
+  if(!k){ o.fill(0); return; }
+  const step=rate/Eng.sr*k;
+  for(let k2=0;k2<BLOCK;k2++){
     const p0=Math.floor(ch.readPos)%ring.size, p1=(p0+1)%ring.size, fr=ch.readPos-Math.floor(ch.readPos);
-    o[k]=ring.A[p0]*(1-fr)+ring.A[p1]*fr;
+    o[k2]=ring.A[p0]*(1-fr)+ring.A[p1]*fr;
     ch.readPos+=step; ch.readCount+=step;
   }
   ch.readPos%=ring.size;

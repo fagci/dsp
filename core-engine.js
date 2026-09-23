@@ -26,6 +26,8 @@ const Eng = {
   devices:[], micId:null, blocks:0, t:0,
   targetSr:null,               // желаемая частота; null — как даст браузер
   preload:12,                  // сколько тишины отдаём воркету на старте: больше — устойчивей к подвисаниям, но больше задержка
+  preloadSab:6,                // то же для SAB-пути: воркет берёт поквантово, запас нужен меньше
+  _preload:12,                 // фактический preload текущего запуска
   maxQ:24,                     // ёмкость внутренней очереди воркета, см. комментарий в start()
   sab:false,                   // используется ли SharedArrayBuffer-путь (решается в start(), зависит от COOP/COEP)
   onRunChange:null,            // колбэк для UI: дергается при старте/паузе/резюме
@@ -40,6 +42,7 @@ const Eng = {
     // тихо остаёмся на старом postMessage-пути ниже, ничего не ломая.
     this.sab = typeof SharedArrayBuffer==='function' &&
                (typeof crossOriginIsolated==='undefined' || crossOriginIsolated);
+    this._preload = this.sab ? this.preloadSab : this.preload;
 
     let src, procOpts;
     if(this.sab){
@@ -48,7 +51,7 @@ const Eng = {
       // как лёгкий "пинг"-будильник раз в BLOCK семплов, чтобы разбудить tick() на основном
       // потоке. Даёт поквантовую (128 сэмплов) выдачу звука вместо ожидания целого BLOCK,
       // и убирает аллокацию/передачу Float32Array на каждый тик.
-      this.RING = pow2ge(Math.max(this.maxQ,this.preload,4)*BLOCK*4);   // степень двойки — модуло через маску, не %
+      this.RING = pow2ge(Math.max(this.maxQ,this._preload,4)*BLOCK*4);   // степень двойки — модуло через маску, не %
       // [0]=inWrite,[1]=outWrite (монотонно растущие int32), [2]=cumulative недобор сэмплов на
       // выходе (audio thread не дождался очередного outWrite) — для диагностики "прерываний
       // звука", которые сам движок раньше никак не считал (см. pumpSAB).
@@ -125,7 +128,7 @@ const Eng = {
         this.pumpSAB(); };
       // тишина уже лежит в буфере (SharedArrayBuffer зануляется при создании) — предзаполнение
       // это просто сдвиг указателя чтения воркета вперёд на preload блоков, без единой записи
-      this._outWrite=this.preload*BLOCK; Atomics.store(this._ctrl,1,this._outWrite);
+      this._outWrite=this._preload*BLOCK; Atomics.store(this._ctrl,1,this._outWrite);
     } else {
       this.node.port.onmessage = e => {
         if(this.node!==node) return;      // движок уже пересоздан/остановлен (setBlock/setSampleRate/stop) — это хвост от старого
@@ -139,7 +142,7 @@ const Eng = {
         this.tick(); };
     }
     this.node.connect(this.ctx.destination);
-    if(!this.sab) for(let i=0;i<this.preload;i++) this.node.port.postMessage(new Float32Array(BLOCK*2));
+    if(!this.sab) for(let i=0;i<this._preload;i++) this.node.port.postMessage(new Float32Array(BLOCK*2));
     // Сторожевой таймер главного потока — независимо от RTL/аудио-кольца, просто ловит сам факт
     // "главный поток на сколько-то мс не отдавал управление событийному циклу" (GC, тяжёлый код,
     // что угодно). setInterval(20мс) сам по себе не гарантирует точность — именно отклонение
@@ -315,7 +318,7 @@ const Eng = {
   latencyMs(){
     if(!this.ctx) return null;
     const hw=((this.ctx.baseLatency||0)+(this.ctx.outputLatency||0))*1000;
-    const queueMs=this.preload*BLOCK/this.sr*1000;
+    const queueMs=this._preload*BLOCK/this.sr*1000;
     const queueMaxMs=this.maxQ*BLOCK/this.sr*1000;
     return {hardwareMs:hw, queueMs, queueMaxMs, totalMs:hw+queueMs, sab:this.sab};
   },
