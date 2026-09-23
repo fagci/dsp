@@ -2104,7 +2104,8 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     {n:'specSize',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'4096',label:'spectrum FFT size'},
     {n:'specWin',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann',label:'spectrum window'}
   ],
-  init:n=>{ n.dev=null; n.connected=false; n.reading=false; n.sourceRate=1024000;
+  init:n=>{ n.p.freq=n.p.freq??100000000;              // новый узел — без частоты крутилка показывала NaN
+            n.dev=null; n.connected=false; n.reading=false; n.sourceRate=1024000;
             n.underrunsWorker=0; n.underrunsOverflow=0; n.underrunsStarve=0;
             n.status='not connected'; n.busy=false; n.specWorker=null; n.specBusy=false;
             n.workerMs=null; n.roundtripMs=null;
@@ -2273,12 +2274,12 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     const chCount=n.ch.filter(c=>c.active).length;
     const r=n.el.querySelector('.readout');
     if(r) r.textContent = n.connected
-      ? `${n.dev?n.dev.tunerName:'?'} · ${n.p.demod} · center ${fmtHz(cf)} · span ${fmtHz(n.sourceRate)} · tune ${fmtHz(tune)} · `+
-        `channels ${chCount} · ${(n.msps||0).toFixed(2)}Msps (I/O:${(n.mspsIo||0).toFixed(2)})`+
+      ? `${n.dev?n.dev.tunerName:'?'} · ${n.p.demod} · ${fmtHz(cf,3)} ±${fmtHz(n.sourceRate/2)} · tune ${fmtHz(tune,3)} · `+
+        `${(n.mspsIo||0).toFixed(2)} Msps · ch ${chCount}`+
         (n.p.demod==='WFM' ? (n.ch[0].stereo?' · ST':' · mono') : '')+
         (n.p.demod==='WFM' && n.ch[0].rds && n.ch[0].rds.pi>=0
           ? ` · RDS ${n.ch[0].rds.pi.toString(16).toUpperCase().padStart(4,'0')} "${n.ch[0].rds.ps.trim()}"`+(n.ch[0].rds.rt?` ${n.ch[0].rds.rt}`:'') : '')+
-        (n.workerMs!=null?` · demod ${n.workerMs.toFixed(1)}ms/chunk (roundtrip ${(n.roundtripMs||0).toFixed(1)}ms)`:'')+
+        (n.workerMs!=null?` · dsp ${n.workerMs.toFixed(1)}/${(n.roundtripMs||0).toFixed(1)} ms`:'')+
         // разбивка по стадии, где реально теряются данные: demod — воркер не успел (вход),
         // ovf — consumer (Eng.tick) отстал, кольцо переполнилось и пришлось прыгнуть вперёд,
         // dry — consumer остался без данных (кольцо опустело быстрее, чем producer его наполнял)
