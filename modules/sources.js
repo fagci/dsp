@@ -798,12 +798,17 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr){
   async function setPll(freq){
     const pllRef=Math.floor(xtalFreq), vcoPowerRef=isR828D?1:2; // у R828D другое опорное значение VCO fine-tune
     await writeEach([[0x10,0x00,0x10],[0x1a,0x00,0x0c]]);
-    let divNum=Math.min(6,Math.floor(Math.log(1770000000/freq)/Math.LN2));
+    await writeRegMask(0x12, 0x06, 0xff);              // максимальный ток VCO — как в драйвере RTL-SDR Blog
+    // делитель: наименьший mixDiv, при котором VCO попадает в 1.77–3.54 ГГц
+    let mixDiv=2, divNum=0;
+    while(mixDiv<=64 && !(freq*mixDiv>=1770000000 && freq*mixDiv<3540000000)) mixDiv<<=1;
+    for(let d=mixDiv; d>2; d>>=1) divNum++;
     const arr=await readRegBuffer(0x00,5);
     const vcoFineTune=(arr[4]&0x30)>>4;
     if(vcoFineTune>vcoPowerRef) divNum--; else if(vcoFineTune<vcoPowerRef) divNum++;
     await writeRegMask(0x10, divNum<<5, 0xe0);
-    const mixDiv=1<<(divNum+1), vcoFreq=freq*mixDiv;
+    // VCO считается по исходному mixDiv, без поправки fine tune — так в librtlsdr
+    const vcoFreq=freq*mixDiv;
     const nint=Math.floor(vcoFreq/(2*pllRef)), vcoFra=vcoFreq%(2*pllRef);
     if(nint>(128/vcoPowerRef-1)){ hasPllLock=false; return null; }
     const ni=Math.floor((nint-13)/4), si=(nint-13)%4;
@@ -818,6 +823,16 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr){
     const arr=await readRegBuffer(0x00,3);
     if(arr[2]&0x40){ hasPllLock=true; return; }
     hasPllLock=false;
+  }
+  // GPIO RTL2832U (блок SYS): GPO 0x3001, GPOE 0x3003, GPD 0x3004 — как rtlsdr_set_bias_tee_gpio
+  async function setGpio(bit, on){
+    const m=1<<bit;
+    const gpd=await com.readRegister(RTL_BLOCK.SYS, 0x3004, 1);
+    await com.writeRegister(RTL_BLOCK.SYS, 0x3004, gpd&~m, 1);
+    const gpoe=await com.readRegister(RTL_BLOCK.SYS, 0x3003, 1);
+    await com.writeRegister(RTL_BLOCK.SYS, 0x3003, gpoe|m, 1);
+    const gpo=await com.readRegister(RTL_BLOCK.SYS, 0x3001, 1);
+    await com.writeRegister(RTL_BLOCK.SYS, 0x3001, on?(gpo|m):(gpo&~m), 1);
   }
   async function init(){ await initRegisters(REGISTERS); await initElectronics(); }
   // rfFreq — истинная целевая RF-частота (без добавленного IF), нужна только для выбора входа/нотчей у R828D
@@ -841,6 +856,8 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr){
       r=await setPll(loFreq);
     }
     if(isR828D) await setV4Input(rf);
+    // КВ через апконвертер: трекинг-фильтр в обход (меньше потерь), setMux его возвращает при каждой перестройке
+    if(upconvert){ await writeRegMask(0x1a, 0x40, 0xc3); await writeRegMask(0x1b, 0x00, 0xff); }
     return r!=null ? r-upconvert : r; // вычитаем сдвиг обратно — вызывающий код не должен знать про апконвертер
   }
   // Blog V4: R828D разведён через триплексер на три физических входа (HF/VHF/UHF) —
@@ -852,6 +869,7 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr){
     if(band===curBand) return;
     curBand=band;
     await writeRegMask(0x06, band===1?0x08:0x00, 0x08); // cable2 — вход HF (апконвертер)
+    await setGpio(5, band!==1);                          // ключ апконвертера на V4 новых партий: 0 — КВ
     await writeRegMask(0x05, band===2?0x40:0x00, 0x40); // cable1 — вход VHF
     await writeRegMask(0x05, band===3?0x00:0x20, 0x20); // air — вход UHF
   }
@@ -1153,15 +1171,18 @@ function mkDec(h, D, cplx){
   return {h, N, D, pos:0, cnt:D, bi:new Float32Array(2*N), bq:cplx?new Float32Array(2*N):null};
 }
 
-let plan=null, mode='WFM', sr=1024000, bw=15000, deemph='50';
+let plan=null, mode='WFM', sr=1024000, bw=15000, deemph='50', agcOn=true;
 let decA=null, decB=null, ssbHr=null, ssbHi=null, ssbN=0;
 let isAM=false, isSSB=false, isFM=false, discScale=1, deA=null, deA1=0, hpA=0, hpA1=0, rawA=0, rawA1=0;
 let rawI0=0, rawQ0=0, prevI=0, prevQ=0, ampDc=0, audDc=0, de=0;
+// АРУ для SSB: мгновенная атака по пику, удержание, затем спад; предел усиления — чтобы шум не раздувать бесконечно
+const AGC_TARGET=0.3, AGC_MAXGAIN=1000;
+let agcPk=AGC_TARGET/AGC_MAXGAIN, agcHold=0, agcHoldN=0, agcRel=0;
 let offsetHz=0, offCos=1, offSin=0, offPhI=1, offPhQ=0;
 let bufPool=[];
 
 function applyConfig(msg){
-  mode=msg.mode; sr=msg.sr; bw=msg.bw; deemph=msg.deemph;
+  mode=msg.mode; sr=msg.sr; bw=msg.bw; deemph=msg.deemph; agcOn=msg.agc!==false;
   plan=rtlPlan(mode, sr, bw);
   isAM=mode==='AM'; isSSB=(mode==='USB'||mode==='LSB'); isFM=!isAM&&!isSSB;
   decA=mkDec(makeLP(sr, plan.pass, plan.stop, 2047), plan.d1, true);
@@ -1182,6 +1203,7 @@ function applyConfig(msg){
   deA = mode==='WFM'&&tau ? Math.exp(-1/(tau*plan.ar)) : null; deA1=deA!=null?1-deA:0;
   hpA=Math.exp(-2*Math.PI*20/plan.ar); hpA1=1-hpA;
   rawA=Math.exp(-2*Math.PI*150/sr); rawA1=1-rawA;
+  agcHoldN=Math.round(0.3*plan.ar); agcRel=Math.exp(-1/(0.4*plan.ar));   // удержание 0.3 с, спад τ=0.4 с
   applyOffset(offsetHz);
 }
 function applyOffset(hz){
@@ -1191,7 +1213,7 @@ function applyOffset(hz){
   offCos=Math.cos(inc); offSin=Math.sin(inc);
 }
 function resetState(){
-  rawI0=rawQ0=prevI=prevQ=ampDc=audDc=de=0; offPhI=1; offPhQ=0;
+  rawI0=rawQ0=prevI=prevQ=ampDc=audDc=de=0; offPhI=1; offPhQ=0; agcPk=AGC_TARGET/AGC_MAXGAIN; agcHold=0;
   for(const d of [decA,decB]) if(d){ d.bi.fill(0); if(d.bq) d.bq.fill(0); d.pos=0; d.cnt=d.D; }
 }
 
@@ -1242,7 +1264,8 @@ self.onmessage=function(e){
       if(isAM){
         const env=Math.sqrt(ci*ci+cq*cq);
         ampDc+=(env-ampDc)*0.0005;
-        v=(env-ampDc)*3;
+        // с АРУ — глубина модуляции относительно несущей: громкость не зависит от силы станции
+        v = agcOn ? (env-ampDc)/Math.max(ampDc,1e-5)*0.5 : (env-ampDc)*3;
       } else {
         const re=ci*prevI+cq*prevQ, im=cq*prevI-ci*prevQ;
         v=Math.atan2(im,re)*discScale;
@@ -1259,6 +1282,13 @@ self.onmessage=function(e){
     audDc=audDc*hpA+v*hpA1;
     let o=v-audDc;
     if(deA!=null){ de=de*deA+o*deA1; o=de; }
+    if(isSSB && agcOn){
+      const a=o<0?-o:o;
+      if(a>=agcPk){ agcPk=a; agcHold=agcHoldN; }
+      else if(agcHold>0) agcHold--;
+      else agcPk=Math.max(AGC_TARGET/AGC_MAXGAIN, agcPk*agcRel);
+      o*=AGC_TARGET/agcPk;
+    }
     out[wIdx++]=o;
   }
   decA.pos=posA; decA.cnt=cntA; B.pos=posB; B.cnt=cntB;
@@ -1311,9 +1341,9 @@ function rtlActivateChannel(n, ci){
   const ch=n.ch[ci];
   if(ch.active && ch.worker) return;
   ch.worker=rtlMakeDemodWorker();
-  ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph});
+  ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false});
   ch.worker.reset();
-  ch.hardKey=n.p.demod+'|'+n.sourceRate; ch.softKey=n.p.bw+'|'+n.p.deemph;
+  ch.hardKey=n.p.demod+'|'+n.sourceRate; ch.softKey=n.p.bw+'|'+n.p.deemph+'|'+n.p.agc;
   n.decim=rtlDecimFor(n.p.demod, n.sourceRate, n.p.bw);
   rtlResizeChannelRing(n, ch);
   ch.appliedOffset=0;
@@ -1857,6 +1887,7 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
      fn:n=>{ rtlResetRing(n); }},
     {n:'bw',t:'range',min:500,max:16000,step:100,d:15000,log:true,label:'audio bandwidth, Hz'},
     {n:'deemph',t:'select',opts:['50','75','off'],d:'50',label:'WFM de-emphasis, µs'},
+    {n:'agc',t:'check',d:true,label:'AM/SSB AGC'},
     {n:'auto',t:'check',d:true,label:'auto gain'},
     {n:'gainDb',t:'range',min:0,max:49.6,step:.1,d:20,label:'gain, dB'},
     {n:'specSize',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'4096',label:'spectrum FFT size'},
@@ -1969,14 +2000,14 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
       const hardKey=n.p.demod+'|'+n.sourceRate;
       if(hardKey!==ch.hardKey){
         ch.hardKey=hardKey;
-        ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph});
+        ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false});
         ch.worker.reset();
         rtlResizeChannelRing(n, ch);   // decim мог смениться вместе с mode — кольцо иначе рассинхронизируется со временем
       } else {
-        const softKey=n.p.bw+'|'+n.p.deemph;
+        const softKey=n.p.bw+'|'+n.p.deemph+'|'+n.p.agc;
         if(softKey!==ch.softKey){
           ch.softKey=softKey;
-          ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph});
+          ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false});
           rtlResizeChannelRing(n, ch);  // bw участвует в decim для SSB (там chanBw==bw) — тот же случай
         }
       }
