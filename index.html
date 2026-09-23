@@ -7,7 +7,7 @@
 <meta name="theme-color" content="#161a1d">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' http: https: ws: wss: data: blob: 'unsafe-inline'">
 <title>DSP</title>
-<link rel="stylesheet" href="styles.css?v=26">
+<link rel="stylesheet" href="styles.css?v=27">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -88,22 +88,31 @@
 <!-- panzoom/interactjs vendored locally (vendor/) — CDN dependency was breaking the whole app offline -->
 <script src="vendor/panzoom.min.js?v=4.6.2"></script>
 <script src="vendor/interact.min.js?v=1.10.28"></script>
-<script src="core-engine.js?v=26"></script>
+<script src="core-engine.js?v=27"></script>
 <!-- modules are listed here by hand, no auto-discovery: add a file under modules/ — add its line here too -->
-<script src="modules/analysis.js?v=26"></script>
-<script src="modules/misc.js?v=26"></script>
-<script src="modules/modulation.js?v=26"></script>
-<script src="modules/output.js?v=26"></script>
-<script src="modules/processing.js?v=26"></script>
-<script src="modules/protocols.js?v=26"></script>
-<script src="modules/sources.js?v=26"></script>
-<script src="modules/hfdl.js?v=26"></script>
-<script src="presets.js?v=26"></script>
-<script src="core-graph.js?v=26"></script>
+<script src="modules/analysis.js?v=27"></script>
+<script src="modules/misc.js?v=27"></script>
+<script src="modules/modulation.js?v=27"></script>
+<script src="modules/output.js?v=27"></script>
+<script src="modules/processing.js?v=27"></script>
+<script src="modules/protocols.js?v=27"></script>
+<script src="modules/sources.js?v=27"></script>
+<script src="modules/hfdl.js?v=27"></script>
+<script src="presets.js?v=27"></script>
+<script src="core-graph.js?v=27"></script>
 <script>
 // офлайн-шелл — без него установленный PWA (иконка на главном экране) без сети показывает
 // нативный экран «нет подключения» вместо приложения, хотя весь DSP считается локально
-if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+if('serviceWorker' in navigator) window.addEventListener('load',()=>{
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+  // COOP/COEP ставит сервис-воркер (см. sw.js) — при первой установке страница ещё не под ним,
+  // перезагружаем один раз (флаг в localStorage — браузер без credentialless не будет крутиться в перезагрузках), чтобы стала cross-origin isolated и движок перешёл на SharedArrayBuffer
+  if(window.crossOriginIsolated===false){
+    const reloadOnce=()=>{ try{ if(localStorage.getItem('coiReload')) return; localStorage.setItem('coiReload','1'); }catch(e){ return; } location.reload(); };
+    if(navigator.serviceWorker.controller) reloadOnce();
+    else navigator.serviceWorker.addEventListener('controllerchange', reloadOnce, {once:true});
+  }
+});
 </script>
 </body></html>
 

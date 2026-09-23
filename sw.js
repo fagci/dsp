@@ -7,11 +7,11 @@
 //
 // CACHE бампать вместе с ?v=N в index.html — иначе после правки файлов старый список ссылок
 // (со старым ?v=) продолжит переустанавливаться поверх уже закэшированного нового.
-const CACHE='dsp-shell-v26';
+const CACHE='dsp-shell-v27';
 const SHELL=[
   './',
   './index.html',
-  './styles.css?v=26',
+  './styles.css?v=27',
   './manifest.json',
   './favicon.svg',
   './icons/favicon-32.png',
@@ -20,17 +20,17 @@ const SHELL=[
   './icons/icon-512.png',
   './vendor/panzoom.min.js?v=4.6.2',
   './vendor/interact.min.js?v=1.10.28',
-  './core-engine.js?v=26',
-  './modules/analysis.js?v=26',
-  './modules/misc.js?v=26',
-  './modules/modulation.js?v=26',
-  './modules/output.js?v=26',
-  './modules/processing.js?v=26',
-  './modules/protocols.js?v=26',
-  './modules/sources.js?v=26',
-  './modules/hfdl.js?v=26',
-  './presets.js?v=26',
-  './core-graph.js?v=26',
+  './core-engine.js?v=27',
+  './modules/analysis.js?v=27',
+  './modules/misc.js?v=27',
+  './modules/modulation.js?v=27',
+  './modules/output.js?v=27',
+  './modules/processing.js?v=27',
+  './modules/protocols.js?v=27',
+  './modules/sources.js?v=27',
+  './modules/hfdl.js?v=27',
+  './presets.js?v=27',
+  './core-graph.js?v=27',
 ];
 self.addEventListener('install',e=>{
   self.skipWaiting();                                 // не ждать закрытия всех вкладок — как и ручной ?v=N, обновление должно применяться сразу
@@ -43,15 +43,28 @@ self.addEventListener('activate',e=>{
       .then(()=>self.clients.claim())
   );
 });
+// COOP/COEP на саму страницу — делают её cross-origin isolated, без этого нет SharedArrayBuffer и
+// движок работает через postMessage с большим выходным буфером. Хостинг (GitHub Pages) заголовки
+// ставить не даёт, поэтому их добавляет сервис-воркер. credentialless, а не require-corp: сторонние
+// no-cors ресурсы (CodeMirror с CDN) грузятся без кук и без CORP-заголовка.
+function isolate(res){
+  if(!res || res.status===0 || res.type==='opaqueredirect') return res;
+  const h=new Headers(res.headers);
+  h.set('Cross-Origin-Opener-Policy','same-origin');
+  h.set('Cross-Origin-Embedder-Policy','credentialless');
+  return new Response(res.body,{status:res.status,statusText:res.statusText,headers:h});
+}
 self.addEventListener('fetch',e=>{
   const req=e.request;
   // сторонние запросы (CDN CodeMirror и т.п.) — мимо кэша, как и раньше без сервис-воркера
   if(req.method!=='GET' || new URL(req.url).origin!==location.origin) return;
+  const nav=req.mode==='navigate';
   e.respondWith(
     fetch(req).then(res=>{
       const copy=res.clone();
       caches.open(CACHE).then(c=>c.put(req,copy));
       return res;
     }).catch(()=>caches.match(req).then(r=>r||caches.match('./index.html')))
+      .then(res=>nav?isolate(res):res)
   );
 });
