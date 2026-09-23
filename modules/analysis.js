@@ -1623,9 +1623,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         else { n.ocx.drawImage(n.off,0,1); n.ocx.putImageData(new ImageData(line,Wp,1),0,0); }
         n._lastRev=n.s.rev; n._lastSpecRef=n.s; n._wfInited=true;
       }
-      if(n.p.grid) saGrid(n,cx,W,hs,H,plotH);
       const R=n.refMag&&n.refMag.length===N? n.refMag : null;
       const diff=R&&n.p.ref==='diff';
+      if(n.p.grid) saGrid(n,cx,W,hs,H,plotH,diff);
       if(R&&n.p.ref==='show'){                    // reference as a faint line under the current one
         cx.strokeStyle=themeColor('--t-img'); cx.globalAlpha=.55; cx.beginPath();
         for(let x=0;x<W;x++){
@@ -1670,6 +1670,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     } else if(n.p.grid) saGrid(n,cx,W,hs,H,plotH);
     cx.strokeStyle=themeColor('--grid'); cx.beginPath(); cx.moveTo(0,hs+.5); cx.lineTo(W,hs+.5); cx.stroke();
     saBands(n,cx,W,H);
+    saDbLabels(n,cx);                                 // подписи уровня — поверх трассы
     saChannels(n,cx,W,hs);                            // полосы ПЧ каналов rtlsdr
     saBandPlan(n,cx,W,hs,plotH);                      // полосы/закладки — зона спектра, водопад не трогаем
     saMarkers(n,cx,W,hs);
