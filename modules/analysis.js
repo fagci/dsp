@@ -1651,6 +1651,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     saChannels(n,cx,W,hs);                            // полосы ПЧ каналов rtlsdr
     saBandPlan(n,cx,W,hs,plotH);                      // полосы/закладки — зона спектра, водопад не трогаем
     saMarkers(n,cx,W,hs);
+    saChannelLabels(n,cx,W);                          // поверх маркеров
     saMarkerTabs(n,cx,W); }});
 
 
