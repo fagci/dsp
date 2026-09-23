@@ -1273,28 +1273,47 @@ function saBands(n,cx,W,H){                        // закраска поло�
 }
 
 // Шторки каналов приёмника (spec.chans от rtlsdr): полоса канального фильтра ПЧ вокруг частоты
-// каждого канала, цветом маркера с тем же номером, подпись — режим и ширина полосы
+// каждого канала, цветом маркера с тем же номером. Подпись (режим и ширина) — отдельным проходом
+// saChannelLabels, после маркеров, чтобы линия маркера её не перекрывала.
 function saChannels(n,cx,W,H){
   const list=n.s&&n.s.chans; if(!list||!list.length) return;
-  cx.font='bold 10px monospace'; cx.textBaseline='middle';
   for(const c of list){
     const x1=saPos(n,c.lo)*W, x2=saPos(n,c.hi)*W;
     if(x2<0||x1>W) continue;
     const col=MK_COL(c.idx);
-    cx.globalAlpha=.16; cx.fillStyle=col; cx.fillRect(x1,16,Math.max(1,x2-x1),H-16);
+    cx.globalAlpha=.08; cx.fillStyle=col; cx.fillRect(x1,16,Math.max(1,x2-x1),H-16);
     cx.globalAlpha=.9; cx.strokeStyle=col; cx.lineWidth=1;
-    cx.beginPath(); cx.moveTo(x1+.5,16); cx.lineTo(x1+.5,H); cx.moveTo(x2-.5,16); cx.lineTo(x2-.5,H); cx.stroke();
-    // подпись — режим и полоса на плашке цвета канала; не влезает в шторку — выносим вбок от неё
-    const bw=c.hi-c.lo, t=c.mode+' '+fmtHz(bw, bw%1000?1:0);
-    const tw=cx.measureText(t).width, ty=26+c.idx*15;
+    const e1=Math.round(x1)+.5, e2=Math.round(x2)-.5;
+    cx.beginPath(); cx.moveTo(e1,16); cx.lineTo(e1,H); cx.moveTo(e2,16); cx.lineTo(e2,H); cx.stroke();
+  }
+  cx.globalAlpha=1;
+}
+// подпись на плашке цвета канала; не влезает в шторку — выносим вбок от неё
+function saChannelLabels(n,cx,W){
+  const list=n.s&&n.s.chans; if(!list||!list.length) return;
+  cx.font=BP_FONT;
+  for(const c of list){
+    const x1=saPos(n,c.lo)*W, x2=saPos(n,c.hi)*W;
+    if(x2<0||x1>W) continue;
+    const col=MK_COL(c.idx), bw=c.hi-c.lo, t=c.mode+' '+fmtHz(bw, bw%1000?1:0);
+    const tw=Math.ceil(cx.measureText(t).width), ty=20+c.idx*15;
     let tx=(x1+x2-tw)/2;
     if(x2-x1<tw+8) tx = x2+4+tw<=W ? x2+4 : x1-tw-4;
     tx=clamp(Math.round(tx), 3, W-tw-3);
-    cx.globalAlpha=.9; cx.fillStyle=col; cx.fillRect(tx-3,ty-7,tw+6,14);
-    cx.globalAlpha=1; cx.fillStyle=contrastText(col); cx.fillText(t,tx,ty);
+    cx.globalAlpha=1; cx.fillStyle=col; cx.fillRect(tx-3,ty,tw+6,14);
+    cx.fillStyle=contrastText(col); cx.fillText(t,tx,ty+11);
   }
-  cx.globalAlpha=1; cx.textBaseline='alphabetic';
 }
+function saBandPlanLabels(n,cx){
+  const list=n._bpLabels; if(!list||!list.length) return;
+  cx.font=BP_FONT; cx.globalAlpha=1;
+  for(const l of list){
+    cx.fillStyle=l.bg; cx.fillRect(l.x-2,l.top,Math.ceil(l.w)+4,l.h);   // подложка цвета полосы — линия маркера не просвечивает сквозь текст
+    cx.fillStyle=l.col; cx.fillText(l.t,l.x,l.y);
+  }
+}
+// шрифт подписей полос/каналов: обычное начертание — bold моноширинный на 10-11px мажется
+const BP_FONT='11px monospace';
 
 // Полосы (band plan) и точечные закладки — из узла 'bandplan'/'bookmarks', список {lo,hi,label,color}.
 // hi===lo — точка (закладка), иначе — полоса. Пересекающиеся полосы раскладываем по "дорожкам"
@@ -1304,9 +1323,10 @@ function saChannels(n,cx,W,H){
 // вплотную над осью, но не поверх её подписей. Водопад ни здесь, ни в вызывающем draw() не трогаем.
 function saBandPlan(n,cx,W,H,plotH){
   const list=n.bandsData;
-  if(!list||!list.length){ if(n._bmBoxes) n._bmBoxes.length=0; return; }
+  if(!list||!list.length){ if(n._bmBoxes) n._bmBoxes.length=0; if(n._bpLabels) n._bpLabels.length=0; return; }
   const [lo0,hi0]=saBounds(n);
   const ranges=[], points=[];
+  const labels=n._bpLabels=(n._bpLabels||[]); labels.length=0;   // подписи полос — рисует saBandPlanLabels поверх маркеров
   for(const b of list){
     if(!b || typeof b.lo!=='number' || isNaN(b.lo)) continue;
     const hi=(typeof b.hi==='number' && !isNaN(b.hi)) ? b.hi : b.lo;
@@ -1335,7 +1355,7 @@ function saBandPlan(n,cx,W,H,plotH){
       if(lane<0){ if(laneEnd.length>=MAX_LANES) lane=laneEnd.length-1; else { lane=laneEnd.length; laneEnd.push(-Infinity); } }
       laneEnd[lane]=r.hi; r._lane=lane;
     }
-    cx.font='bold 10px monospace'; cx.textBaseline='middle';    // middle — подпись по центру дорожки
+    cx.font=BP_FONT;
     const scr=hexToRgb(themeColor('--screen')||'#0a0d0e'), FILL_A=.5;
     for(const r of ranges){
       const x1=Math.round(saPos(n,r.lo)*W), x2=Math.round(saPos(n,r.hi)*W);
@@ -1354,13 +1374,13 @@ function saBandPlan(n,cx,W,H,plotH){
         if(k<2) continue;
         label=label.slice(0,k)+'…'; tw=cx.measureText(label).width;
       }
-      const tx=clamp(Math.round((vx1+vx2)/2-tw/2), x1+3, x2-tw-3), ty=y+LANE_H/2+1;
+      const tx=clamp(Math.round((vx1+vx2)/2-tw/2), x1+3, x2-tw-3), ty=y+LANE_H-4;
       // цвет текста — по фактическому фону (полоса с FILL_A поверх тёмного экрана), а не по цвету полосы
       const [cr,cg,cb]=hexToRgb(col), mix=v=>Math.round(v).toString(16).padStart(2,'0');
       const bg='#'+[cr,cg,cb].map((v,i)=>mix(v*FILL_A+scr[i]*(1-FILL_A))).join('');
-      cx.fillStyle=contrastText(bg); cx.fillText(label,tx,ty);
+      labels.push({t:label,x:tx,y:ty,w:tw,top:y+2,h:LANE_H-3,bg,col:contrastText(bg)});
     }
-    cx.globalAlpha=1; cx.textBaseline='alphabetic';        // вернуть дефолт — ниже (точки) рассчитывают на него
+    cx.globalAlpha=1;
   }
   // ---- точки (закладки): штриховая линия во всю H + подпись у ПОТОЛКА спектра, залитая своим
   // цветом и отцентрированная НА линии (не сбоку от неё) — не сливается ни с полосами снизу, ни с
