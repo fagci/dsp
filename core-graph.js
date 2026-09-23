@@ -189,7 +189,7 @@ matchMedia(`(resolution:${window.devicePixelRatio}dppx)`).addEventListener('chan
 function buildNodeEl(n){
 const d=MOD[n.type];
 const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
-el.innerHTML=`<div class="nhead"><span class="dot" style="background:${catColor(d.cat)}"></span> <span class="ttl">${d.title}</span><span class="dash" title="Pin to dashboard">📌</span><span class="cl">▾</span><span class="x">✕</span></div> <div class="nbody"></div>`;
+el.innerHTML=`<div class="nhead"><span class="dot" style="background:${catColor(d.cat)}"></span> <span class="ttl">${d.title}</span><span class="cl">▾</span><span class="x">✕</span></div> <div class="nbody"></div>`;
 const body=el.querySelector('.nbody');
 const io=document.createElement('div'); io.className='io3';
 const ci=document.createElement('div'); ci.className='col';
@@ -233,7 +233,7 @@ renderParamRows(wrap,n,adv);
 tgl.addEventListener('click',()=>setAdvOpen(n,!n.advOpen));
 mid.append(tgl,wrap);
 } }
-if(d.view){ const  c=document.createElement('canvas'); c.className='view'+(d.pick?' pick':'');
+if(d.view){ const  c=document.createElement('canvas'); c.className='view main'+(d.pick?' pick':'');
 // без willReadFrequently — этот канвас только пишут (drawImage/putImageData), ни один draw()
 // не читает его обратно через getImageData (это отдельный n.capCx у видео-узлов, см. sources.js).
 // Флаг форсирует программный (CPU) рендер канвы вместо GPU-композитинга — на крупных канвах
@@ -279,10 +279,6 @@ const cl=el.querySelector('.cl');
 cl.addEventListener('click',e=>{ e.stopPropagation(); foldNode(n,!n.folded); Undo.push(); });
 cl.addEventListener('pointerdown',e=>e.stopPropagation());
 if(n.folded) foldNode(n,true);
-const dashBtn=el.querySelector('.dash');
-dashBtn.classList.toggle('on', !!n.dash);
-dashBtn.addEventListener('click',e=>{ e.stopPropagation(); toggleDash(n); Undo.push(); });
-dashBtn.addEventListener('pointerdown',e=>e.stopPropagation());
 bindDrag(el.querySelector('.nhead'),n);
 el.addEventListener('pointerdown',ev=>{
 if(!Sel.has(n.id)||ev.shiftKey) selSet(n.id,ev.shiftKey); });
@@ -975,6 +971,11 @@ requestAnimationFrame(()=>requestAnimationFrame(fitView));
 }
 document.getElementById('fit').onclick=fitView;
 let panelMode=false, dashMode=false;
+// свёрнутый сайдбар (десктоп): выбор пользователя по ☰; в тайлах прячется независимо от него
+let sideCollapsedPref=false;
+try{ sideCollapsedPref=localStorage.getItem('dsp-side-collapsed')==='1'; }catch(e){}
+function setSideCollapsed(on){ document.getElementById('side').classList.toggle('collapsed',!!on); }
+setSideCollapsed(sideCollapsedPref);
 function uiLocked(){ return panelMode||dashMode; }   // свободное перетаскивание/связи узлов выключены
 function markPanel(){                                // прибор = узел, которому есть что показать
 for(const n of Graph.nodes){
@@ -1076,7 +1077,7 @@ function dashRenderLeaf(t){
   // выбор/смена модуля в этом слоте — всегда доступен, не только для пустых панелей
   const sel=document.createElement('select'); sel.className='dash-pick';
   sel.append(new Option(n?'— clear —':'— pick module —',''));
-  const cand=Graph.nodes.filter(x=>x.dash && (x===n || !dashLeafOf(x.id)));
+  const cand=Graph.nodes.filter(x=>x===n || !dashLeafOf(x.id));   // любой модуль, ещё не занявший панель
   for(const pn of cand) sel.append(new Option(MOD[pn.type].title+' #'+pn.id, pn.id));
   if(n) sel.value=n.id;
   sel.addEventListener('pointerdown',e=>e.stopPropagation());
@@ -1093,7 +1094,7 @@ function dashRenderLeaf(t){
   const body=document.createElement('div'); body.className='dash-body';
   if(n) body.append(n.el);
   else { const ph=document.createElement('div'); ph.className='dash-empty';
-    ph.textContent=cand.length? 'Pick a module above' : 'No pinned modules available';
+    ph.textContent=cand.length? 'Pick a module above' : 'No free modules';
     body.append(ph); }
   pane.append(body);
   return pane;
@@ -1116,18 +1117,12 @@ function bindDashResizer(rz,t,i){                       // тащим грани
     window.addEventListener('pointermove',move); window.addEventListener('pointerup',up);
   });
 }
-function toggleDash(n){
-  n.dash=!n.dash;
-  const btn=n.el.querySelector('.dash'); if(btn) btn.classList.toggle('on', n.dash);
-  if(n.dash){ if(dashMode) dashAutoPlace(n); }
-  else dashDetach(n);
-  if(dashMode) dashRenderRoot();
-}
 function setDash(on){
   if(on && !dashGridEl) return;                        // старый закэшированный index.html без #dashGrid — тихо выходим
   if(on && panelMode) setPanel(false);                 // режимы взаимоисключающие — разные контейнеры узлов
   dashMode=on;
   cv.classList.toggle('dashboard',on);
+  setSideCollapsed(on ? true : sideCollapsedPref);     // в тайлах сайдбар мешает — прячем, при выходе возвращаем как было
   dashBtn?.classList.toggle('on',on);
   document.getElementById('fit').disabled=on||panelMode;
   if(on){
@@ -1170,7 +1165,11 @@ else if(k==='escape'){ Sel.clear(); syncSel(); }
 });
 const side=document.getElementById('side'), scrim=document.getElementById('scrim');
 const closeSide=()=>{ side.classList.remove('open'); scrim.classList.remove('open'); };
+const narrowUI=matchMedia('(max-width:820px), (pointer:coarse)');
 document.getElementById('menu').onclick=()=>{
+if(!narrowUI.matches){ sideCollapsedPref=!side.classList.contains('collapsed'); setSideCollapsed(sideCollapsedPref);
+  try{ localStorage.setItem('dsp-side-collapsed',sideCollapsedPref?'1':''); }catch(e){}
+  return; }
 side.classList.toggle('open'); scrim.classList.toggle('open',side.classList.contains('open')); };
 scrim.addEventListener('pointerdown',closeSide);
 document.querySelectorAll('.sidetab').forEach(t=>t.addEventListener('click',()=>{
@@ -1331,9 +1330,8 @@ for(const n of o.nodes){ const nn=addNode(n.type,n.x,n.y,n.p,n.id);
 if(nn &&n.f) foldNode(nn,true);
 if(nn &&n.a) setAdvOpen(nn,true);
 if(nn &&n.w){ nn.size.w=n.w; nn.size.h=n.h||nn.size.h; applySize(nn); }
-// n.dash задаётся уже ПОСЛЕ addNode (buildNodeEl успел завести кнопку 📌 без него) — досаживаем
-// класс .on руками, а не через toggleDash (та ещё и разместила бы узел в дереве прямо сейчас)
-if(nn &&n.dash){ nn.dash=true; nn.el.querySelector('.dash')?.classList.add('on'); }
+// n.dash — старые сохранения с 📌: такие узлы сами занимают свободные панели при входе в тайлы
+if(nn &&n.dash) nn.dash=true;
 max=Math.max(max,+String(n.id).slice(1)||0); }
 Graph.seq=max+1;
 Graph.dashTree=o.dashTree||null;                    // раскладка тайлов дашборда (дерево сплитов)
