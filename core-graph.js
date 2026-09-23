@@ -1292,8 +1292,9 @@ dashTree:Graph.dashTree};                           // раскладка тай
 }
 const MIGRATE={                                     // старые узлы → их замена
 water:   {type:'sa', ports:{fsel:'f1'}},
-spectrum:{type:'sa', ports:{fsel:'f1', lsel:'l1'}},
-sa:      {type:'sa', ports:{fsel:'f1'}},
+spectrum:{type:'sa', ports:{fsel:'f1', lsel:'snr1'}},
+// l1..l4 (уровень 0..1 между floor/top) убраны — провода переносим на snr1..snr4
+sa:      {type:'sa', ports:{fsel:'f1', l1:'snr1', l2:'snr2', l3:'snr3', l4:'snr4'}},
 gate:    {type:'thresh', ports:{in:'num', out:'num'}},
 slice:   {type:'thresh', ports:{in:'sig', out:'sig'}}
 };

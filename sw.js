@@ -7,11 +7,11 @@
 //
 // CACHE бампать вместе с ?v=N в index.html — иначе после правки файлов старый список ссылок
 // (со старым ?v=) продолжит переустанавливаться поверх уже закэшированного нового.
-const CACHE='dsp-shell-v44';
+const CACHE='dsp-shell-v46';
 const SHELL=[
   './',
   './index.html',
-  './styles.css?v=44',
+  './styles.css?v=46',
   './manifest.json',
   './favicon.svg',
   './icons/favicon-32.png',
@@ -20,18 +20,18 @@ const SHELL=[
   './icons/icon-512.png',
   './vendor/panzoom.min.js?v=4.6.2',
   './vendor/interact.min.js?v=1.10.28',
-  './core-engine.js?v=44',
-  './modules/analysis.js?v=44',
-  './modules/misc.js?v=44',
-  './modules/modulation.js?v=44',
-  './modules/output.js?v=44',
-  './modules/processing.js?v=44',
-  './modules/protocols.js?v=44',
-  './modules/sources.js?v=44',
-  './modules/hfdl.js?v=44',
-  './modules/propagation.js?v=44',
-  './presets.js?v=44',
-  './core-graph.js?v=44',
+  './core-engine.js?v=46',
+  './modules/analysis.js?v=46',
+  './modules/misc.js?v=46',
+  './modules/modulation.js?v=46',
+  './modules/output.js?v=46',
+  './modules/processing.js?v=46',
+  './modules/protocols.js?v=46',
+  './modules/sources.js?v=46',
+  './modules/hfdl.js?v=46',
+  './modules/propagation.js?v=46',
+  './presets.js?v=46',
+  './core-graph.js?v=46',
 ];
 self.addEventListener('install',e=>{
   self.skipWaiting();                                 // не ждать закрытия всех вкладок — как и ручной ?v=N, обновление должно применяться сразу

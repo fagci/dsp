@@ -1469,10 +1469,11 @@ function saMarkers(n,cx,W,H){
     cx.strokeStyle=MK_COL(k); cx.lineWidth=act?1.5:1;
     cx.beginPath(); cx.moveTo(x+.5,TOP_H); cx.lineTo(x+.5,H); cx.stroke();
     cx.font='10px monospace';
-    // "1: 433.075 -75" — номер, частота (3 знака — см. коммент у fmtHz, иначе близкие маркеры
+    // "1: 433.075 -75 / 18" — номер, частота (3 знака — см. коммент у fmtHz, иначе близкие маркеры
     // выглядят как одна и та же частота, без буквы единицы — компактнее), уровень — одной строкой
     const fv=fmtHz(f,3).replace(/[kMG]$/,'');
-    const t=(k+1)+': '+fv+(n.db[k]>-119?' '+n.db[k].toFixed(0):'');
+    // уровень дБ / SNR над шумовой полкой (см. saNoiseFloor)
+    const t=(k+1)+': '+fv+(n.db[k]>-119?' '+n.db[k].toFixed(0)+' / '+Math.max(0,n.snr?.[k]??0).toFixed(0):'');
     const tw=cx.measureText(t).width;
     // по центру линии маркера; дорожка стека — по НОМЕРУ маркера (k), а не по порядку рисования —
     // иначе позиции соседних подписей "прыгали" бы при каждой смене наведения
@@ -1573,7 +1574,7 @@ function saTickDp(f,step){
   for(let d=0;d<6;d++){ const v=q*10**d; if(Math.abs(v-Math.round(v))<1e-6*Math.max(1,v)) return d; }
   return 6;
 }
-function saGrid(n,cx,W,hs,H,plotH){                 // сетка частот с подписями
+function saGrid(n,cx,W,hs,H,plotH,diff){            // сетка частот и уровня с подписями
   const lo=saFreq(n,0), hi=saFreq(n,1);
   cx.lineWidth=1; cx.globalAlpha=1;
   cx.strokeStyle=themeColor('--grid'); cx.fillStyle=themeColor('--axis'); cx.font='9px monospace';
@@ -1599,9 +1600,28 @@ function saGrid(n,cx,W,hs,H,plotH){                 // сетка частот �
     // подпись — в зарезервированной зоне снизу (см. AXIS_H в draw()), ниже plotH — сама трасса
     // спектра туда не заходит (см. plotH в амплитуде/фазе/PSD), так что подпись не замазывает
     cx.fillText(t,Math.min(x+2,W-cx.measureText(t).width-2),hs-4); }
-  for(let i=1;i<4;i++){                            // горизонтальные деления уровня — в пределах plotH
-    const y=Math.round(plotH*i/4)+.5;
-    cx.beginPath(); cx.moveTo(0,y); cx.lineTo(W,y); cx.stroke(); }
+  // уровень: "круглый" шаг в дБ (1/2/5/10/20…) под высоту графика, подписи слева у линий;
+  // шкала та же, что у трассы: floor..top, в режиме diff — ±40 дБ
+  const dLo=diff?-40:n.p.floor, dHi=diff?40:n.p.top, dr=(dHi-dLo)||1;
+  const want=Math.max(2,Math.floor(plotH/28));       // не чаще ~28 px между линиями
+  const dStep=[1,2,5,10,20,50].find(s=>dr/s<=want)||100;
+  const labels=n._dbLabels=(n._dbLabels||[]); labels.length=0;   // подписи рисует saDbLabels — поверх трассы
+  for(let v=Math.ceil(dLo/dStep)*dStep; v<=dHi; v+=dStep){
+    const y=Math.round(plotH-clamp((v-dLo)/dr,0,1)*(plotH-2)-1)+.5;
+    if(y<14||y>plotH-2) continue;                    // верх — зона закладок, низ — край графика
+    cx.beginPath(); cx.moveTo(0,y); cx.lineTo(W,y); cx.stroke();
+    labels.push({t:(diff&&v>0?'+':'')+v+'dB',y});
+  }
+}
+function saDbLabels(n,cx){
+  const list=n._dbLabels; if(!n.p.grid||!list||!list.length) return;
+  cx.font='9px monospace';
+  const scr=themeColor('--screen'), ax=themeColor('--axis');
+  for(const l of list){
+    const tw=Math.ceil(cx.measureText(l.t).width);
+    cx.globalAlpha=.75; cx.fillStyle=scr; cx.fillRect(1,l.y-11,tw+4,10);
+    cx.globalAlpha=1; cx.fillStyle=ax; cx.fillText(l.t,3,l.y-3);
+  }
 }
 
 def({ id:'thresh', title:'Threshold', cat:'Processing',
