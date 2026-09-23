@@ -1001,6 +1001,19 @@ function axisT(bin,N,log){ return log ? Math.log(bin+1)/Math.log(N) : bin/(N-1);
 const MK_COL_VARS=['--acc','--acc2','--err','--t-img'];
 const MK_COL=k=>themeColor(MK_COL_VARS[k]);
 
+// шумовая полка у частоты f, дБ: медиана бинов в окне ±max(20·tol, 40 бинов) без полосы
+// самого сигнала (±tol). Медиана устойчива к редким соседним сигналам; прореживание — не больше ~400 бинов.
+function saNoiseFloor(sp,f,tol){
+  const m=sp.mag, N=m.length, binHz=Math.abs(specHz(sp,1)-specHz(sp,0))||1;
+  const half=Math.max(20*tol,40*binHz);
+  const a=clamp(Math.floor(specBin(sp,f-half)),0,N-1), b=clamp(Math.ceil(specBin(sp,f+half)),0,N-1);
+  const ea=specBin(sp,f-tol), eb=specBin(sp,f+tol);
+  const stride=Math.max(1,Math.floor((b-a+1)/400)), v=[];
+  for(let i=a;i<=b;i+=stride) if(i<ea||i>eb) v.push(m[i]);
+  if(!v.length) return -120;
+  v.sort((x,y)=>x-y);
+  return 20*Math.log10(v[v.length>>1]+1e-12);
+}
 // GPU-водопад для 'sa': кольцевой буфер в текстуре вместо сдвига всей истории на 1px на канве
 // при каждой новой строке спектра (был O(Wp×hwP) software-composite на каждый новый кадр спектра).
 // Новая строка льётся в текущую позицию кольца (O(Wp) upload через texSubImage2D), а "прокрутка" —
@@ -1114,10 +1127,10 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
        {n:'bLo',t:'num'},{n:'bHi',t:'num'},{n:'floor',t:'num'},{n:'top',t:'num'},
        {n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'split',t:'num'},{n:'tol',t:'num'},
        {n:'log',t:'num'},{n:'grid',t:'num'},{n:'bands',t:'bands'}],
-  outs:[{n:'f1',t:'num'},{n:'l1',t:'num'},{n:'f2',t:'num'},{n:'l2',t:'num'},
-        {n:'f3',t:'num'},{n:'l3',t:'num'},{n:'f4',t:'num'},{n:'l4',t:'num'},
+  outs:[{n:'f1',t:'num'},{n:'f2',t:'num'},{n:'f3',t:'num'},{n:'f4',t:'num'},
         {n:'fr1',t:'num'},{n:'fr2',t:'num'},{n:'fr3',t:'num'},{n:'fr4',t:'num'},
         {n:'db1',t:'num'},{n:'db2',t:'num'},{n:'db3',t:'num'},{n:'db4',t:'num'},
+        {n:'snr1',t:'num'},{n:'snr2',t:'num'},{n:'snr3',t:'num'},{n:'snr4',t:'num'},
         {n:'centerFreq',t:'num'}],
   view:{h:280}, pick:true, resize:true,
   params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)',fn:n=>{ if(n.p.auto) n.zoom=null; }},
@@ -1143,7 +1156,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   // mkPhase/mkBin/mkRev — состояние фазового уточнения частоты (fr1..fr4): сравниваем фазу
   // пика с предыдущим кадром спектра и по сдвигу фазы меряем частоту точнее ширины бина —
   // работает, только если источник спектра отдаёт sp.phase/sp.hop ('fft'/'zfft' это делают).
-  init:n=>{n.mk=[null,null,null,null];n.lv=[0,0,0,0];n.db=[-120,-120,-120,-120];n.active=1;
+  init:n=>{n.mk=[null,null,null,null];n.db=[-120,-120,-120,-120];n.snr=[0,0,0,0];n.active=1;
            n.ext=[0,0,0,0];n.pickT=null;n.peak=null;n.peakFreqs=null;n._dragPending=false;n._dragActive=false;
            n.mkPhase=[0,0,0,0];n.mkBin=[null,null,null,null];n.mkRev=[-1,-1,-1,-1];
            n.zoom=null;n._steer=null;n._srcCenter=null;n._lastRange=null;},
@@ -1288,20 +1301,15 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     }
     for(let k=0;k<4;k++){
       const f=n.mk[k];
-      if(f==null||!sp){ o['f'+(k+1)]=f==null?null:f; o['l'+(k+1)]=null; o['fr'+(k+1)]=null; o['db'+(k+1)]=null;
+      if(f==null||!sp){ o['f'+(k+1)]=f==null?null:f; o['snr'+(k+1)]=null; o['fr'+(k+1)]=null; o['db'+(k+1)]=null;
                          n.mkRev[k]=-1; continue; }
       const lo=clamp(Math.floor(specBin(sp,f-n.p.tol)),0,N-1),
             hi=clamp(Math.ceil (specBin(sp,f+n.p.tol)),0,N-1);
       let mx=0, bin=lo; for(let i=lo;i<=hi;i++) if(sp.mag[i]>mx){ mx=sp.mag[i]; bin=i; }
       n.db[k]=20*Math.log10(mx+1e-12);
-      n.lv[k]=clamp((n.db[k]-n.p.floor)/((n.p.top-n.p.floor)||1),0,1);
-      // l1..l4 — НОРМАЛИЗОВАННЫЙ (0..1 между floor/top) уровень, для UI/индикаторов; db1..db4 —
-      // тот же уровень в НАСТОЯЩИХ дБ, для узлов, которые сами работают в дБ (например, squelch:
-      // его 'level' сравнивается напрямую с порогом threshold в дБ — если туда по ошибке завести
-      // l1 вместо db1, порог сравнивается с числом 0..1, а не с дБ, и почти всегда либо всегда
-      // "открыт", либо всегда "закрыт", в зависимости от знака порога — так и выглядит "squelch
-      // показывает какую-то ерунду, хотя l1 показывает адекватный уровень").
-      o['f'+(k+1)]=f; o['l'+(k+1)]=n.lv[k]; o['db'+(k+1)]=n.db[k];
+      // db — пик в окне ±tol в дБ; snr — он же над шумовой полкой вокруг маркера (см. saNoiseFloor)
+      n.snr[k]=n.db[k]-saNoiseFloor(sp,f,n.p.tol);
+      o['f'+(k+1)]=f; o['db'+(k+1)]=n.db[k]; o['snr'+(k+1)]=n.snr[k];
       // фазовое уточнение: только между соседними кадрами (rev не пропущен) и если пик
       // не перескочил больше чем на 1 бин — иначе это, скорее всего, другой сигнал, не дрейф
       let fr=specHz(sp,bin);
@@ -2561,16 +2569,17 @@ def({ id:'morseRx', title:'Morse: Receive', cat:'Decoders',
           {n:'minRun',t:'range',min:0,max:120,step:1,d:20},
           {n:'clr',t:'button',label:'Clear text',fn:n=>{n.text='';n.cur=[];n.pool=[];n.gaps=[];}}],
   init:n=>{ n.on=false; n.t=0; n.candT=0; n.pool=[]; n.gaps=[]; n.cur=[]; n.text=''; n.space=false;
-            n.mn=0; n.mx=1; n.hist=[]; n.thrShow=.5; },
+            n.mn=null; n.mx=null; n.hist=[]; n.thrShow=.5; },
   process(n,I){
     if(typeof I.thr==='number') setMod(n,'thr',I.thr);
     if(typeof I.minRun==='number') setMod(n,'minRun',I.minRun);
     if(typeof I.auto==='number') setMod(n,'auto',I.auto>=0.5);
     let lv=(typeof I.level==='number')? I.level : (I.sig? clamp(rms(I.sig)*4,0,1) : 0);
     let thr=n.p.thr, hys=.06;
+    if(n.mn==null){ n.mn=n.mx=lv; }                 // от первого значения — уровень любого масштаба: 0..1, дБ, SNR
+    n.mx = lv>n.mx ? lv : n.mx*.998+lv*.002;
+    n.mn = lv<n.mn ? lv : n.mn*.998+lv*.002;
     if(n.p.auto){                                  // порог между скользящими min/max
-      n.mx = lv>n.mx ? lv : n.mx*.998+lv*.002;
-      n.mn = lv<n.mn ? lv : n.mn*.998+lv*.002;
       const d=Math.max(.05,n.mx-n.mn); thr=n.mn+d*n.p.thr; hys=d*.08; }
     n.thrShow=thr;
     const raw = n.on ? lv>thr-hys : lv>thr+hys;
@@ -2583,13 +2592,14 @@ def({ id:'morseRx', title:'Morse: Receive', cat:'Decoders',
     return {gate:n.on?1:0, wpm:1200/mEst(n.pool).unit}; },
   draw(n,cv,cx){
     const W=cv.width,H=cv.height,hs=n.hist; cx.clearRect(0,0,W,H);
+    const mn=n.mn??0, sc=1/((n.mx??1)-mn||1), nv=v=>clamp((v-mn)*sc,0,1);   // график — в рамках min/max
     cx.fillStyle=themeColor('--acc2')+'22';
     for(let i=0;i<hs.length;i++) if(hs[i][2]) cx.fillRect(i/240*W,0,W/240+.6,H);
     cx.strokeStyle=themeColor('--err')+'88'; cx.beginPath();
-    for(let i=0;i<hs.length;i++){ const x=i/240*W,y=H-clamp(hs[i][1],0,1)*H; i?cx.lineTo(x,y):cx.moveTo(x,y); }
+    for(let i=0;i<hs.length;i++){ const x=i/240*W,y=H-nv(hs[i][1])*H; i?cx.lineTo(x,y):cx.moveTo(x,y); }
     cx.stroke();
     cx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--t-num'); cx.beginPath();
-    for(let i=0;i<hs.length;i++){ const x=i/240*W,y=H-clamp(hs[i][0],0,1)*H; i?cx.lineTo(x,y):cx.moveTo(x,y); }
+    for(let i=0;i<hs.length;i++){ const x=i/240*W,y=H-nv(hs[i][0])*H; i?cx.lineTo(x,y):cx.moveTo(x,y); }
     cx.stroke();
     const u=mEst(n.pool).unit, r=n.el.querySelector('.readout');
     const txt=(n.text||'…')+`\n[dot ${u.toFixed(0)} ms · ${(1200/u).toFixed(1)} WPM]`;

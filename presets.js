@@ -234,15 +234,15 @@ const m =addNode('mic',40,240,{gainA:2});
 const ff=addNode('fft',40,440,{size:'4096'});
 const sa=addNode('sa',420,40,{fmin:20,fmax:8000,split:.4});
 sa.size.w=560; sa.size.h=320; applySize(sa);
-const ns=addNode('numsig',420,400,{dc:false,gain:1});
+const ns=addNode('numsig',420,400,{dc:false,gain:.02});   // SNR 0..50 дБ -> 0..1
 const sc=addNode('scope',420,540,{span:16384,gain:1});
 sc.size.w=560; sc.size.h=200; applySize(sc);
 const nvF=addNode('numview',1020,40,{digits:0});
-const nvL=addNode('numview',1020,200,{digits:3});
+const nvL=addNode('numview',1020,200,{digits:1});
 addEdge(m.id,'a',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
 addEdge(sa.id,'f1',nvF.id,'in');
-addEdge(sa.id,'l1',nvL.id,'in');
-addEdge(sa.id,'l1',ns.id,'in');
+addEdge(sa.id,'snr1',nvL.id,'in');
+addEdge(sa.id,'snr1',ns.id,'in');
 addEdge(ns.id,'out',sc.id,'in1');
 markWiresDirty();
 });
@@ -325,8 +325,8 @@ mo2.size.w=380; mo2.size.h=200; applySize(mo2);
 const bp=addNode('biquad',360,40,{type:'bp',freq:700,Q:20});
 const dc=addNode('dac',360,260,{vol:.3,mode:'mono'});
 addEdge(m.id,'a',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
-addEdge(wf.id,'l1',mo.id,'level');                // маркер 1 — первый корреспондент
-addEdge(wf.id,'l2',mo2.id,'level');               // маркер 2 — второй, параллельно
+addEdge(wf.id,'snr1',mo.id,'level');                // маркер 1 — первый корреспондент
+addEdge(wf.id,'snr2',mo2.id,'level');               // маркер 2 — второй, параллельно
 addEdge(m.id,'a',bp.id,'in');
 addEdge(wf.id,'f1',bp.id,'freq');                 // в наушники — тон под маркером 1
 addEdge(bp.id,'out',dc.id,'L');
