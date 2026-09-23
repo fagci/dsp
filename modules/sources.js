@@ -977,15 +977,25 @@ async function rtlOpenDevice(dev, ppm, gain){
 
 // ---- узел графа: источник IQ ----
 
-// Во сколько раз воркер прореживает поток (decim ПОСЛЕ канального фильтра chA — см. RTL_WORKER_SRC)
-// — используется на главном потоке, чтобы правильно посчитать размер аудио-кольца канала и шаг
-// его чтения (сам воркер об этом не сообщает, поэтому формула ЗДЕСЬ ДОЛЖНА ТОЧНО СОВПАДАТЬ с decim
-// внутри RTL_WORKER_SRC). demod/bw общие на все 4 канала (не per-канальные параметры, см.
-// комментарий у 'demod' в params ниже) — поэтому decim тоже один на узел, а не на канал.
-function rtlDecimFor(mode, sr, bwAudio){
-  const chanBw=({WFM:200000,NFM:12500,AM:10000})[mode] || bwAudio;
-  return Math.max(1, Math.floor(sr/Math.max(chanBw*4, 8000)));
+// План децимации демод-воркера: sr → ir (канальный FIR, прореживание d1) → демодуляция →
+// ar (аудио-FIR, прореживание d2). Общий для воркера и главного потока (вставляется в
+// RTL_WORKER_SRC через toString) — главный поток по нему сайзит кольцо и считает темп чтения.
+function rtlPlan(mode, sr, bw){
+  let ir, pass;
+  if(mode==='WFM'){ ir=240000; pass=95000; }
+  else if(mode==='NFM'){ ir=48000; pass=8000; }
+  else if(mode==='AM'){ ir=24000; pass=5000; }
+  else { ir=Math.max(24000, 3*bw); pass=bw; }        // USB/LSB: канал покрывает обе боковые, выбор — на ir
+  const d1=Math.max(1, Math.floor(sr/ir)), irReal=sr/d1;
+  const d2=mode==='WFM' ? Math.max(1, Math.floor(irReal/64000)) : 1;
+  const ar=irReal/d2;
+  let aPass, aStop;
+  if(mode==='WFM'){ aPass=Math.min(bw, 15000); aStop=Math.min(19000, aPass+4000); }   // стоп до пилота 19 кГц
+  else if(mode==='AM'){ aPass=Math.min(bw, pass); aStop=Math.min(ar/2, aPass+1000); }
+  else { aPass=Math.min(bw, 0.4*ar); aStop=Math.min(ar/2, aPass+Math.max(500, aPass*0.25)); }
+  return {d1, d2, decim:d1*d2, ir:irReal, ar, pass, stop:irReal-pass, aPass, aStop};
 }
+function rtlDecimFor(mode, sr, bw){ return rtlPlan(mode, sr, bw).decim; }
 // (Пере)создаёт аудио-кольцо одного канала под ТЕКУЩИЙ n.decim — вызывается при первой
 // активации канала и при каждой смене decim на лету (demod/bw/sourceRate), иначе кольцо
 // остаётся размером под старую децимацию и гистерезис (проценты от size) снова начинает
@@ -1020,199 +1030,143 @@ function rtlResetRing(n){
   for(const ch of n.ch) if(ch.active) rtlResizeChannelRing(n, ch);
 }
 
-// Исходник воркера демодуляции — тяжёлая математика (канальный фильтр + atan2-дискриминатор)
-// уходит в отдельный поток, чтобы не конкурировать за главный поток с async-циклом чтения USB
-// и остальным движком/UI. Тот же приём Blob+createObjectURL, что и у AudioWorklet в core-engine.js.
-const RTL_WORKER_SRC = `
-let mode='WFM', sr=1024000, bwAudio=15000, deemphTau=null, devScale=75000, chanBw=200000;
-// Дискриминатор/audio-фильтры считаются не на КАЖДЫЙ сырой IQ-отсчёт, а после decim (после
-// канального ФНЧ chA ниже — тот уже ограничивает полосу, так что алиасинга от прореживания нет).
-let decim=1, decimCounter=1;
-// Раньше здесь была ещё многоступенчатая "дешёвая" предедецимация (до 3 ступеней треугольного
-// FIR перед chA) — идея была снизить число отсчётов, которые видит дорогой 3-полюсный chA.
-// Реальный бенчмарк (rtl_worker_bench.js в scratchpad) на настоящем коде воркера показал обратное:
-// эти ступени ВЕЗДЕ медленнее, чем просто отдать chA все сырые отсчёты — и на WFM (3.2Msps: 42мс→
-// 28мс без них), и на NFM/AM/SSB (в 1.5-2 раза быстрее без них на всех проверенных sourceRate).
-// Скорее всего дело не в арифметике самих ступеней (она дешёвая), а в branch-per-sample (continue
-// внутри цикла) — JIT явно не любит такой паттерн. Убраны целиком, decim делает всю децимацию сам.
-let cI0=0,cI1=0,cI2=0, cQ0=0,cQ1=0,cQ2=0, prevI=0,prevQ=0, lp0=0,lp1=0,lp2=0,lp3=0,lp4=0,de=0,ampDc=0,audDc=0;
-// Notch на 19кГц (пилот-тон стерео WFM) — узкополосный биквад поверх дискриминатора, ДО
-// lp0..lp4 (те режут по bwAudio, у пользователя может доходить до 16кГц — вплотную к пилоту,
-// и одних лишь 5 полюсов там мало, см. wfm_pilot_check.js: суппрессия пилота от них ~21дБ,
-// а с добавленным notch — глубокая яма ровно на 19кГц и НОЛЬ влияния на 15-18кГц звука).
-// pnOn включается только для WFM (см. applyConfig) — в NFM/AM/SSB пилота нет и notch не нужен.
-let pnOn=false, pnB1=0, pnA1=0, pnA2=0, pnX1=0, pnX2=0, pnY1=0, pnY2=0;
-// Доп. ФНЧ на фиксированных 21кГц (4 полюса, НЕ завязан на bwAudio) — сам notch бьёт точно
-// в пилот (19кГц), но стерео-поднесущая (23-53кГц, DSB-SC с программным звуком, а не чистый
-// тон) — широкая полоса, notch её не берёт. Без этого фильтра суппрессия на границе поднесущей
-// (23кГц) — единицы+десятки дБ, мало для реального эфира: остаток после грубой линейной
-// интерполяции в rtlReadChannelAudio звучит как "хрип"/рассинхрон, коррелирующий с программой
-// (см. wfm_pilot_check.js: +12-25дБ в полосе 21-53кГц). Фиксированный, а не от bwAudio — иначе
-// пользователь, подняв полосу звука, снова терял бы этот запас.
-let fcOn=false, fcA=0, fc0=0, fc1=0, fc2=0, fc3=0;
-// Общий NCO "частоты настройки": сдвигает выбранную внутри захваченной полосы точку
-// (offsetHz относительно центра тюнера) на 0 Гц ДО канального фильтра — так демодулируется
-// сигнал в любом месте полосы обзора без физической перестройки тюнера (без USB round-trip).
+// Исходник демод-воркера. Цепочка: u8 → DC-блок → NCO сдвига → комплексный FIR-дециматор (канал,
+// sr→ir) → дискриминатор/огибающая/SSB-фильтр → аудио-FIR-дециматор (ir→ar) → DC/де-эмфазис.
+// FIR с окном Кайзера (~60 дБ) вместо прежних IIR на полной sr: нет алиасинга при прореживании,
+// пилот/поднесущая WFM режутся самим аудио-фильтром, дорогая часть считается на ir, а не на sr.
+const RTL_WORKER_SRC = rtlPlan.toString()+`
+function besselI0(x){ let s=1, t=1; for(let k=1;k<30;k++){ t*=(x/(2*k))*(x/(2*k)); s+=t; if(t<1e-10*s) break; } return s; }
+// ФНЧ с окном Кайзера, β=5.65 (~60 дБ); число отводов — по ширине перехода, нечётное
+function makeLP(fs, pass, stop, maxN){
+  const tw=Math.max(1, stop-pass), fc=(pass+stop)/2/fs;
+  let N=Math.min(maxN, Math.ceil(3.6*fs/tw)); N|=1;
+  const M=(N-1)/2, beta=5.65, i0b=besselI0(beta), h=new Float32Array(N);
+  let s=0;
+  for(let k=0;k<N;k++){
+    const x=k-M, r=M?x/M:0;
+    const sinc = x===0 ? 2*fc : Math.sin(2*Math.PI*fc*x)/(Math.PI*x);
+    h[k]=sinc*besselI0(beta*Math.sqrt(Math.max(0,1-r*r)))/i0b; s+=h[k];
+  }
+  for(let k=0;k<N;k++) h[k]/=s;
+  return h;
+}
+// дециматор: история удвоенной длины — окно всегда непрерывно, без % в свёртке
+function mkDec(h, D, cplx){
+  const N=h.length;
+  return {h, N, D, pos:0, cnt:D, bi:new Float32Array(2*N), bq:cplx?new Float32Array(2*N):null};
+}
+
+let plan=null, mode='WFM', sr=1024000, bw=15000, deemph='50';
+let decA=null, decB=null, ssbHr=null, ssbHi=null, ssbN=0;
+let isAM=false, isSSB=false, isFM=false, discScale=1, deA=null, deA1=0, hpA=0, hpA1=0, rawA=0, rawA1=0;
+let rawI0=0, rawQ0=0, prevI=0, prevQ=0, ampDc=0, audDc=0, de=0;
 let offsetHz=0, offCos=1, offSin=0, offPhI=1, offPhQ=0;
-// NCO для выделения боковой полосы (SSB), накладывается ПОСЛЕ общего сдвига — прежняя логика.
-let ssbPhI=1, ssbPhQ=0, ssbCos=1, ssbSin=0;
-// DC-блок сырых I/Q, срез 150 Гц — гасит LO-паразит гетеродина. Раньше применялся только
-// для SSB; теперь общий сдвиг (offset) может увести паразит с 0 Гц в слышимую область для
-// ЛЮБОГО режима, поэтому блокируем DC всегда, до всех сдвигов.
-let rawI0=0, rawQ0=0;
-let bufPool=[]; // буферы результата, отданные обратно главным потоком после использования — переиспользуем
+let bufPool=[];
 
 function applyConfig(msg){
-mode=msg.mode; sr=msg.sr; bwAudio=msg.bw;
-const tauMap={'75':75e-6,'50':50e-6,'off':null};
-deemphTau = mode==='WFM' ? tauMap[msg.deemph] : null;
-devScale = mode==='WFM'?75000:(mode==='NFM'?5000:1);
-// для USB/LSB нет записи в карте — попадаем в фолбэк и берём полосу канала равной аудио-полосе
-chanBw = ({WFM:200000,NFM:12500,AM:10000})[mode] || bwAudio;
-// decim — во сколько раз прореживаем ПОСЛЕ канального фильтра chA (тот работает на полной sr —
-// см. комментарий у объявления decim выше про снятые preStages). ФОРМУЛА ДОЛЖНА СОВПАДАТЬ с
-// rtlDecimFor() на главном потоке — та по ней же считает размер аудио-кольца и шаг чтения.
-decim = Math.max(1, Math.floor(sr/Math.max(chanBw*4, 8000)));
-pnOn = mode==='WFM';
-if(pnOn){
-  const outRateCfg=sr/decim, w0=2*Math.PI*19000/outRateCfg, r=Math.exp(-2*Math.PI*150/outRateCfg);
-  pnB1=-2*Math.cos(w0); pnA1=-2*r*Math.cos(w0); pnA2=r*r;
-}
-fcOn = mode==='WFM';
-if(fcOn){ const outRateCfg=sr/decim; fcA=Math.exp(-2*Math.PI*21000/outRateCfg); }
-// сдвиг NCO — половина полосы канала. USB сдвигаем вниз, LSB вверх (см. вывод у цикла ниже)
-const ssbDir = mode==='USB' ? -1 : (mode==='LSB' ? 1 : 0);
-const ssbInc = 2*Math.PI*(chanBw/2)*ssbDir/sr;
-ssbCos=Math.cos(ssbInc); ssbSin=Math.sin(ssbInc);
-applyOffset(offsetHz); // sr мог смениться — приращение общего NCO пересчитать под новую sr
+  mode=msg.mode; sr=msg.sr; bw=msg.bw; deemph=msg.deemph;
+  plan=rtlPlan(mode, sr, bw);
+  isAM=mode==='AM'; isSSB=(mode==='USB'||mode==='LSB'); isFM=!isAM&&!isSSB;
+  decA=mkDec(makeLP(sr, plan.pass, plan.stop, 2047), plan.d1, true);
+  decB=isSSB ? null : mkDec(makeLP(plan.ir, plan.aPass, plan.aStop, 1023), plan.d2, false);
+  if(isSSB){
+    // комплексный полосовой: ФНЧ bw/2 (переход 300 Гц у нуля), сдвинутый на ±bw/2 → одна боковая
+    const lp=makeLP(plan.ir, bw/2-150, bw/2+150, 1023), N=lp.length, M=(N-1)/2;
+    const f0=(mode==='USB'?1:-1)*bw/2/plan.ir;
+    ssbN=N; ssbHr=new Float32Array(N); ssbHi=new Float32Array(N);
+    // свёртка идёт по окну от старого к новому, поэтому ядро разворачиваем по времени
+    for(let k=0;k<N;k++){ const t=M-k; ssbHr[k]=lp[k]*Math.cos(2*Math.PI*f0*t); ssbHi[k]=lp[k]*Math.sin(2*Math.PI*f0*t); }
+    decB=mkDec(new Float32Array(1), 1, true);    // только как кольцо истории для SSB-фильтра
+    decB.N=N; decB.bi=new Float32Array(2*N); decB.bq=new Float32Array(2*N);
+  }
+  const dev = mode==='WFM' ? 75000 : 5000;
+  discScale=plan.ir/(2*Math.PI)/dev;
+  const tau={'75':75e-6,'50':50e-6}[deemph];
+  deA = mode==='WFM'&&tau ? Math.exp(-1/(tau*plan.ar)) : null; deA1=deA!=null?1-deA:0;
+  hpA=Math.exp(-2*Math.PI*20/plan.ar); hpA1=1-hpA;
+  rawA=Math.exp(-2*Math.PI*150/sr); rawA1=1-rawA;
+  applyOffset(offsetHz);
 }
 function applyOffset(hz){
-offsetHz=hz;
-// Точно 0 — самый частый случай (один канал ровно в центре полосы): схлопываем фазор к
-// единице, а не просто останавливаем вращение. Без этого при возврате с ненулевого офсета
-// обратно в 0 фазор застревал бы там, где оказался, и молча крутил бы сигнал остаточным
-// поворотом вечно — вращение остановится, но накопленный сдвиг не уйдёт. А раз при hz===0
-// фазор гарантированно единичный, весь NCO-поворот в цикле ниже можно просто пропускать
-// (см. offZero) — экономит комплексное умножение+обновление фазы на КАЖДОМ сыром отсчёте,
-// а это самая частая ситуация (один канал, без offset-подстройки внутри полосы).
-if(hz===0){ offPhI=1; offPhQ=0; }
-const inc=-2*Math.PI*hz/sr; // минус — переносим выбранную частоту настройки на 0 (даунконверсия)
-offCos=Math.cos(inc); offSin=Math.sin(inc);
+  offsetHz=hz;
+  if(hz===0){ offPhI=1; offPhQ=0; }
+  const inc=-2*Math.PI*hz/sr;
+  offCos=Math.cos(inc); offSin=Math.sin(inc);
+}
+function resetState(){
+  rawI0=rawQ0=prevI=prevQ=ampDc=audDc=de=0; offPhI=1; offPhQ=0;
+  for(const d of [decA,decB]) if(d){ d.bi.fill(0); if(d.bq) d.bq.fill(0); d.pos=0; d.cnt=d.D; }
 }
 
-self.onmessage = function(e){
-const msg=e.data;
-if(msg.type==='config'){ applyConfig(msg); return; }
-if(msg.type==='offset'){ applyOffset(msg.hz); return; } // лёгкое обновление — без сброса фильтров/фазы
-if(msg.type==='reset'){ cI0=cI1=cI2=cQ0=cQ1=cQ2=prevI=prevQ=lp0=lp1=lp2=lp3=lp4=de=ampDc=audDc=0; ssbPhI=1; ssbPhQ=0; offPhI=1; offPhQ=0; rawI0=0; rawQ0=0; decimCounter=1; pnX1=pnX2=pnY1=pnY2=0; fc0=fc1=fc2=fc3=0; return; }
-if(msg.type==='giveBuffer'){ bufPool.push(msg.buffer); return; } // главный поток вернул буфер — кладём в пул
-if(msg.type!=='demod') return;
-const tStart=performance.now();  // время ВНУТРИ воркера, не round-trip с главным потоком (см. workerMs ниже)
-const u8=new Uint8Array(msg.buffer), cnt=msg.cnt;
-// maxOut с запасом +2 на перенос фазы decim между чанками
-const maxOut=Math.floor(cnt/decim)+2;
-// берём буфер из пула (вернули с прошлого раза), и только если пусто или размер не совпал — аллоцируем
-let outAB=null;
-while(bufPool.length){ const b=bufPool.pop(); if(b.byteLength===maxOut*4){ outAB=b; break; } }
-const out=outAB ? new Float32Array(outAB) : new Float32Array(maxOut);
-const outRate=sr/decim;                             // дорогая часть ниже считается на этой частоте
-const lpA=Math.exp(-2*Math.PI*bwAudio/outRate), lpA1=1-lpA; // настоящий ФНЧ на bwAudio
-const hpA=Math.exp(-2*Math.PI*20/outRate), hpA1=1-hpA; // DC-блок аудио, фикс. 20 Гц
-const rawA=Math.exp(-2*Math.PI*150/sr), rawA1=1-rawA; // сырой DC-блок — на полной частоте, до децимации
-const deA=deemphTau ? Math.exp(-1/(deemphTau*outRate)) : null, deA1=deA!=null?1-deA:0;
-const chA=Math.exp(-2*Math.PI*(chanBw/2)/sr), chA1=1-chA; // канальный ФНЧ — на полной sr (без preStages)
-const discScale=outRate/(2*Math.PI)/devScale, isAM=mode==='AM', isSSB=(mode==='USB'||mode==='LSB');
-// offZero — самый частый случай (один канал ровно в центре полосы, без offset-подстройки):
-// фазор гарантированно единичный (см. applyOffset), поворот НИЧЕГО не меняет — пропускаем его
-// целиком. Комплексное умножение+обновление+ренормализация фазы — это ~16 операций на КАЖДЫЙ
-// сырой отсчёт, а на высоком sourceRate (напр. 3.2Msps) именно эта "всегда включённая" часть
-// оказалась самой тяжёлой статьёй расхода воркера — тяжелее канального фильтра chA.
-const offZero = offsetHz===0;
-let wIdx=0;
-for(let k=0;k<cnt;k++){
-const rawI=(u8[2*k]-127.5)/127.5, rawQ=(u8[2*k+1]-127.5)/127.5;
-// DC-блок сырых I/Q — всегда, до любых сдвигов (паразит неподвижен на 0 Гц захваченной полосы)
-rawI0=rawI0*rawA+rawI*rawA1; rawQ0=rawQ0*rawA+rawQ*rawA1;
-let i=rawI-rawI0, q=rawQ-rawQ0;
-// общий сдвиг NCO на выбранную внутри полосы частоту настройки (offsetHz)
-if(!offZero){
-const oPI=offPhI, oPQ=offPhQ;
-const oi=i*oPI-q*oPQ, oq=i*oPQ+q*oPI;
-i=oi; q=oq;
-const nOPI=oPI*offCos-oPQ*offSin, nOPQ=oPI*offSin+oPQ*offCos;
-const oNrm=1.5-0.5*(nOPI*nOPI+nOPQ*nOPQ);
-offPhI=nOPI*oNrm; offPhQ=nOPQ*oNrm;
-}
-let pI=1, pQ=0; // фазор SSB-сдвига этого сэмпла, нужен ниже для обратного вращения
-if(isSSB){
-// умножаем на фазор NCO — сдвигаем спектр так, чтобы нужная боковая оказалась вокруг нуля.
-// Симметричный ФНЧ не различает знак частоты сам по себе, поэтому без этого сдвига
-// USB и LSB были неразличимы — обе боковые проходили одинаково.
-pI=ssbPhI; pQ=ssbPhQ;
-const si=i*pI-q*pQ, sq=i*pQ+q*pI;
-i=si; q=sq;
-const nPhI=pI*ssbCos-pQ*ssbSin, nPhQ=pI*ssbSin+pQ*ssbCos;
-const nrm=1.5-0.5*(nPhI*nPhI+nPhQ*nPhQ); // дешёвая ренормализация вместо sqrt, держит |ph|≈1
-ssbPhI=nPhI*nrm; ssbPhQ=nPhQ*nrm;
-}
-cI0=cI0*chA+i*chA1; cQ0=cQ0*chA+q*chA1;
-cI1=cI1*chA+cI0*chA1; cQ1=cQ1*chA+cQ0*chA1;
-cI2=cI2*chA+cI1*chA1; cQ2=cQ2*chA+cQ1*chA1;
-// Канальный фильтр выше уже ограничил полосу — дальше можно смело прореживать: дискриминатор
-// и все audio-фильтры (дорогая часть — atan2/sqrt на каждый отсчёт) считаются не на каждый
-// сырой сэмпл, а раз в decim сэмплов, на уже отфильтрованном cI2/cQ2.
-if(--decimCounter<=0){
-decimCounter=decim;
-let v;
-if(isSSB){
-// зеркальная боковая уже подавлена фильтром выше — но сам сигнал всё ещё сдвинут по
-// частоте. Крутим отфильтрованный сигнал обратно (умножаем на сопряжённый фазор pI,-pQ),
-// иначе весь звук едет по высоте тона на величину сдвига (а не только несущая).
-v=(cI2*pI+cQ2*pQ)*3;
-} else if(isAM){
-const env=Math.sqrt(cI2*cI2+cQ2*cQ2);
-ampDc+=(env-ampDc)*0.0005;
-v=(env-ampDc)*3;
-} else {
-// re/im — разность фаз между ЭТИМ и ПРЕДЫДУЩИМ ДЕЦИМИРОВАННЫМ отсчётом (шаг по времени —
-// decim/sr, отсюда discScale считается от outRate=sr/decim, а не от sr)
-const re=cI2*prevI+cQ2*prevQ, im=cQ2*prevI-cI2*prevQ;
-v=Math.atan2(im,re)*discScale;
-prevI=cI2; prevQ=cQ2;
-if(pnOn){                            // notch на 19кГц — см. объявление pnOn/pnX../pnY.. выше
-  const y=v+pnB1*pnX1+pnX2-pnA1*pnY1-pnA2*pnY2;
-  pnX2=pnX1; pnX1=v; pnY2=pnY1; pnY1=y; v=y;
-}
-if(fcOn){                            // доп. ФНЧ 21кГц/4 полюса — см. объявление fcOn/fcA.. выше
-  fc0=fc0*fcA+v*(1-fcA); fc1=fc1*fcA+fc0*(1-fcA);
-  fc2=fc2*fcA+fc1*(1-fcA); fc3=fc3*fcA+fc2*(1-fcA);
-  v=fc3;
-}
-}
-audDc=audDc*hpA+v*hpA1;
-const hp=v-audDc;
-// Пять каскадных полюсов режут по bwAudio (обычно 15кГц), но их реальная суппрессия пилота
-// (19кГц) сильно зависит от outRate: при decim=1 (типично для WFM на sourceRate~1МГц — см.
-// rtlDecimFor) outRate остаётся ~1МГц, и те же
-// 5 полюсов дают там лишь ~21дБ вместо ожидаемых ~55дБ (при outRate ближе к 48-96кГц) — пилот
-// и поднесущая (23-53кГц) слышны как "трещащий" шум, меняющийся вместе со звуком, именно в
-// этом случае. Поэтому отдельно — notch ровно на 19кГц под пилот и доп. ФНЧ на фиксированных
-// 21кГц под поднесущую (pnOn/fcOn выше, применяются до этого каскада), не зависящие от bwAudio.
-lp0=lp0*lpA+hp*lpA1;
-lp1=lp1*lpA+lp0*lpA1;
-lp2=lp2*lpA+lp1*lpA1;
-lp3=lp3*lpA+lp2*lpA1;
-lp4=lp4*lpA+lp3*lpA1;
-let outv=lp4;
-if(deA!=null){ de=de*deA+outv*deA1; outv=de; }
-out[wIdx++]=outv;
-}
-}
-// workerMs — ЧЕСТНОЕ время именно этого цикла внутри воркера, отдельно от round-trip'а через
-// главный поток (postMessage/структурное клонирование/ожидание в очереди сообщений) — тот
-// round-trip меряет readerLoop сам (wms=tDemodDone-t1), и эти два числа могут сильно разойтись,
-// если тормозит не сама математика, а именно доставка сообщений.
-self.postMessage({type:'result', id:msg.id, buffer:out.buffer, cnt:wIdx, workerMs:performance.now()-tStart}, [out.buffer]);
+self.onmessage=function(e){
+  const msg=e.data;
+  if(msg.type==='config'){ applyConfig(msg); return; }
+  if(msg.type==='offset'){ applyOffset(msg.hz); return; }
+  if(msg.type==='reset'){ resetState(); return; }
+  if(msg.type==='giveBuffer'){ bufPool.push(msg.buffer); return; }
+  if(msg.type!=='demod' || !plan) return;
+  const tStart=performance.now();
+  const u8=new Uint8Array(msg.buffer), cnt=msg.cnt;
+  const maxOut=Math.floor(cnt/plan.decim)+3;
+  let outAB=null;
+  while(bufPool.length){ const b=bufPool.pop(); if(b.byteLength===maxOut*4){ outAB=b; break; } }
+  const out=outAB ? new Float32Array(outAB) : new Float32Array(maxOut);
+  const offZero=offsetHz===0;
+  // локальные копии горячего состояния
+  const hA=decA.h, NA=decA.N, DA=decA.D, biA=decA.bi, bqA=decA.bq;
+  let posA=decA.pos, cntA=decA.cnt;
+  const B=decB, hB=B.h, NB=B.N, DB=B.D, biB=B.bi, bqB=B.bq;
+  let posB=B.pos, cntB=B.cnt;
+  let wIdx=0;
+  for(let k=0;k<cnt;k++){
+    const rawI=(u8[2*k]-127.5)/127.5, rawQ=(u8[2*k+1]-127.5)/127.5;
+    rawI0=rawI0*rawA+rawI*rawA1; rawQ0=rawQ0*rawA+rawQ*rawA1;
+    let i=rawI-rawI0, q=rawQ-rawQ0;
+    if(!offZero){
+      const oi=i*offPhI-q*offPhQ, oq=i*offPhQ+q*offPhI; i=oi; q=oq;
+      const nI=offPhI*offCos-offPhQ*offSin, nQ=offPhI*offSin+offPhQ*offCos;
+      const nrm=1.5-0.5*(nI*nI+nQ*nQ); offPhI=nI*nrm; offPhQ=nQ*nrm;
+    }
+    biA[posA]=i; biA[posA+NA]=i; bqA[posA]=q; bqA[posA+NA]=q;
+    if(++posA===NA) posA=0;
+    if(--cntA>0) continue;
+    cntA=DA;
+    // канальный FIR на выходной частоте ir
+    let ci=0, cq=0;
+    for(let t=0;t<NA;t++){ const c=hA[t]; ci+=c*biA[posA+t]; cq+=c*bqA[posA+t]; }
+    let v;
+    if(isSSB){
+      biB[posB]=ci; biB[posB+NB]=ci; bqB[posB]=cq; bqB[posB+NB]=cq;
+      if(++posB===NB) posB=0;
+      let y=0;
+      for(let t=0;t<NB;t++) y+=ssbHr[t]*biB[posB+t]-ssbHi[t]*bqB[posB+t];
+      v=y*3;
+    } else {
+      if(isAM){
+        const env=Math.sqrt(ci*ci+cq*cq);
+        ampDc+=(env-ampDc)*0.0005;
+        v=(env-ampDc)*3;
+      } else {
+        const re=ci*prevI+cq*prevQ, im=cq*prevI-ci*prevQ;
+        v=Math.atan2(im,re)*discScale;
+        prevI=ci; prevQ=cq;
+      }
+      biB[posB]=v; biB[posB+NB]=v;
+      if(++posB===NB) posB=0;
+      if(--cntB>0) continue;
+      cntB=DB;
+      let y=0;
+      for(let t=0;t<NB;t++) y+=hB[t]*biB[posB+t];
+      v=y;
+    }
+    audDc=audDc*hpA+v*hpA1;
+    let o=v-audDc;
+    if(deA!=null){ de=de*deA+o*deA1; o=de; }
+    out[wIdx++]=o;
+  }
+  decA.pos=posA; decA.cnt=cntA; B.pos=posB; B.cnt=cntB;
+  // workerMs — время самого цикла, без доставки сообщений (её меряет readerLoop отдельно)
+  self.postMessage({type:'result', id:msg.id, buffer:out.buffer, cnt:wIdx, workerMs:performance.now()-tStart}, [out.buffer]);
 };
 `;
 
@@ -1659,7 +1613,7 @@ function rtlReadIQ(n, oi, oq){
 // то же для одного демодулированного канала; кольцо хранит уже децимированный звук (sourceRate/decim)
 function rtlReadChannelAudio(n, ch, o){
   if(!n.connected || !ch.active || !ch.aring){ o.fill(0); return; }
-  const rate=n.sourceRate/(n.decim||1), ring=ch.aring, need=rate/Eng.sr*BLOCK;
+  const rate=n.sourceRate/(n.decim||1), ring=ch.aring, need=rate/Eng.sr*BLOCK+3;   // +3 — хвост для 4-точечной интерполяции
   const lag=ring.written-ch.readCount;
   const {k, drop}=rtlPace(n, ch, lag, rate, need, 'audio');
   if(drop){ ch.readPos=(ch.readPos+drop)%ring.size; ch.readCount+=drop; }
@@ -1670,9 +1624,15 @@ function rtlReadChannelAudio(n, ch, o){
   }
   if(!k){ o.fill(0); return; }
   const step=rate/Eng.sr*k;
+  // Катмулл-Ром по 4 точкам: звук в кольце уже ограничен аудио-FIR, линейная интерполяция
+  // заметно заваливала верх и давала зеркала при небольшом запасе ar над Eng.sr
+  const A=ring.A, size=ring.size;
   for(let k2=0;k2<BLOCK;k2++){
-    const p0=Math.floor(ch.readPos)%ring.size, p1=(p0+1)%ring.size, fr=ch.readPos-Math.floor(ch.readPos);
-    o[k2]=ring.A[p0]*(1-fr)+ring.A[p1]*fr;
+    const fl=Math.floor(ch.readPos), f=ch.readPos-fl;
+    const i0=fl%size, im=(i0+size-1)%size, i1=(i0+1)%size, i2=(i0+2)%size;
+    const xm=A[im], x0=A[i0], x1=A[i1], x2=A[i2];
+    const c1=0.5*(x1-xm), c2=xm-2.5*x0+2*x1-0.5*x2, c3=0.5*(x2-xm)+1.5*(x0-x1);
+    o[k2]=((c3*f+c2)*f+c1)*f+x0;
     ch.readPos+=step; ch.readCount+=step;
   }
   ch.readPos%=ring.size;
