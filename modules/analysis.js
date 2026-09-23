@@ -1023,9 +1023,17 @@ function saWfGlInit(W,H){
   gl.attachShader(prog,compile(gl.FRAGMENT_SHADER,
     // uHead — нормированная позиция самой свежей строки в кольце; fract(uHead-vUv.y) идёт
     // от головы (новое, верх) в сторону роста возраста (вниз), с переносом через край кольца
-    '#version 300 es\nprecision highp float;uniform sampler2D uHist;uniform float uHead;'+
-    'in vec2 vUv;out vec4 o;'+
-    'void main(){o=texture(uHist,vec2(vUv.x,fract(uHead-vUv.y)));}'));
+    // uMap — границы [lo,hi] каждой строки (частоты относительно ref), в которых она была нарисована:
+    // строка пересчитывается под текущее окно [uLo,uHi], поэтому зум/панорама двигают всю историю
+    // сразу, без ожидания новых данных; вне строки — чёрное. uLin=0 (лог-шкала) — без пересчёта.
+    '#version 300 es\nprecision highp float;uniform sampler2D uHist;uniform highp sampler2D uMap;'+
+    'uniform float uHead,uLo,uHi,uLin;uniform int uH;in vec2 vUv;out vec4 o;'+
+    'void main(){float row=fract(uHead-vUv.y);'+
+    'vec2 m=texelFetch(uMap,ivec2(0,min(int(row*float(uH)),uH-1)),0).rg;'+
+    'float u=vUv.x;'+
+    'if(uLin>.5&&m.y>m.x){u=(uLo+vUv.x*(uHi-uLo)-m.x)/(m.y-m.x);}'+
+    'if(u<0.||u>1.){o=vec4(0.,0.,0.,1.);return;}'+
+    'o=texture(uHist,vec2(u,row));}'));
   gl.linkProgram(prog);
   if(!gl.getProgramParameter(prog,gl.LINK_STATUS)){ const log=gl.getProgramInfoLog(prog); throw new Error(log); }
   const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
@@ -1040,27 +1048,55 @@ function saWfGlInit(W,H){
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);      // вся суть трюка — кольцо по вертикали
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,W,H,0,gl.RGBA,gl.UNSIGNED_BYTE,null);  // инициализация чёрным, не мусором
+  gl.activeTexture(gl.TEXTURE1);
+  const map=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,map);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RG32F,1,H,0,gl.RG,gl.FLOAT,new Float32Array(2*H));  // 0,0 — "без пересчёта"
+  gl.activeTexture(gl.TEXTURE0);
   gl.useProgram(prog);
   gl.uniform1i(gl.getUniformLocation(prog,'uHist'),0);
-  return {canvas:oc, gl, prog, vao, tex, w:W, h:H, pos:-1,
-    uHead:gl.getUniformLocation(prog,'uHead')};
+  gl.uniform1i(gl.getUniformLocation(prog,'uMap'),1);
+  gl.uniform1i(gl.getUniformLocation(prog,'uH'),H);
+  return {canvas:oc, gl, prog, vao, tex, map, w:W, h:H, pos:-1, ref:null,
+    uHead:gl.getUniformLocation(prog,'uHead'), uLo:gl.getUniformLocation(prog,'uLo'),
+    uHi:gl.getUniformLocation(prog,'uHi'), uLin:gl.getUniformLocation(prog,'uLin')};
 }
 // новая строка — единственное, что льётся в текстуру (O(Wp)); история физически не двигается
-function saWfGlWrite(glp,W,line){
+// lo/hi — границы окна, в которых посчитана строка (частоты хранятся от ref — точность float32)
+function saWfGlWrite(glp,W,line,lo,hi){
   glp.pos=(glp.pos+1)%glp.h;
   const {gl}=glp;
+  gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D,glp.tex);
   gl.texSubImage2D(gl.TEXTURE_2D,0,0,glp.pos,W,1,gl.RGBA,gl.UNSIGNED_BYTE,line);
+  if(glp.ref==null) glp.ref=lo;
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,glp.map);
+  gl.texSubImage2D(gl.TEXTURE_2D,0,0,glp.pos,1,1,gl.RG,gl.FLOAT,new Float32Array([lo-glp.ref,hi-glp.ref]));
+  gl.activeTexture(gl.TEXTURE0);
 }
 // кадр отрисовки: полноэкранный квад, сэмплирующий кольцевую текстуру со сдвигом на голову кольца
-function saWfGlRender(glp,W,H){
+function saWfGlRender(glp,W,H,lo,hi,lin){
   const {gl}=glp;
   gl.viewport(0,0,W,H);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,glp.map);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,glp.tex);
   gl.useProgram(glp.prog); gl.bindVertexArray(glp.vao);
   gl.uniform1f(glp.uHead,(glp.pos+.5)/glp.h);
+  const ref=glp.ref??lo;
+  gl.uniform1f(glp.uLo,lo-ref); gl.uniform1f(glp.uHi,hi-ref); gl.uniform1f(glp.uLin,lin?1:0);
   gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
   return glp.canvas;
+}
+
+// Окно просмотра внутри реально захваченной полосы — это просто прокрутка/зум вида, приёмник не
+// трогаем (звук не рвётся, картинка сдвигается сразу). Вышло за край — перестраиваем приёмник
+// на центр окна (как в SDR++): дальше окно опять внутри полосы.
+function saSteerIfOutside(n){
+  if(!n.s||!n.zoom) return;
+  const [lo0,hi0]=specSpan(n.s);
+  if(n.zoom[0]>=lo0 && n.zoom[1]<=hi0 && !n._dragPending) return;
+  n._steer=(n.zoom[0]+n.zoom[1])/2; n._dragPending=true; n._dragT=performance.now();
 }
 
 def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
@@ -1138,7 +1174,6 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     // (ждать реального захвата после финальной позиции), а во время самого драга просто не нужна.
     if(sp){
       const [lo0,hi0]=specSpan(sp);
-      if(n._dragActive) n._dragPending=true;
       // "подтвердилось" — теперь СТРОГО: всё окно ПОЛНОСТЬЮ внутри реально захваченной полосы, а
       // не просто "хоть чуть-чуть пересекается". Старая рыхлая проверка снимала dragPending, стоило
       // окну зацепить край захваченной полосы хоть на бин — а перестройка приёмника (по USB,
@@ -1147,7 +1182,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       // видимый скачок. Этим объяснялось, почему скачок был воспроизводим именно "сразу после
       // отпускания" перетаскивания (перестройка ещё не устаканилась) и пропадал, если подождать
       // чуть дольше перед отпусканием — устаканиться она как раз успевала.
-      else if(n._dragPending){
+      if(n._dragPending){
         const w=n.zoom||[n.p.fmin,n.p.fmax];
         const src=sp.freqs&&sp.freqs.length ? sp.freqs[sp.freqs.length>>1] : (lo0+hi0)/2;
         const tol=Math.max(2*(hi0-lo0)/Math.max(1,(sp.freqs?sp.freqs.length:2)-1), 50);
@@ -1298,7 +1333,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         if(ev.shiftKey){
           const pan=curRange*0.15*(ev.deltaY>0?1:-1);
           n.zoom=[curLo+pan, curHi+pan];
-          n._steer=(n.zoom[0]+n.zoom[1])/2; n._dragPending=true; n._dragT=performance.now();
+          saSteerIfOutside(n);
         } else {
           const zoom=ev.deltaY>0?1.09:1/1.09;         // втрое медленнее прежнего (1.3 → 1.3^(1/3))
           const newRange=clamp(curRange*zoom, 10, fullHi-fullLo);
@@ -1403,12 +1438,13 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           const range=hi0-lo0;
           newLo=lo0-range*dt; newHi=hi0-range*dt;
         }
-        n._dragPending=true; n._dragActive=true;
-        n.zoom=[newLo,newHi]; n._steer=(newLo+newHi)/2;   // драг двигает и окно, и центр приёмника
-        n._dragT=performance.now();
+        n._dragActive=true;
+        n.zoom=[newLo,newHi];
+        saSteerIfOutside(n);                         // приёмник — только если окно вышло за захваченную полосу
       }, {passive:false});
       const endDrag=ev=>{
         if(drag && ev.pointerId===drag.pid && cv.hasPointerCapture(ev.pointerId)) cv.releasePointerCapture(ev.pointerId);
+        if(drag && drag.edge){ n.pickT=null; n._noTap=true; }   // core-graph уже поставил бы маркер на место отпускания
         drag=null; n._dragActive=false;
       };
       cv.addEventListener('pointerup', endDrag);
@@ -1449,6 +1485,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       cv.addEventListener('pointerdown', ev=>{ spTap={x:ev.clientX,y:ev.clientY}; });
       cv.addEventListener('pointerup', ev=>{
         const d=spTap; spTap=null;
+        if(n._noTap){ n._noTap=false; n.pickT=null; return; }          // это был захват края шторки
         if(!d || Math.hypot(ev.clientX-d.x,ev.clientY-d.y)>6) return;  // перетаскивание, не клик
         const tab=tabHit(ev);
         if(tab){ n.pickT=null; if(tab.clear) n.mk[tab.idx]=null; else n.active=tab.idx+1; return; }
@@ -1511,6 +1548,10 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         n._bFmin=bLo; n._bFmax=bHi; n._bFreqs=n.s.freqs||null;
         n._binEdgeX=new Float32Array(W+1);
         for(let x=0;x<=W;x++) n._binEdgeX[x]=clamp(specBin(n.s,saFreq(n,(x-.5)/(W-1))),0,N-1);
+        // столбцы вне реально захваченной полосы (окно обогнало перестройку) — пустые, а не край, размазанный вбок
+        const [sLo,sHi]=specSpan(n.s);
+        n._inX=new Uint8Array(W); for(let x=0;x<W;x++){ const f=saFreq(n,x/(W-1)); n._inX[x]=f>=sLo&&f<=sHi?1:0; }
+        n._inXwf=new Uint8Array(Wp); for(let x=0;x<Wp;x++){ const f=saFreq(n,x/(Wp-1)); n._inXwf[x]=f>=sLo&&f<=sHi?1:0; }
         n._binEdgeXwf=new Float32Array(Wp+1);
         for(let x=0;x<=Wp;x++) n._binEdgeXwf[x]=clamp(specBin(n.s,saFreq(n,(x-.5)/(Wp-1))),0,N-1);
       }
@@ -1554,8 +1595,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         for(let x=0;x<Wp;x++){
           const v=clamp((20*Math.log10(magReduce(m,edgeXwf[x],edgeXwf[x+1])+1e-12)-n.p.floor)/((n.p.top-n.p.floor)||1),0,1);
           const hk=heatIdx(v)*3, k=x*4;
+          if(!n._inXwf[x]){ line[k]=line[k+1]=line[k+2]=0; line[k+3]=255; continue; }
           line[k]=pal[hk]; line[k+1]=pal[hk+1]; line[k+2]=pal[hk+2]; line[k+3]=255; }
-        if(n.wfGl) saWfGlWrite(n.wfGl,Wp,line);
+        if(n.wfGl){ const [wl,wh]=saBounds(n); saWfGlWrite(n.wfGl,Wp,line,wl,wh); }
         else { n.ocx.drawImage(n.off,0,1); n.ocx.putImageData(new ImageData(line,Wp,1),0,0); }
         n._lastRev=n.s.rev; n._lastSpecRef=n.s; n._wfInited=true;
       }
@@ -1580,7 +1622,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         const v=diff? 20*Math.log10((mv+1e-12)/(magReduce(R,edgeX[x],edgeX[x+1])+1e-12))
                     : 20*Math.log10(mv+1e-12);
         const lo=diff? -40 : n.p.floor, hiv=diff? 40 : n.p.top;
-        traceY[x]=plotH-clamp((v-lo)/((hiv-lo)||1),0,1)*(plotH-2)-1; }
+        traceY[x]=n._inX[x] ? plotH-clamp((v-lo)/((hiv-lo)||1),0,1)*(plotH-2)-1 : plotH; }
       // заливка под трассой — чуть плотнее (темнее), чем у полос band plan/приёма (там alpha .14)
       cx.beginPath(); cx.moveTo(0,traceY[0]);
       for(let x=1;x<W;x++) cx.lineTo(x,traceY[x]);
@@ -1600,7 +1642,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           x?cx.lineTo(x,y):cx.moveTo(x,y); }
         cx.stroke();
       }
-      const wfSrc = n.wfGl ? saWfGlRender(n.wfGl,Wp,hwP) : n.off;
+      const [vLo,vHi]=saBounds(n);
+      const wfSrc = n.wfGl ? saWfGlRender(n.wfGl,Wp,hwP,vLo,vHi,!n.p.log) : n.off;
       cx.drawImage(wfSrc,0,hs,W,hw);       // без dw/dh источник (физ. пиксели) масштабируется на dpr лишний раз
     } else if(n.p.grid) saGrid(n,cx,W,hs,H,plotH);
     cx.strokeStyle=themeColor('--grid'); cx.beginPath(); cx.moveTo(0,hs+.5); cx.lineTo(W,hs+.5); cx.stroke();

@@ -1099,32 +1099,34 @@ async function rtlOpenInWorker(usbDev, gain){
 // План децимации демод-воркера: sr → ir (канальный FIR, прореживание d1) → демодуляция →
 // ar (аудио-FIR, прореживание d2). Общий для воркера и главного потока (вставляется в
 // RTL_WORKER_SRC через toString) — главный поток по нему сайзит кольцо и считает темп чтения.
-function rtlPlan(mode, sr, bw, ifbw){
+// bw — ширина полосы канала (ПЧ), как единственный "bandwidth" в SDR++: звуковая полоса выводится
+// из неё (WFM — 15 кГц моно, NFM — половина полуполосы, AM — полуполоса, SSB — сама полоса).
+function rtlPlan(mode, sr, bw){
+  const w = bw>0 ? bw : ({WFM:190000,NFM:16000,AM:10000}[mode]||2800);
   let ir, pass;
-  if(mode==='WFM'){ ir=240000; pass=95000; }
-  else if(mode==='NFM'){ ir=48000; pass=8000; }
-  else if(mode==='AM'){ ir=24000; pass=5000; }
-  else { ir=Math.max(24000, 3*bw); pass=bw; }        // USB/LSB: канал покрывает обе боковые, выбор — на ir
-  // своя полоса ПЧ (WFM/NFM/AM): промежуточную частоту поднимаем, если полоса в неё не влезает
-  if(ifbw>0 && (mode==='WFM'||mode==='NFM'||mode==='AM')){ pass=ifbw/2; ir=Math.max(ir, 2.5*pass); }
+  if(mode==='WFM'){ pass=w/2; ir=Math.max(240000, 2.5*pass); }
+  else if(mode==='NFM'){ pass=w/2; ir=Math.max(48000, 2.5*pass); }
+  else if(mode==='AM'){ pass=w/2; ir=Math.max(24000, 2.5*pass); }
+  else { pass=w; ir=Math.max(24000, 3*w); }          // USB/LSB: канал покрывает обе боковые, выбор — на ir
   const d1=Math.max(1, Math.floor(sr/ir)), irReal=sr/d1;
   const d2=mode==='WFM' ? Math.max(1, Math.floor(irReal/64000)) : 1;
   const ar=irReal/d2;
   let aPass, aStop;
-  if(mode==='WFM'){ aPass=Math.min(bw, 15000); aStop=Math.min(19000, aPass+4000); }   // стоп до пилота 19 кГц
-  else if(mode==='AM'){ aPass=Math.min(bw, pass); aStop=Math.min(ar/2, aPass+1000); }
-  else { aPass=Math.min(bw, 0.4*ar); aStop=Math.min(ar/2, aPass+Math.max(500, aPass*0.25)); }
+  if(mode==='WFM'){ aPass=Math.min(15000, pass*0.6); aStop=Math.min(19000, aPass+4000); }   // стоп до пилота 19 кГц
+  else if(mode==='NFM'){ aPass=Math.min(Math.max(2500, pass*0.5), 0.4*ar); aStop=Math.min(ar/2, aPass*1.25+500); }
+  else if(mode==='AM'){ aPass=Math.min(pass, 0.4*ar); aStop=Math.min(ar/2, aPass+1000); }
+  else { aPass=Math.min(pass, 0.4*ar); aStop=Math.min(ar/2, aPass+Math.max(500, aPass*0.25)); }
   return {d1, d2, decim:d1*d2, ir:irReal, ar, pass, stop:irReal-pass, aPass, aStop};
 }
-function rtlDecimFor(mode, sr, bw, ifbw){ return rtlPlan(mode, sr, bw, ifbw).decim; }
-// полоса ПЧ текущего режима из параметров узла (для SSB — это сама аудиополоса bw)
-const RTL_IF_LIMITS={WFM:[50000,300000], NFM:[3000,40000], AM:[2000,20000]};
-function rtlIfBw(n){ return RTL_IF_LIMITS[n.p.demod] ? +n.p['if'+n.p.demod] : undefined; }
+function rtlDecimFor(mode, sr, bw){ return rtlPlan(mode, sr, bw).decim; }
+// пределы ширины канала и значения по умолчанию для каждого режима
+const RTL_BW_LIMITS={WFM:[50000,300000], NFM:[3000,40000], AM:[2000,20000], USB:[500,16000], LSB:[500,16000]};
+const RTL_BW_DEF={WFM:190000, NFM:16000, AM:10000, USB:2800, LSB:2800};
 // Полоса пропускания канального фильтра (ПЧ) каждого активного канала, в абсолютных частотах:
 // WFM/NFM/AM — симметрично ±pass, USB/LSB — одна боковая шириной bw. Для IQ каналов нет.
 function rtlChanBands(n, cf, half){
   const mode=n.p.demod; if(mode==='IQ') return [];
-  const pl=rtlPlan(mode, n.sourceRate, n.p.bw, rtlIfBw(n)), out=[];
+  const pl=rtlPlan(mode, n.sourceRate, n.p.bw), out=[];
   for(let ci=0;ci<4;ci++){
     const ch=n.ch[ci]; if(!ch.active) continue;
     const f=clamp(ch.tuneFreq==null?cf:ch.tuneFreq, cf-half, cf+half);
@@ -1162,7 +1164,7 @@ function rtlResetRing(n){
   // аудио-кольца каналов живут на децимированной частоте (sourceRate/decim), а не sourceRate —
   // без этого при большой децимации (узкий NFM на высоком sourceRate) кольцо размером "под 2с
   // сырого потока" реально наполнялось бы эти же 2с×decim секунд, и звук не появлялся бы минутами.
-  n.decim=rtlDecimFor(n.p.demod, n.sourceRate, n.p.bw, rtlIfBw(n));
+  n.decim=rtlDecimFor(n.p.demod, n.sourceRate, n.p.bw);
   // аудио-кольца УЖЕ АКТИВНЫХ каналов пересоздаём под новый размер — сами воркеры не трогаем,
   // их переконфигурирует hardKey-проверка в process() на следующем тике (sourceRate там учтён)
   for(const ch of n.ch) if(ch.active) rtlResizeChannelRing(n, ch);
@@ -1206,7 +1208,7 @@ let bufPool=[];
 
 function applyConfig(msg){
   mode=msg.mode; sr=msg.sr; bw=msg.bw; deemph=msg.deemph; agcOn=msg.agc!==false;
-  plan=rtlPlan(mode, sr, bw, msg.ifbw);
+  plan=rtlPlan(mode, sr, bw);
   isAM=mode==='AM'; isSSB=(mode==='USB'||mode==='LSB'); isFM=!isAM&&!isSSB;
   decA=mkDec(makeLP(sr, plan.pass, plan.stop, 2047), plan.d1, true);
   decB=isSSB ? null : mkDec(makeLP(plan.ir, plan.aPass, plan.aStop, 1023), plan.d2, false);
@@ -1364,10 +1366,10 @@ function rtlActivateChannel(n, ci){
   const ch=n.ch[ci];
   if(ch.active && ch.worker) return;
   ch.worker=rtlMakeDemodWorker();
-  ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false, ifbw:rtlIfBw(n)});
+  ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false});
   ch.worker.reset();
-  ch.hardKey=n.p.demod+'|'+n.sourceRate; ch.softKey=n.p.bw+'|'+n.p.deemph+'|'+n.p.agc+'|'+rtlIfBw(n);
-  n.decim=rtlDecimFor(n.p.demod, n.sourceRate, n.p.bw, rtlIfBw(n));
+  ch.hardKey=n.p.demod+'|'+n.sourceRate; ch.softKey=n.p.bw+'|'+n.p.deemph+'|'+n.p.agc;
+  n.decim=rtlDecimFor(n.p.demod, n.sourceRate, n.p.bw);
   rtlResizeChannelRing(n, ch);
   ch.appliedOffset=0;
   ch.active=true;
@@ -1917,14 +1919,12 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     // режим демодуляции/полоса/де-эмфазис — ОБЩИЕ на все 4 канала (проще UI); частота у каждого своя
     {n:'demod',t:'select',opts:DEMOD_OPTS,d:'WFM',label:'demodulation',
      fn:n=>{ rtlResetRing(n); }},
-    {n:'bw',t:'range',min:500,max:16000,step:100,d:15000,log:true,label:'audio bandwidth, Hz'},
+    // ширина полосы канала (ПЧ) — одна на режим, как в SDR++; её же тянут края шторки на спектре 'sa'
+    {n:'bw',t:'range',min:500,max:300000,step:100,d:190000,log:true,label:'bandwidth, Hz'},
     {n:'deemph',t:'select',opts:['50','75','off'],d:'50',label:'WFM de-emphasis, µs'},
     {n:'agc',t:'check',d:true,label:'AM/SSB AGC'},
-    // полоса ПЧ (канального фильтра) — своя для каждого режима; в SSB её роль играет audio bandwidth.
-    // Её же меняет перетаскивание краёв шторки канала на спектре 'sa' (см. spec.setChanBw)
-    {n:'ifWFM',t:'range',min:50000,max:300000,step:1000,d:190000,log:true,label:'WFM IF bandwidth, Hz',adv:true},
-    {n:'ifNFM',t:'range',min:3000,max:40000,step:100,d:16000,log:true,label:'NFM IF bandwidth, Hz',adv:true},
-    {n:'ifAM',t:'range',min:2000,max:20000,step:100,d:10000,log:true,label:'AM IF bandwidth, Hz',adv:true},
+    // запомненная ширина для каждого режима — при смене режима ползунок bw переключается на неё
+    ...['WFM','NFM','AM','USB','LSB'].map(m=>({n:'if'+m,t:'range',min:500,max:300000,d:RTL_BW_DEF[m],hidden:true})),
     {n:'auto',t:'check',d:true,label:'auto gain'},
     {n:'gainDb',t:'range',min:0,max:49.6,step:.1,d:20,label:'gain, dB'},
     {n:'specSize',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'4096',label:'spectrum FFT size'},
@@ -1997,9 +1997,22 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     setModWired(n,'gainDb', I.gainDb, typeof I.gainDb==='number');
     setModWired(n,'demod', I.demod, typeof I.demod==='string' && DEMOD_OPTS.includes(I.demod));
     setModWired(n,'bw', I.bw, typeof I.bw==='number');
+    { const mode=n.p.demod, lim=RTL_BW_LIMITS[mode];
+      if(lim){
+        const key='if'+mode;
+        if(n._bwMode!==mode){                       // сменили режим — ползунок на ширину этого режима
+          n._bwMode=mode;
+          const v=n.p[key]>0 ? n.p[key] : RTL_BW_DEF[mode];
+          if(n.p.bw!==v) setMod(n,'bw',v);
+        } else if(n.p.bw!==n.p[key]){               // ползунок/провод/край шторки — запоминаем для режима
+          const v=Math.round(clamp(n.p.bw,lim[0],lim[1]));
+          n.p[key]=v; if(v!==n.p.bw) setMod(n,'bw',v);
+        }
+      }
+    }
     const cf=n.actualFreq??n.p.freq, half=n.sourceRate/2;
     rtlApplyPending(n); // не await — асинхронно применится, когда сможет (только 'freq'/gain — через USB)
-    n.decim=rtlDecimFor(n.p.demod, n.sourceRate, n.p.bw, rtlIfBw(n)); // дёшево, держим свежим каждый тик — читает rtlReadChannelAudio и readerLoop
+    n.decim=rtlDecimFor(n.p.demod, n.sourceRate, n.p.bw); // дёшево, держим свежим каждый тик — читает rtlReadChannelAudio и readerLoop
 
     // конфиг и дешёвая NCO-перестройка для всех АКТИВНЫХ каналов разом
     for(let ci=0;ci<4;ci++){
@@ -2009,14 +2022,14 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
       const hardKey=n.p.demod+'|'+n.sourceRate;
       if(hardKey!==ch.hardKey){
         ch.hardKey=hardKey;
-        ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false, ifbw:rtlIfBw(n)});
+        ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false});
         ch.worker.reset();
         rtlResizeChannelRing(n, ch);   // decim мог смениться вместе с mode — кольцо иначе рассинхронизируется со временем
       } else {
-        const softKey=n.p.bw+'|'+n.p.deemph+'|'+n.p.agc+'|'+rtlIfBw(n);
+        const softKey=n.p.bw+'|'+n.p.deemph+'|'+n.p.agc;
         if(softKey!==ch.softKey){
           ch.softKey=softKey;
-          ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false, ifbw:rtlIfBw(n)});
+          ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false});
           // кольцо — только если сменилась децимация (bw у SSB, широкая полоса ПЧ у WFM); иначе
           // при перетаскивании края шторки звук обрывался бы на каждом шаге
           if(ch.ringDecim!==n.decim) rtlResizeChannelRing(n, ch);
@@ -2035,9 +2048,7 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
       n.spec.chans=rtlChanBands(n, cf, half);
       // обратный канал для 'sa': перетаскивание края шторки задаёт новую ширину полосы ПЧ
       n.spec.setChanBw=n._setChanBw||(n._setChanBw=(mode,w)=>{
-        const lim=RTL_IF_LIMITS[mode];
-        if(lim) setMod(n,'if'+mode,Math.round(clamp(w,lim[0],lim[1])));
-        else if(mode==='USB'||mode==='LSB') setMod(n,'bw',Math.round(clamp(w,500,16000)));
+        const lim=RTL_BW_LIMITS[mode]; if(lim) setMod(n,'bw',Math.round(clamp(w,lim[0],lim[1])));
       });
     }
     const oi=buf(n,'I'), oq=buf(n,'Q');
