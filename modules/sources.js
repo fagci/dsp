@@ -1220,7 +1220,7 @@ function rtlMakeDemodWorker(){
   const url=URL.createObjectURL(new Blob([RTL_WORKER_SRC], {type:'application/javascript'}));
   const worker=new Worker(url);
   let nextId=1;
-  const pending=new Map(); // несколько параллельных читателей USB могут ждать ответа одновременно
+  const pending=new Map(); // несколько чанков могут ждать ответа одновременно
   worker.onmessage=(e)=>{
     const msg=e.data;
     if(msg.type==='result' && pending.has(msg.id)){
@@ -1273,6 +1273,7 @@ function rtlActivateChannel(n, ci){
 // с тем же порогом, что и backpressure на входе (раньше это были две несвязанные константы).
 const RTL_MAX_INFLIGHT=6;
 const RTL_READS_PER_SEC=20;
+const RTL_USB_QUEUE=4;       // трансферов в полёте, ~200мс запаса на стопор главного потока
 // Запас на восстановление после провала, в секундах реального времени (не в "блоках движка",
 // как было раньше — то не зависело от sourceRate и потому не лечилось подъёмом Msps). 0.5с, а не
 // MAX_INFLIGHT/READS_PER_SEC(=0.3с) — по логам видно, что провалы кольца случаются не от одного
@@ -1323,75 +1324,48 @@ async function rtlReadLoop(n){
   // (cnt), чтобы n.written по-прежнему отражал реальное время, а не альтернативную историю.
   const MAX_INFLIGHT=RTL_MAX_INFLIGHT;
 
-  // Два параллельных читателя USB имеют смысл, только когда узкое место — само чтение USB
-  // (см. IQ-режим ниже: там нет воркера вообще, тянуть данные непрерывно реально важно). Как
-  // только на пути есть демод-воркер, всё наоборот: воркер один (на канал), однопоточный, и
-  // если он не успевает за sourceRate (см. n.workerMs в статусе), то ВТОРОЙ читатель не даёт
-  // никакой дополнительной пропускной способности — он просто вдвое чаще подкидывает чанки в
-  // уже переполненную очередь одного и того же воркера. Хуже того: с 2 читателями чанк до
-  // воркера в среднем доезжает вдвое чаще (период ~chunkPeriod/2), поэтому воркер, который
-  // укладывается в chunkPeriod, но не в chunkPeriod/2, стабильно не успевает именно из-за
-  // этого удвоения частоты — не из-за нехватки CPU как таковой. Поэтому читатель для демод-режимов
-  // один, а не два — этим удвоением и объясняется.
-  // Частоту чтения (READS_PER_SEC), впрочем, срезали тогда же заодно — крупные редкие чтения
-  // (100мс вместо 50мс) снижали число диспетчеризаций, но каждый отдельный срыв (пауза GC,
-  // всплеск нагрузки) стал длиннее и заметнее на слух: то же суммарное время потерь, но
-  // распределённое в более редкие и крупные затыки вместо частых мелких. Теперь, когда воркер
-  // сам стал заметно дешевле (многоступенчатая децимация выше — дорогой канальный фильтр видит
-  // на порядки меньше отсчётов), возвращаем частые мелкие чтения, оставляя ОДНОГО читателя —
-  // так получаем и запас по CPU, и мелкую (менее заметную) гранулярность возможных затыков разом.
-  const isIQ=n.p.demod==='IQ';
+  // Очередь из RTL_USB_QUEUE трансферов в полёте, как у librtlsdr/webrtlsdr. При одном трансфере
+  // донгл простаивает между завершением и следующим transferIn (IPC браузера + занятость главного
+  // потока), его FIFO переполняется и отсчёты теряются — отсюда был устойчивый дефицит mspsIo
+  // в 1-3% от nominal. Порядок сохраняется: bulk-эндпоинт FIFO, трансферы завершаются по очереди.
   const READS_PER_SEC=RTL_READS_PER_SEC;
-  const READERS=isIQ?2:1;
-
-  // Порядок данных не теряется: bulk-эндпоинт USB FIFO по своей природе — какой бы читатель
-  // ни забрал следующий чанк, это всегда хронологически следующий кусок потока.
+  const chunkPeriodMs=1000/READS_PER_SEC;
   let prevReadEnd=null;   // для диагностики: разрыв ДО чтения = главный поток был занят чем-то другим
   async function readerLoop(){
-    // Конвейер чтения: следующий readSamples() запускается СРАЗУ по получении текущего чанка, ДО
-    // его обработки (specRing/диспетчеризация в demod) — а не после, как было раньше. При строго
-    // последовательном await'е время нашей же JS-обработки (тот самый specRing-цикл и т.п.) добавлялось
-    // поверх времени самого USB-трансфера на КАЖДОМ цикле — по логам это давало систематический
-    // (не от подвисаний, монотонный) снос запаса кольца на ~0.85%: реальный устойчивый темп чтения
-    // оказывался чуть ниже sourceRate именно из-за этой лишней последовательной задержки. Конвейер
-    // даёт транспорту крутиться, пока мы заняты обработкой предыдущего чанка, вместо того чтобы
-    // ждать нас, а потом нас же ждать снова. Состояние — локальное для КАЖДОГО вызова readerLoop()
-    // (а не общее): при READERS=2 (см. ниже, режим IQ) их два одновременно, каждый со своим
-    // независимым конвейером — общее состояние свело бы их к одному читателю, ломая параллельность.
-    let pendingRead=null, pendingKickT=0;
+    const queue=[];
     function kickRead(){
       const chunkSamples=Math.max(512, Math.min(131072, 512*Math.ceil(n.sourceRate/READS_PER_SEC/512)));
-      pendingKickT=performance.now();
-      pendingRead=n.dev.readSamples(chunkSamples*2).then(buf=>({buf}), err=>({err}));
+      queue.push(n.dev.readSamples(chunkSamples*2).then(buf=>({buf}), err=>({err})));
     }
-    kickRead();
-    while(n.reading && n.dev){
+    function fillQueue(){ while(n.reading && n.dev && queue.length<RTL_USB_QUEUE) kickRead(); }
+    fillQueue();
+    while(n.reading && n.dev && queue.length){
       const t0=performance.now();
-      // Гэп ДО получения буфера (а не время самого чтения, см. ioMs) — если он большой, значит
-      // между предыдущей итерацией и этой главный поток был занят чем-то посторонним (GC, другой
-      // код), а не самим RTL-путём. Порог — половина номинального периода чтения.
+      // большой разрыв = главный поток был занят посторонним; с очередью это уже не потеря данных
       if(prevReadEnd!=null){
-        const gap=t0-prevReadEnd, nominalMs=1000/READS_PER_SEC;
-        if(gap>nominalMs*1.5) console.warn(`[rtlsdr] gap перед USB-чтением ${gap.toFixed(1)}ms (ожидалось ~${nominalMs.toFixed(0)}ms) @ ${t0.toFixed(0)}ms`);
+        const gap=t0-prevReadEnd;
+        if(gap>chunkPeriodMs*1.5) console.warn(`[rtlsdr] gap перед USB-чтением ${gap.toFixed(1)}ms (ожидалось ~${chunkPeriodMs.toFixed(0)}ms) @ ${t0.toFixed(0)}ms`);
       }
-      const kickT=pendingKickT;
-      const res=await pendingRead;
+      const res=await queue.shift();
       if(res.err){
         errStreak++;
         n.status='read error ('+errStreak+'/5): '+res.err.message;
         if(errStreak>=5){ n.reading=false; break; }
+        // остальные трансферы очереди после сбоя не нужны — дожидаемся и выбрасываем
+        while(queue.length) await queue.shift();
         try{ await n.dev.resetBuffer(); }catch(e2){}
         await new Promise(r=>setTimeout(r,50));
-        kickRead();   // старое чтение уже провалилось — конвейер надо перезапустить, не оставлять пустым
+        prevReadEnd=null;
+        fillQueue();
         continue;
       }
       errStreak=0;
       const buf=res.buf, t1=performance.now();
-      // ioMs — честная длительность ИМЕННО USB-трансфера (от kickT, не от t0 — t0 может быть
-      // позже, если предыдущая обработка заняла время, конвейер это и прячет), не round-trip
-      // с учётом ожидания на нашей стороне.
-      prevReadEnd=t1;   // см. gap-проверку в начале итерации выше
-      kickRead();        // следующий трансфер — сразу, не дожидаясь обработки текущего буфера ниже
+      // ioMs — интервал между завершениями трансферов, в среднем = реальное время чанка;
+      // от момента запуска мерить нельзя: с очередью туда входит ожидание в ней
+      const ioMs=prevReadEnd!=null ? t1-prevReadEnd : chunkPeriodMs;
+      prevReadEnd=t1;
+      fillQueue();       // сразу пополняем очередь, до обработки текущего буфера
       const u8=new Uint8Array(buf), cnt=u8.length>>1, mode=n.p.demod, specRing=n.specRing;
       // Циклический индекс — сравнение+обнуление, а не % на каждый отсчёт: при типичных chunkSamples
       // (десятки тысяч на USB-чтение, READS_PER_SEC раз в секунду) деление в modulo было заметной
@@ -1413,13 +1387,13 @@ async function rtlReadLoop(n){
           }
           ring.w=w; ring.filled=filled; }
         ring.written+=cnt;
-        rtlTrackMsps(n, cnt, t1-kickT, 0);
+        rtlTrackMsps(n, cnt, ioMs, 0);
         continue;
       }
       // раздаём чанк всем активным каналам параллельно — каждому своя копия (владение буфером
       // передаётся воркеру с переносом, один и тот же ArrayBuffer нельзя transfer'ить дважды)
       const active=n.ch.filter(ch=>ch.active&&ch.worker);
-      if(!active.length){ rtlTrackMsps(n, cnt, t1-kickT, 0); continue; }
+      if(!active.length){ rtlTrackMsps(n, cnt, ioMs, 0); continue; }
       if(inFlight>=MAX_INFLIGHT){
         // демод не поспевает за реальным временем (см. комментарий выше про MAX_INFLIGHT) —
         // этот чанк в воркер не идёт, вместо него в кольцо каждого канала честно дописывается
@@ -1435,7 +1409,7 @@ async function rtlReadLoop(n){
         }
         n.underrunsWorker++;   // демод-воркер не успел — вход, не выход (см. readout)
         console.warn(`[rtlsdr] demod backpressure (inFlight=${inFlight}>=${MAX_INFLIGHT}) @ ${t1.toFixed(0)}ms`);
-        rtlTrackMsps(n, cnt, t1-kickT, 0);
+        rtlTrackMsps(n, cnt, ioMs, 0);
         continue;
       }
       // .slice() нужен только чтобы дать КАЖДОМУ каналу свою копию (один ArrayBuffer нельзя
@@ -1480,12 +1454,12 @@ async function rtlReadLoop(n){
         // сглаживаем — на глаз, не для точных измерений; резкий разовый выброс не должен дёргать цифру в статусе
         n.workerMs = n.workerMs==null ? workerMsMax : n.workerMs*0.8+workerMsMax*0.2;
         n.roundtripMs = n.roundtripMs==null ? wms : n.roundtripMs*0.8+wms*0.2;
-        rtlTrackMsps(n, cnt, t1-kickT, wms);
+        rtlTrackMsps(n, cnt, ioMs, wms);
       });
     }
   }
 
-  await Promise.all(Array.from({length:READERS}, readerLoop));
+  await readerLoop();
   n.connected=false;
 }
 
