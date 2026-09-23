@@ -13,8 +13,10 @@ const PROP_URLS={
   mag:  SWPC+'products/solar-wind/mag-5-minute.json',
   ssn:  SWPC+'json/solar-cycle/swpc_observed_ssn.json',
 };
-const PROP_BANDS=[['160m',1.9],['80m',3.6],['40m',7.1],['30m',10.1],['20m',14.1],['17m',18.1],
-  ['15m',21.2],['12m',24.9],['10m',28.5],['6m',50.1]];
+// [название, опорная частота МГц для оценки, границы диапазона в кГц (РФ)]
+const PROP_BANDS=[['160m',1.9,1810,2000],['80m',3.6,3500,3800],['40m',7.1,7000,7200],['30m',10.1,10100,10150],
+  ['20m',14.1,14000,14350],['17m',18.1,18068,18168],['15m',21.2,21000,21450],['12m',24.9,24890,24990],
+  ['10m',28.5,28000,29700],['6m',50.1,50000,52000]];
 const PROP_LVL=['Good','Fair','Poor'], PROP_LVL_COL=['#43a047','#f9a825','#c62828'];
 const PROP_CACHE_KEY='dsp-propagation-cache';
 
@@ -94,6 +96,26 @@ function propMuf(el,R,kp){
   fo*=Math.max(.6,1-0.05*Math.max(0,(kp||0)-3));
   return 3.3*fo;
 }
+// список для входа 'bands' у 'sa': диапазоны с оценкой прохождения (цвет — по оценке) и точка MUF.
+// Пересобирается раз в минуту — между пересборками отдаём тот же массив.
+function propBands(n){
+  const d=n.data, lat=+n.p.lat||0, lon=+n.p.lon||0, now=Date.now();
+  const key=Math.floor(now/60e3)+'|'+(d?.t||0)+'|'+lat+','+lon+'|'+n.p.bandsFor;
+  if(key===n._bandsKey) return n._bands;
+  n._bandsKey=key; n._bands=[];
+  if(!d||(d.sfi==null&&d.ssn==null)) return n._bands;
+  const {dec}=propSunDecl(now), decD=dec*180/Math.PI;
+  const el = n.p.bandsFor==='day' ? 90-Math.abs(lat-decD)
+           : n.p.bandsFor==='night' ? -90+Math.abs(lat+decD) : propSunElev(now,lat,lon);
+  const month=new Date(now).getUTCMonth();
+  for(const [name,f,lo,hi] of PROP_BANDS){
+    const lv=propRate(f,el,d,lat,month);
+    n._bands.push({lo:lo*1e3,hi:hi*1e3,label:name+' '+PROP_LVL[lv],color:PROP_LVL_COL[lv],step:100});
+  }
+  const ssn=d.ssn!=null?d.ssn:propSsnFromSfi(d.sfi??70), muf=propMuf(el,ssn,d.kp);
+  n._bands.push({lo:Math.round(muf*1e4)*100,hi:Math.round(muf*1e4)*100,label:'MUF '+muf.toFixed(1)+'M',color:'#ffffff',step:0});
+  return n._bands;
+}
 // 0 Good / 1 Fair / 2 Poor
 function propRate(fMHz,el,d,lat,month){
   const R=d.ssn!=null?d.ssn:propSsnFromSfi(d.sfi??70), kp=d.kp??2, muf=propMuf(el,R,kp);
@@ -133,12 +155,14 @@ function propRScale(f){
 
 def({ id:'propagation', title:'HF Propagation', cat:'Radio',
   // Индексы NOAA SWPC (SFI, SSN, Kp/A, рентген GOES, солнечный ветер) и оценка прохождения
-  // КВ-диапазонов: днём/ночью (полдень/полночь по Солнцу для точки lat/lon) и сейчас.
-  outs:[{n:'sfi',t:'num'},{n:'ssn',t:'num'},{n:'kp',t:'num'},{n:'a',t:'num'},{n:'muf',t:'num'},{n:'xray',t:'num'}],
+  // КВ-диапазонов: днём/ночью (полдень/полночь по Солнцу для точки lat/lon) и сейчас. Выход bands —
+  // диапазоны, раскрашенные по оценке, и отметка MUF: на вход bands у 'sa' (или через 'bandsmerge').
+  outs:[{n:'sfi',t:'num'},{n:'ssn',t:'num'},{n:'kp',t:'num'},{n:'a',t:'num'},{n:'muf',t:'num'},{n:'xray',t:'num'},{n:'bands',t:'bands'}],
   w:360, view:{h:300}, resize:true,
   params:[
     {n:'lat',t:'num',d:55.75,label:'lat, °'},
     {n:'lon',t:'num',d:37.62,label:'lon, °'},
+    {n:'bandsFor',t:'select',opts:['now','day','night'],d:'now',label:'bands output'},
     {n:'period',t:'select',opts:['5 min','15 min','30 min','60 min'],d:'15 min',label:'refresh'},
     {n:'locate',t:'button',label:'⌖ Locate',fn:n=>{
       navigator.geolocation?.getCurrentPosition(p=>{
@@ -153,10 +177,10 @@ def({ id:'propagation', title:'HF Propagation', cat:'Radio',
     n.data=n.data||null;
   },
   process(n){
-    const d=n.data; if(!d) return {};
+    const d=n.data; if(!d) return {bands:[]};
     const ssn=d.ssn!=null?d.ssn:propSsnFromSfi(d.sfi??70);
     const el=propSunElev(Date.now(),+n.p.lat||0,+n.p.lon||0);
-    return {sfi:d.sfi??0, ssn, kp:d.kp??0, a:d.a??0, muf:propMuf(el,ssn,d.kp), xray:d.xray??0};
+    return {sfi:d.sfi??0, ssn, kp:d.kp??0, a:d.a??0, muf:propMuf(el,ssn,d.kp), xray:d.xray??0, bands:propBands(n)};
   },
   draw(n,cv,cx){
     const per=(parseInt(n.p.period)||15)*60e3;
