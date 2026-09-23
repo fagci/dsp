@@ -1564,11 +1564,21 @@ function saSetRange(n,newLo,newHi){
   if(newLo>=n.p.fmin){ n.set.fmax?.(newHi); n.set.fmin?.(newLo); }
   else { n.set.fmin?.(newLo); n.set.fmax?.(newHi); }
 }
+// знаков после запятой у подписи оси: столько, чтобы шаг сетки был виден в единицах fmtHz
+// (7.05M при шаге 50 кГц, 14.225M при 25 кГц, 7.0005M при 500 Гц); лог-сетка (1/2/5×10ⁿ) — без дробной части
+function saTickDp(f,step){
+  if(!step) return 0;
+  const a=Math.abs(f), unit=a>=1e9?1e9:a>=1e6?1e6:a>=1e3?1e3:1;
+  const q=step/unit;
+  for(let d=0;d<6;d++){ const v=q*10**d; if(Math.abs(v-Math.round(v))<1e-6*Math.max(1,v)) return d; }
+  return 6;
+}
 function saGrid(n,cx,W,hs,H,plotH){                 // сетка частот с подписями
   const lo=saFreq(n,0), hi=saFreq(n,1);
   cx.lineWidth=1; cx.globalAlpha=1;
   cx.strokeStyle=themeColor('--grid'); cx.fillStyle=themeColor('--axis'); cx.font='9px monospace';
   const marks=[];
+  let step=0;                                       // шаг линейной сетки — от него точность подписей
   if(n.p.log){
     for(let d=1;d<=1e10;d*=10) for(const m of [1,2,5]){ const f=d*m;   // до ~10 ГГц — с запасом под RF
       if(f>=lo&&f<=hi) marks.push(f); }
@@ -1578,13 +1588,14 @@ function saGrid(n,cx,W,hs,H,plotH){                 // сетка частот �
     // сетку, либо (после фолбэка на последний кандидат) тысячи линий подряд
     const span=hi-lo||1;
     const base=Math.pow(10,Math.floor(Math.log10(span/6)));
-    const step=[1,2,5,10].map(k=>k*base).find(s=>span/s<=8)||base*10;
-    for(let f=Math.ceil(lo/step)*step; f<=hi; f+=step) marks.push(f);
+    step=[1,2,5,10].map(k=>k*base).find(s=>span/s<=8)||base*10;
+    // f от индекса, не накоплением f+=step — без дрейфа float на RF-частотах
+    for(let i=Math.ceil(lo/step); i*step<=hi; i++) marks.push(i*step);
   }
   for(const f of marks){
     const x=Math.round(saPos(n,f)*W)+.5;
     cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke();
-    const t=fmtHz(f);                                 // сама разберётся Гц/кГц/МГц/ГГц
+    const t=fmtHz(f,saTickDp(f,step));
     // подпись — в зарезервированной зоне снизу (см. AXIS_H в draw()), ниже plotH — сама трасса
     // спектра туда не заходит (см. plotH в амплитуде/фазе/PSD), так что подпись не замазывает
     cx.fillText(t,Math.min(x+2,W-cx.measureText(t).width-2),hs-4); }
