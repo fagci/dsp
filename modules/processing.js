@@ -1469,10 +1469,11 @@ function saMarkers(n,cx,W,H){
     cx.strokeStyle=MK_COL(k); cx.lineWidth=act?1.5:1;
     cx.beginPath(); cx.moveTo(x+.5,TOP_H); cx.lineTo(x+.5,H); cx.stroke();
     cx.font='10px monospace';
-    // "1: 433.075 -75" — номер, частота (3 знака — см. коммент у fmtHz, иначе близкие маркеры
+    // "1: 433.075 -75 / 18" — номер, частота (3 знака — см. коммент у fmtHz, иначе близкие маркеры
     // выглядят как одна и та же частота, без буквы единицы — компактнее), уровень — одной строкой
     const fv=fmtHz(f,3).replace(/[kMG]$/,'');
-    const t=(k+1)+': '+fv+(n.db[k]>-119?' '+n.db[k].toFixed(0):'');
+    // уровень дБ / SNR над шумовой полкой (см. saNoiseFloor)
+    const t=(k+1)+': '+fv+(n.db[k]>-119?' '+n.db[k].toFixed(0)+' / '+Math.max(0,n.snr?.[k]??0).toFixed(0):'');
     const tw=cx.measureText(t).width;
     // по центру линии маркера; дорожка стека — по НОМЕРУ маркера (k), а не по порядку рисования —
     // иначе позиции соседних подписей "прыгали" бы при каждой смене наведения
