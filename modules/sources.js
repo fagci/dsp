@@ -1115,6 +1115,19 @@ function rtlPlan(mode, sr, bw){
   return {d1, d2, decim:d1*d2, ir:irReal, ar, pass, stop:irReal-pass, aPass, aStop};
 }
 function rtlDecimFor(mode, sr, bw){ return rtlPlan(mode, sr, bw).decim; }
+// Полоса пропускания канального фильтра (ПЧ) каждого активного канала, в абсолютных частотах:
+// WFM/NFM/AM — симметрично ±pass, USB/LSB — одна боковая шириной bw. Для IQ каналов нет.
+function rtlChanBands(n, cf, half){
+  const mode=n.p.demod; if(mode==='IQ') return [];
+  const pl=rtlPlan(mode, n.sourceRate, n.p.bw), out=[];
+  for(let ci=0;ci<4;ci++){
+    const ch=n.ch[ci]; if(!ch.active) continue;
+    const f=clamp(ch.tuneFreq==null?cf:ch.tuneFreq, cf-half, cf+half);
+    const lo = mode==='USB' ? f : f-pl.pass, hi = mode==='LSB' ? f : f+pl.pass;
+    out.push({idx:ci, f, lo, hi, mode});
+  }
+  return out;
+}
 // (Пере)создаёт аудио-кольцо одного канала под ТЕКУЩИЙ n.decim — вызывается при первой
 // активации канала и при каждой смене decim на лету (demod/bw/sourceRate), иначе кольцо
 // остаётся размером под старую децимацию и гистерезис (проценты от size) снова начинает
@@ -2004,6 +2017,8 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     }
 
     rtlUpdateSpec(n);
+    // полосы канальных фильтров активных каналов — 'sa' рисует их шторками вокруг частот каналов
+    if(n.spec) n.spec.chans=rtlChanBands(n, cf, half);
     const oi=buf(n,'I'), oq=buf(n,'Q');
     const oa=[buf(n,'audio'), buf(n,'audio2'), buf(n,'audio3'), buf(n,'audio4')];
     const tf=n.ch.map(ch=>clamp(ch.tuneFreq==null?cf:ch.tuneFreq, cf-half, cf+half));

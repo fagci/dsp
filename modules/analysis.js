@@ -1583,6 +1583,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     } else if(n.p.grid) saGrid(n,cx,W,hs,H,plotH);
     cx.strokeStyle=themeColor('--grid'); cx.beginPath(); cx.moveTo(0,hs+.5); cx.lineTo(W,hs+.5); cx.stroke();
     saBands(n,cx,W,H);
+    saChannels(n,cx,W,hs);                            // полосы ПЧ каналов rtlsdr
     saBandPlan(n,cx,W,hs,plotH);                      // полосы/закладки — зона спектра, водопад не трогаем
     saMarkers(n,cx,W,hs);
     saMarkerTabs(n,cx,W); }});

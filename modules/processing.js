@@ -1272,6 +1272,28 @@ function saBands(n,cx,W,H){                        // закраска поло�
   cx.globalAlpha=1;
 }
 
+// Шторки каналов приёмника (spec.chans от rtlsdr): полоса канального фильтра ПЧ вокруг частоты
+// каждого канала, цветом маркера с тем же номером, подпись — режим и ширина полосы
+function saChannels(n,cx,W,H){
+  const list=n.s&&n.s.chans; if(!list||!list.length) return;
+  cx.font='9px monospace';
+  for(const c of list){
+    const x1=saPos(n,c.lo)*W, x2=saPos(n,c.hi)*W;
+    if(x2<0||x1>W) continue;
+    const col=MK_COL(c.idx);
+    cx.globalAlpha=.13; cx.fillStyle=col; cx.fillRect(x1,16,Math.max(1,x2-x1),H-16);
+    cx.globalAlpha=.6; cx.strokeStyle=col; cx.lineWidth=1;
+    cx.beginPath(); cx.moveTo(x1+.5,16); cx.lineTo(x1+.5,H); cx.moveTo(x2-.5,16); cx.lineTo(x2-.5,H); cx.stroke();
+    const bw=c.hi-c.lo, t=c.mode+' '+fmtHz(bw, bw%1000?1:0);
+    const tw=cx.measureText(t).width;
+    if(x2-x1>tw+6){
+      cx.globalAlpha=.85; cx.fillStyle=col;
+      cx.fillText(t, clamp((x1+x2-tw)/2, 2, W-tw-2), 27+c.idx*11);
+    }
+  }
+  cx.globalAlpha=1;
+}
+
 // Полосы (band plan) и точечные закладки — из узла 'bandplan'/'bookmarks', список {lo,hi,label,color}.
 // hi===lo — точка (закладка), иначе — полоса. Пересекающиеся полосы раскладываем по "дорожкам"
 // (жадная раскраска интервального графа, как в календарях) — иначе перекрытие сливалось бы в
