@@ -1,34 +1,97 @@
 # DSP workbench
 
-## SDR software
+A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas. Runs fully client-side, no build step, works offline as a PWA.
+
+## Features
+
+### Workbench
+- Node graph editor: pan/zoom canvas, drag-and-drop modules, typed ports (signal, number, spectrum, image, text, block)
+- Panel view and Dashboard view (split panes, draggable dividers) for building instrument-like UIs
+- Groups (nested subgraphs) with custom inputs/outputs
+- Undo/redo, duplicate, multi-select, module search (Ctrl+K)
+- Save/load patches to local storage or JSON files
+- 65 built-in presets: demos, quick scenarios, radio protocols, music, analysis
+- Adjustable block size, sample rate and run speed (×1…×32)
+- AudioWorklet engine, SharedArrayBuffer path when cross-origin isolated
+- Installable PWA with offline support
+
+### Sources
+- Oscillator, sweep/jammer, constant, LFO, text source
+- Microphone (stereo A+B), audio file, audio stream URL, tab/screen audio capture
+- **RTL-SDR** directly via WebUSB (multiple tuners/demodulators per device)
+- **KiwiSDR** remote receivers (public list included)
+- Camera, video, image, accelerometer and Generic Sensor API
+- Serial port (WebSerial), CSV files, lists
+
+### Analysis
+- Spectrum analyzer / waterfall, persistence spectrum, oscilloscope, constellation, eye diagram
+- CFAR signal detector, channel SNR, channel grid, band scanner, auto frequency scanner
+- Band plans, bookmarks, signal recognition and signal type identifier
+- Goertzel, autocorrelation, cross-correlation, frequency response / coherence
+- Harmonics & THD, third-octaves, LUFS-like loudness, level statistics, spectral descriptors
+- Impulse response & RT60, bird song analyzer, frequency meter, trend charts
+
+### Processing
+- Filters, gain, mixers (4/12 ch), AGC, squelch, mains notch, adaptive filter, spectral denoiser
+- FFT, Zoom-FFT (I/Q), Hilbert transform, quadrature shift, magnitude/phase, wavelet (constant-Q), cepstrum
+- Beamformer, phase scope (X-Y), envelope, calibration, capture & loop
+- Audio effects: delay, reverb, distortion, compressor/limiter, EQ, chorus/flanger/phaser, pitch shifter
+
+### Modulation & radio
+- AM/FM/SSB demodulator, FSK demodulator, generic modulator
+- Carrier acquisition, matched filter, symbol sync
+- OFDM modulator/demodulator, chirp modem (transmit/receive)
+- HF propagation, WWV/WWVH/CHU time decoder
+- Doppler radar, 2D chirp radar, monostatic sonar
+
+### Digital modes & decoders
+- FT8, RTTY, Morse (TX/RX, including from camera), DTMF, PSK31, Feld Hell
+- Olivia, Contestia, AX.25/APRS (TX/RX)
+- WEFAX, NOAA APT, SSTV-style raster
+- HFDL: full receive chain down to ACARS / ADS-C with aircraft map
+- Building blocks: CRC, scrambler, interleaver, convolutional encoder / Viterbi, sync word search, async serial, NRZ clock, text ↔ bits
+
+### Music
+- Synths (2 osc, 4 voices), acid bass (303), drum sequencer, sample library
+- Piano roll, step sequencer, generative melody, arrangement playlist, master clock
+- MIDI keyboard input, ADSR envelope
+
+### Output & extensibility
+- Sound card output, WAV recording, CSV log, trigger recorder
+- Aircraft map, screen transmitter, indicators
+- Module Builder and Script nodes for writing custom DSP code in the browser
+
+## Screenshots
+
+### SDR software
 
 <img width="1920" height="927" alt="image" src="https://github.com/user-attachments/assets/6a573888-5e1d-48f7-bd0b-b8cd517c1445" />
 
-## WeFax
+### WeFax
 
 <img width="1316" height="845" alt="image" src="https://github.com/user-attachments/assets/5491c805-5bd3-44aa-91f9-6572466f4909" />
 
-## ft8
+### ft8
 
 <img width="1591" height="734" alt="image" src="https://github.com/user-attachments/assets/be648341-2275-49e4-9c37-264a1ce0abbf" />
 
-## RTTY
+### RTTY
 
 <img width="1377" height="836" alt="image" src="https://github.com/user-attachments/assets/33482242-2e84-4fed-9eda-784e1bc98c33" />
 
-## Chirp modem (wip)
+### Chirp modem (wip)
 
 <img width="1920" height="846" alt="image" src="https://github.com/user-attachments/assets/b40b1d21-6fdb-4232-bcd8-cb531d7f6b3d" />
 
-## Music making (wip)
+### Music making (wip)
 
 <img width="1168" height="741" alt="image" src="https://github.com/user-attachments/assets/5e8232b4-fccc-4196-97d6-1ca90fcfa97c" />
 
-## Generator + Oscilloscope
+### Generator + Oscilloscope
 
 <img width="719" height="667" alt="image" src="https://github.com/user-attachments/assets/73cacb96-2b82-4550-8068-7d4ddbb47a30" />
 
-## Misc
+### Misc
 
 <img width="925" height="724" alt="image" src="https://github.com/user-attachments/assets/962b3167-53fa-4bf8-ae8c-c035521d4476" />
 
