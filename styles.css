@@ -146,7 +146,7 @@ button,select,input{font:inherit;color:inherit}
 .dash-split.row>.dash-resizer{width:6px;cursor:col-resize}
 .dash-split.col>.dash-resizer{height:6px;cursor:row-resize}
 .dash-resizer:hover,.dash-resizer.active{background:var(--acc)}
-.dash-pane{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--panel);border-radius:3px;overflow:hidden}
+.dash-pane{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--panel);border-radius:3px;overflow:hidden}
 .dash-tools{flex:none;display:flex;align-items:center;gap:3px;padding:3px 4px;
   background:var(--panel2);border-bottom:1px solid var(--line)}
 .dash-tools select.dash-pick{flex:1 1 auto;min-width:0;background:var(--panel);color:var(--txt);
@@ -156,11 +156,23 @@ button,select,input{font:inherit;color:inherit}
 .dash-tools button:hover{color:var(--acc);border-color:var(--acc)}
 .dash-tools button.on{color:var(--acc);border-color:var(--acc)}
 /* ⛶ — в панели только основная канва узла, без заголовка и контролов */
-.dash-pane.bare .node>.nhead{display:none}
 .dash-pane.bare .node .io3>.mid{padding:0}
 .dash-pane.bare .node .io3>.mid>:not(canvas.view.main){display:none!important}
 .dash-pane.bare .dash-body{overflow:hidden}
 .dash-body{flex:1 1 auto;min-height:0;overflow:auto}
+/* в тайлах заголовок узла не нужен: имя уже в селекте панели, кнопки заголовка тут бессмысленны */
+.dash-body .node>.nhead{display:none}
+.dash-body .node.folded .nbody{display:block}
+/* тач: нативный скроллбар на мобилке не тащится, а свайп съедают слайдеры/канвы — своя широкая полоса */
+.dash-rail{display:none;position:absolute;right:0;bottom:0;width:22px;z-index:2;
+  background:var(--panel2);border-left:1px solid var(--line);touch-action:none}
+.dash-rail>i{position:absolute;left:3px;right:3px;min-height:36px;border-radius:8px;background:var(--line)}
+.dash-rail.active>i{background:var(--acc)}
+@media (pointer:coarse){
+  .dash-pane.scroll>.dash-rail{display:block}
+  .dash-pane.scroll>.dash-body{padding-right:22px;scrollbar-width:none}
+  .dash-pane.scroll>.dash-body::-webkit-scrollbar{display:none}
+}
 .dash-body .node{position:static!important;width:100%!important;height:100%!important;
   max-width:none!important;box-shadow:none;transform:none!important}
 .dash-body .node .io3>.col{display:none}
