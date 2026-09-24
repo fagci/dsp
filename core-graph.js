@@ -1065,6 +1065,36 @@ function dashFit(){
     const h=Math.max(110, Math.floor(body.getBoundingClientRect().bottom-el.getBoundingClientRect().top-padB));
     if(Math.abs((parseFloat(el.style.height)||0)-h)>1) el.style.height=h+'px';
   }
+  for(const body of dashGridEl.querySelectorAll('.dash-body')) dashRailSync(body);
+}
+// своя полоса прокрутки панели для тача: тащим бегунок или тапаем по полосе
+function dashRailSync(body){
+  const pane=body.parentElement, rail=pane.querySelector('.dash-rail'); if(!rail) return;
+  const over=body.scrollHeight-body.clientHeight>1;
+  pane.classList.toggle('scroll',over);
+  if(!over) return;
+  rail.style.top=body.offsetTop+'px';
+  const H=body.clientHeight, th=Math.max(36,H*H/body.scrollHeight);
+  const max=body.scrollHeight-H;
+  rail.firstChild.style.height=th+'px';
+  rail.firstChild.style.top=(max>0?body.scrollTop/max*(H-th):0)+'px';
+}
+function bindDashRail(rail,body){
+  body.addEventListener('scroll',()=>dashRailSync(body),{passive:true});
+  rail.addEventListener('pointerdown',ev=>{
+    ev.preventDefault(); ev.stopPropagation(); rail.setPointerCapture(ev.pointerId);
+    const thumb=rail.firstChild, r=rail.getBoundingClientRect(), t=thumb.getBoundingClientRect();
+    // тап мимо бегунка — бегунок центрируется под пальцем, дальше тащим
+    const grab=(ev.clientY>=t.top && ev.clientY<=t.bottom) ? ev.clientY-t.top : t.height/2;
+    const move=e=>{
+      const H=r.height, th=thumb.getBoundingClientRect().height, max=body.scrollHeight-body.clientHeight;
+      body.scrollTop=clamp((e.clientY-r.top-grab)/Math.max(1,H-th),0,1)*max;
+    };
+    const up=()=>{ rail.classList.remove('active');
+      rail.removeEventListener('pointermove',move); rail.removeEventListener('pointerup',up); rail.removeEventListener('pointercancel',up); };
+    rail.classList.add('active'); move(ev);
+    rail.addEventListener('pointermove',move); rail.addEventListener('pointerup',up); rail.addEventListener('pointercancel',up);
+  });
 }
 let dashFitRaf=0;
 function dashFitSoon(){ if(!dashFitRaf) dashFitRaf=requestAnimationFrame(()=>{ dashFitRaf=0; dashFit(); dashObserve(); }); }
@@ -1128,6 +1158,8 @@ function dashRenderLeaf(t){
     ph.textContent=cand.length? 'Pick a module above' : 'No free modules';
     body.append(ph); }
   pane.append(body);
+  const rail=document.createElement('div'); rail.className='dash-rail'; rail.append(document.createElement('i'));
+  bindDashRail(rail,body); pane.append(rail);
   return pane;
 }
 function bindDashResizer(rz,t,i){                       // тащим границу между t.children[i] и [i+1]
