@@ -10,7 +10,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Groups (nested subgraphs) with custom inputs/outputs
 - Undo/redo, duplicate, multi-select, module search (Ctrl+K)
 - Save/load patches to local storage or JSON files
-- ~70 built-in presets: demos, quick scenarios, radio protocols, music, analysis
+- 65 built-in presets: demos, quick scenarios, radio protocols, music, analysis
 - Adjustable block size, sample rate and run speed (×1…×32)
 - AudioWorklet engine, SharedArrayBuffer path when cross-origin isolated
 - Installable PWA with offline support
