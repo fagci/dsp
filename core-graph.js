@@ -283,7 +283,6 @@ bindDrag(el.querySelector('.nhead'),n);
 el.addEventListener('pointerdown',ev=>{
 if(!Sel.has(n.id)||ev.shiftKey) selSet(n.id,ev.shiftKey); });
 n.el=el; content.append(el); el.style.zIndex=++zCounter; posNode(n); applySize(n); // новый узел сразу поверх остальных
-if(typeof panelMode!=='undefined' &&panelMode) markPanel();
 }
 function mergeableParamNames(d){                     // имена параметров, что могут слиться со строкой порта —
 return new Set((d.params||[]).flatMap(s=>            // кроме button/file: у них своя разметка без места под джек (см. paramEl)
@@ -676,7 +675,7 @@ const cx = dir==='o' ? px+pin.offsetWidth-r  : px+r;
 return {x:n.x+cx, y:n.y+py+el.offsetHeight/2};
 }
 function drawWires(){
-if(typeof panelMode!=='undefined'  && uiLocked()) return;
+if(typeof dashMode!=='undefined' && uiLocked()) return;
 // Сначала все чтения геометрии (portPos читает offsetLeft/offsetParent — это layout reads),
 // и только потом все записи атрибута d. Если чередовать чтение и запись по одному проводу за раз,
 // браузер вынужден на каждой итерации форсировать синхронный reflow, чтобы отдать актуальный offset.
@@ -970,32 +969,13 @@ function fitViewWhenReady(){
 requestAnimationFrame(()=>requestAnimationFrame(fitView));
 }
 document.getElementById('fit').onclick=fitView;
-let panelMode=false, dashMode=false;
+let dashMode=false;
 // свёрнутый сайдбар (десктоп): выбор пользователя по ☰; в тайлах прячется независимо от него
 let sideCollapsedPref=false;
 try{ sideCollapsedPref=localStorage.getItem('dsp-side-collapsed')==='1'; }catch(e){}
 function setSideCollapsed(on){ document.getElementById('side').classList.toggle('collapsed',!!on); }
 setSideCollapsed(sideCollapsedPref);
-function uiLocked(){ return panelMode||dashMode; }   // свободное перетаскивание/связи узлов выключены
-function markPanel(){                                // прибор = узел, которому есть что показать
-for(const n of Graph.nodes){
-const d=MOD[n.type];
-const show  = d.view||d.readout||d.swatch||(d.params||[]).some(p=>p.t==='button');
-n.el.classList.toggle('hidden', panelMode  && !show);
-}
-}
-function setPanel(on){
-if(on && dashMode) setDash(false);                  // режимы взаимоисключающие — разные контейнеры узлов
-panelMode=on;
-cv.classList.toggle('panel',on);
-document.getElementById('panel').classList.toggle('on',on);
-document.getElementById('fit').disabled=on;
-for(const n of Graph.nodes) n.el.style.width = on? '' : n.size.w+'px';
-markPanel();
-if(!on){ cv.scrollTop=0; cv.scrollLeft=0;
-for(const n of Graph.nodes) applySize(n); markWiresDirty(); }
-}
-document.getElementById('panel').onclick=()=>setPanel(!panelMode);
+function uiLocked(){ return dashMode; }   // свободное перетаскивание/связи узлов выключены
 /* ---- дашборд: тайловая раскладка закреплённых (📌) узлов, дерево произвольных сплитов (как в tiling WM) ---
    Graph.dashTree — либо null, либо {t:'leaf',id,node} с id узла или null (пустой слот),
    либо {t:'split',id,dir:'row'|'col',children:[...],sizes:[...]} (проценты, sum=100).
@@ -1006,6 +986,13 @@ const dashGridEl=document.getElementById('dashGrid');
 const dashBtn=document.getElementById('dash');
 let dashSeq=1;
 function dashId(){ return 'd'+(dashSeq++); }
+// id в загруженном дереве начинаются с d1 — без сдвига счётчика новый сплит получал чужой id
+function dashSyncSeq(){
+  const walk=t=>{ if(!t) return;
+    const k=+String(t.id).slice(1); if(k>=dashSeq) dashSeq=k+1;
+    if(t.t==='split') t.children.forEach(walk); };
+  walk(Graph.dashTree);
+}
 function dashLeaf(nodeId){ return {t:'leaf', id:dashId(), node:nodeId??null}; }
 function dashEnsureTree(){ if(!Graph.dashTree) Graph.dashTree=dashLeaf(null); return Graph.dashTree; }
 function dashFind(t,id,parent,idx){                  // {leaf,parent,idx} по id узла дерева, либо null
@@ -1025,7 +1012,7 @@ function dashAutoPlace(n){                            // первый пусто
   if(empty){ empty.node=n.id; return true; } return false;
 }
 function dashSplit(leafId,dir){
-  const f=dashFind(Graph.dashTree,leafId); if(!f) return;
+  const f=dashFind(Graph.dashTree,leafId); if(!f||f.leaf.t!=='leaf') return;
   const split={t:'split', id:dashId(), dir, children:[dashLeaf(f.leaf.node),dashLeaf(null)], sizes:[50,50]};
   if(f.parent) f.parent.children[f.idx]=split; else Graph.dashTree=split;
   dashRenderRoot(); Undo.push();
@@ -1036,7 +1023,7 @@ function dashCollapse(t){                             // сплит с 1 реб�
   return t.children.length===1? t.children[0] : t;
 }
 function dashRemoveLeaf(leafId){                       // убрать пустой слот, отдав его место соседям
-  const f=dashFind(Graph.dashTree,leafId); if(!f) return;
+  const f=dashFind(Graph.dashTree,leafId); if(!f||f.leaf.t!=='leaf') return;
   if(!f.parent){ Graph.dashTree=null; dashRenderRoot(); Undo.push(); return; }
   f.parent.children.splice(f.idx,1); f.parent.sizes.splice(f.idx,1);
   const sum=f.parent.sizes.reduce((a,b)=>a+b,0)||1;
@@ -1045,6 +1032,10 @@ function dashRemoveLeaf(leafId){                       // убрать пуст�
   dashRenderRoot(); Undo.push();
 }
 function dashRenderRoot(){
+  // узлы вне дерева — обратно на холст, иначе после очистки сетки они выпадают из DOM
+  const placed=new Set(dashLeaves(Graph.dashTree).map(l=>l.node));
+  for(const n of Graph.nodes) if(!placed.has(n.id) && n.el.parentNode!==content){
+    content.appendChild(n.el); applySize(n); n.onResize?.(n); }
   dashGridEl.innerHTML='';
   if(!Graph.dashTree){
     const hint=document.createElement('div'); hint.className='dash-empty';
@@ -1182,21 +1173,19 @@ function bindDashResizer(rz,t,i){                       // тащим грани
 }
 function setDash(on){
   if(on && !dashGridEl) return;                        // старый закэшированный index.html без #dashGrid — тихо выходим
-  if(on && panelMode) setPanel(false);                 // режимы взаимоисключающие — разные контейнеры узлов
   dashMode=on;
   cv.classList.toggle('dashboard',on);
   setSideCollapsed(on ? true : sideCollapsedPref);     // в тайлах сайдбар мешает — прячем, при выходе возвращаем как было
   dashBtn?.classList.toggle('on',on);
-  document.getElementById('fit').disabled=on||panelMode;
+  document.getElementById('fit').disabled=on;
   if(on){
     dashEnsureTree();
     for(const n of Graph.nodes) if(n.dash && !dashLeafOf(n.id)) dashAutoPlace(n);
     dashRenderRoot();
   } else {
-    for(const l of dashLeaves(Graph.dashTree)){
-      const n=l.node!=null?Graph.map[l.node]:null;
-      if(n){ content.appendChild(n.el); applySize(n); n.onResize?.(n); }   // вернуть высоты холстового режима
-    }
+    for(const n of Graph.nodes) if(n.el.parentNode!==content){   // все, не только из дерева
+      content.appendChild(n.el); applySize(n); n.onResize?.(n); }  // вернуть высоты холстового режима
+    markWiresDirty();
     dashGridEl.innerHTML='';
     dashRO?.disconnect();
   }
@@ -1399,10 +1388,10 @@ if(nn &&n.dash) nn.dash=true;
 max=Math.max(max,+String(n.id).slice(1)||0); }
 Graph.seq=max+1;
 Graph.dashTree=o.dashTree||null;                    // раскладка тайлов дашборда (дерево сплитов)
+dashSyncSeq();
 for(const e of o.edges) addEdge(e.from,e.fp,e.to,e.tp);
 if(o.view){ Object.assign(view,o.view); applyView(); }
 markWiresDirty();
-if(panelMode) setPanel(true);
 if(dashMode) setDash(true);
 Undo.busy=wasBusy;
 if(!wasBusy) Undo.push();

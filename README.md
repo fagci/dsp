@@ -6,7 +6,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 
 ### Workbench
 - Node graph editor: pan/zoom canvas, drag-and-drop modules, typed ports (signal, number, spectrum, image, text, block)
-- Panel view and Dashboard view (split panes, draggable dividers) for building instrument-like UIs
+- Dashboard view (split panes, draggable dividers) for building instrument-like UIs
 - Groups (nested subgraphs) with custom inputs/outputs
 - Undo/redo, duplicate, multi-select, module search (Ctrl+K)
 - Save/load patches to local storage or JSON files
@@ -71,7 +71,7 @@ The UI follows the system color scheme (`prefers-color-scheme`). Instrument scre
 | Desktop — dashboard tiles | <img src="docs/screenshots/desktop-dash-dark.png" alt="Desktop — dashboard tiles, dark"> | <img src="docs/screenshots/desktop-dash-light.png" alt="Desktop — dashboard tiles, light"> |
 | Tablet — graph | <img src="docs/screenshots/tablet-graph-dark.png" alt="Tablet — graph, dark"> | <img src="docs/screenshots/tablet-graph-light.png" alt="Tablet — graph, light"> |
 | Tablet — dashboard tiles | <img src="docs/screenshots/tablet-dash-dark.png" alt="Tablet — dashboard tiles, dark"> | <img src="docs/screenshots/tablet-dash-light.png" alt="Tablet — dashboard tiles, light"> |
-| Phone — panel view | <img width="260" src="docs/screenshots/phone-graph-dark.png" alt="Phone — panel view, dark"> | <img src="docs/screenshots/phone-graph-light.png" alt="Phone — panel view, light"> |
+| Phone — graph | <img width="260" src="docs/screenshots/phone-graph-dark.png" alt="Phone — graph, dark"> | <img src="docs/screenshots/phone-graph-light.png" alt="Phone — graph, light"> |
 | Phone — dashboard tiles | <img width="260" src="docs/screenshots/phone-dash-dark.png" alt="Phone — dashboard tiles, dark"> | <img src="docs/screenshots/phone-dash-light.png" alt="Phone — dashboard tiles, light"> |
 
 ### Dashboard tiles

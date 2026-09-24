@@ -121,17 +121,6 @@ button,select,input{font:inherit;color:inherit}
   background-image:radial-gradient(circle,var(--dot) 1px,transparent 1px);
   background-size:24px 24px}
 #side.collapsed{display:none}
-/* приборный режим: узлы-показометры в столбик, без холста и проводов */
-#canvas.panel{overflow-y:auto;overflow-x:hidden;cursor:default;background:none;touch-action:pan-y}
-#canvas.panel #wires,#canvas.panel #wiresFront{display:none}
-#canvas.panel #content{position:static;transform:none!important;padding:10px;
-  display:flex;flex-direction:column;gap:10px}
-#canvas.panel .node{position:static!important;width:100%!important;max-width:760px;
-  margin:0 auto;box-shadow:none;transform:none!important}
-#canvas.panel .node.hidden{display:none}
-#canvas.panel .io3 .col{display:none}
-#canvas.panel .nhead{cursor:default}
-#canvas.panel .rz{display:none}
 /* ---- дашборд: тайловая раскладка закреплённых (📌) узлов, дерево произвольных сплитов (как в tiling WM) ---- */
 #dashGrid{display:none;width:100%;height:100%;overflow:hidden;box-sizing:border-box}
 #dashGrid>*{width:100%;height:100%}
@@ -229,14 +218,11 @@ button,select,input{font:inherit;color:inherit}
 }
 /* ---- мобильный UX: карточки не выходят за ширину экрана ---- */
 @media (max-width:600px){
-  #canvas:not(.panel) #content .node{
+  #canvas #content .node{
     max-width:calc(100vw - 24px);
     min-width:0;
   }
-  #canvas:not(.panel) #content .node .mid{padding-left:7px;padding-right:7px}
-  #canvas.panel #content{padding:8px;gap:8px}
-  #canvas.panel .node{max-width:none!important}
-  #canvas.panel .nhead{position:sticky;top:0;z-index:1}
+  #canvas #content .node .mid{padding-left:7px;padding-right:7px}
 }
 #canvas.grab{cursor:grabbing}
 #content{position:absolute;left:0;top:0;transform-origin:0 0}
@@ -255,39 +241,33 @@ button,select,input{font:inherit;color:inherit}
 /* ---- карточная вёрстка узлов ----
    Порты выведены из потока (position:absolute) и не отжимают контент —
    .mid занимает всю высоту от заголовка до низа, точки просто плавают поверх. */
-  #canvas:not(.panel) #content .node .io3{position:relative}
-  #canvas:not(.panel) #content .node .io3>.col{
+  #canvas #content .node .io3{position:relative}
+  #canvas #content .node .io3>.col{
     position:absolute;top:10px;bottom:10px;left:0;width:var(--pov);
     max-width:none;min-height:0;flex-direction:column;justify-content:flex-start;
     gap:10px;padding:0;background:none;border:0;overflow:visible;pointer-events:none}
-  #canvas:not(.panel) #content .node .io3>.col.o{
+  #canvas #content .node .io3>.col.o{
     left:auto;right:0;justify-content:flex-start}
-  #canvas:not(.panel) #content .node .io3>.mid{display:grid;
+  #canvas #content .node .io3>.mid{display:grid;
     grid-template-columns:repeat(2,minmax(0,1fr));gap:11px 10px;padding:10px 14px}
-  #canvas:not(.panel) #content .node .io3>.mid>.prm.wide,
-  #canvas:not(.panel) #content .node .io3>.mid>canvas.view,
-  #canvas:not(.panel) #content .node .io3>.mid>.readout,
-  #canvas:not(.panel) #content .node .io3>.mid>.copy,
-  #canvas:not(.panel) #content .node .io3>.mid>.swatch,
-  #canvas:not(.panel) #content .node .io3>.mid>.advWrap{grid-column:1/-1}
-  #canvas:not(.panel) #content .node .io3>.mid>.advWrap:not([hidden]){
+  #canvas #content .node .io3>.mid>.prm.wide,
+  #canvas #content .node .io3>.mid>canvas.view,
+  #canvas #content .node .io3>.mid>.readout,
+  #canvas #content .node .io3>.mid>.copy,
+  #canvas #content .node .io3>.mid>.swatch,
+  #canvas #content .node .io3>.mid>.advWrap{grid-column:1/-1}
+  #canvas #content .node .io3>.mid>.advWrap:not([hidden]){
     display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px 10px}
-  #canvas:not(.panel) #content .node .io3>.mid>.advWrap>.prm.wide{grid-column:1/-1}
-  #canvas:not(.panel) #content .node .io3>.mid>.prm{min-width:0}
-  #canvas:not(.panel) #content .node .io3>.mid>.prm label{flex-basis:46px}
+  #canvas #content .node .io3>.mid>.advWrap>.prm.wide{grid-column:1/-1}
+  #canvas #content .node .io3>.mid>.prm{min-width:0}
+  #canvas #content .node .io3>.mid>.prm label{flex-basis:46px}
   /* В спектроанализаторе чекбоксы занимают свободную ячейку
      напротив «доли спектра», а не переносятся на следующую строку. */
-  #canvas:not(.panel) #content .node[data-type="sa"] .io3>.mid>.prm.wide.checkrow{
+  #canvas #content .node[data-type="sa"] .io3>.mid>.prm.wide.checkrow{
     grid-column:auto}
   /* В «Микрофоне» выбор устройства и соответствующая кнопка стоят парой. */
-  #canvas:not(.panel) #content .node[data-type="mic"] .io3>.mid>.prm.mic-button{
+  #canvas #content .node[data-type="mic"] .io3>.mid>.prm.mic-button{
     grid-column:auto}
-  #canvas.panel #content .node[data-type="mic"] .io3>.mid{
-    display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px 10px}
-  #canvas.panel #content .node[data-type="mic"] .io3>.mid>.prm.wide,
-  #canvas.panel #content .node[data-type="mic"] .io3>.mid>canvas.view,
-  #canvas.panel #content .node[data-type="mic"] .io3>.mid>.readout{
-    grid-column:1/-1}
 .node.sel{box-shadow:0 0 0 1px var(--acc)}
 .node.note{background:var(--note-bg)}
 .node.note .nhead{background:var(--note-head)}
