@@ -2,8 +2,7 @@
 
 ## SDR software
 
-<img width="1920" height="919" alt="image" src="https://github.com/user-attachments/assets/85b759c4-1dde-4d8a-8d18-6eddf3c61413" />
-
+<img width="1920" height="927" alt="image" src="https://github.com/user-attachments/assets/6a573888-5e1d-48f7-bd0b-b8cd517c1445" />
 
 ## WeFax
 
