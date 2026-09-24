@@ -2250,8 +2250,8 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
   // Собственная отрисовка спектра/водопада убрана — для этого универсальный узел 'sa'
   // (Спектроанализатор), подключаемый к выходу 'spec'. Здесь остаётся только статус-строка.
   draw(n){
-    // Крутилка ввода центральной частоты (та же, что у узла 'tuner', см. drawFreqDial выше) — вместо
-    // обычного текстового поля с числом. Не через стандартный d.view (тот канвас движок кладёт
+    // Табло ввода центральной частоты (drawFreqDial, как у 'tuner', но без крутилки: разряд меняется
+    // ведением пальца вверх-вниз) — вместо обычного текстового поля с числом. Не через стандартный d.view (тот канвас движок кладёт
     // ПОСЛЕ всех params — а частота тут самое важное поле, ей место сверху), поэтому канва
     // заводится и позиционируется вручную, первым элементом .mid, с тем же hiDPICanvas для
     // чёткости на ретине/мобиле, что и у обычных view-канвасов.
@@ -2263,12 +2263,12 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
         const cv=document.createElement('canvas'); cv.className='view';
         const dcx=cv.getContext('2d',{willReadFrequently:true});
         mid.insertBefore(cv, mid.firstChild);
-        cv.width=200; cv.height=170; cv.style.height='170px';
+        cv.width=200; cv.height=62; cv.style.height='62px';
         hiDPICanvas(cv,dcx,n);
         n._dialCv=cv; n._dialCx=dcx; n._dial={};
       }
     }
-    if(n._dialCv) drawFreqDial(n.el, n._dialCv, n._dialCx, n._dial, ()=>n.p.freq, v=>{ n.p.freq=v; });
+    if(n._dialCv) drawFreqDial(n.el, n._dialCv, n._dialCx, n._dial, ()=>n.p.freq, v=>{ n.p.freq=v; }, {dial:false});
     const cf=n.actualFreq??n.p.freq;
     const tune=clamp(n.ch[0].tuneFreq==null?cf:n.ch[0].tuneFreq, cf-n.sourceRate/2, cf+n.sourceRate/2);
     const chCount=n.ch.filter(c=>c.active).length;
@@ -3062,7 +3062,10 @@ const TUNER_DIGITS=10;                                  // до 9 999 999 999 Г
 // клавиатуру у canvas). state — объект, который хранит caller (НЕ n.sel/n.ang напрямую) — так одной
 // функцией можно завести несколько независимых крутилок на разных узлах без коллизий состояния.
 // get/set — доступ к самому значению частоты, el — элемент для фокуса/клавиатуры (обычно n.el).
-function drawFreqDial(el,cv,cx,state,get,set){
+// opts.dial===false — без крутилки, только табло: разряд меняется ведением пальца/мыши вверх-вниз
+// прямо по его цифре, тап без сдвига — выбор разряда и цифровая клавиатура.
+function drawFreqDial(el,cv,cx,state,get,set,opts={}){
+  const dial=opts.dial!==false;
   if(state.sel==null){ state.sel=8; state.ang=0; }
   const W=cv.width, H=cv.height, TOP=46, maxV=Math.pow(10,TUNER_DIGITS)-1;
   const stepHz=()=>Math.pow(10,TUNER_DIGITS-1-state.sel);   // шаг = вес выбранного разряда
@@ -3103,7 +3106,13 @@ function drawFreqDial(el,cv,cx,state,get,set){
     cv.addEventListener('pointerdown',ev=>{
       ev.stopPropagation(); ev.preventDefault();          // preventDefault и тут — иначе браузер после тапа сам фокусирует canvas и закрывает клавиатуру
       const r=cv.getBoundingClientRect(), y=(ev.clientY-r.top)/r.height*H;
-      if(y<TOP){                                        // клик по табло — выбрать разряд под стрелки
+      if(!dial){                                        // табло без крутилки: разряд под пальцем, дальше решит move/up
+        const x=(ev.clientX-r.left)/r.width*W;
+        state.sel=clamp(Math.floor(x/(W/TUNER_DIGITS)),0,TUNER_DIGITS-1);
+        state.dragY0=ev.clientY; state.dragFreq0=get(); state.moved=false;
+        state.dragPtr=ev.pointerId; state.dragTouch=ev.pointerType==='touch';
+        cv.setPointerCapture(ev.pointerId);
+      } else if(y<TOP){                                        // клик по табло — выбрать разряд под стрелки
         const x=(ev.clientX-r.left)/r.width*W, cw=W/TUNER_DIGITS;
         state.sel=clamp(Math.floor(x/cw),0,TUNER_DIGITS-1);
         if(ev.pointerType==='touch') numInput.focus(); else el.focus();
@@ -3115,6 +3124,12 @@ function drawFreqDial(el,cv,cx,state,get,set){
     cv.addEventListener('pointermove',ev=>{
       if(state.dragY0==null || ev.pointerId!==state.dragPtr) return;
       ev.preventDefault();
+      if(!dial){                                        // ~1 шаг разряда на 14px (тач) / 8px (мышь), вверх = больше
+        const dy=state.dragY0-ev.clientY;
+        if(!state.moved && Math.abs(dy)<6) return;      // мелкая дрожь пальца — ещё тап
+        state.moved=true;
+        const steps=Math.trunc(dy/(state.dragTouch?14:8));
+        set(clamp(state.dragFreq0+steps*stepHz(),0,maxV)); return; }
       // частота считается от точки СТАРТА драга (не от предыдущего события) — так не плывёт от
       // того, сколько именно move-событий прислал браузер. Тач заметно менее чувствительный, чем
       // мышь: палец физически проезжает по экрану куда больше при том же "ощущаемом" усилии.
@@ -3125,9 +3140,14 @@ function drawFreqDial(el,cv,cx,state,get,set){
       // до целого герца, а не до кратного весу разряда, и в младших разрядах остаётся мусор
       const steps=Math.round((state.dragY0-ev.clientY)*sens);
       set(clamp(state.dragFreq0+steps*stepHz(),0,maxV)); },{passive:false});
-    const endDrag=()=>{ state.dragY0=null; state.dragPtr=null; };
+    const endDrag=ev=>{
+      if(!dial && state.dragY0!=null && !state.moved && ev.type==='pointerup'){   // тап — ввод цифр с клавиатуры
+        if(state.dragTouch) numInput.focus(); else el.focus(); }
+      state.dragY0=null; state.dragPtr=null; };
     cv.addEventListener('pointerup',endDrag); cv.addEventListener('pointercancel',endDrag);
     cv.addEventListener('wheel',ev=>{ ev.preventDefault(); ev.stopPropagation();
+      if(!dial){ const r=cv.getBoundingClientRect();     // колесо крутит разряд под курсором
+        state.sel=clamp(Math.floor((ev.clientX-r.left)/r.width*TUNER_DIGITS),0,TUNER_DIGITS-1); }
       set(clamp(Math.round(get()+(ev.deltaY<0?stepHz():-stepHz())),0,maxV)); },{passive:false});
   }
   cx.clearRect(0,0,W,H);
@@ -3146,6 +3166,7 @@ function drawFreqDial(el,cv,cx,state,get,set){
   }
   cx.textAlign='left'; cx.font='10px monospace'; cx.fillStyle=themeColor('--axis');
   cx.fillText(fmtHz(get())+'Hz · digit ×'+fmtHz(Math.pow(10,TUNER_DIGITS-1-state.sel)), 4, H-4);
+  if(!dial) return;
   // крутилка
   const cx0=W/2, cy0=TOP+(H-TOP)/2, r=Math.min(W,H-TOP)/2-8;
   cx.strokeStyle=themeColor('--grid'); cx.fillStyle=themeColor('--scr-panel'); cx.lineWidth=2;
