@@ -61,6 +61,29 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Aircraft map, screen transmitter, indicators
 - Module Builder and Script nodes for writing custom DSP code in the browser
 
+## Themes
+
+The UI follows the system color scheme (`prefers-color-scheme`). Instrument screens (scopes, spectra, waterfalls) stay dark in both themes.
+
+| | Dark | Light |
+|---|---|---|
+| Desktop — graph | <img src="docs/screenshots/desktop-graph-dark.png" alt="Desktop — graph, dark"> | <img src="docs/screenshots/desktop-graph-light.png" alt="Desktop — graph, light"> |
+| Desktop — dashboard tiles | <img src="docs/screenshots/desktop-dash-dark.png" alt="Desktop — dashboard tiles, dark"> | <img src="docs/screenshots/desktop-dash-light.png" alt="Desktop — dashboard tiles, light"> |
+| Tablet — graph | <img src="docs/screenshots/tablet-graph-dark.png" alt="Tablet — graph, dark"> | <img src="docs/screenshots/tablet-graph-light.png" alt="Tablet — graph, light"> |
+| Tablet — dashboard tiles | <img src="docs/screenshots/tablet-dash-dark.png" alt="Tablet — dashboard tiles, dark"> | <img src="docs/screenshots/tablet-dash-light.png" alt="Tablet — dashboard tiles, light"> |
+| Phone — panel view | <img width="260" src="docs/screenshots/phone-graph-dark.png" alt="Phone — panel view, dark"> | <img src="docs/screenshots/phone-graph-light.png" alt="Phone — panel view, light"> |
+| Phone — dashboard tiles | <img width="260" src="docs/screenshots/phone-dash-dark.png" alt="Phone — dashboard tiles, dark"> | <img src="docs/screenshots/phone-dash-light.png" alt="Phone — dashboard tiles, light"> |
+
+### Dashboard tiles
+
+The ▦ button switches to a tiled dashboard built from the modules of the current patch:
+
+- Pick any module for each pane from its dropdown
+- Split panes right (⬌) or down (⬍), remove them (✕), drag dividers to resize
+- ⛶ shows only the module's display, without controls and header
+- Modules pinned with 📌 are placed into free panes automatically
+- The layout is saved with the patch and works on touch devices (wide scroll rail for long panes)
+
 ## Screenshots
 
 ### SDR software
