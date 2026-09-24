@@ -2255,9 +2255,9 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
     // ПОСЛЕ всех params — а частота тут самое важное поле, ей место сверху), поэтому канва
     // заводится и позиционируется вручную, первым элементом .mid, с тем же hiDPICanvas для
     // чёткости на ретине/мобиле, что и у обычных view-канвасов.
-    // isConnected — не просто "уже создан": rebuildNode (смена sr, и т.п.) выкидывает старый .el
-    // целиком и строит новый, а n._dialCv остался бы указывать на канву, которой больше нет в DOM
-    if((!n._dialCv || !n._dialCv.isConnected) && n.el){
+    // проверяем принадлежность текущему .el, а не isConnected: rebuildNode строит новый .el,
+    // а временно отсоединённый от документа узел (тайлы) иначе получал новую канву каждый кадр
+    if((!n._dialCv || !n.el?.contains(n._dialCv)) && n.el){
       const mid=n.el.querySelector('.mid');
       if(mid){
         const cv=document.createElement('canvas'); cv.className='view';
