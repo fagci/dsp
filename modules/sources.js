@@ -2263,7 +2263,7 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
         const cv=document.createElement('canvas'); cv.className='view';
         const dcx=cv.getContext('2d',{willReadFrequently:true});
         mid.insertBefore(cv, mid.firstChild);
-        cv.width=200; cv.height=62; cv.style.height='62px';
+        cv.width=200; cv.height=46; cv.style.height='46px';
         hiDPICanvas(cv,dcx,n);
         n._dialCv=cv; n._dialCx=dcx; n._dial={};
       }
@@ -3164,9 +3164,9 @@ function drawFreqDial(el,cv,cx,state,get,set,opts={}){
       cx.strokeStyle=themeColor('--grid'); cx.beginPath();
       cx.moveTo(i*cw+cw+.5,4); cx.lineTo(i*cw+cw+.5,TOP-4); cx.stroke(); }
   }
+  if(!dial) return;                                     // без крутилки — только табло, без подписи
   cx.textAlign='left'; cx.font='10px monospace'; cx.fillStyle=themeColor('--axis');
   cx.fillText(fmtHz(get())+'Hz · digit ×'+fmtHz(Math.pow(10,TUNER_DIGITS-1-state.sel)), 4, H-4);
-  if(!dial) return;
   // крутилка
   const cx0=W/2, cy0=TOP+(H-TOP)/2, r=Math.min(W,H-TOP)/2-8;
   cx.strokeStyle=themeColor('--grid'); cx.fillStyle=themeColor('--scr-panel'); cx.lineWidth=2;
