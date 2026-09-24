@@ -81,7 +81,6 @@ The ▦ button switches to a tiled dashboard built from the modules of the curre
 - Pick any module for each pane from its dropdown
 - Split panes right (⬌) or down (⬍), remove them (✕), drag dividers to resize
 - ⛶ shows only the module's display, without controls and header
-- Modules pinned with 📌 are placed into free panes automatically
 - The layout is saved with the patch and works on touch devices (wide scroll rail for long panes)
 
 ## Screenshots
