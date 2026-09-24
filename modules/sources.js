@@ -965,6 +965,7 @@ async function rtlOpenDevice(dev, ppm, gain){
   await com.i2c.close();
 
   async function setSampleRate(rate){
+    rate=Math.min(rate, 3200000);
     // коэффициент ресемплинга — 28-битный регистр; для XTAL=28.8МГц это требует rate>450000.
     // Ниже этого порога коэффициент не влезает, маска обрезает старший бит, и реально
     // настроенная частота получается совсем другой (например, для 250000 — внезапно 562500),
@@ -1005,7 +1006,198 @@ async function rtlOpenDevice(dev, ppm, gain){
     await com.iface.release();
     await dev.close();
   }
-  return {setSampleRate, setCenterFrequency, setGain, resetBuffer, readSamples, close, tunerName:found.name+(isV4?' (Blog V4)':''), epoch:()=>tuneEpoch};
+  return {setSampleRate, setCenterFrequency, setGain, resetBuffer, readSamples, close, tunerName:found.name+(isV4?' (Blog V4)':''), fmt:'u8', bps:2, epoch:()=>tuneEpoch};
+}
+
+// ---- HackRF и Airspy: тот же API, что у rtlOpenDevice ----
+// fmt — формат отсчётов в буферах readSamples: 'u8' (IQ по байту, смещение 127.5) или 's16'
+// (IQ по int16); bps — байт на комплексный отсчёт. Протоколы — по libhackrf и libairspy.
+function sdrVendorIn(dev, request, index, length){
+  return dev.controlTransferIn({requestType:'vendor',recipient:'device',request,value:0,index}, length);
+}
+function sdrVendorOut(dev, request, value, index, data){
+  return dev.controlTransferOut({requestType:'vendor',recipient:'device',request,value,index}, data);
+}
+
+// HackRF: MAX2837 с нулевой ПЧ, int8 IQ. На Linux: rmmod hackrf
+async function hackrfOpenDevice(dev, gain){
+  const REQ={MODE:1, SAMPLE_RATE:6, BB_FILTER:7, SET_FREQ:16, AMP:17, LNA:19, VGA:20};
+  // полосы baseband-фильтра MAX2837, Гц
+  const BB=[1750000,2500000,3500000,5000000,5500000,6000000,7000000,8000000,9000000,10000000,
+    12000000,14000000,15000000,20000000,24000000,28000000];
+  await dev.open();
+  await dev.selectConfiguration(1);
+  await dev.claimInterface(0);
+  let tuneEpoch=0, rxOn=false;
+  const u32pair=(a,b)=>{ const v=new DataView(new ArrayBuffer(8)); v.setUint32(0,a,true); v.setUint32(4,b,true); return v.buffer; };
+  const setMode=m=>sdrVendorOut(dev, REQ.MODE, m, 0);
+
+  async function setSampleRate(rate){
+    rate=Math.round(Math.max(2e6, Math.min(20e6, rate)));
+    await sdrVendorOut(dev, REQ.SAMPLE_RATE, 0, 0, u32pair(rate, 1));
+    // фильтр — наибольшая полоса не шире 0.75·rate, как hackrf_compute_baseband_filter_bw
+    let bw=BB[0]; for(const b of BB) if(b<=0.75*rate) bw=b;
+    await sdrVendorOut(dev, REQ.BB_FILTER, bw&0xffff, bw>>>16);
+    return rate;
+  }
+  async function setCenterFrequency(freq){
+    freq=Math.round(freq);
+    const mhz=Math.floor(freq/1e6);
+    await sdrVendorOut(dev, REQ.SET_FREQ, 0, 0, u32pair(mhz, freq-mhz*1e6));
+    tuneEpoch++;
+    return freq;
+  }
+  // АРУ в HackRF нет: auto — средние LNA/VGA. Ручной gain 0..49.6 растягиваем на LNA 0-40 (шаг 8) + VGA 0-62 (шаг 2)
+  async function setGain(g){
+    let lna=24, vga=24;
+    if(g!=null){
+      const t=Math.max(0, Math.min(1, g/49.6))*102;
+      lna=Math.min(40, Math.round(t*40/102/8)*8);
+      vga=Math.min(62, Math.max(0, Math.round((t-lna)/2)*2));
+    }
+    await sdrVendorOut(dev, REQ.AMP, 0, 0);
+    await sdrVendorIn(dev, REQ.LNA, lna, 1);
+    await sdrVendorIn(dev, REQ.VGA, vga, 1);
+  }
+  async function resetBuffer(){ await setMode(0); await setMode(1); rxOn=true; }
+  async function readSamples(nBytes){
+    const res=await dev.transferIn(1, nBytes);
+    const u8=new Uint8Array(res.data.buffer, res.data.byteOffset, res.data.byteLength);
+    for(let i=0;i<u8.length;i++) u8[i]^=0x80;       // int8 → смещённый u8, как у RTL
+    return res.data.buffer;
+  }
+  async function close(){
+    if(rxOn) await setMode(0).catch(()=>{});
+    await dev.releaseInterface(0).catch(()=>{});
+    await dev.close();
+  }
+  await setMode(0);
+  await setGain(gain);
+  return {setSampleRate, setCenterFrequency, setGain, resetBuffer, readSamples, close,
+    tunerName:dev.productName||'HackRF', fmt:'u8', bps:2, epoch:()=>tuneEpoch};
+}
+
+// Airspy R2/Mini: АЦП отдаёт вещественные 12-битные отсчёты (uint16, смещение 2048) на удвоенной
+// частоте, ПЧ = fs/4. В IQ переводим сами, как iqconverter в libairspy: сдвиг на fs/4
+// последовательностью знаков -,-,+,+ (чётные — I, нечётные — Q), полуполосный ФНЧ, прореживание на 2.
+// На Linux: rmmod airspy
+function airspyMakeConv(){
+  const M=24, N=2*M+1, beta=6;
+  const i0=x=>{ let s=1, t=1; for(let k=1;k<30;k++){ t*=(x/(2*k))*(x/(2*k)); s+=t; } return s; };
+  // h[j] — отвод на смещении j от центра; у полуполосного ненулевые только центр и нечётные j
+  const h=new Float32Array(M+1);
+  let sum=0;
+  for(let j=1;j<=M;j+=2){ const r=j/M; h[j]=Math.sin(Math.PI*j/2)/(Math.PI*j)*i0(beta*Math.sqrt(1-r*r))/i0(beta); sum+=2*h[j]; }
+  for(let j=1;j<=M;j+=2) h[j]*=0.5/sum;             // усиление на нуле = 1
+  const hist=new Float32Array(2*N);
+  let pos=0, n=0, dc=2048;
+  return {
+    reset(){ hist.fill(0); pos=0; n=0; },
+    // raw — Uint16Array вещественных отсчётов, out — Int16Array IQ той же длины (можно на месте)
+    process(raw, out){
+      let w=0;
+      for(let k=0;k<raw.length;k++){
+        const v=raw[k]&0x0fff;
+        dc+=(v-dc)*1e-4;
+        const x=(n&2) ? v-dc : dc-v;
+        hist[pos]=x; hist[pos+N]=x;
+        if(++pos===N) pos=0;
+        if(n&1){
+          // окно hist[pos..pos+N-1], центр — pos+M; задержка чётной длины — отсчёт Q, нечётные отводы — I
+          const c=pos+M;
+          let si=0;
+          for(let j=1;j<=M;j+=2) si+=h[j]*(hist[c-j]+hist[c+j]);
+          const sq=0.5*hist[c];
+          out[w++]=Math.max(-32768, Math.min(32767, Math.round(si*16)));
+          out[w++]=Math.max(-32768, Math.min(32767, Math.round(sq*16)));
+        }
+        n=(n+1)&3;
+      }
+    }
+  };
+}
+async function airspyOpenDevice(dev, gain){
+  const REQ={MODE:1, SET_SAMPLERATE:12, SET_FREQ:13, LNA:14, MIXER:15, VGA:16, LNA_AGC:17, MIXER_AGC:18,
+    GET_SAMPLERATES:25, PACKING:26};
+  await dev.open();
+  await dev.selectConfiguration(1);
+  await dev.claimInterface(0);
+  let tuneEpoch=0, rxOn=false;
+  const setMode=m=>sdrVendorOut(dev, REQ.MODE, m, 0);
+  const conv=airspyMakeConv();
+  await setMode(0);
+  try{ await sdrVendorIn(dev, REQ.PACKING, 0, 1); }catch(e){}   // упаковка 12 бит выключена — uint16 на отсчёт
+  // список частот IQ из прошивки; старые прошивки его не отдают
+  let rates=[10000000, 2500000];
+  try{
+    const c=await sdrVendorIn(dev, REQ.GET_SAMPLERATES, 0, 4), cnt=c.data.getUint32(0,true);
+    if(cnt>0 && cnt<16){
+      const r=await sdrVendorIn(dev, REQ.GET_SAMPLERATES, cnt, cnt*4);
+      rates=[]; for(let i=0;i<cnt;i++) rates.push(r.data.getUint32(i*4,true));
+    }
+  }catch(e){}
+
+  async function setSampleRate(rate){
+    let idx=0;
+    for(let i=1;i<rates.length;i++) if(Math.abs(Math.log(rates[i]/rate))<Math.abs(Math.log(rates[idx]/rate))) idx=i;
+    const was=rxOn;
+    if(was) await setMode(0);
+    await sdrVendorIn(dev, REQ.SET_SAMPLERATE, idx, 1);
+    if(was){ conv.reset(); await setMode(1); }
+    return rates[idx];
+  }
+  async function setCenterFrequency(freq){
+    freq=Math.round(freq);
+    const b=new DataView(new ArrayBuffer(4)); b.setUint32(0, freq, true);
+    await sdrVendorOut(dev, REQ.SET_FREQ, 0, 0, b.buffer);
+    tuneEpoch++;
+    return freq;
+  }
+  // auto — АРУ LNA и смесителя, VGA фиксирован. Ручной gain 0..49.6 — 0..44 шагов поровну на LNA/смеситель/VGA
+  async function setGain(g){
+    if(g==null){
+      await sdrVendorIn(dev, REQ.LNA_AGC, 1, 1); await sdrVendorIn(dev, REQ.MIXER_AGC, 1, 1);
+      await sdrVendorIn(dev, REQ.VGA, 8, 1);
+      return;
+    }
+    const s=Math.round(Math.max(0, Math.min(1, g/49.6))*44);
+    const lna=Math.min(14, Math.ceil(s/3)), mix=Math.min(15, Math.round(s/3)), vga=Math.max(0, Math.min(15, s-lna-mix));
+    await sdrVendorIn(dev, REQ.LNA_AGC, 0, 1); await sdrVendorIn(dev, REQ.MIXER_AGC, 0, 1);
+    await sdrVendorIn(dev, REQ.LNA, lna, 1); await sdrVendorIn(dev, REQ.MIXER, mix, 1); await sdrVendorIn(dev, REQ.VGA, vga, 1);
+  }
+  async function resetBuffer(){
+    await setMode(0);
+    await dev.clearHalt('in', 1).catch(()=>{});
+    conv.reset();
+    await setMode(1); rxOn=true;
+  }
+  // nBytes IQ int16 = столько же байт сырых uint16 (два вещественных на комплексный)
+  async function readSamples(nBytes){
+    const res=await dev.transferIn(1, nBytes);
+    const buf=res.data.buffer, len=res.data.byteLength>>1;
+    conv.process(new Uint16Array(buf, res.data.byteOffset, len), new Int16Array(buf, res.data.byteOffset, len));
+    return buf;
+  }
+  async function close(){
+    if(rxOn) await setMode(0).catch(()=>{});
+    await dev.releaseInterface(0).catch(()=>{});
+    await dev.close();
+  }
+  await setGain(gain);
+  return {setSampleRate, setCenterFrequency, setGain, resetBuffer, readSamples, close,
+    tunerName:rates.includes(6000000)?'Airspy Mini':'Airspy', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
+}
+
+// VID:PID поддерживаемых устройств
+const SDR_USB_FILTERS=[
+  {vendorId:0x0bda,productId:0x2832},{vendorId:0x0bda,productId:0x2838},
+  {vendorId:0x15f4,productId:0x0131},                          // Astrometa DVB-T2
+  {vendorId:0x1d50,productId:0x6089},{vendorId:0x1d50,productId:0x604b},{vendorId:0x1d50,productId:0xcc15}, // HackRF One, Jawbreaker, rad1o
+  {vendorId:0x1d50,productId:0x60a1}                           // Airspy R2/Mini
+];
+function sdrOpenDevice(dev, ppm, gain){
+  if(dev.vendorId===0x1d50) return dev.productId===0x60a1 ? airspyOpenDevice(dev, gain) : hackrfOpenDevice(dev, gain);
+  return rtlOpenDevice(dev, ppm, gain);
 }
 
 // ---- чтение USB в отдельном воркере ----
@@ -1022,11 +1214,17 @@ ${rtlMakeR820T}
 rtlMakeR820T.checkAt=${rtlMakeR820T.checkAt};
 rtlMakeR820T.detect=${rtlMakeR820T.detect};
 ${rtlOpenDevice}
+${sdrVendorIn}
+${sdrVendorOut}
+${hackrfOpenDevice}
+${airspyMakeConv}
+${airspyOpenDevice}
+${sdrOpenDevice}
 let usb=null, api=null, rate=1024000, streaming=false;
 async function stream(readsPerSec, depth){
   const q=[];
   const chunk=()=>Math.max(512, Math.min(131072, 512*Math.ceil(rate/readsPerSec/512)));
-  const fill=()=>{ while(streaming && api && q.length<depth){ const e=api.epoch(); q.push(api.readSamples(chunk()*2).then(b=>({b,e}), err=>({err}))); } };
+  const fill=()=>{ while(streaming && api && q.length<depth){ const e=api.epoch(); q.push(api.readSamples(chunk()*api.bps).then(b=>({b,e}), err=>({err}))); } };
   fill();
   while(streaming && q.length){
     const p=q.shift(); fill();
@@ -1053,9 +1251,9 @@ self.onmessage=async e=>{
       const devs=await navigator.usb.getDevices();
       usb=devs.find(d=>d.vendorId===args.vendorId && d.productId===args.productId && (!args.serial || d.serialNumber===args.serial));
       if(!usb) throw new Error('device is not visible from the worker');
-      try{ api=await rtlOpenDevice(usb, 0, args.gain); }
+      try{ api=await sdrOpenDevice(usb, 0, args.gain); }
       catch(err){ try{ await usb.close(); }catch(e2){} usb=null; throw err; }
-      r={tunerName:api.tunerName};
+      r={tunerName:api.tunerName, fmt:api.fmt, bps:api.bps};
     }
     else if(cmd==='setSampleRate'){ rate=await api.setSampleRate(args.rate); r=rate; }
     else if(cmd==='setCenterFrequency'){ const f=await api.setCenterFrequency(args.freq); r={f, epoch:api.epoch()}; }
@@ -1090,7 +1288,7 @@ async function rtlOpenInWorker(usbDev, gain){
     info=await call('open', {vendorId:usbDev.vendorId, productId:usbDev.productId, serial:usbDev.serialNumber, gain});
   }catch(e){ drop(); throw e; }
   return {
-    worker:true, tunerName:info.tunerName,
+    worker:true, tunerName:info.tunerName, fmt:info.fmt, bps:info.bps,
     setSampleRate:rate=>call('setSampleRate',{rate}),
     setCenterFrequency:async freq=>{ const r=await call('setCenterFrequency',{freq}); epoch=r.epoch; return r.f; },
     epoch:()=>epoch,
@@ -1365,7 +1563,7 @@ self.onmessage=function(e){
   if(msg.type==='giveBuffer'){ bufPool.push(msg.buffer); return; }
   if(msg.type!=='demod' || !plan) return;
   const tStart=performance.now();
-  const u8=new Uint8Array(msg.buffer), cnt=msg.cnt;
+  const u8=new Uint8Array(msg.buffer), cnt=msg.cnt, s16=msg.fmt==='s16' ? new Int16Array(msg.buffer, 0, 2*cnt) : null;
   const maxOut=Math.floor(cnt/plan.decim)+3;
   let outAB=null;
   while(bufPool.length){ const b=bufPool.pop(); if(b.byteLength===maxOut*8){ outAB=b; break; } }
@@ -1381,7 +1579,7 @@ self.onmessage=function(e){
   let posR=R?R.pos:0, cntR=R?R.cnt:0, vS=0;
   let wIdx=0;
   for(let k=0;k<cnt;k++){
-    const rawI=(u8[2*k]-127.5)/127.5, rawQ=(u8[2*k+1]-127.5)/127.5;
+    const rawI=s16 ? s16[2*k]/32768 : (u8[2*k]-127.5)/127.5, rawQ=s16 ? s16[2*k+1]/32768 : (u8[2*k+1]-127.5)/127.5;
     rawI0=rawI0*rawA+rawI*rawA1; rawQ0=rawQ0*rawA+rawQ*rawA1;
     let i=rawI-rawI0, q=rawQ-rawQ0;
     if(!offZero){
@@ -1519,11 +1717,11 @@ function rtlMakeDemodWorker(){
     reset(){ worker.postMessage({type:'reset'}); },
     setOffset(hz){ worker.postMessage({type:'offset', hz}); }, // дешёвая перестройка частоты настройки — без сброса фильтров/фазы
     rdsReset(){ worker.postMessage({type:'rdsReset'}); },
-    demod(u8buffer, cnt){                 // buffer передаётся с переносом владения (zero-copy)
+    demod(u8buffer, cnt, fmt){            // buffer передаётся с переносом владения (zero-copy)
       return new Promise((resolve)=>{
         const id=nextId++;
         pending.set(id, resolve);
-        worker.postMessage({type:'demod', id, buffer:u8buffer, cnt}, [u8buffer]);
+        worker.postMessage({type:'demod', id, buffer:u8buffer, cnt, fmt}, [u8buffer]);
       });
     },
     giveBuffer(buffer){ worker.postMessage({type:'giveBuffer', buffer}, [buffer]); }, // вернуть буфер воркеру для переиспользования
@@ -1628,7 +1826,8 @@ async function rtlReadLoop(n){
       // ioMs — интервал между приходами чанков, в среднем = реальное время чанка
       const ioMs=prevReadEnd!=null ? t1-prevReadEnd : chunkPeriodMs;
       prevReadEnd=t1;
-      const u8=new Uint8Array(buf), cnt=u8.length>>1, mode=n.p.demod, specRing=n.specRing;
+      const u8=new Uint8Array(buf), fmt=n.dev.fmt, s16=fmt==='s16' ? new Int16Array(buf) : null;
+      const cnt=s16 ? s16.length>>1 : u8.length>>1, mode=n.p.demod, specRing=n.specRing;
       // Циклический индекс — сравнение+обнуление, а не % на каждый отсчёт: при типичных chunkSamples
       // (десятки тысяч на USB-чтение, READS_PER_SEC раз в секунду) деление в modulo было заметной
       // главно-поточной нагрузкой ровно там, где конкурирует с чтением USB/сообщениями демод-воркеру.
@@ -1637,7 +1836,7 @@ async function rtlReadLoop(n){
       if(res.epoch==null || res.epoch>=(n._specEpoch||0))
       { let w=specRing.w, filled=specRing.filled; const I=specRing.I, Q=specRing.Q, size=specRing.size;
         for(let k=0;k<cnt;k++){
-          I[w]=(u8[2*k]-127.5)/127.5; Q[w]=(u8[2*k+1]-127.5)/127.5;
+          if(s16){ I[w]=s16[2*k]/32768; Q[w]=s16[2*k+1]/32768; } else { I[w]=(u8[2*k]-127.5)/127.5; Q[w]=(u8[2*k+1]-127.5)/127.5; }
           w++; if(w>=size) w=0;
           if(filled<size) filled++;
         }
@@ -1646,7 +1845,7 @@ async function rtlReadLoop(n){
         const ring=n.ring;
         { let w=ring.w, filled=ring.filled; const I=ring.I, Q=ring.Q, size=ring.size;
           for(let k=0;k<cnt;k++){
-            I[w]=(u8[2*k]-127.5)/127.5; Q[w]=(u8[2*k+1]-127.5)/127.5;
+            if(s16){ I[w]=s16[2*k]/32768; Q[w]=s16[2*k+1]/32768; } else { I[w]=(u8[2*k]-127.5)/127.5; Q[w]=(u8[2*k+1]-127.5)/127.5; }
             w++; if(w>=size) w=0;
             if(filled<size) filled++;
           }
@@ -1683,7 +1882,7 @@ async function rtlReadLoop(n){
       // это убирает лишнюю ~100КБ-аллокацию на каждый чанк, то есть на каждые ~50мс, целиком).
       const lastIdx=active.length-1;
       const demodPromise=Promise.all(active.map((ch,i)=>
-        ch.worker.demod(i===lastIdx ? buf : u8.slice().buffer, cnt)));
+        ch.worker.demod(i===lastIdx ? buf : u8.slice().buffer, cnt, fmt)));
       let tDemodDone=0;
       demodPromise.then(()=>{ tDemodDone=performance.now(); }, ()=>{});
       inFlight++;
@@ -1737,7 +1936,7 @@ function rtlLocalSource(n){
     while(n.reading && n.dev && queue.length<RTL_USB_QUEUE){
       const cs=Math.max(512, Math.min(131072, 512*Math.ceil(n.sourceRate/RTL_READS_PER_SEC/512)));
       const epoch=n.dev.epoch();
-      queue.push(n.dev.readSamples(cs*2).then(buf=>({buf, epoch}), err=>({err})));
+      queue.push(n.dev.readSamples(cs*n.dev.bps).then(buf=>({buf, epoch}), err=>({err})));
     }
   };
   fill();
@@ -2008,13 +2207,12 @@ async function rtlConnect(n){
   if(!navigator.usb){ n.status='WebUSB unavailable (needs Chrome/Edge/Opera)'; return; }
   if(n.connected) return;
   try{
-    const usbDev=await navigator.usb.requestDevice({filters:[{vendorId:0x0bda,productId:0x2832},{vendorId:0x0bda,productId:0x2838},
-      {vendorId:0x15f4,productId:0x0131}]});
+    const usbDev=await navigator.usb.requestDevice({filters:SDR_USB_FILTERS});
     const gain=n.p.auto?null:n.p.gainDb;
     // сначала пробуем открыть донгл в USB-воркере; без WebUSB в воркерах — по-старому, на главном потоке
     n.dev=await rtlOpenInWorker(usbDev, gain).catch(e=>{
       console.warn('[rtlsdr] USB-воркер не открыл донгл, читаем с главного потока:', e.message); return null; })
-      || await rtlOpenDevice(usbDev, 0, gain);
+      || await sdrOpenDevice(usbDev, 0, gain);
     const srSafe=rtlSafeSr(n.p.sr);
     if(srSafe!==+n.p.sr) n.status='sample rate in settings is stale, using '+srSafe+' Hz';
     n.sourceRate=await n.dev.setSampleRate(srSafe);
@@ -2086,7 +2284,7 @@ async function rtlApplyPending(n){
   n.busy=false;
 }
 
-def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
+def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
   ins:[{n:'freq',t:'num'},{n:'steerFreq',t:'num'},{n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'},
        {n:'gainDb',t:'num'},{n:'bw',t:'num'},{n:'demod',t:'val'}],
   outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},
@@ -2099,7 +2297,7 @@ def({ id:'rtlsdr', title:'RTL-SDR', cat:'Sources',
   params:[
     {n:'connect',t:'button',label:'Connect',fn:async n=>{ await rtlConnect(n); }},
     {n:'disconnect',t:'button',label:'Disconnect',fn:async n=>{ await rtlDisconnect(n); }},
-    {n:'sr',t:'select',opts:['960000','1024000','1920000','2048000','2400000','3200000'],d:'1024000',label:'sample rate',
+    {n:'sr',t:'select',opts:['960000','1024000','1920000','2048000','2400000','2500000','3000000','3200000','6000000','8000000','10000000'],d:'1024000',label:'sample rate',
      fn:async n=>{ if(n.dev){ try{ n.sourceRate=await n.dev.setSampleRate(rtlSafeSr(n.p.sr)); rtlResetRing(n); }
        catch(e){ n.status='sample rate change error: '+e.message; } } }},
     // режим демодуляции/полоса/де-эмфазис — ОБЩИЕ на все 4 канала (проще UI); частота у каждого своя

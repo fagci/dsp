@@ -18,7 +18,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 ### Sources
 - Oscillator, sweep/jammer, constant, LFO, text source
 - Microphone (stereo A+B), audio file, audio stream URL, tab/screen audio capture
-- **RTL-SDR** directly via WebUSB (multiple tuners/demodulators per device)
+- **RTL-SDR, HackRF, Airspy R2/Mini** directly via WebUSB (multiple tuners/demodulators per device); on Linux unload the kernel driver first (`dvb_usb_rtl28xxu`, `hackrf`, `airspy`)
 - **KiwiSDR** remote receivers (public list included)
 - Camera, video, image, accelerometer and Generic Sensor API
 - Serial port (WebSerial), CSV files, lists
