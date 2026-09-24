@@ -733,13 +733,14 @@ function rtlMakeCom(dev){
   };
 }
 
-// тюнер R820T/R828D: регистры, PLL, gain. i2cAddr: 0x34 у R820T, 0x74 у R828D (Blog V4)
-function rtlMakeR820T(com, xtalFreq, i2cAddr){
+// тюнер R820T/R828D: регистры, PLL, gain. i2cAddr: 0x34 у R820T, 0x74 у R828D.
+// isV4 — RTL-SDR Blog V4 (триплексер, апконвертер КВ); прочие R828D (Astrometa) — вход air/cable1
+function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
   i2cAddr = i2cAddr || 0x34;
   const REGISTERS=[0x83,0x32,0x75,0xc0,0x40,0xd6,0x6c,0xf5,0x63,0x75,0x68,0x6c,0x83,0x80,0x00,0x0f,0x00,0xc0,0x30,0x48,0xcc,0x60,0x00,0x54,0xae,0x4a,0xc0];
   const MUX_CFGS=[[0,0x08,0x02,0xdf],[50,0x08,0x02,0xbe],[55,0x08,0x02,0x8b],[60,0x08,0x02,0x7b],[65,0x08,0x02,0x69],[70,0x08,0x02,0x58],[75,0x00,0x02,0x44],[90,0x00,0x02,0x34],[110,0x00,0x02,0x24],[140,0x00,0x02,0x14],[180,0x00,0x02,0x13],[250,0x00,0x02,0x11],[280,0x00,0x02,0x00],[310,0x00,0x41,0x00],[588,0x00,0x40,0x00]];
   const BIT_REVS=[0x0,0x8,0x4,0xc,0x2,0xa,0x6,0xe,0x1,0x9,0x5,0xd,0x3,0xb,0x7,0xf];
-  let hasPllLock=false, shadow, curBand=null;
+  let hasPllLock=false, shadow, curBand=null, curInput=null;
   const isR828D = i2cAddr===0x74;
 
   async function readRegBuffer(addr,length){
@@ -843,7 +844,7 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr){
     // триплексера (setV4Input ниже) всё равно выбираем по ИСХОДНОЙ, не сдвинутой частоте —
     // так его определяет сам чип. Сдвиг считаем от xtalFreq (с учётом ppm), не от круглой
     // константы — так делает и официальный драйвер (dev->tun_xtal).
-    const upconvert=(isR828D && rf<=28.8e6) ? xtalFreq : 0;
+    const upconvert=(isV4 && rf<=28.8e6) ? xtalFreq : 0;
     const loFreq=freq+upconvert;
     await setMux(loFreq);
     let r=await setPll(loFreq);
@@ -855,7 +856,8 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr){
       await new Promise(res=>setTimeout(res,15));
       r=await setPll(loFreq);
     }
-    if(isR828D) await setV4Input(rf);
+    if(isV4) await setV4Input(rf);
+    else if(isR828D) await setR828DInput(rf);
     // КВ через апконвертер: трекинг-фильтр в обход (меньше потерь), setMux его возвращает при каждой перестройке
     if(upconvert){ await writeRegMask(0x1a, 0x40, 0xc3); await writeRegMask(0x1b, 0x00, 0xff); }
     return r!=null ? r-upconvert : r; // вычитаем сдвиг обратно — вызывающий код не должен знать про апконвертер
@@ -872,6 +874,13 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr){
     await setGpio(5, band!==1);                          // ключ апконвертера на V4 новых партий: 0 — КВ
     await writeRegMask(0x05, band===2?0x40:0x00, 0x40); // cable1 — вход VHF
     await writeRegMask(0x05, band===3?0x00:0x20, 0x20); // air — вход UHF
+  }
+  // R828D без триплексера (Astrometa): выше 345МГц вход air, ниже cable1 — как в librtlsdr
+  async function setR828DInput(freq){
+    const v=freq>345e6 ? 0x00 : 0x60;
+    if(v===curInput) return;
+    curInput=v;
+    await writeRegMask(0x05, v, 0x60);
   }
   async function setAutoGain(){ await writeEach([[0x05,0x00,0x10],[0x07,0x10,0x10],[0x0c,0x0b,0x9f]]); }
   async function setManualGain(gain){
@@ -941,7 +950,10 @@ async function rtlOpenDevice(dev, ppm, gain){
   await com.i2c.open();
   const found=await rtlMakeR820T.detect(com);
   if(!found){ await com.i2c.close(); throw new Error('tuner is not R820T/R828D — unsupported'); }
-  const tuner=rtlMakeR820T(com, xtalFreq, found.addr);
+  // V4 определяем по USB-строкам, как librtlsdr. У остальных R828D свой кварц тюнера 16МГц
+  const isV4=found.addr===0x74 && dev.manufacturerName==='RTLSDRBlog' && dev.productName==='Blog V4';
+  const tunXtal=(found.addr===0x74 && !isV4) ? Math.floor(16e6*(1+ppm/1e6)) : xtalFreq;
+  const tuner=rtlMakeR820T(com, tunXtal, found.addr, isV4);
   const mult=-1*Math.floor(IF*(1<<22)/xtalFreq);
   await com.writeEach([
     [RTL_CMD.DEMODREG,1,0xb1,0x1a,1],[RTL_CMD.DEMODREG,0,0x08,0x4d,1],
@@ -993,7 +1005,7 @@ async function rtlOpenDevice(dev, ppm, gain){
     await com.iface.release();
     await dev.close();
   }
-  return {setSampleRate, setCenterFrequency, setGain, resetBuffer, readSamples, close, tunerName:found.name, epoch:()=>tuneEpoch};
+  return {setSampleRate, setCenterFrequency, setGain, resetBuffer, readSamples, close, tunerName:found.name+(isV4?' (Blog V4)':''), epoch:()=>tuneEpoch};
 }
 
 // ---- чтение USB в отдельном воркере ----
@@ -1996,7 +2008,8 @@ async function rtlConnect(n){
   if(!navigator.usb){ n.status='WebUSB unavailable (needs Chrome/Edge/Opera)'; return; }
   if(n.connected) return;
   try{
-    const usbDev=await navigator.usb.requestDevice({filters:[{vendorId:0x0bda,productId:0x2832},{vendorId:0x0bda,productId:0x2838}]});
+    const usbDev=await navigator.usb.requestDevice({filters:[{vendorId:0x0bda,productId:0x2832},{vendorId:0x0bda,productId:0x2838},
+      {vendorId:0x15f4,productId:0x0131}]});
     const gain=n.p.auto?null:n.p.gainDb;
     // сначала пробуем открыть донгл в USB-воркере; без WebUSB в воркерах — по-старому, на главном потоке
     n.dev=await rtlOpenInWorker(usbDev, gain).catch(e=>{
