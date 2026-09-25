@@ -1112,6 +1112,40 @@ function saWfGlRender(glp,W,H,lo,hi,lin){
   return glp.canvas;
 }
 
+// Фосфорный спектр для 'sa': накопитель W×plotH, на каждый свежий кадр — затухание и +1 в
+// пикселях трассы (столбец закрашивается от y[x-1] до y[x], чтобы вертикальные фронты не рвались).
+// Нормировка на установившийся уровень 1/(1-decay): яркость = доля кадров, попавших в пиксель.
+// Смена оси/размера/шкалы — сброс, старые попадания уже не в тех координатах.
+function saPhosphor(n,cx,W,H,ty,fresh,diff){
+  const [lo,hi]=saBounds(n);
+  const key=W+'|'+H+'|'+lo+'|'+hi+'|'+n.p.log+'|'+n.p.floor+'|'+n.p.top+'|'+diff;
+  let ph=n.ph;
+  if(!ph || ph.key!==key){
+    const off=document.createElement('canvas'); off.width=W; off.height=H;
+    ph=n.ph={key, acc:new Float32Array(W*H), off, ocx:off.getContext('2d'), img:new ImageData(W,H)};
+  }
+  const a=ph.acc, d=n.p.phDecay;
+  if(fresh){
+    for(let i=0;i<a.length;i++) a[i]*=d;
+    let py=-1;
+    for(let x=0;x<W;x++){
+      if(!n._inX[x]){ py=-1; continue; }
+      const y=clamp(Math.round(ty[x]),0,H-1);
+      let y0=y, y1=y;
+      if(py>=0){ if(py<y) y0=py+1; else if(py>y) y1=py-1; }
+      for(let yy=y0;yy<=y1;yy++) a[yy*W+x]+=1;
+      py=y; }
+  }
+  const pal=paletteLut(n.p.palette), px=ph.img.data, k=(1-d)*n.p.phGain;
+  for(let i=0;i<a.length;i++){
+    const v=a[i]*k, j=i*4;
+    if(v<.002){ px[j+3]=0; continue; }
+    const c=heatIdx(v)*3;
+    px[j]=pal[c]; px[j+1]=pal[c+1]; px[j+2]=pal[c+2]; px[j+3]=Math.min(255,(v*4*255)|0); }
+  ph.ocx.putImageData(ph.img,0,0);
+  cx.drawImage(ph.off,0,0,W,H);
+}
+
 // Окно просмотра внутри реально захваченной полосы — это просто прокрутка/зум вида, приёмник не
 // трогаем (звук не рвётся, картинка сдвигается сразу). Вышло за край — перестраиваем приёмник
 // на центр окна (как в SDR++): дальше окно опять внутри полосы.
@@ -1144,6 +1178,10 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           // выключить — тот же жест, что и "очистить": незачем отдельная кнопка (см. fn у 'check' в core-graph.js)
           {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold) n.peak=null; }},
           {n:'palette',t:'select',opts:['default',...Object.keys(PALETTES)],d:'classic',label:'waterfall palette',adv:true},
+          // фосфорный спектр: плотность попаданий трассы в зоне спектра (как у 'persist')
+          {n:'phosphor',t:'check',d:false,label:'phosphor',fn:n=>{ n.ph=null; }},
+          {n:'phDecay',t:'range',min:.8,max:.999,step:.001,d:.95,label:'phosphor decay',adv:true},
+          {n:'phGain',t:'range',min:.5,max:20,step:.1,d:3,label:'phosphor brightness',adv:true},
           {n:'tol',t:'range',min:5,max:50000,step:5,log:true,d:50,label:'level window, Hz',adv:true},
           {n:'band',t:'select',opts:['none','by inputs','1–2','3–4'],d:'by inputs',label:'band',adv:true},
           {n:'ref',t:'select',opts:['none','show','diff'],d:'none',label:'reference',adv:true},
@@ -1653,14 +1691,18 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
                     : 20*Math.log10(mv+1e-12);
         const lo=diff? -40 : n.p.floor, hiv=diff? 40 : n.p.top;
         traceY[x]=n._inX[x] ? plotH-clamp((v-lo)/((hiv-lo)||1),0,1)*(plotH-2)-1 : plotH; }
-      // заливка под трассой — чуть плотнее (темнее), чем у полос band plan/приёма (там alpha .14)
+      if(n.p.phosphor) saPhosphor(n,cx,W,plotH,traceY,fresh,diff);
+      else {
+        // заливка под трассой — чуть плотнее (темнее), чем у полос band plan/приёма (там alpha .14)
+        cx.beginPath(); cx.moveTo(0,traceY[0]);
+        for(let x=1;x<W;x++) cx.lineTo(x,traceY[x]);
+        cx.lineTo(W-1,plotH); cx.lineTo(0,plotH); cx.closePath();
+        cx.fillStyle=n.colTS; cx.globalAlpha=.22; cx.fill(); cx.globalAlpha=1;
+      }
+      if(n.p.phosphor) cx.globalAlpha=.5;             // трасса поверх тепловой карты — приглушённо
       cx.beginPath(); cx.moveTo(0,traceY[0]);
       for(let x=1;x<W;x++) cx.lineTo(x,traceY[x]);
-      cx.lineTo(W-1,plotH); cx.lineTo(0,plotH); cx.closePath();
-      cx.fillStyle=n.colTS; cx.globalAlpha=.22; cx.fill(); cx.globalAlpha=1;
-      cx.beginPath(); cx.moveTo(0,traceY[0]);
-      for(let x=1;x<W;x++) cx.lineTo(x,traceY[x]);
-      cx.stroke();
+      cx.stroke(); cx.globalAlpha=1;
       if(diff){ cx.strokeStyle=themeColor('--scr-hi')+'22'; cx.beginPath();
         cx.moveTo(0,plotH/2); cx.lineTo(W,plotH/2); cx.stroke(); }
       // peak hold — тонкая линия максимума поверх обычной трассы
