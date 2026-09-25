@@ -18,7 +18,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 ### Sources
 - Oscillator, sweep/jammer, constant, LFO, text source
 - Microphone (stereo A+B), audio file, audio stream URL, tab/screen audio capture
-- **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500 — multiple tuners/demodulators per device (see [USB SDR](#usb-sdr))
+- **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500 — multiple tuners/demodulators per device, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
 - **KiwiSDR** remote receivers (public list included)
 - Camera, video, image, accelerometer and Generic Sensor API
 - Serial port (WebSerial), CSV files, lists
@@ -78,6 +78,15 @@ Common controls: gain (auto or manual), bias-tee, ppm correction, center shift o
 - **SDRplay / MSi2500** has no hardware AGC: *auto* sets a fixed 62 dB, the manual slider covers 0–102 dB of LNA + mixer + baseband gain. The driver is a port of [libmirisdr-4](https://github.com/f4exb/libmirisdr-4). RSP1A / RSP2 IDs are recognized but untested; RSPduo, RSPdx and newer models need the closed SDRplay API and are not supported.
 
 On Linux unload the kernel driver before connecting, e.g. `sudo rmmod msi001 msi2500`, or blacklist it in `/etc/modprobe.d/`. The device also needs user access through a udev rule (as for `rtl-sdr` / `hackrf` / `airspy` packages).
+
+### IQ recording and playback
+
+- **● Record IQ** writes the raw stream to disk as it arrives (File System Access API, so long recordings don't sit in memory; other browsers keep up to 1 GB in memory and download it at the end)
+  - **WAV** — 2-channel PCM, 8-bit unsigned for RTL-SDR / HackRF, 16-bit for Airspy / SDRplay; center frequency in the `auxi` chunk and in the file name (`baseband_<Hz>Hz_…`), the same layout SDR#, SDR++ and HDSDR use; limited to 4 GB
+  - **SigMF** — `.sigmf` archive (`.sigmf-data` + `.sigmf-meta`), retuning while recording adds a new `captures` segment
+- **Open IQ file…** plays a recording through the same chain (spectrum, 4 channels, demodulators) in real time, with loop and position controls
+  - WAV (8/16-bit PCM, 32-bit float), SigMF archive or `.sigmf-meta` + `.sigmf-data` pair (`cu8`, `ci8`, `ci16_le`, `cf32_le`)
+  - raw `.cu8` / `.cs8` / `.cs16` / `.cf32` (e.g. `rtl_sdr` output): frequency and rate are taken from the file name (`…_433920000Hz_2.4Msps.cf32`), otherwise from the node settings
 
 ## Themes
 
