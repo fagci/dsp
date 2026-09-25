@@ -18,7 +18,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 ### Sources
 - Oscillator, sweep/jammer, constant, LFO, text source
 - Microphone (stereo A+B), audio file, audio stream URL, tab/screen audio capture
-- **RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500 (MSi001)** directly via WebUSB (multiple tuners/demodulators per device); on Linux unload the kernel driver first (`dvb_usb_rtl28xxu`, `hackrf`, `airspy`, `msi2500`)
+- **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500 — multiple tuners/demodulators per device (see [USB SDR](#usb-sdr))
 - **KiwiSDR** remote receivers (public list included)
 - Camera, video, image, accelerometer and Generic Sensor API
 - Serial port (WebSerial), CSV files, lists
@@ -60,6 +60,24 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Sound card output, WAV recording, CSV log, trigger recorder
 - Aircraft map, screen transmitter, indicators
 - Module Builder and Script nodes for writing custom DSP code in the browser
+
+## USB SDR
+
+The **USB SDR** node talks to the receiver directly over WebUSB (Chrome, Edge, Opera), no drivers or native software needed. Up to 4 demodulator channels share one device.
+
+| Device | Sample rate | Samples | Linux kernel modules to unload |
+|---|---|---|---|
+| RTL-SDR (RTL2832U + R820T/R828D, incl. Blog V4) | up to 3.2 MSPS | 8 bit | `dvb_usb_rtl28xxu` |
+| HackRF One / Jawbreaker / rad1o | 2–20 MSPS | 8 bit | `hackrf` |
+| Airspy R2 / Mini | rates reported by firmware | 12 bit | `airspy` |
+| SDRplay RSP1 and clones, MSi2500 + MSi001 TV sticks | 1.3–15 MSPS | 14 bit up to 6 MSPS, then 12 / 10 / 8 bit | `msi001`, `msi2500` |
+
+Common controls: gain (auto or manual), bias-tee, ppm correction, center shift off DC.
+
+- **HackRF** has separate LNA / VGA / amp controls instead of the gain slider.
+- **SDRplay / MSi2500** has no hardware AGC: *auto* sets a fixed 62 dB, the manual slider covers 0–102 dB of LNA + mixer + baseband gain. The driver is a port of [libmirisdr-4](https://github.com/f4exb/libmirisdr-4). RSP1A / RSP2 IDs are recognized but untested; RSPduo, RSPdx and newer models need the closed SDRplay API and are not supported.
+
+On Linux unload the kernel driver before connecting, e.g. `sudo rmmod msi001 msi2500`, or blacklist it in `/etc/modprobe.d/`. The device also needs user access through a udev rule (as for `rtl-sdr` / `hackrf` / `airspy` packages).
 
 ## Themes
 
