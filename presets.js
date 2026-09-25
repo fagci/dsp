@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=26;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=27;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -114,6 +114,7 @@ const PRESET_CATS={
   'Morse from Camera':'Quick Scenarios',
   'Quick Sound Level Meter':'Quick Scenarios',
   'Quick Signal Chain Check':'Quick Scenarios',
+  'USB SDR: Wideband Sweep':'Quick Scenarios',
 
   'Piano Roll: Length and Velocity':'Sequencers & Arrangement',
   'Piano Roll: 4-Voice Chords':'Sequencers & Arrangement',
@@ -309,6 +310,23 @@ sc.size.w=560; sc.size.h=200; applySize(sc);
 addEdge(sw.id,'out',dc.id,'L');
 addEdge(m.id,'a',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
 addEdge(m.id,'a',sc.id,'in1');
+markWiresDirty();
+});
+preset('USB SDR: Wideband Sweep', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Connect the SDR — it steps across the range, the spectrum shows the whole band,\n'+
+  'the waterfall gets one line per full pass.\n'+
+  'Tap the spectrum — marker 1 pauses the sweep and tunes to that frequency; remove the marker to resume.\n'+
+  'Use manual gain: with AGC every step has its own level and the waterfall gets striped.'});
+nt.size.w=460; nt.size.h=170; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'WFM',
+  sweep:true,swLo:88,swHi:108,swFft:'1024',swAvg:8});
+const sa=addNode('sa',540,40,{auto:true,floor:-90,top:-20,split:.3});
+sa.size.w=720; sa.size.h=460; applySize(sa);
+const dc=addNode('dac',540,560,{vol:.4});
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(sa.id,'f1',rx.id,'tuneFreq');
+addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
 markWiresDirty();
 });
 /* ---- готовые патчи ---- */

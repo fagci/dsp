@@ -1416,10 +1416,10 @@ ${mirisdrMakeConv}
 ${mirisdrOpenDevice}
 const MIRI_USB_IDS=${JSON.stringify(MIRI_USB_IDS)};
 ${sdrOpenDevice}
-let usb=null, api=null, rate=1024000, streaming=false;
+let usb=null, api=null, rate=1024000, streaming=false, rps=40;
 async function stream(readsPerSec, depth){
-  const q=[];
-  const chunk=()=>Math.max(512, Math.min(131072, 512*Math.ceil(rate/readsPerSec/512)));
+  const q=[]; rps=readsPerSec;
+  const chunk=()=>Math.max(512, Math.min(131072, 512*Math.ceil(rate/rps/512)));
   const fill=()=>{ while(streaming && api && q.length<depth){ const e=api.epoch(); q.push(api.readSamples(chunk()*api.bps).then(b=>({b,e}), err=>({err}))); } };
   fill();
   while(streaming && q.length){
@@ -1457,6 +1457,7 @@ self.onmessage=async e=>{
     else if(cmd==='dev') r=await api[args.m](...args.a);
     else if(cmd==='resetBuffer') await api.resetBuffer();
     else if(cmd==='start'){ if(!streaming){ streaming=true; stream(args.readsPerSec, args.depth); } }
+    else if(cmd==='readRate') rps=args.readsPerSec;
     else if(cmd==='stop') streaming=false;
     else if(cmd==='close'){ streaming=false; if(api){ const a=api; api=null; await a.close(); } }
     self.postMessage({id, ok:true, r});
@@ -1495,6 +1496,7 @@ async function rtlOpenInWorker(usbDev, gain){
     resetBuffer:()=>call('resetBuffer'),
     // cb получает {buf} | {err} | {end}
     startStream(readsPerSec, depth, cb){ onChunk=cb; return call('start',{readsPerSec, depth}); },
+    setReadRate:readsPerSec=>call('readRate',{readsPerSec}),
     stopStream:()=>call('stop'),
     async close(){
       try{ await call('close'); }
@@ -2367,8 +2369,14 @@ async function rtlReadLoop(n){
       // ioMs — интервал между приходами чанков, в среднем = реальное время чанка
       const ioMs=prevReadEnd!=null ? t1-prevReadEnd : chunkPeriodMs;
       prevReadEnd=t1;
-      if(n.rec) iqRecWrite(n, buf, res.epoch);
+      if(n.rec && !n.swActive) iqRecWrite(n, buf, res.epoch);
       const u8=new Uint8Array(buf), fmt=n.dev.fmt, s16=fmt==='s16' ? new Int16Array(buf) : null;
+      if(n.swActive){
+        const cap=n.swCap;
+        if(cap && res.epoch===cap.epoch) sdrSweepFeed(n, cap, u8, s16);
+        rtlTrackMsps(n, s16 ? s16.length>>1 : u8.length>>1, ioMs, 0);
+        continue;
+      }
       const cnt=s16 ? s16.length>>1 : u8.length>>1, mode=n.p.demod, specRing=n.specRing;
       // Циклический индекс — сравнение+обнуление, а не % на каждый отсчёт: при типичных chunkSamples
       // (десятки тысяч на USB-чтение, READS_PER_SEC раз в секунду) деление в modulo было заметной
@@ -2477,7 +2485,7 @@ function rtlLocalSource(n){
   const queue=[], dev=n.dev;
   const fill=()=>{
     while(n.reading && n.dev===dev && queue.length<RTL_USB_QUEUE){
-      const cs=Math.max(512, Math.min(131072, 512*Math.ceil(n.sourceRate/RTL_READS_PER_SEC/512)));
+      const cs=Math.max(512, Math.min(131072, 512*Math.ceil(n.sourceRate/(n.usbRps||RTL_READS_PER_SEC)/512)));
       const epoch=dev.epoch();
       queue.push(dev.readSamples(cs*dev.bps).then(buf=>({buf, epoch}), err=>({err})));
     }
@@ -2791,7 +2799,7 @@ async function rtlConnect(n, choose){
 
 // общий запуск для открытого n.dev (USB или файл)
 async function rtlStart(n, sr){
-  n.p.devKind=n.dev.kind;
+  n.p.devKind=n.dev.kind; n.usbRps=null;
   n.sourceRate=await n.dev.setSampleRate(sr);
   await sdrTune(n);
   // у HackRF свои ступени — применит rtlApplyPending; bias-tee после открытия выключен, GPIO не трогаем
@@ -2871,7 +2879,8 @@ async function rtlApplyPending(n){
     if(+n.p.seek!==n.appliedSeek){ n.appliedSeek=+n.p.seek; n.dev.seek(n.appliedSeek/100); n.specRing.filled=0; }
   }
   const off=sdrDcOff(n);
-  const freqStale = Math.round(n.p.freq)!==n.appliedFreq || (+n.p.ppm||0)!==n.appliedPpm || off!==n.dcOff;
+  // во время прохода тюнером владеет sdrSweepLoop
+  const freqStale = !n.swActive && (Math.round(n.p.freq)!==n.appliedFreq || (+n.p.ppm||0)!==n.appliedPpm || off!==n.dcOff);
   const gainKey=sdrGainKey(n), gainStale=gainKey!==n.appliedGainKey;
   const biasStale=!!n.p.bias!==n.appliedBias;
   if(!freqStale && !gainStale && !biasStale) return;
@@ -2890,6 +2899,149 @@ async function rtlApplyPending(n){
     if(biasStale){ await n.dev.setBiasTee(!!n.p.bias); n.appliedBias=!!n.p.bias; }
   }catch(e){ n.status='retune error: '+e.message; }
   n.busy=false;
+}
+
+// ---- широкополосное сканирование: перестройка шагами, склейка спектров в одну панораму ----
+// Шаг — центральная часть полосы (края завалены антиалиасинговым фильтром). Сетка бинов общая
+// для всех шагов: freqs[j]=lo+j*binHz, шаг k покрывает j∈[k·use, (k+1)·use).
+// Строка водопада 'sa' — по смене rev, т.е. одна на полный проход.
+const SDR_SWEEP_RPS=400;         // мелкие трансферы: старые (до перестройки) быстрее вычерпываются
+const SDR_SWEEP_MAX_BINS=4e6;
+const sdrSleep=ms=>new Promise(r=>setTimeout(r,ms));
+function sdrSetReadRate(n, rps){
+  n.usbRps=rps;
+  n.dev?.setReadRate?.(rps)?.catch?.(()=>{});
+}
+// частота первого канала с маркером — слушаем её, проход на паузе
+function sdrListenFreq(n){
+  for(const ch of n.ch) if(ch.active && ch.tuneFreq!=null) return ch.tuneFreq;
+  return null;
+}
+function sdrSweepPlan(n){
+  const N=+n.p.swFft||1024, sr=n.sourceRate, binHz=sr/N;
+  const use=Math.max(2, Math.round(N*clamp(+n.p.swUse||.8,.3,1)/2)*2);
+  const a=(+n.p.swLo||0)*1e6, b=(+n.p.swHi||0)*1e6, lo=Math.min(a,b), hi=Math.max(a,b);
+  const hops=Math.max(1, Math.ceil((hi-lo)/(use*binHz)));
+  const key=[N,sr,use,lo,hi].join('|');
+  if(n.sw && n.sw.key===key) return n.sw;
+  const total=hops*use;
+  if(total>SDR_SWEEP_MAX_BINS) throw new Error(`too many bins (${(total/1e6).toFixed(1)}M): narrow the range or reduce sweep FFT size`);
+  const mag=new Float32Array(total), freqs=new Float64Array(total);
+  for(let j=0;j<total;j++) freqs[j]=lo+j*binHz;
+  n.sw={key, N, use, binHz, lo, hops, k:0, win:window_('hann',N),
+        re:new Float32Array(N), im:new Float32Array(N), pw:new Float64Array(N),
+        spec:{mag, freqs, sr, size:total, rev:1}, tLine:performance.now(), lineMs:null};
+  return n.sw;
+}
+async function sdrSweepTune(n, f){
+  while(n.busy) await sdrSleep(2);
+  n.busy=true;
+  try{
+    const k=1+(+n.p.ppm||0)*1e-6;
+    await n.dev.setCenterFrequency(Math.round(f/k));
+    return n.dev.epoch();
+  }finally{ n.busy=false; }
+}
+// отсчёты эпохи epoch: сначала skip на установку PLL, потом need в буфер
+function sdrSweepCapture(n, epoch, skip, need){
+  return new Promise(done=>{
+    const cap={epoch, skip, need, I:n.sw.capI, Q:n.sw.capQ, w:0, done};
+    cap.timer=setTimeout(()=>{ if(n.swCap===cap){ n.swCap=null; done(null); } }, 1500);
+    n.swCap=cap;
+  });
+}
+function sdrSweepFeed(n, cap, u8, s16){
+  const cnt=s16 ? s16.length>>1 : u8.length>>1;
+  let k=Math.min(cap.skip, cnt); cap.skip-=k;
+  const I=cap.I, Q=cap.Q; let w=cap.w;
+  if(s16) for(;k<cnt && w<cap.need;k++,w++){ I[w]=s16[2*k]/32768; Q[w]=s16[2*k+1]/32768; }
+  else    for(;k<cnt && w<cap.need;k++,w++){ I[w]=(u8[2*k]-127.5)/127.5; Q[w]=(u8[2*k+1]-127.5)/127.5; }
+  cap.w=w;
+  if(w>=cap.need){ clearTimeout(cap.timer); n.swCap=null; cap.done(cap); }
+}
+// M кадров БПФ шага k → средняя (или максимальная) мощность → центральные use бинов в панораму
+function sdrSweepPlace(n, sw, cap, k){
+  const N=sw.N, half=N>>1, M=Math.floor(cap.need/N), re=sw.re, im=sw.im, pw=sw.pw, win=sw.win;
+  const peak=n.p.swMode==='max';
+  pw.fill(0);
+  for(let m=0;m<M;m++){
+    const o=m*N; let mI=0, mQ=0;
+    for(let i=0;i<N;i++){ mI+=cap.I[o+i]; mQ+=cap.Q[o+i]; }
+    mI/=N; mQ/=N;                                  // DC гетеродина
+    for(let i=0;i<N;i++){ re[i]=(cap.I[o+i]-mI)*win[i]; im[i]=(cap.Q[o+i]-mQ)*win[i]; }
+    fft(re,im);
+    for(let i=0;i<N;i++){
+      const src=(i+half)%N, v=re[src]*re[src]+im[src]*im[src];
+      if(peak){ if(v>pw[i]) pw[i]=v; } else pw[i]+=v;
+    }
+  }
+  // остаток DC-выброса — интерполяция по соседям
+  if(N>=8){ const v=(pw[half-2]+pw[half+2])/2; pw[half-1]=pw[half]=pw[half+1]=v; }
+  const mag=sw.spec.mag, j0=k*sw.use, i0=half-sw.use/2, sc=peak?1:1/M;
+  for(let i=0;i<sw.use;i++) mag[j0+i]=Math.sqrt(pw[i0+i]*sc)/N;
+}
+// живой спектр (при прослушивании) — поверх своего участка панорамы; мощность интегрируется
+// по пересечению бинов, так что уровень шума не зависит от разницы размеров БПФ
+function sdrSweepOverlay(n, sw, sp){
+  const F=sp.freqs, L=F.length; if(L<4) return;
+  const lb=F[1]-F[0], b=sw.binHz, mag=sw.spec.mag, total=mag.length;
+  const e=Math.floor(L*.1), i0=e, i1=L-e;          // края полосы не берём
+  const a0=(F[i0]-lb/2-sw.lo)/b+.5, a1=(F[i1-1]+lb/2-sw.lo)/b+.5;
+  const j0=Math.max(0,Math.ceil(a0)), j1=Math.min(total,Math.floor(a1));
+  if(j1<=j0) return;
+  const acc=sw.ovAcc&&sw.ovAcc.length>=j1-j0 ? sw.ovAcc : (sw.ovAcc=new Float64Array(j1-j0));
+  acc.fill(0,0,j1-j0);
+  for(let i=i0;i<i1;i++){
+    const p=sp.mag[i]*sp.mag[i];
+    let x0=(F[i]-lb/2-sw.lo)/b+.5, x1=(F[i]+lb/2-sw.lo)/b+.5, w=lb/b;
+    for(let j=Math.max(j0,Math.floor(x0)); j<Math.min(j1,Math.ceil(x1)); j++){
+      const ov=Math.min(x1,j+1)-Math.max(x0,j);
+      if(ov>0) acc[j-j0]+=p*ov/w;
+    }
+  }
+  for(let j=j0;j<j1;j++) mag[j]=Math.sqrt(acc[j-j0]);
+}
+async function sdrSweepLoop(n){
+  if(n.swRunning) return;
+  n.swRunning=true;
+  const dev=n.dev;
+  const alive=()=>n.dev===dev && n.connected && n.p.sweep && sdrListenFreq(n)==null;
+  try{
+    let sw=sdrSweepPlan(n);
+    sdrSetReadRate(n, SDR_SWEEP_RPS);
+    n.swActive=true; n.swErr=null;
+    const center=(sw,k)=>sw.lo+(k*sw.use+sw.use/2)*sw.binHz;
+    let epoch=await sdrSweepTune(n, center(sw,sw.k));
+    while(alive()){
+      const need=sw.N*Math.max(1,Math.round(+n.p.swAvg||8));
+      if(!sw.capI || sw.capI.length<need){ sw.capI=new Float32Array(need); sw.capQ=new Float32Array(need); }
+      const skip=Math.round((+n.p.swSettle||0)/1000*n.sourceRate);
+      const cap=await sdrSweepCapture(n, epoch, skip, need);
+      if(!alive()) break;
+      const sw2=sdrSweepPlan(n);
+      if(sw2!==sw){ sw=sw2; epoch=await sdrSweepTune(n, center(sw,sw.k)); continue; }   // параметры сменились
+      if(!cap){ epoch=await sdrSweepTune(n, center(sw,sw.k)); continue; }             // таймаут — повтор шага
+      const kDone=sw.k;
+      sw.k=(sw.k+1)%sw.hops;
+      const tuneP=sdrSweepTune(n, center(sw,sw.k));  // перестройка идёт, пока считаем БПФ
+      sdrSweepPlace(n, sw, cap, kDone);
+      if(kDone===sw.hops-1){
+        const now=performance.now();
+        sw.lineMs=now-sw.tLine; sw.tLine=now; sw.spec.rev++;
+      }
+      epoch=await tuneP;
+    }
+  }catch(e){
+    n.swErr=e.message; n.sw=null;
+    n.p.sweep=false; n.set?.sweep?.(false);
+  }finally{
+    if(n.swCap){ clearTimeout(n.swCap.timer); n.swCap=null; }
+    n.swActive=false; n.swRunning=false;
+    if(n.dev===dev){
+      sdrSetReadRate(n, RTL_READS_PER_SEC);
+      n.appliedFreq=null;                          // rtlApplyPending вернёт тюнер на n.p.freq
+    }
+  }
 }
 
 def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
@@ -2941,7 +3093,16 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'usbId',t:'text',d:'',hidden:true},
     {n:'devKind',t:'text',d:'',hidden:true},
     {n:'specSize',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'4096',label:'spectrum FFT size'},
-    {n:'specWin',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann',label:'spectrum window'}
+    {n:'specWin',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann',label:'spectrum window'},
+    // широкополосное сканирование: 'spec' — панорама всего диапазона; маркер на tuneFreq — пауза и прослушивание
+    {n:'sweep',t:'check',d:false,label:'wideband sweep'},
+    {n:'swLo',t:'range',min:.1,max:6000,step:.1,d:88,log:true,label:'sweep from, MHz'},
+    {n:'swHi',t:'range',min:.1,max:6000,step:.1,d:108,log:true,label:'sweep to, MHz'},
+    {n:'swFft',t:'select',opts:['256','512','1024','2048','4096','8192'],d:'1024',label:'sweep FFT size'},
+    {n:'swAvg',t:'range',min:1,max:64,step:1,d:8,label:'sweep averages per step'},
+    {n:'swMode',t:'select',opts:['avg','max'],d:'avg',label:'sweep detector',adv:true},
+    {n:'swUse',t:'range',min:.3,max:1,step:.05,d:.8,label:'sweep usable band fraction',adv:true},
+    {n:'swSettle',t:'range',min:0,max:50,step:1,d:5,label:'sweep settle time, ms',adv:true}
   ],
   init:n=>{ n.p.freq=n.p.freq??100000000;              // новый узел — без частоты крутилка показывала NaN
             n.dev=null; n.connected=false; n.reading=false; n.sourceRate=1024000;
@@ -2986,6 +3147,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
         n._steerPending = (echo || now<(n._steerMuteUntil||0)) ? null : I.steerFreq;
       }
     } else if(typeof I.steerFreq!=='number') n._inSteer=I.steerFreq;
+    if(n.p.sweep) n._steerPending=null;             // панорама не "ведёт" приёмник
     if(!target && n._steerPending!=null && now-(n._lastSteerRetune||0)>=80){
       target=n._steerPending-(n.dcOff||0); prio=3; n._steerPending=null; n._lastSteerRetune=now;   // троттлинг физической перестройки при драге
     }
@@ -3000,6 +3162,10 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
         if(!target && Math.abs(v-cf0)>half0){ target=v; prio=4; }
       } else ch.tuneFreq=null;                       // маркер сняли — канал снова следует за центром
     }
+    // сканирование: появился маркер — центр на него (проход встанет на паузу сам)
+    const lf=n.p.sweep ? sdrListenFreq(n) : null;
+    if(lf!=null && n._swListen==null && target==null){ target=lf; prio=4; }
+    n._swListen=lf;
     if(target!=null){
       if(target!==n.p.freq){ n.p.freq=target; n.set.freq?.(target); }
       if(prio<=2) n._steerMuteUntil=now+600;
@@ -3062,12 +3228,20 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
       }
     }
 
-    rtlUpdateSpec(n);
+    const sweepOn=n.p.sweep && n.connected && !n.dev?.fixedFreq;
+    if(!n.p.sweep && n.sw){ n.sw=null; n.swErr=null; }
+    if(sweepOn && lf==null && !n.swRunning) sdrSweepLoop(n);
+    if(!n.swActive) rtlUpdateSpec(n);
+    // при прослушивании живой спектр ложится на свой участок панорамы
+    if(sweepOn && n.sw && !n.swActive && n.spec && n.spec.rev!==n._swOvRev && !n.busy && n.appliedFreq!=null){
+      n._swOvRev=n.spec.rev; sdrSweepOverlay(n, n.sw, n.spec);
+    }
+    const spOut=sweepOn && n.sw ? n.sw.spec : n.spec;
     // полосы канальных фильтров активных каналов — 'sa' рисует их шторками вокруг частот каналов
-    if(n.spec){
-      n.spec.chans=rtlChanBands(n, cf, half);
+    if(spOut){
+      spOut.chans=n.swActive ? null : rtlChanBands(n, cf, half);
       // обратный канал для 'sa': перетаскивание края шторки задаёт новую ширину полосы ПЧ
-      n.spec.setChanBw=n._setChanBw||(n._setChanBw=(mode,w)=>{
+      spOut.setChanBw=n._setChanBw||(n._setChanBw=(mode,w)=>{
         const lim=RTL_BW_LIMITS[mode]; if(lim) setMod(n,'bw',Math.round(clamp(w,lim[0],lim[1])));
       });
     }
@@ -3085,7 +3259,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
 
     n._prevPFreq=n.p.freq; // снимок на конец тика — см. manualEdit в начале process() (demod/bw/gainDb — через setModWired)
     return {I:oi, Q:oq, audio:oa[0], audio2:oa[1], audio3:oa[2], audio4:oa[3], audioL:oL, audioR:oR,
-      ps:rds&&rds.sync!==undefined&&rds.ps.trim()?rds.ps.trim():null, rt:rds&&rds.rt?rds.rt:null, spec:n.spec,
+      ps:rds&&rds.sync!==undefined&&rds.ps.trim()?rds.ps.trim():null, rt:rds&&rds.rt?rds.rt:null, spec:spOut,
       demod:n.p.demod, bw:n.p.bw, ...bounds}; },
   // Собственная отрисовка спектра/водопада убрана — для этого универсальный узел 'sa'
   // (Спектроанализатор), подключаемый к выходу 'spec'. Здесь остаётся только статус-строка.
@@ -3116,7 +3290,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     if(n.el && (n._rowsEl!==n.el || n._rowsHk!==hk || n._rowsFl!==fl)){
       n._rowsEl=n.el; n._rowsHk=hk; n._rowsFl=fl;
       for(const [k,show] of [['lna',hk],['vga',hk],['amp',hk],['auto',!hk&&!fl],['gainDb',!hk&&!fl],
-          ['bias',!fl],['ppm',!fl],['dcShift',!fl],['loop',fl],['seek',fl]]){
+          ['bias',!fl],['ppm',!fl],['dcShift',!fl],['loop',fl],['seek',fl],
+          ...['sweep','swLo','swHi','swFft','swAvg','swMode','swUse','swSettle'].map(k=>[k,!fl])]){
         const e=n.el.querySelector(`.prm[data-param="${k}"]`); if(e) e.style.display=show?'':'none';
       }
     }
@@ -3136,7 +3311,9 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
           ` · errors demod:${n.underrunsWorker||0} ovf:${n.underrunsOverflow||0} dry:${n.underrunsStarve||0}`:'')+
         (n.busy?' · …':'')+
         (n.dev?.kind==='file' ? ` · ${iqFmtTime(n.dev.pos/n.dev.rate)} / ${iqFmtTime(n.dev.total/n.dev.rate)}`+(n.dev.ended?' (end)':'') : '')+
-        (n.rec ? ` · ● REC ${iqFmtTime((Date.now()-n.rec.start)/1000)} ${(n.rec.bytes/1e6).toFixed(0)} MB` : n.recMsg ? ' · '+n.recMsg : '')
+        (n.rec ? ` · ● REC ${iqFmtTime((Date.now()-n.rec.start)/1000)} ${(n.rec.bytes/1e6).toFixed(0)} MB` : n.recMsg ? ' · '+n.recMsg : '')+
+        (n.swErr ? ' · sweep error: '+n.swErr : n.p.sweep && n.sw ? ` · sweep ${fmtHz(n.sw.lo,1)}–${fmtHz(n.sw.lo+n.sw.spec.size*n.sw.binHz,1)} `+
+          (n.swActive ? `step ${n.sw.k+1}/${n.sw.hops}`+(n.sw.lineMs ? ` · ${(n.sw.lineMs/1000).toFixed(1)} s/line` : '') : '(paused, listening)') : '')
       : n.status;
   }});
 

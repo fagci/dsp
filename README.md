@@ -10,7 +10,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Groups (nested subgraphs) with custom inputs/outputs
 - Undo/redo, duplicate, multi-select, module search (Ctrl+K)
 - Save/load patches to local storage or JSON files
-- 65 built-in presets: demos, quick scenarios, radio protocols, music, analysis
+- 66 built-in presets: demos, quick scenarios, radio protocols, music, analysis
 - Adjustable block size, sample rate and run speed (×1…×32)
 - AudioWorklet engine, SharedArrayBuffer path when cross-origin isolated
 - Installable PWA with offline support
@@ -18,7 +18,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 ### Sources
 - Oscillator, sweep/jammer, constant, LFO, text source
 - Microphone (stereo A+B), audio file, audio stream URL, tab/screen audio capture
-- **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500 — multiple tuners/demodulators per device, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
+- **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500 — multiple tuners/demodulators per device, wideband sweep with a panoramic waterfall, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
 - **KiwiSDR** remote receivers (public list included)
 - Camera, video, image, accelerometer and Generic Sensor API
 - Serial port (WebSerial), CSV files, lists
@@ -78,6 +78,16 @@ Common controls: gain (auto or manual), bias-tee, ppm correction, center shift o
 - **SDRplay / MSi2500** has no hardware AGC: *auto* sets a fixed 62 dB, the manual slider covers 0–102 dB of LNA + mixer + baseband gain. The driver is a port of [libmirisdr-4](https://github.com/f4exb/libmirisdr-4). RSP1A / RSP2 IDs are recognized but untested; RSPduo, RSPdx and newer models need the closed SDRplay API and are not supported.
 
 On Linux unload the kernel driver before connecting, e.g. `sudo rmmod msi001 msi2500`, or blacklist it in `/etc/modprobe.d/`. The device also needs user access through a udev rule (as for `rtl-sdr` / `hackrf` / `airspy` packages).
+
+### Wideband sweep
+
+**wideband sweep** turns the node into a panoramic scanner (like `rtl_power` / `hackrf_sweep`): the receiver steps across **sweep from … to** (MHz), each step keeps the central **usable band fraction** of the FFT (the edges are rolled off by the anti-alias filter), and the pieces are stitched into one spectrum on the `spec` output. A Spectrum Analyzer on it shows the whole range; its waterfall gets one line per full pass. The readout shows the current step and seconds per line.
+
+- **sweep FFT size** sets the resolution (sample rate / size per bin), **averages per step** — how many FFT frames are averaged (or max-held with the **max** detector) at each step
+- a marker on `tuneFreq` (e.g. marker 1 of the Spectrum Analyzer wired to it) pauses the sweep and tunes there: the demodulators play as usual and the live spectrum is drawn over its part of the panorama; remove the marker to resume from the same step
+- use manual gain: with AGC each step gets its own level and the waterfall is striped. **shift center off DC** keeps the listened station away from the DC spike
+- the speed depends on the retune time over USB: roughly 20–50 ms per step, i.e. a few seconds per line for 100 MHz at 2.4 MSPS and ~30–45 s for the whole RTL-SDR range. A HackRF at 20 MSPS covers ~8× more per step
+- ready-made patch: **USB SDR: Wideband Sweep**
 
 ### IQ recording and playback
 
