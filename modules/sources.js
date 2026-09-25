@@ -1627,7 +1627,7 @@ async function iqRecStop(n){
 }
 
 // ---- разбор файлов ----
-// → {blob, off, size, dtype ('cu8'|'ci8'|'ci16_le'|'cf32_le'), rate, captures:[{start, freq}], name}
+// → {blob, off, size, dtype ('cu8'|'ci8'|'ci16_le'|'cf32_le'|'cf64_le'), rate, captures:[{start, freq}], name}
 function iqFreqFromName(name){
   const m=name.match(/(\d+(?:\.\d+)?)\s*(k|M|G)?Hz/i);
   return m ? Math.round(+m[1]*({k:1e3,m:1e6,g:1e9}[(m[2]||'').toLowerCase()]||1)) : null;
@@ -1649,7 +1649,7 @@ async function iqParseWav(f){
       if(!fmt) break;
       if(fmt.ch!==2) throw new Error('WAV must have 2 channels (I/Q), got '+fmt.ch);
       const tg=fmt.tag===0xfffe ? (fmt.bits===32 ? 3 : 1) : fmt.tag;   // WAVE_FORMAT_EXTENSIBLE — по разрядности
-      const dtype=tg===1&&fmt.bits===8 ? 'cu8' : tg===1&&fmt.bits===16 ? 'ci16_le' : tg===3&&fmt.bits===32 ? 'cf32_le' : null;
+      const dtype=tg===1&&fmt.bits===8 ? 'cu8' : tg===1&&fmt.bits===16 ? 'ci16_le' : tg===3&&fmt.bits===32 ? 'cf32_le' : tg===3&&fmt.bits===64 ? 'cf64_le' : null;
       if(!dtype) throw new Error(`unsupported WAV sample format (${fmt.bits} bit, tag ${fmt.tag})`);
       const size=Math.min(len>0 && len<0xffffffff ? len : f.size, f.size-(o+8));
       return {blob:f, off:o+8, size, dtype, rate:fmt.rate, captures:[{start:0, freq:freq??iqFreqFromName(f.name)}], name:f.name};
@@ -1660,7 +1660,7 @@ async function iqParseWav(f){
 }
 function iqFromMeta(meta, blob, off, size, name){
   const g=meta.global||{}, dt=g['core:datatype']||'';
-  const dtype={cu8:'cu8', ci8:'ci8', ci16_le:'ci16_le', ci16:'ci16_le', cf32_le:'cf32_le', cf32:'cf32_le'}[dt];
+  const dtype={cu8:'cu8', ci8:'ci8', ci16_le:'ci16_le', ci16:'ci16_le', cf32_le:'cf32_le', cf32:'cf32_le', cf64_le:'cf64_le', cf64:'cf64_le'}[dt];
   if(!dtype) throw new Error('unsupported SigMF datatype '+dt);
   const caps=(meta.captures||[]).map(c=>({start:+c['core:sample_start']||0, freq:c['core:frequency']??null}));
   return {blob, off, size, dtype, rate:+g['core:sample_rate'], captures:caps.length?caps:[{start:0, freq:null}], name};
@@ -1679,7 +1679,8 @@ async function iqParseTar(f){
   if(!data || !meta) throw new Error('SigMF archive without .sigmf-data/.sigmf-meta');
   return iqFromMeta(meta, f, data.off, data.size, data.name.split('/').pop());
 }
-async function iqParseFiles(files){
+// fmt — формат сырых отсчётов из настроек узла ('auto' — по расширению)
+async function iqParseFiles(files, fmt){
   files=[...files];
   const ext=f=>(f.name.match(/\.([^.]+)$/)||[])[1]?.toLowerCase()||'';
   const metaF=files.find(f=>ext(f)==='sigmf-meta'), dataF=files.find(f=>ext(f)==='sigmf-data');
@@ -1692,15 +1693,19 @@ async function iqParseFiles(files){
   const e=ext(f);
   if(e==='wav') return iqParseWav(f);
   if(e==='sigmf') return iqParseTar(f);
-  // сырые отсчёты: тип по расширению, частоты — из имени файла, иначе из настроек узла
-  const dtype={cu8:'cu8', u8:'cu8', bin:'cu8', cs8:'ci8', s8:'ci8', cs16:'ci16_le', s16:'ci16_le', cf32:'cf32_le', cfile:'cf32_le', raw:'cf32_le', 'sigmf-data':'cf32_le'}[e];
-  if(!dtype) throw new Error('unknown IQ file type .'+e);
+  // сырые отсчёты: тип — выбранный или по расширению, частоты — из имени файла, иначе из настроек узла
+  const dtype=IQ_RAW_FMT[fmt] || IQ_RAW_EXT[e];
+  if(!dtype) throw new Error('unknown IQ file type .'+e+' — choose IQ file format');
   return {blob:f, off:0, size:f.size, dtype, rate:iqRateFromName(f.name), captures:[{start:0, freq:iqFreqFromName(f.name)}], name:f.name, raw:true};
 }
 
+const IQ_RAW_FMT={cu8:'cu8', cs8:'ci8', cs16:'ci16_le', cf32:'cf32_le', cf64:'cf64_le'};
+const IQ_RAW_EXT={cu8:'cu8', u8:'cu8', bin:'cu8', cs8:'ci8', ci8:'ci8', s8:'ci8', i8:'ci8', cs16:'ci16_le', ci16:'ci16_le', sc16:'ci16_le', s16:'ci16_le', i16:'ci16_le',
+  cf32:'cf32_le', fc32:'cf32_le', f32:'cf32_le', cfile:'cf32_le', raw:'cf32_le', 'sigmf-data':'cf32_le', cf64:'cf64_le', fc64:'cf64_le', f64:'cf64_le'};
+
 // Устройство-проигрыватель с API USB-драйверов: отдаёт отсчёты в реальном времени, центр — из файла.
 function iqFileDevice(src, defRate, defFreq){
-  const bytesPer={cu8:2, ci8:2, ci16_le:4, cf32_le:8}[src.dtype];
+  const bytesPer={cu8:2, ci8:2, ci16_le:4, cf32_le:8, cf64_le:16}[src.dtype];
   const fmt=src.dtype==='cu8'||src.dtype==='ci8' ? 'u8' : 's16', bps=fmt==='u8' ? 2 : 4;
   const rate=src.rate>0 ? src.rate : defRate, total=Math.floor(src.size/bytesPer);
   const caps=src.captures.map(c=>({start:c.start, freq:c.freq??defFreq})).sort((a,b)=>a.start-b.start);
@@ -1744,7 +1749,7 @@ function iqConvert(raw, dtype, fmt){
   if(dtype==='cu8') return raw;
   if(dtype==='ci8'){ const u=new Uint8Array(raw); for(let i=0;i<u.length;i++) u[i]^=0x80; return raw; }
   if(dtype==='ci16_le') return raw;
-  const f=new Float32Array(raw), o=new Int16Array(f.length);
+  const f=dtype==='cf64_le' ? new Float64Array(raw) : new Float32Array(raw), o=new Int16Array(f.length);
   for(let i=0;i<f.length;i++){ const v=f[i]*32767; o[i]=v>32767?32767:v<-32768?-32768:v; }
   return o.buffer;
 }
@@ -2725,12 +2730,12 @@ async function rtlStart(n, sr){
 async function iqOpenFile(n){
   const files=await new Promise(res=>{
     const f=document.createElement('input'); f.type='file'; f.multiple=true;
-    f.accept='.wav,.sigmf,.sigmf-meta,.sigmf-data,.cu8,.u8,.bin,.cs8,.s8,.cs16,.s16,.cf32,.cfile,.raw';
+    if(n.p.iqFmt==='auto') f.accept='.wav,.sigmf,.sigmf-meta,'+Object.keys(IQ_RAW_EXT).map(e=>'.'+e).join(',');
     f.onchange=()=>res(f.files); f.click();
   });
   if(!files.length) return;
   try{
-    const src=await iqParseFiles(files);
+    const src=await iqParseFiles(files, n.p.iqFmt);
     if(n.connected) await rtlDisconnect(n);
     const dev=iqFileDevice(src, rtlSafeSr(n.p.sr), Math.round(n.p.freq));
     dev.onFreq=f=>{ n.actualFreq=f; n.p.freq=f; n.appliedFreq=f; };
@@ -2813,6 +2818,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'choose',t:'button',label:'Choose…',fn:async n=>{ await rtlConnect(n, true); }},
     {n:'disconnect',t:'button',label:'Disconnect',fn:async n=>{ await rtlDisconnect(n); }},
     {n:'openFile',t:'button',label:'Open IQ file…',fn:async n=>{ await iqOpenFile(n); }},
+    {n:'iqFmt',t:'select',opts:['auto','cu8','cs8','cs16','cf32','cf64'],d:'auto',label:'IQ file format (raw)'},
     {n:'recFmt',t:'select',opts:['WAV','SigMF'],d:'WAV',label:'IQ record format'},
     {n:'rec',t:'button',label:'● Record IQ',fn:async n=>{
       if(n.rec) return;

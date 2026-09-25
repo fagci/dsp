@@ -85,8 +85,8 @@ On Linux unload the kernel driver before connecting, e.g. `sudo rmmod msi001 msi
   - **WAV** — 2-channel PCM, 8-bit unsigned for RTL-SDR / HackRF, 16-bit for Airspy / SDRplay; center frequency in the `auxi` chunk and in the file name (`baseband_<Hz>Hz_…`), the same layout SDR#, SDR++ and HDSDR use; limited to 4 GB
   - **SigMF** — `.sigmf` archive (`.sigmf-data` + `.sigmf-meta`), retuning while recording adds a new `captures` segment
 - **Open IQ file…** plays a recording through the same chain (spectrum, 4 channels, demodulators) in real time, with loop and position controls
-  - WAV (8/16-bit PCM, 32-bit float), SigMF archive or `.sigmf-meta` + `.sigmf-data` pair (`cu8`, `ci8`, `ci16_le`, `cf32_le`)
-  - raw `.cu8` / `.cs8` / `.cs16` / `.cf32` (e.g. `rtl_sdr` output): frequency and rate are taken from the file name (`…_433920000Hz_2.4Msps.cf32`), otherwise from the node settings
+  - WAV (8/16-bit PCM, 32/64-bit float), SigMF archive or `.sigmf-meta` + `.sigmf-data` pair (`cu8`, `ci8`, `ci16_le`, `cf32_le`, `cf64_le`)
+  - raw `.cu8` / `.cs8` / `.cs16` / `.cf32` / `.cf64` (e.g. `rtl_sdr` output; the format is guessed from the extension or set by **IQ file format**): frequency and rate are taken from the file name (`…_433920000Hz_2.4Msps.cf32`), otherwise from the node settings
 
 ## Themes
 
