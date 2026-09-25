@@ -1199,14 +1199,196 @@ async function airspyOpenDevice(dev, gain){
     tunerName:rates.includes(6000000)?'Airspy Mini':'Airspy', kind:'airspy', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
 }
 
+// SDRplay RSP1 и донглы на Mirics MSi2500 + MSi001. Протокол — по libmirisdr-4 (Slugen, SM5BSZ).
+// Поток — блоки по 1024 байта: 16 байт заголовка + отсчёты в одном из 4 форматов, формат зависит
+// от частоты дискретизации. Переводим в int16 IQ. На Linux: rmmod msi001 msi2500
+function mirisdrMakeConv(){
+  // отсчётов IQ на 1024-байтный блок по формату
+  const SPB={252:252, 336:336, 384:384, 504:504};
+  const v8=new Int16Array(8);
+  let fmt=252, carry=new Uint8Array(0);
+  function block(s, o, dst, w){
+    if(fmt===252){
+      for(let j=o+16;j<o+1024;j+=2,w++) dst[w]=(s[j]<<2)|(s[j+1]<<10);
+    }else if(fmt===336){
+      for(let j=o+16;j<o+1024;j+=3,w+=2){
+        dst[w]=(s[j]<<4)|((s[j+1]&0x0f)<<12);
+        dst[w+1]=(s[j+1]&0xf0)|(s[j+2]<<8);
+      }
+    }else if(fmt===384){
+      // 6 групп по 164 байта: 16×10 байт (8 отсчётов по 10 бит) + 4 байта сдвигов
+      let p=o+16;
+      for(let g=0;g<6;g++,p+=4){
+        const sh=s[p+160]|(s[p+161]<<8)|(s[p+162]<<16)|(s[p+163]<<24);
+        for(let k=0;k<16;k++,p+=10,w+=8){
+          const d=2-Math.min(2, (sh>>>(2*k))&3);
+          v8[0]=(s[p]<<6)|((s[p+1]&0x03)<<14); v8[1]=((s[p+1]&0xfc)<<4)|((s[p+2]&0x0f)<<12);
+          v8[2]=((s[p+2]&0xf0)<<2)|((s[p+3]&0x3f)<<10); v8[3]=(s[p+3]&0xc0)|(s[p+4]<<8);
+          v8[4]=(s[p+5]<<6)|((s[p+6]&0x03)<<14); v8[5]=((s[p+6]&0xfc)<<4)|((s[p+7]&0x0f)<<12);
+          v8[6]=((s[p+7]&0xf0)<<2)|((s[p+8]&0x3f)<<10); v8[7]=(s[p+8]&0xc0)|(s[p+9]<<8);
+          for(let i=0;i<8;i++) dst[w+i]=v8[i]>>d;
+        }
+      }
+    }else{
+      for(let j=o+16;j<o+1024;j++,w++) dst[w]=s[j]<<8;
+    }
+  }
+  return {
+    get spb(){ return SPB[fmt]; },
+    setFormat(f){ fmt=f; carry=new Uint8Array(0); },
+    reset(){ carry=new Uint8Array(0); },
+    // сырые байты → Int16Array IQ; неполный блок ждёт следующего чтения
+    process(u8){
+      let s=u8;
+      if(carry.length){ s=new Uint8Array(carry.length+u8.length); s.set(carry); s.set(u8, carry.length); }
+      const nb=s.length>>10, out=new Int16Array(nb*2*SPB[fmt]);
+      for(let b=0;b<nb;b++) block(s, b<<10, out, b*2*SPB[fmt]);
+      carry=s.slice(nb<<10);
+      return out;
+    }
+  };
+}
+async function mirisdrOpenDevice(dev, gain){
+  const CMD={WREG:0x41, START:0x43, STOP:0x45};
+  // план диапазонов: от МГц, режим MSi001, повышающий смеситель, AM-порт, делитель LO, слово reg8 (GPIO фильтров)
+  const PLAN=[
+    [0,1,1,1,16,0xf780],[12,1,1,1,16,0xff80],[30,1,1,1,16,0xf280],[50,2,0,0,32,0xf380],
+    [108,4,0,0,16,0xfa80],[250,4,0,0,16,0xf680],[259,6,0,0,8,0xf680],[330,8,0,0,4,0xf380],[960,16,0,0,2,0xfa80]];
+  const BW=[200000,300000,600000,1536000,5000000,6000000,7000000,8000000];
+  await dev.open();
+  if(!dev.configuration) await dev.selectConfiguration(1);
+  await dev.claimInterface(0);
+  const wreg=(reg,val)=>sdrVendorOut(dev, CMD.WREG, ((val&0xff)<<8)|reg, (val>>>8)&0xffff);
+  const conv=mirisdrMakeConv();
+  let tuneEpoch=0, rxOn=false, freq=100000000, rate=2000000, bwIdx=7, band='vhf', reg8=0xf380, bias=false;
+  let gr={lna:0, mixbuf:0, mixer:0, bb:59};
+
+  // частота дискретизации и формат пакетов (mirisdr_set_hard)
+  async function hard(){
+    const fmt=rate<=6048000 ? 252 : rate<=8064000 ? 336 : rate<=9216000 ? 384 : 504;
+    await wreg(0x07, {252:0x000094, 336:0x000085, 384:0x0000a5, 504:0x000c94}[fmt]);
+    conv.setFormat(fmt);
+    let i=4, vco=0;
+    for(;i<16;i+=2){ vco=rate*i*12; if(vco>=202000000) break; }
+    const n=Math.floor(vco/48000000), fract=Math.floor(0x200000*(vco%48000000)/48000000);
+    const reg3=3 | (((i/2-1)&7)<<2) | (((fract>>20)&1)<<7) | ((n&0xf)<<8) |
+      ({252:1, 336:5, 384:9, 504:0xd}[fmt]<<12) | (1<<16);
+    await wreg(0x04, fract&0xfffff);
+    await wreg(0x03, reg3);
+  }
+  // синтезатор MSi001, полоса ПЧ-фильтра, переключатели диапазонов (mirisdr_set_soft)
+  async function soft(){
+    let k=0; while(k+1<PLAN.length && freq>=PLAN[k+1][0]*1e6) k++;
+    const [, mode, up, port, div, word]=PLAN[k];
+    let reg0=(mode<<4) | (1<<10) | (3<<12) | (bwIdx<<14) | (2<<17), offset=0n, loDiv=BigInt(div);
+    if(mode===1){
+      reg0|=(up<<9)|(port<<11);
+      if(up) offset=120000000n;
+      loDiv=16n; band=port ? 'am2' : 'am1';
+    }else band={2:'vhf',4:'b3',6:'b3',8:'b45',16:'bl'}[mode];
+    const F=BigInt(Math.round(freq))+offset, R=96000000n;
+    const fvco=F*loDiv, n=fvco/R;
+    let thresh=R/loDiv, frac=(fvco%R)/loDiv, a=thresh, b=frac;
+    while(a!==0n){ const c=a; a=b%a; b=c; }
+    thresh/=b; frac/=b;
+    a=(thresh+4094n)/4095n;
+    thresh=(thresh+a/2n)/a; frac=(frac+a/2n)/a;
+    let rfvco=(R*(n*thresh*4096n+frac*4096n))/(thresh*4096n*loDiv);
+    if(F<rfvco && frac>0n) frac--;
+    rfvco=(R*(n*thresh*4096n+frac*4096n))/(thresh*4096n*loDiv);
+    const afc=Number(((F-rfvco)*thresh*4096n*loDiv)/R);
+    reg8=word;
+    await wreg(0x08, reg8|(bias?1<<11:0));
+    await wreg(0x09, 0x0e);
+    await wreg(0x09, 3|((afc&4095)<<4));
+    await wreg(0x09, reg0);
+    await wreg(0x09, 5|(Number(thresh&0xfffn)<<4)|(0x28<<16));
+    await wreg(0x09, 2|(Number(frac&0xfffn)<<4)|(Number(n&0x3fn)<<16));
+  }
+  // усиление: снижение LNA (24 дБ), смесителя (19 дБ), baseband 0-59 дБ; на AM-входах вместо LNA mixbuffer
+  async function writeGain(){
+    let reg1=1|(gr.bb<<4);
+    if(band==='am1') reg1|=(gr.mixbuf&3)<<10;
+    else if(band==='am2') reg1|=(gr.mixbuf?3:0)<<10;
+    reg1|=gr.mixer<<12;
+    if(band!=='am1' && band!=='am2') reg1|=gr.lna<<13;
+    reg1|=2<<14;                                     // периодическая DC-калибровка
+    await wreg(0x09, reg1);
+    await wreg(0x09, 6|(0x1f<<4)|(0x800<<10));
+  }
+  // общий 0..102 дБ, как mirisdr_set_tuner_gain
+  function splitGain(g){
+    g=Math.max(0, Math.min(102, Math.round(g)));
+    if(g>=43) gr={lna:0, mixbuf:0, mixer:0, bb:59-(g-43)};
+    else if(g>=19) gr={lna:1, mixbuf:3, mixer:0, bb:59-(g-19)};
+    else gr={lna:1, mixbuf:3, mixer:1, bb:59-g};
+  }
+  const stream=on=>sdrVendorOut(dev, on?CMD.START:CMD.STOP, 0, 0);
+
+  async function setSampleRate(r){
+    rate=Math.round(Math.max(1300000, Math.min(15000000, r)));
+    // фильтр ПЧ — наименьший не уже 0.75·rate
+    bwIdx=BW.findIndex(b=>b>=0.75*rate); if(bwIdx<0) bwIdx=BW.length-1;
+    if(rxOn) await stream(false);
+    await hard();
+    await soft(); await writeGain();
+    if(rxOn){ conv.reset(); await stream(true); }
+    return rate;
+  }
+  async function setCenterFrequency(f){
+    freq=Math.round(f);
+    await soft(); await writeGain();
+    tuneEpoch++;
+    return freq;
+  }
+  // АРУ нет: auto — 62 дБ, как режим auto в libmirisdr. Ручной gain 0..49.6 растягиваем на 0..102
+  async function setGain(g){
+    splitGain(g==null ? 62 : g/49.6*102);
+    await writeGain();
+  }
+  async function setBiasTee(on){ bias=!!on; await wreg(0x08, reg8|(bias?1<<11:0)); }
+  async function resetBuffer(){
+    await stream(false);
+    await dev.clearHalt('in', 1).catch(()=>{});
+    conv.reset();
+    await stream(true); rxOn=true;
+  }
+  // nBytes IQ int16 → целые блоки по 1024 сырых байта; вернуть может чуть больше или меньше
+  async function readSamples(nBytes){
+    const res=await dev.transferIn(1, Math.max(1, Math.ceil(nBytes/4/conv.spb))*1024);
+    return conv.process(new Uint8Array(res.data.buffer, res.data.byteOffset, res.data.byteLength)).buffer;
+  }
+  async function close(){
+    if(rxOn) await stream(false).catch(()=>{});
+    await wreg(0x03, 0x010000).catch(()=>{});      // усыпить ADC
+    await dev.releaseInterface(0).catch(()=>{});
+    await dev.close();
+  }
+  // стоп потока и ADC, мог остаться от прошлого сеанса
+  await stream(false).catch(()=>{});
+  await wreg(0x03, 0x010000);
+  await dev.selectAlternateInterface(0, 3);          // alt 3 — bulk на EP1
+  // инициализация ADC (как драйвер ядра)
+  await wreg(0x08, 0x006080); await wreg(0x05, 0x00000c); await wreg(0x00, 0x000200);
+  await wreg(0x02, 0x004801); await wreg(0x08, 0x00f380);
+  await setSampleRate(rate);
+  await setGain(gain);
+  return {setSampleRate, setCenterFrequency, setGain, setBiasTee, resetBuffer, readSamples, close,
+    tunerName:dev.productName||'MSi2500', kind:'miri', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
+}
+
+// MSi2500: SDRplay RSP1 и клоны, RSP1A/RSP2 (не проверены), ТВ-донглы Hauppauge/AverMedia/IO-DATA/Logitec
+const MIRI_USB_IDS=[[0x1df7,0x2500],[0x1df7,0x3000],[0x1df7,0x3010],[0x2040,0xd300],[0x07ca,0x8591],[0x04bb,0x0537],[0x0511,0x0037]];
 // VID:PID поддерживаемых устройств
 const SDR_USB_FILTERS=[
   {vendorId:0x0bda,productId:0x2832},{vendorId:0x0bda,productId:0x2838},
   {vendorId:0x15f4,productId:0x0131},                          // Astrometa DVB-T2
   {vendorId:0x1d50,productId:0x6089},{vendorId:0x1d50,productId:0x604b},{vendorId:0x1d50,productId:0xcc15}, // HackRF One, Jawbreaker, rad1o
-  {vendorId:0x1d50,productId:0x60a1}                           // Airspy R2/Mini
+  {vendorId:0x1d50,productId:0x60a1},                          // Airspy R2/Mini
+  ...MIRI_USB_IDS.map(([vendorId,productId])=>({vendorId,productId}))
 ];
 function sdrOpenDevice(dev, ppm, gain){
+  if(MIRI_USB_IDS.some(([v,p])=>v===dev.vendorId && p===dev.productId)) return mirisdrOpenDevice(dev, gain);
   if(dev.vendorId===0x1d50) return dev.productId===0x60a1 ? airspyOpenDevice(dev, gain) : hackrfOpenDevice(dev, gain);
   return rtlOpenDevice(dev, ppm, gain);
 }
@@ -1230,6 +1412,9 @@ ${sdrVendorOut}
 ${hackrfOpenDevice}
 ${airspyMakeConv}
 ${airspyOpenDevice}
+${mirisdrMakeConv}
+${mirisdrOpenDevice}
+const MIRI_USB_IDS=${JSON.stringify(MIRI_USB_IDS)};
 ${sdrOpenDevice}
 let usb=null, api=null, rate=1024000, streaming=false;
 async function stream(readsPerSec, depth){
