@@ -81,8 +81,8 @@ On Linux unload the kernel driver before connecting, e.g. `sudo rmmod msi001 msi
 
 ### IQ recording and playback
 
-- **● Record IQ** writes the raw stream to disk as it arrives (File System Access API, so long recordings don't sit in memory; other browsers keep up to 1 GB in memory and download it at the end)
-  - **WAV** — 2-channel PCM, 8-bit unsigned for RTL-SDR / HackRF, 16-bit for Airspy / SDRplay; center frequency in the `auxi` chunk and in the file name (`baseband_<Hz>Hz_…`), the same layout SDR#, SDR++ and HDSDR use; limited to 4 GB
+- **● Record IQ** writes the stream to a temporary file in the browser's site storage (OPFS, so long recordings don't sit in memory; without it — up to 1 GB in memory); **■ Stop recording** opens the save dialog (or downloads the file). If saving was cancelled or the recording stopped on its own (error, disconnect), press Stop again to save it
+  - **WAV** — 2-channel 16-bit PCM with the plain 44-byte header SDR++ expects (8-bit sources are widened to 16 bit); center frequency in the file name (`baseband_<Hz>Hz_…`, SDR++) and in an `auxi` chunk after the data (SDR#, HDSDR); limited to 4 GB
   - **SigMF** — `.sigmf` archive (`.sigmf-data` + `.sigmf-meta`), retuning while recording adds a new `captures` segment
 - **Open IQ file…** plays a recording through the same chain (spectrum, 4 channels, demodulators) in real time, with loop and position controls
   - WAV (8/16-bit PCM, 32/64-bit float), SigMF archive or `.sigmf-meta` + `.sigmf-data` pair (`cu8`, `ci8`, `ci16_le`, `cf32_le`, `cf64_le`)

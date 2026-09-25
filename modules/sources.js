@@ -1504,12 +1504,14 @@ async function rtlOpenInWorker(usbDev, gain){
 }
 
 // ---- файлы IQ: запись и воспроизведение ----
-// WAV IQ — как у SDR#/SDR++/HDSDR: 2 канала PCM (I — левый, Q — правый), 8 бит без знака или 16 бит
-// со знаком; центр частоты — в чанке auxi (SDR#) и в имени файла ("_<Гц>Hz_", SDR++).
-// SigMF — архив .sigmf (tar: <имя>.sigmf-data + <имя>.sigmf-meta); перестройка во время записи
-// добавляет сегмент captures. Читаем также пару .sigmf-meta + .sigmf-data и сырые .cu8/.cs8/.cs16/.cf32.
+// WAV IQ: 2 канала PCM 16 бит со знаком (I — левый, Q — правый), заголовок ровно 44 байта (fmt + data):
+// SDR++ читает заголовок фиксированной структурой и 8 бит не понимает. Чанк auxi (SDR#/HDSDR) —
+// после data, частота ещё и в имени файла ("_<Гц>Hz_", SDR++).
+// SigMF — архив .sigmf (tar: <имя>.sigmf-data + <имя>.sigmf-meta) в формате источника; перестройка
+// во время записи добавляет сегмент captures. Читаем также пару .sigmf-meta + .sigmf-data и сырые файлы.
 const IQ_WAV_MAX=0xffffffff-1024;          // предел RIFF
 const IQ_TAR_MAX=0o77777777777;            // предел поля size в ustar
+const IQ_AUXI=68;
 
 const iqFmtTime=t=>{ t=Math.floor(t); return Math.floor(t/60)+':'+String(t%60).padStart(2,'0'); };
 function iqStamp(d){
@@ -1521,18 +1523,29 @@ function iqSysTime(dv, o, d){
   [d.getUTCFullYear(), d.getUTCMonth()+1, d.getUTCDay(), d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds()]
     .forEach((v,i)=>dv.setUint16(o+2*i, v, true));
 }
-// заголовок WAV: fmt + auxi + data
+const iqStr=(dv,p,s)=>{ for(let i=0;i<s.length;i++) dv.setUint8(p+i, s.charCodeAt(i)); };
+// заголовок WAV: fmt + data, 16 бит
 function iqWavHeader(o){
-  const bits=o.fmt==='u8' ? 8 : 16, auxi=68, size=12+24+8+auxi+8;
-  const b=new ArrayBuffer(size), dv=new DataView(b), str=(p,s)=>{ for(let i=0;i<s.length;i++) dv.setUint8(p+i, s.charCodeAt(i)); };
-  str(0,'RIFF'); dv.setUint32(4, size-8+o.bytes, true); str(8,'WAVE');
-  str(12,'fmt '); dv.setUint32(16,16,true); dv.setUint16(20,1,true); dv.setUint16(22,2,true);
-  dv.setUint32(24,o.rate,true); dv.setUint32(28,o.rate*bits/4,true); dv.setUint16(32,bits/4,true); dv.setUint16(34,bits,true);
-  str(36,'auxi'); dv.setUint32(40,auxi,true);
-  iqSysTime(dv, 44, o.start); iqSysTime(dv, 60, o.stop||o.start);
-  dv.setUint32(76, Math.round(o.freq)>>>0, true); dv.setUint32(80, o.rate, true);   // CenterFreq, ADFrequency
-  str(size-8,'data'); dv.setUint32(size-4, o.bytes, true);
+  const b=new ArrayBuffer(44), dv=new DataView(b);
+  iqStr(dv,0,'RIFF'); dv.setUint32(4, 36+o.bytes+8+IQ_AUXI, true); iqStr(dv,8,'WAVE');
+  iqStr(dv,12,'fmt '); dv.setUint32(16,16,true); dv.setUint16(20,1,true); dv.setUint16(22,2,true);
+  dv.setUint32(24,o.rate,true); dv.setUint32(28,o.rate*4,true); dv.setUint16(32,4,true); dv.setUint16(34,16,true);
+  iqStr(dv,36,'data'); dv.setUint32(40,o.bytes,true);
   return b;
+}
+// чанк auxi — в конец файла
+function iqWavAuxi(o){
+  const b=new ArrayBuffer(8+IQ_AUXI), dv=new DataView(b);
+  iqStr(dv,0,'auxi'); dv.setUint32(4,IQ_AUXI,true);
+  iqSysTime(dv, 8, o.start); iqSysTime(dv, 24, o.stop||o.start);
+  dv.setUint32(40, Math.round(o.freq)>>>0, true); dv.setUint32(44, o.rate, true);   // CenterFreq, ADFrequency
+  return new Uint8Array(b);
+}
+// u8 (смещение 127.5) → s16
+function iqU8toS16(buf){
+  const u=new Uint8Array(buf), o=new Int16Array(u.length);
+  for(let i=0;i<u.length;i++) o[i]=Math.round((u[i]-127.5)*256);
+  return new Uint8Array(o.buffer);
 }
 // заголовок записи ustar; size > 8 ГБ не нужен — запись останавливается раньше
 function iqTarHeader(name, size, mtime){
@@ -1553,77 +1566,141 @@ function iqSigmfMeta(r){
   }, null, 2);
 }
 
-// Запись: чанки в формате источника (u8/s16) пишутся на диск по мере прихода. С File System Access —
-// потоком в файл, заголовок переписывается в конце; без него — в памяти (до IQ_MEM_MAX) и скачивание.
+// Запись: чанки пишутся во временный файл OPFS (хранилище сайта на диске), без него — в память
+// (до IQ_MEM_MAX). По «Стоп» — окно сохранения (или обычное скачивание) и копия в выбранный файл.
 const IQ_MEM_MAX=1<<30;
+const iqTmpBusy=new Set();                 // временные файлы активных и несохранённых записей
+async function iqTmpOpen(){
+  try{
+    const dir=await navigator.storage.getDirectory();
+    // остатки прошлых записей (перезагрузка, скачивание через ссылку) — удаляем
+    for await(const [k] of dir.entries()) if(/^iq-rec-/.test(k) && !iqTmpBusy.has(k)) await dir.removeEntry(k).catch(()=>{});
+    const name='iq-rec-'+Date.now()+'.tmp', h=await dir.getFileHandle(name, {create:true});
+    if(!h.createWritable){ await dir.removeEntry(name); return null; }
+    iqTmpBusy.add(name);
+    return {dir, name, h, w:await h.createWritable()};
+  }catch(e){ return null; }
+}
+function iqTmpDrop(r, remove){
+  if(!r.tmp) return;
+  iqTmpBusy.delete(r.tmp.name);
+  if(remove) r.tmp.dir.removeEntry(r.tmp.name).catch(()=>{});
+}
+function iqRecMsg(n, s){ n.status=s; n.recMsg=s; }
 async function iqRecStart(n){
   if(!n.connected || !n.dev) throw new Error('not connected');
+  if(n.recDone){ iqTmpDrop(n.recDone, true); n.recDone=null; }
+  n.recMsg='';
   const kind=n.p.recFmt==='SigMF' ? 'sigmf' : 'wav', start=new Date(), st=iqStamp(start);
   const freq=Math.round(n.actualFreq??n.p.freq), fmt=n.dev.fmt, rate=Math.round(n.sourceRate);
   const base=kind==='wav' ? `baseband_${freq}Hz_${st.date}_${st.time}Z` : `iq_${freq}Hz_${st.date}_${st.time}Z`;
   const name=base+(kind==='wav' ? '.wav' : '.sigmf');
-  let file=null;
-  if(window.showSaveFilePicker){
-    const h=await window.showSaveFilePicker({suggestedName:name,
-      types:[kind==='wav' ? {description:'WAV IQ', accept:{'audio/wav':['.wav']}} : {description:'SigMF archive', accept:{'application/x-tar':['.sigmf']}}]});
-    file=await h.createWritable();
-  }
   // место под заголовок: WAV — сам заголовок, SigMF — заголовок tar записи данных
-  const head=kind==='wav' ? iqWavHeader({fmt, rate, freq, start, bytes:0}).byteLength : 512;
-  const r={kind, name, base, fmt, rate, freq, start, file, head, bytes:0, pos:head, chunks:[], chain:Promise.resolve(), pending:0,
-    captures:[{start:0, freq, datetime:start.toISOString()}], hw:n.dev.tunerName, epoch:n.dev.epoch?.()||0, err:null};
-  if(file) r.chain=file.write({type:'write', position:0, data:new Uint8Array(head)});
+  const head=kind==='wav' ? 44 : 512;
+  const r={kind, name, base, fmt, rate, freq, start, head, bytes:0, pos:head, chunks:[], chain:Promise.resolve(), pending:0,
+    bps:kind==='wav'||fmt!=='u8' ? 4 : 2, captures:[{start:0, freq, datetime:start.toISOString()}],
+    hw:n.dev.tunerName, epoch:n.dev.epoch?.()||0, err:null, tmp:null};
   n.rec=r;
+  const tmp=await iqTmpOpen();
+  if(n.rec!==r){ if(tmp){ r.tmp=tmp; tmp.w.close().catch(()=>{}); iqTmpDrop(r, true); } return; }
+  if(tmp){
+    // чанки, пришедшие пока открывался файл, — туда же
+    r.tmp=tmp;
+    const pre=r.chunks; r.chunks=[];
+    let pos=head; const w=tmp.w;
+    r.chain=w.write({type:'write', position:0, data:new Uint8Array(head)});
+    for(const d of pre){ const p=pos; r.chain=r.chain.then(()=>w.write({type:'write', position:p, data:d})); pos+=d.length; }
+    r.chain=r.chain.catch(e=>{ r.err=e.message; });
+  }
 }
 // чанк из readerLoop; buf копируется — дальше его забирает демод-воркер
 function iqRecWrite(n, buf, epoch){
   const r=n.rec; if(!r || r.err) return;
   if(epoch!=null && epoch<r.epoch) return;          // чанк до начала записи — ещё старая частота
-  const bps=r.fmt==='u8' ? 2 : 4;
   // первый чанк после перестройки — новый сегмент captures (в WAV частота одна — остаётся начальная)
   if(epoch!=null && epoch>r.epoch){
     r.epoch=epoch;
-    const f=Math.round(n.actualFreq??r.freq), last=r.captures[r.captures.length-1], s=r.bytes/bps;
+    const f=Math.round(n.actualFreq??r.freq), last=r.captures[r.captures.length-1], s=r.bytes/r.bps;
     if(f!==last.freq){ if(s===last.start) last.freq=f; else r.captures.push({start:s, freq:f, datetime:new Date().toISOString()}); }
   }
+  const data=r.kind==='wav' && r.fmt==='u8' ? iqU8toS16(buf) : new Uint8Array(buf.slice(0));
   const max=r.kind==='wav' ? IQ_WAV_MAX : IQ_TAR_MAX;
-  if(r.bytes+buf.byteLength>max || (!r.file && r.bytes+buf.byteLength>IQ_MEM_MAX)){
-    r.err=r.file ? 'file size limit reached' : 'memory limit reached (1 GB)'; iqRecStop(n); return;
+  if(r.bytes+data.length>max || (!r.tmp && r.bytes+data.length>IQ_MEM_MAX)){
+    r.err=r.tmp ? 'file size limit reached' : 'memory limit reached (1 GB)'; iqRecStop(n); return;
   }
-  const data=new Uint8Array(buf.slice(0));
-  if(r.file){
+  if(r.tmp){
     if(r.pending>256e6){ r.err='disk too slow'; iqRecStop(n); return; }
-    const pos=r.pos; r.pending+=data.length;
-    r.chain=r.chain.then(()=>r.file.write({type:'write', position:pos, data})).then(()=>{ r.pending-=data.length; }, e=>{ r.err=e.message; });
+    const pos=r.pos, w=r.tmp.w; r.pending+=data.length;
+    r.chain=r.chain.then(()=>w.write({type:'write', position:pos, data})).then(()=>{ r.pending-=data.length; }, e=>{ r.err=e.message; });
   }else r.chunks.push(data);
   r.pos+=data.length; r.bytes+=data.length;
 }
+// окно сохранения — до первого await, пока действует нажатие кнопки; без него — скачивание ссылкой
+function iqPickSave(r){
+  if(!window.showSaveFilePicker) return null;
+  const p=window.showSaveFilePicker({suggestedName:r.name,
+    types:[r.kind==='wav' ? {description:'WAV IQ', accept:{'audio/wav':['.wav']}} : {description:'SigMF archive', accept:{'application/x-tar':['.sigmf']}}]});
+  p.catch(()=>{});
+  return p;
+}
 async function iqRecStop(n){
-  const r=n.rec; if(!r) return;
+  const r=n.rec;
+  if(!r){ if(n.recDone?.blob) await iqRecSave(n, iqPickSave(n.recDone)); return; }
   n.rec=null;
-  const stop=new Date();
-  let head, tail=null;
-  if(r.kind==='wav') head=new Uint8Array(iqWavHeader({fmt:r.fmt, rate:r.rate, freq:r.freq, start:r.start, stop, bytes:r.bytes}));
-  else{
+  const pick=iqPickSave(r), stop=new Date();
+  iqRecMsg(n, 'finishing '+r.name+'…');
+  let head, tail;
+  if(r.kind==='wav'){
+    head=new Uint8Array(iqWavHeader({rate:r.rate, bytes:r.bytes}));
+    tail=iqWavAuxi({rate:r.rate, freq:r.freq, start:r.start, stop});
+  }else{
     head=iqTarHeader(`${r.base}/${r.base}.sigmf-data`, r.bytes, r.start.getTime());
     const meta=new TextEncoder().encode(iqSigmfMeta(r)), pad=n=>(512-n%512)%512;
     tail=new Uint8Array(pad(r.bytes)+512+meta.length+pad(meta.length)+1024);
     tail.set(iqTarHeader(`${r.base}/${r.base}.sigmf-meta`, meta.length, stop.getTime()), pad(r.bytes));
     tail.set(meta, pad(r.bytes)+512);
   }
-  if(r.file){
-    await r.chain;
-    if(tail) await r.file.write({type:'write', position:r.pos, data:tail});
-    await r.file.write({type:'write', position:0, data:head});
-    await r.file.close();
-  }else{
-    const parts=[head, ...r.chunks]; if(tail) parts.push(tail);
-    const a=document.createElement('a');
-    a.href=URL.createObjectURL(new Blob(parts, {type:r.kind==='wav'?'audio/wav':'application/x-tar'}));
-    a.download=r.name; document.body.append(a); a.click(); a.remove();
-    setTimeout(()=>URL.revokeObjectURL(a.href), 10000);
+  const type=r.kind==='wav' ? 'audio/wav' : 'application/x-tar';
+  try{
+    if(r.tmp){
+      await r.chain;
+      const w=r.tmp.w;
+      await w.write({type:'write', position:r.pos, data:tail});
+      await w.write({type:'write', position:0, data:head});
+      await w.close();
+      r.blob=await r.tmp.h.getFile();
+    }else r.blob=new Blob([head, ...r.chunks, tail], {type});
+  }catch(e){
+    iqTmpDrop(r, true);
+    iqRecMsg(n, 'recording failed: '+e.message);
+    return;
   }
-  n.status=(r.err ? 'recording stopped: '+r.err+', ' : 'recorded ')+r.name+' ('+(r.bytes/1e6).toFixed(1)+' MB)';
+  r.chunks=null;
+  n.recDone=r;
+  await iqRecSave(n, pick);
+}
+async function iqRecSave(n, pick){
+  const r=n.recDone, info=r.name+' ('+(r.bytes/1e6).toFixed(1)+' MB)', pre=r.err ? 'recording stopped: '+r.err+', ' : '';
+  try{
+    if(pick){
+      const h=await pick;
+      iqRecMsg(n, 'saving '+info+'…');
+      await r.blob.stream().pipeTo(await h.createWritable());
+      iqTmpDrop(r, true);
+    }else{
+      const a=document.createElement('a');
+      a.href=URL.createObjectURL(r.blob); a.download=r.name;
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(a.href), 60000);
+      iqTmpDrop(r, false);                           // файл удалится при следующей записи
+    }
+    n.recDone=null;
+    iqRecMsg(n, pre+'saved '+info);
+  }catch(e){
+    // отмена или нет жеста (остановка по ошибке/отключению) — запись ждёт повторного «Стоп»
+    iqRecMsg(n, pre+(e.name==='AbortError' ? 'not saved' : e.name==='SecurityError' ? 'finished' : 'save error: '+e.message)+
+      ' — press Stop recording to save '+info);
+  }
 }
 
 // ---- разбор файлов ----
@@ -1635,6 +1712,17 @@ function iqFreqFromName(name){
 function iqRateFromName(name){
   const m=name.match(/(\d+(?:\.\d+)?)\s*(k|M)?sps/i);
   return m ? Math.round(+m[1]*({k:1e3,m:1e6}[(m[2]||'').toLowerCase()]||1)) : null;
+}
+// auxi после data (так пишем мы — ради SDR++)
+async function iqWavTailFreq(f, o){
+  if(o+8>f.size) return null;
+  const b=await f.slice(o, Math.min(f.size, o+4096)).arrayBuffer(), dv=new DataView(b);
+  for(let p=0; p+8<=b.byteLength;){
+    const id=String.fromCharCode(...new Uint8Array(b, p, 4)), len=dv.getUint32(p+4,true);
+    if(id==='auxi' && len>=36 && p+8+36<=b.byteLength) return dv.getUint32(p+8+32,true)||null;
+    p+=8+len+(len&1);
+  }
+  return null;
 }
 async function iqParseWav(f){
   const hb=await f.slice(0, Math.min(f.size, 1<<16)).arrayBuffer(), dv=new DataView(hb);
@@ -1652,6 +1740,7 @@ async function iqParseWav(f){
       const dtype=tg===1&&fmt.bits===8 ? 'cu8' : tg===1&&fmt.bits===16 ? 'ci16_le' : tg===3&&fmt.bits===32 ? 'cf32_le' : tg===3&&fmt.bits===64 ? 'cf64_le' : null;
       if(!dtype) throw new Error(`unsupported WAV sample format (${fmt.bits} bit, tag ${fmt.tag})`);
       const size=Math.min(len>0 && len<0xffffffff ? len : f.size, f.size-(o+8));
+      if(freq==null) freq=await iqWavTailFreq(f, o+8+size+(size&1));
       return {blob:f, off:o+8, size, dtype, rate:fmt.rate, captures:[{start:0, freq:freq??iqFreqFromName(f.name)}], name:f.name};
     }
     o+=8+len+(len&1);
@@ -3047,7 +3136,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
           ` · errors demod:${n.underrunsWorker||0} ovf:${n.underrunsOverflow||0} dry:${n.underrunsStarve||0}`:'')+
         (n.busy?' · …':'')+
         (n.dev?.kind==='file' ? ` · ${iqFmtTime(n.dev.pos/n.dev.rate)} / ${iqFmtTime(n.dev.total/n.dev.rate)}`+(n.dev.ended?' (end)':'') : '')+
-        (n.rec ? ` · ● REC ${iqFmtTime((Date.now()-n.rec.start)/1000)} ${(n.rec.bytes/1e6).toFixed(0)} MB` : '')
+        (n.rec ? ` · ● REC ${iqFmtTime((Date.now()-n.rec.start)/1000)} ${(n.rec.bytes/1e6).toFixed(0)} MB` : n.recMsg ? ' · '+n.recMsg : '')
       : n.status;
   }});
 
