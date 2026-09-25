@@ -1156,6 +1156,87 @@ function saSteerIfOutside(n){
   n._steer=(n.zoom[0]+n.zoom[1])/2; n._dragPending=true; n._dragT=performance.now();
 }
 
+// История водопада в полном разрешении: строка — уровни всех бинов в дБ (1 байт, шаг SA_H_STEP)
+// плюс её частотная ось (lo, bin). При смене окна/шкалы/палитры текстура водопада перерисовывается
+// из истории — зум без потери деталей. Уровни lv[L] — прореживание по максимуму в 4^L раз,
+// чтобы перерисовка стоила ~строки×ширина, а не строки×бины. Сверх бюджета памяти у самых
+// старых строк сначала выкидываются мелкие уровни; самый грубый остаётся всегда.
+const SA_H_DB0=-160, SA_H_STEP=.75, SA_H_MIN=512;
+function saHistPush(n, s){
+  const budget=+n.p.wfMem*1e6;
+  if(!budget){ n.hist=null; return; }
+  const m=s.mag, N=m.length; if(N<2) return;
+  const lo=specHz(s,0), bin=(specHz(s,N-1)-lo)/(N-1);
+  // неравномерная ось (вейвлет, октавы) — история не ведётся
+  if(!(bin>0) || Math.abs(specHz(s,N>>1)-(lo+bin*(N>>1)))>Math.max(bin*.5,256)){ n.hist=null; return; }
+  const h=n.hist||(n.hist={rows:[], bytes:0});
+  const q=new Uint8Array(N), k=1/SA_H_STEP;
+  for(let i=0;i<N;i++){ const v=(20*Math.log10(m[i]+1e-12)-SA_H_DB0)*k; q[i]=v<0?0:v>255?255:v; }
+  const lv=[q];
+  for(let a=q; a.length>SA_H_MIN;){
+    const b=new Uint8Array(Math.ceil(a.length/4));
+    for(let i=0;i<b.length;i++){ let mx=0; for(let j=i*4, e=Math.min(a.length,j+4); j<e; j++) if(a[j]>mx) mx=a[j]; b[i]=mx; }
+    lv.push(a=b);
+  }
+  let bytes=0; for(const a of lv) bytes+=a.length;
+  h.rows.push({lo, bin, lv}); h.bytes+=bytes;
+  const maxRows=Math.max(1, n.wfH||1000);
+  while(h.rows.length>maxRows){ for(const a of h.rows.shift().lv) if(a) h.bytes-=a.length; }
+  for(let i=0; h.bytes>budget && i<h.rows.length;){
+    const r=h.rows[i]; let L=0; while(!r.lv[L]) L++;
+    if(L<r.lv.length-1){ h.bytes-=r.lv[L].length; r.lv[L]=null; } else i++;
+  }
+}
+// RGBA Wp×H из истории; top — новые сверху (CPU-канва), иначе порядок кольца GL (новые снизу)
+function saHistRender(n, Wp, H, top){
+  const rows=n.hist.rows, buf=new Uint8ClampedArray(Wp*H*4);
+  for(let i=3;i<buf.length;i+=4) buf[i]=255;
+  const fE=new Float64Array(Wp+1);
+  for(let x=0;x<=Wp;x++) fE[x]=saFreq(n,(x-.5)/Math.max(1,Wp-1));
+  let dMin=Infinity; for(let x=0;x<Wp;x++){ const d=Math.abs(fE[x+1]-fE[x]); if(d<dMin) dMin=d; }
+  // цвет на каждый код уровня — один раз
+  const pal=paletteLut(n.p.palette), rng=(n.p.top-n.p.floor)||1, col=new Uint8Array(256*3);
+  for(let c=0;c<256;c++){ const hk=heatIdx((SA_H_DB0+c*SA_H_STEP-n.p.floor)/rng)*3;
+    col[c*3]=pal[hk]; col[c*3+1]=pal[hk+1]; col[c*3+2]=pal[hk+2]; }
+  const cnt=Math.min(H, rows.length);
+  for(let a=0;a<cnt;a++){
+    const r=rows[rows.length-1-a], y=top ? a : H-1-a;
+    let L=clamp(Math.floor(Math.log(Math.max(1,dMin/r.bin))/Math.log(4)), 0, r.lv.length-1);
+    while(!r.lv[L]) L++;
+    const arr=r.lv[L], len=arr.length, sc=Math.pow(4,L), off=(sc-1)/2, kb=1/(r.bin*sc);
+    let o=y*Wp*4;
+    for(let x=0;x<Wp;x++,o+=4){
+      let b0=(fE[x]-r.lo)*kb-off/sc, b1=(fE[x+1]-r.lo)*kb-off/sc;
+      if(b0>b1){ const t=b0; b0=b1; b1=t; }
+      if(b1<-.5 || b0>len-.5) continue;              // вне полосы строки — чёрное
+      let v;
+      if(b1-b0>1){
+        const i0=Math.max(0,Math.ceil(b0)), i1=Math.min(len-1,Math.floor(b1));
+        v=arr[clamp(Math.round((b0+b1)*.5),0,len-1)];
+        for(let i=i0;i<=i1;i++) if(arr[i]>v) v=arr[i];
+      } else {
+        const bf=clamp((b0+b1)*.5,0,len-1), i0=bf|0, i1=Math.min(len-1,i0+1);
+        v=Math.round(arr[i0]+(arr[i1]-arr[i0])*(bf-i0));
+      }
+      buf[o]=col[v*3]; buf[o+1]=col[v*3+1]; buf[o+2]=col[v*3+2];
+    }
+  }
+  return buf;
+}
+// перерисованная история целиком в GL-кольцо: голова — последняя строка, все строки в окне [lo,hi]
+function saWfGlLoadRaw(glp, buf, lo, hi){
+  const {gl}=glp;
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,glp.tex);
+  gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,glp.w,glp.h,gl.RGBA,gl.UNSIGNED_BYTE,buf);
+  if(glp.ref==null) glp.ref=lo;
+  const mp=new Float32Array(2*glp.h);
+  for(let i=0;i<glp.h;i++){ mp[2*i]=lo-glp.ref; mp[2*i+1]=hi-glp.ref; }
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,glp.map);
+  gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,1,glp.h,gl.RG,gl.FLOAT,mp);
+  gl.activeTexture(gl.TEXTURE0);
+  glp.pos=glp.h-1;
+}
+
 def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'m1',t:'num'},{n:'m2',t:'num'},{n:'m3',t:'num'},{n:'m4',t:'num'},
        {n:'bLo',t:'num'},{n:'bHi',t:'num'},{n:'floor',t:'num'},{n:'top',t:'num'},
@@ -1178,6 +1259,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           // выключить — тот же жест, что и "очистить": незачем отдельная кнопка (см. fn у 'check' в core-graph.js)
           {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold) n.peak=null; }},
           {n:'palette',t:'select',opts:['default',...Object.keys(PALETTES)],d:'classic',label:'waterfall palette',adv:true},
+          // история водопада в полном разрешении — зум/смена палитры и диапазона дБ перерисовывают её без потерь
+          {n:'wfMem',t:'select',opts:['off','32','128','512'],d:'128',label:'waterfall history memory, MB',adv:true,
+           fn:n=>{ n.hist=null; n._histKey=null; }},
           // фосфорный спектр: плотность попаданий трассы в зоне спектра (как у 'persist')
           {n:'phosphor',t:'check',d:false,label:'phosphor',fn:n=>{ n.ph=null; }},
           {n:'phDecay',t:'range',min:.8,max:.999,step:.001,d:.95,label:'phosphor decay',adv:true},
@@ -1667,7 +1751,22 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           line[k]=pal[hk]; line[k+1]=pal[hk+1]; line[k+2]=pal[hk+2]; line[k+3]=255; }
         if(n.wfGl){ const [wl,wh]=saBounds(n); saWfGlWrite(n.wfGl,Wp,line,wl,wh); }
         else { n.ocx.drawImage(n.off,0,1); n.ocx.putImageData(new ImageData(line,Wp,1),0,0); }
+        if(fresh) saHistPush(n, n.s);
         n._lastRev=n.s.rev; n._lastSpecRef=n.s; n._wfInited=true;
+      }
+      // окно/шкала/палитра сменились — перерисовать водопад из истории, когда жест затих
+      // (пока тянут — шейдер растягивает старые строки как превью)
+      if(n.hist && n.hist.rows.length){
+        const key=[bLo,bHi,Wp,hwP,n.p.log,n.p.floor,n.p.top,n.p.palette,!!n.wfGl].join('|');
+        if(key!==n._histKey){
+          const now=performance.now();
+          if(key!==n._histPendKey){ n._histPendKey=key; n._histPendT=now; }
+          else if(now-n._histPendT>=90){
+            n._histKey=key;
+            if(n.wfGl) saWfGlLoadRaw(n.wfGl, saHistRender(n,Wp,hwP,false), bLo, bHi);
+            else n.ocx.putImageData(new ImageData(saHistRender(n,Wp,hwP,true),Wp,hwP),0,0);
+          }
+        }
       }
       const R=n.refMag&&n.refMag.length===N? n.refMag : null;
       const diff=R&&n.p.ref==='diff';

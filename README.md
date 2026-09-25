@@ -24,7 +24,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Serial port (WebSerial), CSV files, lists
 
 ### Analysis
-- Spectrum analyzer / waterfall (optional phosphor view), persistence spectrum, oscilloscope, constellation, eye diagram
+- Spectrum analyzer / waterfall (optional phosphor view; the waterfall keeps its history at full resolution, so zoom, dB range and palette changes redraw it without losing detail), persistence spectrum, oscilloscope, constellation, eye diagram
 - CFAR signal detector, channel SNR, channel grid, band scanner, auto frequency scanner
 - Band plans, bookmarks, signal recognition and signal type identifier
 - Goertzel, autocorrelation, cross-correlation, frequency response / coherence
@@ -87,6 +87,7 @@ On Linux unload the kernel driver before connecting, e.g. `sudo rmmod msi001 msi
 - a marker on `tuneFreq` (e.g. marker 1 of the Spectrum Analyzer wired to it) pauses the sweep and tunes there: the demodulators play as usual and the live spectrum is drawn over its part of the panorama; remove the marker to resume from the same step
 - use manual gain: with AGC each step gets its own level and the waterfall is striped. **shift center off DC** keeps the listened station away from the DC spike
 - the speed depends on the retune time over USB: roughly 20–50 ms per step, i.e. a few seconds per line for 100 MHz at 2.4 MSPS and ~30–45 s for the whole RTL-SDR range. A HackRF at 20 MSPS covers ~8× more per step
+- the Spectrum Analyzer keeps the waterfall history at full resolution (**waterfall history memory**, 128 MB by default), so zooming into an old part of the panorama shows the real bins, not stretched pixels. Over the budget the oldest lines keep only a max-decimated copy
 - ready-made patch: **USB SDR: Wideband Sweep**
 
 ### IQ recording and playback
