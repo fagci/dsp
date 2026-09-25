@@ -24,7 +24,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Serial port (WebSerial), CSV files, lists
 
 ### Analysis
-- Spectrum analyzer / waterfall, persistence spectrum, oscilloscope, constellation, eye diagram
+- Spectrum analyzer / waterfall (optional phosphor view), persistence spectrum, oscilloscope, constellation, eye diagram
 - CFAR signal detector, channel SNR, channel grid, band scanner, auto frequency scanner
 - Band plans, bookmarks, signal recognition and signal type identifier
 - Goertzel, autocorrelation, cross-correlation, frequency response / coherence
