@@ -895,7 +895,7 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
     await writeEach([[0x06,0xb1,0xff],[0x05,0xb3,0xff],[0x07,0x3a,0xff],[0x08,0x40,0xff],[0x09,0xc0,0xff],
       [0x0a,0x36,0xff],[0x0c,0x35,0xff],[0x0f,0x68,0xff],[0x11,0x03,0xff],[0x17,0xf4,0xff],[0x19,0x0c,0xff]]);
   }
-  return {init, setFrequency, setAutoGain, setManualGain, close};
+  return {init, setFrequency, setAutoGain, setManualGain, setGpio, close};
 }
 // проверка чипа по ID-регистру на конкретном I2C-адресе (0x69 у обеих версий R82xx)
 rtlMakeR820T.checkAt = async function(com, addr){
@@ -1001,12 +1001,14 @@ async function rtlOpenDevice(dev, ppm, gain){
     await com.writeEach([[RTL_CMD.REG,RTL_BLOCK.USB,RTL_REG.EPA_CTL,0x0210,2],[RTL_CMD.REG,RTL_BLOCK.USB,RTL_REG.EPA_CTL,0x0000,2]]);
   }
   async function readSamples(nBytes){ return await com.bulk.readBuffer(nBytes); }
+  async function setBiasTee(on){ await tuner.setGpio(0, on); }   // GPIO0 — как rtlsdr_set_bias_tee
   async function close(){
     await com.i2c.open(); await tuner.close(); await com.i2c.close();
     await com.iface.release();
     await dev.close();
   }
-  return {setSampleRate, setCenterFrequency, setGain, resetBuffer, readSamples, close, tunerName:found.name+(isV4?' (Blog V4)':''), fmt:'u8', bps:2, epoch:()=>tuneEpoch};
+  return {setSampleRate, setCenterFrequency, setGain, setBiasTee, resetBuffer, readSamples, close,
+    tunerName:found.name+(isV4?' (Blog V4)':''), kind:'rtl', fmt:'u8', bps:2, epoch:()=>tuneEpoch};
 }
 
 // ---- HackRF и Airspy: тот же API, что у rtlOpenDevice ----
@@ -1021,7 +1023,7 @@ function sdrVendorOut(dev, request, value, index, data){
 
 // HackRF: MAX2837 с нулевой ПЧ, int8 IQ. На Linux: rmmod hackrf
 async function hackrfOpenDevice(dev, gain){
-  const REQ={MODE:1, SAMPLE_RATE:6, BB_FILTER:7, SET_FREQ:16, AMP:17, LNA:19, VGA:20};
+  const REQ={MODE:1, SAMPLE_RATE:6, BB_FILTER:7, SET_FREQ:16, AMP:17, LNA:19, VGA:20, ANT_POWER:23};
   // полосы baseband-фильтра MAX2837, Гц
   const BB=[1750000,2500000,3500000,5000000,5500000,6000000,7000000,8000000,9000000,10000000,
     12000000,14000000,15000000,20000000,24000000,28000000];
@@ -1055,10 +1057,17 @@ async function hackrfOpenDevice(dev, gain){
       lna=Math.min(40, Math.round(t*40/102/8)*8);
       vga=Math.min(62, Math.max(0, Math.round((t-lna)/2)*2));
     }
-    await sdrVendorOut(dev, REQ.AMP, 0, 0);
+    await setHackrfGain(lna, vga, false);
+  }
+  // отдельные ступени: LNA 0-40 шаг 8, VGA 0-62 шаг 2, усилитель +14 дБ
+  async function setHackrfGain(lna, vga, amp){
+    lna=Math.max(0, Math.min(40, Math.round(lna/8)*8));
+    vga=Math.max(0, Math.min(62, Math.round(vga/2)*2));
+    await sdrVendorOut(dev, REQ.AMP, amp?1:0, 0);
     await sdrVendorIn(dev, REQ.LNA, lna, 1);
     await sdrVendorIn(dev, REQ.VGA, vga, 1);
   }
+  async function setBiasTee(on){ await sdrVendorOut(dev, REQ.ANT_POWER, on?1:0, 0); }
   async function resetBuffer(){ await setMode(0); await setMode(1); rxOn=true; }
   async function readSamples(nBytes){
     const res=await dev.transferIn(1, nBytes);
@@ -1073,8 +1082,8 @@ async function hackrfOpenDevice(dev, gain){
   }
   await setMode(0);
   await setGain(gain);
-  return {setSampleRate, setCenterFrequency, setGain, resetBuffer, readSamples, close,
-    tunerName:dev.productName||'HackRF', fmt:'u8', bps:2, epoch:()=>tuneEpoch};
+  return {setSampleRate, setCenterFrequency, setGain, setHackrfGain, setBiasTee, resetBuffer, readSamples, close,
+    tunerName:dev.productName||'HackRF', kind:'hackrf', fmt:'u8', bps:2, epoch:()=>tuneEpoch};
 }
 
 // Airspy R2/Mini: АЦП отдаёт вещественные 12-битные отсчёты (uint16, смещение 2048) на удвоенной
@@ -1118,7 +1127,7 @@ function airspyMakeConv(){
 }
 async function airspyOpenDevice(dev, gain){
   const REQ={MODE:1, SET_SAMPLERATE:12, SET_FREQ:13, LNA:14, MIXER:15, VGA:16, LNA_AGC:17, MIXER_AGC:18,
-    GET_SAMPLERATES:25, PACKING:26};
+    GPIO_WRITE:21, GET_SAMPLERATES:25, PACKING:26};
   await dev.open();
   await dev.selectConfiguration(1);
   await dev.claimInterface(0);
@@ -1165,6 +1174,8 @@ async function airspyOpenDevice(dev, gain){
     await sdrVendorIn(dev, REQ.LNA_AGC, 0, 1); await sdrVendorIn(dev, REQ.MIXER_AGC, 0, 1);
     await sdrVendorIn(dev, REQ.LNA, lna, 1); await sdrVendorIn(dev, REQ.MIXER, mix, 1); await sdrVendorIn(dev, REQ.VGA, vga, 1);
   }
+  // bias-tee — GPIO порт 1 пин 13, как airspy_set_rf_bias
+  async function setBiasTee(on){ await sdrVendorOut(dev, REQ.GPIO_WRITE, on?1:0, (1<<5)|13); }
   async function resetBuffer(){
     await setMode(0);
     await dev.clearHalt('in', 1).catch(()=>{});
@@ -1184,8 +1195,8 @@ async function airspyOpenDevice(dev, gain){
     await dev.close();
   }
   await setGain(gain);
-  return {setSampleRate, setCenterFrequency, setGain, resetBuffer, readSamples, close,
-    tunerName:rates.includes(6000000)?'Airspy Mini':'Airspy', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
+  return {setSampleRate, setCenterFrequency, setGain, setBiasTee, resetBuffer, readSamples, close,
+    tunerName:rates.includes(6000000)?'Airspy Mini':'Airspy', kind:'airspy', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
 }
 
 // VID:PID поддерживаемых устройств
@@ -1253,11 +1264,12 @@ self.onmessage=async e=>{
       if(!usb) throw new Error('device is not visible from the worker');
       try{ api=await sdrOpenDevice(usb, 0, args.gain); }
       catch(err){ try{ await usb.close(); }catch(e2){} usb=null; throw err; }
-      r={tunerName:api.tunerName, fmt:api.fmt, bps:api.bps};
+      r={tunerName:api.tunerName, kind:api.kind, fmt:api.fmt, bps:api.bps};
     }
     else if(cmd==='setSampleRate'){ rate=await api.setSampleRate(args.rate); r=rate; }
     else if(cmd==='setCenterFrequency'){ const f=await api.setCenterFrequency(args.freq); r={f, epoch:api.epoch()}; }
     else if(cmd==='setGain') await api.setGain(args.gain);
+    else if(cmd==='dev') r=await api[args.m](...args.a);
     else if(cmd==='resetBuffer') await api.resetBuffer();
     else if(cmd==='start'){ if(!streaming){ streaming=true; stream(args.readsPerSec, args.depth); } }
     else if(cmd==='stop') streaming=false;
@@ -1288,11 +1300,13 @@ async function rtlOpenInWorker(usbDev, gain){
     info=await call('open', {vendorId:usbDev.vendorId, productId:usbDev.productId, serial:usbDev.serialNumber, gain});
   }catch(e){ drop(); throw e; }
   return {
-    worker:true, tunerName:info.tunerName, fmt:info.fmt, bps:info.bps,
+    worker:true, tunerName:info.tunerName, kind:info.kind, fmt:info.fmt, bps:info.bps,
     setSampleRate:rate=>call('setSampleRate',{rate}),
     setCenterFrequency:async freq=>{ const r=await call('setCenterFrequency',{freq}); epoch=r.epoch; return r.f; },
     epoch:()=>epoch,
     setGain:gain=>call('setGain',{gain}),
+    setBiasTee:on=>call('dev',{m:'setBiasTee',a:[on]}),
+    setHackrfGain:(lna,vga,amp)=>call('dev',{m:'setHackrfGain',a:[lna,vga,amp]}),
     resetBuffer:()=>call('resetBuffer'),
     // cb получает {buf} | {err} | {end}
     startStream(readsPerSec, depth, cb){ onChunk=cb; return call('start',{readsPerSec, depth}); },
@@ -1339,7 +1353,7 @@ function rtlChanBands(n, cf, half){
   const pl=rtlPlan(mode, n.sourceRate, n.p.bw), out=[];
   for(let ci=0;ci<4;ci++){
     const ch=n.ch[ci]; if(!ch.active) continue;
-    const f=clamp(ch.tuneFreq==null?cf:ch.tuneFreq, cf-half, cf+half);
+    const f=clamp(ch.tuneFreq==null?sdrCenter(n):ch.tuneFreq, cf-half, cf+half);
     const lo = mode==='USB' ? f : f-pl.pass, hi = mode==='LSB' ? f : f+pl.pass;
     out.push({idx:ci, f, lo, hi, mode});
   }
@@ -2203,11 +2217,31 @@ function rtlReadChannelAudio(n, ch, o, oL, oR){
   ch.readPos%=ring.size;
 }
 
-async function rtlConnect(n){
+const sdrUsbId=d=>d.vendorId.toString(16)+':'+d.productId.toString(16)+':'+(d.serialNumber||'');
+// прошлое устройство из уже разрешённых — без окна выбора; choose — выбрать заново
+async function sdrPickDevice(n, choose){
+  if(!choose && n.p.usbId){
+    const d=(await navigator.usb.getDevices()).find(d=>sdrUsbId(d)===n.p.usbId);
+    if(d) return d;
+  }
+  return navigator.usb.requestDevice({filters:SDR_USB_FILTERS});
+}
+// центр железа: ppm — поправка частоты, dcShift — центр на sr/4 выше, чтобы станция не сидела на DC
+async function sdrTune(n){
+  const want=Math.round(n.p.freq), ppm=+n.p.ppm||0, k=1+ppm*1e-6;
+  const off=n.p.dcShift ? Math.round(n.sourceRate/4) : 0;
+  const hw=await n.dev.setCenterFrequency(Math.round((want+off)/k));
+  n.actualFreq=hw*k; n.dcOff=off; n.appliedFreq=want; n.appliedPpm=ppm;
+}
+// логический центр — куда встаёт канал, следующий за центром
+const sdrCenter=n=>(n.actualFreq??n.p.freq)-(n.dcOff||0);
+const sdrGainKey=n=>n.dev?.kind==='hackrf' ? `h${n.p.lna}|${n.p.vga}|${!!n.p.amp}` : (n.p.auto ? 'auto' : 'g'+n.p.gainDb);
+
+async function rtlConnect(n, choose){
   if(!navigator.usb){ n.status='WebUSB unavailable (needs Chrome/Edge/Opera)'; return; }
   if(n.connected) return;
   try{
-    const usbDev=await navigator.usb.requestDevice({filters:SDR_USB_FILTERS});
+    const usbDev=await sdrPickDevice(n, choose);
     const gain=n.p.auto?null:n.p.gainDb;
     // сначала пробуем открыть донгл в USB-воркере; без WebUSB в воркерах — по-старому, на главном потоке
     n.dev=await rtlOpenInWorker(usbDev, gain).catch(e=>{
@@ -2215,9 +2249,11 @@ async function rtlConnect(n){
       || await sdrOpenDevice(usbDev, 0, gain);
     const srSafe=rtlSafeSr(n.p.sr);
     if(srSafe!==+n.p.sr) n.status='sample rate in settings is stale, using '+srSafe+' Hz';
+    n.p.usbId=sdrUsbId(usbDev); n.p.devKind=n.dev.kind;
     n.sourceRate=await n.dev.setSampleRate(srSafe);
-    n.actualFreq=await n.dev.setCenterFrequency(+n.p.freq);
-    n.appliedFreq=Math.round(n.p.freq); n.appliedGain=gain; n.appliedAuto=!!n.p.auto;
+    await sdrTune(n);
+    // у HackRF свои ступени — применит rtlApplyPending; bias-tee после открытия выключен, GPIO не трогаем
+    n.appliedGainKey=n.dev.kind==='hackrf' ? null : sdrGainKey(n); n.appliedBias=false;
     await n.dev.resetBuffer();
     // отключение/переподключение — каналы поднимаем с нуля; активные до дисконнекта воркеры
     // уже терминированы в rtlDisconnect, но на всякий случай подчистим прежде, чем ресайзить кольца
@@ -2226,7 +2262,7 @@ async function rtlConnect(n){
     n._specEpoch=0;
     rtlActivateChannel(n, 0);                        // channel 1 — always, as before
     // синхронизируем NCO канала 1 с уже выставленным (возможно, отличным от центра) значением
-    const tf0=n.ch[0].tuneFreq==null?n.actualFreq:n.ch[0].tuneFreq;
+    const tf0=n.ch[0].tuneFreq==null?sdrCenter(n):n.ch[0].tuneFreq;
     n.ch[0].appliedOffset=clamp(tf0, n.actualFreq-n.sourceRate/2, n.actualFreq+n.sourceRate/2)-n.actualFreq;
     n.ch[0].worker.setOffset(n.ch[0].appliedOffset);
     if(n.specWorker) n.specWorker.terminate();
@@ -2267,19 +2303,24 @@ function fmtHz(v,dp){                               // dp — знаков по�
 // потому что оба ходят по общему I2C-репитеру тюнера — параллелить нельзя.
 async function rtlApplyPending(n){
   if(!n.dev || n.busy) return;
-  const wantFreq=Math.round(n.p.freq);
-  const wantAuto=!!n.p.auto, wantGain=wantAuto?null:n.p.gainDb;
-  const freqStale = wantFreq!==n.appliedFreq;
-  const gainStale = wantAuto!==n.appliedAuto || (!wantAuto && wantGain!==n.appliedGain);
-  if(!freqStale && !gainStale) return;
+  const off=n.p.dcShift ? Math.round(n.sourceRate/4) : 0;
+  const freqStale = Math.round(n.p.freq)!==n.appliedFreq || (+n.p.ppm||0)!==n.appliedPpm || off!==n.dcOff;
+  const gainKey=sdrGainKey(n), gainStale=gainKey!==n.appliedGainKey;
+  const biasStale=!!n.p.bias!==n.appliedBias;
+  if(!freqStale && !gainStale && !biasStale) return;
   n.busy=true;
   try{
     if(freqStale){
-      n.actualFreq=await n.dev.setCenterFrequency(wantFreq); n.appliedFreq=wantFreq;
+      await sdrTune(n);
       // спектр — только с отсчётов новой частоты: кольцо с нуля, старые чанки отсекает эпоха
       n._specEpoch=n.dev.epoch?.()||0; n.specRing.filled=0;
     }
-    if(gainStale){ await n.dev.setGain(wantGain); n.appliedGain=wantGain; n.appliedAuto=wantAuto; }
+    if(gainStale){
+      if(n.dev.kind==='hackrf') await n.dev.setHackrfGain(+n.p.lna, +n.p.vga, !!n.p.amp);
+      else await n.dev.setGain(n.p.auto?null:n.p.gainDb);
+      n.appliedGainKey=gainKey;
+    }
+    if(biasStale){ await n.dev.setBiasTee(!!n.p.bias); n.appliedBias=!!n.p.bias; }
   }catch(e){ n.status='retune error: '+e.message; }
   n.busy=false;
 }
@@ -2296,6 +2337,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
   readout:true,
   params:[
     {n:'connect',t:'button',label:'Connect',fn:async n=>{ await rtlConnect(n); }},
+    {n:'choose',t:'button',label:'Choose…',fn:async n=>{ await rtlConnect(n, true); }},
     {n:'disconnect',t:'button',label:'Disconnect',fn:async n=>{ await rtlDisconnect(n); }},
     {n:'sr',t:'select',opts:['960000','1024000','1920000','2048000','2400000','2500000','3000000','3200000','6000000','8000000','10000000'],d:'1024000',label:'sample rate',
      fn:async n=>{ if(n.dev){ try{ n.sourceRate=await n.dev.setSampleRate(rtlSafeSr(n.p.sr)); rtlResetRing(n); }
@@ -2312,6 +2354,15 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     ...['WFM','NFM','AM','USB','LSB'].map(m=>({n:'if'+m,t:'range',min:500,max:300000,d:RTL_BW_DEF[m],hidden:true})),
     {n:'auto',t:'check',d:true,label:'auto gain'},
     {n:'gainDb',t:'range',min:0,max:49.6,step:.1,d:20,label:'gain, dB'},
+    // только HackRF — вместо auto/gainDb, строки переключает draw()
+    {n:'lna',t:'range',min:0,max:40,step:8,d:24,label:'LNA, dB'},
+    {n:'vga',t:'range',min:0,max:62,step:2,d:24,label:'VGA, dB'},
+    {n:'amp',t:'check',d:false,label:'amp +14 dB'},
+    {n:'bias',t:'check',d:false,label:'bias-tee',adv:true},
+    {n:'dcShift',t:'check',d:false,label:'shift center off DC',adv:true},
+    {n:'ppm',t:'range',min:-100,max:100,step:.1,d:0,label:'frequency correction, ppm',adv:true},
+    {n:'usbId',t:'text',d:'',hidden:true},
+    {n:'devKind',t:'text',d:'',hidden:true},
     {n:'specSize',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'4096',label:'spectrum FFT size'},
     {n:'specWin',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann',label:'spectrum window'}
   ],
@@ -2320,7 +2371,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
             n.underrunsWorker=0; n.underrunsOverflow=0; n.underrunsStarve=0;
             n.status='not connected'; n.busy=false; n.specWorker=null; n.specBusy=false;
             n.workerMs=null; n.roundtripMs=null;
-            n.appliedFreq=null; n.appliedGain=null; n.appliedAuto=null;
+            n.appliedFreq=null; n.appliedPpm=null; n.appliedGainKey=null; n.appliedBias=null; n.dcOff=0;
             // 4 канала демодуляции; канал 0 без цифрового суффикса в портах, активен всегда
             // (обратная совместимость), 1-3 поднимаются лениво при первом числе на их tuneFreqN.
             // частота настройки каждого канала — НЕ параметр с текстовым полем (умышленно: поле
@@ -2353,12 +2404,13 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
       n._inSteer=I.steerFreq;
       if(first) n._steerPending=null;
       else {
-        const echo=Math.abs(I.steerFreq-(n.p.freq??cf0))<=Math.max(2*binHz, 50);
+        // 'sa' идёт за центром спектра, а он при dcShift не совпадает с n.p.freq
+        const tol=Math.max(2*binHz, 50), echo=Math.abs(I.steerFreq-(n.p.freq??cf0))<=tol || Math.abs(I.steerFreq-cf0)<=tol;
         n._steerPending = (echo || now<(n._steerMuteUntil||0)) ? null : I.steerFreq;
       }
     } else if(typeof I.steerFreq!=='number') n._inSteer=I.steerFreq;
     if(!target && n._steerPending!=null && now-(n._lastSteerRetune||0)>=80){
-      target=n._steerPending; prio=3; n._steerPending=null; n._lastSteerRetune=now;   // троттлинг физической перестройки при драге
+      target=n._steerPending-(n.dcOff||0); prio=3; n._steerPending=null; n._lastSteerRetune=now;   // троттлинг физической перестройки при драге
     }
     // tuneFreq: смена значения — новая частота канала; за пределами полосы — ещё и перестройка центра
     for(let ci=0;ci<4;ci++){
@@ -2375,7 +2427,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
       if(target!==n.p.freq){ n.p.freq=target; n.set.freq?.(target); }
       if(prio<=2) n._steerMuteUntil=now+600;
       // каналы, чья частота не попадает в новую полосу, возвращаем к центру
-      for(const ch of n.ch) if(ch.tuneFreq!=null && Math.abs(ch.tuneFreq-target)>half0) ch.tuneFreq=null;
+      for(const ch of n.ch) if(ch.tuneFreq!=null && Math.abs(ch.tuneFreq-target-(n.dcOff||0))>half0) ch.tuneFreq=null;
     }
     // gainDb/demod/bw — часто одновременно и подключены (например, с выбранной закладки), и хочется
     // покрутить руками поверх — setModWired (processing.js) даёт ручной правке победить, пока сам
@@ -2421,7 +2473,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
           if(ch.ringDecim!==n.decim) rtlResizeChannelRing(n, ch);
         }
       }
-      const wantTune=clamp(ch.tuneFreq==null?cf:ch.tuneFreq, cf-half, cf+half), wantOffset=wantTune-cf;
+      const wantTune=clamp(ch.tuneFreq==null?sdrCenter(n):ch.tuneFreq, cf-half, cf+half), wantOffset=wantTune-cf;
       if(Math.abs(wantOffset-ch.appliedOffset)>0.5){
         ch.worker.setOffset(wantOffset);
         ch.appliedOffset=wantOffset;
@@ -2444,7 +2496,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     }
     const oi=buf(n,'I'), oq=buf(n,'Q');
     const oa=[buf(n,'audio'), buf(n,'audio2'), buf(n,'audio3'), buf(n,'audio4')];
-    const tf=n.ch.map(ch=>clamp(ch.tuneFreq==null?cf:ch.tuneFreq, cf-half, cf+half));
+    const tf=n.ch.map(ch=>clamp(ch.tuneFreq==null?sdrCenter(n):ch.tuneFreq, cf-half, cf+half));
     const bounds={freqLo:cf-half, freqHi:cf+half,               // край захваченной полосы + настройка каждого канала
       tuneFreq:tf[0], tuneFreq2:tf[1], tuneFreq3:tf[2], tuneFreq4:tf[3]};
 
@@ -2481,7 +2533,15 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     }
     if(n._dialCv) drawFreqDial(n.el, n._dialCv, n._dialCx, n._dial, ()=>n.p.freq, v=>{ n.p.freq=v; }, {dial:false});
     const cf=n.actualFreq??n.p.freq;
-    const tune=clamp(n.ch[0].tuneFreq==null?cf:n.ch[0].tuneFreq, cf-n.sourceRate/2, cf+n.sourceRate/2);
+    const tune=clamp(n.ch[0].tuneFreq==null?sdrCenter(n):n.ch[0].tuneFreq, cf-n.sourceRate/2, cf+n.sourceRate/2);
+    // HackRF: ступени LNA/VGA/amp вместо auto/gainDb
+    const hk=n.p.devKind==='hackrf';
+    if(n.el && (n._rowsEl!==n.el || n._rowsHk!==hk)){
+      n._rowsEl=n.el; n._rowsHk=hk;
+      for(const [k,show] of [['lna',hk],['vga',hk],['amp',hk],['auto',!hk],['gainDb',!hk]]){
+        const e=n.el.querySelector(`.prm[data-param="${k}"]`); if(e) e.style.display=show?'':'none';
+      }
+    }
     const chCount=n.ch.filter(c=>c.active).length;
     const r=n.el.querySelector('.readout');
     if(r) r.textContent = n.connected
