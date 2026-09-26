@@ -1525,6 +1525,15 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       cv.addEventListener('wheel', ev=>{
         ev.preventDefault(); ev.stopPropagation();
         if(!n.s) return;
+        // колесо над подписью маркера — точная подстройка: 10 Гц, Ctrl — 1 Гц, Shift — 100 Гц
+        // (SSB: на обычном зуме пиксель — сотни Гц, тапом точно не попасть)
+        const mkw=mkHit(ev);
+        if(mkw && !n.ext[mkw.idx] && n.mk[mkw.idx]!=null){
+          const st=ev.ctrlKey||ev.metaKey ? 1 : ev.shiftKey ? 100 : 10, k=mkw.idx;
+          n.mk[k]=Math.round(n.mk[k]/st)*st+(ev.deltaY<0?st:-st)*(ev.deltaY?1:0);
+          n.active=k+1; n.pickT=null;
+          return;
+        }
         const [fullLo,fullHi]=specSpan(n.s);
         const curLo=saFreq(n,0), curHi=saFreq(n,1), curRange=curHi-curLo||1;
         const rc=cv.getBoundingClientRect(), x=(ev.clientX-rc.left)/rc.width;
@@ -1631,6 +1640,12 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         const y=(ev.clientY-rc.top)/rc.height*cv.height;
         const edge=chanEdgeAt(ev);
         if(edge){ drag={edge, pid:ev.pointerId, w:rc.width, left:rc.left}; cv.setPointerCapture(ev.pointerId); return; }
+        // подпись маркера тянется с верньером: 1/10 скорости обычной панорамы, шаг 1 Гц
+        const mkd=mkHit(ev);
+        if(mkd && !n.ext[mkd.idx] && n.mk[mkd.idx]!=null && n.s){
+          drag={mk:mkd.idx, f0:n.mk[mkd.idx], x0:ev.clientX, w:rc.width, range:saFreq(n,1)-saFreq(n,0), pid:ev.pointerId, moved:false};
+          cv.setPointerCapture(ev.pointerId); return;
+        }
         const resize=Math.abs(y-(n._hs||0))<=6;
         if(!resize && !n.s) return;
         drag={x0:ev.clientX, y0:ev.clientY, w:rc.width, h:rc.height,
@@ -1654,6 +1669,14 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           return;
         }
         if(!drag || ev.pointerId!==drag.pid) return;
+        if(drag.mk!=null){
+          const dx=ev.clientX-drag.x0;
+          if(!drag.moved && Math.abs(dx)<=6) return;     // тот же порог, что у тапа: без движения — клик по подписи
+          ev.preventDefault(); drag.moved=true;
+          n.mk[drag.mk]=Math.round(drag.f0+dx/Math.max(1,drag.w)*drag.range*0.1);
+          n.active=drag.mk+1;
+          return;
+        }
         if(drag.edge){                               // ширина полосы ПЧ — от частоты канала до курсора
           ev.preventDefault();
           const {c}=drag.edge, f=saFreq(n,clamp((ev.clientX-drag.left)/Math.max(1,drag.w),0,1));
@@ -1698,6 +1721,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         }
         if(drag && ev.pointerId===drag.pid && cv.hasPointerCapture(ev.pointerId)) cv.releasePointerCapture(ev.pointerId);
         if(drag && drag.edge){ n.pickT=null; n._noTap=true; }   // core-graph уже поставил бы маркер на место отпускания
+        if(drag && drag.mk!=null && drag.moved){ n.pickT=null; n._noTap=true; }
         drag=null; n._dragActive=false;
       };
       cv.addEventListener('pointerup', endDrag);
@@ -1936,7 +1960,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     cx.strokeStyle=themeColor('--grid'); cx.beginPath(); cx.moveTo(0,hs+.5); cx.lineTo(W,hs+.5); cx.stroke();
     saBands(n,cx,W,H);
     saDbLabels(n,cx);                                 // подписи уровня — поверх трассы
-    saChannels(n,cx,W,hs);                            // полосы ПЧ каналов rtlsdr
+    saChannels(n,cx,W,hs,plotH);                      // полосы ПЧ каналов rtlsdr и порог шумоподавителя
     saBandPlan(n,cx,W,hs,plotH);                      // полосы/закладки — зона спектра, водопад не трогаем
     saMarkers(n,cx,W,hs);
     saBandPlanLabels(n,cx);                           // подписи — поверх маркеров

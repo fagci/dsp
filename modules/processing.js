@@ -1373,8 +1373,9 @@ function saBands(n,cx,W,H){                        // закраска поло�
 // Шторки каналов приёмника (spec.chans от rtlsdr): полоса канального фильтра ПЧ вокруг частоты
 // каждого канала, цветом маркера с тем же номером. Подпись (режим и ширина) — отдельным проходом
 // saChannelLabels, после маркеров, чтобы линия маркера её не перекрывала.
-function saChannels(n,cx,W,H){
+function saChannels(n,cx,W,H,plotH){
   const list=n.s&&n.s.chans; if(!list||!list.length) return;
+  const yDb=db=>plotH-clamp((db-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
   for(const c of list){
     const x1=saPos(n,c.lo)*W, x2=saPos(n,c.hi)*W;
     if(x2<0||x1>W) continue;
@@ -1383,8 +1384,26 @@ function saChannels(n,cx,W,H){
     cx.globalAlpha=.9; cx.strokeStyle=col; cx.lineWidth=1;
     const e1=Math.round(x1)+.5, e2=Math.round(x2)-.5;
     cx.beginPath(); cx.moveTo(e1,16); cx.lineTo(e1,H); cx.moveTo(e2,16); cx.lineTo(e2,H); cx.stroke();
+    // шумоподавитель: пунктир — порог, сплошная — текущий средний уровень в полосе канала
+    // (в той же шкале, что трасса); сплошная выше пунктира — открыт (с гистерезисом 3 дБ и hang)
+    if(c.thrDb!=null && plotH){
+      const yt=Math.round(yDb(c.thrDb))+.5;
+      cx.globalAlpha=.9; cx.setLineDash([4,3]);
+      cx.beginPath(); cx.moveTo(e1,yt); cx.lineTo(e2,yt); cx.stroke(); cx.setLineDash([]);
+      if(c.lvDb!=null){
+        const yl=Math.round(yDb(c.lvDb))+.5;
+        cx.globalAlpha=c.sqOpen?1:.45; cx.lineWidth=2;
+        cx.beginPath(); cx.moveTo(e1,yl); cx.lineTo(e2,yl); cx.stroke(); cx.lineWidth=1;
+      }
+    }
   }
   cx.globalAlpha=1;
+}
+// канал приёмника, на частоте которого стоит маркер (маркер ведёт tuneFreq канала)
+function saChanAtMarker(n,f){
+  const list=n.s&&n.s.chans; if(!list||!list.length||f==null) return null;
+  const tol=Math.max(1, Math.abs(specHz(n.s,1)-specHz(n.s,0))/2);
+  return list.find(c=>Math.abs(c.f-f)<=tol) || null;
 }
 // подпись на плашке цвета канала; не влезает в шторку — выносим вбок от неё
 function saChannelLabels(n,cx,W){
@@ -1393,7 +1412,7 @@ function saChannelLabels(n,cx,W){
   for(const c of list){
     const x1=saPos(n,c.lo)*W, x2=saPos(n,c.hi)*W;
     if(x2<0||x1>W) continue;
-    const col=MK_COL(c.idx), bw=c.hi-c.lo, t=c.mode+' '+fmtHz(bw, bw%1000?1:0);
+    const col=MK_COL(c.idx), bw=c.hi-c.lo, t=c.mode+' '+fmtHz(bw, bw%1000?1:0)+(c.sql ? (c.sqOpen?' SQL open':' SQL closed') : '');
     const tw=Math.ceil(cx.measureText(t).width), ty=20+c.idx*15;
     let tx=(x1+x2-tw)/2;
     if(x2-x1<tw+8) tx = x2+4+tw<=W ? x2+4 : x1-tw-4;
@@ -1570,8 +1589,12 @@ function saMarkers(n,cx,W,H){
     // "1: 433.075 -75 / 18" — номер, частота (3 знака — см. коммент у fmtHz, иначе близкие маркеры
     // выглядят как одна и та же частота, без буквы единицы — компактнее), уровень — одной строкой
     const fv=fmtHz(f,3).replace(/[kMG]$/,'');
-    // уровень дБ / SNR над шумовой полкой (см. saNoiseFloor)
-    const t=(k+1)+': '+fv+(n.db[k]>-119?' '+n.db[k].toFixed(0)+' / '+Math.max(0,n.snr?.[k]??0).toFixed(0):'');
+    // маркер на канале приёмника — RSSI канала (dBFS) / SNR, ровно те, что сравнивает шумоподавитель;
+    // иначе пик в окне ±tol / SNR над шумовой полкой (см. saNoiseFloor)
+    const ch=saChanAtMarker(n,f);
+    const t=(k+1)+': '+fv+(ch && ch.rssi!=null
+      ? ' '+ch.rssi.toFixed(0)+'dBFS / '+(ch.snr!=null?ch.snr.toFixed(0):'—')
+      : n.db[k]>-119?' '+n.db[k].toFixed(0)+' / '+Math.max(0,n.snr?.[k]??0).toFixed(0):'');
     const tw=cx.measureText(t).width;
     // по центру линии маркера; дорожка стека — по НОМЕРУ маркера (k), а не по порядку рисования —
     // иначе позиции соседних подписей "прыгали" бы при каждой смене наведения
