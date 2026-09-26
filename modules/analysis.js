@@ -1179,6 +1179,7 @@ function saWfGlRender(glp,W,H,lo,hi,lin){
 // Под сглаженной трассой — градиентная заливка снизу. По вертикали ячейка ~2px, картинка
 // растягивается drawImage с билинейной интерполяцией. Пересчёт только на свежий кадр.
 // Смена оси/размера/шкалы — сброс, старые попадания уже не в тех координатах.
+let PH_LUT_K=null, PH_LUT_A=null;
 const PH_K=1/1.5;                           // нормировка ядра: сумма по уровню = 1
 function saPhosphor(n,cx,W,H,ty,fresh,diff){
   const [lo,hi]=saBounds(n);
@@ -1226,13 +1227,22 @@ function saPhosphor(n,cx,W,H,ty,fresh,diff){
   const pal=paletteLut(n.p.palette);
   if(ph.dirty || ph.pal!==pal || ph.gain!==n.p.phGain){
     ph.dirty=false; ph.pal=pal; ph.gain=n.p.phGain;
-    // a·(1-d) — доля кадров, попавших в ячейку
-    const px=ph.img.data, g=n.p.phGain*(1-d);
+    // u = a·(1-d)·gain — доля кадров с попаданием; яркость u^0.3: одиночное попадание при
+    // любом затухании сразу заметно (как вспышка люминофора), постоянный сигнал — верх палитры.
+    // Кривая — таблицей: цвет и альфа на 4096 ступеней u.
+    if(!PH_LUT_K){
+      PH_LUT_K=new Uint16Array(4096); PH_LUT_A=new Uint8Array(4096);
+      for(let i=0;i<4096;i++){
+        const v=Math.pow(i/4095,.3);
+        PH_LUT_K[i]=heatIdx(.15+.85*v)*3;            // низ палитры почти чёрный — пропускаем
+        PH_LUT_A[i]=v>.4?255:(v*637)|0; } }
+    // попадание в каждом кадре даёт a·(1-d)=PH_K/2 — при brightness 3 это верх палитры
+    const px=ph.img.data, g=n.p.phGain*(1-d)*4095, lk=PH_LUT_K, la=PH_LUT_A;
     for(let i=0;i<a.length;i++){
-      const j=i*4, x=a[i];
-      if(x<2e-3){ px[j+3]=0; continue; }
-      const v=1-Math.exp(-x*g), k=heatIdx(.15+.85*v)*3;  // низ палитры почти чёрный — пропускаем
-      px[j]=pal[k]; px[j+1]=pal[k+1]; px[j+2]=pal[k+2]; px[j+3]=v>.4?255:(v*637)|0; }
+      const j=i*4, u=a[i]*g;
+      if(u<.5){ px[j+3]=0; continue; }
+      const q=u>4095?4095:u|0, k=lk[q];
+      px[j]=pal[k]; px[j+1]=pal[k+1]; px[j+2]=pal[k+2]; px[j+3]=la[q]; }
     ph.ocx.putImageData(ph.img,0,0);
   }
   cx.imageSmoothingEnabled=true; cx.imageSmoothingQuality='high';
