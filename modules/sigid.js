@@ -112,8 +112,10 @@ function sidSegments(n,s){
   const fl=sidFloor(n,pw,N), thrDb=n.p.thr+Math.max(0,(n.fluctDb-1.5)*1.2), thr=Math.pow(10,thrDb/10);
   n.thrDb=thrDb;
   const binHz=Math.abs(specHz(s,1)-specHz(s,0))||1;
+  // область поиска: пол шума — по всему спектру, сигналы — только внутри
+  const [rlo,rhi]=n.range, ia=Math.max(1,Math.floor(specBin(s,rlo))), ib=Math.min(N-2,Math.ceil(specBin(s,rhi)));
   const runs=[]; let a=-1, last=-1;
-  for(let i=1;i<N-1;i++){
+  for(let i=ia;i<=ib;i++){
     if(pw[i]>fl[i]*thr && pw[i]>1e-24){ if(a<0) a=i; last=i; }
     else if(a>=0 && i-last>Math.max(2,Math.round((last-a+1)*.15))){ runs.push([a,last]); a=-1; }
   }
@@ -197,7 +199,7 @@ function sidTrack(n,segs,s,now){
     // слабый узкий — 3 из 4 кадров: шумовой выброс в одном месте дважды почти не повторяется
     if(!t.ok && sidPop(t.hist&15)>=(t.snr<n.thrDb+6 && t.obw<=3*n.binHz? 3 : 2)) t.ok=true;
   }
-  const hold=Math.max(2000,n.p.period*1500), [lo0,hi0]=specSpan(s);
+  const hold=Math.max(2000,n.p.period*1500), [s0,s1]=specSpan(s), lo0=Math.max(s0,n.range[0]), hi0=Math.min(s1,n.range[1]);
   n.tracks=tracks.filter(t=>(t.hit || (t.ok? now-t.t<=hold : (t.hist&15)!==0)) && t.fc>=lo0 && t.fc<=hi0);
 }
 // занятость и число включений за окно истории
@@ -667,9 +669,12 @@ def({ id:'sigid', title:'Signal Type Identifier', cat:'Analysis', readout:true, 
   // spec — спектр любого источника (у rtlsdr в нём ещё и сырой IQ для анализа отсчётов);
   // in — аудио: свой спектр, если spec не подключён, и отсчёты для анализа;
   // plan — band plan для контекста. bands — метки на 'sa' (напрямую или через bandplan.sigs).
-  ins:[{n:'spec',t:'spec'},{n:'in',t:'sig'},{n:'plan',t:'bands'}],
+  // fmin/fmax — область поиска (например, lo/hi выбранной полосы 'bandplan'); новое значение снимает «весь спектр»
+  ins:[{n:'spec',t:'spec'},{n:'in',t:'sig'},{n:'plan',t:'bands'},{n:'fmin',t:'num'},{n:'fmax',t:'num'}],
   outs:[{n:'bands',t:'bands'},{n:'type',t:'txt'},{n:'f',t:'num'},{n:'conf',t:'num'},{n:'count',t:'num'}],
-  params:[{n:'fftSize',t:'select',opts:['2048','4096','8192','16384'],d:'8192',label:'FFT size (audio input)'},
+  params:[{n:'auto',t:'check',d:true,label:'whole spectrum'},
+          {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[100,3000],label:'search range, Hz'},
+          {n:'fftSize',t:'select',opts:['2048','4096','8192','16384'],d:'8192',label:'FFT size (audio input)'},
           {n:'period',t:'range',min:.5,max:5,step:.5,d:2,label:'analysis period, s'},
           {n:'thr',t:'range',min:3,max:30,step:.5,d:8,label:'detection threshold, dB'},
           {n:'maxSig',t:'range',min:1,max:20,step:1,d:8,label:'signals to label'},
@@ -680,11 +685,18 @@ def({ id:'sigid', title:'Signal Type Identifier', cat:'Analysis', readout:true, 
     if(I.in) sidAudioPush(n,I.in);
     const s=I.spec || (I.in? sidOwnSpec(n) : null);
     const now=performance.now();
+    for(const k of ['fmin','fmax']){
+      const v=I[k];
+      if(typeof v==='number' && isFinite(v) && v!==n['_in'+k]){ n['_in'+k]=v; setMod(n,k,v); if(n.p.auto) setMod(n,'auto',false); }
+    }
     if(!s){ n.text=I.in? 'accumulating…' : 'connect spec or in'; return {bands:n.labels, count:0}; }
     const fresh=s.rev!=null? s.rev!==n._rev || s!==n._sref : s!==n._sref;
     const sa=fresh? (n._rev=s.rev, n._sref=s, sidAccum(n,s,now)) : null;
     if(sa){
       n.rf=!!s.freqs;
+      const [s0,s1]=specSpan(sa);
+      n.range=n.p.auto? [s0,s1] : [Math.min(n.p.fmin,n.p.fmax), Math.max(n.p.fmin,n.p.fmax)];
+      const off=!n.p.auto && (n.range[1]<=s0 || n.range[0]>=s1);
       sidTrack(n,sidSegments(n,sa),sa,now);
       n.sigs=sidSignals(n,s).sort((a,b)=>b.snr-a.snr).slice(0,n.p.maxSig);
       for(const g of n.sigs) g.cls=sidClassify(n,g,I.plan);
@@ -692,7 +704,8 @@ def({ id:'sigid', title:'Signal Type Identifier', cat:'Analysis', readout:true, 
       n.labels=n.sigs.map(g=>({lo:Math.max(g.lo,g.fc-g.obw/2), hi:Math.min(g.hi,g.fc+g.obw/2), label:g.cls.tag, color:SID_T[g.cls.t]?.c||'#b0bec5',
         sig:true, db:g.db, conf:g.cls.conf, type:g.cls.t, f:g.fc}));
       const src=n.p.iq? sidSource(n,s) : null;
-      n.text=n.sigs.length+' signal'+(n.sigs.length===1?'':'s')+' · floor '+(n.floorDb??0).toFixed(0)+' dB · samples: '+
+      n.text=(n.p.auto? '' : 'range '+fmtHz(n.range[0],3)+'–'+fmtHz(n.range[1],3)+'Hz'+(off? ' — outside the spectrum' : '')+'\n')+
+        n.sigs.length+' signal'+(n.sigs.length===1?'':'s')+' · floor '+(n.floorDb??0).toFixed(0)+' dB · samples: '+
         (src? (s.iq? 'IQ '+fmtHz(src.sr,2)+'S/s' : 'audio') : 'none')+'\n'+
         n.sigs.map((g,i)=>{ const c=g.cls;
           return (i+1)+'. '+fmtHz(g.fc,g.rf?4:2).padStart(9)+'Hz  '+c.tag+'  ('+Math.round(c.conf*100)+'%, '+c.src+')\n'+

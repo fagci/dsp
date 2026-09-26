@@ -335,7 +335,8 @@ clearAll();
 const nt=addNode('note',40,40,{text:'Connect the SDR and tune to a busy band. sigid finds signals in the spectrum,\n'+
   'then takes the raw IQ of each one in turn (at the native sample rate) and names the modulation:\n'+
   'AM/NFM/WFM/SSB/CW, FSK with shift and baud, BPSK/QPSK, CTCSS, stereo pilot.\n'+
-  'Labels ride above the signals via the band plan; tap a signal to listen, the demod mode is up to you.'});
+  'Labels ride above the signals via the band plan; tap a signal to listen, the demod mode is up to you.\n'+
+  'Click a band in the band plan to search only inside it; tick «whole spectrum» on sigid to search everywhere again.'});
 nt.size.w=520; nt.size.h=170; applySize(nt);
 const rx=addNode('rtlsdr',40,300,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:446100000});
 const bp=addNode('bandplan',300,300,{preset:'Russia (full)'});
@@ -348,6 +349,7 @@ const dc=addNode('dac',300,700,{vol:.4});
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'spec',si.id,'spec');
 addEdge(bp.id,'bands',si.id,'plan');
+addEdge(bp.id,'lo',si.id,'fmin'); addEdge(bp.id,'hi',si.id,'fmax');   // клик по полосе — искать только в ней
 addEdge(si.id,'bands',bp.id,'sigs');
 addEdge(bp.id,'bands',sa.id,'bands');
 addEdge(sa.id,'f1',rx.id,'tuneFreq');
