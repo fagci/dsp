@@ -3581,9 +3581,13 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
         const e=n.el.querySelector(`.prm[data-param="${k}"]`); if(e) e.style.display=show?'':'none';
       }
     }
+    // строка состояния — не чаще 4 раз/с и только при изменении: каждая запись — layout и paint
+    const now=performance.now();
+    if(now-(n._roT||0)<250) return;
+    n._roT=now;
     const chCount=n.ch.filter(c=>c.active).length;
     const r=n.el.querySelector('.readout');
-    if(r) r.textContent = n.connected
+    const txt = n.connected
       ? `${n.dev?n.dev.tunerName:'?'} · ${n.p.demod} · ${fmtHz(cf,3)} ±${fmtHz(n.sourceRate/2)} · tune ${fmtHz(tune,3)} · `+
         `${(n.mspsIo||0).toFixed(2)} Msps · ch ${chCount}`+
         (n.specK>1 ? ` · fft avg ×${n.specK}` : '')+
@@ -3609,6 +3613,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
         (n.swErr ? ' · sweep error: '+n.swErr : n.p.sweep && n.sw ? ` · sweep ${fmtHz(n.sw.lo,1)}–${fmtHz(n.sw.lo+n.sw.spec.size*n.sw.binHz,1)} `+
           (n.swActive ? `step ${n.sw.k+1}/${n.sw.hops}`+(n.sw.lineMs ? ` · ${(n.sw.lineMs/1000).toFixed(1)} s/line` : '') : '(paused, listening)') : '')
       : n.status;
+    if(r && r.textContent!==(txt??'')) r.textContent=txt??'';
   }});
 
 
@@ -4481,9 +4486,12 @@ function drawFreqDial(el,cv,cx,state,get,set,opts={}){
         state.sel=clamp(Math.floor((ev.clientX-r.left)/r.width*TUNER_DIGITS),0,TUNER_DIGITS-1); }
       set(clamp(Math.round(get()+(ev.deltaY<0?stepHz():-stepHz())),0,maxV)); },{passive:false});
   }
+  // табло меняется редко — без изменений не перерисовываем
+  const digStr=String(Math.round(get())).padStart(TUNER_DIGITS,'0'), cw=W/TUNER_DIGITS;
+  const key=W+'|'+H+'|'+cv.pxGen+'|'+digStr+'|'+state.sel+'|'+(dial?state.ang:'')+'|'+themeColor('--acc')+'|'+themeColor('--grid');
+  if(key===state.key) return; state.key=key;
   cx.clearRect(0,0,W,H);
   // табло
-  const digStr=String(Math.round(get())).padStart(TUNER_DIGITS,'0'), cw=W/TUNER_DIGITS;
   cx.font='bold '+Math.round(Math.min(34,cw*.78))+'px monospace'; cx.textAlign='center'; cx.textBaseline='middle';
   for(let i=0;i<TUNER_DIGITS;i++){
     if(i===state.sel){ cx.fillStyle=themeColor('--acc')+'33'; cx.fillRect(i*cw+1,2,cw-2,TOP-4); }

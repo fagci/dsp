@@ -1263,19 +1263,21 @@ function saHistPush(n, s){
   const lo=specHz(s,0), bin=(specHz(s,N-1)-lo)/(N-1);
   // неравномерная ось (вейвлет, октавы) — история не ведётся
   if(!(bin>0) || Math.abs(specHz(s,N>>1)-(lo+bin*(N>>1)))>Math.max(bin*.5,256)){ n.hist=null; return; }
-  const h=n.hist||(n.hist={rows:[], bytes:0});
-  const q=new Uint8Array(N), k=1/SA_H_STEP;
+  const h=n.hist||(n.hist={rows:[], bytes:0, spare:null});
+  // массивы вытесненной строки того же размера — повторно, без мусора на каждый кадр
+  const sp=h.spare&&h.spare[0]&&h.spare[0].length===N ? h.spare : null; h.spare=null;
+  const q=sp?sp[0]:new Uint8Array(N), k=1/SA_H_STEP;
   for(let i=0;i<N;i++){ const v=(20*Math.log10(m[i]+1e-12)-SA_H_DB0)*k; q[i]=v<0?0:v>255?255:v; }
   const lv=[q];
-  for(let a=q; a.length>SA_H_MIN;){
-    const b=new Uint8Array(Math.ceil(a.length/4));
+  for(let a=q, L=1; a.length>SA_H_MIN; L++){
+    const len=Math.ceil(a.length/4), b=sp&&sp[L]&&sp[L].length===len ? sp[L] : new Uint8Array(len);
     for(let i=0;i<b.length;i++){ let mx=0; for(let j=i*4, e=Math.min(a.length,j+4); j<e; j++) if(a[j]>mx) mx=a[j]; b[i]=mx; }
     lv.push(a=b);
   }
   let bytes=0; for(const a of lv) bytes+=a.length;
   h.rows.push({lo, bin, lv}); h.bytes+=bytes;
   const maxRows=Math.max(1, n.wfH||1000);
-  while(h.rows.length>maxRows){ for(const a of h.rows.shift().lv) if(a) h.bytes-=a.length; }
+  while(h.rows.length>maxRows){ const r=h.rows.shift(); for(const a of r.lv) if(a) h.bytes-=a.length; h.spare=r.lv; }
   for(let i=0; h.bytes>budget && i<h.rows.length;){
     const r=h.rows[i]; let L=0; while(!r.lv[L]) L++;
     if(L<r.lv.length-1){ h.bytes-=r.lv[L].length; r.lv[L]=null; } else i++;
@@ -1331,6 +1333,20 @@ function saWfGlLoadRaw(glp, buf, lo, hi){
   glp.pos=glp.h-1;
 }
 
+// Спектр приходит реже кадров отрисовки (rtlsdr — ~12 раз/с) — перерисовка без изменений
+// только тратит батарею. Ключ — всё, что видно на канве; раз в 500мс перерисовка всё равно
+// (полосы band plan, тема). Отложенная перерисовка водопада из истории — ждём, пока не отработает.
+function saSkipDraw(n,cv){
+  const sp=n.s, now=performance.now();
+  let k=cv.width+'|'+cv.height+'|'+cv.pxGen+'|'+(sp?sp.rev:'-')+'|'+n.zoom+'|'+n.mk+'|'+n.ext+'|'+n.active+'|'+
+    n.band+'|'+n.pickT+'|'+n._dragActive+'|'+n._bmHoverFreq+'|'+n._mkHoverIdx+'|'+n._dragPending+'|'+(n.refMag?n.refMag.length:0);
+  for(const p in n.p) k+='|'+n.p[p];
+  const ch=sp&&sp.chans;
+  if(ch) for(const c of ch) k+='|'+c.lo+','+c.hi+','+c.mode+','+c.sqOpen+','+Math.round(c.lvDb*2)+','+c.thrDb+','+Math.round(c.rssi)+','+Math.round(c.snr);
+  if(k===n._drawKey && sp===n._drawSp && now-n._drawT<500 && n._histPendKey===n._histKey) return true;
+  n._drawKey=k; n._drawSp=sp; n._drawT=now;
+  return false;
+}
 def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'m1',t:'num'},{n:'m2',t:'num'},{n:'m3',t:'num'},{n:'m4',t:'num'},
        {n:'bLo',t:'num'},{n:'bHi',t:'num'},{n:'floor',t:'num'},{n:'top',t:'num'},
@@ -1508,13 +1524,19 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     // анализаторов, и не требует лезть в rtlUpdateSpec за ещё одним, необычным, полем. Сброс —
     // по кнопке (peakClr) или сам по себе при смене частотной оси (freqs) — старые максимумы
     // иначе будут указывать не на те частоты, что сейчас.
-    if(sp && n.p.peakHold){
+    if(sp && n.p.peakHold && (sp!==n._peakSp || sp.rev!==n._peakRev)){   // только на новый спектр
+      n._peakSp=sp; n._peakRev=sp.rev;
       if(!n.peak || n.peak.length!==N || n.peakFreqs!==(sp.freqs||null)){
         n.peak=Float32Array.from(sp.mag); n.peakFreqs=sp.freqs||null;
       } else {
         for(let i=0;i<N;i++) if(sp.mag[i]>n.peak[i]) n.peak[i]=sp.mag[i];
       }
     }
+    // маркеры — раз на новый спектр (process идёт на каждый блок движка); повтор с тем же rev
+    // ещё и сбрасывал фазовое уточнение fr до частоты бина
+    const mkKey=sp?sp.rev+'|'+n.mk+'|'+n.p.tol:null;
+    if(sp && sp===n._mkSp && mkKey===n._mkKey){ Object.assign(o,n._mkOut); return o; }
+    n._mkSp=sp; n._mkKey=mkKey; const mo=n._mkOut={};
     for(let k=0;k<4;k++){
       const f=n.mk[k];
       if(f==null||!sp){ o['f'+(k+1)]=f==null?null:f; o['snr'+(k+1)]=null; o['fr'+(k+1)]=null; o['db'+(k+1)]=null;
@@ -1538,9 +1560,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       }
       if(sp.phase){ n.mkPhase[k]=sp.phase[bin]; n.mkBin[k]=bin; n.mkRev[k]=sp.rev; }
       o['fr'+(k+1)]=fr; }
+    for(let k=1;k<=4;k++) for(const q of ['f','db','snr','fr']) mo[q+k]=o[q+k];
     return o; },
   draw(n,cv,cx){
     const W=cv.width,H=cv.height;
+    if(saSkipDraw(n,cv)) return;                     // ничего не изменилось — канва держит прошлый кадр
     const hs=Math.round(H*n.p.split), hw=H-hs;
     n._hs=hs;                                          // для перетаскивания границы — см. pointerdown ниже
     // AXIS_H — зона под подписи оси частот снизу зоны спектра: сама трасса (амплитуда/фаза/PSD/
