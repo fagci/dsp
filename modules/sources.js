@@ -2825,8 +2825,11 @@ async function sdrPickDevice(n, choose){
   }
   return navigator.usb.requestDevice({filters:SDR_USB_FILTERS});
 }
-// центр железа: ppm — поправка частоты, dcShift — центр на sr/4 выше, чтобы станция не сидела на DC
-const sdrDcOff=n=>n.p.dcShift && !n.dev?.fixedFreq ? Math.round(n.sourceRate/4) : 0;
+// центр железа: ppm — поправка частоты, dcShift — центр на sr/4 выше, чтобы станция не сидела на DC.
+// AM/SAM/SSB — всегда: DC-блок воркера (до NCO) иначе вырезает несущую/низы канала, стоящего в центре,
+// а переносить его после NCO нельзя — там в нуле уже несущая самого канала
+const SDR_DC_MODES=['AM','SAM','USB','LSB'];
+const sdrDcOff=n=>(n.p.dcShift || SDR_DC_MODES.includes(n.p.demod)) && !n.dev?.fixedFreq ? Math.round(n.sourceRate/4) : 0;
 // смещение конвертера, Гц; у файла частота уже эфирная
 const sdrConv=n=>n.dev?.fixedFreq ? 0 : Math.round((+n.p.conv||0)*1e6);
 // всё вне этих двух функций — в эфирных частотах, в железо уходит частота тюнера (без смещения)
@@ -3156,7 +3159,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'vga',t:'range',min:0,max:62,step:2,d:24,label:'VGA, dB'},
     {n:'amp',t:'check',d:false,label:'amp +14 dB'},
     {n:'bias',t:'check',d:false,label:'bias-tee',adv:true},
-    {n:'dcShift',t:'check',d:false,label:'shift center off DC',adv:true},
+    {n:'dcShift',t:'check',d:false,label:'shift center off DC (always for AM/SAM/SSB)',adv:true},
     {n:'ppm',t:'range',min:-100,max:100,step:.1,d:0,label:'frequency correction, ppm',adv:true},
     // up/down-конвертер: эфирная частота = частота тюнера + смещение (−125 для апконвертера 125 МГц, +9750 для LNB)
     {n:'conv',t:'num',d:0,label:'converter offset, MHz (RF = tuner + offset)'},
