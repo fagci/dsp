@@ -2421,6 +2421,34 @@ const RTL_SERVO_PPM=500;
 const RTL_EXCESS=2;         // средний запас выше target×RTL_EXCESS — сброс до target
 const RTL_SERVO_G=0.01;      // EMA уровня кольца на блок движка, τ ≈ 1с при BLOCK=512/48к
 
+// Перегруз АЦП за окно ~0.5 с: доля компонент I/Q на рельсах (u8 — 0/255, s16 — >=97% шкалы),
+// пик компоненты и средняя мощность в dBFS (0 дБ — комплексный тон полной шкалы, как у 'spec').
+// У Airspy IQ идёт после полуполосного конвертера: полная шкала АЦП там — половина int16.
+const SDR_ADC_WIN_MS=500, SDR_ADC_HOLD_MS=3000, SDR_ADC_CLIP=1e-4;
+function sdrAdcStat(n, u8, s16){
+  const st=n.adcAcc||(n.adcAcc={cnt:0, clip:0, pk:0, pw:0, t0:performance.now()});
+  let clip=0, pk=0, pw=0, len;
+  if(s16){
+    const fs=n.dev?.kind==='airspy' ? 16384 : 32768, thr=0.97*fs;
+    len=s16.length;
+    for(let i=0;i<len;i++){ const v=s16[i], a=v<0?-v:v; if(a>pk) pk=a; if(a>=thr) clip++; pw+=v*v; }
+    pk/=fs; pw/=fs*fs;
+  } else {
+    len=u8.length;
+    for(let i=0;i<len;i++){ const b=u8[i], d=b-127.5; if(b===0||b===255) clip++; const a=d<0?-d:d; if(a>pk) pk=a; pw+=d*d; }
+    pk/=127.5; pw/=127.5*127.5;
+  }
+  st.cnt+=len; st.clip+=clip; st.pw+=pw; if(pk>st.pk) st.pk=pk;
+  const now=performance.now();
+  if(now-st.t0<SDR_ADC_WIN_MS || !st.cnt) return;
+  n.adcPk=20*Math.log10(st.pk+1e-9);
+  n.adcRms=10*Math.log10(2*st.pw/st.cnt+1e-18);      // I²+Q² на комплексный отсчёт
+  n.adcClip=st.clip/st.cnt;
+  if(n.adcClip>=SDR_ADC_CLIP){ n.adcOvlT=now; n.adcOvlClip=n.adcClip; }
+  st.cnt=0; st.clip=0; st.pw=0; st.pk=0; st.t0=now;
+}
+const sdrAdcOvl=n=>n.adcOvlT!=null && performance.now()-n.adcOvlT<SDR_ADC_HOLD_MS;
+
 async function rtlReadLoop(n){
   let errStreak=0;
   n.mspsAcc=0; n.mspsIoMs=0; n.mspsWorkerMs=0; n.mspsWinStart=performance.now(); n.msps=0; n.mspsIo=0;
@@ -2485,6 +2513,7 @@ async function rtlReadLoop(n){
       prevReadEnd=t1;
       if(n.rec && !n.swActive) iqRecWrite(n, buf, res.epoch);
       const u8=new Uint8Array(buf), fmt=n.dev.fmt, s16=fmt==='s16' ? new Int16Array(buf) : null;
+      sdrAdcStat(n, u8, s16);
       if(n.swActive){
         const cap=n.swCap;
         if(cap && res.epoch===cap.epoch) sdrSweepFeed(n, cap, u8, s16);
@@ -2940,6 +2969,7 @@ async function rtlStart(n, sr){
   n.specWorker=rtlMakeSpecWorker(); n.specBusy=false;
   n.connected=true; n.reading=true;
   n.underrunsWorker=0; n.underrunsOverflow=0; n.underrunsStarve=0;
+  n.adcAcc=null; n.adcPk=null; n.adcRms=null; n.adcClip=null; n.adcOvlT=null;
   n.status='connected ('+n.dev.tunerName+(n.dev.worker?', USB in worker':'')+')';
   rtlReadLoop(n);
 }
@@ -3173,7 +3203,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
         {n:'audioL',t:'sig'},{n:'audioR',t:'sig'},{n:'ps',t:'val'},{n:'rt',t:'val'},
         {n:'spec',t:'spec'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},
         {n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'},
-        {n:'demod',t:'val'},{n:'bw',t:'num'}],
+        {n:'demod',t:'val'},{n:'bw',t:'num'},
+        {n:'adcPk',t:'num'},{n:'adcRms',t:'num'},{n:'clip',t:'num'},{n:'ovl',t:'num'}],
   readout:true,
   params:[
     {n:'connect',t:'button',label:'Connect',fn:async n=>{ await rtlConnect(n); }},
@@ -3387,7 +3418,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     n._prevPFreq=n.p.freq; // снимок на конец тика — см. manualEdit в начале process() (demod/bw/gainDb — через setModWired)
     return {I:oi, Q:oq, audio:oa[0], audio2:oa[1], audio3:oa[2], audio4:oa[3], audioL:oL, audioR:oR,
       ps:rds&&rds.sync!==undefined&&rds.ps.trim()?rds.ps.trim():null, rt:rds&&rds.rt?rds.rt:null, spec:spOut,
-      demod:n.p.demod, bw:n.p.bw, ...bounds}; },
+      demod:n.p.demod, bw:n.p.bw, ...bounds,
+      adcPk:n.adcPk??null, adcRms:n.adcRms??null, clip:n.adcClip!=null?100*n.adcClip:null, ovl:sdrAdcOvl(n)?1:0}; },
   // Собственная отрисовка спектра/водопада убрана — для этого универсальный узел 'sa'
   // (Спектроанализатор), подключаемый к выходу 'spec'. Здесь остаётся только статус-строка.
   draw(n){
@@ -3441,6 +3473,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
         // dry — consumer остался без данных (кольцо опустело быстрее, чем producer его наполнял)
         ((n.underrunsWorker||n.underrunsOverflow||n.underrunsStarve)?
           ` · errors demod:${n.underrunsWorker||0} ovf:${n.underrunsOverflow||0} dry:${n.underrunsStarve||0}`:'')+
+        (n.adcPk!=null ? ` · ADC pk ${n.adcPk.toFixed(1)} rms ${n.adcRms.toFixed(0)} dBFS` : '')+
+        (sdrAdcOvl(n) ? ` · ⚠ OVERLOAD ${(100*n.adcOvlClip).toFixed(2)}% — reduce gain` : '')+
         (n.busy?' · …':'')+
         (n.dev?.kind==='file' ? ` · ${iqFmtTime(n.dev.pos/n.dev.rate)} / ${iqFmtTime(n.dev.total/n.dev.rate)}`+(n.dev.ended?' (end)':'') : '')+
         (n.rec ? ` · ● REC ${iqFmtTime((Date.now()-n.rec.start)/1000)} ${(n.rec.bytes/1e6).toFixed(0)} MB` : n.recMsg ? ' · '+n.recMsg : '')+
