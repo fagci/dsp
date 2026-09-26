@@ -22,8 +22,12 @@ const Eng = {
   micBuf:new Float32Array(BLOCK), micB:new Float32Array(BLOCK),
   mics:[null,null], streams:[null,null], micIds:[null,null], micSr:[null,null], merger:null,
   stereoSrc:null, stereoSplitter:null, stereoStream:null, stereoDeviceId:null, stereoSr:null,
-  outL:new Float32Array(BLOCK), outR:new Float32Array(BLOCK),
-  devices:[], micId:null, blocks:0, t:0,
+  // Выходные шины по 2 канала: 0 — устройство по умолчанию (ctx.destination), 1..NBUS-1 —
+  // другие звуковые карты через MediaStreamDestination + <audio>.setSinkId (см. busFor).
+  NBUS:4, outs:[], outL:null, outR:null,
+  sinks:[],                    // [bus]={id,merger,msd,el,last,err}, sinks[0] не используется
+  split:null,
+  devices:[], outDevices:[], micId:null, blocks:0, t:0,
   targetSr:null,               // желаемая частота; null — как даст браузер
   preload:12,                  // сколько тишины отдаём воркету на старте: больше — устойчивей к подвисаниям, но больше задержка
   preloadSab:6,                // то же для SAB-пути: воркет берёт поквантово, запас нужен меньше
@@ -36,6 +40,8 @@ const Eng = {
     const opts = {latencyHint:'interactive', ...(this.targetSr?{sampleRate:this.targetSr}:{})};
     this.ctx = new (window.AudioContext||window.webkitAudioContext)(opts);
     this.sr = this.ctx.sampleRate;   // браузер может не дать точную запрошенную частоту
+    const C=2*this.NBUS;
+    this.listDevices();
 
     // SharedArrayBuffer доступен только в cross-origin-isolated контексте (нужны заголовки
     // COOP/COEP на сервере) — если их нет, typeof SharedArrayBuffer просто 'undefined' и мы
@@ -59,11 +65,11 @@ const Eng = {
       this._ctrl=new Int32Array(this._ctrlBuf);
       this._lastUnderrun=0; this.audioUnderruns=0;
       this._inLBuf=new SharedArrayBuffer(this.RING*4); this._inRBuf=new SharedArrayBuffer(this.RING*4);
-      this._outLBuf=new SharedArrayBuffer(this.RING*4); this._outRBuf=new SharedArrayBuffer(this.RING*4);
+      this._outBuf=new SharedArrayBuffer(this.RING*C*4);   // канал c лежит в [c*RING, (c+1)*RING)
       this._inL=new Float32Array(this._inLBuf); this._inR=new Float32Array(this._inRBuf);
-      this._outL=new Float32Array(this._outLBuf); this._outR=new Float32Array(this._outRBuf);
+      this._out=new Float32Array(this._outBuf);
       this._inRead=0; this._outWrite=0;
-      procOpts={ctrl:this._ctrlBuf, inL:this._inLBuf, inR:this._inRBuf, outL:this._outLBuf, outR:this._outRBuf,
+      procOpts={ctrl:this._ctrlBuf, inL:this._inLBuf, inR:this._inRBuf, out:this._outBuf, ch:C,
                  ring:this.RING, block:BLOCK};
       src = `
         class IOS extends AudioWorkletProcessor{
@@ -71,10 +77,10 @@ const Eng = {
             this.B=o.block; this.RING=o.ring; this.MASK=this.RING-1;
             this.ctrl=new Int32Array(o.ctrl);
             this.inL=new Float32Array(o.inL); this.inR=new Float32Array(o.inR);
-            this.outL=new Float32Array(o.outL); this.outR=new Float32Array(o.outR);
+            this.out=new Float32Array(o.out); this.C=o.ch;
             this.inWrite=0; this.outRead=0; this.sinceNotify=0; }
           process(inp,outp){
-            const i0=inp[0][0], i1=inp[0][1], o=outp[0][0], o1=outp[0][1]||o, L=o.length;
+            const i0=inp[0][0], i1=inp[0][1], o=outp[0], C=Math.min(this.C,o.length), L=o[0].length, R=this.RING;
             let iw=this.inWrite;
             for(let i=0;i<L;i++){ const p=iw&this.MASK; this.inL[p]=i0?i0[i]:0; this.inR[p]=i1?i1[i]:0; iw++; }
             this.inWrite=iw; Atomics.store(this.ctrl,0,iw);
@@ -82,8 +88,8 @@ const Eng = {
             if(this.sinceNotify>=this.B){ this.sinceNotify-=this.B; this.port.postMessage(0); } // пинг, без данных
             let or_=this.outRead; const ow=Atomics.load(this.ctrl,1); let miss=0;
             for(let i=0;i<L;i++){
-              if(or_<ow){ const p=or_&this.MASK; o[i]=this.outL[p]; o1[i]=this.outR[p]; or_++; }
-              else { o[i]=0; o1[i]=0; miss++; }}     // недобор — тишина, не блокируемся (Atomics.wait тут нельзя)
+              if(or_<ow){ const p=or_&this.MASK; for(let c=0;c<C;c++) o[c][i]=this.out[c*R+p]; or_++; }
+              else { for(let c=0;c<C;c++) o[c][i]=0; miss++; }}     // недобор — тишина, не блокируемся (Atomics.wait тут нельзя)
             this.outRead=or_;
             if(miss) Atomics.add(this.ctrl,2,miss);  // копится в SAB — главный поток вычитывает в pumpSAB
             return true; }}
@@ -91,7 +97,7 @@ const Eng = {
     } else {
       src = `
         class IO extends AudioWorkletProcessor{
-          constructor(){super();this.B=${BLOCK};
+          constructor(){super();this.B=${BLOCK};this.C=${C};
             this.aL=new Float32Array(this.B);this.aR=new Float32Array(this.B);this.n=0;
             this.q=[];this.cur=null;this.ci=0;
             // Ёмкость очереди: чем больше, тем устойчивей к временным подвисаниям основного
@@ -100,7 +106,7 @@ const Eng = {
             this.MAXQ=${this.maxQ}; this.underrun=0;
             this.port.onmessage=e=>{this.q.push(e.data);if(this.q.length>this.MAXQ)this.q.shift();};}
           process(inp,outp){
-            const i0=inp[0][0], i1=inp[0][1], o=outp[0][0], o1=outp[0][1]||o, L=o.length;
+            const i0=inp[0][0], i1=inp[0][1], o=outp[0], C=Math.min(this.C,o.length), L=o[0].length, B=this.B;
             for(let i=0;i<L;i++){
               this.aL[this.n]=i0?i0[i]:0; this.aR[this.n]=i1?i1[i]:0; this.n++;
               if(this.n===this.B){
@@ -110,15 +116,15 @@ const Eng = {
                 this.n=0;}}
             for(let i=0;i<L;i++){
               if(!this.cur||this.ci>=this.B){this.cur=this.q.shift()||null;this.ci=0;}
-              if(this.cur){ o[i]=this.cur[this.ci]; o1[i]=this.cur[this.B+this.ci]; this.ci++; }
-              else { o[i]=0; o1[i]=0; this.underrun++; }}
+              if(this.cur){ for(let c=0;c<C;c++) o[c][i]=this.cur[c*B+this.ci]; this.ci++; }
+              else { for(let c=0;c<C;c++) o[c][i]=0; this.underrun++; }}
             return true;}}
         registerProcessor('io${BLOCK}',IO);`;
     }
     const url = URL.createObjectURL(new Blob([src],{type:'text/javascript'}));
     await this.ctx.audioWorklet.addModule(url); URL.revokeObjectURL(url);
     this.node = new AudioWorkletNode(this.ctx, this.sab?('io'+BLOCK+'sab'):('io'+BLOCK), {
-      numberOfInputs:1, numberOfOutputs:1, outputChannelCount:[2],
+      numberOfInputs:1, numberOfOutputs:1, outputChannelCount:[C],
       channelCount:2, channelCountMode:'explicit', channelInterpretation:'discrete',
       processorOptions:procOpts });
     const node=this.node;               // локальная ссылка: отличаем «своё» сообщение от эха старого воркета
@@ -141,8 +147,14 @@ const Eng = {
         this.micB.set(e.data.subarray(BLOCK));
         this.tick(); };
     }
-    this.node.connect(this.ctx.destination);
-    if(!this.sab) for(let i=0;i<this._preload;i++) this.node.port.postMessage(new Float32Array(BLOCK*2));
+    // шины разводятся сплиттером: 0 — в destination, остальные — по требованию в openSink
+    this.split=this.ctx.createChannelSplitter(C);
+    this.node.connect(this.split);
+    const m0=this.ctx.createChannelMerger(2);
+    this.split.connect(m0,0,0); this.split.connect(m0,1,1);
+    m0.connect(this.ctx.destination);
+    this.sinks=[];
+    if(!this.sab) for(let i=0;i<this._preload;i++) this.node.port.postMessage(new Float32Array(BLOCK*C));
     // Сторожевой таймер главного потока — независимо от RTL/аудио-кольца, просто ловит сам факт
     // "главный поток на сколько-то мс не отдавал управление событийному циклу" (GC, тяжёлый код,
     // что угодно). setInterval(20мс) сам по себе не гарантирует точность — именно отклонение
@@ -174,6 +186,54 @@ const Eng = {
       console.warn(`[Eng] audio worklet ring underrun +${delta} samples (всего ${u}) @ ${performance.now().toFixed(0)}ms`);
     }
   },
+  // Шина для устройства вывода: 0 — по умолчанию, -1 — нет свободной/нельзя. Зовётся из process
+  // узла каждый блок: last отмечает использование, шина без обращений ~2 с освобождается.
+  sinkSupported: typeof HTMLMediaElement!=='undefined' && 'setSinkId' in HTMLMediaElement.prototype,
+  busFor(id){
+    if(!id || !this.ctx || !this.split) return 0;
+    if(!this.sinkSupported) return -1;
+    for(let k=1;k<this.NBUS;k++) if(this.sinks[k]?.id===id){ this.sinks[k].last=this.blocks; return k; }
+    const stale=this.blocks-Math.ceil(2*this.sr/BLOCK);
+    for(let k=1;k<this.NBUS;k++){
+      const s=this.sinks[k];
+      if(!s || s.last<stale){ this.closeSink(k); this.openSink(k,id); return k; } }
+    return -1;
+  },
+  sinkErr(k){ return this.sinks[k]?.err||''; },
+  openSink(k,id){
+    const s={id, last:this.blocks, err:''};
+    s.merger=this.ctx.createChannelMerger(2);
+    this.split.connect(s.merger,2*k,0); this.split.connect(s.merger,2*k+1,1);
+    s.msd=this.ctx.createMediaStreamDestination();
+    s.merger.connect(s.msd);
+    s.el=new Audio(); s.el.srcObject=s.msd.stream;
+    s.el.setSinkId(id).then(()=>s.el.play())
+      .catch(e=>{ s.err=e.message||String(e); console.error('вывод на устройство:',e); });
+    this.sinks[k]=s;
+  },
+  closeSink(k){
+    const s=this.sinks[k]; if(!s) return;
+    try{ this.split.disconnect(s.merger); }catch(e){}
+    s.merger.disconnect();
+    s.el.pause(); s.el.srcObject=null;
+    s.msd.stream.getTracks().forEach(t=>t.stop());
+    this.sinks[k]=null;
+  },
+  closeSinks(){ for(let k=1;k<this.NBUS;k++) this.closeSink(k); this.sinks=[]; this.split=null; },
+  // Firefox: системный выбор устройства (selectAudioOutput) — без него выходы не видны.
+  // Остальные браузеры показывают выходы и их имена после разрешения на микрофон.
+  async pickOutput(){
+    if(navigator.mediaDevices?.selectAudioOutput){
+      try{
+        const d=await navigator.mediaDevices.selectAudioOutput();
+        await this.listDevices();
+        if(!this.outDevices.some(x=>x.id===d.deviceId))
+          this.outDevices.push({id:d.deviceId,label:d.label||d.deviceId});
+        return d.label||d.deviceId;
+      }catch(e){ console.error('selectAudioOutput:',e); return null; }
+    }
+    await this.unlockLabels(); return null;
+  },
   // Останавливает микрофоны и освобождает железо (иначе индикатор записи в браузере висит вечно).
   stopMics(){
     for(let slot=0;slot<2;slot++){
@@ -193,6 +253,7 @@ const Eng = {
   // индикатор в браузере горит) — поэтому stopMics() здесь обязателен и идёт первым.
   async stop(){
     this.stopMics();
+    this.closeSinks();
     clearInterval(this._stallTimer);
     try{ await this.ctx?.close(); }catch(e){}
     this.running=false; this.paused=false; this.node=null; this.merger=null;
@@ -306,6 +367,12 @@ const Eng = {
     try{ const d=await navigator.mediaDevices.enumerateDevices();
       this.devices=d.filter(x=>x.kind==='audioinput')
         .map((x,i)=>({id:x.deviceId,label:x.label||('input '+(i+1))}));
+      // 'default' — это и есть шина 0, отдельным пунктом не нужен
+      const outs=d.filter(x=>x.kind==='audiooutput' && x.deviceId && x.deviceId!=='default')
+        .map((x,i)=>({id:x.deviceId,label:x.label||('output '+(i+1))}));
+      // выданное через selectAudioOutput может не попасть в enumerateDevices — не теряем
+      for(const o of this.outDevices) if(!outs.some(x=>x.id===o.id)) outs.push(o);
+      this.outDevices=outs;
     }catch(e){ this.devices=[]; }
     return this.devices;
   },
@@ -329,18 +396,19 @@ const Eng = {
     const t0 = performance.now();
     const reps=Math.max(1,this.turbo|0);
     for(let r=0;r<reps;r++){                        // ускоренный прогон: несколько блоков за такт
-      this.outL.fill(0); this.outR.fill(0);
+      for(const o of this.outs) o.fill(0);
       for(const n of Graph.order) evalNode(n);
       this.blocks++; }
     // В SAB-режиме — прямая запись в общую память (см. pumpSAB/start). Иначе — transfer воркету,
     // как раньше: без .slice() тут нет лишней копии, postMessage и так клонирует то, что не transferable.
     if(this.sab){
-      const mask=this.RING-1; let ow=this._outWrite;
-      for(let i=0;i<BLOCK;i++){ const p=(ow+i)&mask; this._outL[p]=this.outL[i]; this._outR[p]=this.outR[i]; }
+      const mask=this.RING-1, R=this.RING, C=this.outs.length; let ow=this._outWrite;
+      for(let c=0;c<C;c++){ const src=this.outs[c], base=c*R;
+        for(let i=0;i<BLOCK;i++) this._out[base+((ow+i)&mask)]=src[i]; }
       ow+=BLOCK; this._outWrite=ow; Atomics.store(this._ctrl,1,ow);
     } else {
-      const out=new Float32Array(BLOCK*2);
-      out.set(this.outL,0); out.set(this.outR,BLOCK);
+      const C=this.outs.length, out=new Float32Array(BLOCK*C);
+      for(let c=0;c<C;c++) out.set(this.outs[c],c*BLOCK);
       this.node.port.postMessage(out, [out.buffer]);
     }
     this.t = performance.now()-t0;
@@ -349,16 +417,21 @@ const Eng = {
     const budgetMs = reps*BLOCK/this.sr*1000;
     this.load = this.load*0.8 + (this.t/budgetMs)*0.2;   // сглаживание — иначе скачет от блока к блоку
   },
+  allocOuts(){
+    this.outs=Array.from({length:2*this.NBUS},()=>new Float32Array(BLOCK));
+    this.outL=this.outs[0]; this.outR=this.outs[1];
+  },
   async setBlock(v){
     const was=this.running&&!this.paused;
     this.stopMics();                                 // раньше треки не останавливались — микрофон висел включённым
     clearInterval(this._stallTimer);                  // иначе старый таймер продолжит тикать поверх нового от start()
+    this.closeSinks();
     try{ await this.ctx?.close(); }catch(e){}
     this.running=false; this.paused=false; this.node=null;
     this.streams=[null,null]; this.micIds=[null,null]; this.merger=null; this.mic=null;
     BLOCK=v;
     this.micBuf=new Float32Array(v); this.micB=new Float32Array(v);
-    this.outL=new Float32Array(v); this.outR=new Float32Array(v);
+    this.allocOuts();
     for(const n of Graph.nodes){ n.b={}; n.zero=null; }   // буферы узлов пересоздадутся
     if(was){
       try{ await this.start(); }
@@ -373,6 +446,7 @@ const Eng = {
     const was=this.running&&!this.paused;
     this.stopMics();
     clearInterval(this._stallTimer);                  // иначе старый таймер продолжит тикать поверх нового от start()
+    this.closeSinks();
     try{ await this.ctx?.close(); }catch(e){}
     this.running=false; this.paused=false; this.node=null;
     this.streams=[null,null]; this.micIds=[null,null]; this.merger=null; this.mic=null;
@@ -387,6 +461,7 @@ const Eng = {
     }
   }
 };
+Eng.allocOuts();
 // список устройств протухает при подключении/отключении железа — обновляем сам, без ручного повторного скана
 if(navigator.mediaDevices?.addEventListener)
   navigator.mediaDevices.addEventListener('devicechange', ()=>Eng.listDevices());

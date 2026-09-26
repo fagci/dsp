@@ -826,28 +826,59 @@ function ft8Run(n,manual,slotMs){
 }
 
 /* ---------- вывод ---------- */
-def({ id:'dac', title:'Sound Card', cat:'Output',
+def({ id:'dac', title:'Sound Card', cat:'Output', readout:true,
   ins:[{n:'L',t:'sig'},{n:'R',t:'sig'},{n:'vol',t:'num'},{n:'pan',t:'num'},{n:'mute',t:'num'}],
-  params:[{n:'vol',t:'range',min:0,max:1,step:.01,d:.3},
+  params:[{n:'dev',t:'select',d:'default',label:'device',
+           opts:()=>['default',...Eng.outDevices.map(d=>d.label)]},
+          {n:'pick',t:'button',label:'show devices',
+           fn:n=>Eng.pickOutput().then(l=>{ if(l){ n.p.dev=l; n.set?.dev?.(); } })},
+          {n:'vol',t:'range',min:0,max:1,step:.01,d:.3},
           {n:'mode',t:'select',opts:['mono','stereo','L→both','R→both'],d:'mono'},
           {n:'pan',t:'range',min:-1,max:1,step:.01,d:0},
           {n:'mute',t:'check',d:false}],
+  init:n=>{ n.gl=null; n.gr=null; n.peak=0; n.clipT=-1e9; n.status=''; },
   process(n,I){
     if(typeof I.vol==='number') setMod(n,'vol',I.vol);
     if(typeof I.pan==='number') setMod(n,'pan',I.pan);
     if(typeof I.mute==='number') setMod(n,'mute',I.mute>=0.5);
-    if(n.p.mute) return {};
-    const v=n.p.vol, L=I.L, R=I.R, m=n.p.mode;
-    const p=clamp(n.p.pan,-1,1), gl=Math.cos((p+1)*Math.PI/4), gr=Math.sin((p+1)*Math.PI/4);
+    const bus=dacBus(n);
+    const L=I.L, R=I.R, m=n.p.mode, v=n.p.mute?0:n.p.vol;
+    let tl=v, tr=v;
+    if(m==='mono'){ const p=clamp(n.p.pan,-1,1);   // панорама равной мощности
+      tl*=Math.cos((p+1)*Math.PI/4)*1.414; tr*=Math.sin((p+1)*Math.PI/4)*1.414; }
+    // усиление плавно ведём за блок — без щелчков при движении vol/pan/mute
+    const al=n.gl??tl, ar=n.gr??tr; n.gl=tl; n.gr=tr;
+    if(bus<0 || (!al&&!ar&&!tl&&!tr) || (!L&&!R)){ n.peak=0; return {}; }
+    const oL=Eng.outs[2*bus], oR=Eng.outs[2*bus+1];
+    const dl=(tl-al)/BLOCK, dr=(tr-ar)/BLOCK;
+    let pk=0;
     for(let i=0;i<BLOCK;i++){
       const a=L?L[i]:0, b=R?R[i]:0;
       let l,r;
       if(m==='stereo'){ l=a; r=b; }
       else if(m==='L→both'){ l=r=a; }
       else if(m==='R→both'){ l=r=b; }
-      else { const x=a+b; l=x*gl*1.414; r=x*gr*1.414; }   // mono with panning
-      Eng.outL[i]+=clamp(l*v,-1,1); Eng.outR[i]+=clamp(r*v,-1,1); }
-    return {}; }});
+      else { l=r=a+b; }
+      l*=al+dl*(i+1); r*=ar+dr*(i+1);
+      const x=Math.max(Math.abs(l),Math.abs(r)); if(x>pk) pk=x;
+      oL[i]+=clamp(l,-1,1); oR[i]+=clamp(r,-1,1); }
+    n.peak=pk; if(pk>1) n.clipT=performance.now();
+    return {}; },
+  draw(n){
+    const db=n.peak>1e-6? (20*Math.log10(n.peak)).toFixed(1)+' dBFS' : '−∞ dBFS';
+    const clip=performance.now()-n.clipT<1000? ' CLIP' : '';
+    n.el.querySelector('.readout').textContent=(n.status? n.status+' · ' : '')+db+clip; }});
+
+// шина движка для выбранного устройства; статус — в readout узла
+function dacBus(n){
+  if(n.p.dev==='default'){ n.status=''; return 0; }
+  const d=Eng.outDevices.find(x=>x.label===n.p.dev);
+  if(!d){ n.status='device not found → default'; return 0; }
+  if(!Eng.sinkSupported){ n.status='device selection unsupported → default'; return 0; }
+  const k=Eng.busFor(d.id);
+  if(k<0){ n.status='too many devices (max '+(Eng.NBUS-1)+' extra)'; return -1; }
+  n.status=Eng.sinkErr(k); return k;
+}
 
 
 def({ id:'flash', title:'Screen Transmitter', cat:'Output', ins:[{n:'in',t:'num'},{n:'lo',t:'num'},{n:'hi',t:'num'}],
