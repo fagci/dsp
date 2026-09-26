@@ -329,6 +329,19 @@ addEdge(sa.id,'f1',rx.id,'tuneFreq');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
 markWiresDirty();
 });
+preset('tinySA: Spectrum', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Connect the tinySA / tinySA Ultra over USB (WebSerial, Chrome/Edge).\n'+
+  'Spectrum and waterfall show the sweep in dBm; drag the spectrum to move the range.\n'+
+  'Screenshot grabs the device screen; generator mode turns the tinySA into a signal source.'});
+nt.size.w=460; nt.size.h=150; applySize(nt);
+const ts=addNode('tinysa',40,300,{start:88,stop:108,points:'450'});
+const sa=addNode('sa',540,40,{auto:true,floor:-110,top:-20,split:.35});
+sa.size.w=720; sa.size.h=460; applySize(sa);
+addEdge(ts.id,'spec',sa.id,'spec');
+addEdge(sa.id,'centerFreq',ts.id,'steerFreq');
+markWiresDirty();
+});
 /* ---- готовые патчи ---- */
 preset('Morse from Microphone', function(){
 clearAll();
