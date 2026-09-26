@@ -58,7 +58,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - MIDI keyboard input, ADSR envelope
 
 ### Output & extensibility
-- Sound card output, WAV recording, CSV log, trigger recorder
+- Sound card output (per-node output device selection, peak/clip meter), WAV recording, CSV log, trigger recorder
 - Aircraft map, screen transmitter, indicators
 - Module Builder and Script nodes for writing custom DSP code in the browser
 
