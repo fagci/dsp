@@ -1950,8 +1950,11 @@ function rtlResetRing(n){
   // rebuffering=true с самого начала — то же "молчим, пока не накопится безопасный запас", что и
   // после настоящего провала в середине игры (см. rtlReadIQ), без отдельного случая под старт.
   n.ringReadPos=0; n.ringReadCount=0; n.ringRebuffering=true;   // чтение сырого IQ — отдельно от каналов
-  const SPEC_SIZE=1<<16; // с запасом на любой выбранный размер БПФ; пишется независимо от режима демодуляции
-  n.specRing={I:new Float32Array(SPEC_SIZE), Q:new Float32Array(SPEC_SIZE), size:SPEC_SIZE, w:0, filled:0};
+  // ~150мс потока (Уэлч берёт всё пришедшее между расчётами), не меньше максимального БПФ;
+  // пишется независимо от режима демодуляции
+  const SPEC_SIZE=clamp(Math.round((n.sourceRate||1024000)*0.15), 1<<17, 1<<22);
+  n.specRing={I:new Float32Array(SPEC_SIZE), Q:new Float32Array(SPEC_SIZE), size:SPEC_SIZE, w:0, filled:0, written:0};
+  n.specTaken=0;
   n.spec=null; n.specFreqs=null; n.lastSpec=0;
   // аудио-кольца каналов живут на децимированной частоте (sourceRate/decim), а не sourceRate —
   // без этого при большой децимации (узкий NFM на высоком sourceRate) кольцо размером "под 2с
@@ -2483,6 +2486,34 @@ const RTL_SERVO_PPM=500;
 const RTL_EXCESS=2;         // средний запас выше target×RTL_EXCESS — сброс до target
 const RTL_SERVO_G=0.01;      // EMA уровня кольца на блок движка, τ ≈ 1с при BLOCK=512/48к
 
+// Перегруз АЦП за окно ~0.5 с: доля компонент I/Q на рельсах (u8 — 0/255, s16 — >=97% шкалы),
+// пик компоненты и средняя мощность в dBFS (0 дБ — комплексный тон полной шкалы, как у 'spec').
+// У Airspy IQ идёт после полуполосного конвертера: полная шкала АЦП там — половина int16.
+const SDR_ADC_WIN_MS=500, SDR_ADC_HOLD_MS=3000, SDR_ADC_CLIP=1e-4;
+function sdrAdcStat(n, u8, s16){
+  const st=n.adcAcc||(n.adcAcc={cnt:0, clip:0, pk:0, pw:0, t0:performance.now()});
+  let clip=0, pk=0, pw=0, len;
+  if(s16){
+    const fs=n.dev?.kind==='airspy' ? 16384 : 32768, thr=0.97*fs;
+    len=s16.length;
+    for(let i=0;i<len;i++){ const v=s16[i], a=v<0?-v:v; if(a>pk) pk=a; if(a>=thr) clip++; pw+=v*v; }
+    pk/=fs; pw/=fs*fs;
+  } else {
+    len=u8.length;
+    for(let i=0;i<len;i++){ const b=u8[i], d=b-127.5; if(b===0||b===255) clip++; const a=d<0?-d:d; if(a>pk) pk=a; pw+=d*d; }
+    pk/=127.5; pw/=127.5*127.5;
+  }
+  st.cnt+=len; st.clip+=clip; st.pw+=pw; if(pk>st.pk) st.pk=pk;
+  const now=performance.now();
+  if(now-st.t0<SDR_ADC_WIN_MS || !st.cnt) return;
+  n.adcPk=20*Math.log10(st.pk+1e-9);
+  n.adcRms=10*Math.log10(2*st.pw/st.cnt+1e-18);      // I²+Q² на комплексный отсчёт
+  n.adcClip=st.clip/st.cnt;
+  if(n.adcClip>=SDR_ADC_CLIP){ n.adcOvlT=now; n.adcOvlClip=n.adcClip; }
+  st.cnt=0; st.clip=0; st.pw=0; st.pk=0; st.t0=now;
+}
+const sdrAdcOvl=n=>n.adcOvlT!=null && performance.now()-n.adcOvlT<SDR_ADC_HOLD_MS;
+
 async function rtlReadLoop(n){
   let errStreak=0;
   n.mspsAcc=0; n.mspsIoMs=0; n.mspsWorkerMs=0; n.mspsWinStart=performance.now(); n.msps=0; n.mspsIo=0;
@@ -2547,6 +2578,7 @@ async function rtlReadLoop(n){
       prevReadEnd=t1;
       if(n.rec && !n.swActive) iqRecWrite(n, buf, res.epoch);
       const u8=new Uint8Array(buf), fmt=n.dev.fmt, s16=fmt==='s16' ? new Int16Array(buf) : null;
+      sdrAdcStat(n, u8, s16);
       if(n.swActive){
         const cap=n.swCap;
         if(cap && res.epoch===cap.epoch) sdrSweepFeed(n, cap, u8, s16);
@@ -2566,7 +2598,7 @@ async function rtlReadLoop(n){
           w++; if(w>=size) w=0;
           if(filled<size) filled++;
         }
-        specRing.w=w; specRing.filled=filled; }
+        specRing.w=w; specRing.filled=filled; specRing.written+=cnt; }
       if(mode==='IQ'){
         const ring=n.ring;
         { let w=ring.w, filled=ring.filled; const I=ring.I, Q=ring.Q, size=ring.size;
@@ -2740,28 +2772,42 @@ function window_(kind,N){
          : 1; }
   return w;
 }
-let winCache={kind:null,N:0,w:null};
-let reBuf=null, imBuf=null, bufN=0; // re/im — внутренние, никуда не отправляются, переиспользование безопасно
+let winCache={kind:null,N:0,w:null,sum:1};
+let reBuf=null, imBuf=null, pwBuf=null, bufN=0; // внутренние, никуда не отправляются, переиспользование безопасно
+// Уэлч: L отсчётов режутся на K кадров по N с перекрытием 50%, мощность усредняется —
+// разброс пола шума падает ~в sqrt(K) раз. Делим на сумму окна, а не на N: 0 дБ = комплексный
+// тон полной шкалы (|I+jQ|=1) при любом окне.
 self.onmessage=function(e){
   const msg=e.data;
   if(msg.type!=='fft') return;
-  const N=msg.N, kind=msg.win;
-  if(!winCache.w || winCache.kind!==kind || winCache.N!==N) winCache={kind,N,w:window_(kind,N)};
-  if(!reBuf || bufN!==N){ reBuf=new Float32Array(N); imBuf=new Float32Array(N); bufN=N; }
+  const N=msg.N, L=msg.L, kind=msg.win;
+  if(!winCache.w || winCache.kind!==kind || winCache.N!==N){
+    const w=window_(kind,N); let sum=0; for(let i=0;i<N;i++) sum+=w[i];
+    winCache={kind,N,w,sum}; }
+  if(!reBuf || bufN!==N){ reBuf=new Float32Array(N); imBuf=new Float32Array(N); pwBuf=new Float64Array(N); bufN=N; }
   const w=winCache.w, I=new Float32Array(msg.I), Q=new Float32Array(msg.Q);
-  const re=reBuf, im=imBuf;
-  for(let i=0;i<N;i++){ re[i]=I[i]*w[i]; im[i]=Q[i]*w[i]; }
-  fft(re,im);
+  const re=reBuf, im=imBuf, pw=pwBuf;
+  // DC-спайк гетеродина (zero-IF RTL2832U): вычитаем среднее всего блока — это и есть центральный бин
+  let mI=0, mQ=0;
+  for(let i=0;i<L;i++){ mI+=I[i]; mQ+=Q[i]; }
+  mI/=L; mQ/=L;
+  // кадры выровнены по концу блока — последний кадр всегда самые свежие отсчёты
+  const hop=N>>1, K=Math.max(1, Math.floor((L-N)/hop)+1), o0=L-N-(K-1)*hop;
+  pw.fill(0);
+  for(let k=0;k<K;k++){
+    const o=o0+k*hop;
+    for(let i=0;i<N;i++){ re[i]=(I[o+i]-mI)*w[i]; im[i]=(Q[o+i]-mQ)*w[i]; }
+    fft(re,im);
+    for(let i=0;i<N;i++) pw[i]+=re[i]*re[i]+im[i]*im[i];
+  }
   // mag НЕ переиспользуем (в отличие от demod-воркера): n.spec может читаться потребителем
   // (узел sa) несколько тактов подряд, пока не придёт следующий расчёт — если отдать этот же
   // буфер воркеру раньше времени, следующий расчёт молча перезапишет память ещё читаемого спектра.
   const mag=new Float32Array(N);
-  const half=N>>1;
-  for(let i=0;i<N;i++){ const src=(i+half)%N; mag[i]=Math.hypot(re[src],im[src])/N; }
-  // I/Q, в отличие от mag, дальше никому не нужны — отдаём буферы обратно главному потоку, чтобы
-  // rtlUpdateSpec не аллоцировал два новых Float32Array(N) на каждый расчёт (~12 раз/с, лишний
-  // источник мусора на главном потоке, см. takeBuffers ниже).
-  self.postMessage({type:'result', mag:mag.buffer, I:I.buffer, Q:Q.buffer}, [mag.buffer, I.buffer, Q.buffer]);
+  const half=N>>1, sc=1/(K*winCache.sum*winCache.sum);
+  for(let i=0;i<N;i++) mag[i]=Math.sqrt(pw[(i+half)%N]*sc);
+  // I/Q дальше никому не нужны — отдаём буферы обратно главному потоку для переиспользования
+  self.postMessage({type:'result', mag:mag.buffer, K, I:I.buffer, Q:Q.buffer}, [mag.buffer, I.buffer, Q.buffer]);
 };
 `;
 
@@ -2774,59 +2820,54 @@ function rtlMakeSpecWorker(){
     if(e.data.type==='result' && pendingResolve){
       const resolve=pendingResolve; pendingResolve=null;
       if(e.data.I && e.data.Q) bufPool.push({I:e.data.I, Q:e.data.Q});
-      resolve(new Float32Array(e.data.mag));
+      resolve({mag:new Float32Array(e.data.mag), K:e.data.K});
     }
   };
   return {
-    // буферы нужного размера из пула (или null, если пул пуст/размер сменился, напр. specSize) —
+    // буферы не меньше L отсчётов из пула (или null, если пул пуст/кольцо выросло) —
     // вызывающий сам решает, аллоцировать ли в этом случае свежие
-    takeBuffers(N){
-      while(bufPool.length){ const b=bufPool.pop(); if(b.I.byteLength===N*4) return b; }
+    takeBuffers(L){
+      while(bufPool.length){ const b=bufPool.pop(); if(b.I.byteLength>=L*4) return b; }
       return null;
     },
-    compute(iBuf, qBuf, N, win){
+    compute(iBuf, qBuf, N, L, win){
       return new Promise((resolve)=>{
         pendingResolve=resolve;
-        worker.postMessage({type:'fft', I:iBuf, Q:qBuf, N, win}, [iBuf, qBuf]);
+        worker.postMessage({type:'fft', I:iBuf, Q:qBuf, N, L, win}, [iBuf, qBuf]);
       });
     },
     terminate(){ worker.terminate(); URL.revokeObjectURL(url); }
   };
 }
 
-// снэпшот спектра сырого IQ: fftshift, ось частот вокруг центра настройки.
-// Расчёт — асинхронно в отдельном воркере (не блокирует ни главный поток, ни цикл чтения USB).
-// process() синхронный по контракту движка — просто заказывает расчёт и отдаёт n.spec, какой есть
-// (на один тик может быть чуть устаревшим — это лучше, чем тормозить главный поток БПФ на 16384).
+// спектр сырого IQ: fftshift, ось частот вокруг центра настройки.
+// Берутся все отсчёты, пришедшие с прошлого расчёта (до specAvg кадров), а не последние N —
+// воркер усредняет их по Уэлчу. process() синхронный по контракту движка: заказывает расчёт
+// и отдаёт n.spec, какой есть. Не успевает воркер — обновления реже, кадров в каждом больше.
+const RTL_SPEC_MAX_FRAMES=256;
 function rtlUpdateSpec(n){
   if(!n.connected || !n.specWorker) return;
   const now=performance.now();
   if(n.specBusy || (n.spec && now-n.lastSpec<80)) return;
   const N=+n.p.specSize, ring=n.specRing;
   if(ring.filled<N) return;
-  const start=(ring.w-N+ring.size)%ring.size;
-  const reuse=n.specWorker.takeBuffers(N);
-  const I=reuse?new Float32Array(reuse.I):new Float32Array(N), Q=reuse?new Float32Array(reuse.Q):new Float32Array(N);
-  // .set() из непрерывных (максимум двух, на стыке кольца) подмассивов вместо ручного цикла
-  // с делением по модулю на КАЖДЫЙ отсчёт — при specSize вроде 32768 это заметная главная-поточная
-  // работа на каждый снимок спектра (раз в ~80мс), а TypedArray.set — оптимизированный memmove.
-  const first=Math.min(N, ring.size-start);
+  const av=n.p.specAvg, frames=av==='off'? 1 : av==='all'? RTL_SPEC_MAX_FRAMES : (+av||1);
+  const fresh=ring.written-(n.specTaken||0);
+  // свежих меньше кадра — берём последние N (перекрытие с прошлым расчётом, как раньше)
+  const L=Math.max(N, Math.min(ring.filled, N+(frames-1)*(N>>1), fresh));
+  n.specTaken=ring.written;
+  const start=(ring.w-L+ring.size)%ring.size;
+  // свежие буферы — сразу под всё кольцо, чтобы пул подходил при любом L
+  const reuse=n.specWorker.takeBuffers(L);
+  const I=reuse?new Float32Array(reuse.I):new Float32Array(ring.size), Q=reuse?new Float32Array(reuse.Q):new Float32Array(ring.size);
+  // .set() из непрерывных (максимум двух, на стыке кольца) подмассивов — оптимизированный memmove
+  const first=Math.min(L, ring.size-start);
   I.set(ring.I.subarray(start,start+first)); Q.set(ring.Q.subarray(start,start+first));
-  if(first<N){ I.set(ring.I.subarray(0,N-first),first); Q.set(ring.Q.subarray(0,N-first),first); }
-  let sumI=0, sumQ=0;
-  for(let i=0;i<N;i++){ sumI+=I[i]; sumQ+=Q[i]; }
-  // DC-спайк в центре спектра — не сигнал, а самосмешение гетеродина на нулевую ПЧ, типичная
-  // болячка RTL2832U (zero-IF архитектура), см. то же самое в gqrx/SDR++ ("DC removal"/"correct IQ").
-  // Вычитаем среднее блока — это ТОЧНО зануляет центральный бин БПФ (он и есть эта самая сумма/N),
-  // персистентный фильтр (как rawI0/rawQ0 в демод-воркере) тут не нужен: смещение почти константа
-  // между блоками, а прямое среднее убирает его сразу, без времени на сходимость IIR. Всегда
-  // включено — переключатель убрали, отключать его незачем (спайк — не сигнал ни при каких условиях).
-  const mI=sumI/N, mQ=sumQ/N;
-  for(let i=0;i<N;i++){ I[i]-=mI; Q[i]-=mQ; }
+  if(first<L){ I.set(ring.I.subarray(0,L-first),first); Q.set(ring.Q.subarray(0,L-first),first); }
   n.specBusy=true;
   const centerFreq=n.actualFreq??n.p.freq, binHz=n.sourceRate/N, half=N>>1, win=n.p.specWin;
-  n.specWorker.compute(I.buffer, Q.buffer, N, win).then(mag=>{
-    n.specBusy=false;
+  n.specWorker.compute(I.buffer, Q.buffer, N, L, win).then(({mag,K})=>{
+    n.specBusy=false; n.specK=K;
     if(!n.specFreqs || n.specFreqs.length!==N || n.specFreqsCenter!==centerFreq || n.specFreqsSr!==n.sourceRate){
       const fr=new Float32Array(N);
       for(let i=0;i<N;i++) fr[i]=centerFreq+(i-half)*binHz;
@@ -3008,6 +3049,7 @@ async function rtlStart(n, sr){
   n.specWorker=rtlMakeSpecWorker(); n.specBusy=false;
   n.connected=true; n.reading=true;
   n.underrunsWorker=0; n.underrunsOverflow=0; n.underrunsStarve=0;
+  n.adcAcc=null; n.adcPk=null; n.adcRms=null; n.adcClip=null; n.adcOvlT=null;
   for(const ch of n.ch){ ch.rssi=null; ch.rssiChunk=null; ch.snr=null; ch.sqOpen=undefined; ch.sqG=1; }
   n.status='connected ('+n.dev.tunerName+(n.dev.worker?', USB in worker':'')+')';
   rtlReadLoop(n);
@@ -3118,7 +3160,8 @@ function sdrSweepPlan(n){
   if(total>SDR_SWEEP_MAX_BINS) throw new Error(`too many bins (${(total/1e6).toFixed(1)}M): narrow the range or reduce sweep FFT size`);
   const mag=new Float32Array(total), freqs=new Float64Array(total);
   for(let j=0;j<total;j++) freqs[j]=lo+j*binHz;
-  n.sw={key, N, use, binHz, lo, hops, k:0, win:window_('hann',N),
+  const win=window_('hann',N); let wsum=0; for(let i=0;i<N;i++) wsum+=win[i];
+  n.sw={key, N, use, binHz, lo, hops, k:0, win, wsum,
         re:new Float32Array(N), im:new Float32Array(N), pw:new Float64Array(N),
         spec:{mag, freqs, sr, size:total, rev:1}, tLine:performance.now(), lineMs:null};
   return n.sw;
@@ -3168,7 +3211,7 @@ function sdrSweepPlace(n, sw, cap, k){
   // остаток DC-выброса — интерполяция по соседям
   if(N>=8){ const v=(pw[half-2]+pw[half+2])/2; pw[half-1]=pw[half]=pw[half+1]=v; }
   const mag=sw.spec.mag, j0=k*sw.use, i0=half-sw.use/2, sc=peak?1:1/M;
-  for(let i=0;i<sw.use;i++) mag[j0+i]=Math.sqrt(pw[i0+i]*sc)/N;
+  for(let i=0;i<sw.use;i++) mag[j0+i]=Math.sqrt(pw[i0+i]*sc)/sw.wsum;   // 0 дБ = полная шкала, как в живом спектре
 }
 // живой спектр (при прослушивании) — поверх своего участка панорамы; мощность интегрируется
 // по пересечению бинов, так что уровень шума не зависит от разницы размеров БПФ
@@ -3243,6 +3286,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
         {n:'spec',t:'spec'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},
         {n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'},
         {n:'demod',t:'val'},{n:'bw',t:'num'},
+        {n:'adcPk',t:'num'},{n:'adcRms',t:'num'},{n:'clip',t:'num'},{n:'ovl',t:'num'},
         {n:'rssi',t:'num'},{n:'snr',t:'num'},{n:'sqOpen',t:'num'},
         {n:'rssi2',t:'num'},{n:'snr2',t:'num'},{n:'rssi3',t:'num'},{n:'snr3',t:'num'},{n:'rssi4',t:'num'},{n:'snr4',t:'num'}],
   readout:true,
@@ -3297,6 +3341,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'devKind',t:'text',d:'',hidden:true},
     {n:'specSize',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'4096',label:'spectrum FFT size'},
     {n:'specWin',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann',label:'spectrum window',adv:true},
+    // Уэлч: сколько кадров (с перекрытием 50%) усреднять за одно обновление; all — весь поток
+    {n:'specAvg',t:'select',opts:['off','4','16','64','all'],d:'all',label:'spectrum averaging, frames',adv:true},
     // широкополосное сканирование: 'spec' — панорама всего диапазона; маркер на tuneFreq — пауза и прослушивание
     {n:'sweep',t:'check',d:false,label:'wideband sweep'},
     {n:'swLo',t:'range',min:.1,max:30000,step:.1,d:88,log:true,label:'sweep from, MHz'},
@@ -3472,6 +3518,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     return {I:oi, Q:oq, audio:oa[0], audio2:oa[1], audio3:oa[2], audio4:oa[3], audioL:oL, audioR:oR,
       ps:rds&&rds.sync!==undefined&&rds.ps.trim()?rds.ps.trim():null, rt:rds&&rds.rt?rds.rt:null, spec:spOut,
       demod:n.p.demod, bw:n.p.bw, ...bounds,
+      adcPk:n.adcPk??null, adcRms:n.adcRms??null, clip:n.adcClip!=null?100*n.adcClip:null, ovl:sdrAdcOvl(n)?1:0,
       ...rtlChanOuts(n)}; },
   // Собственная отрисовка спектра/водопада убрана — для этого универсальный узел 'sa'
   // (Спектроанализатор), подключаемый к выходу 'spec'. Здесь остаётся только статус-строка.
@@ -3517,6 +3564,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     if(r) r.textContent = n.connected
       ? `${n.dev?n.dev.tunerName:'?'} · ${n.p.demod} · ${fmtHz(cf,3)} ±${fmtHz(n.sourceRate/2)} · tune ${fmtHz(tune,3)} · `+
         `${(n.mspsIo||0).toFixed(2)} Msps · ch ${chCount}`+
+        (n.specK>1 ? ` · fft avg ×${n.specK}` : '')+
         (sdrConv(n) ? ` · conv ${sdrConv(n)>0?'+':''}${fmtHz(sdrConv(n),3)}` : '')+
         (n.p.demod==='WFM' ? (n.ch[0].stereo?' · ST':' · mono') : '')+
         (n.p.demod==='SAM' && n.ch[0].sam ? (n.ch[0].sam.lock ? ` · lock ${n.ch[0].sam.hz>=0?'+':''}${n.ch[0].sam.hz.toFixed(0)} Hz` : ' · no lock') : '')+
@@ -3531,6 +3579,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
         // dry — consumer остался без данных (кольцо опустело быстрее, чем producer его наполнял)
         ((n.underrunsWorker||n.underrunsOverflow||n.underrunsStarve)?
           ` · errors demod:${n.underrunsWorker||0} ovf:${n.underrunsOverflow||0} dry:${n.underrunsStarve||0}`:'')+
+        (n.adcPk!=null ? ` · ADC pk ${n.adcPk.toFixed(1)} rms ${n.adcRms.toFixed(0)} dBFS` : '')+
+        (sdrAdcOvl(n) ? ` · ⚠ OVERLOAD ${(100*n.adcOvlClip).toFixed(2)}% — reduce gain` : '')+
         (n.busy?' · …':'')+
         (n.dev?.kind==='file' ? ` · ${iqFmtTime(n.dev.pos/n.dev.rate)} / ${iqFmtTime(n.dev.total/n.dev.rate)}`+(n.dev.ended?' (end)':'') : '')+
         (n.rec ? ` · ● REC ${iqFmtTime((Date.now()-n.rec.start)/1000)} ${(n.rec.bytes/1e6).toFixed(0)} MB` : n.recMsg ? ' · '+n.recMsg : '')+
