@@ -1001,6 +1001,26 @@ addEdge(bm.id,'sum',sc.id,'in3');
 addEdge(ag.id,'out',dc.id,'L');
 markWiresDirty();
 });
+preset('Mains Hum Removal', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Mains hum removal (50/60 Hz and harmonics)\n\n'+
+'Hum Canceller subtracts the hum itself and follows the real mains frequency\n(see its readout);'+
+' the rest of the signal is untouched.\nComb Notch — cheaper, cuts every multiple of f0 (and DC),\n'+
+'here tuned by the canceller\'s freq output. Compare on the spectrum.'});
+nt.size.w=460; nt.size.h=170; applySize(nt);
+const m =addNode('mic',40,260,{gainA:2});
+const hc=addNode('humcancel',540,40,{preset:'50',f0:50,n:20,bw:1});
+const cb=addNode('combnotch',540,420,{preset:'50',f0:50,bw:2});
+const ff=addNode('fft',540,600,{size:'8192'});
+const sa=addNode('sa',900,40,{fmin:0,fmax:1000,split:.4});
+sa.size.w=600; sa.size.h=320; applySize(sa);
+const dc=addNode('dac',900,640,{vol:.3});
+addEdge(m.id,'a',hc.id,'in'); addEdge(m.id,'a',cb.id,'in');
+addEdge(hc.id,'freq',cb.id,'f0');
+addEdge(hc.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
+addEdge(hc.id,'out',dc.id,'L');
+markWiresDirty();
+});
 preset('Room Acoustics', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Room acoustics\n\n'+
