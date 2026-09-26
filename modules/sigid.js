@@ -95,10 +95,13 @@ function sidFloor(n,pw,N){
   for(let j=0;j<nb;j++){ let m=0;
     for(let k=Math.max(0,j-R);k<=Math.min(nb-1,j+R);k++) if(er[k]>m) m=er[k]; op[j]=Math.max(m,1e-30); }
   const fl=n._fl&&n._fl.length===N? n._fl : (n._fl=new Float32Array(N));
-  for(let i=0;i<N;i++){
-    const t=(i+.5)/B-.5, j=clamp(Math.floor(t),0,nb-1), j2=Math.min(nb-1,j+1), f=clamp(t-j,0,1);
-    fl[i]=op[j]+(op[j2]-op[j])*f;
+  // линейно между центрами блоков; края — постоянные. Без вызовов в цикле: на 64k бинах это заметно
+  const h=B>>1; fl.fill(op[0],0,Math.min(N,h));
+  for(let j=0;j+1<nb;j++){
+    const a=j*B+h, b=Math.min(N,a+B), v0=op[j], dv=(op[j+1]-op[j])/B;
+    for(let i=a;i<b;i++) fl[i]=v0+dv*(i-a);
   }
+  const t0=(nb-1)*B+h; if(t0<N) fl.fill(op[nb-1],t0);
   return fl;
 }
 function sidSegments(n,s){
@@ -248,7 +251,9 @@ function sidSpecClass(g){
   const t=g.lead, bw=g.obw, bin=g.binHz;
   if(g.dtmf) return {t:'DTMF', conf:.85, tag:'DTMF '+g.dtmf, det:'row/column tones, key '+g.dtmf};
   if(g.pair) return {t:'FSK', conf:.45, tag:'FSK '+fmtHz(g.shift,0)+'Hz', det:'two alternating tones, shift '+fmtHz(g.shift,0)+'Hz', shift:g.shift};
-  if(bw<=Math.max(2.5*bin,50)){
+  // узкие: в радио до 150 Гц — CW/несущая (брызги манипуляции и уход частоты расширяют CW до 50–100 Гц),
+  // MFSK-правило ниже (FT8 и т.п.) — для аудио и там, где это не CW
+  if(bw<=Math.max(2.5*bin,50) || (g.rf && bw<=150 && g.trans>=3)){
     if(g.duty>.1 && g.duty<.9 && g.trans>=3) return {t:'CW', conf:.55, tag:'CW', det:'narrow, on/off keyed'};
     return g.rf? {t:'CAR', conf:.4, tag:'carrier', det:'narrow, steady'} : {t:'TONE', conf:.4, tag:'tone', det:'narrow, steady'};
   }
@@ -269,6 +274,8 @@ function sidSpecClass(g){
     const sb=t.asym<-.06? 'USB' : t.asym>.06? 'LSB' : 'SSB';
     return {t:sb, conf:sb==='SSB'? .3 : .4, tag:sb, det:'no carrier, energy at the '+(sb==='USB'?'lower':sb==='LSB'?'upper':'—')+' edge'};
   }
+  // в радио узкий без явной манипуляции — CW, PSK31 или FT8: по спектру не отличить, ждём отсчётов
+  if(g.rf && bw<=150) return {t:'UNK', conf:.2, tag:'narrow', det:'CW / PSK31 / FT8? — waiting for sample analysis'};
   if(bw>=12 && bw<=80) return {t:'MFSK', conf:.4, tag:'MFSK '+fmtHz(bw,0)+'Hz', det:'narrow weak-signal MFSK width'};
   if(bw>80 && bw<1.5e3) return t.flat>.5? {t:'MFSK', conf:.35, tag:'MFSK '+fmtHz(bw,0)+'Hz', det:'flat, several tones'}
                                          : {t:'DIG', conf:.3, tag:'narrow data', det:'narrowband data (PSK/FSK)'};
@@ -289,7 +296,8 @@ function sidFocusNew(n,src,g,now){
   // узким (медленная манипуляция) — до period, совсем узким (FT8, WSPR) — полтора, широким — секунда (пакеты TDMA — половина времени)
   const dur=g.obw<100? n.p.period*1.5 : g.obw<3e3? n.p.period*.75 : 1;
   const cap=Math.min(32768,Math.round(fs2*dur)), r=src.ring;
-  return {key:g.key, dur, ring:r, fc:src.fc, off:(g.pair||g.dtmf? g.fc : (g.lo+g.hi)/2)-src.fc, sr:src.sr, B, D, fs2, cap,
+  // по центроиду; по середине сегмента — только плоские многотоновые (у них центроид гуляет)
+  return {key:g.key, dur, ring:r, fc:src.fc, off:(g.lead.flat>.55 && g.obw>=300 && !g.pair && !g.dtmf? (g.lo+g.hi)/2 : g.fc)-src.fc, sr:src.sr, B, D, fs2, cap,
     zi:new Float32Array(cap), zq:new Float32Array(cap), m:0,
     pos:r.written-Math.min(r.filled,cap*D), cr:1, ci:0, k:0,
     s1r:0,s1i:0,s2r:0,s2i:0,d1r:0,d1i:0,d2r:0,d2i:0, t0:now};
@@ -319,40 +327,52 @@ function sidFocusFeed(fx){
   Object.assign(fx,{cr:cr*nm,ci:ci*nm,k,s1r,s1i,s2r,s2i,d1r,d1i,d2r,d2i,m});
   fx.pos+=avail;
 }
+// до SID_FOCI сигналов разом: на загруженном КВ по одному полный круг занимал полминуты
+const SID_FOCI=4;
 function sidFocusStep(n,src,sigs,now){
-  let fx=n.fx;
-  if(fx && (!src || fx.ring!==src.ring || fx.fc!==src.fc || !sigs.some(g=>g.key===fx.key))) fx=n.fx=null;
+  n.fxs=(n.fxs||[]).filter(fx=>src && fx.ring===src.ring && fx.fc===src.fc && sigs.some(g=>g.key===fx.key));
   if(!src) return;
-  if(!fx){
-    if(now-(n.fxLast||0)<150) return;
-    if(n.wPend && now-n.fxLast<3000) return;          // ждём воркер (зависший — бросаем)
-    n.wPend=null;
-    // новые — сразу, уже разобранные — не чаще раза в 4 с
-    const c=sigs.filter(g=>g.snr>=n.p.thr+2 && (!g.lead.iqT || now-g.lead.iqT>4000))
+  const pend=n.wPend||(n.wPend=new Map());
+  for(const [id,p] of pend) if(now-p.t>5000) pend.delete(id);   // зависший воркер — бросаем
+  if(n.fxs.length<SID_FOCI && pend.size<SID_FOCI && now-(n.fxLast||0)>=100){
+    // новые — сразу (сильные первыми), уже разобранные — не чаще раза в 4 с
+    const busy=new Set(n.fxs.map(fx=>fx.key));
+    const c=sigs.filter(g=>!busy.has(g.key) && g.snr>=n.p.thr+2 && (!g.lead.iqT || now-g.lead.iqT>4000))
       .sort((a,b)=>(a.lead.iqT-b.lead.iqT) || (b.snr-a.snr))[0];
-    if(!c) return;
-    fx=n.fx=sidFocusNew(n,src,c,now);
+    if(c){ n.fxs.push(sidFocusNew(n,src,c,now)); n.fxLast=now; c.lead.iqT=now; }
   }
-  sidFocusFeed(fx);
-  if(fx.m>=fx.cap || now-fx.t0>=fx.dur*1000+500){
+  for(const fx of n.fxs.slice()){
+    sidFocusFeed(fx);
+    if(fx.m<fx.cap && now-fx.t0<fx.dur*1000+500) continue;
+    n.fxs.splice(n.fxs.indexOf(fx),1);
     const g=sigs.find(x=>x.key===fx.key);
-    n.fx=null; n.fxLast=now;
-    if(!g) return;
+    if(!g) continue;
     g.lead.iqT=now;
     const w=sidWorker(n);
-    if(!w){ sidIqDone(n,g,sidIqFeatures(fx)); return; }
+    if(!w){ sidIqDone(n,g,sidIqFeatures(fx)); continue; }
     // разбор — в воркере: десятки мс одним куском на главном потоке дали бы щелчок в звуке
-    const id=++n.wid; n.wPend={id,g};
+    const id=++n.wid; pend.set(id,{g,t:now});
     w.postMessage({id,zi:fx.zi,zq:fx.zq,m:fx.m,B:fx.B,fs2:fx.fs2,off:fx.off},[fx.zi.buffer,fx.zq.buffer]);
   }
 }
 function sidIqDone(n,g,f){
   if(!f) return;
-  if(g.pair){                                         // пара не подтвердилась как FSK — это два разных сигнала
-    const c=sidIqClass(f,g);
-    if(c?.t!=='FSK' || Math.abs(c.spacing-g.shift)>g.shift*.25){ if(n.noPair.size>200) n.noPair.clear(); n.noPair.add(g.key); }
-    else g.lead.iq=f;
-  } else g.lead.iq=f;
+  if(!g.pair){
+    // голосование по последним трём разборам: один захват мог прийтись на паузу или сплошной участок
+    // (CW без пауз похож на несущую, FT8 на краю слота — на CW); пустой вердикт прежний не затирает
+    const c=sidIqClass(f,g); if(!c) return;
+    const t=g.lead, h=t.iqH=(t.iqH||[]);
+    h.push({f,type:c.t}); if(h.length>3) h.shift();
+    const cnt={}; for(const x of h) cnt[x.type]=(cnt[x.type]||0)+1;
+    let best=h[h.length-1];
+    for(let i=h.length-1;i>=0;i--) if(cnt[h[i].type]>cnt[best.type]) best=h[i];
+    t.iq=best.f;
+    return;
+  }
+  // пара не подтвердилась как FSK — это два разных сигнала
+  const c=sidIqClass(f,g);
+  if(c?.t!=='FSK' || Math.abs(c.spacing-g.shift)>g.shift*.25){ if(n.noPair.size>200) n.noPair.clear(); n.noPair.add(g.key); }
+  else g.lead.iq=f;
 }
 // воркер собирается из исходников тех же функций — код анализа один
 function sidWorker(n){
@@ -364,9 +384,9 @@ function sidWorker(n){
       '\nonmessage=e=>{ let f=null; try{ f=sidIqFeatures(e.data); }catch(_){} postMessage({id:e.data.id,f}); };';
     const url=URL.createObjectURL(new Blob([src],{type:'text/javascript'}));
     n.worker=new Worker(url); URL.revokeObjectURL(url);
-    n.worker.onmessage=e=>{ const p=n.wPend;
-      if(p && p.id===e.data.id){ n.wPend=null; sidIqDone(n,p.g,e.data.f); } };
-    n.worker.onerror=()=>{ n.worker.terminate(); n.worker=null; n.wPend=null; };
+    n.worker.onmessage=e=>{ const p=n.wPend?.get(e.data.id);
+      if(p){ n.wPend.delete(e.data.id); sidIqDone(n,p.g,e.data.f); } };
+    n.worker.onerror=()=>{ n.worker.terminate(); n.worker=null; n.wPend?.clear(); };
   }catch(_){ n.worker=null; }
   return n.worker;
 }
@@ -412,7 +432,7 @@ function sidLine(xr,xi,L,fs,fmin,fmax,maxK,loc){
       const k0=Math.round(kb/m); if(Math.abs(bf((k0+K)%K))<fmin) continue;
       let km=k0, pm=0;
       for(let k=k0-1;k<=k0+1;k++){ const kk=(k+K)%K, pr=P[kk]/(avg(kk)||1e-30); if(pr>pm){ pm=pr; km=kk; } }
-      if(pm>=6 && pm>=bp*.05){ best=km; bp=pm; break; }
+      if(pm>=6 && pm>=bp*.2){ best=km; bp=pm; break; }
     }
     db=10*Math.log10(bp);
   } else {
@@ -612,17 +632,30 @@ function sidIqFeatures(fx){
   const fm=cv<.35 && spread>0;
   const ct=fm && fs>=700 && fx.B<40e3? sidLine(fi,null,L,fs,60,260,32768,true) : null;
   const pil=fm && fs>=45000? sidLine(fi,null,L,fs,18000,20000,0,true) : null;
-  // CW/OOK: длина точки по отрезкам включения огибающей
+  // CW/OOK: длина точки. Огибающая сглажена ~5 мс, пороги с гистерезисом между шумом и уровнем
+  // сигнала; отрезки короче 12 мс — дребезг на шуме, склеиваются. Точка — кратчайшие элементы и
+  // паузы между элементами (у Морзе обе по одной точке); wpm = 1.2 / точка, с
   let wpm=0;
   if(lowFrac>.1){
-    const sm=Math.max(1,Math.round(fs*.003)), thr=.5*p90, runs=[]; let acc=0, on=false, st=0;
-    for(let k=0;k<L;k++){ acc+=a[k]; if(k>=sm) acc-=a[k-sm];
-      const v=acc/Math.min(k+1,sm)>thr;
-      if(v&&!on){ on=true; st=k; } else if(!v&&on){ on=false; runs.push((k-st)/fs); } }
-    if(runs.length>=4){ const d=sidPctl(runs.filter(x=>x>.01),.2); if(d>0) wpm=1.2/d; }
+    const sm=Math.max(1,Math.round(fs*.005)), es=new Float32Array(L); let acc=0;
+    for(let k=0;k<L;k++){ acc+=a[k]; if(k>=sm) acc-=a[k-sm]; es[k]=acc/Math.min(k+1,sm); }
+    const nzL=sidPctl(es,.1), sgL=sidPctl(es,.9), hi=nzL+.55*(sgL-nzL), lo=nzL+.35*(sgL-nzL), minR=.012*fs;
+    const segs=[]; let on=es[0]>hi, st=0;
+    for(let k=1;k<L;k++){
+      if(on? es[k]<lo : es[k]>hi){
+        if(k-st<minR && segs.length){ const q=segs.pop(); st=q[1]; on=!on; continue; }   // дребезг — назад
+        segs.push([on,st,k]); on=!on; st=k; }
+    }
+    const onR=segs.filter(q=>q[0] && q[1]>0).map(q=>(q[2]-q[1])/fs), offR=segs.filter(q=>!q[0] && q[1]>0).map(q=>(q[2]-q[1])/fs);
+    if(onR.length>=3){
+      // паузы внутри знака всегда в точку — опора по всем отрезкам, иначе окно из одних тире даёт wpm/3
+      const all=[...onR,...offR], t0=sidPctl(all,.2), near=all.filter(x=>x>.5*t0 && x<1.8*t0);
+      const dot=near.length? near.reduce((x,y)=>x+y,0)/near.length : t0;
+      if(dot>.02 && dot<.3) wpm=1.2/dot;
+    }
   }
   return {cv, cvOn, sModes, sConc, sMid, sChg, kurt, lowFrac, modes:mf, conc, mid, plat, bPlat, bRun, spread, F1:L1.frac, cOff:L1.f+fx.off,
-    F2:L2.frac, F4:L4.frac, o2:L2.f/2, o4:L4.f/4, bFsk:rFsk.db>=10? rFsk.f : 0, bEnv:rEnv && rEnv.db>=10? rEnv.f : 0,
+    F2:L2.frac, F4:L4.frac, c2:fx.fc+fx.off+L2.f/2, c4:fx.fc+fx.off+L4.f/4, bFsk:rFsk.db>=10? rFsk.f : 0, bEnv:rEnv && rEnv.db>=10? rEnv.f : 0,
     ctcss:ct && ct.db>=14? ct.f : 0, pilot:!!(pil && pil.db>=12), wpm, fs, dur:L/fs, off:fx.off};
 }
 
@@ -632,7 +665,8 @@ function sidIqClass(f,g){
   const burst=f.cvOn!=null && f.lowFrac>.15 && f.lowFrac<.85 && f.cvOn<.25;
   const cvE=burst? f.cvOn : f.cv, bw=g.obw, cvLo=cvE<(g.snr<15? .32 : .22);
   const baud=b=>b>=100? Math.round(b) : +b.toFixed(1);
-  if(f.modes.length>=2 && ((cvLo && f.conc>.55 && f.mid<.16) || (f.cv<.4 && f.plat>.7))){
+  // много уровней при заметной ступенчатости — MFSK (FT8: 8 тонов по 6.25 Гц), даже если шум размыл ступени
+  if(f.modes.length>=2 && ((cvLo && f.conc>.55 && f.mid<.16) || (f.cv<.4 && f.plat>.7) || (cvLo && bw<3e3 && f.plat>.45 && f.modes.length>=6))){
     const k=f.modes.length, sh=(f.modes[k-1]-f.modes[0])/(k-1), br=k>4? f.bPlat||f.bFsk : f.bRun||f.bFsk, b=br? baud(br) : 0;
     const name=k===2? '2-FSK' : k<=4? '4-FSK' : 'MFSK';
     return {t:k>4? 'MFSK' : 'FSK', conf:.7, levels:k, shift:k===2? sh : 0, spacing:sh, baud:b,
@@ -647,21 +681,28 @@ function sidIqClass(f,g){
       tag:name+(k===2? ' '+fmtHz(sh,sh<1e3?0:1)+'Hz' : '')+(b? ' '+b+'Bd' : '')+(burst? ' TDMA' : ''),
       det:k+' levels at symbol centres, spacing '+fmtHz(sh,sh<1e3?0:1)+'Hz'+(b? ', '+b+' Bd' : '')+(burst? ', bursts' : '')};
   }
-  // у PSK линия — у несущей; у FSK линии z²/z⁴ на кратных сдвига, далеко от центра
-  const nearC=o=>o==null || Math.abs(o)<.15*bw;
-  if(f.F2>.08 && f.F2>2.5*f.F1 && f.F1<.3 && nearC(f.o2)){ const b=f.bEnv? baud(f.bEnv) : 0;
-    return {t:'PSK', conf:.7, tag:'BPSK'+(b? ' '+b+'Bd' : ''), det:'line in z² (±180° phase)'+(b? ', ~'+b+' Bd' : ''), psk:2, baud:b}; }
-  if(f.F4>.05 && f.F4>2.5*f.F2 && f.F2<.05 && f.F1<.05 && nearC(f.o4)){ const b=f.bEnv? baud(f.bEnv) : 0;
-    return {t:'PSK', conf:.6, tag:'QPSK'+(b? ' '+b+'Bd' : ''), det:'line in z⁴ (4 phases)'+(b? ', ~'+b+' Bd' : ''), psk:4, baud:b}; }
+  // манипуляция вкл/выкл; у CW частота при этом стоит на месте (у FT8 на краю слота — ходит по тонам)
   const wide=bw>Math.max(2.5*g.binHz,300), keyed=f.lowFrac>.12 && f.lowFrac<.9 && f.cv>.35;
+  const steady=f.spread<Math.max(20,.25*bw);
+  // у PSK линия — у несущей; у FSK линии z²/z⁴ на кратных сдвига, далеко от центра
+  const nearC=c=>c==null || Math.abs(c-g.fc)<.15*bw;
+  // у PSK31 в тексте серии без смены фазы дают заметную несущую — сравнение относительное
+  if(!keyed && f.F2>.08 && f.F2>1.8*f.F1 && f.F1<.5 && nearC(f.c2)){ const b=f.bEnv? baud(f.bEnv) : 0;
+    return {t:'PSK', conf:.7, tag:'BPSK'+(b? ' '+b+'Bd' : ''), det:'line in z² (±180° phase)'+(b? ', ~'+b+' Bd' : ''), psk:2, baud:b}; }
+  if(!keyed && f.F4>.05 && f.F4>2.5*f.F2 && f.F2<.05 && f.F1<.05 && nearC(f.c4)){ const b=f.bEnv? baud(f.bEnv) : 0;
+    return {t:'PSK', conf:.6, tag:'QPSK'+(b? ' '+b+'Bd' : ''), det:'line in z⁴ (4 phases)'+(b? ', ~'+b+' Bd' : ''), psk:4, baud:b}; }
   // ЧМ с заметной несущей (малая девиация) — раньше проверки несущей
   if(cvLo && wide && f.spread>.15*bw && !keyed){ const c=sidFm(f,g,burst); if(c) return c; }
-  if(f.F1>.25){
-    if(keyed){
+  // у манипуляции линия несущей пропорциональна заполнению — порог по нему
+  // при редкой манипуляции линия несущей тонет в шуме пауз — узкий, неподвижный и манипулированный = CW
+  if(f.F1>.25*Math.max(.3,1-f.lowFrac) || (keyed && !wide && steady)){
+    if(keyed && (steady || wide)){
       const cw=bw<=Math.max(5*g.binHz,500);
       return {t:cw? 'CW' : 'OOK', conf:.7, tag:(cw? 'CW' : 'OOK')+(f.wpm? ' '+Math.round(f.wpm)+'wpm' : ''),
         det:'on/off keyed carrier'+(f.wpm? ', ~'+Math.round(f.wpm)+' WPM' : ''), wpm:f.wpm};
     }
+    // узкий, с паузами, но частота ходит по тонам — MFSK на краю слота (FT8), не CW
+    if(keyed && f.modes.length>=3) return {t:'MFSK', conf:.5, tag:'MFSK', det:f.modes.length+' tones, gaps (slot edge)'};
     if(f.cv>.15 && wide) return {t:'AM', conf:.7, tag:'AM', det:'carrier + envelope modulation'};
     return {t:g.rf? 'CAR' : 'TONE', conf:.6, tag:g.rf? 'carrier' : 'tone', det:'unmodulated'};
   }
@@ -710,7 +751,7 @@ function sidHint(c,g){
       if(bw<=80) return 'FT8/FT4/WSPR-like → ft8Rx';
       return 'Olivia/Contestia-like → oliviaRx / contestiaRx';
     case 'PSK':
-      if(c.psk===2 && near(b,31.25,.1)) return 'PSK31 → preset "PSK31"';
+      if(c.psk===2 && (near(b,31.25,.1) || (!b && bw<120))) return 'PSK31 → preset "PSK31"';
       if(c.psk===2 && near(b,62.5,.1)) return 'PSK63';
       if(near(b,1800,.05)) return 'HFDL-like (1800 Bd PSK) → preset "HFDL: Receive and Aircraft Map"';
       return (c.psk===4? 'QPSK' : 'BPSK')+' → costas + gardner + pskdec';
@@ -774,7 +815,7 @@ def({ id:'sigid', title:'Signal Type Identifier', cat:'Analysis', readout:true, 
           {n:'thr',t:'range',min:3,max:30,step:.5,d:8,label:'detection threshold, dB'},
           {n:'maxSig',t:'range',min:1,max:20,step:1,d:8,label:'signals to label'},
           {n:'iq',t:'check',d:true,label:'sample analysis (IQ / audio)'}],
-  init:n=>{ n.tracks=[]; n.tid=0; n.wid=0; n.wPend=null; n.noPair=new Set(); n.sigs=[]; n.labels=[]; n.text='waiting for spectrum…'; n.fx=null; n.aring=null; n.os=null; },
+  init:n=>{ n.tracks=[]; n.tid=0; n.wid=0; n.wPend=new Map(); n.fxs=[]; n.noPair=new Set(); n.sigs=[]; n.labels=[]; n.text='waiting for spectrum…'; n.aring=null; n.os=null; },
   process(n,I){
     n.inOn=!!I.in;
     if(I.in) sidAudioPush(n,I.in);
@@ -808,7 +849,7 @@ def({ id:'sigid', title:'Signal Type Identifier', cat:'Analysis', readout:true, 
             (c.hint? '\n   → '+c.hint : ''); }).join('\n');
     }
     if(n.p.iq) sidFocusStep(n,sidSource(n,s),n.sigs,now);
-    else n.fx=null;
+    else n.fxs=[];
     const top=n.sigs[0];
     return {bands:n.labels, type:top? top.cls.tag : '', f:top? top.fc : null, conf:top? top.cls.conf : 0, count:n.sigs.length};
   },
