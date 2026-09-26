@@ -2765,11 +2765,15 @@ async function sdrPickDevice(n, choose){
 }
 // центр железа: ppm — поправка частоты, dcShift — центр на sr/4 выше, чтобы станция не сидела на DC
 const sdrDcOff=n=>n.p.dcShift && !n.dev?.fixedFreq ? Math.round(n.sourceRate/4) : 0;
+// смещение конвертера, Гц; у файла частота уже эфирная
+const sdrConv=n=>n.dev?.fixedFreq ? 0 : Math.round((+n.p.conv||0)*1e6);
+// всё вне этих двух функций — в эфирных частотах, в железо уходит частота тюнера (без смещения)
 async function sdrTune(n){
   const want=Math.round(n.p.freq), ppm=+n.p.ppm||0, k=n.dev.fixedFreq ? 1 : 1+ppm*1e-6;
-  const off=sdrDcOff(n);
-  const hw=await n.dev.setCenterFrequency(Math.round((want+off)/k));
-  n.actualFreq=hw*k; n.dcOff=off; n.appliedFreq=want; n.appliedPpm=ppm;
+  const off=sdrDcOff(n), conv=sdrConv(n);
+  if(want+off-conv<=0) throw new Error(`tuner frequency ${fmtHz(want+off-conv)}Hz out of range (check converter offset)`);
+  const hw=await n.dev.setCenterFrequency(Math.round((want+off-conv)/k));
+  n.actualFreq=hw*k+conv; n.dcOff=off; n.appliedFreq=want; n.appliedPpm=ppm; n.appliedConv=conv;
   if(n.dev.fixedFreq){ n.p.freq=hw; n.appliedFreq=hw; }   // у файла центр не перестраивается
 }
 // логический центр — куда встаёт канал, следующий за центром
@@ -2880,7 +2884,7 @@ async function rtlApplyPending(n){
   }
   const off=sdrDcOff(n);
   // во время прохода тюнером владеет sdrSweepLoop
-  const freqStale = !n.swActive && (Math.round(n.p.freq)!==n.appliedFreq || (+n.p.ppm||0)!==n.appliedPpm || off!==n.dcOff);
+  const freqStale = !n.swActive && (Math.round(n.p.freq)!==n.appliedFreq || (+n.p.ppm||0)!==n.appliedPpm || off!==n.dcOff || sdrConv(n)!==n.appliedConv);
   const gainKey=sdrGainKey(n), gainStale=gainKey!==n.appliedGainKey;
   const biasStale=!!n.p.bias!==n.appliedBias;
   if(!freqStale && !gainStale && !biasStale) return;
@@ -2938,7 +2942,7 @@ async function sdrSweepTune(n, f){
   n.busy=true;
   try{
     const k=1+(+n.p.ppm||0)*1e-6;
-    await n.dev.setCenterFrequency(Math.round(f/k));
+    await n.dev.setCenterFrequency(Math.round((f-sdrConv(n))/k));
     return n.dev.epoch();
   }finally{ n.busy=false; }
 }
@@ -3090,14 +3094,16 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'bias',t:'check',d:false,label:'bias-tee',adv:true},
     {n:'dcShift',t:'check',d:false,label:'shift center off DC',adv:true},
     {n:'ppm',t:'range',min:-100,max:100,step:.1,d:0,label:'frequency correction, ppm',adv:true},
+    // up/down-конвертер: эфирная частота = частота тюнера + смещение (−125 для апконвертера 125 МГц, +9750 для LNB)
+    {n:'conv',t:'num',d:0,label:'converter offset, MHz (RF = tuner + offset)'},
     {n:'usbId',t:'text',d:'',hidden:true},
     {n:'devKind',t:'text',d:'',hidden:true},
     {n:'specSize',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'4096',label:'spectrum FFT size'},
     {n:'specWin',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann',label:'spectrum window'},
     // широкополосное сканирование: 'spec' — панорама всего диапазона; маркер на tuneFreq — пауза и прослушивание
     {n:'sweep',t:'check',d:false,label:'wideband sweep'},
-    {n:'swLo',t:'range',min:.1,max:6000,step:.1,d:88,log:true,label:'sweep from, MHz'},
-    {n:'swHi',t:'range',min:.1,max:6000,step:.1,d:108,log:true,label:'sweep to, MHz'},
+    {n:'swLo',t:'range',min:.1,max:30000,step:.1,d:88,log:true,label:'sweep from, MHz'},
+    {n:'swHi',t:'range',min:.1,max:30000,step:.1,d:108,log:true,label:'sweep to, MHz'},
     {n:'swFft',t:'select',opts:['256','512','1024','2048','4096','8192'],d:'1024',label:'sweep FFT size'},
     {n:'swAvg',t:'range',min:1,max:64,step:1,d:8,label:'sweep averages per step'},
     {n:'swMode',t:'select',opts:['avg','max'],d:'avg',label:'sweep detector',adv:true},
@@ -3290,7 +3296,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     if(n.el && (n._rowsEl!==n.el || n._rowsHk!==hk || n._rowsFl!==fl)){
       n._rowsEl=n.el; n._rowsHk=hk; n._rowsFl=fl;
       for(const [k,show] of [['lna',hk],['vga',hk],['amp',hk],['auto',!hk&&!fl],['gainDb',!hk&&!fl],
-          ['bias',!fl],['ppm',!fl],['dcShift',!fl],['loop',fl],['seek',fl],
+          ['bias',!fl],['ppm',!fl],['conv',!fl],['dcShift',!fl],['loop',fl],['seek',fl],
           ...['sweep','swLo','swHi','swFft','swAvg','swMode','swUse','swSettle'].map(k=>[k,!fl])]){
         const e=n.el.querySelector(`.prm[data-param="${k}"]`); if(e) e.style.display=show?'':'none';
       }
@@ -3300,6 +3306,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     if(r) r.textContent = n.connected
       ? `${n.dev?n.dev.tunerName:'?'} · ${n.p.demod} · ${fmtHz(cf,3)} ±${fmtHz(n.sourceRate/2)} · tune ${fmtHz(tune,3)} · `+
         `${(n.mspsIo||0).toFixed(2)} Msps · ch ${chCount}`+
+        (sdrConv(n) ? ` · conv ${sdrConv(n)>0?'+':''}${fmtHz(sdrConv(n),3)}` : '')+
         (n.p.demod==='WFM' ? (n.ch[0].stereo?' · ST':' · mono') : '')+
         (n.p.demod==='WFM' && n.ch[0].rds && n.ch[0].rds.pi>=0
           ? ` · RDS ${n.ch[0].rds.pi.toString(16).toUpperCase().padStart(4,'0')} "${n.ch[0].rds.ps.trim()}"`+(n.ch[0].rds.rt?` ${n.ch[0].rds.rt}`:'') : '')+
@@ -4081,7 +4088,7 @@ def({ id:'genseq', title:'Generative Melody', cat:'Music',
 // Цифровая клавиша заменяет выбранный разряд и переходит на разряд ниже (как ввод суммы на кассе).
 // Перенос между разрядами не эмулируется вручную — n.p.freq обычное число, обычное сложение
 // само переносит в старший разряд (99→100), поэтому отдельной carry-логики не нужно.
-const TUNER_DIGITS=10;                                  // до 9 999 999 999 Гц (~10 ГГц) с запасом
+const TUNER_DIGITS=11;                                  // до ~100 ГГц — эфирные частоты за конвертером (LNB)
 
 // Общая крутилка+табло ввода частоты (изначально была только внутри узла 'tuner') — теперь общий
 // виджет, используемый и в 'rtlsdr' для его центральной частоты (см. draw() у 'rtlsdr' выше), вместо
@@ -4094,7 +4101,7 @@ const TUNER_DIGITS=10;                                  // до 9 999 999 999 Г
 // прямо по его цифре, тап без сдвига — выбор разряда и цифровая клавиатура.
 function drawFreqDial(el,cv,cx,state,get,set,opts={}){
   const dial=opts.dial!==false;
-  if(state.sel==null){ state.sel=8; state.ang=0; }
+  if(state.sel==null){ state.sel=TUNER_DIGITS-2; state.ang=0; }
   const W=cv.width, H=cv.height, TOP=46, maxV=Math.pow(10,TUNER_DIGITS)-1;
   const stepHz=()=>Math.pow(10,TUNER_DIGITS-1-state.sel);   // шаг = вес выбранного разряда
   const bumpDigit=d=>{ set(clamp(Math.round(get()+stepHz()*d),0,maxV)); };
