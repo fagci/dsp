@@ -4113,8 +4113,16 @@ function drawFreqDial(el,cv,cx,state,get,set,opts={}){
     // скрытый инпут — только чтобы на тап по цифре мобилка показала цифровую клавиатуру
     const numInput=document.createElement('input');
     numInput.type='tel'; numInput.inputMode='numeric'; numInput.autocomplete='off';
-    numInput.style.cssText='position:absolute;opacity:0;width:1px;height:1px;padding:0;border:0;pointer-events:none;';
-    el.appendChild(numInput);
+    // в body и fixed поверх табло: внутри узла при фокусе браузер прокручивал тайл дашборда
+    // (и холст графа) к инпуту в конце узла; 16px — иначе iOS зумит страницу при фокусе
+    numInput.style.cssText='position:fixed;opacity:0;width:1px;height:1px;padding:0;border:0;pointer-events:none;font-size:16px;';
+    const focusNum=()=>{
+      if(!numInput.isConnected) document.body.appendChild(numInput);
+      const r=cv.getBoundingClientRect();
+      numInput.style.left=Math.max(0,r.left)+'px'; numInput.style.top=Math.max(0,r.top)+'px';
+      numInput.focus({preventScroll:true});
+    };
+    numInput.addEventListener('blur',()=>numInput.remove());
     numInput.addEventListener('input',()=>{
       const ch=numInput.value.replace(/\D/g,'').slice(-1);
       numInput.value='';
@@ -4150,7 +4158,7 @@ function drawFreqDial(el,cv,cx,state,get,set,opts={}){
       } else if(y<TOP){                                        // клик по табло — выбрать разряд под стрелки
         const x=(ev.clientX-r.left)/r.width*W, cw=W/TUNER_DIGITS;
         state.sel=clamp(Math.floor(x/cw),0,TUNER_DIGITS-1);
-        if(ev.pointerType==='touch') numInput.focus(); else el.focus();
+        if(ev.pointerType==='touch') focusNum(); else el.focus({preventScroll:true});
       } else {                                          // клик по крутилке — начать вращение
         state.dragY0=ev.clientY; state.dragFreq0=get();   // запоминаем старт драга, а не только предыдущую точку
         state.dragLastY=ev.clientY; state.dragPtr=ev.pointerId; state.dragTouch=ev.pointerType==='touch';
@@ -4177,7 +4185,7 @@ function drawFreqDial(el,cv,cx,state,get,set,opts={}){
       set(clamp(state.dragFreq0+steps*stepHz(),0,maxV)); },{passive:false});
     const endDrag=ev=>{
       if(!dial && state.dragY0!=null && !state.moved && ev.type==='pointerup'){   // тап — ввод цифр с клавиатуры
-        if(state.dragTouch) numInput.focus(); else el.focus(); }
+        if(state.dragTouch) focusNum(); else el.focus({preventScroll:true}); }
       state.dragY0=null; state.dragPtr=null; };
     cv.addEventListener('pointerup',endDrag); cv.addEventListener('pointercancel',endDrag);
     cv.addEventListener('wheel',ev=>{ ev.preventDefault(); ev.stopPropagation();
