@@ -1173,38 +1173,69 @@ function saWfGlRender(glp,W,H,lo,hi,lin){
   return glp.canvas;
 }
 
-// Фосфорный спектр для 'sa': накопитель W×plotH, на каждый свежий кадр — затухание и +1 в
-// пикселях трассы (столбец закрашивается от y[x-1] до y[x], чтобы вертикальные фронты не рвались).
-// Нормировка на установившийся уровень 1/(1-decay): яркость = доля кадров, попавших в пиксель.
+// Фосфорный спектр для 'sa' (по мотивам gr-fosphor): на каждый столбец — гистограмма уровней
+// низкого разрешения с нарастанием/затуханием. Попадание размазывается по двум соседним
+// ячейкам (дробный уровень), столбец закрашивается от уровня соседа, чтобы фронты не рвались.
+// Под огибающей — заливка снизу. Маленькая картинка растягивается drawImage с билинейной
+// интерполяцией — плавно и дёшево; пересчёт только на свежий кадр, иначе рисуется кэш.
 // Смена оси/размера/шкалы — сброс, старые попадания уже не в тех координатах.
+const PH_RISE=.25;
 function saPhosphor(n,cx,W,H,ty,fresh,diff){
   const [lo,hi]=saBounds(n);
   const key=W+'|'+H+'|'+lo+'|'+hi+'|'+n.p.log+'|'+n.p.floor+'|'+n.p.top+'|'+diff;
+  const C=Math.max(2,Math.min(512,Math.ceil(W/2))), R=Math.max(8,Math.min(96,Math.round(H/3)));
   let ph=n.ph;
   if(!ph || ph.key!==key){
-    const off=document.createElement('canvas'); off.width=W; off.height=H;
-    ph=n.ph={key, acc:new Float32Array(W*H), off, ocx:off.getContext('2d'), img:new ImageData(W,H)};
+    const off=document.createElement('canvas'); off.width=C; off.height=R;
+    ph=n.ph={key, C, R, acc:new Float32Array(C*R), off, ocx:off.getContext('2d'), img:new ImageData(C,R),
+      live:Float32Array.from(ty), lv:new Float32Array(C), pal:null, dirty:true};
   }
-  const a=ph.acc, d=n.p.phDecay;
+  const a=ph.acc, live=ph.live, d=n.p.phDecay, sc=(H-2)/(R-1);
   if(fresh){
+    // живая трасса — сглаживание по времени, как live spectrum у fosphor
+    for(let x=0;x<W;x++){ const t=ty[x]; live[x]= t>=H ? t : live[x]>=H ? t : live[x]+(t-live[x])*.25; }
     for(let i=0;i<a.length;i++) a[i]*=d;
-    let py=-1;
-    for(let x=0;x<W;x++){
-      if(!n._inX[x]){ py=-1; continue; }
-      const y=clamp(Math.round(ty[x]),0,H-1);
-      let y0=y, y1=y;
-      if(py>=0){ if(py<y) y0=py+1; else if(py>y) y1=py-1; }
-      for(let yy=y0;yy<=y1;yy++) a[yy*W+x]+=1;
-      py=y; }
+    // уровень столбца — максимум по его пикселям, в долях ячейки снизу
+    const lv=ph.lv, kx=W/C;
+    for(let c=0;c<C;c++){
+      let y=H;
+      for(let x=(c*kx)|0, e=Math.min(W,((c+1)*kx)|0||1); x<e; x++) if(n._inX[x] && ty[x]<y) y=ty[x];
+      lv[c]= y>=H ? -1 : clamp((H-1-y)/sc,0,R-1); }
+    for(let c=0;c<C;c++){
+      const v=lv[c]; if(v<0) continue;
+      const b=v|0, f=v-b, i=(R-1-b)*C+c;
+      a[i]+=(1-a[i])*PH_RISE*(1-f);
+      if(f>0 && b+1<R) a[i-C]+=(1-a[i-C])*PH_RISE*f;
+      // вертикальный фронт до уровня соседа — слабее основного попадания
+      const p=c>0?lv[c-1]:-1;
+      if(p>=0 && Math.abs(p-v)>1)
+        for(let bb=Math.round(Math.min(p,v))+1, e=Math.round(Math.max(p,v))-1; bb<=e; bb++){
+          const j=(R-1-bb)*C+c; a[j]+=(1-a[j])*PH_RISE*.4; }
+    }
+    ph.dirty=true;
   }
-  const pal=paletteLut(n.p.palette), px=ph.img.data, k=(1-d)*n.p.phGain;
-  for(let i=0;i<a.length;i++){
-    const v=a[i]*k, j=i*4;
-    if(v<.002){ px[j+3]=0; continue; }
-    const c=heatIdx(v)*3;
-    px[j]=pal[c]; px[j+1]=pal[c+1]; px[j+2]=pal[c+2]; px[j+3]=Math.min(255,(v*4*255)|0); }
-  ph.ocx.putImageData(ph.img,0,0);
-  cx.drawImage(ph.off,0,0,W,H);
+  const pal=paletteLut(n.p.palette);
+  if(ph.dirty || ph.pal!==pal || ph.gain!==n.p.phGain){
+    ph.dirty=false; ph.pal=pal; ph.gain=n.p.phGain;
+    const px=ph.img.data, g=n.p.phGain*.5;
+    for(let c=0;c<C;c++){
+      // сверху вниз: после первой заметной ячейки (огибающая) — заливка до низа
+      let top=-1;
+      for(let r=0;r<R;r++){
+        const i=r*C+c, j=i*4;
+        if(top<0 && a[i]<1e-3){ px[j+3]=0; continue; }
+        let v=1-Math.exp(-a[i]*g);
+        if(top<0 && v>.04) top=r;
+        if(top>=0){ const fl=.22*(1-.6*(r-top)/(R-top)); if(v<fl) v=fl; }
+        if(v<.01){ px[j+3]=0; continue; }
+        const k=heatIdx(v)*3;
+        px[j]=pal[k]; px[j+1]=pal[k+1]; px[j+2]=pal[k+2]; px[j+3]=Math.min(255,(v*3*255)|0); }
+    }
+    ph.ocx.putImageData(ph.img,0,0);
+  }
+  cx.imageSmoothingEnabled=true; cx.imageSmoothingQuality='high';
+  cx.drawImage(ph.off,0,0,C,R,0,1,W,H-2);
+  return live;
 }
 
 // Окно просмотра внутри реально захваченной полосы — это просто прокрутка/зум вида, приёмник не
@@ -1930,7 +1961,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
                     : 20*Math.log10(mv+1e-12);
         const lo=diff? -40 : n.p.floor, hiv=diff? 40 : n.p.top;
         traceY[x]=n._inX[x] ? plotH-clamp((v-lo)/((hiv-lo)||1),0,1)*(plotH-2)-1 : plotH; }
-      if(n.p.phosphor) saPhosphor(n,cx,W,plotH,traceY,fresh,diff);
+      let lineY=traceY;
+      if(n.p.phosphor) lineY=saPhosphor(n,cx,W,plotH,traceY,fresh,diff);
       else {
         // заливка под трассой — чуть плотнее (темнее), чем у полос band plan/приёма (там alpha .14)
         cx.beginPath(); cx.moveTo(0,traceY[0]);
@@ -1938,9 +1970,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         cx.lineTo(W-1,plotH); cx.lineTo(0,plotH); cx.closePath();
         cx.fillStyle=n.colTS; cx.globalAlpha=.22; cx.fill(); cx.globalAlpha=1;
       }
-      if(n.p.phosphor) cx.globalAlpha=.5;             // трасса поверх тепловой карты — приглушённо
-      cx.beginPath(); cx.moveTo(0,traceY[0]);
-      for(let x=1;x<W;x++) cx.lineTo(x,traceY[x]);
+      if(n.p.phosphor) cx.globalAlpha=.7;             // сглаженная трасса поверх тепловой карты
+      cx.beginPath(); cx.moveTo(0,lineY[0]);
+      for(let x=1;x<W;x++) cx.lineTo(x,lineY[x]);
       cx.stroke(); cx.globalAlpha=1;
       if(diff){ cx.strokeStyle=themeColor('--scr-hi')+'22'; cx.beginPath();
         cx.moveTo(0,plotH/2); cx.lineTo(W,plotH/2); cx.stroke(); }
