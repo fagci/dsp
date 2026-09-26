@@ -609,22 +609,42 @@ function persGlRender(glp,W,H,acc,mx,gain){
   return glp.canvas;
 }
 
+// k-я порядковая статистика a[0..c-1] (частичная сортировка на месте, O(c))
+function cfarSelect(a,c,k){
+  let l=0, r=c-1;
+  while(l<r){
+    const x=a[(l+r)>>1]; let i=l, j=r;
+    while(i<=j){ while(a[i]<x) i++; while(a[j]>x) j--;
+      if(i<=j){ const t=a[i]; a[i]=a[j]; a[j]=t; i++; j--; } }
+    if(k<=j) r=j; else if(k>=i) l=i; else break;
+  }
+  return a[k];
+}
+function cfarPopcount(x){ let c=0; for(;x;x&=x-1) c++; return c; }
+// Шум — в линейной мощности (среднее в дБ занижало его на ~2.5 дБ на одиночном кадре):
+//   OS — 75-я перцентиль обучающих бинов (Rohling): сильный сосед, занимающий до четверти окна,
+//        оценку не поднимает; CA — среднее; SO — меньшее из средних слева и справа (сосед с одной стороны).
+// Цель подтверждается, если попала в M из последних N кадров спектра — одиночные выбросы шума отсеиваются.
 def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'guard',t:'num'},
        {n:'train',t:'num'},{n:'thr',t:'num'},{n:'minW',t:'num'},{n:'top',t:'num'},{n:'hold',t:'num'}],
   outs:[{n:'count',t:'num'},{n:'f1',t:'num'},{n:'l1',t:'num'},{n:'f2',t:'num'},{n:'l2',t:'num'},
-        {n:'f3',t:'num'},{n:'l3',t:'num'},{n:'f4',t:'num'},{n:'l4',t:'num'}],
+        {n:'f3',t:'num'},{n:'l3',t:'num'},{n:'f4',t:'num'},{n:'l4',t:'num'},
+        {n:'snr1',t:'num'},{n:'floor',t:'num'}],
   readout:true, tall:true,
   params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)',fn:n=>{ if(n.p.auto) n.zoom=null; }},
           {n:'fmin',t:'range',min:1,max:6e9,step:1,log:true,d:100},
           {n:'fmax',t:'range',min:1,max:6e9,step:1,log:true,d:6000},
+          {n:'method',t:'select',opts:['OS','SO','CA'],d:'OS',label:'noise estimate (OS robust, SO one-side neighbour, CA mean)'},
           {n:'guard',t:'range',min:1,max:32,step:1,d:4,label:'guard bins'},
           {n:'train',t:'range',min:4,max:128,step:1,d:32,label:'training bins'},
           {n:'thr',t:'range',min:1,max:30,step:.5,d:8,label:'threshold, dB'},
           {n:'minW',t:'range',min:1,max:64,step:1,d:2,label:'min width'},
+          {n:'confM',t:'range',min:1,max:8,step:1,d:2,label:'confirm: hits (M)'},
+          {n:'confN',t:'range',min:1,max:8,step:1,d:4,label:'confirm: of last frames (N)'},
           {n:'top',t:'range',min:1,max:30,step:1,d:10,label:'how many to show'},
           {n:'hold',t:'range',min:0,max:5000,step:50,d:500,label:'hold time, ms'}],
-  init:n=>{n.list=[];n.text='';n.tracks=[];},
+  init:n=>{n.list=[];n.text='';n.tracks=[];n.floorDb=null;},
   process(n,I){
     const s=I.spec;
     // тот же трюк, что у 'sa': ручной диапазон не пересекается с реальными данными источника
@@ -637,63 +657,100 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
     for(const k of ['fmin','fmax','guard','train','thr','minW','top','hold'])
       if(typeof I[k]==='number') setMod(n,k,I[k]);
     if(!s) return {count:0};
-    const N=s.mag.length, G=n.p.guard, T=n.p.train;
-    const [specLo,specHi]=n.p.auto? specSpan(s) : [n.p.fmin,n.p.fmax];
-    const lo=clamp(Math.floor(specBin(s,specLo)),1,N-2),
-          hi=clamp(Math.ceil (specBin(s,specHi)),1,N-2);
-    const db=n.dbBuf&&n.dbBuf.length===N? n.dbBuf : (n.dbBuf=new Float32Array(N));
-    for(let i=lo;i<=hi;i++) db[i]=20*Math.log10(s.mag[i]+1e-12);
-    // Префиксные суммы db[lo..hi] — сумма любого диапазона обучающих бинов тогда O(1) вместо
-    // O(train) пересчёта на каждый i (был O(N×train): при 64k FFT и train=128 — счётчик на
-    // 64k×128×2 сложений НА КАЖДЫЙ тик движка). prefix[j] = сумма db[lo..j-1].
-    const prefix=n.cfarPrefix&&n.cfarPrefix.length===N+1? n.cfarPrefix : (n.cfarPrefix=new Float32Array(N+1));
-    prefix[lo]=0;
-    for(let i=lo;i<=hi;i++) prefix[i+1]=prefix[i]+db[i];
-    const hits=[];
-    let run=null;
-    for(let i=lo;i<=hi;i++){
-      // среднее по «обучающим» бинам вокруг цели — левое окно [i-G-T,i-G-1], правое [i+G+1,i+G+T],
-      // обрезанные до [lo,hi] (та же логика, что раньше, просто суммой диапазона, а не циклом по k)
-      let sum=0,c=0;
-      const lb=i-G-1;
-      if(lb>=lo){ const la=Math.max(lo,i-G-T); sum+=prefix[lb+1]-prefix[la]; c+=lb-la+1; }
-      const ra=i+G+1;
-      if(ra<=hi){ const rb=Math.min(hi,i+G+T); sum+=prefix[rb+1]-prefix[ra]; c+=rb-ra+1; }
-      const noise=c? sum/c : -120;
-      if(db[i]-noise>=n.p.thr){
-        if(!run) run={a:i,b:i,peak:db[i],pi:i};
-        else { run.b=i; if(db[i]>run.peak){ run.peak=db[i]; run.pi=i; } }
-      } else if(run){
-        if(run.b-run.a+1>=n.p.minW) hits.push(run);
-        run=null; } }
-    if(run&&run.b-run.a+1>=n.p.minW) hits.push(run);
-    hits.sort((a,b)=>b.peak-a.peak);
-    const now=performance.now();
-    n.tracks=n.tracks||[];
-    for(const h of hits){
-      const f=specHz(s,h.pi), wid=Math.max(1,specHz(s,h.b)-specHz(s,h.a));
-      const tol=Math.max(15,wid);                    // цель та же, если рядом по частоте
-      let tr=n.tracks.find(t=>Math.abs(t.f-f)<=tol);
-      if(tr){ tr.f=tr.f*.7+f*.3; tr.w=Math.max(tr.w,wid); tr.db=h.peak; tr.t=now; }
-      else n.tracks.push({f,w:wid,db:h.peak,t0:now,t:now}); }
-    n.tracks=n.tracks.filter(t=>now-t.t<=n.p.hold);
-    // трек может физически не помещаться в текущую захваченную полосу — например, центр
-    // приёмника уже перестроили (тюнером/вручную), а этот пик остался от старого положения.
-    // Снимаем сразу, не дожидаясь hold — иначе он продолжит тянуть tuneFreq к старой частоте
-    // и "перетягивать" центр обратно при каждой попытке перестроиться (та же история, что
-    // была с маркерами 'sa').
-    const [specLo0,specHi0]=specSpan(s);
-    n.tracks=n.tracks.filter(t=>t.f>=specLo0 && t.f<=specHi0);
-    n.list=n.tracks.slice().sort((a,b)=>b.db-a.db).slice(0,n.p.top);
-    n.text='found '+n.list.length+'\n'+n.list.map(v=>
-      fmtHz(v.f).padStart(8)+'Hz  width '+fmtHz(v.w).padStart(4)+
-      'Hz  '+v.db.toFixed(0).padStart(4)+' dB  '+((now-v.t0)/1000).toFixed(1)+' s').join('\n');
+    // считаем только на новом кадре спектра: иначе один кадр засчитывался бы в M-из-N много раз
+    // (спектр rtlsdr обновляется раз в ~80мс, движок тикает чаще). У части узлов объект спектра
+    // мутируется на месте — сверяем rev, у кого его нет — ссылку.
+    const fresh = s.rev!=null ? s.rev!==n._lastRev : s!==n._lastSpecRef;
+    if(fresh){ n._lastRev=s.rev; n._lastSpecRef=s; cfarFrame(n,s); }
     const [a,b,c,d]=n.list;
     return {count:n.list.length,
       f1:a?a.f:null, l1:a?a.db:null, f2:b?b.f:null, l2:b?b.db:null,
-      f3:c?c.f:null, l3:c?c.db:null, f4:d?d.f:null, l4:d?d.db:null}; },
+      f3:c?c.f:null, l3:c?c.db:null, f4:d?d.f:null, l4:d?d.db:null,
+      snr1:a?a.snr:null, floor:n.floorDb}; },
   draw(n){ const r=n.el.querySelector('.readout');
     if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
+
+function cfarFrame(n,s){
+  const N=s.mag.length, G=n.p.guard, T=n.p.train, meth=n.p.method;
+  const [specLo,specHi]=n.p.auto? specSpan(s) : [n.p.fmin,n.p.fmax];
+  const lo=clamp(Math.floor(specBin(s,specLo)),1,N-2),
+        hi=clamp(Math.ceil (specBin(s,specHi)),1,N-2);
+  if(!n.pwBuf || n.pwBuf.length!==N){
+    n.pwBuf=new Float32Array(N); n.nzBuf=new Float32Array(N); n.cfarPrefix=new Float64Array(N+1); }
+  // всё в линейной мощности, log10 — только для пиков (на 64k бинах log10 на каждый бин — ~10 мс)
+  const pw=n.pwBuf, nz=n.nzBuf, prefix=n.cfarPrefix;
+  for(let i=lo;i<=hi;i++){ const m=s.mag[i]; pw[i]=m*m; }
+  if(meth==='OS'){
+    // порядковая статистика по сетке с шагом ~train/4 и линейная интерполяция между узлами:
+    // честная OS на каждом бине — O(N×train), при 64k БПФ слишком дорого на каждый кадр. Пол шума
+    // меняется плавно, а попавшая в окно узла цель (до четверти окна) 75-ю перцентиль не сдвигает
+    const st=Math.max(1,G,T>>2), scr=n.osScr&&n.osScr.length>=2*T? n.osScr : (n.osScr=new Float32Array(2*T));
+    let pj=-1, pv=0;
+    for(let j=lo;;j+=st){
+      if(j>hi) j=hi;
+      let c=0;
+      for(let k=Math.max(lo,j-G-T);k<=j-G-1;k++) scr[c++]=pw[k];
+      for(let k=j+G+1, e=Math.min(hi,j+G+T);k<=e;k++) scr[c++]=pw[k];
+      const v=c? cfarSelect(scr,c,Math.floor(.75*(c-1))) : 1e-12;
+      nz[j]=v;
+      if(pj>=0) for(let i=pj+1;i<j;i++) nz[i]=pv+(v-pv)*(i-pj)/(j-pj);
+      pj=j; pv=v;
+      if(j===hi) break;
+    }
+  } else {
+    // префиксные суммы мощности: сумма любого окна за O(1)
+    prefix[lo]=0;
+    for(let i=lo;i<=hi;i++) prefix[i+1]=prefix[i]+pw[i];
+    for(let i=lo;i<=hi;i++){
+      let sL=0,cL=0,sR=0,cR=0;
+      const lb=i-G-1;
+      if(lb>=lo){ const la=Math.max(lo,i-G-T); sL=prefix[lb+1]-prefix[la]; cL=lb-la+1; }
+      const ra=i+G+1;
+      if(ra<=hi){ const rb=Math.min(hi,i+G+T); sR=prefix[rb+1]-prefix[ra]; cR=rb-ra+1; }
+      nz[i]= meth==='SO' && cL && cR ? Math.min(sL/cL, sR/cR)
+           : cL+cR ? (sL+sR)/(cL+cR) : 1e-12;
+    }
+  }
+  const hits=[], thr=Math.pow(10,n.p.thr/10);
+  let run=null;
+  const close=()=>{ if(run.b-run.a+1>=n.p.minW){
+    const p=pw[run.pi]; run.peak=10*Math.log10(p+1e-24); run.snr=10*Math.log10((p+1e-24)/(nz[run.pi]+1e-24)); hits.push(run); }
+    run=null; };
+  for(let i=lo;i<=hi;i++){
+    if(pw[i]>=nz[i]*thr){
+      if(!run) run={a:i,b:i,pi:i};
+      else { run.b=i; if(pw[i]>pw[run.pi]) run.pi=i; }
+    } else if(run) close(); }
+  if(run) close();
+  // пол шума диапазона — медиана оценки шума: среднее тянут вверх сильные сигналы
+  const cnt=hi-lo+1, fs=n.floorScr&&n.floorScr.length>=cnt? n.floorScr : (n.floorScr=new Float32Array(cnt));
+  fs.set(nz.subarray(lo,hi+1));
+  n.floorDb=10*Math.log10(cfarSelect(fs,cnt,cnt>>1)+1e-24);
+  hits.sort((a,b)=>b.peak-a.peak);
+  const now=performance.now(), binHz=Math.abs(specHz(s,1)-specHz(s,0));
+  const mask=(1<<n.p.confN)-1, M=Math.min(n.p.confM,n.p.confN);
+  n.tracks=n.tracks||[];
+  for(const t of n.tracks){ t.hist=(t.hist<<1)&mask; t.hit=false; }
+  for(const h of hits){
+    const f=specHz(s,h.pi), wid=Math.max(1,specHz(s,h.b)-specHz(s,h.a));
+    const tol=Math.max(15,wid,2*binHz);              // цель та же, если рядом по частоте
+    let tr=n.tracks.find(t=>Math.abs(t.f-f)<=tol);
+    if(tr){ tr.f=tr.f*.7+f*.3; tr.w=Math.max(tr.w,wid); tr.db=h.peak; tr.snr=h.snr; tr.t=now; }
+    else n.tracks.push(tr={f,w:wid,db:h.peak,snr:h.snr,t0:now,t:now,hist:0,ok:false});
+    tr.hist|=1; tr.hit=true;
+    if(!tr.ok && cfarPopcount(tr.hist)>=M) tr.ok=true; }
+  // неподтверждённые живут только пока есть попадания в окне N, подтверждённые — hold после последнего
+  n.tracks=n.tracks.filter(t=>t.hit || (t.ok? now-t.t<=n.p.hold : t.hist!==0));
+  // трек может физически не помещаться в текущую захваченную полосу — например, центр
+  // приёмника уже перестроили, а этот пик остался от старого положения. Снимаем сразу,
+  // не дожидаясь hold — иначе он продолжит тянуть tuneFreq к старой частоте.
+  const [specLo0,specHi0]=specSpan(s);
+  n.tracks=n.tracks.filter(t=>t.f>=specLo0 && t.f<=specHi0);
+  n.list=n.tracks.filter(t=>t.ok).sort((a,b)=>b.db-a.db).slice(0,n.p.top);
+  n.text='found '+n.list.length+' · floor '+n.floorDb.toFixed(1)+' dB\n'+n.list.map(v=>
+    fmtHz(v.f).padStart(8)+'Hz  width '+fmtHz(v.w).padStart(4)+
+    'Hz  '+v.db.toFixed(0).padStart(4)+' dB  SNR '+v.snr.toFixed(0).padStart(3)+'  '+((now-v.t0)/1000).toFixed(1)+' s').join('\n');
+}
 
 
 const NO_SIGNAL_DB=-140;                              // 'chandet': уровень пустого слота (сигнала нет) — заведомо ниже пола шума RTL-SDR
