@@ -4132,6 +4132,7 @@ function drawFreqDial(el,cv,cx,state,get,set,opts={}){
       set(clamp(+digits.join(''),0,maxV));
       state.sel=clamp(state.sel+1,0,TUNER_DIGITS-1); });
     el.addEventListener('keydown',ev=>{
+      if(ev.target!==el) return;                        // клавиши из полей внутри узла — не табло
       if(/^[0-9]$/.test(ev.key)){                        // ввод цифры прямо в выбранный разряд
         ev.preventDefault(); ev.stopPropagation();
         const digits=String(Math.round(get())).padStart(TUNER_DIGITS,'0').split('');
