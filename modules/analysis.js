@@ -2030,6 +2030,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     saDbLabels(n,cx);                                 // подписи уровня — поверх трассы
     saChannels(n,cx,W,hs,plotH);                      // полосы ПЧ каналов rtlsdr и порог шумоподавителя
     saBandPlan(n,cx,W,hs,plotH);                      // полосы/закладки — зона спектра, водопад не трогаем
+    saSigTags(n,cx,W,plotH);                          // метки сигналов с 'sigid'
     saMarkers(n,cx,W,hs);
     saBandPlanLabels(n,cx);                           // подписи — поверх маркеров
     saChannelLabels(n,cx,W);
@@ -2375,6 +2376,8 @@ def({ id:'bandplan', title:'Band Plan (Presets/Editable)', cat:'Analysis',
   // 'bookmarks'): инлайн добавление/правка/удаление строк, импорт/экспорт CSV (см. bp* выше).
   // Список виден всегда; клик по строке выбирает полосу — её границы, середина, ширина и шаг
   // уходят на выходы (mid -> частота rtlsdr, lo/hi -> fmin/fmax у 'sa' для зума на полосу).
+  // sigs — метки сигналов с 'sigid': идут на выход bands вместе с полосами, 'sa' рисует их над сигналами.
+  ins:[{n:'sigs',t:'bands'}],
   outs:[{n:'bands',t:'bands'},{n:'lo',t:'num'},{n:'mid',t:'num'},{n:'hi',t:'num'},
         {n:'span',t:'num'},{n:'step',t:'num'}],
   readout:true, w:320, h:200, resize:true,
@@ -2390,10 +2393,13 @@ def({ id:'bandplan', title:'Band Plan (Presets/Editable)', cat:'Analysis',
   process(n,I){
     bpApplyPreset(n);
     if(!n._sel && n.p.selKey) n._sel=n.items.find(it=>bpKey(it)===n.p.selKey)||null;
-    const b=n._sel;
-    if(!b || n._gap){ n._gap=false; return {bands:n.items}; }
+    // склейка пересчитывается только при смене списка полос или меток
+    const sigs=Array.isArray(I.sigs) && I.sigs.length ? I.sigs : null;
+    if(n._mI!==n.items || n._mS!==sigs){ n._mI=n.items; n._mS=sigs; n._merged=sigs? n.items.concat(sigs) : n.items; }
+    const bands=n._merged, b=n._sel;
+    if(!b || n._gap){ n._gap=false; return {bands}; }
     const hi=Math.max(b.lo,b.hi);
-    return {bands:n.items, lo:b.lo, mid:(b.lo+hi)/2, hi, span:hi-b.lo, step:b.step||0};
+    return {bands, lo:b.lo, mid:(b.lo+hi)/2, hi, span:hi-b.lo, step:b.step||0};
   },
   draw(n){
     bpApplyPreset(n);
@@ -2726,7 +2732,7 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Analysis',
   init:n=>{ n.state='seek'; n.idx=0; n.curFreq=null; n.text=''; },
   process(n,I){
     for(const k of ['overlap','timeout','settle']) if(typeof I[k]==='number') setMod(n,k,I[k]);
-    const bands=(Array.isArray(I.bands)?I.bands:[]).filter(b=>b && b.hi>b.lo).slice().sort((a,b)=>a.lo-b.lo);
+    const bands=(Array.isArray(I.bands)?I.bands:[]).filter(b=>b && !b.sig && b.hi>b.lo).slice().sort((a,b)=>a.lo-b.lo);
     if(!bands.length){ n.state='idle'; n.curFreq=null; n.text='no bands'; return {freq:0,listening:0,idx:-1,bandLo:0,step:0}; }
     // список диапазонов сменился целиком (другой пресет/правка) — сканируем заново с первого
     if(bands.length!==n._bandsLen || bands[0].lo!==n._firstLo || bands[0].hi!==n._firstHi){

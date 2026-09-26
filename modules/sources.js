@@ -2892,8 +2892,9 @@ function rtlUpdateSpec(n){
       for(let i=0;i<N;i++) fr[i]=centerFreq+(i-half)*binHz;
       n.specFreqs=fr; n.specFreqsCenter=centerFreq; n.specFreqsSr=n.sourceRate;
     }
+    // iq — сырой поток на родной частоте для анализаторов ('sigid'): 0 Гц IQ = centerFreq
     n.spec={mag, sr:n.sourceRate, size:N, freqs:n.specFreqs,
-            rev:(n.specRev=(n.specRev|0)+1)};
+            rev:(n.specRev=(n.specRev|0)+1), iq:{ring:n.specRing, sr:n.sourceRate, fc:centerFreq}};
     n.lastSpec=performance.now();
   }).catch(()=>{ n.specBusy=false; });
 }

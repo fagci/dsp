@@ -1445,7 +1445,7 @@ function saBandPlan(n,cx,W,H,plotH){
   const ranges=[], points=[];
   const labels=n._bpLabels=(n._bpLabels||[]); labels.length=0;   // подписи полос — рисует saBandPlanLabels поверх маркеров
   for(const b of list){
-    if(!b || typeof b.lo!=='number' || isNaN(b.lo)) continue;
+    if(!b || b.sig || typeof b.lo!=='number' || isNaN(b.lo)) continue;
     const hi=(typeof b.hi==='number' && !isNaN(b.hi)) ? b.hi : b.lo;
     if(hi===b.lo){
       if(b.lo<lo0-1 || b.lo>hi0+1) continue;            // точка вне окна — не рисуем вовсе
@@ -1527,6 +1527,43 @@ function saBandPlan(n,cx,W,H,plotH){
     }
     cx.setLineDash([]);
   } else if(n._bmBoxes) n._bmBoxes.length=0;
+}
+// Метки сигналов с 'sigid' (записи sig:true в bands): скобка над сигналом на уровне его пика,
+// подпись типа над ней. Подписи, налезающие на уже поставленные, поднимаются выше.
+function saSigTags(n,cx,W,plotH){
+  const list=n.bandsData; if(!list||!list.length) return;
+  const tags=[], span=(n.p.top-n.p.floor)||1;
+  for(const b of list){
+    if(!b || !b.sig || typeof b.lo!=='number') continue;
+    const x1=Math.round(saPos(n,b.lo)*W), x2=Math.round(saPos(n,b.hi)*W);
+    if(x2<0 || x1>W) continue;
+    const y=plotH-clamp(((b.db??n.p.top)-n.p.floor)/span,0,1)*(plotH-2)-1;
+    tags.push({b,x1,x2:Math.max(x2,x1+3),y});
+  }
+  if(!tags.length) return;
+  tags.sort((a,b)=>a.y-b.y);                          // сильные — первыми, им место у пика
+  cx.font=BP_FONT;
+  const placed=[], TH=14, TOP=18;                     // потолок — подписи закладок (см. saBandPlan)
+  for(const t of tags){
+    const col=t.b.color||'#b0bec5', txt=t.b.label||'?', tw=Math.ceil(cx.measureText(txt).width)+6;
+    const by=Math.max(TOP+TH+4,Math.round(t.y)-5);
+    cx.strokeStyle=col; cx.lineWidth=1.5; cx.globalAlpha=.9;
+    cx.beginPath(); cx.moveTo(t.x1+.5,by+5); cx.lineTo(t.x1+.5,by+.5); cx.lineTo(t.x2-.5,by+.5); cx.lineTo(t.x2-.5,by+5); cx.stroke();
+    const mx=Math.round((t.x1+t.x2)/2), lx=clamp(mx-(tw>>1),2,W-tw-2);
+    let ly=by-TH-2;
+    for(let k=0;k<8;k++){
+      const hit=placed.find(p=>lx<p.x+p.w && lx+tw>p.x && ly<p.y+p.h && ly+TH>p.y);
+      if(!hit) break;
+      ly=hit.y-TH-2;
+    }
+    if(ly<TOP) ly=TOP;
+    if(ly<by-TH-2){ cx.lineWidth=1; cx.beginPath(); cx.moveTo(mx+.5,ly+TH); cx.lineTo(mx+.5,by); cx.stroke(); }
+    cx.globalAlpha=.6+.4*clamp(t.b.conf??1,0,1);      // уверенность — плотностью подложки
+    cx.fillStyle=col; cx.fillRect(lx,ly,tw,TH);
+    cx.globalAlpha=1; cx.fillStyle=contrastText(col); cx.fillText(txt,lx+3,ly+11);
+    placed.push({x:lx,y:ly,w:tw,h:TH});
+  }
+  cx.globalAlpha=1; cx.lineWidth=1;
 }
 // snap клика к сетке каналов полосы из bandplan (n.bandsData) — НЕ к пикселям, а к шагу канала в
 // Гц (поле 'step' у полосы: например, LPD433 — 25кГц, HF Broadcast — 5кГц; см. BANDPLAN_PRESETS в

@@ -27,7 +27,8 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 ### Analysis
 - Spectrum analyzer / waterfall (optional phosphor view; the waterfall keeps its history at full resolution, so zoom, dB range and palette changes redraw it without losing detail), persistence spectrum, oscilloscope, constellation, eye diagram
 - CFAR signal detector (noise estimate in linear power: OS — 75th percentile, robust to strong neighbours; SO — smallest of the two sides; CA — mean; a target is shown after M hits in the last N spectrum frames, so single noise spikes are dropped; outputs SNR of the strongest target and the noise floor), channel SNR, channel grid, band scanner, auto frequency scanner
-- Band plans, bookmarks, signal recognition and signal type identifier
+- Band plans, bookmarks, signal recognition
+- **Signal type identifier**: finds every signal in a spectrum from any source and names its modulation — on an SDR from the raw IQ (see [Signal type identifier](#signal-type-identifier))
 - Goertzel, autocorrelation, cross-correlation, frequency response / coherence
 - Harmonics & THD, third-octaves, LUFS-like loudness, level statistics, spectral descriptors
 - Impulse response & RT60, bird song analyzer, frequency meter, trend charts
@@ -123,6 +124,21 @@ The **tinySA** node talks to a tinySA or tinySA Ultra over its USB serial consol
 - **Screenshot** reads the device screen (`capture`) to the node and the `img` output, **Save PNG** downloads it
 - **gen** (signal generator mode) — `mode low|high output`, frequency, level and **RF on**; `genFreq` (Hz) and `genLevel` (dBm) inputs let the graph drive it (e.g. a stepped frequency sweep)
 - ready-made patch: **tinySA: Spectrum**
+
+## Signal type identifier
+
+The **Signal Type Identifier** (`sigid`) node labels every signal it finds and suggests a decoder for it. It doesn't care where the signal comes from:
+
+- `spec`: a spectrum from any node (USB SDR, FFT, tinySA…). The node finds the signals and classifies them by shape: bandwidth (99% power), flat top, carrier over the sidebands, which sideband holds the energy, and on/off keying over time
+- USB SDR: the node also reads the **raw IQ at the native sample rate** that comes with the spectrum. It takes one signal at a time, shifts it to zero, decimates it and measures the envelope, the instantaneous frequency, the lines in z, z² and z⁴, and the keying rate. The heavy part runs in a Web Worker
+- `in`: audio (microphone, KiwiSDR, a receiver's output). Without `spec` the node computes its own spectrum, and it analyses the audio samples the same way
+- `plan`: a band plan for context. Its label is shown next to each signal, and a matching mode adds some confidence
+
+What it recognises: carrier, CW (with WPM), OOK, AM, USB/LSB, NFM (with CTCSS tone), WFM (with the stereo pilot), 2-FSK / 4-FSK with shift and baud (RTTY, AFSK 1200 / APRS, POCSAG, DMR/P25-like 4800 Bd), MFSK (FT8-like, Olivia/Contestia-like), BPSK / QPSK with symbol rate (PSK31…), OFDM, DTMF keys. Each result says whether it came from the spectrum or from the samples. It is a heuristic, not a decoder.
+
+The `bands` output carries the labels. Wire it into a Spectrum Analyzer's `bands`, or into a **Band Plan**'s `sigs` so the labels show together with the bands: each signal gets a bracket at its peak level with its type above it.
+
+Ready-made patches: **USB SDR: Signal Identifier**, **HF: Quick-Decode All Protocols**.
 
 ## Themes
 
