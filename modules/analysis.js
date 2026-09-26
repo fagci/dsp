@@ -510,7 +510,11 @@ def({ id:'persist', title:'Persistence Spectrum', cat:'Analysis',
     return {fsel:n.fsel||null}; },
   draw(n,cv,cx){
     const W=cv.pxW||cv.width, H=cv.pxH||cv.height;   // пишем ImageData в физический размер буфера — резче картинка
-    if(n.aw!==W||n.ah!==H){ n.aw=W; n.ah=H; n.acc=new Float32Array(W*H); n.id2=null; n.glp=null; n.glTried=false; }
+    // потерянный контекст (фон, нехватка GPU-памяти) — пересоздать, иначе канва пустая навсегда
+    if(n.glp && n.glp.gl.isContextLost()){ n.glp=null; n.glTried=false; }
+    if(n.aw!==W||n.ah!==H){ n.aw=W; n.ah=H; n.acc=new Float32Array(W*H); n.id2=null;
+      n.glp?.gl.getExtension('WEBGL_lose_context')?.loseContext();   // не копить контексты: при лимите браузер гасит самые старые
+      n.glp=null; n.glTried=false; }
     const a=n.acc, g=n.p.gain;
     let mx=1e-6; for(let i=0;i<a.length;i++) if(a[i]>mx) mx=a[i];
     if(!n.glTried){ n.glTried=true;
@@ -1537,7 +1541,33 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         }
         return null;
       };
+      // Мобилка: без touch-action:none браузер забирает жест под скролл панели дашборда
+      // (ближайший скролл-контейнер) и шлёт pointercancel — драг обрывается на полпути.
+      cv.style.touchAction='none';
+      cv.classList.add('ownpinch');                  // двухпальцевый жест не отдавать зуму холста графа
+      // Pinch двумя пальцами — зум окна просмотра, как колесо: частота под центром пальцев
+      // остаётся на месте, приёмник не перестраивается. Пока пальцы на экране — без драга и тапов.
+      const touches=new Map();
+      let pinch=null, gesture=false;
+      const pinchState=()=>{
+        const [a,b]=[...touches.values()], rc=cv.getBoundingClientRect();
+        return {mx:((a.x+b.x)/2-rc.left)/Math.max(1,rc.width), d:Math.max(20,Math.abs(a.x-b.x))};
+      };
       cv.addEventListener('pointerdown', ev=>{
+        if(ev.pointerType==='touch'){
+          touches.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
+          if(touches.size>=2){
+            if(drag && cv.hasPointerCapture(drag.pid)) cv.releasePointerCapture(drag.pid);
+            drag=null; n._dragActive=false; gesture=true; n.pickT=null;
+            if(touches.size===2 && n.s){
+              const {mx,d}=pinchState();
+              pinch={d0:d, f0:saFreq(n,mx), r0:saFreq(n,1)-saFreq(n,0)};
+            }
+            cv.setPointerCapture(ev.pointerId);
+            return;
+          }
+        }
+        if(gesture) return;
         const rc=cv.getBoundingClientRect();
         const y=(ev.clientY-rc.top)/rc.height*cv.height;
         const edge=chanEdgeAt(ev);
@@ -1550,6 +1580,20 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         cv.setPointerCapture(ev.pointerId);
       });
       cv.addEventListener('pointermove', ev=>{
+        if(touches.has(ev.pointerId)) touches.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
+        if(pinch && touches.size===2 && touches.has(ev.pointerId)){
+          ev.preventDefault();
+          if(!n.s) return;
+          const [fullLo,fullHi]=specSpan(n.s);
+          const {mx,d}=pinchState();
+          const newRange=clamp(pinch.r0*pinch.d0/d, 10, fullHi-fullLo);
+          let newLo=pinch.f0-mx*newRange, newHi=newLo+newRange;
+          if(newLo<fullLo){ newLo=fullLo; newHi=newLo+newRange; }
+          if(newHi>fullHi){ newHi=fullHi; newLo=newHi-newRange; }
+          if(Math.abs(newLo-fullLo)<1 && Math.abs(newHi-fullHi)<1){ n.zoom=null; if(!n.p.auto) n.set.auto?.(true); }
+          else n.zoom=[newLo,newHi];
+          return;
+        }
         if(!drag || ev.pointerId!==drag.pid) return;
         if(drag.edge){                               // ширина полосы ПЧ — от частоты канала до курсора
           ev.preventDefault();
@@ -1583,6 +1627,16 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         saSteerIfOutside(n);                         // приёмник — только если окно вышло за захваченную полосу
       }, {passive:false});
       const endDrag=ev=>{
+        if(touches.delete(ev.pointerId)){
+          if(touches.size<2) pinch=null;
+          if(gesture){
+            n.pickT=null;                            // отпускание пальца после pinch — не тап
+            if(ev.type==='pointerup') n._noTap=true;
+            if(cv.hasPointerCapture(ev.pointerId)) cv.releasePointerCapture(ev.pointerId);
+            if(!touches.size) gesture=false;
+            return;
+          }
+        }
         if(drag && ev.pointerId===drag.pid && cv.hasPointerCapture(ev.pointerId)) cv.releasePointerCapture(ev.pointerId);
         if(drag && drag.edge){ n.pickT=null; n._noTap=true; }   // core-graph уже поставил бы маркер на место отпускания
         drag=null; n._dragActive=false;
@@ -1657,6 +1711,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     }
     if(n.s){
       const dpr=(cv.pxW&&cv.width)?cv.pxW/cv.width:1, Wp=cv.pxW||W, hwP=Math.max(1,Math.round(hw*dpr));
+      // контекст потерян — пересоздать и заново залить из истории
+      if(n.wfGl && n.wfGl.gl.isContextLost()){ n.wfGl=null; n.wfW=0; n._histKey=null; }
       if(!n.wfW||n.wfW!==Wp||n.wfH!==hwP){
         // история водопада: при смене размера буфера (ресайз, зум холста) переносим старую картинку
         let prev=null;

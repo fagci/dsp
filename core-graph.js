@@ -149,6 +149,7 @@ n.el.style.transform=`translate3d(${n.x}px,${n.y}px,0)`;   // так двига�
 // Настоящий размер буфера (нужен для putImageData/getImageData — водопады sa/persist)
 // доступен через cv.pxW/cv.pxH.
 const HiDPICanvases=new Map();                      // канва -> restretch
+const HiDPI_CAP=matchMedia('(pointer:coarse)').matches?2.5e6:8e6;   // пикселей буфера на канву
 function hiDPICanvas(cv,cx,n){
 const nativeW=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'width');
 const nativeH=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'height');
@@ -158,13 +159,17 @@ let logW=cv.width, logH=cv.height;
 const restretch=force=>{ const dpr=window.devicePixelRatio||1;
 const rw=cv.isConnected?cv.getBoundingClientRect().width:0;
 let s=Math.max(.5, dpr*(rw>0&&logW>0 ? rw/logW : 1));
-if(logW*logH*s*s>8e6) s=Math.sqrt(8e6/(logW*logH));
+// на мобилках общий лимит памяти канв мал (iOS молча очищает канвы сверх него) — потолок ниже
+const cap=HiDPI_CAP;
+if(logW*logH*s*s>cap) s=Math.sqrt(cap/(logW*logH));
 const pw=Math.max(1,Math.round(logW*s)), ph=Math.max(1,Math.round(logH*s));
 if(!force && pw===cv.pxW && ph===cv.pxH) return;     // смена размера буфера стирает канву — только по делу
 nativeW.set.call(cv, cv.pxW=pw);
 nativeH.set.call(cv, cv.pxH=ph);
 cx.setTransform(pw/logW,0,0,ph/logH,0,0); };
 HiDPICanvases.set(cv,restretch);
+// Chrome на Android сбрасывает 2D-контекст в фоне; после восстановления матрица сброшена
+cv.addEventListener('contextrestored',()=>restretch(true));
 Object.defineProperty(cv,'width',{configurable:true, get:()=>logW,
 set:v=>{ logW=v; restretch(true); }});
 Object.defineProperty(cv,'height',{configurable:true, get:()=>logH,
@@ -811,6 +816,8 @@ function relPt(e){ const r=cv.getBoundingClientRect(); return {x:e.clientX-r.lef
 function midDist(pts){ const [a,b]=pts; return {mx:(a.x+b.x)/2,my:(a.y+b.y)/2,d:Math.hypot(a.x-b.x,a.y-b.y)}; }
 cv.addEventListener('pointerdown',e=>{
 if(e.pointerType!=='touch') return;
+// в дашборде холст скрыт; .ownpinch — канва со своим pinch (спектр sa)
+if(cv.classList.contains('dashboard') || e.target.closest?.('.ownpinch')) return;
 touches.set(e.pointerId,relPt(e));
 if(touches.size===2){
 stopAllDrags();
