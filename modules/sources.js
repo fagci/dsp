@@ -1851,13 +1851,16 @@ function iqConvert(raw, dtype, fmt){
 // ar (аудио-FIR, прореживание d2). Общий для воркера и главного потока (вставляется в
 // RTL_WORKER_SRC через toString) — главный поток по нему сайзит кольцо и считает темп чтения.
 // bw — ширина полосы канала (ПЧ), как единственный "bandwidth" в SDR++: звуковая полоса выводится
-// из неё (WFM — 15 кГц моно, NFM — половина полуполосы, AM — полуполоса, SSB — сама полоса).
+// из неё (WFM — 15 кГц моно, NFM — половина полуполосы, AM/SAM — полуполоса, SSB — сама полоса).
+// AM/SAM: decA только прореживает, соседей режет крутой канальный FIR на ir (cStop — его полоса
+// задержания); stop у decA выбран так, чтобы алиасы ложились не ближе cStop.
 function rtlPlan(mode, sr, bw){
-  const w = bw>0 ? bw : ({WFM:190000,NFM:16000,AM:10000}[mode]||2800);
+  const w = bw>0 ? bw : ({WFM:190000,NFM:16000,AM:10000,SAM:10000}[mode]||2800);
+  const isAm = mode==='AM' || mode==='SAM';
   let ir, pass;
   if(mode==='WFM'){ pass=w/2; ir=Math.max(240000, 2.5*pass); }
   else if(mode==='NFM'){ pass=w/2; ir=Math.max(48000, 2.5*pass); }
-  else if(mode==='AM'){ pass=w/2; ir=Math.max(24000, 2.5*pass); }
+  else if(isAm){ pass=w/2; ir=Math.max(24000, 2.5*pass); }
   else { pass=w; ir=Math.max(24000, 3*w); }          // USB/LSB: канал покрывает обе боковые, выбор — на ir
   const d1=Math.max(1, Math.floor(sr/ir)), irReal=sr/d1;
   const d2=mode==='WFM' ? Math.max(1, Math.floor(irReal/64000)) : 1;
@@ -1865,14 +1868,18 @@ function rtlPlan(mode, sr, bw){
   let aPass, aStop;
   if(mode==='WFM'){ aPass=Math.min(15000, pass*0.6); aStop=Math.min(19000, aPass+4000); }   // стоп до пилота 19 кГц
   else if(mode==='NFM'){ aPass=Math.min(Math.max(2500, pass*0.5), 0.4*ar); aStop=Math.min(ar/2, aPass*1.25+500); }
-  else if(mode==='AM'){ aPass=Math.min(pass, 0.4*ar); aStop=Math.min(ar/2, aPass+1000); }
+  else if(isAm){ aPass=Math.min(pass, 0.4*ar); aStop=Math.min(ar/2, aPass+1000); }
   else { aPass=Math.min(pass, 0.4*ar); aStop=Math.min(ar/2, aPass+Math.max(500, aPass*0.25)); }
-  return {d1, d2, decim:d1*d2, ir:irReal, ar, pass, stop:irReal-pass, aPass, aStop};
+  const cStop = isAm ? pass+1000 : pass;
+  return {d1, d2, decim:d1*d2, ir:irReal, ar, pass, cStop, stop:irReal-cStop, aPass, aStop};
 }
 function rtlDecimFor(mode, sr, bw){ return rtlPlan(mode, sr, bw).decim; }
 // пределы ширины канала и значения по умолчанию для каждого режима
-const RTL_BW_LIMITS={WFM:[50000,300000], NFM:[3000,40000], AM:[2000,20000], USB:[500,16000], LSB:[500,16000]};
-const RTL_BW_DEF={WFM:190000, NFM:16000, AM:10000, USB:2800, LSB:2800};
+const RTL_BW_LIMITS={WFM:[50000,300000], NFM:[3000,40000], AM:[2000,20000], SAM:[2000,20000], USB:[500,16000], LSB:[500,16000]};
+const RTL_BW_DEF={WFM:190000, NFM:16000, AM:10000, SAM:10000, USB:2800, LSB:2800};
+// конфиг демод-воркера канала
+const rtlWorkerCfg=n=>({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false,
+  stereo:n.p.stereo!==false, samSb:n.p.samSb});
 // Полоса пропускания канального фильтра (ПЧ) каждого активного канала, в абсолютных частотах:
 // WFM/NFM/AM — симметрично ±pass, USB/LSB — одна боковая шириной bw. Для IQ каналов нет.
 function rtlChanBands(n, cf, half){
@@ -1948,7 +1955,7 @@ function mkDec(h, D, cplx){
 }
 
 let plan=null, mode='WFM', sr=1024000, bw=15000, deemph='50', agcOn=true, stereoOn=true, isWFM=false;
-let decA=null, decB=null, decS=null, decR=null, ssbHr=null, ssbHi=null, ssbN=0;
+let decA=null, decB=null, decC=null, decS=null, decR=null, ssbHr=null, ssbHi=null, ssbN=0;
 // WFM-стерео и RDS считаются на ir по MPX (выход дискриминатора). Пилот 19 кГц ловит ФАПЧ на
 // фазоре p=e^{jφ} (без sin/cos на отсчёт): поднесущая L-R — sin 2φ, RDS 57 кГц — 3φ.
 let pbB0=0,pbA1=0,pbA2=0, pbX1=0,pbX2=0,pbY1=0,pbY2=0;           // полосовой биквад на 19 кГц
@@ -1961,6 +1968,9 @@ let rdsCII=0, rdsCQQ=0, rdsCIQ=0, rdsPrevBit=0, rdsReg=0, rdsSync=false, rdsLast
 let rdsExp=0, rdsBlk=[0,0,0,0], rdsOk=[false,false,false,false], rdsErr=[], rdsPI=-1, rdsPTY=0, rdsTP=0;
 let rdsPS=new Array(8).fill(' '), rdsRT=new Array(64).fill(' '), rdsAB=-1, rdsDirty=false, rdsPostT=0;
 const RDS_OFF=[0x0FC,0x198,0x168,0x1B4], RDS_OFFC2=0x350;           // A B C D, C'
+// SAM: ФАПЧ на несущую, когерентный детектор; samSb 0 — обе боковые, ±1 — верхняя/нижняя
+let isSAM=false, samSb=0, samPh=0, samW=0, samWmax=0, samLock=0, samLockA=0, samKpN=0, samKiN=0, samKpW=0, samKiW=0, samWide=true;
+let samCar=0.01, samCarA=0, samPostT=0, samFi=0, samFq=0, samFA=0;
 let isAM=false, isSSB=false, isFM=false, discScale=1, deA=null, deA1=0, hpA=0, hpA1=0, rawA=0, rawA1=0;
 let rawI0=0, rawQ0=0, prevI=0, prevQ=0, ampDc=0, audDc=0, de=0;
 // АРУ для SSB: мгновенная атака по пику, удержание, затем спад; предел усиления — чтобы шум не раздувать бесконечно
@@ -2046,9 +2056,10 @@ function rdsSample(ri,rq){
 function applyConfig(msg){
   mode=msg.mode; sr=msg.sr; bw=msg.bw; deemph=msg.deemph; agcOn=msg.agc!==false; stereoOn=msg.stereo!==false;
   plan=rtlPlan(mode, sr, bw);
-  isAM=mode==='AM'; isSSB=(mode==='USB'||mode==='LSB'); isFM=!isAM&&!isSSB;
+  isAM=mode==='AM'; isSAM=mode==='SAM'; isSSB=(mode==='USB'||mode==='LSB'); isFM=!isAM&&!isSAM&&!isSSB;
   decA=mkDec(makeLP(sr, plan.pass, plan.stop, 2047), plan.d1, true);
-  decB=isSSB ? null : mkDec(makeLP(plan.ir, plan.aPass, plan.aStop, 1023), plan.d2, false);
+  decB=isSSB||isSAM ? null : mkDec(makeLP(plan.ir, plan.aPass, plan.aStop, 1023), plan.d2, false);
+  decC=isAM||isSAM ? mkDec(makeLP(plan.ir, plan.pass, plan.cStop, 1023), 1, true) : null;
   isWFM=mode==='WFM';
   if(isWFM){
     decS=mkDec(decB.h, plan.d2, false);                            // L-R — тот же аудиофильтр, что у L+R: задержки совпадают
@@ -2063,15 +2074,18 @@ function applyConfig(msg){
     rdsFs=ir/rD; rdsTb=rdsFs/1187.5; rdsH=Math.max(2,Math.round(rdsFs/2375));
     rdsY=new Float32Array(2*rdsH); rdsM=new Float32Array(3); rdsReset();
   } else { decS=null; decR=null; }
-  if(isSSB){
-    // комплексный полосовой: ФНЧ bw/2 (переход 300 Гц у нуля), сдвинутый на ±bw/2 → одна боковая
-    const lp=makeLP(plan.ir, bw/2-150, bw/2+150, 1023), N=lp.length, M=(N-1)/2;
-    const f0=(mode==='USB'?1:-1)*bw/2/plan.ir;
-    ssbN=N; ssbHr=new Float32Array(N); ssbHi=new Float32Array(N);
-    // свёртка идёт по окну от старого к новому, поэтому ядро разворачиваем по времени
-    for(let k=0;k<N;k++){ const t=M-k; ssbHr[k]=lp[k]*Math.cos(2*Math.PI*f0*t); ssbHi[k]=lp[k]*Math.sin(2*Math.PI*f0*t); }
-    decB=mkDec(new Float32Array(1), 1, true);    // только как кольцо истории для SSB-фильтра
-    decB.N=N; decB.bi=new Float32Array(2*N); decB.bq=new Float32Array(2*N);
+  if(isSSB) mkSideband(bw/2, mode==='USB'?1:-1);
+  if(isSAM){
+    samSb={USB:1,LSB:-1}[msg.samSb]||0;
+    if(samSb) mkSideband(plan.pass/2, samSb);
+    else decB=mkDec(new Float32Array(1), 1, true);   // не используется, нужен только как объект
+    // ФАПЧ 2-го порядка, ζ=0.707: широкая (~100 Гц) на захват, узкая (~20 Гц) в захвате —
+    // держит фазу через замирания несущей. Детектор — atan2, от амплитуды не зависит.
+    const kk=(bn)=>{ const wn=2*Math.PI*bn/0.53/plan.ir; return [2*0.707*wn, wn*wn]; };
+    [samKpW,samKiW]=kk(100); [samKpN,samKiN]=kk(20);
+    samWmax=2*Math.PI*plan.pass/plan.ir;
+    samFA=Math.exp(-2*Math.PI*400/plan.ir);   // ФНЧ перед детектором: модуляция и помехи меньше качают фазу
+    samLockA=Math.exp(-1/(0.15*plan.ir)); samCarA=Math.exp(-1/(0.5*plan.ir));
   }
   const dev = mode==='WFM' ? 75000 : 5000;
   discScale=plan.ir/(2*Math.PI)/dev;
@@ -2082,6 +2096,16 @@ function applyConfig(msg){
   agcHoldN=Math.round(0.3*plan.ar); agcRel=Math.exp(-1/(0.4*plan.ar));   // удержание 0.3 с, спад τ=0.4 с
   applyOffset(offsetHz);
 }
+// комплексный полосовой: ФНЧ half (переход 300 Гц у нуля), сдвинутый на sgn·half → 0..2·half одной стороны
+function mkSideband(half, sgn){
+  const lp=makeLP(plan.ir, half-150, half+150, 1023), N=lp.length, M=(N-1)/2;
+  const f0=sgn*half/plan.ir;
+  ssbN=N; ssbHr=new Float32Array(N); ssbHi=new Float32Array(N);
+  // свёртка идёт по окну от старого к новому, поэтому ядро разворачиваем по времени
+  for(let k=0;k<N;k++){ const t=M-k; ssbHr[k]=lp[k]*Math.cos(2*Math.PI*f0*t); ssbHi[k]=lp[k]*Math.sin(2*Math.PI*f0*t); }
+  decB=mkDec(new Float32Array(1), 1, true);    // только как кольцо истории для фильтра
+  decB.N=N; decB.bi=new Float32Array(2*N); decB.bq=new Float32Array(2*N);
+}
 function applyOffset(hz){
   offsetHz=hz;
   if(hz===0){ offPhI=1; offPhQ=0; }
@@ -2090,7 +2114,8 @@ function applyOffset(hz){
 }
 function resetState(){
   rawI0=rawQ0=prevI=prevQ=ampDc=audDc=de=0; offPhI=1; offPhQ=0; agcPk=AGC_TARGET/AGC_MAXGAIN; agcHold=0;
-  for(const d of [decA,decB,decS,decR]) if(d){ d.bi.fill(0); if(d.bq) d.bq.fill(0); d.pos=0; d.cnt=d.D; }
+  samPh=0; samW=0; samLock=0; samWide=true; samCar=0.01; samFi=samFq=0;
+  for(const d of [decA,decB,decC,decS,decR]) if(d){ d.bi.fill(0); if(d.bq) d.bq.fill(0); d.pos=0; d.cnt=d.D; }
   pbX1=pbX2=pbY1=pbY2=0; plRe=1; plIm=0; plInt=0; plAmp=0.05; plLock=0; stG=0; deR=0; audDcR=0;
   if(isWFM) rdsReset();
 }
@@ -2118,6 +2143,8 @@ self.onmessage=function(e){
   let posB=B.pos, cntB=B.cnt;
   const S=decS, biS=S?S.bi:null, R=decR, hR=R?R.h:null, NR=R?R.N:0, DR=R?R.D:0, biR=R?R.bi:null, bqR=R?R.bq:null;
   let posR=R?R.pos:0, cntR=R?R.cnt:0, vS=0;
+  const C=decC, hC=C?C.h:null, NC=C?C.N:0, biC=C?C.bi:null, bqC=C?C.bq:null;
+  let posC=C?C.pos:0;
   let wIdx=0;
   for(let k=0;k<cnt;k++){
     const rawI=s16 ? s16[2*k]/32768 : (u8[2*k]-127.5)/127.5, rawQ=s16 ? s16[2*k+1]/32768 : (u8[2*k+1]-127.5)/127.5;
@@ -2135,8 +2162,38 @@ self.onmessage=function(e){
     // канальный FIR на выходной частоте ir
     let ci=0, cq=0;
     for(let t=0;t<NA;t++){ const c=hA[t]; ci+=c*biA[posA+t]; cq+=c*bqA[posA+t]; }
+    if(C){                                       // AM/SAM: крутой канальный фильтр перед детектором
+      biC[posC]=ci; biC[posC+NC]=ci; bqC[posC]=cq; bqC[posC+NC]=cq;
+      if(++posC===NC) posC=0;
+      ci=0; cq=0;
+      for(let t=0;t<NC;t++){ const c=hC[t]; ci+=c*biC[posC+t]; cq+=c*bqC[posC+t]; }
+    }
     let v;
-    if(isSSB){
+    if(isSAM){
+      // перенос на несущую: z = c·e^{-jφ}; в захвате несущая — на I, модуляция — тоже на I
+      const pc=Math.cos(samPh), ps=Math.sin(samPh);
+      const zi=ci*pc+cq*ps, zq=cq*pc-ci*ps;
+      samFi=samFi*samFA+zi*(1-samFA); samFq=samFq*samFA+zq*(1-samFA);
+      const e=Math.atan2(samFq, samFi), mag=Math.sqrt(samFi*samFi+samFq*samFq);
+      samLock=samLock*samLockA+(mag>0 ? samFi/mag : 0)*(1-samLockA);
+      if(samWide && samLock>0.7) samWide=false; else if(!samWide && samLock<0.4) samWide=true;
+      samW+=(samWide?samKiW:samKiN)*e;
+      if(samW>samWmax) samW=samWmax; else if(samW<-samWmax) samW=-samWmax;
+      samPh+=samW+(samWide?samKpW:samKpN)*e;
+      if(samPh>Math.PI) samPh-=2*Math.PI; else if(samPh<-Math.PI) samPh+=2*Math.PI;
+      let x=zi;
+      if(samSb){
+        biB[posB]=zi; biB[posB+NB]=zi; bqB[posB]=zq; bqB[posB+NB]=zq;
+        if(++posB===NB) posB=0;
+        let y=0;
+        for(let t=0;t<NB;t++) y+=ssbHr[t]*biB[posB+t]-ssbHi[t]*bqB[posB+t];
+        x=2*y;                                   // Re аналитического сигнала одной боковой ×2 = несущая + m(t)
+      }
+      ampDc+=(x-ampDc)*0.0005;
+      samCar=samCar*samCarA+(zi>0?zi:0)*(1-samCarA);
+      // АРУ — по несущей с медленным τ=0.5 с: короткие провалы несущей при замираниях не раскачивают громкость
+      v = agcOn ? (x-ampDc)/Math.max(samCar,1e-5)*0.5 : (x-ampDc)*3;
+    } else if(isSSB){
       biB[posB]=ci; biB[posB+NB]=ci; bqB[posB]=cq; bqB[posB+NB]=cq;
       if(++posB===NB) posB=0;
       let y=0;
@@ -2220,6 +2277,11 @@ self.onmessage=function(e){
     out[wIdx]=o; outR[wIdx++]=o;
   }
   decA.pos=posA; decA.cnt=cntA; B.pos=posB; B.cnt=cntB;
+  if(C) C.pos=posC;
+  if(isSAM){
+    const now=performance.now();
+    if(now-samPostT>250){ samPostT=now; self.postMessage({type:'sam', lock:samLock>0.6, hz:samW*plan.ir/(2*Math.PI)}); }
+  }
   if(R){ R.pos=posR; R.cnt=cntR; }
   if(isWFM){
     const now=performance.now();
@@ -2243,7 +2305,7 @@ function rtlMakeDemodWorker(){
   const api={onInfo:null};
   worker.onmessage=(e)=>{
     const msg=e.data;
-    if(msg.type==='rds' || msg.type==='stereo'){ api.onInfo?.(msg); return; }
+    if(msg.type==='rds' || msg.type==='stereo' || msg.type==='sam'){ api.onInfo?.(msg); return; }
     if(msg.type==='result' && pending.has(msg.id)){
       const resolve=pending.get(msg.id); pending.delete(msg.id);
       // buffer — сырой ArrayBuffer (вызывающий сам решает, когда вернуть его через giveBuffer());
@@ -2282,11 +2344,11 @@ function rtlActivateChannel(n, ci){
   const ch=n.ch[ci];
   if(ch.active && ch.worker) return;
   ch.worker=rtlMakeDemodWorker();
-  ch.rds=null; ch.stereo=false;
-  ch.worker.onInfo=m=>{ if(m.type==='rds') ch.rds=m; else ch.stereo=m.stereo; };
-  ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false, stereo:n.p.stereo!==false});
+  ch.rds=null; ch.stereo=false; ch.sam=null;
+  ch.worker.onInfo=m=>{ if(m.type==='rds') ch.rds=m; else if(m.type==='sam') ch.sam=m; else ch.stereo=m.stereo; };
+  ch.worker.config(rtlWorkerCfg(n));
   ch.worker.reset();
-  ch.hardKey=n.p.demod+'|'+n.sourceRate; ch.softKey=n.p.bw+'|'+n.p.deemph+'|'+n.p.agc+'|'+n.p.stereo;
+  ch.hardKey=n.p.demod+'|'+n.sourceRate; ch.softKey=n.p.bw+'|'+n.p.deemph+'|'+n.p.agc+'|'+n.p.stereo+'|'+n.p.samSb;
   n.decim=rtlDecimFor(n.p.demod, n.sourceRate, n.p.bw);
   rtlResizeChannelRing(n, ch);
   ch.appliedOffset=0;
@@ -3082,9 +3144,11 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'bw',t:'range',min:500,max:300000,step:100,d:190000,log:true,label:'bandwidth, Hz'},
     {n:'deemph',t:'select',opts:['50','75','off'],d:'50',label:'WFM de-emphasis, µs'},
     {n:'agc',t:'check',d:true,label:'AM/SSB AGC'},
+    // SAM: какую боковую слушать после когерентного детектора (обе — DSB)
+    {n:'samSb',t:'select',opts:['DSB','USB','LSB'],d:'DSB',label:'SAM sideband'},
     {n:'stereo',t:'check',d:true,label:'WFM stereo'},
     // запомненная ширина для каждого режима — при смене режима ползунок bw переключается на неё
-    ...['WFM','NFM','AM','USB','LSB'].map(m=>({n:'if'+m,t:'range',min:500,max:300000,d:RTL_BW_DEF[m],hidden:true})),
+    ...['WFM','NFM','AM','SAM','USB','LSB'].map(m=>({n:'if'+m,t:'range',min:500,max:300000,d:RTL_BW_DEF[m],hidden:true})),
     {n:'auto',t:'check',d:true,label:'auto gain'},
     {n:'gainDb',t:'range',min:0,max:49.6,step:.1,d:20,label:'gain, dB'},
     // только HackRF — вместо auto/gainDb, строки переключает draw()
@@ -3209,14 +3273,14 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
       const hardKey=n.p.demod+'|'+n.sourceRate;
       if(hardKey!==ch.hardKey){
         ch.hardKey=hardKey;
-        ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false, stereo:n.p.stereo!==false});
+        ch.worker.config(rtlWorkerCfg(n));
         ch.worker.reset();
         rtlResizeChannelRing(n, ch);   // decim мог смениться вместе с mode — кольцо иначе рассинхронизируется со временем
       } else {
-        const softKey=n.p.bw+'|'+n.p.deemph+'|'+n.p.agc+'|'+n.p.stereo;
+        const softKey=n.p.bw+'|'+n.p.deemph+'|'+n.p.agc+'|'+n.p.stereo+'|'+n.p.samSb;
         if(softKey!==ch.softKey){
           ch.softKey=softKey;
-          ch.worker.config({mode:n.p.demod, sr:n.sourceRate, bw:n.p.bw, deemph:n.p.deemph, agc:n.p.agc!==false, stereo:n.p.stereo!==false});
+          ch.worker.config(rtlWorkerCfg(n));
           // кольцо — только если сменилась децимация (bw у SSB, широкая полоса ПЧ у WFM); иначе
           // при перетаскивании края шторки звук обрывался бы на каждом шаге
           if(ch.ringDecim!==n.decim) rtlResizeChannelRing(n, ch);
@@ -3308,6 +3372,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
         `${(n.mspsIo||0).toFixed(2)} Msps · ch ${chCount}`+
         (sdrConv(n) ? ` · conv ${sdrConv(n)>0?'+':''}${fmtHz(sdrConv(n),3)}` : '')+
         (n.p.demod==='WFM' ? (n.ch[0].stereo?' · ST':' · mono') : '')+
+        (n.p.demod==='SAM' && n.ch[0].sam ? (n.ch[0].sam.lock ? ` · lock ${n.ch[0].sam.hz>=0?'+':''}${n.ch[0].sam.hz.toFixed(0)} Hz` : ' · no lock') : '')+
         (n.p.demod==='WFM' && n.ch[0].rds && n.ch[0].rds.pi>=0
           ? ` · RDS ${n.ch[0].rds.pi.toString(16).toUpperCase().padStart(4,'0')} "${n.ch[0].rds.ps.trim()}"`+(n.ch[0].rds.rt?` ${n.ch[0].rds.rt}`:'') : '')+
         (n.workerMs!=null?` · dsp ${n.workerMs.toFixed(1)}/${(n.roundtripMs||0).toFixed(1)} ms`:'')+
