@@ -1910,7 +1910,26 @@ function rtlChanSnr(sp, lo, hi){
   const pw=(a,z)=>{ a=Math.max(1,a); z=Math.min(N-2,z); let s=0,c=0; for(let i=a;i<=z;i++){ s+=m[i]*m[i]; c++; } return c? s/c : null; };
   const sig=pw(bin(lo),bin(hi)), L=pw(bin(lo-g-t),bin(lo-g)), R=pw(bin(hi+g),bin(hi+g+t));
   const nz = L!=null && R!=null ? Math.min(L,R) : (L??R);
-  return sig!=null && nz>0 ? 10*Math.log10(sig/nz+1e-12) : null;
+  if(sig==null || !(nz>0)) return null;
+  const sigDb=10*Math.log10(sig+1e-24), nzDb=10*Math.log10(nz+1e-24);
+  return {snr:sigDb-nzDb, nzDb};                      // nzDb — уровень шума на бин, в шкале спектра
+}
+// шумовая полоса окна в бинах: мощность шума на бин = плотность × ENBW
+const RTL_WIN_ENBW={hann:1.5, hamming:1.363, blackman:1.727, rect:1};
+// Для 'sa': то, с чем сравнивает шумоподавитель, в шкале спектра (дБ на бин, среднее по полосе
+// канала). SNR: шум + SNR и шум + порог. level: RSSI и порог минус K, где K — во сколько раз
+// мощность в полосе больше средней мощности бина (бинов в полосе / ENBW окна).
+function rtlChanMeter(n, c, lines){
+  const ch=n.ch[c.idx], mode=n.p.sql;
+  c.rssi=ch.rssi??null; c.snr=ch.snr??null;
+  c.sql = mode==='SNR'||mode==='level' ? mode : null; c.sqOpen=ch.sqOpen!==false;
+  if(lines && c.sql==='SNR' && ch.noiseDb!=null && ch.snr!=null){ c.lvDb=ch.noiseDb+ch.snr; c.thrDb=ch.noiseDb+(+n.p.sqlSnr); }
+  else if(lines && c.sql==='level' && ch.rssi!=null){
+    const binHz=n.sourceRate/(+n.p.specSize||4096);
+    const K=10*Math.log10(Math.max(1,(c.hi-c.lo)/binHz)/(RTL_WIN_ENBW[n.p.specWin]||1.5));
+    c.lvDb=ch.rssi-K; c.thrDb=(+n.p.sqlLvl)-K;
+  }
+  return c;
 }
 // RSSI очередного чанка канала (dBFS в полосе канала) и решение шумоподавителя:
 // открыт при уровне >= порога, закрывается ниже порога−гистерезис спустя hang мс
@@ -3050,7 +3069,7 @@ async function rtlStart(n, sr){
   n.connected=true; n.reading=true;
   n.underrunsWorker=0; n.underrunsOverflow=0; n.underrunsStarve=0;
   n.adcAcc=null; n.adcPk=null; n.adcRms=null; n.adcClip=null; n.adcOvlT=null;
-  for(const ch of n.ch){ ch.rssi=null; ch.rssiChunk=null; ch.snr=null; ch.sqOpen=undefined; ch.sqG=1; }
+  for(const ch of n.ch){ ch.rssi=null; ch.rssiChunk=null; ch.snr=null; ch.noiseDb=null; ch.sqOpen=undefined; ch.sqG=1; }
   n.status='connected ('+n.dev.tunerName+(n.dev.worker?', USB in worker':'')+')';
   rtlReadLoop(n);
 }
@@ -3488,7 +3507,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     const spOut=sweepOn && n.sw ? n.sw.spec : n.spec;
     // полосы канальных фильтров активных каналов — 'sa' рисует их шторками вокруг частот каналов
     if(spOut){
-      spOut.chans=n.swActive ? null : rtlChanBands(n, cf, half);
+      // линии порога — только на живом спектре: у панорамы sweep своя шкала бинов
+      spOut.chans=n.swActive ? null : rtlChanBands(n, cf, half).map(c=>rtlChanMeter(n, c, !sweepOn));
       // обратный канал для 'sa': перетаскивание края шторки задаёт новую ширину полосы ПЧ
       spOut.setChanBw=n._setChanBw||(n._setChanBw=(mode,w)=>{
         const lim=RTL_BW_LIMITS[mode]; if(lim) setMod(n,'bw',Math.round(clamp(w,lim[0],lim[1])));
@@ -3499,7 +3519,9 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
       n._snrRev=n.spec.rev;
       for(const b of rtlChanBands(n, cf, half)){
         const ch=n.ch[b.idx], v=rtlChanSnr(n.spec, b.lo, b.hi);
-        ch.snr = v==null ? null : ch.snr==null ? v : ch.snr*0.5+v*0.5;
+        if(v==null){ ch.snr=null; ch.noiseDb=null; continue; }
+        ch.snr = ch.snr==null ? v.snr : ch.snr*0.5+v.snr*0.5;
+        ch.noiseDb = ch.noiseDb==null ? v.nzDb : ch.noiseDb*0.5+v.nzDb*0.5;
       }
     }
     const oi=buf(n,'I'), oq=buf(n,'Q');
