@@ -1163,6 +1163,104 @@ def({ id:'notch', title:'Mains Notch', cat:'Processing', ins:[{n:'in',t:'sig'},{
       o[i]=x; }
     return {out:o}; }});
 
+// Частоты наводок: сеть 50/60 Гц, ж/д 16.7 Гц, бортсеть 400 Гц; custom — поле f0
+const HUM_PRESETS=['50','60','16.7','25','400','custom'];
+const humPreset=n=>{ if(n.p.preset!=='custom') setMod(n,'f0',+n.p.preset); };
+
+// Адаптивное вычитание гармоник: опорные cos/sin k·φ от своего генератора, веса по МНК —
+// вычитается только сама наводка (амплитуда/фаза каждой гармоники), сигнал между гармониками
+// не трогается. Частота генератора подстраивается по вращению фазора основной гармоники (FLL),
+// поэтому режекция остаётся глубокой при уходе сети на ±0.1…0.5 Гц.
+def({ id:'humcancel', title:'Hum Canceller (adaptive)', cat:'Processing',
+  ins:[{n:'in',t:'sig'},{n:'f0',t:'num'},{n:'n',t:'num'},{n:'bw',t:'num'}],
+  outs:[{n:'out',t:'sig'},{n:'hum',t:'sig'},{n:'freq',t:'num'},{n:'level',t:'num'}],
+  readout:true,
+  params:[{n:'preset',t:'select',opts:HUM_PRESETS,d:'50',label:'interference',fn:humPreset},
+          {n:'f0',t:'range',min:5,max:1000,step:.01,d:50,log:true,label:'fundamental, Hz'},
+          {n:'n',t:'range',min:1,max:60,step:1,d:20,label:'harmonics'},
+          {n:'bw',t:'range',min:.05,max:20,step:.05,d:1,log:true,label:'notch width, Hz (speed)'},
+          {n:'track',t:'check',d:true,label:'track frequency'},
+          {n:'range',t:'range',min:.1,max:5,step:.1,d:1,label:'tracking range, ±Hz',adv:true},
+          {n:'rst',t:'button',label:'Reset',fn:n=>{ n.a=null; }}],
+  init:n=>{ n.a=null; n.ph=0; n.f=null; n.fKey=null; n.th=null; n.lvl=-200; n.red=0; },
+  process(n,I){
+    if(typeof I.n==='number') setMod(n,'n',Math.round(I.n));
+    if(typeof I.bw==='number') setMod(n,'bw',I.bw);
+    const sr=Eng.sr, f0=pv(n,I,'f0');
+    if(n.fKey!==f0){ n.fKey=f0; n.f=f0; n.th=null; }   // новая номинальная частота — трекинг с нуля
+    // по номиналу с запасом на трекинг: иначе дрейф частоты у Найквиста менял бы K и сбрасывал веса
+    const K=Math.max(1,Math.min(Math.round(n.p.n), Math.floor(sr*.475/Math.max(f0+n.p.range,1))));
+    if(!n.a || n.a.length!==2*K){ n.a=new Float64Array(2*K); n.th=null; }
+    const a=n.a, o=buf(n,'out'), h=buf(n,'hum');
+    // шаг МНК из ширины режекции: для пары весов с опорой единичной амплитуды полоса ≈ g·fs/(2π)
+    const g=2*Math.PI*n.p.bw/sr;
+    const w=2*Math.PI*n.f/sr;
+    let ph=n.ph, pin=0, pout=0;
+    for(let i=0;i<BLOCK;i++){
+      const x=I.in?I.in[i]:0;
+      const cb=Math.cos(ph), sb=Math.sin(ph);
+      let c=cb, s=sb, y=0;
+      for(let k=0;k<K;k++){                          // cos/sin k·φ поворотом, без тригонометрии на гармонику
+        y+=a[2*k]*c+a[2*k+1]*s;
+        const cn=c*cb-s*sb; s=s*cb+c*sb; c=cn; }
+      const e=x-y;
+      c=cb; s=sb;
+      for(let k=0;k<K;k++){
+        a[2*k]+=g*e*c; a[2*k+1]+=g*e*s;
+        const cn=c*cb-s*sb; s=s*cb+c*sb; c=cn; }
+      o[i]=e; h[i]=y; pin+=x*x; pout+=e*e;
+      ph+=w; if(ph>Math.PI) ph-=2*Math.PI; }
+    n.ph=ph;
+    // FLL: фазор основной гармоники (a0,a1) вращается со скоростью ошибки частоты
+    const A=Math.hypot(a[0],a[1]);
+    if(n.p.track && A>1e-5){
+      const th=Math.atan2(a[1],a[0]);
+      if(n.th!=null){
+        let d=th-n.th; d-=2*Math.PI*Math.round(d/(2*Math.PI));
+        // A·cos(φ+δ) = a·cosφ + b·sinφ при θ=atan2(b,a)=−δ: частота сети выше — θ убывает
+        const df=-d*sr/(2*Math.PI*BLOCK);
+        n.f=clamp(n.f+.05*df, f0-n.p.range, f0+n.p.range);
+      }
+      n.th=th;
+    } else { n.th=null; if(!n.p.track) n.f=f0; }
+    let hp=0; for(let k=0;k<K;k++) hp+=(a[2*k]*a[2*k]+a[2*k+1]*a[2*k+1])/2;
+    n.lvl=10*Math.log10(hp+1e-20);
+    const r=10*Math.log10((pin+1e-20)/(pout+1e-20));
+    n.red=n.red*.9+r*.1; n.K=K;
+    return {out:o, hum:h, freq:n.f, level:n.lvl}; },
+  draw(n){
+    const r=n.el?.querySelector('.readout'); if(!r) return;
+    r.textContent = n.K ? `${n.f.toFixed(3)} Hz · ${n.K} harm · hum ${n.lvl.toFixed(1)} dBFS · reduction ${Math.max(0,n.red).toFixed(1)} dB`
+      : 'no signal'; }});
+
+// Гребенчатый режектор: H(z)=(1+ρ)/2·(1−z^−D)/(1−ρ·z^−D), D=fs/f0 (дробная — линейная
+// интерполяция). Режет все кратные f0 до Найквиста сразу и почти ничего не стоит, но режет
+// и DC, и не подстраивается сам — f0 можно завести с выхода freq у Hum Canceller.
+def({ id:'combnotch', title:'Comb Notch (all harmonics)', cat:'Processing',
+  ins:[{n:'in',t:'sig'},{n:'f0',t:'num'},{n:'bw',t:'num'}],
+  outs:[{n:'out',t:'sig'}],
+  params:[{n:'preset',t:'select',opts:HUM_PRESETS,d:'50',label:'interference',fn:humPreset},
+          {n:'f0',t:'range',min:5,max:1000,step:.01,d:50,log:true,label:'fundamental, Hz'},
+          {n:'bw',t:'range',min:.1,max:20,step:.1,d:2,log:true,label:'notch width, Hz'}],
+  init:n=>{ n.N=0; },
+  process(n,I){
+    if(typeof I.bw==='number') setMod(n,'bw',I.bw);
+    const sr=Eng.sr, f0=Math.max(1,pv(n,I,'f0'));
+    const D=clamp(sr/f0, 2, sr);
+    const N=pow2ge(Math.ceil(sr)+4);
+    if(n.N!==N){ n.N=N; n.xb=new Float32Array(N); n.yb=new Float32Array(N); n.wi=0; }
+    const r=Math.max(0,1-Math.PI*n.p.bw/sr), rho=Math.pow(r,D), gk=(1+rho)/2;
+    const xb=n.xb, yb=n.yb, m=N-1, Di=Math.floor(D), fr=D-Di, o=buf(n,'out');
+    let wi=n.wi;
+    for(let i=0;i<BLOCK;i++){
+      const x=I.in?I.in[i]:0;
+      const j0=(wi-Di)&m, j1=(wi-Di-1)&m;
+      const xd=xb[j0]+(xb[j1]-xb[j0])*fr, yd=yb[j0]+(yb[j1]-yb[j0])*fr;
+      const y=gk*(x-xd)+rho*yd;
+      xb[wi]=x; yb[wi]=y; o[i]=y; wi=(wi+1)&m; }
+    n.wi=wi;
+    return {out:o}; }});
+
 
 function irMeasure(n){
   const N=n.N; if(!N) return;

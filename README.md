@@ -32,7 +32,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Impulse response & RT60, bird song analyzer, frequency meter, trend charts
 
 ### Processing
-- Filters, gain, mixers (4/12 ch), AGC, squelch, mains notch, adaptive filter, spectral denoiser
+- Filters, gain, mixers (4/12 ch), AGC, squelch, mains notch, adaptive hum canceller (tracks mains frequency, all harmonics), comb notch, adaptive filter, spectral denoiser
 - FFT, Zoom-FFT (I/Q), Hilbert transform, quadrature shift, magnitude/phase, wavelet (constant-Q), cepstrum
 - Beamformer, phase scope (X-Y), envelope, calibration, capture & loop
 - Audio effects: delay, reverb, distortion, compressor/limiter, EQ, chorus/flanger/phaser, pitch shifter
