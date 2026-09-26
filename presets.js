@@ -250,8 +250,8 @@ markWiresDirty();
 preset('HF: Quick-Decode All Protocols', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'HF receiver output — into the mic input.\n'+
-  'sigid below is a heuristic signal-type detector: it hints which\n'+
-  'decoder on the right is even worth watching (no guarantee, but saves time).\n'+
+  'sigid below is a heuristic signal-type detector: it labels each signal on the spectrum\n'+
+  'and hints which decoder on the right is worth watching (no guarantee, but saves time).\n'+
   'Tune the receiver to a band, watch the spectrum for activity.'});
 nt.size.w=460; nt.size.h=200; applySize(nt);
 const m =addNode('mic',40,280,{gainA:2});
@@ -271,7 +271,8 @@ dt.size.w=340; dt.size.h=120; applySize(dt);
 const f8=addNode('ft8Rx',1460,40);
 f8.size.w=380; f8.size.h=260; applySize(f8);
 addEdge(m.id,'a',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
-addEdge(m.id,'a',si.id,'in');
+addEdge(m.id,'a',si.id,'in'); addEdge(ff.id,'spec',si.id,'spec');
+addEdge(si.id,'bands',sa.id,'bands');               // метки типа сигнала — над спектром
 addEdge(m.id,'a',mo.id,'sig');
 addEdge(m.id,'a',af.id,'in');
 addEdge(af.id,'soft',hd.id,'in');
@@ -327,6 +328,31 @@ const dc=addNode('dac',540,560,{vol:.4});
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(sa.id,'f1',rx.id,'tuneFreq');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
+markWiresDirty();
+});
+preset('USB SDR: Signal Identifier', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Connect the SDR and tune to a busy band. sigid finds signals in the spectrum,\n'+
+  'then takes the raw IQ of each one in turn (at the native sample rate) and names the modulation:\n'+
+  'AM/NFM/WFM/SSB/CW, FSK with shift and baud, BPSK/QPSK, CTCSS, stereo pilot.\n'+
+  'Labels ride above the signals via the band plan; tap a signal to listen, the demod mode is up to you.'});
+nt.size.w=520; nt.size.h=170; applySize(nt);
+const rx=addNode('rtlsdr',40,300,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:446100000});
+const bp=addNode('bandplan',300,300,{preset:'Russia (full)'});
+bp.size.w=340; bp.size.h=200; applySize(bp);
+const si=addNode('sigid',680,740,{period:2,thr:8,maxSig:8});
+si.size.w=560; si.size.h=260; applySize(si);
+const sa=addNode('sa',680,40,{auto:true,floor:-90,top:-20,split:.45});
+sa.size.w=760; sa.size.h=480; applySize(sa);
+const dc=addNode('dac',300,700,{vol:.4});
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'spec',si.id,'spec');
+addEdge(bp.id,'bands',si.id,'plan');
+addEdge(si.id,'bands',bp.id,'sigs');
+addEdge(bp.id,'bands',sa.id,'bands');
+addEdge(sa.id,'f1',rx.id,'tuneFreq');
+addEdge(sa.id,'centerFreq',rx.id,'steerFreq');
+addEdge(rx.id,'audio',dc.id,'L'); addEdge(rx.id,'audio',dc.id,'R');
 markWiresDirty();
 });
 preset('tinySA: Spectrum', function(){
