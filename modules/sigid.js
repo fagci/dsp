@@ -231,7 +231,8 @@ function sidSignals(n,s){
       used.add(a); used.add(b); out.push(sidGroup(n,[a,b],{pair:true, shift:gap})); }
   }
   for(const t of tr) if(!used.has(t)) out.push(sidGroup(n,[t],{}));
-  return out;
+  // кусок внутри полосы более сильного и широкого сигнала (тон FSK, всплеск) — его часть, а не отдельный
+  return out.filter(g=>!out.some(o=>o!==g && o.snr>=g.snr && o.obw>2*g.obw && Math.abs(g.fc-o.fc)<o.obw/2));
 }
 function sidGroup(n,ts,ext){
   const lead=ts.reduce((a,b)=>b.snr>a.snr?b:a), lo=Math.min(...ts.map(t=>t.lo)), hi=Math.max(...ts.map(t=>t.hi));
@@ -283,9 +284,10 @@ function sidSource(n,s){
 // один сигнал за раз: перенос в ноль + CIC-2 с децимацией до ~3× полосы, копим до period
 function sidFocusNew(n,src,g,now){
   // центр — середина сегмента: центроид у многотоновых гуляет, края тогда уходят на скат ФНЧ
-  const B=Math.max(g.obw*1.3,Math.min((g.hi-g.lo)*1.1,g.obw*2),150), D=Math.max(1,Math.floor(src.sr/(3*B))), fs2=src.sr/D;
-  // узким (медленная манипуляция) — до period, совсем узким (FT8, WSPR) — полтора, широким хватает полсекунды
-  const dur=g.obw<100? n.p.period*1.5 : g.obw<3e3? n.p.period*.75 : .5;
+  // полоса с запасом: при слабом сигнале края тонут в шуме, и 99% мощности по спектру занижает ширину
+  const B=Math.max(g.obw*(g.snr<25? 1.7 : 1.3),Math.min((g.hi-g.lo)*1.1,g.obw*2),150), D=Math.max(1,Math.floor(src.sr/(3*B))), fs2=src.sr/D;
+  // узким (медленная манипуляция) — до period, совсем узким (FT8, WSPR) — полтора, широким — секунда (пакеты TDMA — половина времени)
+  const dur=g.obw<100? n.p.period*1.5 : g.obw<3e3? n.p.period*.75 : 1;
   const cap=Math.min(32768,Math.round(fs2*dur)), r=src.ring;
   return {key:g.key, dur, ring:r, fc:src.fc, off:(g.pair||g.dtmf? g.fc : (g.lo+g.hi)/2)-src.fc, sr:src.sr, B, D, fs2, cap,
     zi:new Float32Array(cap), zq:new Float32Array(cap), m:0,
@@ -358,7 +360,7 @@ function sidWorker(n){
   n.worker=null;
   if(typeof Worker==='undefined' || typeof Blob==='undefined') return null;
   try{
-    const src=[fft,cfarSelect,sidPctl,sidLine,sidIqFeatures].map(f=>f.toString()).join('\n')+
+    const src=[fft,cfarSelect,sidPctl,sidLine,sidHistModes,sidRrc,sidIqFeatures].map(f=>f.toString()).join('\n')+
       '\nonmessage=e=>{ let f=null; try{ f=sidIqFeatures(e.data); }catch(_){} postMessage({id:e.data.id,f}); };';
     const url=URL.createObjectURL(new Blob([src],{type:'text/javascript'}));
     n.worker=new Worker(url); URL.revokeObjectURL(url);
@@ -422,6 +424,36 @@ function sidLine(xr,xi,L,fs,fmin,fmax,maxK,loc){
 }
 function sidPctl(a,q){ const s=Float32Array.from(a); return s.length? cfarSelect(s,s.length,Math.floor(q*(s.length-1))) : 0; }
 
+// моды гистограммы: сглаживание [1 2 1], пики выше thr·max; соседние без глубокой впадины — одна
+function sidHistModes(vals,half,H,passes,thr){
+  const hist=new Float32Array(H);
+  for(const f of vals){ const b=Math.floor((f+half)/(2*half)*H); if(b>=0&&b<H) hist[b]++; }
+  for(let p=0;p<passes;p++){ const c=hist.slice();
+    for(let i=0;i<H;i++) hist[i]=(c[Math.max(0,i-1)]+2*c[i]+c[Math.min(H-1,i+1)])/4; }
+  let mx=0; for(const v of hist) if(v>mx) mx=v;
+  const m=[];
+  for(let i=1;i<H-1;i++) if(hist[i]>=hist[i-1] && hist[i]>hist[i+1] && hist[i]>=thr*mx) m.push(i);
+  for(let i=0;i+1<m.length;){
+    const x=m[i], y=m[i+1]; let v=Infinity; for(let k=x;k<=y;k++) v=Math.min(v,hist[k]);
+    if(v>.6*Math.min(hist[x],hist[y])) m.splice(hist[x]>=hist[y]? i+1 : i,1); else i++;
+  }
+  return m.map(b=>(b+.5)/H*2*half-half);
+}
+// согласованный RRC (α=0.2, ±4 символа) по мгновенной частоте; выпавшие отсчёты — не в счёт (NaN)
+function sidRrc(x,ok,T){
+  const a=.2, S=Math.ceil(4*T), h=new Float32Array(2*S+1);
+  for(let i=-S;i<=S;i++){ const t=i/T; let v;
+    if(Math.abs(t)<1e-9) v=1-a+4*a/Math.PI;
+    else if(Math.abs(Math.abs(4*a*t)-1)<1e-6) v=a/Math.SQRT2*((1+2/Math.PI)*Math.sin(Math.PI/(4*a))+(1-2/Math.PI)*Math.cos(Math.PI/(4*a)));
+    else v=(Math.sin(Math.PI*t*(1-a))+4*a*t*Math.cos(Math.PI*t*(1+a)))/(Math.PI*t*(1-(4*a*t)**2));
+    h[i+S]=v; }
+  let hs=0; for(const v of h) hs+=v;
+  const L=x.length, y=new Float32Array(L);
+  for(let k=0;k<L;k++){ let s=0, w=0;
+    for(let j=-S;j<=S;j++){ const i=k+j; if(i<0||i>=L||!ok[i]) continue; s+=x[i]*h[j+S]; w+=h[j+S]; }
+    y[k]=w>.6*hs? s/w : NaN; }
+  return y;
+}
 function sidIqFeatures(fx){
   const M=fx.m, T=31;
   if(M<T+256) return null;
@@ -443,19 +475,41 @@ function sidIqFeatures(fx){
   const p90=sidPctl(a,.9); let low=0; for(let k=0;k<L;k++) if(a[k]<.25*p90) low++;
   const lowFrac=low/L;
   // мгновенная частота там, где огибающая выше шума
-  const gate=.3*m1, fi=new Float32Array(L); let prevF=0;
+  // включённые участки — по огибающей, сглаженной ~1 мс, относительно уровня пакета: шум в паузах
+  // между пакетами проходил бы порог по среднему (пауза тянет его вниз) и давал ложную частоту
+  const gate=.3*m1, fi=new Float32Array(L), ok=new Uint8Array(L), sw=Math.max(3,Math.round(fs*.001)), onS=new Uint8Array(L);
+  { let acc=0; for(let k=0;k<L;k++){ acc+=a[k]; if(k>=sw) acc-=a[k-sw]; onS[k]=acc/Math.min(k+1,sw)>.5*p90? 1 : 0; } }
+  let prevF=0;
   const fiv=[];
   for(let k=1;k<L;k++){
-    if(a[k]>gate && a[k-1]>gate){
+    if(a[k]>gate && a[k-1]>gate && onS[k]){
       const re=zr[k]*zr[k-1]+zi[k]*zi[k-1], im=zi[k]*zr[k-1]-zr[k]*zi[k-1];
-      prevF=Math.atan2(im,re)*fs/(2*Math.PI); fiv.push(prevF); }
+      prevF=Math.atan2(im,re)*fs/(2*Math.PI); fiv.push(prevF); ok[k]=1; }
     fi[k]=prevF;
   }
+  // огибающая только на включённых участках: у пакетной передачи (TDMA) паузы не делают её «переменной»
+  let o1=0, o2=0, on=0;
+  for(let k=0;k<L;k++) if(a[k]>.4*p90){ o1+=a[k]; o2+=a[k]*a[k]; on++; }
+  const cvOn=on? Math.sqrt(Math.max(0,o2/on-(o1/on)**2))/(o1/on) : cv;
   const spread=fiv.length? sidPctl(fiv,.95)-sidPctl(fiv,.05) : 0;
   // скорость по скачкам частоты и «ступенчатость»: у MFSK частота стоит на месте весь символ,
   // у аналоговой ЧМ ползёт непрерывно. Окно — треть символа.
-  const dfi=new Float32Array(L); for(let k=1;k<L;k++) dfi[k]=Math.abs(fi[k]-fi[k-1]);
-  const rFsk=sidLine(dfi,null,L,fs,Math.max(8,fs/L*6),fs/2.2,0,true);
+  // паузы между пакетами — средним: иначе линия частоты пакетов (16.7 Гц у DMR) забивает символьную
+  const dfi=new Float32Array(L); let dm=0, dn=0;
+  for(let k=2;k<L;k++) if(ok[k]&&ok[k-1]){ dfi[k]=Math.abs(fi[k]-fi[k-1]); dm+=dfi[k]; dn++; }
+  // щелчки ЧМ на шуме (скачок фазы на 2π) — обрезаем, иначе топят символьную линию
+  if(dn){ dm/=dn; for(let k=0;k<L;k++) if(!(k>=2 && ok[k]&&ok[k-1])) dfi[k]=dm; else if(dfi[k]>4*dm) dfi[k]=4*dm; }
+  let rFsk=sidLine(dfi,null,L,fs,Math.max(8,fs/L*6),fs/2.2,0,true);
+  // запасной путь при шуме: линия в квадрате частоты (циклостационарность сформированной FSK)
+  if(rFsk.db<10){
+    let fm=0, fc=0; for(let k=0;k<L;k++) if(ok[k]){ fm+=fi[k]; fc++; }
+    fm=fc? fm/fc : 0;
+    const f2=new Float32Array(L); let f2m=0;
+    for(let k=0;k<L;k++) if(ok[k]){ const d=Math.min(Math.abs(fi[k]-fm),fx.B); f2[k]=d*d; f2m+=f2[k]; }
+    f2m=fc? f2m/fc : 0; for(let k=0;k<L;k++) if(!ok[k]) f2[k]=f2m;
+    const r2=sidLine(f2,null,L,fs,Math.max(8,fs/L*6),fs/2.2,0,true);
+    if(r2.db>rFsk.db) rFsk=r2;
+  }
   // линии нет (мало символов в захвате) — окно 20 мс: для медленных MFSK вроде FT8
   const wS=Math.max(1,Math.round(rFsk.db>=10? .3*fs/rFsk.f : .02*fs)), pl=new Uint8Array(L);
   let plat=0;
@@ -471,20 +525,7 @@ function sidIqFeatures(fx){
     if(runs.length>=4) bPlat=fs/(sidPctl(runs,.5)+wS+1);
   }
   // гистограмма мгновенной частоты — моды FSK (при ступенчатой — только по «ступеням»)
-  const H=plat>.5? 256 : 128, half=fx.B/2, hist=new Float32Array(H);
-  if(plat>.5){ for(let k=0;k<L;k++) if(pl[k]){ const b=Math.floor((fi[k]+half)/(2*half)*H); if(b>=0&&b<H) hist[b]++; } }
-  else for(const f of fiv){ const b=Math.floor((f+half)/(2*half)*H); if(b>=0&&b<H) hist[b]++; }
-  for(let pass=0;pass<(plat>.5? 1 : 2);pass++){ const c=hist.slice();
-    for(let i=0;i<H;i++) hist[i]=(c[Math.max(0,i-1)]+2*c[i]+c[Math.min(H-1,i+1)])/4; }
-  let hmax=0; for(const v of hist) if(v>hmax) hmax=v;
-  let modes=[];
-  for(let i=1;i<H-1;i++) if(hist[i]>=hist[i-1] && hist[i]>hist[i+1] && hist[i]>=(plat>.5? .12 : .2)*hmax) modes.push(i);
-  // соседние пики без глубокой впадины между ними — одна мода
-  for(let i=0;i+1<modes.length;){
-    const x=modes[i], y=modes[i+1]; let v=Infinity; for(let k=x;k<=y;k++) v=Math.min(v,hist[k]);
-    if(v>.6*Math.min(hist[x],hist[y])){ modes.splice(hist[x]>=hist[y]? i+1 : i,1); } else i++;
-  }
-  const bHz=b=>(b+.5)/H*2*half-half, mf=modes.map(bHz);
+  const half=fx.B/2, mf=plat>.5? sidHistModes(fi.filter((_,k)=>pl[k]),half,256,1,.12) : sidHistModes(fiv,half,128,2,.2);
   // скорость 2/4-FSK по сериям решений: уровень меняем, только подойдя к новому ближе 35% разноса
   // (гистерезис — без дребезга на переходах); кратчайшие серии — один символ
   let bRun=0;
@@ -507,6 +548,42 @@ function sidIqFeatures(fx){
       let T=sidPctl(runs,.3); const nr=runs.filter(r=>r>.6*T && r<1.4*T);
       if(nr.length) T=nr.reduce((x,y)=>x+y,0)/nr.length;
       bRun=fs/T;
+    }
+  }
+  // FSK с формированием (RRC у DMR/P25, гаусс у GFSK): частота почти всё время в переходе, общая
+  // гистограмма сливается в пятно, как у аналоговой ЧМ. Уровни видны в центрах символов: синхронизация
+  // по фазе линии скорости в |Δf| (блоками — чтобы неточность скорости не набегала), согласованный RRC
+  let sModes=[], sConc=0, sMid=0, sChg=0;
+  const Ts=rFsk.db>=10 && rFsk.f>0? fs/rFsk.f : 0;
+  if(Ts>=3 && L>20*Ts){
+    const fr=sidRrc(fi,ok,Ts), sv=[], NB=Math.round(64*Ts);
+    for(let b0=0;b0<L;b0+=NB){
+      const b1=Math.min(L,b0+NB); let cr=0, ci=0;
+      for(let k=b0;k<b1;k++) if(k>=2 && ok[k] && ok[k-1]){ const ph=2*Math.PI*k/Ts; cr+=dfi[k]*Math.cos(ph); ci+=dfi[k]*Math.sin(ph); }
+      // переходы — у фазы линии, центры символов — на полсимвола позже
+      let k0=(Math.atan2(ci,cr)/(2*Math.PI)+.5)*Ts; k0-=Math.floor((k0-b0)/Ts)*Ts;
+      let prev=false;                                 // NaN-разделитель: соседние по времени — только внутри серии
+      for(let k=k0;k<b1;k+=Ts){ const i=Math.round(k), v=i>0 && ok[i] && ok[i-1] && fr[i]===fr[i];
+        if(v) sv.push(fr[i]); else if(prev) sv.push(NaN); prev=v; }
+      if(sv.length && sv[sv.length-1]===sv[sv.length-1]) sv.push(NaN);
+    }
+    const svv=sv.filter(x=>x===x);
+    if(svv.length>=40){
+      sModes=sidHistModes(svv,half,128,1,.15);
+      if(sModes.length>=2){
+        const sp=(sModes[sModes.length-1]-sModes[0])/(sModes.length-1), lev=f=>{
+          let bi=0; for(let i=1;i<sModes.length;i++) if(Math.abs(f-sModes[i])<Math.abs(f-sModes[bi])) bi=i; return bi; };
+        let pc=0, pn=0;
+        for(let j=0;j<sv.length;j++){ const f=sv[j]; if(f!==f) continue;
+          if(sModes.some(x=>Math.abs(f-x)<=.25*sp)) sConc++;
+          for(let i=0;i+1<sModes.length;i++) if(Math.abs(f-(sModes[i]+sModes[i+1])/2)<=.2*(sModes[i+1]-sModes[i])){ sMid++; break; }
+          const g=sv[j+1]; if(g===g && j+1<sv.length){ pn++; if(lev(f)!==lev(g)) pc++; }
+        }
+        sConc/=svv.length; sMid/=svv.length;
+        // смена уровня от символа к символу: у данных случайная (~50% при 2, ~75% при 4 уровнях),
+        // у ЧМ тоном, взятой через полпериода, — каждый раз
+        sChg=pn? pc/pn : 0;
+      }
     }
   }
   // доля отсчётов около мод — у FSK почти всё, у аналоговой ЧМ размазано
@@ -544,14 +621,16 @@ function sidIqFeatures(fx){
       if(v&&!on){ on=true; st=k; } else if(!v&&on){ on=false; runs.push((k-st)/fs); } }
     if(runs.length>=4){ const d=sidPctl(runs.filter(x=>x>.01),.2); if(d>0) wpm=1.2/d; }
   }
-  return {cv, kurt, lowFrac, modes:mf, conc, mid, plat, bPlat, bRun, spread, F1:L1.frac, cOff:L1.f+fx.off,
-    F2:L2.frac, F4:L4.frac, bFsk:rFsk.db>=10? rFsk.f : 0, bEnv:rEnv && rEnv.db>=10? rEnv.f : 0,
+  return {cv, cvOn, sModes, sConc, sMid, sChg, kurt, lowFrac, modes:mf, conc, mid, plat, bPlat, bRun, spread, F1:L1.frac, cOff:L1.f+fx.off,
+    F2:L2.frac, F4:L4.frac, o2:L2.f/2, o4:L4.f/4, bFsk:rFsk.db>=10? rFsk.f : 0, bEnv:rEnv && rEnv.db>=10? rEnv.f : 0,
     ctcss:ct && ct.db>=14? ct.f : 0, pilot:!!(pil && pil.db>=12), wpm, fs, dur:L/fs, off:fx.off};
 }
 
 // ---- классификация по отсчётам ----
 function sidIqClass(f,g){
-  const bw=g.obw, cvLo=f.cv<(g.snr<15? .32 : .22);
+  // пакетная передача (TDMA: DMR, TETRA-MS): огибающая ровная внутри пакетов, между ними пауза
+  const burst=f.cvOn!=null && f.lowFrac>.15 && f.lowFrac<.85 && f.cvOn<.25;
+  const cvE=burst? f.cvOn : f.cv, bw=g.obw, cvLo=cvE<(g.snr<15? .32 : .22);
   const baud=b=>b>=100? Math.round(b) : +b.toFixed(1);
   if(f.modes.length>=2 && ((cvLo && f.conc>.55 && f.mid<.16) || (f.cv<.4 && f.plat>.7))){
     const k=f.modes.length, sh=(f.modes[k-1]-f.modes[0])/(k-1), br=k>4? f.bPlat||f.bFsk : f.bRun||f.bFsk, b=br? baud(br) : 0;
@@ -560,13 +639,23 @@ function sidIqClass(f,g){
       tag:name+(k===2? ' '+fmtHz(sh,sh<1e3?0:1)+'Hz' : '')+(b? ' '+b+'Bd' : ''),
       det:k+' frequency levels, spacing '+fmtHz(sh,sh<1e3?0:1)+'Hz'+(b? ', ~'+b+' Bd' : '')};
   }
-  if(f.F2>.08 && f.F2>2.5*f.F1 && f.F1<.3){ const b=f.bEnv? baud(f.bEnv) : 0;
+  // жёстких ступенек нет — уровни в центрах символов: FSK с формированием импульсов (RRC у DMR, гаусс)
+  if(cvE<.45 && f.sModes && f.sModes.length>=2 && f.sModes.length<=8 && f.sConc>.6 && f.sMid<.2 && f.sChg>.2 && f.sChg<.93){
+    const k=f.sModes.length, sh=(f.sModes[k-1]-f.sModes[0])/(k-1), b=f.bFsk? baud(f.bFsk) : 0;
+    const name=k===2? '2-FSK' : k<=4? '4-FSK' : k+'-FSK';
+    return {t:k>4? 'MFSK' : 'FSK', conf:.75, levels:k, shift:k===2? sh : 0, spacing:sh, baud:b, burst,
+      tag:name+(k===2? ' '+fmtHz(sh,sh<1e3?0:1)+'Hz' : '')+(b? ' '+b+'Bd' : '')+(burst? ' TDMA' : ''),
+      det:k+' levels at symbol centres, spacing '+fmtHz(sh,sh<1e3?0:1)+'Hz'+(b? ', '+b+' Bd' : '')+(burst? ', bursts' : '')};
+  }
+  // у PSK линия — у несущей; у FSK линии z²/z⁴ на кратных сдвига, далеко от центра
+  const nearC=o=>o==null || Math.abs(o)<.15*bw;
+  if(f.F2>.08 && f.F2>2.5*f.F1 && f.F1<.3 && nearC(f.o2)){ const b=f.bEnv? baud(f.bEnv) : 0;
     return {t:'PSK', conf:.7, tag:'BPSK'+(b? ' '+b+'Bd' : ''), det:'line in z² (±180° phase)'+(b? ', ~'+b+' Bd' : ''), psk:2, baud:b}; }
-  if(f.F4>.05 && f.F4>2.5*f.F2 && f.F2<.05 && f.F1<.05){ const b=f.bEnv? baud(f.bEnv) : 0;
+  if(f.F4>.05 && f.F4>2.5*f.F2 && f.F2<.05 && f.F1<.05 && nearC(f.o4)){ const b=f.bEnv? baud(f.bEnv) : 0;
     return {t:'PSK', conf:.6, tag:'QPSK'+(b? ' '+b+'Bd' : ''), det:'line in z⁴ (4 phases)'+(b? ', ~'+b+' Bd' : ''), psk:4, baud:b}; }
   const wide=bw>Math.max(2.5*g.binHz,300), keyed=f.lowFrac>.12 && f.lowFrac<.9 && f.cv>.35;
   // ЧМ с заметной несущей (малая девиация) — раньше проверки несущей
-  if(cvLo && wide && f.spread>.15*bw && !keyed){ const c=sidFm(f,g); if(c) return c; }
+  if(cvLo && wide && f.spread>.15*bw && !keyed){ const c=sidFm(f,g,burst); if(c) return c; }
   if(f.F1>.25){
     if(keyed){
       const cw=bw<=Math.max(5*g.binHz,500);
@@ -576,7 +665,7 @@ function sidIqClass(f,g){
     if(f.cv>.15 && wide) return {t:'AM', conf:.7, tag:'AM', det:'carrier + envelope modulation'};
     return {t:g.rf? 'CAR' : 'TONE', conf:.6, tag:g.rf? 'carrier' : 'tone', det:'unmodulated'};
   }
-  if(cvLo && wide){ const c=sidFm(f,g); if(c) return c; }
+  if(cvLo && wide){ const c=sidFm(f,g,burst); if(c) return c; }
   if(g.lead.flat>.7 && bw>=20e3) return {t:'OFDM', conf:.5, tag:'OFDM '+fmtHz(bw,1), det:'noise-like envelope, flat spectrum'};
   if(bw>=1.5e3 && bw<5e3){
     const sb=g.lead.asym<-.06? 'USB' : g.lead.asym>.06? 'LSB' : 'SSB';
@@ -585,8 +674,13 @@ function sidIqClass(f,g){
   return null;
 }
 
-function sidFm(f,g){
-  const bw=g.obw;
+function sidFm(f,g,burst){
+  const bw=g.obw, t=g.lead;
+  // символы не выделились (шум), но спектр с плоской вершиной (у голоса — пик в центре) или пакеты
+  // TDMA — скорее цифра с формированием импульсов, чем голос
+  if(bw>=4e3 && bw<30e3 && !f.ctcss && (burst || (t.flat>.55 && t.bw3>.35*t.obw && t.wvar<.12)))
+    return {t:'DIG', conf:burst? .55 : .45, tag:'digital FM'+(burst? ' TDMA' : ''), fmDig:true, burst,
+      det:'constant envelope, '+(burst? 'bursts' : 'flat-top spectrum')+', symbols not resolved'};
   if(bw>=60e3) return {t:'WFM', conf:.7, tag:f.pilot? 'WFM stereo' : 'WFM', det:'constant envelope'+(f.pilot? ', 19 kHz pilot' : ''), pilot:f.pilot};
   if(!g.rf && bw<3e3) return null;
   const ct=f.ctcss? SID_CTCSS.reduce((a,b)=>Math.abs(b-f.ctcss)<Math.abs(a-f.ctcss)? b : a) : 0;
@@ -602,7 +696,7 @@ function sidHint(c,g){
     case 'FSK':
       if(bw<=80 && c.levels>2) return 'FT8/FT4/WSPR-like → ft8Rx';
       if(c.levels>2 || (!sh && c.levels)){
-        if(near(b,4800,.08)) return 'DMR / P25 / NXDN96 (4-FSK 4800 Bd)';
+        if(near(b,4800,.08)) return c.burst? 'DMR (TDMA, 4-FSK 4800 Bd)' : 'DMR repeater / P25 / NXDN96 (4-FSK 4800 Bd)';
         if(near(b,2400,.08)) return 'dPMR / NXDN48 (4-FSK 2400 Bd)';
         return '4-FSK data';
       }
@@ -635,6 +729,7 @@ function sidHint(c,g){
       if(near(bw,1.54e6,.1)) return 'DAB';
       return 'OFDM → ofdmRx';
     case 'DIG':
+      if(c.fmDig) return c.burst? 'DMR-like TDMA (too weak to resolve symbols)' : 'DMR / P25 / NXDN-like (too weak to resolve symbols)';
       if(g.rf && near(bw,200e3,.2)) return 'GSM-like channel';
       if(g.rf && bw>=5e3 && bw<=30e3) return 'digital voice/data (DMR/TETRA/P25?)';
       return '';
