@@ -1174,16 +1174,16 @@ function saWfGlRender(glp,W,H,lo,hi,lin){
 }
 
 // Фосфорный спектр для 'sa' (по мотивам gr-fosphor): на каждый столбец — гистограмма уровней
-// низкого разрешения с нарастанием/затуханием. Попадание размазывается по двум соседним
-// ячейкам (дробный уровень), столбец закрашивается от уровня соседа, чтобы фронты не рвались.
-// Под огибающей — заливка снизу. Маленькая картинка растягивается drawImage с билинейной
-// интерполяцией — плавно и дёшево; пересчёт только на свежий кадр, иначе рисуется кэш.
+// с затуханием. Попадание размазывается треугольником по соседним ячейкам (дробный
+// уровень — без ступенек), столбец дотягивается до уровня соседа, чтобы фронты не рвались.
+// Под сглаженной трассой — градиентная заливка снизу. По вертикали ячейка ~2px, картинка
+// растягивается drawImage с билинейной интерполяцией. Пересчёт только на свежий кадр.
 // Смена оси/размера/шкалы — сброс, старые попадания уже не в тех координатах.
-const PH_RISE=.25;
+const PH_K=1/1.5;                           // нормировка ядра: сумма по уровню = 1
 function saPhosphor(n,cx,W,H,ty,fresh,diff){
   const [lo,hi]=saBounds(n);
   const key=W+'|'+H+'|'+lo+'|'+hi+'|'+n.p.log+'|'+n.p.floor+'|'+n.p.top+'|'+diff;
-  const C=Math.max(2,Math.min(512,Math.ceil(W/2))), R=Math.max(8,Math.min(96,Math.round(H/3)));
+  const C=Math.max(2,Math.min(1024,Math.round(W))), R=Math.max(8,Math.min(200,Math.round(H/2)));
   let ph=n.ph;
   if(!ph || ph.key!==key){
     const off=document.createElement('canvas'); off.width=C; off.height=R;
@@ -1193,44 +1193,46 @@ function saPhosphor(n,cx,W,H,ty,fresh,diff){
   const a=ph.acc, live=ph.live, d=n.p.phDecay, sc=(H-2)/(R-1);
   if(fresh){
     // живая трасса — сглаживание по времени, как live spectrum у fosphor
-    for(let x=0;x<W;x++){ const t=ty[x]; live[x]= t>=H ? t : live[x]>=H ? t : live[x]+(t-live[x])*.25; }
+    for(let x=0;x<W;x++){ const t=ty[x]; live[x]= t>=H || live[x]>=H ? t : live[x]+(t-live[x])*.3; }
     for(let i=0;i<a.length;i++) a[i]*=d;
-    // уровень столбца — максимум по его пикселям, в долях ячейки снизу
+    // уровень столбца (в ячейках снизу) — максимум по его пикселям
     const lv=ph.lv, kx=W/C;
     for(let c=0;c<C;c++){
       let y=H;
-      for(let x=(c*kx)|0, e=Math.min(W,((c+1)*kx)|0||1); x<e; x++) if(n._inX[x] && ty[x]<y) y=ty[x];
+      for(let x=(c*kx)|0, e=Math.max((c*kx|0)+1,Math.min(W,((c+1)*kx)|0)); x<e; x++) if(n._inX[x] && ty[x]<y) y=ty[x];
       lv[c]= y>=H ? -1 : clamp((H-1-y)/sc,0,R-1); }
+    // ядро: треугольник по уровню × [.25 .5 .25] по соседним столбцам
+    const hit=(c,v,w)=>{
+      for(let b=Math.max(0,Math.ceil(v-1.5)), e=Math.min(R-1,Math.floor(v+1.5)); b<=e; b++){
+        const i=(R-1-b)*C+c, k=w*(1-Math.abs(b-v)/1.5)*PH_K;
+        a[i]+=k*.5; if(c>0) a[i-1]+=k*.25; if(c<C-1) a[i+1]+=k*.25; } };
     for(let c=0;c<C;c++){
       const v=lv[c]; if(v<0) continue;
-      const b=v|0, f=v-b, i=(R-1-b)*C+c;
-      a[i]+=(1-a[i])*PH_RISE*(1-f);
-      if(f>0 && b+1<R) a[i-C]+=(1-a[i-C])*PH_RISE*f;
-      // вертикальный фронт до уровня соседа — слабее основного попадания
-      const p=c>0?lv[c-1]:-1;
-      if(p>=0 && Math.abs(p-v)>1)
-        for(let bb=Math.round(Math.min(p,v))+1, e=Math.round(Math.max(p,v))-1; bb<=e; bb++){
-          const j=(R-1-bb)*C+c; a[j]+=(1-a[j])*PH_RISE*.4; }
+      hit(c,v,1);
+      const p=c>0?lv[c-1]:-1;               // вертикальный фронт до соседа — слабее
+      if(p>=0 && Math.abs(p-v)>1.5)
+        for(let b=Math.min(p,v)+1, e=Math.max(p,v)-1; b<=e; b+=1.5) hit(c,b,.35);
     }
     ph.dirty=true;
   }
+  // заливка снизу до сглаженной трассы, градиент цвета спектра
+  if(!ph.grad || ph.gradCol!==n.colTS){
+    const col=String(n.colTS).trim(); ph.gradCol=n.colTS;
+    try{ const g=cx.createLinearGradient(0,0,0,H); g.addColorStop(0,col+'88'); g.addColorStop(1,col+'28'); ph.grad=g; }
+    catch(e){ ph.grad=col; } }                // цвет не #rrggbb — без градиента
+  cx.beginPath(); cx.moveTo(0,H);
+  for(let x=0;x<W;x++) cx.lineTo(x,live[x]);
+  cx.lineTo(W,H); cx.closePath(); cx.fillStyle=ph.grad; cx.fill();
   const pal=paletteLut(n.p.palette);
   if(ph.dirty || ph.pal!==pal || ph.gain!==n.p.phGain){
     ph.dirty=false; ph.pal=pal; ph.gain=n.p.phGain;
-    const px=ph.img.data, g=n.p.phGain*.5;
-    for(let c=0;c<C;c++){
-      // сверху вниз: после первой заметной ячейки (огибающая) — заливка до низа
-      let top=-1;
-      for(let r=0;r<R;r++){
-        const i=r*C+c, j=i*4;
-        if(top<0 && a[i]<1e-3){ px[j+3]=0; continue; }
-        let v=1-Math.exp(-a[i]*g);
-        if(top<0 && v>.04) top=r;
-        if(top>=0){ const fl=.22*(1-.6*(r-top)/(R-top)); if(v<fl) v=fl; }
-        if(v<.01){ px[j+3]=0; continue; }
-        const k=heatIdx(v)*3;
-        px[j]=pal[k]; px[j+1]=pal[k+1]; px[j+2]=pal[k+2]; px[j+3]=Math.min(255,(v*3*255)|0); }
-    }
+    // a·(1-d) — доля кадров, попавших в ячейку
+    const px=ph.img.data, g=n.p.phGain*(1-d);
+    for(let i=0;i<a.length;i++){
+      const j=i*4, x=a[i];
+      if(x<2e-3){ px[j+3]=0; continue; }
+      const v=1-Math.exp(-x*g), k=heatIdx(.15+.85*v)*3;  // низ палитры почти чёрный — пропускаем
+      px[j]=pal[k]; px[j+1]=pal[k+1]; px[j+2]=pal[k+2]; px[j+3]=v>.4?255:(v*637)|0; }
     ph.ocx.putImageData(ph.img,0,0);
   }
   cx.imageSmoothingEnabled=true; cx.imageSmoothingQuality='high';
