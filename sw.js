@@ -7,11 +7,11 @@
 //
 // CACHE бампать вместе с ?v=N в index.html — иначе после правки файлов старый список ссылок
 // (со старым ?v=) продолжит переустанавливаться поверх уже закэшированного нового.
-const CACHE='dsp-shell-v57';
+const CACHE='dsp-shell-v58';
 const SHELL=[
   './',
   './index.html',
-  './styles.css?v=57',
+  './styles.css?v=58',
   './manifest.json',
   './favicon.svg',
   './icons/favicon-32.png',
@@ -20,20 +20,20 @@ const SHELL=[
   './icons/icon-512.png',
   './vendor/panzoom.min.js?v=4.6.2',
   './vendor/interact.min.js?v=1.10.28',
-  './core-engine.js?v=57',
-  './modules/analysis.js?v=57',
-  './modules/misc.js?v=57',
-  './modules/modulation.js?v=57',
-  './modules/output.js?v=57',
-  './modules/processing.js?v=57',
-  './modules/protocols.js?v=57',
-  './modules/sigid.js?v=57',
-  './modules/sources.js?v=57',
-  './modules/tinysa.js?v=57',
-  './modules/hfdl.js?v=57',
-  './modules/propagation.js?v=57',
-  './presets.js?v=57',
-  './core-graph.js?v=57',
+  './core-engine.js?v=58',
+  './modules/analysis.js?v=58',
+  './modules/misc.js?v=58',
+  './modules/modulation.js?v=58',
+  './modules/output.js?v=58',
+  './modules/processing.js?v=58',
+  './modules/protocols.js?v=58',
+  './modules/sigid.js?v=58',
+  './modules/sources.js?v=58',
+  './modules/tinysa.js?v=58',
+  './modules/hfdl.js?v=58',
+  './modules/propagation.js?v=58',
+  './presets.js?v=58',
+  './core-graph.js?v=58',
 ];
 self.addEventListener('install',e=>{
   self.skipWaiting();                                 // не ждать закрытия всех вкладок — как и ручной ?v=N, обновление должно применяться сразу
