@@ -26,7 +26,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 
 ### Analysis
 - Spectrum analyzer / waterfall (optional phosphor view; the waterfall keeps its history at full resolution, so zoom, dB range and palette changes redraw it without losing detail), persistence spectrum, oscilloscope, constellation, eye diagram
-- CFAR signal detector, channel SNR, channel grid, band scanner, auto frequency scanner
+- CFAR signal detector (noise estimate in linear power: OS — 75th percentile, robust to strong neighbours; SO — smallest of the two sides; CA — mean; a target is shown after M hits in the last N spectrum frames, so single noise spikes are dropped; outputs SNR of the strongest target and the noise floor), channel SNR, channel grid, band scanner, auto frequency scanner
 - Band plans, bookmarks, signal recognition and signal type identifier
 - Goertzel, autocorrelation, cross-correlation, frequency response / coherence
 - Harmonics & THD, third-octaves, LUFS-like loudness, level statistics, spectral descriptors
