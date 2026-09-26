@@ -166,6 +166,7 @@ const pw=Math.max(1,Math.round(logW*s)), ph=Math.max(1,Math.round(logH*s));
 if(!force && pw===cv.pxW && ph===cv.pxH) return;     // смена размера буфера стирает канву — только по делу
 nativeW.set.call(cv, cv.pxW=pw);
 nativeH.set.call(cv, cv.pxH=ph);
+cv.pxGen=(cv.pxGen|0)+1;                             // буфер стёрт — кэширующим draw() надо перерисовать
 cx.setTransform(pw/logW,0,0,ph/logH,0,0); };
 HiDPICanvases.set(cv,restretch);
 // Chrome на Android сбрасывает 2D-контекст в фоне; после восстановления матрица сброшена
