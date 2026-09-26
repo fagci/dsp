@@ -2268,7 +2268,7 @@ def({ id:'bandplan', title:'Band Plan (Presets/Editable)', cat:'Analysis',
 // доступных freq (частота закладки) и bands (весь список — для оверлея на 'sa'). Так к закладке
 // можно привязать, например, вид модуляции и полосу демодулятора и подключить их прямо на 'rtlsdr' —
 // выбор закладки настраивает приёмник целиком, а не только частоту.
-const DEMOD_OPTS=['IQ','WFM','NFM','AM','USB','LSB'];             // как у rtlsdr.demod (sources.js)
+const DEMOD_OPTS=['IQ','WFM','NFM','AM','SAM','USB','LSB'];             // как у rtlsdr.demod (sources.js)
 async function bmRefresh(n){
   n.loadedListName=n.p.listName;
   const items=await ListDB.list(n.p.listName);
