@@ -1555,15 +1555,17 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       };
       cv.addEventListener('pointerdown', ev=>{
         if(ev.pointerType==='touch'){
+          // первый палец нового жеста — сброс касаний, чьё отпускание не дошло до канвы
+          if(ev.isPrimary){ touches.clear(); pinch=null; gesture=false; }
           touches.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
+          // захват каждого пальца: иначе отпускание за пределами канвы теряется и касание "висит"
+          cv.setPointerCapture(ev.pointerId);
           if(touches.size>=2){
-            if(drag && cv.hasPointerCapture(drag.pid)) cv.releasePointerCapture(drag.pid);
             drag=null; n._dragActive=false; gesture=true; n.pickT=null;
             if(touches.size===2 && n.s){
               const {mx,d}=pinchState();
               pinch={d0:d, f0:saFreq(n,mx), r0:saFreq(n,1)-saFreq(n,0)};
             }
-            cv.setPointerCapture(ev.pointerId);
             return;
           }
         }
@@ -1643,6 +1645,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       };
       cv.addEventListener('pointerup', endDrag);
       cv.addEventListener('pointercancel', endDrag);
+      cv.addEventListener('lostpointercapture', ev=>{ if(touches.has(ev.pointerId)) endDrag(ev); });
 
       // Закладки (bookmark-точки band plan'а, см. saBandPlan/processing.js): наведение поднимает
       // подпись под курсором над соседними (n._bmHoverFreq, читает saBandPlan на следующий кадр —
