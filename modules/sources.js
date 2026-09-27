@@ -316,6 +316,7 @@ def({ id:'file', title:'Audio File', cat:'Sources',
 function ssInit(n,K){
   n.sK=K; n.sq=[]; n.sP=new Float64Array(K+1); n.sClk=null; n.sLastT=0; n.sDt=0;
   n.sGaps=0; n.sRate=0; n.sRT0=0; n.sRN=0;
+  n.mW0=0; n.mLast=null; n.mEvRate=null; n.mDup=0; n.tsBad=false;
 }
 // Метки событий бывают грубыми: Firefox округляет timeStamp (защита от фингерпринтинга,
 // вплоть до 16.7 мс), и при сотнях событий в секунду у многих одна и та же метка. Поэтому
@@ -361,7 +362,29 @@ function ssProcess(n,outs){
 }
 function ssStatus(n){
   if(!n.sLastT) return '';
-  return `${n.sRate.toFixed(1)} Hz`+(n.sGaps?` · gaps ${n.sGaps}`:'');
+  return `${n.sRate.toFixed(1)} Hz`+(n.sGaps?` · gaps ${n.sGaps}`:'')+
+    (n.mEvRate!=null?` · events ${n.mEvRate.toFixed(0)}/s`:'')+(n.mDup?` · repeats ${n.mDup}`:'')+
+    (n.tsBad?` · timeStamp ×${n.tsRatio.toFixed(2)}, using arrival time`:'');
+}
+// devicemotion: одно событие — не обязательно новый отсчёт. Браузер может слать событие на
+// обновление любого из датчиков (ускорение/гироскоп) с теми же значениями остальных — такие
+// повторы отбрасываем, иначе спектр получает ступеньки. timeStamp сверяем с performance.now:
+// если его масштаб/часы другие, частоты спектра поедут — тогда берём время прихода.
+function ssMotion(n,e,v){
+  const wall=performance.now()/1000, ts=e.timeStamp/1000;
+  if(!n.mW0){ n.mW0=wall; n.mT0=ts; n.mEv=0; n.mDup=0; n.tsBad=false; }
+  n.mEv++;
+  const dw=wall-n.mW0;
+  if(dw>=2){
+    n.mEvRate=n.mEv/dw; n.tsRatio=(ts-n.mT0)/dw;
+    const bad=!(Math.abs(n.tsRatio-1)<.05);
+    if(bad!==n.tsBad){ n.tsBad=bad;                  // смена шкалы времени — тайминг потока заново
+      n.sq=[]; n.sClk=null; n.sLastT=0; n.sDt=0; n.sRate=0; n.sRT0=0; }
+    n.mW0=wall; n.mT0=ts; n.mEv=0; }
+  const L=n.mLast;
+  if(L && L[0]===v[0] && L[1]===v[1] && L[2]===v[2]){ n.mDup++; return; }
+  n.mLast=v;
+  ssPush(n,n.tsBad?wall:ts,v);
 }
 const SS_XYZ=[{n:'x',t:'num'},{n:'y',t:'num'},{n:'z',t:'num'},
               {n:'sx',t:'sig'},{n:'sy',t:'sig'},{n:'sz',t:'sig'},{n:'smag',t:'sig'}];
@@ -383,7 +406,7 @@ def({ id:'accel', title:'Accelerometer', cat:'Sources',
       const a=(n.p.grav?e.accelerationIncludingGravity:e.acceleration)||{};
       if(a.x==null) return;
       n.status=''; n.iv=e.interval;
-      ssPush(n,e.timeStamp/1000,[a.x,a.y,a.z]); };
+      ssMotion(n,e,[a.x,a.y,a.z]); };
     window.addEventListener('devicemotion',n.onMotion); }},
     {n:'grav',t:'check',d:true,label:'include gravity (raw)'}],
   init:n=>{ ssInit(n,3); n.status='not started'; },
@@ -425,7 +448,7 @@ async function gsensorMotion(n){
   catch(e){ n.status='error: '+e.message; return; }
   ssInit(n,3); n.via='devicemotion'; n.status='waiting for devicemotion…';
   n.onMotion=e=>{ const v=get(e); if(!v) return;
-    n.v=v; n.status=''; ssPush(n,e.timeStamp/1000,v); };
+    n.v=v; n.status=''; ssMotion(n,e,v); };
   window.addEventListener('devicemotion',n.onMotion);
 }
 function gsensorStart(n){
