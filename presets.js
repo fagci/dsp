@@ -399,7 +399,8 @@ const nt=addNode('note',40,40,{text:'Receive: point the camera at a blinking sou
   'Transmit: type text into «Morse: Transmit», press «Send»,\\n'+
   'then «Fullscreen» on the transmitting screen — it will blink Morse.'});
 nt.size.w=420; nt.size.h=220; applySize(nt);
-const c =addNode('cam',40,300,{roi:true,roiX:.4,roiY:.4,roiW:.2,roiH:.2,roiAuto:true});
+const c =addNode('cam',40,300,{roi:true,roiX:.4,roiY:.4,roiW:.2,roiH:.2,roiAuto:true,
+  ae:false,exp:.7,af:false,awb:false});
 const g =addNode('thresh',420,300,{thr:.55,hys:.08,hold:0});
 const mo=addNode('morseRx',680,300,{auto:true,thr:.5,minRun:30});
 mo.size.w=320; mo.size.h=180; applySize(mo);
