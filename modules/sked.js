@@ -60,6 +60,40 @@ function skedItuPos(itu){
   return c ? {lat:c.lat, lon:c.lon} : null;
 }
 
+// Коды целевых регионов EiBi, которые накрывают точку приёма (грубые прямоугольники).
+// Передача, направленная в другой регион, обычно не слышна или слышна хуже — по этому и фильтр.
+function skedMyTargets(lat,lon){
+  const c=new Set(), in_=(la0,la1,lo0,lo1)=>lat>=la0 && lat<=la1 && lon>=lo0 && lon<=lo1;
+  if(in_(34,72,-25,60)){ c.add('Eu');
+    if(lon<5) c.add('WEu'); else if(lon<20) c.add('CEu'); else c.add('EEu');
+    if(lat>55) c.add('NEu'); if(lat<46) c.add('SEu'); if(lat<48 && lon>12 && lon<30) c.add('SEEu'); }
+  if(in_(40,80,20,180)) c.add('CIS');
+  if(in_(45,80,60,180)){ c.add('Sib'); c.add('NAs'); c.add('As'); }
+  if(in_(35,56,46,90)){ c.add('CAs'); c.add('As'); }
+  if(in_(5,36,60,95)){ c.add('SAs'); c.add('As'); }
+  if(in_(-11,25,92,142)){ c.add('SEA'); c.add('SEAs'); c.add('As'); }
+  if(in_(18,56,100,150)){ c.add('EAs'); c.add('FE'); c.add('As'); }
+  if(in_(12,42,25,63)){ c.add('ME'); c.add('MEa'); c.add('As'); }
+  if(in_(-35,37,-20,52)){ c.add('Af');
+    if(lat>15) c.add('NAf'); if(lon<12 && lat<20 && lat>-5) c.add('WAf');
+    if(lon>28 && lat<16 && lat>-12) c.add('EAf'); if(lat<-15) c.add('SAf');
+    if(lat>-10 && lat<12 && lon>=12 && lon<=30) c.add('CAf'); }
+  if(in_(15,75,-170,-50)){ c.add('NAm'); c.add('Am'); }
+  if(in_(7,25,-118,-77)){ c.add('CAm'); c.add('Am'); c.add('LAm'); }
+  if(in_(10,27,-86,-59)){ c.add('Car'); c.add('Am'); c.add('LAm'); }
+  if(in_(-56,13,-82,-34)){ c.add('SAm'); c.add('Am'); c.add('LAm'); }
+  if(in_(-50,0,110,180) || in_(-30,25,150,180) || in_(-30,25,-180,-130)){ c.add('Oc'); c.add('Pac'); }
+  if(in_(-45,-10,112,155)) c.add('Aus');
+  if(in_(-48,-34,165,179)) c.add('NZ');
+  return [...c];
+}
+function skedTargetOk(e,codes){
+  const t=String(e.target||'').trim();
+  if(!t) return true;                                  // цель не указана — не отбрасываем
+  const lc=codes.map(x=>x.toLowerCase());
+  return t.split(/[,;\/ +&]+/).some(x=>lc.includes(x.toLowerCase()));
+}
+function skedPos(e){ return e.lat!=null ? {lat:e.lat,lon:e.lon} : skedItuPos(e.txItu); }
 function skedParse(text){
   const t=text.replace(/^﻿/,'');
   const nl=t.indexOf('\n'), head=(nl<0?t:t.slice(0,nl)).trim();
@@ -114,11 +148,15 @@ function skedLine(e){
 def({ id:'sked', title:'Station Schedule', cat:'Radio',
   // Какая станция сейчас в эфире: метки на спектре (bands → 'sa'), список на частоте настройки,
   // передатчики на карту (rec) с расстоянием и азимутом от своей позиции.
-  ins:[{n:'freq',t:'num'}],
+  // spanLo/spanHi (Гц) — полоса приёмника (freqLo/freqHi у USB SDR): метки только в ней
+  ins:[{n:'freq',t:'num'},{n:'spanLo',t:'num'},{n:'spanHi',t:'num'}],
   outs:[{n:'bands',t:'bands'},{n:'now',t:'txt'},{n:'rec',t:'rec'},{n:'count',t:'num'}],
   readout:true, tall:true, w:360,
   params:[{n:'tol',t:'range',min:0.1,max:50,step:0.1,d:5,label:'match ±, kHz'},
           {n:'filter',t:'text',d:'',label:'filter (station, language, target, ITU)'},
+          {n:'area',t:'check',d:true,label:'only aimed at my area'},
+          {n:'targets',t:'text',d:'',label:'my target codes (empty — auto from position)'},
+          {n:'maxKm',t:'range',min:0,max:20000,step:100,d:0,label:'max distance to transmitter, km (0 — any)'},
           {n:'lo',t:'num',d:0,label:'bands from, kHz (0 — all)'},
           {n:'hi',t:'num',d:0,label:'bands to, kHz'},
           {n:'file',t:'file',accept:'.csv,.txt,text/csv,text/plain',fn:(n,f)=>{
@@ -128,13 +166,18 @@ def({ id:'sked', title:'Station Schedule', cat:'Radio',
           {n:'dl',t:'button',label:'Download from URL',fn:n=>skedDownload(n),adv:true},
           {n:'clr',t:'button',label:'Forget schedule',fn:n=>{ n.list=[]; n.src=''; geoPut('sked',null).catch(()=>{}); n.key=''; },adv:true}],
   init:n=>{
+    n.span=[0,0]; n.codes=[]; n.dropped=0;
     n.list=[]; n.src=''; n.msg=''; n.key=''; n.bands=[]; n.onAir=[]; n.nowTxt=''; n.recQ=null; n.lastRecKey='';
     geoGet('sked').then(v=>{ if(v && !n.list.length){ n.list=v.list; n.src=v.src; n.key=''; } }).catch(()=>{});
   },
   process(n,I){
     const now=Date.now(), minute=Math.floor(now/60000);
     const f=typeof I.freq==='number' && isFinite(I.freq) ? I.freq/1000 : null;   // вход — Гц
-    const key=[minute,n.list.length,n.src,n.p.filter,n.p.lo,n.p.hi,GeoBase.state,GeoMe.lat,GeoMe.lon].join('|');
+    const spLo=typeof I.spanLo==='number' && isFinite(I.spanLo) ? I.spanLo : 0;
+    const spHi=typeof I.spanHi==='number' && isFinite(I.spanHi) ? I.spanHi : 0;
+    n.span=[spLo,spHi];
+    const key=[minute,n.list.length,n.src,n.p.filter,n.p.lo,n.p.hi,n.p.area,n.p.targets,n.p.maxKm,
+      Math.round(spLo/1e3),Math.round(spHi/1e3),GeoBase.state,GeoMe.lat,GeoMe.lon].join('|');
     if(key!==n.key){ n.key=key; skedUpdate(n,now); }
     const fk=f!=null ? Math.round(f*10)+'|'+n.p.tol+'|'+minute : 'none';
     if(fk!==n.fKey){
@@ -150,7 +193,8 @@ def({ id:'sked', title:'Station Schedule', cat:'Radio',
   },
   draw(n){
     const r=n.el.querySelector('.readout');
-    const head=(n.msg?n.msg+'\n':'')+(n.list.length ? n.src+' · '+n.list.length+' entries · on air '+n.onAir.length :
+    const head=(n.msg?n.msg+'\n':'')+(n.list.length ? n.src+' · '+n.list.length+' entries · on air '+n.onAir.length+
+      (n.dropped?' (filtered out '+n.dropped+')':'')+(n.p.area?'\narea: '+(n.codes.length?n.codes.join(' '):'set your position or target codes'):'') :
       'load a schedule: EiBi CSV or your own CSV (khz, time, station, …)');
     r.textContent=head+(n.nowTxt ? '\n— on the tuned frequency —\n'+n.nowTxt : '');
   }});
@@ -160,15 +204,26 @@ function skedMatch(e,q){
   return q.toLowerCase().split(/\s+/).filter(Boolean).every(w=>s.includes(w));
 }
 function skedUpdate(n,now){
-  const lo=+n.p.lo||0, hi=+n.p.hi||0;
-  n.onAir=n.list.filter(e=>skedOnAir(e,now) && skedMatch(e,n.p.filter));
-  const vis=n.onAir.filter(e=>(!lo || e.khz>=lo) && (!hi || e.khz<=hi));
+  const lo=+n.p.lo||0, hi=+n.p.hi||0, [sLo,sHi]=n.span||[0,0];
+  const own=String(n.p.targets||'').split(/[,;\s]+/).filter(Boolean);
+  n.codes=own.length ? own : GeoMe.lat!=null ? skedMyTargets(GeoMe.lat,GeoMe.lon) : [];
+  const useArea=n.p.area && n.codes.length, maxKm=+n.p.maxKm||0, me=GeoMe.lat!=null;
+  const air=n.list.filter(e=>skedOnAir(e,now) && skedMatch(e,n.p.filter));
+  n.onAir=air.filter(e=>{
+    if(useArea && !skedTargetOk(e,n.codes)) return false;
+    if(maxKm>0 && me){                                 // без известной точки передатчика — отбрасываем
+      const p=skedPos(e); if(!p || geoDist(GeoMe.lat,GeoMe.lon,p.lat,p.lon)>maxKm) return false; }
+    return true;
+  });
+  n.dropped=air.length-n.onAir.length;
+  const vis=n.onAir.filter(e=>(!lo || e.khz>=lo) && (!hi || e.khz<=hi) &&
+    (!(sHi>sLo) || (e.khz*1000>=sLo && e.khz*1000<=sHi)));
   n.bands=vis.slice(0,3000).map(e=>({lo:e.khz*1000, hi:e.khz*1000, step:0,
     label:e.khz+' '+e.station+(e.lang?' '+e.lang:''), color:skedColor(e.lang)}));
   // передатчики: одна запись на станцию+страну передатчика, частоты списком
   const tx=new Map();
   for(const e of vis){
-    const pos=e.lat!=null ? {lat:e.lat,lon:e.lon} : skedItuPos(e.txItu);
+    const pos=skedPos(e);
     if(!pos) continue;
     const id='tx:'+e.station+'/'+(e.txItu||'');
     let t=tx.get(id);
