@@ -1531,7 +1531,8 @@ function ft8Payload(tones){                         // 79 тонов → 174 б�
 def({ id:'ft8Rx', title:'FT8: Receive Slots', cat:'Decoders',
   ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'top',t:'num'},{n:'thr',t:'num'},
        {n:'keep',t:'num'},{n:'tones',t:'num'},{n:'decode',t:'num'},{n:'budget',t:'num'}],
-  outs:[{n:'f',t:'num'},{n:'score',t:'num'},{n:'dt',t:'num'},{n:'busy',t:'num'}],
+  outs:[{n:'f',t:'num'},{n:'score',t:'num'},{n:'dt',t:'num'},{n:'busy',t:'num'},
+        {n:'msg',t:'txt'},{n:'rec',t:'rec'}],        // rec — по записи на сообщение: позывной, локатор, SNR
   readout:true, tall:true,
   params:[{n:'fmin',t:'range',min:100,max:3000,step:6.25,d:200},
           {n:'fmax',t:'range',min:200,max:3200,step:6.25,d:2800},
@@ -1549,7 +1550,8 @@ def({ id:'ft8Rx', title:'FT8: Receive Slots', cat:'Decoders',
           {n:'save',t:'button',label:'Save log',fn:n=>ft8Save(n)},
           {n:'clr',t:'button',label:'Clear log',fn:n=>{n.log=[];ft8Text(n);}}],
   init:n=>{ n.buf=new Float32Array(FT8_SR*15); n.wp=0; n.acc=0; n.sum=0; n.cnt=0;
-            n.slot=-1; n.log=[]; n.text='waiting for slot boundary…'; n.f=0; n.sc=0; n.dt=0; n.busy=0; },
+            n.slot=-1; n.log=[]; n.text='waiting for slot boundary…'; n.f=0; n.sc=0; n.dt=0; n.busy=0;
+            n.recQ=[]; n.msgOut=''; n.grids=new Map(); },
   process(n,I){
     for(const k of ['fmin','fmax','top','thr','keep','budget']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     for(const k of ['tones','decode']) if(typeof I[k]==='number') setMod(n,k,I[k]>=0.5);
@@ -1569,7 +1571,8 @@ def({ id:'ft8Rx', title:'FT8: Receive Slots', cat:'Decoders',
       n.filled=0; }
     n.filled=(n.filled||0)+BLOCK*step;
     n.busy=clamp(n.filled/(FT8_SR*15),0,1);
-    return {f:n.f, score:n.sc, dt:n.dt, busy:n.busy}; },
+    const rec=n.recQ.length ? n.recQ.splice(0) : null;
+    return {f:n.f, score:n.sc, dt:n.dt, busy:n.busy, msg:n.msgOut, rec}; },
   draw(n){ const r=n.el.querySelector('.readout');
     if(r.textContent!==n.text){ const atTop=r.scrollTop<8;
       r.textContent=n.text; if(atTop) r.scrollTop=0; } }});
