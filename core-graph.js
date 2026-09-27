@@ -822,7 +822,26 @@ function syncGridBg(){                                // точки фона д�
 cv.style.backgroundSize=(24*view.k)+'px '+(24*view.k)+'px';
 cv.style.backgroundPosition=(view.x*view.k)+'px '+(view.y*view.k)+'px';
 }
-cv.addEventListener('wheel',e=>{ zoomTouch(); panzoom.zoomWithWheel(e); },{passive:false});
+// Плавный зум колесом: цель копится пропорционально deltaY (тачпад — мелко, колесо — щелчками),
+// масштаб догоняет её по кадрам. panzoom.zoomWithWheel прыгал фиксированным шагом на событие.
+let wz=null;
+function wzStep(){
+const k=panzoom.getScale(), t=wz.k;
+const nk=Math.abs(t-k)<t*.002 ? t : k+(t-k)*.3;
+panzoom.zoomToPoint(nk,{clientX:wz.x,clientY:wz.y},{animate:false});
+zoomTouch();
+if(nk!==t) wz.raf=requestAnimationFrame(wzStep); else wz=null;
+}
+cv.addEventListener('wheel',e=>{
+e.preventDefault();
+let dy=e.deltaY||e.deltaX;
+if(e.deltaMode===1) dy*=16; else if(e.deltaMode===2) dy*=400;   // строки/страницы (Firefox)
+dy=clamp(dy,-120,120);
+if(!wz) wz={k:panzoom.getScale(), x:0, y:0, raf:0};
+wz.k=clamp(wz.k*Math.exp(-dy*.0015),.25,2.5); wz.x=e.clientX; wz.y=e.clientY;
+zoomTouch();
+if(!wz.raf) wz.raf=requestAnimationFrame(wzStep);
+},{passive:false});
 /* ---- два пальца — пан/зум даже поверх узла; один палец — обычное поведение (drag узла / пан по пустому месту) ---- */
 function stopAllDrags(){                              // второй палец не должен параллельно тащить узел
 (interact.interactions?.list||[]).forEach(i=>{ try{ i.stop(); }catch(e){} });
