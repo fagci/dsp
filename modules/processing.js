@@ -485,7 +485,7 @@ def({ id:'hilbert', title:'Hilbert Transform', cat:'Processing', ins:[{n:'in',t:
 
 // Фазоскоп: X-Y осциллограф (фигуры Лиссажу) + метр фазовой корреляции пары каналов.
 // +1 — каналы синфазны, −1 — в противофазе (взаимно гасят друг друга в моно), 0 — не связаны.
-def({ id:'xyscope', title:'Phase Scope (X-Y)', cat:'Processing', ins:[{n:'x',t:'sig'},{n:'y',t:'sig'}],
+def({ id:'xyscope', lazy:'proc', title:'Phase Scope (X-Y)', cat:'Processing', ins:[{n:'x',t:'sig'},{n:'y',t:'sig'}],
   outs:[{n:'corr',t:'num'}],
   view:{h:220}, resize:true, readout:true,
   params:[{n:'gain',t:'range',min:.1,max:8,step:.1,d:1,label:'gain'},
@@ -589,7 +589,7 @@ function sonarAnalyze(n,p,sr){
   } else n._havePrevPh=false;
   n.env=env;
 }
-def({ id:'sonar', title:'Monostatic Sonar (chirp)', cat:'Radar', ins:[{n:'in',t:'sig'}],
+def({ id:'sonar', lazy:'proc', title:'Monostatic Sonar (chirp)', cat:'Radar', ins:[{n:'in',t:'sig'}],
   outs:[{n:'out',t:'sig'},
         {n:'range1',t:'num'},{n:'level1',t:'num'},{n:'motion1',t:'num'},
         {n:'range2',t:'num'},{n:'level2',t:'num'},
@@ -838,7 +838,7 @@ def({ id:'scan', title:'Frame Line', cat:'Video', ins:[{n:'img',t:'img'},{n:'row
     return {out:o}; }});
 
 
-def({ id:'bright', title:'Region Brightness', cat:'Video',
+def({ id:'bright', lazy:'proc', title:'Region Brightness', cat:'Video',
   ins:[{n:'img',t:'img'},{n:'x',t:'num'},{n:'y',t:'num'},{n:'w',t:'num'},{n:'h',t:'num'},
        {n:'auto',t:'num'},{n:'invert',t:'num'}],
   outs:[{n:'out',t:'num'},{n:'raw',t:'num'}], view:{h:46},
@@ -880,7 +880,7 @@ def({ id:'bright', title:'Region Brightness', cat:'Video',
     cx.fillText(n.v.toFixed(3)+(n.p.auto?' auto':''),3,10); }});
 
 
-def({ id:'capture', title:'Capture & Loop', cat:'Processing',
+def({ id:'capture', lazy:'proc', title:'Capture & Loop', cat:'Processing',
   ins:[{n:'in',t:'sig'},{n:'trig',t:'num'},{n:'sec',t:'num'},{n:'thr',t:'num'},{n:'rate',t:'num'},{n:'loop',t:'num'}],
   outs:[{n:'out',t:'sig'},{n:'pos',t:'num'},{n:'playing',t:'num'}],
   view:{h:90}, resize:true, readout:true,
@@ -1091,7 +1091,7 @@ def({ id:'cal', title:'Calibration', cat:'Processing',
     n.v.toFixed(2)+' '+n.p.unit+'  (input '+n.raw.toFixed(2)+')'; }});
 
 
-def({ id:'nlms', title:'Adaptive Filter', cat:'Processing',
+def({ id:'nlms', lazy:'proc', title:'Adaptive Filter', cat:'Processing',
   ins:[{n:'d',t:'sig'},{n:'x',t:'sig'},{n:'mu',t:'num'},{n:'leak',t:'num'},{n:'freeze',t:'num'}],
   outs:[{n:'out',t:'sig'},{n:'y',t:'sig'},{n:'err',t:'num'}],
   view:{h:40}, readout:true,

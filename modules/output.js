@@ -52,7 +52,7 @@ function recSelect(n, rec, autoplay){
   updateRecorderStatus(n);
 }
 
-def({ id:'triggerRecorder', title:'Trigger Recorder', cat:'Output',
+def({ id:'triggerRecorder', lazy:'proc', title:'Trigger Recorder', cat:'Output',
   ins:[{n:'in',t:'sig'},{n:'trig',t:'num'},{n:'threshold',t:'num'},{n:'preTime',t:'num'},
        {n:'postTime',t:'num'},{n:'maxDuration',t:'num'},{n:'trigHold',t:'num'},
        {n:'clipId',t:'num'},{n:'play',t:'num'},{n:'rate',t:'num'},{n:'gain',t:'num'}],
@@ -287,7 +287,7 @@ function initRecorderUI4(n){
   n.waveCx = n.waveCv.getContext('2d');
   root.append(n.waveCv);
 
-  n.statusEl = document.createElement('div');
+  n.statusEl = document.createElement('div'); n._statusHtml = null;
   n.statusEl.style.cssText = 'display:flex;gap:8px;padding:2px 0;font-size:11px;color:#6c7a80;flex-shrink:0;';
   n.statusEl.textContent = '⏹ waiting';
   root.appendChild(n.statusEl);
@@ -338,13 +338,12 @@ function initRecorderUI4(n){
 
 function updateRecorderStatus(n){
   if(!n.statusEl) return;
-  if(n.recording){
-    const dur = (n.buffer.length || 0) / Eng.sr;
-    n.statusEl.innerHTML = `🔴 <span style="color:#e05c5c;">RECORDING</span> ${dur.toFixed(1)}s  (${n.buffer.length} samples)`;
-    n.statusEl.style.color = '#e05c5c';
-  } else {
-    n.statusEl.innerHTML = `⏹ ${n.p.mode}  |  recordings: ${n.recordings.length}`;
-    n.statusEl.style.color = '#6c7a80';
+  const html = n.recording
+    ? `🔴 <span style="color:#e05c5c;">RECORDING</span> ${((n.buffer.length || 0) / Eng.sr).toFixed(1)}s  (${n.buffer.length} samples)`
+    : `⏹ ${n.p.mode}  |  recordings: ${n.recordings.length}`;
+  if(html !== n._statusHtml){                        // innerHTML — разбор и layout, только при изменении
+    n._statusHtml = html; n.statusEl.innerHTML = html;
+    n.statusEl.style.color = n.recording ? '#e05c5c' : '#6c7a80';
   }
   if(n.infoEl) n.infoEl.textContent = `${n.recordings.length} recordings`;
   if(n.playBtn) n.playBtn.textContent = n.play ? '⏸' : '▶';
@@ -629,6 +628,7 @@ def({ id:'geiger', title:'Geiger Counter', cat:'Output',
     return {audio: audioOut, rate: n.rate};
   },
   draw(n, cv, cx){
+    if(!cv) return;                                   // у узла нет view — иначе исключение каждый кадр
     const W = cv.width || 200;
     const H = cv.height || 80;
     cx.clearRect(0,0,W,H);
@@ -1070,7 +1070,7 @@ function dl(blob,name){ const a=document.createElement('a');
   a.href=URL.createObjectURL(blob); a.download=name; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
 
-def({ id:'planeMap', title:'Aircraft Map', cat:'Output',
+def({ id:'planeMap', lazy:'manual', title:'Aircraft Map', cat:'Output',
   ins:[{n:'trig',t:'num'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'id',t:'txt'},
        {n:'gsTrig',t:'num'},{n:'gsLat',t:'num'},{n:'gsLon',t:'num'},{n:'gsName',t:'txt'}],
   view:{h:300}, resize:true,
@@ -1084,7 +1084,7 @@ def({ id:'planeMap', title:'Aircraft Map', cat:'Output',
       const lat=typeof I.lat==='number'?I.lat:null, lon=typeof I.lon==='number'?I.lon:null;
       const id=(typeof I.id==='string'&&I.id)?I.id:'?';
       if(typeof lat==='number'&&typeof lon==='number'&&isFinite(lat)&&isFinite(lon))
-        n.tracks[id]={lat,lon,t:Date.now()};
+        { n.tracks[id]={lat,lon,t:Date.now()}; redraw(n); }
     }
     n.prevTrig=trig;
     // наземные станции — координаты фиксированные (справочник), просто держим "живой" отметкой
@@ -1093,7 +1093,7 @@ def({ id:'planeMap', title:'Aircraft Map', cat:'Output',
       const lat=typeof I.gsLat==='number'?I.gsLat:null, lon=typeof I.gsLon==='number'?I.gsLon:null;
       const name=(typeof I.gsName==='string'&&I.gsName)?I.gsName:'📡 ?';
       if(typeof lat==='number'&&typeof lon==='number'&&isFinite(lat)&&isFinite(lon))
-        n.stations[name]={lat,lon,t:Date.now()};
+        { n.stations[name]={lat,lon,t:Date.now()}; redraw(n); }
     }
     n.prevGsTrig=gsTrig;
     return {};

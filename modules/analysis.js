@@ -40,7 +40,7 @@ var PALETTES = {
 };
 
 // ---
-def({ id:'birdSong', title:'Bird Song Analyzer', cat:'Analysis',
+def({ id:'birdSong', lazy:'proc', title:'Bird Song Analyzer', cat:'Analysis',
   ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'sensitivity',t:'num'},
        {n:'minDuration',t:'num'},{n:'maxGap',t:'num'},{n:'clusters',t:'num'}],
   outs:[{n:'syllable',t:'txt'},{n:'frequency',t:'num'},{n:'activity',t:'num'}],
@@ -476,7 +476,7 @@ function recognizePattern(syllables){
 
 
 
-def({ id:'persist', title:'Persistence Spectrum', cat:'Analysis',
+def({ id:'persist', lazy:'proc', title:'Persistence Spectrum', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'log',t:'num'},
        {n:'floor',t:'num'},{n:'top',t:'num'},{n:'decay',t:'num'},{n:'gain',t:'num'}],
   outs:[{n:'fsel',t:'num'}], view:{h:220}, resize:true, pick:true,
@@ -911,7 +911,7 @@ def({ id:'octave', title:'Third-Octaves', cat:'Analysis', ins:[{n:'spec',t:'spec
     'total '+(n.tot||-120).toFixed(1)+' dBFS'+(n.p.weight!=='none'?' ('+n.p.weight+')':''); }});
 
 
-def({ id:'ir', title:'Impulse Response & RT60', cat:'Analysis',
+def({ id:'ir', lazy:'proc', title:'Impulse Response & RT60', cat:'Analysis',
   ins:[{n:'ref',t:'sig'},{n:'meas',t:'sig'}],
   outs:[{n:'rt60',t:'num'},{n:'delayMs',t:'num'}],
   view:{h:150}, resize:true, readout:true,
@@ -941,7 +941,7 @@ def({ id:'ir', title:'Impulse Response & RT60', cat:'Analysis',
 
 
 /* ---------- анализ ---------- */
-def({ id:'scope', title:'Oscilloscope', cat:'Analysis',
+def({ id:'scope', lazy:'proc', title:'Oscilloscope', cat:'Analysis',
   ins:[{n:'in1',t:'sig'},{n:'in2',t:'sig'},{n:'in3',t:'sig'},{n:'in4',t:'sig'},
        {n:'span',t:'num'},{n:'gain',t:'num'},{n:'ofs',t:'num'},{n:'trig',t:'num'},{n:'stack',t:'num'}],
   view:{h:110},
@@ -2821,7 +2821,7 @@ function paletteLut(name){
   return PALETTE_LUT_CACHE[name] || (PALETTE_LUT_CACHE[name]=buildPaletteLut(PALETTES[name]));
 }
 
-def({ id:'const2', title:'Constellation', cat:'Analysis', ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'dec',t:'num'},{n:'scale',t:'num'},{n:'fade',t:'num'}],
+def({ id:'const2', lazy:true, title:'Constellation', cat:'Analysis', ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'dec',t:'num'},{n:'scale',t:'num'},{n:'fade',t:'num'}],
   view:{h:150},
   params:[{n:'dec',t:'range',min:1,max:64,step:1,d:8},
           {n:'scale',t:'range',min:.2,max:10,step:.1,d:2},
@@ -2846,7 +2846,7 @@ def({ id:'const2', title:'Constellation', cat:'Analysis', ins:[{n:'I',t:'sig'},{
       cx.fillRect(x,y,1.5,1.5); } }});
 
 
-def({ id:'peak', title:'Frequency Peak', cat:'Analysis',
+def({ id:'peak', lazy:'proc', title:'Frequency Peak', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'fc',t:'num'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},
        {n:'floor',t:'num'},{n:'top',t:'num'},{n:'thr',t:'num'},{n:'hold',t:'num'},
        {n:'track',t:'num'},{n:'tol',t:'num'}],
@@ -2915,7 +2915,7 @@ const MORSE={'.-':'A','-...':'B','-.-.':'C','-..':'D','.':'E','..-.':'F','--.':'
 '---..':'8','----.':'9','.-.-.-':'.','--..--':',','..--..':'?','-..-.':'/','-....-':'-',
 '-.--.':'(','-.--.-':')','---...':':','.-.-.':'+','.--.-.':'@','...-.-':'<SK>','-...-':'='};
 
-def({ id:'morseRx', title:'Morse: Receive', cat:'Decoders',
+def({ id:'morseRx', lazy:'proc', title:'Morse: Receive', cat:'Decoders',
   ins:[{n:'level',t:'num'},{n:'sig',t:'sig'},{n:'thr',t:'num'},{n:'auto',t:'num'},{n:'minRun',t:'num'}],
   outs:[{n:'gate',t:'num'},{n:'wpm',t:'num'}],
   readout:true, tall:true, view:{h:44},
@@ -2995,7 +2995,7 @@ function mIdle(n){                                 // добить символ,
   if(!n.space && t>g*5 && n.text && !n.text.endsWith(' ')){ n.text+=' '; n.space=true; }
 }
 
-def({ id:'meter', title:'Level', cat:'Analysis', ins:[{n:'in',t:'sig'}], outs:[{n:'db',t:'num'}],
+def({ id:'meter', lazy:'proc', title:'Level', cat:'Analysis', ins:[{n:'in',t:'sig'}], outs:[{n:'db',t:'num'}],
   view:{h:26}, readout:true,
   init:n=>{n.db=-120;},
   process(n,I){ const r=I.in?rms(I.in):0;
@@ -3015,7 +3015,7 @@ def({ id:'numview', title:'Number', cat:'Analysis', ins:[{n:'in',t:'num'},{n:'di
     (typeof n.v==='number'? n.v.toFixed(n.p.digits) : '—'); }});
 
 
-def({ id:'trend', title:'Trend Chart', cat:'Analysis', ins:[{n:'in',t:'num'},{n:'span',t:'num'}],
+def({ id:'trend', lazy:'proc', title:'Trend Chart', cat:'Analysis', ins:[{n:'in',t:'num'},{n:'span',t:'num'}],
   view:{h:100}, resize:true, readout:true,
   params:[{n:'span',t:'range',min:1,max:120,step:1,d:20,log:true,label:'window, s'},
           {n:'auto',t:'check',d:true,label:'auto range'},
@@ -3076,7 +3076,7 @@ def({ id:'trend', title:'Trend Chart', cat:'Analysis', ins:[{n:'in',t:'num'},{n:
     n.el.querySelector('.readout').textContent = typeof n.last==='number'? n.last.toFixed(3) : '—'; }});
 
 
-def({ id:'imgview', title:'Frame', cat:'Analysis', ins:[{n:'img',t:'img'}], view:{h:110}, resize:true,
+def({ id:'imgview', lazy:true, title:'Frame', cat:'Analysis', ins:[{n:'img',t:'img'}], view:{h:110}, resize:true,
   params:[{n:'png',t:'button',label:'Save snapshot',fn:n=>{
     n.tmp && n.tmp.toBlob(b=>dl(b,'frame-'+Date.now()+'.png'),'image/png'); }}],
   process(n,I){ n.i=I.img; return {}; },
@@ -3094,7 +3094,7 @@ def({ id:'imgview', title:'Frame', cat:'Analysis', ins:[{n:'img',t:'img'}], view
     cx.drawImage(n.tmp,0,0,cv.width,cv.height); }});
 
 
-def({ id:'specstat', title:'Spectrum Statistics', cat:'Analysis', ins:[{n:'spec',t:'spec'},{n:'thr',t:'num'},{n:'tau',t:'num'},{n:'floor',t:'num'},{n:'log',t:'num'}],
+def({ id:'specstat', lazy:'proc', title:'Spectrum Statistics', cat:'Analysis', ins:[{n:'spec',t:'spec'},{n:'thr',t:'num'},{n:'tau',t:'num'},{n:'floor',t:'num'},{n:'log',t:'num'}],
   outs:[{n:'stat',t:'spec'}], view:{h:120}, pick:true, resize:true,
   params:[{n:'mode',t:'select',opts:['average','max','occupancy'],d:'occupancy'},
           {n:'thr',t:'range',min:-140,max:-20,step:1,d:-85},
@@ -3141,7 +3141,7 @@ def({ id:'specstat', title:'Spectrum Statistics', cat:'Analysis', ins:[{n:'spec'
       cx.fillStyle=themeColor('--acc'); cx.fillText(t,tx,H-5); } }});
 
 
-def({ id:'goertzel', title:'Goertzel', cat:'Analysis',
+def({ id:'goertzel', lazy:'proc', title:'Goertzel', cat:'Analysis',
   ins:[{n:'in',t:'sig'},{n:'f',t:'num'},{n:'ms',t:'num'},{n:'floor',t:'num'},{n:'top',t:'num'}],
   outs:[{n:'mag',t:'num'},{n:'db',t:'num'},{n:'env',t:'sig'},{n:'level',t:'sig'}],
   view:{h:40}, readout:true,
@@ -3175,7 +3175,7 @@ def({ id:'goertzel', title:'Goertzel', cat:'Analysis',
     n.el.querySelector('.readout').textContent=n.db.toFixed(1)+' dB'; }});
 
 
-def({ id:'autocorr', title:'Autocorrelator', cat:'Analysis', ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'norm',t:'num'}],
+def({ id:'autocorr', lazy:'proc', title:'Autocorrelator', cat:'Analysis', ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'norm',t:'num'}],
   outs:[{n:'f',t:'num'},{n:'lagMs',t:'num'},{n:'conf',t:'num'}],
   view:{h:120}, resize:true, readout:true,
   params:[{n:'win',t:'select',opts:['0.05','0.1','0.25','0.5','1','2','4'],d:'0.1',label:'window, s'},
@@ -3488,7 +3488,7 @@ def({ id:'signalID', title:'Signal Recognition', cat:'Analysis',
 });
 
 
-def({ id:'xcorr', title:'Cross-Correlation', cat:'Analysis',
+def({ id:'xcorr', lazy:'proc', title:'Cross-Correlation', cat:'Analysis',
   ins:[{n:'A',t:'sig'},{n:'B',t:'sig'},{n:'maxMs',t:'num'},{n:'smooth',t:'num'}],
   outs:[{n:'lagMs',t:'num'},{n:'lagN',t:'num'},{n:'peak',t:'num'}],
   view:{h:110}, resize:true, readout:true,
@@ -3621,7 +3621,7 @@ def({ id:'harm', title:'Harmonics & THD', cat:'Analysis',
     if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
 
-def({ id:'stats', title:'Level Statistics', cat:'Analysis', ins:[{n:'in',t:'sig'},{n:'tau',t:'num'}],
+def({ id:'stats', lazy:true, title:'Level Statistics', cat:'Analysis', ins:[{n:'in',t:'sig'},{n:'tau',t:'num'}],
   outs:[{n:'rms',t:'num'},{n:'peak',t:'num'},{n:'crest',t:'num'},{n:'dbfs',t:'num'}],
   view:{h:100}, resize:true, readout:true, tall:true,
   params:[{n:'tau',t:'range',min:.05,max:10,step:.05,d:1,label:'time constant, s'},
@@ -3660,7 +3660,7 @@ def({ id:'stats', title:'Level Statistics', cat:'Analysis', ins:[{n:'in',t:'sig'
     if(r.textContent!==n.text) r.textContent=n.text; }});
 
 
-def({ id:'eye', title:'Eye Diagram', cat:'Analysis',
+def({ id:'eye', lazy:true, title:'Eye Diagram', cat:'Analysis',
   ins:[{n:'in',t:'sig'},{n:'clk',t:'sig'},{n:'spans',t:'num'},{n:'gain',t:'num'},{n:'fade',t:'num'},{n:'baud',t:'num'}],
   view:{h:180}, resize:true,
   params:[{n:'spans',t:'range',min:1,max:4,step:1,d:2,label:'symbols in window'},
@@ -3699,7 +3699,7 @@ def({ id:'eye', title:'Eye Diagram', cat:'Analysis',
     cx.globalAlpha=1; }});
 
 
-def({ id:'freqmeter', title:'Frequency Meter', cat:'Analysis', ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'digits',t:'num'}],
+def({ id:'freqmeter', lazy:'proc', title:'Frequency Meter', cat:'Analysis', ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'digits',t:'num'}],
   outs:[{n:'f',t:'num'},{n:'conf',t:'num'}], readout:true, view:{h:30},
   params:[{n:'fmin',t:'range',min:10,max:5000,step:1,d:100,log:true},
           {n:'fmax',t:'range',min:50,max:()=>Eng.sr/2,step:1,d:5000,log:true},
@@ -3793,7 +3793,7 @@ function loudHop(n){
   }
 }
 
-def({ id:'loud', title:'Loudness (LUFS-like)', cat:'Analysis', ins:[{n:'in',t:'sig'}],
+def({ id:'loud', lazy:'proc', title:'Loudness (LUFS-like)', cat:'Analysis', ins:[{n:'in',t:'sig'}],
   outs:[{n:'m',t:'num'},{n:'s',t:'num'},{n:'i',t:'num'}],
   readout:true, view:{h:60},
   params:[{n:'rst',t:'button',label:'Reset integrated',fn:n=>{n.gated=[];}}],

@@ -67,6 +67,7 @@ function delNode(n){
 const d=MOD[n.type];
 try{ d?.dispose?.(n); }catch(e){ console.error('dispose '+n.type+':',e); }
 n.roCv?.disconnect();                               // иначе ResizeObserver держит канву живой
+visIO.unobserve(n.el);
 Graph.edges.filter(e=>e.from===n.id||e.to===n.id).forEach(delEdge);
 Graph.nodes=Graph.nodes.filter(x=>x!==n); delete Graph.map[n.id];
 const dlf=dashLeafOf(n.id); if(dlf){ dlf.node=null; if(dashMode) dashRenderRoot(); }
@@ -291,6 +292,10 @@ if(n.folded) foldNode(n,true);
 bindDrag(el.querySelector('.nhead'),n);
 el.addEventListener('pointerdown',ev=>{
 if(!Sel.has(n.id)||ev.shiftKey) selSet(n.id,ev.shiftKey); });
+// ввод по узлу (наведение, клик, колесо, правка поля) — lazy-узлу перерисоваться
+for(const ev of ['pointerdown','pointermove','pointerup','pointerleave','wheel','click','dblclick','input','change','keydown'])
+el.addEventListener(ev,()=>{ n._dirty=true; },{capture:true,passive:true});
+el._node=n; n._vis=undefined; visIO.observe(el);
 n.el=el; content.append(el); el.style.zIndex=++zCounter; posNode(n); applySize(n); // новый узел сразу поверх остальных
 }
 function mergeableParamNames(d){                     // имена параметров, что могут слиться со строкой порта —
@@ -347,7 +352,9 @@ function rebuildNode(n){                            // пересобрать DO
 const sel=n.el.classList.contains('sel');
 fillParamDefaults(n,MOD[n.type]);                  // добить дефолтами новые/переименованные параметры
 n.roCv?.disconnect();                               // старая канва уходит вместе с el, наблюдатель — тоже
+visIO.unobserve(n.el);
 n.el.remove(); buildNodeEl(n);
+n._drawGen=-1;                                      // новый DOM — lazy-узлу нарисоваться заново
 if(sel) n.el.classList.add('sel');
 markWiresDirty();
 }
@@ -787,6 +794,12 @@ pasting=false; syncSel(); markWiresDirty(); Undo.push();
 /* ---- взаимодействие (мышь + тач) ---- */
 let link=null, zCounter=1, activeInteractions=0;
 const cv=document.getElementById('canvas');
+// Видимость узла (в пределах холста, в дашборде — в показанном тайле) — от IntersectionObserver:
+// раньше каждый кадр читали getBoundingClientRect/offsetWidth, а это принудительный layout
+// поверх того, что браузер и так делает при отрисовке кадра.
+const visIO=new IntersectionObserver(es=>{
+for(const e of es){ const n=e.target._node; if(n && n.el===e.target) n._vis=e.isIntersecting; }
+},{root:cv, rootMargin:'40px'});
 const TOUCH=matchMedia('(pointer:coarse)').matches;
 function toCanvas(ev){ const r=cv.getBoundingClientRect();
 return {x:(ev.clientX-r.left+cv.scrollLeft)/view.k-view.x,
@@ -1216,7 +1229,7 @@ function bindDashResizer(rz,t,i){                       // тащим грани
 }
 function setDash(on){
   if(on && !dashGridEl) return;                        // старый закэшированный index.html без #dashGrid — тихо выходим
-  dashMode=on;
+  dashMode=on; redrawAll();
   cv.classList.toggle('dashboard',on);
   setSideCollapsed(on ? true : sideCollapsedPref);     // в тайлах сайдбар мешает — прячем, при выходе возвращаем как было
   dashBtn?.classList.toggle('on',on);
@@ -1489,7 +1502,7 @@ const on=Eng.running&&!Eng.paused;
 runBtn.textContent = on?'■':'▶';
 runBtn.classList.toggle('on',on);
 }
-Eng.onRunChange=syncRunBtn;
+Eng.onRunChange=()=>{ syncRunBtn(); wakeDraw(); };
 runBtn.onclick=async()=>{
 const on=await Eng.toggle();
 if(!on){ stat.textContent='paused'; stat.classList.remove('warn','crit'); }
@@ -1530,13 +1543,35 @@ markWiresDirty();
 /* ---- цикл отрисовки ---- */
 let lastDraw=0;
 let lastStatText='';
-function visible(n,r){                              // узел в пределах экрана?
-// в дашборде координаты графа ни при чём: виден тот, кто стоит в тайле (и тайл не скрыт)
-if(dashMode) return n.el.offsetParent!==null  && dashGridEl.contains(n.el);
-const x=(n.x+view.x)*view.k, y=(n.y+view.y)*view.k;
-const w=n.el.offsetWidth*view.k, h=n.el.offsetHeight*view.k;
-return x+w >-40  && x <r.width+40  && y+h >-40  && y <r.height+40;
+function visible(n){ return n._vis!==false; }       // до первого отчёта — считаем видимым
+// Простой: движок не обрабатывает блоки и нет ввода — перерисовка раз в IDLE_MS через
+// setTimeout, без rAF на каждый vsync. Асинхронные данные (скриншот tinySA, тайлы и т.п.)
+// всё равно появятся, с задержкой не больше IDLE_MS.
+const IDLE_MS=250;
+let lastInput=0, lastBlocks=-1, idleT=0;
+function wakeDraw(){
+lastInput=performance.now();
+if(idleT){ clearTimeout(idleT); idleT=0; requestAnimationFrame(frame); }
 }
+for(const ev of ['pointerdown','pointermove','pointerup','wheel','keydown','input','change','resize'])
+addEventListener(ev,wakeDraw,{capture:true,passive:true});
+function needsDraw(n,ts){
+const dk=MOD[n.type].drawKey;
+if(dk){ n._dkNow=dk(n); if(n._dkNow!==n._dk) return true; }
+if(n._dirty || n._drawGen!==drawGen || ts-n._drawT>=LAZY_MAX_MS) return true;
+const c=n.cv;
+if(c && (c!==n._cvRef || c.pxGen!==n._pxGen || c.width!==n._cvW || c.height!==n._cvH)) return true;
+const p=n.p, ps=n._pSnap;
+for(const k in p) if(p[k]!==ps[k]) return true;
+return false;
+}
+function drawnLazy(n,ts){
+n._dirty=false; n._drawGen=drawGen; n._drawT=ts; n._dk=n._dkNow;
+const c=n.cv;
+if(c){ n._cvRef=c; n._pxGen=c.pxGen; n._cvW=c.width; n._cvH=c.height; }
+n._pSnap=Object.assign(n._pSnap||{},n.p);
+}
+matchMedia('(prefers-color-scheme: light)').addEventListener?.('change',redrawAll);
 function frame(ts){
 // пока активен живой высокоскоростной источник (rtlsdr) — растягиваем кадр отрисовки. Сама
 // отрисовка (особенно водопад/спектр) синхронно грузит главный поток, а от него же зависит
@@ -1554,19 +1589,17 @@ const rtlBusy=Graph.nodes.some(n=>n.type==='rtlsdr' && n.connected);
 const minDt = TOUCH?33 : (rtlBusy?100:16);         // на тач-экранах хватает 30 к/с
 if(ts-lastDraw >=minDt  && !activeInteractions  && !panzooming  && !zooming){
 lastDraw=ts;
-const r=cv.getBoundingClientRect();
-// сначала все чтения layout-свойств (visible() читает offsetWidth/offsetHeight) одним
-// проходом, потом все d.draw() — иначе чередование чтение/запись на каждом узле даёт
-// forced reflow на КАЖДОЙ итерации вместо одного пересчёта layout за весь кадр.
 const toDraw=[];
 for(const n of Graph.nodes){
 const d=MOD[n.type];
 if(!d.draw) continue;
-if(!d.always  && !visible(n,r)) continue;
+if(d.lazy && !needsDraw(n,ts)) continue;
+if(!d.always  && !visible(n)) continue;
 toDraw.push(n);
 }
 for(const n of toDraw){
 const d=MOD[n.type];
+if(d.lazy) drawnLazy(n,ts);                        // до draw(): он может сам попросить следующий кадр
 try{ d.draw(n,n.cv,n.cx); }
 catch(e){ if(!n.drawErr){ n.drawErr=1; console.error('draw '+n.type+':',e); } }
 }
@@ -1582,7 +1615,10 @@ stat.classList.toggle('warn', Eng.turbo===1 &&Eng.load>=.85 &&Eng.load<1);
 stat.classList.toggle('crit', Eng.turbo===1 &&Eng.load>=1);
 }
 }
-requestAnimationFrame(frame);
+const busy=Eng.blocks!==lastBlocks || ts-lastInput<2000 || activeInteractions || panzooming || zooming;
+lastBlocks=Eng.blocks;
+if(busy) requestAnimationFrame(frame);
+else idleT=setTimeout(()=>{ idleT=0; requestAnimationFrame(frame); },IDLE_MS);
 }
 applyView();
 (function boot(){
