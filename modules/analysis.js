@@ -1083,8 +1083,8 @@ function saNoiseFloor(sp,f,tol){
 // OffscreenCanvas и одним drawImage уходит на обычную 2D-канву узла — трасса/сетка/маркеры/драг
 // в остальной отрисовке sa не тронуты.
 function saWfGlInit(W,H){
-  const oc = typeof OffscreenCanvas!=='undefined' ? new OffscreenCanvas(W,H)
-    : Object.assign(document.createElement('canvas'),{width:W,height:H});
+  // обычная DOM-канва, а не OffscreenCanvas: она сама стоит слоем под канвой узла (saWfLayer)
+  const oc = Object.assign(document.createElement('canvas'),{width:W,height:H});
   const gl = oc.getContext('webgl2',{antialias:false,alpha:false,depth:false,stencil:false});
   if(!gl) return null;
   const compile=(type,src)=>{ const sh=gl.createShader(type); gl.shaderSource(sh,src); gl.compileShader(sh);
@@ -1132,14 +1132,14 @@ function saWfGlInit(W,H){
   gl.uniform1i(gl.getUniformLocation(prog,'uHist'),0);
   gl.uniform1i(gl.getUniformLocation(prog,'uMap'),1);
   gl.uniform1i(gl.getUniformLocation(prog,'uH'),H);
-  return {canvas:oc, gl, prog, vao, tex, map, w:W, h:H, pos:-1, ref:null,
+  return {canvas:oc, gl, prog, vao, tex, map, w:W, h:H, pos:-1, ref:null, gen:0,
     uHead:gl.getUniformLocation(prog,'uHead'), uLo:gl.getUniformLocation(prog,'uLo'),
     uHi:gl.getUniformLocation(prog,'uHi'), uLin:gl.getUniformLocation(prog,'uLin')};
 }
 // новая строка — единственное, что льётся в текстуру (O(Wp)); история физически не двигается
 // lo/hi — границы окна, в которых посчитана строка (частоты хранятся от ref — точность float32)
 function saWfGlWrite(glp,W,line,lo,hi){
-  glp.pos=(glp.pos+1)%glp.h;
+  glp.pos=(glp.pos+1)%glp.h; glp.gen++;
   const {gl}=glp;
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D,glp.tex);
@@ -1157,7 +1157,7 @@ function saWfGlLoad(glp,img){
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);
-  glp.pos=glp.h-1;
+  glp.pos=glp.h-1; glp.gen++;
 }
 // кадр отрисовки: полноэкранный квад, сэмплирующий кольцевую текстуру со сдвигом на голову кольца
 function saWfGlRender(glp,W,H,lo,hi,lin){
@@ -1171,6 +1171,42 @@ function saWfGlRender(glp,W,H,lo,hi,lin){
   gl.uniform1f(glp.uLo,lo-ref); gl.uniform1f(glp.uHi,hi-ref); gl.uniform1f(glp.uLin,lin?1:0);
   gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
   return glp.canvas;
+}
+
+// Слой водопада: WebGL-канва стоит в DOM сразу под канвой узла (соседом в .mid, position:absolute
+// по зоне водопада) и композитится браузером сам — раньше каждый кадр её копировали в 2D-канву
+// через drawImage, а это синхронный сброс GPU на главном потоке. Канва узла над слоем прозрачна
+// в зоне водопада; фон зоны спектра дорисовывает draw().
+function saWfLayer(n,cv){
+  const el=n.wfGl?n.wfGl.canvas:null, mid=cv.parentNode;
+  if(n._wfEl && (n._wfEl!==el || !mid)){ n._wfEl.remove(); n._wfEl=null; }
+  if(!el || !mid){
+    n._wfRO?.disconnect(); n._wfRO=null; n._wfCv=null;
+    cv.style.background=''; return;
+  }
+  if(el.parentNode===mid && n._wfCv===cv) return;
+  n._wfEl=el; n._wfCv=cv;
+  el.className='view main sa-wf';                  // .main — иначе в панели "⛶" слой спрятан (styles.css)
+  // grid-column:auto — иначе (правило .mid>canvas.view) отсчёт от grid-области без padding, а не от .mid
+  Object.assign(el.style,{position:'absolute',margin:'0',gridColumn:'auto',gridRow:'auto',
+    pointerEvents:'none',zIndex:'0',borderRadius:'0 0 3px 3px'});
+  cv.after(el);                                    // после канвы узла: querySelector('canvas.view.main') находит её
+  mid.style.position='relative';
+  Object.assign(cv.style,{position:'relative',zIndex:'1',background:'transparent'});
+  // место канвы узла в .mid — из ResizeObserver (layout уже посчитан), а не чтением на каждом кадре
+  n._wfRO?.disconnect();
+  n._wfRO=new ResizeObserver(()=>{ n._wfBox=null; saWfPlace(n); });
+  n._wfRO.observe(cv); n._wfRO.observe(mid);
+  n._wfBox=null; n._wfPlaced=null;
+}
+function saWfPlace(n){
+  const el=n._wfEl, cv=n._wfCv; if(!el || !cv) return;
+  if(!n._wfBox) n._wfBox=[cv.offsetLeft, cv.offsetTop, cv.clientWidth];
+  const [x,y,w]=n._wfBox, hs=n._hs|0, hw=Math.max(0,cv.height-hs), vis=n._wfVis?'':'hidden';
+  const k=x+'|'+y+'|'+w+'|'+hs+'|'+hw+'|'+vis;
+  if(k===n._wfPlaced) return;
+  n._wfPlaced=k;
+  Object.assign(el.style,{left:x+'px', top:(y+hs)+'px', width:w+'px', height:hw+'px', visibility:vis});
 }
 
 // Фосфорный спектр для 'sa' (по мотивам gr-fosphor): на каждый столбец — гистограмма уровней
@@ -1340,7 +1376,7 @@ function saWfGlLoadRaw(glp, buf, lo, hi){
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,glp.map);
   gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,1,glp.h,gl.RG,gl.FLOAT,mp);
   gl.activeTexture(gl.TEXTURE0);
-  glp.pos=glp.h-1;
+  glp.pos=glp.h-1; glp.gen++;
 }
 
 // Спектр приходит реже кадров отрисовки (rtlsdr — ~12 раз/с) — перерисовка без изменений
@@ -1880,6 +1916,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         // потребителем главного потока, топил звук rtlsdr не хуже самой отрисовки графа. Новая
         // строка льётся в текущую позицию кольца текстуры (O(Wp) upload), "прокрутка" — просто
         // сдвиг UV при сэмплинге (TEXTURE_WRAP_T=REPEAT, см. saWfGlInit) — история никуда не едет.
+        n._wfKey=null;
         try{ n.wfGl=(Wp>0&&hwP>0)?saWfGlInit(Wp,hwP):null; }
         catch(e){ n.wfGl=null; console.warn('sa: WebGL недоступен, откат на CPU-водопад',e); }
         if(!n.wfGl){                                  // тот же CPU-путь, что и раньше, без изменений
@@ -2022,8 +2059,12 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         cx.stroke();
       }
       const [vLo,vHi]=saBounds(n);
-      const wfSrc = n.wfGl ? saWfGlRender(n.wfGl,Wp,hwP,vLo,vHi,!n.p.log) : n.off;
-      cx.drawImage(wfSrc,0,hs,W,hw);       // без dw/dh источник (физ. пиксели) масштабируется на dpr лишний раз
+      if(n.wfGl){
+        // слой WebGL под канвой: перерисовываем его только при новой строке/смене окна
+        const gk=Wp+'|'+hwP+'|'+vLo+'|'+vHi+'|'+n.p.log+'|'+n.wfGl.gen;
+        if(gk!==n._wfKey){ n._wfKey=gk; saWfGlRender(n.wfGl,Wp,hwP,vLo,vHi,!n.p.log); }
+        cx.clearRect(0,hs,W,hw);           // зона водопада прозрачна; нарисованное туда выше раньше перекрывал водопад
+      } else cx.drawImage(n.off,0,hs,W,hw);  // без dw/dh источник (физ. пиксели) масштабируется на dpr лишний раз
     } else if(n.p.grid) saGrid(n,cx,W,hs,H,plotH);
     cx.strokeStyle=themeColor('--grid'); cx.beginPath(); cx.moveTo(0,hs+.5); cx.lineTo(W,hs+.5); cx.stroke();
     saBands(n,cx,W,H);
@@ -2034,7 +2075,14 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     saMarkers(n,cx,W,hs);
     saBandPlanLabels(n,cx);                           // подписи — поверх маркеров
     saChannelLabels(n,cx,W);
-    saMarkerTabs(n,cx,W); }});
+    saMarkerTabs(n,cx,W);
+    // слой водопада: DOM-позиция, видимость и фон под прозрачной канвой
+    saWfLayer(n,cv);
+    if(n._wfEl){
+      n._wfVis=!!n.s; saWfPlace(n);
+      cx.save(); cx.globalAlpha=1; cx.globalCompositeOperation='destination-over';
+      cx.fillStyle=themeColor('--screen'); cx.fillRect(0,0,W,n.s?hs:H); cx.restore();
+    } }});
 
 
 // "100.7M" / "88500k" / "433920000" / "433920000Hz" → Гц. Пусто/не число → NaN (вызывающий фильтрует).
