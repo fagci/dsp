@@ -192,7 +192,7 @@ async function tsaCapture(n){
     d[o]=((v>>11)&31)*255/31; d[o+1]=((v>>5)&63)*255/63; d[o+2]=(v&31)*255/31; d[o+3]=255;
   }
   n.capCv.width=W; n.capCv.height=H; n.capCv.getContext('2d').putImageData(img,0,0);
-  n.img={data:img, w:W, h:H, gray:false};
+  n.img={data:img, w:W, h:H, gray:false, rev:(n.img?.rev|0)+1};
 }
 
 async function tsaLoop(n){
@@ -215,7 +215,7 @@ async function tsaLoop(n){
   }finally{ n.looping=false; }
 }
 
-def({ id:'tinysa', title:'tinySA', cat:'Sources',
+def({ id:'tinysa', lazy:'manual', title:'tinySA', cat:'Sources',
   ins:[{n:'start',t:'num'},{n:'stop',t:'num'},{n:'steerFreq',t:'num'},
        {n:'genFreq',t:'num'},{n:'genLevel',t:'num'}],
   outs:[{n:'spec',t:'spec'},{n:'peakF',t:'num'},{n:'peakDb',t:'num'},{n:'img',t:'img'}],
@@ -274,6 +274,7 @@ def({ id:'tinysa', title:'tinySA', cat:'Sources',
     }
     return {spec:n.spec, peakF:n.peakF, peakDb:n.peakDb, img:n.img};
   },
+  drawKey:n=>n.status+'|'+n.connected+'|'+n.spec?.rev+'|'+n.scanMs+'|'+n.err+'|'+n.note+'|'+n.img?.rev,
   draw(n,cv,cx){
     const r=n.el.querySelector('.readout');
     if(r){

@@ -249,7 +249,7 @@ async function reapplyFx(n){
   }
 }
 
-def({ id:'file', title:'Audio File', cat:'Sources',
+def({ id:'file', lazy:'manual', title:'Audio File', cat:'Sources',
   outs:[{n:'out',t:'sig'},{n:'pos',t:'num'},{n:'done',t:'num'}],
   ins:[{n:'seek',t:'num'},{n:'rate',t:'num'},{n:'gain',t:'num'},{n:'loop',t:'num'}], view:{h:44}, resize:true, readout:true,
   params:[{n:'file',t:'file',accept:'audio/*',fn:(n,f)=>{
@@ -258,7 +258,7 @@ def({ id:'file', title:'Audio File', cat:'Sources',
             fr.onload=()=>{
               const ac=Eng.ctx||new (window.AudioContext||window.webkitAudioContext)();
               ac.decodeAudioData(fr.result).then(b=>{
-                n.data=b.getChannelData(0); n.srcSr=b.sampleRate; n.pos=0; n.play=true; }); };
+                n.data=b.getChannelData(0); n.srcSr=b.sampleRate; n.pos=0; n.play=true; n.env=null; redraw(n); }); };
             fr.readAsArrayBuffer(f); }},
           {n:'rate',t:'range',min:.25,max:4,step:.01,d:1},
           {n:'gain',t:'range',min:0,max:4,step:.01,d:1},
@@ -279,12 +279,13 @@ def({ id:'file', title:'Audio File', cat:'Sources',
     const d=n.data, g=n.p.gain;
     const r=n.p.rate*((n.srcSr||Eng.sr)/Eng.sr);     // пересчёт под частоту движка
     let done=0;
-    if(!n.play){ o.fill(0); return {out:o,pos:n.pos/d.length,done:0}; }
+    if(!n.play){ o.fill(0); fileRedraw(n); return {out:o,pos:n.pos/d.length,done:0}; }
     for(let i=0;i<BLOCK;i++){
       if(n.pos>=d.length-1){
         if(n.p.loop) n.pos=0; else { n.play=false; done=1; o[i]=0; continue; } }
       const i0=n.pos|0, fr=n.pos-i0;
       o[i]=(d[i0]*(1-fr)+d[i0+1]*fr)*g; n.pos+=r; }
+    fileRedraw(n);
     return {out:o, pos:n.pos/d.length, done}; },
   draw(n,cv,cx){
     const W=cv.width,H=cv.height; cx.clearRect(0,0,W,H);
@@ -307,6 +308,11 @@ def({ id:'file', title:'Audio File', cat:'Sources',
     n.el.querySelector('.readout').textContent =
       (n.name||'file')+' · '+t.toFixed(1)+' / '+tot.toFixed(1)+' s'+(n.play?'':' · paused'); }});
 
+
+// плейхед (1/2000 длины) и время в readout (0.1 с)
+function fileRedraw(n){
+  redrawIf(n,Math.floor(n.pos/n.data.length*2000)+'|'+Math.floor(n.pos/(n.srcSr||Eng.sr)*10)+'|'+n.play);
+}
 
 // Поток отсчётов датчика с метками времени. Датчики приходят событиями на главном потоке
 // с неровным шагом и пропусками, а num-выход просто держит последнее значение на блок —
@@ -707,7 +713,7 @@ function camMeasureSrc(n,src,sw,sh,rot){
   return r;
 }
 function camArrive(n,t){                            // частота кадров — по приходу, до обработки
-  n.lastFrameAt=performance.now();
+  n.lastFrameAt=performance.now(); n.frameN=(n.frameN|0)+1;
   if(n.prevT){ const d=t-n.prevT;                   // период кадра для развёртки; пропуски не учитываем
     if(d>0 && d<.5 && (!n.fdt || d<n.fdt*1.5)) n.fdt=n.fdt?n.fdt*.95+d*.05:d; }
   n.prevT=t;
@@ -824,12 +830,19 @@ def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'brigh
           (n.ctlNote?` · ${n.ctlNote}`:''); }
     }
     if(!v.videoWidth) return;
+    // кадр камеры приходит реже кадров экрана — getImageData/превью только на новый кадр
+    const fresh=n.frameN!==n._capN; n._capN=n.frameN;
     if(Graph.edges.some(e=>e.from===n.id&&e.fp==='img')){   // полный кадр читаем, только если он кому-то нужен
       const W=+n.p.w, H=Math.round(W*(v.videoHeight/v.videoWidth||3/4));
-      if(n.capCv.width!==W||n.capCv.height!==H){ n.capCv.width=W; n.capCv.height=H; }
-      n.capCx.drawImage(v,0,0,W,H);
-      n.img={data:n.capCx.getImageData(0,0,W,H),w:W,h:H,gray:false};
+      if(fresh || !n.img || n.img.w!==W || n.img.h!==H){
+        if(n.capCv.width!==W||n.capCv.height!==H){ n.capCv.width=W; n.capCv.height=H; }
+        n.capCx.drawImage(v,0,0,W,H);
+        n.img={data:n.capCx.getImageData(0,0,W,H),w:W,h:H,gray:false,rev:(n.img?.rev|0)+1};
+      }
     } else n.img=null;
+    const pk=cv.width+'|'+cv.height+'|'+cv.pxGen+'|'+n.p.roi+'|'+n.p.roiX+'|'+n.p.roiY+'|'+n.p.roiW+'|'+n.p.roiH;
+    if(!fresh && pk===n._prevKey) return;
+    n._prevKey=pk;
     cx.drawImage(v,0,0,cv.width,cv.height);
     if(n.p.roi){                                    // рамка зоны прямо на превью
       cx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--t-num');
@@ -863,9 +876,15 @@ def({ id:'vidsrc', title:'Video (file/URL)', cat:'Sources', outs:[{n:'img',t:'im
       : n.video.readyState<2 ? n.status : (n.video.paused?'paused':'playing');
     if(!n.video?.videoWidth) return;
     const W=+n.p.w, H=Math.round(W*(n.video.videoHeight/n.video.videoWidth||3/4));
+    // новый кадр: счётчик показанных кадров, на паузе — позиция (перемотка)
+    const v=n.video, tf=v.getVideoPlaybackQuality?.().totalVideoFrames;
+    const fk=(tf??(v.paused?'':performance.now()))+'|'+(v.paused?v.currentTime:'')+'|'+v.readyState+'|'+v.seeking+'|'+W+'x'+H+
+      '|'+cv.width+'|'+cv.height+'|'+cv.pxGen;
+    if(fk===n._frameKey) return;
+    n._frameKey=fk;
     if(n.capCv.width!==W||n.capCv.height!==H){ n.capCv.width=W; n.capCv.height=H; }
     n.capCx.drawImage(n.video,0,0,W,H);
-    try{ n.img={data:n.capCx.getImageData(0,0,W,H),w:W,h:H,gray:false}; }
+    try{ n.img={data:n.capCx.getImageData(0,0,W,H),w:W,h:H,gray:false,rev:(n.img?.rev|0)+1}; }
     catch(e){ n.status='cross-origin video without CORS — frame unreadable'; }
     cx.drawImage(n.capCv,0,0,cv.width,cv.height); }});
 
@@ -4456,7 +4475,7 @@ function songBarsLabel(n){
   return n+' bar'+(n===1?'':'s');
 }
 
-def({ id:'song', title:'Arrangement (Playlist)', cat:'Music',
+def({ id:'song', lazy:'manual', title:'Arrangement (Playlist)', cat:'Music',
   ins:[{n:'clk',t:'sig'}],
   outs:[{n:'bank',t:'num'},{n:'bar',t:'num'},{n:'section',t:'num'}],
   view:{h:90}, resize:true, readout:true,
@@ -4485,6 +4504,7 @@ def({ id:'song', title:'Arrangement (Playlist)', cat:'Music',
           // иначе остаёмся на последней секции и крутим её дальше
         } } }
     const cur=n.secs[Math.min(n.secIdx,n.secs.length-1)];
+    redrawIf(n,n.secIdx+'|'+n.barInSec+'|'+n._queued+'|'+n.secs.length);
     return {bank:cur.bank, bar:n.barInSec, section:n.secIdx}; },
   // Горизонтальный таймлайн вместо списка со стрелочками — жесты как в пиано-ролле:
   // тащим тело блока — переставляем секцию местами с соседом, тащим правый край — меняем
@@ -4710,7 +4730,7 @@ function pianoBankIdx(p){ return {A:0,B:1,C:2,D:3}[p.bank]||0; }
 let PIANO_CLIPBOARD=null;                                       // буфер копипаста банка (не сохраняется в патч)
 
 
-def({ id:'pianoroll', title:'Piano Roll', cat:'Music',
+def({ id:'pianoroll', lazy:'manual', title:'Piano Roll', cat:'Music',
   ins:[{n:'clk',t:'sig'},{n:'bankSel',t:'num'}],
   outs:[{n:'freq',t:'num'},{n:'gate',t:'sig'},{n:'step',t:'num'},
         {n:'freq2',t:'num'},{n:'gate2',t:'sig'},
@@ -4765,6 +4785,7 @@ def({ id:'pianoroll', title:'Piano Roll', cat:'Music',
         const vn=n.voiceNote[k];
         gb[k][i]=(vn && n.voiceAge[k]<vn.len*n.stepLen*p.gatelen)?1:0;
         if(vn) n.voiceAge[k]++; } }
+    redrawIf(n,n.idx+'|'+n.bankIdx+'|'+n._synced+'|'+n._bankSelLive+'|'+n.voiceNote.map(v=>v?v.note:'').join());
     return {freq:n.freqOut[0], gate:gb[0], step:n.idx,
             freq2:n.freqOut[1], gate2:gb[1], freq3:n.freqOut[2], gate3:gb[2],
             freq4:n.freqOut[3], gate4:gb[3], vel:n.velOut}; },
@@ -5073,7 +5094,7 @@ function drawFreqDial(el,cv,cx,state,get,set,opts={}){
   cx.fillText('step ×'+fmtHz(stepHz()), cx0, cy0+r+12);
 }
 
-def({ id:'tuner', title:'Tuner', cat:'Radio', outs:[{n:'freq',t:'num'}],
+def({ id:'tuner', lazy:'manual', title:'Tuner', cat:'Radio', outs:[{n:'freq',t:'num'}],
   view:{h:200}, resize:true,
   init:n=>{ n.p.freq=n.p.freq??100000000; n._dial={}; },
   process(n){ return {freq:n.p.freq}; },
@@ -6532,7 +6553,7 @@ function drumPerc(n,t){
   return Math.sin(2*Math.PI*n.ph[5])*Math.exp(-t/0.15);
 }
 
-def({ id:'drumseq', title:'Drum Sequencer (Techno)', cat:'Music',
+def({ id:'drumseq', lazy:'manual', title:'Drum Sequencer (Techno)', cat:'Music',
   ins:[{n:'clk',t:'sig'},{n:'bankSel',t:'num'}],
   outs:[{n:'out',t:'sig'},{n:'step',t:'num'}],
   view:{h:200}, resize:true, readout:true,
@@ -6599,6 +6620,7 @@ def({ id:'drumseq', title:'Drum Sequencer (Techno)', cat:'Music',
       for(let v=0;v<n.rows;v++) n.age[v]+=dt;
       o[i]=clamp(s*0.9,-1.5,1.5);
       if(!n._synced) n.samplesLeft--; }
+    redrawIf(n,n.idx+'|'+n.bankIdx+'|'+n._synced+'|'+n._bankSelLive);
     return {out:o, step:n.idx}; },
   draw(n){
     const cv=n.cv, cx=n.cx; if(!cv) return;
@@ -6664,7 +6686,7 @@ def({ id:'drumseq', title:'Drum Sequencer (Techno)', cat:'Music',
     n.el.querySelector('.readout').textContent=
       'bank '+'ABCD'[n.bankIdx]+(n._bankSelLive?' (auto)':'')+' · step '+Math.max(n.idx,0)+'/'+steps+
       ' · '+(n._synced?'ext. clock':n.p.bpm+' BPM'); }});
-def({ id:'imgsrc', title:'Image (file/URL)', cat:'Sources', outs:[{n:'img',t:'img'}],
+def({ id:'imgsrc', lazy:'manual', title:'Image (file/URL)', cat:'Sources', outs:[{n:'img',t:'img'}],
   params:[
     {n:'url',t:'text',d:'',label:'URL'},
     {n:'load',t:'button',label:'Load URL',fn:n=>{
@@ -6680,6 +6702,7 @@ def({ id:'imgsrc', title:'Image (file/URL)', cat:'Sources', outs:[{n:'img',t:'im
     n.imgEl.onload=()=>{ n.wCache=null; captureImgSrc(n); };
   },
   view:{h:100}, readout:true,
+  drawKey:n=>n.status+'|'+n.img?.rev,
   process(n){                                       // W можно сменить и после загрузки — перезахватим при первом же тике
     if(n.imgEl.complete && n.imgEl.naturalWidth && n.wCache!==n.p.w) captureImgSrc(n);
     return {img:n.img}; },
@@ -6692,6 +6715,6 @@ function captureImgSrc(n){                          // картинка стат
   n.wCache=n.p.w;
   n.capCv.width=W; n.capCv.height=H;
   n.capCx.drawImage(n.imgEl,0,0,W,H);
-  try{ n.img={data:n.capCx.getImageData(0,0,W,H),w:W,h:H,gray:false}; n.status='loaded'; }
+  try{ n.img={data:n.capCx.getImageData(0,0,W,H),w:W,h:H,gray:false,rev:(n.img?.rev|0)+1}; n.status='loaded'; }
   catch(e){ n.img=null; n.status='cross-origin without CORS — frame unreadable'; }
 }

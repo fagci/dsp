@@ -226,7 +226,11 @@ def({ id:'satTrack', title:'Satellites', cat:'Radio',
     out.bands=n.bands||[];
     return out;
   },
-  draw(n,cv,cx){ satSkyDraw(n,cv,cx); satReadout(n); }});
+  draw(n,cv,cx){
+    // небо меняется раз в 2 с (n.sky) — SGP4 по траектории пролёта не гоняем каждый кадр
+    const k=cv.width+'|'+cv.height+'|'+cv.pxGen+'|'+drawGen+'|'+GeoMe.lat+'|'+n.cur?.s.norad+'|'+n.passes[0]?.aos;
+    if(n.sky!==n._skySky || k!==n._skyKey){ n._skySky=n.sky; n._skyKey=k; satSkyDraw(n,cv,cx); }
+    satReadout(n); }});
 function satLoadGroup(n){
   const g=n.p.group, tok=n.loadTok={g};             // загрузка файла/сети до ответа БД отменяет это чтение
   geoGet('tle:'+g).then(v=>{

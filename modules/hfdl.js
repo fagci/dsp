@@ -588,7 +588,7 @@ function hfdlM1Bits(shift){                           // ±1, как и оста
 // Аналог match_sequence() из hfdl.c: пробует все 8 шаблонов M1 одновременно на одном
 // скользящем окне, выдаёт индекс победителя (m1) и импульс начала кадра (go), когда
 // корреляция уверенно выше порога — так что заранее знать скорость станции НЕ нужно.
-def({ id:'hfdlM1Match', title:'HFDL: M1 Detector (rate)', cat:'Protocols', readout:true,
+def({ id:'hfdlM1Match', lazy:'proc', title:'HFDL: M1 Detector (rate)', cat:'Protocols', readout:true,
   ins:[{n:'in',t:'sig'},{n:'baud',t:'num'},{n:'thr',t:'num'}],
   outs:[{n:'go',t:'sig'},{n:'m1',t:'num'},{n:'peak',t:'num'},{n:'corr',t:'sig'},{n:'flip',t:'num'}],
   view:{h:80}, resize:true,

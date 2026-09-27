@@ -28,7 +28,7 @@ def({ id:'mod', title:'Modulator', cat:'Modulation',
     return {out:o}; }});
 
 
-def({ id:'fsk', title:'FSK Demodulator', cat:'Modulation',
+def({ id:'fsk', lazy:'proc', title:'FSK Demodulator', cat:'Modulation',
   ins:[{n:'in',t:'sig'},{n:'f0',t:'num'},{n:'shift',t:'num'},{n:'bw',t:'num'},{n:'invert',t:'num'},{n:'center',t:'num'}],
   outs:[{n:'soft',t:'sig'},{n:'level',t:'num'},{n:'fLo',t:'num'},{n:'fHi',t:'num'},
         {n:'bLo',t:'num'},{n:'bHi',t:'num'},{n:'q',t:'num'}],
@@ -253,7 +253,7 @@ function pLine(n){                                 // следующая стр�
 }
 
 
-def({ id:'costas', title:'Carrier Acquisition', cat:'Modulation',
+def({ id:'costas', lazy:'proc', title:'Carrier Acquisition', cat:'Modulation',
   ins:[{n:'in',t:'sig'},{n:'f0',t:'num'},{n:'loopHz',t:'num'},{n:'lp',t:'num'},{n:'order',t:'sig'}],
   outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'ferr',t:'num'},{n:'lock',t:'num'}],
   view:{h:40}, readout:true,
@@ -518,7 +518,7 @@ def({ id:'wwv', title:'WWV/WWVH/CHU Decoder', cat:'Decoders',
 // Сюда подаётся сигнал с микрофона. Ищем пик в полосе вокруг f0, исключая
 // узкую зону вокруг нулевого сдвига (это прямой сигнал динамик→микрофон).
 
-def({ id:'doppler', title:'Doppler Radar', cat:'Radar',
+def({ id:'doppler', lazy:'proc', title:'Doppler Radar', cat:'Radar',
   ins:[{n:'in',t:'sig'},{n:'f0',t:'num'}],
   outs:[{n:'shift',t:'num'},{n:'velocity',t:'num'}],
   view:{h:70}, resize:true, readout:true,
@@ -651,7 +651,7 @@ function chirpSolve(n,L1,L2){
   return {x,y};
 }
 
-def({ id:'chirpRadar', title:'Chirp Radar 2D', cat:'Radar',
+def({ id:'chirpRadar', lazy:'proc', title:'Chirp Radar 2D', cat:'Radar',
   ins:[{n:'A',t:'sig'},{n:'B',t:'sig'}],
   outs:[{n:'out',t:'sig'},{n:'x',t:'num'},{n:'y',t:'num'},{n:'range1',t:'num'},{n:'range2',t:'num'}],
   view:{h:160}, resize:true, readout:true,

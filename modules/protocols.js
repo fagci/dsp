@@ -26,7 +26,7 @@ function patBits(n){
   return out.length? out : [1];
 }
 
-def({ id:'corr', title:'Pattern Correlator', cat:'Protocols',
+def({ id:'corr', lazy:'proc', title:'Pattern Correlator', cat:'Protocols',
   ins:[{n:'in',t:'sig'},{n:'baud',t:'num'},{n:'thr',t:'num'},{n:'abs',t:'num'},{n:'dead',t:'num'},{n:'shift',t:'num'}], outs:[{n:'corr',t:'sig'},{n:'sync',t:'sig'},{n:'peak',t:'num'}],
   view:{h:80}, resize:true, readout:true,
   params:[{n:'pat',t:'select',opts:Object.keys(PATTERNS),d:'Barker 13'},
@@ -908,7 +908,7 @@ function afskBaudEst(n,dr){                            // NSDF-автокорр�
   if(best>0.3){ n.baud=n.baud*.7+(dr/bl)*.3; n.lock=n.lock*.8+best*.2; } else n.lock*=.8;
 }
 
-def({ id:'afskRx', title:'aFSK: Auto-Receive (auto)', cat:'Decoders', readout:true, tall:true, view:{h:44},
+def({ id:'afskRx', lazy:'proc', title:'aFSK: Auto-Receive (auto)', cat:'Decoders', readout:true, tall:true, view:{h:44},
   ins:[{n:'in',t:'sig'}],
   outs:[{n:'soft',t:'sig'},{n:'fMark',t:'num'},{n:'fSpace',t:'num'},{n:'baud',t:'num'},{n:'lock',t:'num'}],
   params:[{n:'fmin',t:'range',min:100,max:5000,step:1,d:300,log:true},
@@ -1203,7 +1203,7 @@ function imgResample(img,W,H,rgb){                   // источник про�
   return out;
 }
 
-def({ id:'paintTx', title:'Raster (transmit)', cat:'Video',
+def({ id:'paintTx', lazy:'proc', title:'Raster (transmit)', cat:'Video',
   ins:[{n:'img',t:'img'},{n:'lineMs',t:'num'},{n:'slant',t:'num'},{n:'shift',t:'num'}],
   outs:[{n:'level',t:'sig'},{n:'sync',t:'sig'}],
   view:{h:40}, readout:true,
@@ -1251,7 +1251,7 @@ def({ id:'paintTx', title:'Raster (transmit)', cat:'Video',
       : n.done ? 'transmission complete'
       : 'line '+n.py+'/'+(n.cols?n.W:n.H); }});
 
-def({ id:'paint', title:'Raster (line by line)', cat:'Video',
+def({ id:'paint', lazy:'proc', title:'Raster (line by line)', cat:'Video',
   ins:[{n:'level',t:'sig'},{n:'sync',t:'sig'},{n:'lineMs',t:'num'},{n:'slant',t:'num'},
        {n:'offset',t:'num'},{n:'shift',t:'num'},{n:'rgb',t:'num'},{n:'invert',t:'num'}], outs:[{n:'img',t:'img'}],
   view:{h:200}, resize:true, pick:true, readout:true,

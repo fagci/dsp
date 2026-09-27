@@ -300,6 +300,7 @@ const Eng = {
       if(typeof stat!=='undefined') stat.textContent='failed to enable microphone: '+e.message;
       return;
     }
+    if(!this.node || this.ctx.state==='closed'){ st.getTracks().forEach(t=>t.stop()); return; }  // движок остановили, пока ждали доступ
     if(!this.merger){                                // два источника сводятся в два канала входа
       this.merger=this.ctx.createChannelMerger(2);
       this.merger.connect(this.node); }
@@ -331,6 +332,7 @@ const Eng = {
       if(typeof stat!=='undefined') stat.textContent='failed to enable stereo microphone: '+e.message;
       return;
     }
+    if(!this.node || this.ctx.state==='closed'){ st.getTracks().forEach(t=>t.stop()); return; }
     if(!this.merger){ this.merger=this.ctx.createChannelMerger(2); this.merger.connect(this.node); }
     this.stereoStream=st; this.stereoDeviceId=deviceId||null; this.stereoSr=sr||null;
     this.stereoSrc=this.ctx.createMediaStreamSource(st);
@@ -531,6 +533,31 @@ function evalNode(n, ctx){
   applyControlWires(n,I);
   try{ n.out = d.process(n, I, g) || {}; }catch(err){ n.err = err; }
   fillControlOuts(n);
+  if(d.lazy==='proc') n._dirty=true; else if(d.lazy===true) markInputs(n,I);
+}
+/* ---- ленивая отрисовка ----
+   Модуль с lazy:true рисуется (см. frame() в core-graph.js) только когда есть что показать:
+   изменились входы, параметры, размер/буфер канвы, тема, был ввод мышью по узлу, либо модуль
+   сам вызвал redraw(n) (асинхронные данные, внутреннее состояние). lazy:'proc' — после каждого
+   process() (история/затухание меняются каждый блок, но при остановленном движке — ничего).
+   lazy:'manual' — только redraw(n). drawKey(n) в модуле — строка видимого состояния, сверяется
+   каждый кадр (для асинхронных данных: serial, USB, сеть). Страховка: не реже раза в LAZY_MAX_MS. */
+const LAZY_MAX_MS=1000;
+let drawGen=0;
+function redraw(n){ n._dirty=true; }
+function redrawAll(){ drawGen++; }
+function redrawIf(n,key){ if(key!==n._rk){ n._rk=key; n._dirty=true; } }   // ключ видимого состояния сменился
+// Входы: числа/строки — по значению, объекты с rev (спектр) — по rev, прочие объекты
+// (буферы сигнала переиспользуются и перезаписываются) — считаем новыми каждый блок.
+function markInputs(n,I){
+  const s=n._iv||(n._iv={});
+  for(const k in I){
+    const v=I[k];
+    if(v!==null && typeof v==='object'){
+      if(v.rev==null){ n._dirty=true; continue; }
+      if(v!==s[k] || v.rev!==s[k+'\u0001']){ s[k]=v; s[k+'\u0001']=v.rev; n._dirty=true; }
+    } else if(v!==s[k] && !(v!==v && s[k]!==s[k])){ s[k]=v; n._dirty=true; }
+  }
 }
 function topoOrder(nodes,edges,map){                 // топосорт, циклы читают прошлый блок
   const indeg={}, out={};

@@ -656,7 +656,7 @@ function geoLocShown(n){
   return best || n.groups.values().next().value || null;
 }
 function geoLocFmtErr(km){ return km>=1 ? km.toFixed(1)+' km' : Math.round(km*1000)+' m'; }
-def({ id:'geoLocate', title:'Source Locator', cat:'Analysis',
+def({ id:'geoLocate', lazy:'manual', title:'Source Locator', cat:'Analysis',
   ins:[{n:'rec',t:'rec'},{n:'select',t:'rec'}],        // select — клик на карте: показать эту группу
   outs:[{n:'rec',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'err',t:'num'},{n:'count',t:'num'}],
   view:{h:260}, resize:true, readout:true,
@@ -698,6 +698,7 @@ def({ id:'geoLocate', title:'Source Locator', cat:'Analysis',
     if(now-n.lastSolve>200){
       n.lastSolve=now;
       const todo=[...n.groups.values()].filter(g=>g.dirty).slice(0,4);
+      if(todo.length) n.solveGen=(n.solveGen|0)+1;
       for(const g of todo){
         g.dirty=false;
         geoLocSolve(g,n.p);
@@ -712,6 +713,7 @@ def({ id:'geoLocate', title:'Source Locator', cat:'Analysis',
       }
     }
     const g=geoLocShown(n), S=g?.sol;
+    redrawIf(n,n.total+'|'+n.groups.size+'|'+n.showKey+'|'+n.solveGen);
     return {rec, lat:S?S.lat:null, lon:S?S.lon:null, err:S?S.errKm*1000:null, count:n.total};
   },
   draw(n,cv,cx){
@@ -941,7 +943,7 @@ function geoTileGet(src,z,x,y,net){
 
 /* ---------- узел карты ---------- */
 const GEO_TILE_OPTS=['none',...Object.keys(GEO_TILES)];
-def({ id:'geoMap', title:'Map', cat:'Output',
+def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Output',
   ins:[{n:'rec',t:'rec'},{n:'rec2',t:'rec'},{n:'rec3',t:'rec'}],
   outs:[{n:'pick',t:'rec'},{n:'sel',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'count',t:'num'}],
   w:480, view:{h:360}, resize:true,
@@ -978,6 +980,9 @@ def({ id:'geoMap', title:'Map', cat:'Output',
     const pick=n.pickRec, sel=n.selOut; n.pickRec=null; n.selOut=null;
     return {pick, sel, lat:n.pickLat, lon:n.pickLon, count:n.ents.size};
   },
+  // секундный тик — только когда на карте есть что-то зависящее от времени (ttl, "seen N s ago", подсказка)
+  drawKey:n=>n.dirtyGen+'|'+GeoBase.gen+'|'+GeoBase.state+'|'+GeoBase.placesState+'|'+GeoTiles.gen+'|'+n.selKey+'|'+
+    (n.p.ttl>0 || n.selKey || (n.info && Date.now()-n.info.t<9000) ? Math.floor(Date.now()/1000) : ''),
   draw(n,cv,cx){ geoMapDraw(n,cv,cx); }});
 
 function geoMapAdd(n,r){
@@ -1204,6 +1209,7 @@ function geoMapDraw(n,cv,cx){
     dx=-M; dy=-M;
   }
   const g=n._bv, k=v.S/g.S;
+  if(k!==1) redraw(n);                                  // подложка растянута — перерисуем, когда зум успокоится
   cx.drawImage(n._base,dx,dy,g.W*k,g.H*k);
   geoDrawObjects(n,cx,v);
   geoDrawOverlay(n,cx,v);

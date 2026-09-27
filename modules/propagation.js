@@ -153,7 +153,7 @@ function propRScale(f){
   return f>=2e-3?'R5':f>=1e-3?'R4':f>=1e-4?'R3':f>=5e-5?'R2':'R1';
 }
 
-def({ id:'propagation', title:'HF Propagation', cat:'Radio',
+def({ id:'propagation', lazy:'manual', title:'HF Propagation', cat:'Radio',
   // Индексы NOAA SWPC (SFI, SSN, Kp/A, рентген GOES, солнечный ветер) и оценка прохождения
   // КВ-диапазонов: днём/ночью (полдень/полночь по Солнцу для точки lat/lon) и сейчас. Выход bands —
   // диапазоны, раскрашенные по оценке, и отметка MUF: на вход bands у 'sa' (или через 'bandsmerge').
@@ -187,7 +187,7 @@ def({ id:'propagation', title:'HF Propagation', cat:'Radio',
     if(!n.busy && Date.now()-n.lastTry>(n.err&&!n.data?60e3:per)) propFetch(n);
     const W=cv.width, H=cv.height, d=n.data||{};
     // перерисовываем раз в секунду — данные меняются редко
-    const key=W+'x'+H+'|'+(d.t||0)+'|'+n.err+'|'+n.busy+'|'+n.p.lat+','+n.p.lon+'|'+Math.floor(Date.now()/1e3);
+    const key=W+'x'+H+'|'+cv.pxGen+'|'+drawGen+'|'+(d.t||0)+'|'+n.err+'|'+n.busy+'|'+n.p.lat+','+n.p.lon+'|'+Math.floor(Date.now()/1e3);
     if(key===n._drawKey) return; n._drawKey=key;
     cx.clearRect(0,0,W,H);
     cx.font='11px monospace'; cx.textBaseline='alphabetic';
