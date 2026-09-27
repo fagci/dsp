@@ -1489,7 +1489,7 @@ const on=Eng.running&&!Eng.paused;
 runBtn.textContent = on?'■':'▶';
 runBtn.classList.toggle('on',on);
 }
-Eng.onRunChange=syncRunBtn;
+Eng.onRunChange=()=>{ syncRunBtn(); wakeDraw(); };
 runBtn.onclick=async()=>{
 const on=await Eng.toggle();
 if(!on){ stat.textContent='paused'; stat.classList.remove('warn','crit'); }
@@ -1537,6 +1537,17 @@ const x=(n.x+view.x)*view.k, y=(n.y+view.y)*view.k;
 const w=n.el.offsetWidth*view.k, h=n.el.offsetHeight*view.k;
 return x+w >-40  && x <r.width+40  && y+h >-40  && y <r.height+40;
 }
+// Простой: движок не обрабатывает блоки и нет ввода — перерисовка раз в IDLE_MS через
+// setTimeout, без rAF на каждый vsync. Асинхронные данные (скриншот tinySA, тайлы и т.п.)
+// всё равно появятся, с задержкой не больше IDLE_MS.
+const IDLE_MS=250;
+let lastInput=0, lastBlocks=-1, idleT=0;
+function wakeDraw(){
+lastInput=performance.now();
+if(idleT){ clearTimeout(idleT); idleT=0; requestAnimationFrame(frame); }
+}
+for(const ev of ['pointerdown','pointermove','pointerup','wheel','keydown','input','change','resize'])
+addEventListener(ev,wakeDraw,{capture:true,passive:true});
 function frame(ts){
 // пока активен живой высокоскоростной источник (rtlsdr) — растягиваем кадр отрисовки. Сама
 // отрисовка (особенно водопад/спектр) синхронно грузит главный поток, а от него же зависит
@@ -1582,7 +1593,10 @@ stat.classList.toggle('warn', Eng.turbo===1 &&Eng.load>=.85 &&Eng.load<1);
 stat.classList.toggle('crit', Eng.turbo===1 &&Eng.load>=1);
 }
 }
-requestAnimationFrame(frame);
+const busy=Eng.blocks!==lastBlocks || ts-lastInput<2000 || activeInteractions || panzooming || zooming;
+lastBlocks=Eng.blocks;
+if(busy) requestAnimationFrame(frame);
+else idleT=setTimeout(()=>{ idleT=0; requestAnimationFrame(frame); },IDLE_MS);
 }
 applyView();
 (function boot(){

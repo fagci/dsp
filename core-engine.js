@@ -159,13 +159,19 @@ const Eng = {
     // "главный поток на сколько-то мс не отдавал управление событийному циклу" (GC, тяжёлый код,
     // что угодно). setInterval(20мс) сам по себе не гарантирует точность — именно отклонение
     // ОТ ожидаемого периода и есть сигнал, а не абсолютное время между тиками.
+    this.stallWatch(true);
+    this.running = true; this.paused = false;
+    this.onRunChange?.();
+  },
+  // На паузе/останове таймер не нужен: 50 пробуждений в секунду впустую
+  stallWatch(on){
+    clearInterval(this._stallTimer); this._stallTimer=0;
+    if(!on) return;
     this._stallLastT=performance.now();
     this._stallTimer=setInterval(()=>{
       const now=performance.now(), over=(now-this._stallLastT)-20; this._stallLastT=now;
       if(over>15) console.warn(`[Eng] main-thread stall ~${over.toFixed(0)}ms @ ${now.toFixed(0)}ms`);
     }, 20);
-    this.running = true; this.paused = false;
-    this.onRunChange?.();
   },
   // SAB-режим: пришёл пинг от воркета — забираем накопленный им вход из кольца и считаем tick()
   // на каждый полный BLOCK, что успел накопиться (обычно один; если основной поток отставал —
@@ -254,7 +260,7 @@ const Eng = {
   async stop(){
     this.stopMics();
     this.closeSinks();
-    clearInterval(this._stallTimer);
+    this.stallWatch(false);
     try{ await this.ctx?.close(); }catch(e){}
     this.running=false; this.paused=false; this.node=null; this.merger=null;
     this.mic=null; this.micId=null;
@@ -263,7 +269,7 @@ const Eng = {
   async toggle(){
     if(!this.running){ await this.start(); return true; }
     if(this.paused){
-      await this.ctx.resume(); this.paused=false;
+      await this.ctx.resume(); this.paused=false; this.stallWatch(true);
       // переподключаем входы, которые были активны до паузы
       if(this.wasStereo) await this.enableStereoMic(this.stereoDeviceId||undefined, this.stereoSr||undefined);
       else for(let slot=0;slot<2;slot++)
@@ -271,7 +277,7 @@ const Eng = {
     } else {
       this.wasStereo=!!this.stereoSrc;
       this.wasMic=[!!this.mics[0], !!this.mics[1]];
-      await this.ctx.suspend(); this.paused=true;
+      await this.ctx.suspend(); this.paused=true; this.stallWatch(false);
       this.stopMics();
     }
     this.onRunChange?.();
@@ -280,7 +286,7 @@ const Eng = {
   async enableMic(deviceId, slot, sr){
     slot=slot|0;
     if(!this.running) await this.start();
-    else if(this.paused){ await this.ctx.resume(); this.paused=false; this.onRunChange?.(); }
+    else if(this.paused){ await this.ctx.resume(); this.paused=false; this.stallWatch(true); this.onRunChange?.(); }
     if(this.mics[slot] && deviceId===undefined && sr===undefined) return;
     this.stopStereoMic();                             // ручная настройка отдельного входа — выходим из стерео-режима
     const fx=this.fx||{};
@@ -311,7 +317,7 @@ const Eng = {
   // одинаковый моно-даунмикс в обоих слотах вместо реального L/R).
   async enableStereoMic(deviceId, sr){
     if(!this.running) await this.start();
-    else if(this.paused){ await this.ctx.resume(); this.paused=false; this.onRunChange?.(); }
+    else if(this.paused){ await this.ctx.resume(); this.paused=false; this.stallWatch(true); this.onRunChange?.(); }
     this.stopMics();                                  // единый поток на оба канала — отдельные mono-входы не нужны
     const fx=this.fx||{};
     const a={echoCancellation:!!fx.echo, noiseSuppression:!!fx.ns, autoGainControl:!!fx.agc,
@@ -424,7 +430,7 @@ const Eng = {
   async setBlock(v){
     const was=this.running&&!this.paused;
     this.stopMics();                                 // раньше треки не останавливались — микрофон висел включённым
-    clearInterval(this._stallTimer);                  // иначе старый таймер продолжит тикать поверх нового от start()
+    this.stallWatch(false);                           // иначе старый таймер продолжит тикать поверх нового от start()
     this.closeSinks();
     try{ await this.ctx?.close(); }catch(e){}
     this.running=false; this.paused=false; this.node=null;
@@ -445,7 +451,7 @@ const Eng = {
   async setSampleRate(v){
     const was=this.running&&!this.paused;
     this.stopMics();
-    clearInterval(this._stallTimer);                  // иначе старый таймер продолжит тикать поверх нового от start()
+    this.stallWatch(false);                           // иначе старый таймер продолжит тикать поверх нового от start()
     this.closeSinks();
     try{ await this.ctx?.close(); }catch(e){}
     this.running=false; this.paused=false; this.node=null;
