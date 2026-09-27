@@ -301,33 +301,82 @@ def({ id:'recFilter', title:'Rec Filter', cat:'Control',
   draw(n){ n.el.querySelector('.readout').textContent=
     (n.err ? 'error: '+n.err+'\n' : '')+'pass '+n.pass+' · reject '+n.drop; }});
 
+// Своя позиция: вручную (lat/lon или локатор, ⌖ — разово из геолокации) или GPS-слежение.
+// Последняя известная позиция — в GeoMe, её берут узлы, которым нужна точка приёма.
+const GeoMe={lat:null, lon:null, t:0};
 def({ id:'geoMe', title:'My Position', cat:'Sources',
-  // Геолокация браузера (GPS на телефоне). rec — запись на каждую новую точку.
   outs:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'acc',t:'num'},{n:'alt',t:'num'},
-        {n:'speed',t:'num'},{n:'heading',t:'num'},{n:'rec',t:'rec'}],
+        {n:'speed',t:'num'},{n:'heading',t:'num'},{n:'grid',t:'txt'},{n:'rec',t:'rec'}],
   readout:true,
-  params:[{n:'on',t:'check',d:false,label:'track position'},
-          {n:'hi',t:'check',d:true,label:'high accuracy (GPS)'},
-          {n:'id',t:'text',d:'me',label:'record id'}],
-  init:n=>{ n.watch=null; n.fix=null; n.newFix=false; n.msg='off'; n.wOn=false; },
+  params:[{n:'src',t:'select',opts:['manual','gps'],d:'manual',label:'source'},
+          {n:'lat',t:'num',d:55.7558,label:'lat, °'},
+          {n:'lon',t:'num',d:37.6173,label:'lon, °'},
+          {n:'grid',t:'text',d:'',label:'locator (sets lat/lon)'},
+          {n:'locate',t:'button',label:'⌖ Locate once',fn:n=>geoMeLocate(n)},
+          {n:'hi',t:'check',d:true,label:'high accuracy (GPS)',adv:true},
+          {n:'id',t:'text',d:'me',label:'record id',adv:true}],
+  init:n=>{
+    if(n.p.on===true) n.p.src='gps';               // старые патчи: галка «track position»
+    delete n.p.on;
+    n.watch=null; n.fix=null; n.newFix=false; n.msg=''; n.wOn=false; n.lastGrid=n.p.grid; n.lastLL='';
+  },
   dispose:n=>geoMeStop(n),
   process(n){
-    if(n.p.on && !n.wOn) geoMeStart(n);
-    else if(!n.p.on && n.wOn) geoMeStop(n);
-    const f=n.fix;
-    let rec=null;
-    if(n.newFix && f){
-      n.newFix=false;
-      rec=[{t:f.t, id:n.p.id||'me', icon:'me', lat:f.lat, lon:f.lon, acc:f.acc,
-            ...(f.alt!=null?{alt:f.alt}:{}), ...(f.speed!=null?{speed:f.speed}:{}),
-            ...(f.heading!=null?{heading:f.heading}:{}), grid:latLonToGrid(f.lat,f.lon,6)}];
+    const gps=n.p.src==='gps';
+    if(gps && !n.wOn) geoMeStart(n);
+    else if(!gps && n.wOn) geoMeStop(n);
+    let f=null;
+    if(gps) f=n.fix;
+    else {
+      // локатор правят руками — пересчитать lat/lon; lat/lon правят — обновить локатор
+      if(n.p.grid!==n.lastGrid){
+        n.lastGrid=n.p.grid;
+        const g=gridToLatLon(n.p.grid);
+        if(g){ setMod(n,'lat',+g.lat.toFixed(5)); setMod(n,'lon',+g.lon.toFixed(5)); n.lastLL=n.p.lat+','+n.p.lon; }
+      }
+      const lat=recNum(n.p.lat), lon=recNum(n.p.lon);
+      if(lat!=null && lon!=null && Math.abs(lat)<=90 && Math.abs(lon)<=180){
+        const key=lat+','+lon;
+        if(key!==n.lastLL){
+          n.lastLL=key;
+          const g=latLonToGrid(lat,lon,6);
+          const cur=String(n.p.grid||'').trim();          // точка всё ещё в введённом квадрате — локатор не трогаем
+          if(!gridToLatLon(cur) || latLonToGrid(lat,lon,cur.length).toUpperCase()!==cur.toUpperCase()){
+            setMod(n,'grid',g); n.lastGrid=g; }
+          n.newFix=true;
+        }
+        f={lat, lon, acc:null, alt:null, speed:null, heading:null, t:Date.now()};
+        n.msg='manual';
+      } else n.msg='enter lat/lon or locator';
     }
-    return f ? {lat:f.lat, lon:f.lon, acc:f.acc, alt:f.alt, speed:f.speed, heading:f.heading, rec}
+    let rec=null;
+    if(f){
+      GeoMe.lat=f.lat; GeoMe.lon=f.lon; GeoMe.t=Date.now();
+      if(n.newFix){
+        n.newFix=false;
+        rec=[{t:f.t, id:n.p.id||'me', icon:'me', lat:f.lat, lon:f.lon,
+              ...(f.acc!=null?{acc:f.acc, radius:f.acc}:{}),
+              ...(f.alt!=null?{alt:f.alt}:{}), ...(f.speed!=null?{speed:f.speed}:{}),
+              ...(f.heading!=null?{heading:f.heading}:{}), grid:latLonToGrid(f.lat,f.lon,6)}];
+      }
+    }
+    return f ? {lat:f.lat, lon:f.lon, acc:f.acc, alt:f.alt, speed:f.speed, heading:f.heading,
+                grid:latLonToGrid(f.lat,f.lon,6), rec}
              : {rec};
   },
-  draw(n){ const f=n.fix;
-    n.el.querySelector('.readout').textContent = n.msg+(f ?
-      '\n'+f.lat.toFixed(5)+', '+f.lon.toFixed(5)+' ±'+Math.round(f.acc)+' m · '+latLonToGrid(f.lat,f.lon,6) : ''); }});
+  draw(n){ const gps=n.p.src==='gps', f=gps ? n.fix : null;
+    const lat=gps ? f?.lat ?? null : recNum(n.p.lat), lon=gps ? f?.lon ?? null : recNum(n.p.lon);
+    n.el.querySelector('.readout').textContent = n.msg+(lat!=null && lon!=null ?
+      '\n'+lat.toFixed(5)+', '+lon.toFixed(5)+(f?' ±'+Math.round(f.acc)+' m':'')+' · '+latLonToGrid(lat,lon,6) : ''); }});
+function geoMeLocate(n){
+  if(!navigator.geolocation){ n.msg='geolocation not available'; return; }
+  n.msg='locating…';
+  navigator.geolocation.getCurrentPosition(p=>{
+    setMod(n,'src','manual');
+    setMod(n,'lat',+p.coords.latitude.toFixed(5)); setMod(n,'lon',+p.coords.longitude.toFixed(5));
+    n.msg='manual';
+  }, e=>{ n.msg='geolocation: '+e.message; }, {enableHighAccuracy:!!n.p.hi, timeout:30000});
+}
 function geoMeStart(n){
   n.wOn=true;
   if(!navigator.geolocation){ n.msg='geolocation not available'; return; }
@@ -342,7 +391,324 @@ function geoMeStart(n){
 function geoMeStop(n){
   n.wOn=false;
   if(n.watch!=null) navigator.geolocation?.clearWatch(n.watch);
-  n.watch=null; n.msg='off';
+  n.watch=null; n.msg='';
+}
+
+/* ---------- FT8: разбор сообщения ---------- */
+// "CQ [DX|POTA|…] CALL GRID", "CALL1 CALL2 GRID|R-10|-05|RRR|RR73|73"
+function ft8MsgInfo(msg){
+  const w=String(msg||'').trim().toUpperCase().split(/\s+/).filter(Boolean);
+  if(w.length<2) return null;
+  const isGrid=x=>/^[A-R]{2}\d\d$/.test(x) && x!=='RR73';
+  const call=x=>x.replace(/^<|>$/g,'').replace(/\/[RP]$/,'');
+  const o={from:null, to:null, grid:null, cq:false, report:null};
+  const last=w[w.length-1];
+  if(w[0]==='CQ'){
+    o.cq=true;
+    if(isGrid(last) && w.length>=3){ o.grid=last; o.from=call(w[w.length-2]); }
+    else o.from=call(last);
+  } else {
+    o.to=call(w[0]); o.from=call(w[1]);
+    if(w.length>=3){
+      if(isGrid(w[2])) o.grid=w[2];
+      else if(/^R?[+-]\d\d$/.test(w[2])) o.report=w[2];
+    }
+  }
+  const isCall=x=>x && /\d/.test(x) && /[A-Z]/.test(x) && !/^TELEM$/.test(x);   // "...", телеметрия, свободный текст
+  if(!isCall(o.from)) o.from=null;
+  if(!isCall(o.to)) o.to=null;
+  if(w[0]==='TELEM') return null;
+  return o;
+}
+// координаты по локатору + расстояние и азимут от своей позиции (узел My Position)
+function ft8GeoFill(r,grid){
+  const g=gridToLatLon(grid); if(!g) return;
+  r.lat=+g.lat.toFixed(4); r.lon=+g.lon.toFixed(4);
+  if(GeoMe.lat!=null){
+    r.dist_km=Math.round(geoDist(GeoMe.lat,GeoMe.lon,g.lat,g.lon));
+    r.az=Math.round(geoBearing(GeoMe.lat,GeoMe.lon,g.lat,g.lon));
+    r.lat2=GeoMe.lat; r.lon2=GeoMe.lon;
+  }
+}
+
+/* ---------- координаты из текста ---------- */
+// ищет в строке координаты разных видов; возвращает [{lat,lon,kind,match}]
+function geoTextFind(text,opt={}){
+  const T=String(text||''), U=T.toUpperCase(), out=[], used=[];
+  const free=(a,b)=>!used.some(([x,y])=>a<y && b>x);
+  const hem=(v,h)=>(h==='S'||h==='W') ? -v : v;
+  const ok=(lat,lon)=>isFinite(lat) && isFinite(lon) && Math.abs(lat)<=90 && Math.abs(lon)<=180 && !(lat===0 && lon===0);
+  const take=(re,kind,conv)=>{
+    re.lastIndex=0; let m;
+    while((m=re.exec(U))){
+      const a=m.index, b=a+m[0].length;
+      if(!free(a,b)) continue;
+      const p=conv(m); if(!p || !ok(p[0],p[1])) continue;
+      used.push([a,b]); out.push({lat:+p[0].toFixed(6), lon:+p[1].toFixed(6), kind, match:T.slice(a,b), at:a});
+    }
+  };
+  const dm=(d,m)=>+d+(+m)/60;
+  // градусы-минуты-секунды: 55°45'21"N 37°37'04"E
+  take(/(\d{1,2})\s*[°º]\s*(\d{1,2}(?:\.\d+)?)\s*['′]\s*(?:(\d{1,2}(?:\.\d+)?)\s*(?:["″]|''))?\s*([NS])[\s,;\/]*(\d{1,3})\s*[°º]\s*(\d{1,2}(?:\.\d+)?)\s*['′]\s*(?:(\d{1,2}(?:\.\d+)?)\s*(?:["″]|''))?\s*([EW])/g,'dms',
+    m=>[hem(dm(m[1],m[2])+(+(m[3]||0))/3600,m[4]), hem(dm(m[5],m[6])+(+(m[7]||0))/3600,m[8])]);
+  // градусы и минуты: NMEA "5545.350,N,03737.070,E", APRS "4903.50N/07201.75W"
+  take(/(\d{2})(\d{2}\.\d+)\s*,?\s*([NS])\s*[,\/\\ ]?\s*(\d{3})(\d{2}\.\d+)\s*,?\s*([EW])/g,'ddmm',
+    m=>[hem(dm(m[1],m[2]),m[3]), hem(dm(m[4],m[5]),m[6])]);
+  // полушарие впереди, десятичные градусы: N55.7558 E037.6173
+  take(/\b([NS])\s?(\d{1,2}\.\d+)[°º]?\s*[,;\/ ]?\s*([EW])\s?(\d{1,3}\.\d+)[°º]?/g,'hemi',
+    m=>[hem(+m[2],m[1]), hem(+m[4],m[3])]);
+  // ACARS: N55123E037456 — градусы, минуты и десятые (сотые) минуты
+  take(/\b([NS])\s?(\d{2})(\d{2})(\d{1,2})\s*,?\s*([EW])\s?(\d{3})(\d{2})(\d{1,2})\b/g,'acars',
+    m=>[hem(dm(m[2],m[3]+'.'+m[4]),m[1]), hem(dm(m[6],m[7]+'.'+m[8]),m[5])]);
+  // десятичные градусы с полушарием после: 55.7558N 37.6173E
+  take(/(\d{1,2}\.\d+)\s*[°º]?\s*([NS])[\s,;\/]*(\d{1,3}\.\d+)\s*[°º]?\s*([EW])/g,'dec',
+    m=>[hem(+m[1],m[2]), hem(+m[3],m[4])]);
+  // просто пара чисел: 55.7558, 37.6173 (не меньше трёх знаков после точки — меньше ложных)
+  take(/(^|[^\d.])(-?\d{1,2}\.\d{3,})\s*[,;\s]\s*(-?\d{1,3}\.\d{3,})(?![\d.])/g,'pair',
+    m=>[+m[2], +m[3]]);
+  // локаторы Maidenhead: 6 знаков всегда, 4 — по опции
+  const gre=opt.loc4 ? /\b([A-R]{2}\d{2}(?:[A-X]{2})?)\b/g : /\b([A-R]{2}\d{2}[A-X]{2})\b/g;
+  take(gre,'grid',m=>{ if(m[1]==='RR73') return null; const g=gridToLatLon(m[1]); return g ? [g.lat,g.lon] : null; });
+  return out.sort((a,b)=>a.at-b.at);
+}
+
+def({ id:'geoText', title:'Geo from Text', cat:'Decoders',
+  // Координаты из любого текста: декодированные сообщения, NMEA, APRS, ACARS, заметки.
+  ins:[{n:'text',t:'txt'}],
+  outs:[{n:'rec',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'count',t:'num'}],
+  readout:true,
+  params:[{n:'all',t:'check',d:true,label:'all matches (else first)'},
+          {n:'loc4',t:'check',d:false,label:'4-char locators (more false hits)'},
+          {n:'id',t:'text',d:'',label:'record id (empty — none)'}],
+  init:n=>{ n.last=null; n.count=0; n.lat=null; n.lon=null; n.shown=''; },
+  process(n,I){
+    let rec=null;
+    if(typeof I.text==='string' && I.text!==n.last){
+      n.last=I.text;
+      let found=geoTextFind(I.text,{loc4:n.p.loc4});
+      if(!n.p.all) found=found.slice(0,1);
+      if(found.length){
+        const t=Date.now();
+        rec=found.map(f=>({t, lat:f.lat, lon:f.lon, kind:f.kind, match:f.match,
+          text:I.text.length>300 ? I.text.slice(0,300)+'…' : I.text, ...(n.p.id?{id:n.p.id}:{})}));
+        const l=found[found.length-1]; n.lat=l.lat; n.lon=l.lon; n.count+=found.length;
+        n.shown=found.map(f=>f.kind+': '+f.match+' → '+f.lat+', '+f.lon).join('\n');
+      }
+    }
+    return {rec, lat:n.lat, lon:n.lon, count:n.count};
+  },
+  draw(n){ n.el.querySelector('.readout').textContent='found '+n.count+(n.shown?'\n'+n.shown:''); }});
+
+def({ id:'geoMark', title:'Mark Point', cat:'Control',
+  // Снимок «где я и что принимаю»: позиция (входы lat/lon или My Position) + значения на входах.
+  // По кнопке, по фронту go или автоматически раз в N секунд — для замеров на местности.
+  ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'rssi',t:'num'},{n:'snr',t:'num'},
+       {n:'azimuth',t:'num'},{n:'freq',t:'num'},{n:'go',t:'num'}],
+  outs:[{n:'rec',t:'rec'},{n:'count',t:'num'}],
+  readout:true,
+  params:[{n:'mark',t:'button',label:'● Mark',fn:n=>{ n.req=true; }},
+          {n:'auto',t:'range',min:0,max:120,step:1,d:0,label:'auto every, s (0 — off)'},
+          {n:'icon',t:'select',opts:['dot','square','triangle','diamond','star','flag','cross','antenna','rx'],d:'dot'},
+          {n:'note',t:'text',d:'',label:'note'}],
+  init:n=>{ n.req=false; n.prevGo=0; n.count=0; n.lastT=0; n.lastRec=null; n.msg=''; },
+  process(n,I){
+    const go=typeof I.go==='number' ? I.go : 0, edge=go>0.5 && n.prevGo<=0.5; n.prevGo=go;
+    const now=Date.now();
+    let fire=n.req || edge || (n.p.auto>0 && now-n.lastT>=n.p.auto*1000);
+    n.req=false;
+    let rec=null;
+    if(fire){
+      n.lastT=now;
+      const lat=recNum(I.lat) ?? GeoMe.lat, lon=recNum(I.lon) ?? GeoMe.lon;
+      if(lat==null || lon==null){ n.msg='no position: wire lat/lon or add My Position'; }
+      else {
+        const r={t:now, lat:+lat.toFixed(6), lon:+lon.toFixed(6), icon:n.p.icon, n:++n.count};
+        for(const k of ['rssi','snr','azimuth','freq']){ const v=recNum(I[k]); if(v!=null) r[k]=+v.toFixed(2); }
+        if(n.p.note) r.note=n.p.note;
+        r.label=r.rssi!=null ? r.rssi+' dBm' : r.snr!=null ? r.snr+' dB' : '#'+r.n;
+        n.lastRec=r; rec=[r]; n.msg='';
+      }
+    }
+    return {rec, count:n.count};
+  },
+  draw(n){ n.el.querySelector('.readout').textContent=(n.msg?n.msg+'\n':'')+'marks '+n.count+
+    (n.lastRec ? '\n'+recText(n.lastRec,new Set(['icon','label'])) : ''); }});
+
+/* ---------- поиск источника: уровень сигнала и пеленги ---------- */
+// Замеры — записи с координатами и уровнем (rssi/snr/level) и/или азимутом (azimuth).
+// Уровень: модель log-distance s = A − 10·n·lg(d), мощность A неизвестна и исключается
+// (для каждой точки-кандидата берётся лучшая A). Пеленги: невязка угла. Сумма квадратов
+// невязок ищется перебором по сетке (грубо, затем уточнение), вероятность ∝ exp(−cost/2).
+// Локальная плоская проекция: годится до сотен км. На КВ уровень почти не зависит от
+// расстояния (отражения от ионосферы) — там полезны только пеленги.
+function geoLocLocal(lat0,lon0){
+  const kx=111.32*Math.cos(lat0*D2R), ky=110.574;
+  return {fwd:(lat,lon)=>({x:(((lon-lon0+540)%360)-180)*kx, y:(lat-lat0)*ky}),
+          inv:(x,y)=>({lat:lat0+y/ky, lon:((lon0+x/kx+540)%360)-180})};
+}
+function geoLocCost(M,x,y,o){
+  let cs=0, ns=0, sumA=0;
+  const L=[];
+  if(o.useS){
+    for(const m of M){ if(m.s==null) continue;
+      const d=Math.max(Math.hypot(x-m.x,y-m.y),o.dmin), l=10*o.pn*Math.log10(d);
+      L.push(l); sumA+=m.s+l; ns++; }
+    if(ns>=3){
+      const A=sumA/ns; let k=0;
+      for(const m of M){ if(m.s==null) continue; const r=m.s-A+L[k++]; cs+=r*r; }
+      cs/=o.sdb*o.sdb;
+    } else cs=0;
+  }
+  let cb=0;
+  if(o.useB) for(const m of M){ if(m.az==null) continue;
+    const b=Math.atan2(x-m.x,y-m.y)/D2R;
+    let da=((b-m.az)%360+540)%360-180;
+    cb+=da*da/(o.saz*o.saz); }
+  return cs+cb;
+}
+function geoLocSolve(n){
+  const M=n.meas;
+  const nS=M.filter(m=>m.s!=null).length, nB=M.filter(m=>m.az!=null).length;
+  const meth=n.p.method;
+  const useS=(meth!=='bearing') && nS>=3, useB=(meth!=='strength') && nB>=1;
+  n.sol=null;
+  if(!useS && !(useB && nB>=2)){ n.msg='need ≥3 level or ≥2 bearing measurements'; return; }
+  const lat0=M.reduce((a,m)=>a+m.lat,0)/M.length, lon0=M[0].lon;
+  const P=geoLocLocal(lat0,lon0);
+  for(const m of M){ const q=P.fwd(m.lat,m.lon); m.x=q.x; m.y=q.y; }
+  const o={useS, useB, pn:n.p.pathN, sdb:n.p.sigmaDb, saz:n.p.sigmaAz, dmin:0.005};
+  // область поиска: вокруг замеров; с пеленгами — ещё и вокруг пересечения лучей (МНК)
+  let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
+  for(const m of M){ x0=Math.min(x0,m.x); x1=Math.max(x1,m.x); y0=Math.min(y0,m.y); y1=Math.max(y1,m.y); }
+  if(useB){
+    let a11=0,a12=0,a22=0,b1=0,b2=0;
+    for(const m of M){ if(m.az==null) continue;
+      const dx=Math.sin(m.az*D2R), dy=Math.cos(m.az*D2R);
+      const p11=1-dx*dx, p12=-dx*dy, p22=1-dy*dy;
+      a11+=p11; a12+=p12; a22+=p22; b1+=p11*m.x+p12*m.y; b2+=p12*m.x+p22*m.y; }
+    const det=a11*a22-a12*a12;
+    if(Math.abs(det)>1e-9){
+      const ix=(a22*b1-a12*b2)/det, iy=(a11*b2-a12*b1)/det;
+      if(isFinite(ix) && Math.hypot(ix-(x0+x1)/2,iy-(y0+y1)/2)<5000){
+        x0=Math.min(x0,ix); x1=Math.max(x1,ix); y0=Math.min(y0,iy); y1=Math.max(y1,iy); }
+    }
+  }
+  const cx=(x0+x1)/2, cy=(y0+y1)/2;
+  let half=n.p.area>0 ? n.p.area/2 : Math.max(0.3,Math.max(x1-x0,y1-y0)*(useS&&!useB?1.0:0.8));
+  const G=n.G=96;
+  const grid=(ccx,ccy,h)=>{
+    const c=new Float64Array(G*G); let best=Infinity, bi=0;
+    for(let j=0;j<G;j++) for(let i=0;i<G;i++){
+      const x=ccx-h+(i+0.5)*2*h/G, y=ccy+h-(j+0.5)*2*h/G;
+      const v=geoLocCost(M,x,y,o); c[j*G+i]=v;
+      if(v<best){ best=v; bi=j*G+i; } }
+    return {c,best,bi,ccx,ccy,h};
+  };
+  let g=grid(cx,cy,half);
+  const map=g;                                        // крупная сетка — для картинки вероятности
+  const fine=grid(g.ccx-g.h+((g.bi%G)+0.5)*2*g.h/G, g.ccy+g.h-(Math.floor(g.bi/G)+0.5)*2*g.h/G, g.h/8);
+  const bx=fine.ccx-fine.h+((fine.bi%G)+0.5)*2*fine.h/G, by=fine.ccy+fine.h-(Math.floor(fine.bi/G)+0.5)*2*fine.h/G;
+  // разброс по апостериорной вероятности на крупной сетке
+  let W=0,mx=0,my=0,vx=0,vy=0;
+  const pr=new Float64Array(G*G);
+  for(let k=0;k<G*G;k++){ const w=Math.exp(-(map.c[k]-map.best)/2); pr[k]=w; W+=w; }
+  for(let k=0;k<G*G;k++){ const x=map.ccx-map.h+((k%G)+0.5)*2*map.h/G, y=map.ccy+map.h-(Math.floor(k/G)+0.5)*2*map.h/G;
+    mx+=pr[k]*x; my+=pr[k]*y; }
+  mx/=W; my/=W;
+  for(let k=0;k<G*G;k++){ const x=map.ccx-map.h+((k%G)+0.5)*2*map.h/G, y=map.ccy+map.h-(Math.floor(k/G)+0.5)*2*map.h/G;
+    vx+=pr[k]*(x-mx)**2; vy+=pr[k]*(y-my)**2; }
+  const errKm=Math.max(Math.sqrt((vx+vy)/W), 2*fine.h/G);
+  // мощность в 1 км при найденной точке (для справки)
+  let A=null;
+  if(useS){ let s=0,k=0; for(const m of M){ if(m.s==null) continue; s+=m.s+10*o.pn*Math.log10(Math.max(Math.hypot(bx-m.x,by-m.y),o.dmin)); k++; } A=s/k; }
+  const ll=P.inv(bx,by);
+  n.sol={lat:ll.lat, lon:ll.lon, x:bx, y:by, errKm, A, pr, map, P, useS, useB, cost:fine.best};
+  n.msg=(useS?'level ':'')+(useB?'bearings ':'')+'· '+M.length+' meas.';
+}
+def({ id:'geoLocate', title:'Source Locator', cat:'Analysis',
+  ins:[{n:'rec',t:'rec'}],
+  outs:[{n:'rec',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'err',t:'num'},{n:'count',t:'num'}],
+  view:{h:260}, resize:true, readout:true,
+  params:[{n:'field',t:'select',opts:['rssi','snr','level'],d:'rssi',label:'level field'},
+          {n:'method',t:'select',opts:['auto','strength','bearing'],d:'auto',label:'use'},
+          {n:'pathN',t:'range',min:1.5,max:5,step:0.1,d:2.5,label:'path loss exponent n'},
+          {n:'sigmaDb',t:'range',min:1,max:20,step:0.5,d:6,label:'level error, dB'},
+          {n:'sigmaAz',t:'range',min:1,max:45,step:1,d:10,label:'bearing error, °'},
+          {n:'area',t:'range',min:0,max:1000,step:0.1,d:0,label:'search area, km (0 — auto)',adv:true},
+          {n:'max',t:'range',min:3,max:1000,step:1,d:200,label:'keep measurements',adv:true},
+          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.meas=[]; n.sol=null; n.dirty=true; }}],
+  init:n=>{ n.meas=[]; n.sol=null; n.dirty=false; n.lastSolve=0; n.msg='waiting for measurements'; n.pkey=''; },
+  process(n,I){
+    for(const r of recList(I.rec)){
+      const pos=geoRecPos(r); if(!pos) continue;
+      const sv=recNum(r[n.p.field]), az=recNum(r.azimuth ?? r.bearing);
+      if(sv==null && az==null) continue;
+      n.meas.push({lat:pos.lat, lon:pos.lon, s:sv, az:az!=null ? ((az%360)+360)%360 : null});
+      if(n.meas.length>n.p.max) n.meas.splice(0,n.meas.length-n.p.max);
+      n.dirty=true;
+    }
+    const pkey=[n.p.method,n.p.pathN,n.p.sigmaDb,n.p.sigmaAz,n.p.area].join();
+    if(pkey!==n.pkey){ n.pkey=pkey; n.dirty=true; }
+    let rec=null;
+    const now=Date.now();
+    if(n.dirty && now-n.lastSolve>250){
+      n.dirty=false; n.lastSolve=now;
+      if(n.meas.length) geoLocSolve(n);
+      const S=n.sol;
+      if(S){
+        const e=S.errKm>=1 ? S.errKm.toFixed(1)+' km' : Math.round(S.errKm*1000)+' m';
+        rec=[{t:now, id:'estimate', label:'source ±'+e, icon:'star', color:'#ffd84a', size:8,
+              lat:+S.lat.toFixed(6), lon:+S.lon.toFixed(6), radius:Math.round(S.errKm*1000),
+              meas:n.meas.length, ...(S.A!=null?{A_1km:+S.A.toFixed(1)}:{}), grid:latLonToGrid(S.lat,S.lon,6)}];
+      }
+    }
+    const S=n.sol;
+    return {rec, lat:S?S.lat:null, lon:S?S.lon:null, err:S?S.errKm*1000:null, count:n.meas.length};
+  },
+  draw(n,cv,cx){ geoLocDraw(n,cv,cx);
+    const S=n.sol;
+    n.el.querySelector('.readout').textContent=n.msg+(S ? '\n'+S.lat.toFixed(5)+', '+S.lon.toFixed(5)+
+      ' ±'+(S.errKm>=1?S.errKm.toFixed(1)+' km':Math.round(S.errKm*1000)+' m')+
+      (S.A!=null?' · A(1 km) '+S.A.toFixed(1):'') : ''); }});
+function geoLocDraw(n,cv,cx){
+  const W=cv.width, H=cv.height, S=n.sol;
+  cx.fillStyle=themeColor('--screen')||'#0a0d0e'; cx.fillRect(0,0,W,H);
+  if(!S){ cx.fillStyle='#62737b'; cx.font='11px monospace'; cx.fillText(n.msg,8,16); return; }
+  const G=n.G, m=S.map, sz=Math.min(W,H)-8, ox=(W-sz)/2, oy=(H-sz)/2;
+  if(!n._img || n._imgSol!==S){
+    n._imgSol=S;
+    const c=n._img || (n._img=document.createElement('canvas')); c.width=G; c.height=G;
+    const ic=c.getContext('2d'), id=ic.createImageData(G,G);
+    let mx=0; for(const v of S.pr) if(v>mx) mx=v;
+    for(let k=0;k<G*G;k++){
+      const t=Math.pow(S.pr[k]/mx,0.35);
+      id.data[4*k]=Math.round(255*Math.min(1,t*1.6)); id.data[4*k+1]=Math.round(200*Math.max(0,t-0.4)/0.6);
+      id.data[4*k+2]=Math.round(80*(1-t)*t*4); id.data[4*k+3]=Math.round(40+215*t);
+    }
+    ic.putImageData(id,0,0);
+  }
+  cx.imageSmoothingEnabled=true; cx.drawImage(n._img,ox,oy,sz,sz);
+  const px=x=>ox+(x-(m.ccx-m.h))/(2*m.h)*sz, py=y=>oy+((m.ccy+m.h)-y)/(2*m.h)*sz;
+  cx.strokeStyle='rgba(120,200,255,.6)'; cx.lineWidth=1;
+  for(const q of n.meas){
+    if(q.az==null || q.x==null) continue;
+    cx.beginPath(); cx.moveTo(px(q.x),py(q.y));
+    cx.lineTo(px(q.x+Math.sin(q.az*D2R)*m.h*4),py(q.y+Math.cos(q.az*D2R)*m.h*4)); cx.stroke();
+  }
+  let smin=Infinity,smax=-Infinity;
+  for(const q of n.meas) if(q.s!=null){ smin=Math.min(smin,q.s); smax=Math.max(smax,q.s); }
+  for(const q of n.meas){
+    if(q.x==null) continue;
+    const t=q.s!=null && smax>smin ? (q.s-smin)/(smax-smin) : 0.5;
+    cx.fillStyle=q.s!=null ? geoSnrColor(t*40-20) : '#7ac8ff';
+    cx.beginPath(); cx.arc(px(q.x),py(q.y),3+t*3,0,2*Math.PI); cx.fill();
+  }
+  cx.strokeStyle='#fff'; cx.lineWidth=1.5;
+  const sx=px(S.x), sy=py(S.y);
+  cx.beginPath(); cx.moveTo(sx-7,sy); cx.lineTo(sx+7,sy); cx.moveTo(sx,sy-7); cx.lineTo(sx,sy+7); cx.stroke();
+  cx.beginPath(); cx.arc(sx,sy,Math.max(3,S.errKm/(2*m.h)*sz),0,2*Math.PI); cx.stroke();
+  cx.fillStyle='#c8d2d6'; cx.font='10px monospace';
+  const span=2*m.h; cx.fillText('area '+(span>=1?span.toFixed(1)+' km':Math.round(span*1000)+' m'),6,H-6);
 }
 
 /* ---------- хранилище: подложка, населённые пункты, точки карт ---------- */
@@ -376,7 +742,7 @@ function unmercX(x){ return x*360-180; }
 function unmercY(y){ return Math.atan(Math.sinh(Math.PI*(1-2*y)))/D2R; }
 
 // Подложка Natural Earth: data/basemap.json (tools/basemap.mjs), после первой загрузки — из IndexedDB
-const GEO_BASE_TAG='ne10m-1';                        // сменить при пересборке data/basemap.json
+const GEO_BASE_TAG='ne10m-2';                        // сменить при пересборке data/basemap.json
 const GeoBase={state:'idle', data:null, err:'', p:null, places:null, placesState:'', placesP:null, gen:0};
 function geoBaseLoad(){
   if(GeoBase.p) return GeoBase.p;
@@ -416,7 +782,7 @@ function geoBasePrep(raw){
     src:raw.src,
     land:prepLayer(raw.land), lakes:prepLayer(raw.lakes), rivers:prepLayer(raw.rivers),
     adm0:prepLayer(raw.adm0), adm1:prepLayer(raw.adm1),
-    countryLabels:pts(raw.countryLabels,a=>({x:mercX(a[0]),y:mercY(a[1]),name:a[2],mz:a[3]})),
+    countryLabels:pts(raw.countryLabels,a=>({x:mercX(a[0]),y:mercY(a[1]),name:a[2],mz:a[3],a3:a[4],lat:a[1],lon:a[0]})),
     adm1Labels:pts(raw.adm1Labels,a=>({x:mercX(a[0]),y:mercY(a[1]),name:a[2],mz:a[3]})),
     places:pts(raw.places,a=>({x:mercX(a[0]),y:mercY(a[1]),name:a[2],mz:a[3],pop:a[4],kind:a[5]}))
       .sort((a,b)=>b.kind-a.kind || b.pop-a.pop),
@@ -543,7 +909,9 @@ def({ id:'geoMap', title:'Map', cat:'Output',
           {n:'places',t:'button',label:'Download places (GeoNames, 17 MB)',fn:()=>geoPlacesDownload(),adv:true},
           {n:'placesFile',t:'file',accept:'.txt,.tsv,.csv,.json',fn:(n,f)=>geoPlacesImport(f),adv:true}],
   init:n=>{
-    if(n.p.mlat==null){ n.p.mlat=50; n.p.mlon=30; n.p.mz=3; }
+    if(n.p.mlat==null) n.p.mlat=50;
+    if(n.p.mlon==null) n.p.mlon=30;
+    if(n.p.mz==null) n.p.mz=3;
     n.ents=new Map(); n.seq=0; n.selKey=null; n.pickRec=null; n.selOut=null;
     n.pickLat=null; n.pickLon=null; n.info=null; n.lastPrune=0; n.loadedStore=null;
     geoBaseLoad(); geoPlacesLoad();
@@ -651,12 +1019,15 @@ function geoMapWire(n,cv){
   cv.addEventListener('wheel',ev=>{
     ev.preventDefault(); ev.stopPropagation();
     const r=cv.getBoundingClientRect(), k=cv.width/r.width;
-    geoMapZoomAt(n,(ev.clientX-r.left)*k,(ev.clientY-r.top)*k,-Math.sign(ev.deltaY)*(ev.ctrlKey?0.1:0.5));
+    // шаг пропорционален прокрутке: тачпад шлёт много мелких событий, колесо мыши — ~100 px на щелчок
+    const px=ev.deltaY*(ev.deltaMode===1 ? 33 : ev.deltaMode===2 ? 400 : 1);
+    const dz=clamp(-px/(ev.ctrlKey ? 100 : 400),-0.35,0.35);
+    geoMapZoomAt(n,(ev.clientX-r.left)*k,(ev.clientY-r.top)*k,dz);
   },{passive:false});
   cv.addEventListener('dblclick',ev=>{
     ev.stopPropagation();
     const r=cv.getBoundingClientRect(), k=cv.width/r.width;
-    geoMapZoomAt(n,(ev.clientX-r.left)*k,(ev.clientY-r.top)*k,ev.shiftKey?-1:1);
+    geoMapZoomAt(n,(ev.clientX-r.left)*k,(ev.clientY-r.top)*k,ev.shiftKey?-0.5:0.5);
   });
   cv.addEventListener('pointerdown',ev=>{
     ev.stopPropagation();

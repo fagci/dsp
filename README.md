@@ -163,11 +163,19 @@ Keys: Space play/stop, L loop, Del delete, T crop, Ctrl+A/X/C/V, Ctrl+S save, +/
 
 - **Fields → Rec** builds a record from its inputs (the field list is editable, ports appear on *Apply fields*); constants like `icon=plane; color=#f80` are added to every record. With the `rec` input it adds/overrides fields in passing records. Emits on change, on a `go` trigger, or every block.
 - **Rec → Fields** splits the last record back into ports; *Fields from last rec* fills the list from what actually arrives.
-- **CSV → Rec** (text lines or a whole file, header or explicit field names, `,` `;` tab), **Rec Log** (save CSV / GeoJSON, replay), **Rec Filter** (JS condition over `r`), **My Position** (browser geolocation / phone GPS).
+- **CSV → Rec** (text lines or a whole file, header or explicit field names, `,` `;` tab), **Rec Log** (save CSV / GeoJSON, replay), **Rec Filter** (JS condition over `r`).
+- **My Position**: typed in (lat/lon or Maidenhead locator, ⌖ fills it once from geolocation) or live GPS. Other nodes use it for distances and bearings.
+- **Geo from Text**: coordinates from any decoded text — degrees/minutes/seconds, NMEA and APRS (`4903.50N/07201.75W`), ACARS (`N55123E037456`), decimal pairs, 6-char locators (4-char optional).
+- **Mark Point**: your position + RSSI/SNR/azimuth/frequency as a record, on a button, a trigger or every N seconds.
+- **Source Locator**: finds a transmitter from marks — signal level (log-distance model, unknown power) and/or bearings; outputs the estimate with an error radius and shows the probability map. Level-based location works on VHF/UHF at short range; on HF (skywave) only bearings make sense.
+- **FT8** now outputs decoded messages (`msg`) and records: call, addressee, locator (remembered per call), SNR (2500 Hz, WSJT-X style estimate), distance and azimuth from your position — a propagation map in one wire.
+- **Station Schedule** (Radio): EiBi CSV or your own CSV (`khz, time, days, station, lang, target, itu, lat, lon`). Stations on air now go to the spectrum (`bands` → Spectrum Analyzer), the ones on the tuned frequency to the `now` text, transmitters to the map (country centre when the file has no coordinates; EiBi `/XXX` relay sites are used). Download by URL (optional CORS proxy — eibispace.de has no CORS headers) or load the file; it is kept in the browser.
 
 **Map** fields: `lat`, `lon` (or `grid` — Maidenhead locator), `id` (same id → one object with a track), `t`, `label`, `icon` (`dot square triangle diamond star cross plus plane antenna tx rx me flag` or any emoji/text), `color`, `size`, `radius` (m, circle), `azimuth` + `range` (km, great-circle bearing line), `heading` (rotates plane/triangle; otherwise taken from the track), `lat2`/`lon2` (line to a second point), `snr`/`rssi` (colour when no `color`). Everything else is shown as `key: value` on click. Tap on an empty spot — coordinates and locator on the `pick` output.
 
 Works offline: the vector base map (Natural Earth 10m: coast, lakes, rivers, country and region borders, ~7 000 cities, English names) is fetched once from `data/basemap.json` and kept in IndexedDB. *Download places* adds ~130 000 towns from GeoNames (shown from zoom 8), or import a GeoNames dump / CSV `name,lat,lon[,population]`. Optional OSM / OpenTopoMap tiles are cached as you view them and stay available offline. Points can be saved in the browser under a name (*save points as*). Rebuild the base map: `node tools/basemap.mjs`.
+
+Presets: *FT8: Propagation Map*, *Fox Hunt: Locate Transmitter*, *HF: Who Is On Air (Schedule)*, *Map: My Position and Points from CSV*, *HFDL: Receive and Aircraft Map*.
 
 ## Themes
 

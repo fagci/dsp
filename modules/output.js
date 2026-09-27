@@ -715,7 +715,7 @@ function ft8Text(n){
       lines.push('   '+c.f.toFixed(1).padStart(7)+' Hz  start +'+t0.toFixed(2)+
         ' s  end +'+(t0+12.64).toFixed(2)+' s  strength '+c.sc.toFixed(2)+
         '  sync '+(c.sync!=null?c.sync:'?')+'/21');
-      if(c.msg) lines.push('     ► '+c.msg);
+      if(c.msg) lines.push('     ► '+c.msg+(c.snr!=null?'   '+(c.snr>0?'+':'')+c.snr+' dB':''));
       else if(c.hex) lines.push('     packet '+c.hex);
       if(c.syms) lines.push('     tones  '+c.syms); }
     return lines.join('\n');
@@ -741,6 +741,54 @@ function ft8Spec(n){                                 // спектрограмм
     for(let b=0;b<bins;b++) mag[f*bins+b]=Math.hypot(re[b],im[b]);
   }
   return {mag,frames,bins};
+}
+// SNR в полосе 2500 Гц, как у WSJT-X (грубо): мощность тона против медианы шума по спектрограмме слота.
+// Окно Ханна 1024 при 6400 Гц — шумовая полоса бина 9.375 Гц → поправка 10·lg(9.375/2500) ≈ −24.3 дБ.
+function ft8Noise(mag,frames,bins,b0,b1){
+  const v=[];
+  for(let f=0;f<frames;f+=5) for(let b=b0;b<=b1;b+=3){ const m=mag[f*bins+b]; v.push(m*m); }
+  v.sort((a,c)=>a-c);
+  return (v[v.length>>1]||1e-12)/Math.LN2;           // медиана экспоненциального распределения → среднее
+}
+function ft8Snr(e,mag,frames,bins,noise){
+  const hz=FT8_SR/FT8_FFT, b=Math.round(e.f/hz), t=Math.round((e.dt+0.5)*FT8_SR/FT8_HOP);
+  if(b<1||b+7*FT8_TS>=bins||t<0||t+4*FT8_SYMS>=frames) return null;
+  let sum=0;
+  for(let s=0;s<FT8_SYMS;s++){
+    const fr=(t+4*s)*bins; let mx=0;
+    for(let q=0;q<8;q++){ const m=mag[fr+b+q*FT8_TS]; if(m*m>mx) mx=m*m; }
+    sum+=mx; }
+  const ratio=Math.max(sum/FT8_SYMS/noise-1,1e-3);
+  return Math.round(10*Math.log10(ratio)-24.3);
+}
+// записи по расшифрованным сообщениям: позывной, корреспондент, локатор (или ранее слышанный), SNR
+function ft8Recs(n,list,mag,frames,bins,b0,b1,slotMs){
+  const dec=list.filter(e=>e.msg);
+  if(!dec.length) return;
+  const noise=ft8Noise(mag,frames,bins,b0,b1);
+  const msgs=[];
+  for(const e of dec){
+    e.snr=ft8Snr(e,mag,frames,bins,noise);
+    msgs.push(e.msg);
+    const info=typeof ft8MsgInfo==='function' ? ft8MsgInfo(e.msg) : null;
+    const r={t:slotMs, src:'FT8', msg:e.msg, f:+e.f.toFixed(1), dt:+e.dt.toFixed(2)};
+    if(e.snr!=null) r.snr=e.snr;
+    if(info){
+      if(info.from){
+        if(info.grid){ n.grids.set(info.from,info.grid); if(n.grids.size>5000) n.grids.delete(n.grids.keys().next().value); }
+        const grid=info.grid || n.grids.get(info.from);
+        Object.assign(r,{id:info.from, call:info.from, label:info.from});
+        if(grid){ r.grid=grid;
+          if(typeof ft8GeoFill==='function') ft8GeoFill(r,grid); }
+      }
+      if(info.to) r.to=info.to;
+      if(info.cq) r.cq=1;
+      if(info.report) r.report=info.report;
+    }
+    n.recQ.push(r);
+  }
+  if(n.recQ.length>2000) n.recQ.splice(0,n.recQ.length-2000);
+  n.msgOut=msgs.join('\n');
 }
 function ft8Run(n,manual,slotMs){
   const t0=performance.now();
@@ -815,6 +863,7 @@ function ft8Run(n,manual,slotMs){
           if(done) break; }
       } }
     return e; });
+  ft8Recs(n,list,mag,frames,bins,b0,b1,slotMs!=null?slotMs:Date.now());
   if(list.length){ n.f=list[0].f; n.sc=list[0].sc; n.dt=list[0].dt; }
   else { n.f=0; n.sc=0; }
   if(Eng.turbo>1) n.warn='speed ×'+Eng.turbo+' breaks slot alignment — set it back to ×1';
