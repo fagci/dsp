@@ -6163,6 +6163,7 @@ def({ id:'stream', title:'Audio Stream (URL)', cat:'Sources',
     {n:'play',t:'button',label:'▶ Play',fn:n=>streamPlay(n)},
     {n:'stop',t:'button',label:'■ Stop',fn:n=>streamStop(n)},
     {n:'gain',t:'range',min:0,max:4,step:.01,d:1},
+    {n:'auto',t:'check',d:true,label:'play when the URL input changes'},
   ],
   init:n=>{
     n.audioEl=null; n.srcNode=null; n.tapNode=null; n.sink=null; n.ctxRef=null;
@@ -6175,6 +6176,7 @@ def({ id:'stream', title:'Audio Stream (URL)', cat:'Sources',
   process(n,I){
     if(typeof I.url==='string' && I.url && I.url!==n.p.url){
       n.p.url = I.url; if(n.set && n.set.url) n.set.url(I.url);
+      if(n.p.auto) streamPlay(n);                    // новая станция с провода (например, выбор на карте)
     }
     if(typeof I.gain==='number') setMod(n,'gain',I.gain);
     // AudioContext мог быть пересоздан движком (смена размера блока/частоты) — граф протух

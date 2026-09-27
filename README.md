@@ -177,7 +177,9 @@ Works offline: the vector base map (Natural Earth 10m: coast, lakes, rivers, cou
 
 - **Satellites** (Radio): SGP4 orbits from CelesTrak TLE groups (amateur, weather, NOAA, stations…) and uplink/downlink frequencies from the SatNOGS database — both downloaded once and kept in the browser (or imported from files; set a CORS proxy if a site refuses cross-origin requests). On the map: position, visibility footprint, ground track ahead; click a satellite to select it. For the selected one: az/el/range, next passes (24 h), sky plot, and **Doppler**: `freq` is the downlink as heard (wire it to `tuneFreq` of the USB SDR — the channel follows the pass), `up` is what to transmit. Downlinks of satellites above the horizon are marked on the spectrum (`bands`). Orbits: [satellite.js](https://github.com/shashwatak/satellite-js) 5.0.0 (MIT) in `vendor/`. TLEs age: refresh them every week or two.
 
-Presets: *Satellites: Track and Doppler*, *FT8: Propagation Map*, *Fox Hunt: Locate Transmitter*, *HF: Who Is On Air (Schedule)*, *Map: My Position and Points from CSV*, *HFDL: Receive and Aircraft Map*.
+- **Internet Radio** (Sources): search [radio-browser.info](https://www.radio-browser.info) — an open community database with a public API — by name, tag and country; the result is kept in the browser. Stations go to the map (without coordinates — around the country centre); click one to play it: its URL goes to *Audio Stream (URL)*, which now starts on a new URL from the wire. An https page cannot play `http://` streams, and only streams that send CORS headers can be captured into the graph.
+
+Presets: *Internet Radio on the Map*, *Satellites: Track and Doppler*, *FT8: Propagation Map*, *Fox Hunt: Locate Transmitter*, *HF: Who Is On Air (Schedule)*, *Map: My Position and Points from CSV*, *HFDL: Receive and Aircraft Map*.
 
 ## Themes
 
