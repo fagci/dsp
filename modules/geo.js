@@ -949,6 +949,7 @@ def({ id:'geoMap', title:'Map', cat:'Output',
           {n:'tiles',t:'select',opts:GEO_TILE_OPTS,d:'none',label:'tiles'},
           {n:'grid',t:'select',opts:['none','lat/lon','maidenhead'],d:'none',label:'grid'},
           {n:'labels',t:'check',d:true,label:'labels'},
+          {n:'cluster',t:'check',d:true,label:'cluster'},
           {n:'follow',t:'check',d:false,label:'follow'},
           {n:'net',t:'check',d:true,label:'online'},
           {n:'fit',t:'button',label:'Fit',fn:n=>geoMapFit(n)},
@@ -1125,6 +1126,7 @@ function geoMapWire(n,cv){
 }
 function geoMapTap(n,px,py){
   const v=geoView(n,n.cv.width,n.cv.height);
+  for(const c of n.clusters||[]) if(Math.hypot(c.x-px,c.y-py)<=c.r+3){ geoMapZoomAt(n,c.x,c.y,2); return; }  // тап по кластеру — приблизить
   let best=null, bd=12;
   for(const e of n.ents.values()){
     const p=e.pts[e.pts.length-1]; if(!p) continue;
@@ -1399,7 +1401,7 @@ function geoDrawObjects(n,cx,v){
   const {W,H,S}=v, now=Date.now(), ttl=n.p.ttl*60000;
   const mpp=lat=>40075016.686*Math.cos(lat*D2R)/S;   // метров в пикселе
   cx.save(); cx.lineJoin='round';
-  const labs=[];
+  const labs=[], marks=[];
   for(const e of n.ents.values()){
     const r=e.rec, last=e.pts[e.pts.length-1]; if(!last) continue;
     const col=geoEntColor(r,e);
@@ -1464,16 +1466,42 @@ function geoDrawObjects(n,cx,v){
     if(rot==null && (icon==='plane'||icon==='triangle') && e.pts.length>1){
       const p0=e.pts[e.pts.length-2]; rot=geoBearing(p0.lat,p0.lon,last.lat,last.lon);
     }
-    geoIcon(cx,icon,s.x,s.y,size,rot,col);
-    if(n.selKey===e.key){
-      cx.strokeStyle=themeColor('--scr-hi')||'#fff'; cx.lineWidth=1.5;
-      cx.beginPath(); cx.arc(s.x,s.y,size+5,0,2*Math.PI); cx.stroke();
-    }
-    if(n.p.labels && (n.ents.size<=300 || v.z>=7)){  // тысячи подписей на обзоре — каша
-      const lab=r.label ?? e.id;
-      if(lab!=null && lab!=='') labs.push({t:String(lab),x:s.x,y:s.y,size,col,a:cx.globalAlpha,pri:(n.selKey===e.key?1e3:0)+size-age});
-    }
+    marks.push({x:s.x,y:s.y,icon,size,rot,col,a:cx.globalAlpha,sel:n.selKey===e.key,lab:r.label ?? e.id,age});
   }
+  // кластеры: жадно по сетке R px; выбранный объект всегда отдельно
+  const R=44, cl=[], grid=new Map(), clOn=n.p.cluster && v.z<14;
+  for(const m of marks){
+    let c=null;
+    if(clOn && !m.sel){
+      const gx=Math.floor(m.x/R), gy=Math.floor(m.y/R);
+      for(let i=-1;i<=1 && !c;i++) for(let j=-1;j<=1 && !c;j++)
+        for(const q of grid.get((gx+i)+','+(gy+j))||[]) if(Math.abs(q.x-m.x)<R && Math.abs(q.y-m.y)<R){ c=q; break; }
+      if(!c){ c={x:m.x,y:m.y,m:[]}; const k=gx+','+gy; (grid.get(k)||grid.set(k,[]).get(k)).push(c); }
+    } else c={x:m.x,y:m.y,m:[]};
+    c.m.push(m); if(c.m.length===1) cl.push(c);
+  }
+  n.clusters=[];
+  for(const c of cl){
+    if(c.m.length===1){
+      const m=c.m[0]; cx.globalAlpha=m.a;
+      geoIcon(cx,m.icon,m.x,m.y,m.size,m.rot,m.col);
+      if(m.sel){
+        cx.strokeStyle=themeColor('--scr-hi')||'#fff'; cx.lineWidth=1.5;
+        cx.beginPath(); cx.arc(m.x,m.y,m.size+5,0,2*Math.PI); cx.stroke();
+      }
+      if(n.p.labels && (n.ents.size<=300 || v.z>=7) && m.lab!=null && m.lab!=='')  // тысячи подписей на обзоре — каша
+        labs.push({t:String(m.lab),x:m.x,y:m.y,size:m.size,col:m.col,a:m.a,pri:(m.sel?1e3:0)+m.size-m.age});
+      continue;
+    }
+    const k=c.m.length, x=c.m.reduce((a,m)=>a+m.x,0)/k, y=c.m.reduce((a,m)=>a+m.y,0)/k;
+    const rr=10+Math.min(10,Math.log2(k)*2.5), col=c.m.every(m=>m.col===c.m[0].col) ? c.m[0].col : '#9fb0b8';
+    cx.globalAlpha=1; cx.beginPath(); cx.arc(x,y,rr,0,2*Math.PI);
+    cx.fillStyle='rgba(10,13,14,.85)'; cx.fill(); cx.strokeStyle=col; cx.lineWidth=2; cx.stroke();
+    cx.fillStyle=col; cx.font='bold 11px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+    cx.fillText(k>999 ? Math.round(k/1000)+'k' : String(k),x,y+.5);
+    n.clusters.push({x,y,r:rr});
+  }
+  cx.globalAlpha=1;
   // подписи после значков, без наложений: важные первыми, 4 позиции вокруг точки
   labs.sort((a,b)=>b.pri-a.pri);
   cx.font='11px monospace'; cx.textBaseline='middle'; cx.textAlign='left'; cx.lineWidth=3; cx.strokeStyle='rgba(0,0,0,.7)';
