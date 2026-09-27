@@ -708,7 +708,7 @@ markWiresDirty();
 preset('Wavelet vs FFT', function(){
 clearAll();
 const m =addNode('mic',40,40,{gainA:2});
-const wv=addNode('wavelet',40,300,{fmin:80,fmax:8000,bands:'288',Q:16});
+const wv=addNode('wavelet',40,300,{fmin:80,fmax:8000,bands:'288',Q:16,order:'1'});
 const ff=addNode('fft',40,560,{size:'4096'});
 const sa1=addNode('sa',420,40,{fmin:80,fmax:8000,log:true,split:.35});
 sa1.size.w=620; sa1.size.h=340; applySize(sa1);
@@ -727,7 +727,7 @@ const ny=addNode('numsig',320,240,{gain:1,dc:true,dcHz:.3});
 const nz=addNode('numsig',320,440,{gain:1,dc:true,dcHz:.3});
 const s1=addNode('sum',600,40,{ka:1,kb:1});
 const s2=addNode('sum',600,240,{ka:1,kb:1});
-const wv=addNode('wavelet',880,40,{fmin:.5,fmax:40,bands:'144',Q:8,floor:-60,top:10});
+const wv=addNode('wavelet',880,40,{fmin:.5,fmax:40,bands:'144',Q:8,floor:-80,top:0});
 const sa=addNode('sa',880,260,{fmin:.5,fmax:40,log:true,floor:-60,top:10,split:.4,tol:1});
 sa.size.w=640; sa.size.h=360; applySize(sa);
 const sc=addNode('scope',600,460,{span:16384,gain:1,stack:true});
