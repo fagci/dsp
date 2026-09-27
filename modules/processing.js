@@ -2009,52 +2009,68 @@ def({ id:'denoiser', title:'Denoiser (spectral)', cat:'Audio',
 });
 
 
+// Банк комплексных резонаторов с постоянной добротностью: окно на частоте f ~ Q/f секунд,
+// поэтому высокие полосы реагируют быстрее низких (в отличие от БПФ с одним окном на всё).
+// Постоянка вычитается до банка: одиночный резонатор пропускает DC с ослаблением всего 1/(2Q),
+// и, например, гравитация акселерометра (9.8) заливала все полосы. Порядок order — каскад
+// одинаковых резонаторов: крутые скаты, соседние сильные составляющие меньше протекают;
+// полюса раздвинуты так, чтобы полоса по −3 дБ оставалась f/Q. Выход — амплитуда синуса.
 def({ id:'wavelet', title:'Wavelet (const. Q)', cat:'Processing',
   ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'Q',t:'num'},{n:'floor',t:'num'},{n:'top',t:'num'}],
   outs:[{n:'spec',t:'spec'},{n:'f',t:'num'},{n:'level',t:'num'}],
-  params:[{n:'fmin',t:'range',min:20,max:5000,step:1,d:100,log:true},
-          {n:'fmax',t:'range',min:100,max:()=>Eng.sr/2,step:1,d:5000,log:true},
+  params:[{n:'fmin',t:'range',min:.1,max:5000,step:.1,d:100,log:true},
+          {n:'fmax',t:'range',min:1,max:()=>Eng.sr/2,step:.1,d:5000,log:true},
           {n:'bands',t:'select',opts:['24','48','96','144','288'],d:'96'},
           {n:'Q',t:'range',min:2,max:48,step:.5,d:12},
+          {n:'order',t:'select',opts:['1','2','4'],d:'2',label:'resonator order'},
           {n:'decim',t:'select',opts:['auto','1','4','16','64','256'],d:'auto',
            label:'decimation'},
           {n:'floor',t:'range',min:-140,max:-20,step:1,d:-90,label:'level floor'},
           {n:'top',t:'range',min:-60,max:20,step:1,d:-10,label:'level top'}],
-  init:n=>{n.key='';n.f=0;n.lv=0;n.acc=0;n.cnt=0;},
+  init:n=>{n.key='';n.f=0;n.lv=0;n.acc=0;n.cnt=0;n.dc=null;},
   process(n,I){
     for(const k of ['fmin','fmax','Q','floor','top']) if(typeof I[k]==='number') setMod(n,k,I[k]);
-    const B=+n.p.bands;
-    const hiF=Math.max(n.p.fmin,n.p.fmax);
+    const B=+n.p.bands, M=+n.p.order||1;
+    const lo=Math.max(.01,Math.min(n.p.fmin,n.p.fmax)), hi=Math.max(n.p.fmin,n.p.fmax);
     let D=+n.p.decim;
-    if(n.p.decim==='auto'){                          // держим запас втрое над верхней полосой
-      D=1; while(D*4<=256 && hiF*6 < Eng.sr/(D*4)) D*=4; }
-    D=Math.max(1,Math.min(D, Math.floor(Eng.sr/(hiF*3))||1));
+    if(n.p.decim==='auto'){                          // держим запас над верхней полосой
+      D=1; while(D*4<=256 && hi*6 < Eng.sr/(D*4)) D*=4; }
+    D=Math.max(1,Math.min(D, Math.floor(Eng.sr/(hi*3))||1));
     const srE=Eng.sr/D;
-    const key=B+'/'+n.p.fmin+'/'+n.p.fmax+'/'+n.p.Q+'/'+srE;
-    if(n.key!==key){                                 // банк комплексных резонаторов, шаг по логарифму
-      n.key=key; n.B=B; n.D=D; n.srE=srE;
-      n.fc=new Float32Array(B); n.cr=new Float32Array(B); n.ci=new Float32Array(B);
-      n.zr=new Float32Array(B); n.zi=new Float32Array(B);
-      n.mag=new Float32Array(B); n.g=new Float32Array(B);
-      const lo=Math.min(n.p.fmin,n.p.fmax), hi=Math.max(n.p.fmin,n.p.fmax);
+    const key=[B,lo,hi,n.p.Q,M,srE].join('/');
+    if(n.key!==key){                                 // шаг полос по логарифму
+      n.key=key; n.B=B; n.D=D; n.srE=srE; n.M=M;
+      n.fc=new Float32Array(B); n.cr=new Float64Array(B); n.ci=new Float64Array(B);
+      n.zr=new Float64Array(B*M); n.zi=new Float64Array(B*M);
+      n.mag=new Float32Array(B); n.g=new Float64Array(B);
+      const widen=1/Math.sqrt(Math.pow(2,1/M)-1);   // каскад сужает полосу — раздвигаем полюс
       for(let k=0;k<B;k++){
-        const f=lo*Math.pow(hi/lo,k/(B-1));
+        const f=B>1?lo*Math.pow(hi/lo,k/(B-1)):lo;
         n.fc[k]=f;
-        const a=Math.exp(-Math.PI*f/(n.p.Q*srE));    // полоса f/Q — постоянная добротность
+        const a=Math.exp(-Math.PI*f*widen/(n.p.Q*srE));
         const w=2*Math.PI*f/srE;
-        n.cr[k]=a*Math.cos(w); n.ci[k]=a*Math.sin(w); n.g[k]=1-a; } }
-    const B2=n.B, DD=n.D;
+        n.cr[k]=a*Math.cos(w); n.ci[k]=a*Math.sin(w);
+        n.g[k]=2*Math.pow(1-a,M); }                  // ×2: реальный синус делится на ±f
+      n.dcK=1-Math.exp(-2*Math.PI*Math.max(.005,lo/20)/srE);   // ФНЧ для оценки постоянки
+    }
+    const B2=n.B, DD=n.D, zr=n.zr, zi=n.zi, cr=n.cr, ci=n.ci, MM=n.M;
     for(let i=0;i<BLOCK;i++){
       n.acc+=I.in?I.in[i]:0;                          // усреднение = антиалиасинг перед прореживанием
       if(++n.cnt<DD) continue;
-      const x=n.acc/DD; n.acc=0; n.cnt=0;
+      let x=n.acc/DD; n.acc=0; n.cnt=0;
+      if(n.dc==null) n.dc=x;                          // старт без скачка
+      n.dc+=(x-n.dc)*n.dcK; x-=n.dc;
       for(let k=0;k<B2;k++){
-        const zr=n.zr[k], zi=n.zi[k];
-        n.zr[k]=zr*n.cr[k]-zi*n.ci[k]+x;
-        n.zi[k]=zr*n.ci[k]+zi*n.cr[k]; } }
+        const c=cr[k], s=ci[k];
+        let ur=x, ui=0;
+        for(let m=0,j=k*MM;m<MM;m++,j++){             // каскад: выход ступени — вход следующей
+          const r=zr[j], q=zi[j];
+          zr[j]=r*c-q*s+ur; zi[j]=r*s+q*c+ui;
+          ur=zr[j]; ui=zi[j]; } } }
     let best=0,bv=-1;
     for(let k=0;k<B2;k++){
-      n.mag[k]=Math.hypot(n.zr[k],n.zi[k])*n.g[k];   // нормировка усиления резонатора
+      const j=k*MM+MM-1;
+      n.mag[k]=Math.hypot(zr[j],zi[j])*n.g[k];
       if(n.mag[k]>bv){ bv=n.mag[k]; best=k; } }
     n.f=n.fc[best];
     n.lv=clamp((20*Math.log10(bv+1e-12)-n.p.floor)/((n.p.top-n.p.floor)||1),0,1);
