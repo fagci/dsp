@@ -94,7 +94,7 @@ def({ id:'radioDir', title:'Internet Radio', cat:'Sources',
       for(const s of vis){
         const p=rbPos(s); if(!p) continue;
         rec.push({id:'radio:'+s.id, label:s.name, icon:'♪', color:s===n.sel ? '#ffd84a' : p.approx ? '#c890ff' : '#ff8fb1',
-          size:s===n.sel ? 8 : 5, lat:+p.lat.toFixed(4), lon:+p.lon.toFixed(4), ...(p.approx?{approx:1}:{}),
+          size:s===n.sel ? 10 : 7, lat:+p.lat.toFixed(4), lon:+p.lon.toFixed(4), ...(p.approx?{approx:1}:{}),
           country:s.country, ...(s.state?{state:s.state}:{}), ...(s.lang?{lang:s.lang}:{}), ...(s.tags?{tags:s.tags}:{}),
           codec:s.codec+(s.br?' '+s.br+'k':''), votes:s.votes, url:s.url, ...(s.home?{home:s.home}:{})});
       }

@@ -1293,15 +1293,17 @@ function geoDrawLabels(n,cx,v){
     if(geoLabelBox(boxes,x-w/2,y-6,w,12)) cx.fillText(p.name,x-w/2,y);
   });
   let placed=0;
+  const maxPl=Math.max(20,Math.round(W*H/7000));    // плотность подписей по площади
   const place=(name,x,y,big)=>{
+    if(placed>=maxPl) return;
     cx.font=(big?'bold ':'')+'10px sans-serif';
     const w=cx.measureText(name).width;
-    if(!geoLabelBox(boxes,x-3,y-6,w+10,12)) return;
+    if(!geoLabelBox(boxes,x-12,y-12,w+30,24)) return;  // с полем — не впритык
     cx.fillStyle=GEO_COL.place;
     cx.fillRect(x-(big?2:1.5),y-(big?2:1.5),big?4:3,big?4:3);
     cx.fillText(name,x+5,y); placed++;
   };
-  each(D.places,(p,x,y)=>{ if(p.mz<=z+1 && placed<250) place(p.name,x,y,p.kind>0); });
+  each(D.places,(p,x,y)=>{ if(p.mz<=z+.5) place(p.name,x,y,p.kind>0); });
   const P=GeoBase.places;
   if(P && z>=8){
     const lon0=unmercX(ox/S), lon1=unmercX((ox+W)/S);
@@ -1312,7 +1314,7 @@ function geoDrawLabels(n,cx,v){
           const lw=((lo+180)%360+360)%360;
           const cell=P.cells.get((la+90)*360+lw); if(!cell) continue;
           for(const i of cell){
-            if(placed>400) break;
+            if(placed>=maxPl) break;
             const s=geoProj(v,P.lat[i],P.lon[i],(mercX(lo)*S-ox));
             if(s.x<-5 || s.x>W+5 || s.y<-5 || s.y>H+5) continue;
             place(P.name[i],s.x,s.y,false);
@@ -1376,9 +1378,10 @@ function geoIcon(cx,icon,x,y,s,rot,col){
       cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=.7; cx.strokeRect(-s*.35,-s*.35,s*.7,s*.7); break;
     case 'dot':
       cx.arc(0,0,s*.8,0,2*Math.PI); cx.fill(); cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=1; cx.stroke(); break;
-    default:                                         // любой короткий текст/эмодзи как значок
-      cx.font=Math.round(s*2.2)+'px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
-      cx.fillText(String(icon).slice(0,4),0,0);
+    default:                                         // любой короткий текст/эмодзи как значок, на подложке
+      cx.arc(0,0,s*1.25,0,2*Math.PI); cx.fillStyle='rgba(10,13,14,.85)'; cx.fill(); cx.lineWidth=1.5; cx.stroke();
+      cx.fillStyle=col; cx.font='bold '+Math.round(s*1.7)+'px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+      cx.fillText(String(icon).slice(0,4),0,s*.1);
   }
   cx.restore();
 }
@@ -1516,8 +1519,9 @@ function geoDrawOverlay(n,cx,v){
   const e=n.selKey && n.ents.get(n.selKey);
   if(e){
     const p=e.pts[e.pts.length-1];
-    const lines=[...recText(e.rec,new Set(['path'])).split('\n').slice(0,14),
-      p.lat.toFixed(5)+', '+p.lon.toFixed(5)+' · '+latLonToGrid(p.lat,p.lon,6),
+    const cut=Math.max(16,Math.floor((W*.4-10)/6)), skip=new Set(['path','id','icon','color','size','lat','lon','approx']);
+    const lines=[...recText(e.rec,skip).split('\n').slice(0,8).map(l=>l.length>cut ? l.slice(0,cut-1)+'…' : l),
+      p.lat.toFixed(4)+', '+p.lon.toFixed(4)+' '+latLonToGrid(p.lat,p.lon,6),
       'seen '+Math.round((Date.now()-e.seen)/1000)+' s ago'+(e.pts.length>1?' · track '+e.pts.length:'')];
     box(lines,W-6,6,true);
   } else if(n.info && Date.now()-n.info.t<8000){
