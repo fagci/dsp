@@ -695,7 +695,7 @@ def({ id:'fft', title:'FFT', cat:'Processing', ins:[{n:'in',t:'sig'}], outs:[{n:
   process(n,I){
     const N=Math.max(+n.p.size, BLOCK*2);          // окно не короче блока
     if(n.N!==N||n.wk!==n.p.win){ n.N=N; n.wk=n.p.win; n.ring=new Float32Array(N);
-      n.x=new Float32Array(N); n.zr=new Float32Array(N/2); n.zi=new Float32Array(N/2);
+      n.xw=new Float32Array(N); n.zr=new Float32Array(N/2); n.zi=new Float32Array(N/2);
       n.re=new Float32Array(N/2); n.im=new Float32Array(N/2); n.mag=new Float32Array(N/2);
       n.phase=new Float32Array(N/2); n.phRev=-1; n.psd=new Float32Array(N/2);
       n.w=window_(n.p.win,N);
@@ -704,8 +704,8 @@ def({ id:'fft', title:'FFT', cat:'Processing', ins:[{n:'in',t:'sig'}], outs:[{n:
       n.wGain2=sum2; }                               // энергия окна — для верной СПМ (Вт/Гц), другая нормировка
     n.ring.copyWithin(0,BLOCK); // сдвиг окна на блок
     for(let i=0;i<BLOCK;i++) n.ring[N-BLOCK+i]=I.in?I.in[i]:0;
-    for(let i=0;i<N;i++) n.x[i]=n.ring[i]*n.w[i];
-    rfft(n.x,n.zr,n.zi,n.re,n.im);
+    for(let i=0;i<N;i++) n.xw[i]=n.ring[i]*n.w[i];
+    rfft(n.xw,n.zr,n.zi,n.re,n.im);
     // СПМ (одностороння): |X|²·2/(sr·Σw²) — не путать с амплитудой (|X|·2/Σw): у СПМ своя
     // нормировка на полосу (Гц), из-за неё шумовой пол не зависит от размера окна, у амплитуды
     // такой независимости нет и не должно быть (амплитуда тона — просто амплитуда тона).

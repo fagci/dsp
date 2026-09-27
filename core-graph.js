@@ -41,7 +41,10 @@ if(!(s.keys[1] in n.p)) n.p[s.keys[1]]=s.d[1];
 }
 function makeNode(type,params,id,x,y){               // узел без DOM — для внутренностей групп
 const d=MOD[type]; if(!d) return null;
-const n={id:id||('n'+(Graph.seq++)), type, x:x||0,  y:y||0, p:{}, out:{}, b:{},
+// старые сохранения могли содержать мусор в x/y (узел fft затирал n.x буфером)
+x=x??0; y=y??0;
+if(!Number.isFinite(x) || !Number.isFinite(y)){ console.warn('узел '+type+': битые координаты, ставлю в (40,40)'); x=40; y=40; }
+const n={id:id||('n'+(Graph.seq++)), type, x,  y, p:{}, out:{}, b:{},
 size:{w:d.w||((d.view||d.tall)?320:210), h:d.h||(d.tall? 96 : (d.view? d.view.h : 0))}};
 fillParamDefaults(n,d);
 if(params) Object.assign(n.p,params);
