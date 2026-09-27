@@ -534,6 +534,183 @@ def({ id:'geoMark', title:'Mark Point', cat:'Control',
   draw(n){ n.el.querySelector('.readout').textContent=(n.msg?n.msg+'\n':'')+'marks '+n.count+
     (n.lastRec ? '\n'+recText(n.lastRec,new Set(['icon','label'])) : ''); }});
 
+/* ---------- поиск источника: уровень сигнала и пеленги ---------- */
+// Замеры — записи с координатами и уровнем (rssi/snr/level) и/или азимутом (azimuth).
+// Уровень: модель log-distance s = A − 10·n·lg(d), мощность A неизвестна и исключается
+// (для каждой точки-кандидата берётся лучшая A). Пеленги: невязка угла. Сумма квадратов
+// невязок ищется перебором по сетке (грубо, затем уточнение), вероятность ∝ exp(−cost/2).
+// Локальная плоская проекция: годится до сотен км. На КВ уровень почти не зависит от
+// расстояния (отражения от ионосферы) — там полезны только пеленги.
+function geoLocLocal(lat0,lon0){
+  const kx=111.32*Math.cos(lat0*D2R), ky=110.574;
+  return {fwd:(lat,lon)=>({x:(((lon-lon0+540)%360)-180)*kx, y:(lat-lat0)*ky}),
+          inv:(x,y)=>({lat:lat0+y/ky, lon:((lon0+x/kx+540)%360)-180})};
+}
+function geoLocCost(M,x,y,o){
+  let cs=0, ns=0, sumA=0;
+  const L=[];
+  if(o.useS){
+    for(const m of M){ if(m.s==null) continue;
+      const d=Math.max(Math.hypot(x-m.x,y-m.y),o.dmin), l=10*o.pn*Math.log10(d);
+      L.push(l); sumA+=m.s+l; ns++; }
+    if(ns>=3){
+      const A=sumA/ns; let k=0;
+      for(const m of M){ if(m.s==null) continue; const r=m.s-A+L[k++]; cs+=r*r; }
+      cs/=o.sdb*o.sdb;
+    } else cs=0;
+  }
+  let cb=0;
+  if(o.useB) for(const m of M){ if(m.az==null) continue;
+    const b=Math.atan2(x-m.x,y-m.y)/D2R;
+    let da=((b-m.az)%360+540)%360-180;
+    cb+=da*da/(o.saz*o.saz); }
+  return cs+cb;
+}
+function geoLocSolve(n){
+  const M=n.meas;
+  const nS=M.filter(m=>m.s!=null).length, nB=M.filter(m=>m.az!=null).length;
+  const meth=n.p.method;
+  const useS=(meth!=='bearing') && nS>=3, useB=(meth!=='strength') && nB>=1;
+  n.sol=null;
+  if(!useS && !(useB && nB>=2)){ n.msg='need ≥3 level or ≥2 bearing measurements'; return; }
+  const lat0=M.reduce((a,m)=>a+m.lat,0)/M.length, lon0=M[0].lon;
+  const P=geoLocLocal(lat0,lon0);
+  for(const m of M){ const q=P.fwd(m.lat,m.lon); m.x=q.x; m.y=q.y; }
+  const o={useS, useB, pn:n.p.pathN, sdb:n.p.sigmaDb, saz:n.p.sigmaAz, dmin:0.005};
+  // область поиска: вокруг замеров; с пеленгами — ещё и вокруг пересечения лучей (МНК)
+  let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
+  for(const m of M){ x0=Math.min(x0,m.x); x1=Math.max(x1,m.x); y0=Math.min(y0,m.y); y1=Math.max(y1,m.y); }
+  if(useB){
+    let a11=0,a12=0,a22=0,b1=0,b2=0;
+    for(const m of M){ if(m.az==null) continue;
+      const dx=Math.sin(m.az*D2R), dy=Math.cos(m.az*D2R);
+      const p11=1-dx*dx, p12=-dx*dy, p22=1-dy*dy;
+      a11+=p11; a12+=p12; a22+=p22; b1+=p11*m.x+p12*m.y; b2+=p12*m.x+p22*m.y; }
+    const det=a11*a22-a12*a12;
+    if(Math.abs(det)>1e-9){
+      const ix=(a22*b1-a12*b2)/det, iy=(a11*b2-a12*b1)/det;
+      if(isFinite(ix) && Math.hypot(ix-(x0+x1)/2,iy-(y0+y1)/2)<5000){
+        x0=Math.min(x0,ix); x1=Math.max(x1,ix); y0=Math.min(y0,iy); y1=Math.max(y1,iy); }
+    }
+  }
+  const cx=(x0+x1)/2, cy=(y0+y1)/2;
+  let half=n.p.area>0 ? n.p.area/2 : Math.max(0.3,Math.max(x1-x0,y1-y0)*(useS&&!useB?1.0:0.8));
+  const G=n.G=96;
+  const grid=(ccx,ccy,h)=>{
+    const c=new Float64Array(G*G); let best=Infinity, bi=0;
+    for(let j=0;j<G;j++) for(let i=0;i<G;i++){
+      const x=ccx-h+(i+0.5)*2*h/G, y=ccy+h-(j+0.5)*2*h/G;
+      const v=geoLocCost(M,x,y,o); c[j*G+i]=v;
+      if(v<best){ best=v; bi=j*G+i; } }
+    return {c,best,bi,ccx,ccy,h};
+  };
+  let g=grid(cx,cy,half);
+  const map=g;                                        // крупная сетка — для картинки вероятности
+  const fine=grid(g.ccx-g.h+((g.bi%G)+0.5)*2*g.h/G, g.ccy+g.h-(Math.floor(g.bi/G)+0.5)*2*g.h/G, g.h/8);
+  const bx=fine.ccx-fine.h+((fine.bi%G)+0.5)*2*fine.h/G, by=fine.ccy+fine.h-(Math.floor(fine.bi/G)+0.5)*2*fine.h/G;
+  // разброс по апостериорной вероятности на крупной сетке
+  let W=0,mx=0,my=0,vx=0,vy=0;
+  const pr=new Float64Array(G*G);
+  for(let k=0;k<G*G;k++){ const w=Math.exp(-(map.c[k]-map.best)/2); pr[k]=w; W+=w; }
+  for(let k=0;k<G*G;k++){ const x=map.ccx-map.h+((k%G)+0.5)*2*map.h/G, y=map.ccy+map.h-(Math.floor(k/G)+0.5)*2*map.h/G;
+    mx+=pr[k]*x; my+=pr[k]*y; }
+  mx/=W; my/=W;
+  for(let k=0;k<G*G;k++){ const x=map.ccx-map.h+((k%G)+0.5)*2*map.h/G, y=map.ccy+map.h-(Math.floor(k/G)+0.5)*2*map.h/G;
+    vx+=pr[k]*(x-mx)**2; vy+=pr[k]*(y-my)**2; }
+  const errKm=Math.max(Math.sqrt((vx+vy)/W), 2*fine.h/G);
+  // мощность в 1 км при найденной точке (для справки)
+  let A=null;
+  if(useS){ let s=0,k=0; for(const m of M){ if(m.s==null) continue; s+=m.s+10*o.pn*Math.log10(Math.max(Math.hypot(bx-m.x,by-m.y),o.dmin)); k++; } A=s/k; }
+  const ll=P.inv(bx,by);
+  n.sol={lat:ll.lat, lon:ll.lon, x:bx, y:by, errKm, A, pr, map, P, useS, useB, cost:fine.best};
+  n.msg=(useS?'level ':'')+(useB?'bearings ':'')+'· '+M.length+' meas.';
+}
+def({ id:'geoLocate', title:'Source Locator', cat:'Analysis',
+  ins:[{n:'rec',t:'rec'}],
+  outs:[{n:'rec',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'err',t:'num'},{n:'count',t:'num'}],
+  view:{h:260}, resize:true, readout:true,
+  params:[{n:'field',t:'select',opts:['rssi','snr','level'],d:'rssi',label:'level field'},
+          {n:'method',t:'select',opts:['auto','strength','bearing'],d:'auto',label:'use'},
+          {n:'pathN',t:'range',min:1.5,max:5,step:0.1,d:2.5,label:'path loss exponent n'},
+          {n:'sigmaDb',t:'range',min:1,max:20,step:0.5,d:6,label:'level error, dB'},
+          {n:'sigmaAz',t:'range',min:1,max:45,step:1,d:10,label:'bearing error, °'},
+          {n:'area',t:'range',min:0,max:1000,step:0.1,d:0,label:'search area, km (0 — auto)',adv:true},
+          {n:'max',t:'range',min:3,max:1000,step:1,d:200,label:'keep measurements',adv:true},
+          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.meas=[]; n.sol=null; n.dirty=true; }}],
+  init:n=>{ n.meas=[]; n.sol=null; n.dirty=false; n.lastSolve=0; n.msg='waiting for measurements'; n.pkey=''; },
+  process(n,I){
+    for(const r of recList(I.rec)){
+      const pos=geoRecPos(r); if(!pos) continue;
+      const sv=recNum(r[n.p.field]), az=recNum(r.azimuth ?? r.bearing);
+      if(sv==null && az==null) continue;
+      n.meas.push({lat:pos.lat, lon:pos.lon, s:sv, az:az!=null ? ((az%360)+360)%360 : null});
+      if(n.meas.length>n.p.max) n.meas.splice(0,n.meas.length-n.p.max);
+      n.dirty=true;
+    }
+    const pkey=[n.p.method,n.p.pathN,n.p.sigmaDb,n.p.sigmaAz,n.p.area].join();
+    if(pkey!==n.pkey){ n.pkey=pkey; n.dirty=true; }
+    let rec=null;
+    const now=Date.now();
+    if(n.dirty && now-n.lastSolve>250){
+      n.dirty=false; n.lastSolve=now;
+      if(n.meas.length) geoLocSolve(n);
+      const S=n.sol;
+      if(S){
+        const e=S.errKm>=1 ? S.errKm.toFixed(1)+' km' : Math.round(S.errKm*1000)+' m';
+        rec=[{t:now, id:'estimate', label:'source ±'+e, icon:'star', color:'#ffd84a', size:8,
+              lat:+S.lat.toFixed(6), lon:+S.lon.toFixed(6), radius:Math.round(S.errKm*1000),
+              meas:n.meas.length, ...(S.A!=null?{A_1km:+S.A.toFixed(1)}:{}), grid:latLonToGrid(S.lat,S.lon,6)}];
+      }
+    }
+    const S=n.sol;
+    return {rec, lat:S?S.lat:null, lon:S?S.lon:null, err:S?S.errKm*1000:null, count:n.meas.length};
+  },
+  draw(n,cv,cx){ geoLocDraw(n,cv,cx);
+    const S=n.sol;
+    n.el.querySelector('.readout').textContent=n.msg+(S ? '\n'+S.lat.toFixed(5)+', '+S.lon.toFixed(5)+
+      ' ±'+(S.errKm>=1?S.errKm.toFixed(1)+' km':Math.round(S.errKm*1000)+' m')+
+      (S.A!=null?' · A(1 km) '+S.A.toFixed(1):'') : ''); }});
+function geoLocDraw(n,cv,cx){
+  const W=cv.width, H=cv.height, S=n.sol;
+  cx.fillStyle=themeColor('--screen')||'#0a0d0e'; cx.fillRect(0,0,W,H);
+  if(!S){ cx.fillStyle='#62737b'; cx.font='11px monospace'; cx.fillText(n.msg,8,16); return; }
+  const G=n.G, m=S.map, sz=Math.min(W,H)-8, ox=(W-sz)/2, oy=(H-sz)/2;
+  if(!n._img || n._imgSol!==S){
+    n._imgSol=S;
+    const c=n._img || (n._img=document.createElement('canvas')); c.width=G; c.height=G;
+    const ic=c.getContext('2d'), id=ic.createImageData(G,G);
+    let mx=0; for(const v of S.pr) if(v>mx) mx=v;
+    for(let k=0;k<G*G;k++){
+      const t=Math.pow(S.pr[k]/mx,0.35);
+      id.data[4*k]=Math.round(255*Math.min(1,t*1.6)); id.data[4*k+1]=Math.round(200*Math.max(0,t-0.4)/0.6);
+      id.data[4*k+2]=Math.round(80*(1-t)*t*4); id.data[4*k+3]=Math.round(40+215*t);
+    }
+    ic.putImageData(id,0,0);
+  }
+  cx.imageSmoothingEnabled=true; cx.drawImage(n._img,ox,oy,sz,sz);
+  const px=x=>ox+(x-(m.ccx-m.h))/(2*m.h)*sz, py=y=>oy+((m.ccy+m.h)-y)/(2*m.h)*sz;
+  cx.strokeStyle='rgba(120,200,255,.6)'; cx.lineWidth=1;
+  for(const q of n.meas){
+    if(q.az==null || q.x==null) continue;
+    cx.beginPath(); cx.moveTo(px(q.x),py(q.y));
+    cx.lineTo(px(q.x+Math.sin(q.az*D2R)*m.h*4),py(q.y+Math.cos(q.az*D2R)*m.h*4)); cx.stroke();
+  }
+  let smin=Infinity,smax=-Infinity;
+  for(const q of n.meas) if(q.s!=null){ smin=Math.min(smin,q.s); smax=Math.max(smax,q.s); }
+  for(const q of n.meas){
+    if(q.x==null) continue;
+    const t=q.s!=null && smax>smin ? (q.s-smin)/(smax-smin) : 0.5;
+    cx.fillStyle=q.s!=null ? geoSnrColor(t*40-20) : '#7ac8ff';
+    cx.beginPath(); cx.arc(px(q.x),py(q.y),3+t*3,0,2*Math.PI); cx.fill();
+  }
+  cx.strokeStyle='#fff'; cx.lineWidth=1.5;
+  const sx=px(S.x), sy=py(S.y);
+  cx.beginPath(); cx.moveTo(sx-7,sy); cx.lineTo(sx+7,sy); cx.moveTo(sx,sy-7); cx.lineTo(sx,sy+7); cx.stroke();
+  cx.beginPath(); cx.arc(sx,sy,Math.max(3,S.errKm/(2*m.h)*sz),0,2*Math.PI); cx.stroke();
+  cx.fillStyle='#c8d2d6'; cx.font='10px monospace';
+  const span=2*m.h; cx.fillText('area '+(span>=1?span.toFixed(1)+' km':Math.round(span*1000)+' m'),6,H-6);
+}
+
 /* ---------- хранилище: подложка, населённые пункты, точки карт ---------- */
 let geoDbP=null;
 function geoDb(){
