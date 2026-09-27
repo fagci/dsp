@@ -407,12 +407,31 @@ const GSENSOR_DEFS = {
 function gsensorFields(n){ return (GSENSOR_DEFS[n.p.type]||GSENSOR_DEFS.Accelerometer).fields; }
 function gsensorStop(n){
   if(n.sensor){ try{ n.sensor.stop(); }catch(e){} n.sensor=null; }
-  n.status='stopped';
+  if(n.onMotion){ window.removeEventListener('devicemotion',n.onMotion); n.onMotion=null; }
+  n.via=''; n.status='stopped';
+}
+// Без Generic Sensor API (Firefox, Safari) движение берём из devicemotion — в Firefox он ещё
+// и заметно чаще (сотни Гц против 60 у Chrome). Гироскоп: rotationRate в °/с, оси beta/gamma/alpha.
+const GSENSOR_MOTION={
+  Accelerometer:           e=>{ const a=e.accelerationIncludingGravity; return a&&a.x!=null&&[a.x,a.y,a.z]; },
+  LinearAccelerationSensor:e=>{ const a=e.acceleration; return a&&a.x!=null&&[a.x,a.y,a.z]; },
+  Gyroscope:               e=>{ const r=e.rotationRate, k=Math.PI/180;
+                                return r&&r.alpha!=null&&[r.beta*k,r.gamma*k,r.alpha*k]; },
+};
+async function gsensorMotion(n){
+  const get=GSENSOR_MOTION[n.p.type];
+  if(!get || !window.DeviceMotionEvent){ n.status='API unavailable (needs Chrome/Edge on Android, or HTTPS)'; return; }
+  try{ if(DeviceMotionEvent.requestPermission) await DeviceMotionEvent.requestPermission(); }
+  catch(e){ n.status='error: '+e.message; return; }
+  ssInit(n,3); n.via='devicemotion'; n.status='waiting for devicemotion…';
+  n.onMotion=e=>{ const v=get(e); if(!v) return;
+    n.v=v; n.status=''; ssPush(n,e.timeStamp/1000,v); };
+  window.addEventListener('devicemotion',n.onMotion);
 }
 function gsensorStart(n){
   gsensorStop(n);
   const Cls = window[n.p.type];
-  if(!Cls){ n.status='API unavailable (needs Chrome/Edge on Android, or HTTPS)'; return; }
+  if(!Cls){ gsensorMotion(n); return; }
   const def = GSENSOR_DEFS[n.p.type]||GSENSOR_DEFS.Accelerometer;
   ssInit(n,def.fields.length);
   try{
@@ -452,7 +471,7 @@ def({ id:'gsensor', title:'Sensor (Generic Sensor API)', cat:'Sources',
       out.smag=om; }
     return out;
   },
-  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.status||ssStatus(n); }});
+  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.status||ssStatus(n)+(n.via?' · '+n.via:''); }});
 
 
 // Камера. Яркость зоны меряется на КАЖДОМ кадре камеры, а не в draw() (rAF режется до 30 к/с
