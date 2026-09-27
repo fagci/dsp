@@ -366,15 +366,159 @@ def({ id:'gsensor', title:'Sensor (Generic Sensor API)', cat:'Sources',
   draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.status; }});
 
 
+// Камера. Яркость зоны меряется на КАЖДОМ кадре камеры, а не в draw() (rAF режется до 30 к/с
+// на тач-экранах и замирает при пан/зуме). Путь по убыванию качества:
+//  mstp — MediaStreamTrackProcessor: VideoFrame с меткой захвата, Y-плоскость читается напрямую;
+//  rvfc — requestVideoFrameCallback: по кадру видео, метка captureTime;
+//  raf  — из draw(), дубли отсекаются по счётчику декодированных кадров.
+// Значения с метками кладутся в очередь, process() выдаёт их по часам блоков движка —
+// так фронты не сбиваются в пачки по тактам tick() и длительности импульсов сохраняются.
+const CAM_LAG=.06;                                  // запас часов выдачи от свежего кадра, с
+function camStop(n){
+  n.gen=(n.gen|0)+1;
+  try{ n.reader?.cancel(); }catch(e){}
+  n.reader=null;
+  n.video?.srcObject?.getTracks?.().forEach(t=>t.stop());
+  if(n.video) n.video.srcObject=null;
+  n.track=null; n.mode=''; n.fps=0; n.q=[]; n.clk=null; n.qT=null;
+}
+async function camStart(n){
+  camStop(n);
+  const gen=n.gen, [w,h]=n.p.res.split('x').map(Number), fps=+n.p.fps;
+  n.base={width:{ideal:w},height:{ideal:h},frameRate:{ideal:fps}};
+  let s;
+  try{
+    s=await navigator.mediaDevices.getUserMedia({video:{...n.base,zoom:true,
+      facingMode:n.p.cam==='rear'?{ideal:'environment'}:'user'}});
+  }catch(e){ n.status='error: '+(e.message||e.name); return; }
+  if(gen!==n.gen){ s.getTracks().forEach(t=>t.stop()); return; }
+  const tr=s.getVideoTracks()[0];
+  n.track=tr; n.caps=tr.getCapabilities?.()||{}; n.ctlKey=''; n.status='';
+  n.video.srcObject=s; n.video.play().catch(()=>{});
+  n.fpsT0=0; n.fpsN=0; n.lastFrameAt=0;
+  if(typeof MediaStreamTrackProcessor==='function'){
+    let rd=null;
+    try{ rd=new MediaStreamTrackProcessor({track:tr}).readable.getReader(); }catch(e){}
+    if(rd){ n.mode='mstp'; n.reader=rd; camPumpMSTP(n,rd,gen); return; }
+  }
+  if(n.video.requestVideoFrameCallback){
+    n.mode='rvfc';
+    const cb=(now,md)=>{
+      if(gen!==n.gen) return;
+      const t=(md.captureTime??md.expectedDisplayTime??now)/1000;
+      camMeasureSrc(n,n.video,n.video.videoWidth,n.video.videoHeight,0,t);
+      n.video.requestVideoFrameCallback(cb); };
+    n.video.requestVideoFrameCallback(cb);
+  } else n.mode='raf';
+}
+async function camPumpMSTP(n,rd,gen){
+  while(gen===n.gen){
+    let r; try{ r=await rd.read(); }catch(e){ break; }
+    if(r.done) break;
+    const f=r.value;
+    try{ await camMeasureFrame(n,f); }
+    catch(e){ try{ camMeasureSrc(n,f,f.displayWidth,f.displayHeight,f.rotation|0,f.timestamp/1e6); }catch(e2){} }
+    finally{ f.close(); }
+  }
+}
+// ROI превью (как видит пользователь) -> нормированный прямоугольник кадра с учётом поворота
+function camRoi(n,rot){
+  let u0=0,v0=0,u1=1,v1=1;
+  if(n.p.roi){ u0=n.p.roiX; v0=n.p.roiY; u1=Math.min(1,u0+n.p.roiW); v1=Math.min(1,v0+n.p.roiH); }
+  switch(rot){
+    case 90:  return [v0,1-u1,v1,1-u0];
+    case 180: return [1-u1,1-v1,1-u0,1-v0];
+    case 270: return [1-v1,u0,1-v0,u1];
+    default:  return [u0,v0,u1,v1];
+  }
+}
+const CAM_YUV=new Set(['I420','I420A','I422','I444','NV12']);
+const CAM_RGB={RGBA:[0,1,2],RGBX:[0,1,2],BGRA:[2,1,0],BGRX:[2,1,0]};
+async function camMeasureFrame(n,f){
+  const vr=f.visibleRect, fmt=f.format;
+  if(!vr || !(CAM_YUV.has(fmt)||CAM_RGB[fmt])) throw 0;
+  const [a,b,c,d]=camRoi(n,f.rotation|0);
+  let x=vr.x+Math.floor(a*vr.width), y=vr.y+Math.floor(b*vr.height);
+  let x1=vr.x+Math.ceil(c*vr.width), y1=vr.y+Math.ceil(d*vr.height);
+  x&=~1; y&=~1; x1=Math.max(x+2,(x1+1)&~1); y1=Math.max(y+2,(y1+1)&~1);
+  x1=Math.min(x1,vr.x+vr.width); y1=Math.min(y1,vr.y+vr.height);
+  const rect={x,y,width:x1-x,height:y1-y};
+  const sz=f.allocationSize({rect});
+  if(!n.fbuf||n.fbuf.length<sz) n.fbuf=new Uint8Array(sz);
+  const lay=await f.copyTo(n.fbuf,{rect}), p=n.fbuf, {offset,stride}=lay[0];
+  const W=rect.width, H=rect.height, st=Math.max(1,Math.round(Math.sqrt(W*H/2048)));  // ~2к точек хватает
+  let s=0,cnt=0;
+  if(CAM_YUV.has(fmt)){
+    for(let yy=0;yy<H;yy+=st){ const o=offset+yy*stride;
+      for(let xx=0;xx<W;xx+=st){ s+=p[o+xx]; cnt++; } }
+  } else {
+    const [ri,gi,bi]=CAM_RGB[fmt];
+    for(let yy=0;yy<H;yy+=st){ const o=offset+yy*stride;
+      for(let xx=0;xx<W;xx+=st){ const k=o+xx*4; s+=p[k+ri]*.299+p[k+gi]*.587+p[k+bi]*.114; cnt++; } }
+  }
+  camPush(n,cnt?s/cnt/255:0,f.timestamp/1e6);
+}
+// запасной путь: обрезать зону в маленький холст и прочитать его
+function camMeasureSrc(n,src,sw,sh,rot,t){
+  if(!sw||!sh) return;
+  const [a,b,c,d]=camRoi(n,rot);
+  const rw=(rot===90||rot===270), W=rw?sh:sw, H=rw?sw:sh;   // VideoFrame рисуется без поворота
+  const sx=a*W, sy=b*H, w=Math.max(1,(c-a)*W), h=Math.max(1,(d-b)*H);
+  const mw=Math.max(1,Math.min(32,Math.round(w))), mh=Math.max(1,Math.min(32,Math.round(h)));
+  if(n.mCv.width!==mw||n.mCv.height!==mh){ n.mCv.width=mw; n.mCv.height=mh; }
+  n.mCx.drawImage(src,sx,sy,w,h,0,0,mw,mh);
+  const px=n.mCx.getImageData(0,0,mw,mh).data;
+  let s=0; for(let i=0;i<px.length;i+=4) s+=px[i]*.299+px[i+1]*.587+px[i+2]*.114;
+  camPush(n,s/(mw*mh)/255,t);
+}
+function camPush(n,v,t){
+  if(n.p.roiAuto){                                  // скользящие min/max для контраста
+    n.brMx=v>n.brMx?v:n.brMx*.999+v*.001;
+    n.brMn=v<n.brMn?v:n.brMn*.999+v*.001;
+    const d=Math.max(.02,n.brMx-n.brMn); v=clamp((v-n.brMn)/d,0,1); }
+  n.q.push(t,v); n.qT=t; if(n.q.length>512) n.q.splice(0,n.q.length-512);
+  n.lastFrameAt=performance.now();
+  if(!n.fpsT0||t<n.fpsT0){ n.fpsT0=t; n.fpsN=0; }
+  else { n.fpsN++; const dt=t-n.fpsT0; if(dt>=1){ n.fps=n.fpsN/dt; n.fpsT0=t; n.fpsN=0; } }
+}
+// ручные режимы камеры: автоэкспозиция держит длинную выдержку и роняет fps в полутьме
+function camCtlKey(n){ return [n.p.ae,n.p.exp,n.p.af,n.p.awb,n.p.zoom].join(); }
+async function camApplyCtl(n){
+  const tr=n.track, C=n.caps||{}; if(!tr) return;
+  const key=camCtlKey(n); n.ctlKey=key; n.ctlBusy=true;
+  const adv={}, miss=[];
+  const pick=(k,want)=>{ const m=C[k+'Mode']; if(!m) return false;
+    const v=want.find(x=>m.includes(x)); if(v) adv[k+'Mode']=v; return !!v; };
+  if(n.p.ae) pick('exposure',['continuous']);
+  else if(pick('exposure',['manual']) && C.exposureTime){
+    const lo=Math.max(C.exposureTime.min||0,1), hi=Math.max(lo,Math.min(C.exposureTime.max,10000/(+n.p.fps)));
+    adv.exposureTime=lo*Math.pow(hi/lo,n.p.exp);    // единицы — 100 мкс; верх — период кадра
+  } else miss.push('exposure');
+  if(!pick('focus',n.p.af?['continuous']:['single-shot','manual']) && !n.p.af) miss.push('focus');
+  if(!pick('whiteBalance',n.p.awb?['continuous']:['manual','single-shot']) && !n.p.awb) miss.push('WB');
+  if(C.zoom) adv.zoom=clamp(+n.p.zoom,C.zoom.min,C.zoom.max);
+  else if(+n.p.zoom>1) miss.push('zoom');
+  try{ await tr.applyConstraints({...n.base,advanced:[adv]}); }
+  catch(e){                                          // по одному — чтобы отказ одного не рушил остальные
+    for(const [k,v] of Object.entries(adv)){
+      try{ await tr.applyConstraints({...n.base,advanced:[{[k]:v}]}); }catch(e2){ miss.push(k); } } }
+  n.ctlNote=miss.length?'no '+miss.join('/'):'';
+  n.ctlBusy=false;
+}
 def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'bright',t:'num'}],
   ins:[{n:'roiX',t:'num'},{n:'roiY',t:'num'},{n:'roiW',t:'num'},{n:'roiH',t:'num'}],
-  params:[{n:'on',t:'button',label:'Turn on camera',fn:async n=>{
-            n.video.srcObject?.getTracks?.().forEach(t=>t.stop());
-            const s=await navigator.mediaDevices.getUserMedia({video:{width:320,height:240,
-              facingMode:n.p.cam==='rear'?{ideal:'environment'}:'user'}});
-            n.video.srcObject=s; n.video.play(); }},
-          {n:'cam',t:'select',opts:['front','rear'],d:'rear'},
-          {n:'w',t:'select',opts:['80','160','320'],d:'160'},
+  params:[{n:'on',t:'button',label:'Turn on camera',fn:n=>camStart(n)},
+          {n:'cam',t:'select',opts:['front','rear'],d:'rear',fn:n=>{ if(n.track) camStart(n); }},
+          {n:'res',t:'select',opts:['160x120','320x240','640x480','1280x720'],d:'320x240',label:'capture',
+            fn:n=>{ if(n.track) camStart(n); }},
+          {n:'fps',t:'select',opts:['30','60','120','240'],d:'60',label:'frame rate',
+            fn:n=>{ if(n.track) camStart(n); }},
+          {n:'ae',t:'check',d:true,label:'auto exposure'},
+          {n:'exp',t:'range',min:0,max:1,step:.01,d:.5,label:'exposure (manual)'},
+          {n:'af',t:'check',d:true,label:'auto focus'},
+          {n:'awb',t:'check',d:true,label:'auto white balance'},
+          {n:'zoom',t:'range',min:1,max:10,step:.1,d:1,label:'zoom'},
+          {n:'w',t:'select',opts:['80','160','320'],d:'160',label:'img width'},
           {n:'roi',t:'check',d:false,label:'brightness zone'},
           {n:'roiX',t:'range',min:0,max:1,step:.01,d:.35,label:'zone: x'},
           {n:'roiY',t:'range',min:0,max:1,step:.01,d:.35,label:'zone: y'},
@@ -383,33 +527,47 @@ def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'brigh
           {n:'roiAuto',t:'check',d:true,label:'zone: auto-contrast'}],
   init(n){ n.video=document.createElement('video'); n.video.playsInline=true; n.video.muted=true;
            n.capCv=document.createElement('canvas'); n.capCx=n.capCv.getContext('2d',{willReadFrequently:true});
-           n.brMn=0; n.brMx=1; n.bright=0; },
-  dispose:n=>{ n.video?.srcObject?.getTracks?.().forEach(t=>t.stop()); n.video.srcObject=null; },
-  view:{h:100}, always:true,
+           n.mCv=document.createElement('canvas'); n.mCx=n.mCv.getContext('2d',{willReadFrequently:true});
+           n.brMn=0; n.brMx=1; n.bright=0; n.q=[]; n.clk=null; n.qT=null; n.fps=0; n.mode=''; n.status='off'; },
+  dispose:n=>camStop(n),
+  view:{h:100}, readout:true, always:true,
   process(n,I){
     for(const k of ['roiX','roiY','roiW','roiH']) if(typeof I[k]==='number') setMod(n,k,I[k]);
+    const q=n.q;
+    if(n.qT!=null){
+      const err=n.qT-CAM_LAG-n.clk;
+      if(n.clk==null || Math.abs(err)>.3) n.clk=n.qT-CAM_LAG;   // старт/обрыв/смена часов
+      else n.clk+=err*.005;                         // медленная подстройка под дрейф часов камеры
+      n.clk+=BLOCK/Eng.sr;
+      let i=0; while(i<q.length && q[i]<=n.clk){ n.bright=q[i+1]; i+=2; }
+      if(i) q.splice(0,i);
+    }
     return {img:n.img||null, bright:n.bright}; },
   draw(n,cv,cx){
-    if(!n.video?.videoWidth) return;
-    const W=+n.p.w, H=Math.round(W*3/4);
-    if(n.capCv.width!==W){ n.capCv.width=W; n.capCv.height=H; }
-    n.capCx.drawImage(n.video,0,0,W,H);
-    n.img={data:n.capCx.getImageData(0,0,W,H),w:W,h:H,gray:false};
-    if(n.p.roi){                                    // яркость зоны — переехало сюда из отдельного узла "bright"
-      const {w,h}=n.img, px=n.img.data.data;
-      const x0=Math.round(n.p.roiX*w), y0=Math.round(n.p.roiY*h);
-      const x1=Math.min(w,x0+Math.round(n.p.roiW*w)), y1=Math.min(h,y0+Math.round(n.p.roiH*h));
-      let s=0,c=0;
-      for(let y=y0;y<y1;y+=2) for(let x=x0;x<x1;x+=2){
-        s+=(px[(y*w+x)*4]*.299+px[(y*w+x)*4+1]*.587+px[(y*w+x)*4+2]*.114)/255; c++; }
-      let v=c?s/c:0;
-      if(n.p.roiAuto){                              // скользящие min/max для контраста, как было в "bright"
-        n.brMx=v>n.brMx?v:n.brMx*.999+v*.001;
-        n.brMn=v<n.brMn?v:n.brMn*.999+v*.001;
-        const d=Math.max(.02,n.brMx-n.brMn); v=clamp((v-n.brMn)/d,0,1); }
-      n.bright=v; }
-    cx.drawImage(n.capCv,0,0,cv.width,cv.height);
-    if(n.p.roi){                                    // рамка зоны прямо на превью — вместо отдельного узла
+    const r=n.el.querySelector('.readout'), v=n.video;
+    if(n.track && n.track.readyState==='ended'){ n.status='camera stopped'; camStop(n); }
+    if(n.track && !n.ctlBusy && camCtlKey(n)!==n.ctlKey) camApplyCtl(n);
+    if(n.track && v.videoWidth && (n.mode==='raf' || performance.now()-n.lastFrameAt>700)){
+      const tf=v.getVideoPlaybackQuality?.().totalVideoFrames;   // без rVFC/MSTP: только новые кадры
+      if(tf==null || tf!==n.lastTf){ n.lastTf=tf; camMeasureSrc(n,v,v.videoWidth,v.videoHeight,0,performance.now()/1000); }
+    }
+    if(r){
+      if(!n.track) r.textContent=n.status||'off';
+      else { const st=n.track.getSettings?.()||{}, fr=st.frameRate;
+        r.textContent=`${n.fps.toFixed(1)} fps`+(fr?` / ${Math.round(fr)}`:'')+
+          ` · ${st.width||v.videoWidth}×${st.height||v.videoHeight} · ${n.mode}`+
+          (!n.p.ae&&st.exposureTime?` · ${(st.exposureTime/10).toFixed(1)} ms`:'')+
+          (n.ctlNote?` · ${n.ctlNote}`:''); }
+    }
+    if(!v.videoWidth) return;
+    if(Graph.edges.some(e=>e.from===n.id&&e.fp==='img')){   // полный кадр читаем, только если он кому-то нужен
+      const W=+n.p.w, H=Math.round(W*(v.videoHeight/v.videoWidth||3/4));
+      if(n.capCv.width!==W||n.capCv.height!==H){ n.capCv.width=W; n.capCv.height=H; }
+      n.capCx.drawImage(v,0,0,W,H);
+      n.img={data:n.capCx.getImageData(0,0,W,H),w:W,h:H,gray:false};
+    } else n.img=null;
+    cx.drawImage(v,0,0,cv.width,cv.height);
+    if(n.p.roi){                                    // рамка зоны прямо на превью
       cx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--t-num');
       cx.lineWidth=2;
       cx.strokeRect(n.p.roiX*cv.width,n.p.roiY*cv.height,n.p.roiW*cv.width,n.p.roiH*cv.height); } }});
