@@ -54,7 +54,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Building blocks: CRC, scrambler, interleaver, convolutional encoder / Viterbi, sync word search, async serial, NRZ clock, text ↔ bits
 
 ### Music
-- Synths (2 osc, 4 voices), acid bass (303), drum sequencer, sample library
+- Synths (2 osc, 4 voices), acid bass (303), drum sequencer, sample library with an audio editor (see [Sample editor](#sample-editor))
 - Piano roll, step sequencer, generative melody, arrangement playlist, master clock
 - MIDI keyboard input, ADSR envelope
 
@@ -140,6 +140,22 @@ What it recognises: carrier, CW (with WPM), OOK, AM, USB/LSB, NFM (with CTCSS to
 The `bands` output carries the labels. Wire it into a Spectrum Analyzer's `bands`, or into a **Band Plan**'s `sigs` so the labels show together with the bands: each signal gets a bracket at its peak level with its type above it.
 
 Ready-made patches: **USB SDR: Signal Identifier**, **HF: Quick-Decode All Protocols**.
+
+## Sample editor
+
+The **Sample Library** node keeps clips in the browser (IndexedDB). **import** (or drop files on it) adds audio files, **● rec** records a new clip: from the `in` port when it is wired and the graph runs, otherwise from the microphone. Tap a clip to open the editor; ▶ in the list plays the clip through the node's `out`.
+
+The editor fills the screen and plays through its own audio output, no wiring needed:
+
+- **Selection**: drag on the waveform; drag the edge handles to adjust it; tap to place the cursor. Drag on the time ruler or the overview strip to scroll; pinch horizontally to zoom in time, vertically to zoom the amplitude (mouse: wheel zooms, Shift+wheel scrolls, Alt+wheel zooms the amplitude)
+- **Zoom** goes down to single samples (dots and stems); the amplitude zoom goes down to one 16-bit step. **✏ draw** redraws samples by hand, e.g. to fix a click
+- **Playback**: the selection or from the cursor, with **🔁 loop** (the loop region follows the selection)
+- **Edits**: crop to selection, delete, cut / copy / paste (between clips too, resampled when the rates differ), silence, fade in / out, normalize (−1 dBFS, DC removed), gain, reverse. Every edit can be undone / redone (Ctrl+Z / Ctrl+Shift+Z)
+- **Spectrogram** (〰): under the waveform or alone, with a frequency scale (linear or log), FFT size, palette and dB range. It is computed for the visible range, so it stays sharp at any zoom
+- **Noise reduction by profile**: select a piece with noise only → **noise profile**, then select the part to clean (or nothing for the whole clip) → **apply**. It is a spectral gate on the original samples (reduction, sensitivity, frequency and time smoothing); **preview** listens without changing the clip, **residue** lets you hear what gets removed
+- **save** overwrites the clip, **＋copy** saves a new one, **⭳ wav** downloads the selection or the whole clip as 16-bit WAV
+
+Keys: Space play/stop, L loop, Del delete, T crop, Ctrl+A/X/C/V, Ctrl+S save, +/−/0 zoom, S view, ←/→ move the cursor, Esc close.
 
 ## Themes
 

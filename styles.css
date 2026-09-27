@@ -424,3 +424,46 @@ canvas.view.pick{cursor:crosshair}
   max-width:170px}
 #hint{position:absolute;right:10px;bottom:8px;color:var(--dim);font-size:10px;pointer-events:none}
 
+
+/* ---- аудиоредактор клипов (modules/audioeditor.js) ---- */
+.aed{position:fixed;inset:0;z-index:50;display:flex;flex-direction:column;background:var(--bg);
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  user-select:none;-webkit-user-select:none}
+.aed-head{display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--panel);border-bottom:1px solid var(--line)}
+.aed-name{flex:1;min-width:60px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:6px 8px;outline:none}
+.aed-name:focus{border-color:var(--acc)}
+.aed-info{color:var(--dim);font-size:11px;white-space:nowrap}
+.aed-over{display:block;width:100%;height:34px;flex:none;touch-action:none;cursor:pointer;border-bottom:1px solid var(--line)}
+.aed-main{flex:1;min-height:120px;position:relative;overflow:hidden}
+.aed-cv{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:text}
+.aed-stat{display:flex;gap:10px;justify-content:space-between;padding:4px 8px;font-size:11px;color:var(--dim);
+  background:var(--panel);border-top:1px solid var(--line);white-space:nowrap;overflow:hidden;font-variant-numeric:tabular-nums}
+.aed-stat span{overflow:hidden;text-overflow:ellipsis}
+.aed-bar{background:var(--panel);border-top:1px solid var(--line);padding:4px 6px 6px}
+.aed-row{display:flex;gap:4px;align-items:center;padding:2px 0}
+.aed-bar .aed-row{overflow-x:auto;scrollbar-width:thin}
+.aed-tr>:first-child{margin-left:auto}
+.aed-tr>:last-child{margin-right:auto}   /* центр без обрезки при переполнении */
+.aed-sp{flex:1}
+.aed-b{flex:none;min-width:38px;height:36px;padding:0 10px;background:var(--panel2);border:1px solid var(--line);
+  border-radius:4px;color:var(--txt);cursor:pointer;white-space:nowrap;font-size:12px}
+.aed-b:hover:not(:disabled){border-color:var(--acc)}
+.aed-b:disabled{opacity:.35;cursor:default}
+.aed-b.on{background:var(--acc);border-color:var(--acc);color:#111}
+.aed-b.aed-pri{border-color:var(--acc2);color:var(--acc2)}
+.aed-play{min-width:52px;font-size:15px}
+.aed-sheet{display:none;flex-direction:column;gap:6px;padding:8px;background:var(--panel);border-top:1px solid var(--line)}
+.aed-sheet.on{display:flex}
+.aed-sheet .aed-row{flex-wrap:wrap}
+.aed-nrinfo{color:var(--dim);font-size:11px}
+.aed-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px 12px}
+.aed-grid label{display:flex;flex-direction:column;gap:2px;font-size:10px;color:var(--dim);position:relative}
+.aed-grid label b{position:absolute;right:0;top:0;font-weight:normal;color:var(--txt)}
+.aed-grid input[type=range]{width:100%;accent-color:var(--acc);height:26px}
+.aed-grid select{height:30px;background:var(--bg);border:1px solid var(--line);border-radius:3px}
+.aed-chk{display:flex;align-items:center;gap:6px;font-size:11px}
+@media (max-width:600px){
+  .aed-info{display:none}
+  .aed-b{min-width:42px;height:40px;padding:0 9px}
+  .aed-hov{display:none}
+}
