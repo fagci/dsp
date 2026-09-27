@@ -945,13 +945,15 @@ const HFDL_GS_STATIONS = {
 def({ id:'hfdlStack', title:'HFDL: LPDU→HFNPDU→ACARS→ADS-C', cat:'Decoders', readout:true, resize:true,
   ins:[{n:'blk',t:'blk'},{n:'freq',t:'num'}],
   outs:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'trig',t:'num'},{n:'id',t:'txt'},
-        {n:'gsLat',t:'num'},{n:'gsLon',t:'num'},{n:'gsTrig',t:'num'},{n:'gsName',t:'txt'}],
+        {n:'gsLat',t:'num'},{n:'gsLon',t:'num'},{n:'gsTrig',t:'num'},{n:'gsName',t:'txt'},
+        {n:'rec',t:'rec'}],                          // записи для карты: самолёты и наземные станции
   params:[{n:'freq',t:'num',d:11384,label:'frequency, kHz'}],
   init:n=>{ n.bid=-1; n.lastLat=0; n.lastLon=0; n.lastId=''; n.log='no data';
     n.gsLat=0; n.gsLon=0; n.gsName=''; },
   process(n,I){
     const b=I.blk;
     let trig=0, gsTrig=0;
+    const recs=[];
     if(b && b.id!==n.bid){
       n.bid=b.id;
       const freq=typeof I.freq==='number'?I.freq:n.p.freq;
@@ -968,7 +970,9 @@ def({ id:'hfdlStack', title:'HFDL: LPDU→HFNPDU→ACARS→ADS-C', cat:'Decoders
             // uplink: srcId это GS; downlink: dstId это GS. Показываем на карте, если знаем координаты.
             const gsId = lpdu.mpduHeader.direction==='uplink' ? lpdu.mpduHeader.srcId : lpdu.mpduHeader.dstId;
             const gs = HFDL_GS_STATIONS[gsId];
-            if(gs){ n.gsLat=gs.lat; n.gsLon=gs.lon; n.gsName='📡 '+gs.name; gsTrig=1; }
+            if(gs){ n.gsLat=gs.lat; n.gsLon=gs.lon; n.gsName='📡 '+gs.name; gsTrig=1;
+              recs.push({t:Date.now(), id:'GS '+gsId, label:gs.name, lat:gs.lat, lon:gs.lon, icon:'tx',
+                         color:'#7a8cff', src:'HFDL GS', freq}); }
             if(!lpdu.hfnpduPayload) continue;
             const h=hfnpduParse(lpdu.hfnpduPayload);
             if(!h || h.err) continue;
@@ -996,6 +1000,11 @@ def({ id:'hfdlStack', title:'HFDL: LPDU→HFNPDU→ACARS→ADS-C', cat:'Decoders
                 n.lastLat=checked.lat; n.lastLon=checked.lon;
                 n.lastId=checked.icaoAddress!=null?icaoToHex(checked.icaoAddress):(checked.flightId||h.data?.flightId||'?');
                 trig=1;
+                const flight=checked.flightId||h.data?.flightId||posInfo.flightId;
+                recs.push({t:Date.now(), id:n.lastId, lat:checked.lat, lon:checked.lon, icon:'plane', src:'HFDL', freq,
+                  ...(checked.icaoAddress!=null?{icao:icaoToHex(checked.icaoAddress)}:{}),
+                  ...(flight?{flight, label:flight}:{}), ...(h.acars?.reg?{reg:h.acars.reg}:{}),
+                  msg:h.type===HFNPDU_TYPE.ENVELOPED_DATA?'ADS-C':'HFNPDU'});
               }
             }
           }
@@ -1003,7 +1012,7 @@ def({ id:'hfdlStack', title:'HFDL: LPDU→HFNPDU→ACARS→ADS-C', cat:'Decoders
       }catch(e){ n.log='error: '+e.message; }
     }
     return { lat:n.lastLat, lon:n.lastLon, trig, id:n.lastId,
-             gsLat:n.gsLat, gsLon:n.gsLon, gsTrig, gsName:n.gsName };
+             gsLat:n.gsLat, gsLon:n.gsLon, gsTrig, gsName:n.gsName, rec:recs.length?recs:null };
   },
   draw(n){ n.el.querySelector('.readout').textContent=n.log; }});
 

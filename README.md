@@ -50,7 +50,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - FT8, RTTY, Morse (TX/RX, including from camera), DTMF, PSK31, Feld Hell
 - Olivia, Contestia, AX.25/APRS (TX/RX)
 - WEFAX, NOAA APT, SSTV-style raster
-- HFDL: full receive chain down to ACARS / ADS-C with aircraft map
+- HFDL: full receive chain down to ACARS / ADS-C, aircraft tracks and ground stations on the map
 - Building blocks: CRC, scrambler, interleaver, convolutional encoder / Viterbi, sync word search, async serial, NRZ clock, text ↔ bits
 
 ### Music
@@ -60,7 +60,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 
 ### Output & extensibility
 - Sound card output (per-node output device selection, peak/clip meter), WAV recording, CSV log, trigger recorder
-- Aircraft map, screen transmitter, indicators
+- **Map** (offline vector base map, optional OSM tiles, tracks, markers — see [Map and records](#map-and-records)), screen transmitter, indicators
 - Module Builder and Script nodes for writing custom DSP code in the browser
 
 ## USB SDR
@@ -156,6 +156,18 @@ The editor fills the screen and plays through its own audio output, no wiring ne
 - **save** overwrites the clip, **＋copy** saves a new one, **⭳ wav** downloads the selection or the whole clip as 16-bit WAV
 
 Keys: Space play/stop, L loop, Del delete, T crop, Ctrl+A/X/C/V, Ctrl+S save, +/−/0 zoom, S view, ←/→ move the cursor, Esc close.
+
+## Map and records
+
+**Records** (`rec` port) carry objects with arbitrary fields — `{lat, lon, id, snr, …}` — from decoders, CSV files and sensors to the map, logs and filters.
+
+- **Fields → Rec** builds a record from its inputs (the field list is editable, ports appear on *Apply fields*); constants like `icon=plane; color=#f80` are added to every record. With the `rec` input it adds/overrides fields in passing records. Emits on change, on a `go` trigger, or every block.
+- **Rec → Fields** splits the last record back into ports; *Fields from last rec* fills the list from what actually arrives.
+- **CSV → Rec** (text lines or a whole file, header or explicit field names, `,` `;` tab), **Rec Log** (save CSV / GeoJSON, replay), **Rec Filter** (JS condition over `r`), **My Position** (browser geolocation / phone GPS).
+
+**Map** fields: `lat`, `lon` (or `grid` — Maidenhead locator), `id` (same id → one object with a track), `t`, `label`, `icon` (`dot square triangle diamond star cross plus plane antenna tx rx me flag` or any emoji/text), `color`, `size`, `radius` (m, circle), `azimuth` + `range` (km, great-circle bearing line), `heading` (rotates plane/triangle; otherwise taken from the track), `lat2`/`lon2` (line to a second point), `snr`/`rssi` (colour when no `color`). Everything else is shown as `key: value` on click. Tap on an empty spot — coordinates and locator on the `pick` output.
+
+Works offline: the vector base map (Natural Earth 10m: coast, lakes, rivers, country and region borders, ~7 000 cities, English names) is fetched once from `data/basemap.json` and kept in IndexedDB. *Download places* adds ~130 000 towns from GeoNames (shown from zoom 8), or import a GeoNames dump / CSV `name,lat,lon[,population]`. Optional OSM / OpenTopoMap tiles are cached as you view them and stay available offline. Points can be saved in the browser under a name (*save points as*). Rebuild the base map: `node tools/basemap.mjs`.
 
 ## Themes
 

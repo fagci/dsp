@@ -1,0 +1,1067 @@
+"use strict";
+/* ============================ ЗАПИСИ (rec) И КАРТА ============================ */
+// Порт 'rec' — поток записей: в блоке, где что-то пришло, на выходе массив объектов
+// {поле: значение}, в остальных блоках null. Узлы-потребители читают через recList().
+// Известные карте поля: lat, lon (или grid — локатор Maidenhead), id, t, label, icon, color,
+// size, radius (м), azimuth (°), range (км, длина пеленга), heading, lat2/lon2, rssi, snr.
+// Остальные поля карта показывает как «ключ: значение».
+
+function recList(v){ return Array.isArray(v) ? v : (v && typeof v==='object') ? [v] : []; }
+function recNum(v){
+  if(typeof v==='number') return isFinite(v) ? v : null;
+  if(typeof v==='string' && v.trim()!==''){ const x=Number(v); return isFinite(x) ? x : null; }
+  return null;
+}
+// имена портов узла и его параметров — полям так называться нельзя
+const REC_RESERVED=new Set(['rec','go','count','names','consts','mode','apply','detect','rej']);
+function recFieldNames(s){
+  return [...new Set(String(s||'').split(',').map(x=>x.trim()).filter(x=>x && !REC_RESERVED.has(x)))];
+}
+function recConsts(s){                                // "icon=plane; color=#f80"
+  const o={};
+  for(const part of String(s||'').split(/[;\n]/)){
+    const i=part.indexOf('='); if(i<=0) continue;
+    const k=part.slice(0,i).trim(); if(k) o[k]=hostlistCoerce(part.slice(i+1));
+  }
+  return o;
+}
+function recFmt(v){
+  if(typeof v==='number') return Number.isInteger(v) ? String(v) : String(+v.toFixed(6));
+  if(v && typeof v==='object') return JSON.stringify(v);
+  return String(v);
+}
+function recText(r,skip){
+  if(!r) return '';
+  return Object.keys(r).filter(k=>!skip || !skip.has(k)).map(k=>k+': '+recFmt(r[k])).join('\n');
+}
+// время записи: t/time/date — мс, секунды unix или строка даты; иначе — сейчас
+function recTime(r){
+  for(const k of ['t','time','date','datetime','ts']){
+    const v=r[k]; if(v==null || v==='') continue;
+    if(typeof v==='number' && isFinite(v)) return v>1e11 ? v : v>1e8 ? v*1000 : null;
+    const p=Date.parse(String(v)); if(isFinite(p)) return p;
+  }
+  return null;
+}
+
+// CSV с выбором разделителя ('' — угадать по первой строке), кавычки и "" внутри поля
+function geoCsvDelim(line){
+  const c={',':0,';':0,'\t':0};
+  for(const ch of line) if(ch in c) c[ch]++;
+  return c['\t']>=c[';'] && c['\t']>=c[','] && c['\t']>0 ? '\t' : c[';']>c[','] ? ';' : ',';
+}
+function geoCsvParse(text,delim){
+  const rows=[]; let i=0, field='', row=[], inQ=false; const N=text.length;
+  if(!delim){ const nl=text.indexOf('\n'); delim=geoCsvDelim(nl<0?text:text.slice(0,nl)); }
+  while(i<N){
+    const c=text[i];
+    if(inQ){
+      if(c==='"'){ if(text[i+1]==='"'){ field+='"'; i+=2; continue; } inQ=false; i++; continue; }
+      field+=c; i++; continue;
+    }
+    if(c==='"' && field===''){ inQ=true; i++; continue; }
+    if(c===delim){ row.push(field); field=''; i++; continue; }
+    if(c==='\r'){ i++; continue; }
+    if(c==='\n'){ row.push(field); rows.push(row); row=[]; field=''; i++; continue; }
+    field+=c; i++;
+  }
+  if(field.length || row.length){ row.push(field); rows.push(row); }
+  return rows.filter(r=>r.length>1 || r[0]!=='');
+}
+function geoCsvCell(v){
+  const s=v==null ? '' : recFmt(v);
+  return /[",\r\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+}
+function recsToCsv(recs){
+  const keys=[]; const seen=new Set();
+  for(const r of recs) for(const k in r) if(!seen.has(k)){ seen.add(k); keys.push(k); }
+  return [keys.join(','), ...recs.map(r=>keys.map(k=>geoCsvCell(r[k])).join(','))].join('\r\n');
+}
+function recsToGeoJson(recs){
+  const feats=[];
+  for(const r of recs){
+    const p=geoRecPos(r); if(!p) continue;
+    feats.push({type:'Feature', geometry:{type:'Point', coordinates:[p.lon,p.lat]}, properties:r});
+  }
+  return JSON.stringify({type:'FeatureCollection', features:feats});
+}
+
+/* ---------- геодезия ---------- */
+const GEO_R=6371.0088;                               // средний радиус Земли, км
+const D2R=Math.PI/180;
+function geoDist(lat1,lon1,lat2,lon2){               // км, по большому кругу
+  const a=Math.sin((lat2-lat1)*D2R/2)**2+Math.cos(lat1*D2R)*Math.cos(lat2*D2R)*Math.sin((lon2-lon1)*D2R/2)**2;
+  return 2*GEO_R*Math.asin(Math.min(1,Math.sqrt(a)));
+}
+function geoBearing(lat1,lon1,lat2,lon2){            // начальный азимут, 0..360
+  const f1=lat1*D2R, f2=lat2*D2R, dl=(lon2-lon1)*D2R;
+  const b=Math.atan2(Math.sin(dl)*Math.cos(f2), Math.cos(f1)*Math.sin(f2)-Math.sin(f1)*Math.cos(f2)*Math.cos(dl));
+  return (b/D2R+360)%360;
+}
+function geoDest(lat,lon,brg,km){                    // точка на расстоянии km по азимуту brg
+  const d=km/GEO_R, f1=lat*D2R, t=brg*D2R;
+  const f2=Math.asin(Math.sin(f1)*Math.cos(d)+Math.cos(f1)*Math.sin(d)*Math.cos(t));
+  const l2=lon*D2R+Math.atan2(Math.sin(t)*Math.sin(d)*Math.cos(f1), Math.cos(d)-Math.sin(f1)*Math.sin(f2));
+  return {lat:f2/D2R, lon:((l2/D2R+540)%360)-180};
+}
+// Maidenhead: 2/4/6/8 знаков → центр квадрата и его размер в градусах
+function gridToLatLon(g){
+  g=String(g||'').trim().toUpperCase();
+  if(!/^[A-R]{2}(\d\d([A-X]{2}(\d\d)?)?)?$/.test(g)) return null;
+  let lon=-180+(g.charCodeAt(0)-65)*20, lat=-90+(g.charCodeAt(1)-65)*10, w=20, h=10;
+  if(g.length>=4){ lon+=(+g[2])*2; lat+=+g[3]; w=2; h=1; }
+  if(g.length>=6){ w=2/24; h=1/24; lon+=(g.charCodeAt(4)-65)*w; lat+=(g.charCodeAt(5)-65)*h; }
+  if(g.length>=8){ w/=10; h/=10; lon+=(+g[6])*w; lat+=(+g[7])*h; }
+  return {lat:lat+h/2, lon:lon+w/2, w, h};
+}
+function latLonToGrid(lat,lon,len=6){
+  let x=clamp(lon+180,0,359.9999999), y=clamp(lat+90,0,179.9999999);
+  let s=String.fromCharCode(65+Math.floor(x/20), 65+Math.floor(y/10));
+  x%=20; y%=10;
+  if(len>=4){ s+=Math.floor(x/2)+''+Math.floor(y); x%=2; y%=1; }
+  if(len>=6){ s+=String.fromCharCode(97+Math.floor(x*12), 97+Math.floor(y*24)); x%=1/12; y%=1/24; }
+  if(len>=8){ s+=Math.floor(x*120)+''+Math.floor(y*240); }
+  return s;
+}
+// координаты записи: lat/lon (или latitude/longitude/lng), иначе локатор grid/locator
+function geoRecPos(r){
+  let lat=recNum(r.lat ?? r.latitude), lon=recNum(r.lon ?? r.lng ?? r.longitude);
+  if(lat!=null && lon!=null && Math.abs(lat)<=90 && Math.abs(lon)<=180) return {lat,lon};
+  const g=gridToLatLon(r.grid ?? r.locator);
+  return g ? {lat:g.lat, lon:g.lon, grid:g} : null;
+}
+
+/* ---------- узлы записей ---------- */
+def({ id:'recPack', title:'Fields → Rec', cat:'Control',
+  // Собирает запись из значений на входах. С входом rec — дописывает поля в каждую
+  // приходящую запись (константы и подключённые входы перекрывают её поля).
+  ins:n=>[{n:'rec',t:'rec'},{n:'go',t:'num'},...recFieldNames(n.p.names).map(f=>({n:f,t:'val'}))],
+  outs:[{n:'rec',t:'rec'}],
+  readout:true,
+  params:[{n:'names',t:'text',d:'lat,lon,id',label:'fields, comma-separated'},
+          {n:'consts',t:'text',d:'',label:'constants: key=value; …'},
+          {n:'mode',t:'select',opts:['change','trigger','always'],d:'change',label:'emit'},
+          {n:'apply',t:'button',label:'Apply fields',fn:n=>{ rebuildNode(n); markTopoDirty(); }}],
+  init:n=>{ n.prevGo=0; n.lastKey=''; n.last=null; n.count=0; },
+  process(n,I){
+    if(!n._cc || n._cc.src!==n.p.consts) n._cc={src:n.p.consts, o:recConsts(n.p.consts)};
+    const consts=n._cc.o, cur={};
+    let any=false;
+    for(const f of recFieldNames(n.p.names)){
+      const v=I[f];
+      if(v==null || (typeof v==='number' && !isFinite(v))) continue;
+      cur[f]=v; any=true;
+    }
+    const src=recList(I.rec);
+    if(src.length){
+      const out=src.map(r=>({...r, ...consts, ...cur}));
+      n.last=out[out.length-1]; n.count+=out.length;
+      return {rec:out};
+    }
+    const go=typeof I.go==='number' ? I.go : 0, edge=go>0.5 && n.prevGo<=0.5; n.prevGo=go;
+    let fire=edge;
+    if(n.p.mode==='always') fire=fire || any;
+    else if(n.p.mode==='change'){
+      const key=any ? JSON.stringify(cur) : '';
+      if(any && key!==n.lastKey) fire=true;
+      n.lastKey=key;
+    }
+    if(!fire) return {rec:null};
+    const r={t:Date.now(), ...consts, ...cur};
+    n.last=r; n.count++;
+    return {rec:[r]};
+  },
+  draw(n){ n.el.querySelector('.readout').textContent=
+    'emitted '+n.count+(n.last ? '\n'+recText(n.last) : ''); }});
+
+def({ id:'recUnpack', title:'Rec → Fields', cat:'Control',
+  // Раскладывает поля последней пришедшей записи по выходам; значения держатся до следующей.
+  ins:[{n:'rec',t:'rec'}],
+  outs:n=>[{n:'go',t:'num'},{n:'count',t:'num'},...recFieldNames(n.p.names).map(f=>({n:f,t:'val'}))],
+  readout:true,
+  params:[{n:'names',t:'text',d:'lat,lon,id',label:'fields, comma-separated'},
+          {n:'apply',t:'button',label:'Apply fields',fn:n=>{ rebuildNode(n); markTopoDirty(); }},
+          {n:'detect',t:'button',label:'Fields from last rec',fn:n=>{
+            if(!n.last) return;
+            n.p.names=Object.keys(n.last).filter(k=>!REC_RESERVED.has(k)).join(',');
+            rebuildNode(n); markTopoDirty(); }}],
+  init:n=>{ n.last=null; n.count=0; n.vals={}; },
+  process(n,I){
+    const recs=recList(I.rec);
+    if(recs.length){
+      n.last=recs[recs.length-1]; n.count+=recs.length;
+      n.vals={};
+      for(const f of recFieldNames(n.p.names)) n.vals[f]=n.last[f] ?? null;
+    }
+    return {...n.vals, go:recs.length?1:0, count:n.count};
+  },
+  draw(n){ n.el.querySelector('.readout').textContent=
+    'received '+n.count+(n.last ? '\n'+recText(n.last) : ''); }});
+
+def({ id:'recCsv', title:'CSV → Rec', cat:'Control',
+  // Строки CSV (с webserial, текстового источника и т.п.) или целый файл → записи.
+  // Имена полей: из параметра или, если он пуст, из первой строки (заголовок).
+  ins:[{n:'line',t:'txt'}],
+  outs:[{n:'rec',t:'rec'},{n:'count',t:'num'}],
+  readout:true,
+  params:[{n:'names',t:'text',d:'',label:'fields (empty — header line)'},
+          {n:'delim',t:'select',opts:['auto',',',';','tab'],d:'auto',label:'delimiter'},
+          {n:'file',t:'file',accept:'.csv,.tsv,.txt,text/csv,text/plain',fn:(n,f)=>{
+            const rd=new FileReader();
+            rd.onload=()=>recCsvFile(n,String(rd.result));
+            rd.readAsText(f); }},
+          {n:'reset',t:'button',label:'Reset header',fn:n=>{ n.hdr=null; }}],
+  init:n=>{ n.hdr=null; n.lastLine=null; n.queue=[]; n.count=0; n.last=null; n.msg=''; },
+  process(n,I){
+    const out=[];
+    if(typeof I.line==='string' && I.line!==n.lastLine){
+      n.lastLine=I.line;
+      const d=n.p.delim==='tab' ? '\t' : n.p.delim==='auto' ? '' : n.p.delim;
+      for(const row of geoCsvParse(I.line,d)){
+        const r=recCsvRow(n,row); if(r) out.push(r);
+      }
+    }
+    if(n.queue.length) out.push(...n.queue.splice(0,500));   // файл — порциями, не всё в один блок
+    if(!out.length) return {rec:null, count:n.count};
+    n.count+=out.length; n.last=out[out.length-1];
+    return {rec:out, count:n.count};
+  },
+  draw(n){ n.el.querySelector('.readout').textContent=
+    (n.msg ? n.msg+'\n' : '')+'records '+n.count+(n.queue.length ? ' · queued '+n.queue.length : '')+
+    (n.last ? '\n'+recText(n.last) : ''); }});
+function recCsvRow(n,row){
+  const names=recFieldNames(n.p.names);
+  let hdr=names.length ? names : n.hdr;
+  if(!hdr){ n.hdr=row.map(s=>s.trim()); return null; }
+  const r={};
+  hdr.forEach((f,i)=>{ if(f && row[i]!==undefined && row[i]!=='') r[f]=hostlistCoerce(row[i]); });
+  return Object.keys(r).length ? r : null;
+}
+function recCsvFile(n,text){
+  const d=n.p.delim==='tab' ? '\t' : n.p.delim==='auto' ? '' : n.p.delim;
+  const rows=geoCsvParse(text,d);
+  const save=n.hdr; if(!recFieldNames(n.p.names).length) n.hdr=null;   // у файла свой заголовок
+  const recs=[];
+  for(const row of rows){ const r=recCsvRow(n,row); if(r) recs.push(r); }
+  n.hdr=save;
+  n.queue.push(...recs);
+  n.msg='file: '+recs.length+' rows';
+}
+
+def({ id:'recLog', title:'Rec Log', cat:'Output',
+  // Копит записи; сохранение в CSV (все встреченные поля) и GeoJSON (записи с координатами).
+  // Replay — отправить накопленное заново (например, на карту после её очистки).
+  ins:[{n:'rec',t:'rec'}],
+  outs:[{n:'rec',t:'rec'},{n:'count',t:'num'}],
+  readout:true, tall:true,
+  params:[{n:'max',t:'range',min:100,max:100000,step:100,d:10000,label:'max records'},
+          {n:'on',t:'check',d:true,label:'record'},
+          {n:'csv',t:'button',label:'Save CSV',fn:n=>dl(new Blob(['\ufeff'+recsToCsv(n.rows)],{type:'text/csv;charset=utf-8'}),'records-'+Date.now()+'.csv')},
+          {n:'geojson',t:'button',label:'Save GeoJSON',fn:n=>dl(new Blob([recsToGeoJson(n.rows)],{type:'application/geo+json'}),'records-'+Date.now()+'.geojson')},
+          {n:'replay',t:'button',label:'Replay',fn:n=>{ n.replay=n.rows.slice(); }},
+          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.rows=[]; }}],
+  init:n=>{ n.rows=[]; n.replay=null; },
+  process(n,I){
+    const recs=recList(I.rec);
+    if(recs.length && n.p.on){
+      n.rows.push(...recs);
+      if(n.rows.length>n.p.max) n.rows.splice(0,n.rows.length-n.p.max);
+    }
+    let out=recs.length ? recs : null;
+    if(n.replay?.length){ const part=n.replay.splice(0,500); out=out ? out.concat(part) : part; }
+    return {rec:out, count:n.rows.length};
+  },
+  draw(n){
+    const tail=n.rows.slice(-5).map(r=>Object.keys(r).map(k=>k+'='+recFmt(r[k])).join(' ')).join('\n');
+    n.el.querySelector('.readout').textContent=(n.p.on?'● ':'')+'records '+n.rows.length+'\n'+tail; }});
+
+def({ id:'recFilter', title:'Rec Filter', cat:'Control',
+  // Условие — выражение JS над записью r, например: r.snr > -10 && r.id
+  ins:[{n:'rec',t:'rec'}],
+  outs:[{n:'rec',t:'rec'},{n:'rej',t:'rec'}],
+  readout:true,
+  params:[{n:'expr',t:'text',d:'r.lat != null',label:'condition (r — record)'}],
+  init:n=>{ n.pass=0; n.drop=0; n.err=''; },
+  process(n,I){
+    const recs=recList(I.rec);
+    if(!recs.length) return {rec:null, rej:null};
+    if(!n._fn || n._fn.src!==n.p.expr){
+      try{ n._fn={src:n.p.expr, f:new Function('r','return ('+(n.p.expr||'true')+');')}; n.err=''; }
+      catch(e){ n._fn={src:n.p.expr, f:null}; n.err=e.message; }
+    }
+    const pass=[], rej=[];
+    for(const r of recs){
+      let ok=false;
+      try{ ok=n._fn.f ? !!n._fn.f(r) : false; }catch(e){ n.err=e.message; }
+      (ok ? pass : rej).push(r);
+    }
+    n.pass+=pass.length; n.drop+=rej.length;
+    return {rec:pass.length?pass:null, rej:rej.length?rej:null};
+  },
+  draw(n){ n.el.querySelector('.readout').textContent=
+    (n.err ? 'error: '+n.err+'\n' : '')+'pass '+n.pass+' · reject '+n.drop; }});
+
+def({ id:'geoMe', title:'My Position', cat:'Sources',
+  // Геолокация браузера (GPS на телефоне). rec — запись на каждую новую точку.
+  outs:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'acc',t:'num'},{n:'alt',t:'num'},
+        {n:'speed',t:'num'},{n:'heading',t:'num'},{n:'rec',t:'rec'}],
+  readout:true,
+  params:[{n:'on',t:'check',d:false,label:'track position'},
+          {n:'hi',t:'check',d:true,label:'high accuracy (GPS)'},
+          {n:'id',t:'text',d:'me',label:'record id'}],
+  init:n=>{ n.watch=null; n.fix=null; n.newFix=false; n.msg='off'; n.wOn=false; },
+  dispose:n=>geoMeStop(n),
+  process(n){
+    if(n.p.on && !n.wOn) geoMeStart(n);
+    else if(!n.p.on && n.wOn) geoMeStop(n);
+    const f=n.fix;
+    let rec=null;
+    if(n.newFix && f){
+      n.newFix=false;
+      rec=[{t:f.t, id:n.p.id||'me', icon:'me', lat:f.lat, lon:f.lon, acc:f.acc,
+            ...(f.alt!=null?{alt:f.alt}:{}), ...(f.speed!=null?{speed:f.speed}:{}),
+            ...(f.heading!=null?{heading:f.heading}:{}), grid:latLonToGrid(f.lat,f.lon,6)}];
+    }
+    return f ? {lat:f.lat, lon:f.lon, acc:f.acc, alt:f.alt, speed:f.speed, heading:f.heading, rec}
+             : {rec};
+  },
+  draw(n){ const f=n.fix;
+    n.el.querySelector('.readout').textContent = n.msg+(f ?
+      '\n'+f.lat.toFixed(5)+', '+f.lon.toFixed(5)+' ±'+Math.round(f.acc)+' m · '+latLonToGrid(f.lat,f.lon,6) : ''); }});
+function geoMeStart(n){
+  n.wOn=true;
+  if(!navigator.geolocation){ n.msg='geolocation not available'; return; }
+  n.msg='waiting for fix…';
+  n.watch=navigator.geolocation.watchPosition(p=>{
+    const c=p.coords;
+    n.fix={lat:c.latitude, lon:c.longitude, acc:c.accuracy, alt:c.altitude,
+           speed:c.speed, heading:(c.heading!=null && isFinite(c.heading)) ? c.heading : null, t:p.timestamp||Date.now()};
+    n.newFix=true; n.msg='tracking';
+  }, e=>{ n.msg='geolocation: '+e.message; }, {enableHighAccuracy:!!n.p.hi, maximumAge:1000, timeout:30000});
+}
+function geoMeStop(n){
+  n.wOn=false;
+  if(n.watch!=null) navigator.geolocation?.clearWatch(n.watch);
+  n.watch=null; n.msg='off';
+}
+
+/* ---------- хранилище: подложка, населённые пункты, точки карт ---------- */
+let geoDbP=null;
+function geoDb(){
+  return geoDbP || (geoDbP=new Promise((res,rej)=>{
+    const rq=indexedDB.open('dsp-geo',1);
+    rq.onupgradeneeded=()=>rq.result.createObjectStore('kv');
+    rq.onsuccess=()=>res(rq.result);
+    rq.onerror=()=>{ geoDbP=null; rej(rq.error); };
+  }));
+}
+async function geoGet(k){
+  const db=await geoDb();
+  return new Promise((res,rej)=>{ const r=db.transaction('kv').objectStore('kv').get(k);
+    r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); });
+}
+async function geoPut(k,v){
+  const db=await geoDb();
+  return new Promise((res,rej)=>{ const tx=db.transaction('kv','readwrite'); tx.objectStore('kv').put(v,k);
+    tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); });
+}
+
+// Web Mercator в долях мира: x,y ∈ [0,1]
+function mercX(lon){ return (lon+180)/360; }
+function mercY(lat){
+  const s=Math.sin(clamp(lat,-85.0511,85.0511)*D2R);
+  return 0.5-Math.log((1+s)/(1-s))/(4*Math.PI);
+}
+function unmercX(x){ return x*360-180; }
+function unmercY(y){ return Math.atan(Math.sinh(Math.PI*(1-2*y)))/D2R; }
+
+// Подложка Natural Earth: data/basemap.json (tools/basemap.mjs), после первой загрузки — из IndexedDB
+const GEO_BASE_TAG='ne10m-1';                        // сменить при пересборке data/basemap.json
+const GeoBase={state:'idle', data:null, err:'', p:null, places:null, placesState:'', placesP:null, gen:0};
+function geoBaseLoad(){
+  if(GeoBase.p) return GeoBase.p;
+  GeoBase.state='loading';
+  return GeoBase.p=(async()=>{
+    let text=null;
+    try{ const c=await geoGet('basemap'); if(c && c.tag===GEO_BASE_TAG) text=c.text; }catch(e){}
+    if(!text){
+      GeoBase.state='downloading';
+      const r=await fetch('data/basemap.json'); if(!r.ok) throw new Error('HTTP '+r.status);
+      text=await r.text();
+      try{ await geoPut('basemap',{tag:GEO_BASE_TAG, text}); }catch(e){}
+    }
+    GeoBase.data=geoBasePrep(JSON.parse(text));
+    GeoBase.state='ready'; GeoBase.gen++;
+  })().catch(e=>{ GeoBase.state='error'; GeoBase.err=e.message; GeoBase.p=null; });
+}
+function geoBasePrep(raw){
+  const q=raw.q||1000;
+  const prepLayer=L=>{
+    const out=[];
+    for(let i=0;i<L.p.length;i++){
+      const e=L.p[i], m=e.length>>1, xy=new Float64Array(e.length);
+      let lon=0, lat=0, x0=1, y0=1, x1=0, y1=0;
+      for(let j=0;j<m;j++){
+        lon+=e[2*j]; lat+=e[2*j+1];
+        const x=mercX(lon/q), y=mercY(lat/q);
+        xy[2*j]=x; xy[2*j+1]=y;
+        if(x<x0) x0=x; if(x>x1) x1=x; if(y<y0) y0=y; if(y>y1) y1=y;
+      }
+      out.push({xy, bb:[x0,y0,x1,y1], mz:L.mz[i]||0});
+    }
+    return out;
+  };
+  const pts=(a,f)=>a.map(f);
+  return {
+    src:raw.src,
+    land:prepLayer(raw.land), lakes:prepLayer(raw.lakes), rivers:prepLayer(raw.rivers),
+    adm0:prepLayer(raw.adm0), adm1:prepLayer(raw.adm1),
+    countryLabels:pts(raw.countryLabels,a=>({x:mercX(a[0]),y:mercY(a[1]),name:a[2],mz:a[3]})),
+    adm1Labels:pts(raw.adm1Labels,a=>({x:mercX(a[0]),y:mercY(a[1]),name:a[2],mz:a[3]})),
+    places:pts(raw.places,a=>({x:mercX(a[0]),y:mercY(a[1]),name:a[2],mz:a[3],pop:a[4],kind:a[5]}))
+      .sort((a,b)=>b.kind-a.kind || b.pop-a.pop),
+  };
+}
+
+// Детальные населённые пункты (GeoNames): разово скачиваются или импортируются из файла
+const GEO_PLACES_URL='https://raw.githubusercontent.com/lutangar/cities.json/master/cities.json';
+function geoPlacesLoad(){
+  if(GeoBase.placesP) return GeoBase.placesP;
+  return GeoBase.placesP=(async()=>{
+    try{ const c=await geoGet('places'); if(c) geoPlacesSet(c,false); }catch(e){}
+  })();
+}
+function geoPlacesSet(c,save){
+  // c: {name:[], lon:Float32Array, lat:Float32Array, pop:Int32Array}
+  const cells=new Map();
+  for(let i=0;i<c.name.length;i++){
+    const k=Math.floor(c.lat[i]+90)*360+Math.floor(c.lon[i]+180);
+    let a=cells.get(k); if(!a) cells.set(k,a=[]); a.push(i);
+  }
+  for(const a of cells.values()) a.sort((i,j)=>c.pop[j]-c.pop[i]);
+  GeoBase.places={...c, cells};
+  GeoBase.placesState=c.name.length+' places'; GeoBase.gen++;
+  if(save) geoPut('places',{name:c.name, lon:c.lon, lat:c.lat, pop:c.pop}).catch(e=>{ GeoBase.placesState='not saved: '+e.message; });
+}
+function geoPlacesFromList(list){
+  const N=list.length, c={name:new Array(N), lon:new Float32Array(N), lat:new Float32Array(N), pop:new Int32Array(N)};
+  let k=0;
+  for(const p of list){
+    if(!isFinite(p.lat) || !isFinite(p.lon) || !p.name) continue;
+    c.name[k]=p.name; c.lat[k]=p.lat; c.lon[k]=p.lon; c.pop[k]=p.pop|0; k++;
+  }
+  c.name.length=k;
+  return {name:c.name, lon:c.lon.slice(0,k), lat:c.lat.slice(0,k), pop:c.pop.slice(0,k)};
+}
+// форматы: JSON-массив {name,lat,lng|lon}, GeoNames dump (TSV, 19 колонок), CSV с name,lat,lon[,population]
+function geoPlacesParse(text){
+  const t=text.trimStart();
+  if(t[0]==='['){
+    return JSON.parse(t).map(p=>({name:p.name, lat:+p.lat, lon:+(p.lng ?? p.lon), pop:+(p.population ?? p.pop ?? 0)}));
+  }
+  const first=t.slice(0,t.indexOf('\n'));
+  if(first.split('\t').length>=15){
+    return t.split('\n').map(l=>l.split('\t')).filter(a=>a.length>=15)
+      .map(a=>({name:a[1], lat:+a[4], lon:+a[5], pop:+a[14]}));
+  }
+  const rows=geoCsvParse(t,''); const h=rows.shift().map(s=>s.trim().toLowerCase());
+  const ix=(...ks)=>ks.map(k=>h.indexOf(k)).find(i=>i>=0) ?? -1;
+  const iN=ix('name','city'), iLa=ix('lat','latitude'), iLo=ix('lon','lng','longitude'), iP=ix('population','pop');
+  if(iN<0 || iLa<0 || iLo<0) throw new Error('need name, lat, lon columns');
+  return rows.map(r=>({name:r[iN], lat:+r[iLa], lon:+r[iLo], pop:iP>=0 ? +r[iP] : 0}));
+}
+async function geoPlacesDownload(){
+  GeoBase.placesState='downloading…';
+  try{
+    const r=await fetch(GEO_PLACES_URL); if(!r.ok) throw new Error('HTTP '+r.status);
+    geoPlacesSet(geoPlacesFromList(geoPlacesParse(await r.text())),true);
+  }catch(e){ GeoBase.placesState='error: '+e.message; }
+}
+function geoPlacesImport(f){
+  const rd=new FileReader();
+  GeoBase.placesState='importing…';
+  rd.onload=()=>{
+    try{ geoPlacesSet(geoPlacesFromList(geoPlacesParse(String(rd.result))),true); }
+    catch(e){ GeoBase.placesState='error: '+e.message; }
+  };
+  rd.readAsText(f);
+}
+
+// Тайлы (по желанию): всё скачанное кладётся в Cache API 'dsp-tiles' и дальше доступно офлайн.
+// Массовая предзагрузка не делается — правила OSM её запрещают, кэшируется только просмотренное.
+const GEO_TILES={
+  'OSM':{url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png', max:19, attr:'© OpenStreetMap contributors'},
+  'OpenTopoMap':{url:'https://tile.opentopomap.org/{z}/{x}/{y}.png', max:17, attr:'© OpenStreetMap contributors, SRTM | © OpenTopoMap (CC-BY-SA)'},
+};
+const GeoTiles={mem:new Map(), pending:new Set(), gen:0, cache:null};
+function geoTileGet(src,z,x,y,net){
+  const key=src+'/'+z+'/'+x+'/'+y;
+  const m=GeoTiles.mem.get(key);
+  if(m){
+    if(m.bmp){ GeoTiles.mem.delete(key); GeoTiles.mem.set(key,m); return m.bmp; }   // LRU: в конец
+    if(Date.now()-m.err<30000) return null;
+  }
+  if(GeoTiles.pending.has(key) || GeoTiles.pending.size>=8) return null;
+  GeoTiles.pending.add(key);
+  (async()=>{
+    const url=GEO_TILES[src].url.replace('{z}',z).replace('{x}',x).replace('{y}',y);
+    const cache=GeoTiles.cache || (GeoTiles.cache=await caches.open('dsp-tiles'));
+    let r=await cache.match(url);
+    if(!r){
+      if(!net) throw new Error('offline');
+      r=await fetch(url,{mode:'cors'}); if(!r.ok) throw new Error('HTTP '+r.status);
+      await cache.put(url,r.clone());
+    }
+    const bmp=await createImageBitmap(await r.blob());
+    GeoTiles.mem.set(key,{bmp});
+    while(GeoTiles.mem.size>300){ const k=GeoTiles.mem.keys().next().value; GeoTiles.mem.get(k).bmp?.close(); GeoTiles.mem.delete(k); }
+  })().catch(()=>GeoTiles.mem.set(key,{err:Date.now()}))
+    .finally(()=>{ GeoTiles.pending.delete(key); GeoTiles.gen++; });
+  return null;
+}
+
+/* ---------- узел карты ---------- */
+const GEO_TILE_OPTS=['none',...Object.keys(GEO_TILES)];
+def({ id:'geoMap', title:'Map', cat:'Output',
+  ins:[{n:'rec',t:'rec'},{n:'rec2',t:'rec'},{n:'rec3',t:'rec'}],
+  outs:[{n:'pick',t:'rec'},{n:'sel',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'count',t:'num'}],
+  w:480, view:{h:360}, resize:true,
+  params:[{n:'ttl',t:'range',min:0,max:1440,step:1,d:0,label:'keep, min (0 — forever)'},
+          {n:'trail',t:'range',min:1,max:5000,step:1,d:500,label:'track points per id',adv:true},
+          {n:'maxEnt',t:'range',min:10,max:20000,step:10,d:5000,label:'max objects',adv:true},
+          {n:'tiles',t:'select',opts:GEO_TILE_OPTS,d:'none',label:'tiles'},
+          {n:'net',t:'check',d:true,label:'download tiles',adv:true},
+          {n:'labels',t:'check',d:true,label:'object labels'},
+          {n:'grid',t:'select',opts:['none','lat/lon','maidenhead'],d:'none',label:'grid'},
+          {n:'rayKm',t:'range',min:10,max:20000,step:10,d:1000,label:'bearing length, km',adv:true},
+          {n:'follow',t:'check',d:false,label:'follow last'},
+          {n:'store',t:'text',d:'',label:'save points as (empty — don\'t save)',adv:true},
+          {n:'fit',t:'button',label:'Fit',fn:n=>geoMapFit(n)},
+          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.ents.clear(); n.selKey=null; geoMapChanged(n); }},
+          {n:'csv',t:'button',label:'Save CSV',fn:n=>dl(new Blob(['\ufeff'+recsToCsv(geoMapRecs(n))],{type:'text/csv;charset=utf-8'}),'map-'+Date.now()+'.csv'),adv:true},
+          {n:'geojson',t:'button',label:'Save GeoJSON',fn:n=>dl(new Blob([recsToGeoJson(geoMapRecs(n))],{type:'application/geo+json'}),'map-'+Date.now()+'.geojson'),adv:true},
+          {n:'places',t:'button',label:'Download places (GeoNames, 17 MB)',fn:()=>geoPlacesDownload(),adv:true},
+          {n:'placesFile',t:'file',accept:'.txt,.tsv,.csv,.json',fn:(n,f)=>geoPlacesImport(f),adv:true}],
+  init:n=>{
+    if(n.p.mlat==null){ n.p.mlat=50; n.p.mlon=30; n.p.mz=3; }
+    n.ents=new Map(); n.seq=0; n.selKey=null; n.pickRec=null; n.selOut=null;
+    n.pickLat=null; n.pickLon=null; n.info=null; n.lastPrune=0; n.loadedStore=null;
+    geoBaseLoad(); geoPlacesLoad();
+  },
+  process(n,I){
+    for(const k of ['rec','rec2','rec3']) for(const r of recList(I[k])) geoMapAdd(n,r);
+    if(n.p.store!==n.loadedStore) geoMapRestore(n);
+    const now=Date.now();
+    if(now-n.lastPrune>1000){ n.lastPrune=now; geoMapPrune(n,now); }
+    const pick=n.pickRec, sel=n.selOut; n.pickRec=null; n.selOut=null;
+    return {pick, sel, lat:n.pickLat, lon:n.pickLon, count:n.ents.size};
+  },
+  draw(n,cv,cx){ geoMapDraw(n,cv,cx); }});
+
+function geoMapAdd(n,r){
+  const pos=geoRecPos(r); if(!pos) return;
+  const now=Date.now(), t=recTime(r) ?? now;
+  const id=r.id!=null && r.id!=='' ? String(r.id) : null;
+  const key=id!=null ? 'id:'+id : 'p:'+(n.seq++);
+  let e=n.ents.get(key);
+  if(!e){
+    e={key, id, pts:[], rec:{}, seen:now, t};
+    if(n.ents.size>=n.p.maxEnt){ const k0=n.ents.keys().next().value; n.ents.delete(k0); }
+  } else n.ents.delete(key);                         // в конец Map: порядок = свежесть
+  n.ents.set(key,e);
+  Object.assign(e.rec,r);
+  e.seen=now; e.t=t; e.grid=pos.grid||null;
+  const last=e.pts[e.pts.length-1];
+  if(!last || last.lat!==pos.lat || last.lon!==pos.lon){
+    e.pts.push({lat:pos.lat, lon:pos.lon, t});
+    if(e.pts.length>n.p.trail) e.pts.splice(0,e.pts.length-n.p.trail);
+  }
+  if(n.p.follow){ n.p.mlat=pos.lat; n.p.mlon=pos.lon; }
+  geoMapChanged(n);
+}
+function geoMapPrune(n,now){
+  if(!(n.p.ttl>0)) return;
+  const ttl=n.p.ttl*60000; let ch=false;
+  for(const [k,e] of n.ents) if(now-e.seen>ttl){ n.ents.delete(k); ch=true; }
+  if(ch) geoMapChanged(n);
+}
+function geoMapRecs(n){
+  const out=[];
+  for(const e of n.ents.values()){
+    if(e.pts.length>1) for(const p of e.pts.slice(0,-1)) out.push({...e.rec, lat:p.lat, lon:p.lon, t:p.t});
+    out.push({...e.rec});
+  }
+  return out;
+}
+// сохранение точек в IndexedDB под именем из параметра store (с задержкой, пачкой)
+function geoMapChanged(n){
+  n.dirtyGen=(n.dirtyGen|0)+1;
+  if(!n.p.store || n.loadedStore!==n.p.store) return;
+  clearTimeout(n.saveT);
+  n.saveT=setTimeout(()=>{
+    const ents=[...n.ents.values()].map(e=>({key:e.key, id:e.id, pts:e.pts, rec:e.rec, seen:e.seen, t:e.t}));
+    geoPut('pts:'+n.p.store,{seq:n.seq, ents}).catch(()=>{});
+  },2000);
+}
+function geoMapRestore(n){
+  const name=n.p.store; n.loadedStore=name;
+  if(!name) return;
+  geoGet('pts:'+name).then(v=>{
+    if(!v || n.p.store!==name) return;
+    for(const e of v.ents) if(!n.ents.has(e.key)) n.ents.set(e.key,e);
+    n.seq=Math.max(n.seq,v.seq|0); n.dirtyGen=(n.dirtyGen|0)+1;
+  }).catch(()=>{});
+}
+function geoMapFit(n){
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  for(const e of n.ents.values()) for(const p of e.pts){
+    const x=mercX(p.lon), y=mercY(p.lat);
+    if(x<x0) x0=x; if(x>x1) x1=x; if(y<y0) y0=y; if(y>y1) y1=y;
+  }
+  if(!isFinite(x0)) return;
+  const W=n.cv?.width||480, H=n.cv?.height||360;
+  const span=Math.max((x1-x0)/(W*0.8), (y1-y0)/(H*0.8), 1e-9);
+  n.p.mz=clamp(Math.log2(1/(256*span)),1,16);
+  n.p.mlon=unmercX((x0+x1)/2); n.p.mlat=unmercY((y0+y1)/2);
+}
+
+// вид: центр (mlat, mlon) и дробный зум mz; S — размер мира в пикселях
+function geoView(n,W,H){
+  const z=clamp(n.p.mz,0.5,19), S=256*2**z;
+  const ox=mercX(n.p.mlon)*S-W/2, oy=mercY(n.p.mlat)*S-H/2;
+  return {z,S,ox,oy,W,H};
+}
+function geoMapZoomAt(n,px,py,dz){
+  const W=n.cv.width, H=n.cv.height, v=geoView(n,W,H);
+  const wx=(v.ox+px)/v.S, wy=(v.oy+py)/v.S;
+  const z=clamp(v.z+dz,0.5,19), S=256*2**z;
+  const ox=wx*S-px, oy=wy*S-py;
+  n.p.mz=z; n.p.mlon=unmercX(geoWrapX((ox+W/2)/S)); n.p.mlat=unmercY(clamp((oy+H/2)/S,0,1));
+}
+function geoWrapX(x){ return x-Math.floor(x); }
+function geoMapPan(n,dx,dy){
+  const W=n.cv.width, H=n.cv.height, v=geoView(n,W,H);
+  n.p.mlon=unmercX(geoWrapX((v.ox+W/2-dx)/v.S));
+  n.p.mlat=unmercY(clamp((v.oy+H/2-dy)/v.S,0.001,0.999));
+}
+
+function geoMapWire(n,cv){
+  if(n._wired===cv) return; n._wired=cv;
+  const touches=new Map(); let drag=null, pinch=null, tap=null;
+  cv.addEventListener('wheel',ev=>{
+    ev.preventDefault(); ev.stopPropagation();
+    const r=cv.getBoundingClientRect(), k=cv.width/r.width;
+    geoMapZoomAt(n,(ev.clientX-r.left)*k,(ev.clientY-r.top)*k,-Math.sign(ev.deltaY)*(ev.ctrlKey?0.1:0.5));
+  },{passive:false});
+  cv.addEventListener('dblclick',ev=>{
+    ev.stopPropagation();
+    const r=cv.getBoundingClientRect(), k=cv.width/r.width;
+    geoMapZoomAt(n,(ev.clientX-r.left)*k,(ev.clientY-r.top)*k,ev.shiftKey?-1:1);
+  });
+  cv.addEventListener('pointerdown',ev=>{
+    ev.stopPropagation();
+    cv.setPointerCapture(ev.pointerId);
+    touches.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
+    if(touches.size===2){
+      const [a,b]=[...touches.values()];
+      pinch={d:Math.hypot(a.x-b.x,a.y-b.y)||1}; drag=null; tap=null; return;
+    }
+    drag={x:ev.clientX,y:ev.clientY}; tap={x:ev.clientX,y:ev.clientY};
+  });
+  cv.addEventListener('pointermove',ev=>{
+    if(!touches.has(ev.pointerId)) return;
+    touches.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
+    const r=cv.getBoundingClientRect(), k=cv.width/r.width;
+    if(pinch && touches.size===2){
+      const [a,b]=[...touches.values()], d=Math.hypot(a.x-b.x,a.y-b.y)||1;
+      geoMapZoomAt(n,((a.x+b.x)/2-r.left)*k,((a.y+b.y)/2-r.top)*k,Math.log2(d/pinch.d));
+      pinch.d=d; return;
+    }
+    if(drag){
+      geoMapPan(n,(ev.clientX-drag.x)*k,(ev.clientY-drag.y)*k);
+      drag.x=ev.clientX; drag.y=ev.clientY;
+    }
+  });
+  const up=ev=>{
+    touches.delete(ev.pointerId);
+    if(touches.size<2) pinch=null;
+    if(tap && ev.type==='pointerup' && Math.hypot(ev.clientX-tap.x,ev.clientY-tap.y)<6){
+      const r=cv.getBoundingClientRect(), k=cv.width/r.width;
+      geoMapTap(n,(ev.clientX-r.left)*k,(ev.clientY-r.top)*k);
+    }
+    tap=null; if(!touches.size) drag=null;
+  };
+  cv.addEventListener('pointerup',up);
+  cv.addEventListener('pointercancel',up);
+}
+function geoMapTap(n,px,py){
+  const v=geoView(n,n.cv.width,n.cv.height);
+  let best=null, bd=12;
+  for(const e of n.ents.values()){
+    const p=e.pts[e.pts.length-1]; if(!p) continue;
+    const s=geoProj(v,p.lat,p.lon,px);
+    const d=Math.hypot(s.x-px,s.y-py);
+    if(d<bd){ bd=d; best=e; }
+  }
+  if(best){ n.selKey=best.key; n.selOut=[{...best.rec}]; return; }
+  n.selKey=null;
+  const lat=unmercY(clamp((v.oy+py)/v.S,0,1)), lon=unmercX(geoWrapX((v.ox+px)/v.S));
+  n.pickLat=lat; n.pickLon=lon;
+  n.pickRec=[{t:Date.now(), lat:+lat.toFixed(6), lon:+lon.toFixed(6), grid:latLonToGrid(lat,lon,6)}];
+  n.info={lat,lon,t:Date.now()};
+}
+// экранные координаты точки; копию мира выбираем ближайшую к refX (по долготе мир повторяется)
+function geoProj(v,lat,lon,refX){
+  let x=mercX(lon)*v.S-v.ox; const y=mercY(lat)*v.S-v.oy;
+  const ref=refX ?? v.W/2;
+  x+=Math.round((ref-x)/v.S)*v.S;
+  return {x,y};
+}
+
+// обход линий слоя с отсечением по рамке и пропуском точек ближе пикселя; world-копии по долготе
+function geoPathLayer(cx,layer,v,z){
+  const {S,ox,oy,W,H}=v;
+  const k0=Math.floor(ox/S)-1, k1=Math.floor((ox+W)/S)+1;
+  for(const L of layer){
+    if(L.mz>z) continue;
+    const by0=L.bb[1]*S-oy, by1=L.bb[3]*S-oy;
+    if(by1<-2 || by0>H+2) continue;
+    for(let k=k0;k<=k1;k++){
+      const off=k*S-ox;
+      if(L.bb[2]*S+off<-2 || L.bb[0]*S+off>W+2) continue;
+      const xy=L.xy, m=xy.length>>1;
+      let lx=xy[0]*S+off, ly=xy[1]*S-oy;
+      cx.moveTo(lx,ly);
+      for(let j=1;j<m;j++){
+        const x=xy[2*j]*S+off, y=xy[2*j+1]*S-oy;
+        if(j<m-1 && Math.abs(x-lx)+Math.abs(y-ly)<0.8) continue;
+        cx.lineTo(x,y); lx=x; ly=y;
+      }
+    }
+  }
+}
+const GEO_COL={sea:'#0b1419', land:'#151d21', coast:'#33454e', lake:'#0e1c24', river:'#1d3645',
+  adm0:'#6d7f88', adm1:'#34444c', label:'#8d9ea6', labelDim:'#62737b', place:'#b8c4ca', grid:'rgba(120,160,180,.18)'};
+
+function geoMapDraw(n,cv,cx){
+  geoMapWire(n,cv);
+  const W=cv.width, H=cv.height, v=geoView(n,W,H), z=v.z;
+  // подложка — в отдельную канву, перерисовка только при смене вида/данных
+  const key=[W,H,v.ox.toFixed(1),v.oy.toFixed(1),v.S,cv.pxW,GeoBase.gen,n.p.tiles,n.p.grid,
+    n.p.tiles!=='none'?GeoTiles.gen:0].join(':');
+  if(n._baseKey!==key || !n._base){
+    n._baseKey=key;
+    const b=n._base || (n._base=document.createElement('canvas'));
+    if(b.width!==cv.pxW || b.height!==cv.pxH){ b.width=cv.pxW; b.height=cv.pxH; }
+    const bx=b.getContext('2d');
+    bx.setTransform(cv.pxW/W,0,0,cv.pxH/H,0,0);
+    geoDrawBase(n,bx,v);
+  }
+  cx.drawImage(n._base,0,0,W,H);
+  geoDrawObjects(n,cx,v);
+  geoDrawOverlay(n,cx,v);
+}
+function geoDrawBase(n,cx,v){
+  const {W,H,z}=v, D=GeoBase.data;
+  cx.fillStyle=GEO_COL.sea; cx.fillRect(0,0,W,H);
+  const tiles=n.p.tiles!=='none' && GEO_TILES[n.p.tiles];
+  if(tiles) geoDrawTiles(n,cx,v);
+  if(D){
+    if(!tiles){
+      cx.beginPath(); geoPathLayer(cx,D.land,v,z);
+      cx.fillStyle=GEO_COL.land; cx.fill('evenodd');
+      cx.strokeStyle=GEO_COL.coast; cx.lineWidth=1; cx.stroke();
+      cx.beginPath(); geoPathLayer(cx,D.lakes,v,z);
+      cx.fillStyle=GEO_COL.lake; cx.fill('evenodd'); cx.strokeStyle=GEO_COL.river; cx.stroke();
+      cx.beginPath(); geoPathLayer(cx,D.rivers,v,z);
+      cx.strokeStyle=GEO_COL.river; cx.stroke();
+    }
+    if(z>=3){
+      cx.beginPath(); geoPathLayer(cx,D.adm1,v,Math.max(z,4)+2);
+      cx.strokeStyle=tiles?'rgba(80,60,120,.6)':GEO_COL.adm1; cx.setLineDash([3,3]); cx.stroke(); cx.setLineDash([]);
+    }
+    cx.beginPath(); geoPathLayer(cx,D.adm0,v,99);
+    cx.strokeStyle=tiles?'rgba(90,40,110,.8)':GEO_COL.adm0; cx.lineWidth=1.2; cx.stroke(); cx.lineWidth=1;
+  }
+  if(n.p.grid!=='none') geoDrawGrid(n,cx,v);
+  if(D && !tiles) geoDrawLabels(n,cx,v);
+}
+function geoDrawTiles(n,cx,v){
+  const T=GEO_TILES[n.p.tiles], tz=clamp(Math.round(v.z),0,T.max), N=2**tz;
+  const ts=v.S/N;                                    // размер тайла на экране
+  const x0=Math.floor(v.ox/ts), x1=Math.floor((v.ox+v.W)/ts), y0=Math.max(0,Math.floor(v.oy/ts)), y1=Math.min(N-1,Math.floor((v.oy+v.H)/ts));
+  if((x1-x0+1)*(y1-y0+1)>120) return;
+  cx.imageSmoothingEnabled=true;
+  for(let ty=y0;ty<=y1;ty++) for(let tx=x0;tx<=x1;tx++){
+    const wx=((tx%N)+N)%N, sx=tx*ts-v.ox, sy=ty*ts-v.oy;
+    const bmp=geoTileGet(n.p.tiles,tz,wx,ty,n.p.net);
+    if(bmp){ cx.drawImage(bmp,sx,sy,ts+0.5,ts+0.5); continue; }
+    // нет тайла — растянуть кусок родителя из памяти (офлайн или ещё грузится)
+    for(let up=1;up<=5 && tz-up>=0;up++){
+      const pz=tz-up, f=2**up, px=Math.floor(wx/f), py=Math.floor(ty/f);
+      const m=GeoTiles.mem.get(n.p.tiles+'/'+pz+'/'+px+'/'+py);
+      if(!m?.bmp){ if(up===1) geoTileGet(n.p.tiles,pz,px,py,n.p.net); continue; }
+      const sub=256/f;
+      cx.drawImage(m.bmp,(wx-px*f)*sub,(ty-py*f)*sub,sub,sub,sx,sy,ts+0.5,ts+0.5);
+      break;
+    }
+  }
+}
+function geoDrawGrid(n,cx,v){
+  const {W,H,S,ox,oy,z}=v;
+  const lon0=unmercX(ox/S), lon1=unmercX((ox+W)/S);
+  const lat1=unmercY(clamp(oy/S,0,1)), lat0=unmercY(clamp((oy+H)/S,0,1));
+  let dlon, dlat;
+  if(n.p.grid==='maidenhead'){
+    if(z<5){ dlon=20; dlat=10; } else if(z<9){ dlon=2; dlat=1; } else { dlon=2/24; dlat=1/24; }
+  } else {
+    const st=[30,10,5,2,1,0.5,0.2,0.1,0.05,0.02,0.01];
+    const want=(lon1-lon0)/6; dlon=st.find(s=>s<=want)||0.01; dlat=dlon;
+  }
+  cx.strokeStyle=GEO_COL.grid; cx.beginPath();
+  for(let lon=Math.floor((lon0+180)/dlon)*dlon-180; lon<=lon1; lon+=dlon){
+    const x=mercX(lon)*S-ox; cx.moveTo(x,0); cx.lineTo(x,H); }
+  for(let lat=Math.floor((lat0+90)/dlat)*dlat-90; lat<=lat1; lat+=dlat){
+    if(Math.abs(lat)>85) continue;
+    const y=mercY(lat)*S-oy; cx.moveTo(0,y); cx.lineTo(W,y); }
+  cx.stroke();
+  if(n.p.grid==='maidenhead' && (lon1-lon0)/dlon<40){
+    const len=dlon>=20?2:dlon>=2?4:6;
+    cx.fillStyle='rgba(140,180,200,.45)'; cx.font='10px monospace';
+    for(let lon=Math.floor((lon0+180)/dlon)*dlon-180; lon<lon1; lon+=dlon)
+      for(let lat=Math.floor((lat0+90)/dlat)*dlat-90; lat<lat1; lat+=dlat){
+        if(Math.abs(lat)>85) continue;
+        const x=mercX(lon)*S-ox, y=mercY(lat+dlat)*S-oy;
+        cx.fillText(latLonToGrid(lat+dlat/2,((lon+dlon/2+540)%360)-180,len).toUpperCase(),x+3,y+11);
+      }
+  }
+}
+// подписи с разрежением: ставим по приоритету, пропуская пересекающиеся
+function geoLabelBox(boxes,x,y,w,h){
+  for(const b of boxes) if(x<b[2] && x+w>b[0] && y<b[3] && y+h>b[1]) return false;
+  boxes.push([x,y,x+w,y+h]); return true;
+}
+function geoDrawLabels(n,cx,v){
+  const {W,H,S,ox,oy,z}=v, D=GeoBase.data, boxes=[];
+  const k0=Math.floor(ox/S), k1=Math.floor((ox+W)/S);
+  const each=(arr,fn)=>{
+    for(const p of arr){
+      const y=p.y*S-oy; if(y<-10 || y>H+10) continue;
+      for(let k=k0;k<=k1;k++){ const x=p.x*S+k*S-ox; if(x<-40 || x>W+40) continue; fn(p,x,y); }
+    }
+  };
+  cx.textBaseline='middle';
+  cx.font='bold 11px sans-serif'; cx.fillStyle=GEO_COL.label;
+  if(z<7) each(D.countryLabels,(p,x,y)=>{
+    if(p.mz>z+1.5) return;
+    const w=cx.measureText(p.name).width;
+    if(geoLabelBox(boxes,x-w/2,y-7,w,14)) cx.fillText(p.name,x-w/2,y);
+  });
+  cx.font='10px sans-serif'; cx.fillStyle=GEO_COL.labelDim;
+  if(z>=4) each(D.adm1Labels,(p,x,y)=>{
+    if(p.mz>z+1) return;
+    const w=cx.measureText(p.name).width;
+    if(geoLabelBox(boxes,x-w/2,y-6,w,12)) cx.fillText(p.name,x-w/2,y);
+  });
+  let placed=0;
+  const place=(name,x,y,big)=>{
+    cx.font=(big?'bold ':'')+'10px sans-serif';
+    const w=cx.measureText(name).width;
+    if(!geoLabelBox(boxes,x-3,y-6,w+10,12)) return;
+    cx.fillStyle=GEO_COL.place;
+    cx.fillRect(x-(big?2:1.5),y-(big?2:1.5),big?4:3,big?4:3);
+    cx.fillText(name,x+5,y); placed++;
+  };
+  each(D.places,(p,x,y)=>{ if(p.mz<=z+1 && placed<250) place(p.name,x,y,p.kind>0); });
+  const P=GeoBase.places;
+  if(P && z>=8){
+    const lon0=unmercX(ox/S), lon1=unmercX((ox+W)/S);
+    const lat1=unmercY(clamp(oy/S,0,1)), lat0=unmercY(clamp((oy+H)/S,0,1));
+    if((lon1-lon0)*(lat1-lat0)<=64){
+      for(let la=Math.floor(lat0);la<=Math.floor(lat1);la++)
+        for(let lo=Math.floor(lon0);lo<=Math.floor(lon1);lo++){
+          const lw=((lo+180)%360+360)%360;
+          const cell=P.cells.get((la+90)*360+lw); if(!cell) continue;
+          for(const i of cell){
+            if(placed>400) break;
+            const s=geoProj(v,P.lat[i],P.lon[i],(mercX(lo)*S-ox));
+            if(s.x<-5 || s.x>W+5 || s.y<-5 || s.y>H+5) continue;
+            place(P.name[i],s.x,s.y,false);
+          }
+        }
+    }
+  }
+}
+
+const GEO_ICONS=new Set(['dot','square','triangle','diamond','star','cross','plus','plane','antenna','tx','rx','me','flag']);
+function geoSnrColor(snr){                           // -20 дБ — красный … +20 дБ — зелёный
+  const t=clamp((snr+20)/40,0,1);
+  return `hsl(${Math.round(t*120)},80%,55%)`;
+}
+function geoEntColor(r,e){
+  if(r.color) return String(r.color);
+  const snr=recNum(r.snr); if(snr!=null) return geoSnrColor(snr);
+  const rssi=recNum(r.rssi); if(rssi!=null) return geoSnrColor((rssi+100)/2);
+  if(e.id!=null){ let h=0; for(const c of e.id) h=(h*31+c.charCodeAt(0))|0; return `hsl(${((h%360)+360)%360},70%,60%)`; }
+  return themeColor('--acc')||'#e0b23c';
+}
+function geoIcon(cx,icon,x,y,s,rot,col){
+  cx.save(); cx.translate(x,y);
+  cx.fillStyle=col; cx.strokeStyle=col; cx.lineWidth=1.5;
+  const rotate=()=>{ if(rot!=null) cx.rotate(rot*D2R); };
+  cx.beginPath();
+  switch(icon){
+    case 'square': cx.rect(-s*.8,-s*.8,s*1.6,s*1.6); cx.fill(); break;
+    case 'diamond': cx.moveTo(0,-s); cx.lineTo(s,0); cx.lineTo(0,s); cx.lineTo(-s,0); cx.closePath(); cx.fill(); break;
+    case 'triangle': rotate(); cx.moveTo(0,-s*1.2); cx.lineTo(s,s*.8); cx.lineTo(-s,s*.8); cx.closePath(); cx.fill(); break;
+    case 'star':
+      for(let i=0;i<10;i++){ const a=i*Math.PI/5-Math.PI/2, rr=i%2?s*.45:s*1.1; cx.lineTo(Math.cos(a)*rr,Math.sin(a)*rr); }
+      cx.closePath(); cx.fill(); break;
+    case 'cross': cx.moveTo(-s,-s); cx.lineTo(s,s); cx.moveTo(s,-s); cx.lineTo(-s,s); cx.lineWidth=2; cx.stroke(); break;
+    case 'plus': cx.moveTo(-s,0); cx.lineTo(s,0); cx.moveTo(0,-s); cx.lineTo(0,s); cx.lineWidth=2; cx.stroke(); break;
+    case 'plane':
+      rotate(); s*=1.3;
+      cx.moveTo(0,-s); cx.lineTo(s*.12,-s*.6); cx.lineTo(s*.12,-s*.2); cx.lineTo(s,s*.25); cx.lineTo(s,s*.4);
+      cx.lineTo(s*.12,s*.15); cx.lineTo(s*.1,s*.7); cx.lineTo(s*.35,s*.9); cx.lineTo(s*.35,s);
+      cx.lineTo(-s*.35,s); cx.lineTo(-s*.35,s*.9); cx.lineTo(-s*.1,s*.7); cx.lineTo(-s*.12,s*.15);
+      cx.lineTo(-s,s*.4); cx.lineTo(-s,s*.25); cx.lineTo(-s*.12,-s*.2); cx.lineTo(-s*.12,-s*.6); cx.closePath();
+      cx.fill(); cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=.7; cx.stroke(); break;
+    case 'antenna':
+      cx.moveTo(0,s); cx.lineTo(0,-s); cx.moveTo(-s*.7,-s); cx.lineTo(0,-s*.2); cx.lineTo(s*.7,-s); cx.stroke(); break;
+    case 'tx':
+      cx.moveTo(-s*.6,s); cx.lineTo(0,-s*.4); cx.lineTo(s*.6,s); cx.stroke();
+      cx.beginPath(); cx.arc(0,-s*.4,s*.6,-Math.PI*.8,-Math.PI*.2); cx.stroke();
+      cx.beginPath(); cx.arc(0,-s*.4,s*1.1,-Math.PI*.8,-Math.PI*.2); cx.stroke(); break;
+    case 'rx': cx.arc(0,0,s,0,2*Math.PI); cx.stroke(); cx.beginPath(); cx.arc(0,0,s*.35,0,2*Math.PI); cx.fill(); break;
+    case 'me':
+      cx.arc(0,0,s,0,2*Math.PI); cx.stroke();
+      cx.moveTo(-s*1.6,0); cx.lineTo(-s*.5,0); cx.moveTo(s*.5,0); cx.lineTo(s*1.6,0);
+      cx.moveTo(0,-s*1.6); cx.lineTo(0,-s*.5); cx.moveTo(0,s*.5); cx.lineTo(0,s*1.6); cx.stroke();
+      if(rot!=null){ cx.beginPath(); cx.rotate(rot*D2R); cx.moveTo(0,-s*2.4); cx.lineTo(s*.5,-s*1.5); cx.lineTo(-s*.5,-s*1.5); cx.closePath(); cx.fill(); }
+      break;
+    case 'flag': cx.moveTo(0,s); cx.lineTo(0,-s*1.2); cx.lineTo(s,-s*.8); cx.lineTo(0,-s*.4); cx.stroke(); cx.fill(); break;
+    case 'dot':
+      cx.arc(0,0,s*.8,0,2*Math.PI); cx.fill(); cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=1; cx.stroke(); break;
+    default:                                         // любой короткий текст/эмодзи как значок
+      cx.font=Math.round(s*2.2)+'px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+      cx.fillText(String(icon).slice(0,4),0,0);
+  }
+  cx.restore();
+}
+// линия по большому кругу из точки: азимут/дальность или до второй точки
+function geoGreatCircle(cx,v,lat,lon,brg,km,refX){
+  const N=Math.max(8,Math.min(96,Math.ceil(km/100)));
+  let prev=null;
+  for(let i=0;i<=N;i++){
+    const p=geoDest(lat,lon,brg,km*i/N), s=geoProj(v,p.lat,p.lon,prev?prev.x:refX);
+    if(!prev) cx.moveTo(s.x,s.y); else cx.lineTo(s.x,s.y);
+    prev=s;
+  }
+}
+function geoDrawObjects(n,cx,v){
+  const {W,H,S}=v, now=Date.now(), ttl=n.p.ttl*60000;
+  const mpp=lat=>40075016.686*Math.cos(lat*D2R)/S;   // метров в пикселе
+  cx.save(); cx.lineJoin='round';
+  for(const e of n.ents.values()){
+    const r=e.rec, last=e.pts[e.pts.length-1]; if(!last) continue;
+    const col=geoEntColor(r,e);
+    const age=ttl>0 ? clamp((now-e.seen)/ttl,0,1) : 0;
+    cx.globalAlpha=1-age*0.7;
+    const s=geoProj(v,last.lat,last.lon);
+    const vis=s.x>-400 && s.x<W+400 && s.y>-400 && s.y<H+400;
+    if(e.pts.length>1){                              // трек
+      cx.strokeStyle=col; cx.lineWidth=1.5; cx.beginPath();
+      let px=null;
+      for(let i=e.pts.length-1;i>=0;i--){
+        const p=geoProj(v,e.pts[i].lat,e.pts[i].lon,px??s.x);
+        if(px==null) cx.moveTo(p.x,p.y); else cx.lineTo(p.x,p.y);
+        px=p.x;
+      }
+      cx.stroke();
+    }
+    if(e.grid && e.grid.w<=2){                       // квадрат локатора
+      const a=geoProj(v,last.lat+e.grid.h/2,last.lon-e.grid.w/2,s.x), b=geoProj(v,last.lat-e.grid.h/2,last.lon+e.grid.w/2,s.x);
+      if(b.x-a.x>6){ cx.strokeStyle=col; cx.lineWidth=1; cx.globalAlpha*=.6; cx.strokeRect(a.x,a.y,b.x-a.x,b.y-a.y); cx.globalAlpha=1-age*0.7; }
+    }
+    const rad=recNum(r.radius);
+    if(rad!=null && rad>0){
+      const rp=rad/mpp(last.lat);
+      if(rp>2 && rp<1e5){ cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash([4,3]);
+        cx.beginPath(); cx.arc(s.x,s.y,rp,0,2*Math.PI); cx.stroke(); cx.setLineDash([]);
+        cx.fillStyle=col; cx.globalAlpha*=.08; cx.fill(); cx.globalAlpha=1-age*0.7; }
+    }
+    const az=recNum(r.azimuth ?? r.bearing);
+    if(az!=null){
+      const km=recNum(r.range) ?? n.p.rayKm;
+      cx.strokeStyle=col; cx.lineWidth=1.5; cx.setLineDash([6,4]); cx.beginPath();
+      geoGreatCircle(cx,v,last.lat,last.lon,az,km,s.x); cx.stroke(); cx.setLineDash([]);
+    }
+    const lat2=recNum(r.lat2), lon2=recNum(r.lon2);
+    if(lat2!=null && lon2!=null){
+      const km=geoDist(last.lat,last.lon,lat2,lon2);
+      cx.strokeStyle=col; cx.lineWidth=1; cx.beginPath();
+      geoGreatCircle(cx,v,last.lat,last.lon,geoBearing(last.lat,last.lon,lat2,lon2),km,s.x); cx.stroke();
+    }
+    if(!vis) continue;
+    let icon=r.icon!=null && r.icon!=='' ? String(r.icon) : 'dot';
+    const size=recNum(r.size) ?? 6;
+    let rot=recNum(r.heading ?? r.course ?? r.track);
+    if(rot==null && (icon==='plane'||icon==='triangle') && e.pts.length>1){
+      const p0=e.pts[e.pts.length-2]; rot=geoBearing(p0.lat,p0.lon,last.lat,last.lon);
+    }
+    geoIcon(cx,icon,s.x,s.y,size,rot,col);
+    if(n.selKey===e.key){
+      cx.strokeStyle=themeColor('--scr-hi')||'#fff'; cx.lineWidth=1.5;
+      cx.beginPath(); cx.arc(s.x,s.y,size+5,0,2*Math.PI); cx.stroke();
+    }
+    if(n.p.labels){
+      const lab=r.label ?? e.id;
+      if(lab!=null && lab!==''){
+        cx.font='11px monospace'; cx.textBaseline='middle'; cx.textAlign='left';
+        cx.lineWidth=3; cx.strokeStyle='rgba(0,0,0,.7)'; cx.strokeText(String(lab),s.x+size+4,s.y-size);
+        cx.fillStyle=col; cx.fillText(String(lab),s.x+size+4,s.y-size);
+      }
+    }
+  }
+  cx.restore();
+}
+function geoDrawOverlay(n,cx,v){
+  const {W,H,S,z}=v;
+  cx.save();
+  cx.font='10px monospace'; cx.textBaseline='alphabetic'; cx.textAlign='left';
+  const box=(lines,x,y,alignRight)=>{
+    const w=Math.max(...lines.map(l=>cx.measureText(l).width))+10, h=lines.length*13+6;
+    const bx=alignRight ? x-w : x, by=y;
+    cx.fillStyle='rgba(10,13,14,.82)'; cx.fillRect(bx,by,w,h);
+    cx.fillStyle='#c8d2d6'; lines.forEach((l,i)=>cx.fillText(l,bx+5,by+14+i*13));
+  };
+  // масштабная линейка
+  const mpp=40075016.686*Math.cos(n.p.mlat*D2R)/S, target=mpp*90;
+  const steps=[1,2,5]; let len=1;
+  for(let p=1;p<1e8;p*=10) for(const s of steps) if(s*p<=target) len=s*p;
+  const px=len/mpp;
+  cx.strokeStyle='#c8d2d6'; cx.lineWidth=1.5; cx.beginPath();
+  cx.moveTo(8,H-10); cx.lineTo(8+px,H-10); cx.moveTo(8,H-14); cx.lineTo(8,H-6); cx.moveTo(8+px,H-14); cx.lineTo(8+px,H-6); cx.stroke();
+  cx.fillStyle='#c8d2d6'; cx.fillText(len>=1000 ? len/1000+' km' : len+' m',12+px,H-6);
+  // статус
+  const st=[];
+  if(GeoBase.state!=='ready') st.push('base map: '+GeoBase.state+(GeoBase.err?' — '+GeoBase.err:''));
+  if(GeoBase.placesState && !/^\d+ places$/.test(GeoBase.placesState)) st.push('places: '+GeoBase.placesState);
+  st.push('z '+z.toFixed(1)+' · objects '+n.ents.size);
+  cx.fillStyle='rgba(200,210,214,.7)'; st.forEach((l,i)=>cx.fillText(l,6,13+i*12));
+  // атрибуция
+  const attr=n.p.tiles!=='none' && GEO_TILES[n.p.tiles] ? GEO_TILES[n.p.tiles].attr : 'Natural Earth';
+  cx.textAlign='right'; cx.fillStyle='rgba(200,210,214,.55)'; cx.fillText(attr,W-4,H-4); cx.textAlign='left';
+  // выбранный объект / точка под пальцем
+  const e=n.selKey && n.ents.get(n.selKey);
+  if(e){
+    const p=e.pts[e.pts.length-1];
+    const lines=[...recText(e.rec).split('\n').slice(0,14),
+      p.lat.toFixed(5)+', '+p.lon.toFixed(5)+' · '+latLonToGrid(p.lat,p.lon,6),
+      'seen '+Math.round((Date.now()-e.seen)/1000)+' s ago'+(e.pts.length>1?' · track '+e.pts.length:'')];
+    box(lines,W-6,6,true);
+  } else if(n.info && Date.now()-n.info.t<8000){
+    box([n.info.lat.toFixed(5)+', '+n.info.lon.toFixed(5), latLonToGrid(n.info.lat,n.info.lon,6)],W-6,6,true);
+  }
+  cx.restore();
+}

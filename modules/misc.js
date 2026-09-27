@@ -1,5 +1,5 @@
 /* ---------- группы (вложенные подграфы) ---------- */
-const PORT_TYPES=['sig','num','spec','img','txt','blk'];
+const PORT_TYPES=['sig','num','spec','img','txt','blk','bands','rec'];
 
 def({ id:'gin', title:'Group Input', cat:'Misc',
   outs:n=>[{n:'out',t:n.p.type||'sig'}],
