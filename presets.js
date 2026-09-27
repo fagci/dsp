@@ -752,7 +752,7 @@ const nt=addNode('note',40,40,{text:'Sensor samples are placed by their timestam
   'Peaks here are mechanical vibration or aliases of 50/100 Hz hum (e.g. 50 Hz at 60 Hz rate → 10 Hz).'});
 nt.size.w=520; nt.size.h=130; applySize(nt);
 const ac=addNode('accel',40,220);                 // devicemotion: в Firefox — сотни Гц, в Chrome — 60
-const lf=addNode('lfft',320,220,{fs:'128',size:'2048',avg:'64'});
+const lf=addNode('lfft',320,220,{fs:'128',size:'2048',upd:'0.1',avg:'10'});
 const sa=addNode('sa',600,220,{fmin:1,fmax:50,floor:-110,top:-30,split:.45,tol:1});
 sa.size.w=640; sa.size.h=360; applySize(sa);
 addEdge(ac.id,'smag',lf.id,'in');

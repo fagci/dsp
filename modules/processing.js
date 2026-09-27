@@ -723,8 +723,10 @@ def({ id:'fft', title:'FFT', cat:'Processing', ins:[{n:'in',t:'sig'}], outs:[{n:
 // Низкочастотный спектр: у 'fft' на частоте движка даже 65536 точек дают бин ~0.7 Гц.
 // Здесь вход прореживается до fs: среднее по D1 отсчётам до 16·fs, затем КИХ (Блэкман,
 // срез 0.45·fs) с шагом 16. Реальная fs = sr/(16·D1) — ось спектра по ней, а не по заказанной.
-// Спектр — по Уэлчу: окна N с перекрытием 75%, среднее вычитается (гравитация/постоянка
-// иначе растекается по соседним бинам), мощность усредняется экспоненциально или накопительно.
+// Спектр — по Уэлчу: окно N пересчитывается каждые upd секунд независимо от его длины (иначе
+// длинное окно обновляется раз в секунды), среднее вычитается (гравитация/постоянка иначе
+// растекается по соседним бинам), мощность усредняется экспоненциально (avg, с) или накопительно.
+// Пока окно не заполнено, считается по уже накопленной части — картинка есть сразу.
 // Верхние ~20% диапазона (выше 0.4·fs) — переходная полоса фильтра.
 const LFFT_R=16, LFFT_TAPS=LFFT_R*48;
 function lfftSetup(n){
@@ -737,7 +739,7 @@ function lfftSetup(n){
     h[i]=sinc*w; s+=h[i]; }
   for(let i=0;i<LFFT_TAPS;i++) h[i]/=s;
   n.h=h; n.fr=new Float64Array(LFFT_TAPS); n.fw=0; n.fk=0;   // кольцо 16·fs и счётчик до выхода
-  n.acc=0; n.accN=0;
+  n.acc=0; n.accN=0; n.primed=false;
   n.N=N; n.ring=new Float64Array(N); n.rw=0; n.filled=0; n.since=0;
   n.re=new Float32Array(N); n.im=new Float32Array(N);
   n.pw=new Float64Array(N/2); n.avgN=0;
@@ -748,22 +750,25 @@ function lfftSetup(n){
   n.key=[sr,n.p.fs,n.p.size,n.p.win].join();
   n.sp=null;
 }
-function lfftFrame(n){
-  const N=n.N, re=n.re, im=n.im, r=n.ring; let mean=0;
-  for(let i=0;i<N;i++) mean+=r[(n.rw+i)%N];
-  mean/=N;
-  for(let i=0;i<N;i++){ re[i]=(r[(n.rw+i)%N]-mean)*n.w[i]; im[i]=0; }
+function lfftFrame(n,hop){
+  const N=n.N, re=n.re, im=n.im, r=n.ring, F=n.filled, i0=N-F; let mean=0;
+  for(let i=i0;i<N;i++) mean+=r[(n.rw+i)%N];
+  mean/=F;
+  for(let i=0;i<N;i++){ re[i]=i<i0?0:(r[(n.rw+i)%N]-mean)*n.w[i]; im[i]=0; }
   fft(re,im);
-  const av=n.p.avg, K=av==='off'?1:av==='inf'?++n.avgN:Math.min(++n.avgN,+av), a=1/K;
-  const psdNorm=1/(n.fs*n.wGain2);
+  const av=n.p.avg, Kmax=Math.max(1,Math.round(+av*n.fs/hop));   // avg — в секундах
+  const K=av==='off'?1:av==='inf'?++n.avgN:Math.min(++n.avgN,Kmax), a=1/K;
+  let g=n.wGain;                                    // неполное окно — приводим к полному по амплитуде
+  if(i0){ g=0; for(let i=i0;i<N;i++) g+=n.w[i]; }
+  const psdNorm=1/(n.fs*n.wGain2), sc=n.wGain/g;
   for(let i=0;i<N/2;i++){
     const p=re[i]*re[i]+im[i]*im[i];
-    n.pw[i]=K===1?p:n.pw[i]+(p-n.pw[i])*a;
+    n.pw[i]=K===1?p*sc*sc:n.pw[i]+(p*sc*sc-n.pw[i])*a;
     const k=i?2:1;
     n.mag[i]=k*Math.sqrt(n.pw[i])/n.wGain; n.psd[i]=k*n.pw[i]*psdNorm;
     n.phase[i]=i?Math.atan2(im[i],re[i]):0; }
   const sp=n.sp||(n.sp={});
-  sp.mag=n.mag; sp.phase=n.phase; sp.psd=n.psd; sp.hop=N/4; sp.sr=n.fs; sp.size=N; sp.freqs=null;
+  sp.mag=n.mag; sp.phase=n.phase; sp.psd=n.psd; sp.hop=hop; sp.sr=n.fs; sp.size=N; sp.freqs=null;
   sp.rev=(sp.rev|0)+1;
 }
 def({ id:'lfft', title:'Low-Frequency FFT', cat:'Processing', ins:[{n:'in',t:'sig'}], outs:[{n:'spec',t:'spec'}],
@@ -771,15 +776,17 @@ def({ id:'lfft', title:'Low-Frequency FFT', cat:'Processing', ins:[{n:'in',t:'si
   params:[{n:'fs',t:'select',opts:['16','32','64','128','256','512','1024'],d:'64',label:'decimate to, Hz'},
           {n:'size',t:'select',opts:['256','512','1024','2048','4096','8192','16384','32768','65536'],d:'1024'},
           {n:'win',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann'},
-          {n:'avg',t:'select',opts:['off','4','16','64','256','1024','inf'],d:'16',label:'averaging, frames'},
+          {n:'upd',t:'select',opts:['0.05','0.1','0.2','0.5','1','2'],d:'0.1',label:'update every, s'},
+          {n:'avg',t:'select',opts:['off','1','3','10','30','100','300','inf'],d:'3',label:'averaging, s'},
           {n:'clr',t:'button',label:'Reset average',fn:n=>{ n.avgN=0; n.pw?.fill(0); }}],
   init:n=>{ n.key=''; },
   process(n,I){
     if(n.key!==[Eng.sr,n.p.fs,n.p.size,n.p.win].join()) lfftSetup(n);
-    const x=I.in, D1=n.D1, h=n.h, fr=n.fr, N=n.N, hop=N/4;
+    const x=I.in, D1=n.D1, h=n.h, fr=n.fr, N=n.N, hop=Math.max(1,Math.min(N,Math.round(+n.p.upd*n.fs)));
     for(let i=0;i<BLOCK;i++){
       n.acc+=x?x[i]:0;
       if(++n.accN<D1) continue;
+      if(!n.primed){ fr.fill(n.acc/D1); n.primed=true; }   // иначе скачок от нуля до постоянки — ложный НЧ-пик
       fr[n.fw]=n.acc/D1; n.fw=(n.fw+1)%LFFT_TAPS; n.acc=0; n.accN=0;
       if(++n.fk<LFFT_R) continue;
       n.fk=0;
@@ -787,13 +794,14 @@ def({ id:'lfft', title:'Low-Frequency FFT', cat:'Processing', ins:[{n:'in',t:'si
       for(let k=0,j=n.fw;k<LFFT_TAPS;k++){ y+=h[k]*fr[j]; if(++j===LFFT_TAPS) j=0; }
       n.ring[n.rw]=y; n.rw=(n.rw+1)%N;
       if(n.filled<N) n.filled++;
-      if(n.filled>=N && ++n.since>=hop){ n.since=0; lfftFrame(n); }
+      if(n.filled>=Math.min(N,32) && ++n.since>=hop){ n.since=0; lfftFrame(n,hop); }
     }
     return {spec:n.sp}; },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r||!n.fs) return;
     const win=n.N/n.fs;
     r.textContent=`fs ${n.fs.toFixed(2)} Hz · Δf ${(n.fs/n.N).toFixed(4)} Hz · window ${win<120?win.toFixed(1)+' s':(win/60).toFixed(1)+' min'}`+
-      (n.filled<n.N?` · filling ${Math.round(n.filled/n.N*100)}%`:` · avg ${n.p.avg==='inf'?n.avgN:Math.min(n.avgN,+n.p.avg||1)}`); }});
+      (n.filled<n.N?` · filling ${Math.round(n.filled/n.N*100)}%`:'')+
+      (n.p.avg==='inf'?` · avg ${n.avgN} frames`:''); }});
 
 
 
