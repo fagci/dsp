@@ -6,6 +6,8 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 
 [![FT8 propagation map in DSP workbench — open the demo](docs/screenshots/map-ft8.png)](https://fagci.github.io/dsp/)
 
+[More screenshots ↓](#screenshots)
+
 ## Features
 
 ### Workbench
