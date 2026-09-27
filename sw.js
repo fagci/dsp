@@ -7,11 +7,11 @@
 //
 // CACHE бампать вместе с ?v=N в index.html — иначе после правки файлов старый список ссылок
 // (со старым ?v=) продолжит переустанавливаться поверх уже закэшированного нового.
-const CACHE='dsp-shell-v60';
+const CACHE='dsp-shell-v61';
 const SHELL=[
   './',
   './index.html',
-  './styles.css?v=60',
+  './styles.css?v=61',
   './manifest.json',
   './favicon.svg',
   './icons/favicon-32.png',
@@ -20,21 +20,22 @@ const SHELL=[
   './icons/icon-512.png',
   './vendor/panzoom.min.js?v=4.6.2',
   './vendor/interact.min.js?v=1.10.28',
-  './core-engine.js?v=60',
-  './modules/analysis.js?v=60',
-  './modules/misc.js?v=60',
-  './modules/modulation.js?v=60',
-  './modules/output.js?v=60',
-  './modules/processing.js?v=60',
-  './modules/protocols.js?v=60',
-  './modules/sigid.js?v=60',
-  './modules/sources.js?v=60',
-  './modules/audioeditor.js?v=60',
-  './modules/tinysa.js?v=60',
-  './modules/hfdl.js?v=60',
-  './modules/propagation.js?v=60',
-  './presets.js?v=60',
-  './core-graph.js?v=60',
+  './core-engine.js?v=61',
+  './modules/analysis.js?v=61',
+  './modules/misc.js?v=61',
+  './modules/modulation.js?v=61',
+  './modules/output.js?v=61',
+  './modules/processing.js?v=61',
+  './modules/protocols.js?v=61',
+  './modules/sigid.js?v=61',
+  './modules/sources.js?v=61',
+  './modules/audioeditor.js?v=61',
+  './modules/tinysa.js?v=61',
+  './modules/hfdl.js?v=61',
+  './modules/propagation.js?v=61',
+  './modules/geo.js?v=61',
+  './presets.js?v=61',
+  './core-graph.js?v=61',
 ];
 self.addEventListener('install',e=>{
   self.skipWaiting();                                 // не ждать закрытия всех вкладок — как и ручной ?v=N, обновление должно применяться сразу
@@ -43,7 +44,7 @@ self.addEventListener('install',e=>{
 self.addEventListener('activate',e=>{
   e.waitUntil(
     caches.keys()
-      .then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k))))
+      .then(ks=>Promise.all(ks.filter(k=>k!==CACHE && k!=='dsp-tiles').map(k=>caches.delete(k))))   // тайлы карты — отдельно, переживают обновления
       .then(()=>self.clients.claim())
   );
 });

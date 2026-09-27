@@ -151,6 +151,7 @@ const PRESET_CATS={
   'Contestia: Transmit and Receive (Loop)':'Radio Protocols',
   'HFDL: Receive and Aircraft Map':'Radio Protocols',
   'HFDL: Detection and Frame':'Radio Protocols',
+  'Map: My Position and Points from CSV':'Signal Analysis',
   'Chirp Modem: Noise and Reflection':'Radio Protocols',
 
   'Text → Bits → Text (Encodings)':'Signal Analysis',
@@ -279,6 +280,24 @@ addEdge(m.id,'a',af.id,'in');
 addEdge(af.id,'soft',hd.id,'in');
 addEdge(m.id,'a',dt.id,'in');
 addEdge(m.id,'a',f8.id,'in');
+markWiresDirty();
+});
+preset('Map: My Position and Points from CSV', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Map works offline: base map (Natural Earth) is downloaded once and kept in the browser.\n'+
+  'CSV → Rec: load a file with lat,lon (or grid) and any other columns — they show up on click.\n'+
+  'Known fields: id (track), icon, color, size, label, radius (m), azimuth (°), range (km), lat2/lon2, snr, rssi.\n'+
+  'My Position: tick «track position» (GPS on a phone).'});
+nt.size.w=420; nt.size.h=190; applySize(nt);
+const me=addNode('geoMe',40,260,{});
+const csv=addNode('recCsv',20,480,{});
+const lg=addNode('recLog',290,480,{});
+lg.size.w=210; applySize(lg);
+const map=addNode('geoMap',520,40,{mz:3,mlat:50,mlon:30});
+map.size.w=620; map.size.h=560; applySize(map);
+addEdge(me.id,'rec',map.id,'rec');
+addEdge(csv.id,'rec',lg.id,'rec');
+addEdge(lg.id,'rec',map.id,'rec2');
 markWiresDirty();
 });
 preset('Quick Sound Level Meter', function(){
@@ -1721,7 +1740,7 @@ preset('HFDL: Receive and Aircraft Map', function(){
   const vit=addNode('viterbiDec',2260,300,{K:7,g1:'155',g2:'117',tail:true,fmt:'hex'});
   vit.size.w=360; vit.size.h=240; applySize(vit);
   const stack=addNode('hfdlStack',2660,300,{freq:11384});
-  const map=addNode('planeMap',2960,300,{ttl:30});
+  const map=addNode('geoMap',2960,300,{ttl:120,mz:2,mlat:30,mlon:0});
   map.size.w=560; map.size.h=340; applySize(map);
 
   addEdge(m.id,'a',bp.id,'in');
@@ -1746,13 +1765,6 @@ preset('HFDL: Receive and Aircraft Map', function(){
   addEdge(avg.id,'blk',vit.id,'blk');
   addEdge(vit.id,'blk',stack.id,'blk');
 
-  addEdge(stack.id,'lat',map.id,'lat');
-  addEdge(stack.id,'lon',map.id,'lon');
-  addEdge(stack.id,'trig',map.id,'trig');
-  addEdge(stack.id,'id',map.id,'id');
-  addEdge(stack.id,'gsLat',map.id,'gsLat');
-  addEdge(stack.id,'gsLon',map.id,'gsLon');
-  addEdge(stack.id,'gsTrig',map.id,'gsTrig');
-  addEdge(stack.id,'gsName',map.id,'gsName');
+  addEdge(stack.id,'rec',map.id,'rec');               // самолёты (треки по id) и наземные станции
   markWiresDirty();
 });

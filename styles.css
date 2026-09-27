@@ -2,7 +2,7 @@
   --bg:#0e1113; --panel:#161a1d; --panel2:#1d2226; --line:#2a3136;
   --txt:#c8d2d6; --dim:#929fa7; --acc:#e0b23c; --acc2:#4ec9b0;
   --t-sig:#4ec9b0; --t-num:#e0b23c; --t-spec:#c586c0; --t-img:#569cd6;
-  --t-txt:#d18ad1; --t-blk:#7fd17f; --t-bands:#5fb8d1; --err:#e05c5c;
+  --t-txt:#d18ad1; --t-blk:#7fd17f; --t-bands:#5fb8d1; --t-rec:#e0875f; --err:#e05c5c;
   /* --grid/--axis — сетка/подписи осей на canvas.view. Тот canvas всегда на тёмном --screen
      (см. ниже — --screen НЕ переопределён в светлой теме, экран прибора тёмный в обеих темах),
      так что и эти двое — не по теме, а константа, как --screen/--screen-fg сами; если сделать
@@ -22,7 +22,7 @@
     --bg:#eef0f2; --panel:#ffffff; --panel2:#e6e9ec; --line:#c7ccd1;
     --txt:#1c2226; --dim:#5c6670; --acc:#a8720f; --acc2:#0f9488;
     --t-sig:#0f9488; --t-num:#a8720f; --t-spec:#9333ea; --t-img:#2563eb;
-    --t-txt:#a83fa8; --t-blk:#2f9e4f; --t-bands:#1b7f96; --err:#c23b3b;
+    --t-txt:#a83fa8; --t-blk:#2f9e4f; --t-bands:#1b7f96; --t-rec:#b8541f; --err:#c23b3b;
     --dot:#d7dbde; --hi:#000000; --scrim:#0004;
     --note-bg:#fff8e1; --note-head:#fbecc3; --note-line:#e3cf95;
   }
