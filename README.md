@@ -175,7 +175,9 @@ Keys: Space play/stop, L loop, Del delete, T crop, Ctrl+A/X/C/V, Ctrl+S save, +/
 
 Works offline: the vector base map (Natural Earth 10m: coast, lakes, rivers, country and region borders, ~7 000 cities, English names) is fetched once from `data/basemap.json` and kept in IndexedDB. *Download places* adds ~130 000 towns from GeoNames (shown from zoom 8), or import a GeoNames dump / CSV `name,lat,lon[,population]`. Optional OSM / OpenTopoMap tiles are cached as you view them and stay available offline. Points can be saved in the browser under a name (*save points as*). Rebuild the base map: `node tools/basemap.mjs`.
 
-Presets: *FT8: Propagation Map*, *Fox Hunt: Locate Transmitter*, *HF: Who Is On Air (Schedule)*, *Map: My Position and Points from CSV*, *HFDL: Receive and Aircraft Map*.
+- **Satellites** (Radio): SGP4 orbits from CelesTrak TLE groups (amateur, weather, NOAA, stations…) and uplink/downlink frequencies from the SatNOGS database — both downloaded once and kept in the browser (or imported from files; set a CORS proxy if a site refuses cross-origin requests). On the map: position, visibility footprint, ground track ahead; click a satellite to select it. For the selected one: az/el/range, next passes (24 h), sky plot, and **Doppler**: `freq` is the downlink as heard (wire it to `tuneFreq` of the USB SDR — the channel follows the pass), `up` is what to transmit. Downlinks of satellites above the horizon are marked on the spectrum (`bands`). Orbits: [satellite.js](https://github.com/shashwatak/satellite-js) 5.0.0 (MIT) in `vendor/`. TLEs age: refresh them every week or two.
+
+Presets: *Satellites: Track and Doppler*, *FT8: Propagation Map*, *Fox Hunt: Locate Transmitter*, *HF: Who Is On Air (Schedule)*, *Map: My Position and Points from CSV*, *HFDL: Receive and Aircraft Map*.
 
 ## Themes
 

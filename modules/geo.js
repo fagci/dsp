@@ -1264,7 +1264,7 @@ function geoDrawLabels(n,cx,v){
   }
 }
 
-const GEO_ICONS=new Set(['dot','square','triangle','diamond','star','cross','plus','plane','antenna','tx','rx','me','flag']);
+const GEO_ICONS=new Set(['dot','square','triangle','diamond','star','cross','plus','plane','antenna','tx','rx','me','flag','sat']);
 function geoSnrColor(snr){                           // -20 дБ — красный … +20 дБ — зелёный
   const t=clamp((snr+20)/40,0,1);
   return `hsl(${Math.round(t*120)},80%,55%)`;
@@ -1311,6 +1311,11 @@ function geoIcon(cx,icon,x,y,s,rot,col){
       if(rot!=null){ cx.beginPath(); cx.rotate(rot*D2R); cx.moveTo(0,-s*2.4); cx.lineTo(s*.5,-s*1.5); cx.lineTo(-s*.5,-s*1.5); cx.closePath(); cx.fill(); }
       break;
     case 'flag': cx.moveTo(0,s); cx.lineTo(0,-s*1.2); cx.lineTo(s,-s*.8); cx.lineTo(0,-s*.4); cx.stroke(); cx.fill(); break;
+    case 'sat':                                      // корпус и две панели
+      cx.rotate(-Math.PI/4);
+      cx.fillRect(-s*.35,-s*.35,s*.7,s*.7);
+      cx.fillRect(-s*1.3,-s*.25,s*.8,s*.5); cx.fillRect(s*.5,-s*.25,s*.8,s*.5);
+      cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=.7; cx.strokeRect(-s*.35,-s*.35,s*.7,s*.7); break;
     case 'dot':
       cx.arc(0,0,s*.8,0,2*Math.PI); cx.fill(); cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=1; cx.stroke(); break;
     default:                                         // любой короткий текст/эмодзи как значок
@@ -1357,9 +1362,26 @@ function geoDrawObjects(n,cx,v){
     const rad=recNum(r.radius);
     if(rad!=null && rad>0){
       const rp=rad/mpp(last.lat);
-      if(rp>2 && rp<1e5){ cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash([4,3]);
-        cx.beginPath(); cx.arc(s.x,s.y,rp,0,2*Math.PI); cx.stroke(); cx.setLineDash([]);
+      if(rp>2 && rp<1e5){ cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash([4,3]); cx.beginPath();
+        if(rad>300000){                              // большой круг в Меркаторе — не окружность
+          let px=null;
+          for(let i=0;i<=72;i++){
+            const q=geoDest(last.lat,last.lon,i*5,rad/1000), p=geoProj(v,q.lat,q.lon,px??s.x);
+            if(px==null) cx.moveTo(p.x,p.y); else cx.lineTo(p.x,p.y); px=p.x;
+          }
+        } else cx.arc(s.x,s.y,rp,0,2*Math.PI);
+        cx.stroke(); cx.setLineDash([]);
         cx.fillStyle=col; cx.globalAlpha*=.08; cx.fill(); cx.globalAlpha=1-age*0.7; }
+    }
+    if(Array.isArray(r.path) && r.path.length>1){     // путь вперёд (трасса спутника и т.п.): [[lat,lon],…]
+      cx.strokeStyle=col; cx.lineWidth=1.2; cx.setLineDash([2,4]); cx.beginPath();
+      let px=null, py=null;
+      for(const q of r.path){
+        const p=geoProj(v,q[0],q[1],px??s.x);
+        if(px==null || Math.abs(p.x-px)>v.S/2) cx.moveTo(p.x,p.y); else cx.lineTo(p.x,p.y);
+        px=p.x; py=p.y;
+      }
+      cx.stroke(); cx.setLineDash([]);
     }
     const az=recNum(r.azimuth ?? r.bearing);
     if(az!=null){
@@ -1427,7 +1449,7 @@ function geoDrawOverlay(n,cx,v){
   const e=n.selKey && n.ents.get(n.selKey);
   if(e){
     const p=e.pts[e.pts.length-1];
-    const lines=[...recText(e.rec).split('\n').slice(0,14),
+    const lines=[...recText(e.rec,new Set(['path'])).split('\n').slice(0,14),
       p.lat.toFixed(5)+', '+p.lon.toFixed(5)+' · '+latLonToGrid(p.lat,p.lon,6),
       'seen '+Math.round((Date.now()-e.seen)/1000)+' s ago'+(e.pts.length>1?' · track '+e.pts.length:'')];
     box(lines,W-6,6,true);

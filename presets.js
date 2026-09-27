@@ -155,6 +155,7 @@ const PRESET_CATS={
   'FT8: Propagation Map':'Radio Protocols',
   'Fox Hunt: Locate Transmitter':'Signal Analysis',
   'HF: Who Is On Air (Schedule)':'Signal Analysis',
+  'Satellites: Track and Doppler':'Radio Protocols',
   'Chirp Modem: Noise and Reflection':'Radio Protocols',
 
   'Text → Bits → Text (Encodings)':'Signal Analysis',
@@ -365,6 +366,31 @@ addEdge(kw.id,'audio',dc.id,'L'); addEdge(kw.id,'audio',dc.id,'R');
 addEdge(kw.id,'freq',sk.id,'freq');
 addEdge(sk.id,'rec',map.id,'rec');
 addEdge(me.id,'rec',map.id,'rec2');
+markWiresDirty();
+});
+preset('Satellites: Track and Doppler', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'1. My Position: enter your location. 2. Satellites: Download TLE (once), Download frequencies (once) —\n'+
+  'both are kept in the browser. 3. Pick a satellite: type its name/NORAD or click it on the map.\n'+
+  'freq = downlink with Doppler correction → tuneFreq of the SDR channel, so the receiver follows the pass.\n'+
+  'Downlinks of satellites above the horizon are marked on the spectrum.'});
+nt.size.w=620; nt.size.h=130; applySize(nt);
+const me=addNode('geoMe',40,200,{});
+const st=addNode('satTrack',300,200,{group:'amateur',sat:'ISS'});
+st.size.w=380; st.size.h=620; applySize(st);
+const rx=addNode('rtlsdr',720,200,{auto:false,gainDb:35,demod:'NFM',bw:15000,freq:145900000});
+const sa=addNode('sa',720,560,{auto:true,split:.35});
+sa.size.w=560; sa.size.h=320; applySize(sa);
+const dc=addNode('dac',1000,200,{vol:.4});
+const map=addNode('geoMap',1320,40,{mz:2,mlat:40,mlon:30,ttl:10});
+map.size.w=620; map.size.h=520; applySize(map);
+addEdge(st.id,'freq',rx.id,'tuneFreq');
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(st.id,'bands',sa.id,'bands');
+addEdge(rx.id,'audio',dc.id,'L'); addEdge(rx.id,'audio',dc.id,'R');
+addEdge(st.id,'rec',map.id,'rec');
+addEdge(me.id,'rec',map.id,'rec2');
+addEdge(map.id,'sel',st.id,'select');
 markWiresDirty();
 });
 preset('Quick Sound Level Meter', function(){
