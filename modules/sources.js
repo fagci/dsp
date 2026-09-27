@@ -317,17 +317,27 @@ function ssInit(n,K){
   n.sK=K; n.sq=[]; n.sP=new Float64Array(K+1); n.sClk=null; n.sLastT=0; n.sDt=0;
   n.sGaps=0; n.sRate=0; n.sRT0=0; n.sRN=0;
 }
-function ssPush(n,t,vals){                          // t — секунды, в часах performance.now
-  if(t<=n.sLastT) return;                           // повтор/не по порядку
-  const d=n.sLastT?t-n.sLastT:0;
-  if(d>0 && d<1){
-    if(n.sDt && d>n.sDt*1.8) n.sGaps++;
-    n.sDt=n.sDt? n.sDt*.98+Math.min(d,n.sDt*2)*.02 : d; }
+// Метки событий бывают грубыми: Firefox округляет timeStamp (защита от фингерпринтинга,
+// вплоть до 16.7 мс), и при сотнях событий в секунду у многих одна и та же метка. Поэтому
+// частота считается по числу событий за ~1 с, а время отсчёта — по сетке с этим шагом,
+// медленно подтягиваемой к наблюдаемым меткам. Скачок больше нескольких шагов — пропуск.
+function ssPush(n,obs,vals){                        // obs — секунды, в часах performance.now
+  if(!n.sRT0){ n.sRT0=obs; n.sRN=0; }
+  else { n.sRN++; const w=obs-n.sRT0;
+    if(w>=1){ const r=n.sRN/w;
+      n.sRate=n.sRate? n.sRate*.7+r*.3 : r; n.sDt=1/n.sRate; n.sRT0=obs; n.sRN=0; } }
+  let t;
+  if(!n.sDt) t=Math.max(obs,n.sLastT+1e-4);        // первая секунда — как есть
+  else {
+    const pred=n.sLastT+n.sDt, err=obs-pred;
+    if(err>Math.max(.05,4*n.sDt)){ t=obs; n.sGaps++; }
+    else if(err<-Math.max(.1,8*n.sDt)) t=obs;        // сбой часов
+    else t=pred+err*.02;
+    if(t<=n.sLastT) t=n.sLastT+n.sDt*.5;
+  }
   n.sLastT=t;
-  if(!n.sRT0){ n.sRT0=t; n.sRN=0; }
-  else { n.sRN++; const w=t-n.sRT0; if(w>=2){ n.sRate=n.sRN/w; n.sRT0=t; n.sRN=0; } }
   n.sq.push(t,...vals);
-  const cap=(n.sK+1)*4096; if(n.sq.length>cap) n.sq.splice(0,n.sq.length-cap);
+  const cap=(n.sK+1)*16384; if(n.sq.length>cap) n.sq.splice(0,n.sq.length-cap);
 }
 // заполнить sig-выходы (массив буферов на K полей) и вернуть последний выданный отсчёт
 function ssProcess(n,outs){
