@@ -48,9 +48,13 @@ async function rbSearch(n){
     geoPut('radio:list',{list,src:n.src}).catch(()=>{});
   }catch(e){ n.msg='search failed: '+e.message; }
 }
-function rbFiltered(n){
+function rbFiltered(n){                           // зовётся каждый блок — кэш по списку и флагу
   const https=n.p.https && location.protocol==='https:';
-  return n.list.filter(s=>!https || s.url.startsWith('https:'));
+  if(n.visList!==n.list || n.visHttps!==https){
+    n.visList=n.list; n.visHttps=https;
+    n.vis=https ? n.list.filter(s=>s.url.startsWith('https:')) : n.list;
+  }
+  return n.vis;
 }
 function rbSelect(n,s){
   n.sel=s; n.selUrl=s.url;
