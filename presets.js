@@ -115,6 +115,8 @@ const PRESET_CATS={
   'Quick Sound Level Meter':'Quick Scenarios',
   'Quick Signal Chain Check':'Quick Scenarios',
   'USB SDR: Wideband Sweep':'Quick Scenarios',
+  'USB SDR: Signal Identifier':'Quick Scenarios',
+  'tinySA: Spectrum':'Quick Scenarios',
 
   'Piano Roll: Length and Velocity':'Sequencers & Arrangement',
   'Piano Roll: 4-Voice Chords':'Sequencers & Arrangement',
@@ -187,6 +189,7 @@ const PRESET_CATS={
   'Sound Level Meter with Log':'Signal Analysis',
   'Analyze Recording (Offline)':'Signal Analysis',
   'Interference Suppression':'Signal Analysis',
+  'Mains Hum Removal':'Signal Analysis',
   'Room Acoustics':'Signal Analysis',
 };
 const PRESETS={};
