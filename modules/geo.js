@@ -742,7 +742,7 @@ function unmercX(x){ return x*360-180; }
 function unmercY(y){ return Math.atan(Math.sinh(Math.PI*(1-2*y)))/D2R; }
 
 // Подложка Natural Earth: data/basemap.json (tools/basemap.mjs), после первой загрузки — из IndexedDB
-const GEO_BASE_TAG='ne10m-2';                        // сменить при пересборке data/basemap.json
+const GEO_BASE_TAG='ne10m-3';                        // сменить при пересборке data/basemap.json
 const GeoBase={state:'idle', data:null, err:'', p:null, places:null, placesState:'', placesP:null, gen:0};
 function geoBaseLoad(){
   if(GeoBase.p) return GeoBase.p;
@@ -782,7 +782,7 @@ function geoBasePrep(raw){
     src:raw.src,
     land:prepLayer(raw.land), lakes:prepLayer(raw.lakes), rivers:prepLayer(raw.rivers),
     adm0:prepLayer(raw.adm0), adm1:prepLayer(raw.adm1),
-    countryLabels:pts(raw.countryLabels,a=>({x:mercX(a[0]),y:mercY(a[1]),name:a[2],mz:a[3],a3:a[4],lat:a[1],lon:a[0]})),
+    countryLabels:pts(raw.countryLabels,a=>({x:mercX(a[0]),y:mercY(a[1]),name:a[2],mz:a[3],a3:a[4],a2:a[5],lat:a[1],lon:a[0]})),
     adm1Labels:pts(raw.adm1Labels,a=>({x:mercX(a[0]),y:mercY(a[1]),name:a[2],mz:a[3]})),
     places:pts(raw.places,a=>({x:mercX(a[0]),y:mercY(a[1]),name:a[2],mz:a[3],pop:a[4],kind:a[5]}))
       .sort((a,b)=>b.kind-a.kind || b.pop-a.pop),
@@ -1407,7 +1407,7 @@ function geoDrawObjects(n,cx,v){
       cx.strokeStyle=themeColor('--scr-hi')||'#fff'; cx.lineWidth=1.5;
       cx.beginPath(); cx.arc(s.x,s.y,size+5,0,2*Math.PI); cx.stroke();
     }
-    if(n.p.labels){
+    if(n.p.labels && (n.ents.size<=300 || v.z>=7)){  // тысячи подписей на обзоре — каша
       const lab=r.label ?? e.id;
       if(lab!=null && lab!==''){
         cx.font='11px monospace'; cx.textBaseline='middle'; cx.textAlign='left';

@@ -156,6 +156,7 @@ const PRESET_CATS={
   'Fox Hunt: Locate Transmitter':'Signal Analysis',
   'HF: Who Is On Air (Schedule)':'Signal Analysis',
   'Satellites: Track and Doppler':'Radio Protocols',
+  'Internet Radio on the Map':'Signal Analysis',
   'Chirp Modem: Noise and Reflection':'Radio Protocols',
 
   'Text → Bits → Text (Encodings)':'Signal Analysis',
@@ -391,6 +392,29 @@ addEdge(rx.id,'audio',dc.id,'L'); addEdge(rx.id,'audio',dc.id,'R');
 addEdge(st.id,'rec',map.id,'rec');
 addEdge(me.id,'rec',map.id,'rec2');
 addEdge(map.id,'sel',st.id,'select');
+markWiresDirty();
+});
+preset('Internet Radio on the Map', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Internet Radio: set a country code / tag / name and press Search (radio-browser.info).\n'+
+  'Stations go to the map (violet — no coordinates, placed around the country centre).\n'+
+  'Click a station on the map — it starts playing in Audio Stream and goes through the spectrum.\n'+
+  'Only streams that send CORS headers can be captured into the graph.'});
+nt.size.w=560; nt.size.h=130; applySize(nt);
+const rd=addNode('radioDir',40,200,{cc:'',limit:2000});
+rd.size.h=150; applySize(rd);
+const st=addNode('stream',40,640,{url:''});
+const dc=addNode('dac',320,640,{vol:.5});
+const ff=addNode('fft',400,200,{size:'4096'});
+const sa=addNode('sa',400,340,{fmin:0,fmax:16000,split:.35});
+sa.size.w=460; sa.size.h=280; applySize(sa);
+const map=addNode('geoMap',900,40,{mz:2,mlat:35,mlon:15,labels:true});
+map.size.w=640; map.size.h=560; applySize(map);
+addEdge(rd.id,'rec',map.id,'rec');
+addEdge(map.id,'sel',rd.id,'select');
+addEdge(rd.id,'url',st.id,'url');
+addEdge(st.id,'audio',dc.id,'L'); addEdge(st.id,'audio',dc.id,'R');
+addEdge(st.id,'audio',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
 markWiresDirty();
 });
 preset('Quick Sound Level Meter', function(){
