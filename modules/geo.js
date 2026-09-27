@@ -1015,6 +1015,10 @@ function geoMapPan(n,dx,dy){
 
 function geoMapWire(n,cv){
   if(n._wired===cv) return; n._wired=cv;
+  // мобилка: без touch-action:none браузер забирает жест под прокрутку (дашборд) и шлёт
+  // pointercancel — карта сдвигается на чуть-чуть; ownpinch — щипок не отдавать зуму графа
+  cv.style.touchAction='none';
+  cv.classList.add('ownpinch');
   const touches=new Map(); let drag=null, pinch=null, tap=null;
   cv.addEventListener('wheel',ev=>{
     ev.preventDefault(); ev.stopPropagation();
