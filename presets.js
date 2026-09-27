@@ -751,9 +751,9 @@ const nt=addNode('note',40,40,{text:'Sensor samples are placed by their timestam
   'Check the real sensor rate in the sensor readout: Nyquist is half of it.\\n'+
   'Peaks here are mechanical vibration or aliases of 50/100 Hz hum (e.g. 50 Hz at 60 Hz rate → 10 Hz).'});
 nt.size.w=520; nt.size.h=130; applySize(nt);
-const ac=addNode('gsensor',40,220,{type:'Accelerometer',freq:'200'});
-const lf=addNode('lfft',320,220,{fs:'64',size:'1024',avg:'64'});
-const sa=addNode('sa',600,220,{fmin:1,fmax:32,floor:-110,top:-30,split:.45,tol:1});
+const ac=addNode('accel',40,220);                 // devicemotion: в Firefox — сотни Гц, в Chrome — 60
+const lf=addNode('lfft',320,220,{fs:'128',size:'2048',avg:'64'});
+const sa=addNode('sa',600,220,{fmin:1,fmax:50,floor:-110,top:-30,split:.45,tol:1});
 sa.size.w=640; sa.size.h=360; applySize(sa);
 addEdge(ac.id,'smag',lf.id,'in');
 addEdge(lf.id,'spec',sa.id,'spec');
