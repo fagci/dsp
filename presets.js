@@ -152,6 +152,9 @@ const PRESET_CATS={
   'HFDL: Receive and Aircraft Map':'Radio Protocols',
   'HFDL: Detection and Frame':'Radio Protocols',
   'Map: My Position and Points from CSV':'Signal Analysis',
+  'FT8: Propagation Map':'Radio Protocols',
+  'Fox Hunt: Locate Transmitter':'Signal Analysis',
+  'HF: Who Is On Air (Schedule)':'Signal Analysis',
   'Chirp Modem: Noise and Reflection':'Radio Protocols',
 
   'Text → Bits → Text (Encodings)':'Signal Analysis',
@@ -298,6 +301,70 @@ map.size.w=620; map.size.h=560; applySize(map);
 addEdge(me.id,'rec',map.id,'rec');
 addEdge(csv.id,'rec',lg.id,'rec');
 addEdge(lg.id,'rec',map.id,'rec2');
+markWiresDirty();
+});
+preset('FT8: Propagation Map', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Receiver audio (USB, 7074/14074 kHz …) into the mic input.\n'+
+  'Enter your position (lat/lon or locator) — lines go from each heard station to you,\n'+
+  'records carry snr, distance and azimuth. Rec Log saves them to CSV.'});
+nt.size.w=460; nt.size.h=130; applySize(nt);
+const m =addNode('mic',40,200,{gainA:2});
+const me=addNode('geoMe',40,380,{});
+const f8=addNode('ft8Rx',300,200,{fmin:200,fmax:2800,top:15,thr:1.6});
+f8.size.w=420; f8.size.h=300; applySize(f8);
+const lg=addNode('recLog',300,540,{});
+lg.size.w=420; applySize(lg);
+const map=addNode('geoMap',760,40,{mz:2.5,mlat:45,mlon:20,grid:'maidenhead',ttl:60});
+map.size.w=640; map.size.h=560; applySize(map);
+addEdge(m.id,'a',f8.id,'in');
+addEdge(f8.id,'rec',lg.id,'rec');
+addEdge(lg.id,'rec',map.id,'rec');
+addEdge(me.id,'rec',map.id,'rec2');
+markWiresDirty();
+});
+preset('Fox Hunt: Locate Transmitter', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Walk around the transmitter and press ● Mark (or set auto every N s).\n'+
+  'Each mark = your position + RSSI. With 3+ marks Source Locator estimates the source;\n'+
+  'add azimuth (from a directional antenna) for bearings. Manual gain on the SDR, no AGC!\n'+
+  'Path loss n: 2 open field, 2.7–3.5 town, 4+ indoors.'});
+nt.size.w=500; nt.size.h=150; applySize(nt);
+const me=addNode('geoMe',40,220,{src:'gps'});
+const rx=addNode('rtlsdr',40,500,{auto:false,gainDb:20,demod:'NFM'});
+const mk=addNode('geoMark',320,220,{icon:'dot'});
+const loc=addNode('geoLocate',320,480,{field:'rssi'});
+loc.size.w=340; loc.size.h=420; applySize(loc);
+const map=addNode('geoMap',700,40,{mz:15,follow:true,store:'foxhunt'});
+map.size.w=640; map.size.h=600; applySize(map);
+addEdge(rx.id,'rssi',mk.id,'rssi');
+addEdge(rx.id,'snr',mk.id,'snr');
+addEdge(me.id,'lat',mk.id,'lat');
+addEdge(me.id,'lon',mk.id,'lon');
+addEdge(mk.id,'rec',loc.id,'rec');
+addEdge(mk.id,'rec',map.id,'rec');
+addEdge(loc.id,'rec',map.id,'rec2');
+addEdge(me.id,'rec',map.id,'rec3');
+markWiresDirty();
+});
+preset('HF: Who Is On Air (Schedule)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Load a schedule into Station Schedule: EiBi CSV (eibispace.de → sked-XNN.csv)\n'+
+  'or your own CSV (khz, time, days, station, lang, target, itu, lat, lon).\n'+
+  'It shows what is on air now on the tuned frequency; transmitters go to the map\n'+
+  '(country centre when the file has no coordinates). Enter your position for distances.'});
+nt.size.w=500; nt.size.h=150; applySize(nt);
+const kw=addNode('kiwisdr',40,220,{freq:9420000,mod:'am'});
+const dc=addNode('dac',40,520,{vol:.4});
+const me=addNode('geoMe',300,520,{});
+const sk=addNode('sked',300,220,{tol:5});
+sk.size.w=380; sk.size.h=280; applySize(sk);
+const map=addNode('geoMap',720,40,{mz:2,mlat:30,mlon:20});
+map.size.w=620; map.size.h=520; applySize(map);
+addEdge(kw.id,'audio',dc.id,'L'); addEdge(kw.id,'audio',dc.id,'R');
+addEdge(kw.id,'freq',sk.id,'freq');
+addEdge(sk.id,'rec',map.id,'rec');
+addEdge(me.id,'rec',map.id,'rec2');
 markWiresDirty();
 });
 preset('Quick Sound Level Meter', function(){

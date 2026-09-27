@@ -34,6 +34,7 @@ const SHELL=[
   './modules/hfdl.js?v=62',
   './modules/propagation.js?v=62',
   './modules/geo.js?v=62',
+  './modules/sked.js?v=62',
   './presets.js?v=62',
   './core-graph.js?v=62',
 ];

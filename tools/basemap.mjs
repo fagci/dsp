@@ -92,9 +92,9 @@ const out={
   rivers:layer(rivers,0.01,{mz:p=>p.min_zoom}),
   adm0:layer(adm0,0.005),
   adm1:layer(adm1,0.01,{mz:p=>p.MIN_ZOOM}),
-  // подписи: [lon,lat,name,minZoom]
+  // подписи: [lon,lat,name,minZoom], у стран ещё ISO3
   countryLabels:countries.map(f=>{ const p=f.properties;
-    return [r3(p.LABEL_X),r3(p.LABEL_Y),p.NAME_EN||p.NAME,Math.round(p.MIN_LABEL||2)]; }),
+    return [r3(p.LABEL_X),r3(p.LABEL_Y),p.NAME_EN||p.NAME,Math.round(p.MIN_LABEL||2),p.ADM0_A3]; }),
   adm1Labels:adm1poly.filter(f=>f.properties.latitude!=null).map(f=>{ const p=f.properties;
     return [r3(p.longitude),r3(p.latitude),p.name_en||p.name,Math.round(p.min_label||6)]; }),
   // [lon,lat,name,minZoom,pop,kind] kind: 2 — столица страны, 1 — центр региона, 0 — прочие

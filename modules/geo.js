@@ -364,8 +364,8 @@ def({ id:'geoMe', title:'My Position', cat:'Sources',
                 grid:latLonToGrid(f.lat,f.lon,6), rec}
              : {rec};
   },
-  draw(n){ const f=n.p.src==='gps' ? n.fix : null;
-    const lat=f ? f.lat : recNum(n.p.lat), lon=f ? f.lon : recNum(n.p.lon);
+  draw(n){ const gps=n.p.src==='gps', f=gps ? n.fix : null;
+    const lat=gps ? f?.lat ?? null : recNum(n.p.lat), lon=gps ? f?.lon ?? null : recNum(n.p.lon);
     n.el.querySelector('.readout').textContent = n.msg+(lat!=null && lon!=null ?
       '\n'+lat.toFixed(5)+', '+lon.toFixed(5)+(f?' ±'+Math.round(f.acc)+' m':'')+' · '+latLonToGrid(lat,lon,6) : ''); }});
 function geoMeLocate(n){
@@ -742,7 +742,7 @@ function unmercX(x){ return x*360-180; }
 function unmercY(y){ return Math.atan(Math.sinh(Math.PI*(1-2*y)))/D2R; }
 
 // Подложка Natural Earth: data/basemap.json (tools/basemap.mjs), после первой загрузки — из IndexedDB
-const GEO_BASE_TAG='ne10m-1';                        // сменить при пересборке data/basemap.json
+const GEO_BASE_TAG='ne10m-2';                        // сменить при пересборке data/basemap.json
 const GeoBase={state:'idle', data:null, err:'', p:null, places:null, placesState:'', placesP:null, gen:0};
 function geoBaseLoad(){
   if(GeoBase.p) return GeoBase.p;
@@ -782,7 +782,7 @@ function geoBasePrep(raw){
     src:raw.src,
     land:prepLayer(raw.land), lakes:prepLayer(raw.lakes), rivers:prepLayer(raw.rivers),
     adm0:prepLayer(raw.adm0), adm1:prepLayer(raw.adm1),
-    countryLabels:pts(raw.countryLabels,a=>({x:mercX(a[0]),y:mercY(a[1]),name:a[2],mz:a[3]})),
+    countryLabels:pts(raw.countryLabels,a=>({x:mercX(a[0]),y:mercY(a[1]),name:a[2],mz:a[3],a3:a[4],lat:a[1],lon:a[0]})),
     adm1Labels:pts(raw.adm1Labels,a=>({x:mercX(a[0]),y:mercY(a[1]),name:a[2],mz:a[3]})),
     places:pts(raw.places,a=>({x:mercX(a[0]),y:mercY(a[1]),name:a[2],mz:a[3],pop:a[4],kind:a[5]}))
       .sort((a,b)=>b.kind-a.kind || b.pop-a.pop),
@@ -909,7 +909,9 @@ def({ id:'geoMap', title:'Map', cat:'Output',
           {n:'places',t:'button',label:'Download places (GeoNames, 17 MB)',fn:()=>geoPlacesDownload(),adv:true},
           {n:'placesFile',t:'file',accept:'.txt,.tsv,.csv,.json',fn:(n,f)=>geoPlacesImport(f),adv:true}],
   init:n=>{
-    if(n.p.mlat==null){ n.p.mlat=50; n.p.mlon=30; n.p.mz=3; }
+    if(n.p.mlat==null) n.p.mlat=50;
+    if(n.p.mlon==null) n.p.mlon=30;
+    if(n.p.mz==null) n.p.mz=3;
     n.ents=new Map(); n.seq=0; n.selKey=null; n.pickRec=null; n.selOut=null;
     n.pickLat=null; n.pickLon=null; n.info=null; n.lastPrune=0; n.loadedStore=null;
     geoBaseLoad(); geoPlacesLoad();
