@@ -308,24 +308,91 @@ def({ id:'file', title:'Audio File', cat:'Sources',
       (n.name||'file')+' · '+t.toFixed(1)+' / '+tot.toFixed(1)+' s'+(n.play?'':' · paused'); }});
 
 
+// Поток отсчётов датчика с метками времени. Датчики приходят событиями на главном потоке
+// с неровным шагом и пропусками, а num-выход просто держит последнее значение на блок —
+// для спектра это мусор. Здесь отсчёты копятся с метками и выдаются по часам блоков движка
+// (как у камеры): num — последний отсчёт, sig — линейная интерполяция между отсчётами на
+// частоте движка. Дальше его можно проредить узлом 'lfft'.
+function ssInit(n,K){
+  n.sK=K; n.sq=[]; n.sP=new Float64Array(K+1); n.sClk=null; n.sLastT=0; n.sDt=0;
+  n.sGaps=0; n.sRate=0; n.sRT0=0; n.sRN=0;
+}
+function ssPush(n,t,vals){                          // t — секунды, в часах performance.now
+  if(t<=n.sLastT) return;                           // повтор/не по порядку
+  const d=n.sLastT?t-n.sLastT:0;
+  if(d>0 && d<1){
+    if(n.sDt && d>n.sDt*1.8) n.sGaps++;
+    n.sDt=n.sDt? n.sDt*.98+Math.min(d,n.sDt*2)*.02 : d; }
+  n.sLastT=t;
+  if(!n.sRT0){ n.sRT0=t; n.sRN=0; }
+  else { n.sRN++; const w=t-n.sRT0; if(w>=2){ n.sRate=n.sRN/w; n.sRT0=t; n.sRN=0; } }
+  n.sq.push(t,...vals);
+  const cap=(n.sK+1)*4096; if(n.sq.length>cap) n.sq.splice(0,n.sq.length-cap);
+}
+// заполнить sig-выходы (массив буферов на K полей) и вернуть последний выданный отсчёт
+function ssProcess(n,outs){
+  const K=n.sK, S=K+1, q=n.sq, P=n.sP, sr=Eng.sr;
+  if(!n.sLastT){ for(const o of outs) o.fill(0); return P; }
+  const lag=Math.max(.06,3*n.sDt);                  // запас на неровный приход событий
+  const err=n.sLastT-lag-n.sClk;
+  if(n.sClk==null || Math.abs(err)>.5) n.sClk=n.sLastT-lag;
+  else n.sClk+=err*.0005;                           // медленно: подстройка часов = частотная ошибка спектра
+  const c0=n.sClk; let j=0;
+  for(let i=0;i<BLOCK;i++){
+    const ti=c0+i/sr;
+    while(j<q.length && q[j]<=ti){ for(let k=0;k<S;k++) P[k]=q[j+k]; j+=S; }
+    if(j<q.length && P[0]){ const a=(ti-P[0])/(q[j]-P[0]);
+      for(let k=0;k<K;k++) outs[k][i]=P[k+1]+(q[j+1+k]-P[k+1])*a; }
+    else for(let k=0;k<K;k++) outs[k][i]=P[k+1];
+  }
+  if(j) q.splice(0,j);
+  n.sClk+=BLOCK/sr;
+  return P;
+}
+function ssStatus(n){
+  if(!n.sLastT) return '';
+  return `${n.sRate.toFixed(1)} Hz`+(n.sGaps?` · gaps ${n.sGaps}`:'');
+}
+const SS_XYZ=[{n:'x',t:'num'},{n:'y',t:'num'},{n:'z',t:'num'},
+              {n:'sx',t:'sig'},{n:'sy',t:'sig'},{n:'sz',t:'sig'},{n:'smag',t:'sig'}];
+function ssXYZOut(n){
+  const ox=buf(n,'sx'), oy=buf(n,'sy'), oz=buf(n,'sz'), om=buf(n,'smag');
+  const P=ssProcess(n,[ox,oy,oz]);
+  for(let i=0;i<BLOCK;i++) om[i]=Math.hypot(ox[i],oy[i],oz[i]);
+  return {x:P[1],y:P[2],z:P[3],sx:ox,sy:oy,sz:oz,smag:om};
+}
+
+function accelStop(n){ if(n.onMotion){ window.removeEventListener('devicemotion',n.onMotion); n.onMotion=null; } }
 def({ id:'accel', title:'Accelerometer', cat:'Sources',
-  outs:[{n:'x',t:'num'},{n:'y',t:'num'},{n:'z',t:'num'}],
+  outs:SS_XYZ, readout:true,
   params:[{n:'on',t:'button',label:'Allow sensor',fn:async n=>{
-    if(window.DeviceMotionEvent?.requestPermission) await DeviceMotionEvent.requestPermission();
-    window.addEventListener('devicemotion',e=>{ const a=e.accelerationIncludingGravity||{};
-      n.v=[a.x||0,a.y||0,a.z||0]; }); }}],
-  init:n=>{n.v=[0,0,0];},
-  process(n){ return {x:n.v[0],y:n.v[1],z:n.v[2]}; }});
+    try{ if(window.DeviceMotionEvent?.requestPermission) await DeviceMotionEvent.requestPermission(); }
+    catch(e){ n.status='error: '+e.message; return; }
+    accelStop(n); ssInit(n,3); n.status='waiting for events…';
+    n.onMotion=e=>{
+      const a=(n.p.grav?e.accelerationIncludingGravity:e.acceleration)||{};
+      if(a.x==null) return;
+      n.status=''; n.iv=e.interval;
+      ssPush(n,e.timeStamp/1000,[a.x,a.y,a.z]); };
+    window.addEventListener('devicemotion',n.onMotion); }},
+    {n:'grav',t:'check',d:true,label:'include gravity (raw)'}],
+  init:n=>{ ssInit(n,3); n.status='not started'; },
+  dispose:n=>accelStop(n),
+  process:n=>ssXYZOut(n),
+  draw(n){ const r=n.el.querySelector('.readout');
+    if(r) r.textContent=n.status||ssStatus(n)+(n.iv?` · interval ${Math.round(n.iv)} ms`:''); }});
 
 
 // Generic Sensor API — отдельный от 'accel' набор классов (Accelerometer/Gyroscope/...),
 // не пересекается с DeviceMotionEvent. Требует HTTPS и в основном работает только в
 // Chrome/Edge на Android — Firefox и Safari эти классы не реализуют вовсе.
+// Частоту браузер ограничивает сам (Chrome — обычно до 60 Гц); реальная — в строке состояния.
 const GSENSOR_DEFS = {
-  'Accelerometer':      {opts:{frequency:60}, fields:['x','y','z']},
-  'Gyroscope':           {opts:{frequency:60}, fields:['x','y','z']},
-  'Magnetometer':        {opts:{frequency:60}, fields:['x','y','z']},
-  'AmbientLightSensor':  {opts:{}, fields:['illuminance']},
+  'Accelerometer':               {fields:['x','y','z']},
+  'LinearAccelerationSensor':    {fields:['x','y','z']},
+  'Gyroscope':                   {fields:['x','y','z']},
+  'Magnetometer':                {fields:['x','y','z']},
+  'AmbientLightSensor':          {fields:['illuminance']},
 };
 function gsensorFields(n){ return (GSENSOR_DEFS[n.p.type]||GSENSOR_DEFS.Accelerometer).fields; }
 function gsensorStop(n){
@@ -337,9 +404,12 @@ function gsensorStart(n){
   const Cls = window[n.p.type];
   if(!Cls){ n.status='API unavailable (needs Chrome/Edge on Android, or HTTPS)'; return; }
   const def = GSENSOR_DEFS[n.p.type]||GSENSOR_DEFS.Accelerometer;
+  ssInit(n,def.fields.length);
   try{
-    const s = new Cls(def.opts);
-    s.addEventListener('reading', ()=>{ n.v = def.fields.map(f=>s[f]??0); n.status='reading'; });
+    const s = new Cls({frequency:+n.p.freq});
+    s.addEventListener('reading', ()=>{
+      n.v = def.fields.map(f=>s[f]??0); n.status='';
+      ssPush(n,(s.timestamp??performance.now())/1000,n.v); });
     s.addEventListener('error', e=>{ n.status='error: '+(e.error?.message||e.error?.name||'?'); });
     s.start();
     n.sensor=s; n.status='starting…';
@@ -348,22 +418,31 @@ function gsensorStart(n){
   }
 }
 def({ id:'gsensor', title:'Sensor (Generic Sensor API)', cat:'Sources',
-  outs: n => gsensorFields(n).map(f=>({n:f,t:'num'})),
+  outs: n => { const f=gsensorFields(n);
+    return [...f.map(x=>({n:x,t:'num'})), ...f.map(x=>({n:'s'+x,t:'sig'})),
+            ...(f.length===3?[{n:'smag',t:'sig'}]:[])]; },
   readout:true,
   params:[
     {n:'type',t:'select',opts:Object.keys(GSENSOR_DEFS),d:'Accelerometer',
-      fn:n=>{ gsensorStop(n); n.v=[0,0,0]; n.initialized=false; rebuildNode(n); markTopoDirty(); }},
+      fn:n=>{ gsensorStop(n); n.v=[0,0,0]; ssInit(n,gsensorFields(n).length); n.initialized=false; rebuildNode(n); markTopoDirty(); }},
+    {n:'freq',t:'select',opts:['10','30','60','100','200','500'],d:'60',label:'requested rate, Hz',
+      fn:n=>{ if(n.sensor) gsensorStart(n); }},
     {n:'go',t:'button',label:'Start',fn:n=>gsensorStart(n)},
     {n:'stop',t:'button',label:'Stop',fn:n=>gsensorStop(n)},
   ],
-  init:n=>{ n.sensor=null; n.status='not started'; n.v=[0,0,0]; },
+  init:n=>{ n.sensor=null; n.status='not started'; n.v=[0,0,0]; ssInit(n,gsensorFields(n).length); },
   dispose:n=>gsensorStop(n),
   process(n){
     const fields=gsensorFields(n), out={};
-    fields.forEach((f,i)=>out[f]=n.v[i]??0);
+    if(n.sK!==fields.length) ssInit(n,fields.length);
+    const sigs=fields.map(f=>buf(n,'s'+f)), P=ssProcess(n,sigs);
+    fields.forEach((f,i)=>{ out[f]=P[i+1]; out['s'+f]=sigs[i]; });
+    if(fields.length===3){ const om=buf(n,'smag');
+      for(let i=0;i<BLOCK;i++) om[i]=Math.hypot(sigs[0][i],sigs[1][i],sigs[2][i]);
+      out.smag=om; }
     return out;
   },
-  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.status; }});
+  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.status||ssStatus(n); }});
 
 
 // Камера. Яркость зоны меряется на КАЖДОМ кадре камеры, а не в draw() (rAF режется до 30 к/с

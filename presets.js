@@ -170,6 +170,7 @@ const PRESET_CATS={
   'Text → Signal → Text':'Signal Analysis',
   'Wavelet vs FFT':'Signal Analysis',
   'Vibration (Accelerometer)':'Signal Analysis',
+  'Low-Frequency Sensor Spectrum':'Signal Analysis',
   'Event Capture':'Signal Analysis',
   'Band Overview':'Signal Analysis',
   'Preamble Search':'Signal Analysis',
@@ -741,6 +742,21 @@ addEdge(wv.id,'spec',sa.id,'spec');
 addEdge(nx.id,'out',sc.id,'in1'); addEdge(ny.id,'out',sc.id,'in2');
 addEdge(nz.id,'out',sc.id,'in3'); addEdge(s2.id,'out',sc.id,'in4');
 addEdge(s2.id,'out',ac2.id,'in');
+markWiresDirty();
+});
+preset('Low-Frequency Sensor Spectrum', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Sensor samples are placed by their timestamps and resampled evenly\\n'+
+  '(sx/sy/sz/smag outputs), then decimated and averaged (Welch) in «Low-Frequency FFT».\\n'+
+  'Check the real sensor rate in the sensor readout: Nyquist is half of it.\\n'+
+  'Peaks here are mechanical vibration or aliases of 50/100 Hz hum (e.g. 50 Hz at 60 Hz rate → 10 Hz).'});
+nt.size.w=520; nt.size.h=130; applySize(nt);
+const ac=addNode('gsensor',40,220,{type:'Accelerometer',freq:'200'});
+const lf=addNode('lfft',320,220,{fs:'64',size:'1024',avg:'64'});
+const sa=addNode('sa',600,220,{fmin:1,fmax:32,floor:-110,top:-30,split:.45,tol:1});
+sa.size.w=640; sa.size.h=360; applySize(sa);
+addEdge(ac.id,'smag',lf.id,'in');
+addEdge(lf.id,'spec',sa.id,'spec');
 markWiresDirty();
 });
 preset('Event Capture', function(){
