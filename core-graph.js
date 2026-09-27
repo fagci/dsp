@@ -156,8 +156,8 @@ const nativeH=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'heigh
 let logW=cv.width, logH=cv.height;
 // плотность буфера = devicePixelRatio × масштаб холста (panzoom, по фактической ширине на экране),
 // иначе на зуме браузер растягивает битмап и всё мылится. Потолок — по числу пикселей.
-const restretch=force=>{ const dpr=window.devicePixelRatio||1;
-const rw=cv.isConnected?cv.getBoundingClientRect().width:0;
+const restretch=(force,rw0)=>{ const dpr=window.devicePixelRatio||1;
+const rw=rw0!=null ? rw0 : cv.isConnected?cv.getBoundingClientRect().width:0;
 let s=Math.max(.5, dpr*(rw>0&&logW>0 ? rw/logW : 1));
 // на мобилках общий лимит памяти канв мал (iOS молча очищает канвы сверх него) — потолок ниже
 const cap=HiDPI_CAP;
@@ -793,6 +793,15 @@ let panzooming=false;
 const panzoom=Panzoom(content,{canvas:true,maxScale:2.5,minScale:.25,step:.1,excludeClass:'panzoom-exclude'});
 content.addEventListener('panzoomstart',()=>{ panzooming=true; cv.classList.add('grab'); });
 content.addEventListener('panzoomend',  ()=>{ panzooming=false; cv.classList.remove('grab'); });
+// Зум колесом/пинчем: panzoomstart/end не приходят. Пока идёт зум — не рисуем узлы и держим
+// слои с will-change: браузер масштабирует готовый растр, а не перерисовывает всё на каждом шаге.
+// Через 200 мс после последнего шага слои снимаются и один раз перерастеризуются в чёткость.
+let zooming=false, zoomEndT=0;
+function zoomTouch(){
+if(!zooming){ zooming=true; for(const e of [content,wires,wiresFront]) e.style.willChange='transform'; }
+clearTimeout(zoomEndT);
+zoomEndT=setTimeout(()=>{ zooming=false; for(const e of [content,wires,wiresFront]) e.style.willChange=''; },200);
+}
 let rescaleT=0, rescaleK=null;
 content.addEventListener('panzoomchange',ev=>{
 view.x=ev.detail.x; view.y=ev.detail.y; view.k=ev.detail.scale;
@@ -800,13 +809,17 @@ if(view.k!==rescaleK){ rescaleK=view.k; clearTimeout(rescaleT); rescaleT=setTime
 wires.style.transform=content.style.transform; wiresFront.style.transform=content.style.transform;
 syncGridBg(); });
 function rescaleCanvases(){                          // буферы канв под новый масштаб холста
-for(const [c,f] of HiDPICanvases){ if(c.isConnected) f(); else HiDPICanvases.delete(c); }   // отсоединённые — удалённые/пересобранные узлы
+if(zooming){ clearTimeout(rescaleT); rescaleT=setTimeout(rescaleCanvases,250); return; }
+// сначала все чтения размеров, потом все записи — иначе reflow на каждой канве
+const jobs=[];
+for(const [c,f] of HiDPICanvases){ if(c.isConnected) jobs.push([f,c.getBoundingClientRect().width]); else HiDPICanvases.delete(c); }   // отсоединённые — удалённые/пересобранные узлы
+for(const [f,w] of jobs) f(false,w);
 }
 function syncGridBg(){                                // точки фона двигаются и масштабируются вместе с холстом
 cv.style.backgroundSize=(24*view.k)+'px '+(24*view.k)+'px';
 cv.style.backgroundPosition=(view.x*view.k)+'px '+(view.y*view.k)+'px';
 }
-cv.addEventListener('wheel',panzoom.zoomWithWheel,{passive:false});
+cv.addEventListener('wheel',e=>{ zoomTouch(); panzoom.zoomWithWheel(e); },{passive:false});
 /* ---- два пальца — пан/зум даже поверх узла; один палец — обычное поведение (drag узла / пан по пустому месту) ---- */
 function stopAllDrags(){                              // второй палец не должен параллельно тащить узел
 (interact.interactions?.list||[]).forEach(i=>{ try{ i.stop(); }catch(e){} });
@@ -833,7 +846,7 @@ if(touches.size===2 &&pinch){
 const {mx,my,d}=midDist([...touches.values()]);
 view.k=Math.min(2.5,Math.max(.25,view.k*(d/pinch.d0))); pinch.d0=d;
 view.x=mx/view.k-pinch.cx; view.y=my/view.k-pinch.cy;
-applyView();
+zoomTouch(); applyView();
 e.preventDefault(); e.stopPropagation(); }
 },{capture:true,passive:false});
 function endTouch(e){
@@ -1517,7 +1530,7 @@ const rtlBusy=Graph.nodes.some(n=>n.type==='rtlsdr' && n.connected);
 // и звук rtlsdr затыкается (audio ring starve), хотя сам USB успевал бы. 10 к/с даёт вдвое больше
 // пробелов между кадрами отрисовки — тот же компромисс, что и раньше, просто сильнее в пользу звука.
 const minDt = TOUCH?33 : (rtlBusy?100:16);         // на тач-экранах хватает 30 к/с
-if(ts-lastDraw >=minDt  && !activeInteractions  && !panzooming){
+if(ts-lastDraw >=minDt  && !activeInteractions  && !panzooming  && !zooming){
 lastDraw=ts;
 const r=cv.getBoundingClientRect();
 // сначала все чтения layout-свойств (visible() читает offsetWidth/offsetHeight) одним
