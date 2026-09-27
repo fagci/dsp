@@ -328,7 +328,12 @@ function ssPush(n,obs,vals){                        // obs — секунды, �
     if(w>=1){ const r=n.sRN/w;
       n.sRate=n.sRate? n.sRate*.7+r*.3 : r; n.sDt=1/n.sRate; n.sRT0=obs; n.sRN=0; } }
   let t;
-  if(!n.sDt) t=Math.max(obs,n.sLastT+1e-4);        // первая секунда — как есть
+  if(n.sExact){                                     // точные метки датчика — как есть
+    if(obs<=n.sLastT) return;
+    if(n.sDt && obs-n.sLastT>1.8*n.sDt) n.sGaps++;
+    t=obs;
+  }
+  else if(!n.sDt) t=Math.max(obs,n.sLastT+1e-4);   // первая секунда — как есть
   else {
     const pred=n.sLastT+n.sDt, err=obs-pred;
     if(err>Math.max(.05,4*n.sDt)){ t=obs; n.sGaps++; }
@@ -344,7 +349,7 @@ function ssPush(n,obs,vals){                        // obs — секунды, �
 function ssProcess(n,outs){
   const K=n.sK, S=K+1, q=n.sq, P=n.sP, sr=Eng.sr;
   if(!n.sLastT){ for(const o of outs) o.fill(0); return P; }
-  const lag=Math.max(.06,3*n.sDt);                  // запас на неровный приход событий
+  const lag=Math.max(n.sLag||.06,3*n.sDt);          // запас на неровный приход событий
   const err=n.sLastT-lag-n.sClk;
   if(n.sClk==null || Math.abs(err)>.5) n.sClk=n.sLastT-lag;
   else n.sClk+=err*.0005;                           // медленно: подстройка часов = частотная ошибка спектра
@@ -495,6 +500,52 @@ def({ id:'gsensor', title:'Sensor (Generic Sensor API)', cat:'Sources',
     return out;
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.status||ssStatus(n)+(n.via?' · '+n.via:''); }});
+
+
+// Датчики телефона по WebSocket — протокол приложения SensorServer (Android, F-Droid):
+// ws://<ip>:<port>/sensor/connect?type=android.sensor.accelerometer, сообщения
+// {"values":[x,y,z],"timestamp":<нс, часы датчика>,"accuracy":n}. Приложение само читает
+// SensorManager с заданным в нём периодом (сотни Гц), метки — от датчика, поэтому они
+// берутся как есть. Сеть и Android отдают пачками — запас выдачи больше, чем у devicemotion.
+const WSS_TYPES=['accelerometer','linear_acceleration','gyroscope','magnetic_field','gravity',
+  'accelerometer_uncalibrated','gyroscope_uncalibrated','magnetic_field_uncalibrated'];
+function wssStop(n){
+  const ws=n.ws; n.ws=null;
+  if(ws){ ws.onclose=ws.onerror=ws.onmessage=null; try{ ws.close(); }catch(e){} }
+  n.status='disconnected';
+}
+function wssStart(n){
+  wssStop(n);
+  const base=String(n.p.url||'').trim().replace(/\/+$/,'');
+  const url=/\/sensors?\/connect/.test(base)? base
+    : base+'/sensor/connect?type=android.sensor.'+n.p.type;
+  ssInit(n,3); n.sExact=true; n.sLag=.25; n.msgs=0;
+  let ws;
+  try{ ws=new WebSocket(url); }catch(e){ n.status='error: '+e.message; return; }
+  n.ws=ws; n.status='connecting…';
+  ws.onopen=()=>{ n.status='waiting for data…'; };
+  ws.onerror=()=>{ n.status='connection error (is SensorServer running? '+url+')'; };
+  ws.onclose=e=>{ if(n.ws===ws){ n.ws=null; n.status='closed'+(e.code!==1000?' ('+e.code+')':''); } };
+  ws.onmessage=e=>{
+    let m; try{ m=JSON.parse(e.data); }catch(err){ return; }
+    const v=m.values; if(!v || v.length<1) return;
+    const x=[+v[0]||0,+v[1]||0,+v[2]||0];
+    n.msgs++; n.status='';
+    ssPush(n,(+m.timestamp||performance.now()*1e6)/1e9,x);
+  };
+}
+def({ id:'wssensor', title:'Sensor (WebSocket)', cat:'Sources',
+  outs:SS_XYZ, readout:true,
+  params:[
+    {n:'url',t:'text',d:'ws://127.0.0.1:8080',label:'SensorServer address'},
+    {n:'type',t:'select',opts:WSS_TYPES,d:'accelerometer',fn:n=>{ if(n.ws) wssStart(n); }},
+    {n:'go',t:'button',label:'Connect',fn:n=>wssStart(n)},
+    {n:'stop',t:'button',label:'Disconnect',fn:n=>wssStop(n)},
+  ],
+  init:n=>{ n.ws=null; n.status='not connected'; ssInit(n,3); n.sExact=true; n.sLag=.25; },
+  dispose:n=>wssStop(n),
+  process:n=>ssXYZOut(n),
+  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.status||ssStatus(n); }});
 
 
 // Камера. Яркость зоны меряется на КАЖДОМ кадре камеры, а не в draw() (rAF режется до 30 к/с

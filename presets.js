@@ -749,8 +749,10 @@ clearAll();
 const nt=addNode('note',40,40,{text:'Sensor samples are placed by their timestamps and resampled evenly\\n'+
   '(sx/sy/sz/smag outputs), then decimated and averaged (Welch) in «Low-Frequency FFT».\\n'+
   'Check the real sensor rate in the sensor readout: Nyquist is half of it.\\n'+
+  'Browsers give ~60 Hz (Chrome) to ~100 Hz; for hundreds of Hz on Android run the SensorServer app\\n'+
+  'and use «Sensor (WebSocket)» instead of «Accelerometer».\\n'+
   'Peaks here are mechanical vibration or aliases of 50/100 Hz hum (e.g. 50 Hz at 60 Hz rate → 10 Hz).'});
-nt.size.w=520; nt.size.h=130; applySize(nt);
+nt.size.w=560; nt.size.h=160; applySize(nt);
 const ac=addNode('accel',40,220);                 // devicemotion: в Firefox — сотни Гц, в Chrome — 60
 const lf=addNode('lfft',320,220,{fs:'128',size:'2048',upd:'0.1',avg:'10'});
 const sa=addNode('sa',600,220,{fmin:1,fmax:50,floor:-110,top:-30,split:.45,tol:1});
