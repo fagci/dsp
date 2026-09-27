@@ -157,6 +157,7 @@ const PRESET_CATS={
   'HF: Who Is On Air (Schedule)':'Signal Analysis',
   'Satellites: Track and Doppler':'Radio Protocols',
   'Internet Radio on the Map':'Signal Analysis',
+  'Wi-Fi: Locate Access Points (Termux)':'Signal Analysis',
   'Chirp Modem: Noise and Reflection':'Radio Protocols',
 
   'Text → Bits → Text (Encodings)':'Signal Analysis',
@@ -415,6 +416,29 @@ addEdge(map.id,'sel',rd.id,'select');
 addEdge(rd.id,'url',st.id,'url');
 addEdge(st.id,'audio',dc.id,'L'); addEdge(st.id,'audio',dc.id,'R');
 addEdge(st.id,'audio',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
+markWiresDirty();
+});
+preset('Wi-Fi: Locate Access Points (Termux)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'On the phone (Termux + Termux:API): pkg install termux-api jq websocat, then\n'+
+  "  websocat -t ws-l:127.0.0.1:8765 sh-c:'bash wifi-scan.sh'   (tools/termux/wifi-scan.sh)\n"+
+  'Open this page on the same phone, press Connect and walk around: every scan = your GPS position\n'+
+  '+ RSSI of each access point. Source Locator estimates each AP (group by bssid) once the marks\n'+
+  'spread over 15 m. Click an AP on the map to see its probability map. Press Fit on the map.'});
+nt.size.w=640; nt.size.h=150; applySize(nt);
+const net=addNode('nettext',40,220,{url:'ws://127.0.0.1:8765'});
+const me=addNode('recFilter',40,500,{expr:"r.id === 'me'"});
+const fresh=addNode('recFilter',40,630,{expr:"r.id !== 'me' && r.rssi != null && (r.age_s == null || r.age_s < 20)"});
+const loc=addNode('geoLocate',300,220,{group:'bssid',labelField:'ssid',pathN:3,sigmaDb:6,minSpread:15,max:300});
+loc.size.w=360; loc.size.h=420; applySize(loc);
+const map=addNode('geoMap',700,40,{mz:16,labels:true,trail:2000});
+map.size.w=660; map.size.h=600; applySize(map);
+addEdge(net.id,'rec',me.id,'rec');
+addEdge(net.id,'rec',fresh.id,'rec');
+addEdge(fresh.id,'rec',loc.id,'rec');
+addEdge(loc.id,'rec',map.id,'rec');
+addEdge(me.id,'rec',map.id,'rec2');
+addEdge(map.id,'sel',loc.id,'select');
 markWiresDirty();
 });
 preset('Quick Sound Level Meter', function(){
