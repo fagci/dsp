@@ -1801,16 +1801,24 @@ function iqFileDevice(src, defRate, defFreq){
   const rate=src.rate>0 ? src.rate : defRate, total=Math.floor(src.size/bytesPer);
   const caps=src.captures.map(c=>({start:c.start, freq:c.freq??defFreq})).sort((a,b)=>a.start-b.start);
   let pos=0, tuneEpoch=0, t0=0, sent=0, chain=Promise.resolve(), capIdx=0, closed=false;
+  // упреждающее чтение блоками ~0.5 с (не больше 8 МБ): чтение Blob на мобильных медленное,
+  // по чанку на 25 мс оно не успевало
+  const blkN=Math.max(1<<14, Math.min(Math.round(rate/2), Math.floor((8<<20)/bytesPer)));
+  const lead=()=>RTL_FILE_TARGET_S*1000;         // старт с запасом кольца, без паузы на наполнение
+  let cur=null, ahead=null;
+  const load=a=>{ const b=Math.min(total, a+blkN);
+    const p=src.blob.slice(src.off+a*bytesPer, src.off+b*bytesPer).arrayBuffer().then(buf=>({a, b, buf}));
+    p.catch(()=>{}); return {a, p}; };
   const dev={kind:'file', fixedFreq:true, fmt, bps, tunerName:src.name, loop:true, onFreq:null, ended:false,
     rate, total, get pos(){ return pos; },
     epoch:()=>tuneEpoch,
     async setSampleRate(){ return rate; },
     async setCenterFrequency(){ return caps[capIdx].freq; },
     async setGain(){}, async setBiasTee(){},
-    async resetBuffer(){ t0=performance.now(); sent=0; },
-    seek(frac){ pos=Math.max(0, Math.min(total-1, Math.floor(frac*total))); dev.ended=false; t0=performance.now(); sent=0; syncCap(); },
+    async resetBuffer(){ t0=performance.now()-lead(); sent=0; },
+    seek(frac){ pos=Math.max(0, Math.min(total-1, Math.floor(frac*total))); dev.ended=false; t0=performance.now()-lead(); sent=0; syncCap(); },
     readSamples(nBytes){ const p=chain.then(()=>read(nBytes/bps)); chain=p.catch(()=>{}); return p; },
-    async close(){ closed=true; }
+    async close(){ closed=true; cur=ahead=null; }
   };
   function syncCap(){
     let i=0; while(i+1<caps.length && caps[i+1].start<=pos) i++;
@@ -1820,14 +1828,21 @@ function iqFileDevice(src, defRate, defFreq){
     // темп — по часам: чанк отдаётся не раньше, чем он "прозвучал" бы в эфире
     while(dev.ended && !closed) await new Promise(r=>setTimeout(r, 100));
     if(closed) throw new Error('closed');
-    // не пересекаем границу сегмента captures и конец файла
-    const next=caps[capIdx+1]?.start??total, take=Math.max(1, Math.min(ns, next-pos, total-pos));
-    if(!t0) t0=performance.now();
+    while(!(cur && pos>=cur.a && pos<cur.b)){
+      if(!ahead || ahead.a!==pos) ahead=load(pos);
+      const p=ahead.p; ahead=null;
+      cur=await p;
+      if(closed) throw new Error('closed');
+      ahead=load(cur.b>=total ? 0 : cur.b);
+    }
+    // не пересекаем границу сегмента captures, блока и конец файла
+    const next=caps[capIdx+1]?.start??total, take=Math.max(1, Math.min(ns, next-pos, total-pos, cur.b-pos));
+    if(!t0) t0=performance.now()-lead();
     let wait=t0+(sent+take)/rate*1000-performance.now();
-    if(wait<-500){ t0=performance.now()-sent/rate*1000; wait=0; }   // вкладка спала — не догоняем рывком
+    if(wait<-500){ t0=performance.now()-sent/rate*1000-lead(); wait=0; }   // вкладка спала — не догоняем рывком
     if(wait>0) await new Promise(r=>setTimeout(r, wait));
     sent+=take;
-    const raw=await src.blob.slice(src.off+pos*bytesPer, src.off+(pos+take)*bytesPer).arrayBuffer();
+    const o=(pos-cur.a)*bytesPer, raw=cur.buf.slice(o, o+take*bytesPer);
     pos+=take;
     if(pos>=total){ if(dev.loop){ pos=0; } else dev.ended=true; }
     syncCap();
@@ -2500,6 +2515,7 @@ const RTL_USB_QUEUE=8;       // трансферов в полёте, ~200мс �
 // выше RTL_DROP_S (стопор главного потока, после которого данные накопились), лишнее роняем сразу,
 // иначе сервоприводу пришлось бы съедать его минутами.
 const RTL_TARGET_S=0.08;
+const RTL_FILE_TARGET_S=0.3;  // файл: задержка не важна, нужен запас на заминки чтения и главного потока
 const RTL_DROP_S=0.3;
 const RTL_SERVO_PPM=500;
 const RTL_EXCESS=2;         // средний запас выше target×RTL_EXCESS — сброс до target
@@ -2910,8 +2926,9 @@ function rtlSafeSr(v){
 // Общий регулятор чтения кольца. st: {rebuffering, lagAvg}; lag и need — в отсчётах кольца,
 // rateIn — их частота. Возвращает {k, drop}: k — множитель шага (0 = отдать тишину),
 // drop — сколько отсчётов пропустить перед чтением.
+const rtlTargetS=n=>n.dev?.kind==='file' ? RTL_FILE_TARGET_S : RTL_TARGET_S;
 function rtlPace(n, st, lag, rateIn, need, tag){
-  const target=Math.max(need*2, rateIn*RTL_TARGET_S);
+  const target=Math.max(need*2, rateIn*rtlTargetS(n));
   let drop=0;
   if(lag>Math.max(target*2, rateIn*RTL_DROP_S)){
     drop=lag-target; lag=target; st.lagAvg=target; n.underrunsOverflow++;
@@ -2976,7 +2993,7 @@ function rtlReadChannelAudio(n, ch, o, oL, oR){
   const nowLog=performance.now();
   if(!ch.lastLagLogT || nowLog-ch.lastLagLogT>3000){
     ch.lastLagLogT=nowLog;
-    console.log(`[rtlsdr] ring trend: lag=${(1000*lag/rate).toFixed(0)}мс avg=${(1000*(ch.lagAvg||0)/rate).toFixed(0)}мс target=${(1000*RTL_TARGET_S).toFixed(0)}мс servo=${(ch.ppm||0).toFixed(0)}ppm mspsIo=${(n.mspsIo||0).toFixed(3)} nominal=${(n.sourceRate/1e6).toFixed(3)} @ ${nowLog.toFixed(0)}ms`);
+    console.log(`[rtlsdr] ring trend: lag=${(1000*lag/rate).toFixed(0)}мс avg=${(1000*(ch.lagAvg||0)/rate).toFixed(0)}мс target=${(1000*rtlTargetS(n)).toFixed(0)}мс servo=${(ch.ppm||0).toFixed(0)}ppm mspsIo=${(n.mspsIo||0).toFixed(3)} nominal=${(n.sourceRate/1e6).toFixed(3)} @ ${nowLog.toFixed(0)}ms`);
   }
   if(!k){ mute(); return; }
   const step=rate/Eng.sr*k;
