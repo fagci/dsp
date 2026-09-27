@@ -1496,6 +1496,8 @@ markWiresDirty();
 let lastDraw=0;
 let lastStatText='';
 function visible(n,r){                              // узел в пределах экрана?
+// в дашборде координаты графа ни при чём: виден тот, кто стоит в тайле (и тайл не скрыт)
+if(dashMode) return n.el.offsetParent!==null  && dashGridEl.contains(n.el);
 const x=(n.x+view.x)*view.k, y=(n.y+view.y)*view.k;
 const w=n.el.offsetWidth*view.k, h=n.el.offsetHeight*view.k;
 return x+w >-40  && x <r.width+40  && y+h >-40  && y <r.height+40;
