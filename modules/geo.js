@@ -1174,21 +1174,37 @@ function geoPathLayer(cx,layer,v,z){
 const GEO_COL={sea:'#0b1419', land:'#151d21', coast:'#33454e', lake:'#0e1c24', river:'#1d3645',
   adm0:'#6d7f88', adm1:'#34444c', label:'#8d9ea6', labelDim:'#62737b', place:'#b8c4ca', grid:'rgba(120,160,180,.18)'};
 
+const GEO_BASE_CAP=matchMedia('(pointer:coarse)').matches ? 4e6 : 1.2e7;   // пикселей буфера подложки
 function geoMapDraw(n,cv,cx){
   geoMapWire(n,cv);
   const W=cv.width, H=cv.height, v=geoView(n,W,H), z=v.z;
-  // подложка — в отдельную канву, перерисовка только при смене вида/данных
-  const key=[W,H,v.ox.toFixed(1),v.oy.toFixed(1),v.S,cv.pxW,GeoBase.gen,n.p.tiles,n.p.grid,
-    n.p.tiles!=='none'?GeoTiles.gen:0].join(':');
-  if(n._baseKey!==key || !n._base){
+  // подложка — в отдельную канву с полями M: при панораме сдвигаем готовую картинку,
+  // при зуме растягиваем её и перерисовываем, когда зум успокоился
+  const now=performance.now(), M=Math.round(Math.min(W,H)*.35);
+  const key=[W,H,cv.pxW,GeoBase.gen,n.p.tiles,n.p.grid,n.p.tiles!=='none'?GeoTiles.gen:0].join(':');
+  if(v.S!==n._lastS){ n._lastS=v.S; n._zoomT=now; }
+  const bv=n._bv, f=bv ? v.S/bv.S : 1;
+  let dx=0, dy=0, ok=bv && n._baseKey===key && (f===1 || now-n._zoomT<200);
+  if(ok){
+    dx=bv.ox*f-v.ox; dy=bv.oy*f-v.oy;
+    dx-=Math.round((dx+bv.M*f)/v.S)*v.S;               // мир повторяется по долготе
+    ok=dx<=0 && dy<=0 && dx+bv.W*f>=W && dy+bv.H*f>=H;
+  }
+  if(!ok){
     n._baseKey=key;
     const b=n._base || (n._base=document.createElement('canvas'));
-    if(b.width!==cv.pxW || b.height!==cv.pxH){ b.width=cv.pxW; b.height=cv.pxH; }
+    const BW=W+2*M, BH=H+2*M, r=Math.min(cv.pxW/W, Math.sqrt(GEO_BASE_CAP/(BW*BH)));
+    const pw=Math.round(BW*r), ph=Math.round(BH*r);
+    if(b.width!==pw || b.height!==ph){ b.width=pw; b.height=ph; }
     const bx=b.getContext('2d');
-    bx.setTransform(cv.pxW/W,0,0,cv.pxH/H,0,0);
-    geoDrawBase(n,bx,v);
+    bx.setTransform(pw/BW,0,0,ph/BH,0,0);
+    const vb={...v, W:BW, H:BH, ox:v.ox-M, oy:v.oy-M};
+    geoDrawBase(n,bx,vb);
+    n._bv={ox:vb.ox, oy:vb.oy, S:v.S, W:BW, H:BH, M};
+    dx=-M; dy=-M;
   }
-  cx.drawImage(n._base,0,0,W,H);
+  const g=n._bv, k=v.S/g.S;
+  cx.drawImage(n._base,dx,dy,g.W*k,g.H*k);
   geoDrawObjects(n,cx,v);
   geoDrawOverlay(n,cx,v);
 }
@@ -1397,11 +1413,39 @@ function geoGreatCircle(cx,v,lat,lon,brg,km,refX){
     prev=s;
   }
 }
+// кластеры в мировых координатах на целом уровне зума: при панораме не пересчитываются и не прыгают
+function geoClusters(n,z){
+  const on=n.p.cluster && z<14, zi=Math.floor(z);
+  const key=on ? n.dirtyGen+'|'+zi+'|'+n.selKey+'|'+n.ents.size : 'off';
+  if(n._clKey===key) return n._cl;
+  n._clKey=key;
+  const out={groups:[], member:new Set()};
+  if(on){
+    const P=256*2**zi, R=44, grid=new Map(), all=[];
+    for(const e of n.ents.values()){
+      const p=e.pts[e.pts.length-1]; if(!p || e.key===n.selKey) continue;   // выбранный — всегда отдельно
+      const x=mercX(p.lon)*P, y=mercY(p.lat)*P, gx=Math.floor(x/R), gy=Math.floor(y/R);
+      let c=null;
+      for(let i=-1;i<=1 && !c;i++) for(let j=-1;j<=1 && !c;j++)
+        for(const q of grid.get((gx+i)+','+(gy+j))||[]) if(Math.abs(q.x-x)<R && Math.abs(q.y-y)<R){ c=q; break; }
+      if(!c){ c={x,y,sx:0,sy:0,e:[]}; const k=gx+','+gy; (grid.get(k)||grid.set(k,[]).get(k)).push(c); all.push(c); }
+      c.sx+=x; c.sy+=y; c.e.push(e);
+    }
+    for(const c of all){
+      const k=c.e.length; if(k<2) continue;
+      const col0=geoEntColor(c.e[0].rec,c.e[0]);
+      out.groups.push({mx:c.sx/k/P, my:c.sy/k/P, r:10+Math.min(10,Math.log2(k)*2.5), t:k>999 ? Math.round(k/1000)+'k' : String(k),
+        col:c.e.every(e=>geoEntColor(e.rec,e)===col0) ? col0 : '#9fb0b8'});
+      for(const e of c.e) out.member.add(e.key);
+    }
+  }
+  return n._cl=out;
+}
 function geoDrawObjects(n,cx,v){
   const {W,H,S}=v, now=Date.now(), ttl=n.p.ttl*60000;
   const mpp=lat=>40075016.686*Math.cos(lat*D2R)/S;   // метров в пикселе
   cx.save(); cx.lineJoin='round';
-  const labs=[], marks=[];
+  const labs=[], marks=[], C=geoClusters(n,v.z);
   for(const e of n.ents.values()){
     const r=e.rec, last=e.pts[e.pts.length-1]; if(!last) continue;
     const col=geoEntColor(r,e);
@@ -1459,7 +1503,7 @@ function geoDrawObjects(n,cx,v){
       cx.strokeStyle=col; cx.lineWidth=1; cx.beginPath();
       geoGreatCircle(cx,v,last.lat,last.lon,geoBearing(last.lat,last.lon,lat2,lon2),km,s.x); cx.stroke();
     }
-    if(!vis) continue;
+    if(!vis || C.member.has(e.key)) continue;
     let icon=r.icon!=null && r.icon!=='' ? String(r.icon) : 'dot';
     const size=recNum(r.size) ?? 6;
     let rot=recNum(r.heading ?? r.course ?? r.track);
@@ -1468,38 +1512,26 @@ function geoDrawObjects(n,cx,v){
     }
     marks.push({x:s.x,y:s.y,icon,size,rot,col,a:cx.globalAlpha,sel:n.selKey===e.key,lab:r.label ?? e.id,age});
   }
-  // кластеры: жадно по сетке R px; выбранный объект всегда отдельно
-  const R=44, cl=[], grid=new Map(), clOn=n.p.cluster && v.z<14;
   for(const m of marks){
-    let c=null;
-    if(clOn && !m.sel){
-      const gx=Math.floor(m.x/R), gy=Math.floor(m.y/R);
-      for(let i=-1;i<=1 && !c;i++) for(let j=-1;j<=1 && !c;j++)
-        for(const q of grid.get((gx+i)+','+(gy+j))||[]) if(Math.abs(q.x-m.x)<R && Math.abs(q.y-m.y)<R){ c=q; break; }
-      if(!c){ c={x:m.x,y:m.y,m:[]}; const k=gx+','+gy; (grid.get(k)||grid.set(k,[]).get(k)).push(c); }
-    } else c={x:m.x,y:m.y,m:[]};
-    c.m.push(m); if(c.m.length===1) cl.push(c);
+    cx.globalAlpha=m.a;
+    geoIcon(cx,m.icon,m.x,m.y,m.size,m.rot,m.col);
+    if(m.sel){
+      cx.strokeStyle=themeColor('--scr-hi')||'#fff'; cx.lineWidth=1.5;
+      cx.beginPath(); cx.arc(m.x,m.y,m.size+5,0,2*Math.PI); cx.stroke();
+    }
+    if(n.p.labels && (n.ents.size<=300 || v.z>=7) && m.lab!=null && m.lab!=='')  // тысячи подписей на обзоре — каша
+      labs.push({t:String(m.lab),x:m.x,y:m.y,size:m.size,col:m.col,a:m.a,pri:(m.sel?1e3:0)+m.size-m.age});
   }
   n.clusters=[];
-  for(const c of cl){
-    if(c.m.length===1){
-      const m=c.m[0]; cx.globalAlpha=m.a;
-      geoIcon(cx,m.icon,m.x,m.y,m.size,m.rot,m.col);
-      if(m.sel){
-        cx.strokeStyle=themeColor('--scr-hi')||'#fff'; cx.lineWidth=1.5;
-        cx.beginPath(); cx.arc(m.x,m.y,m.size+5,0,2*Math.PI); cx.stroke();
-      }
-      if(n.p.labels && (n.ents.size<=300 || v.z>=7) && m.lab!=null && m.lab!=='')  // тысячи подписей на обзоре — каша
-        labs.push({t:String(m.lab),x:m.x,y:m.y,size:m.size,col:m.col,a:m.a,pri:(m.sel?1e3:0)+m.size-m.age});
-      continue;
-    }
-    const k=c.m.length, x=c.m.reduce((a,m)=>a+m.x,0)/k, y=c.m.reduce((a,m)=>a+m.y,0)/k;
-    const rr=10+Math.min(10,Math.log2(k)*2.5), col=c.m.every(m=>m.col===c.m[0].col) ? c.m[0].col : '#9fb0b8';
-    cx.globalAlpha=1; cx.beginPath(); cx.arc(x,y,rr,0,2*Math.PI);
-    cx.fillStyle='rgba(10,13,14,.85)'; cx.fill(); cx.strokeStyle=col; cx.lineWidth=2; cx.stroke();
-    cx.fillStyle=col; cx.font='bold 11px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
-    cx.fillText(k>999 ? Math.round(k/1000)+'k' : String(k),x,y+.5);
-    n.clusters.push({x,y,r:rr});
+  cx.globalAlpha=1; cx.font='bold 11px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle'; cx.lineWidth=2;
+  for(const c of C.groups){
+    let x=c.mx*S-v.ox; x-=Math.round((x-W/2)/S)*S;
+    const y=c.my*S-v.oy;
+    if(x<-30 || x>W+30 || y<-30 || y>H+30) continue;
+    cx.beginPath(); cx.arc(x,y,c.r,0,2*Math.PI);
+    cx.fillStyle='rgba(10,13,14,.85)'; cx.fill(); cx.strokeStyle=c.col; cx.stroke();
+    cx.fillStyle=c.col; cx.fillText(c.t,x,y+.5);
+    n.clusters.push({x,y,r:c.r});
   }
   cx.globalAlpha=1;
   // подписи после значков, без наложений: важные первыми, 4 позиции вокруг точки
