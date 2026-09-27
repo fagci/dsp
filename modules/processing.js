@@ -695,26 +695,38 @@ def({ id:'fft', title:'FFT', cat:'Processing', ins:[{n:'in',t:'sig'}], outs:[{n:
   process(n,I){
     const N=Math.max(+n.p.size, BLOCK*2);          // окно не короче блока
     if(n.N!==N||n.wk!==n.p.win){ n.N=N; n.wk=n.p.win; n.ring=new Float32Array(N);
-      n.re=new Float32Array(N); n.im=new Float32Array(N); n.mag=new Float32Array(N/2);
-      n.phase=new Float32Array(N/2); n.psd=new Float32Array(N/2);
+      n.x=new Float32Array(N); n.zr=new Float32Array(N/2); n.zi=new Float32Array(N/2);
+      n.re=new Float32Array(N/2); n.im=new Float32Array(N/2); n.mag=new Float32Array(N/2);
+      n.phase=new Float32Array(N/2); n.phRev=-1; n.psd=new Float32Array(N/2);
       n.w=window_(n.p.win,N);
       let sum=0, sum2=0; for(let i=0;i<N;i++){ sum+=n.w[i]; sum2+=n.w[i]*n.w[i]; }
       n.wGain=sum;                                  // когерентное усиление окна — для верной абс. амплитуды
       n.wGain2=sum2; }                               // энергия окна — для верной СПМ (Вт/Гц), другая нормировка
     n.ring.copyWithin(0,BLOCK); // сдвиг окна на блок
     for(let i=0;i<BLOCK;i++) n.ring[N-BLOCK+i]=I.in?I.in[i]:0;
-    for(let i=0;i<N;i++){ n.re[i]=n.ring[i]*n.w[i]; n.im[i]=0; }
-    fft(n.re,n.im);
+    for(let i=0;i<N;i++) n.x[i]=n.ring[i]*n.w[i];
+    rfft(n.x,n.zr,n.zi,n.re,n.im);
     // СПМ (одностороння): |X|²·2/(sr·Σw²) — не путать с амплитудой (|X|·2/Σw): у СПМ своя
     // нормировка на полосу (Гц), из-за неё шумовой пол не зависит от размера окна, у амплитуды
     // такой независимости нет и не должно быть (амплитуда тона — просто амплитуда тона).
     const psdNorm=1/(Eng.sr*n.wGain2);
-    n.mag[0]=Math.hypot(n.re[0],n.im[0])/n.wGain;   // DC без ×2 — нет зеркальной составляющей
-    n.phase[0]=0; n.psd[0]=(n.re[0]*n.re[0]+n.im[0]*n.im[0])*psdNorm;
+    // Math.hypot в V8 на порядок медленнее sqrt
+    const re=n.re, im=n.im, mag=n.mag, psd=n.psd, g=1/n.wGain;
+    const p0=re[0]*re[0]+im[0]*im[0];
+    mag[0]=Math.sqrt(p0)*g;                         // DC без ×2 — нет зеркальной составляющей
+    psd[0]=p0*psdNorm;
     for(let i=1;i<N/2;i++){
-      n.mag[i]=2*Math.hypot(n.re[i],n.im[i])/n.wGain; n.phase[i]=Math.atan2(n.im[i],n.re[i]);
-      n.psd[i]=2*(n.re[i]*n.re[i]+n.im[i]*n.im[i])*psdNorm; }
-    n.sp=n.sp||{}; n.sp.mag=n.mag; n.sp.phase=n.phase; n.sp.psd=n.psd; n.sp.hop=BLOCK;
+      const p=re[i]*re[i]+im[i]*im[i];
+      mag[i]=2*Math.sqrt(p)*g; psd[i]=2*p*psdNorm; }
+    if(!n.sp){
+      // фаза нужна редко (маркеры SA) — считается при первом обращении в этом блоке
+      n.sp={};
+      Object.defineProperty(n.sp,'phase',{enumerable:true, get(){
+        if(n.phRev!==n.sp.rev){ n.phRev=n.sp.rev; const ph=n.phase; ph[0]=0;
+          for(let i=1;i<ph.length;i++) ph[i]=Math.atan2(n.im[i],n.re[i]); }
+        return n.phase; }});
+    }
+    n.sp.mag=n.mag; n.sp.psd=n.psd; n.sp.hop=BLOCK;
     n.sp.sr=Eng.sr; n.sp.size=N; n.sp.freqs=null;
     n.sp.rev=(n.sp.rev|0)+1;                        // счётчик пересчётов — объект переиспользуется, ссылка не меняется
     return {spec:n.sp}; }});

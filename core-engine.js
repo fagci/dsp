@@ -559,6 +559,25 @@ function fft(re,im){
         re[i+k]=ur+vr; im[i+k]=ui+vi; re[i+k+h]=ur-vr; im[i+k+h]=ui-vi;
         const t=cr*wr-ci*wi; ci=cr*wi+ci*wr; cr=t; } } }
 }
+// БПФ вещественного x[N] через комплексное длины N/2 — вдвое дешевле fft().
+// zr/zi — рабочие буферы N/2; в outRe/outIm — бины 0..N/2-1.
+const RFFT_TW=new Map();
+function rfft(x,zr,zi,outRe,outIm){
+  const N=x.length, M=N>>1;
+  let t=RFFT_TW.get(N);
+  if(!t){ t={c:new Float64Array(M), s:new Float64Array(M)};
+    for(let k=0;k<M;k++){ const a=-2*Math.PI*k/N; t.c[k]=Math.cos(a); t.s[k]=Math.sin(a); }
+    RFFT_TW.set(N,t); }
+  for(let i=0;i<M;i++){ zr[i]=x[2*i]; zi[i]=x[2*i+1]; }
+  fft(zr,zi);
+  const c=t.c, s=t.s;
+  outRe[0]=zr[0]+zi[0]; outIm[0]=0;
+  for(let k=1;k<M;k++){
+    const ar=zr[k], ai=zi[k], br=zr[M-k], bi=-zi[M-k];
+    const er=(ar+br)/2, ei=(ai+bi)/2, or_=(ai-bi)/2, oi=(br-ar)/2;   // чётные/нечётные отсчёты
+    outRe[k]=er+c[k]*or_-s[k]*oi; outIm[k]=ei+c[k]*oi+s[k]*or_;
+  }
+}
 function window_(kind,N){
   const w=new Float32Array(N);
   for(let i=0;i<N;i++){ const x=i/(N-1);
