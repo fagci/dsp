@@ -2,6 +2,10 @@
 
 A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas. Runs fully client-side, no build step, works offline as a PWA.
 
+**Live demo: [fagci.github.io/dsp](https://fagci.github.io/dsp/)**
+
+[![FT8 propagation map in DSP workbench — open the demo](docs/screenshots/map-ft8.png)](https://fagci.github.io/dsp/)
+
 ## Features
 
 ### Workbench
@@ -204,6 +208,24 @@ The ▦ button switches to a tiled dashboard built from the modules of the curre
 - The layout is saved with the patch and works on touch devices (wide scroll rail for long panes)
 
 ## Screenshots
+
+### Map: FT8 propagation
+
+Heard stations from their locators, lines to your position, Maidenhead grid; colour — SNR.
+
+<img src="docs/screenshots/map-ft8.png" alt="FT8 propagation map">
+
+### Source location (trilateration)
+
+Fox hunt: RSSI marks along the route plus two bearings from a directional antenna; Source Locator shows the probability map and puts the estimate with its error radius on the map.
+
+<img src="docs/screenshots/foxhunt.png" alt="Source Locator: trilateration by RSSI and bearings">
+
+### Satellites
+
+ISS: footprint, ground track ahead, sky plot, next passes and Doppler-corrected downlink.
+
+<img src="docs/screenshots/satellites.png" alt="Satellite tracking with sky plot and map">
 
 ### SDR software
 
