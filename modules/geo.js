@@ -1396,6 +1396,7 @@ function geoDrawObjects(n,cx,v){
   const {W,H,S}=v, now=Date.now(), ttl=n.p.ttl*60000;
   const mpp=lat=>40075016.686*Math.cos(lat*D2R)/S;   // метров в пикселе
   cx.save(); cx.lineJoin='round';
+  const labs=[];
   for(const e of n.ents.values()){
     const r=e.rec, last=e.pts[e.pts.length-1]; if(!last) continue;
     const col=geoEntColor(r,e);
@@ -1467,11 +1468,19 @@ function geoDrawObjects(n,cx,v){
     }
     if(n.p.labels && (n.ents.size<=300 || v.z>=7)){  // тысячи подписей на обзоре — каша
       const lab=r.label ?? e.id;
-      if(lab!=null && lab!==''){
-        cx.font='11px monospace'; cx.textBaseline='middle'; cx.textAlign='left';
-        cx.lineWidth=3; cx.strokeStyle='rgba(0,0,0,.7)'; cx.strokeText(String(lab),s.x+size+4,s.y-size);
-        cx.fillStyle=col; cx.fillText(String(lab),s.x+size+4,s.y-size);
-      }
+      if(lab!=null && lab!=='') labs.push({t:String(lab),x:s.x,y:s.y,size,col,a:cx.globalAlpha,pri:(n.selKey===e.key?1e3:0)+size-age});
+    }
+  }
+  // подписи после значков, без наложений: важные первыми, 4 позиции вокруг точки
+  labs.sort((a,b)=>b.pri-a.pri);
+  cx.font='11px monospace'; cx.textBaseline='middle'; cx.textAlign='left'; cx.lineWidth=3; cx.strokeStyle='rgba(0,0,0,.7)';
+  const boxes=[];
+  for(const L of labs){
+    const w=cx.measureText(L.t).width, d=L.size+4;
+    for(const [x,y] of [[L.x+d,L.y-L.size],[L.x+d,L.y+L.size],[L.x-d-w,L.y-L.size],[L.x-d-w,L.y+L.size]]){
+      if(!geoLabelBox(boxes,x-1,y-7,w+2,14)) continue;
+      cx.globalAlpha=L.a; cx.strokeText(L.t,x,y); cx.fillStyle=L.col; cx.fillText(L.t,x,y);
+      break;
     }
   }
   cx.restore();
