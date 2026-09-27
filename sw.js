@@ -7,11 +7,11 @@
 //
 // CACHE бампать вместе с ?v=N в index.html — иначе после правки файлов старый список ссылок
 // (со старым ?v=) продолжит переустанавливаться поверх уже закэшированного нового.
-const CACHE='dsp-shell-v64';
+const CACHE='dsp-shell-v65';
 const SHELL=[
   './',
   './index.html',
-  './styles.css?v=64',
+  './styles.css?v=65',
   './manifest.json',
   './favicon.svg',
   './icons/favicon-32.png',
@@ -21,24 +21,24 @@ const SHELL=[
   './vendor/panzoom.min.js?v=4.6.2',
   './vendor/interact.min.js?v=1.10.28',
   './vendor/satellite.min.js?v=5.0.0',
-  './core-engine.js?v=64',
-  './modules/analysis.js?v=64',
-  './modules/misc.js?v=64',
-  './modules/modulation.js?v=64',
-  './modules/output.js?v=64',
-  './modules/processing.js?v=64',
-  './modules/protocols.js?v=64',
-  './modules/sigid.js?v=64',
-  './modules/sources.js?v=64',
-  './modules/audioeditor.js?v=64',
-  './modules/tinysa.js?v=64',
-  './modules/hfdl.js?v=64',
-  './modules/propagation.js?v=64',
-  './modules/geo.js?v=64',
-  './modules/sked.js?v=64',
-  './modules/sat.js?v=64',
-  './presets.js?v=64',
-  './core-graph.js?v=64',
+  './core-engine.js?v=65',
+  './modules/analysis.js?v=65',
+  './modules/misc.js?v=65',
+  './modules/modulation.js?v=65',
+  './modules/output.js?v=65',
+  './modules/processing.js?v=65',
+  './modules/protocols.js?v=65',
+  './modules/sigid.js?v=65',
+  './modules/sources.js?v=65',
+  './modules/audioeditor.js?v=65',
+  './modules/tinysa.js?v=65',
+  './modules/hfdl.js?v=65',
+  './modules/propagation.js?v=65',
+  './modules/geo.js?v=65',
+  './modules/sked.js?v=65',
+  './modules/sat.js?v=65',
+  './presets.js?v=65',
+  './core-graph.js?v=65',
 ];
 self.addEventListener('install',e=>{
   self.skipWaiting();                                 // не ждать закрытия всех вкладок — как и ручной ?v=N, обновление должно применяться сразу
