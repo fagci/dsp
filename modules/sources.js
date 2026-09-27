@@ -521,10 +521,11 @@ function wssStart(n){
     : base+'/sensor/connect?type=android.sensor.'+n.p.type;
   ssInit(n,3); n.sExact=true; n.sLag=.25; n.msgs=0;
   let ws;
-  try{ ws=new WebSocket(url); }catch(e){ n.status='error: '+e.message; return; }
+  const insecure=netInsecure(url);
+  try{ ws=new WebSocket(url); }catch(e){ n.status='error: '+e.message+(insecure?'\n'+NET_INSECURE_MSG:''); return; }
   n.ws=ws; n.status='connecting…';
   ws.onopen=()=>{ n.status='waiting for data…'; };
-  ws.onerror=()=>{ n.status='connection error (is SensorServer running? '+url+')'; };
+  ws.onerror=()=>{ n.status=insecure ? NET_INSECURE_MSG : 'connection error (is SensorServer running? '+url+')'; };
   ws.onclose=e=>{ if(n.ws===ws){ n.ws=null; n.status='closed'+(e.code!==1000?' ('+e.code+')':''); } };
   ws.onmessage=e=>{
     let m; try{ m=JSON.parse(e.data); }catch(err){ return; }
@@ -1008,6 +1009,121 @@ def({ id:'webserial', title:'Serial Port (WebSerial)', cat:'Control',
   },
   draw(n){ const r=n.el.querySelector('.readout');
     if(r) r.textContent = n.status+(n.lastLine?(' | '+n.lastLine):''); }
+});
+
+
+// Со страницы, открытой по https, браузер не пускает ws:// и http:// к другим хостам (mixed
+// content) — ошибка случается до сети, обойти из JS нельзя. Исключение — localhost/127.x/::1.
+function netInsecure(url){
+  if(location.protocol!=='https:') return false;
+  let u; try{ u=new URL(url); }catch(e){ return false; }
+  if(u.protocol!=='ws:' && u.protocol!=='http:') return false;
+  return !/^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/i.test(u.hostname);
+}
+const NET_INSECURE_MSG='this page is https — the browser blocks ws:// and http:// to other hosts (mixed content). '+
+  'Use wss:// / https:// on the device, or open this app over http:// (local copy), '+
+  'or allow «Insecure content» for this site in the browser settings (Chrome).';
+
+// Текст по сети: WebSocket (каждое сообщение) или HTTP(S)-опрос с периодом. Строки — по одной
+// на блок в line (как у Serial Port), JSON-объекты и массивы объектов — сразу записями в rec.
+// Пример (Termux на Android, Wi-Fi скан): websocat -t ws-l:0.0.0.0:8765 sh-c:'while :; do termux-wifi-scaninfo | jq -c .; sleep 30; done'
+function netTextFeed(n,text){
+  const t=String(text).trim(); if(!t) return;
+  n.msgs++;
+  const asRec=v=>v && typeof v==='object' && !Array.isArray(v) ? v : {value:v};
+  if(t[0]==='{' || t[0]==='['){
+    try{
+      const j=JSON.parse(t), now=Date.now();
+      for(const v of Array.isArray(j) ? j : [j]) n.recQ.push({t:now, ...asRec(v)});
+      n.lineQ.push(t.length>2000 ? t.slice(0,2000)+'…' : t);
+      return;
+    }catch(e){}
+  }
+  for(const line of t.split(/\r?\n/)){
+    const l=line.trim(); if(!l) continue;
+    n.lineQ.push(l);
+    if(l[0]==='{'){ try{ n.recQ.push({t:Date.now(), ...asRec(JSON.parse(l))}); }catch(e){} }
+  }
+  if(n.lineQ.length>5000) n.lineQ.splice(0,n.lineQ.length-5000);
+  if(n.recQ.length>20000) n.recQ.splice(0,n.recQ.length-20000);
+}
+function netTextStop(n){
+  n.want=false;
+  clearTimeout(n.timer); n.timer=null;
+  n.abort?.abort(); n.abort=null;
+  const ws=n.ws; n.ws=null;
+  if(ws){ ws.onclose=ws.onerror=ws.onmessage=null; try{ ws.close(); }catch(e){} }
+  n.status='disconnected';
+}
+function netTextStart(n){
+  netTextStop(n);
+  const url=String(n.p.url||'').trim();
+  if(!url){ n.status='enter a URL'; return; }
+  n.want=true;
+  if(netInsecure(url)) n.warn=NET_INSECURE_MSG; else n.warn='';
+  if(/^wss?:/i.test(url)) netTextWs(n,url);
+  else if(/^https?:/i.test(url)) netTextPoll(n,url);
+  else n.status='URL must start with ws://, wss://, http:// or https://';
+}
+function netTextRetry(n,fn,ms){ if(n.want && n.p.reconnect){ clearTimeout(n.timer); n.timer=setTimeout(fn,ms); } }
+function netTextWs(n,url){
+  let ws;
+  try{ ws=new WebSocket(url); }
+  catch(e){ n.status='error: '+e.message; netTextRetry(n,()=>netTextWs(n,url),5000); return; }
+  n.ws=ws; n.status='connecting…';
+  ws.onopen=()=>{ n.status='connected'; };
+  ws.onerror=()=>{ n.status='connection error'; };
+  ws.onclose=e=>{
+    if(n.ws!==ws) return;
+    n.ws=null; n.status='closed'+(e.code!==1000?' ('+e.code+')':'')+(n.p.reconnect?' — reconnecting…':'');
+    netTextRetry(n,()=>{ if(n.want) netTextWs(n,url); },2000);
+  };
+  ws.onmessage=e=>{
+    if(typeof e.data==='string') netTextFeed(n,e.data);
+    else if(e.data?.text) e.data.text().then(t=>netTextFeed(n,t));
+  };
+}
+async function netTextPoll(n,url){
+  if(!n.want) return;
+  const ac=n.abort=new AbortController();
+  try{
+    const r=await fetch(url,{cache:'no-store', signal:ac.signal});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    netTextFeed(n,await r.text());
+    n.status='polling every '+n.p.poll+' s · ok';
+  }catch(e){
+    if(e.name==='AbortError') return;
+    n.status='fetch failed: '+e.message+(e instanceof TypeError ? ' (no CORS headers on the server, or blocked)' : '');
+  }
+  if(n.want){ clearTimeout(n.timer); n.timer=setTimeout(()=>netTextPoll(n,url),Math.max(0.2,+n.p.poll||5)*1000); }
+}
+def({ id:'nettext', title:'Text over Network', cat:'Control',
+  ins:[{n:'send',t:'txt'}],                            // по WebSocket: новое значение — отправить
+  outs:[{n:'line',t:'txt'},{n:'go',t:'num'},{n:'rec',t:'rec'},{n:'count',t:'num'}],
+  readout:true, tall:true,
+  params:[
+    {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'ws:// wss:// http:// https://'},
+    {n:'poll',t:'range',min:0.2,max:600,step:0.1,d:5,label:'HTTP poll every, s'},
+    {n:'reconnect',t:'check',d:true,label:'reconnect'},
+    {n:'connect',t:'button',label:'Connect',fn:n=>netTextStart(n)},
+    {n:'disconnect',t:'button',label:'Disconnect',fn:n=>netTextStop(n)},
+  ],
+  init:n=>{ n.ws=null; n.want=false; n.timer=null; n.abort=null; n.lineQ=[]; n.recQ=[]; n.lastLine='';
+            n.msgs=0; n.count=0; n.status='not connected'; n.warn=''; n.lastSend=undefined; },
+  dispose:n=>netTextStop(n),
+  process(n,I){
+    if(typeof I.send==='string' && I.send!==n.lastSend){
+      n.lastSend=I.send;
+      if(n.ws && n.ws.readyState===1) n.ws.send(I.send);
+    }
+    let go=0;
+    if(n.lineQ.length){ n.lastLine=n.lineQ.shift(); go=1; n.count++; }
+    const rec=n.recQ.length ? n.recQ.splice(0) : null;
+    return {line:n.lastLine, go, rec, count:n.count};
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    r.textContent=(n.warn&&!n.ws&&n.status!=='connected' ? '⚠ '+n.warn+'\n' : '')+n.status+' · messages '+n.msgs+
+      (n.lineQ.length?' · queued '+n.lineQ.length:'')+(n.lastLine?'\n'+n.lastLine.slice(0,400):''); }
 });
 
 
