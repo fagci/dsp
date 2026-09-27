@@ -4548,17 +4548,29 @@ def({ id:'tuner', title:'Tuner', cat:'Radio', outs:[{n:'freq',t:'num'}],
 
 /* ---------- Хранилище семплов (IndexedDB) ---------- */
 // Две таблицы: folders (id, name, parentId) и clips (id, name, folderId, sr, samples, peaks, duration).
-// root-папка имеет parentId/folderId = null.
+// Корень снаружи — null, в базе — 0: null не попадает в индекс IndexedDB, и корень был бы пуст.
 
 const SampleDB = (() => {
   let dbp = null;
+  const ROOT = 0;                                 // автоинкрементные id начинаются с 1
+  const key = v => v==null ? ROOT : v;
 
   function open(){
     if(dbp) return dbp;
     dbp = new Promise((res,rej)=>{
-      const rq = indexedDB.open('dsp-samples', 1);
+      const rq = indexedDB.open('dsp-samples', 2);
       rq.onupgradeneeded = e => {
         const db = e.target.result;
+        if(e.oldVersion===1){                     // v1 хранила корень как null — переводим в 0
+          const tx = e.target.transaction;
+          for(const [st, k] of [['folders','parentId'],['clips','folderId']]){
+            tx.objectStore(st).openCursor().onsuccess = ev=>{
+              const c = ev.target.result; if(!c) return;
+              if(c.value[k]==null){ c.value[k] = ROOT; c.update(c.value); }
+              c.continue();
+            };
+          }
+        }
         if(!db.objectStoreNames.contains('folders')){
           const fs = db.createObjectStore('folders',{keyPath:'id',autoIncrement:true});
           fs.createIndex('parentId','parentId');
@@ -4599,7 +4611,7 @@ const SampleDB = (() => {
 
     async addFolder(name, parentId=null){
       const s = await store('folders','readwrite');
-      return reqP(s.add({name, parentId, created:Date.now()}));
+      return reqP(s.add({name, parentId:key(parentId), created:Date.now()}));
     },
     async renameFolder(id, name){
       const s = await store('folders','readwrite');
@@ -4616,16 +4628,17 @@ const SampleDB = (() => {
     },
     async listFolders(parentId=null){
       const s = await store('folders','readonly');
-      return reqP(s.index('parentId').getAll(parentId));
+      return reqP(s.index('parentId').getAll(key(parentId)));
     },
     async getFolder(id){
-      if(id==null) return null;
+      if(id==null || id===ROOT) return null;
       const s = await store('folders','readonly');
       return reqP(s.get(id));
     },
 
     async addClip(clip){
       clip.created = Date.now();
+      clip.folderId = key(clip.folderId);
       const s = await store('clips','readwrite');
       return reqP(s.add(clip));
     },
@@ -4633,6 +4646,7 @@ const SampleDB = (() => {
       const s = await store('clips','readwrite');
       const c = await reqP(s.get(id));
       Object.assign(c, patch);
+      if('folderId' in patch) c.folderId = key(c.folderId);
       return reqP(s.put(c));
     },
     async deleteClip(id){
@@ -4641,7 +4655,7 @@ const SampleDB = (() => {
     },
     async listClips(folderId=null){
       const s = await store('clips','readonly');
-      return reqP(s.index('folderId').getAll(folderId));
+      return reqP(s.index('folderId').getAll(key(folderId)));
     },
     async getClip(id){
       const s = await store('clips','readonly');
@@ -4681,10 +4695,11 @@ function syncCustomHeight(n, root, minH){
 
 /* ---------- Узел: Библиотека семплов ---------- */
 // Проигрывание идёт через сам узел графа (out:sig), как у обычного 'file' — чтобы услышать,
-// нужно подключить выход к чему-то вроде dac.
+// нужно подключить выход к чему-то вроде dac. Клик по клипу открывает редактор (modules/audioeditor.js).
+// Запись: с входа in, если он подключён и граф запущен, иначе с микрофона.
 def({ id:'sampleLib', title:'Sample Library', cat:'Music',
   outs:[{n:'out',t:'sig'},{n:'clipId',t:'num'},{n:'pos',t:'num'}],
-  ins:[{n:'clipId',t:'num'},{n:'play',t:'num'},{n:'rate',t:'num'},{n:'gain',t:'num'},{n:'loop',t:'num'}],
+  ins:[{n:'clipId',t:'num'},{n:'play',t:'num'},{n:'rate',t:'num'},{n:'gain',t:'num'},{n:'loop',t:'num'},{n:'in',t:'sig'}],
   h:340, resize:true, readout:true,
   params:[
     {n:'rate',t:'range',min:.25,max:4,step:.01,d:1},
@@ -4700,11 +4715,12 @@ def({ id:'sampleLib', title:'Sample Library', cat:'Music',
     n.pos = 0;
     n.play = false;
     n.playGate = false;
-    n.previewCtx = null;         // отдельный контекст только для прослушивания при обрезке
-    n.previewSrc = null;
+    n.rec = null;                // идущая запись {src:'graph'|'mic', chunks, sr, t0}
     n.onResize = ln => { if(ln.ui) syncCustomHeight(ln, ln.ui.root, 120); };
   },
   process(n,I){
+    n.inWired = I.in!=null;
+    if(n.rec && n.rec.src==='graph' && I.in) n.rec.chunks.push(Float32Array.from(I.in));
     if(typeof I.clipId==='number' && I.clipId>=0 && I.clipId!==n.selected){
       libArmClip(n, I.clipId, false);            // источник сменился — играть или нет решает play-gate/старое состояние
     }
@@ -4751,26 +4767,6 @@ async function libArmClip(n, id, autoplay){
   libHighlight(n);
 }
 
-function libEnsurePreviewCtx(n){
-  if(!n.previewCtx || n.previewCtx.state==='closed') n.previewCtx = new (window.AudioContext||window.webkitAudioContext)();
-  if(n.previewCtx.state==='suspended') n.previewCtx.resume();
-  return n.previewCtx;
-}
-function libStopPreview(n){
-  if(n.previewSrc){ try{ n.previewSrc.stop(); }catch(e){} n.previewSrc=null; }
-}
-function libPlayPreview(n, samples, sr){          // только для прослушивания при обрезке, мимо графа
-  libStopPreview(n);
-  const ctx = libEnsurePreviewCtx(n);
-  const buffer = ctx.createBuffer(1, samples.length, sr);
-  buffer.getChannelData(0).set(samples);
-  const src = ctx.createBufferSource();
-  src.buffer = buffer;
-  src.connect(ctx.destination);
-  src.start(0);
-  n.previewSrc = src;
-}
-
 function libInit(n){
   const mid = n.el.querySelector('.mid');
   if(!mid || mid.querySelector('.lib-ui')) return;
@@ -4783,11 +4779,11 @@ function libInit(n){
     <div class="lib-toolbar" style="display:flex;gap:4px;padding:2px 0;align-items:center;flex-shrink:0;">
       <button class="lib-newfolder" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:10px;">+ folder</button>
       <button class="lib-import" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:10px;">import</button>
+      <button class="lib-rec" title="Record from the in port (when wired and running) or from the microphone" style="background:#1d2226;border:1px solid #2a3136;color:#e05c5c;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:10px;">● rec</button>
       <input class="lib-file" type="file" accept="audio/*" multiple style="display:none;">
       <span class="lib-crumbs" style="flex:1;color:#6c7a80;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
     </div>
     <div class="lib-list" style="flex:1;overflow-y:auto;border:1px solid #1d2226;border-radius:3px;background:#0e1113;position:relative;"></div>
-    <div class="lib-trim" style="display:none;position:absolute;inset:0;background:#0e1113;border:1px solid #2a3136;border-radius:3px;padding:4px;flex-direction:column;gap:4px;z-index:5;"></div>
   `;
   mid.append(root);
   syncCustomHeight(n, root, 120);      // сразу выставить текущий n.size.h, дальше — через onResize
@@ -4796,8 +4792,9 @@ function libInit(n){
     root,
     crumbs: root.querySelector('.lib-crumbs'),
     list: root.querySelector('.lib-list'),
-    trim: root.querySelector('.lib-trim'),
+    rec: root.querySelector('.lib-rec'),
   };
+  n.ui.rec.addEventListener('click', ()=>libRecToggle(n));
 
   root.querySelector('.lib-newfolder').addEventListener('click', async ()=>{
     const name = prompt('Folder name:');
@@ -4926,21 +4923,21 @@ function libClipRow(n, c){
   row.draggable = true;
   row.dataset.clipId = c.id;
   const isSel = n.selected===c.id;
-  row.style.cssText = `display:flex;align-items:center;gap:5px;padding:2px 6px;cursor:pointer;
+  row.style.cssText = `display:flex;align-items:center;gap:5px;padding:2px 6px;min-height:28px;cursor:pointer;
     border-bottom:1px solid #121619;background:${isSel?'#1d2226':'transparent'};min-width:0;`;
 
   const canvas = document.createElement('canvas');
-  canvas.width=50; canvas.height=18;
-  canvas.style.cssText = 'width:50px;height:18px;flex-shrink:0;';
+  canvas.width=36; canvas.height=18;
+  canvas.style.cssText = 'width:36px;height:18px;flex-shrink:0;';
   libDrawPeaks(canvas, c.peaks);
 
   const name = document.createElement('span');
   name.textContent = c.name;
-  name.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  name.style.cssText = 'flex:1;min-width:30px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 
   const dur = document.createElement('span');
   dur.textContent = fmtDur(c.duration);
-  dur.style.cssText = 'color:#4ec9b0;width:34px;';
+  dur.style.cssText = 'color:#4ec9b0;width:30px;flex-shrink:0;';
 
   const playBtn = document.createElement('span');
   playBtn.textContent = (n.selected===c.id && n.play) ? '⏸' : '▶';
@@ -4949,14 +4946,6 @@ function libClipRow(n, c){
     ev.stopPropagation();
     if(n.selected===c.id){ n.play = !n.play; libHighlight(n); }
     else await libArmClip(n, c.id, true);
-  });
-
-  const trimBtn = document.createElement('span');
-  trimBtn.textContent = '✂'; trimBtn.style.cssText='cursor:pointer;color:#6c7a80;';
-  trimBtn.addEventListener('click', async ev=>{
-    ev.stopPropagation();
-    const full = await SampleDB.getClip(c.id);
-    libOpenTrim(n, full);
   });
 
   const renameBtn = document.createElement('span');
@@ -4977,9 +4966,10 @@ function libClipRow(n, c){
     libRefresh(n);
   });
 
-  row.append(canvas, name, dur, playBtn, trimBtn, renameBtn, delBtn);
+  for(const b of [playBtn, renameBtn, delBtn]) b.style.padding = '4px 3px';   // палец должен попадать
+  row.append(canvas, name, dur, playBtn, renameBtn, delBtn);
 
-  row.addEventListener('click', ()=>libArmClip(n, c.id, true));
+  row.addEventListener('click', ()=>libOpenEditor(n, c.id));
   row.addEventListener('dragstart', ev=>{
     ev.dataTransfer.setData('application/x-dsp-clip-id', String(c.id));
     ev.dataTransfer.setData('text/plain', c.name);
@@ -5023,102 +5013,57 @@ function escapeHtml(s){
 }
 
 
-/* ---------- Редактор обрезки ---------- */
-function libOpenTrim(n, clip){
-  const box = n.ui.trim;
-  box.style.display = 'flex';
-  box.innerHTML = '';
-
-  const state = { clip, a: 0, b: clip.samples.length, dragging: null };
-  n.trim = state;
-
-  const header = document.createElement('div');
-  header.style.cssText = 'display:flex;justify-content:space-between;font-size:10px;color:#6c7a80;flex-shrink:0;';
-  header.innerHTML = `<span>${escapeHtml(clip.name)}</span><span class="trim-range"></span>`;
-  box.appendChild(header);
-
-  const canvas = document.createElement('canvas');
-  canvas.width = 400; canvas.height = 90;
-  canvas.style.cssText = 'width:100%;height:90px;flex:1;cursor:col-resize;';
-  box.appendChild(canvas);
-
-  const controls = document.createElement('div');
-  controls.style.cssText = 'display:flex;gap:4px;flex-shrink:0;';
-  controls.innerHTML = `
-    <button class="trim-play" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:10px;">▶ clip</button>
-    <span style="flex:1;"></span>
-    <button class="trim-save" style="background:#1d2226;border:1px solid #4ec9b0;color:#4ec9b0;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:10px;">save</button>
-    <button class="trim-cancel" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:10px;">cancel</button>
-  `;
-  box.appendChild(controls);
-
-  const cx = canvas.getContext('2d');
-  const redraw = ()=>{
-    const W=canvas.width, H=canvas.height, half=H/2, s=clip.samples;
-    cx.clearRect(0,0,W,H);
-    cx.strokeStyle = themeColor('--acc2'); cx.lineWidth = 1; cx.beginPath();
-    const step = Math.max(1, Math.floor(s.length/W));
-    for(let x=0;x<W;x++){
-      const idx = Math.min(x*step, s.length-1);
-      const y = half - (s[idx]||0)*half*0.9;
-      x===0? cx.moveTo(x,y) : cx.lineTo(x,y);
-    }
-    cx.stroke();
-    const ax = state.a/s.length*W, bx = state.b/s.length*W;
-    cx.fillStyle = 'rgba(224,178,60,.12)'; cx.fillRect(ax,0,bx-ax,H);
-    cx.strokeStyle = themeColor('--acc'); cx.lineWidth = 2;
-    cx.beginPath(); cx.moveTo(ax,0); cx.lineTo(ax,H); cx.stroke();
-    cx.beginPath(); cx.moveTo(bx,0); cx.lineTo(bx,H); cx.stroke();
-    header.querySelector('.trim-range').textContent =
-      fmtDur(state.a/clip.sr)+' — '+fmtDur(state.b/clip.sr)+' ('+fmtDur((state.b-state.a)/clip.sr)+')';
-  };
-  redraw();
-
-  const xToSample = x => clamp(Math.round(x/canvas.width*clip.samples.length), 0, clip.samples.length);
-  canvas.addEventListener('pointerdown', ev=>{
-    const r = canvas.getBoundingClientRect();
-    const x = (ev.clientX-r.left)/r.width*canvas.width;
-    const s = xToSample(x);
-    const ax = state.a/clip.samples.length*canvas.width, bx = state.b/clip.samples.length*canvas.width;
-    if(Math.abs(x-ax) < 8) state.dragging = 'a';
-    else if(Math.abs(x-bx) < 8) state.dragging = 'b';
-    else { state.a = s; state.b = s; state.dragging = 'b'; }
-    canvas.setPointerCapture(ev.pointerId);
-  });
-  canvas.addEventListener('pointermove', ev=>{
-    if(!state.dragging) return;
-    const r = canvas.getBoundingClientRect();
-    const x = (ev.clientX-r.left)/r.width*canvas.width;
-    const s = xToSample(x);
-    if(state.dragging==='a') state.a = Math.min(s, state.b);
-    else state.b = Math.max(s, state.a);
-    redraw();
-  });
-  canvas.addEventListener('pointerup', ()=>{ state.dragging=null; });
-
-  controls.querySelector('.trim-play').addEventListener('click', ()=>{
-    const slice = clip.samples.subarray(state.a, state.b);
-    libPlayPreview(n, slice, clip.sr);
-  });
-  controls.querySelector('.trim-save').addEventListener('click', async ()=>{
-    libStopPreview(n);
-    const slice = clip.samples.slice(state.a, state.b);
-    await SampleDB.updateClip(clip.id, {
-      samples: slice, duration: slice.length/clip.sr,
-      peaks: SampleDB.computePeaks(slice),
-    });
-    libCloseTrim(n);
-    if(n.selected===clip.id) await libArmClip(n, clip.id, false);   // перезагрузить обрезанный буфер, если клип сейчас в узле
-    libRefresh(n);
-  });
-  controls.querySelector('.trim-cancel').addEventListener('click', ()=>{
-    libStopPreview(n); libCloseTrim(n);
+/* ---------- Редактор и запись ---------- */
+async function libOpenEditor(n, id){
+  if(n.editor) return;
+  const clip = await SampleDB.getClip(id);
+  if(!clip) return;
+  n.editor = aedOpen(clip, {
+    onSaved: async sid=>{ if(n.selected===sid) await libArmClip(n, sid, false); libRefresh(n); },
+    onClose: ()=>{ n.editor = null; },
   });
 }
-function libCloseTrim(n){
-  n.ui.trim.style.display = 'none';
-  n.ui.trim.innerHTML = '';
-  n.trim = null;
+
+async function libRecToggle(n){
+  if(n.rec) return libRecStop(n);
+  if(n.inWired && Eng.running){
+    n.rec = { src:'graph', chunks:[], sr:Eng.sr, t0:performance.now() };
+  } else {
+    // контекст создаём до await — иначе iOS не даст запустить его вне жеста
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    ctx.resume();
+    let st;
+    try{ st = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}}); }
+    catch(e){ ctx.close(); alert('Microphone unavailable: '+e.message); return; }
+    const src = ctx.createMediaStreamSource(st), sp = ctx.createScriptProcessor(4096, 1, 1);
+    const rec = n.rec = { src:'mic', chunks:[], sr:ctx.sampleRate, t0:performance.now(), ctx, st, sp };
+    sp.onaudioprocess = e=>{ if(n.rec===rec) rec.chunks.push(e.inputBuffer.getChannelData(0).slice()); };
+    src.connect(sp); sp.connect(ctx.destination);      // без подключения к выходу обработчик не вызывается; выход — тишина
+  }
+  n.recTimer = setInterval(()=>libRecUI(n), 250);
+  libRecUI(n);
+}
+async function libRecStop(n){
+  const rec = n.rec; n.rec = null;
+  clearInterval(n.recTimer); libRecUI(n);
+  if(rec.src==='mic'){ rec.sp.disconnect(); rec.st.getTracks().forEach(t=>t.stop()); rec.ctx.close(); }
+  const len = rec.chunks.reduce((a,c)=>a+c.length, 0);
+  if(!len){ alert(rec.src==='graph' ? 'Nothing recorded — is the graph running?' : 'Nothing recorded'); return; }
+  const samples = new Float32Array(len);
+  let o = 0; for(const c of rec.chunks){ samples.set(c, o); o += c.length; }
+  const id = await SampleDB.addClip({
+    name: 'rec '+new Date().toLocaleTimeString(), folderId: n.folderId, sr: rec.sr, samples,
+    peaks: SampleDB.computePeaks(samples), duration: len/rec.sr,
+  });
+  await libRefresh(n);
+  await libArmClip(n, id, false);
+}
+function libRecUI(n){
+  const b = n.ui?.rec; if(!b) return;
+  if(n.rec){
+    b.textContent = '■ '+fmtDur((performance.now()-n.rec.t0)/1000)+(n.rec.src==='graph'?' in':' mic');
+    b.style.background = '#e05c5c'; b.style.color = '#111';
+  } else { b.textContent = '● rec'; b.style.background = '#1d2226'; b.style.color = '#e05c5c'; }
 }
 
 
