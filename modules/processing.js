@@ -881,7 +881,7 @@ def({ id:'capture', title:'Capture & Loop', cat:'Processing',
           {n:'grab',t:'button',label:'Freeze last N s',fn:n=>capGrab(n)},
           {n:'play',t:'button',label:'Play / stop',fn:n=>{ n.play=!n.play; n.pos=0; }},
           {n:'wav',t:'button',label:'Save WAV',fn:n=>{
-            if(n.snap) wavDownload([n.snap],Eng.sr); }}],
+            if(n.snap) wavDownload([n.snap],Eng.sr,'capture-'+recStamp()+'.wav'); }}],
   init:n=>{n.ring=null;n.w=0;n.snap=null;n.play=false;n.pos=0;n.prevT=0;n.armed=true;},
   process(n,I){
     for(const k of ['sec','thr','rate']) if(typeof I[k]==='number') setMod(n,k,I[k]);

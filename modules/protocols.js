@@ -1545,7 +1545,7 @@ def({ id:'ft8Rx', title:'FT8: Receive Slots', cat:'Decoders',
           {n:'wav',t:'button',label:'Save slot to WAV',fn:n=>{
             const L=n.buf.length, o=new Float32Array(L);
             for(let i=0;i<L;i++) o[i]=n.buf[(n.wp+i)%L];
-            wavDownload([o],FT8_SR); }},
+            wavDownload([o],FT8_SR,'ft8-'+recStamp()+'.wav'); }},
           {n:'budget',t:'range',min:100,max:3000,step:50,d:800,label:'parse budget, ms'},
           {n:'save',t:'button',label:'Save log',fn:n=>ft8Save(n)},
           {n:'clr',t:'button',label:'Clear log',fn:n=>{n.log=[];ft8Text(n);}}],

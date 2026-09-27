@@ -970,16 +970,91 @@ def({ id:'fmtview', title:'Template Indicator', cat:'Output', ins:[{n:'in',t:'nu
     .replace('{r}', n.r!=null? n.r.toFixed(4):'—'); }});
 
 
-def({ id:'rec', title:'Record WAV', cat:'Output', ins:[{n:'in',t:'sig'}], readout:true,
-  params:[{n:'go',t:'button',label:'Record / stop',fn:n=>{
-            n.on=!n.on; if(n.on) n.chunks=[]; else wavDownload(n.chunks,Eng.sr); }}],
-  init:n=>{n.on=false;n.chunks=[];},
-  process(n,I){ if(n.on&&I.in) n.chunks.push(I.in.slice()); return {}; },
-  draw(n){ n.el.querySelector('.readout').textContent = n.on
-    ? '● '+(n.chunks.length*BLOCK/Eng.sr).toFixed(1)+' s' : 'ready'; }});
+// Запись в WAV или MP3; имя файла — по дате и времени начала записи.
+// MP3 кодируется по ходу записи (lamejs, грузится при первом использовании) — остановка не
+// подвешивает страницу даже на длинной записи. Частоты, которых нет в MP3, приводятся к 48 кГц.
+const MP3_RATES=[48000,44100,32000,24000,22050,16000,12000,11025,8000];
+let lameP=null;
+function loadLame(){
+  return lameP || (lameP=new Promise((res,rej)=>{
+    if(window.lamejs) return res(window.lamejs);
+    const s=document.createElement('script'); s.src='vendor/lame.min.js?v=1.2.1';
+    s.onload=()=>res(window.lamejs); s.onerror=()=>{ lameP=null; rej(new Error('failed to load MP3 encoder')); };
+    document.head.append(s);
+  }));
+}
+function recStamp(t=Date.now()){                      // 2026-09-27_07-52-10, местное время
+  const d=new Date(t), p=v=>String(v).padStart(2,'0');
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'_'+p(d.getHours())+'-'+p(d.getMinutes())+'-'+p(d.getSeconds());
+}
+function recFileName(n,ext){
+  const pre=String(n.p.prefix||'').trim().replace(/[\\/:*?"<>|]+/g,'_');
+  return (pre?pre+'-':'')+recStamp(n.t0)+'.'+ext;
+}
+function recStart(n){
+  n.chunks=[]; n.mp3=[]; n.mp3Bytes=0; n.pending=[]; n.enc=null; n.samples=0; n.err='';
+  n.t0=Date.now(); n.fmtNow=n.p.fmt; n.on=true;
+  if(n.fmtNow!=='mp3') return;
+  n.sr=MP3_RATES.includes(Eng.sr) ? Eng.sr : 48000;
+  n.rs={pos:0, last:0};                              // состояние линейной передискретизации
+  loadLame().then(L=>{
+    if(!n.on || n.fmtNow!=='mp3') return;
+    n.enc=new L.Mp3Encoder(1,n.sr,+n.p.kbps||128);
+    for(const pcm of n.pending) recMp3Push(n,pcm);
+    n.pending=[];
+  }).catch(e=>{ n.err=e.message; });
+}
+function recToPcm(n,x){                              // Float32 блока → Int16 (с передискретизацией при нужде)
+  if(n.sr===Eng.sr){
+    const o=new Int16Array(x.length);
+    for(let i=0;i<x.length;i++) o[i]=clamp(x[i],-1,1)*32767;
+    return o;
+  }
+  const step=Eng.sr/n.sr, out=[], rs=n.rs;
+  while(rs.pos<x.length){
+    const i=Math.floor(rs.pos), f=rs.pos-i, a=i>0 ? x[i-1] : rs.last, b=x[i];
+    out.push(clamp(a+(b-a)*f,-1,1)*32767);
+    rs.pos+=step;
+  }
+  rs.pos-=x.length; rs.last=x[x.length-1];
+  return Int16Array.from(out);
+}
+function recMp3Push(n,pcm){
+  const d=n.enc.encodeBuffer(pcm);
+  if(d.length){ n.mp3.push(new Uint8Array(d.buffer.slice(d.byteOffset,d.byteOffset+d.length))); n.mp3Bytes+=d.length; }
+}
+function recStop(n){
+  n.on=false;
+  if(n.fmtNow==='mp3'){
+    if(!n.enc){ n.err=n.err||'MP3 encoder not ready — nothing saved'; return; }
+    const d=n.enc.flush(); if(d.length) n.mp3.push(new Uint8Array(d.buffer.slice(d.byteOffset,d.byteOffset+d.length)));
+    dl(new Blob(n.mp3,{type:'audio/mpeg'}),recFileName(n,'mp3'));
+    n.mp3=[]; n.enc=null;
+  } else { wavDownload(n.chunks,Eng.sr,recFileName(n,'wav')); n.chunks=[]; }
+}
+def({ id:'rec', title:'Record Audio', cat:'Output', ins:[{n:'in',t:'sig'}], readout:true,
+  params:[{n:'go',t:'button',label:'Record / stop',fn:n=>{ n.on ? recStop(n) : recStart(n); }},
+          {n:'fmt',t:'select',opts:['wav','mp3'],d:'wav',label:'format'},
+          {n:'kbps',t:'select',opts:['64','96','128','192','256','320'],d:'128',label:'MP3 bitrate, kbps'},
+          {n:'prefix',t:'text',d:'rec',label:'file name prefix (then date_time)'}],
+  init:n=>{ n.on=false; n.chunks=[]; n.mp3=[]; n.mp3Bytes=0; n.pending=[]; n.samples=0; n.err=''; },
+  process(n,I){
+    if(!n.on || !I.in) return {};
+    n.samples+=I.in.length;
+    if(n.fmtNow==='mp3'){
+      const pcm=recToPcm(n,I.in);
+      if(n.enc) recMp3Push(n,pcm); else n.pending.push(pcm);
+    } else n.chunks.push(I.in.slice());
+    return {}; },
+  draw(n){
+    const sec=n.samples/Eng.sr;
+    const t=n.on ? '● '+sec.toFixed(1)+' s'+(n.fmtNow==='mp3' ? ' · mp3 '+(n.mp3Bytes/1024).toFixed(0)+' KB'+(n.enc?'':' (loading encoder…)')
+                                                              : ' · wav '+(sec*Eng.sr*2/1048576).toFixed(1)+' MB')
+                 : 'ready · '+n.p.fmt+(n.p.fmt==='mp3' ? ' '+n.p.kbps+' kbps' : '');
+    n.el.querySelector('.readout').textContent=(n.err?n.err+'\n':'')+t; }});
 
 
-function wavDownload(chunks,sr){
+function wavDownload(chunks,sr,name){
   const len=chunks.reduce((a,c)=>a+c.length,0);
   const b=new ArrayBuffer(44+len*2), v=new DataView(b);
   const wr=(o,s)=>{ for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i)); };
@@ -989,7 +1064,7 @@ function wavDownload(chunks,sr){
   v.setUint16(34,16,true); wr(36,'data'); v.setUint32(40,len*2,true);
   let o=44; for(const c of chunks) for(let i=0;i<c.length;i++){
     v.setInt16(o,clamp(c[i],-1,1)*32767,true); o+=2; }
-  dl(new Blob([b],{type:'audio/wav'}),'record.wav');
+  dl(new Blob([b],{type:'audio/wav'}),name||('rec-'+recStamp()+'.wav'));
 }
 function dl(blob,name){ const a=document.createElement('a');
   a.href=URL.createObjectURL(blob); a.download=name; a.click();
