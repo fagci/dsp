@@ -155,43 +155,59 @@ button,select,input{font:inherit;color:inherit}
 }
 .dash-resizer:hover,.dash-resizer.active{background:var(--acc);box-shadow:0 0 0 1px var(--acc)}
 .dash-pane{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--panel);overflow:hidden}
-.dash-tools{flex:none;position:relative;z-index:4;display:flex;align-items:center;gap:3px;padding:2px 3px;
+.dash-tools{flex:none;position:relative;z-index:4;display:flex;align-items:stretch;gap:0;padding:0;min-height:24px;
   background:var(--panel2);border-bottom:1px solid var(--line);container-type:inline-size}
-.dash-tools select.dash-pick{flex:1 1 auto;min-width:6em;max-width:100%;background:var(--panel);color:var(--txt);
-  border:1px solid var(--line);border-radius:2px;font:11px var(--mono);padding:2px 3px}
-.dash-tools button{flex:none;background:var(--panel);border:1px solid var(--line);border-radius:2px;color:var(--dim);
-  cursor:pointer;font-size:12px;padding:1px 6px;line-height:1.5}
-.dash-tools button:hover{color:var(--acc);border-color:var(--acc)}
-.dash-tools button.on{color:var(--acc);border-color:var(--acc)}
-/* вкладки панели: активная — селект модуля, остальные — кнопки; не влезают — прокрутка вбок */
-.dash-tabs{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:2px;overflow-x:auto;scrollbar-width:none;touch-action:pan-x}
+/* кнопки действий — без рамок и приглушены, ярче при наведении на панель */
+.dash-tools button{flex:none;background:none;border:0;border-radius:0;color:var(--dim);
+  cursor:pointer;font-size:12px;padding:0 7px;line-height:1.5}
+.dash-tools button:hover{color:var(--acc)}
+.dash-tools button.on{color:var(--acc)}
+.dash-acts{flex:none;display:flex;align-items:stretch;opacity:.45;transition:opacity .12s}
+.dash-pane:hover .dash-acts,.dash-tools.acts .dash-acts{opacity:1}
+/* вкладки: активная — селект модуля, слита с телом панели, акцентная черта сверху; остальные — тусклый текст */
+.dash-tabs{flex:1 1 auto;min-width:0;display:flex;align-items:stretch;overflow-x:auto;scrollbar-width:none;touch-action:pan-x}
 .dash-tabs::-webkit-scrollbar{display:none}
-.dash-tools .dash-tab{max-width:9em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:11px var(--mono);
-  background:none;border-color:transparent;padding:2px 6px}
-.dash-tools .dash-tab:hover{background:var(--panel)}
-.dash-tools .dash-tadd{background:none;border-style:dashed;padding:1px 5px}
-.dash-acts{flex:none;display:flex;gap:3px}
+.dash-tools select.dash-pick{flex:0 1 auto;min-width:5em;max-width:100%;-webkit-appearance:none;appearance:none;
+  border:0;border-radius:0;margin-bottom:-1px;color:var(--hi,var(--txt));font:11px var(--mono);padding:0 20px 0 9px;cursor:pointer;
+  box-shadow:inset 0 2px 0 var(--acc),inset 1px 0 0 var(--line),inset -1px 0 0 var(--line);
+  background:linear-gradient(45deg,transparent 50%,var(--dim) 50%) right 11px center/4px 4px no-repeat,
+    linear-gradient(135deg,var(--dim) 50%,transparent 50%) right 7px center/4px 4px no-repeat,var(--panel)}
+.dash-tools .dash-tab{max-width:10em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:11px var(--mono);padding:0 9px}
+.dash-tools .dash-tab:hover{color:var(--txt);background:var(--panel)}
+.dash-tools .dash-tadd{padding:0 8px;opacity:.6}
+.dash-tools .dash-tadd:hover{opacity:1}
 .dash-tools .dash-more{display:none}
-/* узкая панель: действия под «⋯», выпадают столбиком */
+/* узкая панель и тач: действия под «⋯», выпадают столбиком */
 @container (max-width:300px){
   .dash-tools .dash-more{display:block}
   .dash-tools select.dash-pick{min-width:4em}
   .dash-acts{display:none;position:absolute;right:2px;top:100%;z-index:6;flex-direction:column;gap:2px;padding:3px;
     background:var(--panel2);border:1px solid var(--line);border-radius:3px;box-shadow:0 4px 14px rgba(0,0,0,.35)}
   .dash-tools.acts .dash-acts{display:flex}
-  .dash-acts button{padding:4px 10px}
+  .dash-acts button{padding:6px 12px}
+}
+@media (hover:none){
+  .dash-tools .dash-more{display:block}
+  .dash-acts{display:none;position:absolute;right:2px;top:100%;z-index:6;flex-direction:column;gap:2px;padding:3px;opacity:1;
+    background:var(--panel2);border:1px solid var(--line);border-radius:3px;box-shadow:0 4px 14px rgba(0,0,0,.35)}
+  .dash-tools.acts .dash-acts{display:flex}
+  .dash-acts button{padding:8px 14px}
 }
 @media (pointer:coarse){
-  .dash-tools{padding:3px}
-  .dash-tools button{padding:4px 9px;font-size:13px}
-  .dash-tools .dash-tab{padding:5px 8px;font-size:12px}
-  .dash-tools select.dash-pick{padding:5px 4px;font-size:12px}
+  .dash-tools{min-height:34px}
+  .dash-tools button{font-size:14px;padding:0 11px}
+  .dash-tools .dash-tab{font-size:12px;padding:0 11px}
+  .dash-tools select.dash-pick{font-size:12px}
 }
 /* страницы тайлов — рядом с ▦, только в режиме тайлов */
-#dashPages{display:none;gap:3px;align-items:center}
+/* страницы — одна сегментированная группа, активная залита акцентом (#bar button.on) */
+#dashPages{display:none;gap:0;align-items:center}
 #dashPages.on{display:flex;flex:0 0 auto}
-#bar #dashPages .dpg{padding:5px 8px;min-width:28px;font:12px var(--mono)}
-#bar #dashPages .dpg.add{border-style:dashed;color:var(--dim)}
+#bar #dashPages .dpg{padding:5px 8px;min-width:28px;font:12px var(--mono);border-radius:0;margin-left:-1px}
+#bar #dashPages .dpg:first-child{border-radius:3px 0 0 3px;margin-left:0}
+#bar #dashPages .dpg:last-child{border-radius:0 3px 3px 0}
+#bar #dashPages .dpg:only-child{border-radius:3px}
+#bar #dashPages .dpg.add{color:var(--dim)}
 .dash-menu{position:fixed;z-index:30;display:flex;flex-direction:column;min-width:150px;padding:4px;
   background:var(--panel2);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,.4)}
 .dash-menu button{background:none;border:0;color:var(--txt);text-align:left;padding:7px 10px;border-radius:4px;cursor:pointer;font-size:13px}

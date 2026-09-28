@@ -1271,7 +1271,14 @@ function dashDetach(n){                                 // узел уезжае
 function dashTabLabel(x){
   if(x.view==='graph') return '◇ Graph';
   const n=x.node!=null?Graph.map[x.node]:null;
-  return n? MOD[n.type].title : '·';
+  return n? dashShort(n) : '·';
+}
+// подпись вкладки без семейства («Tracker: Mixer» → «Mixer»), #id — только если модулей такого типа несколько
+function dashShort(n){
+  const t=MOD[n.type].title, i=t.indexOf(': ');
+  let s=i>0? t.slice(i+2) : t;
+  if(Graph.nodes.some(x=>x!==n && x.type===n.type)) s+=' #'+n.id;
+  return s;
 }
 function dashBtn2(txt,title,fn,cls){
   const b=document.createElement('button'); b.textContent=txt; b.title=title; b.onclick=fn;
@@ -1291,7 +1298,8 @@ function dashRenderLeaf(t){
   const graphElsewhere=dashLeaves(Graph.dashTree).some(l=>l.tabs.some(x=>x!==tab && x.view==='graph'));
   if(!graphElsewhere) sel.append(new Option('◇ Module graph','@graph'));   // одна на страницу
   const cand=Graph.nodes.filter(x=>x===n || !dashLeafOf(x.id));   // любой модуль, ещё не занявший вкладку
-  for(const pn of cand) sel.append(new Option(MOD[pn.type].title+' #'+pn.id, pn.id));
+  for(const pn of cand) sel.append(new Option(pn===n? dashShort(pn) : MOD[pn.type].title+' #'+pn.id, pn.id));   // выбранный — коротко, как вкладка
+  if(n) sel.title=MOD[n.type].title+' #'+n.id;
   if(n) sel.value=n.id; else if(isGraph) sel.value='@graph';
   sel.addEventListener('pointerdown',e=>e.stopPropagation());
   sel.onchange=()=>{ if(n) dashDetach(n);
@@ -1305,7 +1313,7 @@ function dashRenderLeaf(t){
   const strip=document.createElement('div'); strip.className='dash-tabs';
   t.tabs.forEach((x,i)=>{
     if(i===t.cur){ strip.append(sel); return; }
-    const b=dashBtn2(dashTabLabel(x),'Switch to tab',()=>{
+    const b=dashBtn2(dashTabLabel(x),x.node!=null&&Graph.map[x.node]? MOD[Graph.map[x.node].type].title+' #'+x.node : 'Switch to tab',()=>{
       t.cur=i; dashRenderRoot(); scheduleAutosave();
       if(x.view==='graph') dashGraphFit(); },'dash-tab');
     strip.append(b);
