@@ -941,96 +941,430 @@ def({ id:'ir', lazy:'proc', title:'Impulse Response & RT60', cat:'Analysis',
 
 
 /* ---------- анализ ---------- */
+// Осциллограф. Захват — в process(): кольцо на SCOPE_SEC секунд по 4 каналам и детектор фронта
+// с гистерезисом и холдоффом. Позиция пересечения дробная, кадр копируется в n.fb с линейной
+// доинтерполяцией — на коротких развёртках нет джиттера триггера. n.fb же копит усреднение.
+// draw() только выбирает кадр (n.fb или кольцо), считает измерения и рисует.
+const SCOPE_SEC=10, SCOPE_DX=10, SCOPE_DY=8;
+const SCOPE_COL=['--t-sig','--t-num','--t-spec','--t-img','--t-rec'];   // 5-й — канал math
+const SCOPE_FADE={off:1, short:.3, long:.08, infinite:0};
+const SCOPE_SLOPE={rise:'↑',fall:'↓',both:'↕'};
+
+function scope125(v,dir){                            // соседний шаг ряда 1-2-5; dir=0 — ближайший не меньше v
+  const e=Math.floor(Math.log10(v)), c=[];
+  for(let k=e-1;k<=e+1;k++) for(const m of [1,2,5]) c.push(m*Math.pow(10,k));
+  if(dir>0) return c.find(x=>x>v*1.0001);
+  if(dir<0) return c.reverse().find(x=>x<v*.9999);
+  return c.find(x=>x>=v*.9999);
+}
+function scopeFmtT(s){ const a=Math.abs(s);
+  return a>=1 ? +s.toPrecision(3)+' s' : a>=1e-3 ? +(s*1e3).toPrecision(3)+' ms' : +(s*1e6).toPrecision(3)+' µs'; }
+function scopeFmtHz(f){ return !(f>0) ? '—' : f>=1e6 ? +(f/1e6).toPrecision(4)+' MHz'
+  : f>=1e3 ? +(f/1e3).toPrecision(4)+' kHz' : +f.toPrecision(4)+' Hz'; }
+function scopeFmtV(v){ return Math.abs(v)<5e-5 ? '0' : String(+v.toPrecision(3)); }
+
+function scopeAlloc(n,L){
+  n.L=L; n.ring=[0,1,2,3].map(()=>new Float32Array(L));
+  n.abs=0; n.pend=null; n.fb=null; n.fbKey=null; n.capAbs=null; n.lastTrig=-Infinity; n.hofs=0;
+}
+function scopeSpan(n){ return clamp(Math.round(n.p.span),16,n.L-4*BLOCK); }
+function scopeTrigCh(n){
+  if(n.p.tsrc && n.p.tsrc!=='first') return +n.p.tsrc.slice(2)-1;
+  const c=n.act.indexOf(true); return c<0?0:c;
+}
+// фронт на входе триггера: взвод ниже lev-h (выше lev+h для спада), срабатывание при пересечении lev
+function scopeTrigScan(n,s,a0,N,sr){
+  const lev=n.p.tlev, h=Math.max(1e-6,n.p.hyst), sl=n.p.slope;
+  const gap=Math.max(n.p.hold*sr/1000, sr/200);     // не чаще 200 захватов/с
+  let prev=n.tPrev, armR=n.armR, armF=n.armF;
+  for(let i=0;i<N;i++){ const v=s[i];
+    if(v<lev-h) armR=true; else if(v>lev+h) armF=true;
+    let hit=false;
+    if(armR && prev<lev && v>=lev){ armR=false; hit=sl!=='fall'; }
+    else if(armF && prev>lev && v<=lev){ armF=false; hit=sl!=='rise'; }
+    if(hit && n.pend==null){
+      const t=a0+i-1+(lev-prev)/((v-prev)||1);
+      if(t-n.lastTrig>=gap){ n.pend=t; n.lastTrig=t; } }
+    prev=v; }
+  n.tPrev=prev; n.armR=armR; n.armF=armF;
+}
+function scopeCapture(n,t0,span){
+  const L=n.L, avg=n.p.avg==='off'?1:+n.p.avg, key=span+'|'+avg;
+  if(n.fbKey!==key){ n.fbKey=key; n.fb=[0,1,2,3].map(()=>new Float32Array(span)); n.avgK=0; }
+  n.avgK=Math.min(n.avgK+1,avg);
+  const a=1/n.avgK, i0=Math.floor(t0), fr=t0-i0;
+  for(let c=0;c<4;c++){ if(!n.act[c]) continue;
+    const r=n.ring[c], f=n.fb[c];
+    let j=((i0%L)+L)%L;
+    for(let k=0;k<span;k++){ const j1=j+1===L?0:j+1;
+      f[k]+=(r[j]+(r[j1]-r[j])*fr-f[k])*a; j=j1; } }
+  n.fbT=t0; n.pend=null; n.capAbs=n.abs;
+  if(n.p.tmode==='single'){ n.run=false; n.frz=true; }
+}
+function scopeStale(n,span,sr){ return n.capAbs==null || n.abs-n.capAbs>Math.max(2*span,sr*.15); }
+// кадр для показа: кадр триггера (n.fb) или окно кольца; при остановке — панорама по истории (n.hofs)
+function scopeFrame(n){
+  const span=scopeSpan(n), sr=Eng.sr||48000;
+  const has=n.p.trig && n.fb && n.fb[0].length===span;
+  const useFb=has && (n.run ? !(n.p.tmode==='auto' && scopeStale(n,span,sr)) : n.frz);
+  if(useFb && !n.hofs) return {src:n.fb, off:0, L:span, span, trig:true, pre:n.p.tpos*span};
+  const base=useFb ? Math.round(n.fbT) : n.abs-span;
+  const lo=n.abs-n.L+1, hi=n.abs-span;
+  const at=clamp(base-(n.run?0:n.hofs),Math.min(lo,hi),hi);
+  if(!n.run) n.hofs=base-at;
+  return {src:n.ring, off:((at%n.L)+n.L)%n.L, L:n.L, span, trig:useFb,
+          pre:useFb ? n.fbT+n.p.tpos*span-at : span};
+}
+// кадр по каналам в n.vb (0..3, 4 — math), AC-связь — вычитанием среднего по кадру
+function scopeView(n,fr){
+  const N=fr.span;
+  if(!n.vb || n.vb[0].length!==N) n.vb=[0,1,2,3,4].map(()=>new Float32Array(N));
+  const vb=n.vb, ac=n.p.coup==='AC', m=n.p.math;
+  const chs=[0,1,2,3].filter(c=>n.act[c]);
+  if(!chs.length) chs.push(0);
+  const use=new Set(chs); if(m!=='off' || n.p.mode==='XY'){ use.add(0); use.add(1); }
+  for(const c of use){ const v=vb[c], s=fr.src[c];
+    if(!n.act[c]){ v.fill(0); continue; }
+    if(fr.L===N) v.set(s);
+    else { const k=Math.min(N,fr.L-fr.off); v.set(s.subarray(fr.off,fr.off+k)); if(k<N) v.set(s.subarray(0,N-k),k); } }
+  if(m!=='off'){ const a=vb[0], b=vb[1], o=vb[4];
+    if(m==='1+2') for(let i=0;i<N;i++) o[i]=a[i]+b[i];
+    else if(m==='1-2') for(let i=0;i<N;i++) o[i]=a[i]-b[i];
+    else for(let i=0;i<N;i++) o[i]=a[i]*b[i];
+    chs.push(4); }
+  if(ac) for(const c of chs){ const v=vb[c]; let s=0;
+    for(let i=0;i<N;i++) s+=v[i];
+    s/=N; for(let i=0;i<N;i++) v[i]-=s; }
+  return chs;
+}
+// размах/RMS/среднее; частота и скважность — по фронтам через середину размаха с гистерезисом 10%
+function scopeMeasure(v,N,sr){
+  let mn=Infinity, mx=-Infinity, s=0, s2=0;
+  for(let i=0;i<N;i++){ const x=v[i]; if(x<mn) mn=x; if(x>mx) mx=x; s+=x; s2+=x*x; }
+  const pp=mx-mn, mid=(mx+mn)/2, h=pp*.1;
+  let st=v[0]>mid, lb=0, first=-1, last=-1, edges=0, hiN=0, hiLast=0;
+  if(pp>1e-9) for(let i=1;i<N;i++){ const x=v[i];
+    if(!st && x>mid+h){ st=true;
+      const t=lb+(mid-v[lb])/((v[lb+1]-v[lb])||1);
+      if(first<0) first=t; else { last=t; edges++; hiLast=hiN; } }
+    else if(st && x<mid-h) st=false;
+    if(x<=mid) lb=i;
+    if(first>=0 && st) hiN++; }
+  const per=edges ? (last-first)/edges : 0;
+  return {min:mn, max:mx, pp, mean:s/N, rms:Math.sqrt(s2/N),
+          f:per ? sr/per : 0, duty:edges ? hiLast/(last-first) : NaN};
+}
+function scopeMeasAll(n,fr,chs){
+  const sr=Eng.sr||48000, m=[];
+  for(const c of chs) m[c]=scopeMeasure(n.vb[c],fr.span,sr);
+  n.meas=m; n.measT=performance.now();
+}
+function scopeAutoset(n){
+  const sr=Eng.sr||48000; if(!n.L || !n.abs) return;
+  const N=Math.min(Math.round(sr*.2), n.abs, n.L-BLOCK), a0=((n.abs-N)%n.L+n.L)%n.L;
+  const chs=[0,1,2,3].filter(c=>n.act[c]); if(!chs.length) return;
+  const tmp=new Float32Array(N), tc=scopeTrigCh(n);
+  let peak=0, tm=null, one=null;
+  for(const c of chs){ const r=n.ring[c], k=Math.min(N,n.L-a0);
+    tmp.set(r.subarray(a0,a0+k)); if(k<N) tmp.set(r.subarray(0,N-k),k);
+    const m=scopeMeasure(tmp,N,sr);
+    peak=Math.max(peak,Math.abs(m.max),Math.abs(m.min));
+    if(c===tc || !tm) tm=m;
+    one=chs.length===1?m:null; }
+  if(peak<1e-6) return;
+  const k=n.p.stack?.5:.25;
+  let g, ofs=0;
+  if(one && !n.p.stack){ g=1.5/Math.max(one.pp,1e-6); ofs=-(one.max+one.min)/2; }
+  else g=.9/peak;
+  g=k/scope125(k/g,0);                               // В/дел — по ряду 1-2-5
+  g=clamp(g,.05,50);
+  setMod(n,'gain',g); setMod(n,'ofs',clamp(ofs*g,-1,1));
+  const td=tm.f>0 ? scope125(2.5/tm.f/SCOPE_DX,0) : scope125(.02/SCOPE_DX,0);
+  setMod(n,'span',Math.round(td*SCOPE_DX*sr));
+  setMod(n,'trig',true); setMod(n,'tmode','auto');
+  setMod(n,'tlev',clamp((tm.max+tm.min)/2,-1,1));
+  setMod(n,'hyst',clamp(tm.pp*.05,.001,.5));
+  n.run=true; n.hofs=0; n.pend=null; n.pcKey=null;
+}
+function scopeRun(n,on){
+  if(!on){ const span=scopeSpan(n);                  // остановка замораживает то, что было на экране
+    n.frz=!!(n.p.trig && n.fb && n.fb[0].length===span && !(n.p.tmode==='auto' && scopeStale(n,span,Eng.sr||48000))); }
+  n.run=on; n.hofs=0; n.pend=null; n.pcKey=null;
+  if(on && n.p.tmode==='single') setMod(n,'tmode','auto');
+}
+function scopeSingle(n){
+  if(n.p.tmode!=='single') setMod(n,'tmode','single');
+  if(!n.p.trig) setMod(n,'trig',true);
+  n.run=true; n.hofs=0; n.pend=null; n.capAbs=null; n.avgK=0;
+}
+// попадание по элементу управления на экране; loose — тап мимо курсоров двигает ближайший
+function scopeHit(n,x,y,shift,loose){
+  const G=n._geo; if(!G || G.xy) return null;
+  if(shift && !n.run) return {k:'pan'};
+  if(n.p.trig && G.tly!=null && x>G.W-18 && Math.abs(y-G.tly)<9) return {k:'tlev'};
+  if(n.p.trig && G.tx!=null && y<26 && Math.abs(x-G.tx)<9) return {k:'tpos'};
+  const cm=n.p.cursors;
+  if(cm!=='off'){
+    const dt=i=>Math.abs(x-n.cur.t[i]*G.W), dv=i=>Math.abs(y-G.vy(n.cur.v[i]));
+    let best=null, bd=10;
+    if(cm!=='level') for(const i of [0,1]) if(dt(i)<bd){ bd=dt(i); best={k:'ct',i}; }
+    if(cm!=='time') for(const i of [0,1]) if(dv(i)<bd){ bd=dv(i); best={k:'cv',i}; }
+    if(best || !loose) return best;
+    return cm!=='level' ? {k:'ct',i:dt(0)<=dt(1)?0:1} : {k:'cv',i:dv(0)<=dv(1)?0:1};
+  }
+  return n.run ? null : {k:'pan'};
+}
+function scopeDragTo(n,d,x,y){
+  const G=n._geo;
+  if(d.k==='tlev'){ setMod(n,'tlev',clamp(G.yv(y),-1,1)); n.tlevT=performance.now(); }
+  else if(d.k==='tpos') setMod(n,'tpos',clamp(x/G.W,0,1));
+  else if(d.k==='ct') n.cur.t[d.i]=clamp(x/G.W,0,1);
+  else if(d.k==='cv') n.cur.v[d.i]=G.yv(clamp(y,0,G.H));
+  else if(d.k==='pan') n.hofs=Math.round(d.h0+(x-d.x0)/G.W*G.span);
+}
+function scopeWire(n,cv){
+  if(n._wcv===cv) return; n._wcv=cv;
+  const pos=ev=>{ const r=cv.getBoundingClientRect();
+    return [(ev.clientX-r.left)/r.width*cv.width, (ev.clientY-r.top)/r.height*cv.height]; };
+  const CUR={tlev:'ns-resize',cv:'ns-resize',tpos:'ew-resize',ct:'ew-resize',pan:'grab'};
+  let drag=null;
+  cv.addEventListener('pointerdown',ev=>{
+    const [x,y]=pos(ev); drag=scopeHit(n,x,y,ev.shiftKey,true); if(!drag) return;
+    ev.stopPropagation(); cv.setPointerCapture(ev.pointerId);
+    drag.x0=x; drag.h0=n.hofs; n._drag=drag.k;
+    if(drag.k!=='pan') scopeDragTo(n,drag,x,y); });
+  cv.addEventListener('pointermove',ev=>{ const [x,y]=pos(ev);
+    if(drag){ scopeDragTo(n,drag,x,y); return; }
+    const h=scopeHit(n,x,y,ev.shiftKey,false); cv.style.cursor=h?CUR[h.k]:''; });
+  const end=()=>{ drag=null; n._drag=null; };
+  cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
+  cv.addEventListener('dblclick',ev=>{ ev.stopPropagation(); scopeRun(n,!n.run); });
+  // колесо: время/дел, Shift — В/дел; оба по ряду 1-2-5
+  cv.addEventListener('wheel',ev=>{ ev.preventDefault(); ev.stopPropagation();
+    const now=performance.now(); if(n._wt && now-n._wt<80) return; n._wt=now;
+    const dy=ev.deltaY||ev.deltaX; if(!dy) return;
+    const dir=dy<0?-1:1, sr=Eng.sr||48000;
+    if(ev.shiftKey){ const k=n.p.stack?.5:.25, vd=scope125(k/n.p.gain,dir);
+      if(vd) setMod(n,'gain',clamp(k/vd,.05,50)); }
+    else { const td=scope125(n.p.span/SCOPE_DX/sr,dir);
+      if(td) setMod(n,'span',clamp(Math.round(td*SCOPE_DX*sr),16,480000)); }
+  },{passive:false});
+}
+const scopeLz=d=>{ if(d===0) return 1; if(d<=-6||d>=6) return 0;   // ядро Ланцоша, a=6
+  const p=Math.PI*d; return 6*Math.sin(p)*Math.sin(p/6)/(p*p); };
+function scopeTrace(cx,v,N,W,yc,amp,g,o,style){
+  const Y=s=>yc-clamp(s*g+o,-1,1)*amp, spp=N/W;
+  cx.beginPath();
+  if(spp>1){                                          // отсчётов больше, чем пикселей — огибающая min/max
+    for(let x=0;x<W;x++){
+      const i0=(x*spp)|0, i1=Math.min(N,Math.max(i0+1,((x+1)*spp)|0));
+      let mn=v[i0], mx=mn;
+      for(let i=i0+1;i<i1;i++){ const s=v[i]; if(s<mn) mn=s; else if(s>mx) mx=s; }
+      const y1=Y(mn), y2=Y(mx);
+      if(style==='dots'){ cx.rect(x,y2-.5,1,y1-y2+1); continue; }
+      x ? cx.lineTo(x+.5,y1) : cx.moveTo(x+.5,y1); cx.lineTo(x+.5,y2); }
+    style==='dots' ? cx.fill() : cx.stroke(); return; }
+  if(style==='sinc' && spp<.5){                       // sin(x)/x-восстановление между отсчётами
+    for(let x=0;x<=W;x++){ const u=x*spp, k0=Math.floor(u);
+      let s=0, ws=0;
+      for(let j=k0-5;j<=k0+6;j++){ const w=scopeLz(u-j); s+=v[j<0?0:j>=N?N-1:j]*w; ws+=w; }
+      x ? cx.lineTo(x,Y(s/ws)) : cx.moveTo(x,Y(s/ws)); }
+    cx.stroke();
+  } else if(style!=='dots'){
+    for(let k=0;k<N;k++){ const x=k/spp; k ? cx.lineTo(x,Y(v[k])) : cx.moveTo(x,Y(v[k])); }
+    cx.stroke(); }
+  if(style==='dots' || spp<.125){                     // сами отсчёты
+    cx.beginPath(); const r=style==='dots'?1.5:1;
+    for(let k=0;k<N;k++){ const x=k/spp, y=Y(v[k]); cx.rect(x-r,y-r,2*r,2*r); }
+    cx.fill(); }
+}
+function scopeText(cx,t,x,y,col,bg){                 // подпись с подложкой; y — базовая линия
+  const w=cx.measureText(t).width;
+  cx.fillStyle=bg; cx.fillRect(x-2,y-9,w+4,12);
+  cx.fillStyle=col; cx.fillText(t,x,y); return w+4;
+}
+function scopeGridXY(cx,W,H,col){
+  const R=Math.min(W,H)/2, x0=W/2, y0=H/2;
+  cx.strokeStyle=col; cx.beginPath();
+  for(let i=0;i<=SCOPE_DY;i++){ const d=-R+i*2*R/SCOPE_DY;
+    cx.moveTo(x0+d,y0-R); cx.lineTo(x0+d,y0+R); cx.moveTo(x0-R,y0+d); cx.lineTo(x0+R,y0+d); }
+  cx.stroke();
+}
+function scopeDrawXY(n,cx,W,H,g,style,cols){
+  const R=Math.min(W,H)/2, x0=W/2, y0=H/2, N=n.vb[0].length;
+  const st=Math.max(1,Math.floor(N/20000));
+  for(const [a,b,c] of [[0,1,0],[2,3,2]]){         // пары in1/in2 и in3/in4
+    if(a && !(n.act[a]&&n.act[b])) continue;
+    const X=n.vb[a], Yv=n.vb[b];
+    cx.strokeStyle=cx.fillStyle=cols[c]; cx.beginPath();
+    for(let k=0;k<N;k+=st){ const x=x0+clamp(X[k]*g,-1,1)*R, y=y0-clamp(Yv[k]*g,-1,1)*R;
+      if(style==='dots') cx.rect(x-.75,y-.75,1.5,1.5); else k ? cx.lineTo(x,y) : cx.moveTo(x,y); }
+    style==='dots' ? cx.fill() : cx.stroke(); }
+}
 def({ id:'scope', lazy:'proc', title:'Oscilloscope', cat:'Analysis',
   ins:[{n:'in1',t:'sig'},{n:'in2',t:'sig'},{n:'in3',t:'sig'},{n:'in4',t:'sig'},
        {n:'span',t:'num'},{n:'gain',t:'num'},{n:'ofs',t:'num'},{n:'trig',t:'num'},{n:'stack',t:'num'}],
-  view:{h:110},
-  params:[{n:'span',t:'range',min:64,max:480000,step:64,d:1024,log:true,label:'window, samples'},
-          {n:'gain',t:'range',min:.05,max:50,step:.05,d:1},
+  outs:[{n:'freq',t:'num'},{n:'vpp',t:'num'},{n:'rms',t:'num'}],
+  w:380, view:{h:200}, resize:true,
+  params:[{n:'runstop',t:'button',label:'Run / Stop',fn:n=>scopeRun(n,!n.run)},
+          {n:'single',t:'button',label:'Single',fn:scopeSingle},
+          {n:'autoset',t:'button',label:'Autoset',fn:scopeAutoset},
+          {n:'span',t:'range',min:16,max:480000,step:1,d:1024,log:true,label:'window, samples'},
+          {n:'gain',t:'range',min:.05,max:50,step:.05,d:1,log:true},
           {n:'ofs',t:'range',min:-1,max:1,step:.01,d:0},
-          {n:'trig',t:'check',d:true},
+          {n:'tlev',t:'range',min:-1,max:1,step:.001,d:0,label:'trigger level'},
+          {n:'tpos',t:'range',min:0,max:1,step:.01,d:.5,label:'trigger position'},
+          {n:'tmode',t:'buttons',opts:['auto','normal','single'],d:'auto',label:'trigger mode',
+           fn:n=>n.p.tmode==='single' ? scopeSingle(n) : scopeRun(n,true)},
+          {n:'slope',t:'buttons',opts:['rise','fall','both'],d:'rise',label:'slope'},
+          {n:'cursors',t:'select',opts:['off','time','level','both'],d:'off',label:'cursors'},
+          {n:'trig',t:'check',d:true,label:'trigger',fn:n=>{ n.pend=null; }},
           {n:'stack',t:'check',d:false},
-          {n:'grid',t:'check',d:true,label:'grid'}],
-  init:n=>{ n.L=16384; n.ring=[0,1,2,3].map(()=>new Float32Array(n.L)); n.w=0; },
+          {n:'grid',t:'check',d:true,label:'grid'},
+          {n:'meas',t:'check',d:true,label:'measure'},
+          {n:'tsrc',t:'select',opts:['first','in1','in2','in3','in4'],d:'first',label:'trigger source',adv:true},
+          {n:'hyst',t:'range',min:0,max:.5,step:.001,d:.01,label:'trigger hysteresis',adv:true},
+          {n:'hold',t:'range',min:0,max:1000,step:.1,d:0,label:'holdoff, ms',adv:true},
+          {n:'coup',t:'select',opts:['DC','AC'],d:'DC',label:'coupling',adv:true},
+          {n:'avg',t:'select',opts:['off','2','4','8','16','64','256'],d:'off',label:'averaging',adv:true},
+          {n:'persist',t:'select',opts:['off','short','long','infinite'],d:'off',label:'persistence',adv:true},
+          {n:'style',t:'select',opts:['sinc','vectors','dots'],d:'sinc',label:'draw',adv:true},
+          {n:'mode',t:'select',opts:['YT','XY'],d:'YT',label:'display',adv:true},
+          {n:'math',t:'select',opts:['off','1+2','1-2','1*2'],d:'off',label:'math',adv:true}],
+  init:n=>{ n.L=0; n.act=[false,false,false,false]; n.run=true; n.hofs=0; n.tPrev=0; n.armR=n.armF=false;
+            n.cur={t:[.3,.7],v:[.5,-.5]}; n.meas=[]; },
   process(n,I){
-    // буфер вмещает MAXSEC секунд при текущей sr — пересчитываем размер, только если sr поменялась
-    const MAXSEC=10, need=Math.ceil((Eng.sr||48000)*MAXSEC);
-    if(need!==n.L){ n.L=need; n.ring=[0,1,2,3].map(()=>new Float32Array(n.L)); n.w=0; }
-    for(const k of ['span','gain','ofs']) if(typeof I[k]==='number') setMod(n,k,I[k]);
-    for(const k of ['trig','stack']) if(typeof I[k]==='number') setMod(n,k,I[k]>=0.5);
-    const src=[I.in1,I.in2,I.in3,I.in4];
-    let w=n.w;
-    for(let i=0;i<BLOCK;i++){
-      for(let c=0;c<4;c++) n.ring[c][w]=src[c]?src[c][i]:0;
-      w=(w+1)%n.L; }
-    n.w=w; n.act=src.map(s=>!!s);
-    return {}; },
+    const sr=Eng.sr||48000, need=Math.ceil(sr*SCOPE_SEC);
+    if(need!==n.L) scopeAlloc(n,need);
+    const src=[I.in1,I.in2,I.in3,I.in4], N=BLOCK;
+    for(let c=0;c<4;c++) n.act[c]=!!src[c];
+    if(n.run){                                        // остановлен — кольцо заморожено, по нему можно листать
+      const L=n.L, a0=n.abs, w=a0%L, k=Math.min(N,L-w);
+      for(let c=0;c<4;c++){ const r=n.ring[c], s=src[c];
+        if(s){ r.set(s.subarray(0,k),w); if(k<N) r.set(s.subarray(k,N),0); }
+        else { r.fill(0,w,w+k); if(k<N) r.fill(0,0,N-k); } }
+      const ts=src[scopeTrigCh(n)];
+      if(n.p.trig && ts) scopeTrigScan(n,ts,a0,N,sr);
+      n.abs=a0+N;
+      if(n.pend!=null){ const span=scopeSpan(n), t0=n.pend-n.p.tpos*span;
+        if(t0<n.abs-L+2*N) n.pend=null;               // span/tpos сменили — кадр уже не собрать
+        else if(Math.floor(t0)+span+1<n.abs) scopeCapture(n,t0,span); }
+    }
+    // измерения для выходов, пока узел не рисуется (свёрнут/вне экрана)
+    const now=performance.now();
+    if(now-(n._drawT||0)>500 && now-(n.measT||0)>300){ const fr=scopeFrame(n); scopeMeasAll(n,fr,scopeView(n,fr)); }
+    const m=n.meas[scopeTrigCh(n)];
+    return {freq:m?m.f:0, vpp:m?m.pp:0, rms:m?m.rms:0}; },
   draw(n,cv,cx){
-    const W=cv.width,H=cv.height,L=n.L,span=Math.min(+n.p.span,L-1);
-    // цвета темы не меняются каждый кадр — обновляем раз в ~30 кадров, а не при каждой отрисовке
-    if(!n.cols || ((n.colFrame=(n.colFrame||0)+1)%30===0))
-      n.cols=['--t-sig','--t-num','--t-spec','--t-img'].map(v=>
-        getComputedStyle(document.body).getPropertyValue(v));
-    const cols=n.cols;
+    const W=cv.width, H=cv.height, sr=Eng.sr||48000, now=performance.now();
+    if(!n.L) scopeAlloc(n,Math.ceil(sr*SCOPE_SEC));
+    scopeWire(n,cv); n._drawT=now;
+    const cols=SCOPE_COL.map(themeColor), grid=themeColor('--grid'), axis=themeColor('--axis'),
+          acc=themeColor('--acc'), acc2=themeColor('--acc2'), bg=themeColor('--panel')+'d0', txt=themeColor('--txt');
+    const fr=scopeFrame(n), span=fr.span, chs=scopeView(n,fr);
+    if(now-(n.measT||0)>150) scopeMeasAll(n,fr,chs);
+    const g=n.p.gain, o=n.p.ofs, style=n.p.style, xy=n.p.mode==='XY', tc=scopeTrigCh(n);
+    const nL=n.p.stack?chs.length:1, lane=c=>{ const i=n.p.stack?chs.indexOf(c):0;
+      return {yc:H*(i+.5)/nL, amp:H/(2*nL)}; };
+    // персистентность — трассы копятся в отдельной канве и гаснут по SCOPE_FADE
+    const fade=SCOPE_FADE[n.p.persist]??1;
+    let tcx=cx;
+    if(fade<1){
+      const pw=cv.pxW||W, ph=cv.pxH||H;
+      if(!n.pc || n.pc.width!==pw || n.pc.height!==ph){
+        n.pc=Object.assign(document.createElement('canvas'),{width:pw,height:ph});
+        n.pcx=n.pc.getContext('2d'); n.pcKey=null; }
+      tcx=n.pcx; tcx.setTransform(pw/W,0,0,ph/H,0,0);
+      const key=[span,g,o,n.p.stack,n.p.mode,n.p.math,n.p.coup,style,chs.join()].join('|');
+      if(key!==n.pcKey){ n.pcKey=key; tcx.clearRect(0,0,W,H); }
+      else if(fade>0){ tcx.globalCompositeOperation='destination-out';
+        tcx.fillStyle='rgba(0,0,0,'+fade+')'; tcx.fillRect(0,0,W,H);
+        tcx.globalCompositeOperation='source-over'; }
+    } else n.pc=null;
+    const traces=t=>{ t.lineWidth=1;
+      if(xy) scopeDrawXY(n,t,W,H,g,style,cols);
+      else for(const c of chs){ const {yc,amp}=lane(c);
+        t.strokeStyle=t.fillStyle=cols[c]; scopeTrace(t,n.vb[c],span,W,yc,amp,g,o,style); } };
+    if(tcx!==cx) traces(tcx);
     cx.clearRect(0,0,W,H);
-    const act=(n.act||[true]).map((v,i)=>v||i===0), nA=Math.max(1,act.filter(Boolean).length);
-    if(n.p.grid){
-      const totalMs=span/(Eng.sr||48000)*1000;
-      cx.strokeStyle=themeColor('--grid'); cx.font='8px monospace'; cx.fillStyle=themeColor('--axis');
-      // время слева направо: 0 мс — старый край окна, totalMs — текущий момент
-      for(let i=0;i<=10;i++){
-        const x=Math.round(i*W/10)+.5, t=i/10*totalMs;
-        cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke();
-        const lbl=(t<10?t.toFixed(1):Math.round(t))+' ms';
-        cx.fillText(lbl, clamp(x-14,2,W-2-lbl.length*5), 9); }
-      // уровень в дБ относительно полного размаха — отдельно на каждую активную полосу
-      const dbSteps=[0,-6,-12,-18,-24];
-      for(let k=0,shown=0;k<4;k++){ if(!act[k]) continue;
-        const amp = n.p.stack ? H/(2*nA)*.9 : H/2*.95;
-        const yc  = n.p.stack ? H*(shown+.5)/nA : H/2; shown++;
-        cx.beginPath();
-        for(const db of dbSteps){
-          const a=Math.pow(10,db/20), y1=yc-a*amp, y2=yc+a*amp;
-          cx.moveTo(0,y1); cx.lineTo(W,y1); cx.moveTo(0,y2); cx.lineTo(W,y2); }
-        cx.stroke();
-        for(const db of dbSteps){
-          const a=Math.pow(10,db/20), y1=yc-a*amp;
-          cx.fillText(db+' dB', 2, y1-2>8?y1-2:y1+9); } } }
-    cx.strokeStyle=themeColor('--grid');
-    for(let k=0,shown=0;k<4;k++){ if(!act[k]) continue;
-      const yc = n.p.stack ? H*(shown+.5)/nA : H/2; shown++;
-      cx.beginPath(); cx.moveTo(0,yc); cx.lineTo(W,yc); cx.stroke(); }
-    let start=(n.w-span+L)%L;
-    if(n.p.trig){                                     // ищем фронт, но не дальше 2 экранов назад
-      const act=n.act||[true];
-      let ch=0; while(ch<4 && !act[ch]) ch++;         // источник триггера — первый активный канал, не всегда in1
-      const r0=n.ring[ch], searchLen=Math.min(L-span, span*2);
-      for(let k=0;k<searchLen;k++){ const i=(n.w-span-k+L*2)%L, j=(i-1+L)%L;
-        if(r0[j]<=0&&r0[i]>0){ start=i; break; } } }
-    const spp=span/W;                                 // отсчётов на пиксель
-    for(let c=0,shown=0;c<4;c++){ if(!act[c]) continue;
-      const amp = n.p.stack ? H/(2*nA)*.9 : H/2*.95;
-      const yc  = n.p.stack ? H*(shown+.5)/nA : H/2; shown++;
-      cx.strokeStyle=cols[c]; cx.lineWidth=1; cx.beginPath();
-      const r=n.ring[c];
-      // при spp>1 отсчётов больше, чем пикселей — сводим их в столбец через min/max (иначе рисовать нечем).
-      // при spp<=1 отсчётов меньше, чем пикселей — соединяем сами отсчёты линией, а не столбцами:
-      // столбец в этом случае почти всегда попадает в один и тот же отсчёт и рисует "полку", отсюда ступеньки.
-      if(spp<=1){
-        for(let k=0;k<=span;k++){
-          const v=r[(start+Math.min(k,span-1))%L]*n.p.gain+n.p.ofs;
-          const x=k/spp, y=yc-clamp(v,-1,1)*amp;
-          k===0? cx.moveTo(x,y) : cx.lineTo(x,y); }
-      } else {
-        for(let x=0;x<W;x++){
-          const i0=(x*spp)|0, i1=Math.max(i0+1,((x+1)*spp)|0);
-          let mn=1,mx=-1;
-          for(let i=i0;i<i1;i++){ const v=r[(start+i)%L]*n.p.gain+n.p.ofs; if(v<mn)mn=v; if(v>mx)mx=v; }
-          const y1=yc-clamp(mn,-1,1)*amp, y2=yc-clamp(mx,-1,1)*amp;
-          x===0? cx.moveTo(x,y1) : cx.lineTo(x,y1);
-          cx.lineTo(x,y2); }
-      }
-      cx.stroke(); } }});
+    // сетка: 10×8 делений, оси с мелкими рисками по 1/5 деления
+    if(n.p.grid && xy) scopeGridXY(cx,W,H,grid);
+    else if(n.p.grid){
+      cx.strokeStyle=grid; cx.beginPath();
+      for(let i=0;i<=SCOPE_DX;i++){ const x=Math.round(i*W/SCOPE_DX)+.5; cx.moveTo(x,0); cx.lineTo(x,H); }
+      if(n.p.stack) for(let i=0;i<nL;i++){ const yc=H*(i+.5)/nL, a=H/(2*nL);
+        for(const d of [-1,-.5,.5,1]){ const y=Math.round(yc+d*a)+.5; cx.moveTo(0,y); cx.lineTo(W,y); } }
+      else for(let j=0;j<=SCOPE_DY;j++){ const y=Math.round(j*H/SCOPE_DY)+.5; cx.moveTo(0,y); cx.lineTo(W,y); }
+      cx.stroke();
+      cx.strokeStyle=axis+'80'; cx.beginPath();
+      const xm=Math.round(W/2)+.5;
+      cx.moveTo(xm,0); cx.lineTo(xm,H);
+      for(let i=0;i<=SCOPE_DY*5;i++){ const y=Math.round(i*H/SCOPE_DY/5)+.5; cx.moveTo(xm-2,y); cx.lineTo(xm+3,y); }
+      for(let k=0;k<nL;k++){ const y=Math.round(H*(k+.5)/nL)+.5;
+        cx.moveTo(0,y); cx.lineTo(W,y);
+        for(let i=0;i<=SCOPE_DX*5;i++){ const x=Math.round(i*W/SCOPE_DX/5)+.5; cx.moveTo(x,y-2); cx.lineTo(x,y+3); } }
+      cx.stroke(); }
+    if(tcx!==cx) cx.drawImage(n.pc,0,0,W,H); else traces(cx);
+    cx.font='9px monospace'; cx.textBaseline='alphabetic';
+    // геометрия для мыши: опорная полоса — канал триггера
+    const ref=chs.includes(tc)?tc:chs[0], RL=lane(ref);
+    const G=n._geo={W,H,span,xy, vy:v=>RL.yc-(v*g+o)*RL.amp, yv:y=>((RL.yc-y)/RL.amp-o)/g, tly:null, tx:null};
+    const tOf=x=>(x/W*span-fr.pre)/sr;               // время пикселя относительно триггера (или «сейчас»)
+    if(!xy){
+      // маркеры нуля каналов слева
+      for(const c of chs){ const {yc,amp}=lane(c), y=yc-clamp(o,-1,1)*amp;
+        cx.fillStyle=cols[c]; cx.beginPath(); cx.moveTo(0,y-5); cx.lineTo(9,y); cx.lineTo(0,y+5); cx.fill();
+        cx.fillStyle=themeColor('--bg'); cx.fillText(c===4?'M':String(c+1),1,y+3); }
+      if(n.p.trig){
+        if(n.p.tlev!==n._tl){ n._tl=n.p.tlev; n.tlevT=now; }
+        const y=G.tly=clamp(G.vy(n.p.tlev),0,H), col=cols[tc];
+        if(n._drag==='tlev' || now-(n.tlevT||0)<1500){
+          cx.strokeStyle=col; cx.setLineDash([4,3]); cx.beginPath(); cx.moveTo(0,y+.5); cx.lineTo(W,y+.5); cx.stroke(); cx.setLineDash([]); }
+        cx.fillStyle=col; cx.beginPath(); cx.moveTo(W,y-5); cx.lineTo(W-9,y); cx.lineTo(W,y+5); cx.fill();
+        if(fr.trig && fr.pre>=0 && fr.pre<=span){ const x=G.tx=fr.pre/span*W;
+          cx.fillStyle=acc; cx.beginPath(); cx.moveTo(x-5,13); cx.lineTo(x+5,13); cx.lineTo(x,20); cx.fill(); } }
+      // курсоры
+      const cm=n.p.cursors, lines=[];
+      if(cm==='time'||cm==='both'){
+        cx.strokeStyle=acc; cx.setLineDash([3,3]); cx.beginPath();
+        for(const t of n.cur.t){ const x=Math.round(t*W)+.5; cx.moveTo(x,0); cx.lineTo(x,H); }
+        cx.stroke(); cx.setLineDash([]);
+        const t1=tOf(n.cur.t[0]*W), t2=tOf(n.cur.t[1]*W), dt=Math.abs(t2-t1);
+        lines.push(['t1 '+scopeFmtT(t1)+'  t2 '+scopeFmtT(t2),acc],
+                   ['Δt '+scopeFmtT(dt)+'  1/Δt '+scopeFmtHz(dt>0?1/dt:0),acc]); }
+      if(cm==='level'||cm==='both'){
+        cx.strokeStyle=acc2; cx.setLineDash([3,3]); cx.beginPath();
+        for(const v of n.cur.v){ const y=Math.round(G.vy(v))+.5; cx.moveTo(0,y); cx.lineTo(W,y); }
+        cx.stroke(); cx.setLineDash([]);
+        lines.push(['v1 '+scopeFmtV(n.cur.v[0])+'  v2 '+scopeFmtV(n.cur.v[1])+'  ΔV '+scopeFmtV(Math.abs(n.cur.v[0]-n.cur.v[1])),acc2]); }
+      lines.forEach(([t,col],i)=>{ const w=cx.measureText(t).width; scopeText(cx,t,W-w-14,34+i*12,col,bg); });
+    }
+    // строка состояния
+    const stale=scopeStale(n,span,sr);
+    const [st,stc]=!n.run ? ['STOP',themeColor('--err')] : !n.p.trig ? ['FREE',txt]
+      : n.p.tmode==='single' ? ['READY',acc] : !stale ? ['TRIG\'D',themeColor('--t-blk')]
+      : n.p.tmode==='auto' ? ['AUTO',acc] : ['WAIT',acc];
+    let x=2;
+    x+=scopeText(cx,st,x,10,stc,bg)+2;
+    const vdiv=(n.p.stack?.5:.25)/g;
+    const info=[scopeFmtT(span/sr/SCOPE_DX)+'/div', scopeFmtV(xy?.25/g:vdiv)+'/div'];
+    if(n.p.trig) info.push('T'+(tc+1)+SCOPE_SLOPE[n.p.slope]+scopeFmtV(n.p.tlev));
+    if(n.p.coup==='AC') info.push('AC');
+    if(n.p.avg!=='off') info.push('avg '+Math.min(n.avgK|0,+n.p.avg)+'/'+n.p.avg);
+    if(!n.run && n.hofs) info.push('◀ '+scopeFmtT(-n.hofs/sr));
+    scopeText(cx,info.join('  '),x,10,txt,bg);
+    // измерения
+    if(n.p.meas){
+      const rows=chs.map(c=>{ const m=n.meas[c]; if(!m) return null;
+        const f=[(c===4?'M':String(c+1))+' '+scopeFmtHz(m.f).padStart(9), 'pp '+scopeFmtV(m.pp),
+                 'rms '+scopeFmtV(m.rms), 'dc '+scopeFmtV(m.mean)];
+        if(m.f>0) f.push('T '+scopeFmtT(1/m.f), 'duty '+(m.duty*100).toFixed(1)+'%');
+        f.push('max '+scopeFmtV(m.max), 'min '+scopeFmtV(m.min));
+        let s=f.join('  ');
+        while(f.length>2 && cx.measureText(s).width>W-8){ f.pop(); s=f.join('  '); }
+        return [s,cols[c]]; }).filter(Boolean);
+      rows.forEach(([s,col],i)=>scopeText(cx,s,4,H-4-(rows.length-1-i)*12,col,bg)); }
+  }});
 
 
 function binAt(t,N,log){ return log ? Math.pow(N,t)-1 : t*(N-1); }
