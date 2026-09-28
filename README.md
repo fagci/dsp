@@ -13,6 +13,8 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 ### Workbench
 - Node graph editor: pan/zoom canvas, drag-and-drop modules, typed ports (signal, number, spectrum, image, text, block)
 - Dashboard view (split panes, draggable dividers) for building instrument-like UIs
+- **Module graph** pane in the dashboard: the regular node canvas inside a tile, next to the modules opened in other panes (SunVox-style) — see [Module graph pane](#module-graph-pane)
+- Add modules right on the canvas: double-click an empty spot (or **+** in the graph pane) and search
 - Groups (nested subgraphs) with custom inputs/outputs
 - Undo/redo, duplicate, multi-select, module search (Ctrl+K)
 - Save/load patches to local storage or JSON files
@@ -200,6 +202,8 @@ The UI follows the system color scheme (`prefers-color-scheme`). Instrument scre
 | Tablet — dashboard tiles | <img src="docs/screenshots/tablet-dash-dark.png" alt="Tablet — dashboard tiles, dark"> | <img src="docs/screenshots/tablet-dash-light.png" alt="Tablet — dashboard tiles, light"> |
 | Phone — graph | <img width="260" src="docs/screenshots/phone-graph-dark.png" alt="Phone — graph, dark"> | <img src="docs/screenshots/phone-graph-light.png" alt="Phone — graph, light"> |
 | Phone — dashboard tiles | <img width="260" src="docs/screenshots/phone-dash-dark.png" alt="Phone — dashboard tiles, dark"> | <img src="docs/screenshots/phone-dash-light.png" alt="Phone — dashboard tiles, light"> |
+| Desktop — module graph pane | <img src="docs/screenshots/desktop-modgraph-dark.png" alt="Desktop — module graph pane, dark"> | <img src="docs/screenshots/desktop-modgraph-light.png" alt="Desktop — module graph pane, light"> |
+| Phone — module graph pane | <img width="260" src="docs/screenshots/phone-modgraph-dark.png" alt="Phone — module graph pane, dark"> | <img src="docs/screenshots/phone-modgraph-light.png" alt="Phone — module graph pane, light"> |
 
 ### Dashboard tiles
 
@@ -209,6 +213,19 @@ The ▦ button switches to a tiled dashboard built from the modules of the curre
 - Split panes right (⬌) or down (⬍), remove them (✕), drag dividers to resize
 - ⛶ shows only the module's display, without controls and header
 - The layout is saved with the patch and works on touch devices (wide scroll rail for long panes)
+
+### Module graph pane
+
+Pick **◇ Module graph** in a pane's dropdown and that pane becomes a window into the regular node canvas — like the modules window in SunVox, with the modules' own controls in the panes around it.
+
+- Nodes look and work exactly as outside the dashboard: drag, wire, pan, zoom (wheel or two fingers)
+- A module opened in another pane stays on the graph as a dashed stub with its ports, so its wires are visible and can be re-patched
+- **+** or a double-click on an empty spot opens module search (type, ↑/↓, Enter); **⤢** fits the patch into the pane
+- One graph pane per dashboard; it is saved with the layout
+
+<img src="docs/screenshots/desktop-modgraph-dark.png" alt="Module graph pane with an acid bass and drum sequencer in neighbouring panes">
+
+<img src="docs/screenshots/desktop-modpick-dark.png" alt="Adding a module from the graph pane: search popup">
 
 ## Screenshots
 
