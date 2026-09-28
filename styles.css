@@ -275,7 +275,7 @@ button,select,input{font:inherit;color:inherit}
     #canvas #content .node .io3>.mid>.prm.wide.btnrow{grid-column:auto;align-self:start}
   }
   #canvas #content .node .io3>.mid>.prm{min-width:0}
-  #canvas #content .node .io3>.mid>.prm:not(.tilerow) label{flex-basis:46px}
+  #canvas #content .node .io3>.mid>.prm:not(.prmrows) label{flex-basis:46px}
   /* В спектроанализаторе чекбоксы занимают свободную ячейку
      напротив «доли спектра», а не переносятся на следующую строку. */
   #canvas #content .node[data-type="sa"] .io3>.mid>.prm.wide.checkrow{
@@ -416,8 +416,8 @@ button,select,input{font:inherit;color:inherit}
   font-size:10px;line-height:1.25}
 /* ряд ручек (range с knob:true): подпись под ручкой, число внутри */
 .prm.wide.knobrow{display:flex;flex-direction:row;flex-wrap:wrap;gap:6px 10px;align-items:flex-start}
-:is(.knobrow,.tilerow)>.prm.kn{flex:0 0 52px;width:52px;min-height:0;margin:0;padding:0;align-items:center;gap:1px}
-:is(.knobrow,.tilerow)>.prm.kn label{position:static;order:2;width:100%;max-width:none;margin:0;text-align:center;
+.knobrow>.prm.kn{flex:0 0 52px;width:52px;min-height:0;margin:0;padding:0;align-items:center;gap:1px}
+.knobrow>.prm.kn label{position:static;order:2;width:100%;max-width:none;margin:0;text-align:center;
   white-space:normal;line-height:1.15;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .slidernum.kn{width:44px;height:44px;padding:0;background:none;border-radius:50%;cursor:ns-resize;
   justify-content:center;overflow:visible}
@@ -431,53 +431,45 @@ button,select,input{font:inherit;color:inherit}
 .slidernum.kn input[type=number]{inset:12px -10px auto;width:auto;height:20px;font-size:10px;
   padding:0 3px;text-align:center;border:1px solid var(--acc)}
 .prm.linked .slidernum.kn{opacity:.45}
-/* tiles:true — все контролы плитками высотой с ручку, подпись снизу.
-   Поверхности без рамок (рамка только на hover), активное — подложка акцентом + полоска снизу */
-/* сетка ячеек 56px: колонки совпадают во всех строках; плитка — span 1–3 (tileSpan() в core-graph.js) */
-.prm.wide.tilerow{display:grid;grid-template-columns:repeat(auto-fill,56px);gap:0 4px;align-items:start;
-  --tile-on:color-mix(in srgb,var(--acc) 20%,var(--bg))}
-/* раскрытый advanced из плиток — вплотную к основному ряду плиток; у обычных строк отступ прежний
-   (их подпись висит над полем и заехала бы в плитки) */
-#canvas #content .node .io3>.mid>.tilerow+.advWrap:has(>.tilerow:first-child){margin-top:-11px}
-.tilerow>.prm.tile{position:relative;width:auto;min-width:0;min-height:0;margin:0;padding:0;border:0;
-  display:flex;flex-direction:column;align-items:center;gap:1px}
-.tilerow>.prm.tile label{position:static;order:2;width:100%;max-width:none;margin:0;text-align:center;
-  color:var(--dim);font-size:9px;white-space:normal;line-height:1.05;overflow-wrap:anywhere;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.tilerow>.prm.tile>button,.tilerow>.prm.tile>select,.tilerow>.prm.tile>.seg button,
-.tilerow>.prm.tile>input[type=checkbox]{background:var(--bg);border:1px solid transparent;border-radius:3px;
-  color:var(--txt);font-size:9px;cursor:pointer}
-.tilerow>.prm.tile>button:hover,.tilerow>.prm.tile>select:hover,.tilerow>.prm.tile>.seg button:hover,
-.tilerow>.prm.tile>input[type=checkbox]:hover{border-color:var(--line)}
-.tilerow>.prm.tile>:is(button,select,.seg),.tilerow>.prm.tile:has(>input[type=checkbox]) label,
-.tile-measure{letter-spacing:-.4px}
-.tile-measure{position:absolute;visibility:hidden;font-size:9px;white-space:pre}
-.tilerow>.prm.tile>button{height:44px;padding:2px 1px;line-height:1.15;white-space:normal}
-.tilerow>.prm.tile>button{width:100%}
-.tilerow>.prm.tile>button:active{background:var(--tile-on)}
-/* select — значение по центру, своя стрелка вместо нативной */
-.tilerow>.prm.tile>select{height:44px;width:100%;flex:none;padding:0 3px 6px;text-overflow:ellipsis;text-align:center;
-  text-align-last:center;appearance:none;-webkit-appearance:none}
-.tilerow>.prm.tile:has(>select)::after{content:'▾';position:absolute;left:0;right:0;top:29px;text-align:center;
-  font-size:8px;line-height:1;color:var(--dim);pointer-events:none}
-.tilerow>.prm.tile>.seg{flex:none;width:100%;height:44px;flex-direction:column;gap:1px}
-.tilerow>.prm.tile>.seg button{flex:1 1 0;padding:0;line-height:1;color:var(--dim)}
-.tilerow>.prm.tile>.seg button.on{background:var(--tile-on);color:var(--acc);font-weight:600;
-  border-color:transparent;box-shadow:inset 2px 0 0 var(--acc)}
-/* галочка — переключатель: подпись внутри, включено — как активный сегмент */
-.tilerow>.prm.tile>input[type=checkbox]{order:1;width:100%;height:44px}
-.tilerow>.prm.tile>input[type=checkbox]:checked{background:var(--tile-on);border-color:transparent;
-  box-shadow:inset 0 -2px 0 var(--acc)}
-.tilerow>.prm.tile>input[type=checkbox]::after,
-.tilerow>.prm.tile>input[type=checkbox]:checked::after{content:none}
-.tilerow>.prm.tile:has(>input[type=checkbox]) label{position:absolute;left:0;top:0;height:44px;
-  display:flex;align-items:center;justify-content:center;padding:0 1px;box-sizing:border-box;
-  pointer-events:none;z-index:1;font-size:9px;color:var(--dim)}
-.tilerow>.prm.tile:has(>input:checked) label{color:var(--acc);font-weight:600}
-.tilerow>.prm.tile.advToggle{height:44px;justify-content:center;text-align:center;font-size:9px;
-  border-radius:3px;color:var(--dim)}
-.tilerow>.prm.tile.advToggle:hover{background:var(--bg);color:var(--txt)}
-.tilerow>.prm.tile.advToggle .advLbl{padding:0 2px}
+/* строки «подпись — значение» (renderParamRows): подпись слева, значение справа, у чисел — заливка
+   положения во всю строку; сетка до 4 колонок, каждая не уже 140px */
+.prm.wide.prmrows{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(140px,calc((100% - 36px)/4)),1fr));
+  gap:2px 12px}
+.prmrows>.prm.pr{position:relative;display:flex;flex-direction:row;align-items:center;gap:6px;height:22px;
+  min-height:0;margin:0;padding:0 6px;border:0;border-radius:3px;background:var(--bg);overflow:hidden}
+.prmrows>.prm.pr:hover{box-shadow:inset 0 0 0 1px var(--line)}
+.prmrows>.prm.pr label{position:relative;z-index:1;order:0;top:auto;left:auto;flex:1 1 auto;min-width:0;
+  width:auto;max-width:none;margin:0;color:var(--dim);font-size:10px;line-height:1;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+/* число: вся строка — slidernum (тащить/колесо/клик — ввод) */
+.prmrows>.prm.pr-range{padding:0}
+.prmrows>.pr-range .slidernum{height:22px;padding:0 6px;gap:6px;background:none;border-radius:3px}
+.prmrows>.pr :is(label){flex:0 1 auto}
+.prmrows>.pr-range .sn-val{flex:none;margin-left:auto;font-size:11px;color:var(--txt)}
+.prmrows>.pr-select label{max-width:60%}              /* значение select лежит поверх правых 60% */
+.prmrows>.pr-range .slidernum input[type=number]{text-align:right;font-size:11px}
+/* выбор: прозрачный select на всю строку, значение справа */
+.prmrows>.pr-select select{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0 16px 0 40%;
+  appearance:none;-webkit-appearance:none;background:none;border:0;border-radius:3px;cursor:pointer;
+  color:var(--txt);font-size:11px;text-align:right;text-align-last:right;text-overflow:ellipsis}
+.prmrows>.pr-select select option{background:var(--panel);text-align:left}
+.prmrows>.pr-select::after{content:'▾';position:absolute;right:6px;font-size:9px;color:var(--dim);pointer-events:none}
+/* галочка: прозрачный чекбокс на всю строку, справа — ● on / off */
+.prmrows>.pr-check input[type=checkbox]{position:absolute;inset:0;width:100%;height:100%;margin:0;
+  border:0;border-radius:3px;background:none;opacity:0;cursor:pointer}
+.prmrows>.pr-check label{color:var(--dim)}
+.prmrows>.pr-check::after{content:'● off';flex:none;margin-left:auto;font-size:11px;color:var(--dim);pointer-events:none}
+.prmrows>.pr-check:has(>input:checked)::after{content:'● on';color:var(--acc)}
+/* поля ввода — справа, без рамки */
+.prmrows>:is(.pr-num,.pr-text) input{flex:1 1 50%;width:auto;min-width:0;height:20px;padding:0;border:0;
+  background:none;text-align:right;font-size:11px;color:var(--txt)}
+.prm.wide.pr-btns{display:flex;flex-direction:row;flex-wrap:wrap;gap:3px}
+.pr-btns button{flex:1 1 auto;width:auto;height:22px;padding:0 8px;white-space:nowrap}
+/* строки идут плотнее обычных полей (у тех подпись висит над полем) */
+#canvas #content .node .io3>.mid>:is(.pr-btns,.prmrows)+:is(.pr-btns,.prmrows,.advToggle){margin-top:-6px}
+@media (pointer:coarse){
+  .prmrows>.prm.pr,.prmrows>.pr-range .slidernum,.pr-btns button{height:32px}
+}
 .advToggle{cursor:pointer;color:var(--dim);font-size:10px;user-select:none;margin-top:2px}
 .advToggle:hover{color:var(--txt)}
 .advWrap{row-gap:11px}
