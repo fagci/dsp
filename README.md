@@ -242,8 +242,11 @@ The UI follows the system color scheme (`prefers-color-scheme`). Instrument scre
 The ▦ button switches to a tiled dashboard built from the modules of the current patch:
 
 - Pick any module for each pane from its dropdown
-- Split panes right (⬌) or down (⬍), remove them (✕), drag dividers to resize
+- **Tabs in a pane**: **+** next to the dropdown adds a tab, so one pane switches between several modules; the dropdown belongs to the active tab, ⨯ closes it
+- Split panes right (⬌) or down (⬍), remove them (✕), drag dividers to resize; panes sit edge to edge, 1px dividers
+- In narrow panes the pane buttons fold into **⋯**
 - ⛶ shows only the module's display, without controls and header
+- **Tile pages**: **+** next to ▦ adds another set of tiles; switch pages with the numbered buttons (or Alt+1…9), tap the active one to rename, duplicate, reorder or delete it. A module can appear on several pages
 - The layout is saved with the patch and works on touch devices (wide scroll rail for long panes)
 
 ### Module graph pane
@@ -252,8 +255,8 @@ Pick **◇ Module graph** in a pane's dropdown and that pane becomes a window in
 
 - Nodes look and work exactly as outside the dashboard: drag, wire, pan, zoom (wheel or two fingers)
 - A module opened in another pane stays on the graph as a dashed stub with its ports, so its wires are visible and can be re-patched
-- **+** or a double-click on an empty spot opens module search (type, ↑/↓, Enter); **⤢** fits the patch into the pane
-- One graph pane per dashboard; it is saved with the layout
+- **⊕** or a double-click on an empty spot opens module search (type, ↑/↓, Enter); **⤢** fits the patch into the pane
+- One graph pane per tile page; it is saved with the layout
 
 <img src="docs/screenshots/desktop-modgraph-dark.png" alt="Module graph pane with an acid bass and drum sequencer in neighbouring panes">
 
