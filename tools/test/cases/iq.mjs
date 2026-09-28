@@ -120,4 +120,16 @@ export default [
     }
     return true;
   }},
+  {name:'iq: raw ADC chunks unpack lazily, same as float', fn(){
+    const u8 = Uint8Array.from([0, 255, 127, 128, 200, 10]), s16 = Int16Array.from([-32768, 32767, 0, -1]);
+    const s = {sr:1, fc:0, chunks:[], t:0};
+    iqPushRaw(s, u8, 'u8'); iqPushRaw(s, s16, 's16');
+    const [a, b] = s.chunks;
+    if(a._re || s.t !== 5) return 'eager or wrong count: t='+s.t;
+    const exp = [[-1, -0.5/127.5, 72.5/127.5], [1, 0.5/127.5, -117.5/127.5]];
+    for(let i=0; i<3; i++) if(Math.abs(a.re[i]-exp[0][i]) > 1e-6 || Math.abs(a.im[i]-exp[1][i]) > 1e-6) return 'u8 '+i;
+    if(b.re[0] !== -1 || Math.abs(b.im[0]-32767/32768) > 1e-9 || b.re[1] !== 0 || b.im[1] !== -1/32768) return 's16';
+    const p = islPack(s);
+    return p.chunks[0].raw === u8 && p.chunks[0].fmt === 'u8' && !('re' in p.chunks[0]) || 'packed as float';
+  }},
 ];
