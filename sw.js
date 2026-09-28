@@ -7,11 +7,11 @@
 //
 // CACHE бампать вместе с ?v=N в index.html — иначе после правки файлов старый список ссылок
 // (со старым ?v=) продолжит переустанавливаться поверх уже закэшированного нового.
-const CACHE='dsp-shell-v81';
+const CACHE='dsp-shell-v82';
 const SHELL=[
   './',
   './index.html',
-  './styles.css?v=81',
+  './styles.css?v=82',
   './manifest.json',
   './favicon.svg',
   './icons/favicon-32.png',
@@ -22,32 +22,36 @@ const SHELL=[
   './vendor/interact.min.js?v=1.10.28',
   './vendor/satellite.min.js?v=5.0.0',
   './vendor/lame.min.js?v=1.2.1',
-  './core-engine.js?v=81',
-  './modules/analysis.js?v=81',
-  './modules/misc.js?v=81',
-  './modules/modulation.js?v=81',
-  './modules/output.js?v=81',
-  './modules/processing.js?v=81',
-  './modules/protocols.js?v=81',
-  './modules/sigid.js?v=81',
-  './modules/sources.js?v=81',
-  './modules/audioeditor.js?v=81',
-  './modules/tracker-formats.js?v=81',
-  './modules/tracker-player.js?v=81',
-  './modules/tracker.js?v=81',
-  './modules/tracker-session.js?v=81',
-  './modules/tracker-panels.js?v=81',
-  './modules/sampler.js?v=81',
-  './modules/tinysa.js?v=81',
-  './modules/hfdl.js?v=81',
-  './modules/propagation.js?v=81',
-  './modules/geo.js?v=81',
-  './modules/sked.js?v=81',
-  './modules/sat.js?v=81',
-  './modules/radio.js?v=81',
-  './modules/iq.js?v=81',
-  './presets.js?v=81',
-  './core-graph.js?v=81',
+  './core-dsp.js?v=82',
+  './core-engine.js?v=82',
+  './core-islands.js?v=82',
+  './iq-worker.js?v=82',
+  './modules/analysis.js?v=82',
+  './modules/misc.js?v=82',
+  './modules/modulation.js?v=82',
+  './modules/output.js?v=82',
+  './modules/processing.js?v=82',
+  './modules/protocols.js?v=82',
+  './modules/sigid.js?v=82',
+  './modules/sources.js?v=82',
+  './modules/audioeditor.js?v=82',
+  './modules/tracker-formats.js?v=82',
+  './modules/tracker-player.js?v=82',
+  './modules/tracker.js?v=82',
+  './modules/tracker-session.js?v=82',
+  './modules/tracker-panels.js?v=82',
+  './modules/sampler.js?v=82',
+  './modules/tinysa.js?v=82',
+  './modules/hfdl.js?v=82',
+  './modules/propagation.js?v=82',
+  './modules/geo.js?v=82',
+  './modules/sked.js?v=82',
+  './modules/sat.js?v=82',
+  './modules/radio.js?v=82',
+  './modules/iq-kernels.js?v=82',
+  './modules/iq.js?v=82',
+  './presets.js?v=82',
+  './core-graph.js?v=82',
 ];
 self.addEventListener('install',e=>{
   self.skipWaiting();                                 // не ждать закрытия всех вкладок — как и ручной ?v=N, обновление должно применяться сразу
@@ -75,7 +79,8 @@ self.addEventListener('fetch',e=>{
   const req=e.request;
   // сторонние запросы (CDN CodeMirror и т.п.) — мимо кэша, как и раньше без сервис-воркера
   if(req.method!=='GET' || new URL(req.url).origin!==location.origin) return;
-  const nav=req.mode==='navigate';
+  // скрипт воркера под изолированной страницей тоже должен нести COEP, иначе браузер его не запустит
+  const nav=req.mode==='navigate' || req.destination==='worker';
   e.respondWith(
     fetch(req).then(res=>{
       const copy=res.clone();

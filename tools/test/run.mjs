@@ -19,6 +19,8 @@ await page.waitForFunction(() => typeof PRESETS === 'object' && typeof Graph ===
 
 // помощники в странице
 await page.evaluate(() => {
+  // по умолчанию всё синхронно в главном потоке; тесты воркеров включают острова сами
+  Islands.enabled = false;
   window.T = {
     // sec секунд сигнала; возвращает пик на выходе звуковой карты (L+R) за весь прогон
     run(sec){
@@ -66,6 +68,19 @@ await page.evaluate(() => {
       retopo();
       return ns;
     },
+    // граф в реальном времени (ответы воркеров приходят между тактами); каждый блок — в onBlock
+    async realtime(sec, onBlock){
+      const t0 = performance.now(); let done = 0;
+      while(performance.now()-t0 < sec*1000){
+        await new Promise(r => setTimeout(r, 5));
+        const need = Math.floor((performance.now()-t0)/1000*Eng.sr/BLOCK);
+        for(; done<need; done++){
+          for(const o of Eng.outs) o.fill(0);
+          for(const nd of Graph.order) evalNode(nd);
+          onBlock?.((performance.now()-t0)/1000);
+        }
+      }
+    },
     preset(name){ PRESETS[name](); retopo(); },
     byType(t){ return Graph.nodes.filter(n => n.type===t); },
     errors(){ return Graph.nodes.filter(n => n.err).map(n => n.type+': '+(n.err.message||n.err)); },
@@ -91,6 +106,28 @@ for(const f of files){
     if(err){ fail++; console.log(`FAIL ${c.name} (${ms} ms)\n     ${err}`); }
     else console.log(`ok   ${c.name} (${ms} ms)`);
   }
+}
+// Страница под сервис-воркером (COOP/COEP, как на сайте): воркеры островов должны подняться
+if(!only || 'isolated page: island workers start'.includes(only)){
+  total++;
+  const ctx = await browser.newContext();
+  const p2 = await ctx.newPage();
+  await p2.goto(url);
+  await p2.waitForFunction(() => window.crossOriginIsolated === true && document.readyState === 'complete' && typeof Graph === 'object', null, {timeout:15000}).catch(() => {});
+  const res = await p2.evaluate(async () => {
+    if(!crossOriginIsolated) return 'page is not cross-origin isolated';
+    Islands.setEnabled(true);
+    PRESETS['IQ: Receiver from Blocks (Generator)'](); retopo();
+    await new Promise(r => setTimeout(r, 1500));
+    for(let i=0; i<50; i++) for(const nd of Graph.order) evalNode(nd);
+    await new Promise(r => setTimeout(r, 500));
+    for(const nd of Graph.order) evalNode(nd);      // ответы воркера забираются на такте
+    const d = Graph.nodes.find(n => n.type==='iqDecim');
+    return Islands.enabled && d._isl && d.ui?.srOut === 64000 || 'islands '+Islands.enabled+', ui '+JSON.stringify(d.ui);
+  }).catch(e => e.message.split('\n')[0]);
+  if(res === true) console.log('ok   isolated page: island workers start');
+  else { fail++; console.log('FAIL isolated page: island workers start\n     '+res); }
+  await ctx.close();
 }
 console.log(`\n${total-fail}/${total} passed`);
 await browser.close(); srv.close();

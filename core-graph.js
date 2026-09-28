@@ -141,6 +141,7 @@ Graph.order=topoOrder(Graph.nodes,Graph.edges,Graph.map);
 const idx=new Map();                                // "узел+порт → провод" — см. комментарий в evalNode
 for(const e of Graph.edges) idx.set(e.to+'\u0001'+e.tp, e);
 Graph.inIndex=idx;
+Islands.rebuild();                                  // состав островов зависит от проводов
 }
 /* ---- DOM узла ---- */
 function catColor(cat){                             // единый цвет категории — для узлов и палитры
