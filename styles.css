@@ -241,13 +241,14 @@ button,select,input{font:inherit;color:inherit}
 /* ---- карточная вёрстка узлов ----
    Порты выведены из потока (position:absolute) и не отжимают контент —
    .mid занимает всю высоту от заголовка до низа, точки просто плавают поверх. */
-  #canvas #content .node .io3{position:relative}
+  #canvas #content .node .io3{position:relative;container:nio/inline-size}
   #canvas #content .node .io3>.col{
     position:absolute;top:10px;bottom:10px;left:0;width:var(--pov);
     max-width:none;min-height:0;flex-direction:column;justify-content:flex-start;
     gap:10px;padding:0;background:none;border:0;overflow:visible;pointer-events:none}
   #canvas #content .node .io3>.col.o{
     left:auto;right:0;justify-content:flex-start}
+  /* колонки по ширине узла: 2 на узком, до 4 на широком (см. @container nio ниже) */
   #canvas #content .node .io3>.mid{display:grid;
     grid-template-columns:repeat(2,minmax(0,1fr));gap:11px 10px;padding:10px 14px}
   #canvas #content .node .io3>.mid>.prm.wide,
@@ -259,6 +260,19 @@ button,select,input{font:inherit;color:inherit}
   #canvas #content .node .io3>.mid>.advWrap:not([hidden]){
     display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px 10px}
   #canvas #content .node .io3>.mid>.advWrap>.prm.wide{grid-column:1/-1}
+  /* свёрнутый advanced — обычная ячейка, а не отдельная строка */
+  #canvas #content .node .io3>.mid>.prm.wide.advToggle{grid-column:auto;align-self:center}
+  /* на широком узле ряды кнопок/галочек занимают 2 ячейки, а не всю строку */
+  @container nio (min-width:480px){
+    #canvas #content .node .io3>.mid,#canvas #content .node .io3>.mid>.advWrap:not([hidden]){
+      grid-template-columns:repeat(3,minmax(0,1fr))}
+  }
+  @container nio (min-width:640px){
+    #canvas #content .node .io3>.mid,#canvas #content .node .io3>.mid>.advWrap:not([hidden]){
+      grid-template-columns:repeat(4,minmax(0,1fr))}
+    #canvas #content .node .io3>.mid>.prm.wide:is(.btnrow,.checkrow),
+    #canvas #content .node .io3>.mid>.advWrap>.prm.wide:is(.btnrow,.checkrow){grid-column:span 2}
+  }
   #canvas #content .node .io3>.mid>.prm{min-width:0}
   #canvas #content .node .io3>.mid>.prm label{flex-basis:46px}
   /* В спектроанализаторе чекбоксы занимают свободную ячейку
