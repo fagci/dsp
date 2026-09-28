@@ -320,7 +320,7 @@ markWiresDirty();
 function renderParamRows(container,n,params){
 // строки «подпись — значение» (по умолчанию; rows:false у модуля — прежняя раскладка): числа, выборы,
 // галочки, поля ввода — строками в сетке до 4 колонок; подряд идущие кнопки — одним рядом;
-// остальное (code, file, range2, бесконечная крутилка) — как раньше
+// остальное (code, file, бесконечная крутилка) — как раньше
 if(MOD[n.type].rows!==false){
 let grp=null;
 for(let i=0;i<params.length;i++){
@@ -329,7 +329,7 @@ if(p.t==='button'){
 grp=null; const row=document.createElement('div'); row.className='prm wide btnrow pr-btns';
 for(;i<params.length && params[i].t==='button';i++) row.append(paramBtn(n,params[i]));
 i--; container.append(row); continue; }
-if(!['range','check','select','buttons','num','text'].includes(p.t)){ grp=null; renderParamRowsPlain(container,n,[p]); continue; }
+if(!['range','range2','check','select','buttons','num','text'].includes(p.t)){ grp=null; renderParamRowsPlain(container,n,[p]); continue; }
 if(!grp){ grp=document.createElement('div'); grp.className='prm wide prmrows'; container.append(grp); }
 // сегменты — выпадающим списком, ручки — полоской-строкой
 const q= p.t==='range' ? {...p,knob:false} : p.t==='buttons' ? {...p,t:'select'} : p;
