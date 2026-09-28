@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=27;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=28;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -130,6 +130,7 @@ const PRESET_CATS={
   'Techno: Drum Machine':'Synth & Techno',
   'Techno: Generative Acid':'Synth & Techno',
   'Techno: Full Track':'Synth & Techno',
+  'MOD Tracker (ProTracker .mod)':'Synth & Techno',
 
   'Morse from Microphone':'Radio Protocols',
   'RTTY: Transmit and Receive':'Radio Protocols',
@@ -1379,6 +1380,16 @@ preset('Techno: Full Track', function(){
   addEdge(sq.id,'freq',ac.id,'freq'); addEdge(sq.id,'gate',ac.id,'gate');
   addEdge(ac.id,'out',ds.id,'in'); addEdge(ds.id,'out',mx.id,'b');
   addEdge(mx.id,'out',cp.id,'in'); addEdge(cp.id,'out',dc.id,'L');
+  markWiresDirty();
+});
+
+preset('MOD Tracker (ProTracker .mod)', function(){
+  clearAll();
+  const tr=addNode('tracker',40,40,{});
+  tr.p.song='';                                        // ключ песни у каждой загрузки пресета свой
+  tr.size.w=460; tr.size.h=260; applySize(tr);
+  const dc=addNode('dac',560,40,{vol:.6,mode:'stereo'});
+  addEdge(tr.id,'L',dc.id,'L'); addEdge(tr.id,'R',dc.id,'R');
   markWiresDirty();
 });
 

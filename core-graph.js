@@ -1672,7 +1672,7 @@ document.getElementById('wipe')?.addEventListener('click',async()=>{
 if(!confirm('Erase all presets, patches and local app data on this site?')) return;
 try{ localStorage.clear(); }catch(e){}
 try{
-const names=indexedDB.databases ? (await indexedDB.databases()).map(d=>d.name) : ['dsp-samples','dsp-lists'];
+const names=indexedDB.databases ? (await indexedDB.databases()).map(d=>d.name) : ['dsp-samples','dsp-lists','dsp-tracker'];
 await Promise.all(names.filter(Boolean).map(n=>new Promise(res=>{
 const rq=indexedDB.deleteDatabase(n); rq.onsuccess=rq.onerror=rq.onblocked=res; })));
 }catch(e){}
