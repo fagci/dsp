@@ -1,6 +1,6 @@
 /* ============================ ТРЕКЕР: МОДЕЛЬ ПЕСНИ И ФОРМАТЫ ============================ */
 // Общая модель для MOD / S3M / XM; чтение и запись каждого формата.
-// song = {fmt:'mod'|'s3m'|'xm', title, ch, orders[], restart, speed, bpm, gvol, linear, chPan[],
+// song = {fmt:'mod'|'s3m'|'xm', title, ch, orders[], restart, speed, bpm, gvol, linear, chPan[], chVol[],
 //         patterns:[{rows, d:Uint8Array(rows*ch*5)}], samples[] (mod/s3m), instruments[] (xm), rev}
 // Ячейка — 5 байт: нота, инструмент, колонка громкости, эффект, параметр.
 //   нота: 0 — пусто, 1..120 — нота n-1 (48 = C-4 = базовая высота семпла), 121 — key off, 122 — note cut
@@ -82,6 +82,12 @@ function trkDefaultPan(s){                  // MOD — Amiga L R R L, S3M — т
     s.chPan[k] = s.fmt==='mod' ? (lr ? 255 : 0) : s.fmt==='s3m' ? (lr ? 192 : 48) : 128;
   }
   s.chPan.length = s.ch;
+  trkFixChVol(s);
+}
+function trkFixChVol(s){                    // громкость каналов 0..1 — только в нашем хранилище, форматы её не знают
+  if(!s.chVol) s.chVol = [];
+  while(s.chVol.length<s.ch) s.chVol.push(1);
+  s.chVol.length = s.ch;
 }
 function trkFixLoop(s){
   const len = s.data.length;
@@ -98,7 +104,7 @@ function trkCloneSong(s, cache){               // cache — сохранить f
     if(cache && x.f){ o.f = x.f; o.fSrc = x.fSrc; } return o; };
   const env = e=>({...e, pts:e.pts.map(p=>p.slice())});
   return { fmt:s.fmt, title:s.title, ch:s.ch, orders:s.orders.slice(), restart:s.restart, speed:s.speed, bpm:s.bpm,
-    gvol:s.gvol, linear:s.linear, chPan:s.chPan.slice(), patterns:s.patterns.map(p=>({rows:p.rows, d:p.d})),
+    gvol:s.gvol, linear:s.linear, chPan:s.chPan.slice(), chVol:(s.chVol||[]).slice(), patterns:s.patterns.map(p=>({rows:p.rows, d:p.d})),
     samples:s.samples.map(smp),
     instruments:s.instruments ? s.instruments.map(i=>({name:i.name, samples:i.samples.map(smp), map:i.map.slice(),
       venv:env(i.venv), penv:env(i.penv), fade:i.fade, vib:{...i.vib}})) : null,
@@ -248,6 +254,7 @@ function s3mParse(b){
   if(dp===0xFC) for(let i=0;i<32;i++){ const v=b[off+i]; if(chMap[i]!=null && (v&0x20)) pans[chMap[i]] = (v&15)*16; }
   song.chPan = mv&0x80 ? pans : pans.map(()=>128);
   while(song.chPan.length<ch) song.chPan.push(128);
+  trkFixChVol(song);
   // позиции: 254 — разделитель (пропускаем, переходы Bxx пересчитываем), 255 — конец
   const ordMap = [], orders = [];
   for(let i=0;i<rawOrd.length;i++){
@@ -565,7 +572,7 @@ function trkConvert(src, fmt){
   const s = trkCloneSong(src);
   if(s.fmt===fmt) return s;
   const to = trkNewSong(fmt, s.ch);
-  Object.assign(to, {title:s.title, orders:s.orders, restart:s.restart, speed:s.speed, bpm:s.bpm, gvol:s.gvol, chPan:s.chPan});
+  Object.assign(to, {title:s.title, orders:s.orders, restart:s.restart, speed:s.speed, bpm:s.bpm, gvol:s.gvol, chPan:s.chPan, chVol:s.chVol});
   to.linear = false;                                    // амига-периоды — как в исходном формате
   to.patterns = s.patterns.map(p=>{
     const q = trkNewPattern(p.rows, s.ch), d = p.d, o = q.d;

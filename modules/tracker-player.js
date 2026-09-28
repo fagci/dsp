@@ -40,7 +40,7 @@ function modChan(k, pan){
 function modPlayer(song){
   const pl = { song, playing:false, mode:'song', ord:0, row:0, tick:0, speed:6, bpm:125, gvol:64, left:0,
                jump:-1, brk:-1, loopJump:-1, delay:0, inDelay:false, chn:[], ended:false, solo:-1, loop:true,
-               bufs:[], gates:[] };
+               bufs:[], gates:[], clk:null, ext:{}, now:0 };
   modPlayerChannels(pl);
   return pl;
 }
@@ -71,7 +71,8 @@ function modSmpF(s){                          // float-копия данных �
 }
 function trkTrigger(pl, c){
   const s = c.smp;
-  c.pos = 0; c.dir = 1; c.active = !!(s && s.data.length); c.trig++;
+  c.ext = trkIsExt(pl, c.inst);
+  c.pos = 0; c.dir = 1; c.active = !!(s && s.data.length) || c.ext; c.trig++;
   if(!(c.vwav&4)) c.vpos = 0;
   if(!(c.twav&4)) c.tpos = 0;
   // XM: огибающие, затухание и key off сбрасывает номер инструмента, не нота
@@ -79,6 +80,8 @@ function trkTrigger(pl, c){
   c.avPos = 0; c.avT = 0; c.rtCnt = 0;
   c.baseF = trkFreq(pl.song, c.per);
 }
+// инструмент играет узел Tracker Instrument (генератор в графе) — метка обновляется каждый блок
+function trkIsExt(pl, inst){ return (pl.ext[inst]??-9) >= pl.now-2; }
 function trkKeyOff(c){
   c.keyOff = true;
   if(!c.ins || !c.ins.venv.on){ c.vol = 0; c.outVol = 0; }
@@ -394,7 +397,7 @@ function trkPost(pl){
         c.avPos = (c.avPos + av.rate)&255;
       }
     }
-    c.fin = vol*pl.gvol/64/64;
+    c.fin = vol*pl.gvol/64/64*(song.chVol?.[c.k] ?? 1);
     c.finPan = clamp(pan,0,255);
     c.finPer = per;
   }
@@ -420,7 +423,8 @@ function modAdvance(pl){
 }
 function modEnd(pl){ pl.playing = false; pl.ended = true; pl.ord = 0; pl.row = 0; }
 function modDoTick(pl){
-  if(pl.tick===0 && !pl.inDelay) modRow(pl);
+  const row = pl.tick===0 && !pl.inDelay;
+  if(row) modRow(pl);
   else modTickFx(pl);
   trkPost(pl);
   if(++pl.tick>=pl.speed){
@@ -428,6 +432,7 @@ function modDoTick(pl){
     if(pl.delay>0){ pl.delay--; pl.inDelay = true; }
     else { pl.inDelay = false; pl.delay = 0; modAdvance(pl); }
   }
+  return row;
 }
 // Рендер len семплов: каждый канал — в pl.bufs[k] (моно, с громкостью), ворота нот — в pl.gates[k].
 function modRender(pl, len, o){
@@ -439,10 +444,12 @@ function modRender(pl, len, o){
     pl.bufs[k].fill(0);
   }
   pl.bufs.length = N; pl.gates.length = N;
+  if(!pl.clk || pl.clk.length!==len) pl.clk = new Float32Array(len);
+  pl.clk.fill(0);
   let i = 0;
   while(i<len){
     if(pl.left<=0){
-      if(pl.playing) modDoTick(pl);
+      if(pl.playing && modDoTick(pl)) pl.clk[i] = 1;        // импульс на каждую строку — такт для других секвенсоров
       else trkPost(pl);
       pl.left += sr*2.5/pl.bpm;
     }
@@ -454,6 +461,7 @@ function modRender(pl, len, o){
       if(c.trig!==c.trigSeen){ c.trigSeen = c.trig; G[i] = 0; }          // новая нота — провал ворот на семпл
       if(!c.active || !(c.finPer>0)){ c.vu *= 0.9; continue; }
       const s = c.smp;
+      if(c.ext){ c.vu = Math.max(c.fin, c.vu*0.9); continue; }         // звук делает узел-генератор
       if(!s || !s.data.length){ c.active = false; continue; }
       const f = modSmpF(s), L = f.length, loop = s.loop && s.ll>=2 ? s.loop : 0;
       const ls = s.ls, end = loop ? Math.min(ls+s.ll, L) : L, span = end-ls;

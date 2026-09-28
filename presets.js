@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=29;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=30;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -132,6 +132,8 @@ const PRESET_CATS={
   'Techno: Full Track':'Synth & Techno',
   'Tracker (MOD / S3M / XM)':'Synth & Techno',
   'Tracker: Channels through Effects':'Synth & Techno',
+  'Tracker Studio (tiles)':'Synth & Techno',
+  'Tracker: Synths as Instruments':'Synth & Techno',
 
   'Morse from Microphone':'Radio Protocols',
   'RTTY: Transmit and Receive':'Radio Protocols',
@@ -1412,6 +1414,53 @@ preset('Tracker: Channels through Effects', function(){
   addEdge(tr.id,'song',vw.id,'song'); addEdge(tr.id,'song',c1.id,'song'); addEdge(tr.id,'song',c2.id,'song');
   addEdge(c1.id,'out',dl.id,'in'); addEdge(dl.id,'out',d1.id,'L');
   addEdge(c2.id,'freq',ac.id,'freq'); addEdge(c2.id,'gate',ac.id,'gate'); addEdge(ac.id,'out',d1.id,'R');
+  markWiresDirty();
+});
+
+// редактор из тайлов в духе Renoise: включите ▦ — транспорт сверху, последовательность паттернов слева,
+// паттерн в центре, инструменты справа, семпл/инструмент, микшер и граф модулей снизу
+preset('Tracker Studio (tiles)', function(){
+  clearAll();
+  const tr=addNode('tracker',40,40,{});
+  tr.p.song='';
+  const dc=addNode('dac',40,330,{vol:.6,mode:'stereo'});
+  addEdge(tr.id,'L',dc.id,'L'); addEdge(tr.id,'R',dc.id,'R');
+  const tile={};
+  [['trkbar',340,40],['trkseq',340,160],['trkpat',680,160],['trkinsl',1280,160],['trksmp',340,580],['trkmix',800,580],['trkkeys',1280,580]]
+    .forEach(([t,x,y])=>{ tile[t]=addNode(t,x,y,{}); addEdge(tr.id,'song',tile[t].id,'song'); });
+  const leaf=n=>({t:'leaf',id:dashId(),node:n?n.id:null});
+  const split=(dir,children,sizes)=>({t:'split',id:dashId(),dir,children,sizes});
+  Graph.dashTree=split('col',[
+    leaf(tile.trkbar),
+    split('row',[leaf(tile.trkseq),leaf(tile.trkpat),leaf(tile.trkinsl)],[18,57,25]),
+    split('row',[leaf(tile.trksmp),leaf(tile.trkmix),{t:'leaf',id:dashId(),node:null,view:'graph'}],[45,30,25])],[17,52,31]);
+  markWiresDirty();
+});
+
+// трекер играет генераторами графа: инструмент 1 — бас на 303, инструмент 2 — аккорды на 4-голосом синте,
+// драм-машина идёт по clk трекера (импульс на строку)
+preset('Tracker: Synths as Instruments', function(){
+  clearAll();
+  const tr=addNode('tracker',40,40,{demo:'synth'});
+  tr.p.song='';
+  const vw=addNode('trkview',40,330,{});
+  vw.size.w=460; vw.size.h=240; applySize(vw);
+  const i1=addNode('trkins',560,40,{inst:1,voices:'1'});
+  const ac=addNode('acid',820,40,{cutoff:420,envAmt:2600,reso:.8,decay:.18,slide:.04});
+  const i2=addNode('trkins',560,330,{inst:2,voices:'4'});
+  const ps=addNode('poly4',820,330,{wave:'saw',attack:.02,decay:.3,sustain:.5,release:.4,spread:.7});
+  const grid=[stepPattern([0,4,8,12]), stepPattern([]), stepPattern([4,12]),
+              stepPattern([2,6,10,14]), stepPattern([]), stepPattern([])].join(';');
+  const dr=addNode('drumseq',560,620,{grid,steps:16});
+  dr.size.w=460; applySize(dr);
+  const mx=addNode('mixer4',1100,200,{ka:.8,kb:.35,kc:.8,kd:0});
+  const dc=addNode('dac',1360,200,{vol:.5,mode:'mono'});
+  addEdge(tr.id,'song',vw.id,'song'); addEdge(tr.id,'song',i1.id,'song'); addEdge(tr.id,'song',i2.id,'song');
+  addEdge(i1.id,'freq',ac.id,'freq'); addEdge(i1.id,'gate',ac.id,'gate');
+  for(const k of ['','2','3','4']){ addEdge(i2.id,'freq'+k,ps.id,'freq'+k); addEdge(i2.id,'gate'+k,ps.id,'gate'+k); }
+  addEdge(tr.id,'clk',dr.id,'clk');
+  addEdge(ac.id,'out',mx.id,'a'); addEdge(ps.id,'out',mx.id,'b'); addEdge(dr.id,'out',mx.id,'c');
+  addEdge(mx.id,'out',dc.id,'L');
   markWiresDirty();
 });
 
