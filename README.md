@@ -244,7 +244,8 @@ The ▦ button switches to a tiled dashboard built from the modules of the curre
 - Pick any module for each pane from its dropdown
 - **Tabs in a pane**: **+** next to the dropdown adds a tab, so one pane switches between several modules; the dropdown belongs to the active tab, ⨯ closes it
 - Split panes right (⬌) or down (⬍), remove them (✕), drag dividers to resize; panes sit edge to edge, 1px dividers
-- In narrow panes the pane buttons fold into **⋯**
+- **⊡** or a double-click (double-tap) on an empty spot of the pane header maximizes the pane; the same or Esc restores the layout
+- In narrow panes and on touch the pane buttons fold into **⋯**
 - ⛶ shows only the module's display, without controls and header
 - **Tile pages**: **+** next to ▦ adds another set of tiles; switch pages with the numbered buttons (or Alt+1…9), tap the active one to rename, duplicate, reorder or delete it. A module can appear on several pages
 - The layout is saved with the patch and works on touch devices (wide scroll rail for long panes)

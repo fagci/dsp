@@ -1158,7 +1158,15 @@ function dashAutoPlace(n){                            // первая пуста
   }
   return false;
 }
+// развёрнутая на всю сетку панель (id листа) — только вид, не сохраняется
+let dashMax=null;
+function dashToggleMax(leafId){
+  dashMax= dashMax===leafId? null : leafId;
+  dashRenderRoot();
+  if(dashGraphLeaf()) dashGraphFit();
+}
 function dashSplit(leafId,dir){
+  dashMax=null;
   const f=dashFind(Graph.dashTree,leafId); if(!f||f.leaf.t!=='leaf') return;
   const split={t:'split', id:dashId(), dir, children:[f.leaf,dashLeaf(null)], sizes:[50,50]};   // лист как есть — со вкладками
   if(f.parent) f.parent.children[f.idx]=split; else Graph.dashTree=split;
@@ -1181,7 +1189,10 @@ function dashRemoveLeaf(leafId){                       // убрать пане�
 function dashRenderRoot(){
   // узлы вне дерева — обратно на холст, иначе после очистки сетки они выпадают из DOM
   const leaves=dashLeaves(Graph.dashTree), placed=new Set(), hidden=new Set();
-  for(const l of leaves) l.tabs.forEach((x,i)=>{ if(x.node==null) return; placed.add(x.node); if(i!==l.cur) hidden.add(x.node); });
+  const maxLeaf=dashMax!=null? leaves.find(l=>l.id===dashMax)||null : null;
+  if(!maxLeaf) dashMax=null;
+  for(const l of leaves) l.tabs.forEach((x,i)=>{ if(x.node==null) return; placed.add(x.node);
+    if(i!==l.cur || (maxLeaf && l!==maxLeaf)) hidden.add(x.node); });
   for(const n of Graph.nodes){
     if(!placed.has(n.id)){ if(n.el.parentNode!==content){ content.appendChild(n.el); applySize(n); n.onResize?.(n); } }
     else if(hidden.has(n.id)) n.el.remove();            // фоновая вкладка: вне DOM, на графе — заглушка
@@ -1192,7 +1203,7 @@ function dashRenderRoot(){
     hint.textContent="No panes";
     dashGridEl.append(hint); dashSyncGhosts(); dashPagesRender(); return;
   }
-  dashGridEl.append(dashRenderNode(Graph.dashTree));
+  dashGridEl.append(maxLeaf? dashRenderLeaf(maxLeaf) : dashRenderNode(Graph.dashTree));
   dashSyncGhosts();
   dashPagesRender();
   dashFitSoon();
@@ -1337,7 +1348,10 @@ function dashRenderLeaf(t){
       dashBtn2('⤢','Fit patch',dashGraphFit));
     pane.classList.add('graph');
   }
-  const many=t.tabs.length>1;
+  const many=t.tabs.length>1, isMax=dashMax===t.id;
+  const bm=dashBtn2('⊡',isMax?'Restore layout (Esc, double-click header)':'Maximize pane (double-click header)',()=>dashToggleMax(t.id));
+  bm.classList.toggle('on',isMax); pane.classList.toggle('max',isMax);
+  if(!isMax) acts.append(bm);                            // развёрнута — кнопка возврата всегда на виду, не под «⋯»
   acts.append(dashBtn2('⬌','Split right',()=>dashSplit(t.id,'row')),
     dashBtn2('⬍','Split down',()=>dashSplit(t.id,'col')),
     dashBtn2(many?'⨯':'✕',many?'Close tab':'Remove pane',()=>{
@@ -1346,7 +1360,9 @@ function dashRenderLeaf(t){
       t.tabs.splice(t.cur,1); t.cur=Math.min(t.cur,t.tabs.length-1);
       dashRenderRoot(); Undo.push(); }));
   const more=dashBtn2('⋯','Pane actions',()=>tools.classList.toggle('acts'),'dash-more');
-  tools.append(more,acts);
+  tools.append(...(isMax?[bm]:[]),more,acts);
+  // двойной клик/тап по пустому месту шапки — развернуть/вернуть
+  tools.addEventListener('dblclick',e=>{ if(e.target===tools || e.target===strip) dashToggleMax(t.id); });
   pane.append(tools);
   const body=document.createElement('div'); body.className='dash-body';
   if(n) body.append(n.el);
@@ -1521,7 +1537,7 @@ function dashPageName(i){ return Graph.dashPages[i].name || String(i+1); }
 function dashPageGo(i){
   if(i<0 || i>=Graph.dashPages.length || !dashMode) return;
   closeDashMenu();
-  Graph.dashPage=i; dashEnsureTree(); dashRenderRoot();
+  Graph.dashPage=i; dashMax=null; dashEnsureTree(); dashRenderRoot();
   if(dashGraphLeaf()) dashGraphFit();
   scheduleAutosave();
 }
@@ -1581,6 +1597,7 @@ function dashPageMove(d){
 }
 addEventListener('pointerdown',e=>{ if(dashMenuEl && !dashMenuEl.contains(e.target)) closeDashMenu(); },true);
 addEventListener('keydown',e=>{
+  if(dashMode && dashMax!=null && e.key==='Escape' && !e.target.closest?.('input,textarea,select')){ dashToggleMax(dashMax); return; }
   if(!dashMode || !e.altKey || e.ctrlKey || e.metaKey) return;
   const k=+e.key; if(k>=1 && k<=9 && k<=Graph.dashPages.length){ e.preventDefault(); dashPageGo(k-1); }
 });

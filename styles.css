@@ -177,6 +177,8 @@ button,select,input{font:inherit;color:inherit}
 .dash-tools .dash-tadd{padding:0 8px;opacity:.6}
 .dash-tools .dash-tadd:hover{opacity:1}
 .dash-tools .dash-more{display:none}
+/* развёрнутая панель: акцентная черта под шапкой */
+.dash-pane.max>.dash-tools{box-shadow:inset 0 -2px 0 var(--acc)}
 /* узкая панель и тач: действия под «⋯», выпадают столбиком */
 @container (max-width:300px){
   .dash-tools .dash-more{display:block}
