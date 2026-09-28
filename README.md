@@ -11,7 +11,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 ## Features
 
 ### Workbench
-- Node graph editor: pan/zoom canvas, drag-and-drop modules, typed ports (signal, number, spectrum, image, text, block)
+- Node graph editor: pan/zoom canvas, drag-and-drop modules, typed ports (signal, number, spectrum, image, text, block, IQ stream)
 - Dashboard view (split panes, draggable dividers) for building instrument-like UIs
 - **Module graph** pane in the dashboard: the regular node canvas inside a tile, next to the modules opened in other panes (SunVox-style) — see [Module graph pane](#module-graph-pane)
 - Add modules right on the canvas: double-click an empty spot (or **+** in the graph pane) and search
@@ -47,6 +47,10 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - FFT, Zoom-FFT (I/Q), Hilbert transform, quadrature shift, magnitude/phase, wavelet (constant-Q), cepstrum
 - Beamformer, phase scope (X-Y), envelope, calibration, capture & loop
 - Audio effects: delay, reverb, distortion, compressor/limiter, EQ, chorus/flanger/phaser, pitch shifter
+
+### IQ blocks
+- **IQ stream** wires carry complex (or real) samples at their own sample rate, not the engine's — build a receiver from blocks: source → frequency shift → decimator → demodulator → IQ → Audio (see [IQ blocks](#iq-blocks))
+- USB SDR `iq` output (raw IQ at the native rate, also from IQ file playback), IQ generator, IQ spectrum
 
 ### Modulation & radio
 - AM/FM/SSB demodulator, FSK demodulator, generic modulator
@@ -151,6 +155,33 @@ What it recognises: carrier, CW (with WPM), OOK, AM, USB/LSB, NFM (with CTCSS to
 The `bands` output carries the labels. Wire it into a Spectrum Analyzer's `bands`, or into a **Band Plan**'s `sigs` so the labels show together with the bands: each signal gets a bracket at its peak level with its type above it.
 
 Ready-made patches: **USB SDR: Signal Identifier**, **HF: Quick-Decode All Protocols**.
+
+## IQ blocks
+
+A wire of the **IQ** type (lime) carries a stream at its own sample rate: each engine block it brings as many samples as the source produced since the previous block (none, one chunk or several), together with the stream's sample rate and center frequency. So a chain can run at 2.4 MS/s next to audio at 48 kHz, and a receiver is wired from blocks instead of being hidden inside the SDR node.
+
+- **IQ Generator** — a test signal (carrier, AM, FM, USB, LSB) at an offset from the center, plus noise; sample rate up to 2.4 MS/s. *clock error, ppm* simulates a source whose clock differs from the sound card
+- **USB SDR → `iq`** — the raw IQ at the native rate (live or from IQ file playback); samples of the old frequency after a retune are not passed on
+- **IQ Frequency Shift** — brings `freq` (absolute Hz, e.g. marker `f1` of a Spectrum Analyzer) or center + *offset* down to 0 Hz
+- **IQ Decimator** — windowed-sinc FIR (Blackman) and decimation by 2…64; *cutoff* is a fraction of the output rate. Works on complex and real streams
+- **IQ Demodulator** — FM (deviation, 50/75 µs de-emphasis), AM (normalized to the carrier: the output is the modulation depth), USB/LSB (Weaver, 8th-order filter); the output is a real stream at the input rate
+- **IQ → Audio** — the bridge into the engine's audio: ring buffer and a cubic resampler to the sound card rate. The source clock (SDR, file) and the sound card drift apart; the read rate follows the buffer fill within ±2000 ppm, the readout shows the buffer and the correction. Decimate to about the audio rate before it: the bridge has no anti-alias filter
+- **IQ Spectrum** — Welch spectrum of a stream (absolute frequencies for complex streams) for the Spectrum Analyzer
+
+All of this runs on the main thread for now. Presets: *IQ: Receiver from Blocks (Generator)* (no hardware needed) and *USB SDR: FM Receiver from Blocks*.
+
+## Tests
+
+Smoke tests run the engine without a sound card in headless Chromium: a few presets (decoded RTTY text, APRS frames with a good CRC, sound on the output) and the IQ chain (tone frequency and level after FM/AM/SSB, sideband rejection, bridge lock to a drifting clock, decimator independent of chunk sizes, USB SDR `iq` output from an IQ file).
+
+```
+cd tools/test
+npm install            # playwright
+npx playwright install chromium
+npm test               # or: node run.mjs <part of a test name>
+```
+
+The same runs in GitHub Actions on every pull request.
 
 ## Sample editor
 

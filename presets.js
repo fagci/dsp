@@ -107,6 +107,7 @@ const PRESET_CAT_ORDER=['Demo','Quick Scenarios','Sequencers & Arrangement','Syn
                          'Radio Protocols','Phase & Quadrature','Microphone Arrays','Signal Analysis'];
 const PRESET_CATS={
   'Demo: Sweep and Waterfall':'Demo',
+  'IQ: Receiver from Blocks (Generator)':'Demo',
 
   'Quick Audio Recording':'Quick Scenarios',
   'Find Sound Source (by Frequency)':'Quick Scenarios',
@@ -116,6 +117,7 @@ const PRESET_CATS={
   'Quick Signal Chain Check':'Quick Scenarios',
   'USB SDR: Wideband Sweep':'Quick Scenarios',
   'USB SDR: Signal Identifier':'Quick Scenarios',
+  'USB SDR: FM Receiver from Blocks':'Quick Scenarios',
   'tinySA: Spectrum':'Quick Scenarios',
 
   'Piano Roll: Length and Velocity':'Sequencers & Arrangement',
@@ -523,6 +525,53 @@ addEdge(bp.id,'bands',sa.id,'bands');
 addEdge(sa.id,'f1',rx.id,'tuneFreq');
 addEdge(sa.id,'centerFreq',rx.id,'steerFreq');
 addEdge(rx.id,'audio',dc.id,'L'); addEdge(rx.id,'audio',dc.id,'R');
+markWiresDirty();
+});
+preset('IQ: Receiver from Blocks (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A receiver wired from IQ blocks. Lime wires carry an IQ stream at its own sample rate.\n'+
+  'Generator (1.024 MS/s, NFM at +100 kHz) → shift to zero → decimate ×16 (64 kS/s) → FM demodulator → IQ → Audio.\n'+
+  'Tap a signal on the spectrum: marker 1 tunes the shift. Change the generator mode (AM/USB/LSB) and the demodulator with it.'});
+nt.size.w=520; nt.size.h=150; applySize(nt);
+const gn=addNode('iqGen',40,240,{sr:'1024000',fc:100000000,mode:'FM',off:100000,lvl:-20,dev:3000,noise:-70});
+const sp=addNode('iqSpec',40,560,{size:'8192'});
+const sa=addNode('sa',600,40,{auto:true,floor:-110,top:0,split:.4});
+sa.size.w=640; sa.size.h=340; applySize(sa);
+const sh=addNode('iqShift',300,240,{offset:100000});
+const dm=addNode('iqDecim',300,420,{M:'16'});
+const de=addNode('iqDemod',600,440,{mode:'FM',dev:3000});
+const au=addNode('iqAudio',860,440,{});
+const sc=addNode('scope',1100,440);
+const dc=addNode('dac',860,640,{vol:.3});
+addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
+addEdge(gn.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',dm.id,'in'); addEdge(dm.id,'out',de.id,'in'); addEdge(de.id,'out',au.id,'in');
+addEdge(au.id,'out',sc.id,'in1'); addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'out',dc.id,'R');
+markWiresDirty();
+});
+preset('USB SDR: FM Receiver from Blocks', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Broadcast FM receiver built from IQ blocks instead of the SDR\'s own demodulator.\n'+
+  'Raw IQ (1.024 MS/s) → shift the tapped station to zero → ×4 (256 kS/s) → FM, 75 kHz, de-emphasis → ×5 (51.2 kS/s) → audio.\n'+
+  'Connect the SDR, tap a station on the upper spectrum. The lower one shows the channel after decimation.'});
+nt.size.w=560; nt.size.h=150; applySize(nt);
+const rx=addNode('rtlsdr',40,240,{sr:'1024000',freq:100000000,demod:'WFM'});
+const sa=addNode('sa',640,40,{auto:true,floor:-90,top:-20,split:.4});
+sa.size.w=640; sa.size.h=340; applySize(sa);
+const sh=addNode('iqShift',340,240,{});
+const d1=addNode('iqDecim',340,420,{M:'4',cut:.4});
+const sp=addNode('iqSpec',340,600,{size:'2048'});
+const s2=addNode('sa',640,420,{auto:true,floor:-100,top:-20,split:.4});
+s2.size.w=640; s2.size.h=260; applySize(s2);
+const de=addNode('iqDemod',40,760,{mode:'FM',dev:75000,deemph:'50 µs'});
+const d2=addNode('iqDecim',300,760,{M:'5',cut:.35});
+const au=addNode('iqAudio',560,760,{});
+const dc=addNode('dac',820,760,{vol:.4});
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',sp.id,'in'); addEdge(sp.id,'spec',s2.id,'spec');
+addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'out',d2.id,'in'); addEdge(d2.id,'out',au.id,'in');
+addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'out',dc.id,'R');
 markWiresDirty();
 });
 preset('tinySA: Spectrum', function(){

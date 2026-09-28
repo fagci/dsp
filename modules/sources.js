@@ -3471,6 +3471,27 @@ function rtlUpdateSpec(n){
   }).catch(()=>{ n.specBusy=false; });
 }
 
+// Выход 'iq': сырой поток на родной частоте — всё новое в specRing с прошлого такта (туда же
+// не попадают чанки старой частоты после перестройки). Копируется, только если выход подключён.
+function rtlIqOut(n){
+  if(n._iqOrd!==Graph.order){ n._iqOrd=Graph.order; n._iqWired=Graph.edges.some(e=>e.from===n.id && e.fp==='iq'); }
+  const ring=n.specRing, fc=n.actualFreq??n.p.freq;
+  if(!n._iqWired || !n.connected || n.swActive || !ring){ n.iqTaken=null; return null; }
+  const s=iqStream(n,'iq',n.sourceRate,fc);
+  if(n.iqTaken==null || ring.written<n.iqTaken){ n.iqTaken=ring.written; n.iqFc=fc; return s; }
+  let L=ring.written-n.iqTaken, tag=null;
+  if(L>ring.filled){ L=ring.filled; tag='gap'; }         // главный поток отстал или кольцо сброшено
+  if(fc!==n.iqFc){ tag='retune'; n.iqFc=fc; }
+  n.iqTaken=ring.written;
+  if(L<=0) return s;
+  const re=new Float32Array(L), im=new Float32Array(L), start=(ring.w-L+ring.size)%ring.size;
+  const first=Math.min(L, ring.size-start);
+  re.set(ring.I.subarray(start,start+first)); im.set(ring.Q.subarray(start,start+first));
+  if(first<L){ re.set(ring.I.subarray(0,L-first),first); im.set(ring.Q.subarray(0,L-first),first); }
+  iqPush(s,re,im,tag);
+  return s;
+}
+
 // подстраховка от протухшего сохранённого значения (например, оставшегося '250000' из старой
 // версии узла, когда этот вариант ещё был в списке) — вместо падения setSampleRate() в ошибку
 // и полной тишины молча откатываемся на безопасный дефолт.
@@ -3873,7 +3894,7 @@ async function sdrSweepLoop(n){
 def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
   ins:[{n:'freq',t:'num'},{n:'steerFreq',t:'num'},{n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'},
        {n:'gainDb',t:'num'},{n:'bw',t:'num'},{n:'demod',t:'val'}],
-  outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},
+  outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'iq',t:'iq'},
         {n:'audio',t:'sig'},{n:'audio2',t:'sig'},{n:'audio3',t:'sig'},{n:'audio4',t:'sig'},
         {n:'audioL',t:'sig'},{n:'audioR',t:'sig'},{n:'ps',t:'val'},{n:'rt',t:'val'},
         {n:'spec',t:'spec'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},
@@ -4111,7 +4132,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     const rds=n.ch[0].rds;
 
     n._prevPFreq=n.p.freq; // снимок на конец тика — см. manualEdit в начале process() (demod/bw/gainDb — через setModWired)
-    return {I:oi, Q:oq, audio:oa[0], audio2:oa[1], audio3:oa[2], audio4:oa[3], audioL:oL, audioR:oR,
+    return {I:oi, Q:oq, iq:rtlIqOut(n), audio:oa[0], audio2:oa[1], audio3:oa[2], audio4:oa[3], audioL:oL, audioR:oR,
       ps:rds&&rds.sync!==undefined&&rds.ps.trim()?rds.ps.trim():null, rt:rds&&rds.rt?rds.rt:null, spec:spOut,
       demod:n.p.demod, bw:n.p.bw, ...bounds,
       adcPk:n.adcPk??null, adcRms:n.adcRms??null, clip:n.adcClip!=null?100*n.adcClip:null, ovl:sdrAdcOvl(n)?1:0,
