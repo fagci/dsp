@@ -2,7 +2,7 @@
 let BLOCK = 512;                   // размер блока обработки (меняется на ходу)
 const TYPE_COLOR = {sig:'var(--t-sig)',num:'var(--t-num)',spec:'var(--t-spec)',
                     img:'var(--t-img)',txt:'var(--t-txt)',blk:'var(--t-blk)',val:'var(--acc)',bands:'var(--t-bands)',rec:'var(--t-rec)',
-                    trk:'var(--t-trk)'};
+                    trk:'var(--t-trk)',iq:'var(--t-iq)'};
 // Canvas 2D (в отличие от SVG/CSS) не резолвит var(...) сам — цвет для fillStyle/strokeStyle
 // нужен уже вычисленным. Общий кэш на все модули разом: одна getComputedStyle раз в 0.5с на
 // переменную, а не по разу на каждый canvas-узел на каждый кадр (их десятки, кадров 60/с).
@@ -14,7 +14,7 @@ function themeColor(name){
     (ThemeColorCache.vals[name]=getComputedStyle(document.body).getPropertyValue(name).trim());
 }
 // порядок разделов в палитре — иначе порядок зависит от того, в каком файле модуль зарегистрирован
-const CAT_ORDER = ['Sources','Music','Processing','Modulation','Analysis','Radio','Radar',
+const CAT_ORDER = ['Sources','Music','Processing','Modulation','Analysis','Radio','IQ','Radar',
                     'Protocols','Decoders','Audio','Video','Output','Control','Builder','Misc'];
 
 /* ============================ ДВИЖОК ============================ */
@@ -571,6 +571,22 @@ function topoOrder(nodes,edges,map){                 // топосорт, цик
   const seen=new Set(res);
   return res.map(id=>map[id]).concat(nodes.filter(n=>!seen.has(n.id)));
 }
+
+/* ---- поток 'iq' ----
+   Провод 'iq' несёт не блок BLOCK на Eng.sr, а поток со своей частотой дискретизации:
+   {sr, fc, chunks:[{re, im, t0, tag}]}, за такт — 0..N чанков любой длины.
+   im=null — вещественный поток (например, звук демодулятора на частоте потока).
+   fc — какой частоте соответствует 0 Гц потока (у вещественного 0).
+   t0 — номер первого отсчёта чанка от начала потока; tag — 'gap' (пропуск) или 'retune'.
+   Данные чанка живут один такт: кому нужно дольше — копирует. */
+function iqStream(n,name,sr,fc){
+  const m=n._iqs||(n._iqs={});
+  const s=m[name]||(m[name]={sr:0,fc:0,chunks:[],t:0});
+  s.sr=sr; s.fc=fc; s.chunks=[];
+  return s;
+}
+function iqPush(s,re,im,tag){ s.chunks.push({re,im,t0:s.t,tag:tag||null}); s.t+=re.length; }
+function iqIn(I,name){ const s=I[name]; return s&&s.chunks ? s : null; }
 
 /* ---- вспомогательное ---- */
 function buf(n,name){ (n.b||(n.b={})); return n.b[name] || (n.b[name] = new Float32Array(BLOCK)); }
