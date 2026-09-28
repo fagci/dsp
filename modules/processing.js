@@ -1268,6 +1268,31 @@ const humPreset=n=>{ if(n.p.preset!=='custom') setMod(n,'f0',+n.p.preset); };
 // вычитается только сама наводка (амплитуда/фаза каждой гармоники), сигнал между гармониками
 // не трогается. Частота генератора подстраивается по вращению фазора основной гармоники (FLL),
 // поэтому режекция остаётся глубокой при уходе сети на ±0.1…0.5 Гц.
+// Автонотч: NLMS-предсказатель с задержкой. Периодическое (несущие, свисты, гетеродины) предсказуемо
+// и вычитается, речь и шум с задержкой почти не коррелируют и проходят в ошибке предсказания.
+const ANF_N=64, ANF_D=24;
+def({ id:'anf', title:'Auto Notch (NLMS)', cat:'Processing',
+  ins:[{n:'in',t:'sig'}], outs:[{n:'out',t:'sig'},{n:'tones',t:'sig'}],
+  params:[{n:'mu',t:'range',min:.001,max:.1,step:.001,d:.01,log:true,label:'adaptation speed'},
+          {n:'on',t:'check',d:true,label:'on'}],
+  init:n=>{ const L=ANF_N+ANF_D+1; n.w=new Float32Array(ANF_N); n.x=new Float32Array(2*L); n.L=L; n.pos=0; n.pw=0; },
+  process(n,I){
+    const o=buf(n,'out'), t=buf(n,'tones'), x=n.x, w=n.w, L=n.L, mu=n.p.mu, lk=1-1e-5;
+    if(!I.in){ o.fill(0); t.fill(0); return {out:o, tones:t}; }
+    for(let i=0;i<BLOCK;i++){
+      const v=I.in[i];
+      n.pos=n.pos===0 ? L-1 : n.pos-1;                // x[pos+j] — отсчёт j шагов назад
+      const p=n.pos; x[p]=v; x[p+L]=v;
+      const xin=x[p+ANF_D], xout=x[p+ANF_D+ANF_N];
+      n.pw+=xin*xin-xout*xout; if(n.pw<0) n.pw=0;
+      let y=0;
+      for(let k=0;k<ANF_N;k++) y+=w[k]*x[p+ANF_D+k];
+      const e=v-y, g=mu*e/(n.pw+1e-9);
+      for(let k=0;k<ANF_N;k++) w[k]=w[k]*lk+g*x[p+ANF_D+k];
+      o[i]=n.p.on ? e : v; t[i]=y;
+    }
+    return {out:o, tones:t};
+  }});
 def({ id:'humcancel', title:'Hum Canceller (adaptive)', cat:'Processing',
   ins:[{n:'in',t:'sig'},{n:'f0',t:'num'},{n:'n',t:'num'},{n:'bw',t:'num'}],
   outs:[{n:'out',t:'sig'},{n:'hum',t:'sig'},{n:'freq',t:'num'},{n:'level',t:'num'}],

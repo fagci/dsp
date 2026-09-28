@@ -21,7 +21,7 @@ IQK.iqGen={
     const re=new Float32Array(N), im=new Float32Array(N);
     const a=Math.pow(10,n.p.lvl/20), nz=Math.pow(10,n.p.noise/20)/Math.SQRT2;
     const w=2*Math.PI*pv(n,I,'off')/sr, wm=2*Math.PI*n.p.tone/sr, mode=n.p.mode;
-    const kf=2*Math.PI*n.p.dev/sr, depth=n.p.depth;
+    const kf=2*Math.PI*n.p.dev/sr, kw=2*Math.PI*75000/sr, depth=n.p.depth;
     let ph=n.ph, mph=n.mph, x=n.rng;
     const rnd=()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296; };
     for(let i=0;i<N;i++){
@@ -29,6 +29,7 @@ IQK.iqGen={
       let amp=a, p=ph;
       if(mode==='AM') amp=a*(1+depth*m)/(1+depth);
       else if(mode==='FM') ph+=kf*m;
+      else if(mode==='WFM stereo') ph+=kw*iqGenMpx(n,m,sr);
       else if(mode==='USB') p=ph+mph;
       else if(mode==='LSB') p=ph-mph;
       else if(mode==='off') amp=0;
@@ -43,6 +44,27 @@ IQK.iqGen={
     iqPush(s,re,im);
     return {iq:s};
   }};
+
+// MPX стерео-ЧМ: тон только в левом канале (правый — тишина, для проверки разделения),
+// пилот sin 19 кГц, L−R на sin 38 кГц, RDS на 57 кГц: группы 0A с названием станции (ps)
+function iqGenMpx(n,m,sr){
+  if(!n.mpx || n.mpx.sr!==sr || n.mpx.ps!==n.p.ps){
+    const bits=[], ps=(String(n.p.ps||'')+'        ').slice(0,8);
+    const crc=d=>{ let r=d<<10; for(let i=25;i>=10;i--) if(r&(1<<i)) r^=0x5B9<<(i-10); return r&0x3FF; };
+    const block=(d,off)=>{ const w=(d<<10)|(crc(d)^off); for(let i=25;i>=0;i--) bits.push((w>>>i)&1); };
+    for(let seg=0;seg<4;seg++){
+      block(0x1234,RDS_OFF[0]); block((1<<3)|seg,RDS_OFF[1]); block(0xE0CD,RDS_OFF[2]);
+      block((ps.charCodeAt(2*seg)<<8)|ps.charCodeAt(2*seg+1),RDS_OFF[3]);
+    }
+    n.mpx={sr, ps:n.p.ps, bits, t:0, bit:0, e:0, pil:0};
+  }
+  const x=n.mpx, spb=sr/1187.5;
+  const pw=2*Math.PI*19000/sr; x.pil+=pw; if(x.pil>2*Math.PI) x.pil-=2*Math.PI;
+  if(++x.t>=spb){ x.t-=spb; x.bit=(x.bit+1)%x.bits.length; x.e^=x.bits[x.bit]; }   // дифференциальное кодирование
+  const sym=(x.t<spb/2 ? 1 : -1)*(x.e ? 1 : -1);                                    // бифазный символ
+  const L=m, R=0;
+  return 0.45*(L+R)+0.45*(L-R)*Math.sin(2*x.pil)+0.09*Math.sin(x.pil)+0.04*sym*Math.sin(3*x.pil);
+}
 
 /* ---- IQ Frequency Shift ---- */
 // Переносит частоту freq (абсолютную) или fc+offset в 0 Гц: z·e^(−jωt). fc выхода = эта частота.
@@ -123,65 +145,253 @@ IQK.iqDecim={
   }};
 
 /* ---- IQ Demodulator ---- */
-// FM: приращение фазы; AM: огибающая, нормированная на среднее (глубина модуляции);
-// USB/LSB: Weaver — сдвиг на ∓bw/2, ФНЧ bw/2 (Баттерворт 8-го порядка), обратный сдвиг, Re.
-// Выход — вещественный поток на частоте входа.
+// Вход — канал, уже отфильтрованный и прореженный (сдвиг → децимация). Выход 'out' — звук
+// вещественным потоком, 'stereo' — комплексным: re — левый, im — правый (WFM, SAM ISB; иначе моно).
+// FM: приращение фазы / девиация. WFM: 75 кГц, ФАПЧ по пилоту 19 кГц, L−R с 38 кГц, RDS с 57 кГц,
+//   де-эмфазис; звук ФНЧ 15 кГц с прореживанием до ≥40 кС/с (вход — не ниже ~150 кС/с).
+// AM: огибающая, с АРУ — глубина модуляции относительно несущей. SAM: ФАПЧ на несущую (широкая
+//   на захват, узкая в захвате), когерентный детектор; боковая — обе, верхняя, нижняя или ISB.
+// USB/LSB: Weaver — сдвиг на ∓bw/2, ФНЧ bw/2 (Баттерворт 8-го порядка), обратный сдвиг, Re; АРУ по пику.
+const SAM_SB={both:0, USB:1, LSB:-1, ISB:2};
+const RDS_OFF=[0x0FC,0x198,0x168,0x1B4], RDS_OFFC2=0x350;           // A B C D, C'
+function rdsSyn(w){ let r=0; for(let i=25;i>=0;i--){ r=(r<<1)|((w>>>i)&1); if(r&0x400) r^=0x5B9; } return r&0x3FF; }
+function rdsChar(c){ return c>=0x20 && c<0x7f ? String.fromCharCode(c) : c===0x0d ? '\r' : ' '; }
+// приёмник RDS: отсчёты бейзбенда на fs → фаза BPSK → бифазный согласованный фильтр → такт →
+// дифференциальное декодирование → блоки с синдромами → группы 0A/0B (PS) и 2A/2B (RT)
+function rdsNew(fs){
+  const H=Math.max(2,Math.round(fs/2375));
+  return {Tb:fs/1187.5, H, Y:new Float32Array(2*H), Yi:0, n:0, M:new Float32Array(3), next:fs/1187.5,
+    cII:0, cQQ:0, cIQ:0, prev:0, reg:0, sync:false, lastHit:-1, lastOff:-1, bitN:0,
+    exp:0, blk:[0,0,0,0], ok:[false,false,false,false], err:[], pi:-1, pty:0,
+    ps:new Array(8).fill(' '), rt:new Array(64).fill(' '), ab:-1};
+}
+function rdsGroup(r){
+  const [a,b,c,d]=r.blk;
+  if(r.ok[0]) r.pi=a;
+  if(!r.ok[1]) return;
+  const type=b>>>12, ver=(b>>>11)&1;
+  r.pty=(b>>>5)&0x1f;
+  if(type===0 && r.ok[3]){ const i=(b&3)*2; r.ps[i]=rdsChar(d>>>8); r.ps[i+1]=rdsChar(d&0xff); }
+  else if(type===2){
+    const ab=(b>>>4)&1;
+    if(ab!==r.ab){ r.ab=ab; r.rt.fill(' '); }
+    const addr=b&0xf;
+    if(ver===0 && r.ok[2] && r.ok[3]){ const t=[c>>>8,c&0xff,d>>>8,d&0xff]; for(let k=0;k<4;k++) r.rt[addr*4+k]=rdsChar(t[k]); }
+    else if(ver===1 && r.ok[3]){ r.rt[addr*2]=rdsChar(d>>>8); r.rt[addr*2+1]=rdsChar(d&0xff); }
+  }
+}
+function rdsBit(r,bit){
+  r.reg=((r.reg<<1)|bit)&0x3FFFFFF; r.bitN++;
+  if(!r.sync){
+    const sy=rdsSyn(r.reg);
+    let off=RDS_OFF.indexOf(sy); if(off<0 && sy===RDS_OFFC2) off=2;
+    if(off<0) return;
+    if(r.lastHit>=0){                                // два блока подряд на своих местах — синхронизация
+      const dist=r.bitN-r.lastHit, steps=((off-r.lastOff)+4)%4||4;
+      if(dist===steps*26){ r.sync=true; r.exp=(off+1)%4; r.bitN=0; r.err=[];
+        r.blk[off]=(r.reg>>>10)&0xffff; r.ok.fill(false); r.ok[off]=true; r.lastHit=-1; return; }
+    }
+    r.lastHit=r.bitN; r.lastOff=off; return;
+  }
+  if(r.bitN<26) return;
+  r.bitN=0;
+  const sy=rdsSyn(r.reg), ok=sy===RDS_OFF[r.exp] || (r.exp===2 && sy===RDS_OFFC2);
+  r.blk[r.exp]=(r.reg>>>10)&0xffff; r.ok[r.exp]=ok;
+  r.err.push(ok?0:1); if(r.err.length>50) r.err.shift();
+  if(r.exp===3){ rdsGroup(r); r.ok.fill(false); }
+  r.exp=(r.exp+1)%4;
+  if(r.err.length>=10 && r.err.reduce((x,y)=>x+y,0)>r.err.length*0.4){ r.sync=false; r.lastHit=-1; }
+}
+function rdsSample(r,ri,rq){
+  const a=0.002;
+  r.cII+=(ri*ri-r.cII)*a; r.cQQ+=(rq*rq-r.cQQ)*a; r.cIQ+=(ri*rq-r.cIQ)*a;
+  const th=0.5*Math.atan2(2*r.cIQ, r.cII-r.cQQ), y=ri*Math.cos(th)+rq*Math.sin(th), L=2*r.H;
+  r.Y[r.Yi]=y; r.Yi=(r.Yi+1)%L;
+  let m=0; for(let k=0;k<L;k++){ const v=r.Y[(r.Yi+k)%L]; m+=k<r.H ? v : -v; }   // первая половина бита минус вторая
+  r.M[r.n%3]=m; r.n++;
+  if(r.n<r.next+1) return;
+  const mc=r.M[(r.n-2)%3], me=r.M[(r.n-3+3)%3], ml=r.M[(r.n-1)%3];
+  const err=(Math.abs(ml)-Math.abs(me))/(Math.abs(mc)+1e-12);   // ранний/поздний — подстройка такта
+  r.next+=r.Tb+Math.max(-0.5,Math.min(0.5,0.25*err));
+  const bit=mc>0?1:0; rdsBit(r, bit^r.prev); r.prev=bit;
+}
 IQK.iqDemod={
   init(n){ n.key=''; },
   process(n,I){
     const s=iqIn(I,'in');
-    if(!s){ n.ui=null; return {out:null}; }
-    const sr=s.sr, mode=n.p.mode, g=Math.pow(10,n.p.gain/20);
-    const key=mode+'|'+sr+'|'+n.p.bw+'|'+n.p.deemph;
-    if(key!==n.key){
-      n.key=key; n.pr=0; n.pi=0; n.de=0; n.avg=0; n.wr=1; n.wi=0;
-      n.bq=[0.5097956,0.6013449,0.8999762,2.5629154].map(Q=>biquadCoef('lp',n.p.bw/2,Q,sr));
-      n.z=new Float64Array(32);   // 2 канала × 4 каскада × (x1,x2,y1,y2)
-    }
-    const o=iqStream(n,'out',sr,0);
-    const kf=sr/(2*Math.PI*n.p.dev);
-    const tau=n.p.deemph==='50 µs' ? 50e-6 : n.p.deemph==='75 µs' ? 75e-6 : 0;
-    const ade=tau ? 1-Math.exp(-1/(sr*tau)) : 1;
-    const aAvg=1-Math.exp(-1/(sr*0.2));
+    if(!s){ n.ui=null; return {out:null, stereo:null}; }
+    const sr=s.sr, mode=n.p.mode, g=Math.pow(10,n.p.gain/20), agc=n.p.agc!==false;
+    const key=[mode,sr,n.p.bw,n.p.deemph,n.p.samSb].join('|');
+    if(key!==n.key) iqDemodSetup(n,sr,mode);
+    const ar=n.ar, o=iqStream(n,'out',ar,0), os=iqStream(n,'stereo',ar,0);
+    const kf=sr/(2*Math.PI*(mode==='WFM' ? 75000 : n.p.dev));
     for(const c of s.chunks){
-      const xr=c.re, xi=iqChunkIm(c), K=xr.length, y=new Float32Array(K);
-      if(mode==='FM'){
-        let pr=n.pr, pi=n.pi, de=n.de;
-        for(let i=0;i<K;i++){
-          const a=xr[i], b=xi[i];
-          const d=Math.atan2(b*pr-a*pi, a*pr+b*pi);    // arg(z·conj(z_prev))
-          pr=a; pi=b;
-          de+=ade*(d*kf-de); y[i]=g*de;
-        }
-        n.pr=pr; n.pi=pi; n.de=de;
-      } else if(mode==='AM'){
-        let avg=n.avg;
-        for(let i=0;i<K;i++){
-          const m=Math.sqrt(xr[i]*xr[i]+xi[i]*xi[i]);
-          avg+=aAvg*(m-avg);
-          y[i]=avg>1e-12 ? g*(m/avg-1) : 0;
-        }
-        n.avg=avg;
-      } else {
-        const sgn=mode==='USB' ? -1 : 1, w=sgn*Math.PI*n.p.bw/sr, cw=Math.cos(w), sw=Math.sin(w);
-        const z=n.z, bq=n.bq;
-        let wr=n.wr, wi=n.wi;
-        const lp=(x,o,q)=>{ const [b0,b1,b2,a1,a2]=q; const v=b0*x+b1*z[o]+b2*z[o+1]-a1*z[o+2]-a2*z[o+3];
-          z[o+1]=z[o]; z[o]=x; z[o+3]=z[o+2]; z[o+2]=v; return v; };
-        for(let i=0;i<K;i++){
-          const a=xr[i]*wr-xi[i]*wi, b=xr[i]*wi+xi[i]*wr;             // сдвиг на ∓bw/2
+      const xr=c.re, xi=iqChunkIm(c), K=xr.length;
+      const maxOut=mode==='WFM' ? Math.ceil((K+n.wCnt)/n.wD)+1 : K;
+      const yl=new Float32Array(maxOut), yr=new Float32Array(maxOut);
+      let w=0;
+      for(let i=0;i<K;i++){
+        const ci=xr[i], cq=xi[i];
+        let v, vr=null;
+        if(mode==='FM' || mode==='WFM'){
+          v=Math.atan2(cq*n.pr-ci*n.pi, ci*n.pr+cq*n.pi)*kf;      // arg(z·conj(z_prev))
+          n.pr=ci; n.pi=cq;
+          if(mode==='WFM'){
+            const lr=iqWfmStep(n,v);                                 // L−R по ФАПЧ пилота; RDS
+            n.bM[n.bPos]=v; n.bS[n.bPos]=lr; n.bM[n.bPos+n.hN]=v; n.bS[n.bPos+n.hN]=lr;
+            if(++n.bPos===n.hN) n.bPos=0;
+            if(--n.wCnt>0) continue;
+            n.wCnt=n.wD;
+            let m=0, sd=0; const h=n.hA, b=n.bPos;
+            for(let t=0;t<n.hN;t++){ m+=h[t]*n.bM[b+t]; sd+=h[t]*n.bS[b+t]; }
+            const want=(n.p.stereo!==false && n.plLock>0.3 && n.plAmp>0.01) ? 1 : 0;
+            n.stG+=(want-n.stG)*0.002;                                // стерео — плавно и только в захвате
+            sd*=n.stG;
+            v=m+sd; vr=m-sd;
+          }
+        } else if(mode==='AM'){
+          const env=Math.sqrt(ci*ci+cq*cq);
+          n.avg+=n.aAvg*(env-n.avg);
+          v=agc ? (n.avg>1e-12 ? env/n.avg-1 : 0) : (env-n.avg)*3;
+        } else if(mode==='SAM'){
+          [v,vr]=iqSamStep(n,ci,cq,agc);
+        } else {                                                      // USB/LSB, Weaver
+          const wr=n.wr, wi=n.wi, a=ci*wr-cq*wi, b=ci*wi+cq*wr;
           let fa=a, fb=b;
-          for(let k=0;k<4;k++){ fa=lp(fa,4*k,bq[k]); fb=lp(fb,16+4*k,bq[k]); }
-          y[i]=g*2*(fa*wr+fb*wi);                                       // Re{f·e^(±jωt)}: обратный сдвиг
-          const t=wr*cw-wi*sw; wi=wr*sw+wi*cw; wr=t;
+          for(let k=0;k<4;k++){ fa=iqBq(n.z,4*k,n.bq[k],fa); fb=iqBq(n.z,16+4*k,n.bq[k],fb); }
+          v=2*(fa*wr+fb*wi);
+          const t=wr*n.cw-wi*n.sw; n.wi=wr*n.sw+wi*n.cw; n.wr=t;
+          if((i&1023)===1023){ const m=1/Math.hypot(n.wr,n.wi); n.wr*=m; n.wi*=m; }
         }
-        const m=1/Math.sqrt(wr*wr+wi*wi); n.wr=wr*m; n.wi=wi*m;
+        // DC-блок, де-эмфазис, АРУ SSB
+        n.dcL+=n.hp*(v-n.dcL); v-=n.dcL;
+        if(vr!=null){ n.dcR+=n.hp*(vr-n.dcR); vr-=n.dcR; }
+        if(n.de){ n.deL+=n.de*(v-n.deL); v=n.deL; if(vr!=null){ n.deR+=n.de*(vr-n.deR); vr=n.deR; } }
+        if((mode==='USB' || mode==='LSB') && agc) v=iqAgcStep(n,v);
+        yl[w]=g*v; yr[w]=g*(vr==null ? v : vr); w++;
       }
-      iqPush(o,y,null,c.tag);
+      if(mode!=='WFM' || w===yl.length){ iqPush(o,yl,null,c.tag); iqPush(os,yl,yr,c.tag); }
+      else if(w){ const l=yl.slice(0,w); iqPush(o,l,null,c.tag); iqPush(os,l,yr.slice(0,w),c.tag); }
     }
-    n.ui={sr};
-    return {out:o};
+    const res={out:o, stereo:os};
+    if(mode==='WFM'){
+      const r=n.rds, ps=r.ps.join('').trim(), rt=r.rt.join('').split('\r')[0].trim();
+      res.ps=ps || null; res.rt=rt || null; res.pilot=n.plLock>0.3 && n.plAmp>0.01 ? 1 : 0;
+      n.ui={sr, ar, stereo:n.stG>0.5, ps, rt, sync:r.sync, pi:r.pi};
+    } else if(mode==='SAM'){ res.lock=n.samLock>0.6 ? 1 : 0; n.ui={sr, ar, lock:n.samLock>0.6, hz:n.samW*sr/(2*Math.PI)}; }
+    else n.ui={sr, ar};
+    return res;
   }};
+function iqBq(z,o,q,x){ const v=q[0]*x+q[1]*z[o]+q[2]*z[o+1]-q[3]*z[o+2]-q[4]*z[o+3];
+  z[o+1]=z[o]; z[o]=x; z[o+3]=z[o+2]; z[o+2]=v; return v; }
+function iqDemodSetup(n,sr,mode){
+  n.key=[mode,sr,n.p.bw,n.p.deemph,n.p.samSb].join('|');
+  n.pr=0; n.pi=0; n.avg=0; n.aAvg=1-Math.exp(-1/(sr*0.2));
+  n.ar=sr; n.dcL=0; n.dcR=0; n.deL=0; n.deR=0;
+  if(mode==='WFM'){
+    n.wD=Math.max(1,Math.floor(sr/40000)); n.ar=sr/n.wD; n.wCnt=n.wD;
+    n.hA=kaiserLP(sr, 15000, Math.min(18500, n.ar/2), 1023); n.hN=n.hA.length;
+    n.bM=new Float32Array(2*n.hN); n.bS=new Float32Array(2*n.hN); n.bPos=0;
+    const w0=2*Math.PI*19000/sr, Q=12, al=Math.sin(w0)/(2*Q), a0=1+al;
+    n.pb=[al/a0, -2*Math.cos(w0)/a0, (1-al)/a0]; n.pbX1=n.pbX2=n.pbY1=n.pbY2=0;
+    n.plW0c=Math.cos(w0); n.plW0s=Math.sin(w0); n.plRe=1; n.plIm=0; n.plInt=0;
+    const wn=2*Math.PI*15/sr; n.plKp=2*0.707*wn/0.5; n.plKi=wn*wn/0.5;   // полоса ФАПЧ ~15 Гц
+    n.plAmp=0.05; n.plAmpA=Math.exp(-1/(0.05*sr)); n.plLock=0; n.plLockA=Math.exp(-1/(0.2*sr)); n.stG=0;
+    const rD=Math.max(1,Math.round(sr/12000));
+    n.rH=kaiserLP(sr, 2400, 4500, 1023); n.rN=n.rH.length; n.rD=rD; n.rCnt=rD;
+    n.rI=new Float32Array(2*n.rN); n.rQ=new Float32Array(2*n.rN); n.rPos=0;
+    n.rds=rdsNew(sr/rD);
+  }
+  if(mode==='SAM'){
+    n.samSb=SAM_SB[n.p.samSb]||0;
+    if(n.samSb) iqSidebandSetup(n,sr,Math.max(1000,n.p.bw/2));
+    const kk=bn=>{ const wn=2*Math.PI*bn/0.53/sr; return [2*0.707*wn, wn*wn]; };
+    [n.samKpW,n.samKiW]=kk(100); [n.samKpN,n.samKiN]=kk(20);         // ~100 Гц на захват, ~20 Гц в захвате
+    n.samWmax=2*Math.PI*Math.min(5000,sr/4)/sr; n.samFA=Math.exp(-2*Math.PI*400/sr);
+    n.samLockA=Math.exp(-1/(0.15*sr)); n.samCarA=Math.exp(-1/(0.5*sr));
+    n.samPh=0; n.samW=0; n.samLock=0; n.samWide=true; n.samCar=0.01;
+    n.samFi=n.samFq=n.samF2i=n.samF2q=0; n.samDc=0; n.samDcR=0; n.samDcA=1-Math.exp(-1/(0.2*sr));
+  }
+  if(mode==='USB' || mode==='LSB'){
+    n.bq=[0.5097956,0.6013449,0.8999762,2.5629154].map(Q=>biquadCoef('lp',n.p.bw/2,Q,sr));
+    n.z=new Float64Array(32);
+    const w=(mode==='USB' ? -1 : 1)*Math.PI*n.p.bw/sr; n.cw=Math.cos(w); n.sw=Math.sin(w); n.wr=1; n.wi=0;
+    n.agcPk=0.3/1000; n.agcHold=0; n.agcHoldN=Math.round(0.3*sr); n.agcRel=Math.exp(-1/(0.4*sr));
+  }
+  n.hp=1-Math.exp(-2*Math.PI*20/n.ar);                               // DC-блок 20 Гц
+  const tau=mode==='WFM' || mode==='FM' ? {'50 µs':50e-6,'75 µs':75e-6}[n.p.deemph] : 0;
+  n.de=tau ? 1-Math.exp(-1/(tau*n.ar)) : 0;
+}
+// шаг WFM на частоте входа: ФАПЧ по пилоту (биквад 19 кГц → нормировка → фазовый детектор → ПИ),
+// L−R = MPX·2·sin2φ; RDS — MPX·e^(j3φ) → ФНЧ с прореживанием → приёмник RDS
+function iqWfmStep(n,v){
+  const [b0,a1,a2]=n.pb, pb=b0*v-b0*n.pbX2-a1*n.pbY1-a2*n.pbY2;
+  n.pbX2=n.pbX1; n.pbX1=v; n.pbY2=n.pbY1; n.pbY1=pb;
+  n.plAmp=n.plAmp*n.plAmpA+(pb<0?-pb:pb)*(1-n.plAmpA);
+  const pn=pb/(n.plAmp*1.5708+1e-9), e=pn*n.plRe;
+  n.plLock=n.plLock*n.plLockA+pn*n.plIm*(1-n.plLockA);
+  const re=n.plRe, im=n.plIm, c2=re*re-im*im, s2=2*re*im, c3=c2*re-s2*im, s3=s2*re+c2*im;
+  n.plInt+=n.plKi*e;
+  const d=n.plKp*e+n.plInt;
+  let nr=re*n.plW0c-im*n.plW0s, ni=re*n.plW0s+im*n.plW0c;
+  const dr=1-d*d*0.5, tr=nr*dr-ni*d; ni=nr*d+ni*dr; nr=tr;
+  const nn=1.5-0.5*(nr*nr+ni*ni); n.plRe=nr*nn; n.plIm=ni*nn;
+  const ri=v*c3, rq=v*s3, N=n.rN;
+  n.rI[n.rPos]=ri; n.rI[n.rPos+N]=ri; n.rQ[n.rPos]=rq; n.rQ[n.rPos+N]=rq;
+  if(++n.rPos===N) n.rPos=0;
+  if(--n.rCnt<=0){
+    n.rCnt=n.rD;
+    let si=0, sq=0; const h=n.rH, p=n.rPos;
+    for(let t=0;t<N;t++){ si+=h[t]*n.rI[p+t]; sq+=h[t]*n.rQ[p+t]; }
+    rdsSample(n.rds,si,sq);
+  }
+  return v*2*s2;
+}
+// комплексный полосовой одной боковой: ФНЧ half (переход 300 Гц у нуля), сдвинутый на +half
+function iqSidebandSetup(n,sr,half){
+  const lp=kaiserLP(sr, half-150, half+150, 2047), N=lp.length, M=(N-1)/2, f0=half/sr;
+  n.sbN=N; n.sbHr=new Float32Array(N); n.sbHi=new Float32Array(N);
+  for(let k=0;k<N;k++){ const t=M-k; n.sbHr[k]=lp[k]*Math.cos(2*Math.PI*f0*t); n.sbHi[k]=lp[k]*Math.sin(2*Math.PI*f0*t); }
+  n.sbI=new Float32Array(2*N); n.sbQ=new Float32Array(2*N); n.sbPos=0;
+}
+// шаг SAM: перенос на несущую, ФАПЧ (детектор atan2 — от амплитуды не зависит), затем детектор
+// одной/обеих боковых; АРУ — по несущей с τ 0.5 с. Возвращает [основной, правый для ISB]
+function iqSamStep(n,ci,cq,agc){
+  const pc=Math.cos(n.samPh), ps=Math.sin(n.samPh);
+  const zi=ci*pc+cq*ps, zq=cq*pc-ci*ps, fa=n.samFA, fb=1-fa;
+  n.samFi=n.samFi*fa+zi*fb; n.samFq=n.samFq*fa+zq*fb; n.samF2i=n.samF2i*fa+n.samFi*fb; n.samF2q=n.samF2q*fa+n.samFq*fb;
+  const di=n.samWide ? n.samFi : n.samF2i, dq=n.samWide ? n.samFq : n.samF2q;
+  const e=Math.atan2(dq,di), mag=Math.sqrt(di*di+dq*dq);
+  n.samLock=n.samLock*n.samLockA+(mag>0 ? di/mag : 0)*(1-n.samLockA);
+  if(n.samWide && n.samLock>0.7) n.samWide=false; else if(!n.samWide && n.samLock<0.4) n.samWide=true;
+  n.samW+=(n.samWide ? n.samKiW : n.samKiN)*e;
+  n.samW=Math.max(-n.samWmax, Math.min(n.samWmax, n.samW));
+  n.samPh+=n.samW+(n.samWide ? n.samKpW : n.samKpN)*e;
+  if(n.samPh>Math.PI) n.samPh-=2*Math.PI; else if(n.samPh<-Math.PI) n.samPh+=2*Math.PI;
+  let x=zi, xr=null;
+  if(n.samSb){
+    const N=n.sbN; n.sbI[n.sbPos]=zi; n.sbI[n.sbPos+N]=zi; n.sbQ[n.sbPos]=zq; n.sbQ[n.sbPos+N]=zq;
+    if(++n.sbPos===N) n.sbPos=0;
+    let a=0, b=0; const p=n.sbPos;
+    for(let t=0;t<N;t++){ a+=n.sbHr[t]*n.sbI[p+t]; b+=n.sbHi[t]*n.sbQ[p+t]; }
+    x=n.samSb===-1 ? 2*(a+b) : 2*(a-b);                               // Re одной боковой ×2: верхняя a−b, нижняя a+b
+    if(n.samSb===2) xr=2*(a+b);
+  }
+  n.samCar=n.samCar*n.samCarA+(zi>0 ? zi : 0)*(1-n.samCarA);
+  n.samDc+=n.samDcA*(x-n.samDc);
+  const k=agc ? 1/Math.max(n.samCar,1e-5) : 3;
+  let v=(x-n.samDc)*k, vr=null;
+  if(xr!=null){ n.samDcR+=n.samDcA*(xr-n.samDcR); vr=(xr-n.samDcR)*k; }
+  return [v,vr];
+}
+// АРУ по пику: мгновенная атака, удержание 0.3 с, спад τ 0.4 с; усиление не больше 1000
+function iqAgcStep(n,v){
+  const a=v<0 ? -v : v;
+  if(a>=n.agcPk){ n.agcPk=a; n.agcHold=n.agcHoldN; }
+  else if(n.agcHold>0) n.agcHold--;
+  else n.agcPk=Math.max(0.3/1000, n.agcPk*n.agcRel);
+  return v*0.3/n.agcPk;
+}
 
 /* ---- IQ Spectrum ---- */
 // Спектр потока по Уэлчу: кадры N с перекрытием 50%, среднее мощности до avg кадров за обновление.
@@ -403,3 +613,96 @@ function iqChanPick(n,pc,noise,N,sr){
     sl.c=c; sl.seen=now; taken.add(c);
   }
 }
+
+/* ---- IQ DC Block ---- */
+// Постоянная составляющая I/Q (выброс гетеродина zero-IF) — ФВЧ первого порядка, срез fc Гц
+IQK.iqDc={
+  init(n){ n.mi=0; n.mq=0; },
+  process(n,I){
+    const s=iqIn(I,'in');
+    if(!s){ n.ui=null; return {out:null}; }
+    const o=iqStream(n,'out',s.sr,s.fc), a=1-Math.exp(-2*Math.PI*n.p.fc/s.sr);
+    let mi=n.mi, mq=n.mq;
+    for(const c of s.chunks){
+      const xr=c.re, xi=iqChunkIm(c), K=xr.length, yr=new Float32Array(K), yi=new Float32Array(K);
+      for(let i=0;i<K;i++){ mi+=a*(xr[i]-mi); mq+=a*(xi[i]-mq); yr[i]=xr[i]-mi; yi[i]=xi[i]-mq; }
+      iqPush(o,yr,yi,c.tag);
+    }
+    n.mi=mi; n.mq=mq; n.ui={dc:Math.hypot(mi,mq)};
+    return {out:o};
+  }};
+
+/* ---- IQ Noise Blanker ---- */
+// Короткие импульсы (зажигание, импульсные БП) — на широкой полосе, до канального фильтра, где импульс
+// ещё короткий: мощность отсчёта выше порога × средней — отсчёты обнуляются (с задержкой ~10 мкс,
+// чтобы попал и фронт, и ~20 мкс после). Импульсы в среднюю мощность идут только по порогу.
+const NB_K={low:36, mid:20, high:9};
+IQK.iqNb={
+  init(n){ n.key=''; },
+  process(n,I){
+    const s=iqIn(I,'in');
+    if(!s){ n.ui=null; return {out:null}; }
+    const sr=s.sr, K0=NB_K[n.p.level]||0, o=iqStream(n,'out',sr,s.fc);
+    if(n.key!==sr){
+      n.key=sr; n.d=Math.max(2,Math.round(sr*10e-6)); n.post=Math.round(sr*20e-6);
+      n.dI=new Float32Array(n.d); n.dQ=new Float32Array(n.d); n.pos=0; n.cnt=0; n.avg=0; n.a=1-Math.exp(-1/(0.01*sr));
+      n.blanked=0; n.total=0;
+    }
+    for(const c of s.chunks){
+      const xr=c.re, xi=iqChunkIm(c), L=xr.length, yr=new Float32Array(L), yi=new Float32Array(L);
+      for(let i=0;i<L;i++){
+        const p=xr[i]*xr[i]+xi[i]*xi[i], th=K0*n.avg;
+        if(n.avg<1e-12) n.avg=p;
+        else if(K0 && p>th) n.cnt=n.d+n.post;
+        n.avg+=((K0 && p>th ? th : p)-n.avg)*n.a;
+        const di=n.dI[n.pos], dq=n.dQ[n.pos]; n.dI[n.pos]=xr[i]; n.dQ[n.pos]=xi[i];
+        if(++n.pos===n.d) n.pos=0;
+        if(n.cnt>0){ n.cnt--; n.blanked++; } else { yr[i]=di; yi[i]=dq; }
+      }
+      n.total+=L;
+      iqPush(o,yr,yi,c.tag);
+    }
+    n.ui={pct:n.total ? 100*n.blanked/n.total : 0};
+    if(n.total>s.sr){ n.blanked*=0.5; n.total*=0.5; }                  // доля за последние ~секунды
+    return {out:o};
+  }};
+
+/* ---- IQ Squelch ---- */
+// Уровень канала (RSSI, dBFS: 0 — тон полной шкалы) по окнам 10 мс, шумовой пол — следящий минимум
+// (вниз сразу, вверх 0.5 дБ/с), SNR — над ним. Открыт при уровне ≥ порога, закрывается ниже
+// порога − 3 дБ спустя hang мс; открытие/закрытие — плавное (5 мс). Закрытый — нули, не пустота:
+// мост в звук держит запас.
+IQK.iqSquelch={
+  init(n){ n.sr=0; },
+  process(n,I){
+    const s=iqIn(I,'in');
+    if(!s){ n.ui=null; return {out:null, rssi:null, snr:null, open:null}; }
+    const sr=s.sr, o=iqStream(n,'out',sr,s.fc);
+    if(sr!==n.sr){ n.sr=sr; n.win=Math.max(1,Math.round(sr*0.01)); n.acc=0; n.cnt=0; n.rssi=null; n.nf=null;
+      n.open=n.p.mode==='off'; n.t=0; n.lastOk=0; n.g=n.open?1:0; n.gA=1/(sr*0.005); }
+    const mode=n.p.mode, thr=+n.p.thr, hang=n.p.hang/1000;
+    for(const c of s.chunks){
+      const xr=c.re, xi=c.im, K=xr.length, yr=new Float32Array(K), yi=xi ? new Float32Array(K) : null;
+      for(let i=0;i<K;i++){
+        const a=xr[i], b=xi ? xi[i] : 0;
+        n.acc+=a*a+b*b;
+        if(++n.cnt>=n.win){
+          const db=10*Math.log10(n.acc/n.cnt+1e-20)+(xi ? 0 : 3);   // вещественный: мощность тона 0.5
+          n.acc=0; n.cnt=0; n.t+=n.win/sr;
+          n.rssi=n.rssi==null ? db : n.rssi*0.7+db*0.3;
+          n.nf=n.nf==null ? db : Math.min(db, n.nf+0.5*n.win/sr);
+          const v=mode==='level' ? n.rssi : n.rssi-n.nf;
+          if(mode==='off') n.open=true;
+          else if(v>=thr || n.open && v>=thr-3){ n.open=true; n.lastOk=n.t; }
+          else if(n.t-n.lastOk>hang) n.open=false;
+        }
+        const want=n.open ? 1 : 0;
+        n.g+=Math.max(-n.gA, Math.min(n.gA, want-n.g));
+        yr[i]=a*n.g; if(yi) yi[i]=b*n.g;
+      }
+      iqPush(o,yr,yi,c.tag);
+    }
+    const snr=n.rssi==null ? null : n.rssi-n.nf;
+    n.ui={rssi:n.rssi, snr, open:n.open};
+    return {out:o, rssi:n.rssi, snr, open:n.open ? 1 : 0};
+  }};

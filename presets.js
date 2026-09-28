@@ -119,6 +119,7 @@ const PRESET_CATS={
   'USB SDR: Wideband Sweep':'Quick Scenarios',
   'USB SDR: Signal Identifier':'Quick Scenarios',
   'USB SDR: FM Receiver from Blocks':'Quick Scenarios',
+  'USB SDR: HF AM / SSB from Blocks':'Quick Scenarios',
   'USB SDR: Listen to the Strongest Channels':'Quick Scenarios',
   'tinySA: Spectrum':'Quick Scenarios',
 
@@ -554,26 +555,55 @@ markWiresDirty();
 preset('USB SDR: FM Receiver from Blocks', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Broadcast FM receiver built from IQ blocks instead of the SDR\'s own demodulator.\n'+
-  'Raw IQ (1.024 MS/s) → shift the tapped station to zero → ×4 (256 kS/s) → FM, 75 kHz, de-emphasis → ×5 (51.2 kS/s) → audio.\n'+
+  'Raw IQ (1.024 MS/s) → DC block → shift the tapped station to zero → ×4 (256 kS/s) → WFM: stereo pilot PLL,\n'+
+  'RDS (name and radiotext in the demodulator\'s readout), 50 µs de-emphasis, audio at 42.7 kS/s → stereo out.\n'+
   'Connect the SDR, tap a station on the upper spectrum. The lower one shows the channel after decimation.'});
-nt.size.w=560; nt.size.h=150; applySize(nt);
-const rx=addNode('rtlsdr',40,240,{sr:'1024000',freq:100000000,demod:'WFM'});
-const sa=addNode('sa',640,40,{auto:true,floor:-90,top:-20,split:.4});
+nt.size.w=600; nt.size.h=170; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'1024000',freq:100000000,demod:'WFM'});
+const sa=addNode('sa',680,40,{auto:true,floor:-90,top:-20,split:.4});
 sa.size.w=640; sa.size.h=340; applySize(sa);
-const sh=addNode('iqShift',340,240,{});
-const d1=addNode('iqDecim',340,420,{M:'4',cut:.4});
-const sp=addNode('iqSpec',340,600,{size:'2048'});
-const s2=addNode('sa',640,420,{auto:true,floor:-100,top:-20,split:.4});
+const dcb=addNode('iqDc',340,260,{});
+const sh=addNode('iqShift',340,420,{});
+const d1=addNode('iqDecim',340,580,{M:'4',cut:.45});
+const sp=addNode('iqSpec',340,760,{size:'2048'});
+const s2=addNode('sa',680,420,{auto:true,floor:-100,top:-20,split:.4});
 s2.size.w=640; s2.size.h=260; applySize(s2);
-const de=addNode('iqDemod',40,760,{mode:'FM',dev:75000,deemph:'50 µs'});
-const d2=addNode('iqDecim',300,760,{M:'5',cut:.35});
-const au=addNode('iqAudio',560,760,{});
-const dc=addNode('dac',820,760,{vol:.4});
+const de=addNode('iqDemod',40,780,{mode:'WFM',deemph:'50 µs',stereo:true});
+de.size.w=360; applySize(de);
+const au=addNode('iqAudio',680,760,{});
+const dc=addNode('dac',940,760,{vol:.4});
 addEdge(rx.id,'spec',sa.id,'spec');
-addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(rx.id,'iq',dcb.id,'in'); addEdge(dcb.id,'out',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',sp.id,'in'); addEdge(sp.id,'spec',s2.id,'spec');
-addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'out',d2.id,'in'); addEdge(d2.id,'out',au.id,'in');
-addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'out',dc.id,'R');
+addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'stereo',au.id,'in');
+addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'q',dc.id,'R');
+markWiresDirty();
+});
+preset('USB SDR: HF AM / SSB from Blocks', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'HF receiver from IQ blocks (RTL-SDR with an upconverter / direct sampling, Airspy + HF, SDRplay).\n'+
+  'Raw IQ → DC block → noise blanker (on the wide band, where impulses are still short) → shift the tapped\n'+
+  'signal to zero → ×32 (32 kS/s) → SAM (PLL on the carrier; sideband both / USB / LSB / ISB) or USB / LSB →\n'+
+  'squelch → audio → auto notch (removes whistles and heterodynes). Switch the demodulator mode as needed.'});
+nt.size.w=640; nt.size.h=170; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'1024000',freq:7100000,demod:'AM'});
+const sa=addNode('sa',720,40,{auto:true,floor:-100,top:-30,split:.4});
+sa.size.w=640; sa.size.h=340; applySize(sa);
+const dcb=addNode('iqDc',340,260,{});
+const nb=addNode('iqNb',340,400,{level:'mid'});
+const sh=addNode('iqShift',340,540,{});
+const d1=addNode('iqDecim',340,700,{M:'32',cut:.3});
+const de=addNode('iqDemod',40,760,{mode:'SAM',samSb:'both',bw:5000});
+de.size.w=360; applySize(de);
+const sq=addNode('iqSquelch',720,440,{mode:'SNR',thr:6,hang:500});
+const au=addNode('iqAudio',720,640,{});
+const an=addNode('anf',980,640,{});
+const dc=addNode('dac',1240,640,{vol:.4});
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',dcb.id,'in'); addEdge(dcb.id,'out',nb.id,'in'); addEdge(nb.id,'out',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'out',sq.id,'in');
+addEdge(sq.id,'out',au.id,'in'); addEdge(au.id,'out',an.id,'in');
+addEdge(an.id,'out',dc.id,'L'); addEdge(an.id,'out',dc.id,'R');
 markWiresDirty();
 });
 preset('IQ: Channelizer — Three Signals at Once (Generator)', function(){

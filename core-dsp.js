@@ -90,3 +90,27 @@ class IqRawChunk{
   get im(){ if(!this._re) [this._re,this._im]=iqUnpack(this.raw,this.fmt); return this._im; }
 }
 function iqPushRaw(s,raw,fmt,tag){ s.chunks.push(new IqRawChunk(raw,fmt,s.t,tag||null)); s.t+=raw.length>>1; }
+
+// ФНЧ с окном Кайзера, β=5.65 (~60 дБ); число отводов — по ширине перехода (не больше maxN), нечётное
+function besselI0(x){ let s=1, t=1; for(let k=1;k<30;k++){ t*=(x/(2*k))*(x/(2*k)); s+=t; if(t<1e-10*s) break; } return s; }
+function kaiserLP(fs, pass, stop, maxN){
+  const tw=Math.max(1, stop-pass), fc=(pass+stop)/2/fs;
+  let N=Math.min(maxN||2047, Math.ceil(3.6*fs/tw)); N|=1;
+  const M=(N-1)/2, beta=5.65, i0b=besselI0(beta), h=new Float32Array(N);
+  let s=0;
+  for(let k=0;k<N;k++){
+    const x=k-M, r=M ? x/M : 0;
+    const sinc=x===0 ? 2*fc : Math.sin(2*Math.PI*fc*x)/(Math.PI*x);
+    h[k]=sinc*besselI0(beta*Math.sqrt(Math.max(0,1-r*r)))/i0b; s+=h[k];
+  }
+  for(let k=0;k<N;k++) h[k]/=s;
+  return h;
+}
+// КИХ по отсчётам с историей: окно — история + чанк, выход той же длины, что вход
+function firRun(h, hist, x){
+  const N=h.length, H=N-1, K=x.length, b=new Float32Array(H+K), y=new Float32Array(K);
+  b.set(hist); b.set(x,H);
+  for(let i=0;i<K;i++){ let s=0; for(let t=0;t<N;t++) s+=h[t]*b[i+t]; y[i]=s; }
+  hist.set(b.subarray(K));
+  return y;
+}
