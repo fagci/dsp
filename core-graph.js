@@ -243,7 +243,7 @@ wrap.dataset.count=adv.length;
 renderParamRows(wrap,n,adv);
 tgl.addEventListener('click',()=>setAdvOpen(n,!n.advOpen));
 const tr=d.tiles && mid.querySelector(':scope>.tilerow');
-if(tr){ tr.append(tgl); mid.append(wrap); }          // плиткой в конце ряда
+if(tr){ tgl.classList.add('tgap'); tr.append(tgl); mid.append(wrap); }          // плиткой в конце ряда
 else mid.append(tgl,wrap);
 } }
 if(d.view){ const  c=document.createElement('canvas'); c.className='view main'+(d.pick?' pick':'');
@@ -328,7 +328,10 @@ for(const p of params){
 // select на 2-3 варианта — стопкой кнопок, как 'buttons'
 const q= p.t==='range'&&!p.knob ? {...p,knob:true}
 : p.t==='select'&&Array.isArray(p.opts)&&p.opts.length<=3 ? {...p,t:'buttons'} : p;
-const r=paramEl(n,q); r.classList.add('tile'); grp.append(r);
+const r=paramEl(n,q); r.classList.add('tile');
+const kind=q.t==='button'?'btn':q.t;                 // смена типа — отступ между группами
+if(grp.lastChild && grp.lastChild.dataset.kind!==kind) r.classList.add('tgap');
+r.dataset.kind=kind; grp.append(r);
 const sel=r.querySelector(':scope>select');
 if(sel) sel.addEventListener('wheel',e=>{ e.preventDefault(); e.stopPropagation();   // колесо — соседнее значение
 const now=performance.now(); if(sel._lastWheelT!=null && now-sel._lastWheelT<120) return; sel._lastWheelT=now;
