@@ -344,8 +344,9 @@ renderParamRowsPlain(container,n,params);
 function isTileParam(p){
 return ['range','check','button','buttons','select'].includes(p.t);
 }
-// сколько ячеек сетки (56px, зазор 4px) занимает плитка: 1–3, по содержимому — значениям select/сегментов,
-// тексту кнопки/галочки (не больше 3 строк); подпись под плиткой ширину не задаёт (обрезается).
+// сколько ячеек сетки (56px, зазор 4px) занимает плитка: 1–3, по содержимому — вариантам сегментов,
+// тексту кнопки/галочки (не больше 3 строк); select — всегда 1 (длинное значение обрезается);
+// подпись под плиткой ширину не задаёт (обрезается).
 let tileCH=0;                                        // ширина символа текста плитки (9px, letter-spacing -.4px) — меряем раз
 function tileSpan(q){
 if(!tileCH){ const m=document.createElement('span'); m.className='tile-measure'; m.textContent='0'.repeat(20);
@@ -353,7 +354,6 @@ document.body.append(m); tileCH=m.getBoundingClientRect().width/20 || 5.5; m.rem
 const CH=tileCH, cell=k=>k*60-4;
 let need=0;
 if(q.t==='buttons') need=Math.max(...q.opts.map(o=>String(o).length))*CH+4;
-if(q.t==='select') need=Array.isArray(q.opts) ? Math.max(...q.opts.map(o=>String(o).length))*CH+6 : cell(2);
 const txt=String(q.label||q.n);
 if(q.t==='button'||q.t==='check') need=Math.max(...txt.split(/\s+/).map(w=>w.length))*CH+4;
 let k=1; while(k<3 && cell(k)<need) k++;
