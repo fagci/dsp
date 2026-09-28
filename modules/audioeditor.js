@@ -938,6 +938,11 @@ async function aedSave(E, asNew){
   aedDrawEnd(E);
   const s = E.s;
   if(!s.length){ aedMsg(E,'clip is empty'); return; }
+  if(!asNew && E.opts.save){                        // владелец клипа сохраняет сам (семпл трекера)
+    try{ E.opts.save(E); E.dirty = false; aedMsg(E,'saved'); }
+    catch(e){ console.warn(e); aedMsg(E,'save error: '+e.message); }
+    return;
+  }
   const rec = { name:E.name || 'clip', samples:s, sr:E.sr, peaks:SampleDB.computePeaks(s), duration:s.length/E.sr };
   try{
     if(asNew){

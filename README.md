@@ -64,6 +64,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 
 ### Music
 - Synths (2 osc, 4 voices), acid bass (303), drum sequencer, sample library with an audio editor (see [Sample editor](#sample-editor))
+- **MOD tracker**: plays and edits ProTracker `.mod` modules (4–32 channels, all PT effects), pattern editor with keyboard entry, order list, samples with loops, export back to `.mod` (see [MOD tracker](#mod-tracker))
 - Piano roll, step sequencer, generative melody, arrangement playlist, master clock
 - MIDI keyboard input, ADSR envelope
 
@@ -165,6 +166,23 @@ The editor fills the screen and plays through its own audio output, no wiring ne
 - **save** overwrites the clip, **＋copy** saves a new one, **⭳ wav** downloads the selection or the whole clip as 16-bit WAV
 
 Keys: Space play/stop, L loop, Del delete, T crop, Ctrl+A/X/C/V, Ctrl+S save, +/−/0 zoom, S view, ←/→ move the cursor, Esc close.
+
+## MOD tracker
+
+The **MOD Tracker** node plays ProTracker modules (`.mod`: M.K./M!K!/FLT4, 6CHN/8CHN/xxCH, old 15-sample Soundtracker files). Open a file with the node's file picker, tick **play**. `L`/`R` go to a Sound Card in stereo; when they are not wired the node plays straight to the default output, so a single node is enough to listen. `row`/`pos` give the current row and song position. **stereo** is the channel separation (Amiga L-R-R-L panning), **interpolation** — linear or none (the raw Amiga sound).
+
+The replayer follows ProTracker: speed/tempo, arpeggio, portamento and tone portamento, vibrato and tremolo (with waveforms), volume slides, sample offset, position jump, pattern break, pattern loop and pattern delay, note cut / delay, retrigger, fine slides, finetune, panning (8xx, E8x).
+
+**✎ Edit** (or a double click on the node's view) opens the tracker full screen. Edits are heard right away and are kept in the browser (IndexedDB) together with the patch; **⭳ .mod** downloads the song as a regular `.mod`.
+
+- **Pattern**: the cursor row stays in the middle. Arrows move, Tab / Shift+Tab jump between channels, PgUp/PgDn by 16 rows, Home/End. Mouse: click places the cursor, drag selects a block, wheel scrolls (Shift+wheel — channels). Touch: tap places the cursor, drag scrolls
+- **Entry**: **Enter** toggles edit mode (red cursor). The keyboard is a piano in the FT2 layout (Z S X D C… — lower octave, Q 2 W 3 E… — upper), physical keys, so it works with any layout. F1–F4 or numpad +/− set the octave, **step** is how many rows the cursor goes down after a note. On the sample / effect / parameter columns type hex digits. Outside edit mode the keys only play notes
+- **Block**: Shift+arrows or mouse drag select, Ctrl+A selects the channel (twice — the whole pattern), Ctrl+C/X/V copy / cut / paste, Del clears, Ctrl+↑/↓ transposes by a semitone (with Shift — by an octave), Insert / Backspace insert / delete a row in the channel. Ctrl+Z / Ctrl+Shift+Z — undo / redo of every edit
+- **Channels**: click a channel header to mute it, double click — solo
+- **Song** tab: order list (tap a position to edit its pattern), insert / delete positions, change the pattern at a position, new / clone / clear pattern, restart position, number of channels
+- **Samples** tab: 31 slots with name, volume, finetune, loop start / length; drag on the waveform to set the loop, ▶ plays the sample. **load** (or drop an audio file on the tracker) imports any audio file, resampled so that it plays at its own pitch on C-3; **✎ edit** opens the slot in the [sample editor](#sample-editor), **save** there writes it back into the module
+- **Keys** tab — the same on screen for phones: two-octave piano, hex pad, cursor keys, block operations
+- Space plays the song from the current position, Shift+Space loops the current pattern from the cursor row; **⇣ follow** keeps the cursor on the playing row
 
 ## Map and records
 
