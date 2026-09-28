@@ -236,13 +236,13 @@ const main=shown.filter(p=>!p.adv), adv=shown.filter(p=>p.adv);
 renderParamRows(mid,n,main);
 if(adv.length){
 const tgl=document.createElement('div'); tgl.className='prm wide advToggle';
-if(d.tiles) tgl.classList.add('tile');
+if(d.tiles!==false) tgl.classList.add('tile');
 tgl.innerHTML=`<span class="advLbl">${n.advOpen?'▾':'▸'} advanced (${adv.length})</span>`;
 const wrap=document.createElement('div'); wrap.className='advWrap'; wrap.hidden=!n.advOpen;
 wrap.dataset.count=adv.length;
 renderParamRows(wrap,n,adv);
 tgl.addEventListener('click',()=>setAdvOpen(n,!n.advOpen));
-const tr=d.tiles && mid.querySelector(':scope>.tilerow');
+const tr=d.tiles!==false && mid.lastElementChild?.classList.contains('tilerow') && mid.lastElementChild;
 if(tr){ tgl.classList.add('tgap'); tr.append(tgl); mid.append(wrap); }          // плиткой в конце ряда
 else mid.append(tgl,wrap);
 } }
@@ -321,23 +321,41 @@ markWiresDirty();
 }
 // подряд идущие кнопки/галочки — в один ряд; общая раскладка для основных и adv-параметров
 function renderParamRows(container,n,params){
-// tiles:true у модуля — все контролы плитками одного размера в одном потоке, range — ручками
-if(MOD[n.type].tiles){
-const grp=document.createElement('div'); grp.className='prm wide tilerow';
+// плитки (по умолчанию, tiles:false у модуля — отключить): подряд идущие плиточные контролы —
+// в один поток одинаковых плиток, range — ручками; остальные типы — обычными строками
+if(MOD[n.type].tiles!==false){
+let grp=null;
 for(const p of params){
+if(!isTileParam(p)){ grp=null; renderParamRowsPlain(container,n,[p]); continue; }
+if(!grp){ grp=document.createElement('div'); grp.className='prm wide tilerow'; container.append(grp); }
 // select на 2-3 варианта — стопкой кнопок, как 'buttons'
 const q= p.t==='range'&&!p.knob ? {...p,knob:true}
-: p.t==='select'&&Array.isArray(p.opts)&&p.opts.length<=3 ? {...p,t:'buttons'} : p;
+: p.t==='select'&&p.opts.length<=3 ? {...p,t:'buttons'} : p;
 const r=paramEl(n,q); r.classList.add('tile');
 const kind=q.t==='button'?'btn':q.t;                 // смена типа — отступ между группами
 if(grp.lastChild && grp.lastChild.dataset.kind!==kind) r.classList.add('tgap');
+// плитка шире, если самое длинное слово подписи не влезает (моноширинный 9px ≈ 5.5px/символ)
+if(q.t!=='button'){ const words=[...String(q.label||q.n).split(/\s+/), ...(q.t==='buttons'?q.opts.map(String):[])];
+const lw=Math.max(...words.map(w=>w.length));
+if(lw>8) r.style.minWidth=Math.min(120,Math.ceil(lw*5.5+8))+'px'; }
 r.dataset.kind=kind; grp.append(r);
 const sel=r.querySelector(':scope>select');
 if(sel) sel.addEventListener('wheel',e=>{ e.preventDefault(); e.stopPropagation();   // колесо — соседнее значение
 const now=performance.now(); if(sel._lastWheelT!=null && now-sel._lastWheelT<120) return; sel._lastWheelT=now;
 const i=clamp(sel.selectedIndex+(e.deltaY>0?1:-1),0,sel.options.length-1);
 if(i!==sel.selectedIndex){ sel.selectedIndex=i; sel.dispatchEvent(new Event('change')); } },{passive:false}); }
-container.append(grp); return; }
+return; }
+renderParamRowsPlain(container,n,params);
+}
+function isTileParam(p){
+if(p.t==='range'||p.t==='buttons') return true;
+if(p.t==='button') return String(p.label||p.n).length<=24;
+if(p.t==='check') return String(p.label||p.n).length<=32;
+// select со списком из функции (устройства) или длинными пунктами — обычной строкой
+if(p.t==='select') return Array.isArray(p.opts) && p.opts.every(o=>String(o).length<=14);
+return false;
+}
+function renderParamRowsPlain(container,n,params){
 let i=0;
 while(i<params.length){
 if(params[i].t==='button' && params[i+1] && params[i+1].t==='button'){

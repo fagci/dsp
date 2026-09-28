@@ -435,8 +435,9 @@ button,select,input{font:inherit;color:inherit}
    Поверхности без рамок (рамка только на hover), активное — подложка акцентом + полоска снизу */
 .prm.wide.tilerow{display:flex;flex-direction:row;flex-wrap:wrap;gap:0 6px;align-items:flex-start;
   --tile-on:color-mix(in srgb,var(--acc) 20%,var(--bg))}
-#canvas #content .node .io3>.mid:has(>.tilerow),
-#canvas #content .node .io3>.mid>.advWrap:has(>.tilerow){row-gap:0}
+/* раскрытый advanced из плиток — вплотную к основному ряду плиток; у обычных строк отступ прежний
+   (их подпись висит над полем и заехала бы в плитки) */
+#canvas #content .node .io3>.mid>.tilerow+.advWrap:has(>.tilerow:first-child){margin-top:-11px}
 .tilerow>.prm.tile{position:relative;flex:0 0 auto;width:52px;min-height:0;margin:0;padding:0;border:0;
   display:flex;flex-direction:column;align-items:center;gap:1px}
 .tilerow>.prm.tile.tgap{margin-left:10px}             /* смена типа контрола — отступ между группами */
@@ -448,10 +449,13 @@ button,select,input{font:inherit;color:inherit}
   color:var(--txt);font-size:9px;cursor:pointer}
 .tilerow>.prm.tile>button:hover,.tilerow>.prm.tile>select:hover,.tilerow>.prm.tile>.seg button:hover,
 .tilerow>.prm.tile>input[type=checkbox]:hover{border-color:var(--line)}
-.tilerow>.prm.tile>button{height:44px;padding:2px;line-height:1.15;white-space:normal}
+.tilerow>.prm.tile>button{height:44px;padding:2px 4px;line-height:1.15;white-space:normal}
+/* кнопки и select с длинным текстом — шире, по содержимому */
+.tilerow>.prm.tile:is(:has(>button),:has(>select)){width:auto;min-width:52px;max-width:120px}
+.tilerow>.prm.tile>button{width:auto;min-width:52px;max-width:120px}
 .tilerow>.prm.tile>button:active{background:var(--tile-on)}
 /* select — значение по центру, своя стрелка вместо нативной */
-.tilerow>.prm.tile>select{height:44px;width:100%;flex:none;padding:0 2px 6px;text-align:center;
+.tilerow>.prm.tile>select{height:44px;width:auto;min-width:52px;max-width:120px;flex:none;padding:0 6px 6px;text-align:center;
   text-align-last:center;appearance:none;-webkit-appearance:none}
 .tilerow>.prm.tile:has(>select)::after{content:'▾';position:absolute;left:0;right:0;top:29px;text-align:center;
   font-size:8px;line-height:1;color:var(--dim);pointer-events:none}
