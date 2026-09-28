@@ -334,9 +334,20 @@ if(!grp){ grp=document.createElement('div'); grp.className='prm wide prmrows'; c
 // сегменты — выпадающим списком, ручки — полоской-строкой
 const q= p.t==='range' ? {...p,knob:false} : p.t==='buttons' ? {...p,t:'select'} : p;
 const r=paramEl(n,q); r.classList.add('pr','pr-'+q.t);
-if(q.t==='range'){ const box=r.querySelector('.slidernum'), lab=r.querySelector(':scope>label');
-if(box && lab) box.prepend(lab); }                // подпись внутри полоски: тащится вся строка
+const lab=r.querySelector(':scope>label');
+// единица из хвоста подписи («bandwidth, Hz») — тусклым текстом после значения, подпись короче
+const um=lab && ['range','range2','num'].includes(q.t) && /^(.+?),\s*([^\s,]{1,8})$/.exec(lab.textContent);
+if(um){ lab.textContent=um[1]; const u=document.createElement('span'); u.className='pr-unit'; u.textContent=um[2];
+(q.t==='range' ? r.querySelector('.slidernum') : r).append(u); }
+if(q.t==='range'){ const box=r.querySelector('.slidernum'); if(box && lab) box.prepend(lab); }   // подпись внутри полоски: тащится вся строка
 const sel=r.querySelector(':scope>select');
+// подпись + значение (+ единица) длиннее ~23 символов — 2 ячейки, пока ячейки узкие
+const valLen= sel ? (Array.isArray(q.opts) ? Math.max(...q.opts.map(o=>String(o).length)) : 10)+5   // + стрелка
+: q.t==='range2' ? 20 : q.t==='check' ? 5 : 7;
+if(lab && lab.textContent.length+valLen+(um?um[2].length+1:0)>23) r.classList.add('pr-long');
+// выбор из двух — переключение кликом, без списка
+if(sel && Array.isArray(q.opts) && q.opts.length===2){ r.classList.add('pr-two');
+sel.addEventListener('mousedown',e=>{ e.preventDefault(); sel.selectedIndex=1-sel.selectedIndex; sel.dispatchEvent(new Event('change')); }); }
 if(sel) sel.addEventListener('wheel',e=>{ e.preventDefault(); e.stopPropagation();   // колесо — соседнее значение
 const now=performance.now(); if(sel._lastWheelT!=null && now-sel._lastWheelT<120) return; sel._lastWheelT=now;
 const k=clamp(sel.selectedIndex+(e.deltaY>0?1:-1),0,sel.options.length-1);
@@ -432,7 +443,7 @@ row.append(lab);
 if(s.t==='range'){
 // Ползунок-число в духе Blender: тащить — меняет значение, клик — точный ввод текстом.
 const box=document.createElement('div'); box.className='slidernum'; box.tabIndex=0;
-box.title='Drag left/right to change, Shift for fine control, click to type a number, wheel to step';
+box.title='Drag left/right to change, Shift for fine control, click to type, double-click to reset, wheel to step';
 // min/max можно задать числом или функцией n=>число (например, Eng.sr/2 — привязка к частоте
 // движка) — резолвим один раз при сборке; при смене sr узлы пересобираются (см. srSel.onchange).
 const smin=typeof s.min==='function'?s.min(n):s.min, smax=typeof s.max==='function'?s.max(n):s.max;
@@ -505,7 +516,7 @@ inp.addEventListener('keydown',ev=>{ ev.stopPropagation();
 if(ev.key==='Enter') done(true); if(ev.key==='Escape') done(false); });
 inp.addEventListener('blur',()=>done(true));
 }
-if(s.knob) box.addEventListener('dblclick',()=>{ box.querySelector('input')?.remove(); setV(s.d); });
+box.addEventListener('dblclick',()=>{ box.querySelector('input')?.blur(); setV(s.d); });   // сброс к умолчанию
 box.addEventListener('wheel',e=>{
 e.preventDefault(); e.stopPropagation();
 // троттлинг: трекпад на один "свайп" шлёт десятки-сотни wheel-событий подряд (не одно, как
@@ -590,7 +601,7 @@ const mkBox=(key,isLo)=>{
 const min=s.min,max=s.max,step=s.step,log=s.log;
 const box=document.createElement('div'); box.className='slidernum'; box.tabIndex=0;
 box.dataset.param=key; box.dataset.node=n.id;
-box.title='Drag left/right to change, click to type a number, wheel to step';
+box.title='Drag left/right to change, click to type, double-click to reset, wheel to step';
 bindPendingComplete(box,n,key);                  // второй тап — довязать провод прямо на половину диапазона
 const fillEl=document.createElement('div'); fillEl.className='sn-fill';
 const valEl=document.createElement('span'); valEl.className='sn-val';
@@ -605,6 +616,7 @@ const other=n.p[isLo?s.keys[1]:s.keys[0]];
 v=isLo? Math.min(v,other-(step||1)) : Math.max(v,other+(step||1));
 n.p[key]=v; render(v); };
 render(n.p[key]); (n.set||(n.set={}))[key]=setV;
+box.addEventListener('dblclick',()=>{ box.querySelector('input')?.blur(); setV(s.d[isLo?0:1]); });   // сброс к умолчанию
 let dragging=false,sx=0,sv=0,moved=false,pid=null;
 box.addEventListener('pointerdown',e=>{
 if(e.target!==box  && e.target!==fillEl  && e.target!==valEl) return;
