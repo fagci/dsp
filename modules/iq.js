@@ -21,13 +21,14 @@ defIQ({ id:'iqGen', title:'IQ Generator', cat:'IQ',
   ins:[{n:'fc',t:'num'},{n:'off',t:'num'}], outs:[{n:'iq',t:'iq'}],
   params:[{n:'sr',t:'select',opts:IQ_SR_OPTS,d:'1024000',label:'sample rate'},
           {n:'fc',t:'num',d:100000000,label:'center frequency, Hz'},
-          {n:'mode',t:'select',opts:['carrier','AM','FM','USB','LSB','off'],d:'FM'},
+          {n:'mode',t:'select',opts:['carrier','AM','FM','WFM stereo','USB','LSB','off'],d:'FM'},
           {n:'off',t:'num',d:100000,label:'signal offset from center, Hz'},
           {n:'lvl',t:'range',min:-100,max:0,step:1,d:-20,label:'signal level, dBFS'},
           {n:'tone',t:'range',min:50,max:10000,step:1,d:1000,log:true,label:'modulating tone, Hz'},
           {n:'dev',t:'range',min:100,max:100000,step:100,d:5000,log:true,label:'FM deviation, Hz'},
           {n:'depth',t:'range',min:0,max:1,step:.01,d:.5,label:'AM depth'},
           {n:'noise',t:'range',min:-120,max:0,step:1,d:-60,label:'noise, dBFS'},
+          {n:'ps',t:'text',d:'DSP TEST',label:'WFM stereo: RDS station name (tone in the left channel only)'},
           {n:'ppm',t:'range',min:-1000,max:1000,step:1,d:0,label:'clock error vs sound card, ppm',adv:true}]},
   n=>(+n.p.sr/1000)+' kS/s · '+n.p.mode+' @ '+((n.p.fc+n.p.off)/1e6).toFixed(4)+' MHz');
 
@@ -44,13 +45,38 @@ defIQ({ id:'iqDecim', title:'IQ Decimator', cat:'IQ',
   n=>n.ui ? (n.ui.srIn/1000)+' → '+(n.ui.srOut/1000)+' kS/s' : 'no input');
 
 defIQ({ id:'iqDemod', title:'IQ Demodulator', cat:'IQ',
-  ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'}],
-  params:[{n:'mode',t:'select',opts:['FM','AM','USB','LSB'],d:'FM'},
+  ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'},{n:'stereo',t:'iq'},{n:'ps',t:'txt'},{n:'rt',t:'txt'},{n:'pilot',t:'num'},{n:'lock',t:'num'}],
+  params:[{n:'mode',t:'select',opts:['FM','WFM','AM','SAM','USB','LSB'],d:'FM'},
           {n:'dev',t:'range',min:500,max:100000,step:100,d:5000,log:true,label:'FM deviation, Hz'},
           {n:'deemph',t:'select',opts:['off','50 µs','75 µs'],d:'off',label:'FM de-emphasis'},
-          {n:'bw',t:'range',min:500,max:5000,step:50,d:2700,label:'SSB bandwidth, Hz'},
+          {n:'stereo',t:'check',d:true,label:'WFM stereo'},
+          {n:'samSb',t:'select',opts:['both','USB','LSB','ISB'],d:'both',label:'SAM sideband (ISB: upper → left, lower → right)'},
+          {n:'bw',t:'range',min:500,max:10000,step:50,d:2700,label:'SSB bandwidth / SAM sideband width, Hz'},
+          {n:'agc',t:'check',d:true,label:'AGC (AM, SAM, SSB)'},
           {n:'gain',t:'range',min:-20,max:40,step:1,d:0,label:'gain, dB'}]},
-  n=>n.ui ? n.p.mode+' at '+(n.ui.sr/1000)+' kS/s' : 'no input');
+  n=>{ const u=n.ui; if(!u) return 'no input';
+    const r=u.sr/1000+(u.ar!==u.sr ? ' → '+(u.ar/1000).toFixed(1) : '')+' kS/s';
+    if(n.p.mode==='WFM') return 'WFM '+r+(u.stereo ? ' · stereo' : '')+(u.ps ? ' · '+u.ps : '')+(u.rt ? ' · '+u.rt : '');
+    if(n.p.mode==='SAM') return 'SAM '+r+' · '+(u.lock ? 'locked '+(u.hz>=0?'+':'')+u.hz.toFixed(0)+' Hz' : 'searching');
+    return n.p.mode+' '+r; });
+
+defIQ({ id:'iqDc', title:'IQ DC Block', cat:'IQ',
+  ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'}],
+  params:[{n:'fc',t:'range',min:1,max:1000,step:1,d:150,log:true,label:'cutoff, Hz'}]},
+  n=>n.ui ? 'DC '+(20*Math.log10(n.ui.dc+1e-12)).toFixed(1)+' dBFS' : 'no input');
+
+defIQ({ id:'iqNb', title:'IQ Noise Blanker', cat:'IQ',
+  ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'}],
+  params:[{n:'level',t:'select',opts:['off','low','mid','high'],d:'mid',label:'blanking (threshold 36 / 20 / 9× mean power)'}]},
+  n=>n.ui ? 'blanked '+n.ui.pct.toFixed(2)+'%' : 'no input');
+
+defIQ({ id:'iqSquelch', title:'IQ Squelch', cat:'IQ',
+  ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'},{n:'rssi',t:'num'},{n:'snr',t:'num'},{n:'open',t:'num'}],
+  params:[{n:'mode',t:'select',opts:['SNR','level','off'],d:'SNR',label:'open by'},
+          {n:'thr',t:'range',min:-120,max:40,step:1,d:8,label:'threshold: SNR, dB / level, dBFS'},
+          {n:'hang',t:'range',min:0,max:3000,step:10,d:300,label:'hang, ms'}]},
+  n=>{ const u=n.ui; if(!u || u.rssi==null) return 'no input';
+    return (u.open ? 'OPEN' : 'closed')+' · '+u.rssi.toFixed(1)+' dBFS · SNR '+u.snr.toFixed(1)+' dB'; });
 
 defIQ({ id:'iqSpec', title:'IQ Spectrum', cat:'IQ',
   ins:[{n:'in',t:'iq'}], outs:[{n:'spec',t:'spec'}],
@@ -89,6 +115,26 @@ defIQ({ id:'iqChan', title:'IQ Channelizer', cat:'IQ',
           {n:'P',t:'select',opts:['8','16'],d:'16',label:'taps per channel (16 — neighbours rejected)',adv:true}]},
   n=>!n.ui ? 'no input' : n.ui.N+' × '+(n.ui.chW/1000).toFixed(1)+' kHz → '+(n.ui.srOut/1000)+' kS/s · '+
     n.ui.slots.map((f,k)=>(k+1)+': '+(f==null ? '—' : (f/1e6).toFixed(4))).join(' '));
+
+/* ---- I/Q → IQ ---- */
+// Два сигнала движка (I и Q, например стерео-вход звуковой карты от SDR с IQ-выходом, Hilbert,
+// квадратурный сдвиг) — в поток 'iq' на частоте движка. Обратно — IQ → Audio (out = I, q = Q).
+def({ id:'iqMerge', title:'I/Q → IQ', cat:'IQ',
+  ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'fc',t:'num'}], outs:[{n:'iq',t:'iq'}],
+  readout:true,
+  params:[{n:'fc',t:'num',d:0,label:'center frequency, Hz (0 Hz of the stream)'},
+          {n:'swap',t:'check',d:false,label:'swap I and Q (mirror the spectrum)'}],
+  process(n,I){
+    const s=iqStream(n,'iq',Eng.sr,pv(n,I,'fc'));
+    let a=I.I, b=I.Q;
+    if(n.p.swap) [a,b]=[b,a];
+    const re=new Float32Array(BLOCK), im=new Float32Array(BLOCK);
+    if(a) re.set(a); if(b) im.set(b);
+    iqPush(s,re,im);
+    n.state=(Eng.sr/1000)+' kS/s'+(a||b ? '' : ' · no input');
+    return {iq:s};
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.state||''; }});
 
 /* ---- IQ → Audio ---- */
 // Мост в домен движка: кольцо + дробный ресемплер (кубический Эрмит) с частоты потока на Eng.sr.

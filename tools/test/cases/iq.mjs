@@ -33,7 +33,7 @@ export default [
     const f = T.toneHz(a, Eng.sr), pk = T.peak(a);
     return Math.abs(f-1000) < 2 && Math.abs(pk-0.5) < 0.05 || `f=${f.toFixed(2)} peak=${pk.toFixed(3)}`;
   }},
-  {name:'iq: USB passes, LSB rejects', arg:[chain({mode:'USB', tone:1200}, {mode:'USB'}), RX], fn([g, w]){
+  {name:'iq: USB passes, LSB rejects', arg:[chain({mode:'USB', tone:1200}, {mode:'USB', agc:false}), RX], fn([g, w]){
     const ns = T.build(g, w);
     const a = T.capture(ns[4], 'out', 1, 0.5);
     const f = T.toneHz(a, Eng.sr), ru = T.rms(a);

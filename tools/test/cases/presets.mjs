@@ -38,6 +38,10 @@ export default [
     const f = a.map(x => T.toneHz(Float32Array.from(x), Eng.sr));
     return Math.abs(f[0]-1000) < 3 && Math.abs(f[1]-500) < 3 && Math.abs(f[2]-1500) < 3 || 'tones '+f.map(x => x.toFixed(1));
   }},
+  {name:'preset: USB SDR: HF AM / SSB from Blocks (not connected)', fn(){
+    T.preset('USB SDR: HF AM / SSB from Blocks'); T.run(0.5);
+    const e = T.errors(); return e.length ? e.join('; ') : true;
+  }},
   {name:'preset: USB SDR: Listen to the Strongest Channels (not connected)', fn(){
     T.preset('USB SDR: Listen to the Strongest Channels'); T.run(0.5);
     const e = T.errors(); return e.length ? e.join('; ') : true;
