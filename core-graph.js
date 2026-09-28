@@ -324,6 +324,10 @@ if(params[i].t==='button' && params[i+1] && params[i+1].t==='button'){
 const grp=document.createElement('div'); grp.className='prm wide btnrow';
 while(i<params.length && params[i].t==='button'){ grp.append(paramBtn(n,params[i])); i++; }
 container.append(grp);
+} else if(params[i].t==='range' && params[i].knob){ // подряд идущие ручки — в один ряд
+const grp=document.createElement('div'); grp.className='prm wide knobrow';
+while(i<params.length && params[i].t==='range' && params[i].knob){ grp.append(paramEl(n,params[i])); i++; }
+container.append(grp);
 } else if(params[i].t==='check'){
 const grp=document.createElement('div'); grp.className='prm  wide checkrow';
 while(i<params.length && params[i].t==='check'){ grp.append(paramEl(n,params[i])); i++; }
@@ -407,28 +411,39 @@ const smin=typeof s.min==='function'?s.min(n):s.min, smax=typeof s.max==='functi
 const fillEl=document.createElement('div'); fillEl.className='sn-fill';
 const valEl=document.createElement('span'); valEl.className='sn-val';
 box.append(fillEl,valEl);
+// knob:true — та же логика, но вид ручки: дуга 270°, тянуть в любую сторону
+let arc=null;
+if(s.knob){
+row.classList.add('kn'); box.classList.add('kn');
+box.title='Drag up/right to increase, Shift for fine control, click to type, double-click to reset, wheel to step';
+const NS='http://www.w3.org/2000/svg', svg=document.createElementNS(NS,'svg');
+svg.setAttribute('viewBox','0 0 40 40'); svg.classList.add('kn-svg');
+const mk=cls=>{ const e=document.createElementNS(NS,'path'); e.setAttribute('class',cls);
+e.setAttribute('d','M 9.39 30.61 A 15 15 0 1 1 30.61 30.61'); e.setAttribute('pathLength','100'); return e; };
+arc=mk('kn-val'); svg.append(mk('kn-track'),arc); box.prepend(svg); }
 const pct=v=> s.log
 ? clamp(Math.log(v/smin)/Math.log(smax/smin),0,1)*100
 : clamp((v-smin)/((smax-smin)||1),0,1)*100;
 const disp=v=> (s.step &&s.step >=1)
 ? (Math.abs(v) >=1000 ? (Math.round(v/10)/100)+'k' : String(Math.round(v)))
 : fmt(v);
-const render=v=>{ fillEl.style.width=pct(v)+'%'; valEl.textContent=disp(v); };
+const render=v=>{ if(arc) arc.style.strokeDasharray=pct(v)+' 100'; else fillEl.style.width=pct(v)+'%';
+valEl.textContent=disp(v); };
 const setV=v=>{ v=clamp(v,smin,smax); n.p[s.n]=v; render(v); };
 render(n.p[s.n]);
 (n.set||(n.set={}))[s.n]=setV;
-let dragging=false, sx=0, sv=0, moved=false, pid=null;
+let dragging=false, sx=0, sy=0, sv=0, moved=false, pid=null;
 box.addEventListener('pointerdown',e=>{
-if(e.target!==box && e.target!==fillEl && e.target!==valEl) return; // не мешать текстовому вводу
+if(e.target.closest('input')) return;             // не мешать текстовому вводу
 e.stopPropagation(); pid=e.pointerId; box.setPointerCapture(pid);
-dragging=true; moved=false; sx=e.clientX; sv=n.p[s.n];
+dragging=true; moved=false; sx=e.clientX; sy=e.clientY; sv=n.p[s.n];
 });
 box.addEventListener('pointermove',e=>{
 if(!dragging) return;
-const dx=e.clientX-sx;
+const dx=s.knob ? (e.clientX-sx)-(e.clientY-sy) : e.clientX-sx;
 if(Math.abs(dx)>3) moved=true;
 if(!moved) return;
-const slow=e.shiftKey?8:1, w=Math.max(60,box.offsetWidth);
+const slow=e.shiftKey?8:1, w=s.knob ? 200 : Math.max(60,box.offsetWidth);
 let v = s.log ? sv*Math.exp(dx*Math.log(smax/smin)/w/slow)
 : sv+dx*(smax-smin)/w/slow;
 if(s.step) v=Math.round(v/s.step)*s.step;         // не тащить хвост из десятков знаков
@@ -462,6 +477,7 @@ inp.addEventListener('keydown',ev=>{ ev.stopPropagation();
 if(ev.key==='Enter') done(true); if(ev.key==='Escape') done(false); });
 inp.addEventListener('blur',()=>done(true));
 }
+if(s.knob) box.addEventListener('dblclick',()=>{ box.querySelector('input')?.remove(); setV(s.d); });
 box.addEventListener('wheel',e=>{
 e.preventDefault(); e.stopPropagation();
 // троттлинг: трекпад на один "свайп" шлёт десятки-сотни wheel-событий подряд (не одно, как
