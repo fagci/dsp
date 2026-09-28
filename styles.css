@@ -461,11 +461,11 @@ button,select,input{font:inherit;color:inherit}
 .prmrows>.pr-check::after{content:'● off';flex:none;margin-left:auto;font-size:11px;color:var(--dim);pointer-events:none}
 .prmrows>.pr-check:has(>input:checked)::after{content:'● on';color:var(--acc)}
 /* диапазон: подпись, справа «от — до» — две половинки-slidernum со своей заливкой */
-.prmrows>.prm.pr-range2{padding:0 0 0 6px}
+.prmrows>.prm.pr-range2{padding:0 2px 0 6px}
 .prmrows>.pr-range2 .range2{flex:0 1 auto;width:auto;min-width:0;margin-left:auto;height:22px;gap:0}
-.prmrows>.pr-range2 .range2 .slidernum{flex:0 1 90px;width:auto;min-width:40px;height:22px;padding:0 6px;
-  background:none;border-radius:0;justify-content:flex-end}
-.prmrows>.pr-range2 .range2 .slidernum:last-child{border-radius:0 3px 3px 0}
+.prmrows>.pr-range2 .range2 .slidernum{flex:0 1 90px;width:auto;min-width:40px;height:18px;padding:0 6px;
+  background:var(--panel2);border-radius:3px;justify-content:flex-end;box-shadow:inset 0 0 0 1px var(--line)}
+.prmrows>.pr-range2 .range2 .slidernum:hover{box-shadow:inset 0 0 0 1px var(--acc)}
 .prmrows>.pr-range2 .sn-val{font-size:11px;color:var(--txt)}
 .prmrows>.pr-range2 .slidernum input[type=number]{text-align:right;font-size:11px}
 .prmrows>.pr-range2 .r2dash{padding:0 2px;font-size:10px}
