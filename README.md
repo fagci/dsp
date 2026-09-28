@@ -168,11 +168,13 @@ A wire of the **IQ** type (lime) carries a stream at its own sample rate: each e
 - **IQ → Audio** — the bridge into the engine's audio: ring buffer and a cubic resampler to the sound card rate. The source clock (SDR, file) and the sound card drift apart; the read rate follows the buffer fill within ±2000 ppm, the readout shows the buffer and the correction. Decimate to about the audio rate before it: the bridge has no anti-alias filter
 - **IQ Spectrum** — Welch spectrum of a stream (absolute frequencies for complex streams) for the Spectrum Analyzer
 
-All of this runs on the main thread for now. Presets: *IQ: Receiver from Blocks (Generator)* (no hardware needed) and *USB SDR: FM Receiver from Blocks*.
+**Workers.** IQ blocks wired to each other form an *island* that runs in its own Web Worker: the main thread only sends it the inputs coming from outside (e.g. the SDR's raw IQ) and the parameters once per engine block, and hands its outputs to the rest of the graph when they come back a block or two later. The IQ → Audio bridge keeps the stream continuous (its buffer covers the delay); numbers and spectra from an island lag by a few milliseconds. Only outputs wired to nodes outside the island come back. IQ → Audio stays on the main thread (it outputs audio), and so do IQ blocks inside groups. The readout of a block in a worker ends with *· worker*. On the generator preset the main-thread load drops from ~40% to ~2%.
+
+Presets: *IQ: Receiver from Blocks (Generator)* (no hardware needed) and *USB SDR: FM Receiver from Blocks*.
 
 ## Tests
 
-Smoke tests run the engine without a sound card in headless Chromium: a few presets (decoded RTTY text, APRS frames with a good CRC, sound on the output) and the IQ chain (tone frequency and level after FM/AM/SSB, sideband rejection, bridge lock to a drifting clock, decimator independent of chunk sizes, USB SDR `iq` output from an IQ file).
+Smoke tests run the engine without a sound card in headless Chromium: a few presets (decoded RTTY text, APRS frames with a good CRC, sound on the output) and the IQ chain (tone frequency and level after FM/AM/SSB, sideband rejection, bridge lock to a drifting clock, decimator independent of chunk sizes, USB SDR `iq` output from an IQ file), and the same chains in workers: one island per connected chain, values and spectra coming back, parameters followed on the fly, the worker and its state kept when wires change, fallback to the main thread when workers are blocked, and the workers starting on a cross-origin isolated page (as served by the service worker).
 
 ```
 cd tools/test

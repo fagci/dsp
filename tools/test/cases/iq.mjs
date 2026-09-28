@@ -87,7 +87,7 @@ export default [
     const db = 20*Math.log10(sp.mag[k]);
     return Math.abs(sp.freqs[k]-(145e6-123000)) <= 250 && Math.abs(db+20) < 2 || `peak ${sp.freqs[k]} Hz, ${db.toFixed(1)} dB`;
   }},
-  {name:'iq: USB SDR iq output (IQ file playback) → FM chain', async fn(){
+  {name:'iq: USB SDR iq output (IQ file playback) → FM chain, main thread and worker', async fn(){
     // cu8, 1.024 MS/s, NFM ±3 кГц тоном 1 кГц на +100 кГц; частота и скорость — из имени файла
     const sr = 1024000, L = sr*3, u8 = new Uint8Array(2*L);
     let ph = 0;
@@ -96,27 +96,28 @@ export default [
       u8[2*i] = Math.round(127.5+60*Math.cos(ph)); u8[2*i+1] = Math.round(127.5+60*Math.sin(ph));
     }
     const file = new File([u8], 'test_100000000Hz_1.024Msps.cu8');
-    const ns = T.build([['rtlsdr', {sr:'1024000'}], ['iqShift', {}], ['iqDecim', {M:'16'}], ['iqDemod', {mode:'FM', dev:3000}], ['iqAudio', {}],
-      ['const', {v:100.1e6}]], ['0.iq>1.in', '1.out>2.in', '2.out>3.in', '3.out>4.in', '5.out>1.freq']);
-    const rx = ns[0];
-    const src = await iqParseFiles([file], 'auto');
-    const dev = iqFileDevice(src, 1024000, 100000000);
-    dev.onFreq = f => { rx.actualFreq = f; rx.p.freq = f; rx.appliedFreq = f; };
-    rx.p.freq = await dev.setCenterFrequency(); rx.dev = dev;
-    await rtlStart(rx, dev.rate);
-    // в реальном времени: файл читается по часам, граф — по мере прошедшего времени
-    const a = []; let t0 = performance.now(), done = 0;
-    while(performance.now()-t0 < 2500){
-      await new Promise(r => setTimeout(r, 10));
-      const need = Math.floor((performance.now()-t0)/1000*Eng.sr/BLOCK);
-      for(; done<need; done++){
-        for(const nd of Graph.order) evalNode(nd);
-        if(performance.now()-t0 > 1500) a.push(...ns[4].out.out);
-      }
+    // сначала всё в главном потоке, затем цепочка после SDR — в воркере
+    for(const workers of [false, true]){
+      Islands.setEnabled(workers);
+      try{
+        const ns = T.build([['rtlsdr', {sr:'1024000'}], ['iqShift', {}], ['iqDecim', {M:'16'}], ['iqDemod', {mode:'FM', dev:3000}], ['iqAudio', {}],
+          ['const', {v:100.1e6}]], ['0.iq>1.in', '1.out>2.in', '2.out>3.in', '3.out>4.in', '5.out>1.freq']);
+        if(workers && !ns[1]._isl) return 'no island';
+        const rx = ns[0];
+        const src = await iqParseFiles([file], 'auto');
+        const dev = iqFileDevice(src, 1024000, 100000000);
+        dev.onFreq = f => { rx.actualFreq = f; rx.p.freq = f; rx.appliedFreq = f; };
+        rx.p.freq = await dev.setCenterFrequency(); rx.dev = dev;
+        await rtlStart(rx, dev.rate);
+        // в реальном времени: файл читается по часам, граф — по мере прошедшего времени
+        const a = [];
+        await T.realtime(2.5, t => { if(t > 1.5) a.push(...ns[4].out.out); });
+        await rtlDisconnect(rx);
+        const e = T.errors(); if(e.length) return e.join('; ');
+        const f = T.toneHz(Float32Array.from(a), Eng.sr), pk = T.peak(a);
+        if(!(Math.abs(f-1000) < 5 && pk > 0.8 && pk < 1.2)) return `workers=${workers} f=${f.toFixed(2)} peak=${pk.toFixed(3)} fs=${ns[4].state}`;
+      } finally { Islands.setEnabled(false); }
     }
-    await rtlDisconnect(rx);
-    const e = T.errors(); if(e.length) return e.join('; ');
-    const f = T.toneHz(Float32Array.from(a), Eng.sr), pk = T.peak(a);
-    return Math.abs(f-1000) < 5 && pk > 0.8 && pk < 1.2 || `f=${f.toFixed(2)} peak=${pk.toFixed(3)} fs=${ns[4].state}`;
+    return true;
   }},
 ];
