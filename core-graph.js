@@ -243,7 +243,7 @@ wrap.dataset.count=adv.length;
 renderParamRows(wrap,n,adv);
 tgl.addEventListener('click',()=>setAdvOpen(n,!n.advOpen));
 const tr=d.tiles!==false && mid.lastElementChild?.classList.contains('tilerow') && mid.lastElementChild;
-if(tr){ tgl.classList.add('tgap'); tr.append(tgl); mid.append(wrap); }          // плиткой в конце ряда
+if(tr){ tr.append(tgl); mid.append(wrap); }          // плиткой в конце ряда
 else mid.append(tgl,wrap);
 } }
 if(d.view){ const  c=document.createElement('canvas'); c.className='view main'+(d.pick?' pick':'');
@@ -330,15 +330,9 @@ if(!isTileParam(p)){ grp=null; renderParamRowsPlain(container,n,[p]); continue; 
 if(!grp){ grp=document.createElement('div'); grp.className='prm wide tilerow'; container.append(grp); }
 // select на 2-3 варианта — стопкой кнопок, как 'buttons'
 const q= p.t==='range'&&!p.knob ? {...p,knob:true}
-: p.t==='select'&&p.opts.length<=3 ? {...p,t:'buttons'} : p;
+: p.t==='select'&&Array.isArray(p.opts)&&p.opts.length<=3 ? {...p,t:'buttons'} : p;
 const r=paramEl(n,q); r.classList.add('tile');
-const kind=q.t==='button'?'btn':q.t;                 // смена типа — отступ между группами
-if(grp.lastChild && grp.lastChild.dataset.kind!==kind) r.classList.add('tgap');
-// плитка шире, если самое длинное слово подписи не влезает (моноширинный 9px ≈ 5.5px/символ)
-if(q.t!=='button'){ const words=[...String(q.label||q.n).split(/\s+/), ...(q.t==='buttons'?q.opts.map(String):[])];
-const lw=Math.max(...words.map(w=>w.length));
-if(lw>8) r.style.minWidth=Math.min(120,Math.ceil(lw*5.5+8))+'px'; }
-r.dataset.kind=kind; grp.append(r);
+r.style.gridColumn='span '+tileSpan(q); grp.append(r);
 const sel=r.querySelector(':scope>select');
 if(sel) sel.addEventListener('wheel',e=>{ e.preventDefault(); e.stopPropagation();   // колесо — соседнее значение
 const now=performance.now(); if(sel._lastWheelT!=null && now-sel._lastWheelT<120) return; sel._lastWheelT=now;
@@ -348,12 +342,23 @@ return; }
 renderParamRowsPlain(container,n,params);
 }
 function isTileParam(p){
-if(p.t==='range'||p.t==='buttons') return true;
-if(p.t==='button') return String(p.label||p.n).length<=24;
-if(p.t==='check') return String(p.label||p.n).length<=32;
-// select со списком из функции (устройства) или длинными пунктами — обычной строкой
-if(p.t==='select') return Array.isArray(p.opts) && p.opts.every(o=>String(o).length<=14);
-return false;
+return ['range','check','button','buttons','select'].includes(p.t);
+}
+// сколько ячеек сетки (56px, зазор 4px) занимает плитка: 1–3, по содержимому — значениям select/сегментов,
+// тексту кнопки/галочки (не больше 3 строк); подпись под плиткой ширину не задаёт (обрезается).
+let tileCH=0;                                        // ширина символа текста плитки (9px, letter-spacing -.4px) — меряем раз
+function tileSpan(q){
+if(!tileCH){ const m=document.createElement('span'); m.className='tile-measure'; m.textContent='0'.repeat(20);
+document.body.append(m); tileCH=m.getBoundingClientRect().width/20 || 5.5; m.remove(); }
+const CH=tileCH, cell=k=>k*60-4;
+let need=0;
+if(q.t==='buttons') need=Math.max(...q.opts.map(o=>String(o).length))*CH+4;
+if(q.t==='select') need=Array.isArray(q.opts) ? Math.max(...q.opts.map(o=>String(o).length))*CH+6 : cell(2);
+const txt=String(q.label||q.n);
+if(q.t==='button'||q.t==='check') need=Math.max(...txt.split(/\s+/).map(w=>w.length))*CH+4;
+let k=1; while(k<3 && cell(k)<need) k++;
+if(q.t==='button'||q.t==='check') while(k<3 && Math.ceil(txt.length*CH/(cell(k)-4))>3) k++;
+return k;
 }
 function renderParamRowsPlain(container,n,params){
 let i=0;
