@@ -324,7 +324,16 @@ function renderParamRows(container,n,params){
 // tiles:true у модуля — все контролы плитками одного размера в одном потоке, range — ручками
 if(MOD[n.type].tiles){
 const grp=document.createElement('div'); grp.className='prm wide tilerow';
-for(const p of params){ const r=paramEl(n,p.t==='range'&&!p.knob?{...p,knob:true}:p); r.classList.add('tile'); grp.append(r); }
+for(const p of params){
+// select на 2-3 варианта — стопкой кнопок, как 'buttons'
+const q= p.t==='range'&&!p.knob ? {...p,knob:true}
+: p.t==='select'&&Array.isArray(p.opts)&&p.opts.length<=3 ? {...p,t:'buttons'} : p;
+const r=paramEl(n,q); r.classList.add('tile'); grp.append(r);
+const sel=r.querySelector(':scope>select');
+if(sel) sel.addEventListener('wheel',e=>{ e.preventDefault(); e.stopPropagation();   // колесо — соседнее значение
+const now=performance.now(); if(sel._lastWheelT!=null && now-sel._lastWheelT<120) return; sel._lastWheelT=now;
+const i=clamp(sel.selectedIndex+(e.deltaY>0?1:-1),0,sel.options.length-1);
+if(i!==sel.selectedIndex){ sel.selectedIndex=i; sel.dispatchEvent(new Event('change')); } },{passive:false}); }
 container.append(grp); return; }
 let i=0;
 while(i<params.length){
