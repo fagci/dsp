@@ -1,4 +1,7 @@
-const Graph = { nodes:[], edges:[], map:{}, order:[], seq:1, sel:null, dashTree:null };
+const Graph = { nodes:[], edges:[], map:{}, order:[], seq:1, sel:null,
+  dashPages:[{name:'',tree:null}], dashPage:0,       // страницы дашборда: у каждой своё дерево тайлов
+  get dashTree(){ return this.dashPages[this.dashPage].tree; },
+  set dashTree(v){ this.dashPages[this.dashPage].tree=v; } };
 const content = document.getElementById('content');
 const wires = document.getElementById('wires');
 const view = {x:60,y:40,k:1};
@@ -70,7 +73,7 @@ n.roCv?.disconnect();                               // иначе ResizeObserver
 visIO.unobserve(n.el);
 Graph.edges.filter(e=>e.from===n.id||e.to===n.id).forEach(delEdge);
 Graph.nodes=Graph.nodes.filter(x=>x!==n); delete Graph.map[n.id];
-const dlf=dashLeafOf(n.id); if(dlf){ dlf.node=null; if(dashMode) dashRenderRoot(); }
+if(dashForget(n.id) && dashMode) dashRenderRoot();
 ghostDrop(n);
 n.el.remove();
 markTopoDirty();
@@ -1111,9 +1114,19 @@ function dashSyncSeq(){
   const walk=t=>{ if(!t) return;
     const k=+String(t.id).slice(1); if(k>=dashSeq) dashSeq=k+1;
     if(t.t==='split') t.children.forEach(walk); };
-  walk(Graph.dashTree);
+  for(const pg of Graph.dashPages) walk(pg.tree);
 }
-function dashLeaf(nodeId){ return {t:'leaf', id:dashId(), node:nodeId??null}; }
+/* лист — {t:'leaf',id,tabs:[{node,view?,bare?}],cur}: вкладки в одном тайле, видна tabs[cur].
+   Старый формат {node,view,bare} (сохранения, пресеты) переводится при первом обращении. */
+function dashNormLeaf(l){
+  if(!l.tabs){ const x={node:l.node??null}; if(l.view) x.view=l.view; if(l.bare) x.bare=true;
+    l.tabs=[x]; l.cur=0; delete l.node; delete l.view; delete l.bare; }
+  if(!l.tabs.length) l.tabs.push({node:null});
+  l.cur=clamp(l.cur|0,0,l.tabs.length-1);
+  return l;
+}
+function dashTab(l){ return dashNormLeaf(l).tabs[l.cur]; }
+function dashLeaf(nodeId){ return {t:'leaf', id:dashId(), tabs:[{node:nodeId??null}], cur:0}; }
 function dashEnsureTree(){ if(!Graph.dashTree) Graph.dashTree=dashLeaf(null); return Graph.dashTree; }
 function dashFind(t,id,parent,idx){                  // {leaf,parent,idx} по id узла дерева, либо null
   if(!t) return null;
@@ -1123,17 +1136,31 @@ function dashFind(t,id,parent,idx){                  // {leaf,parent,idx} по i
 }
 function dashLeaves(t,out){ out=out||[];
   if(!t) return out;
-  if(t.t==='leaf') out.push(t); else t.children.forEach(c=>dashLeaves(c,out));
+  if(t.t==='leaf') out.push(dashNormLeaf(t)); else t.children.forEach(c=>dashLeaves(c,out));
   return out;
 }
-function dashLeafOf(nodeId){ return dashLeaves(Graph.dashTree).find(l=>l.node===nodeId)||null; }
-function dashAutoPlace(n){                            // первый пустой лист (обход в глубину)
-  const empty=dashLeaves(dashEnsureTree()).find(l=>l.node==null && !l.view);
-  if(empty){ empty.node=n.id; return true; } return false;
+// модуль занимает не больше одной вкладки на странице, на разных страницах может повторяться
+function dashLeafOf(nodeId){ return dashLeaves(Graph.dashTree).find(l=>l.tabs.some(x=>x.node===nodeId))||null; }
+function dashForget(nodeId){                          // удалённый узел — из вкладок всех страниц
+  let hit=false;
+  for(const pg of Graph.dashPages) for(const l of dashLeaves(pg.tree)){
+    const i=l.tabs.findIndex(x=>x.node===nodeId); if(i<0) continue;
+    hit=true;
+    if(l.tabs.length>1){ l.tabs.splice(i,1); if(l.cur>=i && l.cur>0) l.cur--; }
+    else l.tabs[0]={node:null};
+  }
+  return hit;
+}
+function dashAutoPlace(n){                            // первая пустая вкладка (обход в глубину)
+  for(const l of dashLeaves(dashEnsureTree())){
+    const x=l.tabs.find(x=>x.node==null && !x.view);
+    if(x){ x.node=n.id; delete x.bare; return true; }
+  }
+  return false;
 }
 function dashSplit(leafId,dir){
   const f=dashFind(Graph.dashTree,leafId); if(!f||f.leaf.t!=='leaf') return;
-  const split={t:'split', id:dashId(), dir, children:[f.leaf,dashLeaf(null)], sizes:[50,50]};   // лист как есть — с view/bare
+  const split={t:'split', id:dashId(), dir, children:[f.leaf,dashLeaf(null)], sizes:[50,50]};   // лист как есть — со вкладками
   if(f.parent) f.parent.children[f.idx]=split; else Graph.dashTree=split;
   dashRenderRoot(); Undo.push();
 }
@@ -1142,7 +1169,7 @@ function dashCollapse(t){                             // сплит с 1 реб�
   t.children=t.children.map(dashCollapse);
   return t.children.length===1? t.children[0] : t;
 }
-function dashRemoveLeaf(leafId){                       // убрать пустой слот, отдав его место соседям
+function dashRemoveLeaf(leafId){                       // убрать панель, отдав её место соседям
   const f=dashFind(Graph.dashTree,leafId); if(!f||f.leaf.t!=='leaf') return;
   if(!f.parent){ Graph.dashTree=null; dashRenderRoot(); Undo.push(); return; }
   f.parent.children.splice(f.idx,1); f.parent.sizes.splice(f.idx,1);
@@ -1153,17 +1180,21 @@ function dashRemoveLeaf(leafId){                       // убрать пуст�
 }
 function dashRenderRoot(){
   // узлы вне дерева — обратно на холст, иначе после очистки сетки они выпадают из DOM
-  const placed=new Set(dashLeaves(Graph.dashTree).map(l=>l.node));
-  for(const n of Graph.nodes) if(!placed.has(n.id) && n.el.parentNode!==content){
-    content.appendChild(n.el); applySize(n); n.onResize?.(n); }
+  const leaves=dashLeaves(Graph.dashTree), placed=new Set(), hidden=new Set();
+  for(const l of leaves) l.tabs.forEach((x,i)=>{ if(x.node==null) return; placed.add(x.node); if(i!==l.cur) hidden.add(x.node); });
+  for(const n of Graph.nodes){
+    if(!placed.has(n.id)){ if(n.el.parentNode!==content){ content.appendChild(n.el); applySize(n); n.onResize?.(n); } }
+    else if(hidden.has(n.id)) n.el.remove();            // фоновая вкладка: вне DOM, на графе — заглушка
+  }
   dashGridEl.innerHTML='';
   if(!Graph.dashTree){
     const hint=document.createElement('div'); hint.className='dash-empty';
     hint.textContent="No panes";
-    dashGridEl.append(hint); dashSyncGhosts(); return;
+    dashGridEl.append(hint); dashSyncGhosts(); dashPagesRender(); return;
   }
   dashGridEl.append(dashRenderNode(Graph.dashTree));
   dashSyncGhosts();
+  dashPagesRender();
   dashFitSoon();
 }
 // основная канва (или список bandplan/bookmarks) узла в панели — до низа панели: контролы над ней
@@ -1224,7 +1255,7 @@ function dashRenderNode(t){
   if(t.t==='leaf') return dashRenderLeaf(t);
   const wrap=document.createElement('div'); wrap.className='dash-split '+t.dir;
   t.children.forEach((c,i)=>{
-    const el=dashRenderNode(c); el.style.flex='0 0 '+t.sizes[i]+'%';
+    const el=dashRenderNode(c); el.style.flex='0 1 '+t.sizes[i]+'%';   // shrink — место под разделители
     wrap.append(el);
     if(i<t.children.length-1){
       const rz=document.createElement('div'); rz.className='dash-resizer panzoom-exclude';
@@ -1233,53 +1264,81 @@ function dashRenderNode(t){
   });
   return wrap;
 }
-function dashDetach(n){                                 // узел уезжает из своей панели обратно на холст, 📌 не трогаем
-  const leaf=dashLeafOf(n.id); if(leaf) leaf.node=null;
+function dashDetach(n){                                 // узел уезжает из своей вкладки обратно на холст, 📌 не трогаем
+  const leaf=dashLeafOf(n.id); if(leaf) for(const x of leaf.tabs) if(x.node===n.id) x.node=null;
   if(dashMode){ content.appendChild(n.el); applySize(n); n.onResize?.(n); }
 }
+function dashTabLabel(x){
+  if(x.view==='graph') return '◇ Graph';
+  const n=x.node!=null?Graph.map[x.node]:null;
+  return n? MOD[n.type].title : '·';
+}
+function dashBtn2(txt,title,fn,cls){
+  const b=document.createElement('button'); b.textContent=txt; b.title=title; b.onclick=fn;
+  if(cls) b.className=cls; return b;
+}
 function dashRenderLeaf(t){
+  dashNormLeaf(t);
+  const tab=t.tabs[t.cur];
   const pane=document.createElement('div');
-  pane.className='dash-pane'+(t.view==='graph'?'':' panzoom-exclude');   // мимо панелей Panzoom холст не тащит
+  pane.className='dash-pane'+(tab.view==='graph'?'':' panzoom-exclude');   // мимо панелей Panzoom холст не тащит
   const tools=document.createElement('div'); tools.className='dash-tools panzoom-exclude';
-  const n=t.node!=null?Graph.map[t.node]:null;
-  // выбор/смена модуля в этом слоте — всегда доступен, не только для пустых панелей
+  const n=tab.node!=null?Graph.map[tab.node]:null;
+  // выбор/смена модуля в активной вкладке — всегда доступен, не только для пустых панелей
   const sel=document.createElement('select'); sel.className='dash-pick';
-  const isGraph=t.view==='graph';
+  const isGraph=tab.view==='graph';
   sel.append(new Option(n||isGraph?'— clear —':'— pick module —',''));
-  if(isGraph || !dashGraphLeaf()) sel.append(new Option('◇ Module graph','@graph'));   // одна на дашборд
-  const cand=Graph.nodes.filter(x=>x===n || !dashLeafOf(x.id));   // любой модуль, ещё не занявший панель
+  const graphElsewhere=dashLeaves(Graph.dashTree).some(l=>l.tabs.some(x=>x!==tab && x.view==='graph'));
+  if(!graphElsewhere) sel.append(new Option('◇ Module graph','@graph'));   // одна на страницу
+  const cand=Graph.nodes.filter(x=>x===n || !dashLeafOf(x.id));   // любой модуль, ещё не занявший вкладку
   for(const pn of cand) sel.append(new Option(MOD[pn.type].title+' #'+pn.id, pn.id));
   if(n) sel.value=n.id; else if(isGraph) sel.value='@graph';
   sel.addEventListener('pointerdown',e=>e.stopPropagation());
   sel.onchange=()=>{ if(n) dashDetach(n);
     const toGraph=sel.value==='@graph';
-    if(toGraph){ t.node=null; t.view='graph'; }
-    else { t.node=sel.value||null; delete t.view; }
+    if(toGraph){ tab.node=null; tab.view='graph'; }
+    else { tab.node=sel.value||null; delete tab.view; }
+    delete tab.bare;
     dashRenderRoot(); Undo.push();
     if(toGraph) dashGraphFit(); };
-  tools.append(sel);
-  const bRow=document.createElement('button'); bRow.textContent='⬌'; bRow.title='Split right';
-  bRow.onclick=()=>dashSplit(t.id,'row');
-  const bCol=document.createElement('button'); bCol.textContent='⬍'; bCol.title='Split down';
-  bCol.onclick=()=>dashSplit(t.id,'col');
-  const bx=document.createElement('button'); bx.textContent='✕'; bx.title='Remove pane';
-  bx.onclick=()=>{ if(n) dashDetach(n); dashRemoveLeaf(t.id); };
-  tools.append(bRow,bCol,bx);
+  // вкладки: активная — сам селект, остальные — кнопки; полоса прокручивается по горизонтали
+  const strip=document.createElement('div'); strip.className='dash-tabs';
+  t.tabs.forEach((x,i)=>{
+    if(i===t.cur){ strip.append(sel); return; }
+    const b=dashBtn2(dashTabLabel(x),'Switch to tab',()=>{
+      t.cur=i; dashRenderRoot(); scheduleAutosave();
+      if(x.view==='graph') dashGraphFit(); },'dash-tab');
+    strip.append(b);
+  });
+  strip.append(dashBtn2('+','New tab in this pane',()=>{
+    t.tabs.push({node:null}); t.cur=t.tabs.length-1; dashRenderRoot(); Undo.push(); },'dash-tadd'));
+  tools.append(strip);
+  if(t.tabs.length>1) requestAnimationFrame(()=>{           // активная вкладка в зоне видимости
+    const l=sel.offsetLeft-strip.offsetLeft, r=l+sel.offsetWidth;
+    if(l<strip.scrollLeft || r>strip.scrollLeft+strip.clientWidth) strip.scrollLeft=l-24; });
+  // действия панели; в узкой панели прячутся под «⋯» (см. @container в styles.css)
+  const acts=document.createElement('div'); acts.className='dash-acts';
   if(n?.cv){                                            // только канва: контролы и заголовок узла спрятаны
-    const bb=document.createElement('button'); bb.textContent='⛶'; bb.title='Canvas only (hide controls)';
-    bb.classList.toggle('on',!!t.bare);
-    bb.onclick=()=>{ t.bare=!t.bare; dashRenderRoot(); Undo.push(); };
-    tools.insertBefore(bb,bRow);
-    pane.classList.toggle('bare',!!t.bare);
+    const bb=dashBtn2('⛶','Canvas only (hide controls)',()=>{ tab.bare=!tab.bare; dashRenderRoot(); Undo.push(); });
+    bb.classList.toggle('on',!!tab.bare);
+    acts.append(bb);
+    pane.classList.toggle('bare',!!tab.bare);
   }
   if(isGraph){
-    const bf=document.createElement('button'); bf.textContent='⤢'; bf.title='Fit patch';
-    bf.onclick=dashGraphFit;
-    const ba=document.createElement('button'); ba.textContent='+'; ba.title='Add module (or double-click the canvas)';
-    ba.onclick=()=>dashGraphAdd(ba);
-    tools.insertBefore(ba,bRow); tools.insertBefore(bf,bRow);
+    acts.append(dashBtn2('⊕','Add module (or double-click the canvas)',e=>dashGraphAdd(e.currentTarget)),
+      dashBtn2('⤢','Fit patch',dashGraphFit));
     pane.classList.add('graph');
   }
+  const many=t.tabs.length>1;
+  acts.append(dashBtn2('⬌','Split right',()=>dashSplit(t.id,'row')),
+    dashBtn2('⬍','Split down',()=>dashSplit(t.id,'col')),
+    dashBtn2(many?'⨯':'✕',many?'Close tab':'Remove pane',()=>{
+      if(n) dashDetach(n);
+      if(!many){ dashRemoveLeaf(t.id); return; }
+      t.tabs.splice(t.cur,1); t.cur=Math.min(t.cur,t.tabs.length-1);
+      dashRenderRoot(); Undo.push(); }));
+  const more=dashBtn2('⋯','Pane actions',()=>tools.classList.toggle('acts'),'dash-more');
+  tools.append(more,acts);
   pane.append(tools);
   const body=document.createElement('div'); body.className='dash-body';
   if(n) body.append(n.el);
@@ -1291,11 +1350,15 @@ function dashRenderLeaf(t){
   bindDashRail(rail,body); pane.append(rail);
   return pane;
 }
+addEventListener('pointerdown',e=>{                     // «⋯» закрывается тапом мимо
+  if(!dashMode) return;
+  for(const t of dashGridEl.querySelectorAll('.dash-tools.acts')) if(!t.contains(e.target)) t.classList.remove('acts');
+},true);
 /* ---- панель «граф модулей»: окно в обычный холст ----
    Холст (#content/#wires) остаётся под сеткой тайлов, панель графа прозрачна и не ловит события —
    узлы, провода, пан/зум работают как вне тайлов. Узел, занявший другую панель, на холсте
    заменяется заглушкой (n.ghost) с теми же пинами: провода к нему видны, связи можно тянуть. */
-function dashGraphLeaf(){ return dashLeaves(Graph.dashTree).find(l=>l.view==='graph')||null; }
+function dashGraphLeaf(){ return dashLeaves(Graph.dashTree).find(l=>dashTab(l).view==='graph')||null; }   // граф в активной вкладке
 function dashGraphOn(){ return dashMode && !!dashGraphLeaf(); }
 function nodePorts(n){ return n.ghost ? n.ghostPorts : n.ports; }
 function ghostBuild(n){
@@ -1411,7 +1474,7 @@ function bindDashResizer(rz,t,i){                       // тащим грани
       const d=((horiz?e.clientX:e.clientY)-start)/total*100, min=5;
       const a=clamp(s0+d,min,s0+s1-min), b=s0+s1-a;
       t.sizes[i]=a; t.sizes[i+1]=b;
-      panes[i].style.flex='0 0 '+a+'%'; panes[i+1].style.flex='0 0 '+b+'%';
+      panes[i].style.flex='0 1 '+a+'%'; panes[i+1].style.flex='0 1 '+b+'%';
     };
     const up=()=>{ rz.classList.remove('active');
       window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); Undo.push(); };
@@ -1424,6 +1487,7 @@ function setDash(on){
   cv.classList.toggle('dashboard',on);
   setSideCollapsed(on ? true : sideCollapsedPref);     // в тайлах сайдбар мешает — прячем, при выходе возвращаем как было
   dashBtn?.classList.toggle('on',on);
+  dashPagesEl?.classList.toggle('on',on);
   document.getElementById('fit').disabled=on;
   if(on){
     dashEnsureTree();
@@ -1441,6 +1505,77 @@ function setDash(on){
   }
 }
 if(dashBtn) dashBtn.onclick=()=>setDash(!dashMode);
+/* ---- страницы дашборда: наборы тайлов, переключаются вкладками рядом с ▦ ----
+   Одна страница — только «+». Тап по активной — меню (имя, копия, порядок, удалить). Alt+1…9 — переход. */
+const dashPagesEl=dashBtn? document.createElement('span') : null;
+if(dashPagesEl){ dashPagesEl.id='dashPages'; dashBtn.after(dashPagesEl); }
+function dashPageName(i){ return Graph.dashPages[i].name || String(i+1); }
+function dashPageGo(i){
+  if(i<0 || i>=Graph.dashPages.length || !dashMode) return;
+  closeDashMenu();
+  Graph.dashPage=i; dashEnsureTree(); dashRenderRoot();
+  if(dashGraphLeaf()) dashGraphFit();
+  scheduleAutosave();
+}
+function dashPageAdd(tree){
+  Graph.dashPages.push({name:'',tree:tree||null});
+  dashPageGo(Graph.dashPages.length-1); Undo.push();
+}
+function dashCloneTree(t){                             // копия раскладки с новыми id (модули те же)
+  if(!t) return null;
+  const c=JSON.parse(JSON.stringify(t));
+  const walk=x=>{ x.id=dashId(); if(x.t==='split') x.children.forEach(walk); };
+  walk(c); return c;
+}
+function dashPagesRender(){
+  if(!dashPagesEl) return;
+  dashPagesEl.innerHTML='';
+  const many=Graph.dashPages.length>1;
+  if(many) Graph.dashPages.forEach((pg,i)=>{
+    const b=document.createElement('button'); b.className='dpg'+(i===Graph.dashPage?' on':'');
+    b.textContent=dashPageName(i); b.title=i===Graph.dashPage?'Page menu':'Page '+dashPageName(i)+' (Alt+'+(i+1)+')';
+    b.onclick=()=>i===Graph.dashPage? openDashMenu(b) : dashPageGo(i);
+    dashPagesEl.append(b);
+  });
+  const add=document.createElement('button'); add.className='dpg add'; add.textContent='+';
+  add.title='New tile page';
+  add.onclick=()=>dashPageAdd();
+  dashPagesEl.append(add);
+}
+let dashMenuEl=null;
+function closeDashMenu(){ dashMenuEl?.remove(); dashMenuEl=null; }
+function openDashMenu(btn){
+  closeDashMenu();
+  const m=document.createElement('div'); m.className='dash-menu';
+  const item=(txt,fn,dis)=>{ const b=document.createElement('button'); b.textContent=txt; b.disabled=!!dis;
+    b.onclick=()=>{ closeDashMenu(); fn(); }; m.append(b); };
+  const i=Graph.dashPage, single=Graph.dashPages.length<2;
+  item('Rename…',()=>{
+    const v=prompt('Page name',Graph.dashPages[i].name||''); if(v==null) return;
+    Graph.dashPages[i].name=v.trim().slice(0,24); dashPagesRender(); Undo.push(); });
+  item('Duplicate',()=>dashPageAdd(dashCloneTree(Graph.dashTree)));
+  item('◀ Move left',()=>dashPageMove(-1),i===0);
+  item('Move right ▶',()=>dashPageMove(1),i===Graph.dashPages.length-1);
+  item('Delete page',()=>{
+    if(!confirm('Delete tile page "'+dashPageName(i)+'"? Modules stay in the patch.')) return;
+    Graph.dashPages.splice(i,1); Graph.dashPage=Math.min(i,Graph.dashPages.length-1);
+    dashEnsureTree(); dashRenderRoot(); Undo.push(); },single);
+  document.body.append(m); dashMenuEl=m;
+  const r=btn.getBoundingClientRect(), W=m.offsetWidth, H=m.offsetHeight;
+  m.style.left=clamp(r.left,8,innerWidth-W-8)+'px';
+  // панель снизу (телефон) — меню над кнопкой
+  m.style.top=(r.bottom+H+8>innerHeight? r.top-H-4 : r.bottom+4)+'px';
+}
+function dashPageMove(d){
+  const i=Graph.dashPage, j=i+d, P=Graph.dashPages;
+  if(j<0||j>=P.length) return;
+  [P[i],P[j]]=[P[j],P[i]]; Graph.dashPage=j; dashPagesRender(); Undo.push();
+}
+addEventListener('pointerdown',e=>{ if(dashMenuEl && !dashMenuEl.contains(e.target)) closeDashMenu(); },true);
+addEventListener('keydown',e=>{
+  if(!dashMode || !e.altKey || e.ctrlKey || e.metaKey) return;
+  const k=+e.key; if(k>=1 && k<=9 && k<=Graph.dashPages.length){ e.preventDefault(); dashPageGo(k-1); }
+});
 document.getElementById('undo').onclick=()=>Undo.undo();
 document.getElementById('redo').onclick=()=>Undo.redo();
 document.getElementById('dup').onclick=()=>{ copySel(); pasteData(clip,30,30); };
@@ -1590,7 +1725,8 @@ w:n.size.w,h:n.size.h,p:{...n.p},f:n.folded?1:0,a:n.advOpen?1:0};
 if(n.dash) o.dash=1;                                // закреплён (📌) для дашборда
 return o; }),
 edges:Graph.edges.map(e=>({from:e.from,fp:e.fp,to:e.to,tp:e.tp})),
-dashTree:Graph.dashTree};                           // раскладка тайлов дашборда (дерево сплитов)
+dashTree:Graph.dashTree,                            // раскладка активной страницы тайлов (старые версии читают только её)
+dashPages:Graph.dashPages.map(pg=>({name:pg.name||'',tree:pg.tree})), dashPage:Graph.dashPage};
 }
 const MIGRATE={                                     // старые узлы → их замена
 water:   {type:'sa', ports:{fsel:'f1'}},
@@ -1637,7 +1773,10 @@ if(nn &&n.w){ nn.size.w=n.w; nn.size.h=n.h||nn.size.h; applySize(nn); }
 if(nn &&n.dash) nn.dash=true;
 max=Math.max(max,+String(n.id).slice(1)||0); }
 Graph.seq=max+1;
-Graph.dashTree=o.dashTree||null;                    // раскладка тайлов дашборда (дерево сплитов)
+// страницы тайлов; старые сохранения — одна страница из dashTree
+Graph.dashPages=Array.isArray(o.dashPages)&&o.dashPages.length
+  ? o.dashPages.map(pg=>({name:pg?.name||'',tree:pg?.tree||null})) : [{name:'',tree:o.dashTree||null}];
+Graph.dashPage=clamp(o.dashPage|0,0,Graph.dashPages.length-1);
 dashSyncSeq();
 for(const e of o.edges) addEdge(e.from,e.fp,e.to,e.tp);
 if(o.view){ Object.assign(view,o.view); applyView(); }
@@ -1653,7 +1792,7 @@ function clearAll(){
 content.querySelectorAll(':scope > .node').forEach(el=>el.remove());
 // По той же причине чистим SVG-провода, оставшиеся в статическом снимке.
 while(wires.firstChild) wires.firstChild.remove();
-Graph.nodes=[]; Graph.edges=[]; Graph.map={}; Graph.seq=1; Graph.dashTree=null;
+Graph.nodes=[]; Graph.edges=[]; Graph.map={}; Graph.seq=1; Graph.dashPages=[{name:'',tree:null}]; Graph.dashPage=0;
 }
 document.getElementById('save').onclick=()=>
 dl(new Blob([JSON.stringify(serialize(),null,1)],{type:'application/json'}),'patch.json');
