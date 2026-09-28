@@ -236,12 +236,15 @@ const main=shown.filter(p=>!p.adv), adv=shown.filter(p=>p.adv);
 renderParamRows(mid,n,main);
 if(adv.length){
 const tgl=document.createElement('div'); tgl.className='prm wide advToggle';
+if(d.tiles) tgl.classList.add('tile');
 tgl.innerHTML=`<span class="advLbl">${n.advOpen?'▾':'▸'} advanced (${adv.length})</span>`;
 const wrap=document.createElement('div'); wrap.className='advWrap'; wrap.hidden=!n.advOpen;
 wrap.dataset.count=adv.length;
 renderParamRows(wrap,n,adv);
 tgl.addEventListener('click',()=>setAdvOpen(n,!n.advOpen));
-mid.append(tgl,wrap);
+const tr=d.tiles && mid.querySelector(':scope>.tilerow');
+if(tr){ tr.append(tgl); mid.append(wrap); }          // плиткой в конце ряда
+else mid.append(tgl,wrap);
 } }
 if(d.view){ const  c=document.createElement('canvas'); c.className='view main'+(d.pick?' pick':'');
 // без willReadFrequently — этот канвас только пишут (drawImage/putImageData), ни один draw()
@@ -318,6 +321,11 @@ markWiresDirty();
 }
 // подряд идущие кнопки/галочки — в один ряд; общая раскладка для основных и adv-параметров
 function renderParamRows(container,n,params){
+// tiles:true у модуля — все контролы плитками одного размера в одном потоке, range — ручками
+if(MOD[n.type].tiles){
+const grp=document.createElement('div'); grp.className='prm wide tilerow';
+for(const p of params){ const r=paramEl(n,p.t==='range'&&!p.knob?{...p,knob:true}:p); r.classList.add('tile'); grp.append(r); }
+container.append(grp); return; }
 let i=0;
 while(i<params.length){
 if(params[i].t==='button' && params[i+1] && params[i+1].t==='button'){
