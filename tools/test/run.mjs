@@ -90,7 +90,8 @@ await page.evaluate(() => {
 const files = (await readdir(new URL('./cases/', import.meta.url))).filter(f => f.endsWith('.mjs')).sort();
 let fail = 0, total = 0;
 for(const f of files){
-  const cases = (await import('./cases/'+f)).default;
+  const mod = await import('./cases/'+f), cases = mod.default;
+  if(mod.setup) await page.evaluate(mod.setup);     // общие помощники файла — в страницу
   for(const c of cases){
     if(only && !c.name.includes(only)) continue;
     total++;

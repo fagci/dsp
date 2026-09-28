@@ -60,6 +60,36 @@ defIQ({ id:'iqSpec', title:'IQ Spectrum', cat:'IQ',
           {n:'upd',t:'range',min:20,max:1000,step:10,d:60,label:'update, ms of signal'}]},
   n=>'Welch, up to '+n.p.avg+' frames');
 
+defIQ({ id:'iqAdd', title:'IQ Add', cat:'IQ',
+  ins:[{n:'a',t:'iq'},{n:'b',t:'iq'}], outs:[{n:'out',t:'iq'}],
+  params:[{n:'ka',t:'range',min:-40,max:20,step:1,d:0,label:'gain a, dB'},
+          {n:'kb',t:'range',min:-40,max:20,step:1,d:0,label:'gain b, dB'}]},
+  n=>!n.ui ? 'no input' : n.ui.err || 'a + b at '+(n.ui.sr/1000)+' kS/s');
+
+// Каналайзер: число слотов K задаёт порты (ch1..chK, f1..fK)
+const IQCH_K=['1','2','3','4','5','6','7','8'];
+function iqChanPorts(n){
+  const K=+n.p.K||4, valid=new Set(['in','spec','active',...controlParamsOf(n).map(c=>c.n)]);
+  for(let k=1;k<=K;k++){ valid.add('ch'+k); valid.add('f'+k); }
+  Graph.edges.filter(e=>(e.to===n.id && !valid.has(e.tp)) || (e.from===n.id && !valid.has(e.fp))).forEach(delEdge);
+  rebuildNode(n); markTopoDirty();
+}
+defIQ({ id:'iqChan', title:'IQ Channelizer', cat:'IQ',
+  ins:n=>[{n:'in',t:'iq'}, ...Array.from({length:+n.p.K||4},(_,k)=>({n:'f'+(k+1),t:'num'}))],
+  outs:n=>[...Array.from({length:+n.p.K||4},(_,k)=>({n:'ch'+(k+1),t:'iq'})), {n:'spec',t:'spec'},{n:'active',t:'num'}],
+  params:[{n:'N',t:'select',opts:['8','16','32','64','128','256','512','1024'],d:'64',label:'channels'},
+          {n:'ov',t:'select',opts:['1','2'],d:'2',label:'oversampling (2 — clean channel edges)'},
+          {n:'K',t:'select',opts:IQCH_K,d:'4',label:'outputs',fn:iqChanPorts},
+          {n:'sel',t:'select',opts:['strongest','manual'],d:'strongest',label:'outputs take'},
+          {n:'freqs',t:'text',d:'',label:'manual: frequencies, MHz, comma-separated (or f1…)'},
+          {n:'thr',t:'range',min:3,max:40,step:1,d:10,label:'strongest: over noise floor, dB'},
+          {n:'hold',t:'range',min:0,max:10,step:.1,d:1,label:'strongest: hold after signal drops, s'},
+          {n:'skipDc',t:'check',d:true,label:'strongest: skip the center channel (DC spike)'},
+          {n:'upd',t:'range',min:20,max:1000,step:10,d:100,label:'channel power update, ms of signal'},
+          {n:'P',t:'select',opts:['8','16'],d:'16',label:'taps per channel (16 — neighbours rejected)',adv:true}]},
+  n=>!n.ui ? 'no input' : n.ui.N+' × '+(n.ui.chW/1000).toFixed(1)+' kHz → '+(n.ui.srOut/1000)+' kS/s · '+
+    n.ui.slots.map((f,k)=>(k+1)+': '+(f==null ? '—' : (f/1e6).toFixed(4))).join(' '));
+
 /* ---- IQ → Audio ---- */
 // Мост в домен движка: кольцо + дробный ресемплер (кубический Эрмит) с частоты потока на Eng.sr.
 // Часы источника (донгл, файл) и звуковой карты расходятся — шаг чтения подстраивается по
