@@ -5,7 +5,7 @@
    острова и параметры уходят в воркер раз в такт, выходы приходят асинхронно (такт-два спустя)
    и отдаются потребителям. Поток 'iq' задержку переносит (IQ → Audio держит запас), числа и
    спектры просто запаздывают. Узлы внутри групп и режим без воркеров — в главном потоке. */
-const ISL_MAX_INFLIGHT=16;          // тактов без ответа — дальше входы выбрасываются
+const ISL_MAX_INFLIGHT=64;          // тактов без ответа (~0.7 с) — дальше входы выбрасываются
 const ISL_Q=(document.currentScript?.src||'').split('?')[1]||'';
 
 const Islands={
@@ -80,7 +80,8 @@ function islProcess(n,I){
   isl.msg.in[n.id]=inp;
   const out=islTake(isl,n);
   if(n.id===isl.last){
-    if(isl.inflight<ISL_MAX_INFLIGHT){ isl.inflight++; isl.w.postMessage(isl.msg); }
+    // пока воркер грузит скрипты (ещё ни одного ответа), такты копятся в его очереди, а не теряются
+    if(isl.inflight<(isl.ready ? ISL_MAX_INFLIGHT : 1000)){ isl.inflight++; isl.w.postMessage(isl.msg); }
     else Islands.dropped++;       // воркер не успевает: такт теряется, у потока будет разрыв t0
     isl.msg=null;
   }
@@ -110,6 +111,7 @@ function islTake(isl,n){
 }
 // Ответ воркера: чанки копятся до ближайшего такта, числа и спектры — последнее значение
 function islResult(isl,m){
+  isl.ready=true;
   isl.inflight=Math.max(0,isl.inflight-1);
   for(const id in m.res){
     const r=m.res[id], p=isl.pending.get(id);

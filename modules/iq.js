@@ -60,17 +60,46 @@ defIQ({ id:'iqSpec', title:'IQ Spectrum', cat:'IQ',
           {n:'upd',t:'range',min:20,max:1000,step:10,d:60,label:'update, ms of signal'}]},
   n=>'Welch, up to '+n.p.avg+' frames');
 
+defIQ({ id:'iqAdd', title:'IQ Add', cat:'IQ',
+  ins:[{n:'a',t:'iq'},{n:'b',t:'iq'}], outs:[{n:'out',t:'iq'}],
+  params:[{n:'ka',t:'range',min:-40,max:20,step:1,d:0,label:'gain a, dB'},
+          {n:'kb',t:'range',min:-40,max:20,step:1,d:0,label:'gain b, dB'}]},
+  n=>!n.ui ? 'no input' : n.ui.err || 'a + b at '+(n.ui.sr/1000)+' kS/s');
+
+// Каналайзер: число слотов K задаёт порты (ch1..chK, f1..fK)
+const IQCH_K=['1','2','3','4','5','6','7','8'];
+function iqChanPorts(n){
+  const K=+n.p.K||4, valid=new Set(['in','spec','active',...controlParamsOf(n).map(c=>c.n)]);
+  for(let k=1;k<=K;k++){ valid.add('ch'+k); valid.add('f'+k); }
+  Graph.edges.filter(e=>(e.to===n.id && !valid.has(e.tp)) || (e.from===n.id && !valid.has(e.fp))).forEach(delEdge);
+  rebuildNode(n); markTopoDirty();
+}
+defIQ({ id:'iqChan', title:'IQ Channelizer', cat:'IQ',
+  ins:n=>[{n:'in',t:'iq'}, ...Array.from({length:+n.p.K||4},(_,k)=>({n:'f'+(k+1),t:'num'}))],
+  outs:n=>[...Array.from({length:+n.p.K||4},(_,k)=>({n:'ch'+(k+1),t:'iq'})), {n:'spec',t:'spec'},{n:'active',t:'num'}],
+  params:[{n:'N',t:'select',opts:['8','16','32','64','128','256','512','1024'],d:'64',label:'channels'},
+          {n:'ov',t:'select',opts:['1','2'],d:'2',label:'oversampling (2 — clean channel edges)'},
+          {n:'K',t:'select',opts:IQCH_K,d:'4',label:'outputs',fn:iqChanPorts},
+          {n:'sel',t:'select',opts:['strongest','manual'],d:'strongest',label:'outputs take'},
+          {n:'freqs',t:'text',d:'',label:'manual: frequencies, MHz, comma-separated (or f1…)'},
+          {n:'thr',t:'range',min:3,max:40,step:1,d:10,label:'strongest: over noise floor, dB'},
+          {n:'hold',t:'range',min:0,max:10,step:.1,d:1,label:'strongest: hold after signal drops, s'},
+          {n:'skipDc',t:'check',d:true,label:'strongest: skip the center channel (DC spike)'},
+          {n:'upd',t:'range',min:20,max:1000,step:10,d:100,label:'channel power update, ms of signal'},
+          {n:'P',t:'select',opts:['8','16'],d:'16',label:'taps per channel (16 — neighbours rejected)',adv:true}]},
+  n=>!n.ui ? 'no input' : n.ui.N+' × '+(n.ui.chW/1000).toFixed(1)+' kHz → '+(n.ui.srOut/1000)+' kS/s · '+
+    n.ui.slots.map((f,k)=>(k+1)+': '+(f==null ? '—' : (f/1e6).toFixed(4))).join(' '));
+
 /* ---- IQ → Audio ---- */
 // Мост в домен движка: кольцо + дробный ресемплер (кубический Эрмит) с частоты потока на Eng.sr.
 // Часы источника (донгл, файл) и звуковой карты расходятся — шаг чтения подстраивается по
-// запасу в кольце в пределах ±IQA_MAX_PPM. Недобор — тишина до восстановления запаса,
-// средний запас больше цели на 25% — сброс до цели. Прореживать до ~звуковой частоты нужно до моста:
-// сам он фильтра не имеет.
+// запасу в кольце (его минимуму за 0.5 с) в пределах ±IQA_MAX_PPM. Недобор — тишина до
+// восстановления запаса. Прореживать до ~звуковой частоты нужно до моста: сам он фильтра не имеет.
 const IQA_MAX_PPM=2000;
 def({ id:'iqAudio', title:'IQ → Audio', cat:'IQ',
   ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'sig'},{n:'q',t:'sig'},{n:'fill',t:'num'}],
   readout:true,
-  params:[{n:'lat',t:'range',min:20,max:500,step:5,d:100,label:'buffer, ms'},
+  params:[{n:'lat',t:'range',min:20,max:500,step:5,d:100,label:'buffer (minimum kept), ms'},
           {n:'gain',t:'range',min:-40,max:20,step:1,d:0,label:'gain, dB'}],
   init:n=>{ n.sr=0; },
   process(n,I){
@@ -80,7 +109,7 @@ def({ id:'iqAudio', title:'IQ → Audio', cat:'IQ',
     if(s.sr!==n.sr){                             // новая частота — новое кольцо (2 с)
       n.sr=s.sr; n.size=pow2ge(Math.max(s.sr*2, BLOCK*8));
       n.rr=new Float32Array(n.size); n.ri=new Float32Array(n.size);
-      n.W=0; n.pos=0; n.rebuf=true; n.avg=0; n.ppm=0; n.drops=0; n.starves=0;
+      n.W=0; n.pos=0; n.rebuf=true; n.floor=0; n.ppm=0; n.drops=0; n.starves=0;
     }
     const mask=n.size-1, rr=n.rr, ri=n.ri;
     for(const c of s.chunks){
@@ -91,15 +120,24 @@ def({ id:'iqAudio', title:'IQ → Audio', cat:'IQ',
     }
     const ratio=s.sr/Eng.sr, target=Math.max(s.sr*n.p.lat/1000, ratio*BLOCK*2);
     let fill=n.W-n.pos;
-    // лишний запас (пачка после старта воркера, скачок источника) — сбросом, а не долгим стравливанием
-    if(fill>n.size-ratio*BLOCK*2 || !n.rebuf && n.avg>target*1.25){ n.pos=n.W-target; fill=target; n.avg=target; n.drops++; }
+    if(fill>n.size-ratio*BLOCK*2){ n.pos=n.W-target; fill=target; n.drops++; }   // кольцо на исходе
     const g=Math.pow(10,n.p.gain/20);
     if(n.rebuf){
-      if(fill>=target){ n.rebuf=false; n.pos=n.W-target; fill=target; n.avg=target; }   // излишек пришедшего чанка — сразу в сброс
+      if(fill>=target){ n.rebuf=false; n.pos=n.W-target; fill=target;             // излишек пришедшего чанка — сразу в сброс
+        n.floor=target; n.wMin=Infinity; n.wT=0; n.win=0; }
       else { out.fill(0); oq.fill(0); n.state='buffering'; return {out, q:oq, fill:1000*fill/s.sr}; }
     }
-    n.avg+=0.02*(fill-n.avg);
-    n.ppm=clamp(2e4*(n.avg-target)/target, -IQA_MAX_PPM, IQA_MAX_PPM);   // П-регулятор: +10% запаса → +2000 ppm
+    // Запас — по минимуму за окно 0.5 с: данные приходят пачками (воркер, USB), дно этой пилы
+    // и есть запас, от размера пачек оно не зависит. Через 1 с после старта излишек (то, что было
+    // в пути, пока воркер разгонялся) сбрасывается разом; потом — только плавная подстройка,
+    // а сброс — если запас вырос в полтора раза (скачок источника).
+    n.wMin=Math.min(n.wMin,fill); n.wT+=BLOCK;
+    if(n.wT>=Eng.sr/2){
+      const m=n.wMin; n.wMin=Infinity; n.wT=0; n.win++;
+      if(n.win===2 && m>target*1.1 || m>target*1.5){ n.pos+=m-target; fill-=m-target; n.floor=target; if(n.win>2) n.drops++; }
+      else n.floor=n.win===1 ? m : n.floor+0.3*(m-n.floor);
+    }
+    n.ppm=clamp(1e4*(n.floor-target)/target, -IQA_MAX_PPM, IQA_MAX_PPM);   // П-регулятор: +10% запаса → +1000 ppm
     const step=ratio*(1+n.ppm*1e-6);
     if(fill<step*BLOCK+3){ n.rebuf=true; n.starves++; out.fill(0); oq.fill(0); n.state='starved'; return {out, q:oq, fill:1000*fill/s.sr}; }
     let pos=n.pos;

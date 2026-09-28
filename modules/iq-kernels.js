@@ -233,3 +233,173 @@ IQK.iqSpec={
     n.sp={mag, sr:s.sr, size:N, freqs, rev:(n.rev=(n.rev|0)+1)};
     return {spec:n.sp};
   }};
+
+/* ---- IQ Add ---- */
+// Сумма двух потоков одной частоты: отсчёты выравниваются по счёту (кто впереди — ждёт в очереди).
+// fc выхода — от входа a; разные sr — ошибка в ui, на выход идёт только a.
+IQK.iqAdd={
+  init(n){ n.qa=[]; n.qb=[]; n.na=0; n.nb=0; },
+  process(n,I){
+    const a=iqIn(I,'a'), b=iqIn(I,'b');
+    if(!a && !b){ n.ui=null; return {out:null}; }
+    const s0=a||b, o=iqStream(n,'out',s0.sr,s0.fc);
+    const ka=Math.pow(10,n.p.ka/20), kb=Math.pow(10,n.p.kb/20);
+    if(!a || !b || a.sr!==b.sr){
+      n.ui={err:a && b ? 'sample rates differ' : null, sr:s0.sr};
+      const k=a ? ka : kb;
+      for(const c of s0.chunks){ const L=c.re.length, im=iqChunkIm(c), yr=new Float32Array(L), yi=new Float32Array(L);
+        for(let i=0;i<L;i++){ yr[i]=k*c.re[i]; yi[i]=k*im[i]; } iqPush(o,yr,yi,c.tag); }
+      n.qa=[]; n.qb=[]; n.na=0; n.nb=0;
+      return {out:o};
+    }
+    n.ui={sr:a.sr};
+    for(const c of a.chunks){ n.qa.push([c.re, iqChunkIm(c)]); n.na+=c.re.length; }
+    for(const c of b.chunks){ n.qb.push([c.re, iqChunkIm(c)]); n.nb+=c.re.length; }
+    const L=Math.min(n.na,n.nb);
+    if(L>0){
+      const yr=new Float32Array(L), yi=new Float32Array(L);
+      const take=(q,k)=>{ let i=0;
+        while(i<L){ const [r,m]=q[0], c=Math.min(r.length, L-i);
+          for(let j=0;j<c;j++){ yr[i+j]+=k*r[j]; yi[i+j]+=k*m[j]; }
+          i+=c;
+          if(c===r.length) q.shift(); else q[0]=[r.subarray(c), m.subarray(c)];
+        } };
+      take(n.qa,ka); take(n.qb,kb); n.na-=L; n.nb-=L;
+      iqPush(o,yr,yi);
+    }
+    // вход отстал больше чем на секунду — сброс очередей, чтобы не копить без конца
+    if(Math.max(n.na,n.nb)>a.sr){ n.qa=[]; n.qb=[]; n.na=0; n.nb=0; }
+    return {out:o};
+  }};
+
+/* ---- IQ Channelizer ---- */
+// Полифазный банк фильтров (WOLA): N каналов с шагом sr/N, выход каждого канала — sr/D,
+// D=N (ov=1, критическая выборка) или N/2 (ov=2 — без наложения на краях канала).
+// Кадр: свёртка последних L=N·P отсчётов с прототипом ФНЧ, свёртка в N бинов, одно БПФ на все
+// каналы; канал c = z[c]·e^(−j2πcn/N) — сигнал на fc + c·sr/N, перенесённый в 0.
+// Выходы: K слотов — выбранные каналы (вручную по частотам или самые сильные), спектр мощности
+// каналов, число занятых слотов. Коэффициент передачи на центре канала — 1.
+function iqChanProto(N,P,ov){
+  const L=N*P, h=new Float32Array(L), mid=(L-1)/2;
+  const fcN=(ov===2 ? 0.5+2.75/P : 0.5)/N;          // срез: ov=2 — полоса до края канала ровная
+  let sum=0;
+  for(let i=0;i<L;i++){
+    const x=i-mid, sinc=x===0 ? 2*fcN : Math.sin(2*Math.PI*fcN*x)/(Math.PI*x);
+    const w=0.42-0.5*Math.cos(2*Math.PI*i/(L-1))+0.08*Math.cos(4*Math.PI*i/(L-1));
+    h[i]=sinc*w; sum+=h[i];
+  }
+  for(let i=0;i<L;i++) h[i]/=sum;
+  return h;
+}
+function iqChanOff(c,N,sr){ return (c<N/2 ? c : c-N)*sr/N; }
+IQK.iqChan={
+  init(n){ n.key=''; },
+  process(n,I){
+    const s=iqIn(I,'in'), K=+n.p.K;
+    const res={};
+    if(!s || !s.sr){ n.ui=null; for(let k=1;k<=K;k++) res['ch'+k]=null; return res; }
+    const N=+n.p.N, P=+n.p.P, ov=+n.p.ov, D=N/ov, sr=s.sr;
+    const key=N+'|'+P+'|'+ov+'|'+sr;
+    if(key!==n.key){
+      n.key=key; n.h=iqChanProto(N,P,ov); n.H=N*P-1;
+      n.hr=new Float32Array(n.H); n.hi=new Float32Array(n.H);
+      n.ph=D-1;                                       // индекс (в чанке) новейшего отсчёта следующего кадра
+      n.nAbs=0;                                       // номер первого отсчёта следующего чанка
+      n.ur=new Float32Array(N); n.ui_=new Float32Array(N);
+      n.pw=new Float64Array(N); n.frames=0; n.last=0; n.t=0;
+      n.slots=[]; n.sp=null;
+    }
+    const srOut=sr/D, chW=sr/N;
+    // слоты: канал и когда его в последний раз видели над порогом
+    while(n.slots.length<K) n.slots.push({c:null, seen:0});
+    n.slots.length=K;
+    if(n.p.sel==='manual'){
+      const list=String(n.p.freqs||'').split(/[,;\s]+/).filter(Boolean).map(v=>+v*1e6);
+      for(let k=0;k<K;k++){
+        const w=I['f'+(k+1)], f=typeof w==='number' && isFinite(w) ? w : list[k];
+        let c=null;
+        if(isFinite(f) && Math.abs(f-s.fc)<sr/2) c=((Math.round((f-s.fc)/chW)%N)+N)%N;
+        n.slots[k].c=c;
+      }
+    }
+    const outs=n.slots.map((sl,k)=>{
+      const fc=sl.c==null ? s.fc : s.fc+iqChanOff(sl.c,N,sr);
+      return iqStream(n,'ch'+(k+1),srOut,fc);
+    });
+    // смена канала у слота — метка retune на первом чанке
+    const tags=n.slots.map(sl=>{ const t=sl.c!==sl.prev ? 'retune' : null; sl.prev=sl.c; return t; });
+    const h=n.h, H=n.H, ur=n.ur, ui=n.ui_, pw=n.pw;
+    for(const c of s.chunks){
+      const xr=c.re, xi=iqChunkIm(c), Kc=xr.length;
+      const br=new Float32Array(H+Kc); br.set(n.hr); br.set(xr,H);
+      const bi=new Float32Array(H+Kc); bi.set(n.hi); bi.set(xi,H);
+      const cnt=n.ph<Kc ? Math.floor((Kc-1-n.ph)/D)+1 : 0;
+      const yr=n.slots.map(sl=>sl.c==null ? null : new Float32Array(cnt));
+      const yi=n.slots.map(sl=>sl.c==null ? null : new Float32Array(cnt));
+      let j=n.ph;
+      for(let f=0;f<cnt;f++,j+=D){
+        const b=H+j;                                  // br[b] — новейший отсчёт кадра
+        ur.fill(0); ui.fill(0);
+        for(let p=0;p<P;p++){                         // по ветвям: чтение подряд, а не с шагом N
+          const hp=p*N, base=b-hp;
+          for(let k=0;k<N;k++){ const g=h[hp+k]; ur[k]+=g*br[base-k]; ui[k]+=g*bi[base-k]; }
+        }
+        fft(ui,ur);                                   // обратное БПФ через перестановку re/im: результат re→ur, im→ui
+        for(let k=0;k<N;k++) pw[k]+=ur[k]*ur[k]+ui[k]*ui[k];
+        n.frames++;
+        const r=(n.nAbs+j)%N;                         // фаза e^(−j2πcn/N) по номеру новейшего отсчёта
+        for(let q=0;q<K;q++){
+          const cc=n.slots[q].c; if(cc==null) continue;
+          const a=-2*Math.PI*((cc*r)%N)/N, wr=Math.cos(a), wi=Math.sin(a);
+          yr[q][f]=ur[cc]*wr-ui[cc]*wi; yi[q][f]=ur[cc]*wi+ui[cc]*wr;
+        }
+      }
+      n.ph=j-Kc; n.nAbs+=Kc;
+      n.hr.set(br.subarray(Kc)); n.hi.set(bi.subarray(Kc));
+      for(let q=0;q<K;q++) if(yr[q] && cnt){ iqPush(outs[q],yr[q],yi[q],tags[q]||c.tag); tags[q]=null; }
+    }
+    n.t+=s.chunks.reduce((a,c)=>a+c.re.length,0);
+    // спектр каналов и выбор самых сильных — раз в upd мс сигнала
+    if(n.frames && n.t-n.last>=sr*n.p.upd/1000){
+      n.last=n.t;
+      const pc=new Float64Array(N);
+      for(let k=0;k<N;k++){ pc[k]=pw[k]/n.frames; pw[k]=0; }
+      n.frames=0;
+      const sorted=Float64Array.from(pc).sort(), noise=sorted[N>>1]||1e-30;
+      n.noise=noise;
+      if(n.p.sel!=='manual') iqChanPick(n,pc,noise,N,sr);
+      const mag=new Float32Array(N), freqs=new Float32Array(N), half=N>>1;
+      for(let i=0;i<N;i++){ const k=(i+half)%N; mag[i]=Math.sqrt(pc[k]); freqs[i]=s.fc+iqChanOff(k,N,sr); }
+      n.sp={mag, sr, size:N, freqs, rev:(n.rev=(n.rev|0)+1)};
+    }
+    n.ui={N, chW, srOut, slots:n.slots.map(sl=>sl.c==null ? null : s.fc+iqChanOff(sl.c,N,sr))};
+    for(let k=0;k<K;k++) res['ch'+(k+1)]=outs[k];
+    res.spec=n.sp; res.active=n.slots.filter(sl=>sl.c!=null).length;
+    return res;
+  }};
+// Слоты держат свои каналы, пока те над порогом −3 дБ (или ещё hold секунд); свободные слоты
+// занимают самые сильные локальные максимумы над шумом (медиана мощностей каналов) + thr дБ.
+function iqChanPick(n,pc,noise,N,sr){
+  const now=n.t/sr, on=noise*Math.pow(10,n.p.thr/10), keep=noise*Math.pow(10,(n.p.thr-3)/10);
+  const skip=c=>n.p.skipDc && c===0;
+  for(const sl of n.slots){
+    if(sl.c==null) continue;
+    if(pc[sl.c]>keep && !skip(sl.c)) sl.seen=now;
+    else if(now-sl.seen>n.p.hold) sl.c=null;
+  }
+  const taken=new Set(n.slots.filter(sl=>sl.c!=null).map(sl=>sl.c));
+  const near=c=>taken.has(c) || taken.has((c+1)%N) || taken.has((c+N-1)%N);
+  const cand=[];
+  for(let c=0;c<N;c++){
+    if(pc[c]<=on || skip(c) || near(c)) continue;
+    if(pc[c]<pc[(c+1)%N] || pc[c]<pc[(c+N-1)%N]) continue;   // только вершины: широкий сигнал — один слот
+    cand.push(c);
+  }
+  cand.sort((a,b)=>pc[b]-pc[a]);
+  for(const sl of n.slots){
+    if(sl.c!=null) continue;
+    const c=cand.find(c=>!near(c));
+    if(c==null) break;
+    sl.c=c; sl.seen=now; taken.add(c);
+  }
+}

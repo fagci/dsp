@@ -108,6 +108,7 @@ const PRESET_CAT_ORDER=['Demo','Quick Scenarios','Sequencers & Arrangement','Syn
 const PRESET_CATS={
   'Demo: Sweep and Waterfall':'Demo',
   'IQ: Receiver from Blocks (Generator)':'Demo',
+  'IQ: Channelizer — Three Signals at Once (Generator)':'Demo',
 
   'Quick Audio Recording':'Quick Scenarios',
   'Find Sound Source (by Frequency)':'Quick Scenarios',
@@ -118,6 +119,7 @@ const PRESET_CATS={
   'USB SDR: Wideband Sweep':'Quick Scenarios',
   'USB SDR: Signal Identifier':'Quick Scenarios',
   'USB SDR: FM Receiver from Blocks':'Quick Scenarios',
+  'USB SDR: Listen to the Strongest Channels':'Quick Scenarios',
   'tinySA: Spectrum':'Quick Scenarios',
 
   'Piano Roll: Length and Velocity':'Sequencers & Arrangement',
@@ -572,6 +574,62 @@ addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',sp.id,'in'); addEdge(sp.id,'spec',s2.id,'spec');
 addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'out',d2.id,'in'); addEdge(d2.id,'out',au.id,'in');
 addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'out',dc.id,'R');
+markWiresDirty();
+});
+preset('IQ: Channelizer — Three Signals at Once (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Three generators (FM, AM, USB) summed into one 1.024 MS/s stream.\n'+
+  'The channelizer cuts it into 32 channels of 32 kHz with one FFT and hands three of them\n'+
+  '(by frequency) to three demodulators at once; the mixer spreads them left / centre / right.\n'+
+  'The lower spectrum is the power of every channel. Try «outputs take: strongest».'});
+nt.size.w=560; nt.size.h=170; applySize(nt);
+const g1=addNode('iqGen',40,260,{sr:'1024000',fc:100000000,mode:'FM',off:96000,lvl:-20,dev:3000,tone:1000,noise:-70});
+const g2=addNode('iqGen',40,560,{sr:'1024000',fc:100000000,mode:'AM',off:-160000,lvl:-26,tone:500,depth:.6,noise:-120});
+const g3=addNode('iqGen',40,860,{sr:'1024000',fc:100000000,mode:'USB',off:320000,lvl:-30,tone:1500,noise:-120});
+const a1=addNode('iqAdd',300,260,{}), a2=addNode('iqAdd',300,420,{});
+const sp=addNode('iqSpec',300,600,{size:'8192'});
+const sa=addNode('sa',640,40,{auto:true,floor:-110,top:0,split:.4});
+sa.size.w=620; sa.size.h=300; applySize(sa);
+const ch=addNode('iqChan',300,760,{N:'32',ov:'2',K:'3',sel:'manual',freqs:'100.096, 99.84, 100.32'});
+const s2=addNode('sa',640,380,{auto:true,floor:-110,top:0,split:1});
+s2.size.w=620; s2.size.h=200; applySize(s2);
+const d1=addNode('iqDemod',640,640,{mode:'FM',dev:3000}), d2=addNode('iqDemod',640,840,{mode:'AM'}), d3=addNode('iqDemod',640,1040,{mode:'USB'});
+const u1=addNode('iqAudio',900,640,{}), u2=addNode('iqAudio',900,840,{}), u3=addNode('iqAudio',900,1040,{});
+const mx=addNode('mixer4',1160,640,{pa:-.8,pb:0,pc:.8,kc:1.5});
+const dc=addNode('dac',1420,640,{vol:.3});
+addEdge(g1.id,'iq',a1.id,'a'); addEdge(g2.id,'iq',a1.id,'b');
+addEdge(a1.id,'out',a2.id,'a'); addEdge(g3.id,'iq',a2.id,'b');
+addEdge(a2.id,'out',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
+addEdge(a2.id,'out',ch.id,'in'); addEdge(ch.id,'spec',s2.id,'spec');
+addEdge(ch.id,'ch1',d1.id,'in'); addEdge(ch.id,'ch2',d2.id,'in'); addEdge(ch.id,'ch3',d3.id,'in');
+addEdge(d1.id,'out',u1.id,'in'); addEdge(d2.id,'out',u2.id,'in'); addEdge(d3.id,'out',u3.id,'in');
+addEdge(u1.id,'out',mx.id,'a'); addEdge(u2.id,'out',mx.id,'b'); addEdge(u3.id,'out',mx.id,'c');
+addEdge(mx.id,'L',dc.id,'L'); addEdge(mx.id,'R',dc.id,'R');
+markWiresDirty();
+});
+preset('USB SDR: Listen to the Strongest Channels', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Connect the SDR and tune to a busy NFM band (PMR446, 2 m, LPD, marine VHF).\n'+
+  'The channelizer splits 1.024 MS/s into 64 channels of 16 kHz and keeps the four strongest\n'+
+  'active ones on its outputs (held for 2 s after they go quiet); each gets its own NFM demodulator,\n'+
+  'the mixer spreads them across the stereo field. Readout of the channelizer shows who is where.'});
+nt.size.w=600; nt.size.h=170; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'1024000',freq:446100000,demod:'NFM'});
+const sa=addNode('sa',680,40,{auto:true,floor:-90,top:-20,split:.4});
+sa.size.w=620; sa.size.h=320; applySize(sa);
+const ch=addNode('iqChan',360,260,{N:'64',ov:'2',K:'4',sel:'strongest',thr:10,hold:2,skipDc:true});
+const s2=addNode('sa',680,400,{auto:true,floor:-100,top:-20,split:1});
+s2.size.w=620; s2.size.h=200; applySize(s2);
+const mx=addNode('mixer4',1340,640,{pa:-.8,pb:-.3,pc:.3,pd:.8});
+const dc=addNode('dac',1600,640,{vol:.4});
+['a','b','c','d'].forEach((k,i)=>{
+  const d=addNode('iqDemod',680,640+i*180,{mode:'FM',dev:2500});
+  const u=addNode('iqAudio',1000,640+i*180,{});
+  addEdge(ch.id,'ch'+(i+1),d.id,'in'); addEdge(d.id,'out',u.id,'in'); addEdge(u.id,'out',mx.id,k);
+});
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(sa.id,'centerFreq',rx.id,'steerFreq');
+addEdge(rx.id,'iq',ch.id,'in'); addEdge(ch.id,'spec',s2.id,'spec');
+addEdge(mx.id,'L',dc.id,'L'); addEdge(mx.id,'R',dc.id,'R');
 markWiresDirty();
 });
 preset('tinySA: Spectrum', function(){
