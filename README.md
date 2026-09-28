@@ -13,6 +13,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 ### Workbench
 - Node graph editor: pan/zoom canvas, drag-and-drop modules, typed ports (signal, number, spectrum, image, text, block)
 - Dashboard view (split panes, draggable dividers) for building instrument-like UIs
+- **Module graph** pane in the dashboard: a compact SunVox-style map of the patch with signal level meters — pan/zoom, move modules, drag wires between ports (or onto a module), click a wire to delete it, double-click a module to open it in a pane next to the graph
 - Groups (nested subgraphs) with custom inputs/outputs
 - Undo/redo, duplicate, multi-select, module search (Ctrl+K)
 - Save/load patches to local storage or JSON files
