@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=28;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=29;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -130,7 +130,8 @@ const PRESET_CATS={
   'Techno: Drum Machine':'Synth & Techno',
   'Techno: Generative Acid':'Synth & Techno',
   'Techno: Full Track':'Synth & Techno',
-  'MOD Tracker (ProTracker .mod)':'Synth & Techno',
+  'Tracker (MOD / S3M / XM)':'Synth & Techno',
+  'Tracker: Channels through Effects':'Synth & Techno',
 
   'Morse from Microphone':'Radio Protocols',
   'RTTY: Transmit and Receive':'Radio Protocols',
@@ -1383,13 +1384,34 @@ preset('Techno: Full Track', function(){
   markWiresDirty();
 });
 
-preset('MOD Tracker (ProTracker .mod)', function(){
+preset('Tracker (MOD / S3M / XM)', function(){
   clearAll();
   const tr=addNode('tracker',40,40,{});
   tr.p.song='';                                        // ключ песни у каждой загрузки пресета свой
-  tr.size.w=460; tr.size.h=260; applySize(tr);
-  const dc=addNode('dac',560,40,{vol:.6,mode:'stereo'});
-  addEdge(tr.id,'L',dc.id,'L'); addEdge(tr.id,'R',dc.id,'R');
+  const vw=addNode('trkview',40,330,{});
+  vw.size.w=520; vw.size.h=300; applySize(vw);
+  const dc=addNode('dac',640,40,{vol:.6,mode:'stereo'});
+  addEdge(tr.id,'L',dc.id,'L'); addEdge(tr.id,'R',dc.id,'R'); addEdge(tr.id,'song',vw.id,'song');
+  markWiresDirty();
+});
+
+// канал 1 — отдельно через задержку, канал 2 играет не семплом, а 303-синтом по нотам трекера
+preset('Tracker: Channels through Effects', function(){
+  clearAll();
+  const tr=addNode('tracker',40,40,{});
+  tr.p.song='';
+  const vw=addNode('trkview',40,330,{});
+  vw.size.w=520; vw.size.h=260; applySize(vw);
+  const c1=addNode('trkch',620,40,{ch:1,take:true});
+  const dl=addNode('delay',880,40,{ms:250,fb:.35,mix:.35});
+  const c2=addNode('trkch',620,330,{ch:2,take:true});
+  const ac=addNode('acid',880,330,{cutoff:500,envAmt:2400,reso:.75,decay:.2,slide:.03});
+  const dm=addNode('dac',1140,40,{vol:.6,mode:'stereo'});
+  const d1=addNode('dac',1140,260,{vol:.5,mode:'mono'});
+  addEdge(tr.id,'L',dm.id,'L'); addEdge(tr.id,'R',dm.id,'R');
+  addEdge(tr.id,'song',vw.id,'song'); addEdge(tr.id,'song',c1.id,'song'); addEdge(tr.id,'song',c2.id,'song');
+  addEdge(c1.id,'out',dl.id,'in'); addEdge(dl.id,'out',d1.id,'L');
+  addEdge(c2.id,'freq',ac.id,'freq'); addEdge(c2.id,'gate',ac.id,'gate'); addEdge(ac.id,'out',d1.id,'R');
   markWiresDirty();
 });
 

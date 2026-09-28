@@ -64,7 +64,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 
 ### Music
 - Synths (2 osc, 4 voices), acid bass (303), drum sequencer, sample library with an audio editor (see [Sample editor](#sample-editor))
-- **MOD tracker**: plays and edits ProTracker `.mod` modules (4–32 channels, all PT effects), pattern editor with keyboard entry, order list, samples with loops, export back to `.mod` (see [MOD tracker](#mod-tracker))
+- **Tracker**: plays and edits MOD (ProTracker), S3M (Scream Tracker 3) and XM (FastTracker 2) — pattern editor, instruments with envelopes, export in the song's format; split into graph nodes: song, single channels (audio or notes for a synth), pattern view (see [Tracker](#tracker))
 - Piano roll, step sequencer, generative melody, arrangement playlist, master clock
 - MIDI keyboard input, ADSR envelope
 
@@ -167,21 +167,29 @@ The editor fills the screen and plays through its own audio output, no wiring ne
 
 Keys: Space play/stop, L loop, Del delete, T crop, Ctrl+A/X/C/V, Ctrl+S save, +/−/0 zoom, S view, ←/→ move the cursor, Esc close.
 
-## MOD tracker
+## Tracker
 
-The **MOD Tracker** node plays ProTracker modules (`.mod`: M.K./M!K!/FLT4, 6CHN/8CHN/xxCH, old 15-sample Soundtracker files). Open a file with the node's file picker, tick **play**. `L`/`R` go to a Sound Card in stereo; when they are not wired the node plays straight to the default output, so a single node is enough to listen. `row`/`pos` give the current row and song position. **stereo** is the channel separation (Amiga L-R-R-L panning), **interpolation** — linear or none (the raw Amiga sound).
+Three nodes in **Music**, wired by the pink `song` port:
 
-The replayer follows ProTracker: speed/tempo, arpeggio, portamento and tone portamento, vibrato and tremolo (with waveforms), volume slides, sample offset, position jump, pattern break, pattern loop and pattern delay, note cut / delay, retrigger, fine slides, finetune, panning (8xx, E8x).
+- **Tracker Song** — the song, its sequencer and the channel voices. Open a `.mod`, `.s3m` or `.xm` file, tick **play**. `L`/`R` is the mix of all channels (when they are not wired, it plays straight to the default output). **stereo** is the channel separation, **interpolation** — linear or none (the raw Amiga sound). `row`/`pos` give the current row and position. **✎ Edit** opens the editor
+- **Tracker Channel** — one channel on its own: `out` (mono, after volume), `L`/`R` (with the channel's panning), and the notes: `gate`, `freq` (the played pitch in Hz, with portamento, vibrato, arpeggio), `note` (MIDI), `vel`, `inst`. **take out of the song mix** removes the channel from the song's `L`/`R`, so it can go through its own effects — or not be heard at all while `freq`/`gate` drive a synth
+- **Tracker Pattern View** — the live pattern with channel meters, for the canvas or a dashboard tile; double click opens the editor
 
-**✎ Edit** (or a double click on the node's view) opens the tracker full screen. Edits are heard right away and are kept in the browser (IndexedDB) together with the patch; **⭳ .mod** downloads the song as a regular `.mod`.
+Preset *Tracker: Channels through Effects* sends channel 1 through a delay and plays channel 2 on the 303 synth.
+
+Formats: MOD (M.K./M!K!/FLT4, 2–32 channels xCHN/xxCH, 15-sample Soundtracker), S3M (8/16-bit samples, channel panning), XM 1.04 (instruments with several samples and a note map, volume and panning envelopes with sustain and loop, fadeout, auto-vibrato, 16-bit and ping-pong samples, linear or Amiga frequencies, 1–256 rows per pattern). Each song is saved back in its own format; MOD converts to S3M or XM, S3M to XM.
+
+The replayer follows each tracker's effect rules: MOD/XM 0–F and E-commands, XM G H K L P R T X and the volume column, S3M A–X with the ST3 shared memories (D/K/L, E/F), fine and extra fine slides, note cut/delay, pattern loop and delay, retrigger, tremor, key off. It was checked against libxmp tick by tick on its test modules.
+
+**Editor** (full screen). Edits are heard right away and are kept in the browser (IndexedDB) together with the patch; **⭳** downloads the song as a regular module file.
 
 - **Pattern**: the cursor row stays in the middle. Arrows move, Tab / Shift+Tab jump between channels, PgUp/PgDn by 16 rows, Home/End. Mouse: click places the cursor, drag selects a block, wheel scrolls (Shift+wheel — channels). Touch: tap places the cursor, drag scrolls
-- **Entry**: **Enter** toggles edit mode (red cursor). The keyboard is a piano in the FT2 layout (Z S X D C… — lower octave, Q 2 W 3 E… — upper), physical keys, so it works with any layout. F1–F4 or numpad +/− set the octave, **step** is how many rows the cursor goes down after a note. On the sample / effect / parameter columns type hex digits. Outside edit mode the keys only play notes
+- **Entry**: **Enter** toggles edit mode (red cursor). The keyboard is a piano in the FT2 layout (Z S X D C… — lower octave, Q 2 W 3 E… — upper), physical keys, so it works with any layout; `1` or `` ` `` enters key off (XM) / note cut (S3M). F1–F8 or numpad +/− set the octave, **step** is how many rows the cursor goes down after a note. Instrument and parameter columns take hex digits (S3M instrument and volume — decimal), the effect column — 0–F for MOD, 0–9 and A–Z for XM, letters for S3M. The XM volume column: 00–40 is the volume, 6x–Fx are commands (slides, vibrato, panning, portamento). The status line explains the effect under the cursor
 - **Block**: Shift+arrows or mouse drag select, Ctrl+A selects the channel (twice — the whole pattern), Ctrl+C/X/V copy / cut / paste, Del clears, Ctrl+↑/↓ transposes by a semitone (with Shift — by an octave), Insert / Backspace insert / delete a row in the channel. Ctrl+Z / Ctrl+Shift+Z — undo / redo of every edit
-- **Channels**: click a channel header to mute it, double click — solo
-- **Song** tab: order list (tap a position to edit its pattern), insert / delete positions, change the pattern at a position, new / clone / clear pattern, restart position, number of channels
-- **Samples** tab: 31 slots with name, volume, finetune, loop start / length; drag on the waveform to set the loop, ▶ plays the sample. **load** (or drop an audio file on the tracker) imports any audio file, resampled so that it plays at its own pitch on C-3; **✎ edit** opens the slot in the [sample editor](#sample-editor), **save** there writes it back into the module
-- **Keys** tab — the same on screen for phones: two-octave piano, hex pad, cursor keys, block operations
+- **Channels**: click a channel header to mute it, double click — solo; `⇢` marks a channel taken out by a Tracker Channel node
+- **Song** tab: order list (tap a position to edit its pattern), insert / delete positions, change the pattern at a position, new / clone / clear pattern, pattern length (XM), channels, initial speed / tempo, global volume, restart position, linear frequencies (XM)
+- **Samples** tab (**Instruments** for XM): name, volume, finetune (MOD/XM), C-4 rate (S3M), panning and relative note (XM), loop off / forward / ping-pong; drag on the waveform to set the loop, ▶ plays the sample. **load** (or drop an audio file on the tracker) imports any audio file — for MOD resampled to play at its own pitch on C-3, for S3M/XM kept at its rate and tuned to C-4; **✎ edit** opens it in the [sample editor](#sample-editor), **save** there writes it back. XM instruments: several samples, the note map (tap or drag over the keys to give them the selected sample), volume and panning envelopes (drag points, double click adds one, **sus** / **loop** at the selected point), fadeout, auto-vibrato
+- **Keys** tab — the same on screen for phones: two-octave piano, hex and letter pads, key off, cursor keys, block operations
 - Space plays the song from the current position, Shift+Space loops the current pattern from the cursor row; **⇣ follow** keeps the cursor on the playing row
 
 ## Map and records
