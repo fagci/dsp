@@ -896,6 +896,7 @@ for(const [f,w] of jobs) f(false,w);
 function syncGridBg(){                                // точки фона двигаются и масштабируются вместе с холстом
 cv.style.backgroundSize=(24*view.k)+'px '+(24*view.k)+'px';
 cv.style.backgroundPosition=(view.x*view.k)+'px '+(view.y*view.k)+'px';
+syncGraphClip();
 }
 // Плавный зум колесом: цель копится пропорционально deltaY (тачпад — мелко, колесо — щелчками),
 // масштаб догоняет её по кадрам. panzoom.zoomWithWheel прыгал фиксированным шагом на событие.
@@ -1177,6 +1178,7 @@ function dashFit(){
     if(Math.abs((parseFloat(el.style.height)||0)-h)>1) el.style.height=h+'px';
   }
   for(const body of dashGridEl.querySelectorAll('.dash-body')) dashRailSync(body);
+  syncGraphClip();                                      // размер/место панели графа могли измениться
 }
 // своя полоса прокрутки панели для тача: тащим бегунок или тапаем по полосе
 function dashRailSync(body){
@@ -1273,7 +1275,9 @@ function dashRenderLeaf(t){
   if(isGraph){
     const bf=document.createElement('button'); bf.textContent='⤢'; bf.title='Fit patch';
     bf.onclick=dashGraphFit;
-    tools.insertBefore(bf,bRow);
+    const ba=document.createElement('button'); ba.textContent='+'; ba.title='Add module (or double-click the canvas)';
+    ba.onclick=()=>dashGraphAdd(ba);
+    tools.insertBefore(ba,bRow); tools.insertBefore(bf,bRow);
     pane.classList.add('graph');
   }
   pane.append(tools);
@@ -1315,6 +1319,7 @@ function dashSyncGhosts(){
     if(need && !n.ghost) ghostBuild(n); else if(!need) ghostDrop(n);
   }
   cv.classList.toggle('graphOn',on);
+  syncGraphClip();
   markWiresDirty();
 }
 function dashGraphBox(){                               // прямоугольник панели графа относительно холста
@@ -1322,7 +1327,79 @@ function dashGraphBox(){                               // прямоугольн
   const r=el.getBoundingClientRect(), c=cv.getBoundingClientRect();
   return {x:r.left-c.left, y:r.top-c.top, w:r.width, h:r.height};
 }
+// холст виден только в панели графа: между панелями зазоры, сквозь них узлы видны быть не должны.
+// clip-path — в локальных координатах слоя (до его transform), поэтому пересчёт на каждый пан/зум.
+const graphBgEl=document.createElement('div'); graphBgEl.id='graphBg';
+cv.insertBefore(graphBgEl,cv.firstChild);
+function syncGraphClip(){
+  const b=cv.classList.contains('graphOn') && dashGraphBox(), layers=[content,wires,wiresFront];
+  if(!b){ for(const e of layers) e.style.clipPath=''; return; }   // #graphBg виден только при .graphOn
+  const k=view.k, x0=b.x/k-view.x, y0=b.y/k-view.y, x1=x0+b.w/k, y1=y0+b.h/k;
+  const poly=o=>`polygon(${x0+o}px ${y0+o}px,${x1+o}px ${y0+o}px,${x1+o}px ${y1+o}px,${x0+o}px ${y1+o}px)`;
+  content.style.clipPath=poly(0);
+  wires.style.clipPath=wiresFront.style.clipPath=poly(8000);   // слои проводов сдвинуты на -8000px
+  const g=graphBgEl.style;                             // точки фона — отдельным слоем под холстом, по панели
+  g.left=b.x+'px'; g.top=b.y+'px'; g.width=b.w+'px'; g.height=b.h+'px';
+  g.backgroundSize=(24*k)+'px '+(24*k)+'px';
+  g.backgroundPosition=(view.x*k-b.x)+'px '+(view.y*k-b.y)+'px';
+}
 function dashGraphFit(){ requestAnimationFrame(()=>requestAnimationFrame(()=>{ const b=dashGraphBox(); if(b) fitView(b); })); }
+/* ---- выбор модуля прямо на холсте: двойной клик по пустому месту или «+» панели графа ----
+   Поиск по названию/id/категории, стрелки + Enter, Esc — закрыть. at — точка холста для узла. */
+let modPickEl=null;
+function closeModPicker(){ modPickEl?.remove(); modPickEl=null; }
+function openModPicker(clientX,clientY,at){
+  closeModPicker();
+  const box=document.createElement('div'); box.className='modpick panzoom-exclude';
+  const inp=document.createElement('input'); inp.type='search'; inp.placeholder='Add module…';
+  const list=document.createElement('div'); list.className='mp-list';
+  box.append(inp,list); document.body.append(box); modPickEl=box;
+  const mods=Object.values(MOD).filter(m=>!m.legacy && !String(m.id).startsWith('custom:'))
+    .sort((a,b)=>catRank(a.cat)-catRank(b.cat)||a.title.localeCompare(b.title));
+  let items=[], cur=0;
+  const pick=m=>{ closeModPicker();
+    const n=addNode(m.id,Math.round(at.x),Math.round(at.y)); if(!n) return;
+    Sel.clear(); Sel.add(n.id); syncSel(); markWiresDirty(); Undo.push(); };
+  const hl=()=>items.forEach((it,k)=>{ it.el.classList.toggle('on',k===cur); if(k===cur) it.el.scrollIntoView({block:'nearest'}); });
+  const build=()=>{
+    const q=inp.value.trim().toLocaleLowerCase('ru');
+    list.innerHTML=''; items=[]; cur=0; let cat=null;
+    for(const m of mods){
+      if(q && !`${m.title} ${m.id} ${m.cat}`.toLocaleLowerCase('ru').includes(q)) continue;
+      if(m.cat!==cat){ cat=m.cat; const h=document.createElement('div'); h.className='mp-cat'; h.textContent=cat; list.append(h); }
+      const b=document.createElement('button'); b.className='mp-item';
+      b.innerHTML=`<span class="dot" style="background:${catColor(m.cat)}"></span><b></b>${ioDots(m)}`;
+      b.querySelector('b').textContent=m.title; b.title=m.id;
+      b.onclick=()=>pick(m); list.append(b); items.push({m,el:b});
+    }
+    if(!items.length){ const e=document.createElement('div'); e.className='mp-cat'; e.textContent='nothing found'; list.append(e); }
+    hl();
+  };
+  inp.addEventListener('input',build);
+  inp.addEventListener('keydown',e=>{
+    if(e.key==='ArrowDown'){ e.preventDefault(); cur=Math.min(items.length-1,cur+1); hl(); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); cur=Math.max(0,cur-1); hl(); }
+    else if(e.key==='Enter'){ e.preventDefault(); if(items[cur]) pick(items[cur].m); }
+    else if(e.key==='Escape'){ e.preventDefault(); closeModPicker(); }
+  });
+  build();
+  const W=Math.min(300,innerWidth-16), H=Math.min(380,innerHeight-16);
+  box.style.width=W+'px'; box.style.maxHeight=H+'px';
+  box.style.left=clamp(clientX,8,innerWidth-W-8)+'px';
+  box.style.top=clamp(clientY,8,innerHeight-H-8)+'px';
+  if(!TOUCH) inp.focus();                            // на тач клавиатура только по тапу в поле — список виден сразу
+}
+addEventListener('pointerdown',e=>{ if(modPickEl && !modPickEl.contains(e.target)) closeModPicker(); },true);
+cv.addEventListener('dblclick',e=>{                   // пустое место холста — выбрать модуль в эту точку
+  if(uiLocked() || (e.target!==cv && e.target!==content)) return;
+  e.preventDefault();
+  openModPicker(e.clientX,e.clientY,toCanvas(e));
+});
+function dashGraphAdd(btn){                           // «+» панели графа: узел в центр панели
+  const b=dashGraphBox(); if(!b) return;
+  const r=btn.getBoundingClientRect();
+  openModPicker(r.left,r.bottom+4,{x:(b.x+b.w/2)/view.k-view.x-100, y:(b.y+b.h/3)/view.k-view.y});
+}
 function bindDashResizer(rz,t,i){                       // тащим границу между t.children[i] и [i+1]
   rz.addEventListener('pointerdown',ev=>{
     ev.preventDefault(); rz.setPointerCapture(ev.pointerId); rz.classList.add('active');
