@@ -28,6 +28,8 @@ self.onmessage=e=>{
     st.p=inp.p;
     if(!st.init){ st.init=true; IQK[st.type].init(st); }
     const I=Object.assign({}, inp.I);
+    for(const k in I){ const v=I[k];                   // сырые отсчёты АЦП → float здесь, а не в главном потоке
+      if(v && v.chunks) for(const c of v.chunks) if(c.raw){ [c.re,c.im]=iqUnpack(c.raw,c.fmt); c.raw=null; } }
     for(const e of edges) if(e.to===id){ const src=nodes.get(e.from); I[e.tp]=src ? src.out[e.fp] ?? null : null; }
     let err=null;
     try{ st.out=IQK[st.type].process(st,I,ctx) || {}; }

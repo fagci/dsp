@@ -75,3 +75,18 @@ function iqStream(n,name,sr,fc){
 }
 function iqPush(s,re,im,tag){ s.chunks.push({re,im,t0:s.t,tag:tag||null}); s.t+=re.length; }
 function iqIn(I,name){ const s=I[name]; return s&&s.chunks ? s : null; }
+
+// Чанк из сырых отсчётов АЦП: u8 (смещение 127.5, как RTL-SDR) или s16. re/im считаются при
+// первом обращении; в воркер острова уходит сам raw — в 4 (u8) или 2 (s16) раза меньше float.
+function iqUnpack(raw,fmt){
+  const n=raw.length>>1, re=new Float32Array(n), im=new Float32Array(n);
+  if(fmt==='s16') for(let k=0;k<n;k++){ re[k]=raw[2*k]/32768; im[k]=raw[2*k+1]/32768; }
+  else for(let k=0;k<n;k++){ re[k]=(raw[2*k]-127.5)/127.5; im[k]=(raw[2*k+1]-127.5)/127.5; }
+  return [re,im];
+}
+class IqRawChunk{
+  constructor(raw,fmt,t0,tag){ this.raw=raw; this.fmt=fmt; this.t0=t0; this.tag=tag; this._re=null; this._im=null; }
+  get re(){ if(!this._re) [this._re,this._im]=iqUnpack(this.raw,this.fmt); return this._re; }
+  get im(){ if(!this._re) [this._re,this._im]=iqUnpack(this.raw,this.fmt); return this._im; }
+}
+function iqPushRaw(s,raw,fmt,tag){ s.chunks.push(new IqRawChunk(raw,fmt,s.t,tag||null)); s.t+=raw.length>>1; }

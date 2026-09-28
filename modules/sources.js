@@ -3189,7 +3189,12 @@ async function rtlReadLoop(n){
           w++; if(w>=size) w=0;
           if(filled<size) filled++;
         }
-        specRing.w=w; specRing.filled=filled; specRing.written+=cnt; }
+        specRing.w=w; specRing.filled=filled; specRing.written+=cnt;
+        // выход 'iq' — копия сырого буфера; во float его переводит тот, кто читает (часто воркер острова)
+        if(n.iqQ){
+          n.iqQ.push({raw:s16 ? s16.slice() : u8.slice(), fmt:s16 ? 's16' : 'u8'}); n.iqQN+=cnt;
+          while(n.iqQN>n.sourceRate && n.iqQ.length>1){ n.iqQN-=n.iqQ.shift().raw.length>>1; n.iqGap=true; }   // граф стоит
+        } }
       if(mode==='IQ'){
         const ring=n.ring;
         { let w=ring.w, filled=ring.filled; const I=ring.I, Q=ring.Q, size=ring.size;
@@ -3471,24 +3476,18 @@ function rtlUpdateSpec(n){
   }).catch(()=>{ n.specBusy=false; });
 }
 
-// Выход 'iq': сырой поток на родной частоте — всё новое в specRing с прошлого такта (туда же
-// не попадают чанки старой частоты после перестройки). Копируется, только если выход подключён.
+// Выход 'iq': сырой поток на родной частоте — буферы USB с прошлого такта (readerLoop копирует их,
+// только пока выход подключён; чанки старой частоты после перестройки туда не попадают).
 function rtlIqOut(n){
   if(n._iqOrd!==Graph.order){ n._iqOrd=Graph.order; n._iqWired=Graph.edges.some(e=>e.from===n.id && e.fp==='iq'); }
-  const ring=n.specRing, fc=n.actualFreq??n.p.freq;
-  if(!n._iqWired || !n.connected || n.swActive || !ring){ n.iqTaken=null; return null; }
+  const fc=n.actualFreq??n.p.freq;
+  if(!n._iqWired || !n.connected || n.swActive){ n.iqQ=null; return null; }
   const s=iqStream(n,'iq',n.sourceRate,fc);
-  if(n.iqTaken==null || ring.written<n.iqTaken){ n.iqTaken=ring.written; n.iqFc=fc; return s; }
-  let L=ring.written-n.iqTaken, tag=null;
-  if(L>ring.filled){ L=ring.filled; tag='gap'; }         // главный поток отстал или кольцо сброшено
+  if(!n.iqQ){ n.iqQ=[]; n.iqQN=0; n.iqGap=false; n.iqFc=fc; return s; }
+  let tag=n.iqGap ? 'gap' : null;
   if(fc!==n.iqFc){ tag='retune'; n.iqFc=fc; }
-  n.iqTaken=ring.written;
-  if(L<=0) return s;
-  const re=new Float32Array(L), im=new Float32Array(L), start=(ring.w-L+ring.size)%ring.size;
-  const first=Math.min(L, ring.size-start);
-  re.set(ring.I.subarray(start,start+first)); im.set(ring.Q.subarray(start,start+first));
-  if(first<L){ re.set(ring.I.subarray(0,L-first),first); im.set(ring.Q.subarray(0,L-first),first); }
-  iqPush(s,re,im,tag);
+  for(const q of n.iqQ){ iqPushRaw(s,q.raw,q.fmt,tag); tag=null; }
+  n.iqQ=[]; n.iqQN=0; n.iqGap=false;
   return s;
 }
 

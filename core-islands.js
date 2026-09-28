@@ -86,10 +86,11 @@ function islProcess(n,I){
   }
   return out;
 }
-// поток — без служебных полей чанков (_z)
+// поток — без служебных полей чанков (_z); сырые чанки уходят как есть, во float — уже в воркере
 function islPack(v){
   if(!v || !v.chunks) return v;
-  return {sr:v.sr, fc:v.fc, chunks:v.chunks.map(c=>({re:c.re, im:c.im, t0:c.t0, tag:c.tag}))};
+  return {sr:v.sr, fc:v.fc, chunks:v.chunks.map(c=>c.raw ? {raw:c.raw, fmt:c.fmt, t0:c.t0, tag:c.tag}
+    : {re:c.re, im:c.im, t0:c.t0, tag:c.tag})};
 }
 function islTake(isl,n){
   const r=isl.pending.get(n.id); isl.pending.delete(n.id);

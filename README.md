@@ -161,7 +161,7 @@ Ready-made patches: **USB SDR: Signal Identifier**, **HF: Quick-Decode All Proto
 A wire of the **IQ** type (lime) carries a stream at its own sample rate: each engine block it brings as many samples as the source produced since the previous block (none, one chunk or several), together with the stream's sample rate and center frequency. So a chain can run at 2.4 MS/s next to audio at 48 kHz, and a receiver is wired from blocks instead of being hidden inside the SDR node.
 
 - **IQ Generator** — a test signal (carrier, AM, FM, USB, LSB) at an offset from the center, plus noise; sample rate up to 2.4 MS/s. *clock error, ppm* simulates a source whose clock differs from the sound card
-- **USB SDR → `iq`** — the raw IQ at the native rate (live or from IQ file playback); samples of the old frequency after a retune are not passed on
+- **USB SDR → `iq`** — the raw IQ at the native rate (live or from IQ file playback); samples of the old frequency after a retune are not passed on. The USB buffers go on as they are (8 or 16 bit) and are turned into floats by whoever reads them — for an IQ chain in a worker that happens in the worker, not on the main thread
 - **IQ Frequency Shift** — brings `freq` (absolute Hz, e.g. marker `f1` of a Spectrum Analyzer) or center + *offset* down to 0 Hz
 - **IQ Decimator** — windowed-sinc FIR (Blackman) and decimation by 2…64; *cutoff* is a fraction of the output rate. Works on complex and real streams
 - **IQ Demodulator** — FM (deviation, 50/75 µs de-emphasis), AM (normalized to the carrier: the output is the modulation depth), USB/LSB (Weaver, 8th-order filter); the output is a real stream at the input rate
@@ -184,6 +184,8 @@ npm test               # or: node run.mjs <part of a test name>
 ```
 
 The same runs in GitHub Actions on every pull request.
+
+Performance tools in the same folder: `node bench.mjs [sr] [M]` measures each IQ block's share of a CPU core in Node; `node profile.mjs ["preset" | baseline]` plays a synthetic 2.4 MS/s IQ file through a USB SDR preset in Chromium and prints main-thread stalls and the top functions by self time.
 
 ## Sample editor
 
