@@ -2,7 +2,7 @@
   --bg:#0e1113; --panel:#161a1d; --panel2:#1d2226; --line:#2a3136;
   --txt:#c8d2d6; --dim:#929fa7; --acc:#e0b23c; --acc2:#4ec9b0;
   --t-sig:#4ec9b0; --t-num:#e0b23c; --t-spec:#c586c0; --t-img:#569cd6;
-  --t-txt:#d18ad1; --t-blk:#7fd17f; --t-bands:#5fb8d1; --t-rec:#e0875f; --err:#e05c5c;
+  --t-txt:#d18ad1; --t-blk:#7fd17f; --t-bands:#5fb8d1; --t-rec:#e0875f; --t-trk:#e07fb0; --err:#e05c5c;
   /* --grid/--axis — сетка/подписи осей на canvas.view. Тот canvas всегда на тёмном --screen
      (см. ниже — --screen НЕ переопределён в светлой теме, экран прибора тёмный в обеих темах),
      так что и эти двое — не по теме, а константа, как --screen/--screen-fg сами; если сделать
@@ -22,7 +22,7 @@
     --bg:#eef0f2; --panel:#ffffff; --panel2:#e6e9ec; --line:#c7ccd1;
     --txt:#1c2226; --dim:#5c6670; --acc:#a8720f; --acc2:#0f9488;
     --t-sig:#0f9488; --t-num:#a8720f; --t-spec:#9333ea; --t-img:#2563eb;
-    --t-txt:#a83fa8; --t-blk:#2f9e4f; --t-bands:#1b7f96; --t-rec:#b8541f; --err:#c23b3b;
+    --t-txt:#a83fa8; --t-blk:#2f9e4f; --t-bands:#1b7f96; --t-rec:#b8541f; --t-trk:#b83d7c; --err:#c23b3b;
     --dot:#d7dbde; --hi:#000000; --scrim:#0004;
     --note-bg:#fff8e1; --note-head:#fbecc3; --note-line:#e3cf95;
   }
@@ -589,10 +589,40 @@ canvas.view.pick{cursor:crosshair}
 .modpick .mp-item.on,.modpick .mp-item:hover{background:var(--panel2);color:var(--acc)}
 @media (pointer:coarse){ .modpick .mp-item{padding:9px 8px;font-size:13px} }
 
-/* ---- MOD-трекер (modules/tracker.js); кнопки/шапка — от редактора семплов (.aed-*) ---- */
+/* ---- трекер (modules/tracker*.js); кнопки/шапка — от редактора семплов (.aed-*) ---- */
 .trk{position:fixed;inset:0;z-index:49;display:flex;flex-direction:column;background:var(--bg);
   padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
-.trk-tr{background:var(--panel);border-bottom:1px solid var(--line);padding:4px 6px;overflow-x:auto;scrollbar-width:thin}
+.trk-top{display:flex;align-items:flex-start;gap:6px;padding:4px 6px 0;background:var(--panel);border-bottom:1px solid var(--line)}
+.trk-top>.trk-close{margin-top:2px}
+.trk-top>.trk-panel{flex:1;min-width:0}
+.trk-head{overflow-x:auto;scrollbar-width:thin}
+.trk-head .aed-name{min-width:110px;flex:1}
+.trk-center{flex:1;min-width:0;display:flex;flex-direction:column}
+.trk-panel{min-width:0;min-height:0;display:flex;flex-direction:column;gap:6px}
+.trk-p-pat{flex:1;gap:0}
+.trk-p-pat .trk-main{min-height:120px}
+.trk-pane>.trk-p-ins{flex:1 1 40%}
+.trk-p-seq .trk-ords{flex:1}
+.trk-extnote{font-size:11px;color:var(--t-trk);padding:4px 0}
+.trk-extnote[hidden]{display:none}
+/* узел-тайл: панель на всю высоту узла / тайла дашборда */
+.trk-tile{grid-column:1/-1;width:100%;min-width:0;display:flex;flex-direction:column;overflow:auto;
+  background:var(--panel);border-radius:3px;font-size:12px}
+.trk-tile>.trk-panel{flex:1;padding:4px}
+.trk-tile>.trk-p-pat{padding:0}
+.trk-tile>.trk-p-bar{gap:0}
+.trk-tile .trk-head,.trk-tile .trk-tr{flex-wrap:wrap}
+.trk-empty{padding:12px;color:var(--dim);font-size:11px}
+.trk-mix{display:flex;gap:4px;overflow-x:auto;height:100%;min-height:150px}
+.trk-strip{display:flex;flex-direction:column;align-items:center;gap:4px;width:52px;flex:none;padding:4px 2px;
+  background:var(--panel2);border:1px solid var(--line);border-radius:3px}
+.trk-strip b{font-size:11px}
+.trk-strip .aed-b{min-width:34px;height:26px;padding:0}
+.trk-strip input[type=range]{width:46px;accent-color:var(--acc)}
+.trk-strip input[data-f=vol]{writing-mode:vertical-lr;direction:rtl;height:70px;width:22px;flex:1}
+.trk-vu{display:block;width:8px;height:40px;background:var(--bg);border-radius:2px;position:relative;overflow:hidden}
+.trk-vu>i{position:absolute;left:0;right:0;bottom:0;background:var(--acc2)}
+.trk-tr{padding:2px 0 4px;overflow-x:auto;scrollbar-width:thin}
 .trk-lab{color:var(--dim);font-size:10px;margin-left:6px}
 .trk-oct,.trk-step{min-width:18px;text-align:center;font-weight:normal}
 .trk-pos{margin-left:auto;padding:0 6px;color:var(--dim);font-size:11px;white-space:nowrap}
@@ -624,6 +654,16 @@ canvas.view.pick{cursor:crosshair}
 .trk-wrap{flex-wrap:wrap}
 .trk-sinfo{font-size:10px;color:var(--dim)}
 .trk-piano{display:grid;grid-template-columns:repeat(12,1fr);gap:2px}
+.trk-letters{grid-template-columns:repeat(10,1fr)}
+.trk-chk{flex-direction:row!important;align-items:center;gap:6px!important;font-size:11px!important;color:var(--txt)!important}
+.trk-xi,.trk-xe{display:flex;flex-direction:column;gap:6px}
+.trk-xi[hidden],.trk-xe[hidden],.trk-grid [hidden],.trk-hex[hidden]{display:none}
+.trk-xs{display:flex;gap:3px;flex-wrap:wrap}
+.trk-xs .aed-b{min-width:30px;height:30px;padding:0 6px}
+.trk-map{width:100%;height:44px;flex:none;border-radius:3px;touch-action:none;cursor:pointer}
+.trk-env{width:100%;height:120px;flex:none;border-radius:3px;touch-action:none;cursor:crosshair}
+.trk-add{color:var(--acc2)}
+select.aed-b{padding:0 6px}
 .trk-hex{display:grid;grid-template-columns:repeat(8,1fr);gap:2px}
 .trk-kb{display:grid;grid-template-columns:repeat(4,1fr);gap:2px}
 .trk-pk,.trk-k{height:40px;padding:0;background:var(--panel2);border:1px solid var(--line);border-radius:3px;cursor:pointer;font-size:11px}
