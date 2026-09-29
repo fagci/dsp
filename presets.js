@@ -792,6 +792,42 @@ addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 markWiresDirty();
 });
+preset('ISM 433: Sensors and Remotes (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'433 MHz without a radio: the generator sends OOK telegrams in turn — a Nexus/TFA-type temperature and humidity sensor (PPM, 36 bits, 5 repeats),\n'+
+  'an EV1527/PT2262 remote (PWM, 20-bit address + 4 data bits, 6 repeats) and a Manchester packet of an unknown protocol.\n'+
+  'ISM 433 Decoder: envelope → slicer → pulse train → PWM / PPM / Manchester → protocol. Unknown packets are logged with timings and bits.\n'+
+  'Rec: Unique by Key keeps one line per device (id), with a counter and first / last time.'});
+nt.size.w=720; nt.size.h=130; applySize(nt);
+const gn=addNode('iqGen',40,200,{sr:'1024000',fc:433920000,mode:'ISM433',off:20000,lvl:-20,noise:-50});
+const de=addNode('ismRx',340,200,{});
+de.size.w=520; de.size.h=300; applySize(de);
+const log=addNode('recLog',340,560,{});
+log.size.w=520; applySize(log);
+const uniq=addNode('recUniq',900,200,{key:'id'});
+uniq.size.w=420; uniq.size.h=260; applySize(uniq);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec'); addEdge(de.id,'rec',uniq.id,'rec');
+markWiresDirty();
+});
+preset('ISM 433: Sensors and Remotes (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'433.92 MHz ISM band: weather sensors, door and gate remotes, doorbells, car keys (OOK; FSK ones need modulation OOK+FSK or FSK).\n'+
+  'Tap the burst on the spectrum: the decoder shows the protocol (EV1527/PT2262, Nexus) or, for an unknown one, the encoding (PWM/PPM/Manchester),\n'+
+  'pulse timings and the bits. With HackRF turn RX AMP and LNA on; keep the signal off the DC spike (tune 100–200 kHz aside).'});
+nt.size.w=720; nt.size.h=110; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'1024000',freq:433920000,demod:'IQ'});
+const sa=addNode('sa',760,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,200,{});
+const de=addNode('ismRx',340,360,{});
+de.size.w=520; de.size.h=300; applySize(de);
+const log=addNode('recLog',340,720,{});
+log.size.w=520; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
 preset('DMR: Calls, SMS and CSBK (Generator)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'DMR without a radio: the generator sends a repeater downlink — 4FSK 4800 Bd, two TDMA slots with CACH, colour code 1.\n'+
