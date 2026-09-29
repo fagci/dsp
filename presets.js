@@ -792,6 +792,40 @@ addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 markWiresDirty();
 });
+preset('DMR: Calls, SMS and CSBK (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'DMR without a radio: the generator sends a repeater downlink — 4FSK 4800 Bd, two TDMA slots with CACH, colour code 1.\n'+
+  'Slot 1: a group voice call (LC header, four superframes with embedded LC and the talker alias, terminator). Slot 2: CSBK preambles and two data messages\n'+
+  '(IP/UDP/Motorola TMS text at rate ½ and short data at rate ¾, both with CRC-32). The CACH carries a Short LC (slot activity).\n'+
+  'DMR Decoder: FM discriminator, RRC, 8 clock phases, sync and polarity search, then Golay / QR / BPTC / Reed-Solomon / CRC for every field. The voice output has the raw AMBE+2 frames.'});
+nt.size.w=760; nt.size.h=150; applySize(nt);
+const gn=addNode('iqGen',40,240,{sr:'256000',fc:438000000,mode:'DMR',off:2000,lvl:-20,noise:-45});
+const de=addNode('dmrRx',340,240,{});
+de.size.w=560; de.size.h=340; applySize(de);
+const log=addNode('recLog',340,640,{});
+log.size.w=560; applySize(log);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('DMR: Repeater or Direct Mode (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'DMR (MotoTRBO, Hytera, Anytone…): tune the SDR to a repeater output or a simplex/direct frequency in the VHF/UHF bands\n'+
+  'and tap the signal on the spectrum. The decoder shows the colour code, time slots, calls (from → to, group or private, emergency, encrypted), talker alias,\n'+
+  'CSBK and text messages; the log saves CSV. Voice is not decoded to audio: AMBE+2 frames come out raw on the voice output.'});
+nt.size.w=760; nt.size.h=110; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'1024000',freq:438000000,demod:'IQ'});
+const sa=addNode('sa',860,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,200,{});
+const de=addNode('dmrRx',340,360,{});
+de.size.w=560; de.size.h=340; applySize(de);
+const log=addNode('recLog',340,760,{});
+log.size.w=560; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
 preset('Inmarsat STD-C: EGC Messages (Generator)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Inmarsat-C without a dish: the generator sends a LES TDM carrier the way the satellites do — BPSK 1200 Bd,\n'+
