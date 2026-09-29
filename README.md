@@ -18,7 +18,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Groups (nested subgraphs) with custom inputs/outputs
 - Undo/redo, duplicate, multi-select, module search (Ctrl+K)
 - Save/load patches to local storage or JSON files
-- 66 built-in presets: demos, quick scenarios, radio protocols, music, analysis
+- 68 built-in presets: demos, quick scenarios, radio protocols, music, analysis
 - Adjustable block size, sample rate and run speed (×1…×32)
 - AudioWorklet engine, SharedArrayBuffer path when cross-origin isolated
 - Installable PWA with offline support
@@ -50,7 +50,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 
 ### IQ blocks
 - **IQ stream** wires carry complex (or real) samples at their own sample rate, not the engine's — build a receiver from blocks: source → frequency shift → decimator → demodulator → IQ → Audio (see [IQ blocks](#iq-blocks))
-- USB SDR `iq` output (raw IQ at the native rate, also from IQ file playback), IQ generator, IQ spectrum
+- USB SDR `iq` output (raw IQ at the native rate, also from IQ file playback), IQ generator, IQ spectrum, ADS-B demodulator
 
 ### Modulation & radio
 - AM/FM/SSB demodulator, FSK demodulator, generic modulator
@@ -64,6 +64,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Olivia, Contestia, AX.25/APRS (TX/RX)
 - WEFAX, NOAA APT, SSTV-style raster
 - HFDL: full receive chain down to ACARS / ADS-C, aircraft tracks and ground stations on the map
+- **ADS-B / Mode S** (1090 MHz) from raw SDR IQ: aircraft on the map with callsign, altitude, speed and heading (see [ADS-B](#ads-b))
 - GSM: downlink physical-layer receiver from raw IQ — FCCH tone sync, SCH decode (BSIC + frame number), GMSK burst extraction (see [GSM](#gsm))
 - Building blocks: CRC, scrambler, interleaver, convolutional encoder / Viterbi, sync word search, async serial, NRZ clock, text ↔ bits
 
@@ -178,7 +179,7 @@ Ready-made patch: **GSM: Receive Bursts (USB SDR)**.
 
 A wire of the **IQ** type (lime) carries a stream at its own sample rate: each engine block it brings as many samples as the source produced since the previous block (none, one chunk or several), together with the stream's sample rate and center frequency. So a chain can run at 2.4 MS/s next to audio at 48 kHz, and a receiver is wired from blocks instead of being hidden inside the SDR node.
 
-- **IQ Generator** — a test signal (carrier, AM, FM, **WFM stereo** with a pilot and RDS station name — the tone in the left channel only, to check separation — USB, LSB) at an offset from the center, plus noise; sample rate up to 2.4 MS/s. *clock error, ppm* simulates a source whose clock differs from the sound card
+- **IQ Generator** — a test signal (carrier, AM, FM, **WFM stereo** with a pilot and RDS station name — the tone in the left channel only, to check separation — USB, LSB, **ADS-B** — DF17 frames from three simulated aircraft) at an offset from the center, plus noise; sample rate up to 2.4 MS/s. *clock error, ppm* simulates a source whose clock differs from the sound card
 - **USB SDR → `iq`** — the raw IQ at the native rate (live or from IQ file playback); samples of the old frequency after a retune are not passed on. The USB buffers go on as they are (8 or 16 bit) and are turned into floats by whoever reads them — for an IQ chain in a worker that happens in the worker, not on the main thread
 - **IQ Frequency Shift** — brings `freq` (absolute Hz, e.g. marker `f1` of a Spectrum Analyzer) or center + *offset* down to 0 Hz
 - **IQ Decimator** — windowed-sinc FIR (Blackman) and decimation by 2…64; *cutoff* is a fraction of the output rate. Works on complex and real streams
@@ -197,14 +198,24 @@ A wire of the **IQ** type (lime) carries a stream at its own sample rate: each e
 - **IQ Spectrum** — Welch spectrum of a stream (absolute frequencies for complex streams) for the Spectrum Analyzer
 - **IQ Channelizer** — a polyphase filter bank: cuts the stream into N channels (8…1024) spaced sr/N with one FFT for all of them, so many signals can be received at once. Each channel comes out at sr/N (**oversampling 1**) or 2·sr/N (**2**: flat to the channel edge, no aliasing there; with 16 taps per channel the neighbour's centre is rejected by more than 60 dB). **outputs** (1…8) are slots: **manual** — the channels of the listed frequencies (or `f1…` inputs), **strongest** — the strongest active channels above the noise floor (median of the channel powers) + threshold, one slot per signal peak, held for **hold** seconds after it goes quiet; the centre channel (DC spike) is skipped. `spec` is the power of every channel, `active` — how many slots are busy. About 15% of a core at 1.024 MS/s (64 channels, 2× oversampling, 16 taps) — in its worker
 - **IQ Add** — sum of two streams of the same rate (for test signals)
+- **ADS-B Demodulator** — Mode S frames from a 1090 MHz stream (see [ADS-B](#ads-b))
 
-**Workers.** IQ blocks wired to each other form an *island* that runs in its own Web Worker: the main thread only sends it the inputs coming from outside (e.g. the SDR's raw IQ) and the parameters once per engine block, and hands its outputs to the rest of the graph when they come back a block or two later. The IQ → Audio bridge keeps the stream continuous (its buffer covers the delay); numbers and spectra from an island lag by a few milliseconds. Only outputs wired to nodes outside the island come back. IQ → Audio stays on the main thread (it outputs audio), and so do IQ blocks inside groups. The readout of a block in a worker ends with *· worker*. On the generator preset the main-thread load drops from ~40% to ~2%.
+**Workers.** IQ blocks wired to each other form an *island* that runs in its own Web Worker: the main thread only sends it the inputs coming from outside (e.g. the SDR's raw IQ) and the parameters once per engine block, and hands its outputs to the rest of the graph when they come back a block or two later. The IQ → Audio bridge keeps the stream continuous (its buffer covers the delay); numbers and spectra from an island lag by a few milliseconds. Records (`rec`) from an island are queued and delivered once each. Only outputs wired to nodes outside the island come back. IQ → Audio stays on the main thread (it outputs audio), and so do IQ blocks inside groups. The readout of a block in a worker ends with *· worker*. On the generator preset the main-thread load drops from ~40% to ~2%.
 
 Presets: *IQ: Receiver from Blocks (Generator)* and *IQ: Channelizer — Three Signals at Once (Generator)* (no hardware needed), *USB SDR: FM Receiver from Blocks* (stereo, RDS), *USB SDR: HF AM / SSB from Blocks* (DC block, noise blanker, SAM, squelch, auto notch), *USB SDR: Listen to the Strongest Channels* (four strongest NFM channels at once, spread across the stereo field).
 
+## ADS-B
+
+Mode S / ADS-B at 1090 MHz from the raw IQ of a USB SDR — no dump1090 needed.
+
+- **ADS-B Demodulator** (IQ): magnitude → preamble search (pulses at 0, 1, 3.5, 4.5 µs over the gaps by *preamble* dB) → PPM bits, 1 µs each → CRC-24. Half-bit windows are integrated at fractional positions, so any rate from 2 MS/s works (2.4 MS/s is better); the bit phase is refined in quarter-half-bit steps. DF11/17/18 are accepted by CRC, DF17/18 with one wrong bit fixed (or two of the 12 least certain bits — *2 weak bits*: more range, a rare ghost); DF0/4/5/16/20/21 carry the address in the CRC and are accepted only for aircraft heard in DF11/17/18 in the last minute. `rec` — the frames (`raw` hex, `df`, `icao`, `rssi` dBFS), `rate` — frames per second. Runs in a worker; ~18% of a core at 2.4 MS/s.
+- **ADS-B Decoder** (Decoders): frames from the demodulator, or AVR text lines (`*8D…;`, also `@timestamp…;`) on `text` — e.g. from dump1090 port 30002 via *Text over Network*. Decodes callsign and category, airborne and surface positions (CPR: globally from an even/odd pair within 10 s, then locally from the last position; surface ones relative to the receiver), barometric and GNSS altitude (25 ft and Gillham), ground speed and track, heading and IAS/TAS, vertical rate, squawk and emergency (DF5/21, TC28), altitude from DF4/20, callsign from Comm-B BDS 2,0. Positions that jump faster than ~1000 kt or lie farther than *reject* km from the receiver (position from `lat`/`lon`, the parameters or *My Position*) are dropped. The readout is a table like dump1090's interactive view; `rec` goes to the map with `icon: plane`, heading and a colour by altitude; `count`, `msgs`, `range` (max, km).
+
+Presets: *ADS-B: Aircraft Map (Generator)* (no hardware), *ADS-B: Aircraft Map (USB SDR, 1090 MHz)*.
+
 ## Tests
 
-Smoke tests run the engine without a sound card in headless Chromium: a few presets (decoded RTTY text, APRS frames with a good CRC, sound on the output) and the IQ chain (tone frequency and level after FM/AM/SSB, sideband rejection, bridge lock to a drifting clock, decimator and channelizer independent of chunk sizes, channelizer gain, offset and neighbour rejection, two receivers from one channelizer, WFM stereo separation and RDS, SAM lock with a carrier offset, SSB AGC, de-emphasis, noise blanker, squelch, DC block, I/Q merge, auto notch, USB SDR `iq` output from an IQ file), and the same chains in workers: one island per connected chain, values and spectra coming back, parameters followed on the fly, the worker and its state kept when wires change, fallback to the main thread when workers are blocked, and the workers starting on a cross-origin isolated page (as served by the service worker). For GSM: the SCH convolutional code / CRC round-trip and BSIC/frame-number parsing, channel estimation + MLSE recovering a synthetic normal burst, and FCCH detection with carrier-offset estimation.
+Smoke tests run the engine without a sound card in headless Chromium: a few presets (decoded RTTY text, APRS frames with a good CRC, sound on the output) and the IQ chain (tone frequency and level after FM/AM/SSB, sideband rejection, bridge lock to a drifting clock, decimator and channelizer independent of chunk sizes, channelizer gain, offset and neighbour rejection, two receivers from one channelizer, WFM stereo separation and RDS, SAM lock with a carrier offset, SSB AGC, de-emphasis, noise blanker, squelch, ADS-B (reference frames, generator → decoder at 2 and 2.4 MS/s, bit correction), DC block, I/Q merge, auto notch, USB SDR `iq` output from an IQ file), and the same chains in workers: one island per connected chain, values and spectra coming back, parameters followed on the fly, the worker and its state kept when wires change, fallback to the main thread when workers are blocked, and the workers starting on a cross-origin isolated page (as served by the service worker). For GSM: the SCH convolutional code / CRC round-trip and BSIC/frame-number parsing, channel estimation + MLSE recovering a synthetic normal burst, and FCCH detection with carrier-offset estimation.
 
 ```
 cd tools/test
@@ -285,7 +296,7 @@ Works offline: the vector base map (Natural Earth 10m: coast, lakes, rivers, cou
 
 - **Internet Radio** (Sources): search [radio-browser.info](https://www.radio-browser.info) — an open community database with a public API — by name, tag and country; the result is kept in the browser. Stations go to the map (without coordinates — around the country centre); click one to play it: its URL goes to *Audio Stream (URL)*, which now starts on a new URL from the wire. An https page cannot play `http://` streams, and only streams that send CORS headers can be captured into the graph.
 
-Presets: *Internet Radio on the Map*, *Satellites: Track and Doppler*, *FT8: Propagation Map*, *Fox Hunt: Locate Transmitter*, *HF: Who Is On Air (Schedule)*, *Map: My Position and Points from CSV*, *HFDL: Receive and Aircraft Map*.
+Presets: *Internet Radio on the Map*, *Satellites: Track and Doppler*, *FT8: Propagation Map*, *Fox Hunt: Locate Transmitter*, *HF: Who Is On Air (Schedule)*, *Map: My Position and Points from CSV*, *HFDL: Receive and Aircraft Map*, *ADS-B: Aircraft Map (Generator)*.
 
 ## Themes
 

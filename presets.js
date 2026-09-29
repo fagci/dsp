@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=30;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=31;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -109,6 +109,7 @@ const PRESET_CATS={
   'Demo: Sweep and Waterfall':'Demo',
   'IQ: Receiver from Blocks (Generator)':'Demo',
   'IQ: Channelizer — Three Signals at Once (Generator)':'Demo',
+  'ADS-B: Aircraft Map (Generator)':'Demo',
 
   'Quick Audio Recording':'Quick Scenarios',
   'Find Sound Source (by Frequency)':'Quick Scenarios',
@@ -163,6 +164,7 @@ const PRESET_CATS={
   'Contestia: Transmit and Receive (Loop)':'Radio Protocols',
   'HFDL: Receive and Aircraft Map':'Radio Protocols',
   'HFDL: Detection and Frame':'Radio Protocols',
+  'ADS-B: Aircraft Map (USB SDR, 1090 MHz)':'Radio Protocols',
   'Map: My Position and Points from CSV':'Signal Analysis',
   'FT8: Propagation Map':'Radio Protocols',
   'Fox Hunt: Locate Transmitter':'Signal Analysis',
@@ -551,6 +553,37 @@ addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
 addEdge(gn.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',dm.id,'in'); addEdge(dm.id,'out',de.id,'in'); addEdge(de.id,'out',au.id,'in');
 addEdge(au.id,'out',sc.id,'in1'); addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'out',dc.id,'R');
+markWiresDirty();
+});
+preset('ADS-B: Aircraft Map (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'ADS-B without a radio: the generator sends Mode S extended squitters (DF17) from three aircraft\n'+
+  'circling near Novosibirsk — position (CPR even/odd), velocity, callsign — at 2.4 MS/s with noise.\n'+
+  'Demodulator: preamble search, PPM bits, CRC-24. Decoder: CPR → lat/lon, altitude, speed, heading → map.'});
+nt.size.w=560; nt.size.h=140; applySize(nt);
+const gn=addNode('iqGen',40,220,{sr:'2400000',fc:1090000000,mode:'ADS-B',off:0,lvl:-20,noise:-40});
+const dm=addNode('adsbDemod',40,560,{});
+const de=addNode('adsbDecode',320,220,{rlat:55.01,rlon:82.65});
+de.size.w=540; de.size.h=240; applySize(de);
+const map=addNode('geoMap',900,40,{mz:8,mlat:55.0,mlon:82.65,ttl:5,labels:true,trail:300});
+map.size.w=560; map.size.h=420; applySize(map);
+addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'rec',de.id,'rec'); addEdge(de.id,'rec',map.id,'rec');
+markWiresDirty();
+});
+preset('ADS-B: Aircraft Map (USB SDR, 1090 MHz)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Aircraft on the map straight from the air: SDR at 1090 MHz, 2.4 MS/s, raw IQ → ADS-B demodulator → decoder → map.\n'+
+  'Connect the SDR (a 1090 MHz antenna helps a lot). Gain high, but watch the ADC: clipping kills weak frames.\n'+
+  'Set your position in the decoder (or add My Position) — it checks positions by range and decodes surface ones.\n'+
+  'Decoder text input takes AVR lines («*8D…;») too, e.g. dump1090 port 30002 via Text over Network.'});
+nt.size.w=620; nt.size.h=160; applySize(nt);
+const rx=addNode('rtlsdr',40,240,{sr:'2400000',freq:1090000000,demod:'IQ',auto:false,gainDb:40});
+const dm=addNode('adsbDemod',340,240,{});
+const de=addNode('adsbDecode',340,420,{});
+de.size.w=540; de.size.h=280; applySize(de);
+const map=addNode('geoMap',920,40,{mz:7,ttl:5,labels:true,trail:500,tiles:'none'});
+map.size.w=600; map.size.h=460; applySize(map);
+addEdge(rx.id,'iq',dm.id,'in'); addEdge(dm.id,'rec',de.id,'rec'); addEdge(de.id,'rec',map.id,'rec');
 markWiresDirty();
 });
 preset('USB SDR: FM Receiver from Blocks', function(){

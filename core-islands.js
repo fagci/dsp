@@ -104,12 +104,13 @@ function islTake(isl,n){
   const out={};
   for(const port in hold){
     const v=hold[port];
-    // чанки отдаются один раз; без новых — пустой поток с прежними sr/fc
-    out[port]=v && v.chunks && !(r && port in r.out) ? {sr:v.sr, fc:v.fc, chunks:[], t:0} : v;
+    // чанки и записи (rec — массивы) отдаются один раз; без новых — пустой поток с прежними sr/fc / null
+    const fresh=r && port in r.out;
+    out[port]=v && v.chunks && !fresh ? {sr:v.sr, fc:v.fc, chunks:[], t:0} : Array.isArray(v) && !fresh ? null : v;
   }
   return out;
 }
-// Ответ воркера: чанки копятся до ближайшего такта, числа и спектры — последнее значение
+// Ответ воркера: чанки и записи копятся до ближайшего такта, числа и спектры — последнее значение
 function islResult(isl,m){
   isl.ready=true;
   isl.inflight=Math.max(0,isl.inflight-1);
@@ -121,6 +122,8 @@ function islResult(isl,m){
     for(const port in r.out){
       const v=r.out[port], q=p.out[port];
       if(v && v.chunks && q && q.chunks) q.chunks=q.chunks.concat(v.chunks), q.sr=v.sr, q.fc=v.fc;
+      else if(Array.isArray(v) && Array.isArray(q)) p.out[port]=q.concat(v);
+      else if(v==null && Array.isArray(q)) continue;          // записи не затираются пустым тактом
       else p.out[port]=v;
     }
   }
