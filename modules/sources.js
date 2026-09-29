@@ -1289,6 +1289,21 @@ function rtlMakeCom(dev){
   };
 }
 
+const R82XX_LNA_STEPS=[0,9,13,40,38,13,31,22,26,31,26,14,19,5,35,13];
+const R82XX_MIX_STEPS=[0,5,10,10,19,9,10,25,17,10,8,16,13,6,3,-8];
+// как r82xx_set_gain (librtlsdr / rtl-sdr-blog): ступени LNA и смесителя по очереди, пока сумма
+// (десятые дБ) не дойдёт до заданной; VGA фиксирован 16.3 дБ. Итог — одна из 29 ступеней 0…49.6 дБ.
+function r82xxGainSteps(gain){
+  const want=Math.round(gain*10);
+  let total=0, lna=0, mix=0;
+  for(let i=0;i<15;i++){
+    if(total>=want) break;
+    total+=R82XX_LNA_STEPS[++lna];
+    if(total>=want) break;
+    total+=R82XX_MIX_STEPS[++mix];
+  }
+  return {lna, mix, db:total/10};
+}
 // тюнер R820T/R828D: регистры, PLL, gain. i2cAddr: 0x34 у R820T, 0x74 у R828D.
 // isV4 — RTL-SDR Blog V4 (триплексер, апконвертер КВ); прочие R828D (Astrometa) — вход air/cable1
 function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
@@ -1440,12 +1455,9 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
   }
   async function setAutoGain(){ await writeEach([[0x05,0x00,0x10],[0x07,0x10,0x10],[0x0c,0x0b,0x9f]]); }
   async function setManualGain(gain){
-    let step = gain<=15
-      ? Math.round(1.36+gain*(1.1118+gain*(-0.0786+gain*0.0027)))
-      : Math.round(1.2068+gain*(0.6875+gain*(-0.01011+gain*0.0001587)));
-    step=Math.max(0,Math.min(30,step));
-    await writeEach([[0x05,0x10,0x10],[0x07,0x00,0x10],[0x0c,0x08,0x9f],
-      [0x05,Math.floor(step/2),0x0f],[0x07,Math.floor((step-1)/2),0x0f]]);
+    const {lna,mix,db}=r82xxGainSteps(gain);
+    await writeEach([[0x05,0x10,0x10],[0x07,0x00,0x10],[0x0c,0x08,0x9f],[0x05,lna,0x0f],[0x07,mix,0x0f]]);
+    return db;
   }
   async function close(){
     await writeEach([[0x06,0xb1,0xff],[0x05,0xb3,0xff],[0x07,0x3a,0xff],[0x08,0x40,0xff],[0x09,0xc0,0xff],
@@ -2235,6 +2247,8 @@ function sdrOpenDevice(dev, ppm, gain){
 // Доступ к устройству воркер получает через getDevices() — разрешение уже выдано requestDevice().
 const RTL_USB_WORKER_SRC = `
 const RTL_CMD=${JSON.stringify(RTL_CMD)}, RTL_BLOCK=${JSON.stringify(RTL_BLOCK)}, RTL_REG=${JSON.stringify(RTL_REG)};
+const R82XX_LNA_STEPS=${JSON.stringify(R82XX_LNA_STEPS)}, R82XX_MIX_STEPS=${JSON.stringify(R82XX_MIX_STEPS)};
+${r82xxGainSteps}
 ${rtlNumToBuf}
 ${rtlBufToNum}
 ${rtlMakeCom}
@@ -4230,7 +4244,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     // запомненная ширина для каждого режима — при смене режима ползунок bw переключается на неё
     ...['WFM','NFM','AM','SAM','USB','LSB'].map(m=>({n:'if'+m,t:'range',min:500,max:300000,d:RTL_BW_DEF[m],hidden:true})),
     {n:'auto',t:'check',d:true,label:'auto gain'},
-    {n:'gainDb',t:'range',min:0,max:49.6,step:.1,d:20,label:'gain, dB'},
+    // ручное усиление действует только без auto — движение ползунка само его снимает
+    {n:'gainDb',t:'range',min:0,max:49.6,step:.1,d:20,label:'gain, dB',fn:n=>{ if(n.p.auto){ if(n.set?.auto) n.set.auto(false); else n.p.auto=false; } }},
     // только HackRF — вместо auto/gainDb, строки переключает draw()
     {n:'lna',t:'range',min:0,max:40,step:8,d:24,label:'LNA, dB'},
     {n:'vga',t:'range',min:0,max:62,step:2,d:24,label:'VGA, dB'},
@@ -4328,6 +4343,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     // покрутить руками поверх — setModWired (processing.js) даёт ручной правке победить, пока сам
     // провод не укажет на другое значение (та же идея, что у freq/steerFreq выше, общим хелпером).
     setModWired(n,'gainDb', I.gainDb, typeof I.gainDb==='number');
+    if(typeof I.gainDb==='number' && n.p.auto){ if(n.set?.auto) n.set.auto(false); else n.p.auto=false; }   // провод на gain — ручной режим
     setModWired(n,'demod', I.demod, typeof I.demod==='string' && DEMOD_OPTS.includes(I.demod));
     setModWired(n,'bw', I.bw, typeof I.bw==='number');
     { const mode=n.p.demod, lim=RTL_BW_LIMITS[mode];
