@@ -151,6 +151,7 @@ const PRESET_CATS={
   'HFDL: Receive Chain (to Symbols)':'Radio Protocols',
   'GSM: Receive Bursts (USB SDR)':'Radio Protocols',
   'Meteor-M LRPT: Frames (USB SDR, 137 MHz)':'Radio Protocols',
+  'Sound Card IQ: HF Receiver (SoftRock-style)':'Quick Scenarios',
   'FT8: Find Signals in Slot':'Radio Protocols',
   'Weather Fax WEFAX 120':'Radio Protocols',
   'WEFAX Transmit (Demo)':'Radio Protocols',
@@ -640,6 +641,34 @@ addEdge(rx.id,'iq',dcb.id,'in'); addEdge(dcb.id,'out',nb.id,'in'); addEdge(nb.id
 addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'out',sq.id,'in');
 addEdge(sq.id,'out',au.id,'in'); addEdge(au.id,'out',an.id,'in');
 addEdge(an.id,'out',dc.id,'L'); addEdge(an.id,'out',dc.id,'R');
+markWiresDirty();
+});
+preset('Sound Card IQ: HF Receiver (SoftRock-style)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'IQ from the stereo line input — a receiver with an audio IQ output (SoftRock, a direct-conversion kit).\n'+
+  'Set the sample rate at the top to 96 or 192 kHz (the band you see is that wide). Left → I, right → Q.\n'+
+  'IQ Balance fixes the gain/phase mismatch of the two channels (the mirror image; auto needs a busy band) and\n'+
+  'a channel skew (delay ±1 sample on some cards). Tap a signal on the spectrum; SSB/AM mode in the demodulator.\n'+
+  'Set fc in I/Q → IQ to the receiver\'s LO for real frequencies. Mirror spectrum — «swap I and Q».'});
+nt.size.w=660; nt.size.h=170; applySize(nt);
+const mic=addNode('mic',40,260,{mode:'stereo device'});
+const mg=addNode('iqMerge',340,260,{fc:0});
+const bal=addNode('iqBalance',340,400,{auto:true});
+const dcb=addNode('iqDc',340,560,{});
+const sp=addNode('iqSpec',40,560,{size:'4096'});
+const sa=addNode('sa',720,40,{auto:true,floor:-110,top:-30,split:.4});
+sa.size.w=640; sa.size.h=340; applySize(sa);
+const sh=addNode('iqShift',720,420,{});
+const d1=addNode('iqDecim',720,560,{M:'4',cut:.3});
+const de=addNode('iqDemod',1000,420,{mode:'USB',bw:2700});
+const au=addNode('iqAudio',1000,620,{});
+const dc=addNode('dac',1260,620,{vol:.4});
+addEdge(mic.id,'a',mg.id,'I'); addEdge(mic.id,'b',mg.id,'Q');
+addEdge(mg.id,'iq',bal.id,'in'); addEdge(bal.id,'out',dcb.id,'in');
+addEdge(dcb.id,'out',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
+addEdge(dcb.id,'out',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'out',au.id,'in');
+addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'out',dc.id,'R');
 markWiresDirty();
 });
 preset('Meteor-M LRPT: Frames (Generator)', function(){

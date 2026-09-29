@@ -165,7 +165,7 @@ def({ id:'sweep', title:'Sweep / Jammer', cat:'Sources', outs:[{n:'out',t:'sig'}
 // для случаев когда одно физическое устройство и есть оба канала (напр. встроенный массив
 // микрофонов ноутбука вроде ThinkPad T480).
 // частота — просьба к getUserMedia (ideal), браузер может дать не точно её; 'auto' — без constraint
-const SRATE_OPTS=['auto','8000','16000','22050','44100','48000','96000'];
+const SRATE_OPTS=['auto','8000','16000','22050','44100','48000','96000','192000'];
 function srOf(n){ return n.p.srate==='auto' ? undefined : +n.p.srate; }
 
 def({ id:'mic', title:'Microphone (A+B)', cat:'Sources',

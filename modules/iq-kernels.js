@@ -24,6 +24,8 @@ IQK.iqGen={
     const kf=2*Math.PI*n.p.dev/sr, kw=2*Math.PI*75000/sr, depth=n.p.depth;
     let ph=n.ph, mph=n.mph, x=n.rng;
     const rnd=()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296; };
+    // дисбаланс квадратур, как у звуковой карты: Q' = g·(Q·cosφ + I·sinφ), Q на imbD отсчётов позже
+    const ig=Math.pow(10,(+n.p.imbG||0)/20), ip=(+n.p.imbP||0)*Math.PI/180, isn=Math.sin(ip), ics=Math.cos(ip), idl=Math.round(+n.p.imbD||0);
     const env=mode==='ADS-B' ? iqGenAdsb(n,sr,N) : null;
     const bb=mode==='LRPT' ? lrptGenerate(n,sr,N,n.p.lrpt||'OQPSK') : null;
     for(let i=0;i<N;i++){
@@ -44,6 +46,11 @@ IQK.iqGen={
         const u=Math.max(rnd(),1e-12), v=rnd(), r=nz*Math.sqrt(-2*Math.log(u));
         re[i]+=r*Math.cos(2*Math.PI*v); im[i]+=r*Math.sin(2*Math.PI*v);
       }
+      if(ig!==1 || ip) im[i]=ig*(im[i]*ics+re[i]*isn);
+    }
+    if(idl>0){                                         // задержка Q на idl отсчётов
+      const q=n.qd && n.qd.length===idl ? n.qd : new Float32Array(idl), all=new Float32Array(idl+N);
+      all.set(q); all.set(im,idl); n.qd=all.slice(N); im.set(all.subarray(0,N));
     }
     n.ph=ph%(2*Math.PI); n.mph=mph%(2*Math.PI); n.rng=x;
     iqPush(s,re,im);
@@ -636,6 +643,56 @@ IQK.iqDc={
     n.mi=mi; n.mq=mq; n.ui={dc:Math.hypot(mi,mq)};
     return {out:o};
   }};
+
+/* ---- IQ Balance ---- */
+// Дисбаланс квадратур (звуковая карта, SoftRock): Q' = g·(Q·cosφ + I·sinφ), плюс сдвиг каналов.
+// Сдвиг: I и Q задерживаются на 3 ± delay/2 отсчёта (кубическая интерполяция), delay > 0 — Q опаздывает.
+// Авто: по средним I², Q'², I·Q' (без постоянной) — g = √(Q'²/I²), sinφ = IQ'/√(I²·Q'²);
+// Q = (Q'/g − I·sinφ)/cosφ. Годится при спектре, симметричном в среднем (шум, много сигналов).
+IQK.iqBalance={
+  init(n){ n.hr=new Float32Array(8); n.hq=new Float32Array(8); n.mi=0; n.mq=0; n.ii=1e-12; n.qq=1e-12; n.iq=0; n.oi=1e-12; n.oq=1e-12; n.ox=0; },
+  process(n,I){
+    const s=iqIn(I,'in');
+    if(!s){ n.ui=null; return {out:null}; }
+    const o=iqStream(n,'out',s.sr,s.fc), auto=n.p.auto!==false;
+    const a=1-Math.exp(-1/(s.sr*Math.max(.05,+n.p.tau||1)));
+    const D=Math.max(-2,Math.min(2,+n.p.delay||0)), dI=3+D/2, dQ=3-D/2;
+    let g, sn, cs;
+    for(const c of s.chunks){
+      const xr=c.re, xi=iqChunkIm(c), K=xr.length, yr=new Float32Array(K), yi=new Float32Array(K);
+      const br=new Float32Array(8+K), bq=new Float32Array(8+K);
+      br.set(n.hr); br.set(xr,8); bq.set(n.hq); bq.set(xi,8);
+      for(let i=0;i<K;i++){
+        const u=iqBalFrac(br,i+8-dI), v=iqBalFrac(bq,i+8-dQ);
+        n.mi+=a*(u-n.mi); n.mq+=a*(v-n.mq);
+        const p=u-n.mi, q=v-n.mq;
+        n.ii+=a*(p*p-n.ii); n.qq+=a*(q*q-n.qq); n.iq+=a*(p*q-n.iq);
+        if(auto || g===undefined){
+          if(auto){ g=Math.sqrt(n.qq/n.ii); sn=Math.max(-.5,Math.min(.5,n.iq/Math.sqrt(n.ii*n.qq))); }
+          else { g=Math.pow(10,(+n.p.gain||0)/20); sn=Math.sin((+n.p.phase||0)*Math.PI/180); }
+          cs=Math.sqrt(1-sn*sn);
+        }
+        const w=(v/g-u*sn)/cs;
+        yr[i]=u; yi[i]=w;
+        const wp=(q/g-p*sn)/cs;                      // без постоянной — для оценки остатка
+        n.oi+=a*(p*p-n.oi); n.oq+=a*(wp*wp-n.oq); n.ox+=a*(p*wp-n.ox);
+      }
+      n.hr.set(br.subarray(K)); n.hq.set(bq.subarray(K));
+      iqPush(o,yr,yi,c.tag);
+    }
+    if(g===undefined){ g=Math.sqrt(n.qq/n.ii); sn=n.iq/Math.sqrt(n.ii*n.qq); }
+    // зеркальный образ: |1 − g·e^{jφ}|² / |1 + g·e^{jφ}|², до и после коррекции
+    const irr=(gg,s)=>{ const c=Math.sqrt(Math.max(0,1-s*s)); return 10*Math.log10(((1+gg*gg-2*gg*c)+1e-15)/(1+gg*gg+2*gg*c)); };
+    const go=Math.sqrt(n.oq/n.oi), so=n.ox/Math.sqrt(n.oi*n.oq);
+    n.ui={auto, gain:20*Math.log10(g), phase:Math.asin(Math.max(-1,Math.min(1,sn)))*180/Math.PI,
+      before:irr(Math.sqrt(n.qq/n.ii),n.iq/Math.sqrt(n.ii*n.qq)), after:irr(go,so)};
+    return {out:o};
+  }};
+// кубическая интерполяция (Катмулл — Ром) буфера b в дробной позиции t (t−1 … t+2 внутри)
+function iqBalFrac(b,t){
+  const i=Math.floor(t), mu=t-i, p0=b[i-1], p1=b[i], p2=b[i+1], p3=b[i+2];
+  return p1+.5*mu*(p2-p0+mu*(2*p0-5*p1+4*p2-p3+mu*(3*(p1-p2)+p3-p0)));
+}
 
 /* ---- IQ Noise Blanker ---- */
 // Короткие импульсы (зажигание, импульсные БП) — на широкой полосе, до канального фильтра, где импульс
