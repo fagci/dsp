@@ -54,10 +54,12 @@ const SHELL=[
   './modules/ccsds-kernels.js?v=93',
   './modules/lrpt-msumr.js?v=93',
   './modules/sonde-kernels.js?v=93',
+  './modules/inmarsat-kernels.js?v=93',
   './modules/iq.js?v=93',
   './modules/adsb.js?v=93',
   './modules/lrpt.js?v=93',
   './modules/sonde.js?v=93',
+  './modules/inmarsat.js?v=93',
   './presets.js?v=93',
   './core-graph.js?v=93',
 ];

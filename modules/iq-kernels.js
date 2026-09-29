@@ -27,7 +27,7 @@ IQK.iqGen={
     // дисбаланс квадратур, как у звуковой карты: Q' = g·(Q·cosφ + I·sinφ), Q на imbD отсчётов позже
     const ig=Math.pow(10,(+n.p.imbG||0)/20), ip=(+n.p.imbP||0)*Math.PI/180, isn=Math.sin(ip), ics=Math.cos(ip), idl=Math.round(+n.p.imbD||0);
     const env=mode==='ADS-B' ? iqGenAdsb(n,sr,N) : null;
-    const bb=mode==='LRPT' ? lrptGenerate(n,sr,N,n.p.lrpt||'OQPSK') : mode==='RS41' ? rs41Generate(n,sr,N) : null;
+    const bb=mode==='LRPT' ? lrptGenerate(n,sr,N,n.p.lrpt||'OQPSK') : mode==='RS41' ? rs41Generate(n,sr,N) : mode==='STD-C' ? stdcGenerate(n,sr,N) : null;
     for(let i=0;i<N;i++){
       const m=Math.sin(mph); mph+=wm;
       let amp=a, p=ph;

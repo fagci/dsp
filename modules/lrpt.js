@@ -6,7 +6,7 @@
 
 def({ id:'pskDemod', title:'PSK Demodulator', cat:'IQ', kernel:true, readout:true, view:{h:150},
   ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'},{n:'freq',t:'num'},{n:'lock',t:'num'}],
-  params:[{n:'mode',t:'select',opts:['OQPSK','QPSK'],d:'OQPSK',label:'modulation (Meteor M2-3/M2-4: OQPSK, M2: QPSK)'},
+  params:[{n:'mode',t:'select',opts:['OQPSK','QPSK','BPSK'],d:'OQPSK',label:'modulation (Meteor M2-3/M2-4: OQPSK, M2: QPSK, Inmarsat STD-C: BPSK)'},
           {n:'rate',t:'num',d:72000,label:'symbol rate, Bd'},
           {n:'alpha',t:'range',min:.2,max:1,step:.05,d:.6,label:'RRC roll-off'},
           {n:'bw',t:'range',min:.001,max:.03,step:.001,d:.005,log:true,label:'carrier loop bandwidth, × symbol rate'},
