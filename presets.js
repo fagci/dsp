@@ -110,6 +110,7 @@ const PRESET_CATS={
   'IQ: Receiver from Blocks (Generator)':'Demo',
   'IQ: Channelizer — Three Signals at Once (Generator)':'Demo',
   'ADS-B: Aircraft Map (Generator)':'Demo',
+  'Meteor-M LRPT: Frames (Generator)':'Demo',
 
   'Quick Audio Recording':'Quick Scenarios',
   'Find Sound Source (by Frequency)':'Quick Scenarios',
@@ -149,6 +150,7 @@ const PRESET_CATS={
   'Morse: Encoder + Decoder':'Radio Protocols',
   'HFDL: Receive Chain (to Symbols)':'Radio Protocols',
   'GSM: Receive Bursts (USB SDR)':'Radio Protocols',
+  'Meteor-M LRPT: Frames (USB SDR, 137 MHz)':'Radio Protocols',
   'FT8: Find Signals in Slot':'Radio Protocols',
   'Weather Fax WEFAX 120':'Radio Protocols',
   'WEFAX Transmit (Demo)':'Radio Protocols',
@@ -638,6 +640,49 @@ addEdge(rx.id,'iq',dcb.id,'in'); addEdge(dcb.id,'out',nb.id,'in'); addEdge(nb.id
 addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'out',sq.id,'in');
 addEdge(sq.id,'out',au.id,'in'); addEdge(au.id,'out',an.id,'in');
 addEdge(an.id,'out',dc.id,'L'); addEdge(an.id,'out',dc.id,'R');
+markWiresDirty();
+});
+preset('Meteor-M LRPT: Frames (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Meteor-M LRPT without a radio: the generator sends CCSDS frames the way M2-3/M2-4 do —\n'+
+  'RS(255,223)×4, randomizer, NRZ-M, convolutional code K=7 r=1/2, OQPSK 72 kBd with RRC α=0.6 — at 256 kS/s,\n'+
+  '+2 kHz off and with noise. PSK Demodulator: frequency search, carrier and symbol loops, constellation.\n'+
+  'CCSDS Decoder: Viterbi sync (I/Q swap, 90°, pair shift), ASM, derandomizer, Reed–Solomon → VCDU records.\n'+
+  'Raise the generator noise to see where it breaks: at −20 dBFS (Es/N0 ≈ 6 dB) frames still come through.'});
+nt.size.w=660; nt.size.h=170; applySize(nt);
+const gn=addNode('iqGen',40,260,{sr:'256000',fc:137900000,mode:'LRPT',lrpt:'OQPSK',off:2000,lvl:-20,noise:-30});
+const sp=addNode('iqSpec',40,620,{size:'4096'});
+const sa=addNode('sa',340,620,{auto:true,floor:-90,top:-10});
+sa.size.w=460; sa.size.h=220; applySize(sa);
+const dm=addNode('pskDemod',340,260,{mode:'OQPSK'});
+const de=addNode('ccsdsDecode',720,260,{nrzm:true});
+de.size.w=380; applySize(de);
+const log=addNode('recLog',720,440,{});
+log.size.w=480; applySize(log);
+addEdge(gn.id,'iq',dm.id,'in'); addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
+addEdge(dm.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Meteor-M LRPT: Frames (USB SDR, 137 MHz)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Meteor-M LRPT frames straight from the air. The SDR sits 50 kHz below 137.9 MHz (off its DC spike),\n'+
+  'the shift brings 137.9 MHz to zero; tap the signal on the spectrum to move it. 1.024 MS/s, the demodulator\n'+
+  'decimates ÷4 itself. M2-3/M2-4: OQPSK + NRZ-M (default). Old M2: QPSK, NRZ-M off. The other channel is 137.1 MHz.\n'+
+  'Needs a pass above ~15–20° with a 137 MHz antenna (QFH / turnstile / V-dipole); «Satellites: Track and Doppler»\n'+
+  'tells when. Frames go to the record log — save CSV (vcdu as hex). The image decoder comes next.'});
+nt.size.w=680; nt.size.h=180; applySize(nt);
+const rx=addNode('rtlsdr',40,280,{sr:'1024000',freq:137850000,demod:'IQ'});
+const sa=addNode('sa',720,40,{auto:true,floor:-90,top:-20,split:1});
+sa.size.w=640; sa.size.h=300; applySize(sa);
+const sh=addNode('iqShift',340,280,{offset:50000});
+const dm=addNode('pskDemod',340,440,{mode:'OQPSK'});
+const de=addNode('ccsdsDecode',720,400,{nrzm:true});
+de.size.w=380; applySize(de);
+const log=addNode('recLog',720,580,{});
+log.size.w=480; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',dm.id,'in'); addEdge(dm.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('GSM: Receive Bursts (USB SDR)', function(){

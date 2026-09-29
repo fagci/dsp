@@ -2,7 +2,7 @@
 // Воркер острова (см. core-islands.js): узлы с ядром из IQK, свой топологический порядок.
 // config — состав острова (состояние узлов с теми же id сохраняется), tick — один такт движка.
 const Q=self.location.search;
-importScripts('core-dsp.js'+Q, 'modules/iq-kernels.js'+Q);
+importScripts('core-dsp.js'+Q, 'modules/iq-kernels.js'+Q, 'modules/ccsds-kernels.js'+Q);
 
 let nodes=new Map(), order=[], edges=[], outs={};
 const sent=new Map();               // id → {port: последнее отправленное не-iq значение}
