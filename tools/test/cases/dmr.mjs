@@ -227,6 +227,33 @@ export default [
       return rows.some(q => q.kind === 'message' && q.message === 'Hello from DSP lab') && rows.some(q => q.kind === 'call') && ns[1].ui?.cc === 1 || 'rows '+rows.length+' ui '+JSON.stringify(ns[1].ui?.st);
     } finally { Islands.setEnabled(false); }
   }},
+  {name:'dmr call log: calls, seconds, messages, talkgroups, position, CSV, outputs', arg:GEN('256000', 2000, -45), fn([g, w]){
+    g.push(['dmrLog', {}], ['recLog', {}], ['recLog', {}]); w.push('1.rec>2.rec', '2.stations>3.rec', '2.calls>4.rec');
+    const ns = T.build(g, w); T.run(9);
+    const e = T.errors(); if(e.length) return e.join('; ');
+    const lg = ns[2], s = lg.st.get(2600123), tg = lg.tgs.get(9);
+    if(!s) return 'no station: '+[...lg.st.keys()];
+    if(s.calls < 3 || s.seconds < 1 || s.msgs < 4 || s.alias !== 'DSPLAB' || s.tg !== 9) return 'station '+JSON.stringify(s);
+    if(Math.abs(s.lat-55.0302) > 1e-4 || Math.abs(s.lon-82.9204) > 1e-4) return 'position '+s.lat+' '+s.lon;
+    if(!tg || tg.calls < 3 || !tg.stations.has(2600123)) return 'group '+JSON.stringify([tg?.calls]);
+    const calls = lg.calls.filter(c => !c.data);
+    if(calls.length < 3 || calls.some(c => !(c.dur > 0)) || calls.filter(c => c.dur > 1.3 && c.dur < 1.7).length < 2) return 'calls '+JSON.stringify(calls.map(c => c.dur));   // 4 суперкадра ≈ 1.5 с; первый вызов может быть неполным (вход в середине)
+    if(!ns[3].rows.some(r => r.kind === 'station' && r.id === 'dmr:2600123' && r.lat != null)) return 'stations output';
+    if(!ns[4].rows.some(r => r.kind === 'call-log' && r.radio === 2600123 && r.to === 9 && r.seconds > 0.5)) return 'calls output';
+    const csv = [recsToCsv(dmrLogCallRows(lg)), recsToCsv(dmrLogStationRows(lg)), recsToCsv(dmrLogGroupRows(lg))];
+    if(!csv[0].includes('2600123') || !csv[1].includes('DSPLAB') || !csv[2].split('\n')[0].includes('group')) return 'csv '+csv.map(x => x.slice(0, 60)).join(' | ');
+    lg.p.max = 100; return true;
+  }},
+  {name:'preset: DMR: Activity Log and Station Map (Generator)', fn(){
+    T.preset('DMR: Activity Log and Station Map (Generator)'); T.run(9);
+    const e = T.errors(); if(e.length) return e.join('; ');
+    const m = T.byType('geoMap')[0], pts = [...m.ents.values()].filter(x => x.rec.id === 'dmr:2600123');
+    return pts.length === 1 && pts[0].rec.label === 'DSPLAB' || 'map '+pts.length+' '+pts[0]?.rec.label;
+  }},
+  {name:'preset: DMR: Activity Log and Station Map (USB SDR) loads', fn(){
+    T.preset('DMR: Activity Log and Station Map (USB SDR)'); T.run(0.5);
+    const e = T.errors(); return e.length ? e.join('; ') : true;
+  }},
   {name:'preset: DMR: Calls, SMS and CSBK (Generator)', fn(){
     T.preset('DMR: Calls, SMS and CSBK (Generator)'); T.run(10);
     const e = T.errors(); if(e.length) return e.join('; ');

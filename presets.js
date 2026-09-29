@@ -831,6 +831,48 @@ map.size.w=520; map.size.h=400; applySize(map);
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec'); addEdge(de.id,'rec',map.id,'rec');
 markWiresDirty();
 });
+preset('DMR: Activity Log and Station Map (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Who talks to whom, when and for how long: DMR Decoder → DMR Call Log. The log keeps calls and messages, counters per radio ID\n'+
+  'and per talkgroup (calls, seconds, messages, last heard, talker alias) and buttons for CSV (calls, stations, groups). The stations output feeds the map —\n'+
+  'a station shows up as soon as it sends a position (LRRP / NMEA). The generator has one radio (2600123) with a voice call, messages and a position.'});
+nt.size.w=760; nt.size.h=120; applySize(nt);
+const gn=addNode('iqGen',40,240,{sr:'256000',fc:438000000,mode:'DMR',off:2000,lvl:-20,noise:-45});
+const de=addNode('dmrRx',340,240,{});
+de.size.w=480; de.size.h=300; applySize(de);
+const lg=addNode('dmrLog',340,600,{});
+lg.size.w=480; lg.size.h=300; applySize(lg);
+const map=addNode('geoMap',860,240,{mz:9,mlat:55.03,mlon:82.92,ttl:600,labels:true});
+map.size.w=520; map.size.h=400; applySize(map);
+const log=addNode('recLog',860,680,{});
+log.size.w=520; applySize(log);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',lg.id,'rec');
+addEdge(lg.id,'stations',map.id,'rec'); addEdge(lg.id,'calls',log.id,'rec');
+markWiresDirty();
+});
+preset('DMR: Activity Log and Station Map (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Activity of a DMR repeater or a direct-mode channel: tune the SDR and tap the signal on the spectrum. DMR Call Log counts calls, seconds and\n'+
+  'messages per radio ID and per talkgroup, keeps the last calls and saves CSV; stations that send a position (LRRP / NMEA) are placed on the map.'});
+nt.size.w=760; nt.size.h=110; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'1024000',freq:438000000,demod:'IQ'});
+const sa=addNode('sa',860,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,200,{});
+const de=addNode('dmrRx',340,360,{});
+de.size.w=480; de.size.h=300; applySize(de);
+const lg=addNode('dmrLog',340,720,{});
+lg.size.w=480; lg.size.h=300; applySize(lg);
+const map=addNode('geoMap',860,360,{mz:8,ttl:1800,labels:true,trail:3000});
+map.size.w=520; map.size.h=400; applySize(map);
+const log=addNode('recLog',860,800,{});
+log.size.w=520; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',lg.id,'rec');
+addEdge(lg.id,'stations',map.id,'rec'); addEdge(lg.id,'calls',log.id,'rec');
+markWiresDirty();
+});
 preset('Inmarsat STD-C: EGC Messages (Generator)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Inmarsat-C without a dish: the generator sends a LES TDM carrier the way the satellites do — BPSK 1200 Bd,\n'+
