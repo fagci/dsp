@@ -53,7 +53,9 @@ export default [
     return bad.length ? bad.join('; ') : true;
   }},
   {name:'preset: Sound Card IQ: HF Receiver (SoftRock-style) (no input)', fn(){
-    T.preset('Sound Card IQ: HF Receiver (SoftRock-style)'); T.run(.5);
+    T.preset('Sound Card IQ: HF Receiver (SoftRock-style)');
+    T.byType('mic')[0].armed = true;                 // не включать захват: живой AudioContext мешает следующим тестам
+    T.run(.5);
     const e = T.errors(); if(e.length) return e.join('; ');
     return T.byType('iqBalance')[0].ui ? true : 'balance got no stream';
   }},
