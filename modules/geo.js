@@ -1392,7 +1392,7 @@ function geoDrawLabels(n,cx,v){
   }
 }
 
-const GEO_ICONS=new Set(['dot','square','triangle','diamond','star','cross','plus','plane','antenna','tx','rx','me','flag','sat']);
+const GEO_ICONS=new Set(['dot','square','triangle','diamond','star','cross','plus','plane','antenna','tx','rx','me','flag','sat','balloon']);
 function geoSnrColor(snr){                           // -20 дБ — красный … +20 дБ — зелёный
   const t=clamp((snr+20)/40,0,1);
   return `hsl(${Math.round(t*120)},80%,55%)`;
@@ -1444,6 +1444,10 @@ function geoIcon(cx,icon,x,y,s,rot,col){
       cx.fillRect(-s*.35,-s*.35,s*.7,s*.7);
       cx.fillRect(-s*1.3,-s*.25,s*.8,s*.5); cx.fillRect(s*.5,-s*.25,s*.8,s*.5);
       cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=.7; cx.strokeRect(-s*.35,-s*.35,s*.7,s*.7); break;
+    case 'balloon':                                  // шар, стропа, зонд
+      cx.arc(0,-s*.45,s*.75,0,2*Math.PI); cx.fill();
+      cx.beginPath(); cx.moveTo(0,s*.3); cx.lineTo(0,s*.9); cx.stroke();
+      cx.fillRect(-s*.25,s*.9,s*.5,s*.4); break;
     case 'dot':
       cx.arc(0,0,s*.8,0,2*Math.PI); cx.fill(); cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=1; cx.stroke(); break;
     default:                                         // любой короткий текст/эмодзи как значок, на подложке

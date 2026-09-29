@@ -94,72 +94,78 @@ const CCSDS_PN=(()=>{ const t=new Uint8Array(255); let s=0xFF;
   return t; })();
 function ccsdsDerand(b,from,len){ for(let i=0;i<len;i++) b[from+i]^=CCSDS_PN[i%255]; }
 
-/* ---- RS(255,223) CCSDS: GF(2^8) по 0x187, корни α^(11·(112+j)), j=0..31; c[0] — старшая степень ---- */
-const RS_EXP=new Uint8Array(512), RS_LOG=new Uint8Array(256);
-(()=>{ let x=1; for(let i=0;i<255;i++){ RS_EXP[i]=x; RS_LOG[x]=i; x<<=1; if(x&0x100) x^=0x187; }
-  for(let i=255;i<512;i++) RS_EXP[i]=RS_EXP[i-255]; })();
-const RS_NP=32, RS_FCR=112, RS_PRIM=11;
-function gfMul(a,b){ return a&&b ? RS_EXP[RS_LOG[a]+RS_LOG[b]] : 0; }
-function gfDiv(a,b){ return a ? RS_EXP[(RS_LOG[a]+255-RS_LOG[b])%255] : 0; }
-function gfPow(e){ e%=255; return RS_EXP[e<0 ? e+255 : e]; }   // α^e
-// порождающий многочлен, старший коэффициент первым (g[0]=1)
-const RS_GEN=(()=>{ let g=[1];
-  for(let j=0;j<RS_NP;j++){ const r=gfPow(RS_PRIM*(RS_FCR+j)), h=new Array(g.length+1).fill(0);
-    for(let i=0;i<g.length;i++){ h[i]^=g[i]; h[i+1]^=gfMul(g[i],r); }
+/* ---- Рида — Соломона над GF(2^8): поле poly, корни α^(prim·(fcr+j)), j=0..np−1; cw[0] — старшая степень ---- */
+// CCSDS: 0x187, 112, 11, 32. RS41: 0x11D, 0, 1, 24 (у RS41 проверочные байты в младших степенях — см. sonde-kernels).
+function rsCodec(poly,fcr,prim,np){
+  const EXP=new Uint8Array(512), LOG=new Uint8Array(256), K=255-np;
+  let x=1; for(let i=0;i<255;i++){ EXP[i]=x; LOG[x]=i; x<<=1; if(x&0x100) x^=poly; }
+  for(let i=255;i<512;i++) EXP[i]=EXP[i-255];
+  const mul=(a,b)=>a&&b ? EXP[LOG[a]+LOG[b]] : 0;
+  const div=(a,b)=>a ? EXP[(LOG[a]+255-LOG[b])%255] : 0;
+  const pw=e=>{ e%=255; return EXP[e<0 ? e+255 : e]; };   // α^e
+  // порождающий многочлен, старший коэффициент первым (g[0]=1)
+  let g=[1];
+  for(let j=0;j<np;j++){ const r=pw(prim*(fcr+j)), h=new Array(g.length+1).fill(0);
+    for(let i=0;i<g.length;i++){ h[i]^=g[i]; h[i+1]^=mul(g[i],r); }
     g=h; }
-  return Uint8Array.from(g); })();
-// cw[0..222] — данные; в cw[223..254] пишется проверочная часть
-function rsEncode(cw){
-  const p=new Uint8Array(RS_NP);
-  for(let i=0;i<223;i++){
-    const f=cw[i]^p[0];
-    p.copyWithin(0,1); p[RS_NP-1]=0;
-    if(f) for(let j=0;j<RS_NP;j++) p[j]^=gfMul(f,RS_GEN[j+1]);
-  }
-  cw.set(p,223);
+  const GEN=Uint8Array.from(g);
+  return {np, K, mul, div, pw, gen:GEN,
+    // cw[0..K−1] — данные; в cw[K..254] пишется проверочная часть
+    encode(cw){
+      const p=new Uint8Array(np);
+      for(let i=0;i<K;i++){
+        const f=cw[i]^p[0];
+        p.copyWithin(0,1); p[np-1]=0;
+        if(f) for(let j=0;j<np;j++) p[j]^=mul(f,GEN[j+1]);
+      }
+      cw.set(p,K);
+    },
+    // исправление на месте: число исправленных байт или −1
+    decode(cw){
+      const S=new Uint8Array(np);
+      let bad=0;
+      for(let j=0;j<np;j++){
+        const r=pw(prim*(fcr+j));
+        let s=0; for(let i=0;i<255;i++) s=mul(s,r)^cw[i];
+        S[j]=s; bad|=s;
+      }
+      if(!bad) return 0;
+      // Берлекэмп — Мэсси
+      let C=new Uint8Array(np+1), B=new Uint8Array(np+1), L=0, m=1, b=1;
+      C[0]=1; B[0]=1;
+      for(let n=0;n<np;n++){
+        let d=S[n];
+        for(let i=1;i<=L;i++) d^=mul(C[i],S[n-i]);
+        if(!d){ m++; continue; }
+        const coef=div(d,b), T=C.slice();
+        for(let i=m;i<=np;i++) C[i]^=mul(coef,B[i-m]);
+        if(2*L<=n){ L=n+1-L; B=T; b=d; m=1; } else m++;
+      }
+      if(L>np/2) return -1;
+      // Ω = S·Λ mod x^np
+      const O=new Uint8Array(np);
+      for(let i=0;i<np;i++){ let v=0; for(let j=0;j<=Math.min(i,L);j++) v^=mul(C[j],S[i-j]); O[i]=v; }
+      // Ченя: позиция i (степень d=254−i), локатор Y=α^(prim·d); корень Λ — Y⁻¹. Форни: e = Y^(1−fcr)·Ω(Y⁻¹)/Λ'(Y⁻¹)
+      let found=0;
+      const pos=[], val=[];
+      for(let i=0;i<255;i++){
+        const d=254-i, yl=(prim*d)%255, xi=pw(-yl);
+        let lv=0; for(let j=L;j>=0;j--) lv=mul(lv,xi)^C[j];
+        if(lv) continue;
+        let ov=0; for(let j=np-1;j>=0;j--) ov=mul(ov,xi)^O[j];
+        let dv=0; for(let j=L-(L%2===0 ? 1 : 0);j>=1;j-=2) dv^=mul(C[j],pw(-yl*(j-1)));
+        if(!dv) return -1;
+        pos.push(i); val.push(mul(div(ov,dv),pw(yl*(1-fcr))));
+        found++;
+      }
+      if(found!==L) return -1;
+      for(let k=0;k<found;k++) cw[pos[k]]^=val[k];
+      return found;
+    }};
 }
-// исправление на месте: число исправленных байт или −1
-function rsDecode(cw){
-  const S=new Uint8Array(RS_NP);
-  let bad=0;
-  for(let j=0;j<RS_NP;j++){
-    const x=gfPow(RS_PRIM*(RS_FCR+j));
-    let s=0; for(let i=0;i<255;i++) s=gfMul(s,x)^cw[i];
-    S[j]=s; bad|=s;
-  }
-  if(!bad) return 0;
-  // Берлекэмп — Мэсси
-  let C=new Uint8Array(RS_NP+1), B=new Uint8Array(RS_NP+1), L=0, m=1, b=1;
-  C[0]=1; B[0]=1;
-  for(let n=0;n<RS_NP;n++){
-    let d=S[n];
-    for(let i=1;i<=L;i++) d^=gfMul(C[i],S[n-i]);
-    if(!d){ m++; continue; }
-    const coef=gfDiv(d,b), T=C.slice();
-    for(let i=m;i<=RS_NP;i++) C[i]^=gfMul(coef,B[i-m]);
-    if(2*L<=n){ L=n+1-L; B=T; b=d; m=1; } else m++;
-  }
-  if(L>RS_NP/2) return -1;
-  // Ω = S·Λ mod x^32
-  const O=new Uint8Array(RS_NP);
-  for(let i=0;i<RS_NP;i++){ let v=0; for(let j=0;j<=Math.min(i,L);j++) v^=gfMul(C[j],S[i-j]); O[i]=v; }
-  // Ченя: позиция i (степень d=254−i), локатор Y=α^(11d); корень Λ — Y⁻¹. Форни: e = Y^(1−fcr)·Ω(Y⁻¹)/Λ'(Y⁻¹)
-  let found=0;
-  const pos=[], val=[];
-  for(let i=0;i<255;i++){
-    const d=254-i, yl=(RS_PRIM*d)%255, xi=gfPow(-yl);
-    let lv=0; for(let j=L;j>=0;j--) lv=gfMul(lv,xi)^C[j];
-    if(lv) continue;
-    let ov=0; for(let j=RS_NP-1;j>=0;j--) ov=gfMul(ov,xi)^O[j];
-    let dv=0; for(let j=L-(L%2===0 ? 1 : 0);j>=1;j-=2) dv^=gfMul(C[j],gfPow(-yl*(j-1)));
-    if(!dv) return -1;
-    pos.push(i); val.push(gfMul(gfDiv(ov,dv),gfPow(yl*(1-RS_FCR))));
-    found++;
-  }
-  if(found!==L) return -1;
-  for(let k=0;k<found;k++) cw[pos[k]]^=val[k];
-  return found;
-}
+const RS_CCSDS=rsCodec(0x187,112,11,32);
+function rsEncode(cw){ RS_CCSDS.encode(cw); }
+function rsDecode(cw){ return RS_CCSDS.decode(cw); }
 // двойственный базис (CCSDS 131.0-B): таблица в двойственный, обратная — по ней
 const RS_TO_DUAL=Uint8Array.from(('007bafd499e2364dfa81552e6318ccb786fd29521f64b0cb7c07d3a8e59e4a31ec974338750edaa1166db9c28ff4205b6a11c5bef3885c2790eb3f440972a6dd'+
   'ef94403b760dd9a2156ebac18cf723586912c6bdf08b5f2493e83c470a71a5de0378acd79ae1354ef982562d601bcfb485fe2a511c67b3c87f04d0abe69d4932'+
