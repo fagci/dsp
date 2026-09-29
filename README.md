@@ -167,13 +167,16 @@ The **GSM: Receive Bursts (IQ)** (`gsmRx`) node is a downlink physical-layer rec
 - resamples the input (any rate ≥ ~1.08 MS/s) to 4×270.833 kS/s (cubic interpolation), with an internal frequency-correction loop
 - **FCCH**: finds the frequency-correction bursts (a pure tone) and pulls the carrier onto centre
 - **SCH**: estimates the channel from the extended training sequence, detects the burst with an MLSE (Viterbi) equaliser, then convolutionally decodes and CRC-checks it — giving the **BSIC** (NCC/BCC) and the **frame number** (`t1/t2/t3`)
-- once synchronized, it steps through the 51-multiframe on TS0, extracts every burst (FCCH / SCH / normal / dummy) with the same equaliser, and outputs them as **148 soft bits** on the `burst` port (a `blk` carrying its frame number and timeslot), plus SCH sync records on `rec`
+- once synchronized, it steps through the 51-multiframe on TS0, extracts every burst (FCCH / SCH / normal / dummy) with the same equaliser, and outputs them as **148 soft bits** on the `burst` port (a `blk` carrying its frame number and timeslot)
+- it also decodes the **BCCH System Information**: four normal bursts on TS0 (frames 2–5) → de-interleave → convolutional decode (xCCH) → FIRE CRC → RR message. From **SI Type 3** it reads the **Cell ID** and the **Location Area Identification** (MCC/MNC/LAC), from SI4 the LAI — i.e. it identifies the cell, not just its BSIC
 
-Outputs: `rec` (SCH records for the log/map), `burst` (per-burst bits), `freq` (current offset estimate, Hz), `sync` (1 when locked). It is a receiver, not a traffic decoder — the logical channels (BCCH/CCCH, GSMTAP) are decoded downstream from the burst bits. Tune to a GSM900 BCCH (935–960 MHz) or DCS1800 (1805–1880 MHz).
+Outputs: `rec` (records for the log/map — SCH sync with BSIC, and BCCH cells with `id` = `PLMN-LAC-CID`, plus `ci`, `mcc`, `mnc`, `lac`, frequency, dBm and time), `burst` (per-burst bits), `freq` (current offset estimate, Hz), `sync` (1 when locked). Tune to a GSM900 BCCH (935–960 MHz) or DCS1800 (1805–1880 MHz).
 
-The heavy parts (SCH convolutional code + CRC + BSIC/frame-number parsing, channel estimation + MLSE burst detection, FCCH tone detection and offset estimation) are covered by smoke tests on synthetic bursts; on-air reception is untested on real hardware yet.
+To keep a **list of cells**, wire `rec` into **Rec: Unique by Key** (`recUniq`, key = `id`): it keeps one row per cell with a hit count and first/last time, and saves to CSV / GeoJSON. The node is generic — it dedups any records by any field (aircraft by ICAO, stations by callsign, …).
 
-Ready-made patch: **GSM: Receive Bursts (USB SDR)**.
+The heavy parts (SCH and xCCH convolutional codes + CRC/FIRE, BSIC/frame-number and SI3 Cell ID / MCC-MNC-LAC parsing, channel estimation + MLSE burst detection, FCCH tone detection and offset estimation) are covered by smoke tests on synthetic bursts; on-air reception is untested on real hardware yet. It stops at System Information — traffic channels are not decoded.
+
+Ready-made patch: **GSM: Receive Bursts (USB SDR)** (spectrum → tap a channel → receiver → cell list → log).
 
 ## IQ blocks
 
@@ -215,7 +218,7 @@ Presets: *ADS-B: Aircraft Map (Generator)* (no hardware), *ADS-B: Aircraft Map (
 
 ## Tests
 
-Smoke tests run the engine without a sound card in headless Chromium: a few presets (decoded RTTY text, APRS frames with a good CRC, sound on the output) and the IQ chain (tone frequency and level after FM/AM/SSB, sideband rejection, bridge lock to a drifting clock, decimator and channelizer independent of chunk sizes, channelizer gain, offset and neighbour rejection, two receivers from one channelizer, WFM stereo separation and RDS, SAM lock with a carrier offset, SSB AGC, de-emphasis, noise blanker, squelch, ADS-B (reference frames, generator → decoder at 2 and 2.4 MS/s, bit correction), DC block, I/Q merge, auto notch, USB SDR `iq` output from an IQ file), and the same chains in workers: one island per connected chain, values and spectra coming back, parameters followed on the fly, the worker and its state kept when wires change, fallback to the main thread when workers are blocked, and the workers starting on a cross-origin isolated page (as served by the service worker). For GSM: the SCH convolutional code / CRC round-trip and BSIC/frame-number parsing, channel estimation + MLSE recovering a synthetic normal burst, and FCCH detection with carrier-offset estimation.
+Smoke tests run the engine without a sound card in headless Chromium: a few presets (decoded RTTY text, APRS frames with a good CRC, sound on the output) and the IQ chain (tone frequency and level after FM/AM/SSB, sideband rejection, bridge lock to a drifting clock, decimator and channelizer independent of chunk sizes, channelizer gain, offset and neighbour rejection, two receivers from one channelizer, WFM stereo separation and RDS, SAM lock with a carrier offset, SSB AGC, de-emphasis, noise blanker, squelch, ADS-B (reference frames, generator → decoder at 2 and 2.4 MS/s, bit correction), DC block, I/Q merge, auto notch, USB SDR `iq` output from an IQ file), and the same chains in workers: one island per connected chain, values and spectra coming back, parameters followed on the fly, the worker and its state kept when wires change, fallback to the main thread when workers are blocked, and the workers starting on a cross-origin isolated page (as served by the service worker). For GSM: the SCH convolutional code / CRC round-trip and BSIC/frame-number parsing, channel estimation + MLSE recovering a synthetic normal burst, FCCH detection with carrier-offset estimation, and the BCCH chain (xCCH de-interleave + Viterbi + FIRE CRC, SI3 → Cell ID / PLMN / LAC, and CRC rejecting a corrupted block). For records: `recUniq` dedup by key with counts and first/last time.
 
 ```
 cd tools/test
