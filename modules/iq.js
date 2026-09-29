@@ -30,7 +30,10 @@ defIQ({ id:'iqGen', title:'IQ Generator', cat:'IQ',
           {n:'noise',t:'range',min:-120,max:0,step:1,d:-60,label:'noise, dBFS'},
           {n:'lrpt',t:'select',opts:['OQPSK','QPSK'],d:'OQPSK',label:'LRPT: OQPSK + NRZ-M (Meteor M2-3/M2-4) or QPSK (M2)'},
           {n:'ps',t:'text',d:'DSP TEST',label:'WFM stereo: RDS station name (tone in the left channel only)'},
-          {n:'ppm',t:'range',min:-1000,max:1000,step:1,d:0,label:'clock error vs sound card, ppm',adv:true}]},
+          {n:'ppm',t:'range',min:-1000,max:1000,step:1,d:0,label:'clock error vs sound card, ppm',adv:true},
+          {n:'imbG',t:'range',min:-3,max:3,step:.01,d:0,label:'I/Q imbalance: Q gain, dB',adv:true},
+          {n:'imbP',t:'range',min:-15,max:15,step:.1,d:0,label:'I/Q imbalance: phase, °',adv:true},
+          {n:'imbD',t:'range',min:0,max:2,step:1,d:0,label:'I/Q imbalance: Q late by, samples',adv:true}]},
   n=>(+n.p.sr/1000)+' kS/s · '+n.p.mode+' @ '+((n.p.fc+n.p.off)/1e6).toFixed(4)+' MHz');
 
 defIQ({ id:'iqShift', title:'IQ Frequency Shift', cat:'IQ',
@@ -65,6 +68,17 @@ defIQ({ id:'iqDc', title:'IQ DC Block', cat:'IQ',
   ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'}],
   params:[{n:'fc',t:'range',min:1,max:1000,step:1,d:150,log:true,label:'cutoff, Hz'}]},
   n=>n.ui ? 'DC '+(20*Math.log10(n.ui.dc+1e-12)).toFixed(1)+' dBFS' : 'no input');
+
+defIQ({ id:'iqBalance', title:'IQ Balance', cat:'IQ',
+  ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'}],
+  params:[{n:'auto',t:'check',d:true,label:'auto (blind: needs a spectrum symmetric on average — noise, many signals)'},
+          {n:'tau',t:'range',min:.1,max:10,step:.1,d:1,log:true,label:'auto: averaging, s'},
+          {n:'gain',t:'range',min:-3,max:3,step:.01,d:0,label:'manual: Q gain, dB'},
+          {n:'phase',t:'range',min:-15,max:15,step:.05,d:0,label:'manual: phase, °'},
+          {n:'delay',t:'range',min:-2,max:2,step:.01,d:0,label:'Q late by, samples (sound cards: often ±1)'}]},
+  n=>{ const u=n.ui; if(!u) return 'no input';
+    return (u.auto ? 'auto' : 'manual')+' · Q '+(u.gain>=0?'+':'')+u.gain.toFixed(2)+' dB · '+(u.phase>=0?'+':'')+u.phase.toFixed(2)+'°'+
+      ' · image '+u.before.toFixed(0)+' → '+u.after.toFixed(0)+' dB'; });
 
 defIQ({ id:'iqNb', title:'IQ Noise Blanker', cat:'IQ',
   ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'}],
