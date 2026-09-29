@@ -54,6 +54,10 @@ export function setup(){
     if(!m.some(q => q.service === 'short data' && q.message.startsWith('DMR TEST 34') && q.crc === 'ok' && q.rate === '3/4')) return 'no short data ¾: '+JSON.stringify(m);
     if(!k('csbk').some(q => q.name === 'Preamble' && q.data === 1 && q.from === 2600123 && q.to === 4001234)) return 'no preamble CSBK';
     if(!k('csbk').some(q => q.name === 'BS_Dwn_Act')) return 'no BS_Dwn_Act';
+    if(!m.some(q => q.service === 'LRRP' && Math.abs(q.lat-55.0302) < 1e-4 && Math.abs(q.lon-82.9204) < 1e-4 && q.heading === 90 && q.time === '2026-09-29 18:30:15' && q.id === 'dmr:2600123')) return 'no LRRP position: '+JSON.stringify(m.filter(q => q.service === 'LRRP'));
+    if(!k('csbk').some(q => q.name === 'C_ALOHA' && q.model === 'small' && q.net === 42 && q.site === 7 && q.reg === 1)) return 'no C_ALOHA: '+JSON.stringify(k('csbk').filter(q => q.op === 0x19));
+    if(!k('csbk').some(q => q.name === 'TV_GRANT' && q.lpcn === 5 && q.ts === 2 && q.to === 9 && q.from === 2600123)) return 'no TV_GRANT';
+    if(r.ui.sys?.net !== 42) return 'sys '+JSON.stringify(r.ui.sys);
     if(!k('slc').some(q => q.slco === 1 && q.ts1 === 'group voice' && q.ts2 === 'group data')) return 'no short LC: '+JSON.stringify(k('slc'));
     if(!r.recs.some(q => q.slot === 1) || !r.recs.some(q => q.slot === 2)) return 'slots';
     return true;
@@ -135,6 +139,14 @@ export default [
     r = dmrT34Dec(e);
     return r.err > 0 || 'a bit error goes unnoticed';
   }},
+  {name:'dmr: NMEA (UDT) and LRRP position parsing', fn(){
+    const n = dmrNmea('$GPGGA,123519,5501.812,N,08255.224,E,1,08,0.9,123.4,M,46.9,M,,*47\r\n$GPRMC,123519,A,5501.812,N,08255.224,E,022.4,084.4,230394,003.1,W*6A');
+    if(Math.abs(n.lat-55.030200) > 1e-6 || Math.abs(n.lon-82.920400) > 1e-6 || n.alt !== 123.4 || n.speed !== 41.5 || n.heading !== 84.4) return 'nmea '+JSON.stringify(n);
+    const s = dmrNmea('$GPRMC,1,A,3357.500,S,15112.000,W,0,0,1,0,W*00');
+    if(s.lat >= 0 || s.lon >= 0) return 'nmea signs '+JSON.stringify(s);
+    if(dmrLrrp(Uint8Array.from([1,2,3,4,5]), 0).lat != null) return 'lrrp accepted noise';
+    return true;
+  }},
   {name:'dmr: CRC-32 of data messages, TMS text and IP/UDP parsing', fn(){
     const {blk, pad} = dmrMsgBlocks(dmrIpMsg(1234567, 7654321, 'Привет, DMR'), 12, 0);
     const m = new Uint8Array(blk.length*12); blk.forEach((b, i) => m.set(b, 12*i));
@@ -204,7 +216,8 @@ export default [
     T.preset('DMR: Calls, SMS and CSBK (Generator)'); T.run(10);
     const e = T.errors(); if(e.length) return e.join('; ');
     const log = T.byType('recLog')[0];
-    return log.rows.some(q => q.kind === 'message' && q.message === 'Hello from DSP lab') && log.rows.some(q => q.kind === 'call') || 'rows '+log.rows.length;
+    const m = T.byType('geoMap')[0], pts = [...m.ents.values()].filter(x => x.rec.id === 'dmr:2600123');
+    return log.rows.some(q => q.kind === 'message' && q.message === 'Hello from DSP lab') && log.rows.some(q => q.kind === 'call') && pts.length === 1 || 'rows '+log.rows.length+' map '+pts.length;
   }},
   {name:'preset: DMR: Repeater or Direct Mode (USB SDR) loads', fn(){
     T.preset('DMR: Repeater or Direct Mode (USB SDR)'); T.run(0.5);

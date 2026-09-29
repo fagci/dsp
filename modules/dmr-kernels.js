@@ -299,6 +299,39 @@ function dmrTms(a,p){
   }
   return {ack:false, text:best};
 }
+// LRRP (UDP 4001, Motorola): токены позиции как в dsd-fme; координаты — знаковые int32 (широта ×180/2³², долгота ×360/2³²)
+function dmrLrrp(a,p){
+  const r={}, end=a.length;
+  if(end-p<3 || ![0x05,0x07,0x09,0x0B,0x0D,0x0F,0x11,0x14,0x15].includes(a[p])) return r;
+  r.lrrp=({0x05:'location request',0x07:'location response',0x09:'triggered start',0x0B:'triggered start response',0x0D:'triggered location',0x0F:'triggered stop',0x11:'triggered stop response',0x14:'version request',0x15:'version response'})[a[p]];
+  const i32=o=>((a[o]<<24)|(a[o+1]<<16)|(a[o+2]<<8)|a[o+3]);
+  const pos=o=>{ const la=i32(o)*180/4294967296, lo=i32(o+4)*360/4294967296; if(Math.abs(la)<=90 && Math.abs(lo)<=180 && (la||lo)){ r.lat=+la.toFixed(6); r.lon=+lo.toFixed(6); } };
+  for(let i=p+2;i<end;i++){
+    const t=a[i];
+    if((t===0x51||t===0x54||t===0x55) && r.lat==null && i+10<end){ pos(i+1); if(r.lat!=null){ r.radius=(a[i+9]<<8)|a[i+10]; i+=10; } }
+    else if(t===0x66 && r.lat==null && i+8<end){ pos(i+1); if(r.lat!=null) i+=8; }
+    else if((t===0x69||t===0x6A) && r.lat==null && i+9<end){ pos(i+1); if(r.lat!=null){ r.alt=a[i+9]; i+=9; } }
+    else if((t===0x34||t===0x35) && r.time==null && i+5<end){
+      const y=(a[i+1]<<6)|(a[i+2]>>2), mo=((a[i+2]&3)<<2)|(a[i+3]>>6), d=(a[i+3]>>1)&31, h=((a[i+3]&1)<<4)|(a[i+4]>>4), mi=((a[i+4]&15)<<2)|(a[i+5]>>6), sc=a[i+5]&63;
+      if(y>=2000 && y<=2100 && mo>=1 && mo<=12 && d>=1 && d<=31 && h<24 && mi<60 && sc<60){ r.time=y+'-'+String(mo).padStart(2,'0')+'-'+String(d).padStart(2,'0')+' '+String(h).padStart(2,'0')+':'+String(mi).padStart(2,'0')+':'+String(sc).padStart(2,'0'); i+=5; }
+    }
+    else if(t===0x56 && r.heading==null && i+1<end){ r.heading=a[i+1]*2; i+=1; }
+  }
+  return r;
+}
+// NMEA GGA / RMC → широта, долгота (градусы), высота, скорость, курс
+function dmrNmea(str){
+  const r={};
+  for(const line of str.split(/[\r\n]+/)){
+    const m=line.match(/\$?G[PNL](GGA|RMC),([^*]*)/); if(!m) continue;
+    const f=m[2].split(','), ll=(v,h)=>{ if(!v||!h) return null; const dot=v.indexOf('.'), d=parseInt(v.slice(0,dot-2),10), mn=parseFloat(v.slice(dot-2)); return (d+mn/60)*(h==='S'||h==='W' ? -1 : 1); };
+    let la, lo;
+    if(m[1]==='GGA'){ la=ll(f[1],f[2]); lo=ll(f[3],f[4]); if(f[8]) r.alt=+f[8]; }
+    else { if(f[1]!=='A') continue; la=ll(f[2],f[3]); lo=ll(f[4],f[5]); if(f[6]) r.speed=+(f[6]*1.852).toFixed(1); if(f[7]) r.heading=+f[7]; }
+    if(la!=null && lo!=null && !isNaN(la) && !isNaN(lo)){ r.lat=+la.toFixed(6); r.lon=+lo.toFixed(6); }
+  }
+  return r;
+}
 // собранные октеты → поля записи (IP/UDP, TMS, короткие данные)
 function dmrPayload(sap,dd,msg){
   const r={};
@@ -309,6 +342,7 @@ function dmrPayload(sap,dd,msg){
       const sp=(msg[ihl]<<8)|msg[ihl+1], dp=(msg[ihl+2]<<8)|msg[ihl+3]; r.port=dp; r.proto='UDP';
       const p=ihl+8, port=dp===4007||sp===4007 ? 4007 : dp;
       if(port===4007){ const t=dmrTms(msg,p); r.service='TMS'; if(t.ack) r.ack=true; else r.message=t.text; }
+      else if(port===4001){ r.service='LRRP'; Object.assign(r,dmrLrrp(msg,p)); r.data=dmrHex(msg,p,Math.min(40,msg.length-p)); }
       else { r.service=({4001:'LRRP',4004:'XCMP',4005:'ARS',4008:'telemetry',231:'Cellocator'})[port]||('UDP '+port); r.data=dmrHex(msg,p,Math.min(40,msg.length-p)); }
     } else { r.proto='IP '+prot; r.data=dmrHex(msg,ihl,Math.min(40,msg.length-ihl)); }
   } else if(dd!=null){
@@ -659,7 +693,15 @@ function dmrData(n,L,S,bits,st,out){
     let text=(dt===4 ? 'MBC ' : 'CSBK ')+name;
     if(op===0x3D){ Object.assign(f,{data:b[2]>>7, group:(b[2]>>6)&1, blocks:b[3], to:dmrId(b,4), from:dmrId(b,7)});
       text+=(f.data ? ' data' : ' CSBK')+' ×'+f.blocks+' '+f.from+' → '+(f.group ? 'TG ' : '')+f.to; }
-    else if([0x04,0x05,0x1F,0x20,0x24,0x26,0x27,0x30,0x31,0x32,0x33,0x34].includes(op) && dt===3){ f.to=dmrId(b,4); f.from=dmrId(b,7); text+=' '+f.from+' → '+f.to; }
+    else if(op>=0x30 && op<=0x37 && dt===3){                // выдача канала: логический номер, слот, адресат, источник
+      Object.assign(f,{lpcn:(b[2]<<4)|(b[3]>>4), ts:((b[3]>>3)&1)+1, emergency:(b[3]>>1)&1, to:dmrId(b,4), from:dmrId(b,7)});
+      text+=' ch '+(f.lpcn===0xFFF ? 'absolute' : f.lpcn)+' TS'+f.ts+' '+f.from+' → '+f.to+(f.emergency ? ' emergency' : ''); }
+    else if(op===0x19 && dt===3){                            // C_ALOHA: параметры системы Tier III
+      const bb=dmrBitsOf(b), model=dmrNum(bb,40,2), nb=[9,7,4,2][model], sb=[3,5,8,10][model];
+      Object.assign(f,{version:dmrNum(bb,19,3), mask:dmrNum(bb,24,5), reg:bb[35], model:['tiny','small','large','huge'][model], net:dmrNum(bb,42,nb), site:dmrNum(bb,42+nb,sb)});
+      n.sys={net:f.net, site:f.site, model:f.model};
+      text+=' '+f.model+' net '+f.net+' site '+f.site+(f.reg ? ' reg' : ''); }
+    else if([0x04,0x05,0x1F,0x20,0x24,0x26,0x27].includes(op) && dt===3){ f.to=dmrId(b,4); f.from=dmrId(b,7); text+=' '+f.from+' → '+f.to; }
     else if(op===0x38){ f.bs=dmrId(b,4); f.from=dmrId(b,7); text+=' BS '+f.bs+' src '+f.from; }
     else text+=' '+f.raw;
     dmrEmit(n,S,L,out,dt===3 ? 'csbk' : 'mbc',f,text,f.raw);
@@ -720,10 +762,12 @@ function dmrDataDone(n,L,S,out){
   if(d.dpf===0){
     const fm=d.dd;
     const msg=fm===7 ? dmrUtf16(m,0,tot,false) : fm===3 ? dmrText7(m,0,tot) : dmrPrintable(m,0,tot);
-    f.format=fm; f.message=msg; f.data=dmrHex(m,0,Math.min(48,tot)); f.service='UDT';
+    f.format=fm; f.message=fm===5 ? dmrPrintable(m,0,tot) : msg; f.data=dmrHex(m,0,Math.min(48,tot)); f.service='UDT';
+    if(fm===5) Object.assign(f,dmrNmea(f.message));
   } else Object.assign(f,dmrPayload(d.dpf===13||d.dpf===14 ? 10 : d.sap,d.dpf===13||d.dpf===14 ? d.dd : null,body));
+  if(f.lat!=null){ f.id='dmr:'+d.from; f.label=String(d.from); }
   n.st.msgs++;
-  text='DATA '+f.from+' → '+(d.group ? 'TG ' : '')+f.to+' '+(f.service||'')+(f.port?' :'+f.port:'')+' '+(crc===false?'[CRC bad] ':'')+(f.message!=null ? '"'+f.message+'"' : f.data||'');
+  text='DATA '+f.from+' → '+(d.group ? 'TG ' : '')+f.to+' '+(f.service||'')+(f.port?' :'+f.port:'')+' '+(crc===false?'[CRC bad] ':'')+(f.lat!=null ? f.lat+', '+f.lon+' ' : '')+(f.message!=null ? '"'+f.message+'"' : f.data||'');
   dmrEmit(n,S,L,out,'message',f,text);
 }
 
@@ -755,11 +799,15 @@ function dmrDataBurst(cc,dt,raw196,sp){
 }
 function dmrVoiceBurst(ambe,mid){ const b=new Uint8Array(264); b.set(ambe.subarray(0,108),0); b.set(mid,108); b.set(ambe.subarray(108),156); return b; }
 function dmrDib(bits){ const d=new Uint8Array(bits.length>>1); for(let i=0;i<d.length;i++) d[i]=bits[2*i]*2+bits[2*i+1]; return d; }
-function dmrIpMsg(from,to,text){
-  const t=[]; for(const ch of text){ const c=ch.charCodeAt(0); t.push(c&255,c>>8); }
-  const tl=2+t.length;
-  // UDP: порты, длина (заголовок 8 + TMS), контрольная 0; TMS: длина, заголовок, число адресных байт, текст
-  const u=[0x0F,0xA7,0x0F,0xA7,((8+2+tl)>>8)&255,(8+2+tl)&255,0,0,(tl>>8)&255,tl&255,0xA0,0,...t];
+function dmrIpMsg(from,to,text,udp){
+  let u;
+  if(udp){ const l=8+udp.body.length; u=[udp.port>>8,udp.port&255,udp.port>>8,udp.port&255,l>>8,l&255,0,0,...udp.body]; }
+  else {
+    const t=[]; for(const ch of text){ const c=ch.charCodeAt(0); t.push(c&255,c>>8); }
+    const tl=2+t.length;
+    // UDP: порты, длина (заголовок 8 + TMS), контрольная 0; TMS: длина, заголовок, число адресных байт, текст
+    u=[0x0F,0xA7,0x0F,0xA7,((8+2+tl)>>8)&255,(8+2+tl)&255,0,0,(tl>>8)&255,tl&255,0xA0,0,...t];
+  }
   const tot=20+u.length, ip=[0x45,0,tot>>8,tot&255,0,0,0,0,64,17,0,0,12,(from>>16)&255,(from>>8)&255,from&255,12,(to>>16)&255,(to>>8)&255,to&255];
   return Uint8Array.from([...ip,...u]);
 }
@@ -804,7 +852,7 @@ function dmrBuildScript(mode,cc){
     }
   }
   q1.push(dburst(2,dmrEncLc(lcBytes(0,dst,src),0x99)));
-  while(q1.length<28) q1.push(idle);
+  while(q1.length<32) q1.push(idle);
   // слот 2: два сообщения данных
   const q2=[];
   const pre=(to,from,blocks)=>dmrEncMasked(Uint8Array.from([0xBD,0,0x80,blocks,(to>>16)&255,(to>>8)&255,to&255,(from>>16)&255,(from>>8)&255,from&255]),0xA5A5);
@@ -820,7 +868,21 @@ function dmrBuildScript(mode,cc){
     q2.push(dburst(6,dmrEncMasked(h,0xCCCC)));
     for(const b of blk) q2.push(dburst(8,dmrT34Enc(dmrBitsOf(b)))); }
   q2.push(dburst(3,dmrEncMasked(Uint8Array.from([0xB8,0,0,0,0,0,5,(src>>16)&255,(src>>8)&255,src&255]),0xA5A5)));
-  while(q2.length<28) q2.push(idle);
+  // LRRP-позиция (UDP 4001) и CSBK Tier III: C_ALOHA и выдача канала
+  { const i32=v=>[(v>>>24)&255,(v>>>16)&255,(v>>>8)&255,v&255], la=Math.round(55.0302/180*4294967296)>>>0, lo=Math.round(82.9204/360*4294967296)>>>0;
+    const body=[0x0D,22,0x22,0x02,0x01,0x34,0x1F,0xAA,0x7B,0x27,0x8F,0x51,...i32(la),...i32(lo),0x00,0x0A,0x56,0x2D];
+    const {blk,pad}=dmrMsgBlocks(dmrIpMsg(id2[1],id2[0],null,{port:4001,body}),12,0);
+    q2.push(dburst(3,pre(id2[0],id2[1],blk.length)));
+    const h=Uint8Array.from([0x02|((pad>>4)<<4),(4<<4)|(pad&15),(id2[0]>>16)&255,(id2[0]>>8)&255,id2[0]&255,(id2[1]>>16)&255,(id2[1]>>8)&255,id2[1]&255,0x80|blk.length,0]);
+    q2.push(dburst(6,dmrEncMasked(h,0xCCCC)));
+    for(const b of blk) q2.push(dburst(7,dmrBptcEnc(dmrBitsOf(b)))); }
+  { const bb=new Uint8Array(80), put=(o,l,v)=>{ for(let i=0;i<l;i++) bb[o+i]=(v>>(l-1-i))&1; };
+    put(0,1,1); put(2,6,0x19); put(19,3,1); put(23,1,1); put(24,5,1); put(31,4,5); put(35,1,1); put(36,4,3); put(40,2,1); put(42,7,42); put(49,5,7);
+    q2.push(dburst(3,dmrEncMasked(dmrBytes(bb,0,10),0xA5A5))); }
+  { const bb=new Uint8Array(80), put=(o,l,v)=>{ for(let i=0;i<l;i++) bb[o+i]=(v>>(l-1-i))&1; };
+    put(0,1,1); put(2,6,0x31); put(16,12,5); put(28,1,1); put(32,24,9); put(56,24,src);
+    q2.push(dburst(3,dmrEncMasked(dmrBytes(bb,0,10),0xA5A5))); }
+  while(q2.length<32) q2.push(idle);
   // кадры
   const frames=[];
   if(mode==='repeater (BS)'){
@@ -828,7 +890,7 @@ function dmrBuildScript(mode,cc){
     for(let i=0;i<8;i++){ act[12+i]=(0x5A>>(7-i))&1; act[20+i]=(0xA5>>(7-i))&1; }
     act.set(dmrCrc8Gen(act.subarray(0,28)),28);
     const frag=dmrShortLcEnc(act);
-    for(let f=0;f<56;f++){
+    for(let f=0;f<64;f++){
       const slot=f&1, c=new Uint8Array(24), lcss=[1,3,3,2][f&3];
       c[0]=1; c[1]=slot; c[2]=lcss>>1; c[3]=lcss&1; dmrHamEnc(DMR_H743,c,0); c.set(frag[f&3],7);
       const b24=new Uint8Array(24); for(let k=0;k<24;k++) b24[k]=c[DMR_CACH_IL[k]];
@@ -836,7 +898,7 @@ function dmrBuildScript(mode,cc){
     }
   } else {
     const first=mode==='direct TS2' ? 1 : 0;
-    for(let f=0;f<56;f++){
+    for(let f=0;f<64;f++){
       if((f&1)!==first){ frames.push(null); continue; }
       const fr=new Uint8Array(144); fr.set(q1[f>>1],0); frames.push(fr);
     }
