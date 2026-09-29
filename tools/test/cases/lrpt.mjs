@@ -69,10 +69,11 @@ export default [
     if(ns[1].ui.M !== 4) return 'decimation '+ns[1].ui.M;
     return lrptCheck(ns[2], recs, 25);
   }},
-  {name:'lrpt: weak signal (Es/N0 ≈ 6 dB) — RS does the rest', arg:CHAIN({noise:-20.5, off:-2500}, {}), fn([g, w]){
+  {name:'lrpt: weak signal (Es/N0 ≈ 5 dB) — RS fixes bytes, frames that pass are exact', arg:CHAIN({noise:-19.5, off:6000}, {}), fn([g, w]){
     const ns = T.build(g, w), recs = lrptRun(ns, 5);
     const e = T.errors(); if(e.length) return e.join('; ');
-    const r = lrptCheck(ns[2], recs, 25); if(r !== true) return r;
+    if(recs.length < 20) return `frames ${recs.length} (ok ${ns[2].ok}, fail ${ns[2].fail})`;
+    for(const r of recs){ const ref = lrptSimVcdu(r.cnt); for(let i=0; i<892; i++) if(r.vcdu[i] !== ref[i]) return `frame ${r.cnt} byte ${i}`; }
     return ns[2].fixed > 0 || 'no RS corrections at this SNR?';
   }},
   {name:'lrpt: noise alone — no lock, no frames', arg:CHAIN({mode:'off'}, {}), fn([g, w]){
@@ -90,16 +91,56 @@ export default [
       return ns[2].ui?.ok > 15 || 'ui '+JSON.stringify(ns[2].ui);
     } finally { Islands.setEnabled(false); }
   }},
-  {name:'preset: Meteor-M LRPT: Frames (Generator) — frames reach the record log', fn(){
-    T.preset('Meteor-M LRPT: Frames (Generator)'); T.run(4);
-    const e = T.errors(); if(e.length) return e.join('; ');
-    const log = T.byType('recLog')[0], de = T.byType('ccsdsDecode')[0];
-    if(!(log.rows.length >= 20)) return 'rows '+log.rows.length+', decoder '+JSON.stringify(de.ui);
-    const line = recText(log.rows[0]);
-    return /vcdu: ‹892 bytes›/.test(line) && geoCsvCell(log.rows[0].vcdu).length === 1784 || 'fmt '+line.slice(0, 200);
+  {name:'records: byte arrays show as length in text, hex in CSV', fn(){
+    const r = {cnt:1, vcdu:new Uint8Array([1, 2, 255])};
+    return /vcdu: ‹3 bytes›/.test(recText(r)) && geoCsvCell(r.vcdu) === '0102ff' || recText(r)+' / '+geoCsvCell(r.vcdu);
   }},
-  {name:'preset: Meteor-M LRPT: Frames (USB SDR, 137 MHz) (not connected)', fn(){
-    T.preset('Meteor-M LRPT: Frames (USB SDR, 137 MHz)'); T.run(0.5);
+  {name:'msu-mr: Huffman tables are the JPEG ones SatDump uses; segment round trip', fn(){
+    const code = (h, s) => h.code[s].toString(2).padStart(h.len[s], '0'), bad = [];
+    // tables.h SatDump: DC 0 → 00, DC 11 → 111111110; AC EOB → 1010, ZRL → 11111111001, 0/1 → 00, F/A → 1111111111111110
+    for(const [h, s, c] of [[MSU_HDC, 0, '00'], [MSU_HDC, 11, '111111110'], [MSU_HAC, 0, '1010'], [MSU_HAC, 0xF0, '11111111001'],
+      [MSU_HAC, 1, '00'], [MSU_HAC, 0xFA, '1111111111111110']]) if(code(h, s) !== c) bad.push(s+': '+code(h, s));
+    const q = msuQTable(80); if(q[0] !== 6 || q[63] !== 40) bad.push('qt '+q[0]+' '+q[63]);
+    const src = (x, y) => (x*7+y*13)%256 < 128 ? 40 : 210, seg = msuEncodeSegment(src, 95, 123456, 28), d = msuDecodeSegment(seg);
+    if(!d.ok || d.mcus !== 14 || d.ms !== 123456 || seg[8] !== 28) bad.push('decode '+JSON.stringify({ok:d.ok, mcus:d.mcus, ms:d.ms}));
+    let e = 0; for(let y=0; y<8; y++) for(let x=0; x<112; x++) e += Math.abs(d.pix[y*112+x]-src(x, y));
+    if(e/896 > 6) bad.push('mae '+(e/896).toFixed(2));
+    return bad.length ? bad.join('; ') : true;
+  }},
+  {name:'msu-mr: M_PDU demux across frames, a lost frame only loses its packets', fn(){
+    const run = drop => {
+      const st = {}, im = msuNew();
+      for(let c=0; c<80; c++){ if(c === drop) continue; for(const p of msuDemux(st, lrptSimVcdu(c))) msuAdd(im, p); }
+      return {im, st};
+    };
+    const a = run(-1), b = run(40);
+    if(a.im.bad || a.st.lost || a.st.resync) return 'clean: '+JSON.stringify({bad:a.im.bad, lost:a.st.lost, resync:a.st.resync});
+    if(b.st.lost !== 1 || b.im.bad) return 'drop: '+JSON.stringify({bad:b.im.bad, lost:b.st.lost});
+    if(!(b.im.good < a.im.good && b.im.good > a.im.good-40)) return `segments ${b.im.good} vs ${a.im.good}`;
+    // все целые строки совпадают с исходником: каналы на своих местах
+    for(const c of [0, 1, 2]){
+      const ch = a.im.ch.get(c); let e = 0, n = 0;
+      for(const [r, row] of ch.rows){ if(r+1 >= a.im.rows) continue;
+        const line = r+a.im.base; for(let i=0; i<row.length; i+=7){ e += Math.abs(row[i]-msuSimPixel(c, i%MSU_W, line*8+Math.floor(i/MSU_W))); n++; } }
+      if(!(n > 0 && e/n < 2)) return `channel ${c+1}: mae ${(e/n).toFixed(2)} over ${n}`;
+    }
+    return true;
+  }},
+  {name:'preset: Meteor-M LRPT: Image (Generator) — the test picture comes out', fn(){
+    T.preset('Meteor-M LRPT: Image (Generator)'); T.run(8);
+    const e = T.errors(); if(e.length) return e.join('; ');
+    const n = T.byType('lrptImage')[0], im = n.im;
+    if(!(im.rows >= 10)) return 'rows '+im.rows+' '+JSON.stringify(T.byType('ccsdsDecode')[0].ui);
+    if([...im.ch.keys()].sort().join() !== '0,1,2') return 'channels '+[...im.ch.keys()];
+    let e2 = 0, k = 0;
+    for(let y=16; y<(im.rows-1)*8; y+=5) for(let x=0; x<MSU_W; x+=11) for(const c of [0, 1, 2]){
+      e2 += Math.abs(msuPixel(im, c, x, y)-msuSimPixel(c, x, y+im.base*8)); k++; }
+    if(!(e2/k < 2)) return 'mae '+(e2/k).toFixed(2);
+    const c = lrptCrop(n);
+    return c.width === 1568 && c.height === im.rows*8 || 'png '+c.width+'×'+c.height;
+  }},
+  {name:'preset: Meteor-M LRPT: Image (USB SDR, 137 MHz) (not connected)', fn(){
+    T.preset('Meteor-M LRPT: Image (USB SDR, 137 MHz)'); T.run(0.5);
     const e = T.errors(); return e.length ? e.join('; ') : true;
   }},
 ];
