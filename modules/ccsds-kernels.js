@@ -282,7 +282,7 @@ IQK.pskDemod={
     yr.push(si/A); yi.push(sq/A);
     n.pts[n.pk]=si/A; n.pts[n.pk+1]=sq/A; n.pk=(n.pk+2)%n.pts.length;
   },
-  // грубая частота по спектру y⁴ (4 БПФ по 4096)
+  // грубая частота по спектру y⁴ (от 4 до 16 БПФ по 4096)
   acqPush(n,u,v){
     const a2=u*u-v*v, b2=2*u*v;
     const k=n.acqK++;
@@ -298,10 +298,12 @@ IQK.pskDemod={
     const bin=n.sr1/N, lim=Math.min(N/2-2,Math.round(4*(+n.p.pull||10000)/bin)), at=j=>P[(j%N+N)%N];
     let best=0, bj=0, sum=0;
     for(let j=-lim;j<=lim;j++){ const v=at(j); sum+=v; if(v>best){ best=v; bj=j; } }
+    // линия — на 8σ выше шума спектра (σ ≈ среднее/√K после K БПФ); слабый сигнал — копим до 16
+    const mean=sum/(2*lim+1);
+    if(!(best>mean*(1+8/Math.sqrt(n.acqN)))){ if(n.acqN>=16){ n.acqP=null; n.acqN=0; } return; }
     const y0=at(bj-1), y2=at(bj+1), dd=y0-2*best+y2, fr=dd<0 ? .5*(y0-y2)/dd : 0;   // уточнение параболой
     const df=(bj+fr)*bin/4;
-    // линия над средним ≥ 13 дБ и заметный остаток; при захвате остаток ≈ 0 — поправки нет
-    if(best>20*sum/(2*lim+1) && Math.abs(df)>30) n.f+=2*Math.PI*df/n.sr1;
+    if(Math.abs(df)>30) n.f+=2*Math.PI*df/n.sr1;     // при захвате остаток ≈ 0 — поправки нет
     n.acqP=null; n.acqN=0;
   }};
 
@@ -434,7 +436,7 @@ IQK.ccsdsDecode={
 function ccsdsDist(a,b){ let x=(a^b)>>>0, c=0; while(x){ x&=x-1; c++; } return c; }
 
 /* ---- генератор: поток LRPT (для IQ Generator) ---- */
-// Кадры VCDU (VCID 5, счётчик, псевдослучайные данные — lrptSimVcdu) → RS ×4 → рандомизатор →
+// Кадры VCDU (VCID 5, счётчик, пакеты MSU-MR тестовой картинки — lrptSimVcdu) → RS ×4 → рандомизатор →
 // [NRZ-M] → свёрточный код → QPSK / OQPSK с RRC α=0.6, 72 кБод. Комплексная огибающая мощностью 1.
 const LRPT_RS=72000, LRPT_SPAN=6, LRPT_TAB=64;
 const LRPT_SCID=0x9A;
@@ -442,9 +444,8 @@ function lrptSimVcdu(cnt){
   const v=new Uint8Array(892);
   v[0]=0x40|(LRPT_SCID>>2); v[1]=((LRPT_SCID&3)<<6)|5;
   v[2]=(cnt>>16)&0xFF; v[3]=(cnt>>8)&0xFF; v[4]=cnt&0xFF; v[5]=0;
-  v[8]=0x07; v[9]=0xFF;                             // M_PDU: начала пакета нет
-  let x=(cnt*2654435761+12345)>>>0;
-  for(let i=10;i<892;i++){ x^=x<<13; x>>>=0; x^=x>>>17; x^=x<<5; x>>>=0; v[i]=x&0xFF; }
+  const [fhp,d]=msuSimMpdu(cnt);                    // M_PDU: пакеты MSU-MR тестовой картинки (lrpt-msumr.js)
+  v[8]=(fhp>>8)&7; v[9]=fhp&0xFF; v.set(d,10);
   return v;
 }
 function lrptCadu(cnt){
