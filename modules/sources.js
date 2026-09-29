@@ -1933,6 +1933,283 @@ async function mirisdrOpenDevice(dev, gain){
     tunerName:dev.productName||'MSi2500', kind:'miri', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
 }
 
+// RX-888 (и прочие SDDC на Cypress FX3): 16-битный АЦП без тюнера на КВ, R8xx/RDA5815 — на УКВ.
+// Протокол и прошивка — ExtIO_sddc (ik1xpv, MIT). После включения устройство — загрузчик FX3
+// 04b4:00f3, после заливки vendor/SDDC_FX3.img переподключается как 04b4:00f1.
+const RX888_BOOT=[0x04b4,0x00f3], RX888_APP=[0x04b4,0x00f1];
+const RX888_FW_URL='vendor/SDDC_FX3.img';
+const rx888Is=(d,id)=>d.vendorId===id[0] && d.productId===id[1];
+// заливка прошивки в RAM через загрузчик FX3 (как fx3_load_ram в libsddc)
+async function rx888LoadFirmware(dev){
+  const resp=await fetch(RX888_FW_URL);
+  if(!resp.ok) throw new Error('firmware '+RX888_FW_URL+': HTTP '+resp.status);
+  const buf=await resp.arrayBuffer(), img=new DataView(buf);
+  if(img.getUint8(0)!==0x43 || img.getUint8(1)!==0x59 || img.getUint8(3)!==0xb0) throw new Error('bad FX3 firmware image');
+  await dev.open();
+  try{ if(!dev.configuration) await dev.selectConfiguration(1); }catch(e){}
+  try{ await dev.claimInterface(0); }catch(e){}
+  const wr=(addr, data)=>dev.controlTransferOut({requestType:'vendor',recipient:'device',request:0xa0,value:addr&0xffff,index:addr>>>16}, data);
+  let o=4, sum=0, entry;
+  for(;;){
+    const len=img.getUint32(o,true), addr=img.getUint32(o+4,true); o+=8;
+    if(!len){ entry=addr; break; }
+    for(let i=0;i<len;i++) sum=(sum+img.getUint32(o+4*i,true))>>>0;
+    const bytes=new Uint8Array(buf, o, len*4);
+    for(let p=0;p<bytes.length;p+=4096){
+      const part=bytes.slice(p, p+4096), r=await wr(addr+p, part);
+      if(r.status!=='ok' || r.bytesWritten!==part.length) throw new Error('firmware write failed at 0x'+(addr+p).toString(16));
+    }
+    o+=len*4;
+  }
+  if(img.getUint32(o,true)!==sum) throw new Error('firmware checksum mismatch');
+  await wr(entry).catch(()=>{});                   // переход на точку входа, загрузчик отваливается
+  await dev.close().catch(()=>{});
+}
+// после заливки: ждём новое устройство среди разрешённых, иначе — новое окно выбора
+async function rx888Boot(n, dev){
+  n.status='RX-888: loading firmware…';
+  await rx888LoadFirmware(dev);
+  for(let t=0;t<30;t++){
+    await new Promise(r=>setTimeout(r,200));
+    const d=(await navigator.usb.getDevices()).find(d=>rx888Is(d,RX888_APP));
+    if(d) return d;
+  }
+  try{ return await navigator.usb.requestDevice({filters:[{vendorId:RX888_APP[0],productId:RX888_APP[1]}]}); }
+  catch(e){ throw new Error('RX-888 firmware loaded: press Connect again and pick the device'); }
+}
+
+// Вещественные отсчёты АЦП → комплексный IQ: NCO по таблице (центр округляется до fs/65536),
+// затем k полуполосных ФНЧ с прореживанием на 2. Порядок ступени — по Кайзеру на 80 дБ: полоса
+// ±0.4 выходной частоты, чем дальше от выхода, тем фильтр короче. Чанк считается независимо:
+// перед ним — хвост прошлого (hist отсчётов), выходы от хвоста отбрасываются. Поэтому чанки
+// можно раздавать нескольким воркерам, а результат совпадает с непрерывной обработкой.
+function rx888DdcKernel(){
+  const TL=65536, tab=new Float32Array(2*TL);
+  for(let i=0;i<TL;i++){ tab[2*i]=Math.cos(2*Math.PI*i/TL); tab[2*i+1]=Math.sin(2*Math.PI*i/TL); }
+  const i0=x=>{ let s=1, t=1; for(let k=1;k<30;k++){ t*=(x/(2*k))*(x/(2*k)); s+=t; } return s; };
+  function halfband(q){                            // q — отношение входной частоты ступени к выходной
+    const A=80, beta=0.1102*(A-8.7), dw=2*Math.PI*(0.5-0.8/q);
+    let M=Math.ceil((A-8)/(2.285*dw)/2); if(!(M&1)) M++;
+    const K=(M+1)>>1, h=new Float32Array(K);
+    let sum=0;
+    for(let t=0;t<K;t++){ const j=2*t+1, r=j/(M+1); h[t]=Math.sin(Math.PI*j/2)/(Math.PI*j)*i0(beta*Math.sqrt(1-r*r))/i0(beta); sum+=2*h[t]; }
+    for(let t=0;t<K;t++) h[t]*=0.5/sum;             // усиление на нуле = 1
+    return {h, M};
+  }
+  // b — комплексные (I,Q подряд) n отсчётов; выход m — центр на входе 2m+1-M, первые M выходов — нули
+  function run(st, b, n, o){
+    const h=st.h, K=h.length, M=st.M;
+    o.fill(0, 0, 2*M);
+    for(let e=2*M+1, w=2*M; e<n; e+=2, w+=2){
+      const c=2*(e-M);
+      let sr=0.5*b[c], si=0.5*b[c+1];
+      for(let t=0, j=2;t<K;t++, j+=4){ const g=h[t]; sr+=g*(b[c-j]+b[c+j]); si+=g*(b[c-j+1]+b[c+j+1]); }
+      o[w]=sr; o[w+1]=si;
+    }
+    return n>>1;
+  }
+  let bufs=[];
+  const buf=(i,len)=>bufs[i]&&bufs[i].length>=len ? bufs[i] : (bufs[i]=new Float32Array(len));
+  return {
+    TL,
+    // hist — сколько отсчётов истории нужно, чтобы выходы после неё были точными (кратно 2^k)
+    design(k){
+      const st=[]; let v=0;
+      for(let i=0;i<k;i++){ const s=halfband(2**(k-i)); st.push(s); v=Math.ceil((v+2*s.M-1)/2); }
+      return {k, st, skip:v, hist:v*2**k};
+    },
+    // raw — Int16Array, длина кратна 2^k; p0 — фаза NCO первого отсчёта; выход — Int16Array IQ новых отсчётов
+    run(cfg, raw, p0, step, inv){
+      let n=raw.length, b=buf(0, 2*n), p=p0;
+      for(let i=0;i<n;i++){ const x=raw[i]; b[2*i]=x*tab[2*p]; b[2*i+1]=-x*tab[2*p+1]; p=(p+step)&(TL-1); }
+      for(let i=0;i<cfg.k;i++){ const o=buf(1+(i&1), n); n=run(cfg.st[i], b, n, o); b=o; }
+      const m=n-cfg.skip, out=new Int16Array(2*m), sq=inv ? -2 : 2;   // ×2: вещественный тон полной шкалы → комплексный полной шкалы
+      for(let i=0, j=2*cfg.skip;i<m;i++, j+=2){
+        const a=b[j]*2, q=b[j+1]*sq;
+        out[2*i]=a>32767 ? 32767 : a<-32768 ? -32768 : Math.round(a);
+        out[2*i+1]=q>32767 ? 32767 : q<-32768 ? -32768 : Math.round(q);
+      }
+      return out;
+    }
+  };
+}
+// пул воркеров DDC; без Worker — считаем на месте
+function rx888DdcPool(){
+  const ker=rx888DdcKernel();
+  const W=typeof Worker==='undefined' ? 0 : Math.max(1, Math.min(4, (self.navigator?.hardwareConcurrency||4)-2));
+  const src=`${rx888DdcKernel}
+const ker=rx888DdcKernel(); let cfg=null;
+onmessage=e=>{ const m=e.data;
+  if(m.k!=null){ cfg=ker.design(m.k); return; }
+  const out=ker.run(cfg, m.raw, m.p0, m.step, m.inv); postMessage({id:m.id, buf:out.buffer}, [out.buffer]); };`;
+  const url=W ? URL.createObjectURL(new Blob([src], {type:'application/javascript'})) : null;
+  const pend=new Map(), ws=[];
+  for(let i=0;i<W;i++){
+    const w=new Worker(url);
+    w.onmessage=e=>{ const r=pend.get(e.data.id); pend.delete(e.data.id); r?.(e.data.buf); };
+    ws.push(w);
+  }
+  let cfg=null, seq=0;
+  return {
+    TL:ker.TL,
+    setup(k){ cfg=ker.design(k); for(const w of ws) w.postMessage({k}); return cfg; },
+    run(raw, p0, step, inv){
+      if(!W) return Promise.resolve(ker.run(cfg, raw, p0, step, inv).buffer);
+      const id=++seq;
+      return new Promise(r=>{ pend.set(id, r); ws[id%W].postMessage({id, raw, p0, step, inv}, [raw.buffer]); });
+    },
+    close(){ for(const w of ws) w.terminate(); if(url) URL.revokeObjectURL(url); for(const r of pend.values()) r(new ArrayBuffer(0)); pend.clear(); }
+  };
+}
+async function rx888OpenDevice(dev, gain){
+  const CMD={START:0xaa, STOP:0xab, TEST:0xac, GPIO:0xad, STARTADC:0xb2, TUNERINIT:0xb4, TUNERTUNE:0xb5, SETARG:0xb6, TUNERSTDBY:0xb8};
+  const ARG={R82XX_ATT:1, R82XX_VGA:2, DAT31_ATT:10, AD8340_VGA:11, PRESELECTOR:12};
+  const G={SHDWN:1<<5, BIAS_HF:1<<8, BIAS_VHF:1<<9, ATT_SEL0:1<<13, ATT_SEL1:1<<14, VHF_EN:1<<15};
+  // модели прошивки: 1 BBRF103, 2 HF103, 3 RX888, 4 RX888r2, 7 RX888r3
+  const NAMES={1:'BBRF103', 2:'HF103', 3:'RX888', 4:'RX888 mkII', 7:'RX888 mkIII'};
+  // ступени R82xx (дБ), индекс — аргумент R82XX_ATTENUATOR
+  const R82_STEPS=[0,0.9,1.4,2.7,3.7,7.7,8.7,12.5,14.4,15.7,16.6,19.7,20.7,22.9,25.4,28,29.7,32.8,33.8,36.4,37.2,38.6,40.2,42.1,43.4,43.9,44.5,48,49.6];
+  // трансфер — кратно DMA-буферу FX3 (16 КБ); по USB 2 больше ~40 МБ/с не пролезет
+  const XFER=16384, ADC_MAX=dev.usbVersionMajor>=3 ? 66e6 : 16e6;
+  await dev.open();
+  if(!dev.configuration) await dev.selectConfiguration(1);
+  await dev.claimInterface(0);
+  const u32=v=>{ const b=new DataView(new ArrayBuffer(4)); b.setUint32(0,v>>>0,true); return b.buffer; };
+  const u64=v=>{ const b=new DataView(new ArrayBuffer(8)); b.setBigUint64(0,BigInt(Math.round(v)),true); return b.buffer; };
+  const ctl=(cmd,data)=>sdrVendorOut(dev, cmd, 0, 0, data??u32(0));
+  const arg=(idx,val)=>sdrVendorOut(dev, CMD.SETARG, val, idx, new Uint8Array(1));
+  const info=await sdrVendorIn(dev, CMD.TEST, 0, 4);
+  const model=info.data.getUint8(0), fw=info.data.getUint8(1)+'.'+info.data.getUint8(2);
+  if(!NAMES[model]) throw new Error('SDDC: unsupported or unknown hardware (model '+model+')');
+  const r2=model===4, r3=model===7, mk1=model===1 || model===3, hasVhf=model!==2;
+  const ddc=rx888DdcPool();
+  let cfg=null, tail=new Int16Array(0), cnt=0, step=0, inv=false;
+  // сдвиг вниз на f; возвращает фактическую частоту NCO
+  const nco=(f, invert)=>{ step=((Math.round(f/fs*ddc.TL)%ddc.TL)+ddc.TL)%ddc.TL; inv=invert; return step*fs/ddc.TL; };
+  let gpios=0, mode=null, fs=0, k=1, freq=0, gainDb=gain, bias=false, tuneEpoch=0, rxOn=false;
+  const setGpio=()=>{
+    let g=gpios&~(G.BIAS_HF|G.BIAS_VHF);
+    if(bias) g|=mode==='vhf' ? G.BIAS_VHF : G.BIAS_HF;
+    return ctl(CMD.GPIO, u32(g));
+  };
+  await ctl(CMD.STOP);
+
+  async function applyGain(){
+    const g=gainDb;
+    if(mode==='vhf'){
+      if(r3) return;                               // RDA5815: усиление прошивка не задаёт
+      let idx=14;                                  // auto — середина шкалы R82xx
+      if(g!=null){ idx=0; for(let i=1;i<R82_STEPS.length;i++) if(Math.abs(R82_STEPS[i]-g)<Math.abs(R82_STEPS[idx]-g)) idx=i; }
+      await arg(ARG.R82XX_ATT, idx);
+      await arg(ARG.R82XX_VGA, 8);
+      return;
+    }
+    if(mk1){
+      // аттенюатор -20/-10/0 дБ переключателями ATT_SEL
+      const a=g==null ? 0 : g<10 ? -20 : g<20 ? -10 : 0;
+      gpios&=~(G.ATT_SEL0|G.ATT_SEL1);
+      gpios|=a===-20 ? G.ATT_SEL0 : a===-10 ? G.ATT_SEL0|G.ATT_SEL1 : G.ATT_SEL1;
+      await setGpio();
+      return;
+    }
+    // шкала 0..49.6: сначала снимается аттенюатор (-31.5..0 дБ), дальше растёт VGA AD8370
+    const att=g==null ? 0 : Math.max(0, 31.5-g), vgaDb=g==null ? 10 : Math.max(0, g-31.5);
+    await arg(ARG.DAT31_ATT, Math.round(att*2));
+    if(r2 || r3){
+      const v=Math.max(1, Math.min(127, Math.round(Math.pow(10, vgaDb/20)/0.409)));
+      await arg(ARG.AD8340_VGA, 0x80|v);
+    }
+  }
+  async function setMode(m){
+    if(m===mode) return;
+    mode=m;
+    if(m==='vhf'){
+      if(mk1){ gpios&=~(G.ATT_SEL0|G.ATT_SEL1); await setGpio(); await ctl(CMD.TUNERINIT, u32(32000000)); }
+      else{
+        await arg(ARG.DAT31_ATT, 63);              // КВ-вход — максимальное ослабление
+        gpios|=G.VHF_EN; await setGpio();
+        await arg(ARG.AD8340_VGA, 0x80|3);
+        await ctl(CMD.TUNERINIT, u32(r3 ? 27000000 : 16000000));
+      }
+    } else {
+      if(hasVhf) await ctl(CMD.TUNERSTDBY);
+      if(mk1) gpios|=G.ATT_SEL0|G.ATT_SEL1; else gpios&=~G.VHF_EN;
+      await setGpio();
+    }
+    await applyGain();
+  }
+  // КВ — всё ниже fs/2 напрямую с АЦП, выше — через тюнер; ПЧ тюнера инвертирована
+  async function tune(f){
+    if(f<fs/2 || !hasVhf){
+      if(f>=fs/2) throw new Error('frequency above ADC Nyquist ('+(fs/2e6).toFixed(1)+' MHz)');
+      await setMode('hf');
+      if(r3) await arg(ARG.PRESELECTOR, fs<32e6 ? 0b101 : 0b011);
+      return nco(f, false);
+    }
+    if(r3 && f<220e6) throw new Error('RX888 mkIII: '+(fs/2e6).toFixed(1)+'–220 MHz not covered');
+    await setMode('vhf');
+    let ifHz;
+    if(r3){
+      const vco=f+20e6, mhz=Math.floor(vco/1e6);
+      await ctl(CMD.TUNERTUNE, u32(mhz));
+      ifHz=20e6-(vco-mhz*1e6);
+    } else {
+      await ctl(CMD.TUNERTUNE, u64(f));
+      ifHz=4570000;
+    }
+    return f+ifHz-nco(ifHz, true);
+  }
+
+  // частота АЦП — rate·2^k, не выше ADC_MAX
+  async function setSampleRate(rate){
+    rate=Math.round(Math.max(250000, Math.min(ADC_MAX/2, rate)));
+    k=1; while(rate*2**(k+1)<=ADC_MAX) k++;
+    const f=rate*2**k;
+    if(f!==fs){ fs=f; await ctl(CMD.STARTADC, u32(fs)); }
+    if(cfg?.k!==k){ cfg=ddc.setup(k); tail=new Int16Array(cfg.hist); }
+    if(freq) await tune(freq);
+    tuneEpoch++;
+    return rate;
+  }
+  async function setCenterFrequency(f){
+    freq=Math.round(f);
+    const act=Math.round(await tune(freq));
+    tuneEpoch++;
+    return act;
+  }
+  async function setGain(g){ gainDb=g; if(mode) await applyGain(); }
+  async function setBiasTee(on){ bias=!!on; await setGpio(); }
+  async function resetBuffer(){
+    await ctl(CMD.STOP);
+    await dev.clearHalt('in', 1).catch(()=>{});
+    tail.fill(0);
+    await ctl(CMD.START); rxOn=true;
+  }
+  // nBytes IQ int16 → сырых байт в 2^k/2 раз больше; трансфер не больше 1 МБ, отдаёт сколько вышло
+  async function readSamples(nBytes){
+    const raw=Math.min(1<<20, Math.max(XFER, Math.ceil(nBytes/4*2**k*2/XFER)*XFER));
+    const res=await dev.transferIn(1, raw);
+    // чанк DDC: хвост прошлого + новые отсчёты (целое число выходных); фаза NCO — от номера отсчёта
+    const D=2**k, got=res.data.byteLength>>1, n=got-got%D, H=tail.length;
+    const inp=new Int16Array(H+n);
+    inp.set(tail); inp.set(new Int16Array(res.data.buffer, res.data.byteOffset, n), H);
+    tail=inp.slice(n);
+    const p0=(((cnt-H)%ddc.TL+ddc.TL)%ddc.TL*step)%ddc.TL;
+    cnt=(cnt+n)%ddc.TL;
+    return ddc.run(inp, p0, step, inv);
+  }
+  async function close(){
+    if(rxOn) await ctl(CMD.STOP).catch(()=>{});
+    if(mode==='vhf') await ctl(CMD.TUNERSTDBY).catch(()=>{});
+    gpios|=G.SHDWN; bias=false; await setGpio().catch(()=>{});   // АЦП в сон
+    ddc.close();
+    await dev.releaseInterface(0).catch(()=>{});
+    await dev.close();
+  }
+  return {setSampleRate, setCenterFrequency, setGain, setBiasTee, resetBuffer, readSamples, close,
+    tunerName:NAMES[model]+' fw '+fw, kind:'sddc', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
+}
+
 // MSi2500: SDRplay RSP1 и клоны, RSP1A/RSP2 (не проверены), ТВ-донглы Hauppauge/AverMedia/IO-DATA/Logitec
 const MIRI_USB_IDS=[[0x1df7,0x2500],[0x1df7,0x3000],[0x1df7,0x3010],[0x2040,0xd300],[0x07ca,0x8591],[0x04bb,0x0537],[0x0511,0x0037]];
 // VID:PID поддерживаемых устройств
@@ -1941,10 +2218,12 @@ const SDR_USB_FILTERS=[
   {vendorId:0x15f4,productId:0x0131},                          // Astrometa DVB-T2
   {vendorId:0x1d50,productId:0x6089},{vendorId:0x1d50,productId:0x604b},{vendorId:0x1d50,productId:0xcc15}, // HackRF One, Jawbreaker, rad1o
   {vendorId:0x1d50,productId:0x60a1},                          // Airspy R2/Mini
+  {vendorId:0x04b4,productId:0x00f3},{vendorId:0x04b4,productId:0x00f1}, // RX-888 / SDDC: загрузчик FX3, с прошивкой
   ...MIRI_USB_IDS.map(([vendorId,productId])=>({vendorId,productId}))
 ];
 function sdrOpenDevice(dev, ppm, gain){
   if(MIRI_USB_IDS.some(([v,p])=>v===dev.vendorId && p===dev.productId)) return mirisdrOpenDevice(dev, gain);
+  if(rx888Is(dev, RX888_APP)) return rx888OpenDevice(dev, gain);
   if(dev.vendorId===0x1d50) return dev.productId===0x60a1 ? airspyOpenDevice(dev, gain) : hackrfOpenDevice(dev, gain);
   return rtlOpenDevice(dev, ppm, gain);
 }
@@ -1971,6 +2250,11 @@ ${airspyOpenDevice}
 ${mirisdrMakeConv}
 ${mirisdrOpenDevice}
 const MIRI_USB_IDS=${JSON.stringify(MIRI_USB_IDS)};
+const RX888_APP=${JSON.stringify(RX888_APP)};
+const rx888Is=${rx888Is};
+${rx888DdcKernel}
+${rx888DdcPool}
+${rx888OpenDevice}
 ${sdrOpenDevice}
 let usb=null, api=null, rate=1024000, streaming=false, rps=40;
 async function stream(readsPerSec, depth){
@@ -3596,6 +3880,11 @@ async function sdrPickDevice(n, choose){
   if(!choose && n.p.usbId){
     const d=(await navigator.usb.getDevices()).find(d=>sdrUsbId(d)===n.p.usbId);
     if(d) return d;
+    // RX-888 после выключения снова загрузчик — берём его, если уже разрешён
+    if(n.p.usbId.startsWith('4b4:f1:')){
+      const b=(await navigator.usb.getDevices()).find(d=>rx888Is(d, RX888_BOOT));
+      if(b) return b;
+    }
   }
   return navigator.usb.requestDevice({filters:SDR_USB_FILTERS});
 }
@@ -3624,7 +3913,8 @@ async function rtlConnect(n, choose){
   if(n.connected && n.dev?.kind==='file') await rtlDisconnect(n);
   if(n.connected) return;
   try{
-    const usbDev=await sdrPickDevice(n, choose);
+    let usbDev=await sdrPickDevice(n, choose);
+    if(rx888Is(usbDev, RX888_BOOT)) usbDev=await rx888Boot(n, usbDev);
     const gain=n.p.auto?null:n.p.gainDb;
     // сначала пробуем открыть донгл в USB-воркере; без WebUSB в воркерах — по-старому, на главном потоке
     n.dev=await rtlOpenInWorker(usbDev, gain).catch(e=>{
