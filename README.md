@@ -26,7 +26,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 ### Sources
 - Oscillator, sweep/jammer, constant, LFO, text source
 - Microphone (stereo A+B), audio file, audio stream URL, tab/screen audio capture
-- **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500 — multiple tuners/demodulators per device, wideband sweep with a panoramic waterfall, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
+- **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500, RX-888 (mkI/mkII/mkIII) — multiple tuners/demodulators per device, wideband sweep with a panoramic waterfall, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
 - **KiwiSDR** remote receivers (public list included)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
@@ -92,6 +92,7 @@ For HF: **noise blanker** cuts short impulses (power-line, switching supplies) o
 | HackRF One / Jawbreaker / rad1o | 2–20 MSPS | 8 bit | `hackrf` |
 | Airspy R2 / Mini | rates reported by firmware | 12 bit | `airspy` |
 | SDRplay RSP1 and clones, MSi2500 + MSi001 TV sticks | 1.3–15 MSPS | 14 bit up to 6 MSPS, then 12 / 10 / 8 bit | `msi001`, `msi2500` |
+| RX-888 mkI / mkII / mkIII (SDDC, Cypress FX3) | 0.25–10 MSPS out of a 16-bit ADC at up to 66 MSPS | 16 bit ADC, DDC in the browser | — |
 
 Common controls: gain (auto or manual), bias-tee, ppm correction, center shift off DC.
 
@@ -105,6 +106,7 @@ Fine marker tuning (e.g. SSB): the mouse wheel over a marker's label moves it by
 
 - **HackRF** has separate LNA / VGA / amp controls instead of the gain slider.
 - **SDRplay / MSi2500** has no hardware AGC: *auto* sets a fixed 62 dB, the manual slider covers 0–102 dB of LNA + mixer + baseband gain. The driver is a port of [libmirisdr-4](https://github.com/f4exb/libmirisdr-4). RSP1A / RSP2 IDs are recognized but untested; RSPduo, RSPdx and newer models need the closed SDRplay API and are not supported.
+- **RX-888** (and other SDDC boards: HF103, BBRF103): on power-up it is an empty Cypress FX3 boot loader; Connect uploads the firmware (`vendor/SDDC_FX3.img` from [ExtIO_sddc](https://github.com/ik1xpv/ExtIO_sddc), MIT) and the board comes back as a new USB device — if the browser does not pick it up by itself, press Connect again and choose it. On HF the ADC samples the antenna directly: the ADC clock is the sample rate × 2^k (up to 66 MHz over USB 3, 16 MHz over USB 2), and HF is everything below half of it — 1.024, 2.048 or 8 MSPS give the whole 0–30 MHz, 2.4 MSPS only up to 19 MHz, and tuning and decimation to the selected sample rate run in the browser (NCO + half-band filters, 80 dB alias rejection) spread over several workers. Above the ADC's Nyquist frequency the VHF tuner is used (R820T / R828D; mkIII — RDA5815 from 220 MHz). Gain on HF: the slider first removes the 0–31.5 dB attenuator, then raises the AD8370 VGA; *auto* = no attenuation, +10 dB VGA. On Windows the board needs the WinUSB driver (Zadig) for both the boot loader and the running device. Untested on real hardware yet.
 
 On Linux unload the kernel driver before connecting, e.g. `sudo rmmod msi001 msi2500`, or blacklist it in `/etc/modprobe.d/`. The device also needs user access through a udev rule (as for `rtl-sdr` / `hackrf` / `airspy` packages).
 
