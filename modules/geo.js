@@ -275,6 +275,48 @@ def({ id:'recLog', title:'Rec Log', cat:'Output',
     const tail=n.rows.slice(-5).map(r=>Object.keys(r).map(k=>k+'='+recFmt(r[k])).join(' ')).join('\n');
     n.el.querySelector('.readout').textContent=(n.p.on?'● ':'')+'records '+n.rows.length+'\n'+tail; }});
 
+def({ id:'recUniq', title:'Rec: Unique by Key', cat:'Control',
+  // Уникальные записи по ключевому полю (id, cell id, позывной…): копит по одному экземпляру
+  // на ключ, считает count и время first/last. Пример: список GSM-вышек по id (PLMN-LAC-CID),
+  // самолётов по icao, станций по позывному. `new` — только впервые увиденные, `rec` — обновлённые.
+  ins:[{n:'rec',t:'rec'}],
+  outs:[{n:'rec',t:'rec'},{n:'new',t:'rec'},{n:'count',t:'num'}],
+  readout:true, tall:true,
+  params:[{n:'key',t:'text',d:'id',label:'key field'},
+          {n:'mode',t:'select',opts:['merge (last wins)','first only'],d:'merge (last wins)',label:'on repeat'},
+          {n:'max',t:'range',min:100,max:100000,step:100,d:10000,label:'max keys'},
+          {n:'csv',t:'button',label:'Save CSV',fn:n=>dl(new Blob(['﻿'+recsToCsv([...n.map.values()])],{type:'text/csv;charset=utf-8'}),'unique-'+Date.now()+'.csv')},
+          {n:'geojson',t:'button',label:'Save GeoJSON',fn:n=>dl(new Blob([recsToGeoJson([...n.map.values()])],{type:'application/geo+json'}),'unique-'+Date.now()+'.geojson')},
+          {n:'replay',t:'button',label:'Replay',fn:n=>{ n.replay=[...n.map.values()]; }},
+          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.map=new Map(); }}],
+  init:n=>{ n.map=new Map(); n.replay=null; },
+  process(n,I){
+    const recs=recList(I.rec), out=[], fresh=[], key=n.p.key||'id', merge=n.p.mode!=='first only';
+    for(const r of recs){
+      const k=r[key]; if(k==null||k==='') continue;
+      const id=String(k), t=recNum(r.t)!=null?r.t:Date.now();
+      let e=n.map.get(id);
+      if(!e){
+        e={...r, count:1, first:t, last:t};
+        if(n.map.size>=n.p.max) n.map.delete(n.map.keys().next().value);   // вытесняем самый старый
+        n.map.set(id,e); fresh.push(e);
+      } else {
+        if(merge){ const c=e.count, f=e.first; Object.assign(e,r); e.count=c; e.first=f; }
+        e.count++; e.last=t;
+      }
+      out.push(e);
+    }
+    if(n.replay?.length){ const part=n.replay.splice(0,500); out.push(...part); }
+    return {rec:out.length?out:null, new:fresh.length?fresh:null, count:n.map.size};
+  },
+  draw(n){
+    const rows=[...n.map.values()], tail=rows.slice(-8).map(e=>{
+      const lt=recNum(e.last)!=null?new Date(e.last).toLocaleTimeString():'';
+      const extra=Object.keys(e).filter(k=>!['count','first','last','t'].includes(k)).slice(0,4)
+        .map(k=>k+'='+recFmt(e[k])).join(' ');
+      return `×${e.count} ${lt} ${extra}`; }).join('\n');
+    n.el.querySelector('.readout').textContent='unique '+rows.length+'\n'+tail; }});
+
 // Условие компилируется импортом blob-модуля: new Function/eval запрещены CSP страницы
 // (нет unsafe-eval), import() из blob: разрешён — так же сделан Module Builder.
 // Пока модуль грузится (доли мс), записи копятся и не теряются.

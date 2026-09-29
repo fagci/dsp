@@ -64,6 +64,30 @@ export default [
     return d===0 || 'burst mismatches '+d+'/148';
   }},
 
+  // --- BCCH: xCCH-декодер (deinterleave + Viterbi + FIRE CRC) + разбор SI3 ---
+  {name:'gsm: BCCH SI3 encode→decode gives Cell ID and PLMN/LAC', fn(){
+    const mcc=250, mnc=1, lac=0x2715, ci=0x1a2b;
+    const b=new Uint8Array(23);
+    b[0]=(0x12<<2)|1; b[1]=0x06; b[2]=0x1b;             // header: len, PD=RR, SI3
+    b[3]=ci>>8; b[4]=ci&0xff;
+    b[5]=0x52; b[6]=0xf0; b[7]=0x10;                    // LAI digits: MCC 250, MNC 01 (2-digit)
+    b[8]=lac>>8; b[9]=lac&0xff;
+    for(let i=10;i<23;i++) b[i]=0x2b;
+    const bursts=gsmBcchEncode(b);
+    const l2=gsmBcchDecode(bursts);
+    if(!l2) return 'FIRE CRC failed';
+    const si=gsmParseSI(l2);
+    return (si.type==='SI3' && si.ci===ci && si.mcc===250 && si.mnc===1 && si.lac===lac)
+      || 'got '+JSON.stringify(si);
+  }},
+
+  {name:'gsm: BCCH decode rejects a corrupted block (CRC)', fn(){
+    const b=new Uint8Array(23); b[1]=0x06; b[2]=0x1b; b[3]=0x12; b[4]=0x34;
+    const bursts=gsmBcchEncode(b).map(x=>Int8Array.from(x));
+    for(let B=0;B<4;B++) for(let j=0;j<114;j+=4) bursts[B][j]^=1;   // ~25% ошибок — за пределом коррекции
+    return gsmBcchDecode(bursts)===null || 'CRC should have rejected';
+  }},
+
   // --- FCCH: тон обнаружен, смещение несущей оценено ---
   {name:'gsm: FCCH found, carrier offset estimated', fn(){
     const OSR=GSM_OSR, target=GSM_TARGET_SR, foff=1500;

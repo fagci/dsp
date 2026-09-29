@@ -161,33 +161,31 @@ function gsmSchConvEncode(u){
   }
   return out;
 }
-// Витерби по 78 мягким битам (sbit: 0→+, 1→−) → 35 инф. бит (25 данные + 10 CRC)
-function gsmSchConvDecode(sb){
-  const NS=16, STEPS=39, NEG=-1e9;
+// Витерби K=5 (G0/G1) по 2·STEPS мягким битам (sbit: 0→+, 1→−) → STEPS инф. бит.
+// Хвост из 4 нулей → конечное состояние 0. Тот же код у SCH (39 шагов) и xCCH (228).
+function gsmConvK5(sb, steps){
+  const NS=16, NEG=-1e9;
   let pm=new Float32Array(NS).fill(NEG); pm[0]=0;
   let npm=new Float32Array(NS);
-  const back=[]; for(let i=0;i<STEPS;i++) back.push(new Uint8Array(NS));
-  // предвычислить выходы ветвей: из state по bit → (o0,o1,nextState)
-  for(let i=0;i<STEPS;i++){
+  const back=[]; for(let i=0;i<steps;i++) back.push(new Uint8Array(NS));
+  for(let i=0;i<steps;i++){
     npm.fill(NEG);
     const s0=sb[2*i], s1=sb[2*i+1];
     for(let st=0;st<NS;st++){
       if(pm[st]<=NEG/2) continue;
       for(let bit=0;bit<2;bit++){
         const r=(st<<1)|bit, o0=gsmParity(r&GSM_G0), o1=gsmParity(r&GSM_G1);
-        // метрика-корреляция: sbit>0 → бит 0
-        const m=pm[st]+(o0?-s0:s0)+(o1?-s1:s1), ns=r&0xf;
+        const m=pm[st]+(o0?-s0:s0)+(o1?-s1:s1), ns=r&0xf;   // корреляция: sbit>0 → бит 0
         if(m>npm[ns]){ npm[ns]=m; back[i][ns]=(st<<1)|bit; }
       }
     }
     const t=pm; pm=npm; npm=t;
   }
-  // трассировка из конечного состояния 0 (хвост из 4 нулей)
-  const u=new Int8Array(35); let st=0;
-  for(let i=STEPS-1;i>=0;i--){ const b=back[i][st]; const bit=b&1;
-    if(i<35) u[i]=bit; st=b>>1; }
+  const u=new Int8Array(steps); let st=0;
+  for(let i=steps-1;i>=0;i--){ const b=back[i][st]; u[i]=b&1; st=b>>1; }
   return u;
 }
+function gsmSchConvDecode(sb){ return gsmConvK5(sb,39).subarray(0,35); }
 // CRC-16/10 SCH: poly 0x175, init 0, xor 0x3ff (libosmocore gsm0503_sch_crc10)
 function gsmSchCrc10(bits, len){
   let crc=0; const n=9;
@@ -214,6 +212,92 @@ function gsmDecodeSch(eb){
   return {t1,t2,t3,ncc,bcc};
 }
 
+/* ---------- BCCH/CCCH: xCCH-декодер (libosmocore gsm0503) + разбор System Information ----------
+ * 4 нормальных бёрста → деперемежение → свёрточный код K=5 (G0/G1) → FIRE CRC-40 →
+ * 23 байта L2 → RR-сообщение. Из SI Type 3 берём Cell ID и LAI (MCC/MNC/LAC) — это и есть
+ * идентификатор соты. Соседние ARFCN из SI2 — на будущее (форматы списка частот не разобраны). */
+
+// свёрточный код K=5 (кодер, для самопроверки декодера): u (steps−4 инф. + хвост) → 2·steps бит
+function gsmConvK5Encode(u, steps){
+  const out=new Int8Array(2*steps); let state=0, o=0;
+  for(let i=0;i<steps;i++){ const bit=i<u.length?u[i]:0, r=(state<<1)|bit;
+    out[o++]=gsmParity(r&GSM_G0); out[o++]=gsmParity(r&GSM_G1); state=r&0xf; }
+  return out;
+}
+// FIRE CRC-40 (libosmocore gsm0503_fire_crc40): poly 0x0004820009, init 0, xor 0xffffffffff
+const GSM_FIRE_POLY=0x0004820009n, GSM_FIRE_MASK=(1n<<40n)-1n;
+function gsmFireCrc40(bits, len){
+  let crc=0n;
+  for(let i=0;i<len;i++){ crc^=BigInt(bits[i]&1)<<39n;
+    crc=(crc&(1n<<39n))?((crc<<1n)^GSM_FIRE_POLY):(crc<<1n); crc&=GSM_FIRE_MASK; }
+  return crc^0xffffffffffn;
+}
+// деперемежение xCCH (TS 05.03 4.1.4): cB[k]=iB[B·114+j]
+function gsmXcchDeinterleave(iB){
+  const cB=new Float32Array(456);
+  for(let k=0;k<456;k++){ const B=k&3, j=2*((49*k)%57)+((k&7)>>2); cB[k]=iB[B*114+j]; }
+  return cB;
+}
+function gsmXcchInterleave(cB){
+  const iB=new Int8Array(456);
+  for(let k=0;k<456;k++){ const B=k&3, j=2*((49*k)%57)+((k&7)>>2); iB[B*114+j]=cB[k]; }
+  return iB;
+}
+// 23 байта L2 → 4×114 бит (для самопроверки): 184 данные + FIRE-40 → свёртка → перемежение
+function gsmBcchEncode(l2){
+  const conv=new Int8Array(224);
+  for(let i=0;i<23;i++) for(let b=0;b<8;b++) conv[i*8+b]=(l2[i]>>(7-b))&1;
+  const crc=gsmFireCrc40(conv,184);
+  for(let i=0;i<40;i++) conv[184+i]=Number((crc>>BigInt(39-i))&1n);
+  const coded=gsmConvK5Encode(conv,228);
+  const iB=gsmXcchInterleave(coded);
+  const bursts=[]; for(let B=0;B<4;B++) bursts.push(iB.subarray(B*114,B*114+114));
+  return bursts;
+}
+// 4×114 бит данных (0/1) → 23 байта L2 или null (CRC не сошёлся)
+function gsmBcchDecode(four){
+  const iB=new Float32Array(456);
+  for(let B=0;B<4;B++){ const d=four[B]; for(let j=0;j<114;j++) iB[B*114+j]=d[j]?-127:127; }   // 0→+,1→−
+  const cB=gsmXcchDeinterleave(iB);
+  const conv=gsmConvK5(cB,228);                        // 224 данные+parity + 4 хвост
+  const c=gsmFireCrc40(conv,184);                      // CRC по 184 = 40 бит четности
+  for(let i=0;i<40;i++) if(conv[184+i]!==Number((c>>BigInt(39-i))&1n)) return null;
+  const l2=new Uint8Array(23);
+  for(let i=0;i<23;i++){ let v=0; for(let b=0;b<8;b++) v=(v<<1)|conv[i*8+b]; l2[i]=v; }
+  return l2;
+}
+// MCC/MNC из 3 BCD-байт LAI (osmocom gsm48_decode_lai)
+function gsmMccMnc(d0,d1,d2){
+  const mcc=(d0&0x0f)*100+((d0>>4)&0x0f)*10+(d1&0x0f);
+  const mnc=((d1>>4)&0x0f)===0x0f ? (d2&0x0f)*10+((d2>>4)&0x0f)
+                                  : (d2&0x0f)*100+((d2>>4)&0x0f)*10+((d1>>4)&0x0f);
+  return {mcc, mnc, mnc2:((d1>>4)&0x0f)===0x0f};
+}
+// L2-кадр System Information → поля (GSM48_MT_RR_SYSINFO_*)
+function gsmParseSI(b){
+  if((b[1]&0x0f)!==0x06) return null;                  // PD ≠ RR
+  const mt=b[2], r={si:mt};
+  if(mt===0x1b){                                       // SI3: Cell Identity + LAI
+    r.type='SI3'; r.ci=(b[3]<<8)|b[4];
+    const m=gsmMccMnc(b[5],b[6],b[7]); r.mcc=m.mcc; r.mnc=m.mnc; r.mnc2=m.mnc2;
+    r.lac=(b[8]<<8)|b[9];
+  } else if(mt===0x1c){                                // SI4: LAI (без Cell Identity)
+    r.type='SI4';
+    const m=gsmMccMnc(b[3],b[4],b[5]); r.mcc=m.mcc; r.mnc=m.mnc; r.mnc2=m.mnc2;
+    r.lac=(b[6]<<8)|b[7];
+  } else if(mt===0x1a) r.type='SI2';
+  else if(mt===0x19) r.type='SI1';
+  else if(mt===0x00) r.type='SI13';
+  else if(mt===0x02) r.type='SI2bis';
+  else if(mt===0x03) r.type='SI2ter';
+  else r.type='0x'+mt.toString(16);
+  return r;
+}
+function gsmMccMncStr(r){
+  const mnc=r.mnc2 ? String(r.mnc).padStart(2,'0') : String(r.mnc).padStart(3,'0');
+  return String(r.mcc).padStart(3,'0')+'-'+mnc;
+}
+
 /* ---------- приёмник: FCCH → SCH → синхронизация → бёрсты ---------- */
 // Опорные последовательности (готовятся один раз)
 let GSM_SCH_TS=null, GSM_NORM_TS=null;
@@ -236,7 +320,8 @@ class GsmReceiver{
     this.ncc=0; this.bcc=0;
     this.bursts=[];                                     // выданные за такт бёрсты
     this.rec=[];
-    this.dbm=0;
+    this.dbm=0; this.fc=0;
+    this.bcch=[null,null,null,null];                    // 4 бёрста BCCH (кадры 2..5)
   }
   avail(){ return this.len-this.head; }
   push(re,im){
@@ -440,7 +525,35 @@ class GsmReceiver{
   emitSch(){
     const fn=gsmFrameNr(this.t1,this.t2,this.t3);
     this.rec.push({t:Date.now(), kind:'GSM-SCH', bsic:(this.ncc<<3)|this.bcc,
-      ncc:this.ncc, bcc:this.bcc, fn, dbm:this.dbm});
+      ncc:this.ncc, bcc:this.bcc, fn, tn:0, freq:this.fc, dbm:this.dbm});
+  }
+  // 2×57 бит данных из e-бит нормального бёрста (без tail/train/steal/guard)
+  extractData(eb){
+    const d=new Uint8Array(114);
+    for(let i=0;i<57;i++){ d[i]=eb[3+i]; d[57+i]=eb[88+i]; }
+    return d;
+  }
+  // накопление 4 бёрстов BCCH (кадры 2..5 одного 51-мультикадра) → декод SI
+  accumBcch(eb){
+    const idx=this.t3-2;
+    if(idx===0) this.bcch=[null,null,null,null];
+    if(idx<0||idx>3) return;
+    this.bcch[idx]=this.extractData(eb);
+    if(idx===3 && this.bcch.every(Boolean)){
+      const l2=gsmBcchDecode(this.bcch); this.bcch=[null,null,null,null];
+      if(l2){ const si=gsmParseSI(l2); if(si) this.emitBcch(si, l2); }
+    }
+  }
+  emitBcch(si, l2){
+    const fn=gsmFrameNr(this.t1,this.t2,this.t3);
+    let hex=''; for(const x of l2) hex+=x.toString(16).padStart(2,'0');
+    const rec={t:Date.now(), kind:'GSM-'+si.type, si:si.type, bsic:(this.ncc<<3)|this.bcc,
+      ncc:this.ncc, bcc:this.bcc, fn, tn:0, freq:this.fc, dbm:this.dbm, hex};
+    if(si.ci!=null) rec.ci=si.ci;
+    if(si.mcc!=null){ rec.mcc=si.mcc; rec.mnc=si.mnc; rec.plmn=gsmMccMncStr(si); rec.lac=si.lac;
+      // ключ соты: PLMN-LAC-CI (или без CI, если это SI4)
+      rec.id=rec.plmn+'-'+si.lac.toString(16)+(si.ci!=null?'-'+si.ci.toString(16):''); }
+    this.rec.push(rec);
   }
 
   processTimeslot(){
@@ -472,6 +585,7 @@ class GsmReceiver{
       if(bs>=0 && this.head+bs+GSM_BURST_SIZE*GSM_OSR<this.len){
         const eb=new Uint8Array(GSM_BURST_SIZE); this.detectBurst(chanRe,chanIm,bs,eb);
         this.emitBurst('normal',eb);
+        if(this.tn===0 && this.t3>=2 && this.t3<=5) this.accumBcch(eb);   // BCCH → System Information
       }
     }
     const off=this.advanceBurst();
@@ -522,7 +636,7 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
     // остаток: держим по одному отсчёту слева от следующей позиции (для k-1)
     let keepFrom=Math.max(0,Math.floor(pos)-1);
     n.lr=xr.slice(keepFrom); n.li=xi.slice(keepFrom); n.frac=pos-keepFrom;
-    if(outN){ n.rx.push(outR.subarray(0,outN), outI.subarray(0,outN));
+    if(outN){ n.rx.fc=s.fc||0; n.rx.push(outR.subarray(0,outN), outI.subarray(0,outN));
       const {bursts,rec}=n.rx.work();
       // частотная петля
       if(n.p.afc && n.rx.freqOffset!=null && (n.rx.state!=='fcch' || n.rx.freqUpdate)){
@@ -530,14 +644,14 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
         n.foff=clamp(n.foff,-GSM_TARGET_SR/2,GSM_TARGET_SR/2);
       }
       let outRec=rec.length?rec:null, blk=null;
-      for(const b of bursts){
-        blk={d:b.bits, n:b.bits.length, id:++n.bid, fn:b.fn, tn:b.tn, kind:b.type};
-        if(n.log.length<200) n.log.push(`FN ${b.fn} TN ${b.tn} ${b.type}${b.type==='sch'?'':''} ${b.dbm} dBm`);
-      }
-      for(const r of rec) n.log.push(`SCH: BSIC ${r.bsic} (NCC ${r.ncc}/BCC ${r.bcc}) FN ${r.fn} ${r.dbm} dBm`);
+      n.bid+=bursts.length;
+      const last=bursts[bursts.length-1];
+      if(last) blk={d:last.bits, n:last.bits.length, id:n.bid, fn:last.fn, tn:last.tn, kind:last.type};
+      for(const r of rec) n.log.push(gsmRecLine(r));
       if(n.log.length>200) n.log.splice(0,n.log.length-200);
-      n.text=(n.rx.state==='sync'?'синхр.':n.rx.state==='sch'?'жду SCH':'ищу FCCH')+
-        ` · foff ${n.foff.toFixed(0)} Hz · бёрстов ${n.bid}\n`+n.log.slice(-14).join('\n');
+      const st=n.rx.state==='sync'?'синхр.':n.rx.state==='sch'?'жду SCH':'ищу FCCH';
+      const mhz=s.fc?(s.fc/1e6).toFixed(3)+' МГц · ':'';
+      n.text=st+` · ${mhz}foff ${n.foff.toFixed(0)} Hz · бёрстов ${n.bid}\n`+n.log.slice(-14).join('\n');
       return {rec:outRec, burst:blk, freq:n.foff, sync:n.rx.state==='sync'?1:0};
     }
     return {rec:null, burst:null, freq:n.foff, sync:n.rx.state==='sync'?1:0};
@@ -547,4 +661,12 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
 function gsmHerm(y0,y1,y2,y3,t){
   const c1=0.5*(y2-y0), c2=y0-2.5*y1+2*y2-0.5*y3, c3=0.5*(y3-y0)+1.5*(y1-y2);
   return ((c3*t+c2)*t+c1)*t+y1;
+}
+// строка лога по записи
+function gsmRecLine(r){
+  const t=new Date(r.t).toLocaleTimeString();
+  if(r.kind==='GSM-SCH') return `${t} SCH BSIC ${r.bsic} (NCC ${r.ncc}/BCC ${r.bcc}) FN ${r.fn} ${r.dbm} dBm`;
+  if(r.si==='SI3') return `${t} SI3 PLMN ${r.plmn} LAC ${r.lac} CID ${r.ci} · ${r.dbm} dBm`;
+  if(r.si==='SI4') return `${t} SI4 PLMN ${r.plmn} LAC ${r.lac}`;
+  return `${t} ${r.si||r.kind} FN ${r.fn}`;
 }
