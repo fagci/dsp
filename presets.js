@@ -113,6 +113,7 @@ const PRESET_CATS={
   'Meteor-M LRPT: Image (Generator)':'Demo',
   'Radiosonde RS41: Map (Generator)':'Demo',
   'Inmarsat STD-C: EGC Messages (Generator)':'Demo',
+  'MPT 1327: Control Channel (Generator)':'Demo',
 
   'Quick Audio Recording':'Quick Scenarios',
   'Find Sound Source (by Frequency)':'Quick Scenarios',
@@ -155,6 +156,7 @@ const PRESET_CATS={
   'Meteor-M LRPT: Image (USB SDR, 137 MHz)':'Radio Protocols',
   'Radiosonde RS41: Map (USB SDR, 400–406 MHz)':'Radio Protocols',
   'Inmarsat STD-C: EGC Messages (USB SDR, 1.5 GHz)':'Radio Protocols',
+  'MPT 1327: Control Channel (USB SDR)':'Radio Protocols',
   'Sound Card IQ: HF Receiver (SoftRock-style)':'Quick Scenarios',
   'FT8: Find Signals in Slot':'Radio Protocols',
   'Weather Fax WEFAX 120':'Radio Protocols',
@@ -756,6 +758,38 @@ log.size.w=460; applySize(log);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',map.id,'rec'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('MPT 1327: Control Channel (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'MPT 1327 trunking without a radio: the generator sends a control channel — FFSK 1200 Bd (1 = 1200 Hz, 0 = 1800 Hz)\n'+
+  'on an FM carrier, ±2.5 kHz: preamble, sync word 0xC4D7, address codewords with a data codeword every other message.\n'+
+  'MPT 1327 Decoder: FM discriminator, 8 bit-clock phases, sync search, CRC-15 and parity → PFIX/IDENT and raw codewords.'});
+nt.size.w=680; nt.size.h=150; applySize(nt);
+const gn=addNode('iqGen',40,240,{sr:'256000',fc:160000000,mode:'MPT1327',off:7000,lvl:-20,noise:-50});
+const de=addNode('mpt1327Rx',340,240,{});
+de.size.w=520; de.size.h=300; applySize(de);
+const log=addNode('recLog',340,600,{});
+log.size.w=520; applySize(log);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('MPT 1327: Control Channel (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'MPT 1327 analogue trunking: tune the SDR to a control channel (VHF/UHF business bands; the strongest steady FM signal\n'+
+  'with a constant data buzz) and tap it on the spectrum. The decoder shows codewords with PFIX/IDENT; the log saves CSV.'});
+nt.size.w=680; nt.size.h=110; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'1024000',freq:160000000,demod:'IQ'});
+const sa=addNode('sa',760,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,200,{});
+const de=addNode('mpt1327Rx',340,360,{});
+de.size.w=520; de.size.h=300; applySize(de);
+const log=addNode('recLog',340,720,{});
+log.size.w=520; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('Inmarsat STD-C: EGC Messages (Generator)', function(){
