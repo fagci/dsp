@@ -25,6 +25,7 @@ IQK.iqGen={
     let ph=n.ph, mph=n.mph, x=n.rng;
     const rnd=()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296; };
     const env=mode==='ADS-B' ? iqGenAdsb(n,sr,N) : null;
+    const bb=mode==='LRPT' ? lrptGenerate(n,sr,N,n.p.lrpt||'OQPSK') : null;
     for(let i=0;i<N;i++){
       const m=Math.sin(mph); mph+=wm;
       let amp=a, p=ph;
@@ -36,7 +37,9 @@ IQK.iqGen={
       else if(mode==='off') amp=0;
       else if(env) amp=a*env[i];
       ph+=w;
-      re[i]=amp*Math.cos(p); im[i]=amp*Math.sin(p);
+      if(bb){ const c=Math.cos(p), sn=Math.sin(p), br=bb[0][i], bi=bb[1][i];
+        re[i]=a*(br*c-bi*sn); im[i]=a*(br*sn+bi*c); }
+      else { re[i]=amp*Math.cos(p); im[i]=amp*Math.sin(p); }
       if(nz>0){   // Бокс–Мюллер
         const u=Math.max(rnd(),1e-12), v=rnd(), r=nz*Math.sqrt(-2*Math.log(u));
         re[i]+=r*Math.cos(2*Math.PI*v); im[i]+=r*Math.sin(2*Math.PI*v);

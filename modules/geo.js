@@ -25,8 +25,10 @@ function recConsts(s){                                // "icon=plane; color=#f80
   }
   return o;
 }
-function recFmt(v){
+// байтовые массивы (кадры декодеров): в тексте — длина, в CSV (full) — hex
+function recFmt(v,full){
   if(typeof v==='number') return Number.isInteger(v) ? String(v) : String(+v.toFixed(6));
+  if(v instanceof Uint8Array) return full ? Array.from(v,b=>(b<16?'0':'')+b.toString(16)).join('') : '‹'+v.length+' bytes›';
   if(v && typeof v==='object') return JSON.stringify(v);
   return String(v);
 }
@@ -69,7 +71,7 @@ function geoCsvParse(text,delim){
   return rows.filter(r=>r.length>1 || r[0]!=='');
 }
 function geoCsvCell(v){
-  const s=v==null ? '' : recFmt(v);
+  const s=v==null ? '' : recFmt(v,true);
   return /[",\r\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
 }
 function recsToCsv(recs){

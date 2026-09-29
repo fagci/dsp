@@ -50,7 +50,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 
 ### IQ blocks
 - **IQ stream** wires carry complex (or real) samples at their own sample rate, not the engine's — build a receiver from blocks: source → frequency shift → decimator → demodulator → IQ → Audio (see [IQ blocks](#iq-blocks))
-- USB SDR `iq` output (raw IQ at the native rate, also from IQ file playback), IQ generator, IQ spectrum, ADS-B demodulator
+- USB SDR `iq` output (raw IQ at the native rate, also from IQ file playback), IQ generator, IQ spectrum, ADS-B demodulator, PSK (QPSK/OQPSK) demodulator
 
 ### Modulation & radio
 - AM/FM/SSB demodulator, FSK demodulator, generic modulator
@@ -66,6 +66,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - HFDL: full receive chain down to ACARS / ADS-C, aircraft tracks and ground stations on the map
 - **ADS-B / Mode S** (1090 MHz) from raw SDR IQ: aircraft on the map with callsign, altitude, speed and heading (see [ADS-B](#ads-b))
 - GSM: downlink physical-layer receiver from raw IQ — FCCH tone sync, SCH decode (BSIC + frame number), GMSK burst extraction (see [GSM](#gsm))
+- **Meteor-M LRPT** (137 MHz) from raw IQ, frame level: QPSK/OQPSK demodulator, CCSDS decoder (Viterbi K=7, NRZ-M, ASM, derandomizer, RS(255,223)×4) → VCDU records (see [Meteor-M LRPT](#meteor-m-lrpt)); the image decoder is not there yet
 - Building blocks: CRC, scrambler, interleaver, convolutional encoder / Viterbi, sync word search, async serial, NRZ clock, text ↔ bits
 
 ### Music
@@ -182,7 +183,7 @@ Ready-made patch: **GSM: Receive Bursts (USB SDR)** (spectrum → tap a channel 
 
 A wire of the **IQ** type (lime) carries a stream at its own sample rate: each engine block it brings as many samples as the source produced since the previous block (none, one chunk or several), together with the stream's sample rate and center frequency. So a chain can run at 2.4 MS/s next to audio at 48 kHz, and a receiver is wired from blocks instead of being hidden inside the SDR node.
 
-- **IQ Generator** — a test signal (carrier, AM, FM, **WFM stereo** with a pilot and RDS station name — the tone in the left channel only, to check separation — USB, LSB, **ADS-B** — DF17 frames from three simulated aircraft) at an offset from the center, plus noise; sample rate up to 2.4 MS/s. *clock error, ppm* simulates a source whose clock differs from the sound card
+- **IQ Generator** — a test signal (carrier, AM, FM, **WFM stereo** with a pilot and RDS station name — the tone in the left channel only, to check separation — USB, LSB, **ADS-B** — DF17 frames from three simulated aircraft, **LRPT** — Meteor-M CCSDS frames, OQPSK + NRZ-M or QPSK) at an offset from the center, plus noise; sample rate up to 2.4 MS/s. *clock error, ppm* simulates a source whose clock differs from the sound card
 - **USB SDR → `iq`** — the raw IQ at the native rate (live or from IQ file playback); samples of the old frequency after a retune are not passed on. The USB buffers go on as they are (8 or 16 bit) and are turned into floats by whoever reads them — for an IQ chain in a worker that happens in the worker, not on the main thread
 - **IQ Frequency Shift** — brings `freq` (absolute Hz, e.g. marker `f1` of a Spectrum Analyzer) or center + *offset* down to 0 Hz
 - **IQ Decimator** — windowed-sinc FIR (Blackman) and decimation by 2…64; *cutoff* is a fraction of the output rate. Works on complex and real streams
@@ -202,6 +203,7 @@ A wire of the **IQ** type (lime) carries a stream at its own sample rate: each e
 - **IQ Channelizer** — a polyphase filter bank: cuts the stream into N channels (8…1024) spaced sr/N with one FFT for all of them, so many signals can be received at once. Each channel comes out at sr/N (**oversampling 1**) or 2·sr/N (**2**: flat to the channel edge, no aliasing there; with 16 taps per channel the neighbour's centre is rejected by more than 60 dB). **outputs** (1…8) are slots: **manual** — the channels of the listed frequencies (or `f1…` inputs), **strongest** — the strongest active channels above the noise floor (median of the channel powers) + threshold, one slot per signal peak, held for **hold** seconds after it goes quiet; the centre channel (DC spike) is skipped. `spec` is the power of every channel, `active` — how many slots are busy. About 15% of a core at 1.024 MS/s (64 channels, 2× oversampling, 16 taps) — in its worker
 - **IQ Add** — sum of two streams of the same rate (for test signals)
 - **ADS-B Demodulator** — Mode S frames from a 1090 MHz stream (see [ADS-B](#ads-b))
+- **PSK Demodulator** — soft QPSK/OQPSK symbols out as an IQ stream at the symbol rate (see [Meteor-M LRPT](#meteor-m-lrpt))
 
 **Workers.** IQ blocks wired to each other form an *island* that runs in its own Web Worker: the main thread only sends it the inputs coming from outside (e.g. the SDR's raw IQ) and the parameters once per engine block, and hands its outputs to the rest of the graph when they come back a block or two later. The IQ → Audio bridge keeps the stream continuous (its buffer covers the delay); numbers and spectra from an island lag by a few milliseconds. Records (`rec`) from an island are queued and delivered once each. Only outputs wired to nodes outside the island come back. IQ → Audio stays on the main thread (it outputs audio), and so do IQ blocks inside groups. The readout of a block in a worker ends with *· worker*. On the generator preset the main-thread load drops from ~40% to ~2%.
 
@@ -216,9 +218,20 @@ Mode S / ADS-B at 1090 MHz from the raw IQ of a USB SDR — no dump1090 needed.
 
 Presets: *ADS-B: Aircraft Map (Generator)* (no hardware), *ADS-B: Aircraft Map (USB SDR, 1090 MHz)*.
 
+## Meteor-M LRPT
+
+LRPT from Meteor-M satellites (137.1 / 137.9 MHz) from the raw IQ of a USB SDR, down to CCSDS frames. The parameters follow [SatDump](https://github.com/SatDump/SatDump) (GPLv3): M2-3/M2-4 use OQPSK 72 kBd + NRZ-M, the old M2 uses QPSK without NRZ-M; both use RS(255,223) with interleave 4 in the conventional basis.
+
+- **PSK Demodulator** (IQ, worker): decimates to 3–6 samples per symbol by itself (1.024 MS/s → ÷4), RRC matched filter (α = 0.6), AGC, coarse frequency from the 4th-power spectrum (±*frequency search*, also for OQPSK), Gardner symbol timing with cubic interpolation (OQPSK: Q taken half a symbol later), 4th-order Costas loop. Out: soft symbols as an IQ stream at the symbol rate, `freq` (offset, Hz), `lock`; the node shows the constellation, offset and SNR.
+- **CCSDS Decoder** (Decoders, worker): Viterbi sync by re-encoding errors over 8 variants (I/Q swap × 0/90° × pair shift; 180° is removed by NRZ-M or an inverted ASM), streaming Viterbi K=7 r=1/2 (polynomials 171/133), NRZ-M, ASM `1ACFFC1D` with 1024-byte frames, CCSDS derandomizer, RS(255,223)×4 (conventional or dual basis, or off). A lock without ASM for 4 frames is dropped as false. `rec` — one record per frame that passes RS: `scid`, `vcid`, `cnt` (VCDU counter), `rs` (bytes fixed), `vcdu` (892 bytes; hex in CSV). Plus `ber` (re-encoding error rate) and `lock` (0 none, 1 Viterbi, 2 frames synced).
+
+Checked against independent references: the encoded ASM matches SatDump's correlator pattern, RS parity matches `reedsolo` with the CCSDS field, and the PN sequence matches CCSDS. End to end, generator → demodulator → decoder, every frame comes back byte for byte (OQPSK and QPSK, ±9 kHz offset, Es/N0 down to ~6 dB). It has not yet been tried on a real pass recording.
+
+Presets: *Meteor-M LRPT: Frames (Generator)*, *Meteor-M LRPT: Frames (USB SDR, 137 MHz)*.
+
 ## Tests
 
-Smoke tests run the engine without a sound card in headless Chromium: a few presets (decoded RTTY text, APRS frames with a good CRC, sound on the output) and the IQ chain (tone frequency and level after FM/AM/SSB, sideband rejection, bridge lock to a drifting clock, decimator and channelizer independent of chunk sizes, channelizer gain, offset and neighbour rejection, two receivers from one channelizer, WFM stereo separation and RDS, SAM lock with a carrier offset, SSB AGC, de-emphasis, noise blanker, squelch, ADS-B (reference frames, generator → decoder at 2 and 2.4 MS/s, bit correction), DC block, I/Q merge, auto notch, USB SDR `iq` output from an IQ file), and the same chains in workers: one island per connected chain, values and spectra coming back, parameters followed on the fly, the worker and its state kept when wires change, fallback to the main thread when workers are blocked, and the workers starting on a cross-origin isolated page (as served by the service worker). For GSM: the SCH convolutional code / CRC round-trip and BSIC/frame-number parsing, channel estimation + MLSE recovering a synthetic normal burst, FCCH detection with carrier-offset estimation, and the BCCH chain (xCCH de-interleave + Viterbi + FIRE CRC, SI3 → Cell ID / PLMN / LAC, and CRC rejecting a corrupted block). For records: `recUniq` dedup by key with counts and first/last time.
+Smoke tests run the engine without a sound card in headless Chromium: a few presets (decoded RTTY text, APRS frames with a good CRC, sound on the output) and the IQ chain (tone frequency and level after FM/AM/SSB, sideband rejection, bridge lock to a drifting clock, decimator and channelizer independent of chunk sizes, channelizer gain, offset and neighbour rejection, two receivers from one channelizer, WFM stereo separation and RDS, SAM lock with a carrier offset, SSB AGC, de-emphasis, noise blanker, squelch, ADS-B (reference frames, generator → decoder at 2 and 2.4 MS/s, bit correction), DC block, I/Q merge, auto notch, USB SDR `iq` output from an IQ file), and the same chains in workers: one island per connected chain, values and spectra coming back, parameters followed on the fly, the worker and its state kept when wires change, fallback to the main thread when workers are blocked, and the workers starting on a cross-origin isolated page (as served by the service worker). For GSM: the SCH convolutional code / CRC round-trip and BSIC/frame-number parsing, channel estimation + MLSE recovering a synthetic normal burst, FCCH detection with carrier-offset estimation, and the BCCH chain (xCCH de-interleave + Viterbi + FIRE CRC, SI3 → Cell ID / PLMN / LAC, and CRC rejecting a corrupted block). For Meteor-M LRPT / CCSDS: convolutional code vs SatDump's sync pattern, RS parity vs `reedsolo`, PN, RS correcting up to 16 bytes and the dual basis, generator → PSK demodulator → CCSDS decoder for OQPSK+NRZ-M and QPSK (with internal decimation), a weak signal, noise alone giving no frames, the worker island and both presets. For records: `recUniq` dedup by key with counts and first/last time.
 
 ```
 cd tools/test
