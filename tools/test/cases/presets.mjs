@@ -29,6 +29,10 @@ export default [
     T.preset('USB SDR: FM Receiver from Blocks'); T.run(0.5);
     const e = T.errors(); return e.length ? e.join('; ') : true;
   }},
+  {name:'preset: GSM: Receive Bursts (USB SDR) (not connected)', fn(){
+    T.preset('GSM: Receive Bursts (USB SDR)'); T.run(0.5);
+    const e = T.errors(); return e.length ? e.join('; ') : true;
+  }},
   {name:'preset: IQ: Channelizer — Three Signals at Once (Generator)', fn(){
     T.preset('IQ: Channelizer — Three Signals at Once (Generator)');
     const us = T.byType('iqAudio'), a = us.map(() => []);

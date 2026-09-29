@@ -148,6 +148,7 @@ const PRESET_CATS={
   'Decode Protocol as Raster':'Radio Protocols',
   'Morse: Encoder + Decoder':'Radio Protocols',
   'HFDL: Receive Chain (to Symbols)':'Radio Protocols',
+  'GSM: Receive Bursts (USB SDR)':'Radio Protocols',
   'FT8: Find Signals in Slot':'Radio Protocols',
   'Weather Fax WEFAX 120':'Radio Protocols',
   'WEFAX Transmit (Demo)':'Radio Protocols',
@@ -637,6 +638,30 @@ addEdge(rx.id,'iq',dcb.id,'in'); addEdge(dcb.id,'out',nb.id,'in'); addEdge(nb.id
 addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'out',sq.id,'in');
 addEdge(sq.id,'out',au.id,'in'); addEdge(au.id,'out',an.id,'in');
 addEdge(an.id,'out',dc.id,'L'); addEdge(an.id,'out',dc.id,'R');
+markWiresDirty();
+});
+preset('GSM: Receive Bursts (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'GSM downlink receiver (physical layer): sync to a C0 carrier and pull out bursts.\n'+
+  'Raw IQ (2.4 MS/s) → tap a GSM channel on the spectrum → ×2 (1.2 MS/s) → GSM: Receive Bursts.\n'+
+  'The node resamples to 4×270.833 kS/s, finds FCCH, decodes SCH (BSIC + frame number) and outputs\n'+
+  'bursts as bits. Tune to a GSM900 BCCH (935–960 MHz) or DCS1800 (1805–1880 MHz). Rec Log keeps SCH records.\n'+
+  'This is a receiver, not a traffic decoder — decode the logical channels downstream.'});
+nt.size.w=640; nt.size.h=190; applySize(nt);
+const rx=addNode('rtlsdr',40,300,{sr:'2400000',freq:942000000,demod:'IQ'});
+const sa=addNode('sa',700,40,{auto:true,floor:-90,top:-10,split:1});
+sa.size.w=640; sa.size.h=300; applySize(sa);
+const sh=addNode('iqShift',340,300,{});
+const d1=addNode('iqDecim',340,460,{M:'2',cut:.45});
+const gsm=addNode('gsmRx',340,620,{afc:true});
+gsm.size.w=380; gsm.size.h=260; applySize(gsm);
+const log=addNode('recLog',760,400,{});
+log.size.w=360; applySize(log);
+const nv=addNode('numview',760,700,{label:'synced'});
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',gsm.id,'in');
+addEdge(gsm.id,'rec',log.id,'rec'); addEdge(gsm.id,'sync',nv.id,'in');
 markWiresDirty();
 });
 preset('IQ: Channelizer — Three Signals at Once (Generator)', function(){
