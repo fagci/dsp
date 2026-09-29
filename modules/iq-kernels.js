@@ -24,6 +24,7 @@ IQK.iqGen={
     const kf=2*Math.PI*n.p.dev/sr, kw=2*Math.PI*75000/sr, depth=n.p.depth;
     let ph=n.ph, mph=n.mph, x=n.rng;
     const rnd=()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296; };
+    const env=mode==='ADS-B' ? iqGenAdsb(n,sr,N) : null;
     for(let i=0;i<N;i++){
       const m=Math.sin(mph); mph+=wm;
       let amp=a, p=ph;
@@ -33,6 +34,7 @@ IQK.iqGen={
       else if(mode==='USB') p=ph+mph;
       else if(mode==='LSB') p=ph-mph;
       else if(mode==='off') amp=0;
+      else if(env) amp=a*env[i];
       ph+=w;
       re[i]=amp*Math.cos(p); im[i]=amp*Math.sin(p);
       if(nz>0){   // Бокс–Мюллер
@@ -706,3 +708,197 @@ IQK.iqSquelch={
     n.ui={rssi:n.rssi, snr, open:n.open};
     return {out:o, rssi:n.rssi, snr, open:n.open ? 1 : 0};
   }};
+
+/* ---- Mode S / ADS-B: общее для демодулятора, декодера и генератора ---- */
+// CRC-24 Mode S (полином 0xFFF409); остаток = CRC(данные) ^ последние 3 байта
+const MODES_CRC_T=(()=>{ const t=new Uint32Array(256);
+  for(let i=0;i<256;i++){ let c=i<<16; for(let k=0;k<8;k++) c=c&0x800000 ? (c<<1)^0xFFF409 : c<<1; t[i]=c&0xFFFFFF; }
+  return t; })();
+function modesCrc(b,n){ let c=0; for(let i=0;i<n;i++) c=((c<<8)^MODES_CRC_T[((c>>>16)^b[i])&0xff])&0xFFFFFF; return c; }
+function modesResidual(b,nb){ return modesCrc(b,nb-3)^((b[nb-3]<<16)|(b[nb-2]<<8)|b[nb-1]); }
+function modesLen(df){ return df>=16 && df!==23 ? 112 : 56; }
+// синдромы одиночных ошибок в 112-битном кадре (биты 5..111: DF не трогаем): синдром → бит и бит → синдром
+let MODES_FIX1=null, MODES_SYN=null;
+function modesFix1(){
+  if(MODES_FIX1) return MODES_FIX1;
+  MODES_FIX1=new Map(); MODES_SYN=new Int32Array(112);
+  const b=new Uint8Array(14);
+  for(let i=5;i<112;i++){ b.fill(0); b[i>>3]=0x80>>(i&7); const r=modesResidual(b,14); MODES_FIX1.set(r,i); MODES_SYN[i]=r; }
+  return MODES_FIX1;
+}
+function modesHex(b,nb){ let s=''; for(let i=0;i<nb;i++) s+=(b[i]<16?'0':'')+b[i].toString(16); return s.toUpperCase(); }
+// CPR: число долготных зон на широте lat
+function cprNL(lat){
+  lat=Math.abs(lat);
+  if(lat<1e-9) return 59; if(lat>87) return 1; if(lat===87) return 2;
+  const c=Math.cos(Math.PI*lat/180);
+  return Math.floor(2*Math.PI/Math.acos(1-(1-Math.cos(Math.PI/30))/(c*c)));
+}
+function cprMod(a,b){ const r=a%b; return r<0 ? r+b : r; }
+function cprEncode(lat,lon,odd){
+  const dlat=360/(odd?59:60), yz=Math.floor(131072*cprMod(lat,dlat)/dlat+0.5);
+  const rlat=dlat*(yz/131072+Math.floor(lat/dlat)), dlon=360/Math.max(cprNL(rlat)-odd,1);
+  const xz=Math.floor(131072*cprMod(lon,dlon)/dlon+0.5);
+  return [yz&0x1FFFF, xz&0x1FFFF];
+}
+
+/* ---- ADS-B Demodulator ---- */
+// Модуль IQ → поиск преамбулы (импульсы 0, 1, 3.5, 4.5 мкс) → PPM-биты по 1 мкс → CRC-24.
+// Интегралы по дробным окнам через префиксные суммы: подходит любая частота от 2 МС/с (2.4 — лучше).
+// Фаза уточняется перебором сдвигов в полбита. DF11/17/18 — по CRC (1 бит исправляется),
+// DF0/4/5/16/20/21 — адрес в CRC, принимается, если борт недавно слышен в DF11/17/18.
+const ADSB_ADDR_TTL=60000;
+IQK.adsbDemod={
+  init(n){ n.sr=0; n.frames=0; n.fixed=0; n.bad=0; n.cand=0; n.rate=0; n.rT=0; n.rN=0; n.known=new Map(); n.bits=new Uint8Array(112); n.conf=new Float32Array(112); n.b=new Uint8Array(14); },
+  process(n,I){
+    const s=iqIn(I,'in');
+    if(!s){ n.ui=null; return {rec:null, rate:null}; }
+    const sr=s.sr, u=sr/1e6;
+    if(sr!==n.sr){ n.sr=sr; n.span=Math.ceil(121*u)+4; n.hist=new Float32Array(0); n.skip=0; n.t=0; }
+    let K=0; for(const c of s.chunks) K+=c.re.length;
+    const H=n.hist.length, N=H+K, m=new Float32Array(N);
+    m.set(n.hist);
+    let w=H;
+    for(const c of s.chunks){ const xr=c.re, xi=iqChunkIm(c); for(let i=0;i<xr.length;i++,w++) m[w]=Math.sqrt(xr[i]*xr[i]+xi[i]*xi[i]); }
+    const P=new Float64Array(N+1);
+    for(let i=0;i<N;i++) P[i+1]=P[i]+m[i];
+    const G=x=>{ const k=x|0; return P[k]+(x-k)*m[k]; };
+    const S=(a,b)=>G(b)-G(a);
+    const h=u/2, thr=Math.pow(10,n.p.thr/20), recs=[], now=Date.now();
+    const end=N-n.span, bits=n.bits, b=n.b;
+    const pre=x=>{                                   // средний импульс и среднее затишье, на полбита
+      const p1=S(x,x+h), p2=S(x+u,x+u+h), p3=S(x+3.5*u,x+4*u), p4=S(x+4.5*u,x+5*u);
+      const q=S(x+h,x+u)+S(x+u+h,x+3.5*u)+S(x+4*u,x+4.5*u)+S(x+5*u,x+8*u);
+      return [Math.min(p1,p2,p3,p4), (p1+p2+p3+p4)/4, q/12];
+    };
+    let x=n.skip;
+    while(x<end){
+      const [pmin,hi,lo]=pre(x);
+      if(!(hi>thr*lo && pmin>lo && pmin>1e-6*h)){ x+=1; continue; }
+      n.cand++;
+      let got=null;
+      const ph=[0,-.25,.25,-.5,.5].map(d=>x+d*h).filter(v=>v>=0 && v<end).map(v=>[v,pre(v)]).sort((a,c)=>(c[1][1]-c[1][2])-(a[1][1]-a[1][2]));
+      for(const [x0] of ph){
+        got=adsbBits(n,S,x0,u,h,bits,b,now);
+        if(got) break;
+      }
+      if(got){
+        const [len,r]=got;
+        r.rssi=+(20*Math.log10(hi/h+1e-12)).toFixed(1);
+        recs.push(r); n.frames++; n.rN++;
+        x+=(8+len)*u;
+      } else { n.bad++; x+=1; }
+    }
+    n.skip=x-Math.max(end,0);
+    n.hist=m.slice(Math.max(0,N-n.span));
+    n.t+=K/sr; n.rT+=K/sr;
+    if(n.rT>=1){ n.rate=n.rN/n.rT; n.rN=0; n.rT=0;
+      for(const [a,t] of n.known) if(now-t>ADSB_ADDR_TTL) n.known.delete(a); }
+    n.ui={sr, frames:n.frames, fixed:n.fixed, rate:n.rate, cand:n.cand, known:n.known.size};
+    return {rec:recs.length ? recs : null, rate:n.rate};
+  }};
+// биты кадра с позиции x0 → [длина, запись] или null, если CRC не сошлась
+const ADSB_WEAK=12;
+function adsbBits(n,S,x0,u,h,bits,b,now){
+  const d=x0+8*u, conf=n.conf;
+  let len=5;
+  for(let j=0;j<len;j++){
+    const a=d+j*u, p=S(a,a+h), q=S(a+h,a+u);
+    bits[j]=p>q ? 1 : 0; conf[j]=Math.abs(p-q)/(p+q+1e-12);
+    if(j===4) len=modesLen((bits[0]<<4)|(bits[1]<<3)|(bits[2]<<2)|(bits[3]<<1)|bits[4]);
+  }
+  const df=(bits[0]<<4)|(bits[1]<<3)|(bits[2]<<2)|(bits[3]<<1)|bits[4], nb=len/8;
+  b.fill(0);
+  for(let j=0;j<len;j++) if(bits[j]) b[j>>3]|=0x80>>(j&7);
+  let res=modesResidual(b,nb), fix=0, icao;
+  if(df===17 || df===18){
+    if(res && n.p.fix!=='off'){
+      const i=modesFix1().get(res);
+      if(i!=null){ b[i>>3]^=0x80>>(i&7); res=0; fix=1; }
+      else if(n.p.fix==='2 weak bits'){                // пары среди наименее уверенных битов
+        const w=[]; for(let j=5;j<112;j++) w.push(j);
+        w.sort((x,y)=>conf[x]-conf[y]); w.length=ADSB_WEAK;
+        for(let a=0;a<ADSB_WEAK && res;a++) for(let c=a+1;c<ADSB_WEAK;c++) if((MODES_SYN[w[a]]^MODES_SYN[w[c]])===res){
+          for(const k of [w[a],w[c]]) b[k>>3]^=0x80>>(k&7); res=0; fix=2; break; }
+      }
+    }
+    if(res) return null;
+    icao=(b[1]<<16)|(b[2]<<8)|b[3];
+    if(df===17 || (b[0]&7)===0) n.known.set(icao,now);
+  } else if(df===11){
+    if(res&~0x7F) return null;
+    icao=(b[1]<<16)|(b[2]<<8)|b[3];
+    if(res===0) n.known.set(icao,now);               // с IID — только уже известные: меньше призраков
+    else if(!n.known.has(icao)) return null;
+  } else if(df===0 || df===4 || df===5 || df===16 || df===20 || df===21){
+    if(!n.known.has(res)) return null;
+    icao=res;
+  } else return null;
+  if(fix) n.fixed++;
+  const r={t:now, raw:modesHex(b,nb), df, icao:icao.toString(16).toUpperCase().padStart(6,'0')};
+  if(fix) r.fix=fix;
+  return [len,r];
+}
+
+/* ---- генератор: ADS-B (DF17) от нескольких бортов на кругах ---- */
+const ADSB_SIM=[                                   // alt — футы, per — период круга, с (знак — направление)
+  {icao:0x4B1805, call:'SWR123', lat:55.01, lon:82.65, r:30, per:1220, alt:11000},
+  {icao:0x155A2F, call:'SBI2512', lat:55.30, lon:83.25, r:18, per:-1000, alt:4500},
+  {icao:0x3C6444, call:'DLH7AB', lat:54.70, lon:82.10, r:45, per:1220, alt:36000},
+];
+const ADSB_CS='#ABCDEFGHIJKLMNOPQRSTUVWXYZ##### ###############0123456789######';
+function adsbSimPos(a,t){
+  const w=2*Math.PI/a.per, ang=w*t, k=a.r/111.2;
+  const lat=a.lat+k*Math.sin(ang), lon=a.lon+k*Math.cos(ang)/Math.cos(a.lat*Math.PI/180);
+  const kt=Math.abs(w)*a.r*1000/0.5144;                       // скорость по кругу, узлы
+  const ve=-Math.sin(ang)*Math.sign(w)*kt, vn=Math.cos(ang)*Math.sign(w)*kt;
+  return {lat, lon, ve, vn};
+}
+// поля [значение, бит] → 14 байт DF17 с CRC
+function adsbFrame(icao,me){
+  const f=[[17,5],[5,3],[icao,24],...me], b=new Uint8Array(14);
+  let p=0;
+  for(const [v,nb] of f) for(let i=nb-1;i>=0;i--,p++) if(Math.floor(v/2**i)%2) b[p>>3]|=0x80>>(p&7);
+  const c=modesCrc(b,11); b[11]=c>>>16; b[12]=(c>>>8)&0xff; b[13]=c&0xff;
+  return b;
+}
+function adsbSimMsg(a,kind,t){
+  const s=adsbSimPos(a,t);
+  if(kind==='id'){
+    const cs=(a.call+'        ').slice(0,8);
+    return adsbFrame(a.icao,[[4,5],[3,3],...[...cs].map(ch=>[Math.max(0,ADSB_CS.indexOf(ch)),6])]);
+  }
+  if(kind==='v'){
+    const e=Math.round(Math.abs(s.ve))+1, nn=Math.round(Math.abs(s.vn))+1;
+    return adsbFrame(a.icao,[[19,5],[1,3],[0,5],[s.ve<0?1:0,1],[Math.min(e,1023),10],[s.vn<0?1:0,1],[Math.min(nn,1023),10],
+      [0,1],[0,1],[1,9],[0,2],[0,1],[0,7]]);
+  }
+  const odd=kind==='po' ? 1 : 0, [yz,xz]=cprEncode(s.lat,s.lon,odd), q=Math.round((a.alt+1000)/25);
+  return adsbFrame(a.icao,[[11,5],[0,2],[0,1],[((q&0x7F0)<<1)|0x10|(q&0xF),12],[0,1],[odd,1],[yz,17],[xz,17]]);
+}
+// огибающая кадра на частоте sr: доля отсчёта под импульсами
+function adsbEnv(b,sr){
+  const on=[[0,.5],[1,1.5],[3.5,4],[4.5,5]];
+  for(let j=0;j<112;j++){ const v=(b[j>>3]>>(7-(j&7)))&1, t=8+j+(v?0:.5); on.push([t,t+.5]); }
+  const L=Math.ceil(120*sr/1e6)+1, e=new Float32Array(L), dt=1e6/sr;
+  for(const [a,c] of on){
+    const k0=Math.floor(a/dt), k1=Math.min(L-1,Math.floor(c/dt));
+    for(let k=k0;k<=k1;k++) e[k]+=Math.max(0,Math.min(c,(k+1)*dt)-Math.max(a,k*dt))/dt;
+  }
+  return e;
+}
+const ADSB_SEQ=['pe','po','v','pe','po','id'];
+function iqGenAdsb(n,sr,N){
+  let g=n.adsb;
+  if(!g || g.sr!==sr){ g=n.adsb={sr, t:0, k:0, env:null, pos:0, next:0}; }
+  const out=new Float32Array(N);
+  for(let i=0;i<N;i++,g.t++){
+    if(!g.env && g.t>=g.next){
+      const a=ADSB_SIM[g.k%ADSB_SIM.length], kind=ADSB_SEQ[Math.floor(g.k/ADSB_SIM.length)%ADSB_SEQ.length];
+      g.env=adsbEnv(adsbSimMsg(a,kind,g.t/sr),sr); g.pos=0; g.k++;
+      g.next=g.t+Math.round(sr*(0.04+0.03*((g.k*7919)%13)/13));
+    }
+    if(g.env){ out[i]=g.env[g.pos++]; if(g.pos>=g.env.length) g.env=null; }
+  }
+  return out;
+}

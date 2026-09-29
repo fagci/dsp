@@ -5,7 +5,7 @@
 // DSP — в modules/iq-kernels.js. Узлы с kernel движок собирает в острова и считает
 // в воркере (см. core-islands.js), без воркеров — здесь же, в главном потоке.
 
-const IQ_SR_OPTS=['48000','96000','192000','240000','250000','256000','1024000','2048000','2400000'];
+const IQ_SR_OPTS=['48000','96000','192000','240000','250000','256000','1024000','2000000','2048000','2400000'];
 const iqCtx={get block(){ return BLOCK; }, get sr(){ return Eng.sr; }};
 // def с ядром из IQK: process/init в главном потоке, readout — по n.ui
 function defIQ(d, text){
@@ -21,7 +21,7 @@ defIQ({ id:'iqGen', title:'IQ Generator', cat:'IQ',
   ins:[{n:'fc',t:'num'},{n:'off',t:'num'}], outs:[{n:'iq',t:'iq'}],
   params:[{n:'sr',t:'select',opts:IQ_SR_OPTS,d:'1024000',label:'sample rate'},
           {n:'fc',t:'num',d:100000000,label:'center frequency, Hz'},
-          {n:'mode',t:'select',opts:['carrier','AM','FM','WFM stereo','USB','LSB','off'],d:'FM'},
+          {n:'mode',t:'select',opts:['carrier','AM','FM','WFM stereo','USB','LSB','ADS-B','off'],d:'FM'},
           {n:'off',t:'num',d:100000,label:'signal offset from center, Hz'},
           {n:'lvl',t:'range',min:-100,max:0,step:1,d:-20,label:'signal level, dBFS'},
           {n:'tone',t:'range',min:50,max:10000,step:1,d:1000,log:true,label:'modulating tone, Hz'},
