@@ -94,72 +94,78 @@ const CCSDS_PN=(()=>{ const t=new Uint8Array(255); let s=0xFF;
   return t; })();
 function ccsdsDerand(b,from,len){ for(let i=0;i<len;i++) b[from+i]^=CCSDS_PN[i%255]; }
 
-/* ---- RS(255,223) CCSDS: GF(2^8) по 0x187, корни α^(11·(112+j)), j=0..31; c[0] — старшая степень ---- */
-const RS_EXP=new Uint8Array(512), RS_LOG=new Uint8Array(256);
-(()=>{ let x=1; for(let i=0;i<255;i++){ RS_EXP[i]=x; RS_LOG[x]=i; x<<=1; if(x&0x100) x^=0x187; }
-  for(let i=255;i<512;i++) RS_EXP[i]=RS_EXP[i-255]; })();
-const RS_NP=32, RS_FCR=112, RS_PRIM=11;
-function gfMul(a,b){ return a&&b ? RS_EXP[RS_LOG[a]+RS_LOG[b]] : 0; }
-function gfDiv(a,b){ return a ? RS_EXP[(RS_LOG[a]+255-RS_LOG[b])%255] : 0; }
-function gfPow(e){ e%=255; return RS_EXP[e<0 ? e+255 : e]; }   // α^e
-// порождающий многочлен, старший коэффициент первым (g[0]=1)
-const RS_GEN=(()=>{ let g=[1];
-  for(let j=0;j<RS_NP;j++){ const r=gfPow(RS_PRIM*(RS_FCR+j)), h=new Array(g.length+1).fill(0);
-    for(let i=0;i<g.length;i++){ h[i]^=g[i]; h[i+1]^=gfMul(g[i],r); }
+/* ---- Рида — Соломона над GF(2^8): поле poly, корни α^(prim·(fcr+j)), j=0..np−1; cw[0] — старшая степень ---- */
+// CCSDS: 0x187, 112, 11, 32. RS41: 0x11D, 0, 1, 24 (у RS41 проверочные байты в младших степенях — см. sonde-kernels).
+function rsCodec(poly,fcr,prim,np){
+  const EXP=new Uint8Array(512), LOG=new Uint8Array(256), K=255-np;
+  let x=1; for(let i=0;i<255;i++){ EXP[i]=x; LOG[x]=i; x<<=1; if(x&0x100) x^=poly; }
+  for(let i=255;i<512;i++) EXP[i]=EXP[i-255];
+  const mul=(a,b)=>a&&b ? EXP[LOG[a]+LOG[b]] : 0;
+  const div=(a,b)=>a ? EXP[(LOG[a]+255-LOG[b])%255] : 0;
+  const pw=e=>{ e%=255; return EXP[e<0 ? e+255 : e]; };   // α^e
+  // порождающий многочлен, старший коэффициент первым (g[0]=1)
+  let g=[1];
+  for(let j=0;j<np;j++){ const r=pw(prim*(fcr+j)), h=new Array(g.length+1).fill(0);
+    for(let i=0;i<g.length;i++){ h[i]^=g[i]; h[i+1]^=mul(g[i],r); }
     g=h; }
-  return Uint8Array.from(g); })();
-// cw[0..222] — данные; в cw[223..254] пишется проверочная часть
-function rsEncode(cw){
-  const p=new Uint8Array(RS_NP);
-  for(let i=0;i<223;i++){
-    const f=cw[i]^p[0];
-    p.copyWithin(0,1); p[RS_NP-1]=0;
-    if(f) for(let j=0;j<RS_NP;j++) p[j]^=gfMul(f,RS_GEN[j+1]);
-  }
-  cw.set(p,223);
+  const GEN=Uint8Array.from(g);
+  return {np, K, mul, div, pw, gen:GEN,
+    // cw[0..K−1] — данные; в cw[K..254] пишется проверочная часть
+    encode(cw){
+      const p=new Uint8Array(np);
+      for(let i=0;i<K;i++){
+        const f=cw[i]^p[0];
+        p.copyWithin(0,1); p[np-1]=0;
+        if(f) for(let j=0;j<np;j++) p[j]^=mul(f,GEN[j+1]);
+      }
+      cw.set(p,K);
+    },
+    // исправление на месте: число исправленных байт или −1
+    decode(cw){
+      const S=new Uint8Array(np);
+      let bad=0;
+      for(let j=0;j<np;j++){
+        const r=pw(prim*(fcr+j));
+        let s=0; for(let i=0;i<255;i++) s=mul(s,r)^cw[i];
+        S[j]=s; bad|=s;
+      }
+      if(!bad) return 0;
+      // Берлекэмп — Мэсси
+      let C=new Uint8Array(np+1), B=new Uint8Array(np+1), L=0, m=1, b=1;
+      C[0]=1; B[0]=1;
+      for(let n=0;n<np;n++){
+        let d=S[n];
+        for(let i=1;i<=L;i++) d^=mul(C[i],S[n-i]);
+        if(!d){ m++; continue; }
+        const coef=div(d,b), T=C.slice();
+        for(let i=m;i<=np;i++) C[i]^=mul(coef,B[i-m]);
+        if(2*L<=n){ L=n+1-L; B=T; b=d; m=1; } else m++;
+      }
+      if(L>np/2) return -1;
+      // Ω = S·Λ mod x^np
+      const O=new Uint8Array(np);
+      for(let i=0;i<np;i++){ let v=0; for(let j=0;j<=Math.min(i,L);j++) v^=mul(C[j],S[i-j]); O[i]=v; }
+      // Ченя: позиция i (степень d=254−i), локатор Y=α^(prim·d); корень Λ — Y⁻¹. Форни: e = Y^(1−fcr)·Ω(Y⁻¹)/Λ'(Y⁻¹)
+      let found=0;
+      const pos=[], val=[];
+      for(let i=0;i<255;i++){
+        const d=254-i, yl=(prim*d)%255, xi=pw(-yl);
+        let lv=0; for(let j=L;j>=0;j--) lv=mul(lv,xi)^C[j];
+        if(lv) continue;
+        let ov=0; for(let j=np-1;j>=0;j--) ov=mul(ov,xi)^O[j];
+        let dv=0; for(let j=L-(L%2===0 ? 1 : 0);j>=1;j-=2) dv^=mul(C[j],pw(-yl*(j-1)));
+        if(!dv) return -1;
+        pos.push(i); val.push(mul(div(ov,dv),pw(yl*(1-fcr))));
+        found++;
+      }
+      if(found!==L) return -1;
+      for(let k=0;k<found;k++) cw[pos[k]]^=val[k];
+      return found;
+    }};
 }
-// исправление на месте: число исправленных байт или −1
-function rsDecode(cw){
-  const S=new Uint8Array(RS_NP);
-  let bad=0;
-  for(let j=0;j<RS_NP;j++){
-    const x=gfPow(RS_PRIM*(RS_FCR+j));
-    let s=0; for(let i=0;i<255;i++) s=gfMul(s,x)^cw[i];
-    S[j]=s; bad|=s;
-  }
-  if(!bad) return 0;
-  // Берлекэмп — Мэсси
-  let C=new Uint8Array(RS_NP+1), B=new Uint8Array(RS_NP+1), L=0, m=1, b=1;
-  C[0]=1; B[0]=1;
-  for(let n=0;n<RS_NP;n++){
-    let d=S[n];
-    for(let i=1;i<=L;i++) d^=gfMul(C[i],S[n-i]);
-    if(!d){ m++; continue; }
-    const coef=gfDiv(d,b), T=C.slice();
-    for(let i=m;i<=RS_NP;i++) C[i]^=gfMul(coef,B[i-m]);
-    if(2*L<=n){ L=n+1-L; B=T; b=d; m=1; } else m++;
-  }
-  if(L>RS_NP/2) return -1;
-  // Ω = S·Λ mod x^32
-  const O=new Uint8Array(RS_NP);
-  for(let i=0;i<RS_NP;i++){ let v=0; for(let j=0;j<=Math.min(i,L);j++) v^=gfMul(C[j],S[i-j]); O[i]=v; }
-  // Ченя: позиция i (степень d=254−i), локатор Y=α^(11d); корень Λ — Y⁻¹. Форни: e = Y^(1−fcr)·Ω(Y⁻¹)/Λ'(Y⁻¹)
-  let found=0;
-  const pos=[], val=[];
-  for(let i=0;i<255;i++){
-    const d=254-i, yl=(RS_PRIM*d)%255, xi=gfPow(-yl);
-    let lv=0; for(let j=L;j>=0;j--) lv=gfMul(lv,xi)^C[j];
-    if(lv) continue;
-    let ov=0; for(let j=RS_NP-1;j>=0;j--) ov=gfMul(ov,xi)^O[j];
-    let dv=0; for(let j=L-(L%2===0 ? 1 : 0);j>=1;j-=2) dv^=gfMul(C[j],gfPow(-yl*(j-1)));
-    if(!dv) return -1;
-    pos.push(i); val.push(gfMul(gfDiv(ov,dv),gfPow(yl*(1-RS_FCR))));
-    found++;
-  }
-  if(found!==L) return -1;
-  for(let k=0;k<found;k++) cw[pos[k]]^=val[k];
-  return found;
-}
+const RS_CCSDS=rsCodec(0x187,112,11,32);
+function rsEncode(cw){ RS_CCSDS.encode(cw); }
+function rsDecode(cw){ return RS_CCSDS.decode(cw); }
 // двойственный базис (CCSDS 131.0-B): таблица в двойственный, обратная — по ней
 const RS_TO_DUAL=Uint8Array.from(('007bafd499e2364dfa81552e6318ccb786fd29521f64b0cb7c07d3a8e59e4a31ec974338750edaa1166db9c28ff4205b6a11c5bef3885c2790eb3f440972a6dd'+
   'ef94403b760dd9a2156ebac18cf723586912c6bdf08b5f2493e83c470a71a5de0378acd79ae1354ef982562d601bcfb485fe2a511c67b3c87f04d0abe69d4932'+
@@ -194,7 +200,10 @@ const PSK_ACQ_N=4096;
 IQK.pskDemod={
   init(n){ n.key=''; },
   setup(n,sr,Rs){
-    const M=Math.max(1,Math.floor(sr/(3*Rs))), sr1=sr/M, sps=sr1/Rs;
+    // BPSK: Костас 2-го порядка, частота по y²; иначе 4-го и y⁴. Отсчётов на символ — не меньше 3,
+    // а полоса — с запасом под поиск частоты (линия на p·Δf, у медленных сигналов это важнее)
+    n.pp=n.p.mode==='BPSK' ? 2 : 4;
+    const M=Math.max(1,Math.floor(sr/Math.max(3*Rs,2.2*n.pp*(+n.p.pull||10000)))), sr1=sr/M, sps=sr1/Rs;
     n.M=M; n.sr1=sr1; n.sps=sps; n.sp=sps;
     n.dec=M>1 ? {p:{M:String(M), cut:Math.min(.45,(1+(+n.p.alpha||.6))*Rs/2/sr1+.08), tpp:'16'}} : null;
     if(n.dec) IQK.iqDecim.init(n.dec);
@@ -209,7 +218,9 @@ IQK.pskDemod={
       h[k]=v; e+=v*v;
     }
     for(let k=0;k<N;k++) h[k]/=Math.sqrt(e);
-    n.h=h; n.hr=new Float32Array(N-1); n.hi=new Float32Array(N-1);
+    n.h=h; n.hr=new Float32Array(2*N); n.hi=new Float32Array(2*N); n.hk=0;
+    // поиск частоты по широкой полосе (до RRC), когда диапазон поиска сравним с символьной скоростью
+    n.acqWide=(+n.p.pull||10000)>Rs/4;
     n.pw=1; n.ph=0; n.f=0; n.ring=new Float32Array(2*64); n.w=0;
     n.tS=Math.ceil(sps)+4; n.amp=.7; n.lk=0; n.nv=.5; n.pI=0; n.pQ=0;
     n.acq=new Float32Array(2*PSK_ACQ_N); n.acqK=0; n.acqP=null; n.acqN=0;
@@ -222,24 +233,29 @@ IQK.pskDemod={
     const s=iqIn(I,'in');
     if(!s){ n.ui=null; return {out:null, freq:null, lock:null}; }
     const Rs=+n.p.rate||72000, oq=n.p.mode==='OQPSK';
-    const key=s.sr+'|'+Rs+'|'+n.p.alpha+'|'+n.p.bw;
+    const key=s.sr+'|'+Rs+'|'+n.p.alpha+'|'+n.p.bw+'|'+n.p.mode+'|'+n.p.pull;
     if(key!==n.key){ n.key=key; this.setup(n,s.sr,Rs); }
     const src=n.dec ? IQK.iqDecim.process(n.dec,{in:s}).out : s;
     const o=iqStream(n,'out',Rs,s.fc);
     const maxF=2*Math.PI*(+n.p.pull||10000)/n.sr1;
+    const h=n.h, L=h.length, wide=n.acqWide;
     for(const c of src.chunks){
-      const xr=firRun(n.h,n.hr,c.re), xi=firRun(n.h,n.hi,iqChunkIm(c)), K=xr.length;
+      const xr=c.re, xi=iqChunkIm(c), K=xr.length;
       const yr=[], yi=[];
       for(let i=0;i<K;i++){
-        let a=xr[i], b=xi[i];
-        n.pw+=((a*a+b*b)-n.pw)*2e-4;
-        const g=1/Math.sqrt(n.pw+1e-20);
-        a*=g; b*=g;
-        const cs=Math.cos(n.ph), sn=Math.sin(n.ph);
-        const u=a*cs+b*sn, v=b*cs-a*sn;             // ·e^(−jφ)
+        // НГ до согласованного фильтра: RRC стоит на уже сдвинутой несущей (важно, когда уход ~ Rs)
+        const cs=Math.cos(n.ph), sn=Math.sin(n.ph), a0=xr[i], b0=xi[i];
+        const u0=a0*cs+b0*sn, v0=b0*cs-a0*sn;         // ·e^(−jφ)
         n.ph+=n.f; if(n.ph>Math.PI) n.ph-=2*Math.PI; else if(n.ph<-Math.PI) n.ph+=2*Math.PI;
+        if(wide) this.acqPush(n,u0,v0);
+        // RRC: история вдвойне, свёртка без перекладывания
+        const q=n.hk; n.hr[q]=n.hr[q+L]=u0; n.hi[q]=n.hi[q+L]=v0; n.hk=(q+1)%L;
+        let u=0, v=0; for(let j=0,k=n.hk;j<L;j++,k++){ u+=h[j]*n.hr[k]; v+=h[j]*n.hi[k]; }
+        n.pw+=((u*u+v*v)-n.pw)*2e-4;
+        const g=1/Math.sqrt(n.pw+1e-20);
+        u*=g; v*=g;
         const w=n.w&63; n.ring[2*w]=u; n.ring[2*w+1]=v; n.w++;
-        this.acqPush(n,u,v);
+        if(!wide) this.acqPush(n,u,v);
         // строб: нужен запас на кубическую интерполяцию и полсимвола вперёд (OQPSK)
         while(n.tS+n.sp/2+3<n.w){ this.strobe(n,oq,yr,yi); }
       }
@@ -263,30 +279,35 @@ IQK.pskDemod={
     const S=this.interp(n,t), Mi=this.interp(n,t-h);
     let si=S[0], sq, mi=Mi[0], mq;
     if(oq){ sq=this.interp(n,t+h)[1]; mq=S[1]; } else { sq=S[1]; mq=Mi[1]; }
-    const A=n.amp+1e-6;
-    // Гарднер (не зависит от фазы несущей)
-    const te=((n.pI-si)*mi+(n.pQ-sq)*mq)/(A*A);
+    const A=n.amp+1e-6, bp=n.pp===2;
+    // Гарднер (не зависит от фазы несущей); у BPSK — по I
+    const te=((n.pI-si)*mi+(bp ? 0 : (n.pQ-sq)*mq))/(A*A);
     n.pI=si; n.pQ=sq;
     const tc=Math.max(-1,Math.min(1,te));
     n.sp+=n.tb*tc*.5; n.sp=Math.max(n.sps*.995,Math.min(n.sps*1.005,n.sp));
     n.tS+=n.sp+n.ta*tc*n.sps*.5;
-    // Костас QPSK
-    const ce=Math.max(-1,Math.min(1,((si>0?1:-1)*sq-(sq>0?1:-1)*si)/A));
+    // Костас: QPSK — 4-го порядка, BPSK — 2-го
+    const ce=Math.max(-1,Math.min(1,(bp ? (si>0?1:-1)*sq : (si>0?1:-1)*sq-(sq>0?1:-1)*si)/A));
     n.ph+=n.ca*ce; n.f+=n.cb*ce/n.sps;
-    // уровень, шум, захват (cos 4θ)
-    const ai=Math.abs(si), aq=Math.abs(sq);
-    n.amp+=((ai+aq)/2-n.amp)*.005;
-    n.nv+=(((ai-n.amp)**2+(aq-n.amp)**2)/2-n.nv)*.005;
-    const p2=si*si+sq*sq+1e-12, c4=((si*si-sq*sq)**2-4*si*si*sq*sq)/(p2*p2);
-    n.lk+=(-c4-n.lk)*.002;
+    // уровень, шум, захват: cos 4θ (QPSK на диагоналях — −1) или cos 2θ (BPSK)
+    const ai=Math.abs(si), aq=Math.abs(sq), p2=si*si+sq*sq+1e-12;
+    if(bp){
+      n.amp+=(ai-n.amp)*.005; n.nv+=((ai-n.amp)**2-n.nv)*.005;
+      n.lk+=((si*si-sq*sq)/p2-n.lk)*.002;
+    } else {
+      n.amp+=((ai+aq)/2-n.amp)*.005;
+      n.nv+=(((ai-n.amp)**2+(aq-n.amp)**2)/2-n.nv)*.005;
+      n.lk+=(((si*si-sq*sq)**2-4*si*si*sq*sq)/(p2*p2)*-1-n.lk)*.002;
+    }
     yr.push(si/A); yi.push(sq/A);
     n.pts[n.pk]=si/A; n.pts[n.pk+1]=sq/A; n.pk=(n.pk+2)%n.pts.length;
   },
-  // грубая частота по спектру y⁴ (от 4 до 16 БПФ по 4096)
+  // грубая частота по спектру y⁴ / y² (от 4 до 16 БПФ по 4096)
   acqPush(n,u,v){
     const a2=u*u-v*v, b2=2*u*v;
     const k=n.acqK++;
-    n.acq[2*k]=a2*a2-b2*b2; n.acq[2*k+1]=2*a2*b2;
+    if(n.pp===2){ n.acq[2*k]=a2; n.acq[2*k+1]=b2; }
+    else { n.acq[2*k]=a2*a2-b2*b2; n.acq[2*k+1]=2*a2*b2; }
     if(n.acqK<PSK_ACQ_N) return;
     n.acqK=0;
     const N=PSK_ACQ_N, re=new Float64Array(N), im=new Float64Array(N);
@@ -295,14 +316,14 @@ IQK.pskDemod={
     const P=n.acqP||(n.acqP=new Float64Array(N));
     for(let i=0;i<N;i++) P[i]+=re[i]*re[i]+im[i]*im[i];
     if(++n.acqN<4) return;
-    const bin=n.sr1/N, lim=Math.min(N/2-2,Math.round(4*(+n.p.pull||10000)/bin)), at=j=>P[(j%N+N)%N];
+    const bin=n.sr1/N, lim=Math.min(N/2-2,Math.round(n.pp*(+n.p.pull||10000)/bin)), at=j=>P[(j%N+N)%N];
     let best=0, bj=0, sum=0;
     for(let j=-lim;j<=lim;j++){ const v=at(j); sum+=v; if(v>best){ best=v; bj=j; } }
     // линия — на 8σ выше шума спектра (σ ≈ среднее/√K после K БПФ); слабый сигнал — копим до 16
     const mean=sum/(2*lim+1);
     if(!(best>mean*(1+8/Math.sqrt(n.acqN)))){ if(n.acqN>=16){ n.acqP=null; n.acqN=0; } return; }
     const y0=at(bj-1), y2=at(bj+1), dd=y0-2*best+y2, fr=dd<0 ? .5*(y0-y2)/dd : 0;   // уточнение параболой
-    const df=(bj+fr)*bin/4;
+    const df=(bj+fr)*bin/n.pp;
     if(Math.abs(df)>30) n.f+=2*Math.PI*df/n.sr1;     // при захвате остаток ≈ 0 — поправки нет
     n.acqP=null; n.acqN=0;
   }};

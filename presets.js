@@ -111,6 +111,8 @@ const PRESET_CATS={
   'IQ: Channelizer — Three Signals at Once (Generator)':'Demo',
   'ADS-B: Aircraft Map (Generator)':'Demo',
   'Meteor-M LRPT: Image (Generator)':'Demo',
+  'Radiosonde RS41: Map (Generator)':'Demo',
+  'Inmarsat STD-C: EGC Messages (Generator)':'Demo',
 
   'Quick Audio Recording':'Quick Scenarios',
   'Find Sound Source (by Frequency)':'Quick Scenarios',
@@ -151,6 +153,8 @@ const PRESET_CATS={
   'HFDL: Receive Chain (to Symbols)':'Radio Protocols',
   'GSM: Receive Bursts (USB SDR)':'Radio Protocols',
   'Meteor-M LRPT: Image (USB SDR, 137 MHz)':'Radio Protocols',
+  'Radiosonde RS41: Map (USB SDR, 400–406 MHz)':'Radio Protocols',
+  'Inmarsat STD-C: EGC Messages (USB SDR, 1.5 GHz)':'Radio Protocols',
   'Sound Card IQ: HF Receiver (SoftRock-style)':'Quick Scenarios',
   'FT8: Find Signals in Slot':'Radio Protocols',
   'Weather Fax WEFAX 120':'Radio Protocols',
@@ -715,6 +719,81 @@ im.size.w=520; im.size.h=460; applySize(im);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',dm.id,'in'); addEdge(dm.id,'out',de.id,'in'); addEdge(de.id,'rec',im.id,'rec');
+markWiresDirty();
+});
+preset('Radiosonde RS41: Map (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Radiosonde without a radio: the generator flies a Vaisala RS41 up from Novosibirsk — 5 m/s up, wind 8 m/s\n'+
+  'to the north-east — and sends a 320-byte frame every second: GFSK 4800 Bd ±2.4 kHz, scrambled, RS(255,231)×2,\n'+
+  'blocks with CRC. RS41 Radiosonde: FM discriminator, header correlation, bits, ECC, blocks → serial number,\n'+
+  'position (ECEF), height, climb, speed, temperature and humidity (from the calibration sent in pieces, ~10 s) → map.'});
+nt.size.w=680; nt.size.h=170; applySize(nt);
+const gn=addNode('iqGen',40,260,{sr:'256000',fc:403000000,mode:'RS41',off:3000,lvl:-20,noise:-40});
+const rx=addNode('rs41Rx',340,260,{});
+rx.size.w=460; rx.size.h=200; applySize(rx);
+const map=addNode('geoMap',860,40,{mz:10,mlat:55.05,mlon:82.95,ttl:30,labels:true,trail:600});
+map.size.w=560; map.size.h=460; applySize(map);
+addEdge(gn.id,'iq',rx.id,'in'); addEdge(rx.id,'rec',map.id,'rec');
+markWiresDirty();
+});
+preset('Radiosonde RS41: Map (USB SDR, 400–406 MHz)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Weather balloons on the map: Vaisala RS41 sondes, launched twice a day (00 and 12 UTC) from upper-air stations.\n'+
+  'Set the SDR to the sonde frequency band (400–406 MHz; sondehub.org shows what flies near you), tap the\n'+
+  'signal on the spectrum. 1.024 MS/s, the receiver decimates itself. Serial, position, height, climb, speed,\n'+
+  'temperature and humidity (after ~10 s of calibration) — table in the node, track on the map; «Record Log» saves CSV.'});
+nt.size.w=680; nt.size.h=170; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'1024000',freq:403500000,demod:'IQ'});
+const sa=addNode('sa',760,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,260,{});
+const de=addNode('rs41Rx',340,420,{});
+de.size.w=460; de.size.h=220; applySize(de);
+const map=addNode('geoMap',860,360,{mz:8,ttl:60,labels:true,trail:3000});
+map.size.w=560; map.size.h=420; applySize(map);
+const log=addNode('recLog',340,700,{});
+log.size.w=460; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',map.id,'rec'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Inmarsat STD-C: EGC Messages (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Inmarsat-C without a dish: the generator sends a LES TDM carrier the way the satellites do — BPSK 1200 Bd,\n'+
+  'RRC α=0.6, 8.64 s frames of 64×162 symbols (unique word, row permutation, interleaving, K=7 code, scrambler)\n'+
+  'with a Bulletin Board and SafetyNET EGC warnings split over several frames. PSK Demodulator (BPSK): frequency\n'+
+  'search, Costas and symbol loops. STD-C Decoder: frames → packets → assembled EGC messages (text and records).'});
+nt.size.w=680; nt.size.h=170; applySize(nt);
+const gn=addNode('iqGen',40,260,{sr:'48000',fc:1541450000,mode:'STD-C',off:900,lvl:-20,noise:-30});
+const dm=addNode('pskDemod',340,260,{mode:'BPSK',rate:1200,bw:.02,pull:3000});
+const de=addNode('stdcDecode',720,260,{});
+de.size.w=520; de.size.h=320; applySize(de);
+const log=addNode('recLog',720,620,{});
+log.size.w=520; applySize(log);
+addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Inmarsat STD-C: EGC Messages (USB SDR, 1.5 GHz)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Maritime safety broadcasts from geostationary Inmarsat satellites: SafetyNET navigational and weather warnings.\n'+
+  'L-band 1537–1545 MHz (e.g. 1541.45 MHz on IOR/EMEA — look for a ~2 kHz wide carrier), a patch or helix antenna\n'+
+  'pointed at the satellite and an LNA help a lot. Tap the carrier on the spectrum; ×32 to 32 kS/s, BPSK 1200 Bd.\n'+
+  'A frame takes 8.64 s; messages come in parts over several frames. Records go to the log (save CSV).'});
+nt.size.w=680; nt.size.h=170; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'1024000',freq:1541450000,demod:'IQ'});
+const sa=addNode('sa',760,40,{auto:true,floor:-100,top:-40,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,260,{});
+const d1=addNode('iqDecim',340,420,{M:'32',cut:.3});
+const dm=addNode('pskDemod',340,580,{mode:'BPSK',rate:1200,bw:.02,pull:3000});
+const de=addNode('stdcDecode',760,360,{});
+de.size.w=520; de.size.h=320; applySize(de);
+const log=addNode('recLog',760,720,{});
+log.size.w=520; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',dm.id,'in'); addEdge(dm.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('GSM: Receive Bursts (USB SDR)', function(){
