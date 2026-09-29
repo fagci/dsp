@@ -57,6 +57,9 @@ export function setup(){
     if(!m.some(q => q.service === 'LRRP' && Math.abs(q.lat-55.0302) < 1e-4 && Math.abs(q.lon-82.9204) < 1e-4 && q.heading === 90 && q.time === '2026-09-29 18:30:15' && q.id === 'dmr:2600123')) return 'no LRRP position: '+JSON.stringify(m.filter(q => q.service === 'LRRP'));
     if(!k('csbk').some(q => q.name === 'C_ALOHA' && q.model === 'small' && q.net === 42 && q.site === 7 && q.reg === 1)) return 'no C_ALOHA: '+JSON.stringify(k('csbk').filter(q => q.op === 0x19));
     if(!k('csbk').some(q => q.name === 'TV_GRANT' && q.lpcn === 5 && q.ts === 2 && q.to === 9 && q.from === 2600123)) return 'no TV_GRANT';
+    if(!m.some(q => q.message === 'Confirmed data ok' && q.blockCrc === 'ok' && q.crc === 'ok' && q.type === 'confirmed')) return 'no confirmed data: '+JSON.stringify(m.filter(q => q.type === 'confirmed'));
+    if(!m.some(q => q.message === 'Rate one data works.' && q.rate === '1' && q.crc === 'ok')) return 'no rate 1 data: '+JSON.stringify(m.filter(q => q.rate === '1'));
+    if(!k('mbc').some(q => q.name === 'TV_GRANT' && q.crc === 'ok' && q.rx === 433.7625 && q.tx === 438.7625 && q.apcn === 5 && q.to === 9 && q.from === 2600123)) return 'no MBC grant: '+JSON.stringify(k('mbc'));
     if(r.ui.sys?.net !== 42) return 'sys '+JSON.stringify(r.ui.sys);
     if(!k('slc').some(q => q.slco === 1 && q.ts1 === 'group voice' && q.ts2 === 'group data')) return 'no short LC: '+JSON.stringify(k('slc'));
     if(!r.recs.some(q => q.slot === 1) || !r.recs.some(q => q.slot === 2)) return 'slots';
@@ -145,6 +148,18 @@ export default [
     const s = dmrNmea('$GPRMC,1,A,3357.500,S,15112.000,W,0,0,1,0,W*00');
     if(s.lat >= 0 || s.lon >= 0) return 'nmea signs '+JSON.stringify(s);
     if(dmrLrrp(Uint8Array.from([1,2,3,4,5]), 0).lat != null) return 'lrrp accepted noise';
+    return true;
+  }},
+  {name:'dmr: confirmed-block CRC-9 (½, ¾, rate 1) and MBC CRC-16 catch bit errors', fn(){
+    const d = Uint8Array.from({length:22}, (_, i) => (i*13+5)&255);
+    for(const [len, mask] of [[10, 0x0F0], [16, 0x1FF], [22, 0x10F]]){
+      const bits = dmrConfEnc(d.subarray(0, len), 37, mask), r = dmrConfBlock(bits, mask);
+      if(!r.ok || r.serial !== 37) return 'CRC-9 '+len+' '+JSON.stringify(r);
+      bits[30] ^= 1; if(dmrConfBlock(bits, mask).ok) return 'CRC-9 '+len+' misses a bit error';
+    }
+    // MBC: CRC-16 по продолжениям
+    const b = dmrEncMasked(Uint8Array.from([1,2,3,4,5,6,7,8,9,10]), 0), by = dmrBytes(dmrBptcDec(b), 0, 12);
+    if(dmrCrc16(by, 10) !== ((by[10]<<8)|by[11])) return 'MBC continuation CRC';
     return true;
   }},
   {name:'dmr: CRC-32 of data messages, TMS text and IP/UDP parsing', fn(){
