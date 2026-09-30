@@ -14,7 +14,8 @@ const DMR_SYNCS=[
   ['7F7D5DD57DFD','ms','voice',0], ['D5D7F77FD757','ms','data',0], ['77D55F7DFD77','ms','rc',0],
   ['5D577F7757FF','direct','voice',1], ['F7FDD5DDFD55','direct','data',1],
   ['7DFFD5F55D5F','direct','voice',2], ['D7557F5FF7F5','direct','data',2]
-].map(s=>({hi:parseInt(s[0].slice(0,6),16), lo:parseInt(s[0].slice(6),16), mode:s[1], kind:s[2], slot:s[3], hex:s[0]}));
+].map(s=>({hi:parseInt(s[0].slice(0,6),16), lo:parseInt(s[0].slice(6),16), mhi:0xFFFFFF, mlo:0xFFFFFF, len:24, mode:s[1], kind:s[2], slot:s[3], hex:s[0]}));
+DMR_SYNCS.forEach(p=>{ p.syms=dmrSyncSyms(p); });
 const DMR_DT=['PI header','Voice LC header','Terminator LC','CSBK','MBC header','MBC cont.','Data header','Rate ½ data','Rate ¾ data','Idle','Rate 1 data','USBD'];
 
 function dmrPop(v){ v-=(v>>>1)&0x55555555; v=(v&0x33333333)+((v>>>2)&0x33333333); return (((v+(v>>>4))&0x0F0F0F0F)*0x01010101)>>>24; }
@@ -360,160 +361,66 @@ function dmrPayload(sap,dd,msg){
   return r;
 }
 
-/* ---- RRC α=0.2, единичная энергия в отсчётах (согласованный фильтр приёмника) ---- */
-function dmrRrc(t,a){
-  if(Math.abs(t)<1e-9) return 1-a+4*a/Math.PI;
-  if(Math.abs(Math.abs(t)-1/(4*a))<1e-9) return a/Math.SQRT2*((1+2/Math.PI)*Math.sin(Math.PI/(4*a))+(1-2/Math.PI)*Math.cos(Math.PI/(4*a)));
-  return (Math.sin(Math.PI*t*(1-a))+4*a*t*Math.cos(Math.PI*t*(1+a)))/(Math.PI*t*(1-Math.pow(4*a*t,2)));
-}
-function dmrRrcTaps(sps){
-  const hl=Math.round(6*sps), h=new Float32Array(2*hl+1); let e=0;
-  for(let i=0;i<h.length;i++){ h[i]=dmrRrc((i-hl)/sps,.2); e+=h[i]*h[i]; }
-  const g=1/Math.sqrt(e);
-  for(let i=0;i<h.length;i++) h[i]*=g;
-  return h;
-}
-
-/* ---- приёмник ---- */
-const DMR_ACQ=4, DMR_LOCK=8, DMR_SYNC_OK=10, DMR_MISS=12;
+/* ---- приёмник: плагин общего 4FSK-движка (fsk4-kernels.js) ---- */
+const DMR_ACQ=4, DMR_LOCK=8, DMR_SYNC_OK=10, DMR_MISS=12, DMR_AFTER=DMR_BURST-1-(DMR_SYNC_AT+23);
+const dmrRrc=fsk4Rrc, dmrRrcTaps=sps=>fsk4RrcTaps(sps,.2);
 
 function dmrSlotNew(key){ return {key, call:null, mbc:null, vseq:null, est:0, eraw:new Uint8Array(128), ta:null, d:null, lastRaw:{}, lastVoice:0, vbursts:0, sf:0, last:''}; }
 
-IQK.dmrRx={
-  init(n){
-    n.key=''; n.lock=null; n.now=0; n.slots=[dmrSlotNew(0),dmrSlotNew(1)]; n.cc=null; n.recent=[]; n.lastAct=0;
-    n.st={bursts:0, syncs:0, voice:0, data:0, csbk:0, lc:0, msgs:0, bad:0, gaps:0, locks:0}; n.sys=null;
+FSK4.protos.dmr={
+  id:'dmr', name:'DMR', baud:4800, alpha:.2, lp:5500, levels:4, thrAcq:DMR_ACQ, thrLock:DMR_LOCK, syncs:DMR_SYNCS,
+  init(P){
+    P.now=0; P.slots=[dmrSlotNew(0),dmrSlotNew(1)]; P.cc=null; P.recent=[]; P.lastAct=0;
+    P.st={bursts:0, syncs:0, voice:0, data:0, csbk:0, lc:0, msgs:0, bad:0, gaps:0, locks:0}; P.sys=null;
   },
-  setup(n,s,cplx){
-    const M=cplx ? Math.max(1,Math.floor(s.sr/48000)) : 1;
-    n.M=M; n.fs=s.sr/M; n.sps=n.fs/DMR_BAUD;
-    n.dec=M>1 ? {p:{M:String(M), cut:Math.min(.45,7500/n.fs), tpp:'16'}} : null;
-    if(n.dec) IQK.iqDecim.init(n.dec);
-    const stop=Math.min(9000,.47*n.fs);
-    n.lp=cplx ? kaiserLP(n.fs,5500,stop,255) : null;
-    if(n.lp){ n.lr=new Float32Array(n.lp.length-1); n.li=new Float32Array(n.lp.length-1); }
-    n.rrc=dmrRrcTaps(n.sps); n.rh=new Float32Array(n.rrc.length-1);
-    n.pr=0; n.pi=0; n.dc=0; n.env=0;
-    n.x=new Float32Array(0); n.xb=0; n.tNext=0; n.jj=0;
-    n.ring=[]; for(let p=0;p<DMR_PH;p++) n.ring.push(new Float32Array(256));
-    n.hi=new Uint32Array(DMR_PH); n.lo=new Uint32Array(DMR_PH);
-    n.lock=null; n.now=0; n.slots=[dmrSlotNew(0),dmrSlotNew(1)];
+  reset(P){ P.now=0; P.slots=[dmrSlotNew(0),dmrSlotNew(1)]; },
+  lock(P,L,sync){
+    P.st.locks++;
+    L.after=DMR_AFTER;
+    return {mode:sync.mode, cc:-1, fn:0, polOk:false, lastSync:sync};
   },
-  process(n,I){
-    const s=iqIn(I,'in');
-    if(!s){ n.ui=null; return {rec:null, voice:null}; }
-    const cplx=s.chunks.length ? !!s.chunks[0].im : n.cplx;
-    const key=s.sr+'|'+cplx;
-    if(key!==n.key){ n.key=key; n.cplx=cplx; this.setup(n,s,cplx); }
-    const src=n.dec ? IQK.iqDecim.process(n.dec,{in:s}).out : s;
-    const parts=[], a=1/(0.2*n.fs);
-    for(const c of src.chunks){
-      let y;
-      if(!n.cplx) y=Float32Array.from(c.re);
-      else {
-        const xr=firRun(n.lp,n.lr,c.re), xi=firRun(n.lp,n.li,iqChunkIm(c)), K=xr.length, k=n.fs/(2*Math.PI);
-        y=new Float32Array(K);
-        let pr=n.pr, pi=n.pi;
-        for(let i=0;i<K;i++){ const p=xr[i], q=xi[i]; y[i]=Math.atan2(q*pr-p*pi, p*pr+q*pi)*k; pr=p; pi=q; }
-        n.pr=pr; n.pi=pi;
-      }
-      let dc=n.dc;                                     // уход частоты приёмника — медленный ФВЧ
-      for(let i=0;i<y.length;i++){ dc+=a*(y[i]-dc); y[i]-=dc; }
-      n.dc=dc;
-      parts.push(firRun(n.rrc,n.rh,y));
-    }
-    let add=0; for(const p of parts) add+=p.length;
-    const nx=new Float32Array(n.x.length+add); nx.set(n.x); let o=n.x.length;
-    for(const p of parts){ nx.set(p,o); o+=p.length; }
-    n.x=nx;
-    const out={recs:[], voice:[]};
-    this.scan(n,out);
-    const now=Date.now();
-    n.ui={fs:n.fs, M:n.M, cc:n.cc, st:{...n.st}, locked:!!n.lock, mode:n.lock ? n.lock.mode : null, inv:n.lock ? n.lock.g<0 : null,
-      age:n.lastAct ? now-n.lastAct : null, slots:n.slots.map(dmrSlotLine), recent:n.recent.slice(-8), sys:n.sys};
-    return {rec:out.recs.length ? out.recs : null, voice:out.voice.length ? out.voice : null};
-  },
-  scan(n,out){
-    const x=n.x, N=x.length, step=n.sps/DMR_PH;
-    let tj=n.tNext-n.xb;
-    if(tj<0) tj=0;
-    while(tj<N-1){
-      const i0=Math.floor(tj), fr=tj-i0;
-      this.step(n,x[i0]+fr*(x[i0+1]-x[i0]),out);
-      n.jj++; tj+=step;
-    }
-    n.tNext=n.xb+tj;
-    const keep=Math.max(0,Math.floor(tj)-2);
-    if(keep>0){ n.x=x.slice(keep); n.xb+=keep; }
-  },
-  step(n,y,out){
-    const jj=n.jj, ph=jj&7, k=jj>>3;
-    n.ring[ph][k&255]=y;
-    n.env+=(Math.abs(y)-n.env)*(1/2048);
-    const e=n.env, d=y>e ? 1 : y>0 ? 0 : y>-e ? 2 : 3;
-    n.hi[ph]=((n.hi[ph]<<2)|(n.lo[ph]>>>22))&0xFFFFFF; n.lo[ph]=((n.lo[ph]<<2)|d)&0xFFFFFF;
-    const lk=n.lock;
-    if(jj>=8*24 && (!lk || Math.abs(jj-lk.next)<=8)) this.findSync(n,ph,jj);
-    const l2=n.lock;
-    if(l2 && jj===l2.next+8*(DMR_BURST-1-(DMR_SYNC_AT+23))){
-      this.frame(n,l2,jj,out);
-      if(n.lock===l2){ l2.next+=8*DMR_FR; l2.best=99; l2.bestRq=1e9; }
-    }
-  },
-  findSync(n,ph,jj){
-    const lk=n.lock, thr=lk ? DMR_LOCK : DMR_ACQ;
-    let bd=99, bp=null;
-    for(const xm of [0,0xAAAAAA]){
-      const hi=n.hi[ph]^xm, lo=n.lo[ph]^xm;
-      for(const p of DMR_SYNCS){ const d=dmrPop((hi^p.hi)>>>0)+dmrPop((lo^p.lo)>>>0); if(d<bd){ bd=d; bp=p; } }
-    }
-    if(bd>thr) return;
-    const f=this.fit(n,ph,jj,bp);
-    if(!f) return;
-    if(!lk){
-      n.lock={next:jj, best:bd, bestRq:f.rq, mode:bp.mode, g:f.g, o:f.o, cc:-1, fn:0, miss:0, polOk:false, lastSync:bp};
-      n.st.locks++;
-    } else if(bd<lk.best || (bd===lk.best && f.rq<lk.bestRq)){
-      lk.next=jj; lk.best=bd; lk.bestRq=f.rq;
-      // синхрослово голоса и данных — двойники (инверсия): после определения полярности знак задан FEC
-      lk.g=lk.polOk && Math.sign(f.g)!==Math.sign(lk.g) ? -f.g : f.g; lk.o=f.o;
-    }
-  },
-  // усиление и смещение по 24 известным символам синхрослова: y = g·s + o (g<0 — инвертированный спектр);
-  // rq — остаточная дисперсия в долях g²: минимум — лучшая фаза такта
-  fit(n,ph,jj,p){
-    const ring=n.ring[ph], k=jj>>3, s=p.syms||(p.syms=dmrSyncSyms(p));
-    let sy=0, sx=0, sxx=0, sxy=0, syy=0;
-    for(let i=0;i<24;i++){ const v=ring[(k-(23-i))&255]; sy+=v; sx+=s[i]; sxx+=s[i]*s[i]; sxy+=s[i]*v; syy+=v*v; }
-    const den=24*sxx-sx*sx, g=(24*sxy-sx*sy)/den, o=(sy-g*sx)/24;
-    if(!isFinite(g) || Math.abs(g)<1e-3) return null;
-    const res=(syy-2*g*sxy-2*o*sy+g*g*sxx+2*g*o*sx+24*o*o)/24;
-    return {g, o, rq:res/(g*g)};
+  // синхрослово голоса и данных — двойники (инверсия): после определения полярности знак задан FEC
+  gain(L,f){ return L.polOk && Math.sign(f.g)!==Math.sign(L.g) ? -f.g : f.g; },
+  ui(P,L,now,n){
+    const u={cc:P.cc, st:{...P.st}, locked:!!L, mode:L ? L.mode : null, inv:L ? L.g<0 : null,
+      age:P.lastAct ? now-P.lastAct : null, slots:P.slots.map(dmrSlotLine), recent:P.recent.slice(-8), sys:P.sys};
+    u.text=dmrUiText(u,n.fs,n.M);
+    return u;
   },
   // кадр 144 дибита, последний — на шаге e
-  frame(n,L,e,out){
-    const ph=e&7, k0=e>>3, ring=n.ring[ph];
-    let F=new Uint8Array(DMR_FR);
-    for(let i=0;i<DMR_FR;i++){
-      const z=(ring[(k0-(DMR_FR-1-i))&255]-L.o)/L.g;
-      F[i]=z>2 ? 1 : z>0 ? 0 : z>-2 ? 2 : 3;
-    }
+  frame(P,L,e,out){
+    this.frame1(P,L,e,out);
+    if(L.ch.lock===L){ L.next+=8*DMR_FR; L.best=99; L.bestRq=1e9; }
+  },
+  frame1(n,L,e,out){
+    let F=fsk4Slice(L,e,DMR_FR);
     // синхрослова голоса и данных — инверсии друг друга, полярность определяется по FEC (слот-тип, EMB)
     if(!L.polOk){
       const G=F.map(d=>d^2), a=dmrFecScore(F,L), b=dmrFecScore(G,L);
       if(a.s===0 && b.s===0){
-        if(a.sync || b.sync){ L.miss=0; L.fn++; } else if(++L.miss>DMR_MISS){ n.lock=null; return; } else L.fn++;
+        if(a.sync || b.sync){ L.miss=0; L.fn++; } else if(++L.miss>DMR_MISS){ fsk4Drop(L); return; } else L.fn++;
         return;
       }
       if(b.s>a.s){ L.g=-L.g; F=G; }
       L.polOk=true;
     }
-    n.now=e/(DMR_PH*DMR_BAUD)*1000;
+    n.now=e/(FSK4_PH*DMR_BAUD)*1000;
     const ok=dmrFrame(n,L,F,e,out);
     n.st.bursts++;
-    if(ok){ L.miss=0; n.lastAct=Date.now(); } else if(++L.miss>DMR_MISS){ n.lock=null; return; }
+    if(ok){ L.miss=0; n.lastAct=Date.now(); } else if(++L.miss>DMR_MISS){ fsk4Drop(L); return; }
     L.fn++;
   }};
+FSK4.order.push('dmr');
+function dmrUiText(u,fs,M){
+  const s=u.st, ts=u.mode==='bs' || u.mode==='direct' ? ['TS1','TS2'] : ['slot A','slot B'];
+  const head=(fs/1000).toFixed(1)+' kS/s'+(M>1 ? ' (÷'+M+')' : '')+' · '+
+    (u.locked ? ({bs:'repeater',ms:'mobile',direct:'direct mode'})[u.mode]+(u.inv ? ', inverted' : '')+' · CC '+(u.cc==null ? '?' : u.cc) : 'searching sync')+
+    (u.age!=null ? ' · last '+(u.age/1000).toFixed(0)+' s ago' : '');
+  const cnt=s.bursts+' bursts · '+s.voice+' voice · '+s.data+' data · '+s.csbk+' CSBK · '+s.msgs+' messages · '+s.bad+' FEC errors'+
+    (u.sys ? ' · net '+u.sys.net+' site '+u.sys.site : '');
+  return head+'\n'+cnt+'\n'+u.slots.map((l,i)=>ts[i]+': '+l).join('\n')+(u.recent.length ? '\n'+u.recent.join('\n') : '');
+}
+IQK.dmrRx=fsk4Node(()=>['dmr']);
 // 2 — слот-тип данных сошёлся с синхрословом данных, 1 — сошёлся EMB
 function dmrFecScore(F,L){
   const bits=new Uint8Array(264);
