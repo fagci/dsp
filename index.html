@@ -7,13 +7,33 @@
 <meta name="theme-color" content="#161a1d">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' http: https: ws: wss: data: blob: 'unsafe-inline'; script-src 'self' http: https: data: blob: 'unsafe-inline' 'wasm-unsafe-eval'">
 <title>DSP</title>
-<link rel="stylesheet" href="styles.css?v=110">
+<link rel="stylesheet" href="styles.css?v=111">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 </head>
 <body>
+<div id="boot"><div id="bootTxt">Loading… 0/0</div><div id="bootBar"><i></i></div></div>
+<script>
+// прогресс сразу, до раскладки; скрипты грузятся по порядку (async=false)
+(()=>{
+  const V='111', L=["core-dsp.js", "core-engine.js", "core-islands.js", "modules/analysis.js", "modules/misc.js", "modules/modulation.js", "modules/output.js", "modules/processing.js", "modules/protocols.js", "modules/sigid.js", "modules/sources.js", "modules/audioeditor.js", "modules/tracker-formats.js", "modules/tracker-player.js", "modules/tracker.js", "modules/tracker-session.js", "modules/tracker-panels.js", "modules/sampler.js", "modules/tinysa.js", "modules/hfdl.js", "modules/gsm.js", "modules/propagation.js", "modules/geo.js", "modules/sked.js", "modules/sat.js", "modules/radio.js", "modules/iq-kernels.js", "modules/ccsds-kernels.js", "modules/lrpt-msumr.js", "modules/sonde-kernels.js", "modules/inmarsat-kernels.js", "modules/mpt1327-kernels.js", "modules/ism-kernels.js", "modules/fsk4-kernels.js", "modules/dmr-kernels.js", "modules/p25-kernels.js", "modules/nxdn-kernels.js", "modules/m17-kernels.js", "modules/ysf-kernels.js", "modules/dstar-kernels.js", "modules/dpmr-kernels.js", "modules/video-kernels.js", "modules/iq.js", "modules/adsb.js", "modules/lrpt.js", "modules/sonde.js", "modules/inmarsat.js", "modules/mpt1327.js", "modules/ism.js", "modules/dmr.js", "modules/fsk4.js", "modules/mbe-tables.js", "modules/mbe.js", "modules/comms.js", "modules/video.js", "presets.js", "core-graph.js"], txt=document.getElementById('bootTxt'), bar=document.querySelector('#bootBar i'), boot=document.getElementById('boot');
+  let n=0;
+  const step=()=>{ txt.textContent='Loading… '+n+'/'+L.length; bar.style.width=(100*n/L.length)+'%'; };
+  const fail=u=>{ txt.textContent=(navigator.onLine?'Failed to load ':'Offline, not cached: ')+u+' — reload the page'; boot.classList.add('err'); };
+  step();
+  const add=(u,retry)=>{
+    const e=document.createElement('script'); e.src=u+'?v='+V; e.async=false;
+    e.onload=()=>{ step(); if(++n===L.length) boot.remove(); };
+    e.onerror=()=>{ e.remove(); retry?add(u,false):fail(u); };
+    document.head.appendChild(e);
+  };
+  // модулям нужен DOM (#canvas и т.д.) — стартуем после разбора страницы
+  const go=()=>{ for(const u of L) add(u,true); };
+  document.readyState==='loading'?document.addEventListener('DOMContentLoaded',go):go();
+})();
+</script>
 <div id="app">
   <div id="side">
     <h1>DSP</h1>
@@ -70,6 +90,7 @@
         <option value="192000">192000 Hz</option>
       </select>
       <span class="sp"></span>
+      <span id="net" hidden>offline</span>
       <span id="stat">stopped</span>
     </div>
     <div id="canvas" class="grab">
@@ -89,21 +110,10 @@
 <script src="vendor/interact.min.js?v=1.10.28"></script>
 <script src="vendor/satellite.min.js?v=5.0.0"></script>
 <!-- modules are listed here by hand, no auto-discovery: add a file under modules/ — add its line here too -->
-<div id="boot"><div id="bootTxt">Loading… 0/44</div><div id="bootBar"><i></i></div></div>
 <script>
-// скрипты грузятся по порядку (async=false), прогресс — по числу загруженных
-(()=>{
-  const V='110', L=["core-dsp.js", "core-engine.js", "core-islands.js", "modules/analysis.js", "modules/misc.js", "modules/modulation.js", "modules/output.js", "modules/processing.js", "modules/protocols.js", "modules/sigid.js", "modules/sources.js", "modules/audioeditor.js", "modules/tracker-formats.js", "modules/tracker-player.js", "modules/tracker.js", "modules/tracker-session.js", "modules/tracker-panels.js", "modules/sampler.js", "modules/tinysa.js", "modules/hfdl.js", "modules/gsm.js", "modules/propagation.js", "modules/geo.js", "modules/sked.js", "modules/sat.js", "modules/radio.js", "modules/iq-kernels.js", "modules/ccsds-kernels.js", "modules/lrpt-msumr.js", "modules/sonde-kernels.js", "modules/inmarsat-kernels.js", "modules/mpt1327-kernels.js", "modules/ism-kernels.js", "modules/fsk4-kernels.js", "modules/dmr-kernels.js", "modules/p25-kernels.js", "modules/nxdn-kernels.js", "modules/m17-kernels.js", "modules/ysf-kernels.js", "modules/dstar-kernels.js", "modules/dpmr-kernels.js", "modules/video-kernels.js", "modules/iq.js", "modules/adsb.js", "modules/lrpt.js", "modules/sonde.js", "modules/inmarsat.js", "modules/mpt1327.js", "modules/ism.js", "modules/dmr.js", "modules/fsk4.js", "modules/mbe-tables.js", "modules/mbe.js", "modules/comms.js", "modules/video.js", "presets.js", "core-graph.js"], txt=document.getElementById('bootTxt'), bar=document.querySelector('#bootBar i'), boot=document.getElementById('boot');
-  let n=0;
-  const step=()=>{ txt.textContent='Loading… '+n+'/'+L.length; bar.style.width=(100*n/L.length)+'%'; };
-  const fail=u=>{ txt.textContent='Failed to load '+u+' — reload the page'; boot.classList.add('err'); };
-  for(const u of L){
-    const e=document.createElement('script'); e.src=u+'?v='+V; e.async=false;
-    e.onload=()=>{ step(); if(++n===L.length) boot.remove(); };
-    e.onerror=()=>fail(u);
-    document.head.appendChild(e);
-  }
-})();
+// индикатор: нет сети — работаем офлайн (весь DSP локальный)
+(()=>{ const n=document.getElementById('net'), u=()=>{ n.hidden=navigator.onLine; };
+  addEventListener('online',u); addEventListener('offline',u); u(); })();
 </script>
 <script>
 // офлайн-шелл — без него установленный PWA (иконка на главном экране) без сети показывает

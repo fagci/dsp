@@ -898,8 +898,6 @@ for(const [c,f] of HiDPICanvases){ if(c.isConnected) jobs.push([f,c.getBoundingC
 for(const [f,w] of jobs) f(false,w);
 }
 function syncGridBg(){                                // точки фона двигаются и масштабируются вместе с холстом
-cv.style.backgroundSize=(24*view.k)+'px '+(24*view.k)+'px';
-cv.style.backgroundPosition=(view.x*view.k)+'px '+(view.y*view.k)+'px';
 syncGraphClip();
 }
 // Плавный зум колесом: цель копится пропорционально deltaY (тачпад — мелко, колесо — щелчками),
@@ -1417,19 +1415,13 @@ function dashGraphBox(){                               // прямоугольн
 }
 // холст виден только в панели графа: между панелями зазоры, сквозь них узлы видны быть не должны.
 // clip-path — в локальных координатах слоя (до его transform), поэтому пересчёт на каждый пан/зум.
-const graphBgEl=document.createElement('div'); graphBgEl.id='graphBg';
-cv.insertBefore(graphBgEl,cv.firstChild);
 function syncGraphClip(){
   const b=cv.classList.contains('graphOn') && dashGraphBox(), layers=[content,wires,wiresFront];
-  if(!b){ for(const e of layers) e.style.clipPath=''; return; }   // #graphBg виден только при .graphOn
+  if(!b){ for(const e of layers) e.style.clipPath=''; return; }
   const k=view.k, x0=b.x/k-view.x, y0=b.y/k-view.y, x1=x0+b.w/k, y1=y0+b.h/k;
   const poly=o=>`polygon(${x0+o}px ${y0+o}px,${x1+o}px ${y0+o}px,${x1+o}px ${y1+o}px,${x0+o}px ${y1+o}px)`;
   content.style.clipPath=poly(0);
   wires.style.clipPath=wiresFront.style.clipPath=poly(8000);   // слои проводов сдвинуты на -8000px
-  const g=graphBgEl.style;                             // точки фона — отдельным слоем под холстом, по панели
-  g.left=b.x+'px'; g.top=b.y+'px'; g.width=b.w+'px'; g.height=b.h+'px';
-  g.backgroundSize=(24*k)+'px '+(24*k)+'px';
-  g.backgroundPosition=(view.x*k-b.x)+'px '+(view.y*k-b.y)+'px';
 }
 function dashGraphFit(){ requestAnimationFrame(()=>requestAnimationFrame(()=>{ const b=dashGraphBox(); if(b) fitView(b); })); }
 /* ---- выбор модуля прямо на холсте: двойной клик по пустому месту или «+» панели графа ----
