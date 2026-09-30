@@ -521,6 +521,19 @@ export default [
     const e = T.errors(); if(e.length) return e.join('; ');
     return dpmrCheck(r);
   }},
+  {name:'dpmr: packet data header (FS4) — same HI / CC / HI1 layout, version, format, emergency and message information; no call, no end frame; also with the spectrum inverted (FS4 is FS1 with the levels flipped)',
+   arg:[[GEN('256000', 1500, -45, 'dPMR packet data header (FS4)', 'dpmr'), {}], [GEN('256000', 0, -45, 'dPMR packet data header (FS4)', 'dpmr'), {conj:true}]], fn(cfg){
+    for(const [[g, w], opt] of cfg){
+      const ns = T.build(g, w), r = fskRun(ns, 2, opt), h = r.recs.filter(q => q.kind === 'header'), tag = JSON.stringify(opt)+': ';
+      const e = T.errors(); if(e.length) return e.join('; ');
+      if(!h.length) return tag+'no header';
+      const q = h[0];
+      if(!q.packet || q.from !== '5312468' || q.to !== '2468135' || q.mode !== 4 || q.modeName !== 'packet data' || q.version !== 1 || q.format !== 1 || q.emergency !== 1 || q.info !== 0x2A5) return tag+JSON.stringify(q);
+      if(r.ui.cc !== 9) return tag+'colour code '+r.ui.cc;
+      if(r.recs.some(x => x.kind === 'call' || x.kind === 'end')) return tag+'call or end from a packet header';
+    }
+    return true;
+  }},
   {name:'dpmr: 48 kS/s, inverted spectrum, clock ±300 ppm',
    arg:[[GEN('48000', 1500, -35, 'dPMR voice', 'dpmr'), {}], [GEN('256000', 0, -45, 'dPMR voice', 'dpmr'), {conj:true}], [GEN('256000', 0, -45, 'dPMR voice', 'dpmr'), {ppm:300}], [GEN('256000', 0, -45, 'dPMR voice', 'dpmr'), {ppm:-300}]], fn(cfg){
     for(const [[g, w], opt] of cfg){
