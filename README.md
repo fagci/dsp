@@ -71,7 +71,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **Inmarsat STD-C** (1.5 GHz): BPSK 1200 → frames → packets → SafetyNET / FleetNET EGC messages (see [Inmarsat STD-C](#inmarsat-std-c))
 - **MPT 1327** (analogue trunking control channel): FM → FFSK 1200 Bd → codewords with CRC → PFIX/IDENT (see [MPT 1327](#mpt-1327))
 - **ISM 433 MHz** (sensors, remotes, doorbells; OOK and FSK): pulse train → PWM / PPM / Manchester → EV1527/PT2262, Nexus, or an unknown packet with timings and bits (see [ISM 433](#ism-433))
-- **4FSK Digital Voice** — one decoder for **DMR, P25 Phase 1, NXDN 9600 and 4800, YSF, M17, D-STAR and dPMR**: the protocol is found by its sync words (or picked by hand), records and raw vocoder frames on separate outputs (see [4FSK Digital Voice](#4fsk-digital-voice))
+- **4FSK Digital Voice** — one decoder for **DMR, P25 Phase 1, NXDN 9600 and 4800, YSF, M17, D-STAR and dPMR**: the protocol is found by its sync words (or picked by hand), records and raw vocoder frames on separate outputs, turned into sound by the mbelib [Vocoder](#vocoder-mbelib) (see [4FSK Digital Voice](#4fsk-digital-voice))
 - **DMR** (Tier II / III, repeater, mobile or direct mode): 4FSK 4800 Bd → colour code, time slots, voice calls (from → to, emergency, encrypted, talker alias), CSBK, data and SMS, raw AMBE+2 frames (see [DMR](#dmr))
 - Building blocks: CRC, scrambler, interleaver, convolutional encoder / Viterbi, sync word search, async serial, NRZ clock, text ↔ bits
 
@@ -293,6 +293,14 @@ Outputs: `rec` — records (`src` = protocol, `kind` = call / end / message / �
 | **dPMR** (4FSK 2400 Bd) | FS2 payload units: colour code, control channel (scrambler, Hamming(12,8), CRC-7: called and calling ID, mode, version), 8 raw traffic-channel frames per unit. **Header** (FS1: type, called and own ID, mode, format; Hamming(12,8) ×10, CRC-8) and **end frame** (FS3) are decoded, and so is the packet-data header (FS4: same layout, version / format / emergency / message information; the packet frames after it are not). FS4 is FS1 with the levels flipped, so the word's CRC decides the polarity. |
 
 How much is checked: the codes and frame layouts are compared with the code of other implementations — P25, NXDN, YSF and D-STAR against MMDVMHost / the MMDVM firmware (real encoder output), M17 against libm17, dPMR primitives against dsd-fme, the header word against dsdcc (`tools/test/ref` has the reference programs, `tools/test/data/fsk4-vectors.json` the vectors). Whole signals are checked generator → decoder (all sample rates, noise, inverted spectrum, ±300 ppm clock error); **on-air reception has not been tried on real hardware yet**, and dPMR has no independent frame encoder to compare with.
+
+### Vocoder (mbelib)
+
+**Vocoder (mbelib)** (`mbeVoice`, Decoders) turns the raw vocoder frames from the `voice` output of *4FSK Digital Voice* (or *DMR Decoder*) into sound: **P25 IMBE**, **DMR / NXDN / dPMR / YSF (V/D mode 1) AMBE+2** and **D-STAR AMBE**. The decoder is [mbelib](https://github.com/szechyjs/mbelib) (ISC licence) compiled to WebAssembly — `vendor/mbelib.wasm`, built by `tools/mbelib/build.sh` with clang's wasm32 target (no Emscripten; `cosf` / `powf` / `exp` / `log` come from the browser's `Math`). Frames are put into mbelib's matrices with the interleave schedules of dsd-fme, decoded to 8 kHz (160 samples per 20 ms), then queued (120 ms pre-buffer), resampled to the engine rate and mixed. Streams are kept apart per protocol and DMR slot (the *DMR slot* parameter picks one). *M17* (Codec 2) and *YSF V/D mode 2* are not decoded; encrypted calls come out as noise.
+
+- **Checked:** the wasm gives the same samples and error counts as a native build of the same mbelib sources for IMBE, AMBE+2 and AMBE frames (`tools/test/ref/mbelibref.c`), and the whole chain generator → 4FSK Digital Voice → Vocoder produces sound. **Not checked on real speech** — no encoder for these vocoders is available, so the frame layouts are those of dsd-fme and the output quality is that of mbelib (AMBE+2 in particular is only approximated). The generator sends random frames, so it plays noise.
+- **Patents:** IMBE / AMBE / AMBE+2 are DVSI vocoders and their algorithms may be covered by patents in some countries (mbelib's own README says so). The ISC licence covers the code, not that. Check what applies to you before using or distributing it; to leave it out, delete `vendor/mbelib.wasm` — the node then just says the module is missing.
+- The page's Content-Security-Policy allows `'wasm-unsafe-eval'` for this.
 
 ## DMR
 
