@@ -27,3 +27,8 @@ checked generator → decoder. `g++ -std=gnu++14 dpmrref.cpp`.
 
 `tdulcref.cpp` links dsd-fme's `p25p1_check_hdu.cpp` / `p25p1_check_ldu.cpp` / `Hamming.cpp` (`-I include -I src`) and prints its Golay(24,12) and
 RS(24,12,13) encoders on random data. dsd-fme keeps the hexbits in reverse of the transmission order; the test reverses them back.
+
+`cacref.c` (NXDN control channel CAC) takes 300-bit CAC frames on stdin (0/1 text) and runs them through the dsd-fme code:
+`nxdn_soft_decision_viterbi` from `soft_viterbi_k5.c` (built with a stub `dsd.h`), `PERM_12_25`, the CAC puncture pattern and `crc16cac`. It
+prints the CRC (0 = good) and the 171 decoded bits. `cac_*` vectors are frames encoded by `nxdnChEncode(NXDN_CH.cac, …)` that it decodes with
+CRC 0 and the same data bits.
