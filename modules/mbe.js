@@ -42,6 +42,12 @@ function mbeFrames(r){
   else if(r.ambe && (r.src==='DMR' || r.src==='NXDN' || r.src==='dPMR' || (r.src==='YSF' && r.kind==='ambe' && r.dt===0))){
     const by=mbeUnhex(r.ambe), n=(by.length*8)/72|0, b=mbeBits(by,by.length*8);
     for(let f=0;f<n;f++) dib(b,72*f,36,'a2450',MBE_RW,MBE_RX,MBE_RY,MBE_RZ,24,96);
+  } else if(r.src==='YSF' && r.kind==='ambe' && r.dt===2 && r.ambe){
+    // V/D режим 2: 104 бита VCH (перемежение и отбеливание уже сняты) — 27 бит тройками по 81 (голосование) + 22 бита как есть = 49 бит AMBE+2
+    const v=mbeBits(mbeUnhex(r.ambe),104), fr=new Uint8Array(49);
+    for(let i=0;i<27;i++) fr[i]=v[3*i]+v[3*i+1]+v[3*i+2]>=2 ? 1 : 0;
+    for(let i=0;i<22;i++) fr[27+i]=v[81+i];
+    out.push({k:'a2450d',fr});
   } else if(r.src==='M17' && r.codec2){
     const by=mbeUnhex(r.codec2), m1600=r.dtype===3;      // TYPE 3 — голос + данные: 64 бита речи (1600) и 64 бита данных; иначе два кадра 3200
     if(by.length>=8) out.push({k:'c2', mode:m1600 ? 1600 : 3200, bytes:by.subarray(0,8)});
@@ -57,7 +63,7 @@ function mbeFrames(r){
 function mbeDecode(h,fm,q){
   const ex=MBE.ex, mem=new Uint8Array(ex.memory.buffer);
   mem.set(fm.fr,ex.mbx_frame());
-  const e=fm.k==='imbe' ? ex.mbx_imbe(h,q) : fm.k==='a2450' ? ex.mbx_ambe2450(h,q) : ex.mbx_ambe2400(h,q);
+  const e=fm.k==='imbe' ? ex.mbx_imbe(h,q) : fm.k==='a2450' ? ex.mbx_ambe2450(h,q) : fm.k==='a2450d' ? ex.mbx_ambe2450_data(h,q) : ex.mbx_ambe2400(h,q);
   return {errs:e, pcm:new Int16Array(ex.memory.buffer.slice(ex.mbx_pcm(),ex.mbx_pcm()+320))};
 }
 

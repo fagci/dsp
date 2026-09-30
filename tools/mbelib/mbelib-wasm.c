@@ -32,4 +32,6 @@ void mbx_reset(int h){ mbe_initMbeParms(&cur[h],&prv[h],&enh[h]); }
 /* return: bit errors in the first Golay word (errs); pcm has 160 samples at 8 kHz */
 int mbx_imbe(int h,int q){ int e=0,e2=0; mbe_processImbe7200x4400Frame(pcm,&e,&e2,es,(char(*)[23])fr,dd,&cur[h],&prv[h],&enh[h],q); return e; }
 int mbx_ambe2450(int h,int q){ int e=0,e2=0; mbe_processAmbe3600x2450Frame(pcm,&e,&e2,es,(char(*)[24])fr,dd,&cur[h],&prv[h],&enh[h],q); return e; }
+/* AMBE+2 parameter bits already error-corrected (49 in mbx_frame(), one per byte): YSF V/D mode 2 does its own majority vote */
+int mbx_ambe2450_data(int h,int q){ int e=0,e2=0; memcpy(dd,fr,49); mbe_processAmbe2450Data(pcm,&e,&e2,es,dd,&cur[h],&prv[h],&enh[h],q); return e; }
 int mbx_ambe2400(int h,int q){ int e=0,e2=0; mbe_processAmbe3600x2400Frame(pcm,&e,&e2,es,(char(*)[24])fr,dd,&cur[h],&prv[h],&enh[h],q); return e; }

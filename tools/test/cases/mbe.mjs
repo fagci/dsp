@@ -44,7 +44,8 @@ export default [
     fs = chk({src:'YSF', kind:'ambe', dt:0, ambe:ones(9)}, 'a2450', 96, 1); if(typeof fs === 'string') return fs;
     fs = chk({src:'D-STAR', ambe:ones(9)}, 'a2400', 96, 1); if(typeof fs === 'string') return fs;
     if(fs[0].fr.reduce((a, b) => a+b, 0) !== 72) return 'D-STAR cells '+fs[0].fr.reduce((a, b) => a+b, 0);
-    if(mbeFrames({src:'YSF', kind:'ambe', dt:2, ambe:ones(13)}).length || mbeFrames({src:'M17', codec2:'00'}).length) return 'YSF mode 2 / M17 must not go to mbelib';
+    fs = mbeFrames({src:'YSF', kind:'ambe', dt:2, ambe:ones(13)}); if(fs.length !== 1 || fs[0].k !== 'a2450d' || fs[0].fr.length !== 49 || fs[0].fr.some(b => b !== 1)) return 'YSF V/D mode 2: '+JSON.stringify(fs.map(f => f.k));
+    if(mbeFrames({src:'M17', codec2:'00'}).length) return 'a short M17 record must not decode';
     return true;
   }},
   {name:'mbeVoice node: 4FSK generator → fskRx → vocoder → audio (P25, NXDN 9600 / 4800, dPMR, D-STAR, DMR): frames decoded, sound comes out, no NaN', arg:[[...GENV('P25 voice', 'p25'), 'P25'], [...GENV('NXDN 9600 voice', 'nxdn'), 'NXDN'], [...GENV('NXDN 4800 voice', 'nxdn48'), 'NXDN'], [...GENV('dPMR voice', 'dpmr'), 'dPMR'], [...GENV('D-STAR voice', 'dstar'), 'D-STAR'], [...GENDMR(), 'DMR']], async fn(list){
