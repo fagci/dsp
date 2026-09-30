@@ -114,6 +114,7 @@ const PRESET_CATS={
   'Radiosonde RS41: Map (Generator)':'Demo',
   'Inmarsat STD-C: EGC Messages (Generator)':'Demo',
   'MPT 1327: Control Channel (Generator)':'Demo',
+  'Analog TV: Test Card (Generator)':'Demo',
 
   'Quick Audio Recording':'Quick Scenarios',
   'Find Sound Source (by Frequency)':'Quick Scenarios',
@@ -157,6 +158,7 @@ const PRESET_CATS={
   'Radiosonde RS41: Map (USB SDR, 400–406 MHz)':'Radio Protocols',
   'Inmarsat STD-C: EGC Messages (USB SDR, 1.5 GHz)':'Radio Protocols',
   'MPT 1327: Control Channel (USB SDR)':'Radio Protocols',
+  'Analog TV: FPV / TV Receiver (USB SDR)':'Radio Protocols',
   'Sound Card IQ: HF Receiver (SoftRock-style)':'Quick Scenarios',
   'FT8: Find Signals in Slot':'Radio Protocols',
   'Weather Fax WEFAX 120':'Radio Protocols',
@@ -2529,5 +2531,45 @@ log.size.w=560; applySize(log);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Analog TV: Test Card (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Analog video without a radio: the generator sends a PAL test card (colour bars, grey scale, frame) frequency-modulated like an FPV transmitter.\n'+
+  'TV Demodulator: FM discriminator + video low-pass → composite video (sync tips down). TV Decoder: line and field sync, PAL / NTSC by the number of lines, colour burst (PAL V-switch and\n'+
+  'line averaging), interlace → picture on the Frame node. Try: generator standard NTSC, AM (with the demodulator on AM negative), noise; decoder polarity, width, colour, picture shift.\n'+
+  'Colour needs a sample rate of at least 2.4 × the subcarrier (10.6 MS/s PAL, 8.6 MS/s NTSC). 12 MS/s is heavy: lower the run speed if the browser cannot keep up.'});
+nt.size.w=760; nt.size.h=130; applySize(nt);
+const gn=addNode('iqGen',40,240,{sr:'12000000',fc:5800000000,mode:'Analog TV',tv:'PAL',tvm:'FM',tvdev:4000000,off:0,lvl:-20,noise:-50});
+const dm=addNode('tvDemod',340,240,{mode:'FM',dev:4000000,bw:5000000});
+const dc=addNode('tvDecode',340,380,{});
+dc.size.w=420; dc.size.h=110; applySize(dc);
+const fr=addNode('imgview',800,200,{});
+fr.size.w=520; fr.size.h=440; applySize(fr);
+const sp=addNode('iqSpec',340,560,{size:'4096',avg:'4'});
+const sa=addNode('sa',40,640,{auto:true,floor:-100,top:-30});
+sa.size.w=700; sa.size.h=240; applySize(sa);
+addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'out',dc.id,'in'); addEdge(dc.id,'img',fr.id,'img');
+addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
+markWiresDirty();
+});
+preset('Analog TV: FPV / TV Receiver (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Analog video from an SDR with a wide sample rate: FPV (5.6–5.95 GHz, FM, needs a HackRF at 16–20 MS/s) or broadcast TV (UHF, AM negative: set the demodulator to AM (negative), 10 MS/s).\n'+
+  'Tap the video carrier on the spectrum; TV Demodulator turns the channel into composite video, TV Decoder finds the sync, standard and colour. If the picture is a negative or the decoder cannot lock,\n'+
+  'flip its polarity; move the picture with the shift sliders. With HackRF turn RX AMP and LNA on; FPV needs a 5.8 GHz antenna. The demodulator bandwidth (5 MHz) is the video bandwidth.'});
+nt.size.w=760; nt.size.h=110; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'20000000',freq:5800000000,demod:'IQ'});
+const sa=addNode('sa',860,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,200,{});
+const dm=addNode('tvDemod',340,340,{mode:'FM',dev:8000000,bw:5000000});
+const dc=addNode('tvDecode',340,480,{});
+dc.size.w=420; dc.size.h=110; applySize(dc);
+const fr=addNode('imgview',860,360,{});
+fr.size.w=520; fr.size.h=440; applySize(fr);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',dm.id,'in'); addEdge(dm.id,'out',dc.id,'in'); addEdge(dc.id,'img',fr.id,'img');
 markWiresDirty();
 });
