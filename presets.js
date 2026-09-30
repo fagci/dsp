@@ -2498,3 +2498,36 @@ preset('HFDL: Receive and Aircraft Map', function(){
   addEdge(stack.id,'rec',map.id,'rec');               // самолёты (треки по id) и наземные станции
   markWiresDirty();
 });
+
+preset('4FSK Digital Voice: Auto Detect (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'One decoder for the 4FSK / 2FSK digital voice systems: 4FSK Digital Voice takes an IQ stream and finds the protocol by its sync words —\n'+
+  'DMR, P25 Phase 1, NXDN, YSF, M17, D-STAR, dPMR (or pick one in the node). The generator is a test transmitter: switch its 4FSK parameter between\n'+
+  'P25 voice / control channel, NXDN, YSF, M17, D-STAR, dPMR and watch the records: calls, callsigns / IDs, text, trunking messages, raw vocoder frames on the voice output.'});
+nt.size.w=760; nt.size.h=120; applySize(nt);
+const gn=addNode('iqGen',40,240,{sr:'256000',fc:433000000,mode:'4FSK',fsk4:'M17 voice stream',off:2000,lvl:-20,noise:-45});
+const de=addNode('fskRx',340,240,{proto:'auto'});
+de.size.w=560; de.size.h=340; applySize(de);
+const log=addNode('recLog',340,640,{});
+log.size.w=560; applySize(log);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('4FSK Digital Voice: Any System (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Tune the SDR to a digital voice channel (VHF / UHF: DMR, P25, NXDN, YSF, M17, D-STAR, dPMR) and tap the signal on the spectrum.\n'+
+  '4FSK Digital Voice locks onto whatever it hears and decodes it; records go to the log, raw vocoder frames (AMBE / IMBE / Codec 2) come out on the voice output.'});
+nt.size.w=760; nt.size.h=100; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'1024000',freq:438000000,demod:'IQ'});
+const sa=addNode('sa',860,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,200,{});
+const de=addNode('fskRx',340,360,{proto:'auto'});
+de.size.w=560; de.size.h=340; applySize(de);
+const log=addNode('recLog',340,760,{});
+log.size.w=560; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});

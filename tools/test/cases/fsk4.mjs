@@ -434,6 +434,35 @@ export default [
     }
     return true;
   }},
+  {name:'fskRx auto: every protocol is picked by its sync words (P25, NXDN, M17, YSF, D-STAR, dPMR, DMR) — one node, all channels',
+   arg:[['P25 voice', 'p25'], ['NXDN 9600 voice', 'nxdn'], ['M17 voice stream', 'm17'], ['YSF V/D mode 2', 'ysf'], ['D-STAR voice', 'dstar'], ['dPMR voice', 'dpmr']], fn(list){
+    for(const [gen, id] of list){
+      const [g, w] = [[['iqGen', {sr:'256000', fc:433e6, mode:'4FSK', off:1000, lvl:-20, noise:-45, fsk4:gen}], ['fskRx', {proto:'auto'}]], ['0.iq>1.in']];
+      const ns = T.build(g, w), r = fskRun(ns, 4);
+      const e = T.errors(); if(e.length) return e.join('; ');
+      const srcs = new Set(r.recs.map(q => q.src));
+      const want = {p25:'P25', nxdn:'NXDN', m17:'M17', ysf:'YSF', dstar:'D-STAR', dpmr:'dPMR'}[id];
+      if(!srcs.has(want) || srcs.size !== 1) return gen+': records from '+[...srcs].join(', ')+', '+r.recs.length+' total';
+      if(!r.voice.length && id !== 'p25') return gen+': no voice frames';
+    }
+    // DMR (тот же канал 4800 Бод, что у P25 / NXDN / YSF)
+    const ns = T.build([['iqGen', {sr:'256000', fc:438e6, mode:'DMR', off:2000, lvl:-20, noise:-45}], ['fskRx', {proto:'auto'}]], ['0.iq>1.in']);
+    const r = fskRun(ns, 8);
+    if(!r.recs.some(q => q.src === 'DMR' && q.kind === 'call' && q.from === 2600123) || r.recs.some(q => q.src !== 'DMR')) return 'DMR through the universal node: '+[...new Set(r.recs.map(q => q.src))].join(', ');
+    return true;
+  }},
+  {name:'fskRx: universal node in a worker island, all protocols loaded there', arg:GEN('256000', 2000, -45, 'P25 voice', 'auto'), async fn([g, w]){
+    g.push(['recLog', {}]); w.push('1.rec>2.rec');
+    Islands.setEnabled(true);
+    try{
+      const ns = T.build(g, w);
+      if(!ns[1]._isl) return 'not in a worker';
+      await T.realtime(4);
+      await new Promise(r => setTimeout(r, 300)); for(const nd of Graph.order) evalNode(nd);
+      const e = T.errors(); if(e.length) return e.join('; ');
+      return ns[2].rows.some(q => q.src === 'P25' && q.kind === 'call') || 'rows '+ns[2].rows.length;
+    } finally { Islands.setEnabled(false); }
+  }},
   {name:'p25: noise alone — no lock, no records', arg:GEN('256000', 2000, -45, 'P25 voice', 'p25'), fn([g, w]){
     g[0][1].mode = 'off'; g[0][1].noise = -30;
     const ns = T.build(g, w), r = fskRun(ns, 3);

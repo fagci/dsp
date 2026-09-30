@@ -112,7 +112,7 @@ function m17Lsf(b){                                                // 30 бай�
 }
 const M17_MISS=2;
 function m17Emit(P,L,out,kind,f,text){
-  const r={t:Date.now(), src:'M17', kind, ...f, text};
+  const r={t:Date.now(), kind, ...f, src:'M17', text};
   out.recs.push(r);
   P.recent.push(text); if(P.recent.length>20) P.recent.shift();
   return r;

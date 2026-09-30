@@ -64,7 +64,7 @@ const ysfText=b=>String.fromCharCode(...Array.from(b).map(c=>c>=32 && c<127 ? c 
 /* ---- приёмник ---- */
 const YSF_MISS=2;
 function ysfEmit(P,L,out,kind,f,text){
-  const r={t:Date.now(), src:'YSF', kind, ...f, text};
+  const r={t:Date.now(), kind, ...f, src:'YSF', text};
   out.recs.push(r);
   P.recent.push(text); if(P.recent.length>20) P.recent.shift();
   return r;
