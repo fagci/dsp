@@ -34,3 +34,5 @@ prints the CRC (0 = good) and the 171 decoded bits. `cac_*` vectors are frames e
 CRC 0 and the same data bits.
 
 `pduref.cpp` builds against MMDVMHost `P25Trellis` (with a stub `Log.h`): it prints the rate ¾ trellis encoding of an 18-byte block, plus the CRC-32 (`crc32mbf`) and CRC-9 (`ComputeCrc9Bit`) functions copied from dsd-fme over fixed data. Vectors `tr34`, `crc32mbf`, `crc9`.
+
+`dpmrhdrref.cpp` builds inside a dsdcc checkout (f4exb, GPLv3; `g++ -std=c++11 -w -I. dpmrhdrref.cpp fec.cpp`). It encodes dPMR header words the way dsdcc's `processHIn` decodes them (LFSR scrambler, `dI120` interleave, `Hamming_12_8::encode`, CRC-8); its dibit strings are the `dpmr_hdr` vectors. The FS1 / FS3 sync patterns are taken from dsdcc's `dsd_sync.cpp`.

@@ -92,6 +92,9 @@ export function setup(){
     if(r.ui.cc !== 5) return 'colour code '+r.ui.cc;
     if(!k('call').some(q => q.from === '7654321' && q.to === '1234567' && q.cc === 5)) return 'no call: '+JSON.stringify(k('call'));
     if(r.voice.length < 40) return 'voice frames '+r.voice.length;
+    if(!k('header').some(q => q.type === 'communication start' && q.from === '7654321' && q.to === '1234567' && q.modeName === 'voice' && q.format === 1)) return 'no header: '+JSON.stringify(k('header'));
+    if(!k('call').some(q => q.source === 'HEADER')) return 'call not from the header';
+    if(!k('end').some(q => q.by === 'FS3' && q.from === '7654321')) return 'no FS3 end: '+JSON.stringify(k('end'));
     let x = 0xD9312A; const rnd = () => { x ^= x<<13; x ^= x>>>17; x ^= x<<5; return x & 255; };
     // те же TCH, что у генератора: по 72 бита (биты — младший бит xorshift), 8 на блок, 6 блоков
     const exp = new Set(); for(let u=0; u<6; u++) for(let t=0; t<8; t++){ const b = Uint8Array.from({length:72}, () => rnd()&1); exp.add(fskHex(p25Bytes(b))); }
@@ -498,6 +501,18 @@ export default [
     for(const [[g, w], opt, mode] of cfg){
       const ns = T.build(g, w), r = fskRun(ns, mode === 'late' ? 5 : 4, opt);
       const c = dstarCheck(r, mode, g[0][1].sr === '48000' || !!opt.ppm); if(c !== true) return g[0][1].fsk4+' '+g[0][1].sr+' '+JSON.stringify(opt)+': '+c;
+    }
+    return true;
+  }},
+  {name:'dpmr: header word (FS1, HI) — frames encoded by dsdcc (Hamming(12,8), LFSR, 120-bit interleave, CRC-8) decode to the same fields, errors corrected', arg:V, fn(V){
+    for(const line of V.dpmr_hdr){
+      const [ht, called, own, mode, fmt, dib] = line.split(' '), bits = fsk4Unpack(Uint8Array.from(dib, c => +c), 0, 60);
+      const r = dpmrHi(bits);
+      if(!r.ok || r.f.htype !== +ht || r.f.called !== dpmrAiToStr(parseInt(called, 16)) || r.f.own !== dpmrAiToStr(parseInt(own, 16)) || r.f.mode !== +mode || r.f.format !== +fmt) return 'decode '+line.slice(0, 24)+' '+JSON.stringify(r.f);
+      const enc = dpmrHiEncode({htype:+ht, called:r.f.called, own:r.f.own, mode:+mode, format:+fmt});
+      if(enc.join('') !== Array.from(bits).join('')) return 'encoder '+line.slice(0, 24);
+      const bad = bits.slice(); bad[7] ^= 1; bad[80] ^= 1;
+      if(!dpmrHi(bad).ok) return 'two bit errors '+line.slice(0, 24);
     }
     return true;
   }},
