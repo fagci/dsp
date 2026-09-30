@@ -11,7 +11,7 @@
   /* --scr-panel/--scr-hi — тот же случай: заливка-«подложка»/яркий highlight-акцент поверх
      canvas.view, тоже всегда на тёмном --screen, тоже не по теме */
   --scr-panel:#1d2226; --scr-hi:#ffffff;
-  --dot:#20272b; --hi:#ffffff; --scrim:#0009;
+  --hi:#ffffff; --scrim:#0009;
   --note-bg:#1c1a14; --note-head:#241f14; --note-line:#3a3320;
   --screen:#0a0d0e; --screen-fg:#4ec9b0; --pin:13px; --pov:8px;
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
@@ -23,7 +23,7 @@
     --txt:#1c2226; --dim:#5c6670; --acc:#a8720f; --acc2:#0f9488;
     --t-sig:#0f9488; --t-num:#a8720f; --t-spec:#9333ea; --t-img:#2563eb;
     --t-txt:#a83fa8; --t-blk:#2f9e4f; --t-bands:#1b7f96; --t-rec:#b8541f; --t-trk:#b83d7c; --t-iq:#5f8a0e; --err:#c23b3b;
-    --dot:#d7dbde; --hi:#000000; --scrim:#0004;
+    --hi:#000000; --scrim:#0004;
     --note-bg:#fff8e1; --note-head:#fbecc3; --note-line:#e3cf95;
   }
 }
@@ -117,9 +117,7 @@ button,select,input{font:inherit;color:inherit}
 #stat.warn{color:var(--acc)}
 #stat.crit{color:#e05c5c;font-weight:600}
 
-#canvas{flex:1;position:relative;overflow:hidden;cursor:grab;touch-action:none;
-  background-image:radial-gradient(circle,var(--dot) 1px,transparent 1px);
-  background-size:24px 24px}
+#canvas{flex:1;position:relative;overflow:hidden;cursor:grab;touch-action:none}
 #side.collapsed{display:none}
 /* ---- дашборд: тайловая раскладка закреплённых (📌) узлов, дерево произвольных сплитов (как в tiling WM) ---- */
 #dashGrid{display:none;width:100%;height:100%;overflow:hidden;box-sizing:border-box}
@@ -132,8 +130,6 @@ button,select,input{font:inherit;color:inherit}
 #canvas.graphOn .dash-pane:not(.graph),#canvas.graphOn .dash-tools,#canvas.graphOn .dash-resizer{pointer-events:auto}
 .dash-pane.graph{background:none;outline:1px solid var(--line);outline-offset:-1px}
 .dash-pane.graph>.dash-body{overflow:hidden}
-#graphBg{display:none;position:absolute;pointer-events:none;background-image:radial-gradient(circle,var(--dot) 1px,transparent 1px)}
-#canvas.graphOn #graphBg{display:block}
 .node.ghost{opacity:.75;border-style:dashed}
 .node.ghost .ghostNote{color:var(--dim);font-size:11px;padding:4px 0}
 #canvas.dashboard:not(.graphOn) #content,#canvas.dashboard:not(.graphOn) #wires,#canvas.dashboard:not(.graphOn) #wiresFront{display:none}
@@ -743,3 +739,4 @@ select.aed-b{padding:0 6px}
 #bootBar{width:min(240px,60vw);height:4px;background:var(--line);border-radius:2px;overflow:hidden}
 #bootBar i{display:block;height:100%;width:0;background:var(--acc);transition:width .1s}
 #boot.err{color:var(--err)}
+#net{color:var(--acc);font-size:11px;font-weight:600}
