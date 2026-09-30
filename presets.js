@@ -83,8 +83,6 @@ stat.textContent='patch saved: '+name;
 buildPatchList();
 };
 patchSearchEl.addEventListener('input',e=>{ patchQuery=e.target.value; buildPatchList(); });
-document.getElementById('patchClear').addEventListener('click',()=>{
-patchSearchEl.value=''; patchQuery=''; buildPatchList(); patchSearchEl.focus(); });
 // Строит недостающие/устаревшие встроенные пресеты и обновляет версию хранилища.
 // Сами пресеты регистрируются ниже через preset(имя, функция-строитель), см. PRESETS.
 function buildBuiltinPresets(){

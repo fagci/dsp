@@ -51,9 +51,9 @@ button,select,input{font:inherit;color:inherit}
 #patchSearch{width:100%;min-width:0;background:var(--bg);border:1px solid var(--line);
   border-radius:3px;padding:7px 8px;outline:none}
 #patchSearch:focus{border-color:var(--acc)}
-#patchTools button{flex:0 0 30px;background:var(--panel2);border:1px solid var(--line);
-  border-radius:3px;cursor:pointer;color:var(--dim);font-size:14px;line-height:1}
-#patchTools button:hover{border-color:var(--acc);color:var(--txt)}
+#patchTools button{flex:0 0 34px;background:none;border:0;
+  border-radius:3px;cursor:pointer;color:var(--dim);font-size:15px;line-height:1}
+#patchTools button:hover{background:var(--panel2);color:var(--txt)}
 #patchList{overflow:auto;flex:1;padding:6px 0 20px;background:var(--bg)}
 #patchList .pitem.on{background:var(--panel2);border-left-color:var(--acc)}
 #palette{overflow:auto;overscroll-behavior:contain;flex:1;padding:0 0 20px;background:var(--bg)}
@@ -63,9 +63,6 @@ button,select,input{font:inherit;color:inherit}
 #paletteSearch{width:100%;min-width:0;background:var(--bg);border:1px solid var(--line);
   border-radius:3px;padding:7px 8px;outline:none}
 #paletteSearch:focus{border-color:var(--acc)}
-#paletteClear{flex:0 0 30px;background:var(--panel2);border:1px solid var(--line);
-  border-radius:3px;color:var(--dim);cursor:pointer;font-size:17px;line-height:1}
-#paletteClear:hover{border-color:var(--acc);color:var(--txt)}
 #palette.empty:after,#patchList.empty:after{content:'Nothing found';display:block;padding:18px 12px;color:var(--dim)}
 .pcat{border-bottom:1px solid var(--line)}
 .pcat summary{display:flex;align-items:center;gap:7px;padding:9px 12px;
@@ -108,10 +105,13 @@ button,select,input{font:inherit;color:inherit}
 #bar{display:flex;gap:6px;align-items:center;padding:8px;background:var(--panel);
   border-bottom:1px solid var(--line);flex-wrap:wrap}
 #bar .sep{width:1px;height:20px;background:var(--line);margin:0 2px}
-#bar button{background:var(--panel2);border:1px solid var(--line);padding:5px 10px;
+#bar button{background:none;border:0;padding:5px 10px;
   border-radius:3px;cursor:pointer}
-#bar button:hover{border-color:var(--acc);color:var(--hi)}
-#bar button.on{background:var(--acc);border-color:var(--acc);color:#111;font-weight:600}
+#bar button:hover{background:var(--panel2);color:var(--hi)}
+#bar button:active{background:var(--line)}
+#bar button:disabled{opacity:.35;pointer-events:none}
+#bar button.on{background:var(--acc);color:#111;font-weight:600}
+#bar button:focus-visible,#patchTools button:focus-visible{outline:1px solid var(--acc);outline-offset:-1px}
 #bar .sp{flex:1}
 #stat{color:var(--dim);font-size:11px}
 #stat.warn{color:var(--acc)}
@@ -358,7 +358,7 @@ button,select,input{font:inherit;color:inherit}
 .node.note{background:var(--note-bg)}
 .node.note .nhead{background:var(--note-head)}
 #sel{position:absolute;border:1px solid var(--acc);background:#e0b23c18;pointer-events:none;display:none}
-.nhead{display:flex;align-items:center;gap:6px;padding:5px 7px;cursor:move;
+.nhead{display:flex;align-items:center;gap:6px;padding:5px 7px;cursor:move;user-select:none;-webkit-user-select:none;
   background:var(--panel2);border-radius:3px 3px 0 0}
 .nhead .dot{width:6px;height:6px;border-radius:50%;flex:0 0 6px}
 .nhead .ttl{flex:1;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -369,8 +369,6 @@ button,select,input{font:inherit;color:inherit}
 .io3{display:flex;gap:0;align-items:stretch;margin:0}
 .io3 .col:empty{display:none}
 .mid{flex:1;min-width:0;padding:9px 13px 10px}
-.nhead .cl{cursor:pointer;color:var(--dim);padding:0 4px;font-size:10px}
-.nhead .cl:hover{color:var(--acc)}
 .node.folded .nbody{display:none}
 .node.folded{width:auto!important;min-width:150px}
 .node.folded .nhead{border-bottom:0;border-radius:3px}
