@@ -207,7 +207,7 @@ matchMedia(`(resolution:${window.devicePixelRatio}dppx)`).addEventListener('chan
 function buildNodeEl(n){
 const d=MOD[n.type];
 const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
-el.innerHTML=`<div class="nhead" title="Double-tap to fold"><span class="dot" style="background:${catColor(d.cat)}" title="${d.cat||''}"></span> <span class="ttl">${d.title}</span><span class="x">✕</span></div> <div class="nbody"></div>`;
+el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" title="${d.cat||''}">${d.title}</span><span class="x">✕</span></div> <div class="nbody"></div>`;
 const body=el.querySelector('.nbody');
 const io=document.createElement('div'); io.className='io3';
 const ci=document.createElement('div'); ci.className='col';
@@ -1389,7 +1389,7 @@ function nodePorts(n){ return n.ghost ? n.ghostPorts : n.ports; }
 function ghostBuild(n){
   const d=MOD[n.type], g=document.createElement('div');
   g.className='node ghost panzoom-exclude'; g.dataset.id=n.id; g.style.width=n.size.w+'px';
-  g.innerHTML=`<div class="nhead"><span class="dot" style="background:${catColor(d.cat)}"></span> <span class="ttl">${d.title}</span></div>
+  g.innerHTML=`<div class="nhead" style="--cat:${catColor(d.cat)}"><span class="ttl">${d.title}</span></div>
 <div class="nbody"><div class="io3"><div class="col"></div><div class="mid"><div class="ghostNote">▣ in pane</div></div><div class="col o"></div></div></div>`;
   const [ci,co]=g.querySelectorAll('.col'), gp={i:{},o:{}};
   for(const dir of ['i','o']) for(const k in n.ports[dir]){
