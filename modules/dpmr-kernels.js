@@ -4,12 +4,12 @@
    (CCH 36 + 4 канала TCH по 36), между ними цветовой код CC (12 дибитов). CCH: 72 бита → скремблер x⁹+x⁵+1 → перемежение 12×6 →
    6 слов Хэмминга (12,8) → 48 бит (номер кадра, 12 бит адреса, режим, версия, формат, срочность, медленные данные, CRC-7).
    Адрес вызываемого — в кадрах 0/1 суперкадра, вызывающего — в 2/3 (по 12 бит из двух CCH), 24 бита → 7 знаков. Голос AMBE не декодируется
-   — отдаются сырые кадры TCH (72 бита). Заголовок (FS1: два слова HI по 60 дибитов, Хэмминг (12,8) ×10, CRC-8) и конец передачи (FS3) — по dsdcc; пакетный заголовок FS4 не разбирается. Кодеры — для генератора и тестов. */
+   — отдаются сырые кадры TCH (72 бита). Заголовок (FS1: два слова HI по 60 дибитов, Хэмминг (12,8) ×10, CRC-8) и конец передачи (FS3) — по dsdcc; заголовок пакетных данных FS4 (та же структура HI0 / CC / HI1, ETSI TS 102 658 п. 5.4) — только он, пакетные кадры за ним не разбираются. Кодеры — для генератора и тестов. */
 
 const DPMR_BAUD=2400, DPMR_UNIT=384;
 const dpmrDib=s=>s.split('').map(c=>c==='1' ? '01' : c==='3' ? '11' : c==='0' ? '00' : '10').join('');
 const DPMR_FS2=fsk4Sync(dpmrDib('113333131331'));
-const DPMR_FS1=fsk4Sync(fsk4Bits('57FF5F75D577')), DPMR_FS3=fsk4Sync(dpmrDib('133131333311'));
+const DPMR_FS1=fsk4Sync(fsk4Bits('57FF5F75D577')), DPMR_FS4=fsk4Sync(fsk4Bits('FD55F5DF7FDD')), DPMR_FS3=fsk4Sync(dpmrDib('133131333311'));
 // цветовые коды 0…63: 24 бита, младшие биты дибитов всегда 1
 const DPMR_CC=[0x575F77,0x577577,0x57DD75,0x57F775,0x55577D,0x557D7D,0x55D57F,0x55FF7F,0x5F555F,0x5F7F5F,0x5FD75D,0x5FFD5D,0x5D5D55,0x5D7755,0x5DDF57,0x5DF557,
   0x775DD7,0x7777D7,0x77DFD5,0x77F5D5,0x7555DD,0x757FDD,0x75D7DF,0x75FDDF,0x7F57FF,0x7F7DFF,0x7FD5FD,0x7FFFFD,0x7D5FF5,0x7D75F5,0x7DDDF7,0x7DF7F7,
@@ -61,12 +61,12 @@ function dpmrHi(b120){                                             // 120 при
     const r=dpmrHamDec(cw); ham=ham && r.ok; bits.set(r.d,8*w);
   }
   const ok=dpmrCrc8(bits,72).join('')===Array.from(bits.subarray(72)).join('');
-  const f={htype:dmrNum(bits,0,4), called:dpmrAiToStr(dmrNum(bits,4,24)), own:dpmrAiToStr(dmrNum(bits,28,24)), mode:dmrNum(bits,52,3), format:dmrNum(bits,55,4)};
+  const f={htype:dmrNum(bits,0,4), called:dpmrAiToStr(dmrNum(bits,4,24)), own:dpmrAiToStr(dmrNum(bits,28,24)), mode:dmrNum(bits,52,3), version:dmrNum(bits,55,2), format:dmrNum(bits,57,2), emergency:bits[59], info:dmrNum(bits,61,11)};
   return {bits, ok, ham, f};
 }
 function dpmrHiEncode(o){
   const b=new Uint8Array(80), put=(v,n,p)=>{ for(let i=0;i<n;i++) b[p+i]=Math.floor(v/Math.pow(2,n-1-i))&1; };
-  put(o.htype,4,0); put(dpmrStrToAi(o.called),24,4); put(dpmrStrToAi(o.own),24,28); put(o.mode,3,52); put(o.format,4,55);
+  put(o.htype,4,0); put(dpmrStrToAi(o.called),24,4); put(dpmrStrToAi(o.own),24,28); put(o.mode,3,52); put(o.version||0,2,55); put(o.format,2,57); put(o.emergency||0,1,59); put(o.info||0,11,61);
   b.set(dpmrCrc8(b,72),72);
   const st=new Uint8Array(120);
   for(let w=0;w<10;w++){ const cw=dpmrHamEnc(Array.from(b.subarray(8*w,8*w+8))); for(let k=0;k<12;k++) st[10*k+w]=cw[k]; }
@@ -85,7 +85,7 @@ function dpmrEmit(P,L,out,kind,f,text){
   return r;
 }
 FSK4.protos.dpmr={
-  id:'dpmr', name:'dPMR', baud:DPMR_BAUD, alpha:.2, lp:4500, levels:4, thrAcq:2, thrLock:5, maxRq:.15, syncs:[DPMR_FS2,DPMR_FS1,DPMR_FS3],
+  id:'dpmr', name:'dPMR', baud:DPMR_BAUD, alpha:.2, lp:4500, levels:4, thrAcq:2, thrLock:5, maxRq:.15, syncs:[DPMR_FS2,DPMR_FS1,DPMR_FS4,DPMR_FS3],
   init(P){
     P.now=0; P.cc=null; P.called=null; P.calling=null; P.call=null; P.recent=[]; P.lastAct=0;
     P.st={units:0, headers:0, voice:0, cch:0, calls:0, bad:0, locks:0};
@@ -93,7 +93,7 @@ FSK4.protos.dpmr={
   reset(P){ P.now=0; P.call=null; },
   // какой синхрослов найден: FS2 — кадр данных, FS1 — заголовок (132 дибита), FS3 — конец передачи
   kind(L,bp){
-    L.kind=bp===DPMR_FS1 ? 'head' : bp===DPMR_FS3 ? 'end' : 'unit';
+    L.packet=bp===DPMR_FS4; L.kind=bp===DPMR_FS1 || L.packet ? 'head' : bp===DPMR_FS3 ? 'end' : 'unit';
     L.after=L.kind==='head' ? 132 : L.kind==='end' ? 1 : DPMR_UNIT-12;
   },
   lock(P,L,bp){ P.st.locks++; this.kind(L,bp); return {first:true, blind:true, kind:L.kind}; },
@@ -140,19 +140,26 @@ FSK4.protos.dpmr={
     }
     L.next+=8*DPMR_UNIT; L.best=99; L.bestRq=1e9; L.kind='unit'; L.after=DPMR_UNIT-12;
   },
-  // FS1 + HI0 (60) + CC (12) + HI1 (60): оба слова несут одно и то же; идут дальше FS2 и кадры данных
+  // FS1 / FS4 + HI0 (60) + CC (12) + HI1 (60): оба слова несут одно и то же; дальше FS2 и кадры данных.
+  // FS4 — FS1 с перевёрнутыми уровнями, поэтому синхрослово полярность не решает: слово читается как принято, а если CRC не сходится — в инвертированном
+  // виде (тогда синхрослово другое, а спектр перевёрнут)
   header(P,L,e,out){
-    const F=fsk4Slice(L,e,156), bits=fsk4Unpack(F,0,156), h=[dpmrHi(bits.subarray(48,168)), dpmrHi(bits.subarray(192,312))], cc=dpmrColor(bits.subarray(168,192));
-    const good=h.find(x=>x.ok);
+    const F=fsk4Slice(L,e,156), raw=fsk4Unpack(F,0,156);
+    const read=b=>({h:[dpmrHi(b.subarray(48,168)), dpmrHi(b.subarray(192,312))], cc:dpmrColor(b.subarray(168,192))});
+    let inv=false, r=read(raw), good=r.h.find(x=>x.ok);
+    if(!good){ const b=raw.slice(); for(let i=0;i<b.length;i+=2) b[i]^=1; const r2=read(b), g2=r2.h.find(x=>x.ok); if(g2){ inv=true; r=r2; good=g2; } }
+    const h=r.h, cc=r.cc, packet=inv ? !L.packet : L.packet;
     if((L.first || L.blind) && !good){ fsk4Drop(L); return; }
+    if(inv) L.g=-L.g;
     L.first=false; L.blind=false; P.lastAct=Date.now(); P.st.headers++;
     if(cc>=0) P.cc=cc;
     if(good){
       const f=good.f, type=DPMR_HTYPE[f.htype]||'reserved', mode=DPMR_MODE[f.mode]||'reserved';
-      dpmrEmit(P,L,out,'header',{htype:f.htype, type, from:f.own, to:f.called, mode:f.mode, modeName:mode, format:f.format, both:h[0].ok && h[1].ok},
-        'HEADER '+type+' '+f.own+' → '+f.called+' · '+mode+(P.cc!=null ? ' · CC '+P.cc : ''));
-      if(f.htype===0 || f.htype===5 || f.htype===6) this.setCall(P,L,out,f.own,f.called,{mode:f.mode, format:f.format, emergency:0, source:'HEADER'});
+      dpmrEmit(P,L,out,'header',{htype:f.htype, type, from:f.own, to:f.called, mode:f.mode, modeName:mode, format:f.format, version:f.version, emergency:f.emergency, info:f.info, packet, both:h[0].ok && h[1].ok},
+        (packet ? 'PACKET HEADER ' : 'HEADER ')+type+' '+f.own+' → '+f.called+' · '+mode+(P.cc!=null ? ' · CC '+P.cc : ''));
+      if(!packet && (f.htype===0 || f.htype===5 || f.htype===6)) this.setCall(P,L,out,f.own,f.called,{mode:f.mode, format:f.format, version:f.version, emergency:f.emergency, source:'HEADER'});
     } else P.st.bad++;
+    if(packet){ fsk4Drop(L); return; }                        // после FS4 идут пакетные кадры: не разбираются
     L.next+=8*(132+12); L.best=99; L.bestRq=1e9; L.kind='unit'; L.after=DPMR_UNIT-12;
   },
   setCall(P,L,out,from,to,info){
@@ -179,8 +186,8 @@ function dpmrUnit(cch0,cch1,cc,rnd){
   for(let t=0;t<8;t++){ const o=t<4 ? 96+72*t : 480+72*(t-4); for(let i=0;i<72;i++) b[o+i]=rnd()&1; }
   return fsk4Dib(b);
 }
-function dpmrHeaderFrame(o,cc){
-  const fs=Uint8Array.from(fsk4Bits('57FF5F75D577'),c=>+c), b=new Uint8Array(312); b.set(fs);
+function dpmrHeaderFrame(o,cc,fs4){
+  const fs=Uint8Array.from(fsk4Bits(fs4 ? 'FD55F5DF7FDD' : '57FF5F75D577'),c=>+c), b=new Uint8Array(312); b.set(fs);
   const hi=dpmrHiEncode(o); b.set(hi,48); b.set(hi,192);
   const c24=DPMR_CC[cc]; for(let i=0;i<24;i++) b[168+i]=(c24>>(23-i))&1;
   return fsk4Dib(b);
@@ -197,4 +204,8 @@ function dpmrScript(){
   seq.push(fsk4Dib(Uint8Array.from(dpmrDib('133131333311'),c=>+c)));                    // FS3: конец передачи
   return fsk4LevelsOf(p25Cat(new Uint8Array(40),...seq,new Uint8Array(40)));
 }
+function dpmrPacketScript(){
+  return fsk4LevelsOf(p25Cat(new Uint8Array(40),dpmrHeaderFrame({htype:0, called:'2468135', own:'5312468', mode:4, format:1, version:1, emergency:1, info:0x2A5},9,true),new Uint8Array(40)));
+}
+FSK4.gen['dPMR packet data header (FS4)']={baud:DPMR_BAUD, alpha:.2, dev:350, script:dpmrPacketScript};
 FSK4.gen['dPMR voice']={baud:DPMR_BAUD, alpha:.2, dev:350, script:dpmrScript};
