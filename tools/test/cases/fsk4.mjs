@@ -73,6 +73,20 @@ export function setup(){
     if(!noisy && r.ui.st.bad > 2) return 'FEC errors '+r.ui.st.bad;
     return true;
   };
+  window.dstarCheck = (r, mode, noisy) => {
+    const k = x => r.recs.filter(q => q.kind === x);
+    const late = mode === 'late';
+    if(!k('call').some(q => q.my === 'N0CALL' && q.my2 === 'TEST' && q.your === 'CQCQCQ' && q.rpt1 === 'DB0XX  B' && q.rpt2 === 'DB0XX  G' && q.source === (late ? 'slow data' : 'header'))) return 'no call: '+JSON.stringify(k('call'));
+    if(mode === 'gps'){ if(!k('gps').some(q => q.nmea.startsWith('$GPGGA,123519') && q.nmea.endsWith('*47'))) return 'no GPS: '+JSON.stringify(k('gps')); }
+    else if(!k('text').some(q => q.message === 'Hello D-STAR world!!')) return 'no text: '+JSON.stringify(k('text'));
+    if(!late && !k('end').some(q => q.by === 'end pattern')) return 'no end pattern';
+    if(r.voice.length < 30) return 'voice frames '+r.voice.length;
+    let x = 0xD57A4; const rnd = () => { x ^= x<<13; x ^= x>>>17; x ^= x<<5; return x & 255; };
+    const exp = new Set(Array.from({length:63}, () => fskHex(Uint8Array.from({length:9}, rnd))));
+    const bad = r.voice.filter(v => !exp.has(v.ambe));
+    if(bad.length > (noisy ? r.voice.length*.25 : 0)) return 'AMBE '+bad.length+' of '+r.voice.length;
+    return true;
+  };
   window.p25Check = (r, ctl, noisy) => {
     const k = x => r.recs.filter(q => q.kind === x);
     if(r.ui.nac !== 0x293 && r.ui.protos?.p25?.nac !== 0x293) return 'nac '+JSON.stringify(r.ui.nac);
@@ -102,6 +116,20 @@ export function setup(){
 }
 
 export default [
+  {name:'dstar: MMDVM firmware header FEC (K=3 convolution, 24×28 interleave, scrambler) and CRC, MMDVMHost slow data text; encoder bit for bit', arg:V, fn(V){
+    const h = fskUnhex(V.dstar_header), fec = fskUnhex(V.dstar_fec);
+    if(dstarCrc(h, 39) !== (h[39] | (h[40]<<8))) return 'crc';
+    const want = []; for(let i=0; i<83; i++) for(let j=0; j<8; j++) want.push((fec[i]>>j)&1);
+    if(Array.from(dstarHeaderEncode(h)).join('') !== want.slice(4, 664).join('')) return 'header FEC encoder';
+    const bits = Uint8Array.from(want.slice(4, 664)), r = dstarHeaderDecode(bits);
+    if(!r.ok || dstarText(r.h, 27, 8) !== 'N0CALL' || dstarText(r.h, 19, 8) !== 'CQCQCQ' || dstarText(r.h, 3, 8) !== 'DB0XX  G' || dstarText(r.h, 35, 4) !== 'TEST') return 'header decode '+JSON.stringify(r.ok);
+    const bad = bits.slice(); for(const i of [10, 200, 333, 500, 600]) bad[i] ^= 1;
+    if(!dstarHeaderDecode(bad).ok) return 'header with 5 bit errors';
+    const sl = fskUnhex(V.dstar_slow), txt = [];
+    for(let i=0; i<8; i++) txt.push(...Array.from(sl.subarray(3*i, 3*i+3), (v, j) => v^DSTAR_SLOW_SCR[j]));
+    let enc = []; for(const e of dstarSlowElements('Hello D-STAR world!!', null, null).slice(0, 4)) enc.push(...e);
+    return txt.join() === enc.join() || 'slow data text: '+txt.join()+' vs '+enc.join();
+  }},
   {name:'ysf: MMDVMHost frames — FICH (Golay + convolution + CRC-16), header CSD1 / CSD2, V/D mode 2 DCH and VCH; encoders equal', arg:V, fn(V){
     const B = h => dmrBitsOf(fskUnhex(h));
     let r = ysfFichDecode(B(V.ysf_fich_vd2).subarray(40, 240)), f = r && ysfFich(r.f);
@@ -344,6 +372,21 @@ export default [
     for(const [[g, w], opt] of cfg){
       const ns = T.build(g, w), r = fskRun(ns, 4, opt);
       const c = ysfCheck(r, g[0][1].fsk4.includes('mode 1'), g[0][1].sr === '48000' || !!opt.ppm); if(c !== true) return g[0][1].fsk4+' '+g[0][1].sr+' '+JSON.stringify(opt)+': '+c;
+    }
+    return true;
+  }},
+  {name:'dstar: generator → decoder, header, slow data text, AMBE, end pattern (2FSK, GMSK-like), 256 kS/s, +2 kHz', arg:GEN('256000', 2000, -45, 'D-STAR voice', 'dstar'), fn([g, w]){
+    const ns = T.build(g, w), r = fskRun(ns, 4);
+    const e = T.errors(); if(e.length) return e.join('; ');
+    return dstarCheck(r, 'text');
+  }},
+  {name:'dstar: GPS slow data and late entry (header from slow data); 48 kS/s, inverted spectrum, clock ±300 ppm',
+   arg:[[GEN('256000', -3000, -45, 'D-STAR GPS', 'dstar'), {}, 'gps'], [GEN('256000', 1000, -45, 'D-STAR late entry (header in slow data)', 'dstar'), {}, 'late'],
+        [GEN('48000', 1500, -35, 'D-STAR voice', 'dstar'), {}, 'text'], [GEN('256000', 0, -45, 'D-STAR voice', 'dstar'), {conj:true}, 'text'],
+        [GEN('256000', 0, -45, 'D-STAR voice', 'dstar'), {ppm:300}, 'text'], [GEN('256000', 0, -45, 'D-STAR voice', 'dstar'), {ppm:-300}, 'text']], fn(cfg){
+    for(const [[g, w], opt, mode] of cfg){
+      const ns = T.build(g, w), r = fskRun(ns, mode === 'late' ? 5 : 4, opt);
+      const c = dstarCheck(r, mode, g[0][1].sr === '48000' || !!opt.ppm); if(c !== true) return g[0][1].fsk4+' '+g[0][1].sr+' '+JSON.stringify(opt)+': '+c;
     }
     return true;
   }},

@@ -17,3 +17,6 @@ LSF fields and every frame type as 192 dibits (0 = +1, 1 = +3, 2 = −1, 3 = −
 `ysfref.cpp` builds against YSFFICH / YSFPayload / YSFConvolution / CRC / Sync / Golay24128 / Hamming / AMBEFEC (`#define private public`
 gives it access to the raw FICH bytes). It prints a FICH encoded by MMDVMHost, a header frame from `writeHeader` and a V/D mode 2
 frame whose DCH / VCH blocks are built by the same code MMDVMHost uses to regenerate them.
+
+`dstarref.cpp` copies `txHeader()` and its interleave / scramble tables out of the MMDVM firmware (g4klx/MMDVM, `DStarTX.cpp`) — the header
+FEC is done there, not in MMDVMHost — and uses MMDVMHost's `CDStarSlowData` for the slow-data text and `CCRC::addCCITT161` for the CRC.

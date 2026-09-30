@@ -40,6 +40,18 @@ function fsk4Sync(bits,extra){
   }
   return Object.assign({hi,lo,mhi,mlo,len:L,syms,bits}, extra);
 }
+// 2FSK: один символ на бит, бит 1 — отрицательный уровень (дибит 2), 0 — положительный (дибит 0)
+function fsk2Sync(bits,extra){
+  const L=bits.length, syms=new Float32Array(L);
+  let hi=0, lo=0, mhi=0, mlo=0;
+  for(let i=0;i<L;i++){
+    const b=bits.charCodeAt(i)-48;
+    hi=((hi<<2)|(lo>>>22))&0xFFFFFF; lo=((lo<<2)|(b ? 2 : 0))&0xFFFFFF;
+    mhi=((mhi<<2)|(mlo>>>22))&0xFFFFFF; mlo=((mlo<<2)|3)&0xFFFFFF;
+    syms[i]=b ? -1 : 1;
+  }
+  return Object.assign({hi,lo,mhi,mlo,len:L,syms,bits}, extra);
+}
 // ошибок в бит между регистром (24+24 бита) и шаблоном; xm — 0xAAAAAA для инверсии
 function fsk4Dist(hi,lo,p,xm){ return fsk4Pop(((hi^xm^p.hi)&p.mhi)>>>0)+fsk4Pop(((lo^xm^p.lo)&p.mlo)>>>0); }
 
@@ -73,15 +85,15 @@ function fsk4Node(pick,title){
       if(n.dec) IQK.iqDecim.init(n.dec);
       const groups=new Map();
       for(const id of ids){
-        const pr=FSK4.protos[id], key=pr.baud+'|'+pr.alpha+'|'+pr.lp;
-        if(!groups.has(key)) groups.set(key,{baud:pr.baud, alpha:pr.alpha, lp:pr.lp, protos:[]});
+        const pr=FSK4.protos[id], key=pr.baud+'|'+pr.alpha+'|'+pr.lp+'|'+pr.levels;
+        if(!groups.has(key)) groups.set(key,{baud:pr.baud, alpha:pr.alpha, lp:pr.lp, levels:pr.levels, protos:[]});
         groups.get(key).protos.push(pr);
         if(!n.pr[id]){ n.pr[id]={}; pr.init(n.pr[id]); } else pr.reset(n.pr[id]);
       }
       n.ch=[];
       for(const g of groups.values()){
         const c={baud:g.baud, protos:g.protos, sps:n.fs/g.baud, lock:null, jj:0, x:new Float32Array(0), xb:0, tNext:0,
-                 pr:0, pi:0, dc:0, env:0, lev:g.protos.some(p=>p.levels===4) ? 4 : 2};
+                 pr:0, pi:0, dc:0, env:0, lev:g.levels};
         const stop=Math.min(g.lp*1.65,.47*n.fs);
         c.lp=cplx ? kaiserLP(n.fs,g.lp,stop,255) : null;
         if(c.lp){ c.lr=new Float32Array(c.lp.length-1); c.li=new Float32Array(c.lp.length-1); }

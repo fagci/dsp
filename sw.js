@@ -63,6 +63,7 @@ const SHELL=[
   './modules/nxdn-kernels.js?v=103',
   './modules/m17-kernels.js?v=103',
   './modules/ysf-kernels.js?v=103',
+  './modules/dstar-kernels.js?v=103',
   './modules/iq.js?v=103',
   './modules/adsb.js?v=103',
   './modules/lrpt.js?v=103',
