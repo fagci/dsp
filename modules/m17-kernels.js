@@ -180,7 +180,7 @@ FSK4.protos.m17={
         P.lich=null;
       }
       const c=P.call;
-      out.voice.push({t:P.now, src:'M17', kind:'codec2', fn:fn&0x7FFF, from:c?c.src:null, to:c?c.dst:null, can:c?c.can:null, codec2:dmrHex(data)});
+      out.voice.push({t:P.now, src:'M17', kind:'codec2', fn:fn&0x7FFF, from:c?c.src:null, to:c?c.dst:null, can:c?c.can:null, dtype:P.lsf?P.lsf.f.dtype:null, codec2:dmrHex(data)});
       P.st.voice++;
       if(fn&0x8000) this.end(P,L,out,'last frame');
       return true;

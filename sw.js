@@ -23,6 +23,7 @@ const SHELL=[
   './vendor/satellite.min.js?v=5.0.0',
   './vendor/lame.min.js?v=1.2.1',
   './vendor/mbelib.wasm',
+  './vendor/codec2.wasm',
   './vendor/SDDC_FX3.img',
   './core-dsp.js?v=110',
   './core-engine.js?v=110',
