@@ -89,6 +89,24 @@ export default [
     if(d.bitlen !== 48 || !d.hex.startsWith('00') || Math.abs(an.T-250) > 30) return JSON.stringify(d)+' T '+an.T;
     return true;
   }},
+  {name:'ism: noisy NRZ (FSK, no gaps) → PCM bits with the bit period found', fn(){
+    let x = 99; const rnd = () => { x = (x*1103515245 + 12345) & 0x7FFFFFFF; return x/0x7FFFFFFF; };
+    for(const T of [104, 208, 52]){
+      const bits = [1, 0, 1, 0, 1, 0, 1, 0]; for(let i=0; i<120; i++) bits.push(rnd() < .5 ? 1 : 0); bits.push(1, 0);
+      const runs = []; let cur = 1, n = 0;
+      for(const b of bits){ if(b === cur) n++; else { runs.push(n); cur = b; n = 1; } }
+      runs.push(n);
+      const E = runs.map(r => r*T + (rnd()-.5)*.3*T);     // ±15% T дрожания краёв
+      if(E.length % 2 === 0) E.pop();
+      const an = ismAnalyze(E, 8000);
+      if(!an || an.mod !== 'PCM') return 'T '+T+': '+(an && an.mod);
+      if(Math.abs(an.T/T - 1) > .05) return 'T '+T+' found '+an.T;
+      const got = Array.from(an.rows.reduce((a, r) => r.length > a.length ? r : a, an.rows[0]));
+      let bad = 0; for(let i=0; i<Math.min(got.length, bits.length); i++) if(got[i] !== bits[i]) bad++;
+      if(bad || Math.abs(got.length - bits.length) > 2) return 'T '+T+' bits differ '+bad+' len '+got.length+' vs '+bits.length;
+    }
+    return true;
+  }},
   {name:'ism: random pulses give no packet', fn(){
     let x = 7; const rnd = () => { x = (x*1103515245 + 12345) & 0x7FFFFFFF; return x/0x7FFFFFFF; };
     let found = 0;

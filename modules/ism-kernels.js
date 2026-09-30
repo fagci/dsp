@@ -83,27 +83,49 @@ function ismAnalyze(E,G){
     an.mod='PPM'; an.short=cS[0].mean; an.long=cS[1].mean;
     an.rows=rows.map(r=>toBits(r,p=>p[1]<0 ? -1 : p[1]>thr ? 1 : 0));
   } else {
-    // решётка кратных T: Манчестер или PCM
-    const cA=ismSig(ismCluster(mk.concat(sp),1.25),mk.length+sp.length);
-    if(cA.length<2 || cA.length>4) return null;
-    const T=cA[0].mean;
-    for(const c of cA){ const q=c.mean/T; if(Math.abs(q-Math.round(q))>.25) return null; }
-    an.T=T; an.short=T; an.long=cA[cA.length-1].mean;
-    const hb=r=>{ const h=[], put=(l,w)=>{ for(let i=Math.max(1,Math.round(w/T));i>0;i--) h.push(l); };
-      for(const p of r){ put(1,p[0]); if(p[1]>=0) put(0,p[1]); }
-      if(r.tail) put(1,r.tail);
-      return h; };
+    // решётка кратных T: Манчестер или PCM; при шуме и длинных сериях одинаковых бит кластеров много — T ищем по периодичности
+    const all=mk.concat(sp), cA=ismSig(ismCluster(all,1.25),all.length);
+    let T=0;
+    if(cA.length>=2 && cA.length<=4){
+      T=cA[0].mean;
+      for(const c of cA){ const q=c.mean/T; if(Math.abs(q-Math.round(q))>.25) T=0; }
+    }
+    if(!T) T=ismFindT(all);
+    if(!T) return null;
+    an.T=T; an.short=T; an.long=cA.length ? cA[cA.length-1].mean : 0;
+    // весь пакет → отрезки полубит; серия длиннее 12 T — пауза, отрезок кончается (деление на строки выше для решётки не годится:
+    // в NRZ редкие длинные серии похожи на паузы между повторами)
+    const segs=[]; let h=[];
+    const put=(l,w)=>{ const u=Math.max(1,Math.round(w/T)); if(u>12){ if(h.length) segs.push(h); h=[]; return; } for(let i=0;i<u;i++) h.push(l); };
+    for(let i=0;i<nm;i++){ put(1,M[i]); if(S[i]>=0) put(0,S[i]); }
+    if(h.length) segs.push(h);
     // Манчестер: пара полубит 01 → 1, 10 → 0; фаза каждой строки — с наименьшим числом недопустимых пар
     const man=(h,ph)=>{ const b=[]; let bad=0;
       for(let i=ph;i+1<h.length;i+=2){ if(h[i]===h[i+1]) bad++; else b.push(h[i+1]); }
       return {b, bad}; };
     let tot=0, bad=0;
-    const hbs=rows.map(hb), dm=hbs.map(h=>{ const a=man(h,0), b=man(h,1), m=b.bad<a.bad ? b : a; tot+=h.length>>1; bad+=m.bad; return m; });
+    const hbs=segs, dm=hbs.map(h=>{ const a=man(h,0), b=man(h,1), m=b.bad<a.bad ? b : a; tot+=h.length>>1; bad+=m.bad; return m; });
     if(tot && bad<=.03*tot){ an.mod='MAN'; an.rows=dm.map(m=>Uint8Array.from(m.b)); }
     else { an.mod='PCM'; an.rows=hbs.map(h=>Uint8Array.from(h)); }
   }
   an.rows=an.rows.filter(r=>r.length>=4);
   return an.rows.length ? an : null;
+}
+// длительность бита T (мкс) по периодичности серий: T, при котором cos(2π·длит/T) в среднем ближе всего к 1;
+// из подходящих берётся наибольшая (кратные ½T тоже подходят), затем уточняется методом наименьших квадратов
+function ismFindT(v){
+  const r=v.filter(x=>x>=30).sort((a,b)=>a-b);
+  if(r.length<12) return 0;
+  const tmax=1.3*r[r.length>>1], sc=[];
+  let best=0;
+  for(let T=40;T<=tmax;T*=1.015){
+    let s=0; for(const x of r) s+=Math.cos(2*Math.PI*x/T);
+    s/=r.length; sc.push([T,s]); if(s>best) best=s;
+  }
+  if(best<.7) return 0;
+  let T=0; for(const [t,s] of sc) if(s>=.92*best) T=t;
+  let sxn=0,snn=0; for(const x of r){ const k=Math.round(x/T); if(k>0){ sxn+=x*k; snn+=k*k; } }
+  return snn ? sxn/snn : 0;
 }
 // самая частая строка среди rows (по длине len, если задана): {bits, agree, rows}
 function ismBestRow(rows,len){
