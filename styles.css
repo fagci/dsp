@@ -738,3 +738,8 @@ select.aed-b{padding:0 6px}
   .trk-side{width:auto;height:44%;border-left:0;border-top:1px solid var(--line)}
   .trk-pk{height:46px}
 }
+
+#boot{position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:var(--bg);color:var(--txt);font:14px system-ui,sans-serif}
+#bootBar{width:min(240px,60vw);height:4px;background:var(--line);border-radius:2px;overflow:hidden}
+#bootBar i{display:block;height:100%;width:0;background:var(--acc);transition:width .1s}
+#boot.err{color:var(--err)}
