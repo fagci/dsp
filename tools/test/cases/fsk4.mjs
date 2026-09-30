@@ -411,6 +411,21 @@ export default [
     }
     return true;
   }},
+  {name:'nxdn 4800 (2400 Bd): generator → decoder, voice and CAC; 256 kS/s, 48 kS/s, inverted spectrum, clock ±300 ppm',
+   arg:[[GEN('256000', 2000, -45, 'NXDN 4800 voice', 'nxdn48'), {}], [GEN('48000', 1500, -35, 'NXDN 4800 voice', 'nxdn48'), {}],
+        [GEN('256000', 0, -45, 'NXDN 4800 voice', 'nxdn48'), {conj:true}], [GEN('256000', 0, -45, 'NXDN 4800 voice', 'nxdn48'), {ppm:300}], [GEN('256000', 0, -45, 'NXDN 4800 voice', 'nxdn48'), {ppm:-300}],
+        [GEN('256000', 1000, -45, 'NXDN 4800 control channel (CAC)', 'nxdn48'), {}]], fn(cfg){
+    for(const [[g, w], opt] of cfg){
+      const ns = T.build(g, w), r = fskRun(ns, 8, opt), gen = g[0][1].fsk4;
+      const e = T.errors(); if(e.length) return e.join('; ');
+      if(gen.includes('CAC')){
+        if(!r.recs.some(q => q.msg === 'SITE_INFO' && q.location === '123456' && q.source === 'CAC') || !r.recs.some(q => q.msg === 'VCALL_ASSGN' && q.channel === 301)) return 'CAC: '+JSON.stringify(r.recs.slice(0, 3));
+        continue;
+      }
+      const c = nxdnCheck(r, false, g[0][1].sr === '48000' || !!opt.ppm); if(c !== true) return g[0][1].sr+' '+JSON.stringify(opt)+': '+c;
+    }
+    return true;
+  }},
   {name:'m17: generator → decoder, voice stream (LSF, LICH, FN, Codec 2 bytes, last frame), 256 kS/s, +2 kHz', arg:GEN('256000', 2000, -45, 'M17 voice stream', 'm17'), fn([g, w]){
     const ns = T.build(g, w), r = fskRun(ns, 4);
     const e = T.errors(); if(e.length) return e.join('; ');
@@ -469,7 +484,7 @@ export default [
     return true;
   }},
   {name:'fskRx auto: every protocol is picked by its sync words (P25, NXDN, M17, YSF, D-STAR, dPMR, DMR) — one node, all channels',
-   arg:[['P25 voice', 'p25'], ['NXDN 9600 voice', 'nxdn'], ['M17 voice stream', 'm17'], ['YSF V/D mode 2', 'ysf'], ['D-STAR voice', 'dstar'], ['dPMR voice', 'dpmr']], fn(list){
+   arg:[['P25 voice', 'p25'], ['NXDN 9600 voice', 'nxdn'], ['NXDN 4800 voice', 'nxdn'], ['M17 voice stream', 'm17'], ['YSF V/D mode 2', 'ysf'], ['D-STAR voice', 'dstar'], ['dPMR voice', 'dpmr']], fn(list){
     for(const [gen, id] of list){
       const [g, w] = [[['iqGen', {sr:'256000', fc:433e6, mode:'4FSK', off:1000, lvl:-20, noise:-45, fsk4:gen}], ['fskRx', {proto:'auto'}]], ['0.iq>1.in']];
       const ns = T.build(g, w), r = fskRun(ns, 4);

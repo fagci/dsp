@@ -135,13 +135,13 @@ FSK4.protos.nxdn={
   lock(P,L){ P.st.locks++; L.after=8; return {stage:0, first:true, lich:null, eps:P.eps, exp:L.next, blind:false}; },
   ui(P,L,now){
     const s=P.st, c=P.call;
-    const head='NXDN · '+(L ? 'RAN '+(P.ran==null ? '?' : P.ran)+(L.g<0 ? ', inverted' : '') : 'searching sync')+(P.lastAct ? ' · last '+((now-P.lastAct)/1000).toFixed(0)+' s ago' : '');
+    const head=this.name+' · '+(L ? 'RAN '+(P.ran==null ? '?' : P.ran)+(L.g<0 ? ', inverted' : '') : 'searching sync')+(P.lastAct ? ' · last '+((now-P.lastAct)/1000).toFixed(0)+' s ago' : '');
     const cnt=s.frames+' frames · '+s.voice+' voice · '+s.msgs+' messages · '+s.calls+' calls · '+s.bad+' FEC errors';
     return {locked:!!L, ran:P.ran, st:{...s}, age:P.lastAct ? now-P.lastAct : null, call:c, recent:P.recent.slice(-8),
       text:head+'\n'+cnt+'\n'+(c ? c.call+' '+c.from+' → '+c.to+(c.emergency ? ' EMERGENCY' : '')+(c.cipher ? ' encrypted' : '') : 'idle')+(P.recent.length ? '\n'+P.recent.slice(-8).join('\n') : '')};
   },
   frame(P,L,e,out){
-    P.now=e/(FSK4_PH*NXDN_BAUD)*1000;
+    P.now=e/(FSK4_PH*this.baud)*1000;
     if(L.stage===0) this.head(P,L,e,out); else this.body(P,L,e,out);
   },
   // LICH (через 8 дибитов после FSW): чётность — быстрая проверка захвата
@@ -237,6 +237,9 @@ FSK4.protos.nxdn={
     P.call=null;
   }};
 FSK4.order.push('nxdn');
+// NXDN 4800: тот же кадр (192 дибита, LICH, каналы, синхро), но 2400 Бод — кадр идёт 80 мс
+FSK4.protos.nxdn48={...FSK4.protos.nxdn, id:'nxdn48', name:'NXDN 4800', baud:NXDN_BAUD/2, lp:2750};
+FSK4.order.push('nxdn48');
 
 /* ---- генератор ---- */
 const NXDN_FSW=Uint8Array.from('11001101111101011001',c=>+c);
@@ -291,3 +294,5 @@ function nxdnScript(mode){
 FSK4.gen['NXDN 9600 voice']={baud:NXDN_BAUD, alpha:.2, dev:648, script:()=>nxdnScript('voice')};
 FSK4.gen['NXDN 9600 data and FACCH1']={baud:NXDN_BAUD, alpha:.2, dev:648, script:()=>nxdnScript('data')};
 FSK4.gen['NXDN 9600 control channel (CAC)']={baud:NXDN_BAUD, alpha:.2, dev:648, script:()=>nxdnScript('cac')};
+FSK4.gen['NXDN 4800 voice']={baud:NXDN_BAUD/2, alpha:.2, dev:324, script:()=>nxdnScript('voice')};
+FSK4.gen['NXDN 4800 control channel (CAC)']={baud:NXDN_BAUD/2, alpha:.2, dev:324, script:()=>nxdnScript('cac')};
