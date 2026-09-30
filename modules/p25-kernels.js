@@ -300,6 +300,16 @@ function p25HduDecode(F){
   return p25Bytes(p25HexBits(rs.subarray(0,20)));
 }
 // LC / ESS из шести групп по 4 слова Хэмминга (10,6,3); k — число информационных гексабит (12 — LC, 16 — ESS)
+// TDULC: 12 слов Golay(24,12) (по 12 дибитов): 6 слов LC (12 гексабит) и 6 слов RS(24,12,13)-проверки → 72 бита LC или null
+function p25TdulcDecode(F){
+  const hex=new Uint8Array(24);
+  for(let k=0;k<12;k++){
+    const w=fsk4Unpack(p25Data(F,56+12*k,12),0,12), g=m17GolayDec(dmrNum(w,0,24));
+    if(!g) return null;
+    hex[2*k]=g.v>>6; hex[2*k+1]=g.v&63;
+  }
+  return p25RsDec(hex,12)<0 ? null : p25HexBits(hex.subarray(0,12));
+}
 const P25_LCPOS=[200,292,384,476,568,660];
 function p25LduWords(F,k){
   const hex=new Uint8Array(24);
@@ -379,7 +389,15 @@ FSK4.protos.p25={
       } else if(L.blind){ fsk4Drop(L); return; } else P.st.bad++;
     } else if(duid===5 || duid===10){ if(!this.ldu(P,L,F,duid,e,out)) return; }
     else if(duid===3){ P.st.tdu++; this.end(P,L,out,'TDU'); }
-    else if(duid===15){ P.st.tdu++; this.end(P,L,out,'TDULC'); }
+    else if(duid===15){
+      P.st.tdu++;
+      const lc=p25TdulcDecode(F);
+      if(lc){
+        const f=p25Lc(lc);
+        p25Emit(P,L,out,'lc',{...f, source:'TDULC'},'TDULC LC '+f.lcf.toString(16)+(f.type ? ' '+f.type+' '+(f.from!=null ? f.from+' → '+f.to : '') : (f.hex ? ' '+f.hex : '')));
+      } else if(L.blind){ fsk4Drop(L); return; } else P.st.bad++;
+      this.end(P,L,out,'TDULC');
+    }
     this.advance(P,L,len);
   },
   ldu(P,L,F,duid,e,out){
@@ -504,18 +522,24 @@ function p25TsduFrame(nac,blocks){                                  // blocks �
   const body=p25Cat(...blocks), D=56+body.length, len=Math.ceil(p25Span(D)/36)*36;
   return p25Frame(nac,7,body,len);
 }
+function p25TdulcBody(lc72){
+  const hex=p25RsEnc(p25BitsHex(lc72),24), bits=new Uint8Array(288);
+  for(let k=0;k<12;k++){ const g=m17Golay((hex[2*k]<<6)|hex[2*k+1]); for(let i=0;i<24;i++) bits[24*k+i]=(g>>(23-i))&1; }
+  return fsk4Dib(bits);
+}
 // сеанс генератора: 'voice' — HDU, LDU1/2, TDU; иначе — управляющий канал транкинга
 function p25Script(mode){
   const nac=0x293, rnd=(()=>{ let x=0x1234567; return ()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return x&255; }; })();
   const imbe=()=>Array.from({length:9},()=>Uint8Array.from({length:18},rnd)), mi=Uint8Array.from([1,2,3,4,5,6,7,8,9]);
   const seq=[];
-  if(mode==='voice'){
+  if(mode==='voice' || mode==='voicelc'){
     seq.push(p25Frame(nac,0,p25HduBody(mi,0,0x80,0,4321),396));
     seq.push(p25Frame(nac,5,p25Ldu1Body(imbe(),'group',0,4321,1234567),864));
     seq.push(p25Frame(nac,10,p25Ldu2Body(imbe(),mi,0x80,0,[0x5A,0]),864));
     seq.push(p25Frame(nac,5,p25Ldu1Body(imbe(),'group',0,4321,1234567),864));
     seq.push(p25Frame(nac,10,p25Ldu2Body(imbe(),mi,0x80,0,[0,0]),864));
-    seq.push(p25Frame(nac,3,new Uint8Array(14),72));
+    if(mode==='voicelc'){ seq.pop(); const lc=new Uint8Array(9); lc[0]=0x0F; lc[3]=0; lc[4]=0x10; lc[5]=0xE1; lc[6]=0x12; lc[7]=0xD6; lc[8]=0x87; seq.push(p25Frame(nac,15,p25TdulcBody(p25BytesBits(lc)),216)); }
+    else seq.push(p25Frame(nac,3,new Uint8Array(14),72));
   } else {
     seq.push(p25TsduFrame(nac,[
       p25TsbkBlock(0x3D,0,[[1,4],[100,9],[1,1],[0,8],[100,10],[851012500/5,32]],0),
@@ -529,4 +553,5 @@ function p25Script(mode){
   return fsk4LevelsOf(p25Cat(new Uint8Array(60),...seq,new Uint8Array(60)));
 }
 FSK4.gen['P25 voice']={baud:P25_BAUD, alpha:.2, dev:600, script:()=>p25Script('voice')};
+FSK4.gen['P25 voice, TDULC']={baud:P25_BAUD, alpha:.2, dev:600, script:()=>p25Script('voicelc')};
 FSK4.gen['P25 control channel']={baud:P25_BAUD, alpha:.2, dev:600, script:()=>p25Script('control')};
