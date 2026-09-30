@@ -57,6 +57,7 @@ const SHELL=[
   './modules/inmarsat-kernels.js?v=103',
   './modules/mpt1327-kernels.js?v=103',
   './modules/ism-kernels.js?v=103',
+  './modules/fsk4-kernels.js?v=103',
   './modules/dmr-kernels.js?v=103',
   './modules/iq.js?v=103',
   './modules/adsb.js?v=103',
