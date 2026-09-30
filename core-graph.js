@@ -207,7 +207,7 @@ matchMedia(`(resolution:${window.devicePixelRatio}dppx)`).addEventListener('chan
 function buildNodeEl(n){
 const d=MOD[n.type];
 const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
-el.innerHTML=`<div class="nhead"><span class="dot" style="background:${catColor(d.cat)}"></span> <span class="ttl">${d.title}</span><span class="cl">▾</span><span class="x">✕</span></div> <div class="nbody"></div>`;
+el.innerHTML=`<div class="nhead" title="Double-tap to fold"><span class="dot" style="background:${catColor(d.cat)}" title="${d.cat||''}"></span> <span class="ttl">${d.title}</span><span class="x">✕</span></div> <div class="nbody"></div>`;
 const body=el.querySelector('.nbody');
 const io=document.createElement('div'); io.className='io3';
 const ci=document.createElement('div'); ci.className='col';
@@ -293,9 +293,12 @@ mid.append(cp); } }
 if(d.swatch){ const s=document.createElement('div'); s.className='swatch'; mid.append(s); }
 el.querySelector('.x').addEventListener('click',e=>{e.stopPropagation();
 delNode(n); Sel.delete(n.id); Undo.push();});
-const cl=el.querySelector('.cl');
-cl.addEventListener('click',e=>{ e.stopPropagation(); foldNode(n,!n.folded); Undo.push(); });
-cl.addEventListener('pointerdown',e=>e.stopPropagation());
+// двойной тап/клик по заголовку — свернуть/развернуть (свой счётчик: dblclick на тач-экранах ненадёжен)
+{ const head=el.querySelector('.nhead'); let t0=0,x0=0,y0=0;
+head.addEventListener('pointerdown',e=>{ x0=e.clientX; y0=e.clientY; });
+head.addEventListener('pointerup',e=>{
+if(e.target.closest('.x') || Math.hypot(e.clientX-x0,e.clientY-y0)>5){ t0=0; return; }
+if(e.timeStamp-t0<350){ t0=0; foldNode(n,!n.folded); Undo.push(); } else t0=e.timeStamp; }); }
 if(n.folded) foldNode(n,true);
 bindDrag(el.querySelector('.nhead'),n);
 el.addEventListener('pointerdown',ev=>{
@@ -321,7 +324,6 @@ return Math.max(90, n.size.w-2-lw-rw-18);
 function foldNode(n,v){
 n.folded=!!v;
 n.el.classList.toggle('folded',n.folded);
-const cl=n.el.querySelector('.cl'); if(cl) cl.textContent=n.folded?'▸':'▾';
 markWiresDirty();
 }
 // подряд идущие кнопки/галочки — в один ряд; общая раскладка для основных и adv-параметров
@@ -960,7 +962,7 @@ cv.addEventListener('pointercancel',endTouch,{capture:true});
 syncGridBg();                                         // синхронизировать фон с начальным view
 /* ---- перетаскивание и ресайз узлов — отдано interact.js ---- */
 function bindDrag(headEl,n){
-interact(headEl).draggable({ ignoreFrom:'.x,.cl', listeners:{
+interact(headEl).draggable({ ignoreFrom:'.x', listeners:{
 start(ev){ if(uiLocked()){ ev.interaction.stop(); return; }
 if(!Sel.has(n.id)) selSet(n.id,ev.shiftKey);
 const group=[...Sel].map(id=>Graph.map[id]).filter(Boolean);
@@ -1727,8 +1729,6 @@ addNode(modId,p.x-100,p.y-20); markWiresDirty(); Undo.push();
 });
 const paletteSearch=document.getElementById('paletteSearch');
 paletteSearch.addEventListener('input',e=>{ paletteQuery=e.target.value; buildPalette(); });
-document.getElementById('paletteClear').addEventListener('click',()=>{
-paletteSearch.value=''; paletteQuery=''; buildPalette(); paletteSearch.focus(); });
 document.addEventListener('keydown',e=>{
 if((e.ctrlKey||e.metaKey) &&e.key.toLowerCase()==='k'){
 e.preventDefault(); paletteSearch.focus(); paletteSearch.select();

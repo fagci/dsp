@@ -7,7 +7,7 @@
 <meta name="theme-color" content="#161a1d">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' http: https: ws: wss: data: blob: 'unsafe-inline'; script-src 'self' http: https: data: blob: 'unsafe-inline' 'wasm-unsafe-eval'">
 <title>DSP</title>
-<link rel="stylesheet" href="styles.css?v=111">
+<link rel="stylesheet" href="styles.css?v=112">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -18,7 +18,7 @@
 <script>
 // прогресс сразу, до раскладки; скрипты грузятся по порядку (async=false)
 (()=>{
-  const V='111', L=["core-dsp.js", "core-engine.js", "core-islands.js", "modules/analysis.js", "modules/misc.js", "modules/modulation.js", "modules/output.js", "modules/processing.js", "modules/protocols.js", "modules/sigid.js", "modules/sources.js", "modules/audioeditor.js", "modules/tracker-formats.js", "modules/tracker-player.js", "modules/tracker.js", "modules/tracker-session.js", "modules/tracker-panels.js", "modules/sampler.js", "modules/tinysa.js", "modules/hfdl.js", "modules/gsm.js", "modules/propagation.js", "modules/geo.js", "modules/sked.js", "modules/sat.js", "modules/radio.js", "modules/iq-kernels.js", "modules/ccsds-kernels.js", "modules/lrpt-msumr.js", "modules/sonde-kernels.js", "modules/inmarsat-kernels.js", "modules/mpt1327-kernels.js", "modules/ism-kernels.js", "modules/fsk4-kernels.js", "modules/dmr-kernels.js", "modules/p25-kernels.js", "modules/nxdn-kernels.js", "modules/m17-kernels.js", "modules/ysf-kernels.js", "modules/dstar-kernels.js", "modules/dpmr-kernels.js", "modules/video-kernels.js", "modules/iq.js", "modules/adsb.js", "modules/lrpt.js", "modules/sonde.js", "modules/inmarsat.js", "modules/mpt1327.js", "modules/ism.js", "modules/dmr.js", "modules/fsk4.js", "modules/mbe-tables.js", "modules/mbe.js", "modules/comms.js", "modules/video.js", "presets.js", "core-graph.js"], txt=document.getElementById('bootTxt'), bar=document.querySelector('#bootBar i'), boot=document.getElementById('boot');
+  const V='112', L=["core-dsp.js", "core-engine.js", "core-islands.js", "modules/analysis.js", "modules/misc.js", "modules/modulation.js", "modules/output.js", "modules/processing.js", "modules/protocols.js", "modules/sigid.js", "modules/sources.js", "modules/audioeditor.js", "modules/tracker-formats.js", "modules/tracker-player.js", "modules/tracker.js", "modules/tracker-session.js", "modules/tracker-panels.js", "modules/sampler.js", "modules/tinysa.js", "modules/hfdl.js", "modules/gsm.js", "modules/propagation.js", "modules/geo.js", "modules/sked.js", "modules/sat.js", "modules/radio.js", "modules/iq-kernels.js", "modules/ccsds-kernels.js", "modules/lrpt-msumr.js", "modules/sonde-kernels.js", "modules/inmarsat-kernels.js", "modules/mpt1327-kernels.js", "modules/ism-kernels.js", "modules/fsk4-kernels.js", "modules/dmr-kernels.js", "modules/p25-kernels.js", "modules/nxdn-kernels.js", "modules/m17-kernels.js", "modules/ysf-kernels.js", "modules/dstar-kernels.js", "modules/dpmr-kernels.js", "modules/video-kernels.js", "modules/iq.js", "modules/adsb.js", "modules/lrpt.js", "modules/sonde.js", "modules/inmarsat.js", "modules/mpt1327.js", "modules/ism.js", "modules/dmr.js", "modules/fsk4.js", "modules/mbe-tables.js", "modules/mbe.js", "modules/comms.js", "modules/video.js", "presets.js", "core-graph.js"], txt=document.getElementById('bootTxt'), bar=document.querySelector('#bootBar i'), boot=document.getElementById('boot');
   let n=0;
   const step=()=>{ txt.textContent='Loading… '+n+'/'+L.length; bar.style.width=(100*n/L.length)+'%'; };
   const fail=u=>{ txt.textContent=(navigator.onLine?'Failed to load ':'Offline, not cached: ')+u+' — reload the page'; boot.classList.add('err'); };
@@ -42,13 +42,12 @@
       <button class="sidetab" data-tab="patches">Patches</button>
     </div>
     <div id="panelModules" class="sidepanel on">
-      <div id="paletteTools"><input id="paletteSearch" type="search" placeholder="Find a module… (Ctrl+K)" autocomplete="off"><button id="paletteClear" title="Clear search">×</button></div>
+      <div id="paletteTools"><input id="paletteSearch" type="search" placeholder="Find a module… (Ctrl+K)" autocomplete="off"></div>
       <div id="palette"></div>
     </div>
     <div id="panelPatches" class="sidepanel">
       <div id="patchTools">
         <input id="patchSearch" type="search" placeholder="Find a patch…" autocomplete="off">
-        <button id="patchClear" title="Clear search">×</button>
         <button id="psave" title="Save current patch">💾</button>
       </div>
       <div id="patchList"></div>
@@ -64,10 +63,10 @@
       <button id="redo" title="Redo (Ctrl+Shift+Z)" disabled>↷</button>
       <span class="sep"></span>
       <button id="dup" title="Duplicate (D)">⧉ copy</button>
-      <button id="save" title="Download to file">⭳ file</button>
-      <button id="load" title="Open file">⭱ open</button>
-      <button id="clear" title="Clear canvas">✕ clear</button>
-      <button id="wipe" title="Erase all local data (presets, patches, cache) — for testing">⟲ reset</button>
+      <button id="save" title="Save to file">⭳</button>
+      <button id="load" title="Open file">⭱</button>
+      <button id="clear" title="Clear canvas">clr</button>
+      <button id="wipe" title="Erase all local data (presets, patches, cache) — for testing">reset</button>
       <span class="sep"></span>
       <select id="turbo" title="Run speed">
         <option value="1">×1</option><option value="2">×2</option><option value="4">×4</option>
@@ -97,7 +96,7 @@
       <svg id="wires"></svg>
       <div id="content"></div>
       <div id="dashGrid"></div>
-      <div id="hint">Shift+click — select multiple · D duplicate · Ctrl+Z undo · Del delete</div>
+      <div id="hint">Shift+click — select multiple · double-tap title — fold · D duplicate · Ctrl+Z undo · Del delete</div>
     </div>
   </div>
 </div>
