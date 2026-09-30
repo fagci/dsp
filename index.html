@@ -7,7 +7,7 @@
 <meta name="theme-color" content="#161a1d">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' http: https: ws: wss: data: blob: 'unsafe-inline'">
 <title>DSP</title>
-<link rel="stylesheet" href="styles.css?v=100">
+<link rel="stylesheet" href="styles.css?v=101">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -88,51 +88,23 @@
 <script src="vendor/panzoom.min.js?v=4.6.2"></script>
 <script src="vendor/interact.min.js?v=1.10.28"></script>
 <script src="vendor/satellite.min.js?v=5.0.0"></script>
-<script src="core-dsp.js?v=100"></script>
-<script src="core-engine.js?v=100"></script>
-<script src="core-islands.js?v=100"></script>
 <!-- modules are listed here by hand, no auto-discovery: add a file under modules/ — add its line here too -->
-<script src="modules/analysis.js?v=100"></script>
-<script src="modules/misc.js?v=100"></script>
-<script src="modules/modulation.js?v=100"></script>
-<script src="modules/output.js?v=100"></script>
-<script src="modules/processing.js?v=100"></script>
-<script src="modules/protocols.js?v=100"></script>
-<script src="modules/sigid.js?v=100"></script>
-<script src="modules/sources.js?v=100"></script>
-<script src="modules/audioeditor.js?v=100"></script>
-<script src="modules/tracker-formats.js?v=100"></script>
-<script src="modules/tracker-player.js?v=100"></script>
-<script src="modules/tracker.js?v=100"></script>
-<script src="modules/tracker-session.js?v=100"></script>
-<script src="modules/tracker-panels.js?v=100"></script>
-<script src="modules/sampler.js?v=100"></script>
-<script src="modules/tinysa.js?v=100"></script>
-<script src="modules/hfdl.js?v=100"></script>
-<script src="modules/gsm.js?v=100"></script>
-<script src="modules/propagation.js?v=100"></script>
-<script src="modules/geo.js?v=100"></script>
-<script src="modules/sked.js?v=100"></script>
-<script src="modules/sat.js?v=100"></script>
-<script src="modules/radio.js?v=100"></script>
-<script src="modules/iq-kernels.js?v=100"></script>
-<script src="modules/ccsds-kernels.js?v=100"></script>
-<script src="modules/lrpt-msumr.js?v=100"></script>
-<script src="modules/sonde-kernels.js?v=100"></script>
-<script src="modules/inmarsat-kernels.js?v=100"></script>
-<script src="modules/mpt1327-kernels.js?v=100"></script>
-<script src="modules/ism-kernels.js?v=100"></script>
-<script src="modules/dmr-kernels.js?v=100"></script>
-<script src="modules/iq.js?v=100"></script>
-<script src="modules/adsb.js?v=100"></script>
-<script src="modules/lrpt.js?v=100"></script>
-<script src="modules/sonde.js?v=100"></script>
-<script src="modules/inmarsat.js?v=100"></script>
-<script src="modules/mpt1327.js?v=100"></script>
-<script src="modules/ism.js?v=100"></script>
-<script src="modules/dmr.js?v=100"></script>
-<script src="presets.js?v=100"></script>
-<script src="core-graph.js?v=100"></script>
+<div id="boot"><div id="bootTxt">Loading… 0/44</div><div id="bootBar"><i></i></div></div>
+<script>
+// скрипты грузятся по порядку (async=false), прогресс — по числу загруженных
+(()=>{
+  const V='101', L=["core-dsp.js", "core-engine.js", "core-islands.js", "modules/analysis.js", "modules/misc.js", "modules/modulation.js", "modules/output.js", "modules/processing.js", "modules/protocols.js", "modules/sigid.js", "modules/sources.js", "modules/audioeditor.js", "modules/tracker-formats.js", "modules/tracker-player.js", "modules/tracker.js", "modules/tracker-session.js", "modules/tracker-panels.js", "modules/sampler.js", "modules/tinysa.js", "modules/hfdl.js", "modules/gsm.js", "modules/propagation.js", "modules/geo.js", "modules/sked.js", "modules/sat.js", "modules/radio.js", "modules/iq-kernels.js", "modules/ccsds-kernels.js", "modules/lrpt-msumr.js", "modules/sonde-kernels.js", "modules/inmarsat-kernels.js", "modules/mpt1327-kernels.js", "modules/ism-kernels.js", "modules/dmr-kernels.js", "modules/iq.js", "modules/adsb.js", "modules/lrpt.js", "modules/sonde.js", "modules/inmarsat.js", "modules/mpt1327.js", "modules/ism.js", "modules/dmr.js", "presets.js", "core-graph.js"], txt=document.getElementById('bootTxt'), bar=document.querySelector('#bootBar i'), boot=document.getElementById('boot');
+  let n=0;
+  const step=()=>{ txt.textContent='Loading… '+n+'/'+L.length; bar.style.width=(100*n/L.length)+'%'; };
+  const fail=u=>{ txt.textContent='Failed to load '+u+' — reload the page'; boot.classList.add('err'); };
+  for(const u of L){
+    const e=document.createElement('script'); e.src=u+'?v='+V; e.async=false;
+    e.onload=()=>{ step(); if(++n===L.length) boot.remove(); };
+    e.onerror=()=>fail(u);
+    document.head.appendChild(e);
+  }
+})();
+</script>
 <script>
 // офлайн-шелл — без него установленный PWA (иконка на главном экране) без сети показывает
 // нативный экран «нет подключения» вместо приложения, хотя весь DSP считается локально
