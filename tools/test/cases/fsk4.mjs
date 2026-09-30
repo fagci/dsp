@@ -49,6 +49,22 @@ export function setup(){
     if(bad.length > (noisy ? r.voice.length*.25 : 0)) return 'AMBE '+bad.length+' of '+r.voice.length+': '+bad[0].ambe;
     return true;
   };
+  window.m17Check = (r, pkt, noisy) => {
+    const k = x => r.recs.filter(q => q.kind === x);
+    if(pkt){
+      if(!k('call').some(q => q.from === 'N0CALL' && q.to === 'ECHO' && q.mode === 'packet' && q.can === 1)) return 'no packet LSF: '+JSON.stringify(k('call'));
+      if(!k('packet').some(q => q.message === 'Hello from M17' && q.crc === 'ok' && q.proto === 5 && q.bytes === 16)) return 'no packet: '+JSON.stringify(k('packet'));
+      return true;
+    }
+    if(!k('call').some(q => q.from === 'SP5WWP' && q.to === 'W2FBI' && q.mode === 'voice' && q.can === 3 && q.source === 'LSF')) return 'no call: '+JSON.stringify(k('call'));
+    if(!k('end').some(q => q.from === 'SP5WWP' && q.by === 'last frame')) return 'no end: '+JSON.stringify(k('end'));
+    if(r.voice.length < 20) return 'voice frames '+r.voice.length;
+    let x = 0x13579BD; const rnd = () => { x ^= x<<13; x ^= x>>>17; x ^= x<<5; return x & 255; };
+    const exp = Array.from({length:12}, () => fskHex(Uint8Array.from({length:16}, rnd)));
+    const bad = r.voice.filter(v => exp[v.fn] !== v.codec2);
+    if(bad.length > (noisy ? r.voice.length*.25 : 0)) return 'Codec 2 bytes '+bad.length+' of '+r.voice.length+': fn '+bad[0].fn;
+    return true;
+  };
   window.p25Check = (r, ctl, noisy) => {
     const k = x => r.recs.filter(q => q.kind === x);
     if(r.ui.nac !== 0x293 && r.ui.protos?.p25?.nac !== 0x293) return 'nac '+JSON.stringify(r.ui.nac);
@@ -78,6 +94,54 @@ export function setup(){
 }
 
 export default [
+  {name:'m17: libm17 frames — LSF, six stream frames (LICH Golay, FN, Codec 2 bytes), packet, BERT: encoders bit for bit; callsigns, CRC-16, decoders', arg:V, fn(V){
+    const D = h => Uint8Array.from(h, c => +c), lsf = new Uint8Array(30);
+    lsf.set(fskUnhex(V.m17_lsf_dst), 0); lsf.set(fskUnhex(V.m17_lsf_src), 6); lsf.set(fskUnhex(V.m17_lsf_type), 12); lsf.set(fskUnhex(V.m17_lsf_meta), 14); lsf.set(fskUnhex(V.m17_lsf_crc), 28);
+    if(m17Crc(lsf, 30) !== 0 || m17Crc(Uint8Array.of(65), 1) !== 0x206E || m17Crc(Uint8Array.from('123456789', c => c.charCodeAt(0)), 9) !== 0x772B) return 'crc';
+    if(fskHex(m17CallEnc('AB1CD')) !== '0000009FDD51' || m17CallDec(fskUnhex('0000009FDD51')) !== 'AB1CD' || m17CallDec(lsf.subarray(6, 12)) !== 'SP5WWP' || m17CallDec(lsf.subarray(0, 6)) !== 'W2FBI') return 'callsign';
+    const same = (n, mine) => Array.from(mine).join('') === V['m17_'+n] || n+' encoder';
+    let r = same('lsf_frame', m17Frame('lsf', m17EncLsf(lsf))); if(r !== true) return r;
+    const data = Uint8Array.from({length:16}, (_, i) => 0x10+i);
+    for(let c=0; c<6; c++){ r = same('str_'+c, m17Frame('str', m17EncStream(lsf, c, c === 5 ? 0x8005 : 100+c, data))); if(r !== true) return r; }
+    const pk = new Uint8Array(26); for(let i=0; i<25; i++) pk[i] = 0x41+i;
+    r = same('pkt_0', m17Frame('pkt', m17EncPacket(pk))); if(r !== true) return r;
+    const pk2 = new Uint8Array(26); for(let i=0; i<25; i++) pk2[i] = 0x61+i; pk2[25] = 0x80|(7<<2);
+    r = same('pkt_1', m17Frame('pkt', m17EncPacket(pk2))); if(r !== true) return r;
+    r = same('bert', m17Frame('bert', m17EncBert(Uint8Array.from({length:25}, (_, i) => 0xA5^i)))); if(r !== true) return r;
+    // декодеры на кадрах libm17
+    const P = {st:{lsf:0, stream:0, packet:0, bert:0, voice:0, calls:0}, recent:[], lich:null, call:null, pkt:null, now:0}, L = {}, out = {recs:[], voice:[]};
+    const pay = n => m17Il(m17Rnd(fsk4Unpack(D(V['m17_'+n]), 8, 184)));
+    const pr = FSK4.protos.m17;
+    if(!pr.decode(P, L, 'lsf', pay('lsf_frame'), out)) return 'LSF not decoded';
+    const c = out.recs.find(q => q.kind === 'call');
+    if(!c || c.from !== 'SP5WWP' || c.to !== 'W2FBI' || c.can !== 3 || c.mode !== 'voice' || c.enc !== 0) return 'call '+JSON.stringify(c);
+    for(let k=0; k<6; k++) if(!pr.decode(P, L, 'str', pay('str_'+k), out)) return 'stream frame '+k;
+    if(out.voice.length !== 6 || out.voice[0].fn !== 100 || out.voice[0].codec2 !== '101112131415161718191A1B1C1D1E1F' || out.voice[5].fn !== 5) return 'voice '+JSON.stringify(out.voice[0]);
+    if(!out.recs.some(q => q.kind === 'end' && q.by === 'last frame')) return 'no end at FN msb';
+    if(!pr.decode(P, L, 'pkt', pay('pkt_0'), out) || !pr.decode(P, L, 'pkt', pay('pkt_1'), out)) return 'packet frames';
+    const pk3 = out.recs.find(q => q.kind === 'packet');
+    if(!pk3 || pk3.bytes !== 30 || pk3.crc !== 'bad') return 'packet '+JSON.stringify(pk3);          // CRC этого вектора — не пакетный, ожидаем bad
+    if(!pr.decode(P, L, 'bert', pay('bert'), out)) return 'BERT';
+    return true;
+  }},
+  {name:'m17: convolutional code, Golay(24,12) and CRC — errors and erasures', fn(){
+    let x = 4242; const rnd = n => { x ^= x<<13; x ^= x>>>17; x ^= x<<5; return (x>>>0) % n; };
+    for(let d=0; d<4096; d+=7){
+      const w = m17Golay(d), bad = w ^ (1<<rnd(24)) ^ (1<<rnd(24)) ^ (1<<rnd(24));
+      const g = m17GolayDec(bad);
+      if(!g || g.v !== d) return 'golay '+d;
+    }
+    for(const [n, steps, pat, len] of [[240, 244, M17_P1, 368], [144, 148, M17_P2, 272], [206, 210, M17_P3, 368]]){
+      for(let it=0; it<10; it++){
+        const d = Uint8Array.from({length:n}, () => rnd(2)), e = m17Enc(d, steps, pat);
+        if(e.length !== len) return 'punctured length '+e.length+' for '+n;
+        const bad = e.slice(); for(let k=0; k<2; k++) bad[rnd(len)] ^= 1;
+        const r = m17Dec(bad, steps, pat);
+        if(r.bits.subarray(0, n).join('') !== d.join('')) return 'viterbi '+n+' run '+it;
+      }
+    }
+    return true;
+  }},
   {name:'nxdn: MMDVMHost frames — scrambler, LICH, SACCH (CRC-6), FACCH1 (CRC-12), UDCH (CRC-15), encoders both ways', arg:V, fn(V){
     const D = h => fsk4Dib(dmrBitsOf(fskUnhex(h)));
     for(const k of ['A', 'B', 'C']){
@@ -223,6 +287,21 @@ export default [
     for(const [[g, w], opt] of cfg){
       const ns = T.build(g, w), r = fskRun(ns, 4, opt), data = g[0][1].fsk4.includes('data');
       const c = nxdnCheck(r, data, g[0][1].sr === '48000' || !!opt.ppm); if(c !== true) return g[0][1].fsk4+' '+g[0][1].sr+' '+JSON.stringify(opt)+': '+c;
+    }
+    return true;
+  }},
+  {name:'m17: generator → decoder, voice stream (LSF, LICH, FN, Codec 2 bytes, last frame), 256 kS/s, +2 kHz', arg:GEN('256000', 2000, -45, 'M17 voice stream', 'm17'), fn([g, w]){
+    const ns = T.build(g, w), r = fskRun(ns, 4);
+    const e = T.errors(); if(e.length) return e.join('; ');
+    if(r.ui.st.bad > 3) return 'FEC errors '+r.ui.st.bad;
+    return m17Check(r);
+  }},
+  {name:'m17: generator → decoder, packet mode SMS; 48 kS/s, inverted spectrum, clock ±300 ppm',
+   arg:[[GEN('256000', -3000, -45, 'M17 packet (SMS)', 'm17'), {}], [GEN('48000', 1500, -35, 'M17 voice stream', 'm17'), {}],
+        [GEN('256000', 0, -45, 'M17 voice stream', 'm17'), {conj:true}], [GEN('256000', 0, -45, 'M17 voice stream', 'm17'), {ppm:300}], [GEN('256000', 0, -45, 'M17 voice stream', 'm17'), {ppm:-300}]], fn(cfg){
+    for(const [[g, w], opt] of cfg){
+      const ns = T.build(g, w), r = fskRun(ns, 4, opt), pkt = g[0][1].fsk4.includes('packet');
+      const c = m17Check(r, pkt, g[0][1].sr === '48000' || !!opt.ppm); if(c !== true) return g[0][1].fsk4+' '+g[0][1].sr+' '+JSON.stringify(opt)+': '+c;
     }
     return true;
   }},

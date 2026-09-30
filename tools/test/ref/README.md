@@ -10,3 +10,6 @@ Its `name:hex` output lines go to `data/fsk4-vectors.json`.
 `nxdnref.cpp` (NXDN frames: LICH, SACCH, FACCH1, UDCH, scrambler) builds the same way against NXDNLICH / NXDNSACCH / NXDNFACCH1 /
 NXDNUDCH / NXDNCRC / NXDNConvolution / Sync. Note: MMDVMHost computes the LICH parity bit only for the RDCH / UDCH codes it
 uses; the parity here is the XOR of the four high bits (as in dsd-fme), so the RTCH frame C is only used for its FACCH1 halves.
+
+`m17ref.c` is built against libm17 (M17-Project, GPLv2+): `gcc -O1 -I. m17ref.c m17.c */*.c -lm` (without `unit_tests`). It prints the
+LSF fields and every frame type as 192 dibits (0 = +1, 1 = +3, 2 = −1, 3 = −3), sync burst included.
