@@ -28,6 +28,7 @@
   }
 }
 *{box-sizing:border-box}
+:root{--barh:44px}
 html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--txt);
   font:12px/1.4 var(--mono);-webkit-font-smoothing:antialiased;overscroll-behavior:none;
   -webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%}
@@ -37,7 +38,7 @@ button,select,input{font:inherit;color:inherit}
 /* ---- палитра ---- */
 #side{width:235px;flex:0 0 235px;background:var(--panel);border-right:1px solid var(--line);
   display:flex;flex-direction:column;overflow:hidden}
-#side h1{margin:0;padding:12px 12px 10px;font-size:12px;letter-spacing:.06em;font-weight:600;
+#side h1{margin:0;padding:0 12px;height:var(--barh);display:flex;align-items:center;flex:none;font-size:12px;letter-spacing:.06em;font-weight:600;
   color:var(--txt);border-bottom:1px solid var(--line)}
 #side h1 small{display:block;color:var(--dim);font-size:10px;margin-top:4px}
 #sideTabs{display:flex;flex:none;border-bottom:1px solid var(--line)}
@@ -102,7 +103,7 @@ button,select,input{font:inherit;color:inherit}
 
 /* ---- рабочая область ---- */
 #main{flex:1;display:flex;flex-direction:column;min-width:0}
-#bar{display:flex;gap:6px;align-items:center;padding:8px;background:var(--panel);
+#bar{display:flex;gap:6px;align-items:center;padding:0 8px;min-height:var(--barh);flex:none;background:var(--panel);
   border-bottom:1px solid var(--line);flex-wrap:wrap}
 #bar .sep{width:1px;height:20px;background:var(--line);margin:0 2px}
 #bar button{background:none;border:0;padding:5px 10px;
@@ -113,6 +114,11 @@ button,select,input{font:inherit;color:inherit}
 #bar button.on{background:var(--acc);color:#111;font-weight:600}
 #bar button:focus-visible,#patchTools button:focus-visible{outline:1px solid var(--acc);outline-offset:-1px}
 #bar .sp{flex:1}
+#bar select:hover{background:var(--panel2)}
+#bar select option{background:var(--panel);color:var(--txt)}
+.i{width:16px;height:16px;display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+#bar button:has(.i),#patchTools button:has(.i){display:inline-flex;align-items:center;justify-content:center}
+#bar button:has(.i){padding:5px 8px}
 #stat{color:var(--dim);font-size:11px}
 #stat.warn{color:var(--acc)}
 #stat.crit{color:#e05c5c;font-weight:600}
@@ -134,7 +140,6 @@ button,select,input{font:inherit;color:inherit}
 .node.ghost .ghostNote{color:var(--dim);font-size:11px;padding:4px 0}
 #canvas.dashboard:not(.graphOn) #content,#canvas.dashboard:not(.graphOn) #wires,#canvas.dashboard:not(.graphOn) #wiresFront{display:none}
 #canvas.dashboard #dashGrid{display:flex}
-#canvas.dashboard #hint{display:none}
 .dash-split{display:flex;width:100%;height:100%;min-width:0;min-height:0}
 .dash-split.row{flex-direction:row;gap:0}
 .dash-split.col{flex-direction:column;gap:0}              /* gap:0 — иначе общий .col (gap:10px) даёт зазоры */
@@ -271,7 +276,6 @@ button,select,input{font:inherit;color:inherit}
   #bar button,#bar select{flex:0 0 auto;padding:8px 11px}
   #bar .sp{display:none}
   #stat{flex:0 0 auto;padding-right:8px}
-  #hint{display:none}
   .pitem{padding:10px 12px}
   /* на тач-устройствах hover недоступен — держим крестик крупнее и заметным всегда */
   .pitem .pdel{padding:6px 10px;font-size:14px;opacity:.8}
@@ -581,9 +585,8 @@ canvas.view.pick{cursor:crosshair}
   border-radius:3px;padding:3px;cursor:pointer;color:var(--dim);font-size:10px}
 .copy:hover{border-color:var(--acc);color:var(--txt)}
 .swatch{margin-top:5px;height:44px;border-radius:3px}
-#bar select{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padding:5px 6px;
+#bar select{background:none;border:0;border-radius:3px;padding:5px 6px;cursor:pointer;
   max-width:170px}
-#hint{position:absolute;right:10px;bottom:8px;color:var(--dim);font-size:10px;pointer-events:none}
 
 
 /* ---- аудиоредактор клипов (modules/audioeditor.js) ---- */

@@ -1845,12 +1845,13 @@ clearTimeout(autosaveTimer);
 autosaveTimer=setTimeout(()=>LS.set(AKEY,JSON.stringify(serialize())),2000);
 }
 window.addEventListener('beforeunload',()=>{ clearTimeout(autosaveTimer); LS.set(AKEY,JSON.stringify(serialize())); });
+const RUN_PLAY='<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5l12 7-12 7z"/></svg>', RUN_STOP='<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>';
 const runBtn=document.getElementById('run'), stat=document.getElementById('stat');
 // Общая точка синхронизации кнопки — дергается и по клику, и из движка (например, когда
 // узел микрофона сам стартует/резюмирует контекст в обход этой кнопки).
 function syncRunBtn(){
 const on=Eng.running&&!Eng.paused;
-runBtn.textContent = on?'■':'▶';
+runBtn.innerHTML = on?RUN_STOP:RUN_PLAY;
 runBtn.classList.toggle('on',on);
 }
 Eng.onRunChange=()=>{ syncRunBtn(); wakeDraw(); };
@@ -1958,7 +1959,7 @@ if(Eng.running &&!Eng.paused){
 // пишем в DOM только если строка реально изменилась — иначе rAF (до 60 к/с) переписывает
 // textContent даже на кадрах, где Eng.tick() ещё не успел отработать заново
 const load=Math.round(Eng.load*100);
-const statText= `${Eng.sr} Hz · block ${BLOCK}` +(Eng.turbo >1? `· ×${Eng.turbo}` :'')+
+const statText= `${Eng.sr} Hz` +(Eng.turbo >1? ` · ×${Eng.turbo}` :'')+
 `· ${Eng.t.toFixed(2)} ms · load ${load}% · nodes ${Graph.nodes.length}`;
 if(statText!==lastStatText){ stat.textContent=statText; lastStatText=statText; }
 // предупреждение имеет смысл только в реальном времени — при turbo>1 движок нарочно бежит быстрее звука

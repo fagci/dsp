@@ -7,7 +7,7 @@
 <meta name="theme-color" content="#161a1d">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' http: https: ws: wss: data: blob: 'unsafe-inline'; script-src 'self' http: https: data: blob: 'unsafe-inline' 'wasm-unsafe-eval'">
 <title>DSP</title>
-<link rel="stylesheet" href="styles.css?v=112">
+<link rel="stylesheet" href="styles.css?v=113">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -18,7 +18,7 @@
 <script>
 // прогресс сразу, до раскладки; скрипты грузятся по порядку (async=false)
 (()=>{
-  const V='112', L=["core-dsp.js", "core-engine.js", "core-islands.js", "modules/analysis.js", "modules/misc.js", "modules/modulation.js", "modules/output.js", "modules/processing.js", "modules/protocols.js", "modules/sigid.js", "modules/sources.js", "modules/audioeditor.js", "modules/tracker-formats.js", "modules/tracker-player.js", "modules/tracker.js", "modules/tracker-session.js", "modules/tracker-panels.js", "modules/sampler.js", "modules/tinysa.js", "modules/hfdl.js", "modules/gsm.js", "modules/propagation.js", "modules/geo.js", "modules/sked.js", "modules/sat.js", "modules/radio.js", "modules/iq-kernels.js", "modules/ccsds-kernels.js", "modules/lrpt-msumr.js", "modules/sonde-kernels.js", "modules/inmarsat-kernels.js", "modules/mpt1327-kernels.js", "modules/ism-kernels.js", "modules/fsk4-kernels.js", "modules/dmr-kernels.js", "modules/p25-kernels.js", "modules/nxdn-kernels.js", "modules/m17-kernels.js", "modules/ysf-kernels.js", "modules/dstar-kernels.js", "modules/dpmr-kernels.js", "modules/video-kernels.js", "modules/iq.js", "modules/adsb.js", "modules/lrpt.js", "modules/sonde.js", "modules/inmarsat.js", "modules/mpt1327.js", "modules/ism.js", "modules/dmr.js", "modules/fsk4.js", "modules/mbe-tables.js", "modules/mbe.js", "modules/comms.js", "modules/video.js", "presets.js", "core-graph.js"], txt=document.getElementById('bootTxt'), bar=document.querySelector('#bootBar i'), boot=document.getElementById('boot');
+  const V='113', L=["core-dsp.js", "core-engine.js", "core-islands.js", "modules/analysis.js", "modules/misc.js", "modules/modulation.js", "modules/output.js", "modules/processing.js", "modules/protocols.js", "modules/sigid.js", "modules/sources.js", "modules/audioeditor.js", "modules/tracker-formats.js", "modules/tracker-player.js", "modules/tracker.js", "modules/tracker-session.js", "modules/tracker-panels.js", "modules/sampler.js", "modules/tinysa.js", "modules/hfdl.js", "modules/gsm.js", "modules/propagation.js", "modules/geo.js", "modules/sked.js", "modules/sat.js", "modules/radio.js", "modules/iq-kernels.js", "modules/ccsds-kernels.js", "modules/lrpt-msumr.js", "modules/sonde-kernels.js", "modules/inmarsat-kernels.js", "modules/mpt1327-kernels.js", "modules/ism-kernels.js", "modules/fsk4-kernels.js", "modules/dmr-kernels.js", "modules/p25-kernels.js", "modules/nxdn-kernels.js", "modules/m17-kernels.js", "modules/ysf-kernels.js", "modules/dstar-kernels.js", "modules/dpmr-kernels.js", "modules/video-kernels.js", "modules/iq.js", "modules/adsb.js", "modules/lrpt.js", "modules/sonde.js", "modules/inmarsat.js", "modules/mpt1327.js", "modules/ism.js", "modules/dmr.js", "modules/fsk4.js", "modules/mbe-tables.js", "modules/mbe.js", "modules/comms.js", "modules/video.js", "presets.js", "core-graph.js"], txt=document.getElementById('bootTxt'), bar=document.querySelector('#bootBar i'), boot=document.getElementById('boot');
   let n=0;
   const step=()=>{ txt.textContent='Loading… '+n+'/'+L.length; bar.style.width=(100*n/L.length)+'%'; };
   const fail=u=>{ txt.textContent=(navigator.onLine?'Failed to load ':'Offline, not cached: ')+u+' — reload the page'; boot.classList.add('err'); };
@@ -48,23 +48,23 @@
     <div id="panelPatches" class="sidepanel">
       <div id="patchTools">
         <input id="patchSearch" type="search" placeholder="Find a patch…" autocomplete="off">
-        <button id="psave" title="Save current patch">💾</button>
+        <button id="psave" title="Save current patch"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/></svg></button>
       </div>
       <div id="patchList"></div>
     </div>
   </div>
   <div id="main">
     <div id="bar">
-      <button id="menu" title="Show / hide sidebar">☰</button>
-      <button id="run" title="Run / stop">▶</button>
-      <button id="dash" title="Dashboard view — pick a module in each pane, split panes and drag dividers to arrange them">▦</button>
-      <button id="fit" title="Fit to screen">⤢</button>
-      <button id="undo" title="Undo (Ctrl+Z)" disabled>↶</button>
-      <button id="redo" title="Redo (Ctrl+Shift+Z)" disabled>↷</button>
+      <button id="menu" title="Show / hide sidebar"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+      <button id="run" title="Run / stop"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5l12 7-12 7z"/></svg></button>
+      <button id="dash" title="Dashboard view — pick a module in each pane, split panes and drag dividers to arrange them"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/></svg></button>
+      <button id="fit" title="Fit to screen"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+      <button id="undo" title="Undo (Ctrl+Z)" disabled><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg></button>
+      <button id="redo" title="Redo (Ctrl+Shift+Z)" disabled><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 000 12h3"/></svg></button>
       <span class="sep"></span>
-      <button id="dup" title="Duplicate (D)">⧉ copy</button>
-      <button id="save" title="Save to file">⭳</button>
-      <button id="load" title="Open file">⭱</button>
+      <button id="dup" title="Duplicate (D)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="1"/><path d="M5 15V5a1 1 0 011-1h10"/></svg></button>
+      <button id="save" title="Save to file"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></button>
+      <button id="load" title="Open file"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a1 1 0 011-1h5l2 2h8a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1z"/></svg></button>
       <button id="clear" title="Clear canvas">clr</button>
       <button id="wipe" title="Erase all local data (presets, patches, cache) — for testing">reset</button>
       <span class="sep"></span>
@@ -96,7 +96,6 @@
       <svg id="wires"></svg>
       <div id="content"></div>
       <div id="dashGrid"></div>
-      <div id="hint">Shift+click — select multiple · double-tap title — fold · D duplicate · Ctrl+Z undo · Del delete</div>
     </div>
   </div>
 </div>
