@@ -1894,7 +1894,7 @@ markWiresDirty();
 }
 /* ---- цикл отрисовки ---- */
 let lastDraw=0;
-let lastStatText='';
+let lastStatText='', lastStatTs=0;
 function visible(n){ return n._vis!==false; }       // до первого отчёта — считаем видимым
 // Простой: движок не обрабатывает блоки и нет ввода — перерисовка раз в IDLE_MS через
 // setTimeout, без rAF на каждый vsync. Асинхронные данные (скриншот tinySA, тайлы и т.п.)
@@ -1956,15 +1956,17 @@ try{ d.draw(n,n.cv,n.cx); }
 catch(e){ if(!n.drawErr){ n.drawErr=1; console.error('draw '+n.type+':',e); } }
 }
 if(Eng.running &&!Eng.paused){
-// пишем в DOM только если строка реально изменилась — иначе rAF (до 60 к/с) переписывает
-// textContent даже на кадрах, где Eng.tick() ещё не успел отработать заново
+// статус — ≤4 раз/с и только при изменении строки: ms меняются почти каждый блок
+if(ts-lastStatTs>=250){
+lastStatTs=ts;
 const load=Math.round(Eng.load*100);
 const statText= `${Eng.sr} Hz` +(Eng.turbo >1? ` · ×${Eng.turbo}` :'')+
-`· ${Eng.t.toFixed(2)} ms · load ${load}% · nodes ${Graph.nodes.length}`;
+` · ${Eng.t.toFixed(2)} ms · load ${load}% · nodes ${Graph.nodes.length}`;
 if(statText!==lastStatText){ stat.textContent=statText; lastStatText=statText; }
 // предупреждение имеет смысл только в реальном времени — при turbo>1 движок нарочно бежит быстрее звука
 stat.classList.toggle('warn', Eng.turbo===1 &&Eng.load>=.85 &&Eng.load<1);
 stat.classList.toggle('crit', Eng.turbo===1 &&Eng.load>=1);
+}
 }
 }
 const busy=Eng.blocks!==lastBlocks || ts-lastInput<2000 || activeInteractions || panzooming || zooming;

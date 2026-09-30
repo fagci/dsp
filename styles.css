@@ -39,7 +39,7 @@ button,select,input{font:inherit;color:inherit}
 /* ---- палитра ---- */
 #side{width:235px;flex:0 0 235px;background:var(--panel);border-right:1px solid var(--line);
   display:flex;flex-direction:column;overflow:hidden}
-#side h1{margin:0;padding:0 12px;height:var(--barh);display:flex;align-items:center;flex:none;font-size:12px;letter-spacing:.06em;font-weight:600;
+#side h1{margin:0;padding:0 12px;height:var(--barh);line-height:1;display:flex;align-items:center;flex:none;font-size:12px;letter-spacing:.06em;font-weight:600;
   color:var(--txt);border-bottom:1px solid var(--line)}
 #side h1 small{display:block;color:var(--dim);font-size:10px;margin-top:4px}
 /* табы — как вкладки тайлов: активная слита с телом, акцентная черта сверху */
@@ -119,7 +119,7 @@ button,select,input{font:inherit;color:inherit}
 #bar button:focus-visible,#patchTools button:focus-visible{outline:1px solid var(--acc);outline-offset:-1px}
 #bar .sp{flex:1}
 @media (min-width:821px) and (pointer:fine){
-  #bar #menu{position:fixed;left:0;top:0;z-index:12;width:var(--barh);height:var(--barh);padding:0;border-radius:0}
+  #bar #menu{position:fixed;left:0;top:0;z-index:12;width:var(--barh);height:calc(var(--barh) - 1px);padding:0;border-radius:0}
   #side h1{padding-left:var(--barh)}
   #side.collapsed~#main #bar{padding-left:var(--barh)}
 }
@@ -128,7 +128,7 @@ button,select,input{font:inherit;color:inherit}
 .i{width:16px;height:16px;display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
 #bar button:has(.i),#patchTools button:has(.i){display:inline-flex;align-items:center;justify-content:center}
 #bar button:has(.i){padding:5px 8px}
-#stat{color:var(--dim);font-size:11px}
+#stat{color:var(--dim);font-size:11px;flex:0 1 40ch;min-width:0;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;contain:layout paint}
 #stat.warn{color:var(--acc)}
 #stat.crit{color:#e05c5c;font-weight:600}
 
@@ -166,7 +166,7 @@ button,select,input{font:inherit;color:inherit}
 .dash-resizer:hover,.dash-resizer.active{background:var(--acc);box-shadow:0 0 0 1px var(--acc)}
 .dash-pane{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--panel);overflow:hidden}
 .dash-tools{flex:none;position:relative;z-index:4;display:flex;align-items:stretch;gap:0;padding:0;min-height:24px;
-  background:var(--panel2);border-bottom:1px solid var(--line);container-type:inline-size}
+  background:var(--panel2);container-type:inline-size}
 /* кнопки действий — без рамок и приглушены, ярче при наведении на панель */
 .dash-tools button{flex:none;background:none;border:0;border-radius:0;color:var(--dim);
   cursor:pointer;font-size:12px;padding:0 7px;line-height:1.5}
@@ -284,7 +284,7 @@ button,select,input{font:inherit;color:inherit}
   #bar::-webkit-scrollbar{display:none}
   #bar button,#bar select{flex:0 0 auto;padding:8px 11px}
   #bar .sp{display:none}
-  #stat{flex:0 0 auto;padding-right:8px}
+  #stat{flex:0 0 40ch}
   .pitem{padding:10px 12px}
   /* на тач-устройствах hover недоступен — держим крестик крупнее и заметным всегда */
   .pitem .pdel{padding:6px 10px;font-size:14px;opacity:.8}
