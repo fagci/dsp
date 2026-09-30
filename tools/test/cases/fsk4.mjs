@@ -128,6 +128,17 @@ export function setup(){
 }
 
 export default [
+  {name:'p25: TDULC — Golay(24,12) and RS(24,12,13) against dsd-fme encoders (hexbits in transmission order = reverse of dsd order)', arg:V, fn(V){
+    for(let t=0; t<3; t++){ const [d, p] = V['tdulc_g'+t].split(' '); if((m17Golay(parseInt(d, 2)) & 0xFFF).toString(2).padStart(12, '0') !== p) return 'golay '+t; }
+    const B = s => Uint8Array.from(s, c => +c), dh = p25BitsHex(B(V.tdulc_rsd)), ph = p25BitsHex(B(V.tdulc_rsp));
+    if(Array.from(p25RsEnc(Uint8Array.from(Array.from(dh).reverse()), 24).subarray(12)).reverse().join() !== Array.from(ph).join()) return 'RS(24,12)';
+    // кадр TDULC: кодер → декодер, ошибки в словах
+    const lc = new Uint8Array(9); lc[0] = 0x0F; lc[4] = 0x10; lc[5] = 0xE1; lc[6] = 0x12; lc[7] = 0xD6; lc[8] = 0x87;
+    const F = p25Frame(0x293, 15, p25TdulcBody(dmrBitsOf(lc)), 216), got = p25TdulcDecode(F);
+    if(!got || fskHex(p25Bytes(got)) !== fskHex(lc)) return 'TDULC round trip';
+    for(const i of [60, 61, 100, 150, 190]) F[i] ^= 1;
+    const g2 = p25TdulcDecode(F); return (g2 && fskHex(p25Bytes(g2)) === fskHex(lc)) || 'TDULC with bit errors';
+  }},
   {name:'dpmr: dsd-fme primitives — scrambler x⁹+x⁵+1, 12×6 interleave, Hamming(12,8), CRC-7, address digits, colour codes; encoders round trip', arg:V, fn(V){
     for(let t=0; t<6; t++){
       const inb = Uint8Array.from(V['dpmr_in'+t], c => +c), want = V['dpmr_deint'+t];
@@ -462,6 +473,14 @@ export default [
       const e = T.errors(); if(e.length) return e.join('; ');
       return ns[2].rows.some(q => q.src === 'P25' && q.kind === 'call') || 'rows '+ns[2].rows.length;
     } finally { Islands.setEnabled(false); }
+  }},
+  {name:'p25: generator → decoder, voice ended by TDULC (link control: call termination, source and destination)', arg:GEN('256000', 2000, -45, 'P25 voice, TDULC', 'p25'), fn([g, w]){
+    const ns = T.build(g, w), r = fskRun(ns, 4);
+    const e = T.errors(); if(e.length) return e.join('; ');
+    const k = x => r.recs.filter(q => q.kind === x);
+    if(!k('lc').some(q => q.source === 'TDULC' && q.type === 'terminate' && q.to === 4321 && q.from === 1234567)) return 'no TDULC LC: '+JSON.stringify(k('lc'));
+    if(!k('end').some(q => q.by === 'TDULC' && q.from === 1234567)) return 'no end: '+JSON.stringify(k('end'));
+    return r.ui.st.bad <= 2 || 'FEC errors '+r.ui.st.bad;
   }},
   {name:'p25: noise alone — no lock, no records', arg:GEN('256000', 2000, -45, 'P25 voice', 'p25'), fn([g, w]){
     g[0][1].mode = 'off'; g[0][1].noise = -30;

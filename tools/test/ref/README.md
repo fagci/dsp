@@ -24,3 +24,6 @@ FEC is done there, not in MMDVMHost — and uses MMDVMHost's `CDStarSlowData` fo
 `dpmrref.cpp` is assembled from dsd-fme (lwvmobile, ISC): the dPMR scrambler, 12×6 de-interleaver, Hamming(12,8), CRC-7 and address conversion
 are copied verbatim (line ranges of `dpmr_voice.c` and `fec.c`) around a small `main`; dsd-fme has no dPMR encoder, so whole frames are only
 checked generator → decoder. `g++ -std=gnu++14 dpmrref.cpp`.
+
+`tdulcref.cpp` links dsd-fme's `p25p1_check_hdu.cpp` / `p25p1_check_ldu.cpp` / `Hamming.cpp` (`-I include -I src`) and prints its Golay(24,12) and
+RS(24,12,13) encoders on random data. dsd-fme keeps the hexbits in reverse of the transmission order; the test reverses them back.
