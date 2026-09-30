@@ -6,3 +6,7 @@ replaced by empty stubs:
         P25Utils.cpp RS634717.cpp BCH.cpp Golay24128.cpp Hamming.cpp CRC.cpp Utils.cpp P25LowSpeedData.cpp -o p25ref
 
 Its `name:hex` output lines go to `data/fsk4-vectors.json`.
+
+`nxdnref.cpp` (NXDN frames: LICH, SACCH, FACCH1, UDCH, scrambler) builds the same way against NXDNLICH / NXDNSACCH / NXDNFACCH1 /
+NXDNUDCH / NXDNCRC / NXDNConvolution / Sync. Note: MMDVMHost computes the LICH parity bit only for the RDCH / UDCH codes it
+uses; the parity here is the XOR of the four high bits (as in dsd-fme), so the RTCH frame C is only used for its FACCH1 halves.

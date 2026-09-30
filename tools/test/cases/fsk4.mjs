@@ -31,6 +31,24 @@ export function setup(){
   };
   // тот же xorshift, что в генераторе P25: ожидаемые кадры IMBE
   window.p25Rnd = () => { let x = 0x1234567; return () => { x ^= x<<13; x ^= x>>>17; x ^= x<<5; return x & 255; }; };
+  window.nxdnCheck = (r, data, noisy) => {
+    const k = x => r.recs.filter(q => q.kind === x);
+    if(r.ui.ran !== 5) return 'ran '+r.ui.ran;
+    if(data){
+      if(!k('msg').some(q => q.msg === 'DCALL_HEADER' && q.from === 777 && q.to === 888 && q.call === 'individual' && q.source === 'UDCH')) return 'no DCALL_HEADER: '+JSON.stringify(k('msg'));
+      if(!k('call').some(q => q.from === 42 && q.to === 43 && q.call === 'individual' && q.source === 'FACCH1')) return 'no FACCH1 call: '+JSON.stringify(k('call'));
+      return true;
+    }
+    if(!k('call').some(q => q.from === 1234 && q.to === 4321 && q.call === 'conference' && q.source === 'SACCH' && !q.emergency && !q.cipher)) return 'no call: '+JSON.stringify(k('call'));
+    if(!k('end').some(q => q.from === 1234 && q.by === 'TX_REL')) return 'no end: '+JSON.stringify(k('end'));
+    if(r.voice.length < 36) return 'voice frames '+r.voice.length;
+    // те же 72-битные кадры, что в генераторе: xorshift, старший бит не берём — только младший
+    let x = 0x2468ACE; const bit = () => { x ^= x<<13; x ^= x>>>17; x ^= x<<5; return x & 1; };
+    const exp = new Set(); for(let i=0; i<18; i++){ const b = Uint8Array.from({length:72}, bit); exp.add(fskHex(p25Bytes(b))); }
+    const bad = r.voice.filter(v => !exp.has(v.ambe));
+    if(bad.length > (noisy ? r.voice.length*.25 : 0)) return 'AMBE '+bad.length+' of '+r.voice.length+': '+bad[0].ambe;
+    return true;
+  };
   window.p25Check = (r, ctl, noisy) => {
     const k = x => r.recs.filter(q => q.kind === x);
     if(r.ui.nac !== 0x293 && r.ui.protos?.p25?.nac !== 0x293) return 'nac '+JSON.stringify(r.ui.nac);
@@ -60,6 +78,53 @@ export function setup(){
 }
 
 export default [
+  {name:'nxdn: MMDVMHost frames — scrambler, LICH, SACCH (CRC-6), FACCH1 (CRC-12), UDCH (CRC-15), encoders both ways', arg:V, fn(V){
+    const D = h => fsk4Dib(dmrBitsOf(fskUnhex(h)));
+    for(const k of ['A', 'B', 'C']){
+      const F = D(V['nxdn_frame'+k]);
+      for(let i=10; i<192; i++) F[i] ^= nxdnScrBit(i)<<1;
+      const bits = fsk4Unpack(F, 0, 192);
+      if(bits.join('') !== Array.from(dmrBitsOf(fskUnhex(V['nxdn_frame'+k+'_plain']))).join('')) return k+': descrambled frame';
+      const l = nxdnLich(F.slice(10, 18));
+      if(k === 'A' && (l.rfct !== 1 || l.fct !== 2 || l.opt !== 1 || l.dir !== 1 || !l.ok)) return 'LICH A '+JSON.stringify(l);
+      if(k === 'B' && (l.rfct !== 2 || l.fct !== 1 || l.opt !== 3 || l.dir !== 0 || !l.ok)) return 'LICH B '+JSON.stringify(l);
+      if(k !== 'C' && nxdnLichBits(l.rfct, l.fct, l.opt, l.dir) !== l.raw) return 'LICH encoder '+k;
+      if(k === 'B'){
+        const r = nxdnChDecode(NXDN_CH.udch, bits.subarray(36));
+        if(!r.ok || dmrNum(r.bits, 0, 8) !== 7 || fskHex(p25Bytes(r.bits.subarray(8, 184))) !== 'A0A1A2A3A4A5A6A7A8A9AAABACADAEAFB0B1B2B3B4B5') return 'UDCH';
+        const ud = new Uint8Array(184); ud.set(dmrBitsOf(Uint8Array.of(7)), 0); ud.set(dmrBitsOf(Uint8Array.from({length:22}, (_, i) => 0xA0+i)), 8);
+        if(nxdnChEncode(NXDN_CH.udch, ud).join('') !== Array.from(bits.subarray(36)).join('')) return 'UDCH encoder';
+        continue;
+      }
+      const s = nxdnChDecode(NXDN_CH.sacch, bits.subarray(36));
+      if(!s.ok || dmrNum(s.bits, 2, 6) !== (k === 'A' ? 5 : 33) || dmrNum(s.bits, 0, 2) !== (k === 'A' ? 3 : 0)) return 'SACCH '+k+' '+JSON.stringify([s.ok, dmrNum(s.bits, 2, 6)]);
+      if(k === 'A' && Array.from(s.bits.subarray(8, 26)).join('') !== '100000010000001000') return 'SACCH data';
+      const f1 = nxdnChDecode(NXDN_CH.facch1, bits.subarray(96));
+      if(!f1.ok || fskHex(p25Bytes(f1.bits.subarray(0, 80))) !== (k === 'A' ? '01000412340064000000' : '080004ABCD0064000000')) return 'FACCH1 '+k;
+      if(k === 'A'){
+        if(nxdnChDecode(NXDN_CH.facch1, bits.subarray(240)).ok) return 'voice half accepted as FACCH1';
+        if(nxdnChEncode(NXDN_CH.facch1, dmrBitsOf(fskUnhex('01000412340064000000'))).join('') !== Array.from(bits.subarray(96, 240)).join('')) return 'FACCH1 encoder';
+      } else {
+        const f2 = nxdnChDecode(NXDN_CH.facch1, bits.subarray(240));
+        if(!f2.ok || fskHex(p25Bytes(f2.bits.subarray(0, 80))) !== '080004ABCD0064000000') return 'FACCH1 second half';
+        const m = nxdnL3(f1.bits.subarray(0, 72));
+        if(m.name !== 'TX_REL' || m.from !== 0xABCD) return 'layer 3 '+JSON.stringify(m);
+      }
+    }
+    return true;
+  }},
+  {name:'nxdn: convolutional code and CRC — errors and erasures, all three channels', fn(){
+    let x = 777; const rnd = n => { x ^= x<<13; x ^= x>>>17; x ^= x<<5; return (x>>>0) % n; };
+    for(const ch of [NXDN_CH.sacch, NXDN_CH.facch1, NXDN_CH.udch]){
+      for(let it=0; it<20; it++){
+        const d = Uint8Array.from({length:ch.data}, () => rnd(2)), e = nxdnChEncode(ch, d), bad = e.slice();
+        for(let k=0; k<2; k++) bad[rnd(ch.len)] ^= 1;
+        const r = nxdnChDecode(ch, bad);
+        if(!r.ok || r.bits.subarray(0, ch.data).join('') !== d.join('')) return 'channel '+ch.len+' with two bit errors, run '+it;
+      }
+    }
+    return true;
+  }},
   {name:'p25: MMDVMHost vectors — Golay(18,6,8), NID BCH(63,16), trellis ½, HDU RS(36,20), LDU1/2 LC + ESS RS(24,12) / (24,16), TSBK CRC-16', arg:V, fn(V){
     const D = fskDib;
     for(const [dv, w] of [[0, 0], [9, 0x952D], [0x12, 0x12A59], [0x1B, 0x1BF74], [0x24, 0x24C5A], [0x2D, 0x2D977], [0x36, 0x36603], [0x3F, 0x3F32E]])
@@ -146,9 +211,27 @@ export default [
     }
     return true;
   }},
+  {name:'nxdn: generator → decoder, voice (SACCH superframe, AMBE, FACCH1 TX_REL), 256 kS/s, +2 kHz', arg:GEN('256000', 2000, -45, 'NXDN 9600 voice', 'nxdn'), fn([g, w]){
+    const ns = T.build(g, w), r = fskRun(ns, 4);
+    const e = T.errors(); if(e.length) return e.join('; ');
+    if(r.ui.st.bad > 3) return 'FEC errors '+r.ui.st.bad;
+    return nxdnCheck(r);
+  }},
+  {name:'nxdn: generator → decoder, UDCH data call header and FACCH1 call; 48 kS/s, inverted spectrum, clock ±300 ppm',
+   arg:[[GEN('256000', -3000, -45, 'NXDN 9600 data and FACCH1', 'nxdn'), {}], [GEN('48000', 1500, -35, 'NXDN 9600 data and FACCH1', 'nxdn'), {}],
+        [GEN('256000', 0, -45, 'NXDN 9600 voice', 'nxdn'), {conj:true}], [GEN('256000', 0, -45, 'NXDN 9600 voice', 'nxdn'), {ppm:300}], [GEN('256000', 0, -45, 'NXDN 9600 voice', 'nxdn'), {ppm:-300}]], fn(cfg){
+    for(const [[g, w], opt] of cfg){
+      const ns = T.build(g, w), r = fskRun(ns, 4, opt), data = g[0][1].fsk4.includes('data');
+      const c = nxdnCheck(r, data, g[0][1].sr === '48000' || !!opt.ppm); if(c !== true) return g[0][1].fsk4+' '+g[0][1].sr+' '+JSON.stringify(opt)+': '+c;
+    }
+    return true;
+  }},
   {name:'p25: noise alone — no lock, no records', arg:GEN('256000', 2000, -45, 'P25 voice', 'p25'), fn([g, w]){
     g[0][1].mode = 'off'; g[0][1].noise = -30;
     const ns = T.build(g, w), r = fskRun(ns, 3);
     return r.recs.length === 0 && r.voice.length === 0 && r.ui.st.frames === 0 || 'records '+r.recs.length+' frames '+r.ui.st.frames;
   }},
 ];
+
+
+export const nxdnTests = [];

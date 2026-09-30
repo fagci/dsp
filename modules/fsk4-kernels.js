@@ -152,15 +152,16 @@ function fsk4Node(pick,title){
       const e=ch.env, d=ch.lev===4 ? (y>e ? 1 : y>0 ? 0 : y>-e ? 2 : 3) : (y>0 ? 0 : 2);
       ch.hi[ph]=((ch.hi[ph]<<2)|(ch.lo[ph]>>>22))&0xFFFFFF; ch.lo[ph]=((ch.lo[ph]<<2)|d)&0xFFFFFF;
       const lk=ch.lock;
-      if(jj>=8*ch.maxLen && (!lk || Math.abs(jj-lk.next)<=8)) this.findSync(n,ch,ph,jj);
+      if(jj>=8*ch.maxLen && (!lk || lk.blind || Math.abs(jj-lk.next)<=8)) this.findSync(n,ch,ph,jj);
       const l2=ch.lock;
       if(l2 && jj===l2.next+8*l2.after) l2.proto.frame(n.pr[l2.proto.id],l2,jj,out);
     },
+    // lk.blind — протокол не увидел синхрослово на ожидаемом месте: тогда допустим захват в любом месте (новая передача)
     findSync(n,ch,ph,jj){
-      const lk=ch.lock, hi=ch.hi[ph], lo=ch.lo[ph];
+      const lk=ch.lock, hi=ch.hi[ph], lo=ch.lo[ph], near=!!lk && Math.abs(jj-lk.next)<=8;
       let bd=99, bp=null, bq=null;
-      for(const pr of lk ? [lk.proto] : ch.protos){
-        const thr=lk ? pr.thrLock : pr.thrAcq;
+      for(const pr of near ? [lk.proto] : ch.protos){
+        const thr=near ? pr.thrLock : pr.thrAcq;
         for(const xm of [0,0xAAAAAA]) for(const p of pr.syncs){
           const d=fsk4Dist(hi,lo,p,xm);
           if(d<=thr && d<bd){ bd=d; bp=p; bq=pr; }
@@ -168,9 +169,9 @@ function fsk4Node(pick,title){
       }
       if(!bp) return;
       const f=this.fit(ch,ph,jj,bp);
-      if(!f) return;
+      if(!f || (bq.maxRq && f.rq>bq.maxRq)) return;
       const P=n.pr[bq.id];
-      if(!lk){
+      if(!near){
         const L={ch, proto:bq, next:jj, best:bd, bestRq:f.rq, g:f.g, o:f.o, miss:0, after:0};
         Object.assign(L,bq.lock(P,L,bp,f));
         ch.lock=L;
