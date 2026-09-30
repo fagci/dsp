@@ -1836,7 +1836,7 @@ async function mirisdrOpenDevice(dev, gain){
     }
     if(found) break;
   }
-  if(!found) throw new Error('no bulk IN endpoint; '+JSON.stringify(dev.configurations.map(c=>({cfg:c.configurationValue,
+  if(!found) throw new Error('no streaming endpoint (the browser sees no alternate settings; Android Chrome, or a full-speed USB port/hub — try a direct OTG cable or a desktop); '+JSON.stringify(dev.configurations.map(c=>({cfg:c.configurationValue,
     itf:c.interfaces.map(i=>({n:i.interfaceNumber, alts:i.alternates.map(a=>({alt:a.alternateSetting, ep:a.endpoints.map(e=>e.type+' '+e.direction+e.endpointNumber)}))}))}))));
   if(found.cfg!==dev.configuration.configurationValue) await dev.selectConfiguration(found.cfg);
   const itf=found.itf, epIn=found.ep;
