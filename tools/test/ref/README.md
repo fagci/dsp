@@ -32,3 +32,5 @@ RS(24,12,13) encoders on random data. dsd-fme keeps the hexbits in reverse of th
 `nxdn_soft_decision_viterbi` from `soft_viterbi_k5.c` (built with a stub `dsd.h`), `PERM_12_25`, the CAC puncture pattern and `crc16cac`. It
 prints the CRC (0 = good) and the 171 decoded bits. `cac_*` vectors are frames encoded by `nxdnChEncode(NXDN_CH.cac, …)` that it decodes with
 CRC 0 and the same data bits.
+
+`pduref.cpp` builds against MMDVMHost `P25Trellis` (with a stub `Log.h`): it prints the rate ¾ trellis encoding of an 18-byte block, plus the CRC-32 (`crc32mbf`) and CRC-9 (`ComputeCrc9Bit`) functions copied from dsd-fme over fixed data. Vectors `tr34`, `crc32mbf`, `crc9`.
