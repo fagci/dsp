@@ -27,9 +27,23 @@ IQK.iqGen={
     // дисбаланс квадратур, как у звуковой карты: Q' = g·(Q·cosφ + I·sinφ), Q на imbD отсчётов позже
     const ig=Math.pow(10,(+n.p.imbG||0)/20), ip=(+n.p.imbP||0)*Math.PI/180, isn=Math.sin(ip), ics=Math.cos(ip), idl=Math.round(+n.p.imbD||0);
     const env=mode==='ADS-B' ? iqGenAdsb(n,sr,N) : null;
-    const bb=mode==='LRPT' ? lrptGenerate(n,sr,N,n.p.lrpt||'OQPSK') : mode==='RS41' ? rs41Generate(n,sr,N) : mode==='STD-C' ? stdcGenerate(n,sr,N) : mode==='MPT1327' ? mptGenerate(n,sr,N) : mode==='DMR' ? dmrGenerate(n,sr,N) : mode==='4FSK' ? fsk4GenIq(n,sr,N) : mode==='ISM433' ? ismGenerate(n,sr,N) : null;
+    const bb=mode==='LRPT' ? lrptGenerate(n,sr,N,n.p.lrpt||'OQPSK') : mode==='RS41' ? rs41Generate(n,sr,N) : mode==='STD-C' ? stdcGenerate(n,sr,N) : mode==='MPT1327' ? mptGenerate(n,sr,N) : mode==='DMR' ? dmrGenerate(n,sr,N) : mode==='4FSK' ? fsk4GenIq(n,sr,N) : mode==='ISM433' ? ismGenerate(n,sr,N) : mode==='Analog TV' ? tvGenerate(n,sr,N) : null;
+    if(mode==='Analog TV' && w===0 && ig===1 && !ip && !idl){        // быстрый путь: 10–20 МС/с; шум — сумма четырёх байт
+      const b0=bb[0], b1=bb[1], k=nz/147.8;
+      let r=x;
+      for(let i=0;i<N;i++){
+        let vr=a*b0[i], vi=a*b1[i];
+        if(nz>0){
+          r^=r<<13; r^=r>>>17; r^=r<<5; vr+=k*((r&255)+((r>>>8)&255)+((r>>>16)&255)+(r>>>24)-510);
+          r^=r<<13; r^=r>>>17; r^=r<<5; vi+=k*((r&255)+((r>>>8)&255)+((r>>>16)&255)+(r>>>24)-510);
+        }
+        re[i]=vr; im[i]=vi;
+      }
+      n.rng=r; iqPush(s,re,im);
+      return {iq:s};
+    }
     for(let i=0;i<N;i++){
-      const m=Math.sin(mph); mph+=wm;
+      const m=bb ? 0 : Math.sin(mph); mph+=wm;
       let amp=a, p=ph;
       if(mode==='AM') amp=a*(1+depth*m)/(1+depth);
       else if(mode==='FM') ph+=kf*m;
@@ -39,10 +53,13 @@ IQK.iqGen={
       else if(mode==='off') amp=0;
       else if(env) amp=a*env[i];
       ph+=w;
-      if(bb){ const c=Math.cos(p), sn=Math.sin(p), br=bb[0][i], bi=bb[1][i];
-        re[i]=a*(br*c-bi*sn); im[i]=a*(br*sn+bi*c); }
+      if(bb){ const br=bb[0][i], bi=bb[1][i];
+        if(p===0){ re[i]=a*br; im[i]=a*bi; }
+        else { const c=Math.cos(p), sn=Math.sin(p); re[i]=a*(br*c-bi*sn); im[i]=a*(br*sn+bi*c); } }
       else { re[i]=amp*Math.cos(p); im[i]=amp*Math.sin(p); }
-      if(nz>0){   // Бокс–Мюллер
+      if(nz>0 && mode==='Analog TV'){                    // на 10 МС/с Бокс–Мюллер дорог: сумма трёх равномерных
+        re[i]+=nz*2*(rnd()+rnd()+rnd()-1.5); im[i]+=nz*2*(rnd()+rnd()+rnd()-1.5);
+      } else if(nz>0){   // Бокс–Мюллер
         const u=Math.max(rnd(),1e-12), v=rnd(), r=nz*Math.sqrt(-2*Math.log(u));
         re[i]+=r*Math.cos(2*Math.PI*v); im[i]+=r*Math.sin(2*Math.PI*v);
       }
