@@ -2222,8 +2222,8 @@ async function rx888OpenDevice(dev, gain){
     tunerName:NAMES[model]+' fw '+fw, kind:'sddc', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
 }
 
-// MSi2500: SDRplay RSP1 и клоны, RSP1A/RSP2 (не проверены), ТВ-донглы Hauppauge/AverMedia/IO-DATA/Logitec
-const MIRI_USB_IDS=[[0x1df7,0x2500],[0x1df7,0x3000],[0x1df7,0x3010],[0x2040,0xd300],[0x07ca,0x8591],[0x04bb,0x0537],[0x0511,0x0037]];
+// MSi2500: SDRplay RSP1 (2500/3000), RSP2 (3010), RSP1A (3020) — последние два не проверены, ТВ-донглы Hauppauge/AverMedia/IO-DATA/Logitec
+const MIRI_USB_IDS=[[0x1df7,0x2500],[0x1df7,0x3000],[0x1df7,0x3010],[0x1df7,0x3020],[0x2040,0xd300],[0x07ca,0x8591],[0x04bb,0x0537],[0x0511,0x0037]];
 // VID:PID поддерживаемых устройств
 const SDR_USB_FILTERS=[
   {vendorId:0x0bda,productId:0x2832},{vendorId:0x0bda,productId:0x2838},
