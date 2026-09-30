@@ -72,6 +72,19 @@ export default [
       return im.w === 600 && im.h === 576 && u.lock || 'image '+im.w+'×'+im.h+', ui '+JSON.stringify(u);
     } finally { Islands.setEnabled(false); }
   }},
+  {name:'tv: free-run without sync draws a stable raster even when sync detection is off', arg:CHAIN({}, {}, {sync:'free'}), fn(chain){
+    const ns = T.build(...chain);
+    T.run(.3);
+    const err = T.errors(); if(err.length) return err.join('; ');
+    const f = ns[2].frame, W = f.w, H = f.h, px = f.px;
+    let s = 0, s2 = 0, dv = 0, k = 0;
+    for(let y = 20; y < H-20; y++) for(let x = 10; x < W-10; x++){
+      const v = px[(y*W+x)*4], w = px[((y+1)*W+x)*4];
+      s += v; s2 += v*v; dv += Math.abs(v-w); k++;
+    }
+    const m = s/k, sd = Math.sqrt(s2/k-m*m), u = ns[2].ui;
+    return u.free && !u.lock && sd > 30 && dv/k < 30 || `free ${u.free} lock ${u.lock} sd ${sd.toFixed(1)} vdiff ${(dv/k).toFixed(1)}`;
+  }},
   {name:'preset: Analog TV: Test Card (Generator)', fn(){
     T.preset('Analog TV: Test Card (Generator)'); T.run(.4);
     const e = T.errors(); if(e.length) return e.join('; ');

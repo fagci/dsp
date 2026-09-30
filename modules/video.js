@@ -14,6 +14,8 @@ defIQ({ id:'tvDemod', title:'TV Demodulator', cat:'IQ',
 defIQ({ id:'tvDecode', title:'TV Decoder', cat:'Decoders',
   ins:[{n:'in',t:'iq'}], outs:[{n:'img',t:'img'},{n:'lock',t:'num'},{n:'fps',t:'num'}],
   params:[{n:'std',t:'select',opts:['auto','PAL','NTSC'],d:'auto',label:'standard (auto: by lines per field)'},
+          {n:'sync',t:'select',opts:['auto','free'],d:'auto',label:'sync: auto, or free — no sync needed: lines at the nominal rate, levels from picture statistics (weak signal, narrow bandwidth)'},
+          {n:'trim',t:'range',min:-20000,max:20000,step:1,d:0,label:'free: line rate trim, ppm (the picture stops slanting when it matches)'},
           {n:'width',t:'select',opts:['384','480','600','720','960'],d:'600',label:'picture width, px'},
           {n:'invert',t:'select',opts:['auto','off','on'],d:'auto',label:'polarity (auto: flips when there is no sync)'},
           {n:'interlace',t:'select',opts:['weave','bob'],d:'weave',label:'fields: weave (sharp; combs on motion) or bob (line doubling)'},
@@ -23,6 +25,7 @@ defIQ({ id:'tvDecode', title:'TV Decoder', cat:'Decoders',
           {n:'hshift',t:'range',min:-4,max:4,step:.1,d:0,label:'picture shift, µs'},
           {n:'vshift',t:'range',min:-12,max:12,step:1,d:0,label:'picture shift, lines'}]},
   n=>{ const u=n.ui; if(!u) return 'no input';
+    if(u.free) return 'free-run (no sync) · '+u.std+' line rate · '+u.w+'×'+u.h;
     return (u.lock ? 'locked' : 'searching sync')+' · '+u.std+(u.fps ? ' · '+u.fps.toFixed(1)+' fields/s' : '')+
       (u.lines ? ' · '+u.lines+' lines/field' : '')+' · '+(u.color ? 'colour' : u.cOK ? 'no burst' : 'B/W (sample rate too low for colour)')+
       (u.inv ? ' · inverted' : '')+' · '+u.w+'×'+u.h; });

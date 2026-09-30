@@ -145,7 +145,7 @@ IQK.tvDecode={
       n.img={w:f.w, h:f.h, data:new ImageData(new Uint8ClampedArray(f.px),f.w,f.h)};
     }
     n.ui={sr:s.sr, std:d.st===TVS.NTSC ? 'NTSC' : 'PAL', lock:d.lock, lines:d.fl, fps:d.fps, color:d.hasB, inv:d.pol<0,
-      w:n.frame.w, h:n.frame.h, cOK:d.cOK};
+      w:n.frame.w, h:n.frame.h, cOK:d.cOK, free:n.p.sync==='free'};
     return {img:n.img, lock:d.lock ? 1 : 0, fps:d.fps};
   }};
 
@@ -167,7 +167,7 @@ function tvReset(n,sr,key){
     lo:0, hi:0, low:false, px:0, tcF:0, tcR:0, fall:0, aA:1-Math.exp(-1/(.3e-6*sr)), aR:1-Math.exp(-1/(2e-3*sr)),
     pol:n.p.invert==='on' ? -1 : 1, unl:0, lock:false,
     tip:0, bl:0, sh:0, g:1, locked:false, good:0, lastHs:-1, lastP:0, vc:0, vs:false, lineNo:0, rowOK:false, par:0,
-    ready:false, fl:0, fps:0, lastFld:0, cP:0, cN:0, hasB:false, pvOK:false, psiOK:false, psi:0, pAng:0, pLine:-9, pF:0, miss:0,
+    ready:false, fl:0, fps:0, lastFld:0, cP:0, cN:0, hasB:false, fp:-1, fcnt:0, fm:undefined, fs:1, pvOK:false, psiOK:false, psi:0, pAng:0, pLine:-9, pF:0, miss:0,
     PS:new Float64Array(Math.ceil(68e-6*sr)+8), PC:new Float64Array(Math.ceil(68e-6*sr)+8),
     PX:new Float64Array(Math.ceil(68e-6*sr)+8), QS:new Float64Array(Math.ceil(68e-6*sr)+8), QC:new Float64Array(Math.ceil(68e-6*sr)+8),
     SA:new Float32Array(Math.ceil(68e-6*sr)+8), CA:new Float32Array(Math.ceil(68e-6*sr)+8)};
@@ -182,6 +182,8 @@ function tvFeed(n,x){
   const b=d.buf, L0=d.len, pol=d.pol;
   for(let i=0;i<K;i++) b[L0+i]=pol*x[i];
   d.len+=K;
+  if(n.p.sync==='free'){ tvFree(n); return; }
+  if(d.fp>=0) d.fp=-1;
   let low=d.low, lo=d.lo, hi=d.hi, px=d.px, tcF=d.tcF, tcR=d.tcR;
   const aA=d.aA, aR=d.aR, a0=d.base+L0;
   let thr, hy;
@@ -203,6 +205,36 @@ function tvFeed(n,x){
     d.pol=-d.pol; d.unl=0; d.len=0; d.lastHs=-1; d.lastFld=0; d.locked=false; d.good=0; d.sh=0; d.low=false;
     const t=d.lo; d.lo=-d.hi; d.hi=-t;
   }
+}
+
+// Свободный растр: без синхроимпульсов, строки идут с номинальным периодом (+ подстройка trim, ppm), яркость — по статистике
+// строки. Для слабого сигнала и малой полосы: видно хотя бы намёки; когда trim совпал с частотой строк, картинка встаёт.
+function tvFree(n){
+  const d=n.d, st=d.st, us=d.sr*1e-6, end=d.base+d.len, need=68*us;
+  d.lock=false; d.good=0; d.locked=false; d.lastHs=-1; d.vs=false; d.low=false; d.unl=0;
+  const Tl=st.T*us*(1+(+n.p.trim||0)*1e-6);
+  if(d.fp<d.base) d.fp=Math.max(d.base,end-4096);
+  while(d.fp+need<=end){
+    tvLineFree(n,d.fp,d.fcnt);
+    d.fp+=Tl;
+    if(++d.fcnt>=2*st.fld){ d.fcnt=0; d.ready=true; }
+  }
+}
+function tvLineFree(n,f0,cnt){
+  const d=n.d, st=d.st, us=d.sr*1e-6, buf=d.buf, i0=Math.floor(f0)-d.base, W=n.frame.w, Y=d.Y;
+  const y=cnt-2*st.vb-(+n.p.vshift||0);
+  if(y<0 || y>=n.frame.h || i0<0) return;
+  const hs=+n.p.hshift||0, act0=st.a0+hs, dtp=(st.a1-st.a0)/W, stepS=dtp*us;
+  let sp=f0+act0*us+.5*stepS-(d.base+i0), s1=0, s2=0;
+  for(let p=0;p<W;p++,sp+=stepS){
+    const ip=Math.floor(sp), f=sp-ip, v=buf[i0+ip]*(1-f)+buf[i0+ip+1]*f;
+    Y[p]=v; s1+=v; s2+=v*v;
+  }
+  const m=s1/W, sd=Math.sqrt(Math.max(s2/W-m*m,1e-12));
+  if(d.fm===undefined){ d.fm=m; d.fs=sd; } else { d.fm+=(m-d.fm)*.02; d.fs+=(sd-d.fs)*.02; }
+  const ct=+n.p.contrast||1, k=ct*255/(5*d.fs), b=(.5+(+n.p.bright||0))*255-d.fm*k, px=n.frame.px;
+  let o=y*W*4;
+  for(let p=0;p<W;p++,o+=4) px[o]=px[o+1]=px[o+2]=Y[p]*k+b;
 }
 
 function tvPulse(n,f,r){
