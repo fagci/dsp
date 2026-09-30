@@ -314,6 +314,15 @@ Outputs: `rec` — records (`src` = protocol, `kind` = call / end / message / �
 
 How much is checked: the codes and frame layouts are compared with the code of other implementations — P25, NXDN, YSF and D-STAR against MMDVMHost / the MMDVM firmware (real encoder output), M17 against libm17, dPMR primitives against dsd-fme, the header word against dsdcc (`tools/test/ref` has the reference programs, `tools/test/data/fsk4-vectors.json` the vectors). Whole signals are checked generator → decoder (all sample rates, noise, inverted spectrum, ±300 ppm clock error); **on-air reception has not been tried on real hardware yet**, and dPMR has no independent frame encoder to compare with.
 
+### Messages and Subscribers
+
+Two output nodes work on the `rec` output of *4FSK Digital Voice* or *DMR Decoder*, whatever the protocol:
+
+- **Messages** (`msgLog`) — the meaningful messages as a separate stream in one common shape (`time, protocol, type, from, to, text, service, lat, lon, ip …`): DMR SMS / LRRP / IP-UDP / NMEA, P25 data PDUs (IP / UDP, NMEA position), NXDN data calls, M17 packets (SMS), D-STAR slow-data text and GPS. `type` is *text*, *location*, *data* or *signalling*; the *signalling* check adds trunking messages, headers and encryption sync (P25 TSBK / MBT, DMR CSBK, NXDN messages, dPMR headers). Filter by protocol, save CSV, replay. The `msgs` output carries the records on.
+- **Subscribers** (`subLog`) — a registry per protocol: ID or callsign, talker alias, calls, times heard as a destination, talk seconds, messages sent, last group, repeater / reflector (D-STAR, YSF), position when a message had one. Talk groups are counted apart (P25 TG, DMR TG, NXDN conference, `CQCQCQ`) with their stations. The `stations` records carry `lat` / `lon` for the map; CSV for subscribers and groups.
+
+Both *4FSK Digital Voice* presets have them wired. D-STAR callsigns are taken without the `/suffix` (the header has it, the end of the call does not).
+
 ### Vocoder (mbelib)
 
 **Vocoder (mbelib)** (`mbeVoice`, Decoders) turns the raw vocoder frames from the `voice` output of *4FSK Digital Voice* (or *DMR Decoder*) into sound: **P25 IMBE**, **DMR / NXDN / dPMR / YSF (V/D mode 1) AMBE+2** and **D-STAR AMBE**. The AMBE / IMBE decoder is [mbelib](https://github.com/szechyjs/mbelib) (ISC licence) compiled to WebAssembly — `vendor/mbelib.wasm`, built by `tools/mbelib/build.sh` with clang's wasm32 target (no Emscripten; `cosf` / `powf` / `exp` / `log` come from the browser's `Math`). Frames are put into mbelib's matrices with the interleave schedules of dsd-fme, decoded to 8 kHz (160 samples per 20 ms), then queued (120 ms pre-buffer), resampled to the engine rate and mixed. Streams are kept apart per protocol and DMR slot (the *DMR slot* parameter picks one). **M17** goes through [Codec 2](https://github.com/drowe67/codec2) (LGPL 2.1, no patent issue) in a second module, `vendor/codec2.wasm` (`tools/codec2/build.sh`; modes 3200 — two 8-byte frames per stream frame — and 1600 — one frame plus 8 data bytes, chosen by the TYPE field of the LSF). *YSF V/D mode 2* is not decoded; encrypted calls come out as noise.
