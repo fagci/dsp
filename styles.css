@@ -13,7 +13,7 @@
   --scr-panel:#1d2226; --scr-hi:#ffffff;
   --hi:#ffffff; --scrim:#0009;
   --note-bg:#1c1a14; --note-head:#241f14; --note-line:#3a3320;
-  --screen:#0a0d0e; --screen-fg:#4ec9b0; --pin:13px; --pov:8px;
+  --canvas:#07090a; --screen:#0a0d0e; --screen-fg:#4ec9b0; --pin:13px; --pov:8px;
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
 }
 /* светлая системная тема — для читаемости на солнце */
@@ -24,6 +24,7 @@
     --t-sig:#0f9488; --t-num:#a8720f; --t-spec:#9333ea; --t-img:#2563eb;
     --t-txt:#a83fa8; --t-blk:#2f9e4f; --t-bands:#1b7f96; --t-rec:#b8541f; --t-trk:#b83d7c; --t-iq:#5f8a0e; --err:#c23b3b;
     --hi:#000000; --scrim:#0004;
+    --canvas:#d3d9df;
     --note-bg:#fff8e1; --note-head:#fbecc3; --note-line:#e3cf95;
   }
 }
@@ -41,11 +42,14 @@ button,select,input{font:inherit;color:inherit}
 #side h1{margin:0;padding:0 12px;height:var(--barh);display:flex;align-items:center;flex:none;font-size:12px;letter-spacing:.06em;font-weight:600;
   color:var(--txt);border-bottom:1px solid var(--line)}
 #side h1 small{display:block;color:var(--dim);font-size:10px;margin-top:4px}
-#sideTabs{display:flex;flex:none;border-bottom:1px solid var(--line)}
-#sideTabs button{flex:1;background:var(--panel);border:0;border-bottom:2px solid transparent;
-  padding:9px 6px;cursor:pointer;color:var(--dim);font-size:11px}
-#sideTabs button:hover{color:var(--txt)}
-#sideTabs button.on{color:var(--txt);border-bottom-color:var(--acc)}
+/* табы — как вкладки тайлов: активная слита с телом, акцентная черта сверху */
+#sideTabs{display:flex;flex:none;align-items:stretch;min-height:24px;background:var(--panel2);border-bottom:1px solid var(--line)}
+#sideTabs button{flex:1;background:none;border:0;border-radius:0;margin-bottom:-1px;padding:0 9px;cursor:pointer;
+  color:var(--dim);font:11px var(--mono)}
+#sideTabs button:hover{color:var(--txt);background:var(--panel)}
+#sideTabs button.on{color:var(--hi,var(--txt));background:var(--panel);
+  box-shadow:inset 0 2px 0 var(--acc),inset 1px 0 0 var(--line),inset -1px 0 0 var(--line)}
+@media (pointer:coarse){ #sideTabs{min-height:34px} #sideTabs button{font-size:12px} }
 .sidepanel{display:none;flex-direction:column;overflow:hidden;flex:1;min-height:0}
 .sidepanel.on{display:flex}
 #patchTools{display:flex;gap:5px;padding:8px;border-bottom:1px solid var(--line)}
@@ -123,7 +127,7 @@ button,select,input{font:inherit;color:inherit}
 #stat.warn{color:var(--acc)}
 #stat.crit{color:#e05c5c;font-weight:600}
 
-#canvas{flex:1;position:relative;overflow:hidden;cursor:grab;touch-action:none}
+#canvas{flex:1;position:relative;overflow:hidden;cursor:grab;touch-action:none;background:var(--canvas)}
 #side.collapsed{display:none}
 /* ---- дашборд: тайловая раскладка закреплённых (📌) узлов, дерево произвольных сплитов (как в tiling WM) ---- */
 #dashGrid{display:none;width:100%;height:100%;overflow:hidden;box-sizing:border-box}
@@ -312,7 +316,7 @@ button,select,input{font:inherit;color:inherit}
 
 /* ---- узел ---- */
 .node{position:absolute;left:0;top:0;width:212px;background:var(--panel);
-  border-radius:3px;user-select:none;isolation:isolate}
+  border-radius:3px;user-select:none;isolation:isolate;box-shadow:0 0 0 1px var(--line),0 2px 8px #0006}
 /* ---- карточная вёрстка узлов ----
    Порты выведены из потока (position:absolute) и не отжимают контент —
    .mid занимает всю высоту от заголовка до низа, точки просто плавают поверх. */
