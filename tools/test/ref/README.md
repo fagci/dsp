@@ -20,3 +20,7 @@ frame whose DCH / VCH blocks are built by the same code MMDVMHost uses to regene
 
 `dstarref.cpp` copies `txHeader()` and its interleave / scramble tables out of the MMDVM firmware (g4klx/MMDVM, `DStarTX.cpp`) — the header
 FEC is done there, not in MMDVMHost — and uses MMDVMHost's `CDStarSlowData` for the slow-data text and `CCRC::addCCITT161` for the CRC.
+
+`dpmrref.cpp` is assembled from dsd-fme (lwvmobile, ISC): the dPMR scrambler, 12×6 de-interleaver, Hamming(12,8), CRC-7 and address conversion
+are copied verbatim (line ranges of `dpmr_voice.c` and `fec.c`) around a small `main`; dsd-fme has no dPMR encoder, so whole frames are only
+checked generator → decoder. `g++ -std=gnu++14 dpmrref.cpp`.

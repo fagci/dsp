@@ -87,6 +87,18 @@ export function setup(){
     if(bad.length > (noisy ? r.voice.length*.25 : 0)) return 'AMBE '+bad.length+' of '+r.voice.length;
     return true;
   };
+  window.dpmrCheck = (r, noisy) => {
+    const k = x => r.recs.filter(q => q.kind === x);
+    if(r.ui.cc !== 5) return 'colour code '+r.ui.cc;
+    if(!k('call').some(q => q.from === '7654321' && q.to === '1234567' && q.cc === 5)) return 'no call: '+JSON.stringify(k('call'));
+    if(r.voice.length < 40) return 'voice frames '+r.voice.length;
+    let x = 0xD9312A; const rnd = () => { x ^= x<<13; x ^= x>>>17; x ^= x<<5; return x & 255; };
+    // те же TCH, что у генератора: по 72 бита (биты — младший бит xorshift), 8 на блок, 6 блоков
+    const exp = new Set(); for(let u=0; u<6; u++) for(let t=0; t<8; t++){ const b = Uint8Array.from({length:72}, () => rnd()&1); exp.add(fskHex(p25Bytes(b))); }
+    const bad = r.voice.filter(v => !exp.has(v.ambe));
+    if(bad.length > (noisy ? r.voice.length*.25 : 0)) return 'TCH '+bad.length+' of '+r.voice.length;
+    return true;
+  };
   window.p25Check = (r, ctl, noisy) => {
     const k = x => r.recs.filter(q => q.kind === x);
     if(r.ui.nac !== 0x293 && r.ui.protos?.p25?.nac !== 0x293) return 'nac '+JSON.stringify(r.ui.nac);
@@ -116,6 +128,25 @@ export function setup(){
 }
 
 export default [
+  {name:'dpmr: dsd-fme primitives — scrambler x⁹+x⁵+1, 12×6 interleave, Hamming(12,8), CRC-7, address digits, colour codes; encoders round trip', arg:V, fn(V){
+    for(let t=0; t<6; t++){
+      const inb = Uint8Array.from(V['dpmr_in'+t], c => +c), want = V['dpmr_deint'+t];
+      if(Array.from(dpmrDeint(dpmrScr(inb))).join('') !== want) return 'descramble + deinterleave '+t;
+      const [okf, dataS] = V['dpmr_ham'+t].split(' '), c = dpmrCch(inb);
+      if(Array.from(c.bits).join('') !== dataS || (c.ham ? '1' : '0') !== okf) return 'Hamming '+t+' '+Array.from(c.bits).join('')+' vs '+dataS;
+      if(dpmrCrc7(c.bits, 41).toString(16).toUpperCase().padStart(2, '0') !== V['dpmr_crc'+t]) return 'CRC-7 '+t;
+    }
+    for(const [v, s] of [[0, '0000000'], [1806845, '1234567'], [4321987, '295219*'], [1464100, '1000000']]) if(dpmrAiToStr(v) !== s || dpmrStrToAi(s) !== v) return 'address '+v;
+    if(dpmrHamEnc([1, 0, 1, 1, 0, 0, 1, 0]).join('') !== V.dpmr_henc) return 'Hamming encoder';
+    for(let i=0; i<64; i++) if(dpmrColor(Uint8Array.from({length:24}, (_, k) => (DPMR_CC[i]>>(23-k))&1)) !== i) return 'colour code '+i;
+    for(let it=0; it<40; it++){
+      const cch = dpmrCchEncode(it&3, (it*37)&4095, it&7, it&3, 1, it&1, (it*911)&0x3FFFF), bad = cch.slice();
+      const d = dpmrCch(cch); if(!d.ok || !d.ham || dmrNum(d.bits, 0, 2) !== (it&3) || dmrNum(d.bits, 2, 12) !== ((it*37)&4095)) return 'CCH round trip '+it;
+      bad[(it*7)%72] ^= 1;
+      const e = dpmrCch(bad); if(!e.ok || dmrNum(e.bits, 2, 12) !== ((it*37)&4095)) return 'CCH with a bit error '+it;
+    }
+    return true;
+  }},
   {name:'dstar: MMDVM firmware header FEC (K=3 convolution, 24×28 interleave, scrambler) and CRC, MMDVMHost slow data text; encoder bit for bit', arg:V, fn(V){
     const h = fskUnhex(V.dstar_header), fec = fskUnhex(V.dstar_fec);
     if(dstarCrc(h, 39) !== (h[39] | (h[40]<<8))) return 'crc';
@@ -387,6 +418,19 @@ export default [
     for(const [[g, w], opt, mode] of cfg){
       const ns = T.build(g, w), r = fskRun(ns, mode === 'late' ? 5 : 4, opt);
       const c = dstarCheck(r, mode, g[0][1].sr === '48000' || !!opt.ppm); if(c !== true) return g[0][1].fsk4+' '+g[0][1].sr+' '+JSON.stringify(opt)+': '+c;
+    }
+    return true;
+  }},
+  {name:'dpmr: generator → decoder (FS2, CC, CCH called / calling IDs, TCH), 256 kS/s, +2 kHz', arg:GEN('256000', 2000, -45, 'dPMR voice', 'dpmr'), fn([g, w]){
+    const ns = T.build(g, w), r = fskRun(ns, 4);
+    const e = T.errors(); if(e.length) return e.join('; ');
+    return dpmrCheck(r);
+  }},
+  {name:'dpmr: 48 kS/s, inverted spectrum, clock ±300 ppm',
+   arg:[[GEN('48000', 1500, -35, 'dPMR voice', 'dpmr'), {}], [GEN('256000', 0, -45, 'dPMR voice', 'dpmr'), {conj:true}], [GEN('256000', 0, -45, 'dPMR voice', 'dpmr'), {ppm:300}], [GEN('256000', 0, -45, 'dPMR voice', 'dpmr'), {ppm:-300}]], fn(cfg){
+    for(const [[g, w], opt] of cfg){
+      const ns = T.build(g, w), r = fskRun(ns, 4, opt);
+      const c = dpmrCheck(r, g[0][1].sr === '48000' || !!opt.ppm); if(c !== true) return g[0][1].sr+' '+JSON.stringify(opt)+': '+c;
     }
     return true;
   }},
