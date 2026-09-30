@@ -277,13 +277,36 @@ export default [
   }},
   {name:'nxdn: convolutional code and CRC — errors and erasures, all three channels', fn(){
     let x = 777; const rnd = n => { x ^= x<<13; x ^= x>>>17; x ^= x<<5; return (x>>>0) % n; };
-    for(const ch of [NXDN_CH.sacch, NXDN_CH.facch1, NXDN_CH.udch]){
+    for(const ch of [NXDN_CH.sacch, NXDN_CH.facch1, NXDN_CH.udch, NXDN_CH.cac]){
       for(let it=0; it<20; it++){
         const d = Uint8Array.from({length:ch.data}, () => rnd(2)), e = nxdnChEncode(ch, d), bad = e.slice();
         for(let k=0; k<2; k++) bad[rnd(ch.len)] ^= 1;
         const r = nxdnChDecode(ch, bad);
         if(!r.ok || r.bits.subarray(0, ch.data).join('') !== d.join('')) return 'channel '+ch.len+' with two bit errors, run '+it;
       }
+    }
+    return true;
+  }},
+  {name:'nxdn: CAC — frames that dsd-fme decodes with CRC 0, error correction, L3 fields', arg:V, fn(V){
+    for(const i of [0, 1]){
+      const e = Uint8Array.from(V['cac_'+i+'_coded'], c => +c), d = V['cac_'+i+'_data'];
+      if(nxdnChEncode(NXDN_CH.cac, Uint8Array.from(d.slice(0, 155), c => +c)).join('') !== e.join('')) return 'CAC encoder '+i;
+      const bad = e.slice(); bad[7] ^= 1; bad[150] ^= 1; bad[290] ^= 1;
+      const r = nxdnChDecode(NXDN_CH.cac, bad);
+      if(!r.ok || r.bits.subarray(0, 155).join('') !== d.slice(0, 155)) return 'CAC decode '+i;
+    }
+    const m = nxdnL3(Uint8Array.from({length:147}, (_, i) => { const b = [[0x04,6,2],[1,3,16],[1234,16,24],[4321,16,40],[9,6,56],[301,10,62]]; for(const [v, n, o] of b) if(i >= o && i < o+n) return (v>>(n-1-i+o))&1; return 0; }));
+    if(m.name !== 'VCALL_ASSGN' || m.from !== 1234 || m.to !== 4321 || m.channel !== 301 || m.timer !== 9) return 'VCALL_ASSGN '+JSON.stringify(m);
+    return true;
+  }},
+  {name:'nxdn: generator → decoder, control channel (CAC: SITE_INFO, VCALL_ASSGN), 256 kS/s, +2 kHz; inverted spectrum', arg:[[GEN('256000', 2000, -45, 'NXDN 9600 control channel (CAC)', 'nxdn'), {}], [GEN('256000', 0, -45, 'NXDN 9600 control channel (CAC)', 'nxdn'), {conj:true}]], fn(cfg){
+    for(const [[g, w], opt] of cfg){
+      const ns = T.build(g, w), r = fskRun(ns, 3, opt), k = r.recs.filter(q => q.kind === 'msg');
+      const e = T.errors(); if(e.length) return e.join('; ');
+      if(r.ui.ran !== 5) return 'ran '+r.ui.ran;
+      if(!k.some(q => q.msg === 'SITE_INFO' && q.location === '123456' && q.ch1 === 17 && q.ch2 === 433 && q.adj === 2 && q.version === 3 && q.source === 'CAC')) return 'no SITE_INFO: '+JSON.stringify(k);
+      if(!k.some(q => q.msg === 'VCALL_ASSGN' && q.from === 1234 && q.to === 4321 && q.channel === 301 && q.source === 'CAC')) return 'no VCALL_ASSGN: '+JSON.stringify(k);
+      if(r.ui.st.cac < 4 || r.ui.st.bad > 1) return 'cac '+r.ui.st.cac+' bad '+r.ui.st.bad;
     }
     return true;
   }},
