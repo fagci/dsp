@@ -1825,10 +1825,25 @@ async function mirisdrOpenDevice(dev, gain){
   const BW=[200000,300000,600000,1536000,5000000,6000000,7000000,8000000];
   await dev.open();
   if(!dev.configuration) await dev.selectConfiguration(1);
-  await dev.claimInterface(0);
+  // alt 3 с bulk на EP1 у RSP1/MSi2500; у остальных ищем bulk IN по дескрипторам всех конфигураций
+  const bulkIn=al=>al.endpoints.find(e=>e.type==='bulk' && e.direction==='in');
+  const cfgs=[dev.configuration, ...dev.configurations.filter(c=>c.configurationValue!==dev.configuration.configurationValue)];
+  let found=null;
+  for(const cfg of cfgs){
+    for(const i of cfg.interfaces){
+      const al=i.alternates.find(a=>a.alternateSetting===3 && bulkIn(a)) || i.alternates.find(bulkIn);
+      if(al){ found={cfg:cfg.configurationValue, itf:i.interfaceNumber, alt:al.alternateSetting, ep:bulkIn(al).endpointNumber}; break; }
+    }
+    if(found) break;
+  }
+  if(!found) throw new Error('no bulk IN endpoint; '+JSON.stringify(dev.configurations.map(c=>({cfg:c.configurationValue,
+    itf:c.interfaces.map(i=>({n:i.interfaceNumber, alts:i.alternates.map(a=>({alt:a.alternateSetting, ep:a.endpoints.map(e=>e.type+' '+e.direction+e.endpointNumber)}))}))}))));
+  if(found.cfg!==dev.configuration.configurationValue) await dev.selectConfiguration(found.cfg);
+  const itf=found.itf, epIn=found.ep;
+  await dev.claimInterface(itf);
   const wreg=(reg,val)=>sdrVendorOut(dev, CMD.WREG, ((val&0xff)<<8)|reg, (val>>>8)&0xffff);
   const conv=mirisdrMakeConv();
-  let tuneEpoch=0, rxOn=false, freq=100000000, rate=2000000, bwIdx=7, band='vhf', reg8=0xf380, bias=false, epIn=1;
+  let tuneEpoch=0, rxOn=false, freq=100000000, rate=2000000, bwIdx=7, band='vhf', reg8=0xf380, bias=false;
   let gr={lna:0, mixbuf:0, mixer:0, bb:59};
 
   // частота дискретизации и формат пакетов (mirisdr_set_hard)
@@ -1929,19 +1944,13 @@ async function mirisdrOpenDevice(dev, gain){
   async function close(){
     if(rxOn) await stream(false).catch(()=>{});
     await wreg(0x03, 0x010000).catch(()=>{});      // усыпить ADC
-    await dev.releaseInterface(0).catch(()=>{});
+    await dev.releaseInterface(itf).catch(()=>{});
     await dev.close();
   }
   // стоп потока и ADC, мог остаться от прошлого сеанса
   await stream(false).catch(()=>{});
   await wreg(0x03, 0x010000);
-  // alt 3 с bulk на EP1 у RSP1/MSi2500; у остальных ищем alt с bulk IN по дескрипторам
-  const alts=dev.configuration?.interfaces.find(i=>i.interfaceNumber===0)?.alternates||[];
-  const bulkIn=al=>al.endpoints.find(e=>e.type==='bulk' && e.direction==='in');
-  const alt=alts.find(al=>al.alternateSetting===3 && bulkIn(al)) || alts.find(bulkIn);
-  if(!alt) throw new Error('no bulk IN endpoint; alternates: '+JSON.stringify(alts.map(al=>({alt:al.alternateSetting, ep:al.endpoints.map(e=>e.type+' '+e.direction+e.endpointNumber)}))));
-  epIn=bulkIn(alt).endpointNumber;
-  await dev.selectAlternateInterface(0, alt.alternateSetting);
+  await dev.selectAlternateInterface(itf, found.alt);
   // инициализация ADC (как драйвер ядра)
   await wreg(0x08, 0x006080); await wreg(0x05, 0x00000c); await wreg(0x00, 0x000200);
   await wreg(0x02, 0x004801); await wreg(0x08, 0x00f380);
