@@ -198,6 +198,86 @@ function p25Tr12Dec(dib){
   return {bytes:p25Bytes(bits), bits, err};
 }
 
+/* ---- трелис ¾ (98 дибитов → 144 бита), таблица как ENCODE_TABLE_34 в MMDVMHost; состояние — предыдущая тройка бит ---- */
+const P25_T34=[0,8,4,12,2,10,6,14, 4,12,2,10,6,14,0,8, 1,9,5,13,3,11,7,15, 5,13,3,11,7,15,1,9, 3,11,7,15,1,9,5,13, 7,15,1,9,5,13,3,11, 2,10,6,14,0,8,4,12, 6,14,0,8,4,12,2,10];
+function p25Tr34Enc(bytes18){
+  const bits=dmrBitsOf(bytes18), pts=new Uint8Array(98);
+  let st=0;
+  for(let i=0;i<49;i++){
+    const x=i<48 ? bits[3*i]*4+bits[3*i+1]*2+bits[3*i+2] : 0, p=P25_PTS[P25_T34[st*8+x]];
+    pts[2*i]=p[0]; pts[2*i+1]=p[1]; st=x;
+  }
+  const out=new Uint8Array(98);
+  for(let i=0;i<98;i++) out[i]=pts[P25_IL[i]];
+  return out;
+}
+function p25Tr34Dec(dib){
+  const pts=new Uint8Array(98);
+  for(let i=0;i<98;i++) pts[P25_IL[i]]=dib[i];
+  let cost=[0,1e9,1e9,1e9,1e9,1e9,1e9,1e9];
+  const back=[];
+  for(let i=0;i<49;i++){
+    const a=pts[2*i], b=pts[2*i+1], nc=new Array(8).fill(1e9), bp=new Uint8Array(8);
+    for(let s=0;s<8;s++){
+      if(cost[s]>=1e9) continue;
+      for(let x=0;x<8;x++){
+        const p=P25_PTS[P25_T34[s*8+x]], d=cost[s]+dmrPop(p[0]^a)+dmrPop(p[1]^b);
+        if(d<nc[x]){ nc[x]=d; bp[x]=s; }
+      }
+    }
+    back.push(bp); cost=nc;
+  }
+  let s=0; for(let x=1;x<8;x++) if(cost[x]<cost[s]) s=x;
+  const err=cost[s], x=new Uint8Array(49);
+  for(let i=48;i>=0;i--){ x[i]=s; s=back[i][s]; }
+  const bits=new Uint8Array(144);
+  for(let i=0;i<48;i++){ bits[3*i]=x[i]>>2; bits[3*i+1]=(x[i]>>1)&1; bits[3*i+2]=x[i]&1; }
+  return {bytes:p25Bytes(bits), bits, err};
+}
+// CRC-32 многоблочного PDU: x³²+…, старший бит первым, начало 0, результат инвертируется
+function p25Crc32(b,n){
+  let r=0;
+  for(let i=0;i<n;i++) for(let k=7;k>=0;k--){ const fb=((r>>>31)&1)^((b[i]>>k)&1); r=(r<<1)>>>0; if(fb) r=(r^0x04C11DB7)>>>0; }
+  return (r^0xFFFFFFFF)>>>0;
+}
+const P25_SAP={0:'user data', 1:'encrypted user data', 2:'circuit data', 3:'circuit data control', 4:'packet data', 5:'ARP', 6:'SNDCP control', 15:'scan preamble', 29:'encryption support',
+  31:'extended address', 32:'registration', 33:'channel reassignment', 34:'system configuration', 35:'loopback', 36:'statistics', 37:'out of service', 38:'paging', 39:'configuration',
+  40:'key management', 41:'encrypted key management', 48:'location', 61:'trunking control', 63:'encrypted trunking control'};
+const P25_RSP_T=['illegal format','CRC32 failure','memory full','FSN sequence error','undeliverable','NS/VR sequence error','invalid user'];
+// заголовок PDU (12 байт, CRC уже проверен) → поля
+function p25PduHead(b){
+  const f={fmt:b[0]&31, an:(b[0]>>6)&1, io:(b[0]>>5)&1, sap:b[1]&63, mfid:b[2], llid:b[3]*65536+b[4]*256+b[5], blocks:b[6]&127, pad:b[7]&31, offset:b[9]&63};
+  f.sapName=P25_SAP[f.sap]||'SAP '+f.sap;
+  if(f.fmt===3){ const c=b[1]>>6, t=(b[1]>>3)&7; f.response=c===0 ? 'ACK' : c===2 ? 'SACK' : 'NACK'+(c===1 && P25_RSP_T[t] ? ' ('+P25_RSP_T[t]+')' : ''); }
+  return f;
+}
+// собранные данные PDU (заголовок + блоки без CRC32/дополнения) → поля: расширенный адрес, шифрование, IP / UDP, NMEA
+function p25PduBody(h,d){
+  const r={}; let sap=h.sap, ptr=0;
+  if(sap===31 && d.length>=12){ r.extSrc=d[3]*65536+d[4]*256+d[5]; sap=d[1]&63; r.extSap=sap; ptr=12; }
+  if(sap===1 && d.length>=ptr+13){
+    const alg=d[ptr+9], kid=d[ptr+10]*256+d[ptr+11];
+    r.crypt={algid:alg, algo:P25_ALGO[alg]||'0x'+alg.toString(16), kid, mi:dmrHex(d,ptr,8)}; sap=d[ptr+12]&63; ptr+=13;
+    if(alg!==0x80){ r.encrypted=true; r.innerSap=sap; return r; }
+  }
+  if(h.offset) ptr=h.offset;
+  const m=d.subarray(ptr);
+  if(sap===0 || sap===4) Object.assign(r,dmrPayload(4,null,m));
+  else if(sap===48){ const t=Array.from(m,c=>c>=32 && c<127 ? String.fromCharCode(c) : c===10||c===13 ? '\n' : '').join(''); Object.assign(r,dmrNmea(t)); r.data=dmrHex(m,0,Math.min(40,m.length)); }
+  else r.data=dmrHex(m,0,Math.min(40,m.length));
+  return r;
+}
+// MBT (SAP 61, формат 0x17 / 0x15): b — заголовок + блоки, opcode в заголовке или в первом блоке
+function p25Mbt(P,b){
+  const alt=(b[0]&31)===0x17, op=(alt ? b[7] : b[12])&63, f={op, mfid:b[2]}, w=(o,n)=>{ let v=0; for(let i=0;i<n;i++) v=v*256+b[o+i]; return v; };
+  if(op===0x3B) Object.assign(f,{name:'NET_STS_BCST', lra:b[3], sysid:w(4,2)&0xFFF, wacn:(b[12]<<12)|(b[13]<<4)|(b[14]>>4), chT:w(15,2), chR:w(17,2)});
+  else if(op===0x3A) Object.assign(f,{name:'RFSS_STS_BCST', lra:b[3], sysid:w(4,2)&0xFFF, rfss:b[12], site:b[13], chT:w(14,2), chR:w(16,2), sysclass:b[18]});
+  else if(op===0x3C) Object.assign(f,{name:'ADJ_STS_BCST', lra:b[3], cfva:b[4]>>4, sysid:w(4,2)&0xFFF, rfss:b[8], site:b[9], chT:w(12,2), chR:w(14,2), sysclass:b[16], wacn:(b[17]<<12)|(b[18]<<4)|(b[19]>>4)});
+  else if(op===0x00) Object.assign(f,{name:'GRP_V_CH_GRANT', svc:b[8], chT:w(14,2), chR:w(16,2), from:w(3,3), to:w(18,2)});
+  else f.name='opcode 0x'+op.toString(16);
+  return f;
+}
+
 /* ---- разбор служебных данных ---- */
 const p25Mhz=f=>f==null ? '?' : (f/1e6).toFixed(5);
 function p25Chan(P,ch){
@@ -300,6 +380,16 @@ function p25HduDecode(F){
   return p25Bytes(p25HexBits(rs.subarray(0,20)));
 }
 // LC / ESS из шести групп по 4 слова Хэмминга (10,6,3); k — число информационных гексабит (12 — LC, 16 — ESS)
+// TDULC: 12 слов Golay(24,12) (по 12 дибитов): 6 слов LC (12 гексабит) и 6 слов RS(24,12,13)-проверки → 72 бита LC или null
+function p25TdulcDecode(F){
+  const hex=new Uint8Array(24);
+  for(let k=0;k<12;k++){
+    const w=fsk4Unpack(p25Data(F,56+12*k,12),0,12), g=m17GolayDec(dmrNum(w,0,24));
+    if(!g) return null;
+    hex[2*k]=g.v>>6; hex[2*k+1]=g.v&63;
+  }
+  return p25RsDec(hex,12)<0 ? null : p25HexBits(hex.subarray(0,12));
+}
 const P25_LCPOS=[200,292,384,476,568,660];
 function p25LduWords(F,k){
   const hex=new Uint8Array(24);
@@ -379,7 +469,15 @@ FSK4.protos.p25={
       } else if(L.blind){ fsk4Drop(L); return; } else P.st.bad++;
     } else if(duid===5 || duid===10){ if(!this.ldu(P,L,F,duid,e,out)) return; }
     else if(duid===3){ P.st.tdu++; this.end(P,L,out,'TDU'); }
-    else if(duid===15){ P.st.tdu++; this.end(P,L,out,'TDULC'); }
+    else if(duid===15){
+      P.st.tdu++;
+      const lc=p25TdulcDecode(F);
+      if(lc){
+        const f=p25Lc(lc);
+        p25Emit(P,L,out,'lc',{...f, source:'TDULC'},'TDULC LC '+f.lcf.toString(16)+(f.type ? ' '+f.type+' '+(f.from!=null ? f.from+' → '+f.to : '') : (f.hex ? ' '+f.hex : '')));
+      } else if(L.blind){ fsk4Drop(L); return; } else P.st.bad++;
+      this.end(P,L,out,'TDULC');
+    }
     this.advance(P,L,len);
   },
   ldu(P,L,F,duid,e,out){
@@ -429,31 +527,74 @@ FSK4.protos.p25={
       'END '+c.from+' → '+c.to+' · '+dur.toFixed(1)+' s · '+c.ldu+' LDU ('+by+')');
     P.call=null;
   },
-  // TSDU: до трёх блоков по 98 дибитов; PDU: только заголовок
+  // TSDU: до трёх блоков по 98 дибитов; PDU: заголовок (½) и блоки данных (½ или ¾); окно — только последний блок (кольцо 1024 символа)
   blocks(P,L,e,out){
-    const k=L.k, span=p25Span(56+98*k), F=fsk4Slice(L,L.next+8*(span-24),span,L.eps);
+    const k=L.k, m0=56+98*(k-1), a=p25Idx(m0), n=p25Span(m0+98)-a, ep=1+L.eps;
+    const F=fsk4Slice(L,Math.round(L.next-184+8*a*ep)+8*(n-1),n,L.eps), dib=new Uint8Array(98);
+    for(let i=0;i<98;i++) dib[i]=F[p25Idx(m0+i)-a];
     P.lastAct=Date.now();
-    const d=p25Tr12Dec(p25Data(F,56+98*(k-1),98)), bits=dmrBitsOf(d.bytes);
+    if(L.duid===7) return this.tsbkBlock(P,L,out,dib,k);
+    return this.pduBlock(P,L,out,dib,k);
+  },
+  tsbkBlock(P,L,out,dib,k){
+    const d=p25Tr12Dec(dib), bits=dmrBitsOf(d.bytes), span=p25Span(56+98*k);
     const ok=dmrCrc16(d.bytes,10)===d.bytes[10]*256+d.bytes[11];
     let last=true;
-    if(L.duid===7){
-      P.st.tsdu+=k===1 ? 1 : 0;
-      if(ok){
-        P.st.tsbk++;
-        const r=p25Tsbk(P,bits);
-        p25Emit(P,L,out,'tsbk',r.f,r.text);
-        last=!!bits[0];
-      } else if(L.blind){ fsk4Drop(L); return; } else P.st.bad++;
-      if(!last && k<3){ L.k++; L.after=this.tail(L,p25Span(56+98*(k+1))); return; }
-      this.advance(P,L,Math.ceil(span/36)*36);
-    } else {
+    P.st.tsdu+=k===1 ? 1 : 0;
+    if(ok){
+      P.st.tsbk++;
+      const r=p25Tsbk(P,bits);
+      p25Emit(P,L,out,'tsbk',r.f,r.text);
+      last=!!bits[0];
+    } else if(L.blind){ fsk4Drop(L); return; } else P.st.bad++;
+    if(!last && k<3){ L.k++; L.after=this.tail(L,p25Span(56+98*(k+1))); return; }
+    this.advance(P,L,Math.ceil(span/36)*36);
+  },
+  pduBlock(P,L,out,dib,k){
+    let pd=L.pdu;
+    if(k===1){
       P.st.pdu++;
-      if(ok){
-        const b=d.bytes, f={fmt:b[0]&31, ao:b[0]>>6, sap:b[1]&63, mfid:b[2], llid:b[3]*65536+b[4]*256+b[5], blocks:b[6]&127};
-        p25Emit(P,L,out,'pdu',f,'PDU fmt 0x'+f.fmt.toString(16)+' SAP '+f.sap+' LLID '+f.llid+' · '+f.blocks+' data blocks');
-      } else P.st.bad++;
-      fsk4Drop(L);                                                // длину данных не отслеживаем: следующий кадр найдёт поиск синхрослова
+      const d=p25Tr12Dec(dib), ok=dmrCrc16(d.bytes,10)===d.bytes[10]*256+d.bytes[11];
+      if(!ok){ if(!L.blind) P.st.bad++; fsk4Drop(L); return; }
+      const h=p25PduHead(d.bytes);
+      pd=L.pdu={h, hb:d.bytes, r34:h.an===1 && h.fmt===0x16, blocks:[], bad:0};
+      if(h.blocks===0){ p25Emit(P,L,out,'pdu',{...h, crc:'none'},'PDU '+this.pduName(h)); return this.pduEnd(P,L,1); }
+      L.k=2; L.after=this.tail(L,p25Span(56+98*2)); return;
     }
+    const b=pd.r34 ? p25Tr34Dec(dib) : p25Tr12Dec(dib);
+    if(b.err>(pd.r34 ? 24 : 16)) pd.bad++;
+    pd.blocks.push(b);
+    if(k<pd.h.blocks+1){ L.k++; L.after=this.tail(L,p25Span(56+98*(k+1))); return; }
+    this.pduDone(P,L,out);
+    this.pduEnd(P,L,k);
+  },
+  pduName(h){ return (h.fmt===3 ? 'response '+h.response : 'fmt 0x'+h.fmt.toString(16))+' · '+h.sapName+' · '+(h.io ? 'to' : 'from')+' LLID '+h.llid; },
+  pduEnd(P,L,k){ this.advance(P,L,Math.ceil(p25Span(56+98*k)/36)*36); },
+  // все блоки собраны: CRC-32, DBSN / CRC-9 (подтверждённые данные), содержимое
+  pduDone(P,L,out){
+    const pd=L.pdu, h=pd.h, n=pd.blocks.length, chunks=[];
+    let crc9=0;
+    if(pd.r34){
+      for(const b of pd.blocks){
+        const bits=b.bits, cb=Array.from(bits.subarray(0,7)).concat(Array.from(bits.subarray(16)));
+        if(dmrCrc9(cb)===((bits[7]<<8)|dmrNum(bits,8,8))) crc9++;
+        chunks.push(b.bytes.subarray(2));
+      }
+    } else for(const b of pd.blocks) chunks.push(b.bytes);
+    const data=p25Cat(...chunks), len=data.length;
+    const want=((data[len-4]<<24)|(data[len-3]<<16)|(data[len-2]<<8)|data[len-1])>>>0, ok=p25Crc32(data,len-4)===want;
+    const f={...h, crc:ok ? 'ok' : 'bad', bytes:Math.max(0,len-4-h.pad)};
+    if(pd.r34) f.confirmedBlocks=crc9+'/'+n;
+    if(h.sap===61 || h.sap===63){
+      if(!ok){ P.st.bad++; return; }
+      const b=p25Cat(pd.hb,data), m=p25Mbt(P,b), {name,...rest}=m;
+      p25Emit(P,L,out,'mbt',{...rest, msg:name},'MBT '+name+(m.chT!=null ? ' '+p25ChanText(P,m.chT) : '')+(m.from!=null ? ' '+m.from+' → '+m.to : '')+(m.sysid!=null ? ' SYS '+m.sysid.toString(16) : ''));
+      return;
+    }
+    if(!ok) P.st.bad++;
+    const body=p25PduBody(h,p25Cat(pd.hb,data.subarray(0,Math.max(0,len-4-h.pad))).subarray(12));
+    const {data:hex,...rest}=body;
+    p25Emit(P,L,out,'pdu',{...f, ...rest, hex},'PDU '+this.pduName(h)+' · '+f.bytes+' B'+(ok ? '' : ' (CRC error)')+(body.service ? ' · '+body.service : '')+(body.message ? ' "'+body.message+'"' : '')+(body.lat!=null ? ' '+body.lat+', '+body.lon : ''));
   }};
 FSK4.order.push('p25');
 
@@ -504,18 +645,70 @@ function p25TsduFrame(nac,blocks){                                  // blocks �
   const body=p25Cat(...blocks), D=56+body.length, len=Math.ceil(p25Span(D)/36)*36;
   return p25Frame(nac,7,body,len);
 }
-// сеанс генератора: 'voice' — HDU, LDU1/2, TDU; иначе — управляющий канал транкинга
+// PDU: заголовок (½) + блоки данных; frame — кадр с DUID 12
+function p25BlockFrame(nac,duid,blocks){
+  const body=p25Cat(...blocks), D=56+body.length, len=Math.ceil(p25Span(D)/36)*36;
+  return p25Frame(nac,duid,body,len);
+}
+function p25PduHeadBlock(o){
+  const b=new Uint8Array(12);
+  b[0]=(o.an<<6)|(o.io<<5)|o.fmt; b[1]=o.b1!=null ? o.b1 : o.sap; b[2]=o.mfid||0; b[3]=o.llid>>16; b[4]=(o.llid>>8)&255; b[5]=o.llid&255;
+  b[6]=0x80|o.blocks; b[7]=o.b7!=null ? o.b7 : (o.pad||0); b[9]=o.offset||0;
+  const c=dmrCrc16(b,10); b[10]=c>>8; b[11]=c&255;
+  return p25Tr12Enc(b);
+}
+const p25Be32=(v)=>Uint8Array.of(v>>>24,(v>>>16)&255,(v>>>8)&255,v&255);
+// неподтверждённый PDU (½): данные + дополнение + CRC-32
+function p25PduUnconf(o,payload){
+  const tot=Math.ceil((payload.length+4)/12)*12, d=new Uint8Array(tot); d.set(payload);
+  d.set(p25Be32(p25Crc32(d,tot-4)),tot-4);
+  const blocks=[]; for(let i=0;i<tot;i+=12) blocks.push(p25Tr12Enc(d.subarray(i,i+12)));
+  return [p25PduHeadBlock({...o,fmt:o.fmt||0x15,blocks:tot/12,pad:tot-4-payload.length}),...blocks];
+}
+// подтверждённый PDU (¾): блоки [DBSN 7, CRC-9 9, 16 байт]
+function p25PduConf(o,payload){
+  const tot=Math.ceil((payload.length+4)/16)*16, d=new Uint8Array(tot); d.set(payload);
+  d.set(p25Be32(p25Crc32(d,tot-4)),tot-4);
+  const blocks=[];
+  for(let i=0;i<tot/16;i++){
+    const chunk=d.subarray(16*i,16*i+16), bits=Array.from({length:7},(_,k)=>((i+1)>>(6-k))&1).concat(Array.from(dmrBitsOf(chunk))), c=dmrCrc9(bits);
+    blocks.push(p25Tr34Enc(p25Cat(Uint8Array.of(((i+1)<<1)|(c>>8),c&255),chunk)));
+  }
+  return [p25PduHeadBlock({...o,an:1,fmt:0x16,blocks:tot/16,pad:tot-4-payload.length}),...blocks];
+}
+// IPv4 + UDP
+function p25Udp(src,dst,port,text){
+  const t=Uint8Array.from(text,c=>c.charCodeAt(0)), n=28+t.length, ip=new Uint8Array(n);
+  ip.set([0x45,0,n>>8,n&255,0,1,0,0,64,17,0,0,...src,...dst,port>>8,port&255,port>>8,port&255,(8+t.length)>>8,(8+t.length)&255,0,0]); ip.set(t,28);
+  return ip;
+}
+function p25TdulcBody(lc72){
+  const hex=p25RsEnc(p25BitsHex(lc72),24), bits=new Uint8Array(288);
+  for(let k=0;k<12;k++){ const g=m17Golay((hex[2*k]<<6)|hex[2*k+1]); for(let i=0;i<24;i++) bits[24*k+i]=(g>>(23-i))&1; }
+  return fsk4Dib(bits);
+}
+// сеанс генератора: 'data' — PDU (IP/UDP, подтверждённые данные, NMEA, MBT, ответ); 'voice' — HDU, LDU1/2, TDU; иначе — управляющий канал транкинга
 function p25Script(mode){
   const nac=0x293, rnd=(()=>{ let x=0x1234567; return ()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return x&255; }; })();
   const imbe=()=>Array.from({length:9},()=>Uint8Array.from({length:18},rnd)), mi=Uint8Array.from([1,2,3,4,5,6,7,8,9]);
   const seq=[];
-  if(mode==='voice'){
+  if(mode==='voice' || mode==='voicelc'){
     seq.push(p25Frame(nac,0,p25HduBody(mi,0,0x80,0,4321),396));
     seq.push(p25Frame(nac,5,p25Ldu1Body(imbe(),'group',0,4321,1234567),864));
     seq.push(p25Frame(nac,10,p25Ldu2Body(imbe(),mi,0x80,0,[0x5A,0]),864));
     seq.push(p25Frame(nac,5,p25Ldu1Body(imbe(),'group',0,4321,1234567),864));
     seq.push(p25Frame(nac,10,p25Ldu2Body(imbe(),mi,0x80,0,[0,0]),864));
-    seq.push(p25Frame(nac,3,new Uint8Array(14),72));
+    if(mode==='voicelc'){ seq.pop(); const lc=new Uint8Array(9); lc[0]=0x0F; lc[3]=0; lc[4]=0x10; lc[5]=0xE1; lc[6]=0x12; lc[7]=0xD6; lc[8]=0x87; seq.push(p25Frame(nac,15,p25TdulcBody(p25BytesBits(lc)),216)); }
+    else seq.push(p25Frame(nac,3,new Uint8Array(14),72));
+  } else if(mode==='data'){
+    const base={an:0,io:1,sap:4,mfid:0,llid:0x123456};
+    seq.push(p25BlockFrame(nac,12,p25PduUnconf(base,p25Udp([10,1,2,3],[10,4,5,6],5000,'HELLO FROM P25 DATA'))));
+    seq.push(p25BlockFrame(nac,12,p25PduConf({...base,llid:0x00ABCD},p25Udp([10,7,8,9],[10,4,5,6],5001,'CONFIRMED DATA PACKET WITH A LONGER PAYLOAD'))));
+    seq.push(p25BlockFrame(nac,12,p25PduUnconf({...base,io:0,sap:48,llid:1234567},Uint8Array.from('$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47',c=>c.charCodeAt(0)))));
+    seq.push(p25BlockFrame(nac,12,[p25PduHeadBlock({an:0,io:1,fmt:3,b1:0x08,sap:0,mfid:0,llid:0x123456,blocks:0})]));
+    // MBT (формат 0x17, opcode в заголовке): NET_STS_BCST — WACN, каналы, CRC-32 в конце блока
+    const mb=new Uint8Array(12); mb.set([0xBE,0xE0,0x00,0x10,0x64,0x10,0x64,0x00]); mb.set(p25Be32(p25Crc32(mb,8)),8);
+    seq.push(p25BlockFrame(nac,12,[p25PduHeadBlock({an:0,io:1,fmt:0x17,sap:0x3D,mfid:0,llid:0x0A0123,blocks:1,b7:0x3B}),p25Tr12Enc(mb)]));
   } else {
     seq.push(p25TsduFrame(nac,[
       p25TsbkBlock(0x3D,0,[[1,4],[100,9],[1,1],[0,8],[100,10],[851012500/5,32]],0),
@@ -529,4 +722,6 @@ function p25Script(mode){
   return fsk4LevelsOf(p25Cat(new Uint8Array(60),...seq,new Uint8Array(60)));
 }
 FSK4.gen['P25 voice']={baud:P25_BAUD, alpha:.2, dev:600, script:()=>p25Script('voice')};
+FSK4.gen['P25 voice, TDULC']={baud:P25_BAUD, alpha:.2, dev:600, script:()=>p25Script('voicelc')};
 FSK4.gen['P25 control channel']={baud:P25_BAUD, alpha:.2, dev:600, script:()=>p25Script('control')};
+FSK4.gen['P25 data (PDU)']={baud:P25_BAUD, alpha:.2, dev:600, script:()=>p25Script('data')};

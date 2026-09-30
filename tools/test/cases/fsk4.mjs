@@ -92,6 +92,9 @@ export function setup(){
     if(r.ui.cc !== 5) return 'colour code '+r.ui.cc;
     if(!k('call').some(q => q.from === '7654321' && q.to === '1234567' && q.cc === 5)) return 'no call: '+JSON.stringify(k('call'));
     if(r.voice.length < 40) return 'voice frames '+r.voice.length;
+    if(!k('header').some(q => q.type === 'communication start' && q.from === '7654321' && q.to === '1234567' && q.modeName === 'voice' && q.format === 1)) return 'no header: '+JSON.stringify(k('header'));
+    if(!k('call').some(q => q.source === 'HEADER')) return 'call not from the header';
+    if(!k('end').some(q => q.by === 'FS3' && q.from === '7654321')) return 'no FS3 end: '+JSON.stringify(k('end'));
     let x = 0xD9312A; const rnd = () => { x ^= x<<13; x ^= x>>>17; x ^= x<<5; return x & 255; };
     // те же TCH, что у генератора: по 72 бита (биты — младший бит xorshift), 8 на блок, 6 блоков
     const exp = new Set(); for(let u=0; u<6; u++) for(let t=0; t<8; t++){ const b = Uint8Array.from({length:72}, () => rnd()&1); exp.add(fskHex(p25Bytes(b))); }
@@ -128,6 +131,17 @@ export function setup(){
 }
 
 export default [
+  {name:'p25: TDULC — Golay(24,12) and RS(24,12,13) against dsd-fme encoders (hexbits in transmission order = reverse of dsd order)', arg:V, fn(V){
+    for(let t=0; t<3; t++){ const [d, p] = V['tdulc_g'+t].split(' '); if((m17Golay(parseInt(d, 2)) & 0xFFF).toString(2).padStart(12, '0') !== p) return 'golay '+t; }
+    const B = s => Uint8Array.from(s, c => +c), dh = p25BitsHex(B(V.tdulc_rsd)), ph = p25BitsHex(B(V.tdulc_rsp));
+    if(Array.from(p25RsEnc(Uint8Array.from(Array.from(dh).reverse()), 24).subarray(12)).reverse().join() !== Array.from(ph).join()) return 'RS(24,12)';
+    // кадр TDULC: кодер → декодер, ошибки в словах
+    const lc = new Uint8Array(9); lc[0] = 0x0F; lc[4] = 0x10; lc[5] = 0xE1; lc[6] = 0x12; lc[7] = 0xD6; lc[8] = 0x87;
+    const F = p25Frame(0x293, 15, p25TdulcBody(dmrBitsOf(lc)), 216), got = p25TdulcDecode(F);
+    if(!got || fskHex(p25Bytes(got)) !== fskHex(lc)) return 'TDULC round trip';
+    for(const i of [60, 61, 100, 150, 190]) F[i] ^= 1;
+    const g2 = p25TdulcDecode(F); return (g2 && fskHex(p25Bytes(g2)) === fskHex(lc)) || 'TDULC with bit errors';
+  }},
   {name:'dpmr: dsd-fme primitives — scrambler x⁹+x⁵+1, 12×6 interleave, Hamming(12,8), CRC-7, address digits, colour codes; encoders round trip', arg:V, fn(V){
     for(let t=0; t<6; t++){
       const inb = Uint8Array.from(V['dpmr_in'+t], c => +c), want = V['dpmr_deint'+t];
@@ -266,13 +280,36 @@ export default [
   }},
   {name:'nxdn: convolutional code and CRC — errors and erasures, all three channels', fn(){
     let x = 777; const rnd = n => { x ^= x<<13; x ^= x>>>17; x ^= x<<5; return (x>>>0) % n; };
-    for(const ch of [NXDN_CH.sacch, NXDN_CH.facch1, NXDN_CH.udch]){
+    for(const ch of [NXDN_CH.sacch, NXDN_CH.facch1, NXDN_CH.udch, NXDN_CH.cac]){
       for(let it=0; it<20; it++){
         const d = Uint8Array.from({length:ch.data}, () => rnd(2)), e = nxdnChEncode(ch, d), bad = e.slice();
         for(let k=0; k<2; k++) bad[rnd(ch.len)] ^= 1;
         const r = nxdnChDecode(ch, bad);
         if(!r.ok || r.bits.subarray(0, ch.data).join('') !== d.join('')) return 'channel '+ch.len+' with two bit errors, run '+it;
       }
+    }
+    return true;
+  }},
+  {name:'nxdn: CAC — frames that dsd-fme decodes with CRC 0, error correction, L3 fields', arg:V, fn(V){
+    for(const i of [0, 1]){
+      const e = Uint8Array.from(V['cac_'+i+'_coded'], c => +c), d = V['cac_'+i+'_data'];
+      if(nxdnChEncode(NXDN_CH.cac, Uint8Array.from(d.slice(0, 155), c => +c)).join('') !== e.join('')) return 'CAC encoder '+i;
+      const bad = e.slice(); bad[7] ^= 1; bad[150] ^= 1; bad[290] ^= 1;
+      const r = nxdnChDecode(NXDN_CH.cac, bad);
+      if(!r.ok || r.bits.subarray(0, 155).join('') !== d.slice(0, 155)) return 'CAC decode '+i;
+    }
+    const m = nxdnL3(Uint8Array.from({length:147}, (_, i) => { const b = [[0x04,6,2],[1,3,16],[1234,16,24],[4321,16,40],[9,6,56],[301,10,62]]; for(const [v, n, o] of b) if(i >= o && i < o+n) return (v>>(n-1-i+o))&1; return 0; }));
+    if(m.name !== 'VCALL_ASSGN' || m.from !== 1234 || m.to !== 4321 || m.channel !== 301 || m.timer !== 9) return 'VCALL_ASSGN '+JSON.stringify(m);
+    return true;
+  }},
+  {name:'nxdn: generator → decoder, control channel (CAC: SITE_INFO, VCALL_ASSGN), 256 kS/s, +2 kHz; inverted spectrum', arg:[[GEN('256000', 2000, -45, 'NXDN 9600 control channel (CAC)', 'nxdn'), {}], [GEN('256000', 0, -45, 'NXDN 9600 control channel (CAC)', 'nxdn'), {conj:true}]], fn(cfg){
+    for(const [[g, w], opt] of cfg){
+      const ns = T.build(g, w), r = fskRun(ns, 3, opt), k = r.recs.filter(q => q.kind === 'msg');
+      const e = T.errors(); if(e.length) return e.join('; ');
+      if(r.ui.ran !== 5) return 'ran '+r.ui.ran;
+      if(!k.some(q => q.msg === 'SITE_INFO' && q.location === '123456' && q.ch1 === 17 && q.ch2 === 433 && q.adj === 2 && q.version === 3 && q.source === 'CAC')) return 'no SITE_INFO: '+JSON.stringify(k);
+      if(!k.some(q => q.msg === 'VCALL_ASSGN' && q.from === 1234 && q.to === 4321 && q.channel === 301 && q.source === 'CAC')) return 'no VCALL_ASSGN: '+JSON.stringify(k);
+      if(r.ui.st.cac < 4 || r.ui.st.bad > 1) return 'cac '+r.ui.st.cac+' bad '+r.ui.st.bad;
     }
     return true;
   }},
@@ -347,6 +384,37 @@ export default [
     if(r.ui.st.bad > 2) return 'FEC errors '+r.ui.st.bad;
     return p25Check(r);
   }},
+  {name:'p25: PDU — rate ¾ trellis (MMDVMHost), CRC-32 and CRC-9 (dsd-fme) vectors', arg:V, fn(V){
+    const pay = fskUnhex(V.tr34_pay), enc = p25Tr34Enc(pay), want = fskDib(V.tr34).subarray(0, 98);
+    if(enc.join('') !== want.join('')) return 'trellis 3/4 encoder';
+    const d = p25Tr34Dec(want);
+    if(fskHex(d.bytes) !== V.tr34_pay || d.err) return 'trellis 3/4 decoder '+fskHex(d.bytes);
+    const bad = want.slice(); bad[60] ^= 1;
+    if(fskHex(p25Tr34Dec(bad).bytes) !== V.tr34_pay) return 'trellis 3/4 with a dibit error';
+    const m = Uint8Array.from({length:64}, (_, i) => (i*13+5)&255);
+    if(p25Crc32(m, 60).toString(16).toUpperCase() !== V.crc32mbf.replace(/^0+/, '')) return 'CRC-32 '+p25Crc32(m, 60).toString(16);
+    const bits = Array.from(dmrBitsOf(m)).slice(0, 135);
+    if(dmrCrc9(bits).toString(16).toUpperCase() !== V.crc9) return 'CRC-9 '+dmrCrc9(bits).toString(16);
+    return true;
+  }},
+  {name:'p25: generator → decoder, data PDUs (UDP, confirmed ¾ data, NMEA location, response, MBT NET_STS_BCST), 256 kS/s, +2 kHz; inverted, clock ±300 ppm',
+   arg:[[GEN('256000', 2000, -45, 'P25 data (PDU)', 'p25'), {}], [GEN('256000', 0, -45, 'P25 data (PDU)', 'p25'), {conj:true}], [GEN('256000', 0, -45, 'P25 data (PDU)', 'p25'), {ppm:300}], [GEN('256000', 0, -45, 'P25 data (PDU)', 'p25'), {ppm:-300}]], fn(cfg){
+    for(const [[g, w], opt] of cfg){
+      const ns = T.build(g, w), r = fskRun(ns, 6, opt), k = r.recs.filter(q => q.kind === 'pdu'), tag = JSON.stringify(opt)+': ';
+      const e = T.errors(); if(e.length) return e.join('; ');
+      const u = k.find(q => q.sap === 4 && q.service === 'UDP 5000');
+      if(!u || u.crc !== 'ok' || u.llid !== 0x123456 || u.io !== 1 || u.ip !== '10.1.2.3 → 10.4.5.6') return tag+'unconfirmed UDP: '+JSON.stringify(k.slice(0, 2));
+      const c = k.find(q => q.an === 1 && q.fmt === 0x16);
+      if(!c || c.crc !== 'ok' || c.confirmedBlocks !== '5/5' || c.llid !== 0xABCD || c.service !== 'UDP 5001' || c.bytes !== 71) return tag+'confirmed data: '+JSON.stringify(c);
+      const n = k.find(q => q.sap === 48);
+      if(!n || n.crc !== 'ok' || Math.abs(n.lat-48.1173) > 1e-3 || Math.abs(n.lon-11.5167) > 1e-3 || n.llid !== 1234567) return tag+'NMEA: '+JSON.stringify(n);
+      if(!k.some(q => q.fmt === 3 && q.response === 'ACK' && q.llid === 0x123456)) return tag+'response: '+JSON.stringify(k.map(q => q.fmt));
+      const m = r.recs.find(q => q.kind === 'mbt');
+      if(!m || m.msg !== 'NET_STS_BCST' || m.wacn !== 0xBEE00 || m.sysid !== 0x123 || m.chT !== 0x1064 || m.lra !== 10) return tag+'MBT: '+JSON.stringify(m);
+      if(r.ui.st.bad > (opt.ppm ? 12 : 2)) return tag+'FEC errors '+r.ui.st.bad;
+    }
+    return true;
+  }},
   {name:'p25: generator → decoder, control channel (IDEN_UP, RFSS / net status, grant, affiliation, services), three TSDU sizes', arg:GEN('256000', -4000, -45, 'P25 control channel', 'p25'), fn([g, w]){
     const ns = T.build(g, w), r = fskRun(ns, 4);
     const e = T.errors(); if(e.length) return e.join('; ');
@@ -374,6 +442,21 @@ export default [
     for(const [[g, w], opt] of cfg){
       const ns = T.build(g, w), r = fskRun(ns, 4, opt), data = g[0][1].fsk4.includes('data');
       const c = nxdnCheck(r, data, g[0][1].sr === '48000' || !!opt.ppm); if(c !== true) return g[0][1].fsk4+' '+g[0][1].sr+' '+JSON.stringify(opt)+': '+c;
+    }
+    return true;
+  }},
+  {name:'nxdn 4800 (2400 Bd): generator → decoder, voice and CAC; 256 kS/s, 48 kS/s, inverted spectrum, clock ±300 ppm',
+   arg:[[GEN('256000', 2000, -45, 'NXDN 4800 voice', 'nxdn48'), {}], [GEN('48000', 1500, -35, 'NXDN 4800 voice', 'nxdn48'), {}],
+        [GEN('256000', 0, -45, 'NXDN 4800 voice', 'nxdn48'), {conj:true}], [GEN('256000', 0, -45, 'NXDN 4800 voice', 'nxdn48'), {ppm:300}], [GEN('256000', 0, -45, 'NXDN 4800 voice', 'nxdn48'), {ppm:-300}],
+        [GEN('256000', 1000, -45, 'NXDN 4800 control channel (CAC)', 'nxdn48'), {}]], fn(cfg){
+    for(const [[g, w], opt] of cfg){
+      const ns = T.build(g, w), r = fskRun(ns, 8, opt), gen = g[0][1].fsk4;
+      const e = T.errors(); if(e.length) return e.join('; ');
+      if(gen.includes('CAC')){
+        if(!r.recs.some(q => q.msg === 'SITE_INFO' && q.location === '123456' && q.source === 'CAC') || !r.recs.some(q => q.msg === 'VCALL_ASSGN' && q.channel === 301)) return 'CAC: '+JSON.stringify(r.recs.slice(0, 3));
+        continue;
+      }
+      const c = nxdnCheck(r, false, g[0][1].sr === '48000' || !!opt.ppm); if(c !== true) return g[0][1].sr+' '+JSON.stringify(opt)+': '+c;
     }
     return true;
   }},
@@ -421,6 +504,18 @@ export default [
     }
     return true;
   }},
+  {name:'dpmr: header word (FS1, HI) — frames encoded by dsdcc (Hamming(12,8), LFSR, 120-bit interleave, CRC-8) decode to the same fields, errors corrected', arg:V, fn(V){
+    for(const line of V.dpmr_hdr){
+      const [ht, called, own, mode, fmt, dib] = line.split(' '), bits = fsk4Unpack(Uint8Array.from(dib, c => +c), 0, 60);
+      const r = dpmrHi(bits);
+      if(!r.ok || r.f.htype !== +ht || r.f.called !== dpmrAiToStr(parseInt(called, 16)) || r.f.own !== dpmrAiToStr(parseInt(own, 16)) || r.f.mode !== +mode || r.f.format !== +fmt) return 'decode '+line.slice(0, 24)+' '+JSON.stringify(r.f);
+      const enc = dpmrHiEncode({htype:+ht, called:r.f.called, own:r.f.own, mode:+mode, format:+fmt});
+      if(enc.join('') !== Array.from(bits).join('')) return 'encoder '+line.slice(0, 24);
+      const bad = bits.slice(); bad[7] ^= 1; bad[80] ^= 1;
+      if(!dpmrHi(bad).ok) return 'two bit errors '+line.slice(0, 24);
+    }
+    return true;
+  }},
   {name:'dpmr: generator → decoder (FS2, CC, CCH called / calling IDs, TCH), 256 kS/s, +2 kHz', arg:GEN('256000', 2000, -45, 'dPMR voice', 'dpmr'), fn([g, w]){
     const ns = T.build(g, w), r = fskRun(ns, 4);
     const e = T.errors(); if(e.length) return e.join('; ');
@@ -435,7 +530,7 @@ export default [
     return true;
   }},
   {name:'fskRx auto: every protocol is picked by its sync words (P25, NXDN, M17, YSF, D-STAR, dPMR, DMR) — one node, all channels',
-   arg:[['P25 voice', 'p25'], ['NXDN 9600 voice', 'nxdn'], ['M17 voice stream', 'm17'], ['YSF V/D mode 2', 'ysf'], ['D-STAR voice', 'dstar'], ['dPMR voice', 'dpmr']], fn(list){
+   arg:[['P25 voice', 'p25'], ['NXDN 9600 voice', 'nxdn'], ['NXDN 4800 voice', 'nxdn'], ['M17 voice stream', 'm17'], ['YSF V/D mode 2', 'ysf'], ['D-STAR voice', 'dstar'], ['dPMR voice', 'dpmr']], fn(list){
     for(const [gen, id] of list){
       const [g, w] = [[['iqGen', {sr:'256000', fc:433e6, mode:'4FSK', off:1000, lvl:-20, noise:-45, fsk4:gen}], ['fskRx', {proto:'auto'}]], ['0.iq>1.in']];
       const ns = T.build(g, w), r = fskRun(ns, 4);
@@ -462,6 +557,14 @@ export default [
       const e = T.errors(); if(e.length) return e.join('; ');
       return ns[2].rows.some(q => q.src === 'P25' && q.kind === 'call') || 'rows '+ns[2].rows.length;
     } finally { Islands.setEnabled(false); }
+  }},
+  {name:'p25: generator → decoder, voice ended by TDULC (link control: call termination, source and destination)', arg:GEN('256000', 2000, -45, 'P25 voice, TDULC', 'p25'), fn([g, w]){
+    const ns = T.build(g, w), r = fskRun(ns, 4);
+    const e = T.errors(); if(e.length) return e.join('; ');
+    const k = x => r.recs.filter(q => q.kind === x);
+    if(!k('lc').some(q => q.source === 'TDULC' && q.type === 'terminate' && q.to === 4321 && q.from === 1234567)) return 'no TDULC LC: '+JSON.stringify(k('lc'));
+    if(!k('end').some(q => q.by === 'TDULC' && q.from === 1234567)) return 'no end: '+JSON.stringify(k('end'));
+    return r.ui.st.bad <= 2 || 'FEC errors '+r.ui.st.bad;
   }},
   {name:'p25: noise alone — no lock, no records', arg:GEN('256000', 2000, -45, 'P25 voice', 'p25'), fn([g, w]){
     g[0][1].mode = 'off'; g[0][1].noise = -30;

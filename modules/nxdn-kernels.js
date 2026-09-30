@@ -23,6 +23,12 @@ function nxdnCrc(bits,n,w,poly){
   for(let i=0;i<n;i++){ const fb=((c&top) ? 1 : 0)^bits[i]; c=(c<<1)&all; if(fb) c^=poly; }
   return c;
 }
+// CAC: сдвиговая схема dsd-fme / спецификации, начало 0xC3EE, конец инвертируется; поле CRC — 16 нулей после данных
+function nxdnCrcCac(bits,n){
+  let c=0xC3EE;
+  for(let i=0;i<n+16;i++){ c=((c<<1)|(i<n ? bits[i] : 0))&0x1FFFF; if(c&0x10000) c=(c&0xFFFF)^0x1021; }
+  return (c^0xFFFF)&0xFFFF;
+}
 const nxdnCrc6=(b,n)=>nxdnCrc(b,n,6,0x27), nxdnCrc12=(b,n)=>nxdnCrc(b,n,12,0x80F), nxdnCrc15=(b,n)=>nxdnCrc(b,n,15,0x4CC5);
 
 /* ---- свёрточный код K=5, r=½: g1 = 1+D³+D⁴, g2 = 1+D+D²+D⁴ (регистр d1 — предыдущий бит) ---- */
@@ -61,6 +67,7 @@ const nxdnIl=(cols,len)=>Array.from({length:len},(_,i)=>(i%cols)*(len/cols)+((i/
 const NXDN_CH={
   sacch:{len:60, il:nxdnIl(12,60), punct:Array.from({length:12},(_,k)=>5+6*k), steps:36, data:26, crc:nxdnCrc6, cw:6, at:36},
   facch1:{len:144, il:nxdnIl(16,144), punct:Array.from({length:48},(_,k)=>1+4*k), steps:96, data:80, crc:nxdnCrc12, cw:12},
+  cac:{len:300, il:nxdnIl(12,300), punct:Array.from({length:50},(_,k)=>3+14*(k>>1)+8*(k&1)), steps:175, data:155, crc:nxdnCrcCac, cw:16},
   udch:{len:348, il:nxdnIl(12,348), punct:Array.from({length:58},(_,k)=>3+14*(k>>1)+8*(k&1)), steps:203, data:184, crc:nxdnCrc15, cw:15, at:36}
 };
 // биты канала (после перемежения — в порядке кадра) → {bits (data+crc), ok, err}
@@ -100,6 +107,10 @@ function nxdnL3(b){
     const ct=dmrNum(b,16,3);
     Object.assign(f,{ccopt:dmrNum(b,8,8), ctype:ct, call:NXDN_CALLTYPE[ct]||'type '+ct, opt:dmrNum(b,19,5), from:dmrNum(b,24,16), to:dmrNum(b,40,16),
       emergency:b[8], cipher:dmrNum(b,56,2), key:dmrNum(b,58,6)});
+    if(type===0x04 || type===0x05 || type===0x0E || type===0x0D){ delete f.cipher; delete f.key; f.timer=dmrNum(b,56,6); f.channel=dmrNum(b,62,10); }
+  } else if(type===0x18 && b.length>=128){
+    Object.assign(f,{location:dmrNum(b,8,24).toString(16).toUpperCase().padStart(6,'0'), cs:dmrNum(b,32,16), svc:dmrNum(b,48,16), rst:dmrNum(b,64,24), ca:dmrNum(b,88,24),
+      version:dmrNum(b,112,8), adj:dmrNum(b,120,4), ch1:dmrNum(b,124,10), ch2:dmrNum(b,134,10)});
   } else if(type===0x03) f.iv=dmrHex(p25Bytes(b.subarray(8,72)));
   else f.hex=dmrHex(p25Bytes(b.subarray(8,b.length&~7)));
   return f;
@@ -118,19 +129,19 @@ FSK4.protos.nxdn={
   id:'nxdn', name:'NXDN', baud:NXDN_BAUD, alpha:.2, lp:5500, levels:4, thrAcq:2, thrLock:4, maxRq:.12, syncs:[NXDN_SYNC],
   init(P){
     P.now=0; P.ran=null; P.call=null; P.recent=[]; P.lastAct=0; P.sf=null; P.eps=0;
-    P.st={frames:0, sacch:0, facch:0, udch:0, voice:0, calls:0, msgs:0, bad:0, locks:0};
+    P.st={frames:0, sacch:0, facch:0, udch:0, cac:0, voice:0, calls:0, msgs:0, bad:0, locks:0};
   },
   reset(P){ P.now=0; P.call=null; P.sf=null; },
   lock(P,L){ P.st.locks++; L.after=8; return {stage:0, first:true, lich:null, eps:P.eps, exp:L.next, blind:false}; },
   ui(P,L,now){
     const s=P.st, c=P.call;
-    const head='NXDN · '+(L ? 'RAN '+(P.ran==null ? '?' : P.ran)+(L.g<0 ? ', inverted' : '') : 'searching sync')+(P.lastAct ? ' · last '+((now-P.lastAct)/1000).toFixed(0)+' s ago' : '');
+    const head=this.name+' · '+(L ? 'RAN '+(P.ran==null ? '?' : P.ran)+(L.g<0 ? ', inverted' : '') : 'searching sync')+(P.lastAct ? ' · last '+((now-P.lastAct)/1000).toFixed(0)+' s ago' : '');
     const cnt=s.frames+' frames · '+s.voice+' voice · '+s.msgs+' messages · '+s.calls+' calls · '+s.bad+' FEC errors';
     return {locked:!!L, ran:P.ran, st:{...s}, age:P.lastAct ? now-P.lastAct : null, call:c, recent:P.recent.slice(-8),
       text:head+'\n'+cnt+'\n'+(c ? c.call+' '+c.from+' → '+c.to+(c.emergency ? ' EMERGENCY' : '')+(c.cipher ? ' encrypted' : '') : 'idle')+(P.recent.length ? '\n'+P.recent.slice(-8).join('\n') : '')};
   },
   frame(P,L,e,out){
-    P.now=e/(FSK4_PH*NXDN_BAUD)*1000;
+    P.now=e/(FSK4_PH*this.baud)*1000;
     if(L.stage===0) this.head(P,L,e,out); else this.body(P,L,e,out);
   },
   // LICH (через 8 дибитов после FSW): чётность — быстрая проверка захвата
@@ -155,7 +166,13 @@ FSK4.protos.nxdn={
     const bits=fsk4Unpack(F,0,NXDN_FR), lich=L.lich;
     P.lastAct=Date.now();
     const bad=()=>{ if(L.blind || L.first){ fsk4Drop(L); return true; } P.st.bad++; return false; };
-    if(lich.rfct===0){ this.advance(P,L); return; }             // RCCH (CAC): каналы управления не разбираются
+    if(lich.rfct===0){                                            // RCCH: CAC 300 бит
+      P.st.cac++;
+      const r=nxdnChDecode(NXDN_CH.cac,bits.subarray(36));
+      if(!r.ok){ if(bad()) return; }
+      else { P.ran=dmrNum(r.bits,2,6); this.l3(P,L,out,r.bits.subarray(8,8+147),'CAC'); }
+      this.advance(P,L); return;
+    }
     if(lich.fct===1){                                             // UDCH / FACCH2
       P.st.udch++;
       const r=nxdnChDecode(NXDN_CH.udch,bits.subarray(36));
@@ -208,7 +225,7 @@ FSK4.protos.nxdn={
     } else if(f.type===0x08 || f.type===0x11 || f.type===0x07){ this.end(P,L,out,f.name); }
     else if(f.type!==0x10){
       const {type,name,...rest}=f;
-      nxdnEmit(P,L,out,'msg',{msg:name, type, ...rest, source:by},name+('from' in f ? ' '+f.from+' → '+f.to : '')+(f.hex ? ' '+f.hex : ''));
+      nxdnEmit(P,L,out,'msg',{msg:name, type, ...rest, source:by},name+('from' in f ? ' '+f.from+' → '+f.to : '')+('channel' in f ? ' ch '+f.channel : '')+('location' in f ? ' site '+f.location+' ch '+f.ch1+(f.ch2 ? '/'+f.ch2 : '') : '')+(f.hex ? ' '+f.hex : ''));
     }
     if(P.call) P.call.frames++;
   },
@@ -220,6 +237,9 @@ FSK4.protos.nxdn={
     P.call=null;
   }};
 FSK4.order.push('nxdn');
+// NXDN 4800: тот же кадр (192 дибита, LICH, каналы, синхро), но 2400 Бод — кадр идёт 80 мс
+FSK4.protos.nxdn48={...FSK4.protos.nxdn, id:'nxdn48', name:'NXDN 4800', baud:NXDN_BAUD/2, lp:2750};
+FSK4.order.push('nxdn48');
 
 /* ---- генератор ---- */
 const NXDN_FSW=Uint8Array.from('11001101111101011001',c=>+c);
@@ -229,6 +249,7 @@ function nxdnFrame(o){
   const lb=nxdnLichBits(o.rfct,o.fct,o.opt,o.dir);
   for(let i=0;i<8;i++){ b[20+2*i]=(lb>>(7-i))&1; b[21+2*i]=1; }
   if(o.udch) b.set(nxdnChEncode(NXDN_CH.udch,o.udch),36);
+  else if(o.cac) b.set(nxdnChEncode(NXDN_CH.cac,o.cac),36);
   else {
     b.set(nxdnChEncode(NXDN_CH.sacch,o.sacch),36);
     for(let h=0;h<2;h++) b.set(o.slot[h],96+144*h);
@@ -255,6 +276,12 @@ function nxdnScript(mode){
     // FACCH1 с TX_REL вместо второго слота
     const tx=nxdnVcall(0x08,1234,4321,1,0,0,0), fa=nxdnChEncode(NXDN_CH.facch1,p25Cat(tx.subarray(0,72),new Uint8Array(8)));
     seq.push(nxdnFrame({rfct:2,fct:2,opt:2,dir:1,sacch:nxdnSacchData(ran,3,new Uint8Array(18)), slot:[p25Cat(voice(),voice()),fa]}));
+  } else if(mode==='cac'){
+    // канал управления: SITE_INFO (сайт, каналы) и VCALL_ASSGN
+    const cac=(l3)=>{ const d=new Uint8Array(155); for(let i=0;i<6;i++) d[2+i]=(ran>>(5-i))&1; d.set(l3,8); return d; };
+    const site=nxdnBitsOf([[0x18,6,2],[0x123456,24,8],[0x0201,16,32],[0x8F01,16,48],[0,24,64],[0,24,88],[3,8,112],[2,4,120],[17,10,124],[433,10,134]],147);
+    const asg=nxdnBitsOf([[0x04,6,2],[0,8,8],[1,3,16],[0,5,19],[1234,16,24],[4321,16,40],[9,6,56],[301,10,62]],147);
+    for(let k=0;k<2;k++) seq.push(nxdnFrame({rfct:0,fct:0,opt:0,dir:1,cac:cac(site)}), nxdnFrame({rfct:0,fct:0,opt:0,dir:1,cac:cac(asg)}));
   } else {
     // UDCH: заголовок вызова данных (DCALL_HEADER) и произвольное сообщение
     const dh=nxdnVcall(0x09,777,888,4,2,0,0), ud=new Uint8Array(184); for(let i=0;i<6;i++) ud[2+i]=(ran>>(5-i))&1; ud.set(dh,8);
@@ -266,3 +293,6 @@ function nxdnScript(mode){
 }
 FSK4.gen['NXDN 9600 voice']={baud:NXDN_BAUD, alpha:.2, dev:648, script:()=>nxdnScript('voice')};
 FSK4.gen['NXDN 9600 data and FACCH1']={baud:NXDN_BAUD, alpha:.2, dev:648, script:()=>nxdnScript('data')};
+FSK4.gen['NXDN 9600 control channel (CAC)']={baud:NXDN_BAUD, alpha:.2, dev:648, script:()=>nxdnScript('cac')};
+FSK4.gen['NXDN 4800 voice']={baud:NXDN_BAUD/2, alpha:.2, dev:324, script:()=>nxdnScript('voice')};
+FSK4.gen['NXDN 4800 control channel (CAC)']={baud:NXDN_BAUD/2, alpha:.2, dev:324, script:()=>nxdnScript('cac')};
