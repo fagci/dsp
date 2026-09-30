@@ -1503,6 +1503,7 @@ function bindDashResizer(rz,t,i){                       // тащим грани
 function setDash(on){
   if(on && !dashGridEl) return;                        // старый закэшированный index.html без #dashGrid — тихо выходим
   dashMode=on; redrawAll();
+  LS.set('dsp-dash',on?'1':'');                        // режим переживает перезагрузку страницы
   cv.classList.toggle('dashboard',on);
   setSideCollapsed(on ? true : sideCollapsedPref);     // в тайлах сайдбар мешает — прячем, при выходе возвращаем как было
   dashBtn?.classList.toggle('on',on);
@@ -1979,6 +1980,7 @@ applyView();
 buildBuiltinPresets();
 const a=LS.get(AKEY)||LS.get('dsp-patch');
 if(a){ try{ deserialize(JSON.parse(a)); }catch(e){ buildDemo(); } } else buildDemo();
+if(LS.get('dsp-dash')==='1') setDash(true);
 fitViewWhenReady();                                 // сразу видно весь патч, а не дефолтный центр холста
 Undo.stack=[]; Undo.idx=-1; Undo.push();
 graphDirty=false;                                   // старт приложения — не пользовательское изменение
