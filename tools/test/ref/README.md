@@ -13,3 +13,7 @@ uses; the parity here is the XOR of the four high bits (as in dsd-fme), so the R
 
 `m17ref.c` is built against libm17 (M17-Project, GPLv2+): `gcc -O1 -I. m17ref.c m17.c */*.c -lm` (without `unit_tests`). It prints the
 LSF fields and every frame type as 192 dibits (0 = +1, 1 = +3, 2 = −1, 3 = −3), sync burst included.
+
+`ysfref.cpp` builds against YSFFICH / YSFPayload / YSFConvolution / CRC / Sync / Golay24128 / Hamming / AMBEFEC (`#define private public`
+gives it access to the raw FICH bytes). It prints a FICH encoded by MMDVMHost, a header frame from `writeHeader` and a V/D mode 2
+frame whose DCH / VCH blocks are built by the same code MMDVMHost uses to regenerate them.

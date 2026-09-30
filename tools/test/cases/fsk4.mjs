@@ -65,6 +65,14 @@ export function setup(){
     if(bad.length > (noisy ? r.voice.length*.25 : 0)) return 'Codec 2 bytes '+bad.length+' of '+r.voice.length+': fn '+bad[0].fn;
     return true;
   };
+  window.ysfCheck = (r, vd1, noisy) => {
+    const k = x => r.recs.filter(q => q.kind === x);
+    if(!k('call').some(q => q.from === 'N0CALL' && q.to === 'CQCQCQ' && q.downlink === 'DOWNLINK' && q.uplink === 'UPLINK' && q.dgid === 7 && q.dtype === (vd1 ? 'V/D mode 1' : 'V/D mode 2'))) return 'no call: '+JSON.stringify(k('call'));
+    if(!k('end').some(q => q.by === 'terminator')) return 'no terminator';
+    if(r.voice.length < 35) return 'voice blocks '+r.voice.length;
+    if(!noisy && r.ui.st.bad > 2) return 'FEC errors '+r.ui.st.bad;
+    return true;
+  };
   window.p25Check = (r, ctl, noisy) => {
     const k = x => r.recs.filter(q => q.kind === x);
     if(r.ui.nac !== 0x293 && r.ui.protos?.p25?.nac !== 0x293) return 'nac '+JSON.stringify(r.ui.nac);
@@ -94,6 +102,26 @@ export function setup(){
 }
 
 export default [
+  {name:'ysf: MMDVMHost frames — FICH (Golay + convolution + CRC-16), header CSD1 / CSD2, V/D mode 2 DCH and VCH; encoders equal', arg:V, fn(V){
+    const B = h => dmrBitsOf(fskUnhex(h));
+    let r = ysfFichDecode(B(V.ysf_fich_vd2).subarray(40, 240)), f = r && ysfFich(r.f);
+    if(!f || f.fi !== 1 || f.fn !== 3 || f.ft !== 6 || f.mr !== 1 || f.dt !== 2 || f.dgid !== 5 || !f.sql) return 'FICH VD2 '+JSON.stringify(f);
+    r = ysfFichDecode(B(V.ysf_fich_hdr).subarray(40, 240)); f = r && ysfFich(r.f);
+    if(!f || f.fi !== 0 || f.cs !== 2 || f.cm !== 1 || f.bn !== 1 || f.bt !== 2 || f.fn !== 5 || f.ft !== 7 || !f.dev || f.mr !== 2 || f.dt !== 0 || f.dgid !== 18) return 'FICH header '+JSON.stringify(f);
+    const hd = B(V.ysf_frame_hdr), d1 = ysfDchDecode(hd, 240, 1), d2 = ysfDchDecode(hd, 312, 1);
+    if(!d1 || ysfText(d1.subarray(0, 10)) !== 'CQCQCQ' || ysfText(d1.subarray(10, 20)) !== 'N0CALL') return 'CSD1';
+    if(!d2 || ysfText(d2.subarray(0, 10)) !== 'DOWNLINK' || ysfText(d2.subarray(10, 20)) !== 'UPLINK') return 'CSD2';
+    const v2 = B(V.ysf_frame_vd2), dd = ysfDchDecode(v2, 240, 2);
+    if(!dd || ysfText(dd) !== 'N0CALL') return 'VD2 DCH';
+    for(let j=0; j<5; j++) if(fskHex(ysfVch(v2, 240+144*j+40)) !== fskHex(Uint8Array.from({length:13}, (_, i) => j*16+i+1))) return 'VD2 VCH '+j;
+    const enc = new Uint8Array(960); enc.set(Uint8Array.from(YSF_SYNC.bits, c => +c)); enc.set(ysfFichEncode(Uint8Array.of(1<<6, (1<<3)|6, 2, 7)), 40);
+    ysfDchEncode(ysfPad('N0CALL', 10), 2, enc, 240); for(let j=0; j<5; j++) ysfVchEncode(Uint8Array.from({length:13}, (_, i) => j*16+i+1), enc, 240+144*j+40);
+    if(enc.join('') !== Array.from(v2).join('')) return 'V/D mode 2 frame encoder';
+    const e2 = new Uint8Array(960); e2.set(Uint8Array.from(YSF_SYNC.bits, c => +c)); e2.set(ysfFichEncode(Uint8Array.of(0, 6, 1, 0)), 40);
+    ysfDchEncode(p25Cat(ysfPad('CQCQCQ', 10), ysfPad('N0CALL', 10)), 1, e2, 240); ysfDchEncode(p25Cat(ysfPad('DOWNLINK', 10), ysfPad('UPLINK', 10)), 1, e2, 312);
+    if(e2.join('') !== Array.from(hd).join('')) return 'header frame encoder';
+    return true;
+  }},
   {name:'m17: libm17 frames — LSF, six stream frames (LICH Golay, FN, Codec 2 bytes), packet, BERT: encoders bit for bit; callsigns, CRC-16, decoders', arg:V, fn(V){
     const D = h => Uint8Array.from(h, c => +c), lsf = new Uint8Array(30);
     lsf.set(fskUnhex(V.m17_lsf_dst), 0); lsf.set(fskUnhex(V.m17_lsf_src), 6); lsf.set(fskUnhex(V.m17_lsf_type), 12); lsf.set(fskUnhex(V.m17_lsf_meta), 14); lsf.set(fskUnhex(V.m17_lsf_crc), 28);
@@ -302,6 +330,20 @@ export default [
     for(const [[g, w], opt] of cfg){
       const ns = T.build(g, w), r = fskRun(ns, 4, opt), pkt = g[0][1].fsk4.includes('packet');
       const c = m17Check(r, pkt, g[0][1].sr === '48000' || !!opt.ppm); if(c !== true) return g[0][1].fsk4+' '+g[0][1].sr+' '+JSON.stringify(opt)+': '+c;
+    }
+    return true;
+  }},
+  {name:'ysf: generator → decoder, V/D mode 2 (header, FN 0…6 callsigns, 5 VCH per frame, terminator), 256 kS/s, +2 kHz', arg:GEN('256000', 2000, -45, 'YSF V/D mode 2', 'ysf'), fn([g, w]){
+    const ns = T.build(g, w), r = fskRun(ns, 4);
+    const e = T.errors(); if(e.length) return e.join('; ');
+    return ysfCheck(r, false);
+  }},
+  {name:'ysf: generator → decoder, V/D mode 1; 48 kS/s, inverted spectrum, clock ±300 ppm',
+   arg:[[GEN('256000', -3000, -45, 'YSF V/D mode 1', 'ysf'), {}], [GEN('48000', 1500, -35, 'YSF V/D mode 2', 'ysf'), {}],
+        [GEN('256000', 0, -45, 'YSF V/D mode 2', 'ysf'), {conj:true}], [GEN('256000', 0, -45, 'YSF V/D mode 2', 'ysf'), {ppm:300}], [GEN('256000', 0, -45, 'YSF V/D mode 2', 'ysf'), {ppm:-300}]], fn(cfg){
+    for(const [[g, w], opt] of cfg){
+      const ns = T.build(g, w), r = fskRun(ns, 4, opt);
+      const c = ysfCheck(r, g[0][1].fsk4.includes('mode 1'), g[0][1].sr === '48000' || !!opt.ppm); if(c !== true) return g[0][1].fsk4+' '+g[0][1].sr+' '+JSON.stringify(opt)+': '+c;
     }
     return true;
   }},
