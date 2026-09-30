@@ -792,9 +792,6 @@ log.size.w=520; applySize(log);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
-const vc=addNode('mbeVoice',920,360,{}); vc.size.w=340; applySize(vc);
-const dc=addNode('dac',920,540,{vol:.5});
-addEdge(de.id,'voice',vc.id,'voice'); addEdge(vc.id,'out',dc.id,'L'); addEdge(vc.id,'out',dc.id,'R');
 markWiresDirty();
 });
 preset('ISM 433: Sensors and Remotes (Generator)', function(){
@@ -2519,6 +2516,9 @@ addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 const vc=addNode('mbeVoice',920,240,{}); vc.size.w=340; applySize(vc);
 const dc=addNode('dac',920,420,{vol:.5});
 addEdge(de.id,'voice',vc.id,'voice'); addEdge(vc.id,'out',dc.id,'L'); addEdge(vc.id,'out',dc.id,'R');
+const ml=addNode('msgLog',1300,240,{}); ml.size.w=460; ml.size.h=300; applySize(ml);
+const sl=addNode('subLog',1300,580,{}); sl.size.w=460; sl.size.h=300; applySize(sl);
+addEdge(de.id,'rec',ml.id,'rec'); addEdge(de.id,'rec',sl.id,'rec');
 markWiresDirty();
 });
 preset('4FSK Digital Voice: Any System (USB SDR)', function(){
@@ -2537,6 +2537,12 @@ log.size.w=560; applySize(log);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+const vc=addNode('mbeVoice',920,360,{}); vc.size.w=340; applySize(vc);
+const dc=addNode('dac',920,540,{vol:.5});
+addEdge(de.id,'voice',vc.id,'voice'); addEdge(vc.id,'out',dc.id,'L'); addEdge(vc.id,'out',dc.id,'R');
+const ml=addNode('msgLog',1300,360,{}); ml.size.w=460; ml.size.h=300; applySize(ml);
+const sl=addNode('subLog',1300,700,{}); sl.size.w=460; sl.size.h=300; applySize(sl);
+addEdge(de.id,'rec',ml.id,'rec'); addEdge(de.id,'rec',sl.id,'rec');
 markWiresDirty();
 });
 preset('Analog TV: Test Card (Generator)', function(){
