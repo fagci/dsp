@@ -43,11 +43,11 @@ function fsk4Sync(bits,extra){
 // ошибок в бит между регистром (24+24 бита) и шаблоном; xm — 0xAAAAAA для инверсии
 function fsk4Dist(hi,lo,p,xm){ return fsk4Pop(((hi^xm^p.hi)&p.mhi)>>>0)+fsk4Pop(((lo^xm^p.lo)&p.mlo)>>>0); }
 
-/* ---- кадр: дибиты по захвату (e — шаг последнего дибита) ---- */
-function fsk4Slice(L,e,count){
-  const ring=L.ch.ring[e&7], k0=e>>3, F=new Uint8Array(count);
+/* ---- кадр: дибиты по захвату (e — шаг последнего дибита; eps — уход такта передатчика, доля: длинные кадры) ---- */
+function fsk4Slice(L,e,count,eps){
+  const F=new Uint8Array(count), s0=e-8*(count-1), ep=1+(eps||0), ring=L.ch.ring;
   for(let i=0;i<count;i++){
-    const z=(ring[(k0-(count-1-i))&FSK4_RM]-L.o)/L.g;
+    const jj=Math.round(s0+8*i*ep), z=(ring[jj&7][(jj>>3)&FSK4_RM]-L.o)/L.g;
     F[i]=z>2 ? 1 : z>0 ? 0 : z>-2 ? 2 : 3;
   }
   return F;
@@ -127,7 +127,7 @@ function fsk4Node(pick,title){
       for(const ch of n.ch) if(ch.lock){ ui.active=ch.lock.proto.id; }
       for(const id of n.ids){
         const pr=FSK4.protos[id], L=n.ch.map(c=>c.lock).find(l=>l && l.proto===pr) || null;
-        ui.protos[id]=pr.ui(n.pr[id],L,now);
+        ui.protos[id]=pr.ui(n.pr[id],L,now,n);
       }
       n.ui=n.ids.length===1 ? Object.assign(ui,ui.protos[n.ids[0]]) : ui;
       return {rec:out.recs.length ? out.recs : null, voice:out.voice.length ? out.voice : null};
@@ -219,3 +219,12 @@ function fsk4Generate(n,sr,N,cfg){
 function fsk4LevelsOf(dib){ const r=new Float32Array(dib.length); for(let i=0;i<dib.length;i++) r[i]=FSK4_LEV[dib[i]]; return r; }
 // биты (0/1) → дибиты
 function fsk4Dib(bits){ const d=new Uint8Array(bits.length>>1); for(let i=0;i<d.length;i++) d[i]=bits[2*i]*2+bits[2*i+1]; return d; }
+
+// протоколы для IQ-генератора: имя → {baud, alpha, dev (Гц на единицу уровня), script(): цикл уровней}
+FSK4.gen={};
+function fsk4GenIq(n,sr,N){
+  const c=FSK4.gen[n.p.fsk4] || FSK4.gen[Object.keys(FSK4.gen)[0]];
+  return fsk4Generate(n,sr,N,{key:n.p.fsk4, baud:c.baud, alpha:c.alpha, dev:c.dev, script:c.script});
+}
+// универсальный приёмник: один протокол или все сразу (автоопределение по синхрословам)
+IQK.fskRx=fsk4Node(n=>{ const p=n.p.proto; return !p || p==='auto' ? FSK4.order.slice() : FSK4.protos[p] ? [p] : FSK4.order.slice(); });

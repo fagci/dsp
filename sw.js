@@ -59,6 +59,7 @@ const SHELL=[
   './modules/ism-kernels.js?v=103',
   './modules/fsk4-kernels.js?v=103',
   './modules/dmr-kernels.js?v=103',
+  './modules/p25-kernels.js?v=103',
   './modules/iq.js?v=103',
   './modules/adsb.js?v=103',
   './modules/lrpt.js?v=103',
@@ -67,6 +68,7 @@ const SHELL=[
   './modules/mpt1327.js?v=103',
   './modules/ism.js?v=103',
   './modules/dmr.js?v=103',
+  './modules/fsk4.js?v=103',
   './presets.js?v=103',
   './core-graph.js?v=103',
 ];

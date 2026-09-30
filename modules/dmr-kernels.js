@@ -381,9 +381,11 @@ FSK4.protos.dmr={
   },
   // синхрослово голоса и данных — двойники (инверсия): после определения полярности знак задан FEC
   gain(L,f){ return L.polOk && Math.sign(f.g)!==Math.sign(L.g) ? -f.g : f.g; },
-  ui(P,L,now){
-    return {cc:P.cc, st:{...P.st}, locked:!!L, mode:L ? L.mode : null, inv:L ? L.g<0 : null,
+  ui(P,L,now,n){
+    const u={cc:P.cc, st:{...P.st}, locked:!!L, mode:L ? L.mode : null, inv:L ? L.g<0 : null,
       age:P.lastAct ? now-P.lastAct : null, slots:P.slots.map(dmrSlotLine), recent:P.recent.slice(-8), sys:P.sys};
+    u.text=dmrUiText(u,n.fs,n.M);
+    return u;
   },
   // кадр 144 дибита, последний — на шаге e
   frame(P,L,e,out){
@@ -409,6 +411,15 @@ FSK4.protos.dmr={
     L.fn++;
   }};
 FSK4.order.push('dmr');
+function dmrUiText(u,fs,M){
+  const s=u.st, ts=u.mode==='bs' || u.mode==='direct' ? ['TS1','TS2'] : ['slot A','slot B'];
+  const head=(fs/1000).toFixed(1)+' kS/s'+(M>1 ? ' (÷'+M+')' : '')+' · '+
+    (u.locked ? ({bs:'repeater',ms:'mobile',direct:'direct mode'})[u.mode]+(u.inv ? ', inverted' : '')+' · CC '+(u.cc==null ? '?' : u.cc) : 'searching sync')+
+    (u.age!=null ? ' · last '+(u.age/1000).toFixed(0)+' s ago' : '');
+  const cnt=s.bursts+' bursts · '+s.voice+' voice · '+s.data+' data · '+s.csbk+' CSBK · '+s.msgs+' messages · '+s.bad+' FEC errors'+
+    (u.sys ? ' · net '+u.sys.net+' site '+u.sys.site : '');
+  return head+'\n'+cnt+'\n'+u.slots.map((l,i)=>ts[i]+': '+l).join('\n')+(u.recent.length ? '\n'+u.recent.join('\n') : '');
+}
 IQK.dmrRx=fsk4Node(()=>['dmr']);
 // 2 — слот-тип данных сошёлся с синхрословом данных, 1 — сошёлся EMB
 function dmrFecScore(F,L){
