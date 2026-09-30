@@ -381,6 +381,37 @@ export default [
     if(r.ui.st.bad > 2) return 'FEC errors '+r.ui.st.bad;
     return p25Check(r);
   }},
+  {name:'p25: PDU — rate ¾ trellis (MMDVMHost), CRC-32 and CRC-9 (dsd-fme) vectors', arg:V, fn(V){
+    const pay = fskUnhex(V.tr34_pay), enc = p25Tr34Enc(pay), want = fskDib(V.tr34).subarray(0, 98);
+    if(enc.join('') !== want.join('')) return 'trellis 3/4 encoder';
+    const d = p25Tr34Dec(want);
+    if(fskHex(d.bytes) !== V.tr34_pay || d.err) return 'trellis 3/4 decoder '+fskHex(d.bytes);
+    const bad = want.slice(); bad[60] ^= 1;
+    if(fskHex(p25Tr34Dec(bad).bytes) !== V.tr34_pay) return 'trellis 3/4 with a dibit error';
+    const m = Uint8Array.from({length:64}, (_, i) => (i*13+5)&255);
+    if(p25Crc32(m, 60).toString(16).toUpperCase() !== V.crc32mbf.replace(/^0+/, '')) return 'CRC-32 '+p25Crc32(m, 60).toString(16);
+    const bits = Array.from(dmrBitsOf(m)).slice(0, 135);
+    if(dmrCrc9(bits).toString(16).toUpperCase() !== V.crc9) return 'CRC-9 '+dmrCrc9(bits).toString(16);
+    return true;
+  }},
+  {name:'p25: generator → decoder, data PDUs (UDP, confirmed ¾ data, NMEA location, response, MBT NET_STS_BCST), 256 kS/s, +2 kHz; inverted, clock ±300 ppm',
+   arg:[[GEN('256000', 2000, -45, 'P25 data (PDU)', 'p25'), {}], [GEN('256000', 0, -45, 'P25 data (PDU)', 'p25'), {conj:true}], [GEN('256000', 0, -45, 'P25 data (PDU)', 'p25'), {ppm:300}], [GEN('256000', 0, -45, 'P25 data (PDU)', 'p25'), {ppm:-300}]], fn(cfg){
+    for(const [[g, w], opt] of cfg){
+      const ns = T.build(g, w), r = fskRun(ns, 6, opt), k = r.recs.filter(q => q.kind === 'pdu'), tag = JSON.stringify(opt)+': ';
+      const e = T.errors(); if(e.length) return e.join('; ');
+      const u = k.find(q => q.sap === 4 && q.service === 'UDP 5000');
+      if(!u || u.crc !== 'ok' || u.llid !== 0x123456 || u.io !== 1 || u.ip !== '10.1.2.3 → 10.4.5.6') return tag+'unconfirmed UDP: '+JSON.stringify(k.slice(0, 2));
+      const c = k.find(q => q.an === 1 && q.fmt === 0x16);
+      if(!c || c.crc !== 'ok' || c.confirmedBlocks !== '5/5' || c.llid !== 0xABCD || c.service !== 'UDP 5001' || c.bytes !== 71) return tag+'confirmed data: '+JSON.stringify(c);
+      const n = k.find(q => q.sap === 48);
+      if(!n || n.crc !== 'ok' || Math.abs(n.lat-48.1173) > 1e-3 || Math.abs(n.lon-11.5167) > 1e-3 || n.llid !== 1234567) return tag+'NMEA: '+JSON.stringify(n);
+      if(!k.some(q => q.fmt === 3 && q.response === 'ACK' && q.llid === 0x123456)) return tag+'response: '+JSON.stringify(k.map(q => q.fmt));
+      const m = r.recs.find(q => q.kind === 'mbt');
+      if(!m || m.msg !== 'NET_STS_BCST' || m.wacn !== 0xBEE00 || m.sysid !== 0x123 || m.chT !== 0x1064 || m.lra !== 10) return tag+'MBT: '+JSON.stringify(m);
+      if(r.ui.st.bad > (opt.ppm ? 12 : 2)) return tag+'FEC errors '+r.ui.st.bad;
+    }
+    return true;
+  }},
   {name:'p25: generator → decoder, control channel (IDEN_UP, RFSS / net status, grant, affiliation, services), three TSDU sizes', arg:GEN('256000', -4000, -45, 'P25 control channel', 'p25'), fn([g, w]){
     const ns = T.build(g, w), r = fskRun(ns, 4);
     const e = T.errors(); if(e.length) return e.join('; ');
