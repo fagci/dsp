@@ -5,7 +5,7 @@
 // DSP — в modules/iq-kernels.js. Узлы с kernel движок собирает в острова и считает
 // в воркере (см. core-islands.js), без воркеров — здесь же, в главном потоке.
 
-const IQ_SR_OPTS=['48000','96000','192000','240000','250000','256000','1024000','2000000','2048000','2400000'];
+const IQ_SR_OPTS=['48000','96000','192000','240000','250000','256000','1024000','2000000','2048000','2400000','8000000','10000000','12000000','16000000','20000000'];
 const iqCtx={get block(){ return BLOCK; }, get sr(){ return Eng.sr; }};
 // def с ядром из IQK: process/init в главном потоке, readout — по n.ui
 function defIQ(d, text){
@@ -21,7 +21,7 @@ defIQ({ id:'iqGen', title:'IQ Generator', cat:'IQ',
   ins:[{n:'fc',t:'num'},{n:'off',t:'num'}], outs:[{n:'iq',t:'iq'}],
   params:[{n:'sr',t:'select',opts:IQ_SR_OPTS,d:'1024000',label:'sample rate'},
           {n:'fc',t:'num',d:100000000,label:'center frequency, Hz'},
-          {n:'mode',t:'select',opts:['carrier','AM','FM','WFM stereo','USB','LSB','ADS-B','LRPT','RS41','STD-C','MPT1327','DMR','4FSK','ISM433','off'],d:'FM'},
+          {n:'mode',t:'select',opts:['carrier','AM','FM','WFM stereo','USB','LSB','ADS-B','LRPT','RS41','STD-C','MPT1327','DMR','4FSK','ISM433','Analog TV','off'],d:'FM'},
           {n:'off',t:'num',d:100000,label:'signal offset from center, Hz'},
           {n:'lvl',t:'range',min:-100,max:0,step:1,d:-20,label:'signal level, dBFS'},
           {n:'tone',t:'range',min:50,max:10000,step:1,d:1000,log:true,label:'modulating tone, Hz'},
@@ -32,6 +32,9 @@ defIQ({ id:'iqGen', title:'IQ Generator', cat:'IQ',
           {n:'dmr',t:'select',opts:['repeater (BS)','inbound (MS)','direct TS1','direct TS2'],d:'repeater (BS)',label:'DMR: repeater downlink (2 slots, CACH), MS uplink or direct mode'},
           {n:'fsk4',t:'select',opts:Object.keys(FSK4.gen),d:Object.keys(FSK4.gen)[0],label:'4FSK: digital voice / trunking test signal (protocol)'},
           {n:'ism',t:'select',opts:['OOK','FSK'],d:'OOK',label:'ISM433: sensor and remote-control telegrams, OOK or 2-FSK'},
+          {n:'tv',t:'select',opts:['PAL','NTSC'],d:'PAL',label:'Analog TV: standard (colour bars, grey scale, frame)'},
+          {n:'tvm',t:'select',opts:['FM','AM'],d:'FM',label:'Analog TV: FM (FPV, satellite) or AM with negative modulation (broadcast)'},
+          {n:'tvdev',t:'num',d:8000000,label:'Analog TV FM: deviation, sync tip to white, Hz'},
           {n:'ps',t:'text',d:'DSP TEST',label:'WFM stereo: RDS station name (tone in the left channel only)'},
           {n:'ppm',t:'range',min:-1000,max:1000,step:1,d:0,label:'clock error vs sound card, ppm',adv:true},
           {n:'imbG',t:'range',min:-3,max:3,step:.01,d:0,label:'I/Q imbalance: Q gain, dB',adv:true},

@@ -4236,7 +4236,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     // только файл: повтор и позиция
     {n:'loop',t:'check',d:true,label:'loop playback'},
     {n:'seek',t:'range',min:0,max:100,step:.1,d:0,label:'position, %'},
-    {n:'sr',t:'select',opts:['960000','1024000','1920000','2048000','2400000','2500000','3000000','3200000','6000000','8000000','10000000'],d:'1024000',label:'sample rate',
+    {n:'sr',t:'select',opts:['960000','1024000','1920000','2048000','2400000','2500000','3000000','3200000','6000000','8000000','10000000','12000000','16000000','20000000'],d:'1024000',label:'sample rate',
      fn:async n=>{ if(n.dev){ try{ n.sourceRate=await n.dev.setSampleRate(rtlSafeSr(n.p.sr)); rtlResetRing(n); }
        catch(e){ n.status='sample rate change error: '+e.message; } } }},
     // режим демодуляции/полоса/де-эмфазис — ОБЩИЕ на все 4 канала (проще UI); частота у каждого своя
