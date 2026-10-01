@@ -33,6 +33,7 @@ function commsMessage(r,sig){
     const g=typeof dmrNmea==='function' ? dmrNmea(String(r.nmea||'')) : {};
     return base('location', {text:String(r.nmea||''), service:'slow data', lat:g.lat, lon:g.lon, speed:g.speed, heading:g.heading, alt:g.alt});
   }
+  if(r.src==='YSF' && k==='gps') return base('location', {text:r.text, service:'GPS '+(r.radio||''), lat:r.lat, lon:r.lon});
   if(sig && (COMMS_SIGNAL.has(k) || k==='msg' || k==='call' || k==='end' || k==='alias'))
     return base('signalling', {text:r.text||k, service:r.name||r.msg||r.type||k, slot:r.slot, cc:r.cc, nac:r.nac, ran:r.ran});
   return null;
@@ -44,7 +45,7 @@ function commsWho(r){
   if(!r.src) return out;
   const from=commsId(r.from,r.src), to=commsId(r.to,r.src);
   let lat=r.lat, lon=r.lon;
-  if(k==='gps' && typeof dmrNmea==='function'){ const g=dmrNmea(String(r.nmea||'')); lat=g.lat; lon=g.lon; }        // D-STAR: NMEA из слоудаты
+  if(k==='gps' && r.nmea!=null && typeof dmrNmea==='function'){ const g=dmrNmea(String(r.nmea||'')); lat=g.lat; lon=g.lon; }        // D-STAR: NMEA из слоудаты
   const dest=(id)=>{ if(id==null) return; if(commsIsGroup(r)) out.groups.push({id, role:'rx'}); else out.radios.push({id, role:'rx'}); };
   if(k==='call' || (k==='header' && !r.packet) || k==='end' || k==='message' || k==='pdu' || k==='msg' || k==='alias' || k==='text' || k==='gps' || k==='packet' || k==='data-header'){
     const s=k==='pdu' ? (r.io ? null : commsId(r.llid)) : from;

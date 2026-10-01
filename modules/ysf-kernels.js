@@ -3,7 +3,7 @@
    Плагин общего 4FSK-движка (fsk4-kernels.js). Кадр 480 дибитов (100 мс): синхро 40 бит (D471C9634D) + FICH 200 бит + 5 блоков по 144 бита.
    FICH: 4 слова Golay(24,12) (32 бита полей + CRC-16) → свёртка K=5 (как у NXDN) → перемежение. Данные (позывные): DCH — свёртка,
    перемежение, CRC-16, отбеливание; V/D режим 1 — по 9 байт в блоке (20 байт данных), режим 2 — по 5 байт (10 байт).
-   Голос AMBE не декодируется — отдаются сырые кадры. Кодеры — для генератора и тестов (сверка с MMDVMHost). */
+   Голос AMBE не декодируется — отдаются сырые кадры. GPS (радио + широта / долгота) — из блоков данных FN 3…FT (V/D 1) или FN 6, 7 (V/D 2). Кодеры — для генератора и тестов (сверка с MMDVMHost). */
 
 const YSF_BAUD=4800, YSF_FR=480, YSF_SYNC=fsk4Sync(fsk4Bits('D471C9634D'));
 const YSF_WH=[0x93,0xD7,0x51,0x21,0x9C,0x2F,0x6C,0xD0,0xEF,0x0F,0xF8,0x3D,0xF1,0x73,0x20,0x94,0xED,0x1E,0x7C,0xD8];
@@ -61,6 +61,55 @@ function ysfVch(bits,base){ const v=new Uint8Array(104); for(let i=0;i<104;i++) 
 function ysfVchEncode(b13,out,base){ const v=dmrBitsOf(b13.map((x,i)=>x^YSF_WH[i])); for(let i=0;i<104;i++) out[base+YSF_IL26[i]]=v[i]; }
 const ysfText=b=>String.fromCharCode(...Array.from(b).map(c=>c>=32 && c<127 ? c : 32)).trim();
 
+/* ---- GPS из канала данных (V/D 1: FN 3…FT по 20 байт, V/D 2: FN 6, 7 по 10 байт); разбор как в YSFGateway/GPS.cpp ---- */
+const YSF_RADIO={0x20:'DR-2X',0x24:'FT-1D',0x25:'FTM-400D',0x26:'DR-1X',0x27:'FT-991A',0x28:'FT-2D',0x29:'FTM-100D',0x30:'FT-3D',0x31:'FTM-300D',0x33:'FT-5D'};
+function ysfGps(b,len){                                            // b — собранные данные, len — их длина → {lat, lon, radio} или null
+  let e=-1;
+  for(let i=len;i>0;i--) if(b[i]===3){ e=i; break; }
+  if(e<0 || e+1>=b.length) return null;
+  let sum=0; for(let i=0;i<=e;i++) sum=(sum+b[i])&255;
+  if(sum!==b[e+1]) return null;
+  if(!((b[1]===0x22 && b[2]===0x62) || (b[1]===0x47 && b[2]===0x64))) return null;
+  for(let i=5;i<11;i++){ const h=b[i]&0xF0; if(h!==0x50 && h!==0x30) return null; }
+  const d=i=>(b[i]&15), two=i=>[(b[i]&15),(b[i+1]&15)];
+  if(two(5).some(v=>v>9) || two(7).some(v=>v>9) || (b[9]&15)>9 || (b[10]&15)>10) return null;
+  const latDeg=d(5)*10+d(6), latMin=d(7)*10+d(8), latFr=d(9)*10+d(10);
+  if(latDeg>89 || latMin>59 || latFr>99) return null;
+  const latSign=(b[8]&0xF0)===0x50 ? 1 : -1;
+  let lonDeg, v=b[11];
+  if((b[9]&0xF0)===0x50){
+    if(v>=0x76 && v<=0x7F) lonDeg=v-0x76; else if(v>=0x6C && v<=0x75) lonDeg=100+v-0x6C; else if(v>=0x26 && v<=0x6B) lonDeg=110+v-0x26; else return null;
+  } else { if(v>=0x26 && v<=0x7F) lonDeg=10+v-0x26; else return null; }
+  v=b[12]; let lonMin;
+  if(v>=0x58 && v<=0x61) lonMin=v-0x58; else if(v>=0x26 && v<=0x57) lonMin=10+v-0x26; else return null;
+  v=b[13]; if(v<0x1C || v>0x7F) return null;
+  const lonFr=v-0x1C, lonSign=(b[10]&0xF0)===0x30 ? 1 : -1;
+  return {lat:+(latSign*(latDeg+(latMin+latFr*.01)/60)).toFixed(5), lon:+(lonSign*(lonDeg+(lonMin+lonFr*.01)/60)).toFixed(5), radio:YSF_RADIO[b[4]]||('0x'+b[4].toString(16).toUpperCase())};
+}
+function ysfGpsPack(lat,lon,radio){                                // обратное — для генератора (короткий пакет, 16 байт)
+  const b=new Uint8Array(20), la=Math.abs(lat), lo=Math.abs(lon);
+  const lt=Math.round(la*6000), ln=Math.round(lo*6000);              // сотые доли минуты
+  const ld=(lt/6000)|0, lm=((lt%6000)/100)|0, lf=lt%100, od=(ln/6000)|0, om=((ln%6000)/100)|0, of=ln%100;
+  b[1]=0x22; b[2]=0x62; b[4]=radio;
+  b[5]=0x30|((ld/10)|0); b[6]=0x30|(ld%10); b[7]=0x30|((lm/10)|0); b[8]=(lat>=0 ? 0x50 : 0x30)|(lm%10);
+  b[9]=(od<10 || od>=100 ? 0x50 : 0x30)|((lf/10)|0); b[10]=(lon>=0 ? 0x30 : 0x50)|(lf%10);
+  b[11]=od<10 ? 0x76+od : od<110 && od>=100 ? 0x6C+od-100 : od>=110 ? 0x26+od-110 : 0x26+od-10;
+  b[12]=om<10 ? 0x58+om : 0x26+om-10; b[13]=0x1C+of; b[14]=3;
+  let c=0; for(let i=0;i<15;i++) c=(c+b[i])&255;
+  b[15]=c; return b;
+}
+function ysfGpsFeed(P,F,d,out){                                    // d — один блок данных (уже без отбеливания)
+  const m2=F.dt===2, first=m2 ? 6 : 3, sz=m2 ? 10 : 20;
+  if(F.fn<first || F.fn>7) return;
+  if(!P.gps || F.fn===first) P.gps={b:new Uint8Array(m2 ? 20 : 100), got:0};
+  P.gps.b.set(d,(F.fn-first)*sz); P.gps.got|=1<<(F.fn-first);
+  if(F.fn!==F.ft || P.gps.got!==(1<<(F.fn-first+1))-1) return;
+  const g=ysfGps(P.gps.b,(F.fn-first+1)*sz), c=P.call;
+  if(!g || (c && c.gpsLat===g.lat && c.gpsLon===g.lon)) return;
+  if(c){ c.gpsLat=g.lat; c.gpsLon=g.lon; }
+  ysfEmit(P,null,out,'gps',{from:c?c.src:null, to:c?c.dst:null, ...g, dgid:F.dgid},'GPS '+(c&&c.src||'?')+' · '+g.lat.toFixed(5)+', '+g.lon.toFixed(5)+' · '+g.radio);
+}
+
 /* ---- приёмник ---- */
 const YSF_MISS=2;
 function ysfEmit(P,L,out,kind,f,text){
@@ -115,6 +164,7 @@ FSK4.protos.ysf={
     P.st.comm++;
     if(F.dt===2){                                                 // V/D режим 2: DCH — 10 байт на кадр (FN 0 — dest, 1 — src, 2 — downlink, 3 — uplink)
       const d=ysfDchDecode(bits,base,2);
+      if(d) ysfGpsFeed(P,F,d,out);
       if(d){
         const s=ysfText(d), t=P.pend||(P.pend={});
         if(F.fn===0) t.dst=s; else if(F.fn===1) t.src=s; else if(F.fn===2) t.downlink=s; else if(F.fn===3) t.uplink=s;
@@ -127,6 +177,7 @@ FSK4.protos.ysf={
       }
     } else if(F.dt===0){                                          // V/D режим 1: DCH — 20 байт на кадр (FN 0 — dest + src, 1 — downlink + uplink)
       const d=ysfDchDecode(bits,base,1);
+      if(d) ysfGpsFeed(P,F,d,out);
       if(d && F.fn===0) setCall({dst:ysfText(d.subarray(0,10)), src:ysfText(d.subarray(10,20))});
       else if(d && F.fn===1 && P.call){ P.call.downlink=ysfText(d.subarray(0,10)); P.call.uplink=ysfText(d.subarray(10,20)); }
       for(let k=0;k<5;k++){
@@ -162,14 +213,15 @@ function ysfScript(mode){
   const csd=(a,b)=>p25Cat(ysfPad(a,10),ysfPad(b,10));
   const header=()=>ysfFrame(fich(0,0,0,6,mode==='vd1' ? 0 : 2,7),b=>{ ysfDchEncode(csd(dst,src),1,b,240); ysfDchEncode(csd(dl,ul),1,b,240+72); });
   seq.push(header(),header());
-  for(let fn=0;fn<7;fn++){
-    seq.push(ysfFrame(fich(1,0,fn,6,mode==='vd1' ? 0 : 2,7),b=>{
+  const gps=ysfGpsPack(54.9833,82.8964,0x24), last=mode==='vd1' ? 6 : 7;
+  for(let fn=0;fn<=last;fn++){
+    seq.push(ysfFrame(fich(1,0,fn,last,mode==='vd1' ? 0 : 2,7),b=>{
       if(mode==='vd1'){
-        if(fn===0) ysfDchEncode(csd(dst,src),1,b,240); else if(fn===1) ysfDchEncode(csd(dl,ul),1,b,240); else ysfDchEncode(Uint8Array.from({length:20},()=>0x20+(rnd()&31)),1,b,240);
+        if(fn===0) ysfDchEncode(csd(dst,src),1,b,240); else if(fn===1) ysfDchEncode(csd(dl,ul),1,b,240); else if(fn>=3) ysfDchEncode(fn===3 ? gps : new Uint8Array(20),1,b,240); else ysfDchEncode(Uint8Array.from({length:20},()=>0x20+(rnd()&31)),1,b,240);
         for(let k=0;k<5;k++) for(let i=0;i<72;i++) b[240+144*k+72+i]=rnd()&1;
       } else {
         const t=[dst,src,dl,ul][fn];
-        ysfDchEncode(t!=null ? ysfPad(t,10) : Uint8Array.from({length:10},()=>0x30+(rnd()&15)),2,b,240);
+        ysfDchEncode(t!=null ? ysfPad(t,10) : fn>=6 ? gps.subarray(10*(fn-6),10*(fn-5)) : Uint8Array.from({length:10},()=>0x30+(rnd()&15)),2,b,240);
         for(let k=0;k<5;k++) ysfVchEncode(Uint8Array.from({length:13},rnd),b,240+144*k+40);
       }
     }));

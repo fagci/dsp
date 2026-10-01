@@ -1,6 +1,6 @@
 "use strict";
 /* ============================ Vocoder (mbelib) ============================
-   Голос из сырых кадров вокодера: P25 IMBE, DMR / NXDN / dPMR / YSF (режим 1) AMBE+2, D-STAR AMBE. Декодер — mbelib (ISC), собранный в
+   Голос из сырых кадров вокодера: P25 IMBE, DMR / NXDN / dPMR / YSF (режимы 1 и 2) AMBE+2, D-STAR AMBE. Декодер — mbelib (ISC), собранный в
    vendor/mbelib.wasm (tools/mbelib/build.sh). Кадр из записи `voice` раскладывается в матрицу mbelib по расписаниям dsd-fme (mbe-tables.js),
    декодируется в 160 отсчётов 8 кГц на 20 мс, дальше — очередь, ресемплер до частоты движка и сумма потоков.
    M17 (Codec 2, режимы 3200 и 1600) — отдельный модуль vendor/codec2.wasm (tools/codec2/build.sh), по 8 байт на кадр.
@@ -30,6 +30,22 @@ function c2Load(){
 const mbeUnhex=s=>Uint8Array.from(s.match(/../g)||[],h=>parseInt(h,16));
 const mbeBits=(by,n)=>{ const b=new Uint8Array(n); for(let i=0;i<n;i++) b[i]=(by[i>>3]>>(7-(i&7)))&1; return b; };
 
+// YSF V/D mode 2: 104 бита = 27 бит ×3 (повтор) + 22 бита + 1; голосовой кадр AMBE+2 без FEC — восстанавливаем матрицу mbelib (Golay, PRNG)
+const mbeGolay23=d=>{ let r=d<<11; for(let i=22;i>=11;i--) if((r>>i)&1) r^=0xC75<<(i-11); return (d<<11)|(r&0x7FF); };
+function mbeYsf2(by){
+  const b=mbeBits(by,104), d=new Uint8Array(49);
+  for(let i=0;i<27;i++) d[i]=b[3*i]+b[3*i+1]+b[3*i+2]>1 ? 1 : 0;
+  for(let i=0;i<22;i++) d[27+i]=b[81+i];
+  const num=(o,n)=>{ let v=0; for(let i=0;i<n;i++) v=v*2+d[o+i]; return v; };
+  const a=num(0,12), c0=mbeGolay23(a), c1=mbeGolay23(num(12,12)), fr=new Uint8Array(96);
+  for(let j=0;j<23;j++) fr[j+1]=(c0>>j)&1;                     // fr[0][j+1]; fr[0][0] — чётность, mbelib её не проверяет
+  let x=(16*a)&0xFFFF, k=1;
+  const pr=[0]; for(let i=1;i<24;i++){ x=(173*x+13849)&0xFFFF; pr.push(x>>15); }
+  for(let j=22;j>=0;j--) fr[24+j]=((c1>>j)&1)^pr[k++];
+  for(let j=0;j<11;j++) fr[48+j]=d[24+10-j];
+  for(let j=0;j<14;j++) fr[72+j]=d[35+13-j];
+  return fr;
+}
 // запись voice → кадры вокодера {k: 'imbe' | 'a2450' | 'a2400', fr: матрица одним рядом (8×23 или 4×24)}
 function mbeFrames(r){
   const out=[];
@@ -42,6 +58,9 @@ function mbeFrames(r){
   else if(r.ambe && (r.src==='DMR' || r.src==='NXDN' || r.src==='dPMR' || (r.src==='YSF' && r.kind==='ambe' && r.dt===0))){
     const by=mbeUnhex(r.ambe), n=(by.length*8)/72|0, b=mbeBits(by,by.length*8);
     for(let f=0;f<n;f++) dib(b,72*f,36,'a2450',MBE_RW,MBE_RX,MBE_RY,MBE_RZ,24,96);
+  } else if(r.src==='YSF' && r.kind==='ambe' && r.dt===2 && r.ambe){
+    const by=mbeUnhex(r.ambe);
+    if(by.length>=13) out.push({k:'a2450', fr:mbeYsf2(by)});
   } else if(r.src==='M17' && r.codec2){
     const by=mbeUnhex(r.codec2), m1600=r.dtype===3;      // TYPE 3 — голос + данные: 64 бита речи (1600) и 64 бита данных; иначе два кадра 3200
     if(by.length>=8) out.push({k:'c2', mode:m1600 ? 1600 : 3200, bytes:by.subarray(0,8)});
