@@ -273,3 +273,148 @@ def({ id:'segdisp', lazy:'proc', title:'7-Segment Display', cat:'Output', ins:[{
     if(u){ indFont(cx,Math.min(uw*.45,h*.3)); cx.fillStyle=col; cx.textBaseline='bottom'; cx.fillText(u,W-uw-1,y1); cx.textBaseline='alphabetic'; }
   }
 });
+
+/* ---------- Sky Plot (азимут / высота) ---------- */
+const SKY_MAX=1500;
+def({ id:'skyplot', lazy:'proc', title:'Sky Plot', cat:'Output',
+  ins:[{n:'az',t:'num'},{n:'el',t:'num'},{n:'az2',t:'num'},{n:'el2',t:'num'}],
+  view:{h:190}, resize:true,
+  params:[{n:'trail',t:'range',min:0,max:300,step:1,d:30,label:'trail, s'},
+          {n:'horizon',t:'num',d:0,label:'horizon (min elevation), °'}],
+  init:n=>{ n.t=0; n.tr=[[],[]]; n.cur=[null,null]; },
+  process(n,I){
+    n.t+=indDt();
+    [['az','el'],['az2','el2']].forEach(([a,e],k)=>{
+      const az=indNum(I[a]), el=indNum(I[e]);
+      n.cur[k]= az!==null && el!==null ? [az,el] : null;
+      const tr=n.tr[k];
+      if(n.cur[k] && (!tr.length || n.t-tr[tr.length-1][2]>.1)) tr.push([az,el,n.t]);
+      while(tr.length && (n.t-tr[0][2]>n.p.trail || tr.length>SKY_MAX)) tr.shift();
+    });
+    return {}; },
+  draw(n,cv,cx){
+    const W=cv.width, H=cv.height, TXT=14, R=Math.max(10,Math.min(W/2,(H-TXT)/2)-4), X=W/2, Y=(H-TXT)/2;
+    const hz=clamp(+n.p.horizon||0,0,80);
+    const xy=(az,el,r=R)=>{ const q=r*(90-Math.max(el,hz))/(90-hz), a=az*Math.PI/180; return [X+Math.sin(a)*q,Y-Math.cos(a)*q]; };
+    cx.clearRect(0,0,W,H);
+    cx.strokeStyle=themeColor('--axis'); cx.lineWidth=1;
+    for(const f of [1,2/3,1/3]){ cx.globalAlpha=f===1?1:.4; cx.beginPath(); cx.arc(X,Y,R*f,0,7); cx.stroke(); }
+    cx.globalAlpha=.4;
+    for(let a=0;a<360;a+=45){ const [x,y]=xy(a,90); const [x2,y2]=xy(a,hz); cx.beginPath(); cx.moveTo(x,y); cx.lineTo(x2,y2); cx.stroke(); }
+    cx.globalAlpha=1; indFont(cx,R*.13); cx.textAlign='center'; cx.textBaseline='middle'; cx.fillStyle=themeColor('--axis');
+    for(let a=0;a<360;a+=90){ const q=R-R*.1, r=a*Math.PI/180;
+      cx.fillStyle=themeColor(a===0?'--err':'--axis'); cx.fillText(IND_CARDS[a/45],X+Math.sin(r)*q,Y-Math.cos(r)*q); }
+    cx.fillStyle=themeColor('--axis'); cx.textAlign='left';
+    for(const e of [30,60]) if(e>hz){ const [x,y]=xy(0,e); cx.fillText(e+'°',x+2,y-2); }
+    [themeColor('--acc2'),themeColor('--acc')].forEach((col,k)=>{
+      const tr=n.tr[k], cur=n.cur[k];
+      for(let i=1;i<tr.length;i++){
+        const [x1,y1]=xy(tr[i-1][0],tr[i-1][1]), [x2,y2]=xy(tr[i][0],tr[i][1]);
+        cx.globalAlpha=.15+.6*clamp(1-(n.t-tr[i][2])/(n.p.trail||1),0,1);
+        cx.strokeStyle=col; cx.lineWidth=1.5; cx.beginPath(); cx.moveTo(x1,y1); cx.lineTo(x2,y2); cx.stroke();
+      }
+      cx.globalAlpha=1;
+      if(cur){
+        const [x,y]=xy(cur[0],cur[1]), up=cur[1]>=hz, r=Math.max(3,R*.05);
+        cx.beginPath(); cx.arc(x,y,r,0,7);
+        if(up){ cx.fillStyle=col; cx.shadowColor=col; cx.shadowBlur=r*2; cx.fill(); cx.shadowBlur=0; }
+        else { cx.strokeStyle=col; cx.lineWidth=1.5; cx.stroke(); }
+      }
+    });
+    indFont(cx,TXT*.75); cx.textAlign='center'; cx.textBaseline='alphabetic'; cx.fillStyle=themeColor('--scr-hi');
+    const f=c=>c ? Math.round(((c[0]%360)+360)%360)+'° / '+Math.round(c[1])+'°' : '—';
+    cx.fillText('az / el  '+f(n.cur[0])+(n.cur[1] ? '   ·   '+f(n.cur[1]) : ''),X,H-3);
+    cx.textAlign='start'; }
+});
+
+/* ---------- S-Meter ---------- */
+// S1…S9 — по 6 дБ, выше S9 — дБ над S9; шкала: S0…S9 занимают 60 %, +60 дБ — остальные 40 %
+const SM_FRAC=(db,s9)=>{ const d=db-s9; return d<=0 ? clamp(1+d/54,0,1)*.6 : .6+clamp(d/60,0,1)*.4; };
+const SM_NAME=(db,s9)=>{ const d=db-s9;
+  return d>=0 ? 'S9'+(d>=1 ? '+'+Math.round(d) : '') : db<s9-54 ? 'S0' : 'S'+Math.max(0,Math.round(9+d/6)); };
+def({ id:'smeter', lazy:'proc', title:'S-Meter', cat:'Output', ins:[{n:'in',t:'num'}],
+  outs:[{n:'s',t:'num'}], view:{h:58}, resize:true,
+  params:[{n:'s9',t:'num',d:-73,label:'S9 level (dBm; −73 is the HF standard)'},
+          {n:'unit',t:'text',d:'dBm'},
+          {n:'attack',t:'range',min:0,max:1,step:.005,d:.03,label:'attack, s'},
+          {n:'fall',t:'range',min:0,max:3,step:.01,d:.5,label:'fall, s'},
+          {n:'peak',t:'check',d:true,label:'peak marker'}],
+  init:n=>{ n.v=null; n.sv=-Infinity; n.pk=-Infinity; n.pt=0; },
+  process(n,I){
+    const p=n.p, v=indNum(I.in); n.v=v;
+    if(v===null) return {s:null};
+    const lo=p.s9-54;
+    if(!isFinite(n.sv)) n.sv=v;
+    n.sv=indSmooth(n.sv,v,v>n.sv ? +p.attack : +p.fall);
+    indPeak(n,n.sv,60);
+    // S-единицы числом: 9 = S9, дальше +дБ/6 (S9+60 = 19), чтобы провод «s» был линейным по шкале
+    const d=n.sv-p.s9;
+    return {s: n.sv<lo ? 0 : 9+d/6}; },
+  draw(n,cv,cx){
+    const W=cv.width, H=cv.height, p=n.p, s9=+p.s9, pad=14, bw=W-2*pad, bh=Math.max(6,H*.26), by=H-bh-18;
+    cx.clearRect(0,0,W,H);
+    const X=f=>pad+f*bw;
+    cx.globalAlpha=.16; cx.fillStyle=themeColor('--t-blk'); cx.fillRect(X(0),by,bw*.6,bh);
+    cx.fillStyle=themeColor('--err'); cx.fillRect(X(.6),by,bw*.4,bh); cx.globalAlpha=1;
+    if(n.v!==null){
+      const f=SM_FRAC(n.sv,s9);
+      cx.fillStyle=themeColor('--acc2'); cx.fillRect(X(0),by,bw*Math.min(f,.6),bh);
+      if(f>.6){ cx.fillStyle=themeColor('--err'); cx.fillRect(X(.6),by,bw*(f-.6),bh); }
+      if(p.peak && isFinite(n.pk)){ cx.fillStyle=themeColor('--acc'); cx.fillRect(X(SM_FRAC(n.pk,s9))-1,by-2,2,bh+4); }
+    }
+    indFont(cx,Math.min(11,H*.18)); cx.textAlign='center'; cx.textBaseline='top';
+    cx.strokeStyle=themeColor('--axis'); cx.fillStyle=themeColor('--axis'); cx.lineWidth=1;
+    const tick=(f,label,long)=>{ cx.beginPath(); cx.moveTo(X(f)+.5,by+bh); cx.lineTo(X(f)+.5,by+bh+(long?4:2)); cx.stroke();
+      if(label) cx.fillText(label,X(f),by+bh+4); };
+    for(let s=1;s<=9;s++) tick(s/9*.6,s%2===1 ? 'S'+s : '',s%2===1);
+    for(const o of [20,40,60]) tick(.6+o/60*.4,'+'+o,true);
+    cx.textAlign='left'; cx.textBaseline='top'; indFont(cx,Math.min(13,H*.26)); cx.fillStyle=themeColor('--scr-hi');
+    cx.fillText(n.v===null ? '—' : SM_NAME(n.sv,s9),6,2);
+    cx.textAlign='right'; cx.fillStyle=themeColor('--axis');
+    cx.fillText(n.v===null ? '' : indFmt(n.v)+' '+p.unit,W-6,2);
+    cx.textAlign='start'; cx.textBaseline='alphabetic'; }
+});
+
+/* ---------- Text Ticker (бегущая строка / журнал строк) ---------- */
+def({ id:'ticker', lazy:'proc', title:'Text Ticker', cat:'Output',
+  ins:[{n:'text',t:'txt'},{n:'rec',t:'rec'}], view:{h:90}, resize:true,
+  params:[{n:'mode',t:'select',opts:['lines','marquee'],d:'lines',label:'display'},
+          {n:'max',t:'range',min:10,max:1000,step:10,d:200,label:'lines kept'},
+          {n:'time',t:'check',d:false,label:'timestamps'},
+          {n:'speed',t:'range',min:10,max:300,step:5,d:80,label:'marquee speed, px/s'},
+          {n:'field',t:'text',d:'text',label:'record field to show (else all fields)'},
+          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.rows=[]; n.pos=0; redraw(n); }}],
+  init:n=>{ n.rows=[]; n.last=null; n.pos=0; n.pt=0; },
+  process(n,I){
+    const add=s=>{ s=String(s).trim(); if(s) n.rows.push({t:Date.now(),s}); };
+    if(typeof I.text==='string' && I.text!==n.last){
+      n.last=I.text; I.text.split(/[\r\n]+/).forEach(add); }
+    for(const r of recList(I.rec)){
+      const f=n.p.field && r[n.p.field]!=null ? r[n.p.field] : null;
+      add(f!==null ? f : Object.entries(r).filter(([k,v])=>k!=='t' && v!==null && typeof v!=='object').map(([k,v])=>k+'='+(typeof v==='number' && !Number.isInteger(v) ? +v.toPrecision(5) : v)).join(' ')); }
+    if(n.rows.length>n.p.max) n.rows.splice(0,n.rows.length-n.p.max);
+    return {}; },
+  draw(n,cv,cx){
+    const W=cv.width, H=cv.height, p=n.p, fs=clamp(Math.round(H/6),10,13), lh=fs+3;
+    cx.clearRect(0,0,W,H); indFont(cx,fs); cx.textBaseline='top';
+    const stamp=r=>p.time ? new Date(r.t).toLocaleTimeString()+' ' : '';
+    if(p.mode==='marquee'){
+      const msg=n.rows.slice(-20).map(r=>stamp(r)+r.s).join('   ▪   ')+'   ▪   ', tw=cx.measureText(msg).width;
+      const now=performance.now(), dt=n.pt ? Math.min(.1,(now-n.pt)/1000) : 0; n.pt=now;
+      n.pos=(n.pos+p.speed*dt)%(tw+W);
+      cx.fillStyle=themeColor('--acc2');
+      if(!n.rows.length){ cx.fillStyle=themeColor('--axis'); cx.fillText('waiting for text',6,(H-fs)/2); }
+      else cx.fillText(msg,W-n.pos,(H-fs)/2);
+      n.pt=now; redraw(n);                            // бегущая строка анимируется каждый кадр
+    } else {
+      const rows=Math.max(1,Math.floor((H-4)/lh)), shown=n.rows.slice(-rows);
+      shown.forEach((r,i)=>{
+        cx.fillStyle=themeColor(i===shown.length-1 ? '--acc2' : '--axis');
+        let s=stamp(r)+r.s; const maxc=Math.floor((W-8)/(fs*.6));
+        if(s.length>maxc) s=s.slice(0,Math.max(1,maxc-1))+'…';
+        cx.fillText(s,4,2+i*lh+(rows-shown.length)*lh);
+      });
+      if(!shown.length){ cx.fillStyle=themeColor('--axis'); cx.fillText('waiting for text',6,4); }
+    }
+    cx.textBaseline='alphabetic'; }
+});

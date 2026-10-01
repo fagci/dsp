@@ -2839,3 +2839,26 @@ addEdge(l2.id,'out',cp.id,'az');
 addEdge(l3.id,'out',sd.id,'in');
 markWiresDirty();
 });
+preset('Indicators: Sky Plot, S-Meter, Text Ticker', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Two LFOs drive a Sky Plot (azimuth sweeps round, elevation rises and sets; the object is hollow below the horizon, the trail shows the pass).\n'+
+  'A third LFO plays the signal level in dBm for the S-Meter (S9 = -73 dBm, 6 dB per S unit, fast attack, slow fall, peak marker). Compare fires when the level passes S9;\n'+
+  'Fields → Rec packs the level into a record on each trigger and the Text Ticker lists it (switch display to marquee for a running line).'});
+nt.size.w=760; nt.size.h=100; applySize(nt);
+const a=addNode('lfo',40,160,{freq:.04,min:0,max:360,wave:'saw'});
+const e=addNode('lfo',40,340,{freq:.04,min:-15,max:80,wave:'sine'});
+const sp=addNode('skyplot',300,160,{trail:40});
+sp.size.w=300; sp.size.h=260; applySize(sp);
+const l=addNode('lfo',40,640,{freq:.3,min:-100,max:-40,wave:'sine'});
+const sm=addNode('smeter',300,640,{s9:-73});
+sm.size.w=420; sm.size.h=64; applySize(sm);
+const c=addNode('ncmp',760,640,{thr:-73,hys:3,span:20});
+c.size.w=220; c.size.h=110; applySize(c);
+const rp=addNode('recPack',1020,640,{names:'dBm',consts:'event=above S9',mode:'trigger'});
+const tk=addNode('ticker',1020,860,{time:true});
+tk.size.w=420; tk.size.h=130; applySize(tk);
+addEdge(a.id,'out',sp.id,'az'); addEdge(e.id,'out',sp.id,'el');
+addEdge(l.id,'out',sm.id,'in'); addEdge(l.id,'out',c.id,'in'); addEdge(l.id,'out',rp.id,'dBm');
+addEdge(c.id,'rise',rp.id,'go'); addEdge(rp.id,'rec',tk.id,'rec');
+markWiresDirty();
+});

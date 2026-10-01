@@ -458,7 +458,11 @@ Visual blocks on number wires (Output). They draw on a dark screen in both theme
 - **Compass**: azimuth dial with N / E / S / W; `az` is the arrow, `az2` a second marker on the rim (a bearing and a heading, a satellite and the antenna). *Rotate the dial* turns the dial to `az2`. The needle takes the shortest way round 359° → 0°.
 - **7-Segment Display**: seven-segment digits (1…12, decimals, leading zeros, unlit segments); *frequency* format turns Hz into kHz / MHz / GHz with the unit. Overflow shows dashes.
 
-Preset: *Indicators: Lamps, Gauge, LED Bar, Compass, Display*.
+- **Sky Plot**: polar plot for azimuth / elevation — north up, the horizon on the rim, zenith in the centre, rings at 30° and 60°. `az` / `el` is the main object, `az2` / `el2` a second one (a satellite and the antenna); a fading trail shows the pass (*trail*, s). An object below the *horizon* is drawn hollow. Wire the `az` / `el` outputs of *Satellites* or a rotator controller to it.
+- **S-Meter**: receiver scale S1…S9 (6 dB per step), then +10 … +60 dB; *S9 level* is set in dBm (−73 is the HF standard, use −93 for VHF). Fast attack and slow fall like a real meter, peak marker, the S reading and the level in the corner. The `s` output is the reading in S units (9 = S9, 15 = S9 + 36 dB).
+- **Text Ticker**: the latest lines from `text` (a new string is a new line) and `rec` (the *field* is shown, or all fields as `key=value`), as a scrolling log with optional timestamps or as a running line (*marquee*). *Clear* empties it. Good for a decoder's messages next to the other indicators.
+
+Presets: *Indicators: Lamps, Gauge, LED Bar, Compass, Display*, *Indicators: Sky Plot, S-Meter, Text Ticker*.
 
 ## Map and records
 
