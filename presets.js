@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=31;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=32;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -190,6 +190,9 @@ const PRESET_CATS={
   'OFDM: Text via Multi-Carrier Modulation':'Modems & Data Links',
 
   'Map: My Position and Points from CSV':'Maps & Locating',
+  'Sequencer: Vehicle Track on the Map':'Maps & Locating',
+  'Sequencer: Frequency Stepper (CSV → Oscillator)':'Analysis & Measurement',
+  'Sequencer: Random Beacon (Trigger Clock)':'Modems & Data Links',
   'FT8: Propagation Map':'Maps & Locating',
   'Fox Hunt: Locate Transmitter':'Maps & Locating',
   'Internet Radio on the Map':'Maps & Locating',
@@ -349,6 +352,52 @@ map.size.w=620; map.size.h=560; applySize(map);
 addEdge(me.id,'rec',map.id,'rec');
 addEdge(csv.id,'rec',lg.id,'rec');
 addEdge(lg.id,'rec',map.id,'rec2');
+markWiresDirty();
+});
+preset('Sequencer: Vehicle Track on the Map', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Data Sequencer drives along the points of its table at the set speed (advance = distance)\n'+
+  'and, with «interpolate», puts the marker between them. Load your own track: KML, GPX, GeoJSON or CSV with lat,lon.\n'+
+  'Speed can come from a column (speed col), a wire (speed) or the slider. Rec Log saves what was sent.'});
+nt.size.w=460; nt.size.h=130; applySize(nt);
+const sq=addNode('csvsrc',40,200,{advance:'distance',speed:40,rate:4,interp:true,loop:true,
+  data:'id,lat,lon,icon,label\nbus1,55.0302,82.9204,bus,Bus 1\nbus1,55.0350,82.9350,bus,Bus 1\nbus1,55.0410,82.9450,bus,Bus 1\nbus1,55.0450,82.9600,bus,Bus 1\nbus1,55.0420,82.9750,bus,Bus 1'});
+sq.size.w=270; sq.size.h=300; applySize(sq);
+const lg=addNode('recLog',340,200,{}); lg.size.w=210; applySize(lg);
+const map=addNode('geoMap',580,40,{mz:11,mlat:55.04,mlon:82.95});
+map.size.w=620; map.size.h=520; applySize(map);
+addEdge(sq.id,'rec',lg.id,'rec');
+addEdge(lg.id,'rec',map.id,'rec');
+markWiresDirty();
+});
+preset('Sequencer: Frequency Stepper (CSV → Oscillator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Each CSV row is held for its dwell seconds (advance = dwell), then the next one is taken.\n'+
+  'The freq column goes to the oscillator. Any other column can be wired out the same way.'});
+nt.size.w=460; nt.size.h=90; applySize(nt);
+const sq=addNode('csvsrc',40,160,{advance:'dwell',loop:true,data:'freq,dwell\n300,1\n600,1\n1200,0.5\n2400,0.5\n800,2'});
+sq.size.w=260; sq.size.h=300; applySize(sq);
+const o=addNode('osc',340,160,{amp:.3});
+const sc=addNode('scope',560,160);
+const dc=addNode('dac',560,360,{vol:.2});
+addEdge(sq.id,'freq',o.id,'freq');
+addEdge(o.id,'out',sc.id,'in1');
+addEdge(o.id,'out',dc.id,'L');
+markWiresDirty();
+});
+preset('Sequencer: Random Beacon (Trigger Clock)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Trigger Clock fires at random every 3–8 s (mode random); Data Sequencer takes a random row\n'+
+  'of its table on every pulse. «text» goes to a transmitter, «rec» to a log. A row with fields = a packet or a call.\n'+
+  'For a fixed beacon use mode interval; for calls at set times use advance = time with Time Base.'});
+nt.size.w=480; nt.size.h=130; applySize(nt);
+const ck=addNode('tclock',40,200,{mode:'random',rmin:3,rmax:8});
+const sq=addNode('csvsrc',300,200,{order:'shuffle',initial:false,textCol:'msg',
+  data:'src,dst,msg\n101,200,CQ CQ de beacon\n102,200,Test 1 2 3\n103,201,Status OK\n104,201,Battery low'});
+sq.size.w=260; sq.size.h=300; applySize(sq);
+const lg=addNode('recLog',580,200,{}); lg.size.w=210; applySize(lg);
+addEdge(ck.id,'trig',sq.id,'trig');
+addEdge(sq.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('FT8: Propagation Map', function(){

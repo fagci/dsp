@@ -30,7 +30,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **KiwiSDR** remote receivers (public list included)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
-- Serial port (WebSerial), CSV files, lists
+- Serial port (WebSerial), lists, **Data Sequencer** (CSV / KML / GPX / GeoJSON played row by row), Trigger Clock, Time Base — see [Data Sequencer](#data-sequencer)
 - **Text over Network**: WebSocket (`ws://`, `wss://`, with reconnect and a `send` input) or HTTP(S) polling; lines one per block like the serial port, JSON objects/arrays straight into records. Example — Wi-Fi scan from Android (Termux): `websocat -t ws-l:0.0.0.0:8765 sh-c:'while :; do termux-wifi-scaninfo | jq -c .; sleep 30; done'`. [`tools/termux/wifi-scan.sh`](tools/termux/wifi-scan.sh) adds the phone's GPS position to every scan — preset *Wi-Fi: Locate Access Points (Termux)* puts each access point on the map while you walk around. From the https demo the browser only allows `wss://`/`https://` to other devices (`ws://`/`http://` work to localhost, or when the app is opened over http)
 
 ### Analysis
@@ -419,6 +419,18 @@ The replayer follows each tracker's effect rules: MOD/XM 0–F and E-commands, X
 - **Keys** tab / Keypad — the same on screen for phones: two-octave piano, hex and letter pads, key off, cursor keys, block operations
 - **Mixer** tab / node — per channel: level meter, volume, panning, mute, solo (volume is kept with the song in the browser; the formats have no place for it)
 - Space plays the song from the current position, Shift+Space loops the current pattern from the cursor row; **⇣ follow** keeps the cursor on the playing row
+
+## Data Sequencer
+
+A table of any fields played out row by row — to imitate a moving vehicle, step through frequencies, replay packets and calls, or send a beacon.
+
+- **Data Sequencer** (Sources): load a CSV / TSV, **KML** (Point, LineString, `gx:Track`), **GPX** (waypoints, routes, tracks) or **GeoJSON**, or type the table in *advanced → table* and press *Apply table*. The table is saved in the patch. Every column becomes an output port (a column named like a fixed port gets a `_`); `rec` carries the whole row as a record (for the map, Rec Log, filters), `text` — the *text col* (or the whole row), `row` / `count` / `next` (pulse per row) / `done`. Raw packets work too: put them in a column (hex, text) and wire the port.
+- **Advance** (`trig` always steps by one row as well): **rate** — rows/s (0 = only `trig`); **dwell** — each row is held for the seconds in its *dwell col* (frequency stepping: `freq,dwell`); **time** — rows come out at their own timestamps (column `t`, `time`, `timestamp`… ISO, epoch s/ms or `HH:MM:SS`), speed `time ×`; with absolute timestamps and a *Time Base* on `t` the rows follow that clock (set it back and the replay restarts); **distance** — the next row comes out when the path along `lat`/`lon` reaches it at the given `speed` (km/h, m/s or knots; a *speed col* overrides it per row). With *interpolate* the marker moves smoothly between points (*rows/s* = update rate). `dist`, `bearing`, `progress` describe the current leg.
+- **Order**: sequential, ping-pong, **random**, **shuffle** (every row once, then again); *loop*, *first row* / *last row* range, the `row` input picks a row (1…N).
+- **Trigger Clock** (Control): `trig` pulse and `gate` window. Modes: *interval* (with *jitter* %), *random* (min…max), *poisson* (mean = interval), *schedule* (`08:00, 12:30:15, */15s, */5m` — time of day or every N s/m/h, UTC or local; uses `t` from Time Base when wired). *burst* + *gap*, *delay*, *max N*, `gate` width (a window of N s after every trigger), `reset` input. The pulse lasts one block with a gap of one block between pulses.
+- **Time Base** (Control): virtual time — the system clock or a manually set start (UTC) with any speed; outputs `t` (epoch s), `iso`, `tod`; the `set` input takes a new time.
+
+Presets: *Sequencer: Vehicle Track on the Map*, *Sequencer: Frequency Stepper (CSV → Oscillator)*, *Sequencer: Random Beacon (Trigger Clock)*.
 
 ## Map and records
 
