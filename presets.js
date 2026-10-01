@@ -193,6 +193,8 @@ const PRESET_CATS={
   'Sequencer: Vehicle Track on the Map':'Maps & Locating',
   'Sequencer: Frequency Stepper (CSV → Oscillator)':'Analysis & Measurement',
   'Sequencer: Random Beacon (Trigger Clock)':'Modems & Data Links',
+  'Control: Clocks Switch a Tone On and Off':'Analysis & Measurement',
+  'Control: Level Trigger (Compare, Counter, One-Shot)':'Analysis & Measurement',
   'FT8: Propagation Map':'Maps & Locating',
   'Fox Hunt: Locate Transmitter':'Maps & Locating',
   'Internet Radio on the Map':'Maps & Locating',
@@ -398,6 +400,49 @@ sq.size.w=260; sq.size.h=300; applySize(sq);
 const lg=addNode('recLog',580,200,{}); lg.size.w=210; applySize(lg);
 addEdge(ck.id,'trig',sq.id,'trig');
 addEdge(sq.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Control: Clocks Switch a Tone On and Off', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Clock A sets the flip-flop, clock B (delayed by 2 s) resets it: the tone is on for 2 s, off for 2 s.\n'+
+  'Any clock, comparator or oscillator edge can drive set / reset / clk. Math scales 0/1 into the oscillator amplitude.'});
+nt.size.w=520; nt.size.h=110; applySize(nt);
+const a=addNode('tclock',40,240,{interval:4});
+const b=addNode('tclock',40,460,{interval:4,delay:2});
+const ff=addNode('nflip',300,320,{});
+const m=addNode('nmath',520,320,{op:'sum',k:.25});
+const o=addNode('osc',740,240,{freq:660,amp:0});
+const dc=addNode('dac',960,240,{vol:.3});
+const nv=addNode('numview',520,480,{});
+addEdge(a.id,'trig',ff.id,'set');
+addEdge(b.id,'trig',ff.id,'reset');
+addEdge(ff.id,'out',m.id,'in1');
+addEdge(m.id,'out',o.id,'amp');
+addEdge(ff.id,'out',nv.id,'in');
+addEdge(o.id,'out',dc.id,'L');
+markWiresDirty();
+});
+preset('Control: Level Trigger (Compare, Counter, One-Shot)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'LFO swells the tone level; Level measures it in dB. Compare shows the level on its screen with the threshold\n'+
+  'and hysteresis, and fires rise / fall pulses. Counter counts the events, One-Shot holds a 2 s alarm gate after each one.'});
+nt.size.w=560; nt.size.h=110; applySize(nt);
+const l=addNode('lfo',40,240,{freq:.2,min:0,max:.5});
+const o=addNode('osc',260,240,{freq:500,amp:0});
+const mt=addNode('meter',480,240,{});
+const c=addNode('ncmp',720,240,{thr:-24,hys:6,span:20});
+c.size.w=300; c.size.h=140; applySize(c);
+const k=addNode('ncount',1060,240,{mod:0});
+const s=addNode('nshot',1060,420,{width:2});
+const n1=addNode('numview',1280,240,{});
+const n2=addNode('numview',1280,420,{});
+addEdge(l.id,'out',o.id,'amp');
+addEdge(o.id,'out',mt.id,'in');
+addEdge(mt.id,'db',c.id,'in');
+addEdge(c.id,'rise',k.id,'clk');
+addEdge(c.id,'rise',s.id,'trig');
+addEdge(k.id,'count',n1.id,'in');
+addEdge(s.id,'gate',n2.id,'in');
 markWiresDirty();
 });
 preset('FT8: Propagation Map', function(){

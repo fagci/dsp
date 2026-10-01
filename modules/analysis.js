@@ -984,7 +984,7 @@ function scopeTrigScan(n,s,a0,N,sr){
     else if(armF && prev>lev && v<=lev){ armF=false; hit=sl!=='rise'; }
     if(hit && n.pend==null){
       const t=a0+i-1+(lev-prev)/((v-prev)||1);
-      if(t-n.lastTrig>=gap){ n.pend=t; n.lastTrig=t; } }
+      if(t-n.lastTrig>=gap){ n.pend=t; n.lastTrig=t; n.hitN=(n.hitN||0)+1; } }
     prev=v; }
   n.tPrev=prev; n.armR=armR; n.armF=armF;
 }
@@ -1204,7 +1204,7 @@ function scopeDrawXY(n,cx,W,H,g,style,cols){
 def({ id:'scope', lazy:'proc', title:'Oscilloscope', cat:'Analysis',
   ins:[{n:'in1',t:'sig'},{n:'in2',t:'sig'},{n:'in3',t:'sig'},{n:'in4',t:'sig'},
        {n:'span',t:'num'},{n:'gain',t:'num'},{n:'ofs',t:'num'},{n:'trig',t:'num'},{n:'stack',t:'num'}],
-  outs:[{n:'freq',t:'num'},{n:'vpp',t:'num'},{n:'rms',t:'num'}],
+  outs:[{n:'freq',t:'num'},{n:'vpp',t:'num'},{n:'rms',t:'num'},{n:'hit',t:'num'}],
   w:380, view:{h:200}, resize:true,
   params:[{n:'runstop',t:'button',label:'Run / Stop',fn:n=>scopeRun(n,!n.run)},
           {n:'single',t:'button',label:'Single',fn:scopeSingle},
@@ -1232,7 +1232,7 @@ def({ id:'scope', lazy:'proc', title:'Oscilloscope', cat:'Analysis',
           {n:'mode',t:'select',opts:['YT','XY'],d:'YT',label:'display',adv:true},
           {n:'math',t:'select',opts:['off','1+2','1-2','1*2'],d:'off',label:'math',adv:true}],
   init:n=>{ n.L=0; n.act=[false,false,false,false]; n.run=true; n.hofs=0; n.tPrev=0; n.armR=n.armF=false;
-            n.cur={t:[.3,.7],v:[.5,-.5]}; n.meas=[]; },
+            n.cur={t:[.3,.7],v:[.5,-.5]}; n.meas=[]; n.hitN=0; n.hitSeen=0; n.hitHi=false; },
   process(n,I){
     const sr=Eng.sr||48000, need=Math.ceil(sr*SCOPE_SEC);
     if(need!==n.L) scopeAlloc(n,need);
@@ -1254,7 +1254,9 @@ def({ id:'scope', lazy:'proc', title:'Oscilloscope', cat:'Analysis',
     const now=performance.now();
     if(now-(n._drawT||0)>500 && now-(n.measT||0)>300){ const fr=scopeFrame(n); scopeMeasAll(n,fr,scopeView(n,fr)); }
     const m=n.meas[scopeTrigCh(n)];
-    return {freq:m?m.f:0, vpp:m?m.pp:0, rms:m?m.rms:0}; },
+    const hit=(n.hitN||0)!==n.hitSeen && !n.hitHi;     // импульс «триггер сработал»: один блок, затем пауза
+    n.hitHi=hit; if(hit) n.hitSeen=n.hitN;
+    return {freq:m?m.f:0, vpp:m?m.pp:0, rms:m?m.rms:0, hit:hit?1:0}; },
   draw(n,cv,cx){
     const W=cv.width, H=cv.height, sr=Eng.sr||48000, now=performance.now();
     if(!n.L) scopeAlloc(n,Math.ceil(sr*SCOPE_SEC));

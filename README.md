@@ -432,6 +432,22 @@ A table of any fields played out row by row — to imitate a moving vehicle, ste
 
 Presets: *Sequencer: Vehicle Track on the Map*, *Sequencer: Frequency Stepper (CSV → Oscillator)*, *Sequencer: Random Beacon (Trigger Clock)*.
 
+### Control logic
+
+Small universal blocks on number wires (a pulse is 0/1, an edge is a crossing of 0.5; unwired inputs are ignored). The *inputs* select (2…8) adds or removes ports; every numeric parameter of every block can also be driven by a wire.
+
+- **Math**: sum, mean, product, min, max, `in1 − rest`, `in1 ÷ rest`, `in1 ^ in2`, `|in1 − in2|`, then gain and offset.
+- **Compare**: *above / below / inside / outside* a threshold or window, with hysteresis and a minimum on-time; outputs `out`, `rise`, `fall`. The tile is a small screen: the level history, threshold and hysteresis lines, the on-state shaded. Feed it from Level (dB), Frequency Meter, CFAR SNR, a trend or any number.
+- **Logic**: AND, OR, XOR, NAND, NOR, XNOR of 2…8 inputs, `out` and `not`.
+- **Select**: `in1…inN` picked by the `sel` index (0 = in1) — e.g. a Flip-Flop output chooses between two frequencies.
+- **Flip-Flop**: `set`, `reset`, `clk` (toggle) on rising edges; priority and start state. Two clocks switch something on and off.
+- **Sample & Hold**: samples `in` on the `trig` edge, or follows it while `trig` is high.
+- **Counter**: counts `clk` edges by *step*, modulo N; `wrap` is a pulse every N-th clock (divider), `phase` is count/N.
+- **One-Shot**: a trigger starts a `gate` of *width* after *delay*; `end` pulses when it finishes (a delayed trigger). Retriggerable.
+- The **Oscilloscope** has a `hit` output: a pulse each time its trigger fires.
+
+Presets: *Control: Clocks Switch a Tone On and Off*, *Control: Level Trigger (Compare, Counter, One-Shot)*.
+
 ## Map and records
 
 **Records** (`rec` port) carry objects with arbitrary fields — `{lat, lon, id, snr, …}` — from decoders, CSV files and sensors to the map, logs and filters.
