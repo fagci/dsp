@@ -6404,64 +6404,6 @@ function hostlistCloseCsv(n){
 }
 
 
-/* ============================ CSV-ПРОИГРЫВАТЕЛЬ (построчно) ============================ */
-// В отличие от 'hostlist' (там CSV импортируется в IndexedDB и выбирается ОДНА запись
-// вручную) — этот узел просто грузит файл в память и проигрывает строки по порядку:
-// либо по таймеру (rate>0), либо по внешнему триггеру. Годится под любые табличные
-// данные — записанный лог с serial-порта, дамп координат, тестовые векторы для графа и т.п.
-
-function csvsrcAdvance(n){
-  if(!n.rows.length) return;
-  n.idx++;
-  if(n.idx>=n.rows.length) n.idx = n.p.loop ? 0 : n.rows.length-1;
-}
-
-function csvsrcLoad(n, file){
-  const reader = new FileReader();
-  reader.onload = ()=>{
-    let table;
-    try{ table = csvParse(String(reader.result)); }
-    catch(e){ alert('failed to parse CSV: '+e.message); return; }
-    if(!table.length){ alert('file is empty'); return; }
-    const headers = hostlistDedupFieldNames(table[0]);
-    n.rows = table.slice(1).map(r=>{ const o={}; headers.forEach((h,i)=>o[h]=r[i]??''); return o; });
-    n.headers = headers.length ? headers : ['value'];
-    n.idx=0; n.t=0; n.name=file.name;
-    n.initialized=false; rebuildNode(n); markTopoDirty();   // порты пересобираются под новые колонки
-  };
-  reader.readAsText(file);
-}
-
-def({ id:'csvsrc', title:'CSV (File, Row-by-Row)', cat:'Sources',
-  ins: n => [{n:'trig',t:'val'}],
-  outs: n => (n.headers||['value']).map(f=>({n:f,t:'val'})),
-  readout:true,
-  params:[
-    {n:'file',t:'file',accept:'.csv,text/csv',fn:(n,f)=>csvsrcLoad(n,f)},
-    {n:'rate',t:'range',min:0,max:50,step:.1,d:0,label:'rows/sec (0 = trig only)'},
-    {n:'loop',t:'check',d:true},
-  ],
-  init:n=>{
-    n.rows=[]; n.headers=['value']; n.idx=0; n.t=0; n.trigPrev=0; n.name='no file selected';
-  },
-  process(n,I){
-    const trig = typeof I.trig==='number' ? I.trig : 0;
-    if(trig>0.5 && n.trigPrev<=0.5) csvsrcAdvance(n);
-    n.trigPrev = trig;
-    if(n.p.rate>0 && n.rows.length){
-      n.t += BLOCK/Eng.sr;
-      const interval = 1/n.p.rate;
-      if(n.t>=interval){ n.t-=interval; csvsrcAdvance(n); }
-    }
-    const out={}, row=n.rows[n.idx];
-    for(const f of n.headers) out[f] = hostlistCoerce(row ? row[f] : '');
-    return out;
-  },
-  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
-    r.textContent = n.rows.length ? (n.name+' · row '+(n.idx+1)+'/'+n.rows.length) : n.name; }
-});
-
-
 /* ============================ ПРОИГРЫВАТЕЛЬ АУДИОПОТОКА (URL) ============================ */
 // MediaElementSource из <audio> тянем в отдельный AudioWorklet-тап, который просто
 // пересылает сэмплы в главный поток — движок читает их из кольцевого буфера, как rtl-sdr/kiwi.
