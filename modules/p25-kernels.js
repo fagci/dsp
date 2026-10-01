@@ -400,15 +400,22 @@ function p25LduWords(F,k){
   const ec=p25RsDec(hex,k);
   return ec<0 ? null : {bits:p25HexBits(hex.subarray(0,k)), ec};
 }
+// 64-битный LFSR вектора MI между суперкадрами P25 (hex 16 символов → следующий)
+function p25MiNext(hex){
+  let x=BigInt('0x'+hex); const M=(1n<<64n)-1n;
+  for(let i=0;i<64;i++){ const b=((x>>63n)^(x>>61n)^(x>>45n)^(x>>37n)^(x>>26n)^(x>>14n))&1n; x=((x<<1n)|b)&M; }
+  return x.toString(16).padStart(16,'0').toUpperCase();
+}
+
 const P25_IMBE=[56,128,220,312,404,496,588,680,768];
 
 FSK4.protos.p25={
   id:'p25', name:'P25', baud:P25_BAUD, alpha:.2, lp:5500, levels:4, thrAcq:4, thrLock:8, syncs:[P25_SYNC],
   init(P){
-    P.now=0; P.eps=0; P.nac=null; P.call=null; P.recent=[]; P.lastAct=0; P.idens={}; P.cc=null; P.crypt=null;
+    P.now=0; P.eps=0; P.nac=null; P.call=null; P.recent=[]; P.lastAct=0; P.idens={}; P.cc=null; P.crypt=null; P.mi=null;
     P.st={frames:0, hdu:0, ldu:0, tdu:0, tsdu:0, tsbk:0, pdu:0, voice:0, calls:0, bad:0, locks:0};
   },
-  reset(P){ P.now=0; P.call=null; },
+  reset(P){ P.now=0; P.call=null; P.mi=null; },
   lock(P,L){
     P.st.locks++;
     L.after=P25_AFTER_NID;
@@ -463,7 +470,7 @@ FSK4.protos.p25={
       const b=p25HduDecode(F);
       if(b){
         const mi=dmrHex(b,0,9), algid=b[10], kid=b[11]*256+b[12], to=b[13]*256+b[14];
-        P.crypt={algid, kid, mi};
+        P.crypt={algid, kid, mi}; P.mi=dmrHex(b,0,8);
         p25Emit(P,L,out,'hdu',{mi, mfid:b[9], algid, algo:P25_ALGO[algid]||'0x'+algid.toString(16), kid, to},
           'HDU TG '+to+' '+(P25_ALGO[algid]||'algo 0x'+algid.toString(16))+(algid!==0x80 ? ' key '+kid : ''));
       } else if(L.blind){ fsk4Drop(L); return; } else P.st.bad++;
@@ -508,12 +515,14 @@ FSK4.protos.p25={
     }
     if(P.call){ P.call.ldu++; P.call.last=P.now; }
     // сырые кадры IMBE (144 бита каждый)
-    const c2=P.call;
+    // MI суперкадра: из HDU или ESS предыдущего LDU2; в LDU2 ESS уже несёт MI следующего суперкадра, поэтому он вступает после кадров
+    const c2=P.call, cr=P.crypt && P.crypt.algid!==0x80 && P.mi ? {alg:P.crypt.algid, kid:P.crypt.kid, mi:P.mi} : null;
     for(let i=0;i<9;i++){
       const bits=fsk4Unpack(p25Data(F,P25_IMBE[i],72),0,72);
-      out.voice.push({t:P.now, src:'P25', kind:'imbe', nac:P.nac, seq:tag, n:i+1, from:c2?c2.from:null, to:c2?c2.to:null, imbe:dmrHex(p25Bytes(bits))});
+      out.voice.push({t:P.now, src:'P25', kind:'imbe', nac:P.nac, seq:tag, n:i+1, from:c2?c2.from:null, to:c2?c2.to:null, imbe:dmrHex(p25Bytes(bits)), ...cr});
       P.st.voice++; if(c2) c2.voice++;
     }
+    if(duid===10){ if(w) P.mi=dmrHex(p25Bytes(w.bits),0,8); else if(P.mi) P.mi=p25MiNext(P.mi); }
     // низкоскоростные данные (только в LDU1/LDU2: 2 байта)
     const lb=fsk4Unpack(p25Data(F,752,16),0,16), l1=p25Lsd(dmrNum(lb,0,16));
     if(l1>0 && w) p25Emit(P,L,out,'lsd',{lsd:l1, seq:tag},'LSD '+l1.toString(16).padStart(2,'0'));
@@ -521,6 +530,7 @@ FSK4.protos.p25={
   },
   end(P,L,out,by){
     const c=P.call;
+    if(by!=='call') P.mi=null;
     if(!c) return;
     const dur=(P.now-c.t0)/1000;
     p25Emit(P,L,out,'end',{from:c.from, to:c.to, call:c.type, seconds:+dur.toFixed(1), ldu:c.ldu, voice:c.voice, by},
