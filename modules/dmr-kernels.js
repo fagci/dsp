@@ -692,13 +692,34 @@ function dmrDataHeader(n,L,S,raw,out){
     extra=' SAP '+(DMR_SAP[f.sap]||f.sap)+' ×'+blocks;
   } else if(dpf===13 || dpf===14){ blocks=(((b[0]>>4)&3)<<4)|(b[1]&15); f.blocks=blocks; f.format=b[1]>>4; f.pad=0; extra=' fmt '+f.format+' ×'+blocks; }
   else if(dpf===1){ blocks=b[8]&0x7F; f.blocks=blocks; extra=' ×'+blocks; }
-  else if(dpf===0){ blocks=(b[8]&3)+1; f.blocks=blocks; f.format=b[1]&15; extra=' fmt '+f.format+' ×'+blocks; }
+  else if(dpf===0){ blocks=(b[8]&3)+1; f.blocks=blocks; f.format=b[1]&15; f.pad=b[8]>>3; extra=' fmt '+f.format+' ×'+blocks; }
   dmrEmit(n,S,L,out,'data-header',f,'DATA HDR '+f.type+' '+from+' → '+(gi ? 'TG ' : '')+to+extra,dmrHex(b));
   if(blocks>0 && dpf!==15) S.d={dpf, sap:f.sap, pad:f.pad||0, blocks, dd:f.format, conf:dpf===3, blk:[], serial:[], crcBad:0, from, to, group:gi, rate:null, hdr:f};
 }
 function dmrDataFlush(n,L,S,out,why){
   const d=S.d; S.d=null;
   if(d && d.blk.length) dmrEmit(n,S,L,out,'data-partial',{from:d.from,to:d.to,got:d.blk.length,blocks:d.blocks,why},'DATA incomplete '+d.blk.length+'/'+d.blocks+' blocks ('+why+')');
+}
+// UDT: адреса (1), цифры набора BCD (2), IP (6), адрес + UTF-16BE (10) — раскладка как в dsd-fme (dmr_udt_decoder); m — приложенные блоки, pad — пустых тетрад
+function dmrUdt(fm,m,pad,blocks){
+  const nib=i=>(m[i>>1]>>((i&1)?0:4))&15, r={};
+  if(fm===1 && m.length>=1+3*blocks){
+    const n=((blocks*96-8)/24)|0, a=[];
+    for(let i=0;i<n && 1+3*i+2<m.length;i++) a.push((m[1+3*i]<<16)|(m[2+3*i]<<8)|m[3+3*i]);
+    r.addrs=a; r.ok=m[0]&1; r.message='Addresses: '+a.join(', ');
+  } else if(fm===2){
+    let n=Math.max(0,blocks*24-pad), s='';
+    for(let i=0;i<n && (i>>1)<m.length;i++){ const d=nib(i); s+=d<10 ? d : d===10 ? '*' : d===11 ? '#' : d===15 ? ' ' : '?'; }
+    r.digits=s.trim(); r.message='Dialer: '+r.digits;
+  } else if(fm===6 && m.length>=4){
+    r.ip=blocks>1 && m.length>=16 ? Array.from({length:8},(_,i)=>((m[2*i]<<8)|m[2*i+1]).toString(16).toUpperCase().padStart(4,'0')).join(':') : Array.from(m.subarray(0,4)).join('.');
+    r.message='IP '+r.ip;
+  } else if(fm===10 && m.length>=4){
+    r.addr=(m[1]<<16)|(m[2]<<8)|m[3];
+    const n=Math.max(0,((blocks*96-32)/16|0)-(pad>>2)), t=dmrUtf16(m,4,Math.min(2*n,m.length-4),false).replace(/\u0000/g,'').trim();
+    r.message='To '+r.addr+(t ? ': '+t : '');
+  } else return null;
+  return r;
 }
 function dmrDataDone(n,L,S,out){
   const d=S.d; S.d=null;
@@ -718,6 +739,7 @@ function dmrDataDone(n,L,S,out){
     const fm=d.dd;
     const msg=fm===7 ? dmrUtf16(m,0,tot,false) : fm===3 ? dmrText7(m,0,tot) : dmrPrintable(m,0,tot);
     f.format=fm; f.message=fm===5 ? dmrPrintable(m,0,tot) : msg; f.data=dmrHex(m,0,Math.min(48,tot)); f.service='UDT';
+    Object.assign(f,dmrUdt(fm,m,d.hdr.pad||0,d.blocks));
     if(fm===5) Object.assign(f,dmrNmea(f.message));
   } else Object.assign(f,dmrPayload(d.dpf===13||d.dpf===14 ? 10 : d.sap,d.dpf===13||d.dpf===14 ? d.dd : null,body));
   if(f.lat!=null){ f.id='dmr:'+d.from; f.label=String(d.from); }
