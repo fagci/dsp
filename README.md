@@ -464,6 +464,20 @@ Visual blocks on number wires (Output). They draw on a dark screen in both theme
 
 Presets: *Indicators: Lamps, Gauge, LED Bar, Compass, Display*, *Indicators: Sky Plot, S-Meter, Text Ticker*.
 
+### Logic Analyzer
+
+**Logic Analyzer** (Analysis): 1…8 channels → digital traces on a common time axis, with a decoder that gives out the **bits and bytes**.
+
+- **Input wires**: *signal* (audio rate — the usual choice, e.g. the `bit` output of *Transmit Chars*, a demodulator's soft output, a square wave) or *number* (one sample per engine block, ~Eng.sr / block, for slow things: lamps, triggers, flip-flops, Compare outputs). A *threshold* with *hysteresis* turns each wire into 0 / 1. The `d1…dN` outputs are the digitised channels. At 44.1 kHz async serial works up to ~9600 baud (at least 4 samples per bit) and I²C / SPI clocks up to ~10 kHz; the readout warns when the baud is too high for the sample rate.
+- **Display**: the *window* (1 ms … 10 s) is drawn from the list of edges, not samples, so even long windows are cheap. *Trigger* on a rising / falling edge of a chosen channel (the trigger sits at 25 % of the window; the time axis is relative to it), *single shot* with **Arm**, **Hold / Run** freezes the picture. Decoded bytes are drawn as bubbles on the trace (hex and the character, errors in red).
+- **Decoders** (*decoder*; channels are set in the advanced parameters):
+  - **UART**: baud, 5…16 data bits, parity (none / even / odd), idle level, bit order (LSB first by default). Start bit is checked in the middle, every bit is sampled at its centre; framing and parity errors are marked and not sent to `text`.
+  - **SPI**: clock, MOSI, MISO (optional), CS (optional, active low), word size, order (MSB first by default), sampling edge (rising = modes 0 / 3, falling = modes 1 / 2).
+  - **I²C**: SCL + SDA; START / repeated START / STOP, 7-bit address with R / W, data bytes, ACK / NAK (a NAK is marked with `!`).
+- **Outputs**: `byte` (last byte), `new` (pulse in the block where a byte arrived — wire it to a lamp or a counter), `text` (a line: UART — on a line feed, after 80 characters or after 1 s of silence; SPI — `MOSI … | MISO …` after CS goes high; I²C — `S 3C+W 00 AF P` after STOP), `rec` (a record per byte: `proto`, `byte`, `hex`, `ch`, `time` — seconds from the start, `err`; I²C adds `kind` and `addr`, SPI `line`), `hit` (a pulse on every trigger). `text` goes to a *Text Ticker*, `rec` to a *Rec Log*.
+
+Preset: *Logic Analyzer: UART Decode*.
+
 ## Map and records
 
 **Records** (`rec` port) carry objects with arbitrary fields — `{lat, lon, id, snr, …}` — from decoders, CSV files and sensors to the map, logs and filters.

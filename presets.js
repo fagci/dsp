@@ -2862,3 +2862,22 @@ addEdge(l.id,'out',sm.id,'in'); addEdge(l.id,'out',c.id,'in'); addEdge(l.id,'out
 addEdge(c.id,'rise',rp.id,'go'); addEdge(rp.id,'rec',tk.id,'rec');
 markWiresDirty();
 });
+preset('Logic Analyzer: UART Decode', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Transmit Chars (ASCII 8N1, 2400 baud) sends a word every 5 s (a square LFO is the trigger). The Logic Analyzer digitises the wire (threshold + hysteresis),\n'+
+  'shows it on a time axis with bubbles for the decoded bytes, and gives the bytes out: `byte` and `new` (a pulse per byte, here on a lamp), `text` (a line after a pause, here in the Ticker) and `rec` (a record per byte).\n'+
+  'Trigger: falling edge, single shot: press Arm to catch the next transmission. Other decoders: SPI (clock, MOSI, MISO, CS) and I2C (SCL, SDA) — see the decoder channel settings.'});
+nt.size.w=800; nt.size.h=100; applySize(nt);
+const l=addNode('lfo',40,200,{freq:.2,min:0,max:1,wave:'sq'});
+const tx=addNode('serialTx',260,200,{text:'HELLO',baud:2400,code:'ASCII 8N1',stop:'1',loop:false});
+const la=addNode('logan',560,200,{count:'1',names:'TX',proto:'UART',a:1,baud:2400,trig:'falling',single:true,span:.03});
+la.size.w=620; la.size.h=170; applySize(la);
+const lp=addNode('lamps',1220,200,{count:'1',labels:'byte',colors:'amber',hold:.15});
+lp.size.w=160; lp.size.h=80; applySize(lp);
+const tk=addNode('ticker',1220,520,{time:true});
+tk.size.w=360; tk.size.h=100; applySize(tk);
+const nv=addNode('numview',1220,900,{});
+addEdge(l.id,'out',tx.id,'go'); addEdge(tx.id,'bit',la.id,'ch1');
+addEdge(la.id,'new',lp.id,'in1'); addEdge(la.id,'text',tk.id,'text'); addEdge(la.id,'byte',nv.id,'in');
+markWiresDirty();
+});
