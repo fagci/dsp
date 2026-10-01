@@ -2808,3 +2808,57 @@ addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',dm.id,'in'); addEdge(dm.id,'out',dc.id,'in'); addEdge(dc.id,'img',fr.id,'img');
 markWiresDirty();
 });
+preset('Indicators: Lamps, Gauge, LED Bar, Compass, Display', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Visual indicators on number wires. An LFO swells a tone; Level measures it in dB: LED Bar (peak marker), Gauge (needle, colour zones, peak).\n'+
+  'Compare turns the level into lamps (above -24 dB, with hold so short pulses stay visible; the last lamp blinks on a rising edge); a slow second LFO sweeps the Compass azimuth.\n'+
+  'The 7-Segment Display shows a frequency in Hz / kHz / MHz. Every indicator works in the dashboard too.'});
+nt.size.w=760; nt.size.h=100; applySize(nt);
+const l=addNode('lfo',40,170,{freq:.25,min:0,max:.5});
+const o=addNode('osc',260,160,{freq:500,amp:0});
+const mt=addNode('meter',480,160,{});
+const lb=addNode('ledbar',780,170,{min:-60,max:0,warn:-18,crit:-6});
+lb.size.w=300; lb.size.h=34; applySize(lb);
+const gg=addNode('gauge',780,470,{min:-60,max:0,warn:-18,crit:-6,unit:'dB'});
+gg.size.w=300; gg.size.h=170; applySize(gg);
+const c=addNode('ncmp',480,340,{thr:-24,hys:6,span:20});
+c.size.w=200; c.size.h=110; applySize(c);
+const lp=addNode('lamps',1120,170,{count:'3',labels:'level, rise, fall',colors:'green, amber, red',hold:.4});
+lp.size.w=300; lp.size.h=80; applySize(lp);
+const l2=addNode('lfo',40,380,{freq:.05,min:0,max:360,wave:'saw'});
+const cp=addNode('compass',1120,470,{});
+cp.size.w=220; cp.size.h=190; applySize(cp);
+const l3=addNode('lfo',40,590,{freq:.1,min:7000000,max:14350000,wave:'tri'});
+const sd=addNode('segdisp',1120,790,{digits:8,decimals:3,fmt:'frequency'});
+sd.size.w=300; sd.size.h=70; applySize(sd);
+addEdge(l.id,'out',o.id,'amp');
+addEdge(o.id,'out',mt.id,'in');
+addEdge(mt.id,'db',lb.id,'in'); addEdge(mt.id,'db',gg.id,'in'); addEdge(mt.id,'db',c.id,'in');
+addEdge(c.id,'out',lp.id,'in1'); addEdge(c.id,'rise',lp.id,'in2'); addEdge(c.id,'fall',lp.id,'in3');
+addEdge(l2.id,'out',cp.id,'az');
+addEdge(l3.id,'out',sd.id,'in');
+markWiresDirty();
+});
+preset('Indicators: Sky Plot, S-Meter, Text Ticker', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Two LFOs drive a Sky Plot (azimuth sweeps round, elevation rises and sets; the object is hollow below the horizon, the trail shows the pass).\n'+
+  'A third LFO plays the signal level in dBm for the S-Meter (S9 = -73 dBm, 6 dB per S unit, fast attack, slow fall, peak marker). Compare fires when the level passes S9;\n'+
+  'Fields → Rec packs the level into a record on each trigger and the Text Ticker lists it (switch display to marquee for a running line).'});
+nt.size.w=760; nt.size.h=100; applySize(nt);
+const a=addNode('lfo',40,160,{freq:.04,min:0,max:360,wave:'saw'});
+const e=addNode('lfo',40,340,{freq:.04,min:-15,max:80,wave:'sine'});
+const sp=addNode('skyplot',300,160,{trail:40});
+sp.size.w=300; sp.size.h=260; applySize(sp);
+const l=addNode('lfo',40,640,{freq:.3,min:-100,max:-40,wave:'sine'});
+const sm=addNode('smeter',300,640,{s9:-73});
+sm.size.w=420; sm.size.h=64; applySize(sm);
+const c=addNode('ncmp',760,640,{thr:-73,hys:3,span:20});
+c.size.w=220; c.size.h=110; applySize(c);
+const rp=addNode('recPack',1020,640,{names:'dBm',consts:'event=above S9',mode:'trigger'});
+const tk=addNode('ticker',1020,860,{time:true});
+tk.size.w=420; tk.size.h=130; applySize(tk);
+addEdge(a.id,'out',sp.id,'az'); addEdge(e.id,'out',sp.id,'el');
+addEdge(l.id,'out',sm.id,'in'); addEdge(l.id,'out',c.id,'in'); addEdge(l.id,'out',rp.id,'dBm');
+addEdge(c.id,'rise',rp.id,'go'); addEdge(rp.id,'rec',tk.id,'rec');
+markWiresDirty();
+});
