@@ -523,7 +523,7 @@ function dmrShortFrag(n,L,c,out){
 function dmrVoice(n,L,S,bits,sync,emb,out){
   n.st.voice++;
   const now=n.now;
-  if(S.call && now-S.lastVoice>3000) S.call=null;
+  if(S.call && now-S.lastVoice>3000){ S.call=null; S.pi=null; }
   S.lastVoice=now; S.vbursts++;
   if(sync){ S.vseq=0; S.sf++; S.est=0; }
   else {
@@ -533,7 +533,7 @@ function dmrVoice(n,L,S,bits,sync,emb,out){
   const ambe=new Uint8Array(216);
   ambe.set(bits.subarray(0,108),0); ambe.set(bits.subarray(156,264),108);
   const c=S.call;
-  out.voice.push({t:now, src:'DMR', kind:'ambe', slot:S.slot||null, cc:L.cc>=0 ? L.cc : null, seq:'ABCDEF'[S.vseq], from:c?c.from:null, to:c?c.to:null, ambe:dmrHex(dmrBytes(ambe,0,27))});
+  out.voice.push({t:now, src:'DMR', kind:'ambe', slot:S.slot||null, cc:L.cc>=0 ? L.cc : null, seq:'ABCDEF'[S.vseq], from:c?c.from:null, to:c?c.to:null, ambe:dmrHex(dmrBytes(ambe,0,27)), ...(S.pi ? {alg:S.pi.alg, kid:S.pi.kid, mi:S.pi.mi, vb:S.vbursts-1} : null)});
   if(!emb) return;
   const frag=bits.subarray(116,148);
   if(emb.lcss===1){ S.eraw.set(frag,0); S.est=1; }
@@ -580,6 +580,7 @@ function dmrData(n,L,S,bits,st,out){
     if(!b){ n.st.bad++; return; }
     const alg=b[0], mi=dmrHex(b,3,4), to=dmrId(b,7);
     dmrEmit(n,S,L,out,'pi',{alg, fid:b[1], key:b[2], mi, to},'PI (encrypted) alg 0x'+alg.toString(16).toUpperCase()+' key '+b[2]+' MI '+mi+' → '+to,dmrHex(b));
+    S.pi={alg, kid:b[2], mi};
     if(S.call && !S.call.flags.includes('encrypted')) S.call.flags.push('encrypted');
     return; }
   case 1: case 2: {
@@ -589,14 +590,14 @@ function dmrData(n,L,S,bits,st,out){
     if(dt===1){
       n.st.lc++;
       if(S.d) dmrDataFlush(n,L,S,out,'interrupted');
-      S.call={from,to,type:dmrCallName(flco),flags,t0:n.now,late:false}; S.vbursts=0; S.ta=null;
+      S.call={from,to,type:dmrCallName(flco),flags,t0:n.now,late:false}; S.vbursts=0; S.ta=null; S.pi=null;
       dmrEmit(n,S,L,out,'call',{from,to,call:S.call.type,flags:flags.join(','),flco,fid,source:'LC header'},
         'CALL '+S.call.type+' '+from+' → '+to+(flags.length ? ' ['+flags.join(',')+']' : '')+(fid ? ' FID 0x'+fid.toString(16) : ''),'h'+dmrHex(b));
     } else {
       const c=S.call, dur=c ? Math.round(n.now-c.t0) : null;
       dmrEmit(n,S,L,out,'end',{from,to,call:dmrCallName(flco),voice:S.vbursts,ms:dur,alias:c&&c.alias||undefined},
         'END '+dmrCallName(flco)+' '+from+' → '+to+' · '+S.vbursts+' voice bursts',dmrHex(b));
-      S.call=null; S.vbursts=0;
+      S.call=null; S.vbursts=0; S.pi=null;
     }
     return; }
   case 3: case 4: {
