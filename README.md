@@ -448,6 +448,18 @@ Small universal blocks on number wires (a pulse is 0/1, an edge is a crossing of
 
 Presets: *Control: Clocks Switch a Tone On and Off*, *Control: Level Trigger (Compare, Counter, One-Shot)*, *Control: Logic Test Bench (all blocks)* (every block in one patch: arpeggio from Counter + Select + Math, gate from Flip-Flop + Compare + Logic, Sample & Hold, One-Shot, scope `hit` counter).
 
+### Indicators
+
+Visual blocks on number wires (Output). They draw on a dark screen in both themes and work in the dashboard as tiles.
+
+- **Lamps**: 1…16 round lamps with a glow and labels, one input each. *Threshold* mode lights a lamp at or above the level, *brightness* mode follows the value (0…full scale). *Hold / fade* lets a lamp fade out over the given time, so a one-block pulse (Compare `rise`, a trigger, a flip-flop) is still visible; *blink while on*. Colors are a cycled list: `green, amber, red, blue, teal, violet, pink` or `#rrggbb`.
+- **Gauge**: analog needle with a 240° scale, tick labels, optional green / amber / red zones (`amber from`, `red from`), peak marker, needle damping and the value with a unit under the hub. *min* / *max* can be wired.
+- **LED Bar**: segmented ladder (horizontal or vertical, by the tile's shape) with the same zones, instant attack, smooth fall and a peak marker. Defaults fit a dB level: −60…0, amber from −18, red from −3.
+- **Compass**: azimuth dial with N / E / S / W; `az` is the arrow, `az2` a second marker on the rim (a bearing and a heading, a satellite and the antenna). *Rotate the dial* turns the dial to `az2`. The needle takes the shortest way round 359° → 0°.
+- **7-Segment Display**: seven-segment digits (1…12, decimals, leading zeros, unlit segments); *frequency* format turns Hz into kHz / MHz / GHz with the unit. Overflow shows dashes.
+
+Preset: *Indicators: Lamps, Gauge, LED Bar, Compass, Display*.
+
 ## Map and records
 
 **Records** (`rec` port) carry objects with arbitrary fields — `{lat, lon, id, snr, …}` — from decoders, CSV files and sensors to the map, logs and filters.
