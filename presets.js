@@ -148,6 +148,8 @@ const PRESET_CATS={
   'Radiosonde RS41: Map (USB SDR, 400–406 MHz)':'Aircraft, Satellites & Telemetry',
   'ISM 433: Sensors and Remotes (Generator)':'Aircraft, Satellites & Telemetry',
   'ISM 433: Sensors and Remotes (USB SDR)':'Aircraft, Satellites & Telemetry',
+  'ACARS: VHF Messages (Generator)':'Aircraft, Satellites & Telemetry',
+  'ACARS: VHF Messages (USB SDR, 131 MHz)':'Aircraft, Satellites & Telemetry',
   'Inmarsat STD-C: EGC Messages (Generator)':'Aircraft, Satellites & Telemetry',
   'Inmarsat STD-C: EGC Messages (USB SDR, 1.5 GHz)':'Aircraft, Satellites & Telemetry',
   'GSM: Receive Bursts (USB SDR)':'Aircraft, Satellites & Telemetry',
@@ -842,6 +844,40 @@ const de=addNode('ismRx',340,360,{});
 de.size.w=520; de.size.h=300; applySize(de);
 const log=addNode('recLog',340,720,{});
 log.size.w=520; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('ACARS: VHF Messages (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'ACARS without a radio: the generator sends AM bursts with MSK 2400 Bd (1200 / 2400 Hz) — pre-key, "+*", SYN SYN, SOH, aircraft registration,\n'+
+  'label, block id, text, ETX, BCS (CRC-16) — position, OOOI, gate and link-test messages from a few aircraft, with a pause between bursts.\n'+
+  'ACARS Decoder: AM envelope, MSK discriminator at 8 bit-clock phases, sync search (tone polarity and differential coding are found by the sync word),\n'+
+  'parity, CRC → registration, label, flight, text.'});
+nt.size.w=720; nt.size.h=130; applySize(nt);
+const gn=addNode('iqGen',40,220,{sr:'256000',fc:131725000,mode:'ACARS',off:7000,lvl:-20,noise:-50});
+const de=addNode('acarsRx',340,220,{});
+de.size.w=560; de.size.h=300; applySize(de);
+const log=addNode('recLog',340,580,{});
+log.size.w=560; applySize(log);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('ACARS: VHF Messages (USB SDR, 131 MHz)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'ACARS from the air (AM, 25 kHz channels): Europe 131.525 / 131.725 / 131.825 MHz, North America 129.125 / 130.025 / 131.550 MHz.\n'+
+  'Tune to a channel, tap a burst on the spectrum (a short carrier every few seconds, buzzing in AM). The decoder needs the signal in the passband (about ±10 kHz),\n'+
+  'but IQ Frequency Shift before it helps to keep away from the DC spike. A vertical whip is enough, ACARS is vertically polarized.'});
+nt.size.w=720; nt.size.h=110; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'1024000',freq:131725000,demod:'IQ'});
+const sa=addNode('sa',760,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,200,{});
+const de=addNode('acarsRx',340,360,{});
+de.size.w=560; de.size.h=300; applySize(de);
+const log=addNode('recLog',340,720,{});
+log.size.w=560; applySize(log);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');

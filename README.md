@@ -18,7 +18,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Groups (nested subgraphs) with custom inputs/outputs
 - Undo/redo, duplicate, multi-select, module search (Ctrl+K)
 - Save/load patches to local storage or JSON files
-- 68 built-in presets: demos, quick scenarios, radio protocols, music, analysis
+- 70 built-in presets: demos, quick scenarios, radio protocols, music, analysis
 - Adjustable block size, sample rate and run speed (×1…×32)
 - AudioWorklet engine, SharedArrayBuffer path when cross-origin isolated
 - Installable PWA with offline support
@@ -71,6 +71,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **Inmarsat STD-C** (1.5 GHz): BPSK 1200 → frames → packets → SafetyNET / FleetNET EGC messages (see [Inmarsat STD-C](#inmarsat-std-c))
 - **MPT 1327** (analogue trunking control channel): FM → FFSK 1200 Bd → codewords with CRC → PFIX/IDENT (see [MPT 1327](#mpt-1327))
 - **ISM 433 MHz** (sensors, remotes, doorbells; OOK and FSK): pulse train → PWM / PPM / Manchester → EV1527/PT2262, Nexus, or an unknown packet with timings and bits (see [ISM 433](#ism-433))
+- **ACARS** (VHF 131 MHz, AM + MSK 2400 Bd): envelope → MSK → blocks with CRC and parity → aircraft registration, label, flight, text (see [ACARS](#acars))
 - **4FSK Digital Voice** — one decoder for **DMR, P25 Phase 1, NXDN 9600 and 4800, YSF, M17, D-STAR and dPMR**: the protocol is found by its sync words (or picked by hand), records and raw vocoder frames on separate outputs, turned into sound by the mbelib [Vocoder](#vocoder-mbelib) (see [4FSK Digital Voice](#4fsk-digital-voice))
 - **DMR** (Tier II / III, repeater, mobile or direct mode): 4FSK 4800 Bd → colour code, time slots, voice calls (from → to, emergency, encrypted, talker alias), CSBK, data and SMS, raw AMBE+2 frames (see [DMR](#dmr))
 - **Analog video** (FPV 5.8 GHz, broadcast and satellite TV) from raw SDR IQ: FM / AM demodulator → composite video → line and field sync, PAL / NTSC, colour, interlace → picture (see [Analog video](#analog-video))
@@ -277,6 +278,18 @@ Presets: *MPT 1327: Control Channel (Generator)*, *MPT 1327: Control Channel (US
 - **Not done:** the protocols were checked against the generator and hand-made vectors, not against real devices — check a new one with your own captures. Only mark-first, single-frequency packets are handled; a trailing run of zeros in FSK is lost (it looks like silence); no CRC-based protocols yet (Oregon, LaCrosse, Fine Offset…); OOK+FSK mode gives duplicates and false unknown packets.
 
 Presets: *ISM 433: Sensors and Remotes (Generator)*, *ISM 433: Sensors and Remotes (USB SDR)*.
+
+## ACARS
+
+**ACARS Decoder** (Decoders, worker) reads aircraft datalink messages on VHF (131 MHz band, AM, 25 kHz channels): position and OOOI reports, gate and weather messages, link tests.
+
+- **Input:** IQ at any rate (decimated to ~24 kS/s inside) or an already demodulated AM audio. The envelope is taken, so the carrier may be off-centre within the passband (about ±10 kHz); put *IQ Frequency Shift* before it to stay away from the DC spike of the SDR.
+- **Chain:** AM envelope → DC block → mix 1800 Hz to zero → low-pass → phase step per bit (MSK, 1200 / 2400 Hz) at 8 bit-clock phases → sync word `'*' SYN SYN SOH` (two bit errors allowed) → bytes (7 bits LSB first + odd parity) → ETX / ETB, BCS, DEL. The tone polarity and the differential variant (tone change or repeat = bit) are not assumed: all four readings of the bit stream are tried and the sync word picks the right one, shown in the node header.
+- **Check:** BCS is CRC-16 (reflected, polynomial `0x8408`, initial 0) over the bytes from the mode to the BCS, with parity bits included; the result must be zero. With *fix up to 2 parity errors* on, the bits of bytes that fail parity are flipped one by one, and the block is accepted only if the CRC then matches (those are marked `fixed`). Frames with a wrong CRC are only counted.
+- **Output:** records `{t, src:'ACARS', kind:'message', id, reg, mode, ack, label, blk, dir: air2gnd|gnd2air, no, flight, etb, txt, text, rssi, fixed}`. For downlink blocks (block id is a digit) the message number and flight id are split off the text. Rec Log saves CSV, *Rec: Unique by Key* (key `reg`) gives a list of aircraft heard.
+- **Not done:** the message layer is not interpreted (labels, ARINC 620/622 formats, OOOI fields) and positions are not extracted — feed the text to *Geo from Text* if a message carries coordinates (`N55123E037456`). Multi-block messages (ETB) come out as separate records. One channel at a time. The decoder was checked against the generator (including noise at 8 dB SNR, ±300 ppm clock error, inverted and differential tones, single parity errors), **not against real recordings**: the CRC convention and the tone mapping follow the common ACARS decoders from memory, so check them on your own captures first.
+
+Presets: *ACARS: VHF Messages (Generator)*, *ACARS: VHF Messages (USB SDR, 131 MHz)*.
 
 ## Analog video
 
