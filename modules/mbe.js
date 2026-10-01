@@ -120,17 +120,20 @@ function mbePull(s,o,B,step){
   return true;
 }
 
-def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t:'rec'}], outs:[{n:'out',t:'sig'},{n:'err',t:'num'}],
+def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t:'rec'},{n:'key',t:'txt'}], outs:[{n:'out',t:'sig'},{n:'err',t:'num'}],
   readout:true, resize:true, w:340,
   params:[{n:'gain',t:'range',min:0,max:8,step:.01,d:1,label:'gain'},
           {n:'slot',t:'select',opts:['any','1','2'],d:'any',label:'DMR slot'},
-          {n:'uv',t:'range',min:1,max:64,step:1,d:3,label:'unvoiced quality (mbelib uvquality)'}],
-  init:n=>{ n.streams=new Map(); n.tot={frames:0, errs:0, skipped:0}; mbeLoad(); c2Load(); },
+          {n:'uv',t:'range',min:1,max:64,step:1,d:3,label:'unvoiced quality (mbelib uvquality)'},
+          {n:'keys',t:'text',d:'',label:'RC4 keys (40-bit hex): key; id=key; tg:N=key; … ; also from the key input'}],
+  init:n=>{ n.streams=new Map(); n.tot={frames:0, errs:0, skipped:0, dec:0}; n.keyTxt=null; n.keys={list:[], bad:[]}; mbeLoad(); c2Load(); },
   process(n,I){
     const o=buf(n,'out'); o.fill(0);
     if(!MBE.ex && !C2.ex) return {out:o, err:0};
     let err=0;
     const g=n.p.gain, q=n.p.uv|0, slot=n.p.slot, now=Date.now();
+    const kt=(n.p.keys||'')+'\n'+(typeof I.key==='string' ? I.key : '');
+    if(kt!==n.keyTxt){ n.keyTxt=kt; n.keys=vcParseKeys(kt); }
     for(const r of recList(I.voice)){
       if(slot!=='any' && r.slot && String(r.slot)!==slot) continue;
       const fs=mbeFrames(r);
@@ -138,14 +141,18 @@ def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t
       const s=mbeStream(n,r.src+'|'+(r.slot||0));
       if(now-s.last>2000){ if(s.h>=0) MBE.ex.mbx_reset(s.h); }       // новый разговор: состояние предыдущего кадра не нужно
       s.last=now;
-      for(const fm of fs){
+      s.enc=null;
+      for(let f=0;f<fs.length;f++){
+        let fm=fs[f], derr=-1;
+        const dc=vcDecrypt(r,f,fm,n.keys.list,s);
+        if(dc){ s.enc=dc; if(dc.st==='ok'){ fm=dc.fm; derr=dc.errs; n.tot.dec++; } }
         if(fm.k==='c2'){
           if(!s.c2 || s.c2.mode!==fm.mode){ if(s.c2) C2.ex.c2_free(s.c2.h); s.c2={h:C2.ex.c2_new(fm.mode), mode:fm.mode}; }
           if(s.c2.h<0) continue;
           mbePush(s,c2Decode(s.c2.h,fm.bytes),g); s.frames++; n.tot.frames++;
         } else {
           if(s.h<0) s.h=MBE.ex.mbx_new();
-          const d=mbeDecode(s.h,fm,q); s.frames++; s.errs+=d.errs; n.tot.errs+=d.errs; if(d.errs) err=1; n.tot.frames++; mbePush(s,d.pcm,g);
+          const d=mbeDecode(s.h,fm,q); if(derr>=0) d.errs=derr; s.frames++; s.errs+=d.errs; n.tot.errs+=d.errs; if(d.errs) err=1; n.tot.frames++; mbePush(s,d.pcm,g);
         }
       }
     }
@@ -156,6 +163,14 @@ def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t
   draw(n){
     const el=n.el.querySelector('.readout');
     const st=(m,name)=>m.ex ? name+' ready' : m.err ? name+' missing ('+m.err+')' : name+' loading…';
-    const rows=[...n.streams.values()].map(s=>s.key.replace(/\|0$/,'').replace('|',' slot ')+' · '+s.frames+' frames'+(s.h>=0 ? ' · '+s.errs+' bit errors' : '')+' · '+((s.w-s.r)/8).toFixed(0)+' ms queued'+(s.play ? ' ▶' : ''));
-    el.textContent=st(MBE,'mbelib')+' · '+st(C2,'Codec 2')+' · '+n.tot.frames+' frames'+(n.tot.skipped ? ' · '+n.tot.skipped+' records not decodable' : '')+(rows.length ? '\n'+rows.join('\n') : '\nwaiting for voice records');
+    const encTxt=e=>{
+      if(!e) return '';
+      const a=(e.alg===0xAA ? 'ADP RC4' : e.alg===0x21 ? 'EP RC4' : 'alg 0x'+e.alg.toString(16).toUpperCase())+' key '+e.kid;
+      return ' · '+a+({ok:' · decrypting', nokey:' · no key', nomi:' · waiting for MI', alg:' · algorithm not supported', err:' · too many bit errors'})[e.st];
+    };
+    const rows=[...n.streams.values()].map(s=>s.key.replace(/\|0$/,'').replace('|',' slot ')+' · '+s.frames+' frames'+(s.h>=0 ? ' · '+s.errs+' bit errors' : '')+' · '+((s.w-s.r)/8).toFixed(0)+' ms queued'+(s.play ? ' ▶' : '')+encTxt(s.enc));
+    const kn=n.keys.list.length+n.keys.bad.length;
+    el.textContent=st(MBE,'mbelib')+' · '+st(C2,'Codec 2')+' · '+n.tot.frames+' frames'+(n.tot.skipped ? ' · '+n.tot.skipped+' records not decodable' : '')+
+      (kn ? '\nkeys: '+n.keys.list.length+(n.keys.bad.length ? ' ('+n.keys.bad.length+' invalid: need 10 hex digits)' : '')+(n.tot.dec ? ' · '+n.tot.dec+' frames decrypted' : '') : '')+
+      (rows.length ? '\n'+rows.join('\n') : '\nwaiting for voice records');
   }});
