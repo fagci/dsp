@@ -120,7 +120,7 @@ function mbePull(s,o,B,step){
   return true;
 }
 
-def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t:'rec'}], outs:[{n:'out',t:'sig'}],
+def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t:'rec'}], outs:[{n:'out',t:'sig'},{n:'err',t:'num'}],
   readout:true, resize:true, w:340,
   params:[{n:'gain',t:'range',min:0,max:8,step:.01,d:1,label:'gain'},
           {n:'slot',t:'select',opts:['any','1','2'],d:'any',label:'DMR slot'},
@@ -128,7 +128,8 @@ def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t
   init:n=>{ n.streams=new Map(); n.tot={frames:0, errs:0, skipped:0}; mbeLoad(); c2Load(); },
   process(n,I){
     const o=buf(n,'out'); o.fill(0);
-    if(!MBE.ex && !C2.ex) return {out:o};
+    if(!MBE.ex && !C2.ex) return {out:o, err:0};
+    let err=0;
     const g=n.p.gain, q=n.p.uv|0, slot=n.p.slot, now=Date.now();
     for(const r of recList(I.voice)){
       if(slot!=='any' && r.slot && String(r.slot)!==slot) continue;
@@ -144,13 +145,13 @@ def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t
           mbePush(s,c2Decode(s.c2.h,fm.bytes),g); s.frames++; n.tot.frames++;
         } else {
           if(s.h<0) s.h=MBE.ex.mbx_new();
-          const d=mbeDecode(s.h,fm,q); s.frames++; s.errs+=d.errs; n.tot.errs+=d.errs; n.tot.frames++; mbePush(s,d.pcm,g);
+          const d=mbeDecode(s.h,fm,q); s.frames++; s.errs+=d.errs; n.tot.errs+=d.errs; if(d.errs) err=1; n.tot.frames++; mbePush(s,d.pcm,g);
         }
       }
     }
     const step=8000/Eng.sr;
     for(const s of n.streams.values()) mbePull(s,o,BLOCK,step);
-    return {out:o};
+    return {out:o, err};
   },
   draw(n){
     const el=n.el.querySelector('.readout');
