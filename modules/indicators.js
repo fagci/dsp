@@ -244,7 +244,7 @@ def({ id:'segdisp', lazy:'proc', title:'7-Segment Display', cat:'Output', ins:[{
   draw(n,cv,cx){
     const W=cv.width, H=cv.height, p=n.p, D=Math.round(p.digits), {s,u}=segFormat(n.v,p);
     const uw=u ? Math.min(W*.2,H*.9) : 0, cw=(W-uw-8)/D;
-    const h=Math.max(8,Math.min(H-10,cw*1.9)), w=h*.5, t=Math.max(1.5,h*.11), g=t*.7;
+    const w=Math.max(4,Math.min((H-10)*.5,cw*.68)), h=w*2, t=Math.max(1.5,h*.11), g=t*.7;   // цифра — не шире 68 % ячейки, иначе соседние слипаются
     const col=indColor(p.color), y0=(H-h)/2, ym=y0+h/2, y1=y0+h;
     cx.clearRect(0,0,W,H);
     const cells=[];                                  // цифры справа налево; '.' достаётся предыдущей цифре
@@ -268,7 +268,7 @@ def({ id:'segdisp', lazy:'proc', title:'7-Segment Display', cat:'Output', ins:[{
         if(on){ cx.shadowColor=col; cx.shadowBlur=t*1.5; }
         cx.beginPath(); segs[k](); cx.fill(); cx.restore();
       }
-      if(ch && ch.dot){ cx.fillStyle=col; cx.beginPath(); cx.arc(x1+t*1.2,y1,t*.55,0,7); cx.fill(); }
+      if(ch && ch.dot){ cx.fillStyle=col; cx.beginPath(); cx.arc(x1+(cw-w)/2,y1,Math.min(t*.55,(cw-w)*.3),0,7); cx.fill(); }
     }
     if(u){ indFont(cx,Math.min(uw*.45,h*.3)); cx.fillStyle=col; cx.textBaseline='bottom'; cx.fillText(u,W-uw-1,y1); cx.textBaseline='alphabetic'; }
   }
