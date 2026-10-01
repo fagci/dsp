@@ -195,6 +195,7 @@ const PRESET_CATS={
   'Sequencer: Random Beacon (Trigger Clock)':'Modems & Data Links',
   'Control: Clocks Switch a Tone On and Off':'Analysis & Measurement',
   'Control: Level Trigger (Compare, Counter, One-Shot)':'Analysis & Measurement',
+  'Control: Logic Test Bench (all blocks)':'Analysis & Measurement',
   'FT8: Propagation Map':'Maps & Locating',
   'Fox Hunt: Locate Transmitter':'Maps & Locating',
   'Internet Radio on the Map':'Maps & Locating',
@@ -443,6 +444,81 @@ addEdge(c.id,'rise',k.id,'clk');
 addEdge(c.id,'rise',s.id,'trig');
 addEdge(k.id,'count',n1.id,'in');
 addEdge(s.id,'gate',n2.id,'in');
+markWiresDirty();
+});
+preset('Control: Logic Test Bench (all blocks)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Test bench for every Control logic block.\n'+
+  'Clock 1 s → Counter (mod 4) → Select picks a semitone from 4 constants → Math (÷12, 2^x, ×220) → arpeggio pitch.\n'+
+  'Counter wrap (every 4 s) toggles the Flip-Flop; a slow LFO goes through Compare (window 0.2…0.8, screen) and Logic AND with the flip-flop → tone gate.\n'+
+  'Sample & Hold freezes the LFO on every clock → Math → second tone; One-Shot (wrap) makes a short blip on it; Logic XOR and the scope hit counter are shown as numbers.'});
+nt.size.w=760; nt.size.h=130; applySize(nt);
+const X=[40,300,560,820,1080,1340], Y=[190,410,850];
+// тактовый генератор и счётчик
+const ck=addNode('tclock',X[0],Y[0],{interval:1});
+const cn=addNode('ncount',X[1],Y[0],{mod:4});
+const nvC=addNode('numview',X[2],Y[0],{});
+// арпеджио: Select → Math → Math(pow) → Math
+const semi=[0,4,7,12].map((v,i)=>addNode('const',X[1],Y[1]+i*95,{v}));
+const sel=addNode('nsel',X[2],Y[1],{inputs:'4'});
+const m1=addNode('nmath',X[3],Y[1],{op:'sum',k:1/12});
+const two=addNode('const',X[3],Y[1]+170,{v:2});
+const m2=addNode('nmath',X[4],Y[1],{op:'in1 ^ in2'});
+const m3=addNode('nmath',X[5],Y[1],{op:'sum',k:220});
+const o1=addNode('osc',X[5],Y[0],{freq:220,amp:0,wave:'tri'});
+// гейт: Flip-Flop + LFO → Compare → Logic AND → Math → amp
+const ff=addNode('nflip',X[2]+70,Y[2],{});
+const lf=addNode('lfo',X[0],Y[2],{freq:.07,min:0,max:1});
+const cm=addNode('ncmp',X[1],Y[2],{mode:'inside',thr:.2,thr2:.8,hys:.06,span:30});
+cm.size.w=300; cm.size.h=130; applySize(cm);
+const lg=addNode('nlogic',X[3]+40,Y[2],{op:'AND'});
+const mg=addNode('nmath',X[4]+40,Y[2],{op:'sum',k:.25});
+const xr=addNode('nlogic',X[3]+40,Y[2]+150,{op:'XOR'});
+const nvX=addNode('numview',X[4]+40,Y[2]+150,{});
+// второй тон: S&H от LFO по такту, One-Shot от wrap
+const sh=addNode('nhold',X[0],Y[2]+440,{});
+const m4=addNode('nmath',X[1],Y[2]+440,{op:'sum',k:600,ofs:300});
+const os=addNode('nshot',X[2],Y[2]+440,{width:.4});
+const m5=addNode('nmath',X[3],Y[2]+480,{op:'sum',k:.2});
+const o2=addNode('osc',X[4],Y[2]+440,{freq:500,amp:0});
+// выход: сумма, осциллограф с hit, счётчик срабатываний
+const sm=addNode('sum',X[5]-10,Y[2]+100,{});
+const dc=addNode('dac',X[5]+240,Y[2]+100,{vol:.3});
+const sc=addNode('scope',X[5]+240,Y[0]-20,{});
+const hc=addNode('ncount',X[5]+240,Y[2]+580,{mod:0});
+const nvH=addNode('numview',X[5]+480,Y[2]+580,{});
+// провода
+addEdge(ck.id,'trig',cn.id,'clk');
+addEdge(cn.id,'count',nvC.id,'in');
+addEdge(cn.id,'count',sel.id,'sel');
+semi.forEach((c,i)=>addEdge(c.id,'out',sel.id,'in'+(i+1)));
+addEdge(sel.id,'out',m1.id,'in1');
+addEdge(two.id,'out',m2.id,'in1');
+addEdge(m1.id,'out',m2.id,'in2');
+addEdge(m2.id,'out',m3.id,'in1');
+addEdge(m3.id,'out',o1.id,'freq');
+addEdge(cn.id,'wrap',ff.id,'clk');
+addEdge(lf.id,'out',cm.id,'in');
+addEdge(ff.id,'out',lg.id,'in1');
+addEdge(cm.id,'out',lg.id,'in2');
+addEdge(lg.id,'out',mg.id,'in1');
+addEdge(mg.id,'out',o1.id,'amp');
+addEdge(ff.id,'out',xr.id,'in1');
+addEdge(cm.id,'out',xr.id,'in2');
+addEdge(xr.id,'out',nvX.id,'in');
+addEdge(lf.id,'out',sh.id,'in');
+addEdge(ck.id,'trig',sh.id,'trig');
+addEdge(sh.id,'out',m4.id,'in1');
+addEdge(m4.id,'out',o2.id,'freq');
+addEdge(cn.id,'wrap',os.id,'trig');
+addEdge(os.id,'gate',m5.id,'in1');
+addEdge(m5.id,'out',o2.id,'amp');
+addEdge(o1.id,'out',sm.id,'a');
+addEdge(o2.id,'out',sm.id,'b');
+addEdge(sm.id,'out',dc.id,'L');
+addEdge(sm.id,'out',sc.id,'in1');
+addEdge(sc.id,'hit',hc.id,'clk');
+addEdge(hc.id,'count',nvH.id,'in');
 markWiresDirty();
 });
 preset('FT8: Propagation Map', function(){

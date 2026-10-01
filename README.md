@@ -446,7 +446,7 @@ Small universal blocks on number wires (a pulse is 0/1, an edge is a crossing of
 - **One-Shot**: a trigger starts a `gate` of *width* after *delay*; `end` pulses when it finishes (a delayed trigger). Retriggerable.
 - The **Oscilloscope** has a `hit` output: a pulse each time its trigger fires.
 
-Presets: *Control: Clocks Switch a Tone On and Off*, *Control: Level Trigger (Compare, Counter, One-Shot)*.
+Presets: *Control: Clocks Switch a Tone On and Off*, *Control: Level Trigger (Compare, Counter, One-Shot)*, *Control: Logic Test Bench (all blocks)* (every block in one patch: arpeggio from Counter + Select + Math, gate from Flip-Flop + Compare + Logic, Sample & Hold, One-Shot, scope `hit` counter).
 
 ## Map and records
 
