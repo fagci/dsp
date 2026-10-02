@@ -176,7 +176,7 @@ function freqMeasure(n){
   n.f=f;
 }
 
-def({ id:'sigmap', title:'Signal Scale', cat:'Modulation', ins:[{n:'in',t:'sig'},{n:'clamp',t:'num'}],
+def({ id:'sigmap', title:'Signal Scale', cat:'Processing', ins:[{n:'in',t:'sig'},{n:'clamp',t:'num'}],
   outs:[{n:'out',t:'sig'}],
   params:[{n:'inMin',t:'num',d:1500},{n:'inMax',t:'num',d:2300},
           {n:'outMin',t:'num',d:0},{n:'outMax',t:'num',d:1},
@@ -188,7 +188,7 @@ def({ id:'sigmap', title:'Signal Scale', cat:'Modulation', ins:[{n:'in',t:'sig'}
     return {out:o}; }});
 
 
-def({ id:'sigwin', title:'Value Window', cat:'Modulation', ins:[{n:'in',t:'sig'},{n:'minMs',t:'num'}],
+def({ id:'sigwin', title:'Value Window', cat:'Processing', ins:[{n:'in',t:'sig'},{n:'minMs',t:'num'}],
   outs:[{n:'out',t:'sig'},{n:'hit',t:'num'}],
   params:[{n:'lo',t:'num',d:1150},{n:'hi',t:'num',d:1350},
           {n:'minMs',t:'range',min:0,max:100,step:.5,d:3}],

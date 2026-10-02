@@ -134,7 +134,7 @@ function geoRecPos(r){
 }
 
 /* ---------- узлы записей ---------- */
-def({ id:'recPack', title:'Fields → Rec', cat:'Control',
+def({ id:'recPack', title:'Fields → Rec', cat:'Data',
   // Собирает запись из значений на входах. С входом rec — дописывает поля в каждую
   // приходящую запись (константы и подключённые входы перекрывают её поля).
   ins:n=>[{n:'rec',t:'rec'},{n:'go',t:'num'},...recFieldNames(n.p.names).map(f=>({n:f,t:'val'}))],
@@ -176,7 +176,7 @@ def({ id:'recPack', title:'Fields → Rec', cat:'Control',
   draw(n){ n.el.querySelector('.readout').textContent=
     'emitted '+n.count+(n.last ? '\n'+recText(n.last) : ''); }});
 
-def({ id:'recUnpack', title:'Rec → Fields', cat:'Control',
+def({ id:'recUnpack', title:'Rec → Fields', cat:'Data',
   // Раскладывает поля последней пришедшей записи по выходам; значения держатся до следующей.
   ins:[{n:'rec',t:'rec'}],
   outs:n=>[{n:'go',t:'num'},{n:'count',t:'num'},...recFieldNames(n.p.names).map(f=>({n:f,t:'val'}))],
@@ -200,7 +200,7 @@ def({ id:'recUnpack', title:'Rec → Fields', cat:'Control',
   draw(n){ n.el.querySelector('.readout').textContent=
     'received '+n.count+(n.last ? '\n'+recText(n.last) : ''); }});
 
-def({ id:'recCsv', title:'CSV → Rec', cat:'Control',
+def({ id:'recCsv', title:'CSV → Rec', cat:'Data',
   // Строки CSV (с webserial, текстового источника и т.п.) или целый файл → записи.
   // Имена полей: из параметра или, если он пуст, из первой строки (заголовок).
   ins:[{n:'line',t:'txt'}],
@@ -277,7 +277,7 @@ def({ id:'recLog', title:'Rec Log', cat:'Output',
     const tail=n.rows.slice(-5).map(r=>Object.keys(r).map(k=>k+'='+recFmt(r[k])).join(' ')).join('\n');
     n.el.querySelector('.readout').textContent=(n.p.on?'● ':'')+'records '+n.rows.length+'\n'+tail; }});
 
-def({ id:'recUniq', title:'Rec: Unique by Key', cat:'Control',
+def({ id:'recUniq', title:'Rec: Unique by Key', cat:'Data',
   // Уникальные записи по ключевому полю (id, cell id, позывной…): копит по одному экземпляру
   // на ключ, считает count и время first/last. Пример: список GSM-вышек по id (PLMN-LAC-CID),
   // самолётов по icao, станций по позывному. `new` — только впервые увиденные, `rec` — обновлённые.
@@ -329,7 +329,7 @@ function recFilterCompile(n){
     .catch(e=>{ if(n._fn===tok){ tok.ready=true; n.err=e.message; } })
     .finally(()=>URL.revokeObjectURL(url));
 }
-def({ id:'recFilter', title:'Rec Filter', cat:'Control',
+def({ id:'recFilter', title:'Rec Filter', cat:'Data',
   // Условие — выражение JS над записью r, например: r.snr > -10 && r.id
   ins:[{n:'rec',t:'rec'}],
   outs:[{n:'rec',t:'rec'},{n:'rej',t:'rec'}],
@@ -360,7 +360,7 @@ def({ id:'recFilter', title:'Rec Filter', cat:'Control',
 // Своя позиция: вручную (lat/lon или локатор, ⌖ — разово из геолокации) или GPS-слежение.
 // Последняя известная позиция — в GeoMe, её берут узлы, которым нужна точка приёма.
 const GeoMe={lat:null, lon:null, t:0};
-def({ id:'geoMe', title:'My Position', cat:'Sources',
+def({ id:'geoMe', title:'My Position', cat:'Geo',
   outs:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'acc',t:'num'},{n:'alt',t:'num'},
         {n:'speed',t:'num'},{n:'heading',t:'num'},{n:'grid',t:'txt'},{n:'rec',t:'rec'}],
   readout:true,
@@ -528,7 +528,7 @@ function geoTextFind(text,opt={}){
   return out.sort((a,b)=>a.at-b.at);
 }
 
-def({ id:'geoText', title:'Geo from Text', cat:'Decoders',
+def({ id:'geoText', title:'Geo from Text', cat:'Geo',
   // Координаты из любого текста: декодированные сообщения, NMEA, APRS, ACARS, заметки.
   ins:[{n:'text',t:'txt'}],
   outs:[{n:'rec',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'count',t:'num'}],
@@ -555,7 +555,7 @@ def({ id:'geoText', title:'Geo from Text', cat:'Decoders',
   },
   draw(n){ n.el.querySelector('.readout').textContent='found '+n.count+(n.shown?'\n'+n.shown:''); }});
 
-def({ id:'geoMark', title:'Mark Point', cat:'Control',
+def({ id:'geoMark', title:'Mark Point', cat:'Geo',
   // Снимок «где я и что принимаю»: позиция (входы lat/lon или My Position) + значения на входах.
   // По кнопке, по фронту go или автоматически раз в N секунд — для замеров на местности.
   ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'rssi',t:'num'},{n:'snr',t:'num'},
@@ -700,7 +700,7 @@ function geoLocShown(n){
   return best || n.groups.values().next().value || null;
 }
 function geoLocFmtErr(km){ return km>=1 ? km.toFixed(1)+' km' : Math.round(km*1000)+' m'; }
-def({ id:'geoLocate', lazy:'manual', title:'Source Locator', cat:'Analysis',
+def({ id:'geoLocate', lazy:'manual', title:'Source Locator', cat:'Geo',
   ins:[{n:'rec',t:'rec'},{n:'select',t:'rec'}],        // select — клик на карте: показать эту группу
   outs:[{n:'rec',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'err',t:'num'},{n:'count',t:'num'}],
   view:{h:260}, resize:true, readout:true,
@@ -987,7 +987,7 @@ function geoTileGet(src,z,x,y,net){
 
 /* ---------- узел карты ---------- */
 const GEO_TILE_OPTS=['none',...Object.keys(GEO_TILES)];
-def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Output',
+def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
   ins:[{n:'rec',t:'rec'},{n:'rec2',t:'rec'},{n:'rec3',t:'rec'}],
   outs:[{n:'pick',t:'rec'},{n:'sel',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'count',t:'num'}],
   w:480, view:{h:360}, resize:true,

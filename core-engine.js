@@ -15,7 +15,7 @@ function themeColor(name){
 }
 // порядок разделов в палитре — иначе порядок зависит от того, в каком файле модуль зарегистрирован
 const CAT_ORDER = ['Sources','Music','Processing','Modulation','Analysis','Radio','IQ','Radar',
-                    'Protocols','Decoders','Audio','Video','Output','Control','Builder','Misc'];
+                    'Protocols','Decoders','Audio','Video','Geo','Data','Control','Indicators','Output','Builder','Misc'];
 
 /* ============================ ДВИЖОК ============================ */
 const Eng = {

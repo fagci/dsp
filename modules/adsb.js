@@ -4,7 +4,7 @@
    ADS-B Decoder: кадры (rec или текст AVR "*8D…;" — например, из dump1090 по сети) → таблица бортов
    и записи для карты: позиция (CPR), высота, скорость, курс, позывной, squawk. */
 
-defIQ({ id:'adsbDemod', title:'ADS-B Demodulator', cat:'IQ',
+defIQ({ id:'adsbDemod', title:'ADS-B Demodulator', cat:'Modulation',
   ins:[{n:'in',t:'iq'}], outs:[{n:'rec',t:'rec'},{n:'rate',t:'num'}],
   params:[{n:'thr',t:'range',min:1,max:12,step:.5,d:6,label:'preamble: pulses over the gaps, dB'},
           {n:'fix',t:'select',opts:['off','1 bit','2 weak bits'],d:'1 bit',label:'fix errors in DF17/18 (2 weak bits — more range, rare ghosts)'}]},

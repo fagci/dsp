@@ -307,7 +307,7 @@ def({ id:'crcAdd', title:'CRC: Add', cat:'Protocols',
   draw(n){ n.el.querySelector('.readout').textContent=n.text||'…'; }});
 
 
-def({ id:'crcCheck', title:'CRC: Check', cat:'Decoders',
+def({ id:'crcCheck', title:'CRC: Check', cat:'Protocols',
   ins:[{n:'blk',t:'blk'},{n:'msb',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'ok',t:'num'},{n:'text',t:'txt'}],
   readout:true,
   params:[{n:'kind',t:'select',opts:Object.keys(CRCS),d:'CRC-16/X.25 (HDLC)'},
@@ -357,7 +357,7 @@ def({ id:'scrambleTx', title:'Scrambler: Transmit', cat:'Protocols',
     return {out:o}; }});
 
 
-def({ id:'scrambleRx', title:'Scrambler: Receive (descrambler)', cat:'Decoders',
+def({ id:'scrambleRx', title:'Scrambler: Receive (descrambler)', cat:'Protocols',
   ins:[{n:'in',t:'sig'},{n:'len',t:'num'},{n:'tap',t:'num'},{n:'baud',t:'num'}], outs:[{n:'out',t:'sig'}],
   params:[{n:'additive',t:'check',d:false,label:'additive (not self-sync.)'},
           {n:'len',t:'range',min:5,max:23,step:1,d:17,label:'register length'},
@@ -679,7 +679,7 @@ def({ id:'interleaveTx', title:'Interleaver: Transmit', cat:'Protocols',
   draw(n){ n.el.querySelector('.readout').textContent=n.txt||'…'; }});
 
 
-def({ id:'interleaveRx', title:'Interleaver: Receive (deinterleave)', cat:'Decoders',
+def({ id:'interleaveRx', title:'Interleaver: Receive (deinterleave)', cat:'Protocols',
   ins:[{n:'blk',t:'blk'},{n:'rows',t:'num'},{n:'cols',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'text',t:'txt'}],
   readout:true,
   params:[{n:'rows',t:'range',min:1,max:256,step:1,d:9},
@@ -797,7 +797,7 @@ function ita2enc(ch){                              // char → [needs figures sh
   return null;
 }
 
-def({ id:'serialRx', title:'Receive Chars (async serial)', cat:'Decoders', ins:[{n:'soft',t:'sig'},{n:'baud',t:'num'},{n:'invert',t:'num'}],
+def({ id:'serialRx', title:'Receive Chars (async serial)', cat:'Protocols', ins:[{n:'soft',t:'sig'},{n:'baud',t:'num'},{n:'invert',t:'num'}],
   outs:[{n:'busy',t:'num'}], readout:true, tall:true,
   params:[{n:'baud',t:'range',min:10,max:2400,step:.01,d:45.45,log:true},
           {n:'code',t:'select',opts:['Baudot (RTTY)','ASCII 8N1','ASCII 7N1'],d:'Baudot (RTTY)'},
@@ -1035,7 +1035,7 @@ function textDecode(t,mode){
   return t;
 }
 
-def({ id:'textcode', title:'Text: Ciphers/Representations', cat:'Misc',
+def({ id:'textcode', title:'Text: Ciphers/Representations', cat:'Data',
   ins:[{n:'text',t:'txt'}], outs:[{n:'out',t:'txt'}], readout:true, tall:true,
   params:[{n:'text',t:'text',d:'SOS'},
           {n:'mode',t:'select',opts:['encode','decode'],d:'encode'},
@@ -1661,7 +1661,7 @@ def({ id:'txt2bits', title:'Text → Bits', cat:'Protocols',
   draw(n){ n.el.querySelector('.readout').textContent=n.text||'…'; }});
 
 
-def({ id:'bits2txt', title:'Bits → Text', cat:'Decoders',
+def({ id:'bits2txt', title:'Bits → Text', cat:'Protocols',
   ins:[{n:'blk',t:'blk'}], outs:[{n:'text',t:'txt'}], readout:true, tall:true,
   params:[{n:'coding',t:'select',opts:TXTCODINGS,d:'UTF-8'},
           {n:'append',t:'check',d:true,label:'append'},

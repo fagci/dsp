@@ -935,7 +935,7 @@ function pushChar(q,code,bits,st){
   q.push([1,st]);                                  // stop (mark)
 }
 
-def({ id:'textsrc', title:'Text Source', cat:'Control',
+def({ id:'textsrc', title:'Text Source', cat:'Sources',
   outs:[{n:'text',t:'txt'},{n:'go',t:'num'}], readout:true, tall:true,
   ins:[{n:'repeat',t:'num'}],
   params:[{n:'text',t:'text',d:'CQ CQ DE R1ABC K'},
@@ -1010,7 +1010,7 @@ async function serialConnect(n){
   }
 }
 
-def({ id:'webserial', title:'Serial Port (WebSerial)', cat:'Control',
+def({ id:'webserial', title:'Serial Port (WebSerial)', cat:'Sources',
   outs:[{n:'line',t:'txt'},{n:'go',t:'num'}], readout:true, tall:true,
   params:[
     {n:'baud',t:'select',opts:['4800','9600','19200','38400','57600','115200'],d:'9600'},
@@ -1116,7 +1116,7 @@ async function netTextPoll(n,url){
   }
   if(n.want){ clearTimeout(n.timer); n.timer=setTimeout(()=>netTextPoll(n,url),Math.max(0.2,+n.p.poll||5)*1000); }
 }
-def({ id:'nettext', title:'Text over Network', cat:'Control',
+def({ id:'nettext', title:'Text over Network', cat:'Sources',
   ins:[{n:'send',t:'txt'}],                            // по WebSocket: новое значение — отправить
   outs:[{n:'line',t:'txt'},{n:'go',t:'num'},{n:'rec',t:'rec'},{n:'count',t:'num'}],
   readout:true, tall:true,
@@ -1152,7 +1152,7 @@ def({ id:'nettext', title:'Text over Network', cat:'Control',
 function csvlineFields(n){
   return String(n.p.names||'value').split(',').map(s=>s.trim()||'value');
 }
-def({ id:'csvline', title:'Parse CSV Line', cat:'Control',
+def({ id:'csvline', title:'Parse CSV Line', cat:'Data',
   ins:[{n:'line',t:'txt'}],
   outs: n => csvlineFields(n).map(f=>({n:f,t:'val'})),
   readout:true,
@@ -1188,7 +1188,7 @@ function linefilterCompile(n){
     return null;
   }
 }
-def({ id:'linefilter', title:'Line Filter (regexp)', cat:'Control',
+def({ id:'linefilter', title:'Line Filter (regexp)', cat:'Data',
   ins:[{n:'line',t:'txt'}],
   outs:[{n:'line',t:'txt'},{n:'go',t:'num'}],
   readout:true,

@@ -146,7 +146,8 @@ Islands.rebuild();                                  // состав остров
 /* ---- DOM узла ---- */
 function catColor(cat){                             // единый цвет категории — для узлов и палитры
 return cat==='Sources'?'var(--t-num)':cat==='Processing'?'var(--t-sig)'
-: cat==='Analysis'?'var(--t-spec)':cat==='Misc'?'var(--dim)':'var(--t-img)';
+: cat==='Analysis'?'var(--t-spec)':cat==='Misc'?'var(--dim)'
+: cat==='Indicators'?'var(--t-rec)':cat==='Data'?'var(--t-txt)':cat==='Geo'?'var(--t-bands)':'var(--t-img)';
 }
 function posNode(n){                                // position через transform, не left/top —
 n.el.style.transform=`translate3d(${n.x}px,${n.y}px,0)`;   // так двигаем узел без layout-reflow всей страницы

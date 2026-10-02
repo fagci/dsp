@@ -4,7 +4,7 @@
    CCSDS Decoder: символы → Витерби → NRZ-M → кадры 1024 байта → дескремблер → RS → записи VCDU
    (rec: scid, vcid, cnt, rs, vcdu — 892 байта для разбора пакетов и картинки). */
 
-def({ id:'pskDemod', title:'PSK Demodulator', cat:'IQ', kernel:true, readout:true, view:{h:150},
+def({ id:'pskDemod', title:'PSK Demodulator', cat:'Modulation', kernel:true, readout:true, view:{h:150},
   ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'},{n:'freq',t:'num'},{n:'lock',t:'num'}],
   params:[{n:'mode',t:'select',opts:['OQPSK','QPSK','BPSK'],d:'OQPSK',label:'modulation (Meteor M2-3/M2-4: OQPSK, M2: QPSK, Inmarsat STD-C: BPSK)'},
           {n:'rate',t:'num',d:72000,label:'symbol rate, Bd'},

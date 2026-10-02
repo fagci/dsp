@@ -422,7 +422,7 @@ function v27Chainback(vp, nbits, endstate){           // nbits — данные,
  * НЕ поблочные буферы (в отличие от 'sig'). См. пример 'lfo': process возвращает
  * {out:число}, а не Float32Array.
  * ========================================================================================== */
-def({ id:'hfdlViterbi', title:'Viterbi K=7 r=1/2 (HFDL FEC)', cat:'Decoders', readout:true,
+def({ id:'hfdlViterbi', title:'Viterbi K=7 r=1/2 (HFDL FEC)', cat:'Protocols', readout:true,
   ins:[{n:'blk',t:'blk'}],
   outs:[{n:'blk',t:'blk'}],
   params:[{n:'polyConv',t:'select',opts:['raw (no convention)','NASA-DSN','CCSDS'],d:'raw (no convention)',
@@ -667,7 +667,7 @@ def({ id:'hfdlM1Match', lazy:'proc', title:'HFDL: M1 Detector (rate)', cat:'Prot
 // текущей схемы (1=BPSK/2=QPSK/3=8PSK) как sig — Костас переключается синхронно с фреймером,
 // а не молотит один и тот же (обычно неверный для преамбулы/тренировки) режим весь кадр.
 // Держи ОБА узла (этот и hfdlSymToBits) на одних и тех же go/m1 — иначе разъедутся по времени.
-def({ id:'hfdlOrderSched', title:'HFDL: Modulation Scheme Planner', cat:'Decoders', readout:true,
+def({ id:'hfdlOrderSched', title:'HFDL: Modulation Scheme Planner', cat:'Protocols', readout:true,
   ins:[{n:'clk',t:'sig'},{n:'go',t:'sig'},{n:'m1',t:'num'}],
   outs:[{n:'order',t:'sig'}],
   params:[{n:'m1',t:'range',min:0,max:7,step:1,d:3,label:'M1 (if go/m1 not connected)'}],
@@ -722,7 +722,7 @@ def({ id:'hfdlOrderSched', title:'HFDL: Modulation Scheme Planner', cat:'Decoder
   },
   draw(n){ n.el.querySelector('.readout').textContent=n.txt; }});
 
-def({ id:'hfdlSymToBits', title:'HFDL: Symbol→Bits (I/Q, with framer)', cat:'Decoders', readout:true, resize:true,
+def({ id:'hfdlSymToBits', title:'HFDL: Symbol→Bits (I/Q, with framer)', cat:'Protocols', readout:true, resize:true,
   ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'clk',t:'sig'},{n:'go',t:'sig'},{n:'m1',t:'num'},{n:'flip',t:'num'}],
   outs:[{n:'blk',t:'blk'},{n:'m1',t:'num'}],
   params:[{n:'m1',t:'range',min:0,max:7,step:1,d:3,label:'M1 (0-7, if go/m1 not connected)'},
@@ -874,7 +874,7 @@ def({ id:'hfdlSymToBits', title:'HFDL: Symbol→Bits (I/Q, with framer)', cat:'D
 // Для codeRate=2 (QPSK/8PSK) — просто пропускает как есть, без усреднения.
 // Крошечный мост: M1 -> нужный сдвиг push для hfdlDeint (17 один слот / 23 два слота).
 // Та же таблица HFDL_FRAME_PARAMS, что и везде — держит одно место истины по параметрам M1.
-def({ id:'hfdlShiftFromM1', title:'HFDL: Deinterleaver Shift from M1', cat:'Decoders', readout:true,
+def({ id:'hfdlShiftFromM1', title:'HFDL: Deinterleaver Shift from M1', cat:'Protocols', readout:true,
   ins:[{n:'m1',t:'num'}], outs:[{n:'shiftCols',t:'num'}],
   params:[{n:'m1',t:'range',min:0,max:7,step:1,d:3,label:'M1 (if input not connected)'}],
   process(n,I){
@@ -885,7 +885,7 @@ def({ id:'hfdlShiftFromM1', title:'HFDL: Deinterleaver Shift from M1', cat:'Deco
   },
   draw(n){ n.el.querySelector('.readout').textContent=n.txt||''; }});
 
-def({ id:'hfdlChipAvg', title:'HFDL: Chip-Pair Averaging (rate 1/4)', cat:'Decoders', readout:true,
+def({ id:'hfdlChipAvg', title:'HFDL: Chip-Pair Averaging (rate 1/4)', cat:'Protocols', readout:true,
   ins:[{n:'blk',t:'blk'},{n:'m1',t:'num'}],
   outs:[{n:'blk',t:'blk'}],
   params:[{n:'m1',t:'range',min:0,max:7,step:1,d:0,label:'M1 (0-7, if m1 input not connected)'}],
@@ -1072,7 +1072,7 @@ function hfdlDeintBits(bits,shiftCols){                  // 40 строк, сд�
 // НЕ используется в рабочей авто-цепочке ('HFDL: приём и карта самолётов') — там
 // дескремблинг встроен в hfdlSymToBits (по data-символам, а не по baud-такту).
 // Этот узел остался от раннего пресета 'HFDL: обнаружение и кадр' (без фреймера).
-def({ id:'hfdlDescr', title:'HFDL: Descrambler', cat:'Decoders',
+def({ id:'hfdlDescr', title:'HFDL: Descrambler', cat:'Protocols',
   ins:[{n:'in',t:'sig'},{n:'baud',t:'num'}], outs:[{n:'out',t:'sig'}],
   params:[{n:'baud',t:'range',min:1,max:9600,step:.01,d:1800,log:true}],
   init:n=>{n.ph=0;n.cur=1;n.hf=0;},
@@ -1091,7 +1091,7 @@ def({ id:'hfdlDescr', title:'HFDL: Descrambler', cat:'Decoders',
 
 // HFDL перемежает по фиксированной схеме 40×N со сдвигом столбцов — не то же самое,
 // что общая построчная/постолбцовая матрица (interleavePerm в protocols.js).
-def({ id:'hfdlDeint', title:'HFDL: Deinterleaver', cat:'Decoders',
+def({ id:'hfdlDeint', title:'HFDL: Deinterleaver', cat:'Protocols',
   ins:[{n:'blk',t:'blk'},{n:'shiftCols',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'text',t:'txt'}],
   readout:true,
   params:[{n:'shiftCols',t:'range',min:1,max:64,step:1,d:17,label:'column shift'}],

@@ -27,7 +27,7 @@ function lampResize(n){
   Graph.edges.filter(e=>e.to===n.id && !valid.has(e.tp)).forEach(delEdge);
   rebuildNode(n); markTopoDirty();
 }
-def({ id:'lamps', lazy:'proc', title:'Lamps', cat:'Output',
+def({ id:'lamps', lazy:'proc', title:'Lamps', cat:'Indicators',
   ins:n=>Array.from({length:+n.p.count||4},(_,k)=>({n:'in'+(k+1),t:'num'})),
   view:{h:64}, resize:true,
   params:[{n:'count',t:'select',opts:IND_LAMP_COUNTS,d:'4',label:'lamps',fn:lampResize},
@@ -80,7 +80,7 @@ def({ id:'lamps', lazy:'proc', title:'Lamps', cat:'Output',
 });
 
 /* ---------- Gauge (стрелочный прибор) ---------- */
-def({ id:'gauge', lazy:'proc', title:'Gauge', cat:'Output', ins:[{n:'in',t:'num'}],
+def({ id:'gauge', lazy:'proc', title:'Gauge', cat:'Indicators', ins:[{n:'in',t:'num'}],
   view:{h:150}, resize:true,
   params:[{n:'min',t:'num',d:0},{n:'max',t:'num',d:1},
           {n:'zones',t:'check',d:true,label:'colour zones'},
@@ -141,7 +141,7 @@ def({ id:'gauge', lazy:'proc', title:'Gauge', cat:'Output', ins:[{n:'in',t:'num'
 });
 
 /* ---------- LED Bar (светодиодная шкала с пиком) ---------- */
-def({ id:'ledbar', lazy:'proc', title:'LED Bar', cat:'Output', ins:[{n:'in',t:'num'}],
+def({ id:'ledbar', lazy:'proc', title:'LED Bar', cat:'Indicators', ins:[{n:'in',t:'num'}],
   view:{h:34}, resize:true,
   params:[{n:'min',t:'num',d:-60},{n:'max',t:'num',d:0},
           {n:'segs',t:'range',min:5,max:60,step:1,d:24,label:'segments'},
@@ -181,7 +181,7 @@ def({ id:'ledbar', lazy:'proc', title:'LED Bar', cat:'Output', ins:[{n:'in',t:'n
 
 /* ---------- Compass (азимут) ---------- */
 const IND_CARDS=['N','NE','E','SE','S','SW','W','NW'];
-def({ id:'compass', lazy:'proc', title:'Compass', cat:'Output',
+def({ id:'compass', lazy:'proc', title:'Compass', cat:'Indicators',
   ins:[{n:'az',t:'num'},{n:'az2',t:'num'}],
   view:{h:150}, resize:true,
   params:[{n:'tau',t:'range',min:0,max:3,step:.01,d:.2,label:'needle damping, s'},
@@ -235,7 +235,7 @@ function segFormat(v,p){
   if(p.zeros) s=s.replace(/^(-?)(\d+)/,(m,sg,d)=>sg+d.padStart(+p.digits-sg.length-(+p.decimals?+p.decimals:0),'0'));
   return {s,u};
 }
-def({ id:'segdisp', lazy:'proc', title:'7-Segment Display', cat:'Output', ins:[{n:'in',t:'num'}],
+def({ id:'segdisp', lazy:'proc', title:'7-Segment Display', cat:'Indicators', ins:[{n:'in',t:'num'}],
   view:{h:64}, resize:true,
   params:[{n:'digits',t:'range',min:1,max:12,step:1,d:8},
           {n:'decimals',t:'range',min:0,max:6,step:1,d:0},
@@ -280,7 +280,7 @@ def({ id:'segdisp', lazy:'proc', title:'7-Segment Display', cat:'Output', ins:[{
 
 /* ---------- Sky Plot (азимут / высота) ---------- */
 const SKY_MAX=1500;
-def({ id:'skyplot', lazy:'proc', title:'Sky Plot', cat:'Output',
+def({ id:'skyplot', lazy:'proc', title:'Sky Plot', cat:'Indicators',
   ins:[{n:'az',t:'num'},{n:'el',t:'num'},{n:'az2',t:'num'},{n:'el2',t:'num'}],
   view:{h:190}, resize:true,
   params:[{n:'trail',t:'range',min:0,max:300,step:1,d:30,label:'trail, s'},
@@ -336,7 +336,7 @@ def({ id:'skyplot', lazy:'proc', title:'Sky Plot', cat:'Output',
 const SM_FRAC=(db,s9)=>{ const d=db-s9; return d<=0 ? clamp(1+d/54,0,1)*.6 : .6+clamp(d/60,0,1)*.4; };
 const SM_NAME=(db,s9)=>{ const d=db-s9;
   return d>=0 ? 'S9'+(d>=1 ? '+'+Math.round(d) : '') : db<s9-54 ? 'S0' : 'S'+Math.max(0,Math.round(9+d/6)); };
-def({ id:'smeter', lazy:'proc', title:'S-Meter', cat:'Output', ins:[{n:'in',t:'num'}],
+def({ id:'smeter', lazy:'proc', title:'S-Meter', cat:'Indicators', ins:[{n:'in',t:'num'}],
   outs:[{n:'s',t:'num'}], view:{h:58}, resize:true,
   params:[{n:'s9',t:'num',d:-73,label:'S9 level (dBm; −73 is the HF standard)'},
           {n:'unit',t:'text',d:'dBm'},
@@ -380,7 +380,7 @@ def({ id:'smeter', lazy:'proc', title:'S-Meter', cat:'Output', ins:[{n:'in',t:'n
 });
 
 /* ---------- Text Ticker (бегущая строка / журнал строк) ---------- */
-def({ id:'ticker', lazy:'proc', title:'Text Ticker', cat:'Output',
+def({ id:'ticker', lazy:'proc', title:'Text Ticker', cat:'Indicators',
   ins:[{n:'text',t:'txt'},{n:'rec',t:'rec'}], view:{h:90}, resize:true,
   params:[{n:'mode',t:'select',opts:['lines','marquee'],d:'lines',label:'display'},
           {n:'max',t:'range',min:10,max:1000,step:10,d:200,label:'lines kept'},

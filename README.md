@@ -450,7 +450,7 @@ Presets: *Control: Clocks Switch a Tone On and Off*, *Control: Level Trigger (Co
 
 ### Indicators
 
-Visual blocks on number wires (Output). They draw on a dark screen in both themes and work in the dashboard as tiles.
+Visual blocks on number wires (Indicators). They draw on a dark screen in both themes and work in the dashboard as tiles.
 
 - **Lamps**: 1…16 round lamps with a glow and labels, one input each. *Threshold* mode lights a lamp at or above the level, *brightness* mode follows the value (0…full scale). *Hold / fade* lets a lamp fade out over the given time, so a one-block pulse (Compare `rise`, a trigger, a flip-flop) is still visible; *blink while on*. Colors are a cycled list: `green, amber, red, blue, teal, violet, pink` or `#rrggbb`.
 - **Gauge**: analog needle with a 240° scale, tick labels, optional green / amber / red zones (`amber from`, `red from`), peak marker, needle damping and the value with a unit under the hub. *min* / *max* can be wired.

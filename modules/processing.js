@@ -485,7 +485,7 @@ def({ id:'hilbert', title:'Hilbert Transform', cat:'Processing', ins:[{n:'in',t:
 
 // Фазоскоп: X-Y осциллограф (фигуры Лиссажу) + метр фазовой корреляции пары каналов.
 // +1 — каналы синфазны, −1 — в противофазе (взаимно гасят друг друга в моно), 0 — не связаны.
-def({ id:'xyscope', lazy:'proc', title:'Phase Scope (X-Y)', cat:'Processing', ins:[{n:'x',t:'sig'},{n:'y',t:'sig'}],
+def({ id:'xyscope', lazy:'proc', title:'Phase Scope (X-Y)', cat:'Analysis', ins:[{n:'x',t:'sig'},{n:'y',t:'sig'}],
   outs:[{n:'corr',t:'num'}],
   view:{h:220}, resize:true, readout:true,
   params:[{n:'gain',t:'range',min:.1,max:8,step:.1,d:1,label:'gain'},
