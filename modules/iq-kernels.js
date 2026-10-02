@@ -173,6 +173,45 @@ IQK.iqDecim={
     return {out:o, sr:srOut};
   }};
 
+/* ---- IQ Interpolator ---- */
+// Повышение частоты дискретизации в L раз (L нулей между отсчётами + ФНЧ, полифазно): нужно, чтобы узкую
+// полосу после сдвига и децимации снова отдать широкополосному приёмнику потока, например HackRF TX (≥ 2 МС/с).
+// Центр fc не меняется; ФНЧ — те же отводы, что у децимации, с усилением L.
+IQK.iqInterp={
+  init(n){ n.key=''; },
+  process(n,I){
+    const s=iqIn(I,'in');
+    if(!s){ n.ui=null; return {out:null, sr:null}; }
+    const L=+n.p.L, cplx=s.chunks.length ? !!s.chunks[0].im : n.cplx!==false;
+    const key=L+'|'+n.p.cut+'|'+n.p.tpp+'|'+s.sr+'|'+cplx;
+    if(key!==n.key){
+      n.key=key; n.cplx=cplx; n.h=iqDecimTaps(L,+n.p.tpp,n.p.cut).map(v=>v*L);
+      n.T=Math.ceil(n.h.length/L); n.hr=new Float32Array(n.T-1); n.hi=new Float32Array(n.T-1);
+    }
+    const h=n.h, Lh=h.length, T=n.T, H=T-1, srOut=s.sr*L;
+    const o=iqStream(n,'out',srOut,s.fc);
+    n.ui={srIn:s.sr, srOut};
+    for(const c of s.chunks){
+      const xr=c.re, xi=c.im, K=xr.length;
+      const br=new Float32Array(H+K); br.set(n.hr); br.set(xr,H);
+      let bi=null;
+      if(cplx){ bi=new Float32Array(H+K); bi.set(n.hi); if(xi) bi.set(xi,H); }
+      const yr=new Float32Array(K*L), yi=cplx ? new Float32Array(K*L) : null;
+      for(let m=0;m<K;m++){
+        const e=H+m;
+        for(let p=0;p<L;p++){
+          let ar=0, ai=0;
+          if(cplx) for(let j=0, q=p; q<Lh; j++, q+=L){ const g=h[q]; ar+=g*br[e-j]; ai+=g*bi[e-j]; }
+          else for(let j=0, q=p; q<Lh; j++, q+=L) ar+=h[q]*br[e-j];
+          yr[m*L+p]=ar; if(cplx) yi[m*L+p]=ai;
+        }
+      }
+      n.hr.set(br.subarray(K)); if(cplx) n.hi.set(bi.subarray(K));
+      if(K) iqPush(o,yr,yi,c.tag);
+    }
+    return {out:o, sr:srOut};
+  }};
+
 /* ---- IQ Demodulator ---- */
 // Вход — канал, уже отфильтрованный и прореженный (сдвиг → децимация). Выход 'out' — звук
 // вещественным потоком, 'stereo' — комплексным: re — левый, im — правый (WFM, SAM ISB; иначе моно).

@@ -54,6 +54,13 @@ defIQ({ id:'iqDecim', title:'IQ Decimator', cat:'IQ',
           {n:'tpp',t:'select',opts:['8','16','32'],d:'16',label:'taps per output',adv:true}]},
   n=>n.ui ? (n.ui.srIn/1000)+' → '+(n.ui.srOut/1000)+' kS/s' : 'no input');
 
+defIQ({ id:'iqInterp', title:'IQ Interpolator', cat:'IQ',
+  ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'},{n:'sr',t:'num'}],
+  params:[{n:'L',t:'select',opts:['2','3','4','5','8','10','16','20','25','32','40','50','64'],d:'8',label:'interpolation'},
+          {n:'cut',t:'range',min:.1,max:.5,step:.01,d:.4,label:'cutoff, × input rate'},
+          {n:'tpp',t:'select',opts:['4','8','16'],d:'8',label:'taps per input',adv:true}]},
+  n=>n.ui ? (n.ui.srIn/1000)+' → '+(n.ui.srOut/1000)+' kS/s' : 'no input');
+
 defIQ({ id:'iqDemod', title:'IQ Demodulator', cat:'IQ',
   ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'},{n:'stereo',t:'iq'},{n:'ps',t:'txt'},{n:'rt',t:'txt'},{n:'pilot',t:'num'},{n:'lock',t:'num'}],
   params:[{n:'mode',t:'select',opts:['FM','WFM','AM','SAM','USB','LSB'],d:'FM'},
