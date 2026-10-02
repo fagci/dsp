@@ -19,7 +19,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Undo/redo, duplicate, multi-select, module search (Ctrl+K)
 - Save/load patches to local storage or JSON files
 - 70 built-in presets: demos, quick scenarios, radio protocols, music, analysis
-- Adjustable block size, sample rate and run speed (×1…×32)
+- Adjustable block size, sample rate and run speed (×1…×32); redraw rate switch in the toolbar: *fps auto* (60 → 30 → 20 fps as the interface sits idle, 10 fps with a USB SDR connected), *fps max* (always 60 fps — the waterfall does not slow down at rest, but the main thread has less time for USB and audio) and *fps min* (10 fps, lightest on CPU)
 - AudioWorklet engine, SharedArrayBuffer path when cross-origin isolated
 - Installable PWA with offline support
 
