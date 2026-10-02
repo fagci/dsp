@@ -164,8 +164,12 @@ def({ id:'ledbar', lazy:'proc', title:'LED Bar', cat:'Output', ins:[{n:'in',t:'n
     const lo=Math.min(p.min,p.max), hi=Math.max(p.min,p.max), rng=hi-lo||1;
     const vert=p.dir==='vertical' || (p.dir==='auto' && H>W);
     const len=vert?H:W, th=vert?W:H, gap=Math.max(1,len/N*.15), sl=(len-gap*(N-1))/N;
-    cx.clearRect(0,0,W,H);
     const lit=n.v===null ? 0 : (n.sv-lo)/rng*N, pk=isFinite(n.pk) ? Math.min(N-1,Math.floor((n.pk-lo)/rng*N)) : -1;
+    // картинка зависит только от числа зажжённых сегментов и пика — иначе канву зря не трогаем
+    const key=[W,H,drawGen,N,lo,hi,p.warn,p.crit,p.dir,p.peak,Math.floor(lit-.5)+(n.v===null?'x':''),pk].join('|');
+    if(n._lk===key && n._lcv===cv) return;
+    n._lk=key; n._lcv=cv;
+    cx.clearRect(0,0,W,H);
     for(let i=0;i<N;i++){
       const col=themeColor(indZone(p,lo+rng*(i+.5)/N)), pos=i*(sl+gap);
       const on=i+.5<=lit || (p.peak && i===pk && n.v!==null);
