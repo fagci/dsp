@@ -6503,7 +6503,7 @@ async function streamPlay(n){
     streamResetRing(n);
     await audio.play();
     n.connected=true; n.connecting=false; n.status='playing';
-    icyMetadataStart(n, url);   // не ждём — читается фоном, пока не остановят поток
+    if(n.p.meta!==false) icyMetadataStart(n, url);   // не ждём — читается фоном, пока не остановят поток
   }catch(e){
     console.error('stream:',e);
     n.connecting=false; n.connected=false;
@@ -6591,6 +6591,7 @@ def({ id:'stream', title:'Audio Stream (URL)', cat:'Sources',
     {n:'stop',t:'button',label:'■ Stop',fn:n=>streamStop(n)},
     {n:'gain',t:'range',min:0,max:4,step:.01,d:1},
     {n:'auto',t:'check',d:true,label:'play when the URL input changes'},
+    {n:'meta',t:'check',d:true,label:'track info (ICY, opens a second connection)',adv:true},
   ],
   init:n=>{
     n.audioEl=null; n.srcNode=null; n.tapNode=null; n.sink=null; n.ctxRef=null;
