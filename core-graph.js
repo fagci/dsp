@@ -1900,6 +1900,9 @@ markWiresDirty();
 }
 /* ---- цикл отрисовки ---- */
 let lastDraw=0;
+const fpsSel=document.getElementById('fps');
+try{ const v=LS.get('dsp-fps'); if(v==='max'||v==='min') fpsSel.value=v; }catch(e){}
+fpsSel.onchange=()=>{ try{ LS.set('dsp-fps',fpsSel.value); }catch(e){} wakeDraw(); };
 let lastStatText='', lastStatTs=0;
 function visible(n){ return n._vis!==false; }       // до первого отчёта — считаем видимым
 // Простой: движок не обрабатывает блоки и нет ввода — перерисовка раз в IDLE_MS через
@@ -1946,7 +1949,9 @@ const rtlBusy=Graph.nodes.some(n=>n.type==='rtlsdr' && n.connected);
 // пробелов между кадрами отрисовки — тот же компромисс, что и раньше, просто сильнее в пользу звука.
 // без ввода интерфейс только показывает данные: после 2 с — 30 к/с, после 10 с — 20 к/с
 const still = ts-lastInput>2000 && !activeInteractions && !panzooming && !zooming;
-const minDt = TOUCH?33 : (rtlBusy?100 : still ? (ts-lastInput>10000?50:33) : 16);   // на тач-экранах хватает 30 к/с
+const autoDt = TOUCH?33 : (rtlBusy?100 : still ? (ts-lastInput>10000?50:33) : 16);   // на тач-экранах хватает 30 к/с
+const fpsMode=fpsSel.value;                         // переключатель в панели: max — всегда 60 к/с, min — 10 к/с
+const minDt = fpsMode==='max' ? 16 : fpsMode==='min' ? 100 : autoDt;
 if(ts-lastDraw >=minDt  && !activeInteractions  && !panzooming  && !zooming){
 lastDraw=ts;
 const toDraw=[];
