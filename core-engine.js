@@ -158,21 +158,21 @@ const Eng = {
     if(!this.sab) for(let i=0;i<this._preload;i++) this.node.port.postMessage(new Float32Array(BLOCK*C));
     // Сторожевой таймер главного потока — независимо от RTL/аудио-кольца, просто ловит сам факт
     // "главный поток на сколько-то мс не отдавал управление событийному циклу" (GC, тяжёлый код,
-    // что угодно). setInterval(20мс) сам по себе не гарантирует точность — именно отклонение
+    // что угодно). setInterval сам по себе не гарантирует точность — именно отклонение
     // ОТ ожидаемого периода и есть сигнал, а не абсолютное время между тиками.
     this.stallWatch(true);
     this.running = true; this.paused = false;
     this.onRunChange?.();
   },
-  // На паузе/останове таймер не нужен: 50 пробуждений в секунду впустую
+  // На паузе/останове таймер не нужен: 10 пробуждений в секунду впустую
   stallWatch(on){
     clearInterval(this._stallTimer); this._stallTimer=0;
     if(!on) return;
     this._stallLastT=performance.now();
     this._stallTimer=setInterval(()=>{
-      const now=performance.now(), over=(now-this._stallLastT)-20; this._stallLastT=now;
+      const now=performance.now(), over=(now-this._stallLastT)-100; this._stallLastT=now;
       if(over>15) console.warn(`[Eng] main-thread stall ~${over.toFixed(0)}ms @ ${now.toFixed(0)}ms`);
-    }, 20);
+    }, 100);                                          // 10 пробуждений/с вместо 50 — порог тот же, ищем отклонение от периода
   },
   // SAB-режим: пришёл пинг от воркета — забираем накопленный им вход из кольца и считаем tick()
   // на каждый полный BLOCK, что успел накопиться (обычно один; если основной поток отставал —
