@@ -1652,22 +1652,28 @@ async function hackrfOpenDevice(dev, gain){
     await sdrVendorOut(dev, REQ.AMP, amp?1:0, 0);
     await sdrVendorIn(dev, REQ.TXVGA, vga, 1);
   }
+  // нет данных дольше TX_IDLE_MS — передатчик выключается совсем: поток нулей оставил бы несущую (утечка гетеродина)
+  const TX_IDLE_MS=400;
   async function txLoop(){
-    const pend=[]; let primed=false;
+    const pend=[]; let primed=false, idleT=performance.now(), idle=false;
     while(txOn){
       while(txOn && pend.length<4){
         const b=new Int8Array(TX_CHUNK), avail=txW-txR;
         if(avail>=TX_CHUNK && (primed || avail>=4*TX_CHUNK)){
-          primed=true;
+          primed=true; idleT=performance.now();
           const r=txR&(TX_RING-1), f=Math.min(TX_CHUNK, TX_RING-r);
           b.set(txRing.subarray(r, r+f)); b.set(txRing.subarray(0, TX_CHUNK-f), f);
           txR+=TX_CHUNK;
-        } else if(primed){ primed=false; txUnder++; }
+        } else {
+          if(primed){ primed=false; txUnder++; }
+          if(performance.now()-idleT>TX_IDLE_MS){ idle=true; txErr='no data: RF off'; txOn=false; break; }
+        }
         pend.push(dev.transferOut(2, b));
       }
       try{ await pend.shift(); }catch(e){ txErr=e.message; txOn=false; }
     }
     await Promise.allSettled(pend);
+    if(idle) await setMode(0).catch(()=>{});
   }
   async function txStart(){
     if(txOn) return;
@@ -4099,7 +4105,7 @@ async function hackrfTxConnect(n, choose){
 }
 async function hackrfTxStop(n){
   n.txOn=false;
-  if(n.dev && n.txRun){ try{ await n.dev.txStop(); }catch(e){} }
+  if(n.dev){ try{ await n.dev.txStop(); }catch(e){} }
   n.txRun=false; n.appliedSr=n.appliedFc=n.appliedGain=null; n.stats=null;
 }
 async function hackrfTxDisconnect(n){
@@ -4117,10 +4123,23 @@ async function hackrfTxApply(n, sr, fc){
   if(n.appliedFc!==fc){ await d.setCenterFrequency(fc); n.appliedFc=fc; }
   if(n.appliedGain!==gain){ await d.setTxGain(+n.p.vga, !!n.p.amp); n.appliedGain=gain; }
   if(!n.txRun){ await d.txStart(); n.txRun=true; }
+  if(!n.txOn){ await d.txStop(); n.txRun=false; }     // стоп пришёл, пока шла настройка
 }
+// пин tx: передача стартует по фронту 0→1 (уже поднятый при загрузке патча не включает ничего), по спаду — стоп
+async function hackrfTxPinOn(n){
+  if(!n.sr){ n.status='no IQ input'; return; }
+  if(await hackrfTxConnect(n) && n.pinTx){ n.txOn=true; n.status='starting…'; }
+}
+// последняя страховка при закрытии вкладки: без явного txStop прошивка остаётся в режиме TX
+function hackrfTxPageClose(){
+  if(typeof Graph==='undefined') return;
+  for(const n of Graph.nodes) if(n.type==='hackrfTx' && n.dev){ n.txOn=false; try{ n.dev.txStop(); }catch(e){} }
+}
+addEventListener('pagehide', hackrfTxPageClose);
+addEventListener('beforeunload', hackrfTxPageClose);
 
 def({ id:'hackrfTx', title:'HackRF TX', cat:'IQ',
-  ins:[{n:'in',t:'iq'}], outs:[], readout:true,
+  ins:[{n:'in',t:'iq'},{n:'tx',t:'num'}], outs:[], readout:true,
   params:[
     {n:'connect',t:'button',label:'Connect',fn:async n=>{ await hackrfTxConnect(n); }},
     {n:'choose',t:'button',label:'Choose…',fn:async n=>{ if(n.dev) await hackrfTxDisconnect(n); await hackrfTxConnect(n, true); }},
@@ -4134,14 +4153,23 @@ def({ id:'hackrfTx', title:'HackRF TX', cat:'IQ',
       n.txOn=true; n.status='starting…'; }},
     {n:'stop',t:'button',label:'■ Stop',fn:async n=>{ await hackrfTxStop(n); n.status=n.dev ? 'stopped' : 'not connected'; }},
     {n:'usbId',t:'text',d:'',hidden:true}],
-  init:n=>{ n.dev=null; n.txOn=false; n.txRun=false; n.busy=false; n.sr=0; n.fc=0; n.stats=null; n.statT=0;
+  init:n=>{ n.dev=null; n.txOn=false; n.txRun=false; n.busy=false; n.sr=0; n.fc=0; n.stats=null; n.statT=0; n.pinTx=null;
             n.appliedSr=n.appliedFc=n.appliedGain=null; n.status='not connected'; },
   process(n,I){
     const s=iqIn(I,'in');
     if(s){ n.sr=s.sr; n.fc=s.fc; }
+    if(typeof I.tx==='number'){
+      const on=I.tx>=0.5, was=n.pinTx;
+      n.pinTx=on;
+      if(was===false && on) hackrfTxPinOn(n);
+      else if(was===true && !on){ hackrfTxStop(n).then(()=>{ n.status=n.dev ? 'stopped' : 'not connected'; }); }
+    } else if(n.pinTx){ n.pinTx=null; hackrfTxStop(n); }   // пин отключили проводом — передача выключается
+    else n.pinTx=null;
+    if(!n.txOn && n.txRun && !n.busy) hackrfTxStop(n);      // передатчик не должен работать без txOn
     if(!n.txOn || !n.dev || !s) return;
     if(s.sr<2e6 || s.sr>20e6){ n.status='stream is '+(s.sr/1e6).toFixed(3)+' MS/s, HackRF needs 2–20'; return; }
     const sr=Math.round(s.sr), fc=Math.round(s.fc);
+    if(!s.chunks.length) return;
     if(!n.busy && (n.appliedSr!==sr || n.appliedFc!==fc || n.appliedGain!==Math.round(n.p.vga)+'|'+!!n.p.amp || !n.txRun)){
       n.busy=true;
       hackrfTxApply(n, sr, fc).catch(e=>{ n.status='error: '+e.message; hackrfTxStop(n); }).finally(()=>{ n.busy=false; });
@@ -4156,7 +4184,10 @@ def({ id:'hackrfTx', title:'HackRF TX', cat:'IQ',
       n.dev.txPush(b);
     }
     const now=performance.now();
-    if(now-n.statT>500){ n.statT=now; n.dev.txStats().then(st=>{ n.stats=st; }, ()=>{}); }
+    if(now-n.statT>500){ n.statT=now; n.dev.txStats().then(st=>{
+      n.stats=st;
+      if(!st.on && n.txRun){ n.txRun=false; n.status=st.err||'RF off'; }   // драйвер сам выключил передатчик, вернётся с данными
+    }, ()=>{}); }
   },
   draw(n){
     const r=n.el.querySelector('.readout'); if(!r) return;
