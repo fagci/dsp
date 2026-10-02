@@ -1943,9 +1943,9 @@ const rtlBusy=Graph.nodes.some(n=>n.type==='rtlsdr' && n.connected);
 // чтения USB/сообщения демод-воркеру (обе стадии продвигаются промисами на главном потоке),
 // и звук rtlsdr затыкается (audio ring starve), хотя сам USB успевал бы. 10 к/с даёт вдвое больше
 // пробелов между кадрами отрисовки — тот же компромисс, что и раньше, просто сильнее в пользу звука.
-// без ввода дольше 2 с интерфейс только показывает данные — 30 к/с хватает и экономит CPU/GPU
-const calm = ts-lastInput>2000 && !activeInteractions && !panzooming && !zooming;
-const minDt = TOUCH?33 : (rtlBusy?100 : calm?33:16);         // на тач-экранах хватает 30 к/с
+// без ввода интерфейс только показывает данные: после 2 с — 30 к/с, после 10 с — 20 к/с
+const still = ts-lastInput>2000 && !activeInteractions && !panzooming && !zooming;
+const minDt = TOUCH?33 : (rtlBusy?100 : still ? (ts-lastInput>10000?50:33) : 16);   // на тач-экранах хватает 30 к/с
 if(ts-lastDraw >=minDt  && !activeInteractions  && !panzooming  && !zooming){
 lastDraw=ts;
 const toDraw=[];
@@ -1978,8 +1978,10 @@ stat.classList.toggle('crit', Eng.turbo===1 &&Eng.load>=1);
 }
 const busy=Eng.blocks!==lastBlocks || ts-lastInput<2000 || activeInteractions || panzooming || zooming;
 lastBlocks=Eng.blocks;
-if(busy) requestAnimationFrame(frame);
-else idleT=setTimeout(()=>{ idleT=0; requestAnimationFrame(frame); },IDLE_MS);
+if(busy && minDt<33) requestAnimationFrame(frame);
+else if(busy){                                       // кадры реже vsync — будим таймером, а не rAF на каждый vsync вхолостую
+idleT=setTimeout(()=>{ idleT=0; requestAnimationFrame(frame); },Math.max(0,minDt-(performance.now()-lastDraw)-6));
+} else idleT=setTimeout(()=>{ idleT=0; requestAnimationFrame(frame); },IDLE_MS);
 }
 applyView();
 (function boot(){
