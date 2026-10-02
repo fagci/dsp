@@ -1255,13 +1255,17 @@ function bindDashRail(rail,body){
 let dashFitRaf=0;
 function dashFitSoon(){ if(!dashFitRaf) dashFitRaf=requestAnimationFrame(()=>{ dashFitRaf=0; dashFit(); dashObserve(); }); }
 const dashRO=typeof ResizeObserver!=='undefined' ? new ResizeObserver(()=>dashFitSoon()) : null;
+const dashObserved=new Set();
 function dashObserve(){                                 // панель и сам узел (ширина -> перенос контролов, advanced)
   if(!dashRO) return;
-  dashRO.disconnect();
+  // diff вместо disconnect+observe: повторный observe шлёт начальное уведомление и зацикливает dashFit
+  const want=new Set();
   for(const body of dashGridEl.querySelectorAll('.dash-body')){
-    dashRO.observe(body);
-    const mid=body.querySelector('.mid'); if(mid) dashRO.observe(mid);
+    want.add(body);
+    const mid=body.querySelector('.mid'); if(mid) want.add(mid);
   }
+  for(const el of dashObserved) if(!want.has(el)){ dashRO.unobserve(el); dashObserved.delete(el); }
+  for(const el of want) if(!dashObserved.has(el)){ dashRO.observe(el); dashObserved.add(el); }
 }
 function dashRenderNode(t){
   if(t.t==='leaf') return dashRenderLeaf(t);
@@ -1521,7 +1525,7 @@ function setDash(on){
     cv.classList.remove('graphOn');
     markWiresDirty();
     dashGridEl.innerHTML='';
-    dashRO?.disconnect();
+    dashRO?.disconnect(); dashObserved.clear();
   }
 }
 if(dashBtn) dashBtn.onclick=()=>setDash(!dashMode);
