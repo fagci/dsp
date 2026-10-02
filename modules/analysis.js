@@ -2754,7 +2754,7 @@ function bpApplyPreset(n){
   n.name = n.p.preset==='none' ? '' : n.p.preset;
   n._sel=null;
 }
-def({ id:'bandplan', title:'Band Plan (Presets/Editable)', cat:'Analysis',
+def({ id:'bandplan', title:'Band Plan (Presets/Editable)', cat:'Radio',
   // Справочный band plan: либо один из встроенных пресетов (только чтение и экспорт CSV), либо
   // свой список — 'editable (saved list)' держит его в ListDB (та же браузерная БД, что и у
   // 'bookmarks'): инлайн добавление/правка/удаление строк, импорт/экспорт CSV (см. bp* выше).
@@ -3053,7 +3053,7 @@ function bmInit(n){
   root.querySelector('.bm-export').addEventListener('click', ()=>bmExportCsv(n));
   bmRefresh(n);
 }
-def({ id:'bookmarks', title:'Bookmarks (freq list)', cat:'Analysis',
+def({ id:'bookmarks', title:'Bookmarks (freq list)', cat:'Radio',
   // доп.поля — входные пины ТОЖЕ (не только выходные, см. outs) — чтобы "+ add" мог захватить не
   // только частоту, но и текущий вид модуляции/bw и т.п., подключенные с 'rtlsdr' (у него теперь
   // есть выходы demod/bw специально под это) — так же, как 'hostlist' захватывает текущие входы.
@@ -3086,7 +3086,7 @@ def({ id:'bookmarks', title:'Bookmarks (freq list)', cat:'Analysis',
 
 // 'sa' принимает только один вход 'bands' — этот узел склеивает несколько источников (bandplan +
 // bookmarks и т.д.) в один массив, чтобы можно было подключить оба сразу.
-def({ id:'bandsmerge', title:'Merge Band Plans', cat:'Analysis',
+def({ id:'bandsmerge', title:'Merge Band Plans', cat:'Radio',
   ins:[{n:'a',t:'bands'},{n:'b',t:'bands'},{n:'c',t:'bands'},{n:'d',t:'bands'}],
   outs:[{n:'bands',t:'bands'}],
   readout:true,
@@ -3104,7 +3104,7 @@ def({ id:'bandsmerge', title:'Merge Band Plans', cat:'Analysis',
 // (до timeout, даже если активность не пропадает — иначе можно залипнуть на постоянной несущей
 // навсегда), нет — сдвигаемся на span-overlap и, если окно уже дошло до края диапазона, берём
 // следующий. freq выводится на rtlsdr.freq (жёсткая перестройка, в отличие от steerFreq).
-def({ id:'bandscan', title:'Band Scanner', cat:'Analysis',
+def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
   ins:[{n:'bands',t:'bands'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},{n:'active',t:'num'},
        {n:'overlap',t:'num'},{n:'timeout',t:'num'},{n:'settle',t:'num'}],
   outs:[{n:'freq',t:'num'},{n:'listening',t:'num'},{n:'idx',t:'num'},{n:'bandLo',t:'num'},{n:'step',t:'num'}],
@@ -3392,7 +3392,7 @@ def({ id:'meter', lazy:'proc', title:'Level', cat:'Analysis', ins:[{n:'in',t:'si
     n.el.querySelector('.readout').textContent=n.db.toFixed(1)+' dB'; }});
 
 
-def({ id:'numview', title:'Number', cat:'Analysis', ins:[{n:'in',t:'num'},{n:'digits',t:'num'}], readout:true,
+def({ id:'numview', title:'Number', cat:'Indicators', ins:[{n:'in',t:'num'},{n:'digits',t:'num'}], readout:true,
   params:[{n:'digits',t:'range',min:0,max:6,step:1,d:2}],
   process(n,I){ if(typeof I.digits==='number') setMod(n,'digits',I.digits); n.v=I.in; return {}; },
   draw(n){ n.el.querySelector('.readout').textContent =
@@ -3460,7 +3460,7 @@ def({ id:'trend', lazy:'proc', title:'Trend Chart', cat:'Analysis', ins:[{n:'in'
     n.el.querySelector('.readout').textContent = typeof n.last==='number'? n.last.toFixed(3) : '—'; }});
 
 
-def({ id:'imgview', lazy:true, title:'Frame', cat:'Analysis', ins:[{n:'img',t:'img'}], view:{h:110}, resize:true,
+def({ id:'imgview', lazy:true, title:'Frame', cat:'Video', ins:[{n:'img',t:'img'}], view:{h:110}, resize:true,
   params:[{n:'png',t:'button',label:'Save snapshot',fn:n=>{
     n.tmp && n.tmp.toBlob(b=>dl(b,'frame-'+Date.now()+'.png'),'image/png'); }}],
   process(n,I){ n.i=I.img; return {}; },
@@ -3595,7 +3595,7 @@ def({ id:'autocorr', lazy:'proc', title:'Autocorrelator', cat:'Analysis', ins:[{
       ' ('+(n.conf*100).toFixed(0)+'%)'; }});
 
 
-def({ id:'scanner', title:'Auto Frequency Scanner', cat:'Analysis',
+def({ id:'scanner', title:'Auto Frequency Scanner', cat:'Radio',
   ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'step',t:'num'},
        {n:'threshold',t:'num'},{n:'hold',t:'num'},{n:'speed',t:'num'}],
   outs:[{n:'freq',t:'num'},{n:'level',t:'num'},{n:'active',t:'num'}],

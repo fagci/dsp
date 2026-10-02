@@ -3,7 +3,7 @@
    TV Demodulator (IQ-блок, ядро в video-kernels.js): IQ ≥ 8 МС/с → композитный видеосигнал (вещественный поток, синхроимпульсы внизу).
    TV Decoder: строчная и кадровая синхронизация, PAL / NTSC, цвет → картинка на `img` (показывает узел Frame). */
 
-defIQ({ id:'tvDemod', title:'TV Demodulator', cat:'IQ',
+defIQ({ id:'tvDemod', title:'TV Demodulator', cat:'Modulation',
   ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'}],
   params:[{n:'mode',t:'select',opts:['FM','AM (negative)','AM (positive)'],d:'FM',label:'FM: FPV 5.8 GHz, satellite; AM negative: broadcast TV (tune to the vision carrier)'},
           {n:'dev',t:'num',d:8000000,label:'FM: deviation, sync tip to white, Hz (only scales the level)'},

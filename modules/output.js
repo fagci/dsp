@@ -951,7 +951,7 @@ def({ id:'flash', title:'Screen Transmitter', cat:'Output', ins:[{n:'in',t:'num'
     if(n.ov&&n.vis) n.ov.style.background=c; }});
 
 
-def({ id:'color', title:'Color', cat:'Output', ins:[{n:'in',t:'num'}], swatch:true,
+def({ id:'color', title:'Color', cat:'Indicators', ins:[{n:'in',t:'num'}], swatch:true,
   params:[{n:'min',t:'num',d:0},{n:'max',t:'num',d:1},
           {n:'mode',t:'select',opts:['hue','gray','heat'],d:'hue'}],
   process(n,I){ n.v=I.in||0; return {}; },
@@ -962,7 +962,7 @@ def({ id:'color', title:'Color', cat:'Output', ins:[{n:'in',t:'num'}], swatch:tr
       : `hsl(${t*300|0} 80% 55%)`; }});
 
 
-def({ id:'fmtview', title:'Template Indicator', cat:'Output', ins:[{n:'in',t:'num'},{n:'sig',t:'sig'}],
+def({ id:'fmtview', title:'Template Indicator', cat:'Indicators', ins:[{n:'in',t:'num'},{n:'sig',t:'sig'}],
   readout:true, params:[{n:'fmt',t:'text',d:'{v} | rms {r}'}],
   process(n,I){ n.v=I.in; n.r=I.sig?rms(I.sig):null; return {}; },
   draw(n){ n.el.querySelector('.readout').textContent = String(n.p.fmt)
@@ -1070,7 +1070,7 @@ function dl(blob,name){ const a=document.createElement('a');
   a.href=URL.createObjectURL(blob); a.download=name; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
 
-def({ id:'planeMap', lazy:'manual', title:'Aircraft Map', cat:'Output',
+def({ id:'planeMap', lazy:'manual', title:'Aircraft Map', cat:'Geo',
   ins:[{n:'trig',t:'num'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'id',t:'txt'},
        {n:'gsTrig',t:'num'},{n:'gsLat',t:'num'},{n:'gsLon',t:'num'},{n:'gsName',t:'txt'}],
   view:{h:300}, resize:true,
