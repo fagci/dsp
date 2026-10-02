@@ -6415,9 +6415,12 @@ function streamRegisterWorklet(ctx){
   if(ctx._streamTapReady) return ctx._streamTapReady;
   const src = `
     class StreamTap extends AudioWorkletProcessor{
+      constructor(){ super(); this.b=new Float32Array(512); this.k=0; }
       process(inputs,outputs){
         const inp=inputs[0][0];
-        if(inp) this.port.postMessage(inp.slice());   // .slice() — буфер движка переиспользуется
+        if(inp){                                      // копим 512 отсчётов — в 4 раза меньше сообщений
+          this.b.set(inp,this.k); this.k+=inp.length;
+          if(this.k>=512){ this.port.postMessage(this.b); this.b=new Float32Array(512); this.k=0; } }
         const o=outputs[0][0]; if(o) o.fill(0);
         return true; } }
     registerProcessor('stream-tap',StreamTap);`;
@@ -6551,15 +6554,19 @@ async function icyMetadataStart(n, url){
     while(n.icyReading){
       const {value,done} = await reader.read();
       if(done) break;
-      for(let i=0;i<value.length;i++){
-        if(mode==='audio'){
-          sinceMeta++;
+      let i=0;
+      while(i<value.length){
+        if(mode==='audio'){                          // аудиобайты пропускаем целиком, без цикла по байту
+          const k=Math.min(metaint-sinceMeta,value.length-i);
+          sinceMeta+=k; i+=k;
           if(sinceMeta===metaint){ mode='metalen'; sinceMeta=0; }
         } else if(mode==='metalen'){
-          metaLen=value[i]*16; metaBuf=[];
+          metaLen=value[i++]*16; metaBuf=[];
           mode = metaLen>0 ? 'meta' : 'audio';
         } else {
-          metaBuf.push(value[i]);
+          const k=Math.min(metaLen-metaBuf.length,value.length-i);
+          for(let j=0;j<k;j++) metaBuf.push(value[i+j]);
+          i+=k;
           if(metaBuf.length>=metaLen){
             icyMetadataApply(n, new TextDecoder('utf-8').decode(new Uint8Array(metaBuf)));
             mode='audio'; sinceMeta=0;
