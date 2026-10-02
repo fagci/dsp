@@ -1905,7 +1905,7 @@ function visible(n){ return n._vis!==false; }       // до первого от�
 // setTimeout, без rAF на каждый vsync. Асинхронные данные (скриншот tinySA, тайлы и т.п.)
 // всё равно появятся, с задержкой не больше IDLE_MS.
 const IDLE_MS=250;
-let lastInput=0, lastBlocks=-1, idleT=0;
+let lastInput=0, lastBlocks=-1, lastBlockT=0, idleT=0;
 function wakeDraw(){
 lastInput=performance.now();
 if(idleT){ clearTimeout(idleT); idleT=0; requestAnimationFrame(frame); }
@@ -1976,8 +1976,9 @@ stat.classList.toggle('crit', Eng.turbo===1 &&Eng.load>=1);
 }
 }
 }
-const busy=Eng.blocks!==lastBlocks || ts-lastInput<2000 || activeInteractions || panzooming || zooming;
-lastBlocks=Eng.blocks;
+// блоки приходят пачками (аудио-буфер телефона крупнее кадра) — простой только когда их нет заметное время
+if(Eng.blocks!==lastBlocks){ lastBlocks=Eng.blocks; lastBlockT=ts; }
+const busy=ts-lastBlockT<IDLE_MS || ts-lastInput<2000 || activeInteractions || panzooming || zooming;
 if(busy && minDt<33) requestAnimationFrame(frame);
 else if(busy){                                       // кадры реже vsync — будим таймером, а не rAF на каждый vsync вхолостую
 idleT=setTimeout(()=>{ idleT=0; requestAnimationFrame(frame); },Math.max(0,minDt-(performance.now()-lastDraw)-6));
