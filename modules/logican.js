@@ -24,7 +24,7 @@ const laFmtT=s=>{ const a=Math.abs(s);
 function laReset(n){
   const N=laCount(n);
   n.lv=Array(N).fill(0); n.eT=Array.from({length:N},()=>[]); n.eV=Array.from({length:N},()=>[]); n.eH=Array(N).fill(0);
-  n.si=0; n.ann=[]; n.dec={}; n.trigAt=null; n.armed=true; n.hold=null; n.tprev=0;
+  n.si=0; n.ann=[]; n.dec={}; n.trigAt=null; n.pend=null; n.armed=true; n.hold=null; n.tprev=0;
   n.line=''; n.lineT=0; n.textOut=''; n.nbytes=0; n.nerr=0; n.nlines=0; n.byte=0; n.last='';
 }
 function laEmit(n,k,t0,t1,byte,bits,o={}){         // k — канал дорожки, [t0,t1] — отсчёты, o: err, label, rec-поля
@@ -150,7 +150,7 @@ def({ id:'logan', lazy:'proc', title:'Logic Analyzer', cat:'Analysis',
           {n:'trig',t:'select',opts:['off','rising','falling'],d:'off',label:'trigger'},
           {n:'tch',t:'range',min:1,max:8,step:1,d:1,label:'trigger channel'},
           {n:'single',t:'check',d:false,label:'single shot (re-arm with Arm)'},
-          {n:'arm',t:'button',label:'Arm',fn:n=>{ n.armed=true; n.trigAt=null; redraw(n); }},
+          {n:'arm',t:'button',label:'Arm',fn:n=>{ n.armed=true; n.trigAt=null; n.pend=null; redraw(n); }},
           {n:'hold',t:'button',label:'Hold / Run',fn:n=>{ n.hold=n.hold==null ? n.si : null; redraw(n); }},
           {n:'proto',t:'select',opts:['none','UART','SPI','I2C'],d:'none',label:'decoder'},
           {n:'a',t:'range',min:1,max:8,step:1,d:1,label:'channel: UART rx / SPI clk / I²C SCL',adv:true},
@@ -193,9 +193,11 @@ def({ id:'logan', lazy:'proc', title:'Logic Analyzer', cat:'Analysis',
     }
     let hit=0;
     if(p.trig!=='off'){
-      const d=n.dig[clamp(Math.round(p.tch),1,N)-1], want=p.trig==='rising' ? 1 : 0;
+      const d=n.dig[clamp(Math.round(p.tch),1,N)-1], want=p.trig==='rising' ? 1 : 0, ws=Math.max(2,p.span*rate);
       for(let i=0;i<L;i++){
-        if(d[i]===want && n.tprev!==want && (!p.single || n.armed)){ n.trigAt=n.si+i; hit=1; if(p.single) n.armed=false; }
+        const t=n.si+i;
+        if(n.pend!=null && t>=n.pend+ws*.75){ n.trigAt=n.pend; n.pend=null; }      // кадр дописан до конца окна — показываем целиком
+        if(d[i]===want && n.tprev!==want && n.pend==null && (!p.single || n.armed)){ n.pend=t; hit=1; if(p.single) n.armed=false; }
         n.tprev=d[i];
       }
     }
