@@ -4079,6 +4079,7 @@ async function rtlDisconnect(n){
 // ---- HackRF TX: передача IQ-потока ----
 // Приёмник потока 'iq': центр и частота дискретизации берутся из потока (2–20 МС/с). HackRF не умеет
 // принимать и передавать одновременно и занимает устройство целиком — не держите его же открытым в USB SDR.
+const HACKRF_TX_WARN='You must comply with local radio regulations: transmit only where and how the law allows.';
 const HACKRF_USB_FILTERS=[{vendorId:0x1d50,productId:0x6089},{vendorId:0x1d50,productId:0x604b},{vendorId:0x1d50,productId:0xcc15}];
 async function hackrfTxConnect(n, choose){
   if(!navigator.usb){ n.status='WebUSB unavailable (needs Chrome/Edge/Opera)'; return false; }
@@ -4126,11 +4127,10 @@ def({ id:'hackrfTx', title:'HackRF TX', cat:'IQ',
     {n:'disconnect',t:'button',label:'Disconnect',fn:async n=>{ await hackrfTxDisconnect(n); }},
     {n:'vga',t:'range',min:0,max:47,step:1,d:0,label:'TX VGA, dB'},
     {n:'amp',t:'check',d:false,label:'amp +14 dB'},
-    {n:'start',t:'button',label:'● Transmit',fn:async n=>{
+    {n:'start',t:'button',label:'● Transmit (obey local law)',fn:async n=>{
       if(n.txOn) return;
       if(!n.sr){ n.status='no IQ input'; return; }
       if(!await hackrfTxConnect(n)) return;
-      if(!confirm('Transmit on '+((n.fc||0)/1e6).toFixed(4)+' MHz?\nTransmit only where you are licensed or the band is license-free and within its power limits.')) return;
       n.txOn=true; n.status='starting…'; }},
     {n:'stop',t:'button',label:'■ Stop',fn:async n=>{ await hackrfTxStop(n); n.status=n.dev ? 'stopped' : 'not connected'; }},
     {n:'usbId',t:'text',d:'',hidden:true}],
@@ -4163,8 +4163,8 @@ def({ id:'hackrfTx', title:'HackRF TX', cat:'IQ',
     const st=n.stats;
     r.textContent=n.txOn && n.txRun
       ? 'ON AIR '+(n.appliedFc/1e6).toFixed(4)+' MHz · '+(n.appliedSr/1e6).toFixed(2)+' MS/s'+
-        (st ? ' · buffer '+Math.round(st.queued*100)+'% · underruns '+st.under+(st.over ? ' · dropped '+st.over : '')+(st.err ? ' · '+st.err : '') : '')
-      : n.status; },
+        (st ? ' · buffer '+Math.round(st.queued*100)+'% · underruns '+st.under+(st.over ? ' · dropped '+st.over : '')+(st.err ? ' · '+st.err : '') : '')+' · '+HACKRF_TX_WARN
+      : n.status+' · '+HACKRF_TX_WARN; },
   dispose:n=>{ hackrfTxDisconnect(n).catch(()=>{}); }});
 
 // компактный формат частоты: 172300000 → "172.3М", 17500 → "17.5к"

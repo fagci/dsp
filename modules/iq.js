@@ -157,6 +157,72 @@ def({ id:'iqMerge', title:'I/Q → IQ', cat:'IQ',
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.state||''; }});
 
+/* ---- Audio → IQ ---- */
+// Модулятор: звук движка → поток 'iq' на частоте sr (для HackRF TX нужно 2–20 МС/с). Центр потока fc,
+// несущая на fc+off (у HackRF от пика на нуле лучше держать off ≠ 0). Звук ±1 = полная девиация/глубина.
+// FM — фаза копится на частоте потока (девиация больше звуковой частоты не мешает); SSB — аналитический
+// сигнал через КИХ-Гильберт на 127 отводов (боковая подавляется только выше ~400 Гц), задержка выровнена.
+// Звук к частоте потока — кубический Эрмит: образы на кратных звуковой частоте слабые, но фильтра нет.
+const IQM_D=63;
+const IQM_H=(()=>{ const h=new Float32Array(IQM_D+1);      // h[k] — нечётные k, антисимметричная
+  for(let k=1;k<=IQM_D;k+=2) h[k]=2/(Math.PI*k)*(0.54+0.46*Math.cos(Math.PI*k/(IQM_D+1)));
+  return h; })();
+def({ id:'iqMod', title:'IQ Modulator', cat:'IQ',
+  ins:[{n:'in',t:'sig'},{n:'fc',t:'num'},{n:'off',t:'num'}], outs:[{n:'iq',t:'iq'}], readout:true,
+  params:[{n:'mode',t:'select',opts:['NFM','WFM','AM','USB','LSB'],d:'NFM'},
+          {n:'sr',t:'select',opts:['2000000','2048000','2400000','8000000','10000000','12000000','16000000','20000000'],d:'2000000',label:'sample rate'},
+          {n:'fc',t:'num',d:100000000,label:'center frequency, Hz'},
+          {n:'off',t:'num',d:100000,label:'carrier offset from center, Hz (transmit on center + offset)'},
+          {n:'dev',t:'range',min:500,max:100000,step:100,d:5000,log:true,label:'FM deviation, Hz'},
+          {n:'depth',t:'range',min:0,max:1,step:.01,d:.8,label:'AM depth'},
+          {n:'lvl',t:'range',min:-60,max:0,step:1,d:-6,label:'output level, dBFS'}],
+  init:n=>{ n.t=0; n.th=0; n.ext=new Float32Array(3+BLOCK); n.hist=new Float32Array(2*IQM_D); n.hb=null; n.state='no input'; },
+  process(n,I){
+    const sr=+n.p.sr, fc=pv(n,I,'fc'), off=pv(n,I,'off'), mode=n.p.mode, step=Eng.sr/sr;
+    const s=iqStream(n,'iq',sr,fc);
+    if(n.ext.length!==3+BLOCK){ n.ext=new Float32Array(3+BLOCK); n.t=0; }
+    const A=n.ext, B=n.hb && n.hb.length===A.length ? n.hb : (n.hb=new Float32Array(A.length));
+    A.copyWithin(0,BLOCK,BLOCK+3); B.copyWithin(0,BLOCK,BLOCK+3);   // последние 3 отсчёта прошлого блока
+    const x=I.in, ssb=mode==='USB'||mode==='LSB', H=IQM_H, hist=n.hist, ext=new Float32Array(hist.length+BLOCK);
+    ext.set(hist); if(x) ext.set(x.subarray(0,BLOCK),hist.length);
+    for(let i=0;i<BLOCK;i++){
+      const c=i+IQM_D;                                    // середина окна в ext
+      A[3+i]=ext[c];
+      if(ssb){ let y=0; for(let k=1;k<=IQM_D;k+=2) y+=H[k]*(ext[c-k]-ext[c+k]); B[3+i]=y; }
+    }
+    hist.set(ext.subarray(BLOCK));
+    const K=Math.ceil((BLOCK-n.t)/step), re=new Float32Array(K), im=new Float32Array(K);
+    const g=Math.pow(10,n.p.lvl/20), dev=n.p.dev, depth=n.p.depth, sgn=mode==='LSB' ? -1 : 1;
+    const wOff=2*Math.PI*off/sr, wDev=2*Math.PI*dev/sr;
+    let t=n.t, th=n.th, k=0;
+    while(t<BLOCK && k<K){
+      const m=Math.floor(t), f=t-m;
+      const a=herm(A[m],A[m+1],A[m+2],A[m+3],f);
+      if(ssb){
+        const b=sgn*herm(B[m],B[m+1],B[m+2],B[m+3],f), cs=Math.cos(th), sn=Math.sin(th);
+        re[k]=g*(a*cs-b*sn); im[k]=g*(a*sn+b*cs);
+        th+=wOff;
+      } else if(mode==='AM'){
+        const e=g*(1+depth*a)/(1+depth);
+        re[k]=e*Math.cos(th); im[k]=e*Math.sin(th);
+        th+=wOff;
+      } else {
+        re[k]=g*Math.cos(th); im[k]=g*Math.sin(th);
+        th+=wOff+wDev*(mode==='WFM' ? a*15 : a);          // WFM: девиация ×15 от «dev» (5 кГц → 75 кГц)
+      }
+      k++; t+=step;
+    }
+    n.t=t-BLOCK; n.th=th%(2*Math.PI);
+    iqPush(s, k===K ? re : re.subarray(0,k), k===K ? im : im.subarray(0,k));
+    n.state=mode+' · '+((fc+off)/1e6).toFixed(4)+' MHz · '+(sr/1e6)+' MS/s'+(x ? '' : ' · no audio input');
+    return {iq:s};
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.state||''; }});
+function herm(x0,x1,x2,x3,f){
+  const c1=.5*(x2-x0), c2=x0-2.5*x1+2*x2-.5*x3, c3=.5*(x3-x0)+1.5*(x1-x2);
+  return ((c3*f+c2)*f+c1)*f+x1;
+}
+
 /* ---- IQ → Audio ---- */
 // Мост в домен движка: кольцо + дробный ресемплер (кубический Эрмит) с частоты потока на Eng.sr.
 // Часы источника (донгл, файл) и звуковой карты расходятся — шаг чтения подстраивается по
