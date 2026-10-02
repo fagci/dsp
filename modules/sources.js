@@ -1591,7 +1591,7 @@ function sdrVendorOut(dev, request, value, index, data){
 
 // HackRF: MAX2837 с нулевой ПЧ, int8 IQ. На Linux: rmmod hackrf
 async function hackrfOpenDevice(dev, gain){
-  const REQ={MODE:1, SAMPLE_RATE:6, BB_FILTER:7, SET_FREQ:16, AMP:17, LNA:19, VGA:20, ANT_POWER:23};
+  const REQ={MODE:1, SAMPLE_RATE:6, BB_FILTER:7, SET_FREQ:16, AMP:17, LNA:19, VGA:20, ANT_POWER:23, TXVGA:21};
   // полосы baseband-фильтра MAX2837, Гц
   const BB=[1750000,2500000,3500000,5000000,5500000,6000000,7000000,8000000,9000000,10000000,
     12000000,14000000,15000000,20000000,24000000,28000000];
@@ -1643,7 +1643,56 @@ async function hackrfOpenDevice(dev, gain){
     for(let i=0;i<u8.length;i++) u8[i]^=0x80;       // int8 → смещённый u8, как у RTL
     return res.data.buffer;
   }
+  // передача: int8 IQ в bulk OUT 2. Кольцо добирается из txPush, цикл держит 4 трансфера в полёте;
+  // пока кольцо не набрало 4 чанка (и после опустошения) уходят нули — несущая выключена
+  const TX_CHUNK=32768, TX_RING=1<<24;
+  let txOn=false, txRing=null, txR=0, txW=0, txUnder=0, txOver=0, txErr='', txLoopP=null;
+  async function setTxGain(vga, amp){
+    vga=Math.max(0, Math.min(47, Math.round(vga)));
+    await sdrVendorOut(dev, REQ.AMP, amp?1:0, 0);
+    await sdrVendorIn(dev, REQ.TXVGA, vga, 1);
+  }
+  async function txLoop(){
+    const pend=[]; let primed=false;
+    while(txOn){
+      while(txOn && pend.length<4){
+        const b=new Int8Array(TX_CHUNK), avail=txW-txR;
+        if(avail>=TX_CHUNK && (primed || avail>=4*TX_CHUNK)){
+          primed=true;
+          const r=txR&(TX_RING-1), f=Math.min(TX_CHUNK, TX_RING-r);
+          b.set(txRing.subarray(r, r+f)); b.set(txRing.subarray(0, TX_CHUNK-f), f);
+          txR+=TX_CHUNK;
+        } else if(primed){ primed=false; txUnder++; }
+        pend.push(dev.transferOut(2, b));
+      }
+      try{ await pend.shift(); }catch(e){ txErr=e.message; txOn=false; }
+    }
+    await Promise.allSettled(pend);
+  }
+  async function txStart(){
+    if(txOn) return;
+    txRing=new Int8Array(TX_RING); txR=txW=txUnder=txOver=0; txErr='';
+    await setMode(0); await setMode(2);
+    txOn=true; rxOn=false;
+    txLoopP=txLoop();
+  }
+  async function txStop(){
+    const was=txOn||txLoopP;
+    txOn=false;
+    if(txLoopP){ await txLoopP; txLoopP=null; }
+    if(was) await setMode(0).catch(()=>{});
+  }
+  function txPush(a){
+    if(!txOn) return;
+    let k=a.length; const free=TX_RING-(txW-txR);
+    if(k>free){ txOver+=k-free; k=free; }
+    const w=txW&(TX_RING-1), f=Math.min(k, TX_RING-w);
+    txRing.set(a.subarray(0,f), w); txRing.set(a.subarray(f,k), 0);
+    txW+=k;
+  }
+  const txStats=()=>({on:txOn, queued:(txW-txR)/TX_RING, under:txUnder, over:txOver, err:txErr});
   async function close(){
+    await txStop();
     if(rxOn) await setMode(0).catch(()=>{});
     await dev.releaseInterface(0).catch(()=>{});
     await dev.close();
@@ -1651,6 +1700,7 @@ async function hackrfOpenDevice(dev, gain){
   await setMode(0);
   await setGain(gain);
   return {setSampleRate, setCenterFrequency, setGain, setHackrfGain, setBiasTee, resetBuffer, readSamples, close,
+    setTxGain, txStart, txStop, txPush, txStats,
     tunerName:dev.productName||'HackRF', kind:'hackrf', fmt:'u8', bps:2, epoch:()=>tuneEpoch};
 }
 
@@ -2362,6 +2412,12 @@ async function rtlOpenInWorker(usbDev, gain){
     setGain:gain=>call('setGain',{gain}),
     setBiasTee:on=>call('dev',{m:'setBiasTee',a:[on]}),
     setHackrfGain:(lna,vga,amp)=>call('dev',{m:'setHackrfGain',a:[lna,vga,amp]}),
+    setTxGain:(vga,amp)=>call('dev',{m:'setTxGain',a:[vga,amp]}),
+    txStart:()=>call('dev',{m:'txStart',a:[]}),
+    txStop:()=>call('dev',{m:'txStop',a:[]}),
+    txStats:()=>call('dev',{m:'txStats',a:[]}),
+    // без ответа: буфер уходит в воркер передачей, id 0 никто не ждёт
+    txPush:i8=>{ w.postMessage({id:0, cmd:'dev', args:{m:'txPush', a:[i8]}}, [i8.buffer]); },
     resetBuffer:()=>call('resetBuffer'),
     // cb получает {buf} | {err} | {end}
     startStream(readsPerSec, depth, cb){ onChunk=cb; return call('start',{readsPerSec, depth}); },
@@ -4019,6 +4075,97 @@ async function rtlDisconnect(n){
   n.connected=false; n.busy=false;
   n.status='disconnected';
 }
+
+// ---- HackRF TX: передача IQ-потока ----
+// Приёмник потока 'iq': центр и частота дискретизации берутся из потока (2–20 МС/с). HackRF не умеет
+// принимать и передавать одновременно и занимает устройство целиком — не держите его же открытым в USB SDR.
+const HACKRF_USB_FILTERS=[{vendorId:0x1d50,productId:0x6089},{vendorId:0x1d50,productId:0x604b},{vendorId:0x1d50,productId:0xcc15}];
+async function hackrfTxConnect(n, choose){
+  if(!navigator.usb){ n.status='WebUSB unavailable (needs Chrome/Edge/Opera)'; return false; }
+  if(n.dev) return true;
+  try{
+    let usbDev=!choose && n.p.usbId ? (await navigator.usb.getDevices()).find(d=>sdrUsbId(d)===n.p.usbId) : null;
+    if(!usbDev) usbDev=await navigator.usb.requestDevice({filters:HACKRF_USB_FILTERS});
+    n.dev=await rtlOpenInWorker(usbDev, null).catch(e=>{
+      console.warn('[hackrfTx] USB-воркер не открыл устройство, работаем с главного потока:', e.message); return null; })
+      || await hackrfOpenDevice(usbDev, null);
+    n.p.usbId=sdrUsbId(usbDev); n.status='connected: '+n.dev.tunerName;
+    return true;
+  }catch(e){
+    n.dev=null; n.status=e.name==='NotFoundError' ? 'no device selected' : 'error: '+e.message;
+    return false;
+  }
+}
+async function hackrfTxStop(n){
+  n.txOn=false;
+  if(n.dev && n.txRun){ try{ await n.dev.txStop(); }catch(e){} }
+  n.txRun=false; n.appliedSr=n.appliedFc=n.appliedGain=null; n.stats=null;
+}
+async function hackrfTxDisconnect(n){
+  await hackrfTxStop(n);
+  if(n.dev){ try{ await n.dev.close(); }catch(e){} n.dev=null; }
+  n.status='disconnected';
+}
+// USB медленный — только из process() через n.busy; частота и усиление меняются на ходу, rate — перезапуском
+async function hackrfTxApply(n, sr, fc){
+  const d=n.dev, gain=Math.round(n.p.vga)+'|'+!!n.p.amp;
+  if(n.appliedSr!==sr){
+    if(n.txRun){ await d.txStop(); n.txRun=false; }
+    await d.setSampleRate(sr); n.appliedSr=sr; n.appliedFc=null;
+  }
+  if(n.appliedFc!==fc){ await d.setCenterFrequency(fc); n.appliedFc=fc; }
+  if(n.appliedGain!==gain){ await d.setTxGain(+n.p.vga, !!n.p.amp); n.appliedGain=gain; }
+  if(!n.txRun){ await d.txStart(); n.txRun=true; }
+}
+
+def({ id:'hackrfTx', title:'HackRF TX', cat:'IQ',
+  ins:[{n:'in',t:'iq'}], outs:[], readout:true,
+  params:[
+    {n:'connect',t:'button',label:'Connect',fn:async n=>{ await hackrfTxConnect(n); }},
+    {n:'choose',t:'button',label:'Choose…',fn:async n=>{ if(n.dev) await hackrfTxDisconnect(n); await hackrfTxConnect(n, true); }},
+    {n:'disconnect',t:'button',label:'Disconnect',fn:async n=>{ await hackrfTxDisconnect(n); }},
+    {n:'vga',t:'range',min:0,max:47,step:1,d:0,label:'TX VGA, dB'},
+    {n:'amp',t:'check',d:false,label:'amp +14 dB'},
+    {n:'start',t:'button',label:'● Transmit',fn:async n=>{
+      if(n.txOn) return;
+      if(!n.sr){ n.status='no IQ input'; return; }
+      if(!await hackrfTxConnect(n)) return;
+      if(!confirm('Transmit on '+((n.fc||0)/1e6).toFixed(4)+' MHz?\nTransmit only where you are licensed or the band is license-free and within its power limits.')) return;
+      n.txOn=true; n.status='starting…'; }},
+    {n:'stop',t:'button',label:'■ Stop',fn:async n=>{ await hackrfTxStop(n); n.status=n.dev ? 'stopped' : 'not connected'; }},
+    {n:'usbId',t:'text',d:'',hidden:true}],
+  init:n=>{ n.dev=null; n.txOn=false; n.txRun=false; n.busy=false; n.sr=0; n.fc=0; n.stats=null; n.statT=0;
+            n.appliedSr=n.appliedFc=n.appliedGain=null; n.status='not connected'; },
+  process(n,I){
+    const s=iqIn(I,'in');
+    if(s){ n.sr=s.sr; n.fc=s.fc; }
+    if(!n.txOn || !n.dev || !s) return;
+    if(s.sr<2e6 || s.sr>20e6){ n.status='stream is '+(s.sr/1e6).toFixed(3)+' MS/s, HackRF needs 2–20'; return; }
+    const sr=Math.round(s.sr), fc=Math.round(s.fc);
+    if(!n.busy && (n.appliedSr!==sr || n.appliedFc!==fc || n.appliedGain!==Math.round(n.p.vga)+'|'+!!n.p.amp || !n.txRun)){
+      n.busy=true;
+      hackrfTxApply(n, sr, fc).catch(e=>{ n.status='error: '+e.message; hackrfTxStop(n); }).finally(()=>{ n.busy=false; });
+    }
+    if(!n.txRun || n.busy) return;
+    for(const c of s.chunks){
+      const re=c.re, im=c.im, L=re.length, b=new Int8Array(2*L);
+      for(let i=0;i<L;i++){
+        const a=re[i]*127, q=im ? im[i]*127 : 0;
+        b[2*i]=a>127?127:a<-127?-127:a; b[2*i+1]=q>127?127:q<-127?-127:q;
+      }
+      n.dev.txPush(b);
+    }
+    const now=performance.now();
+    if(now-n.statT>500){ n.statT=now; n.dev.txStats().then(st=>{ n.stats=st; }, ()=>{}); }
+  },
+  draw(n){
+    const r=n.el.querySelector('.readout'); if(!r) return;
+    const st=n.stats;
+    r.textContent=n.txOn && n.txRun
+      ? 'ON AIR '+(n.appliedFc/1e6).toFixed(4)+' MHz · '+(n.appliedSr/1e6).toFixed(2)+' MS/s'+
+        (st ? ' · buffer '+Math.round(st.queued*100)+'% · underruns '+st.under+(st.over ? ' · dropped '+st.over : '')+(st.err ? ' · '+st.err : '') : '')
+      : n.status; },
+  dispose:n=>{ hackrfTxDisconnect(n).catch(()=>{}); }});
 
 // компактный формат частоты: 172300000 → "172.3М", 17500 → "17.5к"
 function fmtHz(v,dp){                               // dp — знаков после запятой (по умолчанию 1)
