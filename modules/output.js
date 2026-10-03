@@ -930,6 +930,59 @@ function dacBus(n){
 }
 
 
+// HTTP-запрос наружу (webhook): текст по изменению, числа JSON-объектом по фронту go или раз в period.
+// Один запрос в полёте за раз; лишние пропускаются. Заголовки — «Name: value» через «;».
+function httpOutHeaders(n){
+  const h={};
+  for(const line of String(n.p.headers||'').split(/[\n;]/)){
+    const i=line.indexOf(':'); if(i>0) h[line.slice(0,i).trim()]=line.slice(i+1).trim(); }
+  return h;
+}
+async function httpOutSend(n,body,json){
+  const url=String(n.p.url||'').trim();
+  if(!/^https?:\/\//i.test(url)){ n.status='URL must start with http:// or https://'; return; }
+  if(n.busy){ n.dropped++; return; }
+  n.busy=true;
+  try{
+    const h=httpOutHeaders(n);
+    if(!Object.keys(h).some(k=>k.toLowerCase()==='content-type')) h['Content-Type']=json?'application/json':'text/plain';
+    const r=await fetch(url,{method:n.p.method,headers:h,body:n.p.method==='GET'?undefined:body,cache:'no-store'});
+    n.sent++; n.status='HTTP '+r.status+(r.ok?'':' '+r.statusText);
+  }catch(e){
+    n.status='failed: '+e.message+(e instanceof TypeError ? ' (no CORS headers on the server, blocked, or mixed content)' : '');
+  }
+  n.busy=false;
+}
+def({ id:'httpout', title:'HTTP Out', cat:'Output', readout:true,
+  ins:[{n:'text',t:'txt'},{n:'a',t:'num'},{n:'b',t:'num'},{n:'c',t:'num'},{n:'d',t:'num'},{n:'go',t:'num'}],
+  params:[{n:'url',t:'text',d:'http://127.0.0.1:8080/',label:'http:// https://'},
+          {n:'method',t:'select',opts:['POST','PUT','GET'],d:'POST'},
+          {n:'fmt',t:'select',opts:['text on change','numbers JSON on go','numbers JSON every period'],d:'text on change',label:'send'},
+          {n:'period',t:'range',min:.5,max:3600,step:.5,d:10,label:'numbers period, s'},
+          {n:'headers',t:'text',d:'',label:'headers (Name: value; Name: value)'},
+          {n:'now',t:'button',label:'Send now',fn:n=>{ n.now=true; }}],
+  init:n=>{ n.last=undefined; n.prevGo=0; n.t=0; n.busy=false; n.now=false;
+            n.status='idle'; n.sent=0; n.dropped=0; },
+  process(n,I){
+    const nums=()=>{ const o={t:Date.now()};
+      for(const k of 'abcd') if(typeof I[k]==='number' && isFinite(I[k])) o[k]=I[k];
+      return JSON.stringify(o); };
+    const go=(I.go||0)>.5, rise=go && !n.prevGo; n.prevGo=go;
+    const now=n.now; n.now=false;
+    if(n.p.fmt==='text on change'){
+      if(typeof I.text==='string' && (I.text!==n.last || now) && I.text!==''){ n.last=I.text; httpOutSend(n,I.text,false); }
+    } else if(n.p.fmt==='numbers JSON on go'){
+      if(rise || now) httpOutSend(n,nums(),true);
+    } else {
+      n.t+=BLOCK/Eng.sr;
+      if(n.t>=n.p.period || now){ n.t=0; httpOutSend(n,nums(),true); }
+    }
+    return {}; },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const t=n.status+' · sent '+n.sent+(n.dropped?' · skipped '+n.dropped:'');
+    if(r.textContent!==t) r.textContent=t; }});
+
+
 def({ id:'flash', title:'Screen Transmitter', cat:'Output', ins:[{n:'in',t:'num'},{n:'lo',t:'num'},{n:'hi',t:'num'}],
   swatch:true,
   params:[{n:'on',t:'button',label:'Fullscreen',fn:n=>{
