@@ -7,7 +7,7 @@
 <meta name="theme-color" content="#161a1d">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' http: https: ws: wss: data: blob: 'unsafe-inline'; script-src 'self' http: https: data: blob: 'unsafe-inline' 'wasm-unsafe-eval'">
 <title>DSP</title>
-<link rel="stylesheet" href="styles.css?v=135">
+<link rel="stylesheet" href="styles.css?v=136">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -52,6 +52,7 @@
       </div>
       <div id="patchList"></div>
     </div>
+    <div id="buildInfo" class="build-info" title="Automatically generated from the deployed commit">Build…</div>
   </div>
   <div id="main">
     <div id="bar">
@@ -70,7 +71,7 @@
       <button id="engineToggle" class="toolbar-menu-trigger" type="button" popovertarget="enginePanel" title="Settings" aria-label="Settings" aria-controls="enginePanel" aria-expanded="false"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10m4 0h2M4 12h2m4 0h10M4 18h10m4 0h2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="18" r="2"/></svg><span>Settings</span></button>
       <button id="moreToggle" class="toolbar-menu-trigger" type="button" popovertarget="morePanel" title="Clear actions" aria-label="Clear actions" aria-controls="morePanel" aria-expanded="false"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Clear</span></button>
       <span class="sp"></span>
-      <span id="net" hidden>offline</span>
+      <span id="net" data-state="checking" role="status" aria-live="polite" title="Checking network">Checking…</span>
       <span id="stat">stopped</span>
       <div id="enginePanel" class="toolbar-popover" popover="auto" role="group" aria-labelledby="enginePanelTitle">
         <div id="enginePanelTitle" class="toolbar-popover-title">Settings</div>
@@ -105,9 +106,43 @@
 <script src="vendor/satellite.min.js?v=5.0.0"></script>
 <!-- modules are listed here by hand, no auto-discovery: add a file under modules/ — add its line here too -->
 <script>
-// индикатор: нет сети — работаем офлайн (весь DSP локальный)
-(()=>{ const n=document.getElementById('net'), u=()=>{ n.hidden=navigator.onLine; };
-  addEventListener('online',u); addEventListener('offline',u); u(); })();
+// Network status and deployed build identifier.
+document.addEventListener('DOMContentLoaded',()=>{
+  const n=document.getElementById('net');
+  const build=document.getElementById('buildInfo');
+  if(n){
+    let seq=0;
+    const paint=online=>{
+      const cached=!!(navigator.serviceWorker && navigator.serviceWorker.controller);
+      n.dataset.state=online?'online':cached?'offline-ready':'offline-unavailable';
+      n.textContent=online?'Online':cached?'Offline · cached':'Offline · cache not ready';
+      n.title=online?'Site is reachable':cached?'Offline; the app shell is cached':'Offline; this tab is not controlled by the app cache';
+    };
+    const check=async()=>{
+      const id=++seq;
+      if(!navigator.onLine){paint(false);return;}
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(),2500);
+      try{
+        const response=await fetch('./favicon.svg',{method:'HEAD',cache:'no-store',signal:controller.signal});
+        if(id===seq) paint(response.ok);
+      }catch(_){if(id===seq) paint(false);}
+      finally{clearTimeout(timer);}
+    };
+    window.addEventListener('online',check);
+    window.addEventListener('offline',()=>{seq++;paint(false);});
+    if(navigator.serviceWorker) navigator.serviceWorker.addEventListener('controllerchange',check);
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden)check();});
+    check();
+    setInterval(check,30000);
+  }
+  if(build){
+    fetch('./version.json',{cache:'no-store'})
+      .then(r=>{if(!r.ok)throw new Error('version unavailable');return r.json();})
+      .then(v=>{if(!v.commit)throw new Error('commit missing');const full=String(v.commit);build.textContent='Build '+full.slice(0,7);build.title='Commit '+full+(v.builtAt?' · built '+v.builtAt:'');})
+      .catch(()=>{build.textContent='Build unavailable';build.title='Build ID appears after the first online load';});
+  }
+});
 </script>
 <script>
 // офлайн-шелл — без него установленный PWA (иконка на главном экране) без сети показывает
