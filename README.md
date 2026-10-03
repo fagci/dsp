@@ -85,7 +85,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - MIDI keyboard input, ADSR envelope
 
 ### Output & extensibility
-- Sound card output (per-node output device selection, peak/clip meter), WAV / MP3 recording (files named by date and time), CSV log, trigger recorder
+- Sound card output (per-node output device selection, peak/clip meter), WAV / MP3 recording (files named by date and time; optionally streamed straight to a disk file, so the length is not limited by memory — Chrome/Edge), CSV log, trigger recorder
 - **Map** (offline vector base map, optional OSM tiles, tracks, markers — see [Map and records](#map-and-records)), screen transmitter, indicators
 - Module Builder and Script nodes for writing custom DSP code in the browser
 
