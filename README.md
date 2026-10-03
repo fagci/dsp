@@ -86,8 +86,10 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 
 ### Output & extensibility
 - Sound card output (per-node output device selection, peak/clip meter), WAV / MP3 recording (files named by date and time), CSV log, trigger recorder
+- **Network Out**: WebSocket (`ws://`, `wss://`, reconnect) — text on change, numbers as a JSON object every period, or mono PCM16 audio (a JSON header first, then binary blocks). Example: `websocat -s 8765` on the receiving side
 - **Map** (offline vector base map, optional OSM tiles, tracks, markers — see [Map and records](#map-and-records)), screen transmitter, indicators
 - **Serial Out (WebSerial)**: write text or a numeric value to a serial port — Arduino, relays, transceiver CAT control (template `FA{v:11};` turns a frequency into a Kenwood command); device replies come back on the `reply` output
+- **HTTP Out**: webhook request (POST / PUT / GET, custom headers) — text on change, or numbers as a JSON object on a `go` pulse or every period. The server must allow CORS, and from the https demo only `https://` (or localhost) works
 - Module Builder and Script nodes for writing custom DSP code in the browser
 
 ## USB SDR
