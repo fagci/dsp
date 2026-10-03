@@ -71,7 +71,7 @@
       <button id="engineToggle" class="toolbar-menu-trigger" type="button" popovertarget="enginePanel" title="Settings" aria-label="Settings" aria-controls="enginePanel" aria-expanded="false"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10m4 0h2M4 12h2m4 0h10M4 18h10m4 0h2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="18" r="2"/></svg><span>Settings</span></button>
       <button id="moreToggle" class="toolbar-menu-trigger" type="button" popovertarget="morePanel" title="Clear actions" aria-label="Clear actions" aria-controls="morePanel" aria-expanded="false"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Clear</span></button>
       <span class="sp"></span>
-      <span id="net" data-state="checking" role="status" aria-live="polite" title="Checking network">Checking…</span>
+      <span id="net" hidden data-state="checking" role="status" aria-live="polite" title="Checking network">Offline</span>
       <span id="stat">stopped</span>
       <div id="enginePanel" class="toolbar-popover" popover="auto" role="group" aria-labelledby="enginePanelTitle">
         <div id="enginePanelTitle" class="toolbar-popover-title">Settings</div>
@@ -114,9 +114,10 @@ document.addEventListener('DOMContentLoaded',()=>{
     let seq=0;
     const paint=online=>{
       const cached=!!(navigator.serviceWorker && navigator.serviceWorker.controller);
+      n.hidden=online;
       n.dataset.state=online?'online':cached?'offline-ready':'offline-unavailable';
-      n.textContent=online?'Online':cached?'Offline · cached':'Offline · cache not ready';
-      n.title=online?'Site is reachable':cached?'Offline; the app shell is cached':'Offline; this tab is not controlled by the app cache';
+      n.textContent='Offline';
+      n.title=online?'':cached?'Offline; the app shell is cached':'Offline; this tab is not controlled by the app cache';
     };
     const check=async()=>{
       const id=++seq;
