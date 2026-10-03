@@ -1054,6 +1054,70 @@ def({ id:'rec', title:'Record Audio', cat:'Output', ins:[{n:'in',t:'sig'}], read
     n.el.querySelector('.readout').textContent=(n.err?n.err+'\n':'')+t; }});
 
 
+// Выход в сеть по WebSocket: текст (по изменению), числа JSON-объектом раз в period, звук PCM16 LE
+// (mono, частота Eng.sr; первым сообщением уходит JSON-заголовок). Приёмник пример:
+// websocat -s 8765 | ffplay -f s16le -ar 48000 -ac 1 -   (заголовок — первая строка JSON)
+function netOutStop(n){
+  n.want=false; clearTimeout(n.timer); n.timer=null;
+  const ws=n.ws; n.ws=null;
+  if(ws){ ws.onopen=ws.onclose=ws.onerror=null; try{ ws.close(); }catch(e){} }
+  n.status='disconnected';
+}
+function netOutStart(n){
+  netOutStop(n);
+  const url=String(n.p.url||'').trim();
+  if(!/^wss?:\/\//i.test(url)){ n.status='URL must start with ws:// or wss://'; return; }
+  n.want=true; n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
+  netOutOpen(n,url);
+}
+function netOutOpen(n,url){
+  let ws;
+  try{ ws=new WebSocket(url); }
+  catch(e){ n.status='error: '+e.message; n.timer=setTimeout(()=>n.want&&netOutOpen(n,url),5000); return; }
+  ws.binaryType='arraybuffer';
+  n.ws=ws; n.status='connecting…';
+  ws.onopen=()=>{ n.status='connected';
+    if(n.p.fmt==='audio PCM16') ws.send(JSON.stringify({type:'audio',format:'s16le',channels:1,sampleRate:Eng.sr})); };
+  ws.onerror=()=>{ n.status='connection error'; };
+  ws.onclose=e=>{
+    if(n.ws!==ws) return;
+    n.ws=null; n.status='closed'+(e.code!==1000?' ('+e.code+')':'')+(n.p.reconnect?' — reconnecting…':'');
+    if(n.want && n.p.reconnect) n.timer=setTimeout(()=>n.want&&netOutOpen(n,url),2000);
+  };
+}
+def({ id:'netout', title:'Network Out', cat:'Output', readout:true,
+  ins:[{n:'text',t:'txt'},{n:'a',t:'num'},{n:'b',t:'num'},{n:'c',t:'num'},{n:'d',t:'num'},{n:'audio',t:'sig'}],
+  params:[{n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'ws:// wss://'},
+          {n:'fmt',t:'select',opts:['text','numbers JSON','audio PCM16'],d:'text',label:'send'},
+          {n:'period',t:'range',min:.05,max:60,step:.05,d:1,label:'numbers period, s'},
+          {n:'reconnect',t:'check',d:true,label:'reconnect'},
+          {n:'connect',t:'button',label:'Connect',fn:n=>netOutStart(n)},
+          {n:'disconnect',t:'button',label:'Disconnect',fn:n=>netOutStop(n)}],
+  init:n=>{ n.ws=null; n.want=false; n.timer=null; n.status='not connected'; n.warn='';
+            n.last=undefined; n.t=0; n.sent=0; n.dropped=0; },
+  dispose:n=>netOutStop(n),
+  process(n,I){
+    const ws=n.ws;
+    if(!ws || ws.readyState!==1) return {};
+    if(n.p.fmt==='text'){
+      if(typeof I.text==='string' && I.text!==n.last){ n.last=I.text; ws.send(I.text); n.sent++; }
+    } else if(n.p.fmt==='numbers JSON'){
+      n.t+=BLOCK/Eng.sr;
+      if(n.t>=n.p.period){ n.t=0;
+        const o={t:Date.now()};
+        for(const k of 'abcd') if(typeof I[k]==='number' && isFinite(I[k])) o[k]=I[k];
+        ws.send(JSON.stringify(o)); n.sent++; }
+    } else if(I.audio){
+      if(ws.bufferedAmount>1<<20){ n.dropped++; return {}; }
+      const pcm=new Int16Array(I.audio.length);
+      for(let i=0;i<pcm.length;i++) pcm[i]=clamp(I.audio[i],-1,1)*32767;
+      ws.send(pcm.buffer); n.sent++;
+    }
+    return {}; },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const t=(n.warn&&!n.ws ? '⚠ '+n.warn+'\n' : '')+n.status+' · sent '+n.sent+(n.dropped?' · dropped '+n.dropped:'');
+    if(r.textContent!==t) r.textContent=t; }});
+
 function wavDownload(chunks,sr,name){
   const len=chunks.reduce((a,c)=>a+c.length,0);
   const b=new ArrayBuffer(44+len*2), v=new DataView(b);
