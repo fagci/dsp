@@ -1127,9 +1127,61 @@ function recFileName(n,ext){
   const pre=String(n.p.prefix||'').trim().replace(/[\\/:*?"<>|]+/g,'_');
   return (pre?pre+'-':'')+recStamp(n.t0)+'.'+ext;
 }
+// Запись потоком на диск (File System Access API): в память ничего не копится, длина ограничена
+// только местом. WAV пишется с заглушкой в заголовке, размеры вписываются при остановке.
+function wavHeader(bytes,sr){
+  const b=new ArrayBuffer(44), v=new DataView(b);
+  const wr=(o,s)=>{ for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i)); };
+  wr(0,'RIFF'); v.setUint32(4,36+bytes,true); wr(8,'WAVEfmt ');
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true);
+  v.setUint16(34,16,true); wr(36,'data'); v.setUint32(40,bytes,true);
+  return b;
+}
+function recDiskWrite(n,data){
+  const d=n.disk; if(!d) return;
+  d.bytes+=data.byteLength;
+  d.q=d.q.then(()=>d.w.write(data)).catch(e=>{ n.err='disk write failed: '+e.message; });
+}
+async function recDiskClose(n){
+  const d=n.disk; n.disk=null; if(!d) return;
+  try{
+    await d.q;
+    if(d.wav){ await d.w.write({type:'seek',position:0}); await d.w.write(wavHeader(d.bytes-44,d.sr)); }
+    await d.w.close();
+  }catch(e){ n.err='disk close failed: '+e.message; }
+}
+async function recStartDisk(n,ext,type){
+  n.picking=true;
+  try{
+    const h=await window.showSaveFilePicker({suggestedName:recFileName(n,ext),
+      types:[{description:ext.toUpperCase()+' audio',accept:{[type]:['.'+ext]}}]});
+    const w=await h.createWritable();
+    n.disk={w,q:Promise.resolve(),bytes:0,wav:ext==='wav',sr:Eng.sr};
+    if(n.disk.wav) recDiskWrite(n,wavHeader(0,Eng.sr));
+    n.t0=Date.now(); n.on=true;
+  }catch(e){
+    n.err=e.name==='AbortError' ? 'file not chosen' : 'cannot open file: '+e.message;
+    n.on=false;
+  }
+  n.picking=false;
+}
 function recStart(n){
+  if(n.picking) return;
   n.chunks=[]; n.mp3=[]; n.mp3Bytes=0; n.pending=[]; n.enc=null; n.samples=0; n.err='';
-  n.t0=Date.now(); n.fmtNow=n.p.fmt; n.on=true;
+  n.fmtNow=n.p.fmt; n.t0=Date.now();
+  const toDisk=n.p.dest==='disk file';
+  if(toDisk && !window.showSaveFilePicker){ n.err='saving to disk needs Chrome/Edge — downloading instead'; }
+  const disk=toDisk && !!window.showSaveFilePicker;
+  if(disk){
+    if(n.fmtNow==='mp3'){ n.sr=MP3_RATES.includes(Eng.sr) ? Eng.sr : 48000; n.rs={pos:0, last:0}; }
+    else n.sr=Eng.sr;
+    if(n.fmtNow==='mp3') loadLame().then(L=>{ n.enc=new L.Mp3Encoder(1,n.sr,+n.p.kbps||128);
+      for(const pcm of n.pending) recMp3Push(n,pcm); n.pending=[]; }).catch(e=>{ n.err=e.message; });
+    recStartDisk(n,n.fmtNow==='mp3'?'mp3':'wav',n.fmtNow==='mp3'?'audio/mpeg':'audio/wav');
+    return;
+  }
+  n.t0=Date.now(); n.on=true;
   if(n.fmtNow!=='mp3') return;
   n.sr=MP3_RATES.includes(Eng.sr) ? Eng.sr : 48000;
   n.rs={pos:0, last:0};                              // состояние линейной передискретизации
@@ -1157,10 +1209,18 @@ function recToPcm(n,x){                              // Float32 блока → I
 }
 function recMp3Push(n,pcm){
   const d=n.enc.encodeBuffer(pcm);
-  if(d.length){ n.mp3.push(new Uint8Array(d.buffer.slice(d.byteOffset,d.byteOffset+d.length))); n.mp3Bytes+=d.length; }
+  if(!d.length) return;
+  const u=new Uint8Array(d.buffer.slice(d.byteOffset,d.byteOffset+d.length));
+  n.mp3Bytes+=d.length;
+  if(n.disk) recDiskWrite(n,u); else n.mp3.push(u);
 }
 function recStop(n){
   n.on=false;
+  if(n.disk){
+    if(n.fmtNow==='mp3' && n.enc){ const d=n.enc.flush();
+      if(d.length) recDiskWrite(n,new Uint8Array(d.buffer.slice(d.byteOffset,d.byteOffset+d.length))); n.enc=null; }
+    recDiskClose(n); return;
+  }
   if(n.fmtNow==='mp3'){
     if(!n.enc){ n.err=n.err||'MP3 encoder not ready — nothing saved'; return; }
     const d=n.enc.flush(); if(d.length) n.mp3.push(new Uint8Array(d.buffer.slice(d.byteOffset,d.byteOffset+d.length)));
@@ -1170,6 +1230,7 @@ function recStop(n){
 }
 def({ id:'rec', title:'Record Audio', cat:'Output', ins:[{n:'in',t:'sig'}], readout:true,
   params:[{n:'go',t:'button',label:'Record / stop',fn:n=>{ n.on ? recStop(n) : recStart(n); }},
+          {n:'dest',t:'select',opts:['download','disk file'],d:'download',label:'save to (disk file: streamed, no length limit)'},
           {n:'fmt',t:'select',opts:['wav','mp3'],d:'wav',label:'format'},
           {n:'kbps',t:'select',opts:['64','96','128','192','256','320'],d:'128',label:'MP3 bitrate, kbps'},
           {n:'prefix',t:'text',d:'rec',label:'file name prefix (then date_time)'}],
@@ -1180,11 +1241,14 @@ def({ id:'rec', title:'Record Audio', cat:'Output', ins:[{n:'in',t:'sig'}], read
     if(n.fmtNow==='mp3'){
       const pcm=recToPcm(n,I.in);
       if(n.enc) recMp3Push(n,pcm); else n.pending.push(pcm);
-    } else n.chunks.push(I.in.slice());
+    } else if(n.disk) recDiskWrite(n,recToPcm(n,I.in).buffer);
+    else n.chunks.push(I.in.slice());
     return {}; },
   draw(n){
     const sec=n.samples/Eng.sr;
-    const t=n.on ? '● '+sec.toFixed(1)+' s'+(n.fmtNow==='mp3' ? ' · mp3 '+(n.mp3Bytes/1024).toFixed(0)+' KB'+(n.enc?'':' (loading encoder…)')
+    const t=n.on && n.disk ? '● '+sec.toFixed(1)+' s → disk · '+(n.disk.bytes/1048576).toFixed(1)+' MB'
+           : n.picking ? 'choose a file…'
+           : n.on ? '● '+sec.toFixed(1)+' s'+(n.fmtNow==='mp3' ? ' · mp3 '+(n.mp3Bytes/1024).toFixed(0)+' KB'+(n.enc?'':' (loading encoder…)')
                                                               : ' · wav '+(sec*Eng.sr*2/1048576).toFixed(1)+' MB')
                  : 'ready · '+n.p.fmt+(n.p.fmt==='mp3' ? ' '+n.p.kbps+' kbps' : '');
     n.el.querySelector('.readout').textContent=(n.err?n.err+'\n':'')+t; }});

@@ -85,6 +85,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - MIDI keyboard input, ADSR envelope
 
 ### Output & extensibility
+- Sound card output (per-node output device selection, peak/clip meter), WAV / MP3 recording (files named by date and time; optionally streamed straight to a disk file, so the length is not limited by memory — Chrome/Edge), CSV log, trigger recorder
 - Sound card output (per-node output device selection, peak/clip meter), WAV / MP3 recording (files named by date and time), CSV log, trigger recorder
 - **Network Out**: WebSocket (`ws://`, `wss://`, reconnect) — text on change, numbers as a JSON object every period, or mono PCM16 audio (a JSON header first, then binary blocks). Example: `websocat -s 8765` on the receiving side
 - **Map** (offline vector base map, optional OSM tiles, tracks, markers — see [Map and records](#map-and-records)), screen transmitter, indicators
