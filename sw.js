@@ -5,9 +5,9 @@
 // онлайн всегда получаем свежее (та же схема ?v=N, что и в index.html), офлайн — последнее
 // закэшированное вместо ошибки.
 //
-// CACHE бампать вместе с ?v=N в index.html — иначе после правки файлов старый список ссылок
-// (со старым ?v=) продолжит переустанавливаться поверх уже закэшированного нового.
-const CACHE='dsp-shell-v135';
+// При изменении ресурсов оболочки обновлять их ?v=N и CACHE вместе.
+// Для изменения только стратегии service worker достаточно поднять CACHE.
+const CACHE='dsp-shell-v136';
 const SHELL=[
   './',
   './index.html',
@@ -91,6 +91,55 @@ const SHELL=[
   './presets.js?v=133',
   './core-graph.js?v=133',
 ];
+const SHELL_URLS=new Set(SHELL.map(path=>new URL(path,self.location.href).href));
+const NETWORK_TIMEOUT_MS=3500;
+
+async function fetchWithTimeout(req){
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),NETWORK_TIMEOUT_MS);
+  try{return await fetch(req,{signal:controller.signal});}
+  finally{clearTimeout(timer);}
+}
+async function cacheSuccessful(cache,req,res){
+  if(!res || !res.ok || res.type==='opaque') return;
+  try{await cache.put(req,res.clone());}
+  catch(err){console.warn('[sw] cache write failed:',req.url,err);}
+}
+async function offlineFallback(cache,req,navigation){
+  const exact=await cache.match(req);
+  if(exact) return exact;
+  if(navigation){
+    const shell=await cache.match(new URL('./index.html',self.registration.scope).href);
+    if(shell) return shell;
+  }
+  return Response.error();
+}
+async function cacheFirst(req){
+  const cache=await caches.open(CACHE);
+  const cached=await cache.match(req);
+  if(cached) return cached;
+  try{
+    const res=await fetchWithTimeout(req);
+    await cacheSuccessful(cache,req,res);
+    return res;
+  }catch(_){
+    return offlineFallback(cache,req,false);
+  }
+}
+async function networkFirst(req,navigation){
+  const cache=await caches.open(CACHE);
+  try{
+    const res=await fetchWithTimeout(req);
+    if(res.ok){
+      await cacheSuccessful(cache,req,res);
+      return res;
+    }
+    const cached=await offlineFallback(cache,req,navigation);
+    return cached.type==='error' ? res : cached;
+  }catch(_){
+    return offlineFallback(cache,req,navigation);
+  }
+}
 self.addEventListener('install',e=>{
   self.skipWaiting();                                 // не ждать закрытия всех вкладок — как и ручной ?v=N, обновление должно применяться сразу
   e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)));
@@ -115,16 +164,13 @@ function isolate(res){
 }
 self.addEventListener('fetch',e=>{
   const req=e.request;
-  // сторонние запросы (CDN CodeMirror и т.п.) — мимо кэша, как и раньше без сервис-воркера
+  // сторонние запросы (CDN CodeMirror и т.п.) — мимо кэша
   if(req.method!=='GET' || new URL(req.url).origin!==location.origin) return;
-  // скрипт воркера под изолированной страницей тоже должен нести COEP, иначе браузер его не запустит
-  const nav=req.mode==='navigate' || req.destination==='worker';
-  e.respondWith(
-    fetch(req).then(res=>{
-      const copy=res.clone();
-      caches.open(CACHE).then(c=>c.put(req,copy));
-      return res;
-    }).catch(()=>caches.match(req).then(r=>r||caches.match('./index.html')))
-      .then(res=>nav?isolate(res):res)
-  );
+  const navigation=req.mode==='navigate';
+  const isolateResponse=navigation || req.destination==='worker';
+  // Версионная оболочка читается из кэша сразу; остальные same-origin GET — сеть с тайм-аутом и fallback.
+  const response=SHELL_URLS.has(req.url) && !navigation
+    ? cacheFirst(req)
+    : networkFirst(req,navigation);
+  e.respondWith(response.then(res=>isolateResponse?isolate(res):res));
 });
