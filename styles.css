@@ -762,7 +762,6 @@ select.aed-b{padding:0 6px}
 #bar .toolbar-menu-trigger span{font-size:11px}
 #bar .toolbar-menu-trigger:hover{color:var(--hi)}
 #bar .toolbar-popover[popover]{position:fixed;inset:auto;margin:0;width:min(320px,calc(100vw - 24px));max-height:min(70vh,480px);overflow:auto;padding:12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--txt);box-shadow:0 12px 30px rgba(0,0,0,.38)}
-#bar #enginePanel[popover],#bar #morePanel[popover]{top:calc(var(--barh) + 8px);right:12px}
 #bar #morePanel[popover]{width:min(250px,calc(100vw - 24px))}
 .toolbar-popover-title{margin:0 0 10px;color:var(--txt);font:600 12px/1.4 var(--mono)}
 .toolbar-settings{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px}
@@ -774,6 +773,5 @@ select.aed-b{padding:0 6px}
 #bar .toolbar-actions .danger{color:var(--err)}
 .toolbar-actions .i{flex:0 0 auto}
 @media (max-width:820px),(pointer:coarse){
-  #bar #enginePanel[popover],#bar #morePanel[popover]{top:auto;right:8px;bottom:calc(54px + env(safe-area-inset-bottom));left:auto}
   #bar .toolbar-popover[popover]{max-height:min(65dvh,420px)}
 }

@@ -7,7 +7,7 @@
 <meta name="theme-color" content="#161a1d">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' http: https: ws: wss: data: blob: 'unsafe-inline'; script-src 'self' http: https: data: blob: 'unsafe-inline' 'wasm-unsafe-eval'">
 <title>DSP</title>
-<link rel="stylesheet" href="styles.css?v=134">
+<link rel="stylesheet" href="styles.css?v=135">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -67,13 +67,13 @@
       <span class="sep"></span>
       <button id="fit" title="Fit to screen" aria-label="Fit graph to screen"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
       <button id="dash" title="Dashboard view — pick a module in each pane, split panes and drag dividers to arrange them" aria-label="Toggle dashboard view"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/></svg></button>
-      <button id="engineToggle" class="toolbar-menu-trigger" type="button" popovertarget="enginePanel" title="Engine settings" aria-label="Engine settings"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10m4 0h2M4 12h2m4 0h10M4 18h10m4 0h2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="18" r="2"/></svg><span>Engine</span></button>
-      <button id="moreToggle" class="toolbar-menu-trigger" type="button" popovertarget="morePanel" title="More actions" aria-label="More actions"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg><span>More</span></button>
+      <button id="engineToggle" class="toolbar-menu-trigger" type="button" popovertarget="enginePanel" title="Settings" aria-label="Settings" aria-controls="enginePanel" aria-expanded="false"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10m4 0h2M4 12h2m4 0h10M4 18h10m4 0h2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="18" r="2"/></svg><span>Settings</span></button>
+      <button id="moreToggle" class="toolbar-menu-trigger" type="button" popovertarget="morePanel" title="Clear actions" aria-label="Clear actions" aria-controls="morePanel" aria-expanded="false"><svg class="i" viewBox="0 0 24 24" aria-hidden="true">path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"</svg><span>Clear</span></button>
       <span class="sp"></span>
       <span id="net" hidden>offline</span>
       <span id="stat">stopped</span>
       <div id="enginePanel" class="toolbar-popover" popover="auto" role="group" aria-labelledby="enginePanelTitle">
-        <div id="enginePanelTitle" class="toolbar-popover-title">Engine settings</div>
+        <div id="enginePanelTitle" class="toolbar-popover-title">Settings</div>
         <div class="toolbar-settings">
           <label class="toolbar-setting">Run speed<select id="turbo" title="Run speed"><option value="1">×1</option><option value="2">×2</option><option value="4">×4</option><option value="8">×8</option><option value="16">×16</option><option value="32">×32</option></select></label>
           <label class="toolbar-setting">Block size<select id="blk" title="Block size"><option value="128">128</option><option value="256">256</option><option value="512" selected>512</option><option value="1024">1024</option><option value="2048">2048</option></select></label>
@@ -81,8 +81,7 @@
           <label class="toolbar-setting">Sample rate<select id="sr" title="Sample rate"><option value="">Default</option><option value="8000">8000 Hz</option><option value="11025">11025 Hz</option><option value="16000">16000 Hz</option><option value="22050">22050 Hz</option><option value="44100">44100 Hz</option><option value="48000">48000 Hz</option><option value="96000">96000 Hz</option><option value="192000">192000 Hz</option></select></label>
         </div>
       </div>
-      <div id="morePanel" class="toolbar-popover" popover="auto" role="group" aria-labelledby="morePanelTitle">
-        <div id="morePanelTitle" class="toolbar-popover-title">More actions</div>
+      <div id="morePanel" class="toolbar-popover" popover="auto" role="group" aria-label="Clear actions">
         <div class="toolbar-actions">
           <button id="clear" type="button" title="Clear canvas" aria-label="Clear canvas" popovertarget="morePanel" popovertargetaction="hide"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Clear canvas</span></button>
           <button id="wipe" type="button" class="danger" title="Erase all local data (presets, patches, cache)" aria-label="Erase all local data" popovertarget="morePanel" popovertargetaction="hide"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Erase local data…</span></button>
@@ -123,6 +122,58 @@ if('serviceWorker' in navigator) window.addEventListener('load',()=>{
     else navigator.serviceWorker.addEventListener('controllerchange', reloadOnce, {once:true});
   }
 });
+</script>
+<script>
+// Keep toolbar menus next to the button that opened them.
+(()=>{
+  const entries=[];
+  const place=(trigger,panel)=>{
+    if(!panel.matches(':popover-open')) return;
+    const anchor=trigger.getBoundingClientRect();
+    const box=panel.getBoundingClientRect();
+    const margin=8,gap=8;
+    const left=Math.max(margin,Math.min(anchor.left+(anchor.width-box.width)/2,innerWidth-box.width-margin));
+    let top=anchor.bottom+gap;
+    if(top+box.height>innerHeight-margin) top=anchor.top-box.height-gap;
+    if(top<margin) top=Math.max(margin,Math.min(anchor.bottom+gap,innerHeight-box.height-margin));
+    panel.style.left=left+'px';
+    panel.style.right='auto';
+    panel.style.top=top+'px';
+    panel.style.bottom='auto';
+  };
+  for(const [triggerId,panelId] of [['engineToggle','enginePanel'],['moreToggle','morePanel']]){
+    const trigger=document.getElementById(triggerId),panel=document.getElementById(panelId);
+    if(!trigger||!panel) continue;
+    const entry={trigger,panel};
+    entries.push(entry);
+    trigger.addEventListener('click',()=>{
+      if(panel.matches(':popover-open')) return;
+      const anchor=trigger.getBoundingClientRect();
+      const width=Math.min(panelId==='enginePanel'?320:250,Math.max(0,innerWidth-16));
+      const left=Math.max(8,Math.min(anchor.left+(anchor.width-width)/2,innerWidth-width-8));
+      panel.style.left=left+'px';
+      panel.style.right='auto';
+      panel.style.top=(anchor.bottom+8)+'px';
+      panel.style.bottom='auto';
+    });
+    panel.addEventListener('toggle',()=>{
+      const open=panel.matches(':popover-open');
+      trigger.setAttribute('aria-expanded',open?'true':'false');
+      if(open) requestAnimationFrame(()=>place(trigger,panel));
+    });
+  }
+  let queued=false;
+  const reposition=()=>{
+    if(queued) return;
+    queued=true;
+    requestAnimationFrame(()=>{
+      queued=false;
+      for(const entry of entries) place(entry.trigger,entry.panel);
+    });
+  };
+  window.addEventListener('resize',reposition);
+  window.addEventListener('scroll',reposition,true);
+})();
 </script>
 </body></html>
 
