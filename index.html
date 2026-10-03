@@ -121,7 +121,8 @@ document.addEventListener('DOMContentLoaded',()=>{
     };
     const check=async()=>{
       const id=++seq;
-      if(!navigator.onLine){paint(false);return;}
+      // Always verify actual site reachability before changing status.
+
       const controller=new AbortController();
       const timer=setTimeout(()=>controller.abort(),2500);
       try{
@@ -131,7 +132,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       finally{clearTimeout(timer);}
     };
     window.addEventListener('online',check);
-    window.addEventListener('offline',()=>{seq++;paint(false);});
+    window.addEventListener('offline',check);
     if(navigator.serviceWorker) navigator.serviceWorker.addEventListener('controllerchange',check);
     document.addEventListener('visibilitychange',()=>{if(!document.hidden)check();});
     check();
