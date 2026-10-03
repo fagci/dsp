@@ -930,6 +930,89 @@ function dacBus(n){
 }
 
 
+// Запись в последовательный порт (WebSerial): Arduino, реле, CAT трансиверов. Строка уходит по
+// изменению text или value. В template {v} — value как есть, {v:N} — целое, дополненное нулями до N
+// (Kenwood/Yaesu: «FA{v:11};»). Ответы устройства режутся по \n или ; и идут на выход reply.
+async function serialOutTeardown(n){
+  n.connected=false; n.connecting=false; n.reading=false;
+  if(n.reader){ try{ await n.reader.cancel(); }catch(e){} n.reader=null; }
+  if(n.port){ try{ await n.port.close(); }catch(e){} n.port=null; }
+}
+async function serialOutReadLoop(n){
+  n.reading=true;
+  const reader=n.port.readable.pipeThrough(new TextDecoderStream()).getReader();
+  n.reader=reader;
+  let buf='';
+  try{
+    while(n.reading){
+      const {value,done}=await reader.read();
+      if(done) break;
+      buf+=value;
+      let m;
+      while((m=/[\n;]/.exec(buf))){
+        const line=buf.slice(0,m.index).trim(); buf=buf.slice(m.index+1);
+        if(line){ n.reply=line; n.pulse=2; }
+      }
+      if(buf.length>4096) buf='';
+    }
+    if(n.reading) n.status='port closed by device';
+  }catch(e){ n.status='read error: '+e.message; }
+  finally{ n.reading=false; }
+}
+async function serialOutConnect(n){
+  if(n.connecting) return;
+  await serialOutTeardown(n);
+  if(!navigator.serial){ n.status='WebSerial unavailable (needs Chrome/Edge, HTTPS)'; return; }
+  n.connecting=true; n.status='choose a port…';
+  try{
+    const port=await navigator.serial.requestPort();
+    await port.open({baudRate:+n.p.baud||9600});
+    n.port=port; n.connecting=false; n.connected=true; n.status='connected, '+n.p.baud+' baud';
+    n.writer=port.writable.getWriter();
+    serialOutReadLoop(n);
+  }catch(e){
+    n.connecting=false; n.connected=false;
+    n.status=e.name==='NotFoundError' ? 'no port selected' : 'error: '+e.message;
+  }
+}
+function serialOutDisconnect(n){
+  n.status='disconnected';
+  const w=n.writer; n.writer=null;
+  (async()=>{ try{ await w?.close(); }catch(e){} await serialOutTeardown(n); })();
+}
+const SERIAL_EOL={'none':'','\\n':'\n','\\r':'\r','\\r\\n':'\r\n'};
+function serialOutFormat(n,v){
+  return String(n.p.template||'{v}').replace(/\{v(?::(\d+))?\}/g,(_,w)=>{
+    if(typeof v!=='number' || !isFinite(v)) return '';
+    return w ? String(Math.round(v)).padStart(+w,'0') : String(v); });
+}
+function serialOutWrite(n,str){
+  if(!n.writer) return;
+  const data=new TextEncoder().encode(str+(SERIAL_EOL[n.p.eol]||''));
+  n.chain=n.chain.then(()=>n.writer?.write(data)).then(()=>{ n.sent++; },
+    e=>{ n.status='write error: '+e.message; });
+}
+def({ id:'serialout', title:'Serial Out (WebSerial)', cat:'Output', readout:true,
+  ins:[{n:'text',t:'txt'},{n:'value',t:'num'}], outs:[{n:'reply',t:'txt'},{n:'go',t:'num'}],
+  params:[{n:'baud',t:'select',opts:['4800','9600','19200','38400','57600','115200'],d:'9600'},
+          {n:'eol',t:'select',opts:['none','\\n','\\r','\\r\\n'],d:'\\n',label:'line end'},
+          {n:'template',t:'text',d:'{v}',label:'value template, {v} or {v:11}'},
+          {n:'connect',t:'button',label:'Connect',fn:n=>serialOutConnect(n)},
+          {n:'disconnect',t:'button',label:'Disconnect',fn:n=>serialOutDisconnect(n)}],
+  init:n=>{ n.port=null; n.reader=null; n.writer=null; n.connected=false; n.connecting=false; n.reading=false;
+            n.chain=Promise.resolve(); n.lastText=undefined; n.lastVal=undefined; n.reply=''; n.pulse=0;
+            n.sent=0; n.status='not connected'; },
+  dispose:n=>{ serialOutDisconnect(n); },
+  process(n,I){
+    if(n.connected){
+      if(typeof I.text==='string' && I.text!==n.lastText){ n.lastText=I.text; if(I.text) serialOutWrite(n,I.text); }
+      if(typeof I.value==='number' && isFinite(I.value) && I.value!==n.lastVal){
+        n.lastVal=I.value; serialOutWrite(n,serialOutFormat(n,I.value)); }
+    }
+    const go=n.pulse>0?1:0; if(n.pulse>0) n.pulse--;
+    return {reply:n.reply, go}; },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const t=n.status+' · sent '+n.sent+(n.reply?'\n'+n.reply:'');
 // HTTP-запрос наружу (webhook): текст по изменению, числа JSON-объектом по фронту go или раз в period.
 // Один запрос в полёте за раз; лишние пропускаются. Заголовки — «Name: value» через «;».
 function httpOutHeaders(n){
