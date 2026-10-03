@@ -7,11 +7,11 @@
 //
 // При изменении ресурсов оболочки обновлять их ?v=N и CACHE вместе.
 // Для изменения только стратегии service worker достаточно поднять CACHE.
-const CACHE='dsp-shell-v136';
+const CACHE='dsp-shell-v137';
 const SHELL=[
   './',
   './index.html',
-  './styles.css?v=135',
+  './styles.css?v=136',
   './manifest.json',
   './favicon.svg',
   './icons/favicon-32.png',
