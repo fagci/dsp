@@ -1,0 +1,4 @@
+---
+layout: null
+---
+{"commit":"{{ site.github.build_revision | default: 'local' }}","builtAt":"{{ site.time | date: '%Y-%m-%d' }}"}
