@@ -1,0 +1,79 @@
+--- a/modules/iq.js
++++ b/modules/iq.js
+@@ -164,6 +164,68 @@
+   },
+   draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.state||''; }});
+ 
++/* ---- IQ \u2192 I/Q ---- */
++// \u041f\u043e\u0442\u043e\u043a 'iq' \u2192 \u0434\u0432\u0430 \u0441\u0438\u0433\u043d\u0430\u043b\u0430 \u0434\u0432\u0438\u0436\u043a\u0430 (I \u0438 Q) \u043d\u0430 Eng.sr. \u0422\u043e\u0442 \u0436\u0435 \u043a\u043e\u043b\u044c\u0446\u0435\u0432\u043e\u0439 \u0440\u0435\u0441\u0435\u043c\u043f\u043b\u0435\u0440, \u0447\u0442\u043e \u0443 IQ \u2192 Audio:
++// \u0434\u0440\u043e\u0431\u043d\u044b\u0439 \u0448\u0430\u0433, \u043f\u043e\u0434\u0441\u0442\u0440\u043e\u0439\u043a\u0430 ppm \u043f\u043e \u043c\u0438\u043d\u0438\u043c\u0443\u043c\u0443 \u0437\u0430\u043f\u0430\u0441\u0430, \u043d\u0435\u0434\u043e\u0431\u043e\u0440 \u2192 \u0442\u0438\u0448\u0438\u043d\u0430. \u041f\u0440\u043e\u0440\u0435\u0436\u0438\u0432\u0430\u0442\u044c \u0434\u043e ~\u0437\u0432\u0443\u043a\u043e\u0432\u043e\u0439
++// \u0447\u0430\u0441\u0442\u043e\u0442\u044b \u043d\u0443\u0436\u043d\u043e \u0434\u043e \u044d\u0442\u043e\u0433\u043e \u0443\u0437\u043b\u0430 (\u0441\u0430\u043c \u043e\u043d \u0444\u0438\u043b\u044c\u0442\u0440\u0430 \u043d\u0435 \u0438\u043c\u0435\u0435\u0442). swap \u2014 \u0437\u0435\u0440\u043a\u0430\u043b\u043e \u0441\u043f\u0435\u043a\u0442\u0440\u0430.
++const IQA_MAX_PPM=2000;
++def({ id:'iqSplit', title:'IQ \u2192 I/Q', cat:'IQ',
++  ins:[{n:'in',t:'iq'}], outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'fill',t:'num'}],
++  readout:true,
++  params:[{n:'lat',t:'range',min:20,max:500,step:5,d:100,label:'buffer (minimum kept), ms'},
++          {n:'gain',t:'range',min:-40,max:20,step:1,d:0,label:'gain, dB'},
++          {n:'swap',t:'check',d:false,label:'swap I and Q (mirror the spectrum)'}],
++  init:n=>{ n.sr=0; },
++  process(n,I){
++    const oI=buf(n,'I'), oQ=buf(n,'Q');
++    const s=iqIn(I,'in');
++    if(!s || !s.sr){ oI.fill(0); oQ.fill(0); n.state='no input'; return {I:oI, Q:oQ, fill:null}; }
++    if(s.sr!==n.sr){
++      n.sr=s.sr; n.size=pow2ge(Math.max(s.sr*2, BLOCK*8));
++      n.rr=new Float32Array(n.size); n.ri=new Float32Array(n.size);
++      n.W=0; n.pos=0; n.rebuf=true; n.floor=0; n.ppm=0; n.drops=0; n.starves=0;
++    }
++    const mask=n.size-1, rr=n.rr, ri=n.ri;
++    for(const c of s.chunks){
++      const xr=c.re, xi=c.im, K=xr.length;
++      let w=n.W;
++      for(let i=0;i<K;i++,w++){ rr[w&mask]=xr[i]; ri[w&mask]=xi?xi[i]:0; }
++      n.W=w;
++    }
++    const ratio=s.sr/Eng.sr, target=Math.max(s.sr*n.p.lat/1000, ratio*BLOCK*2);
++    let fill=n.W-n.pos;
++    if(fill>n.size-ratio*BLOCK*2){ n.pos=n.W-target; fill=target; n.drops++; }
++    const g=Math.pow(10,n.p.gain/20);
++    if(n.rebuf){
++      if(fill>=target){ n.rebuf=false; n.pos=n.W-target; fill=target;
++        n.floor=target; n.wMin=Infinity; n.wT=0; n.win=0; }
++      else { oI.fill(0); oQ.fill(0); n.state='buffering'; return {I:oI, Q:oQ, fill:1000*fill/s.sr}; }
++    }
++    n.wMin=Math.min(n.wMin,fill); n.wT+=BLOCK;
++    if(n.wT>=Eng.sr/2){
++      const m=n.wMin; n.wMin=Infinity; n.wT=0; n.win++;
++      if(n.win===2 && m>target*1.1 || m>target*1.5){ n.pos+=m-target; fill-=m-target; n.floor=target; if(n.win>2) n.drops++; }
++      else n.floor=n.win===1 ? m : n.floor+0.3*(m-n.floor);
++    }
++    n.ppm=clamp(1e4*(n.floor-target)/target, -IQA_MAX_PPM, IQA_MAX_PPM);
++    const step=ratio*(1+n.ppm*1e-6);
++    if(fill<step*BLOCK+3){ n.rebuf=true; n.starves++; oI.fill(0); oQ.fill(0); n.state='starved'; return {I:oI, Q:oQ, fill:1000*fill/s.sr}; }
++    let pos=n.pos;
++    const swap=n.p.swap;
++    for(let i=0;i<BLOCK;i++,pos+=step){
++      const k=Math.floor(pos), t=pos-k;
++      const i0=(k-1)&mask, i1=k&mask, i2=(k+1)&mask, i3=(k+2)&mask;
++      const riH=g*herm(rr[i0],rr[i1],rr[i2],rr[i3],t);
++      const qiH=g*herm(ri[i0],ri[i1],ri[i2],ri[i3],t);
++      if(swap){ oI[i]=qiH; oQ[i]=riH; } else { oI[i]=riH; oQ[i]=qiH; }
++    }
++    n.pos=pos;
++    n.state=(s.sr/1000)+' \u2192 '+(Eng.sr/1000)+' kS/s \u00b7 '+(1000*fill/s.sr).toFixed(0)+' ms \u00b7 '+
++      (n.ppm>=0?'+':'')+n.ppm.toFixed(0)+' ppm'+(s.sr>1.5*Eng.sr ? ' \u00b7 decimate first!' : '');
++    return {I:oI, Q:oQ, fill:1000*fill/s.sr};
++  },
++  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.state||''; }});
++
+ /* ---- Audio \u2192 IQ ---- */
+ // \u041c\u043e\u0434\u0443\u043b\u044f\u0442\u043e\u0440: \u0437\u0432\u0443\u043a \u0434\u0432\u0438\u0436\u043a\u0430 \u2192 \u043f\u043e\u0442\u043e\u043a 'iq' \u043d\u0430 \u0447\u0430\u0441\u0442\u043e\u0442\u0435 sr (\u0434\u043b\u044f HackRF TX \u043d\u0443\u0436\u043d\u043e 2\u201320 \u041c\u0421/\u0441). \u0426\u0435\u043d\u0442\u0440 \u043f\u043e\u0442\u043e\u043a\u0430 fc,
+ // \u043d\u0435\u0441\u0443\u0449\u0430\u044f \u043d\u0430 fc+off (\u0443 HackRF \u043e\u0442 \u043f\u0438\u043a\u0430 \u043d\u0430 \u043d\u0443\u043b\u0435 \u043b\u0443\u0447\u0448\u0435 \u0434\u0435\u0440\u0436\u0430\u0442\u044c off \u2260 0). \u0417\u0432\u0443\u043a \u00b11 = \u043f\u043e\u043b\u043d\u0430\u044f \u0434\u0435\u0432\u0438\u0430\u0446\u0438\u044f/\u0433\u043b\u0443\u0431\u0438\u043d\u0430.
+@@ -235,7 +297,6 @@
+ // \u0427\u0430\u0441\u044b \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430 (\u0434\u043e\u043d\u0433\u043b, \u0444\u0430\u0439\u043b) \u0438 \u0437\u0432\u0443\u043a\u043e\u0432\u043e\u0439 \u043a\u0430\u0440\u0442\u044b \u0440\u0430\u0441\u0445\u043e\u0434\u044f\u0442\u0441\u044f \u2014 \u0448\u0430\u0433 \u0447\u0442\u0435\u043d\u0438\u044f \u043f\u043e\u0434\u0441\u0442\u0440\u0430\u0438\u0432\u0430\u0435\u0442\u0441\u044f \u043f\u043e
+ // \u0437\u0430\u043f\u0430\u0441\u0443 \u0432 \u043a\u043e\u043b\u044c\u0446\u0435 (\u0435\u0433\u043e \u043c\u0438\u043d\u0438\u043c\u0443\u043c\u0443 \u0437\u0430 0.5 \u0441) \u0432 \u043f\u0440\u0435\u0434\u0435\u043b\u0430\u0445 \u00b1IQA_MAX_PPM. \u041d\u0435\u0434\u043e\u0431\u043e\u0440 \u2014 \u0442\u0438\u0448\u0438\u043d\u0430 \u0434\u043e
+ // \u0432\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u044f \u0437\u0430\u043f\u0430\u0441\u0430. \u041f\u0440\u043e\u0440\u0435\u0436\u0438\u0432\u0430\u0442\u044c \u0434\u043e ~\u0437\u0432\u0443\u043a\u043e\u0432\u043e\u0439 \u0447\u0430\u0441\u0442\u043e\u0442\u044b \u043d\u0443\u0436\u043d\u043e \u0434\u043e \u043c\u043e\u0441\u0442\u0430: \u0441\u0430\u043c \u043e\u043d \u0444\u0438\u043b\u044c\u0442\u0440\u0430 \u043d\u0435 \u0438\u043c\u0435\u0435\u0442.
+-const IQA_MAX_PPM=2000;
+ def({ id:'iqAudio', title:'IQ \u2192 Audio', cat:'IQ',
+   ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'sig'},{n:'q',t:'sig'},{n:'fill',t:'num'}],
+   readout:true,

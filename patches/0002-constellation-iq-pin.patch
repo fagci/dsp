@@ -1,0 +1,32 @@
+--- a/modules/analysis.js
++++ b/modules/analysis.js
+@@ -3205,7 +3205,8 @@
+   return PALETTE_LUT_CACHE[name] || (PALETTE_LUT_CACHE[name]=buildPaletteLut(PALETTES[name]));
+ }
+ 
+-def({ id:'const2', lazy:true, title:'Constellation', cat:'Analysis', ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'dec',t:'num'},{n:'scale',t:'num'},{n:'fade',t:'num'}],
++def({ id:'const2', lazy:true, title:'Constellation', cat:'Analysis',
++  ins:[{n:'iq',t:'iq'},{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'dec',t:'num'},{n:'scale',t:'num'},{n:'fade',t:'num'}],
+   view:{h:150},
+   params:[{n:'dec',t:'range',min:1,max:64,step:1,d:8},
+           {n:'scale',t:'range',min:.2,max:10,step:.1,d:2},
+@@ -3213,9 +3214,17 @@
+   init:n=>{n.pts=[];},
+   process(n,I){
+     for(const k of ['dec','scale','fade']) if(typeof I[k]==='number') setMod(n,k,I[k]);
+-    if(!I.I||!I.Q) return {};
+     const d=+n.p.dec;
+-    for(let i=0;i<BLOCK;i+=d){ n.pts.push(I.I[i],I.Q[i]); }
++    const sIq=typeof iqIn==='function' ? iqIn(I,'iq') : null;
++    if(sIq && sIq.chunks){
++      // \u043e\u0434\u0438\u043d \u043f\u0438\u043d iq: \u0431\u0435\u0440\u0451\u043c \u0438\u0437 \u0447\u0430\u043d\u043a\u043e\u0432 \u0441 \u0442\u0435\u043c \u0436\u0435 decimation
++      for(const c of sIq.chunks){
++        const re=c.re, im=c.im||null, K=re.length;
++        for(let i=0;i<K;i+=d){ n.pts.push(re[i], im?im[i]:0); }
++      }
++    } else if(I.I&&I.Q){
++      for(let i=0;i<BLOCK;i+=d){ n.pts.push(I.I[i],I.Q[i]); }
++    } else return {};
+     while(n.pts.length>4000) n.pts.splice(0,400);
+     return {}; },
+   draw(n,cv,cx){
