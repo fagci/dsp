@@ -1013,6 +1013,9 @@ def({ id:'serialout', title:'Serial Out (WebSerial)', cat:'Output', readout:true
     return {reply:n.reply, go}; },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     const t=n.status+' · sent '+n.sent+(n.reply?'\n'+n.reply:'');
+    if(r.textContent!==t) r.textContent=t;
+  }});
+
 // HTTP-запрос наружу (webhook): текст по изменению, числа JSON-объектом по фронту go или раз в period.
 // Один запрос в полёте за раз; лишние пропускаются. Заголовки — «Name: value» через «;».
 function httpOutHeaders(n){
@@ -1124,7 +1127,7 @@ function recStamp(t=Date.now()){                      // 2026-09-27_07-52-10, м
   return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'_'+p(d.getHours())+'-'+p(d.getMinutes())+'-'+p(d.getSeconds());
 }
 function recFileName(n,ext){
-  const pre=String(n.p.prefix||'').trim().replace(/[\\/:*?"<>|]+/g,'_');
+  const pre=String(n.p.prefix||'').trim().replace(/[\/:*?"<>|]+/g,'_');
   return (pre?pre+'-':'')+recStamp(n.t0)+'.'+ext;
 }
 // Запись потоком на диск (File System Access API): в память ничего не копится, длина ограничена
