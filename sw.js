@@ -7,11 +7,11 @@
 //
 // CACHE бампать вместе с ?v=N в index.html — иначе после правки файлов старый список ссылок
 // (со старым ?v=) продолжит переустанавливаться поверх уже закэшированного нового.
-const CACHE='dsp-shell-v132';
+const CACHE='dsp-shell-v133';
 const SHELL=[
   './',
   './index.html',
-  './styles.css?v=133',
+  './styles.css?v=134',
   './manifest.json',
   './favicon.svg',
   './icons/favicon-32.png',

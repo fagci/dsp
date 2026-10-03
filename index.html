@@ -7,7 +7,7 @@
 <meta name="theme-color" content="#161a1d">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' http: https: ws: wss: data: blob: 'unsafe-inline'; script-src 'self' http: https: data: blob: 'unsafe-inline' 'wasm-unsafe-eval'">
 <title>DSP</title>
-<link rel="stylesheet" href="styles.css?v=126">
+<link rel="stylesheet" href="styles.css?v=134">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -55,47 +55,39 @@
   </div>
   <div id="main">
     <div id="bar">
-      <button id="menu" title="Show / hide sidebar"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
-      <button id="load" title="Open file"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a1 1 0 011-1h5l2 2h8a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1z"/></svg></button>
-      <button id="save" title="Save to file"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></button>
+      <button id="menu" title="Show / hide sidebar" aria-label="Show or hide sidebar"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+      <button id="load" title="Open file" aria-label="Open patch file"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a1 1 0 011-1h5l2 2h8a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1z"/></svg></button>
+      <button id="save" title="Save to file" aria-label="Save patch to file"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></button>
       <span class="sep"></span>
-      <button id="run" title="Run / stop"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5l12 7-12 7z"/></svg></button>
+      <button id="run" title="Run / stop" aria-label="Run or stop"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5l12 7-12 7z"/></svg></button>
       <span class="sep"></span>
-      <button id="undo" title="Undo (Ctrl+Z)" disabled><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg></button>
-      <button id="redo" title="Redo (Ctrl+Shift+Z)" disabled><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 000 12h3"/></svg></button>
-      <button id="dup" title="Duplicate (D)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="1"/><path d="M5 15V5a1 1 0 011-1h10"/></svg></button>
-      <button id="clear" title="Clear canvas">clr</button>
+      <button id="undo" title="Undo (Ctrl+Z)" aria-label="Undo" disabled><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg></button>
+      <button id="redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 000 12h3"/></svg></button>
+      <button id="dup" title="Duplicate (D)" aria-label="Duplicate selected module"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="1"/><path d="M5 15V5a1 1 0 011-1h10"/></svg></button>
       <span class="sep"></span>
-      <button id="fit" title="Fit to screen"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
-      <button id="dash" title="Dashboard view — pick a module in each pane, split panes and drag dividers to arrange them"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/></svg></button>
-      <span class="sep"></span>
-      <select id="turbo" title="Run speed">
-        <option value="1">×1</option><option value="2">×2</option><option value="4">×4</option>
-        <option value="8">×8</option><option value="16">×16</option><option value="32">×32</option>
-      </select>
-      <select id="blk" title="Block size">
-        <option value="128">128</option><option value="256">256</option>
-        <option value="512" selected>512</option><option value="1024">1024</option>
-        <option value="2048">2048</option>
-      </select>
-      <select id="fps" title="Redraw rate: auto slows down when idle, max keeps 60 fps (heavier on the main thread), min saves CPU (10 fps)">
-        <option value="auto">fps auto</option><option value="max">fps max</option><option value="min">fps min</option>
-      </select>
-      <select id="sr" title="Sample rate">
-        <option value="">default</option>
-        <option value="8000">8000 Hz</option>
-        <option value="11025">11025 Hz</option>
-        <option value="16000">16000 Hz</option>
-        <option value="22050">22050 Hz</option>
-        <option value="44100">44100 Hz</option>
-        <option value="48000">48000 Hz</option>
-        <option value="96000">96000 Hz</option>
-        <option value="192000">192000 Hz</option>
-      </select>
+      <button id="fit" title="Fit to screen" aria-label="Fit graph to screen"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+      <button id="dash" title="Dashboard view — pick a module in each pane, split panes and drag dividers to arrange them" aria-label="Toggle dashboard view"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/></svg></button>
+      <button id="engineToggle" class="toolbar-menu-trigger" type="button" popovertarget="enginePanel" title="Engine settings" aria-label="Engine settings"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10m4 0h2M4 12h2m4 0h10M4 18h10m4 0h2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="18" r="2"/></svg><span>Engine</span></button>
+      <button id="moreToggle" class="toolbar-menu-trigger" type="button" popovertarget="morePanel" title="More actions" aria-label="More actions"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg><span>More</span></button>
       <span class="sp"></span>
       <span id="net" hidden>offline</span>
       <span id="stat">stopped</span>
-      <button id="wipe" title="Erase all local data (presets, patches, cache)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
+      <div id="enginePanel" class="toolbar-popover" popover="auto" role="group" aria-labelledby="enginePanelTitle">
+        <div id="enginePanelTitle" class="toolbar-popover-title">Engine settings</div>
+        <div class="toolbar-settings">
+          <label class="toolbar-setting">Run speed<select id="turbo" title="Run speed"><option value="1">×1</option><option value="2">×2</option><option value="4">×4</option><option value="8">×8</option><option value="16">×16</option><option value="32">×32</option></select></label>
+          <label class="toolbar-setting">Block size<select id="blk" title="Block size"><option value="128">128</option><option value="256">256</option><option value="512" selected>512</option><option value="1024">1024</option><option value="2048">2048</option></select></label>
+          <label class="toolbar-setting">Redraw rate<select id="fps" title="Redraw rate: auto slows down when idle, max keeps 60 fps (heavier on the main thread), min saves CPU (10 fps)"><option value="auto">Auto</option><option value="max">Max</option><option value="min">Min</option></select></label>
+          <label class="toolbar-setting">Sample rate<select id="sr" title="Sample rate"><option value="">Default</option><option value="8000">8000 Hz</option><option value="11025">11025 Hz</option><option value="16000">16000 Hz</option><option value="22050">22050 Hz</option><option value="44100">44100 Hz</option><option value="48000">48000 Hz</option><option value="96000">96000 Hz</option><option value="192000">192000 Hz</option></select></label>
+        </div>
+      </div>
+      <div id="morePanel" class="toolbar-popover" popover="auto" role="group" aria-labelledby="morePanelTitle">
+        <div id="morePanelTitle" class="toolbar-popover-title">More actions</div>
+        <div class="toolbar-actions">
+          <button id="clear" type="button" title="Clear canvas" aria-label="Clear canvas" popovertarget="morePanel" popovertargetaction="hide"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Clear canvas</span></button>
+          <button id="wipe" type="button" class="danger" title="Erase all local data (presets, patches, cache)" aria-label="Erase all local data" popovertarget="morePanel" popovertargetaction="hide"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Erase local data…</span></button>
+        </div>
+      </div>
     </div>
     <div id="canvas" class="grab">
       <svg id="wires"></svg>
