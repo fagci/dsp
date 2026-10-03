@@ -87,6 +87,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 ### Output & extensibility
 - Sound card output (per-node output device selection, peak/clip meter), WAV / MP3 recording (files named by date and time), CSV log, trigger recorder
 - **Map** (offline vector base map, optional OSM tiles, tracks, markers — see [Map and records](#map-and-records)), screen transmitter, indicators
+- **Serial Out (WebSerial)**: write text or a numeric value to a serial port — Arduino, relays, transceiver CAT control (template `FA{v:11};` turns a frequency into a Kenwood command); device replies come back on the `reply` output
 - Module Builder and Script nodes for writing custom DSP code in the browser
 
 ## USB SDR
