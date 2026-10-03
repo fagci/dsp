@@ -111,32 +111,19 @@ document.addEventListener('DOMContentLoaded',()=>{
   const n=document.getElementById('net');
   const build=document.getElementById('buildInfo');
   if(n){
-    let seq=0;
-    const paint=online=>{
+    const update=()=>{
+      const online=navigator.onLine;
       const cached=!!(navigator.serviceWorker && navigator.serviceWorker.controller);
       n.hidden=online;
       n.dataset.state=online?'online':cached?'offline-ready':'offline-unavailable';
       n.textContent='Offline';
       n.title=online?'':cached?'Offline; the app shell is cached':'Offline; this tab is not controlled by the app cache';
     };
-    const check=async()=>{
-      const id=++seq;
-      // Always verify actual site reachability before changing status.
-
-      const controller=new AbortController();
-      const timer=setTimeout(()=>controller.abort(),2500);
-      try{
-        const response=await fetch('./favicon.svg',{method:'HEAD',cache:'no-store',signal:controller.signal});
-        if(id===seq) paint(response.ok);
-      }catch(_){if(id===seq) paint(false);}
-      finally{clearTimeout(timer);}
-    };
-    window.addEventListener('online',check);
-    window.addEventListener('offline',check);
-    if(navigator.serviceWorker) navigator.serviceWorker.addEventListener('controllerchange',check);
-    document.addEventListener('visibilitychange',()=>{if(!document.hidden)check();});
-    check();
-    setInterval(check,30000);
+    window.addEventListener('online',update);
+    window.addEventListener('offline',update);
+    if(navigator.serviceWorker) navigator.serviceWorker.addEventListener('controllerchange',update);
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden)update();});
+    update();
   }
   if(build){
     fetch('./version.json',{cache:'no-store'})
