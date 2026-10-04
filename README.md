@@ -490,7 +490,7 @@ Preset: *Logic Analyzer: UART Decode*.
 
 - **Fields → Rec** builds a record from its inputs (the field list is editable, ports appear on *Apply fields*); constants like `icon=plane; color=#f80` are added to every record. With the `rec` input it adds/overrides fields in passing records. Emits on change, on a `go` trigger, or every block.
 - **Rec → Fields** splits the last record back into ports; *Fields from last rec* fills the list from what actually arrives.
-- **CSV → Rec** (text lines or a whole file, header or explicit field names, `,` `;` tab), **Rec Log** (save CSV / GeoJSON / KML / GPX, replay; the map and *Rec Unique* export the same way), **Rec Filter** (JS condition over `r`).
+- **CSV → Rec** (text lines or a whole file, header or explicit field names, `,` `;` tab), **Rec Log** (save CSV / GeoJSON / KML / GPX, replay; the map and *Rec: Unique by Key* export the same way), **Rec Filter** (JS condition over `r`).
 - **My Position**: typed in (lat/lon or Maidenhead locator, ⌖ fills it once from geolocation) or live GPS. Other nodes use it for distances and bearings.
 - **Geo from Text**: coordinates from any decoded text — degrees/minutes/seconds, NMEA and APRS (`4903.50N/07201.75W`), ACARS (`N55123E037456`), decimal pairs, 6-char locators (4-char optional).
 - **Mark Point**: your position + RSSI/SNR/azimuth/frequency as a record, on a button, a trigger or every N seconds.
