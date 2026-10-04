@@ -107,6 +107,37 @@ Graph.edges.push(e); markTopoDirty(); markWiresDirty();
 syncLinkedParams(Graph.map[to]); syncLinkedParams(Graph.map[from]);
 if(!Undo.busy  && !pasting) Undo.push();
 }
+/* Соединение из UI: iq ↔ sig соединяется через автоадаптер (IQ → Audio / I/Q → IQ) — отдельные I/Q-модули не нужны.
+   Пин Q (или q) идёт на второй канал адаптера, остальные — на первый; адаптер от того же источника переиспользуется. */
+const IQ_ADAPT={ iqSig:{type:'iqAudio', inp:'in', main:'out', second:'q'},
+                 sigIq:{type:'iqMerge', inp:'I', second:'Q', out:'iq'} };
+function portT(n,dir,name){ return portsOf(n,dir).find(o=>o.n===name)?.t; }
+function isQPin(name){ return name==='Q' || name==='q'; }
+function connect(from,fp,to,tp){
+const a=Graph.map[from], b=Graph.map[to]; if(!a||!b||from===to) return;
+const ft=portT(a,'outs',fp), tt=portT(b,'ins',tp);
+const kind=ft==='iq' && tt==='sig' ? IQ_ADAPT.iqSig : ft==='sig' && tt==='iq' ? IQ_ADAPT.sigIq : null;
+if(!kind) return addEdge(from,fp,to,tp);
+const was=Undo.busy; Undo.busy=true;
+try{
+let ad;
+if(kind.type==='iqAudio') ad=Graph.edges.filter(e=>e.from===from && e.fp===fp).map(e=>Graph.map[e.to]).find(n=>n.type==='iqAudio' && n.id!==to);
+else ad=Graph.edges.filter(e=>e.to===to && e.tp===tp).map(e=>Graph.map[e.from]).find(n=>n?.type==='iqMerge');
+if(!ad){
+const x=(a.x+b.x)/2, y=(a.y+b.y)/2;
+ad=addNode(kind.type,x,y,{});
+if(!ad) return;
+}
+if(kind.type==='iqAudio'){
+addEdge(from,fp,ad.id,kind.inp);
+addEdge(ad.id,isQPin(tp)?kind.second:kind.main,to,tp);
+} else {
+addEdge(from,fp,ad.id,isQPin(fp)?kind.second:kind.inp);
+addEdge(ad.id,kind.out,to,tp);
+}
+} finally { Undo.busy=was; }
+Undo.push();
+}
 function delEdge(e){ e.path?.remove(); e.hit?.remove(); e.hoverClone?.remove();
 Graph.edges=Graph.edges.filter(x=>x!==e); markTopoDirty(); markWiresDirty();
 syncLinkedParams(Graph.map[e.to]); syncLinkedParams(Graph.map[e.from]); }
@@ -994,8 +1025,8 @@ function startLink(ev,n,port,dir){ if(uiLocked()) return;
 ev.preventDefault(); ev.stopPropagation();
 if(pending){                                       // второй тап завершает связь
 if(pending.dir!==dir){
-if(pending.dir==='o') addEdge(pending.n.id,pending.port,n.id,port);
-else addEdge(n.id,port,pending.n.id,pending.port);
+if(pending.dir==='o') connect(pending.n.id,pending.port,n.id,port);
+else connect(n.id,port,pending.n.id,pending.port);
 stat.textContent='connection created'; }
 clearPending(); return; }
 const el=nodePorts(n)[dir][port]; el.classList.add('lit');
@@ -1013,8 +1044,8 @@ if(!pending) return;
 const target = pending.dir==='o' ? n.ports.i[param] : n.ports.o[param];
 if(!target) return;
 ev.preventDefault(); ev.stopPropagation();
-if(pending.dir==='o') addEdge(pending.n.id,pending.port,n.id,param);
-else addEdge(n.id,param,pending.n.id,pending.port);
+if(pending.dir==='o') connect(pending.n.id,pending.port,n.id,param);
+else connect(n.id,param,pending.n.id,pending.port);
 stat.textContent='connection created';
 clearPending();
 },true);
@@ -1041,8 +1072,8 @@ const alt=controlPortEl(hit?.closest?.('.prm[data-param],.slidernum[data-param]'
 if(alt) el=alt;
 }
 if(el  && el.dataset.dir  && el.dataset.dir!==link.dir){
-if(link.dir==='o') addEdge(link.n.id,link.port,el.dataset.node,el.dataset.port);
-else addEdge(el.dataset.node,el.dataset.port,link.n.id,link.port);
+if(link.dir==='o') connect(link.n.id,link.port,el.dataset.node,el.dataset.port);
+else connect(el.dataset.node,el.dataset.port,link.n.id,link.port);
 clearPending();
 } else if(moved <8){                                // это был тап — ждём второй
 clearPending();
