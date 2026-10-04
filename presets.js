@@ -138,6 +138,7 @@ const PRESET_CATS={
   'DMR: Activity Log and Station Map (USB SDR)':'Digital Voice & Trunking',
   '4FSK Digital Voice: Auto Detect (Generator)':'Digital Voice & Trunking',
   '4FSK Digital Voice: Any System (USB SDR)':'Digital Voice & Trunking',
+  'M17: Receiver Built from Blocks (Generator)':'Digital Voice & Trunking',
   'TETRA: Test Cell (Generator)':'Digital Voice & Trunking',
   'TETRA: Control Channel (USB SDR)':'Digital Voice & Trunking',
 
@@ -2768,6 +2769,26 @@ addEdge(de.id,'voice',vc.id,'voice'); addEdge(vc.id,'out',dc.id,'L'); addEdge(vc
 const ml=addNode('msgLog',1300,360,{}); ml.size.w=460; ml.size.h=300; applySize(ml);
 const sl=addNode('subLog',1300,700,{}); sl.size.w=460; sl.size.h=300; applySize(sl);
 addEdge(de.id,'rec',ml.id,'rec'); addEdge(de.id,'rec',sl.id,'rec');
+markWiresDirty();
+});
+preset('M17: Receiver Built from Blocks (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The 4FSK receiver taken apart: IQ Decimator → FM Discriminator → RRC Matched Filter → Symbol Slicer → Symbol Sync Search → frames.\n'+
+  'Symbols travel on an IQ wire as a real stream at the symbol rate (levels about ±1, ±3). Symbol Sync Search finds the M17 sync words (LSF 55F7, stream FF5D,\n'+
+  'packet 75FF, BERT DF55) by correlation, fits gain and offset on the word (the sign of the gain is the polarity) and cuts a frame of 184 symbols after it.\n'+
+  'Block Viewer shows the frames; the same chain works for any 4FSK protocol: change the baud, alpha, words and frame length.'});
+nt.size.w=1000; nt.size.h=120; applySize(nt);
+const gn=addNode('iqGen',40,240,{sr:'256000',fc:433000000,mode:'4FSK',fsk4:'M17 voice stream',off:2000,lvl:-20,noise:-45});
+const dc=addNode('iqDecim',340,240,{M:'5'});
+const fm=addNode('fmDisc',340,440,{});
+const rr=addNode('rrc',700,240,{baud:4800,alpha:.5});
+const sl=addNode('symSlicer',700,440,{baud:4800});
+const sy=addNode('symSync',1060,240,{});
+sy.size.w=360; sy.size.h=220; applySize(sy);
+const bv=addNode('blkview',1060,520,{fmt:'hex'});
+bv.size.w=360; bv.size.h=260; applySize(bv);
+addEdge(gn.id,'iq',dc.id,'in'); addEdge(dc.id,'out',fm.id,'in'); addEdge(fm.id,'out',rr.id,'in');
+addEdge(rr.id,'out',sl.id,'in'); addEdge(sl.id,'out',sy.id,'in'); addEdge(sy.id,'blk',bv.id,'blk');
 markWiresDirty();
 });
 preset('TETRA: Test Cell (Generator)', function(){
