@@ -87,6 +87,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 ### Output & extensibility
 - Sound card output (per-node output device selection, peak/clip meter), WAV / MP3 recording (files named by date and time), CSV log, trigger recorder
 - **Map** (offline vector base map, optional OSM tiles, tracks, markers — see [Map and records](#map-and-records)), screen transmitter, indicators
+- **MIDI Out** (Web MIDI): `gate` → note on/off, `note` (or `freq` in Hz straight from *MIDI Keyboard*) with velocity, and a `cc` input for control change — drive hardware synths and a DAW from any signal
 - Module Builder and Script nodes for writing custom DSP code in the browser
 
 ## USB SDR
