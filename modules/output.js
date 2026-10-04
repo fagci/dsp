@@ -1069,6 +1069,48 @@ def({ id:'httpout', title:'HTTP Out', cat:'Output', readout:true,
     if(r.textContent!==t) r.textContent=t; }});
 
 
+// Web MIDI Out: gate (фронт) → note on/off, смена note при поднятом gate — легато, cc → control change.
+// note — номер MIDI, либо freq в Гц (напрямую с «MIDI Keyboard»). Доступ к MIDI общий с «MIDI Keyboard».
+function midiOutPort(n){
+  const a=navigator._midiAccess; if(!a) return null;
+  for(const o of a.outputs.values()) if(o.name===n.p.dev) return o;
+  return null;
+}
+function midiOutSend(n,msg){ const o=midiOutPort(n); if(o) try{ o.send(msg); }catch(e){ n.status='send error: '+e.message; } }
+def({ id:'midiout', title:'MIDI Out', cat:'Output', readout:true,
+  ins:[{n:'gate',t:'sig'},{n:'note',t:'num'},{n:'freq',t:'num'},{n:'vel',t:'num'},{n:'cc',t:'num'}],
+  params:[{n:'dev',t:'select',d:'none',label:'output',
+           opts:()=>['none',...(a=>a?[...a.outputs.values()].map(o=>o.name):[])(navigator._midiAccess)]},
+          {n:'on',t:'button',label:'Allow MIDI',fn:async n=>{
+            try{ navigator._midiAccess=await navigator.requestMIDIAccess(); n.status='access granted — choose an output'; }
+            catch(e){ n.status='no access: '+e.message; } }},
+          {n:'ch',t:'range',min:1,max:16,step:1,d:1,label:'channel'},
+          {n:'ccNum',t:'num',d:1,label:'CC number'},
+          {n:'panic',t:'button',label:'All notes off',fn:n=>{ n.playing=-1;
+            midiOutSend(n,[0xB0|(n.p.ch-1),123,0]); }}],
+  init:n=>{ n.playing=-1; n.lastCc=-1; n.status='no MIDI output'; },
+  dispose:n=>{ if(n.playing>=0) midiOutSend(n,[0x80|(n.p.ch-1),n.playing,0]); },
+  process(n,I){
+    const ch=(n.p.ch-1)&15;
+    let note=typeof I.note==='number' && isFinite(I.note) ? I.note
+           : typeof I.freq==='number' && I.freq>0 ? 69+12*Math.log2(I.freq/440) : null;
+    if(note!==null) note=clamp(Math.round(note),0,127);
+    const g=I.gate ? I.gate[I.gate.length-1]>.5 : false;
+    const vel=Math.round(clamp(typeof I.vel==='number' ? I.vel : 1,0,1)*127)||1;
+    if(g && note!==null){
+      if(n.playing!==note){
+        if(n.playing>=0) midiOutSend(n,[0x80|ch,n.playing,0]);
+        midiOutSend(n,[0x90|ch,note,vel]); n.playing=note; }
+    } else if(n.playing>=0){ midiOutSend(n,[0x80|ch,n.playing,0]); n.playing=-1; }
+    if(typeof I.cc==='number' && isFinite(I.cc)){
+      const v=Math.round(clamp(I.cc,0,1)*127);
+      if(v!==n.lastCc){ n.lastCc=v; midiOutSend(n,[0xB0|ch,clamp(Math.round(n.p.ccNum),0,127),v]); } }
+    return {}; },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const t=(!midiOutPort(n) ? n.status : (n.playing>=0 ? 'note '+n.playing : 'idle')+' → '+n.p.dev);
+    if(r.textContent!==t) r.textContent=t; }});
+
+
 def({ id:'flash', title:'Screen Transmitter', cat:'Output', ins:[{n:'in',t:'num'},{n:'lo',t:'num'},{n:'hi',t:'num'}],
   swatch:true,
   params:[{n:'on',t:'button',label:'Fullscreen',fn:n=>{
