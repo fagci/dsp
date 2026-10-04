@@ -4,7 +4,7 @@
    vendor/mbelib.wasm (tools/mbelib/build.sh). Кадр из записи `voice` раскладывается в матрицу mbelib по расписаниям dsd-fme (mbe-tables.js),
    декодируется в 160 отсчётов 8 кГц на 20 мс, дальше — очередь, ресемплер до частоты движка и сумма потоков.
    M17 (Codec 2, режимы 3200 и 1600) — отдельный модуль vendor/codec2.wasm (tools/codec2/build.sh), по 8 байт на кадр.
-   TETRA (ACELP, EN 300 395-2) — vendor/tetra-acelp.wasm (tools/tetra-acelp/build.sh), в репозиторий не входит: кодек запатентован, файл собирают сами.
+   TETRA (ACELP, EN 300 395-2) — vendor/tetra-acelp.wasm (tools/tetra-acelp/build.sh из эталонного декодера ETSI EN 300 395-2). Кодек может быть запатентован — см. README (TETRA).
    Внимание: IMBE / AMBE могут быть запатентованы (DVSI) — см. README (Vocoder). */
 
 const MBE={p:null, ex:null, err:null};
