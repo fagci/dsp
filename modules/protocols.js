@@ -1336,7 +1336,7 @@ const VARICODE=('1010101011 1011011011 1011101101 1101110111 1011101011 11010111
 const VARIMAP={}; VARICODE.forEach((c,i)=>{ if(!(c in VARIMAP)) VARIMAP[c]=i; });
 
 def({ id:'pskdec', title:'PSK Slicer', cat:'Protocols',
-  ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'clk',t:'sig'},{n:'diff',t:'num'}],
+  ins:[{n:'iq',t:'iq',pair:['I','Q']},{n:'I',t:'sig',hide:true},{n:'Q',t:'sig',hide:true},{n:'clk',t:'sig'},{n:'diff',t:'num'}],
   outs:[{n:'sym',t:'num'},{n:'evm',t:'num'}],
   readout:true, tall:true,
   params:[{n:'order',t:'select',opts:['2','4','8'],d:'8'},

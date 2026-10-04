@@ -338,7 +338,7 @@ def({ id:'reverb', title:'Reverb', cat:'Audio', ins:[{n:'in',t:'sig'},{n:'mix',t
 
 
 def({ id:'iq', title:'Quadrature Shift', cat:'Processing',
-  ins:[{n:'in',t:'sig'},{n:'fc',t:'num'},{n:'bw',t:'num'},{n:'gain',t:'num'}], outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'}],
+  ins:[{n:'in',t:'sig'},{n:'fc',t:'num'},{n:'bw',t:'num'},{n:'gain',t:'num'}], outs:[{n:'iq',t:'iq',pair:['I','Q']},{n:'I',t:'sig',hide:true},{n:'Q',t:'sig',hide:true}],
   params:[{n:'fc',t:'range',min:100,max:()=>Eng.sr/2,step:1,d:5000,log:true},
           {n:'bw',t:'range',min:50,max:8000,step:10,d:1500,log:true},
           {n:'gain',t:'range',min:1,max:32,step:.5,d:2}],
@@ -365,7 +365,7 @@ def({ id:'iq', title:'Quadrature Shift', cat:'Processing',
 // стоит в 'iq': нужно для подписи оси частот (спектр строится вокруг него, не вокруг нуля).
 // dec задавайте так, чтобы Eng.sr/dec было заметно больше bw в 'iq' — иначе алиасинг.
 def({ id:'zfft', title:'Zoom-FFT (I/Q)', cat:'Processing',
-  ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'fc',t:'num'}], outs:[{n:'spec',t:'spec'}],
+  ins:[{n:'iq',t:'iq',pair:['I','Q']},{n:'I',t:'sig',hide:true},{n:'Q',t:'sig',hide:true},{n:'fc',t:'num'}], outs:[{n:'spec',t:'spec'}],
   params:[{n:'fc',t:'range',min:0,max:()=>Eng.sr/2,step:1,d:5000,log:true,label:'carrier (same as iq), Hz'},
           {n:'dec',t:'select',opts:['1','2','4','8','16','32','64'],d:'8',label:'decimation'},
           {n:'size',t:'select',opts:['256','512','1024','2048','4096','8192','16384'],d:'2048'},
@@ -438,7 +438,7 @@ def({ id:'zfft', title:'Zoom-FFT (I/Q)', cat:'Processing',
     return {spec:n.sp}; }});
 
 
-def({ id:'polar', title:'Magnitude/Phase (I/Q → polar)', cat:'Processing', ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'}],
+def({ id:'polar', title:'Magnitude/Phase (I/Q → polar)', cat:'Processing', ins:[{n:'iq',t:'iq',pair:['I','Q']},{n:'I',t:'sig',hide:true},{n:'Q',t:'sig',hide:true}],
   outs:[{n:'mag',t:'sig'},{n:'phase',t:'sig'},{n:'dphase',t:'sig'}],
   init:n=>{n.pp=0;},
   process(n,I){ const m=buf(n,'mag'), p=buf(n,'phase'), d=buf(n,'dphase');
@@ -465,7 +465,7 @@ function hilbertTaps(N){                    // N — нечётное число
   return h;
 }
 def({ id:'hilbert', title:'Hilbert Transform', cat:'Processing', ins:[{n:'in',t:'sig'}],
-  outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'}],
+  outs:[{n:'iq',t:'iq',pair:['I','Q']},{n:'I',t:'sig',hide:true},{n:'Q',t:'sig',hide:true}],
   params:[{n:'taps',t:'range',min:31,max:255,step:2,d:127,label:'taps (odd)'}],
   init:n=>{ n.N=0; },
   process(n,I){
