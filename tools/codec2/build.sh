@@ -18,7 +18,7 @@ CB="$SRC/src/codebook"
 S="$SRC/src"
 clang --target=wasm32 -O2 -nostdlib -ffreestanding -fsigned-char -w -I"$HERE/stub" -I"$HERE" -I"$S" -I"$OUT" -DCODEC2_MODE_EN_DEFAULT=1 \
   -Wl,--no-entry -Wl,--allow-undefined -Wl,--export=c2_bits -Wl,--export=c2_pcm -Wl,--export=c2_new -Wl,--export=c2_free \
-  -Wl,--export=c2_samples -Wl,--export=c2_decode -Wl,--strip-all -Wl,-z,stack-size=131072 \
+  -Wl,--export=c2_samples -Wl,--export=c2_decode -Wl,--export=c2_encode -Wl,--strip-all -Wl,-z,stack-size=131072 \
   -o "$HERE/../../vendor/codec2.wasm" "$HERE/codec2-wasm.c" \
   "$S/codec2.c" "$S/codec2_fft.c" "$S/kiss_fft.c" "$S/kiss_fftr.c" "$S/interp.c" "$S/lpc.c" "$S/lsp.c" "$S/nlp.c" "$S/phase.c" "$S/postfilter.c" \
   "$S/quantise.c" "$S/sine.c" "$S/pack.c" "$S/mbest.c" "$S/newamp1.c" "$S/lpcnet_freq.c" "$S/golay23.c" \

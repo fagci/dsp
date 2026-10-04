@@ -1,6 +1,6 @@
 # Codec 2 as WebAssembly
 
-`vendor/codec2.wasm` is [Codec 2](https://github.com/drowe67/codec2) (LGPL 2.1; built from the 1.2.0 sources) with modes 3200 and 1600, the ones M17 uses:
+`vendor/codec2.wasm` is [Codec 2](https://github.com/drowe67/codec2) (LGPL 2.1; built from the 1.2.0 sources) with modes 3200 and 1600, the ones M17 uses, decoder and encoder (`c2_decode`, `c2_encode`):
 
     git clone https://github.com/drowe67/codec2 && tools/codec2/build.sh ./codec2
 

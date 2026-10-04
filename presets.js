@@ -140,6 +140,7 @@ const PRESET_CATS={
   '4FSK Digital Voice: Any System (USB SDR)':'Digital Voice & Trunking',
   'M17: Receiver Built from Blocks (Generator)':'Digital Voice & Trunking',
   'M17: Transmitter Built from Blocks (Loopback)':'Digital Voice & Trunking',
+  'M17: Voice Transmitter, Microphone to Speaker (Loopback)':'Digital Voice & Trunking',
   'TETRA: Test Cell (Generator)':'Digital Voice & Trunking',
   'TETRA: Control Channel (USB SDR)':'Digital Voice & Trunking',
 
@@ -2799,6 +2800,39 @@ addEdge(tx.id,'blk',pl.id,'blk'); addEdge(pl.id,'out',sh.id,'in'); addEdge(sh.id
 addEdge(fm.id,'iq',ss.id,'in'); addEdge(ss.id,'out',dc.id,'in'); addEdge(dc.id,'out',fd.id,'in');
 addEdge(fd.id,'out',rr.id,'in'); addEdge(rr.id,'out',sl.id,'in'); addEdge(sl.id,'out',sy.id,'in');
 addEdge(sy.id,'blk',ps.id,'blk'); addEdge(ps.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('M17: Voice Transmitter, Microphone to Speaker (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'M17 voice, microphone to speaker through the whole radio chain without a radio. Use headphones: with speakers the sound feeds back into the microphone.\n'+
+  'Microphone → Vocoder Encoder (Codec 2: 8 kHz, 3200 bit/s, 16 bytes per 40 ms) → M17 Frame Builder in voice mode (press PTT on / off: preamble, LSF, a stream frame per 16 bytes, last-frame flag, EOT)\n'+
+  '→ Symbol Player → RRC Pulse Shaper → FM Modulator → IQ → the receiver chain (shift, decimator, FM discriminator, RRC, slicer, sync search) → M17 Frame Parser → Vocoder (mbelib / Codec 2) → sound card.\n'+
+  'For a real transmission put HackRF TX after FM Modulator (shaper output rate 2 MS/s or more) and wire the pin ptt to a switch. You must comply with local radio regulations: transmit only where and how the law allows.'});
+nt.size.w=1100; nt.size.h=130; applySize(nt);
+const mc=addNode('mic',40,240,{});
+const en=addNode('c2Enc',340,240,{});
+const tx=addNode('m17Tx',340,400,{mode:'voice (stream)'});
+tx.size.w=300; tx.size.h=300; applySize(tx);
+const pl=addNode('symPlay',700,240,{});
+const sh=addNode('symShape',700,440,{sr:'256000',alpha:.5});
+const fm=addNode('fmMod',1000,240,{off:100000});
+const ss=addNode('iqShift',1000,500,{offset:100000});
+const dc=addNode('iqDecim',1000,680,{M:'5'});
+const fd=addNode('fmDisc',1300,240,{});
+const rr=addNode('symRrc',1300,440,{baud:4800,alpha:.5});
+const sl=addNode('symSlicer',1300,620,{baud:4800});
+const sy=addNode('symSync',1600,240,{});
+sy.size.w=340; sy.size.h=220; applySize(sy);
+const ps=addNode('m17Parse',1600,500,{});
+ps.size.w=420; ps.size.h=240; applySize(ps);
+const vc=addNode('mbeVoice',2060,240,{}); vc.size.w=340; applySize(vc);
+const dac=addNode('dac',2060,460,{vol:.7});
+addEdge(mc.id,'a',en.id,'in'); addEdge(en.id,'voice',tx.id,'voice');
+addEdge(tx.id,'blk',pl.id,'blk'); addEdge(pl.id,'out',sh.id,'in'); addEdge(sh.id,'out',fm.id,'in');
+addEdge(fm.id,'iq',ss.id,'in'); addEdge(ss.id,'out',dc.id,'in'); addEdge(dc.id,'out',fd.id,'in');
+addEdge(fd.id,'out',rr.id,'in'); addEdge(rr.id,'out',sl.id,'in'); addEdge(sl.id,'out',sy.id,'in');
+addEdge(sy.id,'blk',ps.id,'blk'); addEdge(ps.id,'voice',vc.id,'voice');
+addEdge(vc.id,'out',dac.id,'L'); addEdge(vc.id,'out',dac.id,'R');
 markWiresDirty();
 });
 preset('M17: Receiver Built from Blocks (Generator)', function(){
