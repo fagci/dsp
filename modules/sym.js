@@ -56,3 +56,16 @@ defIQ({ id:'fmMod', title:'FM Modulator', cat:'IQ', kw:'4fsk transmit tx frequen
           {n:'dev',t:'range',min:50,max:20000,step:10,d:800,log:true,label:'deviation per unit level, Hz (M17 800; DMR 648; P25 600)'},
           {n:'lvl',t:'range',min:-60,max:0,step:1,d:-6,label:'output level, dBFS'}]},
   n=>n.ui ? 'FM · '+(n.ui.air/1e6).toFixed(4)+' MHz' : 'no input');
+
+// остальные протоколы 4FSK (P25, NXDN, YSF, D-STAR, dPMR, а также DMR и M17 целиком): код протокола из Digital Voice Decoder на выходе согласованного фильтра
+defIQ({ id:'fskSym', title:'Protocol Decoder (4FSK)', cat:'Decoders', tall:true, resize:true, w:480,
+  kw:'p25 nxdn ysf m17 d-star dstar dpmr dmr 4fsk decoder digital voice',
+  ins:[{n:'in',t:'iq'}], outs:[{n:'rec',t:'rec'},{n:'voice',t:'rec'}],
+  params:[{n:'proto',t:'select',opts:['auto',...FSK4.order],d:'auto',label:'protocol (auto: every one with the symbol rate below, picked by sync words)'},
+          {n:'baud',t:'num',d:4800,label:'symbol rate for auto, Bd'}]},
+  n=>{ const u=n.ui; if(!u) return 'no input';
+    if(u.err) return u.err;
+    const a=u.active && u.protos[u.active], ids=Object.keys(u.protos);
+    if(a) return a.text;
+    const recent=ids.flatMap(id=>u.protos[id].recent||[]).slice(-6);
+    return (u.fs/1000).toFixed(1)+' kS/s · searching sync ('+ids.join(', ')+')'+(recent.length ? '\n'+recent.join('\n') : ''); });

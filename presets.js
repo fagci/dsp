@@ -140,6 +140,7 @@ const PRESET_CATS={
   '4FSK Digital Voice: Any System (USB SDR)':'Digital Voice & Trunking',
   'M17: Receiver Built from Blocks (Generator)':'Digital Voice & Trunking',
   'DMR: Receiver Built from Blocks (Generator)':'Digital Voice & Trunking',
+  'P25: Receiver Built from Blocks (Generator)':'Digital Voice & Trunking',
   'M17: Transmitter Built from Blocks (Loopback)':'Digital Voice & Trunking',
   'M17: Voice Transmitter, Microphone to Speaker (Loopback)':'Digital Voice & Trunking',
   'TETRA: Test Cell (Generator)':'Digital Voice & Trunking',
@@ -2834,6 +2835,25 @@ addEdge(fm.id,'iq',ss.id,'in'); addEdge(ss.id,'out',dc.id,'in'); addEdge(dc.id,'
 addEdge(fd.id,'out',rr.id,'in'); addEdge(rr.id,'out',sl.id,'in'); addEdge(sl.id,'out',sy.id,'in');
 addEdge(sy.id,'blk',ps.id,'blk'); addEdge(ps.id,'voice',vc.id,'voice');
 addEdge(vc.id,'out',dac.id,'L'); addEdge(vc.id,'out',dac.id,'R');
+markWiresDirty();
+});
+preset('P25: Receiver Built from Blocks (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The P25 receiver taken apart: IQ Decimator → FM Discriminator → RRC Matched Filter (α 0.2) → Protocol Decoder (4FSK).\n'+
+  'Protocol Decoder runs the same protocol code as Digital Voice Decoder (sync words, frame grid, NID, LDU, TSBK…) on the matched-filter output: 8 clock phases per symbol and the best phase and the levels\n'+
+  'from the sync word, as in the single node. protocol = auto tries every protocol with the symbol rate below (4800 Bd: P25, NXDN 9600, YSF, DMR, M17…). Change the generator mode (4FSK parameter) to feed it another system.\n'+
+  'For NXDN 4800 and dPMR set the baud of the filter and of the decoder to 2400. The Expand into blocks button on Digital Voice Decoder produces this chain for any protocol; M17 and DMR also have the full chain down to frames.'});
+nt.size.w=1100; nt.size.h=130; applySize(nt);
+const gn=addNode('iqGen',40,240,{sr:'256000',fc:433000000,mode:'4FSK',fsk4:'P25 voice',off:2000,lvl:-20,noise:-45});
+const dc=addNode('iqDecim',340,240,{M:'5'});
+const fm=addNode('fmDisc',340,440,{bw:5500});
+const rr=addNode('symRrc',700,240,{baud:4800,alpha:.2});
+const pd=addNode('fskSym',700,440,{proto:'auto',baud:4800});
+pd.size.w=480; pd.size.h=320; applySize(pd);
+const lg=addNode('recLog',1260,240,{});
+lg.size.w=460; applySize(lg);
+addEdge(gn.id,'iq',dc.id,'in'); addEdge(dc.id,'out',fm.id,'in'); addEdge(fm.id,'out',rr.id,'in');
+addEdge(rr.id,'out',pd.id,'in'); addEdge(pd.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('DMR: Receiver Built from Blocks (Generator)', function(){
