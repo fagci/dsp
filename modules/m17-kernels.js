@@ -231,6 +231,8 @@ FSK4.protos.m17={
     P.call=null; P.lich=null;
   }};
 FSK4.order.push('m17');
+// описание цепочки блоков для «Expand into blocks» (Digital Voice Decoder): FM → RRC → слайсер → синхрослова → разбор кадров
+FSK4.protos.m17.chain={baud:M17_BAUD, alpha:.5, lp:5500, words:'55F7 FF5D 75FF DF55', len:184, tol:1, parser:'m17Parse'};
 
 /* ---- генератор ---- */
 function m17MakeLsf(src,dst,type,meta){
