@@ -138,6 +138,8 @@ const PRESET_CATS={
   'DMR: Activity Log and Station Map (USB SDR)':'Digital Voice & Trunking',
   '4FSK Digital Voice: Auto Detect (Generator)':'Digital Voice & Trunking',
   '4FSK Digital Voice: Any System (USB SDR)':'Digital Voice & Trunking',
+  'TETRA: Test Cell (Generator)':'Digital Voice & Trunking',
+  'TETRA: Control Channel (USB SDR)':'Digital Voice & Trunking',
 
   'Satellites: Track and Doppler':'Aircraft, Satellites & Telemetry',
   'ADS-B: Aircraft Map (Generator)':'Aircraft, Satellites & Telemetry',
@@ -2766,6 +2768,45 @@ addEdge(de.id,'voice',vc.id,'voice'); addEdge(vc.id,'out',dc.id,'L'); addEdge(vc
 const ml=addNode('msgLog',1300,360,{}); ml.size.w=460; ml.size.h=300; applySize(ml);
 const sl=addNode('subLog',1300,700,{}); sl.size.w=460; sl.size.h=300; applySize(sl);
 addEdge(de.id,'rec',ml.id,'rec'); addEdge(de.id,'rec',sl.id,'rec');
+markWiresDirty();
+});
+preset('TETRA: Test Cell (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'TETRA without a radio: the generator sends the main carrier of a test cell (MCC 262, MNC 1011, colour code 5, 391.0 MHz) — π/4-DQPSK, 18 kBd, 4 slots per frame:\n'+
+  'a synchronization burst in frame 18, a control channel in slot 1 (MAC-RESOURCE with addresses and MLE / MM / CMCE message names, a channel allocation now and then),\n'+
+  'a call in slot 2 every few seconds (traffic bursts with random bits instead of speech: the Vocoder plays noise). TETRA Decoder: sync burst → cell identity and time, AACH, SYSINFO, MAC-RESOURCE, calls by usage marker.'});
+nt.size.w=760; nt.size.h=120; applySize(nt);
+const gn=addNode('iqGen',40,240,{sr:'256000',fc:391000000,mode:'TETRA',off:0,lvl:-20,noise:-45});
+const de=addNode('tetraRx',340,240,{});
+de.size.w=560; de.size.h=340; applySize(de);
+const log=addNode('recLog',340,640,{});
+log.size.w=560; applySize(log);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+const vc=addNode('mbeVoice',920,240,{}); vc.size.w=340; applySize(vc);
+const dc=addNode('dac',920,420,{vol:.5});
+addEdge(de.id,'voice',vc.id,'voice'); addEdge(vc.id,'out',dc.id,'L'); addEdge(vc.id,'out',dc.id,'R');
+markWiresDirty();
+});
+preset('TETRA: Control Channel (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'TETRA: tune the SDR to a base-station main carrier (380–400 MHz in Europe, 410–430 / 450–470 MHz elsewhere; 25 kHz channels) and tap the signal on the spectrum.\n'+
+  'The decoder finds the synchronization burst, then shows the cell (MCC / MNC, colour code, frequency, location area), calls and signalling addresses.\n'+
+  'Speech frames go to the voice output → Vocoder (needs the locally built ACELP codec, see README); encrypted calls come out as noise.'});
+nt.size.w=760; nt.size.h=110; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'1024000',freq:392000000,demod:'IQ'});
+const sa=addNode('sa',860,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,200,{});
+const de=addNode('tetraRx',340,360,{});
+de.size.w=560; de.size.h=340; applySize(de);
+const log=addNode('recLog',340,760,{});
+log.size.w=560; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+const vc=addNode('mbeVoice',920,360,{}); vc.size.w=340; applySize(vc);
+const dc=addNode('dac',920,540,{vol:.5});
+addEdge(de.id,'voice',vc.id,'voice'); addEdge(vc.id,'out',dc.id,'L'); addEdge(vc.id,'out',dc.id,'R');
 markWiresDirty();
 });
 preset('Analog TV: Test Card (Generator)', function(){
