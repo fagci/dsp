@@ -92,6 +92,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **Notify**: speaks a text aloud (speech synthesis), shows a system notification and/or vibrates — on a new text or a `go` pulse, with a minimum gap between alerts (e.g. a decoded message or a CFAR detection → voice alert)
 - **Serial Out (WebSerial)**: write text or a numeric value to a serial port — Arduino, relays, transceiver CAT control (template `FA{v:11};` turns a frequency into a Kenwood command); device replies come back on the `reply` output
 - **HTTP Out**: webhook request (POST / PUT / GET, custom headers) — text on change, or numbers as a JSON object on a `go` pulse or every period. The server must allow CORS, and from the https demo only `https://` (or localhost) works
+- **MIDI Out** (Web MIDI): `gate` → note on/off, `note` (or `freq` in Hz straight from *MIDI Keyboard*) with velocity, and a `cc` input for control change — drive hardware synths and a DAW from any signal
 - Module Builder and Script nodes for writing custom DSP code in the browser
 
 ## USB SDR
