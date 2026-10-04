@@ -35,7 +35,7 @@ IQK.fmDisc={
   }};
 
 /* ---- RRC: согласованный фильтр (бод, α) ---- */
-IQK.rrc={
+IQK.symRrc={
   init(n){ n.key=''; },
   process(n,I){
     const s=iqIn(I,'in');
@@ -57,18 +57,18 @@ function symCubic(x,i,f){                                   // кубическ�
   return b+.5*f*(c-a+f*(2*a-5*b+4*c-d+f*(3*(b-c)+d-a)));
 }
 IQK.symSlicer={
-  init(n){ n.x=new Float32Array(0); n.xb=0; n.pos=-1; n.env=0; n.envF=0; n.Ee=0; n.El=0; n.cnt=0; n.eps=0; n.key=''; },
+  init(n){ n.sx=new Float32Array(0); n.xb=0; n.pos=-1; n.env=0; n.envF=0; n.Ee=0; n.El=0; n.cnt=0; n.eps=0; n.key=''; },
   process(n,I){
     const s=iqIn(I,'in');
     if(!s){ n.ui=null; return {out:null}; }
     const sps=s.sr/n.p.baud;
     if(sps<2){ n.ui={err:'sample rate must be ≥ 2 × baud'}; return {out:null}; }
     const key=s.sr+'|'+n.p.baud;
-    if(key!==n.key){ n.key=key; n.x=new Float32Array(0); n.xb=0; n.pos=-1; n.env=0; n.envF=0; n.Ee=0; n.El=0; }
+    if(key!==n.key){ n.key=key; n.sx=new Float32Array(0); n.xb=0; n.pos=-1; n.env=0; n.envF=0; n.Ee=0; n.El=0; }
     let add=0; for(const c of s.chunks) add+=c.re.length;
-    const nx=new Float32Array(n.x.length+add); nx.set(n.x); let o0=n.x.length;
+    const nx=new Float32Array(n.sx.length+add); nx.set(n.sx); let o0=n.sx.length;
     for(const c of s.chunks){ nx.set(c.re,o0); o0+=c.re.length; }
-    const x=n.x=nx, N=x.length, xb=n.xb;
+    const x=n.sx=nx, N=x.length, xb=n.xb;
     if(n.pos<0) n.pos=xb+sps+2;
     const out=iqStream(n,'out',n.p.baud,0), z=new Float32Array(Math.ceil(N/sps)+2), dl=sps/8, mu=n.p.loop;
     let pos=n.pos, env=n.env, envF=n.envF, Ee=n.Ee, El=n.El, m=0, eps=n.eps;
@@ -86,7 +86,7 @@ IQK.symSlicer={
     }
     n.pos=pos; n.env=env; n.envF=envF; n.Ee=Ee; n.El=El; n.eps=eps;
     const keep=Math.max(0,Math.floor(pos-xb-dl)-3);
-    if(keep>0){ n.x=x.slice(keep); n.xb=xb+keep; }
+    if(keep>0){ n.sx=x.slice(keep); n.xb=xb+keep; }
     if(m) iqPush(out,z.slice(0,m),null,null);
     n.ui={sps, env, timing:eps, symbols:n.cnt};
     return {out};

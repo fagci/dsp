@@ -2781,7 +2781,7 @@ nt.size.w=1000; nt.size.h=120; applySize(nt);
 const gn=addNode('iqGen',40,240,{sr:'256000',fc:433000000,mode:'4FSK',fsk4:'M17 voice stream',off:2000,lvl:-20,noise:-45});
 const dc=addNode('iqDecim',340,240,{M:'5'});
 const fm=addNode('fmDisc',340,440,{});
-const rr=addNode('rrc',700,240,{baud:4800,alpha:.5});
+const rr=addNode('symRrc',700,240,{baud:4800,alpha:.5});
 const sl=addNode('symSlicer',700,440,{baud:4800});
 const sy=addNode('symSync',1060,240,{});
 sy.size.w=360; sy.size.h=220; applySize(sy);
