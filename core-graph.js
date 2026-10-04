@@ -166,6 +166,7 @@ continue;
 }
 mark(n.el?.querySelector( `.prm[data-param="${s.n}"]` ),s.n);
 }
+for(const dir of ['ins','outs']) for(const p of portsOf(n,dir)) if(p.hide) mark(null,p.n);    // скрытые пины (старые I/Q) — видны, пока подключены
 }
 function retopo(){
 Graph.order=topoOrder(Graph.nodes,Graph.edges,Graph.map);
@@ -256,13 +257,14 @@ e.addEventListener('pointerdown',ev=>startLink(ev,n,p.n,dir)); };
 // появление/исчезновение пина параметра сдвигало бы соседние базовые порты туда-сюда.
 const paramNames=mergeableParamNames(d);
 // .sort() стабилен (ES2019+) — внутри каждой группы относительный порядок из module.ins/outs сохраняется
-const baseFirst=ps=>[...ps].sort((a,b)=>paramNames.has(a.n)-paramNames.has(b.n));
+const lowPri=p=>paramNames.has(p.n) || !!p.hide;               // hide:true — пин скрыт, пока не подключён (старые I/Q при едином iq)
+const baseFirst=ps=>[...ps].sort((a,b)=>lowPri(a)-lowPri(b));
 for(const p of baseFirst(portsOf(n,'ins'))){
 const e=portEl(p,'i'); ci.append(e); n.ports.i[p.n]=e; wire(e,p,'i');
-if(paramNames.has(p.n)) e.classList.add('ctrl'); }
+if(lowPri(p)) e.classList.add('ctrl'); }
 for(const p of baseFirst(portsOf(n,'outs'))){
 const e=portEl(p,'o'); co.append(e); n.ports.o[p.n]=e; wire(e,p,'o');
-if(paramNames.has(p.n)) e.classList.add('ctrl'); }
+if(lowPri(p)) e.classList.add('ctrl'); }
 io.append(ci,mid,co); body.append(io); n.mid=mid;
 { const params=d.params||[];
 // params с hidden:true вообще не рисуются рядом — значение/дефолт/провод (mergeableParamNames

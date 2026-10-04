@@ -518,6 +518,24 @@ function fillControlOuts(n){                          // значение кон
     n.out[cp.n] = typeof v==='boolean' ? (v?1:0) : v;
   }
 }
+/* Пара I/Q за одним пином iq. Порт с pair:[a,b] — провод iq (поток со своей частотой) сводится к каналам a, b на частоте движка
+   встроенным мостом: тем же ядром, что узел IQ → Audio (на выходе — как I/Q → IQ). Модуль работает с I и Q как раньше;
+   старые провода на I и Q остаются рабочими (пины скрыты, пока не подключены), провод на них приоритетнее. */
+function pairHid(type,p){ const h={type,p,b:{},out:{},size:{w:0,h:0}}; MOD[type].init?.(h); return h; }
+function pairIn(n,I,p){
+  const s=I[p.n];
+  if(!s || !s.chunks) return;
+  const st=(n._pb||(n._pb={}))[p.n] || (n._pb[p.n]=pairHid('iqAudio',{lat:100,gain:0}));
+  const r=MOD.iqAudio.process(st,{in:s})||{};
+  if(I[p.pair[0]]==null) I[p.pair[0]]=r.out;
+  if(I[p.pair[1]]==null) I[p.pair[1]]=r.q;
+}
+function pairOut(n,p){
+  const a=n.out[p.pair[0]], b=n.out[p.pair[1]];
+  if(!a || !b) return;
+  const st=(n._pb||(n._pb={}))[p.n] || (n._pb[p.n]=pairHid('iqMerge',{fc:0,swap:false}));
+  n.out[p.n]=MOD.iqMerge.process(st,{I:a,Q:b})?.iq ?? null;
+}
 function evalNode(n, ctx){
   const d = MOD[n.type]; if(!d) return;
   const g = ctx || Graph;
@@ -531,9 +549,12 @@ function evalNode(n, ctx){
     const e = idx ? idx.get(key) : g.edges.find(e=>e.to===n.id && e.tp===p.n);
     I[p.n] = e ? (g.map[e.from]?.out?.[e.fp] ?? null) : null;
   }
+  if(d._pair===undefined) d._pair=(Array.isArray(d.ins) && d.ins.some(p=>p.pair)) || (Array.isArray(d.outs) && d.outs.some(p=>p.pair));
+  if(d._pair) for(const p of portsOf(n,'ins')) if(p.pair) pairIn(n,I,p);
   applyControlWires(n,I);
   // узел острова (core-islands.js) считается в воркере — здесь только прокси
   try{ n.out = (n._isl && g===Graph ? islProcess(n,I) : d.process(n, I, g)) || {}; }catch(err){ n.err = err; }
+  if(d._pair) for(const p of portsOf(n,'outs')) if(p.pair) pairOut(n,p);
   fillControlOuts(n);
   if(d.lazy==='proc') n._dirty=true; else if(d.lazy===true) markInputs(n,I);
 }

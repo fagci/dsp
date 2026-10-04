@@ -3205,7 +3205,7 @@ function paletteLut(name){
   return PALETTE_LUT_CACHE[name] || (PALETTE_LUT_CACHE[name]=buildPaletteLut(PALETTES[name]));
 }
 
-def({ id:'const2', lazy:true, title:'Constellation', cat:'Analysis', ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'dec',t:'num'},{n:'scale',t:'num'},{n:'fade',t:'num'}],
+def({ id:'const2', lazy:true, title:'Constellation', cat:'Analysis', ins:[{n:'iq',t:'iq',pair:['I','Q']},{n:'I',t:'sig',hide:true},{n:'Q',t:'sig',hide:true},{n:'dec',t:'num'},{n:'scale',t:'num'},{n:'fade',t:'num'}],
   view:{h:150},
   params:[{n:'dec',t:'range',min:1,max:64,step:1,d:8},
           {n:'scale',t:'range',min:.2,max:10,step:.1,d:2},

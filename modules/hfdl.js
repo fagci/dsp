@@ -723,7 +723,7 @@ def({ id:'hfdlOrderSched', title:'HFDL: Modulation Scheme Planner', cat:'Protoco
   draw(n){ n.el.querySelector('.readout').textContent=n.txt; }});
 
 def({ id:'hfdlSymToBits', title:'HFDL: Symbol→Bits (I/Q, with framer)', cat:'Protocols', readout:true, resize:true,
-  ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'clk',t:'sig'},{n:'go',t:'sig'},{n:'m1',t:'num'},{n:'flip',t:'num'}],
+  ins:[{n:'iq',t:'iq',pair:['I','Q']},{n:'I',t:'sig',hide:true},{n:'Q',t:'sig',hide:true},{n:'clk',t:'sig'},{n:'go',t:'sig'},{n:'m1',t:'num'},{n:'flip',t:'num'}],
   outs:[{n:'blk',t:'blk'},{n:'m1',t:'num'}],
   params:[{n:'m1',t:'range',min:0,max:7,step:1,d:3,label:'M1 (0-7, if go/m1 not connected)'},
           {n:'descramble',t:'check',d:true,label:'descramble (per-symbol LFSR)'},
@@ -1158,8 +1158,8 @@ function symsyncBuildFilters(k,m,M){
   return {hSubLen, mfBranch, dmfBranch};
 }
 def({ id:'hfdlSymsync', title:'HFDL: Symbol Sync (polyphase)', cat:'Modulation',
-  ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'baud',t:'num'}],
-  outs:[{n:'sI',t:'sig'},{n:'sQ',t:'sig'},{n:'clk',t:'sig'}],
+  ins:[{n:'iq',t:'iq',pair:['I','Q']},{n:'I',t:'sig',hide:true},{n:'Q',t:'sig',hide:true},{n:'baud',t:'num'}],
+  outs:[{n:'iq',t:'iq',pair:['sI','sQ']},{n:'sI',t:'sig',hide:true},{n:'sQ',t:'sig',hide:true},{n:'clk',t:'sig'}],
   params:[{n:'baud',t:'range',min:10,max:4800,step:.01,d:1800,log:true},
           {n:'lfBw',t:'range',min:0.0001,max:.05,step:.0001,d:.001,label:'timing loop bandwidth'}],
   init:n=>{ n.sI=0; n.sQ=0; n.resampPhase=0; n.prevI=0; n.prevQ=0; },

@@ -86,7 +86,7 @@ def({ id:'fsk', lazy:'proc', title:'FSK Demodulator', cat:'Modulation',
 
 def({ id:'demod', title:'AM/FM/SSB Demodulator', cat:'Modulation',
   ins:[{n:'in',t:'sig'},{n:'freq',t:'num'},{n:'bw',t:'num'},{n:'gain',t:'num'}],
-  outs:[{n:'out',t:'sig'},{n:'I',t:'sig'},{n:'Q',t:'sig'}],
+  outs:[{n:'iq',t:'iq',pair:['I','Q']},{n:'out',t:'sig'},{n:'I',t:'sig',hide:true},{n:'Q',t:'sig',hide:true}],
   params:[{n:'mode',t:'select',opts:['AM','FM','WFM','SSB'],d:'FM'},
           {n:'freq',t:'range',min:100,max:()=>Eng.sr/2,step:1,d:1000,log:true},
           {n:'bw',t:'range',min:5,max:8000,step:1,d:2400,log:true},
@@ -255,7 +255,7 @@ function pLine(n){                                 // следующая стр�
 
 def({ id:'costas', lazy:'proc', title:'Carrier Acquisition', cat:'Modulation',
   ins:[{n:'in',t:'sig'},{n:'f0',t:'num'},{n:'loopHz',t:'num'},{n:'lp',t:'num'},{n:'order',t:'sig'}],
-  outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'ferr',t:'num'},{n:'lock',t:'num'}],
+  outs:[{n:'iq',t:'iq',pair:['I','Q']},{n:'I',t:'sig',hide:true},{n:'Q',t:'sig',hide:true},{n:'ferr',t:'num'},{n:'lock',t:'num'}],
   view:{h:40}, readout:true,
   params:[{n:'f0',t:'range',min:100,max:20000,step:1,d:1800,log:true},
           {n:'order',t:'select',opts:['BPSK','QPSK','8PSK'],d:'QPSK'},
@@ -367,8 +367,8 @@ function rrcTaps(sps,beta,span){                     // корень из при
 }
 
 def({ id:'gardner', title:'Symbol Sync', cat:'Modulation',
-  ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'baud',t:'num'},{n:'gain',t:'num'},{n:'free',t:'num'}],
-  outs:[{n:'sI',t:'sig'},{n:'sQ',t:'sig'},{n:'clk',t:'sig'},{n:'err',t:'num'}],
+  ins:[{n:'iq',t:'iq',pair:['I','Q']},{n:'I',t:'sig',hide:true},{n:'Q',t:'sig',hide:true},{n:'baud',t:'num'},{n:'gain',t:'num'},{n:'free',t:'num'}],
+  outs:[{n:'iq',t:'iq',pair:['sI','sQ']},{n:'sI',t:'sig',hide:true},{n:'sQ',t:'sig',hide:true},{n:'clk',t:'sig'},{n:'err',t:'num'}],
   params:[{n:'baud',t:'range',min:10,max:30000,step:.01,d:1800,log:true},
           {n:'gain',t:'range',min:0,max:.1,step:.0005,d:.005},
           {n:'rateGain',t:'range',min:0,max:.001,step:.00001,d:.0002,label:'rate gain (integral)'},
