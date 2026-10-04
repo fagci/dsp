@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=32;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=33;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -108,6 +108,7 @@ const PRESET_CAT_ORDER=['Start Here',
                          'Images & TV',
                          'HF Modes & Morse',
                          'Modems & Data Links',
+                         'Unknown Signals',
                          'Maps & Locating',
                          'Music: Sequencers & Mixer',
                          'Music: Synth & Tracker',
@@ -187,6 +188,7 @@ const PRESET_CATS={
 
   'DTMF':'Modems & Data Links',
   'Text → Signal → Text':'Modems & Data Links',
+  'Unknown Signal: Blind Analysis (Generator)':'Unknown Signals',
   'Preamble Search':'Modems & Data Links',
   'Noise-Resistant Frame':'Modems & Data Links',
   'APRS / AX.25':'Modems & Data Links',
@@ -3046,6 +3048,46 @@ tk.size.w=420; tk.size.h=130; applySize(tk);
 addEdge(a.id,'out',sp.id,'az'); addEdge(e.id,'out',sp.id,'el');
 addEdge(l.id,'out',sm.id,'in'); addEdge(l.id,'out',c.id,'in'); addEdge(l.id,'out',rp.id,'dBm');
 addEdge(c.id,'rise',rp.id,'go'); addEdge(rp.id,'rec',tk.id,'rec');
+markWiresDirty();
+});
+preset('Unknown Signal: Blind Analysis (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Reverse engineering a transmission without knowing its parameters. The generator (Unknown Signal) sends 2FSK with a hidden symbol rate,\n'+
+  'a sync word, a convolutional code and a CRC, plus an echo, as from multipath. Every node of the chain prints what it found.\n'+
+  'Baud Estimator finds the symbol rate (its wire sets the RRC filter and the slicer) → CMA Equalizer undoes the echo → FM discriminator → RRC → Symbol Slicer\n'+
+  '→ Sync Word Hunter finds the sync word and the frame period and cuts frames → Conv Code Finder finds the polynomials (Viterbi decodes)\n'+
+  '→ CRC Finder names the checksum → Block Viewer shows the message.\n'+
+  'Change the generator: modulation, symbol rate, sync word, message length, CRC, code (also rate 1/3), echo. Without a code Conv Code Finder says so;\n'+
+  'CRC Finder then takes the frames of Sync Word Hunter and tries extra bytes after the checksum. On a real signal use USB SDR iq instead of the generator.'});
+nt.size.w=1100; nt.size.h=170; applySize(nt);
+const gn=addNode('blindGen',40,240,{sr:'256000',off:20000,mod:'2FSK',baud:9600,dev:4800,word:'B38D2E5A',len:16,crc:'CRC-16/X-25',fec:'K=7 (171, 133)',gap:64,lvl:-20,noise:-50,echo:.35,echoDelay:.7,echoPhase:90});
+gn.size.w=300; gn.size.h=420; applySize(gn);
+const sp=addNode('iqSpec',40,700,{size:'8192'});
+const sa=addNode('sa',380,240,{auto:true,floor:-110,top:0,split:.4});
+sa.size.w=520; sa.size.h=300; applySize(sa);
+const sh=addNode('iqShift',380,580,{offset:20000});
+const dm=addNode('iqDecim',380,740,{M:'5'});
+const be=addNode('blindBaud',640,580,{min:100,max:30000,avg:12,thr:10});
+be.size.w=300; be.size.h=130; applySize(be);
+const eq=addNode('blindEq',640,740,{taps:15,mu:.003});
+const fd=addNode('fmDisc',940,580,{bw:0,dc:.2});
+const rr=addNode('symRrc',940,740,{baud:9600,alpha:.5});
+const sl=addNode('symSlicer',940,900,{baud:9600});
+const sy=addNode('syncHunt',1240,240,{levels:'2',len:32,depth:16384,minHits:4,tol:1,flen:0,word:''});
+sy.size.w=360; sy.size.h=190; applySize(sy);
+const cv=addNode('convFind',1240,500,{rate:'auto',maxK:9,thr:.85,min:8,tail:true});
+cv.size.w=360; cv.size.h=220; applySize(cv);
+const cr=addNode('crcFind',1240,780,{min:6,tail:32,maxSkip:2,unknown:true});
+cr.size.w=360; cr.size.h=240; applySize(cr);
+const bv=addNode('blkview',1640,780,{fmt:'text',wrap:32});
+bv.size.w=300; bv.size.h=200; applySize(bv);
+addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
+addEdge(gn.id,'iq',sh.id,'in'); addEdge(sh.id,'out',dm.id,'in');
+addEdge(dm.id,'out',be.id,'in'); addEdge(dm.id,'out',eq.id,'in');
+addEdge(eq.id,'out',fd.id,'in'); addEdge(fd.id,'out',rr.id,'in');
+addEdge(be.id,'baud',rr.id,'baud'); addEdge(be.id,'baud',sl.id,'baud');
+addEdge(rr.id,'out',sl.id,'in'); addEdge(sl.id,'out',sy.id,'in');
+addEdge(sy.id,'blk',cv.id,'blk'); addEdge(cv.id,'blk',cr.id,'blk'); addEdge(cr.id,'blk',bv.id,'blk');
 markWiresDirty();
 });
 preset('Logic Analyzer: UART Decode', function(){
