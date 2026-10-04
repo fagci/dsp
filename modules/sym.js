@@ -9,7 +9,7 @@ defIQ({ id:'fmDisc', title:'FM Discriminator', cat:'IQ', kw:'fm demodulator 4fsk
           {n:'dc',t:'range',min:0,max:2,step:.05,d:.2,label:'DC block time constant, s (0 — off)'}]},
   n=>n.ui ? 'FM · '+(n.ui.sr/1000)+' kS/s' : 'no input');
 
-defIQ({ id:'rrc', title:'RRC Matched Filter', cat:'IQ', kw:'root raised cosine 4fsk symbol',
+defIQ({ id:'symRrc', title:'RRC Matched Filter', cat:'IQ', kw:'root raised cosine 4fsk symbol',
   ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'}],
   params:[{n:'baud',t:'num',d:4800,label:'symbol rate, Bd'},
           {n:'alpha',t:'range',min:.05,max:1,step:.01,d:.2,label:'roll-off α (DMR, P25 0.2; M17 0.5)'}]},
