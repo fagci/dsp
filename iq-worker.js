@@ -2,7 +2,7 @@
 // Воркер острова (см. core-islands.js): узлы с ядром из IQK, свой топологический порядок.
 // config — состав острова (состояние узлов с теми же id сохраняется), tick — один такт движка.
 const Q=self.location.search;
-importScripts('core-dsp.js'+Q, 'modules/iq-kernels.js'+Q, 'modules/ccsds-kernels.js'+Q, 'modules/lrpt-msumr.js'+Q, 'modules/sonde-kernels.js'+Q, 'modules/inmarsat-kernels.js'+Q, 'modules/mpt1327-kernels.js'+Q, 'modules/ism-kernels.js'+Q, 'modules/acars-kernels.js'+Q, 'modules/fsk4-kernels.js'+Q, 'modules/dmr-kernels.js'+Q, 'modules/p25-kernels.js'+Q, 'modules/nxdn-kernels.js'+Q, 'modules/m17-kernels.js'+Q, 'modules/ysf-kernels.js'+Q, 'modules/dstar-kernels.js'+Q, 'modules/dpmr-kernels.js'+Q, 'modules/video-kernels.js'+Q);
+importScripts('core-dsp.js'+Q, 'modules/iq-kernels.js'+Q, 'modules/ccsds-kernels.js'+Q, 'modules/lrpt-msumr.js'+Q, 'modules/sonde-kernels.js'+Q, 'modules/inmarsat-kernels.js'+Q, 'modules/mpt1327-kernels.js'+Q, 'modules/ism-kernels.js'+Q, 'modules/acars-kernels.js'+Q, 'modules/fsk4-kernels.js'+Q, 'modules/dmr-kernels.js'+Q, 'modules/p25-kernels.js'+Q, 'modules/nxdn-kernels.js'+Q, 'modules/m17-kernels.js'+Q, 'modules/ysf-kernels.js'+Q, 'modules/dstar-kernels.js'+Q, 'modules/dpmr-kernels.js'+Q, 'modules/tetra-kernels.js'+Q, 'modules/video-kernels.js'+Q);
 
 let nodes=new Map(), order=[], edges=[], outs={};
 const sent=new Map();               // id → {port: последнее отправленное не-iq значение}
