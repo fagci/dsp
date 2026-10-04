@@ -2,7 +2,7 @@
 /* ============================ Символьный тракт: сборка 4FSK-приёмника блоками ============================
    Тот же тракт, что fsk4-kernels.js делает одним куском: IQ → FM-дискриминатор → RRC → символьный слайсер → поиск синхрослов.
    Символы идут по IQ-проводу как вещественный поток на частоте символов: re = уровень (≈ ±1, ±3, дибит 00 → +1, 01 → +3, 10 → −1, 11 → −3).
-   Кадр поиска синхрослов — blk {d: ±1 мягкие биты (как у Sync Word → Frame), dib: дибиты, n, id, word, inv, errs, t}. */
+   Кадр поиска синхрослов — blk {d: ±1 мягкие биты (как у Sync Word → Frame), dib: дибиты после слова, fr: весь кадр, n, id, word, hit, inv, errs, t, outer — доля внешних уровней}. */
 
 /* ---- FM-дискриминатор: IQ → частота, Гц (вещественный поток той же частоты) ---- */
 IQK.fmDisc={
@@ -109,58 +109,88 @@ function symWords(text){
   }
   return r;
 }
-const SYM_POP2=[0,1,1,2];
+const SYM_POP2=[0,1,1,2], SYM_RING=1024, SYM_MASK=SYM_RING-1;
+// окно из L символов, оканчивающееся индексом E: лучшее слово по корреляции, подгонка z = g·s + o, число битовых ошибок после подгонки
+function symMatch(n,E,tolx,thr,pol,after){
+  const R=n.ring;
+  let best=null;
+  for(const w of n.words){
+    const L=w.s.length;
+    if(E-L+1<=after || E-L+1<0) continue;
+    let dot=0, zs=0, zq=0;
+    for(let j=0;j<L;j++){ const v=R[(E-L+1+j)&SYM_MASK]; dot+=v*w.s[j]; zs+=v; zq+=v*v; }
+    // корреляция Пирсона с эталоном (смещение не мешает)
+    const cv=dot-zs*w.sm/L, vz=zq-zs*zs/L, vs=w.ss-w.sm*w.sm/L;
+    const r=cv/Math.sqrt(vz*vs+1e-20), sg=r<0 ? -1 : 1;
+    if(Math.abs(r)<thr || (sg>0 ? pol==='inverted' : pol==='normal')) continue;
+    // прямая полярность — приоритетнее: у M17 FF5D — инверсия 55F7, у DMR голос и данные — двойники
+    const score=Math.abs(r)+(sg>0 ? 1e-6 : 0);
+    if(best && score<=best.score) continue;
+    const g=(dot-zs*w.sm/L)/(w.ss-w.sm*w.sm/L), o=(zs-g*w.sm)/L;
+    if(!isFinite(g) || Math.abs(g)<1e-6) continue;
+    let e=0;
+    for(let j=0;j<L && e<=tolx;j++) e+=SYM_POP2[symDib((R[(E-L+1+j)&SYM_MASK]-o)/g)^w.d[j]];
+    if(e>tolx) continue;
+    best={w,g,o,e,E,score};
+  }
+  return best;
+}
+// кадр: pre символов до слова + слово + len после, нарезка по подгонке слова (g, o)
+function symEmit(n,pd,pre,len){
+  const L=pd.w ? pd.w.s.length : n.words[0].s.length, tot=pre+L+len, R=n.ring, i0=pd.E-L+1-pre;
+  const fr=new Uint8Array(tot);
+  for(let j=0;j<tot;j++) fr[j]=symDib((R[(i0+j)&SYM_MASK]-pd.o)/pd.g);
+  let outer=0; for(let j=0;j<tot;j++) if(fr[j]&1) outer++;                // дибиты 01 и 11 — внешние уровни ±3: у модулированного кадра ≈ половина
+  const dib=fr.slice(pre+L), bits=new Float32Array(2*len);
+  for(let j=0;j<len;j++){ bits[2*j]=dib[j]&2 ? 1 : -1; bits[2*j+1]=dib[j]&1 ? 1 : -1; }
+  const hex=pd.w ? pd.w.hex : null;
+  n.frame={d:bits, dib, fr, at:pre, n:2*len, id:++n.fid, word:hex, hit:pd.hit, inv:pd.g<0, errs:pd.e, t:pd.E+len, lock:pd.lock, outer:outer/tot};
+  n.total++;
+  if(hex) n.sync[hex]=(n.sync[hex]||0)+1;
+}
+/* Сетка кадров: period > 0 — после захвата кадры идут каждые period символов, и когда слова на месте нет (у DMR в голосовых
+   пакетах B–F вместо него EMB), кадр всё равно выдаётся (по уровням прошлой подгонки); слово ищется на ±1 символ от ожидаемого,
+   miss кадров подряд без слова — захват потерян. */
 IQK.symSync={
-  init(n){ n.key=''; n.ring=new Float32Array(64); n.w=0; n.cnt=0; n.st=0; n.buf=null; n.k=0; n.fid=0; n.frame=null; n.sync={}; n.total=0; n.t=0; },
+  init(n){ n.key=''; n.ring=new Float32Array(SYM_RING); n.w=0; n.pend=null; n.after=-1; n.expect=-1; n.miss=0; n.fid=0; n.frame=null; n.sync={};
+    n.total=0; n.lockId=0; n.fg=1; n.fo=0; n.words=[]; },
   process(n,I){
     const s=iqIn(I,'in');
     if(!s){ n.ui=null; return {blk:n.frame}; }
-    if(n.key!==n.p.word){ n.key=n.p.word; n.words=symWords(n.p.word); n.sync={}; n.cnt=0; n.st=0; }
-    const W=n.words, len=Math.max(1,n.p.len|0), tol=n.p.tol|0, pol=n.p.pol, thr=n.p.corr, R=n.ring;
-    if(!n.buf || n.buf.length!==len) n.buf=new Uint8Array(len);
-    for(const c of s.chunks){
-      const zz=c.re;
-      for(let i=0;i<zz.length;i++,n.t++){
-        const z=zz[i];
-        if(n.st===1){                                       // кадр: набираем len дибитов с поправкой по слову
-          n.buf[n.k++]=symDib((z-n.fo)/n.fg);
-          if(n.k>=len){
-            const bits=new Float32Array(2*len);
-            for(let j=0;j<len;j++){ bits[2*j]=n.buf[j]&2 ? 1 : -1; bits[2*j+1]=n.buf[j]&1 ? 1 : -1; }
-            n.frame={d:bits, dib:n.buf.slice(), n:2*len, id:++n.fid, word:n.hit.hex, inv:n.fg<0, errs:n.errs, t:n.t};
-            n.sync[n.hit.hex]=(n.sync[n.hit.hex]||0)+1; n.total++;
-            n.st=0; n.cnt=0;
+    if(n.key!==n.p.word){ n.key=n.p.word; n.words=symWords(n.p.word); n.sync={}; n.pend=null; n.expect=-1; }
+    const W=n.words, len=Math.max(1,n.p.len|0), pre=Math.max(0,n.p.pre|0), period=Math.max(0,n.p.period|0), tol=n.p.tol|0, tolLock=n.p.lockTol==null ? tol : n.p.lockTol|0,
+      maxMiss=n.p.miss==null ? 12 : n.p.miss|0, pol=n.p.pol, thr=n.p.corr, R=n.ring;
+    if(W.length){
+      for(const c of s.chunks){
+        const zz=c.re;
+        for(let i=0;i<zz.length;i++){
+          R[n.w&SYM_MASK]=zz[i]; n.w++;
+          const cur=n.w-1;
+          if(n.pend){                                      // кадр набирается: слово уже найдено, ждём len символов после него
+            if(cur===n.pend.E+len){
+              const pd=n.pend; n.pend=null; n.after=pd.E+len;
+              if(pd.hit){ n.fg=pd.g; n.fo=pd.o; }
+              symEmit(n,pd,pre,len);
+              n.expect=period>0 ? pd.E+period : -1;
+            }
+            continue;
           }
-          continue;
+          if(n.expect>=0){                                 // держим сетку: слово ждём на n.expect ±1
+            if(cur!==n.expect+1) continue;
+            let best=null;
+            for(let d=-1;d<=1;d++){ const m=symMatch(n,n.expect+d,tolLock,thr-.1,pol,n.after-1); if(m && (!best || m.score>best.score)) best=m; }
+            if(best){ n.miss=0; n.pend={E:best.E,g:best.g,o:best.o,e:best.e,w:best.w,hit:true,lock:n.lockId}; }
+            else if(++n.miss>maxMiss){ n.expect=-1; n.miss=0; }
+            else n.pend={E:n.expect,g:n.fg,o:n.fo,e:-1,w:null,hit:false,lock:n.lockId};
+            continue;
+          }
+          if(n.w<pre+8) continue;
+          const m=symMatch(n,cur,tol,thr,pol,Math.max(n.after,pre-1));
+          if(m && cur-m.w.s.length+1-pre>=0){ n.lockId++; n.miss=0; n.pend={E:cur,g:m.g,o:m.o,e:m.e,w:m.w,hit:true,lock:n.lockId}; }
         }
-        R[n.w&63]=z; n.w++; n.cnt++;
-        let bestC=0, bw=null, bs=0;
-        for(const w of W){
-          const L=w.s.length; if(n.cnt<L) continue;
-          let dot=0, zs=0, zq=0;
-          for(let j=0;j<L;j++){ const v=R[(n.w-L+j)&63]; dot+=v*w.s[j]; zs+=v; zq+=v*v; }
-          // корреляция Пирсона с эталоном (смещение не мешает)
-          const cv=dot-zs*w.sm/L, vz=zq-zs*zs/L, vs=w.ss-w.sm*w.sm/L;
-          const r=cv/Math.sqrt(vz*vs+1e-20);
-          const sg=r<0 ? -1 : 1;
-          if(Math.abs(r)<thr || (sg>0 ? pol==='inverted' : pol==='normal')) continue;
-          // прямая полярность — приоритетнее: у M17 FF5D — инверсия 55F7
-          const score=Math.abs(r)+(sg>0 ? 1e-6 : 0);
-          if(score>bestC){ bestC=score; bw=w; bs=sg; }
-        }
-        if(!bw) continue;
-        // подгонка z = g·s + o по символам слова
-        const L=bw.s.length;
-        let zs=0, zd=0; for(let j=0;j<L;j++){ const v=R[(n.w-L+j)&63]; zs+=v; zd+=v*bw.s[j]; }
-        const g=(zd-zs*bw.sm/L)/(bw.ss-bw.sm*bw.sm/L), o=(zs-g*bw.sm)/L;
-        if(!isFinite(g) || Math.abs(g)<1e-6) continue;
-        let e=0;
-        for(let j=0;j<L;j++) e+=SYM_POP2[symDib((R[(n.w-L+j)&63]-o)/g)^bw.d[j]];
-        if(e>tol) continue;
-        n.st=1; n.k=0; n.hit=bw; n.fg=g; n.fo=o; n.errs=e;
       }
     }
-    n.ui={frames:n.total, sync:{...n.sync}, id:n.fid, words:W.map(w=>w.hex)};
+    n.ui={frames:n.total, sync:{...n.sync}, id:n.fid, locked:n.expect>=0 || !!n.pend, miss:n.miss, words:W.map(w=>w.hex)};
     return {blk:n.frame};
   }};
 

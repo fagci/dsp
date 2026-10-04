@@ -18,7 +18,7 @@ defIQ({ id:'symRrc', title:'RRC Matched Filter', cat:'IQ', kw:'root raised cosin
 defIQ({ id:'symSlicer', title:'Symbol Slicer (4-level)', cat:'IQ', kw:'4fsk symbol clock timing recovery',
   ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'}],
   params:[{n:'baud',t:'num',d:4800,label:'symbol rate, Bd'},
-          {n:'loop',t:'range',min:.001,max:.1,step:.001,d:.01,label:'timing loop gain',adv:true},
+          {n:'loop',t:'range',min:.001,max:.2,step:.001,d:.05,label:'timing loop gain',adv:true},
           {n:'agc',t:'range',min:16,max:16384,step:16,d:256,log:true,label:'level tracking time, symbols',adv:true}]},
   n=>!n.ui ? 'no input' : n.ui.err || n.ui.sps.toFixed(2)+' samples per symbol · '+n.ui.symbols+' symbols · timing '+n.ui.timing.toFixed(3));
 
@@ -28,10 +28,14 @@ defIQ({ id:'symSync', title:'Symbol Sync Search', cat:'Protocols', kw:'4fsk sync
           {n:'len',t:'range',min:1,max:4096,step:1,d:184,label:'frame length after the word, symbols'},
           {n:'tol',t:'range',min:0,max:8,step:1,d:1,label:'error tolerance, bits of the word'},
           {n:'corr',t:'range',min:.5,max:.99,step:.01,d:.9,label:'minimum correlation with the word'},
-          {n:'pol',t:'select',opts:['auto','normal','inverted'],d:'auto',label:'polarity'}]},
+          {n:'pol',t:'select',opts:['auto','normal','inverted'],d:'auto',label:'polarity'},
+          {n:'pre',t:'range',min:0,max:256,step:1,d:0,label:'symbols before the word to include in the frame (DMR 66)',adv:true},
+          {n:'period',t:'range',min:0,max:4096,step:1,d:0,label:'frame period, symbols: keep the frame grid after a lock, also when the word is missing (0 — off; DMR 144)',adv:true},
+          {n:'lockTol',t:'range',min:0,max:24,step:1,d:1,label:'error tolerance while the grid is held, bits of the word',adv:true},
+          {n:'miss',t:'range',min:1,max:100,step:1,d:12,label:'frames in a row without the word before the lock is dropped',adv:true}]},
   n=>{ const u=n.ui; if(!u) return 'no input';
     const hits=Object.entries(u.sync).map(([w,c])=>w+' ×'+c).join('  ');
-    return u.frames+' frames'+(hits ? ' · '+hits : ''); });
+    return u.frames+' frames'+(u.locked ? ' · locked' : '')+(hits ? ' · '+hits : ''); });
 
 /* ---- передатчик: зеркало приёмной цепочки ---- */
 defIQ({ id:'symPlay', title:'Symbol Player', cat:'Protocols', kw:'4fsk transmit frames symbols tx',
