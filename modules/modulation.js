@@ -328,7 +328,7 @@ def({ id:'costas', lazy:'proc', title:'Carrier Acquisition', cat:'Modulation',
 
 def({ id:'rrc', title:'Matched Filter', cat:'Modulation', ins:[{n:'in',t:'sig'},{n:'baud',t:'num'},{n:'beta',t:'num'},{n:'span',t:'num'}],
   outs:[{n:'out',t:'sig'}],
-  params:[{n:'baud',t:'range',min:10,max:4800,step:.01,d:1800,log:true},
+  params:[{n:'baud',t:'range',min:10,max:30000,step:.01,d:1800,log:true},
           {n:'beta',t:'range',min:.05,max:1,step:.01,d:.35},
           {n:'span',t:'range',min:2,max:16,step:1,d:8}],
   init:n=>{n.key='';},
@@ -369,7 +369,7 @@ function rrcTaps(sps,beta,span){                     // корень из при
 def({ id:'gardner', title:'Symbol Sync', cat:'Modulation',
   ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'baud',t:'num'},{n:'gain',t:'num'},{n:'free',t:'num'}],
   outs:[{n:'sI',t:'sig'},{n:'sQ',t:'sig'},{n:'clk',t:'sig'},{n:'err',t:'num'}],
-  params:[{n:'baud',t:'range',min:10,max:4800,step:.01,d:1800,log:true},
+  params:[{n:'baud',t:'range',min:10,max:30000,step:.01,d:1800,log:true},
           {n:'gain',t:'range',min:0,max:.1,step:.0005,d:.005},
           {n:'rateGain',t:'range',min:0,max:.001,step:.00001,d:.0002,label:'rate gain (integral)'},
           {n:'free',t:'check',d:false}],
@@ -737,3 +737,58 @@ def({ id:'chirpRadar', lazy:'proc', title:'Chirp Radar 2D', cat:'Radar',
       ' rmsA='+d.rmsA.toFixed(3)+' rmsB='+d.rmsB.toFixed(3)+
       ' lagA='+(d.lagAms!=null?d.lagAms.toFixed(2):'-')+'ms lagB='+(d.lagBms!=null?d.lagBms.toFixed(2):'-')+'ms'
       : 'waiting for first cycle…'; }});
+
+/* ---------- π/4-DQPSK: дифференциальный детектор (TETRA) ---------- */
+// Вход — символьные отсчёты из Symbol Sync (sI, sQ, clk). На каждом clk считается
+// d = s[n] · conj(s[n-1]): фаза несущей и дрейф в пределах символа сокращаются, остаётся
+// приращение фазы ±π/4, ±3π/4 — четыре точки. Остаточный набег фазы за символ (расстройка
+// частоты) оценивается по среднему d⁴: у идеального сигнала arg(d⁴)=π, отклонение/4 и есть
+// набег. С derot он вычитается, ferr — расстройка в Гц (при baud из параметров).
+// Диапазон оценки — ±baud/8 (для TETRA ±2.25 кГц). Выходы держатся между clk, как у Symbol Sync.
+def({ id:'dpsk', title:'π/4-DQPSK Detector', cat:'Modulation',
+  ins:[{n:'sI',t:'sig'},{n:'sQ',t:'sig'},{n:'clk',t:'sig'}],
+  outs:[{n:'dI',t:'sig'},{n:'dQ',t:'sig'},{n:'clk',t:'sig'},{n:'ferr',t:'num'}],
+  readout:true,
+  params:[{n:'baud',t:'range',min:10,max:30000,step:.01,d:18000,log:true,label:'symbol rate, baud (TETRA 18000)'},
+          {n:'derot',t:'check',d:true,label:'remove residual rotation (d⁴ estimate)'},
+          {n:'tau',t:'range',min:8,max:2000,step:1,d:200,log:true,label:'estimate averaging, symbols'}],
+  init:n=>{ n.pI=0; n.pQ=0; n.have=false; n.cp=false; n.dI=0; n.dQ=0;
+            n.aI=-1; n.aQ=0; n.off=0; n.state='no clock'; },
+  process(n,I){
+    const oi=buf(n,'dI'), oq=buf(n,'dQ'), ok=buf(n,'clk');
+    const a=1/Math.max(1,n.p.tau), derot=n.p.derot;
+    let ticks=0;
+    for(let i=0;i<BLOCK;i++){
+      const xi=I.sI ? I.sI[i] : 0, xq=I.sQ ? I.sQ[i] : 0, c=I.clk ? I.clk[i]>.5 : false;
+      let clk=0;
+      if(c && !n.cp){
+        ticks++;
+        if(n.have){
+          let di=xi*n.pI+xq*n.pQ, dq=xq*n.pI-xi*n.pQ;
+          const m=Math.hypot(di,dq);
+          if(m>1e-9){
+            di/=m; dq/=m;
+            const r2i=di*di-dq*dq, r2q=2*di*dq;              // d²
+            const r4i=r2i*r2i-r2q*r2q, r4q=2*r2i*r2q;        // d⁴
+            n.aI+=a*(r4i-n.aI); n.aQ+=a*(r4q-n.aQ);
+            let e=Math.atan2(n.aQ,n.aI)-Math.PI;             // идеал: arg(d⁴)=π
+            if(e<-Math.PI) e+=2*Math.PI;
+            n.off=e/4;                                       // набег фазы за символ, рад
+            if(derot){
+              const cs=Math.cos(n.off), sn=Math.sin(n.off);
+              const ri=di*cs+dq*sn, rq=dq*cs-di*sn;
+              di=ri; dq=rq;
+            }
+            n.dI=di; n.dQ=dq; clk=1;
+          }
+        }
+        n.pI=xi; n.pQ=xq; n.have=true;
+      }
+      n.cp=c;
+      oi[i]=n.dI; oq[i]=n.dQ; ok[i]=clk;
+    }
+    const ferr=n.off*n.p.baud/(2*Math.PI);
+    n.state=ticks||n.have ? 'ferr '+(ferr>=0?'+':'')+ferr.toFixed(1)+' Hz'+(derot ? '' : ' · derot off') : 'no clock';
+    return {dI:oi, dQ:oq, clk:ok, ferr};
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.state||''; }});

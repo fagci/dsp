@@ -930,6 +930,145 @@ function dacBus(n){
 }
 
 
+// Запись в последовательный порт (WebSerial): Arduino, реле, CAT трансиверов. Строка уходит по
+// изменению text или value. В template {v} — value как есть, {v:N} — целое, дополненное нулями до N
+// (Kenwood/Yaesu: «FA{v:11};»). Ответы устройства режутся по \n или ; и идут на выход reply.
+async function serialOutTeardown(n){
+  n.connected=false; n.connecting=false; n.reading=false;
+  if(n.reader){ try{ await n.reader.cancel(); }catch(e){} n.reader=null; }
+  if(n.port){ try{ await n.port.close(); }catch(e){} n.port=null; }
+}
+async function serialOutReadLoop(n){
+  n.reading=true;
+  const reader=n.port.readable.pipeThrough(new TextDecoderStream()).getReader();
+  n.reader=reader;
+  let buf='';
+  try{
+    while(n.reading){
+      const {value,done}=await reader.read();
+      if(done) break;
+      buf+=value;
+      let m;
+      while((m=/[\n;]/.exec(buf))){
+        const line=buf.slice(0,m.index).trim(); buf=buf.slice(m.index+1);
+        if(line){ n.reply=line; n.pulse=2; }
+      }
+      if(buf.length>4096) buf='';
+    }
+    if(n.reading) n.status='port closed by device';
+  }catch(e){ n.status='read error: '+e.message; }
+  finally{ n.reading=false; }
+}
+async function serialOutConnect(n){
+  if(n.connecting) return;
+  await serialOutTeardown(n);
+  if(!navigator.serial){ n.status='WebSerial unavailable (needs Chrome/Edge, HTTPS)'; return; }
+  n.connecting=true; n.status='choose a port…';
+  try{
+    const port=await navigator.serial.requestPort();
+    await port.open({baudRate:+n.p.baud||9600});
+    n.port=port; n.connecting=false; n.connected=true; n.status='connected, '+n.p.baud+' baud';
+    n.writer=port.writable.getWriter();
+    serialOutReadLoop(n);
+  }catch(e){
+    n.connecting=false; n.connected=false;
+    n.status=e.name==='NotFoundError' ? 'no port selected' : 'error: '+e.message;
+  }
+}
+function serialOutDisconnect(n){
+  n.status='disconnected';
+  const w=n.writer; n.writer=null;
+  (async()=>{ try{ await w?.close(); }catch(e){} await serialOutTeardown(n); })();
+}
+const SERIAL_EOL={'none':'','\\n':'\n','\\r':'\r','\\r\\n':'\r\n'};
+function serialOutFormat(n,v){
+  return String(n.p.template||'{v}').replace(/\{v(?::(\d+))?\}/g,(_,w)=>{
+    if(typeof v!=='number' || !isFinite(v)) return '';
+    return w ? String(Math.round(v)).padStart(+w,'0') : String(v); });
+}
+function serialOutWrite(n,str){
+  if(!n.writer) return;
+  const data=new TextEncoder().encode(str+(SERIAL_EOL[n.p.eol]||''));
+  n.chain=n.chain.then(()=>n.writer?.write(data)).then(()=>{ n.sent++; },
+    e=>{ n.status='write error: '+e.message; });
+}
+def({ id:'serialout', title:'Serial Out (WebSerial)', cat:'Output', readout:true,
+  ins:[{n:'text',t:'txt'},{n:'value',t:'num'}], outs:[{n:'reply',t:'txt'},{n:'go',t:'num'}],
+  params:[{n:'baud',t:'select',opts:['4800','9600','19200','38400','57600','115200'],d:'9600'},
+          {n:'eol',t:'select',opts:['none','\\n','\\r','\\r\\n'],d:'\\n',label:'line end'},
+          {n:'template',t:'text',d:'{v}',label:'value template, {v} or {v:11}'},
+          {n:'connect',t:'button',label:'Connect',fn:n=>serialOutConnect(n)},
+          {n:'disconnect',t:'button',label:'Disconnect',fn:n=>serialOutDisconnect(n)}],
+  init:n=>{ n.port=null; n.reader=null; n.writer=null; n.connected=false; n.connecting=false; n.reading=false;
+            n.chain=Promise.resolve(); n.lastText=undefined; n.lastVal=undefined; n.reply=''; n.pulse=0;
+            n.sent=0; n.status='not connected'; },
+  dispose:n=>{ serialOutDisconnect(n); },
+  process(n,I){
+    if(n.connected){
+      if(typeof I.text==='string' && I.text!==n.lastText){ n.lastText=I.text; if(I.text) serialOutWrite(n,I.text); }
+      if(typeof I.value==='number' && isFinite(I.value) && I.value!==n.lastVal){
+        n.lastVal=I.value; serialOutWrite(n,serialOutFormat(n,I.value)); }
+    }
+    const go=n.pulse>0?1:0; if(n.pulse>0) n.pulse--;
+    return {reply:n.reply, go}; },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const t=n.status+' · sent '+n.sent+(n.reply?'\n'+n.reply:'');
+    if(r.textContent!==t) r.textContent=t;
+  }});
+
+// HTTP-запрос наружу (webhook): текст по изменению, числа JSON-объектом по фронту go или раз в period.
+// Один запрос в полёте за раз; лишние пропускаются. Заголовки — «Name: value» через «;».
+function httpOutHeaders(n){
+  const h={};
+  for(const line of String(n.p.headers||'').split(/[\n;]/)){
+    const i=line.indexOf(':'); if(i>0) h[line.slice(0,i).trim()]=line.slice(i+1).trim(); }
+  return h;
+}
+async function httpOutSend(n,body,json){
+  const url=String(n.p.url||'').trim();
+  if(!/^https?:\/\//i.test(url)){ n.status='URL must start with http:// or https://'; return; }
+  if(n.busy){ n.dropped++; return; }
+  n.busy=true;
+  try{
+    const h=httpOutHeaders(n);
+    if(!Object.keys(h).some(k=>k.toLowerCase()==='content-type')) h['Content-Type']=json?'application/json':'text/plain';
+    const r=await fetch(url,{method:n.p.method,headers:h,body:n.p.method==='GET'?undefined:body,cache:'no-store'});
+    n.sent++; n.status='HTTP '+r.status+(r.ok?'':' '+r.statusText);
+  }catch(e){
+    n.status='failed: '+e.message+(e instanceof TypeError ? ' (no CORS headers on the server, blocked, or mixed content)' : '');
+  }
+  n.busy=false;
+}
+def({ id:'httpout', title:'HTTP Out', cat:'Output', readout:true,
+  ins:[{n:'text',t:'txt'},{n:'a',t:'num'},{n:'b',t:'num'},{n:'c',t:'num'},{n:'d',t:'num'},{n:'go',t:'num'}],
+  params:[{n:'url',t:'text',d:'http://127.0.0.1:8080/',label:'http:// https://'},
+          {n:'method',t:'select',opts:['POST','PUT','GET'],d:'POST'},
+          {n:'fmt',t:'select',opts:['text on change','numbers JSON on go','numbers JSON every period'],d:'text on change',label:'send'},
+          {n:'period',t:'range',min:.5,max:3600,step:.5,d:10,label:'numbers period, s'},
+          {n:'headers',t:'text',d:'',label:'headers (Name: value; Name: value)'},
+          {n:'now',t:'button',label:'Send now',fn:n=>{ n.now=true; }}],
+  init:n=>{ n.last=undefined; n.prevGo=0; n.t=0; n.busy=false; n.now=false;
+            n.status='idle'; n.sent=0; n.dropped=0; },
+  process(n,I){
+    const nums=()=>{ const o={t:Date.now()};
+      for(const k of 'abcd') if(typeof I[k]==='number' && isFinite(I[k])) o[k]=I[k];
+      return JSON.stringify(o); };
+    const go=(I.go||0)>.5, rise=go && !n.prevGo; n.prevGo=go;
+    const now=n.now; n.now=false;
+    if(n.p.fmt==='text on change'){
+      if(typeof I.text==='string' && (I.text!==n.last || now) && I.text!==''){ n.last=I.text; httpOutSend(n,I.text,false); }
+    } else if(n.p.fmt==='numbers JSON on go'){
+      if(rise || now) httpOutSend(n,nums(),true);
+    } else {
+      n.t+=BLOCK/Eng.sr;
+      if(n.t>=n.p.period || now){ n.t=0; httpOutSend(n,nums(),true); }
+    }
+    return {}; },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const t=n.status+' · sent '+n.sent+(n.dropped?' · skipped '+n.dropped:'');
+    if(r.textContent!==t) r.textContent=t; }});
+
+
 // Web MIDI Out: gate (фронт) → note on/off, смена note при поднятом gate — легато, cc → control change.
 // note — номер MIDI, либо freq в Гц (напрямую с «MIDI Keyboard»). Доступ к MIDI общий с «MIDI Keyboard».
 function midiOutPort(n){
@@ -1030,12 +1169,64 @@ function recStamp(t=Date.now()){                      // 2026-09-27_07-52-10, м
   return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'_'+p(d.getHours())+'-'+p(d.getMinutes())+'-'+p(d.getSeconds());
 }
 function recFileName(n,ext){
-  const pre=String(n.p.prefix||'').trim().replace(/[\\/:*?"<>|]+/g,'_');
+  const pre=String(n.p.prefix||'').trim().replace(/[\/:*?"<>|]+/g,'_');
   return (pre?pre+'-':'')+recStamp(n.t0)+'.'+ext;
 }
+// Запись потоком на диск (File System Access API): в память ничего не копится, длина ограничена
+// только местом. WAV пишется с заглушкой в заголовке, размеры вписываются при остановке.
+function wavHeader(bytes,sr){
+  const b=new ArrayBuffer(44), v=new DataView(b);
+  const wr=(o,s)=>{ for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i)); };
+  wr(0,'RIFF'); v.setUint32(4,36+bytes,true); wr(8,'WAVEfmt ');
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true);
+  v.setUint16(34,16,true); wr(36,'data'); v.setUint32(40,bytes,true);
+  return b;
+}
+function recDiskWrite(n,data){
+  const d=n.disk; if(!d) return;
+  d.bytes+=data.byteLength;
+  d.q=d.q.then(()=>d.w.write(data)).catch(e=>{ n.err='disk write failed: '+e.message; });
+}
+async function recDiskClose(n){
+  const d=n.disk; n.disk=null; if(!d) return;
+  try{
+    await d.q;
+    if(d.wav){ await d.w.write({type:'seek',position:0}); await d.w.write(wavHeader(d.bytes-44,d.sr)); }
+    await d.w.close();
+  }catch(e){ n.err='disk close failed: '+e.message; }
+}
+async function recStartDisk(n,ext,type){
+  n.picking=true;
+  try{
+    const h=await window.showSaveFilePicker({suggestedName:recFileName(n,ext),
+      types:[{description:ext.toUpperCase()+' audio',accept:{[type]:['.'+ext]}}]});
+    const w=await h.createWritable();
+    n.disk={w,q:Promise.resolve(),bytes:0,wav:ext==='wav',sr:Eng.sr};
+    if(n.disk.wav) recDiskWrite(n,wavHeader(0,Eng.sr));
+    n.t0=Date.now(); n.on=true;
+  }catch(e){
+    n.err=e.name==='AbortError' ? 'file not chosen' : 'cannot open file: '+e.message;
+    n.on=false;
+  }
+  n.picking=false;
+}
 function recStart(n){
+  if(n.picking) return;
   n.chunks=[]; n.mp3=[]; n.mp3Bytes=0; n.pending=[]; n.enc=null; n.samples=0; n.err='';
-  n.t0=Date.now(); n.fmtNow=n.p.fmt; n.on=true;
+  n.fmtNow=n.p.fmt; n.t0=Date.now();
+  const toDisk=n.p.dest==='disk file';
+  if(toDisk && !window.showSaveFilePicker){ n.err='saving to disk needs Chrome/Edge — downloading instead'; }
+  const disk=toDisk && !!window.showSaveFilePicker;
+  if(disk){
+    if(n.fmtNow==='mp3'){ n.sr=MP3_RATES.includes(Eng.sr) ? Eng.sr : 48000; n.rs={pos:0, last:0}; }
+    else n.sr=Eng.sr;
+    if(n.fmtNow==='mp3') loadLame().then(L=>{ n.enc=new L.Mp3Encoder(1,n.sr,+n.p.kbps||128);
+      for(const pcm of n.pending) recMp3Push(n,pcm); n.pending=[]; }).catch(e=>{ n.err=e.message; });
+    recStartDisk(n,n.fmtNow==='mp3'?'mp3':'wav',n.fmtNow==='mp3'?'audio/mpeg':'audio/wav');
+    return;
+  }
+  n.t0=Date.now(); n.on=true;
   if(n.fmtNow!=='mp3') return;
   n.sr=MP3_RATES.includes(Eng.sr) ? Eng.sr : 48000;
   n.rs={pos:0, last:0};                              // состояние линейной передискретизации
@@ -1063,10 +1254,18 @@ function recToPcm(n,x){                              // Float32 блока → I
 }
 function recMp3Push(n,pcm){
   const d=n.enc.encodeBuffer(pcm);
-  if(d.length){ n.mp3.push(new Uint8Array(d.buffer.slice(d.byteOffset,d.byteOffset+d.length))); n.mp3Bytes+=d.length; }
+  if(!d.length) return;
+  const u=new Uint8Array(d.buffer.slice(d.byteOffset,d.byteOffset+d.length));
+  n.mp3Bytes+=d.length;
+  if(n.disk) recDiskWrite(n,u); else n.mp3.push(u);
 }
 function recStop(n){
   n.on=false;
+  if(n.disk){
+    if(n.fmtNow==='mp3' && n.enc){ const d=n.enc.flush();
+      if(d.length) recDiskWrite(n,new Uint8Array(d.buffer.slice(d.byteOffset,d.byteOffset+d.length))); n.enc=null; }
+    recDiskClose(n); return;
+  }
   if(n.fmtNow==='mp3'){
     if(!n.enc){ n.err=n.err||'MP3 encoder not ready — nothing saved'; return; }
     const d=n.enc.flush(); if(d.length) n.mp3.push(new Uint8Array(d.buffer.slice(d.byteOffset,d.byteOffset+d.length)));
@@ -1076,6 +1275,7 @@ function recStop(n){
 }
 def({ id:'rec', title:'Record Audio', cat:'Output', ins:[{n:'in',t:'sig'}], readout:true,
   params:[{n:'go',t:'button',label:'Record / stop',fn:n=>{ n.on ? recStop(n) : recStart(n); }},
+          {n:'dest',t:'select',opts:['download','disk file'],d:'download',label:'save to (disk file: streamed, no length limit)'},
           {n:'fmt',t:'select',opts:['wav','mp3'],d:'wav',label:'format'},
           {n:'kbps',t:'select',opts:['64','96','128','192','256','320'],d:'128',label:'MP3 bitrate, kbps'},
           {n:'prefix',t:'text',d:'rec',label:'file name prefix (then date_time)'}],
@@ -1086,15 +1286,82 @@ def({ id:'rec', title:'Record Audio', cat:'Output', ins:[{n:'in',t:'sig'}], read
     if(n.fmtNow==='mp3'){
       const pcm=recToPcm(n,I.in);
       if(n.enc) recMp3Push(n,pcm); else n.pending.push(pcm);
-    } else n.chunks.push(I.in.slice());
+    } else if(n.disk) recDiskWrite(n,recToPcm(n,I.in).buffer);
+    else n.chunks.push(I.in.slice());
     return {}; },
   draw(n){
     const sec=n.samples/Eng.sr;
-    const t=n.on ? '● '+sec.toFixed(1)+' s'+(n.fmtNow==='mp3' ? ' · mp3 '+(n.mp3Bytes/1024).toFixed(0)+' KB'+(n.enc?'':' (loading encoder…)')
+    const t=n.on && n.disk ? '● '+sec.toFixed(1)+' s → disk · '+(n.disk.bytes/1048576).toFixed(1)+' MB'
+           : n.picking ? 'choose a file…'
+           : n.on ? '● '+sec.toFixed(1)+' s'+(n.fmtNow==='mp3' ? ' · mp3 '+(n.mp3Bytes/1024).toFixed(0)+' KB'+(n.enc?'':' (loading encoder…)')
                                                               : ' · wav '+(sec*Eng.sr*2/1048576).toFixed(1)+' MB')
                  : 'ready · '+n.p.fmt+(n.p.fmt==='mp3' ? ' '+n.p.kbps+' kbps' : '');
     n.el.querySelector('.readout').textContent=(n.err?n.err+'\n':'')+t; }});
 
+
+// Выход в сеть по WebSocket: текст (по изменению), числа JSON-объектом раз в period, звук PCM16 LE
+// (mono, частота Eng.sr; первым сообщением уходит JSON-заголовок). Приёмник пример:
+// websocat -s 8765 | ffplay -f s16le -ar 48000 -ac 1 -   (заголовок — первая строка JSON)
+function netOutStop(n){
+  n.want=false; clearTimeout(n.timer); n.timer=null;
+  const ws=n.ws; n.ws=null;
+  if(ws){ ws.onopen=ws.onclose=ws.onerror=null; try{ ws.close(); }catch(e){} }
+  n.status='disconnected';
+}
+function netOutStart(n){
+  netOutStop(n);
+  const url=String(n.p.url||'').trim();
+  if(!/^wss?:\/\//i.test(url)){ n.status='URL must start with ws:// or wss://'; return; }
+  n.want=true; n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
+  netOutOpen(n,url);
+}
+function netOutOpen(n,url){
+  let ws;
+  try{ ws=new WebSocket(url); }
+  catch(e){ n.status='error: '+e.message; n.timer=setTimeout(()=>n.want&&netOutOpen(n,url),5000); return; }
+  ws.binaryType='arraybuffer';
+  n.ws=ws; n.status='connecting…';
+  ws.onopen=()=>{ n.status='connected';
+    if(n.p.fmt==='audio PCM16') ws.send(JSON.stringify({type:'audio',format:'s16le',channels:1,sampleRate:Eng.sr})); };
+  ws.onerror=()=>{ n.status='connection error'; };
+  ws.onclose=e=>{
+    if(n.ws!==ws) return;
+    n.ws=null; n.status='closed'+(e.code!==1000?' ('+e.code+')':'')+(n.p.reconnect?' — reconnecting…':'');
+    if(n.want && n.p.reconnect) n.timer=setTimeout(()=>n.want&&netOutOpen(n,url),2000);
+  };
+}
+def({ id:'netout', title:'Network Out', cat:'Output', readout:true,
+  ins:[{n:'text',t:'txt'},{n:'a',t:'num'},{n:'b',t:'num'},{n:'c',t:'num'},{n:'d',t:'num'},{n:'audio',t:'sig'}],
+  params:[{n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'ws:// wss://'},
+          {n:'fmt',t:'select',opts:['text','numbers JSON','audio PCM16'],d:'text',label:'send'},
+          {n:'period',t:'range',min:.05,max:60,step:.05,d:1,label:'numbers period, s'},
+          {n:'reconnect',t:'check',d:true,label:'reconnect'},
+          {n:'connect',t:'button',label:'Connect',fn:n=>netOutStart(n)},
+          {n:'disconnect',t:'button',label:'Disconnect',fn:n=>netOutStop(n)}],
+  init:n=>{ n.ws=null; n.want=false; n.timer=null; n.status='not connected'; n.warn='';
+            n.last=undefined; n.t=0; n.sent=0; n.dropped=0; },
+  dispose:n=>netOutStop(n),
+  process(n,I){
+    const ws=n.ws;
+    if(!ws || ws.readyState!==1) return {};
+    if(n.p.fmt==='text'){
+      if(typeof I.text==='string' && I.text!==n.last){ n.last=I.text; ws.send(I.text); n.sent++; }
+    } else if(n.p.fmt==='numbers JSON'){
+      n.t+=BLOCK/Eng.sr;
+      if(n.t>=n.p.period){ n.t=0;
+        const o={t:Date.now()};
+        for(const k of 'abcd') if(typeof I[k]==='number' && isFinite(I[k])) o[k]=I[k];
+        ws.send(JSON.stringify(o)); n.sent++; }
+    } else if(I.audio){
+      if(ws.bufferedAmount>1<<20){ n.dropped++; return {}; }
+      const pcm=new Int16Array(I.audio.length);
+      for(let i=0;i<pcm.length;i++) pcm[i]=clamp(I.audio[i],-1,1)*32767;
+      ws.send(pcm.buffer); n.sent++;
+    }
+    return {}; },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const t=(n.warn&&!n.ws ? '⚠ '+n.warn+'\n' : '')+n.status+' · sent '+n.sent+(n.dropped?' · dropped '+n.dropped:'');
+    if(r.textContent!==t) r.textContent=t; }});
 
 function wavDownload(chunks,sr,name){
   const len=chunks.reduce((a,c)=>a+c.length,0);

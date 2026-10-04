@@ -146,7 +146,8 @@ defIQ({ id:'iqChan', title:'IQ Channelizer', cat:'IQ',
 
 /* ---- I/Q → IQ ---- */
 // Два сигнала движка (I и Q, например стерео-вход звуковой карты от SDR с IQ-выходом, Hilbert,
-// квадратурный сдвиг) — в поток 'iq' на частоте движка. Обратно — IQ → Audio (out = I, q = Q).
+// квадратурный сдвиг) — в поток 'iq' на частоте движка. Обратно — IQ → Audio (out = I, q = Q)
+// или IQ → I/Q (те же I и Q, но на раздельных sig-выходах).
 def({ id:'iqMerge', title:'I/Q → IQ', cat:'IQ',
   ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'fc',t:'num'}], outs:[{n:'iq',t:'iq'}],
   readout:true,
@@ -230,67 +231,84 @@ function herm(x0,x1,x2,x3,f){
   return ((c3*f+c2)*f+c1)*f+x1;
 }
 
-/* ---- IQ → Audio ---- */
+/* ---- IQ → Audio / IQ → I/Q ---- */
 // Мост в домен движка: кольцо + дробный ресемплер (кубический Эрмит) с частоты потока на Eng.sr.
 // Часы источника (донгл, файл) и звуковой карты расходятся — шаг чтения подстраивается по
 // запасу в кольце (его минимуму за 0.5 с) в пределах ±IQA_MAX_PPM. Недобор — тишина до
 // восстановления запаса. Прореживать до ~звуковой частоты нужно до моста: сам он фильтра не имеет.
+// Тело моста общее для двух блоков: IQ → Audio (out, q) и IQ → I/Q (I, Q) — iqBridge возвращает {out, q, fill}.
 const IQA_MAX_PPM=2000;
+function iqBridge(n,I){
+  const out=buf(n,'out'), oq=buf(n,'q');
+  const s=iqIn(I,'in');
+  if(!s || !s.sr){ out.fill(0); oq.fill(0); n.state='no input'; return {out, q:oq, fill:null}; }
+  if(s.sr!==n.sr){                             // новая частота — новое кольцо (2 с)
+    n.sr=s.sr; n.size=pow2ge(Math.max(s.sr*2, BLOCK*8));
+    n.rr=new Float32Array(n.size); n.ri=new Float32Array(n.size);
+    n.W=0; n.pos=0; n.rebuf=true; n.floor=0; n.ppm=0; n.drops=0; n.starves=0;
+  }
+  const mask=n.size-1, rr=n.rr, ri=n.ri;
+  for(const c of s.chunks){
+    const xr=c.re, xi=c.im, K=xr.length;
+    let w=n.W;
+    for(let i=0;i<K;i++,w++){ rr[w&mask]=xr[i]; ri[w&mask]=xi?xi[i]:0; }
+    n.W=w;
+  }
+  const ratio=s.sr/Eng.sr, target=Math.max(s.sr*n.p.lat/1000, ratio*BLOCK*2);
+  let fill=n.W-n.pos;
+  if(fill>n.size-ratio*BLOCK*2){ n.pos=n.W-target; fill=target; n.drops++; }   // кольцо на исходе
+  const g=Math.pow(10,n.p.gain/20);
+  if(n.rebuf){
+    if(fill>=target){ n.rebuf=false; n.pos=n.W-target; fill=target;             // излишек пришедшего чанка — сразу в сброс
+      n.floor=target; n.wMin=Infinity; n.wT=0; n.win=0; }
+    else { out.fill(0); oq.fill(0); n.state='buffering'; return {out, q:oq, fill:1000*fill/s.sr}; }
+  }
+  // Запас — по минимуму за окно 0.5 с: данные приходят пачками (воркер, USB), дно этой пилы
+  // и есть запас, от размера пачек оно не зависит. Через 1 с после старта излишек (то, что было
+  // в пути, пока воркер разгонялся) сбрасывается разом; потом — только плавная подстройка,
+  // а сброс — если запас вырос в полтора раза (скачок источника).
+  n.wMin=Math.min(n.wMin,fill); n.wT+=BLOCK;
+  if(n.wT>=Eng.sr/2){
+    const m=n.wMin; n.wMin=Infinity; n.wT=0; n.win++;
+    if(n.win===2 && m>target*1.1 || m>target*1.5){ n.pos+=m-target; fill-=m-target; n.floor=target; if(n.win>2) n.drops++; }
+    else n.floor=n.win===1 ? m : n.floor+0.3*(m-n.floor);
+  }
+  n.ppm=clamp(1e4*(n.floor-target)/target, -IQA_MAX_PPM, IQA_MAX_PPM);   // П-регулятор: +10% запаса → +1000 ppm
+  const step=ratio*(1+n.ppm*1e-6);
+  if(fill<step*BLOCK+3){ n.rebuf=true; n.starves++; out.fill(0); oq.fill(0); n.state='starved'; return {out, q:oq, fill:1000*fill/s.sr}; }
+  let pos=n.pos;
+  for(let i=0;i<BLOCK;i++,pos+=step){
+    const k=Math.floor(pos), t=pos-k;
+    const i0=(k-1)&mask, i1=k&mask, i2=(k+1)&mask, i3=(k+2)&mask;
+    out[i]=g*herm(rr[i0],rr[i1],rr[i2],rr[i3],t);
+    oq[i]=g*herm(ri[i0],ri[i1],ri[i2],ri[i3],t);
+  }
+  n.pos=pos;
+  n.state=(s.sr/1000)+' → '+(Eng.sr/1000)+' kS/s · '+(1000*fill/s.sr).toFixed(0)+' ms · '+
+    (n.ppm>=0?'+':'')+n.ppm.toFixed(0)+' ppm'+(s.sr>1.5*Eng.sr ? ' · decimate first!' : '');
+  return {out, q:oq, fill:1000*fill/s.sr};
+}
 def({ id:'iqAudio', title:'IQ → Audio', cat:'IQ',
   ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'sig'},{n:'q',t:'sig'},{n:'fill',t:'num'}],
   readout:true,
   params:[{n:'lat',t:'range',min:20,max:500,step:5,d:100,label:'buffer (minimum kept), ms'},
           {n:'gain',t:'range',min:-40,max:20,step:1,d:0,label:'gain, dB'}],
   init:n=>{ n.sr=0; },
+  process:iqBridge,
+  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.state||''; }});
+
+// Расщепление: поток 'iq' → два сигнала движка I и Q (обратно к I/Q → IQ). Внутри тот же мост
+// (кольцо + ресемплер на Eng.sr), поэтому поток нужно предварительно прореживать до ~звуковой частоты.
+def({ id:'iqSplit', title:'IQ → I/Q', cat:'IQ',
+  ins:[{n:'in',t:'iq'}], outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'fill',t:'num'}],
+  readout:true,
+  params:[{n:'lat',t:'range',min:20,max:500,step:5,d:100,label:'buffer (minimum kept), ms'},
+          {n:'gain',t:'range',min:-40,max:20,step:1,d:0,label:'gain, dB'},
+          {n:'swap',t:'check',d:false,label:'swap I and Q (mirror the spectrum)'}],
+  init:n=>{ n.sr=0; },
   process(n,I){
-    const out=buf(n,'out'), oq=buf(n,'q');
-    const s=iqIn(I,'in');
-    if(!s || !s.sr){ out.fill(0); oq.fill(0); n.state='no input'; return {out, q:oq, fill:null}; }
-    if(s.sr!==n.sr){                             // новая частота — новое кольцо (2 с)
-      n.sr=s.sr; n.size=pow2ge(Math.max(s.sr*2, BLOCK*8));
-      n.rr=new Float32Array(n.size); n.ri=new Float32Array(n.size);
-      n.W=0; n.pos=0; n.rebuf=true; n.floor=0; n.ppm=0; n.drops=0; n.starves=0;
-    }
-    const mask=n.size-1, rr=n.rr, ri=n.ri;
-    for(const c of s.chunks){
-      const xr=c.re, xi=c.im, K=xr.length;
-      let w=n.W;
-      for(let i=0;i<K;i++,w++){ rr[w&mask]=xr[i]; ri[w&mask]=xi?xi[i]:0; }
-      n.W=w;
-    }
-    const ratio=s.sr/Eng.sr, target=Math.max(s.sr*n.p.lat/1000, ratio*BLOCK*2);
-    let fill=n.W-n.pos;
-    if(fill>n.size-ratio*BLOCK*2){ n.pos=n.W-target; fill=target; n.drops++; }   // кольцо на исходе
-    const g=Math.pow(10,n.p.gain/20);
-    if(n.rebuf){
-      if(fill>=target){ n.rebuf=false; n.pos=n.W-target; fill=target;             // излишек пришедшего чанка — сразу в сброс
-        n.floor=target; n.wMin=Infinity; n.wT=0; n.win=0; }
-      else { out.fill(0); oq.fill(0); n.state='buffering'; return {out, q:oq, fill:1000*fill/s.sr}; }
-    }
-    // Запас — по минимуму за окно 0.5 с: данные приходят пачками (воркер, USB), дно этой пилы
-    // и есть запас, от размера пачек оно не зависит. Через 1 с после старта излишек (то, что было
-    // в пути, пока воркер разгонялся) сбрасывается разом; потом — только плавная подстройка,
-    // а сброс — если запас вырос в полтора раза (скачок источника).
-    n.wMin=Math.min(n.wMin,fill); n.wT+=BLOCK;
-    if(n.wT>=Eng.sr/2){
-      const m=n.wMin; n.wMin=Infinity; n.wT=0; n.win++;
-      if(n.win===2 && m>target*1.1 || m>target*1.5){ n.pos+=m-target; fill-=m-target; n.floor=target; if(n.win>2) n.drops++; }
-      else n.floor=n.win===1 ? m : n.floor+0.3*(m-n.floor);
-    }
-    n.ppm=clamp(1e4*(n.floor-target)/target, -IQA_MAX_PPM, IQA_MAX_PPM);   // П-регулятор: +10% запаса → +1000 ppm
-    const step=ratio*(1+n.ppm*1e-6);
-    if(fill<step*BLOCK+3){ n.rebuf=true; n.starves++; out.fill(0); oq.fill(0); n.state='starved'; return {out, q:oq, fill:1000*fill/s.sr}; }
-    let pos=n.pos;
-    for(let i=0;i<BLOCK;i++,pos+=step){
-      const k=Math.floor(pos), t=pos-k;
-      const i0=(k-1)&mask, i1=k&mask, i2=(k+1)&mask, i3=(k+2)&mask;
-      out[i]=g*herm(rr[i0],rr[i1],rr[i2],rr[i3],t);
-      oq[i]=g*herm(ri[i0],ri[i1],ri[i2],ri[i3],t);
-    }
-    n.pos=pos;
-    n.state=(s.sr/1000)+' → '+(Eng.sr/1000)+' kS/s · '+(1000*fill/s.sr).toFixed(0)+' ms · '+
-      (n.ppm>=0?'+':'')+n.ppm.toFixed(0)+' ppm'+(s.sr>1.5*Eng.sr ? ' · decimate first!' : '');
-    return {out, q:oq, fill:1000*fill/s.sr};
+    const r=iqBridge(n,I);
+    return n.p.swap ? {I:r.q, Q:r.out, fill:r.fill} : {I:r.out, Q:r.q, fill:r.fill};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.state||''; }});
 function herm(y0,y1,y2,y3,t){
