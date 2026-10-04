@@ -1099,7 +1099,10 @@ clearPending();
 clearPending();
 pending={n:link.n,port:link.port,dir:link.dir,el:link.el};
 link.el.classList.add('lit');
-stat.textContent='port selected: '+link.port+' — tap the second one';
+stat.textContent='port selected: '+link.port+' — tap the second one, or an empty spot to pick a module';
+} else if(moved>=8 && (hit===cv || hit===content)){   // провод отпущен на пустом месте — модули, подходящие этому порту
+const t=portT(link.n,link.dir==='o'?'outs':'ins',link.port);
+if(t) openModPicker(ev.clientX,ev.clientY,toCanvas(ev),{n:link.n,port:link.port,dir:link.dir,type:t});
 }
 cancelLink();
 }
@@ -1107,8 +1110,17 @@ cv.addEventListener('pointerdown',ev=>{
 if(uiLocked()) return;
 if(ev.target===cv||ev.target===content){
 if(!ev.shiftKey &&Sel.size){ Sel.clear(); syncSel(); }
+tapFrom=pending ? {n:pending.n,port:pending.port,dir:pending.dir,x:ev.clientX,y:ev.clientY,t:ev.timeStamp} : null;
 clearPending(); }
-},true);                                              // capture — отработать раньше Panzoom
+},true);
+// выбран порт, затем тап по пустому месту — выбор модуля для него (отпускание рядом с точкой нажатия, не панорама)
+let tapFrom=null;
+cv.addEventListener('pointerup',ev=>{
+const f=tapFrom; tapFrom=null;
+if(!f || ev.timeStamp-f.t>500 || Math.hypot(ev.clientX-f.x,ev.clientY-f.y)>8) return;
+const t=portT(f.n,f.dir==='o'?'outs':'ins',f.port);
+if(t) openModPicker(ev.clientX,ev.clientY,toCanvas(ev),{n:f.n,port:f.port,dir:f.dir,type:t});
+});                                              // capture — отработать раньше Panzoom
 window.addEventListener('pointermove',ev=>{
 if(uiLocked()) return;
 if(link){ const p=toCanvas(ev), a=portPos(link.n,link.el,link.dir);
@@ -1493,28 +1505,44 @@ function dashGraphFit(){ requestAnimationFrame(()=>requestAnimationFrame(()=>{ c
    Поиск по названию/id/категории, стрелки + Enter, Esc — закрыть. at — точка холста для узла. */
 let modPickEl=null;
 function closeModPicker(){ modPickEl?.remove(); modPickEl=null; }
-function openModPicker(clientX,clientY,at){
+function openModPicker(clientX,clientY,at,from){
   closeModPicker();
   const box=document.createElement('div'); box.className='modpick panzoom-exclude';
   const inp=document.createElement('input'); inp.type='search'; inp.placeholder='Add module…';
   const list=document.createElement('div'); list.className='mp-list';
+  if(from){ const h=document.createElement('div'); h.className='mp-from';          // провод ищет, к чему подключиться
+    h.innerHTML=`<span class="pin" style="background:${TYPE_COLOR[from.type]}"></span>${from.type} ${from.dir==='o'?'→':'←'} <i></i>`;
+    h.querySelector('i').textContent=from.port; box.append(h); }
   box.append(inp,list); document.body.append(box); modPickEl=box;
   const mods=Object.values(MOD).filter(m=>!m.legacy && !String(m.id).startsWith('custom:'))
     .sort((a,b)=>catRank(a.cat)-catRank(b.cat)||a.title.localeCompare(b.title));
   let items=[], cur=0;
   const pick=m=>{ closeModPicker();
-    const n=addNodeUI(m.id,Math.round(at.x),Math.round(at.y)); if(!n) return;
+    const cp=from && compatPort(m,from.type,from.dir);
+    const n=addNodeUI(m.id,Math.round(at.x-(from&&from.dir==='i'?220:0)),Math.round(at.y)); if(!n) return;
+    if(cp){ const was=Undo.busy; Undo.busy=true;
+      try{ if(from.dir==='o') connect(from.n.id,from.port,n.id,cp.n); else connect(n.id,cp.n,from.n.id,from.port); }
+      finally{ Undo.busy=was; } }
     Sel.clear(); Sel.add(n.id); syncSel(); markWiresDirty(); Undo.push(); };
   const hl=()=>items.forEach((it,k)=>{ it.el.classList.toggle('on',k===cur); if(k===cur) it.el.scrollIntoView({block:'nearest'}); });
   const build=()=>{
-    const q=inp.value.trim().toLocaleLowerCase('ru');
+    const q=inp.value.trim();
     list.innerHTML=''; items=[]; cur=0; let cat=null;
-    for(const m of mods){
-      if(q && !`${m.title} ${m.id} ${m.cat}`.toLocaleLowerCase('ru').includes(q)) continue;
-      if(m.cat!==cat){ cat=m.cat; const h=document.createElement('div'); h.className='mp-cat'; h.textContent=cat; list.append(h); }
+    // с поиском — плоский список по релевантности, без — по категориям
+    // порт того же типа — выше, чем через автоадаптер (iq ↔ sig)
+    const exact=m=>!from || compatPort(m,from.type,from.dir)?.t===from.type;
+    let shown=mods.filter(m=>(!from || compatPort(m,from.type,from.dir)) && (!q || modScore(m,q)>0));
+    if(q) shown=shown.map(m=>[m,modScore(m,q)+(exact(m)?10:0)]).sort((a,b)=>b[1]-a[1]).map(x=>x[0]);
+    else if(from) shown=[...shown.filter(exact),...shown.filter(m=>!exact(m))];
+    let viaHdr=false;
+    for(const m of shown){
+      if(!q && from && !exact(m) && !viaHdr){ viaHdr=true; cat=null; const h=document.createElement('div'); h.className='mp-cat'; h.textContent='via auto adapter'; list.append(h); }
+      if(!q && m.cat!==cat){ cat=m.cat; const h=document.createElement('div'); h.className='mp-cat'; h.textContent=cat; list.append(h); }
       const b=document.createElement('button'); b.className='mp-item';
-      b.innerHTML=`<span class="dot" style="background:${catColor(m.cat)}"></span><b></b>${ioDots(m)}`;
+      const cp=from && compatPort(m,from.type,from.dir);
+      b.innerHTML=`${modIcon(m)}<b></b>${cp ? '<i class="mp-port"></i>' : ioDots(m)}`;
       b.querySelector('b').textContent=m.title; b.title=m.id;
+      if(cp) b.querySelector('.mp-port').textContent=(from.dir==='o'?'→ ':'← ')+cp.n;
       b.onclick=()=>pick(m); list.append(b); items.push({m,el:b});
     }
     if(!items.length){ const e=document.createElement('div'); e.className='mp-cat'; e.textContent='nothing found'; list.append(e); }
@@ -1706,6 +1734,32 @@ let paletteQuery='';
 const openCats=new Set();                            // какие категории раскрыты вручную — переживает перестройку палитры
 const catRank=c=>{ const i=CAT_ORDER.indexOf(c); return i<0?999:i; };
 const cats=[...new Set(Object.values(MOD).map(m=>m.cat))].sort((a,b)=>catRank(a)-catRank(b));
+/* Поиск: все слова запроса должны найтись в названии / id / категории / m.kw; названия, начинающиеся со слова, — выше */
+function modScore(m,q){
+const words=q.trim().toLocaleLowerCase('ru').split(/\s+/).filter(Boolean);
+if(!words.length) return 1;
+const title=m.title.toLocaleLowerCase('ru'), rest=`${m.id} ${m.cat} ${m.kw||''}`.toLocaleLowerCase('ru');
+let sc=0;
+for(const w of words){
+if(title.split(/[^a-zа-я0-9]+/).some(t=>t.startsWith(w))) sc+=3;
+else if(title.includes(w)) sc+=2;
+else if(rest.includes(w)) sc+=1;
+else return 0; }
+return sc;
+}
+/* Совместимость портов: тот же тип, val (универсальный) или iq ↔ sig через автоадаптер (см. connect) */
+function typeCompat(a,b){ return a===b || a==='val' || b==='val' || (a==='iq' && b==='sig') || (a==='sig' && b==='iq'); }
+// порт модуля m, к которому можно подключить провод, идущий от порта типа t (dir 'o' — провод начат с выхода → ищем вход)
+function compatPort(m,t,dir){
+const ps=(dir==='o' ? m.ins : m.outs); if(!Array.isArray(ps)) return null;
+return ps.find(p=>p.t===t) || ps.find(p=>typeCompat(t,p.t)) || null;
+}
+// значок модуля без рисования: инициалы на цвете категории, форма — по типу основного выхода
+function modIcon(m){
+const outs=Array.isArray(m.outs)?m.outs:[], t=outs[0]?.t;
+const shape=!outs.length ? 'hex' : t==='iq' ? 'circle' : t==='spec' ? 'diamond' : ['rec','txt','blk','bands','trk','img'].includes(t) ? 'square' : 'round';
+return `<span class="mi" data-shape="${shape}" style="--c:${catColor(m.cat)}">${nodeInitials(m.title)}</span>`;
+}
 function ioDots(m){                                  // строка типов портов — точка + подпись типа
 const ins=Array.isArray(m.ins)?m.ins:[], outs=Array.isArray(m.outs)?m.outs:[];
 const insT=[...new Set(ins.map(p=>p.t))], outsT=[...new Set(outs.map(p=>p.t))];
@@ -1731,7 +1785,7 @@ toastTimer=setTimeout(()=>toastEl.classList.remove('show'),1300);
 }
 function makeCatItem(m){
 const b=document.createElement('button'); b.className='pitem'; b.draggable=true;
-b.innerHTML= `<span class="ptxt"><b>${m.title}</b><span class="prow"><i>${m.id}</i>${ioDots(m)}</span></span>` ;
+b.innerHTML= `${modIcon(m)}<span class="ptxt"><b>${m.title}</b><span class="prow"><i>${m.id}</i>${ioDots(m)}</span></span>` ;
 b.addEventListener('click',()=>{
 const r=cv.getBoundingClientRect();
 addNodeUI(m.id,(r.width/2)/view.k-view.x-100+Math.random()*50,
@@ -1761,8 +1815,9 @@ let matches=0;
 for(const c of cats){
 const list=Object.values(MOD).filter(m=>{
 if(m.cat!==c || (!showLegacy &&m.legacy)) return false;
-return !q ||  `${m.title} ${m.id} ${m.cat}`.toLocaleLowerCase('ru').includes(q);
+return !q || modScore(m,q)>0;
 });
+if(q) list.sort((a,b)=>modScore(b,q)-modScore(a,q)||a.title.localeCompare(b.title));
 if(!list.length) continue;
 const det=makeDetails(c,c.toUpperCase(),q?true:openCats.has(c));      // при поиске раскрыто всегда
 det.querySelector('summary').insertAdjacentHTML('beforeend', `<span class="cnt">${list.length}</span>` );
