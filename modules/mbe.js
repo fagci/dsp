@@ -4,6 +4,7 @@
    vendor/mbelib.wasm (tools/mbelib/build.sh). Кадр из записи `voice` раскладывается в матрицу mbelib по расписаниям dsd-fme (mbe-tables.js),
    декодируется в 160 отсчётов 8 кГц на 20 мс, дальше — очередь, ресемплер до частоты движка и сумма потоков.
    M17 (Codec 2, режимы 3200 и 1600) — отдельный модуль vendor/codec2.wasm (tools/codec2/build.sh), по 8 байт на кадр.
+   TETRA (ACELP, EN 300 395-2) — vendor/tetra-acelp.wasm (tools/tetra-acelp/build.sh), в репозиторий не входит: кодек запатентован, файл собирают сами.
    Внимание: IMBE / AMBE могут быть запатентованы (DVSI) — см. README (Vocoder). */
 
 const MBE={p:null, ex:null, err:null};
@@ -26,6 +27,16 @@ function c2Load(){
     .then(({instance})=>{ C2.ex=instance.exports; return true; })
     .catch(e=>{ C2.err=String(e && e.message || e); return false; });
   return C2.p;
+}
+// TETRA ACELP: необязательный модуль (собирается локально), фиксированная арифметика — математика браузера не нужна
+const TA={p:null, ex:null, err:null};
+function taLoad(){
+  if(TA.p) return TA.p;
+  TA.p=fetch('vendor/tetra-acelp.wasm').then(r=>{ if(!r.ok) throw new Error('not built'); return r.arrayBuffer(); })
+    .then(b=>WebAssembly.instantiate(b,{}))
+    .then(({instance})=>{ TA.ex=instance.exports; return true; })
+    .catch(e=>{ TA.err=String(e && e.message || e); return false; });
+  return TA.p;
 }
 const mbeUnhex=s=>Uint8Array.from(s.match(/../g)||[],h=>parseInt(h,16));
 const mbeBits=(by,n)=>{ const b=new Uint8Array(n); for(let i=0;i<n;i++) b[i]=(by[i>>3]>>(7-(i&7)))&1; return b; };
@@ -65,6 +76,9 @@ function mbeFrames(r){
     const by=mbeUnhex(r.codec2), m1600=r.dtype===3;      // TYPE 3 — голос + данные: 64 бита речи (1600) и 64 бита данных; иначе два кадра 3200
     if(by.length>=8) out.push({k:'c2', mode:m1600 ? 1600 : 3200, bytes:by.subarray(0,8)});
     if(!m1600 && by.length>=16) out.push({k:'c2', mode:3200, bytes:by.subarray(8,16)});
+  } else if(r.src==='TETRA' && r.acelp){
+    const b=mbeBits(mbeUnhex(r.acelp),274);                // два кадра по 137 бит одним слотом
+    out.push({k:'ta', bits:b.subarray(0,137)},{k:'ta', bits:b.subarray(137,274)});
   } else if(r.src==='D-STAR' && r.ambe){
     const by=mbeUnhex(r.ambe), fr=new Uint8Array(96);
     for(let i=0;i<72;i++) fr[MBE_DW[i]*24+MBE_DX[i]]=(by[i>>3]>>(i&7))&1;       // биты в порядке приёма: младший бит байта первым
@@ -86,12 +100,18 @@ function c2Decode(h,bytes){
   const n=ex.c2_decode(h);
   return new Int16Array(ex.memory.buffer.slice(ex.c2_pcm(),ex.c2_pcm()+2*n));
 }
+// кадр TETRA ACELP → 240 отсчётов int16 (30 мс)
+function taDecode(h,bits){
+  const ex=TA.ex; new Uint8Array(ex.memory.buffer,ex.ta_bits(),137).set(bits);
+  ex.ta_decode(h,0);
+  return new Int16Array(ex.memory.buffer.slice(ex.ta_pcm(),ex.ta_pcm()+480));
+}
 const MBE_PRE=960, MBE_MAX=12000;                     // до старта — 120 мс, не больше 1,5 с очереди (8 кГц)
 function mbeStream(n,key){
   let s=n.streams.get(key);
   if(!s){
-    if(n.streams.size>=12){ const old=[...n.streams.entries()].sort((a,b)=>a[1].last-b[1].last)[0]; if(old[1].h>=0) MBE.ex.mbx_free(old[1].h); if(old[1].c2) C2.ex.c2_free(old[1].c2.h); n.streams.delete(old[0]); }
-    s={key, h:-1, c2:null, q:new Float32Array(MBE_MAX+2000), w:0, r:0, ph:0, play:false, last:0, frames:0, errs:0};
+    if(n.streams.size>=12){ const old=[...n.streams.entries()].sort((a,b)=>a[1].last-b[1].last)[0]; if(old[1].h>=0) MBE.ex.mbx_free(old[1].h); if(old[1].c2) C2.ex.c2_free(old[1].c2.h); if(old[1].ta>=0 && TA.ex) TA.ex.ta_free(old[1].ta); n.streams.delete(old[0]); }
+    s={key, h:-1, c2:null, ta:-1, q:new Float32Array(MBE_MAX+2000), w:0, r:0, ph:0, play:false, last:0, frames:0, errs:0};
     n.streams.set(key,s);
   }
   return s;
@@ -126,10 +146,10 @@ def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t
           {n:'slot',t:'select',opts:['any','1','2'],d:'any',label:'DMR slot'},
           {n:'uv',t:'range',min:1,max:64,step:1,d:3,label:'unvoiced quality (mbelib uvquality)'},
           {n:'keys',t:'text',d:'',label:'RC4 keys (40-bit hex): key; id=key; tg:N=key; … ; also from the key input'}],
-  init:n=>{ n.streams=new Map(); n.tot={frames:0, errs:0, skipped:0, dec:0}; n.keyTxt=null; n.keys={list:[], bad:[]}; mbeLoad(); c2Load(); },
+  init:n=>{ n.streams=new Map(); n.tot={frames:0, errs:0, skipped:0, dec:0}; n.keyTxt=null; n.keys={list:[], bad:[]}; mbeLoad(); c2Load(); taLoad(); },
   process(n,I){
     const o=buf(n,'out'); o.fill(0);
-    if(!MBE.ex && !C2.ex) return {out:o, err:0};
+    if(!MBE.ex && !C2.ex && !TA.ex) return {out:o, err:0};
     let err=0;
     const g=n.p.gain, q=n.p.uv|0, slot=n.p.slot, now=Date.now();
     const kt=(n.p.keys||'')+'\n'+(typeof I.key==='string' ? I.key : '');
@@ -137,16 +157,20 @@ def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t
     for(const r of recList(I.voice)){
       if(slot!=='any' && r.slot && String(r.slot)!==slot) continue;
       const fs=mbeFrames(r);
-      if(!fs.length || (fs[0].k==='c2' ? !C2.ex : !MBE.ex)){ n.tot.skipped++; continue; }
+      if(!fs.length || (fs[0].k==='c2' ? !C2.ex : fs[0].k==='ta' ? !TA.ex : !MBE.ex)){ n.tot.skipped++; continue; }
       const s=mbeStream(n,r.src+'|'+(r.slot||0));
-      if(now-s.last>2000){ if(s.h>=0) MBE.ex.mbx_reset(s.h); }       // новый разговор: состояние предыдущего кадра не нужно
+      if(now-s.last>2000){ if(s.h>=0) MBE.ex.mbx_reset(s.h); if(s.ta>=0){ TA.ex.ta_free(s.ta); s.ta=-1; } }       // новый разговор: состояние предыдущего кадра не нужно
       s.last=now;
       s.enc=null;
       for(let f=0;f<fs.length;f++){
         let fm=fs[f], derr=-1;
-        const dc=vcDecrypt(r,f,fm,n.keys.list,s);
+        const dc=fm.k==='ta' ? null : vcDecrypt(r,f,fm,n.keys.list,s);
         if(dc){ s.enc=dc; if(dc.st==='ok'){ fm=dc.fm; derr=dc.errs; n.tot.dec++; } }
-        if(fm.k==='c2'){
+        if(fm.k==='ta'){
+          if(s.ta<0) s.ta=TA.ex.ta_new();
+          if(s.ta<0) continue;
+          mbePush(s,taDecode(s.ta,fm.bits),g); s.frames++; n.tot.frames++;
+        } else if(fm.k==='c2'){
           if(!s.c2 || s.c2.mode!==fm.mode){ if(s.c2) C2.ex.c2_free(s.c2.h); s.c2={h:C2.ex.c2_new(fm.mode), mode:fm.mode}; }
           if(s.c2.h<0) continue;
           mbePush(s,c2Decode(s.c2.h,fm.bytes),g); s.frames++; n.tot.frames++;
@@ -170,7 +194,7 @@ def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t
     };
     const rows=[...n.streams.values()].map(s=>s.key.replace(/\|0$/,'').replace('|',' slot ')+' · '+s.frames+' frames'+(s.h>=0 ? ' · '+s.errs+' bit errors' : '')+' · '+((s.w-s.r)/8).toFixed(0)+' ms queued'+(s.play ? ' ▶' : '')+encTxt(s.enc));
     const kn=n.keys.list.length+n.keys.bad.length;
-    el.textContent=st(MBE,'mbelib')+' · '+st(C2,'Codec 2')+' · '+n.tot.frames+' frames'+(n.tot.skipped ? ' · '+n.tot.skipped+' records not decodable' : '')+
+    el.textContent=st(MBE,'mbelib')+' · '+st(C2,'Codec 2')+' · '+(TA.ex ? 'TETRA ACELP ready' : 'TETRA ACELP not built (tools/tetra-acelp)')+' · '+n.tot.frames+' frames'+(n.tot.skipped ? ' · '+n.tot.skipped+' records not decodable' : '')+
       (kn ? '\nkeys: '+n.keys.list.length+(n.keys.bad.length ? ' ('+n.keys.bad.length+' invalid: need 10 hex digits)' : '')+(n.tot.dec ? ' · '+n.tot.dec+' frames decrypted' : '') : '')+
       (rows.length ? '\n'+rows.join('\n') : '\nwaiting for voice records');
   }});

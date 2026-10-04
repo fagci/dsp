@@ -4,7 +4,7 @@
    вызовы по маркеру использования; записи для журнала. Речь не декодируется. */
 
 defIQ({ id:'tetraRx', title:'TETRA Decoder', cat:'Decoders', tall:true, resize:true, w:480,
-  ins:[{n:'in',t:'iq'}], outs:[{n:'rec',t:'rec'}]},
+  ins:[{n:'in',t:'iq'}], outs:[{n:'rec',t:'rec'},{n:'voice',t:'rec'}]},
   n=>{ const u=n.ui; if(!u) return 'no input'; if(u.err) return u.err;
     const sr=(u.fs/1000).toFixed(1)+' kS/s'+(u.M>1 ? ' (÷'+u.M+')' : '');
     if(!u.locked) return sr+' · searching for a sync burst'+(u.last ? ' ('+u.last+')' : '')+(u.recent.length ? '\n'+u.recent.join('\n') : '');

@@ -1,1 +1,3 @@
 .ne-cache/
+# the ACELP codec is patent-covered ETSI code: built locally (tools/tetra-acelp/build.sh), not committed
+/vendor/tetra-acelp.wasm

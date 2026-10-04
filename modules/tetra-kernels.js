@@ -295,6 +295,52 @@ function tetraResourceBits(blkBits,ssi,sdu,alloc){
   return b;
 }
 
+/* ---- речь TCH/S: 432 бита слота → два кадра кодека по 137 бит ----
+   Матричное деперемежение 24×18, класс 0 (102 бита) без защиты, классы 1 и 2 — один сверточный код 1/3
+   (G1=1+D+D²+D³+D⁴, G2=1+D+D³+D⁴, G3=1+D²+D⁴), 112 бит с выкалыванием 8/12 и 72 бита (60 + CRC-8 + хвост) с 8/18.
+   Порядок битов в кадре — таблица 4 EN 300 395-2 (позиции с 1). */
+const TETRA_C0=[35,36,37,38,39,40,41,42,43,47,48,56,61,62,63,64,65,66,67,68,69,70,74,75,83,88,89,90,91,92,93,94,95,96,97,101,102,110,115,116,117,118,119,120,121,122,123,124,128,129,137];
+const TETRA_C1=[58,85,112,54,81,108,135,50,77,104,131,45,72,99,126,55,82,109,136,5,13,34,8,16,17,22,23,24,25,26,6,14,7,15,60,87,114,46,73,100,127,44,71,98,125,33,49,76,103,130,59,86,113,57,84,111];
+const TETRA_C2=[18,19,20,21,31,32,53,80,107,134,1,2,3,4,9,10,11,12,27,28,29,30,52,79,106,133,51,78,105,132];
+// type-4 мягкие биты (+ → 0, 432) → 274 бита кадров кодека (кадр 0, кадр 1)
+function tetraSpeech(t4){
+  const d=new Float32Array(432);
+  for(let c=0;c<18;c++) for(let l=0;l<24;l++) d[l*18+c]=t4[c*24+l];
+  const t2=new Uint8Array(274);
+  for(let i=0;i<102;i++) t2[i]=d[i]<0 ? 1 : 0;
+  // 184 позиции × 3 бита материнского кода; выколотые — 0 (стёрто)
+  const sym=new Float32Array(184*3); let k=102;
+  for(let pos=0;pos<184;pos++){
+    const a=pos<112, ph=a ? pos : pos-112;
+    sym[pos*3]=d[k++];
+    if(a ? (ph&1)===0 : true) sym[pos*3+1]=d[k++];
+    if(!a && (ph&3)===0) sym[pos*3+2]=d[k++];
+  }
+  const NEG=-1e30; let pm=new Float32Array(16).fill(NEG), nm=new Float32Array(16); pm[0]=0;
+  const dec=new Uint8Array(184*16), par=v=>{ v^=v>>4; v^=v>>2; v^=v>>1; return v&1; };
+  for(let pos=0;pos<184;pos++){
+    nm.fill(NEG);
+    const v0=sym[pos*3], v1=sym[pos*3+1], v2=sym[pos*3+2];
+    for(let s=0;s<16;s++){
+      const p=pm[s]; if(p<=NEG) continue;
+      for(let b=0;b<2;b++){
+        const x=(b<<4)|s, ns=(b<<3)|(s>>1);
+        const c=p+(par(x&0x1f) ? -v0 : v0)+(par(x&0x1b) ? -v1 : v1)+(par(x&0x15) ? -v2 : v2);
+        if(c>nm[ns]){ nm[ns]=c; dec[pos*16+ns]=(s<<1)|b; }
+      }
+    }
+    const t=pm; pm=nm; nm=t;
+  }
+  let st=0;
+  const u=new Uint8Array(184);
+  for(let pos=183;pos>=0;pos--){ const x=dec[pos*16+st]; u[pos]=x&1; st=x>>1; }
+  for(let i=0;i<172;i++) t2[102+i]=u[i];
+  const out=new Uint8Array(274);
+  const put=(tab,o)=>{ for(let i=0;i<tab.length;i++) for(let f=0;f<2;f++) out[f*137+tab[i]-1]=t2[o+2*i+f]; };
+  put(TETRA_C0,0); put(TETRA_C1,102); put(TETRA_C2,214);
+  return out;
+}
+
 /* ---- пакет: разбивка (в битах от начала пакета) ---- */
 const TETRA_SB={b1:94, bbk:252, b2:282}, TETRA_NB={b1:14, bb1:230, tr:244, bb2:266, b2:282};
 function tetraNext(t){ if(++t.tn>4){ t.tn=1; if(++t.fn>18){ t.fn=1; if(++t.mn>60) t.mn=1; } } }
@@ -321,13 +367,13 @@ IQK.tetraRx={
   },
   process(n,I){
     const s=iqIn(I,'in');
-    if(!s){ n.ui=null; return {rec:null}; }
+    if(!s){ n.ui=null; return {rec:null, voice:null}; }
     const cplx=s.chunks.length ? !!s.chunks[0].im : n.cplx;
-    if(!cplx){ n.ui={err:'needs a complex (IQ) stream'}; return {rec:null}; }
+    if(!cplx){ n.ui={err:'needs a complex (IQ) stream'}; return {rec:null, voice:null}; }
     const key=s.sr+'|'+cplx;
     if(key!==n.key){ n.key=key; n.cplx=cplx; this.setup(n,s); }
     const src=n.dec ? IQK.iqDecim.process(n.dec,{in:s}).out : s;
-    const out={recs:[]};
+    const out={recs:[], voice:[]};
     for(const c of src.chunks){
       const yr=firRun(n.rrc,n.hr,c.re), yi=firRun(n.rrc,n.hi,iqChunkIm(c));
       const nr=new Float32Array(n.xr.length+yr.length), ni=new Float32Array(nr.length);
@@ -336,7 +382,7 @@ IQK.tetraRx={
       this.scan(n,out);
     }
     this.ui(n);
-    return {rec:out.recs.length ? out.recs : null};
+    return {rec:out.recs.length ? out.recs : null, voice:out.voice.length ? out.voice : null};
   },
   ui(n){
     const L=n.lock, c=n.cnt, si=n.si;
@@ -423,6 +469,8 @@ IQK.tetraRx={
     }
     return {c:Math.hypot(zr,zi)/tp.len, arg:Math.atan2(zi,zr)};
   },
+  // снять скремблер с мягких битов (+ → 0)
+  descr(b,scr){ const q=tetraScrSeq(scr,b.length), o=new Float32Array(b.length); for(let i=0;i<b.length;i++) o[i]=q[i] ? -b[i] : b[i]; return o; },
   // мягкие биты пакета (510): + → 0; b1 ≈ Im, b2 ≈ Re приращения после снятия набега фазы w
   soft(n,jc,w,inv){
     const p=jc&7, k0=Math.floor(jc/8), R=TETRA_RM, rr=n.dR[p], ri=n.dI[p], cw=Math.cos(w), sw=Math.sin(w), o=new Float32Array(2*TETRA_SYM);
@@ -509,7 +557,12 @@ IQK.tetraRx={
     if(!f18 && aach) this.track(n,L,out,traffic);
     // блоки
     if(type==='n'){
-      if(traffic){ C.tch++; return; }
+      if(traffic){
+        C.tch++;
+        const fr=tetraSpeech(this.descr(full,cell.scr));
+        out.voice.push({t:Date.now(), src:'TETRA', kind:'voice', slot:L.tn, usage:traffic, acelp:tetraHex(fr,0,274), encrypted:!!(n.si && n.si.encrypted)});
+        return;
+      }
       const r=tetraBlkDec(full,TETRA_BLK.full,cell.scr);
       if(r.ok){ C.crcOk++; L.quiet=0; this.mac(n,L,out,r.bits,'SCH/F'); } else C.crcBad++;
     } else {
