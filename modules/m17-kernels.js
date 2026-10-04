@@ -261,3 +261,27 @@ function m17Script(mode){
 }
 FSK4.gen['M17 voice stream']={baud:M17_BAUD, alpha:.5, dev:800, script:()=>m17Script('voice')};
 FSK4.gen['M17 packet (SMS)']={baud:M17_BAUD, alpha:.5, dev:800, script:()=>m17Script('packet')};
+
+/* ---- разбор кадров M17 из blk (Symbol Sync Search): та же канальная часть, что у плагина, без физики ---- */
+// blk — payload 184 дибита после синхрослова; тип кадра — по самому слову (LSF 55F7, поток FF5D, пакет 75FF, BERT DF55)
+const M17_KIND_OF=Object.fromEntries(M17_SYNCS.map(s=>[s.bits ? parseInt(s.bits,2).toString(16).toUpperCase().padStart(4,'0') : '',s.kind]));
+IQK.m17Parse={
+  init(n){ n.pr=null; n.lastFid=0; n.recent=[]; },
+  process(n,I){
+    if(!n.pr){ n.pr={}; FSK4.protos.m17.init(n.pr); n.pr.stats={frames:0, bad:0, other:0}; }
+    const P=n.pr, out={recs:[], voice:[]}, f=I.blk;
+    if(f && f.id!==n.lastFid && f.dib && f.dib.length>=184){
+      n.lastFid=f.id;
+      const kind=M17_KIND_OF[String(f.word).toUpperCase()];
+      if(!kind) P.stats.other++;
+      else {
+        P.now=f.t/M17_BAUD*1000;
+        const t=m17Il(m17Rnd(fsk4Unpack(f.dib,0,184)));
+        if(FSK4.protos.m17.decode(P,null,kind,t,out)){ P.stats.frames++; P.lastAct=Date.now(); } else P.stats.bad++;
+      }
+    }
+    const s=P.st, c=P.call, ps=P.stats;
+    n.ui={text:'M17 · '+ps.frames+' frames · '+s.lsf+' LSF · '+s.voice+' voice · '+s.packet+' packet · '+s.calls+' calls · '+ps.bad+' bad'+
+      '\n'+(c ? c.src+' → '+c.dst+' · '+c.mode+' · CAN '+c.can+(c.enc ? ' · '+c.encName : '') : 'idle')+(P.recent.length ? '\n'+P.recent.slice(-8).join('\n') : '')};
+    return {rec:out.recs.length ? out.recs : null, voice:out.voice.length ? out.voice : null};
+  }};

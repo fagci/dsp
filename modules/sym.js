@@ -18,7 +18,8 @@ defIQ({ id:'symRrc', title:'RRC Matched Filter', cat:'IQ', kw:'root raised cosin
 defIQ({ id:'symSlicer', title:'Symbol Slicer (4-level)', cat:'IQ', kw:'4fsk symbol clock timing recovery',
   ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'}],
   params:[{n:'baud',t:'num',d:4800,label:'symbol rate, Bd'},
-          {n:'loop',t:'range',min:.001,max:.1,step:.001,d:.01,label:'timing loop gain',adv:true}]},
+          {n:'loop',t:'range',min:.001,max:.1,step:.001,d:.01,label:'timing loop gain',adv:true},
+          {n:'agc',t:'range',min:16,max:16384,step:16,d:256,log:true,label:'level tracking time, symbols',adv:true}]},
   n=>!n.ui ? 'no input' : n.ui.err || n.ui.sps.toFixed(2)+' samples per symbol · '+n.ui.symbols+' symbols · timing '+n.ui.timing.toFixed(3));
 
 defIQ({ id:'symSync', title:'Symbol Sync Search', cat:'Protocols', kw:'4fsk sync word frame m17 dmr',
