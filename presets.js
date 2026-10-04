@@ -139,6 +139,7 @@ const PRESET_CATS={
   '4FSK Digital Voice: Auto Detect (Generator)':'Digital Voice & Trunking',
   '4FSK Digital Voice: Any System (USB SDR)':'Digital Voice & Trunking',
   'M17: Receiver Built from Blocks (Generator)':'Digital Voice & Trunking',
+  'DMR: Receiver Built from Blocks (Generator)':'Digital Voice & Trunking',
   'M17: Transmitter Built from Blocks (Loopback)':'Digital Voice & Trunking',
   'M17: Voice Transmitter, Microphone to Speaker (Loopback)':'Digital Voice & Trunking',
   'TETRA: Test Cell (Generator)':'Digital Voice & Trunking',
@@ -2833,6 +2834,29 @@ addEdge(fm.id,'iq',ss.id,'in'); addEdge(ss.id,'out',dc.id,'in'); addEdge(dc.id,'
 addEdge(fd.id,'out',rr.id,'in'); addEdge(rr.id,'out',sl.id,'in'); addEdge(sl.id,'out',sy.id,'in');
 addEdge(sy.id,'blk',ps.id,'blk'); addEdge(ps.id,'voice',vc.id,'voice');
 addEdge(vc.id,'out',dac.id,'L'); addEdge(vc.id,'out',dac.id,'R');
+markWiresDirty();
+});
+preset('DMR: Receiver Built from Blocks (Generator)', function(){
+clearAll();
+const ch=FSK4.protos.dmr.chain;
+const nt=addNode('note',40,40,{text:'The DMR receiver taken apart: IQ Decimator → FM Discriminator → RRC Matched Filter (α 0.2) → Symbol Slicer → Symbol Sync Search → DMR Frame Parser.\n'+
+  'Symbol Sync Search looks for the 48-bit sync words (repeater, mobile, direct mode, voice and data), takes 66 symbols before the word and 54 after it — one 30 ms frame of 144 symbols with the CACH —\n'+
+  'and then keeps the frame grid (period 144) also where the word is missing (voice bursts B–F carry the embedded signalling instead). The parser works out the polarity from the FEC, the colour code, the slots,\n'+
+  'voice calls, CSBK, data and SMS — the same channel layer as Digital Voice Decoder with protocol = dmr. The Expand into blocks button on that node produces exactly this chain.'});
+nt.size.w=1100; nt.size.h=130; applySize(nt);
+const gn=addNode('iqGen',40,240,{sr:'256000',fc:438000000,mode:'DMR',off:2000,lvl:-20,noise:-45});
+const dc=addNode('iqDecim',340,240,{M:'5'});
+const fm=addNode('fmDisc',340,440,{bw:ch.lp});
+const rr=addNode('symRrc',700,240,{baud:ch.baud,alpha:ch.alpha});
+const sl=addNode('symSlicer',700,440,{baud:ch.baud});
+const sy=addNode('symSync',1060,240,{word:ch.words,len:ch.len,tol:ch.tol,pre:ch.pre,period:ch.period,lockTol:ch.lockTol});
+sy.size.w=360; sy.size.h=240; applySize(sy);
+const ps=addNode('dmrParse',1060,540,{});
+ps.size.w=460; ps.size.h=300; applySize(ps);
+const lg=addNode('recLog',1560,240,{});
+lg.size.w=460; applySize(lg);
+addEdge(gn.id,'iq',dc.id,'in'); addEdge(dc.id,'out',fm.id,'in'); addEdge(fm.id,'out',rr.id,'in');
+addEdge(rr.id,'out',sl.id,'in'); addEdge(sl.id,'out',sy.id,'in'); addEdge(sy.id,'blk',ps.id,'blk'); addEdge(ps.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('M17: Receiver Built from Blocks (Generator)', function(){

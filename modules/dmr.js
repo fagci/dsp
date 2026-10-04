@@ -3,6 +3,11 @@
    Ядро DMR (dmr-kernels.js) работает в узле 4FSK Digital Voice (fskRx, proto = dmr; прежний узел DMR Decoder — его миграция): IQ (или ЧМ-звук) → 4FSK 4800 Бод → синхрослова, слоты, колор-код →
    голосовые вызовы (LC, встроенный LC, talker alias), CSBK, данные и SMS, Short LC; сырые кадры AMBE — отдельным выходом. */
 
+// кадры DMR из Symbol Sync Search (с сеткой кадров) → записи и сырые кадры AMBE+2; разбор тот же, что у Digital Voice Decoder с proto = dmr
+defIQ({ id:'dmrParse', title:'DMR Frame Parser', cat:'Decoders', kw:'dmr frames burst csbk lc motorola mototrbo', tall:true, resize:true, w:480,
+  ins:[{n:'blk',t:'blk'}], outs:[{n:'rec',t:'rec'},{n:'voice',t:'rec'}]},
+  n=>n.ui ? n.ui.text : 'no input');
+
 /* ---- журнал: звонки, станции, разговорные группы ---- */
 // Копит записи DMR (Digital Voice Decoder): кто с кем, когда, сколько; по станциям и группам — счётчики. Станции с позицией (LRRP / NMEA)
 // уходят на карту. Длительность — по записи end (время потока), без неё — по числу голосовых пакетов (60 мс на слот).

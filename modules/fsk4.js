@@ -16,10 +16,10 @@ defIQ({ id:'fskRx', title:'Digital Voice Decoder', kw:'4fsk dmr p25 nxdn ysf m17
 
 /* ---- «Expand into blocks»: узел → цепочка блоков с теми же параметрами протокола ----
    IQ Decimator (если приёмник прореживал) → FM Discriminator → RRC → Symbol Slicer → Symbol Sync Search → парсер кадров.
-   Провода входа и выходов переносятся; работает для протоколов с описанием chain (пока M17). Цепочка считается так же, как монолит. */
+   Провода входа и выходов переносятся; работает для протоколов с описанием chain (M17, DMR). Цепочка считается так же, как монолит. */
 function fskExpand(n){
   const ch=FSK4.protos[n.p.proto]?.chain;
-  if(!ch){ showToast('pick a protocol with a block chain first (m17)'); return; }
+  if(!ch){ showToast('pick a protocol with a block chain first (m17, dmr)'); return; }
   const M=n.ui && n.ui.M>1 ? n.ui.M : 0;
   if(!n.ui) showToast('not run yet — add an IQ Decimator by hand if the input rate is above ~48 kS/s');
   const ins=Graph.edges.filter(e=>e.to===n.id).map(e=>({from:e.from,fp:e.fp}));
@@ -32,7 +32,7 @@ function fskExpand(n){
     const fm=add('fmDisc',M?1:0,0,{bw:ch.lp});
     const rr=add('symRrc',M?2:1,0,{baud:ch.baud, alpha:ch.alpha});
     const sl=add('symSlicer',0,1,{baud:ch.baud});
-    const sy=add('symSync',1,1,{word:ch.words, len:ch.len, tol:ch.tol});
+    const sy=add('symSync',1,1,{word:ch.words, len:ch.len, tol:ch.tol, pre:ch.pre||0, period:ch.period||0, lockTol:ch.lockTol==null ? ch.tol : ch.lockTol});
     const ps=add(ch.parser,2,1,{});
     ps.size.w=n.size.w; ps.size.h=n.size.h; applySize(ps);
     const first=dec||fm;

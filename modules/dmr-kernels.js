@@ -927,3 +927,61 @@ function dmrGenerate(n,sr,N){
   g.ph%=2*Math.PI;
   return [re,im];
 }
+
+/* ---- разбор кадров из blk (Symbol Sync Search с сеткой кадров): та же канальная часть, что у плагина, без физики ----
+   Кадр — 144 дибита от начала CACH (66 до синхрослова, слово, 54 после), нарезка по подгонке слова; сетка кадров держится выше по цепочке.
+   Полярность определяется по FEC, как в плагине (слово голоса — инверсия слова данных, поиск слов их не различает). */
+function dmrBitsOfFrame(F){ const b=new Uint8Array(264); for(let i=0;i<132;i++){ const d=F[12+i]; b[2*i]=d>>1; b[2*i+1]=d&1; } return b; }
+IQK.dmrParse={
+  init(n){ n.pr=null; n.lastFid=0; n.L=null; n.lockId=-1; },
+  process(n,I){
+    if(!n.pr){ n.pr={}; FSK4.protos.dmr.init(n.pr); }
+    const P=n.pr, out={recs:[], voice:[]}, f=I.blk;
+    if(f && f.id!==n.lastFid && f.fr && f.fr.length>=DMR_FR){
+      n.lastFid=f.id;
+      if(!n.L || f.lock!==n.lockId){                              // новый захват выше по цепочке — новая передача
+        n.lockId=f.lock; n.L={mode:null, cc:-1, fn:0, polOk:false, flip:false, lastSync:null, miss:0, g:1, dslot:null, sf:null}; P.st.locks++;
+        n.L.ch={lock:n.L};
+      }
+      const L=n.L; let F=f.fr.slice(0,DMR_FR);
+      if(L.flip) F=F.map(d=>d^2);
+      let go=true;
+      // слот без передачи (несущая без модуляции) режется в константный рисунок дибитов, а он после переворота полярности — нулевое слово EMB (CC 0):
+      // у модулированного кадра внешние уровни ±3 — около половины символов
+      if(f.outer<.15){ if(++L.miss>DMR_MISS) n.L=null; else L.fn++; go=false; }
+      if(go && !L.polOk){
+        const G=F.map(d=>d^2), a=dmrFecScore(F,L), b=dmrFecScore(G,L), sc=Math.max(a.s,b.s);
+        // полярность: сразу — по кадру данных со словом и верным типом слота; по EMB (одной проверки QR мало: мусор пустого слота проходит её
+        // в ~3% кадров) — только когда два кадра подряд согласны и по полярности, и по CC
+        let dec=null;
+        if(sc===2) dec=b.s>a.s;
+        else if(sc===1 && a.s!==b.s){
+          const fl=b.s>a.s, e=dmrEmb(dmrBitsOfFrame(fl ? G : F),1);
+          if(e && L.cand && L.cand.flip===fl && L.cand.cc===e.cc){ dec=fl; L.ccc=e.cc; } else L.cand=e ? {flip:fl,cc:e.cc} : null;
+        }
+        if(dec===null){ if(a.sync || b.sync) L.miss=0; else if(sc===0 && ++L.miss>DMR_MISS){ n.L=null; go=false; } L.fn++; go=false; }
+        else { if(dec){ L.flip=true; F=G; } L.polOk=true; }
+      }
+      // пока CC неизвестен, кадр без слова принимается лишь при втором совпадении кода EMB: мусор пустого слота проходит одну проверку (~0,2%)
+      // и закрепил бы чужой CC на всю передачу
+      if(go && L.cc<0 && dmrFecScore(F,L).s===1){
+        const e=dmrEmb(dmrBitsOfFrame(F),1);
+        if(e && L.ccc!==e.cc){ L.ccc=e.cc; L.fn++; go=false; }
+      }
+      if(go){
+        P.now=f.t/DMR_BAUD*1000;
+        const ok=dmrFrame(P,L,F,f.t,out);
+        P.st.bursts++;
+        if(ok){ L.miss=0; P.lastAct=Date.now(); } else if(++L.miss>DMR_MISS){ n.L=null; }
+        L.fn++;
+      }
+    }
+    const L=n.L, s=P.st, ts=L && (L.mode==='bs' || L.mode==='direct') ? ['TS1','TS2'] : ['slot A','slot B'];
+    n.ui={text:(L && L.mode ? ({bs:'repeater',ms:'mobile',direct:'direct mode'})[L.mode]+' · CC '+(P.cc==null ? '?' : P.cc) : 'searching sync')+(P.lastAct ? ' · last '+((Date.now()-P.lastAct)/1000).toFixed(0)+' s ago' : '')+
+      '\n'+s.bursts+' bursts · '+s.voice+' voice · '+s.data+' data · '+s.csbk+' CSBK · '+s.msgs+' messages · '+s.bad+' FEC errors'+(P.sys ? ' · net '+P.sys.net+' site '+P.sys.site : '')+
+      '\n'+P.slots.map((x,i)=>ts[i]+': '+dmrSlotLine(x)).join('\n')+(P.recent.length ? '\n'+P.recent.slice(-8).join('\n') : '')};
+    return {rec:out.recs.length ? out.recs : null, voice:out.voice.length ? out.voice : null};
+  }};
+// описание цепочки блоков для «Expand into blocks»: слова без RC, до слова 66 символов, после 54, период кадра 144, допуск 4 бита (захват) / 8 (удержание)
+FSK4.protos.dmr.chain={baud:DMR_BAUD, alpha:.2, lp:5500, words:DMR_SYNCS.filter(p=>p.kind!=='rc').map(p=>p.hex).join(' '), pre:12+DMR_SYNC_AT, len:DMR_AFTER, period:DMR_FR,
+  tol:DMR_ACQ, lockTol:DMR_LOCK, parser:'dmrParse'};
