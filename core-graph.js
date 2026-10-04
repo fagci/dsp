@@ -871,7 +871,8 @@ if(u) u.disabled=Undo.idx<=0;
 if(r) r.disabled=Undo.idx>=Undo.stack.length-1;
 }
 const Sel=new Set();
-function syncSel(){ for(const n of Graph.nodes) n.el.classList.toggle('sel',Sel.has(n.id)); }
+function syncSel(){ for(const n of Graph.nodes) n.el.classList.toggle('sel',Sel.has(n.id));
+const cb=document.getElementById('chain'); if(cb) cb.disabled=Sel.size!==1 || (typeof dashMode!=='undefined' && dashMode); }
 function selSet(id,add){
 if(!add){ Sel.clear(); Sel.add(id); }
 else { Sel.has(id)? Sel.delete(id) : Sel.add(id); }
@@ -1599,7 +1600,7 @@ function setDash(on){
   setSideCollapsed(on ? true : sideCollapsedPref);     // в тайлах сайдбар мешает — прячем, при выходе возвращаем как было
   dashBtn?.classList.toggle('on',on);
   dashPagesEl?.classList.toggle('on',on);
-  document.getElementById('fit').disabled=on; document.getElementById('lod').disabled=on;
+  document.getElementById('fit').disabled=on; document.getElementById('lod').disabled=on; syncSel();
   if(on){
     dashEnsureTree();
     for(const n of Graph.nodes) if(n.dash && !dashLeafOf(n.id)) dashAutoPlace(n);
@@ -1691,6 +1692,25 @@ addEventListener('keydown',e=>{
 document.getElementById('undo').onclick=()=>Undo.undo();
 document.getElementById('redo').onclick=()=>Undo.redo();
 document.getElementById('dup').onclick=()=>{ copySel(); pasteData(clip,30,30); };
+// «→+»: к выбранному узлу — модуль, подходящий его свободному выходу (нет выходов — входу); новый узел сразу соединён и выбран,
+// так что цепочку можно наращивать тапами (удобно на телефоне, где тянуть провода трудно)
+document.getElementById('chain').onclick=ev=>{
+  if(Sel.size!==1){ showToast('select one module first'); return; }
+  const n=Graph.map[[...Sel][0]]; if(!n) return;
+  const used=(p,dir)=>Graph.edges.some(e=>dir==='o' ? e.from===n.id && e.fp===p.n : e.to===n.id && e.tp===p.n);
+  const outs=portsOf(n,'outs'), ins=portsOf(n,'ins');
+  // сначала свободный сигнальный выход, затем свободный сигнальный вход (приёмник: звуковая карта, журнал), потом числа и что есть
+  const free=(ps,dir,num)=>ps.find(p=>!used(p,dir) && (num || (p.t!=='num' && p.t!=='val')));
+  let port=free(outs,'o',false), dir='o';
+  if(!port){ port=free(ins,'i',false); dir='i'; }
+  if(!port){ port=free(outs,'o',true); dir='o'; }
+  if(!port){ port=free(ins,'i',true); dir='i'; }
+  if(!port){ port=outs[0]; dir='o'; }
+  if(!port){ port=ins[0]; dir='i'; }
+  if(!port){ showToast('this module has no ports'); return; }
+  const r=ev.currentTarget.getBoundingClientRect(), w=n.el.offsetWidth||212;
+  openModPicker(r.left,r.bottom+4,{x:dir==='o' ? n.x+w+70 : n.x-290, y:n.y},{n,port:port.n,dir,type:port.t});
+};
 document.getElementById('turbo').onchange=e=>{
 Eng.turbo=+e.target.value;
 stat.textContent = Eng.turbo >1? 'running ×'+Eng.turbo+' — audio distorted' : 'real time'; };
