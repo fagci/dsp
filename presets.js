@@ -139,6 +139,7 @@ const PRESET_CATS={
   '4FSK Digital Voice: Auto Detect (Generator)':'Digital Voice & Trunking',
   '4FSK Digital Voice: Any System (USB SDR)':'Digital Voice & Trunking',
   'M17: Receiver Built from Blocks (Generator)':'Digital Voice & Trunking',
+  'M17: Transmitter Built from Blocks (Loopback)':'Digital Voice & Trunking',
   'TETRA: Test Cell (Generator)':'Digital Voice & Trunking',
   'TETRA: Control Channel (USB SDR)':'Digital Voice & Trunking',
 
@@ -2769,6 +2770,35 @@ addEdge(de.id,'voice',vc.id,'voice'); addEdge(vc.id,'out',dc.id,'L'); addEdge(vc
 const ml=addNode('msgLog',1300,360,{}); ml.size.w=460; ml.size.h=300; applySize(ml);
 const sl=addNode('subLog',1300,700,{}); sl.size.w=460; sl.size.h=300; applySize(sl);
 addEdge(de.id,'rec',ml.id,'rec'); addEdge(de.id,'rec',sl.id,'rec');
+markWiresDirty();
+});
+preset('M17: Transmitter Built from Blocks (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'M17 transmitter taken apart and looped back into the receiver — no radio involved.\n'+
+  'M17 Frame Builder (text → preamble, LSF, SMS packets, EOT; press Send) → Symbol Player (frames → symbols at 4800 Bd) → RRC Pulse Shaper → FM Modulator (IQ).\n'+
+  'The IQ goes into the receiver chain (IQ Frequency Shift by the carrier offset, decimator, FM discriminator, RRC, slicer, sync search, parser) and the message comes out in the log.\n'+
+  'For a real transmission put HackRF TX after FM Modulator: set the output sample rate of the shaper to 2 MS/s or more. You must comply with local radio regulations: transmit only where and how the law allows.'});
+nt.size.w=1100; nt.size.h=130; applySize(nt);
+const tx=addNode('m17Tx',40,240,{});
+tx.size.w=300; tx.size.h=300; applySize(tx);
+const pl=addNode('symPlay',400,240,{});
+const sh=addNode('symShape',400,440,{sr:'256000',alpha:.5});
+const fm=addNode('fmMod',700,240,{off:100000});
+const ss=addNode('iqShift',700,500,{offset:100000});
+const dc=addNode('iqDecim',700,680,{M:'5'});
+const fd=addNode('fmDisc',1000,240,{});
+const rr=addNode('symRrc',1000,440,{baud:4800,alpha:.5});
+const sl=addNode('symSlicer',1000,620,{baud:4800});
+const sy=addNode('symSync',1300,240,{});
+sy.size.w=340; sy.size.h=220; applySize(sy);
+const ps=addNode('m17Parse',1300,500,{});
+ps.size.w=420; ps.size.h=240; applySize(ps);
+const lg=addNode('recLog',1300,800,{});
+lg.size.w=420; applySize(lg);
+addEdge(tx.id,'blk',pl.id,'blk'); addEdge(pl.id,'out',sh.id,'in'); addEdge(sh.id,'out',fm.id,'in');
+addEdge(fm.id,'iq',ss.id,'in'); addEdge(ss.id,'out',dc.id,'in'); addEdge(dc.id,'out',fd.id,'in');
+addEdge(fd.id,'out',rr.id,'in'); addEdge(rr.id,'out',sl.id,'in'); addEdge(sl.id,'out',sy.id,'in');
+addEdge(sy.id,'blk',ps.id,'blk'); addEdge(ps.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('M17: Receiver Built from Blocks (Generator)', function(){
