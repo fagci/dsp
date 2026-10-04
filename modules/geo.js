@@ -88,6 +88,40 @@ function recsToGeoJson(recs){
   return JSON.stringify({type:'FeatureCollection', features:feats});
 }
 
+function geoXml(v){ return String(v).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function geoRecIso(r){ const t=+r.t; return isFinite(t) && t>1e11 ? new Date(t).toISOString() : ''; }
+function geoRecName(r){ return r.label ?? r.id ?? r.name ?? ''; }
+function recsToKml(recs){
+  const pm=[];
+  for(const r of recs){
+    const p=geoRecPos(r); if(!p) continue;
+    const iso=geoRecIso(r);
+    const data=Object.keys(r).filter(k=>r[k]!=null && typeof r[k]!=='object')
+      .map(k=>`<Data name="${geoXml(k)}"><value>${geoXml(r[k])}</value></Data>`).join('');
+    pm.push(`<Placemark><name>${geoXml(geoRecName(r))}</name>`+(iso?`<TimeStamp><when>${iso}</when></TimeStamp>`:'')+
+      `<ExtendedData>${data}</ExtendedData><Point><coordinates>${p.lon},${p.lat}</coordinates></Point></Placemark>`);
+  }
+  return '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>'+pm.join('')+'</Document></kml>';
+}
+function recsToGpx(recs){
+  const w=[];
+  for(const r of recs){
+    const p=geoRecPos(r); if(!p) continue;
+    const iso=geoRecIso(r), ele=isFinite(+r.alt) && r.alt!=='' && r.alt!=null ? `<ele>${+r.alt}</ele>` : '';
+    const desc=Object.keys(r).filter(k=>r[k]!=null && typeof r[k]!=='object' && !['lat','lon','t','label','id','name'].includes(k))
+      .map(k=>k+'='+r[k]).join('; ');
+    w.push(`<wpt lat="${p.lat}" lon="${p.lon}">${ele}`+(iso?`<time>${iso}</time>`:'')+
+      `<name>${geoXml(geoRecName(r))}</name>`+(desc?`<desc>${geoXml(desc)}</desc>`:'')+'</wpt>');
+  }
+  return '<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="DSP workbench" xmlns="http://www.topografix.com/GPX/1/1">'+w.join('')+'</gpx>';
+}
+// кнопки Save KML / Save GPX рядом с Save GeoJSON: get(n) → записи узла
+function geoExportBtns(get,prefix,adv){
+  const b=(n,label,fn)=>({n,t:'button',label,fn,...(adv?{adv:true}:{})});
+  return [b('kml','Save KML',n=>dl(new Blob([recsToKml(get(n))],{type:'application/vnd.google-earth.kml+xml'}),prefix+'-'+Date.now()+'.kml')),
+          b('gpx','Save GPX',n=>dl(new Blob([recsToGpx(get(n))],{type:'application/gpx+xml'}),prefix+'-'+Date.now()+'.gpx'))];
+}
+
 /* ---------- геодезия ---------- */
 const GEO_R=6371.0088;                               // средний радиус Земли, км
 const D2R=Math.PI/180;
@@ -260,6 +294,7 @@ def({ id:'recLog', title:'Rec Log', cat:'Output',
           {n:'on',t:'check',d:true,label:'record'},
           {n:'csv',t:'button',label:'Save CSV',fn:n=>dl(new Blob(['\ufeff'+recsToCsv(n.rows)],{type:'text/csv;charset=utf-8'}),'records-'+Date.now()+'.csv')},
           {n:'geojson',t:'button',label:'Save GeoJSON',fn:n=>dl(new Blob([recsToGeoJson(n.rows)],{type:'application/geo+json'}),'records-'+Date.now()+'.geojson')},
+          ...geoExportBtns(n=>n.rows,'records'),
           {n:'replay',t:'button',label:'Replay',fn:n=>{ n.replay=n.rows.slice(); }},
           {n:'clr',t:'button',label:'Clear',fn:n=>{ n.rows=[]; }}],
   init:n=>{ n.rows=[]; n.replay=null; },
@@ -289,6 +324,7 @@ def({ id:'recUniq', title:'Rec: Unique by Key', cat:'Data',
           {n:'max',t:'range',min:100,max:100000,step:100,d:10000,label:'max keys'},
           {n:'csv',t:'button',label:'Save CSV',fn:n=>dl(new Blob(['﻿'+recsToCsv([...n.map.values()])],{type:'text/csv;charset=utf-8'}),'unique-'+Date.now()+'.csv')},
           {n:'geojson',t:'button',label:'Save GeoJSON',fn:n=>dl(new Blob([recsToGeoJson([...n.map.values()])],{type:'application/geo+json'}),'unique-'+Date.now()+'.geojson')},
+          ...geoExportBtns(n=>[...n.map.values()],'unique'),
           {n:'replay',t:'button',label:'Replay',fn:n=>{ n.replay=[...n.map.values()]; }},
           {n:'clr',t:'button',label:'Clear',fn:n=>{ n.map=new Map(); }}],
   init:n=>{ n.map=new Map(); n.replay=null; },
@@ -1006,6 +1042,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
           {n:'store',t:'text',d:'',label:'save points as (empty — don\'t save)',adv:true},
           {n:'csv',t:'button',label:'Save CSV',fn:n=>dl(new Blob(['\ufeff'+recsToCsv(geoMapRecs(n))],{type:'text/csv;charset=utf-8'}),'map-'+Date.now()+'.csv'),adv:true},
           {n:'geojson',t:'button',label:'Save GeoJSON',fn:n=>dl(new Blob([recsToGeoJson(geoMapRecs(n))],{type:'application/geo+json'}),'map-'+Date.now()+'.geojson'),adv:true},
+          ...geoExportBtns(geoMapRecs,'map',true),
           {n:'places',t:'button',label:'Download places (GeoNames, 17 MB)',fn:()=>geoPlacesDownload(),adv:true},
           {n:'placesFile',t:'file',accept:'.txt,.tsv,.csv,.json',fn:(n,f)=>geoPlacesImport(f),adv:true}],
   init:n=>{
