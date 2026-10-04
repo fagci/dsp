@@ -163,3 +163,82 @@ IQK.symSync={
     n.ui={frames:n.total, sync:{...n.sync}, id:n.fid, words:W.map(w=>w.hex)};
     return {blk:n.frame};
   }};
+
+/* ============================ Передатчик: зеркало приёмной цепочки ============================
+   Symbol Player (кадры blk → символы на частоте символов) → RRC Pulse Shaper (→ частота потока) → FM Modulator (→ IQ). */
+
+/* ---- Symbol Player: очередь кадров blk → вещественный поток символов (уровни ±1, ±3), в паузах — 0 (несущая без модуляции) ---- */
+IQK.symPlay={
+  init(n){ n.q=[]; n.cur=null; n.pos=0; n.lastFid=0; n.acc=0; n.sent=0; n.ui=null; },
+  process(n,I,ctx){
+    const f=I.blk;
+    if(f && f.id!==n.lastFid && f.dib){ n.lastFid=f.id; n.q.push(f.dib); }
+    n.acc+=n.p.baud*ctx.block/ctx.sr;
+    const K=Math.floor(n.acc); n.acc-=K;
+    const out=iqStream(n,'out',n.p.baud,0), z=new Float32Array(K);
+    for(let i=0;i<K;i++){
+      if(!n.cur || n.pos>=n.cur.length){ n.cur=n.q.shift()||null; n.pos=0; if(n.cur) n.sent++; }
+      z[i]=n.cur ? FSK4_LEV[n.cur[n.pos++]] : 0;
+    }
+    if(K) iqPush(out,z,null,null);
+    n.ui={queued:n.q.length+(n.cur && n.pos<n.cur.length ? 1 : 0), sent:n.sent, sending:!!(n.cur && n.pos<n.cur.length),
+      left:n.cur ? n.cur.length-n.pos : 0};
+    return {out};
+  }};
+
+/* ---- RRC Pulse Shaper: символы (частота символов) → вещественный поток на частоте sr ----
+   y(t) = Σ a_k·p(t − kT), p — RRC (α), нормирован так, что постоянный символ даёт тот же уровень (усиление по постоянной составляющей 1).
+   Таблица шагом 1/64 символа, ±6 символов; задержка 6 символов (нужны будущие символы). */
+const SYM_TAB_CACHE={};
+function symRrcTab(alpha){
+  if(SYM_TAB_CACHE[alpha]) return SYM_TAB_CACHE[alpha];
+  const t=new Float32Array(769); let s=0;
+  for(let i=0;i<769;i++){ t[i]=fsk4Rrc((i-384)/64,alpha); s+=t[i]; }
+  s/=64; for(let i=0;i<769;i++) t[i]/=s;
+  return SYM_TAB_CACHE[alpha]=t;
+}
+IQK.symShape={
+  init(n){ n.key=''; n.sy=new Float32Array(0); n.base=0; n.m=0; },
+  process(n,I){
+    const s=iqIn(I,'in');
+    if(!s){ n.ui=null; return {out:null}; }
+    const sro=+n.p.sr, baud=s.sr, key=sro+'|'+baud+'|'+n.p.alpha;
+    if(key!==n.key){ n.key=key; n.tab=symRrcTab(n.p.alpha); n.sy=new Float32Array(0); n.base=0; n.m=0; }
+    let add=0; for(const c of s.chunks) add+=c.re.length;
+    const sy=new Float32Array(n.sy.length+add); sy.set(n.sy); let o=n.sy.length;
+    for(const c of s.chunks){ sy.set(c.re,o); o+=c.re.length; }
+    const base=n.base, top=base+sy.length, step=baud/sro, tab=n.tab;
+    const out=iqStream(n,'out',sro,0), y=[];
+    let m=n.m, tau, kc;
+    for(;;){
+      tau=m*step; kc=Math.floor(tau);
+      if(kc+6>=top) break;
+      let v=0;
+      for(let k=kc-5;k<=kc+6;k++){ if(k<base) continue; const a=sy[k-base]; if(a) v+=a*tab[Math.round((tau-k+6)*64)]; }
+      y.push(v); m++;
+    }
+    n.m=m;
+    const keep=Math.max(0,kc-6-base);
+    n.sy=keep>0 ? sy.slice(keep) : sy; n.base=base+(keep>0 ? keep : 0);
+    if(y.length) iqPush(out,Float32Array.from(y),null,null);
+    n.ui={sr:sro, baud, sps:sro/baud};
+    return {out};
+  }};
+
+/* ---- FM Modulator: вещественный сигнал (±1, ±3 …) → IQ, девиация dev Гц на единицу, несущая на fc + off ---- */
+IQK.fmMod={
+  init(n){ n.ph=0; },
+  process(n,I){
+    const s=iqIn(I,'in');
+    if(!s){ n.ui=null; return {iq:null}; }
+    const sr=s.sr, o=iqStream(n,'iq',sr,n.p.fc), a=Math.pow(10,n.p.lvl/20), k=2*Math.PI/sr, dev=n.p.dev, off=n.p.off;
+    let ph=n.ph;
+    for(const c of s.chunks){
+      const x=c.re, K=x.length, re=new Float32Array(K), im=new Float32Array(K);
+      for(let i=0;i<K;i++){ ph+=k*(off+dev*x[i]); re[i]=a*Math.cos(ph); im[i]=a*Math.sin(ph); }
+      iqPush(o,re,im,c.tag);
+    }
+    n.ph=ph%(2*Math.PI);
+    n.ui={sr, air:n.p.fc+off};
+    return {iq:o};
+  }};

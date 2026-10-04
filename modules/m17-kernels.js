@@ -287,3 +287,18 @@ IQK.m17Parse={
       '\n'+(c ? c.src+' → '+c.dst+' · '+c.mode+' · CAN '+c.can+(c.enc ? ' · '+c.encName : '') : 'idle')+(P.recent.length ? '\n'+P.recent.slice(-8).join('\n') : '')};
     return {rec:out.recs.length ? out.recs : null, voice:out.voice.length ? out.voice : null};
   }};
+
+/* ---- передача: пакетный кадр SMS (LSF + кадры пакета) → дибиты: преамбула, LSF, пакеты, EOT ---- */
+// can — 0…15, текст UTF-8 с нулевым байтом (протокол 5 — SMS), CRC-16 по телу
+function m17BuildPacket(src,dst,can,text){
+  const meta=new Uint8Array(14), lsf=m17MakeLsf(src,dst,(can&15)<<7,meta);        // пакетный режим: бит 0 типа = 0
+  const body=Uint8Array.from([5,...new TextEncoder().encode(text),0]), crc=m17Crc(body,body.length);
+  const all=p25Cat(body,Uint8Array.of(crc>>8,crc&255)), seq=[M17_PRE,m17Frame('lsf',m17EncLsf(lsf))];
+  for(let i=0,fnum=0;i<all.length;i+=25,fnum++){
+    const chunk=all.subarray(i,i+25), last=i+25>=all.length, b=new Uint8Array(26); b.set(chunk);
+    b[25]=last ? (0x80|(chunk.length<<2)) : ((fnum&31)<<2);
+    seq.push(m17Frame('pkt',m17EncPacket(b)));
+  }
+  seq.push(M17_EOT);
+  return p25Cat(...seq);
+}

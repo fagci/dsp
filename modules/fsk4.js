@@ -53,3 +53,27 @@ function fskExpand(n){
 defIQ({ id:'m17Parse', title:'M17 Frame Parser', cat:'Decoders', kw:'m17 lsf callsign codec2 frames', tall:true, resize:true, w:480,
   ins:[{n:'blk',t:'blk'}], outs:[{n:'rec',t:'rec'},{n:'voice',t:'rec'}]},
   n=>n.ui ? n.ui.text : 'no input');
+
+// M17 на передачу: текст → кадры (преамбула, LSF, пакеты SMS, EOT). Уходит по go (фронт) или кнопке Send; auto — по смене входа text
+def({ id:'m17Tx', title:'M17 Frame Builder', cat:'Protocols', kw:'m17 transmit packet sms lsf tx encoder', readout:true, tall:true,
+  ins:[{n:'text',t:'txt'},{n:'go',t:'num'}], outs:[{n:'blk',t:'blk'}],
+  params:[{n:'src',t:'text',d:'N0CALL',label:'from callsign'},
+          {n:'dst',t:'text',d:'ALL',label:'to callsign'},
+          {n:'can',t:'range',min:0,max:15,step:1,d:0,label:'channel access number'},
+          {n:'msg',t:'text',d:'Hello from M17',label:'message (if the text input is empty)'},
+          {n:'auto',t:'check',d:false,label:'send when the text input changes'},
+          {n:'send',t:'button',label:'Send',fn:n=>{ n.send=true; }}],
+  init:n=>{ n.fid=0; n.prevGo=0; n.frame=null; n.lastIn=null; n.send=false; n.text='ready'; },
+  process(n,I){
+    const go=I.go||0, trig=go>.5 && !n.prevGo; n.prevGo=go>.5;
+    const inText=typeof I.text==='string' && I.text ? I.text : null;
+    let want=trig || n.send; n.send=false;
+    if(inText!==null && inText!==n.lastIn){ n.lastIn=inText; if(n.p.auto) want=true; }
+    if(want){
+      const text=(inText!==null ? inText : n.p.msg).slice(0,700);
+      const dib=m17BuildPacket(n.p.src,n.p.dst,n.p.can,text);
+      n.frame={dib, n:2*dib.length, id:++n.fid, kind:'m17-tx', text};
+      n.text='frame #'+n.fid+' · '+dib.length+' symbols ('+(dib.length/4.8).toFixed(0)+' ms)\n'+n.p.src+' → '+n.p.dst+' · CAN '+n.p.can+'\n"'+text+'"';
+    }
+    return {blk:n.frame}; },
+  draw(n){ n.el.querySelector('.readout').textContent=n.text||'…'; }});
