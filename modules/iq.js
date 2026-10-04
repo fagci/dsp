@@ -148,7 +148,7 @@ defIQ({ id:'iqChan', title:'IQ Channelizer', cat:'IQ',
 // Два сигнала движка (I и Q, например стерео-вход звуковой карты от SDR с IQ-выходом, Hilbert,
 // квадратурный сдвиг) — в поток 'iq' на частоте движка. Обратно — IQ → Audio (out = I, q = Q)
 // или IQ → I/Q (те же I и Q, но на раздельных sig-выходах).
-def({ id:'iqMerge', title:'I/Q → IQ', cat:'IQ',
+def({ id:'iqMerge', title:'I/Q → IQ', cat:'IQ', lod:'dot',
   ins:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'fc',t:'num'}], outs:[{n:'iq',t:'iq'}],
   readout:true,
   params:[{n:'fc',t:'num',d:0,label:'center frequency, Hz (0 Hz of the stream)'},
@@ -288,7 +288,7 @@ function iqBridge(n,I){
     (n.ppm>=0?'+':'')+n.ppm.toFixed(0)+' ppm'+(s.sr>1.5*Eng.sr ? ' · decimate first!' : '');
   return {out, q:oq, fill:1000*fill/s.sr};
 }
-def({ id:'iqAudio', title:'IQ → Audio', cat:'IQ',
+def({ id:'iqAudio', title:'IQ → Audio', cat:'IQ', lod:'dot',
   ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'sig'},{n:'q',t:'sig'},{n:'fill',t:'num'}],
   readout:true,
   params:[{n:'lat',t:'range',min:20,max:500,step:5,d:100,label:'buffer (minimum kept), ms'},

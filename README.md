@@ -14,6 +14,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Node graph editor: pan/zoom canvas, drag-and-drop modules, typed ports (signal, number, spectrum, image, text, block, IQ stream)
 - Dashboard view (split panes, draggable dividers) for building instrument-like UIs
 - **Module graph** pane in the dashboard: the regular node canvas inside a tile, next to the modules opened in other panes (SunVox-style) — see [Module graph pane](#module-graph-pane)
+- **Detail levels (LOD)**: double-tap a module's title to collapse it to a compact card (title only), to a **dot** (a circle with initials; the full name shows on hover / when selected) or back to full. Service modules (the auto adapters *IQ → Audio*, *I/Q → IQ*) are added as dots. The **detail** button in the toolbar switches all modules at once: full → compact → dots. The level is saved in patches
 - Add modules right on the canvas: double-click an empty spot (or **+** in the graph pane) and search
 - Groups (nested subgraphs) with custom inputs/outputs
 - Undo/redo, duplicate, multi-select, module search (Ctrl+K)

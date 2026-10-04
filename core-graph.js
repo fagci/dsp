@@ -47,7 +47,7 @@ const d=MOD[type]; if(!d) return null;
 // старые сохранения могли содержать мусор в x/y (узел fft затирал n.x буфером)
 x=x??0; y=y??0;
 if(!Number.isFinite(x) || !Number.isFinite(y)){ console.warn('узел '+type+': битые координаты, ставлю в (40,40)'); x=40; y=40; }
-const n={id:id||('n'+(Graph.seq++)), type, x,  y, p:{}, out:{}, b:{},
+const n={id:id||('n'+(Graph.seq++)), type, x,  y, p:{}, out:{}, b:{}, lod:0,
 size:{w:d.w||((d.view||d.tall)?320:210), h:d.h||(d.tall? 96 : (d.view? d.view.h : 0))}};
 fillParamDefaults(n,d);
 if(params) Object.assign(n.p,params);
@@ -124,8 +124,8 @@ let ad;
 if(kind.type==='iqAudio') ad=Graph.edges.filter(e=>e.from===from && e.fp===fp).map(e=>Graph.map[e.to]).find(n=>n.type==='iqAudio' && n.id!==to);
 else ad=Graph.edges.filter(e=>e.to===to && e.tp===tp).map(e=>Graph.map[e.from]).find(n=>n?.type==='iqMerge');
 if(!ad){
-const x=(a.x+b.x)/2, y=(a.y+b.y)/2;
-ad=addNode(kind.type,x,y,{});
+const x=((a.x+(a.el?.offsetWidth||a.size.w))+b.x)/2-17, y=(a.y+b.y)/2;
+ad=addNodeUI(kind.type,x,y);
 if(!ad) return;
 }
 if(kind.type==='iqAudio'){
@@ -239,7 +239,8 @@ matchMedia(`(resolution:${window.devicePixelRatio}dppx)`).addEventListener('chan
 function buildNodeEl(n){
 const d=MOD[n.type];
 const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
-el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" title="${d.cat||''}">${d.title}</span><span class="x">✕</span></div> <div class="nbody"></div>`;
+el.style.setProperty('--cat',catColor(d.cat)); el.dataset.title=d.title;
+el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(d.title)}" title="${d.cat||''}">${d.title}</span><span class="x">✕</span></div> <div class="nbody"></div>`;
 const body=el.querySelector('.nbody');
 const io=document.createElement('div'); io.className='io3';
 const ci=document.createElement('div'); ci.className='col';
@@ -330,8 +331,8 @@ delNode(n); Sel.delete(n.id); Undo.push();});
 head.addEventListener('pointerdown',e=>{ x0=e.clientX; y0=e.clientY; });
 head.addEventListener('pointerup',e=>{
 if(e.target.closest('.x') || Math.hypot(e.clientX-x0,e.clientY-y0)>5){ t0=0; return; }
-if(e.timeStamp-t0<350){ t0=0; foldNode(n,!n.folded); Undo.push(); } else t0=e.timeStamp; }); }
-if(n.folded) foldNode(n,true);
+if(e.timeStamp-t0<350){ t0=0; setLod(n,n.lod ? 0 : collapsedLod(n)); Undo.push(); } else t0=e.timeStamp; }); }
+if(n.lod) setLod(n,n.lod);
 bindDrag(el.querySelector('.nhead'),n);
 el.addEventListener('pointerdown',ev=>{
 if(!Sel.has(n.id)||ev.shiftKey) selSet(n.id,ev.shiftKey); });
@@ -353,10 +354,25 @@ const outsShown=portsOf(n,'outs').some(p=>!paramNames.has(p.n));
 const lw=insShown?58:0, rw=outsShown?58:0;
 return Math.max(90, n.size.w-2-lw-rw-18);
 }
-function foldNode(n,v){
-n.folded=!!v;
-n.el.classList.toggle('folded',n.folded);
+/* Уровни детализации узла: 0 — полный, 1 — карточка (только заголовок), 2 — точка (кружок с инициалами).
+   Модуль с lod:'dot' сворачивается в точку, остальные — в карточку; двойной тап по заголовку переключает. */
+const LOD_FULL=0, LOD_CARD=1, LOD_DOT=2;
+function nodeInitials(title){
+const w=String(title).split(/[^A-Za-z0-9А-Яа-я]+/).filter(Boolean);
+return (w.length>1 ? w[0][0]+w[1][0] : (w[0]||'?').slice(0,2)).toUpperCase();
+}
+function collapsedLod(n){ return MOD[n.type].lod==='dot' ? LOD_DOT : LOD_CARD; }
+function setLod(n,v){
+n.lod=v|0;
+n.el.classList.toggle('folded',n.lod===LOD_CARD);
+n.el.classList.toggle('lod-dot',n.lod===LOD_DOT);
 markWiresDirty();
+}
+function foldNode(n,v){ setLod(n,v ? LOD_CARD : LOD_FULL); }
+function addNodeUI(type,x,y){                         // узел, добавленный пользователем: служебные модули — сразу точкой
+const n=addNode(type,x,y);
+if(n && MOD[type].lod==='dot') setLod(n,LOD_DOT);
+return n;
 }
 // подряд идущие кнопки/галочки — в один ряд; общая раскладка для основных и adv-параметров
 function renderParamRows(container,n,params){
@@ -774,9 +790,9 @@ i.addEventListener('pointerdown',e=>e.stopPropagation());
 }
 /* ---- провода ---- */
 function portPos(n,el,dir){
-if(n.folded && !n.ghost){                          // свёрнутый узел: слева входы, справа выходы
+if(n.lod && !n.ghost){                             // свёрнутый узел: слева входы, справа выходы
 const w=n.el.offsetWidth||n.size.w;
-return {x:n.x+(dir==='o'?w:0), y:n.y+14};
+return {x:n.x+(dir==='o'?w:0), y:n.y+(n.lod===LOD_DOT ? (n.el.offsetHeight||34)/2 : 14)};
 }
 // .pin ищем один раз на элемент и кэшируем на нём же — иначе querySelector дважды на каждый провод
 // на каждой перерисовке (порты не пересоздаются иначе как через rebuildNode, который даёт новый el).
@@ -885,6 +901,7 @@ for(const nd of data.nodes){
 const nn=addNode(nd.type,nd.x+dx,nd.y+dy,nd.p);
 if(!nn) continue;
 map[nd.id]=nn.id;
+if(nd.f) setLod(nn,nd.f===LOD_DOT ? LOD_DOT : LOD_CARD);
 if(nd.w){ nn.size.w=nd.w; nn.size.h=nd.h||nn.size.h; applySize(nn); }
 Sel.add(nn.id); }
 for(const e of data.edges)
@@ -1125,6 +1142,13 @@ function fitViewWhenReady(){
 requestAnimationFrame(()=>requestAnimationFrame(()=>fitView()));
 }
 document.getElementById('fit').onclick=()=>fitView();
+// кнопка детализации: все узлы разом — полные → карточки → точки → полные
+document.getElementById('lod').onclick=()=>{
+const next=((Graph.nodes.reduce((m,n)=>Math.max(m,n.lod|0),0))+1)%3;
+for(const n of Graph.nodes) setLod(n,next);
+showToast(['detail: full','detail: compact','detail: dots'][next]);
+Undo.push(); fitView();
+};
 let dashMode=false;
 // свёрнутый сайдбар (десктоп): выбор пользователя по ☰; в тайлах прячется независимо от него
 let sideCollapsedPref=false;
@@ -1476,7 +1500,7 @@ function openModPicker(clientX,clientY,at){
     .sort((a,b)=>catRank(a.cat)-catRank(b.cat)||a.title.localeCompare(b.title));
   let items=[], cur=0;
   const pick=m=>{ closeModPicker();
-    const n=addNode(m.id,Math.round(at.x),Math.round(at.y)); if(!n) return;
+    const n=addNodeUI(m.id,Math.round(at.x),Math.round(at.y)); if(!n) return;
     Sel.clear(); Sel.add(n.id); syncSel(); markWiresDirty(); Undo.push(); };
   const hl=()=>items.forEach((it,k)=>{ it.el.classList.toggle('on',k===cur); if(k===cur) it.el.scrollIntoView({block:'nearest'}); });
   const build=()=>{
@@ -1544,7 +1568,7 @@ function setDash(on){
   setSideCollapsed(on ? true : sideCollapsedPref);     // в тайлах сайдбар мешает — прячем, при выходе возвращаем как было
   dashBtn?.classList.toggle('on',on);
   dashPagesEl?.classList.toggle('on',on);
-  document.getElementById('fit').disabled=on;
+  document.getElementById('fit').disabled=on; document.getElementById('lod').disabled=on;
   if(on){
     dashEnsureTree();
     for(const n of Graph.nodes) if(n.dash && !dashLeafOf(n.id)) dashAutoPlace(n);
@@ -1707,7 +1731,7 @@ const b=document.createElement('button'); b.className='pitem'; b.draggable=true;
 b.innerHTML= `<span class="ptxt"><b>${m.title}</b><span class="prow"><i>${m.id}</i>${ioDots(m)}</span></span>` ;
 b.addEventListener('click',()=>{
 const r=cv.getBoundingClientRect();
-addNode(m.id,(r.width/2)/view.k-view.x-100+Math.random()*50,
+addNodeUI(m.id,(r.width/2)/view.k-view.x-100+Math.random()*50,
 (r.height/3)/view.k-view.y+Math.random()*120);
 markWiresDirty();
 if(isCoarse) showToast('added: '+m.title);  // панель остаётся открытой — можно накидать несколько подряд
@@ -1762,7 +1786,7 @@ const modId=e.dataTransfer.getData('text/x-dsp-module');
 if(!modId) return;
 e.preventDefault();
 const p=dropAt(e.clientX,e.clientY);
-addNode(modId,p.x-100,p.y-20); markWiresDirty(); Undo.push();
+addNodeUI(modId,p.x-100,p.y-20); markWiresDirty(); Undo.push();
 });
 const paletteSearch=document.getElementById('paletteSearch');
 paletteSearch.addEventListener('input',e=>{ paletteQuery=e.target.value; buildPalette(); });
@@ -1776,7 +1800,7 @@ function serialize(){
 flush();                                            // ← синхронизируем граф перед сериализацией
 return {v:1, view:{...view},
 nodes:Graph.nodes.map(n=>{ const o={id:n.id,type:n.type,x:n.x,y:n.y,
-w:n.size.w,h:n.size.h,p:{...n.p},f:n.folded?1:0,a:n.advOpen?1:0};
+w:n.size.w,h:n.size.h,p:{...n.p},f:n.lod|0,a:n.advOpen?1:0};
 if(n.dash) o.dash=1;                                // закреплён (📌) для дашборда
 return o; }),
 edges:Graph.edges.map(e=>({from:e.from,fp:e.fp,to:e.to,tp:e.tp})),
@@ -1821,7 +1845,7 @@ Sel.clear();
 clearAll();
 let max=1;
 for(const n of o.nodes){ const nn=addNode(n.type,n.x,n.y,n.p,n.id);
-if(nn &&n.f) foldNode(nn,true);
+if(nn &&n.f) setLod(nn,n.f===LOD_DOT ? LOD_DOT : LOD_CARD);
 if(nn &&n.a) setAdvOpen(nn,true);
 if(nn &&n.w){ nn.size.w=n.w; nn.size.h=n.h||nn.size.h; applySize(nn); }
 // n.dash — старые сохранения с 📌: такие узлы сами занимают свободные панели при входе в тайлы
