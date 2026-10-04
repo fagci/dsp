@@ -71,6 +71,19 @@ async function tsaTeardown(n){
 }
 function tsaDisconnect(n){ n.status='disconnected'; tsaTeardown(n); }
 
+// первый ответ после открытия порта может быть чужим (запоздавшее приглашение) или не прийти —
+// принимаем только строку с "tinySA", иначе пауза (запоздалое осядет в буфере) и повтор
+async function tsaReadVersion(n){
+  for(let i=0;i<4;i++){
+    try{
+      const v=(await tsaText(n,'version',{timeout:1500})).split(/\r?\n/)[0];
+      if(/tinySA/i.test(v)) return v;
+    }catch(e){ if(!n.connected) throw e; }
+    await new Promise(r=>setTimeout(r,300));
+  }
+  throw new Error('no valid reply to version');
+}
+
 async function tsaConnect(n){
   if(n.connecting) return;
   await tsaTeardown(n);
@@ -84,7 +97,7 @@ async function tsaConnect(n){
     tsaReadLoop(n);
     // хвост недописанной команды и мусор после перезапуска — пара пустых строк до приглашения
     for(let i=0;i<3;i++){ try{ await tsaCmd(n,'',{timeout:700}); break; }catch(e){} }
-    n.version=(await tsaText(n,'version')).split(/\r?\n/)[0]||'?';
+    n.version=await tsaReadVersion(n);
     n.ultra=/tinySA4/i.test(n.version);
     n.status='connected: '+n.version;
     tsaLoop(n);
