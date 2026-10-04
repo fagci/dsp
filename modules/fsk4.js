@@ -15,11 +15,13 @@ defIQ({ id:'fskRx', title:'Digital Voice Decoder', kw:'4fsk dmr p25 nxdn ysf m17
     return (u.fs/1000).toFixed(1)+' kS/s · searching sync ('+ids.join(', ')+')'+(recent.length ? '\n'+recent.join('\n') : ''); });
 
 /* ---- «Expand into blocks»: узел → цепочка блоков с теми же параметрами протокола ----
-   IQ Decimator (если приёмник прореживал) → FM Discriminator → RRC → Symbol Slicer → Symbol Sync Search → парсер кадров.
-   Провода входа и выходов переносятся; работает для протоколов с описанием chain (M17, DMR). Цепочка считается так же, как монолит. */
+   IQ Decimator (если приёмник прореживал) → FM Discriminator → RRC. Дальше: у протоколов с описанием chain.parser (M17, DMR) —
+   Symbol Slicer → Symbol Sync Search → парсер кадров; у остальных (P25, NXDN, YSF, D-STAR, dPMR) — Protocol Decoder (4FSK): код протокола
+   на выходе согласованного фильтра (8 фаз такта и подгонка по синхрослову, как у монолита). Провода входа и выходов переносятся. */
 function fskExpand(n){
-  const ch=FSK4.protos[n.p.proto]?.chain;
-  if(!ch){ showToast('pick a protocol with a block chain first (m17, dmr)'); return; }
+  const pr=FSK4.protos[n.p.proto];
+  if(!pr){ showToast('pick a protocol first (not auto)'); return; }
+  const ch=pr.chain || {baud:pr.baud, alpha:pr.alpha, lp:pr.lp};
   const M=n.ui && n.ui.M>1 ? n.ui.M : 0;
   if(!n.ui) showToast('not run yet — add an IQ Decimator by hand if the input rate is above ~48 kS/s');
   const ins=Graph.edges.filter(e=>e.to===n.id).map(e=>({from:e.from,fp:e.fp}));
@@ -31,16 +33,25 @@ function fskExpand(n){
     const dec=M ? add('iqDecim',0,0,{M:String(M), cut:Math.min(.45,7500/n.ui.fs)}) : null;
     const fm=add('fmDisc',M?1:0,0,{bw:ch.lp});
     const rr=add('symRrc',M?2:1,0,{baud:ch.baud, alpha:ch.alpha});
-    const sl=add('symSlicer',0,1,{baud:ch.baud});
-    const sy=add('symSync',1,1,{word:ch.words, len:ch.len, tol:ch.tol, pre:ch.pre||0, period:ch.period||0, lockTol:ch.lockTol==null ? ch.tol : ch.lockTol});
-    const ps=add(ch.parser,2,1,{});
-    ps.size.w=n.size.w; ps.size.h=n.size.h; applySize(ps);
+    let last;
+    if(ch.parser){
+      const sl=add('symSlicer',0,1,{baud:ch.baud});
+      const sy=add('symSync',1,1,{word:ch.words, len:ch.len, tol:ch.tol, pre:ch.pre||0, period:ch.period||0, lockTol:ch.lockTol==null ? ch.tol : ch.lockTol});
+      const ps=add(ch.parser,2,1,{});
+      ps.size.w=n.size.w; ps.size.h=n.size.h; applySize(ps);
+      addEdge(rr.id,'out',sl.id,'in'); addEdge(sl.id,'out',sy.id,'in'); addEdge(sy.id,'blk',ps.id,'blk');
+      last=ps;
+    } else {
+      const pd=add('fskSym',0,1,{proto:n.p.proto, baud:ch.baud});
+      pd.size.w=n.size.w; pd.size.h=n.size.h; applySize(pd);
+      addEdge(rr.id,'out',pd.id,'in');
+      last=pd;
+    }
     const first=dec||fm;
     for(const e of ins) addEdge(e.from,e.fp,first.id,'in');
     if(dec) addEdge(dec.id,'out',fm.id,'in');
-    addEdge(fm.id,'out',rr.id,'in'); addEdge(rr.id,'out',sl.id,'in');
-    addEdge(sl.id,'out',sy.id,'in'); addEdge(sy.id,'blk',ps.id,'blk');
-    for(const e of outs) addEdge(ps.id,e.fp,e.to,e.tp);
+    addEdge(fm.id,'out',rr.id,'in');
+    for(const e of outs) addEdge(last.id,e.fp,e.to,e.tp);
     delNode(n); Sel.delete(n.id);
     Sel.clear(); for(const m of made) Sel.add(m.id);
     syncSel();

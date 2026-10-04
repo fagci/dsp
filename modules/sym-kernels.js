@@ -272,3 +272,45 @@ IQK.fmMod={
     n.ui={sr, air:n.p.fc+off};
     return {iq:o};
   }};
+
+/* ============================ Protocol Decoder (matched filter output): плагины 4FSK-приёмника ============================
+   Тот же код протокола (синхрослова, захват, кадры, разбор), что у Digital Voice Decoder, но вход — не IQ, а выход согласованного фильтра:
+   вещественный поток после FM Discriminator → RRC Matched Filter (любая частота ≥ 2 × бод). Дальше — как в монолите: 8 фаз такта на символ,
+   лучшая фаза и уровни — по подгонке синхрослова (слепая петля такта на узком глазе этих протоколов — α = 0.2 — хуже), кадровая сетка по слову.
+   proto = auto — все протоколы со скоростью baud. */
+IQK.fskSym=(()=>{
+  const K=fsk4Node(n=>n.ids||[]);
+  const pickIds=n=>{
+    const p=n.p.proto;
+    if(!p || p==='auto') return FSK4.order.filter(id=>Math.abs(FSK4.protos[id].baud-n.p.baud)<1);
+    return FSK4.protos[p] ? [p] : [];
+  };
+  return {
+    init(n){ K.init(n); },
+    process(n,I){
+      const s=iqIn(I,'in');
+      if(!s){ n.ui=null; return {rec:null, voice:null}; }
+      const ids=pickIds(n), key=s.sr+'|'+ids.join();
+      if(key!==n.key){ n.key=key; n.cplx=false; K.setup(n,s,false,ids); }
+      const out={recs:[], voice:[]};
+      if(!ids.length || s.sr<2*Math.max(...ids.map(id=>FSK4.protos[id].baud))){
+        n.ui={fs:s.sr, M:1, protos:{}, active:null, err:ids.length ? 'sample rate must be ≥ 2 × baud' : 'no protocol with '+n.p.baud+' Bd'};
+        n.ui.text=n.ui.err; return {rec:null, voice:null};
+      }
+      for(const ch of n.ch){
+        let add=0; for(const c of s.chunks) add+=c.re.length;
+        const nx=new Float32Array(ch.x.length+add); nx.set(ch.x); let o=ch.x.length;
+        for(const c of s.chunks){ nx.set(c.re,o); o+=c.re.length; }
+        ch.x=nx;
+        K.scan(n,ch,out);
+      }
+      const now=Date.now(), ui={fs:n.fs, M:1, protos:{}, active:null};
+      for(const ch of n.ch) if(ch.lock) ui.active=ch.lock.proto.id;
+      for(const id of n.ids){
+        const pr=FSK4.protos[id], L=n.ch.map(c=>c.lock).find(l=>l && l.proto===pr) || null;
+        ui.protos[id]=pr.ui(n.pr[id],L,now,n);
+      }
+      n.ui=n.ids.length===1 ? Object.assign(ui,ui.protos[n.ids[0]]) : ui;
+      return {rec:out.recs.length ? out.recs : null, voice:out.voice.length ? out.voice : null};
+    }};
+})();
