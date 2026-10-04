@@ -1866,6 +1866,7 @@ dashTree:Graph.dashTree,                            // раскладка акт
 dashPages:Graph.dashPages.map(pg=>({name:pg.name||'',tree:pg.tree})), dashPage:Graph.dashPage};
 }
 const MIGRATE={                                     // старые узлы → их замена
+dmrRx:   {type:'fskRx', p:{proto:'dmr'}, ports:{}},     // DMR Decoder — тот же движок, протокол dmr
 water:   {type:'sa', ports:{fsel:'f1'}},
 spectrum:{type:'sa', ports:{fsel:'f1', lsel:'snr1'}},
 // l1..l4 (уровень 0..1 между floor/top) убраны — провода переносим на snr1..snr4
@@ -1877,7 +1878,7 @@ function migrate(o){
 const map={};
 for(const n of o.nodes){
 const m=MIGRATE[n.type];
-if(m){ map[n.id]=m; n.type=m.type; continue; }
+if(m){ map[n.id]=m; n.type=m.type; if(m.p) n.p={...m.p,...(n.p||{})}; continue; }
 // 'mic' успел дважды сменить форму (mic/mic2 → один узел с выбором канала → оба канала сразу
 // одним узлом с двумя выходами) — старые сохранения отличаем по отсутствию devA и досаживаем.
 if((n.type==='mic'||n.type==='mic2') && (!n.p || n.p.devA===undefined)){

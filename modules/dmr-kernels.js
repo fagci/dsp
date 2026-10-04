@@ -420,7 +420,6 @@ function dmrUiText(u,fs,M){
     (u.sys ? ' · net '+u.sys.net+' site '+u.sys.site : '');
   return head+'\n'+cnt+'\n'+u.slots.map((l,i)=>ts[i]+': '+l).join('\n')+(u.recent.length ? '\n'+u.recent.join('\n') : '');
 }
-IQK.dmrRx=fsk4Node(()=>['dmr']);
 // 2 — слот-тип данных сошёлся с синхрословом данных, 1 — сошёлся EMB
 function dmrFecScore(F,L){
   const bits=new Uint8Array(264);

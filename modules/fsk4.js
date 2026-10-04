@@ -4,7 +4,7 @@
    Один протокол или все сразу: канал (скорость, α) общий, протокол определяется по синхрословам. Записи — на `rec`, сырые кадры
    вокодера (AMBE / IMBE / …) — на `voice`. */
 
-defIQ({ id:'fskRx', title:'4FSK Digital Voice', cat:'Decoders', tall:true, resize:true, w:480,
+defIQ({ id:'fskRx', title:'Digital Voice Decoder', kw:'4fsk dmr p25 nxdn ysf m17 d-star dstar dpmr motorola mototrbo', cat:'Decoders', tall:true, resize:true, w:480,
   ins:[{n:'in',t:'iq'}], outs:[{n:'rec',t:'rec'},{n:'voice',t:'rec'}],
   params:[{n:'proto',t:'select',opts:['auto',...FSK4.order],d:'auto',label:'protocol (auto: every one, picked by sync words)'}]},
   n=>{ const u=n.ui; if(!u) return 'no input';
