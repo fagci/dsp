@@ -12,3 +12,8 @@ defIQ({ id:'fskRx', title:'Digital Voice Decoder', kw:'4fsk dmr p25 nxdn ysf m17
     if(a) return a.text;
     const recent=ids.flatMap(id=>u.protos[id].recent||[]).slice(-6);
     return (u.fs/1000).toFixed(1)+' kS/s · searching sync ('+ids.join(', ')+')'+(recent.length ? '\n'+recent.join('\n') : ''); });
+
+// кадры M17 из Symbol Sync Search (blk) → записи и сырой Codec 2; разбор тот же, что у Digital Voice Decoder с proto = m17
+defIQ({ id:'m17Parse', title:'M17 Frame Parser', cat:'Decoders', kw:'m17 lsf callsign codec2 frames', tall:true, resize:true, w:480,
+  ins:[{n:'blk',t:'blk'}], outs:[{n:'rec',t:'rec'},{n:'voice',t:'rec'}]},
+  n=>n.ui ? n.ui.text : 'no input');
