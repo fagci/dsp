@@ -5,7 +5,7 @@
    сигнализация (транкинг, заголовки, шифрование) — по галочке. Subscribers — реестр абонентов и групп: кто, когда, сколько говорил,
    сколько сообщений, позывной / alias, положение (на карту). Единый вид записей для всех протоколов: commsMessage / commsWho. */
 
-const COMMS_SIGNAL=new Set(['csbk','usbd','data-header','data-partial','mbc','tsbk','mbt','lc','hdu','crypt','lsd','header','bert','emb-lc','pi','block']);
+const COMMS_SIGNAL=new Set(['csbk','usbd','data-header','data-partial','mbc','tsbk','mbt','lc','hdu','crypt','lsd','header','bert','emb-lc','pi','block','resource','sysinfo','sync']);
 const COMMS_GROUP_CALLS=new Set(['group','conference']);
 const commsIsGroup=r=>COMMS_GROUP_CALLS.has(r.call) || r.group===true || r.group===1 || (typeof r.to==='string' && /^CQ/i.test(r.to));
 // позывной D-STAR приходит то с суффиксом (N0CALL/TEST — в заголовке), то без (в конце передачи): абонент — позывной до «/»
@@ -28,6 +28,9 @@ function commsMessage(r,sig){
     return base('data', {text:r.msg+(r.hex ? ' '+r.hex : ''), service:r.msg, ran:r.ran, hex:r.hex});
   if(r.src==='M17' && k==='packet')
     return base(r.message!=null ? 'text' : 'data', {text:r.message!=null ? String(r.message) : r.hex||'', service:'proto '+r.proto, can:r.can, crc:r.crc, hex:r.hex});
+  if(r.src==='TETRA' && k==='message')                                     // SDS: текст, статус, положение (LIP), данные
+    return base(r.lat!=null ? 'location' : r.message!=null ? 'text' : 'data', {text:r.message!=null ? String(r.message) : r.lat!=null ? r.lat+', '+r.lon+(r.speed!=null ? ' · '+r.speed+' km/h' : '') : r.status!=null ? 'status 0x'+r.status.toString(16).toUpperCase().padStart(4,'0') : r.hex||'', service:r.service,
+      lat:r.lat, lon:r.lon, speed:r.speed, heading:r.heading, hex:r.hex});
   if(r.src==='D-STAR' && k==='text') return base('text', {text:String(r.message), service:'slow data'});
   if(r.src==='D-STAR' && k==='gps'){
     const g=typeof dmrNmea==='function' ? dmrNmea(String(r.nmea||'')) : {};
@@ -59,7 +62,7 @@ function commsWho(r){
 }
 
 /* ---- Messages ---- */
-const COMMS_PROTOS=['all','DMR','P25','NXDN','dPMR','YSF','M17','D-STAR'];
+const COMMS_PROTOS=['all','DMR','P25','NXDN','dPMR','YSF','M17','D-STAR','TETRA'];
 function commsMsgRow(m){
   return {time:new Date(m.t).toISOString(), protocol:m.src, type:m.type, from:m.from||'', to:m.to||'', text:m.text||'', service:m.service||'', lat:m.lat ?? '', lon:m.lon ?? '', ip:m.ip||'', crc:m.crc||'', slot:m.slot||'', cc:m.cc ?? m.nac ?? m.ran ?? m.can ?? ''};
 }

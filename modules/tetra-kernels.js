@@ -347,6 +347,97 @@ function tetraNext(t){ if(++t.tn>4){ t.tn=1; if(++t.fn>18){ t.fn=1; if(++t.mn>60
 // слот с BSCH / BNCH в кадре 18 (как у osmo-tetra)
 const tetraBschTn=mn=>4-((mn+1)%4);
 
+/* ---- SDS (CMCE D-SDS-DATA, EN 300 392-2 14.8.x; SDS-TL 29.4; LIP TS 100 392-18-1) ---- */
+// конец сообщения без заполнения: последний единичный бит — граница
+function tetraStrip(b,from,to){ let i=to-1; while(i>=from && !b[i]) i--; return i>=from ? i : to; }
+const TETRA_GSM=[64,163,36,165,232,233,249,236,242,199,10,216,248,13,197,229,916,95,934,915,923,937,928,936,931,920,926,32,198,230,223,201,
+  32,33,34,35,164,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,
+  161,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,196,214,209,220,167,
+  191,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,228,246,241,252,224];
+const TETRA_GSM_ESC={10:12,20:94,40:123,41:125,47:92,60:91,61:126,62:93,64:124,101:0x20ac};
+// текст: кодировка 7 бит (0: алфавит GSM 7 бит, биты упакованы по октетам с младшего), 8 бит (1: ISO 8859-1), 16 бит (26: UCS-2 / UTF-16BE)
+function tetraText(b,pos,end,coding){
+  const av=end-pos;
+  if(coding===0){
+    let s='', esc=false, n=Math.floor(av/7), last=-1;
+    for(let k=0;k<n;k++){
+      let v=0;
+      for(let j=0;j<7;j++){ const p=k*7+j; v|=(b[pos+(p>>3)*8+7-(p&7)]&1)<<j; }
+      last=v;
+      if(k===n-1 && v===0 && n%8===0) break;                        // 7 бит заполнения до октета
+      if(!esc && v===27){ esc=true; continue; }
+      let c=TETRA_GSM[v];
+      if(esc){ if(TETRA_GSM_ESC[v]) c=TETRA_GSM_ESC[v]; esc=false; }
+      s+=String.fromCodePoint(c);
+    }
+    return s;
+  }
+  if(coding===1){ let s=''; for(let i=pos;i+8<=end;i+=8){ const c=tetraBits(b,i,8); s+=String.fromCharCode(c||32); } return s; }
+  if(coding===26){ let s=''; for(let i=pos;i+16<=end;i+=16){ const c=tetraBits(b,i,16); s+=String.fromCharCode(c||32); } return s; }
+  return null;
+}
+const TETRA_LIP_ERR=['<2 m','<20 m','<200 m','<2 km','<20 km','≤200 km','>200 km',null];
+// короткий отчёт LIP: тип PDU 2, время 2, долгота 25, широта 24, ошибка 3, скорость 7, направление 4, тип доп. данных 1 (+ причина 8)
+function tetraLip(b,o,len){
+  if(len<8+68 || tetraBits(b,o+8,2)!==0) return null;
+  const sg=(v,n)=>v>=Math.pow(2,n-1) ? v-Math.pow(2,n) : v;
+  const lon=sg(tetraBits(b,o+12,25),25)*360/Math.pow(2,25), lat=sg(tetraBits(b,o+37,24),24)*180/Math.pow(2,24);
+  const k=tetraBits(b,o+64,7);
+  const r={lat:+lat.toFixed(6), lon:+lon.toFixed(6), elapsed:tetraBits(b,o+10,2), err:TETRA_LIP_ERR[tetraBits(b,o+61,3)]};
+  if(k<127) r.speed=k<=28 ? k : +(16*Math.pow(1.038,k-13)).toFixed(1);
+  const d=tetraBits(b,o+71,4); r.heading=d*22.5;
+  if(!b[o+75] && len>=84) r.reason=tetraBits(b,o+76,8);
+  if(Math.abs(lat)>90 || Math.abs(lon)>180) return null;
+  return r;
+}
+// pos — начало PDU CMCE (тип 5 бит); ответ — поля сообщения или null
+function tetraSds(b,pos,end){
+  let o=pos+5;
+  if(end-o<4) return null;
+  const cpti=tetraBits(b,o,2); o+=2;
+  let from=null;
+  if(cpti===1||cpti===2){ if(end-o<24) return null; from=tetraBits(b,o,24); o+=24; }
+  if(cpti===2){ if(end-o<24) return null; o+=24; }
+  if(end-o<2) return null;
+  const sdti=tetraBits(b,o,2); o+=2;
+  let len;
+  if(sdti<3) len=[16,32,64][sdti]; else { if(end-o<11) return null; len=tetraBits(b,o,11); o+=11; }
+  if(o+len>end) return null;
+  const r={from, sdti, len, hex:tetraHex(b,o,Math.min(len,512))};
+  if(sdti===0){ r.kind='status'; r.status=tetraBits(b,o,16); return r; }
+  if(sdti<3||len<8){ r.kind='data'; return r; }
+  const pid=tetraBits(b,o,8); r.pid=pid; r.kind='data';
+  const e=o+len;
+  let ts=-1, tsOk=false;
+  if(pid===2||pid===9) ts=o+8;
+  else if(pid===10){ const p=tetraLip(b,o,len); if(p){ r.kind='location'; Object.assign(r,p); } return r; }
+  else if(pid>=128 && pid<255 && len>=12){
+    const type=tetraBits(b,o+8,4);
+    if(type<=2){
+      let h=type===0 ? 24 : 32;
+      if(len<h) return r;
+      r.tl=['TRANSFER','REPORT','ACK'][type]; r.ref=tetraBits(b,o+h-8,8);
+      if(type!==2 && b[o+15]){                                      // хранение и пересылка: срок 5, тип адреса 3, адрес
+        let req=h+8; const a=tetraBits(b,o+h+5,3);
+        if(len<req) return r;
+        if(a===0) req+=8; else if(a===1) req+=24; else if(a===2) req+=48;
+        else if(a===3){ if(len<h+16) return r; const dg=tetraBits(b,o+h+8,8); req=h+16+((dg+1)&~1)*4; }
+        else if(a!==7) return r;
+        if(len<req) return r;
+        h=req;
+      }
+      if(type===0 && (pid===130||pid===137)){ ts=o+h; tsOk=true; }
+    }
+  }
+  if(ts>=0 && e-ts>=8){
+    const tsFlag=b[ts], coding=tetraBits(b,ts+1,7);
+    let p=ts+8; if(tsOk && tsFlag) p+=24;
+    r.coding=coding;
+    if(p<=e){ const t=tetraText(b,p,e,coding); if(t!=null){ r.kind='text'; r.text=t; } }
+  }
+  return r;
+}
+
 IQK.tetraRx={
   init(n){ n.key=''; n.ui=null; },
   setup(n,s){
@@ -484,7 +575,7 @@ IQK.tetraRx={
     const soft=this.soft(n,c.jc,c.w,c.inv), sb=tetraBlkDec(soft.subarray(TETRA_SB.b1,TETRA_SB.b1+120),TETRA_BLK.sb1,TETRA_SCR0);
     if(!sb.ok){ n.cnt.crcBad++; return; }
     const sy=tetraSync(sb.bits);
-    const L=n.lock={jS:c.jc, w:c.w, inv:c.inv, tn:sy.tn, fn:sy.fn, mn:sy.mn, miss:0, quiet:0, evalJ:0,
+    const L=n.lock={jS:c.jc, w:c.w, inv:c.inv, tn:sy.tn, fn:sy.fn, mn:sy.mn, miss:0, quiet:0, evalJ:0, sc:0, fr:{},
       cell:{mcc:sy.mcc, mnc:sy.mnc, cc:sy.cc, scr:tetraScrInit(sy.mcc,sy.mnc,sy.cc)}, since:Date.now()};
     n.cnt.locks++; n.si=null;
     this.burst(n,L,'y',soft,out,true);
@@ -507,7 +598,7 @@ IQK.tetraRx={
       L.jS=best.jc;
       this.burst(n,L,best.t,this.soft(n,best.jc,L.w,L.inv),out,false);
     } else if(++L.miss>=12){ this.drop(n,'lost'); return; }
-    L.jS+=8*TETRA_SYM; tetraNext(L); L.evalJ=L.jS+2060;
+    L.jS+=8*TETRA_SYM; tetraNext(L); L.evalJ=L.jS+2060; L.sc++;
     if(++L.quiet>=72*2){ this.drop(n,'no valid blocks'); }
   },
   drop(n,why){
@@ -590,6 +681,38 @@ IQK.tetraRx={
     const sec=(Date.now()-e.t0)/1000;
     this.emit(n,L,out,'end','CALL end · TN '+tn+' · usage marker '+e.marker+' · '+sec.toFixed(1)+' s · '+e.bursts+' traffic bursts',{slot:tn, marker:e.marker, seconds:+sec.toFixed(1), bursts:e.bursts});
   },
+  // сообщение верхнего уровня: LLC → MLE → CMCE; D-SDS-DATA → запись message
+  l3(n,L,out,b,sdu,to,chan){
+    if(!sdu || sdu.disc!=='CMCE' || sdu.pdu!=='D-SDS DATA') return;
+    const m=tetraSds(b,sdu.bits[0],sdu.bits[1]);
+    if(!m) return;
+    n.cnt.sds=(n.cnt.sds||0)+1;
+    const f={chan, from:m.from!=null ? String(m.from) : undefined, to, pid:m.pid, sdti:m.sdti, ref:m.ref, tl:m.tl, hex:m.hex};
+    let txt;
+    if(m.kind==='text'){ f.message=m.text; f.service='SDS text'; txt='SDS '+(m.from!=null ? m.from : '?')+' → '+(to||'?')+' "'+m.text+'"'; }
+    else if(m.kind==='location'){ Object.assign(f,{lat:m.lat, lon:m.lon, speed:m.speed, heading:m.heading, accuracy:m.err, reason:m.reason, service:'SDS LIP'});
+      txt='SDS LIP '+(m.from!=null ? m.from : '?')+' · '+m.lat+', '+m.lon+(m.speed!=null ? ' · '+m.speed+' km/h' : ''); }
+    else if(m.kind==='status'){ f.service='SDS status'; f.status=m.status; txt='SDS status '+(m.from!=null ? m.from : '?')+' → '+(to||'?')+' · 0x'+m.status.toString(16).toUpperCase().padStart(4,'0'); }
+    else { f.service='SDS data'+(m.pid!=null ? ' PID '+m.pid : ''); txt='SDS data '+(m.from!=null ? m.from : '?')+' → '+(to||'?')+' · '+m.len+' bits'+(m.pid!=null ? ' · PID '+m.pid : ''); }
+    if(m.from!=null && f.lat!=null){ f.id='tetra:'+m.from; f.label=String(m.from); }
+    this.emit(n,L,out,'message',txt,f);
+  },
+  // слот TN: накопление фрагментов (MAC-RESOURCE «начало», MAC-FRAG, MAC-END)
+  frag(n,L,out,part,fin,to,chan){
+    const fr=L.fr, tn=L.tn;
+    let f=fr[tn];
+    if(part==='start'){ f={bits:[...fin.bits], to, sc:L.sc}; fr[tn]=f; return; }
+    if(!f) return;
+    if(L.sc-f.sc>144){ delete fr[tn]; return; }                    // два мультикадра без продолжения
+    f.sc=L.sc;
+    for(const v of fin.bits) f.bits.push(v);
+    if(f.bits.length>4096){ delete fr[tn]; return; }
+    if(part==='end'){
+      delete fr[tn];
+      const a=Uint8Array.from(f.bits), sdu=tetraTmSdu(a,0,a.length);
+      this.l3(n,L,out,a,sdu,f.to,chan);
+    }
+  },
   mac(n,L,out,b,chan){
     const N=b.length, si=n.si;
     let off=0;
@@ -612,26 +735,35 @@ IQK.tetraRx={
         let end=N, rest=true;
         if(r.octets>0 && !r.frag && !r.stolen2){ end=off+r.octets*8; rest=false; if(end>N) return; }
         let sdu=null, tail=end;
-        if(r.fill && r.tm>0){
-          let i=end-1; while(i>off+r.tm && !b[i]) i--;
-          tail=b[i] ? i : end;
-        }
+        if(r.fill && r.tm>0) tail=tetraStrip(b,off+r.tm,end);
         if(r.tm>0 && tail-off>r.tm) sdu=tetraTmSdu(b,off+r.tm,tail);
         n.cnt.resource++;
+        const to=r.ssi!=null ? String(r.ssi) : undefined;
         let txt='RESOURCE · '+r.addr+(r.enc ? ' · ENCRYPTED ('+r.enc+')' : '');
         if(r.alloc) txt+=' · alloc TN '+r.alloc.ts+' '+(TETRA_ULDL[r.alloc.uldl]||'')+' ch '+r.alloc.carrier+(r.alloc.dlHz ? ' ('+(r.alloc.dlHz/1e6).toFixed(4)+' MHz)' : '')+' ['+(TETRA_ALLOC[r.alloc.type]||'')+']';
         if(r.frag) txt+=' · fragment start';
         if(sdu) txt+=' · '+sdu.llc+(sdu.disc ? ' · '+sdu.disc+(sdu.pdu ? ' '+sdu.pdu : '') : '');
-        this.emit(n,L,out,'resource',txt,{chan, addrType:TETRA_ADDR[r.addrType], to:r.ssi!=null ? String(r.ssi) : undefined, event:r.event, usage:r.usage, enc:r.enc,
+        this.emit(n,L,out,'resource',txt,{chan, addrType:TETRA_ADDR[r.addrType], to, event:r.event, usage:r.usage, enc:r.enc,
           encrypted:r.enc>0, alloc:r.alloc, llc:sdu&&sdu.llc, disc:sdu&&sdu.disc, pdu:sdu&&sdu.pdu, hex:sdu&&sdu.bits ? tetraHex(b,sdu.bits[0],Math.min(256,sdu.bits[1]-sdu.bits[0])) : undefined, frag:r.frag});
+        if(r.frag && r.tm>0) this.frag(n,L,out,'start',{bits:b.subarray(off+r.tm,tail)},to,chan);
+        else if(!r.frag && sdu) this.l3(n,L,out,b,sdu,to,chan);
         if(rest) return;
         off=end; continue;
       }
       if(t===1){
-        if(b[off+2]===0){ n.cnt.frag=(n.cnt.frag||0)+1; return; }
-        const li=tetraBits(b,off+5,6);
         n.cnt.frag=(n.cnt.frag||0)+1;
+        if(b[off+2]===0){                                           // MAC-FRAG: тип 2, FRAG 1, заполнение 1, данные до конца блока
+          const e=b[off+3] ? tetraStrip(b,off+4,N) : N;
+          this.frag(n,L,out,'frag',{bits:b.subarray(off+4,e)},null,chan);
+          return;
+        }
+        const li=tetraBits(b,off+5,6);                              // MAC-END: тип 2, END 1, заполнение 1, позиция гранта 1, длина 6
         if(li<1 || li>0x3a || off+li*8>N) return;
+        let c=off+11;
+        if(b[c++]) c+=8;
+        if(b[c++]){ const a=tetraChanAlloc(b,c,si ? si.band : null,si ? si.off : 0); if(a.len<0) return; c+=a.len; }
+        const e=b[off+3] ? tetraStrip(b,c,off+li*8) : off+li*8;
+        this.frag(n,L,out,'end',{bits:b.subarray(c,e)},null,chan);
         off+=li*8; continue;
       }
       return;
@@ -650,6 +782,60 @@ function tetraGenSdu(g,k){
   put(3,hdr[1]); put(hdr[1]===2 ? 5 : hdr[1]===1 ? 4 : 3,hdr[2]);
   const pay=rnd(24+(k%5)*8);
   return Uint8Array.from([...b,...pay]);
+}
+
+/* ---- генератор SDS: тексты (GSM 7 бит, Latin-1, UCS-2), отчёты LIP, статусы, длинное сообщение кусками MAC ---- */
+function tetraGsmBits(str){
+  const idx=[...str].map(c=>{ const v=TETRA_GSM.lastIndexOf(c.codePointAt(0)); return v<0 ? TETRA_GSM.lastIndexOf(63) : v; });
+  const b=new Uint8Array(Math.ceil(idx.length*7/8)*8);
+  idx.forEach((v,k)=>{ for(let j=0;j<7;j++){ const p=k*7+j; b[(p>>3)*8+7-(p&7)]=(v>>j)&1; } });
+  return b;
+}
+function tetraGenSds(g,k){
+  const out=[], put=(l,v)=>{ for(let i=l-1;i>=0;i--) out.push(Math.floor(v/Math.pow(2,i))&1); };
+  const from=7001000+k%3, to=100000+(k*37)%9000, kind=k%6;
+  let data=[], pu=(l,v)=>{ for(let i=l-1;i>=0;i--) data.push(Math.floor(v/Math.pow(2,i))&1); };
+  const text=(str,coding,pid)=>{
+    if(pid===130){ pu(8,130); pu(4,0); pu(2,0); pu(1,0); pu(1,0); pu(8,k&255); } else pu(8,pid);
+    pu(1,0); pu(7,coding);
+    if(coding===0) data.push(...tetraGsmBits(str));
+    else for(const c of str) pu(coding===1 ? 8 : 16,coding===1 ? c.charCodeAt(0)&255 : c.charCodeAt(0));
+  };
+  let sdti=3;
+  if(kind===0) text('Hello from the TETRA test cell, message '+k,0,130);
+  else if(kind===1){
+    const a=(k/3)*0.01, lat=55.7558+0.02*Math.sin(a+(k%3)*2), lon=37.6173+0.03*Math.cos(a+(k%3)*2);
+    const enc=(v,bits,scale)=>{ let x=Math.round(v/scale); if(x<0) x+=Math.pow(2,bits); return x; };
+    pu(8,10); pu(2,0); pu(2,0); pu(25,enc(lon,25,360/Math.pow(2,25))); pu(24,enc(lat,24,180/Math.pow(2,24))); pu(3,1); pu(7,20+(k%7)); pu(4,k%16); pu(1,0); pu(8,1);
+  }
+  else if(kind===2) text('Simple text, no SDS-TL: caf\u00e9 '+k,1,2);
+  else if(kind===3){ sdti=0; pu(16,0x8000+k%64); }
+  else if(kind===4) text('Длинное сообщение SDS ('+k+'): '+'проверка сборки фрагментов MAC, UCS-2. '.repeat(2),26,130);
+  else return null;
+  put(4,2); put(3,2); put(5,15); put(2,1); put(24,from); put(2,sdti);
+  if(sdti===3) put(11,data.length);
+  out.push(...data); out.push(0);
+  return {ssi:to, sdu:Uint8Array.from(out)};
+}
+// блок из S бит: сообщение целиком, начало фрагментации, продолжение или конец
+function tetraGenBlk(g,S){
+  const b=new Uint8Array(S), put=(c,l,v)=>{ tetraPutBits(b,c,l,v); return c+l; };
+  const nul=c=>{ if(c+17<=S){ b[c+2]=1; tetraPutBits(b,c+7,6,2); b[c+16]=1; } };
+  if(g.carry){
+    const r=g.carry;
+    if(r.length>S-4){ let c=put(0,2,1); c=put(c,1,0); c=put(c,1,0); b.set(r.subarray(0,S-4),c); g.carry=r.subarray(S-4); return b; }
+    let c=put(0,2,1); c=put(c,1,1); const fillAt=c; c=put(c,1,0); c=put(c,1,0); const liAt=c; c=put(c,6,0); c=put(c,1,0); c=put(c,1,0);
+    b.set(r,c); c+=r.length;
+    let fill=0; if(c&7){ fill=1; b[c++]=1; while(c&7) b[c++]=0; }
+    tetraPutBits(b,fillAt,1,fill); tetraPutBits(b,liAt,6,c>>3);
+    nul(c); g.carry=null; return b;
+  }
+  const m=tetraGenSds(g,g.k++);
+  if(!m){ const t1=tetraResourceBits(S,100000+(g.k*37)%9000,tetraGenSdu(g,g.k),null); return t1; }
+  if(43+m.sdu.length<=S) return tetraResourceBits(S,m.ssi,m.sdu,null);
+  let c=put(0,2,0); c=put(c,1,0); c=put(c,1,0); c=put(c,2,0); c=put(c,1,0); c=put(c,6,0x3f); c=put(c,3,1); c=put(c,24,m.ssi); c=put(c,1,0); c=put(c,1,0); c=put(c,1,0);
+  b.set(m.sdu.subarray(0,S-c),c); g.carry=m.sdu.subarray(S-c);
+  return b;
 }
 function tetraGenSlot(g){
   const c=TETRA_CELL, sc=g.sc++, tn=sc%4+1, fn=Math.floor(sc/4)%18+1, mn=Math.floor(sc/72)%60+1;
@@ -678,12 +864,11 @@ function tetraGenSlot(g){
   if(callOn){ tr=TETRA_SEQ.n; full=new Uint8Array(432); for(let i=0;i<432;i++){ g.x^=g.x<<13; g.x^=g.x>>>17; g.x^=g.x<<5; full[i]=(g.x>>>9)&1; } }
   else if(tn===1 && fn%2===0 && fn!==18){
     tr=TETRA_SEQ.n;
-    const t1=tetraResourceBits(268,100000+(g.k++*37)%9000,tetraGenSdu(g,g.k),fn===4 ? {ts:2,uldl:3,carrier:c.carrier} : null);
-    full=tetraBlkEnc(t1,TETRA_BLK.full,scr);
+    full=tetraBlkEnc(tetraGenBlk(g,268),TETRA_BLK.full,scr);
   }
   if(full){ b1=full.subarray(0,216); b2=full.subarray(216); }
   else if(callSet){ g.k++; b1=hd(tetraGenSdu(g,7)); b2=nullHd(); }
-  else if(tn===1 && fn!==18){ g.k++; b1=hd(tetraGenSdu(g,g.k)); b2=nullHd(); }
+  else if(tn===1 && fn!==18){ b1=tetraBlkEnc(tetraGenBlk(g,124),TETRA_BLK.hd,scr); b2=nullHd(); }
   else { b1=nullHd(); b2=nullHd(); }
   put(q.slice(10)); put([0,0]); put(b1); put(bb.subarray(0,14)); put(tr); put(bb.subarray(14)); put(b2); put([0,0]); put(q.slice(0,10));
   return bits;

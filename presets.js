@@ -2774,7 +2774,7 @@ preset('TETRA: Test Cell (Generator)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'TETRA without a radio: the generator sends the main carrier of a test cell (MCC 262, MNC 1011, colour code 5, 391.0 MHz) — π/4-DQPSK, 18 kBd, 4 slots per frame:\n'+
   'a synchronization burst in frame 18, a control channel in slot 1 (MAC-RESOURCE with addresses and MLE / MM / CMCE message names, a channel allocation now and then),\n'+
-  'a call in slot 2 every few seconds (traffic bursts with random bits instead of speech: the Vocoder plays noise). TETRA Decoder: sync burst → cell identity and time, AACH, SYSINFO, MAC-RESOURCE, calls by usage marker.'});
+  'a call in slot 2 every few seconds (traffic bursts with random bits instead of speech: the Vocoder plays noise), and SDS: text in three encodings (one long, sent in MAC fragments), statuses and LIP position reports of three moving radios — they land in Messages, Subscribers and on the map. TETRA Decoder: sync burst → cell identity and time, AACH, SYSINFO, MAC-RESOURCE, calls by usage marker.'});
 nt.size.w=760; nt.size.h=120; applySize(nt);
 const gn=addNode('iqGen',40,240,{sr:'256000',fc:391000000,mode:'TETRA',off:0,lvl:-20,noise:-45});
 const de=addNode('tetraRx',340,240,{});
@@ -2785,6 +2785,11 @@ addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 const vc=addNode('mbeVoice',920,240,{}); vc.size.w=340; applySize(vc);
 const dc=addNode('dac',920,420,{vol:.5});
 addEdge(de.id,'voice',vc.id,'voice'); addEdge(vc.id,'out',dc.id,'L'); addEdge(vc.id,'out',dc.id,'R');
+const ml=addNode('msgLog',1300,240,{proto:'TETRA'}); ml.size.w=460; ml.size.h=300; applySize(ml);
+const sl=addNode('subLog',1300,580,{proto:'TETRA'}); sl.size.w=460; sl.size.h=300; applySize(sl);
+addEdge(de.id,'rec',ml.id,'rec'); addEdge(de.id,'rec',sl.id,'rec');
+const map=addNode('geoMap',1820,240,{mz:11,ttl:120,labels:true,trail:3000}); map.size.w=560; map.size.h=420; applySize(map);
+addEdge(de.id,'rec',map.id,'rec');
 markWiresDirty();
 });
 preset('TETRA: Control Channel (USB SDR)', function(){
@@ -2807,6 +2812,11 @@ addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 const vc=addNode('mbeVoice',920,360,{}); vc.size.w=340; applySize(vc);
 const dc=addNode('dac',920,540,{vol:.5});
 addEdge(de.id,'voice',vc.id,'voice'); addEdge(vc.id,'out',dc.id,'L'); addEdge(vc.id,'out',dc.id,'R');
+const ml=addNode('msgLog',1300,360,{proto:'TETRA'}); ml.size.w=460; ml.size.h=300; applySize(ml);
+const sl=addNode('subLog',1300,700,{proto:'TETRA'}); sl.size.w=460; sl.size.h=300; applySize(sl);
+addEdge(de.id,'rec',ml.id,'rec'); addEdge(de.id,'rec',sl.id,'rec');
+const map=addNode('geoMap',860,360,{mz:11,ttl:600,labels:true,trail:3000}); map.size.w=560; map.size.h=420; applySize(map);
+addEdge(de.id,'rec',map.id,'rec');
 markWiresDirty();
 });
 preset('Analog TV: Test Card (Generator)', function(){
