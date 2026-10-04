@@ -302,3 +302,14 @@ function m17BuildPacket(src,dst,can,text){
   seq.push(M17_EOT);
   return p25Cat(...seq);
 }
+
+/* ---- передача: голосовой поток (Codec 2 3200, два кадра по 8 байт на кадр M17 в 40 мс) ---- */
+// старт: преамбула + LSF (поток, голос, CAN); дальше кадр на каждые 16 байт; последний кадр помечается флагом конца (бит 15 номера кадра)
+function m17StreamStart(src,dst,can){
+  const lsf=m17MakeLsf(src,dst,0x0005|((can&15)<<7),new Uint8Array(14));
+  return {lsf, fn:0, dib:p25Cat(M17_PRE,m17Frame('lsf',m17EncLsf(lsf)))};
+}
+function m17StreamFrame(st,data16,last){
+  const fn=st.fn++&0x7FFF;
+  return m17Frame('str',m17EncStream(st.lsf,fn%6,last ? (0x8000|fn) : fn,data16));
+}

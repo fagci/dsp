@@ -198,3 +198,50 @@ def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t
       (kn ? '\nkeys: '+n.keys.list.length+(n.keys.bad.length ? ' ('+n.keys.bad.length+' invalid: need 10 hex digits)' : '')+(n.tot.dec ? ' · '+n.tot.dec+' frames decrypted' : '') : '')+
       (rows.length ? '\n'+rows.join('\n') : '\nwaiting for voice records');
   }});
+
+/* ---- Vocoder Encoder (Codec 2): звук движка → кадры M17 (режим 3200, 8 кГц, два кадра по 8 байт на 40 мс) ----
+   Зеркало Vocoder (mbelib) для M17: записи в том же виде (src, codec2 — 16 байт hex), их берёт M17 Frame Builder в режиме voice. */
+const C2E_H=24;                                         // полуширина оконного sinc-фильтра, отсчётов входа
+def({ id:'c2Enc', title:'Vocoder Encoder (Codec 2)', cat:'Protocols', kw:'m17 codec2 voice transmit microphone encoder', readout:true,
+  ins:[{n:'in',t:'sig'},{n:'ptt',t:'num'}], outs:[{n:'voice',t:'rec'}],
+  params:[{n:'gain',t:'range',min:-30,max:30,step:1,d:0,label:'input gain, dB (±1 → ±16384 at 0 dB)'}],
+  init:n=>{ n.h=-1; n.buf=new Float32Array(0); n.base=0; n.tt=0; n.q=[]; n.frames=0; n.text='…'; c2Load(); },
+  dispose(n){ if(n.h>=0 && C2.ex) C2.ex.c2_free(n.h); },
+  process(n,I){
+    const ex=C2.ex;
+    if(!ex){ n.text=C2.err ? 'codec2.wasm: '+C2.err : 'loading codec2.wasm…'; return {voice:null}; }
+    if(n.h<0) n.h=ex.c2_new(3200);
+    const on=I.ptt==null ? true : I.ptt>.5;
+    if(!on){ n.buf=new Float32Array(0); n.base=0; n.tt=0; n.q.length=0; n.text='idle · '+n.frames+' frames sent'; return {voice:null}; }
+    const sr=Eng.sr, x=I.in;
+    const nb=new Float32Array(n.buf.length+BLOCK); nb.set(n.buf); if(x) nb.set(x.subarray(0,BLOCK),n.buf.length);
+    n.buf=nb;
+    // 8 кГц: окно Ханна × sinc, срез 3,8 кГц
+    const step=sr/8000, fc=3800/sr, H=C2E_H, top=n.base+nb.length, g=Math.pow(10,n.p.gain/20)*16384;
+    for(;;){
+      const tt=n.tt, i0=Math.floor(tt);
+      if(i0+H>=top) break;
+      let y=0;
+      for(let k=i0-H+1;k<=i0+H;k++){
+        const d=k-tt, j=k-n.base; if(j<0) continue;
+        const a=2*Math.PI*fc*d, s=Math.abs(a)<1e-9 ? 1 : Math.sin(a)/a;
+        y+=nb[j]*2*fc*s*(.5+.5*Math.cos(Math.PI*d/H));
+      }
+      n.q.push(Math.max(-32768,Math.min(32767,Math.round(y*g))));
+      n.tt+=step;
+    }
+    const keep=Math.max(0,Math.floor(n.tt)-H-n.base);
+    if(keep>0){ n.buf=nb.slice(keep); n.base+=keep; }
+    const recs=[];
+    while(n.q.length>=320){
+      const by=new Uint8Array(16);
+      for(let f=0;f<2;f++){
+        new Int16Array(ex.memory.buffer,ex.c2_pcm(),160).set(n.q.splice(0,160));
+        ex.c2_encode(n.h); by.set(new Uint8Array(ex.memory.buffer,ex.c2_bits(),8),8*f);
+      }
+      recs.push({t:Date.now(), src:'M17', kind:'codec2', dtype:2, codec2:Array.from(by,v=>(v<16?'0':'')+v.toString(16)).join('').toUpperCase()});
+      n.frames++;
+    }
+    n.text='encoding · '+n.frames+' frames sent';
+    return {voice:recs.length ? recs : null}; },
+  draw(n){ n.el.querySelector('.readout').textContent=n.text; }});

@@ -1,6 +1,6 @@
 /* Codec 2 (LGPL 2.1) as a freestanding wasm module for the M17 modes 3200 and 1600: no libc; the host supplies the transcendental
-   functions (Math.*). malloc is a bump allocator over the linear memory - a decoder is created once per stream, and freed
-   decoders are reused, so nothing needs to be given back. */
+   functions (Math.*). malloc is a bump allocator over the linear memory - a codec is created once per stream (decoding or encoding),
+   and freed ones are reused, so nothing needs to be given back. */
 #include "codec2.h"
 #include <stdlib.h>
 #include <string.h>
@@ -40,3 +40,5 @@ void c2_free(int h){ if(h>=0 && h<MAXH && dec[h]) mode_of[h]=-1-mode_of[h]; }
 int c2_samples(int h){ return codec2_samples_per_frame(dec[h]); }
 /* decode the 8 bytes in c2_bits() into c2_samples(h) samples at c2_pcm() */
 int c2_decode(int h){ codec2_decode(dec[h],pcm,in); return codec2_samples_per_frame(dec[h]); }
+/* encode the c2_samples(h) samples at c2_pcm() into the bytes at c2_bits(); returns the number of bytes (8 in both modes) */
+int c2_encode(int h){ codec2_encode(dec[h],in,pcm); return (codec2_bits_per_frame(dec[h])+7)/8; }
