@@ -1061,10 +1061,10 @@ const nt=addNode('note',40,40,{text:'DMR without a radio: the generator sends a 
   'Slot 1: a group voice call (LC header, four superframes with embedded LC and the talker alias, terminator). Slot 2: CSBK preambles and two data messages\n'+
   '(IP/UDP/Motorola TMS text at rate ½, short data at rate ¾, an LRRP position — it lands on the map — all with CRC-32). CSBK: preamble,\n'+
   'Tier III C_ALOHA and a channel grant. The CACH carries a Short LC (slot activity).\n'+
-  'DMR Decoder: FM discriminator, RRC, 8 clock phases, sync and polarity search, then Golay / QR / BPTC / Reed-Solomon / CRC for every field. The voice output has the raw AMBE+2 frames.'});
+  'Digital Voice Decoder (DMR): FM discriminator, RRC, 8 clock phases, sync and polarity search, then Golay / QR / BPTC / Reed-Solomon / CRC for every field. The voice output has the raw AMBE+2 frames.'});
 nt.size.w=760; nt.size.h=150; applySize(nt);
 const gn=addNode('iqGen',40,240,{sr:'256000',fc:438000000,mode:'DMR',off:2000,lvl:-20,noise:-45});
-const de=addNode('dmrRx',340,240,{});
+const de=addNode('fskRx',340,240,{proto:'dmr'});
 de.size.w=560; de.size.h=340; applySize(de);
 const log=addNode('recLog',340,640,{});
 log.size.w=560; applySize(log);
@@ -1083,7 +1083,7 @@ const rx=addNode('rtlsdr',40,200,{sr:'1024000',freq:438000000,demod:'IQ'});
 const sa=addNode('sa',860,40,{auto:true,floor:-100,top:-30,split:1});
 sa.size.w=600; sa.size.h=280; applySize(sa);
 const sh=addNode('iqShift',340,200,{});
-const de=addNode('dmrRx',340,360,{});
+const de=addNode('fskRx',340,360,{proto:'dmr'});
 de.size.w=560; de.size.h=340; applySize(de);
 const log=addNode('recLog',340,760,{});
 log.size.w=560; applySize(log);
@@ -1096,12 +1096,12 @@ markWiresDirty();
 });
 preset('DMR: Activity Log and Station Map (Generator)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Who talks to whom, when and for how long: DMR Decoder → DMR Call Log. The log keeps calls and messages, counters per radio ID\n'+
+const nt=addNode('note',40,40,{text:'Who talks to whom, when and for how long: Digital Voice Decoder (DMR) → DMR Call Log. The log keeps calls and messages, counters per radio ID\n'+
   'and per talkgroup (calls, seconds, messages, last heard, talker alias) and buttons for CSV (calls, stations, groups). The stations output feeds the map —\n'+
   'a station shows up as soon as it sends a position (LRRP / NMEA). The generator has one radio (2600123) with a voice call, messages and a position.'});
 nt.size.w=760; nt.size.h=120; applySize(nt);
 const gn=addNode('iqGen',40,240,{sr:'256000',fc:438000000,mode:'DMR',off:2000,lvl:-20,noise:-45});
-const de=addNode('dmrRx',340,240,{});
+const de=addNode('fskRx',340,240,{proto:'dmr'});
 de.size.w=480; de.size.h=300; applySize(de);
 const lg=addNode('dmrLog',340,600,{});
 lg.size.w=480; lg.size.h=300; applySize(lg);
@@ -1122,7 +1122,7 @@ const rx=addNode('rtlsdr',40,200,{sr:'1024000',freq:438000000,demod:'IQ'});
 const sa=addNode('sa',860,40,{auto:true,floor:-100,top:-30,split:1});
 sa.size.w=600; sa.size.h=280; applySize(sa);
 const sh=addNode('iqShift',340,200,{});
-const de=addNode('dmrRx',340,360,{});
+const de=addNode('fskRx',340,360,{proto:'dmr'});
 de.size.w=480; de.size.h=300; applySize(de);
 const lg=addNode('dmrLog',340,720,{});
 lg.size.w=480; lg.size.h=300; applySize(lg);

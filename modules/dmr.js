@@ -1,14 +1,10 @@
 "use strict";
 /* ============================ DMR ============================
-   DMR Decoder (ядро в dmr-kernels.js): IQ (или ЧМ-звук) → 4FSK 4800 Бод → синхрослова, слоты, колор-код →
+   Ядро DMR (dmr-kernels.js) работает в узле 4FSK Digital Voice (fskRx, proto = dmr; прежний узел DMR Decoder — его миграция): IQ (или ЧМ-звук) → 4FSK 4800 Бод → синхрослова, слоты, колор-код →
    голосовые вызовы (LC, встроенный LC, talker alias), CSBK, данные и SMS, Short LC; сырые кадры AMBE — отдельным выходом. */
 
-defIQ({ id:'dmrRx', title:'DMR Decoder', cat:'Decoders', tall:true, resize:true, w:480,
-  ins:[{n:'in',t:'iq'}], outs:[{n:'rec',t:'rec'},{n:'voice',t:'rec'}]},
-  n=>n.ui ? n.ui.text : 'no input');
-
 /* ---- журнал: звонки, станции, разговорные группы ---- */
-// Копит записи DMR Decoder: кто с кем, когда, сколько; по станциям и группам — счётчики. Станции с позицией (LRRP / NMEA)
+// Копит записи DMR (Digital Voice Decoder): кто с кем, когда, сколько; по станциям и группам — счётчики. Станции с позицией (LRRP / NMEA)
 // уходят на карту. Длительность — по записи end (время потока), без неё — по числу голосовых пакетов (60 мс на слот).
 function dmrLogStation(n,id,t){
   let s=n.st.get(id);
