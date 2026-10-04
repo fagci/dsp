@@ -1069,6 +1069,53 @@ def({ id:'httpout', title:'HTTP Out', cat:'Output', readout:true,
     if(r.textContent!==t) r.textContent=t; }});
 
 
+// Оповещения: озвучка текста (SpeechSynthesis), системное уведомление (Notification), вибрация.
+// Срабатывает по новому тексту или по фронту go; подряд не чаще min gap, s.
+function notifyFire(n,text){
+  const now=Date.now();
+  if(now-n.lastAt<n.p.gap*1000){ n.skipped++; return; }
+  n.lastAt=now; n.fired++;
+  const msg=text || n.p.fallback;
+  if(n.p.speak && window.speechSynthesis && msg){
+    speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(String(msg).slice(0,300));
+    if(n.p.lang) u.lang=n.p.lang;
+    speechSynthesis.speak(u);
+  }
+  if(n.p.popup && window.Notification && Notification.permission==='granted'){
+    try{ new Notification(n.p.title||'DSP',{body:String(msg).slice(0,300)}); }catch(e){ n.err=e.message; }
+  }
+  if(n.p.vibrate && navigator.vibrate) navigator.vibrate(200);
+}
+def({ id:'notify', title:'Notify', cat:'Output', readout:true,
+  ins:[{n:'text',t:'txt'},{n:'go',t:'num'}],
+  params:[{n:'speak',t:'check',d:true,label:'speak'},
+          {n:'popup',t:'check',d:false,label:'system notification'},
+          {n:'vibrate',t:'check',d:false,label:'vibrate (phone)'},
+          {n:'lang',t:'text',d:'',label:'voice language (en-US, ru-RU; empty = default)'},
+          {n:'title',t:'text',d:'DSP',label:'notification title'},
+          {n:'fallback',t:'text',d:'Signal',label:'message when go has no text'},
+          {n:'gap',t:'range',min:0,max:60,step:.5,d:2,label:'min gap, s'},
+          {n:'allow',t:'button',label:'Allow notifications',fn:async n=>{
+            if(!window.Notification){ n.err='Notification API unavailable'; return; }
+            try{ n.err=(await Notification.requestPermission())==='granted' ? '' : 'notifications not allowed'; }
+            catch(e){ n.err=e.message; } }},
+          {n:'test',t:'button',label:'Test',fn:n=>{ n.lastAt=0; notifyFire(n,'Test'); }}],
+  init:n=>{ n.lastText=undefined; n.prevGo=0; n.lastAt=0; n.fired=0; n.skipped=0; n.err=''; },
+  dispose:n=>{ if(n.p.speak && window.speechSynthesis) speechSynthesis.cancel(); },
+  process(n,I){
+    const go=(I.go||0)>.5, rise=go && !n.prevGo; n.prevGo=go;
+    const textNew=typeof I.text==='string' && I.text!=='' && I.text!==n.lastText;
+    if(typeof I.text==='string') n.lastText=I.text;
+    if(textNew) notifyFire(n,I.text);
+    else if(rise) notifyFire(n,typeof I.text==='string' ? I.text : '');
+    return {}; },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const t=(n.err?n.err+'\n':'')+'fired '+n.fired+(n.skipped?' · skipped '+n.skipped:'')
+      +(window.Notification && n.p.popup ? ' · permission: '+Notification.permission : '');
+    if(r.textContent!==t) r.textContent=t; }});
+
+
 def({ id:'flash', title:'Screen Transmitter', cat:'Output', ins:[{n:'in',t:'num'},{n:'lo',t:'num'},{n:'hi',t:'num'}],
   swatch:true,
   params:[{n:'on',t:'button',label:'Fullscreen',fn:n=>{
