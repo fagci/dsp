@@ -68,6 +68,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - OFDM modulator/demodulator, chirp modem (transmit/receive)
 - HF propagation, WWV/WWVH/CHU time decoder
 - **Time Signal Decoder**: DCF77 (77.5 kHz) and WWVB (60 kHz) longwave time signals → bits → minute frame with parity / marker checks → UTC time (see [DCF77 and WWVB](#dcf77-and-wwvb))
+- **SAME / EAS** (NOAA Weather Radio alerts, AFSK 520.83 Bd from an NFM receiver): ZCZC header with the three repeats voted → originator, event, FIPS areas, validity, station; a test-signal generator for the decoder (see [SAME / EAS](#same--eas))
 - Doppler radar, 2D chirp radar, monostatic sonar
 
 ### Infrared
@@ -407,6 +408,19 @@ Presets: *POCSAG: Transmitter Loopback (no radio)*, *POCSAG: Send a Page (HackRF
 - **Not done:** MSF (60 kHz, Great Britain) and JJY (40 / 60 kHz) — other pulse codes; DCF77 weather bits, the PM phase code and the WWVB phase-modulated format are not read; the signal strength gives no confidence value apart from `depth`. Checked against the built-in generator (time code of the current clock, 48 kS/s IQ, a 192 kS/s real signal, an audio tone, noise down to 0 dB in the whole stream, offsets of tens of Hz) and against a second encoder written from the frame description, **not on real signals**; the KiwiSDR route (CW mode + *audio tone*) is a guess that has not been tried.
 
 Presets: *Time Signal: DCF77 Clock (Generator)*, *Time Signal: WWVB Clock (Generator)*, *Time Signal: DCF77 / WWVB from a Sound Card (192 kS/s)*.
+
+## SAME / EAS
+
+**SAME / EAS Decoder** (Decoders, main thread) reads the digital header of the NOAA Weather Radio alerts (US 162.400–162.550 MHz, NFM; the same coding is used by the Emergency Alert System): AFSK at 520.83 Bd, 1 = 2083.3 Hz, 0 = 1562.5 Hz, characters of 8 bits LSB first.
+
+- **Input:** audio (`sig`) of an FM receiver — *USB SDR* `audio` with NFM, a sound card, a file.
+- **Chain:** a correlator on both tones per bit at 8 bit-clock phases → search for `ZCZC` / `NNNN` in the bit stream (up to 2 bit errors) → characters up to `+TTTT-JJJHHMM-LLLLLLLL-`. The phases vote for the string of one transmission, then the three repeats vote **character by character** (the repeats exist for that). A message is closed after *wait* seconds of silence or after three repeats.
+- **Output:** `rec` `{t, src:'SAME', kind: header|eom|raw, org, orgName, event, eventName, locations (PSSCCC codes), states, areas, purge (min), jday, hour, min (UTC), callsign, text, raw, repeats, agree}` — `agree` is how many of the `repeats` match the voted string; a header that does not fit the format comes as `raw`. `text` — the line for a log or *Notify*; `new` — a pulse.
+- **Codes:** originators `EAS` / `CIV` / `WXR` / `PEP`, about 60 event codes (Tornado Warning, Required Weekly Test…; an unknown code is described by its last letter: W warning, A watch, E emergency, S statement); the state of a location (FIPS) is shown, county names are not.
+- **SAME: Test Signal** (Protocols) makes a header ×3 and `NNNN` ×3 from the fields (default: a Required Weekly Test for one Texas county) as audio — **for checking the decoder on a cable or a sound-card loop only**. Do not transmit it and do not feed it into alerting equipment: a false alert is illegal and harmful. There is deliberately no transmit preset.
+- **Not done:** the attention tone (853 + 960 Hz) and the voice message are not touched; no county names or NWR station list; Canadian and other national formats are not distinguished (WXR / EAS only); checked on the generator (SNR down to ~8 dB, a level change, corruption of two of the three repeats in different characters), the frame format is from the description of the code, **not on a real broadcast**.
+
+Presets: *SAME / EAS: Alert Decoder Test (Loopback)*, *SAME / EAS: NOAA Weather Radio (USB SDR)*.
 
 ## ACARS
 

@@ -166,6 +166,8 @@ const PRESET_CATS={
   'Time Signal: DCF77 Clock (Generator)':'HF Modes & Morse',
   'Time Signal: WWVB Clock (Generator)':'HF Modes & Morse',
   'Time Signal: DCF77 / WWVB from a Sound Card (192 kS/s)':'HF Modes & Morse',
+  'SAME / EAS: Alert Decoder Test (Loopback)':'Aircraft, Satellites & Telemetry',
+  'SAME / EAS: NOAA Weather Radio (USB SDR)':'Aircraft, Satellites & Telemetry',
   'POCSAG: Pager Messages (Generator)':'Modems & Data Links',
   'POCSAG: Pager Messages (USB SDR)':'Modems & Data Links',
   'AIS: Vessels on the Map (Generator)':'Aircraft, Satellites & Telemetry',
@@ -1241,6 +1243,38 @@ de.size.w=520; de.size.h=300; applySize(de);
 const log=addNode('recLog',640,590,{});
 log.size.w=520; applySize(log);
 addEdge(mc.id,'a',iq.id,'I'); addEdge(iq.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('SAME / EAS: Alert Decoder Test (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'SAME (NOAA Weather Radio, EAS) without a radio: SAME Test Signal sends a header three times — AFSK 520.83 Bd, 1 = 2083.3 Hz, 0 = 1562.5 Hz, the preamble of 16 bytes 0xAB —\n'+
+  'and then NNNN three times. SAME / EAS Decoder: 8 bit-clock phases, search for ZCZC / NNNN, the three repeats are voted character by character → originator, event, areas, validity, station.\n'+
+  'Press Send in the test node (default: a Required Weekly Test). The test signal is for checking the decoder on a cable or in the sound card only: never put it on the air or into an alerting system.'});
+nt.size.w=840; nt.size.h=130; applySize(nt);
+const tx=addNode('sameTx',40,230,{});
+tx.size.w=340; tx.size.h=320; applySize(tx);
+const rx=addNode('sameRx',420,230,{});
+rx.size.w=520; rx.size.h=300; applySize(rx);
+const log=addNode('recLog',420,590,{});
+log.size.w=520; applySize(log);
+addEdge(tx.id,'out',rx.id,'in'); addEdge(rx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('SAME / EAS: NOAA Weather Radio (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'NOAA Weather Radio (US, 162.400 / .425 / .450 / .475 / .500 / .525 / .550 MHz, narrow FM): tune to the local channel; alerts begin with the SAME burst, so leave the patch running.\n'+
+  'SAME / EAS Decoder shows the event (Tornado Warning, Required Weekly Test…), the areas as FIPS codes (PSSCCC), the validity time and the station; the log keeps them as CSV.'});
+nt.size.w=840; nt.size.h=110; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{auto:false,gainDb:35,demod:'NFM',bw:12500,freq:162550000});
+const sa=addNode('sa',40,520,{auto:true,split:.35});
+sa.size.w=480; sa.size.h=300; applySize(sa);
+const de=addNode('sameRx',420,200,{});
+de.size.w=520; de.size.h=300; applySize(de);
+const dc=addNode('dac',720,520,{vol:.3});
+const log=addNode('recLog',420,560,{});
+log.size.w=260; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'audio',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+addEdge(rx.id,'audio',dc.id,'L'); addEdge(rx.id,'audio',dc.id,'R');
 markWiresDirty();
 });
 preset('ISM 433: Sensors and Remotes (Generator)', function(){
