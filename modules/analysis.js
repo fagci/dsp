@@ -2768,6 +2768,9 @@ const BANDPLAN_PRESETS={
   'LPD433 / PMR446 (license-free voice)':bpK([
     [433075,434775,'LPD433',25000,'SRD'],[446006.25,446193.75,'PMR446',12500,'SRD']]),
   'HF Broadcast (5kHz channels)':BP_BC.filter(b=>b[3]===5000),
+  'GSM downlink (ARFCN bands)':bpK([
+    [925200,935000,'E-GSM900 DL',200000,'CELL'],[935000,960000,'P-GSM900 DL',200000,'CELL'],
+    [1805200,1879800,'DCS1800 DL',200000,'CELL']]),
 };
 // пресет -> n.items; и из process, и из draw — список нужен и при остановленном движке
 function bpApplyPreset(n){
