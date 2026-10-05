@@ -430,6 +430,7 @@ class GsmReceiver{
     this.bcch=[null,null,null,null];                    // 4 бёрста BCCH (кадры 2..5)
     this.bcchTry=0; this.bcchOk=0;                       // попытки/успехи разбора BCCH (диагностика)
     this.cellLabel=null;                                 // подпись своей соты для рёбер графа соседей
+    this.lastCellBase=null; this.lastCellId=null;         // последний известный CID для PLMN-LAC (SI3→SI4)
     this.cbchTn=-1; this.cbchTsc=null;                   // таймслот/TSC CBCH, если настроен и ARFCN совпал с текущим
     this.cbchBuf=[null,null,null,null];                  // 4 бёрста текущего CBCH-блока (23 байта L2 каждый)
     this.cbchPage=[null,null,null,null];                 // 4 фрагмента (seq 0..3) собираемой CBS-страницы
@@ -665,8 +666,12 @@ class GsmReceiver{
     if(si.ci!=null) rec.ci=si.ci;
     if(si.mcc!=null){ rec.mcc=si.mcc; rec.mnc=si.mnc; rec.plmn=gsmMccMncStr(si); rec.lac=si.lac;
       const op=gsmOperator(rec.plmn); if(op) rec.op=op;
-      // ключ соты: PLMN-LAC-CI (или без CI, если это SI4)
-      rec.id=rec.plmn+'-'+si.lac.toString(16)+(si.ci!=null?'-'+si.ci.toString(16):'');
+      // ключ соты: PLMN-LAC-CI. SI4 не несёт CID — тогда переиспользуем CID, который уже узнали из SI3
+      // этой же соты (это один и тот же приём, не другая сота), иначе SI3/SI4 одной соты расходятся
+      // на два разных id и recUniq считает их за две разные записи вместо одной.
+      const base=rec.plmn+'-'+si.lac.toString(16);
+      if(si.ci!=null){ rec.id=base+'-'+si.ci.toString(16); this.lastCellBase=base; this.lastCellId=rec.id; }
+      else rec.id=(this.lastCellBase===base && this.lastCellId) ? this.lastCellId : base;
       this.cellLabel=(op||rec.plmn)+' LAC'+si.lac; }           // для рёбер графа соседей (emitNeighbors)
     if(si.cellArfcns) { rec.cellArfcns=si.cellArfcns; rec.cellFmt=si.cellFmt; }
     if(si.neighborArfcns) { rec.neighborArfcns=si.neighborArfcns; rec.neighborFmt=si.neighborFmt; rec.nccPermitted=si.nccPermitted;
