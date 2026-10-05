@@ -7,7 +7,7 @@
 //
 // CACHE бампать вместе с ?v=N в index.html — иначе после правки файлов старый список ссылок
 // (со старым ?v=) продолжит переустанавливаться поверх уже закэшированного нового.
-const CACHE='dsp-shell-v187';
+const CACHE='dsp-shell-v188';
 const V=CACHE.replace(/\D/g,'');                 // ?v=N берётся из имени кэша — бампать только CACHE и V в index.html
 const SHELL=[
   './',
@@ -68,6 +68,7 @@ const SHELL=[
   './modules/inmarsat-kernels.js?v='+V,
   './modules/mpt1327-kernels.js?v='+V,
   './modules/ism-kernels.js?v='+V,
+  './modules/lora-kernels.js?v='+V,
   './modules/ais-kernels.js?v='+V,
   './modules/pocsag-kernels.js?v='+V,
   './modules/timecode-kernels.js?v='+V,
@@ -92,6 +93,7 @@ const SHELL=[
   './modules/inmarsat.js?v='+V,
   './modules/mpt1327.js?v='+V,
   './modules/ism.js?v='+V,
+  './modules/lora.js?v='+V,
   './modules/ais.js?v='+V,
   './modules/pocsag.js?v='+V,
   './modules/timecode.js?v='+V,

@@ -181,6 +181,9 @@ const PRESET_CATS={
   'AIS: Vessels on the Map (USB SDR, 162 MHz)':'Aircraft, Satellites & Telemetry',
   'ISM 433: Sensors and Remotes (Generator)':'Aircraft, Satellites & Telemetry',
   'ISM 433: Sensors and Remotes (USB SDR)':'Aircraft, Satellites & Telemetry',
+  'LoRa: Chirp Link (Loopback)':'Modems & Data Links',
+  'LoRa: Receive (USB SDR, 868 MHz)':'Modems & Data Links',
+  'LoRa: Send a Message (HackRF TX)':'Modems & Data Links',
   'ACARS: VHF Messages (Generator)':'Aircraft, Satellites & Telemetry',
   'ACARS: VHF Messages (USB SDR, 131 MHz)':'Aircraft, Satellites & Telemetry',
   'Inmarsat STD-C: EGC Messages (Generator)':'Aircraft, Satellites & Telemetry',
@@ -1470,6 +1473,59 @@ log.size.w=520; applySize(log);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('LoRa: Chirp Link (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'LoRa without a radio: LoRa Modulator builds a real frame (preamble of up-chirps, sync word, 2.25 down-chirps, header, payload with CRC, whitening, Hamming, interleaving, Gray)\n'+
+  'and sends it as IQ every 3 s with a frequency offset, a clock error and noise; LoRa Decoder finds the preamble, aligns on the up / down pair, measures the offset and reads the text.\n'+
+  'Change the spreading factor (it must match in both blocks), the bandwidth, the coding rate or raise the noise: in the simulator the decoder holds down to about −5 dB SNR at SF7 and −12 dB at SF12 (chip datasheets quote lower figures).\n'+
+  'The waterfall shows the chirps: a diagonal line that wraps around the band.'});
+nt.size.w=760; nt.size.h=130; applySize(nt);
+const tx=addNode('loraTx',40,200,{sr:'250000',sf:'8',bw:'125000',every:3,off:4000,ppm:10,noise:-40,lvl:-20});
+tx.size.w=420; tx.size.h=300; applySize(tx);
+const sp=addNode('iqSpec',500,200,{size:'1024'});
+const sa=addNode('sa',760,200,{auto:true,floor:-110,top:-10,split:.4});
+sa.size.w=620; sa.size.h=320; applySize(sa);
+const de=addNode('loraRx',500,380,{sf:'8',bw:'125000'});
+de.size.w=520; de.size.h=300; applySize(de);
+const log=addNode('recLog',1060,560,{});
+log.size.w=420; applySize(log);
+addEdge(tx.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
+addEdge(tx.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('LoRa: Receive (USB SDR, 868 MHz)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'LoRa on the air: tune the SDR to a LoRa channel (EU868: 868.1 / 868.3 / 868.5 MHz, US915: 902–928 MHz, Asia 433.05–434.79 MHz, Meshtastic EU 869.525 MHz)\n'+
+  'and tap the chirps on the spectrum. Set the spreading factor and bandwidth of the network (LoRaWAN EU: SF7–12 at 125 kHz; Meshtastic LongFast: SF11 / 250 kHz). Use sync word 34 for LoRaWAN, 2B for Meshtastic, any to take all.\n'+
+  'The decoder shows the frame, its SNR and carrier offset. LoRaWAN payloads are encrypted: the record carries them as hex (the MAC header with the device address is in the first bytes). Take only what the law of your country lets you receive and keep.'});
+nt.size.w=820; nt.size.h=130; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'1024000',freq:868100000,demod:'IQ'});
+const sa=addNode('sa',760,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,200,{});
+const de=addNode('loraRx',340,360,{sf:'7',bw:'125000'});
+de.size.w=520; de.size.h=300; applySize(de);
+const log=addNode('recLog',340,720,{});
+log.size.w=520; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('LoRa: Send a Message (HackRF TX)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'LoRa Modulator → HackRF TX: a LoRa frame from the browser. Set the center frequency (868100000 for EU868 channel 1), the spreading factor, bandwidth, coding rate and sync word of the receiver.\n'+
+  'Press Connect in HackRF TX, then Send in LoRa Modulator: the tx pin turns the transmitter on for the length of the frame. TX VGA and amp are off by default — start at the lowest power, close to the receiver.\n'+
+  'The frame is built from open descriptions of the PHY and was not checked against real chips: if a receiver ignores it, try the other sync word or the *inverted IQ* switch.\n'+
+  'You must comply with local radio regulations: transmit only on frequencies, with power and duty cycle the law allows you (a licence, a test cable or a shielded box).'});
+nt.size.w=900; nt.size.h=150; applySize(nt);
+const tx=addNode('loraTx',40,240,{sr:'2000000',fc:868100000,sf:'7',bw:'125000',msg:'TEST',lvl:-6});
+tx.size.w=420; tx.size.h=300; applySize(tx);
+const hk=addNode('hackrfTx',520,240,{});
+hk.size.w=300; applySize(hk);
+addEdge(tx.id,'iq',hk.id,'in'); addEdge(tx.id,'tx',hk.id,'tx');
 markWiresDirty();
 });
 preset('ACARS: VHF Messages (Generator)', function(){

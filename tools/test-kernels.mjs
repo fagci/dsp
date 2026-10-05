@@ -31,6 +31,23 @@ ev(`function iqMeterRun(id,p,gen){ const n={p}, sr=250000, K=4096; IQK[id].init(
     out=IQK[id].process(n,{in:{sr,fc:0,chunks:[{re,im,t0:0}]}},{block:K,sr}); }
   return out; }`);
 
+
+// LoRa: кадр через синтезатор, шум и канал → IQK.loraRx; возвращает текст принятых кадров
+ev(`function loraRunText(o){
+  const {sf,bw,sr,cr=1,cfo=0,ppm=0,snr=40,text}=o, ldro=loraLdro('auto',sf,bw);
+  const syms=loraEncode(loraBytes(text),{sf,cr,crc:true,ih:false,ldro});
+  const f=loraSynth(syms,{sf,bw,pre:8,sync:0x34,cfo,ppm,amp:1},sr,Math.round(3000*sr/bw)), N=f.re.length;
+  let x=12345; const rnd=()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296; };
+  const sg=Math.pow(10,-snr/20)/Math.SQRT2*Math.sqrt(sr/bw);
+  for(let i=0;i<N;i++){ f.re[i]+=sg*Math.sqrt(-2*Math.log(Math.max(rnd(),1e-12)))*Math.cos(2*Math.PI*rnd()); f.im[i]+=sg*Math.sqrt(-2*Math.log(Math.max(rnd(),1e-12)))*Math.cos(2*Math.PI*rnd()); }
+  const n={p:{sf:String(sf),bw:String(bw),thr:9,sync:'any',hdr:'explicit',len:16,cr:'4/5',crc:true,ldro:'auto',bad:true,invert:false}}; IQK.loraRx.init(n);
+  const got=[];
+  for(let i=0;i<N;i+=4096){ const L=Math.min(4096,N-i);
+    const r=IQK.loraRx.process(n,{in:{sr,fc:0,chunks:[{re:f.re.slice(i,i+L),im:f.im.slice(i,i+L),t0:i}]}},{block:4096,sr});
+    if(r.rec) for(const q of r.rec) got.push(q.text+(q.crcOk===false ? ' [CRC]' : '')+' cfo='+(Math.round(q.cfo/100)*100)); }
+  return got.join('|');
+}`);
+
 const cases=[
   // [название, выражение, ожидаемое, происхождение]
   ['popcnt32(0)','popcnt32(0)',0],
@@ -78,6 +95,19 @@ const cases=[
   ['nxdnCrc12',`nxdnCrc12(${PATB},100)`,1562,'снимок'],
   ['nxdnCrc15',`nxdnCrc15(${PATB},120)`,12026,'снимок'],
   ['nxdnCrc16 (200 бит)',`nxdnCrc(${PATB},200,16,0x1021)`,51987,'снимок'],
+
+  // LoRa: белая последовательность, проверка заголовка, кодер ↔ декодер, приём из синтезированного IQ
+  ['LoRa loraWhite','Array.from(loraWhite(8)).map(v=>v.toString(16)).join()','ff,fe,fc,f8,f0,e1,c2,85','снимок'],
+  ['LoRa loraWhite период 255','(()=>{ const w=loraWhite(300); return w[255]===w[0] && w[254]!==w[0]; })()',true],
+  ['LoRa loraCrc','loraCrc(Uint8Array.from("123456789",c=>c.charCodeAt(0)))','0xBEEF','снимок'],
+  ['LoRa loraHdrChk','loraHdrChk(1,5,3)',17,'снимок'],
+  ['LoRa Хэмминг: мин. расстояние 4/7 и 4/8','[3,4].map(cr=>{ let m=99; for(let a=0;a<16;a++) for(let b=a+1;b<16;b++) m=Math.min(m,popcnt32(LORA_CW[cr][a]^LORA_CW[cr][b])); return m; }).join()','3,4'],
+  ['LoRa Хэмминг: исправление одного бита (4/8)','(()=>{ let ok=0; for(let v=0;v<16;v++) for(let b=0;b<8;b++){ const r=loraHamDec(LORA_CW[4][v]^(1<<b),4); if(r.nib===v && r.err===1) ok++; } return ok; })()',128],
+  ['LoRa кодер → декодер, SF7…12, CR 1…4','(()=>{ let bad=0; for(const sf of [7,8,9,10,11,12]) for(const cr of [1,2,3,4]) for(const ih of [false,true]){ const ldro=sf>=11, b=Uint8Array.from({length:23},(_,i)=>i*29+7&255), o={sf,cr,crc:true,ih,ldro}, s=loraEncode(b,o), d=loraDecode(s,{...o,len:23}); if(!(s.length===loraSymCount(23,o) && d.ok && d.crcOk && d.payload.every((v,i)=>v===b[i]))) bad++; } return bad; })()',0],
+  ['LoRa кодер: одна ошибка символа на ±1 бин исправляется при 4/7','(()=>{ const b=loraBytes("LoRa test"), o={sf:9,cr:3,crc:true,ih:false,ldro:false}, s=loraEncode(b,o); s[12]=(s[12]+1)&511; const d=loraDecode(s,{...o}); return d.ok && d.crcOk && d.fixed>0; })()',true],
+  ['LoRa приём: SF7, BW 125 кГц, 250 кS/с','loraRunText({sf:7,bw:125000,sr:250000,text:"Hello LoRa"})','Hello LoRa cfo=0','снимок'],
+  ['LoRa приём: SF9, CFO +5 кГц, уход 20 ppm, 1,024 МS/с','loraRunText({sf:9,bw:125000,sr:1024000,cfo:5000,ppm:20,text:"drift and offset"})','drift and offset cfo=5000','снимок'],
+  ['LoRa приём: SF12, SNR −10 дБ, CR 4/8','loraRunText({sf:12,bw:125000,sr:250000,cr:4,snr:-10,text:"SF12"})','SF12 cfo=0','снимок'],
 
   // кодер → исправление ошибок: два сбитых бита в слове POCSAG восстанавливаются
   ['POCSAG encode→fix 2 ошибки','(()=>{ const w=pocEncode(0x12345), r=pocFix((w^(1<<3)^(1<<20))>>>0,2); return r && r[0]===w>>>0 && r[1]===2; })()',true],
