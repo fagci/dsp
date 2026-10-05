@@ -630,7 +630,7 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
        {n:'train',t:'num'},{n:'thr',t:'num'},{n:'minW',t:'num'},{n:'top',t:'num'},{n:'hold',t:'num'}],
   outs:[{n:'count',t:'num'},{n:'f1',t:'num'},{n:'l1',t:'num'},{n:'f2',t:'num'},{n:'l2',t:'num'},
         {n:'f3',t:'num'},{n:'l3',t:'num'},{n:'f4',t:'num'},{n:'l4',t:'num'},
-        {n:'snr1',t:'num'},{n:'floor',t:'num'}],
+        {n:'snr1',t:'num'},{n:'floor',t:'num'},{n:'rec',t:'rec'}],
   readout:true, tall:true,
   params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)',fn:n=>{ if(n.p.auto) n.zoom=null; }},
           {n:'fmin',t:'range',min:1,max:6e9,step:1,log:true,d:100},
@@ -643,8 +643,9 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
           {n:'confM',t:'range',min:1,max:8,step:1,d:2,label:'confirm: hits (M)'},
           {n:'confN',t:'range',min:1,max:8,step:1,d:4,label:'confirm: of last frames (N)'},
           {n:'top',t:'range',min:1,max:30,step:1,d:10,label:'how many to show'},
-          {n:'hold',t:'range',min:0,max:5000,step:50,d:500,label:'hold time, ms'}],
-  init:n=>{n.list=[];n.text='';n.tracks=[];n.floorDb=null;},
+          {n:'hold',t:'range',min:0,max:5000,step:50,d:500,label:'hold time, ms'},
+          {n:'idRes',t:'select',opts:['auto','100','1000','5000','12500','25000','100000'],d:'auto',label:'rec: same signal within, Hz',adv:true}],
+  init:n=>{n.list=[];n.text='';n.tracks=[];n.floorDb=null;n.recs=[];},
   process(n,I){
     const s=I.spec;
     // тот же трюк, что у 'sa': ручной диапазон не пересекается с реальными данными источника
@@ -663,13 +664,20 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
     const fresh = s.rev!=null ? s.rev!==n._lastRev : s!==n._lastSpecRef;
     if(fresh){ n._lastRev=s.rev; n._lastSpecRef=s; cfarFrame(n,s); }
     const [a,b,c,d]=n.list;
-    return {count:n.list.length,
+    const rec=n.recs.length ? n.recs.splice(0) : null;
+    return {count:n.list.length, rec,
       f1:a?a.f:null, l1:a?a.db:null, f2:b?b.f:null, l2:b?b.db:null,
       f3:c?c.f:null, l3:c?c.db:null, f4:d?d.f:null, l4:d?d.db:null,
       snr1:a?a.snr:null, floor:n.floorDb}; },
   draw(n){ const r=n.el.querySelector('.readout');
     if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
+// шаг сетки id записей: явный из idRes, auto — ширина цели по ряду 1-2-5
+function cfarIdStep(res,w){
+  if(res && res!=='auto') return +res;
+  const e=Math.pow(10,Math.floor(Math.log10(Math.max(1,w)))), m=w/e;
+  return (m<=1?1:m<=2?2:m<=5?5:10)*e;
+}
 function cfarFrame(n,s){
   const N=s.mag.length, G=n.p.guard, T=n.p.train, meth=n.p.method;
   const [specLo,specHi]=n.p.auto? specSpan(s) : [n.p.fmin,n.p.fmax];
@@ -738,7 +746,15 @@ function cfarFrame(n,s){
     if(tr){ tr.f=tr.f*.7+f*.3; tr.w=Math.max(tr.w,wid); tr.db=h.peak; tr.snr=h.snr; tr.t=now; }
     else n.tracks.push(tr={f,w:wid,db:h.peak,snr:h.snr,t0:now,t:now,hist:0,ok:false});
     tr.hist|=1; tr.hit=true;
-    if(!tr.ok && cfarPopcount(tr.hist)>=M) tr.ok=true; }
+    if(!tr.ok && cfarPopcount(tr.hist)>=M){
+      tr.ok=true;
+      // запись о появлении сигнала: id — частота, округлённая до сетки idRes (одна и та же станция → один id
+      // для Rec: Unique by Key; Table копит строки как есть)
+      const q=cfarIdStep(n.p.idRes, Math.max(wid,2*binHz));
+      n.recs.push({t:Date.now(), src:'CFAR', kind:'signal', id:Math.round(f/q)*q, freq:Math.round(f), width:Math.round(wid),
+        db:+h.peak.toFixed(1), snr:+h.snr.toFixed(1)});
+      if(n.recs.length>1000) n.recs.shift();
+    } }
   // неподтверждённые живут только пока есть попадания в окне N, подтверждённые — hold после последнего
   n.tracks=n.tracks.filter(t=>t.hit || (t.ok? now-t.t<=n.p.hold : t.hist!==0));
   // трек может физически не помещаться в текущую захваченную полосу — например, центр
