@@ -3597,13 +3597,14 @@ def({ id:'autocorr', lazy:'proc', title:'Autocorrelator', cat:'Analysis', ins:[{
 
 def({ id:'scanner', title:'Auto Frequency Scanner', cat:'Radio',
   ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'step',t:'num'},
-       {n:'threshold',t:'num'},{n:'hold',t:'num'},{n:'speed',t:'num'}],
+       {n:'threshold',t:'num'},{n:'snr',t:'num'},{n:'hold',t:'num'},{n:'speed',t:'num'}],
   outs:[{n:'freq',t:'num'},{n:'level',t:'num'},{n:'active',t:'num'}],
   readout:true, tall:true,
   params:[{n:'fmin',t:'range',min:100,max:()=>Eng.sr/2,step:100,d:1000,log:true},
           {n:'fmax',t:'range',min:200,max:()=>Eng.sr/2,step:100,d:3000,log:true},
           {n:'step',t:'range',min:50,max:1000,step:50,d:100,label:'step, Hz'},
           {n:'threshold',t:'range',min:0.001,max:0.1,step:0.001,d:0.01,label:'sensitivity'},
+          {n:'snr',t:'range',min:0,max:40,step:1,d:0,label:'over noise, dB (0 = fixed sensitivity)'},
           {n:'hold',t:'range',min:0.1,max:5,step:0.1,d:1,label:'hold time, s'},
           {n:'speed',t:'range',min:1,max:100,step:1,d:20,label:'scan speed'}],
   init:n=>{ 
@@ -3617,7 +3618,7 @@ def({ id:'scanner', title:'Auto Frequency Scanner', cat:'Radio',
     n.lastFound = '';
   },
   process(n,I){
-    for(const k of ['fmin','fmax','step','threshold','hold','speed'])
+    for(const k of ['fmin','fmax','step','threshold','snr','hold','speed'])
       if(typeof I[k]==='number') setMod(n,k,I[k]);
     const dt = BLOCK / Eng.sr;
     const fmin = n.p.fmin;
@@ -3657,9 +3658,24 @@ def({ id:'scanner', title:'Auto Frequency Scanner', cat:'Radio',
         sum += Math.hypot(re[i], im[i]);
       }
       n.signalLevel = sum / (bw*2 + 1);
+      // порог относительно шума. Пол — по медиане первых 33 измерений (сигналы на части позиций её не сдвигают),
+      // дальше быстро вниз, медленно вверх, а на сигнале (выше 3× пола) почти не растёт — удержание не «съедает» цель
+      if(n.p.snr > 0){
+        const L = n.signalLevel;
+        if(n.noise == null){
+          (n.nbuf || (n.nbuf = [])).push(L);
+          if(n.nbuf.length >= 33){ n.noise = n.nbuf.slice().sort((x,y)=>x-y)[16]; n.nbuf = null; }
+          n.thr = Infinity;                          // пока учимся — ничего не находим
+        } else {
+          if(L < n.noise) n.noise += (L - n.noise) * 0.2;
+          else if(L < 3*n.noise) n.noise += (L - n.noise) * 0.02;
+          else n.noise *= 1.0005;
+          n.thr = Math.max(n.noise * Math.pow(10, n.p.snr/20), 1e-9);
+        }
+      } else n.thr = n.p.threshold;
       
       // Движемся дальше
-      if(n.signalLevel < n.p.threshold){
+      if(n.signalLevel < n.thr){
         n.holdTimer = 0;
         n.currentFreq += step * speed / 10;
         if(n.currentFreq > fmax) n.currentFreq = fmin;
@@ -3689,7 +3705,7 @@ def({ id:'scanner', title:'Auto Frequency Scanner', cat:'Radio',
     
     // Формируем текст для вывода
     let text = `🔍 Scanning: ${Math.round(n.currentFreq)} Hz\n`;
-    text += `📊 Level: ${(n.signalLevel*1000).toFixed(0)} mV\n`;
+    text += `📊 Level: ${(n.signalLevel*1000).toFixed(0)} mV`+(n.p.snr>0 && n.noise!=null ? ` · noise ${(n.noise*1000).toFixed(1)} mV, threshold +${n.p.snr} dB` : '')+'\n';
     text += n.scanning ? '⏳ Searching...\n' : '🔒 Holding\n';
     text += '\n📡 Signals found:\n';
     const now = Date.now();
@@ -3702,7 +3718,7 @@ def({ id:'scanner', title:'Auto Frequency Scanner', cat:'Radio',
     return {
       freq: n.currentFreq,
       level: n.signalLevel,
-      active: n.signalLevel > n.p.threshold ? 1 : 0
+      active: n.signalLevel > (n.thr ?? n.p.threshold) ? 1 : 0
     };
   },
   draw(n){

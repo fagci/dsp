@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=42;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=43;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -124,6 +124,7 @@ const PRESET_CATS={
   'Quick Signal Chain Check':'Start Here',
 
   'USB SDR: Wideband Sweep':'SDR Receivers',
+  'USB SDR: Auto Scan (CFAR + Band Scanner)':'SDR Receivers',
   'USB SDR: Signal Identifier':'SDR Receivers',
   'IQ: Receiver from Blocks (Generator)':'SDR Receivers',
   'USB SDR: FM Receiver from Blocks':'SDR Receivers',
@@ -749,6 +750,33 @@ sa.size.w=720; sa.size.h=460; applySize(sa);
 const dc=addNode('dac',540,560,{vol:.4});
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(sa.id,'f1',rx.id,'tuneFreq');
+addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
+markWiresDirty();
+});
+preset('USB SDR: Auto Scan (CFAR + Band Scanner)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the band plan in windows of the SDR span;\n'+
+  'the CFAR detector looks for signals in each window — its threshold is dB over the local noise floor,\n'+
+  'so it does not depend on gain. When something is there the scanner stops, the strongest target is\n'+
+  'tuned and played, and when it goes quiet (or the listen timeout ends) the scan goes on.\n'+
+  'Pick another band plan in the table; set the demodulator to match the band. Manual gain works best.'});
+nt.size.w=560; nt.size.h=170; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:150000000});
+const bp=addNode('table',360,260,{list:'presets/Utility / services (RU)',initial:false});
+bp.size.w=340; bp.size.h=200; applySize(bp);
+const bs=addNode('bandscan',740,260,{timeout:4000,settle:250});
+bs.size.w=300; bs.size.h=200; applySize(bs);
+const cf=addNode('cfar',360,520,{auto:true,thr:10,confM:2,confN:3});
+cf.size.w=300; cf.size.h=220; applySize(cf);
+const sa=addNode('sa',1080,40,{auto:true,floor:-90,top:-20,split:.4});
+sa.size.w=700; sa.size.h=420; applySize(sa);
+const dc=addNode('dac',740,560,{vol:.4});
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',cf.id,'spec');
+addEdge(bp.id,'bands',bs.id,'bands');
+addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi');
+addEdge(cf.id,'count',bs.id,'active');
+addEdge(bs.id,'freq',rx.id,'freq');
+addEdge(cf.id,'f1',rx.id,'tuneFreq');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
 markWiresDirty();
 });
