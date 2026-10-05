@@ -109,6 +109,30 @@ defIQ({ id:'iqSquelch', title:'IQ Squelch', cat:'IQ',
   n=>{ const u=n.ui; if(!u || u.rssi==null) return 'no input';
     return (u.open ? 'OPEN' : 'closed')+' · '+u.rssi.toFixed(1)+' dBFS · SNR '+u.snr.toFixed(1)+' dB'; });
 
+defIQ({ id:'modMeter', title:'Modulation Meter', cat:'IQ',
+  ins:[{n:'in',t:'iq'}], outs:[{n:'am',t:'num'},{n:'dev',t:'num'},{n:'offset',t:'num'},{n:'fm',t:'num'},{n:'idx',t:'num'},{n:'level',t:'num'}],
+  params:[{n:'bw',t:'range',min:1000,max:100000,step:500,d:15000,log:true,label:'measurement band (demodulated), Hz'},
+          {n:'win',t:'select',opts:['100','250','500','1000'],d:'250',label:'window, ms'}]},
+  n=>{ const u=n.ui;
+    if(!u) return 'no input';
+    if(u.real) return 'needs complex IQ';
+    if(u.none) return 'no carrier';
+    if(u.am==null) return 'no input';
+    return 'AM '+u.am.toFixed(1)+'% (+'+u.pos.toFixed(0)+' / −'+u.neg.toFixed(0)+') · FM ±'+(u.dev>=1000?(u.dev/1000).toFixed(2)+' kHz':u.dev.toFixed(0)+' Hz')+
+      (u.fm ? ' @ '+(u.fm>=1000?(u.fm/1000).toFixed(2)+' kHz':u.fm.toFixed(0)+' Hz')+' · β '+u.idx.toFixed(2) : '')+
+      ' · Δf '+(u.offset>=0?'+':'')+u.offset.toFixed(0)+' Hz · '+u.level.toFixed(1)+' dBFS'; });
+
+defIQ({ id:'iqQuality', title:'IQ Quality', cat:'IQ',
+  ins:[{n:'in',t:'iq'}], outs:[{n:'dc',t:'num'},{n:'dcc',t:'num'},{n:'gain',t:'num'},{n:'phase',t:'num'},{n:'irr',t:'num'}],
+  params:[{n:'win',t:'select',opts:['250','500','1000','2000'],d:'500',label:'window, ms'}]},
+  n=>{ const u=n.ui;
+    if(!u) return 'no input';
+    if(u.real) return 'needs complex IQ';
+    if(u.none) return 'no signal';
+    if(u.dc==null) return 'no input';
+    return 'DC '+u.dc.toFixed(1)+' dBFS ('+u.dcc.toFixed(1)+' dBc) · Q gain '+(u.gain>=0?'+':'')+u.gain.toFixed(2)+' dB · phase '+(u.phase>=0?'+':'')+u.phase.toFixed(2)+
+      '° · image '+(u.irr>=120?'> 120':u.irr.toFixed(1))+' dB'; });
+
 defIQ({ id:'iqSpec', title:'IQ Spectrum', cat:'IQ',
   ins:[{n:'in',t:'iq'}], outs:[{n:'spec',t:'spec'}],
   params:[{n:'size',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'4096'},

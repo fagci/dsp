@@ -23,6 +23,14 @@ const PAT='Array.from({length:30},(_,i)=>(i*37+11)&255)';
 const PATB=`(${PAT}).flatMap(v=>Array.from({length:8},(_,k)=>(v>>(7-k))&1))`;
 const hex=v=>Array.isArray(v) ? v.join(',') : '0x'+(v>>>0).toString(16).toUpperCase();
 
+
+// прогон ядра измерителя на синтетическом потоке 250 кS/s, 2 с
+ev(`function iqMeterRun(id,p,gen){ const n={p}, sr=250000, K=4096; IQK[id].init(n); let out, t=0;
+  for(let b=0;b<2*sr/K;b++){ const re=new Float32Array(K), im=new Float32Array(K);
+    for(let i=0;i<K;i++){ const v=gen(t++/sr); re[i]=v[0]; im[i]=v[1]; }
+    out=IQK[id].process(n,{in:{sr,fc:0,chunks:[{re,im,t0:0}]}},{block:K,sr}); }
+  return out; }`);
+
 const cases=[
   // [название, выражение, ожидаемое, происхождение]
   ['popcnt32(0)','popcnt32(0)',0],
@@ -86,6 +94,15 @@ const cases=[
     const b=new Uint8Array(HRF_SWEEP_BLOCK); b[0]=b[1]=0x7F; new DataView(b.buffer).setUint32(2,500e6,true);
     let c=0; hackrfSweepSplit({buf:null,n:0,synced:false}, b, 100e6, 115e6, ()=>c++); return c;
   })()`,0],
+
+  // измерители: известный сигнал → известные цифры (округление до значащих)
+  ['Modulation Meter: FM ±5 кГц, тон 1 кГц, смещение 2 кГц',`(()=>{ const r=iqMeterRun('modMeter',{bw:15000,win:250},t=>{ const p=2*Math.PI*2000*t+5*Math.sin(2*Math.PI*1000*t); return [.5*Math.cos(p),.5*Math.sin(p)]; });
+    return [Math.round(r.dev/50)*50, Math.round(r.offset), Math.round(r.fm/10)*10, Math.round(r.idx), Math.round(r.am)].join(); })()`,'5000,2000,1000,5,0'],
+  ['Modulation Meter: AM 60%, тон 1 кГц',`(()=>{ const r=iqMeterRun('modMeter',{bw:15000,win:250},t=>{ const e=.5*(1+.6*Math.sin(2*Math.PI*1000*t)); return [e,0*e]; });
+    return [Math.round(r.am), Math.round(r.dev)].join(); })()`,'60,0'],
+  ['IQ Quality: Q +0.5 дБ, фаза 2°, DC 0.01 по I',`(()=>{ const g=Math.pow(10,.5/20), ph=2*Math.PI/180;
+    const r=iqMeterRun('iqQuality',{win:500},t=>{ const I=.3*Math.cos(2*Math.PI*20000*t), Q=.3*Math.sin(2*Math.PI*20000*t); return [I+.01, g*(Q*Math.cos(ph)+I*Math.sin(ph))]; });
+    return [r.dc.toFixed(1), r.gain.toFixed(2), r.phase.toFixed(2), r.irr.toFixed(1)].join(); })()`,'-40.0,0.50,2.00,29.5'],
 ];
 
 let bad=0;

@@ -841,6 +841,57 @@ addEdge(sh.id,'out',dm.id,'in'); addEdge(dm.id,'out',de.id,'in'); addEdge(de.id,
 addEdge(au.id,'out',sc.id,'in1'); addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'out',dc.id,'R');
 markWiresDirty();
 });
+preset('Measure: Modulation Meter — FM and AM (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Modulation Meter: AM depth, FM deviation, modulating frequency, FM index and the carrier offset of a signal near the center.\n'+
+  'The generator sends FM ±5 kHz with a 1 kHz tone, 2 kHz off the center. AM: depth from the positive and negative peaks of the envelope (a difference shows overmodulation or a distorted carrier).\n'+
+  'FM: half of the peak-to-peak deviation of the instantaneous frequency inside the band; β = deviation / modulating frequency.\n'+
+  'Change the generator mode to AM (depth 0.6) or the deviation and the tone. On a real signal shift it to zero first (IQ Frequency Shift) and decimate to a few × the channel width.'});
+nt.size.w=700; nt.size.h=170; applySize(nt);
+const gn=addNode('iqGen',40,260,{sr:'256000',fc:100000000,mode:'FM',off:2000,lvl:-20,tone:1000,dev:5000,depth:.6,noise:-60});
+const mm=addNode('modMeter',340,260,{bw:15000,win:'250'});
+mm.size.w=560; applySize(mm);
+const n1=addNode('numview',340,420,{label:'AM depth, %'});
+const n2=addNode('numview',560,420,{label:'FM deviation, Hz'});
+const n3=addNode('numview',780,420,{label:'FM index β'});
+addEdge(gn.id,'iq',mm.id,'in');
+addEdge(mm.id,'am',n1.id,'in'); addEdge(mm.id,'dev',n2.id,'in'); addEdge(mm.id,'idx',n3.id,'in');
+markWiresDirty();
+});
+preset('Measure: SINAD of an FM Receiver (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'SINAD of an FM receiver, the usual bench test: a carrier modulated by 1 kHz at ±3 kHz → demodulator → SINAD.\n'+
+  'The tone is cut out by a sine fit over the whole window, what is left in 300–3400 Hz is noise and distortion: SINAD = (S+N+D)/(N+D), THD+N = √((N+D)/S).\n'+
+  '12 dB SINAD is the usual sensitivity criterion of a voice receiver. Lower the generator level or raise its noise and watch SINAD fall; ENOB is shown in the readout.'});
+nt.size.w=700; nt.size.h=150; applySize(nt);
+const gn=addNode('iqGen',40,240,{sr:'256000',fc:145000000,mode:'FM',off:0,lvl:-20,tone:1000,dev:3000,noise:-45});
+const dm=addNode('iqDecim',300,240,{M:'4'});
+const de=addNode('iqDemod',300,400,{mode:'FM',dev:3000});
+const au=addNode('iqAudio',560,400,{});
+const sn=addNode('sinad',860,240,{band:'300–3400 Hz',win:'0.5'});
+sn.size.w=520; applySize(sn);
+const nv=addNode('numview',860,520,{label:'SINAD, dB'});
+addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'out',de.id,'in'); addEdge(de.id,'out',au.id,'in');
+addEdge(au.id,'out',sn.id,'in'); addEdge(sn.id,'sinad',nv.id,'in');
+markWiresDirty();
+});
+preset('Measure: IQ Quality — DC and Imbalance (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'IQ Quality: DC offset (LO leakage), I/Q gain and phase error, and the image rejection from them — all from the moments of the stream over a window.\n'+
+  'The generator sends a tone at +20 kHz and mirrors it with an imbalance (generator → advanced: Q gain, phase, delay): gain 0.5 dB and 2° give an image about 29 dB down.\n'+
+  'Works on a tone away from zero, on noise or on a busy band; a carrier exactly at the center (real envelope) reads too low. On a real receiver wire the SDR\'s `iq` here and correct with IQ Balance / IQ DC Block.'});
+nt.size.w=700; nt.size.h=150; applySize(nt);
+const gn=addNode('iqGen',40,240,{sr:'256000',fc:100000000,mode:'carrier',off:20000,lvl:-20,noise:-80,imbG:.5,imbP:2});
+const iq=addNode('iqQuality',340,240,{win:'500'});
+iq.size.w=620; applySize(iq);
+const sp=addNode('iqSpec',340,420,{size:'4096'});
+const sa=addNode('sa',620,420,{auto:true,floor:-110,top:0,split:.4});
+sa.size.w=560; sa.size.h=300; applySize(sa);
+const nv=addNode('numview',990,240,{label:'image rejection, dB'});
+addEdge(gn.id,'iq',iq.id,'in'); addEdge(iq.id,'irr',nv.id,'in');
+addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
+markWiresDirty();
+});
 preset('ADS-B: Aircraft Map (Generator)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'ADS-B without a radio: the generator sends Mode S extended squitters (DF17) from three aircraft\n'+

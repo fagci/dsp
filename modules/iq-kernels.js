@@ -825,6 +825,99 @@ IQK.iqSquelch={
     return {out:o, rssi:n.rssi, snr, open:n.open ? 1 : 0};
   }};
 
+/* ---- Modulation Meter ---- */
+// Несущая у центра канала: огибающая |x| → AM, мгновенная частота (arg x[k]·x*[k-1]) → FM.
+// Оба ряда идут через два однополюсных ФНЧ (полоса bw); максимум и минимум берутся за окно.
+// В FM не участвуют отсчёты с огибающей ниже 10% средней (там фаза — шум). Частота модуляции —
+// по пересечениям нуля девиацией (гистерезис 20% от пика прошлого окна), индекс FM = девиация / частота.
+IQK.modMeter={
+  init(n){ n.sr=0; n.ui=null; },
+  process(n,I){
+    const s=iqIn(I,'in');
+    if(!s){ n.ui=null; return {am:null, dev:null, offset:null, fm:null, idx:null, level:null}; }
+    const sr=s.sr, bw=Math.min(+n.p.bw, sr*0.45), win=+n.p.win/1000;
+    if(sr!==n.sr || bw!==n.bw || win!==n.win){
+      n.sr=sr; n.bw=bw; n.win=win; n.need=Math.max(64,Math.round(sr*win)); n.al=1-Math.exp(-2*Math.PI*bw/sr);
+      n.k=sr/(2*Math.PI); n.px=1; n.py=0; n.la=0; n.lb=0; n.lf=0; n.lg=0; n.skip=Math.round(sr*3/(2*Math.PI*bw))+8;
+      n.ma=0; n.fpk=0; n.fm0=0; n.res=null; n.out=null; n.ui=null; n.winReset=true;
+    }
+    if(n.winReset){ n.winReset=false; n.cnt=0; n.se=0; n.sp=0; n.emax=-1e9; n.emin=1e9; n.sf=0; n.fn=0; n.fmax=-1e12; n.fmin=1e12; n.zc=0; n.zs=0; }
+    let last=null;
+    for(const c of s.chunks){
+      if(!c.im){ n.ui={real:true}; return {am:null, dev:null, offset:null, fm:null, idx:null, level:null}; }
+      const xr=c.re, xi=c.im, K=xr.length, al=n.al, k=n.k;
+      let px=n.px, py=n.py, la=n.la, lb=n.lb, lf=n.lf, lg=n.lg;
+      for(let i=0;i<K;i++){
+        const a=xr[i], b=xi[i], m=Math.sqrt(a*a+b*b);
+        la+=al*(m-la); lb+=al*(la-lb);
+        if(m>=0.1*n.ma){
+          lf+=al*(Math.atan2(xi[i]*px-xr[i]*py, xr[i]*px+xi[i]*py)*k-lf); lg+=al*(lf-lg);
+        }
+        px=a; py=b;
+        if(n.skip>0){ n.skip--; continue; }
+        n.cnt++; n.se+=lb; n.sp+=m*m;
+        if(lb>n.emax) n.emax=lb; if(lb<n.emin) n.emin=lb;
+        if(m>=0.1*n.ma){
+          n.sf+=lg; n.fn++; if(lg>n.fmax) n.fmax=lg; if(lg<n.fmin) n.fmin=lg;
+          const h=0.2*n.fpk, d=lg-n.fm0;
+          if(h>0){ if(n.zs<=0 && d>h){ n.zs=1; n.zc++; } else if(n.zs>=0 && d<-h) n.zs=-1; }
+        }
+        if(n.cnt>=n.need){
+          const mean=n.se/n.cnt, fmean=n.fn?n.sf/n.fn:0, pw=n.sp/n.cnt;
+          if(mean>1e-4 && n.fn>n.cnt*0.3){
+            const dev0=(n.fmax-n.fmin)/2, dev=dev0<1e-3*bw ? 0 : dev0, fm=n.zc/(n.cnt/sr);
+            const pos=(n.emax-mean)/mean, neg=(mean-n.emin)/mean;
+            n.res={am:(pos+neg)*50, pos:pos*100, neg:neg*100, dev, offset:fmean, fm:dev&&n.zc>=2?fm:0, idx:dev&&n.zc>=2&&fm>0?dev/fm:0, level:10*Math.log10(pw+1e-20)};
+            n.ma=mean; n.fpk=dev0; n.fm0=fmean;
+          } else { n.res={none:true}; n.ma=0; n.fpk=0; n.fm0=0; }
+          n.cnt=0; n.se=0; n.sp=0; n.emax=-1e9; n.emin=1e9; n.sf=0; n.fn=0; n.fmax=-1e12; n.fmin=1e12; n.zc=0; n.zs=0;
+        }
+      }
+      n.px=px; n.py=py; n.la=la; n.lb=lb; n.lf=lf; n.lg=lg;
+    }
+    const r=n.res; n.ui=r;
+    return r && !r.none ? {am:r.am, dev:r.dev, offset:r.offset, fm:r.fm, idx:r.idx, level:r.level}
+             : {am:null, dev:null, offset:null, fm:null, idx:null, level:null};
+  }};
+
+/* ---- IQ Quality ---- */
+// Смещение нуля и дисбаланс квадратур по моментам за окно. После вычитания среднего у «правильного»
+// (кругового) сигнала E[x²]=0; дисбаланс даёт E[x²]=2AB·E|z|², отсюда ρ=|E[x²]|/E|x|²=2/(s+1/s),
+// s=A/B — отношение амплитуд сигнала и зеркала, подавление зеркала = 20·lg s. Годится для тона вне нуля,
+// шума, много сигналов; несущая ровно в центре (вещественная огибающая) даёт заниженное подавление.
+// Усиление и фаза — как в IQ Balance: Q'=g(Q·cosφ+I·sinφ).
+IQK.iqQuality={
+  init(n){ n.sr=0; n.ui=null; n.winReset=true; },
+  process(n,I){
+    const s=iqIn(I,'in');
+    if(!s){ n.ui=null; return {dc:null, dcc:null, gain:null, phase:null, irr:null}; }
+    const sr=s.sr, win=+n.p.win/1000;
+    if(sr!==n.sr || win!==n.win){ n.sr=sr; n.win=win; n.need=Math.max(256,Math.round(sr*win)); n.winReset=true; n.res=null; }
+    if(n.winReset){ n.winReset=false; n.cnt=0; n.sx=0; n.sy=0; n.sxx=0; n.syy=0; n.sxy=0; }
+    for(const c of s.chunks){
+      if(!c.im){ n.ui={real:true}; return {dc:null, dcc:null, gain:null, phase:null, irr:null}; }
+      const xr=c.re, xi=c.im, K=xr.length;
+      let sx=n.sx, sy=n.sy, sxx=n.sxx, syy=n.syy, sxy=n.sxy, cnt=n.cnt;
+      for(let i=0;i<K;i++){
+        const a=xr[i], b=xi[i];
+        sx+=a; sy+=b; sxx+=a*a; syy+=b*b; sxy+=a*b;
+        if(++cnt>=n.need){
+          const mi=sx/cnt, mq=sy/cnt, ixx=sxx/cnt-mi*mi, qyy=syy/cnt-mq*mq, ixy=sxy/cnt-mi*mq, pw=ixx+qyy;
+          if(pw>1e-12){
+            const rho=Math.min(1, Math.hypot(ixx-qyy, 2*ixy)/pw), sq=rho<1e-6 ? 1e6 : (1+Math.sqrt(1-rho*rho))/rho;
+            n.res={dc:20*Math.log10(Math.hypot(mi,mq)+1e-12), dcc:10*Math.log10((mi*mi+mq*mq)/pw+1e-20),
+              gain:10*Math.log10(qyy/ixx), phase:Math.asin(Math.max(-1,Math.min(1,ixy/Math.sqrt(ixx*qyy))))*180/Math.PI,
+              irr:Math.min(120,20*Math.log10(sq)), level:10*Math.log10(pw), mi, mq};
+          } else n.res={none:true};
+          sx=sy=sxx=syy=sxy=0; cnt=0;
+        }
+      }
+      n.sx=sx; n.sy=sy; n.sxx=sxx; n.syy=syy; n.sxy=sxy; n.cnt=cnt;
+    }
+    const r=n.res; n.ui=r;
+    return r && !r.none ? {dc:r.dc, dcc:r.dcc, gain:r.gain, phase:r.phase, irr:r.irr} : {dc:null, dcc:null, gain:null, phase:null, irr:null};
+  }};
+
 /* ---- Mode S / ADS-B: общее для демодулятора, декодера и генератора ---- */
 // CRC-24 Mode S (полином 0xFFF409); остаток = CRC(данные) ^ последние 3 байта
 const MODES_CRC_T=(()=>{ const t=new Uint32Array(256);
