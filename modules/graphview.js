@@ -48,6 +48,8 @@ const GV_NODEA={id:['id','node','name','key','узел'], label:['label','title'
   color:['color','colour','цвет'], size:['size','value','размер']};
 function gvKeys(r,alias,ovr){
   const low={}; for(const k in r) low[k.toLowerCase()]=k;
+  // у записей декодеров src — имя протокола (рядом kind / msg), а не источник связи
+  if(low.src!==undefined && (low.kind!==undefined || low.msg!==undefined)) delete low.src;
   const f={};
   for(const nm in alias){
     const o=ovr && ovr[nm];
@@ -57,9 +59,24 @@ function gvKeys(r,alias,ovr){
   return f;
 }
 const gvOvr=(n,pre)=>{ const o={}; for(const k of Object.keys(pre)) if(n.p[pre[k]]) o[k]=n.p[pre[k]]; return o; };
-const gvEdgeOvr=n=>gvOvr(n,{from:'fromCol',to:'toCol',w:'weightCol',label:'labelCol'});
+const gvEdgeOvr=n=>{                                // + toTag: «col=value:префикс» — к id адресата добавляется префикс
+  const o=gvOvr(n,{from:'fromCol',to:'toCol',w:'weightCol',label:'labelCol'});
+  const m=String(n.p.toTag||'').match(/^([^=]+)=([^:]*):(.*)$/);
+  if(m) o.tag={col:m[1].trim().toLowerCase(),val:m[2].trim().toLowerCase(),prefix:m[3]};
+  return o;
+};
 const gvNodeOvr=n=>gvOvr(n,{id:'nodeCol',label:'nodeLabelCol'});
 const gvKey=(a,b)=>a+'\u0001'+b;
+const GV_ALIASF=['alias','from_label','fromname'];
+// подпись отправителя: поле alias записи (и записи, где есть только from — псевдоним абонента)
+function gvAliasOf(r,ovr){
+  if(!r || typeof r!=='object') return null;
+  const f=gvKeys(r,GV_ALIAS,ovr), low={};
+  for(const k in r) low[k.toLowerCase()]=k;
+  if(f.from==null) return null;
+  const a=GV_ALIASF.find(x=>low[x]!==undefined && r[low[x]]!=='' && r[low[x]]!=null);
+  return a ? {id:String(r[f.from]).trim(), label:String(r[low[a]])} : null;
+}
 function gvEdgeRec(r,ovr){                          // запись → {from,to,w,label,color} или null
   if(!r || typeof r!=='object') return null;
   const f=gvKeys(r,GV_ALIAS,ovr), ks=Object.keys(r);
@@ -67,8 +84,11 @@ function gvEdgeRec(r,ovr){                          // запись → {from,to
   const bare=f.from==null && f.to==null && !(ovr && (ovr.from || ovr.to));
   const from=f.from ?? (bare ? ks[0] : null), to=f.to ?? (bare ? ks[1] : null);
   if(from==null || to==null) return null;
-  const a=String(r[from]??'').trim(), b=String(r[to]??'').trim();
+  const a=String(r[from]??'').trim();
+  let b=String(r[to]??'').trim();
   if(!a || !b) return null;
+  const tg=ovr && ovr.tag;
+  if(tg){ const k=Object.keys(r).find(c=>c.toLowerCase()===tg.col); if(k!==undefined && String(r[k]).toLowerCase()===tg.val) b=tg.prefix+b; }
   const w=f.w!=null && r[f.w]!=='' ? +String(r[f.w]).replace(',','.') : NaN;
   return {from:a,to:b,w:Number.isFinite(w) ? w : NaN,label:f.label!=null ? String(r[f.label]??'') : '',color:f.color!=null ? String(r[f.color]||'') : ''};
 }
@@ -100,15 +120,20 @@ function gvLines(n,text,hdr){                       // hdr: объект рас�
   }
 }
 function gvRecs(n,recs){
+  const ovr=gvEdgeOvr(n);
   for(const r of Array.isArray(recs) ? recs : [recs]){
-    const e=gvEdgeRec(r,gvEdgeOvr(n)); if(e) gvAdd(n,e.from,e.to,e.w,e.label);
+    const al=gvAliasOf(r,ovr); if(al && n.aliasA.get(al.id)!==al.label){ n.aliasA.set(al.id,al.label); n.dirty=true; }
+    const e=gvEdgeRec(r,ovr); if(e) gvAdd(n,e.from,e.to,e.w,e.label);
   }
 }
 function gvSetEdges(n,recs){                        // снимок рёбер
   const m=new Map();
-  const ovr=gvEdgeOvr(n);
-  for(const r of recs){ const e=gvEdgeRec(r,ovr); if(e) gvPut(m,e); }
-  n.sEdges=m; n.dirty=true;
+  const ovr=gvEdgeOvr(n), al=new Map();
+  for(const r of recs){
+    const a=gvAliasOf(r,ovr); if(a) al.set(a.id,a.label);
+    const e=gvEdgeRec(r,ovr); if(e) gvPut(m,e);
+  }
+  n.sEdges=m; n.aliasS=al; n.dirty=true;
 }
 function gvSetNodes(n,recs){                        // снимок узлов: id[,label,shape,color,size]
   const m=new Map(), ovr=gvNodeOvr(n);
@@ -126,7 +151,7 @@ function gvSetNodes(n,recs){                        // снимок узлов: 
   n.sNodes=m; n.dirty=true;
 }
 function gvClear(n){                                // накопленное; снимки принадлежат проводам и остаются
-  n.edges=new Map(); n.aNodes=new Set(); n.hdr={}; n.dirty=true;
+  n.edges=new Map(); n.aNodes=new Set(); n.aliasA=new Map(); n.hdr={}; n.dirty=true;
   if(n.p.csv) gvLines(n,n.p.csv,n.hdr);
   n.lastText=undefined; n.lastRec=undefined; n.sel='';
   redraw(n);
@@ -139,6 +164,9 @@ function gvBuild(n){
   const nodes=new Map();
   const touch=id=>{ let nd=nodes.get(id); if(!nd){ nd={id,label:id,deg:0}; nodes.set(id,nd); } return nd; };
   for(const e of edges.values()){ touch(e.from).deg++; touch(e.to).deg++; }
+  for(const al of [n.aliasA,n.aliasS]) for(const [id,label] of al){     // псевдонимы — подпись по умолчанию
+    const nd=nodes.get(id); if(nd) nd.label=label+'\n'+id;
+  }
   for(const [id,a] of n.sNodes) Object.assign(touch(id),a);
   n.dN=nodes; n.dE=edges; n.sync=true;
 }
@@ -221,11 +249,12 @@ def({ id:'graphview', title:'Graph', cat:'Output', kw:'network graph links nodes
           {n:'toCol',t:'text',d:'',label:'edge to col (auto)',adv:true,fn:n=>gvRemap(n)},
           {n:'weightCol',t:'text',d:'',label:'edge weight col (auto)',adv:true,fn:n=>gvRemap(n)},
           {n:'labelCol',t:'text',d:'',label:'edge label col (auto)',adv:true,fn:n=>gvRemap(n)},
+          {n:'toTag',t:'text',d:'',label:'prefix for to: col=value:prefix',adv:true,fn:n=>gvRemap(n)},
           {n:'nodeCol',t:'text',d:'',label:'node id col (auto)',adv:true,fn:n=>gvRemap(n)},
           {n:'nodeLabelCol',t:'text',d:'',label:'node label col (auto)',adv:true,fn:n=>gvRemap(n)},
           {n:'fit',t:'button',label:'Fit',fn:n=>n.net?.fit({animation:true})},
           {n:'clear',t:'button',label:'Clear',fn:n=>{ n.p.csv=''; gvClear(n); }}],
-  init:n=>{ n.edges=new Map(); n.aNodes=new Set(); n.sEdges=new Map(); n.sNodes=new Map(); n.dN=new Map(); n.dE=new Map();
+  init:n=>{ n.aliasA=new Map(); n.aliasS=new Map(); n.edges=new Map(); n.aNodes=new Set(); n.sEdges=new Map(); n.sNodes=new Map(); n.dN=new Map(); n.dE=new Map();
             n.sigN=new Map(); n.sigE=new Map(); n.hdr={}; n.net=null; n.gv=null; n.lastSet=null; n.lastNodes=null;
             n.sel=''; n.dirty=true; n.sync=true; n.gvErr=''; n.fresh=true; },
   dispose:n=>{ try{ n.net?.destroy(); }catch(e){} n.net=null; },
