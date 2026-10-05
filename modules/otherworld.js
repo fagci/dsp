@@ -37,7 +37,8 @@ def({ id:'chaos', title:'Strange Attractor', cat:'Sources', kw:'chaos lorenz ros
     }
     return {x:ox,y:oy,z:oz}; }});
 
-// ---- Слияние двойной чёрной дыры: чирп спирали (f ~ (tc−t)^-3/8), звон, тишина, повтор
+// ---- Слияние двойной чёрной дыры: чирп спирали (f ~ (tc−t)^-3/8, A ~ f^(2/3) — ньютоновское приближение),
+//      затухающий звон, тишина, повтор. Учебная модель, не форма волны из численной относительности
 def({ id:'gwave', title:'Black Hole Merger', cat:'Sources', kw:'gravitational wave ligo chirp inspiral merger black hole',
   outs:[{n:'out',t:'sig'},{n:'sync',t:'sig'}],
   params:[{n:'f0',t:'range',min:5,max:2000,step:1,d:35,log:true,label:'start frequency, Hz'},
@@ -51,14 +52,14 @@ def({ id:'gwave', title:'Black Hole Merger', cat:'Sources', kw:'gravitational wa
     const o=buf(n,'out'), os=buf(n,'sync'), sr=Eng.sr;
     const f0=Math.min(n.p.f0,n.p.fmax*.99), fm=n.p.fmax, T=n.p.dur;
     const tm=T*(1-Math.pow(f0/fm,8/3));                // момент слияния: f достигает fmax
-    const ring=.04, total=tm+ring*5+n.p.gap;
+    const ring=.04, fr=fm*1.2, total=tm+ring*5+n.p.gap;   // звон ~1.2·f слияния (порядок величины для сравнимых масс)
     for(let i=0;i<BLOCK;i++){
       let v=0, mark=0;
       if(n.t<tm){
         const f=f0*Math.pow(1-n.t/T,-3/8);
         n.ph+=f/sr; v=Math.pow(f/fm,2/3)*Math.sin(2*Math.PI*n.ph);
       } else if(n.t<tm+ring*5){
-        n.ph+=fm/sr; v=Math.exp(-(n.t-tm)/ring)*Math.sin(2*Math.PI*n.ph);
+        n.ph+=fr/sr; v=Math.exp(-(n.t-tm)/ring)*Math.sin(2*Math.PI*n.ph);
       }
       n.t+=1/sr; if(n.t>=total){ n.t=0; n.ph=0; mark=1; }
       o[i]=(v+(Math.random()*2-1)*n.p.noise)*n.p.amp; os[i]=mark;
@@ -70,22 +71,28 @@ def({ id:'pulsar', title:'Pulsar', cat:'Sources', kw:'pulsar neutron star radio 
   outs:[{n:'out',t:'sig'},{n:'sync',t:'sig'}],
   params:[{n:'period',t:'range',min:2,max:2000,step:1,d:714,log:true,label:'period, ms'},
           {n:'width',t:'range',min:.5,max:30,step:.5,d:4,label:'pulse width, % of period'},
-          {n:'scint',t:'range',min:0,max:1,step:.01,d:.4,label:'amplitude flicker'},
+          {n:'scint',t:'range',min:0,max:.5,step:.01,d:.2,label:'amplitude flicker (correlated)'},
           {n:'null',t:'range',min:0,max:.9,step:.01,d:.05,label:'missing pulses'},
           {n:'tail',t:'range',min:0,max:1,step:.01,d:.3,label:'scatter tail'},
           {n:'noise',t:'range',min:0,max:1,step:.01,d:.15,label:'noise'},
           {n:'amp',t:'range',min:0,max:1,step:.01,d:.6}],
-  init:n=>{ n.ph=0; n.a=1; n.y=0; },
+  init:n=>{ n.ph=0; n.a=1; n.s=.5; n.y=0; n.nk=''; n.norm=1; },
   process(n){
     const o=buf(n,'out'), os=buf(n,'sync'), dph=1000/n.p.period/Eng.sr;
     const w=n.p.width/100/2.355, c=.15, k=n.p.tail>0 ? Math.exp(-1/(Eng.sr*n.p.period/1000*.3*n.p.tail)) : 0;
+    const key=[n.p.period,n.p.width,n.p.tail,Eng.sr].join();
+    if(key!==n.nk){ n.nk=key;                            // свёртка гауссова импульса с экспонентой: нормируем пик на 1
+      let y=0, m=1e-9;
+      for(let j=0,N=Math.min(Math.round(1/dph),400000);j<N;j++){ const d=(j*dph-c)/w; y=k*y+(1-k)*Math.exp(-.5*d*d); if(y>m) m=y; }
+      n.norm=1/m; }
     for(let i=0;i<BLOCK;i++){
       n.ph+=dph; let mark=0;
       if(n.ph>=1){ n.ph-=1; mark=1;
-        n.a=Math.random()<n.p.null ? 0 : 1-n.p.scint*Math.random(); }
+        n.s=.8*n.s+.2*Math.random();                     // мерцание коррелировано от импульса к импульсу
+        n.a=Math.random()<n.p.null ? 0 : 1-n.p.scint*n.s*2; }
       const d=(n.ph-c)/w, g=n.a*Math.exp(-.5*d*d);
-      n.y= g>n.y ? g : n.y*k;                            // хвост рассеяния: медленный спад
-      o[i]=(n.y+(Math.random()*2-1)*n.p.noise)*n.p.amp; os[i]=mark;
+      n.y=k*n.y+(1-k)*g;                                 // рассеяние в среде: экспоненциальный хвост
+      o[i]=(n.y*n.norm+(Math.random()*2-1)*n.p.noise)*n.p.amp; os[i]=mark;
     }
     return {out:o,sync:os}; }});
 
