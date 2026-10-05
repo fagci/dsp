@@ -1576,6 +1576,89 @@ def({ id:'ft8Rx', title:'FT8: Receive Slots', cat:'Decoders',
   draw(n){ const r=n.el.querySelector('.readout');
     if(r.textContent!==n.text){ const atTop=r.scrollTop<8;
       r.textContent=n.text; if(atTop) r.scrollTop=0; } }});
+/* ---------- FT8: упаковка сообщения и передатчик ---------- */
+// позывной → n28 (стандартные позывные; CQ / DE / QRZ), null — не влезает в формат
+function ft8PackCall(call){
+  call=call.toUpperCase();
+  if(call==='DE') return 0; if(call==='QRZ') return 1; if(call==='CQ') return 2;
+  if(call.length<3 || call.length>6) return null;
+  let c=call;
+  if(!/\d/.test(c[2]||'') && /\d/.test(c[1])) c=' '+c;
+  if(c.length>6) return null;
+  c=c.padEnd(6,' ');
+  const i1=A1.indexOf(c[0]), i2=A2.indexOf(c[1]), i3=A3.indexOf(c[2]), i4=A4.indexOf(c[3]), i5=A4.indexOf(c[4]), i6=A4.indexOf(c[5]);
+  if(i1<0||i2<0||i3<0||i4<0||i5<0||i6<0) return null;
+  return 2063592+4194304+((((i1*36+i2)*10+i3)*27+i4)*27+i5)*27+i6;
+}
+// четвёртое поле → 15 бит: локатор, отчёт ±NN, RRR / RR73 / 73 или пусто
+function ft8PackGrid(g){
+  if(g==='') return 32404;
+  if(g==='RRR') return 32401; if(g==='RR73') return 32402; if(g==='73') return 32403;
+  if(/^[A-R]{2}\d\d$/.test(g)) return (((g.charCodeAt(0)-65)*18+g.charCodeAt(1)-65)*10+ +g[2])*10+ +g[3];
+  const m=/^([+-]\d{1,2})$/.exec(g);
+  return m && Math.abs(+m[1])<=30 ? 32400+35+(+m[1]) : null;
+}
+// текст → 77 бит (тип 1: «CALL1 CALL2 GRID|отчёт», «R» перед отчётом; иначе свободный текст до 13 знаков), null — не упаковалось
+function ft8Pack(text){
+  const t=(text||'').toUpperCase().trim().replace(/\s+/g,' '), w=t.split(' '), b=new Array(77).fill(0);
+  const put=(at,len,v)=>{ for(let i=len-1;i>=0;i--){ b[at+i]=v%2; v=Math.floor(v/2); } };
+  if(w.length>=2 && w.length<=3){
+    const r1=w[0].endsWith('/R'), r2=w[1].endsWith('/R');
+    const c1=ft8PackCall(r1?w[0].slice(0,-2):w[0]), c2=ft8PackCall(r2?w[1].slice(0,-2):w[1]);
+    let g=w[2]||'', R=0;
+    if(/^R[+-]\d{1,2}$/.test(g)){ R=1; g=g.slice(1); }
+    const g15=ft8PackGrid(g);
+    if(c1!==null && c2!==null && g15!==null){
+      put(0,28,c1); b[28]=+r1; put(29,28,c2); b[57]=+r2; b[58]=R; put(59,15,g15); put(74,3,1);
+      return b; }
+  }
+  if(t.length>13 || [...t].some(c=>AF.indexOf(c)<0)) return null;
+  let n=0n; for(const c of t.padEnd(13,' ')) n=n*42n+BigInt(AF.indexOf(c));
+  for(let i=70;i>=0;i--){ b[i]=Number(n&1n); n>>=1n; }
+  return b;
+}
+// 77 бит → 79 тонов: Костас, 58 информационных символов (3 бита, код Грея)
+function ft8Tones(b77){
+  const cw=ft8Encode(b77), t=[];
+  for(let s=0;s<FT8_SYMS;s++){
+    if(s<7) t.push(FT8_COSTAS[s]); else if(s>=36&&s<43) t.push(FT8_COSTAS[s-36]); else if(s>=72) t.push(FT8_COSTAS[s-72]);
+    else { const k=(s<36 ? s-7 : s-14)*3; t.push(FT8_GRAY[cw[k]*4+cw[k+1]*2+cw[k+2]]); } }
+  return t;
+}
+// гауссов частотный импульс GFSK, BT=2: вклад символа j в мгновенную частоту (в долях тона), t — в символах от центра
+const FT8_GP=(()=>{ const N=96, c=Math.PI*2*Math.sqrt(2/Math.LN2), t=new Float32Array(N+1);
+  const erf=x=>{ const u=1/(1+.3275911*Math.abs(x)), y=1-u*(.254829592+u*(-.284496736+u*(1.421413741+u*(-1.453152027+u*1.061405429))))*Math.exp(-x*x); return x>=0?y:-y; };
+  for(let i=0;i<=N;i++){ const x=(i/N)*3-1.5; t[i]=.5*(erf(c*(x+.5))-erf(c*(x-.5))); }
+  return t; })();
+const FT8_TX_SEC=79*.16, FT8_TX_DELAY=.5;
+def({ id:'ft8Tx', title:'FT8: Transmit', cat:'Protocols',
+  ins:[{n:'text',t:'txt'},{n:'freq',t:'num'}], outs:[{n:'out',t:'sig'}], readout:true,
+  params:[{n:'text',t:'text',d:'CQ K1ABC FN42'},
+          {n:'freq',t:'range',min:200,max:3000,step:1,d:1500,label:'tone 0 frequency, Hz'},
+          {n:'slots',t:'select',opts:['every','even','odd'],d:'every',label:'15 s slots (UTC) to transmit in'},
+          {n:'lvl',t:'range',min:.05,max:1,step:.05,d:.5,label:'level'}],
+  init:n=>{ n.slot=-1; n.t=-99; n.ph=0; n.key=null; n.tones=null; n.msg='';n.text=''; },
+  process(n,I){
+    if(typeof I.freq==='number') setMod(n,'freq',I.freq);
+    const o=buf(n,'out'), sr=Eng.sr, txt=(typeof I.text==='string'&&I.text) ? I.text : n.p.text;
+    if(n.key!==txt){ n.key=txt; const b=ft8Pack(txt); n.tones=b ? ft8Tones(b) : null; n.msg=b ? ft8Unpack(b) : null; }
+    const now=Date.now(), slot=Math.floor(now/15000);
+    if(slot!==n.slot){ n.slot=slot; n.t=(now-slot*15000)/1000-FT8_TX_DELAY; }
+    const on=n.tones && (n.p.slots==='every' || (slot%2===0)===(n.p.slots==='even')), tn=n.tones, f0=n.p.freq, a=n.p.lvl;
+    for(let i=0;i<BLOCK;i++,n.t+=1/sr){
+      if(!on || n.t<0 || n.t>=FT8_TX_SEC){ o[i]=0; continue; }
+      const u=n.t/.16, k=Math.floor(u);
+      let f=0;
+      for(let j=k-1;j<=k+1;j++){
+        const tj=tn[j<0?0:j>78?78:j], x=(u-j-.5+1.5)/3*96;
+        if(x>=0 && x<96){ const xi=x|0, fr=x-xi; f+=tj*(FT8_GP[xi]+(FT8_GP[xi+1]-FT8_GP[xi])*fr); } }
+      n.ph+=2*Math.PI*(f0+6.25*f)/sr;
+      o[i]=a*Math.sin(n.ph); }
+    n.ph%=2*Math.PI;
+    return {out:o}; },
+  draw(n){ const r=n.el.querySelector('.readout'), t=n.tones ? (n.msg||'')+' · '+(n.t>=0&&n.t<FT8_TX_SEC ? 'sending '+n.t.toFixed(1)+' s' : 'waiting for the slot') : 'cannot pack: '+(n.key||'');
+    if(r && r.textContent!==t) r.textContent=t; }});
+
 /* ============================================================
    Расширение: обобщённый слой "текст ↔ биты" + передатчик AX.25/APRS.
    Добавить в КОНЕЦ protocols.js (использует def/buf/setMod/BLOCK/Eng
