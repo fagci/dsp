@@ -29,6 +29,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 ### Sources
 - Oscillator, sweep/jammer, constant, LFO (a `sync` input restarts the phase on a rising edge, the `sync` output pulses at the start of every period — chain it with the oscillator's `sync` or another LFO), text source
 - Microphone (stereo A+B), audio file, audio stream URL, tab/screen audio capture
+- **Not from this reality** (synthetic, nothing is received): *Strange Attractor* (Lorenz / Rössler / Thomas, three outputs — try the phase scope), *Black Hole Merger* (inspiral chirp → ringdown → silence, with a `sync` pulse), *Pulsar* (period, flicker, missing pulses, scatter tail), *Schumann Resonance* (five Earth–ionosphere modes driven by lightning, a frequency multiplier brings it into the audible range), *Cellular Automaton* (Wolfram rules, rule 30 as a bit generator)
 - **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500, RX-888 (mkI/mkII/mkIII) — multiple tuners/demodulators per device, wideband sweep with a panoramic waterfall, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
 - **KiwiSDR** remote receivers (public list included)
 - Camera, video, image, accelerometer and Generic Sensor API
