@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=51;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=52;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -223,6 +223,8 @@ const PRESET_CATS={
   'Rig Control: Follow and Tune a Radio':'Network & IoT',
   'APRS-IS: Stations on the Map':'Modems & Data Links',
   'KISS TNC: Packet Radio via Direwolf':'Modems & Data Links',
+  'CAN: OBD-II Dashboard (SLCAN)':'Modems & Data Links',
+  'CAN: Bus Sniffer (SLCAN)':'Modems & Data Links',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
@@ -3916,5 +3918,38 @@ tk.size.w=380; tk.size.h=110; applySize(tk);
 const map=addNode('geoMap',460,220,{mz:6,mlat:55,mlon:83});
 map.size.w=700; map.size.h=470; applySize(map);
 addEdge(k.id,'rec',map.id,'rec'); addEdge(k.id,'text',tk.id,'text');
+markWiresDirty();
+});
+
+preset('CAN: OBD-II Dashboard (SLCAN)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Car data over OBD-II: an SLCAN adapter (CANable, USBtin, any Lawicel-compatible) in the diagnostic socket, WebSerial in Chrome / Edge. The CAN node and the OBD-II node are joined by two text wires: OBD-II asks for one PID after another (7DF#02010C…), the answers come back and are decoded.\n'+
+  'The bit rate of most cars on the OBD socket is 500k. Set the mode to normal and tick «allow transmit» — the OBD-II requests are the only thing this preset sends (they are the ordinary scan-tool queries; nothing is written to the car). Press Connect and choose the port.'});
+nt.size.w=1100; nt.size.h=150; applySize(nt);
+const c=addNode('canSlcan',40,220,{mode:'normal',tx:true});
+c.size.w=360; c.size.h=300; applySize(c);
+const o=addNode('obd2',460,220,{});
+o.size.w=300; o.size.h=240; applySize(o);
+const g1=addNode('gauge',820,220,{min:0,max:8000,warn:5500,crit:6500,unit:'rpm'});
+g1.size.w=300; g1.size.h=170; applySize(g1);
+const g2=addNode('gauge',820,420,{min:0,max:220,warn:130,crit:180,unit:'km/h'});
+g2.size.w=300; g2.size.h=170; applySize(g2);
+const g3=addNode('gauge',1160,220,{min:-20,max:130,warn:100,crit:110,unit:'°C'});
+g3.size.w=300; g3.size.h=170; applySize(g3);
+addEdge(c.id,'text',o.id,'text'); addEdge(o.id,'text',c.id,'text');
+addEdge(o.id,'rpm',g1.id,'in'); addEdge(o.id,'speed',g2.id,'in'); addEdge(o.id,'coolant',g3.id,'in');
+markWiresDirty();
+});
+preset('CAN: Bus Sniffer (SLCAN)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Listen to a CAN bus: the adapter is in listen-only mode (it never sends, even if the text wire is connected). Every frame is a line ID#DATA in the log; the *only these ids* field narrows it to the ones you watch. Rec Log keeps the frames as records (can_id, dlc, data) for a CSV.\n'+
+  'Bit rate must match the bus (500k cars, 250k trucks and J1939, 125k body networks); a wrong one gives adapter errors, not frames.'});
+nt.size.w=1000; nt.size.h=120; applySize(nt);
+const c=addNode('canSlcan',40,190,{});
+c.size.w=360; c.size.h=300; applySize(c);
+const lg=addNode('recLog',440,190,{}); lg.size.w=240; applySize(lg);
+const tk=addNode('ticker',440,360,{time:true});
+tk.size.w=420; tk.size.h=140; applySize(tk);
+addEdge(c.id,'text',tk.id,'text'); addEdge(c.id,'rec',lg.id,'rec');
 markWiresDirty();
 });

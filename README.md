@@ -35,6 +35,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **RTC Data**: a direct browser-to-browser WebRTC data channel, no server — see [RTC Data](#rtc-data); **Tab Link**: text and numbers between tabs of the same browser
 - **Rig Control (rigctl)**: frequency, mode and S-meter of a transceiver through Hamlib `rigctld`, tuning from the graph — see [Rig Control](#rig-control)
 - **KISS TNC** (serial or Direwolf over TCP) and **APRS-IS** client: packets as TNC2 lines and map records — see [APRS and KISS](#aprs-and-kiss)
+- **CAN (SLCAN)** and **OBD-II**: a CAN bus through a USB adapter, car data (rpm, speed, temperature…) — see [CAN and OBD-II](#can-and-obd-ii)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), **Table** (one node for lists, band plans, bookmarks, logs and the data sequencer: CSV / TSV / JSON / TXT / KML / GPX / GeoJSON, folders in the browser DB, played row by row), Trigger Clock, Time Base — see [Table](#table)
@@ -814,6 +815,14 @@ Two nodes bring packet radio and the APRS network into the graph; both speak the
 - A callsign and a licence (or a receive-only login) are yours to bring: the nodes do not check them.
 
 Presets: *APRS-IS: Stations on the Map*, *KISS TNC: Packet Radio via Direwolf*.
+
+## CAN and OBD-II
+
+- **CAN (SLCAN)** — a CAN bus through an SLCAN / Lawicel adapter (CANable, USBtin, CANUSB and clones) over WebSerial (Chrome / Edge). *Bit rate* 10k…1M, 11-bit and 29-bit frames, remote frames. Outputs: `text` (one frame per block, a burst is queued; the candump form `123#DEADBEEF`, `18DAF110#0102` for 29 bits), `rec` (`can_id`, `ext`, `dlc`, `data`), `new`, `ok`; *only these ids* filters by hex id. **Listen-only by default**: the adapter is opened with `L` and nothing can go onto the bus. To send, choose the mode *normal*, reconnect and tick *allow transmit*: the `text` wire (`ID#DATA`, `ID#R` for a remote frame) is then sent when it changes, and the same text again after a pause with no text on the wire. Sending on a car bus can set off warnings, limp modes or worse — do it on a bench, not on a moving vehicle.
+- **OBD-II** — the mode 01 reader on top of it. Wire CAN `text` → OBD-II `text` and OBD-II `text` → CAN `text` (and mode *normal* + *allow transmit* on the CAN node): it asks one PID of the *PIDs* list per *period* (`7DF#02010C…`), decodes the answers of the ECUs (`7E8…7EF`) and gives `rpm`, `speed`, `coolant`, `throttle`, `load` as numbers (the last value is kept) and every answer as a `rec` (`pid`, `name`, `value`, `unit`, `ecu`). Decoded PIDs: 04 load, 05 coolant, 0A fuel pressure, 0B MAP, 0C rpm, 0D speed, 0E timing, 0F intake temp, 10 MAF, 11 throttle, 2F fuel level, 42 module voltage, 46 ambient temp, 5C oil temp; a request for a PID the car does not know gets no answer, and it is skipped. With *ask* off it only decodes — it works on a candump from a sniffer too (lines like `can0 7E8#…` are read).
+- Not done: the other OBD modes (stored fault codes, freeze frame, VIN) and multi-frame ISO-TP answers, UDS, J1939 decoding, CAN FD, ELM327 adapters (they speak a different text protocol). Checked against a mock of the adapter's serial port (frames, errors, listen-only, sending, PID decoding with hand-computed values), **not on a car and not with a real adapter**.
+
+Presets: *CAN: OBD-II Dashboard (SLCAN)*, *CAN: Bus Sniffer (SLCAN)*.
 
 ## Map and records
 
