@@ -83,6 +83,7 @@ const SHELL=[
   './modules/sym-kernels.js?v='+V,
   './modules/blind-kernels.js?v='+V,
   './modules/tetra-kernels.js?v='+V,
+  './modules/gsm-kernels.js?v='+V,
   './modules/video-kernels.js?v='+V,
   './modules/iq.js?v='+V,
   './modules/adsb.js?v='+V,

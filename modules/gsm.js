@@ -19,34 +19,6 @@
  * Дальше демодуляции нет: узел выдаёт биты бёрстов (для demapper/декодера канала),
  * BSIC и номер кадра. Это приёмник физического уровня, не декодер трафика. */
 
-/* ---------- константы (gr-gsm gsm_constants.h) ---------- */
-const GSM_OSR=4;
-const GSM_SYMBOL_RATE=1625000/6;                     // символов/с
-const GSM_TARGET_SR=GSM_SYMBOL_RATE*GSM_OSR;         // 1083333.33 отсч./с
-const GSM_TAIL=3, GSM_GUARD_BITS=8, GSM_GUARD_FRAC=0.25, GSM_GUARD=GSM_GUARD_BITS+GSM_GUARD_FRAC;
-const GSM_DATA_BITS=57, GSM_N_TRAIN=26, GSM_N_SYNC=64;
-const GSM_USEFUL=142, GSM_BURST_SIZE=GSM_USEFUL+2*GSM_TAIL;   // 148
-const GSM_SCH_DATA_LEN=39;
-const GSM_TS_BITS=GSM_TAIL+GSM_USEFUL+GSM_TAIL+GSM_GUARD_BITS;   // 156
-const GSM_TS_PER_FRAME=8, GSM_FRAME_BITS=GSM_TS_PER_FRAME*GSM_TS_BITS+2;   // 1250
-const GSM_SYNC_POS=39, GSM_SYNC_SEARCH_RANGE=30;
-const GSM_TRAIN_POS=GSM_TAIL+(GSM_DATA_BITS+1)+5, GSM_TRAIN_BEGINNING=5;   // 66
-const GSM_SAFETY_MARGIN=6, GSM_CHAN_IMP=5, GSM_MAX_SCH_ERR=10;
-const GSM_FCCH_HITS=GSM_USEFUL-4, GSM_FCCH_MISS=1, GSM_FCCH_MAX_OFF=100;
-
-const GSM_SYNC_BITS=[
-  1,0,1,1,1,0,0,1,0,1,1,0,0,0,1,0, 0,0,0,0,0,1,0,0,0,0,0,0,1,1,1,1,
-  0,0,1,0,1,1,0,1,0,1,0,0,0,1,0,1, 0,1,1,1,0,1,1,0,0,0,0,1,1,0,1,1];
-const GSM_TRAIN_SEQ=[
-  [0,0,1,0,0,1,0,1,1,1,0,0,0,0,1,0,0,0,1,0,0,1,0,1,1,1],
-  [0,0,1,0,1,1,0,1,1,1,0,1,1,1,1,0,0,0,1,0,0,1,0,1,1,1],
-  [0,1,0,0,0,0,1,1,1,0,1,1,1,0,1,0,0,1,0,0,0,0,1,1,1,0],
-  [0,1,0,0,0,1,1,1,1,0,1,1,0,1,0,0,0,1,0,0,0,1,1,1,1,0],
-  [0,0,0,1,1,0,1,0,1,1,1,0,0,1,0,0,0,0,0,1,1,0,1,0,1,1],
-  [0,1,0,0,1,1,1,0,1,0,1,1,0,0,0,0,0,1,0,0,1,1,1,0,1,0],
-  [1,0,1,0,0,1,1,1,1,1,0,1,1,0,0,0,1,0,1,0,0,1,1,1,1,1],
-  [1,1,1,0,1,1,1,1,0,0,0,1,0,0,1,0,1,1,1,0,1,1,1,1,0,0],
-  [0,1,1,1,0,0,0,1,0,1,1,1,0,0,0,1,0,1,1,1,0,0,0,1,0,1]];
 // 51-мультикадр TS0 (нисходящий): FCCH на 0/10/20/30/40, SCH на 1/11/21/31/41, прочее — норм/dummy
 const GSM_FCCH_FRAMES=new Set([0,10,20,30,40]);
 const GSM_SCH_FRAMES=new Set([1,11,21,31,41]);
@@ -148,19 +120,6 @@ function gsmViterbiDetector(inRe, inIm, samplesNum, rhhRe, rhhIm, startState, st
 }
 
 /* ---------- SCH: свёрточный код (G0=0o31, G1=0o33), CRC-10, разбор ---------- */
-// Порядок бит как в osmo_conv: r=(state<<1)|bit, out=parity(r&poly), state=r&0xF.
-const GSM_G0=0b11001, GSM_G1=0b11011;
-function gsmParity(x){ x^=x>>>4; x^=x>>>2; x^=x>>>1; return x&1; }   // чётность бит
-// вход — 39 инф. бит (25 данные + 10 CRC + ... ), возвращает 78 кодовых бит (0/1)
-function gsmSchConvEncode(u){
-  const out=new Int8Array(78); let state=0, o=0;
-  for(let i=0;i<39;i++){
-    const bit=i<u.length?u[i]:0, r=(state<<1)|bit;
-    out[o++]=gsmParity(r&GSM_G0); out[o++]=gsmParity(r&GSM_G1);
-    state=r&0xf;
-  }
-  return out;
-}
 // Витерби K=5 (G0/G1) по 2·STEPS мягким битам (sbit: 0→+, 1→−) → STEPS инф. бит.
 // Хвост из 4 нулей → конечное состояние 0. Тот же код у SCH (39 шагов) и xCCH (228).
 function gsmConvK5(sb, steps){
@@ -186,13 +145,6 @@ function gsmConvK5(sb, steps){
   return u;
 }
 function gsmSchConvDecode(sb){ return gsmConvK5(sb,39).subarray(0,35); }
-// CRC-16/10 SCH: poly 0x175, init 0, xor 0x3ff (libosmocore gsm0503_sch_crc10)
-function gsmSchCrc10(bits, len){
-  let crc=0; const n=9;
-  for(let i=0;i<len;i++){ crc^=(bits[i]&1)<<n;
-    crc=(crc&(1<<n))?((crc<<1)^0x175):(crc<<1); crc&=0x3ff; }
-  return crc^0x3ff;
-}
 // e-биты бёрста (148, 0/1) → {t1,t2,t3,ncc,bcc} или null (CRC не сошёлся)
 function gsmDecodeSch(eb){
   const sb=new Int8Array(78);
@@ -217,42 +169,11 @@ function gsmDecodeSch(eb){
  * 23 байта L2 → RR-сообщение. Из SI Type 3 берём Cell ID и LAI (MCC/MNC/LAC) — это и есть
  * идентификатор соты. Соседние ARFCN из SI2 — на будущее (форматы списка частот не разобраны). */
 
-// свёрточный код K=5 (кодер, для самопроверки декодера): u (steps−4 инф. + хвост) → 2·steps бит
-function gsmConvK5Encode(u, steps){
-  const out=new Int8Array(2*steps); let state=0, o=0;
-  for(let i=0;i<steps;i++){ const bit=i<u.length?u[i]:0, r=(state<<1)|bit;
-    out[o++]=gsmParity(r&GSM_G0); out[o++]=gsmParity(r&GSM_G1); state=r&0xf; }
-  return out;
-}
-// FIRE CRC-40 (libosmocore gsm0503_fire_crc40): poly 0x0004820009, init 0, xor 0xffffffffff
-const GSM_FIRE_POLY=0x0004820009n, GSM_FIRE_MASK=(1n<<40n)-1n;
-function gsmFireCrc40(bits, len){
-  let crc=0n;
-  for(let i=0;i<len;i++){ crc^=BigInt(bits[i]&1)<<39n;
-    crc=(crc&(1n<<39n))?((crc<<1n)^GSM_FIRE_POLY):(crc<<1n); crc&=GSM_FIRE_MASK; }
-  return crc^0xffffffffffn;
-}
 // деперемежение xCCH (TS 05.03 4.1.4): cB[k]=iB[B·114+j]
 function gsmXcchDeinterleave(iB){
   const cB=new Float32Array(456);
   for(let k=0;k<456;k++){ const B=k&3, j=2*((49*k)%57)+((k&7)>>2); cB[k]=iB[B*114+j]; }
   return cB;
-}
-function gsmXcchInterleave(cB){
-  const iB=new Int8Array(456);
-  for(let k=0;k<456;k++){ const B=k&3, j=2*((49*k)%57)+((k&7)>>2); iB[B*114+j]=cB[k]; }
-  return iB;
-}
-// 23 байта L2 → 4×114 бит (для самопроверки): 184 данные + FIRE-40 → свёртка → перемежение
-function gsmBcchEncode(l2){
-  const conv=new Int8Array(224);
-  for(let i=0;i<23;i++) for(let b=0;b<8;b++) conv[i*8+b]=(l2[i]>>(7-b))&1;
-  const crc=gsmFireCrc40(conv,184);
-  for(let i=0;i<40;i++) conv[184+i]=Number((crc>>BigInt(39-i))&1n);
-  const coded=gsmConvK5Encode(conv,228);
-  const iB=gsmXcchInterleave(coded);
-  const bursts=[]; for(let B=0;B<4;B++) bursts.push(iB.subarray(B*114,B*114+114));
-  return bursts;
 }
 // 4×114 бит данных (0/1) → 23 байта L2 или null (CRC не сошёлся)
 function gsmBcchDecode(four){

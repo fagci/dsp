@@ -241,6 +241,8 @@ The heavy parts (SCH and xCCH convolutional codes + CRC/FIRE, BSIC/frame-number 
 
 Ready-made patch: **GSM: Receive Bursts (USB SDR)** (spectrum → tap a channel → receiver → cell list → log).
 
+Test signal: IQ Generator, mode *GSM* — a BCCH carrier (C0) with GMSK BT=0.3 on all 8 timeslots; TS0 follows the 51-multiframe: FCCH, SCH (BSIC, frame number), BCCH with SI1…SI4 in turn (cell `MCC-MNC-LAC-CI` and BSIC are parameters), idle CCCH; the other slots carry filler bursts. The receiver locks on it and lists the cell. Needs a sample rate ≥ 1.1 MS/s.
+
 ## IQ blocks
 
 A wire of the **IQ** type (lime) carries a stream at its own sample rate: each engine block it brings as many samples as the source produced since the previous block (none, one chunk or several), together with the stream's sample rate and center frequency. So a chain can run at 2.4 MS/s next to audio at 48 kHz, and a receiver is wired from blocks instead of being hidden inside the SDR node.
