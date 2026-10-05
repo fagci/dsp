@@ -36,6 +36,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **Rig Control (rigctl)**: frequency, mode and S-meter of a transceiver through Hamlib `rigctld`, tuning from the graph — see [Rig Control](#rig-control)
 - **KISS TNC** (serial or Direwolf over TCP) and **APRS-IS** client: packets as TNC2 lines and map records — see [APRS and KISS](#aprs-and-kiss)
 - **CAN (SLCAN)** and **OBD-II**: a CAN bus through a USB adapter, car data (rpm, speed, temperature…) — see [CAN and OBD-II](#can-and-obd-ii)
+- **DMX Out**: stage lighting over DMX512 (Enttec DMX USB Pro and compatible) — see [DMX512](#dmx512)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), **Table** (one node for lists, band plans, bookmarks, logs and the data sequencer: CSV / TSV / JSON / TXT / KML / GPX / GeoJSON, folders in the browser DB, played row by row), Trigger Clock, Time Base — see [Table](#table)
@@ -823,6 +824,17 @@ Presets: *APRS-IS: Stations on the Map*, *KISS TNC: Packet Radio via Direwolf*.
 - Not done: the other OBD modes (stored fault codes, freeze frame, VIN) and multi-frame ISO-TP answers, UDS, J1939 decoding, CAN FD, ELM327 adapters (they speak a different text protocol). Checked against a mock of the adapter's serial port (frames, errors, listen-only, sending, PID decoding with hand-computed values), **not on a car and not with a real adapter**.
 
 Presets: *CAN: OBD-II Dashboard (SLCAN)*, *CAN: Bus Sniffer (SLCAN)*.
+
+## DMX512
+
+**DMX Out** drives stage lighting (dimmers, LED pars, moving heads, fog machines) through an **Enttec DMX USB Pro** or a compatible adapter (DMXKing ultraDMX, many clones) on WebSerial (Chrome / Edge); the adapter makes the DMX line itself. Press `Connect`, choose the port.
+
+- Inputs `a`…`h` set eight channels starting from *start* (`a` = start, `b` = start + 1, …); the range is 0…255 or, with *input range* 0–1, 0…1 (scaled to 255 — what an LFO or a fader gives). The `text` input takes `channel=value` pairs, `from-to=value` for a range: `10=255 11-14=128` (channels 1…512). Channels keep their last value.
+- A frame goes out on change, at most *fps* per second, and once a second as a refresh. *Channels in the frame* (24…512) shortens it — a smaller frame means a higher refresh on the line. *Blackout now* zeroes the whole universe; with *all to 0 on disconnect* the lights go dark when the node disconnects or is removed.
+- `ok` is 1 while connected. One universe per node; use several nodes with several adapters for more.
+- Not done: DMX input, RDM, Art-Net / sACN (they are UDP, which the browser does not have), the raw FTDI "Open DMX" adapters (the break has to be timed by the host, which a browser cannot do reliably). Checked against the Enttec frame description and a mock of the serial port, **not on real lights**.
+
+Preset: *DMX: RGB Fade from LFOs*.
 
 ## Map and records
 

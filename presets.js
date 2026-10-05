@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=52;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=53;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -225,6 +225,7 @@ const PRESET_CATS={
   'KISS TNC: Packet Radio via Direwolf':'Modems & Data Links',
   'CAN: OBD-II Dashboard (SLCAN)':'Modems & Data Links',
   'CAN: Bus Sniffer (SLCAN)':'Modems & Data Links',
+  'DMX: RGB Fade from LFOs':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
@@ -3951,5 +3952,20 @@ const lg=addNode('recLog',440,190,{}); lg.size.w=240; applySize(lg);
 const tk=addNode('ticker',440,360,{time:true});
 tk.size.w=420; tk.size.h=140; applySize(tk);
 addEdge(c.id,'text',tk.id,'text'); addEdge(c.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+
+preset('DMX: RGB Fade from LFOs', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Stage lighting over DMX512: an Enttec DMX USB Pro (or a compatible one: DMXKing, clones) on WebSerial in Chrome / Edge. Three LFOs of different speed drive channels 1, 2, 3 — the red, green and blue of an RGB fixture at address 1 (set the fixture to 3-channel mode).\n'+
+  'Inputs a…h are the channels from «start»; the text input takes lines like «10=255 11-14=128» (channels 1…512, values 0…255). Frames go out on change, at most fps per second, and once a second as a refresh; Blackout now zeroes everything.\n'+
+  'Mind the room: fast colour changes and strobing can be unpleasant or harmful to people who are sensitive to flashing light — keep the LFOs slow.'});
+nt.size.w=1100; nt.size.h=150; applySize(nt);
+const l1=addNode('lfo',40,220,{freq:.05,min:0,max:1,wave:'sine'});
+const l2=addNode('lfo',40,360,{freq:.08,min:0,max:1,wave:'sine'});
+const l3=addNode('lfo',40,500,{freq:.13,min:0,max:1,wave:'sine'});
+const d=addNode('dmxOut',340,220,{scale:'0–1',channels:24});
+d.size.w=360; d.size.h=340; applySize(d);
+addEdge(l1.id,'out',d.id,'a'); addEdge(l2.id,'out',d.id,'b'); addEdge(l3.id,'out',d.id,'c');
 markWiresDirty();
 });
