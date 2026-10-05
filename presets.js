@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=45;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=46;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -216,6 +216,7 @@ const PRESET_CATS={
   'IR: Arduino / ESP / Flipper (WebSerial)':'Infrared',
   'IR: Tasmota Blaster over MQTT':'Infrared',
   'MQTT: Subscribe and Publish':'Network & IoT',
+  'HTTP: Poll a JSON API':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
@@ -3806,5 +3807,19 @@ tk.size.w=360; tk.size.h=100; applySize(tk);
 const nv=addNode('numview',1220,900,{});
 addEdge(l.id,'out',tx.id,'go'); addEdge(tx.id,'bit',la.id,'ch1');
 addEdge(la.id,'new',lp.id,'in1'); addEdge(la.id,'text',tk.id,'text'); addEdge(la.id,'byte',nv.id,'in');
+markWiresDirty();
+});
+
+preset('HTTP: Poll a JSON API', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'HTTP In asks a URL every period and takes the answer apart: the whole body as text, one JSON field as a number (value), objects / arrays as records (rec, straight to the Map or Rec Log if they have lat / lon).\n'+
+  'The example is the current temperature from Open-Meteo (no key, CORS open); field current.temperature_2m. Press Start. For your own server add Access-Control-Allow-Origin; from the https page only https:// (or localhost) works.'});
+nt.size.w=1000; nt.size.h=110; applySize(nt);
+const h=addNode('httpIn',40,180,{});
+h.size.w=380; h.size.h=300; applySize(h);
+const nv=addNode('numview',480,180,{});
+const tk=addNode('ticker',480,300,{time:true});
+tk.size.w=380; tk.size.h=110; applySize(tk);
+addEdge(h.id,'value',nv.id,'in'); addEdge(h.id,'text',tk.id,'text');
 markWiresDirty();
 });
