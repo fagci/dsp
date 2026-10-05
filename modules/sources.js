@@ -4308,15 +4308,18 @@ function sdrSweepPlan(n, hw){
   const a=(+n.p.swLo||0)*1e6, b=(+n.p.swHi||0)*1e6;
   let lo=Math.min(a,b), hi=Math.max(a,b);
   if(hw){ lo=Math.max(1,Math.floor(lo/1e6))*1e6; hi=Math.min(6000e6, Math.max(hi, lo+1e6)); }
-  const hops=Math.max(1, Math.ceil((hi-lo)/(use*binHz)));
-  const key=[N,sr,use,lo,hi,hw?1:0].join('|');
+  // шаг между шагами развёртки меньше use на долю перекрытия: в нахлёсте соседние шаги плавно сшиваются
+  const stride=hw ? use : Math.max(1, Math.round(use*(1-clamp((+n.p.swOvl||0)/100,0,.5))));
+  const hops=Math.max(1, Math.ceil((Math.ceil((hi-lo)/binHz)-use)/stride)+1);
+  const key=[N,sr,use,stride,lo,hi,hw?1:0].join('|');
   if(n.sw && n.sw.key===key) return n.sw;
-  const total=hops*use;
+  const total=(hops-1)*stride+use;
   if(total>SDR_SWEEP_MAX_BINS) throw new Error(`too many bins (${(total/1e6).toFixed(1)}M): narrow the range or reduce sweep FFT size`);
   const mag=new Float32Array(total), freqs=new Float64Array(total);
   for(let j=0;j<total;j++) freqs[j]=lo+j*binHz;
   const win=window_('hann',N); let wsum=0; for(let i=0;i<N;i++) wsum+=win[i];
-  n.sw={key, N, use, binHz, lo, hops, k:0, win, wsum, hw:!!hw,
+  n.sw={key, N, use, stride, binHz, lo, hops, k:0, win, wsum, hw:!!hw,
+        hp:hw ? null : new Float32Array(hops*use), hdone:hw ? null : new Uint8Array(hops),
         re:new Float32Array(N), im:new Float32Array(N), pw:new Float64Array(N),
         spec:{mag, freqs, sr, size:total, rev:1}, tLine:performance.now(), lineMs:null};
   if(hw) Object.assign(n.sw, {parse:{buf:null, n:0, synced:false}, acc:new Float64Array(total), cnt:new Int32Array(hops),
@@ -4367,8 +4370,26 @@ function sdrSweepPlace(n, sw, cap, k){
   }
   // остаток DC-выброса — интерполяция по соседям
   if(N>=8){ const v=(pw[half-2]+pw[half+2])/2; pw[half-1]=pw[half]=pw[half+1]=v; }
-  const mag=sw.spec.mag, j0=k*sw.use, i0=half-sw.use/2, sc=peak?1:1/M;
-  for(let i=0;i<sw.use;i++) mag[j0+i]=Math.sqrt(pw[i0+i]*sc)/sw.wsum;   // 0 дБ = полная шкала, как в живом спектре
+  // мощность шага — в свой ряд hp; бины панорамы шага собираются из него и соседей по нахлёсту с весами-рампами
+  const use=sw.use, st=sw.stride, hp=sw.hp, hops=sw.hops, ov=use-st, i0=half-use/2, sc=peak?1:1/M, w2=sw.wsum*sw.wsum;
+  for(let i=0;i<use;i++) hp[k*use+i]=pw[i0+i]*sc/w2;
+  sw.hdone[k]=1;
+  const mag=sw.spec.mag, j0=k*st;
+  const wt=(h,i)=>{
+    if(ov<=0) return 1;
+    let w=1;
+    if(h>0) w=Math.min(w,(i+.5)/ov);
+    if(h<hops-1) w=Math.min(w,(use-i-.5)/ov);
+    return w;
+  };
+  // сшивка — по среднему логарифму мощности (линейная по дБ рампа), без перекоса к более громкому шагу
+  const LG=1e-30;
+  for(let i=0;i<use;i++){
+    const j=j0+i, w=wt(k,i), own=hp[k*use+i]; let sp=0, sw_=0, nb=0;
+    if(k>0 && sw.hdone[k-1]){ const l=j-(k-1)*st; if(l<use){ const wl=wt(k-1,l); sp+=wl*Math.log(hp[(k-1)*use+l]+LG); sw_+=wl; nb=1; } }
+    if(k<hops-1 && sw.hdone[k+1]){ const r=j-(k+1)*st; if(r>=0){ const wr=wt(k+1,r); sp+=wr*Math.log(hp[(k+1)*use+r]+LG); sw_+=wr; nb=1; } }
+    mag[j]=nb ? Math.sqrt(Math.exp((sp+w*Math.log(own+LG))/(sw_+w))) : Math.sqrt(own);   // 0 дБ = полная шкала, как в живом спектре
+  }
 }
 // живой спектр (при прослушивании) — поверх своего участка панорамы; мощность интегрируется
 // по пересечению бинов, так что уровень шума не зависит от разницы размеров БПФ
@@ -4476,7 +4497,7 @@ async function sdrSweepLoop(n){
     let sw=sdrSweepPlan(n, false);
     sdrSetReadRate(n, SDR_SWEEP_RPS);
     n.swActive=true; n.swErr=null;
-    const center=(sw,k)=>sw.lo+(k*sw.use+sw.use/2)*sw.binHz;
+    const center=(sw,k)=>sw.lo+(k*sw.stride+sw.use/2)*sw.binHz;
     let epoch=await sdrSweepTune(n, center(sw,sw.k));
     while(alive()){
       const need=sw.N*Math.max(1,Math.round(+n.p.swAvg||8));
@@ -4586,6 +4607,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'swAvg',t:'range',min:1,max:64,step:1,d:8,label:'sweep averages per step',adv:true},
     {n:'swMode',t:'select',opts:['avg','max'],d:'avg',label:'sweep detector',adv:true},
     {n:'swUse',t:'range',min:.3,max:1,step:.05,d:.8,label:'sweep usable band fraction',adv:true},
+    {n:'swOvl',t:'range',min:0,max:50,step:5,d:20,label:'sweep step overlap, % (cross-faded)',adv:true},
     {n:'swSettle',t:'range',min:0,max:50,step:1,d:5,label:'sweep settle time, ms',adv:true}
   ],
   init:n=>{ n.p.freq=n.p.freq??100000000;              // новый узел — без частоты крутилка показывала NaN
@@ -4794,7 +4816,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
           ['sql',dm!=='IQ'],['sqlSnr',dm!=='IQ'&&sq==='SNR'],['sqlLvl',dm!=='IQ'&&sq==='level'],['sqlHang',dm!=='IQ'&&sq!=='off'],
           ['lna',hk],['vga',hk],['amp',hk],['auto',!hk&&!fl],['gainDb',!hk&&!fl],
           ['bias',!fl],['ppm',!fl],['conv',!fl],['dcShift',!fl],['loop',fl],['seek',fl],
-          ...['sweep','swLo','swHi','swFft','swAvg','swMode','swUse','swSettle'].map(k=>[k,!fl]), ['swHw',hk]]){
+          ...['sweep','swLo','swHi','swFft','swAvg','swMode','swUse','swOvl','swSettle'].map(k=>[k,!fl]), ['swHw',hk]]){
         const e=n.el.querySelector(`.prm[data-param="${k}"]`); if(e) e.style.display=show?'':'none';
       }
     }

@@ -154,6 +154,7 @@ On Linux unload the kernel driver before connecting, e.g. `sudo rmmod msi001 msi
 
 **wideband sweep** turns the node into a panoramic scanner (like `rtl_power` / `hackrf_sweep`): the receiver steps across **sweep from … to** (MHz), each step keeps the central **usable band fraction** of the FFT (the edges are rolled off by the anti-alias filter), and the pieces are stitched into one spectrum on the `spec` output. A Spectrum Analyzer on it shows the whole range; its waterfall gets one line per full pass. The readout shows the current step and seconds per line.
 
+- **sweep step overlap** (default 20 %): neighbouring steps overlap by that share of the usable band and are cross-faded there (linear in dB), so the edge roll-off and small gain differences between steps do not leave a staircase. Costs proportionally more steps per pass; 0 gives the old edge-to-edge stitching
 - **sweep FFT size** sets the resolution (sample rate / size per bin), **averages per step** — how many FFT frames are averaged (or max-held with the **max** detector) at each step
 - a marker on `tuneFreq` (e.g. marker 1 of the Spectrum Analyzer wired to it) pauses the sweep and tunes there: the demodulators play as usual and the live spectrum is drawn over its part of the panorama; remove the marker to resume from the same step
 - use manual gain: with AGC each step gets its own level and the waterfall is striped. **shift center off DC** keeps the listened station away from the DC spike
