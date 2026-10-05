@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=47;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=48;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -218,6 +218,7 @@ const PRESET_CATS={
   'MQTT: Subscribe and Publish':'Network & IoT',
   'HTTP: Poll a JSON API':'Network & IoT',
   'SSE: Live Event Stream':'Network & IoT',
+  'RTC: Direct Chat Between Two Browsers':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
@@ -3836,5 +3837,19 @@ const nv=addNode('numview',480,180,{});
 const tk=addNode('ticker',480,300,{time:true});
 tk.size.w=380; tk.size.h=110; applySize(tk);
 addEdge(s.id,'value',nv.id,'in'); addEdge(s.id,'event',tk.id,'text');
+markWiresDirty();
+});
+
+preset('RTC: Direct Chat Between Two Browsers', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'A direct WebRTC link: no server, the data goes from browser to browser. Both sides open this preset.\n'+
+  'Side 1: press Offer, then Copy mine, and send the string to side 2 by any means (a messenger, an MQTT topic: it is the `local` output). Side 2: paste it into remote and press Apply remote (an offer is answered by itself) → Copy mine → send it back. Side 1: paste into remote, Apply remote. When the status says connected, type in the Chat.\n'+
+  'Behind NAT the STUN server finds the outer address; on the same network clear the field. Two strict NATs (some mobile carriers) need a TURN relay, which the node does not support.'});
+nt.size.w=1100; nt.size.h=150; applySize(nt);
+const r=addNode('rtcData',40,220,{});
+r.size.w=380; r.size.h=330; applySize(r);
+const c=addNode('chat',480,220,{});
+c.size.h=330; applySize(c);
+addEdge(c.id,'text',r.id,'text'); addEdge(r.id,'text',c.id,'text');
 markWiresDirty();
 });
