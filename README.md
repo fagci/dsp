@@ -41,6 +41,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **Modbus Master**: registers and coils of industrial devices over RS-485 (RTU) or TCP — see [Modbus](#modbus)
 - **M-Bus Decoder / Master**: utility meters (water, heat, gas, electricity), wired and wireless 868 MHz telegrams — see [M-Bus](#m-bus)
 - **Speech In / Speech Out**: speech recognition from the microphone and speech synthesis — see [Speech](#speech)
+- **File Log**: continuous writing of text, JSON lines or CSV to a file on the disk — see [File Log](#file-log)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), **Table** (one node for lists, band plans, bookmarks, logs and the data sequencer: CSV / TSV / JSON / TXT / KML / GPX / GeoJSON, folders in the browser DB, played row by row), Trigger Clock, Time Base — see [Table](#table)
@@ -884,6 +885,17 @@ Preset: *M-Bus: Read Meters (Wired / Wireless)*.
 - Do not wire Speech Out into Speech In through speakers: the microphone hears the voice and the text feeds itself. Checked with mocks of the recognition and the synthesis (phrases, interim results, restart, a blocked microphone, voice choice, template, queue), **not with a real recognition service or voices**.
 
 Preset: *Speech: Say and Hear*.
+
+## File Log
+
+**File Log** (Output) appends text and records to a file on the disk while they arrive — a log that runs for hours and must survive a closed tab or a crash, unlike *Rec Log*, which keeps records in memory and saves them on a button. It uses the File System Access API (Chrome, Edge; Firefox and Safari have no such API — the node says so).
+
+- `Choose file…` opens the save dialog. An existing file is **continued** (the CSV header is written only into an empty file), a new one is created. The browser asks once; the permission lasts for the session, after a reload choose the file again.
+- *What is written*: **text lines** (the `text` wire: every line of a changed text is one line of the file, *time stamp* adds an ISO time in front), **JSON lines (rec)** (one JSON object per record) or **CSV (rec)** (columns from *CSV columns*, or from the first record — `t` becomes an ISO time; a field that is not in the columns is left out, nested values are written as JSON, cells are quoted as needed).
+- The browser makes written data durable only when the file is closed, so the node **commits every *commit* seconds** (open, go to the end, write, close): a crash costs at most the last period. A failed write (disk full, the file locked) is kept in the buffer and retried; the buffer is limited to about 5 million characters, the oldest part is dropped and counted. `Commit now` and removing the node commit at once. Outputs: `lines` (written), `ok`.
+- Not done: rotation by size or date, several files in one node, reading the file back. Checked with a mock of the File System Access API (append, a failed commit and its retry, the CSV header only in an empty file, quoting, the buffer limit), **not with a real disk dialog**.
+
+Preset: *File Log: Records to Disk*.
 
 ## Map and records
 

@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=57;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=58;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -230,6 +230,7 @@ const PRESET_CATS={
   'Modbus: Poll Registers (RTU / TCP)':'Network & IoT',
   'M-Bus: Read Meters (Wired / Wireless)':'Network & IoT',
   'Speech: Say and Hear':'Analysis & Measurement',
+  'File Log: Records to Disk':'Analysis & Measurement',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
@@ -4035,5 +4036,19 @@ const lg=addNode('recLog',460,360,{}); lg.size.w=240; applySize(lg);
 const o=addNode('speechOut',40,440,{});
 o.size.w=380; o.size.h=240; applySize(o);
 addEdge(s.id,'text',tk.id,'text'); addEdge(s.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+
+preset('File Log: Records to Disk', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'File Log appends what comes on its wires to a file on the disk as it happens (Chrome / Edge, the File System Access API) — for a log that runs for hours and must survive a closed tab. Press «Choose file…» (an existing file is continued, a new one gets the CSV header), then the records are written every few seconds.\n'+
+  'The format: text lines (the text wire), JSON lines or CSV (the rec wire). Here a Table plays a short track in a loop and every point goes to a CSV: t, id, lat, lon, label. Rec Log keeps records in memory and saves on a button; this one writes continuously.'});
+nt.size.w=1100; nt.size.h=130; applySize(nt);
+const sq=addNode('table',40,200,{list:'@patch',advance:'distance',speed:40,rate:4,interp:true,loop:true,
+  data:'id,lat,lon,label\nbus1,55.0302,82.9204,Bus 1\nbus1,55.0350,82.9350,Bus 1\nbus1,55.0410,82.9450,Bus 1\nbus1,55.0450,82.9600,Bus 1\nbus1,55.0420,82.9750,Bus 1'});
+sq.size.w=270; sq.size.h=300; applySize(sq);
+const f=addNode('fileLog',340,200,{format:'CSV (rec)'});
+f.size.w=360; f.size.h=230; applySize(f);
+addEdge(sq.id,'rec',f.id,'rec');
 markWiresDirty();
 });
