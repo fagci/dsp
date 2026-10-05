@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=53;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=54;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -226,6 +226,7 @@ const PRESET_CATS={
   'CAN: OBD-II Dashboard (SLCAN)':'Modems & Data Links',
   'CAN: Bus Sniffer (SLCAN)':'Modems & Data Links',
   'DMX: RGB Fade from LFOs':'Network & IoT',
+  'OSC: Faders and Values':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
@@ -3967,5 +3968,21 @@ const l3=addNode('lfo',40,500,{freq:.13,min:0,max:1,wave:'sine'});
 const d=addNode('dmxOut',340,220,{scale:'0–1',channels:24});
 d.size.w=360; d.size.h=340; applySize(d);
 addEdge(l1.id,'out',d.id,'a'); addEdge(l2.id,'out',d.id,'b'); addEdge(l3.id,'out',d.id,'c');
+markWiresDirty();
+});
+
+preset('OSC: Faders and Values', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Open Sound Control — the language of TouchOSC, Max / Pd, SuperCollider, Ableton, digital mixers. The browser has no UDP, so a WebSocket bridge stands in between:\n'+
+  '  websocat --binary ws-l:127.0.0.1:8080 udp-l:127.0.0.1:9000      (the OSC program sends to / listens on port 9000)\n'+
+  'Press Connect. Incoming messages: text («/mix/ch1 0.75»), the first number as value (a fader on the numview), all of them as records. The LFO goes out as a float to /dsp/fader; the text input sends any message, like «/mix/ch1 0.5 mute true».'});
+nt.size.w=1100; nt.size.h=150; applySize(nt);
+const l=addNode('lfo',40,220,{freq:.2,min:0,max:1,wave:'sine'});
+const o=addNode('oscIo',300,220,{});
+o.size.w=380; o.size.h=330; applySize(o);
+const nv=addNode('numview',740,220,{});
+const tk=addNode('ticker',740,340,{time:true});
+tk.size.w=380; tk.size.h=110; applySize(tk);
+addEdge(l.id,'out',o.id,'value'); addEdge(o.id,'value',nv.id,'in'); addEdge(o.id,'text',tk.id,'text');
 markWiresDirty();
 });

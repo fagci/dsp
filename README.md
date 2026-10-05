@@ -37,6 +37,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **KISS TNC** (serial or Direwolf over TCP) and **APRS-IS** client: packets as TNC2 lines and map records — see [APRS and KISS](#aprs-and-kiss)
 - **CAN (SLCAN)** and **OBD-II**: a CAN bus through a USB adapter, car data (rpm, speed, temperature…) — see [CAN and OBD-II](#can-and-obd-ii)
 - **DMX Out**: stage lighting over DMX512 (Enttec DMX USB Pro and compatible) — see [DMX512](#dmx512)
+- **OSC**: Open Sound Control in and out (TouchOSC, Max / Pd, SuperCollider, mixers) through a WebSocket bridge — see [OSC](#osc)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), **Table** (one node for lists, band plans, bookmarks, logs and the data sequencer: CSV / TSV / JSON / TXT / KML / GPX / GeoJSON, folders in the browser DB, played row by row), Trigger Clock, Time Base — see [Table](#table)
@@ -835,6 +836,22 @@ Presets: *CAN: OBD-II Dashboard (SLCAN)*, *CAN: Bus Sniffer (SLCAN)*.
 - Not done: DMX input, RDM, Art-Net / sACN (they are UDP, which the browser does not have), the raw FTDI "Open DMX" adapters (the break has to be timed by the host, which a browser cannot do reliably). Checked against the Enttec frame description and a mock of the serial port, **not on real lights**.
 
 Preset: *DMX: RGB Fade from LFOs*.
+
+## OSC
+
+**OSC** sends and receives [Open Sound Control](https://opensoundcontrol.stanford.edu/) messages — TouchOSC and other controller apps, Max / Pd, SuperCollider, Ableton, digital mixers (X32 / Wing), lighting desks. OSC lives on UDP, which a browser does not have, so a WebSocket bridge stands between the page and the program:
+
+```
+websocat --binary ws-l:127.0.0.1:8080 udp-l:127.0.0.1:9000
+```
+
+(the program sends its OSC to port 9000; where the replies go is decided by `udp-l:` — see the websocat documentation, and use `udp:host:port` instead for a fixed target. The bridge was not tried here with a real OSC program. From the https page the bridge must be `wss://` or on localhost.)
+
+- Receive: packets and bundles are unpacked (types `i f s b h d t c r m T F N I`). Outputs: `text` (`/mix/ch1 0.75 "two words"`, one message per block, a burst is queued), `addr`, `value` (the first number of the message, the last one is kept), `rec` (`addr`, `args`, `a0`, `a1`, …), `new`, `ok`. *Receive only addresses* takes a prefix (`/mix`) or a pattern with `?` `*` `[]` `{a,b}`; bad packets are counted, not shown.
+- Send: the `value` input goes out as a float (or an integer) to the *address for the value input* when it changes; the `text` input sends any message: `/address arg arg …`, where `3` is an int, `0.5` a float, `true` / `false` are booleans, other words are strings and `"two words"` in quotes is one string.
+- Not done: OSC over TCP / SLIP, time-tagged scheduling (the time tag of a bundle is ignored: messages are delivered at once), address-space queries. Checked with a mock of the bridge and the example from the OSC 1.0 specification, **not with a real OSC program**.
+
+Preset: *OSC: Faders and Values*.
 
 ## Map and records
 
