@@ -4510,6 +4510,13 @@ async function sdrSweepLoop(n){
     let sw=sdrSweepPlan(n, false);
     sdrSetReadRate(n, SDR_SWEEP_RPS);
     n.swActive=true; n.swErr=null;
+    // АРУ на каждом шаге выбирает своё усиление — водопад в полосах; на время прохода фиксируем gainDb
+    n.swGainFix=false;
+    if(n.p.auto && n.dev.kind!=='hackrf'){
+      while(n.busy) await sdrSleep(2);
+      n.busy=true;
+      try{ await n.dev.setGain(n.p.gainDb); n.swGainFix=true; }finally{ n.busy=false; }
+    }
     const center=(sw,k)=>sw.lo+(k*sw.stride+sw.use/2)*sw.binHz;
     let epoch=await sdrSweepTune(n, center(sw,sw.k));
     while(alive()){
@@ -4539,6 +4546,7 @@ async function sdrSweepLoop(n){
     if(n.dev===dev){
       sdrSetReadRate(n, RTL_READS_PER_SEC);
       n.appliedFreq=null;                          // rtlApplyPending вернёт тюнер на n.p.freq
+      if(n.swGainFix){ n.appliedGainKey=null; n.swGainFix=false; }   // и вернёт АРУ
     }
   }
 }
@@ -4865,7 +4873,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
         (n.dev?.kind==='file' ? ` · ${iqFmtTime(n.dev.pos/n.dev.rate)} / ${iqFmtTime(n.dev.total/n.dev.rate)}`+(n.dev.ended?' (end)':'') : '')+
         (n.rec ? ` · ● REC ${iqFmtTime((Date.now()-n.rec.start)/1000)} ${(n.rec.bytes/1e6).toFixed(0)} MB` : n.recMsg ? ' · '+n.recMsg : '')+
         (n.swErr ? ' · sweep error: '+n.swErr : n.swHwErr ? ' · '+n.swHwErr : n.p.sweep && n.sw ? ` · sweep ${fmtHz(n.sw.lo,1)}–${fmtHz(n.sw.lo+n.sw.spec.size*n.sw.binHz,1)} `+
-          (n.swActive ? `step ${n.sw.k+1}/${n.sw.hops}`+(n.sw.lineMs ? ` · ${(n.sw.lineMs/1000).toFixed(1)} s/line` : '') : '(paused, listening)') : '')
+          (n.swActive ? `step ${n.sw.k+1}/${n.sw.hops}`+(n.sw.lineMs ? ` · ${(n.sw.lineMs/1000).toFixed(1)} s/line` : '')+(n.swGainFix ? ` · AGC off (${n.p.gainDb} dB)` : '') : '(paused, listening)') : '')
       : n.status;
     if(r && r.textContent!==(txt??'')) r.textContent=txt??'';
   }});
