@@ -89,7 +89,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - WEFAX, NOAA APT, SSTV-style raster
 - HFDL: full receive chain down to ACARS / ADS-C, aircraft tracks and ground stations on the map
 - **ADS-B / Mode S** (1090 MHz) from raw SDR IQ: aircraft on the map with callsign, altitude, speed and heading (see [ADS-B](#ads-b))
-- GSM: downlink physical-layer receiver from raw IQ — FCCH tone sync, SCH decode (BSIC + frame number), GMSK burst extraction (see [GSM](#gsm))
+- GSM: downlink physical-layer receiver from raw IQ — FCCH tone sync, SCH decode (BSIC + frame number), BCCH System Information (cell ID, LAI, ARFCN lists, RACH, offline operator-name lookup), CBCH/Cell Broadcast text when it shares the received carrier, GMSK burst extraction (see [GSM](#gsm))
 - **Meteor-M LRPT** (137 MHz) from raw IQ, frame level: QPSK/OQPSK demodulator, CCSDS decoder (Viterbi K=7, NRZ-M, ASM, derandomizer, RS(255,223)×4) → VCDU frames → **MSU-MR image** (packets, JPEG-like 8×8 segments, RGB composites, PNG) (see [Meteor-M LRPT](#meteor-m-lrpt))
 - **Radiosondes: Vaisala RS41** (400–406 MHz) from raw IQ or FM audio: serial, position, height, climb, speed, temperature, humidity → map (see [Radiosondes](#radiosondes-rs41))
 - **Inmarsat STD-C** (1.5 GHz): BPSK 1200 → frames → packets → SafetyNET / FleetNET EGC messages (see [Inmarsat STD-C](#inmarsat-std-c))
@@ -243,13 +243,14 @@ The **GSM: Receive Bursts (IQ)** (`gsmRx`) node is a downlink physical-layer rec
 - **FCCH**: finds the frequency-correction bursts (a pure tone) and pulls the carrier onto centre
 - **SCH**: estimates the channel from the extended training sequence, detects the burst with an MLSE (Viterbi) equaliser, then convolutionally decodes and CRC-checks it — giving the **BSIC** (NCC/BCC) and the **frame number** (`t1/t2/t3`)
 - once synchronized, it steps through the 51-multiframe on TS0, extracts every burst (FCCH / SCH / normal / dummy) with the same equaliser, and outputs them as **148 soft bits** on the `burst` port (a `blk` carrying its frame number and timeslot)
-- it also decodes the **BCCH System Information**: four normal bursts on TS0 (frames 2–5) → de-interleave → convolutional decode (xCCH) → FIRE CRC → RR message. From **SI Type 3** it reads the **Cell ID** and the **Location Area Identification** (MCC/MNC/LAC), from SI4 the LAI — i.e. it identifies the cell, not just its BSIC
+- it also decodes the **BCCH System Information**: four normal bursts on TS0 (frames 2–5) → de-interleave → convolutional decode (xCCH) → FIRE CRC → RR message. From **SI3** it reads the **Cell ID** and the **Location Area Identification** (MCC/MNC/LAC, with an offline PLMN→operator name lookup for common CIS/EU/US networks), from **SI1/SI2** the cell's own and neighbour ARFCN lists (bitmap-0 format), from SI1–SI4 the **RACH Control Parameters**; a `debug` toggle adds Control Channel Description, Cell Options and Cell Selection fields plus the raw L2 hex
+- if **SI4** declares a **CBCH** (Cell Broadcast channel) on the *same* carrier it's already receiving (matching ARFCN, non-hopping), it demultiplexes that timeslot per the TS 04.12/03.41 block schedule and decodes **Cell Broadcast** (SMSCB) text — GSM7, UCS2 or raw 8-bit — this is the cell's own public, unaddressed broadcast channel (service/weather/test alerts), not a subscriber's traffic
 
 Outputs: `rec` (records for the log/map — SCH sync with BSIC, and BCCH cells with `id` = `PLMN-LAC-CID`, plus `ci`, `mcc`, `mnc`, `lac`, frequency, dBm and time), `burst` (per-burst bits), `freq` (current offset estimate, Hz), `sync` (1 when locked). Tune to a GSM900 BCCH (935–960 MHz) or DCS1800 (1805–1880 MHz).
 
 To keep a **list of cells**, wire `rec` into **Rec: Unique by Key** (`recUniq`, key = `id`): it keeps one row per cell with a hit count and first/last time, and saves to CSV / GeoJSON. The node is generic — it dedups any records by any field (aircraft by ICAO, stations by callsign, …).
 
-The heavy parts (SCH and xCCH convolutional codes + CRC/FIRE, BSIC/frame-number and SI3 Cell ID / MCC-MNC-LAC parsing, channel estimation + MLSE burst detection, FCCH tone detection and offset estimation) were checked on synthetic bursts (the test scripts are not in the repository; IQ Generator mode *GSM* → this receiver locks and reads the cell); on-air reception is untested on real hardware yet. It stops at System Information — traffic channels are not decoded.
+The heavy parts (SCH and xCCH convolutional codes + CRC/FIRE, BSIC/frame-number and SI parsing, channel estimation + MLSE burst detection, FCCH tone detection and offset estimation) were checked on synthetic bursts (IQ Generator mode *GSM* → this receiver locks and reads the cell) and against real RTL-SDR IQ captures (several hundred successful SI/CBCH decodes across multiple real networks). It stops at System Information and CBCH — traffic/signalling channels addressed to a specific subscriber (SDCCH/FACCH/TCH) are not decoded, only their raw burst bits.
 
 Ready-made patch: **GSM: Receive Bursts (USB SDR)** (spectrum → tap a channel → receiver → cell list → log).
 

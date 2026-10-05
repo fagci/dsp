@@ -15,17 +15,28 @@
  *            — свои энкодер/Витерби сверены с osmo_conv (порядок бит r=(state<<1)|bit),
  *            round-trip и сквозной прогон через бёрст в тестах
  *   [ГОТОВО] BCCH/xCCH: деперемежение + свёрточный код K=5 + FIRE CRC-40 → L2,
- *            разбор SI1/SI2/SI3/SI4 (Cell ID, LAI, список ARFCN bitmap0, RACH Control)
+ *            разбор SI1/SI2/SI3/SI4 (Cell ID, LAI, список ARFCN bitmap0, RACH Control,
+ *            Control Channel/Cell Options/Cell Selection — под debug) и офлайн-таблица
+ *            PLMN→оператор
+ *   [ГОТОВО] CBCH/SMSCB (TS 04.12/03.41): детектор из CBCH Channel Description в SI4
+ *            (TN/подканал/TSC/ARFCN, ARFCN→частота) + сам демультиплексор и декод, если
+ *            CBCH на той же несущей, что идёт приём (частоты совпали, не hopping):
+ *            позиции блока сверены с планировщиком osmo-bts, 4 блока → CBS-страница,
+ *            GSM7/UCS2/8-bit
  *   [ГОТОВО] нумерация бёрстов (t1/t2/t3 → FN, TN) и типизация по 51-мультикадру TS0
  *   [ГОТОВО] внутренняя частотная петля: дерот. входа по накопленному смещению
  *
  * Не разобрано: форматы списка частот range1024/512/256/128 и variable bitmap
  * (только bitmap 0 — покрывает P-GSM900), SI13/SI2bis/SI2ter/SI2quater — только
- * типизируются. Uplink не принимается — только downlink (FCCH/SCH есть только там).
+ * типизируются. CBCH на другой несущей или hopping — только детектируется
+ * (TN/ARFCN/частота), сам канал не декодируется без отдельного приёма на той частоте.
+ * Uplink не принимается — только downlink (FCCH/SCH есть только там).
  *
  * Вход — поток 'iq', любой sr выше ~1.1 МГц; внутри ресемплится на OSR·270.833 кГц.
- * Из трафика (SDCCH/FACCH/TCH) декодируются только сырые биты бёрста — узел не лезет
- * в содержимое звонков/SMS конкретных абонентов, это уже не параметры соты. */
+ * Из трафика конкретных абонентов (SDCCH/FACCH/TCH, адресованного MS по TMSI/IMSI)
+ * декодируются только сырые биты бёрста — узел не лезет в содержимое звонков/SMS
+ * конкретных людей. CBCH — исключение: открытый широковещательный канал без адресации
+ * (оповещения всем в соте), а не связь конкретного абонента. */
 
 // 51-мультикадр TS0 (нисходящий): FCCH на 0/10/20/30/40, SCH на 1/11/21/31/41, прочее — норм/dummy
 const GSM_FCCH_FRAMES=new Set([0,10,20,30,40]);
@@ -250,6 +261,60 @@ function gsmArfcnFreq(n){
   return null;
 }
 
+/* ---------- CBCH/SMSCB (TS 04.12 CBCH block, TS 03.41 CBS message) ----------
+ * Физика блока — тот же самый xCCH (4 нормальных бёрста → gsmBcchDecode), что и у BCCH/SDCCH, только
+ * на другом таймслоте/позиции в 51-мультикадре. Позиции сверены с планировщиком osmo-bts
+ * (src/common/scheduler_mframe.c, frame_sdcch8_cbch[102]): CBCH-блок (4 бёрста) — на FN mod 102 в
+ * {8..11} и {59..62} таймслота из CBCH Channel Description. Один L2-блок (23 байта) = 1 байт
+ * заголовка (LPD/LB/SEQ-NUM) + 22 байта данных; 4 блока (seq 0..3) складываются в CBS-страницу
+ * 88 байт (TS 03.41: Serial Number 2 + Message ID 2 + DCS 1 + Page Parameter 1 + текст 82). */
+const GSM_CBCH_FN=[8,59];                             // начала двух CBCH-окон в 102-кадровом цикле
+// GSM 03.38 default alphabet (септеты 0..127; 27 — ESC на таблицу расширений)
+const GSM7_TABLE='@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\x1bÆæßÉ !"#¤%&\'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà';
+const GSM7_EXT={0x0a:'\f',0x14:'^',0x28:'{',0x29:'}',0x2f:'\\',0x3c:'[',0x3d:'~',0x3e:']',0x40:'|',0x65:'€'};
+// распаковка упакованных септетов (TS 03.38 §6.1.2.1): LSB первого байта — младшие биты первого септета
+function gsm7Unpack(bytes, numSeptets){
+  const out=[]; let buf=0, bits=0, bi=0;
+  while(out.length<numSeptets && bi<bytes.length){
+    buf|=bytes[bi++]<<bits; bits+=8;
+    while(bits>=7 && out.length<numSeptets){ out.push(buf&0x7f); buf>>=7; bits-=7; }
+  }
+  return out;
+}
+function gsm7Decode(bytes, numSeptets){
+  const septets=gsm7Unpack(bytes, numSeptets);
+  let s=''; let esc=false;
+  for(const c of septets){
+    if(esc){ s+=GSM7_EXT[c]||'?'; esc=false; }
+    else if(c===27) esc=true;
+    else s+=GSM7_TABLE[c]||'?';
+  }
+  return s.replace(/\r+$/,'');                        // хвостовая заливка CR (0x0D) — не часть текста
+}
+// DCS (TS 03.38 §5) — упрощённо: General Data Coding group различает кодировку явно, остальные
+// группы (языковые/WAP/message handling) считаем GSM7 по умолчанию — это обычный случай для CBS.
+function gsmDcsInfo(dcs){
+  if((dcs&0xc0)===0x40){ const cs=(dcs>>2)&3;
+    return {charset:['gsm7','8bit','ucs2','reserved'][cs]}; }
+  return {charset:'gsm7'};
+}
+// заголовок CBCH-блока (TS 04.12 §3.4.2.2): spare(1)+LPD(2)+LB(1)+SEQ-NUM(4)
+function gsmCbchHeader(o){
+  return { lpd:(o>>5)&3, lb:!!(o&0x10), seq:o&0x0f };
+}
+// CBS-сообщение 88 байт (TS 03.41 §9.3.2) → {serial,msgId,dcs,charset,totalPages,pageNum,text}
+function gsmCbsParse(p){
+  const sn=(p[0]<<8)|p[1];
+  const serial={gs:(sn>>14)&3, msgCode:(sn>>4)&0x3ff, updateNum:sn&0xf};
+  const msgId=(p[2]<<8)|p[3], dcs=p[4], pp=p[5];
+  const dc=gsmDcsInfo(dcs);
+  let text;
+  if(dc.charset==='gsm7') text=gsm7Decode(p.subarray(6,88),93);
+  else if(dc.charset==='ucs2'){ text=''; for(let i=6;i+1<88;i+=2){ const cc=(p[i]<<8)|p[i+1]; if(cc) text+=String.fromCharCode(cc); } }
+  else { let hex=''; for(let i=6;i<88;i++) hex+=p[i].toString(16).padStart(2,'0'); text='(8-bit) '+hex; }
+  return {serial, msgId, dcs, charset:dc.charset, totalPages:(pp>>4)&0xf, pageNum:pp&0xf, text};
+}
+
 // деперемежение xCCH (TS 05.03 4.1.4): cB[k]=iB[B·114+j]
 function gsmXcchDeinterleave(iB){
   const cB=new Float32Array(456);
@@ -365,6 +430,10 @@ class GsmReceiver{
     this.bcch=[null,null,null,null];                    // 4 бёрста BCCH (кадры 2..5)
     this.bcchTry=0; this.bcchOk=0;                       // попытки/успехи разбора BCCH (диагностика)
     this.cellLabel=null;                                 // подпись своей соты для рёбер графа соседей
+    this.cbchTn=-1; this.cbchTsc=null;                   // таймслот/TSC CBCH, если настроен и ARFCN совпал с текущим
+    this.cbchBuf=[null,null,null,null];                  // 4 бёрста текущего CBCH-блока (23 байта L2 каждый)
+    this.cbchPage=[null,null,null,null];                 // 4 фрагмента (seq 0..3) собираемой CBS-страницы
+    this.cbchTry=0; this.cbchOk=0; this.cbsOk=0;          // диагностика: попытки блока / успехи блока / собранные страницы
   }
   avail(){ return this.len-this.head; }
   push(re,im){
@@ -606,8 +675,38 @@ class GsmReceiver{
     if(si.ctrlCh) rec.ctrlCh=si.ctrlCh;
     if(si.cellOpt) rec.cellOpt=si.cellOpt;
     if(si.cellSel) rec.cellSel=si.cellSel;
-    if(si.cbch) rec.cbch=si.cbch;
+    if(si.cbch){
+      rec.cbch=si.cbch;
+      // декодируем CBCH, только если он на ТОЙ ЖЕ несущей, что мы уже принимаем (его TN не бесплатно —
+      // это тот же C0 или совпавший по частоте TRX); hopping CBCH без MA-списка не разобрать.
+      const cbchOk=si.cbch.present && !si.cbch.hopping && si.cbch.freq!=null &&
+        Math.abs(si.cbch.freq-this.fc/1e6)<0.15;
+      this.cbchTn=cbchOk ? si.cbch.tn : -1; this.cbchTsc=cbchOk ? si.cbch.tsc : null;
+    }
     this.rec.push(rec);
+  }
+  // 4 бёрста CBCH-блока (TS 04.12) готовы → декод через общий xCCH (gsmBcchDecode), разбор заголовка,
+  // накопление 4 блоков (seq 0..3) в CBS-страницу 88 байт и её разбор
+  accumCbch(eb, idx){
+    if(idx===0) this.cbchBuf=[null,null,null,null];
+    this.cbchBuf[idx]=this.extractData(eb);
+    if(idx!==3 || !this.cbchBuf.every(Boolean)) return;
+    this.cbchTry++;
+    const l2=gsmBcchDecode(this.cbchBuf); this.cbchBuf=[null,null,null,null];
+    if(!l2) return;
+    this.cbchOk++;
+    const h=gsmCbchHeader(l2[0]);
+    if(h.lpd!==1 || h.seq>3){ if(h.seq===0) this.cbchPage=[null,null,null,null]; return; }  // не CB / schedule / null
+    if(h.seq===0) this.cbchPage=[null,null,null,null];
+    this.cbchPage[h.seq]=l2.subarray(1,23);
+    if(!this.cbchPage.every(Boolean)) return;
+    const page=new Uint8Array(88); for(let i=0;i<4;i++) page.set(this.cbchPage[i],i*22);
+    this.cbchPage=[null,null,null,null];
+    this.cbsOk++;
+    const cbs=gsmCbsParse(page);
+    this.rec.push({t:Date.now(), kind:'GSM-CBS', fn:gsmFrameNr(this.t1,this.t2,this.t3), tn:this.cbchTn,
+      freq:this.fc, dbm:this.dbm, msgId:cbs.msgId, msgCode:cbs.serial.msgCode, updateNum:cbs.serial.updateNum,
+      dcs:cbs.dcs, charset:cbs.charset, page:cbs.pageNum, pages:cbs.totalPages, text:cbs.text});
   }
   // рёбра «своя сота → сосед по ARFCN» для узла Graph (vis-network): кидаем как записи rec с
   // from/to — graphview сам их подхватит по именам колонок, без отдельного провода
@@ -642,11 +741,17 @@ class GsmReceiver{
     }
     else if(type==='normal'){
       const chanRe=new Float32Array(GSM_CHAN_IMP*GSM_OSR), chanIm=new Float32Array(GSM_CHAN_IMP*GSM_OSR);
-      const bs=this.getNormImp(this.bcc,chanRe,chanIm);
+      // TSC канала по умолчанию = BCC (общее правило для соты), но у CBCH он свой, из Channel Description
+      const tsc=(this.tn===this.cbchTn && this.cbchTsc!=null) ? this.cbchTsc : this.bcc;
+      const bs=this.getNormImp(tsc,chanRe,chanIm);
       if(bs>=0 && this.head+bs+GSM_BURST_SIZE*GSM_OSR<this.len){
         const eb=new Uint8Array(GSM_BURST_SIZE); this.detectBurst(chanRe,chanIm,bs,eb);
         this.emitBurst('normal',eb);
         if(this.tn===0 && this.t3>=2 && this.t3<=5) this.accumBcch(eb);   // BCCH → System Information
+        if(this.tn===this.cbchTn){                                       // CBCH → SMSCB, если настроен на этой несущей
+          const fn=gsmFrameNr(this.t1,this.t2,this.t3), lfn=fn%102;
+          for(const start of GSM_CBCH_FN) if(lfn>=start && lfn<start+4) this.accumCbch(eb, lfn-start);
+        }
       }
     }
     const off=this.advanceBurst();
@@ -726,8 +831,9 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
       // BCCH: попытки/успехи разбора SI — если попыток много, а успехов 0, дело не в "ждать дольше",
       // а в срыве синхронизации на одном из 4 бёрстов подряд (сбросы USB/AGC и т.п.), не в декодере.
       const bc=n.rx.bcchTry? ` · BCCH ${n.rx.bcchOk}/${n.rx.bcchTry}` : '';
+      const cb=n.rx.cbchTn>=0? ` · CBCH TN${n.rx.cbchTn} бл.${n.rx.cbchOk}/${n.rx.cbchTry} стр.${n.rx.cbsOk}` : '';
       const bsicTxt=n.rx.state==='sync'? ` · BSIC ${(n.rx.ncc<<3)|n.rx.bcc}` : '';
-      n.text=st+bsicTxt+` · ${mhz}foff ${n.foff.toFixed(0)} Hz · бёрстов ${n.bid}${bc}\n`+n.log.slice(-14).join('\n');
+      n.text=st+bsicTxt+` · ${mhz}foff ${n.foff.toFixed(0)} Hz · бёрстов ${n.bid}${bc}${cb}\n`+n.log.slice(-14).join('\n');
       return {rec:outRec, burst:blk, freq:n.foff, sync:n.rx.state==='sync'?1:0, nb:outNb};
     }
     return {rec:null, burst:null, freq:n.foff, sync:n.rx.state==='sync'?1:0, nb:null};
@@ -748,6 +854,7 @@ function gsmRecLine(r,debug){
     +gsmRachSuffix(r.rach)+(debug?gsmDebugSuffix(r):'');
   if(r.si==='SI1') return `${t} SI1 своя сота ARFCN: ${gsmArfcnList(r.cellArfcns,r.cellFmt)}`+gsmRachSuffix(r.rach);
   if(r.si==='SI2') return `${t} SI2 соседи ARFCN: ${gsmArfcnList(r.neighborArfcns,r.neighborFmt)}`+gsmRachSuffix(r.rach);
+  if(r.kind==='GSM-CBS') return `${t} CBS [${r.page}/${r.pages}] msgId 0x${r.msgId.toString(16)} (${r.charset}): ${r.text}`;
   return `${t} ${r.si||r.kind} FN ${r.fn}`;
 }
 // доп. строка для debug: Control Channel Description/Cell Options/Cell Selection (SI3),
