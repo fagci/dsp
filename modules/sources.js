@@ -1088,7 +1088,7 @@ function netTextStart(n){
   n.want=true;
   if(netInsecure(url)) n.warn=NET_INSECURE_MSG; else n.warn='';
   if(/^wss?:/i.test(url)) netTextWs(n,url);
-  else if(/^https?:/i.test(url)) netTextPoll(n,url);
+  else if(/^https?:/i.test(url)) (n.p.stream ? netTextStream(n,url) : netTextPoll(n,url));
   else n.status='URL must start with ws://, wss://, http:// or https://';
 }
 function netTextRetry(n,fn,ms){ if(n.want && n.p.reconnect){ clearTimeout(n.timer); n.timer=setTimeout(fn,ms); } }
@@ -1108,6 +1108,32 @@ function netTextWs(n,url){
     if(typeof e.data==='string') netTextFeed(n,e.data);
     else if(e.data?.text) e.data.text().then(t=>netTextFeed(n,t));
   };
+}
+// Поток по HTTP: SSE (text/event-stream, берутся строки data:) или построчный NDJSON; fetch, не EventSource
+async function netTextStream(n,url){
+  if(!n.want) return;
+  const ac=n.abort=new AbortController();
+  try{
+    const r=await fetch(url,{cache:'no-store', signal:ac.signal, headers:{Accept:'text/event-stream, application/x-ndjson, */*'}});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const sse=/event-stream/i.test(r.headers.get('content-type')||'');
+    const rd=r.body.getReader(), dec=new TextDecoder();
+    let buf=''; n.status='streaming'+(sse?' (SSE)':'');
+    for(;;){
+      const {done,value}=await rd.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true});
+      const lines=buf.split(/\r?\n/); buf=lines.pop();
+      for(const l of lines){
+        if(!sse) netTextFeed(n,l);
+        else if(l.startsWith('data:')) netTextFeed(n,l.slice(5));
+      }
+    }
+    n.status='stream ended';
+  }catch(e){
+    if(e.name==='AbortError') return;
+    n.status='stream failed: '+e.message+(e instanceof TypeError ? ' (no CORS headers on the server, or blocked)' : '');
+  }
+  netTextRetry(n,()=>netTextStream(n,url),2000);
 }
 async function netTextPoll(n,url){
   if(!n.want) return;
@@ -1130,6 +1156,7 @@ def({ id:'nettext', title:'Text over Network', cat:'Sources',
   params:[
     {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'ws:// wss:// http:// https://'},
     {n:'poll',t:'range',min:0.2,max:600,step:0.1,d:5,label:'HTTP poll every, s'},
+    {n:'stream',t:'check',d:false,label:'HTTP stream (SSE / NDJSON) instead of polling'},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},
     {n:'connect',t:'button',label:'Connect',fn:n=>netTextStart(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>netTextStop(n)},
