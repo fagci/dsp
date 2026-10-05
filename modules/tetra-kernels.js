@@ -94,11 +94,7 @@ function tetraViterbi(m,L){
 }
 
 /* ---- CRC-16 CCITT (init 0xFFFF, остаток при верном блоке 0x1D0F) ---- */
-function tetraCrc(bits,len){
-  let c=0xFFFF;
-  for(let i=0;i<len;i++){ c^=(bits[i]&1)<<15; c=(c&0x8000) ? ((c<<1)^0x1021)&0xFFFF : (c<<1)&0xFFFF; }
-  return c;
-}
+function tetraCrc(bits,len){ return crcBits(bits,len,16,0x1021,0xFFFF); }
 
 /* ---- блок: тип-1 → тип-5 (кодер) и обратно (декодер) ---- */
 // k345 — длина блока на воздухе, a — параметр перемежителя; t1 — бит информации (без CRC и хвоста)

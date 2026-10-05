@@ -58,11 +58,7 @@ function dmrNearest(tab,w,maxErr){
 
 /* ---- CRC ---- */
 // CRC-CCITT (0x1021, начальное 0, инверсия): 80 бит + 16 бит проверки (в MMDVM addCCITT162)
-function dmrCrc16(a,n){
-  let r=0;
-  for(let i=0;i<n;i++){ r^=a[i]<<8; for(let k=0;k<8;k++) r=(r&0x8000) ? ((r<<1)^0x1021)&0xFFFF : (r<<1)&0xFFFF; }
-  return r^0xFFFF;
-}
+function dmrCrc16(a,n){ return crc16(a,0,n,0x1021,0,0xFFFF); }
 // CRC-9 блока подтверждённых данных (0x059, начальное 0, инверсия)
 function dmrCrc9(bits){ let r=0; for(const v of bits){ const fb=((r>>8)&1)^v; r=(r<<1)&0x1FF; if(fb) r^=0x059; } return r^0x1FF; }
 // блок с префиксом [DBSN 7][CRC-9 9]: проверка по данным и DBSN; mask — по скорости (½: 0x0F0, ¾: 0x1FF, 1: 0x10F)

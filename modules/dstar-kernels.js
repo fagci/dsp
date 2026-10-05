@@ -17,7 +17,7 @@ const DSTAR_SLOW_SCR=[0x70,0x4F,0x93];
 const DSTAR_IL=Array.from({length:660},(_,i)=>{ const c=i%24; return 4+((i/24)|0)+(c<=12 ? 28*c : 336+27*(c-12)); });
 
 // CRC-16 X.25 (отражённый 0x8408, начальное значение и итог инвертируются), младший байт первым
-function dstarCrc(b,n){ let c=0xFFFF; for(let i=0;i<n;i++){ c^=b[i]; for(let k=0;k<8;k++) c=(c&1) ? (c>>1)^0x8408 : c>>1; } return (~c)&0xFFFF; }
+function dstarCrc(b,n){ return crc16r(b,0,n,0x8408,0xFFFF,0xFFFF); }
 // свёртка K=3: g0 = d ⊕ d₂, g1 = d ⊕ d₁ ⊕ d₂; порядок вывода g1, g0
 function dstarConvEnc(bits){
   const o=[]; let d1=0, d2=0;
