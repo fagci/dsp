@@ -70,6 +70,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **Time Signal Decoder**: DCF77 (77.5 kHz) and WWVB (60 kHz) longwave time signals → bits → minute frame with parity / marker checks → UTC time (see [DCF77 and WWVB](#dcf77-and-wwvb))
 - **SAME / EAS** (NOAA Weather Radio alerts, AFSK 520.83 Bd from an NFM receiver): ZCZC header with the three repeats voted → originator, event, FIPS areas, validity, station; a test-signal generator for the decoder (see [SAME / EAS](#same--eas))
 - **SELCAL** (aviation selective calling, HF / VHF, ICAO 16 tones): the code of an aircraft call from audio — two pulses of two tones each → `AB-CD`, with the measured tuning error; a test-signal generator (see [SELCAL](#selcal))
+- **Five-tone selcall** (land mobile: ZVEI-1/2/3, DZVEI, PZVEI, CCIR, EEA, EIA): sequences of 5 tones → the code with the repeat tone expanded; a test-signal generator (see [Five-tone selcall](#five-tone-selcall-zvei-ccir-eea))
 - Doppler radar, 2D chirp radar, monostatic sonar
 
 ### Infrared
@@ -435,6 +436,19 @@ Presets: *SAME / EAS: Alert Decoder Test (Loopback)*, *SAME / EAS: NOAA Weather 
 - **Not done:** the older 12-tone code lists are the same tones (the 16-tone system adds P, Q, R, S); no code database or registration lookup (assignments are the registrar's, ASRI); no decoding of the voice. Checked against the generator (all 16 tones in 9 combinations, pulses of 0.75 and 1.25 s, gaps of 0.1 and 0.3 s, noise down to 0 dB, a −30 dB level, speech-like interference at the level of the tones, 10 minutes of that interference with no false calls, tone errors of 5 and −9 Hz), **not on real recordings**.
 
 Presets: *SELCAL: Test Signal (Loopback)*, *SELCAL: HF Aeronautical Channel (KiwiSDR)*.
+
+## Five-tone selcall (ZVEI, CCIR, EEA)
+
+**Five-Tone Selcall Decoder** (Decoders, main thread) reads the selective calling of land mobile radio — fire brigades and rescue services (ZVEI in German-speaking countries), taxis, security, industry. A call is a **sequence of tones, usually five, with no gaps**, 33–100 ms each; one tone = one symbol 0–9 or A–F; **E is the repeat tone** that stands for the previous digit, so `11223` is sent as `1E2E3`. This is the ground system; the aviation one is [SELCAL](#selcal).
+
+- **Standards** (the table of 16 tones, Hz): ZVEI-1 (2400, 1060, 1160, 1270, 1400, 1530, 1670, 1830, 2000, 2200 for 0–9; A 2800, B 810, C 970, D 885, E 2600, F 680), ZVEI-2, ZVEI-3, DZVEI, PZVEI, CCIR (1981, 1124, 1197, 1275, 1358, 1446, 1540, 1640, 1747, 1860; A 2400, B 930, C 2247, D 991, E 2110, F 1055), EEA, EIA — as listed in the `demod_*.c` files of multimon-ng (numbers only, no code taken); the usual tone length is 70 ms (ZVEI, DZVEI), 100 ms (CCIR, PZVEI), 40 ms (EEA), 33 ms (EIA) — the *tone length* parameter overrides it, and the decoder takes ±40%. In the PZVEI table 0 and E share 2400 Hz: such a tone is a 0, and a 0 after a 0 is shown as E.
+- **Input:** audio (`sig`) of an FM receiver — *USB SDR* `audio` in NFM, a sound card, a file.
+- **Chain:** a Hann window of 0.7 tone, Goertzel on 16 frequencies every 1/8 tone; a frame is a tone when it holds a good share of the window energy (*purity*, 40%) and is 6 dB above the next one; ≥3 frames in a row (one miss is bridged) make a tone; tones whose centres are 0.6–1.8 tone lengths apart are one sequence, which is closed after 2.5 tone lengths of silence; shorter than *shortest sequence* (4) is dropped. Time is counted in samples.
+- **Output:** `rec` `{t, src:'SELCALL', kind:'call', id, std, raw, code, tones}` — `raw` with E, `code` with the repeat expanded; `text` — the code; `new` — a pulse; `level`.
+- **Five-Tone Selcall: Test Signal** (Protocols) plays a code in the chosen standard. **Only for a cable or a sound-card loop**: such tones start real alarm receivers — do not transmit it. There is deliberately no transmit preset.
+- **Not done:** no group-call / emergency symbols meaning, no addresses of fire stations, no 7-tone or 4-tone profile checks, no automatic choice of the standard (the digits are the same in ZVEI-1/2/3 and CCIR/EEA, so the letters tell them apart only if you pick right). Checked against the generator in all eight standards (7 codes each, digits and letters, doubled digits), with noise down to 0 dB, speech-like interference at the level of the tones (9 minutes of it, no false calls), a tone length 20% off — **not on real alarms**; the standard's tone lengths are from the usual specifications, not from a document at hand.
+
+Presets: *Selcall ZVEI / CCIR: Five-Tone Decoder Test (Loopback)*, *Selcall ZVEI / CCIR: Five-Tone Decoder (USB SDR, NFM)*.
 
 ## ACARS
 
