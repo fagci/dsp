@@ -17,6 +17,17 @@ function themeColor(name){
 const CAT_ORDER = ['Sources','Music','Processing','Modulation','Analysis','Radio','IQ','Radar',
                     'Protocols','IR','Decoders','Audio','Video','Geo','Data','Control','Indicators','Output','Builder','Misc'];
 
+// Верхний уровень палитры: 21 категория → 6 групп. Цвет значка — по группе, форма — по роли (источник/обработка/приёмник).
+const CAT_GROUPS = [
+  {id:'Input',     color:'var(--t-num)',   cats:['Sources','Radio','IQ','Control']},
+  {id:'Signal',    color:'var(--t-sig)',   cats:['Processing','Modulation','Audio','Video','Radar']},
+  {id:'Decode',    color:'var(--t-txt)',   cats:['Protocols','Decoders','IR']},
+  {id:'Analysis',  color:'var(--t-spec)',  cats:['Analysis','Indicators','Geo','Data']},
+  {id:'Music',     color:'var(--t-trk)',   cats:['Music']},
+  {id:'Output',    color:'var(--t-img)',   cats:['Output','Builder','Misc']},
+];
+const groupOfCat = c => CAT_GROUPS.find(g=>g.cats.includes(c)) || CAT_GROUPS[CAT_GROUPS.length-1];
+
 /* ============================ ДВИЖОК ============================ */
 const Eng = {
   ctx:null, sr:48000, running:false, node:null, mic:null,

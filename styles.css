@@ -778,13 +778,16 @@ select.aed-b{padding:0 6px}
 #boot.err{color:var(--err)}
 #net{color:var(--acc);font-size:11px;font-weight:600}
 
-/* значок модуля: инициалы на цвете категории, форма — по типу основного выхода */
+/* значок модуля: инициалы, цвет — группа, форма — роль: круг = источник, квадрат = обработка, шестиугольник = приёмник */
 .mi{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-right:7px;
   font:600 9px/1 var(--mono,monospace);color:#111;background:var(--c,var(--dim));border-radius:5px}
-.mi[data-shape=circle]{border-radius:50%}
-.mi[data-shape=square]{border-radius:2px}
-.mi[data-shape=diamond]{clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);font-size:8px}
-.mi[data-shape=hex]{clip-path:polygon(25% 3%,75% 3%,100% 50%,75% 97%,25% 97%,0 50%)}
+.mi[data-role=source]{border-radius:50%}
+.mi[data-role=proc]{border-radius:3px}
+.mi[data-role=sink]{border-radius:0;clip-path:polygon(25% 3%,75% 3%,100% 50%,75% 97%,25% 97%,0 50%)}
+.pcat summary .gdot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--c)}
+.psub{padding:7px 12px 2px;color:var(--dim);font-size:9px;text-transform:uppercase;letter-spacing:.06em}
+#palLegend{display:flex;gap:10px;padding:6px 12px;color:var(--dim);font-size:10px;border-top:1px solid var(--line)}
+#palLegend .mi{width:12px;height:12px;margin:0 3px 0 0;font-size:0;vertical-align:middle;background:var(--dim)}
 .pitem .mi{margin-top:1px}
 .modpick .mp-item .mi{width:18px;height:18px;margin-right:0;font-size:8px}
 .modpick .mp-from{display:flex;align-items:center;gap:5px;padding:6px 8px 0;color:var(--dim);font-size:10px}
