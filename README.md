@@ -69,6 +69,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - HF propagation, WWV/WWVH/CHU time decoder
 - **Time Signal Decoder**: DCF77 (77.5 kHz) and WWVB (60 kHz) longwave time signals → bits → minute frame with parity / marker checks → UTC time (see [DCF77 and WWVB](#dcf77-and-wwvb))
 - **SAME / EAS** (NOAA Weather Radio alerts, AFSK 520.83 Bd from an NFM receiver): ZCZC header with the three repeats voted → originator, event, FIPS areas, validity, station; a test-signal generator for the decoder (see [SAME / EAS](#same--eas))
+- **SELCAL** (aviation selective calling, HF / VHF, ICAO 16 tones): the code of an aircraft call from audio — two pulses of two tones each → `AB-CD`, with the measured tuning error; a test-signal generator (see [SELCAL](#selcal))
 - Doppler radar, 2D chirp radar, monostatic sonar
 
 ### Infrared
@@ -421,6 +422,19 @@ Presets: *Time Signal: DCF77 Clock (Generator)*, *Time Signal: WWVB Clock (Gener
 - **Not done:** the attention tone (853 + 960 Hz) and the voice message are not touched; no county names or NWR station list; Canadian and other national formats are not distinguished (WXR / EAS only); checked on the generator (SNR down to ~8 dB, a level change, corruption of two of the three repeats in different characters), the frame format is from the description of the code, **not on a real broadcast**.
 
 Presets: *SAME / EAS: Alert Decoder Test (Loopback)*, *SAME / EAS: NOAA Weather Radio (USB SDR)*.
+
+## SELCAL
+
+**SELCAL Decoder** (Decoders, main thread) reads the aviation Selective Calling code: a ground station calls an aircraft by four audio tones sent over the voice channel on HF or VHF. Tone table and timings are from the *ASRI SELCAL Users Guide* (Rev D, table 2-1 and figure 2-2): 16 tones named A…S (no I, N, O): A 312.6, B 346.7, C 384.6, D 426.6, E 473.2, F 524.8, G 582.1, H 645.7, J 716.1, K 794.3, L 881.0, M 977.2, P 1083.9, Q 1202.3, R 1333.5, S 1479.1 Hz. A code is **two pulses of two simultaneous tones**, a pulse lasts 1.0 ± 0.25 s, the gap 0.2 ± 0.1 s; `AC-BD` is A + C, then B + D, and the four tones of a code are different. (This is the aviation system — not the ZVEI / CCIR five-tone selcall of land mobile radio.)
+
+- **Input:** audio (`sig`) of a receiver in USB — *KiwiSDR*, *USB SDR*, a sound card. The tones sit in the audio at their own pitch, so the receiver has to be tuned to the carrier frequency of the transmitter within a few Hz.
+- **Chain:** a Hann window of 90 ms, Goertzel on the 16 frequencies every 43 ms; a frame is "two tones" when the two strongest bins hold a good share of the window energy (*tone purity*, default 35%), the weaker is within 11 dB of the stronger and the rest are 10 dB below it; a run of frames with the same pair lasting 0.6–1.5 s is a pulse (a dropout of up to two frames is bridged); two pulses with a gap up to 0.8 s and four different tones are a code. Time is counted in samples (run speed ×8…×32 works).
+- **Tuning error:** the offset of the tones from the table is measured (a parabola through ±6 Hz around the peak) and shown with each code and as `offset` in the record. *receiver tuning error* shifts the whole table by a known error. Beyond about ±10 Hz the tones are no longer found; at an error close to the tone spacing (34 Hz at A–B) a call decodes as a **valid-looking different code** (+40 Hz turns AB-CD into BC-DE) — the offset line is the hint, the code cannot tell.
+- **Output:** `rec` `{t, src:'SELCAL', kind:'call', id, code, tones, freqs, pulse1, pulse2, gap, offset, match}` — `match` (0 / 1) when a code is typed into *watch for a code* (e.g. the code placarded in your cockpit); `text` — the code; `new` — a pulse; `level` — input level.
+- **SELCAL: Test Signal** (Protocols) plays a code as audio (pulse and gap adjustable inside the tolerance). **Only for checking the decoder on a cable or a sound-card loop**: do not transmit it — it calls a real aircraft on a working frequency. There is deliberately no transmit preset.
+- **Not done:** the older 12-tone code lists are the same tones (the 16-tone system adds P, Q, R, S); no code database or registration lookup (assignments are the registrar's, ASRI); no decoding of the voice. Checked against the generator (all 16 tones in 9 combinations, pulses of 0.75 and 1.25 s, gaps of 0.1 and 0.3 s, noise down to 0 dB, a −30 dB level, speech-like interference at the level of the tones, 10 minutes of that interference with no false calls, tone errors of 5 and −9 Hz), **not on real recordings**.
+
+Presets: *SELCAL: Test Signal (Loopback)*, *SELCAL: HF Aeronautical Channel (KiwiSDR)*.
 
 ## ACARS
 
