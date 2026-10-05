@@ -32,6 +32,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500, RX-888 (mkI/mkII/mkIII) — multiple tuners/demodulators per device, wideband sweep with a panoramic waterfall, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
 - **KiwiSDR** remote receivers (public list included)
 - Camera, video, image, accelerometer and Generic Sensor API
+- **Barcode / QR** (Video): reads QR codes and barcodes from a camera, video or image frame (BarcodeDetector — Chrome / Android): the text, a pulse on `go`, records `{format, value}`, a repeat of the same code is ignored for a set time
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), **Table** (one node for lists, band plans, bookmarks, logs and the data sequencer: CSV / TSV / JSON / TXT / KML / GPX / GeoJSON, folders in the browser DB, played row by row), Trigger Clock, Time Base — see [Table](#table)
 - **Bluetooth LE** (Web Bluetooth): **BLE UART** (Nordic UART, HM-10 / FFE0 or your own UUIDs — a serial terminal without a cable), **BLE GATT** (any characteristic: notifications or periodic read, write; formats — heart rate, battery, temperature, uint / int / float, hex), **BLE Advertisements** (RSSI, TX power and manufacturer data of one device without connecting — proximity, finding a beacon) — see [Bluetooth LE](#bluetooth-le)
