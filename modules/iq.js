@@ -133,6 +133,16 @@ defIQ({ id:'iqQuality', title:'IQ Quality', cat:'IQ',
     return 'DC '+u.dc.toFixed(1)+' dBFS ('+u.dcc.toFixed(1)+' dBc) · Q gain '+(u.gain>=0?'+':'')+u.gain.toFixed(2)+' dB · phase '+(u.phase>=0?'+':'')+u.phase.toFixed(2)+
       '° · image '+(u.irr>=120?'> 120':u.irr.toFixed(1))+' dB'; });
 
+defIQ({ id:'evmMeter', title:'EVM / MER', cat:'IQ',
+  ins:[{n:'in',t:'iq'}], outs:[{n:'evm',t:'num'},{n:'mer',t:'num'},{n:'phase',t:'num'},{n:'peak',t:'num'}],
+  params:[{n:'mod',t:'select',opts:['BPSK','QPSK','8PSK','16QAM','64QAM','256QAM'],d:'QPSK',label:'modulation (ideal points, unit mean power)'},
+          {n:'win',t:'select',opts:['256','512','1024','4096'],d:'1024',label:'window, symbols'}]},
+  n=>{ const u=n.ui;
+    if(!u) return 'no input';
+    if(u.none) return 'no signal';
+    if(u.mer==null) return 'measuring…';
+    return 'MER '+u.mer.toFixed(1)+' dB · EVM '+u.evm.toFixed(2)+'% (peak '+u.peak.toFixed(1)+'%) · rotation '+(u.phase>=0?'+':'')+u.phase.toFixed(1)+'°'; });
+
 defIQ({ id:'iqSpec', title:'IQ Spectrum', cat:'IQ',
   ins:[{n:'in',t:'iq'}], outs:[{n:'spec',t:'spec'}],
   params:[{n:'size',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'4096'},

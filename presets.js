@@ -892,6 +892,37 @@ addEdge(gn.id,'iq',iq.id,'in'); addEdge(iq.id,'irr',nv.id,'in');
 addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
 markWiresDirty();
 });
+preset('Measure: Channel Power, OBW and ACPR (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Channel Power / OBW / ACPR on a spectrum: power in the channel, the bandwidth that holds 99 % of the power (the noise floor is subtracted), and the power of the neighbours ±1 and ±2 channel spacings away, in dBc.\n'+
+  'The generator sends an FM signal ±5 kHz with a 2 kHz tone (Carson bandwidth about 14 kHz). Centre 0 = the strongest peak; wire a frequency to `f` to follow another one.\n'+
+  'The search span has to be several times wider than the signal, channel and adjacent bandwidths are set in Hz. Power is in the scale of the spectrum (the sum of bin powers divided by the window ENBW), the dBc values do not depend on it.'});
+nt.size.w=720; nt.size.h=170; applySize(nt);
+const gn=addNode('iqGen',40,260,{sr:'256000',fc:100000000,mode:'FM',off:0,lvl:-20,tone:2000,dev:5000,noise:-70});
+const sp=addNode('iqSpec',340,260,{size:'4096'});
+const cp=addNode('chpwr',340,540,{bw:10000,span:100000,pct:99,spacing:15000});
+cp.size.w=560; applySize(cp);
+const sa=addNode('sa',780,40,{auto:true,floor:-110,top:0,split:.4});
+sa.size.w=640; sa.size.h=340; applySize(sa);
+addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec'); addEdge(sp.id,'spec',cp.id,'spec');
+markWiresDirty();
+});
+preset('Measure: EVM and MER of a QPSK Link (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'EVM / MER of the symbols behind a demodulator: for every window the symbols are decided to the nearest ideal point, gain and rotation are fitted by least squares, EVM = rms error / rms of the ideal points, MER = −20·lg EVM.\n'+
+  'The generator sends QPSK 72 kBd (the LRPT test stream) with noise; raise the noise and watch MER fall, the constellation spreads. Pick the modulation in the meter (BPSK … 256QAM).\n'+
+  'The carrier loop has to be locked (a rotation within about ±40° for PSK, a few degrees for QAM). The meter takes one sample per symbol.'});
+nt.size.w=700; nt.size.h=150; applySize(nt);
+const gn=addNode('iqGen',40,240,{sr:'256000',fc:137900000,mode:'LRPT',lrpt:'QPSK',off:2000,lvl:-20,noise:-30});
+const dm=addNode('pskDemod',340,240,{mode:'QPSK'});
+const ev=addNode('evmMeter',340,700,{mod:'QPSK',win:'1024'});
+ev.size.w=520; applySize(ev);
+const co=addNode('const2',720,240,{});
+co.size.w=240; co.size.h=240; applySize(co);
+const nv=addNode('numview',880,700,{label:'MER, dB'});
+addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'out',ev.id,'in'); addEdge(dm.id,'out',co.id,'iq'); addEdge(ev.id,'mer',nv.id,'in');
+markWiresDirty();
+});
 preset('ADS-B: Aircraft Map (Generator)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'ADS-B without a radio: the generator sends Mode S extended squitters (DF17) from three aircraft\n'+
