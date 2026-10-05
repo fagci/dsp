@@ -2754,7 +2754,7 @@ function bpApplyPreset(n){
   n.name = n.p.preset==='none' ? '' : n.p.preset;
   n._sel=null;
 }
-def({ id:'bandplan', title:'Band Plan (Presets/Editable)', cat:'Radio',
+def({ id:'bandplan', title:'Band Plan (Presets/Editable)', cat:'Radio', legacy:true,   // заменён узлом 'table'
   // Справочный band plan: либо один из встроенных пресетов (только чтение и экспорт CSV), либо
   // свой список — 'editable (saved list)' держит его в ListDB (та же браузерная БД, что и у
   // 'bookmarks'): инлайн добавление/правка/удаление строк, импорт/экспорт CSV (см. bp* выше).
@@ -3053,7 +3053,7 @@ function bmInit(n){
   root.querySelector('.bm-export').addEventListener('click', ()=>bmExportCsv(n));
   bmRefresh(n);
 }
-def({ id:'bookmarks', title:'Bookmarks (freq list)', cat:'Radio',
+def({ id:'bookmarks', title:'Bookmarks (freq list)', cat:'Radio', legacy:true,   // заменён узлом 'table'
   // доп.поля — входные пины ТОЖЕ (не только выходные, см. outs) — чтобы "+ add" мог захватить не
   // только частоту, но и текущий вид модуляции/bw и т.п., подключенные с 'rtlsdr' (у него теперь
   // есть выходы demod/bw специально под это) — так же, как 'hostlist' захватывает текущие входы.

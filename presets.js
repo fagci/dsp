@@ -386,11 +386,11 @@ markWiresDirty();
 });
 preset('Sequencer: Vehicle Track on the Map', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Data Sequencer drives along the points of its table at the set speed (advance = distance)\n'+
+const nt=addNode('note',40,40,{text:'Table drives along the points of its rows at the set speed (advance = distance)\n'+
   'and, with «interpolate», puts the marker between them. Load your own track: KML, GPX, GeoJSON or CSV with lat,lon.\n'+
   'Speed can come from a column (speed col), a wire (speed) or the slider. Rec Log saves what was sent.'});
 nt.size.w=460; nt.size.h=130; applySize(nt);
-const sq=addNode('csvsrc',40,200,{advance:'distance',speed:40,rate:4,interp:true,loop:true,
+const sq=addNode('table',40,200,{list:'@patch',advance:'distance',speed:40,rate:4,interp:true,loop:true,
   data:'id,lat,lon,icon,label\nbus1,55.0302,82.9204,bus,Bus 1\nbus1,55.0350,82.9350,bus,Bus 1\nbus1,55.0410,82.9450,bus,Bus 1\nbus1,55.0450,82.9600,bus,Bus 1\nbus1,55.0420,82.9750,bus,Bus 1'});
 sq.size.w=270; sq.size.h=300; applySize(sq);
 const lg=addNode('recLog',340,200,{}); lg.size.w=210; applySize(lg);
@@ -405,7 +405,7 @@ clearAll();
 const nt=addNode('note',40,40,{text:'Each CSV row is held for its dwell seconds (advance = dwell), then the next one is taken.\n'+
   'The freq column goes to the oscillator. Any other column can be wired out the same way.'});
 nt.size.w=460; nt.size.h=90; applySize(nt);
-const sq=addNode('csvsrc',40,160,{advance:'dwell',loop:true,data:'freq,dwell\n300,1\n600,1\n1200,0.5\n2400,0.5\n800,2'});
+const sq=addNode('table',40,160,{list:'@patch',advance:'dwell',loop:true,data:'freq,dwell\n300,1\n600,1\n1200,0.5\n2400,0.5\n800,2'});
 sq.size.w=260; sq.size.h=300; applySize(sq);
 const o=addNode('osc',340,160,{amp:.3});
 const sc=addNode('scope',560,160);
@@ -417,12 +417,12 @@ markWiresDirty();
 });
 preset('Sequencer: Random Beacon (Trigger Clock)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Trigger Clock fires at random every 3–8 s (mode random); Data Sequencer takes a random row\n'+
+const nt=addNode('note',40,40,{text:'Trigger Clock fires at random every 3–8 s (mode random); Table takes a random row\n'+
   'of its table on every pulse. «text» goes to a transmitter, «rec» to a log. A row with fields = a packet or a call.\n'+
   'For a fixed beacon use mode interval; for calls at set times use advance = time with Time Base.'});
 nt.size.w=480; nt.size.h=130; applySize(nt);
 const ck=addNode('tclock',40,200,{mode:'random',rmin:3,rmax:8});
-const sq=addNode('csvsrc',300,200,{order:'shuffle',initial:false,textCol:'msg',
+const sq=addNode('table',300,200,{list:'@patch',order:'shuffle',initial:false,textCol:'msg',
   data:'src,dst,msg\n101,200,CQ CQ de beacon\n102,200,Test 1 2 3\n103,201,Status OK\n104,201,Battery low'});
 sq.size.w=260; sq.size.h=300; applySize(sq);
 const lg=addNode('recLog',580,200,{}); lg.size.w=210; applySize(lg);
@@ -742,7 +742,7 @@ const nt=addNode('note',40,40,{text:'Connect the SDR and tune to a busy band. si
   'Click a band in the band plan to search only inside it; tick «whole spectrum» on sigid to search everywhere again.'});
 nt.size.w=520; nt.size.h=170; applySize(nt);
 const rx=addNode('rtlsdr',40,300,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:446100000});
-const bp=addNode('bandplan',300,300,{preset:'Russia (full)'});
+const bp=addNode('table',300,300,{list:'presets/Russia (full)',initial:false});
 bp.size.w=340; bp.size.h=200; applySize(bp);
 const si=addNode('sigid',680,740,{period:2,thr:8,maxSig:8});
 si.size.w=560; si.size.h=260; applySize(si);
@@ -1924,7 +1924,7 @@ sa.size.w=620; sa.size.h=340; applySize(sa);
 const st=addNode('stats',360,420,{tau:1});
 st.size.w=420; st.size.h=200; applySize(st);
 const cl=addNode('cal',820,420,{mode:'dB offset',ref:94,unit:'dB SPL'});
-const lg=addNode('csv',1120,40,{period:1,names:'dB_SPL,crest,f_peak,level'});
+const lg=addNode('table',1120,40,{list:'logs/sound level',log:true,period:1,names:'dB_SPL,crest,f_peak,level'});
 lg.size.w=420; lg.size.h=260; applySize(lg);
 const pk=addNode('peak',1120,360,{fmin:20,fmax:20000,thr:-90});
 addEdge(m.id,'a',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
@@ -3303,13 +3303,16 @@ markWiresDirty();
 });
 preset('Graph: Links from CSV', function(){
 clearAll();
-const nt=addNode('note',40,20,{text:'Link graph from CSV: one row = one edge (from,to[,weight[,label]]), a header with from / to / weight / label names is optional. Rows come from the csv field, from a text wire (a chunk of CSV per change, e.g. MQTT In or a network text) or from records with from / to fields. Repeated pairs without a weight thicken the edge. Click a node: its name goes to `sel`.'});
+const nt=addNode('note',40,20,{text:'Link graph: one record = one edge (from, to[, weight[, label]]). Table plays its rows one by one into `rec` (edit them, or switch to another list or file import); records with from / to fields from any source and text wires (a chunk of CSV per change, e.g. MQTT In or a network text) work too. Repeated pairs without a weight thicken the edge. Click a node: its name goes to `sel`.'});
 nt.size.w=1000; nt.size.h=90; applySize(nt);
 const ts=addNode('textsrc',40,150,{text:'Demod,Squelch\nSquelch,Recorder\nDecoder,Map\nDecoder,Log'});
 ts.size.w=300; ts.size.h=120; applySize(ts);
+const tb=addNode('table',40,300,{list:'@patch',rate:4,loop:false,
+  data:'from,to,weight,label\nSDR,Filter,1,\nFilter,Demod,1,\nDemod,Decoder,2,audio\nDemod,Scope,1,\nDecoder,Log,1,'});
+tb.size.w=300; tb.size.h=260; applySize(tb);
 const g=addNode('graphview',380,150,{});
 g.size.w=520; g.size.h=360; applySize(g);
-addEdge(ts.id,'text',g.id,'text');
+addEdge(ts.id,'text',g.id,'text'); addEdge(tb.id,'rec',g.id,'rec');
 markWiresDirty();
 });
 preset('Chat: Text In and Out', function(){
