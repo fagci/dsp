@@ -838,6 +838,35 @@ def({ id:'scan', title:'Frame Line', cat:'Video', ins:[{n:'img',t:'img'},{n:'row
     return {out:o}; }});
 
 
+// QR и штрихкоды из кадра через BarcodeDetector (Chrome/Android; в Firefox/Safari нет). Асинхронно, не чаще period
+def({ id:'barcode', lazy:'proc', title:'Barcode / QR', cat:'Video',
+  ins:[{n:'img',t:'img'}],
+  outs:[{n:'text',t:'txt'},{n:'go',t:'num'},{n:'rec',t:'rec'},{n:'count',t:'num'}],
+  readout:true,
+  params:[{n:'period',t:'range',min:.1,max:5,step:.1,d:.5,label:'scan every, s'},
+          {n:'dup',t:'range',min:0,max:30,step:1,d:3,label:'ignore repeat, s'}],
+  init:n=>{ n.det=null; n.busy=false; n.lastT=0; n.lastRev=-1; n.text=''; n.q=[]; n.count=0; n.seen=new Map();
+    n.status=typeof BarcodeDetector==='undefined' ? 'BarcodeDetector is not supported by this browser' : 'waiting for a frame'; },
+  process(n,I){
+    const now=performance.now();
+    if(I.img && !I.img.gray && !n.busy && typeof BarcodeDetector!=='undefined' &&
+       now-n.lastT>=n.p.period*1000 && I.img.rev!==n.lastRev){
+      n.lastT=now; n.lastRev=I.img.rev; n.busy=true;
+      (n.det||=new BarcodeDetector()).detect(I.img.data).then(res=>{
+        const t=Date.now(); n.status=res.length ? res.length+' found' : 'no code in frame';
+        for(const b of res){
+          const k=b.format+'|'+b.rawValue, prev=n.seen.get(k);
+          if(prev && t-prev<n.p.dup*1000){ n.seen.set(k,t); continue; }
+          n.seen.set(k,t); n.count++;
+          n.q.push({t, src:'barcode', format:b.format, value:b.rawValue}); }
+      }).catch(e=>{ n.status='error: '+e.message; }).finally(()=>{ n.busy=false; });
+    }
+    let go=0; const rec=n.q.length ? n.q.splice(0) : null;
+    if(rec){ n.text=rec[rec.length-1].value; go=1; }
+    return {text:n.text, go, rec, count:n.count}; },
+  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.status+(n.text?'\n'+n.text.slice(0,300):''); }});
+
+
 def({ id:'bright', lazy:'proc', title:'Region Brightness', cat:'Video',
   ins:[{n:'img',t:'img'},{n:'x',t:'num'},{n:'y',t:'num'},{n:'w',t:'num'},{n:'h',t:'num'},
        {n:'auto',t:'num'},{n:'invert',t:'num'}],
