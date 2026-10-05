@@ -159,6 +159,10 @@ const PRESET_CATS={
   'Meteor-M LRPT: Image (USB SDR, 137 MHz)':'Aircraft, Satellites & Telemetry',
   'Radiosonde RS41: Map (Generator)':'Aircraft, Satellites & Telemetry',
   'Radiosonde RS41: Map (USB SDR, 400–406 MHz)':'Aircraft, Satellites & Telemetry',
+  'NMEA: GPS Track (Table Playback)':'Maps & Locating',
+  'NMEA: Network Stream (gpsd, AIS-catcher, Termux)':'Network & IoT',
+  'POCSAG: Pager Messages (Generator)':'Modems & Data Links',
+  'POCSAG: Pager Messages (USB SDR)':'Modems & Data Links',
   'AIS: Vessels on the Map (Generator)':'Aircraft, Satellites & Telemetry',
   'AIS: Vessels on the Map (USB SDR, 162 MHz)':'Aircraft, Satellites & Telemetry',
   'ISM 433: Sensors and Remotes (Generator)':'Aircraft, Satellites & Telemetry',
@@ -1043,6 +1047,42 @@ addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 markWiresDirty();
 });
+preset('NMEA: GPS Track (Table Playback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'NMEA 0183 without a receiver: the Table plays GGA / RMC / VTG sentences of a walk around a block (one epoch a second, three rows each).\n'+
+  'NMEA Parser: checksum → fields; the three sentences of an epoch are joined into one record (position, altitude, speed, course, satellites, HDOP) → map.\n'+
+  'The numeric outputs (lat, lon, sog, cog…) go to any node. A real receiver: Serial Port (WebSerial) or Text over Network (gpsd, Termux) → text of the parser.'});
+nt.size.w=720; nt.size.h=130; applySize(nt);
+const sq=addNode('table',40,200,{list:'@patch',textCol:'nmea',rate:3,loop:true,
+  data:'nmea\n"$GPGGA,073000,5501.9500,N,08255.2000,E,1,09,0.9,150.0,M,-35.0,M,,*6C"\n"$GPRMC,073000,A,5501.9500,N,08255.2000,E,5.0,90.0,150625,,,A*48"\n"$GPVTG,90.0,T,,M,5.0,N,9.3,K,A*3B"\n"$GPGGA,073001,5501.9449,N,08255.2679,E,1,09,0.9,150.8,M,-35.0,M,,*61"\n"$GPRMC,073001,A,5501.9449,N,08255.2679,E,5.2,105.0,150625,,,A*72"\n"$GPVTG,105.0,T,,M,5.2,N,9.6,K,A*01"\n"$GPGGA,073002,5501.9299,N,08255.3313,E,1,09,0.9,151.5,M,-35.0,M,,*6D"\n"$GPRMC,073002,A,5501.9299,N,08255.3313,E,5.4,120.0,150625,,,A*73"\n"$GPVTG,120.0,T,,M,5.4,N,10.0,K,A*3E"\n"$GPGGA,073003,5501.9061,N,08255.3856,E,1,09,0.9,152.1,M,-35.0,M,,*64"\n"$GPRMC,073003,A,5501.9061,N,08255.3856,E,5.6,135.0,150625,,,A*7B"\n"$GPVTG,135.0,T,,M,5.6,N,10.4,K,A*3C"\n"$GPGGA,073004,5501.8750,N,08255.4273,E,1,09,0.9,152.6,M,-35.0,M,,*6A"\n"$GPRMC,073004,A,5501.8750,N,08255.4273,E,5.8,150.0,150625,,,A*7F"\n"$GPVTG,150.0,T,,M,5.8,N,10.7,K,A*32"\n"$GPGGA,073005,5501.8388,N,08255.4536,E,1,09,0.9,152.9,M,-35.0,M,,*63"\n"$GPRMC,073005,A,5501.8388,N,08255.4536,E,6.0,165.0,150625,,,A*74"\n"$GPVTG,165.0,T,,M,6.0,N,11.1,K,A*38"\n"$GPGGA,073006,5501.8000,N,08255.4625,E,1,09,0.9,153.0,M,-35.0,M,,*6A"\n"$GPRMC,073006,A,5501.8000,N,08255.4625,E,5.0,180.0,150625,,,A*7D"\n"$GPVTG,180.0,T,,M,5.0,N,9.3,K,A*0B"\n"$GPGGA,073007,5501.7612,N,08255.4536,E,1,09,0.9,152.9,M,-35.0,M,,*68"\n"$GPRMC,073007,A,5501.7612,N,08255.4536,E,5.2,195.0,150625,,,A*71"\n"$GPVTG,195.0,T,,M,5.2,N,9.6,K,A*08"\n"$GPGGA,073008,5501.7250,N,08255.4273,E,1,09,0.9,152.6,M,-35.0,M,,*6C"\n"$GPRMC,073008,A,5501.7250,N,08255.4273,E,5.4,210.0,150625,,,A*72"\n"$GPVTG,210.0,T,,M,5.4,N,10.0,K,A*3E"\n"$GPGGA,073009,5501.6939,N,08255.3856,E,1,09,0.9,152.1,M,-35.0,M,,*65"\n"$GPRMC,073009,A,5501.6939,N,08255.3856,E,5.6,225.0,150625,,,A*78"\n"$GPVTG,225.0,T,,M,5.6,N,10.4,K,A*3E"\n"$GPGGA,073010,5501.6701,N,08255.3313,E,1,09,0.9,151.5,M,-35.0,M,,*65"\n"$GPRMC,073010,A,5501.6701,N,08255.3313,E,5.8,240.0,150625,,,A*72"\n"$GPVTG,240.0,T,,M,5.8,N,10.7,K,A*30"\n"$GPGGA,073011,5501.6551,N,08255.2679,E,1,09,0.9,150.8,M,-35.0,M,,*67"\n"$GPRMC,073011,A,5501.6551,N,08255.2679,E,6.0,255.0,150625,,,A*73"\n"$GPVTG,255.0,T,,M,6.0,N,11.1,K,A*38"\n"$GPGGA,073012,5501.6500,N,08255.2000,E,1,09,0.9,150.0,M,-35.0,M,,*60"\n"$GPRMC,073012,A,5501.6500,N,08255.2000,E,5.0,270.0,150625,,,A*78"\n"$GPVTG,270.0,T,,M,5.0,N,9.3,K,A*07"\n"$GPGGA,073013,5501.6551,N,08255.1321,E,1,09,0.9,149.2,M,-35.0,M,,*6C"\n"$GPRMC,073013,A,5501.6551,N,08255.1321,E,5.2,285.0,150625,,,A*76"\n"$GPVTG,285.0,T,,M,5.2,N,9.6,K,A*0A"\n"$GPGGA,073014,5501.6701,N,08255.0687,E,1,09,0.9,148.5,M,-35.0,M,,*62"\n"$GPRMC,073014,A,5501.6701,N,08255.0687,E,5.4,300.0,150625,,,A*74"\n"$GPVTG,300.0,T,,M,5.4,N,10.0,K,A*3E"\n"$GPGGA,073015,5501.6939,N,08255.0144,E,1,09,0.9,147.9,M,-35.0,M,,*6D"\n"$GPRMC,073015,A,5501.6939,N,08255.0144,E,5.6,315.0,150625,,,A*7E"\n"$GPVTG,315.0,T,,M,5.6,N,10.4,K,A*3C"\n"$GPGGA,073016,5501.7250,N,08254.9727,E,1,09,0.9,147.4,M,-35.0,M,,*6D"\n"$GPRMC,073016,A,5501.7250,N,08254.9727,E,5.8,330.0,150625,,,A*7A"\n"$GPVTG,330.0,T,,M,5.8,N,10.7,K,A*36"\n"$GPGGA,073017,5501.7612,N,08254.9464,E,1,09,0.9,147.1,M,-35.0,M,,*6F"\n"$GPRMC,073017,A,5501.7612,N,08254.9464,E,6.0,345.0,150625,,,A*74"\n"$GPVTG,345.0,T,,M,6.0,N,11.1,K,A*38"\n"$GPGGA,073018,5501.8000,N,08254.9375,E,1,09,0.9,147.0,M,-35.0,M,,*6C"\n"$GPRMC,073018,A,5501.8000,N,08254.9375,E,5.0,0.0,150625,,,A*77"\n"$GPVTG,0.0,T,,M,5.0,N,9.3,K,A*02"\n"$GPGGA,073019,5501.8388,N,08254.9464,E,1,09,0.9,147.1,M,-35.0,M,,*68"\n"$GPRMC,073019,A,5501.8388,N,08254.9464,E,5.2,15.0,150625,,,A*44"\n"$GPVTG,15.0,T,,M,5.2,N,9.6,K,A*31"\n"$GPGGA,073020,5501.8750,N,08254.9727,E,1,09,0.9,147.4,M,-35.0,M,,*62"\n"$GPRMC,073020,A,5501.8750,N,08254.9727,E,5.4,30.0,150625,,,A*4A"\n"$GPVTG,30.0,T,,M,5.4,N,10.0,K,A*0E"\n"$GPGGA,073021,5501.9061,N,08255.0144,E,1,09,0.9,147.9,M,-35.0,M,,*61"\n"$GPRMC,073021,A,5501.9061,N,08255.0144,E,5.6,45.0,150625,,,A*44"\n"$GPVTG,45.0,T,,M,5.6,N,10.4,K,A*0A"\n"$GPGGA,073022,5501.9299,N,08255.0687,E,1,09,0.9,148.5,M,-35.0,M,,*6C"\n"$GPRMC,073022,A,5501.9299,N,08255.0687,E,5.8,60.0,150625,,,A*43"\n"$GPVTG,60.0,T,,M,5.8,N,10.7,K,A*00"\n"$GPGGA,073023,5501.9449,N,08255.1321,E,1,09,0.9,149.2,M,-35.0,M,,*68"\n"$GPRMC,073023,A,5501.9449,N,08255.1321,E,6.0,75.0,150625,,,A*4E"\n"$GPVTG,75.0,T,,M,6.0,N,11.1,K,A*08"'});
+sq.size.w=300; sq.size.h=300; applySize(sq);
+const pa=addNode('nmea',380,200,{});
+pa.size.w=420; pa.size.h=300; applySize(pa);
+const map=addNode('geoMap',840,40,{mz:16,mlat:55.03,mlon:82.92,ttl:300,labels:false,trail:600});
+map.size.w=560; map.size.h=460; applySize(map);
+const log=addNode('recLog',380,540,{});
+log.size.w=420; applySize(log);
+addEdge(sq.id,'text',pa.id,'text'); addEdge(pa.id,'rec',map.id,'rec'); addEdge(pa.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('NMEA: Network Stream (gpsd, AIS-catcher, Termux)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'NMEA over WebSocket: any program that writes NMEA lines to a pipe, through websocat — e.g. a GPS: gpsd → gpspipe -r | websocat -s 8765,\n'+
+  'AIS-catcher / rtl-ais with -N / -u (NMEA to UDP) → a UDP-to-WebSocket bridge, a ship\'s multiplexer (port 10110) → websockify. From the https page only wss://.\n'+
+  'Edit the URL in Text over Network and press Connect. !AIVDM sentences become vessels (name, type, size) on the map like in AIS Decoder;\n'+
+  'GGA / RMC / VTG become the position of the receiver, depth, wind, water temperature and heading go to the numeric outputs.'});
+nt.size.w=760; nt.size.h=150; applySize(nt);
+const nx=addNode('nettext',40,230,{url:'ws://127.0.0.1:8765'});
+nx.size.w=300; nx.size.h=240; applySize(nx);
+const pa=addNode('nmea',380,230,{});
+pa.size.w=420; pa.size.h=300; applySize(pa);
+const map=addNode('geoMap',840,40,{mz:12,ttl:1800,labels:true,trail:600});
+map.size.w=560; map.size.h=460; applySize(map);
+const log=addNode('recLog',380,570,{});
+log.size.w=420; applySize(log);
+addEdge(nx.id,'line',pa.id,'text'); addEdge(nx.id,'go',pa.id,'go'); addEdge(pa.id,'rec',map.id,'rec'); addEdge(pa.id,'rec',log.id,'rec');
+markWiresDirty();
+});
 preset('AIS: Vessels on the Map (Generator)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'AIS without a radio: the generator sends position reports (types 1, 18), static data (5, 24), a base station (4) and an aid to navigation (21)\n'+
@@ -1079,6 +1119,44 @@ log.size.w=520; applySize(log);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',map.id,'rec'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('POCSAG: Pager Messages (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'POCSAG paging without a radio: the generator sends a text page, a numeric page and a tone-only call in turn — 2-FSK ±4.5 kHz, 1200 Bd\n'+
+  '(pick 512 or 2400 in the generator): preamble 1010…, batches of a sync word and 16 codewords, BCH(31,21) and parity, RIC = address ×8 + frame.\n'+
+  'POCSAG Decoder: FM discriminator, all three baud rates and 8 bit-clock phases at once, polarity by the sync word, errors corrected up to 2 bits per codeword → RIC, function, text / digits.\n'+
+  'Messages lists them (to = RIC); Rec Log saves CSV.'});
+nt.size.w=760; nt.size.h=150; applySize(nt);
+const gn=addNode('iqGen',40,260,{sr:'256000',fc:466000000,mode:'POCSAG',off:5000,lvl:-20,noise:-50});
+const de=addNode('pocsagRx',340,260,{});
+de.size.w=520; de.size.h=300; applySize(de);
+const ms=addNode('msgLog',900,260,{});
+ms.size.w=480; ms.size.h=300; applySize(ms);
+const log=addNode('recLog',340,620,{});
+log.size.w=520; applySize(log);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',ms.id,'rec'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('POCSAG: Pager Messages (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'POCSAG: tune the SDR to a local paging channel (frequencies differ by country: VHF 148–174 MHz, UHF 440–470 MHz, 929 MHz in North America)\n'+
+  'and tap the narrow FSK signal on the spectrum. Check the baud rate (auto tries 512 / 1200 / 2400). Pages are addressed to people: keep to the law of your country\n'+
+  'on receiving and storing them.'});
+nt.size.w=760; nt.size.h=110; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'1024000',freq:466000000,demod:'IQ'});
+const sa=addNode('sa',760,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,200,{});
+const de=addNode('pocsagRx',340,360,{});
+de.size.w=520; de.size.h=300; applySize(de);
+const ms=addNode('msgLog',900,360,{});
+ms.size.w=480; ms.size.h=300; applySize(ms);
+const log=addNode('recLog',340,720,{});
+log.size.w=520; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',ms.id,'rec'); addEdge(de.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('ISM 433: Sensors and Remotes (Generator)', function(){
