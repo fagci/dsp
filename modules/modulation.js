@@ -411,9 +411,9 @@ def({ id:'gardner', title:'Symbol Sync', cat:'Modulation',
 // поля минут/часов/дня/года должны быть верны, DUT1 и флаги — под вопросом.
 
 function wwvClassify(ms){
-  if(ms<220) return '0';
-  if(ms<500) return '1';
-  if(ms<900) return 'M';
+  if(ms<350) return '0';                              // импульсы 200 / 500 / 800 мс, пороги по серединам
+  if(ms<650) return '1';
+  if(ms<950) return 'M';
   return null;                                        // мусор/помеха
 }
 function wwvBcd(bits, idxs, weights){
@@ -424,10 +424,10 @@ function wwvBcd(bits, idxs, weights){
 function wwvDecodeFrame(n){
   const b=n.bits;
   const markOk=[0,9,19,29,39,49].every(i=>b[i]==='M');
-  const min=wwvBcd(b,[6,7],[10,20])+wwvBcd(b,[1,2,3,4],[1,2,4,8]);
+  const min=wwvBcd(b,[6,7,8],[10,20,40])+wwvBcd(b,[1,2,3,4],[1,2,4,8]);
   const hr =wwvBcd(b,[15,16],[10,20])+wwvBcd(b,[10,11,12,13],[1,2,4,8]);
   const day=wwvBcd(b,[30,31],[100,200])+wwvBcd(b,[25,26,27,28],[10,20,40,80])+wwvBcd(b,[20,21,22,23],[1,2,4,8]);
-  const yr =wwvBcd(b,[50,51,52,53],[10,20,40,80])+wwvBcd(b,[45,46,47,48],[1,2,4,8]);
+  const yr =wwvBcd(b,[51,52,53,54],[10,20,40,80])+wwvBcd(b,[45,46,47,48],[1,2,4,8]);
   const raw=b.map(x=>x==null?'.':x).join('');
   const stamp=`${String(hr).padStart(2,'0')}:${String(min).padStart(2,'0')} UTC · day ${day} · 20${String(yr).padStart(2,'0')}`
     +(markOk?'':' · SYNC LOST')+'\n  '+raw;
@@ -512,6 +512,51 @@ def({ id:'wwv', title:'WWV/WWVH/CHU Decoder', cat:'Decoders',
       el.textContent = (n.secIdx>=0?`sec ${n.secIdx}/59 · `:'no sync · ')+'\n'+n.text;
     }
   }});
+
+/* ---------- Тестовый сигнал WWV/WWVH/CHU: 100 Гц подканал + секундная метка ---------- */
+// Раскладка кадра та же, что у декодера: маркеры 0/9/19/29/39/49, 59-я секунда без импульса.
+function wwvFrame(y,doy,hh,mm){
+  const b=new Array(60).fill('0');
+  for(const i of [0,9,19,29,39,49]) b[i]='M';
+  b[59]=null;
+  const put=(idx,v)=>idx.forEach((k,i)=>{ b[k]=(v>>i)&1 ? '1' : '0'; });
+  put([1,2,3,4],mm%10); put([6,7,8],(mm/10)|0);
+  put([10,11,12,13],hh%10); put([15,16],(hh/10)|0);
+  put([20,21,22,23],doy%10); put([25,26,27,28],((doy/10)|0)%10); put([30,31],(doy/100)|0);
+  put([45,46,47,48],y%10); put([51,52,53,54],((y/10)|0)%10);
+  return b;
+}
+function wwvParseStart(s){
+  const m=/^\s*(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})\s*$/.exec(s||'');
+  const d=m ? Date.UTC(+m[1],+m[2]-1,+m[3],+m[4],+m[5]) : Math.floor(Date.now()/60000)*60000;
+  return Math.floor(d/60000);                           // минут от эпохи; поток начинается с начала минуты
+}
+def({ id:'wwvTx', title:'WWV: Test Signal', cat:'Protocols',
+  ins:[], outs:[{n:'out',t:'sig'}], readout:true,
+  params:[{n:'station',t:'select',opts:['WWV/CHU 1000Hz','WWVH 1200Hz'],d:'WWV/CHU 1000Hz'},
+          {n:'start',t:'text',d:'now',label:'start minute, UTC (YYYY-MM-DD HH:MM; anything else = now)'},
+          {n:'lvl',t:'range',min:.05,max:1,step:.05,d:.5,label:'level'}],
+  init:n=>{ n.samp=0; n.p100=0; n.pt=0; n.m0=null; n.key=null; n.fr=null; },
+  process(n,I){
+    const o=buf(n,'out'), sr=Eng.sr, key=n.p.start;
+    if(n.key!==key){ n.key=key; n.m0=wwvParseStart(key); n.samp=0; n.fr=null; }
+    const ft=n.p.station.startsWith('WWVH')?1200:1000, a=n.p.lvl;
+    for(let i=0;i<BLOCK;i++,n.samp++){
+      const sec=Math.floor(n.samp/sr), mi=Math.floor(sec/60), sc=sec%60, ts=(n.samp-sec*sr)/sr;
+      if(!n.fr || n.fr.mi!==mi){
+        const d=new Date((n.m0+mi)*60000), y=d.getUTCFullYear();
+        n.fr={mi, bits:wwvFrame(y%100,Math.round((Date.UTC(y,d.getUTCMonth(),d.getUTCDate())-Date.UTC(y,0,1))/864e5)+1,d.getUTCHours(),d.getUTCMinutes()),
+              stamp:`${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')} ${d.toISOString().slice(0,10)}`}; }
+      const c=n.fr.bits[sc], w=c==='M'?.8 : c==='1'?.5 : c==='0'?.2 : 0;
+      let v=0;
+      if(ts<w){ n.p100+=2*Math.PI*100/sr; v+=.5*Math.sin(n.p100); }
+      if(ts<.005 && sc!==29 && sc!==59){ n.pt+=2*Math.PI*ft/sr; v+=.5*Math.sin(n.pt); }
+      o[i]=a*v;
+    }
+    n.p100%=2*Math.PI; n.pt%=2*Math.PI;
+    return {out:o}; },
+  draw(n){ const r=n.el.querySelector('.readout'), t=n.fr ? 'sec '+(Math.floor(n.samp/Eng.sr)%60)+' · '+n.fr.stamp+' UTC' : 'waiting';
+    if(r && r.textContent!==t) r.textContent=t; }});
 
 /* ---------- Допплеровский радар (акустика) ---------- */
 // Излучатель — узел mod, режим FSK, key/bit не подключены → чистый тон на f0.

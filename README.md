@@ -66,7 +66,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - AM/FM/SSB demodulator, FSK demodulator, generic modulator
 - Carrier acquisition, matched filter, symbol sync
 - OFDM modulator/demodulator, chirp modem (transmit/receive)
-- HF propagation, WWV/WWVH/CHU time decoder
+- HF propagation, WWV/WWVH/CHU time decoder (100 Hz subcarrier: pulses of 200 / 500 / 800 ms classified at 350 / 650 ms; the bit layout is from memory, not checked against real reception) and **WWV: Test Signal** — the same code for a chosen minute plus the second ticks
 - **Time Signal Decoder**: DCF77 (77.5 kHz) and WWVB (60 kHz) longwave time signals → bits → minute frame with parity / marker checks → UTC time (see [DCF77 and WWVB](#dcf77-and-wwvb))
 - **SAME / EAS** (NOAA Weather Radio alerts, AFSK 520.83 Bd from an NFM receiver): ZCZC header with the three repeats voted → originator, event, FIPS areas, validity, station; a test-signal generator for the decoder (see [SAME / EAS](#same--eas))
 - **SELCAL** (aviation selective calling, HF / VHF, ICAO 16 tones): the code of an aircraft call from audio — two pulses of two tones each → `AB-CD`, with the measured tuning error; a test-signal generator (see [SELCAL](#selcal))
@@ -77,7 +77,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **IR Encode / Decode / Learn** — NEC, NEC-ext, Samsung, Sony SIRC 12/15/20, RC5, RC6, JVC, Panasonic; unknown frames (air conditioners) are broken down into header, pulse lengths and bytes; any code can be stored and replayed. The nodes know nothing about the hardware, the adapters do: sound card (**IR Sound TX / RX**) and a serial port (**IR Serial**: Arduino / ESP / Pico, Flipper Zero) — see [Infrared](#infrared-1)
 
 ### Digital modes & decoders
-- FT8, RTTY, Morse (TX/RX, including from camera), DTMF, PSK31, Feld Hell
+- FT8 (receive; **FT8: Transmit** packs a standard message — `CQ K1ABC FN42`, `K1ABC W9XYZ -12`, `R+05`, `RR73`, `73`, or free text up to 13 characters — into 79 GFSK tones and sends it at +0.5 s of every / even / odd 15 s UTC slot, so *FT8: Transmit → FT8: Receive Slots* is a loopback test), RTTY, Morse (TX/RX, including from camera), DTMF, PSK31, Feld Hell
 - Olivia, Contestia, AX.25/APRS (TX/RX)
 - POCSAG pager transmitter (RIC, text / numeric / tone) → IQ Modulator → HackRF TX (see [POCSAG](#pocsag))
 - WEFAX, NOAA APT, SSTV-style raster
