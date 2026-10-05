@@ -626,7 +626,7 @@ function cfarPopcount(x){ let c=0; for(;x;x&=x-1) c++; return c; }
 //        оценку не поднимает; CA — среднее; SO — меньшее из средних слева и справа (сосед с одной стороны).
 // Цель подтверждается, если попала в M из последних N кадров спектра — одиночные выбросы шума отсеиваются.
 def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
-  ins:[{n:'spec',t:'spec'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'guard',t:'num'},
+  ins:[{n:'spec',t:'spec'},{n:'skip',t:'bands'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'guard',t:'num'},
        {n:'train',t:'num'},{n:'thr',t:'num'},{n:'minW',t:'num'},{n:'top',t:'num'},{n:'hold',t:'num'}],
   outs:[{n:'count',t:'num'},{n:'f1',t:'num'},{n:'l1',t:'num'},{n:'f2',t:'num'},{n:'l2',t:'num'},
         {n:'f3',t:'num'},{n:'l3',t:'num'},{n:'f4',t:'num'},{n:'l4',t:'num'},
@@ -658,6 +658,8 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
     for(const k of ['fmin','fmax','guard','train','thr','minW','top','hold'])
       if(typeof I[k]==='number') setMod(n,k,I[k]);
     if(!s) return {count:0};
+    // список пропуска (Table → bands): цели внутри его диапазонов не считаются; частота без ширины — с допуском по ширине цели
+    n.skip=Array.isArray(I.skip) ? I.skip.filter(b=>b && !b.sig && isFinite(b.lo)) : null;
     // считаем только на новом кадре спектра: иначе один кадр засчитывался бы в M-из-N много раз
     // (спектр rtlsdr обновляется раз в ~80мс, движок тикает чаще). У части узлов объект спектра
     // мутируется на месте — сверяем rev, у кого его нет — ссылку.
@@ -677,6 +679,13 @@ function cfarIdStep(res,w){
   if(res && res!=='auto') return +res;
   const e=Math.pow(10,Math.floor(Math.log10(Math.max(1,w)))), m=w/e;
   return (m<=1?1:m<=2?2:m<=5?5:10)*e;
+}
+function cfarSkipped(list,f,w){
+  for(const b of list){
+    const tol=b.hi>b.lo ? 0 : w/2;
+    if(f>=b.lo-tol && f<=b.hi+tol) return true;
+  }
+  return false;
 }
 function cfarFrame(n,s){
   const N=s.mag.length, G=n.p.guard, T=n.p.train, meth=n.p.method;
@@ -741,6 +750,7 @@ function cfarFrame(n,s){
   for(const t of n.tracks){ t.hist=(t.hist<<1)&mask; t.hit=false; }
   for(const h of hits){
     const f=specHz(s,h.pi), wid=Math.max(1,specHz(s,h.b)-specHz(s,h.a));
+    if(n.skip && cfarSkipped(n.skip,f,Math.max(wid,2*binHz))) continue;
     const tol=Math.max(15,wid,2*binHz);              // цель та же, если рядом по частоте
     let tr=n.tracks.find(t=>Math.abs(t.f-f)<=tol);
     if(tr){ tr.f=tr.f*.7+f*.3; tr.w=Math.max(tr.w,wid); tr.db=h.peak; tr.snr=h.snr; tr.t=now; }
@@ -763,7 +773,7 @@ function cfarFrame(n,s){
   const [specLo0,specHi0]=specSpan(s);
   n.tracks=n.tracks.filter(t=>t.f>=specLo0 && t.f<=specHi0);
   n.list=n.tracks.filter(t=>t.ok).sort((a,b)=>b.db-a.db).slice(0,n.p.top);
-  n.text='found '+n.list.length+' · floor '+n.floorDb.toFixed(1)+' dB\n'+n.list.map(v=>
+  n.text='found '+n.list.length+' · floor '+n.floorDb.toFixed(1)+' dB'+(n.skip&&n.skip.length ? ' · skip '+n.skip.length : '')+'\n'+n.list.map(v=>
     fmtHz(v.f).padStart(8)+'Hz  width '+fmtHz(v.w).padStart(4)+
     'Hz  '+v.db.toFixed(0).padStart(4)+' dB  SNR '+v.snr.toFixed(0).padStart(3)+'  '+((now-v.t0)/1000).toFixed(1)+' s').join('\n');
 }
