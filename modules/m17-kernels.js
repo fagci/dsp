@@ -79,7 +79,7 @@ function m17Lich(lsf30,cnt){                                       // 48 бит 
 }
 function m17EncStream(lsf30,cnt,fn,data16){
   const lich=m17Lich(lsf30,cnt), t=new Uint8Array(368);
-  for(let w=0;w<4;w++){ const g=m17Golay(dmrNum(lich,12*w,12)); for(let i=0;i<24;i++) t[24*w+i]=(g>>(23-i))&1; }
+  for(let w=0;w<4;w++){ const g=m17Golay(bitsNum(lich,12*w,12)); for(let i=0;i<24;i++) t[24*w+i]=(g>>(23-i))&1; }
   const d=new Uint8Array(144); for(let i=0;i<16;i++) d[i]=(fn>>(15-i))&1; d.set(dmrBitsOf(data16),16);
   t.set(m17Enc(d,148,M17_P2),96);
   return m17Wire(t);
@@ -100,7 +100,7 @@ function m17Lsf(b){                                                // 30 бай�
     if(f.sub===0 && m[0]){ f.metaText=String.fromCharCode(...Array.from(m.subarray(1)).filter(c=>c>=32 && c<127)).trim(); }
     else if(f.sub===2){ f.cf1=m17CallDec(m.subarray(0,6)); if(m[6]) f.cf2=m17CallDec(m.subarray(6,12)); }
     else if(f.sub===1){
-      const bits=dmrBitsOf(m), s24=v=>v&0x800000 ? v-0x1000000 : v, F=(o,n)=>dmrNum(bits,o,n);
+      const bits=dmrBitsOf(m), s24=v=>v&0x800000 ? v-0x1000000 : v, F=(o,n)=>bitsNum(bits,o,n);
       const valid=F(8,4);
       f.gnss={source:F(0,4), station:F(4,4), valid};
       if(valid&8){ f.lat=+(s24(F(24,24))/8388607*90).toFixed(5); f.lon=+(s24(F(48,24))/8388607*180).toFixed(5); }
@@ -167,9 +167,9 @@ FSK4.protos.m17={
     if(kind==='str'){
       const lich=new Uint8Array(48);
       for(let w=0;w<4;w++){ let v=0; for(let i=0;i<24;i++) v=v*2+t[24*w+i]; const g=m17GolayDec(v); if(!g) return false; for(let i=0;i<12;i++) lich[12*w+i]=(g.v>>(11-i))&1; }
-      const cnt=dmrNum(lich,40,3), r=m17Dec(t.subarray(96),148,M17_P2);
+      const cnt=bitsNum(lich,40,3), r=m17Dec(t.subarray(96),148,M17_P2);
       if(cnt>5 || r.err>30) return false;
-      const fn=dmrNum(r.bits,0,16), data=p25Bytes(r.bits.subarray(16,144));
+      const fn=bitsNum(r.bits,0,16), data=p25Bytes(r.bits.subarray(16,144));
       P.st.stream++;
       // куски LSF из LICH: за шесть кадров — весь LSF (для поздно подключившихся)
       if(!P.lich) P.lich={m:0, b:new Uint8Array(240)};
@@ -188,7 +188,7 @@ FSK4.protos.m17={
     if(kind==='pkt'){
       const r=m17Dec(t,210,M17_P3), by=p25Bytes(r.bits.subarray(0,208));
       if(r.err>40) return false;
-      const meta=r.bits.subarray(200,206), eof=meta[0], cnt=dmrNum(meta,1,5);
+      const meta=r.bits.subarray(200,206), eof=meta[0], cnt=bitsNum(meta,1,5);
       P.st.packet++;
       if(!P.pkt || cnt===0 && !eof && P.pkt.n>0) P.pkt={n:0, data:[]};
       P.pkt.data.push(...by.subarray(0,25).subarray(0,eof ? Math.min(25,cnt) : 25)); P.pkt.n++;

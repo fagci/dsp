@@ -1458,7 +1458,6 @@ function ft8Ldpc(llr,iters){                        // распростране�
 const A1=' 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', A2='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ',
       A3='0123456789', A4=' ABCDEFGHIJKLMNOPQRSTUVWXYZ',
       AF=' 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-./?';
-function bitsNum(b,from,len){ let v=0; for(let i=0;i<len;i++) v=v*2+b[from+i]; return v; }
 function ft8Call(n28){
   const NTOK=2063592, MAX22=4194304;
   if(n28<NTOK){

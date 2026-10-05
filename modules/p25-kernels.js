@@ -4,7 +4,7 @@
    статус-дибит после каждых 35 дибитов данных. HDU: Golay(18,6,8) + RS(36,20,17); LDU1/2: 9 кадров IMBE, LC (RS(24,12,13)) или
    ESS (RS(24,16,9)) в словах Хэмминга (10,6,3), LSD; TSDU: 1–3 блока TSBK (трелис ½ + CRC-16); PDU: только заголовок.
    Голос IMBE не декодируется — отдаются сырые 144 бита кадра. Кодеры нужны генератору и тестам (сверка с MMDVMHost).
-   Помощники (dmrNum, dmrHam*, dmrCrc16, DMR_GOLAY_B…) берутся из dmr-kernels.js. */
+   Помощники (dmrHam*, dmrCrc16, DMR_GOLAY_B…) берутся из dmr-kernels.js. */
 
 const P25_BAUD=4800, P25_SYNC=fsk4Sync(fsk4Bits('5575F5FF77FF'));
 const P25_LEN={0:396, 5:864, 10:864, 3:72, 15:216};                 // длины кадров в дибитах со статусами
@@ -79,7 +79,7 @@ function p25RsDec(s,k){
 const p25Hex=(bits,o)=>bits[o]*32+bits[o+1]*16+bits[o+2]*8+bits[o+3]*4+bits[o+4]*2+bits[o+5];
 function p25HexBits(h){ const b=new Uint8Array(h.length*6); for(let i=0;i<h.length;i++) for(let k=0;k<6;k++) b[6*i+k]=(h[i]>>(5-k))&1; return b; }
 function p25BitsHex(b){ const h=new Uint8Array(b.length/6|0); for(let i=0;i<h.length;i++) h[i]=p25Hex(b,6*i); return h; }
-function p25Bytes(b){ const r=new Uint8Array(b.length>>3); for(let i=0;i<r.length;i++) r[i]=dmrNum(b,8*i,8); return r; }
+function p25Bytes(b){ const r=new Uint8Array(b.length>>3); for(let i=0;i<r.length;i++) r[i]=bitsNum(b,8*i,8); return r; }
 const p25Cat=(...a)=>{ let n=0; for(const x of a) n+=x.length; const r=new Uint8Array(n); let o=0; for(const x of a){ r.set(x,o); o+=x.length; } return r; };
 
 /* ---- Хэмминг (10,6,3) слов LC / ESS ---- */
@@ -293,7 +293,7 @@ const P25_TSBK={0x00:'GRP_V_CH_GRANT', 0x02:'GRP_V_CH_GRANT_UPDT', 0x03:'GRP_V_C
 // 96 бит блока (с CRC) → {f: поля, text}; P.idens — таблица идентификаторов каналов (пополняется IDEN_UP*)
 // смещения — от начала блока: 0 LB, 1 P, 2..7 код, 8..15 MFID, 16..79 аргументы, 80..95 CRC
 function p25Tsbk(P,bits){
-  const F=(a,l)=>dmrNum(bits,a,l), lb=bits[0], prot=bits[1], op=F(2,6), mf=F(8,8), name=P25_TSBK[op]||'TSBK 0x'+op.toString(16);
+  const F=(a,l)=>bitsNum(bits,a,l), lb=bits[0], prot=bits[1], op=F(2,6), mf=F(8,8), name=P25_TSBK[op]||'TSBK 0x'+op.toString(16);
   const f={name, op, mfid:mf, lb, protected:prot};
   let text=name;
   if(prot) return {f, text:text+' (protected)'};
@@ -384,7 +384,7 @@ function p25HduDecode(F){
 function p25TdulcDecode(F){
   const hex=new Uint8Array(24);
   for(let k=0;k<12;k++){
-    const w=fsk4Unpack(p25Data(F,56+12*k,12),0,12), g=m17GolayDec(dmrNum(w,0,24));
+    const w=fsk4Unpack(p25Data(F,56+12*k,12),0,12), g=m17GolayDec(bitsNum(w,0,24));
     if(!g) return null;
     hex[2*k]=g.v>>6; hex[2*k+1]=g.v&63;
   }
@@ -524,7 +524,7 @@ FSK4.protos.p25={
     }
     if(duid===10){ if(w) P.mi=dmrHex(p25Bytes(w.bits),0,8); else if(P.mi) P.mi=p25MiNext(P.mi); }
     // низкоскоростные данные (только в LDU1/LDU2: 2 байта)
-    const lb=fsk4Unpack(p25Data(F,752,16),0,16), l1=p25Lsd(dmrNum(lb,0,16));
+    const lb=fsk4Unpack(p25Data(F,752,16),0,16), l1=p25Lsd(bitsNum(lb,0,16));
     if(l1>0 && w) p25Emit(P,L,out,'lsd',{lsd:l1, seq:tag},'LSD '+l1.toString(16).padStart(2,'0'));
     return true;
   },
@@ -587,7 +587,7 @@ FSK4.protos.p25={
     if(pd.r34){
       for(const b of pd.blocks){
         const bits=b.bits, cb=Array.from(bits.subarray(0,7)).concat(Array.from(bits.subarray(16)));
-        if(dmrCrc9(cb)===((bits[7]<<8)|dmrNum(bits,8,8))) crc9++;
+        if(dmrCrc9(cb)===((bits[7]<<8)|bitsNum(bits,8,8))) crc9++;
         chunks.push(b.bytes.subarray(2));
       }
     } else for(const b of pd.blocks) chunks.push(b.bytes);

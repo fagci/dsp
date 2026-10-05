@@ -19,8 +19,7 @@ DMR_SYNCS.forEach(p=>{ p.syms=dmrSyncSyms(p); });
 const DMR_DT=['PI header','Voice LC header','Terminator LC','CSBK','MBC header','MBC cont.','Data header','Rate ½ data','Rate ¾ data','Idle','Rate 1 data','USBD'];
 
 // число из len ≤ 30 бит массива 0/1, старший первым
-function dmrNum(b,o,len){ let v=0; for(let i=0;i<len;i++) v=v*2+b[o+i]; return v; }
-function dmrBytes(b,o,n){ const r=new Uint8Array(n); for(let i=0;i<n;i++) r[i]=dmrNum(b,o+8*i,8); return r; }
+function dmrBytes(b,o,n){ const r=new Uint8Array(n); for(let i=0;i<n;i++) r[i]=bitsNum(b,o+8*i,8); return r; }
 function dmrHex(a,o,n){ let s=''; for(let i=o||0;i<(n==null ? a.length : (o||0)+n);i++) s+=(a[i]<16?'0':'')+a[i].toString(16); return s.toUpperCase(); }
 function dmrBitsOf(bytes){ const r=new Uint8Array(bytes.length*8); for(let i=0;i<bytes.length;i++) for(let k=0;k<8;k++) r[8*i+k]=(bytes[i]>>(7-k))&1; return r; }
 function dmrId(a,o){ return a[o]*65536+a[o+1]*256+a[o+2]; }
@@ -71,10 +70,10 @@ function dmrCrc9(bits){ let r=0; for(const v of bits){ const fb=((r>>8)&1)^v; r=
 // блок с префиксом [DBSN 7][CRC-9 9]: проверка по данным и DBSN; mask — по скорости (½: 0x0F0, ¾: 0x1FF, 1: 0x10F)
 function dmrConfBlock(bits,mask){
   const cb=Array.from(bits.subarray(16)).concat(Array.from(bits.subarray(0,7)));
-  return {serial:dmrNum(bits,0,7), ok:dmrCrc9(cb)===(dmrNum(bits,7,9)^mask)};
+  return {serial:bitsNum(bits,0,7), ok:dmrCrc9(cb)===(bitsNum(bits,7,9)^mask)};
 }
 // CRC-5 встроенного LC: сумма байт по модулю 31
-function dmrCrc5(bits72){ let t=0; for(let i=0;i<72;i+=8) t+=dmrNum(bits72,i,8); return t%31; }
+function dmrCrc5(bits72){ let t=0; for(let i=0;i<72;i+=8) t+=bitsNum(bits72,i,8); return t%31; }
 // CRC-32 сообщения данных (ETSI B.3.?): как в dsd-fme — слова по 2 октета меняются местами, результат байтами наоборот
 function dmrCrc32(m,n){
   let r=0;
@@ -498,15 +497,15 @@ function dmrShortFrag(n,L,c,out){
       if(L.sf.length===4){
         const b=dmrShortLc(L.sf);
         if(b){
-          const slco=dmrNum(b,0,4), f={slco};
+          const slco=bitsNum(b,0,4), f={slco};
           let text='SLC ';
           if(slco===1){
-            const a1=dmrNum(b,4,4), a2=dmrNum(b,8,4);
-            Object.assign(f,{ts1:DMR_ACT[a1]||'res '+a1, ts2:DMR_ACT[a2]||'res '+a2, hash1:dmrNum(b,12,8), hash2:dmrNum(b,20,8)});
+            const a1=bitsNum(b,4,4), a2=bitsNum(b,8,4);
+            Object.assign(f,{ts1:DMR_ACT[a1]||'res '+a1, ts2:DMR_ACT[a2]||'res '+a2, hash1:bitsNum(b,12,8), hash2:bitsNum(b,20,8)});
             text+='activity: TS1 '+f.ts1+', TS2 '+f.ts2;
           } else if(slco===2 || slco===3){
-            const model=dmrNum(b,4,2), nb=[9,7,4,2][model], sb=[3,5,8,10][model];
-            Object.assign(f,{model:['tiny','small','large','huge'][model], net:dmrNum(b,6,nb), site:dmrNum(b,6+nb,sb), reg:b[18], csc:dmrNum(b,19,9)});
+            const model=bitsNum(b,4,2), nb=[9,7,4,2][model], sb=[3,5,8,10][model];
+            Object.assign(f,{model:['tiny','small','large','huge'][model], net:bitsNum(b,6,nb), site:bitsNum(b,6+nb,sb), reg:b[18], csc:bitsNum(b,19,9)});
             text+=(slco===2 ? 'C_SYS_Parms' : 'P_SYS_Parms')+' '+f.model+' net '+f.net+' site '+f.site;
             n.sys={net:f.net, site:f.site, model:f.model};
           } else text+=slco===0 ? 'null' : 'SLCO '+slco+' '+dmrHex(dmrBytes(Uint8Array.from([...b,0,0,0,0]),0,5));
@@ -544,7 +543,7 @@ function dmrVoice(n,L,S,bits,sync,emb,out){
   }
 }
 function dmrEmbLc(n,L,S,lc,out){
-  const flco=dmrNum(lc,2,6), b=dmrBytes(lc,0,9);
+  const flco=bitsNum(lc,2,6), b=dmrBytes(lc,0,9);
   if(flco===0 || flco===3){
     const to=dmrId(b,3), from=dmrId(b,6), flags=dmrSvcOpt(b[2]);
     if(!S.call || S.call.from!==from || S.call.to!==to){
@@ -610,8 +609,8 @@ function dmrData(n,L,S,bits,st,out){
       Object.assign(f,{lpcn:(b[2]<<4)|(b[3]>>4), ts:((b[3]>>3)&1)+1, emergency:(b[3]>>1)&1, to:dmrId(b,4), from:dmrId(b,7)});
       text+=' ch '+(f.lpcn===0xFFF ? 'absolute' : f.lpcn)+' TS'+f.ts+' '+f.from+' → '+f.to+(f.emergency ? ' emergency' : ''); }
     else if(op===0x19 && dt===3){                            // C_ALOHA: параметры системы Tier III
-      const bb=dmrBitsOf(b), model=dmrNum(bb,40,2), nb=[9,7,4,2][model], sb=[3,5,8,10][model];
-      Object.assign(f,{version:dmrNum(bb,19,3), mask:dmrNum(bb,24,5), reg:bb[35], model:['tiny','small','large','huge'][model], net:dmrNum(bb,42,nb), site:dmrNum(bb,42+nb,sb)});
+      const bb=dmrBitsOf(b), model=bitsNum(bb,40,2), nb=[9,7,4,2][model], sb=[3,5,8,10][model];
+      Object.assign(f,{version:bitsNum(bb,19,3), mask:bitsNum(bb,24,5), reg:bb[35], model:['tiny','small','large','huge'][model], net:bitsNum(bb,42,nb), site:bitsNum(bb,42+nb,sb)});
       n.sys={net:f.net, site:f.site, model:f.model};
       text+=' '+f.model+' net '+f.net+' site '+f.site+(f.reg ? ' reg' : ''); }
     else if([0x04,0x05,0x1F,0x20,0x24,0x26,0x27].includes(op) && dt===3){ f.to=dmrId(b,4); f.from=dmrId(b,7); text+=' '+f.from+' → '+f.to; }
@@ -664,9 +663,9 @@ function dmrMbcDone(n,L,S,out){
   f.raw=m.f.raw+' '+dmrHex(all);
   if(crc && m.f.lpcn===0xFFF){                            // CG_AP: абсолютные частоты выдачи канала (МГц + шаг 125 Гц)
     const bb=dmrBitsOf(all.subarray(0,12));
-    if(dmrNum(bb,16,4)===0){
-      f.apcn=dmrNum(bb,22,12);
-      f.tx=+(dmrNum(bb,34,10)+dmrNum(bb,44,13)*125e-6).toFixed(6); f.rx=+(dmrNum(bb,57,10)+dmrNum(bb,67,13)*125e-6).toFixed(6); f.freq=f.rx;
+    if(bitsNum(bb,16,4)===0){
+      f.apcn=bitsNum(bb,22,12);
+      f.tx=+(bitsNum(bb,34,10)+bitsNum(bb,44,13)*125e-6).toFixed(6); f.rx=+(bitsNum(bb,57,10)+bitsNum(bb,67,13)*125e-6).toFixed(6); f.freq=f.rx;
       text+=' rx '+f.rx+' MHz, tx '+f.tx+' MHz';
     }
   }
