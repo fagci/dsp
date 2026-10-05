@@ -135,7 +135,7 @@ FSK4.protos.dpmr={
     }
     for(let t=0;t<8;t++){
       const o=t<4 ? 96+72*t : 480+72*(t-4);
-      out.voice.push({t:P.now, src:'dPMR', kind:'ambe', n:t, cc:P.cc, from:P.call?P.call.from:null, to:P.call?P.call.to:null, ambe:dmrHex(p25Bytes(bits.subarray(o,o+72)))});
+      out.voice.push({t:P.now, src:'dPMR', kind:'ambe', n:t, cc:P.cc, from:P.call?P.call.from:null, to:P.call?P.call.to:null, ambe:bytesHex(bytesFromBits(bits.subarray(o,o+72)))});
       P.st.voice++;
     }
     L.next+=8*DPMR_UNIT; L.best=99; L.bestRq=1e9; L.kind='unit'; L.after=DPMR_UNIT-12;
@@ -202,10 +202,10 @@ function dpmrScript(){
     seq.push(dpmrUnit(a,b,5,rnd));
   }
   seq.push(fsk4Dib(Uint8Array.from(dpmrDib('133131333311'),c=>+c)));                    // FS3: конец передачи
-  return fsk4LevelsOf(p25Cat(new Uint8Array(40),...seq,new Uint8Array(40)));
+  return fsk4LevelsOf(u8cat(new Uint8Array(40),...seq,new Uint8Array(40)));
 }
 function dpmrPacketScript(){
-  return fsk4LevelsOf(p25Cat(new Uint8Array(40),dpmrHeaderFrame({htype:0, called:'2468135', own:'5312468', mode:4, format:1, version:1, emergency:1, info:0x2A5},9,true),new Uint8Array(40)));
+  return fsk4LevelsOf(u8cat(new Uint8Array(40),dpmrHeaderFrame({htype:0, called:'2468135', own:'5312468', mode:4, format:1, version:1, emergency:1, info:0x2A5},9,true),new Uint8Array(40)));
 }
 FSK4.gen['dPMR packet data header (FS4)']={baud:DPMR_BAUD, alpha:.2, dev:350, script:dpmrPacketScript};
 FSK4.gen['dPMR voice']={baud:DPMR_BAUD, alpha:.2, dev:350, script:dpmrScript};

@@ -79,8 +79,6 @@ function p25RsDec(s,k){
 const p25Hex=(bits,o)=>bits[o]*32+bits[o+1]*16+bits[o+2]*8+bits[o+3]*4+bits[o+4]*2+bits[o+5];
 function p25HexBits(h){ const b=new Uint8Array(h.length*6); for(let i=0;i<h.length;i++) for(let k=0;k<6;k++) b[6*i+k]=(h[i]>>(5-k))&1; return b; }
 function p25BitsHex(b){ const h=new Uint8Array(b.length/6|0); for(let i=0;i<h.length;i++) h[i]=p25Hex(b,6*i); return h; }
-function p25Bytes(b){ const r=new Uint8Array(b.length>>3); for(let i=0;i<r.length;i++) r[i]=bitsNum(b,8*i,8); return r; }
-const p25Cat=(...a)=>{ let n=0; for(const x of a) n+=x.length; const r=new Uint8Array(n); let o=0; for(const x of a){ r.set(x,o); o+=x.length; } return r; };
 
 /* ---- Хэмминг (10,6,3) слов LC / ESS ---- */
 const P25_H1063=dmrHamMake(6,[[0,1,2,5],[0,1,3,5],[0,2,3,4],[1,2,3,4]]);
@@ -163,7 +161,7 @@ const P25_T12=[0,15,12,3, 4,11,8,7, 13,2,1,14, 9,6,5,10];
 const P25_PTS=[[1,-1],[-1,-1],[3,-3],[-3,-3],[-3,-1],[3,-1],[-1,-3],[1,-3],[-3,3],[3,3],[-1,1],[1,1],[1,3],[-1,3],[3,1],[-3,1]]
   .map(p=>p.map(v=>v===1 ? 0 : v===3 ? 1 : v===-1 ? 2 : 3));
 function p25Tr12Enc(bytes12){
-  const bits=dmrBitsOf(bytes12), pts=new Uint8Array(98);
+  const bits=bitsMsb(bytes12), pts=new Uint8Array(98);
   let st=0;
   for(let i=0;i<49;i++){
     const x=i<48 ? bits[2*i]*2+bits[2*i+1] : 0, p=P25_PTS[P25_T12[st*4+x]];
@@ -195,13 +193,13 @@ function p25Tr12Dec(dib){
   for(let i=48;i>=0;i--){ x[i]=s; s=back[i][s]; }
   const bits=new Uint8Array(96);
   for(let i=0;i<48;i++){ bits[2*i]=x[i]>>1; bits[2*i+1]=x[i]&1; }
-  return {bytes:p25Bytes(bits), bits, err};
+  return {bytes:bytesFromBits(bits), bits, err};
 }
 
 /* ---- трелис ¾ (98 дибитов → 144 бита), таблица как ENCODE_TABLE_34 в MMDVMHost; состояние — предыдущая тройка бит ---- */
 const P25_T34=[0,8,4,12,2,10,6,14, 4,12,2,10,6,14,0,8, 1,9,5,13,3,11,7,15, 5,13,3,11,7,15,1,9, 3,11,7,15,1,9,5,13, 7,15,1,9,5,13,3,11, 2,10,6,14,0,8,4,12, 6,14,0,8,4,12,2,10];
 function p25Tr34Enc(bytes18){
-  const bits=dmrBitsOf(bytes18), pts=new Uint8Array(98);
+  const bits=bitsMsb(bytes18), pts=new Uint8Array(98);
   let st=0;
   for(let i=0;i<49;i++){
     const x=i<48 ? bits[3*i]*4+bits[3*i+1]*2+bits[3*i+2] : 0, p=P25_PTS[P25_T34[st*8+x]];
@@ -232,7 +230,7 @@ function p25Tr34Dec(dib){
   for(let i=48;i>=0;i--){ x[i]=s; s=back[i][s]; }
   const bits=new Uint8Array(144);
   for(let i=0;i<48;i++){ bits[3*i]=x[i]>>2; bits[3*i+1]=(x[i]>>1)&1; bits[3*i+2]=x[i]&1; }
-  return {bytes:p25Bytes(bits), bits, err};
+  return {bytes:bytesFromBits(bits), bits, err};
 }
 // CRC-32 многоблочного PDU: x³²+…, старший бит первым, начало 0, результат инвертируется
 function p25Crc32(b,n){
@@ -257,14 +255,14 @@ function p25PduBody(h,d){
   if(sap===31 && d.length>=12){ r.extSrc=d[3]*65536+d[4]*256+d[5]; sap=d[1]&63; r.extSap=sap; ptr=12; }
   if(sap===1 && d.length>=ptr+13){
     const alg=d[ptr+9], kid=d[ptr+10]*256+d[ptr+11];
-    r.crypt={algid:alg, algo:P25_ALGO[alg]||'0x'+alg.toString(16), kid, mi:dmrHex(d,ptr,8)}; sap=d[ptr+12]&63; ptr+=13;
+    r.crypt={algid:alg, algo:P25_ALGO[alg]||'0x'+alg.toString(16), kid, mi:bytesHex(d,ptr,8)}; sap=d[ptr+12]&63; ptr+=13;
     if(alg!==0x80){ r.encrypted=true; r.innerSap=sap; return r; }
   }
   if(h.offset) ptr=h.offset;
   const m=d.subarray(ptr);
   if(sap===0 || sap===4) Object.assign(r,dmrPayload(4,null,m));
-  else if(sap===48){ const t=Array.from(m,c=>c>=32 && c<127 ? String.fromCharCode(c) : c===10||c===13 ? '\n' : '').join(''); Object.assign(r,dmrNmea(t)); r.data=dmrHex(m,0,Math.min(40,m.length)); }
-  else r.data=dmrHex(m,0,Math.min(40,m.length));
+  else if(sap===48){ const t=Array.from(m,c=>c>=32 && c<127 ? String.fromCharCode(c) : c===10||c===13 ? '\n' : '').join(''); Object.assign(r,dmrNmea(t)); r.data=bytesHex(m,0,Math.min(40,m.length)); }
+  else r.data=bytesHex(m,0,Math.min(40,m.length));
   return r;
 }
 // MBT (SAP 61, формат 0x17 / 0x15): b — заголовок + блоки, opcode в заголовке или в первом блоке
@@ -348,17 +346,17 @@ function p25Tsbk(P,bits){
       f.utcOffset=F(20,12);
     }
   }
-  if(f.hex===undefined && Object.keys(f).length<=5) f.hex=dmrHex(p25Bytes(bits.subarray(16,80)));
+  if(f.hex===undefined && Object.keys(f).length<=5) f.hex=bytesHex(bytesFromBits(bits.subarray(16,80)));
   return {f, text};
 }
 function p25Lc(b72){                                               // 72 бита LC → поля
-  const y=p25Bytes(b72), lcf=y[0], op=lcf&0x3F, mf=y[1];
+  const y=bytesFromBits(b72), lcf=y[0], op=lcf&0x3F, mf=y[1];
   const f={lcf:op, mfid:mf, protected:lcf>>7, explicit:(lcf>>6)&1};
   const id3=o=>y[o]*65536+y[o+1]*256+y[o+2];
   if((mf===0 || mf===1) && op===0x00){ Object.assign(f,{type:'group', svc:y[2], to:y[4]*256+y[5], from:id3(6), emergency:y[2]>>7, encrypted:(y[2]>>6)&1}); }
   else if((mf===0 || mf===1) && op===0x03){ Object.assign(f,{type:'private', svc:y[2], to:id3(3), from:id3(6), emergency:y[2]>>7, encrypted:(y[2]>>6)&1}); }
   else if((mf===0 || mf===1) && op===0x0F){ Object.assign(f,{type:'terminate', to:id3(3), from:id3(6)}); }
-  else f.hex=dmrHex(y,2,7);
+  else f.hex=bytesHex(y,2,7);
   return f;
 }
 
@@ -377,7 +375,7 @@ function p25HduDecode(F){
     const g=p25Golay18(w); rs[i]=g ? g.v : 0;
   }
   if(p25RsDec(rs,20)<0) return null;
-  return p25Bytes(p25HexBits(rs.subarray(0,20)));
+  return bytesFromBits(p25HexBits(rs.subarray(0,20)));
 }
 // LC / ESS из шести групп по 4 слова Хэмминга (10,6,3); k — число информационных гексабит (12 — LC, 16 — ESS)
 // TDULC: 12 слов Golay(24,12) (по 12 дибитов): 6 слов LC (12 гексабит) и 6 слов RS(24,12,13)-проверки → 72 бита LC или null
@@ -469,8 +467,8 @@ FSK4.protos.p25={
       P.st.hdu++;
       const b=p25HduDecode(F);
       if(b){
-        const mi=dmrHex(b,0,9), algid=b[10], kid=b[11]*256+b[12], to=b[13]*256+b[14];
-        P.crypt={algid, kid, mi}; P.mi=dmrHex(b,0,8);
+        const mi=bytesHex(b,0,9), algid=b[10], kid=b[11]*256+b[12], to=b[13]*256+b[14];
+        P.crypt={algid, kid, mi}; P.mi=bytesHex(b,0,8);
         p25Emit(P,L,out,'hdu',{mi, mfid:b[9], algid, algo:P25_ALGO[algid]||'0x'+algid.toString(16), kid, to},
           'HDU TG '+to+' '+(P25_ALGO[algid]||'algo 0x'+algid.toString(16))+(algid!==0x80 ? ' key '+kid : ''));
       } else if(L.blind){ fsk4Drop(L); return; } else P.st.bad++;
@@ -506,7 +504,7 @@ FSK4.protos.p25={
         p25Emit(P,L,out,'lc',{...f},'LC 0x'+f.lcf.toString(16)+(f.mfid>1 ? ' MFID 0x'+f.mfid.toString(16) : '')+' '+f.hex);
       }
     } else {
-      const b=p25Bytes(w.bits), algid=b[9], kid=b[10]*256+b[11], mi=dmrHex(b,0,9);
+      const b=bytesFromBits(w.bits), algid=b[9], kid=b[10]*256+b[11], mi=bytesHex(b,0,9);
       if(!P.crypt || P.crypt.algid!==algid || P.crypt.kid!==kid){
         P.crypt={algid, kid, mi};
         p25Emit(P,L,out,'crypt',{mi, algid, algo:P25_ALGO[algid]||'0x'+algid.toString(16), kid},
@@ -519,10 +517,10 @@ FSK4.protos.p25={
     const c2=P.call, cr=P.crypt && P.crypt.algid!==0x80 && P.mi ? {alg:P.crypt.algid, kid:P.crypt.kid, mi:P.mi} : null;
     for(let i=0;i<9;i++){
       const bits=fsk4Unpack(p25Data(F,P25_IMBE[i],72),0,72);
-      out.voice.push({t:P.now, src:'P25', kind:'imbe', nac:P.nac, seq:tag, n:i+1, from:c2?c2.from:null, to:c2?c2.to:null, imbe:dmrHex(p25Bytes(bits)), ...cr});
+      out.voice.push({t:P.now, src:'P25', kind:'imbe', nac:P.nac, seq:tag, n:i+1, from:c2?c2.from:null, to:c2?c2.to:null, imbe:bytesHex(bytesFromBits(bits)), ...cr});
       P.st.voice++; if(c2) c2.voice++;
     }
-    if(duid===10){ if(w) P.mi=dmrHex(p25Bytes(w.bits),0,8); else if(P.mi) P.mi=p25MiNext(P.mi); }
+    if(duid===10){ if(w) P.mi=bytesHex(bytesFromBits(w.bits),0,8); else if(P.mi) P.mi=p25MiNext(P.mi); }
     // низкоскоростные данные (только в LDU1/LDU2: 2 байта)
     const lb=fsk4Unpack(p25Data(F,752,16),0,16), l1=p25Lsd(bitsNum(lb,0,16));
     if(l1>0 && w) p25Emit(P,L,out,'lsd',{lsd:l1, seq:tag},'LSD '+l1.toString(16).padStart(2,'0'));
@@ -547,7 +545,7 @@ FSK4.protos.p25={
     return this.pduBlock(P,L,out,dib,k);
   },
   tsbkBlock(P,L,out,dib,k){
-    const d=p25Tr12Dec(dib), bits=dmrBitsOf(d.bytes), span=p25Span(56+98*k);
+    const d=p25Tr12Dec(dib), bits=bitsMsb(d.bytes), span=p25Span(56+98*k);
     const ok=dmrCrc16(d.bytes,10)===d.bytes[10]*256+d.bytes[11];
     let last=true;
     P.st.tsdu+=k===1 ? 1 : 0;
@@ -591,18 +589,18 @@ FSK4.protos.p25={
         chunks.push(b.bytes.subarray(2));
       }
     } else for(const b of pd.blocks) chunks.push(b.bytes);
-    const data=p25Cat(...chunks), len=data.length;
+    const data=u8cat(...chunks), len=data.length;
     const want=((data[len-4]<<24)|(data[len-3]<<16)|(data[len-2]<<8)|data[len-1])>>>0, ok=p25Crc32(data,len-4)===want;
     const f={...h, crc:ok ? 'ok' : 'bad', bytes:Math.max(0,len-4-h.pad)};
     if(pd.r34) f.confirmedBlocks=crc9+'/'+n;
     if(h.sap===61 || h.sap===63){
       if(!ok){ P.st.bad++; return; }
-      const b=p25Cat(pd.hb,data), m=p25Mbt(P,b), {name,...rest}=m;
+      const b=u8cat(pd.hb,data), m=p25Mbt(P,b), {name,...rest}=m;
       p25Emit(P,L,out,'mbt',{...rest, msg:name},'MBT '+name+(m.chT!=null ? ' '+p25ChanText(P,m.chT) : '')+(m.from!=null ? ' '+m.from+' → '+m.to : '')+(m.sysid!=null ? ' SYS '+m.sysid.toString(16) : ''));
       return;
     }
     if(!ok) P.st.bad++;
-    const body=p25PduBody(h,p25Cat(pd.hb,data.subarray(0,Math.max(0,len-4-h.pad))).subarray(12));
+    const body=p25PduBody(h,u8cat(pd.hb,data.subarray(0,Math.max(0,len-4-h.pad))).subarray(12));
     const {data:hex,...rest}=body;
     p25Emit(P,L,out,'pdu',{...f, ...rest, hex},'PDU '+this.pduName(h)+' · '+f.bytes+' B'+(ok ? '' : ' (CRC error)')+(body.service ? ' · '+body.service : '')+(body.message ? ' "'+body.message+'"' : '')+(body.lat!=null ? ' '+body.lat+', '+body.lon : ''));
   }};
@@ -610,11 +608,10 @@ FSK4.order.push('p25');
 
 /* ---- генератор: кадры P25 ---- */
 const P25_SYNC_DIB=fsk4Dib(Uint8Array.from(P25_SYNC.bits,c=>+c));
-function p25Frame(nac,duid,body,len){ return p25Weave(p25Cat(P25_SYNC_DIB,fsk4Dib(p25NidBits(nac,duid)),body),len); }
-function p25BytesBits(b){ return dmrBitsOf(b); }
+function p25Frame(nac,duid,body,len){ return p25Weave(u8cat(P25_SYNC_DIB,fsk4Dib(p25NidBits(nac,duid)),body),len); }
 function p25HduBody(mi,mfid,algid,kid,tgid){
   const raw=new Uint8Array(15); raw.set(mi); raw[9]=mfid; raw[10]=algid; raw[11]=kid>>8; raw[12]=kid&255; raw[13]=tgid>>8; raw[14]=tgid&255;
-  const rs=p25RsEnc(p25BitsHex(p25BytesBits(raw)),36), bits=new Uint8Array(648);
+  const rs=p25RsEnc(p25BitsHex(bitsMsb(raw)),36), bits=new Uint8Array(648);
   for(let i=0;i<36;i++){ const w=P25_G18[rs[i]]; for(let k=0;k<18;k++) bits[18*i+k]=(w>>(17-k))&1; }
   return fsk4Dib(bits);
 }
@@ -628,18 +625,18 @@ function p25LduBody(imbe,hex24,lsd){
   }
   const ls=new Uint8Array(32);
   for(let i=0;i<2;i++){ const d=lsd[i], w=(d<<8)|p25LsdPar(d); for(let k=0;k<16;k++) ls[16*i+k]=(w>>(15-k))&1; }
-  const v=imbe.map(b=>fsk4Dib(p25BytesBits(b)));
-  return p25Cat(v[0],v[1],lc[0],v[2],lc[1],v[3],lc[2],v[4],lc[3],v[5],lc[4],v[6],lc[5],v[7],fsk4Dib(ls),v[8]);
+  const v=imbe.map(b=>fsk4Dib(bitsMsb(b)));
+  return u8cat(v[0],v[1],lc[0],v[2],lc[1],v[3],lc[2],v[4],lc[3],v[5],lc[4],v[6],lc[5],v[7],fsk4Dib(ls),v[8]);
 }
 function p25Ldu1Body(imbe,type,svc,to,from){
   const lc=new Uint8Array(9); lc[0]=type==='private' ? 3 : 0; lc[2]=svc;
   if(type==='private'){ lc[3]=to>>16; lc[4]=(to>>8)&255; lc[5]=to&255; } else { lc[4]=to>>8; lc[5]=to&255; }
   lc[6]=from>>16; lc[7]=(from>>8)&255; lc[8]=from&255;
-  return p25LduBody(imbe,p25RsEnc(p25BitsHex(p25BytesBits(lc)),24),[0,0]);
+  return p25LduBody(imbe,p25RsEnc(p25BitsHex(bitsMsb(lc)),24),[0,0]);
 }
 function p25Ldu2Body(imbe,mi,algid,kid,lsd){
   const e=new Uint8Array(12); e.set(mi); e[9]=algid; e[10]=kid>>8; e[11]=kid&255;
-  return p25LduBody(imbe,p25RsEnc(p25BitsHex(p25BytesBits(e)),24),lsd||[0,0]);
+  return p25LduBody(imbe,p25RsEnc(p25BitsHex(bitsMsb(e)),24),lsd||[0,0]);
 }
 // блок TSBK: fields — [значение, бит]…, всего 64 бита аргументов
 function p25TsbkBlock(op,mf,fields,lb){
@@ -648,16 +645,16 @@ function p25TsbkBlock(op,mf,fields,lb){
   for(let i=0;i<8;i++) b[8+i]=(mf>>(7-i))&1;
   let o=16;
   for(const [v,n] of fields){ for(let i=0;i<n;i++) b[o+i]=Math.floor(v/Math.pow(2,n-1-i))&1; o+=n; }
-  const c=dmrCrc16(p25Bytes(b),10); for(let i=0;i<16;i++) b[80+i]=(c>>(15-i))&1;
-  return p25Tr12Enc(p25Bytes(b));
+  const c=dmrCrc16(bytesFromBits(b),10); for(let i=0;i<16;i++) b[80+i]=(c>>(15-i))&1;
+  return p25Tr12Enc(bytesFromBits(b));
 }
 function p25TsduFrame(nac,blocks){                                  // blocks — массив 98-дибитных блоков
-  const body=p25Cat(...blocks), D=56+body.length, len=Math.ceil(p25Span(D)/36)*36;
+  const body=u8cat(...blocks), D=56+body.length, len=Math.ceil(p25Span(D)/36)*36;
   return p25Frame(nac,7,body,len);
 }
 // PDU: заголовок (½) + блоки данных; frame — кадр с DUID 12
 function p25BlockFrame(nac,duid,blocks){
-  const body=p25Cat(...blocks), D=56+body.length, len=Math.ceil(p25Span(D)/36)*36;
+  const body=u8cat(...blocks), D=56+body.length, len=Math.ceil(p25Span(D)/36)*36;
   return p25Frame(nac,duid,body,len);
 }
 function p25PduHeadBlock(o){
@@ -681,8 +678,8 @@ function p25PduConf(o,payload){
   d.set(p25Be32(p25Crc32(d,tot-4)),tot-4);
   const blocks=[];
   for(let i=0;i<tot/16;i++){
-    const chunk=d.subarray(16*i,16*i+16), bits=Array.from({length:7},(_,k)=>((i+1)>>(6-k))&1).concat(Array.from(dmrBitsOf(chunk))), c=dmrCrc9(bits);
-    blocks.push(p25Tr34Enc(p25Cat(Uint8Array.of(((i+1)<<1)|(c>>8),c&255),chunk)));
+    const chunk=d.subarray(16*i,16*i+16), bits=Array.from({length:7},(_,k)=>((i+1)>>(6-k))&1).concat(Array.from(bitsMsb(chunk))), c=dmrCrc9(bits);
+    blocks.push(p25Tr34Enc(u8cat(Uint8Array.of(((i+1)<<1)|(c>>8),c&255),chunk)));
   }
   return [p25PduHeadBlock({...o,an:1,fmt:0x16,blocks:tot/16,pad:tot-4-payload.length}),...blocks];
 }
@@ -708,7 +705,7 @@ function p25Script(mode){
     seq.push(p25Frame(nac,10,p25Ldu2Body(imbe(),mi,0x80,0,[0x5A,0]),864));
     seq.push(p25Frame(nac,5,p25Ldu1Body(imbe(),'group',0,4321,1234567),864));
     seq.push(p25Frame(nac,10,p25Ldu2Body(imbe(),mi,0x80,0,[0,0]),864));
-    if(mode==='voicelc'){ seq.pop(); const lc=new Uint8Array(9); lc[0]=0x0F; lc[3]=0; lc[4]=0x10; lc[5]=0xE1; lc[6]=0x12; lc[7]=0xD6; lc[8]=0x87; seq.push(p25Frame(nac,15,p25TdulcBody(p25BytesBits(lc)),216)); }
+    if(mode==='voicelc'){ seq.pop(); const lc=new Uint8Array(9); lc[0]=0x0F; lc[3]=0; lc[4]=0x10; lc[5]=0xE1; lc[6]=0x12; lc[7]=0xD6; lc[8]=0x87; seq.push(p25Frame(nac,15,p25TdulcBody(bitsMsb(lc)),216)); }
     else seq.push(p25Frame(nac,3,new Uint8Array(14),72));
   } else if(mode==='data'){
     const base={an:0,io:1,sap:4,mfid:0,llid:0x123456};
@@ -729,7 +726,7 @@ function p25Script(mode){
       p25TsbkBlock(0x28,0,[[0,1],[0,5],[0,2],[0,16],[4321,16],[1234567,24]],0),
       p25TsbkBlock(0x38,0,[[0,8],[0x0F0F0F,24],[0x0F0F0F,24],[0,8]],1)]));
   }
-  return fsk4LevelsOf(p25Cat(new Uint8Array(60),...seq,new Uint8Array(60)));
+  return fsk4LevelsOf(u8cat(new Uint8Array(60),...seq,new Uint8Array(60)));
 }
 FSK4.gen['P25 voice']={baud:P25_BAUD, alpha:.2, dev:600, script:()=>p25Script('voice')};
 FSK4.gen['P25 voice, TDULC']={baud:P25_BAUD, alpha:.2, dev:600, script:()=>p25Script('voicelc')};

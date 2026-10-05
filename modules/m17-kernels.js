@@ -37,7 +37,7 @@ function m17CallEnc(cs){
 function m17CallDec(b){
   let a=0n; for(let i=0;i<6;i++) a=a*256n+BigInt(b[i]);
   if(a===0xFFFFFFFFFFFFn) return 'BROADCAST';
-  if(a>=0xEE6B28000000n) return '#'+dmrHex(b);
+  if(a>=0xEE6B28000000n) return '#'+bytesHex(b);
   let s=''; while(a){ s+=M17_CHARS[Number(a%40n)]; a/=40n; }
   return s;
 }
@@ -67,7 +67,7 @@ function m17Dec(rx,steps,pat){                                     // rx — п�
 // 368 бит типа 4 ↔ 368 бит типа 2/3 (перемежитель — инволюция), рандомизатор
 const m17Il=b=>{ const o=new Uint8Array(368); for(let i=0;i<368;i++) o[i]=b[M17_IL[i]]; return o; };
 const m17Rnd=b=>{ const o=new Uint8Array(368); for(let i=0;i<368;i++) o[i]=b[i]^((M17_RAND[i>>3]>>(7-(i&7)))&1); return o; };
-const m17Bits=(bytes,n)=>dmrBitsOf(bytes).subarray(0,n);
+const m17Bits=(bytes,n)=>bitsMsb(bytes).subarray(0,n);
 
 /* ---- кодеры кадров: → 368 бит на выход физического уровня (после рандомизатора) ---- */
 const m17Wire=t=>m17Rnd(m17Il(t));
@@ -80,19 +80,19 @@ function m17Lich(lsf30,cnt){                                       // 48 бит 
 function m17EncStream(lsf30,cnt,fn,data16){
   const lich=m17Lich(lsf30,cnt), t=new Uint8Array(368);
   for(let w=0;w<4;w++){ const g=m17Golay(bitsNum(lich,12*w,12)); for(let i=0;i<24;i++) t[24*w+i]=(g>>(23-i))&1; }
-  const d=new Uint8Array(144); for(let i=0;i<16;i++) d[i]=(fn>>(15-i))&1; d.set(dmrBitsOf(data16),16);
+  const d=new Uint8Array(144); for(let i=0;i<16;i++) d[i]=(fn>>(15-i))&1; d.set(bitsMsb(data16),16);
   t.set(m17Enc(d,148,M17_P2),96);
   return m17Wire(t);
 }
 function m17EncPacket(b26){ return m17Wire(m17Enc(m17Bits(b26,206),210,M17_P3)); }    // 25 байт + 6 бит (EOF, счётчик)
 function m17EncBert(b25){ const e=m17Enc(m17Bits(b25,197),201,M17_P2), t=new Uint8Array(368); t.set(e.subarray(0,368)); return m17Wire(t); }
 // кадр целиком: синхро + 368 бит → 192 дибита
-function m17Frame(kind,wire){ return p25Cat(fsk4Dib(Uint8Array.from(M17_SYNCS.find(s=>s.kind===kind).bits,c=>+c)),fsk4Dib(wire)); }
+function m17Frame(kind,wire){ return u8cat(fsk4Dib(Uint8Array.from(M17_SYNCS.find(s=>s.kind===kind).bits,c=>+c)),fsk4Dib(wire)); }
 
 /* ---- разбор ---- */
 function m17Lsf(b){                                                // 30 байт → поля
   const t=b[12]*256+b[13], f={dst:m17CallDec(b.subarray(0,6)), src:m17CallDec(b.subarray(6,12)), type:t, packet:(t&1)^1,
-    dtype:(t>>1)&3, enc:(t>>3)&3, sub:(t>>5)&3, can:(t>>7)&15, signed:(t>>11)&1, meta:dmrHex(b,14,14)};
+    dtype:(t>>1)&3, enc:(t>>3)&3, sub:(t>>5)&3, can:(t>>7)&15, signed:(t>>11)&1, meta:bytesHex(b,14,14)};
   f.mode=f.packet ? 'packet' : M17_DTYPE[f.dtype]||'stream';
   f.encName=M17_ENC[f.enc];
   if(!f.packet && f.enc===0){
@@ -100,7 +100,7 @@ function m17Lsf(b){                                                // 30 бай�
     if(f.sub===0 && m[0]){ f.metaText=String.fromCharCode(...Array.from(m.subarray(1)).filter(c=>c>=32 && c<127)).trim(); }
     else if(f.sub===2){ f.cf1=m17CallDec(m.subarray(0,6)); if(m[6]) f.cf2=m17CallDec(m.subarray(6,12)); }
     else if(f.sub===1){
-      const bits=dmrBitsOf(m), s24=v=>v&0x800000 ? v-0x1000000 : v, F=(o,n)=>bitsNum(bits,o,n);
+      const bits=bitsMsb(m), s24=v=>v&0x800000 ? v-0x1000000 : v, F=(o,n)=>bitsNum(bits,o,n);
       const valid=F(8,4);
       f.gnss={source:F(0,4), station:F(4,4), valid};
       if(valid&8){ f.lat=+(s24(F(24,24))/8388607*90).toFixed(5); f.lon=+(s24(F(48,24))/8388607*180).toFixed(5); }
@@ -160,7 +160,7 @@ FSK4.protos.m17={
   },
   decode(P,L,kind,t,out){
     if(kind==='lsf'){
-      const r=m17Dec(t,244,M17_P1), b=p25Bytes(r.bits.subarray(0,240));
+      const r=m17Dec(t,244,M17_P1), b=bytesFromBits(r.bits.subarray(0,240));
       if(r.err>40 || m17Crc(b,30)!==0) return false;
       P.st.lsf++; this.setLsf(P,L,out,b,'LSF'); return true;
     }
@@ -169,24 +169,24 @@ FSK4.protos.m17={
       for(let w=0;w<4;w++){ let v=0; for(let i=0;i<24;i++) v=v*2+t[24*w+i]; const g=m17GolayDec(v); if(!g) return false; for(let i=0;i<12;i++) lich[12*w+i]=(g.v>>(11-i))&1; }
       const cnt=bitsNum(lich,40,3), r=m17Dec(t.subarray(96),148,M17_P2);
       if(cnt>5 || r.err>30) return false;
-      const fn=bitsNum(r.bits,0,16), data=p25Bytes(r.bits.subarray(16,144));
+      const fn=bitsNum(r.bits,0,16), data=bytesFromBits(r.bits.subarray(16,144));
       P.st.stream++;
       // куски LSF из LICH: за шесть кадров — весь LSF (для поздно подключившихся)
       if(!P.lich) P.lich={m:0, b:new Uint8Array(240)};
       P.lich.b.set(lich.subarray(0,40),40*cnt); P.lich.m|=1<<cnt;
       if(P.lich.m===63){
-        const b=p25Bytes(P.lich.b);
-        if(m17Crc(b,30)===0 && (!P.lsf || dmrHex(P.lsf.raw)!==dmrHex(b))) this.setLsf(P,L,out,b,'LICH');
+        const b=bytesFromBits(P.lich.b);
+        if(m17Crc(b,30)===0 && (!P.lsf || bytesHex(P.lsf.raw)!==bytesHex(b))) this.setLsf(P,L,out,b,'LICH');
         P.lich=null;
       }
       const c=P.call;
-      out.voice.push({t:P.now, src:'M17', kind:'codec2', fn:fn&0x7FFF, from:c?c.src:null, to:c?c.dst:null, can:c?c.can:null, dtype:P.lsf?P.lsf.f.dtype:null, codec2:dmrHex(data)});
+      out.voice.push({t:P.now, src:'M17', kind:'codec2', fn:fn&0x7FFF, from:c?c.src:null, to:c?c.dst:null, can:c?c.can:null, dtype:P.lsf?P.lsf.f.dtype:null, codec2:bytesHex(data)});
       P.st.voice++;
       if(fn&0x8000) this.end(P,L,out,'last frame');
       return true;
     }
     if(kind==='pkt'){
-      const r=m17Dec(t,210,M17_P3), by=p25Bytes(r.bits.subarray(0,208));
+      const r=m17Dec(t,210,M17_P3), by=bytesFromBits(r.bits.subarray(0,208));
       if(r.err>40) return false;
       const meta=r.bits.subarray(200,206), eof=meta[0], cnt=bitsNum(meta,1,5);
       P.st.packet++;
@@ -196,7 +196,7 @@ FSK4.protos.m17={
         const d=Uint8Array.from(P.pkt.data), body=d.subarray(0,d.length-2), c=P.call;
         const crc=m17Crc(d,d.length)===0 ? 'ok' : 'bad';
         const proto=body[0], text=proto===5 ? String.fromCharCode(...body.subarray(1).filter(x=>x>=32 && x<127)) : null;
-        m17Emit(P,L,out,'packet',{from:c?c.src:null, to:c?c.dst:null, bytes:d.length-2, proto, crc, message:text, hex:dmrHex(body,0,Math.min(body.length,64))},
+        m17Emit(P,L,out,'packet',{from:c?c.src:null, to:c?c.dst:null, bytes:d.length-2, proto, crc, message:text, hex:bytesHex(body,0,Math.min(body.length,64))},
           'PACKET '+(c ? c.src+' → '+c.dst+' ' : '')+(d.length-2)+' bytes'+(text ? ' "'+text+'"' : '')+(crc==='ok' ? '' : ' [CRC bad]'));
         P.pkt=null;
       }
@@ -250,7 +250,7 @@ function m17Script(mode){
     seq.push(M17_EOT);
   } else {
     const meta=new Uint8Array(14), lsf=m17MakeLsf('N0CALL','ECHO',(1<<7),meta);   // пакетный режим, CAN 1
-    const text='Hello from M17', body=Uint8Array.from([5,...Array.from(text,c=>c.charCodeAt(0)),0]), crc=m17Crc(body,body.length), all=p25Cat(body,Uint8Array.of(crc>>8,crc&255));
+    const text='Hello from M17', body=Uint8Array.from([5,...Array.from(text,c=>c.charCodeAt(0)),0]), crc=m17Crc(body,body.length), all=u8cat(body,Uint8Array.of(crc>>8,crc&255));
     seq.push(M17_PRE,m17Frame('lsf',m17EncLsf(lsf)));
     for(let i=0,fnum=0;i<all.length;i+=25,fnum++){
       const chunk=all.subarray(i,i+25), last=i+25>=all.length, b=new Uint8Array(26); b.set(chunk);
@@ -259,7 +259,7 @@ function m17Script(mode){
     }
     seq.push(M17_EOT);
   }
-  return fsk4LevelsOf(p25Cat(new Uint8Array(40),...seq,new Uint8Array(40)));
+  return fsk4LevelsOf(u8cat(new Uint8Array(40),...seq,new Uint8Array(40)));
 }
 FSK4.gen['M17 voice stream']={baud:M17_BAUD, alpha:.5, dev:800, script:()=>m17Script('voice')};
 FSK4.gen['M17 packet (SMS)']={baud:M17_BAUD, alpha:.5, dev:800, script:()=>m17Script('packet')};
@@ -293,21 +293,21 @@ IQK.m17Parse={
 function m17BuildPacket(src,dst,can,text){
   const meta=new Uint8Array(14), lsf=m17MakeLsf(src,dst,(can&15)<<7,meta);        // пакетный режим: бит 0 типа = 0
   const body=Uint8Array.from([5,...new TextEncoder().encode(text),0]), crc=m17Crc(body,body.length);
-  const all=p25Cat(body,Uint8Array.of(crc>>8,crc&255)), seq=[M17_PRE,m17Frame('lsf',m17EncLsf(lsf))];
+  const all=u8cat(body,Uint8Array.of(crc>>8,crc&255)), seq=[M17_PRE,m17Frame('lsf',m17EncLsf(lsf))];
   for(let i=0,fnum=0;i<all.length;i+=25,fnum++){
     const chunk=all.subarray(i,i+25), last=i+25>=all.length, b=new Uint8Array(26); b.set(chunk);
     b[25]=last ? (0x80|(chunk.length<<2)) : ((fnum&31)<<2);
     seq.push(m17Frame('pkt',m17EncPacket(b)));
   }
   seq.push(M17_EOT);
-  return p25Cat(...seq);
+  return u8cat(...seq);
 }
 
 /* ---- передача: голосовой поток (Codec 2 3200, два кадра по 8 байт на кадр M17 в 40 мс) ---- */
 // старт: преамбула + LSF (поток, голос, CAN); дальше кадр на каждые 16 байт; последний кадр помечается флагом конца (бит 15 номера кадра)
 function m17StreamStart(src,dst,can){
   const lsf=m17MakeLsf(src,dst,0x0005|((can&15)<<7),new Uint8Array(14));
-  return {lsf, fn:0, dib:p25Cat(M17_PRE,m17Frame('lsf',m17EncLsf(lsf)))};
+  return {lsf, fn:0, dib:u8cat(M17_PRE,m17Frame('lsf',m17EncLsf(lsf)))};
 }
 function m17StreamFrame(st,data16,last){
   const fn=st.fn++&0x7FFF;

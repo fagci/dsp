@@ -20,8 +20,6 @@ const DMR_DT=['PI header','Voice LC header','Terminator LC','CSBK','MBC header',
 
 // число из len ≤ 30 бит массива 0/1, старший первым
 function dmrBytes(b,o,n){ const r=new Uint8Array(n); for(let i=0;i<n;i++) r[i]=bitsNum(b,o+8*i,8); return r; }
-function dmrHex(a,o,n){ let s=''; for(let i=o||0;i<(n==null ? a.length : (o||0)+n);i++) s+=(a[i]<16?'0':'')+a[i].toString(16); return s.toUpperCase(); }
-function dmrBitsOf(bytes){ const r=new Uint8Array(bytes.length*8); for(let i=0;i<bytes.length;i++) for(let k=0;k<8;k++) r[8*i+k]=(bytes[i]>>(7-k))&1; return r; }
 function dmrId(a,o){ return a[o]*65536+a[o+1]*256+a[o+2]; }
 
 /* ---- Хэмминг: k информационных бит, затем проверочные; eqs[j] — какие инф. биты входят в j-й ---- */
@@ -348,14 +346,14 @@ function dmrPayload(sap,dd,msg){
       const sp=(msg[ihl]<<8)|msg[ihl+1], dp=(msg[ihl+2]<<8)|msg[ihl+3]; r.port=dp; r.proto='UDP';
       const p=ihl+8, port=dp===4007||sp===4007 ? 4007 : dp;
       if(port===4007){ const t=dmrTms(msg,p); r.service='TMS'; if(t.ack) r.ack=true; else r.message=t.text; }
-      else if(port===4001){ r.service='LRRP'; Object.assign(r,dmrLrrp(msg,p)); r.data=dmrHex(msg,p,Math.min(40,msg.length-p)); }
-      else { r.service=({4001:'LRRP',4004:'XCMP',4005:'ARS',4008:'telemetry',231:'Cellocator'})[port]||('UDP '+port); r.data=dmrHex(msg,p,Math.min(40,msg.length-p)); }
-    } else { r.proto='IP '+prot; r.data=dmrHex(msg,ihl,Math.min(40,msg.length-ihl)); }
+      else if(port===4001){ r.service='LRRP'; Object.assign(r,dmrLrrp(msg,p)); r.data=bytesHex(msg,p,Math.min(40,msg.length-p)); }
+      else { r.service=({4001:'LRRP',4004:'XCMP',4005:'ARS',4008:'telemetry',231:'Cellocator'})[port]||('UDP '+port); r.data=bytesHex(msg,p,Math.min(40,msg.length-p)); }
+    } else { r.proto='IP '+prot; r.data=bytesHex(msg,ihl,Math.min(40,msg.length-ihl)); }
   } else if(dd!=null){
     r.service='short data'; r.format=dd;
     r.message=dd===0||dd===1 ? undefined : dd===2 ? dmrText7(msg,0,msg.length) : dmrPrintable(msg,0,msg.length);
-    r.data=dmrHex(msg,0,Math.min(40,msg.length));
-  } else { if(sap===10) r.service='short data'; r.data=dmrHex(msg,0,Math.min(40,msg.length)); const t=dmrPrintable(msg,0,msg.length); if(/[A-Za-z]{4}/.test(t)) r.message=t; }
+    r.data=bytesHex(msg,0,Math.min(40,msg.length));
+  } else { if(sap===10) r.service='short data'; r.data=bytesHex(msg,0,Math.min(40,msg.length)); const t=dmrPrintable(msg,0,msg.length); if(/[A-Za-z]{4}/.test(t)) r.message=t; }
   return r;
 }
 
@@ -508,7 +506,7 @@ function dmrShortFrag(n,L,c,out){
             Object.assign(f,{model:['tiny','small','large','huge'][model], net:bitsNum(b,6,nb), site:bitsNum(b,6+nb,sb), reg:b[18], csc:bitsNum(b,19,9)});
             text+=(slco===2 ? 'C_SYS_Parms' : 'P_SYS_Parms')+' '+f.model+' net '+f.net+' site '+f.site;
             n.sys={net:f.net, site:f.site, model:f.model};
-          } else text+=slco===0 ? 'null' : 'SLCO '+slco+' '+dmrHex(dmrBytes(Uint8Array.from([...b,0,0,0,0]),0,5));
+          } else text+=slco===0 ? 'null' : 'SLCO '+slco+' '+bytesHex(dmrBytes(Uint8Array.from([...b,0,0,0,0]),0,5));
           if(slco!==0) dmrEmit(n,null,L,out,'slc',f,text,text);
         } else n.st.bad++;
       }
@@ -530,7 +528,7 @@ function dmrVoice(n,L,S,bits,sync,emb,out){
   const ambe=new Uint8Array(216);
   ambe.set(bits.subarray(0,108),0); ambe.set(bits.subarray(156,264),108);
   const c=S.call;
-  out.voice.push({t:now, src:'DMR', kind:'ambe', slot:S.slot||null, cc:L.cc>=0 ? L.cc : null, seq:'ABCDEF'[S.vseq], from:c?c.from:null, to:c?c.to:null, ambe:dmrHex(dmrBytes(ambe,0,27)), ...(S.pi ? {alg:S.pi.alg, kid:S.pi.kid, mi:S.pi.mi, vb:S.vbursts-1} : null)});
+  out.voice.push({t:now, src:'DMR', kind:'ambe', slot:S.slot||null, cc:L.cc>=0 ? L.cc : null, seq:'ABCDEF'[S.vseq], from:c?c.from:null, to:c?c.to:null, ambe:bytesHex(dmrBytes(ambe,0,27)), ...(S.pi ? {alg:S.pi.alg, kid:S.pi.kid, mi:S.pi.mi, vb:S.vbursts-1} : null)});
   if(!emb) return;
   const frag=bits.subarray(116,148);
   if(emb.lcss===1){ S.eraw.set(frag,0); S.est=1; }
@@ -564,7 +562,7 @@ function dmrEmbLc(n,L,S,lc,out){
           dmrEmit(n,S,L,out,'alias',{from:S.call&&S.call.from, alias:s},'ALIAS '+(S.call ? S.call.from+' ' : '')+'"'+s+'"'); }
       }
     }
-  } else dmrEmit(n,S,L,out,'emb-lc',{flco,raw:dmrHex(b)},'EMB LC FLCO '+flco+' '+dmrHex(b),dmrHex(b));
+  } else dmrEmit(n,S,L,out,'emb-lc',{flco,raw:bytesHex(b)},'EMB LC FLCO '+flco+' '+bytesHex(b),bytesHex(b));
 }
 
 function dmrData(n,L,S,bits,st,out){
@@ -575,8 +573,8 @@ function dmrData(n,L,S,bits,st,out){
   case 0: {
     const b=dmrMasked(dmrBptcDec(raw),0x6969);
     if(!b){ n.st.bad++; return; }
-    const alg=b[0], mi=dmrHex(b,3,4), to=dmrId(b,7);
-    dmrEmit(n,S,L,out,'pi',{alg, fid:b[1], key:b[2], mi, to},'PI (encrypted) alg 0x'+alg.toString(16).toUpperCase()+' key '+b[2]+' MI '+mi+' → '+to,dmrHex(b));
+    const alg=b[0], mi=bytesHex(b,3,4), to=dmrId(b,7);
+    dmrEmit(n,S,L,out,'pi',{alg, fid:b[1], key:b[2], mi, to},'PI (encrypted) alg 0x'+alg.toString(16).toUpperCase()+' key '+b[2]+' MI '+mi+' → '+to,bytesHex(b));
     S.pi={alg, kid:b[2], mi};
     if(S.call && !S.call.flags.includes('encrypted')) S.call.flags.push('encrypted');
     return; }
@@ -589,11 +587,11 @@ function dmrData(n,L,S,bits,st,out){
       if(S.d) dmrDataFlush(n,L,S,out,'interrupted');
       S.call={from,to,type:dmrCallName(flco),flags,t0:n.now,late:false}; S.vbursts=0; S.ta=null; S.pi=null;
       dmrEmit(n,S,L,out,'call',{from,to,call:S.call.type,flags:flags.join(','),flco,fid,source:'LC header'},
-        'CALL '+S.call.type+' '+from+' → '+to+(flags.length ? ' ['+flags.join(',')+']' : '')+(fid ? ' FID 0x'+fid.toString(16) : ''),'h'+dmrHex(b));
+        'CALL '+S.call.type+' '+from+' → '+to+(flags.length ? ' ['+flags.join(',')+']' : '')+(fid ? ' FID 0x'+fid.toString(16) : ''),'h'+bytesHex(b));
     } else {
       const c=S.call, dur=c ? Math.round(n.now-c.t0) : null;
       dmrEmit(n,S,L,out,'end',{from,to,call:dmrCallName(flco),voice:S.vbursts,ms:dur,alias:c&&c.alias||undefined},
-        'END '+dmrCallName(flco)+' '+from+' → '+to+' · '+S.vbursts+' voice bursts',dmrHex(b));
+        'END '+dmrCallName(flco)+' '+from+' → '+to+' · '+S.vbursts+' voice bursts',bytesHex(b));
       S.call=null; S.vbursts=0; S.pi=null;
     }
     return; }
@@ -601,7 +599,7 @@ function dmrData(n,L,S,bits,st,out){
     const bp=dmrBptcDec(raw), b=dmrMasked(bp,dt===3 ? 0xA5A5 : 0xAAAA);
     if(!b){ n.st.bad++; return; }
     n.st.csbk++;
-    const op=b[0]&63, name=DMR_CSBKO[op]||'CSBKO 0x'+op.toString(16), f={op, name, lb:b[0]>>7, pf:(b[0]>>6)&1, fid:b[1], raw:dmrHex(b,0,10)};
+    const op=b[0]&63, name=DMR_CSBKO[op]||'CSBKO 0x'+op.toString(16), f={op, name, lb:b[0]>>7, pf:(b[0]>>6)&1, fid:b[1], raw:bytesHex(b,0,10)};
     let text=(dt===4 ? 'MBC ' : 'CSBK ')+name;
     if(op===0x3D){ Object.assign(f,{data:b[2]>>7, group:(b[2]>>6)&1, blocks:b[3], to:dmrId(b,4), from:dmrId(b,7)});
       text+=(f.data ? ' data' : ' CSBK')+' ×'+f.blocks+' '+f.from+' → '+(f.group ? 'TG ' : '')+f.to; }
@@ -609,7 +607,7 @@ function dmrData(n,L,S,bits,st,out){
       Object.assign(f,{lpcn:(b[2]<<4)|(b[3]>>4), ts:((b[3]>>3)&1)+1, emergency:(b[3]>>1)&1, to:dmrId(b,4), from:dmrId(b,7)});
       text+=' ch '+(f.lpcn===0xFFF ? 'absolute' : f.lpcn)+' TS'+f.ts+' '+f.from+' → '+f.to+(f.emergency ? ' emergency' : ''); }
     else if(op===0x19 && dt===3){                            // C_ALOHA: параметры системы Tier III
-      const bb=dmrBitsOf(b), model=bitsNum(bb,40,2), nb=[9,7,4,2][model], sb=[3,5,8,10][model];
+      const bb=bitsMsb(b), model=bitsNum(bb,40,2), nb=[9,7,4,2][model], sb=[3,5,8,10][model];
       Object.assign(f,{version:bitsNum(bb,19,3), mask:bitsNum(bb,24,5), reg:bb[35], model:['tiny','small','large','huge'][model], net:bitsNum(bb,42,nb), site:bitsNum(bb,42+nb,sb)});
       n.sys={net:f.net, site:f.site, model:f.model};
       text+=' '+f.model+' net '+f.net+' site '+f.site+(f.reg ? ' reg' : ''); }
@@ -629,7 +627,7 @@ function dmrData(n,L,S,bits,st,out){
     else if(dt===8) bits=dmrT34Dec(raw).bits;
     else { bits=new Uint8Array(192); bits.set(raw.subarray(0,96),0); bits.set(raw.subarray(100,196),96); }   // Rate 1: без FEC, 4 бита заполнения
     const by=dmrBytes(bits,0,bits.length>>3), rate=dt===7 ? '1/2' : dt===8 ? '3/4' : '1';
-    if(!S.d){ dmrEmit(n,S,L,out,'block',{rate,raw:dmrHex(by)},'DATA '+rate+' '+dmrHex(by)+' (no header)',dmrHex(by)); return; }
+    if(!S.d){ dmrEmit(n,S,L,out,'block',{rate,raw:bytesHex(by)},'DATA '+rate+' '+bytesHex(by)+' (no header)',bytesHex(by)); return; }
     const d=S.d;
     d.rate=rate;
     if(d.conf){
@@ -648,7 +646,7 @@ function dmrData(n,L,S,bits,st,out){
   case 11: {
     const b=dmrMasked(dmrBptcDec(raw),0x3333);
     if(!b){ n.st.bad++; return; }
-    dmrEmit(n,S,L,out,'usbd',{service:b[0]>>4, raw:dmrHex(b)},'USBD service '+(b[0]>>4)+' '+dmrHex(b),dmrHex(b));
+    dmrEmit(n,S,L,out,'usbd',{service:b[0]>>4, raw:bytesHex(b)},'USBD service '+(b[0]>>4)+' '+bytesHex(b),bytesHex(b));
     return; }
   default:
     dmrEmit(n,S,L,out,'data',{dt},dn+' burst',dn+dt);
@@ -660,9 +658,9 @@ function dmrMbcDone(n,L,S,out){
   const tot=12*m.cont.length, all=new Uint8Array(tot); m.cont.forEach((c,i)=>all.set(c,12*i));
   const crc=dmrCrc16(all,tot-2)===((all[tot-2]<<8)|all[tot-1]), f={...m.f, blocks:m.cont.length, crc:crc ? 'ok' : 'bad'};
   let text=m.text;
-  f.raw=m.f.raw+' '+dmrHex(all);
+  f.raw=m.f.raw+' '+bytesHex(all);
   if(crc && m.f.lpcn===0xFFF){                            // CG_AP: абсолютные частоты выдачи канала (МГц + шаг 125 Гц)
-    const bb=dmrBitsOf(all.subarray(0,12));
+    const bb=bitsMsb(all.subarray(0,12));
     if(bitsNum(bb,16,4)===0){
       f.apcn=bitsNum(bb,22,12);
       f.tx=+(bitsNum(bb,34,10)+bitsNum(bb,44,13)*125e-6).toFixed(6); f.rx=+(bitsNum(bb,57,10)+bitsNum(bb,67,13)*125e-6).toFixed(6); f.freq=f.rx;
@@ -691,7 +689,7 @@ function dmrDataHeader(n,L,S,raw,out){
   } else if(dpf===13 || dpf===14){ blocks=(((b[0]>>4)&3)<<4)|(b[1]&15); f.blocks=blocks; f.format=b[1]>>4; f.pad=0; extra=' fmt '+f.format+' ×'+blocks; }
   else if(dpf===1){ blocks=b[8]&0x7F; f.blocks=blocks; extra=' ×'+blocks; }
   else if(dpf===0){ blocks=(b[8]&3)+1; f.blocks=blocks; f.format=b[1]&15; f.pad=b[8]>>3; extra=' fmt '+f.format+' ×'+blocks; }
-  dmrEmit(n,S,L,out,'data-header',f,'DATA HDR '+f.type+' '+from+' → '+(gi ? 'TG ' : '')+to+extra,dmrHex(b));
+  dmrEmit(n,S,L,out,'data-header',f,'DATA HDR '+f.type+' '+from+' → '+(gi ? 'TG ' : '')+to+extra,bytesHex(b));
   if(blocks>0 && dpf!==15) S.d={dpf, sap:f.sap, pad:f.pad||0, blocks, dd:f.format, conf:dpf===3, blk:[], serial:[], crcBad:0, from, to, group:gi, rate:null, hdr:f};
 }
 function dmrDataFlush(n,L,S,out,why){
@@ -736,7 +734,7 @@ function dmrDataDone(n,L,S,out){
   if(d.dpf===0){
     const fm=d.dd;
     const msg=fm===7 ? dmrUtf16(m,0,tot,false) : fm===3 ? dmrText7(m,0,tot) : dmrPrintable(m,0,tot);
-    f.format=fm; f.message=fm===5 ? dmrPrintable(m,0,tot) : msg; f.data=dmrHex(m,0,Math.min(48,tot)); f.service='UDT';
+    f.format=fm; f.message=fm===5 ? dmrPrintable(m,0,tot) : msg; f.data=bytesHex(m,0,Math.min(48,tot)); f.service='UDT';
     Object.assign(f,dmrUdt(fm,m,d.hdr.pad||0,d.blocks));
     if(fm===5) Object.assign(f,dmrNmea(f.message));
   } else Object.assign(f,dmrPayload(d.dpf===13||d.dpf===14 ? 10 : d.sap,d.dpf===13||d.dpf===14 ? d.dd : null,body));
@@ -762,8 +760,8 @@ function dmrShortLcEnc(b36){
   raw[67]=d[67];
   return [0,1,2,3].map(j=>raw.slice(17*j,17*j+17));
 }
-function dmrEncLc(lc9,mask){ const p=dmrRsPar(lc9), a=new Uint8Array(12); a.set(lc9); a[9]=p[0]^mask; a[10]=p[1]^mask; a[11]=p[2]^mask; return dmrBptcEnc(dmrBitsOf(a)); }
-function dmrEncMasked(b10,mask){ const a=new Uint8Array(12), c=dmrCrc16(b10,10); a.set(b10); a[10]=(c>>8)^(mask>>8); a[11]=(c&255)^(mask&255); return dmrBptcEnc(dmrBitsOf(a)); }
+function dmrEncLc(lc9,mask){ const p=dmrRsPar(lc9), a=new Uint8Array(12); a.set(lc9); a[9]=p[0]^mask; a[10]=p[1]^mask; a[11]=p[2]^mask; return dmrBptcEnc(bitsMsb(a)); }
+function dmrEncMasked(b10,mask){ const a=new Uint8Array(12), c=dmrCrc16(b10,10); a.set(b10); a[10]=(c>>8)^(mask>>8); a[11]=(c&255)^(mask&255); return dmrBptcEnc(bitsMsb(a)); }
 function dmrSyncBits(p){ const b=new Uint8Array(48); for(let i=0;i<12;i++){ const v=parseInt(p.hex[i],16); for(let k=0;k<4;k++) b[4*i+k]=(v>>(3-k))&1; } return b; }
 function dmrDataBurst(cc,dt,raw196,sp){
   const b=new Uint8Array(264), w=DMR_GOLAY[(cc<<4)|dt];
@@ -803,7 +801,7 @@ function dmrPack7(text,nb){
 // подтверждённый блок: [DBSN 7][CRC-9 9] + данные
 function dmrConfEnc(data,serial,mask){
   const bits=new Uint8Array(16+data.length*8);
-  bits.set(dmrBitsOf(data),16);
+  bits.set(bitsMsb(data),16);
   for(let i=0;i<7;i++) bits[i]=(serial>>(6-i))&1;
   const c=dmrCrc9(Array.from(bits.subarray(16)).concat(Array.from(bits.subarray(0,7))))^mask;
   for(let i=0;i<9;i++) bits[7+i]=(c>>(8-i))&1;
@@ -823,7 +821,7 @@ function dmrBuildScript(mode,cc){
   {                                                // формат 0, длина 6, знаки по 7 бит с бита 7
     const s=[0,0,0,0,1,1,0]; for(const ch of 'DSPLAB') for(let k=6;k>=0;k--) s.push((ch.charCodeAt(0)>>k)&1); while(s.length<56) s.push(0); for(let i=0;i<7;i++) for(let k=0;k<8;k++) ta[2+i]|=s[8*i+k]<<(7-k); }
   for(let sf=0;sf<4;sf++){
-    const lc=sf===1 ? ta : lcBytes(0,dst,src), er=dmrEmbEncode(dmrBitsOf(lc));
+    const lc=sf===1 ? ta : lcBytes(0,dst,src), er=dmrEmbEncode(bitsMsb(lc));
     for(let b=0;b<6;b++){
       const ambe=Uint8Array.from({length:216},()=>rnd()&1), mid=new Uint8Array(48);
       if(b===0) mid.set(dmrSyncBits(vs));
@@ -845,12 +843,12 @@ function dmrBuildScript(mode,cc){
   { const {blk,pad}=dmrMsgBlocks(dmrIpMsg(id2[1],id2[0],'Hello from DSP lab'),12,0);
     const h=Uint8Array.from([0x02|((pad>>4)<<4),(4<<4)|(pad&15),(id2[0]>>16)&255,(id2[0]>>8)&255,id2[0]&255,(id2[1]>>16)&255,(id2[1]>>8)&255,id2[1]&255,0x80|blk.length,0]);
     q2.push(dburst(6,dmrEncMasked(h,0xCCCC)));
-    for(const b of blk) q2.push(dburst(7,dmrBptcEnc(dmrBitsOf(b)))); }
+    for(const b of blk) q2.push(dburst(7,dmrBptcEnc(bitsMsb(b)))); }
   q2.push(dburst(3,pre(id2[0],id2[1],1)));
   { const {blk}=dmrMsgBlocks(dmrPack7('DMR TEST 34',10),18,0);
     const bl=blk.length, h=Uint8Array.from([0x8D|(((bl>>4)&3)<<4),(2<<4)|(bl&15),(id2[0]>>16)&255,(id2[0]>>8)&255,id2[0]&255,(id2[1]>>16)&255,(id2[1]>>8)&255,id2[1]&255,1,0]);
     q2.push(dburst(6,dmrEncMasked(h,0xCCCC)));
-    for(const b of blk) q2.push(dburst(8,dmrT34Enc(dmrBitsOf(b)))); }
+    for(const b of blk) q2.push(dburst(8,dmrT34Enc(bitsMsb(b)))); }
   q2.push(dburst(3,dmrEncMasked(Uint8Array.from([0xB8,0,0,0,0,0,5,(src>>16)&255,(src>>8)&255,src&255]),0xA5A5)));
   // LRRP-позиция (UDP 4001) и CSBK Tier III: C_ALOHA и выдача канала
   { const i32=v=>[(v>>>24)&255,(v>>>16)&255,(v>>>8)&255,v&255], la=Math.round(55.0302/180*4294967296)>>>0, lo=Math.round(82.9204/360*4294967296)>>>0;
@@ -859,7 +857,7 @@ function dmrBuildScript(mode,cc){
     q2.push(dburst(3,pre(id2[0],id2[1],blk.length)));
     const h=Uint8Array.from([0x02|((pad>>4)<<4),(4<<4)|(pad&15),(id2[0]>>16)&255,(id2[0]>>8)&255,id2[0]&255,(id2[1]>>16)&255,(id2[1]>>8)&255,id2[1]&255,0x80|blk.length,0]);
     q2.push(dburst(6,dmrEncMasked(h,0xCCCC)));
-    for(const b of blk) q2.push(dburst(7,dmrBptcEnc(dmrBitsOf(b)))); }
+    for(const b of blk) q2.push(dburst(7,dmrBptcEnc(bitsMsb(b)))); }
   { const bb=new Uint8Array(80), put=(o,l,v)=>{ for(let i=0;i<l;i++) bb[o+i]=(v>>(l-1-i))&1; };
     put(0,1,1); put(2,6,0x19); put(19,3,1); put(23,1,1); put(24,5,1); put(31,4,5); put(35,1,1); put(36,4,3); put(40,2,1); put(42,7,42); put(49,5,7);
     q2.push(dburst(3,dmrEncMasked(dmrBytes(bb,0,10),0xA5A5))); }
@@ -874,7 +872,7 @@ function dmrBuildScript(mode,cc){
   { const {blk,pad}=dmrMsgBlocks(Uint8Array.from(Array.from('Rate one data works.',c=>c.charCodeAt(0))),24,0);
     const h=Uint8Array.from([0x02|((pad>>4)<<4),(10<<4)|(pad&15),(id2[0]>>16)&255,(id2[0]>>8)&255,id2[0]&255,(id2[1]>>16)&255,(id2[1]>>8)&255,id2[1]&255,0x80|blk.length,0]);
     q2.push(dburst(6,dmrEncMasked(h,0xCCCC)));
-    for(const b of blk){ const bits=dmrBitsOf(b), raw=new Uint8Array(196); raw.set(bits.subarray(0,96),0); raw.set(bits.subarray(96),100); q2.push(dburst(10,raw)); } }
+    for(const b of blk){ const bits=bitsMsb(b), raw=new Uint8Array(196); raw.set(bits.subarray(0,96),0); raw.set(bits.subarray(96),100); q2.push(dburst(10,raw)); } }
   { const put=(bb,o,l,v)=>{ for(let i=0;i<l;i++) bb[o+i]=(v>>(l-1-i))&1; };
     const hb=new Uint8Array(80); put(hb,2,6,0x31); put(hb,16,12,0xFFF); put(hb,28,1,1); put(hb,32,24,9); put(hb,56,24,src);
     q2.push(dburst(4,dmrEncMasked(dmrBytes(hb,0,10),0xAAAA)));

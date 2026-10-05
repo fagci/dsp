@@ -98,7 +98,7 @@ FSK4.protos.dstar={
     if(!r.ok){ P.st.bad++; fsk4Drop(L); return; }
     const h=r.h;
     P.st.headers++; L.first=false; L.blind=false; P.lastAct=Date.now();
-    this.setCall(P,L,out,{flags:dmrHex(h,0,3), rpt2:dstarText(h,3,8), rpt1:dstarText(h,11,8), your:dstarText(h,19,8), my:dstarText(h,27,8), my2:dstarText(h,35,4)},'header');
+    this.setCall(P,L,out,{flags:bytesHex(h,0,3), rpt2:dstarText(h,3,8), rpt1:dstarText(h,11,8), your:dstarText(h,19,8), my:dstarText(h,27,8), my2:dstarText(h,35,4)},'header');
     // первый голосовой кадр заканчивается синхро данных — от него отсчитываем суперкадр
     L.k=0; P.sd=null; P.text=null; P.nmea='';
     L.next+=8*(660+DSTAR_FR); L.exp=L.next; L.after=2; L.best=99; L.bestRq=1e9;
@@ -130,7 +130,7 @@ FSK4.protos.dstar={
     P.lastAct=Date.now(); P.st.frames++;
     const c=P.call;
     if(c) c.frames++;
-    out.voice.push({t:P.now, src:'D-STAR', kind:'ambe', n:k, from:c?c.my:null, to:c?c.your:null, ambe:dmrHex(by,0,9)});
+    out.voice.push({t:P.now, src:'D-STAR', kind:'ambe', n:k, from:c?c.my:null, to:c?c.your:null, ambe:bytesHex(by,0,9)});
     P.st.voice++;
     if(k>0) this.slow(P,L,out,by.subarray(9,12),k);
     if(k<DSTAR_SUPER-1){ L.k=k+1; L.after=Math.round(DSTAR_FR*(k+1)*(1+L.eps)*8)/8; }        // границы кадров — с поправкой на уход такта, с точностью до ⅛ символа
@@ -141,7 +141,7 @@ FSK4.protos.dstar={
     const d=Uint8Array.from(b3,(v,i)=>v^DSTAR_SLOW_SCR[i]);
     if(k&1){ P.sd=d; return; }
     if(!P.sd) return;
-    const el=p25Cat(P.sd,d), type=el[0]&0xF0, n=el[0]&15;
+    const el=u8cat(P.sd,d), type=el[0]&0xF0, n=el[0]&15;
     P.sd=null;
     if(type===0x40 && n<4){                                        // текст: 4 фрагмента по 5 знаков
       if(!P.text) P.text={m:0, b:new Uint8Array(20)};
@@ -161,7 +161,7 @@ FSK4.protos.dstar={
       for(let o=0;o+41<=P.hdrSd.length && !P.call;o+=5){
         const h=Uint8Array.from(P.hdrSd.slice(o,o+41));
         h[0]&=0x68; h[1]=0; h[2]=0; for(let i=3;i<39;i++) h[i]&=0x7F;
-        if(dstarCrc(h,39)===(h[39]|(h[40]<<8))){ this.setCall(P,L,out,{flags:dmrHex(h,0,3), rpt2:dstarText(h,3,8), rpt1:dstarText(h,11,8), your:dstarText(h,19,8), my:dstarText(h,27,8), my2:dstarText(h,35,4)},'slow data'); P.hdrSd=null; break; }
+        if(dstarCrc(h,39)===(h[39]|(h[40]<<8))){ this.setCall(P,L,out,{flags:bytesHex(h,0,3), rpt2:dstarText(h,3,8), rpt1:dstarText(h,11,8), your:dstarText(h,19,8), my:dstarText(h,27,8), my2:dstarText(h,35,4)},'slow data'); P.hdrSd=null; break; }
       }
     }
   },

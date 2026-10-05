@@ -44,7 +44,7 @@ function ysfDchGather(bits,base,len){                              // 5 блок
 }
 function ysfDchDecode(bits,base,mode){                             // mode 1: 20 байт (9 байт в блоке), mode 2: 10 байт (5 байт) → байты (уже без отбеливания) или null
   const n=mode===1 ? 20 : 10, len=mode===1 ? 72 : 40, il=mode===1 ? YSF_IL9 : YSF_IL5, steps=(n+2)*8+4;
-  const r=nxdnConvDec(ysfDeint(ysfDchGather(bits,base,len),0,il,steps),steps), by=p25Bytes(r.bits.subarray(0,(n+2)*8));
+  const r=nxdnConvDec(ysfDeint(ysfDchGather(bits,base,len),0,il,steps),steps), by=bytesFromBits(r.bits.subarray(0,(n+2)*8));
   if(dmrCrc16(by,n)!==by[n]*256+by[n+1]) return null;
   return by.map((v,i)=>i<n ? v^YSF_WH[i] : v).subarray(0,n);
 }
@@ -52,13 +52,13 @@ function ysfDchEncode(data,mode,out,base){                         // data: 20 �
   const n=mode===1 ? 20 : 10, len=mode===1 ? 72 : 40, il=mode===1 ? YSF_IL9 : YSF_IL5, w=new Uint8Array(n+2);
   for(let i=0;i<n;i++) w[i]=data[i]^YSF_WH[i];
   const c=dmrCrc16(w,n); w[n]=c>>8; w[n+1]=c&255;
-  const src=new Uint8Array((n+2)*8+4); src.set(dmrBitsOf(w));
+  const src=new Uint8Array((n+2)*8+4); src.set(bitsMsb(w));
   const coded=nxdnConvEnc(src), ch=new Uint8Array(coded.length); ysfInter(coded,il,ch,0);
   for(let k=0;k<5;k++) out.set(ch.subarray(len*k,len*k+len),base+144*k);
 }
 // 13 байт голосового канала V/D режима 2 (после снятия перемежения и отбеливания)
-function ysfVch(bits,base){ const v=new Uint8Array(104); for(let i=0;i<104;i++) v[i]=bits[base+YSF_IL26[i]]; const by=p25Bytes(v); return by.map((x,i)=>x^YSF_WH[i]); }
-function ysfVchEncode(b13,out,base){ const v=dmrBitsOf(b13.map((x,i)=>x^YSF_WH[i])); for(let i=0;i<104;i++) out[base+YSF_IL26[i]]=v[i]; }
+function ysfVch(bits,base){ const v=new Uint8Array(104); for(let i=0;i<104;i++) v[i]=bits[base+YSF_IL26[i]]; const by=bytesFromBits(v); return by.map((x,i)=>x^YSF_WH[i]); }
+function ysfVchEncode(b13,out,base){ const v=bitsMsb(b13.map((x,i)=>x^YSF_WH[i])); for(let i=0;i<104;i++) out[base+YSF_IL26[i]]=v[i]; }
 const ysfText=b=>String.fromCharCode(...Array.from(b).map(c=>c>=32 && c<127 ? c : 32)).trim();
 
 /* ---- GPS из канала данных (V/D 1: FN 3…FT по 20 байт, V/D 2: FN 6, 7 по 10 байт); разбор как в YSFGateway/GPS.cpp ---- */
@@ -172,7 +172,7 @@ FSK4.protos.ysf={
         else if((F.fn===2 || F.fn===3) && P.call){ P.call[F.fn===2 ? 'downlink' : 'uplink']=s; }
       }
       for(let k=0;k<5;k++){
-        out.voice.push({t:P.now, src:'YSF', kind:'ambe', fn:F.fn, n:k+1, dt:F.dt, from:P.call?P.call.src:null, to:P.call?P.call.dst:null, ambe:dmrHex(ysfVch(bits,base+144*k+40))});
+        out.voice.push({t:P.now, src:'YSF', kind:'ambe', fn:F.fn, n:k+1, dt:F.dt, from:P.call?P.call.src:null, to:P.call?P.call.dst:null, ambe:bytesHex(ysfVch(bits,base+144*k+40))});
         P.st.voice++;
       }
     } else if(F.dt===0){                                          // V/D режим 1: DCH — 20 байт на кадр (FN 0 — dest + src, 1 — downlink + uplink)
@@ -181,11 +181,11 @@ FSK4.protos.ysf={
       if(d && F.fn===0) setCall({dst:ysfText(d.subarray(0,10)), src:ysfText(d.subarray(10,20))});
       else if(d && F.fn===1 && P.call){ P.call.downlink=ysfText(d.subarray(0,10)); P.call.uplink=ysfText(d.subarray(10,20)); }
       for(let k=0;k<5;k++){
-        out.voice.push({t:P.now, src:'YSF', kind:'ambe', fn:F.fn, n:k+1, dt:F.dt, from:P.call?P.call.src:null, to:P.call?P.call.dst:null, ambe:dmrHex(p25Bytes(bits.subarray(base+144*k+72,base+144*k+144)))});
+        out.voice.push({t:P.now, src:'YSF', kind:'ambe', fn:F.fn, n:k+1, dt:F.dt, from:P.call?P.call.src:null, to:P.call?P.call.dst:null, ambe:bytesHex(bytesFromBits(bits.subarray(base+144*k+72,base+144*k+144)))});
         P.st.voice++;
       }
     } else {                                                      // данные FR / голос FR: только сырой блок
-      out.voice.push({t:P.now, src:'YSF', kind:'raw', fn:F.fn, dt:F.dt, from:P.call?P.call.src:null, to:P.call?P.call.dst:null, ambe:dmrHex(p25Bytes(bits.subarray(base,base+720)))});
+      out.voice.push({t:P.now, src:'YSF', kind:'raw', fn:F.fn, dt:F.dt, from:P.call?P.call.src:null, to:P.call?P.call.dst:null, ambe:bytesHex(bytesFromBits(bits.subarray(base,base+720)))});
       P.st.voice++;
     }
   },
@@ -210,7 +210,7 @@ function ysfScript(mode){
   const rnd=(()=>{ let x=0x51EDBA5; return ()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return x&255; }; })();
   // FICH: [FI, CS, CM, BN], [BT, FN, FT], [DEV, MR, DT], [SQL, DG-ID]
   const fich=(fi,cm,fn,ft,dt,dg)=>Uint8Array.of((fi<<6)|(cm<<2), (0<<6)|(fn<<3)|ft, (0<<6)|(1<<3)|dt, dg);
-  const csd=(a,b)=>p25Cat(ysfPad(a,10),ysfPad(b,10));
+  const csd=(a,b)=>u8cat(ysfPad(a,10),ysfPad(b,10));
   const header=()=>ysfFrame(fich(0,0,0,6,mode==='vd1' ? 0 : 2,7),b=>{ ysfDchEncode(csd(dst,src),1,b,240); ysfDchEncode(csd(dl,ul),1,b,240+72); });
   seq.push(header(),header());
   const gps=ysfGpsPack(54.9833,82.8964,0x24), last=mode==='vd1' ? 6 : 7;
@@ -227,7 +227,7 @@ function ysfScript(mode){
     }));
   }
   seq.push(ysfFrame(fich(2,0,0,6,mode==='vd1' ? 0 : 2,7),b=>{ ysfDchEncode(csd(dst,src),1,b,240); ysfDchEncode(csd(dl,ul),1,b,240+72); }));
-  return fsk4LevelsOf(p25Cat(new Uint8Array(40),...seq,new Uint8Array(40)));
+  return fsk4LevelsOf(u8cat(new Uint8Array(40),...seq,new Uint8Array(40)));
 }
 FSK4.gen['YSF V/D mode 2']={baud:YSF_BAUD, alpha:.2, dev:600, script:()=>ysfScript('vd2')};
 FSK4.gen['YSF V/D mode 1']={baud:YSF_BAUD, alpha:.2, dev:600, script:()=>ysfScript('vd1')};
