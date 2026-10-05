@@ -33,6 +33,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **KiwiSDR** remote receivers (public list included)
 - **HTTP In**: poll any URL (REST / JSON) into text, a number and records; **SSE In**: a live Server-Sent Events stream — see [HTTP](#http)
 - **RTC Data**: a direct browser-to-browser WebRTC data channel, no server — see [RTC Data](#rtc-data); **Tab Link**: text and numbers between tabs of the same browser
+- **Rig Control (rigctl)**: frequency, mode and S-meter of a transceiver through Hamlib `rigctld`, tuning from the graph — see [Rig Control](#rig-control)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), **Table** (one node for lists, band plans, bookmarks, logs and the data sequencer: CSV / TSV / JSON / TXT / KML / GPX / GeoJSON, folders in the browser DB, played row by row), Trigger Clock, Time Base — see [Table](#table)
@@ -783,6 +784,24 @@ Preset: *RTC: Direct Chat Between Two Browsers*.
 ### Tab Link
 
 **Tab Link** (BroadcastChannel) passes text and numbers between tabs and windows of this site in one browser — no network, nothing leaves the machine. `text` and `value` are sent when they change (empty text is skipped); what comes from the other tabs goes out as `text` / `value` / `rec` / `new` (parsed as in HTTP In, *JSON field* picks the number), `ok` is 1 while the channel is open. The same *channel* name in both tabs; a tab does not hear its own messages (two nodes in one tab do hear each other). Use: a second window with a dashboard or a map fed by the graph in the first one. Preset: *Tab Link: Chat Between Two Tabs*.
+
+## Rig Control
+
+**Rig Control (rigctl)** talks to a transceiver through [Hamlib](https://hamlib.github.io/) `rigctld`, which knows hundreds of radios (Icom, Yaesu, Kenwood, Elecraft, …). A browser cannot open a TCP port, so a WebSocket bridge stands between the page and `rigctld`:
+
+```
+rigctld -m <model> -r /dev/ttyUSB0 -s 19200
+websocat --text ws-l:127.0.0.1:4533 tcp:127.0.0.1:4532
+```
+
+(`-m 1` is the dummy rig for a try; from the https page the bridge must be `wss://` or on localhost.) Press `Connect`: the node polls the radio every *poll period*, one command at a time (the extended `rigctl` protocol, so every answer is labelled; a radio that stays silent for 2.5 s is skipped).
+
+- Outputs: `freq` (Hz), `mode` (`USB`, `LSB`, `CW`, `FM`, …), `level` (the level named in the *level* field: `STRENGTH` is the S-meter in dB relative to S9, `SWR`, `ALC`, `RFPOWER_METER`, …), `ptt` (0 / 1), `new` (a pulse per poll), `ok` (1 while connected).
+- Inputs: `freq` sets the frequency when it changes (a constant, a table row, a sequencer — Hz); `mode` sets the mode (an unknown name is ignored and shown); *passband* is used for the mode set (0 — the rig's own). The radio's own dial changes are read back by the next poll.
+- **PTT is off by default**: the `ptt` wire keys the transmitter only with the *allow PTT* flag on (above 0.5 → transmit). Disconnecting or removing the node while keyed sends the release. The node knows nothing about the antenna, power or band — it is your licence and your radio.
+- Not done: split, VFO and memory commands, scan, several rigs in one node (use several nodes), the serial-port CAT of a radio without `rigctld`.
+
+Preset: *Rig Control: Follow and Tune a Radio*.
 
 ## Map and records
 

@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=49;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=50;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -220,6 +220,7 @@ const PRESET_CATS={
   'SSE: Live Event Stream':'Network & IoT',
   'RTC: Direct Chat Between Two Browsers':'Network & IoT',
   'Tab Link: Chat Between Two Tabs':'Network & IoT',
+  'Rig Control: Follow and Tune a Radio':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
@@ -3865,5 +3866,22 @@ t.size.h=170; applySize(t);
 const c=addNode('chat',420,180,{});
 c.size.h=330; applySize(c);
 addEdge(c.id,'text',t.id,'text'); addEdge(t.id,'text',c.id,'text');
+markWiresDirty();
+});
+
+preset('Rig Control: Follow and Tune a Radio', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Hamlib rigctld: the radio\'s frequency, mode and S-meter on the wires, and tuning from the graph. A browser cannot open TCP, so a WebSocket bridge stands in between:\n'+
+  '  rigctld -m <model> -r /dev/ttyUSB0 -s 19200      (or -m 1 for the dummy rig, to try)\n'+
+  '  websocat --text ws-l:127.0.0.1:4533 tcp:127.0.0.1:4532\n'+
+  'Press Connect. The Constant sets the frequency (Hz) the moment its value changes; the S-meter level shows what the radio reports. PTT is off by default (the *allow PTT* flag): with it on, the radio transmits when the ptt wire is above 0.5.'});
+nt.size.w=1100; nt.size.h=170; applySize(nt);
+const k=addNode('const',40,240,{value:7074000});
+const r=addNode('rigCtl',300,240,{});
+r.size.w=380; r.size.h=330; applySize(r);
+const nv=addNode('numview',760,240,{});
+const tk=addNode('ticker',760,360,{time:true});
+tk.size.w=380; tk.size.h=110; applySize(tk);
+addEdge(k.id,'out',r.id,'freq'); addEdge(r.id,'freq',nv.id,'in'); addEdge(r.id,'mode',tk.id,'text');
 markWiresDirty();
 });
