@@ -32,6 +32,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500, RX-888 (mkI/mkII/mkIII) — multiple tuners/demodulators per device, wideband sweep with a panoramic waterfall, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
 - **KiwiSDR** remote receivers (public list included)
 - **HTTP In**: poll any URL (REST / JSON) into text, a number and records; **SSE In**: a live Server-Sent Events stream — see [HTTP](#http)
+- **RTC Data**: a direct browser-to-browser WebRTC data channel, no server — see [RTC Data](#rtc-data)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), **Table** (one node for lists, band plans, bookmarks, logs and the data sequencer: CSV / TSV / JSON / TXT / KML / GPX / GeoJSON, folders in the browser DB, played row by row), Trigger Clock, Time Base — see [Table](#table)
@@ -761,6 +762,23 @@ Presets: *MQTT: Subscribe and Publish*, *IR: Tasmota Blaster over MQTT* (send wi
 - The same CORS and https rules as in HTTP In.
 
 Presets: *HTTP: Poll a JSON API*, *SSE: Live Event Stream* (Wikipedia edits, Wikimedia EventStreams).
+
+## RTC Data
+
+**RTC Data** is a WebRTC data channel between two browsers: the data goes directly, no server of ours in between. Two people (or two of your devices) each have the node; they first swap two short strings, then text and numbers flow both ways.
+
+1. Side 1 presses **Offer**: after a few seconds the node holds its string (`local` output; **Copy mine** puts it in the clipboard).
+2. Side 2 pastes it into `remote` and presses **Apply remote** (or the string comes on the `remote` wire): an offer is answered by itself, the node makes its own string.
+3. Side 2 sends that string back, side 1 pastes it into `remote` → **Apply remote**. The status becomes *connected*, `ok` is 1.
+
+The strings are ordinary text, so they can travel on wires: through MQTT, a chat, HTTP — wire `local` to a sender and `remote` to a receiver, and the handshake needs no copying. A string is the full session description with all addresses (about 800 characters, nothing is sent while you hold it), valid for the one handshake.
+
+- Inputs: `text` (sent when it changes, empty is skipped), `value` (a number, sent as text when it changes), `remote`. Outputs: `text` / `value` / `rec` / `new` as in the other network sources (*JSON field*, `rec` gets `peer: rtc`), `local`, `ok`.
+- The STUN field (default Google's public one) tells a device behind NAT its outer address; empty — the local network only. A link between two devices that both sit behind symmetric NATs (some mobile carriers) needs a TURN relay, which this node does not support: it will not connect. The node says *connection failed*.
+- One peer per node; the channel carries text. For binary data send it as text (hex / base64).
+- Everything is end-to-end encrypted by WebRTC (DTLS), but whoever gets both strings can join the link — do not post them publicly.
+
+Preset: *RTC: Direct Chat Between Two Browsers*.
 
 ## Map and records
 

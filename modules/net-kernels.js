@@ -77,3 +77,19 @@ class SseParser{
     return out;
   }
 }
+
+// Описание сессии WebRTC (offer / answer) ↔ одна строка для копирования: base64url(JSON). Принимает и «сырой» JSON, и голый SDP (тип — по a=setup)
+function rtcPack(d){
+  const j=JSON.stringify({type:d.type,sdp:d.sdp}), b=btoa(unescape(encodeURIComponent(j)));
+  return b.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function rtcUnpack(s){
+  s=String(s||'').trim(); if(!s) return null;
+  try{
+    if(s[0]==='{'){ const d=JSON.parse(s); return d && d.sdp && (d.type==='offer' || d.type==='answer') ? {type:d.type,sdp:d.sdp} : null; }
+    if(/^v=0/.test(s)) return {type:/a=setup:active/.test(s) ? 'answer' : 'offer',sdp:s.replace(/\r?\n/g,'\r\n')+(/\n$/.test(s) ? '' : '\r\n')};
+    const t=s.replace(/\s+/g,'').replace(/-/g,'+').replace(/_/g,'/');
+    const d=JSON.parse(decodeURIComponent(escape(atob(t+'='.repeat((4-t.length%4)%4)))));
+    return d && d.sdp && (d.type==='offer' || d.type==='answer') ? {type:d.type,sdp:d.sdp} : null;
+  }catch(e){ return null; }
+}
