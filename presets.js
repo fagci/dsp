@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=48;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=49;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -219,6 +219,7 @@ const PRESET_CATS={
   'HTTP: Poll a JSON API':'Network & IoT',
   'SSE: Live Event Stream':'Network & IoT',
   'RTC: Direct Chat Between Two Browsers':'Network & IoT',
+  'Tab Link: Chat Between Two Tabs':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
@@ -3851,5 +3852,18 @@ r.size.w=380; r.size.h=330; applySize(r);
 const c=addNode('chat',480,220,{});
 c.size.h=330; applySize(c);
 addEdge(c.id,'text',r.id,'text'); addEdge(r.id,'text',c.id,'text');
+markWiresDirty();
+});
+
+preset('Tab Link: Chat Between Two Tabs', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Tab Link passes text and numbers between tabs and windows of this site in the same browser: no network, no server. Open this preset in two tabs and type in either Chat. A graph in one tab can feed a dashboard in another window the same way (value in → value out).\n'+
+  'The channel name is the same in both tabs; a tab does not hear itself.'});
+nt.size.w=1000; nt.size.h=110; applySize(nt);
+const t=addNode('tabLink',40,180,{channel:'main'});
+t.size.h=170; applySize(t);
+const c=addNode('chat',420,180,{});
+c.size.h=330; applySize(c);
+addEdge(c.id,'text',t.id,'text'); addEdge(t.id,'text',c.id,'text');
 markWiresDirty();
 });
