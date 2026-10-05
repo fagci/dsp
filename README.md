@@ -63,6 +63,9 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - HF propagation, WWV/WWVH/CHU time decoder
 - Doppler radar, 2D chirp radar, monostatic sonar
 
+### Infrared
+- **IR Encode / Decode / Learn** — NEC, NEC-ext, Samsung, Sony SIRC 12/15/20, RC5, RC6, JVC, Panasonic; unknown frames (air conditioners) are broken down into header, pulse lengths and bytes; any code can be stored and replayed. The nodes know nothing about the hardware, the adapters do: sound card (**IR Sound TX / RX**) and a serial port (**IR Serial**: Arduino / ESP / Pico, Flipper Zero) — see [Infrared](#infrared-1)
+
 ### Digital modes & decoders
 - FT8, RTTY, Morse (TX/RX, including from camera), DTMF, PSK31, Feld Hell
 - Olivia, Contestia, AX.25/APRS (TX/RX)
@@ -545,6 +548,25 @@ Presets: *Indicators: Lamps, Gauge, LED Bar, Compass, Display*, *Indicators: Sky
 - **Outputs**: `byte` (last byte), `new` (pulse in the block where a byte arrived — wire it to a lamp or a counter), `text` (a line: UART — on a line feed, after 80 characters or after 1 s of silence; SPI — `MOSI … | MISO …` after CS goes high; I²C — `S 3C+W 00 AF P` after STOP), `rec` (a record per byte: `proto`, `byte`, `hex`, `ch`, `time` — seconds from the start, `err`; I²C adds `kind` and `addr`, SPI `line`), `hit` (a pulse on every trigger). `text` goes to a *Text Ticker*, `rec` to a *Rec Log*.
 
 Preset: *Logic Analyzer: UART Decode*.
+
+## Infrared
+
+The IR layer is split in three, so the same patch works with any hardware:
+
+1. **A frame is a list of pulse lengths** (µs: mark, space, mark, …) and a carrier. On a wire it is a text `F:38000 9000 4500 560 …`, an event: the text is present only in the block where the frame arrived (the same frame twice in a row is two events). Any of these formats is read automatically and can be written back: plain µs numbers (LIRC), Flipper (`ir tx RAW F:… DC:… …` and `.ir` raw data), Tasmota `IRsend`, Pronto hex.
+2. **Codecs** (hardware-independent):
+   - **IR Encode** (`go` pulse, the *Send* button, or a text on `text`: `NEC 0x04 0x08`, `Sony12 1 21`, `RC5 5 12 t`, `Samsung 7 2`, `NEC rep`) → `raw`. Protocol, address and command are also wire inputs. RC5 / RC6 flip the toggle bit on every send.
+   - **IR Decode**: `raw` → `text` (`NEC addr 0x04 cmd 0x08 [04 FB 08 F7]`), `rec` (a record per frame), `addr`, `cmd`, `new`, and `info` with the analysis of an unknown frame: clusters of mark and space lengths and, for pulse-distance protocols, the header, both pause lengths and the bytes (LSB first). A NEC repeat frame repeats the last code.
+   - **IR Learn**: stores the first frame (or the next one after *Capture next*) in a text field saved with the patch — a code in any format can be pasted there; *Replay* or a `go` pulse sends it, with a repeat count and a gap.
+   - **IR Merge**: up to four frame sources on one adapter input.
+3. **Adapters** (hardware):
+   - **IR Sound TX**: the carrier as a sine straight to the sound card (**96 kHz or more**: the sample rate must be at least 2.5 × the carrier) → a transistor and an IR LED; *envelope* gives only the envelope for an external 36–40 kHz modulator (works at any rate).
+   - **IR Sound RX**: *baseband* — the output of an IR receiver module (TSOP / VS1838) into the line / microphone input; *carrier* — a photodiode with an amplifier (96 kHz or more): the signal is mixed with the carrier and filtered. Adaptive threshold, glitch filter, a frame ends after a pause (*gap*, 20 ms by default; raise it for air conditioners, whose frames have long pauses inside).
+   - **IR Serial (WebSerial)**: `sketch` — [`tools/ir/ir-serial.ino`](tools/ir/ir-serial.ino), a bridge for Arduino / ESP32 / ESP8266 / Pico with the IRremote library (`TX <Hz> <µs…>` / `RX <µs…>`); `flipper` — the Flipper Zero console (`ir tx RAW …`, `ir rx raw`); `wire` — your own firmware, plain `F:38000 …` lines both ways.
+
+Presets: *IR: Remote Codes Loopback (No Hardware)*, *IR: Learn and Replay (Sound Card)*, *IR: Arduino / ESP / Flipper (WebSerial)*.
+
+IR as a data link (not a remote): the same adapters carry any frame, and *Transmit Chars* / *Receive Chars* and the *Logic Analyzer* work on the demodulated line.
 
 ## Map and records
 

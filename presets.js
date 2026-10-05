@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=33;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=34;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -108,6 +108,7 @@ const PRESET_CAT_ORDER=['Start Here',
                          'Images & TV',
                          'HF Modes & Morse',
                          'Modems & Data Links',
+                         'Infrared',
                          'Unknown Signals',
                          'Maps & Locating',
                          'Music: Sequencers & Mixer',
@@ -188,6 +189,9 @@ const PRESET_CATS={
 
   'DTMF':'Modems & Data Links',
   'Text → Signal → Text':'Modems & Data Links',
+  'IR: Remote Codes Loopback (No Hardware)':'Infrared',
+  'IR: Learn and Replay (Sound Card)':'Infrared',
+  'IR: Arduino / ESP / Flipper (WebSerial)':'Infrared',
   'Unknown Signal: Blind Analysis (Generator)':'Unknown Signals',
   'Preamble Search':'Modems & Data Links',
   'Noise-Resistant Frame':'Modems & Data Links',
@@ -3048,6 +3052,69 @@ tk.size.w=420; tk.size.h=130; applySize(tk);
 addEdge(a.id,'out',sp.id,'az'); addEdge(e.id,'out',sp.id,'el');
 addEdge(l.id,'out',sm.id,'in'); addEdge(l.id,'out',c.id,'in'); addEdge(l.id,'out',rp.id,'dBm');
 addEdge(c.id,'rise',rp.id,'go'); addEdge(rp.id,'rec',tk.id,'rec');
+markWiresDirty();
+});
+preset('IR: Remote Codes Loopback (No Hardware)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'The IR codec chain without any hardware. A square LFO presses the button every 2 s: IR Encode builds the frame (NEC, address 4, command 8) → IR Sound TX turns it into a waveform\n'+
+  '→ IR Sound RX cuts the waveform back into pulses → IR Decode names the protocol, address and command. Change the protocol, address and command in IR Encode (or give it a text like «Sony12 1 21», «RC5 5 12», «Samsung 7 2»).\n'+
+  'Here TX gives only the envelope and RX takes a baseband signal, so it works at any sample rate. For a real LED and a photodiode set the sample rate to 96 kHz or more, TX «modulated» and RX «carrier».\n'+
+  'The wire between the nodes carries the frame as text «F:38000 9000 4500 …» (µs); formats of Flipper, Tasmota, Pronto and LIRC are understood too (output format in IR Encode).'});
+nt.size.w=1100; nt.size.h=130; applySize(nt);
+const l=addNode('lfo',40,200,{freq:.5,min:0,max:1,wave:'sq'});
+const en=addNode('irEnc',260,200,{proto:'NEC',addr:4,cmd:8});
+en.size.h=150; applySize(en);
+const tx=addNode('irSoundTx',560,200,{mode:'envelope'});
+const rx=addNode('irSoundRx',840,200,{mode:'baseband'});
+const dc=addNode('irDec',1120,200,{});
+dc.size.w=420; dc.size.h=260; applySize(dc);
+const sc=addNode('scope',560,420,{span:4096,gain:1});
+sc.size.w=460; sc.size.h=200; applySize(sc);
+const tk=addNode('ticker',1120,520,{time:true});
+tk.size.w=420; tk.size.h=110; applySize(tk);
+addEdge(l.id,'out',en.id,'go'); addEdge(en.id,'raw',tx.id,'raw'); addEdge(tx.id,'out',rx.id,'in'); addEdge(tx.id,'out',sc.id,'in1');
+addEdge(rx.id,'raw',dc.id,'raw'); addEdge(dc.id,'text',tk.id,'text');
+markWiresDirty();
+});
+preset('IR: Learn and Replay (Sound Card)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Copy a remote with a sound card. Input: an IR receiver module (TSOP / VS1838: its output into the microphone or line input, power from 3.3–5 V of any source), or a photodiode with an amplifier — then switch IR Sound RX to «carrier» (needs 96 kHz or more).\n'+
+  'Point the remote at the receiver and press a key: IR Learn stores the first frame (the text field holds it; it is saved with the patch). IR Decode names a known protocol and IR Learn shows the structure of an unknown one (an air conditioner: header, the two pause lengths, the bytes).\n'+
+  'Replay (or a pulse on `go`) sends the code: IR Sound TX → Sound Card output → a transistor and an IR LED. For a LED on the audio output use «modulated» at 96 kHz or more; at lower rates use «envelope» and an external 38 kHz modulator.\n'+
+  '«Capture next» replaces the stored code. Any text format can be pasted into the field: Flipper .ir raw data, Tasmota IRsend, Pronto hex, LIRC numbers.'});
+nt.size.w=1180; nt.size.h=150; applySize(nt);
+const m =addNode('mic',40,240,{gainA:1,echo:false,ns:false,agc:false});
+const rx=addNode('irSoundRx',300,240,{mode:'baseband',gap:20});
+const ln=addNode('irLearn',580,240,{times:1,gap:45});
+ln.size.w=420; ln.size.h=300; applySize(ln);
+const tx=addNode('irSoundTx',1060,240,{mode:'modulated',level:.9});
+const dc=addNode('irDec',580,600,{});
+dc.size.w=420; dc.size.h=240; applySize(dc);
+const dac=addNode('dac',1340,240,{vol:.5});
+addEdge(m.id,'a',rx.id,'in'); addEdge(rx.id,'raw',ln.id,'raw'); addEdge(rx.id,'raw',dc.id,'raw');
+addEdge(ln.id,'raw',tx.id,'raw'); addEdge(tx.id,'out',dac.id,'L'); addEdge(tx.id,'out',dac.id,'R');
+markWiresDirty();
+});
+preset('IR: Arduino / ESP / Flipper (WebSerial)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'An IR transceiver on a serial port. «device protocol»: sketch — an Arduino / ESP / Pico with tools/ir/ir-serial.ino (IRremote library; a receiver module and an IR LED on its pins),\n'+
+  'flipper — the Flipper Zero console (IR frames are sent with `ir tx RAW …`, received with `ir rx raw`), wire — plain lines «F:38000 9000 4500 …» both ways (your own firmware).\n'+
+  'Connect, press a key on a remote: IR Decode prints the protocol, address and command; IR Learn keeps the frame and replays it. IR Encode sends a command built from the protocol, address and command (or a text like «NEC 0x04 0x08»).\n'+
+  'IR Merge puts Encode and Learn on the single serial input. The same nodes work with the sound card (IR Sound TX / RX): only the adapter changes.'});
+nt.size.w=1100; nt.size.h=150; applySize(nt);
+const sr=addNode('irSerial',40,220,{dev:'sketch (tools/ir)',baud:'115200'});
+sr.size.h=160; applySize(sr);
+const dc=addNode('irDec',360,220,{});
+dc.size.w=420; dc.size.h=260; applySize(dc);
+const ln=addNode('irLearn',820,220,{times:1,gap:45});
+ln.size.w=420; ln.size.h=300; applySize(ln);
+const en=addNode('irEnc',360,540,{proto:'NEC',addr:4,cmd:8});
+en.size.h=150; applySize(en);
+const tk=addNode('ticker',820,600,{time:true});
+tk.size.w=420; tk.size.h=110; applySize(tk);
+const mx=addNode('irMix',600,540,{});
+addEdge(sr.id,'raw',dc.id,'raw'); addEdge(sr.id,'raw',ln.id,'raw'); addEdge(ln.id,'raw',mx.id,'b'); addEdge(en.id,'raw',mx.id,'a'); addEdge(mx.id,'raw',sr.id,'raw');
+addEdge(dc.id,'text',tk.id,'text');
 markWiresDirty();
 });
 preset('Unknown Signal: Blind Analysis (Generator)', function(){
