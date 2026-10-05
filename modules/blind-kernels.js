@@ -39,7 +39,6 @@ const BLIND_SUMS=[
   {name:'Sum-16',w:16,fn:(B,a,b)=>{ let s=0; for(let i=a;i<b;i++) s+=B[i]; return s&0xFFFF; }}
 ];
 const BLIND_REV8=(()=>{ const t=new Uint8Array(256); for(let i=0;i<256;i++){ let r=0; for(let k=0;k<8;k++) r|=((i>>k)&1)<<(7-k); t[i]=r; } return t; })();
-function blindRev(v,w){ let r=0; for(let i=0;i<w;i++) r=(r<<1)|((v>>>i)&1); return r>>>0; }
 function blindCrcReg(B,from,to,w,poly,init,refin){
   const top=(1<<(w-1))>>>0, mask=w===32 ? 0xFFFFFFFF : ((1<<w)-1)>>>0, sh=w-8;
   let c=init>>>0;
@@ -52,7 +51,7 @@ function blindCrcReg(B,from,to,w,poly,init,refin){
 }
 function blindCrc(B,from,to,e){
   let c=blindCrcReg(B,from,to,e.w,e.poly,e.init,e.refin);
-  if(e.refout) c=blindRev(c,e.w);
+  if(e.refout) c=bitRev(c,e.w);
   return (c^e.xorout)>>>0;
 }
 function blindCrcAdvance(c,nbytes,w,poly){                       // nbytes нулевых байт через регистр
@@ -143,13 +142,13 @@ function blindCrcUnknownRun(u,budgetMs){
     const tf=[fe(0),fe(1)], lim=T.w===8 ? 256 : 65536;
     for(;u.poly<lim;u.poly+=2){
       const R=blindCrcReg(D,0,D.length,T.w,u.poly,0,T.refin);
-      const Rr=blindRev(R,T.w);
+      const Rr=bitRev(R,T.w);
       for(let le=0;le<2;le++) for(let ro=0;ro<2;ro++){
         if((ro ? Rr : R)!==tf[le]) continue;
         // кандидат: остальные кадры — одна и та же константа K = поле ^ реg
         const Ks=new Map();
         for(const B of G){
-          const r=blindCrcReg(B,T.skip,end,T.w,u.poly,0,T.refin), K=(blindField(B,L,wb,le)^(ro ? blindRev(r,T.w) : r))>>>0;
+          const r=blindCrcReg(B,T.skip,end,T.w,u.poly,0,T.refin), K=(blindField(B,L,wb,le)^(ro ? bitRev(r,T.w) : r))>>>0;
           Ks.set(K,(Ks.get(K)||0)+1);
         }
         let bk=0,bc=0; for(const [K,c] of Ks) if(c>bc){ bk=K; bc=c; }
@@ -168,7 +167,7 @@ function blindCrcDerive(f){
   const ones=f.w===32 ? 0xFFFFFFFF : ((1<<f.w)-1)>>>0;
   let best=null;
   for(const xo of [0,ones]){
-    let t=(f.K^xo)>>>0; if(f.refout) t=blindRev(t,f.w);
+    let t=(f.K^xo)>>>0; if(f.refout) t=bitRev(t,f.w);
     const init=blindGf2Solve(cols,t,f.w);
     if(init===null) continue;
     const nice=init===0 || init===ones;
@@ -641,7 +640,7 @@ IQK.crcFind={
       if(L>=r.skip+wb+1){
         const got=blindField(B,L,wb,r.le);
         if(cat) pass=(r.def ? blindCrc(B,r.skip,L-wb,r.def) : BLIND_SUMS.find(s=>s.name===r.name).fn(B,r.skip,L-wb))===got;
-        else if(L===r.L){ const reg=blindCrcReg(B,r.skip,L-wb,r.w,r.poly,0,r.refin); pass=((r.refout ? blindRev(reg,r.w) : reg)^r.K)>>>0===got; }
+        else if(L===r.L){ const reg=blindCrcReg(B,r.skip,L-wb,r.w,r.poly,0,r.refin); pass=((r.refout ? bitRev(reg,r.w) : reg)^r.K)>>>0===got; }
       }
       n.goodTotal++;
       n.ok=0;

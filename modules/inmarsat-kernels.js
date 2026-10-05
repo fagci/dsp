@@ -12,7 +12,6 @@
 const STDC_UW='0000011111101010110011011101101001001110001011110010100011000010';
 const STDC_SCR='0000000100011100010010111000000110010010011011100100000101011011010110010110000111110110111101011101000100001101100011110011100110001011010010001010010101001110';
 const STDC_SYMS=10368, STDC_ROW=162, STDC_BYTES=640, STDC_BAUD=1200;
-function stdcRev8(b){ b=((b&0xF0)>>4)|((b&0x0F)<<4); b=((b&0xCC)>>2)|((b&0x33)<<2); return ((b&0xAA)>>1)|((b&0x55)<<1); }
 // контрольная сумма пакета длиной len (последние 2 байта считаются нулями) → [старший, младший]
 function stdcCrc(p,off,len){
   let c0=0, c1=0;
@@ -39,7 +38,7 @@ function stdcDecodeFrame(sym){
   const bits=vitTrace(v), out=new Uint8Array(STDC_BYTES);
   for(let i=0;i<STDC_BYTES;i++){
     let b=0; for(let k=0;k<8;k++) b=(b<<1)|bits[8*i+k];
-    out[i]=stdcRev8(b)^(STDC_SCR.charCodeAt(i>>2)===49 ? 0xFF : 0);
+    out[i]=bitRev(b,8)^(STDC_SCR.charCodeAt(i>>2)===49 ? 0xFF : 0);
   }
   // ошибки перекодирования — оценка качества
   let r=0, e=0, n=0;
@@ -50,7 +49,7 @@ function stdcDecodeFrame(sym){
 function stdcEncodeFrame(bytes){
   const bits=new Uint8Array(STDC_BYTES*8);
   for(let i=0;i<STDC_BYTES;i++){
-    const b=stdcRev8(bytes[i]^(STDC_SCR.charCodeAt(i>>2)===49 ? 0xFF : 0));
+    const b=bitRev(bytes[i]^(STDC_SCR.charCodeAt(i>>2)===49 ? 0xFF : 0),8);
     for(let k=0;k<8;k++) bits[8*i+k]=(b>>(7-k))&1;
   }
   const c=ccEncode({r:0},bits), enc=new Int8Array(c.length);
