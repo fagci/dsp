@@ -34,6 +34,11 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), lists, **Data Sequencer** (CSV / KML / GPX / GeoJSON played row by row), Trigger Clock, Time Base — see [Data Sequencer](#data-sequencer)
+- **Bluetooth LE** (Web Bluetooth): **BLE UART** (Nordic UART, HM-10 / FFE0 or your own UUIDs — a serial terminal without a cable), **BLE GATT** (any characteristic: notifications or periodic read, write; formats — heart rate, battery, temperature, uint / int / float, hex), **BLE Advertisements** (RSSI, TX power and manufacturer data of one device without connecting — proximity, finding a beacon) — see [Bluetooth LE](#bluetooth-le)
+- **IQ over Network**: a remote SDR as an `iq` source — **rtl_tcp** through a TCP → WebSocket bridge (header, rate, tuning, gain, ppm, bias-T, direct sampling are sent as rtl_tcp commands; a wire on the frequency retunes) or a **raw stream** (uint8 / int8 / int16 / float32, rate and center set by hand) from any program that writes IQ to a pipe — see [Remote SDR](#remote-sdr)
+- **Gamepad** (Gamepad API): a gamepad, joystick, steering wheel or pedals as numbers — axes `a1…` (with a dead zone) and buttons `b1…` (analog triggers 0…1), the counts are parameters, the device is chosen by index or the first connected one; the `rumble` / `weak` inputs vibrate it. The browser shows the device only after a button is pressed on it
+- **HID Device** (WebHID): any USB / Bluetooth HID device without a driver — foot pedals, remote controls, USB scales and sensors, barcode scanners, your own boards (Leonardo / Pro Micro, RP2040). Input reports as hex and as records, one field of the report as a number (offset, format, bit, scale, report id filter), the `send` input writes output or feature reports. Keyboards and mice are closed to WebHID by the browser
+- **NFC** (Web NFC, Chrome on Android over https): read NDEF tags — serial number, the first text / URL / JSON record as text, every record as a `rec`; write text, a URL or JSON to a tag (the *Write* button, a pulse on `go`, or a text on the `write` input)
 - **MQTT In** (over WebSocket, QoS 0/1, username/password, auto-reconnect): subscribe to topic filters (`+` / `#`); a message comes out as text, topic, a number (the payload itself, or a JSON field — `temp.value`) and as records (a JSON object or array becomes `rec` with the topic added, so Tasmota / ESPHome / Home Assistant sensors with lat / lon go straight to the map). The browser cannot open `mqtt://` itself: give the broker a WebSocket listener (Mosquitto `listener 9001` + `protocol websockets`, EMQX, HiveMQ, the Home Assistant add-on); from the https page only `wss://` works — see [MQTT](#mqtt)
 - **Text over Network**: WebSocket (`ws://`, `wss://`, with reconnect and a `send` input) or HTTP(S) polling; lines one per block like the serial port, JSON objects/arrays straight into records. Example — Wi-Fi scan from Android (Termux): `websocat -t ws-l:0.0.0.0:8765 sh-c:'while :; do termux-wifi-scaninfo | jq -c .; sleep 30; done'`. [`tools/termux/wifi-scan.sh`](tools/termux/wifi-scan.sh) adds the phone's GPS position to every scan — preset *Wi-Fi: Locate Access Points (Termux)* puts each access point on the map while you walk around. From the https demo the browser only allows `wss://`/`https://` to other devices (`ws://`/`http://` work to localhost, or when the app is opened over http)
 
@@ -157,6 +162,16 @@ On Linux unload the kernel driver before connecting, e.g. `sudo rmmod msi001 msi
 - **Open IQ file…** plays a recording through the same chain (spectrum, 4 channels, demodulators) in real time, with loop and position controls
   - WAV (8/16-bit PCM, 32/64-bit float), SigMF archive or `.sigmf-meta` + `.sigmf-data` pair (`cu8`, `ci8`, `ci16_le`, `cf32_le`, `cf64_le`)
   - raw `.cu8` / `.cs8` / `.cs16` / `.cf32` / `.cf64` (e.g. `rtl_sdr` output; the format is guessed from the extension or set by **IQ file format**): frequency and rate are taken from the file name (`…_433920000Hz_2.4Msps.cf32`), otherwise from the node settings
+
+## Remote SDR
+
+The **IQ over Network** node gives the same `iq` output as the USB SDR, so every IQ block (shift, decimator, demodulators, spectrum, decoders) works on a receiver that sits somewhere else: a Raspberry Pi on the roof, a server, another PC. A browser cannot open TCP sockets, so the receiver's stream goes through a small bridge to WebSocket; from the https page only `wss://` works, from a local copy over http `ws://` too.
+
+- **rtl_tcp**: on the machine with the RTL-SDR run `rtl_tcp -a 0.0.0.0 -s 1024000` and a bridge next to it, e.g. `websockify 8766 127.0.0.1:1234` (any proxy that passes bytes will do), enter `ws://host:8766`. The node checks the `RTL0` header, shows the tuner (R820T…), sends the sample rate, frequency, gain (0 — auto), ppm, RTL AGC, bias-T and the direct sampling branch, and sends again whatever changes — also when a wire drives the frequency (the stream is tagged `retune`).
+- **raw stream**: bytes of interleaved I / Q with the format, sample rate and center frequency set by hand. Examples: `rtl_sdr -f 100e6 -s 1024000 - | websocat -b -s 8766`, `hackrf_transfer -r - -f 100000000 -s 2000000 | websocat -b -s 8766` (set *int8*), GNU Radio or SoapySDR with a pipe sink, your own script. Samples that arrive cut in the middle (a byte boundary in a WebSocket message) are put together.
+- The queue holds 2 seconds; when the page cannot keep up the oldest data is dropped, the stream is tagged `gap` and the overflow counter in the readout grows. The readout shows the real received rate next to the set one.
+
+Preset: *Remote SDR: FM Receiver (rtl_tcp over WebSocket)*. SpyServer, SoapyRemote and other protocols with their own framing are not supported yet.
 
 ## tinySA
 
@@ -549,7 +564,9 @@ Presets: *Indicators: Lamps, Gauge, LED Bar, Compass, Display*, *Indicators: Sky
   - **I²C**: SCL + SDA; START / repeated START / STOP, 7-bit address with R / W, data bytes, ACK / NAK (a NAK is marked with `!`).
 - **Outputs**: `byte` (last byte), `new` (pulse in the block where a byte arrived — wire it to a lamp or a counter), `text` (a line: UART — on a line feed, after 80 characters or after 1 s of silence; SPI — `MOSI … | MISO …` after CS goes high; I²C — `S 3C+W 00 AF P` after STOP), `rec` (a record per byte: `proto`, `byte`, `hex`, `ch`, `time` — seconds from the start, `err`; I²C adds `kind` and `addr`, SPI `line`), `hit` (a pulse on every trigger). `text` goes to a *Text Ticker*, `rec` to a *Rec Log*.
 
-Preset: *Logic Analyzer: UART Decode*.
+- **USB logic analyzers** (WebUSB; `input` → *USB* in the advanced parameters): cheap 8-channel analyzers on the Cypress FX2 (Saleae clones, boards with sigrok **fx2lafw** firmware). Channels 1…8 are D0…D7, 8-bit samples at 20 kHz … 24 MS/s straight into the same traces, trigger and UART / SPI / I²C decoders (the `ch` wires disappear). Buttons: *USB: connect* (opens the chooser), *USB: load firmware (.fw)*, *USB: start*, *USB: stop*. A board without firmware (it does not answer the version request) needs a fx2lafw image: take it from the `sigrok-firmware-fx2lafw` package (`/usr/share/sigrok-firmware/`) or from PulseView (`fx2lafw-saleae-logic.fw` for Saleae clones, `fx2lafw-cypress-fx2.fw` for a bare CY7C68013A board) — it is GPL-2.0+, so it is not bundled; it is loaded into the board's RAM and lives until the power is cut. The board then restarts; connect again. The page keeps up with a few MS/s: the readout shows the rate and the captured samples and warns when samples are dropped. Chrome / Edge / Opera only; on Linux the device needs a udev rule (or `chmod`) for the browser to open it.
+
+Presets: *Logic Analyzer: UART Decode*, *Logic Analyzer: USB (fx2lafw)*.
 
 ## Infrared
 
@@ -569,6 +586,17 @@ The IR layer is split in three, so the same patch works with any hardware:
 Presets: *IR: Remote Codes Loopback (No Hardware)*, *IR: Learn and Replay (Sound Card)*, *IR: Arduino / ESP / Flipper (WebSerial)*.
 
 IR as a data link (not a remote): the same adapters carry any frame, and *Transmit Chars* / *Receive Chars* and the *Logic Analyzer* work on the demodulated line.
+
+## Bluetooth LE
+
+Web Bluetooth works in Chrome, Edge and Opera (desktop and Android) on https or localhost; Firefox and iOS do not support it. The device chooser opens only on a click (*Connect* / *Choose device*). Without the filters the chooser lists every device (*list all devices*); by default it is filtered by the service, or by the name prefix.
+
+- **BLE UART**: `line` / `go` (a line per block, split on line feed) and the `text` input, which writes in chunks (20 bytes by default — safe on any device; with a larger MTU raise it). Profiles: *Nordic UART* (service `6e400001-…`), *HM-10 / FFE0*, *custom* (service, characteristic from the device, characteristic to the device). The line end for sending is selectable. The same line protocols as on a serial port work: wire the `line` output to *IR Decode*, or *Parse CSV Line*.
+- **BLE GATT**: service and characteristic as a name (`heart_rate`), a 16-bit hex (`180D`) or a 128-bit UUID; *notify* or *read every period*; the format turns the bytes into a number (`value` with scale and offset), `hex` is always given, `rec` has a record per value. The `write` input sends hex or text to the characteristic (relays, LED strips, thermometers' settings).
+- **BLE Advertisements**: RSSI (smoothed), TX power, manufacturer data and `present` (0 after the silence set in the parameters) of one chosen device — `watchAdvertisements`, Chrome 85+ (some versions need `chrome://flags/#enable-experimental-web-platform-features`).
+- After a disconnect from the device side the node reconnects every 3 s without the chooser (*reconnect*).
+
+Presets: *BLE: Heart Rate Monitor*, *BLE: Find a Beacon by RSSI*, *BLE: UART Terminal*.
 
 ## MQTT
 

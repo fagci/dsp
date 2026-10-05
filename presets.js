@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=35;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=41;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -127,6 +127,7 @@ const PRESET_CATS={
   'USB SDR: Signal Identifier':'SDR Receivers',
   'IQ: Receiver from Blocks (Generator)':'SDR Receivers',
   'USB SDR: FM Receiver from Blocks':'SDR Receivers',
+  'Remote SDR: FM Receiver (rtl_tcp over WebSocket)':'SDR Receivers',
   'USB SDR: HF AM / SSB from Blocks':'SDR Receivers',
   'Sound Card IQ: HF Receiver (SoftRock-style)':'SDR Receivers',
   'IQ: Channelizer — Three Signals at Once (Generator)':'SDR Receivers',
@@ -195,6 +196,12 @@ const PRESET_CATS={
   'IR: Arduino / ESP / Flipper (WebSerial)':'Infrared',
   'IR: Tasmota Blaster over MQTT':'Infrared',
   'MQTT: Subscribe and Publish':'Network & IoT',
+  'Gamepad: Axes to Tone and Lamps':'Network & IoT',
+  'HID: Reports to Number and Log':'Network & IoT',
+  'NFC: Tag Log and Writer':'Network & IoT',
+  'BLE: Heart Rate Monitor':'Network & IoT',
+  'BLE: Find a Beacon by RSSI':'Network & IoT',
+  'BLE: UART Terminal':'Network & IoT',
   'Unknown Signal: Blind Analysis (Generator)':'Unknown Signals',
   'Preamble Search':'Modems & Data Links',
   'Noise-Resistant Frame':'Modems & Data Links',
@@ -212,6 +219,8 @@ const PRESET_CATS={
   'Control: Clocks Switch a Tone On and Off':'Analysis & Measurement',
   'Control: Level Trigger (Compare, Counter, One-Shot)':'Analysis & Measurement',
   'Control: Logic Test Bench (all blocks)':'Analysis & Measurement',
+  'Logic Analyzer: UART Decode':'Analysis & Measurement',
+  'Logic Analyzer: USB (fx2lafw)':'Analysis & Measurement',
   'FT8: Propagation Map':'Maps & Locating',
   'Fox Hunt: Locate Transmitter':'Maps & Locating',
   'Internet Radio on the Map':'Maps & Locating',
@@ -824,6 +833,35 @@ const au=addNode('iqAudio',680,760,{});
 const dc=addNode('dac',940,760,{vol:.4});
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',dcb.id,'in'); addEdge(dcb.id,'out',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',sp.id,'in'); addEdge(sp.id,'spec',s2.id,'spec');
+addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'stereo',au.id,'in');
+addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'q',dc.id,'R');
+markWiresDirty();
+});
+preset('Remote SDR: FM Receiver (rtl_tcp over WebSocket)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The same broadcast FM receiver as «USB SDR: FM Receiver from Blocks», but the RTL-SDR is on another machine (a Raspberry Pi, a server, a second PC): run `rtl_tcp -a 0.0.0.0 -s 1024000` there\n'+
+  'and a TCP → WebSocket bridge next to it, e.g. `websockify 8766 127.0.0.1:1234` (or any other proxy that passes bytes). IQ over Network speaks rtl_tcp: it sets the rate, tunes, sets the gain / ppm / bias-T.\n'+
+  'Another SDR can be used through the protocol «raw stream»: `rtl_sdr -f 100e6 -s 1024000 - | websocat -b -s 8766`, `hackrf_transfer -r - …`, GNU Radio, SoapySDR — set the format, rate and center by hand.\n'+
+  'From the https page only wss:// works; from a local copy over http — ws:// too. Press Connect, tap a station on the upper spectrum.'});
+nt.size.w=760; nt.size.h=180; applySize(nt);
+const rx=addNode('iqnet',40,260,{url:'ws://127.0.0.1:8766',proto:'rtl_tcp',sr:1024000,freq:100000000});
+rx.size.w=300; rx.size.h=180; applySize(rx);
+const dcb=addNode('iqDc',400,260,{});
+const w0=addNode('iqSpec',400,400,{size:'4096'});
+const sa=addNode('sa',720,260,{auto:true,floor:-90,top:-20,split:.4});
+sa.size.w=640; sa.size.h=300; applySize(sa);
+const sh=addNode('iqShift',400,560,{});
+const d1=addNode('iqDecim',400,720,{M:'4',cut:.45});
+const sp=addNode('iqSpec',400,900,{size:'2048'});
+const s2=addNode('sa',720,600,{auto:true,floor:-100,top:-20,split:.4});
+s2.size.w=640; s2.size.h=260; applySize(s2);
+const de=addNode('iqDemod',40,900,{mode:'WFM',deemph:'50 µs',stereo:true});
+de.size.w=360; applySize(de);
+const au=addNode('iqAudio',720,900,{});
+const dc=addNode('dac',980,900,{vol:.4});
+addEdge(rx.id,'iq',dcb.id,'in'); addEdge(dcb.id,'out',w0.id,'in'); addEdge(w0.id,'spec',sa.id,'spec');
+addEdge(dcb.id,'out',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',sp.id,'in'); addEdge(sp.id,'spec',s2.id,'spec');
 addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'stereo',au.id,'in');
 addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'q',dc.id,'R');
@@ -3057,6 +3095,21 @@ addEdge(l.id,'out',sm.id,'in'); addEdge(l.id,'out',c.id,'in'); addEdge(l.id,'out
 addEdge(c.id,'rise',rp.id,'go'); addEdge(rp.id,'rec',tk.id,'rec');
 markWiresDirty();
 });
+preset('Logic Analyzer: USB (fx2lafw)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Logic Analyzer fed by a cheap 8-channel USB logic analyzer (Saleae clones on the Cypress FX2, boards with sigrok fx2lafw firmware): channels 1…8 are D0…D7, up to 24 MS/s (the page keeps up with a few MS/s; the readout warns when samples are dropped).\n'+
+  'Press «USB: connect» in the advanced parameters and choose the device. If it has no firmware, press «USB: load firmware (.fw)» and pick a file from the sigrok-firmware-fx2lafw package or from PulseView (fx2lafw-saleae-logic.fw for Saleae clones); the board restarts, connect again. Then «USB: start».\n'+
+  'The window, the trigger (edge, single shot with Arm, Hold) and the decoders (UART, SPI, I²C — the channels in the advanced parameters) work as with wires; here the decoder is UART 115200 on channel 1. Samples are 8 bit, so only channels 1…8.'});
+nt.size.w=1100; nt.size.h=130; applySize(nt);
+const la=addNode('logan',40,200,{src:'USB',count:'4',names:'D0,D1,D2,D3',proto:'UART',a:1,baud:115200,urate:'4 MHz',span:.002});
+la.size.w=720; la.size.h=210; applySize(la);
+const lp=addNode('lamps',820,200,{count:'1',labels:'byte',colors:'amber',hold:.15});
+lp.size.w=160; lp.size.h=80; applySize(lp);
+const tk=addNode('ticker',820,330,{time:true});
+tk.size.w=360; tk.size.h=110; applySize(tk);
+addEdge(la.id,'new',lp.id,'in1'); addEdge(la.id,'text',tk.id,'text');
+markWiresDirty();
+});
 preset('IR: Remote Codes Loopback (No Hardware)', function(){
 clearAll();
 const nt=addNode('note',40,20,{text:'The IR codec chain without any hardware. A square LFO presses the button every 2 s: IR Encode builds the frame (NEC, address 4, command 8) → IR Sound TX turns it into a waveform\n'+
@@ -3154,6 +3207,96 @@ const tk=addNode('ticker',440,400,{time:true});
 tk.size.w=380; tk.size.h=110; applySize(tk);
 const nv=addNode('numview',440,560,{});
 addEdge(l.id,'out',mo.id,'value'); addEdge(mi.id,'text',tk.id,'text'); addEdge(mi.id,'value',nv.id,'in');
+markWiresDirty();
+});
+preset('BLE: Heart Rate Monitor', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Web Bluetooth (Chrome / Edge / Opera on https or localhost; not Firefox / iOS). BLE GATT subscribes to the standard Heart Rate service (180D) of a chest strap or a watch in broadcast mode: press Connect, choose the device.\n'+
+  'The value format «heart rate (bpm)» understands both the 8-bit and the 16-bit variant. For any other characteristic type its service and characteristic (a name, 16-bit 2A37 or a 128-bit UUID) and the format: battery %, temperature, uint / int / float, or hex only.'});
+nt.size.w=1000; nt.size.h=110; applySize(nt);
+const g=addNode('bleGatt',40,170,{svc:'heart_rate',chr:'heart_rate_measurement',fmt:'heart rate (bpm)',mode:'notify'});
+g.size.w=340; g.size.h=190; applySize(g);
+const nv=addNode('numview',440,170,{});
+const tr=addNode('trend',440,300,{span:60,auto:true});
+tr.size.w=460; tr.size.h=170; applySize(tr);
+addEdge(g.id,'value',nv.id,'in'); addEdge(g.id,'value',tr.id,'in');
+markWiresDirty();
+});
+preset('BLE: Find a Beacon by RSSI', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'The signal strength of one BLE device that advertises (a beacon, a tracker tag, a fitness band, a phone in discoverable mode): press Choose device. No connection is made, the device only has to broadcast.\n'+
+  'Walk with the laptop or phone and watch the level grow when you get closer. Needs `watchAdvertisements` (Chrome 85+ on desktop and Android; on some versions enable chrome://flags/#enable-experimental-web-platform-features).\n'+
+  'RSSI smoothing averages the jumpy readings; `present` drops to 0 after the silence set in «absent after»; `mfr` gives the manufacturer data (hex), `rec` a record per packet.'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const a=addNode('bleAdv',40,190,{avg:.5,lost:15});
+a.size.w=340; a.size.h=160; applySize(a);
+const nv=addNode('numview',440,190,{});
+const tr=addNode('trend',440,320,{span:60,auto:true});
+tr.size.w=460; tr.size.h=170; applySize(tr);
+addEdge(a.id,'rssi',nv.id,'in'); addEdge(a.id,'rssi',tr.id,'in');
+markWiresDirty();
+});
+preset('BLE: UART Terminal', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'A serial terminal over Bluetooth LE: Nordic UART Service (nRF, ESP32 with a NUS sketch, many BLE modules) or HM-10 (FFE0 / FFE1). The profile «custom» takes your own service and characteristics.\n'+
+  'Lines from the device appear on `line` (Ticker); text from the Text Source goes out with the chosen line end, 20 bytes per write (raise it on devices with a big MTU).\n'+
+  'Press Connect and choose the device.'});
+nt.size.w=1000; nt.size.h=110; applySize(nt);
+const b=addNode('bleUart',40,170,{profile:'Nordic UART',eol:'\\n'});
+b.size.w=360; b.size.h=210; applySize(b);
+const tk=addNode('ticker',460,170,{time:true});
+tk.size.w=420; tk.size.h=140; applySize(tk);
+const ts=addNode('textsrc',40,420,{});
+addEdge(b.id,'line',tk.id,'text'); addEdge(ts.id,'text',b.id,'text');
+markWiresDirty();
+});
+preset('Gamepad: Axes to Tone and Lamps', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'A gamepad, joystick, steering wheel or pedals as a controller (Gamepad API: Chrome, Edge, Firefox, Safari). The browser shows the device only after a button is pressed on it.\n'+
+  'The left stick X sets the pitch of the oscillator (Math: −1…1 → 200…1000 Hz), the first two buttons light the lamps, the trend chart shows the axis. The `rumble` and `weak` inputs make the gamepad vibrate (a wire with 0…1, e.g. from a level meter or a lamp).\n'+
+  'Axes and buttons are plain numbers: wire them to any parameter — the frequency of a receiver, a relay on Serial Out / MQTT Out, a tracker. The counts of axes and buttons are in the parameters.'});
+nt.size.w=1000; nt.size.h=120; applySize(nt);
+const g=addNode('gamepad',40,180,{axes:'4',btns:'4'});
+g.size.w=300; g.size.h=200; applySize(g);
+const m=addNode('nmath',400,180,{op:'sum',inputs:'1',k:400,ofs:600});
+const os=addNode('osc',620,180,{amp:.3,wave:'sine'});
+const dc=addNode('dac',860,180,{vol:.3});
+const lp=addNode('lamps',400,340,{count:'2',labels:'b1,b2',colors:'amber,amber',hold:.1});
+lp.size.w=200; lp.size.h=80; applySize(lp);
+const tr=addNode('trend',620,340,{span:20,auto:false,lo:-1,hi:1});
+tr.size.w=420; tr.size.h=140; applySize(tr);
+addEdge(g.id,'a1',m.id,'in1'); addEdge(m.id,'out',os.id,'freq'); addEdge(os.id,'out',dc.id,'L'); addEdge(os.id,'out',dc.id,'R');
+addEdge(g.id,'b1',lp.id,'in1'); addEdge(g.id,'b2',lp.id,'in2'); addEdge(g.id,'a1',tr.id,'in');
+markWiresDirty();
+});
+preset('HID: Reports to Number and Log', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Any USB / Bluetooth HID device without a driver: foot pedals, remote controls, USB scales and sensors, barcode scanners, your own boards (Arduino Leonardo / Pro Micro, RP2040). WebHID: Chrome, Edge, Opera on https or localhost; keyboards and mice are blocked by the browser.\n'+
+  'Press Connect and choose the device (vendor / product id narrow the list). Every input report appears as hex on `report` (the Ticker); the value output takes one field of the report: offset in the data, format (uint / int 8 / 16 / 32 bit, little or big endian, a single bit) and scale; the report id filters the value.\n'+
+  'Find the field by watching which bytes change while you press or move something. The `send` input (hex) writes an output or a feature report: LEDs, modes, commands.'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const h=addNode('hid',40,190,{fmt:'uint8',off:0});
+h.size.w=360; h.size.h=230; applySize(h);
+const tk=addNode('ticker',460,190,{time:true});
+tk.size.w=420; tk.size.h=140; applySize(tk);
+const tr=addNode('trend',460,350,{span:30,auto:true});
+tr.size.w=420; tr.size.h=140; applySize(tr);
+addEdge(h.id,'report',tk.id,'text'); addEdge(h.id,'value',tr.id,'in');
+markWiresDirty();
+});
+preset('NFC: Tag Log and Writer', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'NFC tags (NDEF): Web NFC works in Chrome on Android over https; desktop browsers do not support it. Press Scan, hold a tag to the back of the phone: the serial number goes to `serial`, the first text / URL / JSON record to `text`, every record to `rec` (Rec Log).\n'+
+  'Write: type a text in the node (or wire a text to `write`), press Write and hold a blank or rewritable tag to the phone; a pulse on `go` does the same. The record type is text, URL or JSON.\n'+
+  'A tag serial or its text can drive anything: publish it with MQTT Out, count visits with a Counter, log arrivals with timestamps.'});
+nt.size.w=1000; nt.size.h=120; applySize(nt);
+const nf=addNode('nfc',40,180,{wtext:'hello from the workbench',wtype:'text'});
+nf.size.w=340; nf.size.h=230; applySize(nf);
+const tk=addNode('ticker',440,180,{time:true});
+tk.size.w=420; tk.size.h=120; applySize(tk);
+const rl=addNode('recLog',440,320,{});
+rl.size.w=420; rl.size.h=170; applySize(rl);
+addEdge(nf.id,'serial',tk.id,'text'); addEdge(nf.id,'rec',rl.id,'rec');
 markWiresDirty();
 });
 preset('Unknown Signal: Blind Analysis (Generator)', function(){

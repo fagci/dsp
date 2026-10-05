@@ -9,9 +9,10 @@
 const LA_KEEP=20;                                   // сколько секунд фронтов помним
 const LA_COLORS=['--t-blk','--acc','--acc2','--t-img','--t-spec','--t-trk','--err','--t-iq'];
 const laNum=n=>n.p.src==='number';
+const laUsb=n=>n.p.src==='USB';                      // отсчёты из USB-логического анализатора (logicusb.js), частота — своя
 const laCount=n=>+n.p.count||4;
-const laType=n=>laNum(n) ? 'num' : 'sig';
-const laRate=n=>laNum(n) ? Eng.sr/BLOCK : Eng.sr;
+const laType=n=>laNum(n) || laUsb(n) ? 'num' : 'sig';
+const laRate=n=>laNum(n) ? Eng.sr/BLOCK : laUsb(n) ? lusbRate(n) : Eng.sr;
 function laRewire(n,all){                           // убрать провода к исчезнувшим портам (all — сменился тип портов)
   const vi=new Set(portsOf(n,'ins').map(p=>p.n)), vo=new Set(portsOf(n,'outs').map(p=>p.n));
   Graph.edges.filter(e=>e.to===n.id ? all || !vi.has(e.tp) : e.from===n.id && (all || !vo.has(e.fp))).forEach(delEdge);
@@ -137,11 +138,11 @@ function laI2c(n,dig,L){
 }
 
 def({ id:'logan', lazy:'proc', title:'Logic Analyzer', cat:'Analysis',
-  ins:n=>Array.from({length:laCount(n)},(_,k)=>({n:'ch'+(k+1),t:laType(n)})),
+  ins:n=>laUsb(n) ? [] : Array.from({length:laCount(n)},(_,k)=>({n:'ch'+(k+1),t:laType(n)})),
   outs:n=>[...Array.from({length:laCount(n)},(_,k)=>({n:'d'+(k+1),t:laType(n)})),
            {n:'byte',t:'num'},{n:'new',t:'num'},{n:'text',t:'txt'},{n:'rec',t:'rec'},{n:'hit',t:'num'}],
   view:{h:170}, resize:true, readout:true, w:440,
-  params:[{n:'src',t:'select',opts:['signal','number'],d:'signal',label:'input wires',fn:n=>{ laReset(n); laRewire(n,true); }},
+  params:[{n:'src',t:'select',opts:['signal','number','USB'],d:'signal',label:'input: wires (signal / number) or a USB logic analyzer (fx2lafw)',fn:n=>{ lusbStop(n); laReset(n); laRewire(n,true); }},
           {n:'count',t:'select',opts:['1','2','3','4','5','6','7','8'],d:'4',label:'channels',fn:n=>{ laReset(n); laRewire(n,false); }},
           {n:'names',t:'text',d:'',label:'channel names (comma separated)'},
           {n:'thr',t:'num',d:.5,label:'threshold'},
@@ -163,30 +164,37 @@ def({ id:'logan', lazy:'proc', title:'Logic Analyzer', cat:'Analysis',
           {n:'idle',t:'select',opts:['high','low'],d:'high',label:'UART idle level',adv:true},
           {n:'order',t:'select',opts:['auto','LSB','MSB'],d:'auto',label:'bit order (auto: UART LSB first, SPI MSB first)',adv:true},
           {n:'edge',t:'select',opts:['rising','falling'],d:'rising',label:'SPI sampling clock edge',adv:true},
-          {n:'clr',t:'button',label:'Clear decoded',fn:n=>{ n.ann=[]; n.nbytes=n.nerr=n.nlines=0; n.last=''; n.dec={}; redraw(n); }}],
-  init:n=>{ laReset(n); n.rk=''; n.dk=''; n.recs=[]; n.newv=0; n.lastT=0; n.dout=[]; n.dig=[]; },
+          {n:'clr',t:'button',label:'Clear decoded',fn:n=>{ n.ann=[]; n.nbytes=n.nerr=n.nlines=0; n.last=''; n.dec={}; redraw(n); }},
+          {n:'urate',t:'select',opts:LUSB_RATES.map(r=>r[0]),d:'1 MHz',label:'USB: sample rate (D0…D7 = channels 1…8)',adv:true,fn:n=>{ if(n.usbRun) lusbStart(n); }},
+          {n:'uconn',t:'button',label:'USB: connect',fn:n=>lusbConnect(n),adv:true},
+          {n:'ufw',t:'button',label:'USB: load firmware (.fw)',fn:n=>lusbFirmware(n),adv:true},
+          {n:'ustart',t:'button',label:'USB: start',fn:n=>lusbStart(n),adv:true},
+          {n:'ustop',t:'button',label:'USB: stop',fn:n=>lusbStop(n),adv:true}],
+  init:n=>{ laReset(n); n.rk=''; n.dk=''; n.recs=[]; n.newv=0; n.lastT=0; n.dout=[]; n.dig=[]; lusbInit(n); },
+  dispose:n=>{ lusbDispose(n); },
   process(n,I){
-    const p=n.p, N=laCount(n), num=laNum(n), rate=laRate(n), L=num ? 1 : BLOCK;
-    const rk=rate+'|'+num+'|'+N; if(rk!==n.rk){ n.rk=rk; laReset(n); }
+    const p=n.p, N=laCount(n), num=laNum(n), usb=laUsb(n), rate=laRate(n), S=usb ? lusbTake(n) : null, L=num ? 1 : usb ? S.n : BLOCK;
+    const rk=rate+'|'+num+'|'+usb+'|'+N; if(rk!==n.rk){ n.rk=rk; laReset(n); }
     const dk=[p.proto,p.a,p.b,p.c,p.cs,p.baud,p.bits,p.parity,p.idle,p.order,p.edge].join('|');
     if(dk!==n.dk){ n.dk=dk; n.dec={}; }
     const thr=+p.thr, h=Math.abs(+p.hys)/2, cut=n.si-LA_KEEP*rate;
     n.recs=[]; n.newv=0;
     for(let k=0;k<N;k++){
-      const a=I['ch'+(k+1)], wired=num ? typeof a==='number' && isFinite(a) : !!a;
-      if(!n.dig[k] || n.dig[k].length!==L){ n.dig[k]=new Uint8Array(L); n.dout[k]=num ? 0 : new Float32Array(L); }
+      const a=I['ch'+(k+1)], wired=usb || (num ? typeof a==='number' && isFinite(a) : !!a);
+      if(!n.dig[k] || (usb ? n.dig[k].length<L : n.dig[k].length!==L)){ n.dig[k]=new Uint8Array(L); n.dout[k]=num || usb ? 0 : new Float32Array(L); }
       const dg=n.dig[k], T=n.eT[k], V=n.eV[k]; let lv=n.lv[k];
       for(let i=0;i<L;i++){
-        if(wired){
+        if(usb) lv=(S.d[i]>>k)&1;
+        else if(wired){
           const v=num ? a : a[i];
           if(lv===0 ? v>thr+h : v<thr-h) lv^=1;
           else if(!T.length) lv=v>thr ? 1 : 0;
         }
         dg[i]=lv;
         if(!T.length || V[V.length-1]!==lv){ T.push(n.si+i); V.push(lv); }
-        if(!num) n.dout[k][i]=lv;
+        if(!num && !usb) n.dout[k][i]=lv;
       }
-      n.lv[k]=lv; if(num) n.dout[k]=lv;
+      n.lv[k]=lv; if(num || usb) n.dout[k]=lv;
       let hd=n.eH[k]; while(hd+1<T.length && T[hd+1]<cut) hd++;      // старые фронты — за голову, раз в 4096 вырезаем
       if(hd>4096){ T.splice(0,hd); V.splice(0,hd); hd=0; }
       n.eH[k]=hd;
@@ -261,7 +269,8 @@ def({ id:'logan', lazy:'proc', title:'Logic Analyzer', cat:'Analysis',
     const r=n.el.querySelector('.readout');
     if(r){
       const spb=rate/Math.max(1,+p.baud);
-      r.textContent = p.proto==='none' ? (n.hold!=null ? 'hold' : p.trig!=='off' ? (n.trigAt==null ? 'waiting for trigger' : 'triggered') : 'running')
-        : p.proto+' · '+n.nbytes+' bytes'+(n.nerr ? ' · '+n.nerr+' errors' : '')+(p.proto==='UART' && spb<3 ? ' · baud too high for this sample rate' : '')+(n.last ? '\n'+n.last.slice(-60) : '');
+      const us=laUsb(n) ? n.ustat+' · ' : '';
+      r.textContent = us+(p.proto==='none' ? (n.hold!=null ? 'hold' : p.trig!=='off' ? (n.trigAt==null ? 'waiting for trigger' : 'triggered') : 'running')
+        : p.proto+' · '+n.nbytes+' bytes'+(n.nerr ? ' · '+n.nerr+' errors' : '')+(p.proto==='UART' && spb<3 ? ' · baud too high for this sample rate' : '')+(n.last ? '\n'+n.last.slice(-60) : ''));
     } }
 });
