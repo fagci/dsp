@@ -161,6 +161,8 @@ const PRESET_CATS={
   'Radiosonde RS41: Map (USB SDR, 400–406 MHz)':'Aircraft, Satellites & Telemetry',
   'NMEA: GPS Track (Table Playback)':'Maps & Locating',
   'NMEA: Network Stream (gpsd, AIS-catcher, Termux)':'Network & IoT',
+  'POCSAG: Pager Messages (Generator)':'Modems & Data Links',
+  'POCSAG: Pager Messages (USB SDR)':'Modems & Data Links',
   'AIS: Vessels on the Map (Generator)':'Aircraft, Satellites & Telemetry',
   'AIS: Vessels on the Map (USB SDR, 162 MHz)':'Aircraft, Satellites & Telemetry',
   'ISM 433: Sensors and Remotes (Generator)':'Aircraft, Satellites & Telemetry',
@@ -1117,6 +1119,44 @@ log.size.w=520; applySize(log);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',map.id,'rec'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('POCSAG: Pager Messages (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'POCSAG paging without a radio: the generator sends a text page, a numeric page and a tone-only call in turn — 2-FSK ±4.5 kHz, 1200 Bd\n'+
+  '(pick 512 or 2400 in the generator): preamble 1010…, batches of a sync word and 16 codewords, BCH(31,21) and parity, RIC = address ×8 + frame.\n'+
+  'POCSAG Decoder: FM discriminator, all three baud rates and 8 bit-clock phases at once, polarity by the sync word, errors corrected up to 2 bits per codeword → RIC, function, text / digits.\n'+
+  'Messages lists them (to = RIC); Rec Log saves CSV.'});
+nt.size.w=760; nt.size.h=150; applySize(nt);
+const gn=addNode('iqGen',40,260,{sr:'256000',fc:466000000,mode:'POCSAG',off:5000,lvl:-20,noise:-50});
+const de=addNode('pocsagRx',340,260,{});
+de.size.w=520; de.size.h=300; applySize(de);
+const ms=addNode('msgLog',900,260,{});
+ms.size.w=480; ms.size.h=300; applySize(ms);
+const log=addNode('recLog',340,620,{});
+log.size.w=520; applySize(log);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',ms.id,'rec'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('POCSAG: Pager Messages (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'POCSAG: tune the SDR to a local paging channel (frequencies differ by country: VHF 148–174 MHz, UHF 440–470 MHz, 929 MHz in North America)\n'+
+  'and tap the narrow FSK signal on the spectrum. Check the baud rate (auto tries 512 / 1200 / 2400). Pages are addressed to people: keep to the law of your country\n'+
+  'on receiving and storing them.'});
+nt.size.w=760; nt.size.h=110; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'1024000',freq:466000000,demod:'IQ'});
+const sa=addNode('sa',760,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,200,{});
+const de=addNode('pocsagRx',340,360,{});
+de.size.w=520; de.size.h=300; applySize(de);
+const ms=addNode('msgLog',900,360,{});
+ms.size.w=480; ms.size.h=300; applySize(ms);
+const log=addNode('recLog',340,720,{});
+log.size.w=520; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',ms.id,'rec'); addEdge(de.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('ISM 433: Sensors and Remotes (Generator)', function(){
