@@ -77,7 +77,7 @@ function nxdnChDecode(ch,raw){
   const des=new Uint8Array(ch.len);
   for(let i=0;i<ch.len;i++) des[i]=raw[ch.il[i]];
   for(let i=0;i<2*ch.steps;i++) rx[i]=P.has(i) ? -1 : des[k++];
-  const r=nxdnConvDec(rx,ch.steps), ok=ch.crc(r.bits,ch.data)===dmrNum(r.bits,ch.data,ch.cw);
+  const r=nxdnConvDec(rx,ch.steps), ok=ch.crc(r.bits,ch.data)===bitsNum(r.bits,ch.data,ch.cw);
   return {bits:r.bits, ok, err:r.err};
 }
 // data — ch.data бит; → ch.len бит канала в порядке кадра
@@ -102,15 +102,15 @@ const nxdnLichBits=(rfct,fct,opt,dir)=>{ const v=(rfct<<6)|(fct<<4)|(opt<<2)|(di
 
 /* ---- слой 3 (биты сообщения: 0–1 флаги, 2–7 тип) ---- */
 function nxdnL3(b){
-  const type=dmrNum(b,2,6), f={type, name:NXDN_MSG[type]||'0x'+type.toString(16), f1:b[0], f2:b[1]};
+  const type=bitsNum(b,2,6), f={type, name:NXDN_MSG[type]||'0x'+type.toString(16), f1:b[0], f2:b[1]};
   if(type===0x01 || type===0x07 || type===0x08 || type===0x11 || type===0x09 || type===0x0B || type===0x38 || type===0x04 || type===0x05 || type===0x0E || type===0x0D){
-    const ct=dmrNum(b,16,3);
-    Object.assign(f,{ccopt:dmrNum(b,8,8), ctype:ct, call:NXDN_CALLTYPE[ct]||'type '+ct, opt:dmrNum(b,19,5), from:dmrNum(b,24,16), to:dmrNum(b,40,16),
-      emergency:b[8], cipher:dmrNum(b,56,2), key:dmrNum(b,58,6)});
-    if(type===0x04 || type===0x05 || type===0x0E || type===0x0D){ delete f.cipher; delete f.key; f.timer=dmrNum(b,56,6); f.channel=dmrNum(b,62,10); }
+    const ct=bitsNum(b,16,3);
+    Object.assign(f,{ccopt:bitsNum(b,8,8), ctype:ct, call:NXDN_CALLTYPE[ct]||'type '+ct, opt:bitsNum(b,19,5), from:bitsNum(b,24,16), to:bitsNum(b,40,16),
+      emergency:b[8], cipher:bitsNum(b,56,2), key:bitsNum(b,58,6)});
+    if(type===0x04 || type===0x05 || type===0x0E || type===0x0D){ delete f.cipher; delete f.key; f.timer=bitsNum(b,56,6); f.channel=bitsNum(b,62,10); }
   } else if(type===0x18 && b.length>=128){
-    Object.assign(f,{location:dmrNum(b,8,24).toString(16).toUpperCase().padStart(6,'0'), cs:dmrNum(b,32,16), svc:dmrNum(b,48,16), rst:dmrNum(b,64,24), ca:dmrNum(b,88,24),
-      version:dmrNum(b,112,8), adj:dmrNum(b,120,4), ch1:dmrNum(b,124,10), ch2:dmrNum(b,134,10)});
+    Object.assign(f,{location:bitsNum(b,8,24).toString(16).toUpperCase().padStart(6,'0'), cs:bitsNum(b,32,16), svc:bitsNum(b,48,16), rst:bitsNum(b,64,24), ca:bitsNum(b,88,24),
+      version:bitsNum(b,112,8), adj:bitsNum(b,120,4), ch1:bitsNum(b,124,10), ch2:bitsNum(b,134,10)});
   } else if(type===0x03) f.iv=dmrHex(p25Bytes(b.subarray(8,72)));
   else f.hex=dmrHex(p25Bytes(b.subarray(8,b.length&~7)));
   return f;
@@ -170,20 +170,20 @@ FSK4.protos.nxdn={
       P.st.cac++;
       const r=nxdnChDecode(NXDN_CH.cac,bits.subarray(36));
       if(!r.ok){ if(bad()) return; }
-      else { P.ran=dmrNum(r.bits,2,6); this.l3(P,L,out,r.bits.subarray(8,8+147),'CAC'); }
+      else { P.ran=bitsNum(r.bits,2,6); this.l3(P,L,out,r.bits.subarray(8,8+147),'CAC'); }
       this.advance(P,L); return;
     }
     if(lich.fct===1){                                             // UDCH / FACCH2
       P.st.udch++;
       const r=nxdnChDecode(NXDN_CH.udch,bits.subarray(36));
       if(!r.ok){ if(bad()) return; }
-      else { P.ran=dmrNum(r.bits,2,6); this.l3(P,L,out,r.bits.subarray(8,8+176),'UDCH'); }
+      else { P.ran=bitsNum(r.bits,2,6); this.l3(P,L,out,r.bits.subarray(8,8+176),'UDCH'); }
     } else if(lich.fct!==3){
       const s=nxdnChDecode(NXDN_CH.sacch,bits.subarray(36));
       if(!s.ok){ if(bad()) return; }
       else {
-        P.st.sacch++; P.ran=dmrNum(s.bits,2,6);
-        const sr=dmrNum(s.bits,0,2), seg=s.bits.subarray(8,26);
+        P.st.sacch++; P.ran=bitsNum(s.bits,2,6);
+        const sr=bitsNum(s.bits,0,2), seg=s.bits.subarray(8,26);
         // суперкадр SACCH: сегменты 1/4 … 4/4 (поле структуры 3, 2, 1, 0) → 72 бита слоя 3
         if(lich.fct===2){
           if(sr===3) P.sf={m:1, b:new Uint8Array(72)};

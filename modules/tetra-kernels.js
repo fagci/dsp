@@ -153,14 +153,13 @@ function tetraRmDec(w){
 }
 
 /* ---- разбор PDU ---- */
-function tetraBits(b,pos,len){ let v=0; for(let i=0;i<len;i++) v=v*2+(b[pos+i]&1); return v; }
 function tetraHex(b,pos,len){ let s=''; for(let i=0;i<len;i+=4){ let v=0; for(let j=0;j<4;j++) v=(v<<1)|(i+j<len ? b[pos+i+j]&1 : 0); s+=v.toString(16); } return s; }
 
 // SYNC PDU (BSCH, 60 бит): системный код 4, цвет 6, TN 2, FN 5, MN 6, режим 2, зарезервированные кадры 3, DTX 1, расширение кадра 18 1, резерв 1, MCC 10, MNC 14, соседи 2, уровень 2, позднее вхождение 1
 function tetraSync(b){
-  return {sys:tetraBits(b,0,4), cc:tetraBits(b,4,6), tn:tetraBits(b,10,2)+1, fn:tetraBits(b,12,5), mn:tetraBits(b,17,6),
-    sharing:tetraBits(b,23,2), reserved:tetraBits(b,25,3), dtx:b[28], f18ext:b[29], mcc:tetraBits(b,31,10), mnc:tetraBits(b,41,14),
-    nbr:tetraBits(b,55,2), svc:tetraBits(b,57,2), late:b[59]};
+  return {sys:bitsNum(b,0,4), cc:bitsNum(b,4,6), tn:bitsNum(b,10,2)+1, fn:bitsNum(b,12,5), mn:bitsNum(b,17,6),
+    sharing:bitsNum(b,23,2), reserved:bitsNum(b,25,3), dtx:b[28], f18ext:b[29], mcc:bitsNum(b,31,10), mnc:bitsNum(b,41,14),
+    nbr:bitsNum(b,55,2), svc:bitsNum(b,57,2), late:b[59]};
 }
 function tetraSyncBits(s){
   const b=new Uint8Array(60), put=(p,l,v)=>{ for(let i=0;i<l;i++) b[p+i]=(v>>(l-1-i))&1; };
@@ -174,12 +173,12 @@ const tetraDlHz=(band,carrier,off)=>TETRA_BAND_HZ(band)+carrier*25000+TETRA_OFFS
 const TETRA_SERV=['registration mandatory','de-registration mandatory','priority cell','no minimum mode','migration','system-wide services','voice','circuit data','(res)','SNDCP data','air encryption','advanced link'];
 function tetraSysinfo(b){
   let c=4;
-  const r={carrier:tetraBits(b,c,12), band:tetraBits(b,c+12,4), off:tetraBits(b,c+16,2), duplex:tetraBits(b,c+18,3), reverse:b[c+21],
-    ncs:tetraBits(b,c+22,2), txpwr:tetraBits(b,c+24,3), rxmin:tetraBits(b,c+27,4), access:tetraBits(b,c+31,4), timeout:tetraBits(b,c+35,4)};
-  c+=39; r.cckValid=b[c++]; const v=tetraBits(b,c,16); c+=16;
+  const r={carrier:bitsNum(b,c,12), band:bitsNum(b,c+12,4), off:bitsNum(b,c+16,2), duplex:bitsNum(b,c+18,3), reverse:b[c+21],
+    ncs:bitsNum(b,c+22,2), txpwr:bitsNum(b,c+24,3), rxmin:bitsNum(b,c+27,4), access:bitsNum(b,c+31,4), timeout:bitsNum(b,c+35,4)};
+  c+=39; r.cckValid=b[c++]; const v=bitsNum(b,c,16); c+=16;
   if(r.cckValid) r.cck=v; else r.hyper=v;
-  r.opt=tetraBits(b,c,2);
-  r.la=tetraBits(b,82,14); r.subscr=tetraBits(b,96,16); r.serv=tetraBits(b,112,12);
+  r.opt=bitsNum(b,c,2);
+  r.la=bitsNum(b,82,14); r.subscr=bitsNum(b,96,16); r.serv=bitsNum(b,112,12);
   r.dlHz=tetraDlHz(r.band,r.carrier,r.off);
   const sp=[[0,1600,10000,10000,10000,10000,10000],[0,4500,0,36000,7000,0,0,0,45000,45000],[],[0,0,0,8000,8000,0,0,0,18000,18000],[0,0,0,18000,5000,0,30000,30000,0,39000],[0,0,0,0,9500]][r.duplex]||[];
   const d=(sp[r.band]||0)*1000;
@@ -212,25 +211,25 @@ const TETRA_ALLOC=['replace','additional','quit and go','replace + slot 1'];
 const TETRA_ULDL=['augmented','downlink','uplink','uplink+downlink'];
 function tetraChanAlloc(b,pos,band,off){
   let c=pos;
-  const r={type:tetraBits(b,c,2), ts:tetraBits(b,c+2,4), uldl:tetraBits(b,c+6,2)}; c+=8;
-  r.clch=b[c++]; r.cellChg=b[c++]; r.carrier=tetraBits(b,c,12); c+=12;
-  if(b[c++]){ band=tetraBits(b,c,4); off=tetraBits(b,c+4,2); c+=10; r.extCarrier=true; }
-  const mp=tetraBits(b,c,2); c+=2;
+  const r={type:bitsNum(b,c,2), ts:bitsNum(b,c+2,4), uldl:bitsNum(b,c+6,2)}; c+=8;
+  r.clch=b[c++]; r.cellChg=b[c++]; r.carrier=bitsNum(b,c,12); c+=12;
+  if(b[c++]){ band=bitsNum(b,c,4); off=bitsNum(b,c+4,2); c+=10; r.extCarrier=true; }
+  const mp=bitsNum(b,c,2); c+=2;
   if(mp===0) c+=2;
   if(r.uldl===0){ r.aug=true; return {r,len:-1}; }                  // расширенный вариант (QAM) не разбирается
   r.dlHz=band!=null ? tetraDlHz(band,r.carrier,off) : 0;
   return {r,len:c-pos};
 }
 function tetraResource(b,len,band,off){
-  const r={fill:b[2], grantPos:b[3], enc:tetraBits(b,4,2), rand:b[6], lenInd:tetraBits(b,7,6), addrType:tetraBits(b,13,3)};
+  const r={fill:b[2], grantPos:b[3], enc:bitsNum(b,4,2), rand:b[6], lenInd:bitsNum(b,7,6), addrType:bitsNum(b,13,3)};
   let c=16;
   const at=r.addrType;
   if(at===0){ r.addr='null'; r.octets=r.lenInd; r.end=true; return r; }
-  if(at===2){ r.event=tetraBits(b,c,10); }
+  if(at===2){ r.event=bitsNum(b,c,10); }
   else {
-    r.ssi=tetraBits(b,c,24);
-    if(at===5||at===7) r.event=tetraBits(b,c+24,10);
-    else if(at===6) r.usage=tetraBits(b,c+24,6);
+    r.ssi=bitsNum(b,c,24);
+    if(at===5||at===7) r.event=bitsNum(b,c+24,10);
+    else if(at===6) r.usage=bitsNum(b,c+24,6);
   }
   c+=[0,24,10,24,24,34,30,34][at];
   const li=r.lenInd;
@@ -258,17 +257,17 @@ const TETRA_MLE=['D-NEW CELL','D-PREPARE FAIL','D-NWRK BROADCAST','D-NWRK BROADC
 function tetraTmSdu(b,pos,end){
   const len=end-pos;
   if(len<4) return null;
-  const t=tetraBits(b,pos,4), r={llc:TETRA_LLC[t]};
+  const t=bitsNum(b,pos,4), r={llc:TETRA_LLC[t]};
   let c=pos+4, e=end;
   if(t<=7 && t>=4) e-=32;                                          // FCS
   if(t===0||t===4) c+=2; else if(t===1||t===5||t===3||t===7) c+=1;
   if(t>7 || e-c<4) return r;
   if(t===3||t===7) return r;                                       // BL-ACK без данных
-  const d=tetraBits(b,c,3); c+=3;
+  const d=bitsNum(b,c,3); c+=3;
   r.disc=TETRA_PDISC[d]||('PD'+d);
-  if(d===2 && e-c>=5){ const k=tetraBits(b,c,5); r.pdu=TETRA_CMCE[k]||('type '+k); }
-  else if(d===1 && e-c>=4){ const k=tetraBits(b,c,4); r.pdu=TETRA_MM[k]||('type '+k); }
-  else if(d===5 && e-c>=3){ const k=tetraBits(b,c,3); r.pdu=TETRA_MLE[k]||('type '+k); }
+  if(d===2 && e-c>=5){ const k=bitsNum(b,c,5); r.pdu=TETRA_CMCE[k]||('type '+k); }
+  else if(d===1 && e-c>=4){ const k=bitsNum(b,c,4); r.pdu=TETRA_MM[k]||('type '+k); }
+  else if(d===5 && e-c>=3){ const k=bitsNum(b,c,3); r.pdu=TETRA_MLE[k]||('type '+k); }
   r.bits=[c,e];
   return r;
 }
@@ -371,21 +370,21 @@ function tetraText(b,pos,end,coding){
     }
     return s;
   }
-  if(coding===1){ let s=''; for(let i=pos;i+8<=end;i+=8){ const c=tetraBits(b,i,8); s+=String.fromCharCode(c||32); } return s; }
-  if(coding===26){ let s=''; for(let i=pos;i+16<=end;i+=16){ const c=tetraBits(b,i,16); s+=String.fromCharCode(c||32); } return s; }
+  if(coding===1){ let s=''; for(let i=pos;i+8<=end;i+=8){ const c=bitsNum(b,i,8); s+=String.fromCharCode(c||32); } return s; }
+  if(coding===26){ let s=''; for(let i=pos;i+16<=end;i+=16){ const c=bitsNum(b,i,16); s+=String.fromCharCode(c||32); } return s; }
   return null;
 }
 const TETRA_LIP_ERR=['<2 m','<20 m','<200 m','<2 km','<20 km','≤200 km','>200 km',null];
 // короткий отчёт LIP: тип PDU 2, время 2, долгота 25, широта 24, ошибка 3, скорость 7, направление 4, тип доп. данных 1 (+ причина 8)
 function tetraLip(b,o,len){
-  if(len<8+68 || tetraBits(b,o+8,2)!==0) return null;
+  if(len<8+68 || bitsNum(b,o+8,2)!==0) return null;
   const sg=(v,n)=>v>=Math.pow(2,n-1) ? v-Math.pow(2,n) : v;
-  const lon=sg(tetraBits(b,o+12,25),25)*360/Math.pow(2,25), lat=sg(tetraBits(b,o+37,24),24)*180/Math.pow(2,24);
-  const k=tetraBits(b,o+64,7);
-  const r={lat:+lat.toFixed(6), lon:+lon.toFixed(6), elapsed:tetraBits(b,o+10,2), err:TETRA_LIP_ERR[tetraBits(b,o+61,3)]};
+  const lon=sg(bitsNum(b,o+12,25),25)*360/Math.pow(2,25), lat=sg(bitsNum(b,o+37,24),24)*180/Math.pow(2,24);
+  const k=bitsNum(b,o+64,7);
+  const r={lat:+lat.toFixed(6), lon:+lon.toFixed(6), elapsed:bitsNum(b,o+10,2), err:TETRA_LIP_ERR[bitsNum(b,o+61,3)]};
   if(k<127) r.speed=k<=28 ? k : +(16*Math.pow(1.038,k-13)).toFixed(1);
-  const d=tetraBits(b,o+71,4); r.heading=d*22.5;
-  if(!b[o+75] && len>=84) r.reason=tetraBits(b,o+76,8);
+  const d=bitsNum(b,o+71,4); r.heading=d*22.5;
+  if(!b[o+75] && len>=84) r.reason=bitsNum(b,o+76,8);
   if(Math.abs(lat)>90 || Math.abs(lon)>180) return null;
   return r;
 }
@@ -393,34 +392,34 @@ function tetraLip(b,o,len){
 function tetraSds(b,pos,end){
   let o=pos+5;
   if(end-o<4) return null;
-  const cpti=tetraBits(b,o,2); o+=2;
+  const cpti=bitsNum(b,o,2); o+=2;
   let from=null;
-  if(cpti===1||cpti===2){ if(end-o<24) return null; from=tetraBits(b,o,24); o+=24; }
+  if(cpti===1||cpti===2){ if(end-o<24) return null; from=bitsNum(b,o,24); o+=24; }
   if(cpti===2){ if(end-o<24) return null; o+=24; }
   if(end-o<2) return null;
-  const sdti=tetraBits(b,o,2); o+=2;
+  const sdti=bitsNum(b,o,2); o+=2;
   let len;
-  if(sdti<3) len=[16,32,64][sdti]; else { if(end-o<11) return null; len=tetraBits(b,o,11); o+=11; }
+  if(sdti<3) len=[16,32,64][sdti]; else { if(end-o<11) return null; len=bitsNum(b,o,11); o+=11; }
   if(o+len>end) return null;
   const r={from, sdti, len, hex:tetraHex(b,o,Math.min(len,512))};
-  if(sdti===0){ r.kind='status'; r.status=tetraBits(b,o,16); return r; }
+  if(sdti===0){ r.kind='status'; r.status=bitsNum(b,o,16); return r; }
   if(sdti<3||len<8){ r.kind='data'; return r; }
-  const pid=tetraBits(b,o,8); r.pid=pid; r.kind='data';
+  const pid=bitsNum(b,o,8); r.pid=pid; r.kind='data';
   const e=o+len;
   let ts=-1, tsOk=false;
   if(pid===2||pid===9) ts=o+8;
   else if(pid===10){ const p=tetraLip(b,o,len); if(p){ r.kind='location'; Object.assign(r,p); } return r; }
   else if(pid>=128 && pid<255 && len>=12){
-    const type=tetraBits(b,o+8,4);
+    const type=bitsNum(b,o+8,4);
     if(type<=2){
       let h=type===0 ? 24 : 32;
       if(len<h) return r;
-      r.tl=['TRANSFER','REPORT','ACK'][type]; r.ref=tetraBits(b,o+h-8,8);
+      r.tl=['TRANSFER','REPORT','ACK'][type]; r.ref=bitsNum(b,o+h-8,8);
       if(type!==2 && b[o+15]){                                      // хранение и пересылка: срок 5, тип адреса 3, адрес
-        let req=h+8; const a=tetraBits(b,o+h+5,3);
+        let req=h+8; const a=bitsNum(b,o+h+5,3);
         if(len<req) return r;
         if(a===0) req+=8; else if(a===1) req+=24; else if(a===2) req+=48;
-        else if(a===3){ if(len<h+16) return r; const dg=tetraBits(b,o+h+8,8); req=h+16+((dg+1)&~1)*4; }
+        else if(a===3){ if(len<h+16) return r; const dg=bitsNum(b,o+h+8,8); req=h+16+((dg+1)&~1)*4; }
         else if(a!==7) return r;
         if(len<req) return r;
         h=req;
@@ -429,7 +428,7 @@ function tetraSds(b,pos,end){
     }
   }
   if(ts>=0 && e-ts>=8){
-    const tsFlag=b[ts], coding=tetraBits(b,ts+1,7);
+    const tsFlag=b[ts], coding=bitsNum(b,ts+1,7);
     let p=ts+8; if(tsOk && tsFlag) p+=24;
     r.coding=coding;
     if(p<=e){ const t=tetraText(b,p,e,coding); if(t!=null){ r.kind='text'; r.text=t; } }
@@ -716,9 +715,9 @@ IQK.tetraRx={
     const N=b.length, si=n.si;
     let off=0;
     while(off+16<=N){
-      const t=tetraBits(b,off,2), v=b.subarray(off);
+      const t=bitsNum(b,off,2), v=b.subarray(off);
       if(t===2){
-        const bt=tetraBits(b,off+2,2);
+        const bt=bitsNum(b,off+2,2);
         if(bt===0 && N-off>=124){
           const s=tetraSysinfo(v);
           n.si=s; n.cnt.sysinfo++;
@@ -756,7 +755,7 @@ IQK.tetraRx={
           this.frag(n,L,out,'frag',{bits:b.subarray(off+4,e)},null,chan);
           return;
         }
-        const li=tetraBits(b,off+5,6);                              // MAC-END: тип 2, END 1, заполнение 1, позиция гранта 1, длина 6
+        const li=bitsNum(b,off+5,6);                              // MAC-END: тип 2, END 1, заполнение 1, позиция гранта 1, длина 6
         if(li<1 || li>0x3a || off+li*8>N) return;
         let c=off+11;
         if(b[c++]) c+=8;

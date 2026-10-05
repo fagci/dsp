@@ -23,7 +23,7 @@ function ysfInter(coded,il,out,off){                               // coded — 
 /* ---- FICH ---- */
 function ysfFichDecode(bits){                                      // bits — 200 бит FICH (после синхро) → {f (6 байт), err} или null
   const r=nxdnConvDec(ysfDeint(bits,0,YSF_IL5,100),100), w=[];
-  for(let i=0;i<4;i++){ const g=m17GolayDec(dmrNum(r.bits,24*i,24)); if(!g) return null; w.push(g.v); }
+  for(let i=0;i<4;i++){ const g=m17GolayDec(bitsNum(r.bits,24*i,24)); if(!g) return null; w.push(g.v); }
   const f=Uint8Array.of(w[0]>>4, ((w[0]<<4)&0xF0)|(w[1]>>8), w[1]&255, w[2]>>4, ((w[2]<<4)&0xF0)|(w[3]>>8), w[3]&255);
   if(dmrCrc16(f,4)!==f[4]*256+f[5]) return null;
   return {f, err:r.err};

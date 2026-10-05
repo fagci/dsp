@@ -15,7 +15,7 @@ const DPMR_CC=[0x575F77,0x577577,0x57DD75,0x57F775,0x55577D,0x557D7D,0x55D57F,0x
   0x775DD7,0x7777D7,0x77DFD5,0x77F5D5,0x7555DD,0x757FDD,0x75D7DF,0x75FDDF,0x7F57FF,0x7F7DFF,0x7FD5FD,0x7FFFFD,0x7D5FF5,0x7D75F5,0x7DDDF7,0x7DF7F7,
   0xD755F7,0xD77FF7,0xD7D7F5,0xD7FDF5,0xD55DFD,0xD577FD,0xD5DFFF,0xD5F5FF,0xDF5FDF,0xDF75DF,0xDFDDDD,0xDFF7DD,0xDD57D5,0xDD7DD5,0xDDD5D7,0xDDFFD7,
   0xF75757,0xF77D57,0xF7D555,0xF7FF55,0xF55F5D,0xF5755D,0xF5DD5F,0xF5F75F,0xFF5D7F,0xFF777F,0xFFDF7D,0xFFF57D,0xFD5575,0xFD7F75,0xFDD777,0xFDFD77];
-const dpmrColor=bits24=>{ const v=(dmrNum(bits24,0,24)|0x555555)>>>0; return DPMR_CC.indexOf(v); };
+const dpmrColor=bits24=>{ const v=(bitsNum(bits24,0,24)|0x555555)>>>0; return DPMR_CC.indexOf(v); };
 // Хэмминг (12,8): проверочные биты H = [P | I₄]; синдром → позиция ошибки
 const DPMR_H=[[1,0,1,0,1,1,0,0,1,0,0,0],[1,1,0,1,0,1,1,0,0,1,0,0],[1,1,1,0,1,0,1,1,0,0,1,0],[0,1,0,1,1,0,0,1,0,0,0,1]];
 const DPMR_HC=(()=>{ const t=new Array(16).fill(-1); [0b1110,0b0111,0b1010,0b0101,0b1011,0b1100,0b0110,0b0011,0b1000,0b0100,0b0010,0b0001].forEach((s,i)=>t[s]=i); return t; })();
@@ -41,7 +41,7 @@ function dpmrCrc7(b,n){ let r=0; for(let i=0;i<n;i++){ r=(((r>>6)&1)^b[i]) ? ((r
 function dpmrCch(b72){
   const d=dpmrDeint(dpmrScr(b72)), bits=new Uint8Array(48); let ham=true;
   for(let i=0;i<6;i++){ const r=dpmrHamDec(Array.from(d.subarray(12*i,12*i+12))); ham=ham && r.ok; bits.set(r.d,8*i); }
-  return {bits, ham, ok:dpmrCrc7(bits,41)===dmrNum(bits,41,7)};
+  return {bits, ham, ok:dpmrCrc7(bits,41)===bitsNum(bits,41,7)};
 }
 function dpmrCchEncode(fn,id12,mode,ver,fmt,emerg,slow){
   const b=new Uint8Array(48), put=(v,n,o)=>{ for(let i=0;i<n;i++) b[o+i]=(v>>(n-1-i))&1; };
@@ -61,7 +61,7 @@ function dpmrHi(b120){                                             // 120 при
     const r=dpmrHamDec(cw); ham=ham && r.ok; bits.set(r.d,8*w);
   }
   const ok=dpmrCrc8(bits,72).join('')===Array.from(bits.subarray(72)).join('');
-  const f={htype:dmrNum(bits,0,4), called:dpmrAiToStr(dmrNum(bits,4,24)), own:dpmrAiToStr(dmrNum(bits,28,24)), mode:dmrNum(bits,52,3), version:dmrNum(bits,55,2), format:dmrNum(bits,57,2), emergency:bits[59], info:dmrNum(bits,61,11)};
+  const f={htype:bitsNum(bits,0,4), called:dpmrAiToStr(bitsNum(bits,4,24)), own:dpmrAiToStr(bitsNum(bits,28,24)), mode:bitsNum(bits,52,3), version:bitsNum(bits,55,2), format:bitsNum(bits,57,2), emergency:bits[59], info:bitsNum(bits,61,11)};
   return {bits, ok, ham, f};
 }
 function dpmrHiEncode(o){
@@ -125,12 +125,12 @@ FSK4.protos.dpmr={
     if(cch0.ok) P.st.cch++; else P.st.bad++;
     if(cch1.ok) P.st.cch++; else P.st.bad++;
     // адреса: кадры 0/1 — вызываемый, 2/3 — вызывающий; по 12 бит из двух CCH
-    const fn0=dmrNum(cch0.bits,0,2), fn1=dmrNum(cch1.bits,0,2);
+    const fn0=bitsNum(cch0.bits,0,2), fn1=bitsNum(cch1.bits,0,2);
     if(cch0.ok && cch1.ok){
-      const id=(dmrNum(cch0.bits,2,12)<<12)|dmrNum(cch1.bits,2,12);
+      const id=(bitsNum(cch0.bits,2,12)<<12)|bitsNum(cch1.bits,2,12);
       if(fn0===0 && fn1===1) P.called=dpmrAiToStr(id);
       else if(fn0===2 && fn1===3) P.calling=dpmrAiToStr(id);
-      const info={mode:dmrNum(cch0.bits,14,3), version:dmrNum(cch0.bits,17,2), format:dmrNum(cch0.bits,19,2), emergency:cch0.bits[21]};
+      const info={mode:bitsNum(cch0.bits,14,3), version:bitsNum(cch0.bits,17,2), format:bitsNum(cch0.bits,19,2), emergency:cch0.bits[21]};
       if(P.called!=null && P.calling!=null) this.setCall(P,L,out,P.calling,P.called,info);
     }
     for(let t=0;t<8;t++){
