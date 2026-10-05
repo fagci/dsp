@@ -13,7 +13,7 @@ function chSend(n,text){
   n.outQ.push(text); if(n.p.echo) chPush(n,'out',text);
 }
 function chMsgEl(n,m){
-  const e=document.createElement('div'); e.className='chat-msg '+m.d;
+  const e=document.createElement('div'); e.className='chat-msg chat-'+m.d;
   if(n.p.time){ const t=document.createElement('span'); t.className='chat-t'; t.textContent=new Date(m.t).toTimeString().slice(0,8); e.append(t); }
   e.append(document.createTextNode(m.text)); return e;
 }
