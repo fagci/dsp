@@ -161,6 +161,8 @@ const PRESET_CATS={
   'Radiosonde RS41: Map (USB SDR, 400–406 MHz)':'Aircraft, Satellites & Telemetry',
   'NMEA: GPS Track (Table Playback)':'Maps & Locating',
   'NMEA: Network Stream (gpsd, AIS-catcher, Termux)':'Network & IoT',
+  'POCSAG: Transmitter Loopback (no radio)':'Modems & Data Links',
+  'POCSAG: Send a Page (HackRF TX)':'Modems & Data Links',
   'POCSAG: Pager Messages (Generator)':'Modems & Data Links',
   'POCSAG: Pager Messages (USB SDR)':'Modems & Data Links',
   'AIS: Vessels on the Map (Generator)':'Aircraft, Satellites & Telemetry',
@@ -1157,6 +1159,37 @@ log.size.w=520; applySize(log);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',ms.id,'rec'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('POCSAG: Transmitter Loopback (no radio)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'POCSAG paging transmitter checked against the decoder without a radio: POCSAG Transmit builds the signal (preamble, sync word, address and message codewords with BCH, 1 = lower frequency),\n'+
+  'IQ Modulator makes NFM with ±4.5 kHz deviation, POCSAG Decoder reads it back. Edit the text, RIC, type (text / numeric / tone) and baud rate and press Send.\n'+
+  'Numeric messages take 0–9 * U space - [ ] ( ( and ) become [ and ]).'});
+nt.size.w=760; nt.size.h=110; applySize(nt);
+const tx=addNode('pocsagTx',40,200,{text:'Hello from the DSP workbench',ric:1234567,func:'3',type:'alpha',baud:'1200'});
+tx.size.w=340; tx.size.h=200; applySize(tx);
+const md=addNode('iqMod',420,200,{mode:'NFM',sr:'2000000',fc:466000000,off:0,dev:4500,lvl:-6});
+const de=addNode('pocsagRx',720,200,{});
+de.size.w=480; de.size.h=260; applySize(de);
+const log=addNode('recLog',720,500,{});
+log.size.w=480; applySize(log);
+addEdge(tx.id,'out',md.id,'in'); addEdge(md.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('POCSAG: Send a Page (HackRF TX)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Page a pager with a HackRF: POCSAG Transmit → IQ Modulator (NFM, ±4.5 kHz) → HackRF TX. Set the carrier frequency of your pager (center frequency + offset in IQ Modulator),\n'+
+  'its RIC (the capcode), the baud rate and the message type (a pager takes what its code plug allows: text on function 3, numeric on function 0 is common). If the pager stays silent, try the *invert* switch.\n'+
+  'Press Connect in HackRF TX, then Send in POCSAG Transmit: the tx pin turns the transmitter on for the length of the message. TX VGA and amp are off by default — start at the lowest power, close to the pager.\n'+
+  'You must comply with local radio regulations: transmit only on frequencies and with power the law allows you (a licence, a test cable or a shielded box).'});
+nt.size.w=900; nt.size.h=150; applySize(nt);
+const tx=addNode('pocsagTx',40,240,{text:'TEST',ric:1234567,func:'3',type:'alpha',baud:'1200'});
+tx.size.w=340; tx.size.h=200; applySize(tx);
+const md=addNode('iqMod',420,240,{mode:'NFM',sr:'2000000',fc:466000000,off:100000,dev:4500,lvl:-6});
+const hk=addNode('hackrfTx',720,240,{});
+hk.size.w=300; applySize(hk);
+addEdge(tx.id,'out',md.id,'in'); addEdge(md.id,'iq',hk.id,'in'); addEdge(tx.id,'tx',hk.id,'tx');
 markWiresDirty();
 });
 preset('ISM 433: Sensors and Remotes (Generator)', function(){

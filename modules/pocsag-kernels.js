@@ -6,6 +6,7 @@
    2 бита функции; сообщение: 20 бит данных; 10 проверочных BCH(31,21), полином 0x769, и бит чётности (чётное число
    единиц во всём слове). Свободное слово — 0x7A89C197. Сообщение идёт словами подряд до следующего адреса или
    свободного слова, через границу пакета (синхрослово пропускается).
+   Полярность по стандарту (ITU-R M.584): 1 — нижняя частота (−4.5 кГц), 0 — верхняя; приёмник берёт любую.
    Текст: 7-битные символы младшим битом вперёд поверх потока 20-битных данных; цифры: тетрады младшим вперёд,
    «0123456789*U -][».
    Скорость ищется перебором всех трёх, тактовая фаза — 8 сдвигами решётки по ⅛ бита, полярность — по синхрослову
@@ -204,9 +205,9 @@ IQK.pocsagRx={
   }};
 
 /* ---- генератор: пейджинг с тремя типами сообщений ---- */
-function pocBatches(cwList){                           // слова-сообщения → поток битов (преамбула, пакеты)
+function pocBatches(cwList,pre){                       // слова-сообщения → поток битов (преамбула pre бит, пакеты)
   const bits=[];
-  for(let i=0;i<576;i++) bits.push(i&1 ? 0 : 1);
+  for(let i=0;i<(pre||576);i++) bits.push(i&1 ? 0 : 1);
   const putw=w=>{ for(let k=31;k>=0;k--) bits.push((w>>>k)&1); };
   const words=cwList.slice();
   while(words.length%16) words.push(POC_IDLE);
@@ -247,7 +248,7 @@ function pocGenerate(n,sr,N){
       const m=POC_SIM[g.k++%POC_SIM.length];
       const bits=pocBatches(pocMessage(m.ric,m.func,m.tone ? null : m.num ? pocNumBits(m.num) : pocAlphaBits(m.text)));
       const spb=sr/baud, f=new Float32Array(Math.ceil(bits.length*spb)+8);
-      for(let k=0;k<f.length;k++){ const b=bits[Math.min(bits.length-1,Math.floor(k/spb))]; f[k]=b ? 4500 : -4500; }
+      for(let k=0;k<f.length;k++){ const b=bits[Math.min(bits.length-1,Math.floor(k/spb))]; f[k]=b ? -4500 : 4500; }
       g.f=f; g.pos=0; g.lp=f[0];
     }
     g.lp+=(g.f[g.pos]-g.lp)*Math.min(1,2*Math.PI*0.6*g.baud/sr);   // сглаживание фронтов
@@ -256,4 +257,28 @@ function pocGenerate(n,sr,N){
     if(++g.pos>=g.f.length){ g.f=null; g.gap=Math.round(sr*(1.0+0.5*((g.k*0.618)%1))); g.ph%=2*Math.PI; }
   }
   return [re,im];
+}
+
+/* ---- кодер: сообщение → биты в эфире ---- */
+// дополнение до целого числа слов: текст — нулями после EOT, цифры — пробелами (0xC)
+function pocTxData(kind,text){
+  let b;
+  if(kind==='numeric'){
+    b=pocNumBits(String(text).toUpperCase().replace(/\(/g,'[').replace(/\)/g,']').replace(/[^0-9*U \-\[\]]/g,' '));
+    while(b.length%20) b.push(...[0,0,1,1]);
+  } else {
+    b=pocAlphaBits(String(text).replace(/[^\x20-\x7E\r\n]/g,'?'));
+    while(b.length%20) b.push(0);
+  }
+  return b;
+}
+// RIC и функция, чей адресный код совпал бы с синхрословом или свободным словом, передавать нельзя
+function pocTxCheck(ric,func){
+  if(!(ric>=0 && ric<=2097151 && ric===Math.floor(ric))) return 'RIC must be 0…2097151';
+  const w=pocAddrWord(ric,func);
+  if(w===POC_IDLE || w===POC_SYNC) return 'this RIC and function make the idle word — pick another';
+  return '';
+}
+function pocTxBits(ric,func,kind,text,pre){
+  return pocBatches(pocMessage(ric,func,kind==='tone' ? null : pocTxData(kind,text)),pre);
 }

@@ -75,6 +75,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 ### Digital modes & decoders
 - FT8, RTTY, Morse (TX/RX, including from camera), DTMF, PSK31, Feld Hell
 - Olivia, Contestia, AX.25/APRS (TX/RX)
+- POCSAG pager transmitter (RIC, text / numeric / tone) → IQ Modulator → HackRF TX (see [POCSAG](#pocsag))
 - WEFAX, NOAA APT, SSTV-style raster
 - HFDL: full receive chain down to ACARS / ADS-C, aircraft tracks and ground stations on the map
 - **ADS-B / Mode S** (1090 MHz) from raw SDR IQ: aircraft on the map with callsign, altitude, speed and heading (see [ADS-B](#ads-b))
@@ -382,6 +383,17 @@ Presets: *NMEA: GPS Track (Table Playback)*, *NMEA: Network Stream (gpsd, AIS-ca
 - **Not done:** the message layer of paging networks (FLEX, ERMES and the like are other protocols; vendor extensions in numeric messages; long messages split into several RICs) is not interpreted; the receiver was checked against the built-in generator (SNR down to ~8 dB in the whole 256 kHz window, offsets ±3 kHz, all three rates) and against the published sync / idle words (BCH polynomial and parity), not against real signals yet.
 
 Presets: *POCSAG: Pager Messages (Generator)*, *POCSAG: Pager Messages (USB SDR)*.
+
+### POCSAG: Transmit
+
+**POCSAG: Transmit** (Protocols) builds a page: a message for one RIC → a signal that goes through *IQ Modulator* (NFM, deviation 4500 Hz = the ±1 of the signal) into *HackRF TX* or any other IQ sink. The same bit stream is read by the decoder above, so a patch can check itself without a radio (*POCSAG: Transmitter Loopback*).
+
+- **Message:** *RIC* (0…2097151; the `ric` wire overrides it), *function* 0…3 (the pager decides what a function means: 3 = text and 0 = numeric are usual), *type* — **alpha** (7-bit ASCII, ends with EOT, the rest of the word is zeros), **numeric** (`0123456789*U -[]`, `(` and `)` are sent as `[` `]`, the rest of the word is spaces) or **tone** (an address with no data). A RIC / function pair whose address word would be the idle word is refused.
+- **Signal:** *baud* 512 / 1200 / 2400, *preamble* (576 bits by default), batches of a sync word and 16 codewords (BCH(31,21), parity), the address in the frame given by the three low bits of the RIC, long messages go on after the next sync word. Polarity as in the standard: **1 = the lower frequency**; *invert* flips it for a pager or a network that uses the other one. The edges are smoothed (one pole at 0.65 baud). *carrier before / after the data* keeps the carrier on a bit longer.
+- **Control:** the *Send* button, a rising edge on `go`, or *send every new text on the wire* (off by default — a wire carries its text from the moment the patch loads); messages queue up. Outputs: `out` (the signal), `tx` (1 while a message is being sent — wire it to the `tx` pin of HackRF TX), `done` (a pulse at the end).
+- **Not done:** one RIC per transmission (no batching of several pages), no tone / voice pagers, no vendor-specific numeric extensions; the encoder was checked by decoding its output (all three rates, text / numeric / tone, a message that crosses the batch border, FM noise and an offset), the constants against the published sync and idle words — not against a real pager yet. **You must comply with local radio regulations: transmit only where and how the law allows**; start with the lowest power, close to the pager.
+
+Presets: *POCSAG: Transmitter Loopback (no radio)*, *POCSAG: Send a Page (HackRF TX)*.
 
 ## ACARS
 
