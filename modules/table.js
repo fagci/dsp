@@ -68,12 +68,16 @@ const tblClean=r=>{ const o={}; for(const k in r){ const v=r[k]; o[k]=v==null ? 
 
 /* ---------- фильтр ---------- */
 // слова через пробел, все должны совпасть: «20m» — с начала слова любого поля, «col:text» — в конкретном поле,
-// «col>5M», «col<=100», «col=x» — сравнение (числа с k/M/G понимаются)
+// «col>5M», «col<=100», «col=x» — сравнение (числа с k/M/G понимаются); «a|b» — любое из, «-слово» / «-col:x» — исключить,
+// «col:» без значения — поле не пусто (to: — записи, где есть адресат)
 function tblFilter(q){
   q=String(q||'').trim().toLowerCase(); if(!q) return null;
   const terms=q.split(/\s+/).map(w=>{
+    const neg=w.length>1 && w[0]==='-'; if(neg) w=w.slice(1);
     const m=w.match(/^([^:<>=]+)(:|>=|<=|>|<|=)(.*)$/);
-    return m ? {col:m[1],op:m[2],val:m[3]} : {val:w};
+    const t=m ? {col:m[1],op:m[2],val:m[3]} : {val:w};
+    t.neg=neg; t.alts=t.val.split('|');
+    return t;
   });
   const words=v=>String(v??'').toLowerCase().split(/[\s/()]+/);
   const startsWord=(v,s)=>{ const str=String(v??'').toLowerCase(); return str.startsWith(s) || words(v).some(w=>w.startsWith(s)); };
@@ -82,12 +86,18 @@ function tblFilter(q){
     if(isFinite(a) && isFinite(b)) return op==='>' ? a>b : op==='<' ? a<b : op==='>=' ? a>=b : op==='<=' ? a<=b : a===b;
     const x=String(v??'').toLowerCase(); return op==='=' || op===':' ? x===s : false;
   };
-  return r=>terms.every(t=>{
-    if(t.col===undefined) return Object.values(r).some(v=>startsWord(v,t.val));
-    const k=Object.keys(r).find(c=>c.toLowerCase()===t.col);
+  const test=t=>{
+    if(t.col===undefined) return t.alts.some(a=>Object.values(r0).some(v=>startsWord(v,a)));
+    const k=Object.keys(r0).find(c=>c.toLowerCase()===t.col);
     if(k===undefined) return false;
-    return t.op===':' ? String(r[k]??'').toLowerCase().includes(t.val) : cmp(r[k],t.op,t.val);
-  });
+    if(t.op===':'){
+      if(t.val==='') return r0[k]!=='' && r0[k]!=null;
+      const s=String(r0[k]??'').toLowerCase(); return t.alts.some(a=>s.includes(a));
+    }
+    return t.alts.some(a=>cmp(r0[k],t.op,a));
+  };
+  let r0;
+  return r=>{ r0=r; return terms.every(t=>test(t)!==t.neg); };
 }
 
 /* ---------- хранилище ---------- */

@@ -777,7 +777,7 @@ function ft8Recs(n,list,mag,frames,bins,b0,b1,slotMs){
       if(info.from){
         if(info.grid){ n.grids.set(info.from,info.grid); if(n.grids.size>5000) n.grids.delete(n.grids.keys().next().value); }
         const grid=info.grid || n.grids.get(info.from);
-        Object.assign(r,{id:info.from, call:info.from, label:info.from});
+        Object.assign(r,{id:info.from, call:info.from, label:info.from, from:info.from});   // from/to — для Table и Graph (src здесь — протокол)
         if(grid){ r.grid=grid;
           if(typeof ft8GeoFill==='function') ft8GeoFill(r,grid); }
       }
