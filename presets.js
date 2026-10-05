@@ -148,6 +148,7 @@ const PRESET_CATS={
   'P25: Receiver Built from Blocks (Generator)':'Digital Voice & Trunking',
   'M17: Transmitter Built from Blocks (Loopback)':'Digital Voice & Trunking',
   'Data over 4FSK: Image, File or Text (Loopback)':'Digital Voice & Trunking',
+  'Data over DMR: Image, File or Text (Loopback)':'Digital Voice & Trunking',
   'M17: Voice Transmitter, Microphone to Speaker (Loopback)':'Digital Voice & Trunking',
   'TETRA: Test Cell (Generator)':'Digital Voice & Trunking',
   'TETRA: Control Channel (USB SDR)':'Digital Voice & Trunking',
@@ -3224,6 +3225,29 @@ addEdge(tx.id,'blk',pl.id,'blk'); addEdge(pl.id,'out',sh.id,'in'); addEdge(sh.id
 addEdge(fm.id,'iq',ss.id,'in'); addEdge(ss.id,'out',dc.id,'in'); addEdge(dc.id,'out',fd.id,'in');
 addEdge(fd.id,'out',rr.id,'in'); addEdge(rr.id,'out',sl.id,'in'); addEdge(sl.id,'out',sy.id,'in');
 addEdge(sy.id,'blk',rx.id,'blk');
+markWiresDirty();
+});
+preset('Data over DMR: Image, File or Text (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Data in real DMR frames, looped back without a radio: the content is yours (a camera picture as JPEG, a file, text), the carrier is DMR.\n'+
+  'DMR Data Builder: bytes → datagrams (frame number, length, CRC-16) → UDP/IPv4 → a data call (CSBK preamble, data header, blocks with CRC-32, BPTC) → time slots with CACH and sync words, colour code 1.\n'+
+  'Symbol Player → RRC Pulse Shaper (α 0.2) → FM Modulator (648 Hz) → Digital Voice Decoder (DMR) → the UDP port and payload come out in rec → Symbols → Data puts the file / picture / text back.\n'+
+  'A standard DMR receiver sees an IP/UDP packet to the given port; it does not know how to show a picture. A real repeater will pass the packets only if it carries the slot and the radio IDs are allowed.\n'+
+  'For a real transmission put HackRF TX after FM Modulator (shaper output rate 2 MS/s or more). You must comply with local radio regulations: transmit only where and how the law allows.'});
+nt.size.w=1100; nt.size.h=150; applySize(nt);
+const cm=addNode('cam',40,260,{});
+const tx=addNode('dmrTx',340,260,{});
+tx.size.w=320; tx.size.h=400; applySize(tx);
+const pl=addNode('symPlay',720,260,{});
+const sh=addNode('symShape',720,460,{sr:'256000',alpha:.2});
+const fm=addNode('fmMod',1020,260,{off:2000,dev:648});
+const de=addNode('fskRx',1020,500,{proto:'dmr'});
+de.size.w=520; de.size.h=300; applySize(de);
+const rx=addNode('dataRx',1600,260,{});
+rx.size.w=360; rx.size.h=300; applySize(rx);
+addEdge(cm.id,'img',tx.id,'img');
+addEdge(tx.id,'blk',pl.id,'blk'); addEdge(pl.id,'out',sh.id,'in'); addEdge(sh.id,'out',fm.id,'in');
+addEdge(fm.id,'iq',de.id,'in'); addEdge(de.id,'rec',rx.id,'rec');
 markWiresDirty();
 });
 preset('M17: Voice Transmitter, Microphone to Speaker (Loopback)', function(){
