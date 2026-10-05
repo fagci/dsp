@@ -7,7 +7,7 @@
    Неизвестный кадр — irAnalyze: кластеры длительностей и общий декодер «расстояние между импульсами». */
 
 const IR_NEAR=(x,r,t=.3)=>x>=r-Math.max(r*t,120) && x<=r+Math.max(r*t,120);
-const IR_FORMATS=['wire','raw µs','flipper','flipper .ir','tasmota','pronto'];
+const IR_FORMATS=['wire','raw µs','flipper','flipper .ir','tasmota','tasmota mqtt','pronto'];
 const IR_PROTOS=['NEC','NEC-ext','Samsung','Sony12','Sony15','Sony20','RC5','RC6','JVC','Panasonic'];
 
 /* ---------- разбор и запись текстовых форматов ---------- */
@@ -21,6 +21,14 @@ function irParse(text){
     return dur.length>1 ? {freq:Math.round(1e6/unit), dur} : null;
   }
   let freq=0, body=s, m;
+  if(s[0]==='{' || s[0]==='['){                                                           // JSON: Tasmota IrReceived.RawData, массив чисел
+    try{
+      const find=o=>{ if(Array.isArray(o) && o.length>1 && o.every(x=>typeof x==='number')) return o;
+        if(o && typeof o==='object') for(const k in o){ const r=k==='RawData' || typeof o[k]==='object' ? find(o[k]) : null; if(r) return r; } return null; };
+      const raw=find(JSON.parse(s)), dur=raw ? raw.map(Math.abs).filter(x=>x>0) : [];
+      return dur.length>1 ? {freq:38000, dur} : null;
+    }catch(e){}
+  }
   if(/IRsend/i.test(s)){                                                                  // Tasmota: IRsend 38000,9000,4500,…
     const nums=(s.replace(/^[\s\S]*?IRsend\d*/i,'').match(/\d+/g)||[]).map(Number);
     if(nums.length>3 && nums[0]>=30000 && nums[0]<=60000) freq=nums.shift();
@@ -30,6 +38,7 @@ function irParse(text){
   if((m=s.match(/\bF:\s*(\d+)/i)) || (m=s.match(/frequency:\s*(\d+)/i))) freq=+m[1];     // Flipper и наш wire
   body=body.replace(/data:/ig,' ').replace(/\b[A-Za-z_]+:\s*[\d.]+/g,' ').replace(/\d+\s+samples/ig,' ');
   const dur=(body.match(/\d+/g)||[]).map(Number).filter(x=>x>0);
+  if(!freq && dur.length>3 && dur[0]>=30000 && dur[0]<=60000) freq=dur.shift();            // «38000,9000,…» (тело IRsend в MQTT): метка не бывает длиннее 30 мс
   return dur.length>1 ? {freq:freq||38000, dur} : null;
 }
 function irFormat(fmt,dur,freq=38000){
@@ -39,6 +48,7 @@ function irFormat(fmt,dur,freq=38000){
     case 'flipper': return 'ir tx RAW F:'+f+' DC:33 '+dur.join(' ');
     case 'flipper .ir': return 'name: Cmd\ntype: raw\nfrequency: '+f+'\nduty_cycle: 0.330000\ndata: '+dur.join(' ');
     case 'tasmota': return 'IRsend '+f+','+dur.join(',');
+    case 'tasmota mqtt': return f+','+dur.join(',');
     case 'pronto': {
       const code=Math.max(1,Math.round(1e6/(f*0.241246))), unit=code*0.241246;
       const d=dur.length%2 ? dur.concat(20000) : dur;
