@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=37;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=38;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -127,6 +127,7 @@ const PRESET_CATS={
   'USB SDR: Signal Identifier':'SDR Receivers',
   'IQ: Receiver from Blocks (Generator)':'SDR Receivers',
   'USB SDR: FM Receiver from Blocks':'SDR Receivers',
+  'Remote SDR: FM Receiver (rtl_tcp over WebSocket)':'SDR Receivers',
   'USB SDR: HF AM / SSB from Blocks':'SDR Receivers',
   'Sound Card IQ: HF Receiver (SoftRock-style)':'SDR Receivers',
   'IQ: Channelizer — Three Signals at Once (Generator)':'SDR Receivers',
@@ -829,6 +830,35 @@ const au=addNode('iqAudio',680,760,{});
 const dc=addNode('dac',940,760,{vol:.4});
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',dcb.id,'in'); addEdge(dcb.id,'out',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',sp.id,'in'); addEdge(sp.id,'spec',s2.id,'spec');
+addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'stereo',au.id,'in');
+addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'q',dc.id,'R');
+markWiresDirty();
+});
+preset('Remote SDR: FM Receiver (rtl_tcp over WebSocket)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The same broadcast FM receiver as «USB SDR: FM Receiver from Blocks», but the RTL-SDR is on another machine (a Raspberry Pi, a server, a second PC): run `rtl_tcp -a 0.0.0.0 -s 1024000` there\n'+
+  'and a TCP → WebSocket bridge next to it, e.g. `websockify 8766 127.0.0.1:1234` (or any other proxy that passes bytes). IQ over Network speaks rtl_tcp: it sets the rate, tunes, sets the gain / ppm / bias-T.\n'+
+  'Another SDR can be used through the protocol «raw stream»: `rtl_sdr -f 100e6 -s 1024000 - | websocat -b -s 8766`, `hackrf_transfer -r - …`, GNU Radio, SoapySDR — set the format, rate and center by hand.\n'+
+  'From the https page only wss:// works; from a local copy over http — ws:// too. Press Connect, tap a station on the upper spectrum.'});
+nt.size.w=760; nt.size.h=180; applySize(nt);
+const rx=addNode('iqnet',40,260,{url:'ws://127.0.0.1:8766',proto:'rtl_tcp',sr:1024000,freq:100000000});
+rx.size.w=300; rx.size.h=180; applySize(rx);
+const dcb=addNode('iqDc',400,260,{});
+const w0=addNode('iqSpec',400,400,{size:'4096'});
+const sa=addNode('sa',720,260,{auto:true,floor:-90,top:-20,split:.4});
+sa.size.w=640; sa.size.h=300; applySize(sa);
+const sh=addNode('iqShift',400,560,{});
+const d1=addNode('iqDecim',400,720,{M:'4',cut:.45});
+const sp=addNode('iqSpec',400,900,{size:'2048'});
+const s2=addNode('sa',720,600,{auto:true,floor:-100,top:-20,split:.4});
+s2.size.w=640; s2.size.h=260; applySize(s2);
+const de=addNode('iqDemod',40,900,{mode:'WFM',deemph:'50 µs',stereo:true});
+de.size.w=360; applySize(de);
+const au=addNode('iqAudio',720,900,{});
+const dc=addNode('dac',980,900,{vol:.4});
+addEdge(rx.id,'iq',dcb.id,'in'); addEdge(dcb.id,'out',w0.id,'in'); addEdge(w0.id,'spec',sa.id,'spec');
+addEdge(dcb.id,'out',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',sp.id,'in'); addEdge(sp.id,'spec',s2.id,'spec');
 addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'stereo',au.id,'in');
 addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'q',dc.id,'R');
