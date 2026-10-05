@@ -215,8 +215,9 @@ function gsmBcchDecode(four){
   const conv=gsmConvK5(cB,228);                        // 224 данные+parity + 4 хвост
   const c=gsmFireCrc40(conv,184);                      // CRC по 184 = 40 бит четности
   for(let i=0;i<40;i++) if(conv[184+i]!==Number((c>>BigInt(39-i))&1n)) return null;
+  // TS 04.08: бит 1 октета передаётся первым и является младшим (LSB) — conv[i*8+0] это бит0, не бит7
   const l2=new Uint8Array(23);
-  for(let i=0;i<23;i++){ let v=0; for(let b=0;b<8;b++) v=(v<<1)|conv[i*8+b]; l2[i]=v; }
+  for(let i=0;i<23;i++){ let v=0; for(let b=0;b<8;b++) v|=conv[i*8+b]<<b; l2[i]=v; }
   return l2;
 }
 // MCC/MNC из 3 BCD-байт LAI (osmocom gsm48_decode_lai)
