@@ -11,7 +11,7 @@ const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const worker=fs.readFileSync(path.join(root,'iq-worker.js'),'utf8');
 const files=[...worker.match(/importScripts\((.*)\);/)[1].matchAll(/'([^']+)'/g)].map(m=>m[1].replace(/\+Q$/,''));
 
-const ctx=vm.createContext({console,Math,Float32Array,Float64Array,Uint8Array,Uint16Array,Uint32Array,Int8Array,Int16Array,Int32Array,Map,Set,Date,JSON,Array,Object,String,Number,parseInt,parseFloat,isFinite,isNaN,Symbol,Promise,BigInt});
+const ctx=vm.createContext({console,Math,Float32Array,Float64Array,Uint8Array,Uint16Array,Uint32Array,Int8Array,Int16Array,Int32Array,Map,Set,Date,JSON,Array,Object,String,Number,parseInt,parseFloat,isFinite,isNaN,Symbol,Promise,BigInt,DataView});
 ctx.self=ctx;
 for(const f of files) vm.runInContext(fs.readFileSync(path.join(root,f),'utf8'),ctx,{filename:f});
 const ev=s=>vm.runInContext(s,ctx);
@@ -73,6 +73,19 @@ const cases=[
 
   // кодер → исправление ошибок: два сбитых бита в слове POCSAG восстанавливаются
   ['POCSAG encode→fix 2 ошибки','(()=>{ const w=pocEncode(0x12345), r=pocFix((w^(1<<3)^(1<<20))>>>0,2); return r && r[0]===w>>>0 && r[1]===2; })()',true],
+  // развёртка HackRF: поток из блоков, режется на чтения произвольной длины, перед ним мусор с ложным 7F 7F
+  ['hackrfSweepSplit: частоты и синхронизация',`(()=>{
+    const blk=f=>{ const b=new Uint8Array(HRF_SWEEP_BLOCK); b[0]=b[1]=0x7F; new DataView(b.buffer).setUint32(2,f,true); b[10]=f/1e6&255; return b; };
+    const fs=[100e6,105e6,110e6,100e6], parts=[Uint8Array.of(1,2,0x7F,0x7F,9,9,9), ...fs.map(blk)];
+    const all=new Uint8Array(parts.reduce((a,p)=>a+p.length,0)); let o=0; for(const p of parts){ all.set(p,o); o+=p.length; }
+    const st={buf:null,n:0,synced:false}, got=[];
+    for(let i=0;i<all.length;i+=5000) hackrfSweepSplit(st, all.subarray(i,i+5000), 100e6, 115e6, (f,iq)=>got.push(f/1e6+':'+iq.length+':'+iq[0]));
+    return got.join();
+  })()`,'100:16374:100,105:16374:105,110:16374:110,100:16374:100'],
+  ['hackrfSweepSplit: частота вне диапазона не синхронизирует',`(()=>{
+    const b=new Uint8Array(HRF_SWEEP_BLOCK); b[0]=b[1]=0x7F; new DataView(b.buffer).setUint32(2,500e6,true);
+    let c=0; hackrfSweepSplit({buf:null,n:0,synced:false}, b, 100e6, 115e6, ()=>c++); return c;
+  })()`,0],
 ];
 
 let bad=0;
