@@ -140,3 +140,37 @@ function firRun(h, hist, x){
   hist.set(b.subarray(K));
   return y;
 }
+
+// HackRF RX_SWEEP: поток блоков по 16384 байт — 7F 7F, частота нижнего края сегмента (u64 LE, Гц), 8187 отсчётов int8 IQ.
+// Читаем потоком с самосинхронизацией: границы чтений не обязаны совпадать с границами блоков.
+// st={buf,n,synced}; cb(freq, iq) получает вид на отсчёты блока, валидный только внутри вызова.
+const HRF_SWEEP_BLOCK=16384;
+function hackrfSweepSplit(st, bytes, fLo, fHi, cb){
+  if(!st.buf || st.buf.length<st.n+bytes.length){
+    const nb=new Uint8Array(Math.max(2*HRF_SWEEP_BLOCK, (st.n+bytes.length)*2));
+    if(st.buf) nb.set(st.buf.subarray(0,st.n));
+    st.buf=nb;
+  }
+  st.buf.set(bytes, st.n); st.n+=bytes.length;
+  const b=st.buf, hdr=i=>{
+    if(b[i]!==0x7F || b[i+1]!==0x7F) return -1;
+    const dv=new DataView(b.buffer, i+2, 8), hi=dv.getUint32(4,true);
+    if(hi) return -1;
+    const f=dv.getUint32(0,true);
+    return f%1e6===0 && f>=fLo-1e6 && f<=fHi ? f : -1;
+  };
+  let o=0;
+  for(;;){
+    if(!st.synced){
+      while(o+10<=st.n && hdr(o)<0) o++;
+      if(o+10>st.n) break;                       // заголовка нет — хвост меньше заголовка оставляем на склейку
+      st.synced=true;
+    }
+    if(o+HRF_SWEEP_BLOCK>st.n) break;
+    const f=hdr(o);
+    if(f<0){ st.synced=false; o++; continue; }   // потеряли ритм — ищем заново
+    cb(f, b.subarray(o+10, o+HRF_SWEEP_BLOCK));
+    o+=HRF_SWEEP_BLOCK;
+  }
+  if(o>0){ b.copyWithin(0, o, st.n); st.n-=o; }
+}
