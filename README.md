@@ -34,6 +34,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), lists, **Data Sequencer** (CSV / KML / GPX / GeoJSON played row by row), Trigger Clock, Time Base — see [Data Sequencer](#data-sequencer)
+- **MQTT In** (over WebSocket, QoS 0/1, username/password, auto-reconnect): subscribe to topic filters (`+` / `#`); a message comes out as text, topic, a number (the payload itself, or a JSON field — `temp.value`) and as records (a JSON object or array becomes `rec` with the topic added, so Tasmota / ESPHome / Home Assistant sensors with lat / lon go straight to the map). The browser cannot open `mqtt://` itself: give the broker a WebSocket listener (Mosquitto `listener 9001` + `protocol websockets`, EMQX, HiveMQ, the Home Assistant add-on); from the https page only `wss://` works — see [MQTT](#mqtt)
 - **Text over Network**: WebSocket (`ws://`, `wss://`, with reconnect and a `send` input) or HTTP(S) polling; lines one per block like the serial port, JSON objects/arrays straight into records. Example — Wi-Fi scan from Android (Termux): `websocat -t ws-l:0.0.0.0:8765 sh-c:'while :; do termux-wifi-scaninfo | jq -c .; sleep 30; done'`. [`tools/termux/wifi-scan.sh`](tools/termux/wifi-scan.sh) adds the phone's GPS position to every scan — preset *Wi-Fi: Locate Access Points (Termux)* puts each access point on the map while you walk around. From the https demo the browser only allows `wss://`/`https://` to other devices (`ws://`/`http://` work to localhost, or when the app is opened over http)
 
 ### Analysis
@@ -98,6 +99,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **Network Out**: WebSocket (`ws://`, `wss://`, reconnect) — text on change, numbers as a JSON object every period, or mono PCM16 audio (a JSON header first, then binary blocks). Example: `websocat -s 8765` on the receiving side
 - **Map** (offline vector base map, optional OSM tiles, tracks, markers — see [Map and records](#map-and-records)), screen transmitter, indicators
 - **Notify**: speaks a text aloud (speech synthesis), shows a system notification and/or vibrates — on a new text or a `go` pulse, with a minimum gap between alerts (e.g. a decoded message or a CFAR detection → voice alert)
+- **MQTT Out**: publish text or a number (template `{v}` / `{v:N}`) on change; topic from a parameter or a wire, QoS 0/1, retain. Example — an IR blaster on Tasmota: *IR Encode* (output format «tasmota mqtt») → MQTT Out `cmnd/<device>/IRsend`
 - **Serial Out (WebSerial)**: write text or a numeric value to a serial port — Arduino, relays, transceiver CAT control (template `FA{v:11};` turns a frequency into a Kenwood command); device replies come back on the `reply` output
 - **HTTP Out**: webhook request (POST / PUT / GET, custom headers) — text on change, or numbers as a JSON object on a `go` pulse or every period. The server must allow CORS, and from the https demo only `https://` (or localhost) works
 - **MIDI Out** (Web MIDI): `gate` → note on/off, `note` (or `freq` in Hz straight from *MIDI Keyboard*) with velocity, and a `cc` input for control change — drive hardware synths and a DAW from any signal
@@ -553,7 +555,7 @@ Preset: *Logic Analyzer: UART Decode*.
 
 The IR layer is split in three, so the same patch works with any hardware:
 
-1. **A frame is a list of pulse lengths** (µs: mark, space, mark, …) and a carrier. On a wire it is a text `F:38000 9000 4500 560 …`, an event: the text is present only in the block where the frame arrived (the same frame twice in a row is two events). Any of these formats is read automatically and can be written back: plain µs numbers (LIRC), Flipper (`ir tx RAW F:… DC:… …` and `.ir` raw data), Tasmota `IRsend`, Pronto hex.
+1. **A frame is a list of pulse lengths** (µs: mark, space, mark, …) and a carrier. On a wire it is a text `F:38000 9000 4500 560 …`, an event: the text is present only in the block where the frame arrived (the same frame twice in a row is two events). Any of these formats is read automatically and can be written back: plain µs numbers (LIRC), Flipper (`ir tx RAW F:… DC:… …` and `.ir` raw data), Tasmota (`IRsend …`, the MQTT body `38000,9000,…`, `IrReceived.RawData` JSON), Pronto hex.
 2. **Codecs** (hardware-independent):
    - **IR Encode** (`go` pulse, the *Send* button, or a text on `text`: `NEC 0x04 0x08`, `Sony12 1 21`, `RC5 5 12 t`, `Samsung 7 2`, `NEC rep`) → `raw`. Protocol, address and command are also wire inputs. RC5 / RC6 flip the toggle bit on every send.
    - **IR Decode**: `raw` → `text` (`NEC addr 0x04 cmd 0x08 [04 FB 08 F7]`), `rec` (a record per frame), `addr`, `cmd`, `new`, and `info` with the analysis of an unknown frame: clusters of mark and space lengths and, for pulse-distance protocols, the header, both pause lengths and the bytes (LSB first). A NEC repeat frame repeats the last code.
@@ -567,6 +569,16 @@ The IR layer is split in three, so the same patch works with any hardware:
 Presets: *IR: Remote Codes Loopback (No Hardware)*, *IR: Learn and Replay (Sound Card)*, *IR: Arduino / ESP / Flipper (WebSerial)*.
 
 IR as a data link (not a remote): the same adapters carry any frame, and *Transmit Chars* / *Receive Chars* and the *Logic Analyzer* work on the demodulated line.
+
+## MQTT
+
+**MQTT In** and **MQTT Out** (MQTT 3.1.1 over WebSocket, written from scratch, no libraries) connect the workbench to any IoT stack. Each node keeps its own connection; `Connect` / `Disconnect` buttons, auto-reconnect every 3 s, a refused login (wrong user or password) is shown and not retried.
+
+- **MQTT In**: `topic` takes several filters separated by spaces or commas. Outputs: `text` and `topic` (one message per block, a burst is queued), `value` (the payload as a number, or the JSON field named in *JSON field* — `a.b.c`; the last value is kept), `rec` (every message of the block: a JSON object or array → records with `topic` and `t` added; plain text or a number → `{topic, text}` / `{topic, value}`), `new` (a pulse per message).
+- **MQTT Out**: `text` is published when it changes (empty text is skipped), `value` when it changes, through the template; the `topic` wire overrides the topic parameter; `ok` is 1 while connected. QoS 1 messages are acknowledged but not re-sent.
+- Passwords are stored in the patch as plain text — do not share patches with real credentials.
+
+Presets: *MQTT: Subscribe and Publish*, *IR: Tasmota Blaster over MQTT* (send with *IR Encode*, receive Tasmota `IrReceived.RawData` — *IR Decode* reads that JSON and the `38000,9000,…` body of `IRsend` directly).
 
 ## Map and records
 

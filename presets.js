@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=34;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=35;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -109,6 +109,7 @@ const PRESET_CAT_ORDER=['Start Here',
                          'HF Modes & Morse',
                          'Modems & Data Links',
                          'Infrared',
+                         'Network & IoT',
                          'Unknown Signals',
                          'Maps & Locating',
                          'Music: Sequencers & Mixer',
@@ -192,6 +193,8 @@ const PRESET_CATS={
   'IR: Remote Codes Loopback (No Hardware)':'Infrared',
   'IR: Learn and Replay (Sound Card)':'Infrared',
   'IR: Arduino / ESP / Flipper (WebSerial)':'Infrared',
+  'IR: Tasmota Blaster over MQTT':'Infrared',
+  'MQTT: Subscribe and Publish':'Network & IoT',
   'Unknown Signal: Blind Analysis (Generator)':'Unknown Signals',
   'Preamble Search':'Modems & Data Links',
   'Noise-Resistant Frame':'Modems & Data Links',
@@ -3115,6 +3118,42 @@ tk.size.w=420; tk.size.h=110; applySize(tk);
 const mx=addNode('irMix',600,540,{});
 addEdge(sr.id,'raw',dc.id,'raw'); addEdge(sr.id,'raw',ln.id,'raw'); addEdge(ln.id,'raw',mx.id,'b'); addEdge(en.id,'raw',mx.id,'a'); addEdge(mx.id,'raw',sr.id,'raw');
 addEdge(dc.id,'text',tk.id,'text');
+markWiresDirty();
+});
+preset('IR: Tasmota Blaster over MQTT', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'An ESP8266 / ESP32 with Tasmota and an IR LED / receiver (the IRsend / IRrecv modules) as a network IR transceiver. Set the broker WebSocket address in both MQTT nodes (Mosquitto: `listener 9001` + `protocol websockets`) and the device topic instead of tasmota_ir.\n'+
+  'Send: IR Encode (output format «tasmota mqtt») → MQTT Out publishes to cmnd/<device>/IRsend. Receive: with `SetOption58 1` and IRrecv on, Tasmota publishes tele/<device>/RESULT with RawData — MQTT In → IR Decode names the protocol, address and command.\n'+
+  'A code learned with IR Learn can be sent the same way: wire IR Learn `raw` through IR Merge to the same MQTT Out.'});
+nt.size.w=1100; nt.size.h=130; applySize(nt);
+const en=addNode('irEnc',40,200,{proto:'NEC',addr:4,cmd:8,fmt:'tasmota mqtt'});
+en.size.h=150; applySize(en);
+const mo=addNode('mqttOut',340,200,{url:'ws://127.0.0.1:9001',topic:'cmnd/tasmota_ir/IRsend'});
+mo.size.h=140; applySize(mo);
+const mi=addNode('mqttIn',40,420,{url:'ws://127.0.0.1:9001',topic:'tele/tasmota_ir/RESULT'});
+mi.size.w=340; mi.size.h=190; applySize(mi);
+const dc=addNode('irDec',640,420,{});
+dc.size.w=420; dc.size.h=260; applySize(dc);
+const tk=addNode('ticker',1100,420,{time:true});
+tk.size.w=380; tk.size.h=110; applySize(tk);
+addEdge(en.id,'raw',mo.id,'text'); addEdge(mi.id,'text',dc.id,'raw'); addEdge(dc.id,'text',tk.id,'text');
+markWiresDirty();
+});
+preset('MQTT: Subscribe and Publish', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'MQTT over WebSocket (the browser cannot open mqtt:// itself: give the broker a WebSocket listener — Mosquitto `listener 9001` + `protocol websockets`, EMQX, HiveMQ, the Home Assistant add-on).\n'+
+  'From the https page only wss:// works, from a local copy over http — ws:// too. Press Connect in both nodes.\n'+
+  'MQTT Out publishes the LFO value to dsp/lfo; MQTT In subscribes to dsp/# and gives the payload as text (Ticker), as a number (the value output; for a JSON payload name the field, e.g. temp.value) and as records (rec — straight to the Map or Rec Log if the JSON has lat / lon).'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const l=addNode('lfo',40,200,{freq:.2,min:0,max:100,wave:'sine'});
+const mo=addNode('mqttOut',300,200,{url:'ws://127.0.0.1:9001',topic:'dsp/lfo',template:'{v}'});
+mo.size.h=140; applySize(mo);
+const mi=addNode('mqttIn',40,400,{url:'ws://127.0.0.1:9001',topic:'dsp/#'});
+mi.size.w=340; mi.size.h=190; applySize(mi);
+const tk=addNode('ticker',440,400,{time:true});
+tk.size.w=380; tk.size.h=110; applySize(tk);
+const nv=addNode('numview',440,560,{});
+addEdge(l.id,'out',mo.id,'value'); addEdge(mi.id,'text',tk.id,'text'); addEdge(mi.id,'value',nv.id,'in');
 markWiresDirty();
 });
 preset('Unknown Signal: Blind Analysis (Generator)', function(){
