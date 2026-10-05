@@ -10,7 +10,7 @@
 // весь список как bands (для 'sa'), выбранная запись — lo/mid/hi/span/step.
 
 const TBL_PATCH='@patch', TBL_PRE='presets/', TBL_ROWS=300;
-const TBL_FIXED=new Set([...SEQ_FIXED,'bands','mid','span']);
+const TBL_FIXED=new Set([...SEQ_FIXED,'bands','rows','mid','span']);
 const TBL_LO=['lo','low','start','freq','frequency'], TBL_HI=['hi','high','end'],
   TBL_LABEL=['name','label','title'], TBL_COLOR=['color','colour'], TBL_STEP=['step'];
 const TBL_HZ=/^(lo|hi|low|high|start|end|freq|frequency|step)$/i;
@@ -167,6 +167,7 @@ function tblDerive(n){
     n.all.forEach((r,i)=>{ if(f(r)){ n.rows.push(r); n.rowIds.push(n.ids[i]); } });
   } else { n.rows=n.all; n.rowIds=n.ids; }
   n.headers=n.cl;
+  n.rowsOut=n.rows.slice();                              // новая ссылка на каждое изменение: потребитель видит смену набора
   n.nameCol=tblCol(n.cl,TBL_LABEL); n.colorCol=tblCol(n.cl,TBL_COLOR);
   tblPorts(n);
   n.timeCol=seqFind(n.cl,n.p.tcol,SEQ_TIME_COLS);
@@ -366,7 +367,7 @@ const tblIns=n=>[{n:'trig',t:'val'},{n:'row',t:'val'},{n:'t',t:'num'},{n:'rec',t
   .concat(n.p.log ? ['a','b','c','d'].map(k=>({n:k,t:'num'})) : []);
 const tblOuts=n=>{
   const o=[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'row',t:'num'},{n:'count',t:'num'},{n:'next',t:'num'},
-    {n:'done',t:'num'},{n:'dist',t:'num'},{n:'bearing',t:'num'},{n:'progress',t:'num'},{n:'bands',t:'bands'}];
+    {n:'done',t:'num'},{n:'dist',t:'num'},{n:'bearing',t:'num'},{n:'progress',t:'num'},{n:'bands',t:'bands'},{n:'rows',t:'bands'}];
   if(tblCol(n.p.cols||[],TBL_LO)) o.push({n:'mid',t:'num'},{n:'span',t:'num'});
   return o.concat((n.cols||[]).map(c=>({n:c.port,t:'val'})));
 };
@@ -441,6 +442,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     const sigs=Array.isArray(I.sigs) && I.sigs.length ? I.sigs : null;
     if(n._mI!==n.bands || n._mS!==sigs){ n._mI=n.bands; n._mS=sigs; n._merged=sigs ? n.bands.concat(sigs) : n.bands; }
     o.bands=n._merged;
+    o.rows=n.rowsOut;                                      // весь отфильтрованный набор записей (Graph set / nodes)
     if(!n.started) for(const c of n.cols) delete o[c.port];   // ничего не выбрано — поля не выдаём (как band plan)
     else if(n.loCol && n.cur){
       const lo=tblHz(n.cur[n.loCol]), hi=n.hiCol ? tblHz(n.cur[n.hiCol]) : lo;
