@@ -34,6 +34,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), lists, **Data Sequencer** (CSV / KML / GPX / GeoJSON played row by row), Trigger Clock, Time Base — see [Data Sequencer](#data-sequencer)
+- **Bluetooth LE** (Web Bluetooth): **BLE UART** (Nordic UART, HM-10 / FFE0 or your own UUIDs — a serial terminal without a cable), **BLE GATT** (any characteristic: notifications or periodic read, write; formats — heart rate, battery, temperature, uint / int / float, hex), **BLE Advertisements** (RSSI, TX power and manufacturer data of one device without connecting — proximity, finding a beacon) — see [Bluetooth LE](#bluetooth-le)
 - **MQTT In** (over WebSocket, QoS 0/1, username/password, auto-reconnect): subscribe to topic filters (`+` / `#`); a message comes out as text, topic, a number (the payload itself, or a JSON field — `temp.value`) and as records (a JSON object or array becomes `rec` with the topic added, so Tasmota / ESPHome / Home Assistant sensors with lat / lon go straight to the map). The browser cannot open `mqtt://` itself: give the broker a WebSocket listener (Mosquitto `listener 9001` + `protocol websockets`, EMQX, HiveMQ, the Home Assistant add-on); from the https page only `wss://` works — see [MQTT](#mqtt)
 - **Text over Network**: WebSocket (`ws://`, `wss://`, with reconnect and a `send` input) or HTTP(S) polling; lines one per block like the serial port, JSON objects/arrays straight into records. Example — Wi-Fi scan from Android (Termux): `websocat -t ws-l:0.0.0.0:8765 sh-c:'while :; do termux-wifi-scaninfo | jq -c .; sleep 30; done'`. [`tools/termux/wifi-scan.sh`](tools/termux/wifi-scan.sh) adds the phone's GPS position to every scan — preset *Wi-Fi: Locate Access Points (Termux)* puts each access point on the map while you walk around. From the https demo the browser only allows `wss://`/`https://` to other devices (`ws://`/`http://` work to localhost, or when the app is opened over http)
 
@@ -569,6 +570,17 @@ The IR layer is split in three, so the same patch works with any hardware:
 Presets: *IR: Remote Codes Loopback (No Hardware)*, *IR: Learn and Replay (Sound Card)*, *IR: Arduino / ESP / Flipper (WebSerial)*.
 
 IR as a data link (not a remote): the same adapters carry any frame, and *Transmit Chars* / *Receive Chars* and the *Logic Analyzer* work on the demodulated line.
+
+## Bluetooth LE
+
+Web Bluetooth works in Chrome, Edge and Opera (desktop and Android) on https or localhost; Firefox and iOS do not support it. The device chooser opens only on a click (*Connect* / *Choose device*). Without the filters the chooser lists every device (*list all devices*); by default it is filtered by the service, or by the name prefix.
+
+- **BLE UART**: `line` / `go` (a line per block, split on line feed) and the `text` input, which writes in chunks (20 bytes by default — safe on any device; with a larger MTU raise it). Profiles: *Nordic UART* (service `6e400001-…`), *HM-10 / FFE0*, *custom* (service, characteristic from the device, characteristic to the device). The line end for sending is selectable. The same line protocols as on a serial port work: wire the `line` output to *IR Decode*, or *Parse CSV Line*.
+- **BLE GATT**: service and characteristic as a name (`heart_rate`), a 16-bit hex (`180D`) or a 128-bit UUID; *notify* or *read every period*; the format turns the bytes into a number (`value` with scale and offset), `hex` is always given, `rec` has a record per value. The `write` input sends hex or text to the characteristic (relays, LED strips, thermometers' settings).
+- **BLE Advertisements**: RSSI (smoothed), TX power, manufacturer data and `present` (0 after the silence set in the parameters) of one chosen device — `watchAdvertisements`, Chrome 85+ (some versions need `chrome://flags/#enable-experimental-web-platform-features`).
+- After a disconnect from the device side the node reconnects every 3 s without the chooser (*reconnect*).
+
+Presets: *BLE: Heart Rate Monitor*, *BLE: Find a Beacon by RSSI*, *BLE: UART Terminal*.
 
 ## MQTT
 

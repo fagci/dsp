@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=35;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=36;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -195,6 +195,9 @@ const PRESET_CATS={
   'IR: Arduino / ESP / Flipper (WebSerial)':'Infrared',
   'IR: Tasmota Blaster over MQTT':'Infrared',
   'MQTT: Subscribe and Publish':'Network & IoT',
+  'BLE: Heart Rate Monitor':'Network & IoT',
+  'BLE: Find a Beacon by RSSI':'Network & IoT',
+  'BLE: UART Terminal':'Network & IoT',
   'Unknown Signal: Blind Analysis (Generator)':'Unknown Signals',
   'Preamble Search':'Modems & Data Links',
   'Noise-Resistant Frame':'Modems & Data Links',
@@ -3154,6 +3157,47 @@ const tk=addNode('ticker',440,400,{time:true});
 tk.size.w=380; tk.size.h=110; applySize(tk);
 const nv=addNode('numview',440,560,{});
 addEdge(l.id,'out',mo.id,'value'); addEdge(mi.id,'text',tk.id,'text'); addEdge(mi.id,'value',nv.id,'in');
+markWiresDirty();
+});
+preset('BLE: Heart Rate Monitor', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Web Bluetooth (Chrome / Edge / Opera on https or localhost; not Firefox / iOS). BLE GATT subscribes to the standard Heart Rate service (180D) of a chest strap or a watch in broadcast mode: press Connect, choose the device.\n'+
+  'The value format «heart rate (bpm)» understands both the 8-bit and the 16-bit variant. For any other characteristic type its service and characteristic (a name, 16-bit 2A37 or a 128-bit UUID) and the format: battery %, temperature, uint / int / float, or hex only.'});
+nt.size.w=1000; nt.size.h=110; applySize(nt);
+const g=addNode('bleGatt',40,170,{svc:'heart_rate',chr:'heart_rate_measurement',fmt:'heart rate (bpm)',mode:'notify'});
+g.size.w=340; g.size.h=190; applySize(g);
+const nv=addNode('numview',440,170,{});
+const tr=addNode('trend',440,300,{span:60,auto:true});
+tr.size.w=460; tr.size.h=170; applySize(tr);
+addEdge(g.id,'value',nv.id,'in'); addEdge(g.id,'value',tr.id,'in');
+markWiresDirty();
+});
+preset('BLE: Find a Beacon by RSSI', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'The signal strength of one BLE device that advertises (a beacon, a tracker tag, a fitness band, a phone in discoverable mode): press Choose device. No connection is made, the device only has to broadcast.\n'+
+  'Walk with the laptop or phone and watch the level grow when you get closer. Needs `watchAdvertisements` (Chrome 85+ on desktop and Android; on some versions enable chrome://flags/#enable-experimental-web-platform-features).\n'+
+  'RSSI smoothing averages the jumpy readings; `present` drops to 0 after the silence set in «absent after»; `mfr` gives the manufacturer data (hex), `rec` a record per packet.'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const a=addNode('bleAdv',40,190,{avg:.5,lost:15});
+a.size.w=340; a.size.h=160; applySize(a);
+const nv=addNode('numview',440,190,{});
+const tr=addNode('trend',440,320,{span:60,auto:true});
+tr.size.w=460; tr.size.h=170; applySize(tr);
+addEdge(a.id,'rssi',nv.id,'in'); addEdge(a.id,'rssi',tr.id,'in');
+markWiresDirty();
+});
+preset('BLE: UART Terminal', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'A serial terminal over Bluetooth LE: Nordic UART Service (nRF, ESP32 with a NUS sketch, many BLE modules) or HM-10 (FFE0 / FFE1). The profile «custom» takes your own service and characteristics.\n'+
+  'Lines from the device appear on `line` (Ticker); text from the Text Source goes out with the chosen line end, 20 bytes per write (raise it on devices with a big MTU).\n'+
+  'Press Connect and choose the device.'});
+nt.size.w=1000; nt.size.h=110; applySize(nt);
+const b=addNode('bleUart',40,170,{profile:'Nordic UART',eol:'\\n'});
+b.size.w=360; b.size.h=210; applySize(b);
+const tk=addNode('ticker',460,170,{time:true});
+tk.size.w=420; tk.size.h=140; applySize(tk);
+const ts=addNode('textsrc',40,420,{});
+addEdge(b.id,'line',tk.id,'text'); addEdge(ts.id,'text',b.id,'text');
 markWiresDirty();
 });
 preset('Unknown Signal: Blind Analysis (Generator)', function(){
