@@ -7,7 +7,7 @@
 <meta name="theme-color" content="#161a1d">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' http: https: ws: wss: data: blob: 'unsafe-inline'; script-src 'self' http: https: data: blob: 'unsafe-inline' 'wasm-unsafe-eval'">
 <title>DSP</title>
-<link rel="stylesheet" href="styles.css?v=128">
+<link rel="stylesheet" href="styles.css?v=172">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -115,7 +115,7 @@
 <script src="vendor/panzoom.min.js?v=4.6.2"></script>
 <script src="vendor/interact.min.js?v=1.10.28"></script>
 <script src="vendor/satellite.min.js?v=5.0.0"></script>
-<!-- modules are listed here by hand, no auto-discovery: add a file under modules/ — add its line here too -->
+<!-- модули перечислены вручную в массиве L (скрипт в <head>), без автопоиска: новый файл — добавить и в L, и в SHELL в sw.js; V бампать вместе с CACHE в sw.js -->
 <script>
 // индикатор: нет сети — работаем офлайн (весь DSP локальный)
 (()=>{ const n=document.getElementById('net'), u=()=>{ n.hidden=navigator.onLine; };
