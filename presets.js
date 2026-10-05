@@ -3303,16 +3303,19 @@ markWiresDirty();
 });
 preset('Graph: Links from CSV', function(){
 clearAll();
-const nt=addNode('note',40,20,{text:'Link graph: one record = one edge (from, to[, weight[, label]]). Table plays its rows one by one into `rec` (edit them, or switch to another list or file import); records with from / to fields from any source and text wires (a chunk of CSV per change, e.g. MQTT In or a network text) work too. Repeated pairs without a weight thicken the edge. Click a node: its name goes to `sel`.'});
-nt.size.w=1000; nt.size.h=90; applySize(nt);
-const ts=addNode('textsrc',40,150,{text:'Demod,Squelch\nSquelch,Recorder\nDecoder,Map\nDecoder,Log'});
-ts.size.w=300; ts.size.h=120; applySize(ts);
-const tb=addNode('table',40,300,{list:'@patch',rate:4,loop:false,
+const nt=addNode('note',40,20,{text:'Link graph from two tables. Links table `rows` → Graph `set`: one row = one edge (from, to[, weight[, label[, color]]]). Nodes table `rows` → Graph `nodes`: id, label, shape (dot, square, diamond, star, hexagon, box…), color, size — nodes without a row get the defaults. The wires carry the whole list, so a row deleted or edited in a table disappears or changes in the graph (only the difference is redrawn); a filter on a table limits the graph. Records on `rec` and CSV on `text` still add edges as they come. Click a node: its name goes to `sel`.'});
+nt.size.w=1000; nt.size.h=100; applySize(nt);
+const ts=addNode('textsrc',40,160,{text:'Demod,Squelch\nSquelch,Recorder\nDecoder,Map\nDecoder,Log'});
+ts.size.w=300; ts.size.h=100; applySize(ts);
+const tb=addNode('table',40,290,{list:'@patch',initial:false,
   data:'from,to,weight,label\nSDR,Filter,1,\nFilter,Demod,1,\nDemod,Decoder,2,audio\nDemod,Scope,1,\nDecoder,Log,1,'});
-tb.size.w=300; tb.size.h=260; applySize(tb);
-const g=addNode('graphview',380,150,{});
-g.size.w=520; g.size.h=360; applySize(g);
-addEdge(ts.id,'text',g.id,'text'); addEdge(tb.id,'rec',g.id,'rec');
+tb.size.w=300; tb.size.h=250; applySize(tb);
+const tn=addNode('table',40,560,{list:'@patch',initial:false,
+  data:'id,label,shape,color\nSDR,SDR,hexagon,#e0a040\nDecoder,Decoder,diamond,\nScope,Scope,square,\nLog,Log,box,'});
+tn.size.w=300; tn.size.h=250; applySize(tn);
+const g=addNode('graphview',380,160,{});
+g.size.w=520; g.size.h=400; applySize(g);
+addEdge(ts.id,'text',g.id,'text'); addEdge(tb.id,'rows',g.id,'set'); addEdge(tn.id,'rows',g.id,'nodes');
 markWiresDirty();
 });
 preset('Chat: Text In and Out', function(){
