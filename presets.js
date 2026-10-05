@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=54;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=55;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -227,6 +227,7 @@ const PRESET_CATS={
   'CAN: Bus Sniffer (SLCAN)':'Modems & Data Links',
   'DMX: RGB Fade from LFOs':'Network & IoT',
   'OSC: Faders and Values':'Network & IoT',
+  'Modbus: Poll Registers (RTU / TCP)':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
@@ -3984,5 +3985,21 @@ const nv=addNode('numview',740,220,{});
 const tk=addNode('ticker',740,340,{time:true});
 tk.size.w=380; tk.size.h=110; applySize(tk);
 addEdge(l.id,'out',o.id,'value'); addEdge(o.id,'value',nv.id,'in'); addEdge(o.id,'text',tk.id,'text');
+markWiresDirty();
+});
+
+preset('Modbus: Poll Registers (RTU / TCP)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Industrial sensors, energy meters, PLCs, inverters: Modbus master. RTU: an RS-485 / RS-232 USB adapter on WebSerial (Chrome / Edge); TCP: a WebSocket bridge, websocat --binary ws-l:127.0.0.1:5020 tcp:<device>:502.\n'+
+  'Set the unit address, the register table (read, start address — 0-based as on the wire, count), how to read them (u16, i16, 32-bit, float with the word order from the device manual) and a multiplier. Press Connect: the first value goes to the number view, all of them to the log as records (unit, addr, value).\n'+
+  'Writing to the device is off by default («allow writing»): then the write input sets a holding register or a coil — only with the device manual in hand.'});
+nt.size.w=1100; nt.size.h=170; applySize(nt);
+const m=addNode('modbusM',40,240,{});
+m.size.w=380; m.size.h=420; applySize(m);
+const nv=addNode('numview',460,240,{});
+const tk=addNode('ticker',460,360,{time:true});
+tk.size.w=380; tk.size.h=110; applySize(tk);
+const lg=addNode('recLog',460,500,{}); lg.size.w=240; applySize(lg);
+addEdge(m.id,'value',nv.id,'in'); addEdge(m.id,'text',tk.id,'text'); addEdge(m.id,'rec',lg.id,'rec');
 markWiresDirty();
 });

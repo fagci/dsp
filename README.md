@@ -38,6 +38,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **CAN (SLCAN)** and **OBD-II**: a CAN bus through a USB adapter, car data (rpm, speed, temperature…) — see [CAN and OBD-II](#can-and-obd-ii)
 - **DMX Out**: stage lighting over DMX512 (Enttec DMX USB Pro and compatible) — see [DMX512](#dmx512)
 - **OSC**: Open Sound Control in and out (TouchOSC, Max / Pd, SuperCollider, mixers) through a WebSocket bridge — see [OSC](#osc)
+- **Modbus Master**: registers and coils of industrial devices over RS-485 (RTU) or TCP — see [Modbus](#modbus)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), **Table** (one node for lists, band plans, bookmarks, logs and the data sequencer: CSV / TSV / JSON / TXT / KML / GPX / GeoJSON, folders in the browser DB, played row by row), Trigger Clock, Time Base — see [Table](#table)
@@ -852,6 +853,17 @@ websocat --binary ws-l:127.0.0.1:8080 udp-l:127.0.0.1:9000
 - Not done: OSC over TCP / SLIP, time-tagged scheduling (the time tag of a bundle is ignored: messages are delivered at once), address-space queries. Checked with a mock of the bridge and the example from the OSC 1.0 specification, **not with a real OSC program**.
 
 Preset: *OSC: Faders and Values*.
+
+## Modbus
+
+**Modbus Master** reads (and, if allowed, writes) registers and coils of sensors, energy meters, PLCs, inverters and the like. *Transport*: **RTU** — an RS-485 / RS-232 USB adapter on WebSerial (Chrome / Edge; the usual 9600 8N1 or 8E1 — with parity *none* the node uses two stop bits, as the standard says; if the device wants one, set parity even), or **TCP** through a WebSocket bridge: `websocat --binary ws-l:127.0.0.1:5020 tcp:<device>:502`.
+
+- A poll asks *count* items from *start address* (0-based, as on the wire — a manual's 40001 is address 0) of unit *unit* with the function *read*: holding (03), input (04), coils (01) or discrete inputs (02). One request is in flight at a time; a silent device is an error after *answer timeout* and the next poll goes on.
+- *Registers as*: `u16`, `i16`, and the 32-bit `u32`, `i32`, `f32` (two registers each; *low word first* for devices that send CD AB). *Multiply values by* applies a scale (a manual's "×0.1"). Outputs: `value` (the first item, the last one is kept), `text` (all items, space-separated), `rec` (`unit`, `addr`, `value` per item), `new`, `ok`, `errors` (silent device and exception answers; the status names the exception, like *illegal data address*).
+- **Writing is off by default**: with *allow writing* the `write` input is sent when it changes — as a holding register (function 06, the integer is rounded) or as a coil (05, above 0.5 is ON) to *write address*. Writing to a PLC or a drive can start machinery or stop a process: only with the device documentation in hand.
+- Not done: write of several registers (16 / 15), 32-bit writes, several polls in one node (use several nodes), broadcast, ASCII mode, device identification. Checked with an independent Modbus TCP slave (Python, struct), CRC vectors from the Modbus specification and a serial-port mock, **not with a real device**.
+
+Preset: *Modbus: Poll Registers (RTU / TCP)*.
 
 ## Map and records
 
