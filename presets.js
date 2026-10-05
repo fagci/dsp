@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=39;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=40;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -197,6 +197,7 @@ const PRESET_CATS={
   'IR: Tasmota Blaster over MQTT':'Infrared',
   'MQTT: Subscribe and Publish':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
+  'HID: Reports to Number and Log':'Network & IoT',
   'BLE: Heart Rate Monitor':'Network & IoT',
   'BLE: Find a Beacon by RSSI':'Network & IoT',
   'BLE: UART Terminal':'Network & IoT',
@@ -3265,6 +3266,21 @@ const tr=addNode('trend',620,340,{span:20,auto:false,lo:-1,hi:1});
 tr.size.w=420; tr.size.h=140; applySize(tr);
 addEdge(g.id,'a1',m.id,'in1'); addEdge(m.id,'out',os.id,'freq'); addEdge(os.id,'out',dc.id,'L'); addEdge(os.id,'out',dc.id,'R');
 addEdge(g.id,'b1',lp.id,'in1'); addEdge(g.id,'b2',lp.id,'in2'); addEdge(g.id,'a1',tr.id,'in');
+markWiresDirty();
+});
+preset('HID: Reports to Number and Log', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Any USB / Bluetooth HID device without a driver: foot pedals, remote controls, USB scales and sensors, barcode scanners, your own boards (Arduino Leonardo / Pro Micro, RP2040). WebHID: Chrome, Edge, Opera on https or localhost; keyboards and mice are blocked by the browser.\n'+
+  'Press Connect and choose the device (vendor / product id narrow the list). Every input report appears as hex on `report` (the Ticker); the value output takes one field of the report: offset in the data, format (uint / int 8 / 16 / 32 bit, little or big endian, a single bit) and scale; the report id filters the value.\n'+
+  'Find the field by watching which bytes change while you press or move something. The `send` input (hex) writes an output or a feature report: LEDs, modes, commands.'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const h=addNode('hid',40,190,{fmt:'uint8',off:0});
+h.size.w=360; h.size.h=230; applySize(h);
+const tk=addNode('ticker',460,190,{time:true});
+tk.size.w=420; tk.size.h=140; applySize(tk);
+const tr=addNode('trend',460,350,{span:30,auto:true});
+tr.size.w=420; tr.size.h=140; applySize(tr);
+addEdge(h.id,'report',tk.id,'text'); addEdge(h.id,'value',tr.id,'in');
 markWiresDirty();
 });
 preset('Unknown Signal: Blind Analysis (Generator)', function(){
