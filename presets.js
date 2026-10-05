@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=50;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=51;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -221,6 +221,8 @@ const PRESET_CATS={
   'RTC: Direct Chat Between Two Browsers':'Network & IoT',
   'Tab Link: Chat Between Two Tabs':'Network & IoT',
   'Rig Control: Follow and Tune a Radio':'Network & IoT',
+  'APRS-IS: Stations on the Map':'Modems & Data Links',
+  'KISS TNC: Packet Radio via Direwolf':'Modems & Data Links',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
@@ -3883,5 +3885,36 @@ const nv=addNode('numview',760,240,{});
 const tk=addNode('ticker',760,360,{time:true});
 tk.size.w=380; tk.size.h=110; applySize(tk);
 addEdge(k.id,'out',r.id,'freq'); addEdge(r.id,'freq',nv.id,'in'); addEdge(r.id,'mode',tk.id,'text');
+markWiresDirty();
+});
+
+preset('APRS-IS: Stations on the Map', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'APRS-IS is the internet network that collects APRS packets from receivers all over the world. The server speaks TCP, so a WebSocket bridge stands in between:\n'+
+  '  websocat --text ws-l:127.0.0.1:14580 tcp:rotate.aprs2.net:14580\n'+
+  'Enter your callsign, leave the passcode empty (receive only) and set the filter (r/lat/lon/km — stations within that radius). Press Connect: stations with a position appear on the map and as tracks by callsign; every packet goes to the ticker as a TNC2 line. Mic-E positions (many trackers) are shown as text, not on the map.'});
+nt.size.w=1100; nt.size.h=170; applySize(nt);
+const a=addNode('aprsIs',40,240,{filter:'r/55.0/83.0/200'});
+a.size.w=380; a.size.h=330; applySize(a);
+const tk=addNode('ticker',40,600,{time:true});
+tk.size.w=380; tk.size.h=110; applySize(tk);
+const map=addNode('geoMap',460,240,{mz:7,mlat:55,mlon:83});
+map.size.w=700; map.size.h=480; applySize(map);
+addEdge(a.id,'rec',map.id,'rec'); addEdge(a.id,'text',tk.id,'text');
+markWiresDirty();
+});
+preset('KISS TNC: Packet Radio via Direwolf', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'A packet-radio TNC over KISS: a hardware TNC on a serial port (WebSerial), or Direwolf / soundmodem over TCP through a bridge:\n'+
+  '  websocat --binary ws-l:127.0.0.1:8001 tcp:127.0.0.1:8001      (Direwolf KISS port is 8001; choose transport WebSocket)\n'+
+  'Received packets: TNC2 lines (CALL>DEST,PATH:info) in the ticker and, if the packet has a position, on the map. Transmitting is off: with «allow transmit» the TNC sends the TNC2 line from the text wire — only with your own callsign and licence.'});
+nt.size.w=1100; nt.size.h=150; applySize(nt);
+const k=addNode('kissTnc',40,220,{transport:'WebSocket (KISS TCP bridge)'});
+k.size.w=380; k.size.h=330; applySize(k);
+const tk=addNode('ticker',40,580,{time:true});
+tk.size.w=380; tk.size.h=110; applySize(tk);
+const map=addNode('geoMap',460,220,{mz:6,mlat:55,mlon:83});
+map.size.w=700; map.size.h=470; applySize(map);
+addEdge(k.id,'rec',map.id,'rec'); addEdge(k.id,'text',tk.id,'text');
 markWiresDirty();
 });
