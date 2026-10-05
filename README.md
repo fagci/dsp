@@ -44,7 +44,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 
 ### Analysis
 - Spectrum analyzer / waterfall (optional phosphor view; the waterfall keeps its history at full resolution, so zoom, dB range and palette changes redraw it without losing detail), persistence spectrum, oscilloscope (auto/normal/single trigger with level, slope, position, hysteresis and holdoff; sub-sample trigger alignment, averaging, persistence, sin(x)/x interpolation, XY, math channel, AC/DC coupling, time/level cursors, automatic measurements, Autoset, Run/Stop with history scroll), constellation, eye diagram
-- CFAR signal detector (noise estimate in linear power: OS — 75th percentile, robust to strong neighbours; SO — smallest of the two sides; CA — mean; a target is shown after M hits in the last N spectrum frames, so single noise spikes are dropped; outputs SNR of the strongest target and the noise floor), channel SNR, channel grid, band scanner, auto frequency scanner
+- CFAR signal detector (noise estimate in linear power: OS — 75th percentile, robust to strong neighbours; SO — smallest of the two sides; CA — mean; a target is shown after M hits in the last N spectrum frames, so single noise spikes are dropped; outputs SNR of the strongest target and the noise floor), channel SNR, channel grid, band scanner, auto frequency scanner (fixed sensitivity, or *over noise, dB*: the threshold follows a noise floor learned from the first 33 positions, so it does not depend on gain)
 - Band plans and bookmarks ([Table](#table)), signal recognition
 - **Blind analysis of an unknown transmission**: *Baud Estimator*, *CMA Equalizer*, *Sync Word Hunter*, *Conv Code Finder*, *CRC Finder* and a test transmitter *Unknown Signal* — from raw IQ to the message without knowing the symbol rate, the sync word, the code or the checksum (see [Blind analysis](#blind-analysis))
 - **Signal type identifier**: finds every signal in a spectrum from any source and names its modulation — on an SDR from the raw IQ (see [Signal type identifier](#signal-type-identifier))
@@ -164,6 +164,7 @@ On Linux unload the kernel driver before connecting, e.g. `sudo rmmod msi001 msi
 - the speed depends on the retune time over USB: roughly 20–50 ms per step, i.e. a few seconds per line for 100 MHz at 2.4 MSPS and ~30–45 s for the whole RTL-SDR range. A HackRF at 20 MSPS covers ~8× more per step
 - the Spectrum Analyzer keeps the waterfall history at full resolution (**waterfall history memory**, 128 MB by default), so zooming into an old part of the panorama shows the real bins, not stretched pixels. Over the budget the oldest lines keep only a max-decimated copy
 - ready-made patch: **USB SDR: Wideband Sweep**
+- ready-made patch for unattended scanning: **USB SDR: Auto Scan (CFAR + Band Scanner)** — the Band Scanner walks a band plan, the CFAR detector (threshold in dB over the local noise, independent of gain) wired to its `active` input stops it on a signal, the strongest target is tuned and played, then the scan goes on
 
 ### IQ recording and playback
 
