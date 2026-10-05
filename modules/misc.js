@@ -158,5 +158,5 @@ function ungroupSel(){                               // развернуть о�
 }
 
 def({ id:'note', title:'Note', cat:'Misc', resize:true,
-  params:[{n:'text',t:'code',d:'Note: what this part of the patch does'}],
+  params:[{n:'text',t:'code',plain:true,d:'Note: what this part of the patch does'}],
   process(){ return {}; }});

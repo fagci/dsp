@@ -898,19 +898,26 @@ def({ id:'const', title:'Constant', cat:'Control', outs:[{n:'out',t:'num'}],
   process(n,I){ if(typeof I.v==='number') setMod(n,'v',I.v); return {out:n.p.v}; }});
 
 
-def({ id:'lfo', title:'LFO', cat:'Control', outs:[{n:'out',t:'num'}],
-  ins:[{n:'freq',t:'num'}],
+def({ id:'lfo', title:'LFO', cat:'Control', outs:[{n:'out',t:'num'},{n:'sync',t:'sig'}],
+  ins:[{n:'freq',t:'num'},{n:'sync',t:'sig'}],
   params:[{n:'freq',t:'range',min:.01,max:20,step:.01,d:.5},
           {n:'min',t:'num',d:0},{n:'max',t:'num',d:1},
-          {n:'wave',t:'select',opts:['sine','tri','saw','sq'],d:'sine'}],
-  init:n=>{n.ph=0;},
+          {n:'wave',t:'select',opts:['sine','tri','saw','sq'],d:'sine'},
+          {n:'phase',t:'range',min:0,max:1,step:.001,d:0,label:'phase'}],
+  init:n=>{n.ph=0;n.pv=0;},
   process(n,I){ if(typeof I.freq==='number') setMod(n,'freq',I.freq);
+    const os=buf(n,'sync'); os.fill(0);
+    if(I.sync){                                     // жёсткая синхронизация по фронту: фаза на старт
+      for(let i=0;i<BLOCK;i++){ const sv=I.sync[i]; if(sv>0 && n.pv<=0){ n.ph=n.p.phase; break; } n.pv=sv; }
+      n.pv=I.sync[BLOCK-1]; }
     const ph=n.ph;
     const v = n.p.wave==='sine'? .5+.5*Math.sin(2*Math.PI*ph)
             : n.p.wave==='tri' ? 1-Math.abs(2*ph-1)
             : n.p.wave==='saw' ? ph : (ph<.5?1:0);
-    n.ph=(ph+n.p.freq*BLOCK/Eng.sr)%1;
-    return {out:n.p.min+(n.p.max-n.p.min)*v}; }});
+    const inc=n.p.freq/Eng.sr, nx=ph+inc*BLOCK;
+    if(nx>=1) os[Math.min(BLOCK-1,Math.ceil((1-ph)/inc))]=1;   // импульс в начале периода
+    n.ph=nx%1;
+    return {out:n.p.min+(n.p.max-n.p.min)*v, sync:os}; }});
 
 
 function uartQueue(n){

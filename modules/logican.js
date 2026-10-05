@@ -137,6 +137,27 @@ function laI2c(n,dig,L){
   D.flush=stop;
 }
 
+function laWire(n,cv){                             // прокрутка истории: тянуть — назад/вперёд, колесо — окно, двойной клик — живой режим
+  if(n._wcv===cv) return; n._wcv=cv;
+  let drag=null;
+  const geo=()=>{ const rate=laRate(n), ws=Math.max(2,n.p.span*rate), r=cv.getBoundingClientRect();
+    return {rate, ws, pw:(cv.width-44-2)*r.width/cv.width, lo:n.si-LA_KEEP*rate+ws}; };
+  cv.addEventListener('pointerdown',ev=>{ ev.stopPropagation(); cv.setPointerCapture(ev.pointerId);
+    if(n.hold==null) n.hold=n.si; drag={x:ev.clientX,h:n.hold}; cv.style.cursor='grabbing'; });
+  cv.addEventListener('pointermove',ev=>{ if(!drag) return;
+    const g=geo(); n.hold=clamp(drag.h-(ev.clientX-drag.x)/g.pw*g.ws,Math.min(g.lo,n.si),n.si);
+    if(n.hold>=n.si) n.hold=null;
+    redraw(n); });
+  const end=()=>{ drag=null; cv.style.cursor=''; };
+  cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
+  cv.addEventListener('dblclick',ev=>{ ev.stopPropagation(); n.hold=null; redraw(n); });
+  cv.addEventListener('wheel',ev=>{ ev.preventDefault(); ev.stopPropagation();
+    const now=performance.now(); if(n._wt && now-n._wt<60) return; n._wt=now;
+    const dy=ev.deltaY||ev.deltaX; if(!dy) return;
+    setMod(n,'span',clamp(n.p.span*(dy<0 ? 1/1.25 : 1.25),.001,10)); redraw(n); },{passive:false});
+  cv.style.cursor='';
+}
+
 def({ id:'logan', lazy:'proc', title:'Logic Analyzer', cat:'Analysis',
   ins:n=>laUsb(n) ? [] : Array.from({length:laCount(n)},(_,k)=>({n:'ch'+(k+1),t:laType(n)})),
   outs:n=>[...Array.from({length:laCount(n)},(_,k)=>({n:'d'+(k+1),t:laType(n)})),
@@ -220,6 +241,7 @@ def({ id:'logan', lazy:'proc', title:'Logic Analyzer', cat:'Analysis',
     return o; },
   draw(n,cv,cx){
     const W=cv.width, H=cv.height, N=laCount(n), p=n.p, rate=laRate(n), LAB=44, AX=13;
+    laWire(n,cv);
     const names=String(p.names||'').split(','), rh=(H-AX)/N, ws=Math.max(2,p.span*rate), pw=W-LAB-2;
     let start;
     if(n.hold!=null) start=n.hold-ws;
@@ -270,7 +292,7 @@ def({ id:'logan', lazy:'proc', title:'Logic Analyzer', cat:'Analysis',
     if(r){
       const spb=rate/Math.max(1,+p.baud);
       const us=laUsb(n) ? n.ustat+' · ' : '';
-      r.textContent = us+(p.proto==='none' ? (n.hold!=null ? 'hold' : p.trig!=='off' ? (n.trigAt==null ? 'waiting for trigger' : 'triggered') : 'running')
+      r.textContent = us+(p.proto==='none' ? (n.hold!=null ? 'hold −'+laFmtT((n.si-n.hold)/rate)+' (double-click: live)' : p.trig!=='off' ? (n.trigAt==null ? 'waiting for trigger' : 'triggered') : 'running')
         : p.proto+' · '+n.nbytes+' bytes'+(n.nerr ? ' · '+n.nerr+' errors' : '')+(p.proto==='UART' && spb<3 ? ' · baud too high for this sample rate' : '')+(n.last ? '\n'+n.last.slice(-60) : ''));
     } }
 });

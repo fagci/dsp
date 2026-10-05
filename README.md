@@ -27,7 +27,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Installable PWA with offline support
 
 ### Sources
-- Oscillator, sweep/jammer, constant, LFO, text source
+- Oscillator, sweep/jammer, constant, LFO (a `sync` input restarts the phase on a rising edge, the `sync` output pulses at the start of every period — chain it with the oscillator's `sync` or another LFO), text source
 - Microphone (stereo A+B), audio file, audio stream URL, tab/screen audio capture
 - **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500, RX-888 (mkI/mkII/mkIII) — multiple tuners/demodulators per device, wideband sweep with a panoramic waterfall, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
 - **KiwiSDR** remote receivers (public list included)
@@ -550,6 +550,11 @@ Visual blocks on number wires (Indicators). They draw on a dark screen in both t
 - **S-Meter**: receiver scale S1…S9 (6 dB per step), then +10 … +60 dB; *S9 level* is set in dBm (−73 is the HF standard, use −93 for VHF). Fast attack and slow fall like a real meter, peak marker, the S reading and the level in the corner. The `s` output is the reading in S units (9 = S9, 15 = S9 + 36 dB).
 - **Text Ticker**: the latest lines from `text` (a new string is a new line) and `rec` (the *field* is shown, or all fields as `key=value`), as a scrolling log with optional timestamps or as a running line (*marquee*). *Clear* empties it. Good for a decoder's messages next to the other indicators.
 
+- **Graph** (Output): a link graph (vis-network, bundled) from CSV — a row is an edge `from,to[,weight[,label]]`, a header with `from` / `to` / `weight` / `label` columns is optional, the delimiter is detected. Rows come from the *csv* field, from the `text` wire (a chunk of CSV on every change) and from `rec` (fields `from` / `to` / `weight` / `label`, or the first two fields). A repeated pair without a weight thickens the edge; nodes are sized by degree. *arrows*, *weights on edges*, *physics*; clicking a node puts its name on `sel`; `nodes` / `edges` are counters. Preset *Graph: Links from CSV*.
+- **Chat** (Output): incoming text from the `text` wire goes into the log, the field at the bottom sends (Enter or *Send*): `text` holds the last sent message, `go` pulses for one block. A text on the `send` input is sent the same way. Preset *Chat: Text In and Out*.
+
+Code fields (Script, Builder, Note, tables) are a plain text area with a light syntax highlight underneath, so the caret stays in place at any canvas zoom; the Note has no highlight.
+
 Presets: *Indicators: Lamps, Gauge, LED Bar, Compass, Display*, *Indicators: Sky Plot, S-Meter, Text Ticker*.
 
 ### Logic Analyzer
@@ -557,6 +562,7 @@ Presets: *Indicators: Lamps, Gauge, LED Bar, Compass, Display*, *Indicators: Sky
 **Logic Analyzer** (Analysis): 1…8 channels → digital traces on a common time axis, with a decoder that gives out the **bits and bytes**.
 
 - **Input wires**: *signal* (audio rate — the usual choice, e.g. the `bit` output of *Transmit Chars*, a demodulator's soft output, a square wave) or *number* (one sample per engine block, ~Eng.sr / block, for slow things: lamps, triggers, flip-flops, Compare outputs). A *threshold* with *hysteresis* turns each wire into 0 / 1. The `d1…dN` outputs are the digitised channels. At 44.1 kHz async serial works up to ~9600 baud (at least 4 samples per bit) and I²C / SPI clocks up to ~10 kHz; the readout warns when the baud is too high for the sample rate.
+- **History**: drag the traces sideways to scroll back through the last 20 s (the view holds), the wheel changes the window, a double click returns to the live trace; *Hold / Run* still freezes the picture.
 - **Display**: the *window* (1 ms … 10 s) is drawn from the list of edges, not samples, so even long windows are cheap. *Trigger* on a rising / falling edge of a chosen channel (the trigger sits at 25 % of the window; the time axis is relative to it), *single shot* with **Arm**, **Hold / Run** freezes the picture. Decoded bytes are drawn as bubbles on the trace (hex and the character, errors in red).
 - **Decoders** (*decoder*; channels are set in the advanced parameters):
   - **UART**: baud, 5…16 data bits, parity (none / even / odd), idle level, bit order (LSB first by default). Start bit is checked in the middle, every bit is sampled at its centre; framing and parity errors are marked and not sent to `text`.
