@@ -32,7 +32,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500, RX-888 (mkI/mkII/mkIII) — multiple tuners/demodulators per device, wideband sweep with a panoramic waterfall, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
 - **KiwiSDR** remote receivers (public list included)
 - **HTTP In**: poll any URL (REST / JSON) into text, a number and records; **SSE In**: a live Server-Sent Events stream — see [HTTP](#http)
-- **RTC Data**: a direct browser-to-browser WebRTC data channel, no server — see [RTC Data](#rtc-data)
+- **RTC Data**: a direct browser-to-browser WebRTC data channel, no server — see [RTC Data](#rtc-data); **Tab Link**: text and numbers between tabs of the same browser
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), **Table** (one node for lists, band plans, bookmarks, logs and the data sequencer: CSV / TSV / JSON / TXT / KML / GPX / GeoJSON, folders in the browser DB, played row by row), Trigger Clock, Time Base — see [Table](#table)
@@ -779,6 +779,10 @@ The strings are ordinary text, so they can travel on wires: through MQTT, a chat
 - Everything is end-to-end encrypted by WebRTC (DTLS), but whoever gets both strings can join the link — do not post them publicly.
 
 Preset: *RTC: Direct Chat Between Two Browsers*.
+
+### Tab Link
+
+**Tab Link** (BroadcastChannel) passes text and numbers between tabs and windows of this site in one browser — no network, nothing leaves the machine. `text` and `value` are sent when they change (empty text is skipped); what comes from the other tabs goes out as `text` / `value` / `rec` / `new` (parsed as in HTTP In, *JSON field* picks the number), `ok` is 1 while the channel is open. The same *channel* name in both tabs; a tab does not hear its own messages (two nodes in one tab do hear each other). Use: a second window with a dashboard or a map fed by the graph in the first one. Preset: *Tab Link: Chat Between Two Tabs*.
 
 ## Map and records
 
