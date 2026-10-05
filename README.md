@@ -56,6 +56,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Goertzel, autocorrelation, cross-correlation, frequency response / coherence
 - Harmonics & THD, third-octaves, LUFS-like loudness, level statistics, spectral descriptors
 - Impulse response & RT60, bird song analyzer, frequency meter, trend charts
+- **Measuring instruments** ([details](#measuring-instruments)): *Modulation Meter* (AM depth, FM deviation, modulating frequency, FM index, carrier offset), *SINAD / THD+N*, *IQ Quality* (DC offset, I/Q gain and phase error, image rejection)
 
 ### Processing
 - Filters, gain, mixers (4/12 ch), AGC, squelch, mains notch, adaptive hum canceller (tracks mains frequency, all harmonics), comb notch, adaptive filter, spectral denoiser
@@ -271,6 +272,7 @@ A wire of the **IQ** type (lime) carries a stream at its own sample rate: each e
 - **IQ DC Block** — removes the LO spike of zero-IF receivers from I/Q
 - **IQ Noise Blanker** — blanks short impulses (ignition, switching supplies) on the wide band before the channel filter, where they are still short
 - **IQ Squelch** — RSSI (dBFS) and SNR over a tracked noise floor; opens by SNR or level with 3 dB hysteresis and a hang time, fades in/out in 5 ms; `rssi`, `snr`, `open` outputs
+- **Modulation Meter** (`modMeter`) and **IQ Quality** (`iqQuality`) — instruments on an `iq` wire, see [Measuring instruments](#measuring-instruments)
 - **I/Q → IQ** — two engine signals (e.g. the stereo line input from a receiver with an IQ output, or Hilbert I/Q) into an IQ stream; IQ → Audio does the reverse. For a sound card: Microphone (A+B) in *stereo device* mode (up to 192 kHz; the engine rate at the top sets the band) → I/Q → IQ → IQ Balance
 - **IQ Balance** — fixes the I/Q mismatch of sound-card and direct-conversion receivers (the mirror image): Q gain and phase, *auto* (blind, from the I², Q², I·Q averages — needs a spectrum symmetric on average: noise, a busy band) or manual, plus a fractional Q delay (channel skew, often ±1 sample on sound cards). The readout shows the estimate and the image level before → after (1 dB / 5° → about −23 dB, corrected below −50 dB)
 - **Auto Notch (NLMS)** (Processing) — removes steady whistles and heterodynes from audio; `tones` is what was removed
@@ -693,6 +695,14 @@ Visual blocks on number wires (Indicators). They draw on a dark screen in both t
 Code fields (Script, Builder, Note, tables) are a plain text area with a light syntax highlight underneath, so the caret stays in place at any canvas zoom; the Note has no highlight.
 
 Presets: *Indicators: Lamps, Gauge, LED Bar, Compass, Display*, *Indicators: Sky Plot, S-Meter, Text Ticker*, *Indicators: Switches and Attitude*, *ADS-B: Radar and Attitude (Generator)*, *Satellites: Pass and Sky Plot*.
+
+### Measuring instruments
+
+Meters with numeric outputs: a value can go to a *Number*, *Gauge*, *Compare* or a log. Presets: *Measure: Modulation Meter — FM and AM (Generator)*, *Measure: SINAD of an FM Receiver (Generator)*, *Measure: IQ Quality — DC and Imbalance (Generator)*.
+
+- **Modulation Meter** (IQ, worker): a carrier near the center of the stream (shift it to zero and decimate first). The envelope gives **AM** — depth from the positive and negative peaks and their mean (a difference is overmodulation or distortion); the instantaneous frequency gives **FM** — peak deviation (half of the peak-to-peak), the modulating frequency (from zero crossings of the deviation) and the index β = deviation / modulating frequency. Also the carrier offset from the center and the level. Both signals pass two one-pole low-pass filters (*measurement band*), a window of 100…1000 ms; samples with the envelope below 10 % of the mean do not take part in FM. Outputs `am` (%), `dev`, `offset`, `fm`, `idx`, `level`. Needs complex IQ; with no carrier the outputs are empty. The modulating frequency is counted per window, so its resolution is 1 / window
+- **SINAD / THD+N** (Analysis, signal): the standard receiver test. The tone is taken out by a least-squares sine fit (cos, sin and a constant) over the whole window, the frequency is found by a golden-section search around the FFT peak, so even 80 dB gets no leakage into the residual; what is left in the band is noise and distortion. **SINAD** = (S+N+D)/(N+D), **THD+N** = √((N+D)/S), also the tone frequency, its level, the residual level and ENOB. *Band*: 300–3400 Hz (voice, 4th-order filters), 20–20000 Hz or full; *tone* 0 = the strongest in the band, or a number / the `freq` input. Window 0.25…2 s, a result every half window. The FM receiver test is *IQ Demodulator → IQ → Audio → SINAD*. No psophometric weighting
+- **IQ Quality** (IQ, worker): over a window of 250…2000 ms — the **DC offset** (dBFS and relative to the signal, dBc: LO leakage), the **Q gain** and **phase** error (the same model as *IQ Balance*: Q′ = g·(Q·cosφ + I·sinφ)) and the **image rejection**, from the circularity of the stream: ρ = |E[x²]| / E[|x|²] after removing the mean, rejection = 20·lg((1 + √(1 − ρ²)) / ρ). Works on a tone away from zero, noise or a busy band; a carrier exactly at the center (real envelope) reads too low, as does anything that is not symmetric by nature. Real streams are refused. Outputs `dc`, `dcc`, `gain`, `phase`, `irr`
 
 ### Logic Analyzer
 

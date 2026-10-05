@@ -4148,6 +4148,88 @@ def({ id:'freqmeter', lazy:'proc', title:'Frequency Meter', cat:'Analysis', ins:
       (n.f? n.f.toFixed(n.p.digits)+' Hz' : '—')+'  ('+(n.conf*100).toFixed(0)+'%)'; }});
 
 
+// SINAD / THD+N: тон вырезается подгонкой синусоиды по всему окну (частота — максимум периодограммы
+// в пределах одного бина вокруг пика БПФ, золотое сечение), остаток = всё, что не тон: шум и искажения
+// в выбранной полосе. SINAD = (S+N+D)/(N+D); THD+N = √((N+D)/S).
+function sinadTone(x,N,sr,f0,flo,fhi){
+  let f=f0;
+  // энергия проекции x на {cos, sin, 1} на частоте f (нормальные уравнения 3×3, метод Гаусса)
+  const E=f=>{ const w=2*Math.PI*f/sr, cw=Math.cos(w), sw=Math.sin(w);
+    let r=1,q=0, sc=0,ss=0,scc=0,sss=0,scs=0,sxc=0,sxs=0,sx=0;
+    for(let i=0;i<N;i++){ const v=x[i]; sc+=r; ss+=q; scc+=r*r; sss+=q*q; scs+=r*q; sxc+=v*r; sxs+=v*q; sx+=v;
+      const t=r*cw-q*sw; q=r*sw+q*cw; r=t; }
+    const A=[[scc,scs,sc,sxc],[scs,sss,ss,sxs],[sc,ss,N,sx]];
+    for(let c=0;c<3;c++){
+      let p=c; for(let k=c+1;k<3;k++) if(Math.abs(A[k][c])>Math.abs(A[p][c])) p=k;
+      if(Math.abs(A[p][c])<1e-9) return 0;
+      [A[c],A[p]]=[A[p],A[c]];
+      for(let k=c+1;k<3;k++){ const m=A[k][c]/A[c][c]; for(let j=c;j<4;j++) A[k][j]-=m*A[c][j]; } }
+    const b=[0,0,0];
+    for(let c=2;c>=0;c--){ let v=A[c][3]; for(let j=c+1;j<3;j++) v-=A[c][j]*b[j]; b[c]=v/A[c][c]; }
+    return b[0]*sxc+b[1]*sxs+b[2]*sx; };
+  if(!(f>0)){
+    const M=pow2ge(N), re=new Float64Array(M), im=new Float64Array(M);
+    for(let i=0;i<N;i++) re[i]=x[i]*(0.5-0.5*Math.cos(2*Math.PI*i/(N-1)));
+    fft(re,im);
+    const lo=Math.max(2,Math.ceil(flo*M/sr)), hi=Math.min(M/2-2,Math.floor(fhi*M/sr));
+    let bv=0,bi=lo;
+    for(let k=lo;k<=hi;k++){ const v=re[k]*re[k]+im[k]*im[k]; if(v>bv){ bv=v; bi=k; } }
+    f=bi*sr/M;
+  }
+  const df=sr/N; let a=f-df, b=f+df;
+  const g=(Math.sqrt(5)-1)/2;
+  let c=b-g*(b-a), d=a+g*(b-a), fc=E(c), fd=E(d);
+  for(let it=0;it<30;it++){
+    if(fc>fd){ b=d; d=c; fd=fc; c=b-g*(b-a); fc=E(c); }
+    else { a=c; c=d; fc=fd; d=a+g*(b-a); fd=E(d); } }
+  f=(a+b)/2;
+  return {f, p:E(f)/N};
+}
+def({ id:'sinad', lazy:'proc', title:'SINAD / THD+N', cat:'Analysis',
+  ins:[{n:'in',t:'sig'},{n:'freq',t:'num'}],
+  outs:[{n:'sinad',t:'num'},{n:'thdn',t:'num'},{n:'tone',t:'num'},{n:'level',t:'num'},{n:'resid',t:'num'}],
+  readout:true, tall:true,
+  params:[{n:'freq',t:'range',min:0,max:()=>Eng.sr/2,step:1,d:0,label:'tone, Hz (0 = find the strongest in the band)'},
+          {n:'band',t:'select',opts:['300–3400 Hz','20–20000 Hz','full'],d:'300–3400 Hz',label:'measurement band'},
+          {n:'win',t:'select',opts:['0.25','0.5','1','2'],d:'0.5',label:'window, s'}],
+  init:n=>{n.ring=null;n.w=0;n.filled=0;n.since=0;n.res=null;n.fl=null;n.fk='';},
+  process(n,I){
+    if(typeof I.freq==='number') setMod(n,'freq',I.freq);
+    const sr=Eng.sr, N=Math.round(+n.p.win*sr), b=n.p.band;
+    const lo=b[0]==='3'?300:b[0]==='2'?20:0, hi=b[0]==='3'?3400:b[0]==='2'?20000:sr/2;
+    const fk=b+'|'+sr;
+    if(fk!==n.fk){ n.fk=fk; n.fl=[];
+      if(lo>0) for(let k=0;k<2;k++) n.fl.push({c:biquadCoef('hp',lo,.707,sr),s:{x1:0,x2:0,y1:0,y2:0}});
+      if(hi<sr/2*.95) for(let k=0;k<2;k++) n.fl.push({c:biquadCoef('lp',Math.min(hi,sr*.45),.707,sr),s:{x1:0,x2:0,y1:0,y2:0}});
+      n.filled=0; n.since=0; n.res=null; }
+    if(!n.ring||n.ring.length!==N){ n.ring=new Float32Array(N); n.w=0; n.filled=0; n.since=0; n.res=null; }
+    const x=I.in, ring=n.ring;
+    for(let i=0;i<BLOCK;i++){
+      let v=x?x[i]:0;
+      for(const f of n.fl) v=biq2(f.s,f.c,v);
+      ring[n.w]=v; n.w=(n.w+1)%N; }
+    n.filled=Math.min(N,n.filled+BLOCK); n.since+=BLOCK;
+    if(n.filled>=N && n.since>=N/2){
+      n.since=0;
+      const t=new Float32Array(N); let m=0;
+      for(let i=0;i<N;i++){ t[i]=ring[(n.w+i)%N]; m+=t[i]; }
+      m/=N; let pt=0;
+      for(let i=0;i<N;i++){ t[i]-=m; pt+=t[i]*t[i]; }
+      pt/=N;
+      if(pt<1e-12) n.res={none:true};
+      else {
+        const r=sinadTone(t,N,sr,+n.p.freq,Math.max(lo,30),Math.min(hi,sr*.45));
+        const ps=Math.min(r.p,pt), pn=Math.max(pt-ps,pt*1e-12);
+        n.res={sinad:10*Math.log10(pt/pn), thdn:10*Math.log10(pn/ps), f:r.f, lvl:10*Math.log10(ps), nz:10*Math.log10(pn)};
+      } }
+    const r=n.res;
+    return r&&!r.none ? {sinad:r.sinad, thdn:r.thdn, tone:r.f, level:r.lvl, resid:r.nz} : {sinad:0,thdn:0,tone:0,level:-120,resid:-120}; },
+  draw(n){
+    const r=n.res, el=n.el.querySelector('.readout');
+    el.textContent = !r ? (n.filled?'measuring…':'no input') : r.none ? 'no signal' :
+      'SINAD '+r.sinad.toFixed(1)+' dB · THD+N '+r.thdn.toFixed(1)+' dB ('+(Math.pow(10,r.thdn/20)*100).toFixed(r.thdn<-40?3:2)+'%)\n'+
+      'tone '+r.f.toFixed(1)+' Hz · '+r.lvl.toFixed(1)+' dBFS · N+D '+r.nz.toFixed(1)+' dBFS · ENOB '+((r.sinad-1.76)/6.02).toFixed(1)+' bit'; }});
+
 def({ id:'blkview', title:'Block Viewer', cat:'Analysis',
   ins:[{n:'blk',t:'blk'},{n:'wrap',t:'num'}], outs:[{n:'text',t:'txt'},{n:'len',t:'num'}],
   readout:true, tall:true,
