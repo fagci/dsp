@@ -1,9 +1,11 @@
 "use strict";
 /* ============================ GSM: приём бёрстов из IQ ============================
- * Порт приёмного тракта gr-gsm (ptrkrysik/gr-gsm, GPLv3) и SCH-декодера из
+ * Порт приёмного тракта gr-gsm (ptrkrysik/gr-gsm, GPLv3) и SCH/BCCH-декодера из
  * libosmocore (osmocom/libosmocore, GPLv2+): FCCH → SCH → синхронизация →
- * разбор бёрстов на TS0 нисходящего канала. Даёт то, что просили — «принимать
- * пакеты с IQ»: несущая C0 ловится, кадры нумеруются, бёрсты выдаются битами.
+ * разбор бёрстов на TS0 нисходящего канала → BCCH/System Information. Даёт то, что
+ * просили — «принимать пакеты с IQ»: несущая C0 ловится, кадры нумеруются, бёрсты
+ * выдаются битами, из BCCH вытаскивается сота целиком (PLMN/LAC/CID, ARFCN свои и
+ * соседние, RACH-параметры).
  *
  * Что готово:
  *   [ГОТОВО] MLSE-детектор (Витерби по каналу) — viterbiDetector, порт 1:1
@@ -12,12 +14,18 @@
  *   [ГОТОВО] SCH: свёрточный код G0/G1, CRC-16/10 (0x175), разбор BSIC/FN
  *            — свои энкодер/Витерби сверены с osmo_conv (порядок бит r=(state<<1)|bit),
  *            round-trip и сквозной прогон через бёрст в тестах
+ *   [ГОТОВО] BCCH/xCCH: деперемежение + свёрточный код K=5 + FIRE CRC-40 → L2,
+ *            разбор SI1/SI2/SI3/SI4 (Cell ID, LAI, список ARFCN bitmap0, RACH Control)
  *   [ГОТОВО] нумерация бёрстов (t1/t2/t3 → FN, TN) и типизация по 51-мультикадру TS0
  *   [ГОТОВО] внутренняя частотная петля: дерот. входа по накопленному смещению
  *
+ * Не разобрано: форматы списка частот range1024/512/256/128 и variable bitmap
+ * (только bitmap 0 — покрывает P-GSM900), SI13/SI2bis/SI2ter/SI2quater — только
+ * типизируются. Uplink не принимается — только downlink (FCCH/SCH есть только там).
+ *
  * Вход — поток 'iq', любой sr выше ~1.1 МГц; внутри ресемплится на OSR·270.833 кГц.
- * Дальше демодуляции нет: узел выдаёт биты бёрстов (для demapper/декодера канала),
- * BSIC и номер кадра. Это приёмник физического уровня, не декодер трафика. */
+ * Из трафика (SDCCH/FACCH/TCH) декодируются только сырые биты бёрста — узел не лезет
+ * в содержимое звонков/SMS конкретных абонентов, это уже не параметры соты. */
 
 // 51-мультикадр TS0 (нисходящий): FCCH на 0/10/20/30/40, SCH на 1/11/21/31/41, прочее — норм/dummy
 const GSM_FCCH_FRAMES=new Set([0,10,20,30,40]);
@@ -166,8 +174,32 @@ function gsmDecodeSch(eb){
 
 /* ---------- BCCH/CCCH: xCCH-декодер (libosmocore gsm0503) + разбор System Information ----------
  * 4 нормальных бёрста → деперемежение → свёрточный код K=5 (G0/G1) → FIRE CRC-40 →
- * 23 байта L2 → RR-сообщение. Из SI Type 3 берём Cell ID и LAI (MCC/MNC/LAC) — это и есть
- * идентификатор соты. Соседние ARFCN из SI2 — на будущее (форматы списка частот не разобраны). */
+ * 23 байта L2 → RR-сообщение. Из SI3 берём Cell ID и LAI (MCC/MNC/LAC) — идентификатор соты.
+ * Из SI1/SI2 — список ARFCN (своей соты и соседних, формат bitmap 0, сверено с dissect_arfcn_list_core
+ * из Wireshark epan/dissectors/packet-gsm_a_rr.c) и RACH Control Parameters (TS 04.08 10.5.2.29).
+ * Форматы range1024/512/256/128 и variable bitmap не разобраны — список ARФCN в этих случаях пуст. */
+
+// Список частот (TS 04.08 10.5.2.13), формат bitmap 0: off — байт с FORMAT-ID, len — длина IE (16 байт).
+// Первый байт даёт только 4 младших бита данных (старшие 4 — FORMAT-ID), дальше по 8 бит/байт; ARFCN 124..1.
+function gsmDecodeFreqList(b, off, len){
+  const format=b[off];
+  if((format&0xc0)!==0x00) return {format:'other', arfcns:[]};   // range/variable-bitmap — не разобрано
+  const arfcns=[]; let bit=4, arfcn=125;
+  for(let byte=0; byte<len; byte++){
+    const oct=b[off+byte];
+    while(bit-->0){ arfcn--; if((oct>>bit)&1) arfcns.push(arfcn); }
+    bit=8;
+  }
+  return {format:'bitmap0', arfcns};
+}
+const GSM_TX_INTEGER=[3,4,5,6,7,8,9,10,11,12,14,16,20,25,32,50];
+const GSM_MAX_RETRANS=[1,2,4,7];
+// RACH Control Parameters (TS 04.08 10.5.2.29), 3 байта с off
+function gsmDecodeRach(b, off){
+  const o1=b[off];
+  return { maxRetrans:GSM_MAX_RETRANS[(o1>>6)&3], txInteger:GSM_TX_INTEGER[(o1>>2)&0xf],
+    cellBarred:!!(o1&0x02), reAllowed:!(o1&0x01), acc:(b[off+1]<<8)|b[off+2] };
+}
 
 // деперемежение xCCH (TS 05.03 4.1.4): cB[k]=iB[B·114+j]
 function gsmXcchDeinterleave(iB){
@@ -202,12 +234,21 @@ function gsmParseSI(b){
     r.type='SI3'; r.ci=(b[3]<<8)|b[4];
     const m=gsmMccMnc(b[5],b[6],b[7]); r.mcc=m.mcc; r.mnc=m.mnc; r.mnc2=m.mnc2;
     r.lac=(b[8]<<8)|b[9];
+    r.rach=gsmDecodeRach(b,16);
   } else if(mt===0x1c){                                // SI4: LAI (без Cell Identity)
     r.type='SI4';
     const m=gsmMccMnc(b[3],b[4],b[5]); r.mcc=m.mcc; r.mnc=m.mnc; r.mnc2=m.mnc2;
     r.lac=(b[6]<<8)|b[7];
-  } else if(mt===0x1a) r.type='SI2';
-  else if(mt===0x19) r.type='SI1';
+    r.rach=gsmDecodeRach(b,10);
+  } else if(mt===0x1a){                                // SI2: соседние соты + RACH
+    r.type='SI2'; const fl=gsmDecodeFreqList(b,3,16);
+    r.neighborArfcns=fl.arfcns; r.neighborFmt=fl.format; r.nccPermitted=b[19];
+    r.rach=gsmDecodeRach(b,20);
+  } else if(mt===0x19){                                // SI1: ARFCN своей соты + RACH
+    r.type='SI1'; const fl=gsmDecodeFreqList(b,3,16);
+    r.cellArfcns=fl.arfcns; r.cellFmt=fl.format;
+    r.rach=gsmDecodeRach(b,19);
+  }
   else if(mt===0x00) r.type='SI13';
   else if(mt===0x02) r.type='SI2bis';
   else if(mt===0x03) r.type='SI2ter';
@@ -474,6 +515,9 @@ class GsmReceiver{
     if(si.mcc!=null){ rec.mcc=si.mcc; rec.mnc=si.mnc; rec.plmn=gsmMccMncStr(si); rec.lac=si.lac;
       // ключ соты: PLMN-LAC-CI (или без CI, если это SI4)
       rec.id=rec.plmn+'-'+si.lac.toString(16)+(si.ci!=null?'-'+si.ci.toString(16):''); }
+    if(si.cellArfcns) { rec.cellArfcns=si.cellArfcns; rec.cellFmt=si.cellFmt; }
+    if(si.neighborArfcns) { rec.neighborArfcns=si.neighborArfcns; rec.neighborFmt=si.neighborFmt; rec.nccPermitted=si.nccPermitted; }
+    if(si.rach) rec.rach=si.rach;
     this.rec.push(rec);
   }
 
@@ -587,7 +631,17 @@ function gsmHerm(y0,y1,y2,y3,t){
 function gsmRecLine(r){
   const t=new Date(r.t).toLocaleTimeString();
   if(r.kind==='GSM-SCH') return `${t} SCH BSIC ${r.bsic} (NCC ${r.ncc}/BCC ${r.bcc}) FN ${r.fn} ${r.dbm} dBm`;
-  if(r.si==='SI3') return `${t} SI3 PLMN ${r.plmn} LAC ${r.lac} CID ${r.ci} · ${r.dbm} dBm`;
-  if(r.si==='SI4') return `${t} SI4 PLMN ${r.plmn} LAC ${r.lac}`;
+  if(r.si==='SI3') return `${t} SI3 PLMN ${r.plmn} LAC ${r.lac} CID ${r.ci} · ${r.dbm} dBm`+gsmRachSuffix(r.rach);
+  if(r.si==='SI4') return `${t} SI4 PLMN ${r.plmn} LAC ${r.lac}`+gsmRachSuffix(r.rach);
+  if(r.si==='SI1') return `${t} SI1 своя сота ARFCN: ${gsmArfcnList(r.cellArfcns,r.cellFmt)}`+gsmRachSuffix(r.rach);
+  if(r.si==='SI2') return `${t} SI2 соседи ARFCN: ${gsmArfcnList(r.neighborArfcns,r.neighborFmt)}`+gsmRachSuffix(r.rach);
   return `${t} ${r.si||r.kind} FN ${r.fn}`;
+}
+function gsmArfcnList(arfcns,fmt){
+  if(fmt&&fmt!=='bitmap0') return `(${fmt}, не разобрано)`;
+  if(!arfcns||!arfcns.length) return '-';
+  return arfcns.length>8 ? arfcns.slice(0,8).join(',')+`,… (${arfcns.length})` : arfcns.join(',');
+}
+function gsmRachSuffix(rach){
+  return rach ? ` · RACH tx${rach.txInteger}/retr${rach.maxRetrans}`+(rach.cellBarred?' CELL_BARRED':'') : '';
 }
