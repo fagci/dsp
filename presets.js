@@ -159,6 +159,8 @@ const PRESET_CATS={
   'Meteor-M LRPT: Image (USB SDR, 137 MHz)':'Aircraft, Satellites & Telemetry',
   'Radiosonde RS41: Map (Generator)':'Aircraft, Satellites & Telemetry',
   'Radiosonde RS41: Map (USB SDR, 400–406 MHz)':'Aircraft, Satellites & Telemetry',
+  'AIS: Vessels on the Map (Generator)':'Aircraft, Satellites & Telemetry',
+  'AIS: Vessels on the Map (USB SDR, 162 MHz)':'Aircraft, Satellites & Telemetry',
   'ISM 433: Sensors and Remotes (Generator)':'Aircraft, Satellites & Telemetry',
   'ISM 433: Sensors and Remotes (USB SDR)':'Aircraft, Satellites & Telemetry',
   'ACARS: VHF Messages (Generator)':'Aircraft, Satellites & Telemetry',
@@ -1039,6 +1041,44 @@ log.size.w=520; applySize(log);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('AIS: Vessels on the Map (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'AIS without a radio: the generator sends position reports (types 1, 18), static data (5, 24), a base station (4) and an aid to navigation (21)\n'+
+  'of four vessels near the Bosphorus — GMSK 9600 Bd on an FM carrier ±2.4 kHz, NRZI, HDLC with bit stuffing and CRC-16. Positions advance faster than real time.\n'+
+  'AIS Decoder: FM discriminator, 8 bit-clock phases, flags, CRC → messages by MMSI; names and dimensions from type 5 / 24 join the positions → map.\n'+
+  'The text output gives !AIVDM sentences for other programs (Network Out, Serial Out).'});
+nt.size.w=720; nt.size.h=150; applySize(nt);
+const gn=addNode('iqGen',40,260,{sr:'256000',fc:162000000,mode:'AIS',off:-25000,lvl:-20,noise:-50});
+const de=addNode('aisRx',340,260,{});
+de.size.w=520; de.size.h=300; applySize(de);
+const map=addNode('geoMap',900,40,{mz:11,mlat:41.03,mlon:29.03,ttl:30,labels:true,trail:600});
+map.size.w=560; map.size.h=460; applySize(map);
+const log=addNode('recLog',340,620,{});
+log.size.w=520; applySize(log);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',map.id,'rec'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('AIS: Vessels on the Map (USB SDR, 162 MHz)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'AIS: channel A is 161.975 MHz, channel B 162.025 MHz — both fit into the 1 MS/s window around 162.000 MHz. Connect the SDR, put marker 1\n'+
+  'of the Spectrum Analyzer on one of the channels (tune it to the other for B, set the letter in the decoder). A VHF antenna near the coast or a harbour works best.\n'+
+  'Vessels appear on the map with a name once a static report (type 5 / 24, every ~6 min) has been heard; the log saves CSV.'});
+nt.size.w=720; nt.size.h=130; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'1024000',freq:162000000,demod:'IQ'});
+const sa=addNode('sa',760,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,200,{});
+const de=addNode('aisRx',340,360,{});
+de.size.w=520; de.size.h=300; applySize(de);
+const map=addNode('geoMap',760,360,{mz:9,ttl:30,labels:true,trail:600});
+map.size.w=560; map.size.h=400; applySize(map);
+const log=addNode('recLog',340,720,{});
+log.size.w=520; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',map.id,'rec'); addEdge(de.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('ISM 433: Sensors and Remotes (Generator)', function(){
