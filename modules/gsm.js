@@ -574,9 +574,9 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
   outs:[{n:'rec',t:'rec'},{n:'burst',t:'blk'},{n:'freq',t:'num'},{n:'sync',t:'num'}],
   readout:true, tall:true,
   params:[{n:'afc',t:'check',d:true,label:'auto frequency correction (FCCH)'},
-          {n:'clr',t:'button',label:'Clear log',fn:n=>{ n.log=[]; n.text='ищу FCCH…'; }}],
+          {n:'clr',t:'button',label:'Clear log',fn:n=>{ n.log=[]; n.text='ищу FCCH…'; n.lastSchBsic=-1; }}],
   init:n=>{ n.rx=new GsmReceiver(); n.foff=0; n.nco=0; n.frac=1; n.lr=new Float32Array(0); n.li=new Float32Array(0);
-            n.bid=0; n.log=[]; n.text='ищу FCCH…'; },
+            n.bid=0; n.log=[]; n.text='ищу FCCH…'; n.lastSchBsic=-1; },
   process(n,I){
     const s=iqIn(I,'in');
     if(!s || !s.sr){ n.text='нет входного IQ-потока'; return {rec:null, burst:null, freq:n.foff, sync:0}; }
@@ -614,14 +614,20 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
       n.bid+=bursts.length;
       const last=bursts[bursts.length-1];
       if(last) blk={d:last.bits, n:last.bits.length, id:n.bid, fn:last.fn, tn:last.tn, kind:last.type};
-      for(const r of rec) n.log.push(gsmRecLine(r));
+      // SCH валит ~10 строк/сек и выталкивает редкие SI1-4 (LAC/CID, ARFCN, RACH) из хвоста лога —
+      // в скролл пишем SCH только при смене BSIC (захват/смена соты), текущий BSIC — в статусной строке.
+      for(const r of rec){
+        if(r.kind==='GSM-SCH'){ if(r.bsic===n.lastSchBsic) continue; n.lastSchBsic=r.bsic; }
+        n.log.push(gsmRecLine(r));
+      }
       if(n.log.length>200) n.log.splice(0,n.log.length-200);
       const st=n.rx.state==='sync'?'синхр.':n.rx.state==='sch'?'жду SCH':'ищу FCCH';
       const mhz=s.fc?(s.fc/1e6).toFixed(3)+' МГц · ':'';
       // BCCH: попытки/успехи разбора SI — если попыток много, а успехов 0, дело не в "ждать дольше",
       // а в срыве синхронизации на одном из 4 бёрстов подряд (сбросы USB/AGC и т.п.), не в декодере.
       const bc=n.rx.bcchTry? ` · BCCH ${n.rx.bcchOk}/${n.rx.bcchTry}` : '';
-      n.text=st+` · ${mhz}foff ${n.foff.toFixed(0)} Hz · бёрстов ${n.bid}${bc}\n`+n.log.slice(-14).join('\n');
+      const bsicTxt=n.rx.state==='sync'? ` · BSIC ${(n.rx.ncc<<3)|n.rx.bcc}` : '';
+      n.text=st+bsicTxt+` · ${mhz}foff ${n.foff.toFixed(0)} Hz · бёрстов ${n.bid}${bc}\n`+n.log.slice(-14).join('\n');
       return {rec:outRec, burst:blk, freq:n.foff, sync:n.rx.state==='sync'?1:0};
     }
     return {rec:null, burst:null, freq:n.foff, sync:n.rx.state==='sync'?1:0};
