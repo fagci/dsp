@@ -704,7 +704,10 @@ class GsmReceiver{
     this.cbchPage=[null,null,null,null];
     this.cbsOk++;
     const cbs=gsmCbsParse(page);
-    this.rec.push({t:Date.now(), kind:'GSM-CBS', fn:gsmFrameNr(this.t1,this.t2,this.t3), tn:this.cbchTn,
+    // id — тот же набор полей (Message ID + Serial Number), которым TS 03.41 определяет дубликат
+    // одного и того же сообщения: повтор схлопнется в recUniq в одну строку, новое — отдельная.
+    const id=(this.cellLabel||'cell?')+'-CBS-'+cbs.msgId.toString(16)+'-'+cbs.serial.msgCode+'-'+cbs.serial.updateNum;
+    this.rec.push({t:Date.now(), kind:'GSM-CBS', id, fn:gsmFrameNr(this.t1,this.t2,this.t3), tn:this.cbchTn,
       freq:this.fc, dbm:this.dbm, msgId:cbs.msgId, msgCode:cbs.serial.msgCode, updateNum:cbs.serial.updateNum,
       dcs:cbs.dcs, charset:cbs.charset, page:cbs.pageNum, pages:cbs.totalPages, text:cbs.text});
   }
