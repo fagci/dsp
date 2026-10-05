@@ -170,6 +170,8 @@ const PRESET_CATS={
   'SAME / EAS: NOAA Weather Radio (USB SDR)':'Aircraft, Satellites & Telemetry',
   'SELCAL: Test Signal (Loopback)':'HF Modes & Morse',
   'SELCAL: HF Aeronautical Channel (KiwiSDR)':'HF Modes & Morse',
+  'Selcall ZVEI / CCIR: Five-Tone Decoder Test (Loopback)':'Digital Voice & Trunking',
+  'Selcall ZVEI / CCIR: Five-Tone Decoder (USB SDR, NFM)':'Digital Voice & Trunking',
   'POCSAG: Pager Messages (Generator)':'Modems & Data Links',
   'POCSAG: Pager Messages (USB SDR)':'Modems & Data Links',
   'AIS: Vessels on the Map (Generator)':'Aircraft, Satellites & Telemetry',
@@ -1308,6 +1310,39 @@ const log=addNode('recLog',700,590,{});
 log.size.w=400; applySize(log);
 addEdge(kw.id,'audio',rx.id,'in'); addEdge(rx.id,'rec',log.id,'rec');
 addEdge(kw.id,'audio',dc.id,'L'); addEdge(kw.id,'audio',dc.id,'R');
+markWiresDirty();
+});
+preset('Selcall ZVEI / CCIR: Five-Tone Decoder Test (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Five-tone selective calling of land mobile radio (fire and rescue, taxis, security): a code is 5 tones in a row, 33–100 ms each, E = the repeat tone for a doubled digit.\n'+
+  'Five-Tone Selcall: Test Signal plays a code in the chosen standard (ZVEI-1/2/3, DZVEI, PZVEI, CCIR, EEA, EIA); Five-Tone Selcall Decoder: Hann window of 0.7 tone, Goertzel on 16 frequencies every 1/8 tone → tone → sequence (tones spaced 0.6–1.8 tone lengths).\n'+
+  'Press Send. Put the same standard into both nodes. The test signal is for a cable or the sound-card loop only: such tones start real alarm receivers — do not transmit it.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const tx=addNode('fivetoneTx',40,230,{});
+tx.size.w=340; tx.size.h=300; applySize(tx);
+const rx=addNode('fivetoneRx',420,230,{});
+rx.size.w=500; rx.size.h=300; applySize(rx);
+const log=addNode('recLog',420,590,{});
+log.size.w=500; applySize(log);
+addEdge(tx.id,'out',rx.id,'in'); addEdge(rx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Selcall ZVEI / CCIR: Five-Tone Decoder (USB SDR, NFM)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Five-tone calls over narrow FM: tune the SDR to a channel that is used for selective calling (the band and the standard are a local matter: ZVEI-1 is common in German-speaking countries, CCIR / EEA in many others),\n'+
+  'pick the standard in the decoder, and the tone length if it differs from the usual (the decoder takes ±40%). The code appears when the tones stop. In the PZVEI table 0 and E share 2400 Hz — a 0 after a 0 is shown as E.\n'+
+  'Alarm calls are addressed to people and organisations: keep to the law of your country about receiving and storing them.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const rx=addNode('rtlsdr',40,230,{auto:false,gainDb:35,demod:'NFM',bw:12500,freq:155000000});
+const sa=addNode('sa',40,560,{auto:true,split:.35});
+sa.size.w=480; sa.size.h=300; applySize(sa);
+const de=addNode('fivetoneRx',420,230,{});
+de.size.w=500; de.size.h=300; applySize(de);
+const dc=addNode('dac',720,560,{vol:.3});
+const log=addNode('recLog',560,590,{});
+log.size.w=260; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'audio',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+addEdge(rx.id,'audio',dc.id,'L'); addEdge(rx.id,'audio',dc.id,'R');
 markWiresDirty();
 });
 preset('ISM 433: Sensors and Remotes (Generator)', function(){
