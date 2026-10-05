@@ -284,6 +284,7 @@ class GsmReceiver{
     this.rec=[];
     this.dbm=0; this.fc=0;
     this.bcch=[null,null,null,null];                    // 4 бёрста BCCH (кадры 2..5)
+    this.bcchTry=0; this.bcchOk=0;                       // попытки/успехи разбора BCCH (диагностика)
   }
   avail(){ return this.len-this.head; }
   push(re,im){
@@ -502,8 +503,9 @@ class GsmReceiver{
     if(idx<0||idx>3) return;
     this.bcch[idx]=this.extractData(eb);
     if(idx===3 && this.bcch.every(Boolean)){
+      this.bcchTry++;
       const l2=gsmBcchDecode(this.bcch); this.bcch=[null,null,null,null];
-      if(l2){ const si=gsmParseSI(l2); if(si) this.emitBcch(si, l2); }
+      if(l2){ this.bcchOk++; const si=gsmParseSI(l2); if(si) this.emitBcch(si, l2); }
     }
   }
   emitBcch(si, l2){
@@ -616,7 +618,10 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
       if(n.log.length>200) n.log.splice(0,n.log.length-200);
       const st=n.rx.state==='sync'?'синхр.':n.rx.state==='sch'?'жду SCH':'ищу FCCH';
       const mhz=s.fc?(s.fc/1e6).toFixed(3)+' МГц · ':'';
-      n.text=st+` · ${mhz}foff ${n.foff.toFixed(0)} Hz · бёрстов ${n.bid}\n`+n.log.slice(-14).join('\n');
+      // BCCH: попытки/успехи разбора SI — если попыток много, а успехов 0, дело не в "ждать дольше",
+      // а в срыве синхронизации на одном из 4 бёрстов подряд (сбросы USB/AGC и т.п.), не в декодере.
+      const bc=n.rx.bcchTry? ` · BCCH ${n.rx.bcchOk}/${n.rx.bcchTry}` : '';
+      n.text=st+` · ${mhz}foff ${n.foff.toFixed(0)} Hz · бёрстов ${n.bid}${bc}\n`+n.log.slice(-14).join('\n');
       return {rec:outRec, burst:blk, freq:n.foff, sync:n.rx.state==='sync'?1:0};
     }
     return {rec:null, burst:null, freq:n.foff, sync:n.rx.state==='sync'?1:0};
