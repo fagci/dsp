@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=55;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=56;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -228,6 +228,7 @@ const PRESET_CATS={
   'DMX: RGB Fade from LFOs':'Network & IoT',
   'OSC: Faders and Values':'Network & IoT',
   'Modbus: Poll Registers (RTU / TCP)':'Network & IoT',
+  'M-Bus: Read Meters (Wired / Wireless)':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
@@ -4001,5 +4002,21 @@ const tk=addNode('ticker',460,360,{time:true});
 tk.size.w=380; tk.size.h=110; applySize(tk);
 const lg=addNode('recLog',460,500,{}); lg.size.w=240; applySize(lg);
 addEdge(m.id,'value',nv.id,'in'); addEdge(m.id,'text',tk.id,'text'); addEdge(m.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+
+preset('M-Bus: Read Meters (Wired / Wireless)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Utility meters (water, heat, gas, electricity) over M-Bus, EN 13757. Wired: a level converter M-Bus ↔ USB-serial (2400 baud, 8E1) on WebSerial; the Master asks each primary address with REQ_UD2 and passes the answer as hex text to the Decoder.\n'+
+  'Wireless (868 MHz, T1 / C1 / S1): the decoder takes the telegram as hex from any receiver — lines like T1;…;0x2E44…; or plain hex — wire it to the Decoder text input instead of the Master. Encrypted telegrams (AES) are named, not decoded.\n'+
+  'Records go to the log (id, medium, description, value, unit); *pick* chooses the record for the value output — a number or a part of the name (Volume, Energy, Power).'});
+nt.size.w=1100; nt.size.h=170; applySize(nt);
+const m=addNode('mbusMaster',40,240,{});
+m.size.w=340; m.size.h=250; applySize(m);
+const d=addNode('mbusDec',440,240,{pick:'Volume'});
+d.size.w=420; d.size.h=250; applySize(d);
+const nv=addNode('numview',900,240,{});
+const lg=addNode('recLog',900,360,{}); lg.size.w=240; applySize(lg);
+addEdge(m.id,'text',d.id,'text'); addEdge(d.id,'value',nv.id,'in'); addEdge(d.id,'rec',lg.id,'rec');
 markWiresDirty();
 });

@@ -39,6 +39,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **DMX Out**: stage lighting over DMX512 (Enttec DMX USB Pro and compatible) — see [DMX512](#dmx512)
 - **OSC**: Open Sound Control in and out (TouchOSC, Max / Pd, SuperCollider, mixers) through a WebSocket bridge — see [OSC](#osc)
 - **Modbus Master**: registers and coils of industrial devices over RS-485 (RTU) or TCP — see [Modbus](#modbus)
+- **M-Bus Decoder / Master**: utility meters (water, heat, gas, electricity), wired and wireless 868 MHz telegrams — see [M-Bus](#m-bus)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), **Table** (one node for lists, band plans, bookmarks, logs and the data sequencer: CSV / TSV / JSON / TXT / KML / GPX / GeoJSON, folders in the browser DB, played row by row), Trigger Clock, Time Base — see [Table](#table)
@@ -864,6 +865,16 @@ Preset: *OSC: Faders and Values*.
 - Not done: write of several registers (16 / 15), 32-bit writes, several polls in one node (use several nodes), broadcast, ASCII mode, device identification. Checked with an independent Modbus TCP slave (Python, struct), CRC vectors from the Modbus specification and a serial-port mock, **not with a real device**.
 
 Preset: *Modbus: Poll Registers (RTU / TCP)*.
+
+## M-Bus
+
+**M-Bus Decoder** turns a meter telegram (EN 13757) into records; **M-Bus Master** reads meters on the wired bus.
+
+- **Decoder** — the `text` input takes a telegram as hex (`68 1B 1B 68 …`, with or without spaces and `0x`); a line of `rtl_wmbus` / `wmbusmeters` style output (`T1;1;1;…;0x2E44…;`: the field with the hex is taken) is read too, so wireless telegrams from an SDR receiver, a dongle or a log can be fed in by any means (Table, a file, MQTT, HTTP). It recognises the **wired** long frame (`68 L L 68 … CS 16`, the checksum is checked) and the **wireless** frame of mode T1 / C1 / S1 (format A — CRC blocks are checked and removed; telegrams whose CRC is already removed are accepted too). The header gives `id`, manufacturer (three letters), medium (water, heat, gas, electricity, …); the data records (DIF / VIF) give description, value, unit, storage number, tariff and function (max / min). Integers, BCD (also negative), 32-bit floats, dates and date-time, text; the units of the primary VIF table (energy, volume, mass, power, flow, temperatures, pressure, on / operating time) with the decimal exponent applied. Outputs: `text` (one-line summary), `rec` (one record per data record with `id`, `manuf`, `medium`, `desc`, `value`, `unit`, `storage`, `tariff`, `func`), `value` (the record chosen with *pick* — a number or a part of the name; the last value is kept), `id`, `new`, `err`.
+- **Master** — a level converter (M-Bus ↔ USB-serial, 2400 baud 8E1 as a rule) on WebSerial. It sends `REQ_UD2` to each primary address of the list, one address per *period*, and gives the answer as hex `text` (wire it to the Decoder); a silent address is counted as an error after the timeout. The bus power comes from the converter, not from the node.
+- Not done: AES decryption (the telegram is named *encrypted*), secondary-address search and selection, the extended VIF tables (0xFB, most of 0xFD) and VIFE — such records show the code and the raw value, mode N (EN 13757-4) frames, format B CRC, SND_UD and writing to meters, OMS command telegrams. Checked with telegrams built by hand from the DIF / VIF rules (the checksum, the CRC-16/EN-13757 check value 0xC2B7, the block CRC and the stream parser) and a serial-port mock, **not with real meters**.
+
+Preset: *M-Bus: Read Meters (Wired / Wireless)*.
 
 ## Map and records
 
