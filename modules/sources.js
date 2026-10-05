@@ -6161,13 +6161,14 @@ const ListDB = (() => {
   function open(){
     if(dbp) return dbp;
     dbp = new Promise((res,rej)=>{
-      const rq = indexedDB.open('dsp-lists', 1);
+      const rq = indexedDB.open('dsp-lists', 2);
       rq.onupgradeneeded = e => {
         const db = e.target.result;
         if(!db.objectStoreNames.contains('items')){
           const s = db.createObjectStore('items',{keyPath:'id',autoIncrement:true});
           s.createIndex('listName','listName');
         }
+        if(!db.objectStoreNames.contains('meta')) db.createObjectStore('meta',{keyPath:'listName'});   // порядок колонок списка
       };
       rq.onsuccess = e => res(e.target.result);
       rq.onerror = e => rej(e.target.error);
@@ -6188,13 +6189,41 @@ const ListDB = (() => {
       return items.map(it=>({...it, fields: it.fields || {value: it.value}}));
     },
     async listNames(){ const s=await store('readonly'); const all=await reqP(s.getAll());
-      return [...new Set(all.map(x=>x.listName))].sort(); },
+      const meta=await ListDB.metaNames();               // пустой список с колонками тоже существует
+      return [...new Set([...all.map(x=>x.listName),...meta])].sort(); },
     async renameList(oldName,newName){ const s=await store('readwrite');
       const items=await reqP(s.index('listName').getAll(oldName));
-      for(const it of items){ it.listName=newName; await reqP(s.put(it)); } },
+      for(const it of items){ it.listName=newName; await reqP(s.put(it)); }
+      const m=await ListDB.getMeta(oldName);
+      if(m){ await ListDB.delMeta(oldName); await ListDB.setMeta(newName,m); } },
     async deleteList(listName){ const s=await store('readwrite');
       const items=await reqP(s.index('listName').getAll(listName));
-      for(const it of items) await reqP(s.delete(it.id)); },
+      for(const it of items) await reqP(s.delete(it.id));
+      await ListDB.delMeta(listName); },
+    // пакетная запись одной транзакцией — для потока записей и импорта
+    async addMany(listName,rows){
+      const db=await open();
+      return new Promise((res,rej)=>{
+        const tx=db.transaction('items','readwrite'), s=tx.objectStore('items'), ids=[];
+        for(const r of rows){
+          const rq=s.add({listName,name:r.name,fields:r.fields,value:r.fields?.value??'',created:Date.now()});
+          rq.onsuccess=()=>ids.push(rq.result);
+        }
+        tx.oncomplete=()=>res(ids); tx.onerror=tx.onabort=()=>rej(tx.error);
+      });
+    },
+    async removeMany(ids){
+      const db=await open();
+      return new Promise((res,rej)=>{
+        const tx=db.transaction('items','readwrite'), s=tx.objectStore('items');
+        for(const id of ids) s.delete(id);
+        tx.oncomplete=()=>res(); tx.onerror=tx.onabort=()=>rej(tx.error);
+      });
+    },
+    async getMeta(listName){ const db=await open(); return reqP(db.transaction('meta','readonly').objectStore('meta').get(listName)); },
+    async setMeta(listName,meta){ const db=await open(); return reqP(db.transaction('meta','readwrite').objectStore('meta').put({...meta,listName})); },
+    async delMeta(listName){ const db=await open(); return reqP(db.transaction('meta','readwrite').objectStore('meta').delete(listName)); },
+    async metaNames(){ const db=await open(); return reqP(db.transaction('meta','readonly').objectStore('meta').getAllKeys()); },
   };
 })();
 
@@ -6226,7 +6255,7 @@ function hostlistCoerce(v){
   return s;
 }
 
-def({ id:'hostlist', title:'List (CSV/DB)', cat:'Sources',
+def({ id:'hostlist', title:'List (CSV/DB)', cat:'Sources', legacy:true,   // заменён узлом 'table'
   // порты формируются динамически по набору полей списка (n.p.fields) — движок уже
   // поддерживает ins/outs как функцию узла (см. portsOf в core-engine.js)
   ins: n => (n.p.fields||['value']).map(f=>({n:f,t:'val'})).concat([{n:'trig',t:'val'}]),

@@ -496,7 +496,7 @@ async function clearAllRecordings2(n){
   refreshRecorderList(n);
 }
 
-def({ id:'csv', title:'CSV Log', cat:'Output',
+def({ id:'csv', title:'CSV Log', cat:'Output', legacy:true,   // заменён узлом 'table' (log inputs a–d)
   ins:[{n:'a',t:'num'},{n:'b',t:'num'},{n:'c',t:'num'},{n:'d',t:'num'},{n:'period',t:'num'},{n:'max',t:'num'}],
   outs:[{n:'rows',t:'num'}], readout:true, tall:true,
   params:[{n:'period',t:'range',min:.05,max:60,step:.05,d:1,label:'period, s'},

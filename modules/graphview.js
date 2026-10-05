@@ -1,7 +1,8 @@
 "use strict";
 /* ============================ GRAPH VIEW (vis-network) ============================
-   Граф связей по CSV: строка = ребро (from,to[,weight[,label]]). Источники: параметр csv, провод text (кусок CSV,
-   добавляется при смене строки) и провод rec (записи с полями from/to/weight/label). Библиотека — vendor/vis-network.min.js,
+   Граф связей: запись = ребро (from,to[,weight[,label]]). Данные приходят только по проводам: rec (записи с полями
+   from/to/weight/label — по одной с узла 'table') и text (кусок CSV, добавляется при смене строки). Старый параметр csv
+   из сохранённых патчей ещё читается, но в интерфейсе его нет. Библиотека — vendor/vis-network.min.js,
    грузится при первом показе. */
 
 const GV_SRC='vendor/vis-network.min.js?v=9.1.9';
@@ -129,14 +130,13 @@ function gvRestyle(n){ n.reset=true; n.net?.setOptions({physics:{enabled:!!n.p.p
 def({ id:'graphview', title:'Graph', cat:'Output', kw:'network graph links nodes edges csv vis connections', resize:true, gv:true, readout:true, w:420, h:300,
   ins:[{n:'text',t:'txt'},{n:'rec',t:'rec'}],
   outs:[{n:'nodes',t:'num'},{n:'edges',t:'num'},{n:'sel',t:'txt'}],
-  params:[{n:'csv',t:'code',plain:true,d:'from,to,weight\nSDR,Filter,1\nFilter,Demod,1\nDemod,Decoder,2\nDemod,Scope,1\nDecoder,Log,1',label:'CSV: from,to[,weight[,label]] (header optional)',fn:n=>gvClear(n)},
-          {n:'delim',t:'select',opts:['auto',',',';','tab','|'],d:'auto',label:'delimiter',fn:n=>gvClear(n)},
+  params:[{n:'delim',t:'select',opts:['auto',',',';','tab','|'],d:'auto',label:'delimiter',fn:n=>gvClear(n)},
           {n:'directed',t:'check',d:false,label:'arrows',fn:gvRestyle},
           {n:'weights',t:'check',d:false,label:'weights on edges',fn:gvRestyle},
           {n:'physics',t:'check',d:true,label:'physics (layout)',fn:gvRestyle},
           {n:'max',t:'num',d:500,label:'max nodes',adv:true},
           {n:'fit',t:'button',label:'Fit',fn:n=>n.net?.fit({animation:true})},
-          {n:'clear',t:'button',label:'Clear',fn:n=>{ n.p.csv=''; n.set?.csv?.(''); gvClear(n); }}],
+          {n:'clear',t:'button',label:'Clear',fn:n=>{ n.p.csv=''; gvClear(n); }}],
   init:n=>{ n.nodes=new Map(); n.edges=new Map(); n.pendN=new Set(); n.pendE=new Set(); n.hdr={}; n.net=null; n.gv=null;
             n.sel=''; n.reset=true; n.gvErr=''; n.fresh=true; },
   dispose:n=>{ try{ n.net?.destroy(); }catch(e){} n.net=null; },

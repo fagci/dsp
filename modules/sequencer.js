@@ -199,7 +199,7 @@ function seqSegment(n,a,b){                           // расстояние (�
 }
 
 /* ---------- узел ---------- */
-def({ id:'csvsrc', title:'Data Sequencer', cat:'Sources',
+def({ id:'csvsrc', title:'Data Sequencer', cat:'Sources', legacy:true,   // заменён узлом 'table'
   ins:[{n:'trig',t:'val'},{n:'row',t:'val'},{n:'t',t:'num'}],
   outs:n=>[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'row',t:'num'},{n:'count',t:'num'},
            {n:'next',t:'num'},{n:'done',t:'num'},{n:'dist',t:'num'},{n:'bearing',t:'num'},
@@ -231,7 +231,18 @@ def({ id:'csvsrc', title:'Data Sequencer', cat:'Sources',
     {n:'data',t:'code',d:'',adv:true,label:'table'},
   ],
   init:n=>{ n.name=''; n.trigPrev=0; n.rowPrev=null; n.pulse=0; seqSetup(n); },
-  process(n,I){
+  process:(n,I)=>seqProcess(n,I),
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const N=n.rows.length;
+    const warn = n.err ? n.err : !N ? 'no data: load a file or fill «table» and press Apply table' :
+      n.p.advance==='time' && !n.tt ? 'no time column' : n.p.advance==='distance' && !n.geo ? 'no lat/lon columns' : '';
+    r.textContent = warn ? '⚠ '+warn : 
+      (n.name?n.name+' · ':'')+'row '+(n.idx+1)+'/'+N+' · '+n.p.advance+(n.done?' · done':'')+
+      (n.cur?'\n'+n.headers.slice(0,6).map(h=>h+': '+recFmt(n.cur[h])).join('\n'):''); }
+});
+
+// общий ход секвенсора: им же пользуется узел 'table' (modules/table.js)
+function seqProcess(n,I){
     const N=n.rows.length, dt=BLOCK/Eng.sr, p=n.p, batch=[];
     if(!N){ n.pulse=0; return {rec:null,text:'',row:0,count:0,next:0,done:0,dist:0,bearing:0,progress:0}; }
     const [lo,hi]=seqRange(n);
@@ -244,6 +255,7 @@ def({ id:'csvsrc', title:'Data Sequencer', cat:'Sources',
     const rw=typeof I.row==='number' && isFinite(I.row) ? I.row : null;
     if(rw!==null && rw!==n.rowPrev){ n.idx=clamp(Math.round(rw)-1,0,N-1); n.nxt=n.idx+1; n.s=0; emit(); }
     n.rowPrev=rw;
+    if(n.pick!=null){ n.idx=clamp(n.pick,0,N-1); n.nxt=n.idx+1; n.s=0; n.pick=null; emit(); }   // клик по строке в таблице
 
     const trig=typeof I.trig==='number' ? I.trig : 0;
     const edge=trig>0.5 && n.trigPrev<=0.5; n.trigPrev=trig;
@@ -318,15 +330,7 @@ def({ id:'csvsrc', title:'Data Sequencer', cat:'Sources',
     out.text = p.textCol && cur[p.textCol]!==undefined ? String(cur[p.textCol]) : n.headers.map(h=>cur[h]).join(',');
     for(const c of n.cols) out[c.port]=cur[c.h];
     return out;
-  },
-  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
-    const N=n.rows.length;
-    const warn = n.err ? n.err : !N ? 'no data: load a file or fill «table» and press Apply table' :
-      n.p.advance==='time' && !n.tt ? 'no time column' : n.p.advance==='distance' && !n.geo ? 'no lat/lon columns' : '';
-    r.textContent = warn ? '⚠ '+warn : 
-      (n.name?n.name+' · ':'')+'row '+(n.idx+1)+'/'+N+' · '+n.p.advance+(n.done?' · done':'')+
-      (n.cur?'\n'+n.headers.slice(0,6).map(h=>h+': '+recFmt(n.cur[h])).join('\n'):''); }
-});
+}
 
 /* ---------- Time Base ---------- */
 // Виртуальные часы: системное время или заданное вручную, с любой скоростью

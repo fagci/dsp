@@ -33,7 +33,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **KiwiSDR** remote receivers (public list included)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
-- Serial port (WebSerial), lists, **Data Sequencer** (CSV / KML / GPX / GeoJSON played row by row), Trigger Clock, Time Base — see [Data Sequencer](#data-sequencer)
+- Serial port (WebSerial), **Table** (one node for lists, band plans, bookmarks, logs and the data sequencer: CSV / TSV / JSON / TXT / KML / GPX / GeoJSON, folders in the browser DB, played row by row), Trigger Clock, Time Base — see [Table](#table)
 - **Bluetooth LE** (Web Bluetooth): **BLE UART** (Nordic UART, HM-10 / FFE0 or your own UUIDs — a serial terminal without a cable), **BLE GATT** (any characteristic: notifications or periodic read, write; formats — heart rate, battery, temperature, uint / int / float, hex), **BLE Advertisements** (RSSI, TX power and manufacturer data of one device without connecting — proximity, finding a beacon) — see [Bluetooth LE](#bluetooth-le)
 - **IQ over Network**: a remote SDR as an `iq` source — **rtl_tcp** through a TCP → WebSocket bridge (header, rate, tuning, gain, ppm, bias-T, direct sampling are sent as rtl_tcp commands; a wire on the frequency retunes) or a **raw stream** (uint8 / int8 / int16 / float32, rate and center set by hand) from any program that writes IQ to a pipe — see [Remote SDR](#remote-sdr)
 - **Gamepad** (Gamepad API): a gamepad, joystick, steering wheel or pedals as numbers — axes `a1…` (with a dead zone) and buttons `b1…` (analog triggers 0…1), the counts are parameters, the device is chosen by index or the first connected one; the `rumble` / `weak` inputs vibrate it. The browser shows the device only after a button is pressed on it
@@ -45,7 +45,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 ### Analysis
 - Spectrum analyzer / waterfall (optional phosphor view; the waterfall keeps its history at full resolution, so zoom, dB range and palette changes redraw it without losing detail), persistence spectrum, oscilloscope (auto/normal/single trigger with level, slope, position, hysteresis and holdoff; sub-sample trigger alignment, averaging, persistence, sin(x)/x interpolation, XY, math channel, AC/DC coupling, time/level cursors, automatic measurements, Autoset, Run/Stop with history scroll), constellation, eye diagram
 - CFAR signal detector (noise estimate in linear power: OS — 75th percentile, robust to strong neighbours; SO — smallest of the two sides; CA — mean; a target is shown after M hits in the last N spectrum frames, so single noise spikes are dropped; outputs SNR of the strongest target and the noise floor), channel SNR, channel grid, band scanner, auto frequency scanner
-- Band plans, bookmarks, signal recognition
+- Band plans and bookmarks ([Table](#table)), signal recognition
 - **Blind analysis of an unknown transmission**: *Baud Estimator*, *CMA Equalizer*, *Sync Word Hunter*, *Conv Code Finder*, *CRC Finder* and a test transmitter *Unknown Signal* — from raw IQ to the message without knowing the symbol rate, the sync word, the code or the checksum (see [Blind analysis](#blind-analysis))
 - **Signal type identifier**: finds every signal in a spectrum from any source and names its modulation — on an SDR from the raw IQ (see [Signal type identifier](#signal-type-identifier))
 - Goertzel, autocorrelation, cross-correlation, frequency response / coherence
@@ -99,8 +99,8 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - MIDI keyboard input, ADSR envelope
 
 ### Output & extensibility
-- Sound card output (per-node output device selection, peak/clip meter), WAV / MP3 recording (files named by date and time; optionally streamed straight to a disk file, so the length is not limited by memory — Chrome/Edge), CSV log, trigger recorder
-- Sound card output (per-node output device selection, peak/clip meter), WAV / MP3 recording (files named by date and time), CSV log, trigger recorder
+- Sound card output (per-node output device selection, peak/clip meter), WAV / MP3 recording (files named by date and time; optionally streamed straight to a disk file, so the length is not limited by memory — Chrome/Edge), log to a [Table](#table), trigger recorder
+- Sound card output (per-node output device selection, peak/clip meter), WAV / MP3 recording (files named by date and time), log to a [Table](#table), trigger recorder
 - **Network Out**: WebSocket (`ws://`, `wss://`, reconnect) — text on change, numbers as a JSON object every period, or mono PCM16 audio (a JSON header first, then binary blocks). Example: `websocat -s 8765` on the receiving side
 - **Map** (offline vector base map, optional OSM tiles, tracks, markers — see [Map and records](#map-and-records)), screen transmitter, indicators
 - **Notify**: speaks a text aloud (speech synthesis), shows a system notification and/or vibrates — on a new text or a `go` pulse, with a minimum gap between alerts (e.g. a decoded message or a CFAR detection → voice alert)
@@ -192,12 +192,12 @@ The **Signal Type Identifier** (`sigid`) node labels every signal it finds and s
 - `spec`: a spectrum from any node (USB SDR, FFT, tinySA…). The node finds the signals and classifies them by shape: bandwidth (99% power), flat top, carrier over the sidebands, which sideband holds the energy, and on/off keying over time
 - USB SDR: the node also reads the **raw IQ at the native sample rate** that comes with the spectrum. It takes one signal at a time, shifts it to zero, decimates it and measures the envelope, the instantaneous frequency, the lines in z, z² and z⁴, and the keying rate. The heavy part runs in a Web Worker
 - `in`: audio (microphone, KiwiSDR, a receiver's output). Without `spec` the node computes its own spectrum, and it analyses the audio samples the same way
-- **whole spectrum** / **search range**: limit where signals are looked for. The `fmin` / `fmax` inputs set the range too, e.g. from a Band Plan's `lo` / `hi`, so clicking a band limits the search to that band. A new value on these inputs unticks **whole spectrum**
+- **whole spectrum** / **search range**: limit where signals are looked for. The `fmin` / `fmax` inputs set the range too, e.g. from a Table's `lo` / `hi` (a band plan list), so clicking a band limits the search to that band. A new value on these inputs unticks **whole spectrum**
 - `plan`: a band plan for context. Its label is shown next to each signal, and a matching mode adds some confidence
 
 What it recognises: carrier, CW (with WPM), OOK, AM, USB/LSB, NFM (with CTCSS tone), WFM (with the stereo pilot), 2-FSK / 4-FSK with shift and baud (RTTY, AFSK 1200 / APRS, POCSAG, DMR/P25-like 4800 Bd), MFSK (FT8-like, Olivia/Contestia-like), BPSK / QPSK with symbol rate (PSK31…), OFDM, DTMF keys. Each result says whether it came from the spectrum or from the samples. It is a heuristic, not a decoder.
 
-The `bands` output carries the labels. Wire it into a Spectrum Analyzer's `bands`, or into a **Band Plan**'s `sigs` so the labels show together with the bands: each signal gets a bracket at its peak level with its type above it.
+The `bands` output carries the labels. Wire it into a Spectrum Analyzer's `bands`, or into a **Table**'s `sigs` so the labels show together with the bands: each signal gets a bracket at its peak level with its type above it.
 
 Ready-made patches: **USB SDR: Signal Identifier**, **HF: Quick-Decode All Protocols**.
 
@@ -508,17 +508,27 @@ The replayer follows each tracker's effect rules: MOD/XM 0–F and E-commands, X
 - **Mixer** tab / node — per channel: level meter, volume, panning, mute, solo (volume is kept with the song in the browser; the formats have no place for it)
 - Space plays the song from the current position, Shift+Space loops the current pattern from the cursor row; **⇣ follow** keeps the cursor on the playing row
 
-## Data Sequencer
+## Table
 
-A table of any fields played out row by row — to imitate a moving vehicle, step through frequencies, replay packets and calls, or send a beacon.
+One node for everything that is a list of records: the former Data Sequencer, Band Plan, Bookmarks, List (CSV/DB) and CSV Log. (They are still in the palette under *show legacy*, so old patches keep working; new work should use **Table**.)
 
-- **Data Sequencer** (Sources): load a CSV / TSV, **KML** (Point, LineString, `gx:Track`), **GPX** (waypoints, routes, tracks) or **GeoJSON**, or type the table in *advanced → table* and press *Apply table*. The table is saved in the patch. Every column becomes an output port (a column named like a fixed port gets a `_`); `rec` carries the whole row as a record (for the map, Rec Log, filters), `text` — the *text col* (or the whole row), `row` / `count` / `next` (pulse per row) / `done`. Raw packets work too: put them in a column (hex, text) and wire the port.
+- **Lists and folders** (Sources → *Table*): a list is a table of records. It lives in the browser database (like the sample library, `folder/name` makes a folder; the two selects at the top switch folder and list, ＋ ✎ 🗑 create, rename / move, delete), or in the patch itself (list `@patch`, *advanced → patch table*: the data travels with the patch file), or it is one of the built-in band plans (folder `presets`, read-only; **copy** turns one into your own list, or moves a list into the patch and back). Old Bookmarks / Band Plan / List lists open as they are.
+- **Rows**: `+ row`, ✎ edit, 🗑 delete, `+ col` / × add and remove columns; a `color` column is a colour picker, `demod` a mode list, frequency fields (`lo`, `hi`, `freq`, `step`…) accept `7.1M`, `433k`, `14 MHz`. A row shows on one line — colour, name, value (a frequency range as `7.0M-7.2M`). Click a row: it is selected and goes out. Lists of any size work, 300 rows are drawn (*tail* shows the last ones).
+- **Filter**: words from the start of any field (`20m` does not find `120m`), all words must match; `demod:am` — in one field, `lo>7M`, `step<=1000`, `name=FM` — comparisons. The filter limits the list on screen, what is played and the `bands` output.
+- **Import / export**: `import` takes CSV, TSV, TXT (a line is a record), JSON (an array of objects, an object holding such an array, JSON Lines), KML, GPX, GeoJSON — several files at once, each becomes a list named after the file (in the current folder). `export` saves the list as CSV, TSV or JSON (*advanced → export format*); `export all` saves every list of the browser DB in one JSON file, `import` brings them back.
+- **Records in**: the `rec` wire adds records (decoders, other tables, any source), `text` adds lines (a line is a record with a `text` field; *text wire: split into columns* puts CSV lines into the list's columns), new fields become new columns. Numeric inputs `a–d` (*log inputs a–d*) are written every *log period* with a timestamp `t` and the names from *log columns* — the CSV Log; *Add row from a–d* does it once (save the current frequency as a bookmark). *max rows* drops the oldest rows (a log does not grow forever; in `@patch` at most 1000).
+- **Out**: one record at a time. Every column is an output port (a column named like a fixed port gets a `_`); `rec` carries the whole row as a record (for the map, Rec Log, **Graph**), `text` — the *text col* (or the whole row), `row` / `count` / `next` (pulse per row) / `done`. Nothing goes out until a row is selected or played. `bands` is the whole (filtered) list for a Spectrum Analyzer, Signal Identifier `plan` or Band Scanner when the list has `lo` (or `freq`), optional `hi`, `name` / `label`, `color`, `step` columns; `mid` and `span` of the selected row appear next to `lo` / `hi` / `step`. `sigs` takes the labels of a Signal Identifier, as the band plan did. Raw packets work too: put them in a column (hex, text) and wire the port.
+
+### Sequencer
+
+The rows can be played out — to imitate a moving vehicle, step through frequencies, replay packets and calls, or send a beacon. *advance* and *rows/s* are on the tile, the rest is under *advanced*; with *rows/s* 0 nothing moves until a row is picked or `trig` comes.
+
 - **Advance** (`trig` always steps by one row as well): **rate** — rows/s (0 = only `trig`); **dwell** — each row is held for the seconds in its *dwell col* (frequency stepping: `freq,dwell`); **time** — rows come out at their own timestamps (column `t`, `time`, `timestamp`… ISO, epoch s/ms or `HH:MM:SS`), speed `time ×`; with absolute timestamps and a *Time Base* on `t` the rows follow that clock (set it back and the replay restarts); **distance** — the next row comes out when the path along `lat`/`lon` reaches it at the given `speed` (km/h, m/s or knots; a *speed col* overrides it per row). With *interpolate* the marker moves smoothly between points (*rows/s* = update rate). `dist`, `bearing`, `progress` describe the current leg.
 - **Order**: sequential, ping-pong, **random**, **shuffle** (every row once, then again); *loop*, *first row* / *last row* range, the `row` input picks a row (1…N).
 - **Trigger Clock** (Control): `trig` pulse and `gate` window. Modes: *interval* (with *jitter* %), *random* (min…max), *poisson* (mean = interval), *schedule* (`08:00, 12:30:15, */15s, */5m` — time of day or every N s/m/h, UTC or local; uses `t` from Time Base when wired). *burst* + *gap*, *delay*, *max N*, `gate` width (a window of N s after every trigger), `reset` input. The pulse lasts one block with a gap of one block between pulses.
 - **Time Base** (Control): virtual time — the system clock or a manually set start (UTC) with any speed; outputs `t` (epoch s), `iso`, `tod`; the `set` input takes a new time.
 
-Presets: *Sequencer: Vehicle Track on the Map*, *Sequencer: Frequency Stepper (CSV → Oscillator)*, *Sequencer: Random Beacon (Trigger Clock)*.
+Presets: *Sequencer: Vehicle Track on the Map*, *Sequencer: Frequency Stepper (CSV → Oscillator)*, *Sequencer: Random Beacon (Trigger Clock)*, *Graph: Links from CSV*, *Sound Level Meter with Log*.
 
 ### Control logic
 
@@ -550,7 +560,7 @@ Visual blocks on number wires (Indicators). They draw on a dark screen in both t
 - **S-Meter**: receiver scale S1…S9 (6 dB per step), then +10 … +60 dB; *S9 level* is set in dBm (−73 is the HF standard, use −93 for VHF). Fast attack and slow fall like a real meter, peak marker, the S reading and the level in the corner. The `s` output is the reading in S units (9 = S9, 15 = S9 + 36 dB).
 - **Text Ticker**: the latest lines from `text` (a new string is a new line) and `rec` (the *field* is shown, or all fields as `key=value`), as a scrolling log with optional timestamps or as a running line (*marquee*). *Clear* empties it. Good for a decoder's messages next to the other indicators.
 
-- **Graph** (Output): a link graph (vis-network, bundled) from CSV — a row is an edge `from,to[,weight[,label]]`, a header with `from` / `to` / `weight` / `label` columns is optional, the delimiter is detected. Rows come from the *csv* field, from the `text` wire (a chunk of CSV on every change) and from `rec` (fields `from` / `to` / `weight` / `label`, or the first two fields). A repeated pair without a weight thickens the edge; nodes are sized by degree. *arrows*, *weights on edges*, *physics*; clicking a node puts its name on `sel`; `nodes` / `edges` are counters. Preset *Graph: Links from CSV*.
+- **Graph** (Output): a link graph (vis-network, bundled) from CSV — a row is an edge `from,to[,weight[,label]]`, a header with `from` / `to` / `weight` / `label` columns is optional, the delimiter is detected. There is no data window: rows come from `rec` — wire a [Table](#table) to it and the graph is built row by row — and from the `text` wire (a chunk of CSV on every change); `rec` takes (fields `from` / `to` / `weight` / `label`, or the first two fields). A repeated pair without a weight thickens the edge; nodes are sized by degree. *arrows*, *weights on edges*, *physics*; clicking a node puts its name on `sel`; `nodes` / `edges` are counters. Preset *Graph: Links from CSV*. (The old *csv* field of saved patches is still read.)
 - **Chat** (Output): incoming text from the `text` wire goes into the log, the field at the bottom sends (Enter or *Send*): `text` holds the last sent message, `go` pulses for one block. A text on the `send` input is sent the same way. Preset *Chat: Text In and Out*.
 
 Code fields (Script, Builder, Note, tables) are a plain text area with a light syntax highlight underneath, so the caret stays in place at any canvas zoom; the Note has no highlight.
