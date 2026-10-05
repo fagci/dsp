@@ -163,6 +163,9 @@ const PRESET_CATS={
   'NMEA: Network Stream (gpsd, AIS-catcher, Termux)':'Network & IoT',
   'POCSAG: Transmitter Loopback (no radio)':'Modems & Data Links',
   'POCSAG: Send a Page (HackRF TX)':'Modems & Data Links',
+  'Time Signal: DCF77 Clock (Generator)':'HF Modes & Morse',
+  'Time Signal: WWVB Clock (Generator)':'HF Modes & Morse',
+  'Time Signal: DCF77 / WWVB from a Sound Card (192 kS/s)':'HF Modes & Morse',
   'POCSAG: Pager Messages (Generator)':'Modems & Data Links',
   'POCSAG: Pager Messages (USB SDR)':'Modems & Data Links',
   'AIS: Vessels on the Map (Generator)':'Aircraft, Satellites & Telemetry',
@@ -1190,6 +1193,54 @@ const md=addNode('iqMod',420,240,{mode:'NFM',sr:'2000000',fc:466000000,off:10000
 const hk=addNode('hackrfTx',720,240,{});
 hk.size.w=300; applySize(hk);
 addEdge(tx.id,'out',md.id,'in'); addEdge(md.id,'iq',hk.id,'in'); addEdge(tx.id,'tx',hk.id,'tx');
+markWiresDirty();
+});
+preset('Time Signal: DCF77 Clock (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'DCF77 without a radio: the generator sends the carrier of Mainflingen, 77.5 kHz, with the power dips of the current time — 100 ms is 0, 200 ms is 1, no dip in the 59th second\n'+
+  'and the frame of the next minute (BCD minutes, hours, date, weekday, parity bits, CET / CEST).\n'+
+  'Time Signal Decoder: mixer on the carrier → 400 Hz envelope → upper / lower level tracking → width of every dip → bit → minute frame with checks → UTC time.\n'+
+  'A frame takes a minute, and two in a row confirm each other (~3 minutes from the start): set the run speed in the toolbar to ×8 … ×32 and the time appears in seconds —\n'+
+  'the decoder counts samples of the stream, not the clock of the page.'});
+nt.size.w=760; nt.size.h=130; applySize(nt);
+const gn=addNode('iqGen',40,230,{sr:'48000',fc:77500,mode:'DCF77',off:0,lvl:-20,noise:-50});
+const de=addNode('timeRx',340,230,{station:'DCF77'});
+de.size.w=520; de.size.h=300; applySize(de);
+const log=addNode('recLog',340,590,{});
+log.size.w=520; applySize(log);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Time Signal: WWVB Clock (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'WWVB without a radio: the generator sends the 60 kHz carrier of Fort Collins with the power dips of the current time — 200 ms is 0, 500 ms is 1, 800 ms is a marker (seconds 0, 9, 19 … 59)\n'+
+  'and the frame of the minute: BCD minutes, hours, day of the year, DUT1, year, leap flags.\n'+
+  'Time Signal Decoder: mixer on the carrier → 400 Hz envelope → upper / lower level tracking → width of every dip → bit → minute frame with checks → UTC time.\n'+
+  'A frame takes a minute, and two in a row confirm each other (~3 minutes from the start): set the run speed in the toolbar to ×8 … ×32 and the time appears in seconds —\n'+
+  'the decoder counts samples of the stream, not the clock of the page.'});
+nt.size.w=760; nt.size.h=130; applySize(nt);
+const gn=addNode('iqGen',40,230,{sr:'48000',fc:60000,mode:'WWVB',off:0,lvl:-20,noise:-50});
+const de=addNode('timeRx',340,230,{station:'WWVB'});
+de.size.w=520; de.size.h=300; applySize(de);
+const log=addNode('recLog',340,590,{});
+log.size.w=520; applySize(log);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Time Signal: DCF77 / WWVB from a Sound Card (192 kS/s)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A longwave time signal straight into a sound card: set the sample rate of the engine (toolbar) to 192000, connect a tuned ferrite loop antenna (77.5 kHz for DCF77, 60 kHz for WWVB) to the line input.\n'+
+  'The input is a real signal at 192 kS/s, I/Q → IQ makes a stream of it with the centre at 0, Time Signal Decoder mixes the station frequency down (carrier = stream center).\n'+
+  'With an SDR that tunes 60–80 kHz (RX-888, a KiwiSDR-like receiver, an upconverter) put its iq output on the decoder input instead; the stream centre frequency is taken into account.\n'+
+  'Without a signal the node says so: look at the carrier level and the depth of the dips (>35% for a frame to be tried).'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const mc=addNode('mic',40,230,{echo:false,ns:false,agc:false});
+const iq=addNode('iqMerge',340,230,{});
+const de=addNode('timeRx',640,230,{station:'DCF77'});
+de.size.w=520; de.size.h=300; applySize(de);
+const log=addNode('recLog',640,590,{});
+log.size.w=520; applySize(log);
+addEdge(mc.id,'a',iq.id,'I'); addEdge(iq.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('ISM 433: Sensors and Remotes (Generator)', function(){
