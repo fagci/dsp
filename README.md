@@ -31,7 +31,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Microphone (stereo A+B), audio file, audio stream URL, tab/screen audio capture
 - **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500, RX-888 (mkI/mkII/mkIII) — multiple tuners/demodulators per device, wideband sweep with a panoramic waterfall, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
 - **KiwiSDR** remote receivers (public list included)
-- **HTTP In**: poll any URL (REST / JSON) into text, a number and records — see [HTTP](#http)
+- **HTTP In**: poll any URL (REST / JSON) into text, a number and records; **SSE In**: a live Server-Sent Events stream — see [HTTP](#http)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), **Table** (one node for lists, band plans, bookmarks, logs and the data sequencer: CSV / TSV / JSON / TXT / KML / GPX / GeoJSON, folders in the browser DB, played row by row), Trigger Clock, Time Base — see [Table](#table)
@@ -754,7 +754,13 @@ Presets: *MQTT: Subscribe and Publish*, *IR: Tasmota Blaster over MQTT* (send wi
 - Error answers (4xx / 5xx) are shown in the status and skipped, unless *also take the body of error answers* is on.
 - Headers (an API key) are stored in the patch as plain text — do not share patches with real credentials.
 
-Preset: *HTTP: Poll a JSON API* (the current temperature from Open-Meteo).
+**SSE In** keeps a connection open to a `text/event-stream` URL (fetch, so headers work, unlike the browser's `EventSource`) and receives what the server pushes.
+
+- Outputs: `text` (the `data` of an event, a burst is queued, one event per block), `event` (its name, `message` by default), `value` and `rec` (parsed the same way as in HTTP In, with `event` added to the records), `new`, `ok` (1 while connected). *events* limits which event names are taken.
+- Reconnect runs every 3 s (or the server's `retry:`). *resume* adds `Last-Event-ID` to it, so the server can send what was missed — off by default: it is a non-standard header for CORS, the browser asks the server first (preflight `OPTIONS`) and a server that does not answer it breaks the reconnect. A 4xx answer (except 408 / 429) is not retried — wrong URL or key.
+- The same CORS and https rules as in HTTP In.
+
+Presets: *HTTP: Poll a JSON API*, *SSE: Live Event Stream* (Wikipedia edits, Wikimedia EventStreams).
 
 ## Map and records
 

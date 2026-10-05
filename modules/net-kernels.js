@@ -53,3 +53,27 @@ function netHeaders(s){
     const i=line.indexOf(':'); if(i>0) h[line.slice(0,i).trim()]=line.slice(i+1).trim(); }
   return h;
 }
+
+// Server-Sent Events: push(строка) → готовые события {event, data, id}; кусок может резать строку, CRLF / LF / CR
+class SseParser{
+  constructor(){ this.buf=''; this.ev=''; this.data=[]; this.id=''; this.retry=null; }
+  push(chunk){
+    this.buf+=chunk; const out=[];
+    let m;
+    while((m=/\r\n|\n|\r(?!$)/.exec(this.buf))){
+      const line=this.buf.slice(0,m.index); this.buf=this.buf.slice(m.index+m[0].length);
+      if(line===''){
+        if(this.data.length) out.push({event:this.ev||'message',data:this.data.join('\n'),id:this.id});
+        this.ev=''; this.data=[]; continue;
+      }
+      if(line[0]===':') continue;
+      const i=line.indexOf(':'), f=i<0 ? line : line.slice(0,i);
+      let v=i<0 ? '' : line.slice(i+1); if(v[0]===' ') v=v.slice(1);
+      if(f==='data') this.data.push(v);
+      else if(f==='event') this.ev=v;
+      else if(f==='id') this.id=v;
+      else if(f==='retry' && /^\d+$/.test(v)) this.retry=+v;
+    }
+    return out;
+  }
+}
