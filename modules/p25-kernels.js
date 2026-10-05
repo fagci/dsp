@@ -4,7 +4,7 @@
    статус-дибит после каждых 35 дибитов данных. HDU: Golay(18,6,8) + RS(36,20,17); LDU1/2: 9 кадров IMBE, LC (RS(24,12,13)) или
    ESS (RS(24,16,9)) в словах Хэмминга (10,6,3), LSD; TSDU: 1–3 блока TSBK (трелис ½ + CRC-16); PDU: только заголовок.
    Голос IMBE не декодируется — отдаются сырые 144 бита кадра. Кодеры нужны генератору и тестам (сверка с MMDVMHost).
-   Помощники (dmrNum, dmrPop, dmrHam*, dmrCrc16, DMR_GOLAY_B…) берутся из dmr-kernels.js. */
+   Помощники (dmrNum, dmrHam*, dmrCrc16, DMR_GOLAY_B…) берутся из dmr-kernels.js. */
 
 const P25_BAUD=4800, P25_SYNC=fsk4Sync(fsk4Bits('5575F5FF77FF'));
 const P25_LEN={0:396, 5:864, 10:864, 3:72, 15:216};                 // длины кадров в дибитах со статусами
@@ -93,7 +93,7 @@ const P25_G18=(()=>{
 })();
 function p25Golay18(w){
   let best=-1, bd=99;
-  for(let d=0;d<64;d++){ const e=dmrPop((P25_G18[d]^w)>>>0); if(e<bd){ bd=e; best=d; } }
+  for(let d=0;d<64;d++){ const e=popcnt32((P25_G18[d]^w)>>>0); if(e<bd){ bd=e; best=d; } }
   return bd<=3 ? {v:best, err:bd} : null;
 }
 
@@ -103,7 +103,7 @@ function p25Lsd(w16){                                              // 16 бит 
   const d=w16>>8;
   if(p25LsdPar(d)===(w16&255)) return d;
   let bd=99, best=-1;
-  for(let v=0;v<256;v++){ const e=dmrPop((((v<<8)|p25LsdPar(v))^w16)>>>0); if(e<bd){ bd=e; best=v; } }
+  for(let v=0;v<256;v++){ const e=popcnt32((((v<<8)|p25LsdPar(v))^w16)>>>0); if(e<bd){ bd=e; best=v; } }
   return bd<2 ? best : -1;
 }
 
@@ -150,7 +150,7 @@ function p25NidFind(bits,maxErr){
   for(let i=0;i<32;i++){ a=a*2+bits[i]; b=b*2+bits[32+i]; }
   let bd=99, bk=-1;
   for(let i=0;i<T.K.length;i++){
-    const d=fsk4Pop((T.A[i]^a)>>>0)+fsk4Pop((T.B[i]^b)>>>0);
+    const d=popcnt32((T.A[i]^a)>>>0)+popcnt32((T.B[i]^b)>>>0);
     if(d<bd){ bd=d; bk=T.K[i]; }
   }
   return bd<=maxErr ? {nac:bk>>4, duid:bk&15, err:bd} : null;
@@ -184,7 +184,7 @@ function p25Tr12Dec(dib){
     for(let s=0;s<4;s++){
       if(cost[s]>=1e9) continue;
       for(let x=0;x<4;x++){
-        const p=P25_PTS[P25_T12[s*4+x]], d=cost[s]+dmrPop(p[0]^a)+dmrPop(p[1]^b);
+        const p=P25_PTS[P25_T12[s*4+x]], d=cost[s]+popcnt32(p[0]^a)+popcnt32(p[1]^b);
         if(d<nc[x]){ nc[x]=d; bp[x]=s; }
       }
     }
@@ -221,7 +221,7 @@ function p25Tr34Dec(dib){
     for(let s=0;s<8;s++){
       if(cost[s]>=1e9) continue;
       for(let x=0;x<8;x++){
-        const p=P25_PTS[P25_T34[s*8+x]], d=cost[s]+dmrPop(p[0]^a)+dmrPop(p[1]^b);
+        const p=P25_PTS[P25_T34[s*8+x]], d=cost[s]+popcnt32(p[0]^a)+popcnt32(p[1]^b);
         if(d<nc[x]){ nc[x]=d; bp[x]=s; }
       }
     }

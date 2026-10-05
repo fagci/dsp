@@ -48,7 +48,7 @@ let M17_GT=null;
 function m17GolayDec(w){                                           // 24 бита → {v, err} (до 3 ошибок)
   if(!M17_GT){ M17_GT=new Uint32Array(4096); for(let d=0;d<4096;d++) M17_GT[d]=m17Golay(d); }
   let bd=99, best=0;
-  for(let d=0;d<4096;d++){ const e=dmrPop((M17_GT[d]^w)>>>0); if(e<bd){ bd=e; best=d; } }
+  for(let d=0;d<4096;d++){ const e=popcnt32((M17_GT[d]^w)>>>0); if(e<bd){ bd=e; best=d; } }
   return bd<=3 ? {v:best, err:bd} : null;
 }
 
@@ -137,7 +137,7 @@ FSK4.protos.m17={
   gain(L,f){ return L.polOk && Math.sign(f.g)!==Math.sign(L.g) ? -f.g : f.g; },
   syncKind(F,prev){
     let kind=prev, bd=3;
-    for(const s of M17_SYNCS){ let d=0; for(let i=0;i<8;i++) d+=dmrPop(F[i]^(s.syms[i]===3 ? 1 : s.syms[i]===1 ? 0 : s.syms[i]===-1 ? 2 : 3)); if(d<bd){ bd=d; kind=s.kind; } }
+    for(const s of M17_SYNCS){ let d=0; for(let i=0;i<8;i++) d+=popcnt32(F[i]^(s.syms[i]===3 ? 1 : s.syms[i]===1 ? 0 : s.syms[i]===-1 ? 2 : 3)); if(d<bd){ bd=d; kind=s.kind; } }
     return bd<3 ? kind : null;
   },
   frame(P,L,e,out){

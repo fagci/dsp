@@ -9,7 +9,6 @@
 
 const VAC_BAUD=2400, VAC_PH=8, VAC_DEL=0x7f, VAC_MAXLEN=240;
 const VAC_INTERP=['1 = 1200 Hz','inverted','differential (change)','differential (same)'];
-function vacPop(v){ v-=(v>>>1)&0x55555555; v=(v&0x33333333)+((v>>>2)&0x33333333); return (((v+(v>>>4))&0x0F0F0F0F)*0x01010101)>>>24; }
 function vacOdd(b){ b^=b>>4; b^=b>>2; b^=b>>1; return (b&1)===1; }
 function vacPar(c){ c&=0x7f; return vacOdd(c) ? c : c|0x80; }
 function vacBits(bytes){ const b=[]; for(const v of bytes) for(let i=0;i<8;i++) b.push((v>>i)&1); return b; }
@@ -118,7 +117,7 @@ IQK.acarsRx={
     if(f.st) return;
     const D=(f.sh^((f.sh>>>1)|(out<<31)))>>>0, cand=[f.sh,~f.sh>>>0,D,~D>>>0];
     let best=-1, bd=3;
-    for(let k=0;k<4;k++){ const d=vacPop((cand[k]^VAC_SYNC)>>>0); if(d<bd){ bd=d; best=k; } }
+    for(let k=0;k<4;k++){ const d=popcnt32((cand[k]^VAC_SYNC)>>>0); if(d<bd){ bd=d; best=k; } }
     if(best<0) return;
     f.st=1; f.ip=best; f.by=[]; f.nb=0; f.cur=0; f.pe=[]; f.tail=0;
     n.syncs++;

@@ -18,7 +18,6 @@ const DMR_SYNCS=[
 DMR_SYNCS.forEach(p=>{ p.syms=dmrSyncSyms(p); });
 const DMR_DT=['PI header','Voice LC header','Terminator LC','CSBK','MBC header','MBC cont.','Data header','Rate ½ data','Rate ¾ data','Idle','Rate 1 data','USBD'];
 
-function dmrPop(v){ v-=(v>>>1)&0x55555555; v=(v&0x33333333)+((v>>>2)&0x33333333); return (((v+(v>>>4))&0x0F0F0F0F)*0x01010101)>>>24; }
 // число из len ≤ 30 бит массива 0/1, старший первым
 function dmrNum(b,o,len){ let v=0; for(let i=0;i<len;i++) v=v*2+b[o+i]; return v; }
 function dmrBytes(b,o,n){ const r=new Uint8Array(n); for(let i=0;i<n;i++) r[i]=dmrNum(b,o+8*i,8); return r; }
@@ -56,7 +55,7 @@ const DMR_GOLAY=(()=>{ const t=new Uint32Array(256); for(let v=0;v<256;v++){ let
 const DMR_QR=(()=>{ const t=new Uint32Array(128); for(let v=0;v<128;v++){ let c=0; for(let i=0;i<7;i++) if((v>>i)&1) c^=DMR_QR_B[i]; t[v]=c; } return t; })();
 function dmrNearest(tab,w,maxErr){
   let best=-1, bd=99;
-  for(let v=0;v<tab.length;v++){ const d=dmrPop((tab[v]^w)>>>0); if(d<bd){ bd=d; best=v; } }
+  for(let v=0;v<tab.length;v++){ const d=popcnt32((tab[v]^w)>>>0); if(d<bd){ bd=d; best=v; } }
   return bd<=maxErr ? {v:best, err:bd} : null;
 }
 
@@ -427,7 +426,7 @@ function dmrFecScore(F,L){
   let sh=0, sl=0;
   for(let i=0;i<12;i++){ sh=(sh<<2)|F[12+DMR_SYNC_AT+i]; sl=(sl<<2)|F[12+DMR_SYNC_AT+12+i]; }
   let bd=99, bp=null;
-  for(const p of DMR_SYNCS){ const d=dmrPop((sh^p.hi)>>>0)+dmrPop((sl^p.lo)>>>0); if(d<bd){ bd=d; bp=p; } }
+  for(const p of DMR_SYNCS){ const d=popcnt32((sh^p.hi)>>>0)+popcnt32((sl^p.lo)>>>0); if(d<bd){ bd=d; bp=p; } }
   const sync=bd<=DMR_SYNC_OK && bp.kind!=='rc';
   if(sync && bp.kind==='data'){ const st=dmrSlotType(bits,1); if(st && st.dt<=11) return {s:2, sync}; }
   if(!sync){ const emb=dmrEmb(bits,1); if(emb && (L.cc<0 || emb.cc===L.cc)) return {s:1, sync}; }
@@ -462,7 +461,7 @@ function dmrFrame(n,L,F,e,out){
   let sh=0, sl=0;
   for(let i=0;i<12;i++){ sh=(sh<<2)|F[12+DMR_SYNC_AT+i]; sl=(sl<<2)|F[12+DMR_SYNC_AT+12+i]; }
   let bd=99, bp=null;
-  for(const p of DMR_SYNCS){ const d=dmrPop((sh^p.hi)>>>0)+dmrPop((sl^p.lo)>>>0); if(d<bd){ bd=d; bp=p; } }
+  for(const p of DMR_SYNCS){ const d=popcnt32((sh^p.hi)>>>0)+popcnt32((sl^p.lo)>>>0); if(d<bd){ bd=d; bp=p; } }
   const sync=bd<=DMR_SYNC_OK && bp.kind!=='rc' ? bp : null;
   if(sync){ L.mode=sync.mode; L.lastSync=sync; n.st.syncs++; }
   let slot=null;

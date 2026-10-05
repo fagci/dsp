@@ -14,7 +14,6 @@
 
 const POC_SYNC=0x7CD215D8, POC_IDLE=0x7A89C197, POC_PH=8, POC_W=48, POC_BAUDS=[512,1200,2400], POC_CLIP=12000;
 const POC_NUM='0123456789*U -][';
-function pocPop(v){ v-=(v>>>1)&0x55555555; v=(v&0x33333333)+((v>>>2)&0x33333333); return (((v+(v>>>4))&0x0F0F0F0F)*0x01010101)>>>24; }
 // остаток от деления слова (без бита чётности, бит 31 — старшая степень) на x^10+x^9+x^8+x^6+x^5+x^3+1
 function pocRem(w){
   let r=w>>>1;
@@ -24,18 +23,18 @@ function pocRem(w){
 // проверочные биты и чётность для 21 информационного бита
 function pocEncode(info21){
   const w=((info21<<11)>>>0), r=pocRem(w|0), cw=(w|(r<<1))>>>0;
-  return (cw|(pocPop(cw)&1))>>>0;
+  return (cw|(popcnt32(cw)&1))>>>0;
 }
 // таблица синдромов: ключ (остаток<<1 | чётность) → шаблон ошибки, число ошибок
 const POC_SYN=(()=>{
-  const m=new Map(), add=(e,k)=>{ const key=(pocRem(e)<<1)|(pocPop(e)&1); if(!m.has(key)) m.set(key,[e>>>0,k]); };
+  const m=new Map(), add=(e,k)=>{ const key=(pocRem(e)<<1)|(popcnt32(e)&1); if(!m.has(key)) m.set(key,[e>>>0,k]); };
   for(let i=0;i<32;i++) add(1<<i,1);
   for(let i=0;i<32;i++) for(let j=i+1;j<32;j++) add((1<<i)|(1<<j),2);
   return m;
 })();
 // слово → [исправленное слово, число исправленных ошибок] или null; maxErr 0…2
 function pocFix(w,maxErr){
-  const s=pocRem(w), p=pocPop(w)&1;
+  const s=pocRem(w), p=popcnt32(w)&1;
   if(!s && !p) return [w>>>0,0];
   if(!maxErr) return null;
   const e=POC_SYN.get((s<<1)|p);
@@ -138,7 +137,7 @@ IQK.pocsagRx={
     if(te>n.tNow) n.tNow=te;
     d.reg=((d.reg<<1)|bit)>>>0;
     if(d.state===0){
-      const a=pocPop((d.reg^POC_SYNC)>>>0), b=pocPop((d.reg^~POC_SYNC)>>>0);
+      const a=popcnt32((d.reg^POC_SYNC)>>>0), b=popcnt32((d.reg^~POC_SYNC)>>>0);
       if(a<=2 || b<=2){ d.state=1; d.pol=a<=2 ? 0 : 1; d.nb=0; d.idx=0; d.bad=0; n.syncs++; }
       return;
     }
@@ -146,7 +145,7 @@ IQK.pocsagRx={
     d.nb=0;
     const w=(d.pol ? ~d.reg : d.reg)>>>0;
     if(d.idx<0){                                       // ждём синхрослово следующего пакета
-      if(pocPop((w^POC_SYNC)>>>0)<=4){ d.idx=0; return; }
+      if(popcnt32((w^POC_SYNC)>>>0)<=4){ d.idx=0; return; }
       this.finish(n,L,d,te,recs);
       d.state=0; return;
     }

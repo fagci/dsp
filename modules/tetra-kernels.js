@@ -144,12 +144,11 @@ function tetraRmEnc(info14){                          // 14-битное чис�
   }
   return tetraRmTab[info14];
 }
-function tetraPop(v){ v-=(v>>>1)&0x55555555; v=(v&0x33333333)+((v>>>2)&0x33333333); return (((v+(v>>>4))&0x0F0F0F0F)*0x01010101)>>>24; }
 // слово 30 бит → {info (14 бит), dist}; ближайшее кодовое слово
 function tetraRmDec(w){
   tetraRmEnc(0);
   let bd=99, bi=0;
-  for(let x=0;x<16384;x++){ const d=tetraPop((w^tetraRmTab[x])>>>0); if(d<bd){ bd=d; bi=x; if(!d) break; } }
+  for(let x=0;x<16384;x++){ const d=popcnt32((w^tetraRmTab[x])>>>0); if(d<bd){ bd=d; bi=x; if(!d) break; } }
   return {info:bi, dist:bd};
 }
 
