@@ -168,6 +168,8 @@ const PRESET_CATS={
   'Time Signal: DCF77 / WWVB from a Sound Card (192 kS/s)':'HF Modes & Morse',
   'SAME / EAS: Alert Decoder Test (Loopback)':'Aircraft, Satellites & Telemetry',
   'SAME / EAS: NOAA Weather Radio (USB SDR)':'Aircraft, Satellites & Telemetry',
+  'SELCAL: Test Signal (Loopback)':'HF Modes & Morse',
+  'SELCAL: HF Aeronautical Channel (KiwiSDR)':'HF Modes & Morse',
   'POCSAG: Pager Messages (Generator)':'Modems & Data Links',
   'POCSAG: Pager Messages (USB SDR)':'Modems & Data Links',
   'AIS: Vessels on the Map (Generator)':'Aircraft, Satellites & Telemetry',
@@ -1275,6 +1277,37 @@ const log=addNode('recLog',420,560,{});
 log.size.w=260; applySize(log);
 addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'audio',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 addEdge(rx.id,'audio',dc.id,'L'); addEdge(rx.id,'audio',dc.id,'R');
+markWiresDirty();
+});
+preset('SELCAL: Test Signal (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Aviation SELCAL (ICAO Annex 10, HF / VHF) without a radio: SELCAL Test Signal sends a code — two pulses of two tones each (1.0 s, gap 0.2 s), the 16 tones A…S from 312.6 to 1479.1 Hz,\n'+
+  'AB-CD = tones A and B, then C and D. SELCAL Decoder: Goertzel on 16 frequencies in a 90 ms window every 43 ms → two tones → pulse → two pulses → code. The tone table and the timings are from the ASRI SELCAL Users Guide.\n'+
+  'Press Send; put a code of your aircraft into *watch for a code* to see a match mark. The test signal is for a cable or the sound-card loop only: do not transmit it — it would call someone else\'s aircraft.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const tx=addNode('selcalTx',40,230,{});
+tx.size.w=340; tx.size.h=300; applySize(tx);
+const rx=addNode('selcalRx',420,230,{});
+rx.size.w=500; rx.size.h=300; applySize(rx);
+const log=addNode('recLog',420,590,{});
+log.size.w=500; applySize(log);
+addEdge(tx.id,'out',rx.id,'in'); addEdge(rx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('SELCAL: HF Aeronautical Channel (KiwiSDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'SELCAL listens on the same channel as the voice: an HF aeronautical (MWARA / VOLMET-type) frequency in USB. Connect a KiwiSDR, set the channel (8891 kHz is only an example), USB.\n'+
+  'Tones appear in the audio at their own pitch, so the receiver has to be tuned within a few Hz: the decoder shows the measured offset (tuning error) with every code, and *receiver tuning error* shifts the table.\n'+
+  'An error of about half the tone spacing (17 Hz at the low end) turns A-B-C into neighbours that look like a valid code — check the offset line if a result looks odd.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const kw=addNode('kiwisdr',40,230,{freq:8891000,mod:'usb',bw:3000});
+const rx=addNode('selcalRx',420,230,{});
+rx.size.w=500; rx.size.h=300; applySize(rx);
+const dc=addNode('dac',420,590,{vol:.4});
+const log=addNode('recLog',700,590,{});
+log.size.w=400; applySize(log);
+addEdge(kw.id,'audio',rx.id,'in'); addEdge(rx.id,'rec',log.id,'rec');
+addEdge(kw.id,'audio',dc.id,'L'); addEdge(kw.id,'audio',dc.id,'R');
 markWiresDirty();
 });
 preset('ISM 433: Sensors and Remotes (Generator)', function(){
