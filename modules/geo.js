@@ -1462,6 +1462,10 @@ function geoIcon(cx,icon,x,y,s,rot,col){
       cx.lineTo(-s*.35,s); cx.lineTo(-s*.35,s*.9); cx.lineTo(-s*.1,s*.7); cx.lineTo(-s*.12,s*.15);
       cx.lineTo(-s,s*.4); cx.lineTo(-s,s*.25); cx.lineTo(-s*.12,-s*.2); cx.lineTo(-s*.12,-s*.6); cx.closePath();
       cx.fill(); cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=.7; cx.stroke(); break;
+    case 'ship':                                     // корпус носом по курсу
+      rotate(); s*=1.2;
+      cx.moveTo(0,-s*1.1); cx.lineTo(s*.55,-s*.3); cx.lineTo(s*.55,s*.9); cx.lineTo(-s*.55,s*.9); cx.lineTo(-s*.55,-s*.3); cx.closePath();
+      cx.fill(); cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=.7; cx.stroke(); break;
     case 'antenna':
       cx.moveTo(0,s); cx.lineTo(0,-s); cx.moveTo(-s*.7,-s); cx.lineTo(0,-s*.2); cx.lineTo(s*.7,-s); cx.stroke(); break;
     case 'tx':
@@ -1598,7 +1602,7 @@ function geoDrawObjects(n,cx,v){
     let icon=r.icon!=null && r.icon!=='' ? String(r.icon) : 'dot';
     const size=recNum(r.size) ?? 6;
     let rot=recNum(r.heading ?? r.course ?? r.track);
-    if(rot==null && (icon==='plane'||icon==='triangle') && e.pts.length>1){
+    if(rot==null && (icon==='plane'||icon==='triangle'||icon==='ship') && e.pts.length>1){
       const p0=e.pts[e.pts.length-2]; rot=geoBearing(p0.lat,p0.lon,last.lat,last.lon);
     }
     marks.push({x:s.x,y:s.y,icon,size,rot,col,a:cx.globalAlpha,sel:n.selKey===e.key,lab:r.label ?? e.id,age});

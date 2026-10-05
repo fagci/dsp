@@ -27,7 +27,7 @@ IQK.iqGen={
     // дисбаланс квадратур, как у звуковой карты: Q' = g·(Q·cosφ + I·sinφ), Q на imbD отсчётов позже
     const ig=Math.pow(10,(+n.p.imbG||0)/20), ip=(+n.p.imbP||0)*Math.PI/180, isn=Math.sin(ip), ics=Math.cos(ip), idl=Math.round(+n.p.imbD||0);
     const env=mode==='ADS-B' ? iqGenAdsb(n,sr,N) : null;
-    const bb=mode==='LRPT' ? lrptGenerate(n,sr,N,n.p.lrpt||'OQPSK') : mode==='RS41' ? rs41Generate(n,sr,N) : mode==='STD-C' ? stdcGenerate(n,sr,N) : mode==='MPT1327' ? mptGenerate(n,sr,N) : mode==='ACARS' ? vacGenerate(n,sr,N) : mode==='DMR' ? dmrGenerate(n,sr,N) : mode==='4FSK' ? fsk4GenIq(n,sr,N) : mode==='TETRA' ? tetraGenerate(n,sr,N) : mode==='ISM433' ? ismGenerate(n,sr,N) : mode==='Analog TV' ? tvGenerate(n,sr,N) : null;
+    const bb=mode==='LRPT' ? lrptGenerate(n,sr,N,n.p.lrpt||'OQPSK') : mode==='RS41' ? rs41Generate(n,sr,N) : mode==='STD-C' ? stdcGenerate(n,sr,N) : mode==='MPT1327' ? mptGenerate(n,sr,N) : mode==='AIS' ? aisGenerate(n,sr,N) : mode==='ACARS' ? vacGenerate(n,sr,N) : mode==='DMR' ? dmrGenerate(n,sr,N) : mode==='4FSK' ? fsk4GenIq(n,sr,N) : mode==='TETRA' ? tetraGenerate(n,sr,N) : mode==='ISM433' ? ismGenerate(n,sr,N) : mode==='Analog TV' ? tvGenerate(n,sr,N) : null;
     if(mode==='Analog TV' && w===0 && ig===1 && !ip && !idl){        // быстрый путь: 10–20 МС/с; шум — сумма четырёх байт
       const b0=bb[0], b1=bb[1], k=nz/147.8;
       let r=x;
