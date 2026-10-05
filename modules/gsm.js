@@ -234,8 +234,20 @@ function gsmDecodeCbch(b, off){
   const tsc=(o2>>5)&7, hopping=!!(o2&0x10);
   const r={present:true, tn, kind, sub, tsc, hopping};
   if(hopping){ r.maio=((o2&0x0f)<<2)|((o3&0xc0)>>6); r.hsn=o3&0x3f; }
-  else r.arfcn=((o2&0x03)<<8)|o3;
+  else { r.arfcn=((o2&0x03)<<8)|o3; r.freq=gsmArfcnFreq(r.arfcn); }
   return r;
+}
+// ARFCN → частота нисходящего канала, МГц (TS 05.05 табл. диапазонов); null — ARFCN вне известных
+// диапазонов. Пригодится, когда интересующий канал (например, CBCH) лежит не на той несущей, на
+// которой идёт приём — её можно прочитать здесь и перестроиться туда отдельной записью.
+function gsmArfcnFreq(n){
+  if(n>=0 && n<=124) return 935+0.2*n;                    // P-GSM 900
+  if(n>=975 && n<=1023) return 935+0.2*(n-1024);           // E-GSM 900 (расширение вниз от 935)
+  if(n>=955 && n<=974) return 935+0.2*(n-1024);            // R-GSM 900
+  // DCS1800 (512-885) и PCS1900 (512-810) делят номера ARFCN — без знания региона/диапазона тюнера
+  // не различить; берём DCS1800 как более распространённый вне Северной Америки.
+  if(n>=512 && n<=885) return 1805.2+0.2*(n-512);
+  return null;
 }
 
 // деперемежение xCCH (TS 05.03 4.1.4): cB[k]=iB[B·114+j]
@@ -749,8 +761,9 @@ function gsmDebugSuffix(r){
   if(r.cellSel){ const c=r.cellSel;
     s+=`\n    CELL-RESELECT-HYST ${c.cellReselectHyst} дБ · MS-TXPWR-MAX-CCH ${c.msTxpwrMaxCch} · RXLEV-ACCESS-MIN ${c.rxlevAccessMin}`; }
   if(r.cbch){ const c=r.cbch;
-    s+=c.present ? `\n    CBCH: TN${c.tn} ${c.kind} суб.${c.sub} TSC${c.tsc}`+(c.hopping?` hop MAIO${c.maio}/HSN${c.hsn}`:` ARFCN${c.arfcn}`)
-                 : `\n    CBCH: не настроен (нет Channel Description в SI4)`; }
+    s+=c.present ? `\n    CBCH: TN${c.tn} ${c.kind} суб.${c.sub} TSC${c.tsc}`+
+        (c.hopping?` hop MAIO${c.maio}/HSN${c.hsn}`:` ARFCN${c.arfcn}`+(c.freq!=null?` (${c.freq.toFixed(1)} МГц)`:''))
+      : `\n    CBCH: не настроен (нет Channel Description в SI4)`; }
   if(r.hex) s+=`\n    hex: ${r.hex}`;
   return s;
 }

@@ -1694,6 +1694,8 @@ const nt=addNode('note',40,40,{text:'GSM downlink receiver: sync to a C0 carrier
   'BCCH (935–960 MHz) or DCS1800 (1805–1880 MHz).'});
 nt.size.w=680; nt.size.h=220; applySize(nt);
 const rx=addNode('rtlsdr',40,320,{sr:'2048000',freq:942000000,demod:'IQ',auto:false,gainDb:32});
+const bp=addNode('table',40,480,{list:'presets/GSM downlink (ARFCN bands)',initial:false});
+bp.size.w=300; bp.size.h=160; applySize(bp);
 const sa=addNode('sa',720,40,{auto:true,floor:-90,top:-10,split:1});
 sa.size.w=640; sa.size.h=300; applySize(sa);
 const sh=addNode('iqShift',340,320,{});
@@ -1706,7 +1708,7 @@ log.size.w=360; applySize(log);
 const nv=addNode('numview',1560,80,{label:'cells'});
 const gv=addNode('graphview',1160,620,{directed:true});
 gv.size.w=420; gv.size.h=320; applySize(gv);
-addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(bp.id,'bands',sa.id,'bands');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',gsm.id,'in');
 addEdge(gsm.id,'rec',uniq.id,'rec'); addEdge(uniq.id,'new',log.id,'rec'); addEdge(uniq.id,'count',nv.id,'in');
