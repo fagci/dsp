@@ -35,6 +35,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), lists, **Data Sequencer** (CSV / KML / GPX / GeoJSON played row by row), Trigger Clock, Time Base — see [Data Sequencer](#data-sequencer)
 - **Bluetooth LE** (Web Bluetooth): **BLE UART** (Nordic UART, HM-10 / FFE0 or your own UUIDs — a serial terminal without a cable), **BLE GATT** (any characteristic: notifications or periodic read, write; formats — heart rate, battery, temperature, uint / int / float, hex), **BLE Advertisements** (RSSI, TX power and manufacturer data of one device without connecting — proximity, finding a beacon) — see [Bluetooth LE](#bluetooth-le)
+- **IQ over Network**: a remote SDR as an `iq` source — **rtl_tcp** through a TCP → WebSocket bridge (header, rate, tuning, gain, ppm, bias-T, direct sampling are sent as rtl_tcp commands; a wire on the frequency retunes) or a **raw stream** (uint8 / int8 / int16 / float32, rate and center set by hand) from any program that writes IQ to a pipe — see [Remote SDR](#remote-sdr)
 - **MQTT In** (over WebSocket, QoS 0/1, username/password, auto-reconnect): subscribe to topic filters (`+` / `#`); a message comes out as text, topic, a number (the payload itself, or a JSON field — `temp.value`) and as records (a JSON object or array becomes `rec` with the topic added, so Tasmota / ESPHome / Home Assistant sensors with lat / lon go straight to the map). The browser cannot open `mqtt://` itself: give the broker a WebSocket listener (Mosquitto `listener 9001` + `protocol websockets`, EMQX, HiveMQ, the Home Assistant add-on); from the https page only `wss://` works — see [MQTT](#mqtt)
 - **Text over Network**: WebSocket (`ws://`, `wss://`, with reconnect and a `send` input) or HTTP(S) polling; lines one per block like the serial port, JSON objects/arrays straight into records. Example — Wi-Fi scan from Android (Termux): `websocat -t ws-l:0.0.0.0:8765 sh-c:'while :; do termux-wifi-scaninfo | jq -c .; sleep 30; done'`. [`tools/termux/wifi-scan.sh`](tools/termux/wifi-scan.sh) adds the phone's GPS position to every scan — preset *Wi-Fi: Locate Access Points (Termux)* puts each access point on the map while you walk around. From the https demo the browser only allows `wss://`/`https://` to other devices (`ws://`/`http://` work to localhost, or when the app is opened over http)
 
@@ -158,6 +159,16 @@ On Linux unload the kernel driver before connecting, e.g. `sudo rmmod msi001 msi
 - **Open IQ file…** plays a recording through the same chain (spectrum, 4 channels, demodulators) in real time, with loop and position controls
   - WAV (8/16-bit PCM, 32/64-bit float), SigMF archive or `.sigmf-meta` + `.sigmf-data` pair (`cu8`, `ci8`, `ci16_le`, `cf32_le`, `cf64_le`)
   - raw `.cu8` / `.cs8` / `.cs16` / `.cf32` / `.cf64` (e.g. `rtl_sdr` output; the format is guessed from the extension or set by **IQ file format**): frequency and rate are taken from the file name (`…_433920000Hz_2.4Msps.cf32`), otherwise from the node settings
+
+## Remote SDR
+
+The **IQ over Network** node gives the same `iq` output as the USB SDR, so every IQ block (shift, decimator, demodulators, spectrum, decoders) works on a receiver that sits somewhere else: a Raspberry Pi on the roof, a server, another PC. A browser cannot open TCP sockets, so the receiver's stream goes through a small bridge to WebSocket; from the https page only `wss://` works, from a local copy over http `ws://` too.
+
+- **rtl_tcp**: on the machine with the RTL-SDR run `rtl_tcp -a 0.0.0.0 -s 1024000` and a bridge next to it, e.g. `websockify 8766 127.0.0.1:1234` (any proxy that passes bytes will do), enter `ws://host:8766`. The node checks the `RTL0` header, shows the tuner (R820T…), sends the sample rate, frequency, gain (0 — auto), ppm, RTL AGC, bias-T and the direct sampling branch, and sends again whatever changes — also when a wire drives the frequency (the stream is tagged `retune`).
+- **raw stream**: bytes of interleaved I / Q with the format, sample rate and center frequency set by hand. Examples: `rtl_sdr -f 100e6 -s 1024000 - | websocat -b -s 8766`, `hackrf_transfer -r - -f 100000000 -s 2000000 | websocat -b -s 8766` (set *int8*), GNU Radio or SoapySDR with a pipe sink, your own script. Samples that arrive cut in the middle (a byte boundary in a WebSocket message) are put together.
+- The queue holds 2 seconds; when the page cannot keep up the oldest data is dropped, the stream is tagged `gap` and the overflow counter in the readout grows. The readout shows the real received rate next to the set one.
+
+Preset: *Remote SDR: FM Receiver (rtl_tcp over WebSocket)*. SpyServer, SoapyRemote and other protocols with their own framing are not supported yet.
 
 ## tinySA
 
