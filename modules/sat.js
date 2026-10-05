@@ -138,7 +138,8 @@ def({ id:'satTrack', title:'Satellites', cat:'Radio',
   // freq — принимаемая частота downlink с поправкой (на tuneFreq приёмника), up — что передавать.
   ins:[{n:'select',t:'rec'}],                         // выбор спутника кликом на карте (выход sel)
   outs:[{n:'rec',t:'rec'},{n:'freq',t:'num'},{n:'up',t:'num'},{n:'shift',t:'num'},
-        {n:'az',t:'num'},{n:'el',t:'num'},{n:'range',t:'num'},{n:'rate',t:'num'},{n:'bands',t:'bands'}],
+        {n:'az',t:'num'},{n:'el',t:'num'},{n:'range',t:'num'},{n:'rate',t:'num'},{n:'bands',t:'bands'},
+        {n:'aos',t:'num'},{n:'los',t:'num'},{n:'maxel',t:'num'}],
   w:360, view:{h:240}, resize:true, readout:true, tall:true,
   params:[{n:'group',t:'select',opts:SAT_GROUPS,d:'amateur',label:'TLE group',
             fn:n=>satLoadGroup(n)},
@@ -183,6 +184,8 @@ def({ id:'satTrack', title:'Satellites', cat:'Radio',
         out={freq:n.cur.fRx, up:n.cur.fTx, shift:f0 ? n.cur.fRx-f0 : null,
              az:st.az, el:st.el, range:st.range, rate};
       }
+      const ps=n.passes.find(q=>q.los>now);            // идущий или ближайший пролёт: aos, los — мс, maxel — °
+      if(ps) Object.assign(out,{aos:ps.aos, los:ps.los, maxel:+ps.maxEl.toFixed(1)});
       const pk=s.norad+'|'+Math.floor(now/60000)+'|'+n.p.minEl+'|'+(obs?GeoMe.lat+','+GeoMe.lon:'');
       if(obs && pk!==n.passKey){ n.passKey=pk; n.passes=satPasses(s,now,24,obs,n.p.minEl); }
       if(!obs) n.passes=[];

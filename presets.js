@@ -151,6 +151,8 @@ const PRESET_CATS={
   'TETRA: Control Channel (USB SDR)':'Digital Voice & Trunking',
 
   'Satellites: Track and Doppler':'Aircraft, Satellites & Telemetry',
+  'Satellites: Pass and Sky Plot':'Aircraft, Satellites & Telemetry',
+  'ADS-B: Radar and Attitude (Generator)':'Aircraft, Satellites & Telemetry',
   'ADS-B: Aircraft Map (Generator)':'Aircraft, Satellites & Telemetry',
   'ADS-B: Aircraft Map (USB SDR, 1090 MHz)':'Aircraft, Satellites & Telemetry',
   'Meteor-M LRPT: Image (Generator)':'Aircraft, Satellites & Telemetry',
@@ -3095,6 +3097,80 @@ tk.size.w=420; tk.size.h=130; applySize(tk);
 addEdge(a.id,'out',sp.id,'az'); addEdge(e.id,'out',sp.id,'el');
 addEdge(l.id,'out',sm.id,'in'); addEdge(l.id,'out',c.id,'in'); addEdge(l.id,'out',rp.id,'dBm');
 addEdge(c.id,'rise',rp.id,'go'); addEdge(rp.id,'rec',tk.id,'rec');
+markWiresDirty();
+});
+preset('Indicators: Switches and Attitude', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Switch: click a tumbler, lever, rocker or button (latching) / push key (held while pressed); each gives 0 / 1 on outN, the state is saved in the patch.\n'+
+  'Here the toggles and the rockers light Lamps panels; the lever, button and push switches show the other styles.\n'+
+  'Attitude: an artificial horizon with a pitch ladder, roll scale and a slip ball. Three LFOs roll, pitch and slip it; with an Accelerometer wired to x / y / z it follows the device (flat, screen up).'});
+nt.size.w=1000; nt.size.h=110; applySize(nt);
+const sw=addNode('switch',40,170,{count:'4',style:'toggle',labels:'A, B, C, D',colors:'green, amber, red, blue'});
+sw.size.w=320; sw.size.h=100; applySize(sw);
+const lp=addNode('lamps',400,170,{count:'4',labels:'A, B, C, D',colors:'green, amber, red, blue'});
+lp.size.w=300; lp.size.h=90; applySize(lp);
+const sl=addNode('switch',40,520,{count:'3',style:'lever',labels:'lever 1, lever 2, lever 3',colors:'amber'});
+sl.size.w=320; sl.size.h=110; applySize(sl);
+const sr=addNode('switch',400,520,{count:'3',style:'rocker',labels:'power, pump, fan',colors:'green'});
+sr.size.w=280; sr.size.h=110; applySize(sr);
+const lr=addNode('lamps',740,520,{count:'3',labels:'power, pump, fan',colors:'green'});
+lr.size.w=280; lr.size.h=90; applySize(lr);
+const sb=addNode('switch',40,870,{count:'3',style:'button',labels:'arm, tx, rec',colors:'red, amber, blue'});
+sb.size.w=320; sb.size.h=100; applySize(sb);
+const sp=addNode('switch',400,870,{count:'2',style:'push',labels:'push, hold',colors:'teal, pink'});
+sp.size.w=240; sp.size.h=100; applySize(sp);
+const r=addNode('lfo',1100,170,{freq:.12,min:-45,max:45});
+const pc=addNode('lfo',1100,450,{freq:.2,min:-18,max:18});
+const sk=addNode('lfo',1100,730,{freq:.3,min:-1,max:1});
+const at=addNode('attitude',1440,170,{});
+at.size.w=320; at.size.h=330; applySize(at);
+addEdge(sw.id,'out1',lp.id,'in1'); addEdge(sw.id,'out2',lp.id,'in2'); addEdge(sw.id,'out3',lp.id,'in3'); addEdge(sw.id,'out4',lp.id,'in4');
+addEdge(sr.id,'out1',lr.id,'in1'); addEdge(sr.id,'out2',lr.id,'in2'); addEdge(sr.id,'out3',lr.id,'in3');
+addEdge(r.id,'out',at.id,'roll'); addEdge(pc.id,'out',at.id,'pitch'); addEdge(sk.id,'out',at.id,'slip');
+markWiresDirty();
+});
+preset('ADS-B: Radar and Attitude (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'ADS-B Radar: a PPI of the decoder\'s aircraft around your position (north up, range rings, headings, trails, a sweep).\n'+
+  'Click an aircraft to select it: its callsign, altitude and speed show under the dial, and the outputs follow it —\n'+
+  'az / range → Compass and Gauge, fpa (flight path angle from the vertical rate) and bank (from the turn rate) → Attitude, alt → 7-Segment.'});
+nt.size.w=620; nt.size.h=130; applySize(nt);
+const gn=addNode('iqGen',40,220,{sr:'2400000',fc:1090000000,mode:'ADS-B',off:0,lvl:-20,noise:-40});
+const dm=addNode('adsbDemod',40,560,{});
+const de=addNode('adsbDecode',320,220,{rlat:55.01,rlon:82.65});
+de.size.w=480; de.size.h=240; applySize(de);
+const rd=addNode('adsbradar',860,40,{lat:55.01,lon:82.65,range:'auto'});
+rd.size.w=380; rd.size.h=380; applySize(rd);
+const cp=addNode('compass',1280,40,{});
+cp.size.w=200; cp.size.h=190; applySize(cp);
+const gg=addNode('gauge',1280,260,{min:0,max:100,warn:70,crit:90,unit:'km'});
+gg.size.w=220; gg.size.h=160; applySize(gg);
+const at=addNode('attitude',860,460,{ball:false});
+at.size.w=260; at.size.h=250; applySize(at);
+const sd=addNode('segdisp',1140,500,{digits:6,decimals:0,color:'amber'});
+sd.size.w=240; sd.size.h=64; applySize(sd);
+addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'rec',de.id,'rec'); addEdge(de.id,'rec',rd.id,'rec');
+addEdge(rd.id,'az',cp.id,'az'); addEdge(rd.id,'track',cp.id,'az2'); addEdge(rd.id,'range',gg.id,'in');
+addEdge(rd.id,'bank',at.id,'roll'); addEdge(rd.id,'fpa',at.id,'pitch'); addEdge(rd.id,'alt',sd.id,'in');
+markWiresDirty();
+});
+preset('Satellites: Pass and Sky Plot', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Enter your position in My Position, press Download TLE in Satellites (once). Pass shows the next pass of the selected satellite:\n'+
+  'the elevation arc between AOS and LOS (aos / los / maxel outputs), a marker at the current elevation and a countdown; Sky Plot shows where it is in the sky now.'});
+nt.size.w=620; nt.size.h=110; applySize(nt);
+const me=addNode('geoMe',40,200,{});
+const st=addNode('satTrack',300,200,{group:'amateur',sat:'ISS'});
+st.size.w=380; st.size.h=520; applySize(st);
+const pp=addNode('passplot',720,200,{});
+pp.size.w=420; pp.size.h=160; applySize(pp);
+const sp=addNode('skyplot',720,400,{trail:120});
+sp.size.w=300; sp.size.h=280; applySize(sp);
+const cp=addNode('compass',1060,400,{});
+cp.size.w=220; cp.size.h=200; applySize(cp);
+addEdge(st.id,'el',pp.id,'el'); addEdge(st.id,'az',pp.id,'az'); addEdge(st.id,'aos',pp.id,'aos');
+addEdge(st.id,'los',pp.id,'los'); addEdge(st.id,'maxel',pp.id,'max');
+addEdge(st.id,'az',sp.id,'az'); addEdge(st.id,'el',sp.id,'el'); addEdge(st.id,'az',cp.id,'az');
 markWiresDirty();
 });
 preset('Logic Analyzer: USB (fx2lafw)', function(){
