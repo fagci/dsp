@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=41;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=42;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -199,6 +199,8 @@ const PRESET_CATS={
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
+  'Graph: Links from CSV':'Network & IoT',
+  'Chat: Text In and Out':'Network & IoT',
   'BLE: Heart Rate Monitor':'Network & IoT',
   'BLE: Find a Beacon by RSSI':'Network & IoT',
   'BLE: UART Terminal':'Network & IoT',
@@ -3297,6 +3299,30 @@ tk.size.w=420; tk.size.h=120; applySize(tk);
 const rl=addNode('recLog',440,320,{});
 rl.size.w=420; rl.size.h=170; applySize(rl);
 addEdge(nf.id,'serial',tk.id,'text'); addEdge(nf.id,'rec',rl.id,'rec');
+markWiresDirty();
+});
+preset('Graph: Links from CSV', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Link graph from CSV: one row = one edge (from,to[,weight[,label]]), a header with from / to / weight / label names is optional. Rows come from the csv field, from a text wire (a chunk of CSV per change, e.g. MQTT In or a network text) or from records with from / to fields. Repeated pairs without a weight thicken the edge. Click a node: its name goes to `sel`.'});
+nt.size.w=1000; nt.size.h=90; applySize(nt);
+const ts=addNode('textsrc',40,150,{text:'Demod,Squelch\nSquelch,Recorder\nDecoder,Map\nDecoder,Log'});
+ts.size.w=300; ts.size.h=120; applySize(ts);
+const g=addNode('graphview',380,150,{});
+g.size.w=520; g.size.h=360; applySize(g);
+addEdge(ts.id,'text',g.id,'text');
+markWiresDirty();
+});
+preset('Chat: Text In and Out', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Chat: incoming text on `text` appears in the log, what you type (Enter / Send) leaves through `text` and a pulse on `go`. Here the Text Source plays the other side; what you type is shown in the Ticker.'});
+nt.size.w=1000; nt.size.h=70; applySize(nt);
+const ts=addNode('textsrc',40,130,{text:'CQ CQ DE R1ABC K',repeat:5});
+ts.size.w=300; ts.size.h=100; applySize(ts);
+const c=addNode('chat',380,130,{});
+c.size.w=340; c.size.h=300; applySize(c);
+const tk=addNode('ticker',760,130,{time:true});
+tk.size.w=360; tk.size.h=140; applySize(tk);
+addEdge(ts.id,'text',c.id,'text'); addEdge(c.id,'text',tk.id,'text');
 markWiresDirty();
 });
 preset('Unknown Signal: Blind Analysis (Generator)', function(){

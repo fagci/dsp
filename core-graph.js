@@ -448,8 +448,8 @@ n.cv.style.height=n.size.h+'px'; n.resized=true; }
 else if(n.cv){ n.cv.width=midWidth(n); n.cv.height=d.view.h;
 n.cv.style.height=d.view.h+'px'; n.resized=true; }
 if(n.ro  && d.tall) n.ro.style.height=n.size.h+'px';
-if(n.cm) n.cm.setSize(null, n.size.h >0? n.size.h : null);      // CodeMirror, если поле кода апгрейднулось
-else if(n.ta  && n.size.h >0) n.ta.style.height=n.size.h+'px';
+if(n.gv && n.size.h >0) n.gv.style.height=n.size.h+'px';
+else if(n.ta  && n.size.h >0 && !d.gv) n.ta.style.height=n.size.h+'px';
 }
 function rebuildNode(n){                            // пересобрать DOM, сохранив состояние модуля
 const sel=n.el.classList.contains('sel');
@@ -470,22 +470,16 @@ function paramBtn(n,s){
 const b=document.createElement('button'); b.textContent=s.label||s.n;
 b.addEventListener('click',()=>s.fn(n)); return b;
 }
-let cmReady=null;
-function loadCodeMirror(){                           // ленивая загрузка с CDN, кэш на всё приложение
-if(cmReady) return cmReady;
-cmReady=new Promise(res=>{
-if(window.CodeMirror) return res(window.CodeMirror);
-const base='https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/';
-for(const href of [base+'codemirror.min.css', base+'theme/dracula.min.css']){
-const l=document.createElement('link'); l.rel='stylesheet'; l.href=href; document.head.append(l); }
-const s=document.createElement('script'); s.src=base+'codemirror.min.js';
-s.onerror=()=>res(null);
-s.onload=()=>{
-const m=document.createElement('script'); m.src=base+'mode/javascript/javascript.min.js';
-m.onload=()=>res(window.CodeMirror); m.onerror=()=>res(window.CodeMirror);   // подсветка не критична
-document.head.append(m); };
-document.head.append(s); });
-return cmReady;
+const JS_TOK=/(\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$))|("(?:[^"\\\n]|\\.)*"?|'(?:[^'\\\n]|\\.)*'?|`(?:[^`\\]|\\[\s\S])*`?)|\b(\d[\w.]*)\b|\b(const|let|var|function|return|if|else|for|while|do|break|continue|new|this|typeof|of|in|true|false|null|undefined|switch|case|default|throw|try|catch|class)\b/g;
+function hlJs(src){                                 // минимальная подсветка JS для слоя под textarea
+const esc=t=>t.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+let out='', i=0, m; JS_TOK.lastIndex=0;
+while((m=JS_TOK.exec(src))){
+out+=esc(src.slice(i,m.index));
+const c=m[1]!=null?'c':m[2]!=null?'s':m[3]!=null?'n':'k';
+out+=`<span class="hl-${c}">${esc(m[0])}</span>`; i=m.index+m[0].length;
+if(m[0]==='') JS_TOK.lastIndex++; }
+return out+esc(src.slice(i));
 }
 function paramEl(n,s){
 const row=document.createElement('div'); row.className='prm'; row.dataset.param=s.n; row.dataset.node=n.id;
@@ -637,23 +631,22 @@ box._lastWheelT=now;
 setV(getV()+(e.deltaY <0?s.step:-s.step)*10); },{passive:false});
 row.append(box,valEl);
 } else if(s.t==='code'){
-row.className='prm wide'; n.cm=null;               // сброс — на случай пересборки узла
-const ta=document.createElement('textarea'); ta.value=n.p[s.n]; ta.spellcheck=false;
-ta.addEventListener('input',()=>{ n.p[s.n]=ta.value; s.fn &&s.fn(n); });
+row.className='prm wide';
+const wrap=document.createElement('div'); wrap.className='code';
+const ta=document.createElement('textarea'); ta.value=n.p[s.n]; ta.spellcheck=false; ta.wrap='off';
+let pre=null, code=null;
+if(!s.plain){
+pre=document.createElement('pre'); pre.setAttribute('aria-hidden','true'); code=document.createElement('code'); pre.append(code);
+wrap.append(pre); }
+const paint=()=>{ if(!code) return; code.innerHTML=hlJs(ta.value)+'\n'; pre.scrollTop=ta.scrollTop; pre.scrollLeft=ta.scrollLeft; };
+ta.addEventListener('input',()=>{ n.p[s.n]=ta.value; paint(); s.fn &&s.fn(n); });
+ta.addEventListener('scroll',()=>{ if(pre){ pre.scrollTop=ta.scrollTop; pre.scrollLeft=ta.scrollLeft; } });
 ta.addEventListener('pointerdown',e=>e.stopPropagation());
-ta.addEventListener('keydown',e=>e.stopPropagation());
-(n.set||(n.set={}))[s.n]=v=>{ n.p[s.n]=v; if(n.cm) n.cm.setValue(v); else ta.value=v; };
-n.ta=ta; row.append(ta);
-loadCodeMirror().then(CM=>{
-if(!CM || !ta.isConnected) return;              // офлайн, либо узел уже пересобран/удалён — оставляем textarea
-const cm=CM.fromTextArea(ta,{mode:'javascript',theme:'dracula',lineNumbers:true,
-tabSize:2,indentUnit:2,viewportMargin:Infinity});
-cm.on('change',()=>{ n.p[s.n]=cm.getValue(); s.fn &&s.fn(n); });
-const w=cm.getWrapperElement();
-w.addEventListener('pointerdown',e=>e.stopPropagation());
-w.addEventListener('keydown',e=>e.stopPropagation());
-n.cm=cm; if(n.size.h >0) cm.setSize(null,n.size.h);
-});
+ta.addEventListener('keydown',e=>{ e.stopPropagation();
+if(e.key==='Tab' && !s.plain){                      // отступ вместо смены фокуса
+e.preventDefault(); ta.setRangeText('  ',ta.selectionStart,ta.selectionEnd,'end'); ta.dispatchEvent(new Event('input')); } });
+(n.set||(n.set={}))[s.n]=v=>{ n.p[s.n]=v; ta.value=v; paint(); };
+n.ta=ta; wrap.append(ta); row.append(wrap); paint();
 } else if(s.t==='range2'){
 // Диапазон одной строкой: два мини-слайдера с взаимным клампом (нижний не может обогнать верхний)
 const wrap=document.createElement('div'); wrap.className='range2';
