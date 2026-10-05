@@ -158,6 +158,7 @@ IQK.symSync={
     const s=iqIn(I,'in');
     if(!s){ n.ui=null; return {blk:n.frame}; }
     if(n.key!==n.p.word){ n.key=n.p.word; n.words=symWords(n.p.word); n.sync={}; n.pend=null; n.expect=-1; }
+    const batch=[];                                    // все кадры этого тика: в blk уходит последний, остальные — в blk.all
     const W=n.words, len=Math.max(1,n.p.len|0), pre=Math.max(0,n.p.pre|0), period=Math.max(0,n.p.period|0), tol=n.p.tol|0, tolLock=n.p.lockTol==null ? tol : n.p.lockTol|0,
       maxMiss=n.p.miss==null ? 12 : n.p.miss|0, pol=n.p.pol, thr=n.p.corr, R=n.ring;
     if(W.length){
@@ -171,6 +172,7 @@ IQK.symSync={
               const pd=n.pend; n.pend=null; n.after=pd.E+len;
               if(pd.hit){ n.fg=pd.g; n.fo=pd.o; }
               symEmit(n,pd,pre,len);
+              if(n.frame) batch.push(n.frame);
               n.expect=period>0 ? pd.E+period : -1;
             }
             continue;
@@ -191,6 +193,7 @@ IQK.symSync={
       }
     }
     n.ui={frames:n.total, sync:{...n.sync}, id:n.fid, locked:n.expect>=0 || !!n.pend, miss:n.miss, words:W.map(w=>w.hex)};
+    if(batch.length>1) n.frame.all=batch;
     return {blk:n.frame};
   }};
 
