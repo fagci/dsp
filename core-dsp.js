@@ -6,6 +6,10 @@ function clamp(v,a,b){ return v<a?a:v>b?b:v; }
 function popcnt32(v){ v-=(v>>>1)&0x55555555; v=(v&0x33333333)+((v>>>2)&0x33333333); return (((v+(v>>>4))&0x0F0F0F0F)*0x01010101)>>>24; }
 function bitsLsb(bytes,n=bytes.length){ const b=[]; for(let i=0;i<n;i++) for(let j=0;j<8;j++) b.push((bytes[i]>>j)&1); return b; }   // байты → биты, младший первым
 function bitsNum(b,o,len){ let v=0; for(let i=0;i<len;i++) v=v*2+b[o+i]; return v; }   // число из бит, старший первым
+function bytesHex(a,o,n){ let s=''; for(let i=o||0;i<(n==null ? a.length : (o||0)+n);i++) s+=(a[i]<16?'0':'')+a[i].toString(16); return s.toUpperCase(); }
+function bitsMsb(bytes){ const r=new Uint8Array(bytes.length*8); for(let i=0;i<bytes.length;i++) for(let k=0;k<8;k++) r[8*i+k]=(bytes[i]>>(7-k))&1; return r; }
+function bytesFromBits(b){ const r=new Uint8Array(b.length>>3); for(let i=0;i<r.length;i++) r[i]=bitsNum(b,8*i,8); return r; }
+const u8cat=(...a)=>{ let n=0; for(const x of a) n+=x.length; const r=new Uint8Array(n); let o=0; for(const x of a){ r.set(x,o); o+=x.length; } return r; };
 function bitRev(v,w){ let r=0; for(let i=0;i<w;i++) r=(r<<1)|((v>>>i)&1); return r>>>0; }
 function pow2ge(n){ let p=1; while(p<n) p<<=1; return p; }
 function rms(a){ let s=0; for(let i=0;i<a.length;i++) s+=a[i]*a[i]; return Math.sqrt(s/a.length); }

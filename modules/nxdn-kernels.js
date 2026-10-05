@@ -111,8 +111,8 @@ function nxdnL3(b){
   } else if(type===0x18 && b.length>=128){
     Object.assign(f,{location:bitsNum(b,8,24).toString(16).toUpperCase().padStart(6,'0'), cs:bitsNum(b,32,16), svc:bitsNum(b,48,16), rst:bitsNum(b,64,24), ca:bitsNum(b,88,24),
       version:bitsNum(b,112,8), adj:bitsNum(b,120,4), ch1:bitsNum(b,124,10), ch2:bitsNum(b,134,10)});
-  } else if(type===0x03) f.iv=dmrHex(p25Bytes(b.subarray(8,72)));
-  else f.hex=dmrHex(p25Bytes(b.subarray(8,b.length&~7)));
+  } else if(type===0x03) f.iv=bytesHex(bytesFromBits(b.subarray(8,72)));
+  else f.hex=bytesHex(bytesFromBits(b.subarray(8,b.length&~7)));
   return f;
 }
 
@@ -202,7 +202,7 @@ FSK4.protos.nxdn={
         } else {
           for(let v=0;v<2;v++){
             const o=off+72*v, c=P.call;
-            out.voice.push({t:P.now, src:'NXDN', kind:'ambe', ran:P.ran, from:c?c.from:null, to:c?c.to:null, ambe:dmrHex(p25Bytes(bits.subarray(o,o+72)))});
+            out.voice.push({t:P.now, src:'NXDN', kind:'ambe', ran:P.ran, from:c?c.from:null, to:c?c.to:null, ambe:bytesHex(bytesFromBits(bits.subarray(o,o+72)))});
             P.st.voice++;
           }
         }
@@ -271,11 +271,11 @@ function nxdnScript(mode){
     const vc=nxdnVcall(0x01,1234,4321,1,0,0,0);
     for(let k=0;k<4;k++){
       const sr=3-k;
-      seq.push(nxdnFrame({rfct:2,fct:2,opt:3,dir:1,sacch:nxdnSacchData(ran,sr,vc.subarray(18*k,18*k+18)), slot:[p25Cat(voice(),voice()),p25Cat(voice(),voice())]}));
+      seq.push(nxdnFrame({rfct:2,fct:2,opt:3,dir:1,sacch:nxdnSacchData(ran,sr,vc.subarray(18*k,18*k+18)), slot:[u8cat(voice(),voice()),u8cat(voice(),voice())]}));
     }
     // FACCH1 с TX_REL вместо второго слота
-    const tx=nxdnVcall(0x08,1234,4321,1,0,0,0), fa=nxdnChEncode(NXDN_CH.facch1,p25Cat(tx.subarray(0,72),new Uint8Array(8)));
-    seq.push(nxdnFrame({rfct:2,fct:2,opt:2,dir:1,sacch:nxdnSacchData(ran,3,new Uint8Array(18)), slot:[p25Cat(voice(),voice()),fa]}));
+    const tx=nxdnVcall(0x08,1234,4321,1,0,0,0), fa=nxdnChEncode(NXDN_CH.facch1,u8cat(tx.subarray(0,72),new Uint8Array(8)));
+    seq.push(nxdnFrame({rfct:2,fct:2,opt:2,dir:1,sacch:nxdnSacchData(ran,3,new Uint8Array(18)), slot:[u8cat(voice(),voice()),fa]}));
   } else if(mode==='cac'){
     // канал управления: SITE_INFO (сайт, каналы) и VCALL_ASSGN
     const cac=(l3)=>{ const d=new Uint8Array(155); for(let i=0;i<6;i++) d[2+i]=(ran>>(5-i))&1; d.set(l3,8); return d; };
@@ -286,10 +286,10 @@ function nxdnScript(mode){
     // UDCH: заголовок вызова данных (DCALL_HEADER) и произвольное сообщение
     const dh=nxdnVcall(0x09,777,888,4,2,0,0), ud=new Uint8Array(184); for(let i=0;i<6;i++) ud[2+i]=(ran>>(5-i))&1; ud.set(dh,8);
     seq.push(nxdnFrame({rfct:2,fct:1,opt:3,dir:0,udch:ud}));
-    const vc=nxdnVcall(0x01,42,43,4,0,0,0), fa=nxdnChEncode(NXDN_CH.facch1,p25Cat(vc,new Uint8Array(8)));
+    const vc=nxdnVcall(0x01,42,43,4,0,0,0), fa=nxdnChEncode(NXDN_CH.facch1,u8cat(vc,new Uint8Array(8)));
     seq.push(nxdnFrame({rfct:1,fct:0,opt:0,dir:1,sacch:nxdnSacchData(ran,0,new Uint8Array(18)), slot:[fa,fa]}));
   }
-  return fsk4LevelsOf(p25Cat(new Uint8Array(40),...seq,new Uint8Array(40)));
+  return fsk4LevelsOf(u8cat(new Uint8Array(40),...seq,new Uint8Array(40)));
 }
 FSK4.gen['NXDN 9600 voice']={baud:NXDN_BAUD, alpha:.2, dev:648, script:()=>nxdnScript('voice')};
 FSK4.gen['NXDN 9600 data and FACCH1']={baud:NXDN_BAUD, alpha:.2, dev:648, script:()=>nxdnScript('data')};
