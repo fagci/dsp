@@ -776,7 +776,7 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
           {n:'debug',t:'check',d:false,label:'debug: доп. поля SI3/SI4 (Control Ch, Cell Opt, CBCH) + hex'},
           {n:'clr',t:'button',label:'Clear log',fn:n=>{ n.log=[]; n.text='ищу FCCH…'; n.lastSchBsic=-1; }}],
   init:n=>{ n.rx=new GsmReceiver(); n.foff=0; n.nco=0; n.frac=1; n.lr=new Float32Array(0); n.li=new Float32Array(0);
-            n.bid=0; n.log=[]; n.text='ищу FCCH…'; n.lastSchBsic=-1; },
+            n.bid=0; n.log=[]; n.text='ищу FCCH…'; n.lastSchBsic=-1; n.fcchSince=null; },
   process(n,I){
     const s=iqIn(I,'in');
     if(!s || !s.sr){ n.text='нет входного IQ-потока'; return {rec:null, burst:null, freq:n.foff, sync:0}; }
@@ -810,6 +810,15 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
         n.foff+=n.rx.freqOffset; n.rx.freqOffset=null; n.rx.freqUpdate=false;
         n.foff=clamp(n.foff,-GSM_TARGET_SR/2,GSM_TARGET_SR/2);
       }
+      // защита от разгона AFC: ложное срабатывание FCCH на шуме/соседнем канале может утянуть foff
+      // далеко от реального смещения (обычный уход кварца — единицы-десятки кГц), а дальше цикл
+      // уже не может зацепиться за сигнал и застревает в этом состоянии навсегда (сам файл при этом
+      // декодируется отлично со свежим foff=0 — баг именно в накоплении, не в приёме). Если долго
+      // ищем FCCH при подозрительно большом foff — сбрасываем накопленную коррекцию и пробуем заново.
+      if(n.rx.state==='fcch'){
+        if(n.fcchSince==null) n.fcchSince=Date.now();
+        else if(Date.now()-n.fcchSince>2000 && Math.abs(n.foff)>50000){ n.foff=0; n.nco=0; n.fcchSince=Date.now(); }
+      } else n.fcchSince=null;
       // отдельный выход nb — рёбра «сота → сосед по ARFCN» для Graph (vis-network), чтобы не путать
       // его с rec: там generic from/to-угадывание по первым двум полям сломалось бы на прочих записях
       const mainRec=[], nbRec=[];
