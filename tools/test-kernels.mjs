@@ -19,6 +19,8 @@ const ev=s=>vm.runInContext(s,ctx);
 const MSG='Array.from("123456789",c=>c.charCodeAt(0))';
 const bitsMsb=`${MSG}.flatMap(v=>Array.from({length:8},(_,k)=>(v>>(7-k))&1))`;
 const bitsLsb=`${MSG}.flatMap(v=>Array.from({length:8},(_,k)=>(v>>k)&1))`;
+const PAT='Array.from({length:30},(_,i)=>(i*37+11)&255)';
+const PATB=`(${PAT}).flatMap(v=>Array.from({length:8},(_,k)=>(v>>(7-k))&1))`;
 const hex=v=>Array.isArray(v) ? v.join(',') : '0x'+(v>>>0).toString(16).toUpperCase();
 
 const cases=[
@@ -55,6 +57,19 @@ const cases=[
   ['mptCrcBits',`mptCrcBits(i=>(${bitsMsb})[i],72)`,'0x2566','снимок'],
   ['nxdnCrcCac',`nxdnCrcCac(${bitsMsb},72)`,'0xED6E','снимок'],
   ['stdcCrc',`stdcCrc(${MSG},0,9)`,'0,148','снимок'],
+
+  // второй вход (30 байт) и другие ширины nxdnCrc
+  ['dmrCrc16 (30 байт)',`dmrCrc16(${PAT},30)`,51428,'снимок'],
+  ['m17Crc (30 байт)',`m17Crc(${PAT},30)`,20887,'снимок'],
+  ['rs41Crc со смещением',`rs41Crc(${PAT},3,20)`,31096,'снимок'],
+  ['vacCrc (30 байт)',`vacCrc(${PAT},30)`,33013,'снимок'],
+  ['dstarCrc (30 байт)',`dstarCrc(${PAT},30)`,56670,'снимок'],
+  ['tetraCrc 100 бит',`tetraCrc(${PATB},100)`,2300,'снимок'],
+  ['tetraCrc 240 бит',`tetraCrc(${PATB},240)`,7518,'снимок'],
+  ['nxdnCrc6',`nxdnCrc6(${PATB},50)`,40,'снимок'],
+  ['nxdnCrc12',`nxdnCrc12(${PATB},100)`,1562,'снимок'],
+  ['nxdnCrc15',`nxdnCrc15(${PATB},120)`,12026,'снимок'],
+  ['nxdnCrc16 (200 бит)',`nxdnCrc(${PATB},200,16,0x1021)`,51987,'снимок'],
 
   // кодер → исправление ошибок: два сбитых бита в слове POCSAG восстанавливаются
   ['POCSAG encode→fix 2 ошибки','(()=>{ const w=pocEncode(0x12345), r=pocFix((w^(1<<3)^(1<<20))>>>0,2); return r && r[0]===w>>>0 && r[1]===2; })()',true],

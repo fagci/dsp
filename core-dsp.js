@@ -10,6 +10,24 @@ function bytesHex(a,o,n){ let s=''; for(let i=o||0;i<(n==null ? a.length : (o||0
 function bitsMsb(bytes){ const r=new Uint8Array(bytes.length*8); for(let i=0;i<bytes.length;i++) for(let k=0;k<8;k++) r[8*i+k]=(bytes[i]>>(7-k))&1; return r; }
 function bytesFromBits(b){ const r=new Uint8Array(b.length>>3); for(let i=0;i<r.length;i++) r[i]=bitsNum(b,8*i,8); return r; }
 const u8cat=(...a)=>{ let n=0; for(const x of a) n+=x.length; const r=new Uint8Array(n); let o=0; for(const x of a){ r.set(x,o); o+=x.length; } return r; };
+// CRC-16 по байтам, старший бит первым (poly 0x1021…)
+function crc16(b,from,len,poly,init,xorout){
+  let r=init;
+  for(let i=0;i<len;i++){ r^=b[from+i]<<8; for(let k=0;k<8;k++) r=(r&0x8000) ? ((r<<1)^poly)&0xFFFF : (r<<1)&0xFFFF; }
+  return r^xorout;
+}
+// отражённый CRC-16, младший бит первым (poly в отражённом виде, напр. 0x8408)
+function crc16r(b,from,len,poly,init,xorout){
+  let r=init;
+  for(let i=0;i<len;i++){ r^=b[from+i]; for(let k=0;k<8;k++) r=(r&1) ? (r>>>1)^poly : r>>>1; }
+  return r^xorout;
+}
+// CRC ширины w по битам, старший первым, без итогового XOR
+function crcBits(bits,len,w,poly,init){
+  const top=1<<(w-1), all=(1<<w)-1; let c=init;
+  for(let i=0;i<len;i++){ const fb=((c&top) ? 1 : 0)^(bits[i]&1); c=(c<<1)&all; if(fb) c^=poly; }
+  return c;
+}
 function bitRev(v,w){ let r=0; for(let i=0;i<w;i++) r=(r<<1)|((v>>>i)&1); return r>>>0; }
 function pow2ge(n){ let p=1; while(p<n) p<<=1; return p; }
 function rms(a){ let s=0; for(let i=0;i<a.length;i++) s+=a[i]*a[i]; return Math.sqrt(s/a.length); }

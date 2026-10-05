@@ -19,11 +19,7 @@ const RS41_HDR_BITS=(()=>{ const b=[];
   for(let i=0;i<RS41_HDR;i++){ const v=RS41_HDR_BYTES[i]^RS41_MASK[i]; for(let k=0;k<8;k++) b.push((v>>k)&1 ? 1 : -1); }
   return b; })();
 const RS41_RS=rsCodec(0x11D,0,1,24);
-function rs41Crc(b,from,len){
-  let r=0xFFFF;
-  for(let i=0;i<len;i++){ r^=b[from+i]<<8; for(let k=0;k<8;k++) r=r&0x8000 ? ((r<<1)^0x1021)&0xFFFF : (r<<1)&0xFFFF; }
-  return r;
-}
+function rs41Crc(b,from,len){ return crc16(b,from,len,0x1021,0xFFFF,0); }
 // длина по байту 0x38: 0x0F — 320, 0xF0 — 518 (с запасом на ошибки)
 function rs41Len(f){ const b=f[0x38]; let t=0; for(let i=0;i<4;i++) t+=((b>>i)&1)-((b>>(i+4))&1); return t>=0 ? RS41_NDATA : RS41_FRAME; }
 // кодовые слова RS41: cw[j] — коэффициент при X^j, проверочные j<24; у кодека старшая степень первой

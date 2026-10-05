@@ -17,11 +17,7 @@ const M17_GOLAY_M=[0x8EB,0x93E,0xA97,0xDC6,0x367,0x6CD,0xD99,0x3DA,0x7B4,0xF68,0
 const M17_DTYPE=['','data','voice','voice+data'], M17_ENC=['none','scrambler','AES','other'];
 
 /* ---- CRC-16 (0x5935, начальное 0xFFFF, без отражения) ---- */
-function m17Crc(bytes,n){
-  let c=0xFFFF;
-  for(let i=0;i<n;i++){ c^=bytes[i]<<8; for(let k=0;k<8;k++) c=(c&0x8000) ? ((c<<1)^0x5935)&0xFFFF : (c<<1)&0xFFFF; }
-  return c;
-}
+function m17Crc(bytes,n){ return crc16(bytes,0,n,0x5935,0xFFFF,0); }
 /* ---- позывные: основание 40, первый символ — младший ---- */
 function m17CallEnc(cs){
   let a=0n;

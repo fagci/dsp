@@ -13,12 +13,7 @@ function vacOdd(b){ b^=b>>4; b^=b>>2; b^=b>>1; return (b&1)===1; }
 function vacPar(c){ c&=0x7f; return vacOdd(c) ? c : c|0x80; }
 // '*' SYN SYN SOH: последние 32 бита перед блоком
 const VAC_SYNC=(()=>{ let v=0; for(const b of bitsLsb([0x2A,0x16,0x16,0x01].map(vacPar))) v=((v<<1)|b)>>>0; return v; })();
-const VAC_CRCT=(()=>{
-  const t=new Uint16Array(256);
-  for(let i=0;i<256;i++){ let c=i; for(let k=0;k<8;k++) c=c&1 ? (c>>>1)^0x8408 : c>>>1; t[i]=c; }
-  return t;
-})();
-function vacCrc(b,len){ let c=0; for(let i=0;i<len;i++) c=(c>>>8)^VAC_CRCT[(c^b[i])&0xFF]; return c; }
+function vacCrc(b,len){ return crc16r(b,0,len,0x8408,0,0); }
 
 // блок без чётности и BCS (режим … ETX/ETB) → поля
 function vacParse(b){

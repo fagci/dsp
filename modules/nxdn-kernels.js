@@ -18,11 +18,7 @@ const NXDN_MSG={0x00:'CALL_RESP', 0x01:'VCALL', 0x02:'VCALL_REC_REQ', 0x03:'VCAL
   0x33:'STAT_RESP', 0x34:'REM_CON_REQ', 0x35:'REM_CON_RESP', 0x38:'SDCALL_REQ_HEADER', 0x39:'SDCALL_REQ_DATA', 0x3A:'SDCALL_IV', 0x3B:'SDCALL_RESP', 0x3F:'PROP_FORM'};
 
 /* ---- CRC (MMDVMHost NXDNCRC): начальное значение из единиц, без инверсии; биты MSB первыми ---- */
-function nxdnCrc(bits,n,w,poly){
-  const top=1<<(w-1), all=(1<<w)-1; let c=all;
-  for(let i=0;i<n;i++){ const fb=((c&top) ? 1 : 0)^bits[i]; c=(c<<1)&all; if(fb) c^=poly; }
-  return c;
-}
+function nxdnCrc(bits,n,w,poly){ return crcBits(bits,n,w,poly,(1<<w)-1); }
 // CAC: сдвиговая схема dsd-fme / спецификации, начало 0xC3EE, конец инвертируется; поле CRC — 16 нулей после данных
 function nxdnCrcCac(bits,n){
   let c=0xC3EE;
