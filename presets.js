@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=41;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=42;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -128,6 +128,7 @@ const PRESET_CATS={
   'IQ: Receiver from Blocks (Generator)':'SDR Receivers',
   'USB SDR: FM Receiver from Blocks':'SDR Receivers',
   'Remote SDR: FM Receiver (rtl_tcp over WebSocket)':'SDR Receivers',
+  'Remote SDR: PlutoSDR FM Receiver (iiod over WebSocket)':'SDR Receivers',
   'USB SDR: HF AM / SSB from Blocks':'SDR Receivers',
   'Sound Card IQ: HF Receiver (SoftRock-style)':'SDR Receivers',
   'IQ: Channelizer — Three Signals at Once (Generator)':'SDR Receivers',
@@ -860,6 +861,35 @@ const de=addNode('iqDemod',40,900,{mode:'WFM',deemph:'50 µs',stereo:true});
 de.size.w=360; applySize(de);
 const au=addNode('iqAudio',720,900,{});
 const dc=addNode('dac',980,900,{vol:.4});
+addEdge(rx.id,'iq',dcb.id,'in'); addEdge(dcb.id,'out',w0.id,'in'); addEdge(w0.id,'spec',sa.id,'spec');
+addEdge(dcb.id,'out',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',sp.id,'in'); addEdge(sp.id,'spec',s2.id,'spec');
+addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'stereo',au.id,'in');
+addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'q',dc.id,'R');
+markWiresDirty();
+});
+preset('Remote SDR: PlutoSDR FM Receiver (iiod over WebSocket)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A PlutoSDR (or ADALM, an AD936x board, any IIO device with an IQ buffer) through its libiio server. The Pluto serves iiod on port 30431 of its network address (192.168.2.1 over USB); give it a TCP → WebSocket bridge:\n'+
+  '`websockify 8766 192.168.2.1:30431`, enter ws://host:8766 and choose the protocol «iiod». The node reads the device list, sets the sample rate, RF bandwidth, frequency and gain (0 — slow-attack AGC) and streams IQ; all of them can be changed while it runs, also by a wire.\n'+
+  'The AD9361 needs ≥ 2.084 MS/s without a FIR filter, so the chain decimates ×10 to 240 kS/s for the WFM demodulator. The device names are in the advanced parameters (ad9361-phy / cf-ad9361-lpc; other boards have other names — the error message lists what the server has).\n'+
+  'From the https page only wss:// works; from a local copy over http — ws:// too. Press Connect, tap a station on the upper spectrum.'});
+nt.size.w=780; nt.size.h=190; applySize(nt);
+const rx=addNode('iqnet',40,280,{url:'ws://127.0.0.1:8766',proto:'iiod (IIO / Pluto)',sr:2400000,freq:100000000});
+rx.size.w=320; rx.size.h=220; applySize(rx);
+const dcb=addNode('iqDc',420,280,{});
+const w0=addNode('iqSpec',420,420,{size:'4096'});
+const sa=addNode('sa',740,280,{auto:true,floor:-90,top:-20,split:.4});
+sa.size.w=640; sa.size.h=300; applySize(sa);
+const sh=addNode('iqShift',420,580,{});
+const d1=addNode('iqDecim',420,740,{M:'10',cut:.45});
+const sp=addNode('iqSpec',420,920,{size:'2048'});
+const s2=addNode('sa',740,620,{auto:true,floor:-100,top:-20,split:.4});
+s2.size.w=640; s2.size.h=260; applySize(s2);
+const de=addNode('iqDemod',40,920,{mode:'WFM',deemph:'50 µs',stereo:true});
+de.size.w=360; applySize(de);
+const au=addNode('iqAudio',740,920,{});
+const dc=addNode('dac',1000,920,{vol:.4});
 addEdge(rx.id,'iq',dcb.id,'in'); addEdge(dcb.id,'out',w0.id,'in'); addEdge(w0.id,'spec',sa.id,'spec');
 addEdge(dcb.id,'out',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',sp.id,'in'); addEdge(sp.id,'spec',s2.id,'spec');
