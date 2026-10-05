@@ -550,7 +550,9 @@ Presets: *Indicators: Lamps, Gauge, LED Bar, Compass, Display*, *Indicators: Sky
   - **I²C**: SCL + SDA; START / repeated START / STOP, 7-bit address with R / W, data bytes, ACK / NAK (a NAK is marked with `!`).
 - **Outputs**: `byte` (last byte), `new` (pulse in the block where a byte arrived — wire it to a lamp or a counter), `text` (a line: UART — on a line feed, after 80 characters or after 1 s of silence; SPI — `MOSI … | MISO …` after CS goes high; I²C — `S 3C+W 00 AF P` after STOP), `rec` (a record per byte: `proto`, `byte`, `hex`, `ch`, `time` — seconds from the start, `err`; I²C adds `kind` and `addr`, SPI `line`), `hit` (a pulse on every trigger). `text` goes to a *Text Ticker*, `rec` to a *Rec Log*.
 
-Preset: *Logic Analyzer: UART Decode*.
+- **USB logic analyzers** (WebUSB; `input` → *USB* in the advanced parameters): cheap 8-channel analyzers on the Cypress FX2 (Saleae clones, boards with sigrok **fx2lafw** firmware). Channels 1…8 are D0…D7, 8-bit samples at 20 kHz … 24 MS/s straight into the same traces, trigger and UART / SPI / I²C decoders (the `ch` wires disappear). Buttons: *USB: connect* (opens the chooser), *USB: load firmware (.fw)*, *USB: start*, *USB: stop*. A board without firmware (it does not answer the version request) needs a fx2lafw image: take it from the `sigrok-firmware-fx2lafw` package (`/usr/share/sigrok-firmware/`) or from PulseView (`fx2lafw-saleae-logic.fw` for Saleae clones, `fx2lafw-cypress-fx2.fw` for a bare CY7C68013A board) — it is GPL-2.0+, so it is not bundled; it is loaded into the board's RAM and lives until the power is cut. The board then restarts; connect again. The page keeps up with a few MS/s: the readout shows the rate and the captured samples and warns when samples are dropped. Chrome / Edge / Opera only; on Linux the device needs a udev rule (or `chmod`) for the browser to open it.
+
+Presets: *Logic Analyzer: UART Decode*, *Logic Analyzer: USB (fx2lafw)*.
 
 ## Infrared
 

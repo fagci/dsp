@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=36;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=37;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -215,6 +215,8 @@ const PRESET_CATS={
   'Control: Clocks Switch a Tone On and Off':'Analysis & Measurement',
   'Control: Level Trigger (Compare, Counter, One-Shot)':'Analysis & Measurement',
   'Control: Logic Test Bench (all blocks)':'Analysis & Measurement',
+  'Logic Analyzer: UART Decode':'Analysis & Measurement',
+  'Logic Analyzer: USB (fx2lafw)':'Analysis & Measurement',
   'FT8: Propagation Map':'Maps & Locating',
   'Fox Hunt: Locate Transmitter':'Maps & Locating',
   'Internet Radio on the Map':'Maps & Locating',
@@ -3058,6 +3060,21 @@ tk.size.w=420; tk.size.h=130; applySize(tk);
 addEdge(a.id,'out',sp.id,'az'); addEdge(e.id,'out',sp.id,'el');
 addEdge(l.id,'out',sm.id,'in'); addEdge(l.id,'out',c.id,'in'); addEdge(l.id,'out',rp.id,'dBm');
 addEdge(c.id,'rise',rp.id,'go'); addEdge(rp.id,'rec',tk.id,'rec');
+markWiresDirty();
+});
+preset('Logic Analyzer: USB (fx2lafw)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Logic Analyzer fed by a cheap 8-channel USB logic analyzer (Saleae clones on the Cypress FX2, boards with sigrok fx2lafw firmware): channels 1…8 are D0…D7, up to 24 MS/s (the page keeps up with a few MS/s; the readout warns when samples are dropped).\n'+
+  'Press «USB: connect» in the advanced parameters and choose the device. If it has no firmware, press «USB: load firmware (.fw)» and pick a file from the sigrok-firmware-fx2lafw package or from PulseView (fx2lafw-saleae-logic.fw for Saleae clones); the board restarts, connect again. Then «USB: start».\n'+
+  'The window, the trigger (edge, single shot with Arm, Hold) and the decoders (UART, SPI, I²C — the channels in the advanced parameters) work as with wires; here the decoder is UART 115200 on channel 1. Samples are 8 bit, so only channels 1…8.'});
+nt.size.w=1100; nt.size.h=130; applySize(nt);
+const la=addNode('logan',40,200,{src:'USB',count:'4',names:'D0,D1,D2,D3',proto:'UART',a:1,baud:115200,urate:'4 MHz',span:.002});
+la.size.w=720; la.size.h=210; applySize(la);
+const lp=addNode('lamps',820,200,{count:'1',labels:'byte',colors:'amber',hold:.15});
+lp.size.w=160; lp.size.h=80; applySize(lp);
+const tk=addNode('ticker',820,330,{time:true});
+tk.size.w=360; tk.size.h=110; applySize(tk);
+addEdge(la.id,'new',lp.id,'in1'); addEdge(la.id,'text',tk.id,'text');
 markWiresDirty();
 });
 preset('IR: Remote Codes Loopback (No Hardware)', function(){
