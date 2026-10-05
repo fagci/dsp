@@ -34,6 +34,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **HTTP In**: poll any URL (REST / JSON) into text, a number and records; **SSE In**: a live Server-Sent Events stream — see [HTTP](#http)
 - **RTC Data**: a direct browser-to-browser WebRTC data channel, no server — see [RTC Data](#rtc-data); **Tab Link**: text and numbers between tabs of the same browser
 - **Rig Control (rigctl)**: frequency, mode and S-meter of a transceiver through Hamlib `rigctld`, tuning from the graph — see [Rig Control](#rig-control)
+- **KISS TNC** (serial or Direwolf over TCP) and **APRS-IS** client: packets as TNC2 lines and map records — see [APRS and KISS](#aprs-and-kiss)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), **Table** (one node for lists, band plans, bookmarks, logs and the data sequencer: CSV / TSV / JSON / TXT / KML / GPX / GeoJSON, folders in the browser DB, played row by row), Trigger Clock, Time Base — see [Table](#table)
@@ -802,6 +803,17 @@ websocat --text ws-l:127.0.0.1:4533 tcp:127.0.0.1:4532
 - Not done: split, VFO and memory commands, scan, several rigs in one node (use several nodes), the serial-port CAT of a radio without `rigctld`.
 
 Preset: *Rig Control: Follow and Tune a Radio*.
+
+## APRS and KISS
+
+Two nodes bring packet radio and the APRS network into the graph; both speak the plain text **TNC2** format `CALL>DEST,PATH:info` (the same as *Receive AX.25/HDLC* prints, so they can be wired together) and give records for the Map: `id` / `label` / `call`, `dst`, `path`, `text` (the comment) and, when the packet has a position, `lat`, `lon` and `sym` (symbol table + code).
+
+- **KISS TNC** — a hardware TNC (Kantronics, Mobilinkd, TNC-Pi, a radio with a built-in TNC) over WebSerial, or Direwolf / soundmodem over TCP through a WebSocket bridge: `websocat --binary ws-l:127.0.0.1:8001 tcp:127.0.0.1:8001` (Direwolf's KISS port is 8001). Outputs: `text` (one packet per block, a burst is queued), `rec`, `new`, `ok`. Input `text`: a TNC2 line, sent as a KISS frame (UI, PID F0, up to 8 digipeaters, `*` marks the repeaters already passed) — **only with *allow transmit***, and only when the text changes (a line that arrived before the flag was set is not sent later). *KISS port* picks the port of a multi-port TNC.
+- **APRS-IS** — a client of the internet APRS network. The server speaks TCP (port 14580), so a bridge is needed: `websocat --text ws-l:127.0.0.1:14580 tcp:rotate.aprs2.net:14580`. Enter your callsign; the passcode empty means receive only, `auto` computes the passcode from the callsign (it is a public checksum, not a secret), or type the one you have. *Filter* is the server-side filter (`r/lat/lon/km`, `b/CALL*`, `t/p`, …) — without one, most servers send nothing. Packets arrive as `text` and `rec`; the login answer (verified / receive only) is shown in the status. The `text` input is sent to APRS-IS only with *allow sending* and a verified login.
+- Positions are read from `!` `=` `/` `@` packets, plain (with the ambiguity spaces) and compressed. **Mic-E** (the position hidden in the destination address, used by many trackers), objects, items, weather and messages are not decoded: the packet is still shown as text.
+- A callsign and a licence (or a receive-only login) are yours to bring: the nodes do not check them.
+
+Presets: *APRS-IS: Stations on the Map*, *KISS TNC: Packet Radio via Direwolf*.
 
 ## Map and records
 
