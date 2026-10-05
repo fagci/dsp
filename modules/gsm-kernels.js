@@ -80,7 +80,8 @@ function gsmXcchInterleave(cB){
 // 23 байта L2 → 4×114 бит (для самопроверки): 184 данные + FIRE-40 → свёртка → перемежение
 function gsmBcchEncode(l2){
   const conv=new Int8Array(224);
-  for(let i=0;i<23;i++) for(let b=0;b<8;b++) conv[i*8+b]=(l2[i]>>(7-b))&1;
+  // TS 04.08: бит 1 октета передаётся первым и является младшим (LSB) — зеркально gsmBcchDecode
+  for(let i=0;i<23;i++) for(let b=0;b<8;b++) conv[i*8+b]=(l2[i]>>b)&1;
   const crc=gsmFireCrc40(conv,184);
   for(let i=0;i<40;i++) conv[184+i]=Number((crc>>BigInt(39-i))&1n);
   const coded=gsmConvK5Encode(conv,228);
