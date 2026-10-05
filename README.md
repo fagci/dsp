@@ -355,6 +355,19 @@ Presets: *ISM 433: Sensors and Remotes (Generator)*, *ISM 433: Sensors and Remot
 
 Presets: *AIS: Vessels on the Map (Generator)*, *AIS: Vessels on the Map (USB SDR, 162 MHz)*.
 
+## NMEA 0183
+
+**NMEA Parser** (Data) turns NMEA 0183 lines into records and numbers. The text comes from *Serial Port (WebSerial)* (a GPS puck, a marine multiplexer), *Text over Network* (`gpsd` → `gpspipe -r | websocat -s 8765`, Termux, an AIS-catcher / OpenCPN relay), a *Table* playing a log, or any other text wire. A line may carry a prefix (a time stamp, `RX `) — the parser starts at the first `$` or `!`.
+
+- **Input:** `text` — the last line (several lines in one block are split); a new line is taken when the text changes, or on a pulse on `go` (wire the *Text over Network* `go` so two identical lines in a row both count).
+- **Checksum:** *if present* (default) drops a sentence with a wrong `*HH` and accepts one without; *required* drops those without; *ignore* does not check.
+- **Sentences:** `GGA`, `RMC`, `GLL` (position, fix quality, satellites, HDOP, altitude, speed, course, UTC and date), `VTG`, `GSA` (satellites used), `GSV` (satellites in view: PRN, elevation, azimuth, SNR; GPS / GLONASS / Galileo / BeiDou by talker), `ZDA`, `HDT` / `HDG` / `HDM` (heading), `DBT` / `DPT` (depth, m), `MWV` (wind, m/s), `MTW` (water temperature), `TXT`, and **`!AIVDM` / `!AIVDO`** — multi-part ones are put together and decoded by the same code as *AIS Decoder* (vessels with name, type and size from the static reports). Other sentences are counted as skipped.
+- **Epoch:** `GGA`, `RMC` and `VTG` of one second arrive as separate lines; they are merged into one record, sent when the time of the next position sentence changes or 300 ms after the first one. Only valid fixes (`A`, quality > 0) give a position.
+- **Output:** `rec` — `{t, src:'NMEA', id, label, lat, lon, alt, speed (kn), course, heading, sats, hdop, fix, utc, date, icon}` for the receiver (*record id* parameter) and the vessel records of AIS; `sat` — the satellites of one `GSV` cycle `{sys, prn, el, az, snr, used}`; numbers `lat`, `lon`, `alt`, `sog` (kn), `cog`, `hdg`, `sats`, `hdop`, `depth`, `wspd`, `wdir`, `temp`, which keep the last value; `go` — a pulse per accepted line.
+- **Not done:** talker-specific sentences (`$P…`), waypoints and routes (`RMB`, `BWC`, `RTE`), `VHW` / `VLW`, the NMEA 2000 / `$PGRMZ` variants; the parser was checked on sample sentences and hand-made vectors, not on live receivers.
+
+Presets: *NMEA: GPS Track (Table Playback)*, *NMEA: Network Stream (gpsd, AIS-catcher, Termux)*.
+
 ## ACARS
 
 **ACARS Decoder** (Decoders, worker) reads aircraft datalink messages on VHF (131 MHz band, AM, 25 kHz channels): position and OOOI reports, gate and weather messages, link tests.
@@ -649,6 +662,7 @@ Presets: *MQTT: Subscribe and Publish*, *IR: Tasmota Blaster over MQTT* (send wi
 - **Fields → Rec** builds a record from its inputs (the field list is editable, ports appear on *Apply fields*); constants like `icon=plane; color=#f80` are added to every record. With the `rec` input it adds/overrides fields in passing records. Emits on change, on a `go` trigger, or every block.
 - **Rec → Fields** splits the last record back into ports; *Fields from last rec* fills the list from what actually arrives.
 - **CSV → Rec** (text lines or a whole file, header or explicit field names, `,` `;` tab), **Rec Log** (save CSV / GeoJSON / KML / GPX, replay; the map and *Rec: Unique by Key* export the same way), **Rec Filter** (JS condition over `r`).
+- **NMEA Parser** (Data): NMEA 0183 text from a GNSS receiver, echo sounder, anemometer, compass or an AIS feed → records and numbers (see [NMEA 0183](#nmea-0183)).
 - **My Position**: typed in (lat/lon or Maidenhead locator, ⌖ fills it once from geolocation) or live GPS. Other nodes use it for distances and bearings.
 - **Geo from Text**: coordinates from any decoded text — degrees/minutes/seconds, NMEA and APRS (`4903.50N/07201.75W`), ACARS (`N55123E037456`), decimal pairs, 6-char locators (4-char optional).
 - **Mark Point**: your position + RSSI/SNR/azimuth/frequency as a record, on a button, a trigger or every N seconds.
