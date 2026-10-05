@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=46;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=47;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -217,6 +217,7 @@ const PRESET_CATS={
   'IR: Tasmota Blaster over MQTT':'Infrared',
   'MQTT: Subscribe and Publish':'Network & IoT',
   'HTTP: Poll a JSON API':'Network & IoT',
+  'SSE: Live Event Stream':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
@@ -3821,5 +3822,19 @@ const nv=addNode('numview',480,180,{});
 const tk=addNode('ticker',480,300,{time:true});
 tk.size.w=380; tk.size.h=110; applySize(tk);
 addEdge(h.id,'value',nv.id,'in'); addEdge(h.id,'text',tk.id,'text');
+markWiresDirty();
+});
+
+preset('SSE: Live Event Stream', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'SSE In keeps one HTTP connection open and receives events the server pushes (text/event-stream). Each event: data as text, its name (event), a JSON field as a number (value) and records (rec).\n'+
+  'The example is the live stream of Wikipedia edits (Wikimedia EventStreams, CORS open); field length.new is the size of the page after the edit. Press Start; the node reconnects by itself.'});
+nt.size.w=1000; nt.size.h=110; applySize(nt);
+const s=addNode('sseIn',40,180,{});
+s.size.w=380; s.size.h=300; applySize(s);
+const nv=addNode('numview',480,180,{});
+const tk=addNode('ticker',480,300,{time:true});
+tk.size.w=380; tk.size.h=110; applySize(tk);
+addEdge(s.id,'value',nv.id,'in'); addEdge(s.id,'event',tk.id,'text');
 markWiresDirty();
 });
