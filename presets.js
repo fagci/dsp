@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=38;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=39;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -196,6 +196,7 @@ const PRESET_CATS={
   'IR: Arduino / ESP / Flipper (WebSerial)':'Infrared',
   'IR: Tasmota Blaster over MQTT':'Infrared',
   'MQTT: Subscribe and Publish':'Network & IoT',
+  'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'BLE: Heart Rate Monitor':'Network & IoT',
   'BLE: Find a Beacon by RSSI':'Network & IoT',
   'BLE: UART Terminal':'Network & IoT',
@@ -3245,6 +3246,25 @@ const tk=addNode('ticker',460,170,{time:true});
 tk.size.w=420; tk.size.h=140; applySize(tk);
 const ts=addNode('textsrc',40,420,{});
 addEdge(b.id,'line',tk.id,'text'); addEdge(ts.id,'text',b.id,'text');
+markWiresDirty();
+});
+preset('Gamepad: Axes to Tone and Lamps', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'A gamepad, joystick, steering wheel or pedals as a controller (Gamepad API: Chrome, Edge, Firefox, Safari). The browser shows the device only after a button is pressed on it.\n'+
+  'The left stick X sets the pitch of the oscillator (Math: −1…1 → 200…1000 Hz), the first two buttons light the lamps, the trend chart shows the axis. The `rumble` and `weak` inputs make the gamepad vibrate (a wire with 0…1, e.g. from a level meter or a lamp).\n'+
+  'Axes and buttons are plain numbers: wire them to any parameter — the frequency of a receiver, a relay on Serial Out / MQTT Out, a tracker. The counts of axes and buttons are in the parameters.'});
+nt.size.w=1000; nt.size.h=120; applySize(nt);
+const g=addNode('gamepad',40,180,{axes:'4',btns:'4'});
+g.size.w=300; g.size.h=200; applySize(g);
+const m=addNode('nmath',400,180,{op:'sum',inputs:'1',k:400,ofs:600});
+const os=addNode('osc',620,180,{amp:.3,wave:'sine'});
+const dc=addNode('dac',860,180,{vol:.3});
+const lp=addNode('lamps',400,340,{count:'2',labels:'b1,b2',colors:'amber,amber',hold:.1});
+lp.size.w=200; lp.size.h=80; applySize(lp);
+const tr=addNode('trend',620,340,{span:20,auto:false,lo:-1,hi:1});
+tr.size.w=420; tr.size.h=140; applySize(tr);
+addEdge(g.id,'a1',m.id,'in1'); addEdge(m.id,'out',os.id,'freq'); addEdge(os.id,'out',dc.id,'L'); addEdge(os.id,'out',dc.id,'R');
+addEdge(g.id,'b1',lp.id,'in1'); addEdge(g.id,'b2',lp.id,'in2'); addEdge(g.id,'a1',tr.id,'in');
 markWiresDirty();
 });
 preset('Unknown Signal: Blind Analysis (Generator)', function(){
