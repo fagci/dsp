@@ -248,6 +248,46 @@ function gsmDecodeCbch(b, off){
   else { r.arfcn=((o2&0x03)<<8)|o3; r.freq=gsmArfcnFreq(r.arfcn); }
   return r;
 }
+
+/* ---------- Rest Octets: побитовый CSN.1-разбор (SI13, позже SI2quater/range-форматы) ----------
+ * Биты нумеруются как в GSM: bitOffset 0 = старший бит байта 0. За пределами массива отдаёт 0
+ * (стандартный "спэйр" заполнитель) — удобно для опциональных полей без явной длины сообщения. */
+class GsmBitReader{
+  constructor(bytes, bitOffset=0){ this.b=bytes; this.pos=bitOffset; this.end=bytes.length*8; }
+  bit(){ if(this.pos>=this.end) return 0; const byte=this.b[this.pos>>3], bit=7-(this.pos&7); this.pos++; return (byte>>bit)&1; }
+  bits(n){ let v=0; for(let i=0;i<n;i++) v=(v<<1)|this.bit(); return v; }
+  flag(){ return this.bit()===1; }   // H/L-флаг CSN.1: обычно 1 = «далее есть поле/повтор»
+  left(){ return this.end-this.pos; }
+}
+// GPRS Mobile Allocation (TS 04.08 вложенный в SI13 Rest Octets) — структура переменной длины,
+// нужно только правильно пройти (для выравнивания битов), содержимое (хоппинг GPRS) не используем
+function gsmSkipGprsMobileAlloc(r){
+  r.bits(6);                                            // HSN
+  while(r.flag()) r.bits(4);                            // RFL number list
+  if(r.flag()) while(r.flag()) r.bits(6);                // ARFCN index list
+  else { const len=r.bits(6); r.bits(len+1); }           // либо явный MA-битмап длиной len+1 бит
+}
+// SI13 Rest Octets (TS 04.08 10.5.2.37b): GPRS-индикатор соты, PBCCH или обычный RAC+параметры.
+// Останавливаемся сразу после нужных нам полей — Additions in Rel-99/4/6 за ними не разбираем,
+// там для нас ничего интересного, а для выравнивания битов дальше они и не нужны.
+function gsmDecodeSi13(b){
+  const r=new GsmBitReader(b, 3*8);                     // Rest Octets начинаются с байта 3 (после PD+msg type)
+  if(!r.flag()) return {present:false};                 // SI13 contents отсутствует — редкий случай (пустое SI13)
+  const res={present:true, bcchChangeMark:r.bits(3), siChangeField:r.bits(4)};
+  if(r.flag()){ r.bits(2); gsmSkipGprsMobileAlloc(r); }  // SI13 change mark + GPRS Mobile Allocation — пропускаем
+  if(r.flag()){                                          // PBCCH присутствует в соте
+    res.psi1RepeatPeriod=r.bits(4);
+    res.pbcch={pb:r.bits(4), tsc:r.bits(3), tn:r.bits(3)};
+    if(r.flag()) res.pbcch.maio=r.bits(6);
+    else if(r.flag()) res.pbcch.arfcn=r.bits(10);
+  } else {                                               // PBCCH не настроен — пакетные данные идут по BCCH/CCCH
+    res.rac=r.bits(8);
+    res.spgcCcchSup=r.flag();
+    res.priorityAccessThr=r.bits(3);
+    res.networkControlOrder=r.bits(2);
+  }
+  return res;
+}
 // ARFCN → частота нисходящего канала, МГц (TS 05.05 табл. диапазонов); null — ARFCN вне известных
 // диапазонов. Пригодится, когда интересующий канал (например, CBCH) лежит не на той несущей, на
 // которой идёт приём — её можно прочитать здесь и перестроиться туда отдельной записью.
@@ -366,7 +406,7 @@ function gsmParseSI(b){
     r.cellArfcns=fl.arfcns; r.cellFmt=fl.format;
     r.rach=gsmDecodeRach(b,19);
   }
-  else if(mt===0x00) r.type='SI13';
+  else if(mt===0x00){ r.type='SI13'; r.si13=gsmDecodeSi13(b); }
   else if(mt===0x02) r.type='SI2bis';
   else if(mt===0x03) r.type='SI2ter';
   else r.type='0x'+mt.toString(16);
@@ -688,6 +728,7 @@ class GsmReceiver{
         Math.abs(si.cbch.freq-this.fc/1e6)<0.15;
       this.cbchTn=cbchOk ? si.cbch.tn : -1; this.cbchTsc=cbchOk ? si.cbch.tsc : null;
     }
+    if(si.si13) rec.si13=si.si13;
     this.rec.push(rec);
   }
   // 4 бёрста CBCH-блока (TS 04.12) готовы → декод через общий xCCH (gsmBcchDecode), разбор заголовка,
@@ -871,8 +912,21 @@ function gsmRecLine(r,debug){
     +gsmRachSuffix(r.rach)+(debug?gsmDebugSuffix(r):'');
   if(r.si==='SI1') return `${t} SI1 своя сота ARFCN: ${gsmArfcnList(r.cellArfcns,r.cellFmt)}`+gsmRachSuffix(r.rach);
   if(r.si==='SI2') return `${t} SI2 соседи ARFCN: ${gsmArfcnList(r.neighborArfcns,r.neighborFmt)}`+gsmRachSuffix(r.rach);
+  if(r.si==='SI13') return `${t} SI13 ${gsmSi13Line(r.si13)}`+(debug&&r.si13?gsmSi13DebugSuffix(r.si13):'');
   if(r.kind==='GSM-CBS') return `${t} CBS [${r.page}/${r.pages}] msgId 0x${r.msgId.toString(16)} (${r.charset}): ${r.text}`;
   return `${t} ${r.si||r.kind} FN ${r.fn}`;
+}
+// краткая строка SI13: поддерживает ли сота GPRS и как к ней подключаться (PBCCH или по BCCH/CCCH)
+function gsmSi13Line(si13){
+  if(!si13 || !si13.present) return 'нет GPRS-данных';
+  if(si13.pbcch) return `GPRS есть, PBCCH на TN${si13.pbcch.tn} TSC${si13.pbcch.tsc}`+
+    (si13.pbcch.arfcn!=null?` ARFCN${si13.pbcch.arfcn}`:si13.pbcch.maio!=null?` hop MAIO${si13.pbcch.maio}`:'');
+  if(si13.rac!=null) return `GPRS есть, PBCCH не настроен (пакетные данные по BCCH/CCCH), RAC ${si13.rac}`;
+  return 'GPRS не поддерживается';
+}
+function gsmSi13DebugSuffix(si13){
+  return `\n    BCCH-CHANGE-MARK ${si13.bcchChangeMark} · SI-CHANGE-FIELD ${si13.siChangeField}`+
+    (si13.spgcCcchSup!=null?` · SPGC-CCCH-SUP ${si13.spgcCcchSup?1:0} · PRIORITY-ACCESS-THR ${si13.priorityAccessThr} · NETWORK-CONTROL-ORDER ${si13.networkControlOrder}`:'');
 }
 // доп. строка для debug: Control Channel Description/Cell Options/Cell Selection (SI3),
 // наличие и позиция CBCH (SI4), сырой hex декодированного L2-сообщения — для сверки руками
