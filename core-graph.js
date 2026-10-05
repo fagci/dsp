@@ -176,11 +176,7 @@ Graph.inIndex=idx;
 Islands.rebuild();                                  // состав островов зависит от проводов
 }
 /* ---- DOM узла ---- */
-function catColor(cat){                             // единый цвет категории — для узлов и палитры
-return cat==='Sources'?'var(--t-num)':cat==='Processing'?'var(--t-sig)'
-: cat==='Analysis'?'var(--t-spec)':cat==='Misc'?'var(--dim)'
-: cat==='Indicators'?'var(--t-rec)':cat==='Data'?'var(--t-txt)':cat==='Geo'?'var(--t-bands)':'var(--t-img)';
-}
+function catColor(cat){ return groupOfCat(cat).color; }   // единый цвет группы — для узлов и палитры
 function posNode(n){                                // position через transform, не left/top —
 n.el.style.transform=`translate3d(${n.x}px,${n.y}px,0)`;   // так двигаем узел без layout-reflow всей страницы
 if(n.ghost) n.ghost.style.transform=n.el.style.transform;
@@ -1769,11 +1765,15 @@ function compatPort(m,t,dir){
 const ps=(dir==='o' ? m.ins : m.outs); if(!Array.isArray(ps)) return null;
 return ps.find(p=>p.t===t) || ps.find(p=>typeCompat(t,p.t)) || null;
 }
-// значок модуля без рисования: инициалы на цвете категории, форма — по типу основного выхода
+// значок модуля: цвет — группа, форма — роль (круг: источник, квадрат: обработка, шестиугольник: приёмник)
+const ROLE_NAME={source:'Source (no inputs)',proc:'Processor (in → out)',sink:'Sink (no outputs)'};
+function modRole(m){
+const hasIn=Array.isArray(m.ins)&&m.ins.length, hasOut=Array.isArray(m.outs)&&m.outs.length;
+return !hasIn&&hasOut ? 'source' : hasIn&&!hasOut ? 'sink' : !hasIn&&!hasOut ? 'sink' : 'proc';
+}
 function modIcon(m){
-const outs=Array.isArray(m.outs)?m.outs:[], t=outs[0]?.t;
-const shape=!outs.length ? 'hex' : t==='iq' ? 'circle' : t==='spec' ? 'diamond' : ['rec','txt','blk','bands','trk','img'].includes(t) ? 'square' : 'round';
-return `<span class="mi" data-shape="${shape}" style="--c:${catColor(m.cat)}">${nodeInitials(m.title)}</span>`;
+const r=modRole(m);
+return `<span class="mi" data-role="${r}" title="${ROLE_NAME[r]}" style="--c:${catColor(m.cat)}">${nodeInitials(m.title)}</span>`;
 }
 function ioDots(m){                                  // строка типов портов — точка + подпись типа
 const ins=Array.isArray(m.ins)?m.ins:[], outs=Array.isArray(m.outs)?m.outs:[];
@@ -1827,16 +1827,21 @@ function buildPalette(){
 pal.innerHTML='';
 const q=paletteQuery.trim().toLocaleLowerCase('ru');
 let matches=0;
-for(const c of cats){
-const list=Object.values(MOD).filter(m=>{
-if(m.cat!==c || (!showLegacy &&m.legacy)) return false;
-return !q || modScore(m,q)>0;
-});
+const visible=m=>(showLegacy||!m.legacy) && (!q || modScore(m,q)>0);
+for(const g of CAT_GROUPS){
+const gcats=cats.filter(c=>g.cats.includes(c) || (g===CAT_GROUPS[CAT_GROUPS.length-1] && !CAT_GROUPS.some(x=>x.cats.includes(c))));
+const byCat=gcats.map(c=>[c,Object.values(MOD).filter(m=>m.cat===c&&visible(m))]).filter(x=>x[1].length);
+if(!byCat.length) continue;
+const total=byCat.reduce((n,x)=>n+x[1].length,0);
+const det=makeDetails(g.id,g.id.toUpperCase(),q?true:openCats.has(g.id));     // при поиске раскрыто всегда
+det.style.setProperty('--c',g.color);
+det.querySelector('summary').insertAdjacentHTML('afterbegin',`<span class="gdot"></span>`);
+det.querySelector('summary').insertAdjacentHTML('beforeend',`<span class="cnt">${total}</span>`);
+for(const [c,list] of byCat){
 if(q) list.sort((a,b)=>modScore(b,q)-modScore(a,q)||a.title.localeCompare(b.title));
-if(!list.length) continue;
-const det=makeDetails(c,c.toUpperCase(),q?true:openCats.has(c));      // при поиске раскрыто всегда
-det.querySelector('summary').insertAdjacentHTML('beforeend', `<span class="cnt">${list.length}</span>` );
+if(byCat.length>1){ const h=document.createElement('div'); h.className='psub'; h.textContent=c; det.append(h); }
 for(const m of list){ matches++; det.append(makeCatItem(m)); }
+}
 pal.append(det);
 }
 if(Object.values(MOD).some(m=>m.legacy)){
