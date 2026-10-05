@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=40;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=41;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -198,6 +198,7 @@ const PRESET_CATS={
   'MQTT: Subscribe and Publish':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
+  'NFC: Tag Log and Writer':'Network & IoT',
   'BLE: Heart Rate Monitor':'Network & IoT',
   'BLE: Find a Beacon by RSSI':'Network & IoT',
   'BLE: UART Terminal':'Network & IoT',
@@ -3281,6 +3282,21 @@ tk.size.w=420; tk.size.h=140; applySize(tk);
 const tr=addNode('trend',460,350,{span:30,auto:true});
 tr.size.w=420; tr.size.h=140; applySize(tr);
 addEdge(h.id,'report',tk.id,'text'); addEdge(h.id,'value',tr.id,'in');
+markWiresDirty();
+});
+preset('NFC: Tag Log and Writer', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'NFC tags (NDEF): Web NFC works in Chrome on Android over https; desktop browsers do not support it. Press Scan, hold a tag to the back of the phone: the serial number goes to `serial`, the first text / URL / JSON record to `text`, every record to `rec` (Rec Log).\n'+
+  'Write: type a text in the node (or wire a text to `write`), press Write and hold a blank or rewritable tag to the phone; a pulse on `go` does the same. The record type is text, URL or JSON.\n'+
+  'A tag serial or its text can drive anything: publish it with MQTT Out, count visits with a Counter, log arrivals with timestamps.'});
+nt.size.w=1000; nt.size.h=120; applySize(nt);
+const nf=addNode('nfc',40,180,{wtext:'hello from the workbench',wtype:'text'});
+nf.size.w=340; nf.size.h=230; applySize(nf);
+const tk=addNode('ticker',440,180,{time:true});
+tk.size.w=420; tk.size.h=120; applySize(tk);
+const rl=addNode('recLog',440,320,{});
+rl.size.w=420; rl.size.h=170; applySize(rl);
+addEdge(nf.id,'serial',tk.id,'text'); addEdge(nf.id,'rec',rl.id,'rec');
 markWiresDirty();
 });
 preset('Unknown Signal: Blind Analysis (Generator)', function(){
