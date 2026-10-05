@@ -31,6 +31,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Microphone (stereo A+B), audio file, audio stream URL, tab/screen audio capture
 - **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500, RX-888 (mkI/mkII/mkIII) — multiple tuners/demodulators per device, wideband sweep with a panoramic waterfall, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
 - **KiwiSDR** remote receivers (public list included)
+- **HTTP In**: poll any URL (REST / JSON) into text, a number and records — see [HTTP](#http)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), **Table** (one node for lists, band plans, bookmarks, logs and the data sequencer: CSV / TSV / JSON / TXT / KML / GPX / GeoJSON, folders in the browser DB, played row by row), Trigger Clock, Time Base — see [Table](#table)
@@ -743,6 +744,17 @@ Presets: *BLE: Heart Rate Monitor*, *BLE: Find a Beacon by RSSI*, *BLE: UART Ter
 - Passwords are stored in the patch as plain text — do not share patches with real credentials.
 
 Presets: *MQTT: Subscribe and Publish*, *IR: Tasmota Blaster over MQTT* (send with *IR Encode*, receive Tasmota `IrReceived.RawData` — *IR Decode* reads that JSON and the `38000,9000,…` body of `IRsend` directly).
+
+## HTTP
+
+**HTTP In** asks a URL (GET or POST, headers, a period from 0.5 s) after `Start` and gives the answer on the wires; `Stop` ends the polling. Only one request is in flight, a request that is silent for longer than the period (at least 5 s) is cancelled.
+
+- Outputs: `text` (the body, one answer per block, a burst is queued), `value` (a number: the JSON field named in *JSON field* — `a.b.0.c` or `a.b[0].c`; or the body itself if it is a number; the last value is kept), `rec` (records: a JSON object or array, or the part of it at *records* path; nested objects become flat keys `a.b`; plain text → `{text}`, a number → `{value}`; `t` and `url` are added), `new` (a pulse per answer), `ok` (1 if the last answer was 2xx).
+- The server has to send CORS headers (`Access-Control-Allow-Origin`), otherwise the browser hides the answer — the node says so. From the https page `http://` of other hosts is blocked as mixed content (localhost is fine).
+- Error answers (4xx / 5xx) are shown in the status and skipped, unless *also take the body of error answers* is on.
+- Headers (an API key) are stored in the patch as plain text — do not share patches with real credentials.
+
+Preset: *HTTP: Poll a JSON API* (the current temperature from Open-Meteo).
 
 ## Map and records
 
