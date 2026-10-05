@@ -261,6 +261,33 @@ function gsmMccMncStr(r){
   return String(r.mcc).padStart(3,'0')+'-'+mnc;
 }
 
+/* ---------- офлайн-таблица PLMN (MCC-MNC) → оператор ----------
+ * Не претендует на полноту и может устаревать (перепродажа кодов, слияния операторов) — сверено по
+ * памяти из открытых MCC/MNC справочников (ITU/GSMA), только крупные операторы СНГ и несколько
+ * заметных зарубежных сетей. Неизвестный код — просто PLMN-код без названия, ничего не придумываем. */
+const GSM_OPERATORS={
+  '250-01':'МТС', '250-02':'МегаФон', '250-20':'Tele2', '250-99':'Билайн',
+  '255-01':'Vodafone UA', '255-03':'Kyivstar', '255-06':'lifecell',
+  '257-01':'МТС (Беларусь)', '257-02':'life:)', '257-04':'A1 (Velcom)',
+  '259-01':'Orange Moldova', '259-02':'Moldcell',
+  '283-01':'VivaCell-MTS', '283-05':'Ucom',
+  '282-01':'Geocell', '282-02':'Magticom', '282-04':'Beeline (Georgia)',
+  '400-01':'Azercell', '400-02':'Bakcell', '400-04':'Nar Mobile',
+  '401-01':'Beeline (KZ)', '401-02':'Activ (Kcell)', '401-77':'Tele2 (KZ)',
+  '434-04':'Beeline (UZ)', '434-05':'Ucell',
+  '437-01':'Beeline (KG)', '437-05':'MegaCom',
+  '260-01':'Plus', '260-02':'T-Mobile PL', '260-03':'Orange PL', '260-06':'Play',
+  '262-01':'Telekom.de', '262-02':'Vodafone.de', '262-07':'O2 Germany',
+  '208-01':'Orange FR', '208-10':'SFR', '208-15':'Free Mobile', '208-20':'Bouygues',
+  '234-10':'O2 UK', '234-15':'Vodafone UK', '234-20':'Three UK', '234-30':'EE',
+  '222-01':'TIM', '222-10':'Vodafone IT', '222-88':'Wind Tre',
+  '214-01':'Vodafone ES', '214-03':'Orange ES', '214-07':'Movistar',
+  '310-260':'T-Mobile US', '310-410':'AT&T', '311-480':'Verizon',
+  '460-00':'China Mobile', '460-01':'China Unicom', '460-03':'China Telecom',
+  '286-01':'Turkcell', '286-02':'Vodafone TR', '286-03':'Türk Telekom',
+};
+function gsmOperator(plmn){ return GSM_OPERATORS[plmn]||null; }
+
 /* ---------- приёмник: FCCH → SCH → синхронизация → бёрсты ---------- */
 // Опорные последовательности (готовятся один раз)
 let GSM_SCH_TS=null, GSM_NORM_TS=null;
@@ -286,6 +313,7 @@ class GsmReceiver{
     this.dbm=0; this.fc=0;
     this.bcch=[null,null,null,null];                    // 4 бёрста BCCH (кадры 2..5)
     this.bcchTry=0; this.bcchOk=0;                       // попытки/успехи разбора BCCH (диагностика)
+    this.cellLabel=null;                                 // подпись своей соты для рёбер графа соседей
   }
   avail(){ return this.len-this.head; }
   push(re,im){
@@ -516,12 +544,22 @@ class GsmReceiver{
       ncc:this.ncc, bcc:this.bcc, fn, tn:0, freq:this.fc, dbm:this.dbm, hex};
     if(si.ci!=null) rec.ci=si.ci;
     if(si.mcc!=null){ rec.mcc=si.mcc; rec.mnc=si.mnc; rec.plmn=gsmMccMncStr(si); rec.lac=si.lac;
+      const op=gsmOperator(rec.plmn); if(op) rec.op=op;
       // ключ соты: PLMN-LAC-CI (или без CI, если это SI4)
-      rec.id=rec.plmn+'-'+si.lac.toString(16)+(si.ci!=null?'-'+si.ci.toString(16):''); }
+      rec.id=rec.plmn+'-'+si.lac.toString(16)+(si.ci!=null?'-'+si.ci.toString(16):'');
+      this.cellLabel=(op||rec.plmn)+' LAC'+si.lac; }           // для рёбер графа соседей (emitNeighbors)
     if(si.cellArfcns) { rec.cellArfcns=si.cellArfcns; rec.cellFmt=si.cellFmt; }
-    if(si.neighborArfcns) { rec.neighborArfcns=si.neighborArfcns; rec.neighborFmt=si.neighborFmt; rec.nccPermitted=si.nccPermitted; }
+    if(si.neighborArfcns) { rec.neighborArfcns=si.neighborArfcns; rec.neighborFmt=si.neighborFmt; rec.nccPermitted=si.nccPermitted;
+      this.emitNeighbors(si.neighborArfcns, si.neighborFmt); }
     if(si.rach) rec.rach=si.rach;
     this.rec.push(rec);
+  }
+  // рёбра «своя сота → сосед по ARFCN» для узла Graph (vis-network): кидаем как записи rec с
+  // from/to — graphview сам их подхватит по именам колонок, без отдельного провода
+  emitNeighbors(arfcns, fmt){
+    if(fmt!=='bitmap0' || !arfcns.length) return;
+    const from=this.cellLabel||('BSIC '+((this.ncc<<3)|this.bcc));
+    for(const a of arfcns) this.rec.push({t:Date.now(), kind:'GSM-NEIGHBOR', from, to:'ARFCN '+a});
   }
 
   processTimeslot(){
@@ -572,7 +610,7 @@ class GsmReceiver{
 /* ---------- DSP-узел ---------- */
 def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
   ins:[{n:'in',t:'iq'}],
-  outs:[{n:'rec',t:'rec'},{n:'burst',t:'blk'},{n:'freq',t:'num'},{n:'sync',t:'num'}],
+  outs:[{n:'rec',t:'rec'},{n:'burst',t:'blk'},{n:'freq',t:'num'},{n:'sync',t:'num'},{n:'nb',t:'rec'}],
   readout:true, tall:true,
   params:[{n:'afc',t:'check',d:true,label:'auto frequency correction (FCCH)'},
           {n:'clr',t:'button',label:'Clear log',fn:n=>{ n.log=[]; n.text='ищу FCCH…'; n.lastSchBsic=-1; }}],
@@ -611,7 +649,11 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
         n.foff+=n.rx.freqOffset; n.rx.freqOffset=null; n.rx.freqUpdate=false;
         n.foff=clamp(n.foff,-GSM_TARGET_SR/2,GSM_TARGET_SR/2);
       }
-      let outRec=rec.length?rec:null, blk=null;
+      // отдельный выход nb — рёбра «сота → сосед по ARFCN» для Graph (vis-network), чтобы не путать
+      // его с rec: там generic from/to-угадывание по первым двум полям сломалось бы на прочих записях
+      const mainRec=[], nbRec=[];
+      for(const r of rec) (r.kind==='GSM-NEIGHBOR' ? nbRec : mainRec).push(r);
+      let outRec=mainRec.length?mainRec:null, outNb=nbRec.length?nbRec:null, blk=null;
       n.bid+=bursts.length;
       const last=bursts[bursts.length-1];
       if(last) blk={d:last.bits, n:last.bits.length, id:n.bid, fn:last.fn, tn:last.tn, kind:last.type};
@@ -619,6 +661,7 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
       // в скролл пишем SCH только при смене BSIC (захват/смена соты), текущий BSIC — в статусной строке.
       for(const r of rec){
         if(r.kind==='GSM-SCH'){ if(r.bsic===n.lastSchBsic) continue; n.lastSchBsic=r.bsic; }
+        else if(r.kind==='GSM-NEIGHBOR') continue;      // рёбра для Graph — не для чтения построчно
         n.log.push(gsmRecLine(r));
       }
       if(n.log.length>200) n.log.splice(0,n.log.length-200);
@@ -629,9 +672,9 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
       const bc=n.rx.bcchTry? ` · BCCH ${n.rx.bcchOk}/${n.rx.bcchTry}` : '';
       const bsicTxt=n.rx.state==='sync'? ` · BSIC ${(n.rx.ncc<<3)|n.rx.bcc}` : '';
       n.text=st+bsicTxt+` · ${mhz}foff ${n.foff.toFixed(0)} Hz · бёрстов ${n.bid}${bc}\n`+n.log.slice(-14).join('\n');
-      return {rec:outRec, burst:blk, freq:n.foff, sync:n.rx.state==='sync'?1:0};
+      return {rec:outRec, burst:blk, freq:n.foff, sync:n.rx.state==='sync'?1:0, nb:outNb};
     }
-    return {rec:null, burst:null, freq:n.foff, sync:n.rx.state==='sync'?1:0};
+    return {rec:null, burst:null, freq:n.foff, sync:n.rx.state==='sync'?1:0, nb:null};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(r && r.textContent!==n.text) r.textContent=n.text||''; }});
 
@@ -643,8 +686,8 @@ function gsmHerm(y0,y1,y2,y3,t){
 function gsmRecLine(r){
   const t=new Date(r.t).toLocaleTimeString();
   if(r.kind==='GSM-SCH') return `${t} SCH BSIC ${r.bsic} (NCC ${r.ncc}/BCC ${r.bcc}) FN ${r.fn} ${r.dbm} dBm`;
-  if(r.si==='SI3') return `${t} SI3 PLMN ${r.plmn} LAC ${r.lac} CID ${r.ci} · ${r.dbm} dBm`+gsmRachSuffix(r.rach);
-  if(r.si==='SI4') return `${t} SI4 PLMN ${r.plmn} LAC ${r.lac}`+gsmRachSuffix(r.rach);
+  if(r.si==='SI3') return `${t} SI3 ${r.op?r.op+' ':''}PLMN ${r.plmn} LAC ${r.lac} CID ${r.ci} · ${r.dbm} dBm`+gsmRachSuffix(r.rach);
+  if(r.si==='SI4') return `${t} SI4 ${r.op?r.op+' ':''}PLMN ${r.plmn} LAC ${r.lac}`+gsmRachSuffix(r.rach);
   if(r.si==='SI1') return `${t} SI1 своя сота ARFCN: ${gsmArfcnList(r.cellArfcns,r.cellFmt)}`+gsmRachSuffix(r.rach);
   if(r.si==='SI2') return `${t} SI2 соседи ARFCN: ${gsmArfcnList(r.neighborArfcns,r.neighborFmt)}`+gsmRachSuffix(r.rach);
   return `${t} ${r.si||r.kind} FN ${r.fn}`;
