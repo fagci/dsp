@@ -200,6 +200,43 @@ function gsmDecodeRach(b, off){
   return { maxRetrans:GSM_MAX_RETRANS[(o1>>6)&3], txInteger:GSM_TX_INTEGER[(o1>>2)&0xf],
     cellBarred:!!(o1&0x02), reAllowed:!(o1&0x01), acc:(b[off+1]<<8)|b[off+2] };
 }
+// Control Channel Description (TS 04.08 10.5.2.11), 3 байта с off — конфигурация CCCH/SDCCH соты
+function gsmDecodeCtrlCh(b, off){
+  const o1=b[off], o2=b[off+1];
+  return { mscr:!!(o1&0x80), att:!!(o1&0x40), bsAgBlksRes:(o1>>3)&7, ccchConf:o1&7,
+    cbq3:(o2>>5)&3, bsPaMfrms:(o2&7)+2, t3212min:b[off+2]*6 };
+}
+// CCCH-CONF (3 бита): объединён ли CCCH с SDCCH и сколько физ. каналов под CCCH
+const GSM_CCCH_CONF=['1 канал CCCH, не объединён с SDCCH','1 канал CCCH, объединён с SDCCH',
+  '2 канала CCCH, не объединён','резерв','3 канала CCCH, не объединён','резерв','4 канала CCCH, не объединён','резерв'];
+// Cell Options BCCH (TS 04.08 10.5.2.3), 1 байт с off
+function gsmDecodeCellOpt(b, off){
+  const o=b[off];
+  return { pwrc:!!(o&0x40), dtx:(o>>4)&3, radioLinkTimeout:(((o&0x0f))+1)*4 };
+}
+// Cell Selection Parameters (TS 04.08 10.5.2.4), 2 байта с off
+function gsmDecodeCellSel(b, off){
+  const o1=b[off], o2=b[off+1];
+  return { cellReselectHyst:((o1>>5)&7)*2, msTxpwrMaxCch:o1&0x1f,
+    acs:!!(o2&0x80), neci:!!(o2&0x40), rxlevAccessMin:o2&0x3f };
+}
+// CBCH Channel Description: опциональный TV-элемент (IEI 0x64) сразу после RACH в SI4 (TS 04.08
+// 10.5.2.5 Channel Description); если байта 0x64 нет — CBCH на соте не настроен (обычный случай).
+function gsmDecodeCbch(b, off){
+  if(b[off]!==0x64) return {present:false};
+  const o1=b[off+1], o2=b[off+2], o3=b[off+3];
+  const tn=o1&7;
+  let kind='?', sub=0;
+  if((o1&0xf8)===0x08) kind='TCH/F+ACCHs';
+  else if((o1&0xf0)===0x10){ kind='TCH/H+ACCH'; sub=(o1>>3)&1; }
+  else if((o1&0xe0)===0x20){ kind='SDCCH/4+CBCH'; sub=(o1>>3)&3; }
+  else if((o1&0xc0)===0x40){ kind='SDCCH/8+CBCH'; sub=(o1>>3)&7; }
+  const tsc=(o2>>5)&7, hopping=!!(o2&0x10);
+  const r={present:true, tn, kind, sub, tsc, hopping};
+  if(hopping){ r.maio=((o2&0x0f)<<2)|((o3&0xc0)>>6); r.hsn=o3&0x3f; }
+  else r.arfcn=((o2&0x03)<<8)|o3;
+  return r;
+}
 
 // деперемежение xCCH (TS 05.03 4.1.4): cB[k]=iB[B·114+j]
 function gsmXcchDeinterleave(iB){
@@ -235,12 +272,14 @@ function gsmParseSI(b){
     r.type='SI3'; r.ci=(b[3]<<8)|b[4];
     const m=gsmMccMnc(b[5],b[6],b[7]); r.mcc=m.mcc; r.mnc=m.mnc; r.mnc2=m.mnc2;
     r.lac=(b[8]<<8)|b[9];
+    r.ctrlCh=gsmDecodeCtrlCh(b,10); r.cellOpt=gsmDecodeCellOpt(b,13); r.cellSel=gsmDecodeCellSel(b,14);
     r.rach=gsmDecodeRach(b,16);
   } else if(mt===0x1c){                                // SI4: LAI (без Cell Identity)
     r.type='SI4';
     const m=gsmMccMnc(b[3],b[4],b[5]); r.mcc=m.mcc; r.mnc=m.mnc; r.mnc2=m.mnc2;
     r.lac=(b[6]<<8)|b[7];
     r.rach=gsmDecodeRach(b,10);
+    r.cbch=gsmDecodeCbch(b,13);
   } else if(mt===0x1a){                                // SI2: соседние соты + RACH
     r.type='SI2'; const fl=gsmDecodeFreqList(b,3,16);
     r.neighborArfcns=fl.arfcns; r.neighborFmt=fl.format; r.nccPermitted=b[19];
@@ -552,6 +591,10 @@ class GsmReceiver{
     if(si.neighborArfcns) { rec.neighborArfcns=si.neighborArfcns; rec.neighborFmt=si.neighborFmt; rec.nccPermitted=si.nccPermitted;
       this.emitNeighbors(si.neighborArfcns, si.neighborFmt); }
     if(si.rach) rec.rach=si.rach;
+    if(si.ctrlCh) rec.ctrlCh=si.ctrlCh;
+    if(si.cellOpt) rec.cellOpt=si.cellOpt;
+    if(si.cellSel) rec.cellSel=si.cellSel;
+    if(si.cbch) rec.cbch=si.cbch;
     this.rec.push(rec);
   }
   // рёбра «своя сота → сосед по ARFCN» для узла Graph (vis-network): кидаем как записи rec с
@@ -613,6 +656,7 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
   outs:[{n:'rec',t:'rec'},{n:'burst',t:'blk'},{n:'freq',t:'num'},{n:'sync',t:'num'},{n:'nb',t:'rec'}],
   readout:true, tall:true,
   params:[{n:'afc',t:'check',d:true,label:'auto frequency correction (FCCH)'},
+          {n:'debug',t:'check',d:false,label:'debug: доп. поля SI3/SI4 (Control Ch, Cell Opt, CBCH) + hex'},
           {n:'clr',t:'button',label:'Clear log',fn:n=>{ n.log=[]; n.text='ищу FCCH…'; n.lastSchBsic=-1; }}],
   init:n=>{ n.rx=new GsmReceiver(); n.foff=0; n.nco=0; n.frac=1; n.lr=new Float32Array(0); n.li=new Float32Array(0);
             n.bid=0; n.log=[]; n.text='ищу FCCH…'; n.lastSchBsic=-1; },
@@ -662,7 +706,7 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
       for(const r of rec){
         if(r.kind==='GSM-SCH'){ if(r.bsic===n.lastSchBsic) continue; n.lastSchBsic=r.bsic; }
         else if(r.kind==='GSM-NEIGHBOR') continue;      // рёбра для Graph — не для чтения построчно
-        n.log.push(gsmRecLine(r));
+        n.log.push(gsmRecLine(r,n.p.debug));
       }
       if(n.log.length>200) n.log.splice(0,n.log.length-200);
       const st=n.rx.state==='sync'?'синхр.':n.rx.state==='sch'?'жду SCH':'ищу FCCH';
@@ -682,15 +726,33 @@ function gsmHerm(y0,y1,y2,y3,t){
   const c1=0.5*(y2-y0), c2=y0-2.5*y1+2*y2-0.5*y3, c3=0.5*(y3-y0)+1.5*(y1-y2);
   return ((c3*t+c2)*t+c1)*t+y1;
 }
-// строка лога по записи
-function gsmRecLine(r){
+// строка лога по записи; debug=true — доп. поля конфигурации соты + сырой hex L2-сообщения
+function gsmRecLine(r,debug){
   const t=new Date(r.t).toLocaleTimeString();
   if(r.kind==='GSM-SCH') return `${t} SCH BSIC ${r.bsic} (NCC ${r.ncc}/BCC ${r.bcc}) FN ${r.fn} ${r.dbm} dBm`;
-  if(r.si==='SI3') return `${t} SI3 ${r.op?r.op+' ':''}PLMN ${r.plmn} LAC ${r.lac} CID ${r.ci} · ${r.dbm} dBm`+gsmRachSuffix(r.rach);
-  if(r.si==='SI4') return `${t} SI4 ${r.op?r.op+' ':''}PLMN ${r.plmn} LAC ${r.lac}`+gsmRachSuffix(r.rach);
+  if(r.si==='SI3') return `${t} SI3 ${r.op?r.op+' ':''}PLMN ${r.plmn} LAC ${r.lac} CID ${r.ci} · ${r.dbm} dBm`
+    +gsmRachSuffix(r.rach)+(debug?gsmDebugSuffix(r):'');
+  if(r.si==='SI4') return `${t} SI4 ${r.op?r.op+' ':''}PLMN ${r.plmn} LAC ${r.lac}`
+    +gsmRachSuffix(r.rach)+(debug?gsmDebugSuffix(r):'');
   if(r.si==='SI1') return `${t} SI1 своя сота ARFCN: ${gsmArfcnList(r.cellArfcns,r.cellFmt)}`+gsmRachSuffix(r.rach);
   if(r.si==='SI2') return `${t} SI2 соседи ARFCN: ${gsmArfcnList(r.neighborArfcns,r.neighborFmt)}`+gsmRachSuffix(r.rach);
   return `${t} ${r.si||r.kind} FN ${r.fn}`;
+}
+// доп. строка для debug: Control Channel Description/Cell Options/Cell Selection (SI3),
+// наличие и позиция CBCH (SI4), сырой hex декодированного L2-сообщения — для сверки руками
+function gsmDebugSuffix(r){
+  let s='';
+  if(r.ctrlCh){ const c=r.ctrlCh;
+    s+=`\n    CCCH-CONF ${c.ccchConf} (${GSM_CCCH_CONF[c.ccchConf]}) · ATT ${c.att?1:0} · BS-PA-MFRMS ${c.bsPaMfrms} · T3212 ${c.t3212min} мин`; }
+  if(r.cellOpt){ const o=r.cellOpt;
+    s+=`\n    PWRC ${o.pwrc?1:0} · DTX ${o.dtx} · RADIO-LINK-TIMEOUT ${o.radioLinkTimeout} с`; }
+  if(r.cellSel){ const c=r.cellSel;
+    s+=`\n    CELL-RESELECT-HYST ${c.cellReselectHyst} дБ · MS-TXPWR-MAX-CCH ${c.msTxpwrMaxCch} · RXLEV-ACCESS-MIN ${c.rxlevAccessMin}`; }
+  if(r.cbch){ const c=r.cbch;
+    s+=c.present ? `\n    CBCH: TN${c.tn} ${c.kind} суб.${c.sub} TSC${c.tsc}`+(c.hopping?` hop MAIO${c.maio}/HSN${c.hsn}`:` ARFCN${c.arfcn}`)
+                 : `\n    CBCH: не настроен (нет Channel Description в SI4)`; }
+  if(r.hex) s+=`\n    hex: ${r.hex}`;
+  return s;
 }
 function gsmArfcnList(arfcns,fmt){
   if(fmt&&fmt!=='bitmap0') return `(${fmt}, не разобрано)`;
