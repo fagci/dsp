@@ -10,7 +10,6 @@ const FSK4_PH=8, FSK4_RING=1024, FSK4_RM=1023;
 const FSK4_LEV=[1,3,-1,-3];
 const FSK4={protos:{}, order:[]};
 
-function fsk4Pop(v){ v-=(v>>>1)&0x55555555; v=(v&0x33333333)+((v>>>2)&0x33333333); return (((v+(v>>>4))&0x0F0F0F0F)*0x01010101)>>>24; }
 
 /* ---- RRC, единичная энергия в отсчётах (согласованный фильтр приёмника) ---- */
 function fsk4Rrc(t,a){
@@ -53,7 +52,7 @@ function fsk2Sync(bits,extra){
   return Object.assign({hi,lo,mhi,mlo,len:L,syms,bits}, extra);
 }
 // ошибок в бит между регистром (24+24 бита) и шаблоном; xm — 0xAAAAAA для инверсии
-function fsk4Dist(hi,lo,p,xm){ return fsk4Pop(((hi^xm^p.hi)&p.mhi)>>>0)+fsk4Pop(((lo^xm^p.lo)&p.mlo)>>>0); }
+function fsk4Dist(hi,lo,p,xm){ return popcnt32(((hi^xm^p.hi)&p.mhi)>>>0)+popcnt32(((lo^xm^p.lo)&p.mlo)>>>0); }
 
 /* ---- кадр: дибиты по захвату (e — шаг последнего дибита; eps — уход такта передатчика, доля: длинные кадры) ---- */
 function fsk4Slice(L,e,count,eps){

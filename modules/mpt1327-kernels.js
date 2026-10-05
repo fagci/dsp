@@ -7,7 +7,6 @@
    Тактовая фаза не отслеживается: 8 сдвигов решётки по ⅛ бита, слово принимается по CRC. */
 
 const MPT_BAUD=1200, MPT_SYNC=0xC4D7, MPT_SYNT=0x3B28, MPT_PH=8;
-function mptPop(v){ v-=(v>>>1)&0x55555555; v=(v&0x33333333)+((v>>>2)&0x33333333); return (((v+(v>>>4))&0x0F0F0F0F)*0x01010101)>>>24; }
 // CRC-15 по bit(i), i=0..len-1 (первый переданный бит — старший)
 function mptCrcBits(bit,len){
   let r=0;
@@ -16,7 +15,7 @@ function mptCrcBits(bit,len){
 }
 // слово: w1 — первые 32 бита, w0 — последние 32; годно, если CRC сходится и чётность полная
 function mptCheck(w1,w0){
-  if((mptPop(w1)+mptPop(w0))&1) return false;
+  if((popcnt32(w1)+popcnt32(w0))&1) return false;
   const c=mptCrcBits(i=>i<32 ? (w1>>>(31-i))&1 : (w0>>>(63-i))&1, 48);
   return c===((w0>>>1)&0x7FFF);
 }
@@ -124,9 +123,9 @@ IQK.mpt1327Rx={
     const sps=n.sps, ends=n.ends;
     while(ends.length && te-ends[0].t>400*sps) ends.shift();
     let inv=null, kind=null;
-    const sm=Math.min(mptPop(w2^MPT_SYNC),mptPop(w2^MPT_SYNT));
+    const sm=Math.min(popcnt32(w2^MPT_SYNC),popcnt32(w2^MPT_SYNT));
     if(sm<=1){                                         // после синхрослова
-      const eff=x=>mptPop(x^MPT_SYNC)<=1 ? 'control' : mptPop(x^MPT_SYNT)<=1 ? 'traffic' : null;
+      const eff=x=>popcnt32(x^MPT_SYNC)<=1 ? 'control' : popcnt32(x^MPT_SYNT)<=1 ? 'traffic' : null;
       if(mptCheck(w1,w0)){ inv=false; kind=eff(w2); }
       else if(mptCheck(~w1>>>0,~w0>>>0)){ inv=true; kind=eff(~w2&0xFFFF); }
       if(kind) n.syncs++;

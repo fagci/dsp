@@ -41,7 +41,6 @@ function sameParse(s){
 const sameBytes=s=>{ const b=[]; for(const ch of s){ const c=ch.charCodeAt(0)&0x7F; for(let k=0;k<8;k++) b.push((c>>k)&1); } return b; };
 const samePat=bits=>{ let v=0; for(let i=0;i<32;i++) v=((v<<1)|bits[i])>>>0; return v; };     // первый бит — старший
 const SAME_VZ=samePat(sameBytes('ZCZC')), SAME_VN=samePat(sameBytes('NNNN'));
-function samePop(v){ v-=(v>>>1)&0x55555555; v=(v&0x33333333)+((v>>>2)&0x33333333); return (((v+(v>>>4))&0x0F0F0F0F)*0x01010101)>>>24; }
 // строка → биты в эфире: преамбула 16×0xAB и сообщение
 function sameBurstBits(str){
   const b=[]; for(let i=0;i<16;i++) for(let k=0;k<8;k++) b.push((0xAB>>k)&1);
@@ -104,8 +103,8 @@ def({ id:'sameRx', title:'SAME / EAS Decoder', cat:'Decoders', readout:true, tal
 function sameFeed(n,d,bit,te){
   d.reg=((d.reg<<1)|bit)>>>0;
   if(d.mode===0){
-    if(samePop((d.reg^SAME_VZ)>>>0)<=2){ d.mode=1; d.str='ZCZC'; d.cnt=0; d.cur=0; }
-    else if(samePop((d.reg^SAME_VN)>>>0)<=2){ sameCand(n,te,'NNNN'); }
+    if(popcnt32((d.reg^SAME_VZ)>>>0)<=2){ d.mode=1; d.str='ZCZC'; d.cnt=0; d.cur=0; }
+    else if(popcnt32((d.reg^SAME_VN)>>>0)<=2){ sameCand(n,te,'NNNN'); }
     return;
   }
   d.cur|=bit<<d.cnt;

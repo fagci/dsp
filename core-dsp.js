@@ -3,6 +3,7 @@
    Без DOM и без движка: грузится и страницей, и воркерами (importScripts). */
 function pv(n,I,name){ const v=I[name]; return (typeof v==='number' && isFinite(v)) ? v : n.p[name]; }
 function clamp(v,a,b){ return v<a?a:v>b?b:v; }
+function popcnt32(v){ v-=(v>>>1)&0x55555555; v=(v&0x33333333)+((v>>>2)&0x33333333); return (((v+(v>>>4))&0x0F0F0F0F)*0x01010101)>>>24; }
 function pow2ge(n){ let p=1; while(p<n) p<<=1; return p; }
 function rms(a){ let s=0; for(let i=0;i<a.length;i++) s+=a[i]*a[i]; return Math.sqrt(s/a.length); }
 

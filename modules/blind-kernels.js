@@ -257,10 +257,9 @@ function blindConvPair(A,B,Kmax,thr){                            // A, B — п�
   }
   const res=[], WA=new Uint32Array(M), WB=new Uint32Array(M);   // первые 32 синдрома, упакованные в слово — быстрый отсев
   for(let m=1;m<M;m++){ let x=0,y=0; for(let r=0;r<32;r++){ x|=PA[m][r]<<r; y|=PB[m][r]<<r; } WA[m]=x>>>0; WB[m]=y>>>0; }
-  const pc=v=>{ v-=(v>>>1)&0x55555555; v=(v&0x33333333)+((v>>>2)&0x33333333); return (((v+(v>>>4))&0x0F0F0F0F)*0x01010101)>>>24; };
   for(let a=1;a<M;a++) for(let b=1;b<M;b++){
     if(a===b) continue;
-    const o1=pc((WB[a]^WA[b])>>>0);
+    const o1=popcnt32((WB[a]^WA[b])>>>0);
     if(Math.min(o1,32-o1)>8) continue;
     const pa=PB[a], pb=PA[b];                                      // s = (b⊛A) ^ (a⊛B)
     // согласованность по префиксу кадра: сообщение кончается там, где накопленное «согласие минус случайное» перестаёт расти (CUSUM)
