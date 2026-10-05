@@ -343,7 +343,7 @@ function dmrPayload(sap,dd,msg){
       const p=ihl+8, port=dp===4007||sp===4007 ? 4007 : dp;
       if(port===4007){ const t=dmrTms(msg,p); r.service='TMS'; if(t.ack) r.ack=true; else r.message=t.text; }
       else if(port===4001){ r.service='LRRP'; Object.assign(r,dmrLrrp(msg,p)); r.data=bytesHex(msg,p,Math.min(40,msg.length-p)); }
-      else { r.service=({4001:'LRRP',4004:'XCMP',4005:'ARS',4008:'telemetry',231:'Cellocator'})[port]||('UDP '+port); r.data=bytesHex(msg,p,Math.min(40,msg.length-p)); }
+      else { r.service=({4001:'LRRP',4004:'XCMP',4005:'ARS',4008:'telemetry',231:'Cellocator'})[port]||('UDP '+port); r.data=bytesHex(msg,p,Math.min(40,msg.length-p)); r.payload=bytesHex(msg,p,msg.length-p); }
     } else { r.proto='IP '+prot; r.data=bytesHex(msg,ihl,Math.min(40,msg.length-ihl)); }
   } else if(dd!=null){
     r.service='short data'; r.format=dd;
@@ -898,6 +898,41 @@ function dmrBuildScript(mode,cc){
   const lv=new Float32Array(frames.length*144), map=[1,3,-1,-3];
   frames.forEach((fr,i)=>{ if(fr) for(let k=0;k<144;k++) lv[i*144+k]=map[fr[k]]; });
   return lv;
+}
+/* ---- передатчик данных: байты → UDP/IPv4 → вызов данных (CSBK-преамбула, заголовок, блоки CRC-32) → бёрсты и кадры слотов ---- */
+function dmrSyncFor(mode,kind){
+  return DMR_SYNCS.find(p=>p.kind===kind && (mode==='inbound (MS)' ? p.mode==='ms' : mode==='direct TS1' ? p.mode==='direct' && p.slot===1 : mode==='direct TS2' ? p.mode==='direct' && p.slot===2 : p.mode==='bs'));
+}
+function dmrIdleBurst(cc,mode){ return dmrDib(dmrDataBurst(cc,9,dmrBptcEnc(new Uint8Array(96)),dmrSyncFor(mode,'data'))); }
+// o: {rate:'1/2'|'3/4'|'1', port, group, pre} → массив бёрстов по 132 дибита
+function dmrDataCall(cc,mode,to,from,body,o){
+  const ds=dmrSyncFor(mode,'data'), burst=(dt,raw)=>dmrDib(dmrDataBurst(cc,dt,raw,ds));
+  const bs=o.rate==='1' ? 24 : o.rate==='3/4' ? 18 : 12, dt=o.rate==='1' ? 10 : o.rate==='3/4' ? 8 : 7;
+  const {blk,pad}=dmrMsgBlocks(dmrIpMsg(from,to,null,{port:o.port,body}),bs,0);
+  if(blk.length>127) throw new Error('too many blocks: '+blk.length);
+  const id3=v=>[(v>>16)&255,(v>>8)&255,v&255], out=[];
+  if(o.pre) out.push(burst(3,dmrEncMasked(Uint8Array.from([0xBD,0,o.group ? 0xC0 : 0x80,blk.length,...id3(to),...id3(from)]),0xA5A5)));
+  const h=Uint8Array.from([(o.group ? 0x80 : 0)|0x02|((pad>>4)<<4),(4<<4)|(pad&15),...id3(to),...id3(from),0x80|blk.length,0]);
+  out.push(burst(6,dmrEncMasked(h,0xCCCC)));
+  for(const b of blk){
+    if(dt===7) out.push(burst(7,dmrBptcEnc(bitsMsb(b))));
+    else if(dt===8) out.push(burst(8,dmrT34Enc(bitsMsb(b))));
+    else { const bits=bitsMsb(b), raw=new Uint8Array(196); raw.set(bits.subarray(0,96),0); raw.set(bits.subarray(96),100); out.push(burst(10,raw)); }
+  }
+  return out;
+}
+// CACH ретранслятора: кадр f — слот f&1, Short LC (активность слотов) по четырём фрагментам
+function dmrCachMaker(){
+  const act=new Uint8Array(36); act.set([0,0,0,1],0); act.set([1,0,0,0],4); act.set([1,0,1,1],8);
+  for(let i=0;i<8;i++){ act[12+i]=(0x5A>>(7-i))&1; act[20+i]=(0xA5>>(7-i))&1; }
+  act.set(dmrCrc8Gen(act.subarray(0,28)),28);
+  const frag=dmrShortLcEnc(act);
+  return f=>{
+    const c=new Uint8Array(24), lcss=[1,3,3,2][f&3];
+    c[0]=1; c[1]=f&1; c[2]=lcss>>1; c[3]=lcss&1; dmrHamEnc(DMR_H743,c,0); c.set(frag[f&3],7);
+    const b24=new Uint8Array(24); for(let k=0;k<24;k++) b24[k]=c[DMR_CACH_IL[k]];
+    return dmrDib(b24);
+  };
 }
 function dmrGenerate(n,sr,N){
   const mode=n.p.dmr||'repeater (BS)';

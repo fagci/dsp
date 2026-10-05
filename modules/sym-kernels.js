@@ -158,7 +158,6 @@ IQK.symSync={
     const s=iqIn(I,'in');
     if(!s){ n.ui=null; return {blk:n.frame}; }
     if(n.key!==n.p.word){ n.key=n.p.word; n.words=symWords(n.p.word); n.sync={}; n.pend=null; n.expect=-1; }
-    const batch=[];                                    // все кадры этого тика: в blk уходит последний, остальные — в blk.all
     const W=n.words, len=Math.max(1,n.p.len|0), pre=Math.max(0,n.p.pre|0), period=Math.max(0,n.p.period|0), tol=n.p.tol|0, tolLock=n.p.lockTol==null ? tol : n.p.lockTol|0,
       maxMiss=n.p.miss==null ? 12 : n.p.miss|0, pol=n.p.pol, thr=n.p.corr, R=n.ring;
     if(W.length){
@@ -172,7 +171,7 @@ IQK.symSync={
               const pd=n.pend; n.pend=null; n.after=pd.E+len;
               if(pd.hit){ n.fg=pd.g; n.fo=pd.o; }
               symEmit(n,pd,pre,len);
-              if(n.frame) batch.push(n.frame);
+              if(n.frame) (n.recent||(n.recent=[])).push({w:n.w,f:n.frame});
               n.expect=period>0 ? pd.E+period : -1;
             }
             continue;
@@ -193,8 +192,9 @@ IQK.symSync={
       }
     }
     n.ui={frames:n.total, sync:{...n.sync}, id:n.fid, locked:n.expect>=0 || !!n.pend, miss:n.miss, words:W.map(w=>w.hex)};
-    if(batch.length>1) n.frame.all=batch;
-    return {blk:n.frame};
+    const RF=n.recent;                                  // кадры последних ~2 с символов: поток blk — «последнее значение», а основной поток читает реже воркера
+    while(RF && RF.length && n.w-RF[0].w>9600) RF.shift();
+    return {blk:RF && RF.length>1 ? {...n.frame, all:RF.map(r=>r.f)} : n.frame};
   }};
 
 /* ============================ Передатчик: зеркало приёмной цепочки ============================
@@ -205,13 +205,15 @@ IQK.symPlay={
   init(n){ n.q=[]; n.cur=null; n.pos=0; n.lastFid=0; n.acc=0; n.sent=0; n.ui=null; },
   process(n,I,ctx){
     const f=I.blk;
-    if(f && f.id!==n.lastFid && f.dib){ n.lastFid=f.id; n.q.push(f.dib); }
+    if(f && f.id!==n.lastFid){                         // blk.all — пачка кадров за такт (передатчики со скоростью выше такта)
+      for(const x of f.all||[f]) if(x.dib && (!f.all || x.id>n.lastFid)) n.q.push(x.dib);
+      n.lastFid=f.id; }
     n.acc+=n.p.baud*ctx.block/ctx.sr;
     const K=Math.floor(n.acc); n.acc-=K;
     const out=iqStream(n,'out',n.p.baud,0), z=new Float32Array(K);
     for(let i=0;i<K;i++){
       if(!n.cur || n.pos>=n.cur.length){ n.cur=n.q.shift()||null; n.pos=0; if(n.cur) n.sent++; }
-      z[i]=n.cur ? FSK4_LEV[n.cur[n.pos++]] : 0;
+      z[i]=n.cur ? FSK4_LEV[n.cur[n.pos++]]||0 : 0;           // дибит 4 — нулевой уровень (пауза передатчика)
     }
     if(K) iqPush(out,z,null,null);
     n.ui={queued:n.q.length+(n.cur && n.pos<n.cur.length ? 1 : 0), sent:n.sent, sending:!!(n.cur && n.pos<n.cur.length),
