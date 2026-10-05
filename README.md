@@ -40,6 +40,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **OSC**: Open Sound Control in and out (TouchOSC, Max / Pd, SuperCollider, mixers) through a WebSocket bridge — see [OSC](#osc)
 - **Modbus Master**: registers and coils of industrial devices over RS-485 (RTU) or TCP — see [Modbus](#modbus)
 - **M-Bus Decoder / Master**: utility meters (water, heat, gas, electricity), wired and wireless 868 MHz telegrams — see [M-Bus](#m-bus)
+- **Speech In / Speech Out**: speech recognition from the microphone and speech synthesis — see [Speech](#speech)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
 - Serial port (WebSerial), **Table** (one node for lists, band plans, bookmarks, logs and the data sequencer: CSV / TSV / JSON / TXT / KML / GPX / GeoJSON, folders in the browser DB, played row by row), Trigger Clock, Time Base — see [Table](#table)
@@ -875,6 +876,14 @@ Preset: *Modbus: Poll Registers (RTU / TCP)*.
 - Not done: AES decryption (the telegram is named *encrypted*), secondary-address search and selection, the extended VIF tables (0xFB, most of 0xFD) and VIFE — such records show the code and the raw value, mode N (EN 13757-4) frames, format B CRC, SND_UD and writing to meters, OMS command telegrams. Checked with telegrams built by hand from the DIF / VIF rules (the checksum, the CRC-16/EN-13757 check value 0xC2B7, the block CRC and the stream parser) and a serial-port mock, **not with real meters**.
 
 Preset: *M-Bus: Read Meters (Wired / Wireless)*.
+
+## Speech
+
+- **Speech In** (Sources) — speech recognition of the microphone through the browser's Web Speech API (Chrome, Edge, Safari; Firefox has none). Choose the *language* (`en-US`, `ru-RU`, …; empty — the browser's), press `Start` and allow the microphone. Outputs: `text` (a finished phrase, one per block, a burst is queued), `interim` (the phrase as it is being said, it changes while the person talks), `conf` (the confidence of the last phrase, 0…1), `rec` (`text`, `conf`, `lang` — for a log), `new`, `ok`. *Keep listening* restarts the recognition after a pause (the browser ends it by itself after some silence; the restarts are limited so that a broken setup does not loop forever). **Privacy: in Chrome and Edge the audio goes to the vendor's recognition service** — the node needs a connection and is not for private talk. The microphone is the browser's default one, not the node's *Microphone* source.
+- **Speech Out** (Output) — reads text aloud with the system voices (no network). Inputs: `text` (spoken when it changes, empty is skipped) and `value` (a number through the *template*, `{v}` or `{v:N}` digits after the point: «{v:1} degrees»). *Voice* is a part of a voice name (the list depends on the system), *language* overrides the voice's, *rate*, *pitch*, *volume*; *a new phrase while speaking* — replace the current one or queue. Output `busy`. The Notify node can also speak on an event; this one is the plain «text → voice».
+- Do not wire Speech Out into Speech In through speakers: the microphone hears the voice and the text feeds itself. Checked with mocks of the recognition and the synthesis (phrases, interim results, restart, a blocked microphone, voice choice, template, queue), **not with a real recognition service or voices**.
+
+Preset: *Speech: Say and Hear*.
 
 ## Map and records
 

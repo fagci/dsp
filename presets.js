@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=56;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=57;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 const patchListEl=document.getElementById('patchList');
@@ -229,6 +229,7 @@ const PRESET_CATS={
   'OSC: Faders and Values':'Network & IoT',
   'Modbus: Poll Registers (RTU / TCP)':'Network & IoT',
   'M-Bus: Read Meters (Wired / Wireless)':'Network & IoT',
+  'Speech: Say and Hear':'Analysis & Measurement',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
@@ -4018,5 +4019,21 @@ d.size.w=420; d.size.h=250; applySize(d);
 const nv=addNode('numview',900,240,{});
 const lg=addNode('recLog',900,360,{}); lg.size.w=240; applySize(lg);
 addEdge(m.id,'text',d.id,'text'); addEdge(d.id,'value',nv.id,'in'); addEdge(d.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+
+preset('Speech: Say and Hear', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Speech In turns what the microphone hears into text (Web Speech: Chrome, Edge, Safari). Set the language (ru-RU, en-US…), press Start and allow the microphone: the phrases go to the ticker and, with their confidence, to the log. In Chrome the audio is sent to the browser vendor\'s recognition service — do not use it for anything private.\n'+
+  'Speech Out reads a text from its wire aloud with the voices of the system (no network); here the Test button checks the sound. Do not wire Speech In to Speech Out on speakers: the microphone would hear the voice and feed it back.'});
+nt.size.w=1100; nt.size.h=130; applySize(nt);
+const s=addNode('speechIn',40,200,{});
+s.size.w=380; s.size.h=210; applySize(s);
+const tk=addNode('ticker',460,200,{time:true});
+tk.size.w=420; tk.size.h=130; applySize(tk);
+const lg=addNode('recLog',460,360,{}); lg.size.w=240; applySize(lg);
+const o=addNode('speechOut',40,440,{});
+o.size.w=380; o.size.h=240; applySize(o);
+addEdge(s.id,'text',tk.id,'text'); addEdge(s.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
