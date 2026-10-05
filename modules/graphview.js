@@ -39,15 +39,33 @@ function gvDelim(n,line){
 // Снимок (входы set и nodes, тип bands): весь набор целиком — что пропало из набора, исчезает с графа.
 // Итог = объединение слоёв; на vis уходит только разница (gvSync), без пересборки всего графа.
 const GV_SHAPES=new Set(['dot','circle','square','box','diamond','triangle','triangleDown','star','hexagon','ellipse','database','text']);
-const GV_NODE={id:/^(id|node|name|key|узел)$/i, label:/^(label|title|text|метка)$/i, shape:/^(shape|форма)$/i,
-               color:/^(color|colour|цвет)$/i, size:/^(size|value|размер)$/i};
 GV_NAMES.color=/^(color|colour|цвет)$/i;
-const gvKeys=(r,names)=>{ const f={}; for(const k in r) for(const nm in names) if(f[nm]==null && names[nm].test(k)) f[nm]=k; return f; };
+// поля записи ищутся по списку имён в порядке предпочтения (from раньше src: у записей декодеров src — протокол),
+// явное имя колонки из параметров перекрывает автоопределение
+const GV_ALIAS={from:['from','source','src','узел1','от'], to:['to','target','dst','dest','узел2','к'],
+  w:['weight','w','value','count','вес'], label:['label','name','text','метка'], color:['color','colour','цвет']};
+const GV_NODEA={id:['id','node','name','key','узел'], label:['label','title','text','метка'], shape:['shape','форма'],
+  color:['color','colour','цвет'], size:['size','value','размер']};
+function gvKeys(r,alias,ovr){
+  const low={}; for(const k in r) low[k.toLowerCase()]=k;
+  const f={};
+  for(const nm in alias){
+    const o=ovr && ovr[nm];
+    if(o){ const k=low[String(o).trim().toLowerCase()]; if(k!==undefined) f[nm]=k; continue; }
+    for(const a of alias[nm]) if(low[a]!==undefined){ f[nm]=low[a]; break; }
+  }
+  return f;
+}
+const gvOvr=(n,pre)=>{ const o={}; for(const k of Object.keys(pre)) if(n.p[pre[k]]) o[k]=n.p[pre[k]]; return o; };
+const gvEdgeOvr=n=>gvOvr(n,{from:'fromCol',to:'toCol',w:'weightCol',label:'labelCol'});
+const gvNodeOvr=n=>gvOvr(n,{id:'nodeCol',label:'nodeLabelCol'});
 const gvKey=(a,b)=>a+'\u0001'+b;
-function gvEdgeRec(r){                              // запись → {from,to,w,label,color} или null
+function gvEdgeRec(r,ovr){                          // запись → {from,to,w,label,color} или null
   if(!r || typeof r!=='object') return null;
-  const f=gvKeys(r,GV_NAMES), ks=Object.keys(r);
-  const from=f.from ?? ks[0], to=f.to ?? ks[1];
+  const f=gvKeys(r,GV_ALIAS,ovr), ks=Object.keys(r);
+  // имён нет вовсе — первые два поля; найдено одно из двух — запись не про связь (псевдоним, голосовой кадр)
+  const bare=f.from==null && f.to==null && !(ovr && (ovr.from || ovr.to));
+  const from=f.from ?? (bare ? ks[0] : null), to=f.to ?? (bare ? ks[1] : null);
   if(from==null || to==null) return null;
   const a=String(r[from]??'').trim(), b=String(r[to]??'').trim();
   if(!a || !b) return null;
@@ -83,19 +101,20 @@ function gvLines(n,text,hdr){                       // hdr: объект рас�
 }
 function gvRecs(n,recs){
   for(const r of Array.isArray(recs) ? recs : [recs]){
-    const e=gvEdgeRec(r); if(e) gvAdd(n,e.from,e.to,e.w,e.label);
+    const e=gvEdgeRec(r,gvEdgeOvr(n)); if(e) gvAdd(n,e.from,e.to,e.w,e.label);
   }
 }
 function gvSetEdges(n,recs){                        // снимок рёбер
   const m=new Map();
-  for(const r of recs){ const e=gvEdgeRec(r); if(e) gvPut(m,e); }
+  const ovr=gvEdgeOvr(n);
+  for(const r of recs){ const e=gvEdgeRec(r,ovr); if(e) gvPut(m,e); }
   n.sEdges=m; n.dirty=true;
 }
 function gvSetNodes(n,recs){                        // снимок узлов: id[,label,shape,color,size]
-  const m=new Map();
+  const m=new Map(), ovr=gvNodeOvr(n);
   for(const r of recs){
     if(!r || typeof r!=='object') continue;
-    const f=gvKeys(r,GV_NODE), id=String(r[f.id ?? Object.keys(r)[0]]??'').trim();
+    const f=gvKeys(r,GV_NODEA,ovr), id=String(r[f.id ?? (ovr.id ? null : Object.keys(r)[0])]??'').trim();
     if(!id) continue;
     const a={};
     if(f.label!=null && r[f.label]!=='') a.label=String(r[f.label]);
@@ -183,6 +202,11 @@ function gvSync(n){
   diff(n.dN,n.sigN,n.vN,(k,nd)=>gvNodeItem(n,nd,T));    // узлы раньше рёбер
   diff(n.dE,n.sigE,n.vE,(k,e)=>gvEdgeItem(n,k,e,T));
 }
+function gvRemap(n){                                // другие колонки — снимки читаются заново
+  if(n.lastSet) gvSetEdges(n,n.lastSet);
+  if(n.lastNodes) gvSetNodes(n,n.lastNodes);
+  redraw(n);
+}
 function gvRestyle(n){ n.sigN.clear(); n.sigE.clear(); n.sync=true; n.net?.setOptions({physics:{enabled:!!n.p.physics}}); redraw(n); }
 
 def({ id:'graphview', title:'Graph', cat:'Output', kw:'network graph links nodes edges csv vis connections', resize:true, gv:true, readout:true, w:420, h:300,
@@ -193,6 +217,12 @@ def({ id:'graphview', title:'Graph', cat:'Output', kw:'network graph links nodes
           {n:'weights',t:'check',d:false,label:'weights on edges',fn:gvRestyle},
           {n:'physics',t:'check',d:true,label:'physics (layout)',fn:gvRestyle},
           {n:'max',t:'num',d:500,label:'max nodes',adv:true},
+          {n:'fromCol',t:'text',d:'',label:'edge from col (auto)',adv:true,fn:n=>gvRemap(n)},
+          {n:'toCol',t:'text',d:'',label:'edge to col (auto)',adv:true,fn:n=>gvRemap(n)},
+          {n:'weightCol',t:'text',d:'',label:'edge weight col (auto)',adv:true,fn:n=>gvRemap(n)},
+          {n:'labelCol',t:'text',d:'',label:'edge label col (auto)',adv:true,fn:n=>gvRemap(n)},
+          {n:'nodeCol',t:'text',d:'',label:'node id col (auto)',adv:true,fn:n=>gvRemap(n)},
+          {n:'nodeLabelCol',t:'text',d:'',label:'node label col (auto)',adv:true,fn:n=>gvRemap(n)},
           {n:'fit',t:'button',label:'Fit',fn:n=>n.net?.fit({animation:true})},
           {n:'clear',t:'button',label:'Clear',fn:n=>{ n.p.csv=''; gvClear(n); }}],
   init:n=>{ n.edges=new Map(); n.aNodes=new Set(); n.sEdges=new Map(); n.sNodes=new Map(); n.dN=new Map(); n.dE=new Map();
