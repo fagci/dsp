@@ -7,11 +7,10 @@
    Голос AMBE не декодируется — отдаются сырые 9 байт кадра. Кодеры — для генератора и тестов (сверка с прошивкой и MMDVMHost). */
 
 const DSTAR_BAUD=4800, DSTAR_FR=96, DSTAR_SUPER=21;
-const dstarBits=(bytes,n)=>{ const b=[]; for(let i=0;i<n;i++) for(let j=0;j<8;j++) b.push((bytes[i]>>j)&1); return b; };   // младший бит первым
 // синхро заголовка (хвост битовой синхронизации + 15 бит), синхро данных, конец передачи
 const DSTAR_HDR_SYNC=fsk2Sync('010101010111011001010000',{kind:'hdr'});
-const DSTAR_DAT_SYNC=fsk2Sync(dstarBits([0x55,0x2D,0x16],3).join(''),{kind:'dat'});
-const DSTAR_END=dstarBits([0x55,0x55,0x55,0x55,0xC8,0x7A],6);
+const DSTAR_DAT_SYNC=fsk2Sync(bitsLsb([0x55,0x2D,0x16],3).join(''),{kind:'dat'});
+const DSTAR_END=bitsLsb([0x55,0x55,0x55,0x55,0xC8,0x7A],6);
 const DSTAR_SCR=[0,247,52,9,68,70,215,6,179,114,222,66,245,165,216,241,135,123,154,4,34,163,107,131,89,57,111,161,250,82,236,248,195,61,77,2,145,209,181,193,172,156,183,80,125,41,118,252,225,158,38,129,200,232,218,96,86,206,91,168,190,20,59,254,112,79,147,64,100,116,109,48,43,231,45,84,95,138,29,127,184,167,73,32,50,186,54,152,149,243,6];
 const DSTAR_SLOW_SCR=[0x70,0x4F,0x93];
 // перемежитель: i-й бит свёртки → позиция в блоке (байты по 8 бит, младший первым), первые 4 бита блока — хвост синхро
@@ -45,7 +44,7 @@ function dstarConvDec(rx,n){                                       // rx — 2n 
 }
 // заголовок 41 байт → 660 бит FEC в порядке передачи (после 24-символьного синхро)
 function dstarHeaderEncode(h41){
-  const coded=dstarConvEnc([...dstarBits(h41,41),0,0]), out=new Uint8Array(664);
+  const coded=dstarConvEnc([...bitsLsb(h41,41),0,0]), out=new Uint8Array(664);
   for(let i=0;i<660;i++) out[DSTAR_IL[i]]=coded[i];
   for(let p=0;p<664;p++) out[p]^=(DSTAR_SCR[p>>3]>>(p&7))&1;
   return out.subarray(4);
@@ -124,7 +123,7 @@ FSK4.protos.dstar={
     let ed=0; for(let i=0;i<48;i++) ed+=bits[i]^DSTAR_END[i];
     if(ed<=6){ this.end(P,L,out,'end pattern'); fsk4Drop(L); return; }
     if(k===0){
-      let d=0; for(let i=0;i<24;i++) d+=bits[72+i]^dstarBits([0x55,0x2D,0x16],3)[i];
+      let d=0; for(let i=0;i<24;i++) d+=bits[72+i]^bitsLsb([0x55,0x2D,0x16],3)[i];
       if(d>4 && L.first){ fsk4Drop(L); return; }
       if(d<=4){ L.first=false; L.blind=false; }
     }
@@ -202,11 +201,11 @@ function dstarScript(mode){
   const frames=mode==='late' ? 63 : 42;                            // два или три суперкадра
   for(let f=0;f<frames;f++){
     const k=f%DSTAR_SUPER, ambe=Uint8Array.from({length:9},rnd);
-    bits.push(...dstarBits(ambe,9));
-    if(k===0) bits.push(...dstarBits([0x55,0x2D,0x16],3));
+    bits.push(...bitsLsb(ambe,9));
+    if(k===0) bits.push(...bitsLsb([0x55,0x2D,0x16],3));
     else {
       const el=els[(((f/DSTAR_SUPER)|0)*10+((k-1)>>1))%els.length], part=(k-1)&1 ? el.subarray(3,6) : el.subarray(0,3);
-      bits.push(...dstarBits(Uint8Array.from(part,(v,i)=>v^DSTAR_SLOW_SCR[i]),3));
+      bits.push(...bitsLsb(Uint8Array.from(part,(v,i)=>v^DSTAR_SLOW_SCR[i]),3));
     }
   }
   bits.push(...DSTAR_END);

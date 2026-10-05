@@ -4,6 +4,8 @@
 function pv(n,I,name){ const v=I[name]; return (typeof v==='number' && isFinite(v)) ? v : n.p[name]; }
 function clamp(v,a,b){ return v<a?a:v>b?b:v; }
 function popcnt32(v){ v-=(v>>>1)&0x55555555; v=(v&0x33333333)+((v>>>2)&0x33333333); return (((v+(v>>>4))&0x0F0F0F0F)*0x01010101)>>>24; }
+function bitsLsb(bytes,n=bytes.length){ const b=[]; for(let i=0;i<n;i++) for(let j=0;j<8;j++) b.push((bytes[i]>>j)&1); return b; }   // байты → биты, младший первым
+function bitRev(v,w){ let r=0; for(let i=0;i<w;i++) r=(r<<1)|((v>>>i)&1); return r>>>0; }
 function pow2ge(n){ let p=1; while(p<n) p<<=1; return p; }
 function rms(a){ let s=0; for(let i=0;i<a.length;i++) s+=a[i]*a[i]; return Math.sqrt(s/a.length); }
 

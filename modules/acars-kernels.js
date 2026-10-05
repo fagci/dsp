@@ -11,9 +11,8 @@ const VAC_BAUD=2400, VAC_PH=8, VAC_DEL=0x7f, VAC_MAXLEN=240;
 const VAC_INTERP=['1 = 1200 Hz','inverted','differential (change)','differential (same)'];
 function vacOdd(b){ b^=b>>4; b^=b>>2; b^=b>>1; return (b&1)===1; }
 function vacPar(c){ c&=0x7f; return vacOdd(c) ? c : c|0x80; }
-function vacBits(bytes){ const b=[]; for(const v of bytes) for(let i=0;i<8;i++) b.push((v>>i)&1); return b; }
 // '*' SYN SYN SOH: последние 32 бита перед блоком
-const VAC_SYNC=(()=>{ let v=0; for(const b of vacBits([0x2A,0x16,0x16,0x01].map(vacPar))) v=((v<<1)|b)>>>0; return v; })();
+const VAC_SYNC=(()=>{ let v=0; for(const b of bitsLsb([0x2A,0x16,0x16,0x01].map(vacPar))) v=((v<<1)|b)>>>0; return v; })();
 const VAC_CRCT=(()=>{
   const t=new Uint16Array(256);
   for(let i=0;i<256;i++){ let c=i; for(let k=0;k<8;k++) c=c&1 ? (c>>>1)^0x8408 : c>>>1; t[i]=c; }
@@ -193,8 +192,8 @@ function vacSimBits(k){
   by.push(crc&0xFF,crc>>8,VAC_DEL);
   const bits=[];
   for(let i=0;i<16;i++) bits.push(1);
-  for(const v of vacBits([0x2B,0x2A,0x16,0x16,0x01].map(vacPar))) bits.push(v);
-  for(const v of vacBits(by)) bits.push(v);
+  for(const v of bitsLsb([0x2B,0x2A,0x16,0x16,0x01].map(vacPar))) bits.push(v);
+  for(const v of bitsLsb(by)) bits.push(v);
   for(let i=0;i<8;i++) bits.push(1);
   for(let i=0;i<3600;i++) bits.push(2);                             // пауза без несущей
   return bits;
