@@ -1823,6 +1823,73 @@ async function airspyOpenDevice(dev, gain){
     tunerName:rates.includes(6000000)?'Airspy Mini':'Airspy', kind:'airspy', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
 }
 
+// Airspy HF+ (Discovery / Dual / Ultra): готовый комплексный IQ после DDC в самом приёмнике, int16 (I, Q), без пересчёта на хосте.
+// Запросы — по libairspyhf: режим приёма 1, частота 2 (4 байта big-endian), список частот дискретизации 3, частота дискретизации 4,
+// AGC 10, порог AGC 11, аттенюатор 12 (шаг 6 дБ, 0..8), HF-LNA 13 (+6 дБ). Поток — bulk IN 1. На Linux: нет конфликтующих модулей ядра.
+// Направление запроса частоты дискретизации (OUT без данных или IN) в памяти не уверен, поэтому пробуем оба.
+async function airspyhfOpenDevice(dev, gain){
+  const REQ={MODE:1, SET_FREQ:2, GET_SAMPLERATES:3, SET_SAMPLERATE:4, SET_AGC:10, SET_AGC_THR:11, SET_ATT:12, SET_LNA:13};
+  await dev.open();
+  await dev.selectConfiguration(1);
+  await dev.claimInterface(0);
+  let tuneEpoch=0, rxOn=false;
+  const outv=(request,value,index,data)=>sdrVendorOut(dev, request, value, index||0, data);
+  const setMode=m=>outv(REQ.MODE, m, 0);
+  await setMode(0);
+  let rates=[768000];
+  try{
+    const c=await sdrVendorIn(dev, REQ.GET_SAMPLERATES, 0, 4), cnt=c.data.getUint32(0,true);
+    if(cnt>0 && cnt<16){
+      const r=await sdrVendorIn(dev, REQ.GET_SAMPLERATES, cnt, cnt*4);
+      rates=[]; for(let i=0;i<cnt;i++) rates.push(r.data.getUint32(i*4,true));
+    }
+  }catch(e){}
+  rates=rates.filter(r=>r>0);
+  async function setSampleRate(rate){
+    let idx=0;
+    for(let i=1;i<rates.length;i++) if(Math.abs(Math.log(rates[i]/rate))<Math.abs(Math.log(rates[idx]/rate))) idx=i;
+    const was=rxOn;
+    if(was) await setMode(0);
+    try{ await outv(REQ.SET_SAMPLERATE, 0, idx); }
+    catch(e){ await sdrVendorIn(dev, REQ.SET_SAMPLERATE, idx, 1); }
+    if(was){ await dev.clearHalt('in',1).catch(()=>{}); await setMode(1); }
+    return rates[idx];
+  }
+  async function setCenterFrequency(freq){
+    freq=Math.round(freq);
+    const b=new DataView(new ArrayBuffer(4)); b.setUint32(0, freq, false);              // big-endian
+    await outv(REQ.SET_FREQ, 0, 0, b.buffer);
+    tuneEpoch++;
+    return freq;
+  }
+  // auto — АРУ приёмника (порог низкий). Ручной gain 0..49.6: аттенюатор 8..0 шагов по 6 дБ и HF-LNA (+6 дБ) на верхней половине
+  async function setGain(g){
+    if(g==null){ await outv(REQ.SET_AGC, 1, 0); await outv(REQ.SET_AGC_THR, 0, 0); return; }
+    const f=Math.max(0, Math.min(1, g/49.6));
+    await outv(REQ.SET_AGC, 0, 0);
+    await outv(REQ.SET_ATT, Math.round((1-f)*8), 0);
+    await outv(REQ.SET_LNA, f>=.5 ? 1 : 0, 0);
+  }
+  async function setBiasTee(){}                                                         // у HF+ питания антенны нет
+  async function resetBuffer(){
+    await setMode(0);
+    await dev.clearHalt('in',1).catch(()=>{});
+    await setMode(1); rxOn=true;
+  }
+  async function readSamples(nBytes){
+    const res=await dev.transferIn(1, nBytes);
+    return res.data.buffer;
+  }
+  async function close(){
+    if(rxOn) await setMode(0).catch(()=>{});
+    await dev.releaseInterface(0).catch(()=>{});
+    await dev.close();
+  }
+  await setGain(gain);
+  return {setSampleRate, setCenterFrequency, setGain, setBiasTee, resetBuffer, readSamples, close,
+    tunerName:dev.productName||'Airspy HF+', kind:'airspyhf', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
+}
+
 // SDRplay RSP1 и донглы на Mirics MSi2500 + MSi001. Протокол — по libmirisdr-4 (Slugen, SM5BSZ).
 // Поток — блоки по 1024 байта: 16 байт заголовка + отсчёты в одном из 4 форматов, формат зависит
 // от частоты дискретизации. Переводим в int16 IQ. На Linux: rmmod msi001 msi2500
@@ -2301,12 +2368,14 @@ const SDR_USB_FILTERS=[
   {vendorId:0x15f4,productId:0x0131},                          // Astrometa DVB-T2
   {vendorId:0x1d50,productId:0x6089},{vendorId:0x1d50,productId:0x604b},{vendorId:0x1d50,productId:0xcc15}, // HackRF One, Jawbreaker, rad1o
   {vendorId:0x1d50,productId:0x60a1},                          // Airspy R2/Mini
+  {vendorId:0x03eb,productId:0x800c},                          // Airspy HF+ (Discovery / Dual / Ultra)
   {vendorId:0x04b4,productId:0x00f3},{vendorId:0x04b4,productId:0x00f1}, // RX-888 / SDDC: загрузчик FX3, с прошивкой
   ...MIRI_USB_IDS.map(([vendorId,productId])=>({vendorId,productId}))
 ];
 function sdrOpenDevice(dev, ppm, gain){
   if(MIRI_USB_IDS.some(([v,p])=>v===dev.vendorId && p===dev.productId)) return mirisdrOpenDevice(dev, gain);
   if(rx888Is(dev, RX888_APP)) return rx888OpenDevice(dev, gain);
+  if(dev.vendorId===0x03eb && dev.productId===0x800c) return airspyhfOpenDevice(dev, gain);
   if(dev.vendorId===0x1d50) return dev.productId===0x60a1 ? airspyOpenDevice(dev, gain) : hackrfOpenDevice(dev, gain);
   return rtlOpenDevice(dev, ppm, gain);
 }
@@ -2332,6 +2401,7 @@ ${sdrVendorOut}
 ${hackrfOpenDevice}
 ${airspyMakeConv}
 ${airspyOpenDevice}
+${airspyhfOpenDevice}
 ${mirisdrMakeConv}
 ${mirisdrOpenDevice}
 const MIRI_USB_IDS=${JSON.stringify(MIRI_USB_IDS)};
@@ -4414,7 +4484,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     // только файл: повтор и позиция
     {n:'loop',t:'check',d:true,label:'loop playback'},
     {n:'seek',t:'range',min:0,max:100,step:.1,d:0,label:'position, %'},
-    {n:'sr',t:'select',opts:['960000','1024000','1920000','2048000','2400000','2500000','3000000','3200000','6000000','8000000','10000000','12000000','16000000','20000000'],d:'1024000',label:'sample rate',
+    {n:'sr',t:'select',opts:['768000','912000','960000','1024000','1920000','2048000','2400000','2500000','3000000','3200000','6000000','8000000','10000000','12000000','16000000','20000000'],d:'1024000',label:'sample rate',
      fn:async n=>{ if(n.dev){ try{ n.sourceRate=await n.dev.setSampleRate(rtlSafeSr(n.p.sr)); rtlResetRing(n); }
        catch(e){ n.status='sample rate change error: '+e.message; } } }},
     // режим демодуляции/полоса/де-эмфазис — ОБЩИЕ на все 4 канала (проще UI); частота у каждого своя

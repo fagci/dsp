@@ -29,7 +29,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 ### Sources
 - Oscillator, sweep/jammer, constant, LFO, text source
 - Microphone (stereo A+B), audio file, audio stream URL, tab/screen audio capture
-- **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500, RX-888 (mkI/mkII/mkIII) — multiple tuners/demodulators per device, wideband sweep with a panoramic waterfall, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
+- **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, Airspy HF+, SDRplay RSP1 / MSi2500, RX-888 (mkI/mkII/mkIII) — multiple tuners/demodulators per device, wideband sweep with a panoramic waterfall, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
 - **KiwiSDR** remote receivers (public list included)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
@@ -123,8 +123,11 @@ For HF: **noise blanker** cuts short impulses (power-line, switching supplies) o
 | RTL-SDR (RTL2832U + R820T/R828D, incl. Blog V4) | up to 3.2 MSPS | 8 bit | `dvb_usb_rtl28xxu` |
 | HackRF One / Jawbreaker / rad1o | 2–20 MSPS | 8 bit | `hackrf` |
 | Airspy R2 / Mini | rates reported by firmware | 12 bit | `airspy` |
+| Airspy HF+ (Discovery / Dual / Ultra) — HF and VHF | rates reported by firmware (192 / 256 / 384 / 456 / 768 kSPS and the like; 768 and 912 kSPS are in the list, lower ones are picked by the nearest match) | 16 bit complex IQ from the receiver's own DDC | — |
 | SDRplay RSP1 and clones, MSi2500 + MSi001 TV sticks | 1.3–15 MSPS | 14 bit up to 6 MSPS, then 12 / 10 / 8 bit | `msi001`, `msi2500` |
 | RX-888 mkI / mkII / mkIII (SDDC, Cypress FX3) | 0.25–10 MSPS out of a 16-bit ADC at up to 66 MSPS | 16 bit ADC, DDC in the browser | — |
+
+**Airspy HF+**: the receiver gives finished IQ, the node adds no host-side conversion. *auto* gain is the receiver's AGC (low threshold); manual 0…49.6 dB sets the attenuator (6 dB steps, 8…0) and, on the upper half of the range, the HF LNA (+6 dB). The bias-tee control does nothing (the HF+ cannot power an antenna). No IQ balancer / library DSP of the vendor library is applied. The protocol follows libairspyhf from memory and has not been checked on a device — see the notes in the pull request.
 
 Common controls: gain (auto or manual), bias-tee, ppm correction, center shift off DC. Manual gain works only with *auto* off — moving the gain slider (or wiring its input) switches *auto* off by itself. On R820T / R828D (incl. RTL-SDR Blog V4) the LNA and mixer steps follow librtlsdr's table exactly (29 steps, 0–49.6 dB, VGA 16.3 dB); the slider rounds up to the next step.
 
