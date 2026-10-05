@@ -31,6 +31,8 @@ function commsMessage(r,sig){
   if(r.src==='TETRA' && k==='message')                                     // SDS: текст, статус, положение (LIP), данные
     return base(r.lat!=null ? 'location' : r.message!=null ? 'text' : 'data', {text:r.message!=null ? String(r.message) : r.lat!=null ? r.lat+', '+r.lon+(r.speed!=null ? ' · '+r.speed+' km/h' : '') : r.status!=null ? 'status 0x'+r.status.toString(16).toUpperCase().padStart(4,'0') : r.hex||'', service:r.service,
       lat:r.lat, lon:r.lon, speed:r.speed, heading:r.heading, hex:r.hex});
+  if(r.src==='POCSAG' && k==='message')                                   // пейджер: адрес — RIC, у тональных текста нет
+    return base(r.type==='tone' ? 'data' : 'text', {to:commsId(r.ric), text:r.type==='tone' ? 'tone only' : r.text||'', service:(r.type||'')+' '+r.baud+' Bd, function '+r.func});
   if(r.src==='D-STAR' && k==='text') return base('text', {text:String(r.message), service:'slow data'});
   if(r.src==='D-STAR' && k==='gps'){
     const g=typeof dmrNmea==='function' ? dmrNmea(String(r.nmea||'')) : {};
@@ -62,7 +64,7 @@ function commsWho(r){
 }
 
 /* ---- Messages ---- */
-const COMMS_PROTOS=['all','DMR','P25','NXDN','dPMR','YSF','M17','D-STAR','TETRA'];
+const COMMS_PROTOS=['all','DMR','P25','NXDN','dPMR','YSF','M17','D-STAR','TETRA','POCSAG'];
 function commsMsgRow(m){
   return {time:new Date(m.t).toISOString(), protocol:m.src, type:m.type, from:m.from||'', to:m.to||'', text:m.text||'', service:m.service||'', lat:m.lat ?? '', lon:m.lon ?? '', ip:m.ip||'', crc:m.crc||'', slot:m.slot||'', cc:m.cc ?? m.nac ?? m.ran ?? m.can ?? ''};
 }
