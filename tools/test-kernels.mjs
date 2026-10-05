@@ -103,6 +103,17 @@ const cases=[
   ['IQ Quality: Q +0.5 дБ, фаза 2°, DC 0.01 по I',`(()=>{ const g=Math.pow(10,.5/20), ph=2*Math.PI/180;
     const r=iqMeterRun('iqQuality',{win:500},t=>{ const I=.3*Math.cos(2*Math.PI*20000*t), Q=.3*Math.sin(2*Math.PI*20000*t); return [I+.01, g*(Q*Math.cos(ph)+I*Math.sin(ph))]; });
     return [r.dc.toFixed(1), r.gain.toFixed(2), r.phase.toFixed(2), r.irr.toFixed(1)].join(); })()`,'-40.0,0.50,2.00,29.5'],
+  ['EVM / MER: QPSK, шум σ=0.05, поворот 10°, усиление 0.7',`(()=>{ let sd=7; const rnd=()=>(sd=(sd*16807)%2147483647)/2147483647, gs=()=>Math.sqrt(-2*Math.log(rnd()+1e-12))*Math.cos(2*Math.PI*rnd());
+    const n={p:{mod:'QPSK',win:'4096'}}; IQK.evmMeter.init(n); const re=new Float32Array(4096), im=new Float32Array(4096), ph=10*Math.PI/180;
+    for(let i=0;i<4096;i++){ const a=Math.PI/4+Math.floor(rnd()*4)*Math.PI/2, x=Math.cos(a)+.05*gs(), y=Math.sin(a)+.05*gs();
+      re[i]=.7*(x*Math.cos(ph)-y*Math.sin(ph)); im[i]=.7*(x*Math.sin(ph)+y*Math.cos(ph)); }
+    const r=IQK.evmMeter.process(n,{in:{sr:1,fc:0,chunks:[{re,im,t0:0}]}},{});
+    return [Math.round(r.mer), Math.round(r.evm), Math.round(-r.phase)].join(); })()`,'23,7,10'],
+  ['EVM / MER: 16QAM, шум σ=0.03 (ожидается 27.5 дБ)',`(()=>{ let sd=11; const rnd=()=>(sd=(sd*16807)%2147483647)/2147483647, gs=()=>Math.sqrt(-2*Math.log(rnd()+1e-12))*Math.cos(2*Math.PI*rnd());
+    const n={p:{mod:'16QAM',win:'4096'}}; IQK.evmMeter.init(n); const re=new Float32Array(4096), im=new Float32Array(4096), g=Math.sqrt(10)/1;
+    for(let i=0;i<4096;i++){ re[i]=([-3,-1,1,3][Math.floor(rnd()*4)])/g+.03*gs(); im[i]=([-3,-1,1,3][Math.floor(rnd()*4)])/g+.03*gs(); }
+    const r=IQK.evmMeter.process(n,{in:{sr:1,fc:0,chunks:[{re,im,t0:0}]}},{});
+    return r.mer>26.8 && r.mer<28.2; })()`,true],
 ];
 
 let bad=0;

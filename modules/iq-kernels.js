@@ -918,6 +918,61 @@ IQK.iqQuality={
     return r && !r.none ? {dc:r.dc, dcc:r.dcc, gain:r.gain, phase:r.phase, irr:r.irr} : {dc:null, dcc:null, gain:null, phase:null, irr:null};
   }};
 
+/* ---- EVM / MER ---- */
+// Вход — по одному комплексному отсчёту на символ (выход PSK Demodulator, Symbol Sync). За окно символов:
+// решение по ближайшей точке, комплексный множитель a = Σ d·s* / Σ|s|² (усиление и поворот по МНК),
+// 4 прохода; EVM = √(Σ|a·s − d|² / Σ|d|²), MER = −20·lg EVM. Идеальные точки — единичной средней мощности.
+function evmPoints(mod){
+  const P=[];
+  if(mod==='BPSK') P.push([1,0],[-1,0]);
+  else if(mod==='QPSK') for(let k=0;k<4;k++) P.push([Math.cos(Math.PI/4+k*Math.PI/2),Math.sin(Math.PI/4+k*Math.PI/2)]);
+  else if(mod==='8PSK') for(let k=0;k<8;k++) P.push([Math.cos(k*Math.PI/4),Math.sin(k*Math.PI/4)]);
+  else { const L=Math.sqrt(+mod.slice(0,-3)), g=Math.sqrt(2*(L*L-1)/3);
+    for(let i=0;i<L;i++) for(let q=0;q<L;q++) P.push([(2*i-L+1)/g,(2*q-L+1)/g]); }
+  return P;
+}
+function evmCalc(re,im,N,P){
+  let ar=0, ai=0, pw=0;
+  for(let i=0;i<N;i++) pw+=re[i]*re[i]+im[i]*im[i];
+  if(!(pw>1e-20)) return null;
+  const g=Math.sqrt(N/pw); ar=g; ai=0;
+  const dr=new Float64Array(N), di=new Float64Array(N);
+  for(let it=0;it<4;it++){
+    let nr=0, ni=0, d2=0;
+    for(let i=0;i<N;i++){
+      const x=re[i]*ar-im[i]*ai, y=re[i]*ai+im[i]*ar;
+      let bd=1e30, bk=0;
+      for(let k=0;k<P.length;k++){ const e=(x-P[k][0])**2+(y-P[k][1])**2; if(e<bd){ bd=e; bk=k; } }
+      dr[i]=P[bk][0]; di[i]=P[bk][1];
+      nr+=dr[i]*re[i]+di[i]*im[i]; ni+=di[i]*re[i]-dr[i]*im[i]; d2+=re[i]*re[i]+im[i]*im[i];
+    }
+    ar=nr/d2; ai=ni/d2;
+  }
+  let e2=0, d2=0, pk=0;
+  for(let i=0;i<N;i++){
+    const x=re[i]*ar-im[i]*ai-dr[i], y=re[i]*ai+im[i]*ar-di[i], e=x*x+y*y;
+    e2+=e; d2+=dr[i]*dr[i]+di[i]*di[i]; if(e>pk) pk=e; }
+  const evm=Math.sqrt(e2/d2);
+  return {evm:evm*100, mer:-20*Math.log10(evm+1e-9), peak:Math.sqrt(pk/(d2/N))*100, phase:Math.atan2(ai,ar)*180/Math.PI, gain:20*Math.log10(Math.hypot(ar,ai)/g)};
+}
+IQK.evmMeter={
+  init(n){ n.k=0; n.ui=null; n.mod=''; },
+  process(n,I){
+    const s=iqIn(I,'in');
+    if(!s){ n.ui=null; return {evm:null, mer:null, phase:null, peak:null}; }
+    const N=+n.p.win;
+    if(n.mod!==n.p.mod || n.N!==N){ n.mod=n.p.mod; n.N=N; n.P=evmPoints(n.mod); n.bre=new Float32Array(N); n.bim=new Float32Array(N); n.k=0; n.res=null; }
+    for(const c of s.chunks){
+      const xr=c.re, xi=c.im;
+      for(let i=0;i<xr.length;i++){
+        n.bre[n.k]=xr[i]; n.bim[n.k]=xi ? xi[i] : 0;
+        if(++n.k>=N){ n.k=0; n.res=evmCalc(n.bre,n.bim,N,n.P)||{none:true}; }
+      }
+    }
+    const r=n.res; n.ui=r||{};
+    return r && !r.none ? {evm:r.evm, mer:r.mer, phase:r.phase, peak:r.peak} : {evm:null, mer:null, phase:null, peak:null};
+  }};
+
 /* ---- Mode S / ADS-B: общее для демодулятора, декодера и генератора ---- */
 // CRC-24 Mode S (полином 0xFFF409); остаток = CRC(данные) ^ последние 3 байта
 const MODES_CRC_T=(()=>{ const t=new Uint32Array(256);

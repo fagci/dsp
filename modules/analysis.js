@@ -825,6 +825,66 @@ def({ id:'chsnr', title:'Channel SNR', cat:'Analysis',
       `SNR ${n.snr.toFixed(1)} dB · signal ${n.sigDb.toFixed(1)} · noise ${n.noiseDb.toFixed(1)}`; }});
 
 
+// Мощность в канале, занятая полоса и ACPR по спектру. Шум — медиана мощностей бинов вокруг канала,
+// делённая на ln2 (экспоненциальное распределение), вычитается по числу бинов. Мощность — сумма мощностей
+// бинов, делённая на ENBW окна (Hann 1.5): шкала спектра, не калибровка.
+function chPowerBand(s,fa,fb,nz,enbw){
+  const N=s.mag.length, a=clamp(Math.ceil(specBin(s,fa)),0,N-1), b=clamp(Math.floor(specBin(s,fb)),0,N-1);
+  let p=0; for(let i=a;i<=b;i++) p+=s.mag[i]*s.mag[i]-nz;
+  return Math.max(p,0)/enbw;
+}
+function chPower(s,P){
+  const N=s.mag.length;
+  let f0=P.f;
+  if(!(f0>0)){ let bv=-1; for(let i=1;i<N-1;i++) if(s.mag[i]>bv){ bv=s.mag[i]; f0=specHz(s,i); } }
+  const half=Math.max(P.span/2, 2*P.sp+P.abw/2+P.bw);
+  const lo=clamp(Math.floor(specBin(s,f0-half)),0,N-1), hi=clamp(Math.ceil(specBin(s,f0+half)),0,N-1);
+  let nz=0;
+  if(P.sub && hi>lo){
+    const st=Math.max(1,Math.floor((hi-lo)/2048)), a=[];
+    for(let i=lo;i<=hi;i+=st) a.push(s.mag[i]*s.mag[i]);
+    a.sort((x,y)=>x-y); nz=a[a.length>>1]/Math.LN2; }
+  const pm=chPowerBand(s,f0-P.bw/2,f0+P.bw/2,nz,P.enbw);
+  const r={f0, pm, nz, adj:[P.sp,2*P.sp].map(d=>[-d,d].map(o=>chPowerBand(s,f0+o-P.abw/2,f0+o+P.abw/2,nz,P.enbw)))};
+  const a=clamp(Math.floor(specBin(s,f0-P.span/2)),0,N-1), b=clamp(Math.ceil(specBin(s,f0+P.span/2)),0,N-1);
+  let tot=0; for(let i=a;i<=b;i++) tot+=Math.max(s.mag[i]*s.mag[i]-nz,0);
+  const tail=(1-P.pct/100)/2*tot;
+  let c=0,il=a,ih=b;
+  for(let i=a;i<=b;i++){ c+=Math.max(s.mag[i]*s.mag[i]-nz,0); if(c>=tail){ il=i; break; } }
+  c=0; for(let i=b;i>=a;i--){ c+=Math.max(s.mag[i]*s.mag[i]-nz,0); if(c>=tail){ ih=i; break; } }
+  r.fl=specHz(s,il-.5); r.fh=specHz(s,ih+.5); r.obw=Math.max(0,r.fh-r.fl);
+  return r;
+}
+def({ id:'chpwr', lazy:'proc', title:'Channel Power / OBW / ACPR', cat:'Analysis',
+  ins:[{n:'spec',t:'spec'},{n:'f',t:'num'},{n:'bw',t:'num'},{n:'span',t:'num'},{n:'spacing',t:'num'}],
+  outs:[{n:'power',t:'num'},{n:'obw',t:'num'},{n:'fc',t:'num'},{n:'acpL',t:'num'},{n:'acpU',t:'num'},{n:'altL',t:'num'},{n:'altU',t:'num'}],
+  readout:true, tall:true,
+  params:[{n:'f',t:'num',d:0,label:'channel centre, Hz (0 = the strongest peak)'},
+          {n:'bw',t:'range',min:100,max:5000000,step:100,d:12500,log:true,label:'channel bandwidth, Hz'},
+          {n:'span',t:'range',min:1000,max:20000000,step:1000,d:100000,log:true,label:'OBW search span, Hz (several × the signal)'},
+          {n:'pct',t:'range',min:90,max:99.9,step:.1,d:99,label:'OBW, % of power'},
+          {n:'spacing',t:'range',min:100,max:5000000,step:100,d:25000,log:true,label:'adjacent channel offset, Hz'},
+          {n:'abw',t:'range',min:0,max:5000000,step:100,d:0,label:'adjacent channel bandwidth, Hz (0 = as the channel)'},
+          {n:'sub',t:'check',d:true,label:'subtract the noise floor'},
+          {n:'enbw',t:'range',min:1,max:3,step:.01,d:1.5,label:'window ENBW, bins (Hann 1.5)',adv:true},
+          {n:'smooth',t:'range',min:0,max:.95,step:.01,d:.5,label:'smoothing'}],
+  init:n=>{n.r=null;n.sm=null;},
+  process(n,I){
+    for(const k of ['f','bw','span','spacing']) if(typeof I[k]==='number') setMod(n,k,I[k]);
+    const s=I.spec, o=()=>n.r?{power:n.r.pdb,obw:n.r.obw,fc:n.r.fc,acpL:n.r.d[0],acpU:n.r.d[1],altL:n.r.d[2],altU:n.r.d[3]}:{};
+    if(!s) return o();
+    const p=n.p, r=chPower(s,{f:p.f,bw:p.bw,span:p.span,pct:p.pct,sp:p.spacing,abw:p.abw>0?p.abw:p.bw,sub:p.sub,enbw:p.enbw});
+    const k=p.smooth, m=n.sm||(n.sm={}), sm=(key,v)=>m[key]=m[key]==null?v:m[key]*k+v*(1-k);
+    const pm=sm('pm',r.pm), adj=[r.adj[0][0],r.adj[0][1],r.adj[1][0],r.adj[1][1]].map((v,i)=>sm('a'+i,v));
+    const db=x=>10*Math.log10(x+1e-24);
+    n.r={f0:r.f0, pdb:db(pm), obw:sm('obw',r.obw), fc:sm('fc',(r.fl+r.fh)/2), d:adj.map(v=>Math.max(db(v)-db(pm),-120))};
+    return o(); },
+  draw(n){ const r=n.r, el=n.el.querySelector('.readout'), fd=v=>v<=-119.9 ? '< noise' : v.toFixed(1); if(!el) return;
+    el.textContent=!r ? '—' :
+      'P '+r.pdb.toFixed(1)+' dB @ '+fmtHz(r.f0,3)+'Hz · OBW '+fmtHz(r.obw)+'Hz ('+n.p.pct+'%) · centre '+fmtHz(r.fc,3)+'Hz\n'+
+      'ACPR '+r.d.slice(0,2).map(fd).join(' / ')+' dBc · ALT '+r.d.slice(2).map(fd).join(' / ')+' dBc'; }});
+
+
 def({ id:'chandet', title:'Channel Grid Detector', cat:'Analysis',
   // Как 'cfar', но кандидаты — не произвольные пробеги бинов, а частоты по сетке каналов
   // (канал 1 = lo, канал 2 = lo+step, …, без сдвига на пол-шага) — соседние занятые каналы
