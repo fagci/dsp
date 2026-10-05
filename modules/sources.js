@@ -4321,7 +4321,8 @@ function sdrSweepPlan(n, hw){
   n.sw={key, N, use, stride, binHz, lo, hops, k:0, win, wsum, hw:!!hw,
         hp:hw ? null : new Float32Array(hops*use), hdone:hw ? null : new Uint8Array(hops),
         re:new Float32Array(N), im:new Float32Array(N), pw:new Float64Array(N),
-        spec:{mag, freqs, sr, size:total, rev:1}, tLine:performance.now(), lineMs:null};
+        spec:{mag, freqs, sr, size:total, rev:1}, tLine:performance.now(), lineMs:null,
+        peak:{mag:new Float32Array(total), freqs, sr, size:total, rev:1}};
   if(hw) Object.assign(n.sw, {parse:{buf:null, n:0, synced:false}, acc:new Float64Array(total), cnt:new Int32Array(hops),
     lastH:-1, passes:0, began:false, tBlock:performance.now()});
   return n.sw;
@@ -4352,6 +4353,14 @@ function sdrSweepFeed(n, cap, u8, s16){
   cap.w=w;
   if(w>=cap.need){ clearTimeout(cap.timer); n.swCap=null; cap.done(cap); }
 }
+// строка панорамы готова: максимум по времени — отдельный спектр на выходе specPeak (для детекторов и логов);
+// swDecay дБ за строку — медленное забывание, 0 — держать
+function sdrSweepLineDone(n, sw){
+  const m=sw.spec.mag, pk=sw.peak.mag, d=Math.pow(10, -(+n.p.swDecay||0)/20);
+  for(let i=0;i<m.length;i++){ const v=pk[i]*d; pk[i]=m[i]>v ? m[i] : v; }
+  sw.peak.rev++;
+  const now=performance.now(); sw.lineMs=now-sw.tLine; sw.tLine=now; sw.spec.rev++;
+}
 // M кадров БПФ шага k → средняя (или максимальная) мощность → центральные use бинов в панораму
 function sdrSweepPlace(n, sw, cap, k){
   const N=sw.N, half=N>>1, M=Math.floor(cap.need/N), re=sw.re, im=sw.im, pw=sw.pw, win=sw.win;
@@ -4372,7 +4381,8 @@ function sdrSweepPlace(n, sw, cap, k){
   if(N>=8){ const v=(pw[half-2]+pw[half+2])/2; pw[half-1]=pw[half]=pw[half+1]=v; }
   // мощность шага — в свой ряд hp; бины панорамы шага собираются из него и соседей по нахлёсту с весами-рампами
   const use=sw.use, st=sw.stride, hp=sw.hp, hops=sw.hops, ov=use-st, i0=half-use/2, sc=peak?1:1/M, w2=sw.wsum*sw.wsum;
-  for(let i=0;i<use;i++) hp[k*use+i]=pw[i0+i]*sc/w2;
+  const a=clamp(+n.p.swSmooth||0,0,.95), had=sw.hdone[k];     // сглаживание строк: экспонента по мощности шага
+  for(let i=0;i<use;i++){ const v=pw[i0+i]*sc/w2, o=k*use+i; hp[o]=a&&had ? a*hp[o]+(1-a)*v : v; }
   sw.hdone[k]=1;
   const mag=sw.spec.mag, j0=k*st;
   const wt=(h,i)=>{
@@ -4424,13 +4434,16 @@ function sdrHwSweepFeed(n, u8){
     sw.tBlock=performance.now();
     if(h<=sw.lastH){
       if(sw.began && ++sw.passes>=avgN){
-        const mag=sw.spec.mag;
+        const mag=sw.spec.mag, a=sw.pub ? clamp(+n.p.swSmooth||0,0,.95) : 0;
         for(let g=0;g<sw.hops;g++){
           if(!cnt[g]) continue;
           const sc=peak ? 1 : 1/cnt[g], o=g*use;
-          for(let i=0;i<use;i++) mag[o+i]=Math.sqrt(acc[o+i]*sc)/sw.wsum;
+          for(let i=0;i<use;i++){
+            const v=acc[o+i]*sc/(sw.wsum*sw.wsum);
+            mag[o+i]=Math.sqrt(a ? a*mag[o+i]*mag[o+i]+(1-a)*v : v);
+          }
         }
-        const now=performance.now(); sw.lineMs=now-sw.tLine; sw.tLine=now; sw.spec.rev++;
+        sw.pub=true; sdrSweepLineDone(n, sw);
         sw.passes=0;
       }
       if(!sw.began || sw.passes===0){ acc.fill(0); cnt.fill(0); }
@@ -4513,8 +4526,7 @@ async function sdrSweepLoop(n){
       const tuneP=sdrSweepTune(n, center(sw,sw.k));  // перестройка идёт, пока считаем БПФ
       sdrSweepPlace(n, sw, cap, kDone);
       if(kDone===sw.hops-1){
-        const now=performance.now();
-        sw.lineMs=now-sw.tLine; sw.tLine=now; sw.spec.rev++;
+        sdrSweepLineDone(n, sw);
       }
       epoch=await tuneP;
     }
@@ -4537,7 +4549,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
   outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'iq',t:'iq'},
         {n:'audio',t:'sig'},{n:'audio2',t:'sig'},{n:'audio3',t:'sig'},{n:'audio4',t:'sig'},
         {n:'audioL',t:'sig'},{n:'audioR',t:'sig'},{n:'ps',t:'val'},{n:'rt',t:'val'},
-        {n:'spec',t:'spec'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},
+        {n:'spec',t:'spec'},{n:'specPeak',t:'spec'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},
         {n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'},
         {n:'demod',t:'val'},{n:'bw',t:'num'},
         {n:'adcPk',t:'num'},{n:'adcRms',t:'num'},{n:'clip',t:'num'},{n:'ovl',t:'num'},
@@ -4608,6 +4620,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'swMode',t:'select',opts:['avg','max'],d:'avg',label:'sweep detector',adv:true},
     {n:'swUse',t:'range',min:.3,max:1,step:.05,d:.8,label:'sweep usable band fraction',adv:true},
     {n:'swOvl',t:'range',min:0,max:50,step:5,d:20,label:'sweep step overlap, % (cross-faded)',adv:true},
+    {n:'swSmooth',t:'range',min:0,max:.95,step:.05,d:0,label:'sweep smoothing between lines',adv:true},
+    {n:'swDecay',t:'range',min:0,max:20,step:.5,d:0,label:'specPeak decay, dB per line (0 = hold)',adv:true},
     {n:'swSettle',t:'range',min:0,max:50,step:1,d:5,label:'sweep settle time, ms',adv:true}
   ],
   init:n=>{ n.p.freq=n.p.freq??100000000;              // новый узел — без частоты крутилка показывала NaN
@@ -4778,6 +4792,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     n._prevPFreq=n.p.freq; // снимок на конец тика — см. manualEdit в начале process() (demod/bw/gainDb — через setModWired)
     return {I:oi, Q:oq, iq:rtlIqOut(n), audio:oa[0], audio2:oa[1], audio3:oa[2], audio4:oa[3], audioL:oL, audioR:oR,
       ps:rds&&rds.sync!==undefined&&rds.ps.trim()?rds.ps.trim():null, rt:rds&&rds.rt?rds.rt:null, spec:spOut,
+      specPeak:sweepOn&&n.sw ? n.sw.peak : null,
       demod:n.p.demod, bw:n.p.bw, ...bounds,
       adcPk:n.adcPk??null, adcRms:n.adcRms??null, clip:n.adcClip!=null?100*n.adcClip:null, ovl:sdrAdcOvl(n)?1:0,
       ...rtlChanOuts(n)}; },
@@ -4816,7 +4831,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
           ['sql',dm!=='IQ'],['sqlSnr',dm!=='IQ'&&sq==='SNR'],['sqlLvl',dm!=='IQ'&&sq==='level'],['sqlHang',dm!=='IQ'&&sq!=='off'],
           ['lna',hk],['vga',hk],['amp',hk],['auto',!hk&&!fl],['gainDb',!hk&&!fl],
           ['bias',!fl],['ppm',!fl],['conv',!fl],['dcShift',!fl],['loop',fl],['seek',fl],
-          ...['sweep','swLo','swHi','swFft','swAvg','swMode','swUse','swOvl','swSettle'].map(k=>[k,!fl]), ['swHw',hk]]){
+          ...['sweep','swLo','swHi','swFft','swAvg','swMode','swUse','swOvl','swSmooth','swDecay','swSettle'].map(k=>[k,!fl]), ['swHw',hk]]){
         const e=n.el.querySelector(`.prm[data-param="${k}"]`); if(e) e.style.display=show?'':'none';
       }
     }
