@@ -156,8 +156,8 @@ def({ id:'adsbDecode', title:'ADS-B Decoder', cat:'Decoders',
   params:[{n:'ttl',t:'range',min:10,max:600,step:10,d:60,label:'keep aircraft, s'},
           {n:'rlat',t:'num',d:0,label:'receiver latitude (or lat input / My Position)'},
           {n:'rlon',t:'num',d:0,label:'receiver longitude'},
-          {n:'maxKm',t:'range',min:50,max:1000,step:10,d:450,label:'reject positions farther than, km'},
-          {n:'noPos',t:'check',d:false,label:'list aircraft without position'},
+          {n:'maxKm',t:'range',min:0,max:1000,step:10,d:0,label:'reject positions farther than, km (0 — any)'},
+          {n:'noPos',t:'check',d:true,label:'list aircraft without position'},
           {n:'clr',t:'button',label:'Clear',fn:n=>{ n.ac.clear(); n.msgs=0; n.maxRange=0; }}],
   init:n=>{ n.ac=new Map(); n.msgs=0; n.lastText=null; n.maxRange=0; n.lastPrune=0; },
   process(n,I){
@@ -219,7 +219,7 @@ function adsbPos(n,a,c,t,ref){
     const km=geoDist(a.lat,a.lon,p.lat,p.lon), dt=Math.max(1,(t-a.posT)/1000);
     if(km>0.5+dt*0.52) return;
   }
-  if(ref){ const km=geoDist(ref.lat,ref.lon,p.lat,p.lon); if(km>n.p.maxKm) return; if(km>n.maxRange) n.maxRange=km; a.dist=km; }
+  if(ref){ const km=geoDist(ref.lat,ref.lon,p.lat,p.lon); if(n.p.maxKm>0 && km>n.p.maxKm) return; if(km>n.maxRange) n.maxRange=km; a.dist=km; }
   a.lat=+p.lat.toFixed(5); a.lon=+p.lon.toFixed(5); a.posT=t; a.posHow=how;
 }
 function adsbTable(n){
@@ -227,9 +227,9 @@ function adsbTable(n){
   const pad=(v,w)=>String(v ?? '').padEnd(w).slice(0,w), num=(v,w,d=0)=>(v==null ? '' : Number(v).toFixed(d)).padStart(w);
   let s=n.ac.size+' aircraft · '+rows.filter(a=>a.lat!=null).length+' with position · '+n.msgs+' msgs'+
     (n.maxRange ? ' · max '+n.maxRange.toFixed(0)+' km' : '')+'\n';
-  s+='ICAO    Flight   Sqwk    Alt   Spd  Hdg      Lat      Lon  Msgs  Age\n';
+  s+='ICAO    Flight   Sqwk    Alt   Spd  Hdg      Lat      Lon   Km  Msgs  Age\n';
   for(const a of rows.slice(0,40))
     s+=pad(a.icao,7)+' '+pad(a.flight,8)+' '+pad(a.squawk,4)+' '+(a.ground ? '   gnd' : num(a.alt,6))+' '+num(a.gs,5)+' '+
-      num(a.track ?? a.hdg,4)+' '+num(a.lat,8,3)+' '+num(a.lon,8,3)+' '+num(a.msgs,5)+' '+num((now-a.seen)/1000,4)+'\n';
+      num(a.track ?? a.hdg,4)+' '+num(a.lat,8,3)+' '+num(a.lon,8,3)+' '+num(a.dist,4)+' '+num(a.msgs,5)+' '+num((now-a.seen)/1000,4)+'\n';
   return s;
 }
