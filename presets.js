@@ -805,7 +805,7 @@ const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the
   'so the bands stay on the screen while the receiver visits them (the pane being received is outlined, old data is dimmed).\n'+
   'The scanner waits for 3 fresh spectrum frames of the new window (spec wire, «fresh frames»), not for a timer: the USB queue still holds ~40 ms of the old frequency\n'+
   'after a retune, and the detector needs 2 frames to confirm a signal. «settle» is only a minimum wait and can stay low.\n'+
-  'Order «interleave»: one window of every range in turn, so a wide range does not starve the narrow ones and all panes refresh evenly.\n'+
+  'Order «band by band»: a range is walked to its end, then the next one (the scanner can be switched to «interleave»: one window of every range in turn).\n'+
   'More ranges than panes: the page turns after the scanner (follow); or use ◀ ▶ / the wheel on a pane title.\n'+
   'View: wheel on a pane — zoom, drag — pan, double click — back. Humps at the window step come from the filter edges: both nodes\n'+
   'drop 10% of each window (the «edge» parameter — keep them equal), so the useful middle is stitched without a gap.\n'+
@@ -816,14 +816,13 @@ const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the
 nt.size.w=720; nt.size.h=250; applySize(nt);
 const rx=addNode('rtlsdr',40,300,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:100000000,sql:'SNR',sqlSnr:8,fastTune:true});
 const bp=addNode('table',360,300,{list:'@patch',initial:false,data:'name,lo,hi,step\n'+
-  'FM broadcast,87.5M,108M,100k\nAirband,118M,137M,25k\n2m ham,144M,146M,12.5k\nMarine VHF,156M,162.025M,25k\n'+
-  'LPD433,433.05M,434.79M,25k\nPMR446,446M,446.2M,12.5k\nSRD 868,868M,870M,25k\nADS-B,1089M,1091M,1M'});
+  'VHF,144M,176M,25k\nUHF,400M,470M,25k'});
 bp.size.w=340; bp.size.h=280; applySize(bp);
-const bs=addNode('bandscan',740,300,{timeout:3000,settle:40,frames:3,edge:10,order:'interleave'});
+const bs=addNode('bandscan',740,300,{timeout:3000,settle:40,frames:3,edge:10,order:'band by band'});
 bs.size.w=300; bs.size.h=200; applySize(bs);
 const sk=addNode('table',1080,300,{list:'Scan skip',initial:false});
 sk.size.w=300; sk.size.h=220; applySize(sk);
-const sa=addNode('sa',40,620,{layout:'panes',panes:4,detect:true,detThr:10,edge:10,follow:true,holdMarker:true,peakHold:true,floor:-90,top:-20,split:.45});
+const sa=addNode('sa',40,620,{layout:'panes',panes:2,detect:true,detThr:10,edge:10,follow:true,holdMarker:true,peakHold:true,floor:-90,top:-20,split:.45});
 sa.size.w=1100; sa.size.h=440; applySize(sa);
 const lg=addNode('table',1420,300,{list:'Scan log',initial:false});
 lg.size.w=420; lg.size.h=260; applySize(lg);
