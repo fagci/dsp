@@ -1278,6 +1278,7 @@ function rtlBufToNum(buf){
 // регистры/I2C поверх control- и bulk-transfer WebUSB
 function rtlMakeCom(dev){
   const WRITE_FLAG=0x10;
+  let fastI2C=false;               // быстрый режим: без «пустого» чтения после записи в демодулятор (open/close I2C)
   async function writeCtrl(value,index,buffer){
     await dev.controlTransferOut({requestType:'vendor',recipient:'device',request:0,value,index}, buffer);
   }
@@ -1299,8 +1300,11 @@ function rtlMakeCom(dev){
     await writeRegBuffer(page,(addr<<8)|0x20, rtlNumToBuf(value,len,true));
     return await readDemodReg(0x0a,0x01);
   }
-  async function openI2C(){ await writeDemodReg(1,1,0x18,1); }
-  async function closeI2C(){ await writeDemodReg(1,1,0x10,1); }
+  async function writeDemodRegNoAck(page,addr,value,len){ await writeRegBuffer(page,(addr<<8)|0x20, rtlNumToBuf(value,len,true)); }
+  async function openI2C(){ await (fastI2C ? writeDemodRegNoAck : writeDemodReg)(1,1,0x18,1); }
+  async function closeI2C(){ await (fastI2C ? writeDemodRegNoAck : writeDemodReg)(1,1,0x10,1); }
+  // несколько регистров подряд одним I2C-сообщением (адрес + до 7 байт, лимит RTL2832 — 8 байт на сообщение)
+  async function writeI2CRegs(addr,reg,bytes){ await writeRegBuffer(RTL_BLOCK.I2C, addr, new Uint8Array([reg,...bytes]).buffer); }
   async function readI2CReg(addr,reg){ await writeRegBuffer(RTL_BLOCK.I2C, addr, new Uint8Array([reg]).buffer); return await readReg(RTL_BLOCK.I2C, addr, 1); }
   async function writeI2CReg(addr,reg,value){ await writeRegBuffer(RTL_BLOCK.I2C, addr, new Uint8Array([reg,value]).buffer); }
   async function readI2CRegBuffer(addr,reg,len){ await writeRegBuffer(RTL_BLOCK.I2C, addr, new Uint8Array([reg]).buffer); return await readRegBuffer(RTL_BLOCK.I2C, addr, len); }
@@ -1316,7 +1320,8 @@ function rtlMakeCom(dev){
   return {
     writeRegister:writeReg, readRegister:readReg, writeRegMask,
     demod:{readRegister:readDemodReg, writeRegister:writeDemodReg},
-    i2c:{open:openI2C, close:closeI2C, readRegister:readI2CReg, writeRegister:writeI2CReg, readRegBuffer:readI2CRegBuffer},
+    i2c:{open:openI2C, close:closeI2C, readRegister:readI2CReg, writeRegister:writeI2CReg, writeRegisters:writeI2CRegs, readRegBuffer:readI2CRegBuffer},
+    setFastI2C:on=>{ fastI2C=!!on; },
     bulk:{readBuffer:readBulk},
     iface:{claim:()=>dev.claimInterface(0), release:()=>dev.releaseInterface(0).catch(()=>{})},
     writeEach
@@ -1345,7 +1350,7 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
   const REGISTERS=[0x83,0x32,0x75,0xc0,0x40,0xd6,0x6c,0xf5,0x63,0x75,0x68,0x6c,0x83,0x80,0x00,0x0f,0x00,0xc0,0x30,0x48,0xcc,0x60,0x00,0x54,0xae,0x4a,0xc0];
   const MUX_CFGS=[[0,0x08,0x02,0xdf],[50,0x08,0x02,0xbe],[55,0x08,0x02,0x8b],[60,0x08,0x02,0x7b],[65,0x08,0x02,0x69],[70,0x08,0x02,0x58],[75,0x00,0x02,0x44],[90,0x00,0x02,0x34],[110,0x00,0x02,0x24],[140,0x00,0x02,0x14],[180,0x00,0x02,0x13],[250,0x00,0x02,0x11],[280,0x00,0x02,0x00],[310,0x00,0x41,0x00],[588,0x00,0x40,0x00]];
   const BIT_REVS=[0x0,0x8,0x4,0xc,0x2,0xa,0x6,0xe,0x1,0x9,0x5,0xd,0x3,0xb,0x7,0xf];
-  let hasPllLock=false, shadow, curBand=null, curInput=null;
+  let hasPllLock=false, shadow, curBand=null, curInput=null, fast=false;
   const isR828D = i2cAddr===0x74;
 
   async function readRegBuffer(addr,length){
@@ -1353,10 +1358,23 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
     for(let i=0;i<buf.length;i++){ const b=buf[i]; buf[i]=(BIT_REVS[b&0xf]<<4)|BIT_REVS[b>>4]; }
     return buf;
   }
+  // регистр, уже равный нужному значению, не пишем (как shadow_equal в r82xx.c): каждая запись — отдельный USB-трансфер.
+  // Теневая копия обновляется только после успешной записи, иначе сбой оставил бы её впереди железа.
   async function writeRegMask(addr,value,mask){
     const val=(shadow[addr-5]&~mask)|(value&mask);
-    shadow[addr-5]=val;
+    if(shadow[addr-5]===val) return;
     await com.i2c.writeRegister(i2cAddr,addr,val);
+    shadow[addr-5]=val;
+  }
+  // регистры addr.. подряд одним сообщением; пишется только охват изменившихся (от первого до последнего)
+  async function writeBurst(addr,vals){
+    let a=0, b=vals.length-1;
+    while(a<=b && shadow[addr-5+a]===vals[a]) a++;
+    while(b>=a && shadow[addr-5+b]===vals[b]) b--;
+    if(a>b) return;
+    const part=vals.slice(a,b+1);
+    await com.i2c.writeRegisters(i2cAddr,addr+a,part);
+    for(let i=0;i<part.length;i++) shadow[addr-5+a+i]=part[i];
   }
   async function writeEach(arr){ for(const l of arr) await writeRegMask(l[0],l[1],l[2]); }
 
@@ -1401,28 +1419,36 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
     const c=MUX_CFGS[i];
     await writeEach([[0x17,c[1],0x08],[0x1a,c[2],0xc3],[0x1b,c[3],0xff],[0x10,0x00,0x0b],[0x08,0x00,0x3f],[0x09,0x00,0x3f]]);
   }
+  // fast: как в ветке fast_retune (sultanqasim/rtl-sdr): без чтения VCO fine tune и без переключения автонастройки
+  // на 8 кГц после захвата — остаётся один burst-запись регистров 0x10–0x16; захват проверяется всё равно (см. setFrequency)
   async function setPll(freq){
     const pllRef=Math.floor(xtalFreq), vcoPowerRef=isR828D?1:2; // у R828D другое опорное значение VCO fine-tune
-    await writeEach([[0x10,0x00,0x10],[0x1a,0x00,0x0c]]);
-    await writeRegMask(0x12, 0x06, 0xff);              // максимальный ток VCO — как в драйвере RTL-SDR Blog
+    await writeRegMask(0x1a, 0x00, 0x0c);              // автонастройка 128 кГц: быстрый захват
     // делитель: наименьший mixDiv, при котором VCO попадает в 1.77–3.54 ГГц
     let mixDiv=2, divNum=0;
     while(mixDiv<=64 && !(freq*mixDiv>=1770000000 && freq*mixDiv<3540000000)) mixDiv<<=1;
     for(let d=mixDiv; d>2; d>>=1) divNum++;
-    const arr=await readRegBuffer(0x00,5);
-    const vcoFineTune=(arr[4]&0x30)>>4;
-    if(vcoFineTune>vcoPowerRef) divNum--; else if(vcoFineTune<vcoPowerRef) divNum++;
-    await writeRegMask(0x10, divNum<<5, 0xe0);
+    if(!fast){
+      const arr=await readRegBuffer(0x00,5);
+      const vcoFineTune=(arr[4]&0x30)>>4;
+      if(vcoFineTune>vcoPowerRef) divNum--; else if(vcoFineTune<vcoPowerRef) divNum++;
+    }
     // VCO считается по исходному mixDiv, без поправки fine tune — так в librtlsdr
     const vcoFreq=freq*mixDiv;
     const nint=Math.floor(vcoFreq/(2*pllRef)), vcoFra=vcoFreq%(2*pllRef);
     if(nint>(128/vcoPowerRef-1)){ hasPllLock=false; return null; }
     const ni=Math.floor((nint-13)/4), si=(nint-13)%4;
-    await writeEach([[0x14, ni+(si<<6), 0xff],[0x12, vcoFra===0?0x08:0x00, 0x08]]);
     const sdm=Math.min(65535, Math.floor(32768*vcoFra/pllRef));
-    await writeEach([[0x16, sdm>>8, 0xff],[0x15, sdm&0xff, 0xff]]);
+    // регистры 0x10–0x16 целиком: 0x10 (делитель, refdiv2 сброшен, ёмкость кварца — после setMux), 0x12 (ток VCO 0x06 + pw_sdm),
+    // 0x14, 0x15/0x16 (sdm); 0x11 и 0x13 — как есть
+    const regs=Array.from(shadow.subarray(0x10-5,0x17-5));
+    regs[0]=(regs[0]&~0xf0)|((divNum<<5)&0xe0);
+    regs[2]=0x06|(vcoFra===0?0x08:0x00);
+    regs[4]=ni+(si<<6);
+    regs[5]=sdm&0xff; regs[6]=sdm>>8;
+    await writeBurst(0x10,regs);
     await getPllLock(true);
-    await writeRegMask(0x1a, 0x08, 0x08);
+    if(!fast) await writeRegMask(0x1a, 0x08, 0x08);   // автонастройка 8 кГц — точная подстройка после захвата
     return 2*pllRef*(nint+sdm/65536)/mixDiv;
   }
   async function getPllLock(firstTry){
@@ -1453,6 +1479,7 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
     const loFreq=freq+upconvert;
     await setMux(loFreq);
     let r=await setPll(loFreq);
+    if(!hasPllLock && fast){ fast=false; try{ r=await setPll(loFreq); } finally{ fast=true; } }   // быстрый путь не захватил — полный
     // та же засада, что была с калибровкой фильтра: PLL иногда не успевает заблокироваться
     // с первой попытки на реальной частоте приёма, не только на калибровочных 56МГц. Раньше
     // ретрай стоял только в calibrateFilter — отсюда "шипит после коннекта, чисто после
@@ -1497,7 +1524,7 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
     await writeEach([[0x06,0xb1,0xff],[0x05,0xb3,0xff],[0x07,0x3a,0xff],[0x08,0x40,0xff],[0x09,0xc0,0xff],
       [0x0a,0x36,0xff],[0x0c,0x35,0xff],[0x0f,0x68,0xff],[0x11,0x03,0xff],[0x17,0xf4,0xff],[0x19,0x0c,0xff]]);
   }
-  return {init, setFrequency, setAutoGain, setManualGain, setGpio, close};
+  return {init, setFrequency, setAutoGain, setManualGain, setGpio, close, setFast:on=>{ fast=!!on; }};
 }
 // проверка чипа по ID-регистру на конкретном I2C-адресе (0x69 у обеих версий R82xx)
 rtlMakeR820T.checkAt = async function(com, addr){
@@ -1599,6 +1626,8 @@ async function rtlOpenDevice(dev, ppm, gain){
     if(g==null) await tuner.setAutoGain(); else await tuner.setManualGain(g);
     await com.i2c.close();
   }
+  // быстрая перестройка: без пустых чтений после записи в демодулятор и без необязательных шагов PLL (см. rtlMakeR820T)
+  function setFastTune(on){ tuner.setFast(on); com.setFastI2C(on); }
   async function resetBuffer(){
     await com.writeEach([[RTL_CMD.REG,RTL_BLOCK.USB,RTL_REG.EPA_CTL,0x0210,2],[RTL_CMD.REG,RTL_BLOCK.USB,RTL_REG.EPA_CTL,0x0000,2]]);
   }
@@ -1609,7 +1638,7 @@ async function rtlOpenDevice(dev, ppm, gain){
     await com.iface.release();
     await dev.close();
   }
-  return {setSampleRate, setCenterFrequency, setGain, setBiasTee, resetBuffer, readSamples, close,
+  return {setSampleRate, setCenterFrequency, setGain, setBiasTee, setFastTune, resetBuffer, readSamples, close,
     tunerName:found.name+(isV4?' (Blog V4)':''), kind:'rtl', fmt:'u8', bps:2, epoch:()=>tuneEpoch};
 }
 
@@ -2482,6 +2511,7 @@ async function rtlOpenInWorker(usbDev, gain){
     epoch:()=>epoch,
     setGain:gain=>call('setGain',{gain}),
     setBiasTee:on=>call('dev',{m:'setBiasTee',a:[on]}),
+    setFastTune:info.kind==='rtl' ? on=>call('dev',{m:'setFastTune',a:[on]}) : undefined,
     setHackrfGain:(lna,vga,amp)=>call('dev',{m:'setHackrfGain',a:[lna,vga,amp]}),
     startSweep:async(...a)=>epoch=await call('dev',{m:'startSweep',a}),
     stopSweep:async()=>epoch=await call('dev',{m:'stopSweep',a:[]}),
@@ -4059,6 +4089,7 @@ async function sdrTune(n){
   const want=Math.round(n.p.freq), ppm=+n.p.ppm||0, k=n.dev.fixedFreq ? 1 : 1+ppm*1e-6;
   const off=sdrDcOff(n), conv=sdrConv(n);
   if(want+off-conv<=0) throw new Error(`tuner frequency ${fmtHz(want+off-conv)}Hz out of range (check converter offset)`);
+  if(n._fastDev!==n.dev || n._fast!==!!n.p.fastTune){ n._fastDev=n.dev; n._fast=!!n.p.fastTune; await n.dev.setFastTune?.(n._fast); }
   const hw=await n.dev.setCenterFrequency(Math.round((want+off-conv)/k));
   n.actualFreq=hw*k+conv; n.dcOff=off; n.appliedFreq=want; n.appliedPpm=ppm; n.appliedConv=conv;
   if(n.dev.fixedFreq){ n.p.freq=hw; n.appliedFreq=hw; }   // у файла центр не перестраивается
@@ -4636,6 +4667,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'amp',t:'check',d:false,label:'amp +14 dB'},
     {n:'bias',t:'check',d:false,label:'bias-tee',adv:true},
     {n:'dcShift',t:'check',d:false,label:'shift center off DC (always for AM/SAM/SSB)',adv:true},
+    {n:'fastTune',t:'check',d:false,label:'fast retune (RTL-SDR: fewer USB transfers per tuning — for scanning)',adv:true},
     {n:'ppm',t:'range',min:-100,max:100,step:.1,d:0,label:'frequency correction, ppm',adv:true},
     // up/down-конвертер: эфирная частота = частота тюнера + смещение (−125 для апконвертера 125 МГц, +9750 для LNB)
     {n:'conv',t:'num',d:0,label:'converter offset, MHz (RF = tuner + offset)',adv:true},
