@@ -1757,7 +1757,7 @@ function saSkipDraw(n,cv){
   return false;
 }
 def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
-  ins:[{n:'spec',t:'spec'},{n:'m1',t:'num'},{n:'m2',t:'num'},{n:'m3',t:'num'},{n:'m4',t:'num'},
+  ins:[{n:'spec',t:'spec'},{n:'spec2',t:'spec'},{n:'spec3',t:'spec'},{n:'spec4',t:'spec'},{n:'m1',t:'num'},{n:'m2',t:'num'},{n:'m3',t:'num'},{n:'m4',t:'num'},
        {n:'bLo',t:'num'},{n:'bHi',t:'num'},{n:'floor',t:'num'},{n:'top',t:'num'},
        {n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'split',t:'num'},{n:'tol',t:'num'},
        {n:'log',t:'num'},{n:'grid',t:'num'},{n:'bands',t:'bands'},{n:'skip',t:'bands'}],
@@ -1766,7 +1766,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         {n:'db1',t:'num'},{n:'db2',t:'num'},{n:'db3',t:'num'},{n:'db4',t:'num'},
         {n:'snr1',t:'num'},{n:'snr2',t:'num'},{n:'snr3',t:'num'},{n:'snr4',t:'num'},
         {n:'centerFreq',t:'num'},
-        {n:'count',t:'num'},{n:'detF',t:'num'},{n:'holdF',t:'num'},{n:'rec',t:'rec'}],   // count/detF/holdF/rec — панели (layout=panes)
+        {n:'count',t:'num'},{n:'detF',t:'num'},{n:'holdF',t:'num'},{n:'rec',t:'rec'},
+        {n:'count2',t:'num'},{n:'detF2',t:'num'},{n:'count3',t:'num'},{n:'detF3',t:'num'},{n:'count4',t:'num'},{n:'detF4',t:'num'}],   // count/detF/holdF/rec — панели (layout=panes)
   view:{h:280}, pick:true, resize:true,
   params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)',fn:n=>{ if(n.p.auto) n.zoom=null; }},
           {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[0,4000],label:'range, Hz'},
@@ -1822,7 +1823,10 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       for(const k of ['floor','top']) if(typeof I[k]==='number') setMod(n,k,I[k]);
       if(Array.isArray(I.bands)) n.bandsData=I.bands;
       n._skipExt=Array.isArray(I.skip) ? I.skip.filter(b=>b && !b.sig && isFinite(b.lo)).map(b=>({lo:b.lo,hi:Math.max(b.lo,b.hi)})) : null;
-      saPanesIngest(n,sp);
+      // spec2…spec4 — ещё приёмники: каждый со своим Band Scanner (lanes), спектры накапливаются в одних и тех же панелях
+      n._pnMulti=!!(I.spec2||I.spec3||I.spec4);
+      saPanesIngest(n,sp,0);
+      [I.spec2,I.spec3,I.spec4].forEach((s2,i)=>{ if(s2) saPanesIngest(n,s2,i+1); });
       return saPanesOut(n);
     }
     for(const k of ['fmin','fmax']) if(typeof I[k]==='number') setMod(n,k,I[k]);
@@ -3157,6 +3161,15 @@ def({ id:'bandsmerge', title:'Merge Band Plans', cat:'Radio',
 // (до timeout, даже если активность не пропадает — иначе можно залипнуть на постоянной несущей
 // навсегда), нет — сдвигаемся на span-overlap и, если окно уже дошло до края диапазона, берём
 // следующий. freq выводится на rtlsdr.freq (жёсткая перестройка, в отличие от steerFreq).
+// все окна сканирования (диапазон, центр) в порядке обхода; дорожка lane из lanes берёт каждое lanes-е — несколько приёмников
+// одновременно стоят на соседних окнах, проход ускоряется во столько же раз
+function bandscanWindows(bands,span,overlap,inter,lanes,lane){
+  const half=span/2, step=Math.max(span*0.05,span-overlap), all=[];
+  const per=bands.map(b=>{ const a=[]; let c=b.lo+half; while(a.length<20000){ a.push(c); if(c+half>=b.hi) break; c+=step; } return a; });
+  if(inter){ const mx=Math.max(...per.map(a=>a.length)); for(let j=0;j<mx;j++) per.forEach((a,b)=>{ if(j<a.length) all.push({b,c:a[j]}); }); }
+  else per.forEach((a,b)=>a.forEach(c=>all.push({b,c})));
+  return all.filter((_,w)=>w%lanes===lane);
+}
 def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
   ins:[{n:'bands',t:'bands'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},{n:'active',t:'num'},
        {n:'overlap',t:'num'},{n:'timeout',t:'num'},{n:'settle',t:'num'},{n:'hold',t:'num'},{n:'spec',t:'spec'}],
@@ -3170,8 +3183,11 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
           {n:'frames',t:'range',min:0,max:10,step:1,d:0,label:'fresh spectrum frames of the new window before deciding (spec wire; 3 lets the detector confirm a signal)'},
           {n:'order',t:'select',opts:['band by band','interleave'],d:'band by band',
            label:'order (interleave: one window of every range in turn — a wide range does not starve the narrow ones, all panes refresh evenly)'},
+          // несколько приёмников: у каждого свой Band Scanner с одним и тем же lanes и своим lane (0…lanes−1) — окна делятся между ними
+          {n:'lanes',t:'range',min:1,max:4,step:1,d:1,label:'receivers sharing the scan (lanes)'},
+          {n:'lane',t:'range',min:0,max:3,step:1,d:0,label:'this receiver\'s lane (0 … lanes−1)'},
           {n:'loop',t:'check',d:true,label:'loop back to first range'}],
-  init:n=>{ n.state='seek'; n.idx=0; n.curFreq=null; n.text=''; n.off=0; n._offM=null; n.pos=[]; n.done=[]; },
+  init:n=>{ n.state='seek'; n.idx=0; n.curFreq=null; n.text=''; n.off=0; n._offM=null; n.pos=[]; n.done=[]; n.wl=null; n.wp=0; },
   process(n,I){
     for(const k of ['overlap','timeout','settle']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     const bands=(Array.isArray(I.bands)?I.bands:[]).filter(b=>b && !b.sig && b.hi>b.lo).slice().sort((a,b)=>a.lo-b.lo);
@@ -3192,19 +3208,33 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
       if(tag!==n._frTag){ n._frTag=tag; if(Math.abs(sp.freqs[sp.freqs.length>>1]-n.curFreq)<=Math.max(3000,full*.01)) n._fr++; }
     }
     const inter=n.p.order==='interleave';
+    // lanes > 1: заранее построенный список окон, дорожка берёт каждое lanes-е
+    const lanes=Math.max(1,n.p.lanes|0), lane=clamp(n.p.lane|0,0,lanes-1), listMode=lanes>1;
+    if(listMode){
+      const key=bands.map(b=>b.lo+'-'+b.hi).join(',')+'|'+span+'|'+n.p.overlap+'|'+n.p.order+'|'+lanes+'|'+lane;
+      if(n._wlKey!==key){ n._wlKey=key; n.wl=bandscanWindows(bands,span,n.p.overlap,inter,lanes,lane); n.wp=0; n.curFreq=null; }
+      if(!n.wl.length){ n.text='lane '+lane+'/'+lanes+': no windows for this lane (fewer windows than receivers)'; return {freq:n.curFreq==null ? 0 : n.curFreq-n.off, listening:0, idx:0, bandLo:bands[0].lo, step:bands[0].step||0}; }
+    }
     // interleave: у каждого диапазона свой курсор окна; смена режима или ширины окна — начинаем заново
-    if(inter && (!n.pos || n._posHalf!==half || n._order!==n.p.order)){
+    if(inter && !listMode && (!n.pos || n._posHalf!==half || n._order!==n.p.order)){
       n.pos=bands.map(b=>b.lo+half); n.done=bands.map(()=>false); n._posHalf=half; n.curFreq=null;
     }
     n._order=n.p.order;
     if(n.curFreq==null){
-      n.idx=clamp(n.idx,0,bands.length-1);
-      n.curFreq=inter ? n.pos[n.idx] : bands[n.idx].lo+half;
+      if(listMode){ n.wp=clamp(n.wp,0,n.wl.length-1); n.idx=n.wl[n.wp].b; n.curFreq=n.wl[n.wp].c; }
+      else { n.idx=clamp(n.idx,0,bands.length-1); n.curFreq=inter ? n.pos[n.idx] : bands[n.idx].lo+half; }
       n.settleUntil=now+n.p.settle; n.state='seek';
     }
     const band=bands[n.idx];
     const active=typeof I.active==='number' && I.active>0;
     const advance=()=>{
+      if(listMode){
+        n.wp++;
+        if(n.wp>=n.wl.length){ if(n.p.loop) n.wp=0; else { n.wp=n.wl.length-1; n.state='done'; return; } }
+        n.idx=n.wl[n.wp].b; n.curFreq=n.wl[n.wp].c;
+        n.settleUntil=now+n.p.settle; n.state='seek';
+        return;
+      }
       if(inter){
         const i=n.idx;
         if(n.pos[i]+half>=bands[i].hi){ n.pos[i]=bands[i].lo+half; n.done[i]=true; }   // окно дошло до края — этот диапазон пройден, курсор в начало
@@ -3254,7 +3284,7 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
     if(n.state==='hold'){                                // отпустили — вернуться к месту остановки
       const r=n._resume||{}; n.idx=clamp(r.idx|0,0,bands.length-1);
       n.curFreq=r.curFreq; n.state='seek'; n.settleUntil=now+n.p.settle; n._resume=null;
-      if(inter && n.pos) n.curFreq=n.pos[n.idx];
+      if(inter && !listMode && n.pos) n.curFreq=n.pos[n.idx];
     }
     if(n.state==='listen'){
       if(!active || now>=n.listenUntil) advance();
@@ -3272,7 +3302,7 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
       }
     }
     const curBand=bands[n.idx];                          // не 'band': advance() выше мог сдвинуть n.idx на новый диапазон
-    n.text=(n.state==='done' ? 'done (pass finished, «loop» is off — tick it to keep scanning)' : n.state)+' · '+(inter?'interleave':'band by band')+' · range '+(n.idx+1)+'/'+bands.length+' "'+(curBand.label||'')+'"\n'+
+    n.text=(n.state==='done' ? 'done (pass finished, «loop» is off — tick it to keep scanning)' : n.state)+' · '+(inter?'interleave':'band by band')+(listMode ? ' · lane '+lane+'/'+lanes+' window '+(n.wp+1)+'/'+n.wl.length : '')+' · range '+(n.idx+1)+'/'+bands.length+' "'+(curBand.label||'')+'"\n'+
       'freq '+fmtHz(n.curFreq)+'Hz'+(n.off ? ' (receiver offset '+fmtHz(n.off)+'Hz)' : '')+
       (n.state==='listen'? '  · listening '+((n.listenUntil-now)/1000).toFixed(1)+'s left' : '');
     // bandLo/step — начало текущего диапазона и его сетка каналов (канал 1 = bandLo, канал 2 =
