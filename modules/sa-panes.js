@@ -12,7 +12,7 @@
 
 const SAP_RES=2048, SAP_WRES=1024, SAP_ROWS=96, SAP_GAP=4, SAP_AXIS=14, SAP_TITLE=13, SAP_MAXB=128;
 const SAP_HINT='wheel — zoom · drag — pan (zoomed) · double click — reset zoom · wheel on a title — next/previous bands\n'+
-  'tap — marker · tap a title — retune the receiver · Shift+tap a ▼ signal — skip it (Shift+tap a ⊘ — return it)';
+  'tap — marker · tap a title — retune the receiver · Shift+tap / long press / «⊘ skip» button + tap on a ▼ signal — skip it (the same on a ⊘ — return it)';
 
 // все диапазоны списка по возрастанию lo
 function saPaneList(n){
@@ -102,13 +102,15 @@ function saPanesIngest(n,sp){
   const skipR=saSkipSync(n);
   const pal=paletteLut(n.p.palette), rng=(n.p.top-n.p.floor)||1;
   for(const b of list){
-    if(b.hi<uLo || b.lo>uHi) continue;
+    if(b.hi<sLo || b.lo>sHi) continue;
     const p=saPaneGet(n,b), span=p.hi-p.lo;
-    const x0=Math.max(0,Math.floor((uLo-p.lo)/span*SAP_RES)), x1=Math.min(SAP_RES-1,Math.ceil((uHi-p.lo)/span*SAP_RES));
+    const x0=Math.max(0,Math.floor((sLo-p.lo)/span*SAP_RES)), x1=Math.min(SAP_RES-1,Math.ceil((sHi-p.lo)/span*SAP_RES));
     let touched=0;
     for(let x=x0;x<=x1;x++){
       const fa=p.lo+span*x/SAP_RES, fb=p.lo+span*(x+1)/SAP_RES;
-      if(fb<uLo || fa>uHi) continue;
+      if(fb<sLo || fa>sHi) continue;
+      // середина окна пишется всегда, проседающий край — только в ещё пустой столбец (дыр нет, горбов нет там, где окна перекрыты)
+      if((fb<uLo || fa>uHi) && p.lv[x]===p.lv[x]) continue;
       let b0=clamp(specBin(sp,fa),0,N-1), b1=clamp(specBin(sp,fb),0,N-1);
       if(b0>b1){ const t=b0; b0=b1; b1=t; }
       let v;
@@ -200,6 +202,11 @@ function saPanesWire(n,cv){
     for(const s of n._skipInt||[]){ if(s.f<h.p.lo || s.f>h.p.hi) continue; const d=Math.abs(px(s.f)-h.x); if(d<ds){ ds=d; sk=s; } }
     return {det, sk};
   };
+  const skipToggle=({det,sk})=>{
+    if(sk) n._skipInt.splice(n._skipInt.indexOf(sk),1);
+    else if(det) n._skipInt.push({f:det.f, w:Math.max(det.w*1.5,5000)});
+    saSkipSave(n);
+  };
   const zoomBy=(h,k)=>{
     const p=h.p, span=h.v[1]-h.v[0], full=p.hi-p.lo, ns=clamp(span*k,full/SAP_RES*24,full);
     let a=h.f-(h.f-h.v[0])*(ns/span), b=a+ns;
@@ -229,18 +236,25 @@ function saPanesWire(n,cv){
       const k=Math.max(1,n.p.panes|0);
       if(b.act==='prev') saSetFrom(n,(n.p.paneFrom|0)-k,true);
       else if(b.act==='next') saSetFrom(n,(n.p.paneFrom|0)+k,true);
+      else if(b.act==='skipmode'){ n._pnSkipMode=!n._pnSkipMode; saPanesBump(n); }
       else { if(n.set && n.set.follow) n.set.follow(!n.p.follow); else n.p.follow=!n.p.follow; saPanesBump(n); }
       return;
     }
     const h=hit(ev); if(!h) return;
-    n._pnDrag={i:h.i, x, v:h.v.slice(), moved:false, id:ev.pointerId};
+    const d=n._pnDrag={i:h.i, x, v:h.v.slice(), moved:false, id:ev.pointerId, done:false};
     try{ cv.setPointerCapture(ev.pointerId); }catch(e){}
+    // долгое нажатие на ▼ / ⊘ — пропуск (где нет Shift: телефон)
+    clearTimeout(n._pnLP);
+    if(h.y>=SAP_TITLE){
+      const t=near(h);
+      if(t.det||t.sk) n._pnLP=setTimeout(()=>{ if(n._pnDrag===d && !d.moved){ d.done=true; skipToggle(t); } },550);
+    }
   });
   on('pointermove',ev=>{
     const d=n._pnDrag;
     if(d){
       const {x}=pt(ev), p=n._pn[d.i], L=saPanesLayout(n,cv.width,cv.height);
-      if(Math.abs(x-d.x)>3) d.moved=true;
+      if(Math.abs(x-d.x)>3){ d.moved=true; clearTimeout(n._pnLP); }
       if(d.moved && p && p.zoom){                                 // панорама увеличенной панели
         const span=d.v[1]-d.v[0], a=clamp(d.v[0]-(x-d.x)/L.w*span,p.lo,p.hi-span);
         p.zoom=[a,a+span]; saPanesBump(n);
@@ -250,16 +264,14 @@ function saPanesWire(n,cv){
     n._pnHover=hit(ev); saPanesBump(n);
   });
   on('pointerup',ev=>{
-    const d=n._pnDrag; n._pnDrag=null;
-    if(!d || d.moved) return;
+    const d=n._pnDrag; n._pnDrag=null; clearTimeout(n._pnLP);
+    if(!d || d.moved || d.done) return;
     const h=hit(ev); if(!h || h.i!==d.i) return;
     if(h.y<SAP_TITLE){ n._steer=(h.v[0]+h.v[1])/2; n._pnSel=h.i; }   // заголовок — перестроить приёмник на панель
     else {
       const {det,sk}=near(h);
-      if(ev.shiftKey && (det||sk)){                                  // Shift+тап: цель — в список пропуска, ⊘ — обратно
-        if(sk) n._skipInt.splice(n._skipInt.indexOf(sk),1);
-        else n._skipInt.push({f:det.f, w:Math.max(det.w*1.5,5000)});
-        saSkipSave(n); return;
+      if((ev.shiftKey || n._pnSkipMode) && (det||sk)){              // Shift+тап или режим ⊘: цель — в список пропуска, ⊘ — обратно
+        skipToggle({det,sk}); return;
       }
       n.mk[n.active-1]=det ? det.f : h.f;                           // обычный тап — активный маркер (на цель — точно на неё)
     }
@@ -277,7 +289,7 @@ function saPanesDraw(n,cv,cx){
   saSkipSync(n);
   const panes=saPaneState(n), list=n._pl||[], now=performance.now();
   const key=W+'|'+H+'|'+cv.pxGen+'|'+n._pnRevDraw+'|'+panes.map(p=>p.key+':'+p.zoom).join(',')+'|'+n._pnSel+'|'+n.p.floor+'|'+n.p.top+'|'+
-    n.p.split+'|'+n.p.peakHold+'|'+n.p.grid+'|'+n.mk+'|'+n.active+'|'+n.p.detect+'|'+n.p.detThr+'|'+n.p.paneFrom+'|'+n.p.follow;
+    n.p.split+'|'+n.p.peakHold+'|'+n.p.grid+'|'+n.mk+'|'+n.active+'|'+n.p.detect+'|'+n.p.detThr+'|'+n.p.paneFrom+'|'+n.p.follow+'|'+n._pnSkipMode;
   if(key===n._pnDrawKey && now-(n._pnDrawT||0)<500) return;
   n._pnDrawKey=key; n._pnDrawT=now;
   cx.clearRect(0,0,W,H);
@@ -417,18 +429,22 @@ function saPanesDraw(n,cv,cx){
     cx.fillStyle='rgba(10,13,14,.85)'; cx.fillRect(tx,L.plotTop+2,tw,13);
     cx.fillStyle=fg; cx.textAlign='left'; cx.fillText(t,tx+4,L.plotTop+12);
   }
-  // листатель полос: ◀ 5–8 / 12 ▶ и следование за сканером
-  if(list.length>panes.length){
-    const from=clamp(n.p.paneFrom|0,0,list.length-1), t1='◀', t2=(from+1)+'–'+(from+panes.length)+' / '+list.length, t3='▶', t4=(n.p.follow?'● ':'○ ')+'follow';
+  // нижний ряд: кнопка режима пропуска (⊘ skip) и листатель полос ◀ 5–8 / 12 ▶ со следованием за сканером
+  {
+    const paged=list.length>panes.length, from=clamp(n.p.paneFrom|0,0,Math.max(0,list.length-1));
+    const items=[];
+    if(n.p.detect) items.push({t:(n._pnSkipMode?'● ':'○ ')+'⊘ skip', act:'skipmode', col:n._pnSkipMode?acc2:dim});
+    if(paged) items.push({t:'◀',act:'prev'},{t:(from+1)+'–'+(from+panes.length)+' / '+list.length,col:dim},{t:'▶',act:'next'},
+      {t:(n.p.follow?'● ':'○ ')+'follow',act:'follow',col:n.p.follow?acc:dim});
     cx.font='10px sans-serif'; cx.textBaseline='middle'; cx.textAlign='left';
-    const w1=14, w2=cx.measureText(t2).width+10, w3=14, w4=cx.measureText(t4).width+10, y1=H-16, y2=H-3;
-    let x=W-4-(w1+w2+w3+w4);
-    const btn=(txt,bw,act,col)=>{
-      cx.fillStyle='rgba(10,13,14,.8)'; cx.fillRect(x,y1,bw,y2-y1);
-      cx.fillStyle=col||fg; cx.fillText(txt,x+5,(y1+y2)/2+.5);
-      if(act) n._pgBoxes.push({x0:x,y0:y1,x1:x+bw,y1:y2,act}); x+=bw;
-    };
-    btn(t1,w1,'prev'); btn(t2,w2,null,dim); btn(t3,w3,'next'); btn(t4,w4,'follow',n.p.follow?acc:dim);
+    const y1=H-17, y2=H-3, ws=items.map(it=>cx.measureText(it.t).width+(it.t.length<2 ? 12 : 10));
+    let x=W-4-ws.reduce((a,v)=>a+v,0);
+    items.forEach((it,k)=>{
+      cx.fillStyle='rgba(10,13,14,.8)'; cx.fillRect(x,y1,ws[k],y2-y1);
+      cx.fillStyle=it.col||fg; cx.fillText(it.t,x+5,(y1+y2)/2+.5);
+      if(it.act) n._pgBoxes.push({x0:x,y0:y1,x1:x+ws[k],y1:y2,act:it.act});
+      x+=ws[k];
+    });
     cx.textBaseline='alphabetic';
   }
   cx.textAlign='left';
