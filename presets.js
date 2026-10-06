@@ -1012,6 +1012,22 @@ addEdge(gn.id,'iq',mm.id,'in');
 addEdge(mm.id,'am',n1.id,'in'); addEdge(mm.id,'dev',n2.id,'in'); addEdge(mm.id,'idx',n3.id,'in');
 markWiresDirty();
 });
+preset('Measure: Signal Meter — SNR, Bandwidth, Frequency (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Signal Meter: SNR, occupied bandwidth (99 % of power), bandwidth at −26 dB and the frequency of the strongest signal.\n'+
+  'The generator sends narrow FM ±5 kHz, 100 kHz off the center. For a carrier (a narrow signal) the frequency comes from the phase slope; for a wide one — from the centroid.\n'+
+  'Lower the generator level or raise its noise and watch SNR; change the deviation and watch OBW. Shift a real signal into the stream first (the meter takes the strongest one).'});
+nt.size.w=700; nt.size.h=150; applySize(nt);
+const gn=addNode('iqGen',40,240,{sr:'256000',fc:100000000,mode:'FM',off:100000,lvl:-20,tone:1000,dev:5000,noise:-60});
+const mm=addNode('sigMeter',340,240,{});
+mm.size.w=620; applySize(mm);
+const n1=addNode('numview',340,400,{label:'SNR, dB'});
+const n2=addNode('numview',560,400,{label:'OBW, Hz'});
+const n3=addNode('numview',780,400,{label:'frequency, Hz'});
+addEdge(gn.id,'iq',mm.id,'in');
+addEdge(mm.id,'snr',n1.id,'in'); addEdge(mm.id,'obw',n2.id,'in'); addEdge(mm.id,'freq',n3.id,'in');
+markWiresDirty();
+});
 preset('Measure: SINAD of an FM Receiver (Generator)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'SINAD of an FM receiver, the usual bench test: a carrier modulated by 1 kHz at ±3 kHz → demodulator → SINAD.\n'+

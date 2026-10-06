@@ -133,6 +133,17 @@ const cases=[
   ['IQ Quality: Q +0.5 дБ, фаза 2°, DC 0.01 по I',`(()=>{ const g=Math.pow(10,.5/20), ph=2*Math.PI/180;
     const r=iqMeterRun('iqQuality',{win:500},t=>{ const I=.3*Math.cos(2*Math.PI*20000*t), Q=.3*Math.sin(2*Math.PI*20000*t); return [I+.01, g*(Q*Math.cos(ph)+I*Math.sin(ph))]; });
     return [r.dc.toFixed(1), r.gain.toFixed(2), r.phase.toFixed(2), r.irr.toFixed(1)].join(); })()`,'-40.0,0.50,2.00,29.5'],
+  ['Signal Meter: тон 12345,678 Гц, шум −63 дБFS, точность ≤ 0,5 Гц',`(()=>{ let x=7; const rnd=()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296; };
+    const nz=()=>Math.sqrt(-2*Math.log(Math.max(rnd(),1e-12)))*Math.cos(2*Math.PI*rnd());
+    const r=iqMeterRun('sigMeter',{size:'4096',avg:16,thr:6,pct:99,xdb:26,fine:true,win:'500',skipDc:true},t=>{ const p=2*Math.PI*12345.678*t; return [.1*Math.cos(p)+.0005*nz(), .1*Math.sin(p)+.0005*nz()]; });
+    return [Math.abs(r.offset-12345.678)<0.5, r.snr>65 && r.snr<80].join(); })()`,'true,true'],
+  ['Signal Meter: OBW 99% шумоподобной полосы 20 кГц (ФНЧ-шум), SNR 20 дБ',`(()=>{ let x=11; const rnd=()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296; };
+    const nz=()=>Math.sqrt(-2*Math.log(Math.max(rnd(),1e-12)))*Math.cos(2*Math.PI*rnd());
+    const h=kaiserLP(250000,9000,11000,401), M=h.length, bi=new Float32Array(M), bq=new Float32Array(M); let w=0;
+    const r=iqMeterRun('sigMeter',{size:'4096',avg:16,thr:6,pct:99,xdb:26,fine:false,win:'500',skipDc:true},t=>{
+      bi[w]=nz(); bq[w]=nz(); w=(w+1)%M; let a=0,b=0; for(let k=0;k<M;k++){ const i=(w-1-k+M)%M; a+=h[k]*bi[i]; b+=h[k]*bq[i]; }
+      const ph=2*Math.PI*40000*t, c=Math.cos(ph), s=Math.sin(ph); return [(a*c-b*s)*0.02+.0007*nz(), (a*s+b*c)*0.02+.0007*nz()]; });
+    return [r.obw>17000 && r.obw<23000, Math.abs(r.offset-40000)<500].join(); })()`,'true,true'],
 ];
 
 let bad=0;
