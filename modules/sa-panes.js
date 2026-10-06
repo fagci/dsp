@@ -398,7 +398,9 @@ function saPanesDraw(n,cv,cx){
     if(p.color){ cx.fillStyle=p.color; cx.fillRect(x0+2,2,6,6); }
     cx.fillStyle=fg; cx.textAlign='left';
     const nd=p.det ? p.det.list.length : 0, zm=p.zoom ? ' ×'+(pspan/vs).toFixed(pspan/vs<10?1:0) : '';
-    cx.fillText((p.label||fmtHz((p.lo+p.hi)/2,3))+(nd ? ' · '+nd+'▼' : '')+zm,x0+(p.color?11:3),10);
+    // возраст данных — видно, как часто сканер заходит в диапазон (не обновлялся дольше 3 с)
+    const age=!p.t ? ' · no data' : now-p.t>3000 ? ' · '+Math.round((now-p.t)/1000)+'s ago' : '';
+    cx.fillText((p.label||fmtHz((p.lo+p.hi)/2,3))+(nd ? ' · '+nd+'▼' : '')+zm+age,x0+(p.color?11:3),10);
     cx.fillStyle=dim;
     const tl=fmtHz(v[0],3), tm=fmtHz((v[0]+v[1])/2,3), th=fmtHz(v[1],3), mw=s=>cx.measureText(s).width;
     if(mw(tl)+mw(tm)+mw(th)+30<w){
