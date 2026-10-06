@@ -11,7 +11,7 @@ const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const worker=fs.readFileSync(path.join(root,'iq-worker.js'),'utf8');
 const files=[...worker.match(/importScripts\((.*)\);/)[1].matchAll(/'([^']+)'/g)].map(m=>m[1].replace(/\+Q$/,''));
 
-const ctx=vm.createContext({console,Math,Float32Array,Float64Array,Uint8Array,Uint16Array,Uint32Array,Int8Array,Int16Array,Int32Array,Map,Set,Date,JSON,Array,Object,String,Number,parseInt,parseFloat,isFinite,isNaN,Symbol,Promise,BigInt,DataView});
+const ctx=vm.createContext({console,Math,Float32Array,Float64Array,Uint8Array,Uint16Array,Uint32Array,Int8Array,Int16Array,Int32Array,Map,Set,Date,JSON,Array,Object,String,Number,parseInt,parseFloat,isFinite,isNaN,Symbol,Promise,BigInt,DataView,WebAssembly,atob});
 ctx.self=ctx;
 for(const f of files) vm.runInContext(fs.readFileSync(path.join(root,f),'utf8'),ctx,{filename:f});
 const ev=s=>vm.runInContext(s,ctx);
@@ -207,6 +207,19 @@ const cases=[
     const a=run(mk(Float32Array)), b=run(mk(Float64Array)); return [a[0], a[1]<1.1, mk(Float32Array).freqs[1]===mk(Float32Array).freqs[0], b[0], b[1]<1e-6].join(); })()`,'true,true,true,true,true'],
   ['specBin: неравномерная ось (октавы) — двоичный поиск, как раньше',`(()=>{ const F=Float64Array.from({length:40},(_,i)=>100*Math.pow(2,i/5)), s={freqs:F,mag:new Float32Array(40),sr:1,size:40}; return [specAxis(s), Math.abs(specBin(s,F[7])-7)<1e-9, Math.abs(specBin(s,(F[7]+F[8])/2)-7.5)<.2].join(); })()`,'false,true,true'],
   ['specHz: линейная ось — дробный индекс даёт дробную частоту',`(()=>{ const F=Float64Array.from({length:100},(_,i)=>1e9+i*50), s={freqs:F,mag:new Float32Array(100),sr:1,size:100}; return specHz(s,10.5); })()`,1000000525],
+  // WASM SIMD: ядро полифазного фильтра каналайзера против JS-варианта на одном и том же входе (N = 64, 256), включая сдвиг истории между чанками
+  ['SIMD доступен в этой среде (иначе проверки ниже идут по JS)',`iqSimd()!==null`,true],
+  ['IQ Channelizer: SIMD = JS (расхождение выходов канала и спектра < 1e-5), N = 64 и 256',`(()=>{ const sr=1024000; let worst=0;
+    for(const NN of ['64','256']){ const run=off=>{ SIMD_OFF=off; const n={p:{N:NN,ov:'2',K:'2',sel:'manual',freqs:'',thr:10,hold:1,skipDc:true,upd:30,P:'16'}}; IQK.iqChan.init(n);
+      let x=99; const rnd=()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296-.5; };
+      const out=[]; let sp=null;
+      for(let b=0;b<12;b++){ const B=b%3===0 ? 3000 : 4096, re=new Float32Array(B), im=new Float32Array(B); for(let i=0;i<B;i++){ re[i]=rnd()+.3*Math.cos(i*.4); im[i]=rnd()+.3*Math.sin(i*.4); }
+        n.slots=[{c:5,seen:0},{c:+NN-3,seen:0}]; const r=IQK.iqChan.process(n,{in:{sr,fc:1e8,chunks:[{re,im,t0:b*B}]}},{block:B,sr:48000}); if(r.spec) sp=r.spec;
+        for(const k of ['ch1','ch2']) if(r[k]) for(const c of r[k].chunks) for(let i=0;i<c.re.length;i++) out.push(c.re[i],c.im[i]); }
+      SIMD_OFF=false; return {out,sp}; };
+      const a=run(false), b=run(true); if(a.out.length!==b.out.length) return 'длина '+a.out.length+' ≠ '+b.out.length;
+      for(let i=0;i<a.out.length;i++) worst=Math.max(worst,Math.abs(a.out[i]-b.out[i])); for(let i=0;i<a.sp.mag.length;i++) worst=Math.max(worst,Math.abs(a.sp.mag[i]-b.sp.mag[i])); }
+    return worst<1e-5; })()`,true],
 ];
 
 let bad=0;
