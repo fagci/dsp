@@ -32,19 +32,42 @@ function bitRev(v,w){ let r=0; for(let i=0;i<w;i++) r=(r<<1)|((v>>>i)&1); return
 function pow2ge(n){ let p=1; while(p<n) p<<=1; return p; }
 function rms(a){ let s=0; for(let i=0;i<a.length;i++) s+=a[i]*a[i]; return Math.sqrt(s/a.length); }
 
+// БПФ по основанию 2 на месте. Таблицы (перестановка бит, twiddle) кэшируются по длине; первые две стадии без умножений.
+const FFT_PLAN=new Map();
+function fftPlan(n){
+  let p=FFT_PLAN.get(n);
+  if(p) return p;
+  const rev=new Uint32Array(n), c=new Float64Array(n>>1), s=new Float64Array(n>>1);
+  for(let i=1,j=0;i<n;i++){ let bit=n>>1; for(;j&bit;bit>>=1) j^=bit; j^=bit; rev[i]=j; }
+  for(let k=0;k<(n>>1);k++){ const a=-2*Math.PI*k/n; c[k]=Math.cos(a); s[k]=Math.sin(a); }
+  p={rev,c,s}; FFT_PLAN.set(n,p); return p;
+}
 function fft(re,im){
   const n=re.length;
-  for(let i=1,j=0;i<n;i++){ let bit=n>>1;
-    for(;j&bit;bit>>=1) j^=bit; j^=bit;
+  if(n<2) return;
+  const {rev,c,s}=fftPlan(n);
+  for(let i=1;i<n;i++){ const j=rev[i];
     if(i<j){ let t=re[i];re[i]=re[j];re[j]=t; t=im[i];im[i]=im[j];im[j]=t; } }
-  for(let len=2;len<=n;len<<=1){
-    const ang=-2*Math.PI/len, wr=Math.cos(ang), wi=Math.sin(ang), h=len>>1;
-    for(let i=0;i<n;i+=len){ let cr=1,ci=0;
-      for(let k=0;k<h;k++){
-        const ur=re[i+k], ui=im[i+k];
-        const vr=re[i+k+h]*cr-im[i+k+h]*ci, vi=re[i+k+h]*ci+im[i+k+h]*cr;
-        re[i+k]=ur+vr; im[i+k]=ui+vi; re[i+k+h]=ur-vr; im[i+k+h]=ui-vi;
-        const t=cr*wr-ci*wi; ci=cr*wi+ci*wr; cr=t; } } }
+  for(let i=0;i<n;i+=2){                              // длина 2: w = 1
+    const ur=re[i], ui=im[i], vr=re[i+1], vi=im[i+1];
+    re[i]=ur+vr; im[i]=ui+vi; re[i+1]=ur-vr; im[i+1]=ui-vi;
+  }
+  if(n>=4) for(let i=0;i<n;i+=4){                     // длина 4: w = 1, −j
+    let ur=re[i], ui=im[i], vr=re[i+2], vi=im[i+2];
+    re[i]=ur+vr; im[i]=ui+vi; re[i+2]=ur-vr; im[i+2]=ui-vi;
+    ur=re[i+1]; ui=im[i+1]; vr=im[i+3]; vi=-re[i+3];   // (re+j·im)·(−j) = im − j·re
+    re[i+1]=ur+vr; im[i+1]=ui+vi; re[i+3]=ur-vr; im[i+3]=ui-vi;
+  }
+  for(let len=8;len<=n;len<<=1){
+    const h=len>>1, step=n/len;
+    for(let i=0;i<n;i+=len){
+      for(let k=0,t=0;k<h;k++,t+=step){
+        const cr=c[t], ci=s[t], a=i+k, b=a+h;
+        const vr=re[b]*cr-im[b]*ci, vi=re[b]*ci+im[b]*cr, ur=re[a], ui=im[a];
+        re[a]=ur+vr; im[a]=ui+vi; re[b]=ur-vr; im[b]=ui-vi;
+      }
+    }
+  }
 }
 // БПФ вещественного x[N] через комплексное длины N/2 — вдвое дешевле fft().
 // zr/zi — рабочие буферы N/2; в outRe/outIm — бины 0..N/2-1.

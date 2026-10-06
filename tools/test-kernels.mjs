@@ -190,6 +190,16 @@ const cases=[
   ['Channel Activity: боковые линии ЧМ через 1 кГц сливаются в один канал (join 2,5 кГц), удалённый — нет',`(()=>{ const st=chanNew(0), L=(f,bw,lab)=>({sig:true,lo:f-bw/2,hi:f+bw/2,f,label:lab,db:-30});
     for(let k=1;k<=6;k++){ const fr=[]; for(let i=-3;i<=3;i++) fr.push(L(99.8e6+i*1000,400,i===0?'FM':'tone')); fr.push(L(100.5e6,12e3,'NFM')); chanUpdate(st,fr,k*1000,{tol:600}); }
     const A=chanRows(st,6000,0), B=chanRows(st,6000,2500); const m=B.find(r=>Math.abs(r.f-99.8e6)<1000); return [A.length, B.length, Math.round(m.bw), Math.round(m.f)].join(); })()`,'8,2,6400,99800000'],
+  // БПФ: сверка с прямым ДПФ (все размеры от 2 до 4096 проходят одним путём, малые — через особые стадии)
+  ['fft: совпадает с ДПФ, N = 2…4096',`(()=>{ let worst=0; for(const N of [2,4,8,16,64,256,4096]){ const re=Float64Array.from({length:N},(_,i)=>Math.sin(i*.7)+Math.cos(i*i*.01)), im=Float64Array.from({length:N},(_,i)=>Math.cos(i*.3)*.5), r0=re.slice(), i0=im.slice();
+    fft(re,im); for(const k of [0,1,N>>1,N-1]){ let sr=0, si=0; for(let t=0;t<N;t++){ const a=-2*Math.PI*k*t/N, c=Math.cos(a), s=Math.sin(a); sr+=r0[t]*c-i0[t]*s; si+=r0[t]*s+i0[t]*c; } worst=Math.max(worst,Math.abs(sr-re[k]),Math.abs(si-im[k]))/Math.max(1,Math.abs(sr)); } } return worst<1e-9; })()`,true],
+  ['fft: тон в бине 5 → пик в бине 5, остальное < 1e-9',`(()=>{ const N=64, re=Float64Array.from({length:N},(_,i)=>Math.cos(2*Math.PI*5*i/N)), im=Float64Array.from({length:N},(_,i)=>Math.sin(2*Math.PI*5*i/N)); fft(re,im); let pk=0, rest=0; for(let k=0;k<N;k++){ const m=Math.hypot(re[k],im[k]); if(k===5) pk=m; else rest=Math.max(rest,m); } return Math.round(pk)+','+(rest<1e-9); })()`,'64,true'],
+  // каналайзер: тон на +25 кГц при fs 256 кS/с, N=64 (канал 4 кГц) → канал 6 (ровно по центру: 25000/4000 = 6.25 → канал 6), мощность на выходе ≈ входной
+  ['IQ Channelizer: тон по центру канала → пик спектра в нужном канале, мощность сохраняется',`(()=>{ const sr=256000, N=64, f=24000, n={p:{N:'64',ov:'2',K:'1',sel:'manual',freqs:'',thr:10,hold:1,skipDc:true,upd:50,P:'16'}}; IQK.iqChan.init(n);
+    const B=4096, mk=o=>{ const re=new Float32Array(B), im=new Float32Array(B); for(let i=0;i<B;i++){ const a=2*Math.PI*f*(o+i)/sr; re[i]=.5*Math.cos(a); im[i]=.5*Math.sin(a); } return {re,im}; };
+    let sp=null, pow=0, cnt=0;
+    for(let b=0;b<20;b++){ const d=mk(b*B); n.slots=[{c:6,seen:0}]; const r=IQK.iqChan.process(n,{in:{sr,fc:1e8,chunks:[{re:d.re,im:d.im,t0:b*B}]},f1:1e8+f},{block:B,sr:48000}); if(r.spec) sp=r.spec; const o=r.ch1; if(b>=5 && o) for(const c of o.chunks) for(let i=0;i<c.re.length;i++){ pow+=c.re[i]*c.re[i]+c.im[i]*c.im[i]; cnt++; } }
+    let pk=0; for(let i=0;i<sp.mag.length;i++) if(sp.mag[i]>sp.mag[pk]) pk=i; return [Math.round(sp.freqs[pk]-1e8), Math.round(10*Math.log10(pow/cnt)*10)/10].join(); })()`,'24000,-6','снимок'],
 ];
 
 let bad=0;
