@@ -1422,6 +1422,24 @@ function saNoiseFloor(sp,f,tol){
   v.sort((x,y)=>x-y);
   return 20*Math.log10(v[v.length>>1]+1e-12);
 }
+// Слежение за несущей: маркер ищет пик в окне ±bw/2 вокруг себя (bw — полоса канала приёмника под
+// маркером, иначе trkBw) и едет за ним. Нет пика выше шумовой полки на 6 дБ — маркер стоит.
+// Раз на новый спектр; провод mN (n.ext) хозяин маркера — не двигаем
+function saTrackCarrier(n,sp){
+  if(sp.rev===n._trkRev) return; n._trkRev=sp.rev;
+  n._trkWin=n._trkWin||[null,null,null,null];
+  for(let k=0;k<4;k++){
+    const f=n.mk[k]; n._trkWin[k]=null;
+    if(f==null||n.ext[k]) continue;
+    const ch=saChanAtMarker(n,f), bw=ch&&ch.hi>ch.lo ? ch.hi-ch.lo : n.p.trkBw;
+    n._trkWin[k]=bw;
+    const pk=carrierPeak(sp.mag,specBin(sp,f-bw/2),specBin(sp,f+bw/2));
+    if(!pk) continue;
+    const fp=specHz(sp,pk.bin);
+    if(20*Math.log10(pk.mag+1e-12)-saNoiseFloor(sp,fp,bw/2)<6) continue;
+    n.mk[k]=Math.abs(fp-f)<bw/50 ? fp : f+(fp-f)*.5;   // сглаживание: не дёргаться за модуляцией
+  }
+}
 // GPU-водопад для 'sa': кольцевой буфер в текстуре вместо сдвига всей истории на 1px на канве
 // при каждой новой строке спектра (был O(Wp×hwP) software-composite на каждый новый кадр спектра).
 // Новая строка льётся в текущую позицию кольца (O(Wp) upload через texSubImage2D), а "прокрутка" —
@@ -1776,6 +1794,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'skipList',t:'text',d:'',hidden:true},
           {n:'paneDb',t:'text',d:'',hidden:true},
           {n:'snap',t:'check',d:true,label:'snap to band plan step',adv:true},
+          {n:'trk',t:'check',d:false,label:'markers: follow the carrier within bw'},
+          {n:'trkBw',t:'range',min:100,max:1e6,step:10,log:true,d:5000,label:'carrier search bw, Hz (a receiver channel under the marker sets its own)',adv:true},
           {n:'ant',t:'select',opts:['off','antenna','harmonics','both'],d:'off',label:'markers: antenna length / harmonic source f/k'},
           {n:'antVf',t:'range',min:.6,max:1,step:.01,d:.95,label:'antenna shortening factor',adv:true},
           // выключить — тот же жест, что и "очистить": незачем отдельная кнопка (см. fn у 'check' в core-graph.js)
@@ -1956,6 +1976,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     }
     // маркеры — раз на новый спектр (process идёт на каждый блок движка); повтор с тем же rev
     // ещё и сбрасывал фазовое уточнение fr до частоты бина
+    if(sp && n.p.trk) saTrackCarrier(n,sp);
     const mkKey=sp?sp.rev+'|'+n.mk+'|'+n.p.tol:null;
     if(sp && sp===n._mkSp && mkKey===n._mkKey){ Object.assign(o,n._mkOut); return o; }
     n._mkSp=sp; n._mkKey=mkKey; const mo=n._mkOut={};

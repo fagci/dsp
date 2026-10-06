@@ -307,3 +307,15 @@ function fmtLen(m){
   if(!(m>0)) return '—';
   return m<1 ? (m*100).toFixed(m<.1?2:1)+' cm' : m.toFixed(m<10?2:1)+' m';
 }
+
+// вершина спектра в бинах [lo,hi]: дробный бин (парабола по логарифму трёх точек) и значение
+function carrierPeak(mag,lo,hi){
+  const N=mag.length; lo=Math.max(0,Math.floor(lo)); hi=Math.min(N-1,Math.ceil(hi));
+  if(hi<lo) return null;
+  let bi=lo; for(let i=lo+1;i<=hi;i++) if(mag[i]>mag[bi]) bi=i;
+  let d=0;
+  if(bi>0 && bi<N-1){
+    const a=Math.log(mag[bi-1]+1e-12), b=Math.log(mag[bi]+1e-12), c=Math.log(mag[bi+1]+1e-12);
+    d=clamp(.5*(a-c)/(a-2*b+c||1e-9),-.5,.5); }
+  return {bin:bi+d, mag:mag[bi]};
+}
