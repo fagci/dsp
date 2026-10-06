@@ -764,6 +764,75 @@ addEdge(sa.id,'f1',rx.id,'tuneFreq');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
 markWiresDirty();
 });
+preset('USB SDR: Channel Scan (Channel Scanner + squelch)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Channel list (Table) → Channel Scanner → SDR. The scanner groups the channels into the fewest receiver windows\n'+
+  '(dead zone at the window edges is set by «edge, %»), retunes the receiver only between windows and steps through the channels\n'+
+  'of a window by the digital tuner. With the spectrum wired, only channels that show a signal over the window noise get the squelch check.\n'+
+  'The SDR squelch (sqOpen) holds the scan on an active channel: «hang» ms after it closes,\n'+
+  '«timeout» ms at most. The «Scan skip» table is a blacklist (rows with freq or lo / hi). Set the demodulator to match the list.'});
+nt.size.w=560; nt.size.h=130; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:150000000,sql:'SNR',sqlSnr:8});
+const bp=addNode('table',360,260,{list:'presets/Utility / services (RU)',initial:false});
+bp.size.w=340; bp.size.h=200; applySize(bp);
+const cs=addNode('chanscan',740,260,{edge:10,settle:100,dwell:80,hang:2000,timeout:30000});
+cs.size.w=320; cs.size.h=200; applySize(cs);
+const sk=addNode('table',40,520,{list:'Scan skip',initial:false});
+sk.size.w=300; sk.size.h=220; applySize(sk);
+const sa=addNode('sa',1080,40,{auto:true,floor:-90,top:-20,split:.4});
+sa.size.w=700; sa.size.h=420; applySize(sa);
+const dc=addNode('dac',740,520,{vol:.4});
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',cs.id,'spec');
+addEdge(bp.id,'bands',cs.id,'bands'); addEdge(sk.id,'bands',cs.id,'skip');
+addEdge(rx.id,'freqLo',cs.id,'freqLo'); addEdge(rx.id,'freqHi',cs.id,'freqHi');
+addEdge(rx.id,'sqOpen',cs.id,'active');
+addEdge(cs.id,'freq',rx.id,'freq'); addEdge(cs.id,'tune',rx.id,'tuneFreq');
+addEdge(cs.id,'plan',sa.id,'bands');
+addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
+markWiresDirty();
+});
+preset('USB SDR: Channel Scan + Decoder Switch (digital voice / analog)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Channel Scanner stops on an active channel (IQ Squelch). Decoder Switch then sends the channel IQ to one branch at a time:\n'+
+  'branch 1 — Digital Voice Decoder (DMR, P25, NXDN, YSF, D-STAR, dPMR, M17 by sync words) → Vocoder (mbelib) → sound; branch 2 — FM audio.\n'+
+  'Branch 1 is tried first; when its decoder produces voice frames the switch locks on it until they stop («keep» ms),\n'+
+  'when nothing is recognised in «time on a branch» ms the transmission is played as analog FM until the signal ends. Add more decoders on branches 3–4\n'+
+  '(wire their rec output to ev3 / ev4, rename the branches). Put the channels (freq column) of your area into the table.'});
+nt.size.w=760; nt.size.h=130; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'1024000',auto:false,gainDb:30,demod:'IQ',freq:438000000});
+const bp=addNode('table',40,520,{list:'presets/Utility / services (RU)',initial:false});
+bp.size.w=300; bp.size.h=200; applySize(bp);
+const sk=addNode('table',40,760,{list:'Scan skip',initial:false});
+sk.size.w=300; sk.size.h=200; applySize(sk);
+const cs=addNode('chanscan',380,260,{edge:10,settle:100,dwell:120,hang:2500,timeout:60000});
+cs.size.w=300; cs.size.h=200; applySize(cs);
+const sh=addNode('iqShift',380,520,{});
+const dm=addNode('iqDecim',380,640,{M:'16'});
+const sq=addNode('iqSquelch',380,760,{mode:'SNR',thr:8,hang:300});
+const sw=addNode('decswitch',700,520,{slots:2,n1:'digital voice',n2:'analog FM',fallback:2,trial:1500,hold:3000});
+sw.size.w=300; sw.size.h=200; applySize(sw);
+const de=addNode('fskRx',1040,260,{proto:'auto'});
+de.size.w=480; de.size.h=300; applySize(de);
+const vc=addNode('mbeVoice',1040,600,{}); vc.size.w=340; applySize(vc);
+const fm=addNode('iqDemod',1040,760,{mode:'FM',dev:3500});
+const au=addNode('iqAudio',1280,760,{});
+const sm=addNode('sum',1300,600,{});
+const dc=addNode('dac',1520,600,{vol:.5});
+const sa=addNode('sa',720,40,{auto:true,floor:-100,top:-30,split:.4});
+sa.size.w=640; sa.size.h=200; applySize(sa);
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',cs.id,'spec');
+addEdge(bp.id,'bands',cs.id,'bands'); addEdge(sk.id,'bands',cs.id,'skip');
+addEdge(rx.id,'freqLo',cs.id,'freqLo'); addEdge(rx.id,'freqHi',cs.id,'freqHi');
+addEdge(cs.id,'freq',rx.id,'freq');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(cs.id,'tune',sh.id,'freq');
+addEdge(sh.id,'out',dm.id,'in'); addEdge(dm.id,'out',sq.id,'in'); addEdge(dm.id,'out',sw.id,'in');
+addEdge(sq.id,'open',cs.id,'active'); addEdge(cs.id,'listening',sw.id,'active');
+addEdge(sw.id,'out1',de.id,'in'); addEdge(de.id,'voice',sw.id,'ev1');
+addEdge(de.id,'voice',vc.id,'voice'); addEdge(vc.id,'out',sm.id,'a');
+addEdge(sw.id,'out2',fm.id,'in'); addEdge(fm.id,'out',au.id,'in'); addEdge(au.id,'out',sm.id,'b');
+addEdge(sm.id,'out',dc.id,'L'); addEdge(sm.id,'out',dc.id,'R');
+markWiresDirty();
+});
 preset('USB SDR: Auto Scan (CFAR + Band Scanner)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the band plan in windows of the SDR span;\n'+

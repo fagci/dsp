@@ -3319,6 +3319,213 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
   draw(n){ const r=n.el.querySelector('.readout'); if(r && r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
 
+// Канальный сканер: список каналов (bands: строки freq, либо lo…hi с step) → минимальное число окон приёмника.
+// Окно покрывает каналы в пределах полезной ширины (окно минус мёртвая зона по краям, edge %); жадный обход слева
+// направо (окно от первого непокрытого канала) даёт минимум окон. Внутри окна каналы перебираются цифровой
+// перестройкой (tune), по шумодаву ('active', обычно sqOpen приёмника): есть сигнал — стоим, пока он не пропал
+// hang мс, но не дольше timeout. skip — чёрный список (строки lo/hi или точки).
+function chanList(bands,skip){
+  const m=new Map();
+  for(const b of bands){
+    if(!b || b.sig || !isFinite(b.lo)) continue;
+    const st=b.hi>b.lo ? (b.step>0 ? b.step : 12500) : 0, cnt=st ? Math.min(5000,Math.floor((b.hi-b.lo)/st+1e-6)+1) : 1;
+    for(let k=0;k<cnt;k++){
+      const f=Math.round(b.lo+k*st);
+      if(m.has(f) || skip.some(s=>f>=s.lo-(s.hi>s.lo?0:1000) && f<=s.hi+(s.hi>s.lo?0:1000))) continue;
+      m.set(f, st ? (b.label?b.label+' ':'')+fmtHz(f)+'Hz' : (b.label||fmtHz(f)+'Hz'));
+    }
+  }
+  return [...m].sort((a,b)=>a[0]-b[0]).map(([f,label])=>({f,label}));
+}
+// сигнатура списка по содержимому: bandsmerge отдаёт новый массив на каждом тике
+function chanSig(a){
+  if(!Array.isArray(a)) return '';
+  let h=0; for(const b of a) if(b) h=(h*31+(b.lo||0)+7*(b.hi||0)+13*(b.step||0)+(b.sig?1:0))%1e12;
+  return a.length+':'+h;
+}
+// уровень каналов окна над шумом по кадру спектра: шум — медиана мощности (занято меньшинство бинов), центр окна (DC) не берём
+function chanSense(sp,chs,c,bw){
+  const F=sp.freqs, M=sp.mag, N=M.length, st=Math.max(1,N>>9), a=[];
+  for(let i=1;i<N-1;i+=st) if(Math.abs(F[i]-c)>3000) a.push(M[i]*M[i]);
+  if(!a.length) return null;
+  a.sort((x,y)=>x-y); const nz=Math.max(a[a.length>>1],1e-20);
+  return chs.map(ch=>{
+    if(Math.abs(ch.f-c)<=3000) return Infinity;          // на центре окна спектру верить нельзя — решит шумодав
+    let pk=0;
+    for(let i=Math.max(1,Math.floor(specBin(sp,ch.f-bw/2))), e=Math.min(N-2,Math.ceil(specBin(sp,ch.f+bw/2)));i<=e;i++){
+      if(Math.abs(F[i]-c)<=3000) continue;
+      const v=M[i]*M[i]; if(v>pk) pk=v;
+    }
+    return 10*Math.log10(Math.max(pk,1e-20)/nz);
+  });
+}
+function chanPlan(ch,W){
+  const w=[];
+  for(let i=0,j;i<ch.length;i=j+1){
+    j=i; while(j+1<ch.length && ch[j+1].f-ch[i].f<=W) j++;
+    w.push({i,j,c:(ch[i].f+ch[j].f)/2});
+  }
+  return w;
+}
+def({ id:'chanscan', title:'Channel Scanner', cat:'Radio',
+  ins:[{n:'bands',t:'bands'},{n:'skip',t:'bands'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},{n:'active',t:'num'},
+       {n:'timeout',t:'num'},{n:'hang',t:'num'},{n:'settle',t:'num'},{n:'dwell',t:'num'},{n:'spec',t:'spec'}],
+  outs:[{n:'freq',t:'num'},{n:'tune',t:'num'},{n:'listening',t:'num'},{n:'idx',t:'num'},{n:'label',t:'txt'},{n:'plan',t:'bands'}],
+  readout:true, tall:true,
+  params:[{n:'edge',t:'range',min:0,max:40,step:1,d:10,label:'dead zone at each window edge, % (the rest is used for channels)'},
+          {n:'settle',t:'range',min:0,max:2000,step:10,d:100,label:'settle after a window retune, ms'},
+          {n:'dwell',t:'range',min:0,max:1000,step:10,d:80,label:'dwell on a channel before the squelch is read, ms'},
+          // с проводом spec: после перестройки окна по спектру находим каналы с сигналом, шумодав проверяется только на них
+          {n:'senseThr',t:'range',min:0,max:30,step:1,d:8,label:'spectrum check (spec wire): channel level over the window noise, dB; only channels above it get the squelch check (0 = check every channel)'},
+          {n:'chbw',t:'range',min:1000,max:100000,step:500,d:12500,log:true,label:'channel width for the spectrum check, Hz'},
+          {n:'frames',t:'range',min:1,max:10,step:1,d:3,label:'spectrum frames of the new window, max over them (intermittent signals)'},
+          {n:'hang',t:'range',min:0,max:30000,step:100,d:2000,label:'stay after the squelch closes, ms'},
+          {n:'timeout',t:'range',min:500,max:300000,step:500,d:30000,label:'max time while the squelch is open, ms'},
+          {n:'loop',t:'check',d:true,label:'loop back to first channel'}],
+  init:n=>{ n.state='tune'; n.wi=0; n.ci=0; n.curC=null; n.off=0; n._offM=null; n.ch=[]; n.plan=[]; n.planBands=[]; n.text=''; n.cand=[]; n.cp=0; },
+  process(n,I){
+    for(const k of ['timeout','hang','settle','dwell']) if(typeof I[k]==='number') setMod(n,k,I[k]);
+    const full=(typeof I.freqLo==='number' && typeof I.freqHi==='number') ? Math.max(1,I.freqHi-I.freqLo) : 2e6;
+    const W=Math.round(full*(1-2*clamp(+n.p.edge||0,0,40)/100)), now=performance.now();
+    const sig=chanSig(I.bands)+'|'+chanSig(I.skip)+'|'+W;
+    if(n._sig!==sig){
+      n._sig=sig;
+      const skip=Array.isArray(I.skip) ? I.skip.filter(b=>b && !b.sig && isFinite(b.lo)).map(b=>({lo:b.lo,hi:Math.max(b.lo,b.hi)})) : [];
+      n.ch=chanList(Array.isArray(I.bands) ? I.bands : [], skip);
+      n.plan=chanPlan(n.ch,W);
+      n.planBands=n.plan.map((w,k)=>({lo:w.c-W/2, hi:w.c+W/2, label:'window '+(k+1)}));
+      n.wi=0; n.curC=null; n.state='tune';
+    }
+    if(!n.ch.length){ n.curC=null; n.text='no channels'; return {freq:0,tune:0,listening:0,idx:-1,label:'',plan:n.planBands}; }
+    const sp=I.spec && I.spec.freqs && I.spec.freqs.length && n.p.senseThr>0 ? I.spec : null;
+    const gotoCh=k=>{ n.ci=k; n.state='probe'; n.until=now+n.p.dwell; };
+    // начало работы с окном: со спектром — сначала сбор кадров (sense), без — все каналы окна кандидаты
+    const startChans=()=>{
+      const w=n.plan[n.wi];
+      if(sp){ n.state='sense'; n.sNeed=Math.max(1,n.p.frames|0); n.sGot=0; n.sTag=null; n.sBest=null; n.sUntil=now+Math.max(1000,6*n.p.settle); return; }
+      n.cand=[]; for(let k=w.i;k<=w.j;k++) n.cand.push(k);
+      n.cp=0; gotoCh(n.cand[0]);
+    };
+    const gotoWin=k=>{ n.wi=k; n.curC=n.plan[k].c; n.ci=n.plan[k].i; n.state='tune'; n.settleUntil=now+n.p.settle; n._wait=0; };
+    if(n.curC==null) gotoWin(clamp(n.wi,0,n.plan.length-1));
+    let win=n.plan[n.wi];
+    const nextWin=()=>{
+      if(n.wi+1<n.plan.length) return gotoWin(n.wi+1);
+      if(!n.p.loop){ n.state='done'; return; }
+      if(n.plan.length>1) gotoWin(0); else startChans();
+    };
+    const next=()=>{
+      if(++n.cp<n.cand.length) return gotoCh(n.cand[n.cp]);
+      nextWin();
+    };
+    const active=typeof I.active==='number' && I.active>0;
+    // смещение центра окна приёмника (0 или sr/4 при dcShift) — как у Band Scanner
+    const measureOff=()=>{
+      if(typeof I.freqLo!=='number' || typeof I.freqHi!=='number') return false;
+      const m0=(I.freqLo+I.freqHi)/2-(n.curC-n.off);
+      const m=Math.abs(m0)<=Math.abs(m0-full/4) ? 0 : Math.round(full/4);
+      if(Math.abs(m0-m)>2000){ n._offM=null; return false; }
+      const ok=n._offM!=null && Math.abs(m-n._offM)<2000;
+      n._offM=m;
+      if(ok && Math.abs(m-n.off)>1000){ n.off=Math.round(m); return true; }
+      return false;
+    };
+    const atTarget=()=>typeof I.freqLo!=='number' || typeof I.freqHi!=='number' ||
+      Math.abs((I.freqLo+I.freqHi)/2-n.curC)<=Math.max(3000,full*.01);
+    if(n.state==='tune'){
+      if(now>=n.settleUntil){
+        if(measureOff()){ n.settleUntil=now+n.p.settle; n._wait=0; }
+        else if(!atTarget() && (n._wait=(n._wait||0)+1)<=6) n.settleUntil=now+Math.max(50,n.p.settle/2);
+        else startChans();
+      }
+    } else if(n.state==='sense'){
+      // кадры нового окна: центр спектра = центр окна, rev растёт; max уровня по кадрам
+      const tag=I.spec.rev!=null ? I.spec.rev : I.spec;
+      if(sp && tag!==n.sTag){
+        n.sTag=tag;
+        if(Math.abs(sp.freqs[sp.freqs.length>>1]-n.curC)<=Math.max(3000,full*.01) && ++n.sGot>1){   // первый кадр после перестройки отбрасываем
+          const lv=chanSense(sp,n.ch.slice(win.i,win.j+1),n.curC,n.p.chbw);
+          if(lv) n.sBest=n.sBest ? lv.map((v,k)=>Math.max(v,n.sBest[k])) : lv;
+        }
+      }
+      if(!sp || (n.sBest && n.sGot>n.sNeed) || now>=n.sUntil){
+        n.cand=[];
+        for(let k=win.i;k<=win.j;k++) if(!n.sBest || n.sBest[k-win.i]>=n.p.senseThr) n.cand.push(k);   // нет кадров — проверяем все
+        n.cp=0; if(n.cand.length) gotoCh(n.cand[0]); else nextWin();
+      }
+    } else if(n.state==='probe'){
+      if(now>=n.until){ if(active){ n.state='listen'; n.t0=n.lastOpen=now; } else next(); }
+    } else if(n.state==='listen'){
+      if(active) n.lastOpen=now;
+      if(now-n.lastOpen>=n.p.hang || now-n.t0>=n.p.timeout) next();
+    }
+    win=n.plan[n.wi];
+    const c=n.ch[clamp(n.ci,0,n.ch.length-1)];
+    n.text=(n.state==='done' ? 'done («loop» is off)' : n.state)+' · '+n.ch.length+' channels in '+n.plan.length+' windows (usable '+fmtHz(W)+'Hz of '+fmtHz(full)+'Hz)'+(sp ? ' · spectrum check' : '')+'\n'+
+      'window '+(n.wi+1)+'/'+n.plan.length+' at '+fmtHz(n.curC)+'Hz'+(n.off ? ' (receiver offset '+fmtHz(n.off)+'Hz)' : '')+(n.state!=='tune' && n.state!=='sense' ? ' · candidates '+n.cand.length+'/'+(win.j-win.i+1) : '')+'\n'+
+      c.label+' · '+fmtHz(c.f)+'Hz'+(n.state==='listen' ? ' · open '+((now-n.t0)/1000).toFixed(1)+'s' : '');
+    return {freq:n.curC-n.off, tune:n.state==='tune' || n.state==='sense' ? n.curC : c.f, listening:n.state==='listen' ? 1 : 0, idx:n.ci, label:c.label, plan:n.planBands};
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(r && r.textContent!==n.text) r.textContent=n.text||'…'; }});
+
+
+// Переключатель декодеров: поток IQ канала идёт только в одну из ветвей out1…out4. Пока есть сигнал (active — шумодав /
+// listening сканера), ветви пробуются по очереди по trial мс; ветвь, чей декодер подал признак жизни (ev: записи, кадры
+// вокодера на voice, или число > 0), удерживается, пока признаки идут (hold мс). Не опознали за круг — ветвь fallback
+// (обычно аналоговый звук). Нет сигнала — все ветви пусты, перебор начнётся заново. Ручной режим: вход sel или slot.
+const DSW_N=4;
+def({ id:'decswitch', title:'Decoder Switch', cat:'Decoders', kw:'route select carousel dmr p25 nxdn pocsag analog fm auto detect',
+  ins:[{n:'in',t:'iq'},{n:'active',t:'num'},{n:'sel',t:'num'},...Array.from({length:DSW_N},(_,k)=>({n:'ev'+(k+1),t:'val'}))],
+  outs:[...Array.from({length:DSW_N},(_,k)=>({n:'out'+(k+1),t:'iq'})),{n:'sel',t:'num'},{n:'name',t:'txt'},{n:'locked',t:'num'}],
+  readout:true, tall:true,
+  params:[{n:'slots',t:'range',min:2,max:DSW_N,step:1,d:3,label:'branches in use'},
+          {n:'n1',t:'text',d:'digital voice',label:'branch 1 name'},
+          {n:'n2',t:'text',d:'analog FM',label:'branch 2 name'},
+          {n:'n3',t:'text',d:'',label:'branch 3 name'},
+          {n:'n4',t:'text',d:'',label:'branch 4 name'},
+          {n:'trial',t:'range',min:200,max:10000,step:100,d:1500,label:'time on a branch while looking for a decoder, ms'},
+          {n:'hold',t:'range',min:200,max:30000,step:100,d:3000,label:'keep the branch after its decoder goes quiet, ms'},
+          {n:'fallback',t:'range',min:0,max:DSW_N,step:1,d:2,label:'branch used when no decoder locks (not tried in the search; 0 = keep searching)'},
+          {n:'slot',t:'range',min:0,max:DSW_N,step:1,d:0,label:'manual: fixed branch (0 = automatic; the sel input overrides)'}],
+  init:n=>{ n.st='idle'; n.cur=0; n.t0=0; n.lastEv=0; n.on=false; n.sent=-1; n.text=''; },
+  process(n,I){
+    const now=performance.now(), K=clamp(n.p.slots|0,2,DSW_N), fb=clamp(n.p.fallback|0,0,K);
+    const alive=v=>Array.isArray(v) ? v.length>0 : typeof v==='number' ? v>0 : typeof v==='string' ? v.length>0 : !!v;
+    const manual=typeof I.sel==='number' && I.sel>0 ? clamp(Math.round(I.sel),1,K) : clamp(n.p.slot|0,0,K);
+    const act=typeof I.active==='number' ? I.active>0 : true;      // active не подключён — сигнал есть всегда
+    const trials=[]; for(let k=1;k<=K;k++) if(k!==fb) trials.push(k);
+    if(manual){ n.st='manual'; n.cur=manual; }
+    else if(!act){ n.st='idle'; n.cur=0; }
+    else {
+      if(n.st==='idle' || n.st==='manual'){ n.st='search'; n.cur=trials[0]||fb||1; n.t0=now; }
+      const ev=alive(I['ev'+n.cur]);
+      if(n.st==='search' && ev){ n.st='lock'; n.lastEv=now; }
+      else if(n.st==='lock'){
+        if(ev) n.lastEv=now;
+        else if(now-n.lastEv>=n.p.hold){ n.st='search'; n.cur=trials[0]||fb||1; n.t0=now; }
+      } else if(n.st==='search' && now-n.t0>=n.p.trial){
+        const i=trials.indexOf(n.cur)+1;
+        if(i<trials.length){ n.cur=trials[i]; n.t0=now; }
+        else if(fb){ n.st='fallback'; n.cur=fb; }                   // круг без опознания — аналоговая ветвь до конца передачи
+        else { n.cur=trials[0]||1; n.t0=now; }
+      }
+    }
+    const o={sel:n.cur, name:n.cur ? (n.p['n'+n.cur]||('branch '+n.cur)) : '', locked:n.st==='lock' ? 1 : 0};
+    for(let k=1;k<=DSW_N;k++) o['out'+k]=null;
+    const s=iqIn(I,'in');
+    if(n.cur && s){
+      const out=iqStream(n,'out'+n.cur,s.sr,s.fc);
+      let first=n.sent!==n.cur; n.sent=n.cur;
+      for(const c of s.chunks){ iqPush(out,c.re,c.im,c.tag || (first ? 'gap' : null)); first=false; }
+      o['out'+n.cur]=out;
+    }
+    if(!n.cur) n.sent=-1;
+    n.text=n.st+(n.cur ? ' → '+n.cur+' "'+o.name+'"' : '')+(n.st==='search' ? ' · '+((n.p.trial-(now-n.t0))/1000).toFixed(1)+'s left' : '')+(!s ? ' · no input' : '');
+    return o;
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(r && r.textContent!==n.text) r.textContent=n.text||'…'; }});
+
+
 // Опорные точки палитры водопада (t от 0 до 1) — та же цветовая идея, что у gqrx/SDR++
 // (тёмный → синий → голубой → зелёный → жёлтый → оранжевый → белый), но переходы между
 // точками — по smoothstep, а не жёсткой прямой: убирает заметные изломы/"грубость" на стыках.
