@@ -587,7 +587,7 @@ IQK.iqChan={
     const N=+n.p.N, P=+n.p.P, ov=+n.p.ov, D=N/ov, sr=s.sr;
     const key=N+'|'+P+'|'+ov+'|'+sr;
     if(key!==n.key){
-      n.key=key; n.h=iqChanProto(N,P,ov); n.H=N*P-1;
+      n.key=key; n.h=iqChanProto(N,P,ov); n.H=N*P-1; n.hrev=Float32Array.from(n.h).reverse();   // hrev — для SIMD-ядра (чтение подряд)
       n.hr=new Float32Array(n.H); n.hi=new Float32Array(n.H);
       n.ph=D-1;                                       // индекс (в чанке) новейшего отсчёта следующего кадра
       n.nAbs=0;                                       // номер первого отсчёта следующего чанка
@@ -614,18 +614,27 @@ IQK.iqChan={
     });
     // смена канала у слота — метка retune на первом чанке
     const tags=n.slots.map(sl=>{ const t=sl.c!==sl.prev ? 'retune' : null; sl.prev=sl.c; return t; });
-    const h=n.h, H=n.H, ur=n.ur, ui=n.ui_, pw=n.pw;
+    const h=n.h, H=n.H, pw=n.pw, sm=N%4===0 ? iqSimd() : null;
     for(const c of s.chunks){
       const xr=c.re, xi=iqChunkIm(c), Kc=xr.length;
-      const br=new Float32Array(H+Kc); br.set(n.hr); br.set(xr,H);
-      const bi=new Float32Array(H+Kc); bi.set(n.hi); bi.set(xi,H);
       const cnt=n.ph<Kc ? Math.floor((Kc-1-n.ph)/D)+1 : 0;
+      // WASM SIMD: коэффициенты (развёрнутые), вход и результат кадра лежат в памяти модуля; иначе — JS (iqChanPoly)
+      let br, bi, ur=n.ur, ui=n.ui_, f32=null, oX=0, oY=0, oU=0, oV=0;
+      if(sm){
+        const NP=N*P; oX=NP; oY=oX+H+Kc; oU=oY+H+Kc; oV=oU+N;
+        f32=simdAlloc(sm,oV+N);
+        f32.set(n.hrev,0); f32.set(n.hr,oX); f32.set(xr,oX+H); f32.set(n.hi,oY); f32.set(xi,oY+H);
+        ur=f32.subarray(oU,oU+N); ui=f32.subarray(oV,oV+N);
+      } else {
+        br=new Float32Array(H+Kc); br.set(n.hr); br.set(xr,H);
+        bi=new Float32Array(H+Kc); bi.set(n.hi); bi.set(xi,H);
+      }
       const yr=n.slots.map(sl=>sl.c==null ? null : new Float32Array(cnt));
       const yi=n.slots.map(sl=>sl.c==null ? null : new Float32Array(cnt));
       let j=n.ph;
       for(let f=0;f<cnt;f++,j+=D){
-        const b=H+j;                                  // br[b] — новейший отсчёт кадра
-        iqChanPoly(h,br,bi,ur,ui,b,N,P);
+        if(sm) sm.poly(0,(oX+j)*4,(oY+j)*4,oU*4,oV*4,N,P);       // окно входа начинается с отсчёта j: j = b − N·P + 1 при b = H + j
+        else iqChanPoly(h,br,bi,ur,ui,H+j,N,P);                  // b = H + j — новейший отсчёт кадра
         fft(ui,ur);                                   // обратное БПФ через перестановку re/im: результат re→ur, im→ui
         for(let k=0;k<N;k++) pw[k]+=ur[k]*ur[k]+ui[k]*ui[k];
         n.frames++;
@@ -637,7 +646,8 @@ IQK.iqChan={
         }
       }
       n.ph=j-Kc; n.nAbs+=Kc;
-      n.hr.set(br.subarray(Kc)); n.hi.set(bi.subarray(Kc));
+      if(sm){ n.hr.set(f32.subarray(oX+Kc,oX+Kc+H)); n.hi.set(f32.subarray(oY+Kc,oY+Kc+H)); }
+      else { n.hr.set(br.subarray(Kc)); n.hi.set(bi.subarray(Kc)); }
       for(let q=0;q<K;q++) if(yr[q] && cnt){ iqPush(outs[q],yr[q],yi[q],tags[q]||c.tag); tags[q]=null; }
     }
     n.t+=s.chunks.reduce((a,c)=>a+c.re.length,0);
