@@ -2487,7 +2487,8 @@ self.onmessage=async e=>{
     if(cmd==='probe') r=!!(self.navigator && navigator.usb && navigator.usb.getDevices);
     else if(cmd==='open'){
       const devs=await navigator.usb.getDevices();
-      usb=devs.find(d=>d.vendorId===args.vendorId && d.productId===args.productId && (!args.serial || d.serialNumber===args.serial));
+      // одинаковые донглы (один серийник) различаются порядковым номером среди подходящих — тем же, что в главном потоке
+      usb=devs.filter(d=>d.vendorId===args.vendorId && d.productId===args.productId && (!args.serial || d.serialNumber===args.serial))[args.index||0];
       if(!usb) throw new Error('device is not visible from the worker');
       try{ api=await sdrOpenDevice(usb, 0, args.gain); }
       catch(err){ try{ await usb.close(); }catch(e2){} usb=null; throw err; }
@@ -2525,7 +2526,8 @@ async function rtlOpenInWorker(usbDev, gain){
   let info;
   try{
     if(!await call('probe')){ drop(); return null; }
-    info=await call('open', {vendorId:usbDev.vendorId, productId:usbDev.productId, serial:usbDev.serialNumber, gain});
+    const same=(await navigator.usb.getDevices()).filter(d=>d.vendorId===usbDev.vendorId && d.productId===usbDev.productId && (!usbDev.serialNumber || d.serialNumber===usbDev.serialNumber));
+    info=await call('open', {vendorId:usbDev.vendorId, productId:usbDev.productId, serial:usbDev.serialNumber, gain, index:Math.max(0,same.indexOf(usbDev))});
   }catch(e){ drop(); throw e; }
   return {
     worker:true, tunerName:info.tunerName, kind:info.kind, fmt:info.fmt, bps:info.bps,
@@ -4090,7 +4092,10 @@ const sdrUsbId=d=>d.vendorId.toString(16)+':'+d.productId.toString(16)+':'+(d.se
 // прошлое устройство из уже разрешённых — без окна выбора; choose — выбрать заново
 async function sdrPickDevice(n, choose){
   if(!choose && n.p.usbId){
-    const d=(await navigator.usb.getDevices()).find(d=>sdrUsbId(d)===n.p.usbId);
+    // несколько одинаковых донглов (один серийник): берём первый, не занятый другим узлом USB SDR
+    const used=new Set(Graph.nodes.filter(o=>o!==n && o.connected && o.usbDev).map(o=>o.usbDev));
+    const same=(await navigator.usb.getDevices()).filter(d=>sdrUsbId(d)===n.p.usbId);
+    const d=same.find(x=>!used.has(x)) || same[0];
     if(d) return d;
     // RX-888 после выключения снова загрузчик — берём его, если уже разрешён
     if(n.p.usbId.startsWith('4b4:f1:')){
@@ -4134,6 +4139,7 @@ async function rtlConnect(n, choose){
   try{
     let usbDev=await sdrPickDevice(n, choose);
     if(rx888Is(usbDev, RX888_BOOT)) usbDev=await rx888Boot(n, usbDev);
+    n.usbDev=usbDev;
     const gain=n.p.auto?null:n.p.gainDb;
     // сначала пробуем открыть донгл в USB-воркере; без WebUSB в воркерах — по-старому, на главном потоке
     n.dev=await rtlOpenInWorker(usbDev, gain).catch(e=>{
@@ -4206,6 +4212,7 @@ async function rtlDisconnect(n){
   for(const ch of n.ch){ if(ch.worker) ch.worker.terminate(); ch.worker=null; ch.aring=null; ch.active=false; }
   if(n.specWorker){ n.specWorker.terminate(); n.specWorker=null; }
   if(n.dev){ try{ await n.dev.close(); }catch(e){} n.dev=null; }
+  n.usbDev=null;
   n.connected=false; n.busy=false;
   n.status='disconnected';
 }

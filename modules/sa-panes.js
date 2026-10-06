@@ -39,11 +39,25 @@ function saPaneGet(n,b){
   }
   p.label=b.label||''; p.color=b.color||''; p.step=b.step||0;
   if(n.p.detect && !p.det){
-    // детектор — обычный cfarFrame с узлом-заглушкой: диапазон панели, подтверждённые цели живут вне окна приёмника
-    p.det={p:{auto:false,fmin:p.lo,fmax:p.hi,method:'OS',guard:4,train:32,thr:n.p.detThr,minW:2,confM:2,
-      confN:3,top:10,hold:1500,idRes:'auto'}, keepOutside:30000, list:[], tracks:[], recs:[], skip:null, floorDb:null};
+    // фасад: list/floorDb — сводка; у каждого источника спектра (приёмника) свой cfarFrame — кадры разных приёмников не сбивают
+    // подтверждение цели друг другу; цели вне окна приёмника живут дольше (keepOutside)
+    p.det={list:[], floorDb:null, srcs:[]};
   } else if(!n.p.detect && p.det) p.det=null;
   return p;
+}
+// детектор приёмника src в диапазоне p (заглушка узла для cfarFrame)
+function saDetSrc(n,p,src){
+  return p.det.srcs[src]||(p.det.srcs[src]={p:{auto:false,fmin:p.lo,fmax:p.hi,method:'OS',guard:4,train:32,thr:n.p.detThr,minW:2,confM:2,
+    confN:3,top:10,hold:1500,idRes:'auto'}, keepOutside:30000, list:[], tracks:[], recs:[], skip:null, floorDb:null});
+}
+// сводный список целей панели: от всех приёмников, без повторов одной и той же частоты
+function saDetMerge(p){
+  const L=[];
+  for(const d of p.det.srcs) if(d) for(const t of d.list) L.push(t);
+  L.sort((a,b)=>b.db-a.db);
+  const out=[];
+  for(const t of L) if(!out.some(o=>Math.abs(o.f-t.f)<=Math.max(5000,o.w,t.w))) out.push(t);
+  p.det.list=out.slice(0,10);
 }
 // панели на экране
 function saPaneState(n){
@@ -74,9 +88,12 @@ function saSkipSync(n){
   n._skKey=key;
   n._skipR=[...ext, ...n._skipInt.map(x=>({lo:x.f-x.w/2, hi:x.f+x.w/2}))];
   for(const p of (n._pnStore ? n._pnStore.values() : [])) if(p.det){
-    p.det.skip=n._skipR;
-    p.det.tracks=p.det.tracks.filter(t=>!cfarSkipped(n._skipR,t.f,t.w));
-    p.det.list=p.det.list.filter(t=>!cfarSkipped(n._skipR,t.f,t.w));
+    for(const d of p.det.srcs) if(d){
+      d.skip=n._skipR;
+      d.tracks=d.tracks.filter(t=>!cfarSkipped(n._skipR,t.f,t.w));
+      d.list=d.list.filter(t=>!cfarSkipped(n._skipR,t.f,t.w));
+    }
+    saDetMerge(p);
   }
   return n._skipR;
 }
@@ -88,10 +105,12 @@ function saSkipClear(n){ n._skipInt=[]; saSkipSave(n); }
 
 /* ---------- накопление ---------- */
 // новое окно спектра → диапазоны
-function saPanesIngest(n,sp){
+// src — номер входа спектра (0 — spec, 1–3 — spec2…spec4): несколько приёмников сканируют вместе
+function saPanesIngest(n,sp,src=0){
   if(!sp || !sp.mag) return;
-  if(sp===n._pnSp && sp.rev===n._pnRev) return;
-  n._pnSp=sp; n._pnRev=sp.rev;
+  const st=(n._pnSrc||(n._pnSrc=[]))[src]||(n._pnSrc[src]={});
+  if(sp===st.sp && sp.rev===st.rev) return;
+  st.sp=sp; st.rev=sp.rev;
   const list=saPaneList(n); if(!list.length) return;
   const N=sp.mag.length, now=performance.now();
   if(N<2) return;
@@ -105,7 +124,7 @@ function saPanesIngest(n,sp){
     if(b-a>2){ m=Float32Array.from(sp.mag); for(let i=a+1;i<b;i++) m[i]=sp.mag[a]+(sp.mag[b]-sp.mag[a])*(i-a)/(b-a); sc={...sp, mag:m}; }
   }
   // следование за сканером: окно ушло в диапазон вне экрана — перелистнуть на его страницу
-  if(n.p.follow && !(n._pnManT && now-n._pnManT<10000)){
+  if(src===0 && n.p.follow && !(n._pnManT && now-n._pnManT<10000)){
     const cw=(sLo+sHi)/2, idx=list.findIndex(b=>cw>=b.lo && cw<=b.hi), k=Math.max(1,n.p.panes|0), from=n.p.paneFrom|0;
     if(idx>=0 && (idx<from || idx>=from+k)) saSetFrom(n,Math.floor(idx/k)*k,false);
   }
@@ -142,11 +161,17 @@ function saPanesIngest(n,sp){
     // строка водопада: полоска окна добавляется в текущую строку; новая строка (сдвиг вниз) — когда прежняя закончена и начался
     // новый заход (пауза в данных, другое окно, прошёл rowMs — стоим на месте), либо сканер пошёл заново (центр окна вернулся назад)
     const d=p.img.data, row=SAP_WRES*4, k=SAP_RES/SAP_WRES, rowMs=Math.max(100,+n.p.rowMs||400);
-    const wrap=p.lastC!=null && c<p.lastC-1e3;
+    const wrap=!n._pnMulti && p.lastC!=null && c<p.lastC-1e3;    // при нескольких приёмниках окна приходят не по порядку
     // диапазон шире окна: строка достраивается за проход, сдвиг — только когда сканер вернулся в начало (центр окна пошёл назад);
     // диапазон в одно окно: строка готова сразу — новая на каждый заход (пауза в данных) и раз в rowMs, пока стоим на месте
     const single=(p.hi-p.lo)<=(uHi-uLo)+1e3;
-    if(!p.rowOpen || wrap || (single && p.rowFull && (gap>250 || now-p.rowT0>=rowMs))){
+    // несколько приёмников: строка готова, а окно снова заходит в уже записанные столбцы (и это не хвост диапазона) — новый проход
+    let multiNew=false;
+    if(n._pnMulti && !single && p.rowFull){
+      let already=0; for(let i=0;i<touched;i++){ const v=p.rowLv[wcol[i]]; if(v===v) already++; }
+      multiNew=already>=.5*touched && touched>=.3*Math.min(SAP_RES,(uHi-uLo)/span*SAP_RES);
+    }
+    if(!p.rowOpen || wrap || multiNew || (single && p.rowFull && (gap>250 || now-p.rowT0>=rowMs))){
       d.copyWithin(row,0,row*(SAP_ROWS-1));
       p.rowLv.fill(NaN); p.rowN=0; p.rowFull=false; p.rowOpen=true; p.rowT0=now;
     }
@@ -165,27 +190,38 @@ function saPanesIngest(n,sp){
     const t=Float32Array.from(p.lv).filter(v=>v===v).sort();
     p.med=t.length ? t[t.length>>1] : -120;
     if(p.det){
-      p.det.p.thr=n.p.detThr; p.det.skip=skipR;
-      cfarFrame(p.det,sc);
-      for(const r of p.det.recs.splice(0)){ r.band=p.label; (n._pnRecs||(n._pnRecs=[])).push(r); }
+      const ds=saDetSrc(n,p,src);
+      ds.p.thr=n.p.detThr; ds.skip=skipR;
+      cfarFrame(ds,sc);
+      p.det.floorDb=ds.floorDb;
+      saDetMerge(p);
+      for(const r of ds.recs.splice(0)){ r.band=p.label; (n._pnRecs||(n._pnRecs=[])).push(r); }
       if(n._pnRecs && n._pnRecs.length>1000) n._pnRecs.splice(0,n._pnRecs.length-1000);
     }
   }
   // цели в окне приёмника — для остановки сканера (count) и подстройки (detF)
+  // (по каждому приёмнику отдельно: у каждого свой Band Scanner и своя частота)
   let cnt=0, best=null;
-  for(const p of n._pnStore.values()) if(p.det) for(const t of p.det.list){
-    if(t.f<sLo || t.f>sHi) continue;
-    cnt++; if(!best || t.db>best.db) best=t;
+  for(const p of n._pnStore.values()) if(p.det){
+    const ds=p.det.srcs[src]; if(!ds) continue;
+    for(const t of ds.list){
+      if(t.f<sLo || t.f>sHi) continue;
+      cnt++; if(!best || t.db>best.db) best=t;
+    }
   }
-  n._pnCount=cnt; n._pnDetF=best ? best.f : null;
+  (n._pnCnt||(n._pnCnt=[]))[src]=cnt; (n._pnDetFs||(n._pnDetFs=[]))[src]=best ? best.f : null;
   n._pnRevDraw=(n._pnRevDraw|0)+1;
 }
 // выходы режима panes: маркеры берут уровень из накопленных данных панели, а не из текущего окна приёмника
 function saPanesOut(n){
   // маркер как «стоп»: holdF — частота первого поставленного маркера (если включено park); сканер встаёт на неё и стоит до снятия
   const mkHold=n.p.holdMarker ? n.mk.find(f=>f!=null) : null;
-  const o={centerFreq:n._steer ?? null, count:n.p.scanStop==='marker only' ? 0 : n._pnCount|0,
-    detF:mkHold ?? n._pnDetF ?? null, holdF:mkHold ?? null, rec:null};
+  const o={centerFreq:n._steer ?? null, holdF:mkHold ?? null, rec:null};
+  for(let k=0;k<4;k++){                                  // count/detF — приёмник 1; count2/detF2 … — приёмники 2–4
+    const q=k?k+1:'';
+    o['count'+q]=n.p.scanStop==='marker only' ? 0 : ((n._pnCnt&&n._pnCnt[k])|0);
+    o['detF'+q]=(k===0 ? mkHold : null) ?? (n._pnDetFs&&n._pnDetFs[k]) ?? null;
+  }
   if(n._pnRecs && n._pnRecs.length) o.rec=n._pnRecs.splice(0);
   const all=n._pnStore ? [...n._pnStore.values()] : [];
   for(let k=0;k<4;k++){
@@ -329,7 +365,7 @@ function saPanesDraw(n,cv,cx){
     cx.fillText('panes: wire bands (Table / band plan) — one pane per range',W/2,H/2);
     cx.textAlign='left'; cx.textBaseline='alphabetic'; return;
   }
-  const L=saPanesLayout(n,W,H), hw=H-L.hs, sp=n._pnSp, span=sp ? specSpan(sp) : null;
+  const L=saPanesLayout(n,W,H), hw=H-L.hs, wins=(n._pnSrc||[]).filter(x=>x&&x.sp).map(x=>specSpan(x.sp));
   const rng=(n.p.top-n.p.floor)||1;
   const yOf=db=>L.plotTop+L.plotH*(1-clamp((db-n.p.floor)/rng,0,1));
   cx.font='10px sans-serif';
@@ -440,7 +476,7 @@ function saPanesDraw(n,cv,cx){
     if(i===0){ cx.textAlign='right'; cx.fillText(Math.round(n.p.top)+'',x0+w-3,L.plotTop+9); cx.fillText(Math.round(n.p.floor)+'',x0+w-3,L.plotTop+L.plotH-2); }
     cx.restore();
     // граница: активное окно приёмника в этой панели / выбранная
-    const live=span && p.t && now-p.t<1200 && !(p.hi<span[0] || p.lo>span[1]);
+    const live=p.t && now-p.t<1200 && wins.some(w=>!(p.hi<w[0] || p.lo>w[1]));   // окно любого приёмника сейчас в этой панели
     cx.lineWidth=live?1.5:1;
     cx.strokeStyle=live ? acc : n._pnSel===i ? dim : 'rgba(128,140,150,.35)';
     cx.strokeRect(x0+.5,.5,w-1,H-1);

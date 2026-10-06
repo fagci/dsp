@@ -126,6 +126,7 @@ const PRESET_CATS={
   'USB SDR: Wideband Sweep':'SDR Receivers',
   'USB SDR: Auto Scan (CFAR + Band Scanner)':'SDR Receivers',
   'USB SDR: Multiband Scan (panes + CFAR)':'SDR Receivers',
+  'USB SDR ×4: Multiband Scan (4 receivers)':'SDR Receivers',
   'USB SDR: Signal Identifier':'SDR Receivers',
   'IQ: Receiver from Blocks (Generator)':'SDR Receivers',
   'USB SDR: FM Receiver from Blocks':'SDR Receivers',
@@ -836,6 +837,45 @@ addEdge(bs.id,'freq',rx.id,'freq');
 addEdge(sa.id,'detF',rx.id,'tuneFreq');
 addEdge(sa.id,'rec',lg.id,'rec');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
+markWiresDirty();
+});
+preset('USB SDR ×4: Multiband Scan (4 receivers)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Four USB SDRs scan together: every Band Scanner has lanes = 4 and its own lane (0…3) and takes every 4th window of the common window list,\n'+
+  'so four neighbouring windows are received at the same moment and a pass takes ~4× less. One Spectrum Analyzer (layout «panes») shows all four\n'+
+  'receivers in the same multiband panes (inputs spec … spec4); every receiver has its own detector, so a signal is confirmed by the receiver that sees it,\n'+
+  'and its own count / detF: that scanner stops and that receiver is tuned to the signal. Audio of the four receivers is mixed (squelch keeps the closed ones silent).\n'+
+  'Press Connect on each receiver (Choose… for the first one). Identical dongles with the same serial are fine — each node takes a free one;\n'+
+  'with different serials (rtl_eeprom) a node always gets the same dongle. All four should use the same sample rate. USB: 4 × 2.4 MS/s is ~19 MB/s — mind the hub;\n'+
+  'lower the sample rate if blocks drop. «Marker parks the scanner» parks lane 0 only. The rest — as in USB SDR: Multiband Scan (panes + CFAR).'});
+nt.size.w=900; nt.size.h=210; applySize(nt);
+const bp=addNode('table',1100,300,{list:'@patch',initial:false,data:'name,lo,hi,step\n'+
+  'FM broadcast,87.5M,108M,100k\nAirband,118M,137M,25k\n2m ham,144M,146M,12.5k\nVHF custom,146M,174M,25k\nMarine VHF,156M,162.025M,25k\n'+
+  'LPD433,433.05M,434.79M,25k\nPMR446,446M,446.2M,12.5k\nSRD 868,868M,870M,25k'});
+bp.size.w=340; bp.size.h=280; applySize(bp);
+const sk=addNode('table',1100,620,{list:'Scan skip',initial:false});
+sk.size.w=300; sk.size.h=220; applySize(sk);
+const sa=addNode('sa',40,1020,{layout:'panes',panes:4,detect:true,detThr:10,edge:10,follow:true,holdMarker:true,peakHold:true,floor:-90,top:-20,split:.45});
+sa.size.w=1300; sa.size.h=460; applySize(sa);
+const lg=addNode('table',1460,300,{list:'Scan log',initial:false});
+lg.size.w=420; lg.size.h=260; applySize(lg);
+const mx=addNode('mixer4',1460,620,{});
+const dc=addNode('dac',1460,860,{vol:.4});
+const SP=['spec','spec2','spec3','spec4'], CN=['count','count2','count3','count4'], DF=['detF','detF2','detF3','detF4'], AU=['a','b','c','d'];
+const bs0=[];
+for(let i=0;i<4;i++){
+  const rx=addNode('rtlsdr',40+i*250,280,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:100000000+i*1000000,sql:'SNR',sqlSnr:8,fastTune:true});
+  const bs=addNode('bandscan',40+i*320,640,{timeout:3000,settle:40,frames:3,edge:10,order:'interleave',lanes:4,lane:i});
+  bs.size.w=300; bs.size.h=200; applySize(bs);
+  addEdge(rx.id,'spec',sa.id,SP[i]); addEdge(rx.id,'spec',bs.id,'spec');
+  addEdge(bp.id,'bands',bs.id,'bands');
+  addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi');
+  addEdge(sa.id,CN[i],bs.id,'active'); addEdge(bs.id,'freq',rx.id,'freq'); addEdge(sa.id,DF[i],rx.id,'tuneFreq');
+  addEdge(rx.id,'audio',mx.id,AU[i]);
+  if(i===0) addEdge(sa.id,'holdF',bs.id,'hold');
+}
+addEdge(bp.id,'bands',sa.id,'bands'); addEdge(sk.id,'bands',sa.id,'skip'); addEdge(sa.id,'rec',lg.id,'rec');
+addEdge(mx.id,'L',dc.id,'L'); addEdge(mx.id,'R',dc.id,'R');
 markWiresDirty();
 });
 preset('USB SDR: Signal Identifier', function(){
