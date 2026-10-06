@@ -811,7 +811,7 @@ const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the
   'by ranges (lo / hi) for pagers and beacons; «Clear skipped signals» wipes the taps. On a phone: the «⊘ skip» button below the panes, then tap a ▼ (or hold a ▼).\n'+
   'Tap a pane — marker 1–4; tap a pane title — retune. The receiver squelch (SNR) keeps the speaker quiet while the scan is not on a signal.'});
 nt.size.w=720; nt.size.h=250; applySize(nt);
-const rx=addNode('rtlsdr',40,300,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:100000000,sql:'SNR',sqlSnr:8});
+const rx=addNode('rtlsdr',40,300,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:100000000,sql:'SNR',sqlSnr:8,fastTune:true});
 const bp=addNode('table',360,300,{list:'@patch',initial:false,data:'name,lo,hi,step\n'+
   'FM broadcast,87.5M,108M,100k\nAirband,118M,137M,25k\n2m ham,144M,146M,12.5k\nMarine VHF,156M,162.025M,25k\n'+
   'LPD433,433.05M,434.79M,25k\nPMR446,446M,446.2M,12.5k\nSRD 868,868M,870M,25k\nADS-B,1089M,1091M,1M'});
