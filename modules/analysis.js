@@ -1776,6 +1776,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'skipList',t:'text',d:'',hidden:true},
           {n:'paneDb',t:'text',d:'',hidden:true},
           {n:'snap',t:'check',d:true,label:'snap to band plan step',adv:true},
+          {n:'ant',t:'select',opts:['off','antenna','harmonics','both'],d:'off',label:'markers: antenna length / harmonic source f/k'},
+          {n:'antVf',t:'range',min:.6,max:1,step:.01,d:.95,label:'antenna shortening factor',adv:true},
           // выключить — тот же жест, что и "очистить": незачем отдельная кнопка (см. fn у 'check' в core-graph.js)
           {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold){ n.peak=null; if(typeof saPeakClear==='function') saPeakClear(n); } }},
           {n:'palette',t:'select',opts:['default',...Object.keys(PALETTES)],d:'classic',label:'waterfall palette',adv:true},
@@ -4443,6 +4445,26 @@ def({ id:'eye', lazy:true, title:'Eye Diagram', cat:'Analysis',
         k?cx.lineTo(x,y):cx.moveTo(x,y); }
       cx.stroke(); }
     cx.globalAlpha=1; }});
+
+
+// Длина антенны и "гармоника к": по частоте — размеры вибратора и возможные основные частоты f/k.
+// Сигнал на f может быть k-й гармоникой передатчика на f/k — то есть не оригиналом
+def({ id:'antenna', title:'Antenna & Harmonics', cat:'Radio', kw:'wavelength dipole quarter half wave length harmonic spurious image',
+  ins:[{n:'f',t:'num'},{n:'vf',t:'num'}],
+  outs:[{n:'lambda',t:'num'},{n:'quarter',t:'num'},{n:'half',t:'num'},{n:'txt',t:'txt'}], readout:true, view:{h:30},
+  params:[{n:'f',t:'range',min:1e3,max:6e9,step:1,log:true,d:433.92e6,label:'frequency, Hz'},
+          {n:'vf',t:'range',min:.6,max:1,step:.01,d:.95,label:'shortening factor (wire ~0.95)'},
+          {n:'kmax',t:'range',min:2,max:16,step:1,d:8,label:'harmonics up to k'}],
+  init:n=>{n.txt='';},
+  process(n,I){
+    for(const k of ['f','vf']) if(typeof I[k]==='number') setMod(n,k,I[k]);
+    const f=n.p.f, d=antennaDims(f,n.p.vf);
+    n.txt=['λ '+fmtLen(d.lambda)+' · λ/4 '+fmtLen(d.quarter)+' · λ/2 '+fmtLen(d.half)+' · 5/8λ '+fmtLen(d.five8),
+      ...harmonicSources(f,n.p.kmax).map(h=>'k='+h.k+' ← '+fmtHz(h.f,3)+'Hz')].join('\n');
+    return {lambda:d.lambda, quarter:d.quarter, half:d.half, txt:n.txt}; },
+  draw(n){
+    const d=antennaDims(n.p.f,n.p.vf);
+    n.el.querySelector('.readout').textContent=fmtHz(n.p.f,3)+'Hz · λ/4 '+fmtLen(d.quarter); }});
 
 
 def({ id:'freqmeter', lazy:'proc', title:'Frequency Meter', cat:'Analysis', ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'digits',t:'num'}],
