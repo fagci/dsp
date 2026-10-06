@@ -101,6 +101,10 @@ function saSkipSave(n){
   n.p.skipList=JSON.stringify(n._skipInt.map(x=>({f:Math.round(x.f),w:Math.round(x.w)})));
   saSkipSync(n); n._pnRevDraw=(n._pnRevDraw|0)+1;
 }
+function saPeakClear(n){
+  if(n._pnStore) for(const p of n._pnStore.values()) p.pk.fill(NaN);
+  n._pnRevDraw=(n._pnRevDraw|0)+1;
+}
 function saSkipClear(n){ n._skipInt=[]; saSkipSave(n); }
 
 /* ---------- накопление ---------- */
@@ -114,7 +118,12 @@ function saPanesIngest(n,sp,src=0){
   const list=saPaneList(n); if(!list.length) return;
   const N=sp.mag.length, now=performance.now();
   if(N<2) return;
-  const [sLo,sHi]=specSpan(sp), cut=(sHi-sLo)*clamp(+n.p.edge||0,0,40)/100, uLo=sLo+cut, uHi=sHi-cut;
+  const [sLo,sHi]=specSpan(sp);
+  // первый кадр после смены окна может нести недосевшую частоту — не пишем (после быстрой перестройки давал повторяющийся узор)
+  const cKey=Math.round((sLo+sHi)/2e3);
+  if(st.cKey!==undefined && st.cKey!==cKey){ st.cKey=cKey; return; }
+  st.cKey=cKey;
+  const cut=(sHi-sLo)*clamp(+n.p.edge||0,0,40)/100, uLo=sLo+cut, uHi=sHi-cut;
   // пик на центре окна приёмника (утечка гетеродина / DC) есть в каждом окне и выглядит как сигнал: центральные бины заменяем
   // интерполяцией соседних (только для окон одного приёмника — у широкой развёртки середина спектра не особая)
   let m=sp.mag, sc=sp;
@@ -307,6 +316,7 @@ function saPanesWire(n,cv){
       else if(b.act==='next') saSetFrom(n,(n.p.paneFrom|0)+k,true);
       else if(b.act==='skipmode'){ n._pnSkipMode=!n._pnSkipMode; saPanesBump(n); }
       else if(b.act==='park'){ if(n.set && n.set.holdMarker) n.set.holdMarker(!n.p.holdMarker); else n.p.holdMarker=!n.p.holdMarker; saPanesBump(n); }
+      else if(b.act==='pkclr'){ saPeakClear(n); saPanesBump(n); }
       else if(b.act==='resume'){ for(let k=0;k<4;k++) n.mk[k]=null; saPanesBump(n); }                    // снять маркеры — сканер продолжает
       else { if(n.set && n.set.follow) n.set.follow(!n.p.follow); else n.p.follow=!n.p.follow; saPanesBump(n); }
       return;
@@ -407,20 +417,23 @@ function saPanesDraw(n,cv,cx){
       return a===a && b===b ? a+(b-a)*fr : a===a ? a : b;
     };
     const trace=(arr,col,alpha,fill)=>{
-      cx.globalAlpha=alpha; cx.strokeStyle=col; cx.fillStyle=col; cx.lineWidth=1;
-      let pen=false, lastX=0, firstX=0;
-      cx.beginPath();
+      const bot=L.plotTop+L.plotH, segs=[];
+      let cur=null;
       for(let px=0;px<w;px++){
         const val=sample(arr,v[0]+vs*px/w,v[0]+vs*(px+1)/w);
-        if(val!==val){ pen=false; continue; }
-        const y=yOf(val);
-        if(!pen){ cx.moveTo(x0+px,y); pen=true; if(fill) firstX=px; } else cx.lineTo(x0+px,y);
-        lastX=px;
+        if(val!==val){ cur=null; continue; }
+        if(!cur) segs.push(cur=[]);
+        cur.push(x0+px,yOf(val));
       }
-      cx.stroke();
-      if(fill){
-        cx.globalAlpha=alpha*.18;
-        cx.lineTo(x0+lastX,L.plotTop+L.plotH); cx.lineTo(x0+firstX,L.plotTop+L.plotH); cx.closePath(); cx.fill();
+      cx.strokeStyle=col; cx.fillStyle=col; cx.lineWidth=1;
+      for(const s of segs){
+        cx.globalAlpha=alpha; cx.beginPath(); cx.moveTo(s[0],s[1]);
+        for(let i=2;i<s.length;i+=2) cx.lineTo(s[i],s[i+1]);
+        cx.stroke();
+        if(fill){
+          cx.globalAlpha=alpha*.18;
+          cx.lineTo(s[s.length-2],bot); cx.lineTo(s[0],bot); cx.closePath(); cx.fill();
+        }
       }
       cx.globalAlpha=1;
     };
@@ -521,6 +534,7 @@ function saPanesDraw(n,cv,cx){
     const items=[];
     if(n._pnHoldF!=null) items.push({t:'▶ resume', act:'resume', col:acc2});
     items.push({t:(n.p.holdMarker?'● ':'○ ')+'⏸ park', act:'park', col:n.p.holdMarker?acc2:dim});
+    if(n.p.peakHold) items.push({t:'⌫ peak', act:'pkclr', col:dim});
     if(n.p.detect) items.push({t:(n._pnSkipMode?'● ':'○ ')+'⊘ skip', act:'skipmode', col:n._pnSkipMode?acc2:dim});
     if(paged) items.push({t:'◀',act:'prev'},{t:(from+1)+'–'+(from+panes.length)+' / '+list.length,col:dim},{t:'▶',act:'next'},
       {t:(n.p.follow?'● ':'○ ')+'follow',act:'follow',col:n.p.follow?acc:dim});

@@ -1634,11 +1634,14 @@ async function rtlOpenDevice(dev, ppm, gain){
     return real;
   }
   // эпоха перестройки: трансферы, запущенные до её конца, несут отсчёты старой частоты
-  let tuneEpoch=0;
+  let tuneEpoch=0, fastOn=false;
   async function setCenterFrequency(freq){
+    const t0=performance.now();
     await com.i2c.open();
     const actual=await tuner.setFrequency(freq+IF, freq);
     await com.i2c.close();
+    // быстрый режим пропускает паузы PLL: до следующего захвата отсчёты идут с недосевшей частотой
+    if(fastOn){ const w=15-(performance.now()-t0); if(w>0) await new Promise(r=>setTimeout(r,w)); }
     tuneEpoch++;
     return actual-IF;
   }
@@ -1648,7 +1651,7 @@ async function rtlOpenDevice(dev, ppm, gain){
     await com.i2c.close();
   }
   // быстрая перестройка: без пустых чтений после записи в демодулятор и без необязательных шагов PLL (см. rtlMakeR820T)
-  function setFastTune(on){ tuner.setFast(on); com.setFastI2C(on); }
+  function setFastTune(on){ fastOn=!!on; tuner.setFast(on); com.setFastI2C(on); }
   async function resetBuffer(){
     await com.writeEach([[RTL_CMD.REG,RTL_BLOCK.USB,RTL_REG.EPA_CTL,0x0210,2],[RTL_CMD.REG,RTL_BLOCK.USB,RTL_REG.EPA_CTL,0x0000,2]]);
   }

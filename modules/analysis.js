@@ -1792,7 +1792,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'skipList',t:'text',d:'',hidden:true},
           {n:'snap',t:'check',d:true,label:'snap to band plan step',adv:true},
           // выключить — тот же жест, что и "очистить": незачем отдельная кнопка (см. fn у 'check' в core-graph.js)
-          {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold) n.peak=null; }},
+          {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold){ n.peak=null; if(typeof saPeakClear==='function') saPeakClear(n); } }},
           {n:'palette',t:'select',opts:['default',...Object.keys(PALETTES)],d:'classic',label:'waterfall palette',adv:true},
           // история водопада в полном разрешении — зум/смена палитры и диапазона дБ перерисовывают её без потерь
           {n:'wfMem',t:'select',opts:['off','32','128','512'],d:'128',label:'waterfall history memory, MB',adv:true,
@@ -3180,7 +3180,7 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
           {n:'timeout',t:'range',min:100,max:30000,step:100,d:3000,label:'listen timeout, ms'},
           {n:'settle',t:'range',min:0,max:2000,step:10,d:200,label:'settle time, ms (minimum wait after a retune)'},
           // с проводом spec: решение — после N свежих кадров спектра уже нового окна (а не по таймеру); 3 — детектору хватает подтвердить цель
-          {n:'frames',t:'range',min:0,max:10,step:1,d:0,label:'fresh spectrum frames of the new window before deciding (spec wire; 0 = auto: 3 when spec and active are wired, so the detector can confirm a signal)'},
+          {n:'frames',t:'range',min:0,max:10,step:1,d:0,label:'fresh spectrum frames of the new window before deciding (spec wire; 0 = auto: 4 when spec and active are wired, so the detector can confirm a signal)'},
           {n:'order',t:'select',opts:['band by band','interleave'],d:'band by band',
            label:'order (interleave: one window of every range in turn — a wide range does not starve the narrow ones, all panes refresh evenly)'},
           // несколько приёмников: у каждого свой Band Scanner с одним и тем же lanes и своим lane (0…lanes−1) — окна делятся между ними
@@ -3293,7 +3293,7 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
       if(!active || now>=n.listenUntil) advance();
     } else if(n.state==='seek'){
       if(now>=n.settleUntil){                           // ждём, пока спектр обновится на новом центре, прежде чем решать
-        const need=(n.p.frames|0) || ((sp && typeof I.active==='number') ? 3 : 0), framesOk=!need || !(sp && sp.freqs) || n._frPrev>=need;     // кадр учитывается на следующем тике: sa успевает его обработать
+        const need=(n.p.frames|0) || ((sp && typeof I.active==='number') ? 4 : 0), framesOk=!need || !(sp && sp.freqs) || n._frPrev>=need;     // кадр учитывается на следующем тике: sa успевает его обработать
         if(measureOff()){ n.settleUntil=now+n.p.settle; n._wait=0; }   // смещение уточнилось — перестраиваем и ждём снова
         else if(!atTarget() && (n._wait=(n._wait||0)+1)<=6) n.settleUntil=now+Math.max(50,n.p.settle/2);   // ещё перестраивается
         else if(!framesOk && now<n.settleUntil+Math.max(1000,6*n.p.settle)){ /* ждём свежие кадры нового окна */ }

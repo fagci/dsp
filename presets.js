@@ -818,7 +818,7 @@ const rx=addNode('rtlsdr',40,300,{sr:'2400000',auto:false,gainDb:30,dcShift:true
 const bp=addNode('table',360,300,{list:'@patch',initial:false,data:'name,lo,hi,step\n'+
   'VHF,144M,176M,25k\nUHF,400M,470M,25k'});
 bp.size.w=340; bp.size.h=280; applySize(bp);
-const bs=addNode('bandscan',740,300,{timeout:3000,settle:40,frames:3,edge:10,order:'band by band'});
+const bs=addNode('bandscan',740,300,{timeout:3000,settle:40,frames:4,edge:10,order:'band by band'});
 bs.size.w=300; bs.size.h=200; applySize(bs);
 const sk=addNode('table',1080,300,{list:'Scan skip',initial:false});
 sk.size.w=300; sk.size.h=220; applySize(sk);
@@ -864,7 +864,7 @@ const SP=['spec','spec2','spec3','spec4'], CN=['count','count2','count3','count4
 const bs0=[];
 for(let i=0;i<4;i++){
   const rx=addNode('rtlsdr',40+i*250,280,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:100000000+i*1000000,sql:'SNR',sqlSnr:8,fastTune:true});
-  const bs=addNode('bandscan',40+i*320,640,{timeout:3000,settle:40,frames:3,edge:10,order:'interleave',lanes:4,lane:i});
+  const bs=addNode('bandscan',40+i*320,640,{timeout:3000,settle:40,frames:4,edge:10,order:'interleave',lanes:4,lane:i});
   bs.size.w=300; bs.size.h=200; applySize(bs);
   addEdge(rx.id,'spec',sa.id,SP[i]); addEdge(rx.id,'spec',bs.id,'spec');
   addEdge(bp.id,'bands',bs.id,'bands');
