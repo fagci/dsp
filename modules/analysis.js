@@ -2240,12 +2240,16 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         const y=(ev.clientY-rc.top)/rc.height*cv.height;
         return Math.abs(y-(n._hs||0))<=6;
       };
+      const harmHit=ev=>{ const rc=cv.getBoundingClientRect(), x=(ev.clientX-rc.left)/rc.width*cv.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
+        return (n._hbBoxes||[]).find(b=>x>=b.x0&&x<=b.x1&&y>=b.y0&&y<=b.y1); };
       let spTap=null;
       cv.addEventListener('pointerdown', ev=>{ spTap={x:ev.clientX,y:ev.clientY}; });
       cv.addEventListener('pointerup', ev=>{
         const d=spTap; spTap=null;
         if(n._noTap){ n._noTap=false; n.pickT=null; return; }          // это был захват края шторки
         if(!d || Math.hypot(ev.clientX-d.x,ev.clientY-d.y)>6) return;  // перетаскивание, не клик
+        const hb=harmHit(ev);
+        if(hb){ n.pickT=null; n.zoom=null; n._steer=hb.f; return; }   // перейти на f/k
         const tab=tabHit(ev);
         if(tab){ n.pickT=null; if(tab.clear) n.mk[tab.idx]=null; else n.active=tab.idx+1; return; }
         if(nearBoundary(ev)){ n.pickT=null; return; }   // клик (без протаскивания) по границе split — не маркер

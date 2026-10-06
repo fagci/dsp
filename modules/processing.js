@@ -1757,6 +1757,7 @@ function saMarkers(n,cx,W,H){
   cx.lineWidth=1; cx.globalAlpha=1; cx.font='10px monospace';
   const TOP_H=16;                                    // потолок с подписями закладок (см. saBandPlan) — не залезаем
   const boxes=n._mkBoxes=(n._mkBoxes||[]); boxes.length=0;
+  n._hbBoxes=[]; n._hbRows=[0,0];
   const hoverK=n._mkHoverIdx;
   const present=[0,1,2,3].filter(k=>n.mk[k]!=null);
   const order = hoverK!=null && present.includes(hoverK)
@@ -1798,13 +1799,24 @@ function saMarkers(n,cx,W,H){
   }
   cx.lineWidth=1;
 }
-// Засечки f/k под маркером: сигнал на f может быть k-й гармоникой передатчика на f/k
+// Засечки f/k под маркером: сигнал на f может быть k-й гармоникой передатчика на f/k.
+// Не попавшие в окно (узкий SDR) — плашки у края со значком стороны; клик по плашке — n._steer
+// (приёмник перестраивается на f/k, см. pointerup в analysis.js)
 function saHarmTicks(n,cx,W,H,f,k,top){
-  cx.save(); cx.strokeStyle=cx.fillStyle=MK_COL(k); cx.globalAlpha=.8; cx.setLineDash([2,3]); cx.font='9px monospace';
+  cx.save(); cx.font='9px monospace';
+  const rows=n._hbRows;
   for(const h of harmonicSources(f,8)){
-    const x=Math.round(saPos(n,h.f)*W); if(x<0||x>W) continue;
-    cx.beginPath(); cx.moveTo(x+.5,top); cx.lineTo(x+.5,H); cx.stroke();
-    cx.fillText('÷'+h.k,Math.min(x+2,W-16),top+10+k*10); }
+    const x=Math.round(saPos(n,h.f)*W);
+    cx.strokeStyle=cx.fillStyle=MK_COL(k);
+    if(x>=0&&x<=W){
+      cx.globalAlpha=.8; cx.setLineDash([2,3]);
+      cx.beginPath(); cx.moveTo(x+.5,top); cx.lineTo(x+.5,H); cx.stroke();
+      cx.setLineDash([]); cx.fillText('÷'+h.k,Math.min(x+2,W-16),top+10+k*10); continue; }
+    const left=x<0, t=(left?'◀ ':'')+'÷'+h.k+' '+fmtHz(h.f,2)+(left?'':' ▶');
+    const tw=cx.measureText(t).width, y=top+2+rows[left?0:1]++*12, tx=left?2:W-tw-6;
+    cx.globalAlpha=.85; cx.fillRect(tx,y,tw+4,11);
+    cx.globalAlpha=1; cx.fillStyle=contrastText(MK_COL(k)); cx.fillText(t,tx+2,y+8);
+    n._hbBoxes.push({x0:tx,y0:y,x1:tx+tw+4,y1:y+11,f:h.f}); }
   cx.restore();
 }
 // Вкладки-переключатели активного маркера (1-4) в правом верхнем углу графика — замена
