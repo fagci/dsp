@@ -216,6 +216,8 @@ function saPanesIngest(n,sp,src=0){
 function saPanesOut(n){
   // маркер как «стоп»: holdF — частота первого поставленного маркера (если включено park); сканер встаёт на неё и стоит до снятия
   const mkHold=n.p.holdMarker ? n.mk.find(f=>f!=null) : null;
+  const hk=n.p.holdMarker ? n.mk.findIndex(f=>f!=null) : -1;
+  if(n._pnHoldF!==mkHold || n._pnHoldK!==hk){ n._pnHoldF=mkHold ?? null; n._pnHoldK=hk; saPanesBump(n); }   // для плашки «сканер припаркован»
   const o={centerFreq:n._steer ?? null, holdF:mkHold ?? null, rec:null};
   for(let k=0;k<4;k++){                                  // count/detF — приёмник 1; count2/detF2 … — приёмники 2–4
     const q=k?k+1:'';
@@ -287,7 +289,11 @@ function saPanesWire(n,cv){
       if(h.p.zoom){ const a=clamp(h.v[0]+d,h.p.lo,h.p.hi-span); h.p.zoom=[a,a+span]; saPanesBump(n); }
     } else zoomBy(h,ev.deltaY<0?.8:1.25);
   },{capture:true,passive:false});
-  on('dblclick',ev=>{ const h=hit(ev); if(h && h.y>=SAP_TITLE){ h.p.zoom=null; saPanesBump(n); } });
+  on('dblclick',ev=>{
+    const h=hit(ev); if(!h || h.y<SAP_TITLE) return;
+    const u=n._pnMkUndo; if(u && performance.now()-u.t<600){ n.mk[u.k]=u.prev; n._pnMkUndo=null; }   // тапы двойного клика не должны ставить маркер
+    h.p.zoom=null; saPanesBump(n);
+  });
   on('pointerdown',ev=>{
     const {x,y}=pt(ev);
     n._pnDrag=null;
@@ -300,6 +306,8 @@ function saPanesWire(n,cv){
       if(b.act==='prev') saSetFrom(n,(n.p.paneFrom|0)-k,true);
       else if(b.act==='next') saSetFrom(n,(n.p.paneFrom|0)+k,true);
       else if(b.act==='skipmode'){ n._pnSkipMode=!n._pnSkipMode; saPanesBump(n); }
+      else if(b.act==='park'){ if(n.set && n.set.holdMarker) n.set.holdMarker(!n.p.holdMarker); else n.p.holdMarker=!n.p.holdMarker; saPanesBump(n); }
+      else if(b.act==='resume'){ for(let k=0;k<4;k++) n.mk[k]=null; saPanesBump(n); }                    // снять маркеры — сканер продолжает
       else { if(n.set && n.set.follow) n.set.follow(!n.p.follow); else n.p.follow=!n.p.follow; saPanesBump(n); }
       return;
     }
@@ -336,6 +344,9 @@ function saPanesWire(n,cv){
       if((ev.shiftKey || n._pnSkipMode) && (det||sk)){              // Shift+тап или режим ⊘: цель — в список пропуска, ⊘ — обратно
         skipToggle({det,sk},h.p); return;
       }
+      // двойной клик (сброс зума) — это два тапа: запоминаем маркер до первого и вернём его в dblclick
+      const u=n._pnMkUndo, tnow=performance.now();
+      if(u && tnow-u.t<500 && u.k===n.active-1) u.t=tnow; else n._pnMkUndo={k:n.active-1, prev:n.mk[n.active-1], t:tnow};
       n.mk[n.active-1]=det ? det.f : h.f;                           // обычный тап — активный маркер (на цель — точно на неё)
     }
     saPanesBump(n);
@@ -352,7 +363,7 @@ function saPanesDraw(n,cv,cx){
   saSkipSync(n);
   const panes=saPaneState(n), list=n._pl||[], now=performance.now();
   const key=W+'|'+H+'|'+cv.pxGen+'|'+n._pnRevDraw+'|'+panes.map(p=>p.key+':'+p.zoom).join(',')+'|'+n._pnSel+'|'+n.p.floor+'|'+n.p.top+'|'+
-    n.p.split+'|'+n.p.peakHold+'|'+n.p.grid+'|'+n.mk+'|'+n.active+'|'+n.p.detect+'|'+n.p.detThr+'|'+n.p.paneFrom+'|'+n.p.follow+'|'+n._pnSkipMode;
+    n.p.split+'|'+n.p.peakHold+'|'+n.p.grid+'|'+n.mk+'|'+n.active+'|'+n.p.detect+'|'+n.p.detThr+'|'+n.p.paneFrom+'|'+n.p.follow+'|'+n._pnSkipMode+'|'+n.p.holdMarker+'|'+n._pnHoldF;
   if(key===n._pnDrawKey && now-(n._pnDrawT||0)<500) return;
   n._pnDrawKey=key; n._pnDrawT=now;
   cx.clearRect(0,0,W,H);
@@ -494,10 +505,22 @@ function saPanesDraw(n,cv,cx){
     cx.fillStyle='rgba(10,13,14,.85)'; cx.fillRect(tx,L.plotTop+2,tw,13);
     cx.fillStyle=fg; cx.textAlign='left'; cx.fillText(t,tx+4,L.plotTop+12);
   }
+  // сканер припаркован на маркере — это нужно видеть: иначе кажется, что он завис
+  if(n._pnHoldF!=null){
+    const t='⏸ scan parked on marker '+(n._pnHoldK+1)+' · '+fmtHz(n._pnHoldF,4)+'Hz — clear the marker (×) or ▶ resume';
+    cx.font='11px sans-serif'; cx.textAlign='left'; cx.textBaseline='middle';
+    const tw=cx.measureText(t).width+14, tx=Math.max(4,(W-tw)/2);
+    cx.fillStyle='rgba(10,13,14,.88)'; cx.fillRect(tx,L.plotTop+4,tw,18);
+    cx.strokeStyle=acc2; cx.lineWidth=1; cx.strokeRect(tx+.5,L.plotTop+4.5,tw-1,17);
+    cx.fillStyle=acc2; cx.fillText(t,tx+7,L.plotTop+13.5);
+    cx.textBaseline='alphabetic';
+  }
   // нижний ряд: кнопка режима пропуска (⊘ skip) и листатель полос ◀ 5–8 / 12 ▶ со следованием за сканером
   {
     const paged=list.length>panes.length, from=clamp(n.p.paneFrom|0,0,Math.max(0,list.length-1));
     const items=[];
+    if(n._pnHoldF!=null) items.push({t:'▶ resume', act:'resume', col:acc2});
+    items.push({t:(n.p.holdMarker?'● ':'○ ')+'⏸ park', act:'park', col:n.p.holdMarker?acc2:dim});
     if(n.p.detect) items.push({t:(n._pnSkipMode?'● ':'○ ')+'⊘ skip', act:'skipmode', col:n._pnSkipMode?acc2:dim});
     if(paged) items.push({t:'◀',act:'prev'},{t:(from+1)+'–'+(from+panes.length)+' / '+list.length,col:dim},{t:'▶',act:'next'},
       {t:(n.p.follow?'● ':'○ ')+'follow',act:'follow',col:n.p.follow?acc:dim});
