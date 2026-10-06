@@ -856,3 +856,34 @@ def({ id:'sigid', title:'Signal Type Identifier', cat:'Analysis', readout:true, 
   dispose:n=>{ if(n.worker){ n.worker.terminate(); n.worker=null; } },
   draw(n){ const r=n.el.querySelector('.readout');
     if(r.textContent!==n.text) r.textContent=n.text; }});
+
+
+/* ============================ Channel Activity ============================
+   Вход bands — выход sigid (или любого источника меток sig:true). Реестр и расчёт — chanUpdate / chanRows (sigdb-kernels.js). */
+def({ id:'chanLog', title:'Channel Activity', cat:'Analysis', readout:true, tall:true, resize:true, w:460,
+  ins:[{n:'bands',t:'bands'}],
+  outs:[{n:'bands',t:'bands'},{n:'text',t:'txt'},{n:'count',t:'num'},{n:'f',t:'num'},{n:'occ',t:'num'}],
+  params:[{n:'tol',t:'range',min:500,max:50000,step:100,log:true,d:2500,label:'same channel if the centers differ by less than, Hz (or 0.6 × width)'},
+          {n:'join',t:'range',min:0,max:20000,step:100,d:2500,label:'merge channels whose centers are closer than, Hz (sidebands of a tone-modulated FM, fragments; 0 — off)'},
+          {n:'min',t:'range',min:0,max:50,step:1,d:0,label:'show channels busier than, %'},
+          {n:'top',t:'range',min:3,max:40,step:1,d:12,label:'rows shown'},
+          {n:'maxCh',t:'range',min:20,max:500,step:10,d:200,label:'channels remembered (the longest silent are dropped)'},
+          {n:'csv',t:'button',label:'Save CSV',fn:n=>{ const R=chanRows(n.st,performance.now(),+n.p.join);
+            const rows=R.map(r=>[r.f.toFixed(0),r.bw.toFixed(0),r.label,r.occ.toFixed(2),r.hits,new Date(Date.now()-(performance.now()-r.first)).toISOString(),new Date(Date.now()-(performance.now()-r.last)).toISOString(),r.db.toFixed(1),r.group].join(','));
+            dl(new Blob(['freq_hz,bw_hz,type,occupancy_pct,hits,first_seen_utc,last_seen_utc,peak_db,group\n'+rows.join('\n')],{type:'text/csv'}),'channels-'+Date.now()+'.csv'); }},
+          {n:'clr',t:'button',label:'Reset',fn:n=>{ n.st=chanNew(performance.now()); n.rows=[]; n.text='reset'; }}],
+  init:n=>{ n.st=chanNew(performance.now()); n.rows=[]; n.text='connect bands from the Signal Type Identifier'; n.out=[]; },
+  process(n,I){
+    const fr=I.bands, now=performance.now();
+    if(Array.isArray(fr) && chanUpdate(n.st,fr,now,{tol:+n.p.tol,maxCh:+n.p.maxCh})){
+      const R=chanRows(n.st,now,+n.p.join).filter(r=>r.occ>=+n.p.min); n.rows=R;
+      n.out=R.slice(0,+n.p.top).map(r=>({lo:r.f-r.bw/2, hi:r.f+r.bw/2, label:r.label+' '+r.occ.toFixed(0)+'%', color:'#b0bec5', sig:true, f:r.f}));
+      let grp='', lines=[];
+      for(const r of R.slice(0,+n.p.top)){ if(r.group!==grp){ grp=r.group; lines.push('— '+grp); }
+        lines.push((fmtHz(r.f,r.f>1e6?4:2)+'Hz').padStart(13)+'  '+r.label.padEnd(8)+' '+r.occ.toFixed(0).padStart(3)+'%  bw '+fmtHz(r.bw,1)+'Hz · '+r.hits+'×'); }
+      n.text=R.length+' channel'+(R.length===1?'':'s')+' over '+Math.round((now-n.st.t0)/1000)+' s\n'+lines.join('\n');
+    }
+    const t=n.rows[0];
+    return {bands:n.out, text:n.text, count:n.rows.length, f:t?t.f:null, occ:t?t.occ:0};
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(r && r.textContent!==n.text) r.textContent=n.text; }});
