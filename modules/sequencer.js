@@ -369,6 +369,41 @@ def({ id:'timebase', title:'Time Base', cat:'Control',
     r.textContent=new Date(n.t*1000).toISOString().slice(0,19).replace('T',' ')+' UTC'; }
 });
 
+/* ---------- Cron ---------- */
+// Расписание как у crontab (см. cronParse в core-dsp.js). Время — вход t (Time Base) или системные часы.
+// Импульс trig — один блок; gate держится dur секунд после срабатывания («писать 10 минут каждый час»).
+// Пропущенное срабатывание (перемотка, вкладка спала > 2 мин) не догоняется.
+def({ id:'cron', title:'Cron', cat:'Control',
+  ins:[{n:'t',t:'num'}],
+  outs:[{n:'trig',t:'num'},{n:'gate',t:'num'},{n:'n',t:'num'},{n:'next',t:'num'}],
+  readout:true,
+  params:[
+    {n:'expr',t:'text',d:'*/15 * * * *',label:'cron: min hour day month weekday (or @hourly @daily @weekly @monthly)'},
+    {n:'tz',t:'select',opts:['UTC','local'],d:'UTC',label:'zone'},
+    {n:'dur',t:'range',min:0,max:86400,step:1,log:false,d:0,label:'gate length, s'},
+    {n:'run',t:'check',d:true,label:'run'},
+  ],
+  init:n=>{ n.src=null; n.c=null; n.nextAt=null; n.fired=0; n.hi=false; n.gateEnd=-1; n.err=false; n.lastT=null; },
+  process(n,I){
+    const p=n.p, cur=typeof I.t==='number' ? (I.t>1e11 ? I.t/1000 : I.t) : Date.now()/1000;
+    const off=p.tz==='local' ? -new Date(cur*1000).getTimezoneOffset()*60 : 0;
+    const key=p.expr+'|'+p.tz;
+    if(key!==n.src){ n.src=key; n.c=cronParse(p.expr); n.err=!n.c; n.nextAt=n.c ? cronNext(n.c,cur,off) : null; }
+    if(n.lastT!=null && (cur<n.lastT || cur-n.lastT>120)) n.nextAt=n.c ? cronNext(n.c,cur,off) : null;   // перемотка: не догоняем
+    n.lastT=cur;
+    let fire=false;
+    if(n.hi) n.hi=false;
+    else if(p.run && n.c && n.nextAt!=null && cur>=n.nextAt){
+      fire=true; n.hi=true; n.fired++; n.gateEnd=cur+p.dur; n.nextAt=cronNext(n.c,cur,off);
+    }
+    n.cur=cur;
+    return {trig:fire?1:0, gate:p.dur>0 && cur<n.gateEnd ? 1 : 0, n:n.fired, next:n.nextAt!=null ? Math.max(0,n.nextAt-cur) : 0};
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const nx=n.nextAt!=null ? new Date(n.nextAt*1000+((n.p.tz==='local' ? -new Date(n.nextAt*1000).getTimezoneOffset()*60 : 0))*1000).toISOString().slice(0,16).replace('T',' ') : '—';
+    r.textContent=n.err ? 'bad cron expression' : (n.p.run ? '' : 'stopped · ')+'fired '+n.fired+' · next '+nx+(n.p.tz==='local'?' local':' UTC'); }
+});
+
 /* ---------- Trigger Clock ---------- */
 // interval / random / poisson / schedule. Импульс держится один блок, между двумя событиями
 // всегда есть блок без импульса (чтобы потребитель увидел фронт).
