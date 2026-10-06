@@ -1458,8 +1458,10 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
     regs[4]=ni+(si<<6);
     regs[5]=sdm&0xff; regs[6]=sdm>>8;
     await writeBurst(0x10,regs);
+    // сразу после записи бит захвата ещё от прежней частоты — даём PLL время (в быстром режиме без этого перестройка «проходила» незахваченной)
+    if(fast) await new Promise(res=>setTimeout(res,4));
     await getPllLock(true);
-    if(!fast) await writeRegMask(0x1a, 0x08, 0x08);   // автонастройка 8 кГц — точная подстройка после захвата
+    await writeRegMask(0x1a, 0x08, 0x08);   // автонастройка 8 кГц — точная подстройка после захвата
     return 2*pllRef*(nint+sdm/65536)/mixDiv;
   }
   async function getPllLock(firstTry){

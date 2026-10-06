@@ -1962,18 +1962,22 @@ document.getElementById('clear').onclick=()=>{
 stashIfDirty();
 clearAll(); markWiresDirty(); currentPatchName=''; buildPatchList(); graphDirty=false;
 };
-// Обычная очистка кэша браузера чистит HTTP-кэш, но не localStorage/IndexedDB —
-// поэтому пресеты и патчи «не удаляются». Эта кнопка стирает именно данные сайта.
-// Кнопки нет в index.php (тестовая, только в index.html) — элемент может отсутствовать.
+// Корзина: OK — обновить файлы приложения (кэш и сервис-воркер; патчи, пресеты, списки остаются),
+// Отмена → второй вопрос: стереть вообще все данные сайта. Кнопки нет в index.php — элемент может отсутствовать.
+let wiping=false;
 document.getElementById('wipe')?.addEventListener('click',async()=>{
-if(!confirm('Erase all presets, patches and local app data on this site?')) return;
+const full=!confirm('Refresh app files and cache?\nPatches, presets and lists are kept.\n\nOK — refresh, Cancel — more options.');
+if(full && !confirm('Erase ALL presets, patches and local data on this site?')) return;
+wiping=true; clearTimeout(autosaveTimer);
+if(full){
 try{ localStorage.clear(); }catch(e){}
 try{
 const names=indexedDB.databases ? (await indexedDB.databases()).map(d=>d.name) : ['dsp-samples','dsp-lists','dsp-tracker'];
 await Promise.all(names.filter(Boolean).map(n=>new Promise(res=>{
 const rq=indexedDB.deleteDatabase(n); rq.onsuccess=rq.onerror=rq.onblocked=res; })));
 }catch(e){}
-try{ if('caches' in window) for(const k of await caches.keys()) await caches.delete(k); }catch(e){}
+} else { try{ LS.set(AKEY,JSON.stringify(serialize())); }catch(e){} }
+try{ if('caches' in window) for(const k of await caches.keys()) if(full || k!=='dsp-tiles') await caches.delete(k); }catch(e){}
 try{ if(navigator.serviceWorker) for(const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); }catch(e){}
 location.href=location.pathname+'?_='+Date.now();
 });
@@ -1984,7 +1988,7 @@ function scheduleAutosave(){
 clearTimeout(autosaveTimer);
 autosaveTimer=setTimeout(()=>LS.set(AKEY,JSON.stringify(serialize())),2000);
 }
-window.addEventListener('beforeunload',()=>{ clearTimeout(autosaveTimer); LS.set(AKEY,JSON.stringify(serialize())); });
+window.addEventListener('beforeunload',()=>{ clearTimeout(autosaveTimer); if(!wiping) LS.set(AKEY,JSON.stringify(serialize())); });
 const RUN_PLAY='<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5l12 7-12 7z"/></svg>', RUN_STOP='<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>';
 const runBtn=document.getElementById('run'), stat=document.getElementById('stat');
 // Общая точка синхронизации кнопки — дергается и по клику, и из движка (например, когда

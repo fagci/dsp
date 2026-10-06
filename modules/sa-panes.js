@@ -296,7 +296,7 @@ function saPanesWire(n,cv){
     if(ev.shiftKey){
       const span=h.v[1]-h.v[0], d=span*.15*(ev.deltaY>0?1:-1);
       if(h.p.zoom){ const a=clamp(h.v[0]+d,h.p.lo,h.p.hi-span); h.p.zoom=[a,a+span]; saPanesBump(n); }
-    } else zoomBy(h,ev.deltaY<0?.8:1.25);
+    } else zoomBy(h,ev.deltaY<0?.96:1.04);
   },{capture:true,passive:false});
   on('dblclick',ev=>{
     const h=hit(ev); if(!h || h.y<SAP_TITLE) return;
