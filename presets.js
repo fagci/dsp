@@ -820,7 +820,7 @@ const bs=addNode('bandscan',740,300,{timeout:3000,settle:250,edge:10,order:'inte
 bs.size.w=300; bs.size.h=200; applySize(bs);
 const sk=addNode('table',1080,300,{list:'Scan skip',initial:false});
 sk.size.w=300; sk.size.h=220; applySize(sk);
-const sa=addNode('sa',40,620,{layout:'panes',panes:4,detect:true,detThr:10,edge:10,follow:true,peakHold:true,floor:-90,top:-20,split:.45});
+const sa=addNode('sa',40,620,{layout:'panes',panes:4,detect:true,detThr:10,edge:10,follow:true,holdMarker:true,peakHold:true,floor:-90,top:-20,split:.45});
 sa.size.w=1100; sa.size.h=440; applySize(sa);
 const lg=addNode('table',1420,300,{list:'Scan log',initial:false});
 lg.size.w=420; lg.size.h=260; applySize(lg);
@@ -829,7 +829,7 @@ addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(bp.id,'bands',sa.id,'bands'); addEdge(bp.id,'bands',bs.id,'bands');
 addEdge(sk.id,'bands',sa.id,'skip');
 addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi');
-addEdge(sa.id,'count',bs.id,'active');
+addEdge(sa.id,'count',bs.id,'active'); addEdge(sa.id,'holdF',bs.id,'hold');
 addEdge(bs.id,'freq',rx.id,'freq');
 addEdge(sa.id,'detF',rx.id,'tuneFreq');
 addEdge(sa.id,'rec',lg.id,'rec');

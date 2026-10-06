@@ -159,7 +159,10 @@ function saPanesIngest(n,sp){
 }
 // выходы режима panes: маркеры берут уровень из накопленных данных панели, а не из текущего окна приёмника
 function saPanesOut(n){
-  const o={centerFreq:n._steer ?? null, count:n._pnCount|0, detF:n._pnDetF ?? null, rec:null};
+  // маркер как «стоп»: holdF — частота первого поставленного маркера (если включено park); сканер встаёт на неё и стоит до снятия
+  const mkHold=n.p.holdMarker ? n.mk.find(f=>f!=null) : null;
+  const o={centerFreq:n._steer ?? null, count:n.p.scanStop==='marker only' ? 0 : n._pnCount|0,
+    detF:mkHold ?? n._pnDetF ?? null, holdF:mkHold ?? null, rec:null};
   if(n._pnRecs && n._pnRecs.length) o.rec=n._pnRecs.splice(0);
   const all=n._pnStore ? [...n._pnStore.values()] : [];
   for(let k=0;k<4;k++){
