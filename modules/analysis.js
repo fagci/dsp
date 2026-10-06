@@ -3226,17 +3226,24 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
       if(ok && Math.abs(m-n.off)>1000){ n.off=Math.round(m); return true; }
       return false;
     };
+    // окно приёмника уже на запрошенном центре? (иначе active — от кадров прежнего окна и зря задержит сканер)
+    const atTarget=()=>typeof I.freqLo!=='number' || typeof I.freqHi!=='number' ||
+      Math.abs((I.freqLo+I.freqHi)/2-n.curFreq)<=Math.max(3000,full*.01);
     if(n.state==='listen'){
       if(!active || now>=n.listenUntil) advance();
     } else if(n.state==='seek'){
       if(now>=n.settleUntil){                           // ждём, пока спектр обновится на новом центре, прежде чем решать
-        if(measureOff()) n.settleUntil=now+n.p.settle;  // смещение уточнилось — перестраиваем и ждём снова
-        else if(active){ n.state='listen'; n.listenUntil=now+n.p.timeout; }
-        else advance();
+        if(measureOff()){ n.settleUntil=now+n.p.settle; n._wait=0; }   // смещение уточнилось — перестраиваем и ждём снова
+        else if(!atTarget() && (n._wait=(n._wait||0)+1)<=6) n.settleUntil=now+Math.max(50,n.p.settle/2);   // ещё перестраивается
+        else {
+          n._wait=0;
+          if(active){ n.state='listen'; n.listenUntil=now+n.p.timeout; }
+          else advance();
+        }
       }
     }
     const curBand=bands[n.idx];                          // не 'band': advance() выше мог сдвинуть n.idx на новый диапазон
-    n.text=n.state+' · range '+(n.idx+1)+'/'+bands.length+' "'+(curBand.label||'')+'"\n'+
+    n.text=n.state+' · '+(inter?'interleave':'band by band')+' · range '+(n.idx+1)+'/'+bands.length+' "'+(curBand.label||'')+'"\n'+
       'freq '+fmtHz(n.curFreq)+'Hz'+(n.off ? ' (receiver offset '+fmtHz(n.off)+'Hz)' : '')+
       (n.state==='listen'? '  · listening '+((n.listenUntil-now)/1000).toFixed(1)+'s left' : '');
     // bandLo/step — начало текущего диапазона и его сетка каналов (канал 1 = bandLo, канал 2 =
