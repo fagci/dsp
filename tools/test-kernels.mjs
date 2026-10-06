@@ -53,6 +53,10 @@ ev(`function xcRun(o){ const {d0=0,eps=0,snr=10,sec=1.2,sr=250000,offs=0,base=0,
     out=IQK.xcorr.process(n,{a:{sr,fc:0,chunks:[{re:ar,im:ai,t0:st}]},b:{sr,fc:0,chunks:[{re:br,im:bi,t0:st}]}},{block:N,sr:48000}); }
   return out; }`);
 
+// строка воркера спектра берётся из sources.js (сам файл требует DOM — выдёргиваем только её)
+{ const srcJs=fs.readFileSync(path.join(root,'modules/sources.js'),'utf8'), a=srcJs.indexOf('const RTL_SPEC_WORKER_SRC'), b=srcJs.indexOf('`;',srcJs.indexOf("self.postMessage({type:'result'",a))+2;
+  vm.runInContext(srcJs.slice(a,b)+';var SPECW_SRC=RTL_SPEC_WORKER_SRC;',ctx);
+  ctx.SPECW_RUN=(src,w,msg)=>{ const wc=vm.createContext({console,Math,Float32Array,Float64Array,Uint8Array,Uint32Array,Map,Set,self:w}); wc.self=w; vm.runInContext(src,wc); w.onmessage({data:msg}); }; }
 const MSG='Array.from("123456789",c=>c.charCodeAt(0))';
 const bitsMsb=`${MSG}.flatMap(v=>Array.from({length:8},(_,k)=>(v>>(7-k))&1))`;
 const bitsLsb=`${MSG}.flatMap(v=>Array.from({length:8},(_,k)=>(v>>k)&1))`;
@@ -251,6 +255,9 @@ const cases=[
   ['IQ Delay: задержка 2,5 + 16 отсчётов тона, сдвиг фазы 30° → амплитуда сохраняется, фаза верна; весь чанк конечен (в т. ч. последние отсчёты)',`(()=>{ const n={p:{delay:2.5,phase:30}}; IQK.iqDelay.init(n); const K=512, re=new Float32Array(K), im=new Float32Array(K), w=2*Math.PI*.05; for(let i=0;i<K;i++){ re[i]=Math.cos(w*i); im[i]=Math.sin(w*i); }
     const o=IQK.iqDelay.process(n,{in:{sr:1000,fc:0,chunks:[{re,im,t0:0}]}},{block:K,sr:48000}).out.chunks[0]; const i=300, ph=Math.atan2(o.im[i],o.re[i])-w*(i-18.5)-30*Math.PI/180, amp=Math.hypot(o.re[i],o.im[i]); let fin=true; for(let k=0;k<K;k++) if(!isFinite(o.re[k])||!isFinite(o.im[k])) fin=false;
     return [Math.abs(amp-1)<.01, Math.abs(Math.atan2(Math.sin(ph),Math.cos(ph)))<.01, fin].join(); })()`,'true,true,true'],
+  // Воркер спектра USB-SDR (встроен в sources.js как строка) — с БПФ из core-dsp: тон 0.1234·fs попадает в свой бин при N до 262144
+  ['Воркер спектра: тон в нужном бине при N = 4096, 65536, 262144',`(()=>{ const src=SPECW_SRC, w={postMessage(m){ w.out=m; }, onmessage:null}; const wc={self:w}; return [4096,65536,262144].map(N=>{ const L=2*N, I=new Float32Array(L), Q=new Float32Array(L); for(let i=0;i<L;i++){ const p=2*Math.PI*.1234*i; I[i]=.5*Math.cos(p); Q[i]=.5*Math.sin(p); }
+    SPECW_RUN(src,w,{type:'fft',I:I.buffer,Q:Q.buffer,N,L,win:'hann'}); const m=new Float32Array(w.out.mag); let pk=0; for(let i=0;i<N;i++) if(m[i]>m[pk]) pk=i; return pk===Math.round(N/2+.1234*N); }).join(); })()`,'true,true,true'],
 ];
 
 let bad=0;
