@@ -150,6 +150,20 @@ defIQ({ id:'sigMeter', title:'Signal Meter', cat:'IQ', kw:'snr occupied bandwidt
     return 'SNR '+u.snr.toFixed(1)+' dB · '+u.level.toFixed(1)+' dBFS · OBW '+f(u.obw)+' · −'+n.p.xdb+' dB '+f(u.bwx)+
       ' · Δf '+(u.off>=0?'+':'')+(u.fine?u.off.toFixed(2)+' Hz (phase)':u.off.toFixed(0)+' Hz'); });
 
+defIQ({ id:'sigDb', title:'Signal Database', cat:'Analysis', kw:'signal identification wiki bandwidth deviation baud symbol rate frequency lookup what is this signal',
+  ins:[{n:'bw',t:'num'},{n:'dev',t:'num'},{n:'baud',t:'num'},{n:'freq',t:'num'}],
+  outs:[{n:'name',t:'txt'},{n:'mod',t:'txt'},{n:'score',t:'num'},{n:'text',t:'txt'}], tall:true, resize:true, w:420,
+  params:[{n:'bw',t:'num',d:0,label:'occupied bandwidth, Hz (0 — unknown)'},
+          {n:'baud',t:'num',d:0,label:'symbol rate, Bd (0 — unknown)'},
+          {n:'dev',t:'num',d:0,label:'FM deviation, Hz (0 — unknown)'},
+          {n:'freq',t:'num',d:0,label:'frequency, Hz (0 — unknown)'},
+          {n:'top',t:'range',min:1,max:10,step:1,d:5,label:'candidates shown'},
+          {n:'min',t:'range',min:0,max:90,step:5,d:10,label:'hide candidates below, %'}]},
+  n=>{ const u=n.ui;
+    if(!u) return 'no input';
+    if(!u.r.length) return 'give at least one of bandwidth, symbol rate, deviation, frequency';
+    return u.r.map(x=>(x.score*100).toFixed(0)+'% '+x.n+' ('+x.mod+')\n     '+x.note).join('\n'); });
+
 defIQ({ id:'iqSpec', title:'IQ Spectrum', cat:'IQ',
   ins:[{n:'in',t:'iq'}], outs:[{n:'spec',t:'spec'}],
   params:[{n:'size',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'4096'},

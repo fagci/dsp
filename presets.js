@@ -1028,6 +1028,21 @@ addEdge(gn.id,'iq',mm.id,'in');
 addEdge(mm.id,'snr',n1.id,'in'); addEdge(mm.id,'obw',n2.id,'in'); addEdge(mm.id,'freq',n3.id,'in');
 markWiresDirty();
 });
+preset('Measure: What Is This Signal — Meter + Database (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Signal Meter measures the bandwidth and frequency, Signal Database lists what such a signal can be.\n'+
+  'The generator sends an FM carrier; set its deviation and tone, add the symbol rate (Baud Estimator) or the deviation (Modulation Meter) to narrow the list.\n'+
+  'Here the deviation is typed by hand into the database — change it together with the generator.'});
+nt.size.w=700; nt.size.h=130; applySize(nt);
+const gn=addNode('iqGen',40,220,{sr:'256000',fc:145000000,mode:'FM',off:30000,lvl:-20,tone:1000,dev:2500,noise:-60});
+const mm=addNode('sigMeter',340,220,{});
+mm.size.w=620; applySize(mm);
+const db=addNode('sigDb',340,380,{dev:2500});
+db.size.w=520; db.size.h=260; applySize(db);
+addEdge(gn.id,'iq',mm.id,'in');
+addEdge(mm.id,'obw',db.id,'bw'); addEdge(mm.id,'freq',db.id,'freq');
+markWiresDirty();
+});
 preset('Measure: SINAD of an FM Receiver (Generator)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'SINAD of an FM receiver, the usual bench test: a carrier modulated by 1 kHz at ±3 kHz → demodulator → SINAD.\n'+
