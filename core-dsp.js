@@ -287,3 +287,23 @@ function specBin(s,f){
   const d=(f-F[lo])/((F[hi]-F[lo])||1);
   return lo+d;
 }
+
+/* ---- антенна и гармоники ---- */
+const C_LIGHT=299792458;
+// длины в метрах: λ в свободном пространстве, λ/4, λ/2, 5/8λ; вибратор укорочен на vf (провод ~0.95)
+function antennaDims(f,vf){
+  vf=vf>0 ? vf : .95;
+  const lam=f>0 ? C_LIGHT/f : 0;
+  return {lambda:lam, quarter:lam/4*vf, half:lam/2*vf, five8:lam*5/8*vf, full:lam*vf};
+}
+// возможные основные частоты f/k (k=2…kmax): если сигнал на f — k-я гармоника чужого передатчика
+function harmonicSources(f,kmax){
+  const r=[]; if(!(f>0)) return r;
+  for(let k=2;k<=(kmax|0||8);k++) r.push({k,f:f/k});
+  return r;
+}
+// длина в метрах → "17.3 cm" / "2.51 m"
+function fmtLen(m){
+  if(!(m>0)) return '—';
+  return m<1 ? (m*100).toFixed(m<.1?2:1)+' cm' : m.toFixed(m<10?2:1)+' m';
+}

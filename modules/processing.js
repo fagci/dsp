@@ -1783,17 +1783,29 @@ function saMarkers(n,cx,W,H){
     const t=(k+1)+': '+fv+(ch && ch.rssi!=null
       ? ' '+ch.rssi.toFixed(0)+'dBFS / '+(ch.snr!=null?ch.snr.toFixed(0):'—')
       : n.db[k]>-119?' '+n.db[k].toFixed(0)+' / '+Math.max(0,n.snr?.[k]??0).toFixed(0):'');
-    const tw=cx.measureText(t).width;
+    const ant=n.p.ant==='antenna'||n.p.ant==='both', hrm=n.p.ant==='harmonics'||n.p.ant==='both';
+    const t2=ant ? t+' λ/4 '+fmtLen(antennaDims(f,n.p.antVf).quarter) : t;
+    const tw=cx.measureText(t2).width;
     // по центру линии маркера; дорожка стека — по НОМЕРУ маркера (k), а не по порядку рисования —
     // иначе позиции соседних подписей "прыгали" бы при каждой смене наведения
     const tx=clamp(Math.round(x-tw/2), 2, W-tw-2), ty=H-14-k*14;
     cx.globalAlpha=hovered?1:(act?.95:.75); cx.fillStyle=MK_COL(k);
     cx.fillRect(tx-3,ty,tw+6,12);
     cx.globalAlpha=1; cx.fillStyle=contrastText(MK_COL(k));
-    cx.fillText(t,tx,ty+9);
+    cx.fillText(t2,tx,ty+9);
+    if(hrm) saHarmTicks(n,cx,W,H,f,k,TOP_H);
     boxes.push({x0:tx-3,y0:ty,x1:tx+tw+3,y1:ty+12,idx:k});
   }
   cx.lineWidth=1;
+}
+// Засечки f/k под маркером: сигнал на f может быть k-й гармоникой передатчика на f/k
+function saHarmTicks(n,cx,W,H,f,k,top){
+  cx.save(); cx.strokeStyle=cx.fillStyle=MK_COL(k); cx.globalAlpha=.8; cx.setLineDash([2,3]); cx.font='9px monospace';
+  for(const h of harmonicSources(f,8)){
+    const x=Math.round(saPos(n,h.f)*W); if(x<0||x>W) continue;
+    cx.beginPath(); cx.moveTo(x+.5,top); cx.lineTo(x+.5,H); cx.stroke();
+    cx.fillText('÷'+h.k,Math.min(x+2,W-16),top+10+k*10); }
+  cx.restore();
 }
 // Вкладки-переключатели активного маркера (1-4) в правом верхнем углу графика — замена
 // прежнего отдельного ряда кнопок 'active' в панели узла: активная вкладка ярче, у занятых
