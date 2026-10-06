@@ -15,9 +15,10 @@
  *            — свои энкодер/Витерби сверены с osmo_conv (порядок бит r=(state<<1)|bit),
  *            round-trip и сквозной прогон через бёрст в тестах
  *   [ГОТОВО] BCCH/xCCH: деперемежение + свёрточный код K=5 + FIRE CRC-40 → L2,
- *            разбор SI1/SI2/SI3/SI4 (Cell ID, LAI, список ARFCN bitmap0, RACH Control,
- *            Control Channel/Cell Options/Cell Selection — под debug) и офлайн-таблица
- *            PLMN→оператор
+ *            разбор SI1/SI2/SI3/SI4 (Cell ID, LAI, список ARFCN — все форматы Frequency List:
+ *            bitmap0, range1024/512/256/128, variable bitmap — RACH Control, Control
+ *            Channel/Cell Options/Cell Selection — под debug) и офлайн-таблица PLMN→оператор
+ *   [ГОТОВО] SI13 (GPRS-индикатор соты: PBCCH или RAC+параметры доступа)
  *   [ГОТОВО] CBCH/SMSCB (TS 04.12/03.41): детектор из CBCH Channel Description в SI4
  *            (TN/подканал/TSC/ARFCN, ARFCN→частота) + сам демультиплексор и декод, если
  *            CBCH на той же несущей, что идёт приём (частоты совпали, не hopping):
@@ -26,10 +27,10 @@
  *   [ГОТОВО] нумерация бёрстов (t1/t2/t3 → FN, TN) и типизация по 51-мультикадру TS0
  *   [ГОТОВО] внутренняя частотная петля: дерот. входа по накопленному смещению
  *
- * Не разобрано: форматы списка частот range1024/512/256/128 и variable bitmap
- * (только bitmap 0 — покрывает P-GSM900), SI13/SI2bis/SI2ter/SI2quater — только
- * типизируются. CBCH на другой несущей или hopping — только детектируется
- * (TN/ARFCN/частота), сам канал не декодируется без отдельного приёма на той частоте.
+ * Не разобрано: SI2bis/SI2ter/SI2quater — только типизируются (SI2quater несёт список 3G/LTE
+ * соседей, но кодирует его тем же range-алгоритмом, что и Frequency List — сложнее, чем кажется
+ * на первый взгляд). CBCH на другой несущей или hopping — только детектируется (TN/ARFCN/частота),
+ * сам канал не декодируется без отдельного приёма на той частоте.
  * Uplink не принимается — только downlink (FCCH/SCH есть только там).
  *
  * Вход — поток 'iq', любой sr выше ~1.1 МГц; внутри ресемплится на OSR·270.833 кГц.
@@ -186,22 +187,80 @@ function gsmDecodeSch(eb){
 /* ---------- BCCH/CCCH: xCCH-декодер (libosmocore gsm0503) + разбор System Information ----------
  * 4 нормальных бёрста → деперемежение → свёрточный код K=5 (G0/G1) → FIRE CRC-40 →
  * 23 байта L2 → RR-сообщение. Из SI3 берём Cell ID и LAI (MCC/MNC/LAC) — идентификатор соты.
- * Из SI1/SI2 — список ARFCN (своей соты и соседних, формат bitmap 0, сверено с dissect_arfcn_list_core
- * из Wireshark epan/dissectors/packet-gsm_a_rr.c) и RACH Control Parameters (TS 04.08 10.5.2.29).
- * Форматы range1024/512/256/128 и variable bitmap не разобраны — список ARФCN в этих случаях пуст. */
+ * Из SI1/SI2 — список ARFCN (своей соты и соседних, все форматы Frequency List — bitmap0, range1024/
+ * 512/256/128, variable bitmap, сверено с dissect_arfcn_list_core/f_k из Wireshark
+ * epan/dissectors/packet-gsm_a_rr.c) и RACH Control Parameters (TS 04.08 10.5.2.29). */
 
-// Список частот (TS 04.08 10.5.2.13), формат bitmap 0: off — байт с FORMAT-ID, len — длина IE (16 байт).
-// Первый байт даёт только 4 младших бита данных (старшие 4 — FORMAT-ID), дальше по 8 бит/байт; ARFCN 124..1.
+// наибольшая степень двойки, не превосходящая idx (TS 04.08 10.5.2.13, функция для range-форматов)
+function gsmPow2Le(idx){ let j=1; do{ j<<=1; } while(j<=idx); return j>>1; }
+// f_k: k-я по порядку ARFCN внутри диапазона range, восстановленная из W-массива (TS 04.08 10.5.2.13
+// Annex, алгоритм "range encoding"); сверено с f_k() из Wireshark packet-gsm_a_rr.c построчно
+function gsmFk(k, w, range){
+  let idx=k; range-=1; range=Math.floor(range/gsmPow2Le(idx));
+  let n=w[idx]-1;
+  while(idx>1){
+    const j=gsmPow2Le(idx); range=2*range+1;
+    if(2*idx<3*j){ idx-=j>>1; n=(n+w[idx]-1+Math.floor((range-1)/2)+1)%range; }
+    else { idx-=j; n=(n+w[idx]-1+1)%range; }
+  }
+  return (n+1)%1024;
+}
+// range1024/512/256/128: первый ARFCN (f0 либо ORIG, явно в заголовке) + W-массив переменной
+// битности (10 бит, затем 9,9,8,8,8,8,7×8,... — удваивается группа, ширина убывает на 1), вплоть
+// до первого нулевого элемента или конца IE; f_k() переводит W-значения в сами номера ARFCN
+function gsmRangeDecode(b, off, len, range){
+  const r=new GsmBitReader(b, off*8+(range===1024?6:7));
+  let arfcnOrig=0; const list=[];
+  if(range===1024){ if((b[off]>>2)&1) list.push(0); }
+  else { arfcnOrig=r.bits(10); list.push(arfcnOrig); }
+  const wsize0={1024:10,512:9,256:8,128:7}[range], imax={1024:16,512:17,256:21,128:28}[range];
+  const w=new Array(imax+1).fill(0);
+  let wsize=wsize0, nwi=1, jwi=0, iused=imax;
+  for(let i=1;i<=imax;i++){
+    w[i]=r.bits(wsize);
+    const curOff=r.pos>>3;
+    // в оригинале (dissect_channel_list_n_range) тут нет break — цикл дочитывает все imax
+    // элементов, просто не используя их дальше; iused после первого нуля уже не меняется
+    // (условие iused===imax больше не сработает), так что на итоговый список ARFCN это не влияет —
+    // останавливаемся раньше, нам не нужна точная позиция конца IE для разбора чего-то следом
+    if(iused===imax && w[i]===0){ iused=i-1; break; }
+    if((curOff-off)>len){ iused=i-1; break; }
+    if(++jwi===nwi){ jwi=0; nwi<<=1; wsize--; }
+  }
+  for(let i=1;i<=iused;i++) list.push((gsmFk(i,w,range)+arfcnOrig)%1024);
+  return [...new Set(list)].sort((a,b2)=>a-b2);
+}
+// variable bitmap: база ARFCN из 10 бит (1 из FORMAT-ID + следующий байт + старший бит третьего),
+// дальше обычный битмап (бит=1 → ARFCN=база+позиция, по модулю 1024), а не «сверху вниз», как bitmap0
+function gsmVarBitmapDecode(b, off, len){
+  let arfcn=((b[off]&0x01)<<9)|(b[off+1]<<1)|((b[off+2]&0x80)>>7);
+  const list=[]; let pos=off+2, bit=7;
+  for(let byte=0; byte<=len-3; byte++){
+    const oct=b[pos];
+    while(bit-->0){ arfcn++; if((oct>>bit)&1) list.push(arfcn%1024); }
+    bit=8; pos++;
+  }
+  return list.sort((a,b2)=>a-b2);
+}
+// Список частот (TS 04.08 10.5.2.13): off — байт с FORMAT-ID, len — длина IE (16 байт для SI1/SI2).
+// bitmap 0: первый байт даёт только 4 младших бита данных (старшие 4 — FORMAT-ID), дальше 8 бит/байт.
 function gsmDecodeFreqList(b, off, len){
   const format=b[off];
-  if((format&0xc0)!==0x00) return {format:'other', arfcns:[]};   // range/variable-bitmap — не разобрано
-  const arfcns=[]; let bit=4, arfcn=125;
-  for(let byte=0; byte<len; byte++){
-    const oct=b[off+byte];
-    while(bit-->0){ arfcn--; if((oct>>bit)&1) arfcns.push(arfcn); }
-    bit=8;
+  if((format&0xc0)===0x00){
+    const arfcns=[]; let bit=4, arfcn=125;
+    for(let byte=0; byte<len; byte++){
+      const oct=b[off+byte];
+      while(bit-->0){ arfcn--; if((oct>>bit)&1) arfcns.push(arfcn); }
+      bit=8;
+    }
+    return {format:'bitmap0', arfcns};
   }
-  return {format:'bitmap0', arfcns};
+  if((format&0xc8)===0x80) return {format:'range1024', arfcns:gsmRangeDecode(b,off,len,1024)};
+  if((format&0xce)===0x88) return {format:'range512', arfcns:gsmRangeDecode(b,off,len,512)};
+  if((format&0xce)===0x8a) return {format:'range256', arfcns:gsmRangeDecode(b,off,len,256)};
+  if((format&0xce)===0x8c) return {format:'range128', arfcns:gsmRangeDecode(b,off,len,128)};
+  if((format&0xce)===0x8e) return {format:'varbitmap', arfcns:gsmVarBitmapDecode(b,off,len)};
+  return {format:'other', arfcns:[]};
 }
 const GSM_TX_INTEGER=[3,4,5,6,7,8,9,10,11,12,14,16,20,25,32,50];
 const GSM_MAX_RETRANS=[1,2,4,7];
@@ -760,7 +819,7 @@ class GsmReceiver{
   // рёбра «своя сота → сосед по ARFCN» для узла Graph (vis-network): кидаем как записи rec с
   // from/to — graphview сам их подхватит по именам колонок, без отдельного провода
   emitNeighbors(arfcns, fmt){
-    if(fmt!=='bitmap0' || !arfcns.length) return;
+    if(fmt==='other' || !arfcns.length) return;
     const from=this.cellLabel||('BSIC '+((this.ncc<<3)|this.bcc));
     for(const a of arfcns) this.rec.push({t:Date.now(), kind:'GSM-NEIGHBOR', from, to:'ARFCN '+a});
   }
@@ -946,7 +1005,7 @@ function gsmDebugSuffix(r){
   return s;
 }
 function gsmArfcnList(arfcns,fmt){
-  if(fmt&&fmt!=='bitmap0') return `(${fmt}, не разобрано)`;
+  if(fmt==='other') return '(формат не разобран)';
   if(!arfcns||!arfcns.length) return '-';
   return arfcns.length>8 ? arfcns.slice(0,8).join(',')+`,… (${arfcns.length})` : arfcns.join(',');
 }
