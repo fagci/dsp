@@ -11,6 +11,9 @@
 // широком диапазоне видны периодические «горбы» по шагу окна.
 
 const SAP_RES=2048, SAP_WRES=1024, SAP_ROWS=96, SAP_GAP=4, SAP_AXIS=14, SAP_TITLE=13, SAP_MAXB=128;
+// история водопада — 1 байт на пиксель (0 — пусто); картинка RGBA живёт только у панелей на экране
+const SAP_DB0=-160, SAP_DBS=.75;
+const sapCode=db=>db!==db ? 0 : Math.max(1,Math.min(255,Math.round((db-SAP_DB0)/SAP_DBS)+1));
 const SAP_HINT='wheel / pinch — zoom · drag — pan (zoomed) · vertical drag, Ctrl+wheel, vertical pinch — dB range of a pane · double click / double tap — reset view · wheel on a title or swipe it — next/previous bands\n'+
   'tap — marker · tap a title — retune the receiver · Shift+tap / long press / «⊘ skip» button + tap on a ▼ signal — skip it (the same on a ⊘ — return it)';
 
@@ -29,11 +32,9 @@ function saPaneGet(n,b){
   const store=n._pnStore||(n._pnStore=new Map()), key=b.lo+'-'+b.hi;
   let p=store.get(key);
   if(!p){
-    const img=new ImageData(SAP_WRES,SAP_ROWS);
-    for(let i=3;i<img.data.length;i+=4) img.data[i]=255;
     p={key, lo:b.lo, hi:b.hi, label:'', color:'', lv:new Float32Array(SAP_RES).fill(NaN), pk:new Float32Array(SAP_RES).fill(NaN),
-      wdb:new Float32Array(SAP_WRES*SAP_ROWS).fill(NaN), db:null,
-      t:0, img, off:null, ocx:null, dirty:false, med:-120, det:null, zoom:null,
+      wdb:new Uint8Array(SAP_WRES*SAP_ROWS), db:null,
+      t:0, img:null, off:null, ocx:null, dirty:false, med:-120, det:null, zoom:null,
       // строка водопада достраивается полосками за проход диапазона; сдвиг — только когда она закончена (rowLv — уровни текущей строки)
       rowLv:new Float32Array(SAP_RES).fill(NaN), rowN:0, rowFull:false, rowOpen:false, rowT0:0, lastC:null, curWin:null};
     try{ const o=JSON.parse(n.p.paneDb||'{}'); if(Array.isArray(o[key])) p.db=o[key]; }catch(e){}
@@ -64,7 +65,10 @@ function saDetMerge(p){
 // панели на экране
 function saPaneState(n){
   const list=saPaneList(n), k=Math.max(1,n.p.panes|0), from=clamp(n.p.paneFrom|0,0,Math.max(0,list.length-1));
-  return n._pn=list.slice(from,from+k).map(b=>saPaneGet(n,b));
+  const shown=list.slice(from,from+k).map(b=>saPaneGet(n,b));
+  for(const p of shown) if(!p.img) saPaneFill(n,p);
+  for(const p of (n._pnStore||new Map()).values()) if(p.img && !shown.includes(p)){ p.img=null; p.off=null; p.ocx=null; p.dirty=false; }
+  return n._pn=shown;
 }
 const saPaneView=p=>p.zoom || [p.lo,p.hi];
 function saSetFrom(n,v,manual){
@@ -109,15 +113,22 @@ function saDbSave(n){
   const o={}; if(n._pnStore) for(const p of n._pnStore.values()) if(p.db) o[p.key]=p.db.map(x=>Math.round(x*10)/10);
   n.p.paneDb=Object.keys(o).length ? JSON.stringify(o) : '';
 }
-// водопад перекрашивается из истории уровней
-function saPaneRepaint(n,p){
-  const pal=paletteLut(n.p.palette), [fl,tp]=saPaneRange(n,p), rng=(tp-fl)||1, d=p.img.data;
+// картинка водопада из истории уровней
+function saPaneFill(n,p){
+  const pal=paletteLut(n.p.palette), [fl,tp]=saPaneRange(n,p), rng=(tp-fl)||1;
+  if(!p.img) p.img=new ImageData(SAP_WRES,SAP_ROWS);
+  const d=p.img.data;
   for(let i=0,o=0;i<p.wdb.length;i++,o+=4){
-    const db=p.wdb[i];
-    if(db!==db){ d[o]=d[o+1]=d[o+2]=0; continue; }
-    const hk=heatIdx((db-fl)/rng)*3; d[o]=pal[hk]; d[o+1]=pal[hk+1]; d[o+2]=pal[hk+2];
+    const c=p.wdb[i]; d[o+3]=255;
+    if(!c){ d[o]=d[o+1]=d[o+2]=0; continue; }
+    const hk=heatIdx((SAP_DB0+(c-1)*SAP_DBS-fl)/rng)*3; d[o]=pal[hk]; d[o+1]=pal[hk+1]; d[o+2]=pal[hk+2];
   }
-  p.dirty=true; saPanesBump(n);
+  p.dirty=true;
+}
+// водопад перекрашивается из истории уровней (панели вне экрана — при показе)
+function saPaneRepaint(n,p){
+  if(!p.img) return;
+  saPaneFill(n,p); saPanesBump(n);
 }
 // подогнать диапазон каждой панели под её данные: от шума −8 дБ до максимума +8 дБ
 function saDbAuto(n){
@@ -157,7 +168,12 @@ function saPanesIngest(n,sp,src=0){
   let m=sp.mag, sc=sp;
   const dcHz=Math.max(0,+n.p.dcCut||0)*1000;
   if(dcHz>0 && sp.freqs && sHi-sLo<=12e6){
-    const ci=N>>1, binHz=Math.abs(specHz(sp,ci)-specHz(sp,ci-1))||1, w=Math.max(3,Math.ceil(dcHz/binHz)), a=Math.max(0,ci-w-1), b=Math.min(N-1,ci+w+1);
+    const ci=N>>1, binHz=Math.abs(specHz(sp,ci)-specHz(sp,ci-1))||1, w=Math.max(3,Math.ceil(dcHz/binHz)), wMax=Math.max(w,Math.ceil(dcHz*5/binHz));
+    // юбка пика несимметрична и шире заданного: вырез расширяется в каждую сторону, пока уровень выше шума (медиана +3 дБ)
+    const thr=Float32Array.from(sp.mag).sort()[N>>1]*1.41;
+    let a=Math.max(0,ci-w-1), b=Math.min(N-1,ci+w+1);
+    while(a>0 && ci-a<wMax && sp.mag[a]>thr) a--;
+    while(b<N-1 && b-ci<wMax && sp.mag[b]>thr) b++;
     if(b-a>2){ m=Float32Array.from(sp.mag); for(let i=a+1;i<b;i++) m[i]=sp.mag[a]+(sp.mag[b]-sp.mag[a])*(i-a)/(b-a); sc={...sp, mag:m}; }
   }
   // следование за сканером: окно ушло в диапазон вне экрана — перелистнуть на его страницу
@@ -197,7 +213,7 @@ function saPanesIngest(n,sp,src=0){
     p.t=now;
     // строка водопада: полоска окна добавляется в текущую строку; новая строка (сдвиг вниз) — когда прежняя закончена и начался
     // новый заход (пауза в данных, другое окно, прошёл rowMs — стоим на месте), либо сканер пошёл заново (центр окна вернулся назад)
-    const d=p.img.data, row=SAP_WRES*4, k=SAP_RES/SAP_WRES, rowMs=Math.max(100,+n.p.rowMs||400);
+    const d=p.img?p.img.data:null, row=SAP_WRES*4, k=SAP_RES/SAP_WRES, rowMs=Math.max(100,+n.p.rowMs||400);
     const wrap=!n._pnMulti && p.lastC!=null && c<p.lastC-1e3;    // при нескольких приёмниках окна приходят не по порядку
     // диапазон шире окна: строка достраивается за проход, сдвиг — только когда сканер вернулся в начало (центр окна пошёл назад);
     // диапазон в одно окно: строка готова сразу — новая на каждый заход (пауза в данных) и раз в rowMs, пока стоим на месте
@@ -209,7 +225,7 @@ function saPanesIngest(n,sp,src=0){
       multiNew=already>=.5*touched && touched>=.3*Math.min(SAP_RES,(uHi-uLo)/span*SAP_RES);
     }
     if(!p.rowOpen || wrap || multiNew || (single && p.rowFull && (gap>250 || now-p.rowT0>=rowMs))){
-      d.copyWithin(row,0,row*(SAP_ROWS-1)); p.wdb.copyWithin(SAP_WRES,0,SAP_WRES*(SAP_ROWS-1));
+      if(d) d.copyWithin(row,0,row*(SAP_ROWS-1)); p.wdb.copyWithin(SAP_WRES,0,SAP_WRES*(SAP_ROWS-1));
       p.rowLv.fill(NaN); p.rowN=0; p.rowFull=false; p.rowOpen=true; p.rowT0=now;
     }
     for(let i=0;i<touched;i++){ const x=wcol[i]; if(!(p.rowLv[x]===p.rowLv[x])) p.rowN++; p.rowLv[x]=p.lv[x]; }
@@ -218,12 +234,13 @@ function saPanesIngest(n,sp,src=0){
     for(let x=0,o=0;x<SAP_WRES;x++,o+=4){                 // верхняя строка — из rowLv (ещё не пройденное — чёрное); столбец водопада — максимум соседних
       let db=NaN;
       for(let q=0;q<k;q++){ const v=p.rowLv[x*k+q]; if(v===v && !(db>=v)) db=v; }
-      p.wdb[x]=db;
+      p.wdb[x]=sapCode(db);
+      if(!d) continue;
       if(db!==db){ d[o]=d[o+1]=d[o+2]=0; d[o+3]=255; continue; }
       const hk=heatIdx((db-pfl)/rng)*3;
       d[o]=pal[hk]; d[o+1]=pal[hk+1]; d[o+2]=pal[hk+2]; d[o+3]=255;
     }
-    p.dirty=true;
+    if(d) p.dirty=true;
     // шумовая полка панели — медиана последних уровней (для SNR маркеров)
     const t=Float32Array.from(p.lv).filter(v=>v===v).sort();
     p.med=t.length ? t[t.length>>1] : -120;
