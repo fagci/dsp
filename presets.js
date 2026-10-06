@@ -805,7 +805,7 @@ const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the
   'so the bands stay on the screen while the receiver visits them (the pane being received is outlined, old data is dimmed).\n'+
   'The scanner waits for 3 fresh spectrum frames of the new window (spec wire, «fresh frames»), not for a timer: the USB queue still holds ~40 ms of the old frequency\n'+
   'after a retune, and the detector needs 2 frames to confirm a signal. «settle» is only a minimum wait and can stay low.\n'+
-  'Order «interleave»: one window of every range in turn, so a wide range does not starve the narrow ones and all panes refresh evenly.\n'+
+  'Order «band by band»: a range is walked to its end, then the next one (the scanner can be switched to «interleave»: one window of every range in turn).\n'+
   'More ranges than panes: the page turns after the scanner (follow); or use ◀ ▶ / the wheel on a pane title.\n'+
   'View: wheel on a pane — zoom, drag — pan, double click — back. Humps at the window step come from the filter edges: both nodes\n'+
   'drop 10% of each window (the «edge» parameter — keep them equal), so the useful middle is stitched without a gap.\n'+
