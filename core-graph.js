@@ -170,6 +170,7 @@ for(const dir of ['ins','outs']) for(const p of portsOf(n,dir)) if(p.hide) mark(
 }
 function retopo(){
 Graph.order=topoOrder(Graph.nodes,Graph.edges,Graph.map);
+markLive(Graph.nodes,Graph.edges,Graph.map);
 const idx=new Map();                                // "узел+порт → провод" — см. комментарий в evalNode
 for(const e of Graph.edges) idx.set(e.to+'\u0001'+e.tp, e);
 Graph.inIndex=idx;
@@ -2103,7 +2104,8 @@ toDraw.push(n);
 for(const n of toDraw){
 const d=MOD[n.type];
 if(d.lazy) drawnLazy(n,ts);                        // до draw(): он может сам попросить следующий кадр
-try{ d.draw(n,n.cv,n.cx); }
+const pa=Prof.on?performance.now():0;
+try{ d.draw(n,n.cv,n.cx); if(pa){ const dt=performance.now()-pa; n._dAcc=(n._dAcc||0)+dt; Prof.tot.d+=dt; } }
 catch(e){ if(!n.drawErr){ n.drawErr=1; console.error('draw '+n.type+':',e); } }
 }
 if(Eng.running &&!Eng.paused){
