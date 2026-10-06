@@ -1330,6 +1330,17 @@ function rtlMakeCom(dev){
 
 const R82XX_LNA_STEPS=[0,9,13,40,38,13,31,22,26,31,26,14,19,5,35,13];
 const R82XX_MIX_STEPS=[0,5,10,10,19,9,10,25,17,10,8,16,13,6,3,-8];
+const R82XX_VGA_STEPS=[0,26,26,30,42,35,24,13,14,32,36,34,35,37,35,36];   // десятые дБ; индекс 8 — тот, что у обычного режима (16.3 дБ)
+// усиление по ступеням в той же шкале, что обычный gain, dB (там VGA стоит на индексе 8 и не считается): LNA + смеситель ± отличие VGA от 8;
+// индекс i добавляет STEPS[i]; auto — ступень не считается (её ведёт АРУ чипа)
+function r82xxStageDb(g){
+  let t=0;
+  for(let i=1;i<=(g.vga|0);i++) t+=R82XX_VGA_STEPS[i];
+  for(let i=1;i<=8;i++) t-=R82XX_VGA_STEPS[i];
+  if(!g.lnaAuto) for(let i=1;i<=(g.lna|0);i++) t+=R82XX_LNA_STEPS[i];
+  if(!g.mixAuto) for(let i=1;i<=(g.mix|0);i++) t+=R82XX_MIX_STEPS[i];
+  return t/10;
+}
 // как r82xx_set_gain (librtlsdr / rtl-sdr-blog): ступени LNA и смесителя по очереди, пока сумма
 // (десятые дБ) не дойдёт до заданной; VGA фиксирован 16.3 дБ. Итог — одна из 29 ступеней 0…49.6 дБ.
 function r82xxGainSteps(gain){
@@ -1515,6 +1526,16 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
     await writeRegMask(0x05, v, 0x60);
   }
   async function setAutoGain(){ await writeEach([[0x05,0x00,0x10],[0x07,0x10,0x10],[0x0c,0x0b,0x9f]]); }
+  // каждая ступень отдельно (как в r820tweak): LNA 0x05 и смеситель 0x07 — индекс 0–15 или авто (бит 4: LNA 1 = ручной, смеситель 0 = ручной),
+  // VGA 0x0c — индекс 0–15 (режим по регистру); g={lna,lnaAuto,mix,mixAuto,vga}
+  async function setStageGain(g){
+    const c=v=>Math.max(0,Math.min(15,v|0));
+    await writeEach([[0x05,g.lnaAuto?0x00:0x10,0x10],[0x07,g.mixAuto?0x10:0x00,0x10]]);
+    if(!g.lnaAuto) await writeRegMask(0x05,c(g.lna),0x0f);
+    if(!g.mixAuto) await writeRegMask(0x07,c(g.mix),0x0f);
+    await writeRegMask(0x0c,c(g.vga),0x9f);
+    return r82xxStageDb({...g,lna:c(g.lna),mix:c(g.mix),vga:c(g.vga)});
+  }
   async function setManualGain(gain){
     const {lna,mix,db}=r82xxGainSteps(gain);
     await writeEach([[0x05,0x10,0x10],[0x07,0x00,0x10],[0x0c,0x08,0x9f],[0x05,lna,0x0f],[0x07,mix,0x0f]]);
@@ -1524,7 +1545,7 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
     await writeEach([[0x06,0xb1,0xff],[0x05,0xb3,0xff],[0x07,0x3a,0xff],[0x08,0x40,0xff],[0x09,0xc0,0xff],
       [0x0a,0x36,0xff],[0x0c,0x35,0xff],[0x0f,0x68,0xff],[0x11,0x03,0xff],[0x17,0xf4,0xff],[0x19,0x0c,0xff]]);
   }
-  return {init, setFrequency, setAutoGain, setManualGain, setGpio, close, setFast:on=>{ fast=!!on; }};
+  return {init, setFrequency, setAutoGain, setManualGain, setStageGain, setGpio, close, setFast:on=>{ fast=!!on; }};
 }
 // проверка чипа по ID-регистру на конкретном I2C-адресе (0x69 у обеих версий R82xx)
 rtlMakeR820T.checkAt = async function(com, addr){
@@ -1590,7 +1611,7 @@ async function rtlOpenDevice(dev, ppm, gain){
     [RTL_CMD.DEMODREG,1,0x1b,mult&0xff,1],[RTL_CMD.DEMODREG,1,0x15,0x01,1]
   ]);
   await tuner.init();
-  if(gain==null) await tuner.setAutoGain(); else await tuner.setManualGain(gain);
+  if(gain==null) await tuner.setAutoGain(); else if(typeof gain==='object') await tuner.setStageGain(gain); else await tuner.setManualGain(gain);
   await com.i2c.close();
 
   async function setSampleRate(rate){
@@ -1623,7 +1644,7 @@ async function rtlOpenDevice(dev, ppm, gain){
   }
   async function setGain(g){
     await com.i2c.open();
-    if(g==null) await tuner.setAutoGain(); else await tuner.setManualGain(g);
+    if(g==null) await tuner.setAutoGain(); else if(typeof g==='object') await tuner.setStageGain(g); else await tuner.setManualGain(g);
     await com.i2c.close();
   }
   // быстрая перестройка: без пустых чтений после записи в демодулятор и без необязательных шагов PLL (см. rtlMakeR820T)
@@ -2413,7 +2434,9 @@ function sdrOpenDevice(dev, ppm, gain){
 const RTL_USB_WORKER_SRC = `
 const RTL_CMD=${JSON.stringify(RTL_CMD)}, RTL_BLOCK=${JSON.stringify(RTL_BLOCK)}, RTL_REG=${JSON.stringify(RTL_REG)};
 const R82XX_LNA_STEPS=${JSON.stringify(R82XX_LNA_STEPS)}, R82XX_MIX_STEPS=${JSON.stringify(R82XX_MIX_STEPS)};
+const R82XX_VGA_STEPS=${JSON.stringify(R82XX_VGA_STEPS)};
 ${r82xxGainSteps}
+${r82xxStageDb}
 ${rtlNumToBuf}
 ${rtlBufToNum}
 ${rtlMakeCom}
@@ -4096,7 +4119,12 @@ async function sdrTune(n){
 }
 // логический центр — куда встаёт канал, следующий за центром
 const sdrCenter=n=>(n.actualFreq??n.p.freq)-(n.dcOff||0);
-const sdrGainKey=n=>n.dev?.kind==='hackrf' ? `h${n.p.lna}|${n.p.vga}|${!!n.p.amp}` : (n.p.auto ? 'auto' : 'g'+n.p.gainDb);
+// «по ступеням» (LNA / смеситель / VGA отдельно) — только RTL-SDR; «default» — прежние auto / gain, dB
+const sdrStages=n=>n.p.gainMode==='stages' && n.dev?.kind==='rtl';
+const sdrStageArg=n=>({lna:+n.p.stLna||0, lnaAuto:!!n.p.stLnaAuto, mix:+n.p.stMix||0, mixAuto:!!n.p.stMixAuto, vga:+n.p.stVga||0});
+const sdrGainArg=n=>sdrStages(n) ? sdrStageArg(n) : (n.p.auto ? null : n.p.gainDb);
+const sdrGainKey=n=>n.dev?.kind==='hackrf' ? `h${n.p.lna}|${n.p.vga}|${!!n.p.amp}`
+  : sdrStages(n) ? `s${n.p.stLna}|${!!n.p.stLnaAuto}|${n.p.stMix}|${!!n.p.stMixAuto}|${n.p.stVga}` : (n.p.auto ? 'auto' : 'g'+n.p.gainDb);
 
 async function rtlConnect(n, choose){
   if(!navigator.usb){ n.status='WebUSB unavailable (needs Chrome/Edge/Opera)'; return; }
@@ -4126,7 +4154,7 @@ async function rtlStart(n, sr){
   n.sourceRate=await n.dev.setSampleRate(sr);
   await sdrTune(n);
   // у HackRF свои ступени — применит rtlApplyPending; bias-tee после открытия выключен, GPIO не трогаем
-  n.appliedGainKey=n.dev.kind==='hackrf' ? null : sdrGainKey(n); n.appliedBias=false;
+  n.appliedGainKey=(n.dev.kind==='hackrf' || sdrStages(n)) ? null : sdrGainKey(n); n.appliedBias=false;   // ступени — применит rtlApplyPending
   await n.dev.resetBuffer();
   // отключение/переподключение — каналы поднимаем с нуля; активные до дисконнекта воркеры
   // уже терминированы в rtlDisconnect, но на всякий случай подчистим прежде, чем ресайзить кольца
@@ -4334,7 +4362,7 @@ async function rtlApplyPending(n){
     }
     if(gainStale){
       if(n.dev.kind==='hackrf') await n.dev.setHackrfGain(+n.p.lna, +n.p.vga, !!n.p.amp);
-      else await n.dev.setGain(n.p.auto?null:n.p.gainDb);
+      else await n.dev.setGain(sdrGainArg(n));
       n.appliedGainKey=gainKey;
     }
     if(biasStale){ await n.dev.setBiasTee(!!n.p.bias); n.appliedBias=!!n.p.bias; }
@@ -4570,7 +4598,7 @@ async function sdrSweepLoop(n){
     n.swActive=true; n.swErr=null;
     // АРУ на каждом шаге выбирает своё усиление — водопад в полосах; на время прохода фиксируем gainDb
     n.swGainFix=false;
-    if(n.p.auto && n.dev.kind!=='hackrf'){
+    if(n.p.auto && n.dev.kind!=='hackrf' && !sdrStages(n)){
       while(n.busy) await sdrSleep(2);
       n.busy=true;
       try{ await n.dev.setGain(n.p.gainDb); n.swGainFix=true; }finally{ n.busy=false; }
@@ -4661,6 +4689,13 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'auto',t:'check',d:true,label:'auto gain'},
     // ручное усиление действует только без auto — движение ползунка само его снимает
     {n:'gainDb',t:'range',min:0,max:49.6,step:.1,d:20,label:'gain, dB',fn:n=>{ if(n.p.auto){ if(n.set?.auto) n.set.auto(false); else n.p.auto=false; } }},
+    // RTL-SDR, режим «stages» (вместо auto/gain): ступени R820T по отдельности — индекс 0–15, LNA и смеситель можно оставить на АРУ чипа
+    {n:'gainMode',t:'select',opts:['default','stages'],d:'default',label:'RTL gain mode (stages: LNA / mixer / VGA separately)',adv:true},
+    {n:'stLna',t:'range',min:0,max:15,step:1,d:8,label:'LNA step',adv:true},
+    {n:'stLnaAuto',t:'check',d:false,label:'LNA auto (chip AGC)',adv:true},
+    {n:'stMix',t:'range',min:0,max:15,step:1,d:8,label:'mixer step',adv:true},
+    {n:'stMixAuto',t:'check',d:false,label:'mixer auto (chip AGC)',adv:true},
+    {n:'stVga',t:'range',min:0,max:15,step:1,d:8,label:'VGA step (8 = 16.3 dB)',adv:true},
     // только HackRF — вместо auto/gainDb, строки переключает draw()
     {n:'lna',t:'range',min:0,max:40,step:8,d:24,label:'LNA, dB'},
     {n:'vga',t:'range',min:0,max:62,step:2,d:24,label:'VGA, dB'},
@@ -4888,15 +4923,17 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     const cf=n.actualFreq??n.p.freq;
     const tune=clamp(n.ch[0].tuneFreq==null?sdrCenter(n):n.ch[0].tuneFreq, cf-n.sourceRate/2, cf+n.sourceRate/2);
     // HackRF: ступени LNA/VGA/amp вместо auto/gainDb
-    const hk=n.p.devKind==='hackrf', fl=n.p.devKind==='file', dm=n.p.demod;
+    const hk=n.p.devKind==='hackrf', fl=n.p.devKind==='file', dm=n.p.demod, rt=n.p.devKind==='rtl', stg=rt && n.p.gainMode==='stages';
     const sq=n.p.sql;
-    if(n.el && (n._rowsEl!==n.el || n._rowsHk!==hk || n._rowsFl!==fl || n._rowsDm!==dm || n._rowsSq!==sq)){
-      n._rowsEl=n.el; n._rowsHk=hk; n._rowsFl=fl; n._rowsDm=dm; n._rowsSq=sq;
+    const rowsKey=rt+'|'+stg+'|'+!!n.p.stLnaAuto+'|'+!!n.p.stMixAuto;
+    if(n.el && (n._rowsEl!==n.el || n._rowsHk!==hk || n._rowsFl!==fl || n._rowsDm!==dm || n._rowsSq!==sq || n._rowsKey!==rowsKey)){
+      n._rowsEl=n.el; n._rowsHk=hk; n._rowsFl=fl; n._rowsDm=dm; n._rowsSq=sq; n._rowsKey=rowsKey;
       // настройки демодулятора — только те, что действуют в текущем режиме
       const wfm=dm==='WFM', hf=['AM','SAM','USB','LSB'].includes(dm);
       for(const [k,show] of [['deemph',wfm],['stereo',wfm],['agc',hf],['anf',hf],['samSb',dm==='SAM'],['nb',dm!=='IQ'],
           ['sql',dm!=='IQ'],['sqlSnr',dm!=='IQ'&&sq==='SNR'],['sqlLvl',dm!=='IQ'&&sq==='level'],['sqlHang',dm!=='IQ'&&sq!=='off'],
-          ['lna',hk],['vga',hk],['amp',hk],['auto',!hk&&!fl],['gainDb',!hk&&!fl],
+          ['lna',hk],['vga',hk],['amp',hk],['auto',!hk&&!fl&&!stg],['gainDb',!hk&&!fl&&!stg],
+          ['gainMode',rt],['stLna',stg&&!n.p.stLnaAuto],['stLnaAuto',stg],['stMix',stg&&!n.p.stMixAuto],['stMixAuto',stg],['stVga',stg],
           ['bias',!fl],['ppm',!fl],['conv',!fl],['dcShift',!fl],['loop',fl],['seek',fl],
           ...['sweep','swLo','swHi','swFft','swAvg','swMode','swUse','swOvl','swSmooth','swDecay','swSettle'].map(k=>[k,!fl]), ['swHw',hk]]){
         const e=n.el.querySelector(`.prm[data-param="${k}"]`); if(e) e.style.display=show?'':'none';
@@ -4913,6 +4950,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
         `${(n.mspsIo||0).toFixed(2)} Msps · ch ${chCount}`+
         (n.specK>1 ? ` · fft avg ×${n.specK}` : '')+
         (sdrConv(n) ? ` · conv ${sdrConv(n)>0?'+':''}${fmtHz(sdrConv(n),3)}` : '')+
+        (sdrStages(n) ? ` · gain L${n.p.stLnaAuto?'a':n.p.stLna} M${n.p.stMixAuto?'a':n.p.stMix} V${n.p.stVga}`+
+          ((n.p.stLnaAuto||n.p.stMixAuto) ? '' : ` ≈ ${r82xxStageDb({lna:n.p.stLna,mix:n.p.stMix,vga:n.p.stVga}).toFixed(1)} dB`) : '')+
         (n.p.demod==='WFM' ? (n.ch[0].stereo?' · ST':' · mono') : '')+
         (n.p.demod==='SAM' && n.ch[0].sam ? (n.ch[0].sam.lock ? ` · lock ${n.ch[0].sam.hz>=0?'+':''}${n.ch[0].sam.hz.toFixed(0)} Hz` : ' · no lock') : '')+
         (n.p.demod==='WFM' && n.ch[0].rds && n.ch[0].rds.pi>=0
