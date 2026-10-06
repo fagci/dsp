@@ -4,6 +4,10 @@
 // CAP16 <samples> <rate-idx> → "DATA <samples> <crc32-hex> <µs>" + samples×(int8 I, int8 Q).
 // Захват коротким окном (низкая скважность): спектр считаем БПФ в браузере, пропуски между снимками неизбежны.
 // Индексы скорости 0–6: 80, 40, 20, 10, 8, 4, 16 МС/с (набор зависит от чипа, смотреть LIMITS?).
+// Встроенное БПФ: CAPS ⊇ SPEC; профили — "SPECINFO?" → "SPECINFO {json}", профиль [rate, code, fft, stride, upf].
+// SPEC 0 <stride> <upf> <det 0|1> <code> [<fft>] → "SPEC <fft> <fs> <?> <MHz>", далее кадры:
+//   "SPC1"(4) seq(4) pairIdx(8) pairs(4) ffts(2) flags(1) gain(1) drops(2) log2n(1) step=2(1) bins[n] crc32(4), LE;
+//   код бина → дБ отн. полной шкалы: code/step − 84.3. Стоп — пустая строка, затем "SPECEND" + 12 чисел.
 
 const ESP_RATES=[80e6,40e6,20e6,10e6,8e6,4e6,16e6];
 const ESP_ENC=new TextEncoder();
@@ -20,6 +24,7 @@ function espCrc32(b){
 
 // приём: общий буфер, читатели ждут нужное число байт / строку
 function espPush(n, chunk){
+  if(n.sink){ n.sink(chunk); return; }
   if(n.rxLen+chunk.length>n.rx.length){
     const b=new Uint8Array(Math.max(n.rx.length*2, n.rxLen+chunk.length));
     b.set(n.rx.subarray(0,n.rxLen)); n.rx=b;
@@ -72,6 +77,7 @@ async function espReadLoop(n){
 
 async function espTeardown(n){
   n.connected=false; n.connecting=false;
+  n.sink=null; if(n.streamEnd){ n.streamEnd(); n.streamEnd=null; }
   if(n.rxWait){ clearTimeout(n.rxWait.timer); n.rxWait.reject(new Error('disconnected')); n.rxWait=null; }
   if(n.reader){ try{ await n.reader.cancel(); }catch(e){} try{ n.reader.releaseLock(); }catch(e){} n.reader=null; }
   if(n.writer){ try{ n.writer.releaseLock(); }catch(e){} n.writer=null; }
@@ -119,6 +125,15 @@ async function espConnect(n){
     espReadLoop(n);
     await espSync(n);
     n.info=await espQuery(n,'INFO');
+    n.caps=[]; n.profiles=[];
+    try{ n.caps=(await espQuery(n,'CAPS')).split(/\s+/); }catch(e){ if(!n.connected) throw e; }
+    if(n.caps.includes('SPECCAPS')){
+      try{
+        const l=await espQuery(n,'SPECINFO?');
+        const j=JSON.parse(l.slice(l.indexOf('{')));
+        if(Array.isArray(j.profiles)) n.profiles=j.profiles;
+      }catch(e){ if(!n.connected) throw e; }
+    }
     try{
       const r=/^RANGE\s+(\d+)\s+(\d+)/.exec(await espQuery(n,'RANGE?'));
       if(r){ n.rangeLo=+r[1]; n.rangeHi=+r[2]; }
@@ -147,7 +162,7 @@ async function espApply(n){
 }
 
 async function espCapture(n){
-  const N=+n.p.size, rate=+n.p.rate;
+  const N=+n.p.size, rate=Math.max(0,ESP_RATES.indexOf(+n.p.rate*1e6));
   await espSend(n, `CAP16 ${N} ${rate}`);
   const head=await espLine(n, 5000);
   const h=/^DATA (\d+) ([0-9a-fA-F]{1,8}) (\d+)$/.exec(head);
@@ -160,7 +175,7 @@ async function espCapture(n){
 
 // снимок → спектр: окно Ханна, усреднение мощности по сегментам окна захвата
 function espSpectrum(n, bytes){
-  const N=bytes.length>>1, sr=ESP_RATES[+n.p.rate]||80e6;
+  const N=bytes.length>>1, sr=(+n.p.rate||80)*1e6;
   const M=Math.min(N, Math.max(64, +n.p.fft||1024));
   const segs=Math.max(1, Math.floor(N/M));
   const re=new Float64Array(M), im=new Float64Array(M), acc=new Float64Array(M);
@@ -187,6 +202,85 @@ function espSpectrum(n, bytes){
   n.peakF=freqs[pk]; n.peakDb=20*Math.log10(mag[pk]);
 }
 
+
+// ---- встроенное БПФ (SPEC) ----
+function espSpecKey(n){ const p=n.p; return [p.freq,p.bw,p.rate,p.fft,p.det,p.shift].join('|'); }
+function espProfile(n){
+  const fs=(+n.p.rate||0)*1e6, all=n.profiles.filter(q=>q[0]===fs);
+  if(!all.length) throw new Error('no SPEC profile for '+n.p.rate+' MS/s');
+  return all.find(q=>q[2]===+n.p.fft) || all[0];
+}
+// разбор потока: ищем SPC1 / SPECEND, остальное пропускаем побайтно
+function espDecode(n, st, chunk){
+  const j=new Uint8Array(st.buf.length+chunk.length); j.set(st.buf); j.set(chunk, st.buf.length); st.buf=j;
+  let at=0;
+  while(st.buf.length-at>=4){
+    const b=st.buf.subarray(at);
+    if(b[0]!==83||b[1]!==80){ at++; continue; }
+    if(b[2]===69&&b[3]===67){                          // SPECEND
+      const e=b.indexOf(10);
+      if(e<0){ if(b.length>256){ at++; continue; } break; }
+      const t=new TextDecoder().decode(b.subarray(0,e)).trim();
+      if(!/^SPECEND(?: \d+){12}$/.test(t)){ at++; continue; }
+      st.end=+t.split(' ')[1]; st.buf=st.buf.slice(at+e+1); return;
+    }
+    if(b[2]===83&&b[3]===49){                          // SPS1 — статистика, не запрашиваем, но пропускаем
+      if(b.length<40) break;
+      at+=40; continue;
+    }
+    if(b[2]!==67||b[3]!==49){ at++; continue; }
+    const len=32+st.nfft;
+    if(b.length<len) break;
+    const dv=new DataView(b.buffer,b.byteOffset,len);
+    if(b[26]!==Math.log2(st.nfft)||b[27]!==2||espCrc32(b.subarray(0,len-4))!==dv.getUint32(len-4,true)){
+      st.crcErr++; at++; continue;
+    }
+    espFrame(n, st, b.subarray(28,28+st.nfft), b[22], dv.getUint16(24,true));
+    at+=len;
+  }
+  st.buf=st.buf.slice(at);
+}
+function espFrame(n, st, bins, flags, drops){
+  const N=st.nfft, mag=new Float32Array(N), half=N>>1;
+  let pk=0, pdb=-1e9;
+  for(let i=0;i<N;i++){
+    const db=bins[n.p.shift?(i+half)%N:i]/2-84.3;
+    mag[i]=Math.pow(10, db/20);
+    if(db>pdb){ pdb=db; pk=i; }
+  }
+  if(!st.freqs){ st.freqs=new Float64Array(N); for(let i=0;i<N;i++) st.freqs[i]=st.lo+(i-half)*st.fs/N; }
+  n.spec={mag, freqs:st.freqs, sr:st.fs, size:N, rev:(n.spec?.rev|0)+1};
+  n.peakF=st.freqs[pk]; n.peakDb=pdb;
+  n.frames=(n.frames|0)+1; n.drops=drops; n.crcErr=st.crcErr;
+  if(!n.t0||performance.now()-n.t0>1000){ n.fps=n.frames/((performance.now()-(n.t0||performance.now()))/1000||1); n.t0=performance.now(); n.frames=0; }
+}
+
+async function espStream(n){
+  const prof=espProfile(n), nfft=n.caps.includes('SPECN') ? +n.p.fft : prof[2];
+  await espApply(n);
+  const key=espSpecKey(n), det=n.p.det==='mean'?0:1;
+  await espSend(n, `SPEC 0 ${prof[3]} ${Math.min(1000,prof[4])} ${det} ${prof[1]}`+(n.caps.includes('SPECN')?' '+nfft:''));
+  const head=(await espLine(n, 5000)).split(' ');
+  if(head[0]==='ERR') throw new Error(head.join(' '));
+  if(head[0]!=='SPEC' || head.length!==5 || +head[1]!==nfft) throw new Error('unexpected SPEC header: '+head.join(' '));
+  const st={buf:new Uint8Array(0), nfft, fs:+head[2], lo:+head[4]*1e6, crcErr:0, end:null, freqs:null};
+  n.freqHz=st.lo;
+  const done=new Promise(res=>{ n.streamEnd=res; });
+  const feed=c=>{ espDecode(n, st, c); if(st.end!==null){ n.sink=null; n.streamEnd=null; n.streamRes(); } };
+  let stopping=false;
+  const finished=new Promise(res=>{ n.streamRes=res; });
+  n.sink=feed;
+  if(n.rxLen){ const c=n.rx.slice(0,n.rxLen); n.rxLen=0; feed(c); }
+  const watch=setInterval(()=>{
+    if(stopping || !n.connected) return;
+    if(n.p.hold || espSpecKey(n)!==key){ stopping=true; n.writer.write(ESP_ENC.encode('\n')).catch(()=>{}); }
+  }, 100);
+  try{ await Promise.race([finished, done]); }
+  finally{ clearInterval(watch); n.sink=null; n.streamEnd=null; }
+  if(!n.connected) return;
+  if(st.end!==0) throw new Error('SPEC ended with status '+st.end);
+}
+
 async function espResync(n){ try{ n.rxLen=0; await espSync(n); }catch(e){} }
 
 async function espLoop(n){
@@ -197,6 +291,7 @@ async function espLoop(n){
       try{
         await espApply(n);
         if(n.p.hold){ await new Promise(r=>setTimeout(r,150)); continue; }
+        if(n.p.mode==='fft' && n.caps.includes('SPEC') && n.profiles.length){ await espStream(n); n.err=null; continue; }
         const t0=performance.now();
         espSpectrum(n, await espCapture(n));
         n.capMs=performance.now()-t0; n.err=null;
@@ -217,17 +312,20 @@ def({ id:'espsdr', lazy:'manual', title:'ESP-SDR (ESP32)', cat:'Sources',
     {n:'connect',t:'button',label:'Connect',fn:n=>espConnect(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>espDisconnect(n)},
     {n:'freq',t:'range',min:100,max:6000,step:1,d:2437,label:'frequency, MHz'},
-    {n:'rate',t:'select',opts:['0','1','2','3','4','5','6'],d:'1',label:'rate index (80/40/20/10/8/4/16 MS/s)'},
-    {n:'size',t:'select',opts:['1024','2048','4096','8190'],d:'4096',label:'samples per burst'},
-    {n:'fft',t:'select',opts:['256','512','1024','2048','4096'],d:'1024',label:'FFT size'},
+    {n:'mode',t:'select',opts:['fft','burst'],d:'fft',label:'mode (on-chip FFT / I/Q bursts)'},
+    {n:'rate',t:'select',opts:['80','40','20','16','10','8','4'],d:'40',label:'sample rate, MS/s'},
+    {n:'fft',t:'select',opts:['256','512','1024','2048','4096'],d:'1024',label:'FFT size (on-chip: up to 2048)'},
+    {n:'det',t:'select',opts:['max','mean'],d:'mean',label:'on-chip detector'},
+    {n:'size',t:'select',opts:['1024','2048','4096','8190'],d:'4096',label:'samples per burst (burst mode)'},
     {n:'bw',t:'range',min:0,max:60,step:1,d:0,label:'analog bandwidth, MHz (0 = widest)'},
     {n:'hold',t:'check',d:false,label:'hold'},
+    {n:'shift',t:'check',d:false,label:'fftshift on-chip bins (if the spectrum looks swapped)',adv:true},
     {n:'baud',t:'select',opts:['2000000','1000000','115200'],d:'2000000',label:'UART baud rate',adv:true},
   ],
   init:n=>{
     n.port=null; n.reader=null; n.writer=null; n.connected=false; n.connecting=false; n.looping=false;
     n.rx=new Uint8Array(65536); n.rxLen=0; n.rxWait=null; n.applied={};
-    n.info=''; n.rangeLo=null; n.rangeHi=null; n.freqHz=0;
+    n.info=''; n.caps=[]; n.profiles=[]; n.sink=null; n.streamEnd=null; n.streamRes=null; n.fps=0; n.drops=0; n.crcErr=0; n.rangeLo=null; n.rangeHi=null; n.freqHz=0;
     n.spec=null; n.peakF=0; n.peakDb=-150; n.capMs=null; n.err=null; n.status='not connected';
   },
   dispose:n=>{ espTeardown(n).catch(e=>console.error('espsdr dispose:',e)); },
@@ -242,13 +340,13 @@ def({ id:'espsdr', lazy:'manual', title:'ESP-SDR (ESP32)', cat:'Sources',
     }
     return {spec:n.spec, peakF:n.peakF, peakDb:n.peakDb};
   },
-  drawKey:n=>n.status+'|'+n.connected+'|'+n.spec?.rev+'|'+n.capMs+'|'+n.err,
+  drawKey:n=>n.status+'|'+n.connected+'|'+n.spec?.rev+'|'+n.capMs+'|'+n.err+'|'+n.fps,
   draw(n,cv,cx){
     const r=n.el.querySelector('.readout');
     if(r){
       let s=n.status;
       if(n.connected){
-        s+=` · ${fmtHz(n.freqHz,3)}Hz`+(n.capMs!=null?` · ${n.capMs.toFixed(0)} ms/burst`:'')+
+        s+=` · ${fmtHz(n.freqHz,3)}Hz`+(n.p.mode==='fft'&&n.profiles.length ? ` · ${n.fps.toFixed(0)} fps, ${n.crcErr|0} CRC err` : n.capMs!=null?` · ${n.capMs.toFixed(0)} ms/burst`:'')+
           (n.spec?` · peak ${fmtHz(n.peakF,3)}Hz ${n.peakDb.toFixed(1)} dB (rel.)`:'');
       }
       if(n.err) s+=' · error: '+n.err;

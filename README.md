@@ -209,11 +209,11 @@ The **tinySA** node talks to a tinySA or tinySA Ultra over its USB serial consol
 
 The **ESP-SDR (ESP32)** node talks to an ESP32 running the [ESPARGOS/esp-sdr](https://github.com/ESPARGOS/esp-sdr) firmware (WebSerial, Chrome/Edge): the chip's undocumented debug path gives raw I/Q of the built-in 2.4 / 5 GHz radio, no extra SDR hardware. Wire `spec` to a Spectrum Analyzer.
 
-- uses the `CAP16` burst command (signed 8-bit I/Q, CRC32 checked); the FFT runs in the browser, several segments of a burst are power-averaged
-- **frequency** (100–6000 MHz, 1 MHz steps; the chip really tunes only near its band), **rate index**, **samples per burst**, **FFT size**, **analog bandwidth**, **hold**
-- bursts are short, so signals between them are missed; the level is relative (dB re 1 ADC unit), not dBm
+- **mode → fft** (default): the chip computes the FFT itself (`SPEC`, profiles from `SPECINFO?`) and streams CRC-checked frames, so the spectrum is continuous at tens of frames per second; **sample rate** / **FFT size** must match a profile of the chip, **detector** is mean or max power. Level — dB re full scale
+- **mode → burst**: `CAP16` snapshots (signed 8-bit I/Q, CRC32), the FFT runs in the browser; bursts are short, so signals between them are missed. Used when the firmware has no `SPEC`
+- **frequency** (100–6000 MHz, 1 MHz steps; the chip really tunes only near its band), **analog bandwidth**, **hold**; changing a setting restarts the stream. If the on-chip spectrum looks swapped around the centre, tick **fftshift** (advanced)
 - `freq` input (Hz) and `steerFreq` (from the Spectrum Analyzer's `centerFreq`) retune the chip; outputs `peakF` / `peakDb`
-- not supported yet: on-chip FFT (`SPEC`), 10-bit `CAP20`, continuous `IQS` stream
+- not supported yet: 10-bit `CAP20`, continuous `IQS` stream, gain control (hardware AGC stays on)
 - ready-made patch: **ESP-SDR: ESP32 Spectrum**
 
 ## Signal type identifier
