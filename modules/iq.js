@@ -133,6 +133,23 @@ defIQ({ id:'iqQuality', title:'IQ Quality', cat:'IQ',
     return 'DC '+u.dc.toFixed(1)+' dBFS ('+u.dcc.toFixed(1)+' dBc) · Q gain '+(u.gain>=0?'+':'')+u.gain.toFixed(2)+' dB · phase '+(u.phase>=0?'+':'')+u.phase.toFixed(2)+
       '° · image '+(u.irr>=120?'> 120':u.irr.toFixed(1))+' dB'; });
 
+defIQ({ id:'sigMeter', title:'Signal Meter', cat:'IQ', kw:'snr occupied bandwidth obw 99 carrier frequency measure cn0 noise floor',
+  ins:[{n:'in',t:'iq'}], outs:[{n:'snr',t:'num'},{n:'obw',t:'num'},{n:'bw',t:'num'},{n:'offset',t:'num'},{n:'freq',t:'num'},{n:'level',t:'num'},{n:'noise',t:'num'}],
+  params:[{n:'size',t:'select',opts:['1024','2048','4096','8192','16384','32768','65536'],d:'4096',label:'FFT size'},
+          {n:'avg',t:'range',min:2,max:64,step:1,d:16,label:'frames averaged'},
+          {n:'thr',t:'range',min:3,max:20,step:.5,d:6,label:'detection threshold above the noise, dB'},
+          {n:'pct',t:'range',min:90,max:99.9,step:.1,d:99,label:'occupied bandwidth: share of power, %'},
+          {n:'xdb',t:'range',min:3,max:60,step:1,d:26,label:'bandwidth below the peak, dB'},
+          {n:'fine',t:'check',d:true,label:'carrier: fine frequency from the phase slope'},
+          {n:'win',t:'select',opts:['250','500','1000','2000'],d:'500',label:'fine frequency window, ms'},
+          {n:'skipDc',t:'check',d:true,label:'ignore the DC spike (center ±2 bins)'}]},
+  n=>{ const u=n.ui;
+    if(!u) return 'no input';
+    if(u.none) return 'no signal · noise '+u.noise.toFixed(1)+' dBFS/Hz';
+    const f=h=>Math.abs(h)>=1e6?(h/1e6).toFixed(3)+' MHz':Math.abs(h)>=1e3?(h/1e3).toFixed(2)+' kHz':h.toFixed(1)+' Hz';
+    return 'SNR '+u.snr.toFixed(1)+' dB · '+u.level.toFixed(1)+' dBFS · OBW '+f(u.obw)+' · −'+n.p.xdb+' dB '+f(u.bwx)+
+      ' · Δf '+(u.off>=0?'+':'')+(u.fine?u.off.toFixed(2)+' Hz (phase)':u.off.toFixed(0)+' Hz'); });
+
 defIQ({ id:'iqSpec', title:'IQ Spectrum', cat:'IQ',
   ins:[{n:'in',t:'iq'}], outs:[{n:'spec',t:'spec'}],
   params:[{n:'size',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'4096'},

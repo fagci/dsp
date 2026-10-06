@@ -918,6 +918,123 @@ IQK.iqQuality={
     return r && !r.none ? {dc:r.dc, dcc:r.dcc, gain:r.gain, phase:r.phase, irr:r.irr} : {dc:null, dcc:null, gain:null, phase:null, irr:null};
   }};
 
+/* ---- Signal Meter ---- */
+// Один сигнал в потоке: спектр Уэлча (Hann, 50%) → шум = 25-й процентиль бинов (поправка на гамма-распределение
+// усреднённого спектра) → самый мощный кластер бинов выше шума + порог → мощность за вычетом шума, SNR в полосе
+// занятия, OBW по доле мощности (хвосты по (1−pct)/2), ширина по −X дБ от пика (крайние пересечения —
+// дыры в спектре FM не обрывают измерение). Частота: у узкого (несущая) — пик с параболой по лог-спектру
+// и дальше точная оценка по наклону фазы (перенос на ноль, ящик-усреднение, сумма x[k]·x*[k-1] за окно);
+// у широкого — центроид кластера. Нормировка: сумма бинов = средняя мощность потока.
+IQK.sigMeter={
+  init(n){ n.sr=0; n.ui=null; n.res=null; },
+  process(n,I){
+    const s=iqIn(I,'in');
+    const none={snr:null, obw:null, bw:null, offset:null, freq:null, level:null, noise:null};
+    if(!s){ n.ui=null; return none; }
+    const sr=s.sr, N=+n.p.size, avg=+n.p.avg, fw=+n.p.win/1000, fine=!!n.p.fine;
+    if(sr!==n.sr || N!==n.N){
+      n.sr=sr; n.N=N; n.win=window_('hann',N);
+      let sw=0, sw2=0; for(let i=0;i<N;i++){ sw+=n.win[i]; sw2+=n.win[i]*n.win[i]; }
+      n.norm=1/(N*sw2); n.re=new Float32Array(N); n.im=new Float32Array(N); n.rr=new Float32Array(N); n.ri=new Float32Array(N);
+      n.w=0; n.hop=0; n.P=new Float64Array(N); n.k=0; n.res=null; n.ui=null; n.fn=null; n.fa=0; n.fcnt=0; n.fz=0;
+    }
+    const hop=N>>1, rr=n.rr, ri=n.ri;
+    // точная частота: NCO на fn (фиксирована на окно), ящик по D отсчётов, фазор лага 1
+    const D=Math.max(1, Math.floor(sr/(8*sr/N))), rd=sr/D, need=Math.max(8,Math.round(rd*fw));
+    for(const c of s.chunks){
+      const xr=c.re, xi=iqChunkIm(c), K=xr.length;
+      for(let i=0;i<K;i++){
+        rr[n.w]=xr[i]; ri[n.w]=xi[i]; n.w=(n.w+1)%N;
+        if(++n.hop>=hop){ n.hop=0; meterFrame(n,N); }
+        if(fine && n.fn!=null){
+          const a=n.fph, cs=Math.cos(a), sn=Math.sin(a);
+          n.fph=a-2*Math.PI*n.fn/sr; if(n.fph<-Math.PI) n.fph+=2*Math.PI;
+          n.fbr+=xr[i]*cs-xi[i]*sn; n.fbi+=xr[i]*sn+xi[i]*cs;
+          if(++n.fbc>=D){
+            const zr=n.fbr, zi=n.fbi; n.fbr=n.fbi=0; n.fbc=0;
+            if(n.fz){ n.far+=zr*n.fpr+zi*n.fpi; n.fai+=zi*n.fpr-zr*n.fpi; n.fcnt++; }
+            n.fpr=zr; n.fpi=zi; n.fz=1;
+            if(n.fcnt>=need){
+              n.fres=n.fn+Math.atan2(n.fai,n.far)*rd/(2*Math.PI); n.fcnt=0; n.far=n.fai=0; n.fz=0;
+              n.fn=n.coarse!=null ? n.coarse : null;
+            }
+          }
+        }
+      }
+    }
+    const r=n.res; n.ui=r;
+    if(!r || r.none) return none;
+    const off=fine && n.fres!=null && r.carrier && Math.abs(n.fres-r.offset)<3*sr/N ? n.fres : r.offset;
+    r.off=off; r.fine=off===n.fres;
+    return {snr:r.snr, obw:r.obw, bw:r.bwx, offset:off, freq:(s.fc||0)+off, level:r.level, noise:r.noise};
+  }};
+function meterFrame(n,N){
+  const {win,re,im,rr,ri}=n; let w=n.w;
+  for(let i=0;i<N;i++){ re[i]=rr[w]*win[i]; im[i]=ri[w]*win[i]; w=(w+1)%N; }
+  fft(re,im);
+  const P=n.P, nm=n.norm;
+  for(let j=0;j<N;j++){ const k=(j+(N>>1))%N; P[j]+=(re[k]*re[k]+im[k]*im[k])*nm; }
+  if(++n.k<+n.p.avg) return;
+  const A=n.k; n.k=0;
+  const S=new Float64Array(N); for(let j=0;j<N;j++){ S[j]=P[j]/A; P[j]=0; }
+  n.res=meterAnalyze(n,S,N,A);
+}
+function meterAnalyze(n,S,N,A){
+  const sr=n.sr, bin=sr/N, p=n.p, lo0=Math.round(N*0.05), hi0=N-lo0, dc=N>>1;
+  // шум: 25-й процентиль по центральным 90% бинов без нуля (W-H: квантиль гамма-распределения среднего из A кадров)
+  const v=[]; for(let j=lo0;j<hi0;j++) if(!p.skipDc || Math.abs(j-dc)>2) v.push(S[j]);
+  v.sort((a,b)=>a-b);
+  const e=1/(9*A), q=Math.pow(1-e-0.6745*Math.sqrt(e),3);
+  const pn=Math.max(v[Math.floor(v.length*0.25)]/q, 1e-20), thr=pn*Math.pow(10,p.thr/10);
+  // кластеры выше порога; щели до 1% полосы склеиваются
+  const gap=Math.max(2,Math.round(N*0.01)), cl=[];
+  for(let j=lo0;j<hi0;j++){
+    if(p.skipDc && Math.abs(j-dc)<=2) continue;
+    if(S[j]<thr) continue;
+    const c=cl[cl.length-1];
+    if(c && j-c.hi<=gap) c.hi=j; else cl.push({lo:j,hi:j,pw:0});
+  }
+  for(const c of cl) for(let j=c.lo;j<=c.hi;j++) c.pw+=S[j]-pn;
+  if(!cl.length) return {none:true, noise:10*Math.log10(pn*N/sr)};
+  let bi=0; for(let i=1;i<cl.length;i++) if(cl[i].pw>cl[bi].pw) bi=i;
+  const c=cl[bi], wd=c.hi-c.lo+1;
+  // область измерения: кластер ± половина его ширины, но не за середину щели до соседей
+  let rl=Math.max(lo0, c.lo-Math.ceil(wd/2)), rh=Math.min(hi0-1, c.hi+Math.ceil(wd/2));
+  if(bi>0) rl=Math.max(rl, Math.ceil((cl[bi-1].hi+c.lo)/2));
+  if(bi<cl.length-1) rh=Math.min(rh, Math.floor((c.hi+cl[bi+1].lo)/2));
+  let tot=0; for(let j=rl;j<=rh;j++) tot+=S[j]-pn;
+  if(tot<=0) return {none:true, noise:10*Math.log10(pn*N/sr)};
+  // OBW: границы там, где накопленная доля достигает (1−pct)/2 и (1+pct)/2, линейно внутри бина
+  const tail=(1-p.pct/100)/2; let cum=0, fl=rl, fh=rh, gotL=false;
+  for(let j=rl;j<=rh;j++){
+    const d=S[j]-pn, nx=cum+d;
+    if(!gotL && nx>=tail*tot){ fl=j-0.5+(d>0 ? (tail*tot-cum)/d : 0.5); gotL=true; }
+    if(nx>=(1-tail)*tot){ fh=j-0.5+(d>0 ? ((1-tail)*tot-cum)/d : 0.5); break; }
+    cum=nx;
+  }
+  const obw=Math.max(bin,(fh-fl)*bin);
+  // ширина по −X дБ: от краёв области внутрь до первого бина не ниже уровня (сглаживание 5 бинов)
+  const sm=j=>{ let a=0,k=0; for(let t=j-2;t<=j+2;t++) if(t>=0&&t<N){ a+=S[t]; k++; } return a/k; };
+  let pk=0; for(let j=rl;j<=rh;j++) pk=Math.max(pk,sm(j));
+  const lv=pk*Math.pow(10,-p.xdb/10);
+  let xl=rl, xh=rh; while(xl<rh && sm(xl)<lv) xl++; while(xh>xl && sm(xh)<lv) xh--;
+  const bwx=(xh-xl+1)*bin;
+  // частота: центроид по кластеру; у несущей — пик с параболой
+  let sj=0,sp=0; for(let j=rl;j<=rh;j++){ const d=Math.max(0,S[j]-pn); sj+=d*j; sp+=d; }
+  let cj=sj/sp, carrier=obw<=6*bin, pj=rl;
+  for(let j=rl;j<=rh;j++) if(S[j]>S[pj]) pj=j;
+  if(carrier && pj>0 && pj<N-1){
+    const a=Math.log(S[pj-1]), b=Math.log(S[pj]), g=Math.log(S[pj+1]), den=a-2*b+g;
+    cj=pj+(den<0 ? 0.5*(a-g)/den : 0);
+  }
+  const offset=(cj-dc)*bin;
+  n.coarse=carrier ? offset : null;
+  if(carrier){ if(n.fn==null){ n.fn=offset; n.fph=0; n.fbr=n.fbi=0; n.fbc=0; n.far=n.fai=0; n.fcnt=0; n.fz=0; n.fres=null; } }
+  else { n.fn=null; n.fres=null; }
+  const sig=tot, nb=pn*obw/bin;
+  return {snr:10*Math.log10(sig/nb), obw, bwx, offset, carrier, level:10*Math.log10(sig), noise:10*Math.log10(pn*N/sr), pn, bin, nbins:wd};
+}
+
 /* ---- Mode S / ADS-B: общее для демодулятора, декодера и генератора ---- */
 // CRC-24 Mode S (полином 0xFFF409); остаток = CRC(данные) ^ последние 3 байта
 const MODES_CRC_T=(()=>{ const t=new Uint32Array(256);
