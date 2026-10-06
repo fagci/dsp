@@ -172,6 +172,29 @@ defIQ({ id:'iqSpec', title:'IQ Spectrum', cat:'IQ',
           {n:'upd',t:'range',min:20,max:1000,step:10,d:60,label:'update, ms of signal'}]},
   n=>'Welch, up to '+n.p.avg+' frames');
 
+defIQ({ id:'iqDelay', title:'IQ Delay', cat:'IQ', kw:'delay fractional phase shift align calibrate tdoa',
+  ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'}],
+  params:[{n:'delay',t:'range',min:0,max:2000,step:.01,d:0,label:'delay, samples, on top of the fixed filter latency of 16 (fractional — windowed sinc, 32 taps; reliable up to ~0.4 of the sample rate)'},
+          {n:'phase',t:'range',min:-180,max:180,step:.5,d:0,label:'phase shift, °'}]},
+  n=>n.ui ? 'delay '+n.ui.D.toFixed(2)+' + 16 samples · phase '+n.ui.phase.toFixed(1)+'°' : 'no input');
+
+defIQ({ id:'xcorr', title:'Cross-Correlator (TDOA / interferometer)', cat:'Analysis', kw:'tdoa interferometry direction finding two dongles correlation delay phase coherence bearing clock drift kerberos',
+  ins:[{n:'a',t:'iq'},{n:'b',t:'iq'}],
+  outs:[{n:'delay',t:'num'},{n:'dist',t:'num'},{n:'bearing',t:'num'},{n:'phase',t:'num'},{n:'coh',t:'num'},{n:'drift',t:'num'}],
+  params:[{n:'size',t:'select',opts:['1024','2048','4096','8192','16384'],d:'4096',label:'block, samples'},
+          {n:'avg',t:'range',min:1,max:32,step:1,d:8,label:'blocks averaged'},
+          {n:'maxLag',t:'range',min:8,max:1000,step:1,d:256,label:'search range, ± samples'},
+          {n:'base',t:'num',d:0,label:'antenna baseline, m (0 — no bearing)'},
+          {n:'offs',t:'num',d:0,label:'delay zero, samples'},
+          {n:'phoff',t:'num',d:0,label:'phase zero, °'},
+          {n:'zero',t:'button',label:'Zero (common source)',fn:n=>{ const r=n.ui&&n.ui.raw; if(r){ setMod(n,'offs',r.delay); setMod(n,'phoff',r.phase); } }}]},
+  n=>{ const u=n.ui;
+    if(!u) return 'needs both a and b';
+    if(u.err) return u.err;
+    const f=(v,d)=>v==null ? '—' : v.toFixed(d);
+    return 'b − a: '+f(u.delay,3)+' samples ('+(u.delay/u.sr*1e6).toFixed(3)+' µs, path '+f(u.dist,1)+' m)'+(u.bearing!=null ? ' · bearing '+f(u.bearing,1)+'°' : '')+
+      '\nphase '+f(u.phase,1)+'° · coherence '+f(u.coh,2)+(u.drift!=null ? ' · clock drift '+f(u.drift,2)+' ppm' : ''); });
+
 defIQ({ id:'iqAdd', title:'IQ Add', cat:'IQ',
   ins:[{n:'a',t:'iq'},{n:'b',t:'iq'}], outs:[{n:'out',t:'iq'}],
   params:[{n:'ka',t:'range',min:-40,max:20,step:1,d:0,label:'gain a, dB'},

@@ -32,6 +32,27 @@ function pskRun(o){ const {mod,nSym=6000,sps=4,baud=50000,tau=0.37,cfo=0,snr=99,
   for(let i=0;i<L;i+=4096){ const K=Math.min(4096,L-i); out=IQK.pskRx.process(n,{in:{sr,fc:0,chunks:[{re:re.slice(i,i+K),im:im.slice(i,i+K),t0:i}]}},{block:K,sr}); }
   return {evm:out.evm, mer:out.mer, foff:out.foff, lock:out.lock, n:n.cnt}; }`);
 
+// Cross-Correlator: шумоподобный сигнал (случайный спектр |f| < 0.4·fs, период M) с ТОЧНОЙ дробной задержкой — сдвиг задаётся фазой бинов;
+// b — тот же сигнал, задержанный на d0 + ε·(номер первого отсчёта блока) (дрейф кусочно-постоянный по блокам); к каждому каналу — свой шум
+ev(`function xcRun(o){ const {d0=0,eps=0,snr=10,sec=1.2,sr=250000,offs=0,base=0,seed=77}=o, N=4096, M=65536, n={p:{size:'4096',avg:8,maxLag:128,offs,phoff:0,base}}; IQK.xcorr.init(n);
+  let x=seed; const rnd=()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296; };
+  const gs=()=>Math.sqrt(-2*Math.log(Math.max(rnd(),1e-12)))*Math.cos(2*Math.PI*rnd());
+  const Xr=new Float64Array(M), Xi=new Float64Array(M); let pw=0;
+  for(let k=-Math.floor(.4*M);k<=Math.floor(.4*M);k++){ const i=(k+M)%M; Xr[i]=gs(); Xi[i]=gs(); pw+=Xr[i]*Xr[i]+Xi[i]*Xi[i]; }
+  const sc=1/Math.sqrt(pw/M)/Math.sqrt(M)*Math.sqrt(M)/Math.sqrt(M);                     // нормировка к единичной мощности ниже
+  const seg=(D,st,len)=>{ const re=new Float64Array(M), im=new Float64Array(M);
+    for(let k=0;k<M;k++){ const ks=k<M/2 ? k : k-M, a=-2*Math.PI*ks*D/M, c=Math.cos(a), s=Math.sin(a); re[k]=Xr[k]*c-Xi[k]*s; im[k]=Xr[k]*s+Xi[k]*c; }
+    fft(im,re);                                                                          // N·IDFT: re→re, im→im
+    const r=new Float32Array(len), q=new Float32Array(len); let p=0; for(let i=0;i<len;i++){ const m=((st+i)%M+M)%M; r[i]=re[m]; q[i]=im[m]; }
+    return [r,q]; };
+  let pwr=0; { const [r,q]=seg(0,0,M); for(let i=0;i<M;i++) pwr+=r[i]*r[i]+q[i]*q[i]; pwr/=M; }
+  const g=1/Math.sqrt(pwr), sg=Math.sqrt(Math.pow(10,-snr/10)/2), total=Math.round(sec*sr); let out=null;
+  const A0=seg(0,0,M);
+  for(let st=0;st<total;st+=N){ const D=d0+eps*st, B=seg(D,st,N), ar=new Float32Array(N), ai=new Float32Array(N), br=new Float32Array(N), bi=new Float32Array(N);
+    for(let i=0;i<N;i++){ const m=(st+i)%M; ar[i]=A0[0][m]*g+sg*gs(); ai[i]=A0[1][m]*g+sg*gs(); br[i]=B[0][i]*g+sg*gs(); bi[i]=B[1][i]*g+sg*gs(); }
+    out=IQK.xcorr.process(n,{a:{sr,fc:0,chunks:[{re:ar,im:ai,t0:st}]},b:{sr,fc:0,chunks:[{re:br,im:bi,t0:st}]}},{block:N,sr:48000}); }
+  return out; }`);
+
 const MSG='Array.from("123456789",c=>c.charCodeAt(0))';
 const bitsMsb=`${MSG}.flatMap(v=>Array.from({length:8},(_,k)=>(v>>(7-k))&1))`;
 const bitsLsb=`${MSG}.flatMap(v=>Array.from({length:8},(_,k)=>(v>>k)&1))`;
@@ -220,6 +241,16 @@ const cases=[
       const a=run(false), b=run(true); if(a.out.length!==b.out.length) return 'длина '+a.out.length+' ≠ '+b.out.length;
       for(let i=0;i<a.out.length;i++) worst=Math.max(worst,Math.abs(a.out[i]-b.out[i])); for(let i=0;i<a.sp.mag.length;i++) worst=Math.max(worst,Math.abs(a.sp.mag[i]-b.sp.mag[i])); }
     return worst<1e-5; })()`,true],
+  // Cross-Correlator: сумма комплексных тонов s(n) — точное значение в дробные моменты; b[n] = s(n − d0 − ε·n) + свой шум, a[n] = s(n) + свой шум
+  ['Cross-Correlator: задержка 3,37 отсчёта, высокий SNR → ±0,005, когерентность > 0,99',`(()=>{ const r=xcRun({d0:3.37,snr:30}); return [Math.abs(r.delay-3.37)<.005, r.coh>.99].join(); })()`,'true,true'],
+  ['Cross-Correlator: шум 0 дБ в каждом канале → ±0,06 отсчёта, когерентность ≈ SNR/(1+SNR) = 0,5 (0,4…0,6)',`(()=>{ const r=xcRun({d0:3.37,snr:0}); return [Math.abs(r.delay-3.37)<.06, r.coh>.4 && r.coh<.6].join(); })()`,'true,true'],
+  ['Cross-Correlator: задержка −41,6 отсчёта (b опережает a), SNR 3 дБ → ±0,05',`Math.abs(xcRun({d0:-41.6,snr:3}).delay+41.6)<.05`,true],
+  ['Cross-Correlator: разность частот дискретизации 20 ppm → дрейф 20 ± 1 ppm',`Math.abs(xcRun({d0:5,eps:20e-6,snr:5,sec:3.2}).drift-20)<1`,true],
+  ['Cross-Correlator: калибровка (offs) вычитается, пеленг по базе 0,5 м',`(()=>{ const r=xcRun({d0:5,snr:10,offs:5.0,base:.5}); return [Math.abs(r.delay)<.03, r.bearing!==null].join(); })()`,'true,true'],
+  ['Cross-Correlator: разные частоты дискретизации → отказ с пояснением',`(()=>{ const n={p:{size:'1024',avg:4,maxLag:64,offs:0,phoff:0,base:0}}; IQK.xcorr.init(n); const c=sr=>({sr,fc:0,chunks:[{re:new Float32Array(1024),im:new Float32Array(1024),t0:0}]}); const r=IQK.xcorr.process(n,{a:c(1000),b:c(2000)},{block:1024,sr:48000}); return r.delay===null && /differ/.test(n.ui.err); })()`,true],
+  ['IQ Delay: задержка 2,5 + 16 отсчётов тона, сдвиг фазы 30° → амплитуда сохраняется, фаза верна; весь чанк конечен (в т. ч. последние отсчёты)',`(()=>{ const n={p:{delay:2.5,phase:30}}; IQK.iqDelay.init(n); const K=512, re=new Float32Array(K), im=new Float32Array(K), w=2*Math.PI*.05; for(let i=0;i<K;i++){ re[i]=Math.cos(w*i); im[i]=Math.sin(w*i); }
+    const o=IQK.iqDelay.process(n,{in:{sr:1000,fc:0,chunks:[{re,im,t0:0}]}},{block:K,sr:48000}).out.chunks[0]; const i=300, ph=Math.atan2(o.im[i],o.re[i])-w*(i-18.5)-30*Math.PI/180, amp=Math.hypot(o.re[i],o.im[i]); let fin=true; for(let k=0;k<K;k++) if(!isFinite(o.re[k])||!isFinite(o.im[k])) fin=false;
+    return [Math.abs(amp-1)<.01, Math.abs(Math.atan2(Math.sin(ph),Math.cos(ph)))<.01, fin].join(); })()`,'true,true,true'],
 ];
 
 let bad=0;
