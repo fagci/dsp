@@ -24,13 +24,17 @@
  *            CBCH на той же несущей, что идёт приём (частоты совпали, не hopping):
  *            позиции блока сверены с планировщиком osmo-bts, 4 блока → CBS-страница,
  *            GSM7/UCS2/8-bit
+ *   [ГОТОВО] SI2quater: список соседей 3G (UTRAN FDD/TDD, UARFCN + scrambling code/cell
+ *            parameter через тот же range-алгоритм, что и Frequency List) — порт f_k() и
+ *            convert_n_to_p/q 1:1 из Wireshark packet-gsm_a_rr.c, сверен на ручном
+ *            битовом векторе. Редкие legacy GPRS-подблоки (RTD/BSIC/Report Priority/Meas
+ *            Param Description) — только детектируются, не разбираются
  *   [ГОТОВО] нумерация бёрстов (t1/t2/t3 → FN, TN) и типизация по 51-мультикадру TS0
  *   [ГОТОВО] внутренняя частотная петля: дерот. входа по накопленному смещению
  *
- * Не разобрано: SI2bis/SI2ter/SI2quater — только типизируются (SI2quater несёт список 3G/LTE
- * соседей, но кодирует его тем же range-алгоритмом, что и Frequency List — сложнее, чем кажется
- * на первый взгляд). CBCH на другой несущей или hopping — только детектируется (TN/ARFCN/частота),
- * сам канал не декодируется без отдельного приёма на той частоте.
+ * Не разобрано: SI2bis/SI2ter — только типизируются. CBCH на другой несущей или
+ * hopping — только детектируется (TN/ARFCN/частота), сам канал не декодируется без
+ * отдельного приёма на той частоте.
  * Uplink не принимается — только downlink (FCCH/SCH есть только там).
  *
  * Вход — поток 'iq', любой sr выше ~1.1 МГц; внутри ресемплится на OSR·270.833 кГц.
@@ -347,6 +351,86 @@ function gsmDecodeSi13(b){
   }
   return res;
 }
+
+/* ---------- SI2quater: список 3G/LTE-соседей (TS 04.08 10.5.2.33b) ----------
+ * Самый навороченный элемент во всём разборе: цепочка опциональных вложенных блоков, из которых
+ * нас интересует только «3G Neighbour Cell Description» → UTRAN FDD/TDD списки (ARFCN + scrambling
+ * code каждой ячейки). Списки кодируются той же range-упаковкой (W-массив → gsmFk), что и Frequency
+ * List, только длина W-поля в битах даётся готовой таблицей (convert_n_to_p/q), а не выводится из
+ * длины целого IE. Четыре опциональных GPRS-блока перед этим (RTD/BSIC/ReportPriority/MeasParam
+ * Description) — объёмные вложенные структуры почти не встречающиеся на практике (наследие
+ * GPRS-эпохи); если какой-то из них присутствует, останавливаемся честно, вместо риска тихо
+ * съехать по биту и выдать неверный список соседей. Сверено построчно с packet-gsm_a_rr.c:
+ * de_rr_si2quater_rest_oct, de_rr_si2quater_meas_info_utran_fdd_desc/tdd_desc, convert_n_to_p/q. */
+// индекс NR_OF_xDD_CELLS (5 бит) → длина поля с W-массивом, бит (TS 04.08 10.5.2.1e)
+const GSM_CONVERT_N_TO_P=[0,10,19,28,36,44,52,60,67,74,81,88,95,102,109,116,122,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+const GSM_CONVERT_N_TO_Q=[0,9,17,25,32,39,46,53,59,65,71,77,83,89,95,101,106,111,116,121,126,0,0,0,0,0,0,0,0,0,0,0];
+// W-массив диапазон-кодированных ячеек внутри поля заранее известной длины bitLen. Позиция ридера
+// после вызова всегда ровно start+bitLen — надёжнее побитового повтора оригинала (там выравнивание
+// при раннем нулевом элементе внутри выделенного под поле бюджета бит явно не задокументировано).
+function gsmReadRangeCells(r, bitLen, wsize0, range){
+  const start=r.pos; if(!bitLen) return [];
+  let wsize=wsize0, nwi=1, jwi=0, i=1; const w=[]; let left=bitLen;
+  while(left>0){
+    w[i]=r.bits(wsize); left-=wsize;
+    if(w[i]===0) break;
+    if(++jwi===nwi){ jwi=0; nwi<<=1; wsize--; }
+    i++;
+  }
+  // i-1 верно в обоих случаях выхода из цикла: при break на нулевом элементе i ещё не увеличен
+  // (указывает на сам нулевой элемент), при естественном завершении (left<=0) i уже увеличен после
+  // последнего прочитанного элемента — итог один и тот же, как и в оригинале (iused=i-1 безусловно)
+  const iused=i-1;
+  const list=[]; for(let k=1;k<=iused;k++) list.push(gsmFk(k,w,range));
+  r.pos=start+bitLen;                                   // жёстко фиксируем конец поля
+  return list;
+}
+function gsmUtranFddDecode(r){
+  const res={cells:[]};
+  if(r.flag()) res.bandwidth=r.bits(3);
+  while(r.flag()){
+    r.bit();                                             // зарезервированный бит (earlier version)
+    const uarfcn=r.bits(14), hasParam0=r.flag();
+    const n=r.bits(5), bitLen=GSM_CONVERT_N_TO_P[n]||0;
+    const codes=gsmReadRangeCells(r,bitLen,10,1024).map(v=>({scramblingCode:v&0x1ff, diversity:(v>>9)&1}));
+    res.cells.push({uarfcn, hasParam0, codes});
+  }
+  return res;
+}
+function gsmUtranTddDecode(r){
+  const res={cells:[]};
+  if(r.flag()) res.bandwidth=r.bits(3);
+  while(r.flag()){
+    r.bit();
+    const uarfcn=r.bits(14), hasParam0=r.flag();
+    const n=r.bits(5), bitLen=GSM_CONVERT_N_TO_Q[n]||0;
+    const codes=gsmReadRangeCells(r,bitLen,9,512).map(v=>({cellParameter:v&0x7f, syncCaseTstd:(v>>7)&1, diversity:(v>>8)&1}));
+    res.cells.push({uarfcn, hasParam0, codes});
+  }
+  return res;
+}
+function gsmDecodeSi2quater(b){
+  const r=new GsmBitReader(b, 3*8);
+  const res={baInd:r.bit(), ba3gInd:r.bit(), mpChangeMark:r.bit(), index:r.bits(4), count:r.bits(4)};
+  if(r.flag()) r.bits(3);                                // Measurement Parameters Description — не используем
+  for(const name of ['RTD','BSIC','Report Priority','GPRS Measurement Parameters']){
+    if(r.flag()){ res.note=`доп. GPRS-описание (${name}) присутствует — дальше не разобрано`; return res; }
+  }
+  if(r.flag()){                                          // NC Measurement Parameters
+    res.networkControlOrder=r.bits(2);
+    if(r.flag()){ res.ncNonDrxPeriod=r.bits(3); res.ncReportingPeriodI=r.bits(3); res.ncReportingPeriodT=r.bits(3); }
+  }
+  if(r.flag()){ const extStart=r.pos, len=r.bits(8); r.pos=extStart+8+len; }  // Extension Info — по явной длине
+  if(r.flag()){                                          // 3G Neighbour Cell Description — ради чего всё это
+    const g={};
+    if(r.flag()) g.indexStart3g=r.bits(7);
+    if(r.flag()) g.absoluteIndexStartEmr=r.bits(7);
+    if(r.flag()) g.utranFdd=gsmUtranFddDecode(r);
+    if(r.flag()) g.utranTdd=gsmUtranTddDecode(r);
+    res.neighbors3g=g;
+  }
+  return res;
+}
 // ARFCN → частота нисходящего канала, МГц (TS 05.05 табл. диапазонов); null — ARFCN вне известных
 // диапазонов. Пригодится, когда интересующий канал (например, CBCH) лежит не на той несущей, на
 // которой идёт приём — её можно прочитать здесь и перестроиться туда отдельной записью.
@@ -468,6 +552,7 @@ function gsmParseSI(b){
   else if(mt===0x00){ r.type='SI13'; r.si13=gsmDecodeSi13(b); }
   else if(mt===0x02) r.type='SI2bis';
   else if(mt===0x03) r.type='SI2ter';
+  else if(mt===0x07){ r.type='SI2quater'; r.si2q=gsmDecodeSi2quater(b); }
   else r.type='0x'+mt.toString(16);
   return r;
 }
@@ -788,6 +873,7 @@ class GsmReceiver{
       this.cbchTn=cbchOk ? si.cbch.tn : -1; this.cbchTsc=cbchOk ? si.cbch.tsc : null;
     }
     if(si.si13) rec.si13=si.si13;
+    if(si.si2q) rec.si2q=si.si2q;
     this.rec.push(rec);
   }
   // 4 бёрста CBCH-блока (TS 04.12) готовы → декод через общий xCCH (gsmBcchDecode), разбор заголовка,
@@ -972,6 +1058,7 @@ function gsmRecLine(r,debug){
   if(r.si==='SI1') return `${t} SI1 своя сота ARFCN: ${gsmArfcnList(r.cellArfcns,r.cellFmt)}`+gsmRachSuffix(r.rach);
   if(r.si==='SI2') return `${t} SI2 соседи ARFCN: ${gsmArfcnList(r.neighborArfcns,r.neighborFmt)}`+gsmRachSuffix(r.rach);
   if(r.si==='SI13') return `${t} SI13 ${gsmSi13Line(r.si13)}`+(debug&&r.si13?gsmSi13DebugSuffix(r.si13):'');
+  if(r.si==='SI2quater') return `${t} SI2quater ${gsmSi2qLine(r.si2q)}`;
   if(r.kind==='GSM-CBS') return `${t} CBS [${r.page}/${r.pages}] msgId 0x${r.msgId.toString(16)} (${r.charset}): ${r.text}`;
   return `${t} ${r.si||r.kind} FN ${r.fn}`;
 }
@@ -982,6 +1069,17 @@ function gsmSi13Line(si13){
     (si13.pbcch.arfcn!=null?` ARFCN${si13.pbcch.arfcn}`:si13.pbcch.maio!=null?` hop MAIO${si13.pbcch.maio}`:'');
   if(si13.rac!=null) return `GPRS есть, PBCCH не настроен (пакетные данные по BCCH/CCCH), RAC ${si13.rac}`;
   return 'GPRS не поддерживается';
+}
+// краткая строка SI2quater: список 3G/LTE UTRAN-соседей (ARFCN + число scrambling-кодов на каждом)
+function gsmSi2qLine(q){
+  if(!q) return '';
+  if(q.note) return q.note;
+  const g=q.neighbors3g;
+  if(!g || (!g.utranFdd?.cells?.length && !g.utranTdd?.cells?.length)) return '3G-соседей нет';
+  const parts=[];
+  for(const c of g.utranFdd?.cells||[]) parts.push(`FDD UARFCN${c.uarfcn}×${c.codes.length}`);
+  for(const c of g.utranTdd?.cells||[]) parts.push(`TDD UARFCN${c.uarfcn}×${c.codes.length}`);
+  return '3G-соседи: '+parts.join(', ');
 }
 function gsmSi13DebugSuffix(si13){
   return `\n    BCCH-CHANGE-MARK ${si13.bcchChangeMark} · SI-CHANGE-FIELD ${si13.siChangeField}`+
