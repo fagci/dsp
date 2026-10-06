@@ -766,12 +766,13 @@ function cfarFrame(n,s){
       if(n.recs.length>1000) n.recs.shift();
     } }
   // неподтверждённые живут только пока есть попадания в окне N, подтверждённые — hold после последнего
-  n.tracks=n.tracks.filter(t=>t.hit || (t.ok? now-t.t<=n.p.hold : t.hist!==0));
+  // keepOutside (мс) — только панели 'sa': подтверждённая цель вне текущего окна приёмника остаётся на панели
+  const [specLo0,specHi0]=specSpan(s), inWin=t=>t.f>=specLo0 && t.f<=specHi0;
+  n.tracks=n.tracks.filter(t=>t.hit || (!n.keepOutside || inWin(t) ? (t.ok? now-t.t<=n.p.hold : t.hist!==0) : t.ok && now-t.t<=n.keepOutside));
   // трек может физически не помещаться в текущую захваченную полосу — например, центр
   // приёмника уже перестроили, а этот пик остался от старого положения. Снимаем сразу,
   // не дожидаясь hold — иначе он продолжит тянуть tuneFreq к старой частоте.
-  const [specLo0,specHi0]=specSpan(s);
-  n.tracks=n.tracks.filter(t=>t.f>=specLo0 && t.f<=specHi0);
+  n.tracks=n.tracks.filter(t=>inWin(t) || (n.keepOutside && t.ok));
   n.list=n.tracks.filter(t=>t.ok).sort((a,b)=>b.db-a.db).slice(0,n.p.top);
   n.text='found '+n.list.length+' · floor '+n.floorDb.toFixed(1)+' dB'+(n.skip&&n.skip.length ? ' · skip '+n.skip.length : '')+'\n'+n.list.map(v=>
     fmtHz(v.f).padStart(8)+'Hz  width '+fmtHz(v.w).padStart(4)+
@@ -1764,7 +1765,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         {n:'fr1',t:'num'},{n:'fr2',t:'num'},{n:'fr3',t:'num'},{n:'fr4',t:'num'},
         {n:'db1',t:'num'},{n:'db2',t:'num'},{n:'db3',t:'num'},{n:'db4',t:'num'},
         {n:'snr1',t:'num'},{n:'snr2',t:'num'},{n:'snr3',t:'num'},{n:'snr4',t:'num'},
-        {n:'centerFreq',t:'num'}],
+        {n:'centerFreq',t:'num'},
+        {n:'count',t:'num'},{n:'detF',t:'num'},{n:'rec',t:'rec'}],        // count/detF/rec — детектор панелей (layout=panes)
   view:{h:280}, pick:true, resize:true,
   params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)',fn:n=>{ if(n.p.auto) n.zoom=null; }},
           {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[0,4000],label:'range, Hz'},
@@ -1777,6 +1779,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'layout',t:'select',opts:['single','panes'],d:'single',label:'layout'},
           {n:'panes',t:'range',min:1,max:8,step:1,d:4,label:'panes (bands side by side)'},
           {n:'paneFrom',t:'range',min:0,max:500,step:1,d:0,label:'first band #',adv:true},
+          {n:'detect',t:'check',d:false,label:'panes: detect signals (CFAR)',fn:n=>{ n._pn=null; n._pnSig=null; }},
+          {n:'detThr',t:'range',min:3,max:30,step:.5,d:10,label:'detector threshold, dB over noise',adv:true},
           {n:'snap',t:'check',d:true,label:'snap to band plan step',adv:true},
           // выключить — тот же жест, что и "очистить": незачем отдельная кнопка (см. fn у 'check' в core-graph.js)
           {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold) n.peak=null; }},
@@ -1810,7 +1814,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       for(const k of ['floor','top']) if(typeof I[k]==='number') setMod(n,k,I[k]);
       if(Array.isArray(I.bands)) n.bandsData=I.bands;
       saPanesIngest(n,sp);
-      return {centerFreq:n._steer ?? null};
+      return saPanesOut(n);
     }
     for(const k of ['fmin','fmax']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     // границы поменяли не мы (поле диапазона или провод) — это ручной ввод: auto выключаем,

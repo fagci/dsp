@@ -28,7 +28,10 @@ function saPaneState(n){
     const off=document.createElement('canvas'); off.width=SAP_RES; off.height=SAP_ROWS;
     return {lo:b.lo, hi:b.hi, label:b.label||'', color:b.color||'', lv:new Float32Array(SAP_RES).fill(NaN),
       pk:new Float32Array(SAP_RES).fill(NaN), t:0, off, ocx:off.getContext('2d'),
-      img:new ImageData(SAP_RES,SAP_ROWS), dirty:false};
+      img:new ImageData(SAP_RES,SAP_ROWS), dirty:false, med:-120,
+      // детектор — обычный cfarFrame с узлом-заглушкой: диапазон панели, подтверждённые цели живут вне окна приёмника
+      det:n.p.detect ? {p:{auto:false,fmin:b.lo,fmax:b.hi,method:'OS',guard:4,train:32,thr:n.p.detThr,minW:2,confM:2,
+        confN:3,top:10,hold:1500,idRes:'auto'}, keepOutside:30000, list:[], tracks:[], recs:[], skip:null, floorDb:null} : null};
   });
   for(const p of n._pn) for(let i=3;i<p.img.data.length;i+=4) p.img.data[i]=255;
   return n._pn;
@@ -74,8 +77,41 @@ function saPanesIngest(n,sp){
       d[o]=pal[hk]; d[o+1]=pal[hk+1]; d[o+2]=pal[hk+2]; d[o+3]=255;
     }
     p.dirty=true;
+    // шумовая полка панели — медиана последних уровней (для SNR маркеров)
+    const t=Float32Array.from(p.lv).filter(v=>v===v).sort();
+    p.med=t.length ? t[t.length>>1] : -120;
+    if(p.det){
+      p.det.p.thr=n.p.detThr;
+      cfarFrame(p.det,sp);
+      for(const r of p.det.recs.splice(0)){ r.band=p.label; (n._pnRecs||(n._pnRecs=[])).push(r); }
+      if(n._pnRecs && n._pnRecs.length>1000) n._pnRecs.splice(0,n._pnRecs.length-1000);
+    }
   }
+  // цели в окне приёмника — для остановки сканера (count) и подстройки (detF)
+  let cnt=0, best=null;
+  for(const p of panes) if(p.det) for(const t of p.det.list){
+    if(t.f<sLo || t.f>sHi) continue;
+    cnt++; if(!best || t.db>best.db) best=t;
+  }
+  n._pnCount=cnt; n._pnDetF=best ? best.f : null;
   n._pnRevDraw=(n._pnRevDraw|0)+1;
+}
+// выходы режима panes: маркеры берут уровень из накопленных данных панели, а не из текущего окна приёмника
+function saPanesOut(n){
+  const o={centerFreq:n._steer ?? null, count:n._pnCount|0, detF:n._pnDetF ?? null, rec:null};
+  if(n._pnRecs && n._pnRecs.length) o.rec=n._pnRecs.splice(0);
+  const panes=n._pn||[];
+  for(let k=0;k<4;k++){
+    const f=n.mk[k], q=k+1; o['f'+q]=f; o['fr'+q]=null;
+    const p=f==null ? null : panes.find(x=>f>=x.lo && f<=x.hi);
+    if(!p){ o['db'+q]=null; o['snr'+q]=null; n.db[k]=-120; n.snr[k]=0; continue; }
+    const span=p.hi-p.lo, c=clamp(Math.floor((f-p.lo)/span*SAP_RES),0,SAP_RES-1), r=Math.max(1,Math.round(n.p.tol/(span/SAP_RES)));
+    let mx=-Infinity;
+    for(let i=Math.max(0,c-r);i<=Math.min(SAP_RES-1,c+r);i++) if(p.lv[i]>mx) mx=p.lv[i];
+    if(mx===-Infinity){ o['db'+q]=null; o['snr'+q]=null; n.db[k]=-120; n.snr[k]=0; continue; }
+    n.db[k]=mx; n.snr[k]=mx-p.med; o['db'+q]=mx; o['snr'+q]=mx-p.med;
+  }
+  return o;
 }
 function saPanesLayout(n,W,H){
   const defs=n._pn||[], k=Math.max(1,defs.length), w=(W-SAP_GAP*(k-1))/k;
@@ -97,8 +133,17 @@ function saPanesWire(n,cv){
     if(n.p.layout!=='panes') return;
     ev.stopImmediatePropagation();
     if(t==='pointerdown'){
+      const r=cv.getBoundingClientRect(), x=(ev.clientX-r.left)/r.width*cv.width, y=(ev.clientY-r.top)/r.height*cv.height;
+      const inB=b=>x>=b.x0 && x<=b.x1 && y>=b.y0 && y<=b.y1;
+      for(const b of n._tabBoxes||[]){                    // вкладки маркеров 1–4: × — снять, вкладка — выбрать
+        if(b.cl && inB(b.cl)){ n.mk[b.idx]=null; n._pnRevDraw=(n._pnRevDraw|0)+1; return; }
+        if(inB(b)){ n.active=b.idx+1; n._pnRevDraw=(n._pnRevDraw|0)+1; return; }
+      }
       const h=hit(ev); if(!h) return;
-      n._steer=(n._pn[h.i].lo+n._pn[h.i].hi)/2; n._pnSel=h.i; n._pnRevDraw=(n._pnRevDraw|0)+1;
+      const p=n._pn[h.i];
+      if(h.y<SAP_TITLE){ n._steer=(p.lo+p.hi)/2; n._pnSel=h.i; }          // заголовок — перестроить приёмник на панель
+      else n.mk[n.active-1]=p.lo+(p.hi-p.lo)*h.fx;                        // график и водопад — активный маркер сюда
+      n._pnRevDraw=(n._pnRevDraw|0)+1;
     }
   },true);
   cv.addEventListener('pointermove',ev=>{
@@ -112,7 +157,7 @@ function saPanesDraw(n,cv,cx){
   saPanesWire(n,cv);
   n.pickT=null; n._wfVis=false; saWfPlace(n);            // GL-водопад одиночного режима прячем
   const panes=saPaneState(n), now=performance.now();
-  const key=W+'|'+H+'|'+cv.pxGen+'|'+n._pnRevDraw+'|'+n._pnSig+'|'+n._pnSel+'|'+n.p.floor+'|'+n.p.top+'|'+n.p.split+'|'+n.p.peakHold+'|'+n.p.grid;
+  const key=W+'|'+H+'|'+cv.pxGen+'|'+n._pnRevDraw+'|'+n._pnSig+'|'+n._pnSel+'|'+n.p.floor+'|'+n.p.top+'|'+n.p.split+'|'+n.p.peakHold+'|'+n.p.grid+'|'+n.mk+'|'+n.active+'|'+n.p.detect;
   if(key===n._pnDrawKey && now-(n._pnDrawT||0)<500) return;
   n._pnDrawKey=key; n._pnDrawT=now;
   cx.clearRect(0,0,W,H);
@@ -163,6 +208,33 @@ function saPanesDraw(n,cv,cx){
     };
     if(n.p.peakHold) trace(p.pk,acc2,stale?.35:.8,false);
     trace(p.lv,acc,stale?.4:1,true);
+    // найденные сигналы (CFAR): треугольник у пика; подписаны сильнейшие
+    if(p.det){
+      p.det.list.slice(0,3).forEach(t=>{
+        const x=x0+(t.f-p.lo)/(p.hi-p.lo)*w, y=yOf(t.db), old=now-t.t>2500;
+        cx.globalAlpha=old?.4:1; cx.fillStyle=acc2;
+        cx.beginPath(); cx.moveTo(x,y-2); cx.lineTo(x-3.5,y-9); cx.lineTo(x+3.5,y-9); cx.closePath(); cx.fill();
+        const lab=fmtHz(t.f,3), tw=cx.measureText(lab).width;
+        cx.fillStyle=fg; cx.textAlign='center'; cx.fillText(lab,clamp(x,x0+tw/2+2,x0+w-tw/2-2),Math.max(L.plotTop+9,y-12));
+        cx.globalAlpha=1;
+      });
+      p.det.list.slice(3).forEach(t=>{
+        const x=x0+(t.f-p.lo)/(p.hi-p.lo)*w, y=yOf(t.db);
+        cx.globalAlpha=.7; cx.fillStyle=acc2; cx.fillRect(x-1,y-6,2,5); cx.globalAlpha=1;
+      });
+    }
+    // маркеры 1–4 этой панели
+    for(let k=0;k<4;k++){
+      const f=n.mk[k]; if(f==null || f<p.lo || f>p.hi) continue;
+      const x=Math.round(x0+(f-p.lo)/(p.hi-p.lo)*w), act=n.active-1===k;
+      cx.strokeStyle=MK_COL(k); cx.lineWidth=act?1.5:1;
+      cx.beginPath(); cx.moveTo(x+.5,L.plotTop); cx.lineTo(x+.5,H); cx.stroke();
+      const c=clamp(Math.floor((f-p.lo)/(p.hi-p.lo)*SAP_RES),0,SAP_RES-1), v=p.lv[c];
+      const t=(k+1)+': '+fmtHz(f,3).replace(/[kMG]$/,'')+(v===v ? ' '+v.toFixed(0)+' / '+Math.max(0,v-p.med).toFixed(0) : '');
+      const tw=cx.measureText(t).width, tx=clamp(x-tw/2,x0+2,x0+w-tw-2), ty=L.plotTop+L.plotH-14-k*13;
+      cx.fillStyle=MK_COL(k); cx.globalAlpha=act?.95:.75; cx.fillRect(tx-3,ty,tw+6,12);
+      cx.globalAlpha=1; cx.fillStyle=contrastText(MK_COL(k)); cx.textAlign='left'; cx.fillText(t,tx,ty+9);
+    }
     // граница: активное окно приёмника в этой панели / выбранная
     const live=span && p.t && now-p.t<1200 && !(p.hi<span[0] || p.lo>span[1]);
     if(live || n._pnSel===i){
@@ -190,6 +262,7 @@ function saPanesDraw(n,cv,cx){
     cx.restore();
   });
   // курсор: частота и уровень под указателем
+  saMarkerTabs(n,cx,W);
   const h=n._pnHover;
   if(h && panes[h.i]){
     const p=panes[h.i], x0=Math.round(h.i*(L.w+SAP_GAP)), w=Math.round(L.w), f=p.lo+(p.hi-p.lo)*h.fx;
