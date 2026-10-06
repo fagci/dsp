@@ -144,6 +144,11 @@ const cases=[
       bi[w]=nz(); bq[w]=nz(); w=(w+1)%M; let a=0,b=0; for(let k=0;k<M;k++){ const i=(w-1-k+M)%M; a+=h[k]*bi[i]; b+=h[k]*bq[i]; }
       const ph=2*Math.PI*40000*t, c=Math.cos(ph), s=Math.sin(ph); return [(a*c-b*s)*0.02+.0007*nz(), (a*s+b*c)*0.02+.0007*nz()]; });
     return [r.obw>17000 && r.obw<23000, Math.abs(r.offset-40000)<500].join(); })()`,'true,true'],
+  ['Signal Database: 4800 Bd, ±1.9 кГц, 12.5 кГц, 450 МГц → все 4800-Bd 4FSK с равным баллом',`sdbMatch({bw:11000,baud:4800,dev:1944,freq:450e6},8).filter(x=>x.score===1).map(x=>x.n).sort().join()`,'DMR,NXDN 4800,P25 Phase 1,Yaesu System Fusion'],
+  ['Signal Database: 125 кГц, 868 МГц → LoRa',`sdbMatch({bw:125000,freq:868.1e6},1)[0].n`,'LoRa 125 кГц'],
+  ['Signal Database: 1090 МГц, 2 МГц → ADS-B',`sdbMatch({bw:2e6,freq:1090e6},1)[0].n`,'ADS-B / Mode S'],
+  ['Signal Database: 180 кГц, ±75 кГц, 100 МГц → WFM',`sdbMatch({bw:180e3,dev:75e3,freq:100e6},1)[0].n`,'Радиовещание WFM'],
+  ['Signal Database: без данных — пусто',`sdbMatch({bw:0,dev:0,baud:0,freq:0}).length`,0],
 ];
 
 let bad=0;
