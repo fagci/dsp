@@ -1824,10 +1824,10 @@ markWiresDirty();
 preset('ESP-SDR: ESP32 Spectrum', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Flash ESP-SDR firmware to an ESP32 (see ESPARGOS/esp-sdr), connect it over USB/UART (WebSerial, Chrome/Edge).\n'+
-  'The node captures short I/Q bursts from the chip\'s debug path; the spectrum is relative (dB re 1 ADC unit).\n'+
-  'Drag the spectrum to retune; gaps between bursts mean brief signals can be missed.'});
+  'The chip computes the FFT itself (on-chip FFT) and streams the spectrum; the level is dB re full scale.\n'+
+  'Drag the spectrum to retune. The I/Q burst mode is a fallback for firmware without SPEC.'});
 nt.size.w=460; nt.size.h=150; applySize(nt);
-const es=addNode('espsdr',40,300,{freq:2437,rate:'1',size:'4096',fft:'1024'});
+const es=addNode('espsdr',40,300,{freq:2437,rate:'40',fft:'1024'});
 const sa=addNode('sa',540,40,{auto:true,split:.35});
 sa.size.w=720; sa.size.h=460; applySize(sa);
 addEdge(es.id,'spec',sa.id,'spec');
