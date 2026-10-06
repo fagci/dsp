@@ -182,6 +182,14 @@ const cases=[
   ['PSK Rx: QPSK, SNR 20 дБ → EVM 5,0% ± 0,5',`Math.abs(pskRun({mod:'QPSK',snr:20}).evm-5)<.5`,true],
   ['PSK Rx: 16QAM, уход −1%, SNR 25 дБ → захват, ±3 Гц, EVM 2,8…4%',`(()=>{ const r=pskRun({mod:'16QAM',snr:25,cfo:-.01,tau:.8}); return [r.lock, Math.abs(r.foff+500)<3, r.evm>2.8 && r.evm<4].join(); })()`,'1,true,true'],
   ['PSK Rx: меньше 2 отсчётов на символ → отказ',`(()=>{ const n={p:{mod:'QPSK',baud:100000,alpha:.35,tbw:.01,cbw:.02,win:2000}}; IQK.pskRx.init(n); const r=IQK.pskRx.process(n,{in:{sr:150000,fc:0,chunks:[{re:new Float32Array(64),im:new Float32Array(64),t0:0}]}},{block:64,sr:150000}); return r.evm===null && !!n.ui.err; })()`,true],
+  // Channel Activity: кадры каждые 2 с; NFM виден в 8 кадрах из 10 (с дрожанием частоты), DMR в 4, FT8 в 5. Время кадра засчитывается видимому каналу, первое появление — нет: 7, 3, 4 интервала из 10
+  ['Channel Activity: каналы, занятость и группы',`(()=>{ const st=chanNew(0), L=(f,bw,lab)=>({sig:true,lo:f-bw/2,hi:f+bw/2,f,label:lab,db:-40});
+    for(let k=1;k<=10;k++){ const fr=[]; if(k<=8) fr.push(L(100.1e6+(k%3-1)*800,12e3,'NFM')); if(k>8) fr.push(L(100.5e6,12e3,'DMR')); if(k===3||k===4) fr.push(L(100.5e6,12e3,'DMR')); if(k%2) fr.push(L(7.074e6,50,'FT8')); chanUpdate(st,fr,k*2000,{}); }
+    const R=chanRows(st,20000); return [R.length, R.map(r=>r.label).join('/'), R.map(r=>Math.round(r.occ/5)*5).join('/'), R.map(r=>r.group.split(' ')[0]).join('/')].join(' | '); })()`,'3 | NFM/FT8/DMR | 70/40/30 | voice/narrow/voice'],
+  ['Channel Activity: повторный кадр не считается',`(()=>{ const st=chanNew(0), fr=[{sig:true,lo:1e6,hi:1.01e6,f:1.005e6,label:'X',db:0}]; const a=chanUpdate(st,fr,1000,{}), b=chanUpdate(st,fr,2000,{}); return [a,b,st.ch[0].hits].join(); })()`,'true,false,1'],
+  ['Channel Activity: боковые линии ЧМ через 1 кГц сливаются в один канал (join 2,5 кГц), удалённый — нет',`(()=>{ const st=chanNew(0), L=(f,bw,lab)=>({sig:true,lo:f-bw/2,hi:f+bw/2,f,label:lab,db:-30});
+    for(let k=1;k<=6;k++){ const fr=[]; for(let i=-3;i<=3;i++) fr.push(L(99.8e6+i*1000,400,i===0?'FM':'tone')); fr.push(L(100.5e6,12e3,'NFM')); chanUpdate(st,fr,k*1000,{tol:600}); }
+    const A=chanRows(st,6000,0), B=chanRows(st,6000,2500); const m=B.find(r=>Math.abs(r.f-99.8e6)<1000); return [A.length, B.length, Math.round(m.bw), Math.round(m.f)].join(); })()`,'8,2,6400,99800000'],
 ];
 
 let bad=0;

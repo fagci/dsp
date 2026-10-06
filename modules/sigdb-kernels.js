@@ -121,3 +121,54 @@ IQK.sigDb={
     return {name:b ? b.n : '', mod:b ? b.mod : '', score:b ? b.score : 0,
       text:n.ui.r.map(x=>(x.score*100).toFixed(0)+'% '+x.n+' ('+x.mod+') — '+x.note).join('\n')};
   }};
+
+/* ============================ Channel Activity: реестр каналов по меткам sigid ============================
+   Метки {lo, hi, f, label, db} с каждого кадра анализа сводятся в постоянные каналы: центр и ширина — скользящее среднее,
+   тип — самая частая метка, занятость = время, когда канал был виден, / время наблюдения. Группы по ширине — кластеризация
+   «узкие / голос / широкие / широкополосные». Время — аргумент (мс), чтобы тест не зависел от часов. */
+const CHAN_GROUPS=[[3e3,'narrow < 3 kHz'],[16e3,'voice / data 3–16 kHz'],[250e3,'wide 16–250 kHz'],[1e18,'broadband > 250 kHz']];
+function chanGroup(bw){ for(const g of CHAN_GROUPS) if(bw<g[0]) return g[1]; return CHAN_GROUPS[3][1]; }
+function chanNew(now){ return {ch:[], t0:now, last:now, frame:null, id:0}; }
+// frame — массив меток этого кадра; один и тот же массив повторно не учитывается
+function chanUpdate(st,frame,now,p){
+  if(frame===st.frame) return false;
+  st.frame=frame;
+  const dt=Math.max(0,Math.min(now-st.last,p.maxDt||60000)); st.last=now;
+  const seen=new Set();
+  for(const l of frame){
+    if(!l.sig) continue;
+    const f=l.f!=null ? l.f : (l.lo+l.hi)/2, bw=Math.max(1,l.hi-l.lo);
+    let best=null, bd=1e30;
+    for(const c of st.ch){
+      if(seen.has(c)) continue;
+      const tol=Math.max(p.tol||2500, 0.6*Math.max(bw,c.bw)), d=Math.abs(f-c.f);
+      if(d<=tol && bw<c.bw*3 && bw>c.bw/3 && d<bd){ best=c; bd=d; }
+    }
+    if(!best){ best={id:++st.id, f, bw, n:0, act:0, hits:0, first:now, last:now, cls:{}, db:-1e9}; st.ch.push(best); }
+    const w=Math.min(best.n,49)+1;
+    best.f=(best.f*(w-1)+f)/w; best.bw=(best.bw*(w-1)+bw)/w; best.n++;
+    best.act+=best.n>1 ? dt : 0; best.hits++; best.last=now; best.cls[l.label]=(best.cls[l.label]||0)+1;
+    if(l.db!=null && l.db>best.db) best.db=l.db;
+    seen.add(best);
+  }
+  if(st.ch.length>(p.maxCh||200)){ st.ch.sort((a,b)=>b.last-a.last); st.ch.length=p.maxCh||200; }
+  return true;
+}
+// join — Гц: соседние каналы с центрами ближе join сливаются (боковые линии тональной ЧМ, обрывки одного сигнала); 0 — не сливать
+function chanRows(st,now,join){
+  const T=Math.max(1,now-st.t0);
+  let R=st.ch.map(c=>{ let lab='?', m=0; for(const k in c.cls) if(c.cls[k]>m){ m=c.cls[k]; lab=k; }
+    return {id:c.id, f:c.f, bw:c.bw, label:lab, lm:m, occ:Math.min(100,c.act/T*100), hits:c.hits, first:c.first, last:c.last, db:c.db}; });
+  if(join>0){
+    R.sort((a,b)=>a.f-b.f);
+    const M=[]; let cur=null;
+    for(const r of R){
+      if(cur && r.f-cur.f1<=join){ cur.lo=Math.min(cur.lo,r.f-r.bw/2); cur.hi=Math.max(cur.hi,r.f+r.bw/2); cur.f1=r.f;
+        if(r.lm>cur.lm){ cur.label=r.label; cur.lm=r.lm; } cur.occ=Math.max(cur.occ,r.occ); cur.hits+=r.hits; cur.first=Math.min(cur.first,r.first); cur.last=Math.max(cur.last,r.last); cur.db=Math.max(cur.db,r.db); cur.n++; }
+      else { if(cur) M.push(cur); cur={...r, lo:r.f-r.bw/2, hi:r.f+r.bw/2, f1:r.f, n:1}; }
+    }
+    if(cur) M.push(cur);
+    R=M.map(m=>({...m, f:(m.lo+m.hi)/2, bw:m.hi-m.lo}));
+  }
+  return R.map(r=>({...r, group:chanGroup(r.bw)})).sort((a,b)=>b.occ-a.occ || b.hits-a.hits);
+}

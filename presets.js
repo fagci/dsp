@@ -251,6 +251,7 @@ const PRESET_CATS={
   'Measure: Signal Meter — SNR, Bandwidth, Frequency (Generator)':'Analysis & Measurement',
   'Measure: What Is This Signal — Meter + Database (Generator)':'Analysis & Measurement',
   'Control: Cron — Scheduled Tone (Time Base ×600)':'Analysis & Measurement',
+  'Measure: Channel Activity — Occupancy Log (Generator)':'Analysis & Measurement',
   'Measure: EVM of a QPSK Signal (Generator)':'Analysis & Measurement',
   'Measure: Scheduled Spectrum Archive (Cron → IndexedDB)':'Analysis & Measurement',
   'Control: Logic Test Bench (all blocks)':'Analysis & Measurement',
@@ -1094,6 +1095,23 @@ const n1=addNode('numview',680,420,{label:'EVM, %'});
 const n2=addNode('numview',860,420,{label:'MER, dB'});
 addEdge(gn.id,'iq',rx.id,'in'); addEdge(rx.id,'out',cs.id,'iq');
 addEdge(rx.id,'evm',n1.id,'in'); addEdge(rx.id,'mer',n2.id,'in');
+markWiresDirty();
+});
+preset('Measure: Channel Activity — Occupancy Log (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Channel Activity turns the labels of the Signal Type Identifier into a log of channels: centre, width, most frequent type, occupancy (time seen / time watched) and a width group.\n'+
+  'Two generators (FM and AM at different offsets) feed one spectrum; wait a few analysis periods. With a real SDR connect the spectrum source instead; Save CSV exports the table, Reset starts a new watch.'});
+nt.size.w=700; nt.size.h=130; applySize(nt);
+const g1=addNode('iqGen',40,230,{sr:'1024000',fc:100000000,mode:'FM',off:-200000,lvl:-25,tone:1000,dev:3000,noise:-70});   // тональная ЧМ — гребёнка линий; Channel Activity сливает их
+const g2=addNode('iqGen',40,430,{sr:'1024000',fc:100000000,mode:'AM',off:150000,lvl:-30,tone:700,depth:.6,noise:-120});
+const ad=addNode('iqAdd',300,330,{});
+const sp=addNode('iqSpec',560,330,{size:'8192',avg:'16'});
+const si=addNode('sigid',820,330,{period:2,thr:8,maxSig:8});
+si.size.w=420; applySize(si);
+const cl=addNode('chanLog',820,640,{});
+cl.size.w=520; cl.size.h=300; applySize(cl);
+addEdge(g1.id,'iq',ad.id,'a'); addEdge(g2.id,'iq',ad.id,'b'); addEdge(ad.id,'out',sp.id,'in');
+addEdge(sp.id,'spec',si.id,'spec'); addEdge(si.id,'bands',cl.id,'bands');
 markWiresDirty();
 });
 preset('Measure: SINAD of an FM Receiver (Generator)', function(){
