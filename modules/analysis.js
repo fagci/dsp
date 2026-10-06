@@ -3157,13 +3157,15 @@ def({ id:'bandsmerge', title:'Merge Band Plans', cat:'Radio',
 // следующий. freq выводится на rtlsdr.freq (жёсткая перестройка, в отличие от steerFreq).
 def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
   ins:[{n:'bands',t:'bands'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},{n:'active',t:'num'},
-       {n:'overlap',t:'num'},{n:'timeout',t:'num'},{n:'settle',t:'num'},{n:'hold',t:'num'}],
+       {n:'overlap',t:'num'},{n:'timeout',t:'num'},{n:'settle',t:'num'},{n:'hold',t:'num'},{n:'spec',t:'spec'}],
   outs:[{n:'freq',t:'num'},{n:'listening',t:'num'},{n:'idx',t:'num'},{n:'bandLo',t:'num'},{n:'step',t:'num'}],
   readout:true, tall:true,
   params:[{n:'overlap',t:'range',min:0,max:2000000,step:1000,log:true,d:0,label:'overlap, Hz'},
           {n:'edge',t:'range',min:0,max:40,step:1,d:0,label:'drop window edges, % (the useful part is the middle; same as Spectrum Analyzer panes)'},
           {n:'timeout',t:'range',min:100,max:30000,step:100,d:3000,label:'listen timeout, ms'},
-          {n:'settle',t:'range',min:0,max:2000,step:50,d:200,label:'settle time, ms'},
+          {n:'settle',t:'range',min:0,max:2000,step:10,d:200,label:'settle time, ms (minimum wait after a retune)'},
+          // с проводом spec: решение — после N свежих кадров спектра уже нового окна (а не по таймеру); 3 — детектору хватает подтвердить цель
+          {n:'frames',t:'range',min:0,max:10,step:1,d:0,label:'fresh spectrum frames of the new window before deciding (spec wire; 3 lets the detector confirm a signal)'},
           {n:'order',t:'select',opts:['band by band','interleave'],d:'band by band',
            label:'order (interleave: one window of every range in turn — a wide range does not starve the narrow ones, all panes refresh evenly)'},
           {n:'loop',t:'check',d:true,label:'loop back to first range'}],
@@ -3180,6 +3182,13 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
     const full=(typeof I.freqLo==='number' && typeof I.freqHi==='number')? Math.max(1,I.freqHi-I.freqLo) : 2e6;
     // edge: края окна приёмника проседают — полезна середина; окно шагает на её ширину, а начало диапазона ею же закрыто
     const span=full*(1-2*clamp(+n.p.edge||0,0,40)/100), half=span/2, now=performance.now();
+    // свежие кадры спектра нового окна: центр спектра = запрошенный центр, rev растёт
+    const sp=I.spec;
+    if(n._frCur!==n.curFreq){ n._frCur=n.curFreq; n._fr=0; n._frPrev=0; n._frTag=null; }
+    if(sp && sp.freqs && sp.freqs.length){
+      const tag=sp.rev!=null ? sp.rev : sp;
+      if(tag!==n._frTag){ n._frTag=tag; if(Math.abs(sp.freqs[sp.freqs.length>>1]-n.curFreq)<=Math.max(3000,full*.01)) n._fr++; }
+    }
     const inter=n.p.order==='interleave';
     // interleave: у каждого диапазона свой курсор окна; смена режима или ширины окна — начинаем заново
     if(inter && (!n.pos || n._posHalf!==half || n._order!==n.p.order)){
@@ -3249,8 +3258,10 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
       if(!active || now>=n.listenUntil) advance();
     } else if(n.state==='seek'){
       if(now>=n.settleUntil){                           // ждём, пока спектр обновится на новом центре, прежде чем решать
+        const need=(n.p.frames|0), framesOk=!need || !(sp && sp.freqs) || n._frPrev>=need;     // кадр учитывается на следующем тике: sa успевает его обработать
         if(measureOff()){ n.settleUntil=now+n.p.settle; n._wait=0; }   // смещение уточнилось — перестраиваем и ждём снова
         else if(!atTarget() && (n._wait=(n._wait||0)+1)<=6) n.settleUntil=now+Math.max(50,n.p.settle/2);   // ещё перестраивается
+        else if(!framesOk && now<n.settleUntil+Math.max(1000,6*n.p.settle)){ /* ждём свежие кадры нового окна */ }
         else {
           n._wait=0;
           if(active){ n.state='listen'; n.listenUntil=now+n.p.timeout; }
@@ -3264,6 +3275,7 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
       (n.state==='listen'? '  · listening '+((n.listenUntil-now)/1000).toFixed(1)+'s left' : '');
     // bandLo/step — начало текущего диапазона и его сетка каналов (канал 1 = bandLo, канал 2 =
     // bandLo+step, …), для узлов вроде 'chandet', которым нужно знать сетку, а не только freq.
+    n._frPrev=n._fr;
     return {freq:n.curFreq-n.off, listening:n.state==='listen'?1:0, idx:n.idx,
       bandLo:curBand.lo, step:curBand.step||0};
   },

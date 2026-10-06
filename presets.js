@@ -802,6 +802,8 @@ clearAll();
 const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the ranges of the table in windows of the SDR span; the Spectrum Analyzer\n'+
   '(layout «panes») shows every range as its own pane — a spectrum on top, a waterfall below — and keeps what each window saw,\n'+
   'so the bands stay on the screen while the receiver visits them (the pane being received is outlined, old data is dimmed).\n'+
+  'The scanner waits for 3 fresh spectrum frames of the new window (spec wire, «fresh frames»), not for a timer: the USB queue still holds ~40 ms of the old frequency\n'+
+  'after a retune, and the detector needs 2 frames to confirm a signal. «settle» is only a minimum wait and can stay low.\n'+
   'Order «interleave»: one window of every range in turn, so a wide range does not starve the narrow ones and all panes refresh evenly.\n'+
   'More ranges than panes: the page turns after the scanner (follow); or use ◀ ▶ / the wheel on a pane title.\n'+
   'View: wheel on a pane — zoom, drag — pan, double click — back. Humps at the window step come from the filter edges: both nodes\n'+
@@ -816,7 +818,7 @@ const bp=addNode('table',360,300,{list:'@patch',initial:false,data:'name,lo,hi,s
   'FM broadcast,87.5M,108M,100k\nAirband,118M,137M,25k\n2m ham,144M,146M,12.5k\nMarine VHF,156M,162.025M,25k\n'+
   'LPD433,433.05M,434.79M,25k\nPMR446,446M,446.2M,12.5k\nSRD 868,868M,870M,25k\nADS-B,1089M,1091M,1M'});
 bp.size.w=340; bp.size.h=280; applySize(bp);
-const bs=addNode('bandscan',740,300,{timeout:3000,settle:250,edge:10,order:'interleave'});
+const bs=addNode('bandscan',740,300,{timeout:3000,settle:40,frames:3,edge:10,order:'interleave'});
 bs.size.w=300; bs.size.h=200; applySize(bs);
 const sk=addNode('table',1080,300,{list:'Scan skip',initial:false});
 sk.size.w=300; sk.size.h=220; applySize(sk);
@@ -828,7 +830,7 @@ const dc=addNode('dac',1420,620,{vol:.4});
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(bp.id,'bands',sa.id,'bands'); addEdge(bp.id,'bands',bs.id,'bands');
 addEdge(sk.id,'bands',sa.id,'skip');
-addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi');
+addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi'); addEdge(rx.id,'spec',bs.id,'spec');
 addEdge(sa.id,'count',bs.id,'active'); addEdge(sa.id,'holdF',bs.id,'hold');
 addEdge(bs.id,'freq',rx.id,'freq');
 addEdge(sa.id,'detF',rx.id,'tuneFreq');

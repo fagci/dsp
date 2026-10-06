@@ -4114,6 +4114,7 @@ async function sdrTune(n){
   if(want+off-conv<=0) throw new Error(`tuner frequency ${fmtHz(want+off-conv)}Hz out of range (check converter offset)`);
   if(n._fastDev!==n.dev || n._fast!==!!n.p.fastTune){ n._fastDev=n.dev; n._fast=!!n.p.fastTune; await n.dev.setFastTune?.(n._fast); }
   const hw=await n.dev.setCenterFrequency(Math.round((want+off-conv)/k));
+  (n._tuneT||(n._tuneT=[])).push(performance.now());
   n.actualFreq=hw*k+conv; n.dcOff=off; n.appliedFreq=want; n.appliedPpm=ppm; n.appliedConv=conv;
   if(n.dev.fixedFreq){ n.p.freq=hw; n.appliedFreq=hw; }   // у файла центр не перестраивается
 }
@@ -4352,6 +4353,7 @@ async function rtlApplyPending(n){
   const freqStale = !n.swActive && (Math.round(n.p.freq)!==n.appliedFreq || (+n.p.ppm||0)!==n.appliedPpm || off!==n.dcOff || sdrConv(n)!==n.appliedConv);
   const gainKey=sdrGainKey(n), gainStale=gainKey!==n.appliedGainKey;
   const biasStale=!!n.p.bias!==n.appliedBias;
+  sdrAdaptRps(n);
   if(!freqStale && !gainStale && !biasStale) return;
   n.busy=true;
   try{
@@ -4377,6 +4379,16 @@ async function rtlApplyPending(n){
 const SDR_SWEEP_RPS=400;         // мелкие трансферы: старые (до перестройки) быстрее вычерпываются
 const SDR_SWEEP_MAX_BINS=4e6;
 const sdrSleep=ms=>new Promise(r=>setTimeout(r,ms));
+// сканирование полос (частые перестройки): после перестройки очередь трансферов сначала отдаёт отсчёты прежней частоты —
+// 8 × 25 мс = ~200 мс впустую. Пока перестройки идут часто (≥3 за 3 с), читаем мелкими чанками (5 мс): очередь устаревших ~40 мс
+const SDR_SCAN_RPS=200;
+function sdrAdaptRps(n){
+  if(!n.dev || n.dev.kind!=='rtl' || n.swActive || n.p.sweep) return;     // sweep ведёт скорость чтения сам
+  const t=n._tuneT||(n._tuneT=[]), now=performance.now();
+  while(t.length && now-t[0]>3000) t.shift();
+  const want=t.length>=3 ? SDR_SCAN_RPS : RTL_READS_PER_SEC;
+  if((n.usbRps||RTL_READS_PER_SEC)!==want) sdrSetReadRate(n, want);
+}
 function sdrSetReadRate(n, rps){
   n.usbRps=rps;
   n.dev?.setReadRate?.(rps)?.catch?.(()=>{});
