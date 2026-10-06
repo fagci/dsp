@@ -1766,7 +1766,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         {n:'db1',t:'num'},{n:'db2',t:'num'},{n:'db3',t:'num'},{n:'db4',t:'num'},
         {n:'snr1',t:'num'},{n:'snr2',t:'num'},{n:'snr3',t:'num'},{n:'snr4',t:'num'},
         {n:'centerFreq',t:'num'},
-        {n:'count',t:'num'},{n:'detF',t:'num'},{n:'rec',t:'rec'}],        // count/detF/rec — детектор панелей (layout=panes)
+        {n:'count',t:'num'},{n:'detF',t:'num'},{n:'holdF',t:'num'},{n:'rec',t:'rec'}],   // count/detF/holdF/rec — панели (layout=panes)
   view:{h:280}, pick:true, resize:true,
   params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)',fn:n=>{ if(n.p.auto) n.zoom=null; }},
           {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[0,4000],label:'range, Hz'},
@@ -1783,6 +1783,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'edge',t:'range',min:0,max:40,step:1,d:10,label:'panes: drop window edges, % (humps) — same as Band Scanner'},
           {n:'detect',t:'check',d:false,label:'panes: detect signals (CFAR)',fn:n=>{ n._pnRevDraw=(n._pnRevDraw|0)+1; }},
           {n:'detThr',t:'range',min:3,max:30,step:.5,d:10,label:'panes: detector threshold, dB over noise'},
+          {n:'scanStop',t:'select',opts:['signals + marker','marker only'],d:'signals + marker',label:'panes: stop the scan on (marker only — scan non-stop)'},
+          {n:'holdMarker',t:'check',d:false,label:'panes: park the scanner on a marker (until it is cleared)'},
           {n:'skipClear',t:'button',label:'Clear skipped signals',fn:n=>{ if(typeof saSkipClear==='function') saSkipClear(n); }},
           {n:'skipList',t:'text',d:'',hidden:true},
           {n:'snap',t:'check',d:true,label:'snap to band plan step',adv:true},
@@ -3155,7 +3157,7 @@ def({ id:'bandsmerge', title:'Merge Band Plans', cat:'Radio',
 // следующий. freq выводится на rtlsdr.freq (жёсткая перестройка, в отличие от steerFreq).
 def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
   ins:[{n:'bands',t:'bands'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},{n:'active',t:'num'},
-       {n:'overlap',t:'num'},{n:'timeout',t:'num'},{n:'settle',t:'num'}],
+       {n:'overlap',t:'num'},{n:'timeout',t:'num'},{n:'settle',t:'num'},{n:'hold',t:'num'}],
   outs:[{n:'freq',t:'num'},{n:'listening',t:'num'},{n:'idx',t:'num'},{n:'bandLo',t:'num'},{n:'step',t:'num'}],
   readout:true, tall:true,
   params:[{n:'overlap',t:'range',min:0,max:2000000,step:1000,log:true,d:0,label:'overlap, Hz'},
@@ -3229,6 +3231,20 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
     // окно приёмника уже на запрошенном центре? (иначе active — от кадров прежнего окна и зря задержит сканер)
     const atTarget=()=>typeof I.freqLo!=='number' || typeof I.freqHi!=='number' ||
       Math.abs((I.freqLo+I.freqHi)/2-n.curFreq)<=Math.max(3000,full*.01);
+    // hold: частота на входе — встать окном на неё и стоять, пока вход не опустеет (например, маркер на панели), затем продолжить с места остановки
+    const holdF=typeof I.hold==='number' && isFinite(I.hold) && I.hold>0 ? I.hold : null;
+    if(holdF!=null){
+      if(n.state!=='hold'){ n._resume={idx:n.idx,curFreq:n.curFreq,state:n.state}; n.state='hold'; }
+      if(n.curFreq!==holdF){ n.curFreq=holdF; n.settleUntil=now+n.p.settle; }
+      const curBand0=bands[n.idx];
+      n.text='hold · '+fmtHz(holdF)+'Hz (marker)'+(n.off ? ' (receiver offset '+fmtHz(n.off)+'Hz)' : '');
+      return {freq:holdF-n.off, listening:1, idx:n.idx, bandLo:curBand0.lo, step:curBand0.step||0};
+    }
+    if(n.state==='hold'){                                // отпустили — вернуться к месту остановки
+      const r=n._resume||{}; n.idx=clamp(r.idx|0,0,bands.length-1);
+      n.curFreq=r.curFreq; n.state='seek'; n.settleUntil=now+n.p.settle; n._resume=null;
+      if(inter && n.pos) n.curFreq=n.pos[n.idx];
+    }
     if(n.state==='listen'){
       if(!active || now>=n.listenUntil) advance();
     } else if(n.state==='seek'){
