@@ -2035,7 +2035,7 @@ markWiresDirty();
 /* ---- цикл отрисовки ---- */
 let lastDraw=0;
 const fpsSel=document.getElementById('fps');
-try{ const v=LS.get('dsp-fps'); if(v==='max'||v==='min') fpsSel.value=v; }catch(e){}
+try{ const v=LS.get('dsp-fps'); if(v==='auto'||v==='max'||v==='min') fpsSel.value=v; }catch(e){}
 fpsSel.onchange=()=>{ try{ LS.set('dsp-fps',fpsSel.value); }catch(e){} wakeDraw(); };
 let lastStatText='', lastStatTs=0;
 function visible(n){ return n._vis!==false; }       // до первого отчёта — считаем видимым
