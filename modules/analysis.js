@@ -1780,6 +1780,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'panes',t:'range',min:1,max:8,step:1,d:4,label:'panes (bands side by side)'},
           {n:'paneFrom',t:'range',min:0,max:500,step:1,d:0,label:'first band #',adv:true},
           {n:'follow',t:'check',d:true,label:'panes: follow the scanner (turn the page)'},
+          {n:'dcCut',t:'range',min:0,max:20,step:.5,d:3,label:'panes: cut the receiver centre spike, kHz (0 = off)'},
+          {n:'rowMs',t:'range',min:100,max:5000,step:100,d:400,label:'panes: waterfall row interval while parked on a range, ms',adv:true},
           {n:'edge',t:'range',min:0,max:40,step:1,d:10,label:'panes: drop window edges, % (humps) — same as Band Scanner'},
           {n:'detect',t:'check',d:false,label:'panes: detect signals (CFAR)',fn:n=>{ n._pnRevDraw=(n._pnRevDraw|0)+1; }},
           {n:'detThr',t:'range',min:3,max:30,step:.5,d:10,label:'panes: detector threshold, dB over noise'},
@@ -3270,7 +3272,7 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
       }
     }
     const curBand=bands[n.idx];                          // не 'band': advance() выше мог сдвинуть n.idx на новый диапазон
-    n.text=n.state+' · '+(inter?'interleave':'band by band')+' · range '+(n.idx+1)+'/'+bands.length+' "'+(curBand.label||'')+'"\n'+
+    n.text=(n.state==='done' ? 'done (pass finished, «loop» is off — tick it to keep scanning)' : n.state)+' · '+(inter?'interleave':'band by band')+' · range '+(n.idx+1)+'/'+bands.length+' "'+(curBand.label||'')+'"\n'+
       'freq '+fmtHz(n.curFreq)+'Hz'+(n.off ? ' (receiver offset '+fmtHz(n.off)+'Hz)' : '')+
       (n.state==='listen'? '  · listening '+((n.listenUntil-now)/1000).toFixed(1)+'s left' : '');
     // bandLo/step — начало текущего диапазона и его сетка каналов (канал 1 = bandLo, канал 2 =
