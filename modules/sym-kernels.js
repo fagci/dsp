@@ -319,3 +319,89 @@ IQK.fskSym=(()=>{
       return {rec:out.recs.length ? out.recs : null, voice:out.voice.length ? out.voice : null};
     }};
 })();
+
+/* ============================ PSK / QAM Receiver (EVM) ============================
+   IQ → RRC (согласованный фильтр) → AGC по символам → синхронизация по Гарднеру (кубическая интерполяция)
+   → несущая: грубая оценка ухода по M-й степени (пока нет захвата) + петля по решению (2-го порядка)
+   → созвездие с единичной средней мощностью → EVM = √(⟨|z−d|²⟩/⟨|d|²⟩) по окну символов, MER = −20·lg EVM.
+   Выход out — символы на частоте символов (derotated, нормированные): годится для 'Constellation'.
+   Ограничения: нет дифференциального кодирования, неоднозначность фазы не снимается (на EVM не влияет),
+   захват — до ±~2% частоты символов, нужно ≥ 2 отсчётов на символ. */
+const PSKRX={
+  BPSK:{M:2, pts:[[1,0],[-1,0]]},
+  QPSK:{M:4, pts:[[1,1],[-1,1],[-1,-1],[1,-1]].map(p=>[p[0]*Math.SQRT1_2,p[1]*Math.SQRT1_2])},
+  '8PSK':{M:8, pts:Array.from({length:8},(_,k)=>[Math.cos(k*Math.PI/4),Math.sin(k*Math.PI/4)])},
+  '16QAM':{M:4, pts:(()=>{ const a=[-3,-1,1,3], o=[]; for(const i of a) for(const q of a) o.push([i/Math.sqrt(10),q/Math.sqrt(10)]); return o; })()},
+};
+function pskLoop(bw,z){ const th=bw/(z+1/(4*z)), d=1+2*z*th+th*th; return [4*z*th/d, 4*th*th/d]; }
+// кубический Катмулл–Ром между y1 и y2, mu∈[0,1)
+function pskCubic(a,i,mu){ const y0=a[i-1], y1=a[i], y2=a[i+1], y3=a[i+2];
+  return y1+0.5*mu*(y2-y0+mu*(2*y0-5*y1+4*y2-y3+mu*(3*(y1-y2)+y3-y0))); }
+IQK.pskRx={
+  init(n){ n.key=''; n.ui=null; },
+  process(n,I){
+    const s=iqIn(I,'in'), p=n.p;
+    if(!s){ n.ui=null; return {out:null, evm:null, mer:null, foff:null, lock:0}; }
+    const sps=s.sr/p.baud;
+    if(sps<2){ n.ui={err:'needs ≥ 2 samples per symbol (sample rate / symbol rate = '+sps.toFixed(2)+')'}; return {out:null, evm:null, mer:null, foff:null, lock:0}; }
+    const key=s.sr+'|'+p.baud+'|'+p.alpha+'|'+p.mod+'|'+p.tbw+'|'+p.cbw;
+    if(key!==n.key){
+      n.key=key; n.h=fsk4RrcTaps(sps,+p.alpha); n.hr=new Float32Array(n.h.length-1); n.hi_=new Float32Array(n.h.length-1);
+      n.br=new Float32Array(0); n.bi=new Float32Array(0); n.base=0;     // MF-отсчёты, base — абсолютный номер первого
+      n.t=4; n.nu=0; n.g=1; n.spr=0; n.spi=0; n.have=false;            // строб, интегратор такта, AGC, прошлый символ
+      [n.kpt,n.kit]=pskLoop(+p.tbw,0.707); [n.kpc,n.kic]=pskLoop(+p.cbw,0.707);
+      n.ph=0; n.fr=0; n.cr=0; n.ci=0; n.pr=0; n.pi=0; n.hasP=false; n.fest=0; n.pk=0;
+      n.eR=new Float64Array(+p.win||2000); n.ek=0; n.en=0; n.esum=0; n.cnt=0; n.evm=null; n.lock=false;
+    }
+    const C=PSKRX[p.mod], pts=C.pts, M=C.M, o=iqStream(n,'out',p.baud,0), outR=[], outI=[];
+    for(const c of s.chunks){
+      const yr=firRun(n.h,n.hr,c.re), yi=firRun(n.h,n.hi_,iqChunkIm(c)), K=yr.length;
+      const br=new Float32Array(n.br.length+K), bi=new Float32Array(n.bi.length+K);
+      br.set(n.br); br.set(yr,n.br.length); bi.set(n.bi); bi.set(yi,n.bi.length); n.br=br; n.bi=bi;
+      const end=n.base+br.length;
+      for(;;){
+        const t=n.t, i0=Math.floor(t)-n.base, mu=t-Math.floor(t), tm=t-sps/2, im0=Math.floor(tm)-n.base, mum=tm-Math.floor(tm);
+        if(im0<1) { n.t+=sps; continue; }                               // нет истории для середины символа
+        if(i0+2>=br.length) break;                                       // нужны отсчёты до i0+2
+        const g=n.g;
+        const sr_=g*pskCubic(br,i0,mu), si_=g*pskCubic(bi,i0,mu), mr=g*pskCubic(br,im0,mum), mi=g*pskCubic(bi,im0,mum);
+        // Гарднер: e = Re{(s − s₋₁)·conj(m)}; знак: строб позже оптимума → e > 0 → шаг укорачиваем
+        let te=0;
+        if(n.have) te=(sr_-n.spr)*mr+(si_-n.spi)*mi;
+        n.have=true; n.spr=sr_; n.spi=si_;
+        n.nu+=n.kit*te*-1; n.t+=sps+n.kpt*te*-1+n.nu;
+        // M-я степень для грубой оценки ухода (рад/символ), без учёта амплитуды
+        const a2=sr_*sr_+si_*si_, qam=p.mod==='16QAM';
+        if(a2>(qam ? 1.4 : 1e-12)){                                      // QAM: только угловые точки (|z|² = 1.8) — у них M-я степень постоянна
+          let qr=sr_, qi=si_; for(let k=1;k<M;k*=2){ const t1=qr*qr-qi*qi; qi=2*qr*qi; qr=t1; }
+          const qa=Math.hypot(qr,qi)||1; qr/=qa; qi/=qa;
+          if(n.hasP){
+            if(qam){ const m=n.cnt-n.pk;                                  // уход за m символов между угловыми точками
+              if(m<=8) n.fest+=0.05*(Math.atan2(qi*n.pr-qr*n.pi, qr*n.pr+qi*n.pi)/(M*m)-n.fest); }
+            else { n.cr=0.98*n.cr+0.02*(qr*n.pr+qi*n.pi); n.ci=0.98*n.ci+0.02*(qi*n.pr-qr*n.pi); n.fest=Math.atan2(n.ci,n.cr)/M; }
+          }
+          n.pr=qr; n.pi=qi; n.hasP=true; n.pk=n.cnt;
+        }
+        // несущая: derotate, решение, фазовая ошибка
+        const cs=Math.cos(n.ph), sn=Math.sin(n.ph), zr=sr_*cs+si_*sn, zi=si_*cs-sr_*sn;
+        let best=0, bd=1e9; for(let k=0;k<pts.length;k++){ const dr=zr-pts[k][0], di=zi-pts[k][1], d=dr*dr+di*di; if(d<bd){ bd=d; best=k; } }
+        const d=pts[best], pe=Math.atan2(zi*d[0]-zr*d[1], zr*d[0]+zi*d[1]);
+        if(!n.lock) n.fr+=0.05*(n.fest-n.fr);                           // пока нет захвата — частота из M-й степени
+        else n.fr+=n.kic*pe;
+        n.ph+=n.fr+n.kpc*pe;
+        // AGC по мощности символа (ожидание 1)
+        n.g*=1-0.005*(zr*zr+zi*zi-1);
+        // EVM: скользящее окно по квадрату ошибки (мощность опорных точек = 1)
+        const W=n.eR.length; n.esum+=bd-n.eR[n.ek]; n.eR[n.ek]=bd; n.ek=(n.ek+1)%W; n.en=Math.min(W,n.en+1);
+        n.cnt++;
+        if(n.en>=W/4){ n.evm=Math.sqrt(Math.max(0,n.esum)/n.en); n.lock=n.evm<(p.mod==='16QAM' ? 0.18 : 0.3); }
+        outR.push(zr); outI.push(zi);
+      }
+      const keep=Math.max(0,Math.floor(n.t-sps)-n.base-3);              // хвост для будущей интерполяции и середины символа
+      if(keep>0){ n.br=n.br.slice(keep); n.bi=n.bi.slice(keep); n.base+=keep; }
+    }
+    if(outR.length) iqPush(o,Float32Array.from(outR),Float32Array.from(outI));
+    const evm=n.evm, foff=(n.fr/(2*Math.PI))*p.baud;
+    n.ui={evm, mer:evm ? -20*Math.log10(evm) : null, foff, lock:n.lock, n:n.cnt, sps};
+    return {out:o, evm:evm!=null ? evm*100 : null, mer:n.ui.mer, foff, lock:n.lock ? 1 : 0};
+  }};
