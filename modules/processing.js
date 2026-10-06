@@ -377,7 +377,7 @@ def({ id:'zfft', title:'Zoom-FFT (I/Q)', cat:'Processing',
       n.N=N; n.wk=n.p.win;
       n.ringI=new Float32Array(N); n.ringQ=new Float32Array(N);
       n.re=new Float32Array(N); n.im=new Float32Array(N);
-      n.mag=new Float32Array(N); n.freqs=new Float32Array(N); n.phase=new Float32Array(N);
+      n.mag=new Float32Array(N); n.freqs=new Float64Array(N); n.phase=new Float32Array(N);
       n.psd=new Float32Array(N);
       n.scrI=new Float32Array(BLOCK); n.scrQ=new Float32Array(BLOCK);
       n.fI=new Float32Array(BLOCK); n.fQ=new Float32Array(BLOCK);

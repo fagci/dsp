@@ -1399,22 +1399,6 @@ def({ id:'scope', lazy:'proc', title:'Oscilloscope', cat:'Analysis',
 function binAt(t,N,log){ return log ? Math.pow(N,t)-1 : t*(N-1); }
 
 // спектр может нести собственную ось частот (freqs) — тогда шаг бинов неравномерный
-function specHz(s,i){
-  if(!s) return 0;
-  if(s.freqs){ const F=s.freqs, k=clamp(Math.round(i),0,F.length-1); return F[k]; }
-  return i*s.sr/s.size;
-}
-function specBin(s,f){
-  if(!s) return 0;
-  if(!s.freqs) return f/(s.sr/s.size);
-  const F=s.freqs, N=F.length;
-  if(f<=F[0]) return 0;
-  if(f>=F[N-1]) return N-1;
-  let lo=0, hi=N-1;                                 // ось монотонна — двоичный поиск
-  while(hi-lo>1){ const m=(lo+hi)>>1; if(F[m]<=f) lo=m; else hi=m; }
-  const d=(f-F[lo])/((F[hi]-F[lo])||1);
-  return lo+d;
-}
 function specSpan(s){                               // границы оси спектра
   if(!s) return [0,Eng.sr/2];
   if(s.freqs) return [s.freqs[0], s.freqs[s.freqs.length-1]];
