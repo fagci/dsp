@@ -3008,11 +3008,20 @@ function rtlChanMeter(n, c, lines){
 // открыт при уровне >= порога, закрывается ниже порога−гистерезис спустя hang мс
 const RTL_SQL_HYST=3;
 function rtlChanLevel(n, ch, db){
+  const prev=ch.rssi;
   ch.rssiChunk=db;
-  ch.rssi = ch.rssi==null ? db : ch.rssi*0.7+db*0.3;
+  ch.rssi = prev==null ? db : prev*0.7+db*0.3;
   const mode=n.p.sql;
   if(mode!=='SNR' && mode!=='level'){ ch.sqOpen=true; return; }
-  const v = mode==='level' ? db : ch.snr, thr = mode==='level' ? +n.p.sqlLvl : +n.p.sqlSnr;
+  let v = mode==='level' ? db : ch.snr;
+  const thr = mode==='level' ? +n.p.sqlLvl : +n.p.sqlSnr;
+  // кадр спектра редкий и сглаженный — SNR по нему отстаёт. Шум в шкале RSSI калибруем по спектру на устоявшемся уровне
+  // (RSSI − SNR), дальше SNR каждого чанка — его RSSI минус этот шум; после перестройки — прежний путь, пока шум не набран
+  if(mode==='SNR'){
+    if(ch._nzFc!==n.actualFreq){ ch._nzFc=n.actualFreq; ch.nzRef=null; }
+    if(ch.snr!=null && prev!=null && Math.abs(db-prev)<1){ const r=prev-ch.snr; ch.nzRef=ch.nzRef==null ? r : ch.nzRef*0.95+r*0.05; }
+    if(ch.nzRef!=null) v=db-ch.nzRef;
+  }
   if(v==null) return;
   const now=performance.now();
   if(ch.sqOpen===undefined) ch.sqOpen=v>=thr;      // первое решение — сразу, без hang
@@ -4183,7 +4192,7 @@ async function rtlStart(n, sr){
   n.connected=true; n.reading=true;
   n.underrunsWorker=0; n.underrunsOverflow=0; n.underrunsStarve=0;
   n.adcAcc=null; n.adcPk=null; n.adcRms=null; n.adcClip=null; n.adcOvlT=null;
-  for(const ch of n.ch){ ch.rssi=null; ch.rssiChunk=null; ch.snr=null; ch.noiseDb=null; ch.sqOpen=undefined; ch.sqG=1; }
+  for(const ch of n.ch){ ch.rssi=null; ch.rssiChunk=null; ch.snr=null; ch.noiseDb=null; ch.nzRef=null; ch.sqOpen=undefined; ch.sqG=1; }
   n.status='connected ('+n.dev.tunerName+(n.dev.worker?', USB in worker':'')+')';
   rtlReadLoop(n);
 }
