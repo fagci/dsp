@@ -3469,6 +3469,63 @@ def({ id:'chanscan', title:'Channel Scanner', cat:'Radio',
   draw(n){ const r=n.el.querySelector('.readout'); if(r && r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
 
+// Переключатель декодеров: поток IQ канала идёт только в одну из ветвей out1…out4. Пока есть сигнал (active — шумодав /
+// listening сканера), ветви пробуются по очереди по trial мс; ветвь, чей декодер подал признак жизни (ev: записи, кадры
+// вокодера на voice, или число > 0), удерживается, пока признаки идут (hold мс). Не опознали за круг — ветвь fallback
+// (обычно аналоговый звук). Нет сигнала — все ветви пусты, перебор начнётся заново. Ручной режим: вход sel или slot.
+const DSW_N=4;
+def({ id:'decswitch', title:'Decoder Switch', cat:'Decoders', kw:'route select carousel dmr p25 nxdn pocsag analog fm auto detect',
+  ins:[{n:'in',t:'iq'},{n:'active',t:'num'},{n:'sel',t:'num'},...Array.from({length:DSW_N},(_,k)=>({n:'ev'+(k+1),t:'val'}))],
+  outs:[...Array.from({length:DSW_N},(_,k)=>({n:'out'+(k+1),t:'iq'})),{n:'sel',t:'num'},{n:'name',t:'txt'},{n:'locked',t:'num'}],
+  readout:true, tall:true,
+  params:[{n:'slots',t:'range',min:2,max:DSW_N,step:1,d:3,label:'branches in use'},
+          {n:'n1',t:'text',d:'digital voice',label:'branch 1 name'},
+          {n:'n2',t:'text',d:'analog FM',label:'branch 2 name'},
+          {n:'n3',t:'text',d:'',label:'branch 3 name'},
+          {n:'n4',t:'text',d:'',label:'branch 4 name'},
+          {n:'trial',t:'range',min:200,max:10000,step:100,d:1500,label:'time on a branch while looking for a decoder, ms'},
+          {n:'hold',t:'range',min:200,max:30000,step:100,d:3000,label:'keep the branch after its decoder goes quiet, ms'},
+          {n:'fallback',t:'range',min:0,max:DSW_N,step:1,d:2,label:'branch used when no decoder locks (not tried in the search; 0 = keep searching)'},
+          {n:'slot',t:'range',min:0,max:DSW_N,step:1,d:0,label:'manual: fixed branch (0 = automatic; the sel input overrides)'}],
+  init:n=>{ n.st='idle'; n.cur=0; n.t0=0; n.lastEv=0; n.on=false; n.sent=-1; n.text=''; },
+  process(n,I){
+    const now=performance.now(), K=clamp(n.p.slots|0,2,DSW_N), fb=clamp(n.p.fallback|0,0,K);
+    const alive=v=>Array.isArray(v) ? v.length>0 : typeof v==='number' ? v>0 : typeof v==='string' ? v.length>0 : !!v;
+    const manual=typeof I.sel==='number' && I.sel>0 ? clamp(Math.round(I.sel),1,K) : clamp(n.p.slot|0,0,K);
+    const act=typeof I.active==='number' ? I.active>0 : true;      // active не подключён — сигнал есть всегда
+    const trials=[]; for(let k=1;k<=K;k++) if(k!==fb) trials.push(k);
+    if(manual){ n.st='manual'; n.cur=manual; }
+    else if(!act){ n.st='idle'; n.cur=0; }
+    else {
+      if(n.st==='idle' || n.st==='manual'){ n.st='search'; n.cur=trials[0]||fb||1; n.t0=now; }
+      const ev=alive(I['ev'+n.cur]);
+      if(n.st==='search' && ev){ n.st='lock'; n.lastEv=now; }
+      else if(n.st==='lock'){
+        if(ev) n.lastEv=now;
+        else if(now-n.lastEv>=n.p.hold){ n.st='search'; n.cur=trials[0]||fb||1; n.t0=now; }
+      } else if(n.st==='search' && now-n.t0>=n.p.trial){
+        const i=trials.indexOf(n.cur)+1;
+        if(i<trials.length){ n.cur=trials[i]; n.t0=now; }
+        else if(fb){ n.st='fallback'; n.cur=fb; }                   // круг без опознания — аналоговая ветвь до конца передачи
+        else { n.cur=trials[0]||1; n.t0=now; }
+      }
+    }
+    const o={sel:n.cur, name:n.cur ? (n.p['n'+n.cur]||('branch '+n.cur)) : '', locked:n.st==='lock' ? 1 : 0};
+    for(let k=1;k<=DSW_N;k++) o['out'+k]=null;
+    const s=iqIn(I,'in');
+    if(n.cur && s){
+      const out=iqStream(n,'out'+n.cur,s.sr,s.fc);
+      let first=n.sent!==n.cur; n.sent=n.cur;
+      for(const c of s.chunks){ iqPush(out,c.re,c.im,c.tag || (first ? 'gap' : null)); first=false; }
+      o['out'+n.cur]=out;
+    }
+    if(!n.cur) n.sent=-1;
+    n.text=n.st+(n.cur ? ' → '+n.cur+' "'+o.name+'"' : '')+(n.st==='search' ? ' · '+((n.p.trial-(now-n.t0))/1000).toFixed(1)+'s left' : '')+(!s ? ' · no input' : '');
+    return o;
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(r && r.textContent!==n.text) r.textContent=n.text||'…'; }});
+
+
 // Опорные точки палитры водопада (t от 0 до 1) — та же цветовая идея, что у gqrx/SDR++
 // (тёмный → синий → голубой → зелёный → жёлтый → оранжевый → белый), но переходы между
 // точками — по smoothstep, а не жёсткой прямой: убирает заметные изломы/"грубость" на стыках.
