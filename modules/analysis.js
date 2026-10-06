@@ -3162,8 +3162,10 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
           {n:'edge',t:'range',min:0,max:40,step:1,d:0,label:'drop window edges, % (the useful part is the middle; same as Spectrum Analyzer panes)'},
           {n:'timeout',t:'range',min:100,max:30000,step:100,d:3000,label:'listen timeout, ms'},
           {n:'settle',t:'range',min:0,max:2000,step:50,d:200,label:'settle time, ms'},
+          {n:'order',t:'select',opts:['band by band','interleave'],d:'band by band',
+           label:'order (interleave: one window of every range in turn — a wide range does not starve the narrow ones, all panes refresh evenly)'},
           {n:'loop',t:'check',d:true,label:'loop back to first range'}],
-  init:n=>{ n.state='seek'; n.idx=0; n.curFreq=null; n.text=''; n.off=0; n._offM=null; },
+  init:n=>{ n.state='seek'; n.idx=0; n.curFreq=null; n.text=''; n.off=0; n._offM=null; n.pos=[]; n.done=[]; },
   process(n,I){
     for(const k of ['overlap','timeout','settle']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     const bands=(Array.isArray(I.bands)?I.bands:[]).filter(b=>b && !b.sig && b.hi>b.lo).slice().sort((a,b)=>a.lo-b.lo);
@@ -3171,19 +3173,36 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
     // список диапазонов сменился целиком (другой пресет/правка) — сканируем заново с первого
     if(bands.length!==n._bandsLen || bands[0].lo!==n._firstLo || bands[0].hi!==n._firstHi){
       n._bandsLen=bands.length; n._firstLo=bands[0].lo; n._firstHi=bands[0].hi;
-      n.idx=0; n.curFreq=null; n.state='seek';
+      n.idx=0; n.curFreq=null; n.state='seek'; n.pos=null;
     }
     const full=(typeof I.freqLo==='number' && typeof I.freqHi==='number')? Math.max(1,I.freqHi-I.freqLo) : 2e6;
     // edge: края окна приёмника проседают — полезна середина; окно шагает на её ширину, а начало диапазона ею же закрыто
     const span=full*(1-2*clamp(+n.p.edge||0,0,40)/100), half=span/2, now=performance.now();
+    const inter=n.p.order==='interleave';
+    // interleave: у каждого диапазона свой курсор окна; смена режима или ширины окна — начинаем заново
+    if(inter && (!n.pos || n._posHalf!==half || n._order!==n.p.order)){
+      n.pos=bands.map(b=>b.lo+half); n.done=bands.map(()=>false); n._posHalf=half; n.curFreq=null;
+    }
+    n._order=n.p.order;
     if(n.curFreq==null){
       n.idx=clamp(n.idx,0,bands.length-1);
-      n.curFreq=bands[n.idx].lo+half;
+      n.curFreq=inter ? n.pos[n.idx] : bands[n.idx].lo+half;
       n.settleUntil=now+n.p.settle; n.state='seek';
     }
     const band=bands[n.idx];
     const active=typeof I.active==='number' && I.active>0;
     const advance=()=>{
+      if(inter){
+        const i=n.idx;
+        if(n.pos[i]+half>=bands[i].hi){ n.pos[i]=bands[i].lo+half; n.done[i]=true; }   // окно дошло до края — этот диапазон пройден, курсор в начало
+        else n.pos[i]+=Math.max(span*0.05, span-n.p.overlap);
+        if(!n.p.loop && n.done.every(Boolean)){ n.state='done'; return; }
+        let k=0;
+        do{ n.idx=(n.idx+1)%bands.length; k++; } while(!n.p.loop && n.done[n.idx] && k<=bands.length);
+        n.curFreq=n.pos[n.idx];
+        n.settleUntil=now+n.p.settle; n.state='seek';
+        return;
+      }
       if(n.curFreq+half>=band.hi){                     // окно уже дошло до конца текущего диапазона
         if(n.idx+1>=bands.length){
           if(n.p.loop) n.idx=0; else { n.state='done'; return; }   // idx остаётся на последнем валидном диапазоне

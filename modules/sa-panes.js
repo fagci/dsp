@@ -35,7 +35,7 @@ function saPaneGet(n,b){
       t:0, img, off:null, ocx:null, dirty:false, med:-120, det:null, zoom:null};
     store.set(key,p);
   }
-  p.label=b.label||''; p.color=b.color||'';
+  p.label=b.label||''; p.color=b.color||''; p.step=b.step||0;
   if(n.p.detect && !p.det){
     // детектор — обычный cfarFrame с узлом-заглушкой: диапазон панели, подтверждённые цели живут вне окна приёмника
     p.det={p:{auto:false,fmin:p.lo,fmax:p.hi,method:'OS',guard:4,train:32,thr:n.p.detThr,minW:2,confM:2,
@@ -202,9 +202,10 @@ function saPanesWire(n,cv){
     for(const s of n._skipInt||[]){ if(s.f<h.p.lo || s.f>h.p.hi) continue; const d=Math.abs(px(s.f)-h.x); if(d<ds){ ds=d; sk=s; } }
     return {det, sk};
   };
-  const skipToggle=({det,sk})=>{
+  // ширина пропуска — не меньше канала диапазона (шаг сетки, иначе 12.5 кГц): несущая гуляет, узкий пропуск её теряет
+  const skipToggle=({det,sk},p)=>{
     if(sk) n._skipInt.splice(n._skipInt.indexOf(sk),1);
-    else if(det) n._skipInt.push({f:det.f, w:Math.max(det.w*1.5,5000)});
+    else if(det) n._skipInt.push({f:det.f, w:Math.max(det.w*1.5, p && p.step>=1000 ? p.step : 12500)});
     saSkipSave(n);
   };
   const zoomBy=(h,k)=>{
@@ -247,7 +248,7 @@ function saPanesWire(n,cv){
     clearTimeout(n._pnLP);
     if(h.y>=SAP_TITLE){
       const t=near(h);
-      if(t.det||t.sk) n._pnLP=setTimeout(()=>{ if(n._pnDrag===d && !d.moved){ d.done=true; skipToggle(t); } },550);
+      if(t.det||t.sk) n._pnLP=setTimeout(()=>{ if(n._pnDrag===d && !d.moved){ d.done=true; skipToggle(t,h.p); } },550);
     }
   });
   on('pointermove',ev=>{
@@ -271,7 +272,7 @@ function saPanesWire(n,cv){
     else {
       const {det,sk}=near(h);
       if((ev.shiftKey || n._pnSkipMode) && (det||sk)){              // Shift+тап или режим ⊘: цель — в список пропуска, ⊘ — обратно
-        skipToggle({det,sk}); return;
+        skipToggle({det,sk},h.p); return;
       }
       n.mk[n.active-1]=det ? det.f : h.f;                           // обычный тап — активный маркер (на цель — точно на неё)
     }
