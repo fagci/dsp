@@ -4,7 +4,9 @@
 // Список = таблица записей. Хранится в одном из мест (параметр list):
 //   имя        — локальная БД браузера (ListDB), "папка/имя" — папка; список переживает патч и перезагрузку;
 //   @patch     — таблица в самом патче (параметр data): патч переносим вместе с данными;
-//   presets/…  — встроенные band plan'ы, только чтение (копируются в свой список кнопкой copy).
+//   presets/…  — встроенные band plan'ы (папки, modules/bandplan-data.js), только чтение (копируются кнопкой copy).
+// Списки — дерево папок с галочками (p.show): bands = объединение отмеченных списков (общий фильтр), редактируется и
+// отдаётся построчно активный список (p.list).
 // Вход: файл (CSV/TSV/TXT/JSON/KML/GPX/GeoJSON), провода rec и text, числовые входы a–d (лог).
 // Выход: по одной записи (секвенсор из modules/sequencer.js), поля — отдельными проводами,
 // весь список как bands (для 'sa'), выбранная запись — lo/mid/hi/span/step.
@@ -16,6 +18,12 @@ const TBL_LO=['lo','low','start','freq','frequency'], TBL_HI=['hi','high','end']
 const TBL_HZ=/^(lo|hi|low|high|start|end|freq|frequency|step)$/i;
 const tblCol=(cl,list)=>{ for(const k of list){ const h=cl.find(x=>x.toLowerCase()===k); if(h) return h; } return null; };
 const tblKind=name=>name===TBL_PATCH ? 'patch' : name.startsWith(TBL_PRE) && BANDPLAN_PRESETS[name.slice(TBL_PRE.length)] ? 'preset' : 'db';
+// старые имена пресетов (до раскладки по папкам) → новые
+const tblCanon=name=>{ const a=name.startsWith(TBL_PRE) && window.BP_ALIAS && BP_ALIAS[name.slice(TBL_PRE.length)]; return a ? TBL_PRE+a : name; };
+const tblDir=name=>name.slice(0,name.lastIndexOf('/')+1);          // «папка/» или ''
+const tblLeaf=name=>name.slice(name.lastIndexOf('/')+1);
+// отмеченные для показа списки; без p.show (старые патчи) — только активный
+const tblShow=n=>new Set((Array.isArray(n.p.show) ? n.p.show : [n.p.list]).map(tblCanon));
 const tblRO=n=>tblKind(n.p.list)==='preset';
 const tblHz=v=>typeof v==='number' ? v : parseHzCell(v);
 const tblSame=(a,b)=>a.length===b.length && a.every((x,i)=>x===b[i]);
@@ -105,11 +113,39 @@ function tblSplit(name){ const i=name.indexOf('/'); return i<0 ? ['',name] : [na
 // DB-запись ↔ строка таблицы: name — поле 'name', остальное — fields
 const tblToItem=(r,cl)=>{ const f={}; for(const k of cl) if(k!=='name') f[k]=r[k]??''; return {name:String(r.name??''),fields:f}; };
 function tblPresetRows(name){
-  const rows=BANDPLAN_PRESETS[name].map(([lo,hi,label,step,color])=>({name:label,lo,hi,step:step||0,color:color||''}));
-  return {cols:['name','lo','hi','step','color'],rows};
+  const src=BANDPLAN_PRESETS[name], kd=src.some(r=>r[6]), nt=src.some(r=>r[5]);
+  const rows=src.map(([lo,hi,label,step,color,note,kind])=>{
+    const o={name:label,lo,hi,step:step||0,color:color||''};
+    if(kd) o.kind=kind||'';
+    if(nt) o.note=note||'';
+    return o;
+  });
+  return {cols:['name','lo','hi','step','color',...(kd?['kind']:[]),...(nt?['note']:[])],rows};
+}
+// список из DB: колонки и строки (общий разбор для активного и отмеченных списков)
+function tblDbRows(items,meta){
+  const keys=[]; let hasName=false;
+  for(const it of items){
+    if(it.name) hasName=true;
+    for(const k in it.fields) if(k!=='name' && !keys.includes(k)) keys.push(k);
+  }
+  const cols=meta?.cols ? meta.cols.slice() : (hasName ? ['name'] : []).concat(keys);
+  if(hasName && !cols.includes('name')) cols.unshift('name');
+  for(const k of keys) if(!cols.includes(k)) cols.push(k);
+  const rows=items.map(it=>{ const o={}; for(const c of cols) o[c]=hostlistCoerce(c==='name' ? it.name : it.fields[c] ?? ''); return o; });
+  return {cols,rows};
+}
+// любой список → {cols,rows} без касания состояния узла
+async function tblReadList(n,name){
+  const kind=tblKind(name);
+  if(kind==='preset') return tblPresetRows(name.slice(TBL_PRE.length));
+  if(kind==='patch'){ const text=String(n.p.data||'').trim(); return text ? tblFromTable(seqParse(text,'',true)) : {cols:[],rows:[]}; }
+  const [items,meta]=await Promise.all([ListDB.list(name),ListDB.getMeta(name)]);
+  return tblDbRows(items,meta);
 }
 
 async function tblLoad(n){
+  n.p.list=tblCanon(n.p.list);
   n.loading=true;
   try{ await tblLoadRun(n); } finally{ n.loading=false; }
 }
@@ -127,15 +163,7 @@ async function tblLoadRun(n){
     try{ [items,meta]=await Promise.all([ListDB.list(list),ListDB.getMeta(list)]); }
     catch(e){ n.err='storage: '+(e.message||e); }
     if(tok!==n.loadTok) return;
-    const keys=[]; let hasName=false;
-    for(const it of items){
-      if(it.name) hasName=true;
-      for(const k in it.fields) if(k!=='name' && !keys.includes(k)) keys.push(k);
-    }
-    cols=meta?.cols ? meta.cols.slice() : (hasName ? ['name'] : []).concat(keys);
-    if(hasName && !cols.includes('name')) cols.unshift('name');
-    for(const k of keys) if(!cols.includes(k)) cols.push(k);
-    rows=items.map(it=>{ const o={}; for(const c of cols) o[c]=hostlistCoerce(c==='name' ? it.name : it.fields[c] ?? ''); return o; });
+    ({cols,rows}=tblDbRows(items,meta));
     ids=items.map(it=>it.id);
   }
   n.loaded=list; n.loadedData=kind==='patch' ? n.p.data : null;
@@ -146,6 +174,7 @@ async function tblLoadRun(n){
   tblDerive(n);
   seqReset(n);
   if(n.p.sel!=null){ const j=n.rowIds.indexOf(n.p.sel); if(j>=0){ n.pick=j; n.idx=j; n.cur={...n.rows[j]}; } }
+  tblSyncExtra(n);
   if(n.ui) tblRenderAll(n);
 }
 // p.cols (порты) := cols. prune — убрать провода к исчезнувшим портам
@@ -189,17 +218,48 @@ function tblDerive(n){
   tblBands(n);
   n.uiDirty=true;
 }
-function tblBands(n){
-  const cl=n.cl, lo=tblCol(cl,TBL_LO), hi=tblCol(cl,TBL_HI), lb=tblCol(cl,TBL_LABEL),
+function tblBandsOf(cl,rows){
+  const lo=tblCol(cl,TBL_LO), hi=tblCol(cl,TBL_HI), lb=tblCol(cl,TBL_LABEL),
     co=tblCol(cl,TBL_COLOR), st=tblCol(cl,TBL_STEP), out=[];
-  if(lo) for(const r of n.rows){
+  if(lo) for(const r of rows){
     const l=tblHz(r[lo]); if(!isFinite(l)) continue;
     let h=hi ? tblHz(r[hi]) : l; if(!isFinite(h)) h=l;
     const s=st ? tblHz(r[st]) : 0;
     out.push({lo:l, hi:Math.max(l,h), label:lb ? String(r[lb]??'') : fmtHz(l)+'Hz',
       color:co ? String(r[co]||'') : '', step:isFinite(s) ? s : 0});
   }
-  n.bands=out; n.loCol=lo; n.hiCol=hi;
+  return out;
+}
+function tblBands(n){
+  n.loCol=tblCol(n.cl,TBL_LO); n.hiCol=tblCol(n.cl,TBL_HI);
+  n.bandsOwn=tblBandsOf(n.cl,n.rows);
+  const f=tblFilter(n.p.filter);                        // тот же фильтр — и для остальных отмеченных списков
+  for(const e of n.extra.values()) e.bands=tblBandsOf(e.cols,f ? e.rows.filter(f) : e.rows);
+  tblMerge(n);
+}
+// bands = активный список (если отмечен) + остальные отмеченные
+function tblMerge(n){
+  const sh=tblShow(n), parts=[];
+  if(sh.has(n.p.list)) parts.push(n.bandsOwn);
+  for(const [k,e] of n.extra) if(sh.has(k) && k!==n.p.list) parts.push(e.bands);
+  n.bands=parts.length===1 ? parts[0] : [].concat(...parts);
+  n.onCount=sh.size;
+}
+// загрузить отмеченные, но ещё не прочитанные списки; убрать снятые
+function tblSyncExtra(n){
+  n._showRef=n.p.show;
+  const sh=tblShow(n);
+  for(const k of [...n.extra.keys()]) if(!sh.has(k) || k===n.p.list) n.extra.delete(k);
+  const need=[...sh].filter(k=>k!==n.p.list && !n.extra.has(k));
+  tblMerge(n);
+  if(!need.length) return;
+  const tok=n.extraTok=(n.extraTok||0)+1;
+  Promise.all(need.map(async k=>[k,await tblReadList(n,k).catch(()=>null)])).then(res=>{
+    if(tok!==n.extraTok) return;
+    const now=tblShow(n);
+    for(const [k,t] of res) if(t && now.has(k) && k!==n.p.list) n.extra.set(k,{cols:t.cols,rows:t.rows,bands:[]});
+    tblBands(n); n.uiDirty=true;
+  });
 }
 
 /* ---------- изменения ---------- */
@@ -299,7 +359,7 @@ async function tblUse(n,list){                          // переключит�
 /* ---------- импорт / экспорт ---------- */
 const tblBase=name=>name.replace(/\.[^.]+$/,'');
 async function tblImport(n,files){
-  const [folder]=tblSplit(n.p.list), prefix=folder && tblKind(n.p.list)==='db' ? folder+'/' : '';
+  const prefix=tblKind(n.p.list)==='db' ? tblDir(n.p.list) : '';
   let last=null;
   for(const f of files){
     try{
@@ -337,7 +397,7 @@ async function tblExportAll(){
 }
 async function tblCopy(n){
   const to=prompt('Copy "'+n.p.list+'" to (name, folder/name, or '+TBL_PATCH+' to keep it in the patch):',
-    tblKind(n.p.list)==='preset' ? 'my '+tblSplit(n.p.list)[1] : n.p.list==='@patch' ? 'table' : n.p.list+' copy');
+    tblKind(n.p.list)==='preset' ? 'my '+tblLeaf(n.p.list) : n.p.list==='@patch' ? 'table' : n.p.list+' copy');
   if(!to) return;
   if(to.startsWith(TBL_PRE)){ alert('"'+TBL_PRE+'" is reserved for built-in lists'); return; }
   const cl=n.cl.slice(), rows=n.all.map(r=>({...r}));
@@ -384,7 +444,7 @@ const tblOuts=n=>{
 
 def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks band plan sequencer data log records rows folder import export',
   ins:tblIns, outs:tblOuts,
-  readout:true, resize:true, w:340, h:330,
+  readout:true, resize:true, w:360, h:420,
   params:[
     {n:'list',t:'text',d:'table',hidden:true},
     {n:'filter',t:'text',d:'',hidden:true},
@@ -417,10 +477,11 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     {n:'data',t:'code',d:'',adv:true,label:'patch table (list = @patch)',plain:true,fn:n=>{ if(n.p.list===TBL_PATCH) tblLoad(n); }},
   ],
   init:n=>{
-    n.p.list=n.p.list||'table';
+    n.p.list=tblCanon(n.p.list||'table');
     n.p.cols=Array.isArray(n.p.cols) ? n.p.cols : [];
     if(n.p.sel===undefined) n.p.sel=null;
     n.all=[]; n.ids=[]; n.cl=[]; n.rows=[]; n.rowIds=[]; n.headers=[]; n.cols=[]; n.bands=[];
+    n.extra=new Map(); n.bandsOwn=[]; n.onCount=0;
     n.err=''; n.loaded=null; n.loadedData=null; n.pend=[]; n.lastFlush=0; n.flushing=false;
     n.lastRec=undefined; n.lastText=undefined; n.lastIn={}; n.logT=0; n.pick=null;
     n.trigPrev=0; n.rowPrev=null; n.pulse=0; n.initialized=false; n.uiDirty=true;
@@ -439,6 +500,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     const p=n.p, dt=BLOCK/Eng.sr;
     // список/таблицу сменили извне (undo, десериализация, правка data)
     if((n.loaded!==p.list || (p.list===TBL_PATCH && n.loadedData!==p.data)) && !n.loading) tblLoad(n);
+    else if(n._showRef!==p.show && !n.loading) tblSyncExtra(n);       // галочки изменили извне (undo, патч)
     n.lastIn=I;
     if(p.collect && !tblRO(n)){
       if(I.rec && I.rec!==n.lastRec){ n.lastRec=I.rec; for(const r of Array.isArray(I.rec) ? I.rec : [I.rec]) if(r && typeof r==='object') n.pend.push(r); }
@@ -466,7 +528,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     if(r){
       const N=n.rows.length;
       const warn=n.err ? n.err : n.p.advance==='time' && N && !n.tt ? 'no time column' : n.p.advance==='distance' && N && !n.geo ? 'no lat/lon columns' : '';
-      const t=warn ? '⚠ '+warn : (n.p.list)+' · '+(N ? 'row '+(n.idx+1)+'/'+N : 'empty')+' · '+n.p.advance+(n.done?' · done':'')+
+      const t=warn ? '⚠ '+warn : (n.p.list)+(n.onCount>1 ? ' (+'+(n.onCount-1)+' on)' : '')+' · '+(N ? 'row '+(n.idx+1)+'/'+N : 'empty')+' · '+n.p.advance+(n.done?' · done':'')+
         (n.pend.length ? ' · +'+n.pend.length : '');
       if(r.textContent!==t) r.textContent=t;
     }
@@ -483,7 +545,8 @@ const TBL_BTN='background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding
 const TBL_IN='min-width:0;background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;font-size:10px;padding:1px 3px;';
 async function tblNames(){
   const db=await ListDB.listNames().catch(()=>[]);
-  return [TBL_PATCH,...Object.keys(BANDPLAN_PRESETS).map(k=>TBL_PRE+k),...db.filter(x=>x!==TBL_PATCH && !x.startsWith(TBL_PRE))];
+  const legacy=window.BP_LEGACY;                          // старые плоские имена — только для совместимости патчей
+  return [TBL_PATCH,...Object.keys(BANDPLAN_PRESETS).filter(k=>!legacy?.has(k)).map(k=>TBL_PRE+k),...db.filter(x=>x!==TBL_PATCH && !x.startsWith(TBL_PRE))];
 }
 function tblInit(n){
   const mid=n.el.querySelector('.mid');
@@ -493,13 +556,23 @@ function tblInit(n){
   root.style.cssText='position:relative;display:flex;flex-direction:column;font-size:11px;'+
     'color:#c8d2d6;box-sizing:border-box;overflow:hidden;grid-column:1/-1;width:100%;min-width:0;gap:2px;';
   root.innerHTML=`
+    <style>
+      .tbl-ui .tt-dir,.tbl-ui .tt-file{display:flex;align-items:center;gap:4px;padding:1px 4px;cursor:pointer;white-space:nowrap;}
+      .tbl-ui .tt-dir:hover,.tbl-ui .tt-file:hover{background:#161b1e;}
+      .tbl-ui .tt-file.act{background:#1f3a36;color:#4ec9b0;}
+      .tbl-ui .tt-name{flex:1;overflow:hidden;text-overflow:ellipsis;}
+      .tbl-ui .tt-cnt{color:#6c7a80;font-size:9px;}
+      .tbl-ui .tt-car{width:9px;color:#6c7a80;}
+      .tbl-ui input[type=checkbox]{margin:0;accent-color:#4ec9b0;}
+    </style>
     <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
-      <select class="tbl-folder" title="folder" style="${TBL_IN}flex:0 1 38%;"></select>
-      <select class="tbl-select" title="list" style="${TBL_IN}flex:1;"></select>
+      <span class="tbl-thead" title="show / hide the list tree" style="cursor:pointer;color:#c8d2d6;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+      <span class="tbl-none" title="uncheck all lists" style="cursor:pointer;color:#6c7a80;font-size:10px;">none</span>
       <span class="tbl-new" title="new list (folder/name)" style="cursor:pointer;color:#6c7a80;">＋</span>
-      <span class="tbl-ren" title="rename / move list" style="cursor:pointer;color:#6c7a80;">✎</span>
-      <span class="tbl-delL" title="delete list" style="cursor:pointer;color:#6c7a80;">🗑</span>
+      <span class="tbl-ren" title="rename / move the active list" style="cursor:pointer;color:#6c7a80;">✎</span>
+      <span class="tbl-delL" title="delete the active list" style="cursor:pointer;color:#6c7a80;">🗑</span>
     </div>
+    <div class="tbl-tree" title="☑ — the list is shown on the bands output (band plan on the spectrum); click a name — make it the active list (rows, edit, sequencer)" style="flex:0 1 auto;max-height:42%;min-height:30px;overflow-y:auto;border:1px solid #1d2226;border-radius:3px;background:#0e1113;"></div>
     <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
       <input class="tbl-filter" placeholder="filter: 20m  demod:am  lo>7M" title="words match from the start of any field; col:text, col>5M, col<=100" style="${TBL_IN}flex:1;">
       <span class="tbl-tail" title="show the last rows" style="cursor:pointer;color:#6c7a80;font-size:10px;">tail</span>
@@ -520,8 +593,16 @@ function tblInit(n){
   mid.append(root);
   syncCustomHeight(n,root,150);
   const q=s=>root.querySelector(s);
-  n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), folder:q('.tbl-folder'), select:q('.tbl-select'),
+  n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), tree:q('.tbl-tree'), thead:q('.tbl-thead'),
     filter:q('.tbl-filter'), cols:q('.tbl-cols'), tail:false, marked:-1};
+  n._open=new Set(Array.isArray(n.p.open) ? n.p.open : []);
+  if(!Array.isArray(n.p.open)) for(const k of new Set([...tblShow(n),n.p.list])){            // раскрыть пути отмеченных
+    const parts=k.split('/'); parts.pop();
+    parts.reduce((a,x)=>{ const path=a ? a+'/'+x : x; n._open.add(path); return path; },'');
+  }
+  n.ui.thead.addEventListener('click',()=>{ n.p.treeHide=!n.p.treeHide; tblTreeVis(n); });
+  q('.tbl-none').addEventListener('click',()=>tblSetShow(n,[]));
+  n.ui.tree.addEventListener('click',e=>tblTreeClick(n,e));
   n.ui.filter.value=n.p.filter||'';
   n.ui.filter.addEventListener('keydown',e=>e.stopPropagation());
   n.ui.filter.addEventListener('input',()=>{
@@ -530,17 +611,11 @@ function tblInit(n){
     tblRenderList(n);
   });
   q('.tbl-tail').addEventListener('click',e=>{ n.ui.tail=!n.ui.tail; e.target.style.color=n.ui.tail?'#4ec9b0':'#6c7a80'; tblRenderList(n); });
-  n.ui.folder.addEventListener('change',async()=>{
-    const f=n.ui.folder.value, names=(await tblNames()).filter(x=>tblSplit(x)[0]===f);
-    const pick=names.find(x=>x!==TBL_PATCH) ?? names[0];
-    if(pick) await tblUse(n,pick);
-  });
-  n.ui.select.addEventListener('change',()=>tblUse(n,n.ui.select.value));
   q('.tbl-new').addEventListener('click',async()=>{
-    const f=tblSplit(n.p.list)[0], nm=prompt('New list name (folder/name):',f && tblKind(n.p.list)==='db' ? f+'/' : ''); if(!nm) return;
+    const nm=prompt('New list name (folder/name):',tblKind(n.p.list)==='db' ? tblDir(n.p.list) : ''); if(!nm) return;
     if(nm===TBL_PATCH || nm.startsWith(TBL_PRE)){ alert('this name is reserved'); return; }
     await ListDB.setMeta(nm,{cols:[]});
-    await tblUse(n,nm);
+    await tblPick(n,nm);
   });
   q('.tbl-ren').addEventListener('click',async()=>{
     if(tblKind(n.p.list)!=='db'){ alert('only lists in the browser DB can be renamed'); return; }
@@ -553,7 +628,7 @@ function tblInit(n){
     if(tblKind(n.p.list)!=='db'){ alert('only lists in the browser DB can be deleted'); return; }
     if(!confirm('Delete list "'+n.p.list+'" entirely?')) return;
     await ListDB.deleteList(n.p.list);
-    await tblUse(n,'table');
+    await tblPick(n,'table');
   });
   q('.tbl-add').addEventListener('click',()=>tblAddForm(n));
   const file=q('.tbl-file');
@@ -571,17 +646,84 @@ function tblInit(n){
 }
 async function tblRenderAll(n){
   if(!n.ui) return;
-  const names=await tblNames();
+  const names=await tblNames(), ui=n.ui;
   if(!names.includes(n.p.list)) names.push(n.p.list);   // пустой, ещё не записанный
-  const folders=[...new Set(names.map(x=>tblSplit(x)[0]))].sort((a,b)=>a===''?-1:b===''?1:a<b?-1:1);
-  const [cf,cn]=tblSplit(n.p.list), ui=n.ui;
-  ui.folder.innerHTML=folders.map(f=>`<option value="${escapeHtml(f)}"${f===cf?' selected':''}>${f===''?'(root)':escapeHtml(f)}</option>`).join('');
-  ui.select.innerHTML=names.filter(x=>tblSplit(x)[0]===cf).map(x=>{
-    const leaf=tblSplit(x)[1];
-    return `<option value="${escapeHtml(x)}"${x===n.p.list?' selected':''}>${escapeHtml(leaf)}</option>`; }).join('');
+  n.treeNames=names;
+  tblRenderTree(n);
   ui.filter.value=n.p.filter||'';
   tblRenderCols(n);
   tblRenderList(n);
+}
+/* ---------- дерево списков ---------- */
+function tblBuildTree(names){
+  const root={dirs:new Map(),files:[],path:'',name:''};
+  for(const full of names){
+    const parts=full.split('/'), leaf=parts.pop();
+    let d=root;
+    for(const x of parts){
+      if(!d.dirs.has(x)) d.dirs.set(x,{dirs:new Map(),files:[],path:d.path ? d.path+'/'+x : x,name:x});
+      d=d.dirs.get(x);
+    }
+    d.files.push({name:full,leaf});
+  }
+  return root;
+}
+const tblFilesOf=d=>[...d.files.map(f=>f.name),...[...d.dirs.values()].flatMap(tblFilesOf)];
+const tblByName=(a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'});
+function tblRenderTree(n){
+  const ui=n.ui, sh=tblShow(n), html=[];
+  const walk=(d,depth)=>{
+    for(const sub of [...d.dirs.values()].sort((a,b)=>tblByName(a.name,b.name))){
+      const all=tblFilesOf(sub), on=all.filter(f=>sh.has(f)).length, open=n._open.has(sub.path);
+      html.push(`<div class="tt-dir" data-path="${escapeHtml(sub.path)}" style="padding-left:${depth*12+2}px">`+
+        `<span class="tt-car">${open?'▾':'▸'}</span><input type="checkbox" class="tt-cb" data-ind="${on&&on<all.length?1:0}"${on&&on===all.length?' checked':''}>`+
+        `<span class="tt-name">${escapeHtml(sub.path==='presets' ? 'presets (built-in)' : sub.name)}</span><span class="tt-cnt">${on?on+'/':''}${all.length}</span></div>`);
+      if(open) walk(sub,depth+1);
+    }
+    for(const f of d.files.slice().sort((a,b)=>tblByName(a.leaf,b.leaf)))
+      html.push(`<div class="tt-file${f.name===n.p.list?' act':''}" data-name="${escapeHtml(f.name)}" style="padding-left:${depth*12+14}px">`+
+        `<input type="checkbox" class="tt-cb"${sh.has(f.name)?' checked':''}><span class="tt-name" title="${escapeHtml(f.name)}">${escapeHtml(f.leaf)}</span></div>`);
+  };
+  walk(tblBuildTree(n.treeNames||[]),0);
+  const keep=ui.tree.scrollTop;
+  ui.tree.innerHTML=html.join('');
+  ui.tree.querySelectorAll('[data-ind="1"]').forEach(c=>{ c.indeterminate=true; });
+  ui.tree.scrollTop=keep;
+  ui.thead.textContent=(n.p.treeHide ? '▸ ' : '▾ ')+'Lists · '+sh.size+' shown · '+tblLeaf(n.p.list);
+  tblTreeVis(n);
+}
+function tblTreeVis(n){
+  n.ui.tree.style.display=n.p.treeHide ? 'none' : '';
+  n.ui.thead.textContent=n.ui.thead.textContent.replace(/^[▸▾]/,n.p.treeHide ? '▸' : '▾');
+}
+function tblTreeClick(n,e){
+  const row=e.target.closest('.tt-dir,.tt-file'); if(!row) return;
+  const isCb=e.target.classList.contains('tt-cb');
+  if(row.classList.contains('tt-file')){
+    if(isCb) tblToggleShow(n,[row.dataset.name],e.target.checked);
+    else tblPick(n,row.dataset.name);
+    return;
+  }
+  const path=row.dataset.path;
+  if(isCb){
+    const d=[...n.treeNames].filter(x=>x.startsWith(path+'/'));
+    tblToggleShow(n,d,e.target.checked);
+  } else {
+    if(n._open.has(path)) n._open.delete(path); else n._open.add(path);
+    n.p.open=[...n._open]; tblRenderTree(n);
+  }
+}
+function tblSetShow(n,list){ n.p.show=list; tblSyncExtra(n); tblRenderTree(n); }
+function tblToggleShow(n,names,on){
+  const sh=tblShow(n);
+  for(const k of names) on ? sh.add(k) : sh.delete(k);
+  tblSetShow(n,[...sh]);
+}
+// выбор активного списка; если «показывался» только прежний активный — галочка переходит на новый
+async function tblPick(n,list){
+  const sh=n.p.show;
+  if(Array.isArray(sh) && (!sh.length || (sh.length===1 && tblCanon(sh[0])===n.p.list))) n.p.show=[list];
+  await tblUse(n,list);
 }
 function tblRenderCols(n){
   const box=n.ui.cols, ro=tblRO(n);
@@ -635,6 +777,7 @@ function tblSummary(n,r){
     const l=tblHz(r[lo]);
     if(isFinite(l)){ const h=hi ? tblHz(r[hi]) : l; parts.push(isFinite(h) && h>l ? fmtHz(l,3)+'-'+fmtHz(h,3) : fmtHz(l,3)); skip.add(lo); if(hi) skip.add(hi); }
   }
+  if(lo) skip.add(tblCol(n.cl,TBL_STEP));                // шаг сетки — в подсказке
   for(const c of n.cl) if(!skip.has(c) && r[c]!=='' && r[c]!=null) parts.push(recFmt(r[c]));
   return parts.join(' / ');
 }
@@ -655,6 +798,7 @@ function tblRow(n,i,ro){
   val.textContent=tblSummary(n,r);
   val.style.cssText='color:#4ec9b0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%;';
   row.append(name,val);
+  row.title=n.cl.filter(c=>r[c]!=='' && r[c]!=null).map(c=>c+': '+(TBL_HZ.test(c)&&isFinite(tblHz(r[c])) ? fmtHz(tblHz(r[c]),4)+'Hz' : recFmt(r[c]))).join('\n');
   if(!ro){
     const ed=document.createElement('span');
     ed.textContent='✎'; ed.style.cssText='cursor:pointer;color:#6c7a80;';

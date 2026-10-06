@@ -1773,6 +1773,10 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'split',t:'range',min:.15,max:.85,step:.01,d:.4,label:'spectrum split',hidden:true},
           {n:'log',t:'check',d:false},
           {n:'grid',t:'check',d:true},
+          // panes — несколько диапазонов из bands рядом, у каждого спектр и водопад (см. sa-panes.js)
+          {n:'layout',t:'select',opts:['single','panes'],d:'single',label:'layout'},
+          {n:'panes',t:'range',min:1,max:8,step:1,d:4,label:'panes (bands side by side)'},
+          {n:'paneFrom',t:'range',min:0,max:500,step:1,d:0,label:'first band #',adv:true},
           {n:'snap',t:'check',d:true,label:'snap to band plan step',adv:true},
           // выключить — тот же жест, что и "очистить": незачем отдельная кнопка (см. fn у 'check' в core-graph.js)
           {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold) n.peak=null; }},
@@ -1802,6 +1806,12 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
            n.zoom=null;n._steer=null;n._srcCenter=null;n._lastRange=null;},
   process(n,I){
     const sp=I.spec;
+    if(n.p.layout==='panes'){                          // несколько диапазонов рядом: свой путь без одноосевой логики
+      for(const k of ['floor','top']) if(typeof I[k]==='number') setMod(n,k,I[k]);
+      if(Array.isArray(I.bands)) n.bandsData=I.bands;
+      saPanesIngest(n,sp);
+      return {centerFreq:n._steer ?? null};
+    }
     for(const k of ['fmin','fmax']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     // границы поменяли не мы (поле диапазона или провод) — это ручной ввод: auto выключаем,
     // зум сбрасываем, центр введённого диапазона — цель для приёмника (centerFreq)
@@ -1971,6 +1981,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     for(let k=1;k<=4;k++) for(const q of ['f','db','snr','fr']) mo[q+k]=o[q+k];
     return o; },
   draw(n,cv,cx){
+    if(n.p.layout==='panes') return saPanesDraw(n,cv,cx);
     const W=cv.width,H=cv.height;
     if(saSkipDraw(n,cv)) return;                     // ничего не изменилось — канва держит прошлый кадр
     const hs=Math.round(H*n.p.split), hw=H-hs;
