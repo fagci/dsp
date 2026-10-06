@@ -36,6 +36,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Camera, video, image, accelerometer and Generic Sensor API
 - **Barcode / QR** (Video): reads QR codes and barcodes from a camera, video or image frame (BarcodeDetector — Chrome / Android): the text, a pulse on `go`, records `{format, value}`, a repeat of the same code is ignored for a set time
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
+- **ESP-SDR (ESP32)** over WebSerial: raw I/Q bursts from an ESP32's built-in radio ([ESPARGOS/esp-sdr](https://github.com/ESPARGOS/esp-sdr) firmware), spectrum in the browser (see [ESP-SDR](#esp-sdr))
 - Serial port (WebSerial), **Table** (one node for lists, band plans, bookmarks, logs and the data sequencer: CSV / TSV / JSON / TXT / KML / GPX / GeoJSON, folders in the browser DB, played row by row), Trigger Clock, Time Base — see [Table](#table)
 - **Bluetooth LE** (Web Bluetooth): **BLE UART** (Nordic UART, HM-10 / FFE0 or your own UUIDs — a serial terminal without a cable), **BLE GATT** (any characteristic: notifications or periodic read, write; formats — heart rate, battery, temperature, uint / int / float, hex), **BLE Advertisements** (RSSI, TX power and manufacturer data of one device without connecting — proximity, finding a beacon) — see [Bluetooth LE](#bluetooth-le)
 - **IQ over Network**: a remote SDR as an `iq` source — **rtl_tcp** through a TCP → WebSocket bridge (header, rate, tuning, gain, ppm, bias-T, direct sampling are sent as rtl_tcp commands; a wire on the frequency retunes) or a **raw stream** (uint8 / int8 / int16 / float32, rate and center set by hand) from any program that writes IQ to a pipe — see [Remote SDR](#remote-sdr)
@@ -203,6 +204,17 @@ The **tinySA** node talks to a tinySA or tinySA Ultra over its USB serial consol
 - **Screenshot** reads the device screen (`capture`) to the node and the `img` output, **Save PNG** downloads it
 - **gen** (signal generator mode) — `mode low|high output`, frequency, level and **RF on**; `genFreq` (Hz) and `genLevel` (dBm) inputs let the graph drive it (e.g. a stepped frequency sweep)
 - ready-made patch: **tinySA: Spectrum**
+
+## ESP-SDR
+
+The **ESP-SDR (ESP32)** node talks to an ESP32 running the [ESPARGOS/esp-sdr](https://github.com/ESPARGOS/esp-sdr) firmware (WebSerial, Chrome/Edge): the chip's undocumented debug path gives raw I/Q of the built-in 2.4 / 5 GHz radio, no extra SDR hardware. Wire `spec` to a Spectrum Analyzer.
+
+- uses the `CAP16` burst command (signed 8-bit I/Q, CRC32 checked); the FFT runs in the browser, several segments of a burst are power-averaged
+- **frequency** (100–6000 MHz, 1 MHz steps; the chip really tunes only near its band), **rate index**, **samples per burst**, **FFT size**, **analog bandwidth**, **hold**
+- bursts are short, so signals between them are missed; the level is relative (dB re 1 ADC unit), not dBm
+- `freq` input (Hz) and `steerFreq` (from the Spectrum Analyzer's `centerFreq`) retune the chip; outputs `peakF` / `peakDb`
+- not supported yet: on-chip FFT (`SPEC`), 10-bit `CAP20`, continuous `IQS` stream
+- ready-made patch: **ESP-SDR: ESP32 Spectrum**
 
 ## Signal type identifier
 
