@@ -307,7 +307,7 @@ async function espLoop(n){
 def({ id:'espsdr', lazy:'manual', title:'ESP-SDR (ESP32)', cat:'Sources',
   ins:[{n:'freq',t:'num'},{n:'steerFreq',t:'num'}],
   outs:[{n:'spec',t:'spec'},{n:'peakF',t:'num'},{n:'peakDb',t:'num'}],
-  view:{h:120}, readout:true, tall:true,
+  readout:true, tall:true,
   params:[
     {n:'connect',t:'button',label:'Connect',fn:n=>espConnect(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>espDisconnect(n)},
@@ -319,7 +319,7 @@ def({ id:'espsdr', lazy:'manual', title:'ESP-SDR (ESP32)', cat:'Sources',
     {n:'size',t:'select',opts:['1024','2048','4096','8190'],d:'4096',label:'samples per burst (burst mode)'},
     {n:'bw',t:'range',min:0,max:60,step:1,d:0,label:'analog bandwidth, MHz (0 = widest)'},
     {n:'hold',t:'check',d:false,label:'hold'},
-    {n:'shift',t:'check',d:false,label:'fftshift on-chip bins (if the spectrum looks swapped)',adv:true},
+    {n:'shift',t:'check',d:true,label:'fftshift on-chip bins (off if the spectrum is already centred)',adv:true},
     {n:'baud',t:'select',opts:['2000000','1000000','115200'],d:'2000000',label:'UART baud rate',adv:true},
   ],
   init:n=>{
@@ -341,7 +341,7 @@ def({ id:'espsdr', lazy:'manual', title:'ESP-SDR (ESP32)', cat:'Sources',
     return {spec:n.spec, peakF:n.peakF, peakDb:n.peakDb};
   },
   drawKey:n=>n.status+'|'+n.connected+'|'+n.spec?.rev+'|'+n.capMs+'|'+n.err+'|'+n.fps,
-  draw(n,cv,cx){
+  draw(n){
     const r=n.el.querySelector('.readout');
     if(r){
       let s=n.status;
@@ -352,6 +352,5 @@ def({ id:'espsdr', lazy:'manual', title:'ESP-SDR (ESP32)', cat:'Sources',
       if(n.err) s+=' · error: '+n.err;
       if(r.textContent!==s) r.textContent=s;
     }
-    cx.clearRect(0,0,cv.width,cv.height);
   }
 });

@@ -211,7 +211,7 @@ The **ESP-SDR (ESP32)** node talks to an ESP32 running the [ESPARGOS/esp-sdr](ht
 
 - **mode → fft** (default): the chip computes the FFT itself (`SPEC`, profiles from `SPECINFO?`) and streams CRC-checked frames, so the spectrum is continuous at tens of frames per second; **sample rate** / **FFT size** must match a profile of the chip, **detector** is mean or max power. Level — dB re full scale
 - **mode → burst**: `CAP16` snapshots (signed 8-bit I/Q, CRC32), the FFT runs in the browser; bursts are short, so signals between them are missed. Used when the firmware has no `SPEC`
-- **frequency** (100–6000 MHz, 1 MHz steps; the chip really tunes only near its band), **analog bandwidth**, **hold**; changing a setting restarts the stream. If the on-chip spectrum looks swapped around the centre, tick **fftshift** (advanced)
+- **frequency** (100–6000 MHz, 1 MHz steps; the chip really tunes only near its band), **analog bandwidth**, **hold**; changing a setting restarts the stream. **fftshift** (advanced, on by default) reorders the on-chip bins so DC sits in the centre; turn it off if a firmware already sends them centred
 - `freq` input (Hz) and `steerFreq` (from the Spectrum Analyzer's `centerFreq`) retune the chip; outputs `peakF` / `peakDb`
 - not supported yet: 10-bit `CAP20`, continuous `IQS` stream, gain control (hardware AGC stays on)
 - ready-made patch: **ESP-SDR: ESP32 Spectrum**
