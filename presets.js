@@ -497,6 +497,22 @@ addEdge(cr.id,'gate',m.id,'in1'); addEdge(m.id,'out',o.id,'amp'); addEdge(o.id,'
 addEdge(cr.id,'n',nv.id,'in');
 markWiresDirty();
 });
+preset('Measure: Scheduled Spectrum Archive (Cron → IndexedDB)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Spectrum Archive records the spectrum into the browser database only while Cron holds its gate high: here a 20-second window every minute, one row per 5 s (mean power).\n'+
+  'Time Base runs ×60 so a minute passes in a second. Replace Oscillator + FFT with an RTL-SDR (or any spectrum source) for a real watch; Export CSV / PNG waterfall take the current session.\n'+
+  'The rows stay in IndexedDB after a reload.'});
+nt.size.w=700; nt.size.h=130; applySize(nt);
+const tb=addNode('timebase',40,230,{source:'manual',speed:60});
+const cr=addNode('cron',300,230,{expr:'* * * * *',dur:20});
+const o=addNode('osc',40,420,{freq:1500,amp:.4});
+const f=addNode('fft',300,420,{});
+const a=addNode('specArchive',560,300,{mode:'gate',period:5,acc:'mean',maxBins:'512'});
+a.size.w=520; applySize(a);
+addEdge(tb.id,'t',cr.id,'t'); addEdge(cr.id,'gate',a.id,'gate');
+addEdge(o.id,'out',f.id,'in'); addEdge(f.id,'spec',a.id,'spec');
+markWiresDirty();
+});
 preset('Control: Level Trigger (Compare, Counter, One-Shot)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'LFO swells the tone level; Level measures it in dB. Compare shows the level on its screen with the threshold\n'+

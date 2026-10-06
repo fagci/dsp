@@ -1487,3 +1487,127 @@ def({ id:'planeMap', lazy:'manual', title:'Aircraft Map', cat:'Geo',
       cx.fillText(id,x+6,y-6);
     }
   }});
+
+/* ============================ Spectrum Archive: спектры в IndexedDB ============================
+   Строка = среднее (или максимум) кадров спектра за период; бины сводятся к maxBins максимумом по группе,
+   уровень — Uint8 с шагом 0.5 дБ от «низа» строки (lo, 127 дБ динамики). Сессия — подряд записанные строки
+   с одной осью; смена оси или кнопка New session начинает новую. Режимы: periodic — каждые period с,
+   gate — пока вход gate > 0.5, trigger — по фронту входа trig (например, выход Cron). Время — часы компьютера. */
+const SpecDB=(()=>{
+  let dbp=null;
+  const open=()=>dbp||(dbp=new Promise((res,rej)=>{
+    const rq=indexedDB.open('dsp-spectra',1);
+    rq.onupgradeneeded=e=>{
+      const db=e.target.result;
+      db.createObjectStore('sessions',{keyPath:'id',autoIncrement:true});
+      db.createObjectStore('rows',{keyPath:'id',autoIncrement:true}).createIndex('sess','sess');
+    };
+    rq.onsuccess=e=>res(e.target.result); rq.onerror=e=>rej(e.target.error);
+  }));
+  const rp=rq=>new Promise((res,rej)=>{ rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error); });
+  const tx=async(st,mode)=>(await open()).transaction(st,mode).objectStore(st);
+  return {
+    async newSession(meta){ return rp((await tx('sessions','readwrite')).add(meta)); },
+    async addRow(row){ return rp((await tx('rows','readwrite')).add(row)); },
+    async rows(sess){ return rp((await tx('rows','readonly')).index('sess').getAll(sess)); },
+    async session(id){ return rp((await tx('sessions','readonly')).get(id)); },
+    async count(){ return rp((await tx('rows','readonly')).count()); },
+    async trim(max){                                  // оставить max последних строк
+      const st=await tx('rows','readwrite'), n=await rp(st.count());
+      if(n<=max) return;
+      let k=n-max;
+      await new Promise((res,rej)=>{ const c=st.openCursor(); c.onsuccess=e=>{ const cur=e.target.result; if(!cur||k<=0) return res(); cur.delete(); k--; cur.continue(); }; c.onerror=()=>rej(c.error); });
+    },
+    async clear(){ const db=await open(); const t=db.transaction(['rows','sessions'],'readwrite'); t.objectStore('rows').clear(); t.objectStore('sessions').clear(); return new Promise(r=>t.oncomplete=r); },
+  };
+})();
+
+function saReduce(db,nb){                              // максимум по группам до nb бинов
+  const N=db.length; if(N<=nb) return Float32Array.from(db);
+  const o=new Float32Array(nb);
+  for(let k=0;k<nb;k++){ const a=Math.floor(k*N/nb), b=Math.max(a+1,Math.floor((k+1)*N/nb)); let m=-1e9; for(let i=a;i<b;i++) if(db[i]>m) m=db[i]; o[k]=m; }
+  return o;
+}
+function saPack(db){ let hi=-1e9; for(const v of db) if(v>hi) hi=v; const lo=hi-127.5, q=new Uint8Array(db.length);
+  for(let i=0;i<db.length;i++){ const v=Math.round((db[i]-lo)*2); q[i]=v<0?0:v>255?255:v; } return {lo,q}; }
+function saFlush(n){
+  const a=n.arc; if(!a || !a.k) return;
+  const N=a.A.length, db=new Float32Array(N);
+  if(n.p.acc==='max') for(let i=0;i<N;i++) db[i]=20*Math.log10(a.M[i]+1e-12);
+  else for(let i=0;i<N;i++) db[i]=10*Math.log10(a.A[i]/a.k+1e-24);
+  const red=saReduce(db,+n.p.maxBins), key=red.length+'|'+a.f0+'|'+a.f1;
+  a.A.fill(0); a.M.fill(0); a.k=0;
+  const {lo,q}=saPack(red), t=Date.now();
+  n.db=(n.db||Promise.resolve()).then(async()=>{
+    if(key!==n.skey){ n.skey=key; n.sess=await SpecDB.newSession({t0:t, f0:a.f0, f1:a.f1, nb:red.length, rf:a.rf, sr:a.sr, name:n.p.name}); n.srows=0; }
+    await SpecDB.addRow({sess:n.sess, t, lo, q});
+    n.srows++; n.total++; n.last=t;
+    if(n.total>+n.p.maxRows+50){ await SpecDB.trim(+n.p.maxRows); n.total=await SpecDB.count(); }
+  }).catch(e=>{ n.err=e.message||String(e); });
+}
+async function saExport(n,kind){
+  if(n.sess==null){ n.err='nothing recorded in this session'; return; }
+  await (n.db||Promise.resolve());
+  const [rows,ses]=await Promise.all([SpecDB.rows(n.sess),SpecDB.session(n.sess)]);
+  if(!rows.length) return;
+  const nb=ses.nb, fr=i=>ses.f0+(ses.f1-ses.f0)*i/Math.max(1,nb-1), stamp=new Date(rows[0].t).toISOString().slice(0,19).replace(/[:T]/g,'-');
+  if(kind==='csv'){
+    const head=['time_utc',...Array.from({length:nb},(_,i)=>fr(i).toFixed(ses.rf?0:1))].join(',');
+    const body=rows.map(r=>[new Date(r.t).toISOString(),...Array.from(r.q,v=>(r.lo+v/2).toFixed(1))].join(',')).join('\n');
+    dl(new Blob([head+'\n'+body],{type:'text/csv'}),'spectra-'+stamp+'.csv');
+  } else {
+    const cv=document.createElement('canvas'); cv.width=nb; cv.height=rows.length;
+    const cx=cv.getContext('2d'), im=cx.createImageData(nb,rows.length);
+    rows.forEach((r,y)=>{ for(let x=0;x<nb;x++){ const v=r.q[x]/255, o=4*(y*nb+x);      // тёмно-синий → зелёный → жёлтый → белый
+      im.data[o]=255*Math.min(1,Math.max(0,(v-.45)*3)); im.data[o+1]=255*Math.min(1,Math.max(0,(v-.2)*2.5)); im.data[o+2]=255*Math.min(1,.25+v*(v<.5?1.2:Math.max(0,1.6-v*1.6))); im.data[o+3]=255; } });
+    cx.putImageData(im,0,0);
+    cv.toBlob(b=>dl(b,'waterfall-'+stamp+'.png'),'image/png');
+  }
+}
+def({ id:'specArchive', lazy:'proc', title:'Spectrum Archive', cat:'Output',
+  ins:[{n:'spec',t:'spec'},{n:'trig',t:'num'},{n:'gate',t:'num'}],
+  outs:[{n:'rows',t:'num'},{n:'total',t:'num'}], readout:true,
+  params:[
+    {n:'run',t:'check',d:true,label:'record'},
+    {n:'mode',t:'select',opts:['periodic','gate','trigger'],d:'periodic',label:'periodic — a row every period; gate — a row every period while the gate input is high (the rest is written when it drops); trigger — on each rising edge of trig, record the next period'},
+    {n:'period',t:'range',min:1,max:3600,step:1,log:true,d:60,label:'period, s (frames inside are averaged)'},
+    {n:'acc',t:'select',opts:['mean','max'],d:'mean',label:'within a row: mean power or max hold (sporadic signals)'},
+    {n:'maxBins',t:'select',opts:['256','512','1024','2048','4096'],d:'1024',label:'bins per row (max of each group)'},
+    {n:'maxRows',t:'range',min:100,max:200000,step:100,log:true,d:20000,label:'rows kept in the browser (oldest dropped)'},
+    {n:'name',t:'text',d:'',label:'session name'},
+    {n:'csv',t:'button',label:'Export CSV',fn:n=>saExport(n,'csv')},
+    {n:'png',t:'button',label:'Export PNG waterfall',fn:n=>saExport(n,'png')},
+    {n:'new',t:'button',label:'New session',fn:n=>{ saFlush(n); n.skey=null; }},
+    {n:'clr',t:'button',label:'Clear all archived spectra',fn:n=>{ n.db=(n.db||Promise.resolve()).then(()=>SpecDB.clear()).then(()=>{ n.skey=null; n.sess=null; n.srows=0; n.total=0; }).catch(e=>{ n.err=e.message; }); }},
+  ],
+  init:n=>{ n.arc=null; n.skey=null; n.sess=null; n.srows=0; n.total=0; n.db=null; n.err=null; n.t0=Date.now(); n.prevTrig=0; n.last=0; n.sref=null; n.capEnd=0;
+    n.db=SpecDB.count().then(c=>{ n.total=c; }).catch(e=>{ n.err=e.message||String(e); }); },
+  process(n,I){
+    const s=I.spec, now=Date.now(), p=n.p, per=p.period*1000;
+    const trig=typeof I.trig==='number' ? I.trig : 0, edge=trig>0.5 && n.prevTrig<=0.5; n.prevTrig=trig;
+    const gate=typeof I.gate==='number' && I.gate>0.5;
+    if(edge && p.mode==='trigger' && p.run){ n.capEnd=now+per; n.t0=now; }
+    const active=p.run && (p.mode==='periodic' || (p.mode==='gate' && gate) || (p.mode==='trigger' && now<n.capEnd));
+    const fresh=s && (s.rev!=null ? s.rev!==n.srev || s!==n.sref : s!==n.sref);       // у fft объект тот же, меняется rev
+    if(s && s.mag && active && fresh){
+      n.sref=s; n.srev=s.rev;
+      const N=s.mag.length, [f0,f1]=specSpan(s);
+      let a=n.arc;
+      if(!a || a.A.length!==N || a.f0!==f0 || a.f1!==f1){ saFlush(n); a=n.arc={A:new Float64Array(N),M:new Float32Array(N),k:0,f0,f1,rf:!!s.freqs,sr:s.sr}; }
+      const m=s.mag, A=a.A, M=a.M;
+      for(let i=0;i<N;i++){ const v=m[i]; A[i]+=v*v; if(v>M[i]) M[i]=v; }
+      a.k++;
+    }
+    if(n.arc && n.arc.k){
+      if(p.mode==='trigger'){ if(now>=n.capEnd){ saFlush(n); } }
+      else if(now-n.t0>=per || !active){ saFlush(n); }       // окно истекло или gate опустили — отдать накопленное
+    }
+    if(p.mode!=='trigger' && (now-n.t0>=per || !active)) n.t0=now;
+    return {rows:n.srows, total:n.total};
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const kb=n.total*(+n.p.maxBins+16)/1024;
+    r.textContent=n.err ? 'storage error: '+n.err
+      : (n.p.run ? 'REC' : 'paused')+' · '+n.p.mode+' · session '+n.srows+' rows · total '+n.total+' (~'+(kb>1024?(kb/1024).toFixed(1)+' MB':kb.toFixed(0)+' KB')+')'+
+        (n.last ? ' · last '+new Date(n.last).toISOString().slice(11,19)+' UTC' : ''); }
+});
