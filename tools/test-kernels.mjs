@@ -149,6 +149,16 @@ const cases=[
   ['Signal Database: 1090 МГц, 2 МГц → ADS-B',`sdbMatch({bw:2e6,freq:1090e6},1)[0].n`,'ADS-B / Mode S'],
   ['Signal Database: 180 кГц, ±75 кГц, 100 МГц → WFM',`sdbMatch({bw:180e3,dev:75e3,freq:100e6},1)[0].n`,'Радиовещание WFM'],
   ['Signal Database: без данных — пусто',`sdbMatch({bw:0,dev:0,baud:0,freq:0}).length`,0],
+  // cron: срабатывания по crontab-правилам, время в UTC
+  ['cron: */15 — следующая после 10:07',`(()=>{ const c=cronParse('*/15 * * * *'); return new Date(cronNext(c,Date.UTC(2026,0,5,10,7)/1000,0)*1000).toISOString(); })()`,'2026-01-05T10:15:00.000Z'],
+  ['cron: 30 8 * * 1-5 — пятница вечером → понедельник',`(()=>{ const c=cronParse('30 8 * * 1-5'); return new Date(cronNext(c,Date.UTC(2026,0,9,18,0)/1000,0)*1000).toISOString(); })()`,'2026-01-12T08:30:00.000Z'],
+  ['cron: 0 0 1 */3 * — по кварталам',`(()=>{ const c=cronParse('0 0 1 */3 *'); return new Date(cronNext(c,Date.UTC(2026,1,5)/1000,0)*1000).toISOString(); })()`,'2026-04-01T00:00:00.000Z'],
+  ['cron: 0 12 13 * fri — день месяца ИЛИ день недели',`(()=>{ const c=cronParse('0 12 13 * fri'); let t=Date.UTC(2026,0,1)/1000, o=[]; for(let i=0;i<3;i++){ t=cronNext(c,t,0); o.push(new Date(t*1000).toISOString().slice(5,10)); } return o.join(); })()`,'01-02,01-09,01-13'],
+  ['cron: имена и 7 = воскресенье, список',`(()=>{ const c=cronParse('0 6 * jan,jul sun,7'); return [c.dow.size, c.dow.has(0), c.mon.size].join(); })()`,'1,true,2'],
+  ['cron: @hourly',`new Date(cronNext(cronParse('@hourly'),Date.UTC(2026,5,1,5,59,59)/1000,0)*1000).toISOString()`,'2026-06-01T06:00:00.000Z'],
+  ['cron: сдвиг зоны +3 ч (0 9 * * * по местному = 06:00 UTC)',`new Date(cronNext(cronParse('0 9 * * *'),Date.UTC(2026,5,1,0,0)/1000,10800)*1000).toISOString()`,'2026-06-01T06:00:00.000Z'],
+  ['cron: ошибки разбора',`['* * * *','61 * * * *','* * 32 * *','a b c d e','*/0 * * * *','5-2 * * * *'].map(e=>cronParse(e)===null).join()`,'true,true,true,true,true,true'],
+  ['cron: 30 февраля не бывает',`cronNext(cronParse('0 0 30 2 *'),Date.UTC(2026,0,1)/1000,0)`,null],
 ];
 
 let bad=0;

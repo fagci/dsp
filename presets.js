@@ -481,6 +481,22 @@ addEdge(ff.id,'out',nv.id,'in');
 addEdge(o.id,'out',dc.id,'L');
 markWiresDirty();
 });
+preset('Control: Cron — Scheduled Tone (Time Base ×600)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Cron fires like crontab: here every 15 minutes (*/15 * * * *), and the gate stays high for 5 minutes after each firing.\n'+
+  'Time Base runs ×600, so a virtual quarter of an hour passes in 1.5 s. Try "0 9 * * mon-fri", "30 6 1 * *" or @hourly; the readout shows the next firing.'});
+nt.size.w=620; nt.size.h=110; applySize(nt);
+const tb=addNode('timebase',40,220,{source:'manual',speed:600});
+const cr=addNode('cron',300,220,{expr:'*/15 * * * *',dur:300});
+const m=addNode('nmath',560,300,{op:'sum',k:.25});
+const o=addNode('osc',760,220,{freq:660,amp:0});
+const dc=addNode('dac',960,220,{vol:.3});
+const nv=addNode('numview',560,460,{label:'firings'});
+addEdge(tb.id,'t',cr.id,'t');
+addEdge(cr.id,'gate',m.id,'in1'); addEdge(m.id,'out',o.id,'amp'); addEdge(o.id,'out',dc.id,'L');
+addEdge(cr.id,'n',nv.id,'in');
+markWiresDirty();
+});
 preset('Control: Level Trigger (Compare, Counter, One-Shot)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'LFO swells the tone level; Level measures it in dB. Compare shows the level on its screen with the threshold\n'+

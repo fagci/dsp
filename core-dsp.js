@@ -174,3 +174,57 @@ function hackrfSweepSplit(st, bytes, fLo, fHi, cb){
   }
   if(o>0){ b.copyWithin(0, o, st.n); st.n-=o; }
 }
+
+// cron: 5 полей «мин час день мес день-недели», как у crontab.
+// Звезда, a, a-b, a-b/n, звезда/n, списки через запятую, имена mon…/jan…, 7 = воскресенье, @hourly @daily @weekly @monthly.
+// День месяца и день недели, если заданы оба, срабатывают по «или» (как в Vixie cron).
+const CRON_ALIAS={'@hourly':'0 * * * *','@daily':'0 0 * * *','@midnight':'0 0 * * *','@weekly':'0 0 * * 0','@monthly':'0 0 1 * *','@yearly':'0 0 1 1 *','@annually':'0 0 1 1 *'};
+const CRON_NAMES={sun:0,mon:1,tue:2,wed:3,thu:4,fri:5,sat:6,jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+function cronField(s,lo,hi,dow){
+  const set=new Set(); let star=true;
+  for(const part of s.toLowerCase().split(',')){
+    const m=part.match(/^(\*|[a-z0-9]+(?:-[a-z0-9]+)?)(?:\/(\d+))?$/);
+    if(!m) return null;
+    const step=m[2]?+m[2]:1; if(step<1) return null;
+    let a,b;
+    if(m[1]==='*'){ a=lo; b=hi; if(!m[2]) { /* звезда без шага */ } else star=false; }
+    else {
+      star=false;
+      const r=m[1].split('-').map(v=>v in CRON_NAMES ? CRON_NAMES[v] : /^\d+$/.test(v) ? +v : NaN);
+      a=r[0]; b=r.length>1 ? r[1] : (m[2] ? hi : a);
+      if(isNaN(a)||isNaN(b)) return null;
+    }
+    if(dow && a===7 && b===7) a=b=0;
+    const top=dow ? 7 : hi;
+    if(a<lo||b>top||a>b) return null;
+    for(let v=a;v<=b;v+=step) set.add(dow&&v===7 ? 0 : v);
+  }
+  return {set, star};
+}
+function cronParse(expr){
+  let s=String(expr||'').trim().toLowerCase();
+  s=CRON_ALIAS[s]||s;
+  const f=s.split(/\s+/);
+  if(f.length!==5) return null;
+  const mi=cronField(f[0],0,59), ho=cronField(f[1],0,23), dm=cronField(f[2],1,31), mo=cronField(f[3],1,12), dw=cronField(f[4],0,6,true);
+  if(!mi||!ho||!dm||!mo||!dw) return null;
+  return {min:mi.set, hour:ho.set, dom:dm.set, mon:mo.set, dow:dw.set, domStar:dm.star, dowStar:dw.star};
+}
+function cronDayOk(c,d){          // d — Date в «зонном» представлении (поля через getUTC*)
+  if(!c.mon.has(d.getUTCMonth()+1)) return false;
+  const a=c.dom.has(d.getUTCDate()), b=c.dow.has(d.getUTCDay());
+  return c.domStar&&c.dowStar ? true : c.domStar ? b : c.dowStar ? a : a||b;
+}
+// ближайшее срабатывание строго после t (секунды Unix); off — сдвиг зоны, с. Минутная сетка; null — нет за 5 лет
+function cronNext(c,t,off){
+  let m=Math.floor((t+off)/60)+1;               // минута в зонном времени
+  const end=m+5*366*1440;
+  while(m<end){
+    const d=new Date(m*60000);
+    if(!cronDayOk(c,d)){ m=Math.floor(m/1440+1)*1440; continue; }       // весь день мимо — на полночь
+    if(!c.hour.has(d.getUTCHours())){ m=Math.floor(m/60+1)*60; continue; }
+    if(c.min.has(d.getUTCMinutes())) return m*60-off;
+    m++;
+  }
+  return null;
+}
