@@ -16,6 +16,22 @@ ctx.self=ctx;
 for(const f of files) vm.runInContext(fs.readFileSync(path.join(root,f),'utf8'),ctx,{filename:f});
 const ev=s=>vm.runInContext(s,ctx);
 
+// PSK/QAM: символы → непрерывный RRC (формула) с дробной задержкой tau (в символах), уход несущей cfo (доля частоты символов), шум; → IQK.pskRx
+ev(`function rrcAt(x,a){ if(Math.abs(x)<1e-9) return 1-a+4*a/Math.PI;
+  if(Math.abs(Math.abs(x)-1/(4*a))<1e-9) return a/Math.SQRT2*((1+2/Math.PI)*Math.sin(Math.PI/(4*a))+(1-2/Math.PI)*Math.cos(Math.PI/(4*a)));
+  return (Math.sin(Math.PI*x*(1-a))+4*a*x*Math.cos(Math.PI*x*(1+a)))/(Math.PI*x*(1-Math.pow(4*a*x,2))); }
+function pskRun(o){ const {mod,nSym=6000,sps=4,baud=50000,tau=0.37,cfo=0,snr=99,alpha=.35,seed=5}=o, C=PSKRX[mod], sr=baud*sps;
+  let x=seed*2654435761>>>0; const rnd=()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296; };
+  const gs=()=>Math.sqrt(-2*Math.log(Math.max(rnd(),1e-12)))*Math.cos(2*Math.PI*rnd());
+  const sy=Array.from({length:nSym},()=>C.pts[Math.floor(rnd()*C.pts.length)]), L=nSym*sps;
+  const re=new Float32Array(L), im=new Float32Array(L), span=10;
+  for(let k=0;k<nSym;k++) for(let j=-span*sps;j<=span*sps;j++){ const i=k*sps+j+Math.round(sps*2); if(i<0||i>=L) continue; const g=rrcAt((j-tau*sps+Math.round(sps*2)-Math.round(sps*2))/sps,alpha); re[i]+=sy[k][0]*g; im[i]+=sy[k][1]*g; }
+  let pw=0; for(let i=0;i<L;i++) pw+=re[i]*re[i]+im[i]*im[i]; pw/=L; const sc=1/Math.sqrt(pw), sg=Math.sqrt(Math.pow(10,-snr/10)/2);
+  for(let i=0;i<L;i++){ const ph=2*Math.PI*cfo*i/sps, c=Math.cos(ph), s=Math.sin(ph), a=re[i]*sc, b=im[i]*sc; re[i]=a*c-b*s+sg*gs(); im[i]=a*s+b*c+sg*gs(); }
+  const n={p:{mod,baud,alpha,tbw:.01,cbw:.02,win:2000}}; IQK.pskRx.init(n); let out;
+  for(let i=0;i<L;i+=4096){ const K=Math.min(4096,L-i); out=IQK.pskRx.process(n,{in:{sr,fc:0,chunks:[{re:re.slice(i,i+K),im:im.slice(i,i+K),t0:i}]}},{block:K,sr}); }
+  return {evm:out.evm, mer:out.mer, foff:out.foff, lock:out.lock, n:n.cnt}; }`);
+
 const MSG='Array.from("123456789",c=>c.charCodeAt(0))';
 const bitsMsb=`${MSG}.flatMap(v=>Array.from({length:8},(_,k)=>(v>>(7-k))&1))`;
 const bitsLsb=`${MSG}.flatMap(v=>Array.from({length:8},(_,k)=>(v>>k)&1))`;
@@ -159,6 +175,13 @@ const cases=[
   ['cron: сдвиг зоны +3 ч (0 9 * * * по местному = 06:00 UTC)',`new Date(cronNext(cronParse('0 9 * * *'),Date.UTC(2026,5,1,0,0)/1000,10800)*1000).toISOString()`,'2026-06-01T06:00:00.000Z'],
   ['cron: ошибки разбора',`['* * * *','61 * * * *','* * 32 * *','a b c d e','*/0 * * * *','5-2 * * * *'].map(e=>cronParse(e)===null).join()`,'true,true,true,true,true,true'],
   ['cron: 30 февраля не бывает',`cronNext(cronParse('0 0 30 2 *'),Date.UTC(2026,0,1)/1000,0)`,null],
+  // PSK/QAM Receiver: шум задан отношением сигнал/шум на отсчёт; после согласованного фильтра символьное SNR выше на 10·lg(sps)
+  ['PSK Rx: QPSK без шума, уход несущей +1% Rb, дробный строб → захват, уход ±2 Гц, EVM < 1,5%',`(()=>{ const r=pskRun({mod:'QPSK',cfo:.01}); return [r.lock, Math.abs(r.foff-500)<2, r.evm<1.5].join(); })()`,'1,true,true'],
+  ['PSK Rx: BPSK, 8PSK без шума → EVM < 1,5%',`['BPSK','8PSK'].map(m=>{ const r=pskRun({mod:m,tau:.8,cfo:-.005}); return r.lock && r.evm<1.5 && Math.abs(r.foff+250)<2; }).join()`,'true,true'],
+  ['PSK Rx: QPSK, SNR 10 дБ на отсчёт (sps 4 → символьное 16 дБ) → EVM 15,8% ± 1',`Math.abs(pskRun({mod:'QPSK',snr:10}).evm-15.8)<1`,true],
+  ['PSK Rx: QPSK, SNR 20 дБ → EVM 5,0% ± 0,5',`Math.abs(pskRun({mod:'QPSK',snr:20}).evm-5)<.5`,true],
+  ['PSK Rx: 16QAM, уход −1%, SNR 25 дБ → захват, ±3 Гц, EVM 2,8…4%',`(()=>{ const r=pskRun({mod:'16QAM',snr:25,cfo:-.01,tau:.8}); return [r.lock, Math.abs(r.foff+500)<3, r.evm>2.8 && r.evm<4].join(); })()`,'1,true,true'],
+  ['PSK Rx: меньше 2 отсчётов на символ → отказ',`(()=>{ const n={p:{mod:'QPSK',baud:100000,alpha:.35,tbw:.01,cbw:.02,win:2000}}; IQK.pskRx.init(n); const r=IQK.pskRx.process(n,{in:{sr:150000,fc:0,chunks:[{re:new Float32Array(64),im:new Float32Array(64),t0:0}]}},{block:64,sr:150000}); return r.evm===null && !!n.ui.err; })()`,true],
 ];
 
 let bad=0;

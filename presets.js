@@ -251,6 +251,7 @@ const PRESET_CATS={
   'Measure: Signal Meter — SNR, Bandwidth, Frequency (Generator)':'Analysis & Measurement',
   'Measure: What Is This Signal — Meter + Database (Generator)':'Analysis & Measurement',
   'Control: Cron — Scheduled Tone (Time Base ×600)':'Analysis & Measurement',
+  'Measure: EVM of a QPSK Signal (Generator)':'Analysis & Measurement',
   'Measure: Scheduled Spectrum Archive (Cron → IndexedDB)':'Analysis & Measurement',
   'Control: Logic Test Bench (all blocks)':'Analysis & Measurement',
   'Indicators: Lamps, Gauge, LED Bar, Compass, Display':'Analysis & Measurement',
@@ -1077,6 +1078,22 @@ const db=addNode('sigDb',340,380,{dev:2500});
 db.size.w=520; db.size.h=260; applySize(db);
 addEdge(gn.id,'iq',mm.id,'in');
 addEdge(mm.id,'obw',db.id,'bw'); addEdge(mm.id,'freq',db.id,'freq');
+markWiresDirty();
+});
+preset('Measure: EVM of a QPSK Signal (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'PSK/QAM Receiver: matched filter, symbol timing and carrier recovery, then EVM and MER against the ideal constellation.\n'+
+  'Unknown Signal sends QPSK at 9600 Bd (no checksum or code on the air path matters here, only the modulation). Lower its level or raise its noise: EVM grows, MER falls, the constellation blurs. The carrier offset is found by the loop (± ~2 % of the symbol rate), so a real signal must be shifted close to zero first.\n'+
+  'Change the modulation to BPSK in both the generator and the receiver.'});
+nt.size.w=700; nt.size.h=150; applySize(nt);
+const gn=addNode('blindGen',40,250,{sr:'256000',off:150,mod:'QPSK',baud:9600,lvl:-20,noise:-45});
+const rx=addNode('pskRx',340,250,{mod:'QPSK',baud:9600});
+rx.size.w=560; applySize(rx);
+const cs=addNode('const2',340,420,{});
+const n1=addNode('numview',680,420,{label:'EVM, %'});
+const n2=addNode('numview',860,420,{label:'MER, dB'});
+addEdge(gn.id,'iq',rx.id,'in'); addEdge(rx.id,'out',cs.id,'iq');
+addEdge(rx.id,'evm',n1.id,'in'); addEdge(rx.id,'mer',n2.id,'in');
 markWiresDirty();
 });
 preset('Measure: SINAD of an FM Receiver (Generator)', function(){

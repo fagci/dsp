@@ -22,6 +22,20 @@ defIQ({ id:'symSlicer', title:'Symbol Slicer (4-level)', cat:'IQ', kw:'4fsk symb
           {n:'agc',t:'range',min:16,max:16384,step:16,d:256,log:true,label:'level tracking time, symbols',adv:true}]},
   n=>!n.ui ? 'no input' : n.ui.err || n.ui.sps.toFixed(2)+' samples per symbol · '+n.ui.symbols+' symbols · timing '+n.ui.timing.toFixed(3));
 
+defIQ({ id:'pskRx', title:'PSK/QAM Receiver (EVM)', cat:'Analysis', kw:'evm mer constellation bpsk qpsk 8psk 16qam symbol timing carrier recovery costas gardner',
+  ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'},{n:'evm',t:'num'},{n:'mer',t:'num'},{n:'foff',t:'num'},{n:'lock',t:'num'}],
+  params:[{n:'mod',t:'select',opts:['BPSK','QPSK','8PSK','16QAM'],d:'QPSK',label:'modulation'},
+          {n:'baud',t:'num',d:25000,label:'symbol rate, Bd (≥ 2 samples per symbol at the input)'},
+          {n:'alpha',t:'range',min:.1,max:1,step:.01,d:.35,label:'RRC roll-off'},
+          {n:'tbw',t:'range',min:.001,max:.05,step:.001,log:true,d:.01,label:'timing loop bandwidth, × symbol rate'},
+          {n:'cbw',t:'range',min:.002,max:.1,step:.001,log:true,d:.02,label:'carrier loop bandwidth, × symbol rate'},
+          {n:'win',t:'select',opts:['500','1000','2000','5000','20000'],d:'2000',label:'EVM window, symbols'}]},
+  n=>{ const u=n.ui;
+    if(!u) return 'no input';
+    if(u.err) return u.err;
+    if(u.evm==null) return 'acquiring… '+u.n+' symbols';
+    return (u.lock ? 'LOCK' : 'no lock')+' · EVM '+(u.evm*100).toFixed(2)+' % ('+(20*Math.log10(Math.max(u.evm,1e-4))).toFixed(1)+' dB) · MER '+u.mer.toFixed(1)+' dB · Δf '+(u.foff>=0?'+':'')+u.foff.toFixed(1)+' Hz'; });
+
 defIQ({ id:'symSync', title:'Symbol Sync Search', cat:'Protocols', kw:'4fsk sync word frame m17 dmr',
   ins:[{n:'in',t:'iq'}], outs:[{n:'blk',t:'blk'}],
   params:[{n:'word',t:'text',d:'55F7 FF5D 75FF DF55',label:'sync words (hex, several separated by spaces)'},
