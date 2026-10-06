@@ -11,7 +11,7 @@
 // широком диапазоне видны периодические «горбы» по шагу окна.
 
 const SAP_RES=2048, SAP_WRES=1024, SAP_ROWS=96, SAP_GAP=4, SAP_AXIS=14, SAP_TITLE=13, SAP_MAXB=128;
-const SAP_HINT='wheel — zoom · drag — pan (zoomed) · double click — reset zoom · wheel on a title — next/previous bands\n'+
+const SAP_HINT='wheel / pinch — zoom · drag — pan (zoomed) · vertical drag, Ctrl+wheel, vertical pinch — dB range of a pane · double click / double tap — reset view · wheel on a title or swipe it — next/previous bands\n'+
   'tap — marker · tap a title — retune the receiver · Shift+tap / long press / «⊘ skip» button + tap on a ▼ signal — skip it (the same on a ⊘ — return it)';
 
 // все диапазоны списка по возрастанию lo
@@ -32,9 +32,11 @@ function saPaneGet(n,b){
     const img=new ImageData(SAP_WRES,SAP_ROWS);
     for(let i=3;i<img.data.length;i+=4) img.data[i]=255;
     p={key, lo:b.lo, hi:b.hi, label:'', color:'', lv:new Float32Array(SAP_RES).fill(NaN), pk:new Float32Array(SAP_RES).fill(NaN),
+      wdb:new Float32Array(SAP_WRES*SAP_ROWS).fill(NaN), db:null,
       t:0, img, off:null, ocx:null, dirty:false, med:-120, det:null, zoom:null,
       // строка водопада достраивается полосками за проход диапазона; сдвиг — только когда она закончена (rowLv — уровни текущей строки)
       rowLv:new Float32Array(SAP_RES).fill(NaN), rowN:0, rowFull:false, rowOpen:false, rowT0:0, lastC:null, curWin:null};
+    try{ const o=JSON.parse(n.p.paneDb||'{}'); if(Array.isArray(o[key])) p.db=o[key]; }catch(e){}
     store.set(key,p);
   }
   p.label=b.label||''; p.color=b.color||''; p.step=b.step||0;
@@ -101,6 +103,32 @@ function saSkipSave(n){
   n.p.skipList=JSON.stringify(n._skipInt.map(x=>({f:Math.round(x.f),w:Math.round(x.w)})));
   saSkipSync(n); n._pnRevDraw=(n._pnRevDraw|0)+1;
 }
+// диапазон дБ панели: свой (жесты) или общий floor/top
+const saPaneRange=(n,p)=>p.db||[n.p.floor,n.p.top];
+function saDbSave(n){
+  const o={}; if(n._pnStore) for(const p of n._pnStore.values()) if(p.db) o[p.key]=p.db.map(x=>Math.round(x*10)/10);
+  n.p.paneDb=Object.keys(o).length ? JSON.stringify(o) : '';
+}
+// водопад перекрашивается из истории уровней
+function saPaneRepaint(n,p){
+  const pal=paletteLut(n.p.palette), [fl,tp]=saPaneRange(n,p), rng=(tp-fl)||1, d=p.img.data;
+  for(let i=0,o=0;i<p.wdb.length;i++,o+=4){
+    const db=p.wdb[i];
+    if(db!==db){ d[o]=d[o+1]=d[o+2]=0; continue; }
+    const hk=heatIdx((db-fl)/rng)*3; d[o]=pal[hk]; d[o+1]=pal[hk+1]; d[o+2]=pal[hk+2];
+  }
+  p.dirty=true; saPanesBump(n);
+}
+// подогнать диапазон каждой панели под её данные: от шума −8 дБ до максимума +8 дБ
+function saDbAuto(n){
+  for(const p of (n._pnStore||new Map()).values()){
+    const t=Float32Array.from(p.lv).filter(v=>v===v).sort();
+    if(t.length<8) continue;
+    const lo=t[Math.floor(t.length*.05)]-8, hi=Math.max(t[t.length-1]+8,lo+30);
+    p.db=[Math.floor(lo),Math.ceil(hi)]; saPaneRepaint(n,p);
+  }
+  saDbSave(n);
+}
 function saPeakClear(n){
   if(n._pnStore) for(const p of n._pnStore.values()) p.pk.fill(NaN);
   n._pnRevDraw=(n._pnRevDraw|0)+1;
@@ -138,10 +166,10 @@ function saPanesIngest(n,sp,src=0){
     if(idx>=0 && (idx<from || idx>=from+k)) saSetFrom(n,Math.floor(idx/k)*k,false);
   }
   const skipR=saSkipSync(n);
-  const pal=paletteLut(n.p.palette), rng=(n.p.top-n.p.floor)||1;
+  const pal=paletteLut(n.p.palette);
   for(const b of list){
     if(b.hi<sLo || b.lo>sHi) continue;
-    const p=saPaneGet(n,b), span=p.hi-p.lo;
+    const p=saPaneGet(n,b), span=p.hi-p.lo, [pfl,ptp]=saPaneRange(n,p), rng=(ptp-pfl)||1;
     const x0=Math.max(0,Math.floor((sLo-p.lo)/span*SAP_RES)), x1=Math.min(SAP_RES-1,Math.ceil((sHi-p.lo)/span*SAP_RES));
     let touched=0;
     const wcol=n._wcol||(n._wcol=new Int32Array(SAP_RES));
@@ -181,7 +209,7 @@ function saPanesIngest(n,sp,src=0){
       multiNew=already>=.5*touched && touched>=.3*Math.min(SAP_RES,(uHi-uLo)/span*SAP_RES);
     }
     if(!p.rowOpen || wrap || multiNew || (single && p.rowFull && (gap>250 || now-p.rowT0>=rowMs))){
-      d.copyWithin(row,0,row*(SAP_ROWS-1));
+      d.copyWithin(row,0,row*(SAP_ROWS-1)); p.wdb.copyWithin(SAP_WRES,0,SAP_WRES*(SAP_ROWS-1));
       p.rowLv.fill(NaN); p.rowN=0; p.rowFull=false; p.rowOpen=true; p.rowT0=now;
     }
     for(let i=0;i<touched;i++){ const x=wcol[i]; if(!(p.rowLv[x]===p.rowLv[x])) p.rowN++; p.rowLv[x]=p.lv[x]; }
@@ -190,8 +218,9 @@ function saPanesIngest(n,sp,src=0){
     for(let x=0,o=0;x<SAP_WRES;x++,o+=4){                 // верхняя строка — из rowLv (ещё не пройденное — чёрное); столбец водопада — максимум соседних
       let db=NaN;
       for(let q=0;q<k;q++){ const v=p.rowLv[x*k+q]; if(v===v && !(db>=v)) db=v; }
+      p.wdb[x]=db;
       if(db!==db){ d[o]=d[o+1]=d[o+2]=0; d[o+3]=255; continue; }
-      const hk=heatIdx((db-n.p.floor)/rng)*3;
+      const hk=heatIdx((db-pfl)/rng)*3;
       d[o]=pal[hk]; d[o+1]=pal[hk+1]; d[o+2]=pal[hk+2]; d[o+3]=255;
     }
     p.dirty=true;
@@ -258,10 +287,12 @@ const saPanesBump=n=>{ n._pnRevDraw=(n._pnRevDraw|0)+1; };
 function saPanesWire(n,cv){
   if(n._pnWired) return;
   n._pnWired=true;
+  cv.classList.add('ownpinch');                           // двухпальцевый жест не отдавать зуму холста графа
   const pt=ev=>{ const r=cv.getBoundingClientRect(); return {x:(ev.clientX-r.left)/r.width*cv.width, y:(ev.clientY-r.top)/r.height*cv.height}; };
   const inB=(b,x,y)=>x>=b.x0 && x<=b.x1 && y>=b.y0 && y<=b.y1;
-  const hit=ev=>{
-    const {x,y}=pt(ev), W=cv.width, H=cv.height, L=saPanesLayout(n,W,H);
+  const hit=ev=>{ const {x,y}=pt(ev); return hitXY(x,y); };
+  const hitXY=(x,y)=>{
+    const W=cv.width, H=cv.height, L=saPanesLayout(n,W,H);
     const i=Math.floor(x/(L.w+SAP_GAP));
     if(i<0 || i>=L.k || x-i*(L.w+SAP_GAP)>L.w || !n._pn || !n._pn[i]) return null;
     const p=n._pn[i], v=saPaneView(p), fx=(x-i*(L.w+SAP_GAP))/L.w;
@@ -289,20 +320,32 @@ function saPanesWire(n,cv){
     saPanesBump(n);
   };
   const on=(t,fn,o)=>cv.addEventListener(t,ev=>{ if(n.p.layout!=='panes') return; ev.stopImmediatePropagation(); fn(ev); },o||true);
+  // дБ-диапазон панели: свой (p.db) или общий; смена перекрашивает водопад
+  const setDb=(p,fl,tp)=>{
+    tp=clamp(tp,-200,60); fl=clamp(fl,-220,tp-10);
+    p.db=[fl,tp]; saPaneRepaint(n,p);
+  };
+  const resetView=h=>{ h.p.zoom=null; if(h.p.db){ h.p.db=null; saPaneRepaint(n,h.p); saDbSave(n); } saPanesBump(n); };
+  const scaleDb=(h,k)=>{
+    const [fl,tp]=saPaneRange(n,h.p), span=clamp((tp-fl)*k,10,200), at=tp-(h.y-h.L.plotTop)/h.L.plotH*(tp-fl);   // вокруг уровня под курсором
+    const nt=at+(h.y-h.L.plotTop)/h.L.plotH*span; setDb(h.p,nt-span,nt); saDbSave(n);
+  };
   on('wheel',ev=>{
     ev.preventDefault();
     const h=hit(ev); if(!h) return;
     if(h.y<SAP_TITLE){ saSetFrom(n,(n.p.paneFrom|0)+(ev.deltaY>0?1:-1),true); return; }
+    if(ev.ctrlKey){ scaleDb(h,ev.deltaY<0?.96:1.04); return; }
     if(ev.shiftKey){
       const span=h.v[1]-h.v[0], d=span*.15*(ev.deltaY>0?1:-1);
       if(h.p.zoom){ const a=clamp(h.v[0]+d,h.p.lo,h.p.hi-span); h.p.zoom=[a,a+span]; saPanesBump(n); }
     } else zoomBy(h,ev.deltaY<0?.96:1.04);
   },{capture:true,passive:false});
-  on('dblclick',ev=>{
-    const h=hit(ev); if(!h || h.y<SAP_TITLE) return;
+  const dbl=h=>{
     const u=n._pnMkUndo; if(u && performance.now()-u.t<600){ n.mk[u.k]=u.prev; n._pnMkUndo=null; }   // тапы двойного клика не должны ставить маркер
-    h.p.zoom=null; saPanesBump(n);
-  });
+    resetView(h);
+  };
+  on('dblclick',ev=>{ const h=hit(ev); if(h && h.y>=SAP_TITLE) dbl(h); });
+  const ptrs=n._pnPtrs||(n._pnPtrs=new Map());
   on('pointerdown',ev=>{
     const {x,y}=pt(ev);
     n._pnDrag=null;
@@ -317,36 +360,79 @@ function saPanesWire(n,cv){
       else if(b.act==='skipmode'){ n._pnSkipMode=!n._pnSkipMode; saPanesBump(n); }
       else if(b.act==='park'){ if(n.set && n.set.holdMarker) n.set.holdMarker(!n.p.holdMarker); else n.p.holdMarker=!n.p.holdMarker; saPanesBump(n); }
       else if(b.act==='pkclr'){ saPeakClear(n); saPanesBump(n); }
+      else if(b.act==='dbauto') saDbAuto(n);
       else if(b.act==='resume'){ for(let k=0;k<4;k++) n.mk[k]=null; saPanesBump(n); }                    // снять маркеры — сканер продолжает
       else { if(n.set && n.set.follow) n.set.follow(!n.p.follow); else n.p.follow=!n.p.follow; saPanesBump(n); }
       return;
     }
     const h=hit(ev); if(!h) return;
-    const d=n._pnDrag={i:h.i, x, v:h.v.slice(), moved:false, id:ev.pointerId, done:false};
+    ptrs.set(ev.pointerId,{x,y});
     try{ cv.setPointerCapture(ev.pointerId); }catch(e){}
-    // долгое нажатие на ▼ / ⊘ — пропуск (где нет Shift: телефон)
     clearTimeout(n._pnLP);
+    if(ptrs.size===2){                                   // щипок двумя пальцами: ширина — зум по частоте, высота — дБ-диапазон, сдвиг — панорама
+      const [a,b]=[...ptrs.values()], mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
+      const hh=hitXY(mx,my);
+      n._pnDrag=null;
+      if(hh){ const [fl,tp]=saPaneRange(n,hh.p);
+        n._pnPinch={i:hh.i, dx:Math.max(1,Math.abs(a.x-b.x)), dy:Math.max(1,Math.abs(a.y-b.y)), mx, my, v:hh.v.slice(), f:hh.f, fl, tp, L:hh.L, x0:hh.x0}; }
+      return;
+    }
+    if(ptrs.size>2) return;
+    const d=n._pnDrag={i:h.i, x, y, v:h.v.slice(), moved:false, axis:null, id:ev.pointerId, done:false, title:h.y<SAP_TITLE, db:saPaneRange(n,h.p).slice()};
+    // долгое нажатие на ▼ / ⊘ — пропуск (где нет Shift: телефон)
     if(h.y>=SAP_TITLE){
       const t=near(h);
       if(t.det||t.sk) n._pnLP=setTimeout(()=>{ if(n._pnDrag===d && !d.moved){ d.done=true; skipToggle(t,h.p); } },550);
     }
   });
   on('pointermove',ev=>{
+    const {x,y}=pt(ev), q=ptrs.get(ev.pointerId); if(q){ q.x=x; q.y=y; }
+    const pc=n._pnPinch;
+    if(pc && ptrs.size>=2){
+      const [a,b]=[...ptrs.values()], p=n._pn[pc.i]; if(!p) return;
+      const mx=(a.x+b.x)/2, my=(a.y+b.y)/2, L=pc.L;
+      if(pc.dx>24){                                     // частота: масштаб по расстоянию по x, точка под центром щипка остаётся под ним
+        const span0=pc.v[1]-pc.v[0], full=p.hi-p.lo, ns=clamp(span0*pc.dx/Math.max(1,Math.abs(a.x-b.x)),full/SAP_RES*24,full);
+        let lo=pc.f-(mx-pc.x0)/L.w*ns, hi=lo+ns;
+        if(lo<p.lo){ hi+=p.lo-lo; lo=p.lo; } if(hi>p.hi){ lo-=hi-p.hi; hi=p.hi; }
+        p.zoom=ns>=full*.999 ? null : [Math.max(p.lo,lo),Math.min(p.hi,hi)];
+      }
+      if(pc.dy>24){                                     // уровень: то же по y
+        const span0=pc.tp-pc.fl, ns=clamp(span0*pc.dy/Math.max(1,Math.abs(a.y-b.y)),10,200);
+        const at=pc.tp-(pc.my-L.plotTop)/L.plotH*span0, nt=at+(my-L.plotTop)/L.plotH*ns;
+        setDb(p,nt-ns,nt);
+      }
+      saPanesBump(n); return;
+    }
     const d=n._pnDrag;
     if(d){
-      const {x}=pt(ev), p=n._pn[d.i], L=saPanesLayout(n,cv.width,cv.height);
-      if(Math.abs(x-d.x)>3){ d.moved=true; clearTimeout(n._pnLP); }
-      if(d.moved && p && p.zoom){                                 // панорама увеличенной панели
-        const span=d.v[1]-d.v[0], a=clamp(d.v[0]-(x-d.x)/L.w*span,p.lo,p.hi-span);
+      const p=n._pn[d.i], L=saPanesLayout(n,cv.width,cv.height), dx=x-d.x, dy=y-d.y;
+      if(Math.abs(dx)>3 || Math.abs(dy)>3){ d.moved=true; clearTimeout(n._pnLP); }
+      if(!d.axis && (Math.abs(dx)>6 || Math.abs(dy)>6)) d.axis=Math.abs(dx)>=Math.abs(dy)?'x':'y';
+      if(!p || d.title) return;
+      if(d.axis==='x' && p.zoom){                       // панорама увеличенной панели
+        const span=d.v[1]-d.v[0], a=clamp(d.v[0]-dx/L.w*span,p.lo,p.hi-span);
         p.zoom=[a,a+span]; saPanesBump(n);
+      } else if(d.axis==='y'){                          // вертикальное перетаскивание сдвигает дБ-диапазон панели
+        const k=(d.db[1]-d.db[0])/L.plotH;
+        setDb(p,d.db[0]+dy*k,d.db[1]+dy*k);
       }
       return;
     }
     n._pnHover=hit(ev); saPanesBump(n);
   });
   on('pointerup',ev=>{
+    ptrs.delete(ev.pointerId);
+    if(n._pnPinch){ if(ptrs.size<2){ n._pnPinch=null; saDbSave(n); n._pnDrag=null; } return; }
     const d=n._pnDrag; n._pnDrag=null; clearTimeout(n._pnLP);
-    if(!d || d.moved || d.done) return;
+    if(!d) return;
+    if(d.axis==='y' && !d.title) saDbSave(n);
+    if(d.title && d.moved){                              // смахивание по заголовку — листание страниц
+      const {x}=pt(ev), k=Math.max(1,n.p.panes|0);
+      if(Math.abs(x-d.x)>40) saSetFrom(n,(n.p.paneFrom|0)+(x<d.x?k:-k),true);
+      return;
+    }
+    if(d.moved || d.done) return;
     const h=hit(ev); if(!h || h.i!==d.i) return;
     if(h.y<SAP_TITLE){ n._steer=(h.v[0]+h.v[1])/2; n._pnSel=h.i; }   // заголовок — перестроить приёмник на панель
     else {
@@ -354,13 +440,17 @@ function saPanesWire(n,cv){
       if((ev.shiftKey || n._pnSkipMode) && (det||sk)){              // Shift+тап или режим ⊘: цель — в список пропуска, ⊘ — обратно
         skipToggle({det,sk},h.p); return;
       }
-      // двойной клик (сброс зума) — это два тапа: запоминаем маркер до первого и вернём его в dblclick
+      // двойной клик / двойной тап (сброс вида) — это два тапа: запоминаем маркер до первого и вернём его
       const u=n._pnMkUndo, tnow=performance.now();
       if(u && tnow-u.t<500 && u.k===n.active-1) u.t=tnow; else n._pnMkUndo={k:n.active-1, prev:n.mk[n.active-1], t:tnow};
+      const lt=n._pnTap;
+      if(ev.pointerType==='touch' && lt && lt.i===h.i && tnow-lt.t<350 && Math.abs(lt.x-h.x)<20){ n._pnTap=null; dbl(h); return; }   // на телефоне dblclick не приходит
+      n._pnTap={i:h.i, x:h.x, t:tnow};
       n.mk[n.active-1]=det ? det.f : h.f;                           // обычный тап — активный маркер (на цель — точно на неё)
     }
     saPanesBump(n);
   });
+  on('pointercancel',ev=>{ ptrs.delete(ev.pointerId); n._pnPinch=null; n._pnDrag=null; clearTimeout(n._pnLP); },false);
   on('pointerleave',()=>{ n._pnHover=null; saPanesBump(n); },false);
   cv.title=SAP_HINT;
 }
@@ -369,10 +459,13 @@ function saPanesWire(n,cv){
 function saPanesDraw(n,cv,cx){
   const W=cv.width, H=cv.height;
   saPanesWire(n,cv);
+  cv.style.touchAction='none';
+  const rk=n.p.floor+'|'+n.p.top+'|'+n.p.palette;                // общий диапазон/палитра сменились — перекрасить водопады
+  if(n._pnRk!==rk){ if(n._pnRk!==undefined) for(const p of (n._pnStore||new Map()).values()) saPaneRepaint(n,p); n._pnRk=rk; }
   n.pickT=null; n._wfVis=false; saWfPlace(n);            // GL-водопад одиночного режима прячем
   saSkipSync(n);
   const panes=saPaneState(n), list=n._pl||[], now=performance.now();
-  const key=W+'|'+H+'|'+cv.pxGen+'|'+n._pnRevDraw+'|'+panes.map(p=>p.key+':'+p.zoom).join(',')+'|'+n._pnSel+'|'+n.p.floor+'|'+n.p.top+'|'+
+  const key=W+'|'+H+'|'+cv.pxGen+'|'+n._pnRevDraw+'|'+panes.map(p=>p.key+':'+p.zoom).join(',')+'|'+n._pnSel+'|'+n.p.floor+'|'+n.p.top+'|'+panes.map(p=>p.db).join(';')+'|'+
     n.p.split+'|'+n.p.peakHold+'|'+n.p.grid+'|'+n.mk+'|'+n.active+'|'+n.p.detect+'|'+n.p.detThr+'|'+n.p.paneFrom+'|'+n.p.follow+'|'+n._pnSkipMode+'|'+n.p.holdMarker+'|'+n._pnHoldF;
   if(key===n._pnDrawKey && now-(n._pnDrawT||0)<500) return;
   n._pnDrawKey=key; n._pnDrawT=now;
@@ -387,11 +480,12 @@ function saPanesDraw(n,cv,cx){
     cx.textAlign='left'; cx.textBaseline='alphabetic'; return;
   }
   const L=saPanesLayout(n,W,H), hw=H-L.hs, wins=(n._pnSrc||[]).filter(x=>x&&x.sp).map(x=>specSpan(x.sp));
-  const rng=(n.p.top-n.p.floor)||1;
-  const yOf=db=>L.plotTop+L.plotH*(1-clamp((db-n.p.floor)/rng,0,1));
+  let yOf=null;
   cx.font='10px sans-serif';
   panes.forEach((p,i)=>{
     const x0=Math.round(i*(L.w+SAP_GAP)), w=Math.round(L.w), v=saPaneView(p), vs=v[1]-v[0], pspan=p.hi-p.lo;
+    const [pfl,ptp]=saPaneRange(n,p), prng=(ptp-pfl)||1;
+    yOf=db=>L.plotTop+L.plotH*(1-clamp((db-pfl)/prng,0,1));
     const X=f=>x0+(f-v[0])/vs*w;
     // водопад (для увеличения — вырезка из накопленной картинки)
     if(p.dirty){
@@ -497,7 +591,7 @@ function saPanesDraw(n,cv,cx){
       cx.textAlign='left'; cx.fillText(tl,x0+3,L.hs-3);
       cx.textAlign='right'; cx.fillText(th,x0+w-3,L.hs-3);
     } else { cx.textAlign='center'; cx.fillText(tm,x0+w/2,L.hs-3); }
-    if(i===0){ cx.textAlign='right'; cx.fillText(Math.round(n.p.top)+'',x0+w-3,L.plotTop+9); cx.fillText(Math.round(n.p.floor)+'',x0+w-3,L.plotTop+L.plotH-2); }
+    if(i===0 || p.db){ cx.textAlign='right'; cx.fillText(Math.round(ptp)+'',x0+w-3,L.plotTop+9); cx.fillText(Math.round(pfl)+'',x0+w-3,L.plotTop+L.plotH-2); }
     cx.restore();
     // граница: активное окно приёмника в этой панели / выбранная
     const live=p.t && now-p.t<1200 && wins.some(w=>!(p.hi<w[0] || p.lo>w[1]));   // окно любого приёмника сейчас в этой панели
@@ -535,6 +629,7 @@ function saPanesDraw(n,cv,cx){
     if(n._pnHoldF!=null) items.push({t:'▶ resume', act:'resume', col:acc2});
     items.push({t:(n.p.holdMarker?'● ':'○ ')+'⏸ park', act:'park', col:n.p.holdMarker?acc2:dim});
     if(n.p.peakHold) items.push({t:'⌫ peak', act:'pkclr', col:dim});
+    items.push({t:'⇕ dB', act:'dbauto', col:dim});
     if(n.p.detect) items.push({t:(n._pnSkipMode?'● ':'○ ')+'⊘ skip', act:'skipmode', col:n._pnSkipMode?acc2:dim});
     if(paged) items.push({t:'◀',act:'prev'},{t:(from+1)+'–'+(from+panes.length)+' / '+list.length,col:dim},{t:'▶',act:'next'},
       {t:(n.p.follow?'● ':'○ ')+'follow',act:'follow',col:n.p.follow?acc:dim});

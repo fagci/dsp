@@ -1790,6 +1790,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'holdMarker',t:'check',d:false,label:'panes: park the scanner on a marker (until it is cleared)'},
           {n:'skipClear',t:'button',label:'Clear skipped signals',fn:n=>{ if(typeof saSkipClear==='function') saSkipClear(n); }},
           {n:'skipList',t:'text',d:'',hidden:true},
+          {n:'paneDb',t:'text',d:'',hidden:true},
           {n:'snap',t:'check',d:true,label:'snap to band plan step',adv:true},
           // выключить — тот же жест, что и "очистить": незачем отдельная кнопка (см. fn у 'check' в core-graph.js)
           {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold){ n.peak=null; if(typeof saPeakClear==='function') saPeakClear(n); } }},
@@ -1998,6 +1999,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     for(let k=1;k<=4;k++) for(const q of ['f','db','snr','fr']) mo[q+k]=o[q+k];
     return o; },
   draw(n,cv,cx){
+    cv.style.touchAction=n.p.layout==='panes' ? 'none' : '';
     if(n.p.layout==='panes') return saPanesDraw(n,cv,cx);
     const W=cv.width,H=cv.height;
     if(saSkipDraw(n,cv)) return;                     // ничего не изменилось — канва держит прошлый кадр
