@@ -417,7 +417,13 @@ const Eng = {
     const reps=Math.max(1,this.turbo|0);
     for(let r=0;r<reps;r++){                        // ускоренный прогон: несколько блоков за такт
       for(const o of this.outs) o.fill(0);
-      for(const n of Graph.order) evalNode(n);
+      if(Prof.on){
+        for(const n of Graph.order){
+          if(n._frozen || (Prof.skip && n._dead)) continue;
+          const a=performance.now(); evalNode(n); const dt=performance.now()-a;
+          n._pAcc=(n._pAcc||0)+dt; Prof.tot.p+=dt;
+        }
+      } else for(const n of Graph.order) if(!n._frozen && !(Prof.skip && n._dead)) evalNode(n);
       this.blocks++; }
     // В SAB-режиме — прямая запись в общую память (см. pumpSAB/start). Иначе — transfer воркету,
     // как раньше: без .slice() тут нет лишней копии, postMessage и так клонирует то, что не transferable.
@@ -605,6 +611,23 @@ function topoOrder(nodes,edges,map){                 // топосорт, цик
   return res.map(id=>map[id]).concat(nodes.filter(n=>!seen.has(n.id)));
 }
 
+/* ---- энергопрофиль ----
+   skip — не считать узлы, результат которых никому не нужен: ни отрисовки, ни проводов к нужным узлам.
+   on — копить время process()/draw() по узлам (мс на узел), панель power в modules/power.js. */
+const Prof={ on:false, skip:true, t0:0, tot:{p:0,d:0} };
+try{ if(localStorage.getItem('dsp-skip')==='0') Prof.skip=false; }catch(e){}
+const PROF_ROOT_CATS=new Set(['Output','Sources','Control']);   // побочные эффекты (звук, устройства, управление) — всегда нужны
+function markLive(nodes,edges,map){
+  const live=new Set(), ins=new Map();
+  for(const e of edges){ let a=ins.get(e.to); if(!a) ins.set(e.to,a=[]); a.push(e.from); }
+  const stack=[];
+  for(const n of nodes){
+    const d=MOD[n.type];
+    if(!d || d.draw || d.always || PROF_ROOT_CATS.has(d.cat) || !portsOf(n,'outs').length || n._isl){ live.add(n.id); stack.push(n.id); }
+  }
+  while(stack.length){ const id=stack.pop(); for(const f of ins.get(id)||[]) if(!live.has(f)){ live.add(f); stack.push(f); } }
+  for(const n of nodes) n._dead=!live.has(n.id);
+}
 /* ---- вспомогательное ---- */
 function buf(n,name){ (n.b||(n.b={})); return n.b[name] || (n.b[name] = new Float32Array(BLOCK)); }
 // pv, clamp, fft, window_, biquadCoef, iqStream… — в core-dsp.js
