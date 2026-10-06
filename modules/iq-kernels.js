@@ -1049,6 +1049,123 @@ function meterAnalyze(n,S,N,A){
   return {snr:10*Math.log10(sig/nb), obw, bwx, offset, carrier, level:10*Math.log10(sig), noise:10*Math.log10(pn*N/sr), pn, bin, nbins:wd};
 }
 
+/* ---- IQ Delay ---- */
+// y[n] = x[n − D − 16], D = целая часть + дробная (окно Ханна · sinc, 32 отвода) и сдвиг фазы. Фильтр каузален, поэтому у него постоянная
+// групповая задержка 16 отсчётов: чтобы сравнить с чем-то, пропускайте второй поток через такой же узел с delay = 0. Для калибровки и проверки мультиприёмника.
+IQK.iqDelay={
+  init(n){ n.hr=null; n.hi=null; n.key=''; },
+  process(n,I){
+    const s=iqIn(I,'in');
+    if(!s){ n.ui=null; return {out:null}; }
+    const D=Math.max(0,+n.p.delay), Di=Math.floor(D), f=D-Di, H=Math.max(64,Di+40), key=H+'';
+    if(key!==n.key){ n.key=key; n.hr=new Float32Array(H); n.hi=new Float32Array(H); }
+    const t=new Float32Array(32);                      // j = −15…16: x[m], m = n − Di − j, вес sinc(j − f)
+    for(let j=-15;j<=16;j++){ const x=j-f, w=0.5+0.5*Math.cos(Math.PI*x/17); t[j+15]=(Math.abs(x)<1e-9 ? 1 : Math.sin(Math.PI*x)/(Math.PI*x))*w; }
+    const ph=(+n.p.phase||0)*Math.PI/180, cp=Math.cos(ph), sp=Math.sin(ph);
+    const o=iqStream(n,'out',s.sr,s.fc);
+    for(const c of s.chunks){
+      const xr=c.re, xi=iqChunkIm(c), K=xr.length;
+      const br=new Float32Array(H+K), bi=new Float32Array(H+K); br.set(n.hr); br.set(xr,H); bi.set(n.hi); bi.set(xi,H);
+      const yr=new Float32Array(K), yi=new Float32Array(K);
+      for(let i=0;i<K;i++){
+        let a=0, b=0; const base=H+i-Di-16;               // m = n − Di − 16 − j ≤ n − 1: только прошлые отсчёты
+        for(let j=-15;j<=16;j++){ const g=t[j+15], m=base-j; if(m>=0){ a+=g*br[m]; b+=g*bi[m]; } }
+        yr[i]=a*cp-b*sp; yi[i]=a*sp+b*cp;
+      }
+      n.hr.set(br.subarray(K)); n.hi.set(bi.subarray(K));
+      iqPush(o,yr,yi,c.tag);
+    }
+    n.ui={D, phase:+n.p.phase||0};
+    return {out:o};
+  }};
+
+/* ---- Cross-Correlator (TDOA / интерферометр) ---- */
+// Два IQ-потока одной частоты дискретизации (два донгла на общем источнике: антенна + делитель, шумовой генератор, либо два приёмника
+// одного сигнала). Блоки по N отсчётов (по порядку поступления) → кросс-спектр S = conj(A)·B (окно Ханна).
+// Целая задержка — пик Σ|IFFT(S)|² за avg блоков в диапазоне ±maxLag; дробная — по наклону фазы S между соседними бинами,
+// Σ S[k]·e^{+j2πk·l/N}·conj(S[k−1]·…) за те же блоки: общая случайная фаза блока (расхождение гетеродинов) сокращается, а при слабом
+// сигнале выигрыш по шуму такой же, как у корреляции. Знак: b[n] = a[n − d] → d > 0. Фаза — остаток после снятия задержки (разность
+// фаз несущих a и b), для интерферометра по узкополосному сигналу; когерентность — нормированная корреляция в пике.
+// Дрейф: наклон задержки по времени → разность частот дискретизации, ppm.
+const XC_C0=299792458;
+IQK.xcorr={
+  init(n){ n.qa=[]; n.qb=[]; n.na=0; n.nb=0; n.key=''; n.ui=null; n.hist=[]; },
+  process(n,I){
+    const a=iqIn(I,'a'), b=iqIn(I,'b');
+    const none={delay:null, dist:null, bearing:null, phase:null, coh:null, drift:null};
+    if(!a || !b){ n.ui=null; n.qa=[]; n.qb=[]; n.na=0; n.nb=0; return none; }
+    if(a.sr!==b.sr){ n.ui={err:'sample rates differ ('+a.sr+' / '+b.sr+')'}; return none; }
+    const sr=a.sr, N=+n.p.size, avg=+n.p.avg, L=Math.min(+n.p.maxLag, (N>>1)-4);
+    const key=N+'|'+sr;
+    if(key!==n.key){
+      n.key=key; n.win=window_('hann',N); n.P=new Float64Array(N); n.k=0; n.S=[]; n.t=0; n.hist=[]; n.res=null;
+      n.qa=[]; n.qb=[]; n.na=0; n.nb=0;
+    }
+    for(const c of a.chunks){ n.qa.push([c.re, iqChunkIm(c)]); n.na+=c.re.length; }
+    for(const c of b.chunks){ n.qb.push([c.re, iqChunkIm(c)]); n.nb+=c.re.length; }
+    const take=(q,cnt)=>{ const r=new Float32Array(N), m=new Float32Array(N); let i=0;
+      while(i<N){ const [x,y]=q[0], c=Math.min(x.length,N-i); r.set(x.subarray(0,c),i); m.set(y.subarray(0,c),i); i+=c;
+        if(c===x.length) q.shift(); else q[0]=[x.subarray(c),y.subarray(c)]; } return [r,m]; };
+    while(n.na>=N && n.nb>=N){
+      const [ar,ai]=take(n.qa), [br,bi]=take(n.qb); n.na-=N; n.nb-=N; n.t+=N;
+      let ea=0, eb=0; const w=n.win;
+      for(let i=0;i<N;i++){ ar[i]*=w[i]; ai[i]*=w[i]; br[i]*=w[i]; bi[i]*=w[i]; ea+=ar[i]*ar[i]+ai[i]*ai[i]; eb+=br[i]*br[i]+bi[i]*bi[i]; }
+      fft(ar,ai); fft(br,bi);
+      const sr_=new Float32Array(N), si_=new Float32Array(N);
+      for(let k=0;k<N;k++){ sr_[k]=ar[k]*br[k]+ai[k]*bi[k]; si_[k]=ar[k]*bi[k]-ai[k]*br[k]; }   // conj(A)·B
+      n.S.push([sr_.slice(),si_.slice(),Math.sqrt(ea*eb)]);
+      fft(si_,sr_);                                    // N·IDFT(S): re→sr_, im→si_
+      for(let l=0;l<N;l++) n.P[l]+=(sr_[l]*sr_[l]+si_[l]*si_[l])/(N*N);
+      if(++n.k>=avg){ xcFinish(n,N,L,sr); n.k=0; n.S=[]; n.P.fill(0); }
+    }
+    const r=n.res;
+    if(!r){ n.ui=null; return none; }
+    const d=r.delay-(+n.p.offs||0);
+    let ph=r.phase-(+n.p.phoff||0); ph=((ph+540)%360)-180;
+    const dist=d/sr*XC_C0, base=+n.p.base, bearing=base>0 ? Math.asin(Math.max(-1,Math.min(1,dist/base)))*180/Math.PI : null;
+    n.ui={raw:{delay:r.delay, phase:r.phase}, delay:d, dist, bearing, phase:ph, coh:r.coh, drift:r.drift, sr, n:r.n};
+    return {delay:d, dist, bearing, phase:ph, coh:r.coh, drift:r.drift};
+  }};
+function xcFinish(n,N,L,sr){
+  // целая задержка — максимум накопленной мощности корреляции в ±L
+  const P=n.P; let l0=0, pk=-1;
+  for(let l=-L;l<=L;l++){ const v=P[(l+N)%N]; if(v>pk){ pk=v; l0=l; } }
+  // дробная — наклон фазы кросс-спектра: от грубого к точному. На каждой ступени (лаг m бинов: 1, 8, 64, 512) кросс-спектр уже
+  // повёрнут на найденную задержку, остаток мал, и фаза Σ S[k]·conj(S[k−m]) = −2π·m·δ/N однозначна; длинный лаг даёт большое «плечо»
+  // (ошибка падает ~ в m раз), короткий — страхует от неоднозначности. Общая фаза блока при произведении сокращается.
+  let delay=l0;
+  const cs=new Float64Array(N), sn=new Float64Array(N);
+  for(const m of [1,8,64,512]){
+    if(m>N/4) break;
+    for(let k=0;k<N;k++){ const a=2*Math.PI*(k<N/2 ? k : k-N)*delay/N; cs[k]=Math.cos(a); sn[k]=Math.sin(a); }
+    let tr=0, ti=0;
+    for(const [xr,xi] of n.S){
+      for(let k=m;k<N;k++){
+        if((k<N/2)!==(k-m<N/2)) continue;               // пара через стык отрицательных и положительных частот
+        const cr=xr[k]*cs[k]-xi[k]*sn[k], ci=xr[k]*sn[k]+xi[k]*cs[k], qr=xr[k-m]*cs[k-m]-xi[k-m]*sn[k-m], qi=xr[k-m]*sn[k-m]+xi[k-m]*cs[k-m];
+        tr+=cr*qr+ci*qi; ti+=ci*qr-cr*qi;
+      }
+    }
+    delay-=Math.atan2(ti,tr)*N/(2*Math.PI*m);
+  }
+  // остаточная общая фаза (Σ по всем блокам с общей фазой блока не складывается — берём фазу суммы по блокам после снятия задержки
+  // и фазы самого блока) и когерентность: |Σk S[k]·e^{j2πk·d/N}| / (N·√(Ea·Eb)) по блокам
+  let cohSum=0, pr_=0, pi_=0;
+  for(const [xr,xi,en] of n.S){
+    let ar=0, ai=0;
+    for(let k=0;k<N;k++){ const a=2*Math.PI*(k<N/2 ? k : k-N)*delay/N, c=Math.cos(a), s2=Math.sin(a); ar+=xr[k]*c-xi[k]*s2; ai+=xr[k]*s2+xi[k]*c; }
+    cohSum+=en>0 ? Math.hypot(ar,ai)/(N*en) : 0;
+    pr_+=ar; pi_+=ai;                                  // сумма по блокам: фаза осмысленна, если гетеродины a и b когерентны (общий опорный генератор)
+  }
+  const coh=Math.min(1,cohSum/n.S.length);
+  // дрейф: линейная регрессия задержки по времени (последние 12 оценок)
+  const h=n.hist; h.push([n.t/sr, delay]); if(h.length>12) h.shift();
+  let drift=null;
+  if(h.length>=6){ const m=h.length; let st=0, sd=0, stt=0, std=0; for(const [t,d] of h){ st+=t; sd+=d; stt+=t*t; std+=t*d; }
+    const den=m*stt-st*st; if(den>0) drift=(m*std-st*sd)/den/sr*1e6; }
+  n.res={delay, phase:Math.atan2(pi_,pr_)*180/Math.PI, coh, drift, n:n.S.length};
+}
+
 /* ---- Mode S / ADS-B: общее для демодулятора, декодера и генератора ---- */
 // CRC-24 Mode S (полином 0xFFF409); остаток = CRC(данные) ^ последние 3 байта
 const MODES_CRC_T=(()=>{ const t=new Uint32Array(256);

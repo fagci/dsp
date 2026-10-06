@@ -251,6 +251,7 @@ const PRESET_CATS={
   'Measure: Signal Meter — SNR, Bandwidth, Frequency (Generator)':'Analysis & Measurement',
   'Measure: What Is This Signal — Meter + Database (Generator)':'Analysis & Measurement',
   'Control: Cron — Scheduled Tone (Time Base ×600)':'Analysis & Measurement',
+  'Measure: Cross-Correlator — Delay Between Two Receivers (Generator)':'Analysis & Measurement',
   'Measure: Channel Activity — Occupancy Log (Generator)':'Analysis & Measurement',
   'Measure: EVM of a QPSK Signal (Generator)':'Analysis & Measurement',
   'Measure: Scheduled Spectrum Archive (Cron → IndexedDB)':'Analysis & Measurement',
@@ -1112,6 +1113,23 @@ const cl=addNode('chanLog',820,640,{});
 cl.size.w=520; cl.size.h=300; applySize(cl);
 addEdge(g1.id,'iq',ad.id,'a'); addEdge(g2.id,'iq',ad.id,'b'); addEdge(ad.id,'out',sp.id,'in');
 addEdge(sp.id,'spec',si.id,'spec'); addEdge(si.id,'bands',cl.id,'bands');
+markWiresDirty();
+});
+preset('Measure: Cross-Correlator — Delay Between Two Receivers (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Cross-Correlator measures the delay of receiver b relative to a, the phase left after removing it, the coherence and (given the antenna baseline) a bearing.\n'+
+  'One noise source feeds a and b through two IQ Delay nodes (both have the same fixed latency of 16 samples; b has 3.37 more): change the delay and read it back. With two real dongles on a splitter and a noise source, press Zero first, then connect the antennas.\n'+
+  'The source here is full-band noise, so the reading is good to ~0.1 sample; a band-limited source (up to ~0.4 of the sample rate) reads better.'});
+nt.size.w=720; nt.size.h=150; applySize(nt);
+const g=addNode('iqGen',40,250,{sr:'256000',fc:100000000,mode:'off',noise:-25});
+const d0=addNode('iqDelay',300,250,{delay:0});
+const dl=addNode('iqDelay',300,420,{delay:3.37});
+const xc=addNode('xcorr',580,250,{});
+xc.size.w=620; applySize(xc);
+const n1=addNode('numview',580,430,{label:'delay, samples'});
+const n2=addNode('numview',780,430,{label:'coherence'});
+addEdge(g.id,'iq',d0.id,'in'); addEdge(d0.id,'out',xc.id,'a'); addEdge(g.id,'iq',dl.id,'in'); addEdge(dl.id,'out',xc.id,'b');
+addEdge(xc.id,'delay',n1.id,'in'); addEdge(xc.id,'coh',n2.id,'in');
 markWiresDirty();
 });
 preset('Measure: SINAD of an FM Receiver (Generator)', function(){
