@@ -3260,10 +3260,13 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
     // Центр окна приёмника может не совпадать с запрошенной частотой (dcShift, AM/SSB — смещение sr/4): иначе слева от
     // каждого окна остаётся дыра, а узкий диапазон вовсе мимо окна. Смещение — из freqLo/freqHi после установки; запрашиваем
     // freq − off, чтобы окно стояло ровно на curFreq. Принимаем, когда два замера подряд совпали и укладываются в окно.
+    // Смещение бывает только двух видов: 0 или sr/4 (dcShift, AM/SSB). Остальное — устаревшие freqLo/freqHi сразу после перестройки
+    // (окно ещё прежнее): их принимать нельзя — окна «прыгают» и узор повторяется.
     const measureOff=()=>{
       if(typeof I.freqLo!=='number' || typeof I.freqHi!=='number') return false;
-      const m=(I.freqLo+I.freqHi)/2-(n.curFreq-n.off);
-      if(Math.abs(m)>full/2){ n._offM=null; return false; }
+      const m0=(I.freqLo+I.freqHi)/2-(n.curFreq-n.off);
+      const m=Math.abs(m0)<=Math.abs(m0-full/4) ? 0 : Math.round(full/4);
+      if(Math.abs(m0-m)>2000){ n._offM=null; return false; }
       const ok=n._offM!=null && Math.abs(m-n._offM)<2000;
       n._offM=m;
       if(ok && Math.abs(m-n.off)>1000){ n.off=Math.round(m); return true; }
