@@ -764,6 +764,32 @@ addEdge(sa.id,'f1',rx.id,'tuneFreq');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
 markWiresDirty();
 });
+preset('USB SDR: Channel Scan (Channel Scanner + squelch)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Channel list (Table) → Channel Scanner → SDR. The scanner groups the channels into the fewest receiver windows\n'+
+  '(dead zone at the window edges is set by «edge, %»), retunes the receiver only between windows and steps through the channels\n'+
+  'of a window by the digital tuner. The SDR squelch (sqOpen) holds the scan on an active channel: «hang» ms after it closes,\n'+
+  '«timeout» ms at most. The «Scan skip» table is a blacklist (rows with freq or lo / hi). Set the demodulator to match the list.'});
+nt.size.w=560; nt.size.h=130; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:150000000,sql:'SNR',sqlSnr:8});
+const bp=addNode('table',360,260,{list:'presets/Utility / services (RU)',initial:false});
+bp.size.w=340; bp.size.h=200; applySize(bp);
+const cs=addNode('chanscan',740,260,{edge:10,settle:100,dwell:80,hang:2000,timeout:30000});
+cs.size.w=320; cs.size.h=200; applySize(cs);
+const sk=addNode('table',40,520,{list:'Scan skip',initial:false});
+sk.size.w=300; sk.size.h=220; applySize(sk);
+const sa=addNode('sa',1080,40,{auto:true,floor:-90,top:-20,split:.4});
+sa.size.w=700; sa.size.h=420; applySize(sa);
+const dc=addNode('dac',740,520,{vol:.4});
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(bp.id,'bands',cs.id,'bands'); addEdge(sk.id,'bands',cs.id,'skip');
+addEdge(rx.id,'freqLo',cs.id,'freqLo'); addEdge(rx.id,'freqHi',cs.id,'freqHi');
+addEdge(rx.id,'sqOpen',cs.id,'active');
+addEdge(cs.id,'freq',rx.id,'freq'); addEdge(cs.id,'tune',rx.id,'tuneFreq');
+addEdge(cs.id,'plan',sa.id,'bands');
+addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
+markWiresDirty();
+});
 preset('USB SDR: Auto Scan (CFAR + Band Scanner)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the band plan in windows of the SDR span;\n'+
