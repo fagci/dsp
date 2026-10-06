@@ -795,7 +795,7 @@ preset('USB SDR: Channel Scan + Decoder Switch (digital voice / analog)', functi
 clearAll();
 const nt=addNode('note',40,40,{text:'Channel Scanner stops on an active channel (IQ Squelch). Decoder Switch then sends the channel IQ to one branch at a time:\n'+
   'branch 1 — Digital Voice Decoder (DMR, P25, NXDN, YSF, D-STAR, dPMR, M17 by sync words) → Vocoder (mbelib) → sound; branch 2 — FM audio.\n'+
-  'Branch 1 is tried first; when its decoder produces voice frames the switch locks on it until they stop («keep» ms),\n'+
+  'Branch 1 is tried first; when the decoder syncs on any protocol (voice or data — its lock output) the switch stays on it until the sync is lost («keep» ms),\n'+
   'when nothing is recognised in «time on a branch» ms the transmission is played as analog FM until the signal ends. Add more decoders on branches 3–4\n'+
   '(wire their rec output to ev3 / ev4, rename the branches). Put the channels (freq column) of your area into the table.'});
 nt.size.w=760; nt.size.h=130; applySize(nt);
@@ -827,7 +827,7 @@ addEdge(cs.id,'freq',rx.id,'freq');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(cs.id,'tune',sh.id,'freq');
 addEdge(sh.id,'out',dm.id,'in'); addEdge(dm.id,'out',sq.id,'in'); addEdge(dm.id,'out',sw.id,'in');
 addEdge(sq.id,'open',cs.id,'active'); addEdge(cs.id,'listening',sw.id,'active');
-addEdge(sw.id,'out1',de.id,'in'); addEdge(de.id,'voice',sw.id,'ev1');
+addEdge(sw.id,'out1',de.id,'in'); addEdge(de.id,'lock',sw.id,'ev1');
 addEdge(de.id,'voice',vc.id,'voice'); addEdge(vc.id,'out',sm.id,'a');
 addEdge(sw.id,'out2',fm.id,'in'); addEdge(fm.id,'out',au.id,'in'); addEdge(au.id,'out',sm.id,'b');
 addEdge(sm.id,'out',dc.id,'L'); addEdge(sm.id,'out',dc.id,'R');

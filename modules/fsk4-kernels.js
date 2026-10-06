@@ -105,7 +105,7 @@ function fsk4Node(pick,title){
     },
     process(n,I){
       const s=iqIn(I,'in');
-      if(!s){ n.ui=null; return {rec:null, voice:null}; }
+      if(!s){ n.ui=null; return {rec:null, voice:null, lock:null, proto:null}; }
       const cplx=s.chunks.length ? !!s.chunks[0].im : n.cplx;
       const ids=pick(n), key=s.sr+'|'+cplx+'|'+ids.join();
       if(key!==n.key){ n.key=key; n.cplx=cplx; this.setup(n,s,cplx,ids); }
@@ -141,7 +141,9 @@ function fsk4Node(pick,title){
         ui.protos[id]=pr.ui(n.pr[id],L,now,n);
       }
       n.ui=n.ids.length===1 ? Object.assign(ui,ui.protos[n.ids[0]]) : ui;
-      return {rec:out.recs.length ? out.recs : null, voice:out.voice.length ? out.voice : null};
+      // lock — протокол синхронизирован (голос, данные, CSBK — всё, что не пропало с канала), proto — его название
+      return {rec:out.recs.length ? out.recs : null, voice:out.voice.length ? out.voice : null,
+        lock:ui.active ? 1 : 0, proto:ui.active ? (FSK4.protos[ui.active].name||ui.active) : ''};
     },
     scan(n,ch,out){
       const x=ch.x, N=x.length, step=ch.sps/FSK4_PH;

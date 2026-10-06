@@ -5,7 +5,7 @@
    вокодера (AMBE / IMBE / …) — на `voice`. */
 
 defIQ({ id:'fskRx', title:'Digital Voice Decoder', kw:'4fsk dmr p25 nxdn ysf m17 d-star dstar dpmr motorola mototrbo', cat:'Decoders', tall:true, resize:true, w:480,
-  ins:[{n:'in',t:'iq'}], outs:[{n:'rec',t:'rec'},{n:'voice',t:'rec'}],
+  ins:[{n:'in',t:'iq'}], outs:[{n:'rec',t:'rec'},{n:'voice',t:'rec'},{n:'lock',t:'num'},{n:'proto',t:'txt'}],
   params:[{n:'proto',t:'select',opts:['auto',...FSK4.order],d:'auto',label:'protocol (auto: every one, picked by sync words)'},
           {n:'expand',t:'button',label:'Expand into blocks',fn:n=>fskExpand(n)}]},
   n=>{ const u=n.ui; if(!u) return 'no input';
