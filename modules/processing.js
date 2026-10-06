@@ -1774,6 +1774,9 @@ function saMarkers(n,cx,W,H){
     cx.globalAlpha=1;
     cx.strokeStyle=MK_COL(k); cx.lineWidth=act?1.5:1;
     cx.beginPath(); cx.moveTo(x+.5,TOP_H); cx.lineTo(x+.5,H); cx.stroke();
+    const tb=n.p.trk&&n._trkWin?.[k];                 // окно поиска несущей
+    if(tb){ const x1=saPos(n,f-tb/2)*W, x2=saPos(n,f+tb/2)*W;
+      cx.globalAlpha=.12; cx.fillStyle=MK_COL(k); cx.fillRect(x1,TOP_H,Math.max(2,x2-x1),H-TOP_H); cx.globalAlpha=1; }
     cx.font='10px monospace';
     // "1: 433.075 -75 / 18" — номер, частота (3 знака — см. коммент у fmtHz, иначе близкие маркеры
     // выглядят как одна и та же частота, без буквы единицы — компактнее), уровень — одной строкой
