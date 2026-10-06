@@ -768,7 +768,8 @@ preset('USB SDR: Channel Scan (Channel Scanner + squelch)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Channel list (Table) → Channel Scanner → SDR. The scanner groups the channels into the fewest receiver windows\n'+
   '(dead zone at the window edges is set by «edge, %»), retunes the receiver only between windows and steps through the channels\n'+
-  'of a window by the digital tuner. The SDR squelch (sqOpen) holds the scan on an active channel: «hang» ms after it closes,\n'+
+  'of a window by the digital tuner. With the spectrum wired, only channels that show a signal over the window noise get the squelch check.\n'+
+  'The SDR squelch (sqOpen) holds the scan on an active channel: «hang» ms after it closes,\n'+
   '«timeout» ms at most. The «Scan skip» table is a blacklist (rows with freq or lo / hi). Set the demodulator to match the list.'});
 nt.size.w=560; nt.size.h=130; applySize(nt);
 const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:150000000,sql:'SNR',sqlSnr:8});
@@ -781,7 +782,7 @@ sk.size.w=300; sk.size.h=220; applySize(sk);
 const sa=addNode('sa',1080,40,{auto:true,floor:-90,top:-20,split:.4});
 sa.size.w=700; sa.size.h=420; applySize(sa);
 const dc=addNode('dac',740,520,{vol:.4});
-addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',cs.id,'spec');
 addEdge(bp.id,'bands',cs.id,'bands'); addEdge(sk.id,'bands',cs.id,'skip');
 addEdge(rx.id,'freqLo',cs.id,'freqLo'); addEdge(rx.id,'freqHi',cs.id,'freqHi');
 addEdge(rx.id,'sqOpen',cs.id,'active');
