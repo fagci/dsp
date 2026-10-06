@@ -3163,7 +3163,7 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
           {n:'timeout',t:'range',min:100,max:30000,step:100,d:3000,label:'listen timeout, ms'},
           {n:'settle',t:'range',min:0,max:2000,step:50,d:200,label:'settle time, ms'},
           {n:'loop',t:'check',d:true,label:'loop back to first range'}],
-  init:n=>{ n.state='seek'; n.idx=0; n.curFreq=null; n.text=''; },
+  init:n=>{ n.state='seek'; n.idx=0; n.curFreq=null; n.text=''; n.off=0; n._offM=null; },
   process(n,I){
     for(const k of ['overlap','timeout','settle']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     const bands=(Array.isArray(I.bands)?I.bands:[]).filter(b=>b && !b.sig && b.hi>b.lo).slice().sort((a,b)=>a.lo-b.lo);
@@ -3195,21 +3195,34 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
       }
       n.settleUntil=now+n.p.settle; n.state='seek';
     };
+    // Центр окна приёмника может не совпадать с запрошенной частотой (dcShift, AM/SSB — смещение sr/4): иначе слева от
+    // каждого окна остаётся дыра, а узкий диапазон вовсе мимо окна. Смещение — из freqLo/freqHi после установки; запрашиваем
+    // freq − off, чтобы окно стояло ровно на curFreq. Принимаем, когда два замера подряд совпали и укладываются в окно.
+    const measureOff=()=>{
+      if(typeof I.freqLo!=='number' || typeof I.freqHi!=='number') return false;
+      const m=(I.freqLo+I.freqHi)/2-(n.curFreq-n.off);
+      if(Math.abs(m)>full/2){ n._offM=null; return false; }
+      const ok=n._offM!=null && Math.abs(m-n._offM)<2000;
+      n._offM=m;
+      if(ok && Math.abs(m-n.off)>1000){ n.off=Math.round(m); return true; }
+      return false;
+    };
     if(n.state==='listen'){
       if(!active || now>=n.listenUntil) advance();
     } else if(n.state==='seek'){
       if(now>=n.settleUntil){                           // ждём, пока спектр обновится на новом центре, прежде чем решать
-        if(active){ n.state='listen'; n.listenUntil=now+n.p.timeout; }
+        if(measureOff()) n.settleUntil=now+n.p.settle;  // смещение уточнилось — перестраиваем и ждём снова
+        else if(active){ n.state='listen'; n.listenUntil=now+n.p.timeout; }
         else advance();
       }
     }
     const curBand=bands[n.idx];                          // не 'band': advance() выше мог сдвинуть n.idx на новый диапазон
     n.text=n.state+' · range '+(n.idx+1)+'/'+bands.length+' "'+(curBand.label||'')+'"\n'+
-      'freq '+fmtHz(n.curFreq)+'Hz'+
+      'freq '+fmtHz(n.curFreq)+'Hz'+(n.off ? ' (receiver offset '+fmtHz(n.off)+'Hz)' : '')+
       (n.state==='listen'? '  · listening '+((n.listenUntil-now)/1000).toFixed(1)+'s left' : '');
     // bandLo/step — начало текущего диапазона и его сетка каналов (канал 1 = bandLo, канал 2 =
     // bandLo+step, …), для узлов вроде 'chandet', которым нужно знать сетку, а не только freq.
-    return {freq:n.curFreq, listening:n.state==='listen'?1:0, idx:n.idx,
+    return {freq:n.curFreq-n.off, listening:n.state==='listen'?1:0, idx:n.idx,
       bandLo:curBand.lo, step:curBand.step||0};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(r && r.textContent!==n.text) r.textContent=n.text||'…'; }});
