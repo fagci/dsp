@@ -251,3 +251,39 @@ function cronNext(c,t,off){
   }
   return null;
 }
+
+// Линейная ось спектра с частотами в Гц: {f0, st} (бин i ↔ f0+st·i) или false, если ось неравномерная (вейвлет, октавы).
+// Ось из Float32Array на ГГц-частотах квантована до 128 Гц (на 100 МГц — 8 Гц) — крупнее бина БПФ; поиск бина по такой оси
+// даёт «ступеньки» при сильном зуме, поэтому у равномерной оси бин считается по краям, а не по элементам. Кэш — на объекте спектра.
+function specAxis(s){
+  const F=s.freqs, N=F.length, a=s._ax;
+  if(a!==undefined && s._axF===F && s._axN===N && s._ax0===F[0] && s._ax1===F[N-1]) return a;
+  let ax=false;
+  if(N>2){
+    const f0=F[0], st=(F[N-1]-F[0])/(N-1);
+    if(st>0){
+      const tol=Math.max(Math.abs(F[N-1])*1.3e-7, st*0.02), dk=Math.max(1,N>>8);   // float32: полшага = 6e-8 от значения
+      ax={f0,st};
+      for(let i=1;i<N-1;i+=dk) if(Math.abs(F[i]-(f0+st*i))>tol){ ax=false; break; }
+    }
+  }
+  s._ax=ax; s._axF=F; s._axN=N; s._ax0=F[0]; s._ax1=F[N-1];
+  return ax;
+}
+function specHz(s,i){
+  if(!s) return 0;
+  if(s.freqs){ const ax=specAxis(s); if(ax) return ax.f0+ax.st*clamp(i,0,s.freqs.length-1); const F=s.freqs, k=clamp(Math.round(i),0,F.length-1); return F[k]; }
+  return i*s.sr/s.size;
+}
+function specBin(s,f){
+  if(!s) return 0;
+  if(!s.freqs) return f/(s.sr/s.size);
+  const F=s.freqs, N=F.length, ax=specAxis(s);
+  if(ax) return clamp((f-ax.f0)/ax.st,0,N-1);
+  if(f<=F[0]) return 0;
+  if(f>=F[N-1]) return N-1;
+  let lo=0, hi=N-1;                                 // неравномерная ось — двоичный поиск
+  while(hi-lo>1){ const m=(lo+hi)>>1; if(F[m]<=f) lo=m; else hi=m; }
+  const d=(f-F[lo])/((F[hi]-F[lo])||1);
+  return lo+d;
+}

@@ -499,7 +499,7 @@ IQK.iqSpec={
     const sc=1/(K*n.wsum*n.wsum), half=N>>1;
     let mag, freqs=null;
     if(cplx){
-      mag=new Float32Array(N); freqs=new Float32Array(N);
+      mag=new Float32Array(N); freqs=new Float64Array(N);          // float32 на ГГц-частотах квантован до 128 Гц — крупнее бина
       const bin=s.sr/N;
       for(let i=0;i<N;i++){ mag[i]=Math.sqrt(pw[(i+half)%N]*sc); freqs[i]=s.fc+(i-half)*bin; }
     } else {
@@ -650,7 +650,7 @@ IQK.iqChan={
       const sorted=Float64Array.from(pc).sort(), noise=sorted[N>>1]||1e-30;
       n.noise=noise;
       if(n.p.sel!=='manual') iqChanPick(n,pc,noise,N,sr);
-      const mag=new Float32Array(N), freqs=new Float32Array(N), half=N>>1;
+      const mag=new Float32Array(N), freqs=new Float64Array(N), half=N>>1;
       for(let i=0;i<N;i++){ const k=(i+half)%N; mag[i]=Math.sqrt(pc[k]); freqs[i]=s.fc+iqChanOff(k,N,sr); }
       n.sp={mag, sr, size:N, freqs, rev:(n.rev=(n.rev|0)+1)};
     }

@@ -200,6 +200,13 @@ const cases=[
     let sp=null, pow=0, cnt=0;
     for(let b=0;b<20;b++){ const d=mk(b*B); n.slots=[{c:6,seen:0}]; const r=IQK.iqChan.process(n,{in:{sr,fc:1e8,chunks:[{re:d.re,im:d.im,t0:b*B}]},f1:1e8+f},{block:B,sr:48000}); if(r.spec) sp=r.spec; const o=r.ch1; if(b>=5 && o) for(const c of o.chunks) for(let i=0;i<c.re.length;i++){ pow+=c.re[i]*c.re[i]+c.im[i]*c.im[i]; cnt++; } }
     let pk=0; for(let i=0;i<sp.mag.length;i++) if(sp.mag[i]>sp.mag[pk]) pk=i; return [Math.round(sp.freqs[pk]-1e8), Math.round(10*Math.log10(pow/cnt)*10)/10].join(); })()`,'24000,-6','снимок'],
+  // Ось спектра на 1.544 ГГц: Float32Array склеивает соседние бины по 62.5 Гц (шаг float32 — 128 Гц), и поиск бина по элементам давал ступеньки.
+  // specBin считает по краям линейной оси: индекс монотонен; абсолютная ошибка float32 — не больше его полушага на краях (≈1 бин), у Float64Array — нулевая
+  ['specBin: ось float32 на 1.544 ГГц — монотонный индекс, ошибка ≤ 1.1 бина, элементы оси действительно склеены',`(()=>{ const N=16384, f0=1543488000, mk=T=>{ const F=new T(N); for(let i=0;i<N;i++) F[i]=f0+i*62.5; return {freqs:F,mag:new Float32Array(N),sr:1024000,size:N}; };
+    const run=s=>{ let prev=-1, worst=0, mono=true; for(let k=0;k<400;k++){ const f=1544205800+k*2.5, b=specBin(s,f); if(b<prev) mono=false; prev=b; worst=Math.max(worst,Math.abs(b-(f-f0)/62.5)); } return [mono,worst]; };
+    const a=run(mk(Float32Array)), b=run(mk(Float64Array)); return [a[0], a[1]<1.1, mk(Float32Array).freqs[1]===mk(Float32Array).freqs[0], b[0], b[1]<1e-6].join(); })()`,'true,true,true,true,true'],
+  ['specBin: неравномерная ось (октавы) — двоичный поиск, как раньше',`(()=>{ const F=Float64Array.from({length:40},(_,i)=>100*Math.pow(2,i/5)), s={freqs:F,mag:new Float32Array(40),sr:1,size:40}; return [specAxis(s), Math.abs(specBin(s,F[7])-7)<1e-9, Math.abs(specBin(s,(F[7]+F[8])/2)-7.5)<.2].join(); })()`,'false,true,true'],
+  ['specHz: линейная ось — дробный индекс даёт дробную частоту',`(()=>{ const F=Float64Array.from({length:100},(_,i)=>1e9+i*50), s={freqs:F,mag:new Float32Array(100),sr:1,size:100}; return specHz(s,10.5); })()`,1000000525],
 ];
 
 let bad=0;
