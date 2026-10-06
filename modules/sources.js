@@ -3051,9 +3051,9 @@ function rtlResetRing(n){
   // rebuffering=true с самого начала — то же "молчим, пока не накопится безопасный запас", что и
   // после настоящего провала в середине игры (см. rtlReadIQ), без отдельного случая под старт.
   n.ringReadPos=0; n.ringReadCount=0; n.ringRebuffering=true;   // чтение сырого IQ — отдельно от каналов
-  // ~150мс потока (Уэлч берёт всё пришедшее между расчётами), не меньше максимального БПФ;
+  // ~150мс потока (Уэлч берёт всё пришедшее между расчётами), не меньше двух максимальных БПФ (262144);
   // пишется независимо от режима демодуляции
-  const SPEC_SIZE=clamp(Math.round((n.sourceRate||1024000)*0.15), 1<<17, 1<<22);
+  const SPEC_SIZE=clamp(Math.round((n.sourceRate||1024000)*0.15), 1<<19, 1<<22);
   n.specRing={I:new Float32Array(SPEC_SIZE), Q:new Float32Array(SPEC_SIZE), size:SPEC_SIZE, w:0, filled:0, written:0};
   n.specTaken=0;
   n.spec=null; n.specFreqs=null; n.lastSpec=0;
@@ -3857,20 +3857,7 @@ function rtlTrackMsps(n, cnt, ioMs, workerMs){
 // Воркер под БПФ спектра — тот же приём, что и demod-воркер: fft()/window_() глобальны
 // в core-engine.js и недоступны внутри Worker, поэтому копии встроены сюда же.
 const RTL_SPEC_WORKER_SRC = `
-function fft(re,im){
-  const n=re.length;
-  for(let i=1,j=0;i<n;i++){ let bit=n>>1;
-    for(;j&bit;bit>>=1) j^=bit; j^=bit;
-    if(i<j){ let t=re[i];re[i]=re[j];re[j]=t; t=im[i];im[i]=im[j];im[j]=t; } }
-  for(let len=2;len<=n;len<<=1){
-    const ang=-2*Math.PI/len, wr=Math.cos(ang), wi=Math.sin(ang), h=len>>1;
-    for(let i=0;i<n;i+=len){ let cr=1,ci=0;
-      for(let k=0;k<h;k++){
-        const ur=re[i+k], ui=im[i+k];
-        const vr=re[i+k+h]*cr-im[i+k+h]*ci, vi=re[i+k+h]*ci+im[i+k+h]*cr;
-        re[i+k]=ur+vr; im[i+k]=ui+vi; re[i+k+h]=ur-vr; im[i+k+h]=ui-vi;
-        const t=cr*wr-ci*wi; ci=cr*wi+ci*wr; cr=t; } } }
-}
+${'const FFT_PLAN=new Map();\n'+fftPlan.toString()+'\n'+fft.toString()}
 function window_(kind,N){
   const w=new Float32Array(N);
   for(let i=0;i<N;i++){ const x=i/(N-1);
@@ -3977,7 +3964,7 @@ function rtlUpdateSpec(n){
   n.specWorker.compute(I.buffer, Q.buffer, N, L, win).then(({mag,K})=>{
     n.specBusy=false; n.specK=K;
     if(!n.specFreqs || n.specFreqs.length!==N || n.specFreqsCenter!==centerFreq || n.specFreqsSr!==n.sourceRate){
-      const fr=new Float32Array(N);
+      const fr=new Float64Array(N);                  // float32 на ГГц шагает по 128 Гц — крупнее бина: ступеньки при зуме
       for(let i=0;i<N;i++) fr[i]=centerFreq+(i-half)*binHz;
       n.specFreqs=fr; n.specFreqsCenter=centerFreq; n.specFreqsSr=n.sourceRate;
     }
@@ -4741,7 +4728,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'conv',t:'num',d:0,label:'converter offset, MHz (RF = tuner + offset)',adv:true},
     {n:'usbId',t:'text',d:'',hidden:true},
     {n:'devKind',t:'text',d:'',hidden:true},
-    {n:'specSize',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'4096',label:'spectrum FFT size'},
+    {n:'specSize',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536','131072','262144'],d:'4096',label:'spectrum FFT size'},
     {n:'specWin',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann',label:'spectrum window',adv:true},
     // Уэлч: сколько кадров (с перекрытием 50%) усреднять за одно обновление; all — весь поток
     {n:'specAvg',t:'select',opts:['off','4','16','64','all'],d:'all',label:'spectrum averaging, frames',adv:true},
