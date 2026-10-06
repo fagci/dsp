@@ -800,27 +800,32 @@ markWiresDirty();
 preset('USB SDR: Multiband Scan (panes + CFAR)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the ranges of the table in windows of the SDR span; the Spectrum Analyzer\n'+
-  '(layout «panes») shows every range as its own pane — a spectrum on top, a waterfall below — and keeps what each window\n'+
-  'saw, so all the bands stay on the screen while the receiver visits them one by one (the pane being received is outlined,\n'+
-  'old data is dimmed). The detector (CFAR) marks signals with a triangle and stops the scanner on one: the strongest is tuned and played.\n'+
-  'Tap a pane to put marker 1–4 there (tabs top right); tap a pane title to retune the receiver on its centre.\n'+
-  'Edit the ranges in the table (name, lo, hi, step) — or open the lists tree and tick ready-made plans (Services, Voice, Amateur…);\n'+
-  'filter works too (kind=video). Up to 8 panes at once, «first band #» scrolls a longer list.'});
-nt.size.w=640; nt.size.h=190; applySize(nt);
-const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:100000000});
-const bp=addNode('table',360,260,{list:'@patch',initial:false,data:'name,lo,hi,step\n'+
+  '(layout «panes») shows every range as its own pane — a spectrum on top, a waterfall below — and keeps what each window saw,\n'+
+  'so the bands stay on the screen while the receiver visits them (the pane being received is outlined, old data is dimmed).\n'+
+  'More ranges than panes: the page turns after the scanner (follow); or use ◀ ▶ / the wheel on a pane title.\n'+
+  'View: wheel on a pane — zoom, drag — pan, double click — back. Humps at the window step come from the filter edges: both nodes\n'+
+  'drop 10% of each window (the «edge» parameter — keep them equal), so the useful middle is stitched without a gap.\n'+
+  'SEARCH: «detect signals» + threshold (dB over the noise; the dashed line on a pane is where it is). A ▼ marks a signal and the scanner stops on it:\n'+
+  'the strongest is tuned and played. SKIP: Shift+tap a ▼ (it turns into ⊘, Shift+tap it to return); the «Scan skip» table below is a skip list\n'+
+  'by ranges (lo / hi) for pagers and beacons; «Clear skipped signals» wipes the taps. Tap a pane — marker 1–4; tap a pane title — retune.'});
+nt.size.w=720; nt.size.h=230; applySize(nt);
+const rx=addNode('rtlsdr',40,300,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:100000000});
+const bp=addNode('table',360,300,{list:'@patch',initial:false,data:'name,lo,hi,step\n'+
   'FM broadcast,87.5M,108M,100k\nAirband,118M,137M,25k\n2m ham,144M,146M,12.5k\nMarine VHF,156M,162.025M,25k\n'+
   'LPD433,433.05M,434.79M,25k\nPMR446,446M,446.2M,12.5k\nSRD 868,868M,870M,25k\nADS-B,1089M,1091M,1M'});
 bp.size.w=340; bp.size.h=280; applySize(bp);
-const bs=addNode('bandscan',740,260,{timeout:3000,settle:250});
+const bs=addNode('bandscan',740,300,{timeout:3000,settle:250,edge:10});
 bs.size.w=300; bs.size.h=200; applySize(bs);
-const sa=addNode('sa',40,560,{layout:'panes',panes:8,detect:true,detThr:10,peakHold:true,floor:-90,top:-20,split:.45});
-sa.size.w=1000; sa.size.h=420; applySize(sa);
-const lg=addNode('table',1080,260,{list:'Scan log',initial:false});
+const sk=addNode('table',1080,300,{list:'Scan skip',initial:false});
+sk.size.w=300; sk.size.h=220; applySize(sk);
+const sa=addNode('sa',40,620,{layout:'panes',panes:4,detect:true,detThr:10,edge:10,follow:true,peakHold:true,floor:-90,top:-20,split:.45});
+sa.size.w=1100; sa.size.h=440; applySize(sa);
+const lg=addNode('table',1420,300,{list:'Scan log',initial:false});
 lg.size.w=420; lg.size.h=260; applySize(lg);
-const dc=addNode('dac',1080,560,{vol:.4});
+const dc=addNode('dac',1420,620,{vol:.4});
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(bp.id,'bands',sa.id,'bands'); addEdge(bp.id,'bands',bs.id,'bands');
+addEdge(sk.id,'bands',sa.id,'skip');
 addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi');
 addEdge(sa.id,'count',bs.id,'active');
 addEdge(bs.id,'freq',rx.id,'freq');

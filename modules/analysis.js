@@ -1760,7 +1760,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'m1',t:'num'},{n:'m2',t:'num'},{n:'m3',t:'num'},{n:'m4',t:'num'},
        {n:'bLo',t:'num'},{n:'bHi',t:'num'},{n:'floor',t:'num'},{n:'top',t:'num'},
        {n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'split',t:'num'},{n:'tol',t:'num'},
-       {n:'log',t:'num'},{n:'grid',t:'num'},{n:'bands',t:'bands'}],
+       {n:'log',t:'num'},{n:'grid',t:'num'},{n:'bands',t:'bands'},{n:'skip',t:'bands'}],
   outs:[{n:'f1',t:'num'},{n:'f2',t:'num'},{n:'f3',t:'num'},{n:'f4',t:'num'},
         {n:'fr1',t:'num'},{n:'fr2',t:'num'},{n:'fr3',t:'num'},{n:'fr4',t:'num'},
         {n:'db1',t:'num'},{n:'db2',t:'num'},{n:'db3',t:'num'},{n:'db4',t:'num'},
@@ -1779,8 +1779,12 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'layout',t:'select',opts:['single','panes'],d:'single',label:'layout'},
           {n:'panes',t:'range',min:1,max:8,step:1,d:4,label:'panes (bands side by side)'},
           {n:'paneFrom',t:'range',min:0,max:500,step:1,d:0,label:'first band #',adv:true},
-          {n:'detect',t:'check',d:false,label:'panes: detect signals (CFAR)',fn:n=>{ n._pn=null; n._pnSig=null; }},
-          {n:'detThr',t:'range',min:3,max:30,step:.5,d:10,label:'detector threshold, dB over noise',adv:true},
+          {n:'follow',t:'check',d:true,label:'panes: follow the scanner (turn the page)'},
+          {n:'edge',t:'range',min:0,max:40,step:1,d:10,label:'panes: drop window edges, % (humps) — same as Band Scanner'},
+          {n:'detect',t:'check',d:false,label:'panes: detect signals (CFAR)',fn:n=>{ n._pnRevDraw=(n._pnRevDraw|0)+1; }},
+          {n:'detThr',t:'range',min:3,max:30,step:.5,d:10,label:'panes: detector threshold, dB over noise'},
+          {n:'skipClear',t:'button',label:'Clear skipped signals',fn:n=>{ if(typeof saSkipClear==='function') saSkipClear(n); }},
+          {n:'skipList',t:'text',d:'',hidden:true},
           {n:'snap',t:'check',d:true,label:'snap to band plan step',adv:true},
           // выключить — тот же жест, что и "очистить": незачем отдельная кнопка (см. fn у 'check' в core-graph.js)
           {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold) n.peak=null; }},
@@ -1813,6 +1817,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     if(n.p.layout==='panes'){                          // несколько диапазонов рядом: свой путь без одноосевой логики
       for(const k of ['floor','top']) if(typeof I[k]==='number') setMod(n,k,I[k]);
       if(Array.isArray(I.bands)) n.bandsData=I.bands;
+      n._skipExt=Array.isArray(I.skip) ? I.skip.filter(b=>b && !b.sig && isFinite(b.lo)).map(b=>({lo:b.lo,hi:Math.max(b.lo,b.hi)})) : null;
       saPanesIngest(n,sp);
       return saPanesOut(n);
     }
@@ -3154,6 +3159,7 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
   outs:[{n:'freq',t:'num'},{n:'listening',t:'num'},{n:'idx',t:'num'},{n:'bandLo',t:'num'},{n:'step',t:'num'}],
   readout:true, tall:true,
   params:[{n:'overlap',t:'range',min:0,max:2000000,step:1000,log:true,d:0,label:'overlap, Hz'},
+          {n:'edge',t:'range',min:0,max:40,step:1,d:0,label:'drop window edges, % (the useful part is the middle; same as Spectrum Analyzer panes)'},
           {n:'timeout',t:'range',min:100,max:30000,step:100,d:3000,label:'listen timeout, ms'},
           {n:'settle',t:'range',min:0,max:2000,step:50,d:200,label:'settle time, ms'},
           {n:'loop',t:'check',d:true,label:'loop back to first range'}],
@@ -3167,8 +3173,9 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
       n._bandsLen=bands.length; n._firstLo=bands[0].lo; n._firstHi=bands[0].hi;
       n.idx=0; n.curFreq=null; n.state='seek';
     }
-    const span=(typeof I.freqLo==='number' && typeof I.freqHi==='number')? Math.max(1,I.freqHi-I.freqLo) : 2e6;
-    const half=span/2, now=performance.now();
+    const full=(typeof I.freqLo==='number' && typeof I.freqHi==='number')? Math.max(1,I.freqHi-I.freqLo) : 2e6;
+    // edge: края окна приёмника проседают — полезна середина; окно шагает на её ширину, а начало диапазона ею же закрыто
+    const span=full*(1-2*clamp(+n.p.edge||0,0,40)/100), half=span/2, now=performance.now();
     if(n.curFreq==null){
       n.idx=clamp(n.idx,0,bands.length-1);
       n.curFreq=bands[n.idx].lo+half;
