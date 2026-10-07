@@ -12,8 +12,9 @@ const GF_MEM=new Map();                                 // ключ ячейки
 let gfChain=Promise.resolve(), gfLast=0, gfDown=0;      // gfDown — до какого момента сеть не трогаем после полного отказа
 
 // запросы к Overpass — строго по одному и не чаще раза в GF_GAP мс (публичный сервер банит за частоту).
-// «Сервер занят» (429/502/503/504, 200 с remark, текст вместо JSON) — не данные: пауза и следующее зеркало
-function gfFetch(kind,ix,iy){
+// «Сервер занят» (429/502/503/504, 200 с remark, текст вместо JSON) — не данные: пауза и следующее зеркало.
+// 400 на POST (зеркало потеряло тело запроса) — тот же запрос через GET. Возвращает разобранный JSON
+function gfPost(query){
   const job=gfChain.then(async()=>{
     if(Date.now()<gfDown) throw new Error('Overpass is busy — waiting before the next try');
     let err;
@@ -21,13 +22,15 @@ function gfFetch(kind,ix,iy){
       const wait=gfLast+GF_GAP-Date.now(); if(wait>0) await new Promise(r=>setTimeout(r,wait));
       let busy=false;
       try{
-        const r=await fetch(GF_URLS[k%GF_URLS.length],{method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'data='+encodeURIComponent(gfQuery(kind,ix,iy))});
+        const url=GF_URLS[k%GF_URLS.length];
+        let r=await fetch(url,{method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'data='+encodeURIComponent(query)});
+        if(r.status===400) r=await fetch(url+'?data='+encodeURIComponent(query));
         gfLast=Date.now();
         if([429,502,503,504].includes(r.status)){ err=new Error('server busy (HTTP '+r.status+')'); busy=true; }
         else if(!r.ok) throw new Error('HTTP '+r.status);
         else {
           let j=null; try{ j=await r.json(); }catch(e){ err=new Error('server busy (not JSON)'); busy=true; }
-          if(j){ const re=gfRemarkError(j); if(re){ err=new Error('server busy: '+re); busy=true; } else return gfParse(kind,j); }
+          if(j){ const re=gfRemarkError(j); if(re){ err=new Error('server busy: '+re); busy=true; } else return j; }
         }
       }catch(e){ err=e; gfLast=Date.now(); }
       if(!busy && !(err instanceof TypeError)) break;                 // сеть и «занят» — пробуем дальше, 4xx — нет
@@ -39,6 +42,7 @@ function gfFetch(kind,ix,iy){
   gfChain=job.catch(()=>{});
   return job;
 }
+const gfFetch=(kind,ix,iy)=>gfPost(gfQuery(kind,ix,iy)).then(j=>gfParse(kind,j));
 // База аэродромов OurAirports (два статических CSV, ~14 МБ): качается один раз целиком, хранится в базе браузера, дальше по ячейкам из памяти.
 // Не зависит от Overpass; null — базы нет и сети нет (или не скачалась): тогда ячейки берутся из Overpass
 function gfOaLoad(net){

@@ -380,29 +380,13 @@ function ovDrawRelief(cx,rel,proj,solid){
 
 
 // ---------- OSM Overpass: пики, города, дороги, реки ----------
-// Overpass: основной сервер часто отвечает 504 — пробуем зеркала по очереди
-const OV_OVERPASS=['https://overpass-api.de/api/interpreter','https://overpass.private.coffee/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
-async function ovOverpass(query){
-  let err=null;
-  for(const url of OV_OVERPASS){
-    try{
-      const ac=new AbortController(), tm=setTimeout(()=>ac.abort(),70000);
-      const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'data='+encodeURIComponent(query),signal:ac.signal}).finally(()=>clearTimeout(tm));
-      if(!r.ok) throw new Error('HTTP '+r.status);
-      const txt=await r.text(); let j=null; try{ j=JSON.parse(txt); }catch(e){ throw new Error('server busy'); }
-      const re=gfRemarkError(j); if(re) throw new Error('server busy: '+re);          // не кэшировать ответ-ошибку
-      return txt;
-    }catch(e){ err=e; }
-  }
-  throw err||new Error('no server');
-}
 async function ovOsmLoad(n,lat,lon,rKm){
   const key='osm:'+lat.toFixed(2)+','+lon.toFixed(2)+','+rKm, gen=n.osmReq={};
   n.osmMsg='loading map features…';
   try{
     let txt=await geoGet(key).catch(()=>null);
     if(!txt){
-      txt=await ovOverpass(ovkOsmQuery(lat,lon,rKm*1000));
+      txt=JSON.stringify(await gfPost(ovkOsmQuery(lat,lon,rKm*1000)));
       geoPut(key,txt).catch(()=>{});
     }
     if(n.osmReq!==gen) return;
@@ -427,16 +411,34 @@ function ovOsmGeo(n,obs,rel,alt,okey){
 }
 
 // ---------- здания OSM: контуры с высотой, ночью светятся ----------
-async function ovBldLoad(n,lat,lon,rKm){
-  const key='bld2:'+lat.toFixed(3)+','+lon.toFixed(3)+','+rKm, gen=n.bldReq={};
-  n.bldMsg='loading buildings…';
+const OV_BT=0.02;                                          // ячейка зданий, ° (~2 км)
+// ячейки вокруг камеры в радиусе rKm, ближние первыми
+function ovBldCells(lat,lon,rKm){
+  const dy=rKm/111.32, dx=rKm/(111.32*Math.max(.2,Math.cos(lat*ORI_D))), out=[];
+  for(let iy=Math.floor((lat-dy)/OV_BT); iy<=Math.floor((lat+dy)/OV_BT); iy++)
+    for(let ix=Math.floor((lon-dx)/OV_BT); ix<=Math.floor((lon+dx)/OV_BT); ix++){
+      const la=(iy+.5)*OV_BT, lo=(ix+.5)*OV_BT;
+      out.push({ix,iy,key:ix+','+iy,d:Math.hypot((la-lat)*111.32,(lo-lon)*111.32*Math.cos(lat*ORI_D))});
+    }
+  return out.sort((a,b)=>a.d-b.d).filter(c=>c.d<=rKm+2.2);
+}
+// одна ячейка: из базы браузера или из Overpass (по очереди, с паузой и зеркалами — gfPost); набор растёт по мере прихода ячеек
+async function ovBldTile(n,c,lat,lon){
+  const key='bt:'+c.key, tiles=n.bldTiles||(n.bldTiles=new Map());
+  n.bldPend.add(c.key);
   try{
     let txt=await geoGet(key).catch(()=>null);
-    if(!txt){ txt=await ovOverpass(ovkBldQuery(lat,lon,rKm*1000)); geoPut(key,txt).catch(()=>{}); }
-    if(n.bldReq!==gen) return;
-    const j=JSON.parse(txt);
-    n.bld=ovkBldParse(j,lat,lon); n.bldRoads=ovkBldRoads(j,lat,lon); n.bldFor={lat,lon,r:rKm}; n.bldGen=(n.bldGen|0)+1; n.bldMsg='';
-  }catch(e){ if(n.bldReq===gen){ n.bldMsg='buildings: '+e.message; n.bldT=Date.now()+90000; } }
+    if(!txt){ txt=JSON.stringify(await gfPost(ovkBldQuery(c.iy*OV_BT,c.ix*OV_BT,(c.iy+1)*OV_BT,(c.ix+1)*OV_BT))); geoPut(key,txt).catch(()=>{}); }
+    const j=JSON.parse(txt), la=(c.iy+.5)*OV_BT, lo=(c.ix+.5)*OV_BT;
+    tiles.set(c.key,{b:ovkBldParse(j,la,lo),r:ovkBldRoads(j,la,lo),la,lo});
+    const ids=new Set(), rid=new Set(); n.bld=[]; n.bldRoads=[];
+    for(const t of tiles.values()){                       // здания и улицы на стыках ячеек — по одному разу
+      for(const b of t.b) if(!ids.has(b.id)){ ids.add(b.id); n.bld.push(b); }
+      for(const w of t.r) if(!rid.has(w.id)){ rid.add(w.id); n.bldRoads.push(w); }
+    }
+    n.bldGen=(n.bldGen|0)+1; n.bldMsg=n.bldPend.size>1 ? 'loading buildings… '+(n.bldPend.size-1)+' left' : '';
+  }catch(e){ n.bldFail.set(c.key,Date.now()+90000); n.bldMsg='buildings: '+e.message; }
+  finally{ n.bldPend.delete(c.key); }
 }
 // контур в ENU на высоте земли в центре здания (против часовой), размер, видимость верха из точки наблюдения; улицы — точками
 function ovBldGeo(n,obs,rel,alt,okey){
@@ -660,7 +662,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           {n:'dRoll',t:'range',min:-180,max:180,step:.5,d:0,label:'roll correction, °',adv:true},
           {n:'resetc',t:'button',label:'Reset corrections',fn:n=>{ for(const k of ['dAz','dEl','dRoll']) setMod(n,k,0); },adv:true}],
   init:n=>{ n.ents=new Map(); n.links=new Map(); n.gnodes=new Map(); n.gedges=[]; n.gnSrc=null; n.gsSrc=null; n.gLinks=[]; n.I={}; n.seq=0; n.pose=[]; n.sel=null; n.hits=[]; n.last=null; n.msg=null; n.home=null;
-            n.pickOut=null; n.selInfo=null; n.visOut=null; n.nvis=0; n.nhid=0; n.osm=null; n.osmFor=null; n.osmT=0; n.osmMsg=''; n.osmGen=0; n.bld=null; n.bldFor=null; n.bldT=0; n.bldMsg=''; n.bldGen=0;
+            n.pickOut=null; n.selInfo=null; n.visOut=null; n.nvis=0; n.nhid=0; n.osm=null; n.osmFor=null; n.osmT=0; n.osmMsg=''; n.osmGen=0; n.bld=null; n.bldTiles=null; n.bldRoads=null; n.bldPend=new Set(); n.bldFail=new Map(); n.bldMsg=''; n.bldGen=0;
             n.feat={air:null,pop:null,my:[],links:[]}; n.featCtr=null; n.featReading=false; n.featRev=-1; n.featFor=null; n.featT=0; n.featMsg=''; n.featGen=0; n.featBusy=false; },
   dispose:n=>{ n.osmReq=null; n.featReq=null; },
   process(n,I){
@@ -842,13 +844,22 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
       }
     }
 
-    // здания OSM вблизи: контуры с высотой, ночью светятся окна
+    // здания и улицы OSM вблизи: ячейки грузятся по очереди, ночью здания светятся, улицы — линиями и фонарями
     if(proj && obs && p.bld){
-      if(!n.bldFor || n.bldFor.r!==+p.bldR || geoDist(n.bldFor.lat,n.bldFor.lon,lat,lon)>+p.bldR/4){
-        if(now>=(n.bldT||0) && !n.bldBusy){ n.bldT=now+30000; n.bldBusy=true; ovBldLoad(n,lat,lon,+p.bldR).finally(()=>{ n.bldBusy=false; }); }
-      }
+      n.bldPend||(n.bldPend=new Set()); n.bldFail||(n.bldFail=new Map());
+      for(const c of ovBldCells(lat,lon,+p.bldR))
+        if(!n.bldTiles?.has(c.key) && !n.bldPend.has(c.key) && !(n.bldFail.get(c.key)>now) && n.bldPend.size<12) ovBldTile(n,c);
       const bg=ovBldGeo(n,obs,rel,alt,okey);
-      if(bg && sun0) ovDrawBuildings(cx,proj,foc,[rx,ry,rw,rh],bg.b,dk,+p.vis,sun0);
+      if(bg){
+        cx.lineJoin='round'; cx.strokeStyle='#ffb347'; cx.lineWidth=1; cx.globalAlpha=.3+.3*dk;
+        for(const wl of bg.roads){
+          cx.beginPath(); let pen=false;
+          for(const q of wl.pts){ const c=q.vis ? proj(q.e) : null; if(!c){ pen=false; continue; } if(pen) cx.lineTo(c.x,c.y); else cx.moveTo(c.x,c.y); pen=true; }
+          cx.stroke();
+        }
+        cx.globalAlpha=1;
+        if(sun0) ovDrawBuildings(cx,proj,foc,[rx,ry,rw,rh],bg.b,dk,+p.vis,sun0);
+      }
     }
 
     // карта OSM: реки и дороги по рельефу, подписи вершин и городов
