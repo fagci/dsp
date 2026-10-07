@@ -317,7 +317,7 @@ function ovAlign(n){
   n.msg={t:performance.now(), s:`aligned to ${t.name}: azimuth ${dAz>=0?'+':''}${dAz.toFixed(1)}°, elevation ${dEl>=0?'+':''}${dEl.toFixed(1)}°`};
 }
 
-def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmented reality hud camera satellite adsb 3d drone fpv sky sun moon osm trails line of sight',
+def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmented reality hud camera satellite adsb 3d drone fpv sky sun moon planets stars galaxy nebula osm trails line of sight',
   // Видео (vid, или растр img — например, из TV Decoder) + объекты (rec) в 3D + HUD. Камера: lat / lon / alt (м) — где она стоит, az / el / roll — куда смотрит.
   // Без видео рисует небо с горизонтом. Входы a…d — числа в HUD (подписи — параметр «HUD»).
   ins:[{n:'vid',t:'vid'},{n:'img',t:'img'},{n:'rec',t:'rec'},{n:'rec2',t:'rec'},
@@ -339,6 +339,9 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           {n:'trails',t:'check',d:true,label:'paths (path field)',adv:true},
           {n:'trail',t:'range',min:0,max:600,step:10,d:120,label:'trails of moving objects, s (0 — off)'},
           {n:'sky',t:'check',d:true,label:'Sun and Moon'},
+          {n:'planets',t:'check',d:true,label:'planets (Mercury … Neptune)'},
+          {n:'starMag',t:'range',min:-1,max:4,step:.1,d:2,label:'stars brighter than magnitude (−1 — none)'},
+          {n:'deep',t:'check',d:true,label:'deep sky: Andromeda, Pleiades, Orion Nebula, Magellanic Clouds…'},
           {n:'terrain',t:'check',d:true,label:'skyline from Horizon',adv:true},
           {n:'relief',t:'select',opts:['off','auto','lines','solid'],d:'auto',label:'terrain relief 3D from Horizon (auto: solid without video, lines over video)'},
           {n:'osm',t:'check',d:false,label:'OSM: peaks, towns, roads, rivers (asks overpass-api.de, needs Horizon heights)'},
@@ -498,6 +501,35 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
         halo(b.label+(b.id==='moon' ? ' '+Math.round(b.frac*100)+'%' : ''),c.x+R+4,c.y-2);
         if(c.x>=rx && c.x<=rx+rw && c.y>=ry && c.y<=ry+rh) hits.push({key,x:c.x,y:c.y,rad:R+6,rec:{id:b.id,label:b.label,az:+b.az.toFixed(2),el:+b.el.toFixed(2),size_deg:+b.size.toFixed(3),...(b.id==='moon' ? {illuminated:+b.frac.toFixed(3)} : {})},az:b.az,el:b.el,range:null});
         if(n.sel===key){ cx.strokeStyle='#ffd84a'; cx.lineWidth=1.5; cx.beginPath(); cx.arc(c.x,c.y,R+5,0,7); cx.stroke(); }
+      }
+    }
+
+    // планеты, яркие звёзды, глубокий космос: точки с подписью, размер — по блеску
+    if(proj && havePos && (p.planets || +p.starMag>-1 || p.deep)){
+      const k=lat+'|'+lon+'|'+p.planets+'|'+p.starMag+'|'+p.deep;
+      const objs=n.sky2At && now-n.sky2At<1000 && n.sky2Key===k ? n.sky2 : (n.sky2At=now, n.sky2Key=k,
+        n.sky2=ovkSkyObjects(now,lat,lon,{planets:p.planets, starMag:+p.starMag>-1 ? +p.starMag : null, deep:p.deep}));
+      cx.font='10px monospace'; cx.textAlign='left'; cx.textBaseline='alphabetic';
+      for(const b of objs){
+        if(b.el<-1) continue;
+        const key='sky:'+b.id, e=dir(b.az,b.el).map(x=>x*1e7), c=proj(e);
+        cands.push({key, name:b.label, az:b.az, el:b.el, find:ftxt && b.label.toLowerCase().includes(ftxt)});
+        if(!c) continue;
+        const vis=ovkVisible(los,e[0],e[1],e[2],.001), m=b.mag ?? 3;
+        const R=b.kind==='deep' ? 7 : Math.max(2,Math.min(6,3.2-m*.6)), pr=b.kind==='planet' ? Math.max(R,foc*Math.tan(b.size*OVK_D/2)) : R;
+        cx.save(); cx.globalAlpha=vis ? 1 : .35;
+        if(b.kind==='deep'){
+          cx.strokeStyle='#9fd0ff'; cx.lineWidth=1.2; cx.beginPath(); cx.ellipse(c.x,c.y,R,R*.55,-.5,0,7); cx.stroke();
+        } else {
+          const clr=b.kind==='planet' ? {mercury:'#c8b8a0',venus:'#fff0c0',mars:'#ff8a5c',jupiter:'#ffd9a0',saturn:'#e8d49a',uranus:'#9ae8e8',neptune:'#7aa0ff'}[b.id] : '#ffffff';
+          cx.fillStyle=clr; cx.beginPath(); cx.arc(c.x,c.y,pr,0,7); cx.fill();
+        }
+        cx.restore();
+        cx.fillStyle=b.kind==='planet' ? '#ffe9b8' : b.kind==='deep' ? '#9fd0ff' : 'rgba(255,255,255,.85)';
+        halo(b.label,c.x+pr+4,c.y-2);
+        if(c.x>=rx && c.x<=rx+rw && c.y>=ry && c.y<=ry+rh) hits.push({key,x:c.x,y:c.y,rad:pr+6,
+          rec:{id:b.id,label:b.label,kind:b.kind,az:+b.az.toFixed(2),el:+b.el.toFixed(2),...(b.mag!=null ? {mag:+b.mag.toFixed(1)} : {})},az:b.az,el:b.el,range:null});
+        if(n.sel===key){ cx.strokeStyle='#ffd84a'; cx.lineWidth=1.5; cx.beginPath(); cx.arc(c.x,c.y,pr+5,0,7); cx.stroke(); }
       }
     }
 

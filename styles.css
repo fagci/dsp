@@ -123,8 +123,6 @@ button,select,input{font:inherit;color:inherit}
   #side h1{padding-left:var(--barh)}
   #side.collapsed~#main #bar{padding-left:var(--barh)}
 }
-#bar select:hover{background:var(--panel2)}
-#bar select option{background:var(--panel);color:var(--txt)}
 .i{width:16px;height:16px;display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
 #bar button:has(.i),#patchTools button:has(.i){display:inline-flex;align-items:center;justify-content:center}
 #bar button:has(.i){padding:5px 8px}
@@ -288,7 +286,7 @@ button,select,input{font:inherit;color:inherit}
     scrollbar-width:none;border-bottom:0;border-top:1px solid var(--line)}
   #canvas{order:1}
   #bar::-webkit-scrollbar{display:none}
-  #bar button,#bar select{flex:0 0 auto;padding:8px 11px}
+  #bar button{flex:0 0 auto;padding:8px 11px}
   #bar .sp{display:none}
   #stat{flex:0 0 40ch}
   .pitem{padding:10px 12px}
@@ -622,8 +620,17 @@ canvas.view.pick{cursor:crosshair}
   border-radius:3px;padding:3px;cursor:pointer;color:var(--dim);font-size:10px}
 .copy:hover{border-color:var(--acc);color:var(--txt)}
 .swatch{margin-top:5px;height:44px;border-radius:3px}
-#bar select{background:none;border:0;border-radius:3px;padding:5px 6px;cursor:pointer;
-  max-width:170px}
+#settings.on{color:var(--acc)}
+#setPanel{position:fixed;z-index:60;padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,.35);font-size:12px;color:var(--txt)}
+#setPanel[hidden]{display:none}
+#setPanel label{display:flex;align-items:center;justify-content:space-between;gap:10px}
+#setPanel label span{color:var(--dim)}
+#setPanel select,#setPanel input{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:3px;padding:5px 6px;font:inherit;min-width:0}
+#setPanel input{flex:1;max-width:190px}
+#setPanel select{cursor:pointer}
+#setPanel select:focus-visible,#setPanel input:focus{outline:1px solid var(--acc);outline-offset:-1px}
+#setPanel p{margin:0;color:var(--dim);font-size:11px;line-height:1.4}
+#setPanel code{font:11px var(--mono)}
 
 
 /* ---- аудиоредактор клипов (modules/audioeditor.js) ---- */

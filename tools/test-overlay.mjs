@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,isFinite,parseFloat,isNaN,Infinity});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/overlay-kernels.js'),'utf8')+
-  ';this.K={ovkSunEcl,ovkMoonEcl,ovkEclToEq,ovkAzEl,ovkSkyBodies,ovkLosBuild,ovkVisible,ovkOsmQuery,ovkOsmParse,ovkPosePush,ovkPoseAt,ovkTrailPush,ovkWrap,ovkNorm,OVK_RING0,OVK_RING_K};',ctx);
+  ';this.K={ovkSunEcl,ovkMoonEcl,ovkEclToEq,ovkAzEl,ovkSkyBodies,ovkPlanets,ovkPrecess,ovkSkyObjects,ovkLosBuild,ovkVisible,ovkOsmQuery,ovkOsmParse,ovkPosePush,ovkPoseAt,ovkTrailPush,ovkWrap,ovkNorm,OVK_RING0,OVK_RING_K};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -30,6 +30,24 @@ ok('moon frac in 0…1',n2.moon.frac>=0&&n2.moon.frac<=1);
 // полнолуние: 2026-01-03 ~10:03 UTC → доля ≈ 1, Луна напротив Солнца
 const fm=K.ovkSkyBodies(Date.UTC(2026,0,3,10,3,0),0,0);
 ok('full moon frac',fm.moon.frac>0.99,String(fm.moon.frac));
+
+// Венера, 1992-12-20 0h TD (Meeus 33.a): α = 316.17°, δ = −18.89°, Δ = 0.91085 а.е.
+T=(2448976.5-2451545)/36525;
+const ven=K.ovkPlanets(T).find(x=>x.id==='venus');
+near('venus α',ven.ra,316.17,0.3); near('venus δ',ven.dec,-18.89,0.3); near('venus Δ',ven.dist,0.91085,0.01);
+ok('venus bright',ven.mag<-3.5 && ven.mag>-4.9,String(ven.mag));
+// Юпитер, 2026-01-10 — противостояние: ярче −2.5, рядом с Близнецами (α ≈ 7.4ч, δ ≈ +22°)
+const jup=K.ovkPlanets((2461050.5-2451545)/36525).find(x=>x.id==='jupiter');
+near('jupiter α',jup.ra/15,7.4,0.2); near('jupiter δ',jup.dec,22.5,1.5); ok('jupiter bright',jup.mag<-2.3,String(jup.mag));
+// прецессия: Полярная в 2026 — α ≈ 3.2ч, δ ≈ 89.37°
+const pol=K.ovkPrecess(2.5303*15,89.2641,0.26);
+near('polaris δ 2026',pol.dec,89.37,0.03);
+// Сириус в Новосибирске: кульминация в январе, угол места = 90 − 55 − 16.7 ≈ 18.3°
+let best=-99;
+for(let m=0;m<1440;m+=5){ const o=K.ovkSkyObjects(Date.UTC(2026,0,10,0,m),55,82.9,{starMag:0}).find(x=>x.id==='sirius'); best=Math.max(best,o.el); }
+near('sirius culmination',best,18.3,0.5);
+const all=K.ovkSkyObjects(Date.UTC(2026,0,10,12,0),55,82.9,{planets:true,starMag:2.5,deep:true});
+ok('objects count',all.length>=7+30,String(all.length));
 
 // видимость: хребет 1000 м на севере (азимут 0) в ~10 км
 const NA=180, rings=[], R=6371000;
