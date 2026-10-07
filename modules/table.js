@@ -569,7 +569,8 @@ function tblInit(n){
     <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
       <span class="tbl-thead" title="show / hide the list tree" style="cursor:pointer;color:#c8d2d6;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
       <span class="tbl-none" title="uncheck all lists" style="cursor:pointer;color:#6c7a80;font-size:10px;">none</span>
-      <span class="tbl-new" title="new list (folder/name)" style="cursor:pointer;color:#6c7a80;">＋</span>
+      <span class="tbl-new" title="new list: empty, or with the columns of a template (map points, measurements, frequencies, ranges, transmitters…)" style="cursor:pointer;color:#6c7a80;">＋</span>
+      <span class="tbl-tpl" title="add the columns of a template to the active list (the data stays)" style="cursor:pointer;color:#6c7a80;">⊞</span>
       <span class="tbl-ren" title="rename / move the active list" style="cursor:pointer;color:#6c7a80;">✎</span>
       <span class="tbl-delL" title="delete the active list" style="cursor:pointer;color:#6c7a80;">🗑</span>
     </div>
@@ -612,12 +613,8 @@ function tblInit(n){
     tblRenderList(n);
   });
   q('.tbl-tail').addEventListener('click',e=>{ n.ui.tail=!n.ui.tail; e.target.style.color=n.ui.tail?'#4ec9b0':'#6c7a80'; tblRenderList(n); });
-  q('.tbl-new').addEventListener('click',async()=>{
-    const nm=prompt('New list name (folder/name):',tblKind(n.p.list)==='db' ? tblDir(n.p.list) : ''); if(!nm) return;
-    if(nm===TBL_PATCH || nm.startsWith(TBL_PRE)){ alert('this name is reserved'); return; }
-    await ListDB.setMeta(nm,{cols:[]});
-    await tblPick(n,nm);
-  });
+  q('.tbl-new').addEventListener('click',()=>tblTplMenu(n,'new'));
+  q('.tbl-tpl').addEventListener('click',()=>tblTplMenu(n,'apply'));
   q('.tbl-ren').addEventListener('click',async()=>{
     if(tblKind(n.p.list)!=='db'){ alert('only lists in the browser DB can be renamed'); return; }
     const nm=prompt('List name (folder/name):',n.p.list); if(!nm || nm===n.p.list) return;
@@ -644,6 +641,38 @@ function tblInit(n){
     await tblClear(n); tblRenderAll(n);
   });
   tblRenderAll(n);
+}
+// меню шаблонов: new — создать список (с колонками шаблона или пустой), apply — добавить недостающие колонки в активный
+async function tblNewList(n,t){
+  const dir=t ? t.dir+'/' : (tblKind(n.p.list)==='db' ? tblDir(n.p.list) : '');
+  const nm=(prompt('New list name (folder/name):',dir)||'').trim(); if(!nm) return;
+  if(nm===TBL_PATCH || nm.startsWith(TBL_PRE)){ alert('this name is reserved'); return; }
+  const have=(await ListDB.listNames()).includes(nm);
+  if(!have) await ListDB.setMeta(nm,{cols:t ? t.cols.slice() : []});
+  await tblPick(n,nm);
+  if(have && t) await tblApplyTemplate(n,t);                  // список уже есть — шаблон только дополняет колонки
+}
+async function tblApplyTemplate(n,t){
+  if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }
+  await tblColsEdit(n,tblTemplateCols(n.cl,t)); tblRenderAll(n);
+}
+function tblTplMenu(n,mode){
+  const root=n.ui.root; root.querySelector('.tbl-menu')?.remove();
+  const m=document.createElement('div'); m.className='tbl-menu';
+  m.style.cssText='position:absolute;z-index:20;left:0;right:0;top:20px;max-height:75%;overflow-y:auto;background:#161b1e;border:1px solid #2a3136;border-radius:3px;box-shadow:0 4px 14px #000a;';
+  const item=(title,desc,fn,cols)=>{
+    const d=document.createElement('div'); d.style.cssText='padding:4px 8px;cursor:pointer;border-bottom:1px solid #1d2226;';
+    d.innerHTML='<div style="color:#c8d2d6;">'+escapeHtml(title)+'</div>'+(cols ? '<div style="color:#4ec9b0;font-size:9px;white-space:normal;">'+escapeHtml(cols)+'</div>' : '')+
+      '<div style="color:#6c7a80;font-size:9px;white-space:normal;">'+escapeHtml(desc)+'</div>';
+    d.addEventListener('mouseenter',()=>{ d.style.background='#1f3a36'; }); d.addEventListener('mouseleave',()=>{ d.style.background=''; });
+    d.addEventListener('click',()=>{ m.remove(); fn(); }); m.append(d);
+  };
+  if(mode==='new') item('Empty list','columns appear from the first rows you add or import',()=>tblNewList(n,null));
+  else if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }
+  for(const t of TBL_TEMPLATES) item(t.title,t.desc,()=>mode==='new' ? tblNewList(n,t) : tblApplyTemplate(n,t),t.cols.join(', '));
+  root.append(m);
+  const off=e=>{ if(!m.contains(e.target)){ m.remove(); document.removeEventListener('pointerdown',off,true); } };
+  setTimeout(()=>document.addEventListener('pointerdown',off,true));
 }
 async function tblRenderAll(n){
   if(!n.ui) return;
