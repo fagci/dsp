@@ -162,6 +162,102 @@ function ovAlt(r){
   return 0;
 }
 
+// ---------- рельеф ----------
+// Сетка «азимут × дальность» вокруг наблюдателя по карте высот Horizon (hAt). Кольца — с шагом ×1.08 от 250 м,
+// точки в ENU (e, n, u) + высота над уровнем моря (h). Цвет ячейки: материал по высоте, освещение по наклону, дымка по дальности.
+const OV_RING_K=1.08, OV_AZ_STEP=2, OV_SHADES=8;
+const OV_MAT=[[70,100,55],[112,96,70],[125,125,132],[238,242,246]], OV_HAZE=[150,172,200], OV_SUN=(()=>{ const v=[-.5,-.4,.77], l=Math.hypot(...v); return v.map(x=>x/l); })();
+function ovRelief(n,obs,lat,lon,alt){
+  const H=Horizon;
+  if(!H.hAt || H.lat==null || Math.abs(H.lat-lat)>.02) return null;
+  const key=H.ver+'|'+lat+'|'+lon+'|'+alt;
+  if(n.relKey===key) return n.rel;
+  const R=6371000, la=lat*ORI_D, lo=lon*ORI_D, sl=Math.sin(la), cl=Math.cos(la), NA=360/OV_AZ_STEP, rings=[], dist=[];
+  for(let d=250; d<=H.radius*1000; d*=OV_RING_K){
+    const dl=d/R, sd=Math.sin(dl), cd=Math.cos(dl), a=new Float32Array(NA*4).fill(NaN);
+    for(let i=0;i<NA;i++){
+      const th=i*OV_AZ_STEP*ORI_D, s2=sl*cd+cl*sd*Math.cos(th), la2=Math.asin(s2),
+            lo2=lo+Math.atan2(Math.sin(th)*sd*cl,cd-sl*s2), h=H.hAt(la2/ORI_D,lo2/ORI_D);
+      if(h!==h) continue;
+      const e=ovEnu(obs,la2/ORI_D,lo2/ORI_D,h);
+      a[i*4]=e[0]; a[i*4+1]=e[1]; a[i*4+2]=e[2]; a[i*4+3]=h;
+    }
+    rings.push(a); dist.push(d);
+  }
+  // ячейка (j, i) — между кольцами j и j+1, азимутами i и i+1: код цвета = материал × OV_SHADES + освещение
+  const cells=[], colors=[];
+  for(let j=0;j<rings.length-1;j++){
+    const a=rings[j], b=rings[j+1], c=new Int16Array(NA).fill(-1);
+    for(let i=0;i<NA;i++){
+      const o0=i*4, o1=((i+1)%NA)*4;
+      if(a[o0]!==a[o0] || a[o1]!==a[o1] || b[o0]!==b[o0] || b[o1]!==b[o1]) continue;
+      const ax=a[o1]-a[o0], ay=a[o1+1]-a[o0+1], az=a[o1+2]-a[o0+2], bx=b[o0]-a[o0], by=b[o0+1]-a[o0+1], bz=b[o0+2]-a[o0+2];
+      let nx=ay*bz-az*by, ny=az*bx-ax*bz, nz=ax*by-ay*bx;
+      const nl=Math.hypot(nx,ny,nz)||1; if(nz<0){ nx=-nx; ny=-ny; nz=-nz; }
+      const sh=Math.max(0,Math.min(1,.3+.8*(nx*OV_SUN[0]+ny*OV_SUN[1]+nz*OV_SUN[2])/nl));
+      const h=(a[o0+3]+a[o1+3]+b[o0+3]+b[o1+3])/4, m=h<400 ? 0 : h<1500 ? 1 : h<2500 ? 2 : 3;
+      c[i]=m*OV_SHADES+Math.round(sh*(OV_SHADES-1));
+    }
+    cells.push(c);
+    const fog=1-Math.exp(-dist[j]/45000), row=[];            // цвета для этого кольца
+    for(let m=0;m<OV_MAT.length;m++) for(let k=0;k<OV_SHADES;k++){
+      const f=.35+.65*k/(OV_SHADES-1), base=OV_MAT[m];
+      row.push('rgb('+[0,1,2].map(q=>Math.round((base[q]*f)*(1-fog)+OV_HAZE[q]*fog)).join(',')+')');
+    }
+    colors.push(row);
+  }
+  n.relKey=key; n.rel={rings,NA,cells,colors};
+  return n.rel;
+}
+// кольца от дальних к ближним — ближние перекрывают дальние; ячейки одного цвета в кольце — одним путём
+function ovDrawRelief(cx,rel,proj,solid){
+  const {rings,NA,cells,colors}=rel, nr=rings.length, P=[];
+  for(let j=0;j<nr;j++){
+    const a=rings[j], X=new Float32Array(NA).fill(NaN), Y=new Float32Array(NA);
+    for(let i=0;i<NA;i++){
+      const o=i*4; if(a[o]!==a[o]) continue;
+      const q=proj([a[o],a[o+1],a[o+2]]); if(q){ X[i]=q.x; Y[i]=q.y; }
+    }
+    P.push({X,Y});
+  }
+  if(solid){
+    for(let j=nr-2;j>=0;j--){
+      const A=P[j], B=P[j+1], c=cells[j], paths=new Map();
+      for(let i=0;i<NA;i++){
+        const k=c[i], i1=(i+1)%NA;
+        if(k<0 || A.X[i]!==A.X[i] || A.X[i1]!==A.X[i1] || B.X[i]!==B.X[i] || B.X[i1]!==B.X[i1]) continue;
+        let pa=paths.get(k); if(!pa){ pa=new Path2D(); paths.set(k,pa); }
+        pa.moveTo(A.X[i],A.Y[i]); pa.lineTo(A.X[i1],A.Y[i1]); pa.lineTo(B.X[i1],B.Y[i1]); pa.lineTo(B.X[i],B.Y[i]); pa.closePath();
+      }
+      for(const [k,pa] of paths){ cx.fillStyle=colors[j][k]; cx.fill(pa); cx.strokeStyle=colors[j][k]; cx.lineWidth=.7; cx.stroke(pa); }   // обводка — без щелей между ячейками
+    }
+    const A=P[0], c=cells[0], bottom=cx.canvas.height+60;         // земля под ближним кольцом — до низа кадра
+    for(let i=0;i<NA;i++){
+      const i1=(i+1)%NA;
+      if(c[i]<0 || A.X[i]!==A.X[i] || A.X[i1]!==A.X[i1]) continue;
+      cx.fillStyle=cx.strokeStyle=colors[0][c[i]]; cx.lineWidth=.7;
+      cx.beginPath(); cx.moveTo(A.X[i],A.Y[i]); cx.lineTo(A.X[i1],A.Y[i1]); cx.lineTo(A.X[i1],bottom); cx.lineTo(A.X[i],bottom); cx.closePath(); cx.fill(); cx.stroke();
+    }
+    return;
+  }
+  cx.lineWidth=1;                                          // каркас: каждое 3-е кольцо и меридианы через 10°
+  for(let j=nr-1;j>=0;j-=1){
+    const t=j/(nr-1), A=P[j];
+    cx.strokeStyle=`rgba(255,200,90,${(.7-.5*t).toFixed(2)})`;
+    if(j%3===0){
+      cx.beginPath(); let pen=false;
+      for(let i=0;i<=NA;i++){ const k=i%NA; if(A.X[k]!==A.X[k]){ pen=false; continue; }
+        if(pen) cx.lineTo(A.X[k],A.Y[k]); else cx.moveTo(A.X[k],A.Y[k]); pen=true; }
+      cx.stroke();
+    }
+    if(j<nr-1){
+      const B=P[j+1]; cx.beginPath();
+      for(let i=0;i<NA;i+=5){ if(A.X[i]!==A.X[i] || B.X[i]!==B.X[i]) continue; cx.moveTo(A.X[i],A.Y[i]); cx.lineTo(B.X[i],B.Y[i]); }
+      cx.stroke();
+    }
+  }
+}
+
 def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmented reality hud camera satellite adsb 3d drone fpv sky',
   // Видео (vid, или растр img — например, из TV Decoder) + объекты (rec) в 3D + HUD. Камера: lat / lon / alt (м) — где она стоит, az / el / roll — куда смотрит.
   // Без видео рисует небо с горизонтом. Входы a…d — числа в HUD (подписи — параметр «HUD»).
@@ -178,6 +274,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           {n:'labels',t:'check',d:true,label:'labels'},
           {n:'trails',t:'check',d:true,label:'paths (path field)'},
           {n:'terrain',t:'check',d:true,label:'skyline from Horizon'},
+          {n:'relief',t:'select',opts:['off','auto','lines','solid'],d:'auto',label:'terrain relief 3D from Horizon (auto: solid without video, lines over video)'},
           {n:'find',t:'text',d:'',label:'find: name or id (an arrow at the edge)'},
           {n:'hud',t:'text',d:'A, B, C, D',label:'HUD inputs a…d: name[:unit], …'},
           {n:'dAz',t:'range',min:-180,max:180,step:.5,d:0,label:'azimuth correction, °'},
@@ -222,7 +319,9 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
       cx.fillStyle=g; cx.fillRect(0,0,W,H); }
     cx.save(); cx.beginPath(); cx.rect(rx,ry,rw,rh); cx.clip();
 
-    const lat=recNum(I.lat) ?? GeoMe.lat, lon=recNum(I.lon) ?? GeoMe.lon, alt=recNum(I.alt) ?? 0;
+    const lat=recNum(I.lat) ?? GeoMe.lat, lon=recNum(I.lon) ?? GeoMe.lon,
+          hzOk=lat!=null && Horizon.prof && Math.abs(Horizon.lat-lat)<.02,
+          alt=recNum(I.alt) ?? (hzOk && Horizon.ground!=null ? Horizon.ground+2 : 0);   // без alt — на земле по карте высот
     const az0=recNum(I.az), el0=recNum(I.el), ro0=recNum(I.roll)??0;
     const haveCam=az0!=null && el0!=null, havePos=lat!=null && lon!=null;
     const fov=Math.max(5,recNum(I.fov) ?? +p.fov), foc=(rw/2)/Math.tan(fov*ORI_D/2), cxp=rx+rw/2, cyp=ry+rh/2;
@@ -238,6 +337,10 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
       if(close) cx.closePath(); cx.stroke(); };
     const lines=[];
 
+    if(proj && obs && p.relief!=='off'){
+      const rel=ovRelief(n,obs,lat,lon,alt);
+      if(rel) ovDrawRelief(cx,rel,proj,p.relief==='solid' || p.relief==='auto' && !vw);
+    }
     if(proj){
       cx.font='10px monospace'; cx.textBaseline='middle'; cx.textAlign='center';
       // горизонт, стороны света, градусные метки
@@ -297,7 +400,8 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
         const {r,e,rng}=it, c=proj(e);
         const name=String(r.label ?? r.id ?? ''), isFind=ftxt && (name.toLowerCase().includes(ftxt) || String(r.id??'').toLowerCase().includes(ftxt));
         const color=isFind ? '#ffd84a' : (r.color||col);
-        const above=e[2]/rng>-.02;
+        const eAz=((Math.atan2(e[0],e[1])/ORI_D)+360)%360, hid=hzOk && e[2]/rng<Math.sin(horizonAt(eAz,lat,lon)*ORI_D);   // за горой
+        const above=e[2]/rng>-.02 && !hid;
         if(!c || c.x<rx-40 || c.x>rx+rw+40 || c.y<ry-40 || c.y>ry+rh+40){
           if(isFind){                                      // стрелка к объекту за кадром
             const dx=ovDot(e,cam.r), dy=ovDot(e,cam.u), an=Math.atan2(-dy,dx), m=Math.min(rw,rh)/2-14;
@@ -327,6 +431,9 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
         if(p.labels){
           cx.textAlign='left';
           const az=((Math.atan2(e[0],e[1])/ORI_D)+360)%360, el=Math.asin(e[2]/rng)/ORI_D;
+          cx.save(); cx.strokeStyle='rgba(0,0,0,.65)'; cx.lineWidth=3; cx.lineJoin='round';
+          const t2=(rng>=10000 ? Math.round(rng/1000)+' km' : (rng/1000).toFixed(1)+' km')+(md===OV_MODELS.plane ? ' · '+Math.round(ovAlt(r)/.3048/100)*100+' ft' : '');
+          cx.strokeText(name,c.x+12,c.y-4); cx.strokeText(t2,c.x+12,c.y+8); cx.restore();     // обводка — читается на фоне гор
           cx.fillText(name,c.x+12,c.y-4);
           cx.globalAlpha*=.75;
           cx.fillText((rng>=10000 ? Math.round(rng/1000)+' km' : (rng/1000).toFixed(1)+' km')+(md===OV_MODELS.plane ? ' · '+Math.round(ovAlt(r)/.3048/100)*100+' ft' : ''),c.x+12,c.y+8);

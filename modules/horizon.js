@@ -6,7 +6,7 @@
 
 const HZ_URL='https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 const HZ_MAX_TILES=150;
-const Horizon={prof:null, lat:null, lon:null, src:''};       // prof — Float32Array(360), °, индекс — азимут
+const Horizon={prof:null, lat:null, lon:null, src:'', hAt:null, ground:null, radius:0, ver:0};       // prof — Float32Array(360), °, индекс — азимут
 
 function horizonInterp(prof,az){
   az=((az%360)+360)%360;
@@ -106,13 +106,13 @@ async function horizonRun(n,lat,lon,key){
     const prof=horizonProfile(hAt,lat,lon,g+(+p.ant||0),{radius:+p.radius*1000, step:Math.max(50,pix), k:+p.k||1.33});
     n.prof=prof; n.ground=g; n.manual=false; n.srcTxt='terrain z'+z+', '+list.length+' tiles'+(bad?', '+bad+' failed':'');
     n.job=null; n.done=job; n.msg='';
-    Object.assign(Horizon,{prof, lat, lon, src:n.srcTxt});
+    Object.assign(Horizon,{prof, lat, lon, src:n.srcTxt, hAt, ground:g, radius:+p.radius, ver:Horizon.ver+1});   // hAt(lat,lon) → высота, м — для рельефа в Video Overlay
   }catch(e){ fail('terrain: '+e.message); }
 }
 function horizonTick(n,lat,lon){
   if(lat==null || lon==null){ n.noPos=true; return; }
   n.noPos=false;
-  if(n.manual && !n.req){ Object.assign(Horizon,{prof:n.prof, lat, lon, src:n.srcTxt}); return; }
+  if(n.manual && !n.req){ Object.assign(Horizon,{prof:n.prof, lat, lon, src:n.srcTxt, hAt:null}); return; }
   const p=n.p, key=[p.radius,p.zoom,p.ant,p.k].join('|'), ref=n.job||n.done;
   const changed=!ref || ref.key!==key || geoDist(ref.lat,ref.lon,lat,lon)>1;
   if(!changed && !n.req) return;
