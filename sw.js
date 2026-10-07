@@ -5,9 +5,10 @@
 // онлайн всегда получаем свежее (та же схема ?v=N, что и в index.html), офлайн — последнее
 // закэшированное вместо ошибки.
 //
+// ?v=N-запросы отдаются из кэша без обращения к сети (cache-first), поэтому любая правка файла требует бампа V.
 // CACHE бампать вместе с ?v=N в index.html — иначе после правки файлов старый список ссылок
 // (со старым ?v=) продолжит переустанавливаться поверх уже закэшированного нового.
-const CACHE='dsp-shell-v239';
+const CACHE='dsp-shell-v240';
 const V=CACHE.replace(/\D/g,'');                 // ?v=N берётся из имени кэша — бампать только CACHE и V в index.html
 const SHELL=[
   './',
@@ -179,6 +180,16 @@ self.addEventListener('fetch',e=>{
   if(req.method!=='GET' || new URL(req.url).origin!==location.origin) return;
   // скрипт воркера под изолированной страницей тоже должен нести COEP, иначе браузер его не запустит
   const nav=req.mode==='navigate' || req.destination==='worker';
+  // URL с ?v=N неизменяем (версия = имя кэша) — отдаём из кэша без сети; иначе каждый запуск перекачивает все файлы
+  if(new URL(req.url).searchParams.has('v')){
+    e.respondWith(
+      caches.open(CACHE).then(c=>c.match(req).then(r=>r||fetch(req).then(res=>{
+        if(res.ok) c.put(req,res.clone());
+        return res;
+      }))).then(res=>nav?isolate(res):res)
+    );
+    return;
+  }
   e.respondWith(
     fetch(req).then(res=>{
       const copy=res.clone();
