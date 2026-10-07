@@ -550,7 +550,7 @@ Two blocks turn an IQ stream into a picture: **TV Demodulator** (IQ, worker) and
 
 The IQ Generator mode **Analog TV** sends a test card (75 % colour bars, grey scale, white frame) in PAL or NTSC, FM (*deviation*) or AM with negative modulation.
 
-Presets: *Analog TV: Test Card (Generator)*, *Analog TV: FPV / TV Receiver (USB SDR)*, *Analog TV: FPV Channel Scanner (HackRF)* (Band Scanner over the Raceband channels; the TV Decoder `lock` stops the scan on a live video, add rows to the table for more channels).
+Presets: *Analog TV: Test Card (Generator)*, *Analog TV: FPV / TV Receiver (USB SDR)*, *Analog TV: FPV Channel Scanner (HackRF)* (Band Scanner over the Raceband channels; the TV Decoder `lock` stops the scan on a live video, add rows to the table for more channels). *Analog TV: FPV Multiband Scanner (HackRF)* is the same scan over 21 channels: 0.9, 1.2, 2.4 GHz and Raceband.
 
 ## Digital Voice Decoder (4FSK)
 
