@@ -164,6 +164,7 @@ const PRESET_CATS={
   'Telemetry: Decode Frames (no hardware)':'Aircraft, Satellites & Telemetry',
   'Telemetry: HUD over Video → Record':'Aircraft, Satellites & Telemetry',
   'AR: Satellites Through the Camera (Phone)':'Aircraft, Satellites & Telemetry',
+  'AR: Drones Around (Remote ID, Phone)':'Aircraft, Satellites & Telemetry',
   'AR: ADS-B Aircraft in the Sky (Phone + Generator)':'Aircraft, Satellites & Telemetry',
   'ADS-B: Radar and Attitude (Generator)':'Aircraft, Satellites & Telemetry',
   'Remote ID: Drones on a Map (ESP32)':'Aircraft, Satellites & Telemetry',
@@ -4244,13 +4245,13 @@ preset('Telemetry: HUD over Video → Record', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Your own HUD from the drone telemetry: Telemetry decoder (Connect port: flight controller, radio modem or ELRS / Crossfire UART) → Video Overlay (camera position and attitude from lat / lon / alt / az / el / roll,\n'+
   'numbers on the HUD: battery V, speed, link rssi and quality) over a video file; Record Video writes the result. For a live analog picture replace the video source by TV Decoder `img` (the Overlay takes `img` as well).\n'+
-  'Heading, pitch and roll are the drone\'s, not the camera\'s: tune the correction sliders of the Overlay (azimuth / elevation / roll) for a camera that is tilted up on the frame. Without a picture the Overlay draws a synthetic sky.'});
+  'Heading, pitch and roll are the drone\'s, not the camera\'s: set tilt in the Overlay for a camera that is tilted up on the frame, and video delay (analog FPV ≈ 50–150 ms, digital more) so the marks do not lag. The first position fix becomes home: its distance, bearing and a flag are drawn. Without a picture the Overlay draws a synthetic sky.'});
 nt.size.w=800; nt.size.h=120; applySize(nt);
 const tl=addNode('telem',40,200,{});
 tl.size.w=420; tl.size.h=260; applySize(tl);
 const vs=addNode('vidsrc',40,500,{w:'320'});
 vs.size.w=300; vs.size.h=200; applySize(vs);
-const ov=addNode('overlay',500,200,{hud:'V:V, speed:m/s, RSSI:dBm, LQ:%'});
+const ov=addNode('overlay',500,200,{hud:'V:V, speed:m/s, RSSI:dBm, LQ:%',home:'first fix',tilt:20,lag:100});
 ov.size.w=560; ov.size.h=420; applySize(ov);
 const vr=addNode('vidrec',1100,200,{});
 vr.size.w=300; vr.size.h=200; applySize(vr);
@@ -4260,11 +4261,34 @@ addEdge(tl.id,'volts',ov.id,'a'); addEdge(tl.id,'speed',ov.id,'b'); addEdge(tl.i
 addEdge(ov.id,'vid',vr.id,'vid');
 markWiresDirty();
 });
+preset('AR: Drones Around (Remote ID, Phone)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Drones from Remote ID in the camera: a demo Open Drone ID frame (a multirotor hovering 60 m up near Novosibirsk) → Open Drone ID → Video Overlay. With the ESP32 receiver (WebSerial) wire its rec instead of the text source.\n'+
+  'Orientation (Start) is the phone\'s compass, My Position — where you stand, Horizon — the terrain: a drone behind a hill is dimmed and marked “no LOS”. Tap a drone for its card (pick output). Set the position near the demo drone, or turn the Position source to gps in the field.\n'+
+  'The operator\'s position comes as a flag. Align crosshair to target nudges the compass by the Sun or the Moon.'});
+nt.size.w=820; nt.size.h=120; applySize(nt);
+const tx=addNode('textsrc',40,200,{text:'ODID,wifi,-60,aa:bb:cc:00:11:22,f21904021231353831463444454d4f3030303030303031000000000012205a3c0098aace20d0d06e310000c00848080000000000004200d077ce2008216e31000000000000000000000000000000520044454d4f2d4f50455241544f5200000000000000000000'});
+tx.size.w=420; tx.size.h=140; applySize(tx);
+const od=addNode('odid',500,200,{});
+od.size.w=520; od.size.h=240; applySize(od);
+const or=addNode('orient',40,400,{});
+const me=addNode('geoMe',40,540,{src:'manual',lat:55.0375,lon:82.925});
+const hz=addNode('horizon',300,500,{radius:30,zoom:10});
+hz.size.w=340; hz.size.h=150; applySize(hz);
+const ov=addNode('overlay',1060,200,{fov:60,labels:true,find:''});
+ov.size.w=560; ov.size.h=440; applySize(ov);
+addEdge(tx.id,'text',od.id,'text'); addEdge(od.id,'rec',ov.id,'rec');
+addEdge(me.id,'lat',od.id,'lat'); addEdge(me.id,'lon',od.id,'lon');
+addEdge(or.id,'az',ov.id,'az'); addEdge(or.id,'el',ov.id,'el'); addEdge(or.id,'roll',ov.id,'roll');
+addEdge(me.id,'lat',ov.id,'lat'); addEdge(me.id,'lon',ov.id,'lon'); addEdge(me.id,'alt',ov.id,'alt');
+addEdge(me.id,'lat',hz.id,'lat'); addEdge(me.id,'lon',hz.id,'lon');
+markWiresDirty();
+});
 preset('AR: Satellites Through the Camera (Phone)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Open on a phone over HTTPS. Press Turn on camera (Camera), Start (Orientation) and Download TLE (Satellites); set My Position to gps.\n'+
   'Orientation gives where the camera looks (az / el / roll), My Position — where it stands, Satellites — what is above, Horizon — the terrain (heights are downloaded once). Video Overlay draws the satellites (stub models) and a wire mesh of the mountains over the picture.\n'+
-  'The compass of a phone is off by 5–15°: tune the azimuth / elevation corrections in Video Overlay by a known object (the Moon, the ISS). Type a name in find to get an arrow to a satellite outside the frame.'});
+  'The compass of a phone is off by 5–15°: put the crosshair on the Sun, the Moon or the ISS and press Align crosshair to target in Video Overlay — the corrections are set for you. Type a name in find to get an arrow to a satellite outside the frame. Tap an object for its card; the Sun and the Moon are drawn too.'});
 nt.size.w=760; nt.size.h=130; applySize(nt);
 const cm=addNode('cam',40,220,{cam:'rear',res:'1280x720',fps:'30'});
 const or=addNode('orient',40,380,{});
@@ -4273,7 +4297,7 @@ const st=addNode('satTrack',300,220,{group:'stations',sat:'ISS',show:'all'});
 st.size.w=380; st.size.h=520; applySize(st);
 const hz=addNode('horizon',300,760,{radius:50,zoom:10});
 hz.size.w=340; hz.size.h=150; applySize(hz);
-const ov=addNode('overlay',720,220,{fov:60,find:'ISS'});
+const ov=addNode('overlay',720,220,{fov:60,find:'ISS',osm:true});
 ov.size.w=520; ov.size.h=420; applySize(ov);
 addEdge(cm.id,'vid',ov.id,'vid'); addEdge(or.id,'az',ov.id,'az'); addEdge(or.id,'el',ov.id,'el'); addEdge(or.id,'roll',ov.id,'roll');
 addEdge(me.id,'lat',ov.id,'lat'); addEdge(me.id,'lon',ov.id,'lon'); addEdge(me.id,'alt',ov.id,'alt');

@@ -64,6 +64,7 @@ const SHELL=[
   './modules/sked.js?v='+V,
   './modules/sat.js?v='+V,
   './modules/horizon.js?v='+V,
+  './modules/overlay-kernels.js?v='+V,
   './modules/overlay.js?v='+V,
   './modules/radio.js?v='+V,
   './modules/simd-kernels.js?v='+V,
