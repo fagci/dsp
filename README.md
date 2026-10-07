@@ -211,6 +211,16 @@ The **tinySA** node talks to a tinySA or tinySA Ultra over its USB serial consol
 - **gen** (signal generator mode) — `mode low|high output`, frequency, level and **RF on**; `genFreq` (Hz) and `genLevel` (dBm) inputs let the graph drive it (e.g. a stepped frequency sweep)
 - ready-made patches: **tinySA: Spectrum**, **tinySA: FPV 5.8 GHz Channel Activity** (Ultra sweep 5.35–5.95 GHz under the FPV channel strip, peak hold, strongest peak on a display)
 
+## Remote ID
+
+The **Remote ID (Open Drone ID)** node (Sources) shows drones that broadcast Remote ID (ASTM F3411): ID, type, status, position, altitude, speed, heading and the operator position. The signal is public and unencrypted: Wi-Fi beacons and NAN frames (2.4 / 5 GHz) and Bluetooth advertisements (service data 0xFFFA). Only drones that transmit it are seen (most DJI models and drones made for the EU / US market; home-built FPV usually not). Receive-only.
+
+- hardware: an **ESP32-C5** (2.4 + 5 GHz Wi-Fi and BLE) with the firmware in `tools/odid-esp32c5` (Arduino-ESP32 3.x; not tested on hardware). It hops Wi-Fi channels, scans BLE and prints one line per frame: `ODID,<wifi|ble>,<rssi>,<mac>,<hex>`. **Connect ESP32** opens the port over WebSerial (Chrome/Edge)
+- inputs: `text` — the same lines (or bare hex of a message / Message Pack), `rec` — records with `raw` (and optionally `mac`, `rssi`), `lat` / `lon` — your position for the distance (otherwise *My Position*)
+- outputs: `rec` — a drone record (`lat`, `lon`, `heading`, `speed`, `alt_m`, `dist_km`, …) and, with *also output the operator position*, an operator record, both for the *Map*; `count`, `frames`, `dist` — the distance to the nearest drone, km
+- messages are merged per transmitter address: Basic ID comes every few seconds, Location every second
+- presets: **Remote ID: Drones on a Map (ESP32)**, **Remote ID: Demo Frame (no hardware)**; the decoder is checked by `node tools/test-odid.mjs` (vectors built by hand from the standard's layout, not recorded from real drones)
+
 ## ESP-SDR
 
 The **ESP-SDR (ESP32)** node talks to an ESP32 running the [ESPARGOS/esp-sdr](https://github.com/ESPARGOS/esp-sdr) firmware (WebSerial, Chrome/Edge): the chip's undocumented debug path gives raw I/Q of the built-in 2.4 / 5 GHz radio, no extra SDR hardware. Wire `spec` to a Spectrum Analyzer.
