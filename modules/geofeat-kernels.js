@@ -86,3 +86,69 @@ function gfNearestRunway(data,lat,lon,maxKm){
   return {lat:a[0], lon:a[1], hdg:gfBearing(a[0],a[1],b[0],b[1]), len:gfDistKm(a[0],a[1],b[0],b[1])*1000, ref:best.ref,
     name:ap ? (ap.name||ap.icao) : '', distKm:bd};
 }
+
+// ---------- OurAirports (статические CSV, не зависят от Overpass) ----------
+// rows: массивы строк CSV с заголовком в первой. Результат компактный: ap [ident,lat,lon,name,icao,iata,ele_m,kind,size], rw [lat1,lon1,lat2,lon2,ref,width_m,surface,ident]
+const GF_OA_TYPES={large_airport:0, medium_airport:1, small_airport:2, heliport:3};
+function gfCsvCols(rows){
+  const h=(rows[0]||[]).map(s=>String(s).trim().toLowerCase());
+  return k=>h.indexOf(k);
+}
+function gfOaParse(apRows,rwRows){
+  const A=gfCsvCols(apRows), ap=[], pos=new Map();
+  const iId=A('ident'), iT=A('type'), iN=A('name'), iLa=A('latitude_deg'), iLo=A('longitude_deg'), iE=A('elevation_ft'), iIata=A('iata_code'), iGps=A('gps_code');
+  for(let r=1;r<apRows.length;r++){
+    const x=apRows[r], size=GF_OA_TYPES[x[iT]]; if(size===undefined) continue;
+    const lat=parseFloat(x[iLa]), lon=parseFloat(x[iLo]); if(!isFinite(lat) || !isFinite(lon)) continue;
+    const ident=x[iId], icao=/^[A-Z]{4}$/.test(x[iGps]||'') ? x[iGps] : /^[A-Z]{4}$/.test(ident) ? ident : '', ele=parseFloat(x[iE]);
+    ap.push([ident,lat,lon,x[iN]||'',icao,x[iIata]||'',isFinite(ele) ? Math.round(ele*.3048) : null,size===3 ? 'heli' : 'aerodrome',size]);
+    pos.set(ident,[lat,lon]);
+  }
+  const B=gfCsvCols(rwRows), rw=[];
+  const jA=B('airport_ident'), jL=B('length_ft'), jW=B('width_ft'), jS=B('surface'), jC=B('closed'),
+        jle=B('le_ident'), jla1=B('le_latitude_deg'), jlo1=B('le_longitude_deg'), jh1=B('le_heading_degt'),
+        jhe=B('he_ident'), jla2=B('he_latitude_deg'), jlo2=B('he_longitude_deg'), jh2=B('he_heading_degt');
+  for(let r=1;r<rwRows.length;r++){
+    const x=rwRows[r]; if(x[jC]==='1' || !pos.has(x[jA])) continue;
+    let la1=parseFloat(x[jla1]), lo1=parseFloat(x[jlo1]), la2=parseFloat(x[jla2]), lo2=parseFloat(x[jlo2]);
+    if(![la1,lo1,la2,lo2].every(isFinite)){                       // концов нет — от точки аэродрома по курсу и длине
+      const len=parseFloat(x[jL])*.3048; if(!(len>100)) continue;
+      let hd=parseFloat(x[jh1]); if(!isFinite(hd)){ const h2=parseFloat(x[jh2]); hd=isFinite(h2) ? h2+180 : (parseInt(x[jle])||NaN)*10; }
+      if(!isFinite(hd)) continue;
+      const c=pos.get(x[jA]), dN=Math.cos(hd*GF_D)*len/2, dE=Math.sin(hd*GF_D)*len/2, kLat=1/111320, kLon=1/(111320*Math.cos(c[0]*GF_D));
+      la1=c[0]-dN*kLat; lo1=c[1]-dE*kLon; la2=c[0]+dN*kLat; lo2=c[1]+dE*kLon;
+    }
+    const w=parseFloat(x[jW]);
+    rw.push([la1,lo1,la2,lo2,[x[jle],x[jhe]].filter(Boolean).join('/'),isFinite(w) ? Math.round(w*.3048) : 0,x[jS]||'',x[jA]]);
+  }
+  return {ap,rw};
+}
+// компактные данные → индекс по ячейкам 0.5°
+function gfOaIndex(db){
+  const m=new Map(), cell=(la,lo)=>Math.floor(lo/GF_CELL)+':'+Math.floor(la/GF_CELL);
+  const get=k=>{ let c=m.get(k); if(!c) m.set(k,c={ap:[],rw:[]}); return c; };
+  for(const a of db.ap) get(cell(a[1],a[2])).ap.push(a);
+  for(const r of db.rw){ const k1=cell(r[0],r[1]), k2=cell(r[2],r[3]); get(k1).rw.push(r); if(k2!==k1) get(k2).rw.push(r); }
+  return m;
+}
+// ячейка индекса → данные в том же виде, что gfParse('air')
+function gfOaCell(idx,ix,iy){
+  const c=idx.get(ix+':'+iy);
+  if(!c) return {ap:[],rw:[]};
+  return {
+    ap:c.ap.map(a=>({id:'a'+a[0], lat:a[1], lon:a[2], name:a[3], icao:a[4], iata:a[5], ele:a[6]===null ? NaN : a[6], kind:a[7]})),
+    rw:c.rw.map(r=>({id:'r'+r[7]+':'+r[4], pts:[[r[0],r[1]],[r[2],r[3]]], ref:r[4], width:r[5], surface:r[6]})),
+  };
+}
+
+// ---------- встроенный список населённых пунктов ----------
+const gfPopKind=pop=>pop>=200000 ? 'city' : pop>=20000 ? 'town' : 'village';
+// к пунктам OSM добавить пункты из встроенного списка, которых в OSM-данных нет (то же имя ближе 3 км — дубль)
+function gfMergePlaces(osm,local){
+  const out=osm.slice();
+  for(const q of local){
+    if(osm.some(o=>o.name===q.name && gfDistKm(o.lat,o.lon,q.lat,q.lon)<3)) continue;
+    out.push(q);
+  }
+  return out;
+}
