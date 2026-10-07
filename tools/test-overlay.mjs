@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,isFinite,parseFloat,isNaN,Infinity});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/overlay-kernels.js'),'utf8')+
-  ';this.K={ovkSunEcl,ovkMoonEcl,ovkEclToEq,ovkAzEl,ovkSkyBodies,ovkPlanets,ovkPrecess,ovkSkyObjects,ovkLosBuild,ovkCellHidden,ovkVisible,ovkOsmQuery,ovkOsmParse,ovkBldQuery,ovkBldParse,ovkPosePush,ovkPoseAt,ovkTrailPush,ovkWrap,ovkNorm,ovkSunVec,ovkDayK,ovkLit,ovkShadowed,ovkPalette,ovkFog,ovkDip,ovkLinkPts,ovkClipNear,OVK_RING0,OVK_RING_K};',ctx);
+  ';this.K={ovkSunEcl,ovkMoonEcl,ovkEclToEq,ovkAzEl,ovkSkyBodies,ovkPlanets,ovkPrecess,ovkSkyObjects,ovkLosBuild,ovkCellHidden,ovkVisible,ovkOsmQuery,ovkOsmParse,ovkBldQuery,ovkBldParse,ovkBldRoads,ovkPosePush,ovkPoseAt,ovkTrailPush,ovkWrap,ovkNorm,ovkSunVec,ovkDayK,ovkLit,ovkShadowed,ovkPalette,ovkFog,ovkDip,ovkLinkPts,ovkClipNear,OVK_RING0,OVK_RING_K};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -156,4 +156,8 @@ ok('buildings: nearest first',bp[0].id===2 && bp[1].id===1);
 near('buildings: levels → height',bp[0].h,9,.01); near('buildings: height tag',bp[1].h,12.5,.01);
 ok('buildings: closing point removed',bp[1].pts.length===3);
 ok('buildings: query asks way[building]',/way\["building"\]\(around:500,55\.00000,82\.00000\)/.test(K.ovkBldQuery(55,82,500)));
+const rj={elements:[{type:'way',id:9,tags:{highway:'residential'},geometry:[{lat:55,lon:82},{lat:55.0009,lon:82}]},{type:'way',id:10,tags:{building:'yes'},geometry:[]}]};
+const rd=K.ovkBldRoads(rj,55,82,25);
+ok('streets: one way, points every ~25 m',rd.length===1 && rd[0].pts.length===5,JSON.stringify(rd.map(w=>w.pts.length)));
+ok('streets: budget limits points',K.ovkBldRoads(rj,55,82,25,3).length===0);
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad?1:0);
