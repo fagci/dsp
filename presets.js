@@ -175,6 +175,7 @@ const PRESET_CATS={
   'AR: Satellites Through the Camera (Phone)':'Aircraft, Satellites & Telemetry',
   'AR: Drones Around (Remote ID, Phone)':'Aircraft, Satellites & Telemetry',
   'AR: ADS-B Aircraft in the Sky (Phone + Generator)':'Aircraft, Satellites & Telemetry',
+  'Radio Reach: ADS-B Coverage over Terrain (Generator)':'Aircraft, Satellites & Telemetry',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
   'Flight Sim: Take Off from the Nearest Runway':'Aircraft, Satellites & Telemetry',
   'Flight Sim: Watch ADS-B Aircraft (Generator)':'Aircraft, Satellites & Telemetry',
@@ -4407,6 +4408,24 @@ addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'rec',de.id,'rec'); addEdge(de.id,
 addEdge(or.id,'az',ov.id,'az'); addEdge(or.id,'el',ov.id,'el'); addEdge(or.id,'roll',ov.id,'roll');
 addEdge(me.id,'lat',ov.id,'lat'); addEdge(me.id,'lon',ov.id,'lon'); addEdge(me.id,'alt',ov.id,'alt');
 addEdge(me.id,'lat',hz.id,'lat'); addEdge(me.id,'lon',hz.id,'lon');
+markWiresDirty();
+});
+preset('Radio Reach: ADS-B Coverage over Terrain (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'How far do I receive aircraft from this point with this antenna, given the mountains? Radio Reach traces every azimuth over the Horizon height map (earth curvature with refraction k) and draws, for each aircraft altitude, the distance at which the aircraft goes below the terrain line; the table of min / avg / max reach is in the readout.\n'+
+  'Try several antennas in «ants» (2, 10, 30 m) and altitudes in «alts» (FL100, 3000m…); «antNo» picks the antenna shown. The decoded ADS-B aircraft (here a generator; use a USB SDR at 1090 MHz for real traffic) are drawn on the same plot: white dots are received, the dashed line is the farthest received per sector, a red dot is an aircraft received beyond the calculated reach (tune k and the antenna height). «Save to table» appends the summary to the Table list «analysis/reach»; the `poly` output draws the coverage areas on the Map.'});
+nt.size.w=900; nt.size.h=120; applySize(nt);
+const gn=addNode('iqGen',40,220,{sr:'2400000',fc:1090000000,mode:'ADS-B',off:0,lvl:-20,noise:-40});
+const dm=addNode('adsbDemod',40,850,{});
+const me=addNode('geoMe',320,580,{src:'manual',lat:55.01,lon:82.65});
+const de=addNode('adsbDecode',320,220,{rlat:55.01,rlon:82.65});
+de.size.w=480; de.size.h=240; applySize(de);
+const hz=addNode('horizon',820,220,{radius:100,zoom:10});
+hz.size.w=340; hz.size.h=150; applySize(hz);
+const rc=addNode('reach',820,420,{ants:'2, 10, 30',alts:'FL100, FL250, FL350',name:'Home'});
+rc.size.w=460; rc.size.h=420; applySize(rc);
+addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'rec',de.id,'rec'); addEdge(de.id,'rec',rc.id,'rec');
+addEdge(me.id,'lat',hz.id,'lat'); addEdge(me.id,'lon',hz.id,'lon'); addEdge(me.id,'lat',rc.id,'lat'); addEdge(me.id,'lon',rc.id,'lon');
 markWiresDirty();
 });
 preset('Flight Sim: Fly over Terrain (Joystick)', function(){
