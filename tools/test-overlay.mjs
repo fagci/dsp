@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,isFinite,parseFloat,isNaN,Infinity});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/overlay-kernels.js'),'utf8')+
-  ';this.K={ovkSunEcl,ovkMoonEcl,ovkEclToEq,ovkAzEl,ovkSkyBodies,ovkPlanets,ovkPrecess,ovkSkyObjects,ovkLosBuild,ovkCellHidden,ovkVisible,ovkOsmQuery,ovkOsmParse,ovkPosePush,ovkPoseAt,ovkTrailPush,ovkWrap,ovkNorm,ovkSunVec,ovkDayK,ovkLit,ovkShadowed,ovkPalette,ovkFog,ovkDip,ovkLinkPts,ovkClipNear,OVK_RING0,OVK_RING_K};',ctx);
+  ';this.K={ovkSunEcl,ovkMoonEcl,ovkEclToEq,ovkAzEl,ovkSkyBodies,ovkPlanets,ovkPrecess,ovkSkyObjects,ovkLosBuild,ovkCellHidden,ovkVisible,ovkOsmQuery,ovkOsmParse,ovkBldQuery,ovkBldParse,ovkPosePush,ovkPoseAt,ovkTrailPush,ovkWrap,ovkNorm,ovkSunVec,ovkDayK,ovkLit,ovkShadowed,ovkPalette,ovkFog,ovkDip,ovkLinkPts,ovkClipNear,OVK_RING0,OVK_RING_K};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -144,4 +144,16 @@ ok('clip: both in front → unchanged',K.ovkClipNear([0,10,0],[5,50,0],f,1).leng
 ok('clip: both behind → dropped',K.ovkClipNear([0,-10,0],[5,-50,0],f,1)===null);
 const cl=K.ovkClipNear([0,-10,0],[0,30,0],f,1); near('clip: a segment crossing the camera plane is cut at it',cl[0][1],1,1e-9); near('clip: the far end stays',cl[1][1],30,1e-9);
 const cl2=K.ovkClipNear([4,40,0],[8,-20,0],f,1); near('clip: the other direction',cl2[1][1],1,1e-9); near('clip: x follows the cut',cl2[1][0],4+(8-4)*(1-40)/(-20-40),1e-9);
+// здания: высота из height / building:levels / по умолчанию; ближние первыми; контур без замыкающей точки
+const bj={elements:[
+  {type:'way',id:1,tags:{building:'yes',height:'12.5'},geometry:[{lat:55.001,lon:82.001},{lat:55.001,lon:82.002},{lat:55.002,lon:82.002},{lat:55.001,lon:82.001}]},
+  {type:'way',id:2,tags:{building:'house','building:levels':'3'},geometry:[{lat:55,lon:82},{lat:55,lon:82.0002},{lat:55.0002,lon:82.0002},{lat:55.0002,lon:82}]},
+  {type:'way',id:3,tags:{building:'yes'},geometry:[{lat:55,lon:82},{lat:55,lon:82.0001}]},
+  {type:'node',id:4,lat:55,lon:82}]};
+const bp=K.ovkBldParse(bj,55,82);
+ok('buildings: bad ways dropped',bp.length===2,String(bp.length));
+ok('buildings: nearest first',bp[0].id===2 && bp[1].id===1);
+near('buildings: levels → height',bp[0].h,9,.01); near('buildings: height tag',bp[1].h,12.5,.01);
+ok('buildings: closing point removed',bp[1].pts.length===3);
+ok('buildings: query asks way[building]',/way\["building"\]\(around:500,55\.00000,82\.00000\)/.test(K.ovkBldQuery(55,82,500)));
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad?1:0);

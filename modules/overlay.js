@@ -415,6 +415,90 @@ function ovOsmGeo(n,obs,rel,alt,okey){
   return n.osmGeo={roads:line(o.roads), rivers:line(o.rivers), peaks:dots(o.peaks,60), places:dots(o.places,40)};
 }
 
+// ---------- здания OSM: контуры с высотой, окна светятся ночью ----------
+async function ovBldLoad(n,lat,lon,rKm){
+  const key='bld:'+lat.toFixed(3)+','+lon.toFixed(3)+','+rKm, gen=n.bldReq={};
+  n.bldMsg='loading buildings…';
+  try{
+    let txt=await geoGet(key).catch(()=>null);
+    if(!txt){
+      const r=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',
+        headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'data='+encodeURIComponent(ovkBldQuery(lat,lon,rKm*1000))});
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      txt=await r.text();
+      let j=null; try{ j=JSON.parse(txt); }catch(e){ throw new Error('server busy, try later'); }
+      const re=gfRemarkError(j); if(re) throw new Error('server busy: '+re);
+      geoPut(key,txt).catch(()=>{});
+    }
+    if(n.bldReq!==gen) return;
+    n.bld=ovkBldParse(JSON.parse(txt),lat,lon); n.bldFor={lat,lon,r:rKm}; n.bldGen=(n.bldGen|0)+1; n.bldMsg='';
+  }catch(e){ if(n.bldReq===gen){ n.bldMsg='buildings: '+e.message; n.bldT=Date.now()+90000; } }
+}
+// контур в ENU на высоте земли в центре здания; ориентация против часовой; видимость центра из точки наблюдения
+function ovBldGeo(n,obs,rel,alt,okey){
+  if(!n.bld) return null;
+  const key=okey+'|'+n.bldGen+'|'+Horizon.ver;
+  if(n.bldGeoKey===key) return n.bldGeo;
+  const hAt=Horizon.hAt, out=[];
+  for(const b of n.bld){
+    const g=hAt ? hAt(b.lat,b.lon) : alt-2, h0=g===g ? g : alt-2;
+    let ring=b.pts.map(q=>ovEnu(obs,q[0],q[1],h0)), A=0;
+    for(let i=0;i<ring.length;i++){ const u=ring[i], v=ring[(i+1)%ring.length]; A+=u[0]*v[1]-v[0]*u[1]; }
+    if(A<0) ring=ring.reverse();
+    const c=ovEnu(obs,b.lat,b.lon,h0+b.h/2);
+    out.push({id:b.id, h:b.h, lv:b.lv, ring, c, d:Math.hypot(c[0],c[1]), vis:ovkVisible(rel?.los,c[0],c[1],c[2],.02)});
+  }
+  out.sort((a,b)=>b.d-a.d);                                  // от дальних к ближним
+  n.bldGeoKey=key; return n.bldGeo=out;
+}
+const ovHash=(a,b,c,d)=>{ let x=(a*73856093)^(b*19349663)^(c*83492791)^(d*2654435761); x=(x^(x>>>13))*1274126177; return ((x^(x>>>16))>>>0)/4294967296; };
+// здания: стены, обращённые к камере, с окнами; крыша; ночью окна горят у части этажей
+function ovDrawBuildings(cx,proj,foc,box,list,dk,vis,sun){
+  const [rx,ry,rw,rh]=box, night=1-dk;
+  const sv=ovkSunVec(sun.az,sun.el), day=ovMix([132,134,140],[168,166,160],dk), dark=[14,17,26], haze=ovMix(OV_HAZE_NIGHT,OV_HAZE_DAY,dk);
+  let budget=7000;
+  for(const b of list){
+    if(!b.vis) continue;
+    const fog=ovkFog(b.d,vis,0), top=[], bot=[], R=b.ring, N=R.length;
+    let on=false;
+    for(let i=0;i<N;i++){
+      const p0=proj(R[i]), p1=proj([R[i][0],R[i][1],R[i][2]+b.h]);
+      if(!p0 || !p1){ on=false; break; }
+      bot.push(p0); top.push(p1); if(p0.x>rx-50 && p0.x<rx+rw+50 && p0.y>ry-50 && p0.y<ry+rh+50 || p1.y>ry-50 && p1.y<ry+rh+50 && p1.x>rx-50 && p1.x<rx+rw+50) on=true;
+    }
+    if(bot.length!==N || !on) continue;
+    for(let i=0;i<N;i++){
+      const j=(i+1)%N, A=R[i], B=R[j], dx=B[0]-A[0], dy=B[1]-A[1], L=Math.hypot(dx,dy); if(L<1) continue;
+      const nx=dy/L, ny=-dx/L;                                      // наружу при обходе против часовой
+      if(nx*A[0]+ny*A[1]>=0) continue;                              // стена смотрит от камеры
+      const lit=Math.max(0,nx*sv[0]+ny*sv[1])*.5+.5, base=ovMix(dark,day.map(v=>v*lit),dk);
+      const col=ovMix(base,haze,fog*.85), q0=bot[i], q1=bot[j], q2=top[j], q3=top[i];
+      cx.fillStyle='rgb('+col.map(Math.round).join(',')+')';
+      cx.beginPath(); cx.moveTo(q0.x,q0.y); cx.lineTo(q1.x,q1.y); cx.lineTo(q2.x,q2.y); cx.lineTo(q3.x,q3.y); cx.closePath(); cx.fill();
+      if(night<.05 || fog>.9) continue;
+      const cols=Math.max(1,Math.floor(L/3.5)), rows=b.lv, wpx=Math.hypot(q1.x-q0.x,q1.y-q0.y)/cols, hpx=Math.hypot(q3.x-q0.x,q3.y-q0.y)/rows, pa=night*(1-fog)*.95;
+      if(wpx<2.2 || hpx<2.2){                                       // окна не различить — стена светится средней яркостью
+        const f=.28*pa; if(f<.01) continue;
+        cx.fillStyle='rgba(255,196,110,'+f.toFixed(3)+')'; cx.beginPath(); cx.moveTo(q0.x,q0.y); cx.lineTo(q1.x,q1.y); cx.lineTo(q2.x,q2.y); cx.lineTo(q3.x,q3.y); cx.closePath(); cx.fill();
+        continue;
+      }
+      const ww=wpx*.55, wh=hpx*.5;
+      for(let r=0;r<rows;r++){
+        const v=(r+.5)/rows;
+        for(let c=0;c<cols;c++){
+          if(budget<=0) break;
+          const h=ovHash(b.id%2147483647,i,c,r); if(h>.38) continue;       // окно горит
+          const u=(c+.5)/cols, x=(q0.x+(q1.x-q0.x)*u)*(1-v)+(q3.x+(q2.x-q3.x)*u)*v, y=(q0.y+(q1.y-q0.y)*u)*(1-v)+(q3.y+(q2.y-q3.y)*u)*v;
+          cx.fillStyle=h<.08 ? 'rgba(190,225,255,'+pa.toFixed(2)+')' : 'rgba(255,'+(188+(h*200|0))+',110,'+pa.toFixed(2)+')';
+          cx.fillRect(x-ww/2,y-wh/2,ww,wh); budget--;
+        }
+      }
+    }
+    const rc=ovMix(ovMix([22,25,34],day.map(v=>v*1.05),dk),haze,fog*.85);                            // крыша
+    cx.fillStyle='rgb('+rc.map(Math.round).join(',')+')'; cx.beginPath(); top.forEach((q,i)=>i ? cx.lineTo(q.x,q.y) : cx.moveTo(q.x,q.y)); cx.closePath(); cx.fill();
+  }
+}
+
 // ---------- аэродромы, полосы и населённые пункты (geofeat.js: ячейки OSM в базе браузера) ----------
 const OV_FEAT_KINDS=['air','pop'];
 // Точки берутся из списков Table (geo/airfields, geo/runways, geo/places и свои списки из параметра lists), а не из памяти загрузчика:
@@ -532,6 +616,8 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           {n:'relief',t:'select',opts:['off','auto','lines','solid'],d:'auto',label:'terrain relief 3D from Horizon (auto: solid without video, lines over video)'},
           {n:'vis',t:'range',min:5,max:150,step:1,d:35,label:'haze: visibility, km (distant mountains fade into the sky)'},
           {n:'minLight',t:'range',min:0,max:.6,step:.01,d:.3,label:'night brightness floor of the relief (0 — pitch dark)'},
+          {n:'bld',t:'check',d:false,label:'buildings (OSM): footprints with height, windows light up at night (asks overpass-api.de, needs Horizon heights)'},
+          {n:'bldR',t:'range',min:.3,max:3,step:.1,d:1.2,label:'buildings radius, km',adv:true},
           {n:'lights',t:'check',d:true,label:'night lights: towns, roads and runways glow after dark (needs OSM / towns / airfields on)'},
           {n:'shadows',t:'check',d:true,label:'terrain shadows from the real Sun (cost: a few ms when the mesh is rebuilt)'},
           {n:'tshift',t:'range',min:-12,max:12,step:.25,d:0,label:'Sun time shift, h (0 — real time; moves the Sun, the light and the sky)',adv:true},
@@ -556,7 +642,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           {n:'dRoll',t:'range',min:-180,max:180,step:.5,d:0,label:'roll correction, °',adv:true},
           {n:'resetc',t:'button',label:'Reset corrections',fn:n=>{ for(const k of ['dAz','dEl','dRoll']) setMod(n,k,0); },adv:true}],
   init:n=>{ n.ents=new Map(); n.links=new Map(); n.gnodes=new Map(); n.gedges=[]; n.gnSrc=null; n.gsSrc=null; n.gLinks=[]; n.I={}; n.seq=0; n.pose=[]; n.sel=null; n.hits=[]; n.last=null; n.msg=null; n.home=null;
-            n.pickOut=null; n.selInfo=null; n.visOut=null; n.nvis=0; n.nhid=0; n.osm=null; n.osmFor=null; n.osmT=0; n.osmMsg=''; n.osmGen=0;
+            n.pickOut=null; n.selInfo=null; n.visOut=null; n.nvis=0; n.nhid=0; n.osm=null; n.osmFor=null; n.osmT=0; n.osmMsg=''; n.osmGen=0; n.bld=null; n.bldFor=null; n.bldT=0; n.bldMsg=''; n.bldGen=0;
             n.feat={air:null,pop:null,my:[],links:[]}; n.featCtr=null; n.featReading=false; n.featRev=-1; n.featFor=null; n.featT=0; n.featMsg=''; n.featGen=0; n.featBusy=false; },
   dispose:n=>{ n.osmReq=null; n.featReq=null; },
   process(n,I){
@@ -736,6 +822,15 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           rec:{id:b.id,label:b.label,kind:b.kind,az:+b.az.toFixed(2),el:+b.el.toFixed(2),...(b.mag!=null ? {mag:+b.mag.toFixed(1)} : {})},az:b.az,el:b.el,range:null});
         if(n.sel===key){ cx.strokeStyle='#ffd84a'; cx.lineWidth=1.5; cx.beginPath(); cx.arc(c.x,c.y,pr+5,0,7); cx.stroke(); }
       }
+    }
+
+    // здания OSM вблизи: контуры с высотой, ночью светятся окна
+    if(proj && obs && p.bld){
+      if(!n.bldFor || n.bldFor.r!==+p.bldR || geoDist(n.bldFor.lat,n.bldFor.lon,lat,lon)>+p.bldR/4){
+        if(now>=(n.bldT||0) && !n.bldBusy){ n.bldT=now+30000; n.bldBusy=true; ovBldLoad(n,lat,lon,+p.bldR).finally(()=>{ n.bldBusy=false; }); }
+      }
+      const bg=ovBldGeo(n,obs,rel,alt,okey);
+      if(bg && sun0) ovDrawBuildings(cx,proj,foc,[rx,ry,rw,rh],bg,dk,+p.vis,sun0);
     }
 
     // карта OSM: реки и дороги по рельефу, подписи вершин и городов
@@ -1014,7 +1109,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
     }
     cx.textAlign='left'; cx.textBaseline='bottom'; cx.globalAlpha=.9; cx.fillStyle='#ffd84a';
     if(n.msg && performance.now()-n.msg.t<5000) cx.fillText(n.msg.s,rx+6,ry+rh-4);
-    else if(n.osmMsg || n.featMsg) { cx.fillStyle='#ffb347'; cx.fillText(n.osmMsg||n.featMsg,rx+6,ry+rh-4); }
+    else if(n.osmMsg || n.featMsg || n.bldMsg) { cx.fillStyle='#ffb347'; cx.fillText(n.osmMsg||n.featMsg||n.bldMsg,rx+6,ry+rh-4); }
     cx.textAlign='right'; cx.textBaseline='bottom'; cx.globalAlpha=.8; cx.fillStyle=col;
     const st=[]; if(!haveCam) st.push('no orientation'); if(!havePos) st.push('no position');
     if(sun0 && p.sky) st.push('sun '+Math.round(sun0.az)+'°/'+Math.round(sun0.el)+'°');
