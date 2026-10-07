@@ -1706,11 +1706,13 @@ const v=+e.target.value;
 stat.textContent='block size '+v+', engine restarting';
 await Eng.setBlock(v);
 stat.textContent='block size '+v+' · inputs need to be re-enabled '; };
-// единственная горячая клавиша — Delete (удалить выбранное); остальное — кнопками в панели
+// горячие клавиши: Delete — удалить выбранное, Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y — отмена и повтор; остальное — кнопками в панели
 window.addEventListener('keydown',ev=>{
 const t=ev.target;
 if(t &&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
 if(ev.key==='Delete' &&!ev.ctrlKey &&!ev.metaKey &&!ev.altKey){ ev.preventDefault(); delSel(); }
+const k=ev.key.toLowerCase();
+if((ev.ctrlKey||ev.metaKey) &&!ev.altKey &&(k==='z'||k==='y')){ ev.preventDefault(); (k==='y'||ev.shiftKey) ? Undo.redo() : Undo.undo(); }
 });
 const side=document.getElementById('side'), scrim=document.getElementById('scrim');
 const closeSide=()=>{ side.classList.remove('open'); scrim.classList.remove('open'); };
@@ -1842,12 +1844,14 @@ pal.classList.toggle('empty',matches===0);
 buildPalette();
 // ---- drag-n-drop модуля из палитры на холст ----
 cv.addEventListener('dragover',e=>{
-if(!e.dataTransfer.types.includes('text/x-dsp-module')) return;
+if(!e.dataTransfer.types.includes('text/x-dsp-module') && !e.dataTransfer.types.includes('text/x-dsp-patch')) return;
 e.preventDefault(); e.dataTransfer.dropEffect='copy'; cv.classList.add('dropok');
 });
 cv.addEventListener('dragleave',()=>cv.classList.remove('dropok'));
 cv.addEventListener('drop',e=>{
 cv.classList.remove('dropok');
+const patchName=e.dataTransfer.getData('text/x-dsp-patch');
+if(patchName){ e.preventDefault(); const q=dropAt(e.clientX,e.clientY); insertPatch(patchName,q.x,q.y); return; }
 const modId=e.dataTransfer.getData('text/x-dsp-module');
 if(!modId) return;
 e.preventDefault();

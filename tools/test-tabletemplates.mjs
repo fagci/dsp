@@ -27,9 +27,10 @@ ok('band plan: what the spectrum and the scanner read',has('bands',['lo','hi','s
 ok('frequency list: freq and demod',has('freqs',['freq','demod']));
 ok('transmitters: a mast height and power for the coverage calculation',has('tx',['lat','lon','h','freq','erp_w']));
 ok('links: both ends and the link fields',has('links',['lat','lon','h','lat2','lon2','h2','freq','kind','color','label']));
+ok('points and measurements can carry sound and a photo',has('points',['photo','audio']) && has('measure',['photo','audio']) && has('photos',['audio']));
 ok('track: what the sequencer needs',has('track',['id','lat','lon']));
 // добавление колонок
-ok('apply: only the missing columns, in order, nothing removed',JSON.stringify(K.tblTemplateCols(['name','lat','foo'],T.find(t=>t.id==='points')))===JSON.stringify(['name','lat','foo','lon','alt','h','icon','color','note']));
+ok('apply: only the missing columns, in order, nothing removed',JSON.stringify(K.tblTemplateCols(['name','lat','foo'],T.find(t=>t.id==='points')))===JSON.stringify(['name','lat','foo','lon','alt','h','icon','color','note','photo','audio']));
 ok('apply to an empty list gives the template',JSON.stringify(K.tblTemplateCols([],T[0]))===JSON.stringify(T[0].cols));
 ok('apply twice changes nothing',JSON.stringify(K.tblTemplateCols(K.tblTemplateCols(['x'],T[1]),T[1]))===JSON.stringify(K.tblTemplateCols(['x'],T[1])));
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad?1:0);

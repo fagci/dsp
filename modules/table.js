@@ -14,7 +14,8 @@
 const TBL_PATCH='@patch', TBL_PRE='presets/', TBL_ROWS=300;
 const TBL_FIXED=new Set([...SEQ_FIXED,'bands','rows','mid','span']);
 const TBL_LO=['lo','low','start','freq','frequency'], TBL_HI=['hi','high','end'],
-  TBL_LABEL=['name','label','title'], TBL_COLOR=['color','colour'], TBL_STEP=['step'];
+  TBL_LABEL=['name','label','title'], TBL_COLOR=['color','colour'], TBL_STEP=['step'], TBL_LAT=['lat','latitude'], TBL_LON=['lon','lng','longitude'];
+const TBL_PIN_FIELDS=['icon','note','alt','h','photo','audio','freq'];
 const TBL_HZ=/^(lo|hi|low|high|start|end|freq|frequency|step)$/i;
 const tblCol=(cl,list)=>{ for(const k of list){ const h=cl.find(x=>x.toLowerCase()===k); if(h) return h; } return null; };
 const tblKind=name=>name===TBL_PATCH ? 'patch' : name.startsWith(TBL_PRE) && BANDPLAN_PRESETS[name.slice(TBL_PRE.length)] ? 'preset' : 'db';
@@ -221,6 +222,14 @@ function tblDerive(n){
 function tblBandsOf(cl,rows){
   const lo=tblCol(cl,TBL_LO), hi=tblCol(cl,TBL_HI), lb=tblCol(cl,TBL_LABEL),
     co=tblCol(cl,TBL_COLOR), st=tblCol(cl,TBL_STEP), out=[];
+  // строки с координатами — пины для Map (kind:'pin'); потребители частотных полос их пропускают
+  const la=tblCol(cl,TBL_LAT), lg=tblCol(cl,TBL_LON), id=tblCol(cl,['id']);
+  if(la && lg) for(const r of rows){
+    const lat=+r[la], lon=+r[lg]; if(r[la]==='' || r[lg]==='' || !isFinite(lat) || !isFinite(lon)) continue;
+    const label=lb ? String(r[lb]??'') : '', pin={kind:'pin', id:String(id && r[id]!=='' ? r[id] : label || lat+','+lon), label, lat, lon, color:co ? String(r[co]||'') : ''};
+    for(const f of TBL_PIN_FIELDS){ const c=tblCol(cl,[f]); if(c && r[c]!=='' && r[c]!=null) pin[f]=r[c]; }
+    out.push(pin);
+  }
   if(lo) for(const r of rows){
     const l=tblHz(r[lo]); if(!isFinite(l)) continue;
     let h=hi ? tblHz(r[hi]) : l; if(!isFinite(h)) h=l;
@@ -541,6 +550,9 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
 });
 
 /* ---------- интерфейс ---------- */
+// значки карты (geoIcon): имя или любой короткий текст / эмодзи; в форме записи — выбор из списка
+const TBL_ICONS=['dot','square','diamond','triangle','star','flag','cross','plus','antenna','tx','rx','me','plane','ship','sat','balloon','📍','🏠','🚩','⚠','📡','🔊','📷','⛰','🚗','🔋'];
+const TBL_AUDIO=/^audio$/;                            // колонка со звуком: в ячейке id клипов «sm-…» (Sample Library, audioattach.js)
 const TBL_PHOTO=/^photos?$/;                           // колонка с фото: в ячейке id «ph-…» (хранилище photos.js)
 const TBL_BTN='background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;';
 const TBL_IN='min-width:0;background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;font-size:10px;padding:1px 3px;';
@@ -835,6 +847,13 @@ function tblRow(n,i,ro){
     ph.addEventListener('click',e=>{ e.stopPropagation(); phView(pids); });
     row.append(ph);
   }
+  const ac=n.cl.find(c=>TBL_AUDIO.test(c.toLowerCase())), aids=ac ? auIds(r[ac]) : [];
+  if(aids.length){
+    const au=document.createElement('span');
+    au.textContent='🔊'+aids.length; au.title='Play the audio'; au.style.cssText='cursor:pointer;color:#e0b23c;flex-shrink:0;';
+    au.addEventListener('click',e=>{ e.stopPropagation(); auView(aids); });
+    row.append(au);
+  }
   row.title=n.cl.filter(c=>r[c]!=='' && r[c]!=null).map(c=>c+': '+(TBL_HZ.test(c)&&isFinite(tblHz(r[c])) ? fmtHz(tblHz(r[c]),4)+'Hz' : recFmt(r[c]))).join('\n');
   if(!ro){
     const ed=document.createElement('span');
@@ -891,6 +910,25 @@ function tblForm(n,rec,onSave,onCancel){
         const x=got.find(g=>g.exif?.lat!=null)?.exif;
         if(x) for(const [k,v] of [['lat',x.lat],['lon',x.lon],['alt',x.alt],['t',x.t]]){ const f=ins[k]; if(f && v!=null && !String(f.value).trim()) f.value=k==='t' ? v : +v.toFixed(6); }
       }),mkb('view',()=>phView(phIds(inp.value))),mkb('clear',()=>{ inp.value=''; upd(); }));
+      upd(); l.append(c,inp,bar); ins[c]=inp; form.append(l); continue;
+    } else if(low==='icon'){                            // значок точки на карте
+      inp=document.createElement('select');
+      const cur=String(rec[c]??''), opts=['',...TBL_ICONS]; if(cur && !opts.includes(cur)) opts.push(cur);
+      for(const o of opts){ const op=document.createElement('option'); op.value=o; op.textContent=o||'(default)'; inp.append(op); }
+      inp.value=cur; inp.style.cssText=TBL_IN+'flex:1;';
+    } else if(TBL_AUDIO.test(low)){                     // звук: записать, файл, клип из библиотеки; прослушать
+      inp=document.createElement('input'); inp.type='hidden'; inp.value=auJoin(auIds(rec[c]));
+      const bar=document.createElement('span'); bar.style.cssText='flex:1;display:flex;gap:6px;align-items:center;flex-wrap:wrap;';
+      const cnt=document.createElement('span'), mkb=(t,f)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=t; b.style.cssText=TBL_BTN; b.addEventListener('click',e=>{ e.preventDefault(); f(b); }); return b; };
+      const upd=()=>{ cnt.textContent=auIds(inp.value).length+' clips'; }, add=ids=>{ inp.value=auJoin([...auIds(inp.value),...ids.filter(Boolean)]); upd(); };
+      let stopRec=null;
+      bar.append(cnt,mkb('🎤 rec',async b=>{
+        try{
+          if(!stopRec){ stopRec=await auRecStart(); b.textContent='⏹ stop'; }
+          else { const s=stopRec; stopRec=null; b.textContent='🎤 rec'; add([await s()]); }
+        }catch(e){ stopRec=null; b.textContent='🎤 rec'; alert('Recording failed: '+e.message); }
+      }),mkb('📁 file',async()=>add(await auPickAdd())),mkb('🎵 library',async()=>add([await auChoose()])),
+        mkb('▶',()=>auView(auIds(inp.value))),mkb('clear',()=>{ inp.value=''; upd(); }));
       upd(); l.append(c,inp,bar); ins[c]=inp; form.append(l); continue;
     } else if(low==='demod'){
       inp=document.createElement('select');

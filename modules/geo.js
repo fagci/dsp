@@ -1077,7 +1077,7 @@ function geoTileGet(src,z,x,y,net){
 /* ---------- узел карты ---------- */
 const GEO_TILE_OPTS=['none',...Object.keys(GEO_TILES)];
 def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
-  ins:[{n:'rec',t:'rec'},{n:'rec2',t:'rec'},{n:'rec3',t:'rec'}],
+  ins:[{n:'rec',t:'rec'},{n:'rec2',t:'rec'},{n:'rec3',t:'rec'},{n:'pins',t:'bands'}],
   outs:[{n:'pick',t:'rec'},{n:'sel',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'count',t:'num'}],
   w:480, view:{h:360}, resize:true,
   params:[{n:'ttl',t:'range',min:0,max:1440,step:1,d:0,label:'keep, min (0 — forever)'},
@@ -1088,7 +1088,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
           {n:'follow',t:'check',d:false,label:'follow'},
           {n:'net',t:'check',d:true,label:'online'},
           {n:'fit',t:'button',label:'Fit',fn:n=>geoMapFit(n)},
-          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.ents.clear(); n.rasters?.clear(); n.selKey=null; geoMapChanged(n); }},
+          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.ents.clear(); n.pins.clear(); n.rasters?.clear(); n.selKey=null; geoMapChanged(n); }},
           {n:'trail',t:'range',min:1,max:5000,step:1,d:500,label:'track points per id',adv:true},
           {n:'maxEnt',t:'range',min:10,max:20000,step:10,d:5000,label:'max objects',adv:true},
           {n:'rayKm',t:'range',min:10,max:20000,step:10,d:1000,label:'bearing length, km',adv:true},
@@ -1102,12 +1102,13 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
     if(n.p.mlat==null) n.p.mlat=50;
     if(n.p.mlon==null) n.p.mlon=30;
     if(n.p.mz==null) n.p.mz=3;
-    n.ents=new Map(); n.seq=0; n.selKey=null; n.pickRec=null; n.selOut=null;
+    n.ents=new Map(); n.pins=new Map(); n.pinsSrc=null; n.seq=0; n.selKey=null; n.pickRec=null; n.selOut=null;
     n.pickLat=null; n.pickLon=null; n.info=null; n.lastPrune=0; n.loadedStore=null;
     geoBaseLoad(); geoPlacesLoad();
   },
   process(n,I){
     for(const k of ['rec','rec2','rec3']) for(const r of recList(I[k])) geoMapAdd(n,r);
+    geoMapPins(n,I.pins);
     if(n.p.store!==n.loadedStore) geoMapRestore(n);
     const now=Date.now();
     if(now-n.lastPrune>1000){ n.lastPrune=now; geoMapPrune(n,now); }
@@ -1119,6 +1120,34 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
     (n.p.ttl>0 || n.selKey || (n.info && Date.now()-n.info.t<9000) ? Math.floor(Date.now()/1000) : ''),
   draw(n,cv,cx){ geoMapDraw(n,cv,cx); }});
 
+// bands с элементами kind:'pin' (Table с колонками lat/lon) — набор точек целиком; обновление по разнице:
+// изменённые и новые добавляются, пропавшие снимаются с карты, неизменённые не трогаются
+const bandIsPin=b=>!!b && b.kind==='pin';
+const _noPins=new WeakMap();
+function bandsNoPins(a){
+  let r=_noPins.get(a); if(r) return r;
+  r=a.some(bandIsPin) ? a.filter(b=>!bandIsPin(b)) : a;
+  _noPins.set(a,r); return r;
+}
+function geoMapPins(n,src){
+  if(src===n.pinsSrc) return;
+  n.pinsSrc=src;
+  const next=new Map();
+  if(Array.isArray(src)) for(const b of src){
+    if(!bandIsPin(b)) continue;
+    const {kind,...rec}=b; rec.id='pin:'+b.id; rec.track=0;
+    next.set(rec.id,{rec,sig:JSON.stringify(rec)});
+  }
+  let ch=false;
+  for(const id of n.pins.keys()) if(!next.has(id)){ n.ents.delete('id:'+id); if(n.selKey==='id:'+id) n.selKey=null; ch=true; }
+  for(const [id,x] of next){
+    if(n.pins.get(id)?.sig===x.sig && n.ents.has('id:'+id)) continue;
+    const e=n.ents.get('id:'+id); if(e) e.pts.length=0;
+    geoMapAdd(n,x.rec); ch=true;
+  }
+  n.pins=next;
+  if(ch) geoMapChanged(n);
+}
 function geoMapAdd(n,r){
   if(r && r.kind==='raster'){                        // растровый слой (покрытие): картинка и границы, не объект
     const id=String(r.id ?? 'raster'), rs=n.rasters || (n.rasters=new Map());
@@ -1149,7 +1178,7 @@ function geoMapAdd(n,r){
 function geoMapPrune(n,now){
   if(!(n.p.ttl>0)) return;
   const ttl=n.p.ttl*60000; let ch=false;
-  for(const [k,e] of n.ents) if(now-e.seen>ttl){ n.ents.delete(k); ch=true; }
+  for(const [k,e] of n.ents) if(now-e.seen>ttl && !n.pins.has(e.id)){ n.ents.delete(k); ch=true; }
   if(ch) geoMapChanged(n);
 }
 function geoMapRecs(n){

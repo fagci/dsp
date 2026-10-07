@@ -1828,7 +1828,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     const sp=I.spec;
     if(n.p.layout==='panes'){                          // несколько диапазонов рядом: свой путь без одноосевой логики
       for(const k of ['floor','top']) if(typeof I[k]==='number') setMod(n,k,I[k]);
-      if(Array.isArray(I.bands)) n.bandsData=I.bands;
+      if(Array.isArray(I.bands)) n.bandsData=bandsNoPins(I.bands);
       n._skipExt=Array.isArray(I.skip) ? I.skip.filter(b=>b && !b.sig && isFinite(b.lo)).map(b=>({lo:b.lo,hi:Math.max(b.lo,b.hi)})) : null;
       // spec2…spec4 — ещё приёмники: каждый со своим Band Scanner (lanes), спектры накапливаются в одних и тех же панелях
       n._pnMulti=!!(I.spec2||I.spec3||I.spec4);
@@ -1911,7 +1911,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     n.s=sp;
     // список полос/закладок с узла 'bandplan' (или совместимого) — держим последний известный,
     // если сейчас не подключено (или на секунду пропало между тиками), а не мигаем пустым списком
-    if(Array.isArray(I.bands)) n.bandsData=I.bands;
+    if(Array.isArray(I.bands)) n.bandsData=bandsNoPins(I.bands);
     saTake(n);                                       // тап мог случиться между блоками
     for(const k of ['floor','top','split','tol'])   // прямая передача значения
       if(typeof I[k]==='number') setMod(n,k,I[k]);
@@ -3402,7 +3402,7 @@ def({ id:'chanscan', title:'Channel Scanner', cat:'Radio',
     if(n._sig!==sig){
       n._sig=sig;
       const skip=Array.isArray(I.skip) ? I.skip.filter(b=>b && !b.sig && isFinite(b.lo)).map(b=>({lo:b.lo,hi:Math.max(b.lo,b.hi)})) : [];
-      n.ch=chanList(Array.isArray(I.bands) ? I.bands : [], skip);
+      n.ch=chanList(Array.isArray(I.bands) ? bandsNoPins(I.bands) : [], skip);
       n.plan=chanPlan(n.ch,W);
       n.planBands=n.plan.map((w,k)=>({lo:w.c-W/2, hi:w.c+W/2, label:'window '+(k+1)}));
       n.wi=0; n.curC=null; n.state='tune';
