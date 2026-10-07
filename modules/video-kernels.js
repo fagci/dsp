@@ -269,7 +269,7 @@ function tvPulse(n,f,r){
 // конец поля: число строк → PAL / NTSC; при полном кадре (два поля) — готовая картинка
 function tvEndField(n){
   const d=n.d, a=d.lastP;
-  d.fl=d.lineNo; d.rowOK=false;
+  d.fl=d.lineNo; d.fieldOK=d.rowOK; d.rowOK=false;       // fieldOK: поле начато с кадрового синхроимпульса, строки рисовались
   if(d.lastFld){ const fps=d.sr/(a-d.lastFld); if(fps>20 && fps<100) d.fps=d.fps ? d.fps+(fps-d.fps)*.2 : fps; }
   d.lastFld=a;
   if(n.p.std==='auto' && d.fl>240){
@@ -383,4 +383,89 @@ function tvLine(n,f0,lineNo){
       } else px[o]=px[o+1]=px[o+2]=yy*k5+b5;
     }
   }
+}
+
+/* ---- TV Hopper: мозаика из нескольких каналов одним приёмником ----
+   Один приёмник по очереди ставится на каналы; на каждом принимается одно поле (bob), его кадр кладётся в плитку мозаики.
+   У каждого канала своя пара «демодулятор + декодер» (состояние сохраняется между заходами: полярность, уровни синхронизации),
+   поэтому после перестройки декодер захватывается за поле-два, а не с нуля. Чанки со старой частотой (fc потока ≠ запрошенной)
+   отбрасываются. hold > 0 — стоять на канале с этим номером (1…N) и отдавать его полный кадр на `sel`. */
+const TVH_TW=384, TVH_TH=288;
+function tvhParse(s){
+  return String(s||'').split(/[\s,;]+/).map(Number).filter(v=>isFinite(v) && v>0).map(v=>v<1e6 ? v*1e6 : v).slice(0,16);
+}
+function tvhChannel(n,f){
+  const p=n.p;
+  const dm={p:{mode:'FM', dev:+p.dev||8e6, bw:+p.bw||5e6, inv:!!p.inv}}, dc={p:{std:p.std||'auto', sync:'auto', trim:0, width:String(TVH_TW),
+    invert:'auto', interlace:'bob', color:p.color!==false, bright:+p.bright||0, contrast:+p.contrast||1, hshift:0, vshift:0}};
+  IQK.tvDemod.init(dm); IQK.tvDecode.init(dc);
+  return {f, dm, dc, lock:false, seen:0, miss:0, skip:0};
+}
+IQK.tvHop={
+  init(n){ n.key=''; n.ch=[]; n.i=0; n.cmdT=0; n.arrive=0; n.mos=null; n.img=null; n.sel=null; n.imgT=0; n.dirty=false; },
+  process(n,I){
+    const now=typeof performance==='undefined' ? Date.now() : performance.now();
+    const key=[n.p.chs,n.p.dev,n.p.bw,n.p.std,n.p.color,n.p.bright,n.p.contrast,n.p.inv].join('|');
+    if(key!==n.key){
+      n.key=key; n.ch=tvhParse(n.p.chs).map(f=>tvhChannel(n,f)); n.i=0; n.cmdT=now; n.arrive=0;
+      const N=n.ch.length, cols=Math.max(1,Math.ceil(Math.sqrt(N))), rows=Math.max(1,Math.ceil(N/cols));
+      n.cols=cols; n.rows=rows; n.mw=cols*TVH_TW; n.mh=rows*TVH_TH;
+      n.mos=new Uint8ClampedArray(n.mw*n.mh*4);
+      for(let i=3;i<n.mos.length;i+=4) n.mos[i]=255;
+      n.dirty=true;
+    }
+    const N=n.ch.length;
+    if(!N){ n.ui=null; return {freq:null, img:null, sel:null, lock:0, ch:-1}; }
+    const hold=Math.round(pv(n,I,'hold'))||0, held=hold>0 && hold<=N;
+    if(held && n.i!==hold-1){ n.i=hold-1; n.cmdT=now; n.arrive=0; }
+    if(n.i>=N) n.i=0;
+    const c=n.ch[n.i], want=c.f, s=iqIn(I,'in');
+    if(s && s.chunks.length){
+      // приёмник уже на нужной частоте? без fc в потоке — по таймеру
+      const at=s.fc ? Math.abs(s.fc-want)<5e6 : now-n.cmdT>(+n.p.settle||150);
+      if(at){
+        if(!n.arrive) n.arrive=now;
+        const v=IQK.tvDemod.process(c.dm,{in:s}).out, was=c.dc.img;
+        c.dc.imgT=-1e9;                                                          // без паузы между картинками: поле одно на заход
+        IQK.tvDecode.process(c.dc,{in:v});
+        c.lock=!!c.dc.d.lock;
+        if(c.dc.img!==was && c.dc.d.fieldOK){                                    // декодер закончил целое поле (не обрывок после перестройки)
+          c.seen=now; c.miss=0; tvhPut(n,c);
+          if(held) n.sel=c.dc.img; else tvhNext(n,now);
+        } else if(!held && now-n.arrive>(c.miss ? +n.p.probe||80 : +n.p.dwell||120)){   // не дождались поля — дальше
+          c.miss=Math.min(c.miss+1,4); c.skip=c.miss; c.lock=false;                    // пустой канал пробуем всё реже
+          tvhNext(n,now);
+        }
+      } else if(now-n.cmdT>(+n.p.settle||300) && !held) tvhNext(n,now);          // приёмник не дошёл до канала
+    }
+    const out={freq:n.ch[n.i].f, lock:n.ch.filter(x=>x.lock).length, ch:n.i};
+    if(n.dirty && (now-n.imgT>60)){
+      n.dirty=false; n.imgT=now;
+      const mos=n.mos.slice(), k=now-1e3*(+n.p.stale||3);
+      for(const x of n.ch) if(x.seen<k) x.lock=false;                            // давно не обновлялся — не считаем захваченным
+      n.img={w:n.mw, h:n.mh, data:new ImageData(mos,n.mw,n.mh)};
+    }
+    out.img=n.img;
+    out.sel=held ? n.sel : null;
+    n.ui={n:N, i:n.i, hold:held, chans:n.ch.map(x=>({f:x.f, lock:x.lock, age:x.seen ? (now-x.seen)/1000 : null}))};
+    return out;
+  }};
+function tvhNext(n,now){
+  const N=n.ch.length;
+  for(let k=0;k<N;k++){
+    n.i=(n.i+1)%N;
+    const c=n.ch[n.i];
+    if(c.skip>0 && k<N-1) c.skip--; else break;                                  // пропускаем пустые каналы (кроме последнего шанса)
+  }
+  n.cmdT=now; n.arrive=0;
+}
+// кадр канала → плитка (каждая вторая строка: bob даёт вдвое больше строк, чем поле)
+function tvhPut(n,c){
+  const f=c.dc.frame, j=n.ch.indexOf(c), col=j%n.cols, row=(j/n.cols)|0, W=f.w, mos=n.mos, mw=n.mw;
+  const rows=Math.min(TVH_TH,f.h>>1);
+  for(let y=0;y<rows;y++){
+    const src=(2*y)*W*4, dst=((row*TVH_TH+y)*mw+col*TVH_TW)*4;
+    mos.set(f.px.subarray(src,src+Math.min(W,TVH_TW)*4),dst);
+  }
+  n.dirty=true;
 }

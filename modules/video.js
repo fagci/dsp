@@ -29,3 +29,21 @@ defIQ({ id:'tvDecode', title:'TV Decoder', cat:'Decoders',
     return (u.lock ? 'locked' : 'searching sync')+' · '+u.std+(u.fps ? ' · '+u.fps.toFixed(1)+' fields/s' : '')+
       (u.lines ? ' · '+u.lines+' lines/field' : '')+' · '+(u.color ? 'colour' : u.cOK ? 'no burst' : 'B/W (sample rate too low for colour)')+
       (u.inv ? ' · inverted' : '')+' · '+u.w+'×'+u.h; });
+
+defIQ({ id:'tvHop', title:'TV Hopper (mosaic)', cat:'Decoders',
+  ins:[{n:'in',t:'iq'},{n:'hold',t:'num'}], outs:[{n:'freq',t:'num'},{n:'img',t:'img'},{n:'sel',t:'img'},{n:'lock',t:'num'},{n:'ch',t:'num'}],
+  params:[{n:'chs',t:'text',d:'5658,5695,5732,5769',label:'channels, MHz (up to 16, comma-separated): one receiver visits them in turn'},
+          {n:'hold',t:'num',d:0,label:'hold: stay on channel number N (1…) and show its full frame on sel; 0 — hop'},
+          {n:'dwell',t:'range',min:40,max:500,step:10,d:120,label:'max time on a channel without a field, ms'},
+          {n:'probe',t:'range',min:40,max:300,step:10,d:80,label:'time on a channel that gave no field last time, ms (empty channels are also visited less often)'},
+          {n:'settle',t:'range',min:50,max:1000,step:10,d:300,label:'wait for the receiver to reach the channel, ms'},
+          {n:'stale',t:'range',min:1,max:20,step:1,d:3,label:'a channel not updated for this long is not counted as locked, s'},
+          {n:'dev',t:'num',d:8000000,label:'FM deviation, Hz (only scales the level)',adv:true},
+          {n:'bw',t:'range',min:1e6,max:8e6,step:1e5,d:5e6,label:'video bandwidth, Hz',adv:true},
+          {n:'inv',t:'check',d:false,label:'invert',adv:true},
+          {n:'std',t:'select',opts:['auto','PAL','NTSC'],d:'auto',label:'standard',adv:true},
+          {n:'color',t:'check',d:true,label:'colour (needs ≥ 10.6 MS/s)',adv:true},
+          {n:'bright',t:'range',min:-.5,max:.5,step:.01,d:0,label:'brightness',adv:true},
+          {n:'contrast',t:'range',min:.5,max:2,step:.01,d:1,label:'contrast',adv:true}]},
+  n=>{ const u=n.ui; if(!u) return 'no channels';
+    return (u.hold ? 'hold ' : 'hop ')+(u.i+1)+'/'+u.n+' · '+u.chans.map((c,k)=>(k===u.i ? '▶' : '')+(c.f/1e6).toFixed(0)+(c.lock ? ' ●' : c.age!=null ? ' ○' : ' –')).join('  '); });
