@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,isFinite,Set,parseInt,parseFloat,Number});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/geofeat-kernels.js'),'utf8')+
-  ';this.K={gfKey,gfCells,gfQuery,gfParse,gfMerge,gfDistKm,gfBearing,gfNearestRunway};',ctx);
+  ';this.K={gfKey,gfCells,gfQuery,gfParse,gfMerge,gfDistKm,gfBearing,gfNearestRunway,gfRemarkError,gfEmpty};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -63,4 +63,11 @@ ok('nearest runway',r && r.ref==='07/25' && r.name==='Tolmachevo',JSON.stringify
 near('runway heading east',r.hdg,90,.1); near('runway length',r.len,6380,60); near('runway start',r.lon,82.6,1e-9);
 ok('none within range',K.gfNearestRunway(data,50,60,30)===null);
 ok('empty data',K.gfNearestRunway({},55,82,30)===null);
+// ответ «сервер занят»
+const busyMsg='Error: runtime error: open64: 0 Success /osm3s_osm_base Dispatcher_Client::request_read_and_idx::timeout. The server is probably too busy to handle your request.';
+ok('remark: busy server is an error',K.gfRemarkError({elements:[],remark:'runtime error: '+busyMsg})!=='' && K.gfRemarkError({elements:[],remark:busyMsg}).startsWith('runtime error'));
+ok('remark: out of memory',K.gfRemarkError({remark:'runtime error: Query run out of memory using about 2048 MB'})!=='');
+ok('remark: harmless note is not an error',K.gfRemarkError({remark:'something informational'})==='' && K.gfRemarkError({elements:[]})==='' && K.gfRemarkError(null)==='');
+ok('empty: legacy empty cell',K.gfEmpty({ap:[],rw:[]}) && K.gfEmpty({pl:[]}) && K.gfEmpty(null));
+ok('empty: cell with data',!K.gfEmpty({ap:[1],rw:[]}) && !K.gfEmpty({pl:[1]}));
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad?1:0);

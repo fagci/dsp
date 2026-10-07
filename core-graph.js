@@ -1418,7 +1418,7 @@ function dashRenderLeaf(t){
     pane.classList.add('graph');
   }
   const many=t.tabs.length>1, isMax=dashMax===t.id;
-  const bm=dashBtn2('⊡',isMax?'Restore layout (Esc, double-click header)':'Maximize pane (double-click header)',()=>dashToggleMax(t.id));
+  const bm=dashBtn2('⊡',isMax?'Restore layout (double-click header)':'Maximize pane (double-click header)',()=>dashToggleMax(t.id));
   bm.classList.toggle('on',isMax); pane.classList.toggle('max',isMax);
   if(!isMax) acts.append(bm);                            // развёрнута — кнопка возврата всегда на виду, не под «⋯»
   acts.append(dashBtn2('⬌','Split right',()=>dashSplit(t.id,'row')),
@@ -1610,7 +1610,7 @@ function setDash(on){
 }
 if(dashBtn) dashBtn.onclick=()=>setDash(!dashMode);
 /* ---- страницы дашборда: наборы тайлов, переключаются вкладками рядом с ▦ ----
-   Одна страница — только «+». Тап по активной — меню (имя, копия, порядок, удалить). Alt+1…9 — переход. */
+   Одна страница — только «+». Тап по активной — меню (имя, копия, порядок, удалить). */
 const dashPagesEl=dashBtn? document.createElement('span') : null;
 if(dashPagesEl){ dashPagesEl.id='dashPages'; dashBtn.after(dashPagesEl); }
 function dashPageName(i){ return Graph.dashPages[i].name || String(i+1); }
@@ -1637,7 +1637,7 @@ function dashPagesRender(){
   const many=Graph.dashPages.length>1;
   if(many) Graph.dashPages.forEach((pg,i)=>{
     const b=document.createElement('button'); b.className='dpg'+(i===Graph.dashPage?' on':'');
-    b.textContent=dashPageName(i); b.title=i===Graph.dashPage?'Page menu':'Page '+dashPageName(i)+' (Alt+'+(i+1)+')';
+    b.textContent=dashPageName(i); b.title=i===Graph.dashPage?'Page menu':'Page '+dashPageName(i);
     b.onclick=()=>i===Graph.dashPage? openDashMenu(b) : dashPageGo(i);
     dashPagesEl.append(b);
   });
@@ -1676,11 +1676,6 @@ function dashPageMove(d){
   [P[i],P[j]]=[P[j],P[i]]; Graph.dashPage=j; dashPagesRender(); Undo.push();
 }
 addEventListener('pointerdown',e=>{ if(dashMenuEl && !dashMenuEl.contains(e.target)) closeDashMenu(); },true);
-addEventListener('keydown',e=>{
-  if(dashMode && dashMax!=null && e.key==='Escape' && !e.target.closest?.('input,textarea,select')){ dashToggleMax(dashMax); return; }
-  if(!dashMode || !e.altKey || e.ctrlKey || e.metaKey) return;
-  const k=+e.key; if(k>=1 && k<=9 && k<=Graph.dashPages.length){ e.preventDefault(); dashPageGo(k-1); }
-});
 document.getElementById('undo').onclick=()=>Undo.undo();
 document.getElementById('redo').onclick=()=>Undo.redo();
 document.getElementById('dup').onclick=()=>{ copySel(); pasteData(clip,30,30); };
@@ -1711,19 +1706,11 @@ const v=+e.target.value;
 stat.textContent='block size '+v+', engine restarting';
 await Eng.setBlock(v);
 stat.textContent='block size '+v+' · inputs need to be re-enabled '; };
+// единственная горячая клавиша — Delete (удалить выбранное); остальное — кнопками в панели
 window.addEventListener('keydown',ev=>{
 const t=ev.target;
 if(t &&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
-const mod=ev.ctrlKey||ev.metaKey, k=(ev.key||'').toLowerCase();
-if(mod &&k==='z'){ ev.preventDefault(); ev.shiftKey?Undo.redo():Undo.undo(); }
-else if(mod &&k==='y'){ ev.preventDefault(); Undo.redo(); }
-else if(mod &&k==='c'){ copySel(); }
-else if(mod &&k==='v'){ pasteData(clip,30,30); }
-else if(!mod &&k==='d' &&Sel.size){ ev.preventDefault(); copySel(); pasteData(clip,30,30); }
-else if(mod &&k==='a'){ ev.preventDefault();
-Graph.nodes.forEach(n=>Sel.add(n.id)); syncSel(); }
-else if(k==='delete'||k==='backspace'){ ev.preventDefault(); delSel(); }
-else if(k==='escape'){ Sel.clear(); syncSel(); }
+if(ev.key==='Delete' &&!ev.ctrlKey &&!ev.metaKey &&!ev.altKey){ ev.preventDefault(); delSel(); }
 });
 const side=document.getElementById('side'), scrim=document.getElementById('scrim');
 const closeSide=()=>{ side.classList.remove('open'); scrim.classList.remove('open'); };
@@ -1869,11 +1856,6 @@ addNodeUI(modId,p.x-100,p.y-20); markWiresDirty(); Undo.push();
 });
 const paletteSearch=document.getElementById('paletteSearch');
 paletteSearch.addEventListener('input',e=>{ paletteQuery=e.target.value; buildPalette(); });
-document.addEventListener('keydown',e=>{
-if((e.ctrlKey||e.metaKey) &&e.key.toLowerCase()==='k'){
-e.preventDefault(); paletteSearch.focus(); paletteSearch.select();
-}
-});
 /* ---- сохранение ---- */
 function serialize(){
 flush();                                            // ← синхронизируем граф перед сериализацией

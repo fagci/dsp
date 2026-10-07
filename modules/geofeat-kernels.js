@@ -20,6 +20,12 @@ function gfQuery(kind,ix,iy){
   if(kind==='air') return '[out:json][timeout:60];nwr["aeroway"~"^(aerodrome|helipad)$"]'+bb+';out center;way["aeroway"="runway"]'+bb+';out geom;';
   return '[out:json][timeout:60];node["place"~"^(city|town|village)$"]["name"]'+bb+';out;';
 }
+// Overpass при перегрузке отвечает 200 и пустым elements, а причину кладёт в remark — это не пустая ячейка
+function gfRemarkError(json){
+  const r=json && typeof json.remark==='string' ? json.remark : '';
+  return /runtime error|timeout|too busy|out of memory|rate.?limit|try again/i.test(r) ? r.replace(/^Error:\s*/,'').slice(0,120) : '';
+}
+const gfEmpty=d=>!d || !((d.ap&&d.ap.length)||(d.rw&&d.rw.length)||(d.pl&&d.pl.length));
 // ответ → компактные данные ячейки: air {ap, rw}, pop {pl}
 function gfParse(kind,json){
   const els=json?.elements||[];
