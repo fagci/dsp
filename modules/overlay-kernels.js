@@ -225,6 +225,28 @@ function ovkOsmParse(json,minM=80){
   return res;
 }
 
+// ---------- здания OSM ----------
+// way[building] с контуром; высота — тег height, иначе building:levels × 3 м, иначе 7 м
+function ovkBldQuery(lat,lon,rM){
+  return '[out:json][timeout:25];way["building"](around:'+Math.round(rM)+','+lat.toFixed(5)+','+lon.toFixed(5)+');out geom 12000;';
+}
+// ближайшие max зданий: {id, h, lv, pts:[[lat,lon]…] без замыкающей точки, lat, lon (центр), d — расстояние до центра запроса, м}
+function ovkBldParse(json,lat,lon,max=3000){
+  const out=[], kx=111320*Math.cos(lat*OVK_D);
+  for(const el of (json?.elements||[])){
+    if(el.type!=='way' || !el.geometry || !el.tags) continue;
+    let pts=el.geometry.filter(q=>q && q.lat!=null).map(q=>[q.lat,q.lon]);
+    if(pts.length>1 && pts[0][0]===pts[pts.length-1][0] && pts[0][1]===pts[pts.length-1][1]) pts.pop();
+    if(pts.length<3) continue;
+    let cl=0, co=0; for(const q of pts){ cl+=q[0]; co+=q[1]; } cl/=pts.length; co/=pts.length;
+    const t=el.tags, hh=parseFloat(t.height), lv=parseFloat(t['building:levels']), lvl=isFinite(lv) ? Math.max(1,Math.round(lv)) : null;
+    const h=isFinite(hh) && hh>0 ? hh : lvl ? lvl*3 : 7;
+    out.push({id:el.id, h:Math.min(h,400), lv:lvl || Math.max(1,Math.round(h/3)), pts, lat:cl, lon:co, d:Math.hypot((cl-lat)*111320,(co-lon)*kx)});
+  }
+  out.sort((a,b)=>a.d-b.d);
+  return out.slice(0,max);
+}
+
 // ---------- свет и тени рельефа ----------
 // направление на Солнце в ENU
 const ovkSunVec=(az,el)=>[Math.sin(az*OVK_D)*Math.cos(el*OVK_D), Math.cos(az*OVK_D)*Math.cos(el*OVK_D), Math.sin(el*OVK_D)];
