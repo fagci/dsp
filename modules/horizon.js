@@ -82,16 +82,19 @@ async function horizonTileBytes(z,x,y){
   }
   return buf;
 }
-async function horizonTile(z,x,y){
-  const mk=z+'/'+x+'/'+y, hit=HZ_MEM_TILES.get(mk);
-  if(hit){ HZ_MEM_TILES.delete(mk); HZ_MEM_TILES.set(mk,hit); return hit; }
-  const buf=await horizonTileBytes(z,x,y);
+async function horizonDecode(buf){
   const bmp=await createImageBitmap(new Blob([buf],{type:'image/png'}),{colorSpaceConversion:'none',premultiplyAlpha:'none'});
   const cv=document.createElement('canvas'); cv.width=cv.height=256;
   const cx=cv.getContext('2d',{willReadFrequently:true});
   cx.drawImage(bmp,0,0); bmp.close?.();
   const d=cx.getImageData(0,0,256,256).data, out=new Float32Array(65536);
   for(let i=0;i<65536;i++) out[i]=d[i*4]*256+d[i*4+1]+d[i*4+2]/256-32768;
+  return out;
+}
+async function horizonTile(z,x,y){
+  const mk=z+'/'+x+'/'+y, hit=HZ_MEM_TILES.get(mk);
+  if(hit){ HZ_MEM_TILES.delete(mk); HZ_MEM_TILES.set(mk,hit); return hit; }
+  const out=await horizonDecode(await horizonTileBytes(z,x,y));
   HZ_MEM_TILES.set(mk,out);
   while(HZ_MEM_TILES.size>HZ_MEM) HZ_MEM_TILES.delete(HZ_MEM_TILES.keys().next().value);
   return out;
