@@ -90,7 +90,7 @@ function recsToGeoJson(recs){
 
 function geoXml(v){ return String(v).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function geoRecIso(r){ const t=+r.t; return isFinite(t) && t>1e11 ? new Date(t).toISOString() : ''; }
-function geoRecName(r){ return r.label ?? r.id ?? r.name ?? ''; }
+function geoRecName(r){ return r.label ?? r.name ?? r.id ?? ''; }
 function recsToKml(recs){
   const pm=[];
   for(const r of recs){

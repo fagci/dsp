@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,isFinite,Set,parseInt,parseFloat,Number});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/geofeat-kernels.js'),'utf8')+
-  ';this.K={gfKey,gfCells,gfQuery,gfParse,gfMerge,gfDistKm,gfBearing,gfNearestRunway,gfRemarkError,gfEmpty,gfOaParse,gfOaIndex,gfOaCell,gfPopKind,gfMergePlaces};',ctx);
+  ';this.K={gfKey,gfCells,gfQuery,gfParse,gfMerge,gfDistKm,gfBearing,gfNearestRunway,gfRemarkError,gfEmpty,gfOaParse,gfOaIndex,gfOaCell,gfPopKind,gfMergePlaces,gfToRows,gfApFromRow,gfRwFromRow,gfPlFromRow,gfMyFromRow,GS_LISTS,GS_COLS};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -101,4 +101,19 @@ ok('oa: nearest runway works on it',K.gfNearestRunway(K.gfMerge('air',[c1]),55.0
 ok('pop kinds',K.gfPopKind(1e6)==='city' && K.gfPopKind(50000)==='town' && K.gfPopKind(1000)==='village' && K.gfPopKind(0)==='village');
 const mp=K.gfMergePlaces([{name:'Alpha',lat:55,lon:83}],[{name:'Alpha',lat:55.01,lon:83.01},{name:'Alpha',lat:56,lon:83},{name:'Beta',lat:55,lon:83}]);
 ok('merge places: same name nearby is a duplicate, far one or other name stays',mp.length===3 && mp.filter(q=>q.name==='Alpha').length===2,JSON.stringify(mp));
+// строки таблиц
+const rows=K.gfToRows({ap:a.ap,rw:a.rw,pl:p.pl,pk:[{id:'p1',name:'Peak',lat:1,lon:2,ele:3000}]},'osm');
+ok('rows: every kind has its list',Object.keys(rows).every(k=>K.GS_LISTS[k]) && rows.air.length===2 && rows.rw.length===1 && rows.pop.length===2 && rows.peak.length===1);
+ok('rows: columns match the schema',['air','rw','pop','peak'].every(k=>rows[k].every(r=>Object.keys(r).every(c=>K.GS_COLS[k].includes(c)))));
+ok('rows: runway has both ends',rows.rw[0].lat===55 && rows.rw[0].lon2===82.7 && rows.rw[0].name==='07/25' && rows.rw[0].src==='osm');
+const ap2=K.gfApFromRow({...rows.air[0],lat:'55.5',lon:'82'});
+ok('row → airfield, strings from the table accepted',ap2.lat===55.5 && ap2.icao==='UNNT' && ap2.ele===111);
+ok('row → airfield: no coordinates → null',K.gfApFromRow({name:'x'})===null && K.gfApFromRow({lat:'a',lon:1})===null);
+const rw2=K.gfRwFromRow(rows.rw[0]);
+ok('row → runway in the shape of the nearest-runway search',rw2.pts.length===2 && K.gfNearestRunway({rw:[rw2],ap:[]},55.0,82.65,30)?.ref==='07/25');
+ok('row → runway: one end missing → null',K.gfRwFromRow({lat:1,lon:1,lat2:'',lon2:2})===null);
+ok('row → place: kind from population when missing',K.gfPlFromRow({name:'X',lat:1,lon:2,pop:300000}).kind==='city' && K.gfPlFromRow({name:'',lat:1,lon:2})===null);
+const my=K.gfMyFromRow({name:'Tower',lat:'55.1',lon:'83',h:'25',color:'#f80'},'my/sources');
+ok('row → own point',my.name==='Tower' && my.h===25 && my.alt===null && my.color==='#f80' && my.list==='my/sources');
+ok('own point: height from ant_h, label as name',K.gfMyFromRow({label:'L',lat:1,lon:1,ant_h:10},'x').h===10 && K.gfMyFromRow({label:'L',lat:1,lon:1},'x').name==='L');
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad?1:0);

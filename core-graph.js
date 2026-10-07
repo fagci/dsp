@@ -1945,22 +1945,14 @@ document.getElementById('clear').onclick=()=>{
 stashIfDirty();
 clearAll(); markWiresDirty(); currentPatchName=''; buildPatchList(); graphDirty=false;
 };
-// Корзина: OK — обновить файлы приложения (кэш и сервис-воркер; патчи, пресеты, списки остаются),
-// Отмена → второй вопрос: стереть вообще все данные сайта. Кнопки нет в index.php — элемент может отсутствовать.
+// Корзина: только обновляет файлы приложения (кэш и сервис-воркер). Данные — патчи, списки Table (в том числе точки geo/…), кэш рельефа,
+// образцы, настройки — не стираются ни здесь, ни по какому-либо второму вопросу: для переноса и копии есть полный экспорт / импорт (Settings).
 let wiping=false;
 document.getElementById('wipe')?.addEventListener('click',async()=>{
-const full=!confirm('Refresh app files and cache?\nPatches, presets and lists are kept.\n\nOK — refresh, Cancel — more options.');
-if(full && !confirm('Erase ALL presets, patches and local data on this site?')) return;
+if(!confirm('Refresh app files and cache?\nPatches, tables, terrain and all other data are kept.')) return;
 wiping=true; clearTimeout(autosaveTimer);
-if(full){
-try{ localStorage.clear(); }catch(e){}
-try{
-const names=indexedDB.databases ? (await indexedDB.databases()).map(d=>d.name) : ['dsp-samples','dsp-lists','dsp-tracker'];
-await Promise.all(names.filter(Boolean).map(n=>new Promise(res=>{
-const rq=indexedDB.deleteDatabase(n); rq.onsuccess=rq.onerror=rq.onblocked=res; })));
-}catch(e){}
-} else { try{ LS.set(AKEY,JSON.stringify(serialize())); }catch(e){} }
-try{ if('caches' in window) for(const k of await caches.keys()) if(full || k!=='dsp-tiles') await caches.delete(k); }catch(e){}
+try{ LS.set(AKEY,JSON.stringify(serialize())); }catch(e){}
+try{ if('caches' in window) for(const k of await caches.keys()) if(k!=='dsp-tiles') await caches.delete(k); }catch(e){}
 try{ if(navigator.serviceWorker) for(const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); }catch(e){}
 location.href=location.pathname+'?_='+Date.now();
 });

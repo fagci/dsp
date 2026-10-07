@@ -152,3 +152,43 @@ function gfMergePlaces(osm,local){
   }
   return out;
 }
+
+// ---------- строки таблиц: точки у поверхности живут в списках Table (geo/…), оттуда их читают Overlay, Flight Sim, карта ----------
+const GS_LISTS={air:'geo/airfields', rw:'geo/runways', pop:'geo/places', peak:'geo/peaks'};
+const GS_COLS={
+  air:['id','name','icao','iata','kind','lat','lon','ele','src'],
+  rw:['id','name','airport','lat','lon','lat2','lon2','width','surface','src'],
+  pop:['id','name','kind','lat','lon','pop','src'],
+  peak:['id','name','lat','lon','ele','src'],
+};
+const gfNum=v=>{ const x=typeof v==='number' ? v : parseFloat(v); return isFinite(x) ? x : null; };
+// данные ячейки (gfParse / gfOaCell) → строки по спискам
+function gfToRows(data,src){
+  const out={air:[],rw:[],pop:[],peak:[]};
+  for(const a of (data?.ap||[])) out.air.push({id:a.id,name:a.name||'',icao:a.icao||'',iata:a.iata||'',kind:a.kind||'aerodrome',lat:a.lat,lon:a.lon,ele:isFinite(a.ele) ? a.ele : '',src});
+  for(const r of (data?.rw||[])) out.rw.push({id:r.id,name:r.ref||'',airport:r.airport||'',lat:r.pts[0][0],lon:r.pts[0][1],lat2:r.pts[1][0],lon2:r.pts[1][1],width:r.width||'',surface:r.surface||'',src});
+  for(const p of (data?.pl||[])) out.pop.push({id:p.id,name:p.name,kind:p.kind,lat:p.lat,lon:p.lon,pop:p.pop||'',src});
+  for(const p of (data?.pk||[])) out.peak.push({id:p.id,name:p.name,lat:p.lat,lon:p.lon,ele:isFinite(p.ele) ? p.ele : '',src});
+  return out;
+}
+// строка списка → объекты в формате, который читают Overlay и gfNearestRunway; null — нет координат
+function gfApFromRow(r){
+  const lat=gfNum(r.lat), lon=gfNum(r.lon); if(lat==null || lon==null) return null;
+  const ele=gfNum(r.ele);
+  return {id:String(r.id ?? ''), lat, lon, name:String(r.name ?? ''), icao:String(r.icao ?? ''), iata:String(r.iata ?? ''), kind:String(r.kind||'aerodrome'), ele:ele==null ? NaN : ele};
+}
+function gfRwFromRow(r){
+  const la=gfNum(r.lat), lo=gfNum(r.lon), la2=gfNum(r.lat2), lo2=gfNum(r.lon2);
+  if(la==null || lo==null || la2==null || lo2==null) return null;
+  return {id:String(r.id ?? ''), pts:[[la,lo],[la2,lo2]], ref:String(r.name ?? ''), width:gfNum(r.width)||0, surface:String(r.surface ?? '')};
+}
+function gfPlFromRow(r){
+  const lat=gfNum(r.lat), lon=gfNum(r.lon); if(lat==null || lon==null || !r.name) return null;
+  const pop=gfNum(r.pop)||0, kind=r.kind in GF_PLACE_RANK ? r.kind : gfPopKind(pop);
+  return {id:String(r.id ?? ''), lat, lon, name:String(r.name), kind, pop};
+}
+// пользовательская точка (источник сигнала, пост наблюдения…): lat, lon; alt — над уровнем моря, h — над землёй (по умолчанию 0)
+function gfMyFromRow(r,list){
+  const lat=gfNum(r.lat), lon=gfNum(r.lon); if(lat==null || lon==null) return null;
+  return {lat, lon, name:String(r.name ?? r.label ?? r.id ?? ''), alt:gfNum(r.alt), h:gfNum(r.h ?? r.ant_h) ?? 0, color:String(r.color||''), list};
+}

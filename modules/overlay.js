@@ -328,6 +328,8 @@ async function ovOsmLoad(n,lat,lon,rKm){
     }
     if(n.osmReq!==gen) return;
     n.osm=ovkOsmParse(JSON.parse(txt)); n.osmFor={lat,lon}; n.osmGen=(n.osmGen|0)+1; n.osmMsg='';
+    gsUpsert('peak',n.osm.peaks.map(q=>({id:'pk'+q.lat.toFixed(4)+','+q.lon.toFixed(4),name:q.name,lat:q.lat,lon:q.lon,ele:isFinite(q.ele) ? q.ele : '',src:'osm'}))).catch(()=>{});     // вершины и города — в таблицы geo/…
+    gsUpsert('pop',n.osm.places.map(q=>({id:'pl'+q.lat.toFixed(4)+','+q.lon.toFixed(4),name:q.name,kind:q.kind,lat:q.lat,lon:q.lon,pop:'',src:'osm'}))).catch(()=>{});
   }catch(e){ if(n.osmReq===gen){ n.osmMsg='OSM: '+e.message; n.osmT=Date.now()+90000; } }
 }
 // вершины линий и точки — в ENU один раз на наблюдателя: высота по карте высот (+3 м), признак видимости из точки наблюдения
@@ -347,36 +349,35 @@ function ovOsmGeo(n,obs,rel,alt,okey){
 
 // ---------- аэродромы, полосы и населённые пункты (geofeat.js: ячейки OSM в базе браузера) ----------
 const OV_FEAT_KINDS=['air','pop'];
-// встроенные города: базовая карта (Natural Earth, без сети) и, если скачаны, GeoNames — в радиусе rKm
-function ovLocalPlaces(lat,lon,rKm){
-  const out=[], push=(id,la,lo,name,pop)=>{ if(name && gfDistKm(lat,lon,la,lo)<=rKm) out.push({id,lat:la,lon:lo,name,kind:gfPopKind(pop),pop}); };
-  const G=GeoBase.places;
-  if(G){
-    const dLat=Math.ceil(rKm/111.19)+1, dLon=Math.ceil(rKm/(111.19*Math.max(.05,Math.cos(lat*ORI_D))))+1, la0=Math.floor(lat+90), lo0=Math.floor(lon+180);
-    for(let a=la0-dLat;a<=la0+dLat;a++) for(let b=lo0-dLon;b<=lo0+dLon;b++){
-      for(const i of (G.cells.get(a*360+((b%360)+360)%360)||[])) push('g'+i,G.lat[i],G.lon[i],G.name[i],G.pop[i]);
-    }
-  } else for(const q of (GeoBase.data?.places||[])) push('b'+q.name+q.x,unmercY(q.y),unmercX(q.x),q.name,q.pop);
-  return out;
+// Точки берутся из списков Table (geo/airfields, geo/runways, geo/places и свои списки из параметра lists), а не из памяти загрузчика:
+// правки в таблицах видны сразу (ListDB.rev), а те же точки доступны карте и анализу
+async function ovFeatRead(n,lat,lon,rKm,kinds,lists){
+  const res={air:null,pop:null,my:[]};
+  if(kinds.includes('air')){
+    const [ap,rw]=await Promise.all([gsRead(GS_LISTS.air),gsRead(GS_LISTS.rw)]);
+    res.air={ap:gsNear(ap,gfApFromRow,lat,lon,rKm,40), rw:gsNear(rw,gfRwFromRow,lat,lon,rKm,60)};
+  }
+  if(kinds.includes('pop')) res.pop={pl:gsNear(await gsRead(GS_LISTS.pop),gfPlFromRow,lat,lon,rKm,150)};
+  for(const l of lists){
+    const rows=await gsRead(l).catch(()=>[]);
+    res.my.push(...gsNear(rows,r=>gfMyFromRow(r,l),lat,lon,rKm,200));
+  }
+  n.feat=res; n.featCtr={lat,lon}; n.featRev=ListDB.rev; n.featGen=(n.featGen|0)+1; redraw(n);
 }
+const ovFeatLists=p=>String(p.lists||'').split(',').map(s=>s.trim()).filter(Boolean);
 async function ovFeatLoad(n,lat,lon,rKm,kinds){
-  const gen=n.featReq={}, key=kinds.join()+'|'+rKm;
-  n.featMsg='loading '+(kinds.includes('air') ? 'airfields' : 'towns')+'…'; redraw(n);
+  const gen=n.featReq={}, key=kinds.join()+'|'+rKm+'|'+ovFeatLists(n.p).join();
+  n.featMsg='loading '+(kinds.includes('air') ? 'airfields' : kinds.length ? 'towns' : 'points')+'…'; redraw(n);
   const poll=setInterval(()=>{ if(GF_STATE.msg && n.featMsg!==GF_STATE.msg){ n.featMsg=GF_STATE.msg; redraw(n); } },400);
-  const errs=[], near=a=>a.map(q=>({q,d:gfDistKm(lat,lon,q.lat ?? (q.pts[0][0]+q.pts[1][0])/2,q.lon ?? (q.pts[0][1]+q.pts[1][1])/2)})).filter(x=>x.d<=rKm);
-  const publish=(k,v)=>{ if(n.featReq!==gen) return; n.feat[k]=v; n.featGen=(n.featGen|0)+1; redraw(n); };      // каждый вид — сразу, не ждём остальные
-  const places=pl=>({pl:near(pl).sort((a,b)=>GF_PLACE_RANK[a.q.kind]-GF_PLACE_RANK[b.q.kind] || a.d-b.d).slice(0,150).map(x=>x.q)});
+  const errs=[], lists=ovFeatLists(n.p), read=()=>n.featReq===gen && ovFeatRead(n,lat,lon,rKm,kinds,lists);
   try{
+    await read();                                           // что уже лежит в таблицах — сразу
     for(const k of kinds){
-      if(k==='pop'){
-        await geoBaseLoad().catch(()=>{});                  // города из встроенной карты — без сети, сразу
-        publish('pop',places(ovLocalPlaces(lat,lon,rKm)));
-      }
-      const r=await gfLoad(k,lat,lon,rKm,true);
+      if(k==='pop'){ await gsEnsureBuiltin(lat,lon,rKm); await read(); }      // встроенные города — без сети
+      const r=await gsEnsure(k,lat,lon,rKm,true);
       if(n.featReq!==gen) return;
       if(r.error) errs.push((k==='air' ? 'airfields' : 'villages')+': '+r.error);
-      if(k==='air') publish('air',{ap:near(r.data.ap).sort((a,b)=>a.d-b.d).slice(0,40).map(x=>x.q), rw:near(r.data.rw).sort((a,b)=>a.d-b.d).slice(0,60).map(x=>x.q)});
-      else if(r.data.pl.length) publish('pop',places(gfMergePlaces(r.data.pl,ovLocalPlaces(lat,lon,rKm))));
+      await read();
     }
     n.featMsg=errs.length ? errs[0]+' — retry in a minute' : '';
     if(errs.length){ n.featT=Date.now()+60000; n.featFor=null; } else n.featFor={lat,lon,key};
@@ -384,14 +385,20 @@ async function ovFeatLoad(n,lat,lon,rKm,kinds){
   finally{ clearInterval(poll); }
   redraw(n);
 }
-function ovFeatDownload(n){
+async function ovFeatDownload(n){
   const L=n.last; if(!L || L.lat==null){ n.featMsg='no position yet'; redraw(n); return; }
   const kinds=OV_FEAT_KINDS.filter(k=>n.p[k]); if(!kinds.length) kinds.push(...OV_FEAT_KINDS);
-  gfPrefetch(kinds,L.lat,L.lon,+n.p.featDlR,m=>{ n.featMsg=m; redraw(n); });
+  const R=+n.p.featDlR; let bad='';
+  for(const k of kinds){
+    if(k==='pop') await gsEnsureBuiltin(L.lat,L.lon,R);
+    const r=await gsEnsure(k,L.lat,L.lon,R,true,(i,m)=>{ n.featMsg=(k==='air' ? 'airfields' : 'towns')+' '+i+'/'+m+' → tables geo/…'; redraw(n); });
+    if(r.error) bad=r.error;
+  }
+  n.featMsg=bad ? 'downloaded with errors: '+bad : 'saved to the tables geo/airfields, geo/runways, geo/places'; n.featRev=-1; redraw(n);
 }
 // положение на земле и видимость точек один раз на наблюдателя (как ovOsmGeo)
 function ovFeatGeo(n,obs,rel,alt,okey){
-  const f=n.feat; if(!f.air && !f.pop) return null;
+  const f=n.feat; if(!f.air && !f.pop && !f.my?.length) return null;
   const key=okey+'|'+n.featGen+'|'+Horizon.ver;
   if(n.featGeoKey===key) return n.featGeo;
   const hAt=Horizon.hAt, ground=(la,lo,fb)=>{ const h=hAt ? hAt(la,lo) : alt-2; return h===h ? h : (fb!=null && isFinite(fb) ? fb : null); };
@@ -402,8 +409,9 @@ function ovFeatGeo(n,obs,rel,alt,okey){
     const a=r.pts[0], b=r.pts[1], ha=ground(a[0],a[1]), hb=ground(b[0],b[1]); if(ha==null || hb==null) continue;
     rw.push({a:pt(a[0],a[1],ha+.4), b:pt(b[0],b[1],hb+.4), ref:r.ref, width:r.width || 30});
   }
+  const my=(f.my||[]).map(q=>{ const h=q.alt!=null ? q.alt : ground(q.lat,q.lon); return h==null ? null : {...pt(q.lat,q.lon,q.alt!=null ? h : h+q.h), name:q.name, color:q.color, list:q.list}; }).filter(Boolean);
   n.featGeoKey=key;
-  return n.featGeo={rw, ap:(f.air?.ap||[]).map(q=>dot(q,0,q.ele)).filter(Boolean), pl:(f.pop?.pl||[]).map(q=>dot(q,0)).filter(Boolean)};
+  return n.featGeo={rw, ap:(f.air?.ap||[]).map(q=>dot(q,0,q.ele)).filter(Boolean), pl:(f.pop?.pl||[]).map(q=>dot(q,0)).filter(Boolean), my};
 }
 
 // выбор цели для калибровки: auto — ближайшая к перекрестию в пределах 30°
@@ -461,6 +469,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           {n:'osmLoad',t:'button',label:'Load OSM now',fn:n=>{ n.osmT=0; n.osmFor=null; },adv:true},
           {n:'air',t:'check',d:false,label:'airfields and runways (OSM, saved in the browser; needs Horizon heights)'},
           {n:'pop',t:'check',d:false,label:'towns and villages (OSM, saved in the browser; needs Horizon heights)'},
+          {n:'lists',t:'text',d:'',label:'own points: Table lists, comma-separated (columns name, lat, lon; h — height above ground, m, or alt — above sea level; color) — signal sources, observation posts'},
           {n:'featR',t:'range',min:10,max:100,step:5,d:40,label:'airfields / towns radius, km'},
           {n:'featDl',t:'button',label:'Download area for offline',fn:n=>ovFeatDownload(n)},
           {n:'featDlR',t:'range',min:20,max:200,step:10,d:100,label:'download area radius, km (airfields and towns are downloaded apart from the terrain)',adv:true},
@@ -477,7 +486,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           {n:'resetc',t:'button',label:'Reset corrections',fn:n=>{ for(const k of ['dAz','dEl','dRoll']) setMod(n,k,0); },adv:true}],
   init:n=>{ n.ents=new Map(); n.I={}; n.seq=0; n.pose=[]; n.sel=null; n.hits=[]; n.last=null; n.msg=null; n.home=null;
             n.pickOut=null; n.selInfo=null; n.visOut=null; n.nvis=0; n.nhid=0; n.osm=null; n.osmFor=null; n.osmT=0; n.osmMsg=''; n.osmGen=0;
-            n.feat={air:null,pop:null}; n.featFor=null; n.featT=0; n.featMsg=''; n.featGen=0; n.featBusy=false; },
+            n.feat={air:null,pop:null,my:[]}; n.featCtr=null; n.featReading=false; n.featRev=-1; n.featFor=null; n.featT=0; n.featMsg=''; n.featGen=0; n.featBusy=false; },
   dispose:n=>{ n.osmReq=null; n.featReq=null; },
   process(n,I){
     const now=Date.now(), tr=+n.p.trail*1000;
@@ -694,12 +703,15 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
     }
 
     // аэродромы, полосы, населённые пункты
-    if(proj && obs && (p.air || p.pop)){
-      const kinds=OV_FEAT_KINDS.filter(k=>p[k]), fkey=kinds.join()+'|'+p.featR;
+    if(proj && obs && (p.air || p.pop || p.lists)){
+      const kinds=OV_FEAT_KINDS.filter(k=>p[k]), lists=ovFeatLists(p), fkey=kinds.join()+'|'+p.featR+'|'+lists.join();
       for(const k of OV_FEAT_KINDS) if(!p[k]) n.feat[k]=null;
       if((!n.featFor || n.featFor.key!==fkey || geoDist(n.featFor.lat,n.featFor.lon,lat,lon)>Math.max(3,+p.featR/4)) && now>=n.featT && !n.featBusy){
         n.featBusy=true; n.featT=now+1500;
         ovFeatLoad(n,lat,lon,+p.featR,kinds).finally(()=>{ n.featBusy=false; });
+      }
+      if(n.featCtr && n.featRev!==ListDB.rev && !n.featReading){            // таблицы правили (Table, загрузка) — перечитать, даже пока идёт загрузка
+        n.featReading=true; ovFeatRead(n,n.featCtr.lat,n.featCtr.lon,+p.featR,kinds,lists).finally(()=>{ n.featReading=false; });
       }
       const g=ovFeatGeo(n,obs,rel,alt,okey);
       if(g){
@@ -723,6 +735,15 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           if(!free(c.x-4,c.y-12,tw,14)) continue;
           cx.strokeStyle='#6fd0ff'; cx.lineWidth=1.5; cx.beginPath(); cx.arc(c.x,c.y,4,0,7); cx.stroke();
           cx.fillStyle='#6fd0ff'; halo(label,c.x+7,c.y);
+        }
+        for(const q of g.my){                                       // свои точки из таблиц: источники сигналов, посты наблюдения — первыми, чтобы подписи не вытеснялись
+          if(!q.vis) continue; const c=proj(q.e); if(!c || c.x<rx || c.x>rx+rw || c.y<ry+24 || c.y>ry+rh) continue;
+          const km=Math.hypot(q.e[0],q.e[1],q.e[2])/1000, label=q.name+' '+(km>=10 ? Math.round(km) : km.toFixed(1))+' km', tw=cx.measureText(label).width+14;
+          if(!free(c.x-6,c.y-12,tw,14)) continue;
+          const col=q.color||'#ff6bd6';
+          cx.fillStyle=col; cx.strokeStyle='rgba(0,0,0,.8)'; cx.lineWidth=1.5; cx.beginPath();
+          cx.moveTo(c.x,c.y-6); cx.lineTo(c.x+5,c.y); cx.lineTo(c.x,c.y+6); cx.lineTo(c.x-5,c.y); cx.closePath(); cx.stroke(); cx.fill();
+          halo(label,c.x+9,c.y+3);
         }
         let shown=0;
         for(const q of g.pl){
