@@ -55,6 +55,7 @@ def({ id:'joystick', title:'Joystick (screen + keyboard)', cat:'Sources', always
           {n:'ramp',t:'range',min:0,max:1,step:.01,d:.15,label:'keyboard ramp, s to full deflection (0 — instant)',adv:true},
           {n:'dead',t:'range',min:0,max:.5,step:.01,d:.05,label:'dead zone',adv:true},
           {n:'expo',t:'range',min:0,max:1,step:.01,d:0,label:'expo (softer near the centre)',adv:true},
+          {n:'invy',t:'select',opts:JOY_INV,d:'none',label:'invert vertical (back / down = up) of the stick: for pitch, where pulling the stick back raises the nose'},
           {n:'hold',t:'select',opts:['none','left Y','right Y'],d:'none',label:'stick Y that keeps its value (throttle): keys move it, the stick does not spring back'},
           {n:'tpl',t:'text',d:'J {x1} {y1} {x2} {y2} {bits}',label:'frame: {x1} {y1} {x2} {y2} −1…1 · {X1}… −100…100 · {r1}…{r4} 1000…2000 µs · {b1}…{b8} {bits} · {hex} 7-byte frame · {n} counter · {t} ms'},
           {n:'rate',t:'range',min:0,max:50,step:1,d:10,label:'frames per second while active (0 — only when something changes)'},
@@ -83,7 +84,7 @@ def({ id:'joystick', title:'Joystick (screen + keyboard)', cat:'Sources', always
       else n.jpos[a]=joyStep(n.jpos[a],tg[a],dt,+p.ramp);
     }
     const o=n.jout, prev=JSON.stringify(o);
-    for(const a of JOY_AXES) o[a]=n.jstop ? 0 : joyShape(n.jpos[a],+p.dead,+p.expo);
+    for(const a of JOY_AXES) o[a]=n.jstop ? 0 : (joyInvY(p.invy,a) ? -1 : 1)*joyShape(n.jpos[a],+p.dead,+p.expo);
     for(let i=0;i<8;i++) o.b[i]=n.jstop ? 0 : (tg.b[i]||pb[i] ? 1 : 0);
     const active=JOY_AXES.some(a=>o[a]!==0) || o.b.some(Boolean), changed=JSON.stringify(o)!==prev;
     // кадр: по таймеру, пока что-то нажато (или keep-alive); при отпускании — ещё один нулевой кадр

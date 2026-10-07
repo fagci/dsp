@@ -176,6 +176,7 @@ const PRESET_CATS={
   'AR: Drones Around (Remote ID, Phone)':'Aircraft, Satellites & Telemetry',
   'AR: ADS-B Aircraft in the Sky (Phone + Generator)':'Aircraft, Satellites & Telemetry',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
+  'Flight Sim: Take Off from the Nearest Runway':'Aircraft, Satellites & Telemetry',
   'Flight Sim: Watch ADS-B Aircraft (Generator)':'Aircraft, Satellites & Telemetry',
   'ADS-B: Radar and Attitude (Generator)':'Aircraft, Satellites & Telemetry',
   'Remote ID: Drones on a Map (ESP32)':'Aircraft, Satellites & Telemetry',
@@ -4410,16 +4411,37 @@ markWiresDirty();
 });
 preset('Flight Sim: Fly over Terrain (Joystick)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'An arcade flight simulator on the Video Overlay. Start the engine, click the Joystick pad and fly: W / S — throttle (it holds its value), A / D — rudder, arrows — roll and pitch, Space — next camera, F — reset after a crash.\n'+
-  'Flight Sim integrates the aircraft and gives the camera (chase / cockpit / tower / orbit); Horizon downloads the terrain around it once and keeps it in the browser, so a flown area works offline. For a whole area ahead of time press «Download area for offline» in the advanced parameters of Horizon. Real hardware: wire Gamepad axes to the Joystick ex1…ey2 inputs.'});
+const nt=addNode('note',40,40,{text:'An arcade flight simulator on the Video Overlay. Start the engine, click the Joystick pad and fly: W / S — throttle (it holds its value), A / D — rudder, arrows — roll and pitch (down arrow pulls the nose up), Space — next camera, F — reset after a crash.\n'+
+  'Flight Sim integrates the aircraft and gives the camera (chase / cockpit / tower / orbit); Horizon downloads the terrain around it once and keeps it in the browser, so a flown area works offline. Airfields, runways and towns come from OSM per 0.5° cell and are kept the same way. For a whole area ahead of time press «Download area for offline» in Horizon (terrain, advanced parameters) and in Video Overlay (airfields and towns). The Sun is the real one for the place and the time (Video Overlay: «Sun time shift» changes the hour): lit slopes, terrain shadows, a night sky. Real hardware: wire Gamepad axes to the Joystick ex1…ey2 inputs.'});
 nt.size.w=900; nt.size.h=120; applySize(nt);
-const js=addNode('joystick',40,200,{hold:'left Y',kbd:'when focused'});
+const js=addNode('joystick',40,200,{hold:'left Y',kbd:'when focused',invy:'right stick'});
 const me=addNode('geoMe',40,520,{src:'manual',lat:43.68,lon:40.2});
-const fs=addNode('flightsim',420,200,{mode:'fly',cam:'chase',agl0:400,hdg0:60});
+const fs=addNode('flightsim',420,200,{mode:'fly',cam:'chase',agl0:400,hdg0:60,thrm:'stick up only 0…1'});
 fs.size.w=340; fs.size.h=120; applySize(fs);
 const hz=addNode('horizon',420,420,{radius:40,zoom:10});
 hz.size.w=340; hz.size.h=150; applySize(hz);
-const ov=addNode('overlay',820,200,{relief:'solid',sky:true,planets:false,starMag:-1,deep:false,trail:0,hud:'KT, AGL:m, VS:m/s, HDG:°',labels:false});
+const ov=addNode('overlay',820,200,{relief:'solid',sky:true,planets:false,starMag:-1,deep:false,trail:0,hud:'KT, AGL:m, VS:m/s, HDG:°',labels:false,air:true,pop:true});
+ov.size.w=560; ov.size.h=420; applySize(ov);
+addEdge(js.id,'x2',fs.id,'ail'); addEdge(js.id,'y2',fs.id,'elev'); addEdge(js.id,'x1',fs.id,'rud'); addEdge(js.id,'y1',fs.id,'thr');
+addEdge(js.id,'b1',fs.id,'cam'); addEdge(js.id,'b8',fs.id,'reset');
+addEdge(me.id,'lat',fs.id,'lat'); addEdge(me.id,'lon',fs.id,'lon');
+addEdge(fs.id,'lat',hz.id,'lat'); addEdge(fs.id,'lon',hz.id,'lon');
+for(const k of ['lat','lon','alt','az','el','roll','fov','rec']) addEdge(fs.id,k,ov.id,k);
+addEdge(fs.id,'kts',ov.id,'a'); addEdge(fs.id,'agl',ov.id,'b'); addEdge(fs.id,'vsi',ov.id,'c'); addEdge(fs.id,'hdg',ov.id,'d');
+markWiresDirty();
+});
+preset('Flight Sim: Take Off from the Nearest Runway', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Starts on the nearest runway (OSM, downloaded once and kept in the browser; the point is My Position — Sochi Adler here). Click the Joystick pad, push W to add throttle, hold the down arrow (pull) after 40 m/s to lift off.\n'+
+  'Airfields, runways and towns appear on the overlay; «Sun time shift» in Video Overlay moves the real Sun (try +6 h for the evening shadows). Start the engine; the first start waits for the terrain and the runway.'});
+nt.size.w=900; nt.size.h=110; applySize(nt);
+const js=addNode('joystick',40,200,{hold:'left Y',kbd:'when focused',invy:'right stick'});
+const me=addNode('geoMe',40,520,{src:'manual',lat:43.45,lon:39.92});
+const fs=addNode('flightsim',420,200,{mode:'fly',cam:'chase',start:'nearest runway',thrm:'stick up only 0…1'});
+fs.size.w=340; fs.size.h=120; applySize(fs);
+const hz=addNode('horizon',420,420,{radius:40,zoom:11});
+hz.size.w=340; hz.size.h=150; applySize(hz);
+const ov=addNode('overlay',820,200,{relief:'solid',sky:true,planets:false,starMag:-1,deep:false,trail:0,hud:'KT, AGL:m, VS:m/s, HDG:°',labels:false,air:true,pop:true,featR:30});
 ov.size.w=560; ov.size.h=420; applySize(ov);
 addEdge(js.id,'x2',fs.id,'ail'); addEdge(js.id,'y2',fs.id,'elev'); addEdge(js.id,'x1',fs.id,'rud'); addEdge(js.id,'y1',fs.id,'thr');
 addEdge(js.id,'b1',fs.id,'cam'); addEdge(js.id,'b8',fs.id,'reset');
