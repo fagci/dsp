@@ -5,9 +5,9 @@
    узлы (карта, Video Overlay, Mark Point, Radio Reach, Signal Paths, секвенсор). Проверяется tools/test-tabletemplates.mjs. */
 
 const TBL_TEMPLATES=[
-  {id:'points', title:'Map points', dir:'points', cols:['name','lat','lon','alt','h','icon','color','note'],
+  {id:'points', title:'Map points', dir:'points', cols:['name','lat','lon','alt','h','icon','color','note','photo','audio'],
    desc:'Points on the Map and in the 3D overlay (Video Overlay → own points). h — height above the ground, m; alt — above sea level.'},
-  {id:'measure', title:'Field measurements (point + height)', dir:'field', cols:['name','t','session','tx','lat','lon','alt','h','freq','rssi','azimuth','elevation','rx_ant','rx_gain','note','photo'],
+  {id:'measure', title:'Field measurements (point + height)', dir:'field', cols:['name','t','session','tx','lat','lon','alt','h','freq','rssi','azimuth','elevation','rx_ant','rx_gain','note','photo','audio'],
    desc:'What Mark Point records: where, how high the antenna was, level, bearing, source (tx), session (field / quiet), antenna, photo. Feeds Source Locator and the Map.'},
   {id:'freqs', title:'Frequencies (channels, bookmarks)', dir:'freq', cols:['name','freq','demod','bw','color','note'],
    desc:'One frequency per row (Hz, 145.5M, 14 MHz): a receiver can be tuned from it, the Sequencer steps through it.'},
@@ -15,7 +15,7 @@ const TBL_TEMPLATES=[
    desc:'Ranges for the spectrum (bands), the Band Scanner and the multiband view: lo, hi, channel step, mode.'},
   {id:'tx', title:'Transmitters (signal sources)', dir:'sources', cols:['name','lat','lon','h','freq','erp_w','pol','azimuth','beamwidth','note'],
    desc:'Radio / TV masts and any known source: place, mast height (h, m), frequency, radiated power (erp_w), antenna gain, polarisation, direction and beamwidth.'},
-  {id:'rx', title:'Receiving points (observation posts)', dir:'posts', cols:['name','lat','lon','alt','h','rx_ant','rx_gain','note','photo'],
+  {id:'rx', title:'Receiving points (observation posts)', dir:'posts', cols:['name','lat','lon','alt','h','rx_ant','rx_gain','note','photo','audio'],
    desc:'Where you listen from: a place, antenna height (h, m above ground), antenna and its gain, a photo of the site.'},
   {id:'links', title:'Links (two ends)', dir:'links', cols:['name','lat','lon','h','lat2','lon2','h2','freq','kind','color','label','note'],
    desc:'A link between two points (Signal Paths input / output; drawn on the Map and in 3D). kind: direct / reflect; a row may also carry path3 (JSON).'},
@@ -27,7 +27,7 @@ const TBL_TEMPLATES=[
    desc:'Signals you noted: time, frequency, mode, bandwidth, level, place.'},
   {id:'track', title:'Track (route)', dir:'tracks', cols:['id','lat','lon','alt','speed','icon','label'],
    desc:'A route for the Sequencer (a moving marker on the Map): rows with the same id are one vehicle; speed in km/h.'},
-  {id:'photos', title:'Photo log', dir:'photos', cols:['name','t','lat','lon','alt','photo','note'],
+  {id:'photos', title:'Photo log', dir:'photos', cols:['name','t','lat','lon','alt','photo','audio','note'],
    desc:'Photos with the place and time (the place and time are taken from the picture when it has EXIF).'},
 ];
 // недостающие колонки шаблона в конец списка колонок cur

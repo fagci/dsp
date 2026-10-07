@@ -86,9 +86,9 @@ button,select,input{font:inherit;color:inherit}
 .pitem.dragging{opacity:.4}
 #canvas.dropok{outline:2px dashed var(--acc);outline-offset:-2px}
 .pitem .ptxt{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
-.pitem .pdel{flex:0 0 auto;margin-left:6px;padding:2px 6px;border-radius:4px;
+.pitem .pins,.pitem .pdel{flex:0 0 auto;margin-left:6px;padding:2px 6px;border-radius:4px;
   color:var(--dim);font-size:11px;line-height:1.6;opacity:.55;cursor:pointer}
-.pitem .pdel:hover{opacity:1;color:var(--txt);background:var(--panel2)}
+.pitem .pins:hover,.pitem .pdel:hover{opacity:1;color:var(--txt);background:var(--panel2)}
 .pitem b{font-weight:500;overflow-wrap:anywhere}
 .pitem i{font-style:normal;color:var(--dim);font-size:9px}
 .pitem .prow{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 8px}
@@ -291,7 +291,7 @@ button,select,input{font:inherit;color:inherit}
   #stat{flex:0 0 40ch}
   .pitem{padding:10px 12px}
   /* на тач-устройствах hover недоступен — держим крестик крупнее и заметным всегда */
-  .pitem .pdel{padding:6px 10px;font-size:14px;opacity:.8}
+  .pitem .pins,.pitem .pdel{padding:6px 10px;font-size:14px;opacity:.8}
   .prm{flex-wrap:wrap;gap:2px}
   .prm label{flex:1 0 100%;font-size:10px}
   .prm input[type=range]{height:40px;flex:1 1 60%}

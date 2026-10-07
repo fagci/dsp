@@ -27,12 +27,14 @@ writeP(p);
 }
 function makePatchItem(name,count){
 const b=document.createElement('button'); b.className='pitem'+(name===currentPatchName?' on':'');
-b.innerHTML= `<span class="ptxt"><b>${name}</b><i>${count} nodes</i></span><span class="pdel" title="Delete patch">✕</span>` ;
+b.innerHTML= `<span class="ptxt"><b>${name}</b><i>${count} nodes</i></span><span class="pins" title="Insert into the current graph">＋</span><span class="pdel" title="Delete patch">✕</span>` ;
+b.draggable=true;
+b.addEventListener('dragstart',e=>{ e.dataTransfer.setData('text/x-dsp-patch',name); e.dataTransfer.effectAllowed='copy'; });
 const doDelete=e=>{ e.preventDefault(); e.stopPropagation();
 if(confirm('Delete patch «'+name+'»?')){ const p=readP(); delete p[name]; writeP(p);
 if(currentPatchName===name) currentPatchName='';
 buildPatchList(); stat.textContent='patch deleted'; } };
-b.addEventListener('click',e=>{ if(e.target.closest('.pdel')) return; openPatch(name); });
+b.addEventListener('click',e=>{ if(e.target.closest('.pdel')) return; if(e.target.closest('.pins')){ insertPatch(name); return; } openPatch(name); });
 b.querySelector('.pdel').addEventListener('click',doDelete);      // тап/клик по крестику — работает и на мобиле
 b.addEventListener('contextmenu',doDelete);                       // на десктопе правый клик — тоже как раньше
 return b;
@@ -76,6 +78,16 @@ const p=readP(); if(!p[name]) return;
 deserialize(p[name]); currentPatchName=name; graphDirty=false;
 stat.textContent='opened: '+name;
 buildPatchList(); closeSide();
+}
+// вставка патча в текущий граф (не заменяя его); левый верхний угол — в (x,y) или в центр видимой области
+function insertPatch(name,x,y){
+const p=readP(), d=p[name]; if(!d || !d.nodes?.length) return;
+const data=migrate(JSON.parse(JSON.stringify(d)));
+const x0=Math.min(...data.nodes.map(n=>n.x)), y0=Math.min(...data.nodes.map(n=>n.y));
+if(x==null){ const r=cv.getBoundingClientRect(); x=(r.width/2)/view.k-view.x-60; y=(r.height/3)/view.k-view.y; }
+pasteData(data,x-x0,y-y0);
+stat.textContent='inserted: '+name+' (Ctrl+Z — undo)';
+if(narrowUI.matches) closeSide();
 }
 document.getElementById('psave').onclick=()=>{
 const name=prompt('Patch name',currentPatchName||'patch '+new Date().toLocaleString());
