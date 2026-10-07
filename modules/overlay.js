@@ -300,6 +300,33 @@ function ovDrawSky(cx,W,H,c0,cam,cel,dk,ground){
   if(!c0){ if(cel<0) cx.fillRect(0,0,W,H); return; }
   const BIG=W+H; cx.save(); cx.translate(c0.x,c0.y); cx.rotate(Math.atan2(cam.r[2],cam.u[2])); cx.fillRect(-BIG,0,2*BIG,BIG); cx.restore();
 }
+// ночные огни: города и посёлки — свечением, дороги и полосы — точками; только видимое из точки наблюдения, ослабляется дымкой
+const OV_LIGHT_PX={city:[9,.9,5],town:[6,.75,3.5],village:[4,.6,2.5]};     // [радиус, ×100 м; яркость; минимум, px]
+function ovDrawLights(cx,proj,foc,box,g,night,vis){
+  const [rx,ry,rw,rh]=box, fade=e=>1-.8*ovkFog(Math.hypot(e[0],e[1]),vis,0), inb=c=>c && c.x>=rx-20 && c.x<=rx+rw+20 && c.y>=ry-20 && c.y<=ry+rh+20;
+  cx.save(); cx.globalCompositeOperation='lighter';
+  cx.fillStyle='rgb(255,200,110)';
+  for(const wl of g.roads||[]) for(const q of wl.pts){                      // дорога — цепочка огней
+    if(!q || !q.vis) continue; const c=proj(q.e); if(!inb(c)) continue;
+    cx.globalAlpha=night*fade(q.e)*.85; cx.fillRect(c.x-1,c.y-1,2,2);
+  }
+  for(const q of g.places||[]){
+    if(!q.vis) continue; const c=proj(q.e); if(!inb(c)) continue;
+    const L=OV_LIGHT_PX[q.kind]||OV_LIGHT_PX.village, r=Math.max(L[2],L[0]*100*foc/c.z), a=night*fade(q.e)*L[1];
+    const gr=cx.createRadialGradient(c.x,c.y,0,c.x,c.y,r);
+    gr.addColorStop(0,'rgba(255,214,140,'+a.toFixed(3)+')'); gr.addColorStop(.35,'rgba(255,170,70,'+(a*.35).toFixed(3)+')'); gr.addColorStop(1,'rgba(255,150,50,0)');
+    cx.globalAlpha=1; cx.fillStyle=gr; cx.fillRect(c.x-r,c.y-r,2*r,2*r);
+  }
+  cx.fillStyle='rgb(255,244,214)';
+  for(const r of g.rw||[]){                                               // полоса: огни по обеим кромкам
+    if(!r.a.vis && !r.b.vis) continue;
+    const A=r.a.e, B=r.b.e, dx=B[0]-A[0], dy=B[1]-A[1], L=Math.hypot(dx,dy)||1, hw=(r.width||30)/2, nx=-dy/L*hw, ny=dx/L*hw, N=Math.min(40,Math.max(2,Math.round(L/40)));
+    cx.globalAlpha=night*fade(A);
+    for(let i=0;i<=N;i++){ const t=i/N;
+      for(const sg of [1,-1]){ const c=proj([A[0]+dx*t+sg*nx,A[1]+dy*t+sg*ny,A[2]+(B[2]-A[2])*t+.5]); if(inb(c)) cx.fillRect(c.x-1,c.y-1,2,2); } }
+  }
+  cx.restore();
+}
 // кольца от дальних к ближним — ближние перекрывают дальние; ячейки одного цвета в кольце — одним путём
 function ovDrawRelief(cx,rel,proj,solid){
   const {rings,NA,cells,col,off}=rel, nr=rings.length, P=rel.P||(rel.P=[]), cw=cx.canvas.width, ch=cx.canvas.height, mg=40;
@@ -505,6 +532,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           {n:'relief',t:'select',opts:['off','auto','lines','solid'],d:'auto',label:'terrain relief 3D from Horizon (auto: solid without video, lines over video)'},
           {n:'vis',t:'range',min:5,max:150,step:1,d:35,label:'haze: visibility, km (distant mountains fade into the sky)'},
           {n:'minLight',t:'range',min:0,max:.6,step:.01,d:.3,label:'night brightness floor of the relief (0 — pitch dark)'},
+          {n:'lights',t:'check',d:true,label:'night lights: towns, roads and runways glow after dark (needs OSM / towns / airfields on)'},
           {n:'shadows',t:'check',d:true,label:'terrain shadows from the real Sun (cost: a few ms when the mesh is rebuilt)'},
           {n:'tshift',t:'range',min:-12,max:12,step:.25,d:0,label:'Sun time shift, h (0 — real time; moves the Sun, the light and the sky)',adv:true},
           {n:'osm',t:'check',d:false,label:'OSM: peaks, towns, roads, rivers (asks overpass-api.de, needs Horizon heights)'},
@@ -801,6 +829,12 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           cx.fillStyle='#ffe9a8'; cx.fillRect(c.x-sz,c.y-sz,sz*2,sz*2); halo(label,c.x+7,c.y);
         }
       }
+    }
+
+    // ночные огни по тем же данным OSM, что и подписи выше
+    if(proj && obs && p.lights && dk<.98){
+      const o=p.osm ? n.osmGeo : null, f=n.featGeo, fl={roads:o?.roads, places:p.pop ? (n.feat.pop && f ? f.pl : []) : o?.places, rw:p.air && n.feat.air && f ? f.rw : []};
+      if(fl.roads || fl.places?.length || fl.rw.length) ovDrawLights(cx,proj,foc,[rx,ry,rw,rh],fl,1-dk,+p.vis);
     }
 
     // связи: прямой путь, пути с отражением — отрезки между концами в 3D (rec: lat, lon → lat2, lon2 или path3; строки списков own points с lat2 / lon2)
