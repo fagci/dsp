@@ -209,7 +209,7 @@ The **tinySA** node talks to a tinySA or tinySA Ultra over its USB serial consol
 - outputs: `peakF` / `peakDb` — the highest point of the last sweep
 - **Screenshot** reads the device screen (`capture`) to the node and the `img` output, **Save PNG** downloads it
 - **gen** (signal generator mode) — `mode low|high output`, frequency, level and **RF on**; `genFreq` (Hz) and `genLevel` (dBm) inputs let the graph drive it (e.g. a stepped frequency sweep)
-- ready-made patch: **tinySA: Spectrum**
+- ready-made patches: **tinySA: Spectrum**, **tinySA: FPV 5.8 GHz Channel Activity** (Ultra sweep 5.35–5.95 GHz under the FPV channel strip, peak hold, strongest peak on a display)
 
 ## ESP-SDR
 

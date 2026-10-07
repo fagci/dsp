@@ -137,6 +137,7 @@ const PRESET_CATS={
   'IQ: Channelizer — Three Signals at Once (Generator)':'SDR Receivers',
   'USB SDR: Listen to the Strongest Channels':'SDR Receivers',
   'tinySA: Spectrum':'SDR Receivers',
+  'tinySA: FPV 5.8 GHz Channel Activity':'SDR Receivers',
 
   'MPT 1327: Control Channel (Generator)':'Digital Voice & Trunking',
   'MPT 1327: Control Channel (USB SDR)':'Digital Voice & Trunking',
@@ -2098,6 +2099,25 @@ const sa=addNode('sa',540,40,{auto:true,floor:-110,top:-20,split:.35});
 sa.size.w=720; sa.size.h=460; applySize(sa);
 addEdge(ts.id,'spec',sa.id,'spec');
 addEdge(sa.id,'centerFreq',ts.id,'steerFreq');
+markWiresDirty();
+});
+preset('tinySA: FPV 5.8 GHz Channel Activity', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Which FPV video channels are on air right now: a tinySA Ultra sweeps 5.35–5.95 GHz (WebSerial, Chrome/Edge) under the A/B/E/F/R/L channel strip.\n'+
+  'An analog video transmitter shows as a ~18 MHz hump on its channel; peak hold keeps a pilot that flies in bursts. The strongest point goes to the display (strongest channel = the pilot closest to you).\n'+
+  'Needs a tinySA Ultra: above ~5.3 GHz it works in its extended range, with reduced accuracy (enough for presence, not for calibrated levels). The basic tinySA does not reach 5.8 GHz.\n'+
+  'Tap the spectrum to put a marker; to watch the video of a found channel use Analog TV: FPV Channel Scanner (HackRF).'});
+nt.size.w=760; nt.size.h=130; applySize(nt);
+const ts=addNode('tinysa',40,210,{start:5350,stop:5950,points:'1000',rbw:'300'});
+const bp=addNode('table',40,420,{list:'presets/Drones/FPV analog video 5.8G (A B E F R L)',initial:false});
+bp.size.w=340; bp.size.h=260; applySize(bp);
+const sa=addNode('sa',460,40,{auto:false,floor:-100,top:-20,split:.5,peakHold:true});
+sa.size.w=860; sa.size.h=520; applySize(sa);
+const sd=addNode('segdisp',460,600,{digits:8,decimals:1,fmt:'frequency'});
+sd.size.w=300; sd.size.h=70; applySize(sd);
+addEdge(ts.id,'spec',sa.id,'spec');
+addEdge(bp.id,'bands',sa.id,'bands');
+addEdge(ts.id,'peakF',sd.id,'in');
 markWiresDirty();
 });
 preset('ESP-SDR: ESP32 Spectrum', function(){
