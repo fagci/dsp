@@ -735,7 +735,7 @@ function sidHint(c,g){
     case 'CW': return 'Morse → morseRx / preset "Morse from Microphone"';
     case 'DTMF': return 'DTMF → dtmfRx';
     case 'FSK':
-      if(bw<=80 && c.levels>2) return 'FT8/FT4/WSPR-like → ft8Rx';
+      if(bw<=80 && c.levels>2) return 'FT8/FT4/WSPR/JS8-like → ft8Rx / js8Rx';
       if(c.levels>2 || (!sh && c.levels)){
         if(near(b,4800,.08)) return c.burst? 'DMR (TDMA, 4-FSK 4800 Bd)' : 'DMR repeater / P25 / NXDN96 (4-FSK 4800 Bd)';
         if(near(b,2400,.08)) return 'dPMR / NXDN48 (4-FSK 2400 Bd)';
@@ -748,7 +748,7 @@ function sidHint(c,g){
       if(near(b,9600,.1)) return 'GFSK 9600 (AIS / packet 9k6)';
       return '2-FSK → afskRx / fsk';
     case 'MFSK':
-      if(bw<=80) return 'FT8/FT4/WSPR-like → ft8Rx';
+      if(bw<=80) return 'FT8/FT4/WSPR/JS8-like → ft8Rx / js8Rx';
       return 'Olivia/Contestia-like → oliviaRx / contestiaRx';
     case 'PSK':
       if(c.psk===2 && (near(b,31.25,.1) || (!b && bw<120))) return 'PSK31 → preset "PSK31"';
