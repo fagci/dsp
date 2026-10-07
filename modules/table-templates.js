@@ -7,7 +7,7 @@
 const TBL_TEMPLATES=[
   {id:'points', title:'Map points', dir:'points', cols:['name','lat','lon','alt','h','icon','color','note'],
    desc:'Points on the Map and in the 3D overlay (Video Overlay → own points). h — height above the ground, m; alt — above sea level.'},
-  {id:'measure', title:'Field measurements (point + height)', dir:'field', cols:['name','t','session','tx','lat','lon','alt','h','freq','rssi','azimuth','rx_ant','rx_gain','note','photo'],
+  {id:'measure', title:'Field measurements (point + height)', dir:'field', cols:['name','t','session','tx','lat','lon','alt','h','freq','rssi','azimuth','elevation','rx_ant','rx_gain','note','photo'],
    desc:'What Mark Point records: where, how high the antenna was, level, bearing, source (tx), session (field / quiet), antenna, photo. Feeds Source Locator and the Map.'},
   {id:'freqs', title:'Frequencies (channels, bookmarks)', dir:'freq', cols:['name','freq','demod','bw','color','note'],
    desc:'One frequency per row (Hz, 145.5M, 14 MHz): a receiver can be tuned from it, the Sequencer steps through it.'},

@@ -597,7 +597,7 @@ def({ id:'geoMark', title:'Mark Point', cat:'Geo',
   // Поля записи понимает остальное: lat, lon, alt, h (высота антенны над землёй — для 3D), rssi / snr, azimuth, freq, tx (источник —
   // группировка в Source Locator), session (field — в движении, quiet — спокойное место для пеленгации), rx_ant, rx_gain, note, photo.
   ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'alt',t:'num'},{n:'rssi',t:'num'},{n:'snr',t:'num'},
-       {n:'azimuth',t:'num'},{n:'freq',t:'num'},{n:'go',t:'num'}],
+       {n:'azimuth',t:'num'},{n:'elevation',t:'num'},{n:'freq',t:'num'},{n:'go',t:'num'}],
   outs:[{n:'rec',t:'rec'},{n:'count',t:'num'}],
   readout:true,
   params:[{n:'mark',t:'button',label:'● Mark',fn:n=>{ n.req=true; }},
@@ -614,7 +614,7 @@ def({ id:'geoMark', title:'Mark Point', cat:'Geo',
   init:n=>{ n.req=false; n.prevGo=0; n.count=0; n.lastT=0; n.lastRec=null; n.msg=''; n.snap={}; n.emit=null; },
   process(n,I){
     const go=typeof I.go==='number' ? I.go : 0, edge=go>0.5 && n.prevGo<=0.5; n.prevGo=go;
-    n.snap={lat:I.lat,lon:I.lon,alt:I.alt,rssi:I.rssi,snr:I.snr,azimuth:I.azimuth,freq:I.freq};
+    n.snap={lat:I.lat,lon:I.lon,alt:I.alt,rssi:I.rssi,snr:I.snr,azimuth:I.azimuth,elevation:I.elevation,freq:I.freq};
     const now=Date.now();
     let fire=n.req || edge || (n.p.auto>0 && now-n.lastT>=n.p.auto*1000);
     n.req=false;
@@ -631,7 +631,7 @@ function geoMarkRec(n,I,photo){
   if(p.prefix) r.name=p.prefix+r.n;
   const alt=recNum(I.alt); if(alt!=null) r.alt=+alt.toFixed(1);
   r.h=+p.rx_h||0; r.session=p.session;
-  for(const k of ['rssi','snr','azimuth','freq']){ const v=recNum(I[k]); if(v!=null) r[k]=+v.toFixed(2); }
+  for(const k of ['rssi','snr','azimuth','elevation','freq']){ const v=recNum(I[k]); if(v!=null) r[k]=+v.toFixed(2); }
   if(p.tx) r.tx=p.tx; if(p.rx_ant) r.rx_ant=p.rx_ant; if(+p.rx_gain) r.rx_gain=+p.rx_gain; if(p.note) r.note=p.note; if(photo) r.photo=photo;
   r.label=r.rssi!=null ? r.rssi+' dBm' : r.snr!=null ? r.snr+' dB' : '#'+r.n;
   n.lastRec=r; n.msg='';
@@ -759,7 +759,7 @@ function geoLocShown(n){
 function geoLocFmtErr(km){ return km>=1 ? km.toFixed(1)+' km' : Math.round(km*1000)+' m'; }
 def({ id:'geoLocate', lazy:'manual', title:'Source Locator', cat:'Geo',
   ins:[{n:'rec',t:'rec'},{n:'select',t:'rec'}],        // select — клик на карте: показать эту группу
-  outs:[{n:'rec',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'err',t:'num'},{n:'count',t:'num'}],
+  outs:[{n:'rec',t:'rec'},{n:'rays',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'alt',t:'num'},{n:'err',t:'num'},{n:'count',t:'num'}],
   view:{h:260}, resize:true, readout:true,
   params:[{n:'field',t:'select',opts:['rssi','snr','level'],d:'rssi',label:'level field'},
           {n:'method',t:'select',opts:['auto','strength','bearing'],d:'auto',label:'use'},
@@ -771,6 +771,11 @@ def({ id:'geoLocate', lazy:'manual', title:'Source Locator', cat:'Geo',
           {n:'minSpread',t:'range',min:0,max:500,step:1,d:0,label:'min spread of level marks, m',adv:true},
           {n:'area',t:'range',min:0,max:1000,step:0.1,d:0,label:'search area, km (0 — auto)',adv:true},
           {n:'max',t:'range',min:3,max:1000,step:1,d:200,label:'keep measurements (per source)',adv:true},
+          {n:'h0',t:'range',min:0,max:300,step:1,d:10,label:'assumed source height above ground, m (without elevation angles)'},
+          {n:'sigEl',t:'range',min:.5,max:20,step:.5,d:2,label:'elevation error, °',adv:true},
+          {n:'rays',t:'check',d:true,label:'rays: links from the marks to the estimate (Map, 3D)'},
+          {n:'save',t:'text',d:'analysis/sources',label:'Table list for the estimates',adv:true},
+          {n:'tosave',t:'button',label:'Save estimates to table',fn:n=>geoLocSave(n)},
           {n:'clr',t:'button',label:'Clear',fn:n=>{ n.groups.clear(); n.showKey=null; }}],
   init:n=>{ n.groups=new Map(); n.showKey=null; n.lastSolve=0; n.pkey=''; n.total=0; },
   process(n,I){
@@ -780,7 +785,7 @@ def({ id:'geoLocate', lazy:'manual', title:'Source Locator', cat:'Geo',
     }
     for(const r of recList(I.rec)){
       const pos=geoRecPos(r); if(!pos) continue;
-      const sv=recNum(r[n.p.field]), az=recNum(r.azimuth ?? r.bearing);
+      const sv=recNum(r[n.p.field]), az=recNum(r.azimuth ?? r.bearing), el=recNum(r.elevation);
       if(sv==null && az==null) continue;
       let key='';
       if(gf){ const v=r[gf]; if(v==null || v==='') continue; key=String(v); }
@@ -788,13 +793,14 @@ def({ id:'geoLocate', lazy:'manual', title:'Source Locator', cat:'Geo',
       if(lf && r[lf]!=null && r[lf]!=='') g.label=String(r[lf]);
       const last=g.meas[g.meas.length-1];
       if(last && last.lat===pos.lat && last.lon===pos.lon && last.s===sv && last.az===az) continue;   // повтор того же скана
-      g.meas.push({lat:pos.lat, lon:pos.lon, s:sv, az:az!=null ? ((az%360)+360)%360 : null});
+      const hz=typeof Horizon!=='undefined' && Horizon.hAt ? Horizon.hAt(pos.lat,pos.lon) : null, m3={lat:pos.lat, lon:pos.lon, s:sv, az:az!=null ? ((az%360)+360)%360 : null, el, alt:recNum(r.alt), h:recNum(r.h)};
+      m3.alt3=l3MeasAlt(m3,hz); g.meas.push(m3);
       if(g.meas.length>n.p.max) g.meas.splice(0,g.meas.length-n.p.max);
       g.dirty=true; g.t=Date.now(); n.total++;
     }
     const pkey=[n.p.method,n.p.pathN,n.p.sigmaDb,n.p.sigmaAz,n.p.area,n.p.minSpread].join();
     if(pkey!==n.pkey){ n.pkey=pkey; for(const g of n.groups.values()) g.dirty=true; }
-    let rec=null;
+    let rec=null, rays=null;
     const now=Date.now();
     if(now-n.lastSolve>200){
       n.lastSolve=now;
@@ -804,18 +810,26 @@ def({ id:'geoLocate', lazy:'manual', title:'Source Locator', cat:'Geo',
         g.dirty=false;
         geoLocSolve(g,n.p);
         const S=g.sol; if(!S) continue;
+        geoLoc3d(g,n.p);
         const e=geoLocFmtErr(S.errKm);
         const name=gf ? (g.label||g.key) : 'source';
         (rec||(rec=[])).push({t:now, id:gf ? 'loc:'+g.key : 'estimate', label:name+' ±'+e,
           icon:gf ? 'antenna' : 'star', color:gf ? geoEntColor({}, {id:g.key}) : '#ffd84a', size:gf ? 7 : 8,
           lat:+S.lat.toFixed(6), lon:+S.lon.toFixed(6), radius:Math.round(S.errKm*1000),
           meas:g.meas.length, ...(gf?{[gf]:g.key, track:0}:{}), ...(lf&&g.label?{[lf]:g.label}:{}),
-          ...(S.A!=null?{A_1km:+S.A.toFixed(1)}:{}), grid:latLonToGrid(S.lat,S.lon,6)});
+          ...(S.A!=null?{A_1km:+S.A.toFixed(1)}:{}), grid:latLonToGrid(S.lat,S.lon,6),
+          ...(S.h3 ? {alt:+S.h3.alt.toFixed(1), ...(S.h3.h!=null?{h:+S.h3.h.toFixed(1)}:{}), alt_err:Math.round(S.h3.sd), height_src:S.h3.how} : {})});
+        if(n.p.rays){
+          const R=l3Rays(g.meas,{lat:S.lat,lon:S.lon,alt:S.h3 ? S.h3.alt : 0},'ray:'+(gf ? g.key : 'estimate'),{color:gf ? geoEntColor({}, {id:g.key}) : '#6fd0ff'});
+          (rays||(rays=[])).push(...R.rays);
+          for(let i=R.n;i<(g.rayN||0);i++) rays.push({id:'ray:'+(gf ? g.key : 'estimate')+':'+i,gone:true});
+          g.rayN=R.n;
+        }
       }
     }
     const g=geoLocShown(n), S=g?.sol;
     redrawIf(n,n.total+'|'+n.groups.size+'|'+n.showKey+'|'+n.solveGen);
-    return {rec, lat:S?S.lat:null, lon:S?S.lon:null, err:S?S.errKm*1000:null, count:n.total};
+    return {rec, rays, lat:S?S.lat:null, lon:S?S.lon:null, alt:S?.h3 ? S.h3.alt : null, err:S?S.errKm*1000:null, count:n.total};
   },
   draw(n,cv,cx){
     const g=geoLocShown(n);
@@ -825,7 +839,25 @@ def({ id:'geoLocate', lazy:'manual', title:'Source Locator', cat:'Geo',
     n.el.querySelector('.readout').textContent=
       (gf ? 'sources '+n.groups.size+' · located '+solved+(g?'\n▶ '+(g.label||g.key)+(g.label?' ('+g.key+')':''):'')+'\n' : '')+
       (g ? g.msg : 'waiting for measurements')+
-      (S ? '\n'+S.lat.toFixed(5)+', '+S.lon.toFixed(5)+' ±'+geoLocFmtErr(S.errKm)+(S.A!=null?' · A(1 km) '+S.A.toFixed(1):'') : ''); }});
+      (S ? '\n'+S.lat.toFixed(5)+', '+S.lon.toFixed(5)+' ±'+geoLocFmtErr(S.errKm)+(S.A!=null?' · A(1 km) '+S.A.toFixed(1):'')+
+        (S.h3 ? '\nalt '+Math.round(S.h3.alt)+' m'+(S.h3.h!=null?' ('+Math.round(S.h3.h)+' m above ground)':'')+' ±'+Math.round(S.h3.sd)+' · '+(S.h3.how==='elevation' ? 'from '+S.h3.n+' elevation angle(s)' : 'assumed height') : '') : ''); }});
+// высота найденного источника: по углам места или земля у точки + предполагаемая высота (Horizon нужен для земли)
+function geoLoc3d(g,p){
+  const S=g.sol, P=S.P, ground=typeof Horizon!=='undefined' && Horizon.hAt ? Horizon.hAt(S.lat,S.lon) : null;
+  const M=g.meas.map(m=>({x:m.x,y:m.y,z:m.alt3,el:m.el}));
+  S.h3=l3Source(M,{x:S.x,y:S.y},ground,{h0:+p.h0,sigEl:+p.sigEl});
+}
+// оценки в Table: lat lon alt h с погрешностями — для 3D и последующей работы
+async function geoLocSave(n){
+  const rows=[];
+  for(const g of n.groups.values()){
+    const S=g.sol; if(!S) continue;
+    rows.push({name:g.label||g.key||'source',t:new Date(g.t||Date.now()).toISOString(),lat:+S.lat.toFixed(6),lon:+S.lon.toFixed(6),alt:S.h3?+S.h3.alt.toFixed(1):'',h:S.h3&&S.h3.h!=null?+S.h3.h.toFixed(1):'',
+      err_m:Math.round(S.errKm*1000),alt_err_m:S.h3?Math.round(S.h3.sd):'',height_src:S.h3?S.h3.how:'',meas:g.meas.length,grid:latLonToGrid(S.lat,S.lon,6)});
+  }
+  if(!rows.length){ return; }
+  await tblPut(n.p.save||'analysis/sources',Object.keys(rows[0]),rows);
+}
 function geoLocDraw(n,cv,cx){                          // n — группа замеров
   const W=cv.width, H=cv.height, S=n?.sol;
   cx.fillStyle=themeColor('--screen')||'#0a0d0e'; cx.fillRect(0,0,W,H);
