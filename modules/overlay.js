@@ -461,7 +461,7 @@ function ovBldGeo(n,obs,rel,alt,okey){
   n.bldGeoKey=key; return n.bldGeo={b:bl, roads};
 }
 const ovHash=(a,b,c,d)=>{ let x=(a*73856093)^(b*19349663)^(c*83492791)^(d*2654435761); x=(x^(x>>>13))*1274126177; return ((x^(x>>>16))>>>0)/4294967296; };
-// Здания светятся: мелкие и далёкие — точками, крупные — тёплыми стенами. Рисуем сначала мелкие (дальние), поверх них крупные
+// Здания: мелкие и далёкие — прямоугольниками, крупные — стенами и крышей; ночью стены тёплые. Сначала мелкие (дальние), поверх них крупные
 function ovDrawBuildings(cx,proj,foc,box,list,dk,vis,sun){
   const [rx,ry,rw,rh]=box, night=1-dk, sv=ovkSunVec(sun.az,sun.el), day=ovMix([132,134,140],[168,166,160],dk), haze=ovMix(OV_HAZE_NIGHT,OV_HAZE_DAY,dk);
   const big=[], tiny=[];
@@ -470,18 +470,10 @@ function ovDrawBuildings(cx,proj,foc,box,list,dk,vis,sun){
     const c=proj(b.c); if(!c || c.x<rx-60 || c.x>rx+rw+60 || c.y<ry-60 || c.y>ry+rh+60) continue;
     (Math.max(b.w,b.h)*foc/c.z<6 ? tiny : big).push(b,c);
   }
-  if(dk>.05){                                                       // днём — серые точки
-    cx.fillStyle='rgb('+day.map(Math.round).join(',')+')';
-    for(let i=0;i<tiny.length;i+=2){ const b=tiny[i], c=tiny[i+1], s=Math.max(1.5,b.w*foc/c.z); cx.globalAlpha=dk*(1-ovkFog(b.d,vis,0)*.8); cx.fillRect(c.x-s/2,c.y-s/2,s,s); }
-    cx.globalAlpha=1;
-  }
-  if(night>.03){                                                    // ночью — тёплое свечение, ярче у «жилых» (по хэшу)
-    cx.save(); cx.globalCompositeOperation='lighter';
-    for(let i=0;i<tiny.length;i+=2){
-      const b=tiny[i], c=tiny[i+1], h=ovHash(b.id%2147483647,1,2,3), s=Math.max(2,b.w*foc/c.z*1.3), a=night*(1-ovkFog(b.d,vis,0)*.75)*(.45+.55*h);
-      cx.globalAlpha=a; cx.fillStyle=h<.12 ? 'rgb(190,225,255)' : 'rgb(255,'+(170+(h*110|0))+',95)'; cx.fillRect(c.x-s/2,c.y-s/2,s,s);
-    }
-    cx.restore();
+  for(let i=0;i<tiny.length;i+=2){                                  // мелкие и далёкие — обычными прямоугольниками цвета стен
+    const b=tiny[i], c=tiny[i+1], fog=ovkFog(b.d,vis,0), s=Math.max(1.5,b.w*foc/c.z), gl=.6+.8*ovHash(b.id%2147483647,7,7,7);
+    cx.fillStyle='rgb('+ovMix(ovMix([60,42,26].map(v=>v*gl),day,dk),haze,fog*.8).map(Math.round).join(',')+')';
+    cx.fillRect(c.x-s/2,c.y-s/2,s,s);
   }
   for(let k=0;k<big.length;k+=2){
     const b=big[k], R=b.ring, N=R.length, fog=ovkFog(b.d,vis,0), top=[], bot=[];
