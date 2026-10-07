@@ -9,7 +9,7 @@
 // отдаётся построчно активный список (p.list).
 // Вход: файл (CSV/TSV/TXT/JSON/KML/GPX/GeoJSON), провода rec и text, числовые входы a–d (лог).
 // Выход: по одной записи (секвенсор из modules/sequencer.js), поля — отдельными проводами,
-// весь список как bands (для 'sa'), выбранная запись — lo/mid/hi/span/step.
+// весь список (отмеченные списки) как bands (для 'sa') и rows (для Graph / Map), выбранная запись — lo/mid/hi/span/step.
 
 const TBL_PATCH='@patch', TBL_PRE='presets/', TBL_ROWS=300;
 const TBL_FIXED=new Set([...SEQ_FIXED,'bands','rows','mid','span']);
@@ -206,7 +206,6 @@ function tblDerive(n){
     n.all.forEach((r,i)=>{ if(f(r)){ n.rows.push(r); n.rowIds.push(n.ids[i]); } });
   } else { n.rows=n.all; n.rowIds=n.ids; }
   n.headers=n.cl;
-  n.rowsOut=n.rows.slice();                              // новая ссылка на каждое изменение: потребитель видит смену набора
   n.nameCol=tblCol(n.cl,TBL_LABEL); n.colorCol=tblCol(n.cl,TBL_COLOR);
   tblPorts(n);
   n.timeCol=seqFind(n.cl,n.p.tcol,SEQ_TIME_COLS);
@@ -234,15 +233,16 @@ function tblBands(n){
   n.loCol=tblCol(n.cl,TBL_LO); n.hiCol=tblCol(n.cl,TBL_HI);
   n.bandsOwn=tblBandsOf(n.cl,n.rows);
   const f=tblFilter(n.p.filter);                        // тот же фильтр — и для остальных отмеченных списков
-  for(const e of n.extra.values()) e.bands=tblBandsOf(e.cols,f ? e.rows.filter(f) : e.rows);
+  for(const e of n.extra.values()){ e.rowsF=f ? e.rows.filter(f) : e.rows; e.bands=tblBandsOf(e.cols,e.rowsF); }
   tblMerge(n);
 }
-// bands = активный список (если отмечен) + остальные отмеченные
+// bands и rows = активный список (если отмечен) + остальные отмеченные
 function tblMerge(n){
-  const sh=tblShow(n), parts=[];
-  if(sh.has(n.p.list)) parts.push(n.bandsOwn);
-  for(const [k,e] of n.extra) if(sh.has(k) && k!==n.p.list) parts.push(e.bands);
+  const sh=tblShow(n), parts=[], rp=[];
+  if(sh.has(n.p.list)){ parts.push(n.bandsOwn); rp.push(n.rows); }
+  for(const [k,e] of n.extra) if(sh.has(k) && k!==n.p.list){ parts.push(e.bands); rp.push(e.rowsF||e.rows); }
   n.bands=parts.length===1 ? parts[0] : [].concat(...parts);
+  n.rowsOut=[].concat(...rp);                            // записи всех отмеченных списков; новая ссылка на каждое изменение — потребитель видит смену набора
   n.onCount=sh.size;
 }
 // загрузить отмеченные, но ещё не прочитанные списки; убрать снятые
@@ -257,7 +257,7 @@ function tblSyncExtra(n){
   Promise.all(need.map(async k=>[k,await tblReadList(n,k).catch(()=>null)])).then(res=>{
     if(tok!==n.extraTok) return;
     const now=tblShow(n);
-    for(const [k,t] of res) if(t && now.has(k) && k!==n.p.list) n.extra.set(k,{cols:t.cols,rows:t.rows,bands:[]});
+    for(const [k,t] of res) if(t && now.has(k) && k!==n.p.list) n.extra.set(k,{cols:t.cols,rows:t.rows,rowsF:t.rows,bands:[]});
     tblBands(n); n.uiDirty=true;
   });
 }
@@ -514,7 +514,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     const sigs=Array.isArray(I.sigs) && I.sigs.length ? I.sigs : null;
     if(n._mI!==n.bands || n._mS!==sigs){ n._mI=n.bands; n._mS=sigs; n._merged=sigs ? n.bands.concat(sigs) : n.bands; }
     o.bands=n._merged;
-    o.rows=n.rowsOut;                                      // весь отфильтрованный набор записей (Graph set / nodes)
+    o.rows=n.rowsOut;                                      // записи всех отмеченных списков с общим фильтром (Graph / Map: set, nodes)
     if(!n.started) for(const c of n.cols) delete o[c.port];   // ничего не выбрано — поля не выдаём (как band plan)
     else if(n.loCol && n.cur){
       const lo=tblHz(n.cur[n.loCol]), hi=n.hiCol ? tblHz(n.cur[n.hiCol]) : lo;
