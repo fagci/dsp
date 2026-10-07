@@ -352,7 +352,7 @@ const OV_FEAT_KINDS=['air','pop'];
 // Точки берутся из списков Table (geo/airfields, geo/runways, geo/places и свои списки из параметра lists), а не из памяти загрузчика:
 // правки в таблицах видны сразу (ListDB.rev), а те же точки доступны карте и анализу
 async function ovFeatRead(n,lat,lon,rKm,kinds,lists){
-  const res={air:null,pop:null,my:[]};
+  const res={air:null,pop:null,my:[],links:[]};
   if(kinds.includes('air')){
     const [ap,rw]=await Promise.all([gsRead(GS_LISTS.air),gsRead(GS_LISTS.rw)]);
     res.air={ap:gsNear(ap,gfApFromRow,lat,lon,rKm,40), rw:gsNear(rw,gfRwFromRow,lat,lon,rKm,60)};
@@ -361,6 +361,7 @@ async function ovFeatRead(n,lat,lon,rKm,kinds,lists){
   for(const l of lists){
     const rows=await gsRead(l).catch(()=>[]);
     res.my.push(...gsNear(rows,r=>gfMyFromRow(r,l),lat,lon,rKm,200));
+    for(const r of rows){ const pts=ovkLinkPts(r); if(pts && (r.lat2!==undefined || r.path3)) res.links.push({r,l}); }               // строки с двумя концами — связи
   }
   n.feat=res; n.featCtr={lat,lon}; n.featRev=ListDB.rev; n.featGen=(n.featGen|0)+1; redraw(n);
 }
@@ -398,7 +399,7 @@ async function ovFeatDownload(n){
 }
 // положение на земле и видимость точек один раз на наблюдателя (как ovOsmGeo)
 function ovFeatGeo(n,obs,rel,alt,okey){
-  const f=n.feat; if(!f.air && !f.pop && !f.my?.length) return null;
+  const f=n.feat; if(!f.air && !f.pop && !f.my?.length && !f.links?.length) return null;
   const key=okey+'|'+n.featGen+'|'+Horizon.ver;
   if(n.featGeoKey===key) return n.featGeo;
   const hAt=Horizon.hAt, ground=(la,lo,fb)=>{ const h=hAt ? hAt(la,lo) : alt-2; return h===h ? h : (fb!=null && isFinite(fb) ? fb : null); };
@@ -484,15 +485,16 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           {n:'dEl',t:'range',min:-90,max:90,step:.1,d:0,label:'elevation correction, °',adv:true},
           {n:'dRoll',t:'range',min:-180,max:180,step:.5,d:0,label:'roll correction, °',adv:true},
           {n:'resetc',t:'button',label:'Reset corrections',fn:n=>{ for(const k of ['dAz','dEl','dRoll']) setMod(n,k,0); },adv:true}],
-  init:n=>{ n.ents=new Map(); n.I={}; n.seq=0; n.pose=[]; n.sel=null; n.hits=[]; n.last=null; n.msg=null; n.home=null;
+  init:n=>{ n.ents=new Map(); n.links=new Map(); n.I={}; n.seq=0; n.pose=[]; n.sel=null; n.hits=[]; n.last=null; n.msg=null; n.home=null;
             n.pickOut=null; n.selInfo=null; n.visOut=null; n.nvis=0; n.nhid=0; n.osm=null; n.osmFor=null; n.osmT=0; n.osmMsg=''; n.osmGen=0;
-            n.feat={air:null,pop:null,my:[]}; n.featCtr=null; n.featReading=false; n.featRev=-1; n.featFor=null; n.featT=0; n.featMsg=''; n.featGen=0; n.featBusy=false; },
+            n.feat={air:null,pop:null,my:[],links:[]}; n.featCtr=null; n.featReading=false; n.featRev=-1; n.featFor=null; n.featT=0; n.featMsg=''; n.featGen=0; n.featBusy=false; },
   dispose:n=>{ n.osmReq=null; n.featReq=null; },
   process(n,I){
     const now=Date.now(), tr=+n.p.trail*1000;
     n.I=I;
     for(const k of ['rec','rec2']) for(const r of recList(I[k])){
-      if(r && r.gone && r.id!=null){ n.ents.delete(k+':'+r.id); continue; }            // gone: убрать объект сразу, не ждать ttl
+      if(r && r.gone && r.id!=null){ n.ents.delete(k+':'+r.id); n.links.delete(k+':'+r.id); continue; }            // gone: убрать объект сразу, не ждать ttl
+      if(r && r.id!=null && ovkLinkPts(r)){ n.links.set(k+':'+r.id,{r,t:now}); continue; }                        // связь (два конца или path3) — отдельным слоем
       if(!r || recNum(r.lat)==null && recNum(r.az)==null) continue;
       const id=r.id!=null ? String(r.id) : r.label!=null ? String(r.label) : 'o'+(n.seq++), key=k+':'+id, old=n.ents.get(key), en={r,t:now,trail:old?.trail||[]};
       const la=recNum(r.lat), lo=recNum(r.lon);
@@ -503,6 +505,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
     if(n.ents.size>2000 || now-(n.pruned||0)>2000){
       n.pruned=now; const ttl=n.p.ttl*1000;
       for(const [key,e] of n.ents) if(now-e.t>ttl) n.ents.delete(key);
+      for(const [key,e] of n.links) if(now-e.t>ttl) n.links.delete(key);
     }
     const az=recNum(I.az), el=recNum(I.el);
     if(az!=null && el!=null) ovkPosePush(n.pose,performance.now(),az,el,recNum(I.roll)??0);
@@ -753,6 +756,31 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           shown++;
           const sz=q.kind==='city' ? 3 : q.kind==='town' ? 2.5 : 2;
           cx.fillStyle='#ffe9a8'; cx.fillRect(c.x-sz,c.y-sz,sz*2,sz*2); halo(label,c.x+7,c.y);
+        }
+      }
+    }
+
+    // связи: прямой путь, пути с отражением — отрезки между концами в 3D (rec: lat, lon → lat2, lon2 или path3; строки списков own points с lat2 / lon2)
+    if(proj && obs){
+      const all=[...n.links.values()].map(e=>e.r).concat((n.feat.links||[]).map(x=>x.r));
+      if(all.length){
+        const hAt=Horizon.hAt, ground=(la,lo)=>{ const h=hAt ? hAt(la,lo) : NaN; return h===h ? h : alt-2; };
+        cx.lineJoin='round'; cx.textAlign='left'; cx.font='10px monospace'; cx.textBaseline='alphabetic';
+        for(const r of all){
+          const pts=ovkLinkPts(r); if(!pts) continue;
+          const E=pts.map(q=>ovEnu(obs,q.lat,q.lon,q.alt!=null ? q.alt : ground(q.lat,q.lon)+q.h));
+          const col=r.color||'#ffd84a', refl=/reflect|bounce/i.test(String(r.kind||''));
+          cx.strokeStyle=col; cx.lineWidth=refl ? 1.3 : 1.8; cx.setLineDash(refl ? [6,4] : []); cx.globalAlpha=.95;
+          let mid=null;
+          for(let i=0;i<E.length-1;i++){
+            const c=ovkClipNear(E[i],E[i+1],cam.f,1); if(!c) continue;
+            const a=proj(c[0]), b=proj(c[1]); if(!a || !b) continue;
+            cx.beginPath(); cx.moveTo(a.x,a.y); cx.lineTo(b.x,b.y); cx.stroke();
+            if(!mid) mid={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+          }
+          cx.setLineDash([]); cx.globalAlpha=1; cx.fillStyle=col;
+          for(let i=1;i<E.length-1;i++){ const q=proj(E[i]); if(q){ cx.beginPath(); cx.arc(q.x,q.y,3,0,7); cx.fill(); } }     // точки отражения
+          if(mid && r.label && mid.x>=rx && mid.x<=rx+rw && mid.y>=ry && mid.y<=ry+rh) halo(String(r.label)+(r.loss_db!=null ? '  '+Math.round(r.loss_db)+' dB' : ''),mid.x+4,mid.y-4);
         }
       }
     }

@@ -176,6 +176,8 @@ const PRESET_CATS={
   'AR: Drones Around (Remote ID, Phone)':'Aircraft, Satellites & Telemetry',
   'AR: ADS-B Aircraft in the Sky (Phone + Generator)':'Aircraft, Satellites & Telemetry',
   'Radio Reach: ADS-B Coverage over Terrain (Generator)':'Aircraft, Satellites & Telemetry',
+  'Field Survey: Mark Points with Photos → Table, Locator, Map':'Maps & Locating',
+  'Signal Paths: Links in 3D (Free Fly)':'Maps & Locating',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
   'Flight Sim: Take Off from the Nearest Runway':'Aircraft, Satellites & Telemetry',
   'Flight Sim: Watch ADS-B Aircraft (Generator)':'Aircraft, Satellites & Telemetry',
@@ -4408,6 +4410,47 @@ addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'rec',de.id,'rec'); addEdge(de.id,
 addEdge(or.id,'az',ov.id,'az'); addEdge(or.id,'el',ov.id,'el'); addEdge(or.id,'roll',ov.id,'roll');
 addEdge(me.id,'lat',ov.id,'lat'); addEdge(me.id,'lon',ov.id,'lon'); addEdge(me.id,'alt',ov.id,'alt');
 addEdge(me.id,'lat',hz.id,'lat'); addEdge(me.id,'lon',hz.id,'lon');
+markWiresDirty();
+});
+preset('Field Survey: Mark Points with Photos → Table, Locator, Map', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Field measurements as points. On a phone: My Position in «gps» mode, press ● Mark (or 📷 Mark + photo — the camera opens, the photo goes to the browser database and its place and time come from EXIF when there is no GPS) at every spot; the level here is a slow LFO standing in for a receiver — wire Level / S-Meter / Spectrum Peak instead.\n'+
+  'Every mark is a record with lat, lon, alt, h (antenna height), rssi, azimuth, freq, tx (the source), session (field / quiet), rx_ant, rx_gain, note, photo. They are stored in the Table list «field/measurements» (📷 opens the photos; edit any field later), drawn on the Map and given to Source Locator, which groups by tx and finds the source from levels and bearings. Mark in a calm place with «session = quiet» for a long listen; filter the Table by session to feed either set to the Locator.'});
+nt.size.w=980; nt.size.h=130; applySize(nt);
+const me=addNode('geoMe',40,200,{src:'manual',lat:55.0126,lon:82.6507});
+const lf=addNode('lfo',40,380,{freq:.05,min:-90,max:-50});
+const mk=addNode('geoMark',320,200,{prefix:'P',tx:'FM tower',rx_ant:'whip',rx_h:1.5,session:'field'});
+mk.size.w=300; mk.size.h=170; applySize(mk);
+const tb=addNode('table',700,200,{list:'field/measurements'});
+tb.size.w=420; tb.size.h=260; applySize(tb);
+const lc=addNode('geoLocate',320,420,{group:'tx',labelField:'tx'});
+lc.size.w=340; lc.size.h=260; applySize(lc);
+const mp=addNode('geoMap',700,500,{mz:12,mlat:55.0126,mlon:82.6507});
+mp.size.w=520; mp.size.h=360; applySize(mp);
+addEdge(me.id,'lat',mk.id,'lat'); addEdge(me.id,'lon',mk.id,'lon'); addEdge(lf.id,'out',mk.id,'rssi');
+addEdge(mk.id,'rec',tb.id,'rec'); addEdge(mk.id,'rec',lc.id,'rec'); addEdge(mk.id,'rec',mp.id,'rec'); addEdge(lc.id,'rec',mp.id,'rec');
+markWiresDirty();
+});
+preset('Signal Paths: Links in 3D (Free Fly)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A link is a record with two ends: lat, lon, h → lat2, lon2, h2 (h — above the ground, alt — above sea level), or a polyline path3 [[lat, lon, alt], …] — a direct path and paths with reflections (kind = reflect is dashed; the vertices are the reflection points). The Map draws the same records; here a Table plays four of them into Video Overlay, and the camera is free: Joystick — arrows turn and look, W / S fly forward / back along the view (the throttle holds), A / D step sideways; Space switches to the other cameras.\n'+
+  'Your own links: put the columns lat, lon, h, lat2, lon2, h2, label, color, kind into a Table list and type its name into Video Overlay → own points (the list shows points and links), or wire the `rec` of calculators.'});
+nt.size.w=960; nt.size.h=130; applySize(nt);
+const js=addNode('joystick',40,200,{hold:'left Y',kbd:'when focused',invy:'right stick'});
+const me=addNode('geoMe',40,520,{src:'manual',lat:54.985,lon:82.65});
+const fs=addNode('flightsim',420,200,{mode:'fly',cam:'free',agl0:250,hdg0:0,fspeed:120});
+fs.size.w=340; fs.size.h=120; applySize(fs);
+const hz=addNode('horizon',420,420,{radius:20,zoom:11});
+hz.size.w=340; hz.size.h=150; applySize(hz);
+const tb=addNode('table',820,640,{list:'@patch',advance:'rate',rate:8,loop:false,
+  data:'id,lat,lon,h,lat2,lon2,h2,label,color,kind\nL1,55.0100,82.6500,120,55.0300,82.6900,80,direct,#ffd84a,direct\nL2,55.0100,82.6500,120,55.0300,82.6900,80,,#ff6bd6,reflect\nL3,55.0020,82.6450,60,55.0210,82.6600,200,TX → RX,#6fd0ff,direct\nL4,55.0000,82.6700,150,55.0100,82.6500,120,backhaul,#7dff9a,direct'});
+tb.size.w=420; tb.size.h=240; applySize(tb);
+const ov=addNode('overlay',820,200,{relief:'solid',sky:true,planets:false,starMag:-1,deep:false,trail:0,labels:false,hud:'KT, AGL:m, VS:m/s, HDG:°'});
+ov.size.w=560; ov.size.h=400; applySize(ov);
+addEdge(js.id,'x2',fs.id,'ail'); addEdge(js.id,'y2',fs.id,'elev'); addEdge(js.id,'x1',fs.id,'rud'); addEdge(js.id,'y1',fs.id,'thr'); addEdge(js.id,'b1',fs.id,'cam');
+addEdge(me.id,'lat',fs.id,'lat'); addEdge(me.id,'lon',fs.id,'lon'); addEdge(fs.id,'lat',hz.id,'lat'); addEdge(fs.id,'lon',hz.id,'lon');
+for(const k of ['lat','lon','alt','az','el','roll','fov','rec']) addEdge(fs.id,k,ov.id,k);
+addEdge(tb.id,'rec',ov.id,'rec2');
 markWiresDirty();
 });
 preset('Radio Reach: ADS-B Coverage over Terrain (Generator)', function(){

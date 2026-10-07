@@ -259,6 +259,28 @@ function ovkFog(d,visKm,h){
 // на сколько градусов видимый горизонт ниже уровня на высоте hM (с рефракцией)
 const ovkDip=hM=>.0293*Math.sqrt(Math.max(0,hM));
 
+// ---------- связи ----------
+// Связь — запись с двумя концами (lat, lon → lat2, lon2) или с ломаной path3 [[lat, lon, alt?], …] (прямой путь, путь с отражением).
+// Высота конца: alt — над уровнем моря, иначе h — над землёй. Возвращает [{lat,lon,alt|null,h}, …] или null, если записи нет концов
+function ovkLinkPts(r){
+  const num=v=>{ const x=typeof v==='number' ? v : parseFloat(v); return isFinite(x) ? x : null; };
+  if(Array.isArray(r.path3) && r.path3.length>1){
+    const out=r.path3.map(q=>({lat:num(q[0]),lon:num(q[1]),alt:num(q[2]),h:0}));
+    return out.every(q=>q.lat!=null && q.lon!=null) ? out : null;
+  }
+  const la=num(r.lat), lo=num(r.lon), la2=num(r.lat2), lo2=num(r.lon2);
+  if(la==null || lo==null || la2==null || lo2==null) return null;
+  return [{lat:la,lon:lo,alt:num(r.alt),h:num(r.h) ?? 0},{lat:la2,lon:lo2,alt:num(r.alt2),h:num(r.h2) ?? num(r.h) ?? 0}];
+}
+// отрезок a→b (ENU, м), обрезанный плоскостью перед камерой (z — проекция на взгляд f, не меньше eps); null — целиком позади
+function ovkClipNear(a,b,f,eps){
+  const za=a[0]*f[0]+a[1]*f[1]+a[2]*f[2], zb=b[0]*f[0]+b[1]*f[1]+b[2]*f[2];
+  if(za<=eps && zb<=eps) return null;
+  if(za>=eps && zb>=eps) return [a,b];
+  const t=(eps-za)/(zb-za), c=[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t];
+  return za<eps ? [c,b] : [a,c];
+}
+
 // ---------- поза камеры во времени (сдвиг видео относительно датчиков) ----------
 function ovkPosePush(buf,t,az,el,roll){
   const l=buf[buf.length-1];

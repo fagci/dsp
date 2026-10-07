@@ -592,39 +592,60 @@ def({ id:'geoText', title:'Geo from Text', cat:'Geo',
   draw(n){ n.el.querySelector('.readout').textContent='found '+n.count+(n.shown?'\n'+n.shown:''); }});
 
 def({ id:'geoMark', title:'Mark Point', cat:'Geo',
-  // Снимок «где я и что принимаю»: позиция (входы lat/lon или My Position) + значения на входах.
-  // По кнопке, по фронту go или автоматически раз в N секунд — для замеров на местности.
-  ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'rssi',t:'num'},{n:'snr',t:'num'},
+  // Снимок «где я и что принимаю»: позиция (входы lat/lon/alt или My Position) + значения на входах.
+  // По кнопке, по фронту go или автоматически раз в N секунд — для замеров на местности. К замеру можно добавить фото (📷).
+  // Поля записи понимает остальное: lat, lon, alt, h (высота антенны над землёй — для 3D), rssi / snr, azimuth, freq, tx (источник —
+  // группировка в Source Locator), session (field — в движении, quiet — спокойное место для пеленгации), rx_ant, rx_gain, note, photo.
+  ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'alt',t:'num'},{n:'rssi',t:'num'},{n:'snr',t:'num'},
        {n:'azimuth',t:'num'},{n:'freq',t:'num'},{n:'go',t:'num'}],
   outs:[{n:'rec',t:'rec'},{n:'count',t:'num'}],
   readout:true,
   params:[{n:'mark',t:'button',label:'● Mark',fn:n=>{ n.req=true; }},
+          {n:'markp',t:'button',label:'📷 Mark + photo',fn:n=>geoMarkPhoto(n)},
           {n:'auto',t:'range',min:0,max:120,step:1,d:0,label:'auto every, s (0 — off)'},
+          {n:'session',t:'select',opts:['field','quiet'],d:'field',label:'session: field (moving about) or quiet (a calm place, a long listen for locating)'},
+          {n:'tx',t:'text',d:'',label:'source being measured (field «tx»: Source Locator groups by it)'},
+          {n:'prefix',t:'text',d:'P',label:'name prefix: P1, P2…'},
+          {n:'rx_ant',t:'text',d:'',label:'receiving antenna (model, polarisation)'},
+          {n:'rx_gain',t:'num',d:0,label:'antenna gain, dBi'},
+          {n:'rx_h',t:'num',d:1.5,label:'antenna height above ground, m'},
           {n:'icon',t:'select',opts:['dot','square','triangle','diamond','star','flag','cross','antenna','rx'],d:'dot'},
           {n:'note',t:'text',d:'',label:'note'}],
-  init:n=>{ n.req=false; n.prevGo=0; n.count=0; n.lastT=0; n.lastRec=null; n.msg=''; },
+  init:n=>{ n.req=false; n.prevGo=0; n.count=0; n.lastT=0; n.lastRec=null; n.msg=''; n.snap={}; n.emit=null; },
   process(n,I){
     const go=typeof I.go==='number' ? I.go : 0, edge=go>0.5 && n.prevGo<=0.5; n.prevGo=go;
+    n.snap={lat:I.lat,lon:I.lon,alt:I.alt,rssi:I.rssi,snr:I.snr,azimuth:I.azimuth,freq:I.freq};
     const now=Date.now();
     let fire=n.req || edge || (n.p.auto>0 && now-n.lastT>=n.p.auto*1000);
     n.req=false;
-    let rec=null;
-    if(fire){
-      n.lastT=now;
-      const lat=recNum(I.lat) ?? GeoMe.lat, lon=recNum(I.lon) ?? GeoMe.lon;
-      if(lat==null || lon==null){ n.msg='no position: wire lat/lon or add My Position'; }
-      else {
-        const r={t:now, lat:+lat.toFixed(6), lon:+lon.toFixed(6), icon:n.p.icon, n:++n.count};
-        for(const k of ['rssi','snr','azimuth','freq']){ const v=recNum(I[k]); if(v!=null) r[k]=+v.toFixed(2); }
-        if(n.p.note) r.note=n.p.note;
-        r.label=r.rssi!=null ? r.rssi+' dBm' : r.snr!=null ? r.snr+' dB' : '#'+r.n;
-        n.lastRec=r; rec=[r]; n.msg='';
-      }
-    }
+    if(fire){ n.lastT=now; const r=geoMarkRec(n,n.snap,''); if(r) n.emit=[r]; }
+    const rec=n.emit; n.emit=null;
     return {rec, count:n.count};
   },
   draw(n){ n.el.querySelector('.readout').textContent=(n.msg?n.msg+'\n':'')+'marks '+n.count+
     (n.lastRec ? '\n'+recText(n.lastRec,new Set(['icon','label'])) : ''); }});
+function geoMarkRec(n,I,photo){
+  const p=n.p, now=Date.now(), lat=recNum(I.lat) ?? GeoMe.lat, lon=recNum(I.lon) ?? GeoMe.lon;
+  if(lat==null || lon==null){ n.msg='no position: wire lat/lon or add My Position'; return null; }
+  const r={t:now, lat:+lat.toFixed(6), lon:+lon.toFixed(6), icon:p.icon, n:++n.count};
+  if(p.prefix) r.name=p.prefix+r.n;
+  const alt=recNum(I.alt); if(alt!=null) r.alt=+alt.toFixed(1);
+  r.h=+p.rx_h||0; r.session=p.session;
+  for(const k of ['rssi','snr','azimuth','freq']){ const v=recNum(I[k]); if(v!=null) r[k]=+v.toFixed(2); }
+  if(p.tx) r.tx=p.tx; if(p.rx_ant) r.rx_ant=p.rx_ant; if(+p.rx_gain) r.rx_gain=+p.rx_gain; if(p.note) r.note=p.note; if(photo) r.photo=photo;
+  r.label=r.rssi!=null ? r.rssi+' dBm' : r.snr!=null ? r.snr+' dB' : '#'+r.n;
+  n.lastRec=r; n.msg='';
+  return r;
+}
+// фото берётся сразу — в обработчике нажатия (иначе телефон не откроет камеру); показания — те, что были в момент нажатия
+async function geoMarkPhoto(n){
+  const snap={...n.snap}, got=await phPickAdd();
+  if(!got.length) return;
+  const x=got.find(g=>g.exif?.lat!=null)?.exif;
+  if(x && recNum(snap.lat)==null && GeoMe.lat==null){ snap.lat=x.lat; snap.lon=x.lon; if(x.alt!=null && recNum(snap.alt)==null) snap.alt=x.alt; }     // GPS нет — место из снимка
+  const r=geoMarkRec(n,snap,phJoin(got.map(g=>g.id)));
+  if(r) n.emit=[r];
+}
 
 /* ---------- поиск источника: уровень сигнала и пеленги ---------- */
 // Замеры — записи с координатами и уровнем (rssi/snr/level) и/или азимутом (azimuth).
@@ -1576,10 +1597,11 @@ function geoDrawObjects(n,cx,v){
         cx.stroke(); cx.setLineDash([]);
         cx.fillStyle=col; cx.globalAlpha*=.08; cx.fill(); cx.globalAlpha=1-age*0.7; }
     }
-    if(Array.isArray(r.path) && r.path.length>1){     // путь вперёд (трасса спутника и т.п.): [[lat,lon],…]
-      cx.strokeStyle=col; cx.lineWidth=1.2; cx.setLineDash([2,4]); cx.beginPath();
+    const pth=Array.isArray(r.path) ? r.path : r.path3;          // path3 — ломаная связи (путь сигнала с отражением): [[lat,lon,alt],…]
+    if(Array.isArray(pth) && pth.length>1){           // путь вперёд (трасса спутника и т.п.): [[lat,lon],…]
+      cx.strokeStyle=col; cx.lineWidth=1.2; cx.setLineDash(r.path3 ? [] : [2,4]); cx.beginPath();
       let px=null, py=null;
-      for(const q of r.path){
+      for(const q of pth){
         const p=geoProj(v,q[0],q[1],px??s.x);
         if(px==null || Math.abs(p.x-px)>v.S/2) cx.moveTo(p.x,p.y); else cx.lineTo(p.x,p.y);
         px=p.x; py=p.y;
