@@ -264,8 +264,10 @@ const ovkDip=hM=>.0293*Math.sqrt(Math.max(0,hM));
 // Высота конца: alt — над уровнем моря, иначе h — над землёй. Возвращает [{lat,lon,alt|null,h}, …] или null, если записи нет концов
 function ovkLinkPts(r){
   const num=v=>{ const x=typeof v==='number' ? v : parseFloat(v); return isFinite(x) ? x : null; };
-  if(Array.isArray(r.path3) && r.path3.length>1){
-    const out=r.path3.map(q=>({lat:num(q[0]),lon:num(q[1]),alt:num(q[2]),h:0}));
+  let p3=r.path3;                                   // из ячейки Table приходит строкой JSON
+  if(typeof p3==='string' && p3[0]==='['){ try{ p3=JSON.parse(p3); }catch(e){ p3=null; } }
+  if(Array.isArray(p3) && p3.length>1){
+    const out=p3.map(q=>({lat:num(q[0]),lon:num(q[1]),alt:num(q[2]),h:0}));
     return out.every(q=>q.lat!=null && q.lon!=null) ? out : null;
   }
   const la=num(r.lat), lo=num(r.lon), la2=num(r.lat2), lo2=num(r.lon2);

@@ -178,6 +178,7 @@ const PRESET_CATS={
   'Radio Reach: ADS-B Coverage over Terrain (Generator)':'Aircraft, Satellites & Telemetry',
   'Field Survey: Mark Points with Photos → Table, Locator, Map':'Maps & Locating',
   'Signal Paths: Links in 3D (Free Fly)':'Maps & Locating',
+  'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
   'Flight Sim: Take Off from the Nearest Runway':'Aircraft, Satellites & Telemetry',
   'Flight Sim: Watch ADS-B Aircraft (Generator)':'Aircraft, Satellites & Telemetry',
@@ -4429,6 +4430,32 @@ const mp=addNode('geoMap',700,500,{mz:12,mlat:55.0126,mlon:82.6507});
 mp.size.w=520; mp.size.h=360; applySize(mp);
 addEdge(me.id,'lat',mk.id,'lat'); addEdge(me.id,'lon',mk.id,'lon'); addEdge(lf.id,'out',mk.id,'rssi');
 addEdge(mk.id,'rec',tb.id,'rec'); addEdge(mk.id,'rec',lc.id,'rec'); addEdge(mk.id,'rec',mp.id,'rec'); addEdge(lc.id,'rec',mp.id,'rec');
+markWiresDirty();
+});
+preset('Signal Paths: Direct and Reflected Between Two Points', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'What paths can a radio signal take between two points? Signal Paths takes the two ends (a Table row here: lat lon h → lat2 lon2 h2, freq), the Horizon height map and gives: the direct path (line of sight, how much of the first Fresnel zone is clear, diffraction on the main obstacle, loss) and the single reflections off the terrain (the reflection point, extra length and delay, level against the direct one). The side view shows the terrain along the path, the Fresnel zone and the paths; the same records are links: they are drawn on the Map and in 3D.\n'+
+  'Change the row (or h, h2, frequency, reflection loss, tolerance) and the paths are recalculated. Fly around with the Joystick (free camera; W / S forward and back along the view, arrows turn and look). «Save to table» keeps the links in the list «analysis/paths» — type it into Video Overlay → own points to see them later without a calculator.'});
+nt.size.w=980; nt.size.h=130; applySize(nt);
+const tb=addNode('table',40,200,{list:'@patch',advance:'rate',rate:1,loop:true,
+  data:'name,lat,lon,h,lat2,lon2,h2,freq\nLink 1,55.0100,82.6500,15,55.0420,82.7000,15,145e6'});
+tb.size.w=420; tb.size.h=200; applySize(tb);
+const hz=addNode('horizon',40,440,{radius:20,zoom:11});
+hz.size.w=340; hz.size.h=150; applySize(hz);
+const ps=addNode('paths',500,200,{k:1.33,refl:8,maxn:5,tol:40});
+ps.size.w=460; ps.size.h=420; applySize(ps);
+const js=addNode('joystick',40,640,{hold:'left Y',kbd:'when focused',invy:'right stick'});
+const fs=addNode('flightsim',1000,200,{mode:'fly',cam:'free',agl0:250,hdg0:0,fspeed:120});
+fs.size.w=340; fs.size.h=120; applySize(fs);
+const ov=addNode('overlay',1000,360,{relief:'solid',sky:true,planets:false,starMag:-1,deep:false,trail:0,labels:false,hud:'KT, AGL:m, VS:m/s, HDG:°'});
+ov.size.w=560; ov.size.h=400; applySize(ov);
+const mp=addNode('geoMap',500,640,{mz:13,mlat:55.026,mlon:82.675});
+mp.size.w=480; mp.size.h=340; applySize(mp);
+addEdge(tb.id,'rec',ps.id,'rec');
+addEdge(ps.id,'rec',ov.id,'rec2'); addEdge(ps.id,'rec',mp.id,'rec');
+addEdge(js.id,'x2',fs.id,'ail'); addEdge(js.id,'y2',fs.id,'elev'); addEdge(js.id,'x1',fs.id,'rud'); addEdge(js.id,'y1',fs.id,'thr'); addEdge(js.id,'b1',fs.id,'cam');
+addEdge(tb.id,'lat',fs.id,'lat'); addEdge(tb.id,'lon',fs.id,'lon'); addEdge(fs.id,'lat',hz.id,'lat'); addEdge(fs.id,'lon',hz.id,'lon');
+for(const k of ['lat','lon','alt','az','el','roll','fov','rec']) addEdge(fs.id,k,ov.id,k);
 markWiresDirty();
 });
 preset('Signal Paths: Links in 3D (Free Fly)', function(){
