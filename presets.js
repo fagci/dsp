@@ -110,6 +110,7 @@ const PRESET_CAT_ORDER=['Start Here',
                          'Modems & Data Links',
                          'Infrared',
                          'Network & IoT',
+                         'Control & Remote',
                          'Games',
                          'Unknown Signals',
                          'Maps & Locating',
@@ -163,6 +164,11 @@ const PRESET_CATS={
   'Analog TV: Record Video and Snapshots (Generator)':'Images & TV',
   'Telemetry: Decode Frames (no hardware)':'Aircraft, Satellites & Telemetry',
   'Telemetry: HUD over Video → Record':'Aircraft, Satellites & Telemetry',
+  'Joystick: Keyboard and Screen Sticks → Serial':'Control & Remote',
+  'Joystick: Gamepad → Frame → MQTT':'Control & Remote',
+  'nRF24: Joystick → Radio Link (USB bridge)':'Control & Remote',
+  'nRF24: Receive Frames (USB bridge)':'Control & Remote',
+  'nRF24: 2.4 GHz Channel Scan (USB bridge)':'Control & Remote',
   'AR: Satellites Through the Camera (Phone)':'Aircraft, Satellites & Telemetry',
   'AR: Drones Around (Remote ID, Phone)':'Aircraft, Satellites & Telemetry',
   'AR: ADS-B Aircraft in the Sky (Phone + Generator)':'Aircraft, Satellites & Telemetry',
@@ -4261,6 +4267,77 @@ addEdge(tl.id,'volts',ov.id,'a'); addEdge(tl.id,'speed',ov.id,'b'); addEdge(tl.i
 addEdge(ov.id,'vid',vr.id,'vid');
 markWiresDirty();
 });
+preset('Joystick: Keyboard and Screen Sticks → Serial', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Control a device from the keyboard or the screen: click the Joystick pad, then W A S D — the left stick, arrows — the right one, Space / Enter / Z X Q E R F — buttons b1…b8; on a phone drag the sticks and press the buttons.\n'+
+  'Esc — emergency stop (all zeros until Resume). The frame template turns the sticks into a line («J x1 y1 x2 y2 bits»; {r1}…{r4} give 1000…2000 µs for servos / RC, {hex} a 7-byte frame) and sends it at 10 frames/s while a key is held, plus a zero frame when released.\n'+
+  'Serial Out writes the line to a flight controller, a robot or an Arduino (WebSerial, Chrome / Edge); the same text input exists on BLE UART, MQTT Out and Text over Network. Before connecting a real machine: take the propellers off, set the dead zone and the ramp, test the stop.'});
+nt.size.w=840; nt.size.h=130; applySize(nt);
+const jy=addNode('joystick',40,230,{tpl:'J {X1} {Y1} {X2} {Y2} {bits}',rate:10});
+jy.size.w=400; jy.size.h=190; applySize(jy);
+const tk=addNode('ticker',500,230,{});
+tk.size.w=380; tk.size.h=100; applySize(tk);
+const so=addNode('serialout',500,600,{baud:'115200'});
+so.size.w=380; so.size.h=140; applySize(so);
+addEdge(jy.id,'text',tk.id,'text'); addEdge(jy.id,'text',so.id,'text');
+markWiresDirty();
+});
+preset('Joystick: Gamepad → Frame → MQTT', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A hardware gamepad drives the same frame as the on-screen pad: Gamepad axes → Joystick inputs ex1…ey2 (a wire overrides the screen and the keys for that axis; the dead zone and expo of the Joystick still apply) → one JSON line → MQTT Out.\n'+
+  'Point MQTT Out at a broker with a WebSocket listener (Mosquitto «listener 9001», «protocol websockets») and subscribe a rover, a relay board or Home Assistant to the topic. Keep-alive repeats the frame while the sticks are centred so the receiver can tell a silent link from a still stick.'});
+nt.size.w=820; nt.size.h=110; applySize(nt);
+const gp=addNode('gamepad',40,170,{axes:'4',btns:'12'});
+gp.size.w=300; gp.size.h=260; applySize(gp);
+const jy=addNode('joystick',380,170,{tpl:'{"n":{n},"x":{x1},"y":{y1},"x2":{x2},"y2":{y2},"b":{bits}}',rate:10,keep:true,dead:.08});
+jy.size.w=400; jy.size.h=190; applySize(jy);
+const mq=addNode('mqttOut',820,170,{topic:'dsp/joystick'});
+mq.size.w=360; mq.size.h=220; applySize(mq);
+addEdge(gp.id,'a1',jy.id,'ex1'); addEdge(gp.id,'a2',jy.id,'ey1'); addEdge(gp.id,'a3',jy.id,'ex2'); addEdge(gp.id,'a4',jy.id,'ey2');
+addEdge(jy.id,'text',mq.id,'text');
+markWiresDirty();
+});
+preset('nRF24: Joystick → Radio Link (USB bridge)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A radio link to your own receiver on nRF24L01+: the Joystick makes a 7-byte frame ({hex}: A5, x1, y1, x2, y2 as signed bytes, buttons, XOR) and nRF24 sends it on the channel and address you set (payload 8 bytes, the frame is padded).\n'+
+  'Hardware: an nRF24L01+ on an Arduino Nano / Uno with tools/nrf24-bridge (USB, WebSerial). Press Connect bridge, then use the keys (click the pad first). The receiver needs the same channel, rate, address, payload size and CRC; with auto-acknowledge on, «ok» shows whether the receiver answered.\n'+
+  'For your own models and boards only — keep the channel clear of Wi-Fi (Scan 2.4 GHz channels).'});
+nt.size.w=840; nt.size.h=130; applySize(nt);
+const jy=addNode('joystick',40,230,{tpl:'{hex}',rate:20,hold:'left Y'});
+jy.size.w=400; jy.size.h=190; applySize(jy);
+const nr=addNode('nrf24',500,230,{mode:'transmit',fmt:'hex',pay:8,ch:76});
+nr.size.w=420; nr.size.h=320; applySize(nr);
+const tk=addNode('ticker',960,600,{});
+tk.size.w=300; tk.size.h=80; applySize(tk);
+const lp=addNode('lamps',960,230,{count:'1',labels:'link ok',colors:'green'});
+lp.size.w=180; lp.size.h=80; applySize(lp);
+addEdge(jy.id,'text',nr.id,'send'); addEdge(jy.id,'text',tk.id,'text'); addEdge(nr.id,'ok',lp.id,'in1');
+markWiresDirty();
+});
+preset('nRF24: Receive Frames (USB bridge)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Receive from your own nRF24 transmitter: set the same channel, rate, address, payload size and CRC and the mode receive; every packet is shown as text and as a record (hex, length, channel, time).\n'+
+  'The Table keeps the history (save as CSV from its menu). A frame from the Joystick preset («A5 …» 7 bytes) shows up as hex.'});
+nt.size.w=760; nt.size.h=100; applySize(nt);
+const nr=addNode('nrf24',40,200,{mode:'receive',fmt:'hex',pay:8,ch:76});
+nr.size.w=420; nr.size.h=320; applySize(nr);
+const tk=addNode('ticker',500,200,{time:true});
+tk.size.w=420; tk.size.h=200; applySize(tk);
+addEdge(nr.id,'hex',tk.id,'text');
+markWiresDirty();
+});
+preset('nRF24: 2.4 GHz Channel Scan (USB bridge)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Which of the 126 nRF24 channels (2400…2525 MHz) are busy: the bridge listens for a carrier on every channel several times and the share of hits is drawn as a level. Wi-Fi shows as humps ~20 MHz wide.\n'+
+  'Press Scan 2.4 GHz channels (passes per channel: more — smoother, slower) and pick a channel with no hump for your link.'});
+nt.size.w=760; nt.size.h=100; applySize(nt);
+const nr=addNode('nrf24',40,200,{passes:30});
+nr.size.w=420; nr.size.h=320; applySize(nr);
+const sa=addNode('sa',500,200,{auto:false,floor:-105,top:-35,split:.6,peakHold:true});
+sa.size.w=640; sa.size.h=380; applySize(sa);
+addEdge(nr.id,'spec',sa.id,'spec');
+markWiresDirty();
+});
 preset('AR: Drones Around (Remote ID, Phone)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Drones from Remote ID in the camera: a demo Open Drone ID frame (a multirotor hovering 60 m up near Novosibirsk) → Open Drone ID → Video Overlay. With the ESP32 receiver (WebSerial) wire its rec instead of the text source.\n'+
@@ -4271,11 +4348,11 @@ const tx=addNode('textsrc',40,200,{text:'ODID,wifi,-60,aa:bb:cc:00:11:22,f219040
 tx.size.w=420; tx.size.h=140; applySize(tx);
 const od=addNode('odid',500,200,{});
 od.size.w=520; od.size.h=240; applySize(od);
-const or=addNode('orient',40,400,{});
-const me=addNode('geoMe',40,540,{src:'manual',lat:55.0375,lon:82.925});
-const hz=addNode('horizon',300,500,{radius:30,zoom:10});
+const or=addNode('orient',40,520,{});
+const me=addNode('geoMe',40,710,{src:'manual',lat:55.0375,lon:82.925});
+const hz=addNode('horizon',500,540,{radius:30,zoom:10});
 hz.size.w=340; hz.size.h=150; applySize(hz);
-const ov=addNode('overlay',1060,200,{fov:60,labels:true,find:''});
+const ov=addNode('overlay',880,200,{fov:60,labels:true,find:''});
 ov.size.w=560; ov.size.h=440; applySize(ov);
 addEdge(tx.id,'text',od.id,'text'); addEdge(od.id,'rec',ov.id,'rec');
 addEdge(me.id,'lat',od.id,'lat'); addEdge(me.id,'lon',od.id,'lon');
@@ -4291,13 +4368,13 @@ const nt=addNode('note',40,40,{text:'Open on a phone over HTTPS. Press Turn on c
   'The compass of a phone is off by 5–15°: put the crosshair on the Sun, the Moon or the ISS and press Align crosshair to target in Video Overlay — the corrections are set for you. Type a name in find to get an arrow to a satellite outside the frame. Tap an object for its card; the Sun and the Moon are drawn too.'});
 nt.size.w=760; nt.size.h=130; applySize(nt);
 const cm=addNode('cam',40,220,{cam:'rear',res:'1280x720',fps:'30'});
-const or=addNode('orient',40,380,{});
-const me=addNode('geoMe',40,520,{src:'gps'});
-const st=addNode('satTrack',300,220,{group:'stations',sat:'ISS',show:'all'});
+const or=addNode('orient',40,740,{});
+const me=addNode('geoMe',40,930,{src:'gps'});
+const st=addNode('satTrack',400,220,{group:'stations',sat:'ISS',show:'all'});
 st.size.w=380; st.size.h=520; applySize(st);
-const hz=addNode('horizon',300,760,{radius:50,zoom:10});
+const hz=addNode('horizon',800,220,{radius:50,zoom:10});
 hz.size.w=340; hz.size.h=150; applySize(hz);
-const ov=addNode('overlay',720,220,{fov:60,find:'ISS',osm:true});
+const ov=addNode('overlay',1160,220,{fov:60,find:'ISS',osm:true});
 ov.size.w=520; ov.size.h=420; applySize(ov);
 addEdge(cm.id,'vid',ov.id,'vid'); addEdge(or.id,'az',ov.id,'az'); addEdge(or.id,'el',ov.id,'el'); addEdge(or.id,'roll',ov.id,'roll');
 addEdge(me.id,'lat',ov.id,'lat'); addEdge(me.id,'lon',ov.id,'lon'); addEdge(me.id,'alt',ov.id,'alt');
@@ -4311,14 +4388,14 @@ const nt=addNode('note',40,40,{text:'ADS-B frames from a generator (replace Gene
   'Press Start in Orientation on a phone (HTTPS) and point it at the sky; add a Camera → vid wire to see the real picture under the overlay. My Position is the observer (gps on a phone). Horizon downloads the terrain: the mountains are drawn in 3D and an aircraft behind a ridge is dimmed.'});
 nt.size.w=760; nt.size.h=110; applySize(nt);
 const gn=addNode('iqGen',40,220,{sr:'2400000',fc:1090000000,mode:'ADS-B',off:0,lvl:-20,noise:-40});
-const dm=addNode('adsbDemod',40,560,{});
-const me=addNode('geoMe',320,500,{src:'manual',lat:55.01,lon:82.65});
+const dm=addNode('adsbDemod',40,850,{});
+const me=addNode('geoMe',320,580,{src:'manual',lat:55.01,lon:82.65});
 const de=addNode('adsbDecode',320,220,{rlat:55.01,rlon:82.65});
 de.size.w=480; de.size.h=240; applySize(de);
-const or=addNode('orient',320,640,{});
-const hz=addNode('horizon',860,680,{radius:50,zoom:10});
+const or=addNode('orient',320,840,{});
+const hz=addNode('horizon',820,220,{radius:50,zoom:10});
 hz.size.w=340; hz.size.h=150; applySize(hz);
-const ov=addNode('overlay',860,220,{fov:60,labels:true});
+const ov=addNode('overlay',1180,220,{fov:60,labels:true});
 ov.size.w=520; ov.size.h=420; applySize(ov);
 addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'rec',de.id,'rec'); addEdge(de.id,'rec',ov.id,'rec');
 addEdge(or.id,'az',ov.id,'az'); addEdge(or.id,'el',ov.id,'el'); addEdge(or.id,'roll',ov.id,'roll');
