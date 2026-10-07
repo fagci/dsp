@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,isFinite,parseFloat,isNaN,Infinity});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/overlay-kernels.js'),'utf8')+
-  ';this.K={ovkSunEcl,ovkMoonEcl,ovkEclToEq,ovkAzEl,ovkSkyBodies,ovkPlanets,ovkPrecess,ovkSkyObjects,ovkLosBuild,ovkVisible,ovkOsmQuery,ovkOsmParse,ovkPosePush,ovkPoseAt,ovkTrailPush,ovkWrap,ovkNorm,ovkSunVec,ovkDayK,ovkLit,ovkShadowed,ovkPalette,ovkFog,ovkDip,ovkLinkPts,ovkClipNear,OVK_RING0,OVK_RING_K};',ctx);
+  ';this.K={ovkSunEcl,ovkMoonEcl,ovkEclToEq,ovkAzEl,ovkSkyBodies,ovkPlanets,ovkPrecess,ovkSkyObjects,ovkLosBuild,ovkCellHidden,ovkVisible,ovkOsmQuery,ovkOsmParse,ovkPosePush,ovkPoseAt,ovkTrailPush,ovkWrap,ovkNorm,ovkSunVec,ovkDayK,ovkLit,ovkShadowed,ovkPalette,ovkFog,ovkDip,ovkLinkPts,ovkClipNear,OVK_RING0,OVK_RING_K};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -64,6 +64,18 @@ ok('other azimuth → visible',K.ovkVisible(los,30000,0,500));
 ok('before ridge → visible',K.ovkVisible(los,0,5000,100));
 ok('near ring → visible',K.ovkVisible(los,0,100,0));
 ok('ridge shadow covers neighbouring azimuth (±1 cell)',!K.ovkVisible(los,Math.sin(1.5*Math.PI/180)*30000,Math.cos(1.5*Math.PI/180)*30000,500));
+// закрытые ячейки: хребет 1000 м по всему кругу на ~10 км, за ним низина
+const rg=[];
+for(let d=K.OVK_RING0; d<=50000; d*=K.OVK_RING_K){
+  const a=new Float32Array(NA*4);
+  for(let i=0;i<NA;i++){ const th=i*2*Math.PI/180; let u=-d*d/(2*R); if(d>9000 && d<11000) u+=1000;
+    a[i*4]=d*Math.sin(th); a[i*4+1]=d*Math.cos(th); a[i*4+2]=u; a[i*4+3]=0; }
+  rg.push(a);
+}
+const lg=K.ovkLosBuild(rg,NA), jr=rg.findIndex(a=>Math.hypot(a[0],a[1])>11000), jn=rg.findIndex(a=>Math.hypot(a[0],a[1])>2000), jf=rg.findIndex(a=>Math.hypot(a[0],a[1])>9000);
+ok('cell behind a full ridge → hidden',K.ovkCellHidden(lg,rg,jr+2,5));
+ok('cell before the ridge → drawn',!K.ovkCellHidden(lg,rg,jn,5));
+ok('ridge cell itself → drawn',!K.ovkCellHidden(lg,rg,jf-1,5));
 
 // OSM
 const q=K.ovkOsmQuery(55.01,82.65,25000);
