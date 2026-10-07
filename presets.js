@@ -210,6 +210,7 @@ const PRESET_CATS={
   'Analog TV: Test Card (Generator)':'Images & TV',
   'Analog TV: FPV / TV Receiver (USB SDR)':'Images & TV',
   'Analog TV: FPV Multiband Scanner (HackRF)':'Images & TV',
+  'Analog TV: FPV Mosaic (one HackRF)':'Images & TV',
   'Analog TV: FPV Channel Scanner (HackRF)':'Images & TV',
 
   'HF: Who Is On Air (Schedule)':'HF Modes & Morse',
@@ -4030,6 +4031,27 @@ addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi');
 addEdge(bs.id,'freq',rx.id,'freq');
 addEdge(rx.id,'iq',dm.id,'in'); addEdge(dm.id,'out',dc.id,'in'); addEdge(dc.id,'img',fr.id,'img');
 addEdge(dc.id,'lock',bs.id,'active');
+markWiresDirty();
+});
+preset('Analog TV: FPV Mosaic (one HackRF)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Several analog FPV channels on one screen from ONE HackRF: TV Hopper tunes the receiver to each channel in turn, catches one video field and puts it into that channel\'s tile.\n'+
+  'A tile refreshes every channels × (retune time + ~50 ms): 4 channels ≈ 2–4 frames per second each. A tile of a silent channel stays black. Hold = N: stay on channel N and show it in full size (right, `sel`) at the full rate.\n'+
+  'Channels: edit «channels, MHz» in the hopper (Raceband by default, up to 16). The decoder state of every channel is kept between visits, so a channel locks again within a field or two.\n'+
+  'HackRF at 20 MS/s, RX AMP and LNA on, 5.8 GHz antenna. Tune dwell / settle if tiles stay black on a live channel (the receiver needs time to retune: settle), or fill slowly (dwell). Not checked on real hardware.'});
+nt.size.w=780; nt.size.h=130; applySize(nt);
+const rx=addNode('rtlsdr',40,220,{sr:'20000000',freq:5658000000,demod:'IQ'});
+const hp=addNode('tvHop',340,220,{chs:'5658,5695,5732,5769'});
+hp.size.w=420; hp.size.h=200; applySize(hp);
+const fr=addNode('imgview',800,200,{});
+fr.size.w=560; fr.size.h=560; applySize(fr);
+const fs=addNode('imgview',1400,200,{});
+fs.size.w=420; fs.size.h=320; applySize(fs);
+const sa=addNode('sa',40,460,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=720; sa.size.h=300; applySize(sa);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',hp.id,'in'); addEdge(hp.id,'freq',rx.id,'freq');
+addEdge(hp.id,'img',fr.id,'img'); addEdge(hp.id,'sel',fs.id,'img');
 markWiresDirty();
 });
 preset('Indicators: Lamps, Gauge, LED Bar, Compass, Display', function(){
