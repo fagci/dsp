@@ -265,6 +265,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
        {n:'lat',t:'num'},{n:'lon',t:'num'},{n:'alt',t:'num'},
        {n:'az',t:'num'},{n:'el',t:'num'},{n:'roll',t:'num'},{n:'fov',t:'num'},
        {n:'a',t:'num'},{n:'b',t:'num'},{n:'c',t:'num'},{n:'d',t:'num'}],
+  outs:[{n:'vid',t:'vid'}],                       // готовая картинка с объектами и HUD — для Record Video
   w:420, view:{h:300}, resize:true,
   params:[{n:'fov',t:'range',min:10,max:140,step:1,d:60,label:'field of view across the image width, °'},
           {n:'ttl',t:'range',min:2,max:600,step:1,d:60,label:'keep an object without updates, s'},
@@ -293,10 +294,11 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
       n.pruned=now; const ttl=n.p.ttl*1000;
       for(const [key,e] of n.ents) if(now-e.t>ttl) n.ents.delete(key);
     }
-    return {};
+    return {vid:n.outCv||null};
   },
   draw(n,cv,cx){
     const W=cv.width, H=cv.height, I=n.I||{}, p=n.p, now=Date.now();
+    n.outCv=cv;
     cx.fillStyle='#000'; cx.fillRect(0,0,W,H);
     // видео вписывается в холст; FOV — по ширине кадра
     let v=I.vid;

@@ -1611,3 +1611,118 @@ def({ id:'specArchive', lazy:'proc', title:'Spectrum Archive', cat:'Output',
       : (n.p.run ? 'REC' : 'paused')+' · '+n.p.mode+' · session '+n.srows+' rows · total '+n.total+' (~'+(kb>1024?(kb/1024).toFixed(1)+' MB':kb.toFixed(0)+' KB')+')'+
         (n.last ? ' · last '+new Date(n.last).toISOString().slice(11,19)+' UTC' : ''); }
 });
+
+
+/* ============================ Record Video ============================
+   Зеркало к «Video (file/URL)»: кадры с входа vid (видео, canvas, выход vid у Video Overlay вместе с HUD) или img
+   (растр: TV Decoder, TV Hopper, SSTV…) → MediaRecorder → webm / mp4. Постоянная частота кадров, снимок PNG кнопкой
+   или по фронту входа snap (например, lock декодера). Запись по уровню входа gate. */
+const VREC_MIME=[['webm VP9','video/webm;codecs=vp9'],['webm VP8','video/webm;codecs=vp8'],['webm','video/webm'],['mp4 H.264','video/mp4;codecs=avc1.42E01E'],['mp4','video/mp4']];
+function vrecMime(sel){
+  if(typeof MediaRecorder==='undefined') return null;
+  const list=sel==='auto' ? VREC_MIME : VREC_MIME.filter(m=>m[0]===sel);
+  for(const [,t] of list) if(MediaRecorder.isTypeSupported(t)) return t;
+  return null;
+}
+// текущий кадр источника на канву n.cv (масштаб по maxw); false, если кадра нет
+function vrecDraw(n){
+  const I=n.I||{}, v=I.vid, im=I.img;
+  let w=0,h=0,src=null;
+  if(v && (v.videoWidth||v.width)){ w=v.videoWidth||v.width; h=v.videoHeight||v.height; src=v; }
+  else if(im && im.w){
+    w=im.w; h=im.h;
+    n.tc=n.tc||document.createElement('canvas');
+    if(n.tc.width!==w||n.tc.height!==h){ n.tc.width=w; n.tc.height=h; n.tcx=n.tc.getContext('2d'); n.tid=null; }
+    if(im.gray){
+      if(!n.tid) n.tid=n.tcx.createImageData(w,h);
+      const d=n.tid.data, b=im.buf;
+      for(let k=0;k<b.length;k++){ const x=b[k]*255, j=k*4; d[j]=d[j+1]=d[j+2]=x; d[j+3]=255; }
+      n.tcx.putImageData(n.tid,0,0);
+    } else n.tcx.putImageData(im.data,0,0);
+    src=n.tc;
+  }
+  if(!src) return false;
+  const mw=+n.p.maxw||0, k=mw && w>mw ? mw/w : 1;
+  const W=Math.max(2,Math.round(w*k)&~1), H=Math.max(2,Math.round(h*k)&~1);   // кодеки хотят чётные размеры
+  n.cv=n.cv||document.createElement('canvas');
+  if(n.cv.width!==W||n.cv.height!==H){ n.cv.width=W; n.cv.height=H; n.cx=n.cv.getContext('2d'); }
+  n.cx.drawImage(src,0,0,W,H);
+  return true;
+}
+function vrecName(n,ext){
+  const pre=String(n.p.prefix||'').trim().replace(/[\/:*?"<>|]+/g,'_');
+  return (pre?pre+'-':'')+recStamp(n.t0||Date.now())+'.'+ext;
+}
+async function vrecStart(n){
+  if(n.on || n.picking) return;
+  n.err='';
+  const mime=vrecMime(n.p.fmt);
+  if(!mime){ n.err=typeof MediaRecorder==='undefined' ? 'MediaRecorder unavailable in this browser' : 'format not supported here: '+n.p.fmt; return; }
+  if(!vrecDraw(n)){ n.err='no picture on vid / img'; return; }
+  n.t0=Date.now(); n.ext=mime.startsWith('video/mp4') ? 'mp4' : 'webm'; n.mime=mime;
+  n.chunks=[]; n.bytes=0; n.disk=null;
+  if(n.p.dest==='disk file'){
+    if(!window.showSaveFilePicker) n.err='saving to disk needs Chrome/Edge — downloading instead';
+    else{
+      n.picking=true;
+      try{
+        const h=await window.showSaveFilePicker({suggestedName:vrecName(n,n.ext),types:[{description:n.ext.toUpperCase()+' video',accept:{['video/'+n.ext]:['.'+n.ext]}}]});
+        n.disk={w:await h.createWritable(), q:Promise.resolve()};
+      }catch(e){ n.err=e.name==='AbortError' ? 'file not chosen' : 'cannot open file: '+e.message; n.picking=false; return; }
+      n.picking=false;
+    }
+  }
+  const fps=Math.max(1,+n.p.fps||25);
+  const rec=new MediaRecorder(n.cv.captureStream(fps),{mimeType:mime,videoBitsPerSecond:(+n.p.kbps||4000)*1000});
+  rec.ondataavailable=e=>{
+    if(!e.data.size) return;
+    n.bytes+=e.data.size;
+    if(n.disk) n.disk.q=n.disk.q.then(()=>n.disk.w.write(e.data)).catch(x=>{ n.err='disk write failed: '+x.message; });
+    else n.chunks.push(e.data);
+  };
+  rec.onstop=async()=>{
+    clearInterval(n.timer); n.timer=null; n.on=false;
+    if(n.disk){ const d=n.disk; n.disk=null; try{ await d.q; await d.w.close(); }catch(x){ n.err='disk close failed: '+x.message; } }
+    else if(n.chunks.length) dl(new Blob(n.chunks,{type:mime}),vrecName(n,n.ext));
+    n.chunks=[]; n.rec=null;
+  };
+  n.rec=rec; n.on=true;
+  rec.start(1000);
+  n.timer=setInterval(()=>vrecDraw(n),1000/fps);               // кадры идут с постоянной частотой, даже если источник стоит
+}
+function vrecStop(n){ if(n.rec && n.rec.state!=='inactive') n.rec.stop(); }
+function vrecSnap(n){
+  if(!vrecDraw(n)){ n.err='no picture on vid / img'; return; }
+  n.cv.toBlob(b=>b && dl(b,vrecName({p:n.p,t0:Date.now()},'png')),'image/png');
+}
+def({ id:'vidrec', lazy:'manual', title:'Record Video', cat:'Output', readout:true,
+  ins:[{n:'vid',t:'vid'},{n:'img',t:'img'},{n:'gate',t:'num'},{n:'snap',t:'num'}], outs:[{n:'on',t:'num'},{n:'sec',t:'num'}],
+  params:[{n:'go',t:'button',label:'Record / stop',fn:n=>{ n.on ? vrecStop(n) : vrecStart(n); }},
+          {n:'shot',t:'button',label:'Snapshot PNG',fn:n=>vrecSnap(n)},
+          {n:'fmt',t:'select',opts:['auto',...VREC_MIME.map(m=>m[0])],d:'auto',label:'format (auto: the first the browser can encode)'},
+          {n:'fps',t:'range',min:5,max:60,step:1,d:25,label:'frame rate'},
+          {n:'kbps',t:'range',min:200,max:20000,step:100,d:4000,label:'bitrate, kbps'},
+          {n:'maxw',t:'select',opts:['0','1920','1280','960','640'],d:'0',label:'max width, px (0 — as the source)'},
+          {n:'dest',t:'select',opts:['download','disk file'],d:'download',label:'save to (disk file: streamed, no length limit)'},
+          {n:'prefix',t:'text',d:'video',label:'file name prefix (then date_time)'}],
+  init:n=>{ n.on=false; n.I={}; n.chunks=[]; n.bytes=0; n.err=''; n.rec=null; n.timer=null; n.gate=null; n.snapv=null; },
+  dispose:n=>{ clearInterval(n.timer); try{ if(n.rec && n.rec.state!=='inactive') n.rec.stop(); }catch(e){} },
+  process(n,I){
+    n.I=I;
+    if(typeof I.gate==='number'){                              // запись по уровню входа
+      const g=I.gate>0;
+      if(g!==n.gate){ n.gate=g; g ? vrecStart(n) : vrecStop(n); }
+    }
+    if(typeof I.snap==='number'){                              // снимок по фронту
+      const s=I.snap>0;
+      if(s && n.snapv===false) vrecSnap(n);
+      n.snapv=s;
+    }
+    return {on:n.on?1:0, sec:n.on ? (Date.now()-n.t0)/1000 : 0}; },
+  drawKey:n=>n.on+'|'+n.err+'|'+Math.floor(Date.now()/500)+'|'+n.bytes+'|'+!!(n.I&&(n.I.vid||n.I.img)),
+  draw(n){
+    const r=n.el.querySelector('.readout'); if(!r) return;
+    const t=n.on ? '● '+((Date.now()-n.t0)/1000).toFixed(1)+' s · '+(n.bytes/1048576).toFixed(1)+' MB · '+n.ext+(n.disk ? ' → disk' : '')
+      : n.picking ? 'choose a file…'
+      : (n.I&&(n.I.vid||n.I.img)) ? 'ready · '+(vrecMime(n.p.fmt)||'no encoder')+' · '+n.p.fps+' fps' : 'no picture';
+    const s=(n.err?n.err+'\n':'')+t; if(r.textContent!==s) r.textContent=s; }});

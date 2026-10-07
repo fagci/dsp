@@ -159,6 +159,8 @@ const PRESET_CATS={
 
   'Satellites: Track and Doppler':'Aircraft, Satellites & Telemetry',
   'Satellites: Pass and Sky Plot':'Aircraft, Satellites & Telemetry',
+  'Video: File with HUD → Record':'Images & TV',
+  'Analog TV: Record Video and Snapshots (Generator)':'Images & TV',
   'AR: Satellites Through the Camera (Phone)':'Aircraft, Satellites & Telemetry',
   'AR: ADS-B Aircraft in the Sky (Phone + Generator)':'Aircraft, Satellites & Telemetry',
   'ADS-B: Radar and Attitude (Generator)':'Aircraft, Satellites & Telemetry',
@@ -4180,6 +4182,40 @@ cp.size.w=220; cp.size.h=200; applySize(cp);
 addEdge(st.id,'el',pp.id,'el'); addEdge(st.id,'az',pp.id,'az'); addEdge(st.id,'aos',pp.id,'aos');
 addEdge(st.id,'los',pp.id,'los'); addEdge(st.id,'maxel',pp.id,'max');
 addEdge(st.id,'az',sp.id,'az'); addEdge(st.id,'el',sp.id,'el'); addEdge(st.id,'az',cp.id,'az');
+markWiresDirty();
+});
+preset('Video: File with HUD → Record', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A video file (or URL) with your own HUD on top, recorded back to a file: Video (file/URL) → Video Overlay (numbers a…d on the HUD; wire a telemetry source to az / el / lat / lon / alt) → Record Video.\n'+
+  'Record Video is the mirror of the source: Record / stop, Snapshot PNG, format (webm / mp4, whatever the browser can encode), frame rate, bitrate, maximum width, save to a file on disk (no length limit, Chrome / Edge).\n'+
+  'Wire a number to `gate` to record while it is above 0, or to `snap` to take a PNG on its rising edge.'});
+nt.size.w=780; nt.size.h=110; applySize(nt);
+const vs=addNode('vidsrc',40,180,{w:'320'});
+vs.size.w=300; vs.size.h=200; applySize(vs);
+const ov=addNode('overlay',380,180,{});
+ov.size.w=520; ov.size.h=380; applySize(ov);
+const lf=addNode('lfo',40,420,{freq:.05,min:0,max:360,wave:'saw'});
+const vr=addNode('vidrec',940,180,{});
+vr.size.w=300; vr.size.h=200; applySize(vr);
+addEdge(vs.id,'vid',ov.id,'vid'); addEdge(lf.id,'out',ov.id,'az'); addEdge(ov.id,'vid',vr.id,'vid');
+markWiresDirty();
+});
+preset('Analog TV: Record Video and Snapshots (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Recording the decoded analog video without a radio: generator → TV Demodulator → TV Decoder → Frame, and Record Video on the decoder picture.\n'+
+  'Press Record / stop (webm or mp4 download or a file on disk) or Snapshot PNG. The decoder `lock` goes to `snap`: a PNG is taken every time the picture locks again (a channel coming on air).\n'+
+  'With a real receiver replace the generator by the USB SDR, or record the whole mosaic: TV Hopper `img` → Record Video.'});
+nt.size.w=780; nt.size.h=110; applySize(nt);
+const gn=addNode('iqGen',40,200,{sr:'12000000',fc:5800000000,mode:'Analog TV',tv:'PAL',tvm:'FM',tvdev:4000000,off:0,lvl:-20,noise:-50});
+const dm=addNode('tvDemod',340,200,{mode:'FM',dev:4000000,bw:5000000});
+const dc=addNode('tvDecode',340,340,{});
+dc.size.w=420; dc.size.h=110; applySize(dc);
+const fr=addNode('imgview',800,180,{});
+fr.size.w=520; fr.size.h=440; applySize(fr);
+const vr=addNode('vidrec',340,500,{});
+vr.size.w=360; vr.size.h=200; applySize(vr);
+addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'out',dc.id,'in'); addEdge(dc.id,'img',fr.id,'img');
+addEdge(dc.id,'img',vr.id,'img'); addEdge(dc.id,'lock',vr.id,'snap');
 markWiresDirty();
 });
 preset('AR: Satellites Through the Camera (Phone)', function(){
