@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,isFinite,parseFloat,isNaN,Infinity});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/overlay-kernels.js'),'utf8')+
-  ';this.K={ovkSunEcl,ovkMoonEcl,ovkEclToEq,ovkAzEl,ovkSkyBodies,ovkPlanets,ovkPrecess,ovkSkyObjects,ovkLosBuild,ovkVisible,ovkOsmQuery,ovkOsmParse,ovkPosePush,ovkPoseAt,ovkTrailPush,ovkWrap,ovkNorm,ovkSunVec,ovkDayK,ovkLit,ovkShadowed,ovkPalette,ovkFog,ovkDip,OVK_RING0,OVK_RING_K};',ctx);
+  ';this.K={ovkSunEcl,ovkMoonEcl,ovkEclToEq,ovkAzEl,ovkSkyBodies,ovkPlanets,ovkPrecess,ovkSkyObjects,ovkLosBuild,ovkVisible,ovkOsmQuery,ovkOsmParse,ovkPosePush,ovkPoseAt,ovkTrailPush,ovkWrap,ovkNorm,ovkSunVec,ovkDayK,ovkLit,ovkShadowed,ovkPalette,ovkFog,ovkDip,ovkLinkPts,ovkClipNear,OVK_RING0,OVK_RING_K};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -119,4 +119,16 @@ near('fog: none at zero distance',K.ovkFog(0,35,0),0,1e-12); near('fog: 1−1/e 
 ok('fog: grows with distance',K.ovkFog(30000,35,500)>K.ovkFog(10000,35,500)); ok('fog: thinner on high slopes',K.ovkFog(30000,35,3500)<K.ovkFog(30000,35,0)*.5);
 ok('fog: clearer air — less haze',K.ovkFog(30000,100,0)<K.ovkFog(30000,20,0));
 near('dip: sea level',K.ovkDip(0),0,0); near('dip: 100 m',K.ovkDip(100),.293,.001); near('dip: 2500 m',K.ovkDip(2500),1.465,.002); near('dip: negative altitude',K.ovkDip(-5),0,0);
+// связи
+const L2=K.ovkLinkPts({lat:55,lon:82,h:30,lat2:55.1,lon2:82.2,h2:'10',alt2:900});
+ok('link: two ends, height above ground or above sea level',L2.length===2 && L2[0].h===30 && L2[0].alt===null && L2[1].alt===900 && L2[1].h===10,JSON.stringify(L2));
+ok('link: the second end takes the first end height by default',K.ovkLinkPts({lat:1,lon:2,h:7,lat2:3,lon2:4})[1].h===7);
+const L3=K.ovkLinkPts({path3:[[55,82,300],[55.01,82.02,40],[55.02,82.01]]});
+ok('link: a polyline with a reflection point (altitude optional)',L3.length===3 && L3[0].alt===300 && L3[2].alt===null);
+ok('link: no second end / broken coordinates → not a link',K.ovkLinkPts({lat:1,lon:2})===null && K.ovkLinkPts({lat:1,lon:2,lat2:'x',lon2:3})===null && K.ovkLinkPts({path3:[[1,2],[x=>0,4]]})===null && K.ovkLinkPts({path3:[[1,2]]})===null);
+const f=[0,1,0];                                                                         // камера смотрит на север
+ok('clip: both in front → unchanged',K.ovkClipNear([0,10,0],[5,50,0],f,1).length===2 && K.ovkClipNear([0,10,0],[5,50,0],f,1)[1][1]===50);
+ok('clip: both behind → dropped',K.ovkClipNear([0,-10,0],[5,-50,0],f,1)===null);
+const cl=K.ovkClipNear([0,-10,0],[0,30,0],f,1); near('clip: a segment crossing the camera plane is cut at it',cl[0][1],1,1e-9); near('clip: the far end stays',cl[1][1],30,1e-9);
+const cl2=K.ovkClipNear([4,40,0],[8,-20,0],f,1); near('clip: the other direction',cl2[1][1],1,1e-9); near('clip: x follows the cut',cl2[1][0],4+(8-4)*(1-40)/(-20-40),1e-9);
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad?1:0);

@@ -541,6 +541,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
 });
 
 /* ---------- интерфейс ---------- */
+const TBL_PHOTO=/^photos?$/;                           // колонка с фото: в ячейке id «ph-…» (хранилище photos.js)
 const TBL_BTN='background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;';
 const TBL_IN='min-width:0;background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;font-size:10px;padding:1px 3px;';
 async function tblNames(){
@@ -778,7 +779,7 @@ function tblSummary(n,r){
     if(isFinite(l)){ const h=hi ? tblHz(r[hi]) : l; parts.push(isFinite(h) && h>l ? fmtHz(l,3)+'-'+fmtHz(h,3) : fmtHz(l,3)); skip.add(lo); if(hi) skip.add(hi); }
   }
   if(lo) skip.add(tblCol(n.cl,TBL_STEP));                // шаг сетки — в подсказке
-  for(const c of n.cl) if(!skip.has(c) && r[c]!=='' && r[c]!=null) parts.push(recFmt(r[c]));
+  for(const c of n.cl) if(!skip.has(c) && !TBL_PHOTO.test(c.toLowerCase()) && r[c]!=='' && r[c]!=null) parts.push(recFmt(r[c]));
   return parts.join(' / ');
 }
 function tblRow(n,i,ro){
@@ -798,6 +799,13 @@ function tblRow(n,i,ro){
   val.textContent=tblSummary(n,r);
   val.style.cssText='color:#4ec9b0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%;';
   row.append(name,val);
+  const pc=n.cl.find(c=>TBL_PHOTO.test(c.toLowerCase())), pids=pc ? phIds(r[pc]) : [];
+  if(pids.length){
+    const ph=document.createElement('span');
+    ph.textContent='📷'+pids.length; ph.title='Show the photos'; ph.style.cssText='cursor:pointer;color:#e0b23c;flex-shrink:0;';
+    ph.addEventListener('click',e=>{ e.stopPropagation(); phView(pids); });
+    row.append(ph);
+  }
   row.title=n.cl.filter(c=>r[c]!=='' && r[c]!=null).map(c=>c+': '+(TBL_HZ.test(c)&&isFinite(tblHz(r[c])) ? fmtHz(tblHz(r[c]),4)+'Hz' : recFmt(r[c]))).join('\n');
   if(!ro){
     const ed=document.createElement('span');
@@ -843,6 +851,18 @@ function tblForm(n,rec,onSave,onCancel){
     if(TBL_COLOR.includes(low)){
       inp=document.createElement('input'); inp.type='color'; inp.value=/^#[0-9a-f]{6}$/i.test(rec[c]) ? rec[c] : '#c9c9c9';
       inp.style.cssText='flex:0 0 44px;height:16px;padding:0;background:none;border:1px solid #2a3136;';
+    } else if(TBL_PHOTO.test(low)){                     // фото: добавить с камеры / из галереи, посмотреть; координаты и время из EXIF — в пустые поля
+      inp=document.createElement('input'); inp.type='hidden'; inp.value=phJoin(phIds(rec[c]));
+      const bar=document.createElement('span'); bar.style.cssText='flex:1;display:flex;gap:6px;align-items:center;';
+      const cnt=document.createElement('span'), mkb=(t,f)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=t; b.style.cssText=TBL_BTN; b.addEventListener('click',e=>{ e.preventDefault(); f(); }); return b; };
+      const upd=()=>{ cnt.textContent=phIds(inp.value).length+' photos'; };
+      bar.append(cnt,mkb('📷 add',async()=>{
+        const got=await phPickAdd(); if(!got.length) return;
+        inp.value=phJoin([...phIds(inp.value),...got.map(g=>g.id)]); upd();
+        const x=got.find(g=>g.exif?.lat!=null)?.exif;
+        if(x) for(const [k,v] of [['lat',x.lat],['lon',x.lon],['alt',x.alt],['t',x.t]]){ const f=ins[k]; if(f && v!=null && !String(f.value).trim()) f.value=k==='t' ? v : +v.toFixed(6); }
+      }),mkb('view',()=>phView(phIds(inp.value))),mkb('clear',()=>{ inp.value=''; upd(); }));
+      upd(); l.append(c,inp,bar); ins[c]=inp; form.append(l); continue;
     } else if(low==='demod'){
       inp=document.createElement('select');
       for(const o of DEMOD_OPTS){ const op=document.createElement('option'); op.value=op.textContent=o; inp.append(op); }

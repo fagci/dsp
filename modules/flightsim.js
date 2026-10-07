@@ -4,7 +4,7 @@
    Выходы lat / lon / alt / az / el / roll / fov — на входы Video Overlay и Horizon (рельеф и объекты вокруг камеры).
    Высота земли — Horizon.hAt (если есть узел Horizon), иначе плоская по параметру ground. Ядро — flightsim-kernels.js. */
 
-const FLY_CAMS=['chase','cockpit','tower','orbit'];
+const FLY_CAMS=['chase','cockpit','tower','orbit','free'];
 const FLY_TTL=90000, FLY_WAIT=20000, FLY_RWY_KM=30;
 
 // высота земли: по карте Horizon, вне её — последняя известная, до первой — параметр
@@ -79,6 +79,7 @@ def({ id:'flightsim', title:'Flight Sim', cat:'Sources',
           {n:'height',t:'range',min:0,max:200,step:1,d:12,label:'chase / orbit height above the aircraft, m'},
           {n:'orbit',t:'range',min:0,max:90,step:1,d:15,label:'orbit speed, °/s'},
           {n:'zoom',t:'check',d:true,label:'tower: zoom on the aircraft'},
+          {n:'fspeed',t:'range',min:5,max:2000,step:5,d:150,label:'free camera: speed at full stick, m/s (cam = free: ail turns, elev looks up / down, thr goes forward along the view, rud steps sideways; the aircraft stands still)'},
           {n:'th',t:'range',min:0,max:100,step:1,d:8,label:'tower height above ground, m'},
           {n:'agl0',t:'range',min:0,max:3000,step:10,d:300,label:'start height above ground, m (0 — on the ground)'},
           {n:'start',t:'select',opts:['point','nearest runway'],d:'point',label:'start: in the air at the point, or on the nearest runway (OSM, saved in the browser; heads along it, throttle idle)'},
@@ -92,7 +93,7 @@ def({ id:'flightsim', title:'Flight Sim', cat:'Sources',
           {n:'slon',t:'num',d:37.6173,label:'start lon, °',adv:true},
           {n:'id',t:'text',d:'sim',label:'record id',adv:true}],
   init:n=>{ n.s=null; n.spawnAt=null; n.tower=null; n.cs={}; n.t=0; n.tracks=new Map(); n.pickId=null; n.nextPick=false;
-            n.thrCmd=.5; n.note=''; n.rwy=undefined; n.rwyKey=''; n.rwyBusy=false; n.rwyErr=''; n.spawnRwy=null; n.edge={reset:0,cam:0,next:0}; n.gh=null; n.msg=''; n.txt=''; n.camKey=''; n.out=null; },
+            n.thrCmd=.5; n.note=''; n.rwy=undefined; n.rwyKey=''; n.rwyBusy=false; n.rwyErr=''; n.spawnRwy=null; n.edge={reset:0,cam:0,next:0}; n.fc=null; n.gh=null; n.msg=''; n.txt=''; n.camKey=''; n.out=null; },
   process(n,I){
     const p=n.p, now=performance.now(), ts=Date.now(), dt=n.t ? Math.min(.1,(now-n.t)/1000) : 0; n.t=now;
     const rise=k=>{ const v=recNum(I[k])>.5 ? 1 : 0, r=v && !n.edge[k]; n.edge[k]=v; return r; };
@@ -129,7 +130,7 @@ def({ id:'flightsim', title:'Flight Sim', cat:'Sources',
         if(tv!=null) n.thrCmd=p.thrm==='stick −1…1' ? Math.max(0,Math.min(1,(tv+1)/2)) : Math.max(0,Math.min(1,tv));
         const c={ail:clamp1(recNum(I.ail)??0), elev:(p.inv?-1:1)*clamp1(recNum(I.elev)??0), rud:clamp1(recNum(I.rud)??0), thr:n.thrCmd};
         const steps=Math.ceil(dt/.02), h=dt/Math.max(1,steps), P=flyModelP(p);
-        for(let i=0;i<steps;i++) flyStep(s,c,h,P,flyGround(n,s.lat,s.lon));
+        if(p.cam!=='free') for(let i=0;i<steps;i++) flyStep(s,c,h,P,flyGround(n,s.lat,s.lon));          // свободная камера: самолёт стоит
         T={lat:s.lat,lon:s.lon,alt:s.alt,hdg:s.hdg,pitch:s.pitch,roll:s.roll}; own={...T,spd:s.spd,vs:s.vs};
         id=p.id||'sim';
       }
@@ -145,6 +146,21 @@ def({ id:'flightsim', title:'Flight Sim', cat:'Sources',
         if(cam.alt<g){ cam.alt=g; const l=flyLook(flyEnu(cam,T)); cam.az=l.az; cam.el=l.el; }
       }
     } else if(o) cam={lat:o.lat,lon:o.lon,alt:o.alt,az:n.lastAz ?? 0,el:5,roll:0,fov:+p.fov};
+    // свободный полёт камеры: не привязана ни к самолёту, ни к башне. ail — поворот, elev — взгляд вверх / вниз, rud — шаг в сторону,
+    // thr (−1…1) — вперёд / назад вдоль взгляда (с Joystick hold — «круиз»); стартует с того места, где была камера
+    if(p.cam!=='free') n.fc=null;
+    else {
+      if(!n.fc && cam) n.fc={lat:cam.lat,lon:cam.lon,alt:cam.alt,az:cam.az,el:Math.max(-60,Math.min(60,cam.el))};
+      const f=n.fc;
+      if(f){
+        const sp=+p.fspeed, c1=v=>Math.max(-1,Math.min(1,v??0));
+        f.az=((f.az+c1(recNum(I.ail))*70*dt)%360+360)%360; f.el=Math.max(-89,Math.min(89,f.el+(p.inv?-1:1)*c1(recNum(I.elev))*50*dt));
+        const a=f.az*Math.PI/180, e=f.el*Math.PI/180, fw=c1(recNum(I.thr))*sp*dt, st=c1(recNum(I.rud))*sp*dt;
+        const q=flyMove(f.lat,f.lon,Math.sin(a)*Math.cos(e)*fw+Math.cos(a)*st, Math.cos(a)*Math.cos(e)*fw-Math.sin(a)*st);
+        f.lat=q.lat; f.lon=q.lon; f.alt=Math.max(flyGroundAt(n,f.lat,f.lon)+2,f.alt+Math.sin(e)*fw);
+        cam={lat:f.lat,lon:f.lon,alt:f.alt,az:f.az,el:f.el,roll:0,fov:+p.fov};
+      }
+    }
     if(cam) n.lastAz=cam.az;
     // ----- выходы -----
     const kts=own ? own.spd/FLY_KT : null, agl=own ? own.alt-flyGroundAt(n,own.lat,own.lon) : null;
