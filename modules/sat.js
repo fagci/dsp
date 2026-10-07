@@ -50,19 +50,24 @@ function satRangeRate(s,t,obs){
 }
 function satFootprintKm(altKm){ return GEO_R*Math.acos(GEO_R/(GEO_R+Math.max(0,altKm))); }
 
-// ближайшие пролёты: шаг 30 с, края уточняются делением пополам до ~1 с
-function satPasses(s,from,hours,obs,minEl,maxN=6){
-  const el=t=>{ const st=satState(s,new Date(t),obs); return st ? st.el : -90; };
-  const edge=(a,b,up)=>{ for(let k=0;k<6;k++){ const m=(a+b)/2; ((el(m)>minEl)===up) ? (b=m) : (a=m); } return (a+b)/2; };
+// порог видимости в азимуте: не ниже горизонта узла и, если включено, рельефа (Horizon)
+function satLimit(n,az,obs){
+  const m=+n.p.minEl||0;
+  return n.p.terrain && obs ? Math.max(m,horizonAt(az,GeoMe.lat,GeoMe.lon)) : m;
+}
+// ближайшие пролёты: шаг 30 с, края уточняются делением пополам до ~1 с; видим, когда el выше порога lim(az)
+function satPasses(s,from,hours,obs,lim,maxN=6){
+  const mg=t=>{ const st=satState(s,new Date(t),obs); return st ? st.el-lim(st.az) : -90; };
+  const edge=(a,b,up)=>{ for(let k=0;k<6;k++){ const m=(a+b)/2; ((mg(m)>0)===up) ? (b=m) : (a=m); } return (a+b)/2; };
   const out=[], step=30000, end=from+hours*3600000;
-  let prev=el(from), t0=prev>minEl ? from : null;
+  let prev=mg(from), t0=prev>0 ? from : null;
   for(let t=from+step;t<=end && out.length<maxN;t+=step){
-    const e=el(t);
-    if(prev<=minEl && e>minEl) t0=edge(t-step,t,true);
-    if(prev>minEl && e<=minEl && t0!=null){
+    const e=mg(t);
+    if(prev<=0 && e>0) t0=edge(t-step,t,true);
+    if(prev>0 && e<=0 && t0!=null){
       const t1=edge(t-step,t,false);
       let best=-90, tb=t0;
-      for(let q=t0;q<=t1;q+=10000){ const v=el(q); if(v>best){ best=v; tb=q; } }
+      for(let q=t0;q<=t1;q+=10000){ const v=satState(s,new Date(q),obs)?.el ?? -90; if(v>best){ best=v; tb=q; } }
       const a0=satState(s,new Date(t0),obs), a1=satState(s,new Date(t1),obs);
       out.push({aos:t0, los:t1, maxEl:best, tMax:tb, azAos:a0?.az, azLos:a1?.az});
       t0=null;
@@ -148,6 +153,7 @@ def({ id:'satTrack', title:'Satellites', cat:'Radio',
           {n:'f0',t:'num',d:0,label:'downlink, MHz (0 — from SatNOGS)'},
           {n:'fu',t:'num',d:0,label:'uplink, MHz (0 — from SatNOGS)'},
           {n:'minEl',t:'range',min:-5,max:45,step:1,d:0,label:'horizon, °'},
+          {n:'terrain',t:'check',d:true,label:'terrain horizon (Horizon module)'},
           {n:'show',t:'select',opts:['above horizon','all'],d:'all',label:'on the map'},
           {n:'track',t:'range',min:0,max:300,step:5,d:100,label:'ground track ahead, min'},
           {n:'tle',t:'button',label:'Download TLE',fn:n=>satTleDownload(n)},
@@ -186,8 +192,8 @@ def({ id:'satTrack', title:'Satellites', cat:'Radio',
       }
       const ps=n.passes.find(q=>q.los>now);            // идущий или ближайший пролёт: aos, los — мс, maxel — °
       if(ps) Object.assign(out,{aos:ps.aos, los:ps.los, maxel:+ps.maxEl.toFixed(1)});
-      const pk=s.norad+'|'+Math.floor(now/60000)+'|'+n.p.minEl+'|'+(obs?GeoMe.lat+','+GeoMe.lon:'');
-      if(obs && pk!==n.passKey){ n.passKey=pk; n.passes=satPasses(s,now,24,obs,n.p.minEl); }
+      const pk=s.norad+'|'+Math.floor(now/60000)+'|'+n.p.minEl+'|'+n.p.terrain+'|'+Horizon.gen+'|'+(obs?GeoMe.lat+','+GeoMe.lon:'');
+      if(obs && pk!==n.passKey){ n.passKey=pk; n.passes=satPasses(s,now,24,obs,az=>satLimit(n,az,obs)); }
       if(!obs) n.passes=[];
     }
     // все: раз в 2 с на карту, небо, метки downlink над горизонтом
@@ -197,7 +203,7 @@ def({ id:'satTrack', title:'Satellites', cat:'Radio',
       for(const q of n.sats){
         if(!satMatch(q,n.p.filter) && q!==s) continue;
         const st=satState(q,date,obs); if(!st) continue;
-        const up=st.el!=null && st.el>n.p.minEl;
+        const up=st.el!=null && st.el>satLimit(n,st.az,obs);
         if(st.el!=null && st.el>-5) sky.push({name:q.name, az:st.az, el:st.el, sel:q===s});
         if(up && Sat.tx?.get(q.norad)){
           const rr=satRangeRate(q,now,obs), k=rr!=null ? rr/SAT_C : 0;
@@ -231,7 +237,7 @@ def({ id:'satTrack', title:'Satellites', cat:'Radio',
   },
   draw(n,cv,cx){
     // небо меняется раз в 2 с (n.sky) — SGP4 по траектории пролёта не гоняем каждый кадр
-    const k=cv.width+'|'+cv.height+'|'+cv.pxGen+'|'+drawGen+'|'+GeoMe.lat+'|'+n.cur?.s.norad+'|'+n.passes[0]?.aos;
+    const k=cv.width+'|'+cv.height+'|'+cv.pxGen+'|'+drawGen+'|'+GeoMe.lat+'|'+Horizon.gen+'|'+n.cur?.s.norad+'|'+n.passes[0]?.aos;
     if(n.sky!==n._skySky || k!==n._skyKey){ n._skySky=n.sky; n._skyKey=k; satSkyDraw(n,cv,cx); }
     satReadout(n); }});
 function satLoadGroup(n){
