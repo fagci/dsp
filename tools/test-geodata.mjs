@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,isFinite,Set,parseFloat,Number,String,JSON,Array,Date,Float64Array,Uint8ClampedArray,Error,Object});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/geodata-kernels.js'),'utf8')+
-  ';this.K={gdTerrarium,gdApplyGround,gdReliefColor,gdQuery,gdBboxAround,gdBboxKm2,gdHeight,gdParseOverpass,gdParseGeneric,gdDemShade,gdCellUrl,gdCellRow,gdCellFromCsv,gdCellFilter,gdParseVector,gdVecPrep,GD_COLS,GD_KINDS};',ctx);
+  ';this.K={gdTerrarium,gdApplyGround,gdReliefColor,gdQuery,gdBboxAround,gdBboxKm2,gdHeight,gdKindCols,gdParseOverpass,gdParseGeneric,gdDemShade,gdCellUrl,gdCellRow,gdCellFromCsv,gdCellFilter,gdParseVector,gdVecPrep,GD_COLS,GD_KINDS};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 
@@ -42,6 +42,13 @@ ok('overpass: two unique rows',rows.length===2,rows.length);
 ok('overpass: cell tower fields',rows[0].id==='osm:n1' && rows[0].kind==='cell' && rows[0].radio==='LTE' && rows[0].h===60 && rows[0].operator==='MTS',JSON.stringify(rows[0]));
 ok('overpass: broadcast tower',rows[1].radio==='TV' && rows[1].kind!=='cell' && rows[1].name==='TV tower');
 ok('overpass: columns exist',Object.keys(rows[0]).every(k=>K.GD_COLS.towers.includes(k)),Object.keys(rows[0]).join());
+for(const kind of Object.keys(K.GD_KINDS)) ok('columns defined for kind '+kind,Array.isArray(K.gdKindCols(kind)) && K.gdKindCols(kind).length>3,kind);
+const tv=K.gdParseOverpass('broadcast',{elements:[
+  {type:'node',id:663935374,lat:54.9796378,lon:82.886887,tags:{'communication:television':'yes',height:'192',man_made:'mast',name:'ORTPC','tower:type':'communication'}},
+  {type:'node',id:726992612,lat:54.9287130,lon:82.8632463,tags:{'communication:radio':'yes','communication:television':'yes',height:'112',man_made:'tower','tower:type':'communication'}},
+  {type:'node',id:2855228052,lat:54.946,lon:83.117,tags:{man_made:'tower','tower:type':'communication'}}]});
+ok('masts: three rows, all columns known',tv.length===3 && tv.every(r=>Object.keys(r).every(k=>K.gdKindCols('broadcast').includes(k))));
+ok('masts: radio and height',tv[0].radio==='TV' && tv[0].h===192 && tv[1].radio==='FM,TV' && tv[2].radio==='');
 const pk=K.gdParseOverpass('peaks',{elements:[{type:'node',id:9,lat:1,lon:2,tags:{name:'Mt',ele:'1234'}}]});
 ok('peaks',pk[0].ele===1234 && pk[0].name==='Mt');
 
