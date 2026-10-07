@@ -9,7 +9,7 @@
 // отдаётся построчно активный список (p.list).
 // Вход: файл (CSV/TSV/TXT/JSON/KML/GPX/GeoJSON), провода rec и text, числовые входы a–d (лог).
 // Выход: по одной записи (секвенсор из modules/sequencer.js), поля — отдельными проводами,
-// весь список как bands (для 'sa'), выбранная запись — lo/mid/hi/span/step.
+// весь список (отмеченные списки) как bands (для 'sa') и rows (для Graph / Map), выбранная запись — lo/mid/hi/span/step.
 
 const TBL_PATCH='@patch', TBL_PRE='presets/', TBL_ROWS=300;
 const TBL_FIXED=new Set([...SEQ_FIXED,'bands','rows','mid','span']);
@@ -206,7 +206,6 @@ function tblDerive(n){
     n.all.forEach((r,i)=>{ if(f(r)){ n.rows.push(r); n.rowIds.push(n.ids[i]); } });
   } else { n.rows=n.all; n.rowIds=n.ids; }
   n.headers=n.cl;
-  n.rowsOut=n.rows.slice();                              // новая ссылка на каждое изменение: потребитель видит смену набора
   n.nameCol=tblCol(n.cl,TBL_LABEL); n.colorCol=tblCol(n.cl,TBL_COLOR);
   tblPorts(n);
   n.timeCol=seqFind(n.cl,n.p.tcol,SEQ_TIME_COLS);
@@ -234,15 +233,16 @@ function tblBands(n){
   n.loCol=tblCol(n.cl,TBL_LO); n.hiCol=tblCol(n.cl,TBL_HI);
   n.bandsOwn=tblBandsOf(n.cl,n.rows);
   const f=tblFilter(n.p.filter);                        // тот же фильтр — и для остальных отмеченных списков
-  for(const e of n.extra.values()) e.bands=tblBandsOf(e.cols,f ? e.rows.filter(f) : e.rows);
+  for(const e of n.extra.values()){ e.rowsF=f ? e.rows.filter(f) : e.rows; e.bands=tblBandsOf(e.cols,e.rowsF); }
   tblMerge(n);
 }
-// bands = активный список (если отмечен) + остальные отмеченные
+// bands и rows = активный список (если отмечен) + остальные отмеченные
 function tblMerge(n){
-  const sh=tblShow(n), parts=[];
-  if(sh.has(n.p.list)) parts.push(n.bandsOwn);
-  for(const [k,e] of n.extra) if(sh.has(k) && k!==n.p.list) parts.push(e.bands);
+  const sh=tblShow(n), parts=[], rp=[];
+  if(sh.has(n.p.list)){ parts.push(n.bandsOwn); rp.push(n.rows); }
+  for(const [k,e] of n.extra) if(sh.has(k) && k!==n.p.list){ parts.push(e.bands); rp.push(e.rowsF||e.rows); }
   n.bands=parts.length===1 ? parts[0] : [].concat(...parts);
+  n.rowsOut=[].concat(...rp);                            // записи всех отмеченных списков; новая ссылка на каждое изменение — потребитель видит смену набора
   n.onCount=sh.size;
 }
 // загрузить отмеченные, но ещё не прочитанные списки; убрать снятые
@@ -257,7 +257,7 @@ function tblSyncExtra(n){
   Promise.all(need.map(async k=>[k,await tblReadList(n,k).catch(()=>null)])).then(res=>{
     if(tok!==n.extraTok) return;
     const now=tblShow(n);
-    for(const [k,t] of res) if(t && now.has(k) && k!==n.p.list) n.extra.set(k,{cols:t.cols,rows:t.rows,bands:[]});
+    for(const [k,t] of res) if(t && now.has(k) && k!==n.p.list) n.extra.set(k,{cols:t.cols,rows:t.rows,rowsF:t.rows,bands:[]});
     tblBands(n); n.uiDirty=true;
   });
 }
@@ -514,7 +514,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     const sigs=Array.isArray(I.sigs) && I.sigs.length ? I.sigs : null;
     if(n._mI!==n.bands || n._mS!==sigs){ n._mI=n.bands; n._mS=sigs; n._merged=sigs ? n.bands.concat(sigs) : n.bands; }
     o.bands=n._merged;
-    o.rows=n.rowsOut;                                      // весь отфильтрованный набор записей (Graph set / nodes)
+    o.rows=n.rowsOut;                                      // записи всех отмеченных списков с общим фильтром (Graph / Map: set, nodes)
     if(!n.started) for(const c of n.cols) delete o[c.port];   // ничего не выбрано — поля не выдаём (как band plan)
     else if(n.loCol && n.cur){
       const lo=tblHz(n.cur[n.loCol]), hi=n.hiCol ? tblHz(n.cur[n.hiCol]) : lo;
@@ -586,6 +586,7 @@ function tblInit(n){
     <div class="tbl-cols" style="display:flex;gap:3px;flex-wrap:wrap;flex-shrink:0;font-size:10px;"></div>
     <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;flex-wrap:wrap;">
       <button class="tbl-add" style="${TBL_BTN}">+ row</button>
+      <button class="tbl-here" style="${TBL_BTN}" title="new row at my current position (GPS) — with the icon, a photo and a sound in the same form">📍 here</button>
       <button class="tbl-import" style="${TBL_BTN}" title="CSV, TSV, TXT, JSON, KML, GPX, GeoJSON — each file becomes a list">import</button>
       <button class="tbl-export" style="${TBL_BTN}" title="export this list (format in advanced)">export</button>
       <button class="tbl-all" style="${TBL_BTN}" title="all lists in one JSON file (import brings them back)">export all</button>
@@ -632,6 +633,7 @@ function tblInit(n){
     await tblPick(n,'table');
   });
   q('.tbl-add').addEventListener('click',()=>tblAddForm(n));
+  q('.tbl-here').addEventListener('click',()=>tblHereForm(n));
   const file=q('.tbl-file');
   q('.tbl-import').addEventListener('click',()=>file.click());
   file.addEventListener('change',()=>{ const fs=[...file.files]; file.value=''; if(fs.length) tblImport(n,fs); });
@@ -953,10 +955,33 @@ function tblEditForm(n,i,row){
   const form=tblForm(n,n.rows[i],async o=>{ await tblUpdate(n,i,o); tblRenderList(n); },()=>tblRenderList(n));
   row.replaceWith(form);
 }
-function tblAddForm(n){
+// текущая позиция: GPS браузера, при отказе — последняя известная (My Position)
+function tblPosition(){
+  return new Promise(res=>{
+    const last=()=>res(typeof GeoMe!=='undefined' && GeoMe.lat!=null ? {lat:GeoMe.lat,lon:GeoMe.lon} : null);
+    if(!navigator.geolocation) return last();
+    navigator.geolocation.getCurrentPosition(p=>res({lat:+p.coords.latitude.toFixed(6),lon:+p.coords.longitude.toFixed(6),
+      alt:p.coords.altitude!=null ? Math.round(p.coords.altitude) : null}),last,{enableHighAccuracy:true,timeout:8000,maximumAge:5000});
+  });
+}
+// «📍 here»: форма новой строки с позицией и временем; значок, фото и звук — в той же форме
+async function tblHereForm(n){
+  if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }
+  if(!tblCol(n.cl,['lat']) || !tblCol(n.cl,['lon'])){
+    if(!confirm('This list has no lat / lon columns. Add the columns of «Map points» (name, lat, lon, alt, h, icon, color, note, photo, audio)?')) return;
+    await tblColsEdit(n,tblTemplateCols(n.cl,TBL_TEMPLATES.find(t=>t.id==='points'))); tblRenderAll(n);
+  }
+  const pos=await tblPosition();
+  if(!pos) alert('Position unknown (no GPS access): type lat / lon by hand, or take them from the photo');
+  const set=(c,v)=>{ const k=tblCol(n.cl,c); if(k && v!=null) rec[k]=v; }, rec={};
+  set(['lat'],pos?.lat); set(['lon'],pos?.lon); set(['alt','altitude'],pos?.alt); set(['t','time'],Date.now());
+  const nm=tblCol(n.cl,TBL_LABEL); if(nm) rec[nm]='P'+(n.all.length+1);
+  tblAddForm(n,rec);
+}
+function tblAddForm(n,init){
   if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }
   const ui=n.ui; ui.list.querySelector('.tbl-newrow')?.remove();
-  const form=tblForm(n,{},async o=>{
+  const form=tblForm(n,init||{},async o=>{
     await tblAdd(n,[o]); tblRenderList(n);
   },()=>form.remove());
   form.classList.add('tbl-newrow');
