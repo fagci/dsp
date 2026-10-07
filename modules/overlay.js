@@ -172,13 +172,16 @@ function ovAlt(r){
 // ---------- рельеф ----------
 // Сетка «азимут × дальность» вокруг наблюдателя по карте высот Horizon (hAt). Кольца — с шагом ×1.08 от 250 м,
 // точки в ENU (e, n, u) + высота над уровнем моря (h). Цвет ячейки: материал по высоте, освещение по наклону, дымка по дальности.
-const OV_RING_K=OVK_RING_K, OV_AZ_STEP=2, OV_SHADES=8;
+const OV_RING_K=OVK_RING_K, OV_AZ_STEP=2, OV_SHADES=8, OV_REL_MOVE=60, OV_REL_UP=40;
 const OV_MAT=[[70,100,55],[112,96,70],[125,125,132],[238,242,246]], OV_HAZE=[150,172,200], OV_SUN=(()=>{ const v=[-.5,-.4,.77], l=Math.hypot(...v); return v.map(x=>x/l); })();
 function ovRelief(n,obs,lat,lon,alt){
   const H=Horizon;
   if(!H.hAt || H.lat==null || Math.abs(H.lat-lat)>.02) return null;
-  const key=H.ver+'|'+lat+'|'+lon+'|'+alt;
-  if(n.relKey===key) return n.rel;
+  const r0=n.rel;                                           // камера сместилась немного — те же кольца со сдвигом (rel.off), без пересборки
+  if(r0 && n.relVer===H.ver){
+    const e=ovEnu(r0.obs,lat,lon,alt);
+    if(Math.hypot(e[0],e[1])<OV_REL_MOVE && Math.abs(e[2])<OV_REL_UP){ r0.off=e; return r0; }
+  }
   const R=6371000, la=lat*ORI_D, lo=lon*ORI_D, sl=Math.sin(la), cl=Math.cos(la), NA=360/OV_AZ_STEP, rings=[], dist=[];
   for(let d=OVK_RING0; d<=H.radius*1000; d*=OV_RING_K){
     const dl=d/R, sd=Math.sin(dl), cd=Math.cos(dl), a=new Float32Array(NA*4).fill(NaN);
@@ -213,17 +216,17 @@ function ovRelief(n,obs,lat,lon,alt){
     }
     colors.push(row);
   }
-  n.relKey=key; n.rel={rings,NA,cells,colors,los:ovkLosBuild(rings,NA)};
+  n.relVer=H.ver; n.rel={rings,NA,cells,colors,los:ovkLosBuild(rings,NA),obs,off:[0,0,0]};
   return n.rel;
 }
 // кольца от дальних к ближним — ближние перекрывают дальние; ячейки одного цвета в кольце — одним путём
 function ovDrawRelief(cx,rel,proj,solid){
-  const {rings,NA,cells,colors}=rel, nr=rings.length, P=[];
+  const {rings,NA,cells,colors,off}=rel, nr=rings.length, P=[];
   for(let j=0;j<nr;j++){
     const a=rings[j], X=new Float32Array(NA).fill(NaN), Y=new Float32Array(NA);
     for(let i=0;i<NA;i++){
       const o=i*4; if(a[o]!==a[o]) continue;
-      const q=proj([a[o],a[o+1],a[o+2]]); if(q){ X[i]=q.x; Y[i]=q.y; }
+      const q=proj([a[o]-off[0],a[o+1]-off[1],a[o+2]-off[2]]); if(q){ X[i]=q.x; Y[i]=q.y; }
     }
     P.push({X,Y});
   }
@@ -365,6 +368,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
     const now=Date.now(), tr=+n.p.trail*1000;
     n.I=I;
     for(const k of ['rec','rec2']) for(const r of recList(I[k])){
+      if(r && r.gone && r.id!=null){ n.ents.delete(k+':'+r.id); continue; }            // gone: убрать объект сразу, не ждать ttl
       if(!r || recNum(r.lat)==null && recNum(r.az)==null) continue;
       const id=r.id!=null ? String(r.id) : r.label!=null ? String(r.label) : 'o'+(n.seq++), key=k+':'+id, old=n.ents.get(key), en={r,t:now,trail:old?.trail||[]};
       const la=recNum(r.lat), lo=recNum(r.lon);
@@ -648,8 +652,10 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
         const md=ovModelOf(r);
         if(p.models){
           const ppm=foc/c.z, k=Math.max(+p.scale, +p.minpx/(md.L*ppm)), hd=(recNum(r.heading ?? r.track ?? r.hdg)||0)*OVK_D,
-                ch=Math.cos(hd), sh=Math.sin(hd);
-          const T=(x,y,z)=>proj([e[0]+(x*ch+y*sh)*k, e[1]+(-x*sh+y*ch)*k, e[2]+z*k]);
+                ch=Math.cos(hd), sh=Math.sin(hd), mr=(recNum(r.roll)||0)*OVK_D, mp=(recNum(r.pitch)||0)*OVK_D,
+                cr=Math.cos(mr), sr=Math.sin(mr), cp=Math.cos(mp), sp=Math.sin(mp);
+          const T=(x0,y0,z0)=>{ const x=x0*cr+z0*sr, z1=z0*cr-x0*sr, y=y0*cp-z1*sp, z=y0*sp+z1*cp;       // крен вокруг оси y, тангаж вокруг x
+            return proj([e[0]+(x*ch+y*sh)*k, e[1]+(-x*sh+y*ch)*k, e[2]+z*k]); };
           cx.beginPath();
           for(const s of md.seg){ const a=T(s[0],s[1],s[2]), b=T(s[3],s[4],s[5]); if(a&&b){ cx.moveTo(a.x,a.y); cx.lineTo(b.x,b.y); } }
           cx.stroke();

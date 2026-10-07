@@ -175,6 +175,8 @@ const PRESET_CATS={
   'AR: Satellites Through the Camera (Phone)':'Aircraft, Satellites & Telemetry',
   'AR: Drones Around (Remote ID, Phone)':'Aircraft, Satellites & Telemetry',
   'AR: ADS-B Aircraft in the Sky (Phone + Generator)':'Aircraft, Satellites & Telemetry',
+  'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
+  'Flight Sim: Watch ADS-B Aircraft (Generator)':'Aircraft, Satellites & Telemetry',
   'ADS-B: Radar and Attitude (Generator)':'Aircraft, Satellites & Telemetry',
   'Remote ID: Drones on a Map (ESP32)':'Aircraft, Satellites & Telemetry',
   'Remote ID: Demo Frame (no hardware)':'Aircraft, Satellites & Telemetry',
@@ -4404,6 +4406,50 @@ addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'rec',de.id,'rec'); addEdge(de.id,
 addEdge(or.id,'az',ov.id,'az'); addEdge(or.id,'el',ov.id,'el'); addEdge(or.id,'roll',ov.id,'roll');
 addEdge(me.id,'lat',ov.id,'lat'); addEdge(me.id,'lon',ov.id,'lon'); addEdge(me.id,'alt',ov.id,'alt');
 addEdge(me.id,'lat',hz.id,'lat'); addEdge(me.id,'lon',hz.id,'lon');
+markWiresDirty();
+});
+preset('Flight Sim: Fly over Terrain (Joystick)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'An arcade flight simulator on the Video Overlay. Start the engine, click the Joystick pad and fly: W / S — throttle (it holds its value), A / D — rudder, arrows — roll and pitch, Space — next camera, F — reset after a crash.\n'+
+  'Flight Sim integrates the aircraft and gives the camera (chase / cockpit / tower / orbit); Horizon downloads the terrain around it once and keeps it in the browser, so a flown area works offline. For a whole area ahead of time press «Download area for offline» in the advanced parameters of Horizon. Real hardware: wire Gamepad axes to the Joystick ex1…ey2 inputs.'});
+nt.size.w=900; nt.size.h=120; applySize(nt);
+const js=addNode('joystick',40,200,{hold:'left Y',kbd:'when focused'});
+const me=addNode('geoMe',40,520,{src:'manual',lat:43.68,lon:40.2});
+const fs=addNode('flightsim',420,200,{mode:'fly',cam:'chase',agl0:400,hdg0:60});
+fs.size.w=340; fs.size.h=120; applySize(fs);
+const hz=addNode('horizon',420,420,{radius:40,zoom:10});
+hz.size.w=340; hz.size.h=150; applySize(hz);
+const ov=addNode('overlay',820,200,{relief:'solid',sky:true,planets:false,starMag:-1,deep:false,trail:0,hud:'KT, AGL:m, VS:m/s, HDG:°',labels:false});
+ov.size.w=560; ov.size.h=420; applySize(ov);
+addEdge(js.id,'x2',fs.id,'ail'); addEdge(js.id,'y2',fs.id,'elev'); addEdge(js.id,'x1',fs.id,'rud'); addEdge(js.id,'y1',fs.id,'thr');
+addEdge(js.id,'b1',fs.id,'cam'); addEdge(js.id,'b8',fs.id,'reset');
+addEdge(me.id,'lat',fs.id,'lat'); addEdge(me.id,'lon',fs.id,'lon');
+addEdge(fs.id,'lat',hz.id,'lat'); addEdge(fs.id,'lon',hz.id,'lon');
+for(const k of ['lat','lon','alt','az','el','roll','fov','rec']) addEdge(fs.id,k,ov.id,k);
+addEdge(fs.id,'kts',ov.id,'a'); addEdge(fs.id,'agl',ov.id,'b'); addEdge(fs.id,'vsi',ov.id,'c'); addEdge(fs.id,'hdg',ov.id,'d');
+markWiresDirty();
+});
+preset('Flight Sim: Watch ADS-B Aircraft (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Flight Sim in «watch ADS-B» mode: the camera follows one aircraft of the decoded ADS-B stream — from a tower at My Position (zooms on the aircraft), from behind, from the cockpit or circling it. «Next aircraft» switches between them, «follow» takes a callsign or an ICAO code.\n'+
+  'ADS-B frames come from a generator here (replace Generator + Demodulator with a USB SDR at 1090 MHz). Horizon downloads the terrain around the tower once and keeps it in the browser. Start the engine.'});
+nt.size.w=900; nt.size.h=110; applySize(nt);
+const gn=addNode('iqGen',40,220,{sr:'2400000',fc:1090000000,mode:'ADS-B',off:0,lvl:-20,noise:-40});
+const dm=addNode('adsbDemod',40,850,{});
+const me=addNode('geoMe',320,580,{src:'manual',lat:55.01,lon:82.65});
+const de=addNode('adsbDecode',320,220,{rlat:55.01,rlon:82.65});
+de.size.w=480; de.size.h=240; applySize(de);
+const fs=addNode('flightsim',820,220,{mode:'watch ADS-B',cam:'tower',th:20});
+fs.size.w=340; fs.size.h=120; applySize(fs);
+const hz=addNode('horizon',820,420,{radius:50,zoom:10});
+hz.size.w=340; hz.size.h=150; applySize(hz);
+const ov=addNode('overlay',1220,220,{relief:'solid',trail:300,labels:true,hud:'KT, AGL:m, VS:m/s, HDG:°'});
+ov.size.w=560; ov.size.h=420; applySize(ov);
+addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'rec',de.id,'rec'); addEdge(de.id,'rec',ov.id,'rec'); addEdge(de.id,'rec',fs.id,'rec');
+addEdge(me.id,'lat',fs.id,'lat'); addEdge(me.id,'lon',fs.id,'lon');
+addEdge(me.id,'lat',hz.id,'lat'); addEdge(me.id,'lon',hz.id,'lon');
+for(const k of ['lat','lon','alt','az','el','roll','fov']) addEdge(fs.id,k,ov.id,k);
+addEdge(fs.id,'kts',ov.id,'a'); addEdge(fs.id,'agl',ov.id,'b'); addEdge(fs.id,'vsi',ov.id,'c'); addEdge(fs.id,'hdg',ov.id,'d');
 markWiresDirty();
 });
 preset('Logic Analyzer: USB (fx2lafw)', function(){

@@ -5,7 +5,8 @@
 // Точка наблюдения — My Position (GeoMe) или провода lat / lon. Профиль общий (Horizon) — его читают другие узлы.
 
 const HZ_URL='https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
-const HZ_MAX_TILES=150;
+const HZ_MAX_TILES=150, HZ_PRE_MAX=2500, HZ_MEM=240;
+const HZ_MEM_TILES=new Map();                          // декодированные тайлы 'z/x/y' → Float32Array, свежие в конце: при смещении окна декодируются только новые
 const Horizon={prof:null, lat:null, lon:null, src:'', hAt:null, ground:null, radius:0, ver:0};       // prof — Float32Array(360), °, индекс — азимут
 
 function horizonInterp(prof,az){
@@ -63,22 +64,54 @@ function horizonTileList(lat,lon,radiusKm,z){
   for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++) out.push([((x%N)+N)%N,y]);
   return out;
 }
-async function horizonTile(z,x,y){
+// браузер может вычистить IndexedDB при нехватке места — просим постоянное хранилище один раз
+let hzPersist=null;
+function horizonPersist(){
+  return hzPersist || (hzPersist=(navigator.storage?.persist ? navigator.storage.persist() : Promise.resolve(false)).catch(()=>false));
+}
+// байты тайла: из IndexedDB, иначе из сети (и в IndexedDB)
+async function horizonTileBytes(z,x,y){
   const key='dem:'+z+'/'+x+'/'+y;
   let buf=await geoGet(key).catch(()=>null);
   if(!buf){
+    horizonPersist();
     const r=await fetch(Net.url(HZ_URL.replace('{z}',z).replace('{x}',x).replace('{y}',y)));
     if(!r.ok) throw new Error('HTTP '+r.status);
     buf=await r.arrayBuffer();
-    geoPut(key,buf).catch(()=>{});
+    await geoPut(key,buf).catch(()=>{});
   }
+  return buf;
+}
+async function horizonTile(z,x,y){
+  const mk=z+'/'+x+'/'+y, hit=HZ_MEM_TILES.get(mk);
+  if(hit){ HZ_MEM_TILES.delete(mk); HZ_MEM_TILES.set(mk,hit); return hit; }
+  const buf=await horizonTileBytes(z,x,y);
   const bmp=await createImageBitmap(new Blob([buf],{type:'image/png'}),{colorSpaceConversion:'none',premultiplyAlpha:'none'});
   const cv=document.createElement('canvas'); cv.width=cv.height=256;
   const cx=cv.getContext('2d',{willReadFrequently:true});
   cx.drawImage(bmp,0,0); bmp.close?.();
   const d=cx.getImageData(0,0,256,256).data, out=new Float32Array(65536);
   for(let i=0;i<65536;i++) out[i]=d[i*4]*256+d[i*4+1]+d[i*4+2]/256-32768;
+  HZ_MEM_TILES.set(mk,out);
+  while(HZ_MEM_TILES.size>HZ_MEM) HZ_MEM_TILES.delete(HZ_MEM_TILES.keys().next().value);
   return out;
+}
+// скачать область заранее (без декодирования): потом работает без сети. Уже сохранённые тайлы пропускаются
+async function horizonPrefetch(n,lat,lon){
+  const z=Math.round(+n.p.zoom), R=+n.p.preR, list=horizonTileList(lat,lon,R,z), tok=n.preTok={};
+  if(list.length>HZ_PRE_MAX){ n.msg=list.length+' tiles — lower the area radius or the zoom'; return; }
+  let i=0, ok=0, bad=0, err='';
+  const worker=async()=>{
+    while(i<list.length && n.preTok===tok){
+      const [x,y]=list[i++];
+      try{ await horizonTileBytes(z,x,y); ok++; } catch(e){ bad++; err=e.message; }
+      n.msg='downloading '+(ok+bad)+'/'+list.length+(bad ? ', '+bad+' failed' : '');
+    }
+  };
+  await Promise.all(Array.from({length:6},worker));
+  if(n.preTok!==tok) return;
+  const kept=await horizonPersist();
+  n.msg=ok+' of '+list.length+' tiles saved'+(bad ? ', '+bad+' failed ('+err+') — set a CORS proxy in Settings' : '')+(kept ? '' : ' · the browser may clear them when space runs low');
 }
 
 async function horizonRun(n,lat,lon,key){
@@ -156,6 +189,9 @@ def({ id:'horizon', title:'Horizon', cat:'Radio',
           {n:'k',t:'range',min:1,max:2,step:.01,d:1.33,label:'refraction k (4/3 — standard)'},
           {n:'margin',t:'num',d:0,label:'margin on the output, °'},
           {n:'calc',t:'button',label:'Recalculate',fn:n=>{ n.req=true; }},
+          {n:'preR',t:'range',min:10,max:300,step:10,d:100,label:'download area: radius, km (at the zoom above)',adv:true},
+          {n:'pre',t:'button',label:'Download area for offline',fn:n=>{ const lat=n.lastLat, lon=n.lastLon;
+            if(lat==null || lon==null){ n.msg='no observer — add My Position or wire lat / lon'; return; } horizonPrefetch(n,lat,lon); },adv:true},
           {n:'file',t:'file',accept:'.csv,.txt',fn:(n,f)=>{
             const rd=new FileReader(); rd.onload=()=>{
               const pr=horizonFromPairs(String(rd.result));
@@ -165,6 +201,7 @@ def({ id:'horizon', title:'Horizon', cat:'Radio',
             n.noPos=false; n.ground=null; n.srcTxt=''; n.az=null; },
   process(n,I){
     const lat=recNum(I.lat) ?? GeoMe.lat, lon=recNum(I.lon) ?? GeoMe.lon;
+    n.lastLat=lat; n.lastLon=lon;
     horizonTick(n,lat,lon);
     const az=recNum(I.az); n.az=az;
     if(!n.prof) return {el:null,max:null,maxaz:null};
