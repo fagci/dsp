@@ -161,6 +161,8 @@ const PRESET_CATS={
   'AR: Satellites Through the Camera (Phone)':'Aircraft, Satellites & Telemetry',
   'AR: ADS-B Aircraft in the Sky (Phone + Generator)':'Aircraft, Satellites & Telemetry',
   'ADS-B: Radar and Attitude (Generator)':'Aircraft, Satellites & Telemetry',
+  'Remote ID: Drones on a Map (ESP32)':'Aircraft, Satellites & Telemetry',
+  'Remote ID: Demo Frame (no hardware)':'Aircraft, Satellites & Telemetry',
   'ADS-B: Aircraft Map (Generator)':'Aircraft, Satellites & Telemetry',
   'ADS-B: Aircraft Map (USB SDR, 1090 MHz)':'Aircraft, Satellites & Telemetry',
   'Meteor-M LRPT: Image (Generator)':'Aircraft, Satellites & Telemetry',
@@ -1173,6 +1175,34 @@ sa.size.w=560; sa.size.h=300; applySize(sa);
 const nv=addNode('numview',990,240,{label:'image rejection, dB'});
 addEdge(gn.id,'iq',iq.id,'in'); addEdge(iq.id,'irr',nv.id,'in');
 addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
+markWiresDirty();
+});
+preset('Remote ID: Drones on a Map (ESP32)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Open Drone ID (Remote ID, ASTM F3411): drones broadcast their ID, position, altitude, speed and the operator position over Wi-Fi (beacon / NAN) and Bluetooth, unencrypted.\n'+
+  'Flash tools/odid-esp32c5 to an ESP32-C5 (2.4 + 5 GHz Wi-Fi and BLE), connect it over USB (WebSerial, Chrome/Edge) and press Connect ESP32.\n'+
+  'Drones with a position go to the map (orange; blue flags are the operators), the readout lists everything heard. Only drones that transmit Remote ID are seen: most DJI models and every drone made for the EU / US market, home-built FPV usually not.\n'+
+  'Add My Position (or set lat/lon) to get the distance. Receive-only: nothing is transmitted.'});
+nt.size.w=780; nt.size.h=130; applySize(nt);
+const od=addNode('odid',40,210,{});
+od.size.w=560; od.size.h=300; applySize(od);
+const map=addNode('geoMap',640,210,{mz:12,mlat:55.04,mlon:82.93,ttl:5,labels:true,trail:300,follow:true});
+map.size.w=620; map.size.h=460; applySize(map);
+addEdge(od.id,'rec',map.id,'rec');
+markWiresDirty();
+});
+preset('Remote ID: Demo Frame (no hardware)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'One Open Drone ID Message Pack (Basic ID, Location, System, Operator ID) typed in by hand: a multirotor hovering near Novosibirsk, 60 m up, flying east at 15 m/s,\n'+
+  'the operator about 300 m away. The same hex comes from the ESP32 firmware as «ODID,wifi,-60,mac,hex». Edit the text and press Send to try other frames.'});
+nt.size.w=780; nt.size.h=90; applySize(nt);
+const tx=addNode('textsrc',40,160,{text:'ODID,wifi,-60,aa:bb:cc:00:11:22,f21904021231353831463444454d4f3030303030303031000000000012205a3c0098aace20d0d06e310000c00848080000000000004200d077ce2008216e31000000000000000000000000000000520044454d4f2d4f50455241544f5200000000000000000000'});
+tx.size.w=420; tx.size.h=140; applySize(tx);
+const od=addNode('odid',500,160,{});
+od.size.w=560; od.size.h=240; applySize(od);
+const map=addNode('geoMap',40,440,{mz:15,mlat:55.0408,mlon:82.932,ttl:0,labels:true});
+map.size.w=620; map.size.h=380; applySize(map);
+addEdge(tx.id,'text',od.id,'text'); addEdge(od.id,'rec',map.id,'rec');
 markWiresDirty();
 });
 preset('ADS-B: Aircraft Map (Generator)', function(){
