@@ -187,7 +187,7 @@ function ovkOsmQuery(lat,lon,rM){
   return '[out:json][timeout:25];('+
     'node["natural"="peak"]["name"]'+a+';'+
     'node["place"~"^(city|town|village)$"]["name"]'+a+';'+
-    'way["highway"~"^(motorway|trunk|primary)$"]'+a+';'+
+    'way["highway"~"^(motorway|trunk|primary|secondary|tertiary)$"]'+a+';'+
     'way["waterway"="river"]'+a+';'+
     ');out geom 6000;';
 }
@@ -203,7 +203,7 @@ function ovkSimplify(g,minM){                         // убрать точки
   }
   return out;
 }
-const OVK_PLACE_RANK={city:0,town:1,village:2}, OVK_ROAD_RANK={motorway:0,trunk:1,primary:2};
+const OVK_PLACE_RANK={city:0,town:1,village:2}, OVK_ROAD_RANK={motorway:0,trunk:1,primary:2,secondary:3,tertiary:4};
 function ovkOsmParse(json,minM=80){
   const res={peaks:[],places:[],roads:[],rivers:[]};
   for(const el of (json?.elements||[])){
@@ -228,9 +228,10 @@ function ovkOsmParse(json,minM=80){
 // ---------- здания и улицы OSM ----------
 // way[building] с контуром (высота — тег height, иначе building:levels × 3 м, иначе 7 м) и улицы вокруг
 const OVK_STREETS='motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service';
-function ovkBldQuery(lat,lon,rM){
-  const a='(around:'+Math.round(rM)+','+lat.toFixed(5)+','+lon.toFixed(5)+')';
-  return '[out:json][timeout:60];way["building"]'+a+'->.b;way["highway"~"^('+OVK_STREETS+')$"]'+a+'->.r;.b out geom 30000;.r out geom 20000;';
+// ячейка s, w, n, e (°) — здания и улицы целиком; ячейки маленькие, чтобы Overpass не давал таймаут
+function ovkBldQuery(s,w,n,e){
+  const a='('+[s,w,n,e].map(v=>v.toFixed(5)).join(',')+')';
+  return '[out:json][timeout:90];way["building"]'+a+'->.b;way["highway"~"^('+OVK_STREETS+')$"]'+a+'->.r;.b out geom 40000;.r out geom 20000;';
 }
 // ближние max зданий: {id, h, lv, pts:[[lat,lon]…] без замыкающей точки, lat, lon (центр), d — расстояние до центра запроса, м}
 function ovkBldParse(json,lat,lon,max=30000){
@@ -262,7 +263,7 @@ function ovkBldRoads(json,lat,lon,stepM=25,maxPts=20000){
     }
     if(pts.length<2) continue;
     const mid=pts[pts.length>>1];
-    res.push({kind:hw, pts, d:Math.hypot((mid[0]-lat)*111320,(mid[1]-lon)*kx)});
+    res.push({id:el.id, kind:hw, pts, d:Math.hypot((mid[0]-lat)*111320,(mid[1]-lon)*kx)});
   }
   res.sort((a,b)=>a.d-b.d);
   let budget=maxPts;
