@@ -63,11 +63,11 @@ function horizonTileList(lat,lon,radiusKm,z){
   for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++) out.push([((x%N)+N)%N,y]);
   return out;
 }
-async function horizonTile(z,x,y,proxy){
+async function horizonTile(z,x,y){
   const key='dem:'+z+'/'+x+'/'+y;
   let buf=await geoGet(key).catch(()=>null);
   if(!buf){
-    const r=await fetch(proxy+HZ_URL.replace('{z}',z).replace('{x}',x).replace('{y}',y));
+    const r=await fetch(Net.url(HZ_URL.replace('{z}',z).replace('{x}',x).replace('{y}',y)));
     if(!r.ok) throw new Error('HTTP '+r.status);
     buf=await r.arrayBuffer();
     geoPut(key,buf).catch(()=>{});
@@ -87,19 +87,19 @@ async function horizonRun(n,lat,lon,key){
   try{
     const list=horizonTileList(lat,lon,+p.radius,z);
     if(list.length>HZ_MAX_TILES) return fail(list.length+' tiles — lower the radius or the zoom');
-    const tiles=new Map(), proxy=p.proxy||'';
+    const tiles=new Map();
     let i=0, ok=0, bad=0, err='';
     const worker=async()=>{
       while(i<list.length && n.tok===tok){
         const [x,y]=list[i++];
-        try{ tiles.set(x+'/'+y,await horizonTile(z,x,y,proxy)); ok++; }
+        try{ tiles.set(x+'/'+y,await horizonTile(z,x,y)); ok++; }
         catch(e){ bad++; err=e.message; }
         n.msg='terrain tiles '+(ok+bad)+'/'+list.length;
       }
     };
     await Promise.all(Array.from({length:6},worker));
     if(n.tok!==tok) return;
-    if(!ok) return fail('terrain: '+err+' — set a CORS proxy or import a profile file');
+    if(!ok) return fail('terrain: '+err+' — set a CORS proxy in Settings or import a profile file');
     const hAt=horizonSampler(tiles,z), g=hAt(lat,lon);
     if(g!==g) return fail('no terrain data at the observer');
     const pix=2*Math.PI*6378137*Math.cos(lat*D2R)/((1<<z)*256);
@@ -160,8 +160,7 @@ def({ id:'horizon', title:'Horizon', cat:'Radio',
             const rd=new FileReader(); rd.onload=()=>{
               const pr=horizonFromPairs(String(rd.result));
               if(!pr){ n.msg='no «azimuth, elevation» rows in file'; return; }
-              n.tok=null; n.prof=pr; n.manual=true; n.srcTxt='file: '+f.name; n.msg=''; }; rd.readAsText(f); },adv:true},
-          {n:'proxy',t:'text',d:'',label:'CORS proxy prefix',adv:true}],
+              n.tok=null; n.prof=pr; n.manual=true; n.srcTxt='file: '+f.name; n.msg=''; }; rd.readAsText(f); },adv:true}],
   init:n=>{ n.msg=''; n.prof=null; n.done=null; n.job=null; n.tok=null; n.due=0; n.req=false; n.manual=false;
             n.noPos=false; n.ground=null; n.srcTxt=''; n.az=null; },
   process(n,I){

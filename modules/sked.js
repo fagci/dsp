@@ -162,7 +162,6 @@ def({ id:'sked', title:'Station Schedule', cat:'Radio',
           {n:'file',t:'file',accept:'.csv,.txt,text/csv,text/plain',fn:(n,f)=>{
             const rd=new FileReader(); rd.onload=()=>skedLoadText(n,String(rd.result),f.name); rd.readAsText(f); }},
           {n:'url',t:'text',d:'',label:'URL (EiBi: …/dx/sked-a26.csv)',adv:true},
-          {n:'proxy',t:'text',d:'',label:'CORS proxy prefix (if the site has no CORS)',adv:true},
           {n:'dl',t:'button',label:'Download from URL',fn:n=>skedDownload(n),adv:true},
           {n:'clr',t:'button',label:'Forget schedule',fn:n=>{ n.list=[]; n.src=''; geoPut('sked',null).catch(()=>{}); n.key=''; },adv:true}],
   init:n=>{
@@ -250,11 +249,11 @@ async function skedDownload(n){
   const url=String(n.p.url||'').trim(); if(!url){ n.msg='enter URL'; return; }
   n.msg='downloading…';
   try{
-    const r=await fetch((n.p.proxy||'')+url); if(!r.ok) throw new Error('HTTP '+r.status);
+    const r=await fetch(Net.url(url)); if(!r.ok) throw new Error('HTTP '+r.status);
     // EiBi — в Latin-1
     const buf=await r.arrayBuffer();
     let text;
     try{ text=new TextDecoder('utf-8',{fatal:true}).decode(buf); }catch(e){ text=new TextDecoder('latin1').decode(buf); }
     skedLoadText(n,text,url.split('/').pop());
-  }catch(e){ n.msg='download failed: '+e.message+' — the site may block cross-origin requests: set a CORS proxy or load the file'; }
+  }catch(e){ n.msg='download failed: '+e.message+' — the site may block cross-origin requests: set a CORS proxy in Settings or load the file'; }
 }

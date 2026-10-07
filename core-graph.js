@@ -2042,6 +2042,26 @@ let lastDraw=0;
 const fpsSel=document.getElementById('fps');
 try{ const v=LS.get('dsp-fps'); if(v==='auto'||v==='max'||v==='min') fpsSel.value=v; }catch(e){}
 fpsSel.onchange=()=>{ try{ LS.set('dsp-fps',fpsSel.value); }catch(e){} wakeDraw(); };
+// панель настроек: кнопка в баре, выпадает вверх, если бар внизу (телефон)
+(()=>{
+  const btn=document.getElementById('settings'), panel=document.getElementById('setPanel'), px=document.getElementById('proxy');
+  if(!btn || !panel) return;
+  px.value=LS.get('dsp-proxy')||'';
+  px.onchange=()=>{ LS.set('dsp-proxy',px.value.trim()); btn.classList.toggle('on',!!px.value.trim()); };
+  btn.classList.toggle('on',!!px.value.trim());
+  const place=()=>{
+    const r=btn.getBoundingClientRect(), w=Math.min(300,innerWidth-16);
+    panel.style.width=w+'px';
+    panel.style.left=Math.max(8,Math.min(r.left,innerWidth-w-8))+'px';
+    if(r.top>innerHeight/2){ panel.style.top=''; panel.style.bottom=(innerHeight-r.top+4)+'px'; }
+    else { panel.style.bottom=''; panel.style.top=(r.bottom+4)+'px'; }
+  };
+  const set=on=>{ panel.hidden=!on; btn.setAttribute('aria-expanded',on); if(on) place(); };
+  btn.onclick=()=>set(panel.hidden);
+  document.addEventListener('pointerdown',e=>{ if(!panel.hidden && !panel.contains(e.target) && !btn.contains(e.target)) set(false); });
+  window.addEventListener('keydown',e=>{ if(e.key==='Escape' && !panel.hidden) set(false); });
+  addEventListener('resize',()=>{ if(!panel.hidden) place(); });
+})();
 let lastStatText='', lastStatTs=0;
 function visible(n){ return n._vis!==false; }       // до первого отчёта — считаем видимым
 // Простой: движок не обрабатывает блоки и нет ввода — перерисовка раз в IDLE_MS через

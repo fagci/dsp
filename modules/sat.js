@@ -94,9 +94,9 @@ function satTxSet(list,save){
 async function satTxDownload(n){
   Sat.txState='downloading transmitters…';
   try{
-    const r=await fetch((n.p.proxy||'')+SAT_TX_URL); if(!r.ok) throw new Error('HTTP '+r.status);
+    const r=await fetch(Net.url(SAT_TX_URL)); if(!r.ok) throw new Error('HTTP '+r.status);
     satTxSet(await r.json(),true);
-  }catch(e){ Sat.txState='transmitters: '+e.message+' — set a CORS proxy or import the JSON file'; }
+  }catch(e){ Sat.txState='transmitters: '+e.message+' — set a CORS proxy in Settings or import the JSON file'; }
 }
 function satFmtMHz(hz){ return (hz/1e6).toFixed(hz%1000 ? 4 : 3); }
 function satTxText(norad){
@@ -108,12 +108,12 @@ function satTxText(norad){
 async function satTleDownload(n){
   const g=n.p.group; n.msg='downloading TLE '+g+'…';
   try{
-    const r=await fetch((n.p.proxy||'')+SAT_TLE_URL.replace('{g}',g)); if(!r.ok) throw new Error('HTTP '+r.status);
+    const r=await fetch(Net.url(SAT_TLE_URL.replace('{g}',g))); if(!r.ok) throw new Error('HTTP '+r.status);
     const text=await r.text();
     const list=satParseTle(text); if(!list.length) throw new Error('no TLE in response');
     await geoPut('tle:'+g,{t:Date.now(), text}).catch(()=>{});
     satSetList(n,list,g); n.msg='';
-  }catch(e){ n.msg='TLE: '+e.message+' — set a CORS proxy or import a TLE file'; }
+  }catch(e){ n.msg='TLE: '+e.message+' — set a CORS proxy in Settings or import a TLE file'; }
 }
 function satSetList(n,list,src){
   n.loadTok=null;
@@ -159,8 +159,7 @@ def({ id:'satTrack', title:'Satellites', cat:'Radio',
               satSetList(n,l,'file: '+f.name); n.msg=''; }; rd.readAsText(f); },adv:true},
           {n:'txFile',t:'file',accept:'.json',fn:(n,f)=>{
             const rd=new FileReader(); rd.onload=()=>{ try{ satTxSet(JSON.parse(String(rd.result)),true); }
-              catch(e){ Sat.txState='JSON: '+e.message; } }; rd.readAsText(f); },adv:true},
-          {n:'proxy',t:'text',d:'',label:'CORS proxy prefix',adv:true}],
+              catch(e){ Sat.txState='JSON: '+e.message; } }; rd.readAsText(f); },adv:true}],
   init:n=>{ n.sats=[]; n.src=''; n.msg=''; n.byNorad=new Map(); n.lastMap=0; n.passes=[]; n.passKey='';
             n.cur=null; n.sky=[]; satLoadGroup(n); satTxLoad(); },
   process(n,I){

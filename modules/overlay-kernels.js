@@ -54,6 +54,96 @@ function ovkSkyBodies(ms,lat,lon){
   };
 }
 
+// ---------- планеты, яркие звёзды, глубокий космос ----------
+// Планеты: кеплеровы элементы Standish (JPL, 1800–2050) — точность порядка угловой минуты, для AR-метки хватает.
+// [a, e, I, L, ϖ, Ω] и их скорости за столетие; Земля — барицентр Земля–Луна
+const OVK_ELEM={
+  mercury:[[0.38709927,0.20563593,7.00497902,252.25032350,77.45779628,48.33076593],[0.00000037,0.00001906,-0.00594749,149472.67411175,0.16047689,-0.12534081]],
+  venus:  [[0.72333566,0.00677672,3.39467605,181.97909950,131.60246718,76.67984255],[0.00000390,-0.00004107,-0.00078890,58517.81538729,0.00268329,-0.27769418]],
+  earth:  [[1.00000261,0.01671123,-0.00001531,100.46457166,102.93768193,0],[0.00000562,-0.00004392,-0.01294668,35999.37244981,0.32327364,0]],
+  mars:   [[1.52371034,0.09339410,1.84969142,-4.55343205,-23.94362959,49.55953891],[0.00001847,0.00007882,-0.00813131,19140.30268499,0.44441088,-0.29257343]],
+  jupiter:[[5.20288700,0.04838624,1.30439695,34.39644051,14.72847983,100.47390909],[-0.00011607,-0.00013253,-0.00183714,3034.74612775,0.21252668,0.20469106]],
+  saturn: [[9.53667594,0.05386179,2.48599187,49.95424423,92.59887831,113.66242448],[-0.00125060,-0.00050991,0.00193609,1222.49362201,-0.41897216,-0.28867794]],
+  uranus: [[19.18916464,0.04725744,0.77263783,313.23810451,170.95427630,74.01692503],[-0.00196176,-0.00004397,-0.00242939,428.48202785,0.40805281,0.04240589]],
+  neptune:[[30.06992276,0.00859048,1.77004347,-55.12002969,44.96476227,131.78422574],[0.00026291,0.00005105,0.00035372,218.45945325,-0.32241464,-0.00508664]],
+};
+// id, название, угловой диаметр на 1 а.е., ″; блеск — по формулам Astronomical Almanac (кольца Сатурна не учтены)
+const OVK_PLANETS=[
+  {id:'mercury',label:'Mercury',d0:6.74},{id:'venus',label:'Venus',d0:16.92},{id:'mars',label:'Mars',d0:9.36},
+  {id:'jupiter',label:'Jupiter',d0:196.74},{id:'saturn',label:'Saturn',d0:165.6},
+  {id:'uranus',label:'Uranus',d0:65.8},{id:'neptune',label:'Neptune',d0:62.2}];
+const OVK_MAG0={mercury:-0.42,venus:-4.40,mars:-1.52,jupiter:-9.40,saturn:-8.88,uranus:-7.19,neptune:-6.87};
+function ovkHelio(id,T){                              // гелиоцентрические эклиптические J2000, а.е.
+  const [e0,r]=OVK_ELEM[id], v=e0.map((x,i)=>x+r[i]*T);
+  const a=v[0], e=v[1], I=v[2]*OVK_D, w=(v[4]-v[5])*OVK_D, Om=v[5]*OVK_D;
+  let M=ovkWrap(v[3]-v[4])*OVK_D, E=M+e*Math.sin(M);
+  for(let i=0;i<8;i++) E-=(E-e*Math.sin(E)-M)/(1-e*Math.cos(E));
+  const xp=a*(Math.cos(E)-e), yp=a*Math.sqrt(1-e*e)*Math.sin(E);
+  const cw=Math.cos(w), sw=Math.sin(w), cO=Math.cos(Om), sO=Math.sin(Om), cI=Math.cos(I), sI=Math.sin(I);
+  return [(cw*cO-sw*sO*cI)*xp+(-sw*cO-cw*sO*cI)*yp, (cw*sO+sw*cO*cI)*xp+(-sw*sO+cw*cO*cI)*yp, sw*sI*xp+cw*sI*yp];
+}
+// прецессия экваториальных координат J2000 → на эпоху T (веков от J2000), °
+function ovkPrecess(raD,decD,T){
+  const s=OVK_D/3600, zeta=(2306.2181*T+0.30188*T*T)*s, z=(2306.2181*T+1.09468*T*T)*s, th=(2004.3109*T-0.42665*T*T)*s;
+  const a=raD*OVK_D, d=decD*OVK_D;
+  const A=Math.cos(d)*Math.sin(a+zeta), B=Math.cos(th)*Math.cos(d)*Math.cos(a+zeta)-Math.sin(th)*Math.sin(d), C=Math.sin(th)*Math.cos(d)*Math.cos(a+zeta)+Math.cos(th)*Math.sin(d);
+  return {ra:ovkNorm((Math.atan2(A,B)+z)/OVK_D), dec:Math.asin(Math.max(-1,Math.min(1,C)))/OVK_D};
+}
+// планеты для эпохи T: ra, dec (на эпоху), dist (а.е.), mag, size (°), frac — освещённая доля
+function ovkPlanets(T){
+  const E=ovkHelio('earth',T), eps=23.43928*OVK_D, ce=Math.cos(eps), se=Math.sin(eps), R=Math.hypot(...E), out=[];
+  for(const P of OVK_PLANETS){
+    const h=ovkHelio(P.id,T), x=h[0]-E[0], y=h[1]-E[1], z=h[2]-E[2], D=Math.hypot(x,y,z), r=Math.hypot(...h);
+    const ra=Math.atan2(y*ce-z*se,x)/OVK_D, dec=Math.asin((y*se+z*ce)/D)/OVK_D, q=ovkPrecess(ovkNorm(ra),dec,T);
+    const i=Math.acos(Math.max(-1,Math.min(1,(r*r+D*D-R*R)/(2*r*D))))/OVK_D;      // фазовый угол
+    let m=OVK_MAG0[P.id]+5*Math.log10(r*D);
+    if(P.id==='mercury') m+=0.0380*i-0.000273*i*i+0.000002*i*i*i;
+    else if(P.id==='venus') m+=0.0009*i+0.000239*i*i-0.00000065*i*i*i;
+    else if(P.id==='mars') m+=0.016*i;
+    else if(P.id==='jupiter') m+=0.005*i;
+    out.push({id:P.id,label:P.label,kind:'planet',ra:q.ra,dec:q.dec,dist:D,mag:m,size:P.d0/D/3600,frac:(1+Math.cos(i*OVK_D))/2});
+  }
+  return out;
+}
+// [id, название, α J2000 (ч), δ J2000 (°), блеск, вид]; deep — туманности, галактики, скопления
+const OVK_STARS=[
+  ['sirius','Sirius',6.7525,-16.7161,-1.46],['canopus','Canopus',6.3992,-52.6957,-0.74],['arcturus','Arcturus',14.2610,19.1824,-0.05],
+  ['rigilkent','Rigil Kent.',14.6600,-60.8354,-0.01],['vega','Vega',18.6156,38.7837,0.03],['capella','Capella',5.2782,45.9980,0.08],
+  ['rigel','Rigel',5.2423,-8.2016,0.13],['procyon','Procyon',7.6550,5.2250,0.34],['achernar','Achernar',1.6286,-57.2368,0.46],
+  ['betelgeuse','Betelgeuse',5.9195,7.4071,0.50],['hadar','Hadar',14.0637,-60.3730,0.61],['altair','Altair',19.8464,8.8683,0.76],
+  ['acrux','Acrux',12.4433,-63.0991,0.76],['aldebaran','Aldebaran',4.5987,16.5093,0.85],['antares','Antares',16.4901,-26.4320,0.96],
+  ['spica','Spica',13.4199,-11.1613,0.97],['pollux','Pollux',7.7553,28.0262,1.14],['fomalhaut','Fomalhaut',22.9608,-29.6222,1.16],
+  ['deneb','Deneb',20.6905,45.2803,1.25],['mimosa','Mimosa',12.7953,-59.6888,1.25],['regulus','Regulus',10.1395,11.9672,1.35],
+  ['adhara','Adhara',6.9771,-28.9721,1.50],['castor','Castor',7.5767,31.8883,1.58],['shaula','Shaula',17.5601,-37.1038,1.63],
+  ['gacrux','Gacrux',12.5194,-57.1132,1.64],['bellatrix','Bellatrix',5.4189,6.3497,1.64],['elnath','Elnath',5.4382,28.6075,1.65],
+  ['alnilam','Alnilam',5.6036,-1.2019,1.69],['alnair','Alnair',22.1372,-46.9610,1.74],['alnitak','Alnitak',5.6793,-1.9426,1.77],
+  ['alioth','Alioth',12.9005,55.9598,1.77],['dubhe','Dubhe',11.0621,61.7510,1.79],['mirfak','Mirfak',3.4054,49.8612,1.80],
+  ['wezen','Wezen',7.1399,-26.3932,1.84],['kaus','Kaus Austr.',18.4029,-34.3846,1.85],['alkaid','Alkaid',13.7923,49.3133,1.86],
+  ['polaris','Polaris',2.5303,89.2641,1.98],['alpheratz','Alpheratz',0.1398,29.0904,2.06],['schedar','Schedar',0.6751,56.5373,2.24],
+  ['mizar','Mizar',13.3988,54.9254,2.23],['caph','Caph',0.1529,59.1498,2.27],['merak','Merak',11.0307,56.3824,2.37],
+  ['phecda','Phecda',11.8972,53.6948,2.44],['navi','Navi',0.9451,60.7167,2.47],['imai','Imai',12.2524,-58.7489,2.80],
+  ['megrez','Megrez',12.2571,57.0326,3.31]];
+const OVK_DEEP=[
+  ['m31','Andromeda Galaxy',0.7123,41.269,3.4],['m45','Pleiades',3.7900,24.105,1.6],['m42','Orion Nebula',5.5881,-5.391,4.0],
+  ['lmc','Large Magellanic Cloud',5.3917,-69.756,0.9],['smc','Small Magellanic Cloud',0.8767,-72.80,2.7],
+  ['omegacen','Omega Centauri',13.4472,-47.480,3.7],['gc','Galactic Centre',17.7611,-29.008,null],['m13','Hercules Cluster',16.6947,36.460,5.8]];
+// планеты (mag ≤ planetMag), звёзды (mag ≤ starMag), глубокий космос (deep) — азимут и угол места в точке lat/lon
+function ovkSkyObjects(ms,lat,lon,opt){
+  const jd=ovkJd(ms), T=(jd-2451545)/36525, res=[];
+  const put=(o,ra,dec)=>{ const h=ovkAzEl(ra,dec,jd,lat,lon); o.az=h.az; o.el=h.el; res.push(o); };
+  if(opt.planets) for(const P of ovkPlanets(T)) put(P,P.ra,P.dec);
+  const st=(arr,kind,lim)=>{
+    for(const s of arr){
+      if(s[4]!=null && s[4]>lim) continue;
+      const q=ovkPrecess(s[2]*15,s[3],T);
+      put({id:s[0],label:s[1],kind,mag:s[4],size:0},q.ra,q.dec);
+    }
+  };
+  if(opt.starMag!=null) st(OVK_STARS,'star',opt.starMag);
+  if(opt.deep) st(OVK_DEEP,'deep',99);
+  return res;
+}
+
 // ---------- видимость по рельефу ----------
 // rings[j] — Float32Array(NA·4): e, n, u, h точек кольца j (NaN — нет данных), азимуты через 360/NA.
 // cum[j][i] — наибольший угол места (рад) по кольцам ближе j в азимутах i−1…i+1: то, что заслоняет точку дальше кольца j.

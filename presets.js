@@ -4,6 +4,9 @@
 const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=45;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
+// общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
+const Net={ get proxy(){ return (LS.get('dsp-proxy')||'').trim(); },
+  url(u){ const p=this.proxy; return !p ? u : p.includes('{url}') ? p.replace('{url}',encodeURIComponent(u)) : p+u; } };
 const patchListEl=document.getElementById('patchList');
 const patchSearchEl=document.getElementById('patchSearch');
 const readP=()=>{ try{ return JSON.parse(LS.get(PKEY))||{}; }catch(e){ return {}; } };
