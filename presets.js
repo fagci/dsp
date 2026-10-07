@@ -4498,7 +4498,7 @@ const mp=addNode('geoMap',1040,200,{mz:11,mlat:55.0,mlon:82.65});
 mp.size.w=480; mp.size.h=420; applySize(mp);
 addEdge(tb.id,'rec',cv.id,'rec'); addEdge(me.id,'lat',cv.id,'lat'); addEdge(me.id,'lon',cv.id,'lon');
 addEdge(me.id,'lat',hz.id,'lat'); addEdge(me.id,'lon',hz.id,'lon');
-addEdge(cv.id,'rec',mp.id,'rec'); addEdge(cv.id,'poly',mp.id,'rec2');
+addEdge(cv.id,'rec',mp.id,'rec'); addEdge(cv.id,'poly',mp.id,'rec2'); addEdge(cv.id,'raster',mp.id,'rec3');
 markWiresDirty();
 });
 preset('Radio Reach: ADS-B Coverage over Terrain (Generator)', function(){

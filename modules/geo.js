@@ -1088,7 +1088,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
           {n:'follow',t:'check',d:false,label:'follow'},
           {n:'net',t:'check',d:true,label:'online'},
           {n:'fit',t:'button',label:'Fit',fn:n=>geoMapFit(n)},
-          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.ents.clear(); n.selKey=null; geoMapChanged(n); }},
+          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.ents.clear(); n.rasters?.clear(); n.selKey=null; geoMapChanged(n); }},
           {n:'trail',t:'range',min:1,max:5000,step:1,d:500,label:'track points per id',adv:true},
           {n:'maxEnt',t:'range',min:10,max:20000,step:10,d:5000,label:'max objects',adv:true},
           {n:'rayKm',t:'range',min:10,max:20000,step:10,d:1000,label:'bearing length, km',adv:true},
@@ -1120,6 +1120,11 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
   draw(n,cv,cx){ geoMapDraw(n,cv,cx); }});
 
 function geoMapAdd(n,r){
+  if(r && r.kind==='raster'){                        // растровый слой (покрытие): картинка и границы, не объект
+    const id=String(r.id ?? 'raster'), rs=n.rasters || (n.rasters=new Map());
+    if(r.gone) rs.delete(id); else if(r.canvas && isFinite(r.north) && isFinite(r.south) && isFinite(r.west) && isFinite(r.east)){ if(rs.size>=8 && !rs.has(id)) rs.delete(rs.keys().next().value); rs.set(id,r); }
+    geoMapChanged(n); return;
+  }
   const pos=geoRecPos(r); if(!pos) return;
   const now=Date.now(), t=recTime(r) ?? now;
   const id=r.id!=null && r.id!=='' ? String(r.id) : null;
@@ -1345,8 +1350,33 @@ function geoMapDraw(n,cv,cx){
   const g=n._bv, k=v.S/g.S;
   if(k!==1) redraw(n);                                  // подложка растянута — перерисуем, когда зум успокоится
   cx.drawImage(n._base,dx,dy,g.W*k,g.H*k);
+  geoDrawRasters(n,cx,v);
   geoDrawObjects(n,cx,v);
   geoDrawOverlay(n,cx,v);
+}
+// растры: строка картинки — полоса между своими широтами (карта в меркаторе, картинка линейна по широте)
+function geoDrawRasters(n,cx,v){
+  if(!n.rasters || !n.rasters.size) return;
+  const t=n._rt || (n._rt=document.createElement('canvas'));
+  if(t.width!==v.W || t.height!==v.H){ t.width=v.W; t.height=v.H; }
+  const tx=t.getContext('2d');
+  for(const r of n.rasters.values()){
+    const c=r.canvas, rows=c.height, a=geoProj(v,r.north,r.west), b=geoProj(v,r.south,r.east);
+    if(b.x<0 || a.x>v.W || b.y<0 || a.y>v.H) continue;
+    // сначала непрозрачно во временную канву (границы строк по целым пикселям, без швов), затем одним слоем с прозрачностью
+    tx.clearRect(0,0,v.W,v.H); tx.imageSmoothingEnabled=false;
+    const x0=Math.round(a.x), w=Math.max(1,Math.round(b.x)-x0);
+    if(rows<2 || b.y-a.y<rows*1.5) tx.drawImage(c,x0,Math.round(a.y),w,Math.max(1,Math.round(b.y)-Math.round(a.y)));
+    else {
+      let y0=Math.round(geoProj(v,r.north,r.west).y);
+      for(let j=0;j<rows;j++){
+        const y1=Math.round(geoProj(v,r.north+(r.south-r.north)*(j+1)/rows,r.west).y);
+        if(y1>y0 && y1>=0 && y0<=v.H) tx.drawImage(c,0,j,c.width,1,x0,y0,w,y1-y0);
+        y0=y1;
+      }
+    }
+    cx.save(); cx.globalAlpha=clamp(+r.opacity||.55,0,1); cx.drawImage(t,0,0); cx.restore();
+  }
 }
 function geoDrawBase(n,cx,v){
   const {W,H,z}=v, D=GeoBase.data;
