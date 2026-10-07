@@ -76,6 +76,8 @@ const GD_COLS={
   repeaters:['id','name','operator','freq','tone','mode','lat','lon','h','ele','icon','src'],
   peaks:['id','name','lat','lon','ele','src'],
 };
+// колонки списка для вида (broadcast и masts пишут в тот же список, что towers)
+const gdKindCols=kind=>GD_COLS[kind] || GD_COLS[{broadcast:'towers',masts:'towers'}[kind]] || null;
 function gdQuery(kind,bbox,custom){
   const b='('+bbox.map(v=>+v.toFixed(5)).join(',')+')';
   if(kind==='custom'){

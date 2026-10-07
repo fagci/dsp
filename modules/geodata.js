@@ -100,7 +100,7 @@ async function gdImportOsm(kind,bbox,o){
   const json=await gfPost(gdQuery(kind,bbox,o.custom));
   let rows, cols, list;
   if(kind==='custom'){ const g=gdParseGeneric(json); rows=g.rows; cols=g.cols; list=o.list||'geo/osm'; }
-  else { rows=gdParseOverpass(kind,json); cols=GD_COLS[kind]; list=GD_KINDS[kind].list; }
+  else { rows=gdParseOverpass(kind,json); cols=gdKindCols(kind); list=GD_KINDS[kind].list; }
   return {rows, added:await gdUpsert(list,cols,rows), list, cols};
 }
 async function gdImportCellApi(key,bbox,onMsg){
