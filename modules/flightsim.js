@@ -5,7 +5,7 @@
    Высота земли — Horizon.hAt (если есть узел Horizon), иначе плоская по параметру ground. Ядро — flightsim-kernels.js. */
 
 const FLY_CAMS=['chase','cockpit','tower','orbit'];
-const FLY_TTL=90000, FLY_WAIT=20000;
+const FLY_TTL=90000, FLY_WAIT=20000, FLY_RWY_KM=30;
 
 // высота земли: по карте Horizon, вне её — последняя известная, до первой — параметр
 function flyGround(n,la,lo){
@@ -20,15 +20,37 @@ function flyPoint(n,I){
 function flyModelP(p){ return {vmin:+p.vmin, vmax:Math.max(+p.vmax,+p.vmin+10)}; }
 
 // самолёт ставится, когда известна высота земли в точке старта: без неё агл дал бы неверную высоту
+// ближайшая полоса из данных аэродромов (geofeat.js): undefined — ещё грузится, null — рядом нет
+function flyRunway(n,pt){
+  const key=pt.lat.toFixed(3)+','+pt.lon.toFixed(3);
+  if(n.rwyKey!==key){ n.rwyKey=key; n.rwy=undefined; n.rwyBusy=false; }
+  if(n.rwy===undefined && !n.rwyBusy){
+    n.rwyBusy=true;
+    gfLoad('air',pt.lat,pt.lon,FLY_RWY_KM,true).then(r=>{ n.rwy=gfNearestRunway(r.data,pt.lat,pt.lon,FLY_RWY_KM); })
+      .catch(e=>{ n.rwy=null; n.rwyErr=e.message; }).finally(()=>{ n.rwyBusy=false; });
+  }
+  return n.rwy;
+}
 function flySpawn(n,I,now){
-  const pt=n.spawnAt || flyPoint(n,I);
+  let pt=n.spawnAt || flyPoint(n,I), hdg=+n.p.hdg0, agl=+n.p.agl0, note='';
   if(!pt){ n.msg='no start point — add My Position or wire lat / lon'; return false; }
-  if(!n.spawnAt){ n.spawnAt=pt; n.spawnT=now; n.gh=null; n.tower=pt; }
+  if(!n.spawnAt){ n.spawnAt=pt; n.spawnT=now; n.gh=null; n.tower=pt; n.spawnRwy=null; }
+  if(n.p.start==='nearest runway' && !n.spawnRwy){
+    const r=flyRunway(n,n.spawnAt);
+    if(r===undefined){ n.msg='looking for a runway…'; return false; }
+    n.spawnRwy=r || {none:true};
+    if(r){ n.spawnAt=pt={lat:r.lat,lon:r.lon}; n.tower=pt; n.spawnT=now; }
+  }
+  if(n.p.start==='nearest runway'){
+    if(n.spawnRwy.none) note='no runway within '+FLY_RWY_KM+' km'+(n.rwyErr ? ' ('+n.rwyErr+')' : '')+' — started at the point';
+    else { hdg=n.spawnRwy.hdg; agl=0; note='runway '+(n.spawnRwy.ref||'')+' '+(n.spawnRwy.name||'')+', '+Math.round(n.spawnRwy.len)+' m'; }
+  }
   const h=Horizon.hAt ? Horizon.hAt(pt.lat,pt.lon) : NaN, haveHz=Graph.nodes.some(x=>x.type==='horizon');
   if(h!==h && haveHz && now-n.spawnT<FLY_WAIT){ n.msg='waiting for terrain (Horizon)…'; return false; }
   const gh=h===h ? h : +n.p.ground; n.gh=gh;
-  n.s=flyInit(pt.lat,pt.lon,gh,+n.p.agl0,+n.p.hdg0,flyModelP(n.p));
-  n.spawnAt=null; n.cs={}; n.msg='';
+  n.s=flyInit(pt.lat,pt.lon,gh,agl,hdg,flyModelP(n.p));
+  if(agl<=0) n.thrCmd=0;
+  n.spawnAt=null; n.cs={}; n.msg=''; n.note=note;
   return true;
 }
 function flyReset(n){ n.s=null; n.spawnAt=null; n.cs={}; }
@@ -59,8 +81,9 @@ def({ id:'flightsim', title:'Flight Sim', cat:'Sources',
           {n:'zoom',t:'check',d:true,label:'tower: zoom on the aircraft'},
           {n:'th',t:'range',min:0,max:100,step:1,d:8,label:'tower height above ground, m'},
           {n:'agl0',t:'range',min:0,max:3000,step:10,d:300,label:'start height above ground, m (0 — on the ground)'},
+          {n:'start',t:'select',opts:['point','nearest runway'],d:'point',label:'start: in the air at the point, or on the nearest runway (OSM, saved in the browser; heads along it, throttle idle)'},
           {n:'hdg0',t:'range',min:0,max:359,step:1,d:90,label:'start heading, °'},
-          {n:'thrm',t:'select',opts:['stick −1…1','lever 0…1'],d:'stick −1…1',label:'thr input range'},
+          {n:'thrm',t:'select',opts:['stick −1…1','lever 0…1','stick up only 0…1'],d:'stick −1…1',label:'thr input: a stick −1…1 (centre = half), a lever 0…1, or a stick whose lower half is idle (hold-throttle Joystick: starts at idle)'},
           {n:'inv',t:'check',d:false,label:'invert elevator (stick forward — nose down)'},
           {n:'vmin',t:'num',d:30,label:'stall speed, m/s',adv:true},
           {n:'vmax',t:'num',d:100,label:'top speed, m/s',adv:true},
@@ -69,7 +92,7 @@ def({ id:'flightsim', title:'Flight Sim', cat:'Sources',
           {n:'slon',t:'num',d:37.6173,label:'start lon, °',adv:true},
           {n:'id',t:'text',d:'sim',label:'record id',adv:true}],
   init:n=>{ n.s=null; n.spawnAt=null; n.tower=null; n.cs={}; n.t=0; n.tracks=new Map(); n.pickId=null; n.nextPick=false;
-            n.thrCmd=.5; n.edge={reset:0,cam:0,next:0}; n.gh=null; n.msg=''; n.txt=''; n.camKey=''; n.out=null; },
+            n.thrCmd=.5; n.note=''; n.rwy=undefined; n.rwyKey=''; n.rwyBusy=false; n.rwyErr=''; n.spawnRwy=null; n.edge={reset:0,cam:0,next:0}; n.gh=null; n.msg=''; n.txt=''; n.camKey=''; n.out=null; },
   process(n,I){
     const p=n.p, now=performance.now(), ts=Date.now(), dt=n.t ? Math.min(.1,(now-n.t)/1000) : 0; n.t=now;
     const rise=k=>{ const v=recNum(I[k])>.5 ? 1 : 0, r=v && !n.edge[k]; n.edge[k]=v; return r; };
@@ -103,7 +126,7 @@ def({ id:'flightsim', title:'Flight Sim', cat:'Sources',
       if(!n.s) flySpawn(n,I,now);
       if(n.s){
         const s=n.s, tv=recNum(I.thr);
-        if(tv!=null) n.thrCmd=p.thrm==='lever 0…1' ? Math.max(0,Math.min(1,tv)) : Math.max(0,Math.min(1,(tv+1)/2));
+        if(tv!=null) n.thrCmd=p.thrm==='stick −1…1' ? Math.max(0,Math.min(1,(tv+1)/2)) : Math.max(0,Math.min(1,tv));
         const c={ail:clamp1(recNum(I.ail)??0), elev:(p.inv?-1:1)*clamp1(recNum(I.elev)??0), rud:clamp1(recNum(I.rud)??0), thr:n.thrCmd};
         const steps=Math.ceil(dt/.02), h=dt/Math.max(1,steps), P=flyModelP(p);
         for(let i=0;i<steps;i++) flyStep(s,c,h,P,flyGround(n,s.lat,s.lon));
@@ -130,7 +153,7 @@ def({ id:'flightsim', title:'Flight Sim', cat:'Sources',
       ? {t:ts, id, label:'SIM', lat:own.lat, lon:own.lon, alt_m:own.alt, heading:own.hdg, pitch:own.pitch, roll:own.roll, icon:'plane',
          color:'#7dff9a', ...(n.s.gnd ? {ground:true} : {})}
       : {id, gone:true}] : null;
-    if(!watch) text=n.s ? (n.s.crashed ? 'CRASHED — press Reset' : '') : n.msg;
+    if(!watch) text=n.s ? (n.s.crashed ? 'CRASHED — press Reset' : n.note||'') : n.msg;
     else text=T ? '' : n.tracks.size ? 'no match for «'+p.follow+'»' : 'waiting for aircraft on rec…';
     n.txt=(cam ? (watch ? 'watch · ' : 'fly · ')+p.cam+(id ? ' · '+id : '') : '')+(own ? '\n'+Math.round(kts)+' kt · '+Math.round(own.alt)+' m (AGL '+Math.round(agl)+') · hdg '+String(Math.round(own.hdg)).padStart(3,'0')+
       ' · VS '+(own.vs>=0?'+':'')+own.vs.toFixed(1)+' m/s'+(!watch ? ' · THR '+Math.round(n.s.thr*100)+'%' : '') : '')+(text ? '\n'+text : '');

@@ -31,6 +31,9 @@ function joyShape(v,dead,expo){
   const u=Math.min(1,(a-dead)/(1-dead)), y=(1-expo)*u+expo*u*u*u;
   return v<0 ? -y : y;
 }
+// инверсия вертикали: какие стики меняют знак Y (назад / на себя = вверх)
+const JOY_INV=['none','right stick','left stick','both sticks'];
+const joyInvY=(sel,axis)=>axis==='y2' ? sel==='right stick' || sel==='both sticks' : axis==='y1' ? sel==='left stick' || sel==='both sticks' : false;
 const joyBits=b=>b.reduce((s,v,i)=>s|(v?1<<i:0),0);
 const joyI8=v=>Math.round(Math.max(-1,Math.min(1,v))*127);
 // кадр из 7 байт: A5, x1, y1, x2, y2 (знаковые байты), кнопки (бит i — b(i+1)), XOR всех предыдущих

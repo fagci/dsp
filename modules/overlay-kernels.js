@@ -217,6 +217,29 @@ function ovkOsmParse(json,minM=80){
   return res;
 }
 
+// ---------- свет и тени рельефа ----------
+// направление на Солнце в ENU
+const ovkSunVec=(az,el)=>[Math.sin(az*OVK_D)*Math.cos(el*OVK_D), Math.cos(az*OVK_D)*Math.cos(el*OVK_D), Math.sin(el*OVK_D)];
+// 0 — ночь, 1 — день; сумерки между −6° и +6°
+const ovkDayK=el=>Math.max(0,Math.min(1,(el+6)/12));
+// освещённость ячейки 0…1 по нормали (вверх) n и направлению на Солнце s; плоская земля ≈ .8, склон к Солнцу — 1
+function ovkLit(n,s,el){
+  if(el<=0) return 0;
+  const d=n[0]*s[0]+n[1]*s[1]+n[2]*s[2];
+  return Math.max(0,Math.min(1,d/Math.max(.35,Math.sin(el*OVK_D))/1.25));
+}
+// точка в тени рельефа: луч к Солнцу уходит над землёй? hAt(lat,lon) → высота, м; hTop — высота самой высокой точки окна; шаги растут ×1.25, кривизна не учитывается
+function ovkShadowed(hAt,la,lo,h,az,el,maxM,hTop=Infinity){
+  if(el<2) return false;
+  const t=Math.tan(el*OVK_D), kLat=1/111320, kLon=1/(111320*Math.cos(la*OVK_D)), dN=Math.cos(az*OVK_D), dE=Math.sin(az*OVK_D);
+  for(let d=100; d<=maxM; d*=1.25){
+    if(h+d*t>hTop) return false;                         // луч выше любой вершины окна
+    const q=hAt(la+d*dN*kLat, lo+d*dE*kLon);
+    if(q===q && q>h+d*t+3) return true;
+  }
+  return false;
+}
+
 // ---------- поза камеры во времени (сдвиг видео относительно датчиков) ----------
 function ovkPosePush(buf,t,az,el,roll){
   const l=buf[buf.length-1];

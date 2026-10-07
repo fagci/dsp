@@ -172,51 +172,65 @@ function ovAlt(r){
 // ---------- рельеф ----------
 // Сетка «азимут × дальность» вокруг наблюдателя по карте высот Horizon (hAt). Кольца — с шагом ×1.08 от 250 м,
 // точки в ENU (e, n, u) + высота над уровнем моря (h). Цвет ячейки: материал по высоте, освещение по наклону, дымка по дальности.
-const OV_RING_K=OVK_RING_K, OV_AZ_STEP=2, OV_SHADES=8, OV_REL_MOVE=60, OV_REL_UP=40;
-const OV_MAT=[[70,100,55],[112,96,70],[125,125,132],[238,242,246]], OV_HAZE=[150,172,200], OV_SUN=(()=>{ const v=[-.5,-.4,.77], l=Math.hypot(...v); return v.map(x=>x/l); })();
-function ovRelief(n,obs,lat,lon,alt){
+const OV_RING_K=OVK_RING_K, OV_AZ_STEP=2, OV_SHADES=8, OV_REL_MOVE=60, OV_REL_UP=40, OV_SHADOW_KM=12000;
+const OV_MAT=[[70,100,55],[112,96,70],[125,125,132],[238,242,246]], OV_HAZE=[150,172,200], OV_HAZE_NIGHT=[12,20,38];
+const ovMix=(a,b,k)=>a.map((v,i)=>v+(b[i]-v)*k);
+// Солнце (az, el) для места и времени t; пересчёт раз в секунду
+function ovSky(n,now,t,lat,lon){
+  if(n.skyAt && now-n.skyAt<1000 && n.skyKey===lat+'|'+lon) return n.sky;
+  n.skyAt=now; n.skyKey=lat+'|'+lon; return n.sky=ovkSkyBodies(t,lat,lon);
+}
+function ovRelief(n,obs,lat,lon,alt,sun,shadows){
   const H=Horizon;
   if(!H.hAt || H.lat==null || Math.abs(H.lat-lat)>.02) return null;
   const r0=n.rel;                                           // камера сместилась немного — те же кольца со сдвигом (rel.off), без пересборки
-  if(r0 && n.relVer===H.ver){
+  if(r0 && n.relVer===H.ver && r0.shadows===shadows && Math.abs(ovkWrap(r0.sun.az-sun.az))<.5 && Math.abs(r0.sun.el-sun.el)<.5){
     const e=ovEnu(r0.obs,lat,lon,alt);
     if(Math.hypot(e[0],e[1])<OV_REL_MOVE && Math.abs(e[2])<OV_REL_UP){ r0.off=e; return r0; }
   }
-  const R=6371000, la=lat*ORI_D, lo=lon*ORI_D, sl=Math.sin(la), cl=Math.cos(la), NA=360/OV_AZ_STEP, rings=[], dist=[];
+  const R=6371000, la=lat*ORI_D, lo=lon*ORI_D, sl=Math.sin(la), cl=Math.cos(la), NA=360/OV_AZ_STEP, rings=[], dist=[], lats=[], lons=[]; let hTop=-Infinity;
   for(let d=OVK_RING0; d<=H.radius*1000; d*=OV_RING_K){
-    const dl=d/R, sd=Math.sin(dl), cd=Math.cos(dl), a=new Float32Array(NA*4).fill(NaN);
+    const dl=d/R, sd=Math.sin(dl), cd=Math.cos(dl), a=new Float32Array(NA*4).fill(NaN), pla=new Float64Array(NA), plo=new Float64Array(NA);
     for(let i=0;i<NA;i++){
       const th=i*OV_AZ_STEP*ORI_D, s2=sl*cd+cl*sd*Math.cos(th), la2=Math.asin(s2),
             lo2=lo+Math.atan2(Math.sin(th)*sd*cl,cd-sl*s2), h=H.hAt(la2/ORI_D,lo2/ORI_D);
+      pla[i]=la2/ORI_D; plo[i]=lo2/ORI_D;
       if(h!==h) continue;
       const e=ovEnu(obs,la2/ORI_D,lo2/ORI_D,h);
       a[i*4]=e[0]; a[i*4+1]=e[1]; a[i*4+2]=e[2]; a[i*4+3]=h;
     }
-    rings.push(a); dist.push(d);
+    rings.push(a); dist.push(d); lats.push(pla); lons.push(plo);
+    for(let i=0;i<NA;i++) if(a[i*4+3]>hTop) hTop=a[i*4+3];
   }
+  const sv=ovkSunVec(sun.az,sun.el), dk=ovkDayK(sun.el), amb=.12+.26*dk, haze=ovMix(OV_HAZE_NIGHT,OV_HAZE,dk),
+        shOn=shadows && sun.el>=2 && sun.el<60, shMax=shOn ? Math.min(12000,2500/Math.tan(sun.el*ORI_D)) : 0;
   // ячейка (j, i) — между кольцами j и j+1, азимутами i и i+1: код цвета = материал × OV_SHADES + освещение
   const cells=[], colors=[];
   for(let j=0;j<rings.length-1;j++){
-    const a=rings[j], b=rings[j+1], c=new Int16Array(NA).fill(-1);
+    const a=rings[j], b=rings[j+1], c=new Int16Array(NA).fill(-1), shStep=dist[j]<3000 ? 2 : 4; let sdw=false;
     for(let i=0;i<NA;i++){
       const o0=i*4, o1=((i+1)%NA)*4;
       if(a[o0]!==a[o0] || a[o1]!==a[o1] || b[o0]!==b[o0] || b[o1]!==b[o1]) continue;
       const ax=a[o1]-a[o0], ay=a[o1+1]-a[o0+1], az=a[o1+2]-a[o0+2], bx=b[o0]-a[o0], by=b[o0+1]-a[o0+1], bz=b[o0+2]-a[o0+2];
       let nx=ay*bz-az*by, ny=az*bx-ax*bz, nz=ax*by-ay*bx;
       const nl=Math.hypot(nx,ny,nz)||1; if(nz<0){ nx=-nx; ny=-ny; nz=-nz; }
-      const sh=Math.max(0,Math.min(1,.3+.8*(nx*OV_SUN[0]+ny*OV_SUN[1]+nz*OV_SUN[2])/nl));
+      let sh=ovkLit([nx/nl,ny/nl,nz/nl],sv,sun.el);
+      if(shOn && sh>0 && dist[j]<=OV_SHADOW_KM){            // тень — через ячейку по азимуту (вдали реже) и только вблизи
+        if(i%shStep===0) sdw=ovkShadowed(H.hAt,lats[j][i],lons[j][i],a[o0+3],sun.az,sun.el,shMax,hTop);
+        if(sdw) sh=0;
+      }
       const h=(a[o0+3]+a[o1+3]+b[o0+3]+b[o1+3])/4, m=h<400 ? 0 : h<1500 ? 1 : h<2500 ? 2 : 3;
       c[i]=m*OV_SHADES+Math.round(sh*(OV_SHADES-1));
     }
     cells.push(c);
     const fog=1-Math.exp(-dist[j]/45000), row=[];            // цвета для этого кольца
     for(let m=0;m<OV_MAT.length;m++) for(let k=0;k<OV_SHADES;k++){
-      const f=.35+.65*k/(OV_SHADES-1), base=OV_MAT[m];
-      row.push('rgb('+[0,1,2].map(q=>Math.round((base[q]*f)*(1-fog)+OV_HAZE[q]*fog)).join(',')+')');
+      const f=amb+(1-amb)*k/(OV_SHADES-1), base=OV_MAT[m];
+      row.push('rgb('+[0,1,2].map(q=>Math.round((base[q]*f)*(1-fog)+haze[q]*fog)).join(',')+')');
     }
     colors.push(row);
   }
-  n.relVer=H.ver; n.rel={rings,NA,cells,colors,los:ovkLosBuild(rings,NA),obs,off:[0,0,0]};
+  n.relVer=H.ver; n.rel={rings,NA,cells,colors,los:ovkLosBuild(rings,NA),obs,off:[0,0,0],sun:{az:sun.az,el:sun.el},shadows};
   return n.rel;
 }
 // кольца от дальних к ближним — ближние перекрывают дальние; ячейки одного цвета в кольце — одним путём
@@ -300,6 +314,46 @@ function ovOsmGeo(n,obs,rel,alt,okey){
   return n.osmGeo={roads:line(o.roads), rivers:line(o.rivers), peaks:dots(o.peaks,60), places:dots(o.places,40)};
 }
 
+// ---------- аэродромы, полосы и населённые пункты (geofeat.js: ячейки OSM в базе браузера) ----------
+const OV_FEAT_KINDS=['air','pop'];
+async function ovFeatLoad(n,lat,lon,rKm,kinds){
+  const gen=n.featReq={}, key=kinds.join()+'|'+rKm;
+  n.featMsg='loading '+(kinds.includes('air') ? 'airfields' : 'towns')+'…'; redraw(n);
+  try{
+    const res={};
+    for(const k of kinds){
+      const r=await gfLoad(k,lat,lon,rKm,true);
+      if(n.featReq!==gen) return;
+      const near=a=>a.map(q=>({q,d:gfDistKm(lat,lon,q.lat ?? (q.pts[0][0]+q.pts[1][0])/2,q.lon ?? (q.pts[0][1]+q.pts[1][1])/2)})).filter(x=>x.d<=rKm);
+      if(k==='air') res.air={ap:near(r.data.ap).sort((a,b)=>a.d-b.d).slice(0,40).map(x=>x.q), rw:near(r.data.rw).sort((a,b)=>a.d-b.d).slice(0,60).map(x=>x.q)};
+      else res.pop={pl:near(r.data.pl).sort((a,b)=>GF_PLACE_RANK[a.q.kind]-GF_PLACE_RANK[b.q.kind] || a.d-b.d).slice(0,150).map(x=>x.q)};
+    }
+    Object.assign(n.feat,res); n.featFor={lat,lon,key}; n.featGen=(n.featGen|0)+1; n.featMsg='';
+  }catch(e){ if(n.featReq===gen){ n.featMsg='map data: '+e.message; n.featT=Date.now()+60000; n.featFor=null; } }
+  redraw(n);
+}
+function ovFeatDownload(n){
+  const L=n.last; if(!L || L.lat==null){ n.featMsg='no position yet'; redraw(n); return; }
+  const kinds=OV_FEAT_KINDS.filter(k=>n.p[k]); if(!kinds.length) kinds.push(...OV_FEAT_KINDS);
+  gfPrefetch(kinds,L.lat,L.lon,+n.p.featDlR,m=>{ n.featMsg=m; redraw(n); });
+}
+// положение на земле и видимость точек один раз на наблюдателя (как ovOsmGeo)
+function ovFeatGeo(n,obs,rel,alt,okey){
+  const f=n.feat; if(!f.air && !f.pop) return null;
+  const key=okey+'|'+n.featGen+'|'+Horizon.ver;
+  if(n.featGeoKey===key) return n.featGeo;
+  const hAt=Horizon.hAt, ground=(la,lo,fb)=>{ const h=hAt ? hAt(la,lo) : alt-2; return h===h ? h : (fb!=null && isFinite(fb) ? fb : null); };
+  const pt=(la,lo,h)=>{ const e=ovEnu(obs,la,lo,h); return {e, vis:ovkVisible(rel?.los,e[0],e[1],e[2],.02)}; };
+  const dot=(q,up,fb)=>{ const h=ground(q.lat,q.lon,fb); return h==null ? null : {...pt(q.lat,q.lon,h+up), name:q.name, icao:q.icao, kind:q.kind, pop:q.pop}; };
+  const rw=[];
+  for(const r of f.air?.rw||[]){
+    const a=r.pts[0], b=r.pts[1], ha=ground(a[0],a[1]), hb=ground(b[0],b[1]); if(ha==null || hb==null) continue;
+    rw.push({a:pt(a[0],a[1],ha+.4), b:pt(b[0],b[1],hb+.4), ref:r.ref, width:r.width || 30});
+  }
+  n.featGeoKey=key;
+  return n.featGeo={rw, ap:(f.air?.ap||[]).map(q=>dot(q,0,q.ele)).filter(Boolean), pl:(f.pop?.pl||[]).map(q=>dot(q,0)).filter(Boolean)};
+}
+
 // выбор цели для калибровки: auto — ближайшая к перекрестию в пределах 30°
 function ovAlign(n){
   const L=n.last; if(!L){ return; }
@@ -347,9 +401,16 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           {n:'deep',t:'check',d:true,label:'deep sky: Andromeda, Pleiades, Orion Nebula, Magellanic Clouds…'},
           {n:'terrain',t:'check',d:true,label:'skyline from Horizon',adv:true},
           {n:'relief',t:'select',opts:['off','auto','lines','solid'],d:'auto',label:'terrain relief 3D from Horizon (auto: solid without video, lines over video)'},
+          {n:'shadows',t:'check',d:true,label:'terrain shadows from the real Sun (cost: a few ms when the mesh is rebuilt)'},
+          {n:'tshift',t:'range',min:-12,max:12,step:.25,d:0,label:'Sun time shift, h (0 — real time; moves the Sun, the light and the sky)',adv:true},
           {n:'osm',t:'check',d:false,label:'OSM: peaks, towns, roads, rivers (asks overpass-api.de, needs Horizon heights)'},
           {n:'osmR',t:'range',min:5,max:50,step:1,d:25,label:'OSM radius, km',adv:true},
           {n:'osmLoad',t:'button',label:'Load OSM now',fn:n=>{ n.osmT=0; n.osmFor=null; },adv:true},
+          {n:'air',t:'check',d:false,label:'airfields and runways (OSM, saved in the browser; needs Horizon heights)'},
+          {n:'pop',t:'check',d:false,label:'towns and villages (OSM, saved in the browser; needs Horizon heights)'},
+          {n:'featR',t:'range',min:10,max:100,step:5,d:40,label:'airfields / towns radius, km'},
+          {n:'featDl',t:'button',label:'Download area for offline',fn:n=>ovFeatDownload(n)},
+          {n:'featDlR',t:'range',min:20,max:200,step:10,d:100,label:'download area radius, km (airfields and towns are downloaded apart from the terrain)',adv:true},
           {n:'los',t:'check',d:true,label:'line of sight: dim objects behind the relief, mark them “no LOS”',adv:true},
           {n:'find',t:'text',d:'',label:'find: name or id (an arrow at the edge)'},
           {n:'home',t:'select',opts:['off','first fix'],d:'off',label:'home: first position fix (distance and bearing on the HUD)'},
@@ -362,8 +423,9 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           {n:'dRoll',t:'range',min:-180,max:180,step:.5,d:0,label:'roll correction, °',adv:true},
           {n:'resetc',t:'button',label:'Reset corrections',fn:n=>{ for(const k of ['dAz','dEl','dRoll']) setMod(n,k,0); },adv:true}],
   init:n=>{ n.ents=new Map(); n.I={}; n.seq=0; n.pose=[]; n.sel=null; n.hits=[]; n.last=null; n.msg=null; n.home=null;
-            n.pickOut=null; n.selInfo=null; n.visOut=null; n.nvis=0; n.nhid=0; n.osm=null; n.osmFor=null; n.osmT=0; n.osmMsg=''; n.osmGen=0; },
-  dispose:n=>{ n.osmReq=null; },
+            n.pickOut=null; n.selInfo=null; n.visOut=null; n.nvis=0; n.nhid=0; n.osm=null; n.osmFor=null; n.osmT=0; n.osmMsg=''; n.osmGen=0;
+            n.feat={air:null,pop:null}; n.featFor=null; n.featT=0; n.featMsg=''; n.featGen=0; n.featBusy=false; },
+  dispose:n=>{ n.osmReq=null; n.featReq=null; },
   process(n,I){
     const now=Date.now(), tr=+n.p.trail*1000;
     n.I=I;
@@ -418,7 +480,11 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
     let rx=0, ry=0, rw=W, rh=H;
     if(vw && vh){ const s=Math.min(W/vw,H/vh); rw=vw*s; rh=vh*s; rx=(W-rw)/2; ry=(H-rh)/2;
       try{ cx.drawImage(v,rx,ry,rw,rh); }catch(e){} }
-    else { const g=cx.createLinearGradient(0,0,0,H); g.addColorStop(0,'#0a1830'); g.addColorStop(1,'#1d3a5a');
+    const tnow=now+(+p.tshift||0)*3600000, gla=recNum(I.lat) ?? GeoMe.lat, glo=recNum(I.lon) ?? GeoMe.lon,
+          sun0=gla!=null && glo!=null ? ovSky(n,now,tnow,gla,glo).sun : null, dk=sun0 ? ovkDayK(sun0.el) : 0;
+    const rgb=a=>'rgb('+a.map(Math.round).join(',')+')';
+    if(!(vw && vh)){ const g=cx.createLinearGradient(0,0,0,H);               // небо: ночь → день по высоте Солнца
+      g.addColorStop(0,rgb(ovMix([10,24,48],[47,111,181],dk))); g.addColorStop(1,rgb(ovMix([29,58,90],[156,196,232],dk)));
       cx.fillStyle=g; cx.fillRect(0,0,W,H); }
     cx.save(); cx.beginPath(); cx.rect(rx,ry,rw,rh); cx.clip();
 
@@ -445,7 +511,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
     const ftxt=String(p.find||'').trim().toLowerCase();
     const cands=[], hits=[];
 
-    const rel=obs ? ovRelief(n,obs,lat,lon,alt) : null;
+    const rel=obs && sun0 ? ovRelief(n,obs,lat,lon,alt,sun0,p.shadows) : null;
     const los=rel && p.los ? rel.los : null;
     if(proj && rel && p.relief!=='off') ovDrawRelief(cx,rel,proj,p.relief==='solid' || p.relief==='auto' && !vw);
     if(proj){
@@ -480,7 +546,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
 
     // Солнце и Луна: положение по времени и месту, диски — в натуральную величину (но не мельче 6 px)
     if(proj && p.sky && havePos){
-      const sb=n.skyAt && now-n.skyAt<1000 && n.skyKey===lat+'|'+lon ? n.sky : (n.sky=ovkSkyBodies(now,lat,lon), n.skyAt=now, n.skyKey=lat+'|'+lon, n.sky);
+      const sb=ovSky(n,now,tnow,lat,lon);
       for(const b of [sb.sun,sb.moon]){
         if(b.el<-3) continue;
         const key='sky:'+b.id, d=1e7, e=dir(b.az,b.el).map(x=>x*d), c=proj(e);
@@ -509,10 +575,10 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
     }
 
     // планеты, яркие звёзды, глубокий космос: точки с подписью, размер — по блеску
-    if(proj && havePos && (p.planets || +p.starMag>-1 || p.deep)){
+    if(proj && havePos && (p.planets || +p.starMag>-1 || p.deep) && (vw || sun0.el<-3)){          // без видео днём звёзд нет
       const k=lat+'|'+lon+'|'+p.planets+'|'+p.starMag+'|'+p.deep;
       const objs=n.sky2At && now-n.sky2At<1000 && n.sky2Key===k ? n.sky2 : (n.sky2At=now, n.sky2Key=k,
-        n.sky2=ovkSkyObjects(now,lat,lon,{planets:p.planets, starMag:+p.starMag>-1 ? +p.starMag : null, deep:p.deep}));
+        n.sky2=ovkSkyObjects(tnow,lat,lon,{planets:p.planets, starMag:+p.starMag>-1 ? +p.starMag : null, deep:p.deep}));
       cx.font='10px monospace'; cx.textAlign='left'; cx.textBaseline='alphabetic';
       for(const b of objs){
         if(b.el<-1) continue;
@@ -559,7 +625,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
         cx.globalAlpha=.85; lines(g.rivers,'#4da3ff',1.4); lines(g.roads,'#ffb347',1.4); cx.globalAlpha=1;
         const boxes=[], free=(x,y,w,h)=>{ for(const b of boxes) if(x<b[0]+b[2] && x+w>b[0] && y<b[1]+b[3] && y+h>b[1]) return false; boxes.push([x,y,w,h]); return true; };
         cx.font='10px monospace'; cx.textAlign='left'; cx.textBaseline='alphabetic';
-        for(const [arr,kind] of [[g.peaks,'peak'],[g.places,'place']]){
+        for(const [arr,kind] of [[g.peaks,'peak'],[p.pop ? [] : g.places,'place']]){
           let shown=0;
           for(const q of arr){
             if(shown>=25 || !q.vis) continue;
@@ -571,6 +637,49 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
             else { cx.fillStyle='#ffffff'; cx.fillRect(c.x-2,c.y-2,4,4); }
             cx.fillStyle=kind==='peak' ? '#e8e0c8' : '#ffffff'; halo(label,c.x+7,c.y);
           }
+        }
+      }
+    }
+
+    // аэродромы, полосы, населённые пункты
+    if(proj && obs && (p.air || p.pop)){
+      const kinds=OV_FEAT_KINDS.filter(k=>p[k]), fkey=kinds.join()+'|'+p.featR;
+      for(const k of OV_FEAT_KINDS) if(!p[k]) n.feat[k]=null;
+      if((!n.featFor || n.featFor.key!==fkey || geoDist(n.featFor.lat,n.featFor.lon,lat,lon)>Math.max(3,+p.featR/4)) && now>=n.featT && !n.featBusy){
+        n.featBusy=true; n.featT=now+1500;
+        ovFeatLoad(n,lat,lon,+p.featR,kinds).finally(()=>{ n.featBusy=false; });
+      }
+      const g=ovFeatGeo(n,obs,rel,alt,okey);
+      if(g){
+        const boxes=[], free=(x,y,w,h)=>{ for(const b of boxes) if(x<b[0]+b[2] && x+w>b[0] && y<b[1]+b[3] && y+h>b[1]) return false; boxes.push([x,y,w,h]); return true; };
+        cx.font='10px monospace'; cx.textAlign='left'; cx.textBaseline='alphabetic'; cx.lineJoin='round';
+        for(const r of g.rw){                                       // полоса: реальная ширина, но не тоньше 3 px
+          if(!r.a.vis && !r.b.vis) continue;
+          const A=r.a.e, B=r.b.e, mid=proj([(A[0]+B[0])/2,(A[1]+B[1])/2,(A[2]+B[2])/2]); if(!mid) continue;
+          const dx=B[0]-A[0], dy=B[1]-A[1], L=Math.hypot(dx,dy)||1, hw=Math.max(r.width/2,1.5*mid.z/foc), nx=-dy/L*hw, ny=dx/L*hw;
+          const C=[[A[0]+nx,A[1]+ny,A[2]],[A[0]-nx,A[1]-ny,A[2]],[B[0]-nx,B[1]-ny,B[2]],[B[0]+nx,B[1]+ny,B[2]]].map(proj);
+          if(C.some(c=>!c)) continue;
+          cx.beginPath(); C.forEach((c,i)=>i ? cx.lineTo(c.x,c.y) : cx.moveTo(c.x,c.y)); cx.closePath();
+          cx.fillStyle='rgba(58,63,70,.92)'; cx.fill(); cx.strokeStyle='rgba(235,235,225,.9)'; cx.lineWidth=1; cx.stroke();
+          const a=proj([A[0],A[1],A[2]+.2]), b=proj([B[0],B[1],B[2]+.2]);
+          if(a && b){ cx.setLineDash([6,8]); cx.strokeStyle='rgba(255,255,255,.8)'; cx.beginPath(); cx.moveTo(a.x,a.y); cx.lineTo(b.x,b.y); cx.stroke(); cx.setLineDash([]); }
+          if(r.ref && mid.x>=rx && mid.x<=rx+rw && mid.y>=ry+24 && mid.y<=ry+rh && free(mid.x+4,mid.y-12,50,14)){ cx.fillStyle='#ffffff'; halo(r.ref,mid.x+6,mid.y-2); }
+        }
+        for(const q of g.ap){
+          if(!q.vis) continue; const c=proj(q.e); if(!c || c.x<rx || c.x>rx+rw || c.y<ry+24 || c.y>ry+rh) continue;
+          const label=(q.icao||q.name||(q.kind==='heli' ? 'heliport' : 'airfield'))+(q.icao && q.name ? ' '+q.name : ''), tw=cx.measureText(label).width+14;
+          if(!free(c.x-4,c.y-12,tw,14)) continue;
+          cx.strokeStyle='#6fd0ff'; cx.lineWidth=1.5; cx.beginPath(); cx.arc(c.x,c.y,4,0,7); cx.stroke();
+          cx.fillStyle='#6fd0ff'; halo(label,c.x+7,c.y);
+        }
+        let shown=0;
+        for(const q of g.pl){
+          if(shown>=25 || !q.vis) continue; const c=proj(q.e); if(!c || c.x<rx || c.x>rx+rw || c.y<ry+24 || c.y>ry+rh) continue;
+          const km=Math.hypot(q.e[0],q.e[1])/1000, label=q.name+' '+(km>=10 ? Math.round(km) : km.toFixed(1))+' km', tw=cx.measureText(label).width+14;
+          if(!free(c.x-4,c.y-12,tw,14)) continue;
+          shown++;
+          const sz=q.kind==='city' ? 3 : q.kind==='town' ? 2.5 : 2;
+          cx.fillStyle='#ffe9a8'; cx.fillRect(c.x-sz,c.y-sz,sz*2,sz*2); halo(label,c.x+7,c.y);
         }
       }
     }
@@ -705,7 +814,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
       if(hd>3){ const br=ovkNorm(Math.atan2(he[0],he[1])/OVK_D); homeArrow=ovkWrap(br-caz); L.push(`HOME ${hd>=1000 ? (hd/1000).toFixed(2)+' km' : Math.round(hd)+' m'}  ${br.toFixed(0)}°`); }
     }
     cx.textAlign='left';
-    L.forEach((s,i)=>cx.fillText(s,rx+6,ry+32+i*13));
+    L.forEach((s,i)=>halo(s,rx+6,ry+32+i*13));
     if(homeArrow!=null){                                   // стрелка «домой» относительно направления камеры
       const ax=rx+rw-24, ay=ry+44;
       cx.save(); cx.translate(ax,ay); cx.rotate(homeArrow*OVK_D); cx.strokeStyle='#4da3ff'; cx.fillStyle='#4da3ff'; cx.lineWidth=2;
@@ -727,9 +836,10 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
     }
     cx.textAlign='left'; cx.textBaseline='bottom'; cx.globalAlpha=.9; cx.fillStyle='#ffd84a';
     if(n.msg && performance.now()-n.msg.t<5000) cx.fillText(n.msg.s,rx+6,ry+rh-4);
-    else if(n.osmMsg) { cx.fillStyle='#ffb347'; cx.fillText(n.osmMsg,rx+6,ry+rh-4); }
+    else if(n.osmMsg || n.featMsg) { cx.fillStyle='#ffb347'; cx.fillText(n.osmMsg||n.featMsg,rx+6,ry+rh-4); }
     cx.textAlign='right'; cx.textBaseline='bottom'; cx.globalAlpha=.8; cx.fillStyle=col;
     const st=[]; if(!haveCam) st.push('no orientation'); if(!havePos) st.push('no position');
+    if(sun0 && p.sky) st.push('sun '+Math.round(sun0.az)+'°/'+Math.round(sun0.el)+'°');
     st.push(shown+' in view'+(off?', '+off+' off':'')+(rel && p.los && nhid ? ', '+nhid+' no LOS' : ''));
     cx.fillText(st.join(' · '),rx+rw-6,ry+rh-4);
     cx.globalAlpha=1;

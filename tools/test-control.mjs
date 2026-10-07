@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,Float64Array,Uint8Array,TextEncoder,TextDecoder,Array,String,Number,isFinite});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/control-kernels.js'),'utf8')+
-  ';this.K={joyTarget,joyStep,joyShape,joyBits,joyHexFrame,joyFormat,nrfHex,nrfTextToHex,nrfHexToText,nrfCfgLine,nrfParseLine,nrfScanSpec};',ctx);
+  ';this.K={joyTarget,joyStep,joyShape,joyBits,joyInvY,joyHexFrame,joyFormat,nrfHex,nrfTextToHex,nrfHexToText,nrfCfgLine,nrfParseLine,nrfScanSpec};',ctx);
 const K=ctx.K;
 let bad=0; const eq=(n,a,b)=>{ if(JSON.stringify(a)!==JSON.stringify(b)){ bad++; console.log('FAIL',n,JSON.stringify(a),'!=',JSON.stringify(b)); } else console.log('ok  ',n); };
 const near=(n,a,b,e=1e-6)=>{ if(Math.abs(a-b)>e){ bad++; console.log('FAIL',n,a,'≉',b); } else console.log('ok  ',n); };
@@ -22,6 +22,10 @@ near('ramp up',K.joyStep(0,1,.1,.5),.2); near('ramp reaches target',K.joyStep(.9
 // мёртвая зона и экспонента
 near('dead zone',K.joyShape(.05,.1,0),0); near('full stays full',K.joyShape(1,.1,0.5),1); near('linear mid',K.joyShape(.55,.1,0),.5);
 near('expo softens',K.joyShape(.55,.1,1),.125); near('sign kept',K.joyShape(-1,.1,0),-1);
+// инверсия вертикали
+eq('inv none',['y1','y2'].map(a=>K.joyInvY('none',a)),[false,false]); eq('inv right',['y1','y2'].map(a=>K.joyInvY('right stick',a)),[false,true]);
+eq('inv left',['y1','y2'].map(a=>K.joyInvY('left stick',a)),[true,false]); eq('inv both',['y1','y2'].map(a=>K.joyInvY('both sticks',a)),[true,true]);
+eq('inv never on x',['x1','x2'].map(a=>K.joyInvY('both sticks',a)),[false,false]);
 // кадр
 eq('bits',K.joyBits([1,0,1,0,0,0,0,1]),0x85);
 eq('hex frame',K.joyHexFrame(1,-1,0,0.5,0b101),'A57F81004005'+'XX'.replace('XX',(0xA5^0x7F^0x81^0x00^0x40^0x05).toString(16).toUpperCase().padStart(2,'0')));

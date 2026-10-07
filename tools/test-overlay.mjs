@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,isFinite,parseFloat,isNaN,Infinity});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/overlay-kernels.js'),'utf8')+
-  ';this.K={ovkSunEcl,ovkMoonEcl,ovkEclToEq,ovkAzEl,ovkSkyBodies,ovkPlanets,ovkPrecess,ovkSkyObjects,ovkLosBuild,ovkVisible,ovkOsmQuery,ovkOsmParse,ovkPosePush,ovkPoseAt,ovkTrailPush,ovkWrap,ovkNorm,OVK_RING0,OVK_RING_K};',ctx);
+  ';this.K={ovkSunEcl,ovkMoonEcl,ovkEclToEq,ovkAzEl,ovkSkyBodies,ovkPlanets,ovkPrecess,ovkSkyObjects,ovkLosBuild,ovkVisible,ovkOsmQuery,ovkOsmParse,ovkPosePush,ovkPoseAt,ovkTrailPush,ovkWrap,ovkNorm,ovkSunVec,ovkDayK,ovkLit,ovkShadowed,OVK_RING0,OVK_RING_K};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -95,4 +95,19 @@ K.ovkPosePush(buf,9000,0,0,0); ok('pose trims old',buf.length===1);
 const tr=[]; K.ovkTrailPush(tr,55,82,0,0,60000); K.ovkTrailPush(tr,55.00001,82,0,1000,60000); K.ovkTrailPush(tr,55.01,82,0,2000,60000);
 ok('trail: skip near, keep far',tr.length===2);
 K.ovkTrailPush(tr,55.02,82,0,90000,60000); ok('trail: old dropped',tr.length===1);
+// Солнце для света и теней: направление, день/ночь, освещённость, тень от рельефа
+const sv=K.ovkSunVec(90,0); near('sun vector east on the horizon',sv[0],1,1e-9); near('sun vector zenith',K.ovkSunVec(0,90)[2],1,1e-9);
+near('day factor night',K.ovkDayK(-10),0,0); near('day factor noon',K.ovkDayK(40),1,0); near('day factor twilight',K.ovkDayK(0),.5,1e-9);
+const up=[0,0,1], s45=K.ovkSunVec(180,45);
+near('lit: flat ground',K.ovkLit(up,s45,45),.8,1e-9); ok('lit: night is dark',K.ovkLit(up,K.ovkSunVec(0,-10),-10)===0);
+const tilt=[Math.sin(.3)*Math.sin(Math.PI),-Math.sin(.3),Math.cos(.3)];                 // склон, повёрнутый к Солнцу (юг, наклон на юг)
+ok('lit: slope towards the Sun is brighter than flat',K.ovkLit([0,-Math.sin(.3),Math.cos(.3)],s45,45)>K.ovkLit(up,s45,45));
+ok('lit: slope away is darker than flat',K.ovkLit([0,Math.sin(.3),Math.cos(.3)],s45,45)<K.ovkLit(up,s45,45));
+ok('lit: steep wall away from the Sun is dark',K.ovkLit([0,.99,.1],s45,45)<.05);
+const wall=(la,lo)=>(lo>0.0045 ? 200 : 0);                                              // стена 200 м в ~500 м к востоку
+ok('shadow: low Sun behind the wall',K.ovkShadowed(wall,0,0,0,90,10,3000)===true);
+ok('shadow: high Sun clears the wall',K.ovkShadowed(wall,0,0,0,90,30,3000)===false);
+ok('shadow: Sun on the other side',K.ovkShadowed(wall,0,0,0,270,10,3000)===false);
+ok('shadow: Sun at the horizon is handled by the light, not the ray',K.ovkShadowed(wall,0,0,0,90,1,3000)===false);
+ok('shadow: point above the wall is lit',K.ovkShadowed(wall,0,0,300,90,10,3000)===false);
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad?1:0);
