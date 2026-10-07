@@ -286,6 +286,7 @@ function satSkyDraw(n,cv,cx){
   cx.fillStyle='#6c7a80'; cx.font='10px monospace'; cx.textAlign='center'; cx.textBaseline='middle';
   cx.fillText('N',x0,y0-R-8); cx.fillText('S',x0,y0+R+8); cx.fillText('E',x0+R+8,y0); cx.fillText('W',x0-R-8,y0);
   if(GeoMe.lat==null){ cx.fillText('set My Position',x0,y0); return; }
+  if(n.p.terrain) horizonSilhouette(cx,P,0,GeoMe.lat,GeoMe.lon,'#6e7d82',.45);
   // траектория ближайшего (или текущего) пролёта выбранного
   const c=n.cur, p=n.passes[0];
   if(c && p){
