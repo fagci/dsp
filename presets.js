@@ -209,6 +209,7 @@ const PRESET_CATS={
   'WEFAX Transmit (Demo)':'Images & TV',
   'Analog TV: Test Card (Generator)':'Images & TV',
   'Analog TV: FPV / TV Receiver (USB SDR)':'Images & TV',
+  'Analog TV: FPV Multiband Scanner (HackRF)':'Images & TV',
   'Analog TV: FPV Mosaic (one HackRF)':'Images & TV',
   'Analog TV: FPV Channel Scanner (HackRF)':'Images & TV',
 
@@ -4005,6 +4006,33 @@ addEdge(rx.id,'iq',dm.id,'in'); addEdge(dm.id,'out',dc.id,'in'); addEdge(dc.id,'
 addEdge(dc.id,'lock',bs.id,'active');
 markWiresDirty();
 });
+preset('Analog TV: FPV Multiband Scanner (HackRF)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Like the Raceband scanner, but over every analog FPV band a HackRF can reach: 0.9 GHz, 1.2 GHz (8 channels), 2.4 GHz (4 channels) and Raceband R1–R8 on 5.8 GHz — 21 channels.\n'+
+  'One channel per 20 MHz window; TV Demodulator + TV Decoder try to lock, the lock stops the scan on a live video (listen timeout 20 s, then it goes on). A pass takes about 8–9 s.\n'+
+  'Each band needs its own antenna (or a wideband one): 5.8 GHz antenna is deaf at 1.2 GHz. Turn RX AMP and LNA on. 2.4 GHz is crowded with Wi-Fi and control links, expect false stops.\n'+
+  'More channels: add rows (name,lo,hi,step with a 20M window around the channel centre). The lists in Table → presets/Drones have the other frequencies (3.3 GHz is a wide range, not a channel grid).'});
+nt.size.w=780; nt.size.h=140; applySize(nt);
+const rx=addNode('rtlsdr',40,220,{sr:'20000000',freq:915000000,demod:'IQ'});
+const bp=addNode('table',40,380,{list:'@patch',initial:false,data:'name,lo,hi,step\n0.9G 915,905M,925M,20M\n1.2G ch1 1080,1070M,1090M,20M\n1.2G ch2 1120,1110M,1130M,20M\n1.2G ch3 1160,1150M,1170M,20M\n1.2G ch4 1200,1190M,1210M,20M\n1.2G ch5 1240,1230M,1250M,20M\n1.2G ch6 1280,1270M,1290M,20M\n1.2G ch7 1320,1310M,1330M,20M\n1.2G ch8 1360,1350M,1370M,20M\n2.4G ch1 2414,2404M,2424M,20M\n2.4G ch2 2432,2422M,2442M,20M\n2.4G ch3 2450,2440M,2460M,20M\n2.4G ch4 2468,2458M,2478M,20M\nR1 5658,5648M,5668M,20M\nR2 5695,5685M,5705M,20M\nR3 5732,5722M,5742M,20M\nR4 5769,5759M,5779M,20M\nR5 5806,5796M,5816M,20M\nR6 5843,5833M,5853M,20M\nR7 5880,5870M,5890M,20M\nR8 5917,5907M,5927M,20M'});
+bp.size.w=340; bp.size.h=440; applySize(bp);
+const bs=addNode('bandscan',420,220,{timeout:20000,settle:400,edge:0});
+bs.size.w=300; bs.size.h=160; applySize(bs);
+const dm=addNode('tvDemod',420,420,{mode:'FM',dev:8000000,bw:5000000});
+const dc=addNode('tvDecode',420,560,{});
+dc.size.w=420; dc.size.h=110; applySize(dc);
+const sa=addNode('sa',860,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const fr=addNode('imgview',860,360,{});
+fr.size.w=520; fr.size.h=440; applySize(fr);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(bp.id,'bands',bs.id,'bands');
+addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi');
+addEdge(bs.id,'freq',rx.id,'freq');
+addEdge(rx.id,'iq',dm.id,'in'); addEdge(dm.id,'out',dc.id,'in'); addEdge(dc.id,'img',fr.id,'img');
+addEdge(dc.id,'lock',bs.id,'active');
+markWiresDirty();
+});
 preset('Analog TV: FPV Mosaic (one HackRF)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Several analog FPV channels on one screen from ONE HackRF: TV Hopper tunes the receiver to each channel in turn, catches one video field and puts it into that channel\'s tile.\n'+
@@ -4157,7 +4185,7 @@ markWiresDirty();
 preset('AR: Satellites Through the Camera (Phone)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Open on a phone over HTTPS. Press Turn on camera (Camera), Start (Orientation) and Download TLE (Satellites); set My Position to gps.\n'+
-  'Orientation gives where the camera looks (az / el / roll), My Position — where it stands, Satellites — what is above. Video Overlay draws the satellites (stub models) over the picture.\n'+
+  'Orientation gives where the camera looks (az / el / roll), My Position — where it stands, Satellites — what is above, Horizon — the terrain (heights are downloaded once). Video Overlay draws the satellites (stub models) and a wire mesh of the mountains over the picture.\n'+
   'The compass of a phone is off by 5–15°: tune the azimuth / elevation corrections in Video Overlay by a known object (the Moon, the ISS). Type a name in find to get an arrow to a satellite outside the frame.'});
 nt.size.w=760; nt.size.h=130; applySize(nt);
 const cm=addNode('cam',40,220,{cam:'rear',res:'1280x720',fps:'30'});
@@ -4165,17 +4193,20 @@ const or=addNode('orient',40,380,{});
 const me=addNode('geoMe',40,520,{src:'gps'});
 const st=addNode('satTrack',300,220,{group:'stations',sat:'ISS',show:'all'});
 st.size.w=380; st.size.h=520; applySize(st);
+const hz=addNode('horizon',300,760,{radius:50,zoom:10});
+hz.size.w=340; hz.size.h=150; applySize(hz);
 const ov=addNode('overlay',720,220,{fov:60,find:'ISS'});
 ov.size.w=520; ov.size.h=420; applySize(ov);
 addEdge(cm.id,'vid',ov.id,'vid'); addEdge(or.id,'az',ov.id,'az'); addEdge(or.id,'el',ov.id,'el'); addEdge(or.id,'roll',ov.id,'roll');
 addEdge(me.id,'lat',ov.id,'lat'); addEdge(me.id,'lon',ov.id,'lon'); addEdge(me.id,'alt',ov.id,'alt');
 addEdge(st.id,'rec',ov.id,'rec');
+addEdge(me.id,'lat',hz.id,'lat'); addEdge(me.id,'lon',hz.id,'lon');
 markWiresDirty();
 });
 preset('AR: ADS-B Aircraft in the Sky (Phone + Generator)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'ADS-B frames from a generator (replace Generator + Demodulator with a USB SDR at 1090 MHz) → Decoder → Video Overlay: the aircraft are drawn in 3D from the observer\'s point of view.\n'+
-  'Press Start in Orientation on a phone (HTTPS) and point it at the sky; add a Camera → vid wire to see the real picture under the overlay. My Position is the observer (gps on a phone).'});
+  'Press Start in Orientation on a phone (HTTPS) and point it at the sky; add a Camera → vid wire to see the real picture under the overlay. My Position is the observer (gps on a phone). Horizon downloads the terrain: the mountains are drawn in 3D and an aircraft behind a ridge is dimmed.'});
 nt.size.w=760; nt.size.h=110; applySize(nt);
 const gn=addNode('iqGen',40,220,{sr:'2400000',fc:1090000000,mode:'ADS-B',off:0,lvl:-20,noise:-40});
 const dm=addNode('adsbDemod',40,560,{});
@@ -4183,11 +4214,14 @@ const me=addNode('geoMe',320,500,{src:'manual',lat:55.01,lon:82.65});
 const de=addNode('adsbDecode',320,220,{rlat:55.01,rlon:82.65});
 de.size.w=480; de.size.h=240; applySize(de);
 const or=addNode('orient',320,640,{});
+const hz=addNode('horizon',860,680,{radius:50,zoom:10});
+hz.size.w=340; hz.size.h=150; applySize(hz);
 const ov=addNode('overlay',860,220,{fov:60,labels:true});
 ov.size.w=520; ov.size.h=420; applySize(ov);
 addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'rec',de.id,'rec'); addEdge(de.id,'rec',ov.id,'rec');
 addEdge(or.id,'az',ov.id,'az'); addEdge(or.id,'el',ov.id,'el'); addEdge(or.id,'roll',ov.id,'roll');
 addEdge(me.id,'lat',ov.id,'lat'); addEdge(me.id,'lon',ov.id,'lon'); addEdge(me.id,'alt',ov.id,'alt');
+addEdge(me.id,'lat',hz.id,'lat'); addEdge(me.id,'lon',hz.id,'lon');
 markWiresDirty();
 });
 preset('Logic Analyzer: USB (fx2lafw)', function(){
