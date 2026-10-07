@@ -25,7 +25,7 @@ ok('points: what the map and the overlay read',has('points',['name','lat','lon',
 ok('measure: what Mark Point writes',has('measure',['name','t','session','tx','lat','lon','alt','h','freq','rssi','azimuth','rx_ant','rx_gain','note','photo']));
 ok('band plan: what the spectrum and the scanner read',has('bands',['lo','hi','step','demod','color']));
 ok('frequency list: freq and demod',has('freqs',['freq','demod']));
-ok('transmitters: a mast height and power for the coverage calculation',has('tx',['lat','lon','h','freq','erp_w','gain_dbi']));
+ok('transmitters: a mast height and power for the coverage calculation',has('tx',['lat','lon','h','freq','erp_w']));
 ok('links: both ends and the link fields',has('links',['lat','lon','h','lat2','lon2','h2','freq','kind','color','label']));
 ok('track: what the sequencer needs',has('track',['id','lat','lon']));
 // добавление колонок

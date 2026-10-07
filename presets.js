@@ -178,6 +178,7 @@ const PRESET_CATS={
   'Radio Reach: ADS-B Coverage over Terrain (Generator)':'Aircraft, Satellites & Telemetry',
   'Field Survey: Mark Points with Photos → Table, Locator, Map':'Maps & Locating',
   'Signal Paths: Links in 3D (Free Fly)':'Maps & Locating',
+  'Coverage: Transmitters from Table → Dead Zones':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
   'Flight Sim: Take Off from the Nearest Runway':'Aircraft, Satellites & Telemetry',
@@ -4478,6 +4479,26 @@ addEdge(js.id,'x2',fs.id,'ail'); addEdge(js.id,'y2',fs.id,'elev'); addEdge(js.id
 addEdge(me.id,'lat',fs.id,'lat'); addEdge(me.id,'lon',fs.id,'lon'); addEdge(fs.id,'lat',hz.id,'lat'); addEdge(fs.id,'lon',hz.id,'lon');
 for(const k of ['lat','lon','alt','az','el','roll','fov','rec']) addEdge(fs.id,k,ov.id,k);
 addEdge(tb.id,'rec',ov.id,'rec2');
+markWiresDirty();
+});
+preset('Coverage: Transmitters from Table → Dead Zones', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Preliminary coverage calculation: where is the signal of your transmitters (a Table: name, lat, lon, h, freq, erp_w, azimuth, beamwidth) weak or absent. For every cell around the point Coverage takes the Horizon height map and calculates the path loss: free space, diffraction on the terrain (Deygout, earth curvature with k) and interference with the ground reflection; the best of the transmitters is shown. Cells below «min» are dead zones: their edge goes to the Map as a dashed line (`poly`), the transmitters as `rec`.\n'+
+  'In the field: put measurements (lat, lon, rssi, h, tx) into a Table list and type its name into «meas» — the readout shows the bias and rms against the calculation, «Save residuals» adds the points where the model is wrong, «Calibrate» takes the bias into the clutter loss. «Save to table» keeps the summary in «analysis/coverage».'});
+nt.size.w=980; nt.size.h=130; applySize(nt);
+const tb=addNode('table',40,200,{list:'@patch',advance:'rate',rate:4,loop:false,
+  data:'name,lat,lon,h,freq,erp_w,azimuth,beamwidth\nTV tower,55.0300,82.7000,120,5e8,1000,,\nFM,54.9800,82.6200,60,1e8,200,90,120'});
+tb.size.w=420; tb.size.h=200; applySize(tb);
+const me=addNode('geoMe',40,440,{src:'manual',lat:55.0,lon:82.65});
+const hz=addNode('horizon',40,600,{radius:25,zoom:11});
+hz.size.w=340; hz.size.h=150; applySize(hz);
+const cv=addNode('coverage',500,200,{radius:20,cell:250,min:-95,rxh:2});
+cv.size.w=500; cv.size.h=460; applySize(cv);
+const mp=addNode('geoMap',1040,200,{mz:11,mlat:55.0,mlon:82.65});
+mp.size.w=480; mp.size.h=420; applySize(mp);
+addEdge(tb.id,'rec',cv.id,'rec'); addEdge(me.id,'lat',cv.id,'lat'); addEdge(me.id,'lon',cv.id,'lon');
+addEdge(me.id,'lat',hz.id,'lat'); addEdge(me.id,'lon',hz.id,'lon');
+addEdge(cv.id,'rec',mp.id,'rec'); addEdge(cv.id,'poly',mp.id,'rec2');
 markWiresDirty();
 });
 preset('Radio Reach: ADS-B Coverage over Terrain (Generator)', function(){
