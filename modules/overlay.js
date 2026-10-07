@@ -160,6 +160,44 @@ function ovModelOf(r){
   return OV_MODELS.other;
 }
 // высота записи, м
+// Тот же набор, что у Graph и Map: nodes — записи id[,label,icon,color]+lat/lon[,alt | h], set — связи from,to[,label,color].
+// Снимки целиком, применяется разница; узлы и связи не устаревают по ttl, пока они в наборе. Узел без координат не рисуется.
+// Высота: alt — над уровнем моря, иначе h — над рельефом (по умолчанию на земле).
+function ovGraphSet(n,nodes,set,now){
+  let dirty=false;
+  if(nodes!==n.gnSrc){
+    n.gnSrc=nodes; dirty=true;
+    const next=new Map();
+    if(Array.isArray(nodes)) for(const rec of nodes){
+      const x=geoNodeRec(rec); if(!x || x.none) continue;
+      const r={...x.rec,id:x.id}; delete r.track;
+      const alt=recNum(r.alt), h=recNum(r.h);
+      if(alt!=null) r.alt_m=alt; else r.height_m=h ?? 0;
+      next.set(x.id,{sig:x.sig,r});
+    }
+    for(const id of n.gnodes.keys()) if(!next.has(id)) n.ents.delete('node:'+id);
+    for(const [id,x] of next) if(n.gnodes.get(id)?.sig!==x.sig || !n.ents.has('node:'+id)){
+      const old=n.ents.get('node:'+id); n.ents.set('node:'+id,{r:x.r,t:now,trail:old?.trail||[]}); }
+    n.gnodes=next;
+  }
+  if(set!==n.gsSrc){
+    n.gsSrc=set; dirty=true; n.gedges=[];
+    if(Array.isArray(set)) for(const rec of set){ const e=gvEdgeRec(rec,null); if(e) n.gedges.push(e); }
+  }
+  if(dirty){
+    for(const k of n.gLinks) n.links.delete(k);
+    n.gLinks=[];
+    for(const e of n.gedges){
+      const a=n.gnodes.get(e.from)?.r, b=n.gnodes.get(e.to)?.r; if(!a || !b) continue;
+      const k='set:'+e.from+'\u0001'+e.to;
+      n.links.set(k,{t:now,r:{id:k,lat:a.lat,lon:a.lon,lat2:b.lat,lon2:b.lon,h:a.height_m,h2:b.height_m,alt:a.alt_m,alt2:b.alt_m,
+        color:e.color||undefined,label:e.label||undefined}});
+      n.gLinks.push(k);
+    }
+  }
+  for(const id of n.gnodes.keys()){ const en=n.ents.get('node:'+id); if(en) en.t=now; }
+  for(const k of n.gLinks){ const l=n.links.get(k); if(l) l.t=now; }
+}
 function ovAlt(r){
   if(r.ground) return 0;
   let v=recNum(r.alt_km); if(v!=null) return v*1000;
@@ -438,7 +476,7 @@ function ovAlign(n){
 def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmented reality hud camera satellite adsb 3d drone fpv sky sun moon planets stars galaxy nebula osm trails line of sight',
   // Видео (vid, или растр img — например, из TV Decoder) + объекты (rec) в 3D + HUD. Камера: lat / lon / alt (м) — где она стоит, az / el / roll — куда смотрит.
   // Без видео рисует небо с горизонтом. Входы a…d — числа в HUD (подписи — параметр «HUD»).
-  ins:[{n:'vid',t:'vid'},{n:'img',t:'img'},{n:'rec',t:'rec'},{n:'rec2',t:'rec'},
+  ins:[{n:'vid',t:'vid'},{n:'img',t:'img'},{n:'rec',t:'rec'},{n:'rec2',t:'rec'},{n:'nodes',t:'bands'},{n:'set',t:'bands'},
        {n:'lat',t:'num'},{n:'lon',t:'num'},{n:'alt',t:'num'},
        {n:'az',t:'num'},{n:'el',t:'num'},{n:'roll',t:'num'},{n:'fov',t:'num'},
        {n:'a',t:'num'},{n:'b',t:'num'},{n:'c',t:'num'},{n:'d',t:'num'}],
@@ -485,7 +523,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           {n:'dEl',t:'range',min:-90,max:90,step:.1,d:0,label:'elevation correction, °',adv:true},
           {n:'dRoll',t:'range',min:-180,max:180,step:.5,d:0,label:'roll correction, °',adv:true},
           {n:'resetc',t:'button',label:'Reset corrections',fn:n=>{ for(const k of ['dAz','dEl','dRoll']) setMod(n,k,0); },adv:true}],
-  init:n=>{ n.ents=new Map(); n.links=new Map(); n.I={}; n.seq=0; n.pose=[]; n.sel=null; n.hits=[]; n.last=null; n.msg=null; n.home=null;
+  init:n=>{ n.ents=new Map(); n.links=new Map(); n.gnodes=new Map(); n.gedges=[]; n.gnSrc=null; n.gsSrc=null; n.gLinks=[]; n.I={}; n.seq=0; n.pose=[]; n.sel=null; n.hits=[]; n.last=null; n.msg=null; n.home=null;
             n.pickOut=null; n.selInfo=null; n.visOut=null; n.nvis=0; n.nhid=0; n.osm=null; n.osmFor=null; n.osmT=0; n.osmMsg=''; n.osmGen=0;
             n.feat={air:null,pop:null,my:[],links:[]}; n.featCtr=null; n.featReading=false; n.featRev=-1; n.featFor=null; n.featT=0; n.featMsg=''; n.featGen=0; n.featBusy=false; },
   dispose:n=>{ n.osmReq=null; n.featReq=null; },
@@ -502,6 +540,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
       else if(!tr) en.trail=[];
       n.ents.set(key,en);
     }
+    ovGraphSet(n,I.nodes,I.set,now);
     if(n.ents.size>2000 || now-(n.pruned||0)>2000){
       n.pruned=now; const ttl=n.p.ttl*1000;
       for(const [key,e] of n.ents) if(now-e.t>ttl) n.ents.delete(key);
