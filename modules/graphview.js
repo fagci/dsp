@@ -45,7 +45,9 @@ GV_NAMES.color=/^(color|colour|цвет)$/i;
 const GV_ALIAS={from:['from','source','src','узел1','от'], to:['to','target','dst','dest','узел2','к'],
   w:['weight','w','value','count','вес'], label:['label','name','text','метка'], color:['color','colour','цвет']};
 const GV_NODEA={id:['id','node','name','key','узел'], label:['label','title','text','метка'], shape:['shape','форма'],
-  color:['color','colour','цвет'], size:['size','value','размер']};
+  color:['color','colour','цвет'], size:['size','value','размер'], icon:['icon','значок']};
+// значок карты → форма узла, когда колонки shape нет: один и тот же список рисуется и здесь, и на Map
+const GV_ICON_SHAPE={dot:'dot',square:'square',diamond:'diamond',triangle:'triangle',star:'star',flag:'triangle',antenna:'triangle',tx:'triangle',plane:'triangle',ship:'box',sat:'diamond',balloon:'dot'};
 function gvKeys(r,alias,ovr){
   const low={}; for(const k in r) low[k.toLowerCase()]=k;
   // у записей декодеров src — имя протокола (рядом kind / msg), а не источник связи
@@ -144,6 +146,7 @@ function gvSetNodes(n,recs){                        // снимок узлов: 
     const a={};
     if(f.label!=null && r[f.label]!=='') a.label=String(r[f.label]);
     if(f.shape!=null){ const sh=String(r[f.shape]).trim(); if(GV_SHAPES.has(sh)) a.shape=sh; }
+    if(a.shape==null && f.icon!=null){ const sh=GV_ICON_SHAPE[String(r[f.icon]).trim()]; if(sh) a.shape=sh; }
     if(f.color!=null && r[f.color]) a.color=String(r[f.color]);
     if(f.size!=null){ const v=+r[f.size]; if(v>0) a.size=v; }
     m.set(id,a);
