@@ -461,7 +461,7 @@ function ovBldGeo(n,obs,rel,alt,okey){
   n.bldGeoKey=key; return n.bldGeo={b:bl, roads};
 }
 const ovHash=(a,b,c,d)=>{ let x=(a*73856093)^(b*19349663)^(c*83492791)^(d*2654435761); x=(x^(x>>>13))*1274126177; return ((x^(x>>>16))>>>0)/4294967296; };
-// Здания светятся: мелкие и далёкие — точками, крупные — стенами с окнами. Рисуем сначала мелкие (дальние), поверх них крупные
+// Здания светятся: мелкие и далёкие — точками, крупные — тёплыми стенами. Рисуем сначала мелкие (дальние), поверх них крупные
 function ovDrawBuildings(cx,proj,foc,box,list,dk,vis,sun){
   const [rx,ry,rw,rh]=box, night=1-dk, sv=ovkSunVec(sun.az,sun.el), day=ovMix([132,134,140],[168,166,160],dk), haze=ovMix(OV_HAZE_NIGHT,OV_HAZE_DAY,dk);
   const big=[], tiny=[];
@@ -483,7 +483,6 @@ function ovDrawBuildings(cx,proj,foc,box,list,dk,vis,sun){
     }
     cx.restore();
   }
-  let budget=9000;
   for(let k=0;k<big.length;k+=2){
     const b=big[k], R=b.ring, N=R.length, fog=ovkFog(b.d,vis,0), top=[], bot=[];
     for(let i=0;i<N;i++){ const p0=proj(R[i]), p1=proj([R[i][0],R[i][1],R[i][2]+b.h]); if(!p0 || !p1) break; bot.push(p0); top.push(p1); }
@@ -496,23 +495,6 @@ function ovDrawBuildings(cx,proj,foc,box,list,dk,vis,sun){
       const lit=Math.max(0,nx*sv[0]+ny*sv[1])*.5+.5, col=ovMix(ovMix(cold,day.map(v=>v*lit),dk),haze,dk*fog*.85), q0=bot[i], q1=bot[j], q2=top[j], q3=top[i];
       cx.fillStyle='rgb('+col.map(Math.round).join(',')+')';
       cx.beginPath(); cx.moveTo(q0.x,q0.y); cx.lineTo(q1.x,q1.y); cx.lineTo(q2.x,q2.y); cx.lineTo(q3.x,q3.y); cx.closePath(); cx.fill();
-      if(night<.05 || fog>.9) continue;
-      const cols=Math.max(1,Math.floor(L/3.5)), rows=b.lv, wpx=Math.hypot(q1.x-q0.x,q1.y-q0.y)/cols, hpx=Math.hypot(q3.x-q0.x,q3.y-q0.y)/rows, pa=night*(1-fog)*.95;
-      if(wpx<2.2 || hpx<2.2){                                       // окна не различить — стена светится средней яркостью
-        cx.fillStyle='rgba(255,196,110,'+(.35*pa).toFixed(3)+')'; cx.beginPath(); cx.moveTo(q0.x,q0.y); cx.lineTo(q1.x,q1.y); cx.lineTo(q2.x,q2.y); cx.lineTo(q3.x,q3.y); cx.closePath(); cx.fill();
-        continue;
-      }
-      const ww=wpx*.6, wh=hpx*.55;
-      for(let r=0;r<rows;r++){
-        const v=(r+.5)/rows;
-        for(let c=0;c<cols;c++){
-          if(budget<=0) break;
-          const h=ovHash(b.id%2147483647,i,c,r); if(h>.55) continue;       // окно горит
-          const u=(c+.5)/cols, x=(q0.x+(q1.x-q0.x)*u)*(1-v)+(q3.x+(q2.x-q3.x)*u)*v, y=(q0.y+(q1.y-q0.y)*u)*(1-v)+(q3.y+(q2.y-q3.y)*u)*v;
-          cx.fillStyle=h<.06 ? 'rgba(190,225,255,'+pa.toFixed(2)+')' : 'rgba(255,'+(188+(h*130|0))+',110,'+pa.toFixed(2)+')';
-          cx.fillRect(x-ww/2,y-wh/2,ww,wh); budget--;
-        }
-      }
     }
     const rc=ovMix(ovMix([34,26,20],day.map(v=>v*1.05),dk),haze,fog*.85);                            // крыша
     cx.fillStyle='rgb('+rc.map(Math.round).join(',')+')'; cx.beginPath(); top.forEach((q,i)=>i ? cx.lineTo(q.x,q.y) : cx.moveTo(q.x,q.y)); cx.closePath(); cx.fill();
