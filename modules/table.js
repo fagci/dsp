@@ -586,6 +586,7 @@ function tblInit(n){
     <div class="tbl-cols" style="display:flex;gap:3px;flex-wrap:wrap;flex-shrink:0;font-size:10px;"></div>
     <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;flex-wrap:wrap;">
       <button class="tbl-add" style="${TBL_BTN}">+ row</button>
+      <button class="tbl-here" style="${TBL_BTN}" title="new row at my current position (GPS) — with the icon, a photo and a sound in the same form">📍 here</button>
       <button class="tbl-import" style="${TBL_BTN}" title="CSV, TSV, TXT, JSON, KML, GPX, GeoJSON — each file becomes a list">import</button>
       <button class="tbl-export" style="${TBL_BTN}" title="export this list (format in advanced)">export</button>
       <button class="tbl-all" style="${TBL_BTN}" title="all lists in one JSON file (import brings them back)">export all</button>
@@ -632,6 +633,7 @@ function tblInit(n){
     await tblPick(n,'table');
   });
   q('.tbl-add').addEventListener('click',()=>tblAddForm(n));
+  q('.tbl-here').addEventListener('click',()=>tblHereForm(n));
   const file=q('.tbl-file');
   q('.tbl-import').addEventListener('click',()=>file.click());
   file.addEventListener('change',()=>{ const fs=[...file.files]; file.value=''; if(fs.length) tblImport(n,fs); });
@@ -953,10 +955,33 @@ function tblEditForm(n,i,row){
   const form=tblForm(n,n.rows[i],async o=>{ await tblUpdate(n,i,o); tblRenderList(n); },()=>tblRenderList(n));
   row.replaceWith(form);
 }
-function tblAddForm(n){
+// текущая позиция: GPS браузера, при отказе — последняя известная (My Position)
+function tblPosition(){
+  return new Promise(res=>{
+    const last=()=>res(typeof GeoMe!=='undefined' && GeoMe.lat!=null ? {lat:GeoMe.lat,lon:GeoMe.lon} : null);
+    if(!navigator.geolocation) return last();
+    navigator.geolocation.getCurrentPosition(p=>res({lat:+p.coords.latitude.toFixed(6),lon:+p.coords.longitude.toFixed(6),
+      alt:p.coords.altitude!=null ? Math.round(p.coords.altitude) : null}),last,{enableHighAccuracy:true,timeout:8000,maximumAge:5000});
+  });
+}
+// «📍 here»: форма новой строки с позицией и временем; значок, фото и звук — в той же форме
+async function tblHereForm(n){
+  if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }
+  if(!tblCol(n.cl,['lat']) || !tblCol(n.cl,['lon'])){
+    if(!confirm('This list has no lat / lon columns. Add the columns of «Map points» (name, lat, lon, alt, h, icon, color, note, photo, audio)?')) return;
+    await tblColsEdit(n,tblTemplateCols(n.cl,TBL_TEMPLATES.find(t=>t.id==='points'))); tblRenderAll(n);
+  }
+  const pos=await tblPosition();
+  if(!pos) alert('Position unknown (no GPS access): type lat / lon by hand, or take them from the photo');
+  const set=(c,v)=>{ const k=tblCol(n.cl,c); if(k && v!=null) rec[k]=v; }, rec={};
+  set(['lat'],pos?.lat); set(['lon'],pos?.lon); set(['alt','altitude'],pos?.alt); set(['t','time'],Date.now());
+  const nm=tblCol(n.cl,TBL_LABEL); if(nm) rec[nm]='P'+(n.all.length+1);
+  tblAddForm(n,rec);
+}
+function tblAddForm(n,init){
   if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }
   const ui=n.ui; ui.list.querySelector('.tbl-newrow')?.remove();
-  const form=tblForm(n,{},async o=>{
+  const form=tblForm(n,init||{},async o=>{
     await tblAdd(n,[o]); tblRenderList(n);
   },()=>form.remove());
   form.classList.add('tbl-newrow');
