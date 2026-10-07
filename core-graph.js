@@ -1275,7 +1275,7 @@ function dashRenderRoot(){
 }
 // основная канва (или список bandplan/bookmarks) узла в панели — до низа панели: контролы над ней
 // переносятся по ширине, поэтому её верх плавает и чистым CSS высоту не задать
-const DASH_FILL='canvas.view.main, .bp-ui, .bm-ui, .tbl-ui, .trk-tile, .chat, .graphview';
+const DASH_FILL='canvas.view.main, .bp-ui, .bm-ui, .tbl-ui, .trk-tile, .chat, .ng, .graphview';
 function dashFit(){
   if(!dashMode) return;
   for(const body of dashGridEl.querySelectorAll('.dash-body')){

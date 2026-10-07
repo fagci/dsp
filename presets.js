@@ -110,6 +110,7 @@ const PRESET_CAT_ORDER=['Start Here',
                          'Modems & Data Links',
                          'Infrared',
                          'Network & IoT',
+                         'Games',
                          'Unknown Signals',
                          'Maps & Locating',
                          'Music: Sequencers & Mixer',
@@ -229,6 +230,10 @@ const PRESET_CATS={
   'NFC: Tag Log and Writer':'Network & IoT',
   'Graph: Links from CSV':'Network & IoT',
   'Chat: Text In and Out':'Network & IoT',
+  'Game: Tic-Tac-Toe over WebRTC':'Games',
+  'Game: Connect Four over WebRTC':'Games',
+  'Game: Battleship over WebRTC':'Games',
+  'Game: Tic-Tac-Toe over MQTT':'Games',
   'BLE: Heart Rate Monitor':'Network & IoT',
   'BLE: Find a Beacon by RSSI':'Network & IoT',
   'BLE: UART Terminal':'Network & IoT',
@@ -4237,6 +4242,31 @@ tk.size.w=360; tk.size.h=140; applySize(tk);
 addEdge(ts.id,'text',c.id,'text'); addEdge(c.id,'text',tk.id,'text');
 markWiresDirty();
 });
+function gamePreset(name,id,w,h,mqtt){
+preset(name, function(){
+clearAll();
+const how=mqtt
+  ? 'Both players load this preset, set the same broker and topic in MQTT In / MQTT Out and press Connect. Moves go as text over one shared topic (a node ignores its own messages).'
+  : 'One player presses Create offer in WebRTC Data and sends the code to the other, who presses Accept offer and sends the answer back (Apply answer). Then the game starts by itself.';
+const nt=addNode('note',40,20,{text:'Two-player game: opponent moves arrive on `in`, yours leave on `out` as text — the same wires as Chat, so any channel works (WebRTC, MQTT, Text over Network). '+how+' First player is chosen automatically (or by the side parameter), every next game starts with the other one. Outputs: turn, result (1 win / −1 loss), go pulse per move.'});
+nt.size.w=1000; nt.size.h=90; applySize(nt);
+const g=addNode(id,420,150,{});
+g.size.w=w; g.size.h=h; applySize(g);
+if(mqtt){
+  const mi=addNode('mqttIn',40,150,{topic:'dsp/game/ttt'}); mi.size.w=340; mi.size.h=240; applySize(mi);
+  const mo=addNode('mqttOut',800,150,{topic:'dsp/game/ttt'}); mo.size.w=300; mo.size.h=160; applySize(mo);
+  addEdge(mi.id,'text',g.id,'in'); addEdge(g.id,'out',mo.id,'text');
+}else{
+  const r=addNode('rtcdata',40,150,{}); r.size.w=340; r.size.h=300; applySize(r);
+  addEdge(r.id,'line',g.id,'in'); addEdge(g.id,'out',r.id,'send');
+}
+markWiresDirty();
+});
+}
+gamePreset('Game: Tic-Tac-Toe over WebRTC','gtictactoe',280,330,false);
+gamePreset('Game: Connect Four over WebRTC','gconnect4',360,420,false);
+gamePreset('Game: Battleship over WebRTC','gbattleship',400,380,false);
+gamePreset('Game: Tic-Tac-Toe over MQTT','gtictactoe',280,330,true);
 preset('Unknown Signal: Blind Analysis (Generator)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Reverse engineering a transmission without knowing its parameters. The generator (Unknown Signal) sends 2FSK with a hidden symbol rate,\n'+
