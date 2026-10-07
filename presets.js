@@ -214,6 +214,8 @@ const PRESET_CATS={
   'RTTY: Receive Off-Air':'HF Modes & Morse',
   'Morse: Encoder + Decoder':'HF Modes & Morse',
   'FT8: Find Signals in Slot':'HF Modes & Morse',
+  'JS8Call: Receive Off-Air':'HF Modes & Morse',
+  'JS8Call: Transmit and Receive (Loop)':'HF Modes & Morse',
   'PSK31 (7035–7040 kHz)':'HF Modes & Morse',
   'Feld Hell':'HF Modes & Morse',
   'SSB: Shift to Zero':'HF Modes & Morse',
@@ -2290,6 +2292,47 @@ addEdge(m.id,'a',f8.id,'in');
 addEdge(f8.id,'f',wf.id,'m3');
 markWiresDirty();
 });
+preset('JS8Call: Receive Off-Air', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'JS8Call Normal (15 s): receiver audio (USB, dial 7078 / 10130 / 14078 kHz …) into the mic input.\n'+
+  'Decodes heartbeats, directed commands and text (free text needs the JSC dictionary, loaded on first use).\n'+
+  'Records go to the Rec Log / map like FT8.'});
+nt.size.w=520; nt.size.h=110; applySize(nt);
+const m =addNode('mic',40,180,{gainA:2});
+const ff=addNode('fft',40,360,{size:'16384'});
+const wf=addNode('sa',40,520,{fmin:200,fmax:2800,floor:-110,top:-30,split:.4});
+wf.size.w=560; wf.size.h=300; applySize(wf);
+const rx=addNode('js8Rx',640,180,{fmin:200,fmax:2800,top:10,thr:1.6});
+rx.size.w=460; rx.size.h=360; applySize(rx);
+const lg=addNode('recLog',1140,180,{});
+lg.size.w=420; applySize(lg);
+addEdge(m.id,'a',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
+addEdge(m.id,'a',rx.id,'in');
+addEdge(rx.id,'f',wf.id,'m3');
+addEdge(rx.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('JS8Call: Transmit and Receive (Loop)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'JS8Call: encoder → decoder on one wire (a message every 15 s UTC slot, decoded after the slot ends).\n'+
+  'Text: HB [GRID] · CQ [DX|QRP|…] · W9XYZ SNR? · W9XYZ SNR -12 · W9XYZ: free text (several frames, one per slot).\n'+
+  'Raise the noise level — Normal mode decodes down to about −14 dB in 2500 Hz here.'});
+nt.size.w=560; nt.size.h=110; applySize(nt);
+const tx=addNode('js8Tx',40,180,{text:'W9XYZ: HELLO FROM JS8',mycall:'K1ABC',mygrid:'FN42',freq:1500,lvl:.5});
+tx.size.w=380; tx.size.h=300; applySize(tx);
+const nz=addNode('osc',480,180,{wave:'noise',amp:.15});
+const mx=addNode('sum',480,400,{ka:1,kb:1});
+const ff=addNode('fft',760,40,{size:'16384'});
+const wf=addNode('sa',760,220,{fmin:200,fmax:2800,floor:-110,top:-30,split:.4});
+wf.size.w=560; wf.size.h=280; applySize(wf);
+const rx=addNode('js8Rx',1360,40,{fmin:200,fmax:2800,top:6,thr:1.6});
+rx.size.w=440; rx.size.h=320; applySize(rx);
+addEdge(tx.id,'out',mx.id,'a'); addEdge(nz.id,'out',mx.id,'b');
+addEdge(mx.id,'out',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
+addEdge(mx.id,'out',rx.id,'in');
+markWiresDirty();
+});
+
 preset('Weather Fax WEFAX 120', function(){
   clearAll();
   const m =addNode('mic',40,40,{gainA:2});

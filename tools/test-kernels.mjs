@@ -14,6 +14,8 @@ const files=[...worker.match(/importScripts\((.*)\);/)[1].matchAll(/'([^']+)'/g)
 const ctx=vm.createContext({console,Math,Float32Array,Float64Array,Uint8Array,Uint16Array,Uint32Array,Int8Array,Int16Array,Int32Array,Map,Set,Date,JSON,Array,Object,String,Number,parseInt,parseFloat,isFinite,isNaN,Symbol,Promise,BigInt,DataView,WebAssembly,atob});
 ctx.self=ctx;
 for(const f of files) vm.runInContext(fs.readFileSync(path.join(root,f),'utf8'),ctx,{filename:f});
+vm.runInContext(fs.readFileSync(path.join(root,'modules/js8-kernels.js'),'utf8'),ctx,{filename:'modules/js8-kernels.js'});   // в воркер не входит
+ctx.JS8_DICT=fs.readFileSync(path.join(root,'data/js8-jsc.txt'),'utf8');
 const ev=s=>vm.runInContext(s,ctx);
 
 // PSK/QAM: символы → непрерывный RRC (формула) с дробной задержкой tau (в символах), уход несущей cfo (доля частоты символов), шум; → IQK.pskRx
@@ -88,6 +90,18 @@ ev(`function loraRunText(o){
     if(r.rec) for(const q of r.rec) got.push(q.text+(q.crcOk===false ? ' [CRC]' : '')+' cfo='+(Math.round(q.cfo/100)*100)); }
   return got.join('|');
 }`);
+
+
+// JS8Call: посылка (тоны → GFSK) на 6400 Гц + шум в полосе 2500 Гц → спектрограмма → декодер
+ev(`js8JscSet(JS8_DICT);
+function js8Chain(o){ const {text='HB FN42',f0=1234.5,snr=99,delay=.63,seed=3,amp=1}=o;
+  let x=seed>>>0||1; const rnd=()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296; };
+  const gs=()=>Math.sqrt(-2*Math.log(Math.max(rnd(),1e-12)))*Math.cos(2*Math.PI*rnd());
+  const buf=new Float32Array(JS8_SR*15), fr=js8Plan(text,'K1ABC','FN42').frames[0];
+  const w=js8Wave(js8Tones(fr,3,0),f0,JS8_SR,amp), o0=Math.round(delay*JS8_SR);
+  for(let i=0;i<w.length;i++) buf[o0+i]+=w[i];
+  const sg=Math.sqrt(.5/Math.pow(10,snr/10)/(2500/3200)); for(let i=0;i<buf.length;i++) buf[i]+=sg*gs();
+  const r=js8Decode(js8Spec(buf,0),{fmin:200,fmax:2800,top:6,thr:1.6,budget:20000,costas:0}); return r[0]; }`);
 
 const cases=[
   // [название, выражение, ожидаемое, происхождение]
@@ -261,6 +275,39 @@ const cases=[
   // Воркер спектра USB-SDR (встроен в sources.js как строка) — с БПФ из core-dsp: тон 0.1234·fs попадает в свой бин при N до 262144
   ['Воркер спектра: тон в нужном бине при N = 4096, 65536, 262144',`(()=>{ const src=SPECW_SRC, w={postMessage(m){ w.out=m; }, onmessage:null}; const wc={self:w}; return [4096,65536,262144].map(N=>{ const L=2*N, I=new Float32Array(L), Q=new Float32Array(L); for(let i=0;i<L;i++){ const p=2*Math.PI*.1234*i; I[i]=.5*Math.cos(p); Q[i]=.5*Math.sin(p); }
     SPECW_RUN(src,w,{type:'fft',I:I.buffer,Q:Q.buffer,N,L,win:'hann'}); const m=new Float32Array(w.out.mag); let pk=0; for(let i=0;i<N;i++) if(m[i]>m[pk]) pk=i; return pk===Math.round(N/2+.1234*N); }).join(); })()`,'true,true,true'],
+  // JS8Call: порт кодека Normal (LDPC(174,87), CRC-12, кадры 72+3 бита, Costas, JSC) по исходникам JS8Call; сверки с настоящим эфиром здесь нет —
+  // проверяется внутренняя согласованность (проверочная матрица ↔ генератор, упаковка ↔ разбор, передатчик ↔ приёмник)
+  ['JS8: кодовое слово из 87 бит выполняет все 87 проверок, extract возвращает те же 72 бита и i3',`(()=>{ let ok=true, x=7; const rnd=()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296; };
+    for(let r=0;r<30;r++){ const b72=Array.from({length:72},()=>rnd()<.5?1:0), i3=r%8, cw=js8Encode(js8MsgBits(b72,i3));
+      for(const row of JS8_NM){ let p=0; for(const c of row) p^=cw[c-1]; if(p) ok=false; }
+      const e=js8Extract(cw); if(!e||e.i3!==i3||e.b72.join('')!==b72.join('')) ok=false;
+      const bad=cw.slice(); bad[(r*7)%174]^=1; if(js8Extract(bad)&&!js8Ldpc(Array.from(bad,v=>v?-4:4),30).ok) ok=false; }
+    return ok; })()`,true],
+  ['JS8: LDPC исправляет 12 ошибок в 174 мягких отсчётах (шум на LLR)',`(()=>{ const b72=Array.from({length:72},(_,i)=>(i*5+i%3)&1), cw=js8Encode(js8MsgBits(b72,1));
+    const llr=Array.from(cw,(v,i)=>(v?-3:3)+((i*37)%11-5)*.2); for(const k of [3,19,40,55,71,88,102,120,133,150,160,171]) llr[k]=-llr[k];
+    const d=js8Ldpc(llr,50); const e=d.ok&&js8Extract(d.bits); return !!e && e.b72.join('')===b72.join(''); })()`,true],
+  ['JS8: CRC-12 пустого кадра = 42 (xor-маска), i3 меняет сумму',`[js8Crc12(new Array(72).fill(0),0), js8Crc12(new Array(72).fill(0),1)===42].join()`,'42,false'],
+  ['JS8: heartbeat, CQ, адресный кадр, группа @ALLCALL, позывной /P — туда-обратно',`[
+    js8Unpack(js8PackHeartbeat('K1ABC','HB','FN42'),0).text,
+    js8Unpack(js8PackHeartbeat('W9XYZ/P','CQ DX','EM73'),0).text,
+    js8Unpack(js8PackDirected('K1ABC','W9XYZ',' SNR',-12),0).text,
+    js8Unpack(js8PackDirected('N2AB/P','@ALLCALL',' GRID?',null),0).text].join(' | ')`,
+    'K1ABC: @HB HEARTBEAT FN42 | W9XYZ/P: @ALLCALL CQ DX EM73 | K1ABC: W9XYZ SNR -12 | N2AB/P: @ALLCALL GRID?'],
+  ['JS8: локатор 15 бит — FN42, JO62, AA00, RR99 туда-обратно',`['FN42','JO62','AA00','RR99','QF22'].map(g=>js8UnpackGrid(js8PackGrid(g))).join()`,'FN42,JO62,AA00,RR99,QF22'],
+  ['JS8: позывной 28 бит — 2-, 3-, 5-, 6-значные, 3DA0, 3XA',`['K1A','W9XYZ','RA3AA','G4ABC','3DA0XX','3XA2B','AB1','KP4Z'].map(c=>{ const p=js8PackCall(c); return p && js8UnpackCall(p.v,p.p); }).join()`,'K1A,W9XYZ,RA3AA,G4ABC,3DA0XX,3XA2B,AB1,KP4Z'],
+  ['JS8: свободный текст — Хаффман и словарь JSC (кадр = 72 бита), 3 кадра в слотах, склейка совпадает',`(()=>{ const t='THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 73', p=js8Plan(t,'K1ABC','FN42');
+    const s=p.frames.map(b=>js8Unpack(b,0).text).join(''); const h=js8PackHuff('HELLO WORLD'), j=js8PackJsc('HELLO WORLD');
+    return [p.frames.length, p.frames.every(b=>b.length===72), s.replace(/ /g,'')===t.replace(/ /g,''), js8Unpack(h.bits,0).text, js8Unpack(j.bits,0).text, j.n>=h.n].join(); })()`,'3,true,true,HELLO WORLD,HELLO WORLD,true'],
+  ['JS8: план передачи — HB с локатором из настроек, адресная команда, «TO: текст» = адресный кадр + данные',`['HB','W9XYZ SNR? ','W9XYZ SNR -07','W9XYZ: HELLO'].map(t=>{ const p=js8Plan(t,'K1ABC','FN42'); return p.frames.map(b=>js8Unpack(b,0).text).join('|'); }).join(' / ')`,
+    'K1ABC: @HB HEARTBEAT FN42 / K1ABC: W9XYZ SNR? / K1ABC: W9XYZ SNR -07 / K1ABC: W9XYZ |HELLO'],
+  ['JS8: 79 тонов — Костас в трёх блоках, остальное 3 бита подряд; снимок для HB FN42 от K1ABC',`(()=>{ const t=js8Tones(js8Plan('HB','K1ABC','FN42').frames[0],3,0);
+    return [t.length, t.slice(0,7).join(''), t.slice(36,43).join(''), t.slice(72).join(''), t.every(v=>v>=0&&v<8), t.join('')].join(' '); })()`,'79 4256130 4256130 4256130 true 4256130263105060054354764600570362474256130023633675204153030541500305644256130'],
+  ['JS8: передатчик → спектрограмма → декодер: без шума и при −10 дБ в 2500 Гц, частота ±2 Гц, dt ±0.05 с',`[99,-10].map(snr=>{ const e=js8Chain({snr}); return !!e && e.msg==='K1ABC: @HB HEARTBEAT FN42' && Math.abs(e.f-1234.5)<2 && Math.abs(e.dt-.13)<.05 && e.sync===21; }).join()`,'true,true'],
+  ['JS8: передискретизация 44100 → 6400 — тон 1500 Гц без «призраков» ±700 Гц (< −60 дБ), усиление 1 ± 0,02; 48000 и 96000 тоже',`[44100,48000,96000].map(sr=>{ const rs=js8Resampler(sr,6400), o=new Float32Array(8), y=[]; const N=Math.round(sr*3);
+    for(let i=0;i<N;i++){ const k=rs.push(Math.sin(2*Math.PI*1500*i/sr),o); for(let q=0;q<k;q++) y.push(o[q]); }
+    const P=f=>{ let re=0,im=0, n=0; for(let i=2000;i<y.length-2000;i++,n++){ const a=2*Math.PI*f*i/6400; re+=y[i]*Math.cos(a); im+=y[i]*Math.sin(a); } return Math.hypot(re,im)/n*2; };
+    const a=P(1500); return Math.abs(a-1)<.02 && P(800)/a<1e-3 && P(2200)/a<1e-3; }).join()`,'true,true,true'],
+  ['JS8: слабее порога (−25 дБ) ложных сообщений нет',`(()=>{ const e=js8Chain({snr:-25}); return !e || !e.msg; })()`,true],
 ];
 
 let bad=0;
