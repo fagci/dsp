@@ -163,9 +163,9 @@ function ovAlt(r){
 }
 
 def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmented reality hud camera satellite adsb 3d drone fpv sky',
-  // Видео (vid) + объекты (rec) в 3D + HUD. Камера: lat / lon / alt (м) — где она стоит, az / el / roll — куда смотрит.
+  // Видео (vid, или растр img — например, из TV Decoder) + объекты (rec) в 3D + HUD. Камера: lat / lon / alt (м) — где она стоит, az / el / roll — куда смотрит.
   // Без видео рисует небо с горизонтом. Входы a…d — числа в HUD (подписи — параметр «HUD»).
-  ins:[{n:'vid',t:'vid'},{n:'rec',t:'rec'},{n:'rec2',t:'rec'},
+  ins:[{n:'vid',t:'vid'},{n:'img',t:'img'},{n:'rec',t:'rec'},{n:'rec2',t:'rec'},
        {n:'lat',t:'num'},{n:'lon',t:'num'},{n:'alt',t:'num'},
        {n:'az',t:'num'},{n:'el',t:'num'},{n:'roll',t:'num'},{n:'fov',t:'num'},
        {n:'a',t:'num'},{n:'b',t:'num'},{n:'c',t:'num'},{n:'d',t:'num'}],
@@ -202,7 +202,19 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
     const W=cv.width, H=cv.height, I=n.I||{}, p=n.p, now=Date.now();
     cx.fillStyle='#000'; cx.fillRect(0,0,W,H);
     // видео вписывается в холст; FOV — по ширине кадра
-    const v=I.vid, vw=v?.videoWidth||v?.width||0, vh=v?.videoHeight||v?.height||0;
+    let v=I.vid;
+    if(!v && I.img){                                 // растр из декодера (TV Decoder, SSTV...) — через холст
+      const im=I.img, c=n.imCv||(n.imCv=document.createElement('canvas'));
+      if(c.width!==im.w || c.height!==im.h){ c.width=im.w; c.height=im.h; n.imCx=c.getContext('2d'); n.imGray=null; }
+      if(im.gray){
+        if(!n.imGray) n.imGray=n.imCx.createImageData(im.w,im.h);
+        const d=n.imGray.data, g=im.buf;
+        for(let k=0;k<g.length;k++){ const x=g[k]*255, j=k*4; d[j]=d[j+1]=d[j+2]=x; d[j+3]=255; }
+        n.imCx.putImageData(n.imGray,0,0);
+      } else if(im.data) n.imCx.putImageData(im.data,0,0);
+      v=c;
+    }
+    const vw=v?.videoWidth||v?.width||0, vh=v?.videoHeight||v?.height||0;
     let rx=0, ry=0, rw=W, rh=H;
     if(vw && vh){ const s=Math.min(W/vw,H/vh); rw=vw*s; rh=vh*s; rx=(W-rw)/2; ry=(H-rh)/2;
       try{ cx.drawImage(v,rx,ry,rw,rh); }catch(e){} }
