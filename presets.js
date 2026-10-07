@@ -206,6 +206,7 @@ const PRESET_CATS={
   'WEFAX Transmit (Demo)':'Images & TV',
   'Analog TV: Test Card (Generator)':'Images & TV',
   'Analog TV: FPV / TV Receiver (USB SDR)':'Images & TV',
+  'Analog TV: FPV Channel Scanner (HackRF)':'Images & TV',
 
   'HF: Who Is On Air (Schedule)':'HF Modes & Morse',
   'Morse from Microphone':'HF Modes & Morse',
@@ -3923,6 +3924,34 @@ fr.size.w=520; fr.size.h=440; applySize(fr);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',dm.id,'in'); addEdge(dm.id,'out',dc.id,'in'); addEdge(dc.id,'img',fr.id,'img');
+markWiresDirty();
+});
+preset('Analog TV: FPV Channel Scanner (HackRF)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Scans analog 5.8 GHz FPV channels (Raceband R1–R8 in the table; add rows for A/B/E/F/L: name,lo,hi,step with a 20M window around the channel centre).\n'+
+  'HackRF at 20 MS/s: the Band Scanner tunes one channel per window, TV Demodulator + TV Decoder try to lock on it. The decoder lock stops the scan on a live video (up to the listen timeout, then it moves on).\n'+
+  'A pass over 8 channels takes about 3–4 s; settle gives the decoder time to find the sync. Turn RX AMP and LNA on and use a 5.8 GHz antenna. Only unencrypted analog video can be shown: digital links (DJI, Walksnail, HDZero) are not decoded.'});
+nt.size.w=760; nt.size.h=120; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'20000000',freq:5658000000,demod:'IQ'});
+const bp=addNode('table',40,360,{list:'@patch',initial:false,data:'name,lo,hi,step\n'+
+  'R1 5658,5648M,5668M,20M\nR2 5695,5685M,5705M,20M\nR3 5732,5722M,5742M,20M\nR4 5769,5759M,5779M,20M\n'+
+  'R5 5806,5796M,5816M,20M\nR6 5843,5833M,5853M,20M\nR7 5880,5870M,5890M,20M\nR8 5917,5907M,5927M,20M'});
+bp.size.w=340; bp.size.h=260; applySize(bp);
+const bs=addNode('bandscan',420,200,{timeout:20000,settle:400,edge:0});
+bs.size.w=300; bs.size.h=160; applySize(bs);
+const dm=addNode('tvDemod',420,400,{mode:'FM',dev:8000000,bw:5000000});
+const dc=addNode('tvDecode',420,540,{});
+dc.size.w=420; dc.size.h=110; applySize(dc);
+const sa=addNode('sa',860,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const fr=addNode('imgview',860,360,{});
+fr.size.w=520; fr.size.h=440; applySize(fr);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(bp.id,'bands',bs.id,'bands');
+addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi');
+addEdge(bs.id,'freq',rx.id,'freq');
+addEdge(rx.id,'iq',dm.id,'in'); addEdge(dm.id,'out',dc.id,'in'); addEdge(dc.id,'img',fr.id,'img');
+addEdge(dc.id,'lock',bs.id,'active');
 markWiresDirty();
 });
 preset('Indicators: Lamps, Gauge, LED Bar, Compass, Display', function(){
