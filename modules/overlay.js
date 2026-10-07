@@ -380,18 +380,29 @@ function ovDrawRelief(cx,rel,proj,solid){
 
 
 // ---------- OSM Overpass: пики, города, дороги, реки ----------
+// Overpass: основной сервер часто отвечает 504 — пробуем зеркала по очереди
+const OV_OVERPASS=['https://overpass-api.de/api/interpreter','https://overpass.private.coffee/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
+async function ovOverpass(query){
+  let err=null;
+  for(const url of OV_OVERPASS){
+    try{
+      const ac=new AbortController(), tm=setTimeout(()=>ac.abort(),70000);
+      const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'data='+encodeURIComponent(query),signal:ac.signal}).finally(()=>clearTimeout(tm));
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      const txt=await r.text(); let j=null; try{ j=JSON.parse(txt); }catch(e){ throw new Error('server busy'); }
+      const re=gfRemarkError(j); if(re) throw new Error('server busy: '+re);          // не кэшировать ответ-ошибку
+      return txt;
+    }catch(e){ err=e; }
+  }
+  throw err||new Error('no server');
+}
 async function ovOsmLoad(n,lat,lon,rKm){
   const key='osm:'+lat.toFixed(2)+','+lon.toFixed(2)+','+rKm, gen=n.osmReq={};
   n.osmMsg='loading map features…';
   try{
     let txt=await geoGet(key).catch(()=>null);
     if(!txt){
-      const r=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',
-        headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'data='+encodeURIComponent(ovkOsmQuery(lat,lon,rKm*1000))});
-      if(!r.ok) throw new Error('HTTP '+r.status);
-      txt=await r.text();
-      let j=null; try{ j=JSON.parse(txt); }catch(e){ throw new Error('server busy, try later'); }
-      const re=gfRemarkError(j); if(re) throw new Error('server busy: '+re);          // не кэшировать ответ-ошибку
+      txt=await ovOverpass(ovkOsmQuery(lat,lon,rKm*1000));
       geoPut(key,txt).catch(()=>{});
     }
     if(n.osmReq!==gen) return;
@@ -415,86 +426,93 @@ function ovOsmGeo(n,obs,rel,alt,okey){
   return n.osmGeo={roads:line(o.roads), rivers:line(o.rivers), peaks:dots(o.peaks,60), places:dots(o.places,40)};
 }
 
-// ---------- здания OSM: контуры с высотой, окна светятся ночью ----------
+// ---------- здания OSM: контуры с высотой, ночью светятся ----------
 async function ovBldLoad(n,lat,lon,rKm){
-  const key='bld:'+lat.toFixed(3)+','+lon.toFixed(3)+','+rKm, gen=n.bldReq={};
+  const key='bld2:'+lat.toFixed(3)+','+lon.toFixed(3)+','+rKm, gen=n.bldReq={};
   n.bldMsg='loading buildings…';
   try{
     let txt=await geoGet(key).catch(()=>null);
-    if(!txt){
-      const r=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',
-        headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'data='+encodeURIComponent(ovkBldQuery(lat,lon,rKm*1000))});
-      if(!r.ok) throw new Error('HTTP '+r.status);
-      txt=await r.text();
-      let j=null; try{ j=JSON.parse(txt); }catch(e){ throw new Error('server busy, try later'); }
-      const re=gfRemarkError(j); if(re) throw new Error('server busy: '+re);
-      geoPut(key,txt).catch(()=>{});
-    }
+    if(!txt){ txt=await ovOverpass(ovkBldQuery(lat,lon,rKm*1000)); geoPut(key,txt).catch(()=>{}); }
     if(n.bldReq!==gen) return;
-    n.bld=ovkBldParse(JSON.parse(txt),lat,lon); n.bldFor={lat,lon,r:rKm}; n.bldGen=(n.bldGen|0)+1; n.bldMsg='';
+    const j=JSON.parse(txt);
+    n.bld=ovkBldParse(j,lat,lon); n.bldRoads=ovkBldRoads(j,lat,lon); n.bldFor={lat,lon,r:rKm}; n.bldGen=(n.bldGen|0)+1; n.bldMsg='';
   }catch(e){ if(n.bldReq===gen){ n.bldMsg='buildings: '+e.message; n.bldT=Date.now()+90000; } }
 }
-// контур в ENU на высоте земли в центре здания; ориентация против часовой; видимость центра из точки наблюдения
+// контур в ENU на высоте земли в центре здания (против часовой), размер, видимость верха из точки наблюдения; улицы — точками
 function ovBldGeo(n,obs,rel,alt,okey){
   if(!n.bld) return null;
   const key=okey+'|'+n.bldGen+'|'+Horizon.ver;
   if(n.bldGeoKey===key) return n.bldGeo;
-  const hAt=Horizon.hAt, out=[];
+  const hAt=Horizon.hAt, ground=(la,lo)=>{ const g=hAt ? hAt(la,lo) : alt-2; return g===g ? g : alt-2; }, bl=[];
   for(const b of n.bld){
-    const g=hAt ? hAt(b.lat,b.lon) : alt-2, h0=g===g ? g : alt-2;
-    let ring=b.pts.map(q=>ovEnu(obs,q[0],q[1],h0)), A=0;
-    for(let i=0;i<ring.length;i++){ const u=ring[i], v=ring[(i+1)%ring.length]; A+=u[0]*v[1]-v[0]*u[1]; }
+    const h0=ground(b.lat,b.lon);
+    let ring=b.pts.map(q=>ovEnu(obs,q[0],q[1],h0)), A=0, x0=1e9, x1=-1e9, y0=1e9, y1=-1e9;
+    for(let i=0;i<ring.length;i++){ const u=ring[i], v=ring[(i+1)%ring.length]; A+=u[0]*v[1]-v[0]*u[1];
+      if(u[0]<x0) x0=u[0]; if(u[0]>x1) x1=u[0]; if(u[1]<y0) y0=u[1]; if(u[1]>y1) y1=u[1]; }
     if(A<0) ring=ring.reverse();
     const c=ovEnu(obs,b.lat,b.lon,h0+b.h/2);
-    out.push({id:b.id, h:b.h, lv:b.lv, ring, c, d:Math.hypot(c[0],c[1]), vis:ovkVisible(rel?.los,c[0],c[1],c[2],.02)});
+    const tp=ovEnu(obs,b.lat,b.lon,h0+b.h);
+    bl.push({id:b.id, h:b.h, lv:b.lv, ring, c, d:Math.hypot(c[0],c[1]), w:Math.max(3,Math.hypot(x1-x0,y1-y0)), vis:ovkVisible(rel?.los,tp[0],tp[1],tp[2],.05)});       // виден верх здания
   }
-  out.sort((a,b)=>b.d-a.d);                                  // от дальних к ближним
-  n.bldGeoKey=key; return n.bldGeo=out;
+  bl.sort((a,b)=>b.d-a.d);                                  // от дальних к ближним
+  const roads=(n.bldRoads||[]).map(w=>({kind:w.kind, pts:w.pts.map(q=>{ const e=ovEnu(obs,q[0],q[1],ground(q[0],q[1])+4); return {e,vis:ovkVisible(rel?.los,e[0],e[1],e[2],.03)}; })}));
+  n.bldGeoKey=key; return n.bldGeo={b:bl, roads};
 }
 const ovHash=(a,b,c,d)=>{ let x=(a*73856093)^(b*19349663)^(c*83492791)^(d*2654435761); x=(x^(x>>>13))*1274126177; return ((x^(x>>>16))>>>0)/4294967296; };
-// здания: стены, обращённые к камере, с окнами; крыша; ночью окна горят у части этажей
+// Здания светятся: мелкие и далёкие — точками, крупные — стенами с окнами. Рисуем сначала мелкие (дальние), поверх них крупные
 function ovDrawBuildings(cx,proj,foc,box,list,dk,vis,sun){
-  const [rx,ry,rw,rh]=box, night=1-dk;
-  const sv=ovkSunVec(sun.az,sun.el), day=ovMix([132,134,140],[168,166,160],dk), dark=[14,17,26], haze=ovMix(OV_HAZE_NIGHT,OV_HAZE_DAY,dk);
-  let budget=7000;
+  const [rx,ry,rw,rh]=box, night=1-dk, sv=ovkSunVec(sun.az,sun.el), day=ovMix([132,134,140],[168,166,160],dk), haze=ovMix(OV_HAZE_NIGHT,OV_HAZE_DAY,dk);
+  const big=[], tiny=[];
   for(const b of list){
     if(!b.vis) continue;
-    const fog=ovkFog(b.d,vis,0), top=[], bot=[], R=b.ring, N=R.length;
-    let on=false;
-    for(let i=0;i<N;i++){
-      const p0=proj(R[i]), p1=proj([R[i][0],R[i][1],R[i][2]+b.h]);
-      if(!p0 || !p1){ on=false; break; }
-      bot.push(p0); top.push(p1); if(p0.x>rx-50 && p0.x<rx+rw+50 && p0.y>ry-50 && p0.y<ry+rh+50 || p1.y>ry-50 && p1.y<ry+rh+50 && p1.x>rx-50 && p1.x<rx+rw+50) on=true;
+    const c=proj(b.c); if(!c || c.x<rx-60 || c.x>rx+rw+60 || c.y<ry-60 || c.y>ry+rh+60) continue;
+    (Math.max(b.w,b.h)*foc/c.z<6 ? tiny : big).push(b,c);
+  }
+  if(dk>.05){                                                       // днём — серые точки
+    cx.fillStyle='rgb('+day.map(Math.round).join(',')+')';
+    for(let i=0;i<tiny.length;i+=2){ const b=tiny[i], c=tiny[i+1], s=Math.max(1.5,b.w*foc/c.z); cx.globalAlpha=dk*(1-ovkFog(b.d,vis,0)*.8); cx.fillRect(c.x-s/2,c.y-s/2,s,s); }
+    cx.globalAlpha=1;
+  }
+  if(night>.03){                                                    // ночью — тёплое свечение, ярче у «жилых» (по хэшу)
+    cx.save(); cx.globalCompositeOperation='lighter';
+    for(let i=0;i<tiny.length;i+=2){
+      const b=tiny[i], c=tiny[i+1], h=ovHash(b.id%2147483647,1,2,3), s=Math.max(2,b.w*foc/c.z*1.3), a=night*(1-ovkFog(b.d,vis,0)*.75)*(.45+.55*h);
+      cx.globalAlpha=a; cx.fillStyle=h<.12 ? 'rgb(190,225,255)' : 'rgb(255,'+(170+(h*110|0))+',95)'; cx.fillRect(c.x-s/2,c.y-s/2,s,s);
     }
-    if(bot.length!==N || !on) continue;
+    cx.restore();
+  }
+  let budget=9000;
+  for(let k=0;k<big.length;k+=2){
+    const b=big[k], R=b.ring, N=R.length, fog=ovkFog(b.d,vis,0), top=[], bot=[];
+    for(let i=0;i<N;i++){ const p0=proj(R[i]), p1=proj([R[i][0],R[i][1],R[i][2]+b.h]); if(!p0 || !p1) break; bot.push(p0); top.push(p1); }
+    if(bot.length!==N) continue;
+    const gl=.6+.8*ovHash(b.id%2147483647,7,7,7), cold=ovMix([60,42,26].map(v=>v*gl),haze,fog*.8);
     for(let i=0;i<N;i++){
       const j=(i+1)%N, A=R[i], B=R[j], dx=B[0]-A[0], dy=B[1]-A[1], L=Math.hypot(dx,dy); if(L<1) continue;
-      const nx=dy/L, ny=-dx/L;                                      // наружу при обходе против часовой
+      const nx=dy/L, ny=-dx/L;
       if(nx*A[0]+ny*A[1]>=0) continue;                              // стена смотрит от камеры
-      const lit=Math.max(0,nx*sv[0]+ny*sv[1])*.5+.5, base=ovMix(dark,day.map(v=>v*lit),dk);
-      const col=ovMix(base,haze,fog*.85), q0=bot[i], q1=bot[j], q2=top[j], q3=top[i];
+      const lit=Math.max(0,nx*sv[0]+ny*sv[1])*.5+.5, col=ovMix(ovMix(cold,day.map(v=>v*lit),dk),haze,dk*fog*.85), q0=bot[i], q1=bot[j], q2=top[j], q3=top[i];
       cx.fillStyle='rgb('+col.map(Math.round).join(',')+')';
       cx.beginPath(); cx.moveTo(q0.x,q0.y); cx.lineTo(q1.x,q1.y); cx.lineTo(q2.x,q2.y); cx.lineTo(q3.x,q3.y); cx.closePath(); cx.fill();
       if(night<.05 || fog>.9) continue;
       const cols=Math.max(1,Math.floor(L/3.5)), rows=b.lv, wpx=Math.hypot(q1.x-q0.x,q1.y-q0.y)/cols, hpx=Math.hypot(q3.x-q0.x,q3.y-q0.y)/rows, pa=night*(1-fog)*.95;
       if(wpx<2.2 || hpx<2.2){                                       // окна не различить — стена светится средней яркостью
-        const f=.28*pa; if(f<.01) continue;
-        cx.fillStyle='rgba(255,196,110,'+f.toFixed(3)+')'; cx.beginPath(); cx.moveTo(q0.x,q0.y); cx.lineTo(q1.x,q1.y); cx.lineTo(q2.x,q2.y); cx.lineTo(q3.x,q3.y); cx.closePath(); cx.fill();
+        cx.fillStyle='rgba(255,196,110,'+(.35*pa).toFixed(3)+')'; cx.beginPath(); cx.moveTo(q0.x,q0.y); cx.lineTo(q1.x,q1.y); cx.lineTo(q2.x,q2.y); cx.lineTo(q3.x,q3.y); cx.closePath(); cx.fill();
         continue;
       }
-      const ww=wpx*.55, wh=hpx*.5;
+      const ww=wpx*.6, wh=hpx*.55;
       for(let r=0;r<rows;r++){
         const v=(r+.5)/rows;
         for(let c=0;c<cols;c++){
           if(budget<=0) break;
-          const h=ovHash(b.id%2147483647,i,c,r); if(h>.38) continue;       // окно горит
+          const h=ovHash(b.id%2147483647,i,c,r); if(h>.55) continue;       // окно горит
           const u=(c+.5)/cols, x=(q0.x+(q1.x-q0.x)*u)*(1-v)+(q3.x+(q2.x-q3.x)*u)*v, y=(q0.y+(q1.y-q0.y)*u)*(1-v)+(q3.y+(q2.y-q3.y)*u)*v;
-          cx.fillStyle=h<.08 ? 'rgba(190,225,255,'+pa.toFixed(2)+')' : 'rgba(255,'+(188+(h*200|0))+',110,'+pa.toFixed(2)+')';
+          cx.fillStyle=h<.06 ? 'rgba(190,225,255,'+pa.toFixed(2)+')' : 'rgba(255,'+(188+(h*130|0))+',110,'+pa.toFixed(2)+')';
           cx.fillRect(x-ww/2,y-wh/2,ww,wh); budget--;
         }
       }
     }
-    const rc=ovMix(ovMix([22,25,34],day.map(v=>v*1.05),dk),haze,fog*.85);                            // крыша
+    const rc=ovMix(ovMix([34,26,20],day.map(v=>v*1.05),dk),haze,fog*.85);                            // крыша
     cx.fillStyle='rgb('+rc.map(Math.round).join(',')+')'; cx.beginPath(); top.forEach((q,i)=>i ? cx.lineTo(q.x,q.y) : cx.moveTo(q.x,q.y)); cx.closePath(); cx.fill();
   }
 }
@@ -616,8 +634,8 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           {n:'relief',t:'select',opts:['off','auto','lines','solid'],d:'auto',label:'terrain relief 3D from Horizon (auto: solid without video, lines over video)'},
           {n:'vis',t:'range',min:5,max:150,step:1,d:35,label:'haze: visibility, km (distant mountains fade into the sky)'},
           {n:'minLight',t:'range',min:0,max:.6,step:.01,d:.3,label:'night brightness floor of the relief (0 — pitch dark)'},
-          {n:'bld',t:'check',d:false,label:'buildings (OSM): footprints with height, windows light up at night (asks overpass-api.de, needs Horizon heights)'},
-          {n:'bldR',t:'range',min:.3,max:3,step:.1,d:1.2,label:'buildings radius, km',adv:true},
+          {n:'bld',t:'check',d:false,label:'buildings and streets (OSM): all buildings with height, glow at night, street lights (asks Overpass, needs Horizon heights)'},
+          {n:'bldR',t:'range',min:.3,max:5,step:.1,d:1.5,label:'buildings and streets radius, km',adv:true},
           {n:'lights',t:'check',d:true,label:'night lights: towns, roads and runways glow after dark (needs OSM / towns / airfields on)'},
           {n:'shadows',t:'check',d:true,label:'terrain shadows from the real Sun (cost: a few ms when the mesh is rebuilt)'},
           {n:'tshift',t:'range',min:-12,max:12,step:.25,d:0,label:'Sun time shift, h (0 — real time; moves the Sun, the light and the sky)',adv:true},
@@ -830,7 +848,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
         if(now>=(n.bldT||0) && !n.bldBusy){ n.bldT=now+30000; n.bldBusy=true; ovBldLoad(n,lat,lon,+p.bldR).finally(()=>{ n.bldBusy=false; }); }
       }
       const bg=ovBldGeo(n,obs,rel,alt,okey);
-      if(bg && sun0) ovDrawBuildings(cx,proj,foc,[rx,ry,rw,rh],bg,dk,+p.vis,sun0);
+      if(bg && sun0) ovDrawBuildings(cx,proj,foc,[rx,ry,rw,rh],bg.b,dk,+p.vis,sun0);
     }
 
     // карта OSM: реки и дороги по рельефу, подписи вершин и городов
@@ -928,7 +946,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
 
     // ночные огни по тем же данным OSM, что и подписи выше
     if(proj && obs && p.lights && dk<.98){
-      const o=p.osm ? n.osmGeo : null, f=n.featGeo, fl={roads:o?.roads, places:p.pop ? (n.feat.pop && f ? f.pl : []) : o?.places, rw:p.air && n.feat.air && f ? f.rw : []};
+      const o=p.osm ? n.osmGeo : null, f=n.featGeo, fl={roads:p.bld && n.bldGeo ? (o?.roads||[]).concat(n.bldGeo.roads) : o?.roads, places:p.pop ? (n.feat.pop && f ? f.pl : []) : o?.places, rw:p.air && n.feat.air && f ? f.rw : []};
       if(fl.roads || fl.places?.length || fl.rw.length) ovDrawLights(cx,proj,foc,[rx,ry,rw,rh],fl,1-dk,+p.vis);
     }
 

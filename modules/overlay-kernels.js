@@ -225,16 +225,18 @@ function ovkOsmParse(json,minM=80){
   return res;
 }
 
-// ---------- здания OSM ----------
-// way[building] с контуром; высота — тег height, иначе building:levels × 3 м, иначе 7 м
+// ---------- здания и улицы OSM ----------
+// way[building] с контуром (высота — тег height, иначе building:levels × 3 м, иначе 7 м) и улицы вокруг
+const OVK_STREETS='motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service';
 function ovkBldQuery(lat,lon,rM){
-  return '[out:json][timeout:25];way["building"](around:'+Math.round(rM)+','+lat.toFixed(5)+','+lon.toFixed(5)+');out geom 12000;';
+  const a='(around:'+Math.round(rM)+','+lat.toFixed(5)+','+lon.toFixed(5)+')';
+  return '[out:json][timeout:60];way["building"]'+a+'->.b;way["highway"~"^('+OVK_STREETS+')$"]'+a+'->.r;.b out geom 30000;.r out geom 20000;';
 }
-// ближайшие max зданий: {id, h, lv, pts:[[lat,lon]…] без замыкающей точки, lat, lon (центр), d — расстояние до центра запроса, м}
-function ovkBldParse(json,lat,lon,max=3000){
+// ближние max зданий: {id, h, lv, pts:[[lat,lon]…] без замыкающей точки, lat, lon (центр), d — расстояние до центра запроса, м}
+function ovkBldParse(json,lat,lon,max=30000){
   const out=[], kx=111320*Math.cos(lat*OVK_D);
   for(const el of (json?.elements||[])){
-    if(el.type!=='way' || !el.geometry || !el.tags) continue;
+    if(el.type!=='way' || !el.geometry || !el.tags || !el.tags.building) continue;
     let pts=el.geometry.filter(q=>q && q.lat!=null).map(q=>[q.lat,q.lon]);
     if(pts.length>1 && pts[0][0]===pts[pts.length-1][0] && pts[0][1]===pts[pts.length-1][1]) pts.pop();
     if(pts.length<3) continue;
@@ -245,6 +247,26 @@ function ovkBldParse(json,lat,lon,max=3000){
   }
   out.sort((a,b)=>a.d-b.d);
   return out.slice(0,max);
+}
+// улицы: точки через stepM метров вдоль линии (фонари); ближние первыми, всего не больше maxPts точек; [{kind, pts:[[lat,lon]…]}]
+function ovkBldRoads(json,lat,lon,stepM=25,maxPts=20000){
+  const res=[], kx=111320*Math.cos(lat*OVK_D);
+  for(const el of (json?.elements||[])){
+    const hw=el.tags?.highway;
+    if(el.type!=='way' || !el.geometry || !hw) continue;
+    const g=el.geometry.filter(q=>q && q.lat!=null), pts=[];
+    for(let i=0;i<g.length;i++){
+      if(!i){ pts.push([g[0].lat,g[0].lon]); continue; }
+      const a=g[i-1], b=g[i], dy=(b.lat-a.lat)*111320, dx=(b.lon-a.lon)*kx, L=Math.hypot(dx,dy), m=Math.max(1,Math.round(L/stepM));
+      for(let q=1;q<=m;q++) pts.push([a.lat+(b.lat-a.lat)*q/m, a.lon+(b.lon-a.lon)*q/m]);
+    }
+    if(pts.length<2) continue;
+    const mid=pts[pts.length>>1];
+    res.push({kind:hw, pts, d:Math.hypot((mid[0]-lat)*111320,(mid[1]-lon)*kx)});
+  }
+  res.sort((a,b)=>a.d-b.d);
+  let budget=maxPts;
+  return res.filter(w=>(budget-=w.pts.length)>=0);
 }
 
 // ---------- свет и тени рельефа ----------
