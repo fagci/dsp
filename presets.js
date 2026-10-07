@@ -161,6 +161,8 @@ const PRESET_CATS={
   'Satellites: Pass and Sky Plot':'Aircraft, Satellites & Telemetry',
   'Video: File with HUD → Record':'Images & TV',
   'Analog TV: Record Video and Snapshots (Generator)':'Images & TV',
+  'Telemetry: Decode Frames (no hardware)':'Aircraft, Satellites & Telemetry',
+  'Telemetry: HUD over Video → Record':'Aircraft, Satellites & Telemetry',
   'AR: Satellites Through the Camera (Phone)':'Aircraft, Satellites & Telemetry',
   'AR: ADS-B Aircraft in the Sky (Phone + Generator)':'Aircraft, Satellites & Telemetry',
   'ADS-B: Radar and Attitude (Generator)':'Aircraft, Satellites & Telemetry',
@@ -4216,6 +4218,46 @@ const vr=addNode('vidrec',340,500,{});
 vr.size.w=360; vr.size.h=200; applySize(vr);
 addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'out',dc.id,'in'); addEdge(dc.id,'img',fr.id,'img');
 addEdge(dc.id,'img',vr.id,'img'); addEdge(dc.id,'lock',vr.id,'snap');
+markWiresDirty();
+});
+preset('Telemetry: Decode Frames (no hardware)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Drone telemetry without a drone: four MAVLink v2 frames typed in as hex (HEARTBEAT armed, GLOBAL_POSITION_INT, ATTITUDE, SYS_STATUS) → Telemetry decoder → map and indicators.\n'+
+  'Position near Novosibirsk, 60 m above the start (180 m above sea level), flying east at 15 m/s, battery 15.6 V / 18.4 A / 71 %. The decoder runs MAVLink, CRSF, MSP and LTM at once: a frame is accepted only with a valid checksum.\n'+
+  'With a real flight controller, radio modem or ELRS / Crossfire receiver UART: press Connect port, pick the baud (MAVLink 57600 / 115200, MSP 115200, CRSF 420000).'});
+nt.size.w=780; nt.size.h=110; applySize(nt);
+const tx=addNode('textsrc',40,180,{text:'fd09000001010100000004000000020381040313d8fd1c0000020101210000e803000098aace20d0d06e3120bf020060ea0000dc05000000002823f014fd1c00000301011e0000e80300008fc2f53dcdcc4cbdf90fc93f0000000000000000000000006917fd1f00000401010100000000000000000000000000000000f03c3007000000000000000000000000471c8b'});
+tx.size.w=380; tx.size.h=140; applySize(tx);
+const tl=addNode('telem',460,180,{});
+tl.size.w=520; tl.size.h=240; applySize(tl);
+const map=addNode('geoMap',1020,180,{mz:15,mlat:55.0415,mlon:82.9346,ttl:0,labels:true});
+map.size.w=520; map.size.h=380; applySize(map);
+const gv=addNode('gauge',460,460,{min:12,max:25,warn:14,crit:13,unit:'V'});
+gv.size.w=240; gv.size.h=150; applySize(gv);
+const cp=addNode('compass',720,460,{});
+cp.size.w=200; cp.size.h=170; applySize(cp);
+addEdge(tx.id,'text',tl.id,'text'); addEdge(tl.id,'rec',map.id,'rec');
+addEdge(tl.id,'volts',gv.id,'in'); addEdge(tl.id,'az',cp.id,'in');
+markWiresDirty();
+});
+preset('Telemetry: HUD over Video → Record', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Your own HUD from the drone telemetry: Telemetry decoder (Connect port: flight controller, radio modem or ELRS / Crossfire UART) → Video Overlay (camera position and attitude from lat / lon / alt / az / el / roll,\n'+
+  'numbers on the HUD: battery V, speed, link rssi and quality) over a video file; Record Video writes the result. For a live analog picture replace the video source by TV Decoder `img` (the Overlay takes `img` as well).\n'+
+  'Heading, pitch and roll are the drone\'s, not the camera\'s: tune the correction sliders of the Overlay (azimuth / elevation / roll) for a camera that is tilted up on the frame. Without a picture the Overlay draws a synthetic sky.'});
+nt.size.w=800; nt.size.h=120; applySize(nt);
+const tl=addNode('telem',40,200,{});
+tl.size.w=420; tl.size.h=260; applySize(tl);
+const vs=addNode('vidsrc',40,500,{w:'320'});
+vs.size.w=300; vs.size.h=200; applySize(vs);
+const ov=addNode('overlay',500,200,{hud:'V:V, speed:m/s, RSSI:dBm, LQ:%'});
+ov.size.w=560; ov.size.h=420; applySize(ov);
+const vr=addNode('vidrec',1100,200,{});
+vr.size.w=300; vr.size.h=200; applySize(vr);
+addEdge(vs.id,'vid',ov.id,'vid');
+for(const k of ['lat','lon','alt','az','el','roll']) addEdge(tl.id,k,ov.id,k);
+addEdge(tl.id,'volts',ov.id,'a'); addEdge(tl.id,'speed',ov.id,'b'); addEdge(tl.id,'rssi',ov.id,'c'); addEdge(tl.id,'lq',ov.id,'d');
+addEdge(ov.id,'vid',vr.id,'vid');
 markWiresDirty();
 });
 preset('AR: Satellites Through the Camera (Phone)', function(){

@@ -211,6 +211,16 @@ The **tinySA** node talks to a tinySA or tinySA Ultra over its USB serial consol
 - **gen** (signal generator mode) — `mode low|high output`, frequency, level and **RF on**; `genFreq` (Hz) and `genLevel` (dBm) inputs let the graph drive it (e.g. a stepped frequency sweep)
 - ready-made patches: **tinySA: Spectrum**, **tinySA: FPV 5.8 GHz Channel Activity** (Ultra sweep 5.35–5.95 GHz under the FPV channel strip, peak hold, strongest peak on a display)
 
+## Telemetry
+
+The **Telemetry (MAVLink / CRSF / MSP / LTM)** node (Sources) decodes drone telemetry from a serial port (WebSerial, Chrome/Edge): a flight controller over USB, a telemetry radio modem (SiK 433 / 868 / 915 MHz), or the UART of an ELRS / Crossfire receiver. It runs four decoders on the same byte stream; a frame is accepted only with a valid checksum, so *protocol → auto* needs no setting except the baud.
+
+- **MAVLink** v1 / v2 (ArduPilot, PX4): HEARTBEAT (armed), SYS_STATUS (battery), GPS_RAW_INT, ATTITUDE, GLOBAL_POSITION_INT, VFR_HUD. **CRSF** (ELRS, Crossfire; 420000 baud): GPS, battery, attitude, link statistics (RSSI, LQ, SNR), flight mode. **MSP** v1 / v2 (Betaflight, INAV; it only answers requests, so the node asks for attitude, GPS, analog and altitude five times a second — *MSP: ask* switches this off). **LTM** (INAV, Ardupilot through a modem): GPS, attitude, status
+- outputs: `lat`, `lon`, `alt` (m), `az` (heading, °), `el` (pitch, °), `roll`, `speed` (m/s), `volts`, `amps`, `rssi`, `lq`, `sats`, `batt` (%), `mode`, and `rec` — a map record (name from *name on the map*, heading and speed for the *Map*); the first six go straight to *Video Overlay* (camera `lat` / `lon` / `alt` / `az` / `el` / `roll`), the rest to its HUD inputs `a`…`d`
+- input `text` takes the same bytes as hex, so a log or a test frame can be fed without hardware. Baud: MAVLink 57600 / 115200, MSP 115200, CRSF 420000, LTM 2400–19200
+- the numbers are the drone's, not the camera's; the Overlay's correction sliders compensate a tilted camera. Reads only: nothing is sent except the MSP requests
+- presets: **Telemetry: Decode Frames (no hardware)**, **Telemetry: HUD over Video → Record** (telemetry → Video Overlay over a video file → Record Video); the parsers are checked by `node tools/test-telemetry.mjs` (checksums against the CRC catalogue check values, frames built by hand from the protocol layouts, not recorded from real drones)
+
 ## Remote ID
 
 The **Remote ID (Open Drone ID)** node (Sources) shows drones that broadcast Remote ID (ASTM F3411): ID, type, status, position, altitude, speed, heading and the operator position. The signal is public and unencrypted: Wi-Fi beacons and NAN frames (2.4 / 5 GHz) and Bluetooth advertisements (service data 0xFFFA). Only drones that transmit it are seen (most DJI models and drones made for the EU / US market; home-built FPV usually not). Receive-only.
