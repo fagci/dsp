@@ -18,12 +18,26 @@ function horizonInterp(prof,az){
   const i=Math.floor(az), f=az-i;
   return prof[i%360]*(1-f)+prof[(i+1)%360]*f;
 }
+// профиль, если он посчитан для этой точки (±2 км), иначе null
+function horizonFor(lat,lon){
+  const H=Horizon;
+  if(!H.prof || lat==null || lon==null) return null;
+  if(Math.abs(lat-H.lat)>.02 || Math.abs(lon-H.lon)>.02/Math.max(.1,Math.cos(lat*D2R))) return null;
+  return H.prof;
+}
 // угол горизонта в азимуте az для точки lat/lon; 0 — профиля для этой точки нет
 function horizonAt(az,lat,lon){
-  const H=Horizon;
-  if(!H.prof || lat==null || lon==null || az==null) return 0;
-  if(Math.abs(lat-H.lat)>.02 || Math.abs(lon-H.lon)>.02/Math.max(.1,Math.cos(lat*D2R))) return 0;
-  return horizonInterp(H.prof,az);
+  const pr=horizonFor(lat,lon);
+  return pr && az!=null ? horizonInterp(pr,az) : 0;
+}
+// силуэт гор на полярном графике: xy(az,el) → [x,y], rimEl — угол на краю круга; без профиля точки не рисует
+function horizonSilhouette(cx,xy,rimEl,lat,lon,color,alpha){
+  const pr=horizonFor(lat,lon); if(!pr) return;
+  const outer=[], inner=[];
+  for(let a=0;a<360;a+=2){ outer.push(xy(a,rimEl)); inner.push(xy(a,Math.max(horizonInterp(pr,a),rimEl))); }
+  cx.beginPath();
+  for(const poly of [outer,inner]){ poly.forEach(([x,y],i)=>i ? cx.lineTo(x,y) : cx.moveTo(x,y)); cx.closePath(); }
+  cx.fillStyle=color; cx.globalAlpha=alpha; cx.fill('evenodd'); cx.globalAlpha=1;
 }
 
 // hAt(lat,lon) → высота, м (NaN — нет данных); h0 — высота антенны над уровнем моря, м.

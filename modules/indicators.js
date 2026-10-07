@@ -284,7 +284,8 @@ def({ id:'skyplot', lazy:'proc', title:'Sky Plot', cat:'Indicators',
   ins:[{n:'az',t:'num'},{n:'el',t:'num'},{n:'az2',t:'num'},{n:'el2',t:'num'}],
   view:{h:190}, resize:true,
   params:[{n:'trail',t:'range',min:0,max:300,step:1,d:30,label:'trail, s'},
-          {n:'horizon',t:'num',d:0,label:'horizon (min elevation), °'}],
+          {n:'horizon',t:'num',d:0,label:'horizon (min elevation), °'},
+          {n:'terrain',t:'check',d:true,label:'show mountains (Horizon module)'}],
   init:n=>{ n.t=0; n.tr=[[],[]]; n.cur=[null,null]; },
   process(n,I){
     n.t+=indDt();
@@ -308,6 +309,7 @@ def({ id:'skyplot', lazy:'proc', title:'Sky Plot', cat:'Indicators',
     cx.globalAlpha=1; indFont(cx,R*.13); cx.textAlign='center'; cx.textBaseline='middle'; cx.fillStyle=themeColor('--axis');
     for(let a=0;a<360;a+=90){ const q=R-R*.1, r=a*Math.PI/180;
       cx.fillStyle=themeColor(a===0?'--err':'--axis'); cx.fillText(IND_CARDS[a/45],X+Math.sin(r)*q,Y-Math.cos(r)*q); }
+    if(n.p.terrain) horizonSilhouette(cx,xy,hz,GeoMe.lat,GeoMe.lon,themeColor('--axis'),.4);
     cx.fillStyle=themeColor('--axis'); cx.textAlign='left';
     for(const e of [30,60]) if(e>hz){ const [x,y]=xy(0,e); cx.fillText(e+'°',x+2,y-2); }
     [themeColor('--acc2'),themeColor('--acc')].forEach((col,k)=>{
