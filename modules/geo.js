@@ -1597,7 +1597,8 @@ function geoDrawObjects(n,cx,v){
         cx.stroke(); cx.setLineDash([]);
         cx.fillStyle=col; cx.globalAlpha*=.08; cx.fill(); cx.globalAlpha=1-age*0.7; }
     }
-    const pth=Array.isArray(r.path) ? r.path : r.path3;          // path3 — ломаная связи (путь сигнала с отражением): [[lat,lon,alt],…]
+    let pth=Array.isArray(r.path) ? r.path : r.path3;
+    if(typeof pth==='string' && pth[0]==='['){ try{ pth=JSON.parse(pth); }catch(e){ pth=null; } }          // path3 — ломаная связи (путь сигнала с отражением): [[lat,lon,alt],…]
     if(Array.isArray(pth) && pth.length>1){           // путь вперёд (трасса спутника и т.п.): [[lat,lon],…]
       cx.strokeStyle=col; cx.lineWidth=1.2; cx.setLineDash(r.path3 ? [] : [2,4]); cx.beginPath();
       let px=null, py=null;

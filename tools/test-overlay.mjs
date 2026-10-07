@@ -125,6 +125,7 @@ ok('link: two ends, height above ground or above sea level',L2.length===2 && L2[
 ok('link: the second end takes the first end height by default',K.ovkLinkPts({lat:1,lon:2,h:7,lat2:3,lon2:4})[1].h===7);
 const L3=K.ovkLinkPts({path3:[[55,82,300],[55.01,82.02,40],[55.02,82.01]]});
 ok('link: a polyline with a reflection point (altitude optional)',L3.length===3 && L3[0].alt===300 && L3[2].alt===null);
+ok('link: path3 as a JSON string (a Table cell)',K.ovkLinkPts({path3:JSON.stringify([[55,82,100],[55.1,82.1,5],[55.2,82.2]])}).length===3);
 ok('link: no second end / broken coordinates → not a link',K.ovkLinkPts({lat:1,lon:2})===null && K.ovkLinkPts({lat:1,lon:2,lat2:'x',lon2:3})===null && K.ovkLinkPts({path3:[[1,2],[x=>0,4]]})===null && K.ovkLinkPts({path3:[[1,2]]})===null);
 const f=[0,1,0];                                                                         // камера смотрит на север
 ok('clip: both in front → unchanged',K.ovkClipNear([0,10,0],[5,50,0],f,1).length===2 && K.ovkClipNear([0,10,0],[5,50,0],f,1)[1][1]===50);
