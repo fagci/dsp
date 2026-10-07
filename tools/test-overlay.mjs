@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,isFinite,parseFloat,isNaN,Infinity});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/overlay-kernels.js'),'utf8')+
-  ';this.K={ovkSunEcl,ovkMoonEcl,ovkEclToEq,ovkAzEl,ovkSkyBodies,ovkPlanets,ovkPrecess,ovkSkyObjects,ovkLosBuild,ovkVisible,ovkOsmQuery,ovkOsmParse,ovkPosePush,ovkPoseAt,ovkTrailPush,ovkWrap,ovkNorm,ovkSunVec,ovkDayK,ovkLit,ovkShadowed,OVK_RING0,OVK_RING_K};',ctx);
+  ';this.K={ovkSunEcl,ovkMoonEcl,ovkEclToEq,ovkAzEl,ovkSkyBodies,ovkPlanets,ovkPrecess,ovkSkyObjects,ovkLosBuild,ovkVisible,ovkOsmQuery,ovkOsmParse,ovkPosePush,ovkPoseAt,ovkTrailPush,ovkWrap,ovkNorm,ovkSunVec,ovkDayK,ovkLit,ovkShadowed,ovkPalette,ovkFog,ovkDip,OVK_RING0,OVK_RING_K};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -110,4 +110,13 @@ ok('shadow: high Sun clears the wall',K.ovkShadowed(wall,0,0,0,90,30,3000)===fal
 ok('shadow: Sun on the other side',K.ovkShadowed(wall,0,0,0,270,10,3000)===false);
 ok('shadow: Sun at the horizon is handled by the light, not the ray',K.ovkShadowed(wall,0,0,0,90,1,3000)===false);
 ok('shadow: point above the wall is lit',K.ovkShadowed(wall,0,0,300,90,10,3000)===false);
+// цвет, дымка, наклон горизонта
+const pgr=K.ovkPalette(0), psn=K.ovkPalette(4000), pmid=K.ovkPalette(900);
+ok('palette: lowland green, peaks white',pgr[1]>pgr[0] && psn.every(v=>v>230),JSON.stringify([pgr,psn]));
+ok('palette: smooth between anchors',pmid.every((v,i)=>v>=Math.min(K.ovkPalette(600)[i],K.ovkPalette(1300)[i])-1e-9 && v<=Math.max(K.ovkPalette(600)[i],K.ovkPalette(1300)[i])+1e-9));
+ok('palette: below zero and above the top are clamped',K.ovkPalette(-50)[0]===pgr[0] && K.ovkPalette(9000)[0]===psn[0]);
+near('fog: none at zero distance',K.ovkFog(0,35,0),0,1e-12); near('fog: 1−1/e at the visibility distance',K.ovkFog(35000,35,0),1-Math.exp(-1),1e-9);
+ok('fog: grows with distance',K.ovkFog(30000,35,500)>K.ovkFog(10000,35,500)); ok('fog: thinner on high slopes',K.ovkFog(30000,35,3500)<K.ovkFog(30000,35,0)*.5);
+ok('fog: clearer air — less haze',K.ovkFog(30000,100,0)<K.ovkFog(30000,20,0));
+near('dip: sea level',K.ovkDip(0),0,0); near('dip: 100 m',K.ovkDip(100),.293,.001); near('dip: 2500 m',K.ovkDip(2500),1.465,.002); near('dip: negative altitude',K.ovkDip(-5),0,0);
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad?1:0);

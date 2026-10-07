@@ -240,6 +240,25 @@ function ovkShadowed(hAt,la,lo,h,az,el,maxM,hTop=Infinity){
   return false;
 }
 
+// ---------- цвет и дымка рельефа ----------
+// цвет поверхности по высоте, м: зелень → бурый → камень → снег (линейно между опорными точками)
+const OVK_PAL=[[0,[62,96,52]],[600,[92,108,58]],[1300,[122,104,72]],[2100,[130,118,104]],[2900,[142,140,142]],[3700,[236,240,246]]];
+function ovkPalette(h){
+  const P=OVK_PAL;
+  if(h<=P[0][0]) return P[0][1].slice();
+  for(let i=1;i<P.length;i++) if(h<=P[i][0]){
+    const k=(h-P[i-1][0])/(P[i][0]-P[i-1][0]);
+    return P[i-1][1].map((v,q)=>v+(P[i][1][q]-v)*k);
+  }
+  return P[P.length-1][1].slice();
+}
+// доля дымки 0…1 на расстоянии d (м) при видимости visKm; в горах (выше) воздух чище — высоко лежащие склоны дымятся слабее
+function ovkFog(d,visKm,h){
+  return (1-Math.exp(-d/(visKm*1000)))*(1-.55*Math.max(0,Math.min(1,h/3500)));
+}
+// на сколько градусов видимый горизонт ниже уровня на высоте hM (с рефракцией)
+const ovkDip=hM=>.0293*Math.sqrt(Math.max(0,hM));
+
 // ---------- поза камеры во времени (сдвиг видео относительно датчиков) ----------
 function ovkPosePush(buf,t,az,el,roll){
   const l=buf[buf.length-1];

@@ -7,7 +7,7 @@
 const HZ_URL='https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 const HZ_MAX_TILES=150, HZ_PRE_MAX=2500, HZ_MEM=240;
 const HZ_MEM_TILES=new Map();                          // декодированные тайлы 'z/x/y' → Float32Array, свежие в конце: при смещении окна декодируются только новые
-const Horizon={prof:null, lat:null, lon:null, src:'', hAt:null, ground:null, radius:0, ver:0};       // prof — Float32Array(360), °, индекс — азимут
+const Horizon={prof:null, lat:null, lon:null, src:'', hAt:null, ground:null, h0:null, radius:0, ver:0};       // prof — Float32Array(360), °, индекс — азимут
 
 function horizonInterp(prof,az){
   az=((az%360)+360)%360;
@@ -139,7 +139,7 @@ async function horizonRun(n,lat,lon,key){
     const prof=horizonProfile(hAt,lat,lon,g+(+p.ant||0),{radius:+p.radius*1000, step:Math.max(50,pix), k:+p.k||1.33});
     n.prof=prof; n.ground=g; n.manual=false; n.srcTxt='terrain z'+z+', '+list.length+' tiles'+(bad?', '+bad+' failed':'');
     n.job=null; n.done=job; n.msg='';
-    Object.assign(Horizon,{prof, lat, lon, src:n.srcTxt, hAt, ground:g, radius:+p.radius, ver:Horizon.ver+1});   // hAt(lat,lon) → высота, м — для рельефа в Video Overlay
+    Object.assign(Horizon,{prof, lat, lon, src:n.srcTxt, hAt, ground:g, h0:g+(+p.ant||0), radius:+p.radius, ver:Horizon.ver+1});   // hAt(lat,lon) → высота, м — для рельефа в Video Overlay
   }catch(e){ fail('terrain: '+e.message); }
 }
 function horizonTick(n,lat,lon){
