@@ -8,7 +8,7 @@
 // ?v=N-запросы отдаются из кэша без обращения к сети (cache-first), поэтому любая правка файла требует бампа V.
 // CACHE бампать вместе с ?v=N в index.html — иначе после правки файлов старый список ссылок
 // (со старым ?v=) продолжит переустанавливаться поверх уже закэшированного нового.
-const CACHE='dsp-shell-v248';
+const CACHE='dsp-shell-v249';
 const V=CACHE.replace(/\D/g,'');                 // ?v=N берётся из имени кэша — бампать только CACHE и V в index.html
 const SHELL=[
   './',
@@ -77,6 +77,8 @@ const SHELL=[
   './modules/photos.js?v='+V,
   './modules/paths-kernels.js?v='+V,
   './modules/paths.js?v='+V,
+  './modules/coverage-kernels.js?v='+V,
+  './modules/coverage.js?v='+V,
   './modules/overlay-kernels.js?v='+V,
   './modules/overlay.js?v='+V,
   './modules/control-kernels.js?v='+V,

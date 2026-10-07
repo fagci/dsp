@@ -13,7 +13,7 @@ const TBL_TEMPLATES=[
    desc:'One frequency per row (Hz, 145.5M, 14 MHz): a receiver can be tuned from it, the Sequencer steps through it.'},
   {id:'bands', title:'Frequency ranges (band plan)', dir:'bands', cols:['name','lo','hi','step','demod','color','kind','note'],
    desc:'Ranges for the spectrum (bands), the Band Scanner and the multiband view: lo, hi, channel step, mode.'},
-  {id:'tx', title:'Transmitters (signal sources)', dir:'sources', cols:['name','lat','lon','h','freq','erp_w','gain_dbi','pol','azimuth','beamwidth','note'],
+  {id:'tx', title:'Transmitters (signal sources)', dir:'sources', cols:['name','lat','lon','h','freq','erp_w','pol','azimuth','beamwidth','note'],
    desc:'Radio / TV masts and any known source: place, mast height (h, m), frequency, radiated power (erp_w), antenna gain, polarisation, direction and beamwidth.'},
   {id:'rx', title:'Receiving points (observation posts)', dir:'posts', cols:['name','lat','lon','alt','h','rx_ant','rx_gain','note','photo'],
    desc:'Where you listen from: a place, antenna height (h, m above ground), antenna and its gain, a photo of the site.'},
