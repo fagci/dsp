@@ -208,28 +208,32 @@ function gdOpenMenu(n){
   const off=e=>{ if(!m.contains(e.target)){ m.remove(); document.removeEventListener('pointerdown',off,true); } };
   setTimeout(()=>document.addEventListener('pointerdown',off,true));
 }
-// колонка ground для строк с координатами (альтитуда alt — из ground + h, если пуста); правки пачкой, дерево один раз
+// колонка ground для строк с координатами; alt (если колонка есть и пуста) = ground + h (h пуст — 0), h — из alt и ground
 async function gdTableElev(n){
   if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }
   if(!n.latCol || !n.lonCol){ alert('this list has no lat / lon columns'); return; }
   if(!n.cl.includes('ground')) await tblColsEdit(n,[...n.cl,'ground']);
-  const hasAlt=n.cl.includes('alt'), hasH=n.cl.includes('h'), db=tblKind(n.p.list)==='db';
-  let ok=0, miss=0;
+  const hasAlt=n.cl.includes('alt'), hasH=n.cl.includes('h'), db=tblKind(n.p.list)==='db', empty=v=>v==='' || v==null;
+  let ok=0, same=0, miss=0;
   for(let k=0;k<n.all.length;k++){
     const r=n.all[k], la=recNum(r[n.latCol]), lo=recNum(r[n.lonCol]);
-    if(la==null || lo==null || (r.ground!=='' && r.ground!=null)) continue;
-    const g=await geoElevAt(la,lo).catch(()=>NaN);
-    if(g!==g){ miss++; continue; }
-    const x=gdApplyGround(r,g,false), o={...r,ground:x.ground};
-    if(hasAlt && (r.alt==='' || r.alt==null) && x.alt!=null) o.alt=x.alt;
-    if(hasH && (r.h==='' || r.h==null) && x.h!=null) o.h=x.h;
+    if(la==null || lo==null) continue;
+    let g=recNum(r.ground);
+    if(g==null){
+      g=await geoElevAt(la,lo).catch(()=>NaN);
+      if(g!==g){ miss++; continue; }
+    }
+    const x=gdApplyGround(hasAlt && empty(r.alt) && empty(r.h) ? {...r,h:0} : r,g,false), o={...r,ground:x.ground};
+    if(hasAlt && empty(r.alt) && x.alt!=null) o.alt=x.alt;
+    if(hasH && empty(r.h) && x.h!=null) o.h=x.h;
+    if(o.ground===r.ground && o.alt===r.alt && o.h===r.h){ same++; continue; }
     n.all[k]=o; ok++;
     if(db){ const it=tblToItem(o,n.cl); await ListDB.update(n.ids[k],{name:it.name,fields:it.fields,value:it.fields.value??''}); }
     if(ok%20===0 && n.ui) n.ui.count.textContent='ground '+ok+'…';
   }
   if(!db) await tblSave(n);
   tblDerive(n); tblRenderAll(n);
-  alert(ok+' rows filled'+(miss ? ', '+miss+' without terrain data ('+(GD.err||'no network?')+')' : ''));
+  alert(ok+' rows filled'+(same ? ', '+same+' already complete' : '')+(miss ? ', '+miss+' without terrain data ('+(GD.err||'no network?')+')' : ''));
 }
 
 /* ---------- Map: клик с учётом высоты, импорт в окне, векторные слои ---------- */
