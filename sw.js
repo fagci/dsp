@@ -7,7 +7,7 @@
 //
 // CACHE бампать вместе с ?v=N в index.html — иначе после правки файлов старый список ссылок
 // (со старым ?v=) продолжит переустанавливаться поверх уже закэшированного нового.
-const CACHE='dsp-shell-v228';
+const CACHE='dsp-shell-v229';
 const V=CACHE.replace(/\D/g,'');                 // ?v=N берётся из имени кэша — бампать только CACHE и V в index.html
 const SHELL=[
   './',
@@ -63,6 +63,7 @@ const SHELL=[
   './modules/logican.js?v='+V,
   './modules/sked.js?v='+V,
   './modules/sat.js?v='+V,
+  './modules/horizon.js?v='+V,
   './modules/radio.js?v='+V,
   './modules/simd-kernels.js?v='+V,
   './modules/iq-kernels.js?v='+V,
