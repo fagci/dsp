@@ -20,7 +20,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **Module picker**: search takes several words (all must match title / id / category; titles starting with a word rank first). Drop a wire on an empty spot — or select a port and tap an empty spot — and the picker lists only modules that have a matching port, shows which pin the wire will go to and connects it on pick; modules that need an automatic *iq* ↔ signal adapter come after the exact matches. Every module gets a generated icon: initials on the category colour, the shape follows the main output type (circle — IQ, diamond — spectrum, square — records / text / images, hexagon — no outputs)
 - Add modules right on the canvas: double-click an empty spot (or **+** in the graph pane) and search
 - Groups (nested subgraphs) with custom inputs/outputs
-- Undo/redo, duplicate, multi-select, module search (Ctrl+K)
+- Undo/redo, duplicate, multi-select, module search — all from the toolbar; the only hotkey is **Delete** (removes the selected modules), so a stray key cannot change the patch
 - Save/load patches to local storage or JSON files
 - 160+ built-in presets: demos, quick scenarios, radio protocols, music, analysis
 - Adjustable block size, sample rate and run speed (×1…×32); redraw rate switch in the settings panel (the sliders button in the toolbar, together with run speed, block size, sample rate and the global **CORS proxy** used by Satellites, Horizon and Station Schedule — `{url}` in it is replaced by the encoded address, otherwise the address is appended): *fps max* (default; always 60 fps — the waterfall does not slow down at rest, but the main thread has less time for USB and audio), *fps auto* (60 → 30 → 20 fps as the interface sits idle, 10 fps with a USB SDR connected) and *fps min* (10 fps, lightest on CPU)
@@ -891,10 +891,10 @@ The ▦ button switches to a tiled dashboard built from the modules of the curre
 - Pick any module for each pane from its dropdown
 - **Tabs in a pane**: **+** next to the dropdown adds a tab, so one pane switches between several modules; the dropdown belongs to the active tab, ⨯ closes it
 - Split panes right (⬌) or down (⬍), remove them (✕), drag dividers to resize; panes sit edge to edge, 1px dividers
-- **⊡** or a double-click (double-tap) on an empty spot of the pane header maximizes the pane; the same or Esc restores the layout
+- **⊡** or a double-click (double-tap) on an empty spot of the pane header maximizes the pane; the same restores the layout
 - In narrow panes and on touch the pane buttons fold into **⋯**
 - ⛶ shows only the module's display, without controls and header
-- **Tile pages**: **+** next to ▦ adds another set of tiles; switch pages with the numbered buttons (or Alt+1…9), tap the active one to rename, duplicate, reorder or delete it. A module can appear on several pages
+- **Tile pages**: **+** next to ▦ adds another set of tiles; switch pages with the numbered buttons, tap the active one to rename, duplicate, reorder or delete it. A module can appear on several pages
 - The layout is saved with the patch and works on touch devices (wide scroll rail for long panes)
 
 ### Module graph pane

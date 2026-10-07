@@ -293,7 +293,10 @@ async function ovOsmLoad(n,lat,lon,rKm){
       const r=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',
         headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'data='+encodeURIComponent(ovkOsmQuery(lat,lon,rKm*1000))});
       if(!r.ok) throw new Error('HTTP '+r.status);
-      txt=await r.text(); geoPut(key,txt).catch(()=>{});
+      txt=await r.text();
+      let j=null; try{ j=JSON.parse(txt); }catch(e){ throw new Error('server busy, try later'); }
+      const re=gfRemarkError(j); if(re) throw new Error('server busy: '+re);          // не кэшировать ответ-ошибку
+      geoPut(key,txt).catch(()=>{});
     }
     if(n.osmReq!==gen) return;
     n.osm=ovkOsmParse(JSON.parse(txt)); n.osmFor={lat,lon}; n.osmGen=(n.osmGen|0)+1; n.osmMsg='';
