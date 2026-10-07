@@ -764,7 +764,7 @@ async function camApplyCtl(n){
   n.ctlNote=miss.length?'no '+miss.join('/'):'';
   n.ctlBusy=false;
 }
-def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'bright',t:'num'},{n:'rows',t:'sig'}],
+def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'vid',t:'vid'},{n:'bright',t:'num'},{n:'rows',t:'sig'}],
   ins:[{n:'roiX',t:'num'},{n:'roiY',t:'num'},{n:'roiW',t:'num'},{n:'roiH',t:'num'}],
   params:[{n:'on',t:'button',label:'Turn on camera',fn:n=>camStart(n)},
           {n:'cam',t:'select',opts:['front','rear'],d:'rear',fn:n=>{ if(n.track) camStart(n); }},
@@ -797,7 +797,7 @@ def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'brigh
   process(n,I){
     for(const k of ['roiX','roiY','roiW','roiH']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     const o=buf(n,'rows'), q=n.q, rq=n.rq, sr=Eng.sr;
-    if(n.qT==null){ o.fill(n.rv); return {img:n.img||null, bright:n.bright, rows:o}; }
+    if(n.qT==null){ o.fill(n.rv); return {img:n.img||null, vid:n.track?n.video:null, bright:n.bright, rows:o}; }
     const err=n.qT-CAM_LAG-n.clk;
     if(n.clk==null || Math.abs(err)>.3) n.clk=n.qT-CAM_LAG;   // старт/обрыв/смена часов
     else n.clk+=err*.005;                           // медленная подстройка под дрейф часов камеры
@@ -810,7 +810,7 @@ def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'brigh
     n.clk+=BLOCK/sr;
     let i=0; while(i<q.length && q[i]<=n.clk){ n.bright=q[i+1]; i+=2; }
     if(i) q.splice(0,i);
-    return {img:n.img||null, bright:n.bright, rows:o}; },
+    return {img:n.img||null, vid:n.track?n.video:null, bright:n.bright, rows:o}; },
   draw(n,cv,cx){
     const r=n.el.querySelector('.readout'), v=n.video;
     if(n.track && n.track.readyState==='ended'){ n.status='camera stopped'; camStop(n); }
@@ -853,7 +853,7 @@ def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'brigh
 // <video> как источник кадров — файл или URL, в отличие от 'cam' не живая камера.
 // crossOrigin='anonymous' нужен, иначе getImageData на чужом URL кинет SecurityError
 // (canvas "запятнан") — сработает только если сервер видео отдаёт CORS-заголовки.
-def({ id:'vidsrc', title:'Video (file/URL)', cat:'Sources', outs:[{n:'img',t:'img'}],
+def({ id:'vidsrc', title:'Video (file/URL)', cat:'Sources', outs:[{n:'img',t:'img'},{n:'vid',t:'vid'}],
   params:[
     {n:'url',t:'text',d:'',label:'URL'},
     {n:'load',t:'button',label:'Load URL',fn:n=>{
@@ -869,7 +869,7 @@ def({ id:'vidsrc', title:'Video (file/URL)', cat:'Sources', outs:[{n:'img',t:'im
            n.capCv=document.createElement('canvas'); n.capCx=n.capCv.getContext('2d',{willReadFrequently:true});
            n.status='no source'; },
   view:{h:100}, readout:true, always:true,
-  process(n){ if(n.video.loop!==!!n.p.loop) n.video.loop=!!n.p.loop; return {img:n.img||null}; },
+  process(n){ if(n.video.loop!==!!n.p.loop) n.video.loop=!!n.p.loop; return {img:n.img||null, vid:n.video.videoWidth?n.video:null}; },
   draw(n,cv,cx){
     const r=n.el.querySelector('.readout');
     if(r) r.textContent = n.video.error ? 'load error'

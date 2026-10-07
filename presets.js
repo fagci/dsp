@@ -158,6 +158,8 @@ const PRESET_CATS={
 
   'Satellites: Track and Doppler':'Aircraft, Satellites & Telemetry',
   'Satellites: Pass and Sky Plot':'Aircraft, Satellites & Telemetry',
+  'AR: Satellites Through the Camera (Phone)':'Aircraft, Satellites & Telemetry',
+  'AR: ADS-B Aircraft in the Sky (Phone + Generator)':'Aircraft, Satellites & Telemetry',
   'ADS-B: Radar and Attitude (Generator)':'Aircraft, Satellites & Telemetry',
   'ADS-B: Aircraft Map (Generator)':'Aircraft, Satellites & Telemetry',
   'ADS-B: Aircraft Map (USB SDR, 1090 MHz)':'Aircraft, Satellites & Telemetry',
@@ -4006,6 +4008,42 @@ cp.size.w=220; cp.size.h=200; applySize(cp);
 addEdge(st.id,'el',pp.id,'el'); addEdge(st.id,'az',pp.id,'az'); addEdge(st.id,'aos',pp.id,'aos');
 addEdge(st.id,'los',pp.id,'los'); addEdge(st.id,'maxel',pp.id,'max');
 addEdge(st.id,'az',sp.id,'az'); addEdge(st.id,'el',sp.id,'el'); addEdge(st.id,'az',cp.id,'az');
+markWiresDirty();
+});
+preset('AR: Satellites Through the Camera (Phone)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Open on a phone over HTTPS. Press Turn on camera (Camera), Start (Orientation) and Download TLE (Satellites); set My Position to gps.\n'+
+  'Orientation gives where the camera looks (az / el / roll), My Position — where it stands, Satellites — what is above. Video Overlay draws the satellites (stub models) over the picture.\n'+
+  'The compass of a phone is off by 5–15°: tune the azimuth / elevation corrections in Video Overlay by a known object (the Moon, the ISS). Type a name in find to get an arrow to a satellite outside the frame.'});
+nt.size.w=760; nt.size.h=130; applySize(nt);
+const cm=addNode('cam',40,220,{cam:'rear',res:'1280x720',fps:'30'});
+const or=addNode('orient',40,380,{});
+const me=addNode('geoMe',40,520,{src:'gps'});
+const st=addNode('satTrack',300,220,{group:'stations',sat:'ISS',show:'all'});
+st.size.w=380; st.size.h=520; applySize(st);
+const ov=addNode('overlay',720,220,{fov:60,find:'ISS'});
+ov.size.w=520; ov.size.h=420; applySize(ov);
+addEdge(cm.id,'vid',ov.id,'vid'); addEdge(or.id,'az',ov.id,'az'); addEdge(or.id,'el',ov.id,'el'); addEdge(or.id,'roll',ov.id,'roll');
+addEdge(me.id,'lat',ov.id,'lat'); addEdge(me.id,'lon',ov.id,'lon'); addEdge(me.id,'alt',ov.id,'alt');
+addEdge(st.id,'rec',ov.id,'rec');
+markWiresDirty();
+});
+preset('AR: ADS-B Aircraft in the Sky (Phone + Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'ADS-B frames from a generator (replace Generator + Demodulator with a USB SDR at 1090 MHz) → Decoder → Video Overlay: the aircraft are drawn in 3D from the observer\'s point of view.\n'+
+  'Press Start in Orientation on a phone (HTTPS) and point it at the sky; add a Camera → vid wire to see the real picture under the overlay. My Position is the observer (gps on a phone).'});
+nt.size.w=760; nt.size.h=110; applySize(nt);
+const gn=addNode('iqGen',40,220,{sr:'2400000',fc:1090000000,mode:'ADS-B',off:0,lvl:-20,noise:-40});
+const dm=addNode('adsbDemod',40,560,{});
+const me=addNode('geoMe',320,500,{src:'manual',lat:55.01,lon:82.65});
+const de=addNode('adsbDecode',320,220,{rlat:55.01,rlon:82.65});
+de.size.w=480; de.size.h=240; applySize(de);
+const or=addNode('orient',320,640,{});
+const ov=addNode('overlay',860,220,{fov:60,labels:true});
+ov.size.w=520; ov.size.h=420; applySize(ov);
+addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'rec',de.id,'rec'); addEdge(de.id,'rec',ov.id,'rec');
+addEdge(or.id,'az',ov.id,'az'); addEdge(or.id,'el',ov.id,'el'); addEdge(or.id,'roll',ov.id,'roll');
+addEdge(me.id,'lat',ov.id,'lat'); addEdge(me.id,'lon',ov.id,'lon'); addEdge(me.id,'alt',ov.id,'alt');
 markWiresDirty();
 });
 preset('Logic Analyzer: USB (fx2lafw)', function(){
