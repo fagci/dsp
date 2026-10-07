@@ -41,6 +41,25 @@ async function covMeas(n){
   return out;
 }
 
+// картинка по ячейкам (север — вверх); пустые ячейки без расчёта — прозрачные только для карты
+function covImage(R,mode,thr,clear){
+  const {g,best,cnt,txs}=R, c=document.createElement('canvas'); c.width=g.nx; c.height=g.ny;
+  const x=c.getContext('2d'), im=x.createImageData(g.nx,g.ny), mx=Math.max(1,txs.length);
+  for(let j=0;j<g.ny;j++) for(let i=0;i<g.nx;i++){
+    const v=best[j*g.nx+i], o=((g.ny-1-j)*g.nx+i)*4;
+    let col, a=255;
+    if(!isFinite(v)){ col=[12,16,18]; if(clear) a=0; }
+    else if(mode) col=v<thr ? [18,36,64] : cvColor((v-thr)/60*.9+.1);
+    else { const q=cnt[j*g.nx+i]; col=q===0 ? [18,36,64] : cvColor(q/mx*.9+.1); }
+    im.data[o]=col[0]; im.data[o+1]=col[1]; im.data[o+2]=col[2]; im.data[o+3]=a;
+  }
+  x.putImageData(im,0,0); return c;
+}
+// растровый слой для карты: картинка и границы по широте / долготе (Map рисует строки по своей проекции)
+function covRaster(n){
+  const R=n.res, g=R.g, nw=R.F.inv(g.x0,g.y0+g.ny*g.cell), se=R.F.inv(g.x0+g.nx*g.cell,g.y0);
+  return {id:'cov:raster',kind:'raster',label:'coverage',canvas:covImage(R,n.p.show==='strongest signal',R.thr,true),north:nw[0],west:nw[1],south:se[0],east:se[1],opacity:+n.p.rastAlpha};
+}
 async function covRun(n,key,cfg){
   const p=n.p, tok=n.tok={}, t0=performance.now(), stop=()=>n.tok!==tok;
   const fail=m=>{ if(!stop()){ n.msg=m; n.job=false; n.res=null; n.done=key; } };
@@ -84,7 +103,7 @@ async function covRun(n,key,cfg){
     }
     if(stop()) return;
     n.res={g,F,best,who,cnt,txs,thr,res,lat:cfg.lat,lon:cfg.lon,t:Date.now(),stats:cvStats(best,g.cell,thr),rs:cvResid(res.map(r=>[r.rssi,r.pred])),ms:Math.round(performance.now()-t0)};
-    n.msg=''; n.job=false; n.done=key; n.emit=covRecords(n); n.img=null;
+    n.msg=''; n.job=false; n.done=key; n.emit=covRecords(n); n.emit.raster=[covRaster(n)]; n.img=null;
   }catch(e){ fail('coverage: '+e.message); }
 }
 // записи: сводка, контур порога (path — на карту), замеры с невязкой
@@ -116,7 +135,7 @@ def({ id:'coverage', title:'Coverage Map', cat:'Radio', kw:'coverage map dead zo
   // dead — доля мёртвых ячеек, %; area — их площадь, км²; bias / rms — невязка с замерами (измерено − расчёт), дБ; n — замеров; rec — сводка, невязки;
   // poly — контур порога для карты
   ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'rec',t:'rec'}],
-  outs:[{n:'dead',t:'num'},{n:'area',t:'num'},{n:'bias',t:'num'},{n:'rms',t:'num'},{n:'n',t:'num'},{n:'rec',t:'rec'},{n:'poly',t:'rec'}],
+  outs:[{n:'dead',t:'num'},{n:'area',t:'num'},{n:'bias',t:'num'},{n:'rms',t:'num'},{n:'n',t:'num'},{n:'rec',t:'rec'},{n:'poly',t:'rec'},{n:'raster',t:'rec'}],
   w:440, view:{h:380}, resize:true, readout:true,
   params:[{n:'tx',t:'text',d:'',label:'transmitters: Table lists, comma-separated (name, lat, lon, h, freq, erp_w, azimuth, beamwidth)'},
           {n:'filter',t:'text',d:'',label:'only these (names or frequencies, comma-separated; empty — all)'},
@@ -131,6 +150,7 @@ def({ id:'coverage', title:'Coverage Map', cat:'Radio', kw:'coverage map dead zo
           {n:'clutter',t:'range',min:0,max:40,step:.5,d:0,label:'extra loss (buildings, trees), dB — «Calibrate» sets it from the measurements'},
           {n:'tworay',t:'check',d:false,label:'two-ray ground interference on line of sight (lobes and nulls; needs antenna heights)'},
           {n:'show',t:'select',opts:['strongest signal','signals above threshold'],d:'strongest signal',label:'map shows'},
+          {n:'rastAlpha',t:'range',min:.2,max:1,step:.05,d:.55,label:'raster opacity on the Map (output `raster`)',adv:true},
           {n:'save',t:'text',d:'analysis/coverage',label:'Table list for the residuals'},
           {n:'tosave',t:'button',label:'Save residuals to table',fn:n=>covSave(n)},
           {n:'cal',t:'button',label:'Calibrate: remove the bias',fn:n=>covApplyBias(n)},
@@ -155,7 +175,7 @@ def({ id:'coverage', title:'Coverage Map', cat:'Radio', kw:'coverage map dead zo
     }
     const R=n.res, e=n.emit; n.emit=null;
     return {dead:R ? 100*R.stats.dead : null, area:R ? R.stats.dead_km2 : null, bias:R && R.rs.n ? R.rs.bias : null, rms:R && R.rs.n ? R.rs.rms : null, n:R ? R.rs.n : null,
-      rec:e ? e.rec : null, poly:e ? e.poly : null};
+      rec:e ? e.rec : null, poly:e ? e.poly : null, raster:e ? e.raster : null};
   },
   draw(n,cv,cx){
     const W=cv.width, H=cv.height, R=n.res, p=n.p, L=[], pad=8, leg=26, S=Math.max(40,Math.min(W-2*pad,H-2*pad-leg));
@@ -166,16 +186,7 @@ def({ id:'coverage', title:'Coverage Map', cat:'Radio', kw:'coverage map dead zo
       const {g,best,cnt,txs,thr}=R, ox=(W-S)/2, oy=pad, sc=S/(g.nx*g.cell), mode=p.show==='strongest signal';
       const key=R.t+'|'+p.show+'|'+thr;
       if(n.imgKey!==key || !n.img){                              // картинка по ячейкам: одна на расчёт
-        const c=document.createElement('canvas'); c.width=g.nx; c.height=g.ny; const x=c.getContext('2d'), im=x.createImageData(g.nx,g.ny), mx=Math.max(1,R.txs.length);
-        for(let j=0;j<g.ny;j++) for(let i=0;i<g.nx;i++){
-          const v=best[j*g.nx+i], o=((g.ny-1-j)*g.nx+i)*4;           // север — вверх
-          let col;
-          if(!isFinite(v)) col=[12,16,18];
-          else if(mode) col=v<thr ? [18,36,64] : cvColor((v-thr)/60*.9+.1);
-          else { const q=cnt[j*g.nx+i]; col=q===0 ? [18,36,64] : cvColor(q/mx*.9+.1); }
-          im.data[o]=col[0]; im.data[o+1]=col[1]; im.data[o+2]=col[2]; im.data[o+3]=255;
-        }
-        x.putImageData(im,0,0); n.img=c; n.imgKey=key;
+        n.img=covImage(R,mode,thr,false); n.imgKey=key;
       }
       cx.imageSmoothingEnabled=false; cx.drawImage(n.img,ox,oy,S,S);
       // контур порога
