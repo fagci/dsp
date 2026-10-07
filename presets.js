@@ -273,6 +273,7 @@ const PRESET_CATS={
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
   'Graph: Links from CSV':'Network & IoT',
+  'Network: Same Nodes and Links as Graph and on the Map':'Maps & Locating',
   'Chat: Text In and Out':'Network & IoT',
   'Game: Tic-Tac-Toe over WebRTC':'Games',
   'Game: Connect Four over WebRTC':'Games',
@@ -4815,6 +4816,24 @@ tn.size.w=300; tn.size.h=250; applySize(tn);
 const g=addNode('graphview',380,160,{});
 g.size.w=520; g.size.h=400; applySize(g);
 addEdge(ts.id,'text',g.id,'text'); addEdge(tb.id,'rows',g.id,'set'); addEdge(tn.id,'rows',g.id,'nodes');
+markWiresDirty();
+});
+preset('Network: Same Nodes and Links as Graph and on the Map', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'One dataset, two views. The nodes table (`id, name, lat, lon, icon, color`) and the links table (`from, to, weight, label`) go both to Graph (`nodes`, `set` — a network) and to Map (`nodes`, `set` — points with icons at their coordinates and lines between them). Edit a row: only the difference is redrawn in both. A node without lat / lon stays in the graph only. Map icons: dot, square, diamond, triangle, star, flag, antenna, tx, rx, plane, ship, sat, balloon or any emoji.'});
+nt.size.w=1000; nt.size.h=90; applySize(nt);
+const tn=addNode('table',40,140,{list:'@patch',initial:false,
+  data:'id,name,lat,lon,icon,color\nHQ,Headquarters,50.45,30.52,star,#e0a040\nRelay A,Relay A,50.10,30.00,antenna,\nRelay B,Relay B,50.80,31.20,antenna,\nField 1,Field 1,49.80,29.40,flag,\nField 2,Field 2,51.20,30.10,flag,\nCloud,Cloud,,,square,'});
+tn.size.w=320; tn.size.h=260; applySize(tn);
+const tl=addNode('table',40,420,{list:'@patch',initial:false,
+  data:'from,to,weight,label\nHQ,Relay A,3,link\nHQ,Relay B,2,link\nRelay A,Field 1,1,\nRelay B,Field 2,1,\nHQ,Cloud,1,vpn'});
+tl.size.w=320; tl.size.h=240; applySize(tl);
+const g=addNode('graphview',400,140,{directed:true});
+g.size.w=420; g.size.h=380; applySize(g);
+const m=addNode('geoMap',840,140,{arrows:true});
+m.size.w=480; m.size.h=380; applySize(m);
+addEdge(tn.id,'rows',g.id,'nodes'); addEdge(tl.id,'rows',g.id,'set');
+addEdge(tn.id,'rows',m.id,'nodes'); addEdge(tl.id,'rows',m.id,'set');
 markWiresDirty();
 });
 preset('Chat: Text In and Out', function(){

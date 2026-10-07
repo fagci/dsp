@@ -1077,7 +1077,7 @@ function geoTileGet(src,z,x,y,net){
 /* ---------- узел карты ---------- */
 const GEO_TILE_OPTS=['none',...Object.keys(GEO_TILES)];
 def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
-  ins:[{n:'rec',t:'rec'},{n:'rec2',t:'rec'},{n:'rec3',t:'rec'},{n:'pins',t:'bands'}],
+  ins:[{n:'rec',t:'rec'},{n:'rec2',t:'rec'},{n:'rec3',t:'rec'},{n:'nodes',t:'bands'},{n:'set',t:'bands'}],
   outs:[{n:'pick',t:'rec'},{n:'sel',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'count',t:'num'}],
   w:480, view:{h:360}, resize:true,
   params:[{n:'ttl',t:'range',min:0,max:1440,step:1,d:0,label:'keep, min (0 — forever)'},
@@ -1088,9 +1088,10 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
           {n:'follow',t:'check',d:false,label:'follow'},
           {n:'net',t:'check',d:true,label:'online'},
           {n:'fit',t:'button',label:'Fit',fn:n=>geoMapFit(n)},
-          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.ents.clear(); n.pins.clear(); n.rasters?.clear(); n.selKey=null; geoMapChanged(n); }},
+          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.ents.clear(); n.gn.clear(); n.links.clear(); n.gnSrc=n.gsSrc=null; n.rasters?.clear(); n.selKey=null; geoMapChanged(n); }},
           {n:'trail',t:'range',min:1,max:5000,step:1,d:500,label:'track points per id',adv:true},
           {n:'maxEnt',t:'range',min:10,max:20000,step:10,d:5000,label:'max objects',adv:true},
+          {n:'arrows',t:'check',d:false,label:'arrows on links',adv:true},
           {n:'rayKm',t:'range',min:10,max:20000,step:10,d:1000,label:'bearing length, km',adv:true},
           {n:'store',t:'text',d:'',label:'save points as (empty — don\'t save)',adv:true},
           {n:'csv',t:'button',label:'Save CSV',fn:n=>dl(new Blob(['\ufeff'+recsToCsv(geoMapRecs(n))],{type:'text/csv;charset=utf-8'}),'map-'+Date.now()+'.csv'),adv:true},
@@ -1102,13 +1103,13 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
     if(n.p.mlat==null) n.p.mlat=50;
     if(n.p.mlon==null) n.p.mlon=30;
     if(n.p.mz==null) n.p.mz=3;
-    n.ents=new Map(); n.pins=new Map(); n.pinsSrc=null; n.seq=0; n.selKey=null; n.pickRec=null; n.selOut=null;
+    n.ents=new Map(); n.gn=new Map(); n.gnSrc=null; n.links=new Map(); n.gsSrc=null; n.unplaced=0; n.seq=0; n.selKey=null; n.pickRec=null; n.selOut=null;
     n.pickLat=null; n.pickLon=null; n.info=null; n.lastPrune=0; n.loadedStore=null;
     geoBaseLoad(); geoPlacesLoad();
   },
   process(n,I){
     for(const k of ['rec','rec2','rec3']) for(const r of recList(I[k])) geoMapAdd(n,r);
-    geoMapPins(n,I.pins);
+    geoMapNodes(n,I.nodes); geoMapLinks(n,I.set);
     if(n.p.store!==n.loadedStore) geoMapRestore(n);
     const now=Date.now();
     if(now-n.lastPrune>1000){ n.lastPrune=now; geoMapPrune(n,now); }
@@ -1120,33 +1121,66 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
     (n.p.ttl>0 || n.selKey || (n.info && Date.now()-n.info.t<9000) ? Math.floor(Date.now()/1000) : ''),
   draw(n,cv,cx){ geoMapDraw(n,cv,cx); }});
 
-// bands с элементами kind:'pin' (Table с колонками lat/lon) — набор точек целиком; обновление по разнице:
-// изменённые и новые добавляются, пропавшие снимаются с карты, неизменённые не трогаются
-const bandIsPin=b=>!!b && b.kind==='pin';
-const _noPins=new WeakMap();
-function bandsNoPins(a){
-  let r=_noPins.get(a); if(r) return r;
-  r=a.some(bandIsPin) ? a.filter(b=>!bandIsPin(b)) : a;
-  _noPins.set(a,r); return r;
+// Тот же набор, что и у Graph: nodes — записи id[,label,shape|icon,color,size] + lat/lon; set — связи from,to[,weight,label,color].
+// Снимки целиком, обновление по разнице: меняются только изменённые, пропавшие снимаются. Узел без координат на карте
+// не рисуется (в Graph он остаётся). Связь рисуется между узлами по большому кругу.
+const GEO_SHAPE_ICON={dot:'dot',circle:'dot',ellipse:'dot',square:'square',box:'square',database:'square',diamond:'diamond',hexagon:'diamond',
+  triangle:'triangle',triangleDown:'triangle',star:'star'};
+function geoNodeRec(r){
+  if(!r || typeof r!=='object') return null;
+  const f=gvKeys(r,GV_NODEA,null), k=f.id ?? Object.keys(r)[0], id=String(r[k]??'').trim();
+  if(!id) return null;
+  const pos=geoRecPos(r); if(!pos) return {id,none:true};
+  const out={};
+  for(const c in r) if(r[c]!=='' && r[c]!=null) out[c]=r[c];
+  delete out[k]; delete out.shape;
+  out.id='n:'+id; out.lat=pos.lat; out.lon=pos.lon; out.track=0;
+  if(out.label==null && f.label==null) out.label=r.name ?? id;
+  if(out.icon==null && f.shape!=null) out.icon=GEO_SHAPE_ICON[r[f.shape]];
+  return {id,rec:out,sig:JSON.stringify(out)};
 }
-function geoMapPins(n,src){
-  if(src===n.pinsSrc) return;
-  n.pinsSrc=src;
-  const next=new Map();
-  if(Array.isArray(src)) for(const b of src){
-    if(!bandIsPin(b)) continue;
-    const {kind,...rec}=b; rec.id='pin:'+b.id; rec.track=0;
-    next.set(rec.id,{rec,sig:JSON.stringify(rec)});
-  }
+function geoMapNodes(n,src){
+  if(src===n.gnSrc) return;
+  n.gnSrc=src;
+  const next=new Map(); n.unplaced=0;
+  if(Array.isArray(src)) for(const r of src){ const x=geoNodeRec(r); if(!x) continue; if(x.none) n.unplaced++; else next.set(x.rec.id,x); }
   let ch=false;
-  for(const id of n.pins.keys()) if(!next.has(id)){ n.ents.delete('id:'+id); if(n.selKey==='id:'+id) n.selKey=null; ch=true; }
+  for(const id of n.gn.keys()) if(!next.has(id)){ n.ents.delete('id:'+id); if(n.selKey==='id:'+id) n.selKey=null; ch=true; }
   for(const [id,x] of next){
-    if(n.pins.get(id)?.sig===x.sig && n.ents.has('id:'+id)) continue;
-    const e=n.ents.get('id:'+id); if(e) e.pts.length=0;
+    if(n.gn.get(id)?.sig===x.sig && n.ents.has('id:'+id)) continue;
+    const e=n.ents.get('id:'+id); if(e){ e.pts.length=0; e.rec={}; }
     geoMapAdd(n,x.rec); ch=true;
   }
-  n.pins=next;
+  n.gn=next;
   if(ch) geoMapChanged(n);
+}
+function geoMapLinks(n,src){
+  if(src===n.gsSrc) return;
+  n.gsSrc=src; n.links=new Map();
+  if(Array.isArray(src)) for(const r of src){ const e=gvEdgeRec(r,null); if(e) gvPut(n.links,e); }
+  geoMapChanged(n);
+}
+// связи под значками: линия по большому кругу, толщина — вес, подпись посередине
+function geoDrawLinks(n,cx,v){
+  if(!n.links.size) return;
+  const pos=id=>{ const e=n.ents.get('id:n:'+id), p=e?.pts[e.pts.length-1]; return p; };
+  const base=themeColor('--line')||'#7a8a90', lab=n.p.labels && n.links.size<=200, labs=[];
+  cx.save(); cx.lineJoin='round';
+  for(const e of n.links.values()){
+    const a=pos(e.from), b=pos(e.to); if(!a || !b) continue;
+    const km=geoDist(a.lat,a.lon,b.lat,b.lon), brg=geoBearing(a.lat,a.lon,b.lat,b.lon), sa=geoProj(v,a.lat,a.lon);
+    cx.strokeStyle=cx.fillStyle=e.color||base; cx.globalAlpha=.8; cx.lineWidth=1+Math.min(4,Math.log2(1+Math.abs(e.w)||1));
+    cx.beginPath(); geoGreatCircle(cx,v,a.lat,a.lon,brg,km,sa.x); cx.stroke();
+    const m=geoDest(a.lat,a.lon,brg,km/2), sm=geoProj(v,m.lat,m.lon,sa.x);
+    if(n.p.arrows){
+      const q=geoDest(a.lat,a.lon,brg,km*.55), sq=geoProj(v,q.lat,q.lon,sa.x), ang=Math.atan2(sq.y-sm.y,sq.x-sm.x);
+      cx.beginPath(); cx.moveTo(sq.x,sq.y); cx.lineTo(sq.x-8*Math.cos(ang-.4),sq.y-8*Math.sin(ang-.4)); cx.lineTo(sq.x-8*Math.cos(ang+.4),sq.y-8*Math.sin(ang+.4)); cx.closePath(); cx.fill();
+    }
+    if(lab && e.label) labs.push([e.label,sm.x,sm.y]);
+  }
+  cx.globalAlpha=1; cx.font='10px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle'; cx.fillStyle='#d8e0e3'; cx.strokeStyle='rgba(10,13,14,.85)'; cx.lineWidth=3;
+  for(const [t,x,y] of labs){ cx.strokeText(t,x,y-6); cx.fillText(t,x,y-6); }
+  cx.restore();
 }
 function geoMapAdd(n,r){
   if(r && r.kind==='raster'){                        // растровый слой (покрытие): картинка и границы, не объект
@@ -1178,7 +1212,7 @@ function geoMapAdd(n,r){
 function geoMapPrune(n,now){
   if(!(n.p.ttl>0)) return;
   const ttl=n.p.ttl*60000; let ch=false;
-  for(const [k,e] of n.ents) if(now-e.seen>ttl && !n.pins.has(e.id)){ n.ents.delete(k); ch=true; }
+  for(const [k,e] of n.ents) if(now-e.seen>ttl && !n.gn.has(e.id)){ n.ents.delete(k); ch=true; }
   if(ch) geoMapChanged(n);
 }
 function geoMapRecs(n){
@@ -1652,6 +1686,7 @@ function geoDrawObjects(n,cx,v){
   const {W,H,S}=v, now=Date.now(), ttl=n.p.ttl*60000;
   const mpp=lat=>40075016.686*Math.cos(lat*D2R)/S;   // метров в пикселе
   cx.save(); cx.lineJoin='round';
+  geoDrawLinks(n,cx,v);
   const labs=[], marks=[], C=geoClusters(n,v.z);
   for(const e of n.ents.values()){
     const r=e.rec, last=e.pts[e.pts.length-1]; if(!last) continue;

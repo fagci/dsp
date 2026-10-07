@@ -14,8 +14,7 @@
 const TBL_PATCH='@patch', TBL_PRE='presets/', TBL_ROWS=300;
 const TBL_FIXED=new Set([...SEQ_FIXED,'bands','rows','mid','span']);
 const TBL_LO=['lo','low','start','freq','frequency'], TBL_HI=['hi','high','end'],
-  TBL_LABEL=['name','label','title'], TBL_COLOR=['color','colour'], TBL_STEP=['step'], TBL_LAT=['lat','latitude'], TBL_LON=['lon','lng','longitude'];
-const TBL_PIN_FIELDS=['icon','note','alt','h','photo','audio','freq'];
+  TBL_LABEL=['name','label','title'], TBL_COLOR=['color','colour'], TBL_STEP=['step'];
 const TBL_HZ=/^(lo|hi|low|high|start|end|freq|frequency|step)$/i;
 const tblCol=(cl,list)=>{ for(const k of list){ const h=cl.find(x=>x.toLowerCase()===k); if(h) return h; } return null; };
 const tblKind=name=>name===TBL_PATCH ? 'patch' : name.startsWith(TBL_PRE) && BANDPLAN_PRESETS[name.slice(TBL_PRE.length)] ? 'preset' : 'db';
@@ -222,14 +221,6 @@ function tblDerive(n){
 function tblBandsOf(cl,rows){
   const lo=tblCol(cl,TBL_LO), hi=tblCol(cl,TBL_HI), lb=tblCol(cl,TBL_LABEL),
     co=tblCol(cl,TBL_COLOR), st=tblCol(cl,TBL_STEP), out=[];
-  // строки с координатами — пины для Map (kind:'pin'); потребители частотных полос их пропускают
-  const la=tblCol(cl,TBL_LAT), lg=tblCol(cl,TBL_LON), id=tblCol(cl,['id']);
-  if(la && lg) for(const r of rows){
-    const lat=+r[la], lon=+r[lg]; if(r[la]==='' || r[lg]==='' || !isFinite(lat) || !isFinite(lon)) continue;
-    const label=lb ? String(r[lb]??'') : '', pin={kind:'pin', id:String(id && r[id]!=='' ? r[id] : label || lat+','+lon), label, lat, lon, color:co ? String(r[co]||'') : ''};
-    for(const f of TBL_PIN_FIELDS){ const c=tblCol(cl,[f]); if(c && r[c]!=='' && r[c]!=null) pin[f]=r[c]; }
-    out.push(pin);
-  }
   if(lo) for(const r of rows){
     const l=tblHz(r[lo]); if(!isFinite(l)) continue;
     let h=hi ? tblHz(r[hi]) : l; if(!isFinite(h)) h=l;
