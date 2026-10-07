@@ -26,7 +26,7 @@ function flyRunway(n,pt){
   if(n.rwyKey!==key){ n.rwyKey=key; n.rwy=undefined; n.rwyBusy=false; }
   if(n.rwy===undefined && !n.rwyBusy){
     n.rwyBusy=true;
-    gfLoad('air',pt.lat,pt.lon,FLY_RWY_KM,true).then(r=>{ n.rwy=gfNearestRunway(r.data,pt.lat,pt.lon,FLY_RWY_KM); })
+    gsAir(pt.lat,pt.lon,FLY_RWY_KM,true).then(r=>{ n.rwy=gfNearestRunway(r.data,pt.lat,pt.lon,FLY_RWY_KM); if(!n.rwy && r.error) n.rwyErr=r.error; })
       .catch(e=>{ n.rwy=null; n.rwyErr=e.message; }).finally(()=>{ n.rwyBusy=false; });
   }
   return n.rwy;

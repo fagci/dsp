@@ -625,6 +625,7 @@ canvas.view.pick{cursor:crosshair}
 #setPanel[hidden]{display:none}
 #setPanel label{display:flex;align-items:center;justify-content:space-between;gap:10px}
 #setPanel label span{color:var(--dim)}
+#setPanel button{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:3px;padding:5px 8px;font:inherit;cursor:pointer}
 #setPanel select,#setPanel input{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:3px;padding:5px 6px;font:inherit;min-width:0}
 #setPanel input{flex:1;max-width:190px}
 #setPanel select{cursor:pointer}

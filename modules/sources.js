@@ -6506,6 +6506,11 @@ const ListDB = (() => {
     async metaNames(){ const db=await open(); return reqP(db.transaction('meta','readonly').objectStore('meta').getAllKeys()); },
   };
 })();
+// счётчик изменений хранилища: читатели списков (Overlay, Flight Sim) перечитывают их, когда он сменился
+ListDB.rev=0;
+for(const k of ['add','update','remove','renameList','deleteList','addMany','removeMany','setMeta','delMeta']){
+  const f=ListDB[k]; ListDB[k]=async function(...a){ const r=await f.apply(this,a); ListDB.rev++; return r; };
+}
 
 // Простой CSV-парсер с поддержкой кавычек и экранированных "" внутри поля.
 function csvParse(text){
