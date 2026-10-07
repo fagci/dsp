@@ -235,11 +235,11 @@ function ovVertexNormals(rings,NA){
   }
   return out;
 }
-function ovRelief(n,obs,lat,lon,alt,sun,shadows,vis){
+function ovRelief(n,obs,lat,lon,alt,sun,shadows,vis,minLight){
   const H=Horizon;
   if(!H.hAt || H.lat==null || Math.abs(H.lat-lat)>.02) return null;
   const r0=n.rel;                                           // камера сместилась немного — те же кольца со сдвигом (rel.off), без пересборки
-  if(r0 && n.relVer===H.ver && r0.shadows===shadows && r0.vis===vis && Math.abs(ovkWrap(r0.sun.az-sun.az))<.5 && Math.abs(r0.sun.el-sun.el)<.5){
+  if(r0 && n.relVer===H.ver && r0.shadows===shadows && r0.vis===vis && r0.minLight===minLight && Math.abs(ovkWrap(r0.sun.az-sun.az))<.5 && Math.abs(r0.sun.el-sun.el)<.5){
     const e=ovEnu(r0.obs,lat,lon,alt);
     if(Math.hypot(e[0],e[1])<OV_REL_MOVE && Math.abs(e[2])<OV_REL_UP){ r0.off=e; return r0; }
   }
@@ -257,20 +257,21 @@ function ovRelief(n,obs,lat,lon,alt,sun,shadows,vis){
     rings.push(a); dist.push(d); lats.push(pla); lons.push(plo);
     for(let i=0;i<NA;i++) if(a[i*4+3]>hTop) hTop=a[i*4+3];
   }
-  const sv=ovkSunVec(sun.az,sun.el), dk=ovkDayK(sun.el), amb=.12+.26*dk, haze=ovMix(OV_HAZE_NIGHT,OV_HAZE_DAY,dk),
-        shOn=shadows && sun.el>=2 && sun.el<60, shMax=shOn ? Math.min(12000,2500/Math.tan(sun.el*ORI_D)) : 0, VN=ovVertexNormals(rings,NA);
+  const sv=ovkSunVec(sun.az,sun.el), dk=ovkDayK(sun.el), amb=Math.max(minLight,.12+.26*dk), haze=ovMix(OV_HAZE_NIGHT,OV_HAZE_DAY,dk),
+        shOn=shadows && sun.el>=2 && sun.el<60, shMax=shOn ? Math.min(12000,2500/Math.tan(sun.el*ORI_D)) : 0, VN=ovVertexNormals(rings,NA), los=ovkLosBuild(rings,NA);
   // ячейка (j, i) — между кольцами j и j+1, азимутами i и i+1: код цвета = ступень высоты × OV_SHADES + освещение
   const cells=[];
   for(let j=0;j<rings.length-1;j++){
-    const a=rings[j], b=rings[j+1], va=VN[j], vb=VN[j+1], c=new Int16Array(NA).fill(-1), shStep=dist[j]<3000 ? 2 : 4; let sdw=false;
+    const a=rings[j], b=rings[j+1], va=VN[j], vb=VN[j+1], c=new Int16Array(NA).fill(-1), shStep=dist[j]<3000 ? 2 : 4; let sdw=false, stale=true;
     for(let i=0;i<NA;i++){
       const i1=(i+1)%NA, o0=i*4, o1=i1*4;
       if(a[o0]!==a[o0] || a[o1]!==a[o1] || b[o0]!==b[o0] || b[o1]!==b[o1]) continue;
+      if(ovkCellHidden(los,rings,j,i)){ if(i%shStep===0) stale=true; continue; }      // закрыта ближним рельефом — не рисуем и не считаем тень
       let nx=va[i*3]+va[i1*3]+vb[i*3]+vb[i1*3], ny=va[i*3+1]+va[i1*3+1]+vb[i*3+1]+vb[i1*3+1], nz=va[i*3+2]+va[i1*3+2]+vb[i*3+2]+vb[i1*3+2];
       const nl=Math.hypot(nx,ny,nz); if(!(nl>0)) continue;
       let sh=ovkLit([nx/nl,ny/nl,nz/nl],sv,sun.el);
       if(shOn && sh>0 && dist[j]<=OV_SHADOW_KM){            // тень — через ячейку по азимуту (вдали реже) и только вблизи
-        if(i%shStep===0) sdw=ovkShadowed(H.hAt,lats[j][i],lons[j][i],a[o0+3],sun.az,sun.el,shMax,hTop);
+        if(stale || i%shStep===0){ sdw=ovkShadowed(H.hAt,lats[j][i],lons[j][i],a[o0+3],sun.az,sun.el,shMax,hTop); stale=false; }
         if(sdw) sh=0;
       }
       const h=(a[o0+3]+a[o1+3]+b[o0+3]+b[o1+3])/4, m=Math.max(0,Math.min(OV_MATS-1,Math.round(h/OV_MAT_TOP*(OV_MATS-1))));
@@ -285,7 +286,7 @@ function ovRelief(n,obs,lat,lon,alt,sun,shadows,vis){
     const m=(k/OV_SHADES)|0, l=k%OV_SHADES, hm=m/(OV_MATS-1)*OV_MAT_TOP, f=amb+(1-amb)*l/(OV_SHADES-1), base=ovkPalette(hm), fog=ovkFog(dist[j],vis,hm);
     return row[k]='rgb('+[0,1,2].map(q=>Math.round((base[q]*f+(1-f)*OV_TINT[q]*(.3+.7*dk))*(1-fog)+haze[q]*fog)).join(',')+')';
   };
-  n.relVer=H.ver; n.rel={rings,NA,cells,col,los:ovkLosBuild(rings,NA),obs,off:[0,0,0],sun:{az:sun.az,el:sun.el},shadows,vis};
+  n.relVer=H.ver; n.rel={rings,NA,cells,col,los,obs,off:[0,0,0],sun:{az:sun.az,el:sun.el},shadows,vis,minLight};
   return n.rel;
 }
 // небо: от верха к горизонту; ниже видимого горизонта (он ниже уровня на ovkDip) — дальняя земля в цвете дымки
@@ -301,21 +302,23 @@ function ovDrawSky(cx,W,H,c0,cam,cel,dk,ground){
 }
 // кольца от дальних к ближним — ближние перекрывают дальние; ячейки одного цвета в кольце — одним путём
 function ovDrawRelief(cx,rel,proj,solid){
-  const {rings,NA,cells,col,off}=rel, nr=rings.length, P=[];
+  const {rings,NA,cells,col,off}=rel, nr=rings.length, P=rel.P||(rel.P=[]), cw=cx.canvas.width, ch=cx.canvas.height, mg=40;
   for(let j=0;j<nr;j++){
-    const a=rings[j], X=new Float32Array(NA).fill(NaN), Y=new Float32Array(NA);
+    const a=rings[j], X=P[j]?.X||new Float32Array(NA), Y=P[j]?.Y||new Float32Array(NA); X.fill(NaN);
     for(let i=0;i<NA;i++){
       const o=i*4; if(a[o]!==a[o]) continue;
       const q=proj([a[o]-off[0],a[o+1]-off[1],a[o+2]-off[2]]); if(q){ X[i]=q.x; Y[i]=q.y; }
     }
-    P.push({X,Y});
+    P[j]={X,Y};
   }
+  const out=(x0,x1,x2,x3,lim)=>(x0<-mg&&x1<-mg&&x2<-mg&&x3<-mg)||(x0>lim+mg&&x1>lim+mg&&x2>lim+mg&&x3>lim+mg);       // ячейка целиком вне кадра
   if(solid){
     for(let j=nr-2;j>=0;j--){
       const A=P[j], B=P[j+1], c=cells[j], paths=new Map();
       for(let i=0;i<NA;i++){
         const k=c[i], i1=(i+1)%NA;
         if(k<0 || A.X[i]!==A.X[i] || A.X[i1]!==A.X[i1] || B.X[i]!==B.X[i] || B.X[i1]!==B.X[i1]) continue;
+        if(out(A.X[i],A.X[i1],B.X[i],B.X[i1],cw) || out(A.Y[i],A.Y[i1],B.Y[i],B.Y[i1],ch)) continue;
         let pa=paths.get(k); if(!pa){ pa=new Path2D(); paths.set(k,pa); }
         pa.moveTo(A.X[i],A.Y[i]); pa.lineTo(A.X[i1],A.Y[i1]); pa.lineTo(B.X[i1],B.Y[i1]); pa.lineTo(B.X[i],B.Y[i]); pa.closePath();
       }
@@ -501,6 +504,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
           {n:'terrain',t:'check',d:true,label:'skyline from Horizon',adv:true},
           {n:'relief',t:'select',opts:['off','auto','lines','solid'],d:'auto',label:'terrain relief 3D from Horizon (auto: solid without video, lines over video)'},
           {n:'vis',t:'range',min:5,max:150,step:1,d:35,label:'haze: visibility, km (distant mountains fade into the sky)'},
+          {n:'minLight',t:'range',min:0,max:.6,step:.01,d:.3,label:'night brightness floor of the relief (0 — pitch dark)'},
           {n:'shadows',t:'check',d:true,label:'terrain shadows from the real Sun (cost: a few ms when the mesh is rebuilt)'},
           {n:'tshift',t:'range',min:-12,max:12,step:.25,d:0,label:'Sun time shift, h (0 — real time; moves the Sun, the light and the sky)',adv:true},
           {n:'osm',t:'check',d:false,label:'OSM: peaks, towns, roads, rivers (asks overpass-api.de, needs Horizon heights)'},
@@ -614,7 +618,7 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
 
     const dip=ovkDip(Math.max(0,alt)), solid=p.relief==='solid' || p.relief==='auto' && !vw;      // видимый горизонт ниже уровня на dip
     if(!vw) ovDrawSky(cx,W,H,proj ? proj(dir(caz,-dip)) : null,cam,cel,dk,p.relief!=='off');
-    const rel=obs && sun0 ? ovRelief(n,obs,lat,lon,alt,sun0,p.shadows,+p.vis) : null;
+    const rel=obs && sun0 ? ovRelief(n,obs,lat,lon,alt,sun0,p.shadows,+p.vis,isFinite(+p.minLight) ? +p.minLight : .3) : null;
     const los=rel && p.los ? rel.los : null;
     if(proj && rel && p.relief!=='off') ovDrawRelief(cx,rel,proj,solid);
     if(proj){

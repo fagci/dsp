@@ -148,11 +148,11 @@ function ovkSkyObjects(ms,lat,lon,opt){
 // rings[j] — Float32Array(NA·4): e, n, u, h точек кольца j (NaN — нет данных), азимуты через 360/NA.
 // cum[j][i] — наибольший угол места (рад) по кольцам ближе j в азимутах i−1…i+1: то, что заслоняет точку дальше кольца j.
 function ovkLosBuild(rings,NA){
-  const nr=rings.length, cum=[], run=new Float32Array(NA).fill(-Infinity);
+  const nr=rings.length, cum=[], low=[], run=new Float32Array(NA).fill(-Infinity);
   for(let j=0;j<=nr;j++){
-    const c=new Float32Array(NA);
-    for(let i=0;i<NA;i++) c[i]=Math.max(run[i],run[(i+NA-1)%NA],run[(i+1)%NA]);
-    cum.push(c);
+    const c=new Float32Array(NA), l=new Float32Array(NA);
+    for(let i=0;i<NA;i++){ c[i]=Math.max(run[i],run[(i+NA-1)%NA],run[(i+1)%NA]); l[i]=Math.min(run[i],run[(i+1)%NA]); }
+    cum.push(c); low.push(l);
     if(j===nr) break;
     const a=rings[j];
     for(let i=0;i<NA;i++){
@@ -161,7 +161,15 @@ function ovkLosBuild(rings,NA){
       if(ang>run[i]) run[i]=ang;
     }
   }
-  return {cum,NA,nr};
+  return {cum,low,NA,nr};
+}
+// ячейка (j, i) между кольцами j и j+1 целиком закрыта ближними кольцами: все её вершины ниже линии, по которой ближний рельеф перекрывает оба азимута
+function ovkCellHidden(los,rings,j,i){
+  const NA=los.NA, a=rings[j], b=rings[j+1], l=los.low[j][i], i1=((i+1)%NA)*4, i0=i*4;
+  if(!(l>-Infinity)) return false;
+  for(const [r,o] of [[a,i0],[a,i1],[b,i0],[b,i1]])
+    if(Math.atan2(r[o+2],Math.hypot(r[o],r[o+1]))>=l-0.004) return false;
+  return true;
 }
 // точка в ENU (м): видна ли из центра колец. margin — запас, рад (против самозаслонения точек на поверхности)
 function ovkVisible(los,e,n,u,margin){
