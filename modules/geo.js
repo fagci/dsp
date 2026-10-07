@@ -1043,13 +1043,42 @@ function geoPlacesImport(f){
 
 // Тайлы (по желанию): всё скачанное кладётся в Cache API 'dsp-tiles' и дальше доступно офлайн.
 // Массовая предзагрузка не делается — правила OSM её запрещают, кэшируется только просмотренное.
+const ESRI='https://server.arcgisonline.com/ArcGIS/rest/services/';
 const GEO_TILES={
   'OSM':{url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png', max:19, attr:'© OpenStreetMap contributors'},
   'OpenTopoMap':{url:'https://tile.opentopomap.org/{z}/{x}/{y}.png', max:17, attr:'© OpenStreetMap contributors, SRTM | © OpenTopoMap (CC-BY-SA)'},
+  'OSM Humanitarian':{url:'https://a.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', max:19, attr:'© OpenStreetMap contributors, Humanitarian OSM Team'},
+  'CyclOSM':{url:'https://a.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', max:20, attr:'© OpenStreetMap contributors, © CyclOSM'},
+  'CARTO Dark':{url:'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', max:20, attr:'© OpenStreetMap contributors © CARTO'},
+  'CARTO Light':{url:'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', max:20, attr:'© OpenStreetMap contributors © CARTO'},
+  'Esri Satellite':{url:ESRI+'World_Imagery/MapServer/tile/{z}/{y}/{x}', max:19, attr:'Tiles © Esri — Maxar, Earthstar Geographics, USDA, USGS'},
+  'Esri Topo':{url:ESRI+'World_Topo_Map/MapServer/tile/{z}/{y}/{x}', max:19, attr:'Tiles © Esri — USGS, NOAA, Esri'},
+  'Esri Streets':{url:ESRI+'World_Street_Map/MapServer/tile/{z}/{y}/{x}', max:19, attr:'Tiles © Esri — HERE, Garmin, OpenStreetMap contributors'},
+  'Relief (DEM)':{dem:'color', url:'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png', max:12, attr:'Terrain: Terrarium (SRTM, NED, GMTED, …) via AWS'},
+};
+// накладываются поверх основы с прозрачностью (параметр overlay)
+const GEO_OVERLAYS={
+  'Hillshade (DEM)':{dem:'shade', url:GEO_TILES['Relief (DEM)'].url, max:12, attr:'Terrain: Terrarium via AWS'},
+  'Hillshade (Esri)':{url:ESRI+'Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', max:16, attr:'Hillshade © Esri'},
+  'Railways':{url:'https://a.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png', max:19, attr:'© OpenRailwayMap'},
+  'Sea marks':{url:'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', max:18, attr:'© OpenSeaMap'},
+  'Hiking trails':{url:'https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png', max:18, attr:'© waymarkedtrails.org'},
+  'Cycling routes':{url:'https://tile.waymarkedtrails.org/cycling/{z}/{x}/{y}.png', max:18, attr:'© waymarkedtrails.org'},
 };
 const GeoTiles={mem:new Map(), pending:new Set(), gen:0, cache:null};
+// источник слоя узла: which — 'tiles' (основа) или 'overlay'; 'custom' — адрес из параметров tileUrl / tileUrl2 ({z}/{x}/{y}, {s} — a)
+function geoSrc(n,which){
+  const name=n.p[which];
+  if(!name || name==='none') return null;
+  if(name==='custom'){
+    const u=String(n.p[which==='tiles' ? 'tileUrl' : 'tileUrl2']||'').trim();
+    return /\{z\}/.test(u) && /\{x\}/.test(u) && /\{y\}/.test(u) ? {id:'custom:'+u, url:u, max:19, attr:'custom tiles'} : null;
+  }
+  const t=(which==='tiles' ? GEO_TILES : GEO_OVERLAYS)[name];
+  return t ? {...t, id:t.dem ? 'dem:'+t.dem : name} : null;
+}
 function geoTileGet(src,z,x,y,net){
-  const key=src+'/'+z+'/'+x+'/'+y;
+  const key=src.id+'/'+z+'/'+x+'/'+y;
   const m=GeoTiles.mem.get(key);
   if(m){
     if(m.bmp){ GeoTiles.mem.delete(key); GeoTiles.mem.set(key,m); return m.bmp; }   // LRU: в конец
@@ -1058,15 +1087,21 @@ function geoTileGet(src,z,x,y,net){
   if(GeoTiles.pending.has(key) || GeoTiles.pending.size>=8) return null;
   GeoTiles.pending.add(key);
   (async()=>{
-    const url=GEO_TILES[src].url.replace('{z}',z).replace('{x}',x).replace('{y}',y);
-    const cache=GeoTiles.cache || (GeoTiles.cache=await caches.open('dsp-tiles'));
-    let r=await cache.match(url);
-    if(!r){
-      if(!net) throw new Error('offline');
-      r=await fetch(url,{mode:'cors'}); if(!r.ok) throw new Error('HTTP '+r.status);
-      await cache.put(url,r.clone());
+    let bmp;
+    if(src.dem){                                     // рельеф: тайл высот → картинка (из базы или сети, как Horizon)
+      const h=await gdDemTile(z,x,y,net), mpp=156543.03392*Math.cos(unmercY((y+.5)/2**z)*D2R)/2**z;
+      bmp=await createImageBitmap(new ImageData(gdDemShade(h,mpp,src.dem),256,256));
+    } else {
+      const url=src.url.replace('{z}',z).replace('{x}',x).replace('{y}',y).replace('{s}','a');
+      const cache=GeoTiles.cache || (GeoTiles.cache=await caches.open('dsp-tiles'));
+      let r=await cache.match(url);
+      if(!r){
+        if(!net) throw new Error('offline');
+        r=await fetch(url,{mode:'cors'}); if(!r.ok) throw new Error('HTTP '+r.status);
+        await cache.put(url,r.clone());
+      }
+      bmp=await createImageBitmap(await r.blob());
     }
-    const bmp=await createImageBitmap(await r.blob());
     GeoTiles.mem.set(key,{bmp});
     while(GeoTiles.mem.size>300){ const k=GeoTiles.mem.keys().next().value; GeoTiles.mem.get(k).bmp?.close(); GeoTiles.mem.delete(k); }
   })().catch(()=>GeoTiles.mem.set(key,{err:Date.now()}))
@@ -1075,13 +1110,15 @@ function geoTileGet(src,z,x,y,net){
 }
 
 /* ---------- узел карты ---------- */
-const GEO_TILE_OPTS=['none',...Object.keys(GEO_TILES)];
+const GEO_TILE_OPTS=['none',...Object.keys(GEO_TILES),'custom'], GEO_OV_OPTS=['none',...Object.keys(GEO_OVERLAYS),'custom'];
 def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
   ins:[{n:'rec',t:'rec'},{n:'rec2',t:'rec'},{n:'rec3',t:'rec'},{n:'nodes',t:'bands'},{n:'set',t:'bands'}],
   outs:[{n:'pick',t:'rec'},{n:'sel',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'count',t:'num'}],
   w:480, view:{h:360}, resize:true,
   params:[{n:'ttl',t:'range',min:0,max:1440,step:1,d:0,label:'keep, min (0 — forever)'},
           {n:'tiles',t:'select',opts:GEO_TILE_OPTS,d:'none',label:'tiles'},
+          {n:'overlay',t:'select',opts:GEO_OV_OPTS,d:'none',label:'overlay layer (relief shading, railways, trails…)'},
+          {n:'ovAlpha',t:'range',min:.1,max:1,step:.05,d:.7,label:'overlay opacity'},
           {n:'grid',t:'select',opts:['none','lat/lon','maidenhead'],d:'none',label:'grid'},
           {n:'labels',t:'check',d:true,label:'labels'},
           {n:'cluster',t:'check',d:true,label:'cluster'},
@@ -1097,6 +1134,12 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
           {n:'csv',t:'button',label:'Save CSV',fn:n=>dl(new Blob(['\ufeff'+recsToCsv(geoMapRecs(n))],{type:'text/csv;charset=utf-8'}),'map-'+Date.now()+'.csv'),adv:true},
           {n:'geojson',t:'button',label:'Save GeoJSON',fn:n=>dl(new Blob([recsToGeoJson(geoMapRecs(n))],{type:'application/geo+json'}),'map-'+Date.now()+'.geojson'),adv:true},
           ...geoExportBtns(geoMapRecs,'map',true),
+          {n:'tileUrl',t:'text',d:'',label:'custom tiles URL (tiles = custom): https://…/{z}/{x}/{y}.png',adv:true},
+          {n:'tileUrl2',t:'text',d:'',label:'custom overlay URL (overlay = custom)',adv:true},
+          {n:'vfile',t:'file',accept:'.geojson,.json,.kml,.gpx,application/json,application/geo+json',label:'Load vector layer: GeoJSON / KML / GPX',fn:(n,f)=>gdVecFile(n,f)},
+          {n:'vclr',t:'button',label:'Remove vector layers',fn:n=>gdVecClear(n)},
+          {n:'osmKind',t:'select',opts:Object.keys(GD_KINDS),d:'towers',label:'objects from OpenStreetMap'},
+          {n:'osmGo',t:'button',label:'Load objects in view (also saved to Table lists geo/…)',fn:n=>gdMapImport(n,n.p.osmKind)},
           {n:'places',t:'button',label:'Download places (GeoNames, 17 MB)',fn:()=>geoPlacesDownload(),adv:true},
           {n:'placesFile',t:'file',accept:'.txt,.tsv,.csv,.json',fn:(n,f)=>geoPlacesImport(f),adv:true}],
   init:n=>{
@@ -1106,6 +1149,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
     n.ents=new Map(); n.gn=new Map(); n.gnSrc=null; n.links=new Map(); n.gsSrc=null; n.unplaced=0; n.seq=0; n.selKey=null; n.pickRec=null; n.selOut=null;
     n.pickLat=null; n.pickLon=null; n.info=null; n.lastPrune=0; n.loadedStore=null;
     geoBaseLoad(); geoPlacesLoad();
+    n.vec=null; n.vmsg=''; n.vgen=0; gdVecRestore(n);
   },
   process(n,I){
     for(const k of ['rec','rec2','rec3']) for(const r of recList(I[k])) geoMapAdd(n,r);
@@ -1117,7 +1161,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
     return {pick, sel, lat:n.pickLat, lon:n.pickLon, count:n.ents.size};
   },
   // секундный тик — только когда на карте есть что-то зависящее от времени (ttl, "seen N s ago", подсказка)
-  drawKey:n=>n.dirtyGen+'|'+GeoBase.gen+'|'+GeoBase.state+'|'+GeoBase.placesState+'|'+GeoTiles.gen+'|'+n.selKey+'|'+
+  drawKey:n=>n.dirtyGen+'|'+GeoBase.gen+'|'+GeoBase.state+'|'+GeoBase.placesState+'|'+GeoTiles.gen+'|'+n.vmsg+'|'+n.selKey+'|'+
     (n.p.ttl>0 || n.selKey || (n.info && Date.now()-n.info.t<9000) ? Math.floor(Date.now()/1000) : ''),
   draw(n,cv,cx){ geoMapDraw(n,cv,cx); }});
 
@@ -1344,9 +1388,7 @@ function geoMapTap(n,px,py){
   if(best){ n.selKey=best.key; n.selOut=[{...best.rec}]; return; }
   n.selKey=null;
   const lat=unmercY(clamp((v.oy+py)/v.S,0,1)), lon=unmercX(geoWrapX((v.ox+px)/v.S));
-  n.pickLat=lat; n.pickLon=lon;
-  n.pickRec=[{t:Date.now(), lat:+lat.toFixed(6), lon:+lon.toFixed(6), grid:latLonToGrid(lat,lon,6)}];
-  n.info={lat,lon,t:Date.now()};
+  geoMapPick(n,lat,lon);                             // pick уходит с рельефом под точкой (ground), как только он известен
 }
 // экранные координаты точки; копию мира выбираем ближайшую к refX (по долготе мир повторяется)
 function geoProj(v,lat,lon,refX){
@@ -1388,7 +1430,7 @@ function geoMapDraw(n,cv,cx){
   // подложка — в отдельную канву с полями M: при панораме сдвигаем готовую картинку,
   // при зуме растягиваем её и перерисовываем, когда зум успокоился
   const now=performance.now(), M=Math.round(Math.min(W,H)*.35);
-  const key=[W,H,cv.pxW,GeoBase.gen,n.p.tiles,n.p.grid,n.p.tiles!=='none'?GeoTiles.gen:0].join(':');
+  const key=[W,H,cv.pxW,GeoBase.gen,n.p.tiles,n.p.overlay,n.p.ovAlpha,n.p.tileUrl,n.p.tileUrl2,n.vgen,n.p.grid,n.p.tiles!=='none'||n.p.overlay!=='none'?GeoTiles.gen:0].join(':');
   if(v.S!==n._lastS){ n._lastS=v.S; n._zoomT=now; }
   const bv=n._bv, f=bv ? v.S/bv.S : 1;
   let dx=0, dy=0, ok=bv && n._baseKey===key && (f===1 || now-n._zoomT<200);
@@ -1413,6 +1455,7 @@ function geoMapDraw(n,cv,cx){
   const g=n._bv, k=v.S/g.S;
   if(k!==1) redraw(n);                                  // подложка растянута — перерисуем, когда зум успокоится
   cx.drawImage(n._base,dx,dy,g.W*k,g.H*k);
+  GD.view={n};
   geoDrawRasters(n,cx,v);
   geoDrawObjects(n,cx,v);
   geoDrawOverlay(n,cx,v);
@@ -1444,8 +1487,9 @@ function geoDrawRasters(n,cx,v){
 function geoDrawBase(n,cx,v){
   const {W,H,z}=v, D=GeoBase.data;
   cx.fillStyle=GEO_COL.sea; cx.fillRect(0,0,W,H);
-  const tiles=n.p.tiles!=='none' && GEO_TILES[n.p.tiles];
-  if(tiles) geoDrawTiles(n,cx,v);
+  const tiles=geoSrc(n,'tiles'), over=geoSrc(n,'overlay');
+  if(tiles) geoDrawTiles(n,cx,v,tiles,1);
+  if(over) geoDrawTiles(n,cx,v,over,clamp(+n.p.ovAlpha||.7,0,1));
   if(D){
     if(!tiles){
       cx.beginPath(); geoPathLayer(cx,D.land,v,z);
@@ -1463,29 +1507,31 @@ function geoDrawBase(n,cx,v){
     cx.beginPath(); geoPathLayer(cx,D.adm0,v,99);
     cx.strokeStyle=tiles?'rgba(90,40,110,.8)':GEO_COL.adm0; cx.lineWidth=1.2; cx.stroke(); cx.lineWidth=1;
   }
+  gdVecDraw(n,cx,v);
   if(n.p.grid!=='none') geoDrawGrid(n,cx,v);
   if(D && !tiles) geoDrawLabels(n,cx,v);
 }
-function geoDrawTiles(n,cx,v){
-  const T=GEO_TILES[n.p.tiles], tz=clamp(Math.round(v.z),0,T.max), N=2**tz;
+function geoDrawTiles(n,cx,v,T,alpha){
+  const tz=clamp(Math.round(v.z),0,T.max), N=2**tz;
   const ts=v.S/N;                                    // размер тайла на экране
   const x0=Math.floor(v.ox/ts), x1=Math.floor((v.ox+v.W)/ts), y0=Math.max(0,Math.floor(v.oy/ts)), y1=Math.min(N-1,Math.floor((v.oy+v.H)/ts));
   if((x1-x0+1)*(y1-y0+1)>120) return;
-  cx.imageSmoothingEnabled=true;
+  cx.save(); cx.imageSmoothingEnabled=true; cx.globalAlpha=alpha;
   for(let ty=y0;ty<=y1;ty++) for(let tx=x0;tx<=x1;tx++){
     const wx=((tx%N)+N)%N, sx=tx*ts-v.ox, sy=ty*ts-v.oy;
-    const bmp=geoTileGet(n.p.tiles,tz,wx,ty,n.p.net);
+    const bmp=geoTileGet(T,tz,wx,ty,n.p.net);
     if(bmp){ cx.drawImage(bmp,sx,sy,ts+0.5,ts+0.5); continue; }
     // нет тайла — растянуть кусок родителя из памяти (офлайн или ещё грузится)
     for(let up=1;up<=5 && tz-up>=0;up++){
       const pz=tz-up, f=2**up, px=Math.floor(wx/f), py=Math.floor(ty/f);
-      const m=GeoTiles.mem.get(n.p.tiles+'/'+pz+'/'+px+'/'+py);
-      if(!m?.bmp){ if(up===1) geoTileGet(n.p.tiles,pz,px,py,n.p.net); continue; }
+      const m=GeoTiles.mem.get(T.id+'/'+pz+'/'+px+'/'+py);
+      if(!m?.bmp){ if(up===1) geoTileGet(T,pz,px,py,n.p.net); continue; }
       const sub=256/f;
       cx.drawImage(m.bmp,(wx-px*f)*sub,(ty-py*f)*sub,sub,sub,sx,sy,ts+0.5,ts+0.5);
       break;
     }
   }
+  cx.restore();
 }
 function geoDrawGrid(n,cx,v){
   const {W,H,S,ox,oy,z}=v;
@@ -1814,10 +1860,12 @@ function geoDrawOverlay(n,cx,v){
   const st=[];
   if(GeoBase.state!=='ready') st.push('base map: '+GeoBase.state+(GeoBase.err?' — '+GeoBase.err:''));
   if(GeoBase.placesState && !/^\d+ places$/.test(GeoBase.placesState)) st.push('places: '+GeoBase.placesState);
+  if(n.vmsg) st.push(n.vmsg);
   st.push('z '+z.toFixed(1)+' · objects '+n.ents.size);
   cx.fillStyle='rgba(200,210,214,.7)'; st.forEach((l,i)=>cx.fillText(l,6,13+i*12));
   // атрибуция
-  const attr=n.p.tiles!=='none' && GEO_TILES[n.p.tiles] ? GEO_TILES[n.p.tiles].attr : 'Natural Earth';
+  const ts=geoSrc(n,'tiles'), os=geoSrc(n,'overlay');
+  const attr=[ts ? ts.attr : 'Natural Earth', os && os.attr].filter(Boolean).join(' · ');
   cx.textAlign='right'; cx.fillStyle='rgba(200,210,214,.55)'; cx.fillText(attr,W-4,H-4); cx.textAlign='left';
   // выбранный объект / точка под пальцем
   const e=n.selKey && n.ents.get(n.selKey);
@@ -1829,7 +1877,9 @@ function geoDrawOverlay(n,cx,v){
       'seen '+Math.round((Date.now()-e.seen)/1000)+' s ago'+(e.pts.length>1?' · track '+e.pts.length:'')];
     box(lines,W-6,6,true);
   } else if(n.info && Date.now()-n.info.t<8000){
-    box([n.info.lat.toFixed(5)+', '+n.info.lon.toFixed(5), latLonToGrid(n.info.lat,n.info.lon,6)],W-6,6,true);
+    const g=n.info.ground;
+    box([n.info.lat.toFixed(5)+', '+n.info.lon.toFixed(5), latLonToGrid(n.info.lat,n.info.lon,6),
+      g===undefined ? 'ground: …' : g===null ? 'ground: no data' : 'ground: '+Math.round(g)+' m'],W-6,6,true);
   }
   cx.restore();
 }

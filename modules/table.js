@@ -588,6 +588,7 @@ function tblInit(n){
       <button class="tbl-add" style="${TBL_BTN}">+ row</button>
       <button class="tbl-here" style="${TBL_BTN}" title="new row at my current position (GPS) — with the icon, a photo and a sound in the same form">📍 here</button>
       <button class="tbl-import" style="${TBL_BTN}" title="CSV, TSV, TXT, JSON, KML, GPX, GeoJSON — each file becomes a list">import</button>
+      <button class="tbl-od" style="${TBL_BTN}" title="objects from open sources (cell towers: OpenStreetMap, OpenCelliD; masts, repeaters, peaks, own Overpass query) and terrain elevation for rows with lat / lon">🌐 open data</button>
       <button class="tbl-export" style="${TBL_BTN}" title="export this list (format in advanced)">export</button>
       <button class="tbl-all" style="${TBL_BTN}" title="all lists in one JSON file (import brings them back)">export all</button>
       <button class="tbl-copy" style="${TBL_BTN}" title="copy to another list, the patch or the browser DB">copy</button>
@@ -637,6 +638,7 @@ function tblInit(n){
   const file=q('.tbl-file');
   q('.tbl-import').addEventListener('click',()=>file.click());
   file.addEventListener('change',()=>{ const fs=[...file.files]; file.value=''; if(fs.length) tblImport(n,fs); });
+  q('.tbl-od').addEventListener('click',()=>gdOpenMenu(n));
   q('.tbl-export').addEventListener('click',()=>tblExport(n));
   q('.tbl-all').addEventListener('click',()=>tblExportAll());
   q('.tbl-copy').addEventListener('click',()=>tblCopy(n));
