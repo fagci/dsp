@@ -545,70 +545,55 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
 const TBL_ICONS=['dot','square','diamond','triangle','star','flag','cross','plus','antenna','tx','rx','me','plane','ship','sat','balloon','📍','🏠','🚩','⚠','📡','🔊','📷','⛰','🚗','🔋'];
 const TBL_AUDIO=/^audio$/;                            // колонка со звуком: в ячейке id клипов «sm-…» (Sample Library, audioattach.js)
 const TBL_PHOTO=/^photos?$/;                           // колонка с фото: в ячейке id «ph-…» (хранилище photos.js)
-const TBL_BTN='background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;';
-const TBL_IN='min-width:0;background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;font-size:10px;padding:1px 3px;';
+const TBL_BTN='background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;';
+const TBL_IN='min-width:0;background:var(--bg);border:1px solid var(--line);color:var(--txt);font-size:11px;padding:1px 3px;';
 async function tblNames(){
   const db=await ListDB.listNames().catch(()=>[]);
   const legacy=window.BP_LEGACY;                          // старые плоские имена — только для совместимости патчей
   return [TBL_PATCH,...Object.keys(BANDPLAN_PRESETS).filter(k=>!legacy?.has(k)).map(k=>TBL_PRE+k),...db.filter(x=>x!==TBL_PATCH && !x.startsWith(TBL_PRE))];
 }
+/* Вид: сверху выбор списка (папки — группы выпадающего списка) и «⋯» со всеми действиями, ниже фильтр,
+   две частые кнопки, список строк фиксированной высоты. Правка строки — панелью снизу поверх списка:
+   она не прокручивается вместе со строками и не меняет высоту списка. Дерево списков (для показа
+   нескольких списков на bands) и колонки — по запросу из «⋯». */
 function tblInit(n){
   const mid=n.el.querySelector('.mid');
   if(!mid || mid.querySelector('.tbl-ui')) return;
   const root=document.createElement('div');
   root.className='tbl-ui';
-  root.style.cssText='position:relative;display:flex;flex-direction:column;font-size:11px;'+
-    'color:#c8d2d6;box-sizing:border-box;overflow:hidden;grid-column:1/-1;width:100%;min-width:0;gap:2px;';
   root.innerHTML=`
-    <style>
-      .tbl-ui .tt-dir,.tbl-ui .tt-file{display:flex;align-items:center;gap:4px;padding:1px 4px;cursor:pointer;white-space:nowrap;}
-      .tbl-ui .tt-dir:hover,.tbl-ui .tt-file:hover{background:#161b1e;}
-      .tbl-ui .tt-file.act{background:#1f3a36;color:#4ec9b0;}
-      .tbl-ui .tt-name{flex:1;overflow:hidden;text-overflow:ellipsis;}
-      .tbl-ui .tt-cnt{color:#6c7a80;font-size:9px;}
-      .tbl-ui .tt-car{width:9px;color:#6c7a80;}
-      .tbl-ui input[type=checkbox]{margin:0;accent-color:#4ec9b0;}
-    </style>
-    <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
-      <span class="tbl-thead" title="show / hide the list tree" style="cursor:pointer;color:#c8d2d6;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
-      <span class="tbl-none" title="uncheck all lists" style="cursor:pointer;color:#6c7a80;font-size:10px;">none</span>
-      <span class="tbl-new" title="new list: empty, or with the columns of a template (map points, measurements, frequencies, ranges, transmitters…)" style="cursor:pointer;color:#6c7a80;">＋</span>
-      <span class="tbl-tpl" title="add the columns of a template to the active list (the data stays)" style="cursor:pointer;color:#6c7a80;">⊞</span>
-      <span class="tbl-ren" title="rename / move the active list" style="cursor:pointer;color:#6c7a80;">✎</span>
-      <span class="tbl-delL" title="delete the active list" style="cursor:pointer;color:#6c7a80;">🗑</span>
+    <div class="tbl-head">
+      <select class="tbl-pick" title="active list: rows, edit, sequencer"></select>
+      <label class="tbl-chk" title="show this list on the bands output (band plan on the spectrum); more lists — ⋯ → Shown lists"><input type="checkbox" class="tbl-showcb">bands</label>
+      <button class="tbl-btn tbl-new" title="new list">＋</button>
+      <button class="tbl-btn tbl-menub" title="actions">⋯</button>
     </div>
-    <div class="tbl-tree" title="☑ — the list is shown on the bands output (band plan on the spectrum); click a name — make it the active list (rows, edit, sequencer)" style="flex:0 1 auto;max-height:42%;min-height:30px;overflow-y:auto;border:1px solid #1d2226;border-radius:3px;background:#0e1113;"></div>
-    <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
-      <input class="tbl-filter" placeholder="filter: 20m  demod:am  lo>7M" title="words match from the start of any field; col:text, col>5M, col<=100" style="${TBL_IN}flex:1;">
-      <span class="tbl-tail" title="show the last rows" style="cursor:pointer;color:#6c7a80;font-size:10px;">tail</span>
-      <span class="tbl-count" style="color:#6c7a80;font-size:10px;white-space:nowrap;"></span>
+    <div class="tbl-tree" hidden title="☑ — the list is shown on the bands output; click a name — make it the active list"></div>
+    <div class="tbl-bar">
+      <input class="tbl-filter" placeholder="filter: 20m  demod:am  lo>7M" title="words match from the start of any field; col:text, col>5M, col<=100">
+      <span class="tbl-count"></span>
     </div>
-    <div class="tbl-cols" style="display:flex;gap:3px;flex-wrap:wrap;flex-shrink:0;font-size:10px;"></div>
-    <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;flex-wrap:wrap;">
-      <button class="tbl-add" style="${TBL_BTN}">+ row</button>
-      <button class="tbl-here" style="${TBL_BTN}" title="new row at my current position (GPS) — with the icon, a photo and a sound in the same form">📍 here</button>
-      <button class="tbl-import" style="${TBL_BTN}" title="CSV, TSV, TXT, JSON, KML, GPX, GeoJSON — each file becomes a list">import</button>
-      <button class="tbl-od" style="${TBL_BTN}" title="objects from open sources (cell towers: OpenStreetMap, OpenCelliD; masts, repeaters, peaks, own Overpass query) and terrain elevation for rows with lat / lon">🌐 open data</button>
-      <button class="tbl-export" style="${TBL_BTN}" title="export this list (format in advanced)">export</button>
-      <button class="tbl-all" style="${TBL_BTN}" title="all lists in one JSON file (import brings them back)">export all</button>
-      <button class="tbl-copy" style="${TBL_BTN}" title="copy to another list, the patch or the browser DB">copy</button>
-      <button class="tbl-clear" style="${TBL_BTN}">clear</button>
-      <input class="tbl-file" type="file" multiple accept=".csv,.tsv,.txt,.json,.jsonl,.kml,.gpx,.geojson,text/*" style="display:none;">
+    <div class="tbl-cols" hidden></div>
+    <div class="tbl-acts">
+      <button class="tbl-btn pri tbl-add">+ row</button>
+      <button class="tbl-btn tbl-here" title="new row at my current position (GPS) — with the icon, a photo and a sound in the same form">📍 here</button>
     </div>
-    <div class="tbl-list" style="flex:1;overflow-y:auto;border:1px solid #1d2226;border-radius:3px;background:#0e1113;"></div>
+    <div class="tbl-list"></div>
+    <div class="tbl-edit" hidden></div>
+    <input class="tbl-file" type="file" multiple accept=".csv,.tsv,.txt,.json,.jsonl,.kml,.gpx,.geojson,text/*" hidden>
   `;
   mid.append(root);
   syncCustomHeight(n,root,150);
   const q=s=>root.querySelector(s);
-  n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), tree:q('.tbl-tree'), thead:q('.tbl-thead'),
-    filter:q('.tbl-filter'), cols:q('.tbl-cols'), tail:false, marked:-1};
+  n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), tree:q('.tbl-tree'), pick:q('.tbl-pick'), showcb:q('.tbl-showcb'),
+    filter:q('.tbl-filter'), cols:q('.tbl-cols'), edit:q('.tbl-edit'), tail:false, marked:-1};
   n._open=new Set(Array.isArray(n.p.open) ? n.p.open : []);
   if(!Array.isArray(n.p.open)) for(const k of new Set([...tblShow(n),n.p.list])){            // раскрыть пути отмеченных
     const parts=k.split('/'); parts.pop();
     parts.reduce((a,x)=>{ const path=a ? a+'/'+x : x; n._open.add(path); return path; },'');
   }
-  n.ui.thead.addEventListener('click',()=>{ n.p.treeHide=!n.p.treeHide; tblTreeVis(n); });
-  q('.tbl-none').addEventListener('click',()=>tblSetShow(n,[]));
+  n.ui.pick.addEventListener('change',()=>tblPick(n,n.ui.pick.value));
+  n.ui.showcb.addEventListener('change',()=>tblToggleShow(n,[n.p.list],n.ui.showcb.checked));
   n.ui.tree.addEventListener('click',e=>tblTreeClick(n,e));
   n.ui.filter.value=n.p.filter||'';
   n.ui.filter.addEventListener('keydown',e=>e.stopPropagation());
@@ -617,42 +602,96 @@ function tblInit(n){
     tblDerive(n); seqReset(n); n.initDone=true;           // новый набор — без повторной выдачи первой строки
     tblRenderList(n);
   });
-  q('.tbl-tail').addEventListener('click',e=>{ n.ui.tail=!n.ui.tail; e.target.style.color=n.ui.tail?'#4ec9b0':'#6c7a80'; tblRenderList(n); });
-  q('.tbl-new').addEventListener('click',()=>tblTplMenu(n,'new'));
-  q('.tbl-tpl').addEventListener('click',()=>tblTplMenu(n,'apply'));
-  q('.tbl-ren').addEventListener('click',async()=>{
-    if(tblKind(n.p.list)!=='db'){ alert('only lists in the browser DB can be renamed'); return; }
-    const nm=prompt('List name (folder/name):',n.p.list); if(!nm || nm===n.p.list) return;
-    if(nm===TBL_PATCH || nm.startsWith(TBL_PRE)){ alert('this name is reserved'); return; }
-    await ListDB.renameList(n.p.list,nm);
-    n.p.list=nm; n.loaded=nm; tblRenderAll(n);
-  });
-  q('.tbl-delL').addEventListener('click',async()=>{
-    if(tblKind(n.p.list)!=='db'){ alert('only lists in the browser DB can be deleted'); return; }
-    if(!confirm('Delete list "'+n.p.list+'" entirely?')) return;
-    await ListDB.deleteList(n.p.list);
-    await tblPick(n,'table');
-  });
+  q('.tbl-new').addEventListener('click',()=>tblNewMenu(n));
+  q('.tbl-menub').addEventListener('click',()=>tblMainMenu(n));
   q('.tbl-add').addEventListener('click',()=>tblAddForm(n));
   q('.tbl-here').addEventListener('click',()=>tblHereForm(n));
   const file=q('.tbl-file');
-  q('.tbl-import').addEventListener('click',()=>file.click());
+  n.ui.fileEl=file;
   file.addEventListener('change',()=>{ const fs=[...file.files]; file.value=''; if(fs.length) tblImport(n,fs); });
-  q('.tbl-od').addEventListener('click',()=>gdOpenMenu(n));
-  q('.tbl-export').addEventListener('click',()=>tblExport(n));
-  q('.tbl-all').addEventListener('click',()=>tblExportAll());
-  q('.tbl-copy').addEventListener('click',()=>tblCopy(n));
-  q('.tbl-clear').addEventListener('click',async()=>{
-    if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }
-    if(!n.all.length || !confirm('Delete all '+n.all.length+' rows of "'+n.p.list+'"?')) return;
-    await tblClear(n); tblRenderAll(n);
-  });
   tblRenderAll(n);
+}
+// действия над списком / данными — из меню «⋯»
+async function tblRenameList(n){
+  if(tblKind(n.p.list)!=='db'){ alert('only lists in the browser DB can be renamed'); return; }
+  const nm=(prompt('List name:',tblLeaf(n.p.list))||'').trim(); if(!nm) return;
+  const full=nm.includes('/') ? nm : tblDir(n.p.list)+nm;        // «папка/имя» целиком — тоже можно
+  if(full===n.p.list) return;
+  if(full===TBL_PATCH || full.startsWith(TBL_PRE)){ alert('this name is reserved'); return; }
+  await ListDB.renameList(n.p.list,full);
+  n.p.list=full; n.loaded=full; tblRenderAll(n);
+}
+async function tblMoveList(n){
+  if(tblKind(n.p.list)!=='db'){ alert('only lists in the browser DB can be moved'); return; }
+  const dirs=[...new Set((n.treeNames||[]).filter(x=>tblKind(x)==='db' && x.includes('/')).map(x=>tblDir(x).slice(0,-1)))].sort(tblByName);
+  const f=prompt('Folder (empty — no folder)'+(dirs.length ? '\nexisting: '+dirs.join(', ') : '')+':',tblDir(n.p.list).slice(0,-1));
+  if(f==null) return;
+  const dir=f.trim().replace(/^\/+|\/+$/g,'');
+  const full=(dir ? dir+'/' : '')+tblLeaf(n.p.list);
+  if(full===n.p.list) return;
+  if(full.startsWith(TBL_PRE)){ alert('this name is reserved'); return; }
+  await ListDB.renameList(n.p.list,full);
+  n.p.list=full; n.loaded=full; tblRenderAll(n);
+}
+async function tblDeleteList(n){
+  if(tblKind(n.p.list)!=='db'){ alert('only lists in the browser DB can be deleted'); return; }
+  if(!confirm('Delete list "'+tblLeaf(n.p.list)+'" entirely?')) return;
+  await ListDB.deleteList(n.p.list);
+  await tblPick(n,'table');
+}
+async function tblClearRows(n){
+  if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }
+  if(!n.all.length || !confirm('Delete all '+n.all.length+' rows of "'+tblLeaf(n.p.list)+'"?')) return;
+  await tblClear(n); tblRenderAll(n);
+}
+// выпадающее меню над списком: заголовки групп и пункты (подсказка — описание)
+function tblMenuEl(n){
+  const root=n.ui.root; root.querySelector('.tbl-menu')?.remove();
+  const m=document.createElement('div'); m.className='tbl-menu';
+  root.append(m);
+  const off=e=>{ if(!m.contains(e.target)){ m.remove(); document.removeEventListener('pointerdown',off,true); } };
+  setTimeout(()=>document.addEventListener('pointerdown',off,true));
+  return m;
+}
+function tblMenuHead(m,t){ const h=document.createElement('div'); h.className='tm-h'; h.textContent=t; m.append(h); }
+function tblMenuItem(m,title,desc,fn,cols,compact){
+  const d=document.createElement('div'); d.className='tm-i';
+  d.innerHTML='<div class="tm-t">'+escapeHtml(title)+'</div>'+(cols ? '<div class="tm-c">'+escapeHtml(cols)+'</div>' : '')+
+    (desc && !compact ? '<div class="tm-d">'+escapeHtml(desc)+'</div>' : '');
+  if(desc && compact) d.title=desc;
+  d.addEventListener('click',()=>{ m.remove(); fn(); }); m.append(d);
+}
+function tblMainMenu(n){
+  const m=tblMenuEl(n), it=(t,d,f)=>tblMenuItem(m,t,d,f,null,true);
+  tblMenuHead(m,'Rows');
+  it('Clear all rows','delete every row of the active list',()=>tblClearRows(n));
+  tblMenuHead(m,'Data');
+  it('Import file…','CSV, TSV, TXT, JSON, KML, GPX, GeoJSON — each file becomes a list',()=>n.ui.fileEl.click());
+  it('Open data…','objects from open sources (cell towers, masts, repeaters, peaks, own Overpass query) and terrain elevation for rows with lat / lon',()=>gdOpenMenu(n));
+  it('Export this list','format in advanced',()=>tblExport(n));
+  it('Export all lists','all lists in one JSON file (import brings them back)',()=>tblExportAll());
+  tblMenuHead(m,'List');
+  it('Copy to…','another list, the patch or the browser DB',()=>tblCopy(n));
+  it('Rename…','',()=>tblRenameList(n));
+  it('Move to folder…','',()=>tblMoveList(n));
+  it('Add template columns…','the data stays',()=>tblTplMenu(n,'apply'));
+  it('Delete list','',()=>tblDeleteList(n));
+  tblMenuHead(m,'View');
+  it(n.ui.cols.hidden ? 'Show columns…' : 'Hide columns','add and remove columns',()=>{ n.ui.cols.hidden=!n.ui.cols.hidden; });
+  it(n.ui.tree.hidden ? 'Shown lists…' : 'Hide shown lists','tick several lists to show them on the bands output',()=>{ n.ui.tree.hidden=!n.ui.tree.hidden; });
+  it(n.ui.tail ? 'Show first rows' : 'Show last rows','',()=>{ n.ui.tail=!n.ui.tail; tblRenderList(n); });
+}
+function tblNewMenu(n){
+  const m=tblMenuEl(n);
+  tblMenuItem(m,'Empty list','columns appear from the first rows you add or import',()=>tblNewList(n,null));
+  tblMenuHead(m,'From a template');
+  for(const t of TBL_TEMPLATES) tblMenuItem(m,t.title,t.desc,()=>tblNewList(n,t),t.cols.join(', '));
 }
 // меню шаблонов: new — создать список (с колонками шаблона или пустой), apply — добавить недостающие колонки в активный
 async function tblNewList(n,t){
   const dir=t ? t.dir+'/' : (tblKind(n.p.list)==='db' ? tblDir(n.p.list) : '');
-  const nm=(prompt('New list name (folder/name):',dir)||'').trim(); if(!nm) return;
+  const nm0=(prompt('New list name:','')||'').trim(); if(!nm0) return;
+  const nm=nm0.includes('/') ? nm0 : dir+nm0;                 // имя в текущей папке (или папке шаблона); «папка/имя» — своя
   if(nm===TBL_PATCH || nm.startsWith(TBL_PRE)){ alert('this name is reserved'); return; }
   const have=(await ListDB.listNames()).includes(nm);
   if(!have) await ListDB.setMeta(nm,{cols:t ? t.cols.slice() : []});
@@ -663,23 +702,11 @@ async function tblApplyTemplate(n,t){
   if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }
   await tblColsEdit(n,tblTemplateCols(n.cl,t)); tblRenderAll(n);
 }
-function tblTplMenu(n,mode){
-  const root=n.ui.root; root.querySelector('.tbl-menu')?.remove();
-  const m=document.createElement('div'); m.className='tbl-menu';
-  m.style.cssText='position:absolute;z-index:20;left:0;right:0;top:20px;max-height:75%;overflow-y:auto;background:#161b1e;border:1px solid #2a3136;border-radius:3px;box-shadow:0 4px 14px #000a;';
-  const item=(title,desc,fn,cols)=>{
-    const d=document.createElement('div'); d.style.cssText='padding:4px 8px;cursor:pointer;border-bottom:1px solid #1d2226;';
-    d.innerHTML='<div style="color:#c8d2d6;">'+escapeHtml(title)+'</div>'+(cols ? '<div style="color:#4ec9b0;font-size:9px;white-space:normal;">'+escapeHtml(cols)+'</div>' : '')+
-      '<div style="color:#6c7a80;font-size:9px;white-space:normal;">'+escapeHtml(desc)+'</div>';
-    d.addEventListener('mouseenter',()=>{ d.style.background='#1f3a36'; }); d.addEventListener('mouseleave',()=>{ d.style.background=''; });
-    d.addEventListener('click',()=>{ m.remove(); fn(); }); m.append(d);
-  };
-  if(mode==='new') item('Empty list','columns appear from the first rows you add or import',()=>tblNewList(n,null));
-  else if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }
-  for(const t of TBL_TEMPLATES) item(t.title,t.desc,()=>mode==='new' ? tblNewList(n,t) : tblApplyTemplate(n,t),t.cols.join(', '));
-  root.append(m);
-  const off=e=>{ if(!m.contains(e.target)){ m.remove(); document.removeEventListener('pointerdown',off,true); } };
-  setTimeout(()=>document.addEventListener('pointerdown',off,true));
+// шаблоны колонок для активного списка (mode 'apply')
+function tblTplMenu(n){
+  if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }
+  const m=tblMenuEl(n);
+  for(const t of TBL_TEMPLATES) tblMenuItem(m,t.title,t.desc,()=>tblApplyTemplate(n,t),t.cols.join(', '));
 }
 async function tblRenderAll(n){
   if(!n.ui) return;
@@ -726,12 +753,29 @@ function tblRenderTree(n){
   ui.tree.innerHTML=html.join('');
   ui.tree.querySelectorAll('[data-ind="1"]').forEach(c=>{ c.indeterminate=true; });
   ui.tree.scrollTop=keep;
-  ui.thead.textContent=(n.p.treeHide ? '▸ ' : '▾ ')+'Lists · '+sh.size+' shown · '+tblLeaf(n.p.list);
-  tblTreeVis(n);
+  tblRenderPick(n);
 }
-function tblTreeVis(n){
-  n.ui.tree.style.display=n.p.treeHide ? 'none' : '';
-  n.ui.thead.textContent=n.ui.thead.textContent.replace(/^[▸▾]/,n.p.treeHide ? '▸' : '▾');
+// выбор активного списка: папки — группы, видно только имя без пути
+function tblRenderPick(n){
+  const ui=n.ui, sel=ui.pick, names=(n.treeNames||[n.p.list]).slice().sort(tblByName);
+  const groups=new Map();
+  for(const f of names){
+    const g=tblKind(f)==='db' ? tblDir(f).slice(0,-1) : tblKind(f)==='patch' ? '' : tblDir(f).slice(0,-1);
+    if(!groups.has(g)) groups.set(g,[]);
+    groups.get(g).push(f);
+  }
+  const label=g=>g==='' ? 'Lists' : g==='presets' ? 'Built-in (read-only)' : g.startsWith('presets/') ? 'Built-in · '+g.slice(8) : g;
+  const many=groups.size>1;
+  sel.innerHTML='';
+  for(const g of [...groups.keys()].sort((a,b)=>(a==='')?-1:(b==='')?1:(a.startsWith('presets')-b.startsWith('presets'))||tblByName(a,b))){
+    const host=many ? Object.assign(document.createElement('optgroup'),{label:label(g)}) : sel;
+    for(const f of groups.get(g)){
+      const o=document.createElement('option'); o.value=f; o.textContent=tblKind(f)==='patch' ? 'This patch' : tblLeaf(f); host.append(o);
+    }
+    if(many) sel.append(host);
+  }
+  sel.value=n.p.list;
+  ui.showcb.checked=tblShow(n).has(n.p.list);
 }
 function tblTreeClick(n,e){
   const row=e.target.closest('.tt-dir,.tt-file'); if(!row) return;
@@ -758,6 +802,7 @@ function tblToggleShow(n,names,on){
 }
 // выбор активного списка; если «показывался» только прежний активный — галочка переходит на новый
 async function tblPick(n,list){
+  tblCloseEditor(n);
   const sh=n.p.show;
   if(Array.isArray(sh) && (!sh.length || (sh.length===1 && tblCanon(sh[0])===n.p.list))) n.p.show=[list];
   await tblUse(n,list);
@@ -767,8 +812,8 @@ function tblRenderCols(n){
   box.innerHTML='';
   for(const c of n.cl){
     const chip=document.createElement('span');
-    chip.style.cssText='background:#1d2226;border:1px solid #2a3136;border-radius:3px;padding:0 4px;display:flex;align-items:center;gap:3px;';
-    chip.innerHTML=`<span>${escapeHtml(c)}</span>`+(ro ? '' : '<span class="x" style="cursor:pointer;color:#6c7a80;">×</span>');
+    chip.className='tbl-chip';
+    chip.innerHTML=`<span>${escapeHtml(c)}</span>`+(ro ? '' : '<span class="x">×</span>');
     chip.querySelector('.x')?.addEventListener('click',async()=>{
       if(!confirm('Remove column "'+c+'" from all rows?')) return;
       await tblColsEdit(n,n.cl.filter(x=>x!==c)); tblRenderAll(n);
@@ -777,7 +822,7 @@ function tblRenderCols(n){
   }
   if(!ro){
     const add=document.createElement('span');
-    add.textContent='+ col'; add.style.cssText='cursor:pointer;color:#4ec9b0;';
+    add.textContent='+ col'; add.className='tbl-chip add';
     add.addEventListener('click',async()=>{
       const nm=(prompt('New column name:')||'').trim(); if(!nm || n.cl.includes(nm)) return;
       await tblColsEdit(n,n.cl.concat([nm])); tblRenderAll(n);
@@ -792,7 +837,7 @@ function tblRenderList(n){
   if(!N){
     const e=document.createElement('div');
     e.textContent=n.all.length ? 'nothing matches' : ro ? 'empty' : 'empty — add a row, import a file or wire rec / text';
-    e.style.cssText='padding:12px;text-align:center;color:#2a3136;';
+    e.className='tbl-empty';
     list.append(e); ui.marked=-1; return;
   }
   const s=ui.tail ? Math.max(0,N-TBL_ROWS) : 0, e=Math.min(N,s+TBL_ROWS);
@@ -800,7 +845,7 @@ function tblRenderList(n){
   if(N>TBL_ROWS){
     const m=document.createElement('div');
     m.textContent=(ui.tail?'… '+s+' earlier rows hidden':'… '+(N-e)+' more rows')+' — narrow with the filter';
-    m.style.cssText='padding:4px;text-align:center;color:#6c7a80;font-size:10px;';
+    m.className='tbl-empty sm';
     list.append(m);
   }
   ui.marked=-1; tblMark(n);
@@ -822,7 +867,7 @@ function tblRow(n,i,ro){
   const r=n.rows[i];
   const row=document.createElement('div');
   row.dataset.i=i;
-  row.style.cssText='display:flex;align-items:center;gap:5px;padding:2px 6px;cursor:pointer;border-bottom:1px solid #121619;min-width:0;';
+  row.className='tbl-row';
   if(n.colorCol){
     const sw=document.createElement('span');
     sw.style.cssText=`width:9px;height:9px;border-radius:2px;flex-shrink:0;background:${escapeHtml(String(r[n.colorCol]||'#c9c9c9'))};`;
@@ -830,32 +875,32 @@ function tblRow(n,i,ro){
   }
   const name=document.createElement('span');
   name.textContent=n.nameCol ? String(r[n.nameCol]??'') : '#'+(i+1);
-  name.style.cssText='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  name.className='tbl-rname';
   const val=document.createElement('span');
   val.textContent=tblSummary(n,r);
-  val.style.cssText='color:#4ec9b0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%;';
+  val.className='tbl-rval';
   row.append(name,val);
   const pc=n.cl.find(c=>TBL_PHOTO.test(c.toLowerCase())), pids=pc ? phIds(r[pc]) : [];
   if(pids.length){
     const ph=document.createElement('span');
-    ph.textContent='📷'+pids.length; ph.title='Show the photos'; ph.style.cssText='cursor:pointer;color:#e0b23c;flex-shrink:0;';
+    ph.textContent='📷'+pids.length; ph.title='Show the photos'; ph.className='tbl-ico warn';
     ph.addEventListener('click',e=>{ e.stopPropagation(); phView(pids); });
     row.append(ph);
   }
   const ac=n.cl.find(c=>TBL_AUDIO.test(c.toLowerCase())), aids=ac ? auIds(r[ac]) : [];
   if(aids.length){
     const au=document.createElement('span');
-    au.textContent='🔊'+aids.length; au.title='Play the audio'; au.style.cssText='cursor:pointer;color:#e0b23c;flex-shrink:0;';
+    au.textContent='🔊'+aids.length; au.title='Play the audio'; au.className='tbl-ico warn';
     au.addEventListener('click',e=>{ e.stopPropagation(); auView(aids); });
     row.append(au);
   }
   row.title=n.cl.filter(c=>r[c]!=='' && r[c]!=null).map(c=>c+': '+(TBL_HZ.test(c)&&isFinite(tblHz(r[c])) ? fmtHz(tblHz(r[c]),4)+'Hz' : recFmt(r[c]))).join('\n');
   if(!ro){
     const ed=document.createElement('span');
-    ed.textContent='✎'; ed.style.cssText='cursor:pointer;color:#6c7a80;';
+    ed.textContent='✎'; ed.className='tbl-ico'; ed.title='Edit';
     ed.addEventListener('click',e=>{ e.stopPropagation(); tblEditForm(n,i,row); });
     const del=document.createElement('span');
-    del.textContent='🗑'; del.style.cssText='cursor:pointer;color:#6c7a80;';
+    del.textContent='🗑'; del.className='tbl-ico'; del.title='Delete';
     del.addEventListener('click',async e=>{
       e.stopPropagation();
       if(!confirm('Delete row "'+(name.textContent||i+1)+'"?')) return;
@@ -863,6 +908,7 @@ function tblRow(n,i,ro){
     });
     row.append(ed,del);
   }
+  if(!ro) row.addEventListener('dblclick',()=>tblEditForm(n,i,row));
   row.addEventListener('click',()=>{                    // выбор записи: уходит на выходы
     n.pick=i; n.idx=i; n.cur={...n.rows[i]}; n.p.sel=n.rowIds[i];
     tblMark(n);
@@ -877,26 +923,26 @@ function tblMark(n){
   for(const el of ui.list.children){
     if(el.dataset.i===undefined) continue;
     const on=+el.dataset.i===want;
-    el.style.background=on ? '#1f3a36' : '';
+    el.classList.toggle('on',on);
     if(on){ const t=el.offsetTop-ui.list.clientHeight/2; if(el.offsetTop<ui.list.scrollTop || el.offsetTop+el.offsetHeight>ui.list.scrollTop+ui.list.clientHeight) ui.list.scrollTop=Math.max(0,t); }
   }
 }
 function tblForm(n,rec,onSave,onCancel){
   const form=document.createElement('div');
-  form.style.cssText='display:flex;flex-direction:column;gap:2px;padding:3px 6px;border-bottom:1px solid #121619;background:#161b1e;';
+  form.className='tbl-form';
   const ins={};
   const cl=n.cl.length ? n.cl : ['name'];
   for(const c of cl){
     const l=document.createElement('label');
-    l.style.cssText='display:flex;gap:4px;align-items:center;font-size:10px;color:#6c7a80;';
+    l.className=TBL_PHOTO.test(c.toLowerCase())||TBL_AUDIO.test(c.toLowerCase()) ? 'wide' : '';
     let inp;
     const low=c.toLowerCase();
     if(TBL_COLOR.includes(low)){
       inp=document.createElement('input'); inp.type='color'; inp.value=/^#[0-9a-f]{6}$/i.test(rec[c]) ? rec[c] : '#c9c9c9';
-      inp.style.cssText='flex:0 0 44px;height:16px;padding:0;background:none;border:1px solid #2a3136;';
+      inp.style.cssText='';
     } else if(TBL_PHOTO.test(low)){                     // фото: добавить с камеры / из галереи, посмотреть; координаты и время из EXIF — в пустые поля
       inp=document.createElement('input'); inp.type='hidden'; inp.value=phJoin(phIds(rec[c]));
-      const bar=document.createElement('span'); bar.style.cssText='flex:1;display:flex;gap:6px;align-items:center;';
+      const bar=document.createElement('span'); bar.className='tf-bar';
       const cnt=document.createElement('span'), mkb=(t,f)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=t; b.style.cssText=TBL_BTN; b.addEventListener('click',e=>{ e.preventDefault(); f(); }); return b; };
       const upd=()=>{ cnt.textContent=phIds(inp.value).length+' photos'; };
       bar.append(cnt,mkb('📷 add',async()=>{
@@ -905,15 +951,15 @@ function tblForm(n,rec,onSave,onCancel){
         const x=got.find(g=>g.exif?.lat!=null)?.exif;
         if(x) for(const [k,v] of [['lat',x.lat],['lon',x.lon],['alt',x.alt],['t',x.t]]){ const f=ins[k]; if(f && v!=null && !String(f.value).trim()) f.value=k==='t' ? v : +v.toFixed(6); }
       }),mkb('view',()=>phView(phIds(inp.value))),mkb('clear',()=>{ inp.value=''; upd(); }));
-      upd(); l.append(c,inp,bar); ins[c]=inp; form.append(l); continue;
+      upd(); l.append(Object.assign(document.createElement('span'),{textContent:c}),inp,bar); ins[c]=inp; form.append(l); continue;
     } else if(low==='icon'){                            // значок точки на карте
       inp=document.createElement('select');
       const cur=String(rec[c]??''), opts=['',...TBL_ICONS]; if(cur && !opts.includes(cur)) opts.push(cur);
       for(const o of opts){ const op=document.createElement('option'); op.value=o; op.textContent=o||'(default)'; inp.append(op); }
-      inp.value=cur; inp.style.cssText=TBL_IN+'flex:1;';
+      inp.value=cur; 
     } else if(TBL_AUDIO.test(low)){                     // звук: записать, файл, клип из библиотеки; прослушать
       inp=document.createElement('input'); inp.type='hidden'; inp.value=auJoin(auIds(rec[c]));
-      const bar=document.createElement('span'); bar.style.cssText='flex:1;display:flex;gap:6px;align-items:center;flex-wrap:wrap;';
+      const bar=document.createElement('span'); bar.className='tf-bar';
       const cnt=document.createElement('span'), mkb=(t,f)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=t; b.style.cssText=TBL_BTN; b.addEventListener('click',e=>{ e.preventDefault(); f(b); }); return b; };
       const upd=()=>{ cnt.textContent=auIds(inp.value).length+' clips'; }, add=ids=>{ inp.value=auJoin([...auIds(inp.value),...ids.filter(Boolean)]); upd(); };
       let stopRec=null;
@@ -924,24 +970,22 @@ function tblForm(n,rec,onSave,onCancel){
         }catch(e){ stopRec=null; b.textContent='🎤 rec'; alert('Recording failed: '+e.message); }
       }),mkb('📁 file',async()=>add(await auPickAdd())),mkb('🎵 library',async()=>add([await auChoose()])),
         mkb('▶',()=>auView(auIds(inp.value))),mkb('clear',()=>{ inp.value=''; upd(); }));
-      upd(); l.append(c,inp,bar); ins[c]=inp; form.append(l); continue;
+      upd(); l.append(Object.assign(document.createElement('span'),{textContent:c}),inp,bar); ins[c]=inp; form.append(l); continue;
     } else if(low==='demod'){
       inp=document.createElement('select');
       for(const o of DEMOD_OPTS){ const op=document.createElement('option'); op.value=op.textContent=o; inp.append(op); }
       inp.value=DEMOD_OPTS.includes(rec[c]) ? rec[c] : DEMOD_OPTS[0];
-      inp.style.cssText=TBL_IN+'flex:1;';
+      
     } else {
       inp=document.createElement('input'); inp.value=rec[c]??'';
-      inp.style.cssText=TBL_IN+'flex:1;';
+      
       inp.addEventListener('keydown',e=>{ e.stopPropagation(); if(e.key==='Enter') save.click(); });
     }
-    ins[c]=inp; l.append(c,inp); form.append(l);
+    ins[c]=inp; l.append(Object.assign(document.createElement('span'),{textContent:c}),inp); form.append(l);
   }
-  const btns=document.createElement('div'); btns.style.cssText='display:flex;gap:4px;justify-content:flex-end;margin-top:2px;';
-  const save=document.createElement('button'); save.textContent='save';
-  save.style.cssText=TBL_BTN+'border-color:#4ec9b0;color:#4ec9b0;';
-  const cancel=document.createElement('button'); cancel.textContent='cancel'; cancel.style.cssText=TBL_BTN;
-  btns.append(save,cancel); form.append(btns);
+  const save=document.createElement('button'); save.textContent='save'; save.className='tbl-btn pri';
+  const cancel=document.createElement('button'); cancel.textContent='cancel'; cancel.className='tbl-btn';
+  form.save=save; form.cancel=cancel;
   save.addEventListener('click',async()=>{
     const o={};
     for(const c of cl){
@@ -953,9 +997,30 @@ function tblForm(n,rec,onSave,onCancel){
   cancel.addEventListener('click',onCancel);
   return form;
 }
+// правка — панелью снизу поверх списка: не прокручивается со строками, высота списка не меняется
+function tblOpenEditor(n,title,form,rowEl){
+  const ui=n.ui, ed=ui.edit;
+  ed.innerHTML='';
+  const h=document.createElement('div'); h.className='te-h';
+  const t=document.createElement('span'); t.className='te-t'; t.textContent=title;
+  h.append(t,form.cancel,form.save);
+  ed.append(h,form);
+  ed.hidden=false;
+  ui.list.style.paddingBottom=ed.offsetHeight+'px';           // последние строки не прячутся под панелью
+  ui.list.querySelectorAll('.tbl-row.edit').forEach(r=>r.classList.remove('edit'));
+  if(rowEl){ rowEl.classList.add('edit'); rowEl.scrollIntoView({block:'nearest'}); }
+  const f=form.querySelector('input:not([type=hidden]):not([type=color]),select'); f?.focus({preventScroll:true});
+}
+function tblCloseEditor(n){
+  const ui=n.ui; if(!ui?.edit) return;
+  ui.edit.hidden=true; ui.edit.innerHTML=''; ui.list.style.paddingBottom='';
+  ui.list.querySelectorAll('.tbl-row.edit').forEach(r=>r.classList.remove('edit'));
+}
 function tblEditForm(n,i,row){
-  const form=tblForm(n,n.rows[i],async o=>{ await tblUpdate(n,i,o); tblRenderList(n); },()=>tblRenderList(n));
-  row.replaceWith(form);
+  const close=()=>{ tblCloseEditor(n); };
+  const form=tblForm(n,n.rows[i],async o=>{ await tblUpdate(n,i,o); close(); tblRenderList(n); },close);
+  const nm=n.nameCol ? String(n.rows[i][n.nameCol]??'') : '';
+  tblOpenEditor(n,'Edit row '+(i+1)+(nm ? ' · '+nm : ''),form,row);
 }
 // текущая позиция: GPS браузера, при отказе — последняя известная (My Position)
 function tblPosition(){
@@ -982,10 +1047,8 @@ async function tblHereForm(n){
 }
 function tblAddForm(n,init){
   if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }
-  const ui=n.ui; ui.list.querySelector('.tbl-newrow')?.remove();
   const form=tblForm(n,init||{},async o=>{
-    await tblAdd(n,[o]); tblRenderList(n);
-  },()=>form.remove());
-  form.classList.add('tbl-newrow');
-  ui.list.prepend(form);
+    await tblAdd(n,[o]); tblCloseEditor(n); tblRenderList(n);
+  },()=>tblCloseEditor(n));
+  tblOpenEditor(n,'New row',form,null);
 }

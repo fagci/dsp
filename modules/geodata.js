@@ -167,15 +167,8 @@ function gdKindTitle(k){ return GD_KINDS[k]?.title || k; }
 
 // меню «open data» в Table
 function gdOpenMenu(n){
-  const root=n.ui.root; root.querySelector('.tbl-menu')?.remove();
-  const m=document.createElement('div'); m.className='tbl-menu';
-  m.style.cssText='position:absolute;z-index:20;left:0;right:0;top:20px;max-height:75%;overflow-y:auto;background:#161b1e;border:1px solid #2a3136;border-radius:3px;box-shadow:0 4px 14px #000a;';
-  const item=(title,desc,fn)=>{
-    const d=document.createElement('div'); d.style.cssText='padding:4px 8px;cursor:pointer;border-bottom:1px solid #1d2226;';
-    d.innerHTML='<div style="color:#c8d2d6;">'+escapeHtml(title)+'</div><div style="color:#6c7a80;font-size:9px;white-space:normal;">'+escapeHtml(desc)+'</div>';
-    d.addEventListener('mouseenter',()=>{ d.style.background='#1f3a36'; }); d.addEventListener('mouseleave',()=>{ d.style.background=''; });
-    d.addEventListener('click',()=>{ m.remove(); fn().catch(e=>alert(e.message||e)); }); m.append(d);
-  };
+  const m=tblMenuEl(n);
+  const item=(title,desc,fn)=>tblMenuItem(m,title,desc,()=>fn().catch(e=>alert(e.message||e)));
   const done=async r=>{ n.dataMsg=''; alert(r.added+' new of '+r.rows.length+' found → list "'+r.list+'"'+(r.capped ? '\n(stopped at the limit — narrow the area or the MCC)' : '')); await tblPick(n,r.list); tblRenderAll(n); };
   const osm=kind=>async()=>{ const b=gdAskArea(); if(b) await done(await gdImportOsm(kind,b)); };
   item('Cell towers around a point (OpenStreetMap)','No key. Masts and towers tagged as mobile / GSM / UMTS / LTE / 5G, antennas. Coverage depends on the mappers — OpenCelliD below is usually denser. → geo/towers',osm('towers'));
@@ -204,9 +197,6 @@ function gdOpenMenu(n){
     const b=gdAskArea(); if(b) await done(await gdImportOsm('custom',b,{custom:q}));
   });
   item('⛰ Fill ground elevation of this list','Adds the column «ground» (terrain height at lat / lon, m); alt is filled from h where it is empty.',async()=>{ await gdTableElev(n); });
-  root.append(m);
-  const off=e=>{ if(!m.contains(e.target)){ m.remove(); document.removeEventListener('pointerdown',off,true); } };
-  setTimeout(()=>document.addEventListener('pointerdown',off,true));
 }
 // колонка ground для строк с координатами; alt (если колонка есть и пуста) = ground + h (h пуст — 0), h — из alt и ground
 async function gdTableElev(n){
