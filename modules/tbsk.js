@@ -42,30 +42,33 @@ def({ id:'tbskRx', title:'TBSK Decoder', cat:'Decoders', readout:true, tall:true
 });
 
 /* ---- Передатчик ---- */
-function tbskTxQueue(n,text,lead){
-  const sr=Eng.sr, tone=tbskTone(sr,+n.p.fc,+n.p.cycle), bytes=new TextEncoder().encode(String(text).slice(0,1024));
+function tbskTxQueue(n,data,lead){                  // data: строка или Uint8Array
+  const sr=Eng.sr, tone=tbskTone(sr,+n.p.fc,+n.p.cycle), isBin=typeof data!=='string',
+    bytes=isBin ? data.subarray(0,1024) : new TextEncoder().encode(data.slice(0,1024));
   if(!bytes.length){ n.status='nothing to send'; return; }
   const w=tbskModulate(tone,tbskBits(bytes),{amp:+n.p.amp, stop:n.p.stop!==false});
   if(lead){ const z=new Float32Array(lead+w.length); z.set(w,lead); n.tq={w:z, i:0}; } else n.tq={w, i:0};
-  n.status='sending '+bytes.length+' B · '+(sr/tone.length).toFixed(0)+' bit/s · '+(n.tq.w.length/sr).toFixed(2)+' s\n"'+String(text).slice(0,60)+'"';
+  n.status='sending '+bytes.length+' B · '+(sr/tone.length).toFixed(0)+' bit/s · '+(n.tq.w.length/sr).toFixed(2)+' s'+(isBin ? (data.length>1024 ? '\nbytes cut to 1024 of '+data.length : '\nbytes') : '\n"'+data.slice(0,60)+'"');
 }
 def({ id:'tbskTx', title:'TBSK Modulator', cat:'Protocols', readout:true, tall:true,
   kw:'tbsk tbskmodem nyatla spread spectrum dpsk transmit modulator acoustic modem data over sound',
-  ins:[{n:'text',t:'txt'},{n:'go',t:'num'}], outs:[{n:'out',t:'sig'},{n:'busy',t:'num'}],
-  params:[{n:'msg',t:'text',d:'Hello, TBSK!',label:'message (if the text input is empty)'},
+  ins:[{n:'text',t:'txt'},{n:'bin',t:'bin'},{n:'go',t:'num'}], outs:[{n:'out',t:'sig'},{n:'busy',t:'num'}],
+  params:[{n:'msg',t:'text',d:'Hello, TBSK!',label:'message (if the text and bin inputs are empty; bin wins over text)'},
           {n:'fc',t:'range',min:200,max:12000,step:1,d:4800,label:'carrier, Hz'},
           {n:'cycle',t:'range',min:2,max:100,step:1,d:10,label:'tone length, carrier periods (bit rate = carrier / cycle)'},
           {n:'amp',t:'range',min:0,max:1,step:.01,d:.5},
           {n:'stop',t:'check',d:true,label:'stop symbol at the end (the receiver closes the frame on it)'},
-          {n:'auto',t:'check',d:false,label:'send when the text input changes'},
+          {n:'auto',t:'check',d:false,label:'send when the text or bin input changes'},
           {n:'send',t:'button',label:'Send',fn:n=>{ n.send=true; }}],
-  init:n=>{ n.tq=null; n.pend=[]; n.prevGo=0; n.send=false; n.lastIn=undefined; n.status='waiting'; },
+  init:n=>{ n.tq=null; n.pend=[]; n.prevGo=0; n.send=false; n.lastIn=undefined; n.lastBin=null; n.status='waiting'; },
   process(n,I){
     const o=buf(n,'out'), go=I.go||0, inText=typeof I.text==='string' && I.text ? I.text : null;
     let want=(go>.5 && n.prevGo<=.5) || n.send; n.prevGo=go; n.send=false;
     if(inText!==null && inText!==n.lastIn){ n.lastIn=inText; if(n.p.auto) want=true; }
+    const inBin=I.bin && I.bin.d && I.bin.d.length ? I.bin : null;
+    if(inBin && inBin!==n.lastBin){ n.lastBin=inBin; if(n.p.auto) want=true; }
     if(want){                                        // идёт передача — кадр ждёт в очереди, а не затирает текущий
-      const t=inText!==null ? inText : n.p.msg;
+      const t=inBin ? inBin.d : inText!==null ? inText : n.p.msg;
       if(n.tq){ if(n.pend.length<32) n.pend.push(t); } else tbskTxQueue(n,t);
     }
     const q=n.tq;
