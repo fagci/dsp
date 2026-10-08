@@ -73,13 +73,13 @@ function mqInMessage(n,p){
   }
   if(!rec) rec=[{t,topic:p.topic,...(val!==null ? {value:val} : {text})}];
   n.msgs++;
-  n.q.push({text,topic:p.topic,val});
+  n.q.push({text,topic:p.topic,val,bin:p.payload});
   n.recQ.push(...rec);
   if(n.q.length>5000) n.q.splice(0,n.q.length-5000);
   if(n.recQ.length>20000) n.recQ.splice(0,n.recQ.length-20000);
 }
 def({ id:'mqttIn', title:'MQTT In', cat:'Sources', kw:'mqtt subscribe broker iot tasmota esphome home assistant sensor',
-  outs:[{n:'text',t:'txt'},{n:'topic',t:'txt'},{n:'value',t:'num'},{n:'rec',t:'rec'},{n:'new',t:'num'}], readout:true, tall:true,
+  outs:[{n:'text',t:'txt'},{n:'topic',t:'txt'},{n:'value',t:'num'},{n:'rec',t:'rec'},{n:'new',t:'num'},{n:'bin',t:'bin'}], readout:true, tall:true,
   params:[{n:'url',t:'text',d:'ws://127.0.0.1:9001',label:'broker WebSocket: ws:// wss://'},
           {n:'topic',t:'text',d:'#',label:'topic filters (space or comma separated; + and # allowed)'},
           {n:'user',t:'text',d:'',label:'user (optional)'},
@@ -90,14 +90,14 @@ def({ id:'mqttIn', title:'MQTT In', cat:'Sources', kw:'mqtt subscribe broker iot
           {n:'connect',t:'button',label:'Connect',fn:n=>mqStart(n)},
           {n:'disconnect',t:'button',label:'Disconnect',fn:n=>mqStop(n)}],
   init:n=>{ n.ws=null; n.want=false; n.ok=false; n.timer=n.pingT=null; n.pid=0; n.cid=''; n.q=[]; n.recQ=[]; n.msgs=0;
-            n.last={text:'',topic:'',val:0}; n.status='not connected'; n.warn='';
+            n.last={text:'',topic:'',val:0}; n.status='not connected'; n.warn=''; n.binOut=null;
             n.onConnect=n=>{ const f=mqTopics(n.p.topic); mqSend(n,mqSubscribe(mqNextId(n),f.length ? f : ['#'],0)); };
             n.onMessage=mqInMessage; },
   dispose:n=>mqStop(n),
   process(n){
-    let m=null; if(n.q.length){ m=n.q.shift(); n.last={text:m.text,topic:m.topic,val:m.val!==null ? m.val : n.last.val}; }
+    let m=null; if(n.q.length){ m=n.q.shift(); n.last={text:m.text,topic:m.topic,val:m.val!==null ? m.val : n.last.val}; n.binOut=binObj(m.bin,m.topic); }
     const rec=n.recQ.length ? n.recQ.splice(0) : null;
-    return {text:m ? m.text : null, topic:m ? m.topic : null, value:n.last.val, rec, new:m ? 1 : 0};
+    return {text:m ? m.text : null, topic:m ? m.topic : null, value:n.last.val, rec, new:m ? 1 : 0, bin:n.binOut};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     const t=(n.warn && !n.ok ? '⚠ '+n.warn+'\n' : '')+n.status+' · messages '+n.msgs+(n.q.length ? ' · queued '+n.q.length : '')+
@@ -111,11 +111,11 @@ def({ id:'mqttIn', title:'MQTT In', cat:'Sources', kw:'mqtt subscribe broker iot
 function mqOutPublish(n,topic,payload){
   if(!n.ok || !topic) return false;
   const qos=+n.p.qos|0, o={qos,retain:!!n.p.retain,id:qos ? mqNextId(n) : 0};
-  mqSend(n,mqPublish(topic,payload,o)); n.sent++; n.lastPub=topic+': '+(typeof payload==='string' ? payload : '')+'';
+  mqSend(n,mqPublish(topic,payload,o)); n.sent++; n.lastPub=topic+': '+(typeof payload==='string' ? payload : '['+payload.length+' bytes]');
   return true;
 }
 def({ id:'mqttOut', title:'MQTT Out', cat:'Output', kw:'mqtt publish broker iot tasmota esphome home assistant relay',
-  ins:[{n:'text',t:'txt'},{n:'value',t:'num'},{n:'topic',t:'txt'}], outs:[{n:'ok',t:'num'}], readout:true,
+  ins:[{n:'text',t:'txt'},{n:'value',t:'num'},{n:'topic',t:'txt'},{n:'bin',t:'bin'}], outs:[{n:'ok',t:'num'}], readout:true,
   params:[{n:'url',t:'text',d:'ws://127.0.0.1:9001',label:'broker WebSocket: ws:// wss://'},
           {n:'topic',t:'text',d:'dsp/out',label:'topic (a wire on `topic` overrides)'},
           {n:'template',t:'text',d:'{v}',label:'value template, {v} or {v:N}'},
@@ -128,11 +128,12 @@ def({ id:'mqttOut', title:'MQTT Out', cat:'Output', kw:'mqtt publish broker iot 
           {n:'connect',t:'button',label:'Connect',fn:n=>mqStart(n)},
           {n:'disconnect',t:'button',label:'Disconnect',fn:n=>mqStop(n)}],
   init:n=>{ n.ws=null; n.want=false; n.ok=false; n.timer=n.pingT=null; n.pid=0; n.cid=''; n.sent=0; n.lastPub='';
-            n.lastText=undefined; n.lastVal=undefined; n.status='not connected'; n.warn=''; },
+            n.lastText=undefined; n.lastVal=undefined; n.lastBin=null; n.status='not connected'; n.warn=''; },
   dispose:n=>mqStop(n),
   process(n,I){
     const topic=typeof I.topic==='string' && I.topic.trim() ? I.topic.trim() : String(n.p.topic||'').trim();
     if(typeof I.text==='string' && I.text!==n.lastText){ if(!I.text || mqOutPublish(n,topic,I.text)) n.lastText=I.text; }
+    if(I.bin && I.bin.d && I.bin!==n.lastBin){ if(mqOutPublish(n,topic,I.bin.d)) n.lastBin=I.bin; }
     if(typeof I.value==='number' && isFinite(I.value) && I.value!==n.lastVal){
       const s=String(n.p.template||'{v}').replace(/\{v(?::(\d+))?\}/g,(_,w)=>w ? String(Math.round(I.value)).padStart(+w,'0') : String(I.value));
       if(mqOutPublish(n,topic,s)) n.lastVal=I.value;

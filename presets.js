@@ -270,6 +270,7 @@ const PRESET_CATS={
   'IR: Arduino / ESP / Flipper (WebSerial)':'Infrared',
   'IR: Tasmota Blaster over MQTT':'Infrared',
   'MQTT: Subscribe and Publish':'Network & IoT',
+  'Bytes: File over Any Text Channel (Loopback)':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
@@ -4325,6 +4326,22 @@ tk.size.w=380; tk.size.h=100; applySize(tk);
 const so=addNode('serialout',500,600,{baud:'115200'});
 so.size.w=380; so.size.h=140; applySize(so);
 addEdge(jy.id,'text',tk.id,'text'); addEdge(jy.id,'text',so.id,'text');
+markWiresDirty();
+});
+preset('Bytes: File over Any Text Channel (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Any file over any channel. File → Bytes reads a file (the bin port is plain bytes), Bytes → Frames cuts it into frames with a number, length and CRC-32 (the first frame carries the name, size and the CRC of the whole file) and writes one frame per line, Frames → Bytes puts the file together and checks it, Bytes → File keeps it in Files › Received or downloads it.\n'+
+  'Here the lines go straight from one node to the other. Cut the wire and put a channel in between: Serial Out → Serial Port, MQTT Out → MQTT In, Text over Network, BLE UART — or hand the text to TBSK, a sound card, a radio modem. Frames can be lost, doubled or reordered: switch on the carousel and a late listener still gets the whole file. Raw bytes need no text: the bin ports of Serial Port, Text over Network, MQTT and BLE UART take the frames as they are.'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const fl=addNode('binFile',40,240,{});
+fl.size.w=300; fl.size.h=200; applySize(fl);
+const tx=addNode('binTx',400,240,{});
+tx.size.w=320; tx.size.h=320; applySize(tx);
+const rx=addNode('binRx',780,240,{});
+rx.size.w=320; rx.size.h=260; applySize(rx);
+const sv=addNode('binSave',1160,240,{});
+sv.size.w=300; sv.size.h=200; applySize(sv);
+addEdge(fl.id,'bin',tx.id,'bin'); addEdge(tx.id,'text',rx.id,'text'); addEdge(rx.id,'bin',sv.id,'bin');
 markWiresDirty();
 });
 preset('Joystick: Gamepad → Frame → MQTT', function(){

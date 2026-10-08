@@ -58,7 +58,7 @@ async function bleWrite(n,el,bytes){
 
 /* ---------- BLE UART ---------- */
 def({ id:'bleUart', title:'BLE UART (Web Bluetooth)', cat:'Sources', kw:'bluetooth le ble serial nordic uart nus hm-10 esp32 arduino terminal',
-  ins:[{n:'text',t:'txt'}], outs:[{n:'line',t:'txt'},{n:'go',t:'num'}], readout:true, tall:true,
+  ins:[{n:'text',t:'txt'},{n:'bin',t:'bin'}], outs:[{n:'line',t:'txt'},{n:'go',t:'num'},{n:'bin',t:'bin'}], readout:true, tall:true,
   params:[{n:'profile',t:'select',opts:[...Object.keys(BLE_PROFILES),'custom'],d:'Nordic UART',label:'profile'},
           {n:'svc',t:'text',d:'',label:'custom: service UUID',adv:true},
           {n:'rx',t:'text',d:'',label:'custom: characteristic from the device (notify)',adv:true},
@@ -73,8 +73,9 @@ def({ id:'bleUart', title:'BLE UART (Web Bluetooth)', cat:'Sources', kw:'bluetoo
           {n:'disconnect',t:'button',label:'Disconnect',fn:n=>bleDisconnect(n)}],
   init:n=>{ n.dev=null; n.chs=[]; n.connected=n.connecting=false; n.timer=n.pollT=null; n.acc=''; n.q=[]; n.last=''; n.sent=0; n.got=0;
             n.status='not connected'; n.wr=null; n.lastText=undefined; n.chain=Promise.resolve(); n.dec=new TextDecoder();
+            n.lastBin=null; n.binQ=[]; n.binOut=null; n.gotB=0;
             n.onDisc=bleOnDisc(n);
-            n.onVal=e=>{ const r=bleLines(n.acc,n.dec.decode(e.target.value,{stream:true})); n.acc=r.rest; for(const l of r.lines){ n.q.push(l); n.got++; } if(n.q.length>2000) n.q.splice(0,n.q.length-2000); };
+            n.onVal=e=>{ n.binQ.push(new Uint8Array(e.target.value.buffer.slice(e.target.value.byteOffset,e.target.value.byteOffset+e.target.value.byteLength))); if(n.binQ.length>4096) n.binQ.splice(0,n.binQ.length-4096); const r=bleLines(n.acc,n.dec.decode(e.target.value,{stream:true})); n.acc=r.rest; for(const l of r.lines){ n.q.push(l); n.got++; } if(n.q.length>2000) n.q.splice(0,n.q.length-2000); };
             n.plan=n=>{
               const pr=BLE_PROFILES[n.p.profile]||{svc:n.p.svc,rx:n.p.rx,tx:n.p.tx};
               return {services:[bleUuid(pr.svc)],setup:async(n,server)=>{
@@ -90,11 +91,17 @@ def({ id:'bleUart', title:'BLE UART (Web Bluetooth)', cat:'Sources', kw:'bluetoo
         n.chain=n.chain.then(()=>bleWrite(n,el,new TextEncoder().encode(I.text+eol))).then(()=>{ n.sent++; },e=>{ n.status='write error: '+e.message; });
       }
     } else if(!I.text) n.lastText=undefined;
+    if(I.bin && I.bin.d && I.bin!==n.lastBin){
+      n.lastBin=I.bin;
+      if(n.connected && n.wr){ const el=n.wr, d=I.bin.d;
+        n.chain=n.chain.then(()=>bleWrite(n,el,d)).then(()=>{ n.sent++; },e=>{ n.status='write error: '+e.message; }); }
+    }
+    if(n.binQ.length){ const p=n.binQ.splice(0), d=p.length>1 ? binCat(...p) : p[0]; n.gotB+=d.length; n.binOut=binObj(d); }
     let go=0; if(n.q.length){ n.last=n.q.shift(); go=1; }
-    return {line:go ? n.last : (n.last||null),go};
+    return {line:go ? n.last : (n.last||null),go,bin:n.binOut};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
-    const t=n.status+' · received '+n.got+' · sent '+n.sent+(n.last ? '\n'+n.last.slice(0,300) : '');
+    const t=n.status+' · received '+n.got+(n.gotB ? ' ('+n.gotB+' B)' : '')+' · sent '+n.sent+(n.last ? '\n'+n.last.slice(0,300) : '');
     if(r.textContent!==t) r.textContent=t; }
 });
 

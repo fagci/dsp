@@ -978,8 +978,8 @@ def({ id:'textsrc', title:'Text Source', cat:'Sources',
 // этот узел сам ничего не разбирает — только читает порт и отдаёт строку целиком.
 
 async function serialTeardown(n){
-  n.connected=false; n.connecting=false; n.reading=false;
-  if(n.reader){ try{ await n.reader.cancel(); }catch(e){} n.reader=null; }
+  n.connected=false; n.connecting=false; n.reading=false; if(n.binQ) n.binQ.length=0;
+  if(n.reader){ try{ await n.reader.cancel(); }catch(e){} try{ n.reader.releaseLock(); }catch(e){} n.reader=null; }   // порт закрывается только без замков
   if(n.port){ try{ await n.port.close(); }catch(e){} n.port=null; }
 }
 function serialDisconnect(n){ n.status='disconnected'; serialTeardown(n); }
@@ -987,13 +987,15 @@ function serialDisconnect(n){ n.status='disconnected'; serialTeardown(n); }
 // Границы чтения из порта не совпадают с границами строк — копим в буфер и режем по \n.
 async function serialReadLoop(n){
   n.reading=true;
-  const reader = n.port.readable.pipeThrough(new TextDecoderStream()).getReader();
+  const reader = n.port.readable.getReader(), dec = new TextDecoder();
   n.reader = reader;
   let buf='';
   try{
     while(n.reading){
-      const {value,done} = await reader.read();
+      const {value:bytes,done} = await reader.read();
       if(done) break;
+      n.binQ.push(bytes); if(n.binQ.length>4096) n.binQ.splice(0,n.binQ.length-4096);
+      const value = dec.decode(bytes,{stream:true});
       buf += value;
       let idx;
       while((idx=buf.indexOf('\n'))>=0){
@@ -1003,7 +1005,7 @@ async function serialReadLoop(n){
     }
     if(n.reading) n.status='port closed by device';   // done без явного disconnect()
   }catch(e){
-    n.status='read error: '+e.message;
+    if(n.reading) n.status='read error: '+e.message;
   }finally{
     n.reading=false;
   }
@@ -1025,8 +1027,16 @@ async function serialConnect(n){
   }
 }
 
+// запись сырых байтов; порядок записей сохраняет цепочка промисов
+function serialWriteBytes(n,data){
+  if(!n.port?.writable) return;
+  n.chain=n.chain.then(async()=>{
+    const w=n.port.writable.getWriter();
+    try{ await w.write(data); n.sent++; } finally{ w.releaseLock(); }
+  }).catch(e=>{ n.status='write error: '+e.message; });
+}
 def({ id:'webserial', title:'Serial Port (WebSerial)', cat:'Sources',
-  outs:[{n:'line',t:'txt'},{n:'go',t:'num'}], readout:true, tall:true,
+  ins:[{n:'send',t:'bin'}], outs:[{n:'line',t:'txt'},{n:'go',t:'num'},{n:'bin',t:'bin'}], readout:true, tall:true,
   params:[
     {n:'baud',t:'select',opts:['4800','9600','19200','38400','57600','115200'],d:'9600'},
     {n:'connect',t:'button',label:'Connect',fn:n=>serialConnect(n)},
@@ -1035,14 +1045,20 @@ def({ id:'webserial', title:'Serial Port (WebSerial)', cat:'Sources',
   init:n=>{
     n.port=null; n.reader=null; n.connected=false; n.connecting=false; n.reading=false;
     n.lastLine=''; n.linePulse=0; n.status='not connected';
+    n.binQ=[]; n.binOut=null; n.lastSend=null; n.chain=Promise.resolve(); n.sent=0; n.got=0;
   },
   dispose:n=>{ serialTeardown(n).catch(e=>console.error('serial dispose:',e)); },
-  process(n){
+  process(n,I){
     const go = n.linePulse>0?1:0; if(n.linePulse>0) n.linePulse--;
-    return {line:n.lastLine, go};
+    if(I.send && I.send.d && I.send!==n.lastSend){ n.lastSend=I.send; if(n.connected) serialWriteBytes(n,I.send.d); }
+    if(n.binQ.length){                                  // всё, что пришло за такт, одним куском: границы чтения всё равно случайны
+      const parts=n.binQ.splice(0), d=parts.length>1 ? binCat(...parts) : parts[0];
+      n.got+=d.length; n.binOut=binObj(d);
+    }
+    return {line:n.lastLine, go, bin:n.binOut};
   },
   draw(n){ const r=n.el.querySelector('.readout');
-    if(r) r.textContent = n.status+(n.lastLine?(' | '+n.lastLine):''); }
+    if(r) r.textContent = n.status+(n.got||n.sent ? ' · rx '+n.got+' B · tx '+n.sent : '')+(n.lastLine?(' | '+n.lastLine):''); }
 });
 
 
@@ -1112,9 +1128,14 @@ function netTextWs(n,url){
     n.ws=null; n.status='closed'+(e.code!==1000?' ('+e.code+')':'')+(n.p.reconnect?' — reconnecting…':'');
     netTextRetry(n,()=>{ if(n.want) netTextWs(n,url); },2000);
   };
+  ws.binaryType='arraybuffer';
   ws.onmessage=e=>{
     if(typeof e.data==='string') netTextFeed(n,e.data);
-    else if(e.data?.text) e.data.text().then(t=>netTextFeed(n,t));
+    else if(e.data instanceof ArrayBuffer){
+      const d=new Uint8Array(e.data);
+      if(n.p.binary){ n.binQ.push(d); n.binRx+=d.length; if(n.binQ.length>4096) n.binQ.splice(0,n.binQ.length-4096); }
+      else netTextFeed(n,new TextDecoder().decode(d));
+    }
   };
 }
 // Поток по HTTP: SSE (text/event-stream, берутся строки data:) или построчный NDJSON; fetch, не EventSource
@@ -1158,32 +1179,39 @@ async function netTextPoll(n,url){
   if(n.want){ clearTimeout(n.timer); n.timer=setTimeout(()=>netTextPoll(n,url),Math.max(0.2,+n.p.poll||5)*1000); }
 }
 def({ id:'nettext', title:'Text over Network', cat:'Sources',
-  ins:[{n:'send',t:'txt'}],                            // по WebSocket: новое значение — отправить
-  outs:[{n:'line',t:'txt'},{n:'go',t:'num'},{n:'rec',t:'rec'},{n:'count',t:'num'}],
+  ins:[{n:'send',t:'txt'},{n:'sendBin',t:'bin'}],      // по WebSocket: новое значение — отправить
+  outs:[{n:'line',t:'txt'},{n:'go',t:'num'},{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'bin',t:'bin'}],
   readout:true, tall:true,
   params:[
     {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'ws:// wss:// http:// https://'},
     {n:'poll',t:'range',min:0.2,max:600,step:0.1,d:5,label:'HTTP poll every, s'},
     {n:'stream',t:'check',d:false,label:'HTTP stream (SSE / NDJSON) instead of polling'},
+    {n:'binary',t:'check',d:false,label:'WebSocket: binary messages go to the bin output (not read as text)'},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},
     {n:'connect',t:'button',label:'Connect',fn:n=>netTextStart(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>netTextStop(n)},
   ],
   init:n=>{ n.ws=null; n.want=false; n.timer=null; n.abort=null; n.lineQ=[]; n.recQ=[]; n.lastLine='';
-            n.msgs=0; n.count=0; n.status='not connected'; n.warn=''; n.lastSend=undefined; },
+            n.msgs=0; n.count=0; n.status='not connected'; n.warn=''; n.lastSend=undefined;
+            n.binQ=[]; n.binOut=null; n.lastBin=null; n.binRx=0; },
   dispose:n=>netTextStop(n),
   process(n,I){
     if(typeof I.send==='string' && I.send!==n.lastSend){
       n.lastSend=I.send;
       if(n.ws && n.ws.readyState===1) n.ws.send(I.send);
     }
+    if(I.sendBin && I.sendBin.d && I.sendBin!==n.lastBin){
+      n.lastBin=I.sendBin;
+      if(n.ws && n.ws.readyState===1) n.ws.send(I.sendBin.d);
+    }
+    if(n.binQ.length){ const p=n.binQ.splice(0); n.binOut=binObj(p.length>1 ? binCat(...p) : p[0]); }
     let go=0;
     if(n.lineQ.length){ n.lastLine=n.lineQ.shift(); go=1; n.count++; }
     const rec=n.recQ.length ? n.recQ.splice(0) : null;
-    return {line:n.lastLine, go, rec, count:n.count};
+    return {line:n.lastLine, go, rec, count:n.count, bin:n.binOut};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
-    r.textContent=(n.warn&&!n.ws&&n.status!=='connected' ? '⚠ '+n.warn+'\n' : '')+n.status+' · messages '+n.msgs+
+    r.textContent=(n.warn&&!n.ws&&n.status!=='connected' ? '⚠ '+n.warn+'\n' : '')+n.status+' · messages '+n.msgs+(n.binRx ? ' · binary '+n.binRx+' B' : '')+
       (n.lineQ.length?' · queued '+n.lineQ.length:'')+(n.lastLine?'\n'+n.lastLine.slice(0,400):''); }
 });
 
