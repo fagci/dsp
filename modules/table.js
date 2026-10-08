@@ -12,7 +12,7 @@
 // весь список (отмеченные списки) как bands (для 'sa') и rows (для Graph / Map), выбранная запись — lo/mid/hi/span/step.
 
 const TBL_PATCH='@patch', TBL_PRE='presets/', TBL_ROWS=300;
-const TBL_FIXED=new Set([...SEQ_FIXED,'bands','rows','mid','span']);
+const TBL_FIXED=new Set([...SEQ_FIXED,'bands','rows','mid','span']);   // 'bands' — старое имя выхода, колонка с таким именем по-прежнему получает «_»
 const TBL_LO=['lo','low','start','freq','frequency'], TBL_HI=['hi','high','end'],
   TBL_LABEL=['name','label','title'], TBL_COLOR=['color','colour'], TBL_STEP=['step'];
 const TBL_HZ=/^(lo|hi|low|high|start|end|freq|frequency|step)$/i;
@@ -217,32 +217,34 @@ function tblDerive(n){
   tblBands(n);
   n.uiDirty=true;
 }
-function tblBandsOf(cl,rows){
-  const lo=tblCol(cl,TBL_LO), hi=tblCol(cl,TBL_HI), lb=tblCol(cl,TBL_LABEL),
-    co=tblCol(cl,TBL_COLOR), st=tblCol(cl,TBL_STEP), out=[];
-  if(lo) for(const r of rows){
-    const l=tblHz(r[lo]); if(!isFinite(l)) continue;
+// записи списка для выхода rows: строка как есть, а у строк с частотой — ещё и числовые lo / hi / step и label / color
+// (диапазон для спектра и сканеров; потребителям записей без lo они просто не видны)
+function tblRowsOut(cl,rows){
+  const lo=tblCol(cl,TBL_LO);
+  if(!lo) return rows;
+  const hi=tblCol(cl,TBL_HI), lb=tblCol(cl,TBL_LABEL), co=tblCol(cl,TBL_COLOR), st=tblCol(cl,TBL_STEP);
+  return rows.map(r=>{
+    const l=tblHz(r[lo]); if(!isFinite(l)) return r;
     let h=hi ? tblHz(r[hi]) : l; if(!isFinite(h)) h=l;
     const s=st ? tblHz(r[st]) : 0;
-    out.push({lo:l, hi:Math.max(l,h), label:lb ? String(r[lb]??'') : fmtHz(l)+'Hz',
-      color:co ? String(r[co]||'') : '', step:isFinite(s) ? s : 0});
-  }
-  return out;
+    const o={...r, lo:l, hi:Math.max(l,h), label:lb ? String(r[lb]??'') : fmtHz(l)+'Hz', step:isFinite(s) ? s : 0};
+    if(co) o.color=String(r[co]||'');
+    return o;
+  });
 }
 function tblBands(n){
   n.loCol=tblCol(n.cl,TBL_LO); n.hiCol=tblCol(n.cl,TBL_HI);
-  n.bandsOwn=tblBandsOf(n.cl,n.rows);
+  n.rowsOwn=tblRowsOut(n.cl,n.rows);
   const f=tblFilter(n.p.filter);                        // тот же фильтр — и для остальных отмеченных списков
-  for(const e of n.extra.values()){ e.rowsF=f ? e.rows.filter(f) : e.rows; e.bands=tblBandsOf(e.cols,e.rowsF); }
+  for(const e of n.extra.values()){ e.rowsF=f ? e.rows.filter(f) : e.rows; e.out=tblRowsOut(e.cols,e.rowsF); }
   tblMerge(n);
 }
-// bands и rows = активный список (если отмечен) + остальные отмеченные
+// rows = активный список (если отмечен) + остальные отмеченные
 function tblMerge(n){
-  const sh=tblShow(n), parts=[], rp=[];
-  if(sh.has(n.p.list)){ parts.push(n.bandsOwn); rp.push(n.rows); }
-  for(const [k,e] of n.extra) if(sh.has(k) && k!==n.p.list){ parts.push(e.bands); rp.push(e.rowsF||e.rows); }
-  n.bands=parts.length===1 ? parts[0] : [].concat(...parts);
-  n.rowsOut=[].concat(...rp);                            // записи всех отмеченных списков; новая ссылка на каждое изменение — потребитель видит смену набора
+  const sh=tblShow(n), rp=[];
+  if(sh.has(n.p.list)) rp.push(n.rowsOwn);
+  for(const [k,e] of n.extra) if(sh.has(k) && k!==n.p.list) rp.push(e.out||e.rowsF||e.rows);
+  n.rowsOut=rp.length===1 ? rp[0] : [].concat(...rp);                            // записи всех отмеченных списков; новая ссылка на каждое изменение — потребитель видит смену набора
   n.onCount=sh.size;
 }
 // загрузить отмеченные, но ещё не прочитанные списки; убрать снятые
@@ -257,7 +259,7 @@ function tblSyncExtra(n){
   Promise.all(need.map(async k=>[k,await tblReadList(n,k).catch(()=>null)])).then(res=>{
     if(tok!==n.extraTok) return;
     const now=tblShow(n);
-    for(const [k,t] of res) if(t && now.has(k) && k!==n.p.list) n.extra.set(k,{cols:t.cols,rows:t.rows,rowsF:t.rows,bands:[]});
+    for(const [k,t] of res) if(t && now.has(k) && k!==n.p.list) n.extra.set(k,{cols:t.cols,rows:t.rows,rowsF:t.rows,out:[]});
     tblBands(n); n.uiDirty=true;
   });
 }
@@ -437,7 +439,7 @@ const tblIns=n=>[{n:'trig',t:'val'},{n:'row',t:'val'},{n:'t',t:'num'},{n:'rec',t
   .concat(n.p.log ? ['a','b','c','d'].map(k=>({n:k,t:'num'})) : []);
 const tblOuts=n=>{
   const o=[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'row',t:'num'},{n:'count',t:'num'},{n:'next',t:'num'},
-    {n:'done',t:'num'},{n:'dist',t:'num'},{n:'bearing',t:'num'},{n:'progress',t:'num'},{n:'bands',t:'bands'},{n:'rows',t:'bands'}];
+    {n:'done',t:'num'},{n:'dist',t:'num'},{n:'bearing',t:'num'},{n:'progress',t:'num'},{n:'rows',t:'bands'}];
   if(tblCol(n.p.cols||[],TBL_LO)) o.push({n:'mid',t:'num'},{n:'span',t:'num'});
   return o.concat((n.cols||[]).map(c=>({n:c.port,t:'val'})));
 };
@@ -480,8 +482,8 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     n.p.list=tblCanon(n.p.list||'table');
     n.p.cols=Array.isArray(n.p.cols) ? n.p.cols : [];
     if(n.p.sel===undefined) n.p.sel=null;
-    n.all=[]; n.ids=[]; n.cl=[]; n.rows=[]; n.rowIds=[]; n.headers=[]; n.cols=[]; n.bands=[];
-    n.extra=new Map(); n.bandsOwn=[]; n.onCount=0;
+    n.all=[]; n.ids=[]; n.cl=[]; n.rows=[]; n.rowIds=[]; n.headers=[]; n.cols=[]; n.rowsOwn=[]; n.rowsOut=[];
+    n.extra=new Map(); n.onCount=0;
     n.err=''; n.loaded=null; n.loadedData=null; n.pend=[]; n.lastFlush=0; n.flushing=false;
     n.lastRec=undefined; n.lastText=undefined; n.lastIn={}; n.logT=0; n.pick=null;
     n.trigPrev=0; n.rowPrev=null; n.pulse=0; n.initialized=false; n.uiDirty=true;
@@ -512,9 +514,8 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
 
     const o=seqProcess(n,I);
     const sigs=Array.isArray(I.sigs) && I.sigs.length ? I.sigs : null;
-    if(n._mI!==n.bands || n._mS!==sigs){ n._mI=n.bands; n._mS=sigs; n._merged=sigs ? n.bands.concat(sigs) : n.bands; }
-    o.bands=n._merged;
-    o.rows=n.rowsOut;                                      // записи всех отмеченных списков с общим фильтром (Graph / Map: set, nodes)
+    if(n._mI!==n.rowsOut || n._mS!==sigs){ n._mI=n.rowsOut; n._mS=sigs; n._merged=sigs ? n.rowsOut.concat(sigs) : n.rowsOut; }
+    o.rows=n._merged;                                      // записи всех отмеченных списков с общим фильтром (Graph / Map: set, nodes)
     if(!n.started) for(const c of n.cols) delete o[c.port];   // ничего не выбрано — поля не выдаём (как band plan)
     else if(n.loCol && n.cur){
       const lo=tblHz(n.cur[n.loCol]), hi=n.hiCol ? tblHz(n.cur[n.hiCol]) : lo;
