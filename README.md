@@ -921,7 +921,10 @@ The ▦ button switches to a tiled dashboard built from the modules of the curre
 - Split panes right (⬌) or down (⬍), remove them (✕), drag dividers to resize; panes sit edge to edge, 1px dividers
 - **⊡** or a double-click (double-tap) on an empty spot of the pane header maximizes the pane; the same restores the layout
 - In narrow panes and on touch the pane buttons fold into **⋯**
-- ⛶ shows only the module's display, without controls and header
+- ⛶ shows only the module's display, without controls, header, frames or selection; the button stays in the pane header on touch too
+- **✎** (pane menu, or in a module's header on the canvas) gives a module its own name — it shows in the header, the pane dropdown and the tab (empty name — the default one)
+- With no module graph pane on the page, the editing buttons of the toolbar (undo / redo, duplicate, chain, clear, fit, detail) are hidden
+- **▶** also asks for the camera and motion sensors at once for modules that need them (Camera, Orientation, Accelerometer, Sensor), so a Video Overlay shows the picture right away
 - **Tile pages**: **+** next to ▦ adds another set of tiles; switch pages with the numbered buttons, tap the active one to rename, duplicate, reorder or delete it. A module can appear on several pages
 - The layout is saved with the patch and works on touch devices (wide scroll rail for long panes)
 

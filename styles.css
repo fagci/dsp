@@ -34,7 +34,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--
   font:12px/1.4 var(--mono);-webkit-font-smoothing:antialiased;overscroll-behavior:none;
   -webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%}
 button,select,input{font:inherit;color:inherit}
-#app{display:flex;height:100%}
+#app{display:flex;height:100%;padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left)}
 
 /* ---- палитра ---- */
 #side{width:235px;flex:0 0 235px;background:var(--panel);border-right:1px solid var(--line);
@@ -118,6 +118,7 @@ button,select,input{font:inherit;color:inherit}
 #bar button.on{color:var(--acc)}
 #bar button:focus-visible,#patchTools button:focus-visible{outline:1px solid var(--acc);outline-offset:-1px}
 #bar .sp{flex:1}
+body.noedit #bar .ed{display:none}
 @media (min-width:821px) and (pointer:fine){
   #bar #menu{position:fixed;left:0;top:0;z-index:12;width:var(--barh);height:calc(var(--barh) - 1px);padding:0;border-radius:0}
   #side h1{padding-left:var(--barh)}
@@ -234,6 +235,13 @@ button,select,input{font:inherit;color:inherit}
   #bar #dashPages .dpg{padding:8px 11px}
 }
 /* ⛶ — в панели только основная канва узла, без заголовка и контролов */
+.dash-tools .dash-bare{opacity:.75}
+.dash-tools .dash-bare:hover,.dash-tools .dash-bare.on{opacity:1}
+.dash-pane.bare .node,.dash-pane.bare .nbody,.dash-pane.bare .dash-body{background:none;border-radius:0}
+.dash-pane.bare canvas.view{margin:0;border-radius:0}
+.dash-pane.bare :focus,.dash-pane.bare :focus-visible{outline:none}
+.dash-pane.bare>.dash-rail{display:none!important}
+.dash-pane.bare.scroll>.dash-body{padding-right:0}
 .dash-pane.bare .node .io3>.mid{padding:0}
 .dash-pane.bare .node .io3>.mid>:not(canvas.view.main){display:none!important}
 .dash-pane.bare .dash-body{overflow:hidden}
@@ -255,6 +263,7 @@ button,select,input{font:inherit;color:inherit}
   max-width:none!important;box-shadow:none;transform:none!important}
 .dash-body .node .io3>.col{display:none}
 .dash-body .node .rz{display:none}
+.dash-body .node.sel{box-shadow:none}
 /* в панели: контролы переносятся по ширине (сколько колонок влезет), крупные блоки — на всю
    ширину; высоту основной канвы/списка до низа панели выставляет dashFit() (core-graph.js) */
 .dash-body .node .io3>.mid,.dash-body .node .io3>.mid>.advWrap:not([hidden]){display:flex;flex-wrap:wrap;
@@ -302,6 +311,7 @@ button,select,input{font:inherit;color:inherit}
   .slidernum input[type=number]{font-size:14px}
   .nhead{padding:8px}
   .nhead .x{padding:0 6px;font-size:14px}
+  .nhead .ren{padding:0 6px;font-size:13px}
   .rz{width:22px;height:22px}
 }
 /* ---- мобильный UX: карточки не выходят за ширину экрана ---- */
@@ -381,7 +391,9 @@ button,select,input{font:inherit;color:inherit}
 .nhead{display:flex;align-items:center;gap:6px;padding:5px 7px;cursor:move;user-select:none;-webkit-user-select:none;
   background:var(--panel);border-radius:3px 3px 0 0;box-shadow:inset 0 2px 0 var(--cat,var(--dim))}
 .nhead .ttl{flex:1;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.nhead .x{cursor:pointer;color:var(--dim);padding:0 2px}
+.nhead .x,.nhead .ren{cursor:pointer;color:var(--dim);padding:0 2px}
+.nhead .ren{font-size:10px;opacity:.5}
+.nhead .ren:hover{color:var(--acc);opacity:1}
 .nhead .x:hover{color:#e05c5c}
 .nbody{padding:0}
 .io{display:flex;justify-content:space-between;gap:8px}
@@ -391,10 +403,11 @@ button,select,input{font:inherit;color:inherit}
 .node.folded .nbody{display:none}
 .node.folded{width:auto!important;min-width:150px}
 .node.folded .nhead{border-bottom:0;border-radius:3px}
+.node.folded .rz{display:none}
 /* точка: кружок с инициалами; полное имя — при наведении / выделении */
 #content .node.lod-dot{width:34px!important;height:34px!important;min-width:0;border-radius:50%;
   box-shadow:0 0 0 2px var(--cat,var(--dim)),0 2px 8px #0006}
-#content .node.lod-dot .nbody,#content .node.lod-dot .nhead .x,#content .node.lod-dot .rz{display:none}
+#content .node.lod-dot .nbody,#content .node.lod-dot .nhead .x,#content .node.lod-dot .nhead .ren,#content .node.lod-dot .rz{display:none}
 #content .node.lod-dot .nhead{height:100%;padding:0;border-radius:50%;box-shadow:none;justify-content:center}
 #content .node.lod-dot .nhead .ttl{flex:none;font-size:0}
 #content .node.lod-dot .nhead .ttl::before{content:attr(data-ini);font-size:11px;font-weight:600}
@@ -554,10 +567,10 @@ button,select,input{font:inherit;color:inherit}
 .prmrows>.pr-range .slidernum{height:22px;padding:0 6px;gap:6px;background:none;border-radius:3px}
 .prmrows>.pr :is(label){flex:0 1 auto}
 .prmrows>.pr-range .sn-val{flex:none;margin-left:auto;font-size:11px;color:var(--txt)}
-.prmrows>.pr-select label{max-width:60%}              /* значение select лежит поверх правых 60% */
+.prmrows>.pr-select label{max-width:55%}              /* значение select лежит поверх правых 45% */
 .prmrows>.pr-range .slidernum input[type=number]{text-align:right;font-size:11px}
 /* выбор: прозрачный select на всю строку, значение справа */
-.prmrows>.pr-select select{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0 16px 0 40%;
+.prmrows>.pr-select select{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0 16px 0 55%;
   appearance:none;-webkit-appearance:none;background:none;border:0;border-radius:3px;cursor:pointer;
   color:var(--txt);font-size:11px;text-align:right;text-align-last:right;text-overflow:ellipsis}
 .prmrows>.pr-select select option{background:var(--panel);text-align:left}
