@@ -178,10 +178,10 @@ function dlOut(n,frames,now){
   if(frames.length) n.frame=frames[frames.length-1];
   return R.length>1 ? {...n.frame, all:R.map(r=>r.f)} : n.frame;
 }
-const DL_SRC=['auto','image','text','bits','file'];
+const DL_SRC=['auto','image','bin','text','bits','file'];
 // параметры источника данных — общие для dataTx и dmrTx
 const DL_SRC_PARAMS=()=>[
-  {n:'src',t:'select',opts:DL_SRC,d:'auto',label:'source (auto: image, bits, text, then the message below)'},
+  {n:'src',t:'select',opts:DL_SRC,d:'auto',label:'source (auto: image, bin, bits, text, then the message below)'},
   {n:'msg',t:'text',d:'Hello',label:'message (if nothing else is wired)'},
   {n:'file',t:'file',accept:'*/*',fn:(n,f)=>{ f.arrayBuffer().then(a=>{ n.fileBytes=new Uint8Array(a); n.text='file: '+f.name+' · '+f.size+' bytes'; }); }},
   {n:'w',t:'select',opts:['64','96','128','160','240','320','480'],d:'160',label:'image: width, px'},
@@ -191,15 +191,17 @@ const DL_SRC_PARAMS=()=>[
 // go / кнопка Send / loop → выбрать источник и вызвать send(байты, подпись); idle — передатчик свободен
 function dlSource(n,I,P,idle,send){
   if(I.img) n.lastImg=I.img;
+  if(I.bin && I.bin.d && I.bin.d.length) n.lastBin=I.bin.d;
   const go=I.go||0, rise=go>.5 && n.prevGo<=.5; n.prevGo=go;
   if((rise||n.trig||(P.loop && idle && n.what)) && idle){
     const bitsOf=b=>{ const d=b.d, a=new Uint8Array(Math.ceil(d.length/8)); for(let i=0;i<d.length;i++) if(d[i]>0) a[i>>3]|=0x80>>(i&7); return a; };
     let src=P.src; const textIn=typeof I.text==='string' && I.text ? I.text : '';
-    if(src==='auto') src=n.lastImg ? 'image' : I.blk ? 'bits' : textIn ? 'text' : n.fileBytes ? 'file' : 'text';
+    if(src==='auto') src=n.lastImg ? 'image' : n.lastBin ? 'bin' : I.blk ? 'bits' : textIn ? 'text' : n.fileBytes ? 'file' : 'text';
     if(src==='image'){
       if(!n.lastImg) n.text='no image on the input';
       else{ n.busy=true; n.text='encoding the image…'; dlImgToJpeg(n.lastImg,+P.w,P.q).then(b=>{ n.busy=false; if(b) send(b,'image'); else n.text='could not encode the image'; }); }
     }else if(src==='bits'){ if(I.blk && I.blk.d) send(bitsOf(I.blk),'bits'); else n.text='no bit block on the input'; }
+    else if(src==='bin'){ if(n.lastBin) send(n.lastBin,'bytes'); else n.text='no bytes on the bin input'; }
     else if(src==='file'){ if(n.fileBytes) send(n.fileBytes,'file'); else n.text='choose a file'; }
     else send(new TextEncoder().encode((textIn||P.msg).slice(0,60000)),'text');
   }
@@ -207,14 +209,14 @@ function dlSource(n,I,P,idle,send){
 }
 
 def({ id:'dataTx', title:'Data → Symbols (universal)', cat:'Protocols', kw:'transmit file image video frame text bytes 4fsk dmr tx modem packetizer', readout:true, tall:true,
-  ins:[{n:'img',t:'img'},{n:'text',t:'txt'},{n:'blk',t:'blk'},{n:'go',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'busy',t:'num'}],
+  ins:[{n:'img',t:'img'},{n:'text',t:'txt'},{n:'blk',t:'blk'},{n:'bin',t:'bin'},{n:'go',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'busy',t:'num'}],
   params:[...DL_SRC_PARAMS(),
           {n:'pay',t:'range',min:8,max:255,step:1,d:32,label:'payload per frame, bytes'},
           {n:'word',t:'text',d:'755FD7DF75F7',label:'sync word (hex)'},
           {n:'pre',t:'range',min:0,max:256,step:2,d:16,label:'preamble, symbols'},
           {n:'baud',t:'num',d:4800,label:'symbol rate, Bd (paces the frames)'},
           {n:'whiten',t:'check',d:true,label:'whiten the body (PN9)'}],
-  init:n=>{ n.q=[]; n.qi=0; n.nextAt=0; n.fid=0; n.frame=null; n.prevGo=0; n.trig=false; n.fileBytes=null; n.lastImg=null; n.busy=false; n.what=''; n.text='ready'; },
+  init:n=>{ n.q=[]; n.qi=0; n.nextAt=0; n.fid=0; n.frame=null; n.prevGo=0; n.trig=false; n.fileBytes=null; n.lastImg=null; n.lastBin=null; n.busy=false; n.what=''; n.text='ready'; },
   process(n,I){
     const P=n.p, now=performance.now();
     dlSource(n,I,P,n.qi>=n.q.length && !n.busy,(data,what)=>{
@@ -233,7 +235,7 @@ def({ id:'dataTx', title:'Data → Symbols (universal)', cat:'Protocols', kw:'tr
    Приёмник — Digital Voice Decoder (proto dmr): UDP-порт и полезная нагрузка выходят в rec; Symbols → Data собирает их обратно. */
 const DM_MODES=['repeater (BS)','inbound (MS)','direct TS1','direct TS2'], DM_FRAME_MS=30, DM_AHEAD_MS=150, DM_LEAD=8, DM_TAIL=4;
 def({ id:'dmrTx', title:'DMR Data Builder', cat:'Protocols', kw:'dmr transmit data udp ip image file video frame text tx mototrbo hytera packet', readout:true, tall:true,
-  ins:[{n:'img',t:'img'},{n:'text',t:'txt'},{n:'blk',t:'blk'},{n:'go',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'busy',t:'num'}],
+  ins:[{n:'img',t:'img'},{n:'text',t:'txt'},{n:'blk',t:'blk'},{n:'bin',t:'bin'},{n:'go',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'busy',t:'num'}],
   params:[{n:'mode',t:'select',opts:DM_MODES,d:DM_MODES[0],label:'repeater downlink (2 slots, CACH), mobile uplink or direct mode'},
           {n:'cc',t:'range',min:0,max:15,step:1,d:1,label:'colour code'},
           {n:'slot',t:'select',opts:['1','2'],d:'2',label:'time slot with the data'},
@@ -245,7 +247,7 @@ def({ id:'dmrTx', title:'DMR Data Builder', cat:'Protocols', kw:'dmr transmit da
           {n:'port',t:'num',d:4545,label:'UDP port'},
           {n:'pay',t:'range',min:8,max:255,step:1,d:160,label:'payload per datagram, bytes'},
           {n:'pre',t:'check',d:true,label:'CSBK data preamble before each datagram'}],
-  init:n=>{ n.q=[]; n.qi=0; n.bq=[]; n.fid=0; n.fc=0; n.frame=null; n.prevGo=0; n.trig=false; n.fileBytes=null; n.lastImg=null; n.busy=false; n.what='';
+  init:n=>{ n.q=[]; n.qi=0; n.bq=[]; n.fid=0; n.fc=0; n.frame=null; n.prevGo=0; n.trig=false; n.fileBytes=null; n.lastImg=null; n.lastBin=null; n.busy=false; n.what='';
     n.act=false; n.lead=0; n.tail=0; n.ahead=0; n.cach=null; n.idle=null; n.idleKey=''; n.text='ready'; },
   process(n,I){
     const P=n.p, now=performance.now(), bs=P.mode==='repeater (BS)', cc=P.cc|0, slot=+P.slot-1;
@@ -282,7 +284,7 @@ def({ id:'dmrTx', title:'DMR Data Builder', cat:'Protocols', kw:'dmr transmit da
   draw(n){ n.el.querySelector('.readout').textContent=n.text||'…'; }});
 
 def({ id:'dataRx', title:'Symbols → Data (universal)', cat:'Decoders', kw:'receive file image video frame text bytes 4fsk dmr rx modem depacketizer', readout:true, tall:true, view:{h:100},
-  ins:[{n:'blk',t:'blk'},{n:'rec',t:'rec'}], outs:[{n:'text',t:'txt'},{n:'img',t:'img'},{n:'rec',t:'rec'},{n:'progress',t:'num'},{n:'ok',t:'num'}],
+  ins:[{n:'blk',t:'blk'},{n:'rec',t:'rec'}], outs:[{n:'text',t:'txt'},{n:'img',t:'img'},{n:'rec',t:'rec'},{n:'progress',t:'num'},{n:'ok',t:'num'},{n:'bin',t:'bin'}],
   params:[{n:'pay',t:'range',min:8,max:255,step:1,d:32,label:'payload per frame, bytes (as in the transmitter)'},
           {n:'port',t:'num',d:4545,label:'DMR: UDP port of the datagrams (rec input, from Digital Voice Decoder)'},
           {n:'whiten',t:'check',d:true,label:'body is whitened (PN9)'},
@@ -291,7 +293,7 @@ def({ id:'dataRx', title:'Symbols → Data (universal)', cat:'Decoders', kw:'rec
             if(!n.last) return; const a=document.createElement('a');
             a.href=URL.createObjectURL(new Blob([n.last])); a.download='data.bin'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),5000); }}],
   init:n=>{ n.lastId=0; n.parts=new Map(); n.seen=new WeakSet(); n.total=0; n.at=0; n.good=0; n.bad=0; n.done=0; n.pulse=0; n.out=null; n.msgText=''; n.rec=null;
-    n.img=null; n.capCv=document.createElement('canvas'); n.last=null; n.text='waiting for frames'; },
+    n.img=null; n.binOut=null; n.capCv=document.createElement('canvas'); n.last=null; n.text='waiting for frames'; },
   process(n,I){
     const f=I.blk, P=n.p, now=performance.now();
     n.pulse=0; n.rec=null;
@@ -314,7 +316,7 @@ def({ id:'dataRx', title:'Symbols → Data (universal)', cat:'Decoders', kw:'rec
         n.parts.set(r.seq,Uint8Array.from(r.data));
         if(n.parts.size===n.total){
           const all=u8cat(...Array.from({length:n.total},(_,i)=>n.parts.get(i)));
-          n.parts.clear(); n.total=0; n.done++; n.pulse=1; n.last=all;
+          n.parts.clear(); n.total=0; n.done++; n.pulse=1; n.last=all; n.binOut=binObj(all);
           const jpeg=all[0]===0xFF && all[1]===0xD8, png=all[0]===0x89 && all[1]===0x50;
           let text=null; if(!jpeg && !png){ try{ text=new TextDecoder('utf-8',{fatal:true}).decode(all); }catch(e){} }
           if(text!==null) n.msgText=text;
@@ -328,6 +330,6 @@ def({ id:'dataRx', title:'Symbols → Data (universal)', cat:'Decoders', kw:'rec
       }
     }
     n.text=n.good+' frames ok · '+n.bad+' bad · '+n.done+' transfers'+(n.total ? '\nreceiving '+n.parts.size+'/'+n.total : '')+(n.msgText ? '\n'+n.msgText.slice(0,300) : '');
-    return {text:n.msgText, img:n.img, rec:n.rec, progress:n.total ? n.parts.size/n.total : 0, ok:n.pulse}; },
+    return {text:n.msgText, img:n.img, rec:n.rec, progress:n.total ? n.parts.size/n.total : 0, ok:n.pulse, bin:n.binOut}; },
   drawKey:n=>n.text+'|'+n.img?.rev,
   draw(n,cv,cx){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.text; if(n.img) cx.drawImage(n.capCv,0,0,cv.width,cv.height); }});
