@@ -4,14 +4,18 @@
    через мессенджер или буфер обмена. Один узел делает Offer, второй принимает его (Accept offer) и отдаёт Answer,
    первый применяет Answer. Дальше текст идёт как у Text over Network (строки в line, JSON — в rec). В одной сети STUN не
    нужен; через интернет — укажите STUN-сервер. Разбор сообщений — netTextFeed (sources.js).
+   Голос и видео — треки того же соединения (микрофон, камера, экран); добавляются и снимаются на лету, предложения идут по
+   служебному каналу sig (negotiated, id 1; «perfect negotiation»: вежливый — тот, кто отвечал).
    Каналов два: dsp — текст (чат, игры), file — файлы кусками с контролем буфера (текст при передаче не стоит). Принятый файл
    кладётся в файловое хранилище (filestore.js), папка Received; отправить можно файл с устройства или по id хранилища. */
 
 function rtcClose(n){
   n.gen=(n.gen|0)+1;
-  const dc=n.dc, fc=n.fc, pc=n.pc; n.dc=n.fc=n.pc=null; n.open=false; n.fopen=false; n.rx=null; n.txQ=[]; n.tx=null;
-  for(const c of [dc,fc]) if(c){ c.onopen=c.onclose=c.onmessage=null; try{ c.close(); }catch(e){} }
-  if(pc){ pc.onconnectionstatechange=pc.ondatachannel=null; try{ pc.close(); }catch(e){} }
+  const dc=n.dc, fc=n.fc, sc=n.sc, pc=n.pc;
+  n.dc=n.fc=n.sc=n.pc=null; n.open=false; n.fopen=false; n.sopen=false; n.rx=null; n.txQ=[]; n.tx=null;
+  n.snd={}; n.making=false; n.remote=null; n.rmask=0; n.mediaDirty=true;      // свои треки (n.loc) живут: после переподключения уйдут снова
+  for(const c of [dc,fc,sc]) if(c){ c.onopen=c.onclose=c.onmessage=null; try{ c.close(); }catch(e){} }
+  if(pc){ pc.onconnectionstatechange=pc.ondatachannel=pc.ontrack=pc.onnegotiationneeded=null; try{ pc.close(); }catch(e){} }
   n.status='closed';
 }
 const rtcEnc=d=>btoa(unescape(encodeURIComponent(JSON.stringify({type:d.type,sdp:d.sdp}))));
@@ -21,7 +25,9 @@ function rtcMake(n){
   if(typeof RTCPeerConnection==='undefined'){ n.status='WebRTC is not supported by this browser'; return null; }
   const ice=String(n.p.ice||'').split(/[\s,]+/).filter(Boolean).map(urls=>({urls}));
   const pc=new RTCPeerConnection({iceServers:ice}), gen=n.gen;
-  n.pc=pc;
+  n.pc=pc; rtcSigChannel(n,pc);
+  pc.ontrack=e=>rtcTrackIn(n,e,gen);
+  pc.onnegotiationneeded=()=>{ if(n.gen===gen && n.sopen) rtcNegotiate(n); };
   pc.onconnectionstatechange=()=>{
     if(n.gen!==gen) return;
     if(pc.connectionState==='failed' || pc.connectionState==='closed'){ n.open=n.fopen=false; n.neg=0; n.status='connection '+pc.connectionState; }
@@ -123,6 +129,7 @@ async function rtcShow(n,kind,code){
 }
 async function rtcOffer(n){
   const pc=rtcMake(n); if(!pc) return;
+  n.polite=false;
   const gen=n.gen; n.status='creating offer…';
   try{
     rtcAttach(n,pc.createDataChannel('dsp'));
@@ -135,6 +142,7 @@ async function rtcAnswer(n,code=n.p.remote){
   let d; try{ d=rtcDec(code); }catch(e){ n.status='remote code is not valid'; return; }
   if(d.type!=='offer'){ n.status='remote code is not an offer'; return; }
   const pc=rtcMake(n); if(!pc) return;
+  n.polite=true;
   const gen=n.gen; n.status='creating answer…';
   pc.ondatachannel=e=>rtcAttach(n,e.channel);
   try{
@@ -148,6 +156,91 @@ async function rtcApply(n,code=n.p.remote){
   let d; try{ d=rtcDec(code); }catch(e){ n.status='remote code is not valid'; return; }
   if(d.type!=='answer'){ n.status='remote code is not an answer'; return; }
   try{ await n.pc.setRemoteDescription(d); n.status='connecting…'; }catch(e){ n.status='error: '+e.message; }
+}
+
+/* ---- голос и видео ---- */
+function rtcSigChannel(n,pc){
+  const gen=n.gen, sc=pc.createDataChannel('sig',{negotiated:true,id:1}); n.sc=sc;
+  sc.onopen=()=>{ if(n.gen===gen){ n.sopen=true; if(Object.keys(n.snd).length) rtcNegotiate(n); } };
+  sc.onclose=()=>{ if(n.gen===gen) n.sopen=false; };
+  sc.onmessage=e=>{ if(n.gen===gen) rtcSigMsg(n,e.data); };
+}
+async function rtcNegotiate(n){                       // наше предложение (после добавления / снятия трека)
+  const pc=n.pc, gen=n.gen; if(!pc || !n.sopen) return;
+  try{
+    n.making=true; await pc.setLocalDescription();
+    if(n.gen===gen && n.sc?.readyState==='open') n.sc.send(JSON.stringify({desc:pc.localDescription}));
+  }catch(e){ n.mstat='negotiation: '+e.message; }
+  finally{ n.making=false; }
+}
+async function rtcSigMsg(n,data){
+  let m; try{ m=JSON.parse(data); }catch(e){ return; }
+  const pc=n.pc, gen=n.gen; if(!pc || !m.desc) return;
+  try{
+    const clash=m.desc.type==='offer' && (n.making || pc.signalingState!=='stable');
+    if(clash && !n.polite) return;                     // невежливый игнорирует чужое предложение при коллизии
+    await pc.setRemoteDescription(m.desc);
+    if(m.desc.type==='offer'){
+      await pc.setLocalDescription();
+      if(n.gen===gen && n.sc?.readyState==='open') n.sc.send(JSON.stringify({desc:pc.localDescription}));
+    }
+  }catch(e){ n.mstat='negotiation: '+e.message; }
+}
+function rtcTrackIn(n,e,gen){
+  if(n.gen!==gen) return;
+  const r=n.remote || (n.remote=new MediaStream());
+  r.addTrack(e.track);
+  const upd=()=>{ let m=0; for(const t of r.getTracks()) if(!t.muted && t.readyState==='live') m|=t.kind==='audio' ? 1 : 2; n.rmask=m; n.mediaDirty=true; };
+  e.track.onmute=upd; e.track.onunmute=upd; e.track.onended=upd; upd();
+}
+const RTC_MEDIA={
+  mic:()=>navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}}),
+  camera:n=>navigator.mediaDevices.getUserMedia({video:{facingMode:n.p.facing||'user',width:{ideal:640},height:{ideal:480}}}),
+  screen:()=>navigator.mediaDevices.getDisplayMedia({video:true}),
+};
+async function rtcMediaSync(n){                       // желаемое (параметры mic / camera / screen) → треки соединения
+  if(n.msBusy || !n.pc || !n.sopen) return;
+  n.msBusy=true; const pc=n.pc;
+  try{
+    for(const k of ['mic','camera','screen']){
+      const want=!!n.p[k], have=n.snd[k];
+      if(want && !have){
+        let st=n.loc[k]; const tr=st?.getTracks()[0];
+        if(!tr || tr.readyState!=='live'){
+          if(!navigator.mediaDevices?.getUserMedia){ n.mstat='no media access (needs https)'; n.p[k]=false; continue; }
+          try{ st=n.loc[k]=await RTC_MEDIA[k](n); }
+          catch(e){ n.mstat=k+': '+e.message; n.p[k]=false; n.mediaDirty=true; continue; }
+          st.getTracks()[0].onended=()=>{ if(n.loc[k]===st){ n.p[k]=false; n.mediaDirty=true; } };   // экран остановили из браузера
+        }
+        if(n.pc!==pc) return;
+        n.snd[k]=pc.addTrack(st.getTracks()[0],st); n.mediaDirty=true;
+      } else if(!want && have){
+        try{ pc.removeTrack(have); }catch(e){}
+        delete n.snd[k]; n.loc[k]?.getTracks().forEach(t=>t.stop()); n.loc[k]=null; n.mediaDirty=true;
+      }
+    }
+    const mic=n.loc.mic?.getAudioTracks()[0]; if(mic) mic.enabled=!n.p.mute;
+  }finally{ n.msBusy=false; }
+}
+function rtcMediaStopAll(n){ for(const k in n.loc){ n.loc[k]?.getTracks().forEach(t=>t.stop()); n.loc[k]=null; } }
+function rtcMediaUi(n){                               // видео собеседника и свой предпросмотр
+  if(!n.vbox || !n.vbox.isConnected){
+    const box=document.createElement('div'); box.className='rtc-media'; box.hidden=true;
+    const rv=document.createElement('video'); rv.autoplay=true; rv.playsInline=true; rv.className='rtc-rv';
+    const lv=document.createElement('video'); lv.autoplay=true; lv.playsInline=true; lv.muted=true; lv.className='rtc-lv';
+    rv.onclick=()=>rv.play().catch(()=>{});
+    box.addEventListener('pointerdown',e=>e.stopPropagation());
+    box.append(rv,lv); n.mid.append(box); n.vbox=box; n.rv=rv; n.lv=lv; n.mediaDirty=true;
+  }
+  if(!n.mediaDirty) { n.rv.muted=!n.p.speaker; return; }
+  n.mediaDirty=false;
+  if(n.rv.srcObject!==n.remote){ n.rv.srcObject=n.remote||null; if(n.remote) n.rv.play().catch(()=>{}); }
+  n.rv.muted=!n.p.speaker;
+  const cam=n.loc.camera || n.loc.screen;
+  if(n.lv.srcObject!==cam) n.lv.srcObject=cam||null;
+  n.lv.hidden=!cam;
+  n.vbox.hidden=!(n.rmask&2) && !cam;
+  n.rv.style.display=(n.rmask&2) ? '' : 'none';
 }
 
 /* ---- автоподключение: сигналинг через MQTT ----
@@ -223,7 +316,7 @@ async function rtcSigIn(n,m){
 
 def({ id:'rtcdata', title:'WebRTC Data', cat:'Sources', kw:'webrtc peer data channel p2p datachannel browser direct',
   ins:[{n:'send',t:'txt'},{n:'sendFile',t:'num'}],
-  outs:[{n:'line',t:'txt'},{n:'go',t:'num'},{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'file',t:'num'},{n:'got',t:'num'},{n:'progress',t:'num'},{n:'open',t:'num'}],
+  outs:[{n:'line',t:'txt'},{n:'go',t:'num'},{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'file',t:'num'},{n:'got',t:'num'},{n:'progress',t:'num'},{n:'open',t:'num'},{n:'remote',t:'num'}],
   readout:true, tall:true,
   params:[
     {n:'ice',t:'text',d:'',label:'STUN (stun:stun.l.google.com:19302), empty — same network only'},
@@ -237,13 +330,21 @@ def({ id:'rtcdata', title:'WebRTC Data', cat:'Sources', kw:'webrtc peer data cha
     {n:'sigUser',t:'text',d:'',fn:n=>rtcAutoStop(n),label:'broker user (optional)'},
     {n:'sigPass',t:'text',d:'',fn:n=>rtcAutoStop(n),label:'broker password (saved with the patch!)'},
     {n:'auto',t:'check',d:false,label:'auto-connect and reconnect'},
+    {n:'mic',t:'check',d:false,label:'microphone (voice)'},
+    {n:'mute',t:'check',d:false,label:'mute my microphone'},
+    {n:'camera',t:'check',d:false,label:'camera'},
+    {n:'facing',t:'select',opts:['user','environment'],d:'user',label:'camera: front / rear'},
+    {n:'screen',t:'check',d:false,label:'share screen'},
+    {n:'speaker',t:'check',d:true,label:'play the other side (sound and picture)'},
     {n:'sendpick',t:'button',label:'Send file…',fn:n=>rtcPickSend(n)},
     {n:'maxMB',t:'num',d:200,label:'refuse incoming files over, MB'},
   ],
-  init:n=>{ n.pc=n.dc=null; n.open=false; n.gen=0; n.code=''; n.lineQ=[]; n.recQ=[]; n.lastLine=''; n.fc=null; n.fopen=false; n.rx=null; n.tx=null; n.txQ=[]; n.recvQ=[]; n.lastFile=-1; n.prog=0; n.fstat=''; n.lastSendId=undefined; n.sig=null; n.sigOn=false; n.hiT=null; n.neg=0; n.myId=''; n.peerId=null; n.auto=false; n.msgs=0; n.count=0;
+  init:n=>{ n.pc=n.dc=null; n.open=false; n.gen=0; n.code=''; n.lineQ=[]; n.recQ=[]; n.lastLine=''; n.fc=null; n.fopen=false; n.rx=null; n.tx=null; n.txQ=[]; n.recvQ=[]; n.lastFile=-1; n.prog=0; n.fstat=''; n.lastSendId=undefined; n.sc=null; n.sopen=false; n.snd={}; n.loc={}; n.making=false; n.polite=false; n.remote=null; n.rmask=0; n.mstat=''; n.mediaDirty=true; n.msBusy=false; n.vbox=null;
+            n.sig=null; n.sigOn=false; n.hiT=null; n.neg=0; n.myId=''; n.peerId=null; n.auto=false; n.msgs=0; n.count=0;
             n.lastSend=undefined; n.status=typeof RTCPeerConnection==='undefined' ? 'WebRTC is not supported by this browser' : 'not connected'; },
-  dispose:n=>{ rtcAutoStop(n); rtcClose(n); },
+  dispose:n=>{ rtcAutoStop(n); rtcClose(n); rtcMediaStopAll(n); n.vbox?.remove(); },
   process(n,I){
+    if(n.sopen) rtcMediaSync(n);
     if(n.p.auto && !n.sigOn) rtcAutoStart(n); else if(!n.p.auto && n.sigOn) rtcAutoStop(n);
     if(typeof I.send==='string' && I.send!==n.lastSend){
       n.lastSend=I.send;
@@ -255,8 +356,8 @@ def({ id:'rtcdata', title:'WebRTC Data', cat:'Sources', kw:'webrtc peer data cha
     let go=0;
     if(n.lineQ.length){ n.lastLine=n.lineQ.shift(); go=1; n.count++; }
     const rec=n.recQ.length ? n.recQ.splice(0) : null;
-    return {line:n.lastLine, go, rec, count:n.count, file:typeof n.lastFile==='number' ? n.lastFile : -1, got, progress:n.prog, open:n.open ? 1 : 0}; },
-  drawKey:n=>n.status+'|'+n.msgs+'|'+n.lineQ.length+'|'+n.fstat,
-  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
-    r.textContent=n.status+(n.msgs ? ' · messages '+n.msgs : '')+(n.fstat ? '\nfile: '+n.fstat : '')+(n.code ? '\n'+n.code : '')+(n.lastLine ? '\n'+n.lastLine.slice(0,400) : ''); }
+    return {line:n.lastLine, go, rec, count:n.count, file:typeof n.lastFile==='number' ? n.lastFile : -1, got, progress:n.prog, open:n.open ? 1 : 0, remote:n.rmask}; },
+  drawKey:n=>n.status+'|'+n.msgs+'|'+n.lineQ.length+'|'+n.fstat+'|'+n.mstat+'|'+n.rmask,
+  draw(n){ rtcMediaUi(n); const r=n.el.querySelector('.readout'); if(!r) return;
+    r.textContent=n.status+(n.msgs ? ' · messages '+n.msgs : '')+(n.fstat ? '\nfile: '+n.fstat : '')+(n.mstat ? '\nmedia: '+n.mstat : '')+(n.rmask ? '\nremote: '+(n.rmask&1 ? 'voice ' : '')+(n.rmask&2 ? 'video' : '') : '')+(n.code ? '\n'+n.code : '')+(n.lastLine ? '\n'+n.lastLine.slice(0,400) : ''); }
 });

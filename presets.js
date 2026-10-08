@@ -276,6 +276,7 @@ const PRESET_CATS={
   'Network: Same Nodes and Links as Graph and on the Map':'Maps & Locating',
   'Chat: Text In and Out':'Network & IoT',
   'Files over WebRTC':'Network & IoT',
+  'Call: voice, video, chat and files over WebRTC':'Network & IoT',
   'Game: Tic-Tac-Toe over WebRTC':'Games',
   'Game: Connect Four over WebRTC':'Games',
   'Game: Battleship over WebRTC':'Games',
@@ -4871,6 +4872,16 @@ nt.size.w=1000; nt.size.h=90; applySize(nt);
 const r=addNode('rtcdata',40,150,{}); r.size.w=340; r.size.h=330; applySize(r);
 const f=addNode('files',420,150,{}); f.size.w=360; f.size.h=330; applySize(f);
 addEdge(f.id,'send',r.id,'sendFile');
+markWiresDirty();
+});
+preset('Call: voice, video, chat and files over WebRTC', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'One connection for everything: voice, camera / screen, chat and files at once. Connect by hand (Create offer / Accept offer / Apply answer) or fill the MQTT broker and a secret room in WebRTC Data on both sides and tick auto-connect (it also reconnects by itself). Tick microphone / camera / share screen when you want to be heard and seen — they can be switched on and off at any moment without breaking the connection; the picture and sound of the other side appear in the node. Chat: type in the Chat node. Files: tap a file in Files and press «Send selected →»; received files land in the Received folder.'});
+nt.size.w=1100; nt.size.h=90; applySize(nt);
+const r=addNode('rtcdata',40,150,{}); r.size.w=360; r.size.h=380; applySize(r);
+const c=addNode('chat',420,150,{}); c.size.w=320; c.size.h=300; applySize(c);
+const f=addNode('files',760,150,{}); f.size.w=340; f.size.h=330; applySize(f);
+addEdge(r.id,'line',c.id,'text'); addEdge(c.id,'text',r.id,'send'); addEdge(f.id,'send',r.id,'sendFile');
 markWiresDirty();
 });
 gamePreset('Game: Tic-Tac-Toe over WebRTC','gtictactoe',280,330,false);
