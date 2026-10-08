@@ -4848,7 +4848,7 @@ preset(name, function(){
 clearAll();
 const how=mqtt
   ? 'Both players load this preset, set the same broker and topic in MQTT In / MQTT Out and press Connect. Moves go as text over one shared topic (a node ignores its own messages).'
-  : 'One player presses Create offer in WebRTC Data and sends the code to the other, who presses Accept offer and sends the answer back (Apply answer). Then the game starts by itself.';
+  : 'One player presses Create offer in WebRTC Data and sends the code to the other, who presses Accept offer and sends the answer back (Apply answer). Then the game starts by itself. To reconnect without codes after a drop, fill the broker WebSocket and a secret room in WebRTC Data on both sides and tick auto-connect; after a reconnect the game restarts (the score stays).';
 const nt=addNode('note',40,20,{text:'Two-player game: opponent moves arrive on `in`, yours leave on `out` as text — the same wires as Chat, so any channel works (WebRTC, MQTT, Text over Network). '+how+' First player is chosen automatically (or by the side parameter), every next game starts with the other one. Outputs: turn, result (1 win / −1 loss), go pulse per move.'});
 nt.size.w=1000; nt.size.h=90; applySize(nt);
 const g=addNode(id,420,150,{});
@@ -4859,7 +4859,7 @@ if(mqtt){
   addEdge(mi.id,'text',g.id,'in'); addEdge(g.id,'out',mo.id,'text');
 }else{
   const r=addNode('rtcdata',40,150,{}); r.size.w=340; r.size.h=300; applySize(r);
-  addEdge(r.id,'line',g.id,'in'); addEdge(g.id,'out',r.id,'send');
+  addEdge(r.id,'line',g.id,'in'); addEdge(g.id,'out',r.id,'send'); addEdge(r.id,'open',g.id,'link');
 }
 markWiresDirty();
 });

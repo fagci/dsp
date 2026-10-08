@@ -56,7 +56,7 @@ function ngRecv(n,m){
 }
 function ngInit(n,gid,spec){
   n.gid=gid; n.spec=spec; n.nonce=ngRnd(); n.seq=0; n.outQ=[]; n.last='';
-  n.lastIn=undefined; n.lastNew=false; n.peer=null; n.peerSeq=0; n.peerSide='a';
+  n.lastIn=undefined; n.lastNew=false; n.lastLink=0; n.peer=null; n.peerSeq=0; n.peerSide='a';
   n.me=1; n.ready=false; n.k=0; n.sc={w:0,l:0,d:0}; n.lastHello=0;
   n.box=null; n.dirty=true; n.over=false; n.res=0; n.turnP=1;
   spec.reset(n);
@@ -64,6 +64,9 @@ function ngInit(n,gid,spec){
 function ngProcess(n,I){
   if(typeof I.in==='string' && I.in!==n.lastIn){ n.lastIn=I.in; const m=ngParse(n,I.in); if(m) ngRecv(n,m); }
   const nw=+I.new>.5; if(nw && !n.lastNew) ngAgain(n); n.lastNew=nw;
+  const lk=+I.link>.5;                               // канал поднялся заново (после обрыва): обе стороны начинают партию с нуля, счёт остаётся
+  if(lk && !n.lastLink){ if(n.ready) ngStart(n,0); ngHello(n); }
+  n.lastLink=lk;
   if(!n.ready && Date.now()-n.lastHello>2000) ngHello(n);
   let go=0;
   if(n.outQ.length){ n.last=n.outQ.shift(); go=1; }
@@ -107,7 +110,7 @@ function ngDraw(n){
 function ngDef(o){
   def({ id:o.id, title:o.title, cat:'Output', w:o.w||340, resize:true,
     kw:'game multiplayer two players network '+o.kw,
-    ins:[{n:'in',t:'txt'},{n:'new',t:'num'}],
+    ins:[{n:'in',t:'txt'},{n:'new',t:'num'},{n:'link',t:'num'}],
     outs:[{n:'out',t:'txt'},{n:'go',t:'num'},{n:'turn',t:'num'},{n:'result',t:'num'}],
     params:[{n:'side',t:'select',opts:['auto','first','second'],d:'auto',label:'first player in game 1',
              fn:n=>{ if(n.peer){ ngHello(n); const me=ngResolve(n); if(me!==n.me){ n.me=me; ngStart(n,0); } } }}],
