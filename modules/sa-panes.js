@@ -487,7 +487,7 @@ function saPanesDraw(n,cv,cx){
   if(key===n._pnDrawKey && now-(n._pnDrawT||0)<500) return;
   n._pnDrawKey=key; n._pnDrawT=now;
   cx.clearRect(0,0,W,H);
-  const screen=themeColor('--screen')||'#0a0d0e', fg=themeColor('--fg')||'#c8d2d6', dim=themeColor('--dim')||'#6c7a80';
+  const screen=themeColor('--screen')||'#0a0d0e', fg=themeColor('--scr-txt')||'#c8d2d6', dim=themeColor('--dim')||'#6c7a80';
   const acc=themeColor('--acc')||'#4ec9b0', acc2=themeColor('--acc2')||'#ffb74d';
   cx.fillStyle=screen; cx.fillRect(0,0,W,H);
   n._pgBoxes=[];
@@ -623,10 +623,10 @@ function saPanesDraw(n,cv,cx){
     const p=panes[h.i], v=saPaneView(p), x0=Math.round(h.i*(L.w+SAP_GAP)), w=Math.round(L.w), f=v[0]+(v[1]-v[0])*h.fx;
     const val=p.lv[clamp(Math.floor((f-p.lo)/(p.hi-p.lo)*SAP_RES),0,SAP_RES-1)];
     const x=x0+h.fx*w;
-    cx.strokeStyle='rgba(255,255,255,.5)'; cx.lineWidth=1; cx.beginPath(); cx.moveTo(x+.5,L.plotTop); cx.lineTo(x+.5,H); cx.stroke();
+    cx.strokeStyle=themeRgba('--scr-hi',.5); cx.lineWidth=1; cx.beginPath(); cx.moveTo(x+.5,L.plotTop); cx.lineTo(x+.5,H); cx.stroke();
     const t=fmtHz(f,4)+'Hz'+(val===val ? ' · '+val.toFixed(1)+' dB' : ''); cx.font='10px sans-serif';
     const tw=cx.measureText(t).width+8, tx=clamp(x+6,x0,x0+w-tw);
-    cx.fillStyle='rgba(10,13,14,.85)'; cx.fillRect(tx,L.plotTop+2,tw,13);
+    cx.fillStyle=themeRgba('--screen',.85); cx.fillRect(tx,L.plotTop+2,tw,13);
     cx.fillStyle=fg; cx.textAlign='left'; cx.fillText(t,tx+4,L.plotTop+12);
   }
   // сканер припаркован на маркере — это нужно видеть: иначе кажется, что он завис
@@ -634,7 +634,7 @@ function saPanesDraw(n,cv,cx){
     const t='⏸ scan parked on marker '+(n._pnHoldK+1)+' · '+fmtHz(n._pnHoldF,4)+'Hz — clear the marker (×) or ▶ resume';
     cx.font='11px sans-serif'; cx.textAlign='left'; cx.textBaseline='middle';
     const tw=cx.measureText(t).width+14, tx=Math.max(4,(W-tw)/2);
-    cx.fillStyle='rgba(10,13,14,.88)'; cx.fillRect(tx,L.plotTop+4,tw,18);
+    cx.fillStyle=themeRgba('--screen',.88); cx.fillRect(tx,L.plotTop+4,tw,18);
     cx.strokeStyle=acc2; cx.lineWidth=1; cx.strokeRect(tx+.5,L.plotTop+4.5,tw-1,17);
     cx.fillStyle=acc2; cx.fillText(t,tx+7,L.plotTop+13.5);
     cx.textBaseline='alphabetic';
@@ -654,7 +654,7 @@ function saPanesDraw(n,cv,cx){
     const y1=H-17, y2=H-3, ws=items.map(it=>cx.measureText(it.t).width+(it.t.length<2 ? 12 : 10));
     let x=W-4-ws.reduce((a,v)=>a+v,0);
     items.forEach((it,k)=>{
-      cx.fillStyle='rgba(10,13,14,.8)'; cx.fillRect(x,y1,ws[k],y2-y1);
+      cx.fillStyle=themeRgba('--screen',.8); cx.fillRect(x,y1,ws[k],y2-y1);
       cx.fillStyle=it.col||fg; cx.fillText(it.t,x+5,(y1+y2)/2+.5);
       if(it.act) n._pgBoxes.push({x0:x,y0:y1,x1:x+ws[k],y1:y2,act:it.act});
       x+=ws[k];

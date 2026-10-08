@@ -1307,7 +1307,7 @@ def({ id:'scope', lazy:'proc', title:'Oscilloscope', cat:'Analysis',
       const key=[span,g,o,n.p.stack,n.p.mode,n.p.math,n.p.coup,style,chs.join()].join('|');
       if(key!==n.pcKey){ n.pcKey=key; tcx.clearRect(0,0,W,H); }
       else if(fade>0){ tcx.globalCompositeOperation='destination-out';
-        tcx.fillStyle='rgba(0,0,0,'+fade+')'; tcx.fillRect(0,0,W,H);
+        tcx.fillStyle=themeRgba('--screen',fade); tcx.fillRect(0,0,W,H);
         tcx.globalCompositeOperation='source-over'; }
     } else n.pc=null;
     const traces=t=>{ t.lineWidth=1;
@@ -3593,7 +3593,7 @@ def({ id:'const2', lazy:true, title:'Constellation', cat:'Analysis', ins:[{n:'iq
     return {}; },
   draw(n,cv,cx){
     const W=cv.width,H=cv.height,R=Math.min(W,H)/2*.9;
-    cx.fillStyle=`rgba(10,13,14,${n.p.fade})`; cx.fillRect(0,0,W,H);
+    cx.fillStyle=themeRgba('--screen',n.p.fade); cx.fillRect(0,0,W,H);
     cx.strokeStyle=themeColor('--grid'); cx.beginPath();
     cx.moveTo(W/2,0);cx.lineTo(W/2,H);cx.moveTo(0,H/2);cx.lineTo(W,H/2);cx.stroke();
     cx.fillStyle=getComputedStyle(document.body).getPropertyValue('--t-num');
@@ -4458,7 +4458,7 @@ def({ id:'eye', lazy:true, title:'Eye Diagram', cat:'Analysis',
     return {}; },
   draw(n,cv,cx){
     const W=cv.width,H=cv.height;
-    cx.fillStyle='rgba(10,13,14,'+n.p.fade+')'; cx.fillRect(0,0,W,H);
+    cx.fillStyle=themeRgba('--screen',n.p.fade); cx.fillRect(0,0,W,H);
     cx.strokeStyle=themeColor('--grid'); cx.beginPath();
     cx.moveTo(0,H/2); cx.lineTo(W,H/2); cx.moveTo(W/2,0); cx.lineTo(W/2,H); cx.stroke();
     cx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--t-sig');

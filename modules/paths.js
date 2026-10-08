@@ -6,6 +6,7 @@
    строки Table) или запись rec с двумя концами; высоты антенн h / h2 над землёй. Ядро — paths-kernels.js. */
 
 const PP_COL={direct:'#7dff9a',weak:'#ffd84a',blocked:'#ff5c5c',reflect:'#ff6bd6'};
+const PPS=()=>({direct:themeColor('--scr-ok'),weak:themeColor('--scr-warn'),blocked:themeColor('--scr-bad'),reflect:PP_COL.reflect});   // цвета на экране узла — по теме
 
 function pathsEnds(n,I){
   const p=n.p, r=n.rec;                                  // последняя запись rec с двумя концами
@@ -125,8 +126,8 @@ def({ id:'paths', title:'Signal Paths', cat:'Radio', kw:'propagation path reflec
       }
       // прямой путь
       const kind=direct.los ? (direct.fres>=.6 ? 'direct' : 'weak') : 'blocked';
-      cx.strokeStyle=PP_COL[kind]; cx.lineWidth=2; cx.beginPath(); cx.moveTo(X(0),Y(A[2])); cx.lineTo(X(Lm),Y(B[2])); cx.stroke();
-      if(direct.nuI>=0 && !direct.los){ const t=direct.nuI/direct.prof.n; cx.fillStyle=PP_COL.blocked; cx.beginPath(); cx.arc(X(Lm*t),Y(hs[Math.round(t*N)]),4,0,7); cx.fill(); }
+      cx.strokeStyle=PPS()[kind]; cx.lineWidth=2; cx.beginPath(); cx.moveTo(X(0),Y(A[2])); cx.lineTo(X(Lm),Y(B[2])); cx.stroke();
+      if(direct.nuI>=0 && !direct.los){ const t=direct.nuI/direct.prof.n; cx.fillStyle=PPS().blocked; cx.beginPath(); cx.arc(X(Lm*t),Y(hs[Math.round(t*N)]),4,0,7); cx.fill(); }
       // отражённые: проекция на вертикальную плоскость через A и B (боковое смещение подписано)
       cx.lineWidth=1.2; cx.setLineDash([5,4]); cx.font='10px monospace'; cx.textAlign='left'; cx.textBaseline='alphabetic';
       refl.forEach((r,i)=>{
@@ -136,7 +137,7 @@ def({ id:'paths', title:'Signal Paths', cat:'Radio', kw:'propagation path reflec
         cx.fillText((i+1)+(Math.abs(off)>5 ? ' ±'+Math.round(Math.abs(off))+' m' : ''),X(sx)+5,Y(r.P[2])-4);
       });
       cx.setLineDash([]);
-      cx.fillStyle='#7dff9a'; cx.fillRect(X(0)-2,Y(A[2])-2,4,4); cx.fillRect(X(Lm)-2,Y(B[2])-2,4,4);
+      cx.fillStyle=themeColor('--scr-ok'); cx.fillRect(X(0)-2,Y(A[2])-2,4,4); cx.fillRect(X(Lm)-2,Y(B[2])-2,4,4);
       cx.fillStyle='#6c7a80'; cx.textAlign='center'; cx.fillText((Lm/1000).toFixed(2)+' km · ground '+Math.round(R.gA)+' → '+Math.round(R.gB)+' m'+(Horizon.hAt ? '' : ' · flat (no Horizon)'),W/2,H-7);
       L.push((E.name ? E.name+' · ' : '')+(Lm/1000).toFixed(2)+' km · '+(f/1e6).toFixed(3)+' MHz · antennas '+Math.round(A[2]-R.gA)+' / '+Math.round(B[2]-R.gB)+' m');
       L.push('direct: '+(direct.los ? 'line of sight' : 'BLOCKED ('+Math.round(-direct.clear)+' m)')+' · first Fresnel zone '+(isFinite(direct.fres) ? Math.round(direct.fres*100)+'% clear' : '—')+' · loss '+direct.loss.toFixed(1)+' dB (free space '+direct.fspl.toFixed(1)+(direct.diff ? ' + diffraction '+direct.diff.toFixed(1) : '')+')');

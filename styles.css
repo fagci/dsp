@@ -11,6 +11,7 @@
   /* --scr-panel/--scr-hi — тот же случай: заливка-«подложка»/яркий highlight-акцент поверх
      canvas.view, тоже всегда на тёмном --screen, тоже не по теме */
   --scr-panel:#1d2226; --scr-hi:#ffffff;
+  --scr-txt:#c8d2d6; --scr-ok:#7dff9a; --scr-warn:#ffd84a; --scr-bad:#ff5c5c;
   --hi:#ffffff; --scrim:#0009;
   --note-bg:#1c1a14; --note-head:#241f14; --note-line:#3a3320;
   --canvas:#07090a; --screen:#0a0d0e; --screen-fg:#4ec9b0; --pin:13px; --pov:8px;
@@ -25,6 +26,8 @@
     --t-txt:#a83fa8; --t-blk:#2f9e4f; --t-bands:#1b7f96; --t-rec:#b8541f; --t-trk:#b83d7c; --t-iq:#5f8a0e; --t-vid:#8a7a0a; --err:#c23b3b;
     --hi:#000000; --scrim:#0004;
     --canvas:#d3d9df;
+    --screen:#f3f5f7; --screen-fg:#0b7c72; --grid:#dde2e6; --axis:#68737b; --scr-panel:#e4e8eb; --scr-hi:#111111;
+    --scr-txt:#2b343a; --scr-ok:#1a9a45; --scr-warn:#a87400; --scr-bad:#d03030;
     --note-bg:#fff8e1; --note-head:#fbecc3; --note-line:#e3cf95;
   }
 }

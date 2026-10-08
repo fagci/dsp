@@ -502,10 +502,10 @@ def({ id:'xyscope', lazy:'proc', title:'Phase Scope (X-Y)', cat:'Analysis', ins:
   draw(n){
     const cv=n.cv, cx=n.cx; if(!cv) return;
     const W=cv.width, H=cv.height, MH=18, plotH=H-MH;
-    cx.fillStyle=`rgba(11,13,14,${1-n.p.persist})`;                  // не clearRect — точки оставляют след
+    cx.fillStyle=themeRgba('--screen',1-n.p.persist);                  // не clearRect — точки оставляют след
     cx.fillRect(0,0,W,plotH);
     const cxm=W/2, cym=plotH/2, s=Math.min(W,plotH)/2*0.9*n.p.gain;
-    cx.strokeStyle='rgba(255,255,255,.06)'; cx.lineWidth=1;
+    cx.strokeStyle=themeRgba('--scr-hi',.06); cx.lineWidth=1;
     cx.beginPath(); cx.moveTo(0,cym); cx.lineTo(W,cym); cx.moveTo(cxm,0); cx.lineTo(cxm,plotH); cx.stroke();
     const x=n._x, y=n._y;
     if(x&&y){
@@ -515,10 +515,10 @@ def({ id:'xyscope', lazy:'proc', title:'Phase Scope (X-Y)', cat:'Analysis', ins:
         cx.fillRect(px,py,1.4,1.4); } }
     cx.fillStyle=themeColor('--screen'); cx.fillRect(0,plotH,W,MH);
     const half=W/2, mx=half+n.corr*half;
-    cx.fillStyle='rgba(255,255,255,.08)'; cx.fillRect(0,plotH+2,W,MH-4);
+    cx.fillStyle=themeRgba('--scr-hi',.08); cx.fillRect(0,plotH+2,W,MH-4);
     cx.fillStyle = n.corr<0 ? themeColor('--err') : themeColor('--t-blk');
     cx.fillRect(Math.min(half,mx),plotH+2,Math.abs(mx-half),MH-4);
-    cx.strokeStyle='rgba(255,255,255,.3)';
+    cx.strokeStyle=themeRgba('--scr-hi',.3);
     cx.beginPath(); cx.moveTo(half,plotH+1); cx.lineTo(half,plotH+MH-1); cx.stroke();
     n.el.querySelector('.readout').textContent='correlation '+n.corr.toFixed(2)+
       (n.corr>0.7?' · in phase':n.corr<-0.7?' · out of phase':(n.corr<0.2&&n.corr>-0.2)?' · uncorrelated':''); }});
