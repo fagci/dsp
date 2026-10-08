@@ -5,7 +5,7 @@
 
 def({ id:'tbskRx', title:'TBSK Decoder', cat:'Decoders', readout:true, tall:true, resize:true, w:420,
   kw:'tbsk tbskmodem nyatla spread spectrum dpsk delay detection acoustic modem data over sound',
-  ins:[{n:'in',t:'sig'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'new',t:'num'},{n:'level',t:'num'}],
+  ins:[{n:'in',t:'sig'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'new',t:'num'},{n:'level',t:'num'},{n:'bin',t:'bin'}],
   params:[{n:'fc',t:'range',min:200,max:12000,step:1,d:4800,label:'carrier, Hz (as in the transmitter)'},
           {n:'cycle',t:'range',min:2,max:100,step:1,d:10,label:'tone length, carrier periods (as in the transmitter; bit rate = carrier / cycle)'},
           {n:'th',t:'range',min:.05,max:.6,step:.01,d:.2,label:'end of frame: correlation below this'},
@@ -28,11 +28,11 @@ def({ id:'tbskRx', title:'TBSK Decoder', cat:'Decoders', readout:true, tall:true
       const text=new TextDecoder().decode(f.bytes).replace(/[\x00-\x08\x0b-\x1f\x7f]/g,'·'), hex=[...f.bytes].map(b=>b.toString(16).padStart(2,'0')).join('');
       n.frames++;
       recs.push({t:Date.now(), src:'TBSK', kind:'frame', id:hex.slice(0,16), bytes:f.bytes.length, bits:f.bits, hex, text, quality:+f.quality.toFixed(2), bps:Math.round(sr/n.tone.length)});
-      texts.push(text);
+      texts.push(text); n.binOut=binObj(Uint8Array.from(f.bytes));
       n.last=text;
       n.recent.push(f.bytes.length+' B · q '+f.quality.toFixed(2)+' · '+text.replace(/\n/g,' ').slice(0,60)); if(n.recent.length>20) n.recent.shift();
     }
-    return {rec:recs.length ? recs : null, text:texts.length ? texts.join('\n') : null, new:recs.length ? 1 : 0, level:n.lvl};
+    return {rec:recs.length ? recs : null, text:texts.length ? texts.join('\n') : null, new:recs.length ? 1 : 0, level:n.lvl, bin:n.binOut||null};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     const bps=n.tone ? Eng.sr/n.tone.length : 0;
