@@ -90,7 +90,8 @@ def({ id:'txtToBin', title:'Text → Bytes', cat:'Data', kw:'bytes binary hex ba
 /* ---------- Bytes → Frames ---------- */
 def({ id:'binTx', title:'Bytes → Frames', cat:'Protocols', kw:'bytes file packetizer frames chunks crc carousel transfer serial ble mqtt', readout:true, tall:true,
   ins:[{n:'bin',t:'bin'},{n:'go',t:'num'}], outs:[{n:'bin',t:'bin'},{n:'text',t:'txt'},{n:'go',t:'num'},{n:'busy',t:'num'},{n:'progress',t:'num'}],
-  params:[{n:'pay',t:'range',min:1,max:1024,step:1,d:64,label:'payload per frame, bytes (BLE: 20 minus 15 header — or raise the BLE chunk)'},
+  params:[{n:'meta',t:'check',d:true,label:'send the name and type in the first frame (off — bytes only)'},
+          {n:'pay',t:'range',min:1,max:1024,step:1,d:64,label:'payload per frame, bytes (BLE: 20 minus 15 header — or raise the BLE chunk)'},
           {n:'rate',t:'range',min:1,max:90,step:1,d:20,label:'frames per second (one frame per engine tick at most)'},
           {n:'enc',t:'select',opts:['base64','hex'],d:'base64',label:'text output (one frame per line)'},
           {n:'loop',t:'check',d:false,label:'carousel: repeat the whole transfer (one-way links, late listeners)'},
@@ -101,7 +102,7 @@ def({ id:'binTx', title:'Bytes → Frames', cat:'Protocols', kw:'bytes file pack
   process(n,I){
     const P=n.p, now=performance.now(), go=(I.go||0)>.5, rise=go && !n.prevGo; n.prevGo=go;
     const start=()=>{
-      try{ n.q=binPack(n.src.d,{pay:P.pay,name:n.src.name,mime:n.src.mime}); n.qi=0; n.nextAt=0; n.rounds=0; }
+      try{ n.q=binPack(n.src.d,{pay:P.pay,name:P.meta ? n.src.name : '',mime:P.meta ? n.src.mime : ''}); n.qi=0; n.nextAt=0; n.rounds=0; }
       catch(e){ n.q=[]; n.text=String(e.message||e); } };
     if(I.bin && I.bin.d && I.bin!==n.lastIn){ n.lastIn=I.bin; n.src=I.bin; start(); }
     else if((n.trig||rise) && n.src) start();
