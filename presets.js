@@ -275,6 +275,7 @@ const PRESET_CATS={
   'Graph: Links from CSV':'Network & IoT',
   'Network: Same Nodes and Links as Graph and on the Map':'Maps & Locating',
   'Chat: Text In and Out':'Network & IoT',
+  'Files over WebRTC':'Network & IoT',
   'Game: Tic-Tac-Toe over WebRTC':'Games',
   'Game: Connect Four over WebRTC':'Games',
   'Game: Battleship over WebRTC':'Games',
@@ -4863,6 +4864,15 @@ if(mqtt){
 markWiresDirty();
 });
 }
+preset('Files over WebRTC', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Direct file transfer between two browsers. One side presses Create offer in WebRTC Data and sends the code to the other, who presses Accept offer and sends the answer back (Apply answer). Then tap a file in Files and press «Send selected →»; or press Send file… in WebRTC Data to send a file from this device. Received files land in the Received folder of the matching storage (audio / images / files) of the Files node. Text, games and files share one connection, a file does not hold the chat.'});
+nt.size.w=1000; nt.size.h=90; applySize(nt);
+const r=addNode('rtcdata',40,150,{}); r.size.w=340; r.size.h=330; applySize(r);
+const f=addNode('files',420,150,{}); f.size.w=360; f.size.h=330; applySize(f);
+addEdge(f.id,'send',r.id,'sendFile');
+markWiresDirty();
+});
 gamePreset('Game: Tic-Tac-Toe over WebRTC','gtictactoe',280,330,false);
 gamePreset('Game: Connect Four over WebRTC','gconnect4',360,420,false);
 gamePreset('Game: Battleship over WebRTC','gbattleship',400,380,false);

@@ -285,11 +285,13 @@ let fmDrag=null;
 
 /* ---- узел: файловый менеджер ---- */
 def({ id:'files', title:'Files', cat:'Output', kw:'file manager storage samples images folder browser upload download', w:340, h:360, resize:true,
-  ins:[], outs:[{n:'id',t:'num'},{n:'name',t:'txt'},{n:'size',t:'num'}],
-  params:[{n:'space',t:'select',opts:FS_SPACES,d:'files',label:'storage',fn:n=>{ n.fm?.setSpace(n.p.space); }}],
-  init:n=>{ n.fm=null; n.sel=null; },
+  ins:[], outs:[{n:'id',t:'num'},{n:'name',t:'txt'},{n:'size',t:'num'},{n:'send',t:'num'}],
+  params:[{n:'sendBtn',t:'button',label:'Send selected → (pulse on `send`)',fn:n=>{ if(n.sel && typeof n.sel.id==='number') n.pend=n.sel.id; }},
+    {n:'space',t:'select',opts:FS_SPACES,d:'files',label:'storage',fn:n=>{ n.fm?.setSpace(n.p.space); }}],
+  init:n=>{ n.fm=null; n.sel=null; n.pend=-1; },
   dispose:n=>{ n.fm?.destroy(); n.fm=null; },
-  process:n=>({id:n.sel && typeof n.sel.id==='number' ? n.sel.id : -1, name:n.sel?.name||'', size:n.sel?.size||0}),
+  process(n){ const send=n.pend; n.pend=-1;     // импульс: id на один блок, потом -1
+    return {id:n.sel && typeof n.sel.id==='number' ? n.sel.id : -1, name:n.sel?.name||'', size:n.sel?.size||0, send}; },
   draw(n){
     if(n.fm && n.mid.contains(n.fm.root)) return;
     n.fm?.destroy();
