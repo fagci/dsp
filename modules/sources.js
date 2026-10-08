@@ -6922,12 +6922,12 @@ function streamRegisterWorklet(ctx){
   if(ctx._streamTapReady) return ctx._streamTapReady;
   const src = `
     class StreamTap extends AudioWorkletProcessor{
-      constructor(){ super(); this.b=new Float32Array(512); this.k=0; }
+      constructor(){ super(); this.l=new Float32Array(512); this.r=new Float32Array(512); this.k=0; }
       process(inputs,outputs){
-        const inp=inputs[0][0];
-        if(inp){                                      // копим 512 отсчётов — в 4 раза меньше сообщений
-          this.b.set(inp,this.k); this.k+=inp.length;
-          if(this.k>=512){ this.port.postMessage(this.b); this.b=new Float32Array(512); this.k=0; } }
+        const a=inputs[0][0], b=inputs[0][1] || a;     // моно-источник — в оба канала
+        if(a){                                        // копим 512 отсчётов — в 4 раза меньше сообщений
+          this.l.set(a,this.k); this.r.set(b,this.k); this.k+=a.length;
+          if(this.k>=512){ this.port.postMessage({l:this.l,r:this.r}); this.l=new Float32Array(512); this.r=new Float32Array(512); this.k=0; } }
         const o=outputs[0][0]; if(o) o.fill(0);
         return true; } }
     registerProcessor('stream-tap',StreamTap);`;
@@ -6938,14 +6938,33 @@ function streamRegisterWorklet(ctx){
 
 function streamResetRing(n){
   const SIZE = Math.max(50000, Math.round((Eng.sr||48000)*3));
-  n.ring = {A:new Float32Array(SIZE), size:SIZE, w:0, filled:0, written:0};
+  n.ring = {A:new Float32Array(SIZE), B:new Float32Array(SIZE), size:SIZE, w:0, filled:0, written:0};
   n.readPos=0; n.readCount=0; n.rebuffering=false;
 }
 
-function streamPush(n, chunk){
-  const ring=n.ring; let w=ring.w, filled=ring.filled;
-  for(let i=0;i<chunk.length;i++){ ring.A[w]=chunk[i]; w=(w+1)%ring.size; if(filled<ring.size) filled++; }
-  ring.w=w; ring.filled=filled; ring.written+=chunk.length;
+function streamPush(n, chunk){                        // chunk: {l, r}
+  const ring=n.ring, L=chunk.l, R=chunk.r; let w=ring.w, filled=ring.filled;
+  for(let i=0;i<L.length;i++){ ring.A[w]=L[i]; ring.B[w]=R[i]; w=(w+1)%ring.size; if(filled<ring.size) filled++; }
+  ring.w=w; ring.filled=filled; ring.written+=L.length;
+}
+// чтение блока из кольца: стерео, с подстройкой отставания; null — пока играть нечем (тишина)
+function streamReadBlock(n,oL,oR,g){
+  const ring=n.ring;
+  if(!n.connected || ring.filled<ring.size*0.2) return false;
+  let lag=ring.written-n.readCount;
+  if(lag>ring.size*0.9){ const delta=lag-ring.size*0.5; n.readPos=(n.readPos+delta)%ring.size; n.readCount+=delta; lag=ring.written-n.readCount; }
+  if(n.rebuffering){
+    if(lag<ring.size*0.2) return false;
+    n.rebuffering=false;
+  }
+  if(lag<BLOCK){ n.rebuffering=true; return false; }
+  for(let i=0;i<BLOCK;i++){
+    const k=Math.floor(n.readPos)%ring.size;
+    oL[i]=ring.A[k]*g; oR[i]=ring.B[k]*g;
+    n.readPos++; n.readCount++;
+  }
+  n.readPos%=ring.size;
+  return true;
 }
 
 // Ждёт, пока <audio> реально сможет играть, либо словит ошибку источника/таймаут.
@@ -7002,7 +7021,7 @@ async function streamPlay(n){
     await streamRegisterWorklet(ctx);
     const srcNode = ctx.createMediaElementSource(audio);
     const tap = new AudioWorkletNode(ctx,'stream-tap',{numberOfInputs:1,numberOfOutputs:1,
-      channelCount:1, channelCountMode:'explicit', channelInterpretation:'speakers'});
+      channelCount:2, channelCountMode:'explicit', channelInterpretation:'speakers'});
     tap.port.onmessage = e => streamPush(n, e.data);
     const sink = ctx.createGain(); sink.gain.value = 0;   // тянем граф до destination неслышно
     srcNode.connect(tap); tap.connect(sink); sink.connect(ctx.destination);
@@ -7090,7 +7109,7 @@ async function icyMetadataStart(n, url){
 
 def({ id:'stream', title:'Audio Stream (URL)', cat:'Sources',
   ins:[{n:'url',t:'txt'}],
-  outs:[{n:'audio',t:'sig'},{n:'artist',t:'val'},{n:'title',t:'val'},{n:'trackChange',t:'val'}],
+  outs:[{n:'L',t:'sig'},{n:'R',t:'sig'},{n:'artist',t:'val'},{n:'title',t:'val'},{n:'trackChange',t:'val'}],
   readout:true,
   params:[
     {n:'url',t:'text',d:'https://ice1.somafm.com/groovesalad-128-mp3',label:'stream URL'},
@@ -7121,21 +7140,9 @@ def({ id:'stream', title:'Audio Stream (URL)', cat:'Sources',
     }
     const trackChange = n.trackPulse>0?1:0; if(n.trackPulse>0) n.trackPulse--;
     const meta = {artist:n.icyArtist||'', title:n.icyTitle||'', trackChange};
-    const o=buf(n,'audio'), ring=n.ring, g=n.p.gain;
-    if(!n.connected || ring.filled<ring.size*0.2){ o.fill(0); return {audio:o, ...meta}; }
-    let lag=ring.written-n.readCount;
-    if(lag>ring.size*0.9){ const delta=lag-ring.size*0.5; n.readPos=(n.readPos+delta)%ring.size; n.readCount+=delta; lag=ring.written-n.readCount; }
-    if(n.rebuffering){
-      if(lag<ring.size*0.2){ o.fill(0); return {audio:o, ...meta}; }
-      n.rebuffering=false;
-    }
-    if(lag<BLOCK){ n.rebuffering=true; o.fill(0); return {audio:o, ...meta}; }
-    for(let i=0;i<BLOCK;i++){
-      o[i]=ring.A[Math.floor(n.readPos)%ring.size]*g;
-      n.readPos++; n.readCount++;
-    }
-    n.readPos%=ring.size;
-    return {audio:o, ...meta};
+    const oL=buf(n,'L'), oR=buf(n,'R');
+    if(!streamReadBlock(n,oL,oR,n.p.gain)){ oL.fill(0); oR.fill(0); }
+    return {L:oL, R:oR, ...meta};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     r.textContent = n.icyRaw ? (n.status+' | track: '+n.icyRaw) : n.status; }
@@ -7174,7 +7181,7 @@ async function dispCapture(n){
     await streamRegisterWorklet(ctx);
     const srcNode = ctx.createMediaStreamSource(new MediaStream([atrack]));
     const tap = new AudioWorkletNode(ctx,'stream-tap',{numberOfInputs:1,numberOfOutputs:1,
-      channelCount:1, channelCountMode:'explicit', channelInterpretation:'speakers'});
+      channelCount:2, channelCountMode:'explicit', channelInterpretation:'speakers'});
     tap.port.onmessage = e => streamPush(n, e.data);
     const sink = ctx.createGain(); sink.gain.value=0;
     srcNode.connect(tap); tap.connect(sink); sink.connect(ctx.destination);
@@ -7190,7 +7197,7 @@ async function dispCapture(n){
 }
 
 def({ id:'dispaudio', title:'Capture Tab/Screen (Audio)', cat:'Sources',
-  outs:[{n:'audio',t:'sig'}],
+  outs:[{n:'L',t:'sig'},{n:'R',t:'sig'}],
   readout:true,
   params:[
     {n:'go',t:'button',label:'▶ Capture',fn:n=>dispCapture(n)},
@@ -7209,21 +7216,9 @@ def({ id:'dispaudio', title:'Capture Tab/Screen (Audio)', cat:'Sources',
       n.status='context recreated — capture again';
       dispTeardown(n);
     }
-    const o=buf(n,'audio'), ring=n.ring, g=n.p.gain;
-    if(!n.connected || ring.filled<ring.size*0.2){ o.fill(0); return {audio:o}; }
-    let lag=ring.written-n.readCount;
-    if(lag>ring.size*0.9){ const delta=lag-ring.size*0.5; n.readPos=(n.readPos+delta)%ring.size; n.readCount+=delta; lag=ring.written-n.readCount; }
-    if(n.rebuffering){
-      if(lag<ring.size*0.2){ o.fill(0); return {audio:o}; }
-      n.rebuffering=false;
-    }
-    if(lag<BLOCK){ n.rebuffering=true; o.fill(0); return {audio:o}; }
-    for(let i=0;i<BLOCK;i++){
-      o[i]=ring.A[Math.floor(n.readPos)%ring.size]*g;
-      n.readPos++; n.readCount++;
-    }
-    n.readPos%=ring.size;
-    return {audio:o};
+    const oL=buf(n,'L'), oR=buf(n,'R');
+    if(!streamReadBlock(n,oL,oR,n.p.gain)){ oL.fill(0); oR.fill(0); }
+    return {L:oL, R:oR};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.status; }
 });
