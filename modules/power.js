@@ -44,6 +44,13 @@
   }
   btn.onclick=()=>{
     Prof.on=!Prof.on; btn.classList.toggle('on',Prof.on); panel.hidden=!Prof.on;
+    if(Prof.on){                                     // над кнопкой, а не поверх неё (тулбар внизу на телефоне)
+      const r=btn.getBoundingClientRect(), w=Math.min(230,innerWidth-16);
+      panel.style.width=w+'px'; panel.style.right='auto';
+      panel.style.left=Math.max(8,Math.min(r.left,innerWidth-w-8))+'px';
+      if(r.top>innerHeight/2){ panel.style.top=''; panel.style.bottom=(innerHeight-r.top+4)+'px'; }
+      else { panel.style.bottom=''; panel.style.top=(r.bottom+4)+'px'; }
+    }
     clearInterval(timer);
     if(Prof.on){
       Prof.t0=performance.now(); Prof.tot.p=Prof.tot.d=0; b0=null;
