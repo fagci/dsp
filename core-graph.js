@@ -489,7 +489,9 @@ const sel=n.el.classList.contains('sel');
 fillParamDefaults(n,MOD[n.type]);                  // добить дефолтами новые/переименованные параметры
 n.roCv?.disconnect();                               // старая канва уходит вместе с el, наблюдатель — тоже
 visIO.unobserve(n.el);
+const host=n.el.parentNode, inDash=dashMode && !!dashLeafOf(n.id);   // в тайле новый DOM остаётся в своей панели
 n.el.remove(); buildNodeEl(n);
+if(inDash){ if(host && host!==content) host.append(n.el); else n.el.remove(); applySize(n); n.onResize?.(n); dashFitSoon(); }
 n._drawGen=-1;                                      // новый DOM — lazy-узлу нарисоваться заново
 if(sel) n.el.classList.add('sel');
 markWiresDirty();
@@ -1423,7 +1425,7 @@ function dashRenderLeaf(t){
   if(n) sel.title=nodeTitle(n)+' #'+n.id;
   if(n) sel.value=n.id; else if(isGraph) sel.value='@graph';
   sel.addEventListener('pointerdown',e=>e.stopPropagation());
-  if(n){ onLongPress(sel,()=>renameNode(n)); sel.addEventListener('dblclick',()=>renameNode(n)); }
+  if(n) sel.addEventListener('dblclick',()=>renameNode(n));   // долгое нажатие на select конфликтует с его списком — на тач имя меняется через ⋯ → ✎
   sel.onchange=()=>{ if(n) dashDetach(n);
     const toGraph=sel.value==='@graph';
     if(toGraph){ tab.node=null; tab.view='graph'; }
