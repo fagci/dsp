@@ -5923,48 +5923,9 @@ def({ id:'tuner', lazy:'manual', title:'Tuner', cat:'Radio', outs:[{n:'freq',t:'
 // Корень снаружи — null, в базе — 0: null не попадает в индекс IndexedDB, и корень был бы пуст.
 
 const SampleDB = (() => {
-  let dbp = null;
-  const ROOT = 0;                                 // автоинкрементные id начинаются с 1
-  const key = v => v==null ? ROOT : v;
-
-  function open(){
-    if(dbp) return dbp;
-    dbp = new Promise((res,rej)=>{
-      const rq = indexedDB.open('dsp-samples', 2);
-      rq.onupgradeneeded = e => {
-        const db = e.target.result;
-        if(e.oldVersion===1){                     // v1 хранила корень как null — переводим в 0
-          const tx = e.target.transaction;
-          for(const [st, k] of [['folders','parentId'],['clips','folderId']]){
-            tx.objectStore(st).openCursor().onsuccess = ev=>{
-              const c = ev.target.result; if(!c) return;
-              if(c.value[k]==null){ c.value[k] = ROOT; c.update(c.value); }
-              c.continue();
-            };
-          }
-        }
-        if(!db.objectStoreNames.contains('folders')){
-          const fs = db.createObjectStore('folders',{keyPath:'id',autoIncrement:true});
-          fs.createIndex('parentId','parentId');
-        }
-        if(!db.objectStoreNames.contains('clips')){
-          const cs = db.createObjectStore('clips',{keyPath:'id',autoIncrement:true});
-          cs.createIndex('folderId','folderId');
-        }
-      };
-      rq.onsuccess = e => res(e.target.result);
-      rq.onerror = e => rej(e.target.error);
-    });
-    return dbp;
-  }
-
-  async function store(name, mode){
-    const db = await open();
-    return db.transaction(name, mode).objectStore(name);
-  }
-  function reqP(rq){
-    return new Promise((res,rej)=>{ rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error); });
-  }
+  // Данные лежат в FileStore (пространство audio, modules/filestore.js): клип — WAV float32 + meta {sr,peaks,duration,…}.
+  const SP = 'audio';
+  const key = v => v==null ? 0 : v;               // корень снаружи null/0
 
   function computePeaks(samples, buckets=400){
     const peaks = new Float32Array(buckets*2);
@@ -5977,61 +5938,50 @@ const SampleDB = (() => {
     }
     return peaks;
   }
+  const toClip = r => ({...r.meta, id:r.id, name:r.name, folderId:r.folderId, created:r.created});
+  const isClip = r => r.meta && r.meta.sr;
+  async function withSamples(clip, r){
+    clip.samples = r.meta.fmt==='f32' ? await fsWavDecode(r.blob) : (await decodeAudioFile(r.blob)).samples;
+    return clip;
+  }
 
   return {
     computePeaks,
 
-    async addFolder(name, parentId=null){
-      const s = await store('folders','readwrite');
-      return reqP(s.add({name, parentId:key(parentId), created:Date.now()}));
-    },
-    async renameFolder(id, name){
-      const s = await store('folders','readwrite');
-      const f = await reqP(s.get(id)); f.name=name;
-      return reqP(s.put(f));
-    },
-    async deleteFolder(id){
-      const subs = await this.listFolders(id);
-      for(const f of subs) await this.deleteFolder(f.id);   // рекурсивно чистим вложенное
-      const clips = await this.listClips(id);
-      for(const c of clips) await this.deleteClip(c.id);
-      const s = await store('folders','readwrite');
-      return reqP(s.delete(id));
-    },
+    addFolder: (name, parentId=null) => FileStore.addFolder(SP, name, parentId),
+    renameFolder: (id, name) => FileStore.renameFolder(id, name),
+    deleteFolder: id => FileStore.deleteFolder(id),
     async listFolders(parentId=null){
-      const s = await store('folders','readonly');
-      return reqP(s.index('parentId').getAll(key(parentId)));
+      return (await FileStore.listFolders(SP, parentId)).map(f=>({id:f.id,name:f.name,parentId:f.parentId,created:f.created}));
     },
     async getFolder(id){
-      if(id==null || id===ROOT) return null;
-      const s = await store('folders','readonly');
-      return reqP(s.get(id));
+      const f = await FileStore.getFolder(id);
+      return f && {id:f.id,name:f.name,parentId:f.parentId,created:f.created};
     },
 
     async addClip(clip){
-      clip.created = Date.now();
-      clip.folderId = key(clip.folderId);
-      const s = await store('clips','readwrite');
-      return reqP(s.add(clip));
+      const {name, folderId, samples, sr, ...meta} = clip;
+      return FileStore.put({space:SP, folderId, name, mime:'audio/wav', blob:fsWavF32(samples, sr), meta:{...meta, fmt:'f32', sr}});
     },
     async updateClip(id, patch){
-      const s = await store('clips','readwrite');
-      const c = await reqP(s.get(id));
-      Object.assign(c, patch);
-      if('folderId' in patch) c.folderId = key(c.folderId);
-      return reqP(s.put(c));
+      const r = await FileStore.get(id); if(!r) return;
+      const {name, folderId, samples, ...meta} = patch, up = {};
+      if(name!==undefined) up.name = name;
+      if(folderId!==undefined) up.folderId = folderId;
+      if(samples){ up.blob = fsWavF32(samples, meta.sr || r.meta.sr); meta.fmt = 'f32'; }
+      if(Object.keys(meta).length) up.meta = {...r.meta, ...meta};
+      return FileStore.update(id, up);
     },
-    async deleteClip(id){
-      const s = await store('clips','readwrite');
-      return reqP(s.delete(id));
-    },
-    async listClips(folderId=null){
-      const s = await store('clips','readonly');
-      return reqP(s.index('folderId').getAll(key(folderId)));
+    deleteClip: id => FileStore.remove(id),
+    async listClips(folderId=null, samples=false){
+      const rs = (await FileStore.list(SP, folderId)).filter(isClip);
+      const out = rs.map(toClip);
+      if(samples) await Promise.all(out.map((c,i)=>withSamples(c, rs[i])));
+      return out;
     },
     async getClip(id){
-      const s = await store('clips','readonly');
-      return reqP(s.get(id));
+      const r = await FileStore.get(id);
+      return r && r.space===SP && isClip(r) ? withSamples(toClip(r), r) : undefined;
     },
   };
 })();

@@ -661,6 +661,8 @@ Presets: *Inmarsat STD-C: EGC Messages (Generator)*, *Inmarsat STD-C: EGC Messag
 
 The **Sample Library** node keeps clips in the browser (IndexedDB). **import** (or drop files on it) adds audio files, **● rec** records a new clip: from the `in` port when it is wired and the graph runs, otherwise from the microphone. Tap a clip to open the editor; ▶ in the list plays the clip through the node's `out`.
 
+The **Files** node is a file manager for the browser storage (database *dsp-files*): three storages — *audio* (Sample Library clips, stored as float32 WAV), *images* (photos of Table rows and pictures) and *files* (anything else, e.g. received over the network). Folders, **⤒ import** (or drop files), rename, **⇢** move to another folder, **⤓** download, delete; outputs `id` / `name` / `size` of the selected file. Old databases *dsp-samples* and *dsp-photos* are copied into it once with the same ids (patches and Tables keep working) and stay as a reserve; backups include *dsp-files* (old backup files still import).
+
 The editor fills the screen and plays through its own audio output, no wiring needed:
 
 - **Selection**: drag on the waveform; drag the edge handles to adjust it; tap to place the cursor. Drag on the time ruler or the overview strip to scroll; pinch horizontally to zoom in time, vertically to zoom the amplitude (mouse: wheel zooms, Shift+wheel scrolls, Alt+wheel zooms the amplitude)

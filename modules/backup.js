@@ -109,13 +109,15 @@ async function bkRestoreDb(name,d,onMsg){
 async function bkImport(text,sel,onMsg){
   const o=JSON.parse(text);
   if(o.format!==BK_FORMAT) throw new Error('not a DSP backup file');
-  const res={ls:0,rows:0,tiles:0,skipped:[]};
+  const res={ls:0,rows:0,tiles:0,skipped:[]}; let legacy=false;
   if(o.ls && sel.includes('settings')){ for(const k in o.ls){ localStorage.setItem(k,o.ls[k]); res.ls++; } }
   for(const name in (o.idb||{})){
-    const g=BK_GROUPS.find(g=>g.db?.includes(name));
+    const g=BK_GROUPS.find(g=>g.db?.includes(name) || g.imp?.includes(name));
     if(g && !sel.includes(g.id)) continue;
     const r=await bkRestoreDb(name,o.idb[name],onMsg); res.rows+=r.rows; res.skipped.push(...r.skipped.map(s=>name+'/'+s));
+    if(name==='dsp-samples' || name==='dsp-photos') legacy=true;       // старая копия: перенести в dsp-files
   }
+  if(legacy && typeof FileStore!=='undefined') await FileStore.migrateLegacy();
   if(o.caches && sel.includes('tiles') && 'caches' in window){
     for(const name in o.caches){
       const c=await caches.open(name);
