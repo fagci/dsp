@@ -407,19 +407,22 @@ function ssXYZOut(n){
 }
 
 function accelStop(n){ if(n.onMotion){ window.removeEventListener('devicemotion',n.onMotion); n.onMotion=null; } }
+async function accelStart(n){
+  try{ if(window.DeviceMotionEvent?.requestPermission) await DeviceMotionEvent.requestPermission(); }
+  catch(e){ n.status='error: '+e.message; return; }
+  accelStop(n); ssInit(n,3); n.status='waiting for events…';
+  n.onMotion=e=>{
+    const a=(n.p.grav?e.accelerationIncludingGravity:e.acceleration)||{};
+    if(a.x==null) return;
+    n.status=''; n.iv=e.interval;
+    ssMotion(n,e,[a.x,a.y,a.z]); };
+  window.addEventListener('devicemotion',n.onMotion);
+}
 def({ id:'accel', title:'Accelerometer', cat:'Sources',
   outs:SS_XYZ, readout:true,
-  params:[{n:'on',t:'button',label:'Allow sensor',fn:async n=>{
-    try{ if(window.DeviceMotionEvent?.requestPermission) await DeviceMotionEvent.requestPermission(); }
-    catch(e){ n.status='error: '+e.message; return; }
-    accelStop(n); ssInit(n,3); n.status='waiting for events…';
-    n.onMotion=e=>{
-      const a=(n.p.grav?e.accelerationIncludingGravity:e.acceleration)||{};
-      if(a.x==null) return;
-      n.status=''; n.iv=e.interval;
-      ssMotion(n,e,[a.x,a.y,a.z]); };
-    window.addEventListener('devicemotion',n.onMotion); }},
+  params:[{n:'on',t:'button',label:'Allow sensor',fn:n=>accelStart(n)},
     {n:'grav',t:'check',d:true,label:'include gravity (raw)'}],
+  onRun:n=>{ if(!n.onMotion) return accelStart(n); },
   init:n=>{ ssInit(n,3); n.status='not started'; },
   dispose:n=>accelStop(n),
   process:n=>ssXYZOut(n),
@@ -493,6 +496,7 @@ def({ id:'gsensor', title:'Sensor (Generic Sensor API)', cat:'Sources',
     {n:'go',t:'button',label:'Start',fn:n=>gsensorStart(n)},
     {n:'stop',t:'button',label:'Stop',fn:n=>gsensorStop(n)},
   ],
+  onRun:n=>{ if(!n.sensor && !n.onMotion) gsensorStart(n); },
   init:n=>{ n.sensor=null; n.status='not started'; n.v=[0,0,0]; ssInit(n,gsensorFields(n).length); },
   dispose:n=>gsensorStop(n),
   process(n){
@@ -766,6 +770,7 @@ async function camApplyCtl(n){
 }
 def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'vid',t:'vid'},{n:'bright',t:'num'},{n:'rows',t:'sig'}],
   ins:[{n:'roiX',t:'num'},{n:'roiY',t:'num'},{n:'roiW',t:'num'},{n:'roiH',t:'num'}],
+  onRun:n=>{ if(!n.track) return camStart(n); },
   params:[{n:'on',t:'button',label:'Turn on camera',fn:n=>camStart(n)},
           {n:'cam',t:'select',opts:['front','rear'],d:'rear',fn:n=>{ if(n.track) camStart(n); }},
           {n:'res',t:'select',opts:['160x120','320x240','640x480','1280x720'],d:'320x240',label:'capture',

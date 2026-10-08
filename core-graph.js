@@ -234,11 +234,27 @@ const watchDpr=()=>{ restretch();
 matchMedia(`(resolution:${window.devicePixelRatio}dppx)`).addEventListener('change',watchDpr,{once:true}); };
 matchMedia(`(resolution:${window.devicePixelRatio}dppx)`).addEventListener('change',watchDpr,{once:true});
 }
+function nodeTitle(n){ return n.name || MOD[n.type].title; }
+function setNodeName(n,v){                          // пустое имя — вернуть название модуля
+n.name=String(v||'').trim().slice(0,40);
+if(!n.name) delete n.name;
+const t=nodeTitle(n);
+for(const e of [n.el,n.ghost]) if(e){ e.dataset.title=t;
+const ttl=e.querySelector('.ttl'); if(ttl){ ttl.textContent=t; ttl.dataset.ini=nodeInitials(t); } }
+if(dashMode) dashRenderRoot();
+}
+function renameNode(n){
+const v=prompt('Module name (empty — default)',n.name||''); if(v==null) return;
+setNodeName(n,v); Undo.push();
+}
 function buildNodeEl(n){
 const d=MOD[n.type];
 const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
-el.style.setProperty('--cat',catColor(d.cat)); el.dataset.title=d.title;
-el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(d.title)}" title="${d.cat||''}">${d.title}</span><span class="x">✕</span></div> <div class="nbody"></div>`;
+const title=nodeTitle(n);
+el.style.setProperty('--cat',catColor(d.cat)); el.dataset.title=title;
+el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span><span class="ren" title="Rename">✎</span><span class="x">✕</span></div> <div class="nbody"></div>`;
+el.querySelector('.ttl').textContent=title;
+el.querySelector('.ren').addEventListener('click',e=>{ e.stopPropagation(); renameNode(n); });
 const body=el.querySelector('.nbody');
 const io=document.createElement('div'); io.className='io3';
 const ci=document.createElement('div'); ci.className='col';
@@ -301,7 +317,7 @@ if(moved >6) return;                          // это было перетас�
 const r=c.getBoundingClientRect();
 n.pickT=clamp((ev.clientX-r.left)/r.width,0,1); });
 c.addEventListener('pointercancel',()=>{ tap=null; }); } }
-if(d.view||d.resize||d.tall){ const rz=document.createElement('div'); rz.className='rz'; el.append(rz);
+{ const rz=document.createElement('div'); rz.className='rz'; el.append(rz);   // размер меняется у любого модуля
 bindResize(rz,n); }
 if(d.readout){ const r=document.createElement('div'); r.className='readout'+(d.tall?' tall':'');
 r.textContent='—'; mid.append(r); n.ro=r;
@@ -373,6 +389,14 @@ const n=addNode(type,x,y);
 if(n && MOD[type].lod==='dot') setLod(n,LOD_DOT);
 return n;
 }
+// длинная подпись → короткое имя (без скобок и пояснения после «:» / « — »); полный текст остаётся в подсказке
+function shortLabel(t){
+let s=t.replace(/\s*\([^)]*\)/g,'');
+const i=s.search(/:\s/); if(i>3) s=s.slice(0,i);
+const j=s.indexOf(' — '); if(j>3) s=s.slice(0,j);
+s=s.replace(/[\s,…]+$/,'');
+return s||t;
+}
 // подряд идущие кнопки/галочки — в один ряд; общая раскладка для основных и adv-параметров
 function renderParamRows(container,n,params){
 // строки «подпись — значение» (по умолчанию; rows:false у модуля — прежняя раскладка): числа, выборы,
@@ -392,6 +416,7 @@ if(!grp){ grp=document.createElement('div'); grp.className='prm wide prmrows'; c
 const q= p.t==='range' ? {...p,knob:false} : p.t==='buttons' ? {...p,t:'select'} : p;
 const r=paramEl(n,q); r.classList.add('pr','pr-'+q.t);
 const lab=r.querySelector(':scope>label');
+if(lab && lab.textContent.length>24) lab.textContent=shortLabel(lab.textContent);
 // единица из хвоста подписи («bandwidth, Hz») — тусклым текстом после значения, подпись короче
 const um=lab && ['range','range2','num'].includes(q.t) && /^(.+?),\s*([^\s,]{1,8})$/.exec(lab.textContent);
 if(um){ lab.textContent=um[1]; const u=document.createElement('span'); u.className='pr-unit'; u.textContent=um[2];
@@ -481,7 +506,7 @@ return out+esc(src.slice(i));
 function paramEl(n,s){
 const row=document.createElement('div'); row.className='prm'; row.dataset.param=s.n; row.dataset.node=n.id;
 const lab=document.createElement('label'); lab.textContent=s.label||s.n;
-lab.title=s.label||s.n;
+lab.title=s.tip||s.label||s.n;                       // tip — подробное описание, label — короткое имя
 if(s.t==='button'){
 row.className='prm '+(n.type==='mic' &&['on','onB'].includes(s.n)?'mic-button':'wide');
 row.append(paramBtn(n,s)); return row;
@@ -881,6 +906,7 @@ if(!Sel.size) return;
 clip={
 nodes:Graph.nodes.filter(n=>Sel.has(n.id)).map(n=>{
 const o={id:n.id,type:n.type,x:n.x,y:n.y,w:n.size.w,h:n.size.h,p:{...n.p}};
+if(n.name) o.name=n.name;
 return o; }),
 edges:Graph.edges.filter(e=>Sel.has(e.from) &&Sel.has(e.to)).map(e=>
 ({from:e.from,fp:e.fp,to:e.to,tp:e.tp}))
@@ -898,6 +924,7 @@ const nn=addNode(nd.type,nd.x+dx,nd.y+dy,nd.p);
 if(!nn) continue;
 map[nd.id]=nn.id;
 if(nd.f) setLod(nn,nd.f===LOD_DOT ? LOD_DOT : LOD_CARD);
+if(nd.name) setNodeName(nn,nd.name);
 if(nd.w){ nn.size.w=nd.w; nn.size.h=nd.h||nn.size.h; applySize(nn); }
 Sel.add(nn.id); }
 for(const e of data.edges)
@@ -1029,7 +1056,8 @@ start(ev){ if(uiLocked()){ ev.interaction.stop(); return; }
 n.__rw=n.size.w; n.__rh=n.size.h; activeInteractions++; },
 move(ev){ if(uiLocked()) return;
 n.size.w=clamp(Math.round(n.__rw+(ev.clientX-ev.clientX0)/view.k),160,1400);
-n.size.h=clamp(Math.round(n.__rh+(ev.clientY-ev.clientY0)/view.k),40,2000);
+const d=MOD[n.type];
+if(d.view||d.resize||d.tall) n.size.h=clamp(Math.round(n.__rh+(ev.clientY-ev.clientY0)/view.k),40,2000);   // у прочих — только ширина (колонки полей)
 applySize(n); drawWires(); },
 end(){ activeInteractions--; Undo.push(); }
 }});
@@ -1355,6 +1383,7 @@ function dashTabLabel(x){
 }
 // подпись вкладки без семейства («Tracker: Mixer» → «Mixer»), #id — только если модулей такого типа несколько
 function dashShort(n){
+  if(n.name) return n.name;
   const t=MOD[n.type].title, i=t.indexOf(': ');
   let s=i>0? t.slice(i+2) : t;
   if(Graph.nodes.some(x=>x!==n && x.type===n.type)) s+=' #'+n.id;
@@ -1378,8 +1407,8 @@ function dashRenderLeaf(t){
   const graphElsewhere=dashLeaves(Graph.dashTree).some(l=>l.tabs.some(x=>x!==tab && x.view==='graph'));
   if(!graphElsewhere) sel.append(new Option('◇ Module graph','@graph'));   // одна на страницу
   const cand=Graph.nodes.filter(x=>x===n || !dashLeafOf(x.id));   // любой модуль, ещё не занявший вкладку
-  for(const pn of cand) sel.append(new Option(pn===n? dashShort(pn) : MOD[pn.type].title+' #'+pn.id, pn.id));   // выбранный — коротко, как вкладка
-  if(n) sel.title=MOD[n.type].title+' #'+n.id;
+  for(const pn of cand) sel.append(new Option(pn===n? dashShort(pn) : nodeTitle(pn)+' #'+pn.id, pn.id));   // выбранный — коротко, как вкладка
+  if(n) sel.title=nodeTitle(n)+' #'+n.id;
   if(n) sel.value=n.id; else if(isGraph) sel.value='@graph';
   sel.addEventListener('pointerdown',e=>e.stopPropagation());
   sel.onchange=()=>{ if(n) dashDetach(n);
@@ -1393,7 +1422,7 @@ function dashRenderLeaf(t){
   const strip=document.createElement('div'); strip.className='dash-tabs';
   t.tabs.forEach((x,i)=>{
     if(i===t.cur){ strip.append(sel); return; }
-    const b=dashBtn2(dashTabLabel(x),x.node!=null&&Graph.map[x.node]? MOD[Graph.map[x.node].type].title+' #'+x.node : 'Switch to tab',()=>{
+    const b=dashBtn2(dashTabLabel(x),x.node!=null&&Graph.map[x.node]? nodeTitle(Graph.map[x.node])+' #'+x.node : 'Switch to tab',()=>{
       t.cur=i; dashRenderRoot(); scheduleAutosave();
       if(x.view==='graph') dashGraphFit(); },'dash-tab');
     strip.append(b);
@@ -1406,12 +1435,13 @@ function dashRenderLeaf(t){
     if(l<strip.scrollLeft || r>strip.scrollLeft+strip.clientWidth) strip.scrollLeft=l-24; });
   // действия панели; в узкой панели прячутся под «⋯» (см. @container в styles.css)
   const acts=document.createElement('div'); acts.className='dash-acts';
+  let bareBtn=null;
   if(n?.cv){                                            // только канва: контролы и заголовок узла спрятаны
-    const bb=dashBtn2('⛶','Canvas only (hide controls)',()=>{ tab.bare=!tab.bare; dashRenderRoot(); Undo.push(); });
-    bb.classList.toggle('on',!!tab.bare);
-    acts.append(bb);
+    bareBtn=dashBtn2('⛶','Canvas only (hide controls)',()=>{ tab.bare=!tab.bare; dashRenderRoot(); Undo.push(); },'dash-bare');
+    bareBtn.classList.toggle('on',!!tab.bare);
     pane.classList.toggle('bare',!!tab.bare);
   }
+  if(n) acts.append(dashBtn2('✎','Rename module',()=>renameNode(n)));
   if(isGraph){
     acts.append(dashBtn2('⊕','Add module (or double-click the canvas)',e=>dashGraphAdd(e.currentTarget)),
       dashBtn2('⤢','Fit patch',dashGraphFit));
@@ -1429,7 +1459,7 @@ function dashRenderLeaf(t){
       t.tabs.splice(t.cur,1); t.cur=Math.min(t.cur,t.tabs.length-1);
       dashRenderRoot(); Undo.push(); }));
   const more=dashBtn2('⋯','Pane actions',()=>tools.classList.toggle('acts'),'dash-more');
-  tools.append(...(isMax?[bm]:[]),more,acts);
+  tools.append(...(bareBtn?[bareBtn]:[]),...(isMax?[bm]:[]),more,acts);   // ⛶ и возврат из максимума — всегда на виду, не под «⋯»
   // двойной клик/тап по пустому месту шапки — развернуть/вернуть
   tools.addEventListener('dblclick',e=>{ if(e.target===tools || e.target===strip) dashToggleMax(t.id); });
   pane.append(tools);
@@ -1457,13 +1487,14 @@ function nodePorts(n){ return n.ghost ? n.ghostPorts : n.ports; }
 function ghostBuild(n){
   const d=MOD[n.type], g=document.createElement('div');
   g.className='node ghost panzoom-exclude'; g.dataset.id=n.id; g.style.width=n.size.w+'px';
-  g.innerHTML=`<div class="nhead" style="--cat:${catColor(d.cat)}"><span class="ttl">${d.title}</span></div>
+  g.innerHTML=`<div class="nhead" style="--cat:${catColor(d.cat)}"><span class="ttl"></span></div>
 <div class="nbody"><div class="io3"><div class="col"></div><div class="mid"><div class="ghostNote">▣ in pane</div></div><div class="col o"></div></div></div>`;
   const [ci,co]=g.querySelectorAll('.col'), gp={i:{},o:{}};
   for(const dir of ['i','o']) for(const k in n.ports[dir]){
     const e=n.ports[dir][k].cloneNode(true); e.classList.remove('lit');
     e.addEventListener('pointerdown',ev=>startLink(ev,n,k,dir));
     (dir==='i'?ci:co).append(e); gp[dir][k]=e; }
+  g.querySelector('.ttl').textContent=nodeTitle(n);
   bindDrag(g.querySelector('.nhead'),n);
   n.ghost=g; n.ghostPorts=gp; content.append(g); posNode(n);
 }
@@ -1475,6 +1506,7 @@ function dashSyncGhosts(){
     if(need && !n.ghost) ghostBuild(n); else if(!need) ghostDrop(n);
   }
   cv.classList.toggle('graphOn',on);
+  document.body.classList.toggle('noedit',dashMode && !on);   // правка графа — только когда он виден в тайлах
   syncGraphClip();
   markWiresDirty();
 }
@@ -1603,6 +1635,7 @@ function setDash(on){
       content.appendChild(n.el); applySize(n); n.onResize?.(n); }  // вернуть высоты холстового режима
     for(const n of Graph.nodes) ghostDrop(n);
     cv.classList.remove('graphOn');
+    document.body.classList.remove('noedit');
     markWiresDirty();
     dashGridEl.innerHTML='';
     dashRO?.disconnect(); dashObserved.clear();
@@ -1866,6 +1899,7 @@ flush();                                            // ← синхронизи�
 return {v:1, view:{...view},
 nodes:Graph.nodes.map(n=>{ const o={id:n.id,type:n.type,x:n.x,y:n.y,
 w:n.size.w,h:n.size.h,p:{...n.p},f:n.lod|0,a:n.advOpen?1:0};
+if(n.name) o.name=n.name;
 if(n.dash) o.dash=1;                                // закреплён (📌) для дашборда
 return o; }),
 edges:Graph.edges.map(e=>({from:e.from,fp:e.fp,to:e.to,tp:e.tp})),
@@ -1913,6 +1947,7 @@ let max=1;
 for(const n of o.nodes){ const nn=addNode(n.type,n.x,n.y,n.p,n.id);
 if(nn &&n.f) setLod(nn,n.f===LOD_DOT ? LOD_DOT : LOD_CARD);
 if(nn &&n.a) setAdvOpen(nn,true);
+if(nn &&n.name) setNodeName(nn,n.name);
 if(nn &&n.w){ nn.size.w=n.w; nn.size.h=n.h||nn.size.h; applySize(nn); }
 // n.dash — старые сохранения с 📌: такие узлы сами занимают свободные панели при входе в тайлы
 if(nn &&n.dash) nn.dash=true;
@@ -1978,7 +2013,14 @@ runBtn.innerHTML = on?RUN_STOP:RUN_PLAY;
 runBtn.classList.toggle('on',on);
 }
 Eng.onRunChange=()=>{ syncRunBtn(); wakeDraw(); };
+// запуск просит все разрешения сразу (камера, датчики): модулям с onRun не нужно жать «Start» руками;
+// вызываем до await — iOS требует, чтобы запрос был прямо из тапа
+function askPermissions(){
+for(const n of Graph.nodes){
+try{ Promise.resolve(MOD[n.type].onRun?.(n)).catch(()=>{}); }catch(e){} }
+}
 runBtn.onclick=async()=>{
+if(!(Eng.running&&!Eng.paused)) askPermissions();
 const on=await Eng.toggle();
 if(!on){ stat.textContent='paused'; stat.classList.remove('warn','crit'); }
 };
