@@ -490,3 +490,67 @@ def({ id:'tclock', title:'Trigger Clock', cat:'Control',
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     r.textContent=(n.stopped?'stopped · ':'')+'triggers '+n.fired+(n.p.mode==='schedule'?' · '+n.p.at:' · next in '+Math.max(0,n.next-n.time).toFixed(1)+' s'); }
 });
+
+/* ---------- Stopwatch ---------- */
+// Замер интервала между событием start и событием stop (задержки, время передачи данных).
+// Событие: фронт числа/сигнала через порог (в сигнале — с точностью до доли отсчёта), либо новое значение
+// не-числового входа (текст, rec, bin). Часы: wall — performance.now() (реальное время, мкс),
+// samples — счётчик отсчётов узла (точное время в цепочке DSP, не зависит от нагрузки).
+function swReset(n){
+  n.run=false; n.t0=0; n.last=null; n.st=swStat(); n.recQ=[]; n.es={}; n.pv={};
+}
+function swClock(n){ return n.p.clock==='samples' ? n.smp/Eng.sr*1000 : performance.now(); }
+function swAbs(n,t){ return n.clk==='samples' ? t : performance.timeOrigin+t; }
+function swEvent(n,k,t){
+  if(k==='reset'){ swReset(n); return; }
+  const toggle=k==='start' && n.p.mode==='toggle' && n.run;
+  if(k==='start' && !toggle){
+    if(n.run && n.p.again==='ignore') return;
+    n.run=true; n.t0=t; n.clk=n.p.clock; return;
+  }
+  if(!n.run) return;                                   // stop (или повторный toggle) без старта
+  const ms=Math.max(0,t-n.t0);
+  n.run=false; n.last=ms; n.done=1; swAdd(n.st,ms);
+  n.recQ.push({n:n.st.n, start:swAbs(n,n.t0), end:swAbs(n,t), ms, clock:n.clk});
+  if(n.recQ.length>20000) n.recQ.splice(0,n.recQ.length-20000);
+}
+function swInput(n,key,v,ev){
+  if(v===null || v===undefined){ delete n.es[key]; n.pv[key]=null; return; }
+  if(typeof v==='number' || v instanceof Float32Array){
+    for(const p of swEdges(n.es[key]||(n.es[key]={}),v,+n.p.thr,.05)) ev.push({p,k:key});
+  } else {
+    if(v!==n.pv[key] && v.length!==0) ev.push({p:0,k:key});
+    n.pv[key]=v;
+  }
+}
+def({ id:'stopwatch', title:'Stopwatch', cat:'Control',
+  ins:[{n:'start',t:'val'},{n:'stop',t:'val'},{n:'reset',t:'val'}],
+  outs:[{n:'ms',t:'num'},{n:'elapsed',t:'num'},{n:'run',t:'num'},{n:'done',t:'num'},{n:'rec',t:'rec'},
+        {n:'text',t:'txt'},{n:'mean',t:'num'},{n:'n',t:'num'}],
+  readout:true, tall:true,
+  params:[
+    {n:'clock',t:'select',opts:['wall','samples'],d:'wall',label:'clock (wall = real time, samples = sample count)'},
+    {n:'mode',t:'select',opts:['start/stop','toggle'],d:'start/stop',label:'mode (toggle: every start edge flips)'},
+    {n:'again',t:'select',opts:['ignore','restart'],d:'ignore',label:'start while running'},
+    {n:'thr',t:'range',min:-1,max:1,step:.01,d:.5,label:'threshold'},
+    {n:'go',t:'button',label:'Start / Stop',fn:n=>swEvent(n,n.run ? 'stop' : 'start',swClock(n))},
+    {n:'rst',t:'button',label:'Reset',fn:n=>swEvent(n,'reset')},
+  ],
+  init:n=>{ n.smp=0; n.clk=n.p.clock; n.done=0; swReset(n); },
+  process(n,I){
+    const w0=performance.now(), sr=Eng.sr, ev=[];
+    n.done=0;
+    swInput(n,'start',I.start,ev); swInput(n,'stop',I.stop,ev); swInput(n,'reset',I.reset,ev);
+    ev.sort((a,b)=>a.p-b.p);
+    for(const e of ev) swEvent(n,e.k, n.p.clock==='samples' ? (n.smp+e.p)/sr*1000 : w0+e.p/sr*1000);
+    n.smp+=BLOCK;
+    const el=n.run ? Math.max(0,(n.clk==='samples' ? (n.smp)/sr*1000 : w0)-n.t0) : 0;
+    n.elapsed=el;
+    const s=n.st, last=n.last;
+    return {ms:last??0, elapsed:el, run:n.run?1:0, done:n.done, rec:n.recQ.length ? n.recQ.splice(0) : null,
+      text:last!==null ? swFmt(last) : null, mean:s.n ? s.mean : 0, n:s.n};
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const s=n.st, l1=n.run ? '● '+swFmt(n.elapsed) : n.last!==null ? swFmt(n.last) : '—';
+    r.textContent=l1+(s.n ? '\nn '+s.n+' · min '+swFmt(s.min)+' · avg '+swFmt(s.mean)+' · max '+swFmt(s.max)+' · σ '+swFmt(swSd(s)) : ''); }
+});
