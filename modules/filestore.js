@@ -287,16 +287,15 @@ let fmDrag=null;
 /* ---- узел: файловый менеджер ---- */
 def({ id:'files', title:'Files', cat:'Output', kw:'file manager storage samples images folder browser upload download', w:340, h:360, resize:true,
   ins:[], outs:[{n:'id',t:'num'},{n:'name',t:'txt'},{n:'size',t:'num'},{n:'send',t:'num'},{n:'bin',t:'bin'}],
-  params:[{n:'sendBtn',t:'button',label:'Send selected → (pulse on `send`)',fn:n=>{ if(n.sel && typeof n.sel.id==='number') n.pend=n.sel.id; }},
+  params:[{n:'meta',t:'check',d:true,label:'bin: attach name and type (off — bare bytes)'},
+    {n:'sendBtn',t:'button',label:'Send selected → (pulse on `send`, bytes on `bin`)',fn:n=>{ if(n.sel && typeof n.sel.id==='number') n.pend=n.sel.id; }},
     {n:'space',t:'select',opts:FS_SPACES,d:'files',label:'storage',fn:n=>{ n.fm?.setSpace(n.p.space); }}],
-  init:n=>{ n.fm=null; n.sel=null; n.pend=-1; n.binOut=null; n.binKey=''; },
+  init:n=>{ n.fm=null; n.sel=null; n.pend=-1; n.binOut=null; },
   dispose:n=>{ n.fm?.destroy(); n.fm=null; },
   process(n){ const send=n.pend; n.pend=-1;     // импульс: id на один блок, потом -1
-    const r=n.sel, key=r && typeof r.id==='number' ? r.id+'|'+r.modified : '';
-    if(key!==n.binKey){                           // байты выбранного файла подгружаются при смене выбора (до 64 МБ)
-      n.binKey=key; n.binOut=null;
-      if(r && r.blob && r.blob.size<=67108864) r.blob.arrayBuffer().then(a=>{ if(n.binKey===key) n.binOut=binObj(new Uint8Array(a),fmFileName(r),r.mime); });
-    }
+    const r=n.sel;
+    if(send>=0 && r && r.blob)                    // байты уходят только по кнопке
+      r.blob.arrayBuffer().then(a=>{ n.binOut=n.p.meta ? binObj(new Uint8Array(a),fmFileName(r),r.mime) : binObj(new Uint8Array(a)); });
     return {id:r && typeof r.id==='number' ? r.id : -1, name:r?.name||'', size:r?.size||0, send, bin:n.binOut}; },
   draw(n){
     if(n.fm && n.mid.contains(n.fm.root)) return;
