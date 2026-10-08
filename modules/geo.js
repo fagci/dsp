@@ -1222,7 +1222,7 @@ function geoDrawLinks(n,cx,v){
     }
     if(lab && e.label) labs.push([e.label,sm.x,sm.y]);
   }
-  cx.globalAlpha=1; cx.font='10px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle'; cx.fillStyle='#d8e0e3'; cx.strokeStyle='rgba(10,13,14,.85)'; cx.lineWidth=3;
+  cx.globalAlpha=1; cx.font='10px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle'; cx.fillStyle=themeColor('--scr-txt'); cx.strokeStyle=themeRgba('--screen',.85); cx.lineWidth=3;
   for(const [t,x,y] of labs){ cx.strokeText(t,x,y-6); cx.fillText(t,x,y-6); }
   cx.restore();
 }
@@ -1420,8 +1420,13 @@ function geoPathLayer(cx,layer,v,z){
     }
   }
 }
-const GEO_COL={sea:'#0b1419', land:'#151d21', coast:'#33454e', lake:'#0e1c24', river:'#1d3645',
+const GEO_COL_DARK={sea:'#0b1419', land:'#151d21', coast:'#33454e', lake:'#0e1c24', river:'#1d3645',
   adm0:'#6d7f88', adm1:'#34444c', label:'#8d9ea6', labelDim:'#62737b', place:'#b8c4ca', grid:'rgba(120,160,180,.18)'};
+const GEO_COL_LIGHT={sea:'#d9e6ee', land:'#f1efe9', coast:'#9eb0b9', lake:'#cbdfea', river:'#8fb8d0',
+  adm0:'#7a8a92', adm1:'#b3bec4', label:'#4a5a62', labelDim:'#7a8a92', place:'#25313a', grid:'rgba(60,90,110,.18)'};
+// светлая тема — светлая подложка (экран узла светлый)
+function geoLight(){ const h=themeColor('--screen').replace('#',''); return h.length===6 && parseInt(h.slice(0,2),16)>128; }
+function geoCol(){ return geoLight() ? GEO_COL_LIGHT : GEO_COL_DARK; }
 
 const GEO_BASE_CAP=matchMedia('(pointer:coarse)').matches ? 4e6 : 1.2e7;   // пикселей буфера подложки
 function geoMapDraw(n,cv,cx){
@@ -1430,7 +1435,7 @@ function geoMapDraw(n,cv,cx){
   // подложка — в отдельную канву с полями M: при панораме сдвигаем готовую картинку,
   // при зуме растягиваем её и перерисовываем, когда зум успокоился
   const now=performance.now(), M=Math.round(Math.min(W,H)*.35);
-  const key=[W,H,cv.pxW,GeoBase.gen,n.p.tiles,n.p.overlay,n.p.ovAlpha,n.p.tileUrl,n.p.tileUrl2,n.vgen,n.p.grid,n.p.tiles!=='none'||n.p.overlay!=='none'?GeoTiles.gen:0].join(':');
+  const key=[geoLight(),W,H,cv.pxW,GeoBase.gen,n.p.tiles,n.p.overlay,n.p.ovAlpha,n.p.tileUrl,n.p.tileUrl2,n.vgen,n.p.grid,n.p.tiles!=='none'||n.p.overlay!=='none'?GeoTiles.gen:0].join(':');
   if(v.S!==n._lastS){ n._lastS=v.S; n._zoomT=now; }
   const bv=n._bv, f=bv ? v.S/bv.S : 1;
   let dx=0, dy=0, ok=bv && n._baseKey===key && (f===1 || now-n._zoomT<200);
@@ -1486,26 +1491,26 @@ function geoDrawRasters(n,cx,v){
 }
 function geoDrawBase(n,cx,v){
   const {W,H,z}=v, D=GeoBase.data;
-  cx.fillStyle=GEO_COL.sea; cx.fillRect(0,0,W,H);
+  cx.fillStyle=geoCol().sea; cx.fillRect(0,0,W,H);
   const tiles=geoSrc(n,'tiles'), over=geoSrc(n,'overlay');
   if(tiles) geoDrawTiles(n,cx,v,tiles,1);
   if(over) geoDrawTiles(n,cx,v,over,clamp(+n.p.ovAlpha||.7,0,1));
   if(D){
     if(!tiles){
       cx.beginPath(); geoPathLayer(cx,D.land,v,z);
-      cx.fillStyle=GEO_COL.land; cx.fill('evenodd');
-      cx.strokeStyle=GEO_COL.coast; cx.lineWidth=1; cx.stroke();
+      cx.fillStyle=geoCol().land; cx.fill('evenodd');
+      cx.strokeStyle=geoCol().coast; cx.lineWidth=1; cx.stroke();
       cx.beginPath(); geoPathLayer(cx,D.lakes,v,z);
-      cx.fillStyle=GEO_COL.lake; cx.fill('evenodd'); cx.strokeStyle=GEO_COL.river; cx.stroke();
+      cx.fillStyle=geoCol().lake; cx.fill('evenodd'); cx.strokeStyle=geoCol().river; cx.stroke();
       cx.beginPath(); geoPathLayer(cx,D.rivers,v,z);
-      cx.strokeStyle=GEO_COL.river; cx.stroke();
+      cx.strokeStyle=geoCol().river; cx.stroke();
     }
     if(z>=3){
       cx.beginPath(); geoPathLayer(cx,D.adm1,v,Math.max(z,4)+2);
-      cx.strokeStyle=tiles?'rgba(80,60,120,.6)':GEO_COL.adm1; cx.setLineDash([3,3]); cx.stroke(); cx.setLineDash([]);
+      cx.strokeStyle=tiles?'rgba(80,60,120,.6)':geoCol().adm1; cx.setLineDash([3,3]); cx.stroke(); cx.setLineDash([]);
     }
     cx.beginPath(); geoPathLayer(cx,D.adm0,v,99);
-    cx.strokeStyle=tiles?'rgba(90,40,110,.8)':GEO_COL.adm0; cx.lineWidth=1.2; cx.stroke(); cx.lineWidth=1;
+    cx.strokeStyle=tiles?'rgba(90,40,110,.8)':geoCol().adm0; cx.lineWidth=1.2; cx.stroke(); cx.lineWidth=1;
   }
   gdVecDraw(n,cx,v);
   if(n.p.grid!=='none') geoDrawGrid(n,cx,v);
@@ -1544,7 +1549,7 @@ function geoDrawGrid(n,cx,v){
     const st=[30,10,5,2,1,0.5,0.2,0.1,0.05,0.02,0.01];
     const want=(lon1-lon0)/6; dlon=st.find(s=>s<=want)||0.01; dlat=dlon;
   }
-  cx.strokeStyle=GEO_COL.grid; cx.beginPath();
+  cx.strokeStyle=geoCol().grid; cx.beginPath();
   for(let lon=Math.floor((lon0+180)/dlon)*dlon-180; lon<=lon1; lon+=dlon){
     const x=mercX(lon)*S-ox; cx.moveTo(x,0); cx.lineTo(x,H); }
   for(let lat=Math.floor((lat0+90)/dlat)*dlat-90; lat<=lat1; lat+=dlat){
@@ -1577,13 +1582,13 @@ function geoDrawLabels(n,cx,v){
     }
   };
   cx.textBaseline='middle';
-  cx.font='bold 11px sans-serif'; cx.fillStyle=GEO_COL.label;
+  cx.font='bold 11px sans-serif'; cx.fillStyle=geoCol().label;
   if(z<7) each(D.countryLabels,(p,x,y)=>{
     if(p.mz>z+1.5) return;
     const w=cx.measureText(p.name).width;
     if(geoLabelBox(boxes,x-w/2,y-7,w,14)) cx.fillText(p.name,x-w/2,y);
   });
-  cx.font='10px sans-serif'; cx.fillStyle=GEO_COL.labelDim;
+  cx.font='10px sans-serif'; cx.fillStyle=geoCol().labelDim;
   if(z>=4) each(D.adm1Labels,(p,x,y)=>{
     if(p.mz>z+1) return;
     const w=cx.measureText(p.name).width;
@@ -1596,7 +1601,7 @@ function geoDrawLabels(n,cx,v){
     cx.font=(big?'bold ':'')+'10px sans-serif';
     const w=cx.measureText(name).width;
     if(!geoLabelBox(boxes,x-12,y-12,w+30,24)) return;  // с полем — не впритык
-    cx.fillStyle=GEO_COL.place;
+    cx.fillStyle=geoCol().place;
     cx.fillRect(x-(big?2:1.5),y-(big?2:1.5),big?4:3,big?4:3);
     cx.fillText(name,x+5,y); placed++;
   };
@@ -1684,7 +1689,7 @@ function geoIcon(cx,icon,x,y,s,rot,col){
     case 'dot':
       cx.arc(0,0,s*.8,0,2*Math.PI); cx.fill(); cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=1; cx.stroke(); break;
     default:                                         // любой короткий текст/эмодзи как значок, на подложке
-      cx.arc(0,0,s*1.25,0,2*Math.PI); cx.fillStyle='rgba(10,13,14,.85)'; cx.fill(); cx.lineWidth=1.5; cx.stroke();
+      cx.arc(0,0,s*1.25,0,2*Math.PI); cx.fillStyle=themeRgba('--screen',.85); cx.fill(); cx.lineWidth=1.5; cx.stroke();
       cx.fillStyle=col; cx.font='bold '+Math.round(s*1.7)+'px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
       cx.fillText(String(icon).slice(0,4),0,s*.1);
   }
@@ -1819,14 +1824,14 @@ function geoDrawObjects(n,cx,v){
     const y=c.my*S-v.oy;
     if(x<-30 || x>W+30 || y<-30 || y>H+30) continue;
     cx.beginPath(); cx.arc(x,y,c.r,0,2*Math.PI);
-    cx.fillStyle='rgba(10,13,14,.85)'; cx.fill(); cx.strokeStyle=c.col; cx.stroke();
+    cx.fillStyle=themeRgba('--screen',.85); cx.fill(); cx.strokeStyle=c.col; cx.stroke();
     cx.fillStyle=c.col; cx.fillText(c.t,x,y+.5);
     n.clusters.push({x,y,r:c.r});
   }
   cx.globalAlpha=1;
   // подписи после значков, без наложений: важные первыми, 4 позиции вокруг точки
   labs.sort((a,b)=>b.pri-a.pri);
-  cx.font='11px monospace'; cx.textBaseline='middle'; cx.textAlign='left'; cx.lineWidth=3; cx.strokeStyle='rgba(0,0,0,.7)';
+  cx.font='11px monospace'; cx.textBaseline='middle'; cx.textAlign='left'; cx.lineWidth=3; cx.strokeStyle=themeRgba('--screen',.8);
   const boxes=[];
   for(const L of labs){
     const w=cx.measureText(L.t).width, d=L.size+4;
@@ -1845,17 +1850,17 @@ function geoDrawOverlay(n,cx,v){
   const box=(lines,x,y,alignRight)=>{
     const w=Math.max(...lines.map(l=>cx.measureText(l).width))+10, h=lines.length*13+6;
     const bx=alignRight ? x-w : x, by=y;
-    cx.fillStyle='rgba(10,13,14,.82)'; cx.fillRect(bx,by,w,h);
-    cx.fillStyle='#c8d2d6'; lines.forEach((l,i)=>cx.fillText(l,bx+5,by+14+i*13));
+    cx.fillStyle=themeRgba('--screen',.82); cx.fillRect(bx,by,w,h);
+    cx.fillStyle=themeColor('--scr-txt'); lines.forEach((l,i)=>cx.fillText(l,bx+5,by+14+i*13));
   };
   // масштабная линейка
   const mpp=40075016.686*Math.cos(n.p.mlat*D2R)/S, target=mpp*90;
   const steps=[1,2,5]; let len=1;
   for(let p=1;p<1e8;p*=10) for(const s of steps) if(s*p<=target) len=s*p;
   const px=len/mpp;
-  cx.strokeStyle='#c8d2d6'; cx.lineWidth=1.5; cx.beginPath();
+  cx.strokeStyle=themeColor('--scr-txt'); cx.lineWidth=1.5; cx.beginPath();
   cx.moveTo(8,H-10); cx.lineTo(8+px,H-10); cx.moveTo(8,H-14); cx.lineTo(8,H-6); cx.moveTo(8+px,H-14); cx.lineTo(8+px,H-6); cx.stroke();
-  cx.fillStyle='#c8d2d6'; cx.fillText(len>=1000 ? len/1000+' km' : len+' m',12+px,H-6);
+  cx.fillStyle=themeColor('--scr-txt'); cx.fillText(len>=1000 ? len/1000+' km' : len+' m',12+px,H-6);
   // статус
   const st=[];
   if(GeoBase.state!=='ready') st.push('base map: '+GeoBase.state+(GeoBase.err?' — '+GeoBase.err:''));
