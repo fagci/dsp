@@ -394,14 +394,16 @@ async function tblImport(n,files){
   }
   if(last) await tblUse(n,last);
 }
-function tblExport(n){
+function tblExportFile(n){
   const cl=n.cl, rows=n.all, fmt=n.p.fmt, base=(tblSplit(n.p.list)[1]||'table').replace(/[^\w.-]+/g,'_');
-  if(fmt==='json') dl(new Blob([JSON.stringify(rows.map(r=>{ const o={}; for(const c of cl) o[c]=r[c]; return o; }),null,1)],{type:'application/json'}),base+'.json');
-  else if(fmt==='tsv'){
+  if(fmt==='json') return {name:base+'.json', blob:new Blob([JSON.stringify(rows.map(r=>{ const o={}; for(const c of cl) o[c]=r[c]; return o; }),null,1)],{type:'application/json'})};
+  if(fmt==='tsv'){
     const cell=v=>String(v??'').replace(/[\t\r\n]+/g,' ');
-    dl(new Blob(['﻿'+[cl,...rows.map(r=>cl.map(c=>r[c]))].map(r=>r.map(cell).join('\t')).join('\r\n')],{type:'text/tab-separated-values;charset=utf-8'}),base+'.tsv');
-  } else dl(new Blob(['﻿'+[cl,...rows.map(r=>cl.map(c=>r[c]))].map(r=>r.map(csvCell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}),base+'.csv');
+    return {name:base+'.tsv', blob:new Blob(['\ufeff'+[cl,...rows.map(r=>cl.map(c=>r[c]))].map(r=>r.map(cell).join('\t')).join('\r\n')],{type:'text/tab-separated-values;charset=utf-8'})};
+  }
+  return {name:base+'.csv', blob:new Blob(['\ufeff'+[cl,...rows.map(r=>cl.map(c=>r[c]))].map(r=>r.map(csvCell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'})};
 }
+function tblExport(n,share){ const f=tblExportFile(n); if(share) shareFile(f.blob,f.name); else dl(f.blob,f.name); }
 async function tblExportAll(){
   const lists={};
   for(const name of await ListDB.listNames()){
@@ -688,6 +690,7 @@ function tblMainMenu(n){
   it('Import file…','CSV, TSV, TXT, JSON, KML, GPX, GeoJSON — each file becomes a list',()=>n.ui.fileEl.click());
   it('Open data…','objects from open sources (cell towers, masts, repeaters, peaks, own Overpass query) and terrain elevation for rows with lat / lon',()=>gdOpenMenu(n));
   it('Export this list','format in advanced',()=>tblExport(n));
+  it('Share this list…','send it through the system share menu',()=>tblExport(n,true));
   it('Export all lists','all lists in one JSON file (import brings them back)',()=>tblExportAll());
   tblMenuHead(m,'List');
   it('Copy to…','another list, the patch or the browser DB',()=>tblCopy(n));
