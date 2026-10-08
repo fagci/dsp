@@ -12,7 +12,7 @@
 // весь список (отмеченные списки) как bands (для 'sa') и rows (для Graph / Map), выбранная запись — lo/mid/hi/span/step.
 
 const TBL_PATCH='@patch', TBL_PRE='presets/', TBL_ROWS=300;
-const TBL_FIXED=new Set([...SEQ_FIXED,'bands','rows','mid','span']);   // 'bands' — старое имя выхода, колонка с таким именем по-прежнему получает «_»
+const TBL_FIXED=new Set([...SEQ_FIXED,'rows','mid','span']);
 const TBL_LO=['lo','low','start','freq','frequency'], TBL_HI=['hi','high','end'],
   TBL_LABEL=['name','label','title'], TBL_COLOR=['color','colour'], TBL_STEP=['step'];
 const TBL_HZ=/^(lo|hi|low|high|start|end|freq|frequency|step)$/i;
@@ -332,6 +332,21 @@ async function tblClear(n){
   if(tblKind(n.p.list)==='patch') await tblSave(n);
   tblDerive(n); seqReset(n);
 }
+// набор на входе rows → в активный список: заменить строки или дописать (станции после поиска, любой набор записей)
+async function tblFromRows(n,list){
+  if(tblRO(n) || n.loaded!==n.p.list){ n.rowsAgain=list; return; }
+  if(n.rowsBusy){ n.rowsAgain=list; return; }
+  n.rowsBusy=true;
+  try{
+    if(n.p.rowsIn!=='add') await tblClear(n);
+    await tblAdd(n,list.filter(r=>r && typeof r==='object'));
+    n.uiDirty=true;
+  }catch(e){ console.warn('table rows in:',e); }
+  finally{
+    n.rowsBusy=false;
+    if(n.rowsAgain){ const a=n.rowsAgain; n.rowsAgain=null; tblFromRows(n,a); }
+  }
+}
 async function tblColsEdit(n,cl){                       // переименование/добавление/удаление колонок
   if(tblRO(n)) return;
   const old=n.cl;
@@ -435,7 +450,7 @@ function tblFlush(n){
 }
 
 /* ---------- узел ---------- */
-const tblIns=n=>[{n:'trig',t:'val'},{n:'row',t:'val'},{n:'t',t:'num'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'sigs',t:'bands'}]
+const tblIns=n=>[{n:'trig',t:'val'},{n:'row',t:'val'},{n:'t',t:'num'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'rows',t:'bands'},{n:'sigs',t:'bands'}]
   .concat(n.p.log ? ['a','b','c','d'].map(k=>({n:k,t:'num'})) : []);
 const tblOuts=n=>{
   const o=[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'row',t:'num'},{n:'count',t:'num'},{n:'next',t:'num'},
@@ -460,6 +475,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     {n:'initial',t:'check',d:true,label:'first row at start',adv:true},
     {n:'reset',t:'button',label:'Reset',fn:n=>seqReset(n),adv:true},
     {n:'collect',t:'check',d:true,label:'store rec / text wires',adv:true},
+    {n:'rowsIn',t:'select',opts:['replace','add'],d:'replace',label:'rows in (wire)',tip:'a set on the rows input is stored in the active list: replace its rows, or add to them'},
     {n:'textCsv',t:'check',d:false,label:'text wire: split into columns',adv:true},
     {n:'log',t:'check',d:false,label:'log inputs a–d',adv:true,fn:n=>{ tblRebuild(n,true); }},
     {n:'period',t:'range',min:.05,max:60,step:.05,d:1,label:'log period, s',adv:true},
@@ -509,6 +525,8 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
       if(typeof I.text==='string' && I.text!==n.lastText){ n.lastText=I.text; if(I.text) n.pend.push(...tblTextRows(n,I.text)); }
     }
     if(p.log){ n.logT+=dt; if(n.logT>=Math.max(.05,+p.period||1)){ n.logT=0; n.pend.push(tblLogRow(n,I)); } }
+    if(Array.isArray(I.rows) && I.rows!==n.lastRowsIn){ n.lastRowsIn=I.rows; if(!tblRO(n)) tblFromRows(n,I.rows); }
+    else if(n.rowsAgain && !n.rowsBusy && n.loaded===n.p.list && !tblRO(n)){ const a=n.rowsAgain; n.rowsAgain=null; tblFromRows(n,a); }
     if(n.pend.length>5000) n.pend.splice(0,n.pend.length-5000);
     if(n.pend.length && performance.now()-n.lastFlush>500) tblFlush(n);
 

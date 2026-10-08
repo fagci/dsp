@@ -94,6 +94,19 @@ function gvEdgeRec(r,ovr){                          // запись → {from,to
   const w=f.w!=null && r[f.w]!=='' ? +String(r[f.w]).replace(',','.') : NaN;
   return {from:a,to:b,w:Number.isFinite(w) ? w : NaN,label:f.label!=null ? String(r[f.label]??'') : '',color:f.color!=null ? String(r[f.color]||'') : ''};
 }
+// записи набора rows → узлы и связи: связь — запись с непустыми from и to (или их псевдонимами), остальное — узлы;
+// разбор кэшируется по самому массиву, поэтому ссылки стабильны, пока набор не сменился
+function rowIsEdge(r){
+  if(!r || typeof r!=='object') return false;
+  const f=gvKeys(r,GV_ALIAS,null);
+  return f.from!=null && f.to!=null && String(r[f.from]??'').trim()!=='' && String(r[f.to]??'').trim()!=='';
+}
+const ROWS_SPLIT=new WeakMap();
+function rowsSplit(rows){
+  let c=ROWS_SPLIT.get(rows);
+  if(!c){ c={nodes:[],edges:[]}; for(const r of rows){ if(r && typeof r==='object') (rowIsEdge(r) ? c.edges : c.nodes).push(r); } ROWS_SPLIT.set(rows,c); }
+  return c;
+}
 function gvPut(map,e){                              // без веса повтор пары утолщает ребро
   const key=gvKey(e.from,e.to), c=map.get(key);
   if(!c) map.set(key,{from:e.from,to:e.to,w:Number.isFinite(e.w) ? e.w : 1,label:e.label,color:e.color});
@@ -241,7 +254,7 @@ function gvRemap(n){                                // другие колонк
 function gvRestyle(n){ n.sigN.clear(); n.sigE.clear(); n.sync=true; n.net?.setOptions({physics:{enabled:!!n.p.physics}}); redraw(n); }
 
 def({ id:'graphview', title:'Graph', cat:'Output', kw:'network graph links nodes edges csv vis connections', resize:true, gv:true, readout:true, w:420, h:300,
-  ins:[{n:'text',t:'txt'},{n:'rec',t:'rec'},{n:'set',t:'bands'},{n:'nodes',t:'bands'}],
+  ins:[{n:'text',t:'txt'},{n:'rec',t:'rec'},{n:'rows',t:'bands'}],
   outs:[{n:'nodes',t:'num'},{n:'edges',t:'num'},{n:'sel',t:'txt'}],
   params:[{n:'delim',t:'select',opts:['auto',',',';','tab','|'],d:'auto',label:'delimiter',fn:n=>gvClear(n)},
           {n:'directed',t:'check',d:false,label:'arrows',fn:gvRestyle},
@@ -266,8 +279,9 @@ def({ id:'graphview', title:'Graph', cat:'Output', kw:'network graph links nodes
     if(typeof I.text==='string' && I.text!==n.lastText){ n.lastText=I.text; gvLines(n,I.text,n.hdr); }
     if(I.rec && I.rec!==n.lastRec){ n.lastRec=I.rec; gvRecs(n,I.rec); }
     // снимок: меняется только вместе с самим набором (по ссылке); отключили провод — слой пуст
-    for(const [port,key,set] of [['set','lastSet',gvSetEdges],['nodes','lastNodes',gvSetNodes]]){
-      if(Array.isArray(I[port])){ if(I[port]!==n[key]){ n[key]=I[port]; set(n,I[port]); } }
+    const sp=Array.isArray(I.rows) ? rowsSplit(I.rows) : null;
+    for(const [list,key,set] of [[sp&&sp.edges,'lastSet',gvSetEdges],[sp&&sp.nodes,'lastNodes',gvSetNodes]]){
+      if(list){ if(list!==n[key]){ n[key]=list; set(n,list); } }
       else if(n[key]){ n[key]=null; set(n,[]); }
     }
     if(n.dirty) gvBuild(n);

@@ -773,7 +773,7 @@ const sa=addNode('sa',400,340,{fmin:0,fmax:16000,split:.35});
 sa.size.w=460; sa.size.h=280; applySize(sa);
 const map=addNode('geoMap',900,40,{mz:2,mlat:35,mlon:15,labels:true});
 map.size.w=640; map.size.h=560; applySize(map);
-addEdge(rd.id,'rec',map.id,'rec');
+addEdge(rd.id,'rows',map.id,'rows');
 addEdge(map.id,'sel',rd.id,'select');
 addEdge(rd.id,'url',st.id,'url');
 addEdge(st.id,'audio',dc.id,'L'); addEdge(st.id,'audio',dc.id,'R');
@@ -4803,37 +4803,30 @@ markWiresDirty();
 });
 preset('Graph: Links from CSV', function(){
 clearAll();
-const nt=addNode('note',40,20,{text:'Link graph from two tables. Links table `rows` → Graph `set`: one row = one edge (from, to[, weight[, label[, color]]]). Nodes table `rows` → Graph `nodes`: id, label, shape (dot, square, diamond, star, hexagon, box…), color, size — nodes without a row get the defaults. The wires carry the whole list, so a row deleted or edited in a table disappears or changes in the graph (only the difference is redrawn); a filter on a table limits the graph. Records on `rec` and CSV on `text` still add edges as they come. Click a node: its name goes to `sel`.'});
+const nt=addNode('note',40,20,{text:'Link graph from one table. Table `rows` → Graph `rows`: a row with `from` and `to` is an edge (from, to[, weight[, label[, color]]]), any other row is a node (id, label, shape (dot, square, diamond, star, hexagon, box…), color, size) — nodes without a row get the defaults. The wire carries the whole list, so a row deleted or edited in the table disappears or changes in the graph (only the difference is redrawn); a filter on the table limits the graph. Records on `rec` and CSV on `text` still add edges as they come. Click a node: its name goes to `sel`.'});
 nt.size.w=1000; nt.size.h=100; applySize(nt);
 const ts=addNode('textsrc',40,160,{text:'Demod,Squelch\nSquelch,Recorder\nDecoder,Map\nDecoder,Log'});
 ts.size.w=300; ts.size.h=100; applySize(ts);
 const tb=addNode('table',40,290,{list:'@patch',initial:false,
-  data:'from,to,weight,label\nSDR,Filter,1,\nFilter,Demod,1,\nDemod,Decoder,2,audio\nDemod,Scope,1,\nDecoder,Log,1,'});
-tb.size.w=300; tb.size.h=250; applySize(tb);
-const tn=addNode('table',40,560,{list:'@patch',initial:false,
-  data:'id,label,shape,color\nSDR,SDR,hexagon,#e0a040\nDecoder,Decoder,diamond,\nScope,Scope,square,\nLog,Log,box,'});
-tn.size.w=300; tn.size.h=250; applySize(tn);
+  data:'from,to,weight,label,id,shape,color\nSDR,Filter,1,,,,\nFilter,Demod,1,,,,\nDemod,Decoder,2,audio,,,\nDemod,Scope,1,,,,\nDecoder,Log,1,,,,\n,,,SDR,SDR,hexagon,#e0a040\n,,,Decoder,Decoder,diamond,\n,,,Scope,Scope,square,\n,,,Log,Log,box,'});
+tb.size.w=300; tb.size.h=400; applySize(tb);
 const g=addNode('graphview',380,160,{});
 g.size.w=520; g.size.h=400; applySize(g);
-addEdge(ts.id,'text',g.id,'text'); addEdge(tb.id,'rows',g.id,'set'); addEdge(tn.id,'rows',g.id,'nodes');
+addEdge(ts.id,'text',g.id,'text'); addEdge(tb.id,'rows',g.id,'rows');
 markWiresDirty();
 });
 preset('Network: Same Nodes and Links as Graph and on the Map', function(){
 clearAll();
-const nt=addNode('note',40,20,{text:'One dataset, two views. The nodes table (`id, name, lat, lon, icon, color`) and the links table (`from, to, weight, label`) go both to Graph (`nodes`, `set` — a network) and to Map (`nodes`, `set` — points with icons at their coordinates and lines between them). Edit a row: only the difference is redrawn in both. A node without lat / lon stays in the graph only. Map icons: dot, square, diamond, triangle, star, flag, antenna, tx, rx, plane, ship, sat, balloon or any emoji.'});
+const nt=addNode('note',40,20,{text:'One dataset, two views. One table: node rows (`id, name, lat, lon, icon, color`) and link rows (`from, to, weight, label`) go with `rows` both to Graph (a network) and to Map (points with icons at their coordinates and lines between them). Edit a row: only the difference is redrawn in both. A node without lat / lon stays in the graph only. Map icons: dot, square, diamond, triangle, star, flag, antenna, tx, rx, plane, ship, sat, balloon or any emoji.'});
 nt.size.w=1000; nt.size.h=90; applySize(nt);
 const tn=addNode('table',40,140,{list:'@patch',initial:false,
-  data:'id,name,lat,lon,icon,color\nHQ,Headquarters,50.45,30.52,star,#e0a040\nRelay A,Relay A,50.10,30.00,antenna,\nRelay B,Relay B,50.80,31.20,antenna,\nField 1,Field 1,49.80,29.40,flag,\nField 2,Field 2,51.20,30.10,flag,\nCloud,Cloud,,,square,'});
-tn.size.w=320; tn.size.h=260; applySize(tn);
-const tl=addNode('table',40,420,{list:'@patch',initial:false,
-  data:'from,to,weight,label\nHQ,Relay A,3,link\nHQ,Relay B,2,link\nRelay A,Field 1,1,\nRelay B,Field 2,1,\nHQ,Cloud,1,vpn'});
-tl.size.w=320; tl.size.h=240; applySize(tl);
+  data:'id,name,lat,lon,icon,color,from,to,weight,label\nHQ,Headquarters,50.45,30.52,star,#e0a040,,,,\nRelay A,Relay A,50.10,30.00,antenna,,,,,\nRelay B,Relay B,50.80,31.20,antenna,,,,,\nField 1,Field 1,49.80,29.40,flag,,,,,\nField 2,Field 2,51.20,30.10,flag,,,,,\nCloud,Cloud,,,square,,,,,\n,,,,,,HQ,Relay A,3,link\n,,,,,,HQ,Relay B,2,link\n,,,,,,Relay A,Field 1,1,\n,,,,,,Relay B,Field 2,1,\n,,,,,,HQ,Cloud,1,vpn'});
+tn.size.w=360; tn.size.h=420; applySize(tn);
 const g=addNode('graphview',400,140,{directed:true});
 g.size.w=420; g.size.h=380; applySize(g);
 const m=addNode('geoMap',840,140,{arrows:true});
 m.size.w=480; m.size.h=380; applySize(m);
-addEdge(tn.id,'rows',g.id,'nodes'); addEdge(tl.id,'rows',g.id,'set');
-addEdge(tn.id,'rows',m.id,'nodes'); addEdge(tl.id,'rows',m.id,'set');
+addEdge(tn.id,'rows',g.id,'rows'); addEdge(tn.id,'rows',m.id,'rows');
 markWiresDirty();
 });
 preset('Chat: Text In and Out', function(){

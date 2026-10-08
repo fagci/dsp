@@ -586,7 +586,7 @@ function ovAlign(n){
 def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmented reality hud camera satellite adsb 3d drone fpv sky sun moon planets stars galaxy nebula osm trails line of sight',
   // Видео (vid, или растр img — например, из TV Decoder) + объекты (rec) в 3D + HUD. Камера: lat / lon / alt (м) — где она стоит, az / el / roll — куда смотрит.
   // Без видео рисует небо с горизонтом. Входы a…d — числа в HUD (подписи — параметр «HUD»).
-  ins:[{n:'vid',t:'vid'},{n:'img',t:'img'},{n:'rec',t:'rec'},{n:'rec2',t:'rec'},{n:'nodes',t:'bands'},{n:'set',t:'bands'},
+  ins:[{n:'vid',t:'vid'},{n:'img',t:'img'},{n:'rec',t:'rec'},{n:'rec2',t:'rec'},{n:'rows',t:'bands'},
        {n:'lat',t:'num'},{n:'lon',t:'num'},{n:'alt',t:'num'},
        {n:'az',t:'num'},{n:'el',t:'num'},{n:'roll',t:'num'},{n:'fov',t:'num'},
        {n:'a',t:'num'},{n:'b',t:'num'},{n:'c',t:'num'},{n:'d',t:'num'}],
@@ -654,7 +654,8 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
       else if(!tr) en.trail=[];
       n.ents.set(key,en);
     }
-    ovGraphSet(n,I.nodes,I.set,now);
+    const sp=Array.isArray(I.rows) ? rowsSplit(I.rows) : null;
+    ovGraphSet(n,sp&&sp.nodes,sp&&sp.edges,now);
     if(n.ents.size>2000 || now-(n.pruned||0)>2000){
       n.pruned=now; const ttl=n.p.ttl*1000;
       for(const [key,e] of n.ents) if(now-e.t>ttl) n.ents.delete(key);
