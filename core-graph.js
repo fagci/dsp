@@ -500,7 +500,8 @@ e.innerHTML= `<span class="pin" style="background:${TYPE_COLOR[p.t]}">${p.n}</sp
 return e;
 }
 function paramBtn(n,s){
-const b=document.createElement('button'); b.textContent=s.label||s.n;
+const b=document.createElement('button'), t=s.label||s.n;
+b.textContent=t.length>26 ? shortLabel(t) : t; b.title=s.tip||t;
 b.addEventListener('click',()=>s.fn(n)); return b;
 }
 const JS_TOK=/(\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$))|("(?:[^"\\\n]|\\.)*"?|'(?:[^'\\\n]|\\.)*'?|`(?:[^`\\]|\\[\s\S])*`?)|\b(\d[\w.]*)\b|\b(const|let|var|function|return|if|else|for|while|do|break|continue|new|this|typeof|of|in|true|false|null|undefined|switch|case|default|throw|try|catch|class)\b/g;
