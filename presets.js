@@ -776,8 +776,8 @@ map.size.w=640; map.size.h=560; applySize(map);
 addEdge(rd.id,'rows',map.id,'rows');
 addEdge(map.id,'sel',rd.id,'select');
 addEdge(rd.id,'url',st.id,'url');
-addEdge(st.id,'audio',dc.id,'L'); addEdge(st.id,'audio',dc.id,'R');
-addEdge(st.id,'audio',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
+addEdge(st.id,'L',dc.id,'L'); addEdge(st.id,'R',dc.id,'R');
+addEdge(st.id,'L',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
 markWiresDirty();
 });
 preset('Wi-Fi: Locate Access Points (Termux)', function(){

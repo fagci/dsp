@@ -1961,6 +1961,7 @@ for(const e of o.edges) if(tbls.has(e.from) && e.fp==='bands') e.fp='rows';   //
 for(const e of o.edges){
 const radio=types[e.from]==='radioDir' && e.fp==='rec';
 if(radio) e.fp='rows';
+if((types[e.from]==='stream' || types[e.from]==='dispaudio') && e.fp==='audio') e.fp=e.tp==='R' ? 'R' : 'L';   // моно-выход audio → стерео L / R
 if(['geoMap','graphview','overlay'].includes(types[e.to]) && (e.tp==='nodes' || e.tp==='set' || (radio && /^rec\d*$/.test(e.tp)))) e.tp='rows';
 } }
 for(const e of o.edges){
