@@ -564,11 +564,11 @@ function tblInit(n){
   root.innerHTML=`
     <div class="tbl-head">
       <select class="tbl-pick" title="active list: rows, edit, sequencer"></select>
-      <label class="tbl-chk" title="show this list on the bands output (band plan on the spectrum); more lists — ⋯ → Shown lists"><input type="checkbox" class="tbl-showcb">bands</label>
+      <button class="tbl-btn tbl-shown" title="lists shown on the map and the bands output — tick as many as you need"></button>
       <button class="tbl-btn tbl-new" title="new list">＋</button>
       <button class="tbl-btn tbl-menub" title="actions">⋯</button>
     </div>
-    <div class="tbl-tree" hidden title="☑ — the list is shown on the bands output; click a name — make it the active list"></div>
+    <div class="tbl-tree" hidden></div>
     <div class="tbl-bar">
       <input class="tbl-filter" placeholder="filter: 20m  demod:am  lo>7M" title="words match from the start of any field; col:text, col>5M, col<=100">
       <span class="tbl-count"></span>
@@ -585,7 +585,7 @@ function tblInit(n){
   mid.append(root);
   syncCustomHeight(n,root,150);
   const q=s=>root.querySelector(s);
-  n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), tree:q('.tbl-tree'), pick:q('.tbl-pick'), showcb:q('.tbl-showcb'),
+  n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), tree:q('.tbl-tree'), pick:q('.tbl-pick'), shown:q('.tbl-shown'),
     filter:q('.tbl-filter'), cols:q('.tbl-cols'), edit:q('.tbl-edit'), tail:false, marked:-1};
   n._open=new Set(Array.isArray(n.p.open) ? n.p.open : []);
   if(!Array.isArray(n.p.open)) for(const k of new Set([...tblShow(n),n.p.list])){            // раскрыть пути отмеченных
@@ -593,7 +593,7 @@ function tblInit(n){
     parts.reduce((a,x)=>{ const path=a ? a+'/'+x : x; n._open.add(path); return path; },'');
   }
   n.ui.pick.addEventListener('change',()=>tblPick(n,n.ui.pick.value));
-  n.ui.showcb.addEventListener('change',()=>tblToggleShow(n,[n.p.list],n.ui.showcb.checked));
+  n.ui.shown.addEventListener('click',()=>tblTreeToggle(n));
   n.ui.tree.addEventListener('click',e=>tblTreeClick(n,e));
   n.ui.filter.value=n.p.filter||'';
   n.ui.filter.addEventListener('keydown',e=>e.stopPropagation());
@@ -678,7 +678,7 @@ function tblMainMenu(n){
   it('Delete list','',()=>tblDeleteList(n));
   tblMenuHead(m,'View');
   it(n.ui.cols.hidden ? 'Show columns…' : 'Hide columns','add and remove columns',()=>{ n.ui.cols.hidden=!n.ui.cols.hidden; });
-  it(n.ui.tree.hidden ? 'Shown lists…' : 'Hide shown lists','tick several lists to show them on the bands output',()=>{ n.ui.tree.hidden=!n.ui.tree.hidden; });
+  it('Shown lists…','tick several lists to show them on the map and the bands output',()=>tblTreeToggle(n));
   it(n.ui.tail ? 'Show first rows' : 'Show last rows','',()=>{ n.ui.tail=!n.ui.tail; tblRenderList(n); });
 }
 function tblNewMenu(n){
@@ -750,7 +750,7 @@ function tblRenderTree(n){
   };
   walk(tblBuildTree(n.treeNames||[]),0);
   const keep=ui.tree.scrollTop;
-  ui.tree.innerHTML=html.join('');
+  ui.tree.innerHTML='<div class="tt-top"><span class="tt-ttl">Shown on the map / bands · '+sh.size+'</span><span class="tt-none" title="untick all">none</span><span class="tt-close" title="close">✕</span></div>'+html.join('');
   ui.tree.querySelectorAll('[data-ind="1"]').forEach(c=>{ c.indeterminate=true; });
   ui.tree.scrollTop=keep;
   tblRenderPick(n);
@@ -775,9 +775,13 @@ function tblRenderPick(n){
     if(many) sel.append(host);
   }
   sel.value=n.p.list;
-  ui.showcb.checked=tblShow(n).has(n.p.list);
+  ui.shown.textContent='☑ '+tblShow(n).size;
+  ui.shown.classList.toggle('on',!ui.tree.hidden);
 }
+function tblTreeToggle(n){ n.ui.tree.hidden=!n.ui.tree.hidden; n.ui.shown.classList.toggle('on',!n.ui.tree.hidden); }
 function tblTreeClick(n,e){
+  if(e.target.closest('.tt-close')){ tblTreeToggle(n); return; }
+  if(e.target.closest('.tt-none')){ tblSetShow(n,[]); return; }
   const row=e.target.closest('.tt-dir,.tt-file'); if(!row) return;
   const isCb=e.target.classList.contains('tt-cb');
   if(row.classList.contains('tt-file')){
