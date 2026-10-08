@@ -986,25 +986,26 @@ function serialOutFormat(n,v){
     if(typeof v!=='number' || !isFinite(v)) return '';
     return w ? String(Math.round(v)).padStart(+w,'0') : String(v); });
 }
-function serialOutWrite(n,str){
+function serialOutWrite(n,str,raw){
   if(!n.writer) return;
-  const data=new TextEncoder().encode(str+(SERIAL_EOL[n.p.eol]||''));
+  const data=raw ? str : new TextEncoder().encode(str+(SERIAL_EOL[n.p.eol]||''));
   n.chain=n.chain.then(()=>n.writer?.write(data)).then(()=>{ n.sent++; },
     e=>{ n.status='write error: '+e.message; });
 }
 def({ id:'serialout', title:'Serial Out (WebSerial)', cat:'Output', readout:true,
-  ins:[{n:'text',t:'txt'},{n:'value',t:'num'}], outs:[{n:'reply',t:'txt'},{n:'go',t:'num'}],
+  ins:[{n:'text',t:'txt'},{n:'value',t:'num'},{n:'bin',t:'bin'}], outs:[{n:'reply',t:'txt'},{n:'go',t:'num'}],
   params:[{n:'baud',t:'select',opts:['4800','9600','19200','38400','57600','115200'],d:'9600'},
           {n:'eol',t:'select',opts:['none','\\n','\\r','\\r\\n'],d:'\\n',label:'line end'},
           {n:'template',t:'text',d:'{v}',label:'value template, {v} or {v:11}'},
           {n:'connect',t:'button',label:'Connect',fn:n=>serialOutConnect(n)},
           {n:'disconnect',t:'button',label:'Disconnect',fn:n=>serialOutDisconnect(n)}],
   init:n=>{ n.port=null; n.reader=null; n.writer=null; n.connected=false; n.connecting=false; n.reading=false;
-            n.chain=Promise.resolve(); n.lastText=undefined; n.lastVal=undefined; n.reply=''; n.pulse=0;
+            n.chain=Promise.resolve(); n.lastText=undefined; n.lastVal=undefined; n.lastBin=null; n.reply=''; n.pulse=0;
             n.sent=0; n.status='not connected'; },
   dispose:n=>{ serialOutDisconnect(n); },
   process(n,I){
     if(n.connected){
+      if(I.bin && I.bin.d && I.bin!==n.lastBin){ n.lastBin=I.bin; serialOutWrite(n,I.bin.d,true); }   // байты без конца строки
       if(typeof I.text==='string' && I.text!==n.lastText){ n.lastText=I.text; if(I.text) serialOutWrite(n,I.text); }
       if(typeof I.value==='number' && isFinite(I.value) && I.value!==n.lastVal){
         n.lastVal=I.value; serialOutWrite(n,serialOutFormat(n,I.value)); }
