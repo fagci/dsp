@@ -282,6 +282,7 @@ const PRESET_CATS={
   'Game: Tic-Tac-Toe over WebRTC':'Games',
   'Game: Connect Four over WebRTC':'Games',
   'Game: Battleship over WebRTC':'Games',
+  'Game: Reversi over WebRTC':'Games',
   'Game: Tic-Tac-Toe over MQTT':'Games',
   'BLE: Heart Rate Monitor':'Network & IoT',
   'BLE: Find a Beacon by RSSI':'Network & IoT',
@@ -4939,6 +4940,7 @@ markWiresDirty();
 gamePreset('Game: Tic-Tac-Toe over WebRTC','gtictactoe',280,330,false);
 gamePreset('Game: Connect Four over WebRTC','gconnect4',360,420,false);
 gamePreset('Game: Battleship over WebRTC','gbattleship',400,380,false);
+gamePreset('Game: Reversi over WebRTC','greversi',360,420,false);
 gamePreset('Game: Tic-Tac-Toe over MQTT','gtictactoe',280,330,true);
 preset('Unknown Signal: Blind Analysis (Generator)', function(){
 clearAll();

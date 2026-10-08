@@ -865,6 +865,7 @@ select.aed-b{padding:0 6px}
 .ng-disc.f1{background:var(--acc);border-color:var(--acc)}
 .ng-disc.f2{background:var(--acc2);border-color:var(--acc2)}
 .ng-disc.last{box-shadow:inset 0 0 0 2px var(--bg)}
+.ng-c.hint::after{content:'';width:30%;height:30%;border-radius:50%;background:var(--dim);opacity:.5}
 
 /* ---- Table (modules/table.js): список, правка панелью снизу, меню действий ---- */
 .tbl-ui{position:relative;display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--txt);box-sizing:border-box;

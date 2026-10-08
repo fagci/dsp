@@ -245,3 +245,44 @@ const BS={
   }
 };
 ngDef({id:'gbattleship',title:'Battleship (2 players)',kw:'battleship sea battle ships',w:380,spec:BS});
+
+/* ---- реверси ---- */
+const RV_N=8, RV_D=[[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+function rvFlips(b,i,p){                             // клетки, которые перевернёт ход p в i
+  if(b[i]) return [];
+  const r0=Math.floor(i/RV_N), c0=i%RV_N, out=[];
+  for(const [dr,dc] of RV_D){
+    const line=[]; let r=r0+dr, c=c0+dc;
+    while(r>=0&&r<RV_N&&c>=0&&c<RV_N && b[r*RV_N+c]===3-p){ line.push(r*RV_N+c); r+=dr; c+=dc; }
+    if(line.length && r>=0&&r<RV_N&&c>=0&&c<RV_N && b[r*RV_N+c]===p) out.push(...line);
+  }
+  return out;
+}
+const rvMoves=(b,p)=>{ const m=[]; for(let i=0;i<RV_N*RV_N;i++) if(rvFlips(b,i,p).length) m.push(i); return m; };
+const rvCount=(b,p)=>b.reduce((s,v)=>s+(v===p),0);
+function rvPlay(n,i,p){
+  if(n.over || n.turnP!==p || !(i>=0 && i<RV_N*RV_N)) return false;
+  const f=rvFlips(n.b,i,p); if(!f.length) return false;
+  n.b[i]=p; f.forEach(k=>{ n.b[k]=p; }); n.lastRv=i;
+  if(rvMoves(n.b,3-p).length) n.turnP=3-p;
+  else if(!rvMoves(n.b,p).length){                   // никто не может ходить
+    const a=rvCount(n.b,1), c=rvCount(n.b,2);
+    ngFinish(n,a>c ? 1 : c>a ? 2 : 3);
+  }                                                  // иначе соперник пропускает ход
+  n.dirty=true; return true;
+}
+const RV={
+  reset(n){
+    n.b=Array(RV_N*RV_N).fill(0); n.lastRv=-1;
+    n.b[27]=n.b[36]=2; n.b[28]=n.b[35]=1;
+  },
+  msg(n,cmd,a){ if(cmd==='m') rvPlay(n,+a[0],3-n.me); },
+  mount(n,bd){ n.cells=ngGrid(bd,RV_N,RV_N,i=>{ if(n.ready && rvPlay(n,i,n.me)) ngSend(n,'m '+i); }); },
+  render(n){
+    const mine=n.turnP===n.me && !n.over ? new Set(rvMoves(n.b,n.me)) : null;
+    n.cells.forEach((c,i)=>{ const v=n.b[i];
+      c.className='ng-c ng-disc'+(v ? ' f'+v : '')+(!v && mine && mine.has(i) ? ' hint' : '')+(i===n.lastRv ? ' last' : ''); });
+  },
+  status:n=>(n.over ? ngEnd(n) : ngWho(n)+' ('+(n.turnP===1 ? 'amber' : 'teal')+')')+' '+rvCount(n.b,1)+':'+rvCount(n.b,2)
+};
+ngDef({id:'greversi',title:'Reversi (2 players)',kw:'reversi othello',w:340,spec:RV});
