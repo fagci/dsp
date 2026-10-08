@@ -8,7 +8,7 @@
 // ?v=N-запросы отдаются из кэша без обращения к сети (cache-first), поэтому любая правка файла требует бампа V.
 // CACHE бампать вместе с ?v=N в index.html — иначе после правки файлов старый список ссылок
 // (со старым ?v=) продолжит переустанавливаться поверх уже закэшированного нового.
-const CACHE='dsp-shell-v274';
+const CACHE='dsp-shell-v275';
 const V=CACHE.replace(/\D/g,'');                 // ?v=N берётся из имени кэша — бампать только CACHE и V в index.html
 const SHELL=[
   './',
@@ -168,6 +168,7 @@ const SHELL=[
   './modules/graphview.js?v='+V,
   './modules/chat.js?v='+V,
   './modules/games.js?v='+V,
+  './modules/mobile.js?v='+V,
   './presets.js?v='+V,
   './core-graph.js?v='+V,
 ];
@@ -178,7 +179,7 @@ self.addEventListener('install',e=>{
 self.addEventListener('activate',e=>{
   e.waitUntil(
     caches.keys()
-      .then(ks=>Promise.all(ks.filter(k=>k!==CACHE && k!=='dsp-tiles').map(k=>caches.delete(k))))   // тайлы карты — отдельно, переживают обновления
+      .then(ks=>Promise.all(ks.filter(k=>k!==CACHE && k!=='dsp-tiles' && k!=='dsp-share').map(k=>caches.delete(k))))   // тайлы карты — отдельно, переживают обновления
       .then(()=>self.clients.claim())
   );
 });
@@ -193,8 +194,18 @@ function isolate(res){
   h.set('Cross-Origin-Embedder-Policy','credentialless');
   return new Response(res.body,{status:res.status,statusText:res.statusText,headers:h});
 }
+// «Поделиться → DSP»: файлы приходят POST-ом (manifest share_target) — кладём в кэш dsp-share, страница заберёт их сама
+async function takeShare(e){
+  try{
+    const fd=await e.request.formData(), c=await caches.open('dsp-share');
+    let i=0;
+    for(const f of fd.getAll('files')) if(f && f.name) await c.put('./share/'+(i++),new Response(f,{headers:{'X-Name':encodeURIComponent(f.name),'Content-Type':f.type||'application/octet-stream'}}));
+  }catch(err){}
+  return new Response(null,{status:303,headers:{Location:'./index.html?share=done'}});
+}
 self.addEventListener('fetch',e=>{
   const req=e.request;
+  if(req.method==='POST' && new URL(req.url).origin===location.origin && new URL(req.url).searchParams.has('share')){ e.respondWith(takeShare(e)); return; }
   // сторонние запросы (CDN CodeMirror и т.п.) — мимо кэша, как и раньше без сервис-воркера
   if(req.method!=='GET' || new URL(req.url).origin!==location.origin) return;
   // скрипт воркера под изолированной страницей тоже должен нести COEP, иначе браузер его не запустит

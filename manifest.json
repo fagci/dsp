@@ -7,6 +7,17 @@
   "display_override": ["fullscreen", "standalone"],
   "background_color": "#0e1113",
   "theme_color": "#161a1d",
+  "share_target": {
+    "action": "./index.html?share=1",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {"files": [{"name": "files", "accept": ["application/json", "text/csv", "text/tab-separated-values", "text/plain", "application/gpx+xml", "application/vnd.google-earth.kml+xml", "application/geo+json", ".json", ".csv", ".tsv", ".txt", ".gpx", ".kml", ".geojson"]}]}
+  },
+  "file_handlers": [
+    {"action": "./index.html", "accept": {
+      "application/json": [".json", ".geojson"], "text/csv": [".csv"], "text/tab-separated-values": [".tsv"], "text/plain": [".txt"],
+      "application/gpx+xml": [".gpx"], "application/vnd.google-earth.kml+xml": [".kml"]}}
+  ],
   "icons": [
     {"src": "icons/favicon-32.png", "sizes": "32x32", "type": "image/png"},
     {"src": "icons/apple-touch-icon.png", "sizes": "180x180", "type": "image/png"}

@@ -930,6 +930,15 @@ The ▦ button switches to a tiled dashboard built from the modules of the curre
 - **Tile pages**: **+** next to ▦ adds another set of tiles; switch pages with the numbered buttons, tap the active one to rename, duplicate, reorder or delete it. A module can appear on several pages
 - The layout is saved with the patch and works on touch devices (wide scroll rail for long panes)
 
+### On a phone
+
+- **Screen stays on** while the graph runs (Settings → *Keep screen on*, on by default; needs the Screen Wake Lock API).
+- **Background audio**: while running, a silent media element is attached to the audio engine, so the browser treats the page as playing media (it is not put to sleep with the screen off) and the lock screen shows play / pause. Without a sound output Chrome may still throttle the page.
+- **Back gesture** closes what is open — the sidebar sheet, a maximized tile, ⛶ canvas-only mode, the settings panel, the module search — instead of leaving the app.
+- **Files from other apps**: in the installed app, *Share → DSP* or *Open with → DSP* takes CSV / TSV / TXT / GPX / KML / GeoJSON / lists into a Table (a new one if the patch has none) and loads a patch `.json` (Chromium on Android; file handlers also on desktop).
+- **Share out**: Settings → *Patch → Share…* and Table `⋯` → *Share this list…* open the system share menu (a plain download where it is not available).
+- **Fullscreen**: the installed app opens without the status bar (`display_override`); reinstall it after an update of the manifest.
+
 ### Module graph pane
 
 Pick **◇ Module graph** in a pane's dropdown and that pane becomes a window into the regular node canvas — like the modules window in SunVox, with the modules' own controls in the panes around it.

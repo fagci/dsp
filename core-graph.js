@@ -1267,13 +1267,15 @@ function dashAutoPlace(n){                            // первая пуста
 }
 // развёрнутая на всю сетку панель (id листа) — только вид, не сохраняется
 let dashMax=null;
+const dashBackMax=()=>{ dashMax=null; dashRenderRoot(); if(dashGraphLeaf()) dashGraphFit(); };   // жест «назад» — из развёрнутой панели
+function dashMaxClear(){ if(dashMax!=null){ dashMax=null; Back.drop(dashBackMax); } }
 function dashToggleMax(leafId){
-  dashMax= dashMax===leafId? null : leafId;
+  if(dashMax===leafId) dashMaxClear(); else { if(dashMax==null) Back.push(dashBackMax); dashMax=leafId; }
   dashRenderRoot();
   if(dashGraphLeaf()) dashGraphFit();
 }
 function dashSplit(leafId,dir){
-  dashMax=null;
+  dashMaxClear();
   const f=dashFind(Graph.dashTree,leafId); if(!f||f.leaf.t!=='leaf') return;
   const split={t:'split', id:dashId(), dir, children:[f.leaf,dashLeaf(null)], sizes:[50,50]};   // лист как есть — со вкладками
   if(f.parent) f.parent.children[f.idx]=split; else Graph.dashTree=split;
@@ -1297,7 +1299,7 @@ function dashRenderRoot(){
   // узлы вне дерева — обратно на холст, иначе после очистки сетки они выпадают из DOM
   const leaves=dashLeaves(Graph.dashTree), placed=new Set(), hidden=new Set();
   const maxLeaf=dashMax!=null? leaves.find(l=>l.id===dashMax)||null : null;
-  if(!maxLeaf) dashMax=null;
+  if(!maxLeaf) dashMaxClear();
   for(const l of leaves) l.tabs.forEach((x,i)=>{ if(x.node==null) return; placed.add(x.node);
     if(i!==l.cur || (maxLeaf && l!==maxLeaf)) hidden.add(x.node); });
   for(const n of Graph.nodes){
@@ -1407,6 +1409,7 @@ function dashBtn2(txt,title,fn,cls){
   const b=document.createElement('button'); b.textContent=txt; b.title=title; b.onclick=fn;
   if(cls) b.className=cls; return b;
 }
+const BARE_BACK=new WeakMap();
 function dashRenderLeaf(t){
   dashNormLeaf(t);
   const tab=t.tabs[t.cur];
@@ -1452,7 +1455,10 @@ function dashRenderLeaf(t){
   const acts=document.createElement('div'); acts.className='dash-acts';
   let bareBtn=null;
   if(n?.cv){                                            // только канва: контролы и заголовок узла спрятаны
-    bareBtn=dashBtn2('⛶','Canvas only (hide controls)',()=>{ tab.bare=!tab.bare; dashRenderRoot(); Undo.push(); },'dash-bare');
+    bareBtn=dashBtn2('⛶','Canvas only (hide controls)',()=>{
+      let back=BARE_BACK.get(tab); if(!back) BARE_BACK.set(tab,back=()=>{ tab.bare=false; dashRenderRoot(); });   // жест «назад» возвращает органы управления
+      tab.bare=!tab.bare; if(tab.bare) Back.push(back); else Back.drop(back);
+      dashRenderRoot(); Undo.push(); },'dash-bare');
     bareBtn.classList.toggle('on',!!tab.bare);
     pane.classList.toggle('bare',!!tab.bare);
   }
@@ -1552,7 +1558,8 @@ function dashGraphFit(){ requestAnimationFrame(()=>requestAnimationFrame(()=>{ c
 /* ---- выбор модуля прямо на холсте: двойной клик по пустому месту или «+» панели графа ----
    Поиск по названию/id/категории, стрелки + Enter, Esc — закрыть. at — точка холста для узла. */
 let modPickEl=null;
-function closeModPicker(){ modPickEl?.remove(); modPickEl=null; }
+const modPickBack=()=>{ modPickEl?.remove(); modPickEl=null; };
+function closeModPicker(){ if(modPickEl){ modPickBack(); Back.drop(modPickBack); } }
 function openModPicker(clientX,clientY,at,from){
   closeModPicker();
   const box=document.createElement('div'); box.className='modpick panzoom-exclude';
@@ -1561,7 +1568,7 @@ function openModPicker(clientX,clientY,at,from){
   if(from){ const h=document.createElement('div'); h.className='mp-from';          // провод ищет, к чему подключиться
     h.innerHTML=`<span class="pin" style="background:${TYPE_COLOR[from.type]}"></span>${from.type} ${from.dir==='o'?'→':'←'} <i></i>`;
     h.querySelector('i').textContent=from.port; box.append(h); }
-  box.append(inp,list); document.body.append(box); modPickEl=box;
+  box.append(inp,list); document.body.append(box); modPickEl=box; Back.push(modPickBack);
   const mods=Object.values(MOD).filter(m=>!m.legacy && !String(m.id).startsWith('custom:'))
     .sort((a,b)=>catRank(a.cat)-catRank(b.cat)||a.title.localeCompare(b.title));
   let items=[], cur=0;
@@ -1673,7 +1680,7 @@ function dashPageName(i){ return Graph.dashPages[i].name || String(i+1); }
 function dashPageGo(i){
   if(i<0 || i>=Graph.dashPages.length || !dashMode) return;
   closeDashMenu();
-  Graph.dashPage=i; dashMax=null; dashEnsureTree(); dashRenderRoot();
+  Graph.dashPage=i; dashMaxClear(); dashEnsureTree(); dashRenderRoot();
   if(dashGraphLeaf()) dashGraphFit();
   scheduleAutosave();
 }
@@ -1771,13 +1778,15 @@ const k=ev.key.toLowerCase();
 if((ev.ctrlKey||ev.metaKey) &&!ev.altKey &&(k==='z'||k==='y')){ ev.preventDefault(); (k==='y'||ev.shiftKey) ? Undo.redo() : Undo.undo(); }
 });
 const side=document.getElementById('side'), scrim=document.getElementById('scrim');
-const closeSide=()=>{ side.classList.remove('open'); scrim.classList.remove('open'); };
+const closeSideBack=()=>{ side.classList.remove('open'); scrim.classList.remove('open'); };   // по жесту «назад» запись истории уже снята
+const closeSide=()=>{ const was=side.classList.contains('open'); closeSideBack(); if(was) Back.drop(closeSideBack); };
 const narrowUI=matchMedia('(max-width:820px), (pointer:coarse)');
 document.getElementById('menu').onclick=()=>{
 if(!narrowUI.matches){ sideCollapsedPref=!side.classList.contains('collapsed'); setSideCollapsed(sideCollapsedPref);
   try{ localStorage.setItem('dsp-side-collapsed',sideCollapsedPref?'1':''); }catch(e){}
   return; }
-side.classList.toggle('open'); scrim.classList.toggle('open',side.classList.contains('open')); };
+if(side.classList.contains('open')) closeSide();
+else { side.classList.add('open'); scrim.classList.add('open'); Back.push(closeSideBack); } };
 scrim.addEventListener('pointerdown',closeSide);
 document.querySelectorAll('.sidetab').forEach(t=>t.addEventListener('click',()=>{
 document.querySelectorAll('.sidetab').forEach(x=>x.classList.toggle('on',x===t));
@@ -2009,6 +2018,9 @@ Graph.nodes=[]; Graph.edges=[]; Graph.map={}; Graph.seq=1; Graph.dashPages=[{nam
 }
 document.getElementById('save').onclick=()=>
 dl(new Blob([JSON.stringify(serialize(),null,1)],{type:'application/json'}),'patch.json');
+{ const aw=document.getElementById('awake'), sp=document.getElementById('sharePatch');
+  if(aw){ aw.checked=Awake.enabled(); aw.onchange=()=>{ LS.set('dsp-awake',aw.checked?'1':'0'); Awake.set(Awake.want); }; }
+  if(sp) sp.onclick=()=>shareFile(new Blob([JSON.stringify(serialize(),null,1)],{type:'application/json'}),'patch.json'); }
 document.getElementById('load').onclick=()=>document.getElementById('fpick').click();
 document.getElementById('fpick').onchange=e=>{ const f=e.target.files[0]; if(!f) return;
 const r=new FileReader(); r.onload=()=>{ try{ stashIfDirty(); deserialize(JSON.parse(r.result)); fitViewWhenReady(); graphDirty=false; }catch(err){ alert('Could not read file: '+err.message); } };
@@ -2045,7 +2057,7 @@ const on=Eng.running&&!Eng.paused;
 runBtn.innerHTML = on?RUN_STOP:RUN_PLAY;
 runBtn.classList.toggle('on',on);
 }
-Eng.onRunChange=()=>{ syncRunBtn(); wakeDraw();
+Eng.onRunChange=()=>{ syncRunBtn(); wakeDraw(); mobileOnRun();
 if(!(Eng.running&&!Eng.paused))                      // стоп — источники выключаем совсем (индикатор камеры, датчики)
 for(const n of Graph.nodes){ try{ MOD[n.type].onStop?.(n); }catch(e){} } };
 // запуск просит все разрешения сразу (камера, датчики): модулям с onRun не нужно жать «Start» руками;
@@ -2111,7 +2123,9 @@ fpsSel.onchange=()=>{ try{ LS.set('dsp-fps',fpsSel.value); }catch(e){} wakeDraw(
     if(r.top>innerHeight/2){ panel.style.top=''; panel.style.bottom=(innerHeight-r.top+4)+'px'; }
     else { panel.style.bottom=''; panel.style.top=(r.bottom+4)+'px'; }
   };
-  const set=on=>{ panel.hidden=!on; btn.setAttribute('aria-expanded',on); if(on) place(); };
+  const back=()=>{ panel.hidden=true; btn.setAttribute('aria-expanded',false); };
+  const set=on=>{ const was=!panel.hidden; panel.hidden=!on; btn.setAttribute('aria-expanded',on); if(on) place();
+    if(on && !was) Back.push(back); else if(!on && was) Back.drop(back); };
   btn.onclick=()=>set(panel.hidden);
   document.addEventListener('pointerdown',e=>{ if(!panel.hidden && !panel.contains(e.target) && !btn.contains(e.target)) set(false); });
   window.addEventListener('keydown',e=>{ if(e.key==='Escape' && !panel.hidden) set(false); });
@@ -2211,6 +2225,7 @@ buildBuiltinPresets();
 const a=LS.get(AKEY)||LS.get('dsp-patch');
 if(a){ try{ deserialize(JSON.parse(a)); }catch(e){ buildDemo(); } } else buildDemo();
 if(LS.get('dsp-dash')==='1') setDash(true);
+mobileBoot();
 fitViewWhenReady();                                 // сразу видно весь патч, а не дефолтный центр холста
 Undo.stack=[]; Undo.idx=-1; Undo.push();
 graphDirty=false;                                   // старт приложения — не пользовательское изменение
