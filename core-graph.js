@@ -1956,6 +1956,13 @@ n.p={devA: oldSlot===0?(old.dev||'default'):'default', gainA: oldSlot===0?(old.g
 }
 const tbls=new Set(o.nodes.filter(n=>n.type==='table').map(n=>n.id));
 for(const e of o.edges) if(tbls.has(e.from) && e.fp==='bands') e.fp='rows';   // выходы bands и rows у Table слиты в rows
+// входы nodes / set у карты, Graph и Video Overlay слиты в rows; Internet Radio выдаёт набор rows вместо потока rec
+{ const types={}; for(const n of o.nodes) types[n.id]=n.type;
+for(const e of o.edges){
+const radio=types[e.from]==='radioDir' && e.fp==='rec';
+if(radio) e.fp='rows';
+if(['geoMap','graphview','overlay'].includes(types[e.to]) && (e.tp==='nodes' || e.tp==='set' || (radio && /^rec\d*$/.test(e.tp)))) e.tp='rows';
+} }
 for(const e of o.edges){
 const a=map[e.from], b=map[e.to];
 if(a &&a.ports &&a.ports[e.fp]) e.fp=a.ports[e.fp];

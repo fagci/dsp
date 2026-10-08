@@ -1112,7 +1112,7 @@ function geoTileGet(src,z,x,y,net){
 /* ---------- узел карты ---------- */
 const GEO_TILE_OPTS=['none',...Object.keys(GEO_TILES),'custom'], GEO_OV_OPTS=['none',...Object.keys(GEO_OVERLAYS),'custom'];
 def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
-  ins:[{n:'rec',t:'rec'},{n:'rec2',t:'rec'},{n:'rec3',t:'rec'},{n:'nodes',t:'bands'},{n:'set',t:'bands'}],
+  ins:[{n:'rec',t:'rec'},{n:'rec2',t:'rec'},{n:'rec3',t:'rec'},{n:'rows',t:'bands'}],
   outs:[{n:'pick',t:'rec'},{n:'sel',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'count',t:'num'}],
   w:480, view:{h:360}, resize:true,
   params:[{n:'ttl',t:'range',min:0,max:1440,step:1,d:0,label:'keep, min (0 — forever)'},
@@ -1153,7 +1153,8 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
   },
   process(n,I){
     for(const k of ['rec','rec2','rec3']) for(const r of recList(I[k])) geoMapAdd(n,r);
-    geoMapNodes(n,I.nodes); geoMapLinks(n,I.set);
+    const sp=Array.isArray(I.rows) ? rowsSplit(I.rows) : null;     // rows: записи с координатами — точки, с from / to — связи
+    geoMapNodes(n,sp&&sp.nodes); geoMapLinks(n,sp&&sp.edges);
     if(n.p.store!==n.loadedStore) geoMapRestore(n);
     const now=Date.now();
     if(now-n.lastPrune>1000){ n.lastPrune=now; geoMapPrune(n,now); }
@@ -1165,7 +1166,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
     (n.p.ttl>0 || n.selKey || (n.info && Date.now()-n.info.t<9000) ? Math.floor(Date.now()/1000) : ''),
   draw(n,cv,cx){ geoMapDraw(n,cv,cx); }});
 
-// Тот же набор, что и у Graph: nodes — записи id[,label,shape|icon,color,size] + lat/lon; set — связи from,to[,weight,label,color].
+// Один набор rows, как у Graph: записи id[,label,shape|icon,color,size] + lat/lon — точки, записи from,to[,weight,label,color] — связи.
 // Снимки целиком, обновление по разнице: меняются только изменённые, пропавшие снимаются. Узел без координат на карте
 // не рисуется (в Graph он остаётся). Связь рисуется между узлами по большому кругу.
 const GEO_SHAPE_ICON={dot:'dot',circle:'dot',ellipse:'dot',square:'square',box:'square',database:'square',diamond:'diamond',hexagon:'diamond',

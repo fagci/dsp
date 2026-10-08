@@ -65,7 +65,7 @@ function rbSelect(n,s){
 
 def({ id:'radioDir', title:'Internet Radio', cat:'Sources',
   ins:[{n:'select',t:'rec'}],                          // клик на карте (выход sel)
-  outs:[{n:'rec',t:'rec'},{n:'url',t:'txt'},{n:'name',t:'txt'},{n:'count',t:'num'}],
+  outs:[{n:'rows',t:'bands'},{n:'url',t:'txt'},{n:'name',t:'txt'},{n:'count',t:'num'}],
   readout:true, tall:true, w:340,
   params:[{n:'name',t:'text',d:'',label:'name contains'},
           {n:'tag',t:'text',d:'',label:'tag (jazz, news, …)'},
@@ -80,7 +80,7 @@ def({ id:'radioDir', title:'Internet Radio', cat:'Sources',
     geoGet('radio:list').then(v=>{ if(v && !n.list.length){ n.list=v.list; n.src=v.src; n.emitKey=''; } }).catch(()=>{}); },
   process(n,I){
     for(const r of recList(I.select)){
-      const id=String(r.id||''); if(!id.startsWith('radio:')) continue;
+      const id=String(r.id||'').replace(/^n:/,''); if(!id.startsWith('radio:')) continue;
       const s=n.list.find(x=>x.id===id.slice(6)); if(s){ rbSelect(n,s); n.lastStation=n.p.station; }
     }
     if(n.p.station!==n.lastStation){                  // имя ввели руками
@@ -90,11 +90,10 @@ def({ id:'radioDir', title:'Internet Radio', cat:'Sources',
       if(s && s!==n.sel){ rbSelect(n,s); n.lastStation=n.p.station; }
     }
     const vis=rbFiltered(n);
-    let rec=null;
     const key=n.src+'|'+vis.length+'|'+n.p.https+'|'+GeoBase.state+'|'+(n.sel?.id||'');
     if(key!==n.emitKey && GeoBase.state==='ready'){
       n.emitKey=key;
-      rec=[];
+      const rec=[];
       for(const s of vis){
         const p=rbPos(s); if(!p) continue;
         rec.push({id:'radio:'+s.id, label:s.name, icon:'♪', color:s===n.sel ? '#ffd84a' : p.approx ? '#c890ff' : '#ff8fb1',
@@ -102,9 +101,9 @@ def({ id:'radioDir', title:'Internet Radio', cat:'Sources',
           country:s.country, ...(s.state?{state:s.state}:{}), ...(s.lang?{lang:s.lang}:{}), ...(s.tags?{tags:s.tags}:{}),
           codec:s.codec+(s.br?' '+s.br+'k':''), votes:s.votes, url:s.url, ...(s.home?{home:s.home}:{})});
       }
-      if(!rec.length) rec=null;
+      n.rowsOut=rec;                                  // набор целиком: после нового поиска точки на карте заменяются
     }
-    return {rec, url:n.selUrl||null, name:n.sel?.name||null, count:vis.length};
+    return {rows:n.rowsOut||null, url:n.selUrl||null, name:n.sel?.name||null, count:vis.length};
   },
   draw(n){
     const vis=n.list.length ? rbFiltered(n).length : 0, s=n.sel;
