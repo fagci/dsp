@@ -1,20 +1,8 @@
 "use strict";
 /* ============================ Фото ============================
-   Фото замеров хранятся в базе браузера dsp-photos (сжатый JPEG до 1600 px + место и время из EXIF), в ячейке таблицы лежат
+   Фото замеров хранятся в базе браузера (dsp-files, пространство images; см. filestore.js) (сжатый JPEG до 1600 px + место и время из EXIF), в ячейке таблицы лежат
    только идентификаторы «ph-…»: список остаётся лёгким, а фото входят в полную копию (Settings → All data).
    Читает Table (колонка photo / photos), пишут Table и Measure Point. Ядро — photo-kernels.js. */
-
-let phDbP=null;
-function phDb(){
-  return phDbP || (phDbP=new Promise((res,rej)=>{
-    const rq=indexedDB.open('dsp-photos',1);
-    rq.onupgradeneeded=()=>rq.result.createObjectStore('img',{keyPath:'id'});
-    rq.onsuccess=()=>res(rq.result);
-    rq.onerror=()=>{ phDbP=null; rej(rq.error); };
-  }));
-}
-async function phStore(mode){ return (await phDb()).transaction('img',mode).objectStore('img'); }
-const phReq=r=>new Promise((res,rej)=>{ r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); });
 
 // файл с камеры или из галереи → сжатый JPEG в базе; возвращает {id, exif, w, h}
 async function phAdd(file){
@@ -24,12 +12,15 @@ async function phAdd(file){
   const [w,h]=phFit(bmp.width,bmp.height), cv=document.createElement('canvas'); cv.width=w; cv.height=h;
   cv.getContext('2d').drawImage(bmp,0,0,w,h); bmp.close?.();
   const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',.82));
-  const id=phNewId(), rec={id,blob,w,h,t:exif?.t ?? file.lastModified ?? Date.now(),exif,name:file.name||'',added:Date.now()};
-  await phReq((await phStore('readwrite')).put(rec)); phUrls.delete(id);
-  return {id,exif,w,h,t:rec.t};
+  const id=phNewId(), t=exif?.t ?? file.lastModified ?? Date.now();
+  await FileStore.put({id,space:'images',folderId:0,name:file.name||id,mime:'image/jpeg',blob,meta:{w,h,t,exif}}); phUrls.delete(id);
+  return {id,exif,w,h,t};
 }
-async function phGet(id){ return phReq((await phStore('readonly')).get(id)); }
-async function phRemove(id){ await phReq((await phStore('readwrite')).delete(id)); phUrls.delete(id); }
+async function phGet(id){
+  const r=await FileStore.get(id); if(!r || r.space!=='images') return undefined;
+  return {id:r.id,blob:r.blob,name:r.name,added:r.created,w:r.meta?.w,h:r.meta?.h,t:r.meta?.t ?? r.created,exif:r.meta?.exif};
+}
+async function phRemove(id){ await FileStore.remove(id); phUrls.delete(id); }
 const phUrls=new Map();
 async function phUrl(id){
   if(phUrls.has(id)) return phUrls.get(id);

@@ -9,7 +9,7 @@ const NG_BIT={auto:'a',first:'f',second:'s'};
 const ngRnd=()=>Math.random().toString(36).slice(2,10).padEnd(8,'0');
 
 function ngSend(n,cmd){ n.seq++; n.outQ.push(n.gid+':'+n.nonce+':'+n.seq+':'+cmd); }
-function ngHello(n){ n.lastHello=Date.now(); ngSend(n,'hello '+(NG_BIT[n.p.side]||'a')); }
+function ngHello(n,re){ n.lastHello=Date.now(); ngSend(n,'hello '+(NG_BIT[n.p.side]||'a')+(re ? ' r' : '')); }
 function ngParse(n,text){
   const m=/^([a-z0-9]+):([a-z0-9]+):(\d+):(.*)$/.exec(String(text).trim());
   return m && m[1]===n.gid && m[2]!==n.nonce ? {nonce:m[2],seq:+m[3],cmd:m[4]} : null;
@@ -37,23 +37,26 @@ function ngAgain(n){
 }
 function ngRecv(n,m){
   let fresh=false;
-  if(m.nonce!==n.peer){ n.peer=m.nonce; n.peerSeq=0; n.peerSide='a'; fresh=true; ngHello(n); }
+  if(m.nonce!==n.peer){ n.peer=m.nonce; n.peerSeq=0; n.peerSide='a'; fresh=true; }
   if(m.seq<=n.peerSeq) return;
   n.peerSeq=m.seq;
   const a=m.cmd.split(' '), cmd=a.shift();
   if(cmd==='hello'){
     n.peerSide=a[0]||'a';
     const me=ngResolve(n);
-    if(fresh || !n.ready || me!==n.me){ n.me=me; n.ready=true; ngStart(n,0); }
+    const re=a[1]==='r';                             // ответ на hello — не отвечаем, иначе пинг-понг
+    if(fresh || !n.ready || me!==n.me || !re){ n.me=me; n.ready=true; ngStart(n,0); }
+    if(!re) ngHello(n,true);
     return;
   }
+  if(fresh) ngHello(n);
   if(!n.ready) return;
   if(cmd==='new'){ const k=+a[0]|0; if(k>n.k) ngStart(n,k); return; }
   n.spec.msg(n,cmd,a); n.dirty=true;
 }
 function ngInit(n,gid,spec){
   n.gid=gid; n.spec=spec; n.nonce=ngRnd(); n.seq=0; n.outQ=[]; n.last='';
-  n.lastIn=undefined; n.lastNew=false; n.peer=null; n.peerSeq=0; n.peerSide='a';
+  n.lastIn=undefined; n.lastNew=false; n.lastLink=0; n.peer=null; n.peerSeq=0; n.peerSide='a';
   n.me=1; n.ready=false; n.k=0; n.sc={w:0,l:0,d:0}; n.lastHello=0;
   n.box=null; n.dirty=true; n.over=false; n.res=0; n.turnP=1;
   spec.reset(n);
@@ -61,7 +64,10 @@ function ngInit(n,gid,spec){
 function ngProcess(n,I){
   if(typeof I.in==='string' && I.in!==n.lastIn){ n.lastIn=I.in; const m=ngParse(n,I.in); if(m) ngRecv(n,m); }
   const nw=+I.new>.5; if(nw && !n.lastNew) ngAgain(n); n.lastNew=nw;
-  if(!n.peer && Date.now()-n.lastHello>2000) ngHello(n);
+  const lk=+I.link>.5;                               // канал поднялся заново (после обрыва): обе стороны начинают партию с нуля, счёт остаётся
+  if(lk && !n.lastLink){ if(n.ready) ngStart(n,0); ngHello(n); }
+  n.lastLink=lk;
+  if(!n.ready && Date.now()-n.lastHello>2000) ngHello(n);
   let go=0;
   if(n.outQ.length){ n.last=n.outQ.shift(); go=1; }
   return {out:n.last, go, turn:n.ready && !n.over && n.turnP===n.me ? 1 : 0, result:n.res===1 ? 1 : n.res===-1 ? -1 : 0};
@@ -104,7 +110,7 @@ function ngDraw(n){
 function ngDef(o){
   def({ id:o.id, title:o.title, cat:'Output', w:o.w||340, resize:true,
     kw:'game multiplayer two players network '+o.kw,
-    ins:[{n:'in',t:'txt'},{n:'new',t:'num'}],
+    ins:[{n:'in',t:'txt'},{n:'new',t:'num'},{n:'link',t:'num'}],
     outs:[{n:'out',t:'txt'},{n:'go',t:'num'},{n:'turn',t:'num'},{n:'result',t:'num'}],
     params:[{n:'side',t:'select',opts:['auto','first','second'],d:'auto',label:'first player in game 1',
              fn:n=>{ if(n.peer){ ngHello(n); const me=ngResolve(n); if(me!==n.me){ n.me=me; ngStart(n,0); } } }}],

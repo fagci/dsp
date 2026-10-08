@@ -33,7 +33,7 @@ async function saveRecordingToDB(n, samples, peak, rms){
 
 async function refreshRecorderList(n){
   const folderId = await ensureRecorderFolder();
-  const clips = await SampleDB.listClips(folderId);
+  const clips = await SampleDB.listClips(folderId, true);
   clips.sort((a,b)=>a.created-b.created);
   n.recordings = clips;
   if(n.selected!=null && !clips.some(c=>c.id===n.selected)){ n.selected=-1; n.data=null; n.play=false; }

@@ -57,6 +57,6 @@ const BK_GROUPS=[
   {id:'settings', label:'Patches and settings (browser storage)', ls:true},
   {id:'tables',   label:'Tables (lists: your points, geo/airfields, runways, places, band plans…)', db:['dsp-lists']},
   {id:'geo',      label:'Terrain tiles, airport database and map caches (slow to download again)', db:['dsp-geo']},
-  {id:'media',    label:'Photos of measurements, samples, tracker sessions, spectrum archive (can be large)', db:['dsp-samples','dsp-tracker','dsp-spectra','dsp-photos']},
+  {id:'media',    label:'Photos of measurements, samples, tracker sessions, spectrum archive (can be large)', db:['dsp-files','dsp-tracker','dsp-spectra'], imp:['dsp-samples','dsp-photos']},
   {id:'tiles',    label:'Map tiles cache (Cache API)', caches:['dsp-tiles']},
 ];
