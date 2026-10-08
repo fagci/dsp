@@ -932,22 +932,32 @@ function unmercY(y){ return Math.atan(Math.sinh(Math.PI*(1-2*y)))/D2R; }
 // Подложка Natural Earth: data/basemap.json (tools/basemap.mjs), после первой загрузки — из IndexedDB
 const GEO_BASE_TAG='ne10m-3';                        // сменить при пересборке data/basemap.json
 const GeoBase={state:'idle', data:null, err:'', p:null, places:null, placesState:'', placesP:null, gen:0};
+// подложка (4 МБ) на мобильной сети может оборваться, а запись в кэше — оказаться битой: повторяем 3 раза с паузой
 function geoBaseLoad(){
   if(GeoBase.p) return GeoBase.p;
   GeoBase.state='loading';
   return GeoBase.p=(async()=>{
-    let text=null;
-    try{ const c=await geoGet('basemap'); if(c && c.tag===GEO_BASE_TAG) text=c.text; }catch(e){}
-    if(!text){
+    let data=null;
+    try{ const c=await geoGet('basemap'); if(c && c.tag===GEO_BASE_TAG) data=geoBasePrep(JSON.parse(c.text)); }catch(e){ data=null; }   // битый кэш — качаем заново
+    if(!data){
       GeoBase.state='downloading';
       const r=await fetch('data/basemap.json'); if(!r.ok) throw new Error('HTTP '+r.status);
-      text=await r.text();
+      const text=await r.text();
+      data=geoBasePrep(JSON.parse(text));
       try{ await geoPut('basemap',{tag:GEO_BASE_TAG, text}); }catch(e){}
     }
-    GeoBase.data=geoBasePrep(JSON.parse(text));
+    GeoBase.data=data; GeoBase.tries=0; GeoBase.err='';
     GeoBase.state='ready'; GeoBase.gen++;
-  })().catch(e=>{ GeoBase.state='error'; GeoBase.err=e.message; GeoBase.p=null; });
+  })().catch(e=>{
+    GeoBase.state='error'; GeoBase.err=e.message; GeoBase.p=null;
+    if((GeoBase.tries=(GeoBase.tries|0)+1)<=3) setTimeout(geoBaseLoad,3000*GeoBase.tries);
+  });
 }
+// вернулись в приложение — подложки карт могли быть стёрты системой без всякого события: рисуем заново
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState!=='visible') return;
+  for(const n of Graph.nodes) if(n.type==='geoMap'){ n._baseKey=null; n.dirtyGen=(n.dirtyGen|0)+1; }
+});
 function geoBasePrep(raw){
   const q=raw.q||1000;
   const prepLayer=L=>{
@@ -1447,7 +1457,10 @@ function geoMapDraw(n,cv,cx){
   }
   if(!ok){
     n._baseKey=key;
-    const b=n._base || (n._base=document.createElement('canvas'));
+    let b=n._base;
+    if(!b){ b=n._base=document.createElement('canvas');
+      // Android стирает буфер подложки в фоне / при нехватке памяти: ключ тот же, и карта рисовалась бы пустой
+      b.addEventListener('contextrestored',()=>{ n._baseKey=null; redraw(n); }); }
     const BW=W+2*M, BH=H+2*M, r=Math.min(cv.pxW/W, Math.sqrt(GEO_BASE_CAP/(BW*BH)));
     const pw=Math.round(BW*r), ph=Math.round(BH*r);
     if(b.width!==pw || b.height!==ph){ b.width=pw; b.height=ph; }
