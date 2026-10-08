@@ -4755,6 +4755,20 @@ const ts=addNode('textsrc',40,420,{});
 addEdge(b.id,'line',tk.id,'text'); addEdge(ts.id,'text',b.id,'text');
 markWiresDirty();
 });
+preset('Meshtastic: Chat and Nodes on the Map', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'A Meshtastic node (Heltec, T-Beam, RAK, T-Echo…) as a source: over Bluetooth LE (service 6ba1b218-…) or USB serial. The node does the radio and the decryption, the page gets ready messages, positions and telemetry.\n'+
+  'Press Connect and choose the node. `text` / `from` / `go` — incoming chat messages; the text input sends to the node set in «send to» (^all — the whole channel). `rec` carries every packet (text, position, telemetry, node info) with the sender name and position: it goes to the Table and to the map.\n'+
+  'A node accepts one BLE client at a time: disconnect the phone app first.'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const m=addNode('meshtastic',40,190,{});
+m.size.w=380; m.size.h=240; applySize(m);
+const tk=addNode('ticker',480,190,{time:true});
+tk.size.w=420; tk.size.h=140; applySize(tk);
+const ts=addNode('textsrc',40,470,{});
+addEdge(m.id,'text',tk.id,'text'); addEdge(ts.id,'text',m.id,'text');
+markWiresDirty();
+});
 preset('Gamepad: Axes to Tone and Lamps', function(){
 clearAll();
 const nt=addNode('note',40,20,{text:'A gamepad, joystick, steering wheel or pedals as a controller (Gamepad API: Chrome, Edge, Firefox, Safari). The browser shows the device only after a button is pressed on it.\n'+
