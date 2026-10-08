@@ -152,7 +152,7 @@ async function fsWavDecode(blob){                      // только свой 
 }
 
 /* ---- файловый менеджер ----
-   fmMount(host,{space,onSelect(rec|null),onOpen(rec),accept(rec)->bool,extra(rec,row),spaces:[...]})
+   fmMount(host,{space,onSelect(rec|null),onOpen(rec),openOnClick,onFolder(id|null),accept(rec)->bool,extra(rec,row),spaces:[...]})
    Возвращает {refresh(),setSpace(s),get space,get folder,get selected,destroy()}. */
 const fmIcon=r=>{
   const m=r.mime||'';
@@ -230,6 +230,7 @@ function fmMount(host,o={}){
     const g=++S.gen;
     const [folders,files,path,use]=await Promise.all([FileStore.listFolders(S.space,S.folder),FileStore.list(S.space,S.folder),FileStore.path(S.folder),FileStore.usage(S.space)]);
     if(S.dead || g!==S.gen) return;
+    o.onFolder?.(S.folder);
     for(const u of S.urls) URL.revokeObjectURL(u); S.urls=[];
     drawTabs();
     crumbs.textContent='';
@@ -266,8 +267,8 @@ function fmMount(host,o={}){
         mk('⇢','Move',async e=>{ e.stopPropagation(); const t=await fmPickFolder(S.space); if(t!==undefined) await FileStore.update(r.id,{folderId:t}); }),
         mk('⤓','Download',e=>{ e.stopPropagation(); fmDownload(r); }),
         mk('✕','Delete',async e=>{ e.stopPropagation(); if(confirm('Delete "'+r.name+'"?')){ if(S.selected?.id===r.id) select(null); await FileStore.remove(r.id); } }));
-      row.onclick=()=>select(r);
-      row.ondblclick=()=>o.onOpen?.(r);
+      row.onclick=()=>{ select(r); if(o.openOnClick) o.onOpen?.(r); };
+      row.ondblclick=()=>{ if(!o.openOnClick) o.onOpen?.(r); };
       row.ondragstart=e=>{ fmDrag=r.id; e.dataTransfer.setData('text/plain',r.name); };
       row.ondragend=()=>{ fmDrag=null; };
       list.append(row);

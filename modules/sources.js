@@ -6099,235 +6099,60 @@ function libInit(n){
     'color:#c8d2d6;box-sizing:border-box;overflow:hidden;grid-column:1/-1;width:100%;min-width:0;';
   root.innerHTML = `
     <div class="lib-toolbar" style="display:flex;gap:4px;padding:2px 0;align-items:center;flex-shrink:0;">
-      <button class="lib-newfolder" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:10px;">+ folder</button>
-      <button class="lib-import" style="background:#1d2226;border:1px solid #2a3136;color:#c8d2d6;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:10px;">import</button>
       <button class="lib-rec" title="Record from the in port (when wired and running) or from the microphone" style="background:#1d2226;border:1px solid #2a3136;color:#e05c5c;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:10px;">● rec</button>
-      <input class="lib-file" type="file" accept="audio/*" multiple style="display:none;">
-      <span class="lib-crumbs" style="flex:1;color:#6c7a80;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
     </div>
-    <div class="lib-list" style="flex:1;overflow-y:auto;border:1px solid #1d2226;border-radius:3px;background:#0e1113;position:relative;"></div>
+    <div class="lib-list" style="flex:1;min-height:0;position:relative;"></div>
   `;
   mid.append(root);
   syncCustomHeight(n, root, 120);      // сразу выставить текущий n.size.h, дальше — через onResize
 
   n.ui = {
     root,
-    crumbs: root.querySelector('.lib-crumbs'),
     list: root.querySelector('.lib-list'),
     rec: root.querySelector('.lib-rec'),
   };
   n.ui.rec.addEventListener('click', ()=>libRecToggle(n));
-
-  root.querySelector('.lib-newfolder').addEventListener('click', async ()=>{
-    const name = prompt('Folder name:');
-    if(!name) return;
-    await SampleDB.addFolder(name, n.folderId);
-    libRefresh(n);
+  libWatchStore(n);
+  // список, папки, импорт, перенос — общий файловый менеджер (filestore.js); тут только play и редактор
+  n.fm = fmMount(n.ui.list, {
+    space:'audio', spaces:['audio'], openOnClick:true,
+    onOpen: r=>libOpenEditor(n, r.id),
+    onFolder: id=>{ n.folderId = id || null; },
+    accept: r=>r.meta && r.meta.sr,
+    extra: (r,row)=>{
+      row.dataset.clipId = r.id;
+      const b = document.createElement('button');
+      b.className = 'lib-play'; b.textContent = (n.selected===r.id && n.play) ? '⏸' : '▶';
+      b.addEventListener('click', async ev=>{
+        ev.stopPropagation();
+        if(n.selected===r.id){ n.play = !n.play; libHighlight(n); }
+        else await libArmClip(n, r.id, true);
+      });
+      row.append(b);
+      row.classList.toggle('armed', n.selected===r.id);
+    },
   });
-
-  const fileInput = root.querySelector('.lib-file');
-  root.querySelector('.lib-import').addEventListener('click', ()=>fileInput.click());
-  fileInput.addEventListener('change', async ()=>{
-    for(const f of fileInput.files) await libImportFile(n, f);
-    fileInput.value='';
-    libRefresh(n);
-  });
-
-  // drag&drop файлов прямо на панель
-  root.addEventListener('dragover', ev=>{ ev.preventDefault(); });
-  root.addEventListener('drop', async ev=>{
-    ev.preventDefault();
-    const files = [...(ev.dataTransfer.files||[])].filter(f=>f.type.startsWith('audio/'));
-    for(const f of files) await libImportFile(n, f);
-    libRefresh(n);
-  });
-
-  libRefresh(n);
 }
 
-async function libImportFile(n, file){
-  try{
-    const {samples, sr} = await decodeAudioFile(file);
-    await SampleDB.addClip({
-      name: file.name.replace(/\.[^.]+$/,''),
-      folderId: n.folderId,
-      sr, samples,
-      peaks: SampleDB.computePeaks(samples),
-      duration: samples.length/sr,
-    });
-  }catch(e){ console.warn('import error', e); alert('Failed to read file: '+file.name); }
-}
+function libRefresh(n){ n.fm?.refresh(); }
 
-async function libRefresh(n){
-  const [folders, clips] = await Promise.all([
-    SampleDB.listFolders(n.folderId),
-    SampleDB.listClips(n.folderId),
-  ]);
-  await libBuildCrumbs(n);
-  libRenderList(n, folders, clips);
-}
-
-async function libBuildCrumbs(n){
-  const path = [];
-  let id = n.folderId;
-  while(id!=null){
-    const f = await SampleDB.getFolder(id);
-    if(!f) break;
-    path.unshift(f);
-    id = f.parentId;
-  }
-  n.path = path;
-  const parts = ['root', ...path.map(f=>f.name)];
-  n.ui.crumbs.textContent = parts.join(' / ');
-}
-
-function libRenderList(n, folders, clips){
-  const list = n.ui.list;
-  list.innerHTML = '';
-
-  if(n.folderId!=null){
-    const up = document.createElement('div');
-    up.textContent = '.. up';
-    up.style.cssText = 'padding:3px 6px;cursor:pointer;color:#6c7a80;border-bottom:1px solid #121619;';
-    up.addEventListener('click', ()=>{
-      const parent = n.path.length>1 ? n.path[n.path.length-2].id : null;
-      n.folderId = parent;
-      libRefresh(n);
-    });
-    list.appendChild(up);
-  }
-
-  for(const f of folders){
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:4px;padding:3px 6px;cursor:pointer;border-bottom:1px solid #121619;';
-    row.innerHTML = `<span>📁</span><span class="lib-fname" style="flex:1;">${escapeHtml(f.name)}</span>
-      <span class="lib-frename" style="cursor:pointer;color:#6c7a80;">✎</span>
-      <span class="lib-fdel" style="cursor:pointer;color:#6c7a80;">🗑</span>`;
-    row.addEventListener('click', (ev)=>{
-      if(ev.target.classList.contains('lib-frename')||ev.target.classList.contains('lib-fdel')) return;
-      n.folderId = f.id; libRefresh(n);
-    });
-    row.querySelector('.lib-frename').addEventListener('click', async (ev)=>{
-      ev.stopPropagation();
-      const name = prompt('New name:', f.name);
-      if(name){ await SampleDB.renameFolder(f.id, name); libRefresh(n); }
-    });
-    row.querySelector('.lib-fdel').addEventListener('click', async (ev)=>{
-      ev.stopPropagation();
-      if(!confirm('Delete folder "'+f.name+'" and everything in it?')) return;
-      await SampleDB.deleteFolder(f.id); libRefresh(n);
-    });
-    // перетаскивание клипов в папку
-    row.addEventListener('dragover', ev=>{ ev.preventDefault(); row.style.background='#1d2226'; });
-    row.addEventListener('dragleave', ()=>{ row.style.background=''; });
-    row.addEventListener('drop', async ev=>{
-      ev.preventDefault(); row.style.background='';
-      const id = +ev.dataTransfer.getData('application/x-dsp-clip-id');
-      if(id) { await SampleDB.updateClip(id, {folderId:f.id}); libRefresh(n); }
-    });
-    list.appendChild(row);
-  }
-
-  for(const c of clips){
-    list.appendChild(libClipRow(n, c));
-  }
-
-  if(!folders.length && !clips.length){
-    const empty = document.createElement('div');
-    empty.textContent = 'empty — import a file or record a sample';
-    empty.style.cssText = 'padding:12px;text-align:center;color:#2a3136;';
-    list.appendChild(empty);
-  }
-}
-
-function libClipRow(n, c){
-  const row = document.createElement('div');
-  row.draggable = true;
-  row.dataset.clipId = c.id;
-  const isSel = n.selected===c.id;
-  row.style.cssText = `display:flex;align-items:center;gap:5px;padding:2px 6px;min-height:28px;cursor:pointer;
-    border-bottom:1px solid #121619;background:${isSel?'#1d2226':'transparent'};min-width:0;`;
-
-  const canvas = document.createElement('canvas');
-  canvas.width=36; canvas.height=18;
-  canvas.style.cssText = 'width:36px;height:18px;flex-shrink:0;';
-  libDrawPeaks(canvas, c.peaks);
-
-  const name = document.createElement('span');
-  name.textContent = c.name;
-  name.style.cssText = 'flex:1;min-width:30px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-
-  const dur = document.createElement('span');
-  dur.textContent = fmtDur(c.duration);
-  dur.style.cssText = 'color:#4ec9b0;width:30px;flex-shrink:0;';
-
-  const playBtn = document.createElement('span');
-  playBtn.textContent = (n.selected===c.id && n.play) ? '⏸' : '▶';
-  playBtn.style.cssText='cursor:pointer;';
-  playBtn.addEventListener('click', async ev=>{
-    ev.stopPropagation();
-    if(n.selected===c.id){ n.play = !n.play; libHighlight(n); }
-    else await libArmClip(n, c.id, true);
+// клип удалили (кнопкой или вместе с папкой) — сбросить то, что играет
+function libWatchStore(n){
+  const off = FileStore.onChange(async ()=>{
+    if(!n.ui?.root.isConnected){ off(); return; }
+    if(n.selected!=null && !(await FileStore.get(n.selected))){ n.selected=null; n.data=null; n.play=false; libHighlight(n); }
   });
-
-  const renameBtn = document.createElement('span');
-  renameBtn.textContent = '✎'; renameBtn.style.cssText='cursor:pointer;color:#6c7a80;';
-  renameBtn.addEventListener('click', async ev=>{
-    ev.stopPropagation();
-    const nm = prompt('New name:', c.name);
-    if(nm){ await SampleDB.updateClip(c.id, {name:nm}); libRefresh(n); }
-  });
-
-  const delBtn = document.createElement('span');
-  delBtn.textContent = '🗑'; delBtn.style.cssText='cursor:pointer;color:#6c7a80;';
-  delBtn.addEventListener('click', async ev=>{
-    ev.stopPropagation();
-    if(!confirm('Delete sample "'+c.name+'"?')) return;
-    await SampleDB.deleteClip(c.id);
-    if(n.selected===c.id){ n.selected=null; n.data=null; n.play=false; }
-    libRefresh(n);
-  });
-
-  for(const b of [playBtn, renameBtn, delBtn]) b.style.padding = '4px 3px';   // палец должен попадать
-  row.append(canvas, name, dur, playBtn, renameBtn, delBtn);
-
-  row.addEventListener('click', ()=>libOpenEditor(n, c.id));
-  row.addEventListener('dragstart', ev=>{
-    ev.dataTransfer.setData('application/x-dsp-clip-id', String(c.id));
-    ev.dataTransfer.setData('text/plain', c.name);
-  });
-
-  return row;
 }
 
 // Лёгкое обновление подсветки/иконки play без полной перерисовки списка — вызывается на каждый draw().
 function libHighlight(n){
   if(!n.ui) return;
-  const rows = n.ui.list.querySelectorAll('[data-clip-id]');
-  rows.forEach(r=>{
-    const id = +r.dataset.clipId;
-    const sel = id===n.selected;
-    r.style.background = sel ? '#1d2226' : 'transparent';
-    const btn = r.children[3];
+  n.ui.list.querySelectorAll('[data-clip-id]').forEach(r=>{
+    const sel = +r.dataset.clipId===n.selected;
+    r.classList.toggle('armed', sel);
+    const btn = r.querySelector('.lib-play');
     if(btn) btn.textContent = (sel && n.play) ? '⏸' : '▶';
   });
-}
-
-function libDrawPeaks(canvas, peaks){
-  const cx = canvas.getContext('2d');
-  const W=canvas.width, H=canvas.height, half=H/2;
-  cx.clearRect(0,0,W,H);
-  if(!peaks || !peaks.length) return;
-  const n = peaks.length/2;
-  cx.strokeStyle = themeColor('--acc2'); cx.lineWidth = 1;
-  cx.beginPath();
-  for(let i=0;i<n;i++){
-    const x = i/n*W;
-    const lo = peaks[i*2], hi = peaks[i*2+1];
-    cx.moveTo(x, half - hi*half*0.9);
-    cx.lineTo(x, half - lo*half*0.9);
-  }
-  cx.stroke();
 }
 
 function escapeHtml(s){
