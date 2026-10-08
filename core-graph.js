@@ -234,6 +234,16 @@ const watchDpr=()=>{ restretch();
 matchMedia(`(resolution:${window.devicePixelRatio}dppx)`).addEventListener('change',watchDpr,{once:true}); };
 matchMedia(`(resolution:${window.devicePixelRatio}dppx)`).addEventListener('change',watchDpr,{once:true});
 }
+// долгое нажатие (без сдвига) — fn; следующий клик/открытие списка гасится
+function onLongPress(el,fn,ms=550){
+let t=0,x0=0,y0=0,fired=false;
+const stop=()=>{ clearTimeout(t); t=0; };
+el.addEventListener('pointerdown',e=>{ fired=false; x0=e.clientX; y0=e.clientY; stop();
+t=setTimeout(()=>{ t=0; fired=true; el.blur?.(); fn(); },ms); });
+el.addEventListener('pointermove',e=>{ if(t && Math.hypot(e.clientX-x0,e.clientY-y0)>8) stop(); });
+for(const ev of ['pointerup','pointercancel','pointerleave']) el.addEventListener(ev,stop);
+for(const ev of ['mousedown','touchend','click']) el.addEventListener(ev,e=>{ if(fired){ e.preventDefault(); e.stopPropagation(); if(ev==='click') fired=false; } },true);
+}
 function nodeTitle(n){ return n.name || MOD[n.type].title; }
 function setNodeName(n,v){                          // пустое имя — вернуть название модуля
 n.name=String(v||'').trim().slice(0,40);
@@ -349,6 +359,7 @@ if(e.target.closest('.x') || Math.hypot(e.clientX-x0,e.clientY-y0)>5){ t0=0; ret
 if(e.timeStamp-t0<350){ t0=0; setLod(n,n.lod ? 0 : collapsedLod(n)); Undo.push(); } else t0=e.timeStamp; }); }
 if(n.lod) setLod(n,n.lod);
 bindDrag(el.querySelector('.nhead'),n);
+onLongPress(el.querySelector('.ttl'),()=>renameNode(n));
 el.addEventListener('pointerdown',ev=>{
 if(!Sel.has(n.id)||ev.shiftKey) selSet(n.id,ev.shiftKey); });
 // ввод по узлу (наведение, клик, колесо, правка поля) — lazy-узлу перерисоваться
@@ -1411,6 +1422,7 @@ function dashRenderLeaf(t){
   if(n) sel.title=nodeTitle(n)+' #'+n.id;
   if(n) sel.value=n.id; else if(isGraph) sel.value='@graph';
   sel.addEventListener('pointerdown',e=>e.stopPropagation());
+  if(n){ onLongPress(sel,()=>renameNode(n)); sel.addEventListener('dblclick',()=>renameNode(n)); }
   sel.onchange=()=>{ if(n) dashDetach(n);
     const toGraph=sel.value==='@graph';
     if(toGraph){ tab.node=null; tab.view='graph'; }
@@ -1462,6 +1474,14 @@ function dashRenderLeaf(t){
   tools.append(...(bareBtn?[bareBtn]:[]),...(isMax?[bm]:[]),more,acts);   // ⛶ и возврат из максимума — всегда на виду, не под «⋯»
   // двойной клик/тап по пустому месту шапки — развернуть/вернуть
   tools.addEventListener('dblclick',e=>{ if(e.target===tools || e.target===strip) dashToggleMax(t.id); });
+  // жест по шапке: вниз — разделить вниз, вправо — разделить вправо
+  requestAnimationFrame(()=>strip.classList.toggle('ovf',strip.scrollWidth>strip.clientWidth+1));
+  { let p0=null;
+    tools.addEventListener('pointerdown',e=>{ p0=e.pointerType==='mouse'?null:{x:e.clientX,y:e.clientY}; },true);
+    tools.addEventListener('pointerup',e=>{ if(!p0) return; const dx=e.clientX-p0.x, dy=e.clientY-p0.y; p0=null;
+      if(dy>36 && dy>Math.abs(dx)*1.5){ dashSplit(t.id,'col'); }
+      else if(dx>72 && dx>Math.abs(dy)*2 && !strip.classList.contains('ovf')){ dashSplit(t.id,'row'); } },true);
+    tools.addEventListener('pointercancel',()=>{ p0=null; },true); }
   pane.append(tools);
   const body=document.createElement('div'); body.className='dash-body';
   if(n) body.append(n.el);
@@ -2012,7 +2032,9 @@ const on=Eng.running&&!Eng.paused;
 runBtn.innerHTML = on?RUN_STOP:RUN_PLAY;
 runBtn.classList.toggle('on',on);
 }
-Eng.onRunChange=()=>{ syncRunBtn(); wakeDraw(); };
+Eng.onRunChange=()=>{ syncRunBtn(); wakeDraw();
+if(!(Eng.running&&!Eng.paused))                      // стоп — источники выключаем совсем (индикатор камеры, датчики)
+for(const n of Graph.nodes){ try{ MOD[n.type].onStop?.(n); }catch(e){} } };
 // запуск просит все разрешения сразу (камера, датчики): модулям с onRun не нужно жать «Start» руками;
 // вызываем до await — iOS требует, чтобы запрос был прямо из тапа
 function askPermissions(){

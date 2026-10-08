@@ -78,6 +78,7 @@ def({ id:'orient', title:'Orientation', cat:'Sources', kw:'compass azimuth pitch
   outs:[{n:'az',t:'num'},{n:'el',t:'num'},{n:'roll',t:'num'}],
   readout:true,
   onRun:n=>{ if(!n.sensor && !n.onOri) return oriStart(n); },
+  onStop:n=>oriStop(n),
   params:[{n:'cam',t:'select',opts:['rear','front'],d:'rear',label:'camera that looks along the axis'},
           {n:'tau',t:'range',min:0,max:1,step:.01,d:.08,label:'smoothing, s'},
           {n:'go',t:'button',label:'Start',fn:n=>oriStart(n)},
