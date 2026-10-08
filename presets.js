@@ -275,6 +275,9 @@ const PRESET_CATS={
   'Graph: Links from CSV':'Network & IoT',
   'Network: Same Nodes and Links as Graph and on the Map':'Maps & Locating',
   'Chat: Text In and Out':'Network & IoT',
+  'Files over WebRTC':'Network & IoT',
+  'Call: voice, video, chat and files over WebRTC':'Network & IoT',
+  'WebRTC: audio and video of the graph over a connection':'Network & IoT',
   'Game: Tic-Tac-Toe over WebRTC':'Games',
   'Game: Connect Four over WebRTC':'Games',
   'Game: Battleship over WebRTC':'Games',
@@ -4861,7 +4864,7 @@ preset(name, function(){
 clearAll();
 const how=mqtt
   ? 'Both players load this preset, set the same broker and topic in MQTT In / MQTT Out and press Connect. Moves go as text over one shared topic (a node ignores its own messages).'
-  : 'One player presses Create offer in WebRTC Data and sends the code to the other, who presses Accept offer and sends the answer back (Apply answer). Then the game starts by itself.';
+  : 'One player presses Create offer in WebRTC Data and sends the code to the other, who presses Accept offer and sends the answer back (Apply answer). Then the game starts by itself. To reconnect without codes after a drop, fill the broker WebSocket and a secret room in WebRTC Data on both sides and tick auto-connect; after a reconnect the game restarts (the score stays).';
 const nt=addNode('note',40,20,{text:'Two-player game: opponent moves arrive on `in`, yours leave on `out` as text — the same wires as Chat, so any channel works (WebRTC, MQTT, Text over Network). '+how+' First player is chosen automatically (or by the side parameter), every next game starts with the other one. Outputs: turn, result (1 win / −1 loss), go pulse per move.'});
 nt.size.w=1000; nt.size.h=90; applySize(nt);
 const g=addNode(id,420,150,{});
@@ -4872,11 +4875,49 @@ if(mqtt){
   addEdge(mi.id,'text',g.id,'in'); addEdge(g.id,'out',mo.id,'text');
 }else{
   const r=addNode('rtcdata',40,150,{}); r.size.w=340; r.size.h=300; applySize(r);
-  addEdge(r.id,'line',g.id,'in'); addEdge(g.id,'out',r.id,'send');
+  addEdge(r.id,'line',g.id,'in'); addEdge(g.id,'out',r.id,'send'); addEdge(r.id,'open',g.id,'link');
 }
 markWiresDirty();
 });
 }
+preset('Files over WebRTC', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Direct file transfer between two browsers. One side presses Create offer in WebRTC Data and sends the code to the other, who presses Accept offer and sends the answer back (Apply answer). Then tap a file in Files and press «Send selected →»; or press Send file… in WebRTC Data to send a file from this device. Received files land in the Received folder of the matching storage (audio / images / files) of the Files node. Text, games and files share one connection, a file does not hold the chat.'});
+nt.size.w=1000; nt.size.h=90; applySize(nt);
+const r=addNode('rtcdata',40,150,{}); r.size.w=340; r.size.h=330; applySize(r);
+const f=addNode('files',420,150,{}); f.size.w=360; f.size.h=330; applySize(f);
+addEdge(f.id,'send',r.id,'sendFile');
+markWiresDirty();
+});
+preset('Call: voice, video, chat and files over WebRTC', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'One connection for everything: voice, camera / screen, chat and files at once. Connect by hand (Create offer / Accept offer / Apply answer) or fill the MQTT broker and a secret room in WebRTC Data on both sides and tick auto-connect (it also reconnects by itself). Tick microphone / camera / share screen when you want to be heard and seen — they can be switched on and off at any moment without breaking the connection; the picture and sound of the other side appear in the node. Chat: type in the Chat node. Files: tap a file in Files and press «Send selected →»; received files land in the Received folder.'});
+nt.size.w=1100; nt.size.h=90; applySize(nt);
+const r=addNode('rtcdata',40,150,{}); r.size.w=360; r.size.h=380; applySize(r);
+const c=addNode('chat',420,150,{}); c.size.w=320; c.size.h=300; applySize(c);
+const f=addNode('files',760,150,{}); f.size.w=340; f.size.h=330; applySize(f);
+addEdge(r.id,'line',c.id,'text'); addEdge(c.id,'text',r.id,'send'); addEdge(f.id,'send',r.id,'sendFile');
+markWiresDirty();
+});
+preset('WebRTC: audio and video of the graph over a connection', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Any sound and picture of the graph go to the other side as tracks of one WebRTC connection (the connection itself — by hand or auto-connect, see WebRTC Data). Audio Out takes a sound from `in`, Video Out a picture from `vid` (Video file / camera) or `img` (TV, SSTV, any frame); on the other side Audio In / Video In give them back to the graph under the same track name (label) — into a Sound Card, a decoder, a Frame viewer. The wire `rtc` links a node with its WebRTC Data (link). Load the same preset on both sides and swap sources and sinks as you like. Microphone, camera and screen of WebRTC Data have the labels mic / camera / screen.'});
+nt.size.w=1100; nt.size.h=90; applySize(nt);
+const r=addNode('rtcdata',40,150,{}); r.size.w=340; r.size.h=330; applySize(r);
+const osc=addNode('osc',420,150,{freq:440,amp:.2}); 
+const ao=addNode('rtcAudioOut',720,150,{label:'voice'}); ao.size.w=260; ao.size.h=120; applySize(ao);
+const vs=addNode('vidsrc',420,330,{}); vs.size.w=260; vs.size.h=220; applySize(vs);
+const vo=addNode('rtcVideoOut',720,330,{label:'video'}); vo.size.w=260; vo.size.h=130; applySize(vo);
+const ai=addNode('rtcAudioIn',420,620,{label:'voice'}); ai.size.w=260; ai.size.h=120; applySize(ai);
+const dac=addNode('dac',720,620,{}); 
+const vi=addNode('rtcVideoIn',420,780,{label:'video'}); vi.size.w=260; vi.size.h=220; applySize(vi);
+const fr=addNode('imgview',720,780,{}); fr.size.w=300; fr.size.h=220; applySize(fr);
+addEdge(osc.id,'out',ao.id,'in'); addEdge(r.id,'link',ao.id,'rtc');
+addEdge(vs.id,'vid',vo.id,'vid'); addEdge(r.id,'link',vo.id,'rtc');
+addEdge(r.id,'link',ai.id,'rtc'); addEdge(ai.id,'out',dac.id,'L');
+addEdge(r.id,'link',vi.id,'rtc'); addEdge(vi.id,'img',fr.id,'img');
+markWiresDirty();
+});
 gamePreset('Game: Tic-Tac-Toe over WebRTC','gtictactoe',280,330,false);
 gamePreset('Game: Connect Four over WebRTC','gconnect4',360,420,false);
 gamePreset('Game: Battleship over WebRTC','gbattleship',400,380,false);
