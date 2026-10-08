@@ -857,6 +857,17 @@ Web Bluetooth works in Chrome, Edge and Opera (desktop and Android) on https or 
 
 Presets: *BLE: Heart Rate Monitor*, *BLE: Find a Beacon by RSSI*, *BLE: UART Terminal*.
 
+### Meshtastic
+
+**Meshtastic (BLE / Serial)** (Sources) talks to a Meshtastic node through its client API — Bluetooth LE (service `6ba1b218-…`) or WebSerial (115200, frames `0x94 0xC3`). The node does the radio and the decryption with its channel keys; the page gets ready messages, positions and telemetry. On connect the node sends its config and the node list.
+
+- **Outputs:** `text` / `from` / `go` / `snr` — incoming chat messages, one per block; `rec` — every packet as a record `{t, kind, id, name, to, ch, snr, rssi, hop, text, lat, lon, alt, battery, voltage, temp, hum, press…}` (kinds: `text`, `position`, `telemetry`, `nodeinfo`, `node` from the config dump, `encrypted` for a channel the node has no key for). Positions of known nodes are added to their other records, so the records go to the *Map* and the *Table* as they are.
+- **Input:** `text` is sent to *send to* (`^all` or a node id like `!a1b2c3d4`) on the chosen channel index.
+- A node accepts one BLE client at a time: disconnect the phone app first. Not covered: node settings (admin messages), a passive LoRa receiver without a node — for that see *LoRa Decoder* (sync word `2B`).
+- The parser is checked against the protobuf layout only (`node tools/test-meshtastic.mjs`), not on real hardware yet.
+
+Preset: *Meshtastic: Chat and Nodes on the Map*.
+
 ## MQTT
 
 **MQTT In** and **MQTT Out** (MQTT 3.1.1 over WebSocket, written from scratch, no libraries) connect the workbench to any IoT stack. Each node keeps its own connection; `Connect` / `Disconnect` buttons, auto-reconnect every 3 s, a refused login (wrong user or password) is shown and not retried.
