@@ -85,6 +85,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **SAME / EAS** (NOAA Weather Radio alerts, AFSK 520.83 Bd from an NFM receiver): ZCZC header with the three repeats voted → originator, event, FIPS areas, validity, station; a test-signal generator for the decoder (see [SAME / EAS](#same--eas))
 - **SELCAL** (aviation selective calling, HF / VHF, ICAO 16 tones): the code of an aircraft call from audio — two pulses of two tones each → `AB-CD`, with the measured tuning error; a test-signal generator (see [SELCAL](#selcal))
 - **Five-tone selcall** (land mobile: ZVEI-1/2/3, DZVEI, PZVEI, CCIR, EEA, EIA): sequences of 5 tones → the code with the repeat tone expanded; a test-signal generator (see [Five-tone selcall](#five-tone-selcall-zvei-ccir-eea))
+- **TBSK** (spread-spectrum data over sound, [nyatla/TBSKmodem](https://github.com/nyatla/TBSKmodem)): a modulator (text → audio) and a decoder (audio → bytes / text) with a differential tone and delay detection, 5 bit/s … 1 kbit/s, no carrier lock (see [TBSK](#tbsk-spread-spectrum-data-over-sound))
 - Doppler radar, 2D chirp radar, monostatic sonar
 
 ### Infrared
@@ -520,6 +521,20 @@ Presets: *SELCAL: Test Signal (Loopback)*, *SELCAL: HF Aeronautical Channel (Kiw
 - **Not done:** Fast (10 s), Turbo (6 s), Slow (30 s) and Ultra submodes (other symbol times and the modified Costas arrays — the arrays are in the code, the timing is not); relayed `>` messages and checksummed commands (`MSG`, `QUERY`, …) are shown as their commands only; transmitting from a compound callsign (`CALL/XX`); no inbox, no auto-reply. **The codec is checked against itself** (parity matrix ↔ generator, packing ↔ unpacking, transmitter ↔ receiver in `tools/test-kernels.mjs`, and the loopback preset in a browser), **not against real on-air JS8Call traffic or the reference program** — a field check with a recording is welcome.
 
 Presets: *JS8Call: Transmit and Receive (Loop)*, *JS8Call: Receive Off-Air*.
+
+## TBSK (spread-spectrum data over sound)
+
+**TBSK Decoder** (Decoders, main thread) and **TBSK Modulator** (Protocols) implement the modulation of [nyatla/TBSKmodem](https://github.com/nyatla/TBSKmodem) — data over sound with no carrier or phase lock, from ~5 bit/s to ~1 kbit/s. A bit is one *tone* (a carrier with pseudo-random ±45° phase jumps per sample, so the spectrum is spread) or the same tone with the opposite sign; the coding is differential (a 1 keeps the sign of the previous symbol, a 0 flips it), and the receiver correlates every symbol with the previous one (delay detection): +1 → 1, −1 → 0.
+
+- **Parameters** (the same on both sides): *carrier* (Hz) and *tone length* (carrier periods); bit rate = carrier / tone length (4800 Hz / 10 = 480 bit/s). A longer tone is slower and tolerates more noise and interference. The tone is built as in the Python port (XPskSin: phase step δ + k·2π/8, k = ±1 from XorShift31(999), 299 skipped).
+- **Frame:** a preamble of 14 symbols (`0 1`, five `1`, `0 1 0 1`, `0 0 1`: a plateau of correlation +1, then −1), the bits (bytes, most significant bit first, UTF-8 for text), an optional stop symbol (the tone with alternating sample signs, correlation ≈ 0). TBSK itself has no length, CRC or error correction — the *max bytes* parameter cuts a frame, otherwise it ends when the correlation drops below *end of frame* (0.2).
+- **Receiver:** running correlation of the last tone with the one before it; the preamble is found by matching the expected ±1 pattern at symbol boundaries (threshold 0.4 — about 13σ above noise), symbol timing is then tracked by the neighbouring |r| (±500 ppm clock error is fine). Output: `rec` `{t, src:'TBSK', kind:'frame', id, bytes, bits, hex, text, quality, bps}` (*quality* is the mean |r|), `text`, `new`, `level`.
+- **Modulator:** text from the `text` input (or the *message* parameter), sent by the *Send* button, a rising edge on `go` or, with *auto*, on a change of the text; outputs `out` (audio) and `busy`. Wire `out` to the audio output node and the microphone to the decoder for a real loop through air.
+- **Not done / not checked:** no tone types other than XPskSin (no plain PN tone), no pre-set custom `shift` generator, no packet layer. Checked against the module's own modulator: clean signal, three frames in a row, binary payload, any start offset, 20/20 frames at 1 dB SNR (white noise in the whole band; it fails somewhere between 1 and −2.5 dB, tested at 1, −2.5 and −7.5 dB), ±500 ppm sample clock error, no false frames on 20 s of noise or on a pure carrier (`node tools/test-tbsk.mjs`). **Not compared with a signal from the original TBSKmodem** (the preamble and the first differential symbol are written from the Python source; if a recording from the original does not decode, this is where to look first).
+
+**License and patent:** the modulation, the tone generator and its constants, and the preamble structure are taken from [TBSKmodem](https://github.com/nyatla/TBSKmodem) by Ryo Iizuka (nyatla.jp), MIT License, Copyright (C) 2022 Ryo Iizuka, nyatla.jp; the code here is a new implementation (no source copied). The original's README mentions patent WO-A-2010/016589 (modulation / demodulation device) and says some rights may belong to YAMAHA CORPORATION — check it before commercial use.
+
+Preset: *TBSK: Spread-Spectrum Data Over Sound (Loopback)*.
 
 ## Five-tone selcall (ZVEI, CCIR, EEA)
 

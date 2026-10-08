@@ -217,6 +217,7 @@ const PRESET_CATS={
   'SELCAL: HF Aeronautical Channel (KiwiSDR)':'HF Modes & Morse',
   'Selcall ZVEI / CCIR: Five-Tone Decoder Test (Loopback)':'Digital Voice & Trunking',
   'Selcall ZVEI / CCIR: Five-Tone Decoder (USB SDR, NFM)':'Digital Voice & Trunking',
+  'TBSK: Spread-Spectrum Data Over Sound (Loopback)':'Modems & Data Links',
   'POCSAG: Pager Messages (Generator)':'Modems & Data Links',
   'POCSAG: Pager Messages (USB SDR)':'Modems & Data Links',
   'AIS: Vessels on the Map (Generator)':'Aircraft, Satellites & Telemetry',
@@ -1768,6 +1769,23 @@ rx.size.w=500; rx.size.h=300; applySize(rx);
 const log=addNode('recLog',420,590,{});
 log.size.w=500; applySize(log);
 addEdge(tx.id,'out',rx.id,'in'); addEdge(rx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('TBSK: Spread-Spectrum Data Over Sound (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'TBSK (nyatla/TBSKmodem): a bit is one tone — a carrier with pseudo-random phase jumps (spread spectrum) — or the same tone inverted; the coding is differential, the receiver correlates every symbol with the previous one, so it needs neither carrier nor phase lock.\n'+
+  'Bit rate = carrier / tone length (4800 Hz / 10 periods = 480 bit/s); a longer tone is more robust and slower. Press Send in the modulator: a preamble (a plateau of +1 then −1 correlation) is found, then bits come out as bytes. The noise oscillator is mixed in to show the margin: raise its amplitude until frames stop (about 0 dB SNR).\n'+
+  'To play it over the air: audio output → microphone, same carrier and tone length on both sides.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const tx=addNode('tbskTx',40,230,{});
+tx.size.w=340; tx.size.h=360; applySize(tx);
+const no=addNode('osc',40,620,{wave:'noise',amp:.1});
+const sm=addNode('sum',420,300,{});
+const rx=addNode('tbskRx',620,230,{});
+rx.size.w=440; rx.size.h=360; applySize(rx);
+const log=addNode('recLog',620,620,{});
+log.size.w=440; applySize(log);
+addEdge(tx.id,'out',sm.id,'a'); addEdge(no.id,'out',sm.id,'b'); addEdge(sm.id,'out',rx.id,'in'); addEdge(rx.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('Selcall ZVEI / CCIR: Five-Tone Decoder (USB SDR, NFM)', function(){
