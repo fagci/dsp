@@ -290,12 +290,12 @@ def({ id:'files', title:'Files', cat:'Output', kw:'file manager storage samples 
   params:[{n:'meta',t:'check',d:true,label:'bin: attach name and type (off — bare bytes)'},
     {n:'sendBtn',t:'button',label:'Send selected → (pulse on `send`, bytes on `bin`)',fn:n=>{ if(n.sel && typeof n.sel.id==='number') n.pend=n.sel.id; }},
     {n:'space',t:'select',opts:FS_SPACES,d:'files',label:'storage',fn:n=>{ n.fm?.setSpace(n.p.space); }}],
-  init:n=>{ n.fm=null; n.sel=null; n.pend=-1; n.binOut=null; },
+  init:n=>{ n.fm=null; n.sel=null; n.pend=-1; n.ready=-1; n.binOut=null; },
   dispose:n=>{ n.fm?.destroy(); n.fm=null; },
-  process(n){ const send=n.pend; n.pend=-1;     // импульс: id на один блок, потом -1
+  process(n){ const req=n.pend; n.pend=-1; const send=n.ready; n.ready=-1;     // импульс: id на один блок, потом -1
     const r=n.sel;
-    if(send>=0 && r && r.blob)                    // байты уходят только по кнопке
-      r.blob.arrayBuffer().then(a=>{ n.binOut=n.p.meta ? binObj(new Uint8Array(a),fmFileName(r),r.mime) : binObj(new Uint8Array(a)); });
+    if(req>=0 && r && r.blob)                     // байты уходят только по кнопке; пульс send идёт вместе с ними, а не раньше
+      r.blob.arrayBuffer().then(a=>{ n.binOut=n.p.meta ? binObj(new Uint8Array(a),fmFileName(r),r.mime) : binObj(new Uint8Array(a)); n.ready=req; });
     return {id:r && typeof r.id==='number' ? r.id : -1, name:r?.name||'', size:r?.size||0, send, bin:n.binOut}; },
   draw(n){
     if(n.fm && n.mid.contains(n.fm.root)) return;
