@@ -8,10 +8,24 @@
 const NG_BIT={auto:'a',first:'f',second:'s'};
 const ngRnd=()=>Math.random().toString(36).slice(2,10).padEnd(8,'0');
 
-function ngSend(n,cmd){ n.seq++; n.outQ.push(n.gid+':'+n.nonce+':'+n.seq+':'+cmd); }
+const ngCrc=t=>{ let h=0; for(let i=0;i<t.length;i++) h=(h*31+t.charCodeAt(i))&255; return h.toString(16).padStart(2,'0'); };
+function ngSend(n,cmd){                              // надёжный режим: hello и ack без номера, ходы с номером, контрольная сумма и повтор до ack
+  const svc=n.p.rel && /^(hello|ack)\b/.test(cmd);
+  const seq=svc ? 0 : ++n.seq;
+  let t=n.gid+':'+n.nonce+':'+seq+':'+cmd;
+  if(n.p.rel) t+='*'+ngCrc(t);
+  n.outQ.push(t);
+  if(n.p.rel && !svc){ n.unack.push({seq,t}); n.lastTx=Date.now(); }
+}
 function ngHello(n,re){ n.lastHello=Date.now(); ngSend(n,'hello '+(NG_BIT[n.p.side]||'a')+(re ? ' r' : '')); }
 function ngParse(n,text){
-  const m=/^([a-z0-9]+):([a-z0-9]+):(\d+):(.*)$/.exec(String(text).trim());
+  text=String(text).trim();
+  if(n.p.rel){                                       // битый кадр отбрасываем целиком
+    const k=text.lastIndexOf('*');
+    if(k<0 || ngCrc(text.slice(0,k))!==text.slice(k+1)) return null;
+    text=text.slice(0,k);
+  }
+  const m=/^([a-z0-9]+):([a-z0-9]+):(\d+):(.*)$/.exec(text);
   return m && m[1]===n.gid && m[2]!==n.nonce ? {nonce:m[2],seq:+m[3],cmd:m[4]} : null;
 }
 function ngResolve(n){                               // 1 — первый игрок, 2 — второй; обе стороны считают одинаково
@@ -38,38 +52,52 @@ function ngAgain(n){
 function ngRecv(n,m){
   let fresh=false;
   if(m.nonce!==n.peer){ n.peer=m.nonce; n.peerSeq=0; n.peerSide='a'; fresh=true; }
-  if(m.seq<=n.peerSeq) return;
-  n.peerSeq=m.seq;
   const a=m.cmd.split(' '), cmd=a.shift();
+  if(n.p.rel){
+    if(cmd==='ack'){ if(!fresh){ const k=+a[0]|0; n.unack=n.unack.filter(u=>u.seq>k); } return; }
+    if(cmd!=='hello'){
+      if(!n.ready){ if(fresh) ngHello(n); return; }  // пока не готовы — ход не принимаем и не подтверждаем, отправитель повторит
+      if(m.seq!==n.peerSeq+1){ ngSend(n,'ack '+n.peerSeq); return; }   // дубль или пропуск: говорим, до какого номера приняли
+      n.peerSeq=m.seq; ngSend(n,'ack '+m.seq);
+    }
+  }else{
+    if(m.seq<=n.peerSeq) return;
+    n.peerSeq=m.seq;
+  }
   if(cmd==='hello'){
     n.peerSide=a[0]||'a';
     const me=ngResolve(n);
     const re=a[1]==='r';                             // ответ на hello — не отвечаем, иначе пинг-понг
-    if(fresh || !n.ready || me!==n.me || !re){ n.me=me; n.ready=true; ngStart(n,0); }
+    if(fresh || !n.ready || me!==n.me || !re){ n.me=me; n.ready=true; n.unack=[]; ngStart(n,0); }
     if(!re) ngHello(n,true);
     return;
   }
-  if(fresh) ngHello(n);
+  if(fresh && !n.p.rel) ngHello(n);
   if(!n.ready) return;
   if(cmd==='new'){ const k=+a[0]|0; if(k>n.k) ngStart(n,k); return; }
   n.spec.msg(n,cmd,a); n.dirty=true;
 }
 function ngInit(n,gid,spec){
-  n.gid=gid; n.spec=spec; n.nonce=ngRnd(); n.seq=0; n.outQ=[]; n.last='';
+  n.gid=gid; n.spec=spec; n.nonce=ngRnd(); n.seq=0; n.outQ=[]; n.unack=[]; n.lastTx=0; n.justSent=false; n.last='';
   n.lastIn=undefined; n.lastNew=false; n.lastLink=0; n.peer=null; n.peerSeq=0; n.peerSide='a';
-  n.me=1; n.ready=false; n.k=0; n.sc={w:0,l:0,d:0}; n.lastHello=0;
+  n.me=1; n.ready=false; n.k=0; n.sc={w:0,l:0,d:0}; n.lastHello=0; n.jit=0;
   n.box=null; n.dirty=true; n.over=false; n.res=0; n.turnP=1;
   spec.reset(n);
 }
 function ngProcess(n,I){
-  if(typeof I.in==='string' && I.in!==n.lastIn){ n.lastIn=I.in; const m=ngParse(n,I.in); if(m) ngRecv(n,m); }
+  if(typeof I.in!=='string') n.lastIn=undefined;     // пустой вход между кадрами: тот же текст снова — это повтор, а не то же значение
+  else if(I.in!==n.lastIn){ n.lastIn=I.in; const m=ngParse(n,I.in); if(m) ngRecv(n,m); }
   const nw=+I.new>.5; if(nw && !n.lastNew) ngAgain(n); n.lastNew=nw;
   const lk=+I.link>.5;                               // канал поднялся заново (после обрыва): обе стороны начинают партию с нуля, счёт остаётся
-  if(lk && !n.lastLink){ if(n.ready) ngStart(n,0); ngHello(n); }
+  if(lk && !n.lastLink){ if(n.ready){ n.unack=[]; ngStart(n,0); } ngHello(n); }
   n.lastLink=lk;
   if(!n.ready && Date.now()-n.lastHello>2000) ngHello(n);
+  if(n.p.rel && n.unack.length && !n.outQ.length && Date.now()-n.lastTx>n.p.resend*1000*(1+n.jit)){   // нет ack — повторяем самое старое
+    n.outQ.push(n.unack[0].t); n.lastTx=Date.now(); n.jit=Math.random()*.5;
+  }
   let go=0;
-  if(n.outQ.length){ n.last=n.outQ.shift(); go=1; }
+  if(n.justSent) n.justSent=false;                   // пауза в один блок: go даёт фронт на каждое сообщение
+  else if(n.outQ.length){ n.last=n.outQ.shift(); go=1; n.justSent=true; }
   return {out:n.last, go, turn:n.ready && !n.over && n.turnP===n.me ? 1 : 0, result:n.res===1 ? 1 : n.res===-1 ? -1 : 0};
 }
 
@@ -113,7 +141,9 @@ function ngDef(o){
     ins:[{n:'in',t:'txt'},{n:'new',t:'num'},{n:'link',t:'num'}],
     outs:[{n:'out',t:'txt'},{n:'go',t:'num'},{n:'turn',t:'num'},{n:'result',t:'num'}],
     params:[{n:'side',t:'select',opts:['auto','first','second'],d:'auto',label:'first player in game 1',
-             fn:n=>{ if(n.peer){ ngHello(n); const me=ngResolve(n); if(me!==n.me){ n.me=me; ngStart(n,0); } } }}],
+             fn:n=>{ if(n.peer){ ngHello(n); const me=ngResolve(n); if(me!==n.me){ n.me=me; ngStart(n,0); } } }},
+            {n:'rel',t:'check',d:false,label:'lossy channel (sound, radio): checksum, acks, resend'},
+            {n:'resend',t:'range',min:1,max:30,step:.5,d:4,label:'resend an unacknowledged move after, s'}],
     init:n=>ngInit(n,o.id,o.spec),
     process:ngProcess,
     draw:ngDraw });

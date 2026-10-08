@@ -42,10 +42,11 @@ def({ id:'tbskRx', title:'TBSK Decoder', cat:'Decoders', readout:true, tall:true
 });
 
 /* ---- Передатчик ---- */
-function tbskTxQueue(n,text){
+function tbskTxQueue(n,text,lead){
   const sr=Eng.sr, tone=tbskTone(sr,+n.p.fc,+n.p.cycle), bytes=new TextEncoder().encode(String(text).slice(0,1024));
   if(!bytes.length){ n.status='nothing to send'; return; }
-  n.tq={w:tbskModulate(tone,tbskBits(bytes),{amp:+n.p.amp, stop:n.p.stop!==false}), i:0};
+  const w=tbskModulate(tone,tbskBits(bytes),{amp:+n.p.amp, stop:n.p.stop!==false});
+  if(lead){ const z=new Float32Array(lead+w.length); z.set(w,lead); n.tq={w:z, i:0}; } else n.tq={w, i:0};
   n.status='sending '+bytes.length+' B · '+(sr/tone.length).toFixed(0)+' bit/s · '+(n.tq.w.length/sr).toFixed(2)+' s\n"'+String(text).slice(0,60)+'"';
 }
 def({ id:'tbskTx', title:'TBSK Modulator', cat:'Protocols', readout:true, tall:true,
@@ -58,19 +59,25 @@ def({ id:'tbskTx', title:'TBSK Modulator', cat:'Protocols', readout:true, tall:t
           {n:'stop',t:'check',d:true,label:'stop symbol at the end (the receiver closes the frame on it)'},
           {n:'auto',t:'check',d:false,label:'send when the text input changes'},
           {n:'send',t:'button',label:'Send',fn:n=>{ n.send=true; }}],
-  init:n=>{ n.tq=null; n.prevGo=0; n.send=false; n.lastIn=undefined; n.status='waiting'; },
+  init:n=>{ n.tq=null; n.pend=[]; n.prevGo=0; n.send=false; n.lastIn=undefined; n.status='waiting'; },
   process(n,I){
     const o=buf(n,'out'), go=I.go||0, inText=typeof I.text==='string' && I.text ? I.text : null;
     let want=(go>.5 && n.prevGo<=.5) || n.send; n.prevGo=go; n.send=false;
     if(inText!==null && inText!==n.lastIn){ n.lastIn=inText; if(n.p.auto) want=true; }
-    if(want) tbskTxQueue(n,inText!==null ? inText : n.p.msg);
+    if(want){                                        // идёт передача — кадр ждёт в очереди, а не затирает текущий
+      const t=inText!==null ? inText : n.p.msg;
+      if(n.tq){ if(n.pend.length<32) n.pend.push(t); } else tbskTxQueue(n,t);
+    }
     const q=n.tq;
     if(q){
       const k=Math.min(BLOCK,q.w.length-q.i);
       for(let i=0;i<k;i++) o[i]=q.w[q.i+i];
       for(let i=k;i<BLOCK;i++) o[i]=0;
       q.i+=k;
-      if(q.i>=q.w.length){ n.tq=null; n.status='sent'; }
+      if(q.i>=q.w.length){
+        n.tq=null; n.status='sent';
+        if(n.pend.length) tbskTxQueue(n,n.pend.shift(),Math.round(Eng.sr*.15));   // пауза, чтобы приёмник закрыл прошлый кадр
+      }
       return {out:o, busy:1};
     }
     o.fill(0);
