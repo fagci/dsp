@@ -175,6 +175,7 @@ body.noedit #bar .ed{display:none}
 .dash-pane:hover .dash-acts,.dash-tools.acts .dash-acts{opacity:1}
 /* вкладки: активная — селект модуля, слита с телом панели, акцентная черта сверху; остальные — тусклый текст */
 .dash-tabs{flex:1 1 auto;min-width:0;display:flex;align-items:stretch;overflow-x:auto;scrollbar-width:none;touch-action:pan-x}
+@media (pointer:coarse){ .dash-tools{touch-action:none} .dash-tools .dash-tabs.ovf{touch-action:pan-x} }
 .dash-tabs::-webkit-scrollbar{display:none}
 .dash-tools select.dash-pick{flex:0 1 auto;min-width:5em;max-width:100%;-webkit-appearance:none;appearance:none;
   border:0;border-radius:0;margin-bottom:-1px;color:var(--hi,var(--txt));font:11px var(--mono);padding:0 20px 0 9px;cursor:pointer;
@@ -298,8 +299,8 @@ body.noedit #bar .ed{display:none}
   #bar::-webkit-scrollbar{display:none}
   #bar button{flex:0 0 auto;padding:8px 11px}
   #bar .sp{display:none}
-  #stat{position:fixed;left:0;right:0;bottom:env(safe-area-inset-bottom);height:20px;line-height:20px;padding:0 10px;
-    text-align:left;font-size:10px;z-index:1;pointer-events:none;flex:none}
+  #stat{position:fixed;left:0;right:0;bottom:env(safe-area-inset-bottom);height:20px;line-height:20px;padding:0 24px;
+    text-align:center;font-size:10px;z-index:1;pointer-events:none;flex:none}
   .pitem{padding:10px 12px}
   /* на тач-устройствах hover недоступен — держим крестик крупнее и заметным всегда */
   .pitem .pins,.pitem .pdel{padding:6px 10px;font-size:14px;opacity:.8}
