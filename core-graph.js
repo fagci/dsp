@@ -1954,6 +1954,8 @@ n.p={devA: oldSlot===0?(old.dev||'default'):'default', gainA: oldSlot===0?(old.g
      echo:!!old.echo, ns:!!old.ns, agc:!!old.agc};
 }
 }
+const tbls=new Set(o.nodes.filter(n=>n.type==='table').map(n=>n.id));
+for(const e of o.edges) if(tbls.has(e.from) && e.fp==='bands') e.fp='rows';   // выходы bands и rows у Table слиты в rows
 for(const e of o.edges){
 const a=map[e.from], b=map[e.to];
 if(a &&a.ports &&a.ports[e.fp]) e.fp=a.ports[e.fp];
