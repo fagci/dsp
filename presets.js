@@ -283,6 +283,8 @@ const PRESET_CATS={
   'Game: Tic-Tac-Toe over WebRTC':'Games',
   'Game: Connect Four over WebRTC':'Games',
   'Game: Battleship over WebRTC':'Games',
+  'Game: Reversi over WebRTC':'Games',
+  'Game: Reversi over Sound (TBSK)':'Games',
   'Game: Tic-Tac-Toe over MQTT':'Games',
   'BLE: Heart Rate Monitor':'Network & IoT',
   'BLE: Find a Beacon by RSSI':'Network & IoT',
@@ -4956,6 +4958,25 @@ markWiresDirty();
 gamePreset('Game: Tic-Tac-Toe over WebRTC','gtictactoe',280,330,false);
 gamePreset('Game: Connect Four over WebRTC','gconnect4',360,420,false);
 gamePreset('Game: Battleship over WebRTC','gbattleship',400,380,false);
+gamePreset('Game: Reversi over WebRTC','greversi',360,420,false);
+preset('Game: Reversi over Sound (TBSK)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Reversi between two devices with no network: the moves travel as sound. Both players load this preset, put the devices close (speaker to microphone), allow the microphone and play. Same carrier and tone length on both sides (here 4800 Hz, 16 periods = 300 bit/s; a longer tone is slower and more robust). A move is ~30 bytes, about a second of sound; the channel is half-duplex, so keep the room quiet and do not talk while it plays.\n'+
+  'The game has «lossy channel» on: every message carries a checksum, the other side confirms moves and an unconfirmed move is sent again, so a lost or corrupted burst delays the game but does not break it. The microphone has echo cancellation, noise suppression and AGC off — they damage the modem signal. Your own sound reaches your own microphone too; the game ignores it. First player is chosen automatically (the side parameter).'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const g=addNode('greversi',420,200,{rel:true,resend:6});
+g.size.w=360; g.size.h=420; applySize(g);
+const m=addNode('mic',40,200,{gainA:1,echo:false,ns:false,agc:false});
+const rx=addNode('tbskRx',40,330,{fc:4800,cycle:16,max:96});
+rx.size.w=340; rx.size.h=260; applySize(rx);
+const tx=addNode('tbskTx',820,200,{fc:4800,cycle:16,amp:.5,auto:false});
+tx.size.w=300; tx.size.h=240; applySize(tx);
+const dac=addNode('dac',820,480,{});
+addEdge(m.id,'a',rx.id,'in'); addEdge(rx.id,'text',g.id,'in');
+addEdge(g.id,'out',tx.id,'text'); addEdge(g.id,'go',tx.id,'go');
+addEdge(tx.id,'out',dac.id,'L'); addEdge(tx.id,'out',dac.id,'R');
+markWiresDirty();
+});
 gamePreset('Game: Tic-Tac-Toe over MQTT','gtictactoe',280,330,true);
 preset('Unknown Signal: Blind Analysis (Generator)', function(){
 clearAll();
