@@ -4766,6 +4766,19 @@ const ts=addNode('textsrc',40,470,{});
 addEdge(m.id,'text',tk.id,'text'); addEdge(ts.id,'text',m.id,'text');
 markWiresDirty();
 });
+preset('RNode: Reticulum Announces on the Air', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'An RNode (LoRa board with the RNode firmware: Heltec, T-Beam, RAK…) as a raw LoRa modem over USB serial or BLE. Set the frequency, bandwidth, spreading factor and coding rate of the network you want to listen to (the Reticulum RNode defaults: 867.2 MHz, 125 kHz, SF8, CR 4/5; other regions use their own band) and press Connect.\n'+
+  'With «parse Reticulum packets» on, the records show packet type, destination hash, hops and — for announces — the destination name (lxmf.delivery, nomadnetwork.node…) and the display name from the app data. Contents of ordinary packets are encrypted and are not shown; announce signatures are not verified.\n'+
+  'The `send` input transmits a raw frame (hex or text). Keep the TX power and duty cycle within your local rules.'});
+nt.size.w=1000; nt.size.h=150; applySize(nt);
+const r=addNode('rnode',40,210,{});
+r.size.w=400; r.size.h=300; applySize(r);
+const tb=addNode('table',500,210,{list:'reticulum/announces'});
+tb.size.w=520; tb.size.h=300; applySize(tb);
+addEdge(r.id,'rec',tb.id,'rec');
+markWiresDirty();
+});
 preset('Gamepad: Axes to Tone and Lamps', function(){
 clearAll();
 const nt=addNode('note',40,20,{text:'A gamepad, joystick, steering wheel or pedals as a controller (Gamepad API: Chrome, Edge, Firefox, Safari). The browser shows the device only after a button is pressed on it.\n'+

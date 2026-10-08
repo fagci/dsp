@@ -868,6 +868,19 @@ Presets: *BLE: Heart Rate Monitor*, *BLE: Find a Beacon by RSSI*, *BLE: UART Ter
 
 Preset: *Meshtastic: Chat and Nodes on the Map*.
 
+### RNode and Reticulum
+
+**RNode LoRa Modem (KISS) / Reticulum** (Sources) drives a board with the [RNode firmware](https://github.com/markqvist/RNode_Firmware) (Heltec, T-Beam, RAK…) as a raw LoRa modem over WebSerial (115200) or BLE (Nordic UART; the board shows a pairing PIN). Commands and frame formats follow `Framing.h` of the firmware and `RNodeInterface.py` of Reticulum.
+
+- **Radio:** frequency (MHz, or a wire on the `freq` input in Hz), bandwidth, spreading factor, coding rate, TX power. Changes in the parameters or on the wire are sent to the board at once; the readout shows what the board reports back (frequency, SF, radio on/off, firmware, noise floor, battery, temperature).
+- **Receive:** every frame as `hex` / `go` and a record `{t, kind, len, rssi, snr, hex…}`; `rssi`, `snr` and `noise` (the channel noise floor reported by the board) are numbers for a trend or a gauge.
+- **Transmit:** the `send` input writes one frame (hex or text, up to 508 bytes). Keep TX power and duty cycle within your local rules.
+- **Reticulum (passive):** with *parse Reticulum packets* on, records get the packet type (`data`, `announce`, `linkrequest`, `proof`), destination hash and type, hops, context and the transport id. An **announce** also gives the destination name (`lxmf.delivery`, `lxmf.propagation`, `nomadnetwork.node`, `rnstransport.*` are recognized by their name hash), the display name from the app data (LXMF msgpack or a Nomad Network text), the announce time and whether it carries a ratchet. The contents of ordinary packets are encrypted and are not shown; announce signatures are **not verified**, so a record is a claim, not proof. Packets with IFAC (interface access codes) are only flagged. The node does not take part in the network: no identity, no routing, no sending of announces.
+- The board adds its own one-byte header and splits long packets; the firmware hides this, so frames from other LoRa devices that are not RNodes may not come through.
+- Checked against the protocol only (`node tools/test-rnode.mjs`), not on real hardware yet.
+
+Preset: *RNode: Reticulum Announces on the Air* (announces into a Table).
+
 ## MQTT
 
 **MQTT In** and **MQTT Out** (MQTT 3.1.1 over WebSocket, written from scratch, no libraries) connect the workbench to any IoT stack. Each node keeps its own connection; `Connect` / `Disconnect` buttons, auto-reconnect every 3 s, a refused login (wrong user or password) is shown and not retried.
