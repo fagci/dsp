@@ -13,6 +13,12 @@ function themeColor(name){
   return ThemeColorCache.vals[name] ||
     (ThemeColorCache.vals[name]=getComputedStyle(document.body).getPropertyValue(name).trim());
 }
+// цвет токена темы с прозрачностью: themeRgba('--scr-hi',.1) — «белая» подсветка на тёмном экране, тёмная на светлом
+function themeRgba(name,a){
+  const h=themeColor(name).replace('#','');
+  const f=h.length===3?h.replace(/./g,'$&$&'):h;
+  return 'rgba('+parseInt(f.slice(0,2),16)+','+parseInt(f.slice(2,4),16)+','+parseInt(f.slice(4,6),16)+','+a+')';
+}
 // порядок разделов в палитре — иначе порядок зависит от того, в каком файле модуль зарегистрирован
 const CAT_ORDER = ['Sources','Music','Processing','Modulation','Analysis','Radio','IQ','Radar',
                     'Protocols','IR','Decoders','Audio','Video','Geo','Data','Control','Indicators','Output','Builder','Misc'];

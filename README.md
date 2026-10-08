@@ -921,6 +921,7 @@ The ▦ button switches to a tiled dashboard built from the modules of the curre
 - Split panes right (⬌) or down (⬍), remove them (✕), drag dividers to resize; panes sit edge to edge, 1px dividers
 - **⊡** or a double-click (double-tap) on an empty spot of the pane header maximizes the pane; the same restores the layout
 - In narrow panes and on touch the pane buttons fold into **⋯**
+- Module displays follow the light theme too (light screen, dark ink); the spectrum analyzer waterfall, persistence, the Map and Video Overlay stay dark
 - ⛶ shows only the module's display, without controls, header, frames or selection; the button stays in the pane header on touch too
 - **✎** (pane menu, or in a module's header on the canvas) gives a module its own name — it shows in the header, the pane dropdown and the tab (empty name — the default one)
 - With no module graph pane on the page, the editing buttons of the toolbar (undo / redo, duplicate, chain, clear, fit, detail) are hidden

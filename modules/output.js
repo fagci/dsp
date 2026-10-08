@@ -1457,12 +1457,12 @@ def({ id:'planeMap', lazy:'manual', title:'Aircraft Map', cat:'Geo',
   draw(n,cv,cx){
     const W=cv.width,H=cv.height;
     cx.fillStyle=themeColor('--screen'); cx.fillRect(0,0,W,H);
-    cx.strokeStyle='rgba(255,255,255,.12)'; cx.lineWidth=1;
+    cx.strokeStyle=themeRgba('--scr-hi',.12); cx.lineWidth=1;
     for(let lon=-180;lon<=180;lon+=30){ const x=(lon+180)/360*W;
       cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke(); }
     for(let lat=-90;lat<=90;lat+=30){ const y=(90-lat)/180*H;
       cx.beginPath(); cx.moveTo(0,y); cx.lineTo(W,y); cx.stroke(); }
-    cx.strokeStyle='rgba(255,255,255,.35)';               // экватор и нулевой меридиан ярче
+    cx.strokeStyle=themeRgba('--scr-hi',.35);               // экватор и нулевой меридиан ярче
     cx.beginPath(); cx.moveTo(W/2,0); cx.lineTo(W/2,H); cx.moveTo(0,H/2); cx.lineTo(W,H/2); cx.stroke();
     const now=Date.now(), ttl=n.p.ttl*60000;
     // станции — квадратик, фикс. цвет, не протухают по ttl (их положение не меняется,

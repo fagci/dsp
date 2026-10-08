@@ -891,11 +891,11 @@ function geoLocDraw(n,cv,cx){                          // n — группа з�
     cx.fillStyle=q.s!=null ? geoSnrColor(t*40-20) : '#7ac8ff';
     cx.beginPath(); cx.arc(px(q.x),py(q.y),3+t*3,0,2*Math.PI); cx.fill();
   }
-  cx.strokeStyle='#fff'; cx.lineWidth=1.5;
+  cx.strokeStyle=themeColor('--scr-hi'); cx.lineWidth=1.5;
   const sx=px(S.x), sy=py(S.y);
   cx.beginPath(); cx.moveTo(sx-7,sy); cx.lineTo(sx+7,sy); cx.moveTo(sx,sy-7); cx.lineTo(sx,sy+7); cx.stroke();
   cx.beginPath(); cx.arc(sx,sy,Math.max(3,S.errKm/(2*m.h)*sz),0,2*Math.PI); cx.stroke();
-  cx.fillStyle='#c8d2d6'; cx.font='10px monospace';
+  cx.fillStyle=themeColor('--scr-txt'); cx.font='10px monospace';
   const span=2*m.h; cx.fillText('area '+(span>=1?span.toFixed(1)+' km':Math.round(span*1000)+' m'),6,H-6);
 }
 

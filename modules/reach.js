@@ -132,14 +132,14 @@ def({ id:'reach', title:'Radio Reach', cat:'Radio', kw:'coverage range adsb airc
       cx.fillStyle=col; cx.globalAlpha=.07; cx.fill(); cx.globalAlpha=1; cx.strokeStyle=col; cx.lineWidth=it.li===Math.round(+p.altNo)-1 ? 2 : 1.2; cx.stroke();
     }
     // принятое: наибольшая дальность по секторам и сами цели
-    cx.lineWidth=1.2; cx.strokeStyle='#ffffff'; cx.setLineDash([4,3]); cx.beginPath(); let any=false;
+    cx.lineWidth=1.2; cx.strokeStyle=themeColor('--scr-hi'); cx.setLineDash([4,3]); cx.beginPath(); let any=false;
     for(let i=0;i<=RR_BINS;i++){ const km=n.bins[i%RR_BINS]; if(!km) continue; const q=pt((i%RR_BINS+.5)*360/RR_BINS,km); if(any) cx.lineTo(q[0],q[1]); else cx.moveTo(q[0],q[1]); any=true; }
     cx.stroke(); cx.setLineDash([]);
-    for(const q of n.pts.values()){ const s=pt(q.az,q.km); cx.fillStyle=q.ok ? 'rgba(255,255,255,.85)' : '#ff5c5c'; cx.fillRect(s[0]-1.5,s[1]-1.5,3,3); }
+    for(const q of n.pts.values()){ const s=pt(q.az,q.km); cx.fillStyle=q.ok ? themeRgba('--scr-hi',.85) : '#ff5c5c'; cx.fillRect(s[0]-1.5,s[1]-1.5,3,3); }
     cx.fillStyle='#ffd84a'; cx.beginPath(); cx.arc(cxp,cyp,3,0,7); cx.fill();
     // легенда
     cx.textAlign='left'; cx.font='10px monospace';
-    sel.forEach((it,i)=>{ cx.fillStyle=RR_COLORS[it.li%RR_COLORS.length]; cx.fillRect(6,8+i*13,8,8); cx.fillStyle='#c8d2d6'; cx.fillText((it.li===Math.round(+p.altNo)-1 ? '▶ ' : '')+it.alt.label,18,16+i*13); });
+    sel.forEach((it,i)=>{ cx.fillStyle=RR_COLORS[it.li%RR_COLORS.length]; cx.fillRect(6,8+i*13,8,8); cx.fillStyle=themeColor('--scr-txt'); cx.fillText((it.li===Math.round(+p.altNo)-1 ? '▶ ' : '')+it.alt.label,18,16+i*13); });
     const L=[];
     if(n.msg) L.push(n.msg);
     if(n.noPos) L.push('no observer — add My Position or wire lat / lon');

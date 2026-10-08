@@ -200,7 +200,7 @@ def({ id:'coverage', title:'Coverage Map', cat:'Radio', kw:'coverage map dead zo
         cx.strokeStyle='rgba(0,0,0,.7)'; cx.strokeText(t.name,q[0]+8,q[1]+3); cx.fillText(t.name,q[0]+8,q[1]+3); }
       for(const m of R.res){ const q=pos(m.x,m.y); if(q[0]<ox || q[0]>ox+S || q[1]<oy || q[1]>oy+S) continue;
         cx.fillStyle=m.res>=0 ? '#6fd0ff' : '#ff9a4d'; cx.strokeStyle='#fff'; cx.lineWidth=1.5; cx.beginPath(); cx.arc(q[0],q[1],3+Math.min(4,Math.abs(m.res)/6),0,7); cx.fill(); cx.stroke(); }
-      cx.strokeStyle='#c8d2d6'; cx.lineWidth=1; cx.strokeRect(ox,oy,S,S);
+      cx.strokeStyle=themeColor('--scr-txt'); cx.lineWidth=1; cx.strokeRect(ox,oy,S,S);
       // шкала
       const ly=oy+S+10, lw=Math.min(S,220), lx=(W-lw)/2;
       for(let i=0;i<lw;i++){ const c=cvColor(i/lw); cx.fillStyle='rgb('+c.join(',')+')'; cx.fillRect(lx+i,ly,1,8); }

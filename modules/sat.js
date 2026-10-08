@@ -273,7 +273,7 @@ function satSkyDraw(n,cv,cx){
   cx.fillStyle=themeColor('--screen')||'#0a0d0e'; cx.fillRect(0,0,W,H);
   const R=Math.min(W,H)/2-14, x0=W/2, y0=H/2;
   const P=(az,el)=>{ const r=(90-Math.max(el,-5))/90*R; return [x0+r*Math.sin(az*D2R), y0-r*Math.cos(az*D2R)]; };
-  cx.strokeStyle='#2a3a40'; cx.lineWidth=1;
+  cx.strokeStyle=themeColor('--axis'); cx.lineWidth=1;
   for(const e of [0,30,60]){ cx.beginPath(); cx.arc(x0,y0,(90-e)/90*R,0,2*Math.PI); cx.stroke(); }
   cx.beginPath(); cx.moveTo(x0-R,y0); cx.lineTo(x0+R,y0); cx.moveTo(x0,y0-R); cx.lineTo(x0,y0+R); cx.stroke();
   cx.fillStyle='#6c7a80'; cx.font='10px monospace'; cx.textAlign='center'; cx.textBaseline='middle';
@@ -282,7 +282,7 @@ function satSkyDraw(n,cv,cx){
   // траектория ближайшего (или текущего) пролёта выбранного
   const c=n.cur, p=n.passes[0];
   if(c && p){
-    cx.strokeStyle='rgba(255,216,74,.5)'; cx.setLineDash([4,3]); cx.beginPath();
+    cx.strokeStyle=themeColor('--scr-warn')+'99'; cx.setLineDash([4,3]); cx.beginPath();
     const obs=satObs(); let first=true;
     for(let t=p.aos;t<=p.los;t+=15000){
       const st=satState(c.s,new Date(t),obs); if(!st) continue;
@@ -293,7 +293,7 @@ function satSkyDraw(n,cv,cx){
   cx.textAlign='left';
   for(const q of n.sky){
     const [x,y]=P(q.az,q.el);
-    cx.fillStyle=q.sel ? '#ffd84a' : q.el>0 ? '#7dff9a' : '#55656c';
+    cx.fillStyle=q.sel ? themeColor('--scr-warn') : q.el>0 ? themeColor('--scr-ok') : '#55656c';
     cx.beginPath(); cx.arc(x,y,q.sel?4:3,0,2*Math.PI); cx.fill();
     if(q.sel || q.el>0) cx.fillText(q.name.slice(0,14),x+5,y-5);
   }

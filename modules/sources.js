@@ -5392,7 +5392,7 @@ def({ id:'song', lazy:'manual', title:'Arrangement (Playlist)', cat:'Music',
     cx.clearRect(0,0,W,H);
     const {px,offs}=geom(W);
     if(px>=4){                                                             // сетка тактов — не рисуем, если сольётся в кашу
-      cx.strokeStyle='rgba(255,255,255,.06)';
+      cx.strokeStyle=themeRgba('--scr-hi',.06);
       const total=offs.length?offs[offs.length-1]+secs[secs.length-1].bars:0;
       for(let b=0;b<=total;b++){ const x=Math.round(b*px)+.5; cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke(); } }
     for(let i=0;i<secs.length;i++){
@@ -5408,10 +5408,10 @@ def({ id:'song', lazy:'manual', title:'Arrangement (Playlist)', cat:'Music',
       cx.fillText(songBarsLabel(s.bars), x0+4, H-6);
       if(w>CLOSE+4){ cx.fillStyle='rgba(0,0,0,.3)'; cx.fillRect(x0+w-CLOSE,1,CLOSE-1,CLOSE-1);
         cx.fillStyle=themeColor('--scr-hi'); cx.textAlign='center'; cx.fillText('×', x0+w-CLOSE/2, CLOSE-4); cx.textAlign='left'; }
-      cx.fillStyle='rgba(255,255,255,.25)'; cx.fillRect(x0+w-HANDLE,0,HANDLE-1,H); }
+      cx.fillStyle=themeRgba('--scr-hi',.25); cx.fillRect(x0+w-HANDLE,0,HANDLE-1,H); }
     if(secs.length && n.secIdx<secs.length){                               // плейхед — прогресс по всей аранжировке
       const x=(offs[n.secIdx]+n.barInSec)*px;
-      cx.fillStyle='rgba(255,255,255,.85)'; cx.fillRect(x-1,0,2,H); }
+      cx.fillStyle=themeRgba('--scr-hi',.85); cx.fillRect(x-1,0,2,H); }
     const cur=secs[Math.min(n.secIdx,secs.length-1)];
     n.el.querySelector('.readout').textContent=
       'section '+(n.secIdx+1)+'/'+secs.length+' · bank '+'ABCD'[cur.bank]+
@@ -5689,18 +5689,18 @@ def({ id:'pianoroll', lazy:'manual', title:'Piano Roll', cat:'Music',
     cx.clearRect(0,0,W,H);
     const bi=n.bankIdx, bw=W/4, auto=!!n._bankSelLive;                       // вкладки банков
     for(let b=0;b<4;b++){
-      cx.fillStyle = b===bi ? 'rgba(138,180,248,.35)' : 'rgba(255,255,255,.05)';
+      cx.fillStyle = b===bi ? 'rgba(138,180,248,.35)' : themeRgba('--scr-hi',.05);
       cx.fillRect(b*bw,0,bw-1,TABH-1);
       cx.font='9px monospace'; cx.fillStyle = b===bi ? themeColor('--t-img') : themeColor('--axis');
       cx.fillText('ABCD'[b],b*bw+bw/2-3,TABH-4); }
     if(auto){ cx.fillStyle='rgba(224,178,60,.8)'; cx.fillRect(0,TABH-2,W,2); }  // банк задаётся song-узлом
     cx.save(); cx.translate(0,TABH);
     const key=NOTE_NAMES.indexOf(n.p.key), scaleSet=new Set(GEN_SCALES[n.p.scale]||GEN_SCALES['major']);
-    cx.fillStyle='rgba(255,255,255,.04)';
+    cx.fillStyle=themeRgba('--scr-hi',.04);
     for(let row=0;row<n.rows;row++){
       const note=n.pitchLo+(n.rows-1-row), rel=((note-key)%12+12)%12;
       if(!scaleSet.has(rel)) cx.fillRect(0,row*rh,W,rh); }
-    cx.strokeStyle='rgba(255,255,255,.08)'; cx.lineWidth=1;
+    cx.strokeStyle=themeRgba('--scr-hi',.08); cx.lineWidth=1;
     for(let c=0;c<=steps;c++){ cx.beginPath(); cx.moveTo(c*cw+.5,0); cx.lineTo(c*cw+.5,gh); cx.stroke(); }
     for(let r=0;r<=n.rows;r++){ cx.beginPath(); cx.moveTo(0,r*rh+.5); cx.lineTo(W,r*rh+.5); cx.stroke(); }
     const sounding=new Set(n.voiceNote.filter(Boolean));
@@ -7456,15 +7456,15 @@ def({ id:'drumseq', lazy:'manual', title:'Drum Sequencer (Techno)', cat:'Music',
     cx.clearRect(0,0,W,H);
     const bi=n.bankIdx, bw=W/4;                                     // вкладки банков
     for(let b=0;b<4;b++){
-      cx.fillStyle = b===bi ? 'rgba(138,180,248,.35)' : 'rgba(255,255,255,.05)';
+      cx.fillStyle = b===bi ? 'rgba(138,180,248,.35)' : themeRgba('--scr-hi',.05);
       cx.fillRect(b*bw,0,bw-1,TABH-1);
       cx.font='9px monospace'; cx.fillStyle = b===bi ? themeColor('--t-img') : themeColor('--axis');
       cx.fillText('ABCD'[b],b*bw+bw/2-3,TABH-4); }
     if(n._bankSelLive){ cx.fillStyle='rgba(224,178,60,.8)'; cx.fillRect(0,TABH-2,W,2); }  // банк задаётся song-узлом
     cx.save(); cx.translate(0,TABH);
-    cx.fillStyle='rgba(255,255,255,.04)';
+    cx.fillStyle=themeRgba('--scr-hi',.04);
     for(let c=0;c<steps;c+=4) cx.fillRect(c*cw,0,cw,gh);           // подсветка долей — каждый 4-й шаг
-    cx.strokeStyle='rgba(255,255,255,.08)'; cx.lineWidth=1;
+    cx.strokeStyle=themeRgba('--scr-hi',.08); cx.lineWidth=1;
     for(let c=0;c<=steps;c++){ cx.beginPath(); cx.moveTo(c*cw+.5,0); cx.lineTo(c*cw+.5,gh); cx.stroke(); }
     for(let r=0;r<=n.rows;r++){ cx.beginPath(); cx.moveTo(0,r*rh+.5); cx.lineTo(W,r*rh+.5); cx.stroke(); }
     cx.fillStyle=themeColor('--t-img');
