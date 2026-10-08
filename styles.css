@@ -863,3 +863,64 @@ select.aed-b{padding:0 6px}
 .ng-disc.f1{background:var(--acc);border-color:var(--acc)}
 .ng-disc.f2{background:var(--acc2);border-color:var(--acc2)}
 .ng-disc.last{box-shadow:inset 0 0 0 2px var(--bg)}
+
+/* ---- Table (modules/table.js): список, правка панелью снизу, меню действий ---- */
+.tbl-ui{position:relative;display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--txt);box-sizing:border-box;
+  overflow:hidden;grid-column:1/-1;width:100%;min-width:0}
+.tbl-head,.tbl-bar,.tbl-acts{display:flex;gap:4px;align-items:center;flex:none;min-width:0}
+.tbl-ui select.tbl-pick{flex:1;min-width:0;height:28px;background:var(--bg);border:1px solid var(--line);border-radius:3px;
+  color:var(--txt);padding:0 4px;font-size:12px}
+.tbl-ui .tbl-btn{background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:0 9px;border-radius:3px;
+  cursor:pointer;font-size:12px;height:28px;white-space:nowrap;flex:none}
+.tbl-ui .tbl-btn:hover{border-color:var(--acc)}
+.tbl-ui .tbl-btn.pri{border-color:var(--acc2);color:var(--acc2)}
+.tbl-ui .tbl-chk{display:flex;align-items:center;gap:3px;color:var(--dim);font-size:10px;white-space:nowrap;cursor:pointer;flex:none}
+.tbl-ui input[type=checkbox]{margin:0;accent-color:var(--acc2)}
+.tbl-ui .tbl-filter{flex:1;min-width:0;height:26px;background:var(--bg);border:1px solid var(--line);color:var(--txt);
+  font-size:11px;padding:0 6px;border-radius:3px}
+.tbl-ui .tbl-count{color:var(--dim);font-size:10px;white-space:nowrap}
+.tbl-ui [hidden]{display:none!important}
+.tbl-tree{flex:none;max-height:40%;min-height:30px;overflow-y:auto;border:1px solid var(--line);border-radius:3px;background:var(--bg)}
+.tbl-tree .tt-dir,.tbl-tree .tt-file{display:flex;align-items:center;gap:4px;padding:3px 4px;cursor:pointer;white-space:nowrap}
+.tbl-tree .tt-dir:hover,.tbl-tree .tt-file:hover{background:var(--panel2)}
+.tbl-tree .tt-file.act{background:color-mix(in srgb,var(--acc2) 20%,transparent);color:var(--acc2)}
+.tbl-tree .tt-name{flex:1;overflow:hidden;text-overflow:ellipsis}
+.tbl-tree .tt-cnt{color:var(--dim);font-size:9px}
+.tbl-tree .tt-car{width:9px;color:var(--dim)}
+.tbl-cols{display:flex;gap:3px;flex-wrap:wrap;flex:none;font-size:10px;max-height:56px;overflow-y:auto}
+.tbl-chip{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padding:1px 5px;display:flex;align-items:center;gap:3px}
+.tbl-chip .x{cursor:pointer;color:var(--dim)}
+.tbl-chip.add{cursor:pointer;color:var(--acc2)}
+.tbl-list{flex:1;min-height:0;overflow-y:auto;border:1px solid var(--line);border-radius:3px;background:var(--bg)}
+.tbl-row{display:flex;align-items:center;gap:6px;padding:4px 6px;cursor:pointer;border-bottom:1px solid var(--line);min-width:0}
+.tbl-row.on{background:color-mix(in srgb,var(--acc2) 20%,transparent)}
+.tbl-row.edit{box-shadow:inset 2px 0 0 var(--acc)}
+.tbl-rname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tbl-rval{color:var(--acc2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%}
+.tbl-ico{cursor:pointer;color:var(--dim);flex:none;padding:0 3px}
+.tbl-ico:hover{color:var(--acc)}
+.tbl-ico.warn{color:var(--acc)}
+.tbl-empty{padding:12px;text-align:center;color:var(--dim)}
+.tbl-empty.sm{padding:4px;font-size:10px}
+.tbl-edit{position:absolute;left:0;right:0;bottom:0;z-index:15;max-height:62%;display:flex;flex-direction:column;
+  background:var(--panel);border:1px solid var(--acc);border-radius:4px;box-shadow:0 -4px 14px #0006}
+.tbl-edit .te-h{display:flex;gap:6px;align-items:center;padding:4px 6px;border-bottom:1px solid var(--line);flex:none}
+.tbl-edit .te-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim)}
+.tbl-edit .tbl-btn{height:26px}
+.tbl-form{overflow-y:auto;padding:6px;display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px 8px}
+.tbl-form label{display:flex;flex-direction:column;gap:1px;font-size:9px;color:var(--dim);min-width:0}
+.tbl-form label.wide{grid-column:1/-1}
+.tbl-form input,.tbl-form select{min-width:0;height:26px;background:var(--bg);border:1px solid var(--line);color:var(--txt);
+  font-size:12px;padding:0 5px;border-radius:3px}
+.tbl-form input:focus,.tbl-form select:focus{outline:none;border-color:var(--acc)}
+.tbl-form input[type=color]{padding:0;width:48px}
+.tbl-form .tf-bar{display:flex;gap:4px;align-items:center;flex-wrap:wrap;font-size:10px;color:var(--txt)}
+.tbl-form .tf-bar button{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:3px;cursor:pointer;
+  padding:2px 7px;font-size:11px}
+.tbl-menu{position:absolute;z-index:20;left:0;right:0;top:32px;max-height:75%;overflow-y:auto;background:var(--panel);
+  border:1px solid var(--line);border-radius:4px;box-shadow:0 4px 14px #0007}
+.tbl-menu .tm-h{padding:5px 10px 2px;font-size:9px;color:var(--dim);letter-spacing:.06em;text-transform:uppercase;background:var(--panel2)}
+.tbl-menu .tm-i{padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--line)}
+.tbl-menu .tm-i:hover{background:color-mix(in srgb,var(--acc2) 20%,transparent)}
+.tbl-menu .tm-d{color:var(--dim);font-size:9px;white-space:normal}
+.tbl-menu .tm-c{color:var(--acc2);font-size:9px;white-space:normal}
