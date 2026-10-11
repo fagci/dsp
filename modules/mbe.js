@@ -91,7 +91,7 @@ function mbeDecode(h,fm,q){
   const ex=MBE.ex, mem=new Uint8Array(ex.memory.buffer);
   mem.set(fm.fr,ex.mbx_frame());
   const e=fm.k==='imbe' ? ex.mbx_imbe(h,q) : fm.k==='a2450' ? ex.mbx_ambe2450(h,q) : ex.mbx_ambe2400(h,q);
-  return {errs:e, pcm:new Int16Array(ex.memory.buffer.slice(ex.mbx_pcm(),ex.mbx_pcm()+320))};
+  return {errs:e, cls:ex.mbx_class(h), w0:ex.mbx_w0(h), nv:ex.mbx_voiced(h), pcm:new Int16Array(ex.memory.buffer.slice(ex.mbx_pcm(),ex.mbx_pcm()+320))};
 }
 
 // кадр Codec 2 → отсчёты int16 (160 на 20 мс в режиме 3200, 320 на 40 мс в 1600)
@@ -106,15 +106,42 @@ function taDecode(h,bits){
   ex.ta_decode(h,0);
   return new Int16Array(ex.memory.buffer.slice(ex.ta_pcm(),ex.ta_pcm()+480));
 }
+// есть ли речь в кадре: среднеквадратичное значение отсчётов int16 выше порога (тишина, потеря кадра, пустой кадр дают ~0)
+const mbeVoiced=(pcm,thr)=>{ let e=0; for(let i=0;i<pcm.length;i++) e+=pcm[i]*pcm[i]; return Math.sqrt(e/pcm.length)>thr; };
+const MBE_HANG=300;                                    // мс удержания признака речи после последнего активного кадра
 const MBE_PRE=960, MBE_MAX=12000;                     // до старта — 120 мс, не больше 1,5 с очереди (8 кГц)
 function mbeStream(n,key){
   let s=n.streams.get(key);
   if(!s){
     if(n.streams.size>=12){ const old=[...n.streams.entries()].sort((a,b)=>a[1].last-b[1].last)[0]; if(old[1].h>=0) MBE.ex.mbx_free(old[1].h); if(old[1].c2) C2.ex.c2_free(old[1].c2.h); if(old[1].ta>=0 && TA.ex) TA.ex.ta_free(old[1].ta); n.streams.delete(old[0]); }
-    s={key, h:-1, c2:null, ta:-1, q:new Float32Array(MBE_MAX+2000), w:0, r:0, ph:0, play:false, last:0, frames:0, errs:0};
+    s={key, h:-1, c2:null, ta:-1, q:new Float32Array(MBE_MAX+2000), w:0, r:0, ph:0, play:false, last:0, frames:0, errs:0, voiced:0, vt:-1e9};
     n.streams.set(key,s);
   }
   return s;
+}
+// Зашифрованная речь без ключа проходит FEC чисто, но параметры кадров случайны: основной тон скачет от кадра к кадру.
+// Живая речь в соседних кадрах с вокализованными полосами меняет тон плавно (|ln w0| < MBE_PJ).
+const MBE_WIN=30, MBE_PJ=.12, MBE_SMOOTH=.6;
+function mbePitchOk(h){
+  let pairs=0, ok=0;
+  for(let i=1;i<h.length;i++){
+    const a=h[i-1], b=h[i];
+    if(!a.ok || !b.ok || a.nv<1 || b.nv<1) continue;
+    pairs++; if(Math.abs(Math.log(b.w0/a.w0))<MBE_PJ) ok++;
+  }
+  return pairs<3 || ok/pairs>=MBE_SMOOTH;
+}
+// info — параметры кадра mbelib ({cls, w0, nv}) или null (Codec 2, ACELP: только энергия)
+function mbeMark(n,s,pcm,thr,now,info){
+  let ok=mbeVoiced(pcm,thr);
+  if(s.enc && s.enc.st!=='ok') ok=false;                  // шифрованный вызов без рабочего ключа
+  if(info){
+    const h=s.hist||(s.hist=[]);
+    h.push({ok:info.cls===0, w0:info.w0, nv:info.nv});
+    if(h.length>MBE_WIN) h.shift();
+    if(info.cls!==0 || !mbePitchOk(h)) ok=false;
+  }
+  if(ok){ s.vt=now; s.voiced++; n.tot.voiced++; }
 }
 function mbePush(s,pcm,g){
   const N=pcm.length;
@@ -140,18 +167,19 @@ function mbePull(s,o,B,step){
   return true;
 }
 
-def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t:'rec'},{n:'key',t:'txt'}], outs:[{n:'out',t:'sig'},{n:'err',t:'num'}],
+def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t:'rec'},{n:'key',t:'txt'}], outs:[{n:'out',t:'sig'},{n:'err',t:'num'},{n:'vad',t:'num'}],
   readout:true, resize:true, w:340,
   params:[{n:'gain',t:'range',min:0,max:8,step:.01,d:1,label:'gain'},
           {n:'slot',t:'select',opts:['any','1','2'],d:'any',label:'DMR slot'},
           {n:'uv',t:'range',min:1,max:64,step:1,d:3,label:'unvoiced quality (mbelib uvquality)'},
+          {n:'vthr',t:'range',min:0,max:2000,step:1,d:60,label:'voice detect threshold (RMS, int16)'},
           {n:'keys',t:'text',d:'',label:'RC4 keys (40-bit hex): key; id=key; tg:N=key; … ; also from the key input'}],
-  init:n=>{ n.streams=new Map(); n.tot={frames:0, errs:0, skipped:0, dec:0}; n.keyTxt=null; n.keys={list:[], bad:[]}; mbeLoad(); c2Load(); taLoad(); },
+  init:n=>{ n.streams=new Map(); n.tot={frames:0, errs:0, skipped:0, dec:0, voiced:0}; n.keyTxt=null; n.keys={list:[], bad:[]}; mbeLoad(); c2Load(); taLoad(); },
   process(n,I){
     const o=buf(n,'out'); o.fill(0);
-    if(!MBE.ex && !C2.ex && !TA.ex) return {out:o, err:0};
+    if(!MBE.ex && !C2.ex && !TA.ex) return {out:o, err:0, vad:0};
     let err=0;
-    const g=n.p.gain, q=n.p.uv|0, slot=n.p.slot, now=Date.now();
+    const g=n.p.gain, vthr=n.p.vthr, q=n.p.uv|0, slot=n.p.slot, now=Date.now();
     const kt=(n.p.keys||'')+'\n'+(typeof I.key==='string' ? I.key : '');
     if(kt!==n.keyTxt){ n.keyTxt=kt; n.keys=vcParseKeys(kt); }
     for(const r of recList(I.voice)){
@@ -159,7 +187,7 @@ def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t
       const fs=mbeFrames(r);
       if(!fs.length || (fs[0].k==='c2' ? !C2.ex : fs[0].k==='ta' ? !TA.ex : !MBE.ex)){ n.tot.skipped++; continue; }
       const s=mbeStream(n,r.src+'|'+(r.slot||0));
-      if(now-s.last>2000){ if(s.h>=0) MBE.ex.mbx_reset(s.h); if(s.ta>=0){ TA.ex.ta_free(s.ta); s.ta=-1; } }       // новый разговор: состояние предыдущего кадра не нужно
+      if(now-s.last>2000){ s.hist=null; if(s.h>=0) MBE.ex.mbx_reset(s.h); if(s.ta>=0){ TA.ex.ta_free(s.ta); s.ta=-1; } }       // новый разговор: состояние предыдущего кадра не нужно
       s.last=now;
       s.enc=null;
       for(let f=0;f<fs.length;f++){
@@ -169,20 +197,22 @@ def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t
         if(fm.k==='ta'){
           if(s.ta<0) s.ta=TA.ex.ta_new();
           if(s.ta<0) continue;
-          mbePush(s,taDecode(s.ta,fm.bits),g); s.frames++; n.tot.frames++;
+          const pc=taDecode(s.ta,fm.bits); mbeMark(n,s,pc,vthr,now); mbePush(s,pc,g); s.frames++; n.tot.frames++;
         } else if(fm.k==='c2'){
           if(!s.c2 || s.c2.mode!==fm.mode){ if(s.c2) C2.ex.c2_free(s.c2.h); s.c2={h:C2.ex.c2_new(fm.mode), mode:fm.mode}; }
           if(s.c2.h<0) continue;
-          mbePush(s,c2Decode(s.c2.h,fm.bytes),g); s.frames++; n.tot.frames++;
+          const pc=c2Decode(s.c2.h,fm.bytes); mbeMark(n,s,pc,vthr,now); mbePush(s,pc,g); s.frames++; n.tot.frames++;
         } else {
           if(s.h<0) s.h=MBE.ex.mbx_new();
-          const d=mbeDecode(s.h,fm,q); if(derr>=0) d.errs=derr; s.frames++; s.errs+=d.errs; n.tot.errs+=d.errs; if(d.errs) err=1; n.tot.frames++; mbePush(s,d.pcm,g);
+          const d=mbeDecode(s.h,fm,q); if(derr>=0) d.errs=derr; s.frames++; s.errs+=d.errs; n.tot.errs+=d.errs; if(d.errs) err=1; n.tot.frames++; mbeMark(n,s,d.pcm,vthr,now,d); mbePush(s,d.pcm,g);
         }
       }
     }
     const step=8000/Eng.sr;
     for(const s of n.streams.values()) mbePull(s,o,BLOCK,step);
-    return {out:o, err};
+    let vad=0;
+    for(const s of n.streams.values()) if(now-s.vt<MBE_HANG) vad=1;
+    return {out:o, err, vad};
   },
   draw(n){
     const el=n.el.querySelector('.readout');
@@ -192,9 +222,9 @@ def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t
       const a=(e.alg===0xAA ? 'ADP RC4' : e.alg===0x21 ? 'EP RC4' : 'alg 0x'+e.alg.toString(16).toUpperCase())+' key '+e.kid;
       return ' · '+a+({ok:' · decrypting', nokey:' · no key', nomi:' · waiting for MI', alg:' · algorithm not supported', err:' · too many bit errors'})[e.st];
     };
-    const rows=[...n.streams.values()].map(s=>s.key.replace(/\|0$/,'').replace('|',' slot ')+' · '+s.frames+' frames'+(s.h>=0 ? ' · '+s.errs+' bit errors' : '')+' · '+((s.w-s.r)/8).toFixed(0)+' ms queued'+(s.play ? ' ▶' : '')+encTxt(s.enc));
+    const rows=[...n.streams.values()].map(s=>s.key.replace(/\|0$/,'').replace('|',' slot ')+' · '+s.frames+' frames ('+s.voiced+' voiced)'+(s.h>=0 ? ' · '+s.errs+' bit errors' : '')+' · '+((s.w-s.r)/8).toFixed(0)+' ms queued'+(s.play ? ' ▶' : '')+encTxt(s.enc));
     const kn=n.keys.list.length+n.keys.bad.length;
-    el.textContent=st(MBE,'mbelib')+' · '+st(C2,'Codec 2')+' · '+(TA.ex ? 'TETRA ACELP ready' : 'TETRA ACELP not built (tools/tetra-acelp)')+' · '+n.tot.frames+' frames'+(n.tot.skipped ? ' · '+n.tot.skipped+' records not decodable' : '')+
+    el.textContent=st(MBE,'mbelib')+' · '+st(C2,'Codec 2')+' · '+(TA.ex ? 'TETRA ACELP ready' : 'TETRA ACELP not built (tools/tetra-acelp)')+' · '+n.tot.frames+' frames, '+n.tot.voiced+' voiced'+(n.tot.skipped ? ' · '+n.tot.skipped+' records not decodable' : '')+
       (kn ? '\nkeys: '+n.keys.list.length+(n.keys.bad.length ? ' ('+n.keys.bad.length+' invalid: need 10 hex digits)' : '')+(n.tot.dec ? ' · '+n.tot.dec+' frames decrypted' : '') : '')+
       (rows.length ? '\n'+rows.join('\n') : '\nwaiting for voice records');
   }});

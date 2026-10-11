@@ -17,19 +17,32 @@ static char fr[8*23];        /* IMBE 8x23 or AMBE 4x24 frame, one bit per byte *
 static char dd[88];
 static short pcm[160];
 static char es[64];
+static int cls[MAXH];
 void mbx_seed(unsigned s){ rnd_s=s ? s : 1; }     /* noise of the unvoiced bands; the tests seed it per frame */
 char* mbx_frame(void){ return fr; }
 short* mbx_pcm(void){ return pcm; }
 char* mbx_data(void){ return dd; }               /* decoded 49 / 88 parameter bits of the last frame (debug) */
 
 int mbx_new(void){
-  for(int i=0;i<MAXH;i++) if(!used[i]){ used[i]=1; mbe_initMbeParms(&cur[i],&prv[i],&enh[i]); return i; }
+  for(int i=0;i<MAXH;i++) if(!used[i]){ used[i]=1; cls[i]=0; mbe_initMbeParms(&cur[i],&prv[i],&enh[i]); return i; }
   return -1;
 }
 void mbx_free(int h){ if(h>=0 && h<MAXH) used[h]=0; }
-void mbx_reset(int h){ mbe_initMbeParms(&cur[h],&prv[h],&enh[h]); }
+void mbx_reset(int h){ cls[h]=0; mbe_initMbeParms(&cur[h],&prv[h],&enh[h]); }
+
+/* Frame class of the last decoded frame, read from the error string mbelib fills: 0 speech parameters, 1 repeat of the previous
+   frame (too many bit errors), 2 erasure, 3 tone, 4 muted after repeated losses.  The parameters of the frame sit in prv[]. */
+static void classify(int h){
+  int c=0;
+  for(const char* p=es;*p;p++){ if(*p=='E') c=2; else if(*p=='T') c=3; else if(*p=='M') c=4; else if(*p=='R' && !c) c=1; }
+  cls[h]=c;
+}
+int mbx_class(int h){ return cls[h]; }
+float mbx_w0(int h){ return prv[h].w0; }              /* fundamental frequency, rad / sample */
+int mbx_bands(int h){ return prv[h].L; }              /* harmonic bands */
+int mbx_voiced(int h){ int n=0; for(int l=1;l<=prv[h].L && l<57;l++) n+=prv[h].Vl[l]; return n; }
 
 /* return: bit errors in the first Golay word (errs); pcm has 160 samples at 8 kHz */
-int mbx_imbe(int h,int q){ int e=0,e2=0; mbe_processImbe7200x4400Frame(pcm,&e,&e2,es,(char(*)[23])fr,dd,&cur[h],&prv[h],&enh[h],q); return e; }
-int mbx_ambe2450(int h,int q){ int e=0,e2=0; mbe_processAmbe3600x2450Frame(pcm,&e,&e2,es,(char(*)[24])fr,dd,&cur[h],&prv[h],&enh[h],q); return e; }
-int mbx_ambe2400(int h,int q){ int e=0,e2=0; mbe_processAmbe3600x2400Frame(pcm,&e,&e2,es,(char(*)[24])fr,dd,&cur[h],&prv[h],&enh[h],q); return e; }
+int mbx_imbe(int h,int q){ int e=0,e2=0; es[0]=0; mbe_processImbe7200x4400Frame(pcm,&e,&e2,es,(char(*)[23])fr,dd,&cur[h],&prv[h],&enh[h],q); classify(h); return e; }
+int mbx_ambe2450(int h,int q){ int e=0,e2=0; es[0]=0; mbe_processAmbe3600x2450Frame(pcm,&e,&e2,es,(char(*)[24])fr,dd,&cur[h],&prv[h],&enh[h],q); classify(h); return e; }
+int mbx_ambe2400(int h,int q){ int e=0,e2=0; es[0]=0; mbe_processAmbe3600x2400Frame(pcm,&e,&e2,es,(char(*)[24])fr,dd,&cur[h],&prv[h],&enh[h],q); classify(h); return e; }
