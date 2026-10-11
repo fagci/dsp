@@ -4133,23 +4133,19 @@ function rtlMakeSpecWorker(){
 }
 
 // спектр сырого IQ: fftshift, ось частот вокруг центра настройки.
-// Берутся все отсчёты, пришедшие с прошлого расчёта (до specAvg кадров), а не последние N —
-// воркер усредняет их по Уэлчу. process() синхронный по контракту движка: заказывает расчёт
-// и отдаёт n.spec, какой есть. Не успевает воркер — обновления реже, кадров в каждом больше.
-const RTL_SPEC_MAX_FRAMES=256;
+// Как в SDR++: каждый кадр — БПФ по последним N отсчётам с интервалом по переключателю fps,
+// усреднение — экспоненциальное сглаживание мощности по кадрам (specAvg — длина в кадрах).
+// process() синхронный по контракту движка: заказывает расчёт и отдаёт n.spec, какой есть.
+const RTL_SPEC_MAX_FRAMES=64;
 function rtlUpdateSpec(n){
   if(!n.connected || !n.specWorker) return;
   const now=performance.now();
-  // усреднение копит отсчёты за интервал — с ним 80 мс; без него интервал следует переключателю fps
-  const fm=document.getElementById('fps')?.value, avOff=n.p.specAvg==='off';
-  const minGap=!avOff ? 80 : fm==='max' ? 0 : fm==='min' ? 100 : 80;
+  const fm=document.getElementById('fps')?.value, minGap=fm==='max' ? 16 : fm==='min' ? 100 : 50;
   if(n.specBusy || (n.spec && now-n.lastSpec<minGap)) return;
   const N=+n.p.specSize, ring=n.specRing;
   if(ring.filled<N) return;
   const av=n.p.specAvg, frames=av==='off'? 1 : av==='all'? RTL_SPEC_MAX_FRAMES : (+av||1);
-  const fresh=ring.written-(n.specTaken||0);
-  // свежих меньше кадра — берём последние N (перекрытие с прошлым расчётом, как раньше)
-  const L=Math.max(N, Math.min(ring.filled, N+(frames-1)*(N>>1), fresh));
+  const L=N;
   n.specTaken=ring.written;
   const start=(ring.w-L+ring.size)%ring.size;
   // свежие буферы — сразу под всё кольцо, чтобы пул подходил при любом L
@@ -4161,8 +4157,16 @@ function rtlUpdateSpec(n){
   if(first<L){ I.set(ring.I.subarray(0,L-first),first); Q.set(ring.Q.subarray(0,L-first),first); }
   n.specBusy=true;
   const centerFreq=n.actualFreq??n.p.freq, binHz=n.sourceRate/N, half=N>>1, win=n.p.specWin, tl=iqTl(n);
-  n.specWorker.compute(I.buffer, Q.buffer, N, L, win).then(({mag,K})=>{
-    n.specBusy=false; n.specK=K;
+  n.specWorker.compute(I.buffer, Q.buffer, N, L, win).then(({mag})=>{
+    n.specBusy=false;
+    // сброс накопления при смене размера/полосы/центра/окна: старые кадры к новой оси не относятся
+    const key=N+'|'+n.sourceRate+'|'+centerFreq+'|'+win;
+    const pw=n.specPw;
+    if(!pw || pw.length!==N || n.specPwKey!==key){ n.specPw=new Float32Array(N); n.specPwKey=key; n.specPwN=0; }
+    // разгон: пока кадров меньше длины окна, это обычное среднее
+    const cnt=Math.min(n.specPwN+1, frames), a=1/cnt, acc=n.specPw;
+    n.specPwN=cnt; n.specK=cnt;
+    for(let i=0;i<N;i++){ const m=mag[i], v=cnt===1 ? m*m : acc[i]+(m*m-acc[i])*a; acc[i]=v; mag[i]=Math.sqrt(v); }
     if(!n.specFreqs || n.specFreqs.length!==N || n.specFreqsCenter!==centerFreq || n.specFreqsSr!==n.sourceRate){
       const fr=new Float64Array(N);                  // float32 на ГГц шагает по 128 Гц — крупнее бина: ступеньки при зуме
       for(let i=0;i<N;i++) fr[i]=centerFreq+(i-half)*binHz;
