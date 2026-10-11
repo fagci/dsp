@@ -167,7 +167,7 @@ defIQ({ id:'sigDb', title:'Signal Database', cat:'Analysis', kw:'signal identifi
 defIQ({ id:'iqSpec', title:'IQ Spectrum', cat:'IQ',
   ins:[{n:'in',t:'iq'}], outs:[{n:'spec',t:'spec'}],
   params:[{n:'size',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'4096'},
-          {n:'win',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann'},
+          {n:'win',t:'select',opts:WINDOW_KINDS,d:'hann'},
           {n:'avg',t:'select',opts:['1','4','16','64'],d:'16',label:'smoothing, frames'},
           {n:'upd',t:'range',min:4,max:1000,step:2,d:16,label:'update, ms of signal'}]},
   n=>'smoothing '+n.p.avg+' frames');

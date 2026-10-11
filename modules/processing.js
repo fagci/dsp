@@ -369,7 +369,7 @@ def({ id:'zfft', title:'Zoom-FFT (I/Q)', cat:'Processing',
   params:[{n:'fc',t:'range',min:0,max:()=>Eng.sr/2,step:1,d:5000,log:true,label:'carrier (same as iq), Hz'},
           {n:'dec',t:'select',opts:['1','2','4','8','16','32','64'],d:'8',label:'decimation'},
           {n:'size',t:'select',opts:['256','512','1024','2048','4096','8192','16384'],d:'2048'},
-          {n:'win',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann'}],
+          {n:'win',t:'select',opts:WINDOW_KINDS,d:'hann'}],
   init:n=>{ n.N=0; n.gi=0; n.absPos=0; n.lpDec=0; },
   process(n,I){
     const dec=Math.max(1,+n.p.dec||1), N=Math.max(+n.p.size,8);
@@ -690,7 +690,7 @@ def({ id:'dc', title:'Remove DC', cat:'Processing', ins:[{n:'in',t:'sig'},{n:'fr
 
 def({ id:'fft', title:'FFT', cat:'Processing', ins:[{n:'in',t:'sig'}], outs:[{n:'spec',t:'spec'}],
   params:[{n:'size',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'2048'},
-          {n:'win',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann'}],
+          {n:'win',t:'select',opts:WINDOW_KINDS,d:'hann'}],
   init:n=>{n.N=0;},
   process(n,I){
     const N=Math.max(+n.p.size, BLOCK*2);          // окно не короче блока
@@ -787,7 +787,7 @@ def({ id:'lfft', title:'Low-Frequency FFT', cat:'Processing', ins:[{n:'in',t:'si
   readout:true,
   params:[{n:'fs',t:'select',opts:['16','32','64','128','256','512','1024'],d:'64',label:'decimate to, Hz'},
           {n:'size',t:'select',opts:['256','512','1024','2048','4096','8192','16384','32768','65536'],d:'1024'},
-          {n:'win',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann'},
+          {n:'win',t:'select',opts:WINDOW_KINDS,d:'hann'},
           {n:'upd',t:'select',opts:['0.05','0.1','0.2','0.5','1','2'],d:'0.1',label:'update every, s'},
           {n:'avg',t:'select',opts:['off','1','3','10','30','100','300','inf'],d:'3',label:'averaging, s'},
           {n:'clr',t:'button',label:'Reset average',fn:n=>{ n.avgN=0; n.pw?.fill(0); }}],

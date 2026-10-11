@@ -88,14 +88,59 @@ function rfft(x,zr,zi,outRe,outIm){
     outRe[k]=er+c[k]*or_-s[k]*oi; outIm[k]=ei+c[k]*oi+s[k]*or_;
   }
 }
-function window_(kind,N){
-  const w=new Float32Array(N);
-  for(let i=0;i<N;i++){ const x=i/(N-1);
-    w[i] = kind==='hann'? 0.5-0.5*Math.cos(2*Math.PI*x)
-         : kind==='hamming'? 0.54-0.46*Math.cos(2*Math.PI*x)
-         : kind==='blackman'? 0.42-0.5*Math.cos(2*Math.PI*x)+0.08*Math.cos(4*Math.PI*x)
-         : 1; }
+const WINDOW_KINDS=['hann','hamming','blackman','nuttall','blackman-harris','blackman-nuttall','flattop','hft95','hft116d','hft144d',
+  'kaiser','gaussian','dolph-chebyshev','tukey','hann-poisson','bartlett','welch','cosine','bohman','parzen','lanczos','rect'];
+// p — параметр окна (kaiser: β, gaussian: σ, tukey: α, dolph-chebyshev: подавление боковых, дБ, hann-poisson: α); 0/не задан — по умолчанию.
+// Самодостаточна: эту функцию целиком (toString) встраивают в воркер спектра.
+function window_(kind,N,p){
+  const COS={hann:[.5,.5], hamming:[.54,.46], blackman:[.42,.5,.08], nuttall:[.355768,.487396,.144232,.012604],
+    'blackman-harris':[.35875,.48829,.14128,.01168], 'blackman-nuttall':[.3635819,.4891775,.1365995,.0106411],
+    flattop:[.21557895,.41663158,.277263158,.083578947,.006947368],
+    hft95:[1,1.9383379,1.3045202,.4028270,.0350665], hft116d:[1,1.9575375,1.4780705,.6367431,.1228389,.0066288],
+    hft144d:[1,1.96760033,1.57983607,.81123644,.22583558,.02773848,.00090360]};
+  const DEF={kaiser:8, gaussian:.4, tukey:.5, 'dolph-chebyshev':100, 'hann-poisson':2};
+  const w=new Float32Array(N), M=Math.max(1,N-1), c=COS[kind];
+  if(!(p>0)) p=DEF[kind];
+  const i0=x=>{ let s=1, t=1; for(let k=1;k<60;k++){ t*=(x/(2*k))*(x/(2*k)); s+=t; if(t<1e-18*s) break; } return s; };
+  if(c){
+    let cs=0; for(const v of c) cs+=v;                 // центр окна = 1
+    for(let i=0;i<N;i++){ const x=2*Math.PI*i/M; let v=0; for(let k=0;k<c.length;k++) v+=(k&1?-1:1)*c[k]*Math.cos(k*x); w[i]=v/cs; }
+  } else if(kind==='dolph-chebyshev' && N>=4 && !(N&(N-1))){
+    // Дольф—Чебышев: спектр окна — полином Чебышева порядка N-1 (как scipy.signal.windows.chebwin)
+    const ord=N-1, beta=Math.cosh(Math.acosh(Math.pow(10,p/20))/ord), re=new Float32Array(N), im=new Float32Array(N);
+    for(let k=0;k<N;k++){
+      const a=Math.PI*k/N, x=beta*Math.cos(a);
+      const T= x>1 ? Math.cosh(ord*Math.acosh(x)) : x<-1 ? -Math.cosh(ord*Math.acosh(-x)) : Math.cos(ord*Math.acos(x));
+      re[k]=T*Math.cos(a); im[k]=T*Math.sin(a); }
+    fft(re,im);
+    const h=N>>1; let mx=0;
+    for(let i=0;i<N;i++){ w[i]= i<h ? re[h-i] : re[i-h+1]; if(w[i]>mx) mx=w[i]; }
+    for(let i=0;i<N;i++) w[i]/=mx;
+  } else {
+    const kb=kind==='dolph-chebyshev' ? 0.1102*(p-8.7) : p, kk=kind==='dolph-chebyshev' ? 'kaiser' : kind, ib=kk==='kaiser' ? i0(kb) : 1;
+    for(let i=0;i<N;i++){
+      const x=i/M, t=2*x-1, r=Math.abs(t);
+      w[i] = kk==='kaiser' ? i0(kb*Math.sqrt(Math.max(0,1-t*t)))/ib
+           : kk==='gaussian' ? Math.exp(-.5*(t/p)*(t/p))
+           : kk==='tukey' ? (p>=1 ? .5-.5*Math.cos(2*Math.PI*x) : x<p/2 ? .5*(1+Math.cos(2*Math.PI/p*(x-p/2))) : x>1-p/2 ? .5*(1+Math.cos(2*Math.PI/p*(x-1+p/2))) : 1)
+           : kk==='hann-poisson' ? .5*(1+Math.cos(Math.PI*t))*Math.exp(-p*r)
+           : kk==='bartlett' ? 1-r
+           : kk==='welch' ? 1-t*t
+           : kk==='cosine' ? Math.sin(Math.PI*x)
+           : kk==='bohman' ? (1-r)*Math.cos(Math.PI*r)+Math.sin(Math.PI*r)/Math.PI
+           : kk==='parzen' ? (r<=.5 ? 1-6*r*r*(1-r) : 2*Math.pow(1-r,3))
+           : kk==='lanczos' ? (r<1e-9 ? 1 : Math.sin(Math.PI*t)/(Math.PI*t))
+           : 1;
+    }
+  }
   return w;
+}
+// шумовая полоса окна в бинах: ENBW = N·Σw²/(Σw)² (на 4096 точках, от длины почти не зависит)
+const WIN_ENBW_CACHE={};
+function winEnbw(kind,p){
+  const k=kind+'|'+(p||0);
+  if(WIN_ENBW_CACHE[k]==null){ const w=window_(kind,4096,p); let s=0,s2=0; for(let i=0;i<4096;i++){ s+=w[i]; s2+=w[i]*w[i]; } WIN_ENBW_CACHE[k]=4096*s2/(s*s); }
+  return WIN_ENBW_CACHE[k];
 }
 function biquadCoef(type,f,Q,sr){
   const w0=2*Math.PI*clamp(f,10,sr/2-100)/sr, c=Math.cos(w0), s=Math.sin(w0), al=s/(2*Math.max(.05,Q));
