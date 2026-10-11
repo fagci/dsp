@@ -393,6 +393,127 @@ def({ id:'recFilter', title:'Rec Filter', cat:'Data',
   draw(n){ n.el.querySelector('.readout').textContent=
     (n.err ? 'error: '+n.err+'\n' : '')+'pass '+n.pass+' · reject '+n.drop; }});
 
+/* ---------- Rec → Entities: правила «запись → сущности и связи» ----------
+   Строка правила: [выход:] условия | поля (разделитель — « | » с пробелами). Выход — имя порта (по умолчанию только rec; rec получает всё).
+   Условия через пробел, все должны совпасть: field (есть значение), !field, field=a|b, field!=a, field~regex.
+   Поля через запятую: name=шаблон, голое name (копия, если поле есть), * (все поля записи). В шаблоне {f} — поле записи,
+   {f:x} — число в hex, {a|b} — первое непустое; пусто — правило для записи пропускается.
+   {f*} — поле-массив: по одной записи на элемент. Поле t переходит в результат само. */
+function entSplit(s,sep){                             // делит по sep вне фигурных скобок
+  const out=[]; let d=0, cur='';
+  for(const ch of s){
+    if(ch==='{') d++; else if(ch==='}') d=Math.max(0,d-1);
+    if(ch===sep && !d){ out.push(cur); cur=''; } else cur+=ch;
+  }
+  out.push(cur); return out;
+}
+function entCond(c){
+  let m;
+  if((m=/^([^=!~]+)!=(.*)$/.exec(c))) { const k=m[1], v=m[2].split('|'); return r=>!v.includes(String(r[k]??'')); }
+  if((m=/^([^=!~]+)=(.*)$/.exec(c)))  { const k=m[1], v=m[2].split('|'); return r=>v.includes(String(r[k]??'')); }
+  if((m=/^([^=!~]+)~(.*)$/.exec(c)))  { const k=m[1], re=new RegExp(m[2],'i'); return r=>re.test(String(r[k]??'')); }
+  if(c[0]==='!') { const k=c.slice(1); return r=>r[k]==null || r[k]===''; }
+  return r=>r[c]!=null && r[c]!=='';
+}
+function entParse(text){
+  const rules=[], errs=[];
+  String(text||'').split('\n').forEach((raw,i)=>{
+    const line=raw.trim(); if(!line || line[0]==='#') return;
+    try{
+      const sep=/\s\|\s/.exec(line);                 // разделитель « | »; | внутри a|b — это «или»
+      let head=sep ? line.slice(0,sep.index) : '', body=sep ? line.slice(sep.index+sep[0].length) : line, out='rec';
+      const m=/^([A-Za-z_]\w*)\s*:\s*(.*)$/.exec(head); if(m){ out=m[1]; head=m[2]; }
+      if(out==='count') throw new Error('name taken');
+      const conds=head.trim().split(/\s+/).filter(Boolean).map(entCond);
+      const fields=entSplit(body,',').map(x=>x.trim()).filter(Boolean).map(f=>{
+        if(f==='*') return {all:true};
+        const e=f.indexOf('='); if(e<0) return {k:f,tpl:'{'+f+'}',opt:true};
+        return {k:f.slice(0,e).trim(),tpl:f.slice(e+1)};
+      });
+      rules.push({out,conds,fields});
+    }catch(e){ errs.push('line '+(i+1)+': '+e.message); }
+  });
+  return {rules,errs};
+}
+// шаблон → строка или null (пустое поле); fan — индекс элемента для {f*}
+function entTpl(tpl,r,fan){
+  let miss=false, arr=null;
+  const s=tpl.replace(/\{([^{}]+)\}/g,(_,x)=>{
+    const star=/\*$/.test(x); if(star) x=x.slice(0,-1);
+    let hex=false; const c=x.lastIndexOf(':'); if(c>0 && x.slice(c+1)==='x'){ hex=true; x=x.slice(0,c); }
+    let v=null;
+    for(const a of x.split('|')){ const t=r[a.trim()]; if(t!=null && t!=='' && !(Array.isArray(t) && !t.length)){ v=t; break; } }
+    if(v==null){ miss=true; return ''; }
+    if(star){ if(!Array.isArray(v)){ miss=true; return ''; } arr=v; return fan==null ? '' : String(v[fan]); }
+    if(hex && typeof v==='number') return v.toString(16);
+    return Array.isArray(v) ? v.join(' ') : recFmt(v,true);
+  });
+  return miss ? {s:null} : {s,arr};
+}
+const entVal=s=>s!=='' && s.length<16 && !/^0\d/.test(s) && isFinite(+s) ? +s : s;
+function entApply(rule,r){
+  if(!rule.conds.every(f=>f(r))) return [];
+  let N=1;
+  for(const f of rule.fields) if(f.tpl){ const t=entTpl(f.tpl,r,null); if(t.arr){ N=t.arr.length; break; } }
+  const res=[];
+  for(let i=0;i<N;i++){
+    const o={}; let ok=true;
+    for(const f of rule.fields){
+      if(f.all){ Object.assign(o,r); continue; }
+      const t=entTpl(f.tpl,r,i);
+      if(t.s==null){ if(f.opt) continue; ok=false; break; }
+      o[f.k]=entVal(t.s);
+    }
+    if(ok){ if(r.t!=null && o.t==null) o.t=r.t; res.push(o); }
+  }
+  return res;
+}
+const entOutNames=text=>{ const set=new Set(); for(const r of entParse(text).rules) if(r.out!=='rec') set.add(r.out); return [...set]; };
+def({ id:'recEnt', title:'Rec → Entities', cat:'Data', kw:'entity entities link graph table rules map extract card',
+  // Правила превращают одну запись декодера в сущности и связи: вышка, оператор, абонент, группа…
+  // Выходы-таблицы по именам из правил; всё вместе — на rec. На Table (upsert key=id) дубли схлопываются.
+  ins:[{n:'rec',t:'rec'}],
+  outs:n=>[{n:'rec',t:'rec'},...entOutNames(n.p.rules).map(o=>({n:o,t:'rec'})),{n:'count',t:'num'}],
+  readout:true, tall:true,
+  params:[{n:'rules',t:'code',plain:true,d:'',label:'rules: [out:] conditions | fields'},
+          {n:'apply',t:'button',label:'Apply outputs',fn:n=>{ rebuildNode(n); markTopoDirty(); }},
+          {n:'tpl',t:'select',opts:['—','GSM cells','Digital voice (DMR / P25 / NXDN)'],d:'—',label:'insert rules',
+           fn:n=>{ const t=ENT_TEMPLATES[n.p.tpl]; if(t){ n.p.rules=(n.p.rules?n.p.rules.trimEnd()+'\n':'')+t; } n.p.tpl='—'; rebuildNode(n); markTopoDirty(); }}],
+  init:n=>{ n.in=0; n.outN=0; n.err=''; },
+  process(n,I){
+    const recs=recList(I.rec);
+    if(!n._c || n._c.src!==n.p.rules){ const c=entParse(n.p.rules); c.src=n.p.rules; n._c=c; n.err=c.errs.join('; '); }
+    if(!recs.length) return {rec:null,count:n.outN};
+    const all=[], by={};
+    for(const r of recs) for(const rule of n._c.rules){
+      const res=entApply(rule,r); if(!res.length) continue;
+      all.push(...res);
+      if(rule.out!=='rec') (by[rule.out]||(by[rule.out]=[])).push(...res);
+    }
+    n.in+=recs.length; n.outN+=all.length;
+    const o={rec:all.length?all:null,count:n.outN};
+    for(const k of entOutNames(n.p.rules)) o[k]=by[k]||null;
+    return o;
+  },
+  draw(n){ n.el.querySelector('.readout').textContent=(n.err?'error: '+n.err+'\n':'')+'in '+n.in+' · out '+n.outN; }});
+const ENT_TEMPLATES={
+  'GSM cells':
+`# сота, оператор и связь «сота → оператор», каналы ARFCN; подписи ставят только правила с известным оператором
+cell: kind~^GSM-SI plmn | id, type=cell, shape=square, plmn, lac, ci, bsic, freq, dbm
+cell: kind~^GSM-SI plmn op | id, label={op} LAC {lac}
+operator: kind~^GSM-SI plmn | id=PLMN {plmn}, type=operator, shape=hexagon
+operator: kind~^GSM-SI plmn op | id=PLMN {plmn}, label={op}
+link: kind~^GSM-SI plmn | id={id}>PLMN {plmn}, from={id}, to=PLMN {plmn}, label=operator
+link: kind~^GSM-SI cellArfcns | id={id}>ARFCN {cellArfcns*}, from={id}, to=ARFCN {cellArfcns*}, label=uses`,
+  'Digital voice (DMR / P25 / NXDN)':
+`# абоненты, группы и связи; префикс сети {src} разводит одинаковые id в разных системах
+subscriber: kind=call from | id={src}:{from}, type=subscriber, label={src} {from}, shape=dot
+subscriber: kind=alias from alias | id={src}:{from}, alias
+talkgroup: kind=call call=group to | id={src}:TG{to}, type=talkgroup, label=TG {to}, shape=diamond
+link: kind=call call=group from to | id={src}:{from}>TG{to}, from={src}:{from}, to={src}:TG{to}, label=member
+link: kind=call call=private from to | id={src}:{from}>{to}, from={src}:{from}, to={src}:{to}, label=call`
+};
+
 // Своя позиция: вручную (lat/lon или локатор, ⌖ — разово из геолокации) или GPS-слежение.
 // Последняя известная позиция — в GeoMe, её берут узлы, которым нужна точка приёма.
 const GeoMe={lat:null, lon:null, t:0};
