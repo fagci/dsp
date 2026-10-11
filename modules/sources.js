@@ -2844,22 +2844,27 @@ function iqAnnStep(n, sp, tl){
   sp.tl=tl; sp.ann=(n.annSt||(n.annSt={list:[]})).list;
 }
 // метка: короткая аннотация в полосе канала 1 на текущем месте таймлайна; подпись — text, иначе тег,
-// плюс локальное время (markTime)
-function iqMark(n, text){
+// плюс локальное время (markTime); at — время события, мс (у записи декодера)
+function iqMark(n, text, at){
   if(!n.connected || !n.dev) return;
   const st=n.annSt||(n.annSt={list:[]}), t=iqTl(n), cf=n.actualFreq??n.p.freq, half=n.sourceRate/2;
-  const b=rtlChanBands(n, cf, half)[0], f=b ? b.f : cf, now=new Date();
+  const b=rtlChanBands(n, cf, half)[0], f=b ? b.f : cf, now=new Date(at>1e12 ? at : Date.now());
   const lo=b ? b.lo : f-n.sourceRate/20, hi=b ? b.hi : f+n.sourceRate/20;
   const label=[text || (n.p.tag||'').trim() || 'mark', n.p.markTime ? now.toLocaleTimeString([], {hour12:false}) : ''].filter(Boolean).join(' ');
   st.list.push({a0:t, a1:t+Math.round(n.sourceRate*.25), lo, hi, mark:true, label, ts:now.getTime()});
+  if(st.list.length>2000) st.list.splice(0, st.list.length-2000);
   n.status='mark '+label;
 }
-// входы: markTrg — фронт ставит метку, mark — её текст (как text + go у Text Source)
+// имя метки по записи декодера: label, иначе "источник вид id"
+const iqRecName=r=>String(r.label ?? [r.src, r.kind, r.id].filter(v=>v!=null && v!=='').join(' ') ?? '').trim().slice(0,60);
+// входы: markTrg — фронт ставит метку, mark — её текст (как text + go у Text Source);
+// rec — запись декодера, каждая ставит метку (имя — свой текст с mark, иначе автоимя)
 function iqMarkIn(n, I){
-  const v=I.markTrg, up=typeof v==='number' && v>.5;
+  const v=I.markTrg, up=typeof v==='number' && v>.5, own=I.mark==null ? '' : String(I.mark).trim();
   const fire=up && !n._markUp;
   n._markUp=up;
-  if(fire) iqMark(n, I.mark==null ? '' : String(I.mark).trim());
+  if(fire) iqMark(n, own);
+  if(I.rec) for(const r of recList(I.rec).slice(0,20)) if(r && typeof r==='object') iqMark(n, own || iqRecName(r), r.t);
 }
 
 // накопление секунд перед триггером
@@ -4861,7 +4866,7 @@ async function sdrSweepLoop(n){
 
 def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
   ins:[{n:'freq',t:'num'},{n:'steerFreq',t:'num'},{n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'},
-       {n:'gainDb',t:'num'},{n:'bw',t:'num'},{n:'demod',t:'val'},{n:'mark',t:'val'},{n:'markTrg',t:'num'}],
+       {n:'gainDb',t:'num'},{n:'bw',t:'num'},{n:'demod',t:'val'},{n:'mark',t:'val'},{n:'markTrg',t:'num'},{n:'rec',t:'rec'}],
   outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'iq',t:'iq'},
         {n:'audio',t:'sig'},{n:'audio2',t:'sig'},{n:'audio3',t:'sig'},{n:'audio4',t:'sig'},
         {n:'audioL',t:'sig'},{n:'audioR',t:'sig'},{n:'ps',t:'val'},{n:'rt',t:'val'},
