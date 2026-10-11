@@ -2656,9 +2656,9 @@ function iqTarHeader(name, size, mtime){
 function iqSigmfMeta(r){
   return JSON.stringify({
     global:{'core:datatype':r.fmt==='u8'?'cu8':'ci16_le', 'core:sample_rate':r.rate, 'core:version':'1.0.0',
-      'core:recorder':'DSP workbench', 'core:hw':r.hw||''},
+      'core:recorder':'DSP workbench', 'core:hw':r.hw||'', ...(r.tag ? {'core:description':r.tag} : {})},
     captures:r.captures.map(c=>({'core:sample_start':c.start, 'core:frequency':c.freq, 'core:datetime':c.datetime})),
-    annotations:[]
+    annotations:r.anns||[]
   }, null, 2);
 }
 
@@ -2683,20 +2683,37 @@ function iqTmpDrop(r, remove){
   if(remove) r.tmp.dir.removeEntry(r.tmp.name).catch(()=>{});
 }
 function iqRecMsg(n, s){ n.status=s; n.recMsg=s; }
-async function iqRecStart(n){
+// Кусок полосы для записи: null — вся полоса приёма
+function iqRecBand(n){
+  const mode=n.p.recBand; if(mode!=='channel 1' && mode!=='custom') return null;
+  const sr=n.sourceRate, cf=n.actualFreq??n.p.freq, bw=Math.min(+n.p.recBw||sr, sr);
+  const D=Math.floor(sr/(bw*1.2));
+  if(D<2) return null;
+  const want=mode==='custom' ? (+n.p.recF||cf) : (n.ch[0].tuneFreq??sdrCenter(n)), half=(sr-bw*1.2)/2;
+  return {c:Math.round(clamp(want, cf-half, cf+half)), bw, D};
+}
+// Метка в имя файла
+const iqTagName=t=>(t||'').trim().replace(/[^\w\u0400-\u04ff-]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40);
+// o.auto — запуск триггером (сохранение скачиванием); o.pre — накопленные до триггера чанки
+async function iqRecStart(n, o={}){
   if(!n.connected || !n.dev) throw new Error('not connected');
   if(n.recDone){ iqTmpDrop(n.recDone, true); n.recDone=null; }
   n.recMsg='';
   const kind=n.p.recFmt==='SigMF' ? 'sigmf' : 'wav', start=new Date(), st=iqStamp(start);
-  const freq=Math.round(n.actualFreq??n.p.freq), fmt=n.dev.fmt, rate=Math.round(n.sourceRate);
-  const base=kind==='wav' ? `baseband_${freq}Hz_${st.date}_${st.time}Z` : `iq_${freq}Hz_${st.date}_${st.time}Z`;
+  const sub=iqRecBand(n), tag=(n.p.tag||'').trim(), tn=iqTagName(tag);
+  const freq=sub ? sub.c : Math.round(n.actualFreq??n.p.freq), fmt0=n.dev.fmt, srcRate=Math.round(n.sourceRate);
+  const ddc=sub ? iqaDdc(srcRate, sub.c-(n.actualFreq??n.p.freq), sub.D, sub.bw) : null;
+  const fmt=ddc ? 's16' : fmt0, rate=ddc ? ddc.rate : srcRate;
+  const base=(kind==='wav' ? 'baseband' : 'iq')+(tn ? '_'+tn : '')+`_${freq}Hz_${st.date}_${st.time}Z`;
   const name=base+(kind==='wav' ? '.wav' : '.sigmf');
   // место под заголовок: WAV — сам заголовок, SigMF — заголовок tar записи данных
   const head=kind==='wav' ? 44 : 512;
-  const r={kind, name, base, fmt, rate, freq, start, head, bytes:0, pos:head, chunks:[], chain:Promise.resolve(), pending:0,
+  const r={kind, name, base, fmt, fmt0, rate, freq, start, head, bytes:0, pos:head, chunks:[], chain:Promise.resolve(), pending:0,
     bps:kind==='wav'||fmt!=='u8' ? 4 : 2, captures:[{start:0, freq, datetime:start.toISOString()}],
-    hw:n.dev.tunerName, epoch:n.dev.epoch?.()||0, err:null, tmp:null};
+    hw:n.dev.tunerName, epoch:n.dev.epoch?.()||0, err:null, tmp:null,
+    ddc, D:ddc ? sub.D : 1, bw:sub?.bw, tag, auto:!!o.auto, tl0:o.pre?.length ? o.pre[0].tl : iqTl(n), nSrc:0};
   n.rec=r;
+  for(const c of o.pre||[]) iqRecWrite(n, c.buf, c.epoch, c.tl);
   const tmp=await iqTmpOpen();
   if(n.rec!==r){ if(tmp){ r.tmp=tmp; tmp.w.close().catch(()=>{}); iqTmpDrop(r, true); } return; }
   if(tmp){
@@ -2710,22 +2727,37 @@ async function iqRecStart(n){
   }
 }
 // чанк из readerLoop; buf копируется — дальше его забирает демод-воркер
-function iqRecWrite(n, buf, epoch){
+function iqRecWrite(n, buf, epoch, tl){
   const r=n.rec; if(!r || r.err) return;
   if(epoch!=null && epoch<r.epoch) return;          // чанк до начала записи — ещё старая частота
-  // первый чанк после перестройки — новый сегмент captures (в WAV частота одна — остаётся начальная)
-  if(epoch!=null && epoch>r.epoch){
-    r.epoch=epoch;
-    const f=Math.round(n.actualFreq??r.freq), last=r.captures[r.captures.length-1], s=r.bytes/r.bps;
-    if(f!==last.freq){ if(s===last.start) last.freq=f; else r.captures.push({start:s, freq:f, datetime:new Date().toISOString()}); }
+  const cnt=r.fmt0==='u8' ? buf.byteLength>>1 : buf.byteLength>>2;
+  let data;
+  if(r.ddc){
+    // кусок полосы: центр записи абсолютный, при перестройке приёмника сдвигаем смеситель; вышел за полосу — пропуск
+    if(epoch!=null) r.epoch=epoch;
+    const off=r.freq-(n.actualFreq??r.freq), sr=n.sourceRate;
+    r.nSrc+=cnt;
+    if(Math.abs(off)+r.bw*.6>sr/2) return;
+    if(off!==r.ddcOff){ r.ddcOff=off; r.ddc.setOffset(off); }
+    const out=r.ddc.push(r.fmt0==='u8' ? new Uint8Array(buf) : new Int16Array(buf), r.fmt0);
+    if(!out.length) return;
+    data=new Uint8Array(out.buffer);
+  }else{
+    // первый чанк после перестройки — новый сегмент captures (в WAV частота одна — остаётся начальная)
+    if(epoch!=null && epoch>r.epoch){
+      r.epoch=epoch;
+      const f=Math.round(n.actualFreq??r.freq), last=r.captures[r.captures.length-1], s=r.bytes/r.bps;
+      if(f!==last.freq){ if(s===last.start) last.freq=f; else r.captures.push({start:s, freq:f, datetime:new Date().toISOString()}); }
+    }
+    r.nSrc+=cnt;
+    data=r.kind==='wav' && r.fmt==='u8' ? iqU8toS16(buf) : new Uint8Array(buf.slice(0));
   }
-  const data=r.kind==='wav' && r.fmt==='u8' ? iqU8toS16(buf) : new Uint8Array(buf.slice(0));
   const max=r.kind==='wav' ? IQ_WAV_MAX : IQ_TAR_MAX;
   if(r.bytes+data.length>max || (!r.tmp && r.bytes+data.length>IQ_MEM_MAX)){
-    r.err=r.tmp ? 'file size limit reached' : 'memory limit reached (1 GB)'; iqRecStop(n); return;
+    r.err=r.tmp ? 'file size limit reached' : 'memory limit reached (1 GB)'; iqRecStop(n, r.auto); return;
   }
   if(r.tmp){
-    if(r.pending>256e6){ r.err='disk too slow'; iqRecStop(n); return; }
+    if(r.pending>256e6){ r.err='disk too slow'; iqRecStop(n, r.auto); return; }
     const pos=r.pos, w=r.tmp.w; r.pending+=data.length;
     r.chain=r.chain.then(()=>w.write({type:'write', position:pos, data})).then(()=>{ r.pending-=data.length; }, e=>{ r.err=e.message; });
   }else r.chunks.push(data);
@@ -2739,11 +2771,14 @@ function iqPickSave(r){
   p.catch(()=>{});
   return p;
 }
-async function iqRecStop(n){
+async function iqRecStop(n, auto){
   const r=n.rec;
   if(!r){ if(n.recDone?.blob) await iqRecSave(n, iqPickSave(n.recDone)); return; }
   n.rec=null;
-  const pick=iqPickSave(r), stop=new Date();
+  // триггерная запись остановилась без жеста пользователя — окно сохранения недоступно, файл скачивается
+  const pick=auto ? null : iqPickSave(r), stop=new Date();
+  r.anns=iqaSigmf(n.annSt?.list||[], r.tl0, r.nSrc, r.D, r.rate);
+  r.annNote=r.anns.length && r.kind==='wav' ? 'annotations are saved only in SigMF, ' : '';
   iqRecMsg(n, 'finishing '+r.name+'…');
   let head, tail;
   if(r.kind==='wav'){
@@ -2776,7 +2811,7 @@ async function iqRecStop(n){
   await iqRecSave(n, pick);
 }
 async function iqRecSave(n, pick){
-  const r=n.recDone, info=r.name+' ('+(r.bytes/1e6).toFixed(1)+' MB)', pre=r.err ? 'recording stopped: '+r.err+', ' : '';
+  const r=n.recDone, info=r.name+' ('+(r.bytes/1e6).toFixed(1)+' MB)', pre=(r.err ? 'recording stopped: '+r.err+', ' : '')+(r.annNote||'');
   try{
     if(pick){
       const h=await pick;
@@ -2796,6 +2831,66 @@ async function iqRecSave(n, pick){
     // отмена или нет жеста (остановка по ошибке/отключению) — запись ждёт повторного «Стоп»
     iqRecMsg(n, pre+(e.name==='AbortError' ? 'not saved' : e.name==='SecurityError' ? 'finished' : 'save error: '+e.message)+
       ' — press Stop recording to save '+info);
+  }
+}
+
+// ---- разметка (аннотации) и триггер записи ----
+// Таймлайн — отсчёты источника: у файла позиция в нём, у живого источника счётчик кольца спектра.
+const iqTl=n=>n.dev?.kind==='file' ? n.dev.pos : (n.specRing?.written||0);
+// начало чанка, который сейчас придёт из USB (до записи в кольцо)
+const iqTlChunk=(n, cnt)=>n.dev?.kind==='file' ? Math.max(0, n.dev.pos-cnt) : (n.specRing?.written||0);
+// автообнаружение по кадру спектра; кадр кладёт на график 'sa' (spec.tl, spec.ann) и ведёт список аннотаций
+function iqAnnStep(n, sp, tl){
+  const st=n.annSt||(n.annSt=iqaNew());
+  sp.tl=tl; sp.ann=st.list;
+  if(n.p.annot==='off') return;
+  const cf=n.actualFreq??n.p.freq, bin=n.sourceRate/sp.size, dc=Math.max(3*bin, 2500);
+  const dets=iqaDetect(sp.freqs, sp.mag, +n.p.annThr||10, n.dev?.kind==='file' ? null : [{lo:cf-dc, hi:cf+dc}]);
+  iqaTrack(st, dets, tl, sp.size, Math.round(n.sourceRate*.4), (n.p.tag||'').trim());
+}
+// метка вручную: короткая аннотация в полосе канала 1 на текущем месте таймлайна
+function iqMark(n){
+  if(!n.connected || !n.dev) return;
+  const st=n.annSt||(n.annSt=iqaNew()), t=iqTl(n), cf=n.actualFreq??n.p.freq, half=n.sourceRate/2;
+  const b=rtlChanBands(n, cf, half)[0], f=b ? b.f : cf;
+  const lo=b ? b.lo : f-n.sourceRate/20, hi=b ? b.hi : f+n.sourceRate/20, tag=(n.p.tag||'').trim();
+  st.list.push({a0:t, a1:t+Math.round(n.sourceRate*.25), lo, hi, peak:0, auto:false, mark:true, label:tag||'mark'});
+  n.status='mark '+(tag||'')+' '+fmtHz(f,3)+'Hz';
+}
+// накопление секунд перед триггером
+function iqPreKeep(n, buf, epoch, tl){
+  const q=n.preQ||(n.preQ=[]), cnt=n.dev.fmt==='u8' ? buf.byteLength>>1 : buf.byteLength>>2;
+  q.push({buf:buf.slice(0), epoch, tl, cnt}); n.preN=(n.preN||0)+cnt;
+  const lim=n.sourceRate*(+n.p.recPre||0);
+  while(q.length>1 && n.preN-q[0].cnt>=lim) n.preN-=q.shift().cnt;
+}
+// запись по условию: шумоподавитель канала 1 или сигнал в его полосе; стоп — закрытие шумоподавителя
+// (без него — пропажа сигнала). Раз в такт из process().
+function iqRecAuto(n){
+  const m=n.p.recTrig;
+  if(m!=='squelch' && m!=='signal'){ n.trg=null; n.preQ=null; n.preN=0; return; }
+  if(!n.connected || !n.dev || n.swActive) return;
+  if(n.rec && !n.rec.auto){ n.trg=null; return; }       // ручная запись — триггер не вмешивается
+  const st=n.trg||(n.trg={}), ch=n.ch[0], sql=n.p.sql==='SNR' || n.p.sql==='level';
+  if(m==='squelch' && !sql){ n.status='record trigger "squelch" needs squelch enabled'; return; }
+  let open, closed, armed=false, armAtStart;
+  if(m==='squelch'){ open=ch.sqOpen===true; closed=!open; armAtStart=true; }
+  else{
+    const cf=n.actualFreq??n.p.freq, b=rtlChanBands(n, cf, n.sourceRate/2)[0];
+    const sig=!!(b && n.annSt && iqaActiveIn(n.annSt, b.lo, b.hi));
+    open=sig;
+    if(sql){ closed=ch.sqOpen===false; armed=ch.sqOpen===true; armAtStart=false; }
+    else{ closed=!sig; armAtStart=true; }
+  }
+  // после остановки — ждём, пока условие запуска спадёт, иначе слабый сигнал даст серию коротких записей
+  if(st.low){ if(!open) st.low=false; else return; }
+  const act=iqaTrig(st, open, closed, performance.now(), {maxMs:(+n.p.recMax||300)*1000, waitMs:2000, armAtStart, armed});
+  if(act==='start'){
+    const pre=n.preQ||[]; n.preQ=null; n.preN=0;
+    iqRecStart(n, {auto:true, pre}).catch(e=>{ st.on=false; n.status='record error: '+e.message; });
+  }else if(act==='stop'){
+    st.low=true;
+    if(n.rec?.auto) iqRecStop(n, true);
   }
 }
 
@@ -2848,7 +2943,7 @@ function iqFromMeta(meta, blob, off, size, name){
   const dtype={cu8:'cu8', ci8:'ci8', ci16_le:'ci16_le', ci16:'ci16_le', cf32_le:'cf32_le', cf32:'cf32_le', cf64_le:'cf64_le', cf64:'cf64_le'}[dt];
   if(!dtype) throw new Error('unsupported SigMF datatype '+dt);
   const caps=(meta.captures||[]).map(c=>({start:+c['core:sample_start']||0, freq:c['core:frequency']??null}));
-  return {blob, off, size, dtype, rate:+g['core:sample_rate'], captures:caps.length?caps:[{start:0, freq:null}], name};
+  return {blob, off, size, dtype, rate:+g['core:sample_rate'], captures:caps.length?caps:[{start:0, freq:null}], name, ann:meta.annotations};
 }
 async function iqParseTar(f){
   let o=0, data=null, meta=null;
@@ -2903,14 +2998,16 @@ function iqFileDevice(src, defRate, defFreq){
   const load=a=>{ const b=Math.min(total, a+blkN);
     const p=src.blob.slice(src.off+a*bytesPer, src.off+b*bytesPer).arrayBuffer().then(buf=>({a, b, buf}));
     p.catch(()=>{}); return {a, p}; };
-  const dev={kind:'file', fixedFreq:true, fmt, bps, tunerName:src.name, loop:true, onFreq:null, ended:false,
+  const dev={kind:'file', fixedFreq:true, fmt, bps, tunerName:src.name, loop:true, onFreq:null, ended:false, paused:false,
     rate, total, get pos(){ return pos; },
+    annots:iqaFromSigmf(src.ann, caps[0].freq, rate),
     epoch:()=>tuneEpoch,
     async setSampleRate(){ return rate; },
     async setCenterFrequency(){ return caps[capIdx].freq; },
     async setGain(){}, async setBiasTee(){},
     async resetBuffer(){ t0=performance.now()-lead(); sent=0; },
     seek(frac){ pos=Math.max(0, Math.min(total-1, Math.floor(frac*total))); dev.ended=false; t0=performance.now()-lead(); sent=0; syncCap(); },
+    seekTo(s){ dev.seek(s/total); },
     readSamples(nBytes){ const p=chain.then(()=>read(nBytes/bps)); chain=p.catch(()=>{}); return p; },
     async close(){ closed=true; cur=ahead=null; }
   };
@@ -2920,7 +3017,7 @@ function iqFileDevice(src, defRate, defFreq){
   }
   async function read(ns){
     // темп — по часам: чанк отдаётся не раньше, чем он "прозвучал" бы в эфире
-    while(dev.ended && !closed) await new Promise(r=>setTimeout(r, 100));
+    while((dev.ended || dev.paused) && !closed) await new Promise(r=>setTimeout(r, 100));
     if(closed) throw new Error('closed');
     while(!(cur && pos>=cur.a && pos<cur.b)){
       if(!ahead || ahead.a!==pos) ahead=load(pos);
@@ -2952,6 +3049,60 @@ function iqConvert(raw, dtype, fmt){
   const f=dtype==='cf64_le' ? new Float64Array(raw) : new Float32Array(raw), o=new Int16Array(f.length);
   for(let i=0;i<f.length;i++){ const v=f[i]*32767; o[i]=v>32767?32767:v<-32768?-32768:v; }
   return o.buffer;
+}
+
+// ---- панель воспроизведения файла: пауза, прогресс, перемотка, переход по меткам ----
+function iqSeek(n, s){
+  const d=n.dev; if(d?.kind!=='file') return;
+  s=Math.max(0, Math.min(d.total-1, Math.round(s)));
+  d.seekTo(s); n.p.seek=n.appliedSeek=s/d.total*100; n.specRing.filled=0;
+}
+function iqBarBuild(n){
+  const mid=n.el.querySelector('.mid'); if(!mid || !n._dialCv) return null;
+  const row=document.createElement('div'), css='background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:3px;padding:1px 7px;cursor:pointer;font-size:11px';
+  row.style.cssText='display:none;flex-wrap:wrap;align-items:center;gap:4px;grid-column:1/-1;width:100%;min-width:0;box-sizing:border-box;margin:2px 0;';
+  const btn=(t,title,fn)=>{ const b=document.createElement('button'); b.textContent=t; b.title=title; b.style.cssText=css; b.onclick=fn; row.append(b); return b; };
+  const U={row};
+  U.play=btn('❚❚','pause / play', ()=>{ if(n.dev?.kind==='file') n.dev.paused=!n.dev.paused; });
+  btn('|◂','previous mark',()=>{ const d=n.dev, p=d.pos-d.rate*1.5, a=(n.annSt?.list||[]).filter(x=>x.a0<p).sort((x,y)=>y.a0-x.a0)[0]; if(a) iqSeek(n, a.a0-d.rate*.3); });
+  btn('−10','back 10 s',()=>iqSeek(n, n.dev.pos-n.dev.rate*10));
+  U.cv=document.createElement('canvas'); U.cv.style.cssText='order:-1;flex:1 1 100%;min-width:0;height:22px;cursor:pointer;touch-action:none';
+  row.append(U.cv);
+  btn('+10','forward 10 s',()=>iqSeek(n, n.dev.pos+n.dev.rate*10));
+  btn('▸|','next mark',()=>{ const d=n.dev, p=d.pos+d.rate*.2, a=(n.annSt?.list||[]).filter(x=>x.a0>p).sort((x,y)=>x.a0-y.a0)[0]; if(a) iqSeek(n, a.a0-d.rate*.3); });
+  U.t=document.createElement('span'); U.t.style.cssText='font:11px var(--mono);color:var(--dim);white-space:nowrap;margin-left:auto'; row.append(U.t);
+  let drag=false, lastT=0;
+  const at=ev=>{ const r=U.cv.getBoundingClientRect(); return Math.max(0, Math.min(1, (ev.clientX-r.left)/r.width))*n.dev.total; };
+  U.cv.onpointerdown=ev=>{ drag=true; U.cv.setPointerCapture(ev.pointerId); iqSeek(n, at(ev)); lastT=performance.now(); };
+  U.cv.onpointermove=ev=>{ if(drag && performance.now()-lastT>120){ lastT=performance.now(); iqSeek(n, at(ev)); } };
+  U.cv.onpointerup=ev=>{ if(drag){ drag=false; iqSeek(n, at(ev)); } };
+  mid.insertBefore(row, n._dialCv.nextSibling);
+  return U;
+}
+function iqBarUpdate(n){
+  const file=n.connected && n.dev?.kind==='file';
+  let U=n._bar;
+  if(U && !n.el?.contains(U.row)) U=n._bar=null;
+  if(!file){ if(U) U.row.style.display='none'; return; }
+  if(!U){ U=n._bar=iqBarBuild(n); if(!U) return; }
+  const d=n.dev, W=Math.max(40, Math.round(U.cv.clientWidth*(window.devicePixelRatio||1))), H=Math.round(22*(window.devicePixelRatio||1));
+  U.row.style.display='flex';
+  const txt=iqFmtTime(d.pos/d.rate)+' / '+iqFmtTime(d.total/d.rate)+(d.ended?' end':'');
+  if(U.t.textContent!==txt) U.t.textContent=txt;
+  const pl=d.paused ? '▶' : '❚❚'; if(U.play.textContent!==pl) U.play.textContent=pl;
+  const key=W+'|'+H+'|'+Math.round(d.pos/d.total*W)+'|'+(n.annSt?.list.length||0)+'|'+(n.annSt?.act.length||0);
+  if(key===U.key) return;
+  U.key=key;
+  if(U.cv.width!==W) U.cv.width=W; if(U.cv.height!==H) U.cv.height=H;
+  const cx=U.cv.getContext('2d'), x=v=>v/d.total*W;
+  cx.clearRect(0,0,W,H);
+  cx.fillStyle=themeColor('--grid'); cx.fillRect(0,H*.35,W,H*.3);
+  cx.fillStyle=themeColor('--acc2'); cx.globalAlpha=.5; cx.fillRect(0,H*.35,x(d.pos),H*.3); cx.globalAlpha=1;
+  for(const a of n.annSt?.list||[]){
+    cx.fillStyle=a.mark ? themeColor('--t-img') : themeColor('--acc');
+    cx.fillRect(Math.floor(x(a.a0)), a.mark ? 0 : H*.1, Math.max(2, Math.ceil(x(a.a1-a.a0))), a.mark ? H : H*.8);
+  }
+  cx.fillStyle=themeColor('--hi'); cx.fillRect(Math.round(x(d.pos))-1, 0, 2, H);
 }
 
 // ---- узел графа: источник IQ ----
@@ -3714,7 +3865,11 @@ async function rtlReadLoop(n){
       // ioMs — интервал между приходами чанков, в среднем = реальное время чанка
       const ioMs=prevReadEnd!=null ? t1-prevReadEnd : chunkPeriodMs;
       prevReadEnd=t1;
-      if(n.rec && !n.swActive) iqRecWrite(n, buf, res.epoch);
+      if(!n.swActive){
+        const tl=iqTlChunk(n, n.dev.fmt==='u8' ? buf.byteLength>>1 : buf.byteLength>>2);
+        if(n.rec) iqRecWrite(n, buf, res.epoch, tl);
+        else if((n.p.recTrig==='squelch' || n.p.recTrig==='signal') && +n.p.recPre>0) iqPreKeep(n, buf, res.epoch, tl);
+      }
       const u8=new Uint8Array(buf), fmt=n.dev.fmt, s16=fmt==='s16' ? new Int16Array(buf) : null;
       if(n.swHw){ sdrHwSweepFeed(n, u8); continue; }
       sdrAdcStat(n, u8, s16);
@@ -3998,7 +4153,7 @@ function rtlUpdateSpec(n){
   I.set(ring.I.subarray(start,start+first)); Q.set(ring.Q.subarray(start,start+first));
   if(first<L){ I.set(ring.I.subarray(0,L-first),first); Q.set(ring.Q.subarray(0,L-first),first); }
   n.specBusy=true;
-  const centerFreq=n.actualFreq??n.p.freq, binHz=n.sourceRate/N, half=N>>1, win=n.p.specWin;
+  const centerFreq=n.actualFreq??n.p.freq, binHz=n.sourceRate/N, half=N>>1, win=n.p.specWin, tl=iqTl(n);
   n.specWorker.compute(I.buffer, Q.buffer, N, L, win).then(({mag,K})=>{
     n.specBusy=false; n.specK=K;
     if(!n.specFreqs || n.specFreqs.length!==N || n.specFreqsCenter!==centerFreq || n.specFreqsSr!==n.sourceRate){
@@ -4009,6 +4164,7 @@ function rtlUpdateSpec(n){
     // iq — сырой поток на родной частоте для анализаторов ('sigid'): 0 Гц IQ = centerFreq
     n.spec={mag, sr:n.sourceRate, size:N, freqs:n.specFreqs,
             rev:(n.specRev=(n.specRev|0)+1), iq:{ring:n.specRing, sr:n.sourceRate, fc:centerFreq}};
+    iqAnnStep(n, n.spec, tl);
     n.lastSpec=performance.now();
   }).catch(()=>{ n.specBusy=false; });
 }
@@ -4207,6 +4363,8 @@ async function rtlStart(n, sr){
   for(const ch of n.ch){ if(ch.worker) ch.worker.terminate(); ch.worker=null; ch.aring=null; ch.active=false; }
   rtlResetRing(n);
   n._specEpoch=0;
+  n.annSt=iqaNew(); n.trg=null; n.preQ=null; n.preN=0;
+  if(n.dev.annots) n.annSt.list.push(...n.dev.annots);
   rtlActivateChannel(n, 0);                        // channel 1 — always, as before
   // синхронизируем NCO канала 1 с уже выставленным (возможно, отличным от центра) значением
   const tf0=n.ch[0].tuneFreq==null?sdrCenter(n):n.ch[0].tuneFreq;
@@ -4246,7 +4404,7 @@ async function iqOpenFile(n){
 }
 
 async function rtlDisconnect(n){
-  if(n.rec) await iqRecStop(n);
+  if(n.rec) await iqRecStop(n, n.rec.auto);
   n.reading=false;
   for(const ch of n.ch){ if(ch.worker) ch.worker.terminate(); ch.worker=null; ch.aring=null; ch.active=false; }
   if(n.specWorker){ n.specWorker.terminate(); n.specWorker=null; }
@@ -4719,6 +4877,19 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
       if(n.rec) return;
       try{ await iqRecStart(n); }catch(e){ if(e.name!=='AbortError') n.status='record error: '+e.message; } }},
     {n:'recStop',t:'button',label:'■ Stop recording',fn:async n=>{ await iqRecStop(n); }},
+    // кусок полосы: сдвиг + децимация, файл только с нужной частью (центр — в имени и в метаданных)
+    {n:'recBand',t:'select',opts:['full','channel 1','custom'],d:'full',label:'IQ record band (channel 1 / custom: only that part, decimated)'},
+    {n:'recBw',t:'range',min:1000,max:2000000,step:1000,log:true,d:200000,label:'IQ record bandwidth, Hz (channel 1 / custom)'},
+    {n:'recF',t:'num',d:0,label:'IQ record centre, Hz (custom; 0 = receiver centre)'},
+    // разметка и метки; тег идёт в имя записи, SigMF и подписи аннотаций
+    {n:'tag',t:'text',d:'',label:'tag (recording name, SigMF, marks)'},
+    {n:'annot',t:'select',opts:['auto','off'],d:'auto',label:'annotations: find signals automatically (shown on the waterfall, saved in SigMF)'},
+    {n:'annThr',t:'range',min:4,max:30,step:.5,d:10,label:'annotation threshold, dB over noise',adv:true},
+    {n:'mark',t:'button',label:'⚑ Mark here',fn:n=>iqMark(n)},
+    // запись по условию до закрытия шумоподавителя; секунды до триггера берутся из накопленных чанков
+    {n:'recTrig',t:'select',opts:['off','squelch','signal'],d:'off',label:'record on (squelch open / signal in channel 1; stops when squelch closes)'},
+    {n:'recPre',t:'range',min:0,max:5,step:.5,d:1,label:'trigger: pre-roll, s'},
+    {n:'recMax',t:'range',min:5,max:3600,step:5,log:true,d:300,label:'trigger: max length, s'},
     // только файл: повтор и позиция
     {n:'loop',t:'check',d:true,label:'loop playback'},
     {n:'seek',t:'range',min:0,max:100,step:.1,d:0,label:'position, %'},
@@ -4913,6 +5084,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     if(!n.p.sweep && n.sw){ n.sw=null; n.swErr=null; }
     if(sweepOn && lf==null && !n.swRunning) (n.p.swHw && n.dev.kind==='hackrf' ? sdrHwSweepLoop : sdrSweepLoop)(n);
     if(!n.swActive) rtlUpdateSpec(n);
+    iqRecAuto(n);
     // при прослушивании живой спектр ложится на свой участок панорамы
     if(sweepOn && n.sw && !n.swActive && n.spec && n.spec.rev!==n._swOvRev && !n.busy && n.appliedFreq!=null){
       n._swOvRev=n.spec.rev; sdrSweepOverlay(n, n.sw, n.spec);
@@ -4978,6 +5150,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
       }
     }
     if(n._dialCv) drawFreqDial(n.el, n._dialCv, n._dialCx, n._dial, ()=>n.p.freq, v=>{ n.p.freq=v; }, {dial:false});
+    iqBarUpdate(n);
     const cf=n.actualFreq??n.p.freq;
     const tune=clamp(n.ch[0].tuneFreq==null?sdrCenter(n):n.ch[0].tuneFreq, cf-n.sourceRate/2, cf+n.sourceRate/2);
     // HackRF: ступени LNA/VGA/amp вместо auto/gainDb
@@ -4992,7 +5165,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
           ['sql',dm!=='IQ'],['sqlSnr',dm!=='IQ'&&sq==='SNR'],['sqlLvl',dm!=='IQ'&&sq==='level'],['sqlHang',dm!=='IQ'&&sq!=='off'],
           ['lna',hk],['vga',hk],['amp',hk],['auto',!hk&&!fl&&!stg],['gainDb',!hk&&!fl&&!stg],
           ['gainMode',rt],['stLna',stg&&!n.p.stLnaAuto],['stLnaAuto',stg],['stMix',stg&&!n.p.stMixAuto],['stMixAuto',stg],['stVga',stg],
-          ['bias',!fl],['ppm',!fl],['conv',!fl],['dcShift',!fl],['loop',fl],['seek',fl],
+          ['bias',!fl],['ppm',!fl],['conv',!fl],['dcShift',!fl],['loop',fl],['seek',false],
           ...['sweep','swLo','swHi','swFft','swAvg','swMode','swUse','swOvl','swSmooth','swDecay','swSettle'].map(k=>[k,!fl]), ['swHw',hk]]){
         const e=n.el.querySelector(`.prm[data-param="${k}"]`); if(e) e.style.display=show?'':'none';
       }
