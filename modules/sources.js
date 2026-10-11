@@ -4150,7 +4150,11 @@ function rtlUpdateSpec(n){
   const N=+n.p.specSize, ring=n.specRing;
   if(ring.filled<N) return;
   const av=n.p.specAvg, frames=av==='off'? 1 : av==='all'? RTL_SPEC_MAX_FRAMES : (+av||1);
-  const L=N;
+  // Уэлч: K сегментов с перекрытием 50% в одном кадре — шум падает в ~sqrt(K) раз без размазывания по кадрам
+  let K=+n.p.specWelch||1;
+  const lim=Math.min(ring.filled,ring.size);
+  while(K>1 && N+(K-1)*(N>>1)>lim) K--;
+  const L=N+(K-1)*(N>>1);
   n.specTaken=ring.written;
   const start=(ring.w-L+ring.size)%ring.size;
   // свежие буферы — сразу под всё кольцо, чтобы пул подходил при любом L
@@ -4959,6 +4963,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'specFps',t:'select',opts:['10','15','25','30','60'],d:'25',label:'spectrum rate, fps',adv:true},
     // усреднение по кадрам (EMA, 64 кадра для all); off — каждый кадр как есть
     {n:'specAvg',t:'select',opts:['off','4','16','64','all'],d:'off',label:'spectrum averaging, frames',adv:true},
+    {n:'specWelch',t:'select',opts:['1','2','4','8'],d:'1',label:'Welch segments per frame (50% overlap, less noise without smearing)',adv:true},
     {n:'specMode',t:'select',opts:['avg','max'],d:'avg',label:'averaging detector (max = peak hold with decay)',adv:true},
     // широкополосное сканирование: 'spec' — панорама всего диапазона; маркер на tuneFreq — пауза и прослушивание
     {n:'sweep',t:'check',d:false,label:'wideband sweep'},

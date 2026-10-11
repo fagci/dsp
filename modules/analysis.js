@@ -749,7 +749,9 @@ function cfarFrame(n,s){
   n.tracks=n.tracks||[];
   for(const t of n.tracks){ t.hist=(t.hist<<1)&mask; t.hit=false; }
   for(const h of hits){
-    const f=specHz(s,h.pi), wid=Math.max(1,specHz(s,h.b)-specHz(s,h.a));
+    // параболическая интерполяция пика по логарифму мощности: частота точнее бина
+    const pa=Math.log(pw[h.pi-1]+1e-30), pb=Math.log(pw[h.pi]+1e-30), pc=Math.log(pw[h.pi+1]+1e-30), den=pa-2*pb+pc;
+    const f=specHz(s,h.pi+(den<0 ? clamp(.5*(pa-pc)/den,-.5,.5) : 0)), wid=Math.max(1,specHz(s,h.b)-specHz(s,h.a));
     if(n.skip && cfarSkipped(n.skip,f,Math.max(wid,2*binHz))) continue;
     const tol=Math.max(15,wid,2*binHz);              // цель та же, если рядом по частоте
     let tr=n.tracks.find(t=>Math.abs(t.f-f)<=tol);
@@ -1592,10 +1594,17 @@ function saPhosphor(n,cx,W,H,ty,fresh,diff){
     ph=n.ph={key, C, R, acc:new Float32Array(C*R), off, ocx:off.getContext('2d'), img:new ImageData(C,R),
       live:Float32Array.from(ty), lv:new Float32Array(C), pal:null, dirty:true};
   }
-  const a=ph.acc, live=ph.live, d=n.p.phDecay, sc=(H-2)/(R-1);
+  const a=ph.acc, live=ph.live, d0=n.p.phDecay, sc=(H-2)/(R-1);
+  // затухание задано на кадр при 25 fps; пересчёт по реальному dt — яркость и память не зависят от fps
+  const now=performance.now();
+  const fk=fresh ? clamp((now-(ph.tf||now-40))*.025,.25,8) : 1;
+  const d=fresh ? Math.pow(d0,fk) : d0;
   if(fresh){
+    ph.tf=now;
+    const hw=(1-d)/(1-d0);                              // вес попадания: плотность при постоянном сигнале не зависит от fps
     // живая трасса — сглаживание по времени, как live spectrum у fosphor
-    for(let x=0;x<W;x++){ const t=ty[x]; live[x]= t>=H || live[x]>=H ? t : live[x]+(t-live[x])*.3; }
+    const lk=1-Math.pow(.7,fk);
+    for(let x=0;x<W;x++){ const t=ty[x]; live[x]= t>=H || live[x]>=H ? t : live[x]+(t-live[x])*lk; }
     for(let i=0;i<a.length;i++) a[i]*=d;
     // уровень столбца (в ячейках снизу) — максимум по его пикселям
     const lv=ph.lv, kx=W/C;
@@ -1605,6 +1614,7 @@ function saPhosphor(n,cx,W,H,ty,fresh,diff){
       lv[c]= y>=H ? -1 : clamp((H-1-y)/sc,0,R-1); }
     // ядро: треугольник по уровню × [.25 .5 .25] по соседним столбцам
     const hit=(c,v,w)=>{
+      w*=hw;
       for(let b=Math.max(0,Math.ceil(v-1.5)), e=Math.min(R-1,Math.floor(v+1.5)); b<=e; b++){
         const i=(R-1-b)*C+c, k=w*(1-Math.abs(b-v)/1.5)*PH_K;
         a[i]+=k*.5; if(c>0) a[i-1]+=k*.25; if(c<C-1) a[i+1]+=k*.25; } };
@@ -1638,7 +1648,7 @@ function saPhosphor(n,cx,W,H,ty,fresh,diff){
         PH_LUT_K[i]=heatIdx(.15+.85*v)*3;            // низ палитры почти чёрный — пропускаем
         PH_LUT_A[i]=v>.4?255:(v*637)|0; } }
     // попадание в каждом кадре даёт a·(1-d)=PH_K/2 — при brightness 3 это верх палитры
-    const px=ph.img.data, g=n.p.phGain*(1-d)*4095, lk=PH_LUT_K, la=PH_LUT_A;
+    const px=ph.img.data, g=n.p.phGain*(1-d0)*4095, lk=PH_LUT_K, la=PH_LUT_A;
     for(let i=0;i<a.length;i++){
       const j=i*4, u=a[i]*g;
       if(u<.5){ px[j+3]=0; continue; }
