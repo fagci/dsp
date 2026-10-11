@@ -10,7 +10,7 @@ def({ id:'tbskRx', title:'TBSK Decoder', cat:'Decoders', readout:true, tall:true
           {n:'cycle',t:'range',min:2,max:100,step:1,d:10,label:'tone length, carrier periods (as in the transmitter; bit rate = carrier / cycle)'},
           {n:'th',t:'range',min:.05,max:.6,step:.01,d:.2,label:'end of frame: correlation below this'},
           {n:'det',t:'range',min:.2,max:.9,step:.01,d:.4,label:'preamble detection threshold'},
-          {n:'max',t:'range',min:0,max:1024,step:1,d:0,label:'max bytes per frame (0 = until the signal ends)'}],
+          {n:'max',t:'range',min:0,max:65536,step:1,d:0,label:'max bytes per frame (0 = until the signal ends)'}],
   init:n=>{ n.key=''; n.rx=null; n.lvl=0; n.frames=0; n.recent=[]; n.last=''; },
   process(n,I){
     const sr=Eng.sr, p=n.p, key=[sr,p.fc,p.cycle,p.th,p.det,p.max].join('|');
@@ -42,13 +42,14 @@ def({ id:'tbskRx', title:'TBSK Decoder', cat:'Decoders', readout:true, tall:true
 });
 
 /* ---- Передатчик ---- */
+const TBSK_MAX=65536;                               // предел кадра, байт
 function tbskTxQueue(n,data,lead){                  // data: строка или Uint8Array
   const sr=Eng.sr, tone=tbskTone(sr,+n.p.fc,+n.p.cycle), isBin=typeof data!=='string',
-    bytes=isBin ? data.subarray(0,1024) : new TextEncoder().encode(data.slice(0,1024));
+    bytes=(isBin ? data : new TextEncoder().encode(data)).subarray(0,TBSK_MAX);
   if(!bytes.length){ n.status='nothing to send'; return; }
   const w=tbskModulate(tone,tbskBits(bytes),{amp:+n.p.amp, stop:n.p.stop!==false});
   if(lead){ const z=new Float32Array(lead+w.length); z.set(w,lead); n.tq={w:z, i:0}; } else n.tq={w, i:0};
-  n.status='sending '+bytes.length+' B · '+(sr/tone.length).toFixed(0)+' bit/s · '+(n.tq.w.length/sr).toFixed(2)+' s'+(isBin ? (data.length>1024 ? '\nbytes cut to 1024 of '+data.length : '\nbytes') : '\n"'+data.slice(0,60)+'"');
+  n.status='sending '+bytes.length+' B · '+(sr/tone.length).toFixed(0)+' bit/s · '+(n.tq.w.length/sr).toFixed(2)+' s'+(isBin ? (data.length>TBSK_MAX ? '\nbytes cut to '+TBSK_MAX+' of '+data.length : '\nbytes') : '\n"'+data.slice(0,60)+'"');
 }
 def({ id:'tbskTx', title:'TBSK Modulator', cat:'Protocols', readout:true, tall:true,
   kw:'tbsk tbskmodem nyatla spread spectrum dpsk transmit modulator acoustic modem data over sound',
