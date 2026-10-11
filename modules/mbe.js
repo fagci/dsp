@@ -91,7 +91,7 @@ function mbeDecode(h,fm,q){
   const ex=MBE.ex, mem=new Uint8Array(ex.memory.buffer);
   mem.set(fm.fr,ex.mbx_frame());
   const e=fm.k==='imbe' ? ex.mbx_imbe(h,q) : fm.k==='a2450' ? ex.mbx_ambe2450(h,q) : ex.mbx_ambe2400(h,q);
-  return {errs:e, pcm:new Int16Array(ex.memory.buffer.slice(ex.mbx_pcm(),ex.mbx_pcm()+320))};
+  return {errs:e, cls:ex.mbx_class(h), w0:ex.mbx_w0(h), nv:ex.mbx_voiced(h), pcm:new Int16Array(ex.memory.buffer.slice(ex.mbx_pcm(),ex.mbx_pcm()+320))};
 }
 
 // кадр Codec 2 → отсчёты int16 (160 на 20 мс в режиме 3200, 320 на 40 мс в 1600)
@@ -119,8 +119,29 @@ function mbeStream(n,key){
   }
   return s;
 }
-function mbeMark(n,s,pcm,thr,now){
-  if(mbeVoiced(pcm,thr)){ s.vt=now; s.voiced++; n.tot.voiced++; }
+// Зашифрованная речь без ключа проходит FEC чисто, но параметры кадров случайны: основной тон скачет от кадра к кадру.
+// Живая речь в соседних кадрах с вокализованными полосами меняет тон плавно (|ln w0| < MBE_PJ).
+const MBE_WIN=30, MBE_PJ=.12, MBE_SMOOTH=.6;
+function mbePitchOk(h){
+  let pairs=0, ok=0;
+  for(let i=1;i<h.length;i++){
+    const a=h[i-1], b=h[i];
+    if(!a.ok || !b.ok || a.nv<1 || b.nv<1) continue;
+    pairs++; if(Math.abs(Math.log(b.w0/a.w0))<MBE_PJ) ok++;
+  }
+  return pairs<3 || ok/pairs>=MBE_SMOOTH;
+}
+// info — параметры кадра mbelib ({cls, w0, nv}) или null (Codec 2, ACELP: только энергия)
+function mbeMark(n,s,pcm,thr,now,info){
+  let ok=mbeVoiced(pcm,thr);
+  if(s.enc && s.enc.st!=='ok') ok=false;                  // шифрованный вызов без рабочего ключа
+  if(info){
+    const h=s.hist||(s.hist=[]);
+    h.push({ok:info.cls===0, w0:info.w0, nv:info.nv});
+    if(h.length>MBE_WIN) h.shift();
+    if(info.cls!==0 || !mbePitchOk(h)) ok=false;
+  }
+  if(ok){ s.vt=now; s.voiced++; n.tot.voiced++; }
 }
 function mbePush(s,pcm,g){
   const N=pcm.length;
@@ -166,7 +187,7 @@ def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t
       const fs=mbeFrames(r);
       if(!fs.length || (fs[0].k==='c2' ? !C2.ex : fs[0].k==='ta' ? !TA.ex : !MBE.ex)){ n.tot.skipped++; continue; }
       const s=mbeStream(n,r.src+'|'+(r.slot||0));
-      if(now-s.last>2000){ if(s.h>=0) MBE.ex.mbx_reset(s.h); if(s.ta>=0){ TA.ex.ta_free(s.ta); s.ta=-1; } }       // новый разговор: состояние предыдущего кадра не нужно
+      if(now-s.last>2000){ s.hist=null; if(s.h>=0) MBE.ex.mbx_reset(s.h); if(s.ta>=0){ TA.ex.ta_free(s.ta); s.ta=-1; } }       // новый разговор: состояние предыдущего кадра не нужно
       s.last=now;
       s.enc=null;
       for(let f=0;f<fs.length;f++){
@@ -183,7 +204,7 @@ def({ id:'mbeVoice', title:'Vocoder (mbelib)', cat:'Decoders', ins:[{n:'voice',t
           const pc=c2Decode(s.c2.h,fm.bytes); mbeMark(n,s,pc,vthr,now); mbePush(s,pc,g); s.frames++; n.tot.frames++;
         } else {
           if(s.h<0) s.h=MBE.ex.mbx_new();
-          const d=mbeDecode(s.h,fm,q); if(derr>=0) d.errs=derr; s.frames++; s.errs+=d.errs; n.tot.errs+=d.errs; if(d.errs) err=1; n.tot.frames++; mbeMark(n,s,d.pcm,vthr,now); mbePush(s,d.pcm,g);
+          const d=mbeDecode(s.h,fm,q); if(derr>=0) d.errs=derr; s.frames++; s.errs+=d.errs; n.tot.errs+=d.errs; if(d.errs) err=1; n.tot.frames++; mbeMark(n,s,d.pcm,vthr,now,d); mbePush(s,d.pcm,g);
         }
       }
     }
