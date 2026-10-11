@@ -1,79 +1,7 @@
 "use strict";
 /* ============ IQ: аннотации, запись куска полосы, триггер записи (без DOM) ============ */
 // Время — в отсчётах источника ("таймлайн"): у файла это позиция в нём, у живого источника — счётчик отсчётов.
-// Аннотация: {a0, a1, lo, hi, label, auto, peak}; a0..a1 — отсчёты, lo..hi — Гц.
-
-const IQA_MAX=800;                                    // аннотаций в списке; старые закрытые выбрасываются
-
-function iqaFmtHz(f){
-  const a=Math.abs(f);
-  return a>=1e9 ? (f/1e9).toFixed(4).replace(/\.?0+$/,'')+'G' : a>=1e6 ? (f/1e6).toFixed(4).replace(/\.?0+$/,'')+'M'
-    : a>=1e3 ? (f/1e3).toFixed(2).replace(/\.?0+$/,'')+'k' : String(Math.round(f));
-}
-
-// Сигналы в кадре спектра: бины выше шумового пола на thrDb, соседние склеиваются.
-// freqs — Гц по бинам (возрастают), mag — амплитуда. Шум — медиана мощности по прореженной выборке
-// (редкие сигналы её не сдвигают). skip: [{lo,hi}] — зоны, которые не берём (пик нуля приёмника).
-function iqaDetect(freqs, mag, thrDb, skip){
-  const N=mag.length; if(N<8) return [];
-  const step=Math.max(1, N>>12), s=[];
-  for(let i=0;i<N;i+=step) s.push(20*Math.log10(mag[i]+1e-12));
-  s.sort((a,b)=>a-b);
-  const floor=s[s.length>>1], thr=floor+thrDb, bin=(freqs[N-1]-freqs[0])/(N-1), out=[];
-  let i=0;
-  while(i<N){
-    if(20*Math.log10(mag[i]+1e-12)<thr){ i++; continue; }
-    let j=i, gap=0, pk=-1e9, last=i, hits=0;
-    for(; j<N && gap<=2; j++){
-      const v=20*Math.log10(mag[j]+1e-12);
-      if(v>=thr){ gap=0; last=j; hits++; if(v>pk) pk=v; } else gap++;
-    }
-    const lo=freqs[i]-bin/2, hi=freqs[last]+bin/2;
-    i=last+1;
-    if(hits<2 && pk<thr+6) continue;                   // одиночный выброс шума
-    if(skip && skip.some(z=>(lo+hi)/2>=z.lo && (lo+hi)/2<=z.hi)) continue;
-    out.push({lo, hi, db:pk, snr:pk-floor});
-  }
-  return out;
-}
-
-const iqaOverlap=(a,b)=>Math.min(a.hi,b.hi)-Math.max(a.lo,b.lo);
-const IQA_CONFIRM=3;                                  // кадров подряд, чтобы новый сигнал стал аннотацией
-function iqaNew(){ return {list:[], act:[], cand:[], last:-1}; }
-
-// Трекер: кадр на таймлайне t (окно win отсчётов) → открытые/продлённые/закрытые аннотации.
-// hang — сколько отсчётов сигнал может отсутствовать до закрытия. Возвращает список только что открытых.
-function iqaTrack(st, dets, t, win, hang, tag){
-  if(st.last>=0 && t<st.last){ st.act=[]; st.cand=[]; }  // перемотка назад/зацикливание файла
-  st.last=t;
-  const opened=[], used=new Set(), cand=[];
-  for(const d of dets){
-    const w=d.hi-d.lo, tol=Math.max(w*.25, 1);
-    let m=null;
-    for(const a of st.act) if(!used.has(a) && iqaOverlap(a,d)>-tol && iqaOverlap(a,d)>=Math.min(w,a.hi-a.lo)*.3-tol) { m=a; break; }
-    if(m){ used.add(m); m.a1=t; m.lo=Math.min(m.lo,d.lo); m.hi=Math.max(m.hi,d.hi); if(d.db>m.peak) m.peak=d.db; m.label=iqaLabel(m,tag); continue; }
-    // уже размечено (например, из файла) — второй раз не создаём
-    let cov=false;
-    for(let k=st.list.length-1, c=0; k>=0 && c<IQA_MAX; k--, c++){
-      const a=st.list[k];
-      if(t>=a.a0-win && t<=a.a1+win && iqaOverlap(a,d)>0.3*Math.min(w,a.hi-a.lo)){ cov=true; break; }
-    }
-    if(cov) continue;
-    // новый сигнал подтверждается несколькими кадрами подряд — случайные выбросы шума не размечаем
-    const pc=st.cand.find(c=>iqaOverlap(c,d)>0.3*Math.min(w,c.hi-c.lo)), c={a0:pc ? pc.a0 : Math.max(0,t-win), lo:d.lo, hi:d.hi, db:d.db, cnt:(pc?.cnt||0)+1};
-    if(c.cnt<IQA_CONFIRM){ cand.push(c); continue; }
-    const a={a0:c.a0, a1:t, lo:d.lo, hi:d.hi, peak:d.db, auto:true, label:''};
-    a.label=iqaLabel(a,tag);
-    st.list.push(a); st.act.push(a); used.add(a); opened.push(a);
-    if(st.list.length>IQA_MAX){ const i=st.list.findIndex(x=>!st.act.includes(x)); if(i>=0) st.list.splice(i,1); }
-  }
-  st.act=st.act.filter(a=>t-a.a1<=hang);
-  st.cand=cand;
-  return opened;
-}
-const iqaLabel=(a,tag)=>(tag?tag+' ':'')+iqaFmtHz((a.lo+a.hi)/2)+'Hz';
-// сигнал, пересекающий полосу [lo,hi], ещё открыт
-const iqaActiveIn=(st,lo,hi)=>st.act.some(a=>iqaOverlap(a,{lo,hi})>0);
+// Аннотация: {a0, a1, lo, hi, label, mark}; a0..a1 — отсчёты, lo..hi — Гц.
 
 // аннотации в формате SigMF для записи, начавшейся на таймлайне t0 (длиной total отсчётов источника, прореживание D)
 function iqaSigmf(list, t0, total, D, rate){
@@ -83,7 +11,6 @@ function iqaSigmf(list, t0, total, D, rate){
     const s=Math.max(0, Math.round((a.a0-t0)/D)), e=Math.min(Math.round(total/D), Math.round((a.a1-t0)/D));
     const o={'core:sample_start':s, 'core:sample_count':Math.max(1,e-s), 'core:label':a.label||''};
     if(isFinite(a.lo)){ o['core:freq_lower_edge']=Math.round(a.lo); o['core:freq_upper_edge']=Math.round(a.hi); }
-    if(a.auto) o['core:comment']='auto';
     out.push(o);
   }
   return out;
@@ -95,7 +22,7 @@ function iqaFromSigmf(arr, fc, rate){
     const a0=+x['core:sample_start']||0, c=+x['core:sample_count']||0;
     const lo=x['core:freq_lower_edge'], hi=x['core:freq_upper_edge'];
     out.push({a0, a1:a0+Math.max(0,c), lo:lo!=null ? +lo : (fc||0)-(rate||0)/2, hi:hi!=null ? +hi : (fc||0)+(rate||0)/2,
-      label:x['core:label']||x['core:description']||'', auto:x['core:comment']==='auto', peak:-1e9});
+      label:x['core:label']||x['core:description']||''});
   }
   return out.sort((p,q)=>p.a0-q.a0);
 }

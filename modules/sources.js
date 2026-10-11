@@ -2839,19 +2839,14 @@ async function iqRecSave(n, pick){
 const iqTl=n=>n.dev?.kind==='file' ? n.dev.pos : (n.specRing?.written||0);
 // начало чанка, который сейчас придёт из USB (до записи в кольцо)
 const iqTlChunk=(n, cnt)=>n.dev?.kind==='file' ? Math.max(0, n.dev.pos-cnt) : (n.specRing?.written||0);
-// автообнаружение по кадру спектра; кадр кладёт на график 'sa' (spec.tl, spec.ann) и ведёт список аннотаций
+// кадр спектра несёт таймлайн и список аннотаций для 'sa' (spec.tl, spec.ann)
 function iqAnnStep(n, sp, tl){
-  const st=n.annSt||(n.annSt=iqaNew());
-  sp.tl=tl; sp.ann=st.list;
-  if(n.p.annot==='off') return;
-  const cf=n.actualFreq??n.p.freq, bin=n.sourceRate/sp.size, dc=Math.max(3*bin, 2500);
-  const dets=iqaDetect(sp.freqs, sp.mag, +n.p.annThr||10, n.dev?.kind==='file' ? null : [{lo:cf-dc, hi:cf+dc}]);
-  iqaTrack(st, dets, tl, sp.size, Math.round(n.sourceRate*.4), (n.p.tag||'').trim());
+  sp.tl=tl; sp.ann=(n.annSt||(n.annSt={list:[]})).list;
 }
 // метка вручную: короткая аннотация в полосе канала 1 на текущем месте таймлайна
 function iqMark(n){
   if(!n.connected || !n.dev) return;
-  const st=n.annSt||(n.annSt=iqaNew()), t=iqTl(n), cf=n.actualFreq??n.p.freq, half=n.sourceRate/2;
+  const st=n.annSt||(n.annSt={list:[]}), t=iqTl(n), cf=n.actualFreq??n.p.freq, half=n.sourceRate/2;
   const b=rtlChanBands(n, cf, half)[0], f=b ? b.f : cf;
   const lo=b ? b.lo : f-n.sourceRate/20, hi=b ? b.hi : f+n.sourceRate/20, tag=(n.p.tag||'').trim();
   st.list.push({a0:t, a1:t+Math.round(n.sourceRate*.25), lo, hi, peak:0, auto:false, mark:true, label:tag||'mark'});
@@ -2864,27 +2859,17 @@ function iqPreKeep(n, buf, epoch, tl){
   const lim=n.sourceRate*(+n.p.recPre||0);
   while(q.length>1 && n.preN-q[0].cnt>=lim) n.preN-=q.shift().cnt;
 }
-// запись по условию: шумоподавитель канала 1 или сигнал в его полосе; стоп — закрытие шумоподавителя
-// (без него — пропажа сигнала). Раз в такт из process().
+// запись по шумоподавителю канала 1: старт — открылся, стоп — закрылся (hang — sqlHang).
+// Раз в такт из process().
 function iqRecAuto(n){
-  const m=n.p.recTrig;
-  if(m!=='squelch' && m!=='signal'){ n.trg=null; n.preQ=null; n.preN=0; return; }
+  if(n.p.recTrig!=='squelch'){ n.trg=null; n.preQ=null; n.preN=0; return; }
   if(!n.connected || !n.dev || n.swActive) return;
   if(n.rec && !n.rec.auto){ n.trg=null; return; }       // ручная запись — триггер не вмешивается
-  const st=n.trg||(n.trg={}), ch=n.ch[0], sql=n.p.sql==='SNR' || n.p.sql==='level';
-  if(m==='squelch' && !sql){ n.status='record trigger "squelch" needs squelch enabled'; return; }
-  let open, closed, armed=false, armAtStart;
-  if(m==='squelch'){ open=ch.sqOpen===true; closed=!open; armAtStart=true; }
-  else{
-    const cf=n.actualFreq??n.p.freq, b=rtlChanBands(n, cf, n.sourceRate/2)[0];
-    const sig=!!(b && n.annSt && iqaActiveIn(n.annSt, b.lo, b.hi));
-    open=sig;
-    if(sql){ closed=ch.sqOpen===false; armed=ch.sqOpen===true; armAtStart=false; }
-    else{ closed=!sig; armAtStart=true; }
-  }
-  // после остановки — ждём, пока условие запуска спадёт, иначе слабый сигнал даст серию коротких записей
+  if(n.p.sql!=='SNR' && n.p.sql!=='level'){ n.status='record trigger needs squelch enabled'; return; }
+  const st=n.trg||(n.trg={}), open=n.ch[0].sqOpen===true;
+  // после остановки (в т.ч. по max length) ждём закрытия, иначе открытый шумоподавитель даст серию записей
   if(st.low){ if(!open) st.low=false; else return; }
-  const act=iqaTrig(st, open, closed, performance.now(), {maxMs:(+n.p.recMax||300)*1000, waitMs:2000, armAtStart, armed});
+  const act=iqaTrig(st, open, !open, performance.now(), {maxMs:(+n.p.recMax||300)*1000, waitMs:2000, armAtStart:true});
   if(act==='start'){
     const pre=n.preQ||[]; n.preQ=null; n.preN=0;
     iqRecStart(n, {auto:true, pre}).catch(e=>{ st.on=false; n.status='record error: '+e.message; });
@@ -3096,7 +3081,7 @@ function iqBarUpdate(n){
   const txt=iqFmtTime(d.pos/d.rate)+' / '+iqFmtTime(d.total/d.rate)+(d.ended?' end':'');
   if(U.t.textContent!==txt) U.t.textContent=txt;
   const pl=d.paused || !iqEngOn() ? '▶' : '❚❚'; if(U.play.textContent!==pl) U.play.textContent=pl;
-  const key=W+'|'+H+'|'+Math.round(d.pos/d.total*W)+'|'+(n.annSt?.list.length||0)+'|'+(n.annSt?.act.length||0);
+  const key=W+'|'+H+'|'+Math.round(d.pos/d.total*W)+'|'+(n.annSt?.list.length||0);
   if(key===U.key) return;
   U.key=key;
   if(U.cv.width!==W) U.cv.width=W; if(U.cv.height!==H) U.cv.height=H;
@@ -3874,7 +3859,7 @@ async function rtlReadLoop(n){
       if(!n.swActive){
         const tl=iqTlChunk(n, n.dev.fmt==='u8' ? buf.byteLength>>1 : buf.byteLength>>2);
         if(n.rec) iqRecWrite(n, buf, res.epoch, tl);
-        else if((n.p.recTrig==='squelch' || n.p.recTrig==='signal') && +n.p.recPre>0) iqPreKeep(n, buf, res.epoch, tl);
+        else if(n.p.recTrig==='squelch' && +n.p.recPre>0) iqPreKeep(n, buf, res.epoch, tl);
       }
       const u8=new Uint8Array(buf), fmt=n.dev.fmt, s16=fmt==='s16' ? new Int16Array(buf) : null;
       if(n.swHw){ sdrHwSweepFeed(n, u8); continue; }
@@ -4374,7 +4359,7 @@ async function rtlStart(n, sr){
   for(const ch of n.ch){ if(ch.worker) ch.worker.terminate(); ch.worker=null; ch.aring=null; ch.active=false; }
   rtlResetRing(n);
   n._specEpoch=0;
-  n.annSt=iqaNew(); n.trg=null; n.preQ=null; n.preN=0;
+  n.annSt={list:[]}; n.trg=null; n.preQ=null; n.preN=0;
   if(n.dev.annots) n.annSt.list.push(...n.dev.annots);
   rtlActivateChannel(n, 0);                        // channel 1 — always, as before
   // синхронизируем NCO канала 1 с уже выставленным (возможно, отличным от центра) значением
@@ -4894,11 +4879,9 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'recF',t:'num',d:0,label:'IQ record centre, Hz (custom; 0 = receiver centre)'},
     // разметка и метки; тег идёт в имя записи, SigMF и подписи аннотаций
     {n:'tag',t:'text',d:'',label:'tag (recording name, SigMF, marks)'},
-    {n:'annot',t:'select',opts:['auto','off'],d:'auto',label:'annotations: find signals automatically (shown on the waterfall, saved in SigMF)'},
-    {n:'annThr',t:'range',min:4,max:30,step:.5,d:10,label:'annotation threshold, dB over noise',adv:true},
     {n:'mark',t:'button',label:'⚑ Mark here',fn:n=>iqMark(n)},
     // запись по условию до закрытия шумоподавителя; секунды до триггера берутся из накопленных чанков
-    {n:'recTrig',t:'select',opts:['off','squelch','signal'],d:'off',label:'record on (squelch open / signal in channel 1; stops when squelch closes)'},
+    {n:'recTrig',t:'select',opts:['off','squelch'],d:'off',label:'record while squelch is open (channel 1; needs squelch on)'},
     {n:'recPre',t:'range',min:0,max:5,step:.5,d:1,label:'trigger: pre-roll, s'},
     {n:'recMax',t:'range',min:5,max:3600,step:5,log:true,d:300,label:'trigger: max length, s'},
     // только файл: повтор и позиция
