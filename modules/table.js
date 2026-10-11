@@ -204,7 +204,7 @@ function tblDerive(n){
   if(f){
     n.rows=[]; n.rowIds=[];
     n.all.forEach((r,i)=>{ if(f(r)){ n.rows.push(r); n.rowIds.push(n.ids[i]); } });
-  } else { n.rows=n.all; n.rowIds=n.ids; }
+  } else { n.rows=n.all.slice(); n.rowIds=n.ids.slice(); }      // новая ссылка: потребители ключуют кэш по массиву, а n.all дописывается на месте
   n.headers=n.cl;
   n.nameCol=tblCol(n.cl,TBL_LABEL); n.colorCol=tblCol(n.cl,TBL_COLOR);
   tblPorts(n);

@@ -4874,7 +4874,7 @@ markWiresDirty();
 });
 preset('Entities: Cells, Operators and Talkgroups (Sample Data)', function(){
 clearAll();
-const nt=addNode('note',40,20,{text:'Entity cards from a record stream. Made-up GSM cells and DMR / P25 calls are played from a table (1 row/s, looped) into «Rec → Entities»: its rules turn every record into entities (cell, operator, subscriber, talkgroup) and links between them. A collecting Table with «upsert key col» = id merges repeats (count, first, last) and its `rows` go to Graph: nodes with shape and colour, edges between them. Open the rules and edit them — the same rules work on real decoder records (see the USB SDR presets). Insert ready-made rule sets with «insert rules».'});
+const nt=addNode('note',40,20,{text:'Entity cards from a record stream. Made-up GSM cells and DMR / P25 calls are played from a table (1 row/s, looped) into «Rec → Entities»: its rules turn every record into entities (cell, operator, subscriber, talkgroup) and links between them. A collecting Table with «upsert key col» = id merges repeats (count, first, last) and its `rows` go to Graph (nodes with shape and colour, edges between them) and to Entity Card: click a node in the graph to see its attributes and links, click a linked entity to walk on, or search by id / name. Open the rules and edit them — the same rules work on real decoder records (see the USB SDR presets). Insert ready-made rule sets with «insert rules».'});
 nt.size.w=1000; nt.size.h=100; applySize(nt);
 const src=addNode('table',40,150,{list:'@patch',advance:'rate',rate:1,loop:true,initial:true,
   data:'kind,src,id,plmn,op,lac,ci,from,to,call,alias\nGSM-SI3,,250-01-1f4-3a2b,250-01,MTS,500,14891,,,,\nGSM-SI3,,250-01-1f4-3a2c,250-01,MTS,500,14892,,,,\nGSM-SI3,,250-02-1f5-0102,250-02,MegaFon,501,258,,,,\nGSM-SI3,,250-99-1f6-0007,250-99,Beeline,502,7,,,,\nGSM-SI4,,250-01-1f4-3a2b,250-01,MTS,500,14891,,,,\ncall,DMR,,,,,,2600123,91,group,\ncall,DMR,,,,,,2600124,91,group,\ncall,DMR,,,,,,2600125,91,group,\ncall,DMR,,,,,,2600123,2600124,private,\ncall,DMR,,,,,,2600126,9,group,\ncall,DMR,,,,,,2600126,91,group,\ncall,P25,,,,,,1234567,100,group,\ncall,P25,,,,,,1234568,100,group,\nalias,DMR,,,,,,2600123,,,ALPHA\nalias,DMR,,,,,,2600126,,,Dispatcher'});
@@ -4885,7 +4885,9 @@ const col=addNode('table',1000,150,{list:'@patch',key:'id',initial:false});
 col.size.w=360; col.size.h=420; applySize(col);
 const g=addNode('graphview',1400,150,{directed:true});
 g.size.w=520; g.size.h=420; applySize(g);
-addEdge(src.id,'rec',ent.id,'rec'); addEdge(ent.id,'rec',col.id,'rec'); addEdge(col.id,'rows',g.id,'rows');
+const cd=addNode('entcard',1400,600,{});
+cd.size.w=360; cd.size.h=360; applySize(cd);
+addEdge(src.id,'rec',ent.id,'rec'); addEdge(ent.id,'rec',col.id,'rec'); addEdge(col.id,'rows',g.id,'rows'); addEdge(col.id,'rows',cd.id,'rows'); addEdge(g.id,'sel',cd.id,'sel');
 markWiresDirty();
 });
 preset('Entities: DMR Subscribers and Talkgroups (USB SDR)', function(){
@@ -4907,7 +4909,9 @@ g.size.w=520; g.size.h=360; applySize(g);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',ent.id,'rec');
-addEdge(ent.id,'rec',col.id,'rec'); addEdge(col.id,'rows',g.id,'rows');
+const cd=addNode('entcard',1400,700,{});
+cd.size.w=360; cd.size.h=360; applySize(cd);
+addEdge(ent.id,'rec',col.id,'rec'); addEdge(col.id,'rows',g.id,'rows'); addEdge(col.id,'rows',cd.id,'rows'); addEdge(g.id,'sel',cd.id,'sel');
 markWiresDirty();
 });
 preset('Entities: GSM Cells and Operators (USB SDR)', function(){
@@ -4931,7 +4935,9 @@ g.size.w=520; g.size.h=360; applySize(g);
 addEdge(rx.id,'spec',sa.id,'spec'); addEdge(bp.id,'rows',sa.id,'bands');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',gsm.id,'in'); addEdge(gsm.id,'rec',ent.id,'rec');
-addEdge(ent.id,'rec',col.id,'rec'); addEdge(col.id,'rows',g.id,'rows');
+const cd=addNode('entcard',1680,700,{});
+cd.size.w=360; cd.size.h=360; applySize(cd);
+addEdge(ent.id,'rec',col.id,'rec'); addEdge(col.id,'rows',g.id,'rows'); addEdge(col.id,'rows',cd.id,'rows'); addEdge(g.id,'sel',cd.id,'sel');
 markWiresDirty();
 });
 preset('Network: Same Nodes and Links as Graph and on the Map', function(){
