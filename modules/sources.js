@@ -3181,7 +3181,7 @@ function rtlChanSnr(sp, lo, hi){
   return {snr:sigDb-nzDb, nzDb};                      // nzDb — уровень шума на бин, в шкале спектра
 }
 // шумовая полоса окна в бинах: мощность шума на бин = плотность × ENBW
-const RTL_WIN_ENBW={hann:1.5, hamming:1.363, blackman:1.727, rect:1};
+const RTL_WIN_ENBW={hann:1.5, hamming:1.363, blackman:1.727, nuttall:1.976, 'blackman-harris':2.004, flattop:3.77, rect:1};
 // Для 'sa': то, с чем сравнивает шумоподавитель, в шкале спектра (дБ на бин, среднее по полосе
 // канала). SNR: шум + SNR и шум + порог. level: RSSI и порог минус K, где K — во сколько раз
 // мощность в полосе больше средней мощности бина (бинов в полосе / ENBW окна).
@@ -4055,13 +4055,18 @@ function rtlTrackMsps(n, cnt, ioMs, workerMs){
 // в core-engine.js и недоступны внутри Worker, поэтому копии встроены сюда же.
 const RTL_SPEC_WORKER_SRC = `
 ${'const FFT_PLAN=new Map();\n'+fftPlan.toString()+'\n'+fft.toString()}
+const WIN_COEF={
+  hann:[0.5,0.5], hamming:[0.54,0.46], blackman:[0.42,0.5,0.08],
+  nuttall:[0.355768,0.487396,0.144232,0.012604],
+  'blackman-harris':[0.35875,0.48829,0.14128,0.01168],
+  flattop:[0.21557895,0.41663158,0.277263158,0.083578947,0.006947368]
+};
 function window_(kind,N){
-  const w=new Float32Array(N);
-  for(let i=0;i<N;i++){ const x=i/(N-1);
-    w[i] = kind==='hann'? 0.5-0.5*Math.cos(2*Math.PI*x)
-         : kind==='hamming'? 0.54-0.46*Math.cos(2*Math.PI*x)
-         : kind==='blackman'? 0.42-0.5*Math.cos(2*Math.PI*x)+0.08*Math.cos(4*Math.PI*x)
-         : 1; }
+  const w=new Float32Array(N), a=WIN_COEF[kind];
+  for(let i=0;i<N;i++){ const x=2*Math.PI*i/(N-1);
+    if(!a){ w[i]=1; continue; }
+    let v=0; for(let k=0;k<a.length;k++) v+=(k&1?-1:1)*a[k]*Math.cos(k*x);
+    w[i]=v; }
   return w;
 }
 let winCache={kind:null,N:0,w:null,sum:1};
@@ -4140,7 +4145,7 @@ const RTL_SPEC_MAX_FRAMES=64;
 function rtlUpdateSpec(n){
   if(!n.connected || !n.specWorker) return;
   const now=performance.now();
-  const fm=document.getElementById('fps')?.value, minGap=fm==='max' ? 16 : fm==='min' ? 100 : 50;
+  const minGap=1000/(+n.p.specFps||25);
   if(n.specBusy || (n.spec && now-n.lastSpec<minGap)) return;
   const N=+n.p.specSize, ring=n.specRing;
   if(ring.filled<N) return;
@@ -4160,13 +4165,16 @@ function rtlUpdateSpec(n){
   n.specWorker.compute(I.buffer, Q.buffer, N, L, win).then(({mag})=>{
     n.specBusy=false;
     // сброс накопления при смене размера/полосы/центра/окна: старые кадры к новой оси не относятся
-    const key=N+'|'+n.sourceRate+'|'+centerFreq+'|'+win;
+    const peak=n.p.specMode==='max';
+    const key=N+'|'+n.sourceRate+'|'+centerFreq+'|'+win+'|'+peak;
     const pw=n.specPw;
     if(!pw || pw.length!==N || n.specPwKey!==key){ n.specPw=new Float32Array(N); n.specPwKey=key; n.specPwN=0; }
     // разгон: пока кадров меньше длины окна, это обычное среднее
     const cnt=Math.min(n.specPwN+1, frames), a=1/cnt, acc=n.specPw;
     n.specPwN=cnt; n.specK=cnt;
-    for(let i=0;i<N;i++){ const m=mag[i], v=cnt===1 ? m*m : acc[i]+(m*m-acc[i])*a; acc[i]=v; mag[i]=Math.sqrt(v); }
+    // max: пик по бину с экспоненциальным спадом, avg: среднее мощности
+    if(peak) for(let i=0;i<N;i++){ const p=mag[i]*mag[i], d=acc[i]*(1-a), v=cnt===1||p>d ? p : d; acc[i]=v; mag[i]=Math.sqrt(v); }
+    else for(let i=0;i<N;i++){ const m=mag[i], v=cnt===1 ? m*m : acc[i]+(m*m-acc[i])*a; acc[i]=v; mag[i]=Math.sqrt(v); }
     if(!n.specFreqs || n.specFreqs.length!==N || n.specFreqsCenter!==centerFreq || n.specFreqsSr!==n.sourceRate){
       const fr=new Float64Array(N);                  // float32 на ГГц шагает по 128 Гц — крупнее бина: ступеньки при зуме
       for(let i=0;i<N;i++) fr[i]=centerFreq+(i-half)*binHz;
@@ -4947,9 +4955,11 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'usbId',t:'text',d:'',hidden:true},
     {n:'devKind',t:'text',d:'',hidden:true},
     {n:'specSize',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536','131072','262144'],d:'4096',label:'spectrum FFT size'},
-    {n:'specWin',t:'select',opts:['hann','hamming','blackman','rect'],d:'hann',label:'spectrum window',adv:true},
-    // Уэлч: сколько кадров (с перекрытием 50%) усреднять за одно обновление; all — весь поток
-    {n:'specAvg',t:'select',opts:['off','4','16','64','all'],d:'all',label:'spectrum averaging, frames',adv:true},
+    {n:'specWin',t:'select',opts:['hann','hamming','blackman','nuttall','blackman-harris','flattop','rect'],d:'hann',label:'spectrum window',adv:true},
+    {n:'specFps',t:'select',opts:['10','15','25','30','60'],d:'25',label:'spectrum rate, fps',adv:true},
+    // усреднение по кадрам (EMA, 64 кадра для all); off — каждый кадр как есть
+    {n:'specAvg',t:'select',opts:['off','4','16','64','all'],d:'off',label:'spectrum averaging, frames',adv:true},
+    {n:'specMode',t:'select',opts:['avg','max'],d:'avg',label:'averaging detector (max = peak hold with decay)',adv:true},
     // широкополосное сканирование: 'spec' — панорама всего диапазона; маркер на tuneFreq — пауза и прослушивание
     {n:'sweep',t:'check',d:false,label:'wideband sweep'},
     {n:'swLo',t:'range',min:.1,max:30000,step:.1,d:88,log:true,label:'sweep from, MHz'},
