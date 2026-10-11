@@ -3979,7 +3979,9 @@ const RTL_SPEC_MAX_FRAMES=256;
 function rtlUpdateSpec(n){
   if(!n.connected || !n.specWorker) return;
   const now=performance.now();
-  if(n.specBusy || (n.spec && now-n.lastSpec<80)) return;
+  // интервал пересчёта следует переключателю fps: max — без искусственного потолка
+  const fm=document.getElementById('fps')?.value, minGap=fm==='max' ? 0 : fm==='min' ? 100 : 80;
+  if(n.specBusy || (n.spec && now-n.lastSpec<minGap)) return;
   const N=+n.p.specSize, ring=n.specRing;
   if(ring.filled<N) return;
   const av=n.p.specAvg, frames=av==='off'? 1 : av==='all'? RTL_SPEC_MAX_FRAMES : (+av||1);
