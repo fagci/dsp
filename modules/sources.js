@@ -3181,7 +3181,6 @@ function rtlChanSnr(sp, lo, hi){
   return {snr:sigDb-nzDb, nzDb};                      // nzDb — уровень шума на бин, в шкале спектра
 }
 // шумовая полоса окна в бинах: мощность шума на бин = плотность × ENBW
-const RTL_WIN_ENBW={hann:1.5, hamming:1.363, blackman:1.727, nuttall:1.976, 'blackman-harris':2.004, flattop:3.77, rect:1};
 // Для 'sa': то, с чем сравнивает шумоподавитель, в шкале спектра (дБ на бин, среднее по полосе
 // канала). SNR: шум + SNR и шум + порог. level: RSSI и порог минус K, где K — во сколько раз
 // мощность в полосе больше средней мощности бина (бинов в полосе / ENBW окна).
@@ -3192,7 +3191,7 @@ function rtlChanMeter(n, c, lines){
   if(lines && c.sql==='SNR' && ch.noiseDb!=null && ch.snr!=null){ c.lvDb=ch.noiseDb+ch.snr; c.thrDb=ch.noiseDb+(+n.p.sqlSnr); }
   else if(lines && c.sql==='level' && ch.rssi!=null){
     const binHz=n.sourceRate/(+n.p.specSize||4096);
-    const K=10*Math.log10(Math.max(1,(c.hi-c.lo)/binHz)/(RTL_WIN_ENBW[n.p.specWin]||1.5));
+    const K=10*Math.log10(Math.max(1,(c.hi-c.lo)/binHz)/winEnbw(n.p.specWin,+n.p.specWinP||0));
     c.lvDb=ch.rssi-K; c.thrDb=(+n.p.sqlLvl)-K;
   }
   return c;
@@ -4055,21 +4054,8 @@ function rtlTrackMsps(n, cnt, ioMs, workerMs){
 // в core-engine.js и недоступны внутри Worker, поэтому копии встроены сюда же.
 const RTL_SPEC_WORKER_SRC = `
 ${'const FFT_PLAN=new Map();\n'+fftPlan.toString()+'\n'+fft.toString()}
-const WIN_COEF={
-  hann:[0.5,0.5], hamming:[0.54,0.46], blackman:[0.42,0.5,0.08],
-  nuttall:[0.355768,0.487396,0.144232,0.012604],
-  'blackman-harris':[0.35875,0.48829,0.14128,0.01168],
-  flattop:[0.21557895,0.41663158,0.277263158,0.083578947,0.006947368]
-};
-function window_(kind,N){
-  const w=new Float32Array(N), a=WIN_COEF[kind];
-  for(let i=0;i<N;i++){ const x=2*Math.PI*i/(N-1);
-    if(!a){ w[i]=1; continue; }
-    let v=0; for(let k=0;k<a.length;k++) v+=(k&1?-1:1)*a[k]*Math.cos(k*x);
-    w[i]=v; }
-  return w;
-}
-let winCache={kind:null,N:0,w:null,sum:1};
+${window_.toString()}
+let winCache={kind:null,N:0,p:0,w:null,sum:1};
 let reBuf=null, imBuf=null, pwBuf=null, bufN=0; // внутренние, никуда не отправляются, переиспользование безопасно
 // Уэлч: L отсчётов режутся на K кадров по N с перекрытием 50%, мощность усредняется —
 // разброс пола шума падает ~в sqrt(K) раз. Делим на сумму окна, а не на N: 0 дБ = комплексный
@@ -4077,10 +4063,10 @@ let reBuf=null, imBuf=null, pwBuf=null, bufN=0; // внутренние, ник�
 self.onmessage=function(e){
   const msg=e.data;
   if(msg.type!=='fft') return;
-  const N=msg.N, L=msg.L, kind=msg.win;
-  if(!winCache.w || winCache.kind!==kind || winCache.N!==N){
-    const w=window_(kind,N); let sum=0; for(let i=0;i<N;i++) sum+=w[i];
-    winCache={kind,N,w,sum}; }
+  const N=msg.N, L=msg.L, kind=msg.win, wp=msg.winP||0;
+  if(!winCache.w || winCache.kind!==kind || winCache.N!==N || winCache.p!==wp){
+    const w=window_(kind,N,wp); let sum=0; for(let i=0;i<N;i++) sum+=w[i];
+    winCache={kind,N,p:wp,w,sum}; }
   if(!reBuf || bufN!==N){ reBuf=new Float32Array(N); imBuf=new Float32Array(N); pwBuf=new Float64Array(N); bufN=N; }
   const w=winCache.w, I=new Float32Array(msg.I), Q=new Float32Array(msg.Q);
   const re=reBuf, im=imBuf, pw=pwBuf;
@@ -4127,10 +4113,10 @@ function rtlMakeSpecWorker(){
       while(bufPool.length){ const b=bufPool.pop(); if(b.I.byteLength>=L*4) return b; }
       return null;
     },
-    compute(iBuf, qBuf, N, L, win){
+    compute(iBuf, qBuf, N, L, win, winP){
       return new Promise((resolve)=>{
         pendingResolve=resolve;
-        worker.postMessage({type:'fft', I:iBuf, Q:qBuf, N, L, win}, [iBuf, qBuf]);
+        worker.postMessage({type:'fft', I:iBuf, Q:qBuf, N, L, win, winP}, [iBuf, qBuf]);
       });
     },
     terminate(){ worker.terminate(); URL.revokeObjectURL(url); }
@@ -4166,11 +4152,11 @@ function rtlUpdateSpec(n){
   if(first<L){ I.set(ring.I.subarray(0,L-first),first); Q.set(ring.Q.subarray(0,L-first),first); }
   n.specBusy=true;
   const centerFreq=n.actualFreq??n.p.freq, binHz=n.sourceRate/N, half=N>>1, win=n.p.specWin, tl=iqTl(n);
-  n.specWorker.compute(I.buffer, Q.buffer, N, L, win).then(({mag})=>{
+  n.specWorker.compute(I.buffer, Q.buffer, N, L, win, +n.p.specWinP||0).then(({mag})=>{
     n.specBusy=false;
     // сброс накопления при смене размера/полосы/центра/окна: старые кадры к новой оси не относятся
     const peak=n.p.specMode==='max';
-    const key=N+'|'+n.sourceRate+'|'+centerFreq+'|'+win+'|'+peak;
+    const key=N+'|'+n.sourceRate+'|'+centerFreq+'|'+win+'|'+(+n.p.specWinP||0)+'|'+peak;
     const pw=n.specPw;
     if(!pw || pw.length!==N || n.specPwKey!==key){ n.specPw=new Float32Array(N); n.specPwKey=key; n.specPwN=0; }
     // разгон: пока кадров меньше длины окна, это обычное среднее
@@ -4959,7 +4945,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'usbId',t:'text',d:'',hidden:true},
     {n:'devKind',t:'text',d:'',hidden:true},
     {n:'specSize',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536','131072','262144'],d:'4096',label:'spectrum FFT size'},
-    {n:'specWin',t:'select',opts:['hann','hamming','blackman','nuttall','blackman-harris','flattop','rect'],d:'hann',label:'spectrum window',adv:true},
+    {n:'specWin',t:'select',opts:WINDOW_KINDS,d:'hann',label:'spectrum window',adv:true},
+    {n:'specWinP',t:'range',min:0,max:200,step:.1,d:0,label:'window parameter (0 = default): kaiser β 8, gaussian σ 0.4, tukey α 0.5, Chebyshev dB 100, Hann-Poisson α 2',adv:true},
     {n:'specFps',t:'select',opts:['10','15','25','30','60'],d:'25',label:'spectrum rate, fps',adv:true},
     // усреднение по кадрам (EMA, 64 кадра для all); off — каждый кадр как есть
     {n:'specAvg',t:'select',opts:['off','4','16','64','all'],d:'off',label:'spectrum averaging, frames',adv:true},

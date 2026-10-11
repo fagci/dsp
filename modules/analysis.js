@@ -630,7 +630,7 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
        {n:'train',t:'num'},{n:'thr',t:'num'},{n:'minW',t:'num'},{n:'top',t:'num'},{n:'hold',t:'num'}],
   outs:[{n:'count',t:'num'},{n:'f1',t:'num'},{n:'l1',t:'num'},{n:'f2',t:'num'},{n:'l2',t:'num'},
         {n:'f3',t:'num'},{n:'l3',t:'num'},{n:'f4',t:'num'},{n:'l4',t:'num'},
-        {n:'snr1',t:'num'},{n:'floor',t:'num'},{n:'rec',t:'rec'}],
+        {n:'snr1',t:'num'},{n:'floor',t:'num'},{n:'bw1',t:'num'},{n:'rec',t:'rec'}],
   readout:true, tall:true,
   params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)',fn:n=>{ if(n.p.auto) n.zoom=null; }},
           {n:'fmin',t:'range',min:1,max:6e9,step:1,log:true,d:100},
@@ -640,6 +640,7 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
           {n:'train',t:'range',min:4,max:128,step:1,d:32,label:'training bins'},
           {n:'thr',t:'range',min:1,max:30,step:.5,d:8,label:'threshold, dB'},
           {n:'minW',t:'range',min:1,max:64,step:1,d:2,label:'min width'},
+          {n:'bwDb',t:'range',min:1,max:40,step:1,d:10,label:'occupied bandwidth: dB below peak (not below threshold)'},
           {n:'confM',t:'range',min:1,max:8,step:1,d:2,label:'confirm: hits (M)'},
           {n:'confN',t:'range',min:1,max:8,step:1,d:4,label:'confirm: of last frames (N)'},
           {n:'top',t:'range',min:1,max:30,step:1,d:10,label:'how many to show'},
@@ -670,7 +671,7 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
     return {count:n.list.length, rec,
       f1:a?a.f:null, l1:a?a.db:null, f2:b?b.f:null, l2:b?b.db:null,
       f3:c?c.f:null, l3:c?c.db:null, f4:d?d.f:null, l4:d?d.db:null,
-      snr1:a?a.snr:null, floor:n.floorDb}; },
+      snr1:a?a.snr:null, floor:n.floorDb, bw1:a?a.bw:null}; },
   draw(n){ const r=n.el.querySelector('.readout');
     if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
@@ -686,6 +687,16 @@ function cfarSkipped(list,f,w){
     if(f>=b.lo-tol && f<=b.hi+tol) return true;
   }
   return false;
+}
+// Занятая полоса пика: уровень «пик − bwDb», но не ниже порога; края — линейно по логарифму мощности между бинами
+function cfarBw(s,pw,nz,pi,lo,hi,db,thr){
+  const lv=Math.max(pw[pi]*Math.pow(10,-db/10), nz[pi]*thr);
+  let a=pi, b=pi;
+  while(a>lo && pw[a-1]>=lv) a--;
+  while(b<hi && pw[b+1]>=lv) b++;
+  const edge=(i,j)=>{ const pi_=pw[i], pj=pw[j]; return pj>=pi_||pi_<=lv ? i : i+(j-i)*Math.log(pi_/lv)/Math.log(pi_/pj); };
+  const xl=a>lo ? edge(a,a-1) : a, xr=b<hi ? edge(b,b+1) : b;
+  return Math.max(Math.abs(specHz(s,1)-specHz(s,0)), specHz(s,xr)-specHz(s,xl));
 }
 function cfarFrame(n,s){
   const N=s.mag.length, G=n.p.guard, T=n.p.train, meth=n.p.method;
@@ -753,17 +764,18 @@ function cfarFrame(n,s){
     const pa=Math.log(pw[h.pi-1]+1e-30), pb=Math.log(pw[h.pi]+1e-30), pc=Math.log(pw[h.pi+1]+1e-30), den=pa-2*pb+pc;
     const f=specHz(s,h.pi+(den<0 ? clamp(.5*(pa-pc)/den,-.5,.5) : 0)), wid=Math.max(1,specHz(s,h.b)-specHz(s,h.a));
     if(n.skip && cfarSkipped(n.skip,f,Math.max(wid,2*binHz))) continue;
+    const bw=cfarBw(s,pw,nz,h.pi,lo,hi,n.p.bwDb,thr);
     const tol=Math.max(15,wid,2*binHz);              // цель та же, если рядом по частоте
     let tr=n.tracks.find(t=>Math.abs(t.f-f)<=tol);
-    if(tr){ tr.f=tr.f*.7+f*.3; tr.w=Math.max(tr.w,wid); tr.db=h.peak; tr.snr=h.snr; tr.t=now; }
-    else n.tracks.push(tr={f,w:wid,db:h.peak,snr:h.snr,t0:now,t:now,hist:0,ok:false});
+    if(tr){ tr.f=tr.f*.7+f*.3; tr.w=Math.max(tr.w,wid); tr.db=h.peak; tr.snr=h.snr; tr.bw=tr.bw*.7+bw*.3; tr.t=now; }
+    else n.tracks.push(tr={f,w:wid,bw,db:h.peak,snr:h.snr,t0:now,t:now,hist:0,ok:false});
     tr.hist|=1; tr.hit=true;
     if(!tr.ok && cfarPopcount(tr.hist)>=M){
       tr.ok=true;
       // запись о появлении сигнала: id — частота, округлённая до сетки idRes (одна и та же станция → один id
       // для Rec: Unique by Key; Table копит строки как есть)
       const q=cfarIdStep(n.p.idRes, Math.max(wid,2*binHz));
-      n.recs.push({t:Date.now(), src:'CFAR', kind:'signal', id:Math.round(f/q)*q, freq:Math.round(f), width:Math.round(wid),
+      n.recs.push({t:Date.now(), src:'CFAR', kind:'signal', id:Math.round(f/q)*q, freq:Math.round(f), width:Math.round(wid), bw:Math.round(tr.bw),
         db:+h.peak.toFixed(1), snr:+h.snr.toFixed(1)});
       if(n.recs.length>1000) n.recs.shift();
     } }
@@ -777,7 +789,7 @@ function cfarFrame(n,s){
   n.tracks=n.tracks.filter(t=>inWin(t) || (n.keepOutside && t.ok));
   n.list=n.tracks.filter(t=>t.ok).sort((a,b)=>b.db-a.db).slice(0,n.p.top);
   n.text='found '+n.list.length+' · floor '+n.floorDb.toFixed(1)+' dB'+(n.skip&&n.skip.length ? ' · skip '+n.skip.length : '')+'\n'+n.list.map(v=>
-    fmtHz(v.f).padStart(8)+'Hz  width '+fmtHz(v.w).padStart(4)+
+    fmtHz(v.f).padStart(8)+'Hz  bw '+fmtHz(v.bw).padStart(4)+
     'Hz  '+v.db.toFixed(0).padStart(4)+' dB  SNR '+v.snr.toFixed(0).padStart(3)+'  '+((now-v.t0)/1000).toFixed(1)+' s').join('\n');
 }
 
