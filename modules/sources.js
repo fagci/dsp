@@ -2843,15 +2843,30 @@ const iqTlChunk=(n, cnt)=>n.dev?.kind==='file' ? Math.max(0, n.dev.pos-cnt) : (n
 function iqAnnStep(n, sp, tl){
   sp.tl=tl; sp.ann=(n.annSt||(n.annSt={list:[]})).list;
 }
-// метка вручную: короткая аннотация в полосе канала 1 на текущем месте таймлайна
-function iqMark(n){
+// метка: короткая аннотация в полосе канала 1 на текущем месте таймлайна; подпись — text, иначе тег,
+// плюс локальное время (markTime); at — время события, мс (у записи декодера)
+function iqMark(n, text, at){
   if(!n.connected || !n.dev) return;
   const st=n.annSt||(n.annSt={list:[]}), t=iqTl(n), cf=n.actualFreq??n.p.freq, half=n.sourceRate/2;
-  const b=rtlChanBands(n, cf, half)[0], f=b ? b.f : cf;
-  const lo=b ? b.lo : f-n.sourceRate/20, hi=b ? b.hi : f+n.sourceRate/20, tag=(n.p.tag||'').trim();
-  st.list.push({a0:t, a1:t+Math.round(n.sourceRate*.25), lo, hi, peak:0, auto:false, mark:true, label:tag||'mark'});
-  n.status='mark '+(tag||'')+' '+fmtHz(f,3)+'Hz';
+  const b=rtlChanBands(n, cf, half)[0], f=b ? b.f : cf, now=new Date(at>1e12 ? at : Date.now());
+  const lo=b ? b.lo : f-n.sourceRate/20, hi=b ? b.hi : f+n.sourceRate/20;
+  const label=[text || (n.p.tag||'').trim() || 'mark', n.p.markTime ? now.toLocaleTimeString([], {hour12:false}) : ''].filter(Boolean).join(' ');
+  st.list.push({a0:t, a1:t+Math.round(n.sourceRate*.25), lo, hi, mark:true, label, ts:now.getTime()});
+  if(st.list.length>2000) st.list.splice(0, st.list.length-2000);
+  n.status='mark '+label;
 }
+// имя метки по записи декодера: label, иначе "источник вид id"
+const iqRecName=r=>String(r.label ?? [r.src, r.kind, r.id].filter(v=>v!=null && v!=='').join(' ') ?? '').trim().slice(0,60);
+// входы: markTrg — фронт ставит метку, mark — её текст (как text + go у Text Source);
+// rec — запись декодера, каждая ставит метку (имя — свой текст с mark, иначе автоимя)
+function iqMarkIn(n, I){
+  const v=I.markTrg, up=typeof v==='number' && v>.5, own=I.mark==null ? '' : String(I.mark).trim();
+  const fire=up && !n._markUp;
+  n._markUp=up;
+  if(fire) iqMark(n, own);
+  if(I.rec) for(const r of recList(I.rec).slice(0,20)) if(r && typeof r==='object') iqMark(n, own || iqRecName(r), r.t);
+}
+
 // накопление секунд перед триггером
 function iqPreKeep(n, buf, epoch, tl){
   const q=n.preQ||(n.preQ=[]), cnt=n.dev.fmt==='u8' ? buf.byteLength>>1 : buf.byteLength>>2;
@@ -4851,7 +4866,7 @@ async function sdrSweepLoop(n){
 
 def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
   ins:[{n:'freq',t:'num'},{n:'steerFreq',t:'num'},{n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'},
-       {n:'gainDb',t:'num'},{n:'bw',t:'num'},{n:'demod',t:'val'}],
+       {n:'gainDb',t:'num'},{n:'bw',t:'num'},{n:'demod',t:'val'},{n:'mark',t:'val'},{n:'markTrg',t:'num'},{n:'rec',t:'rec'}],
   outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'iq',t:'iq'},
         {n:'audio',t:'sig'},{n:'audio2',t:'sig'},{n:'audio3',t:'sig'},{n:'audio4',t:'sig'},
         {n:'audioL',t:'sig'},{n:'audioR',t:'sig'},{n:'ps',t:'val'},{n:'rt',t:'val'},
@@ -4879,7 +4894,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'recF',t:'num',d:0,label:'IQ record centre, Hz (custom; 0 = receiver centre)'},
     // разметка и метки; тег идёт в имя записи, SigMF и подписи аннотаций
     {n:'tag',t:'text',d:'',label:'tag (recording name, SigMF, marks)'},
-    {n:'mark',t:'button',label:'⚑ Mark here',fn:n=>iqMark(n)},
+    {n:'markTime',t:'check',d:true,label:'marks: add local time to the label'},
     // запись по условию до закрытия шумоподавителя; секунды до триггера берутся из накопленных чанков
     {n:'recTrig',t:'select',opts:['off','squelch'],d:'off',label:'record while squelch is open (channel 1; needs squelch on)'},
     {n:'recPre',t:'range',min:0,max:5,step:.5,d:1,label:'trigger: pre-roll, s'},
@@ -5079,6 +5094,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     if(sweepOn && lf==null && !n.swRunning) (n.p.swHw && n.dev.kind==='hackrf' ? sdrHwSweepLoop : sdrSweepLoop)(n);
     if(!n.swActive) rtlUpdateSpec(n);
     iqRecAuto(n);
+    iqMarkIn(n, I);
     // при прослушивании живой спектр ложится на свой участок панорамы
     if(sweepOn && n.sw && !n.swActive && n.spec && n.spec.rev!==n._swOvRev && !n.busy && n.appliedFreq!=null){
       n._swOvRev=n.spec.rev; sdrSweepOverlay(n, n.sw, n.spec);
