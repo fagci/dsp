@@ -11,6 +11,7 @@ function iqaSigmf(list, t0, total, D, rate){
     const s=Math.max(0, Math.round((a.a0-t0)/D)), e=Math.min(Math.round(total/D), Math.round((a.a1-t0)/D));
     const o={'core:sample_start':s, 'core:sample_count':Math.max(1,e-s), 'core:label':a.label||''};
     if(isFinite(a.lo)){ o['core:freq_lower_edge']=Math.round(a.lo); o['core:freq_upper_edge']=Math.round(a.hi); }
+    if(a.ts) o['core:comment']=new Date(a.ts).toISOString();
     out.push(o);
   }
   return out;
