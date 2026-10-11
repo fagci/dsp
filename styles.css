@@ -827,6 +827,22 @@ select.aed-b{padding:0 6px}
 .modpick .mp-from i{font-style:normal;color:var(--txt)}
 .modpick .mp-item .mp-port{flex:none;font-style:normal;font-size:9px;color:var(--dim)}
 .graphview{width:100%;height:280px;min-height:120px;resize:vertical;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:3px}
+.entcard{width:100%;height:280px;min-height:120px;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--line);border-radius:3px;overflow:hidden;font-size:11px}
+.ec-bar{display:flex;gap:4px;padding:3px;border-bottom:1px solid var(--line)}
+.ec-q{flex:1;min-width:0}
+.ec-body{flex:1;overflow:auto;padding:5px 6px;user-select:text}
+.ec-title{font-size:13px;font-weight:600}
+.ec-type{margin-left:6px;font-size:10px;font-weight:400;color:var(--acc2);border:1px solid var(--line);border-radius:3px;padding:0 4px}
+.ec-id,.ec-dim{color:var(--dim);margin-top:1px}
+.ec-attrs{display:grid;grid-template-columns:auto 1fr;gap:1px 8px;margin:5px 0}
+.ec-k{color:var(--dim)}
+.ec-v{word-break:break-all}
+.ec-h{margin:7px 0 2px;color:var(--dim)}
+.ec-chips{display:flex;flex-wrap:wrap;gap:3px}
+.ec-chip,.ec-pick{cursor:pointer;background:var(--panel2);border:1px solid var(--line);border-radius:3px;padding:1px 5px}
+.ec-chip:hover,.ec-pick:hover{border-color:var(--acc)}
+.ec-pick{display:block;margin-bottom:2px}
+.ec-more{color:var(--dim);padding:1px 3px}
 .chat{display:flex;flex-direction:column;gap:4px;width:100%;min-height:0}
 .chat-log{flex:1 1 160px;min-height:60px;resize:vertical;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:4px 6px;font:11px/1.45 var(--mono)}
 .chat-msg{white-space:pre-wrap;overflow-wrap:anywhere;padding:1px 0;font:inherit}

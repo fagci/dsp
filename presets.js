@@ -275,6 +275,9 @@ const PRESET_CATS={
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
   'Graph: Links from CSV':'Network & IoT',
+  'Entities: Cells, Operators and Talkgroups (Sample Data)':'Network & IoT',
+  'Entities: DMR Subscribers and Talkgroups (USB SDR)':'Digital Voice & Trunking',
+  'Entities: GSM Cells and Operators (USB SDR)':'Aircraft, Satellites & Telemetry',
   'Network: Same Nodes and Links as Graph and on the Map':'Maps & Locating',
   'Chat: Text In and Out':'Network & IoT',
   'Files over WebRTC':'Network & IoT',
@@ -4867,6 +4870,74 @@ tb.size.w=300; tb.size.h=400; applySize(tb);
 const g=addNode('graphview',380,160,{});
 g.size.w=520; g.size.h=400; applySize(g);
 addEdge(ts.id,'text',g.id,'text'); addEdge(tb.id,'rows',g.id,'rows');
+markWiresDirty();
+});
+preset('Entities: Cells, Operators and Talkgroups (Sample Data)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Entity cards from a record stream. Made-up GSM cells and DMR / P25 calls are played from a table (1 row/s, looped) into «Rec → Entities»: its rules turn every record into entities (cell, operator, subscriber, talkgroup) and links between them. A collecting Table with «upsert key col» = id merges repeats (count, first, last) and its `rows` go to Graph (nodes with shape and colour, edges between them) and to Entity Card: click a node in the graph to see its attributes and links, click a linked entity to walk on, or search by id / name. Open the rules and edit them — the same rules work on real decoder records (see the USB SDR presets). Insert ready-made rule sets with «insert rules».'});
+nt.size.w=1000; nt.size.h=100; applySize(nt);
+const src=addNode('table',40,150,{list:'@patch',advance:'rate',rate:1,loop:true,initial:true,
+  data:'kind,src,id,plmn,op,lac,ci,from,to,call,alias\nGSM-SI3,,250-01-1f4-3a2b,250-01,MTS,500,14891,,,,\nGSM-SI3,,250-01-1f4-3a2c,250-01,MTS,500,14892,,,,\nGSM-SI3,,250-02-1f5-0102,250-02,MegaFon,501,258,,,,\nGSM-SI3,,250-99-1f6-0007,250-99,Beeline,502,7,,,,\nGSM-SI4,,250-01-1f4-3a2b,250-01,MTS,500,14891,,,,\ncall,DMR,,,,,,2600123,91,group,\ncall,DMR,,,,,,2600124,91,group,\ncall,DMR,,,,,,2600125,91,group,\ncall,DMR,,,,,,2600123,2600124,private,\ncall,DMR,,,,,,2600126,9,group,\ncall,DMR,,,,,,2600126,91,group,\ncall,P25,,,,,,1234567,100,group,\ncall,P25,,,,,,1234568,100,group,\nalias,DMR,,,,,,2600123,,,ALPHA\nalias,DMR,,,,,,2600126,,,Dispatcher'});
+src.size.w=360; src.size.h=420; applySize(src);
+const ent=addNode('recEnt',440,150,{rules:ENT_TEMPLATES['GSM cells']+'\n'+ENT_TEMPLATES['Digital voice (DMR / P25 / NXDN)']});
+ent.size.w=520; ent.size.h=420; applySize(ent);
+const col=addNode('table',1000,150,{list:'@patch',key:'id',initial:false});
+col.size.w=360; col.size.h=420; applySize(col);
+const g=addNode('graphview',1400,150,{directed:true});
+g.size.w=520; g.size.h=420; applySize(g);
+const cd=addNode('entcard',1400,600,{});
+cd.size.w=360; cd.size.h=360; applySize(cd);
+addEdge(src.id,'rec',ent.id,'rec'); addEdge(ent.id,'rec',col.id,'rec'); addEdge(col.id,'rows',g.id,'rows'); addEdge(col.id,'rows',cd.id,'rows'); addEdge(g.id,'sel',cd.id,'sel');
+markWiresDirty();
+});
+preset('Entities: DMR Subscribers and Talkgroups (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Who is in which talkgroup, on real air: DMR repeater or direct-mode channel → Digital Voice Decoder → «Rec → Entities» (rules «Digital voice») → Table with «upsert key col» = id (one row per subscriber, group and link, with count / first / last) → Graph. The network prefix (DMR:, P25:) keeps equal ids of different systems apart. Tune the SDR and tap the signal on the spectrum. To follow P25 or NXDN, swap the decoder protocol — the rules are the same.'});
+nt.size.w=760; nt.size.h=110; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'1024000',freq:438000000,demod:'IQ'});
+const sa=addNode('sa',860,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,200,{});
+const de=addNode('fskRx',340,360,{proto:'dmr'});
+de.size.w=480; de.size.h=300; applySize(de);
+const ent=addNode('recEnt',860,360,{rules:ENT_TEMPLATES['Digital voice (DMR / P25 / NXDN)']});
+ent.size.w=480; ent.size.h=300; applySize(ent);
+const col=addNode('table',1380,360,{list:'@patch',key:'id',initial:false});
+col.size.w=360; col.size.h=300; applySize(col);
+const g=addNode('graphview',860,700,{directed:true});
+g.size.w=520; g.size.h=360; applySize(g);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',ent.id,'rec');
+const cd=addNode('entcard',1400,700,{});
+cd.size.w=360; cd.size.h=360; applySize(cd);
+addEdge(ent.id,'rec',col.id,'rec'); addEdge(col.id,'rows',g.id,'rows'); addEdge(col.id,'rows',cd.id,'rows'); addEdge(g.id,'sel',cd.id,'sel');
+markWiresDirty();
+});
+preset('Entities: GSM Cells and Operators (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Cells, operators and channels around you, on real air: GSM: Receive Bursts decodes the BCCH (PLMN / LAC / CID, operator, ARFCN lists) → «Rec → Entities» (rules «GSM cells») → Table with «upsert key col» = id → Graph: operator → cells → ARFCN. Tune to a GSM900 BCCH (935–960 MHz) or DCS1800 (1805–1880 MHz) and tap the channel on the spectrum; 2.048 MS/s and a fixed gain work best. The rules also fit other sources — edit them in the node.'});
+nt.size.w=760; nt.size.h=110; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'2048000',freq:942000000,demod:'IQ',auto:false,gainDb:32});
+const bp=addNode('table',40,360,{list:'presets/GSM downlink (ARFCN bands)',initial:false});
+bp.size.w=300; bp.size.h=160; applySize(bp);
+const sa=addNode('sa',860,40,{auto:true,floor:-90,top:-10,split:1});
+sa.size.w=640; sa.size.h=300; applySize(sa);
+const sh=addNode('iqShift',340,200,{});
+const gsm=addNode('gsmRx',340,360,{afc:true});
+gsm.size.w=760; gsm.size.h=300; applySize(gsm);
+const ent=addNode('recEnt',1140,360,{rules:ENT_TEMPLATES['GSM cells']});
+ent.size.w=480; ent.size.h=300; applySize(ent);
+const col=addNode('table',1660,360,{list:'@patch',key:'id',initial:false});
+col.size.w=360; col.size.h=300; applySize(col);
+const g=addNode('graphview',1140,700,{directed:true});
+g.size.w=520; g.size.h=360; applySize(g);
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(bp.id,'rows',sa.id,'bands');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',gsm.id,'in'); addEdge(gsm.id,'rec',ent.id,'rec');
+const cd=addNode('entcard',1680,700,{});
+cd.size.w=360; cd.size.h=360; applySize(cd);
+addEdge(ent.id,'rec',col.id,'rec'); addEdge(col.id,'rows',g.id,'rows'); addEdge(col.id,'rows',cd.id,'rows'); addEdge(g.id,'sel',cd.id,'sel');
 markWiresDirty();
 });
 preset('Network: Same Nodes and Links as Graph and on the Map', function(){

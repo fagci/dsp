@@ -293,3 +293,120 @@ def({ id:'graphview', title:'Graph', cat:'Output', kw:'network graph links nodes
     if(r){ const t=n.gvErr || 'nodes '+n.dN.size+' · edges '+n.dE.size+(n.sel ? ' · '+n.sel : '');
       if(r.textContent!==t) r.textContent=t; } }
 });
+
+/* ============================ ENTITY CARD ============================
+   Карточка сущности: строка таблицы (rows, как у Graph) + связи в обе стороны, сгруппированные по метке.
+   Выбор — провод sel (Graph.sel), щелчок по связанной сущности или поиск по id / подписи. */
+const EC_HIDE=new Set(['id','node','name','label','type','shape','color','size','icon','from','to','source','target','src','dst','weight','count','first','last','t']);
+const ecStr=v=>String(v??'').trim();
+function ecIndex(rows){
+  const sp=rowsSplit(rows), byId=new Map(), out=new Map(), inn=new Map();
+  for(const r of sp.nodes){ const id=ecStr(r.id??r.node??r.name); if(id) byId.set(id,r); }
+  const seen=new Set(), add=(m,k,v)=>{ let a=m.get(k); if(!a) m.set(k,a=[]); a.push(v); };
+  for(const e of sp.edges){
+    const a=ecStr(e.from??e.source??e.src), b=ecStr(e.to??e.target??e.dst), l=ecStr(e.label);
+    if(!a || !b) continue;
+    const k=a+'\u0001'+b+'\u0001'+l; if(seen.has(k)) continue; seen.add(k);
+    const w=+e.count||+e.weight||0;
+    add(out,a,{id:b,label:l,w}); add(inn,b,{id:a,label:l,w});
+  }
+  return {byId,out,inn};
+}
+const ecName=(ix,id)=>{ const r=ix.byId.get(id); return r && ecStr(r.label) || id; };
+const ecTime=v=>{ const x=+v; return x>1e11 ? new Date(x).toLocaleString() : ecStr(v); };
+function ecSelect(n,id){
+  id=ecStr(id); if(!id || id===n.sel) return;
+  if(n.sel) n.hist.push(n.sel);
+  if(n.hist.length>50) n.hist.shift();
+  n.sel=id; n.q=''; if(n.ui) n.ui.q.value=''; n.rev++;
+}
+function ecLinks(n,title,list,cls){
+  const wrap=document.createElement('div'); wrap.className='ec-sec';
+  const by=new Map();
+  for(const e of list){ const k=e.label||'—'; let a=by.get(k); if(!a) by.set(k,a=[]); a.push(e); }
+  for(const [label,arr] of by){
+    const h=document.createElement('div'); h.className='ec-h'; h.textContent=title+' '+label+' · '+arr.length; wrap.append(h);
+    const box=document.createElement('div'); box.className='ec-chips';
+    for(const e of arr.slice(0,40)){
+      const c=document.createElement('span'); c.className='ec-chip '+cls; c.dataset.id=e.id;
+      const r=n.ix.byId.get(e.id), ty=r && ecStr(r.type);
+      c.textContent=ecName(n.ix,e.id)+(e.w>1 ? ' ×'+e.w : '');
+      c.title=e.id+(ty ? ' · '+ty : '');
+      box.append(c);
+    }
+    if(arr.length>40){ const m=document.createElement('span'); m.className='ec-more'; m.textContent='+'+(arr.length-40); box.append(m); }
+    wrap.append(box);
+  }
+  return wrap;
+}
+function ecRender(n){
+  const ui=n.ui, body=ui.body, ix=n.ix; body.innerHTML='';
+  const q=n.q.trim().toLowerCase();
+  if(q){
+    let k=0;
+    for(const [id,r] of ix.byId){
+      if(!(id.toLowerCase().includes(q) || ecStr(r.label).toLowerCase().includes(q))) continue;
+      const c=document.createElement('div'); c.className='ec-pick'; c.dataset.id=id;
+      c.textContent=(ecStr(r.label)||id)+(r.type ? ' · '+r.type : '')+' · '+id; body.append(c);
+      if(++k>=30) break;
+    }
+    if(!k) body.textContent='nothing found';
+    return;
+  }
+  if(!n.sel){ body.textContent=ix.byId.size ? 'select a node: Graph sel → sel, or search above' : 'wire a Table rows → rows'; return; }
+  const row=ix.byId.get(n.sel);
+  const head=document.createElement('div'); head.className='ec-title';
+  head.textContent=(row && ecStr(row.label)) || n.sel;
+  if(row?.type){ const t=document.createElement('span'); t.className='ec-type'; t.textContent=row.type; head.append(t); }
+  body.append(head);
+  const idl=document.createElement('div'); idl.className='ec-id'; idl.textContent=n.sel; body.append(idl);
+  if(!row){ const m=document.createElement('div'); m.className='ec-dim'; m.textContent='no row for this id: it appears only in links'; body.append(m); }
+  else {
+    if(row.count || row.first){
+      const s=document.createElement('div'); s.className='ec-dim';
+      s.textContent=(row.count ? '×'+row.count : '')+(row.first ? ' · '+ecTime(row.first)+(row.last && row.last!==row.first ? ' → '+ecTime(row.last) : '') : '');
+      body.append(s);
+    }
+    const dl=document.createElement('div'); dl.className='ec-attrs';
+    for(const k of Object.keys(row)){
+      if(EC_HIDE.has(k.toLowerCase()) && k!=='alias') continue;
+      const v=row[k]; if(v===''||v==null) continue;
+      const a=document.createElement('span'); a.className='ec-k'; a.textContent=k;
+      const b=document.createElement('span'); b.className='ec-v'; b.textContent=recFmt(v);
+      dl.append(a,b);
+    }
+    if(dl.children.length) body.append(dl);
+  }
+  const o=ix.out.get(n.sel)||[], i=ix.inn.get(n.sel)||[];
+  if(o.length) body.append(ecLinks(n,'→',o,'o'));
+  if(i.length) body.append(ecLinks(n,'←',i,'i'));
+  if(!o.length && !i.length){ const m=document.createElement('div'); m.className='ec-dim'; m.textContent='no links'; body.append(m); }
+}
+function ecMount(n){
+  const root=document.createElement('div'); root.className='entcard';
+  root.innerHTML='<div class="ec-bar"><button class="ec-back" title="back">←</button><input class="ec-q" placeholder="find: id or name"></div><div class="ec-body"></div>';
+  ['pointerdown','wheel','keydown'].forEach(ev=>root.addEventListener(ev,e=>e.stopPropagation()));
+  n.ui={root, body:root.querySelector('.ec-body'), q:root.querySelector('.ec-q')};
+  n.ui.q.addEventListener('input',()=>{ n.q=n.ui.q.value; n.rev++; });
+  root.querySelector('.ec-back').addEventListener('click',()=>{ const id=n.hist.pop(); if(id){ n.sel=id; n.rev++; } });
+  root.addEventListener('click',e=>{ const t=e.target.closest('[data-id]'); if(t) ecSelect(n,t.dataset.id); });
+  n.mid.append(root); if(n.size.h>0) root.style.height=n.size.h+'px';
+  n.drawn=-1;
+}
+def({ id:'entcard', title:'Entity Card', cat:'Output', kw:'entity card details links graph table select node', resize:true, w:320, h:360, readout:true,
+  ins:[{n:'rows',t:'bands'},{n:'sel',t:'txt'}],
+  outs:[{n:'sel',t:'txt'},{n:'rec',t:'rec'},{n:'links',t:'num'}],
+  params:[],
+  init:n=>{ n.ix={byId:new Map(),out:new Map(),inn:new Map()}; n.sel=''; n.q=''; n.hist=[]; n.rev=0; n.rowsRef=null; n.lastSel=undefined; n.ui=null; n.drawn=-1; n.t=0; },
+  process(n,I){
+    if(typeof I.sel==='string' && I.sel!==n.lastSel){ n.lastSel=I.sel; if(I.sel) ecSelect(n,I.sel); }
+    const rows=Array.isArray(I.rows) ? I.rows : null;
+    if(rows!==n.rowsRef){ n.rowsRef=rows; n.ix=rows ? ecIndex(rows) : {byId:new Map(),out:new Map(),inn:new Map()}; n.rev++; }
+    const row=n.sel ? n.ix.byId.get(n.sel) : null;
+    return {sel:n.sel||null, rec:row ? [row] : null, links:n.sel ? (n.ix.out.get(n.sel)?.length||0)+(n.ix.inn.get(n.sel)?.length||0) : 0};
+  },
+  draw(n){
+    if(!n.ui || !n.ui.root.isConnected) ecMount(n);
+    if(n.drawn!==n.rev){ n.drawn=n.rev; ecRender(n); }
+    const r=n.el.querySelector('.readout'); if(r){ const t=n.sel||'—'; if(r.textContent!==t) r.textContent=t; } }
+});
