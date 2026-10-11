@@ -2983,6 +2983,8 @@ const IQ_RAW_FMT={cu8:'cu8', cs8:'ci8', cs16:'ci16_le', cf32:'cf32_le', cf64:'cf
 const IQ_RAW_EXT={cu8:'cu8', u8:'cu8', bin:'cu8', cs8:'ci8', ci8:'ci8', s8:'ci8', i8:'ci8', cs16:'ci16_le', ci16:'ci16_le', sc16:'ci16_le', s16:'ci16_le', i16:'ci16_le',
   cf32:'cf32_le', fc32:'cf32_le', f32:'cf32_le', cfile:'cf32_le', raw:'cf32_le', 'sigmf-data':'cf32_le', cf64:'cf64_le', fc64:'cf64_le', f64:'cf64_le'};
 
+// Файл играет, только пока нажат общий Run: прогресс и звук идут вместе с движком
+const iqEngOn=()=>Eng.running && !Eng.paused;
 // Устройство-проигрыватель с API USB-драйверов: отдаёт отсчёты в реальном времени, центр — из файла.
 function iqFileDevice(src, defRate, defFreq){
   const bytesPer={cu8:2, ci8:2, ci16_le:4, cf32_le:8, cf64_le:16}[src.dtype];
@@ -3017,7 +3019,7 @@ function iqFileDevice(src, defRate, defFreq){
   }
   async function read(ns){
     // темп — по часам: чанк отдаётся не раньше, чем он "прозвучал" бы в эфире
-    while((dev.ended || dev.paused) && !closed) await new Promise(r=>setTimeout(r, 100));
+    while((dev.ended || dev.paused || !iqEngOn()) && !closed) await new Promise(r=>setTimeout(r, 100));
     if(closed) throw new Error('closed');
     while(!(cur && pos>=cur.a && pos<cur.b)){
       if(!ahead || ahead.a!==pos) ahead=load(pos);
@@ -3063,7 +3065,11 @@ function iqBarBuild(n){
   row.style.cssText='display:none;flex-wrap:wrap;align-items:center;gap:4px;grid-column:1/-1;width:100%;min-width:0;box-sizing:border-box;margin:2px 0;';
   const btn=(t,title,fn)=>{ const b=document.createElement('button'); b.textContent=t; b.title=title; b.style.cssText=css; b.onclick=fn; row.append(b); return b; };
   const U={row};
-  U.play=btn('❚❚','pause / play', ()=>{ if(n.dev?.kind==='file') n.dev.paused=!n.dev.paused; });
+  U.play=btn('❚❚','pause / play', ()=>{
+    const d=n.dev; if(d?.kind!=='file') return;
+    if(!iqEngOn()){ d.paused=false; document.getElementById('run')?.click(); }   // общий Run выключен — запускаем его
+    else d.paused=!d.paused;
+  });
   btn('|◂','previous mark',()=>{ const d=n.dev, p=d.pos-d.rate*1.5, a=(n.annSt?.list||[]).filter(x=>x.a0<p).sort((x,y)=>y.a0-x.a0)[0]; if(a) iqSeek(n, a.a0-d.rate*.3); });
   btn('−10','back 10 s',()=>iqSeek(n, n.dev.pos-n.dev.rate*10));
   U.cv=document.createElement('canvas'); U.cv.style.cssText='order:-1;flex:1 1 100%;min-width:0;height:22px;cursor:pointer;touch-action:none';
@@ -3089,7 +3095,7 @@ function iqBarUpdate(n){
   U.row.style.display='flex';
   const txt=iqFmtTime(d.pos/d.rate)+' / '+iqFmtTime(d.total/d.rate)+(d.ended?' end':'');
   if(U.t.textContent!==txt) U.t.textContent=txt;
-  const pl=d.paused ? '▶' : '❚❚'; if(U.play.textContent!==pl) U.play.textContent=pl;
+  const pl=d.paused || !iqEngOn() ? '▶' : '❚❚'; if(U.play.textContent!==pl) U.play.textContent=pl;
   const key=W+'|'+H+'|'+Math.round(d.pos/d.total*W)+'|'+(n.annSt?.list.length||0)+'|'+(n.annSt?.act.length||0);
   if(key===U.key) return;
   U.key=key;
