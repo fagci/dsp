@@ -1012,6 +1012,13 @@ function tblForm(n,rec,onSave,onCancel){
   const save=document.createElement('button'); save.textContent='save'; save.className='tbl-btn pri';
   const cancel=document.createElement('button'); cancel.textContent='cancel'; cancel.className='tbl-btn';
   form.save=save; form.cancel=cancel;
+  // поле под клавиатурой: после её появления прокрутить форму и страницу к полю
+  form.addEventListener('focusin',e=>{
+    const t=e.target; if(!t.matches?.('input,select')) return;
+    const go=()=>t.scrollIntoView({block:'center',behavior:'smooth'});
+    setTimeout(go,50);
+    if(window.visualViewport) visualViewport.addEventListener('resize',go,{once:true});
+  });
   save.addEventListener('click',async()=>{
     const o={};
     for(const c of cl){
@@ -1035,7 +1042,10 @@ function tblOpenEditor(n,title,form,rowEl){
   ui.list.style.paddingBottom=ed.offsetHeight+'px';           // последние строки не прячутся под панелью
   ui.list.querySelectorAll('.tbl-row.edit').forEach(r=>r.classList.remove('edit'));
   if(rowEl){ rowEl.classList.add('edit'); rowEl.scrollIntoView({block:'nearest'}); }
-  const f=form.querySelector('input:not([type=hidden]):not([type=color]),select'); f?.focus({preventScroll:true});
+  // на сенсорных экранах без автофокуса: иначе клавиатура сразу закрывает поля
+  if(!matchMedia('(pointer:coarse)').matches){
+    const f=form.querySelector('input:not([type=hidden]):not([type=color]),select'); f?.focus({preventScroll:true});
+  }
 }
 function tblCloseEditor(n){
   const ui=n.ui; if(!ui?.edit) return;
