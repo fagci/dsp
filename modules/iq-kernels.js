@@ -462,7 +462,8 @@ function iqAgcStep(n,v){
 }
 
 /* ---- IQ Spectrum ---- */
-// Спектр потока по Уэлчу: кадры N с перекрытием 50%, среднее мощности до avg кадров за обновление.
+// Спектр потока: каждое обновление — одно БПФ по последним N отсчётам (как в SDR++), avg — длина
+// экспоненциального сглаживания мощности по обновлениям, а не накопление отсчётов за интервал.
 // Комплексный поток — N бинов по центру fc (freqs абсолютные, как у USB SDR); вещественный — 0..sr/2.
 // 0 дБ — тон полной шкалы.
 IQK.iqSpec={
@@ -471,13 +472,12 @@ IQK.iqSpec={
     const s=iqIn(I,'in');
     if(!s || !s.sr) return {spec:n.sp||null};
     const N=+n.p.size, A=+n.p.avg, cplx=s.chunks.length ? !!s.chunks[0].im : n.cplx!==false;
-    const cap=N+(A-1)*(N>>1);
-    const key=N+'|'+A+'|'+n.p.win+'|'+s.sr+'|'+cplx;
+    const key=N+'|'+A+'|'+n.p.win+'|'+s.sr+'|'+s.fc+'|'+cplx;
     if(key!==n.key){
-      n.key=key; n.cplx=cplx; n.size=pow2ge(cap);
+      n.key=key; n.cplx=cplx; n.size=pow2ge(N);
       n.rr=new Float32Array(n.size); n.ri=new Float32Array(n.size); n.W=0; n.last=0;
       n.w=window_(n.p.win,N); let sum=0; for(let i=0;i<N;i++) sum+=n.w[i]; n.wsum=sum;
-      n.re=new Float32Array(N); n.im=new Float32Array(N); n.pw=new Float64Array(N);
+      n.re=new Float32Array(N); n.im=new Float32Array(N); n.pw=new Float64Array(N); n.cnt=0;
       n.sp=null;
     }
     const mask=n.size-1;
@@ -487,16 +487,14 @@ IQK.iqSpec={
       n.W=w;
     }
     if(n.W<N || n.W-n.last<s.sr*n.p.upd/1000) return {spec:n.sp};
-    const fresh=Math.min(n.W-n.last, cap, n.W); n.last=n.W;
-    const hop=N>>1, K=Math.max(1, Math.floor((Math.max(fresh,N)-N)/hop)+1);
-    const re=n.re, im=n.im, pw=n.pw, w=n.w; pw.fill(0);
-    for(let k=0;k<K;k++){
-      const o=n.W-N-(K-1-k)*hop;
-      for(let i=0;i<N;i++){ const j=(o+i)&mask; re[i]=n.rr[j]*w[i]; im[i]=n.ri[j]*w[i]; }
-      fft(re,im);
-      for(let i=0;i<N;i++) pw[i]+=re[i]*re[i]+im[i]*im[i];
-    }
-    const sc=1/(K*n.wsum*n.wsum), half=N>>1;
+    n.last=n.W;
+    const re=n.re, im=n.im, pw=n.pw, w=n.w, o=n.W-N;
+    for(let i=0;i<N;i++){ const j=(o+i)&mask; re[i]=n.rr[j]*w[i]; im[i]=n.ri[j]*w[i]; }
+    fft(re,im);
+    // разгон: пока кадров меньше avg, это обычное среднее
+    const cnt=n.cnt=Math.min(n.cnt+1, A), a=1/cnt;
+    for(let i=0;i<N;i++){ const p=re[i]*re[i]+im[i]*im[i]; pw[i]=cnt===1 ? p : pw[i]+(p-pw[i])*a; }
+    const sc=1/(n.wsum*n.wsum), half=N>>1;
     let mag, freqs=null;
     if(cplx){
       mag=new Float32Array(N); freqs=new Float64Array(N);          // float32 на ГГц-частотах квантован до 128 Гц — крупнее бина
