@@ -4140,8 +4140,9 @@ const RTL_SPEC_MAX_FRAMES=256;
 function rtlUpdateSpec(n){
   if(!n.connected || !n.specWorker) return;
   const now=performance.now();
-  // интервал пересчёта следует переключателю fps: max — без искусственного потолка
-  const fm=document.getElementById('fps')?.value, minGap=fm==='max' ? 0 : fm==='min' ? 100 : 80;
+  // усреднение копит отсчёты за интервал — с ним 80 мс; без него интервал следует переключателю fps
+  const fm=document.getElementById('fps')?.value, avOff=n.p.specAvg==='off';
+  const minGap=!avOff ? 80 : fm==='max' ? 0 : fm==='min' ? 100 : 80;
   if(n.specBusy || (n.spec && now-n.lastSpec<minGap)) return;
   const N=+n.p.specSize, ring=n.specRing;
   if(ring.filled<N) return;
