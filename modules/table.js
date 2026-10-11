@@ -277,11 +277,47 @@ async function tblSaveCols(n){
   if(tblKind(n.p.list)==='db') await ListDB.setMeta(n.p.list,{cols:n.cl});
   else await tblSave(n);
 }
+// upsert по ключевой колонке: повтор обновляет строку (непустые поля), count/first/last ведутся сами; → новые строки
+const TBL_STAT=['count','first','last'];
+async function tblUpsert(n,recs,key){
+  let grown=false;
+  for(const c of [key,...TBL_STAT]) if(!n.cl.includes(c)){ n.cl.push(c); grown=true; }
+  const kind=tblKind(n.p.list), now=Date.now();
+  const at=new Map(); n.all.forEach((r,i)=>{ const k=r[key]; if(k!=='' && k!=null) at.set(String(k),i); });
+  const fresh=new Map(), dirty=new Set();
+  for(const r of recs){
+    const kv=r[key]; if(kv===''||kv==null) continue;
+    const k=String(kv), t=typeof r.t==='number' ? r.t : now;
+    const row=at.has(k) ? n.all[at.get(k)] : fresh.get(k);
+    if(row){
+      for(const c in r) if(r[c]!=='' && !TBL_STAT.includes(c)){ row[c]=r[c]; if(!n.cl.includes(c)){ n.cl.push(c); grown=true; } }
+      row.count=(+row.count||1)+1; row.last=t; if(row.first===''||row.first==null) row.first=t;
+      if(at.has(k)) dirty.add(at.get(k));
+    } else {
+      for(const c in r) if(!n.cl.includes(c)){ n.cl.push(c); grown=true; }
+      fresh.set(k,{...r,count:1,first:t,last:t});
+    }
+  }
+  if(kind==='db') for(const i of dirty){
+    const it=tblToItem(n.all[i],n.cl);
+    await ListDB.update(n.ids[i],{name:it.name,fields:it.fields,value:it.fields.value??''});
+  }
+  return {fresh:[...fresh.values()],grown};
+}
 // добавление записей; новые поля расширяют колонки (и порты — без потери проводов)
 async function tblAdd(n,recs){
   if(tblRO(n) || !recs.length) return;
   recs=recs.map(tblClean);
   let grown=false;
+  if(n.p.key && n.p.key.trim()){
+    const u=await tblUpsert(n,recs,n.p.key.trim());
+    recs=u.fresh; grown=u.grown;
+    if(!recs.length){
+      await tblSaveCols(n);
+      if(grown) tblSetCols(n,n.cl.slice(),false);
+      tblDerive(n); return;
+    }
+  }
   for(const r of recs) for(const k in r) if(!n.cl.includes(k)){ n.cl.push(k); grown=true; }
   const kind=tblKind(n.p.list);
   const rows=recs.map(r=>{ const o={}; for(const c of n.cl) o[c]=r[c]??''; return o; });
@@ -478,6 +514,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     {n:'reset',t:'button',label:'Reset',fn:n=>seqReset(n),adv:true},
     {n:'collect',t:'check',d:true,label:'store rec / text wires',adv:true},
     {n:'rowsIn',t:'select',opts:['replace','add'],d:'replace',label:'rows in (wire)',tip:'a set on the rows input is stored in the active list: replace its rows, or add to them'},
+    {n:'key',t:'text',d:'',adv:true,label:'upsert key col',tip:'if set, a wired rec with the same value in this column updates its row instead of adding one; count / first / last columns are kept'},
     {n:'textCsv',t:'check',d:false,label:'text wire: split into columns',adv:true},
     {n:'log',t:'check',d:false,label:'log inputs a–d',adv:true,fn:n=>{ tblRebuild(n,true); }},
     {n:'period',t:'range',min:.05,max:60,step:.05,d:1,label:'log period, s',adv:true},
@@ -608,6 +645,7 @@ function tblInit(n){
   const q=s=>root.querySelector(s);
   n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), tree:q('.tbl-tree'), pick:q('.tbl-pick'), shown:q('.tbl-shown'),
     filter:q('.tbl-filter'), cols:q('.tbl-cols'), edit:q('.tbl-edit'), tail:false, marked:-1};
+  n.ui.cols.hidden=!n.colsOpen;                           // пересборка узла (смена колонок) не должна прятать редактор
   n._open=new Set(Array.isArray(n.p.open) ? n.p.open : []);
   if(!Array.isArray(n.p.open)) for(const k of new Set([...tblShow(n),n.p.list])){            // раскрыть пути отмеченных
     const parts=k.split('/'); parts.pop();
@@ -699,7 +737,7 @@ function tblMainMenu(n){
   it('Add template columns…','the data stays',()=>tblTplMenu(n,'apply'));
   it('Delete list','',()=>tblDeleteList(n));
   tblMenuHead(m,'View');
-  it(n.ui.cols.hidden ? 'Show columns…' : 'Hide columns','add and remove columns',()=>{ n.ui.cols.hidden=!n.ui.cols.hidden; });
+  it(n.ui.cols.hidden ? 'Show columns…' : 'Hide columns','add and remove columns',()=>{ n.ui.cols.hidden=!n.ui.cols.hidden; n.colsOpen=!n.ui.cols.hidden; });
   it('Shown lists…','tick several lists to show them on the map and the bands output',()=>tblTreeToggle(n));
   it(n.ui.tail ? 'Show first rows' : 'Show last rows','',()=>{ n.ui.tail=!n.ui.tail; tblRenderList(n); });
 }
