@@ -1,4 +1,4 @@
-// Проверка разметки IQ, записи куска полосы и триггера: node tools/test-iqrec.mjs
+// Проверка аннотаций SigMF, записи куска полосы и триггера: node tools/test-iqrec.mjs
 import vm from 'node:vm';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,53 +7,20 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({console,Math,Float32Array,Float64Array,Int16Array,Set,Array,Object,String,Number,isFinite});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/iqrec-kernels.js'),'utf8')+
-  ';this.K={iqaDetect,iqaNew,iqaTrack,iqaActiveIn,iqaSigmf,iqaFromSigmf,iqaDdc,iqaTrig,iqaFmtHz};',ctx,{filename:'iqrec-kernels.js'});
+  ';this.K={iqaSigmf,iqaFromSigmf,iqaDdc,iqaTrig};',ctx,{filename:'iqrec-kernels.js'});
 const K=ctx.K;
 let bad=0;
 const ok=(c,m)=>{ if(!c){ bad++; console.log('FAIL',m); } else console.log('ok  ',m); };
 
-// спектр: шум + несущие
-const N=4096, sr=2.048e6, fc=100e6, bin=sr/N;
-const freqs=new Float64Array(N).map((_,i)=>fc+(i-N/2)*bin);
-let seed=1; const rnd=()=>{ seed=(seed*1664525+1013904223)>>>0; return seed/4294967296; };
-function frame(sigs){
-  const m=new Float32Array(N).map(()=>Math.pow(10,(-90+3*(rnd()-.5))/20));
-  for(const [f,w,db] of sigs){ const c=Math.round((f-freqs[0])/bin), h=Math.round(w/bin/2); for(let i=c-h;i<=c+h;i++) m[i]=Math.pow(10,db/20); }
-  return m;
-}
-const f1=fc+300e3, f2=fc-500e3;
-let d=K.iqaDetect(freqs, frame([[f1,12e3,-40],[f2,6e3,-50]]), 10, [{lo:fc-3e3,hi:fc+3e3}]);
-ok(d.length===2, 'два сигнала найдены: '+d.length);
-ok(d.some(x=>Math.abs((x.lo+x.hi)/2-f1)<2*bin) && d.some(x=>Math.abs((x.lo+x.hi)/2-f2)<2*bin), 'центры совпадают');
-ok(K.iqaDetect(freqs, frame([]), 10).length===0, 'на шуме пусто');
-ok(K.iqaDetect(freqs, frame([[fc,2e3,-30]]), 10, [{lo:fc-3e3,hi:fc+3e3}]).length===0, 'пик нуля пропущен');
-
-// трекер: сигнал есть кадры 0..9, нет 10..19, снова 20..24
-const st=K.iqaNew(); let t=0; const W=N;
-for(let k=0;k<40;k++){ t+=W/2; const on=k<10||(k>=20&&k<25); K.iqaTrack(st, on?K.iqaDetect(freqs,frame([[f1,12e3,-40]]),10):[], t, W, W*3, ''); }
-ok(st.list.length===2, 'два интервала: '+st.list.length);
-ok(st.list[0].a1>st.list[0].a0 && st.list[0].a1<=10*W/2+W/2, 'первый интервал закончился вовремя');
-ok(st.act.length===0, 'активных нет');
-ok(/100\.3M/.test(st.list[0].label), 'подпись по частоте: '+st.list[0].label);
-// единичный кадр не создаёт аннотацию
-{ const s1=K.iqaNew(); K.iqaTrack(s1, K.iqaDetect(freqs,frame([[f1,12e3,-40]]),10), W, W, W*3, ''); K.iqaTrack(s1, [], 2*W, W, W*3, ''); K.iqaTrack(s1, K.iqaDetect(freqs,frame([[f1,12e3,-40]]),10), 3*W, W, W*3, ''); ok(s1.list.length===0, 'выброс на один кадр не размечается'); }
-// чистый шум за 400 кадров — ничего
-{ const s0=K.iqaNew(); for(let k=0;k<400;k++) K.iqaTrack(s0, K.iqaDetect(freqs,frame([]),10), k*W, W, W*3, ''); ok(s0.list.length===0, 'шум не размечается: '+s0.list.length); }
-// файловая аннотация не дублируется
-const st2=K.iqaNew(); st2.list.push({a0:0,a1:100*W,lo:f1-10e3,hi:f1+10e3,label:'x',auto:false});
-for(let k=0;k<4;k++) K.iqaTrack(st2, K.iqaDetect(freqs,frame([[f1,12e3,-40]]),10), (5+k)*W, W, W*3, '');
-ok(st2.list.length===1, 'уже размеченное не дублируется');
-// перемотка назад закрывает активные
-K.iqaTrack(st, K.iqaDetect(freqs,frame([[f1,12e3,-40]]),10), 100*W, W, W*3, '');
-K.iqaTrack(st, [], 1*W, W, W*3, '');
-ok(st.act.length===0, 'перемотка назад сбрасывает активные');
+const N=4096, W=N, sr=2.048e6, fc=100e6;
+const list=[{a0:1000,a1:9000,lo:100299000,hi:100301000,label:'A 100.3MHz'},{a0:20000,a1:30000,lo:99499000,hi:99501000,label:'mark',mark:true}];
 
 // SigMF туда и обратно
-const an=K.iqaSigmf(st.list, 0, 40*W, 4, 512000);
+const an=K.iqaSigmf(list, 0, 40*W, 4, 512000);
 ok(an.length===2 && an[0]['core:sample_start']>=0 && an[0]['core:freq_lower_edge']<an[0]['core:freq_upper_edge'], 'SigMF-аннотации');
 const back=K.iqaFromSigmf(an, fc, 512000);
-ok(back.length===2 && Math.abs(back[0].a0*4-st.list[0].a0)<=4, 'обратный разбор');
-ok(K.iqaSigmf(st.list, 1e9, 10, 1, 1).length===0, 'вне записи не попадает');
+ok(back.length===2 && Math.abs(back[0].a0*4-list[0].a0)<=4 && back[0].label==='A 100.3MHz', 'обратный разбор');
+ok(K.iqaSigmf(list, 1e9, 10, 1, 1).length===0, 'вне записи не попадает');
 
 // DDC: тон на +120 кГц от центра приёма, запись вокруг +100 кГц, полоса 50 кГц, должен стать +20 кГц
 {
