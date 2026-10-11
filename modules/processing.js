@@ -1550,6 +1550,44 @@ function saChannels(n,cx,W,H,plotH){
   }
   cx.globalAlpha=1;
 }
+// Время строк водопада: spec.tl (отсчёты таймлайна источника) на каждую новую строку, новые в конце.
+// Нужно для наложения аннотаций IQ (spec.ann: {a0,a1,lo,hi,label,mark}); возраст строки a — T[T.length-1-a].
+function saWfStamp(n){
+  const tl=n.s.tl;
+  if(tl==null){ n._wfT=null; return; }
+  const T=n._wfT||(n._wfT=[]);
+  if(T.length && tl<T[T.length-1]) T.length=0;        // перемотка назад — прежние строки уже не сопоставить
+  T.push(tl);
+  if(T.length>6144) T.splice(0, 2048);
+}
+// T[i] >= v, i в [a,b+1]
+function saWfLower(T,v,a,b){ let l=a, h=b+1; while(l<h){ const m=(l+h)>>1; if(T[m]<v) l=m+1; else h=m; } return l; }
+function saAnnot(n,cx,W,hs,hw,dpr){
+  const sp=n.s, T=n._wfT, list=sp&&sp.ann;
+  if(!list || !list.length || !T || !T.length) return;
+  const rows=Math.min(T.length, Math.round(hw*dpr)), last=T.length-1, first=last-rows+1, win=sp.size||0;
+  const tA=T[first], tB=T[last];
+  cx.save(); cx.beginPath(); cx.rect(0,hs,W,hw); cx.clip();
+  cx.font='10px monospace'; cx.lineWidth=1;
+  for(const a of list){
+    if(a.a1+win<tA || a.a0>tB) continue;
+    const i0=saWfLower(T,a.a0,first,last), i1=saWfLower(T,a.a1+win+1,first,last)-1;
+    if(i1<i0) continue;
+    let x1=saPos(n,a.lo)*W, x2=saPos(n,a.hi)*W;
+    if(x2<0 || x1>W) continue;
+    if(x2-x1<3){ const c=(x1+x2)/2; x1=c-1.5; x2=c+1.5; }
+    const y=hs+(last-i1)/dpr, h=Math.max(2,(i1-i0+1)/dpr), col=themeColor(a.mark ? '--t-img' : '--hi');
+    cx.globalAlpha=.12; cx.fillStyle=col; cx.fillRect(x1,y,x2-x1,h);
+    cx.globalAlpha=.9; cx.strokeStyle=col; cx.setLineDash(a.mark ? [] : [4,3]);
+    cx.strokeRect(Math.round(x1)+.5,Math.round(y)+.5,Math.max(1,x2-x1),h);
+    if(a.label && h>=12){
+      const tw=Math.ceil(cx.measureText(a.label).width)+6, lx=Math.max(1,Math.min(W-tw-1,x1)), ly=Math.max(hs,y);
+      cx.setLineDash([]); cx.globalAlpha=.75; cx.fillStyle=themeColor('--screen'); cx.fillRect(lx,ly,tw,12);
+      cx.globalAlpha=1; cx.fillStyle=col; cx.fillText(a.label,lx+3,ly+10);
+    }
+  }
+  cx.restore();
+}
 // канал приёмника, на частоте которого стоит маркер (маркер ведёт tuneFreq канала)
 function saChanAtMarker(n,f){
   const list=n.s&&n.s.chans; if(!list||!list.length||f==null) return null;

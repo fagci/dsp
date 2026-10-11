@@ -20,7 +20,8 @@ async function ensureRecorderFolder(){
 async function saveRecordingToDB(n, samples, peak, rms){
   const folderId = await ensureRecorderFolder();
   const id = await SampleDB.addClip({
-    name: 'recording ' + new Date().toLocaleTimeString(),
+    name: ((n.p.tag||'').trim() || 'recording') + ' ' + new Date().toLocaleTimeString(),
+    tag: (n.p.tag||'').trim(),
     folderId, sr: Eng.sr, samples,
     peaks: SampleDB.computePeaks(samples),
     duration: samples.length / Eng.sr,
@@ -59,7 +60,9 @@ def({ id:'triggerRecorder', lazy:'proc', title:'Trigger Recorder', cat:'Output',
   outs:[{n:'recording',t:'num'},{n:'out',t:'sig'},{n:'clipId',t:'num'}],
   h:280, resize:true, readout:true,
   params:[
-    {n:'mode',t:'select',opts:['manual','level','edge'],d:'manual',label:'mode'},
+    // gate: пишет, пока trig выше 0.5 (например, sqOpen приёмника), и postTime после его закрытия
+    {n:'mode',t:'select',opts:['manual','gate','level','edge'],d:'manual',label:'mode'},
+    {n:'tag',t:'text',d:'',label:'tag (recording name)'},
     {n:'threshold',t:'range',min:0.001,max:0.5,step:0.001,d:0.02,label:'threshold'},
     {n:'preTime',t:'range',min:0.1,max:5,step:0.1,d:0.5,label:'pre-record, s'},
     {n:'postTime',t:'range',min:0.1,max:10,step:0.1,d:1,label:'post-record, s'},
@@ -137,6 +140,10 @@ def({ id:'triggerRecorder', lazy:'proc', title:'Trigger Recorder', cat:'Output',
           if(n.trigTimer > n.p.trigHold) n.trigState = false;
         }
         break;
+      case 'gate':
+        if(trig > 0.5 && !n.trigState){ triggered = true; n.trigState = true; }
+        if(trig <= 0.5) n.trigState = false;
+        break;
       case 'edge':
         if(level > n.p.threshold && n.prevLevel <= n.p.threshold) triggered = true;
         n.prevLevel = level;
@@ -166,6 +173,9 @@ def({ id:'triggerRecorder', lazy:'proc', title:'Trigger Recorder', cat:'Output',
       let stop = false;
       if(n.p.mode === 'manual'){
         stop = trig <= 0.5 && n.buffer.length > preNeed + Eng.sr*0.5;
+      } else if(n.p.mode === 'gate'){
+        n.silenceTimer = trig > 0.5 ? 0 : n.silenceTimer + dt;
+        stop = n.silenceTimer > n.p.postTime || (performance.now() - n.recordStart) / 1000 > n.p.maxDuration;
       } else {
         const duration = (performance.now() - n.recordStart) / 1000;
         stop = duration > n.p.maxDuration;

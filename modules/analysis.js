@@ -2398,7 +2398,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           line[k]=pal[hk]; line[k+1]=pal[hk+1]; line[k+2]=pal[hk+2]; line[k+3]=255; }
         if(n.wfGl){ const [wl,wh]=saBounds(n); saWfGlWrite(n.wfGl,Wp,line,wl,wh); }
         else { n.ocx.drawImage(n.off,0,1); n.ocx.putImageData(new ImageData(line,Wp,1),0,0); }
-        if(fresh) saHistPush(n, n.s);
+        if(fresh){ saHistPush(n, n.s); saWfStamp(n); }
         n._lastRev=n.s.rev; n._lastSpecRef=n.s; n._wfInited=true;
       }
       // окно/шкала/палитра сменились — перерисовать водопад из истории, когда жест затих
@@ -2473,6 +2473,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     saBands(n,cx,W,H);
     saDbLabels(n,cx);                                 // подписи уровня — поверх трассы
     saChannels(n,cx,W,hs,plotH);                      // полосы ПЧ каналов rtlsdr и порог шумоподавителя
+    if(n.s) saAnnot(n,cx,W,hs,hw,(cv.pxW&&cv.width)?cv.pxW/cv.width:1);   // аннотации IQ поверх водопада
     saBandPlan(n,cx,W,hs,plotH);                      // полосы/закладки — зона спектра, водопад не трогаем
     saSigTags(n,cx,W,plotH);                          // метки сигналов с 'sigid'
     saMarkers(n,cx,W,hs);
