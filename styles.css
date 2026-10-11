@@ -541,6 +541,8 @@ body.noedit #bar .ed{display:none}
   border-radius:3px;cursor:pointer}
 .prm button:hover{border-color:var(--acc)}
 .btnrow{display:flex;gap:6px}
+/* кнопки — тот же отступ сверху, что у ламп/холстов/readout (5px) */
+.prm.wide.btnrow{margin-top:5px;padding-top:0}
 .btnrow button{flex:1 1 0;width:auto;min-width:0;white-space:normal;
   font-size:10px;line-height:1.25}
 /* ряд ручек (range с knob:true): подпись под ручкой, число внутри */
@@ -636,7 +638,7 @@ canvas.view{display:block;width:100%;background:var(--screen);
 .rz:hover{border-color:var(--acc)}
 canvas.view.pick{cursor:crosshair}
 .readout.tall{font-size:12px;text-align:left;white-space:pre-wrap;word-break:break-word;
-  height:96px;overflow:auto;line-height:1.5;color:var(--txt);resize:vertical}
+  height:96px;max-height:none;overflow:auto;line-height:1.5;color:var(--txt);resize:vertical}
 .copy{width:100%;margin-top:4px;background:var(--panel2);border:1px solid var(--line);
   border-radius:3px;padding:3px;cursor:pointer;color:var(--dim);font-size:10px}
 .copy:hover{border-color:var(--acc);color:var(--txt)}

@@ -1319,13 +1319,14 @@ function dashRenderRoot(){
 }
 // основная канва (или список bandplan/bookmarks) узла в панели — до низа панели: контролы над ней
 // переносятся по ширине, поэтому её верх плавает и чистым CSS высоту не задать
-const DASH_FILL='canvas.view.main, .bp-ui, .bm-ui, .tbl-ui, .trk-tile, .chat, .ng, .graphview';
+const DASH_FILL='canvas.view.main, .bp-ui, .bm-ui, .tbl-ui, .trk-tile, .chat, .ng, .graphview, .readout.tall';
 function dashFit(){
   if(!dashMode) return;
   for(const body of dashGridEl.querySelectorAll('.dash-body')){
     const el=body.querySelector(DASH_FILL); if(!el) continue;
     const mid=el.closest('.mid'), padB=mid?parseFloat(getComputedStyle(mid).paddingBottom)||0:12;
-    const h=Math.max(110, Math.floor(body.getBoundingClientRect().bottom-el.getBoundingClientRect().top-padB));
+    let after=0; for(let q=el.nextElementSibling;q;q=q.nextElementSibling) if(q.offsetHeight) after+=q.offsetHeight+4;   // кнопка Copy под readout
+    const h=Math.max(110, Math.floor(body.getBoundingClientRect().bottom-el.getBoundingClientRect().top-padB-after));
     if(Math.abs((parseFloat(el.style.height)||0)-h)>1) el.style.height=h+'px';
   }
   for(const body of dashGridEl.querySelectorAll('.dash-body')) dashRailSync(body);
