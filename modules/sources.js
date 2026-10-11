@@ -2854,16 +2854,12 @@ function iqMark(n, text){
   st.list.push({a0:t, a1:t+Math.round(n.sourceRate*.25), lo, hi, mark:true, label, ts:now.getTime()});
   n.status='mark '+label;
 }
-// входы: mark — фронт ставит метку; markText — новая непустая строка (например, тип кадра декодера) ставит метку с ней
+// входы: markTrg — фронт ставит метку, mark — её текст (как text + go у Text Source)
 function iqMarkIn(n, I){
-  let fire=false, text='';
-  const v=I.mark, up=typeof v==='number' && v>.5;
-  if(up && !n._markUp) fire=true;
+  const v=I.markTrg, up=typeof v==='number' && v>.5;
+  const fire=up && !n._markUp;
   n._markUp=up;
-  const tx=I.markText==null ? '' : String(I.markText).trim();
-  if(tx && tx!==n._markTx){ fire=true; text=tx; }
-  n._markTx=tx;
-  if(fire) iqMark(n, text||tx);
+  if(fire) iqMark(n, I.mark==null ? '' : String(I.mark).trim());
 }
 
 // накопление секунд перед триггером
@@ -4865,7 +4861,7 @@ async function sdrSweepLoop(n){
 
 def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
   ins:[{n:'freq',t:'num'},{n:'steerFreq',t:'num'},{n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'},
-       {n:'gainDb',t:'num'},{n:'bw',t:'num'},{n:'demod',t:'val'},{n:'mark',t:'num'},{n:'markText',t:'val'}],
+       {n:'gainDb',t:'num'},{n:'bw',t:'num'},{n:'demod',t:'val'},{n:'mark',t:'val'},{n:'markTrg',t:'num'}],
   outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'iq',t:'iq'},
         {n:'audio',t:'sig'},{n:'audio2',t:'sig'},{n:'audio3',t:'sig'},{n:'audio4',t:'sig'},
         {n:'audioL',t:'sig'},{n:'audioR',t:'sig'},{n:'ps',t:'val'},{n:'rt',t:'val'},
