@@ -118,6 +118,22 @@ function gsmNormalBurst(d114,tsc){
   return b;
 }
 // L2-кадры (23 байта): SI1…SI4 и пустой CCCH
+// содержимое CCCH-блока k-го мультикадра (paging с TMSI, immediate assignment, reject, заполнение) — для генератора и проверок
+const GSM_CCCH_ALL=[6,12,16,22,26,32,36,42,46], GSM_CCCH_COMBINED=[6,12,16];
+const GSM_CCCH_ROT=['PAG1','IA','PAG3','IAREJ','PAG2','IDLE'];
+function gsmCcchL2(type,k,fn,bsic){
+  const l=new Uint8Array(23).fill(GSM_SYNC_FILL), tmsi=i=>[0xf4,0x1a,0x2b,(k>>8)&255,(k+i)&255];
+  l[1]=0x06;
+  const rr=(o)=>{ l[o]=0x4a+(k&1); const t1=(fn/1326|0)&31, t2=fn%26, t3=fn%51; l[o+1]=(t1<<3)|(t3>>3); l[o+2]=((t3&7)<<5)|t2; };
+  if(type==='PAG1'){ l[0]=(9<<2)|1; l[2]=0x21; l[3]=0x00; l[4]=5; l.set(tmsi(0),5); }
+  else if(type==='PAG2'){ l[0]=(11<<2)|1; l[2]=0x22; l[3]=0x00; l.set(tmsi(0).slice(1),4); l.set(tmsi(1).slice(1),8); }
+  else if(type==='PAG3'){ l[0]=(19<<2)|1; l[2]=0x24; l[3]=0x00; for(let i=0;i<4;i++) l.set(tmsi(i).slice(1),4+4*i); }
+  else if(type==='IA'){                                   // SDCCH/4 подканал 0, TN0, ARFCN 20, без прыжков
+    l[0]=(11<<2)|1; l[2]=0x3f; l[3]=0x00; l[4]=(4<<3)|0; l[5]=((bsic&7)<<5)|0; l[6]=20; rr(7); l[10]=1; l[11]=0; }
+  else if(type==='IAREJ'){ l[0]=(19<<2)|1; l[2]=0x3a; l[3]=0x00; for(let i=0;i<4;i++){ rr(4+4*i); l[7+4*i]=16; } }
+  else l[0]=0x01;                                         // заполнение: pseudo length 0
+  return l;
+}
 function gsmL2(type,cell){
   const l=new Uint8Array(23).fill(GSM_SYNC_FILL);
   const lai=(o)=>{
@@ -127,7 +143,7 @@ function gsmL2(type,cell){
   };
   l[1]=0x06;
   if(type==='SI3'){ l[0]=0x49; l[2]=0x1b; l[3]=cell.ci>>8&255; l[4]=cell.ci&255; lai(5);
-    l.set([0x01,0x03,0x00, 0x28, 0x45,0x0c, 0x47,0x00,0x00,0x00],10); }
+    l.set([cell.combined===false ? 0x00 : 0x01,0x03,0x00, 0x28, 0x45,0x0c, 0x47,0x00,0x00,0x00],10); }
   else if(type==='SI4'){ l[0]=0x31; l[2]=0x1c; lai(3); l.set([0x45,0x0c, 0x47,0x00,0x00,0x00],8); }
   else { l[0]=0x59; l[2]={SI1:0x19,SI2:0x1a,SI2bis:0x02,SI2ter:0x03,CCCH:0x21}[type]; if(type==='CCCH'){ l[0]=0x15; l[3]=0x00; l[4]=0x01; l[5]=0xf0; } }
   return l;
@@ -168,9 +184,10 @@ function gsmNextSlot(g){
     const k=g.fn/51|0, key=GSM_SI_ROT[k&7]+'|'+k;
     if(g.siKey!==key){ g.siKey=key; g.si=gsmBcchEncode(gsmL2(GSM_SI_ROT[k&7],g.cell)); }
     burst=gsmNormalBurst(g.si[f51-2],tsc);
-  } else if(tn===0 && f51!==50){
-    if(!g.idle) g.idle=gsmBcchEncode(gsmL2('CCCH',g.cell));
-    burst=gsmNormalBurst(g.idle[(f51-6)&3],tsc);
+  } else if(tn===0 && (g.cell.combined===false ? GSM_CCCH_ALL : GSM_CCCH_COMBINED).some(b=>f51>=b && f51<b+4)){
+    const st=(g.cell.combined===false ? GSM_CCCH_ALL : GSM_CCCH_COMBINED).find(b=>f51>=b && f51<b+4), k=g.fn/51|0, bi=GSM_CCCH_ALL.indexOf(st), key=k+'|'+st;
+    if(g.ccKey!==key){ g.ccKey=key; g.cc=gsmBcchEncode(gsmCcchL2(GSM_CCCH_ROT[(k*3+bi)%GSM_CCCH_ROT.length],k,g.fn-(f51-st),bsic)); }
+    burst=gsmNormalBurst(g.cc[f51-st],tsc);
   } else {
     const d=new Int8Array(114); for(let i=0;i<114;i++){ g.rng^=g.rng<<13; g.rng^=g.rng>>>17; g.rng^=g.rng<<5; d[i]=g.rng>>>31; }
     burst=gsmNormalBurst(d,tsc);
@@ -184,10 +201,10 @@ function gsmNextSlot(g){
 }
 function gsmGenerate(n,sr,N){
   let g=n.gsm;
-  if(!g || g.sr!==sr || g.key!==n.p.gsmCell+'|'+n.p.bsic){
+  if(!g || g.sr!==sr || g.key!==n.p.gsmCell+'|'+n.p.bsic+'|'+n.p.gsmCombined){
     gsmQTable();
-    g=n.gsm={sr, key:n.p.gsmCell+'|'+n.p.bsic, cell:gsmParseCell(n.p.gsmCell), bsic:+n.p.bsic||0,
-             sym:[], base:0, acc:0, x:0, tn:0, fn:0, prev:0, rng:0x9e3779b9, siKey:'', si:null, idle:null};
+    g=n.gsm={sr, key:n.p.gsmCell+'|'+n.p.bsic+'|'+n.p.gsmCombined, cell:{...gsmParseCell(n.p.gsmCell), combined:n.p.gsmCombined!==false}, bsic:+n.p.bsic||0,
+             sym:[], base:0, acc:0, x:0, tn:0, fn:0, prev:0, rng:0x9e3779b9, siKey:'', si:null, idle:null, ccKey:'', cc:null};
   }
   const re=new Float32Array(N), im=new Float32Array(N), dx=GSM_SYMBOL_RATE/sr;
   for(let s=0;s<N;s++){

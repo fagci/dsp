@@ -32,6 +32,10 @@
  *   [ГОТОВО] нумерация бёрстов (t1/t2/t3 → FN, TN) и типизация по 51-мультикадру TS0
  *   [ГОТОВО] внутренняя частотная петля: дерот. входа по накопленному смещению
  *
+ *   [ГОТОВО] CCCH на TS0 (paging, immediate assignment / extended / reject): те же 4 бёрста → xCCH → L2; блоки 6–9, 12–15,
+ *            16–19 (объединённый с SDCCH/4) или все девять (по CCCH-CONF из SI3). Идентификаторы абонентов в paging — хэш-маркер
+ *            или ничего (параметр ids), подробности — у функции gsmParseCcch
+ *
  * Не разобрано: SI2bis/SI2ter — только типизируются. CBCH на другой несущей или
  * hopping — только детектируется (TN/ARFCN/частота), сам канал не декодируется без
  * отдельного приёма на той частоте.
@@ -556,6 +560,80 @@ function gsmParseSI(b){
   else r.type='0x'+mt.toString(16);
   return r;
 }
+/* ---------- CCCH (TS 44.018): paging и immediate assignment ----------
+ * Тот же xCCH-блок, что и BCCH: 4 бёрста → 23 байта L2. Положение блоков в 51-мультикадре TS0: объединённый CCCH (с SDCCH/4) —
+ * кадры 6–9, 12–15, 16–19; необъединённый — ещё 22–25, 26–29, 32–35, 36–39, 42–45, 46–49. Тип канала (PCH / AGCH) по заголовку
+ * не определить, различает сообщение. Идентификаторы абонентов (TMSI / IMSI в paging) по умолчанию не выдаются: только хэш с
+ * случайной солью сеанса (одинаковый абонент — одинаковый маркер внутри приёма) либо вовсе без них; параметр ids = show
+ * показывает их как есть и кладёт в hex без маски. Трафик абонентов (SDCCH / TCH / SACCH) этим не декодируется. */
+const GSM_CHAN_TYPE=t=>t===1 ? 'TCH/F' : t<=3 ? 'TCH/H sub '+(t&1) : t<=7 ? 'SDCCH/4 sub '+(t&3) : t<=15 ? 'SDCCH/8 sub '+(t&7) : 'type '+t;
+// Mobile Identity (TS 24.008 10.5.1.4) → {kind, value}
+function gsmMobileId(b){
+  if(!b.length) return {kind:'none',value:''};
+  const t=b[0]&7, odd=(b[0]>>3)&1;
+  if(t===4) return {kind:'TMSI', value:Array.from(b.subarray(1),x=>x.toString(16).padStart(2,'0')).join('')};
+  if(t===0) return {kind:'none',value:''};
+  let d=String(b[0]>>4);
+  for(let i=1;i<b.length;i++){ d+=(b[i]&15).toString(16); if(i<b.length-1 || odd) d+=(b[i]>>4).toString(16); }
+  return {kind:({1:'IMSI',2:'IMEI',3:'IMEISV'})[t]||'type '+t, value:d.replace(/f/g,'')};
+}
+// Channel Description (3 байта) → поля
+function gsmChanDesc(b,o){
+  const ch=b[o], o2=b[o+1], r={chan:GSM_CHAN_TYPE(ch>>3), tn:ch&7, tsc:(o2>>5)&7, hopping:!!(o2&0x10)};
+  if(r.hopping){ r.maio=((o2&0x0f)<<2)|(b[o+2]>>6); r.hsn=b[o+2]&0x3f; } else { r.arfcn=((o2&3)<<8)|b[o+2]; r.freq=gsmArfcnFreq(r.arfcn); }
+  return r;
+}
+// Request Reference (3 байта): RA, T1', T3, T2 → номер кадра по модулю 42432
+function gsmReqRef(b,o){
+  const ra=b[o], t1=b[o+1]>>3, t3=((b[o+1]&7)<<3)|(b[o+2]>>5), t2=b[o+2]&31;
+  return {ra, fn:(51*26*t1)+(51*(((t3+26)-t2)%26))+t3};
+}
+// 23 байта L2 → разобранное сообщение CCCH или null (не RR / не CCCH-сообщение)
+function gsmParseCcch(b){
+  if((b[0]>>2)===0) return {msg:'idle'};                    // L2 pseudo length 0 — заполнение
+  if((b[1]&0x0f)!==0x06) return null;
+  const mt=b[2];
+  if(mt===0x21 || mt===0x22 || mt===0x24){
+    const r={msg:'Paging Request '+(mt===0x21 ? 1 : mt===0x22 ? 2 : 3), mt, pageMode:b[3]&15, cneed1:(b[3]>>4)&3, cneed2:(b[3]>>6)&3, ids:[]};
+    if(mt===0x21){
+      const l=b[4]; r.ids.push(b.subarray(5,5+l));
+      const i=5+l; if(b[i]===0x17 && i+1<b.length) r.ids.push(b.subarray(i+2,i+2+b[i+1]));
+    } else if(mt===0x22){
+      r.ids.push(b.subarray(4,8),b.subarray(8,12));
+      if(b[12]===0x17 && 13<b.length) r.ids.push(b.subarray(14,14+b[13]));
+    } else r.ids.push(b.subarray(4,8),b.subarray(8,12),b.subarray(12,16),b.subarray(16,20));
+    if(mt!==0x21){                                              // TMSI без байта типа → с ним, для общего разбора
+      const k=mt===0x22 ? 2 : 4;
+      r.ids=r.ids.map((x,i)=>i<k ? (x.every(v=>v===0xff) ? new Uint8Array(0) : Uint8Array.from([0xf4,...x])) : x);
+    }
+    r.ids=r.ids.map(gsmMobileId).filter(x=>x.kind!=='none');
+    return r;
+  }
+  if(mt===0x3f){
+    const r={msg:'Immediate Assignment', mt, pageMode:b[3]&15, dedicated:b[3]>>4, ...gsmChanDesc(b,4), ...gsmReqRef(b,7), ta:b[10], maLen:b[11]};
+    return r;
+  }
+  if(mt===0x39) return {msg:'Immediate Assignment Extended', mt, pageMode:b[3]&15, a:{...gsmChanDesc(b,4), ...gsmReqRef(b,7), ta:b[10]}, b:{...gsmChanDesc(b,11), ...gsmReqRef(b,14), ta:b[17]}};
+  if(mt===0x3a){
+    const refs=[]; for(let i=0;i<4;i++){ const o=4+4*i; refs.push({...gsmReqRef(b,o), wait:b[o+3]}); }
+    return {msg:'Immediate Assignment Reject', mt, pageMode:b[3]&15, refs};
+  }
+  return {msg:'other', mt};
+}
+// копия L2 paging без идентификаторов абонентов (для hex при ids ≠ show)
+function gsmMaskPaging(b){
+  const o=Uint8Array.from(b), mt=b[2];
+  const zero=(a,n)=>{ for(let i=a;i<a+n && i<o.length;i++) o[i]=0; };
+  if(mt===0x21){ const l=b[4]; zero(5,l); const i=5+l; if(b[i]===0x17) zero(i+2,b[i+1]); }
+  else if(mt===0x22){ zero(4,8); if(b[12]===0x17) zero(14,b[13]); }
+  else if(mt===0x24) zero(4,16);
+  return o;
+}
+function gsmIdToken(salt,id){                                  // FNV-1a 32 по соли сеанса и идентификатору
+  let h=0x811c9dc5; const s=salt+'|'+id.kind+id.value;
+  for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,0x01000193)>>>0; }
+  return id.kind+' #'+h.toString(36).padStart(7,'0');
+}
 function gsmMccMncStr(r){
   const mnc=r.mnc2 ? String(r.mnc).padStart(2,'0') : String(r.mnc).padStart(3,'0');
   return String(r.mcc).padStart(3,'0')+'-'+mnc;
@@ -619,6 +697,11 @@ class GsmReceiver{
     this.cbchBuf=[null,null,null,null];                  // 4 бёрста текущего CBCH-блока (23 байта L2 каждый)
     this.cbchPage=[null,null,null,null];                 // 4 фрагмента (seq 0..3) собираемой CBS-страницы
     this.cbchTry=0; this.cbchOk=0; this.cbsOk=0;          // диагностика: попытки блока / успехи блока / собранные страницы
+    this.ccchCombined=null;                              // CCCH объединён с SDCCH/4 (CCCH-CONF из SI3): null — ещё неизвестно
+    this.ccchBuf=[null,null,null,null];
+    this.ids='hash';                                     // идентификаторы абонентов в paging: hash | none | show
+    this.salt=Math.random().toString(36).slice(2);       // соль хэша — на один приём
+    this.ccch={blocks:0, ok:0, idle:0, paging:0, ids:0, ia:0, rej:0, other:0};
   }
   avail(){ return this.len-this.head; }
   push(re,im){
@@ -861,7 +944,7 @@ class GsmReceiver{
     if(si.neighborArfcns) { rec.neighborArfcns=si.neighborArfcns; rec.neighborFmt=si.neighborFmt; rec.nccPermitted=si.nccPermitted;
       this.emitNeighbors(si.neighborArfcns, si.neighborFmt); }
     if(si.rach) rec.rach=si.rach;
-    if(si.ctrlCh) rec.ctrlCh=si.ctrlCh;
+    if(si.ctrlCh){ rec.ctrlCh=si.ctrlCh; this.ccchCombined=si.ctrlCh.ccchConf===1 ? true : [0,2,4,6].includes(si.ctrlCh.ccchConf) ? false : this.ccchCombined; }
     if(si.cellOpt) rec.cellOpt=si.cellOpt;
     if(si.cellSel) rec.cellSel=si.cellSel;
     if(si.cbch){
@@ -878,6 +961,53 @@ class GsmReceiver{
   }
   // 4 бёрста CBCH-блока (TS 04.12) готовы → декод через общий xCCH (gsmBcchDecode), разбор заголовка,
   // накопление 4 блоков (seq 0..3) в CBS-страницу 88 байт и её разбор
+  // позиция в блоке CCCH: {start, idx} либо null; до SI3 (конфигурация неизвестна) — только кадры, общие для обеих конфигураций
+  ccchPos(t3){
+    for(const st of this.ccchCombined===false ? GSM_CCCH_ALL : GSM_CCCH_COMBINED) if(t3>=st && t3<st+4) return {start:st, idx:t3-st};
+    return null;
+  }
+  accumCcch(eb, idx){
+    if(idx===0) this.ccchBuf=[null,null,null,null];
+    this.ccchBuf[idx]=this.extractData(eb);
+    if(idx!==3 || !this.ccchBuf.every(Boolean)) return;
+    const l2=gsmBcchDecode(this.ccchBuf); this.ccchBuf=[null,null,null,null];
+    const C=this.ccch; C.blocks++;
+    if(!l2) return;
+    C.ok++;
+    const m=gsmParseCcch(l2);
+    if(!m) return;
+    if(m.msg==='idle'){ C.idle++; return; }
+    this.emitCcch(m,l2);
+  }
+  emitCcch(m,l2){
+    const C=this.ccch, fn=gsmFrameNr(this.t1,this.t2,this.t3), hx=a=>Array.from(a,x=>x.toString(16).padStart(2,'0')).join('');
+    const base={t:Date.now(), fn, tn:0, freq:this.fc, dbm:this.dbm, bsic:(this.ncc<<3)|this.bcc, hexSchema:'gsm-l2'};
+    if(m.msg.startsWith('Paging')){
+      C.paging++;
+      if(!m.ids.length){ C.idle++; return; }                  // paging без идентификатора — заполнение
+      C.ids+=m.ids.length;
+      const rec={...base, kind:'GSM-PCH', msg:m.msg, pageMode:m.pageMode, count:m.ids.length};
+      if(this.ids==='show') rec.ids=m.ids.map(x=>x.kind+' '+x.value);
+      else if(this.ids==='hash') rec.ids=m.ids.map(x=>gsmIdToken(this.salt,x));
+      rec.hex=hx(this.ids==='show' ? l2 : gsmMaskPaging(l2));
+      rec.text=m.msg+' · '+m.ids.length+' '+(m.ids.length===1 ? 'identity' : 'identities')+(rec.ids ? ': '+rec.ids.join(', ') : '');
+      this.rec.push(rec); return;
+    }
+    if(m.msg==='Immediate Assignment'){
+      C.ia++;
+      this.rec.push({...base, kind:'GSM-AGCH', msg:m.msg, chan:m.chan, ctn:m.tn, tsc:m.tsc, hopping:m.hopping, arfcn:m.arfcn, maio:m.maio, hsn:m.hsn, ra:m.ra, reqFn:m.fn, ta:m.ta, hex:hx(l2),
+        text:'Immediate Assignment · '+m.chan+' TN'+m.tn+' TSC'+m.tsc+(m.hopping ? ' hopping MAIO '+m.maio+' HSN '+m.hsn : ' ARFCN '+m.arfcn)+' · RA 0x'+m.ra.toString(16)+' · TA '+m.ta}); return;
+    }
+    if(m.msg==='Immediate Assignment Extended'){
+      C.ia++;
+      this.rec.push({...base, kind:'GSM-AGCH', msg:m.msg, hex:hx(l2), text:'Immediate Assignment Extended · '+[m.a,m.b].map(x=>x.chan+' TN'+x.tn+(x.hopping ? ' hopping' : ' ARFCN '+x.arfcn)).join(' / ')}); return;
+    }
+    if(m.msg==='Immediate Assignment Reject'){
+      C.rej++;
+      this.rec.push({...base, kind:'GSM-AGCH', msg:m.msg, wait:m.refs[0].wait, hex:hx(l2), text:'Immediate Assignment Reject · wait '+m.refs[0].wait+' s'}); return;
+    }
+    C.other++;
+  }
   accumCbch(eb, idx){
     if(idx===0) this.cbchBuf=[null,null,null,null];
     this.cbchBuf[idx]=this.extractData(eb);
@@ -943,6 +1073,7 @@ class GsmReceiver{
         const eb=new Uint8Array(GSM_BURST_SIZE); this.detectBurst(chanRe,chanIm,bs,eb);
         this.emitBurst('normal',eb);
         if(this.tn===0 && this.t3>=2 && this.t3<=5) this.accumBcch(eb);   // BCCH → System Information
+        if(this.tn===0){ const cp=this.ccchPos(this.t3); if(cp) this.accumCcch(eb,cp.idx); }   // CCCH → paging, immediate assignment
         if(this.tn===this.cbchTn){                                       // CBCH → SMSCB, если настроен на этой несущей
           const fn=gsmFrameNr(this.t1,this.t2,this.t3), lfn=fn%102;
           for(const start of GSM_CBCH_FN) if(lfn>=start && lfn<start+4) this.accumCbch(eb, lfn-start);
@@ -969,6 +1100,7 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
   readout:true, tall:true,
   params:[{n:'afc',t:'check',d:true,label:'auto frequency correction (FCCH)'},
           {n:'debug',t:'check',d:false,label:'debug: доп. поля SI3/SI4 (Control Ch, Cell Opt, CBCH) + hex'},
+          {n:'ids',t:'select',opts:['hash','none','show'],d:'hash',label:'paging identifiers (TMSI / IMSI): hash — only a marker, none — count only, show — as is'},
           {n:'clr',t:'button',label:'Clear log',fn:n=>{ n.log=[]; n.text='ищу FCCH…'; n.lastSchBsic=-1; }}],
   init:n=>{ n.rx=new GsmReceiver(); n.foff=0; n.nco=0; n.frac=1; n.lr=new Float32Array(0); n.li=new Float32Array(0);
             n.bid=0; n.log=[]; n.text='ищу FCCH…'; n.lastSchBsic=-1; n.fcchSince=null; },
@@ -998,7 +1130,7 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
     // остаток: держим по одному отсчёту слева от следующей позиции (для k-1)
     let keepFrom=Math.max(0,Math.floor(pos)-1);
     n.lr=xr.slice(keepFrom); n.li=xi.slice(keepFrom); n.frac=pos-keepFrom;
-    if(outN){ n.rx.fc=s.fc||0; n.rx.push(outR.subarray(0,outN), outI.subarray(0,outN));
+    if(outN){ n.rx.fc=s.fc||0; n.rx.ids=n.p.ids||'hash'; n.rx.push(outR.subarray(0,outN), outI.subarray(0,outN));
       const {bursts,rec}=n.rx.work();
       // частотная петля
       if(n.p.afc && n.rx.freqOffset!=null && (n.rx.state!=='fcch' || n.rx.freqUpdate)){
@@ -1041,8 +1173,9 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
       // а в срыве синхронизации на одном из 4 бёрстов подряд (сбросы USB/AGC и т.п.), не в декодере.
       const bc=n.rx.bcchTry? ` · BCCH ${n.rx.bcchOk}/${n.rx.bcchTry}` : '';
       const cb=n.rx.cbchTn>=0? ` · CBCH TN${n.rx.cbchTn} бл.${n.rx.cbchOk}/${n.rx.cbchTry} стр.${n.rx.cbsOk}` : '';
+      const cc=n.rx.ccch.blocks ? ` · CCCH ${n.rx.ccch.ok}/${n.rx.ccch.blocks} pag ${n.rx.ccch.paging} IA ${n.rx.ccch.ia}` : '';
       const bsicTxt=n.rx.state==='sync'? ` · BSIC ${(n.rx.ncc<<3)|n.rx.bcc}` : '';
-      n.text=st+bsicTxt+` · ${mhz}foff ${n.foff.toFixed(0)} Hz · бёрстов ${n.bid}${bc}${cb}\n`+n.log.slice(-14).join('\n');
+      n.text=st+bsicTxt+` · ${mhz}foff ${n.foff.toFixed(0)} Hz · бёрстов ${n.bid}${bc}${cb}${cc}\n`+n.log.slice(-14).join('\n');
       return {rec:outRec, burst:blk, freq:n.foff, sync:n.rx.state==='sync'?1:0, nb:outNb};
     }
     return {rec:null, burst:null, freq:n.foff, sync:n.rx.state==='sync'?1:0, nb:null};
@@ -1056,6 +1189,7 @@ function gsmHerm(y0,y1,y2,y3,t){
 // строка лога по записи; debug=true — доп. поля конфигурации соты + сырой hex L2-сообщения
 function gsmRecLine(r,debug){
   const t=new Date(r.t).toLocaleTimeString();
+  if(r.kind==='GSM-PCH' || r.kind==='GSM-AGCH') return `${t} ${r.kind==='GSM-PCH' ? 'PCH' : 'AGCH'} ${r.text} · FN ${r.fn} ${r.dbm} dBm`;
   if(r.kind==='GSM-SCH') return `${t} SCH BSIC ${r.bsic} (NCC ${r.ncc}/BCC ${r.bcc}) FN ${r.fn} ${r.dbm} dBm`;
   if(r.si==='SI3') return `${t} SI3 ${r.op?r.op+' ':''}PLMN ${r.plmn} LAC ${r.lac} CID ${r.ci} · ${r.dbm} dBm`
     +gsmRachSuffix(r.rach)+(debug?gsmDebugSuffix(r):'');
