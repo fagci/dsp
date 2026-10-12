@@ -25,6 +25,38 @@ const temps=Object.keys(p).filter(k=>k.startsWith(TEMP_PREFIX)).sort();
 while(temps.length>TEMP_MAX) delete p[temps.shift()];
 writeP(p);
 }
+// Имя патча в адресе (#p=имя) — у каждой вкладки свой патч; #d=… — патч целиком в ссылке (только при «Copy link»)
+const hashParam=k=>{ const m=location.hash.match(new RegExp('[#&]'+k+'=([^&]*)')); try{ return m?decodeURIComponent(m[1]):''; }catch(e){ return ''; } };
+function syncHash(){
+const h=currentPatchName?'#p='+encodeURIComponent(currentPatchName):'';
+if(location.hash!==h) try{ history.replaceState(null,'',location.pathname+location.search+h); }catch(e){}
+}
+const b64u={ enc(u8){ let s=''; for(const c of u8) s+=String.fromCharCode(c); return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); },
+  dec(t){ const s=atob(t.replace(/-/g,'+').replace(/_/g,'/')); return Uint8Array.from(s,c=>c.charCodeAt(0)); } };
+async function packPatch(obj){
+const st=new Blob([JSON.stringify(obj)]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+return b64u.enc(new Uint8Array(await new Response(st).arrayBuffer()));
+}
+async function unpackPatch(t){
+const st=new Blob([b64u.dec(t)]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+return JSON.parse(await new Response(st).text());
+}
+async function loadFromHash(){
+const d=hashParam('d'), n=hashParam('p');
+if(d){
+try{ stashIfDirty(); deserialize(await unpackPatch(d)); currentPatchName=''; graphDirty=false; fitViewWhenReady(); stat.textContent='patch loaded from link'; }
+catch(e){ stat.textContent='bad link: '+e.message; }
+syncHash(); buildPatchList();
+} else if(n && n!==currentPatchName && readP()[n]) openPatch(n);
+}
+window.addEventListener('hashchange',loadFromHash);
+document.getElementById('plink').onclick=async()=>{
+try{
+const url=location.origin+location.pathname+'#d='+await packPatch(serialize());
+try{ await navigator.clipboard.writeText(url); stat.textContent='link copied ('+url.length+' chars)'; }
+catch(e){ prompt('Copy link',url); }
+}catch(e){ stat.textContent='link failed: '+e.message; }
+};
 function makePatchItem(name,count){
 const b=document.createElement('button'); b.className='pitem'+(name===currentPatchName?' on':'');
 b.innerHTML= `<span class="ptxt"><b>${name}</b><i>${count} nodes</i></span><span class="pins" title="Insert into the current graph">＋</span><span class="pdel" title="Delete patch">✕</span>` ;
@@ -32,7 +64,7 @@ b.draggable=true;
 b.addEventListener('dragstart',e=>{ e.dataTransfer.setData('text/x-dsp-patch',name); e.dataTransfer.effectAllowed='copy'; });
 const doDelete=e=>{ e.preventDefault(); e.stopPropagation();
 if(confirm('Delete patch «'+name+'»?')){ const p=readP(); delete p[name]; writeP(p);
-if(currentPatchName===name) currentPatchName='';
+if(currentPatchName===name){ currentPatchName=''; syncHash(); }
 buildPatchList(); stat.textContent='patch deleted'; } };
 b.addEventListener('click',e=>{ if(e.target.closest('.pdel')) return; if(e.target.closest('.pins')){ insertPatch(name); return; } openPatch(name); });
 b.querySelector('.pdel').addEventListener('click',doDelete);      // тап/клик по крестику — работает и на мобиле
@@ -75,7 +107,7 @@ patchListEl.classList.toggle('empty',matches===0);
 function openPatch(name){
 stashIfDirty();
 const p=readP(); if(!p[name]) return;
-deserialize(p[name]); currentPatchName=name; graphDirty=false;
+deserialize(p[name]); currentPatchName=name; graphDirty=false; syncHash();
 stat.textContent='opened: '+name;
 buildPatchList(); closeSide();
 }
@@ -93,7 +125,7 @@ document.getElementById('psave').onclick=()=>{
 const name=prompt('Patch name',currentPatchName||'patch '+new Date().toLocaleString());
 if(!name) return;
 const p=readP(); p[name]=serialize(); writeP(p);
-currentPatchName=name; graphDirty=false;
+currentPatchName=name; graphDirty=false; syncHash();
 stat.textContent='patch saved: '+name;
 buildPatchList();
 };
