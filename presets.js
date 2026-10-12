@@ -179,6 +179,7 @@ const PRESET_CATS={
   'USB SDR: Signal Identifier':'SDR Receivers',
   'IQ: Receiver from Blocks (Generator)':'SDR Receivers',
   'USB SDR: FM Receiver from Blocks':'SDR Receivers',
+  'USB SDR: FM Radio with RDS':'SDR Receivers',
   'Remote SDR: FM Receiver (rtl_tcp over WebSocket)':'SDR Receivers',
   'USB SDR: HF AM / SSB from Blocks':'SDR Receivers',
   'Sound Card IQ: HF Receiver (SoftRock-style)':'SDR Receivers',
@@ -876,6 +877,24 @@ sc.size.w=560; sc.size.h=200; applySize(sc);
 addEdge(sw.id,'out',dc.id,'L');
 addEdge(m.id,'a',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
 addEdge(m.id,'a',sc.id,'in1');
+markWiresDirty();
+});
+preset('USB SDR: FM Radio with RDS', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Connect the SDR and tune an FM station (the dial or the spectrum).\n'+
+  'The RDS decoder runs only while the rds output is wired, stereo is off unless ticked — both cost CPU.\n'+
+  'RDS Display: station name, radiotext, RT+, PTY, clock, alternative frequencies, other networks, group statistics.'});
+nt.size.w=520; nt.size.h=120; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'1024000',auto:false,gainDb:30,demod:'WFM',freq:100000000});
+const sa=addNode('sa',40,560,{auto:true,floor:-90,top:-20,split:.3});
+sa.size.w=520; sa.size.h=300; applySize(sa);
+const rd=addNode('rds',620,40,{});
+rd.size.w=460; rd.size.h=420; applySize(rd);
+const dc=addNode('dac',620,500,{vol:.4});
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(sa.id,'f1',rx.id,'tuneFreq');
+addEdge(rx.id,'rds',rd.id,'rec');
+addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
 markWiresDirty();
 });
 preset('USB SDR: Wideband Sweep', function(){

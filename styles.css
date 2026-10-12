@@ -362,6 +362,7 @@ body.noedit #bar .ed{display:none}
   #canvas #content .node .io3>.mid>.swatch,
   #canvas #content .node .io3>.mid>.graphview,
   #canvas #content .node .io3>.mid>.chat,
+  #canvas #content .node .io3>.mid>.rds-ui,
   #canvas #content .node .io3>.mid>.ng,
   #canvas #content .node .io3>.mid>.fm,
   #canvas #content .node .io3>.mid>.rtc-media,
@@ -854,6 +855,73 @@ select.aed-b{padding:0 6px}
 .chat-row input:focus{outline:none;border-color:var(--acc)}
 .chat-row button{flex:0 0 auto;height:26px;padding:2px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:3px;cursor:pointer}
 .chat-row button:hover{border-color:var(--acc)}
+/* RDS Display: цвета — токены экрана прибора; ширина — @container, высота — data-h (см. modules/rds.js) */
+.rds-ui{--rd:var(--axis);--rl:var(--grid);container:rds/inline-size;display:flex;flex-direction:column;gap:6px;width:100%;
+  height:300px;min-height:100px;resize:vertical;overflow:hidden;padding:8px 10px;border-radius:4px;
+  background:var(--screen);color:var(--txt);font:11px/1.4 var(--mono)}
+.rds-head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;flex:0 0 auto}
+.rds-ps{font-size:clamp(20px,10cqw,54px);line-height:1.05;letter-spacing:.06em;white-space:pre;color:var(--screen-fg)}
+.rds-side{flex:1 1 110px;min-width:0;display:flex;flex-direction:column;gap:1px}
+.rds-pi b{font-size:15px;color:var(--acc);font-weight:600}
+.rds-pi span{color:var(--screen-fg);font-size:13px}
+.rds-sub{color:var(--rd);overflow-wrap:anywhere}
+.rds-q{display:flex;align-items:center;gap:6px;color:var(--rd);font-size:10px}
+.rds-q .trk{flex:0 1 90px;height:5px;border-radius:3px;background:var(--rl);overflow:hidden}
+.rds-q i{display:block;height:100%;width:0;background:var(--t-blk);transition:width .4s}
+.rds-q i.y{background:var(--acc)}
+.rds-q i.r{background:var(--err)}
+.rds-flags{display:flex;flex-wrap:wrap;gap:4px;flex:0 0 auto}
+.rds-chip{display:inline-block;padding:1px 7px;border:1px solid var(--rl);border-radius:9px;color:var(--rd);font-size:10px;letter-spacing:.04em;white-space:nowrap}
+.rds-chip.on{color:var(--screen);background:var(--screen-fg);border-color:var(--screen-fg)}
+.rds-chip.off{opacity:.55}
+.rds-chip.unk{opacity:.35;border-style:dashed}
+.rds-st .rds-chip{cursor:pointer}
+.rds-body{flex:1 1 auto;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:9px;padding-right:2px}
+.rds-rt{font-size:13px;color:var(--scr-hi);overflow-wrap:anywhere;min-height:1.4em}
+.rds-np{color:var(--acc);font-size:12px;overflow-wrap:anywhere}
+.rds-cards{display:grid;grid-template-columns:minmax(0,1fr);gap:7px 12px}
+.rds-card{display:flex;flex-direction:column;min-width:0;padding-left:7px;border-left:2px solid var(--rl)}
+.rds-k{color:var(--rd);font-size:9px;text-transform:uppercase;letter-spacing:.07em}
+.rds-v{font-size:12px;color:var(--scr-hi);overflow-wrap:anywhere}
+.rds-s{color:var(--rd);font-size:10px}
+.rds-wide{display:none}
+.rds-sec h4{margin:0 0 3px;font:600 9px var(--mono);text-transform:uppercase;letter-spacing:.07em;color:var(--rd)}
+.rds-chips{display:flex;flex-wrap:wrap;gap:3px}
+.rds-eonrow{display:flex;gap:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rds-eonrow b{color:var(--screen-fg);font-weight:600}
+.rds-eonrow span{color:var(--rd);overflow:hidden;text-overflow:ellipsis}
+.rds-grp{display:grid;grid-template-columns:repeat(16,minmax(0,1fr));gap:2px;height:48px}
+.rds-gc{display:flex;flex-direction:column;align-items:stretch;gap:1px;font-size:8px;color:var(--rd);text-align:center}
+.rds-gb{flex:1;display:flex;align-items:flex-end;gap:1px}
+.rds-gb i{flex:1;min-height:1px;background:var(--screen-fg)}
+.rds-gb i.b{background:var(--acc)}
+.rds-gc.z i{opacity:.2}
+.rds-st{display:flex;flex-wrap:wrap;gap:4px}
+.rds-stale .rds-ps,.rds-stale .rds-rt,.rds-stale .rds-np{opacity:.4}
+.rds-none .rds-ps{opacity:.3}
+@container rds (max-width:259px){
+  .rds-flags .rds-chip:nth-child(n+4){display:none}
+  .rds-sub{white-space:normal}
+}
+@container rds (min-width:300px){
+  .rds-cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .rds-wide{display:grid;grid-template-columns:minmax(0,1fr);gap:9px}
+}
+@container rds (min-width:520px){
+  .rds-cards{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .rds-wide{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .rds-sec[data-s=grp]{grid-column:1/-1}
+}
+@container rds (min-width:760px){
+  .rds-cards{grid-template-columns:repeat(5,minmax(0,1fr))}
+  .rds-wide{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+/* низкая плитка: название станции и одна строка радиотекста */
+.rds-ui[data-h=s]{padding:5px 8px;gap:3px}
+.rds-ui[data-h=s] .rds-flags,.rds-ui[data-h=s] .rds-q,.rds-ui[data-h=s] .rds-sub{display:none}
+.rds-ui[data-h=s] .rds-ps{font-size:clamp(16px,7cqw,32px)}
+.rds-ui[data-h=s] .rds-body>:not(.rds-rt){display:none}
+.rds-ui[data-h=s] .rds-rt{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #power.on{color:var(--acc)}
 #powerPanel{position:fixed;right:8px;bottom:8px;z-index:60;width:230px;padding:8px;background:var(--panel,#1b1d22);border:1px solid var(--line,#333);border-radius:6px;font-size:11px;color:var(--dim)}
 #powerPanel .pp-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;color:var(--text,#ddd)}
