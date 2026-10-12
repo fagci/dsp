@@ -64,5 +64,19 @@ let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else
   const rt=ev('hexParse("gsm-l2",b3)');
   ok('plmn build round trip',rt.vals.plmn==='250-01' && rt.vals.ci===4660 && rt.vals.lac===500 && ev('gsmParseSI(b3)').mcc===250,JSON.stringify(rt.vals));
 }
+
+// M17: LSF от генератора ядра → схема; позывные основания 40 и CRC-16 против m17Crc / m17CallDec
+{
+  const meta=new Uint8Array(14);
+  ctx.lsfb=ev("(()=>{ const m=new Uint8Array(14); m.set(m17CallEnc('SP5WWP'),0); m.set(m17CallEnc('M17-M17 C'),6); return m17MakeLsf('SP5WWP','W2FBI',0x0005|(3<<7)|(2<<5),m); })()");
+  const p=ev('hexParse("m17-lsf",lsfb)'), v=p.vals;
+  ok('m17 lsf parsed',v.src==='SP5WWP' && v.dst==='W2FBI' && v.can===3 && v.dtype===2 && v.stream===1 && v.sub===2 && p.ok,JSON.stringify(v));
+  ok('m17 crc agrees with the decoder',ev('m17Crc(lsfb,30)')===0 && p.fields.find(f=>f.n==='crc').calcOk===true);
+  const bc=ev(`hexBuild('m17-lsf',{dst:'BROADCAST',src:'SP5WWP',can:3,dtype:2,stream:1,sub:2,enc:0,meta:'00'})`);
+  ctx.bcb=bc.bytes; 
+  ok('m17 build: broadcast, crc',ev('m17Crc(bcb,30)')===0 && ev('m17CallDec(bcb.subarray(0,6))')==='BROADCAST' && ev('m17CallDec(bcb.subarray(6,12))')==='SP5WWP',ev('bytesHex(bcb)'));
+  const pk=ev('hexParse("m17-pkt",hexFromHex("0548454c4c4f"))');
+  ok('m17 packet: SMS',pk.vals.proto===5 && pk.vals.data==='48454c4c4f');
+}
 console.log(bad ? bad+' failed' : 'all ok');
 process.exit(bad?1:0);
