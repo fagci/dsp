@@ -900,7 +900,8 @@ class GsmReceiver{
     const id=(this.cellLabel||'cell?')+'-CBS-'+cbs.msgId.toString(16)+'-'+cbs.serial.msgCode+'-'+cbs.serial.updateNum;
     this.rec.push({t:Date.now(), kind:'GSM-CBS', id, fn:gsmFrameNr(this.t1,this.t2,this.t3), tn:this.cbchTn,
       freq:this.fc, dbm:this.dbm, msgId:cbs.msgId, msgCode:cbs.serial.msgCode, updateNum:cbs.serial.updateNum,
-      dcs:cbs.dcs, charset:cbs.charset, page:cbs.pageNum, pages:cbs.totalPages, text:cbs.text});
+      dcs:cbs.dcs, charset:cbs.charset, page:cbs.pageNum, pages:cbs.totalPages, text:cbs.text,
+      hex:Array.from(page,x=>x.toString(16).padStart(2,'0')).join(''), hexSchema:'gsm-cbs'});
   }
   // рёбра «своя сота → сосед по ARFCN» для узла Graph (vis-network): кидаем как записи rec с
   // from/to — graphview сам их подхватит по именам колонок, без отдельного провода

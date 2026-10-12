@@ -31,7 +31,7 @@ Object.assign(HEX_LIB,{
   udp:{ title:'UDP', group:'Network', fields:[
     {n:'sport',t:'u16'}, {n:'dport',t:'u16'}, {n:'len',t:'u16',calc:'_len'},
     {n:'csum',t:'u16',fmt:'hex',calc:'inet16',pseudo:{proto:17},zeroFF:true,optional:true},
-    {n:'data',t:'rest'}]},
+    {n:'data',t:'rest',sub:{by:'dport',map:{4729:'gsmtap'}}}]},
   tcp:{ title:'TCP', group:'Network', fields:[
     {n:'sport',t:'u16'}, {n:'dport',t:'u16'}, {n:'seq',t:'u32'}, {n:'ack',t:'u32'},
     {n:'off',t:'bits',w:4,calc:'data.$off/4'}, {n:'rsv',t:'bits',w:3},
@@ -194,19 +194,6 @@ Object.assign(HEX_LIB,{
     {n:'ns',t:'bytes',len:10,when:'uuid==65194 && etype==0 && _left>=16'}, {n:'inst',t:'bytes',len:6,when:'uuid==65194 && etype==0 && _left>=6'},
     {n:'scheme',t:'u8',when:'uuid==65194 && etype==16 && _left>0',enum:{0:'http://www.',1:'https://www.',2:'http://',3:'https://'}},
     {n:'url',t:'str',len:'rest',when:'uuid==65194 && etype==16'},
-    {n:'rest',t:'bytes',len:'_left'}]},
-
-  /* ---------- GSM: L2-сообщение BCCH (23 байта после деперемежения и FIRE CRC), TS 44.018 ---------- */
-  'gsm-l2':{ title:'GSM BCCH L2 message (System Information)', group:'GSM', fields:[
-    {n:'li',t:'bits',w:6}, {n:'m',t:'bits',w:1}, {n:'el',t:'bits',w:1},
-    {n:'skip',t:'bits',w:4}, {n:'pd',t:'bits',w:4,enum:{6:'RR'}},
-    {n:'mt',t:'u8',fmt:'hex',enum:{0:'SI13',2:'SI2bis',3:'SI2ter',7:'SI2quater',25:'SI1',26:'SI2',27:'SI3',28:'SI4'}},
-    {n:'ci',t:'u16',when:'mt==27'},
-    {n:'plmn',t:'bytes',fmt:'plmn',when:'mt==27 || mt==28'}, {n:'lac',t:'u16',when:'mt==27 || mt==28'},
-    {n:'ctrl',t:'bytes',len:3,when:'mt==27'}, {n:'copt',t:'u8',fmt:'hex',when:'mt==27'},
-    {n:'csel',t:'bytes',len:2,when:'mt==27 || mt==28'},
-    {n:'freqs',t:'bytes',len:16,when:'mt==25 || mt==26'}, {n:'ncc',t:'u8',fmt:'hex',when:'mt==26'},
-    {n:'rach',t:'bytes',len:3,when:'mt==25 || mt==26 || mt==27 || mt==28'},
     {n:'rest',t:'bytes',len:'_left'}]},
 
   /* ---------- M17 (M17 Specification v2) ---------- */

@@ -10,7 +10,7 @@ const files=[...worker.match(/importScripts\((.*)\);/)[1].matchAll(/'([^']+)'/g)
 const ctx=vm.createContext({console,Math,Float32Array,Float64Array,Uint8Array,Uint16Array,Uint32Array,Int8Array,Int16Array,Int32Array,Map,Set,Date,JSON,Array,Object,String,Number,parseInt,parseFloat,isFinite,isNaN,Symbol,Promise,BigInt,DataView,WebAssembly,atob,ArrayBuffer,TextEncoder,TextDecoder,Error});
 ctx.self=ctx;
 for(const f of files) vm.runInContext(fs.readFileSync(path.join(root,f),'utf8'),ctx,{filename:f});
-for(const f of ['hex-kernels.js','hex-formats.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
+for(const f of ['hex-kernels.js','hex-formats.js','hex-gsm.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
 const ev=s=>vm.runInContext(s,ctx);
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -151,6 +151,63 @@ let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else
   ok('dmr-pi schema: CRC with the 0x6969 mask',((pi.bytes[10]<<8)|pi.bytes[11])===(ev('dmrCrc16(pib,10)')^0x6969) && ev('hexParse("dmr-pi",pib)').ok,Array.from(pi.bytes).map(x=>x.toString(16)).join(' ')+' '+JSON.stringify(pi.warn));
   let thr=false; try{ ev('dmrSigBurst("CSBK",Uint8Array.from([1,2,3]),1)'); }catch(e){ thr=true; }
   ok('dmr burst rejects short input',thr);
+}
+
+// GSM, полный разбор: схема gsm-l2 против функций самого декодера (gsmDecodeCtrlCh / CellOpt / CellSel / Rach / FreqList / Cbch / Si13 / Si2quater)
+{
+  const P=(s)=>ev(`hexParse("gsm-l2",Uint8Array.from(${JSON.stringify(s)}))`);
+  const si3=[0x59,0x06,0x1b, 0x12,0x34, 0x52,0xf0,0x10, 0x01,0xf4, 0x45,0x2a,0x0b, 0x56, 0x2a,0x3b, 0x66,0xff,0xfe, 0x2b,0x2b,0x2b,0x2b];
+  ctx.si3b=si3;
+  const p=P(si3), v=p.vals, dc=ev('gsmDecodeCtrlCh(si3b,10)'), dopt=ev('gsmDecodeCellOpt(si3b,13)'), dsel=ev('gsmDecodeCellSel(si3b,14)'), dr=ev('gsmDecodeRach(si3b,16)');
+  ok('gsm si3 control channel: schema agrees with the decoder',!!v.mscr===dc.mscr && !!v.att===dc.att && v.bs_ag_blks_res===dc.bsAgBlksRes && v.ccch_conf===dc.ccchConf && v.cbq3===dc.cbq3 && +v.bs_pa_mfrms+2===dc.bsPaMfrms && v.t3212*6===dc.t3212min,JSON.stringify([dc,v]));
+  ok('gsm si3 cell options and selection agree',!!v.pwrc===dopt.pwrc && v.dtx===dopt.dtx && (+v.radio_link_timeout+1)*4===dopt.radioLinkTimeout && v.cell_reselect_hyst*2===dsel.cellReselectHyst && v.ms_txpwr_max_cch===dsel.msTxpwrMaxCch && !!v.acs===dsel.acs && !!v.neci===dsel.neci && v.rxlev_access_min===dsel.rxlevAccessMin,JSON.stringify([dopt,dsel,v]));
+  ok('gsm si3 RACH agrees',[1,2,4,7][v.max_retrans]===dr.maxRetrans && [3,4,5,6,7,8,9,10,11,12,14,16,20,25,32,50][v.tx_integer]===dr.txInteger && !!v.cell_barred===dr.cellBarred && (v.re_allowed===0)===dr.reAllowed && v.access_classes===dr.acc,JSON.stringify([dr,v]));
+  ok('gsm si3 rest octets summary is produced',typeof v.rest3==='string' && v.rest3.length>0,v.rest3);
+  // списки частот: bitmap0 и range512
+  const fl=[0x59,0x06,0x19, 0x04,0xa5,0x5a,0x01,0,0,0,0,0,0,0,0,0,0,0,0, 0x66,0xff,0xfe, 0x00];
+  ctx.si1b=fl; const f1=P(fl), d1=ev('gsmDecodeFreqList(si1b,3,16)');
+  ok('gsm si1 frequency list text lists the decoder ARFCNs',d1.arfcns.length>3 && f1.vals.freqs.startsWith(d1.format+': ') && d1.arfcns.every(a=>f1.vals.freqs.includes(String(a)) || /–/.test(f1.vals.freqs)),f1.vals.freqs+' | '+d1.arfcns.join(','));
+  ok('gsm si1 schema layout',f1.vals.mt===25 && f1.fields.find(f=>f.n==='freqs').bl===128 && f1.vals.max_retrans!==undefined && f1.ok,JSON.stringify(f1.vals));
+  // SI4 с описанием CBCH (IEI 0x64) против gsmDecodeCbch
+  const si4=[0x31,0x06,0x1c, 0x25,0xf0,0x11, 0x00,0x7b, 0x2a,0x3b, 0x04,0x05,0x06, 0x64, 0x25,0x23,0x45, 0x2b,0x2b,0x2b,0x2b,0x2b];
+  ctx.si4b=si4; const p4=P(si4), v4=p4.vals, dcb=ev('gsmDecodeCbch(si4b,13)');
+  ok('gsm si4 CBCH description agrees with the decoder',dcb.present && v4.tag===0x64 && v4.cbch_tn===dcb.tn && v4.cbch_tsc===dcb.tsc && v4.cbch_hop===(dcb.hopping?1:0) && v4.cbch_arfcn===dcb.arfcn && /SDCCH\/4/.test(p4.fields.find(f=>f.n==='cbch_chan').text),JSON.stringify([dcb,v4]));
+  // SI13 и SI2quater: текстовые сводки на тех же байтах, что видит декодер
+  const si13=[0x01,0x06,0x00, 0xA4,0x5E,0x12,0x34,0x56,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b];
+  ctx.s13b=si13; const dd=ev('gsmDecodeSi13(s13b)'), pp=P(si13);
+  ok('gsm si13 summary reflects the decoder result',pp.vals.mt===0 && typeof pp.vals.si13==='string' && pp.vals.si13.includes('BCCH change mark '+dd.bcchChangeMark) && pp.vals.si13.includes('SI change field '+dd.siChangeField),pp.vals.si13+' | '+JSON.stringify(dd));
+  const sq=[0x01,0x06,0x07, 0x00,0x00,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b];
+  const ps=P(sq);
+  ok('gsm si2quater summary is produced',ps.vals.mt===7 && /BA_IND/.test(ps.vals.si2q),ps.vals.si2q);
+  // paging, immediate assignment: собранные из полей сообщения читаются обратно
+  const pg=ev(`hexBuild("gsm-l2",{li:22,m:0,el:1,skip:0,pd:6,mt:33,cneed2:1,cneed1:2,page_mode:0,mi1len:5,mi1:"f4a1b2c3d4",rest:""})`);
+  const pgp=ev('hexParse("gsm-l2",Uint8Array.from('+JSON.stringify(Array.from(pg.bytes))+'))');
+  ok('gsm paging request 1: TMSI shown',pgp.vals.mt===33 && pgp.vals.mi1==='TMSI a1b2c3d4' && pgp.vals.page_mode===0,JSON.stringify(pgp.vals));
+  const ia=ev(`hexBuild("gsm-l2",{li:21,m:0,el:1,skip:0,pd:6,mt:63,dedicated_mode:0,ia_page_mode:0,ia_chan:8,ia_tn:3,ia_tsc:2,ia_hop:0,ia_arfcn:513,ra:0x4a,t1:3,t3:20,t2:7,timing_advance:1,malen:0})`);
+  const iap=ev('hexParse("gsm-l2",Uint8Array.from('+JSON.stringify(Array.from(ia.bytes))+'))');
+  ok('gsm immediate assignment: channel, ARFCN, request reference',iap.vals.ia_arfcn===513 && iap.vals.ia_tn===3 && iap.vals.ra===0x4a && iap.vals.t3===20 && iap.vals.timing_advance===1,JSON.stringify(iap.vals));
+  // IMSI в Mobile Identity
+  ok('gsm mobile identity: IMSI digits',ev('HEX_FMT_EXT["gsm-mi"](Uint8Array.from([0x29,0x52,0x00,0x10,0x32,0x54,0x76,0x98]))')==='IMSI 225000123456789',ev('HEX_FMT_EXT["gsm-mi"](Uint8Array.from([0x29,0x52,0x00,0x10,0x32,0x54,0x76,0x98]))'));
+  // CBCH: блок и страница; текст GSM7 против gsmCbsParse декодера
+  const text='Test alert: take cover! € [ok]', page=new Uint8Array(88);
+  const sn=(1<<14)|(321<<4)|2; page[0]=sn>>8; page[1]=sn&255; page[2]=0x11; page[3]=0x2d; page[4]=0x0f; page[5]=0x12;
+  page.set(ev(`HEX_UNFMT_EXT.gsm7(${JSON.stringify(text)},82)`),6);
+  ctx.pg=page; const dcbs=ev('gsmCbsParse(pg)'), pcb=ev('hexParse("gsm-cbs",pg)');
+  ok('gsm CBS page: GSM7 text equals the decoder text',pcb.vals.text===dcbs.text && dcbs.text===text && pcb.vals.msg_id===dcbs.msgId && pcb.vals.msg_code===dcbs.serial.msgCode && pcb.vals.update===dcbs.serial.updateNum && pcb.vals.gs===dcbs.serial.gs,JSON.stringify([pcb.vals,dcbs]));
+  ctx.cbl=Uint8Array.from([0x20|0x10|2,...new Array(22).fill(0x41)]);
+  const bl=ev('hexParse("gsm-cbch-block",cbl)'), dh=ev('gsmCbchHeader(cbl[0])');
+  ok('gsm CBCH block header agrees',bl.vals.lpd===dh.lpd && !!bl.vals.lb===dh.lb && bl.vals.seq===dh.seq && bl.vals.data.length===44,JSON.stringify([bl.vals.lpd,bl.vals.lb,bl.vals.seq,dh]));
+  // GSMTAP в UDP в IPv4 в Ethernet: полный путь до SI3
+  const gt=[2,4,1,0, 0x00,0x3c, 0xd2,0x05, 0,0,0x12,0x34, 1,0,0,0, ...si3];
+  const fr=ev(`hexBuild("eth",{dst:"ff:ff:ff:ff:ff:ff",src:"00:11:22:33:44:55",type:"IPv4","payload.ver":4,"payload.ttl":64,"payload.proto":"UDP","payload.src":"127.0.0.1","payload.dst":"127.0.0.1","payload.payload.sport":4000,"payload.payload.dport":4729,"payload.payload.data":"${gt.map(x=>x.toString(16).padStart(2,'0')).join('')}"})`);
+  const fp=ev('hexParse("eth",Uint8Array.from('+JSON.stringify(Array.from(fr.bytes))+'))');
+  ok('GSMTAP over UDP: ARFCN, channel, and the SI3 inside',fp.ok && fp.vals['payload.payload.data.arfcn']===60 && fp.vals['payload.payload.data.sub_type']===1 && fp.vals['payload.payload.data.payload.mt']===27 && fp.vals['payload.payload.data.payload.ci']===0x1234,JSON.stringify(Object.entries(fp.vals).filter(([k])=>k.includes('data.')).slice(0,12)));
+  // pcap: Linux cooked и loopback
+  const ip=Array.from(ev('hexBuild("ipv4",{ver:4,ttl:64,proto:"UDP",src:"1.1.1.1",dst:"2.2.2.2","payload.sport":1,"payload.dport":4729,"payload.data":"'+gt.map(x=>x.toString(16).padStart(2,'0')).join('')+'"}).bytes'));
+  const sll=ev('hexParse("sll",Uint8Array.from('+JSON.stringify([0,0,0,1,0,6,0,0,0,0,0,0,0,0,8,0,...ip])+'))');
+  ok('pcap Linux cooked: IPv4 → UDP → GSMTAP',sll.ok && sll.vals.proto===2048 && sll.vals['payload.payload.data.arfcn']===60,JSON.stringify(Object.keys(sll.vals).slice(0,12)));
+  const lo=ev('hexParse("null",Uint8Array.from('+JSON.stringify([2,0,0,0,...ip])+'))');
+  ok('pcap loopback: IPv4 → UDP → GSMTAP',lo.ok && lo.vals['payload.payload.data.sub_type']===1);
 }
 console.log(bad ? bad+' failed' : 'all ok');
 process.exit(bad?1:0);
