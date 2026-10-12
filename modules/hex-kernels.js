@@ -8,7 +8,7 @@
    t: u8…u64 / i8…i64 (кратно 8 бит), f32 f64, bits (w бит), bytes (len), str (len, enc), rest, list, pad
    endian: 'be' | 'le' (поле или схема); bitorder схемы: 'msb' (первый бит — старший) | 'lsb' (802.11)
    len, count, when, e — выражения над ранее разобранными полями: (ihl-5)*4, type==0 && subtype==8
-     имена: поле, sub.поле, список[0].поле; поле.off / поле.len — смещение (от начала схемы) и длина в байтах;
+     имена: поле, sub.поле, список[0].поле; поле.$off / поле.$len — смещение (от начала схемы) и длина в байтах;
      _left — осталось байт (при разборе), _len — размер схемы в байтах (в calc)
    calc: 'crc16-x25' | 'crc32' | 'inet16' | 'xor8' | 'sum8' | …  — контрольная сумма (from / to / over:'all')
          любая другая строка — выражение, значение пересчитывается при сборке (длины, ihl)
@@ -26,7 +26,7 @@ const HEX_OPS={
 const HEX_PREC=[['||'],['&&'],['|'],['^'],['&'],['==','!='],['<','<=','>','>='],['<<','>>'],['+','-'],['*','/','%']];
 function hexExpr(src){
   let f=HEX_EXPR.get(src); if(f) return f;
-  const T=String(src).match(/0x[0-9a-f]+|\d+|[A-Za-z_][\w.\[\]]*|<<|>>|<=|>=|==|!=|&&|\|\||[-+*\/%&|^~!<>?:()]/gi)||[];
+  const T=String(src).match(/0x[0-9a-f]+|\d+|[A-Za-z_][\w.\[\]$]*|<<|>>|<=|>=|==|!=|&&|\|\||[-+*\/%&|^~!<>?:()]/gi)||[];
   let i=0;
   const prim=()=>{
     const t=T[i++];
@@ -250,8 +250,8 @@ function hexLookup(c,prefix,ss,se){
     const dot=name.lastIndexOf('.');
     if(dot>0){
       const base=hexNames(c,prefix,name.slice(0,dot)), r=base && c.byName[base], what=name.slice(dot+1);
-      if(r && what==='off') return (r.b0>>3)-ss;
-      if(r && what==='len') return (r.bl+7)>>3;
+      if(r && what==='$off') return (r.b0>>3)-ss;
+      if(r && what==='$len') return (r.bl+7)>>3;
     }
     return undefined;
   };
@@ -495,7 +495,18 @@ function hexCalcFields(c){
             src=Array.from(data.subarray ? data.subarray(0,e) : data.slice(0,e));
             for(let i=0;i<(r.bl+7)>>3;i++) src[(r.b0>>3)+i]=0;
           }
-          val=sum.f(src,a,e);
+          if(f.pseudo){                                       // UDP / TCP / ICMPv6: псевдозаголовок IP из src и dst родителя
+            const g=n=>{ const k=hexNames(c,r.prefix,n); return k && c.byName[k] && c.byName[k].raw; };
+            const sa=g('src'), da=g('dst');
+            if(!sa || !da) throw new Error('no src / dst of the IP header');
+            const L=r.se-r.ss, pr=f.pseudo.proto;
+            const all=Array.from(sa).concat(Array.from(da), sa.length===16 ? [0,0,(L>>8)&255,L&255,0,0,0,pr] : [0,pr,(L>>8)&255,L&255]);
+            const body=Array.from(data.subarray ? data.subarray(r.ss,r.se) : data.slice(r.ss,r.se));
+            for(let i=0;i<(r.bl+7)>>3;i++) body[(r.b0>>3)-r.ss+i]=0;
+            const m=all.concat(body);
+            val=sum.f(m,0,m.length);
+            if(f.zeroFF && val===0) val=0xFFFF;
+          } else val=sum.f(src,a,e);
         } else {
           const env=hexLookup(c,r.prefix,r.ss,r.se);
           val=hexExpr(String(calc))(env);
@@ -509,7 +520,7 @@ function hexCalcFields(c){
         r.text=hexNumText(val,r.bl,f);
       } else {
         r.calcExpect=val;
-        r.calcOk=Number(val)===Number(r.value);
+        r.calcOk=Number(val)===Number(r.value) || !!(f.optional && Number(r.value)===0);
         if(sum && !r.calcOk) r.warn='checksum: expected 0x'+Number(val).toString(16).toUpperCase().padStart(sum.w/4,'0');
         else if(!sum && !r.calcOk) r.warn='expected '+val;
       }
@@ -569,4 +580,23 @@ function hexDump(d,width,from,to){
     L.push(i.toString(16).padStart(4,'0')+'  '+Array.from(row,hexByte).join(' ').padEnd(width*3-1)+'  '+hexFmtBytes(row,'ascii'));
   }
   return L.join('\n');
+}
+
+// схема по содержимому: перебирает схемы с полем detect (выражение над разобранными полями и _size)
+function hexDetect(data,lib){
+  lib=lib||HEX_LIB;
+  if(!(data instanceof Uint8Array)) data=Uint8Array.from(data);
+  let first=null;
+  for(const name in lib){
+    const s=lib[name];
+    if(!s || !s.detect) continue;
+    let res; try{ res=hexParse(s,data,{lib}); }catch(e){ continue; }
+    if(res.trunc) continue;
+    let ok=false;
+    try{ ok=!!hexExpr(s.detect)(k=>k==='_size' ? data.length : res.vals[k]); }catch(e){}
+    if(!ok) continue;
+    if(res.ok) return name;
+    if(first===null) first=name;
+  }
+  return first;
 }
