@@ -161,6 +161,14 @@ Object.assign(HEX_LIB,{
     {n:'flag',t:'bits',w:1}, {n:'data',t:'bits',w:20,fmt:'hex'},
     {n:'bch',t:'bits',w:10,fmt:'hex',calc:'pocsag-bch'}, {n:'par',t:'bits',w:1,calc:'parity32'}]},
 
+  /* ---------- ACARS (VHF), блок без битов чётности + BCS ---------- */
+  acars:{ title:'ACARS block', group:'Aviation', endian:'le', fields:[
+    {n:'mode',t:'str',len:1}, {n:'reg',t:'str',len:7}, {n:'ack',t:'u8',fmt:'hex'}, {n:'label',t:'str',len:2}, {n:'blk',t:'u8',fmt:'hex'},
+    {n:'stx',t:'u8',fmt:'hex',when:'_left>3'},
+    {n:'msgno',t:'str',len:4,when:'_left>3 && blk>=48 && blk<=57'}, {n:'flight',t:'str',len:6,when:'_left>3 && blk>=48 && blk<=57'},
+    {n:'text',t:'str',len:'_left>3 ? _left-3 : 0',when:'_left>3'},
+    {n:'end',t:'u8',fmt:'hex',enum:{3:'ETX',23:'ETB'}}, {n:'bcs',t:'u16',fmt:'hex'}]},
+
   /* ---------- Для проверки и примеров ---------- */
   'esp-pkt':{ title:'ESP32 sniffer record', group:'Wi-Fi', endian:'le', fields:[
     {n:'rssi',t:'i8',fmt:'dbm'}, {n:'chan',t:'u8'}, {n:'len',t:'u16'},
