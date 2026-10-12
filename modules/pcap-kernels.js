@@ -4,7 +4,7 @@
    pcapRead(байты) → {linktype, packets:[{t, data, orig, link}]}; pcapWrite(пакеты, linktype) → байты.
    linktype → схема HEX Structure: PCAP_SCHEMA. Проверка: node tools/test-hex.mjs */
 
-const PCAP_SCHEMA={1:'eth', 101:'auto', 105:'wifi', 127:'radiotap', 228:'ipv4', 229:'ipv6'};
+const PCAP_SCHEMA={0:'null', 1:'eth', 101:'auto', 105:'wifi', 108:'null', 113:'sll', 127:'radiotap', 228:'ipv4', 229:'ipv6'};
 function pcapRead(d,max){
   max=max||20000;
   if(!(d instanceof Uint8Array)) d=Uint8Array.from(d);

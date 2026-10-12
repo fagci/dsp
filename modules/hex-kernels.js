@@ -153,6 +153,7 @@ const hexNorm=v=>typeof v==='bigint' && v>=-9007199254740991n && v<=900719925474
 
 /* ---------- форматы значений ---------- */
 const HEX_M17CS=' ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/.';
+const HEX_FMT_EXT={}, HEX_UNFMT_EXT={};                          // форматы, добавленные другими файлами (hex-gsm.js): имя → функция
 const HEX_FIXED={mac:6, ipv4:4, ipv6:16, plmn:3, m17call:6};
 const hexByte=b=>b.toString(16).padStart(2,'0');
 function hexToHex(b){ let s=''; for(const x of b) s+=hexByte(x); return s; }
@@ -183,13 +184,14 @@ function hexFmtBytes(b,fmt){
       return t; }
     case 'ascii': return Array.from(b,x=>x>=32&&x<127 ? String.fromCharCode(x) : '.').join('');
     case 'bcd': return Array.from(b,hexByte).join('');
-    default: return hexToHex(b);
+    default: return HEX_FMT_EXT[fmt] ? HEX_FMT_EXT[fmt](b) : hexToHex(b);
   }
 }
 function hexUnfmtBytes(v,fmt,len){
   if(v instanceof Uint8Array) return v;
   if(Array.isArray(v)) return Uint8Array.from(v);
   v=String(v);
+  if(HEX_UNFMT_EXT[fmt]) return HEX_UNFMT_EXT[fmt](v,len);
   if(fmt==='ipv4') return Uint8Array.from(v.split('.').map(x=>(+x)&255));
   if(fmt==='ipv6'){
     const [a,b]=v.split('::'), pa=a ? a.split(':') : [], pb=b!==undefined && b ? b.split(':') : [];
@@ -213,8 +215,8 @@ function hexUnfmtBytes(v,fmt,len){
   if(fmt==='ascii') return Uint8Array.from(v,ch=>ch.charCodeAt(0)&255);
   return hexFromHex(v);
 }
-const hexEncStr=(s,enc)=>enc==='utf8' ? new TextEncoder().encode(s) : Uint8Array.from(s,c=>c.charCodeAt(0)&255);
-const hexDecStr=(b,enc)=>enc==='utf8' ? new TextDecoder().decode(b) : Array.from(b,x=>String.fromCharCode(x)).join('');
+const hexEncStr=(s,enc)=>enc==='utf8' ? new TextEncoder().encode(s) : enc==='ucs2' ? Uint8Array.from(Array.from(s).flatMap(c=>[c.charCodeAt(0)>>8,c.charCodeAt(0)&255])) : Uint8Array.from(s,c=>c.charCodeAt(0)&255);
+const hexDecStr=(b,enc)=>enc==='utf8' ? new TextDecoder().decode(b) : enc==='ucs2' ? Array.from({length:b.length>>1},(_,i)=>String.fromCharCode((b[2*i]<<8)|b[2*i+1])).join('') : Array.from(b,x=>String.fromCharCode(x)).join('');
 
 function hexFmtInt(v,w,fmt){
   switch(fmt){
