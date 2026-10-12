@@ -308,6 +308,7 @@ const PRESET_CATS={
   'Bytes: File over Any Text Channel (Loopback)':'Network & IoT',
   'Hex: Parse a Packet (Ethernet / IPv4 / UDP)':'Network & IoT',
   'Hex: Table Rows → Packets → Table':'Network & IoT',
+  'Hex: PCAP File → Packets → HEX Structure':'Network & IoT',
   'Wi-Fi: ESP32 Sniffer → Table and HEX Structure':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
@@ -4560,6 +4561,22 @@ hx.size.w=460; hx.size.h=520; applySize(hx);
 const t2=addNode('table',920,200,{list:'@patch',data:''});
 t2.size.w=320; t2.size.h=300; applySize(t2);
 addEdge(t1.id,'rec',hx.id,'rec'); addEdge(hx.id,'rec',t2.id,'rec');
+markWiresDirty();
+});
+preset('Hex: PCAP File → Packets → HEX Structure', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Open a .pcap / .pcapng file (File → Bytes → Choose file): PCAP Reader turns it into records, one packet per record (hex, link type, time), at the set rate or all at once. HEX Structure picks the structure by the content (auto) or by the link type: Ethernet, 802.11, radiotap. The Table keeps the list of packets; click a row to see its fields.\n'+
+  'PCAP Writer does the opposite: records with a hex field (Wi-Fi Sniffer, DMR and ADS-B decoders, HEX Structure) become a .pcap file for Wireshark (Save → Bytes → File).'});
+nt.size.w=860; nt.size.h=130; applySize(nt);
+const fl=addNode('binFile',40,200,{});
+fl.size.w=300; fl.size.h=200; applySize(fl);
+const pr=addNode('pcapRead',380,200,{rate:2});
+pr.size.w=300; pr.size.h=200; applySize(pr);
+const tb=addNode('table',720,200,{list:'@patch',data:''});
+tb.size.w=380; tb.size.h=340; applySize(tb);
+const hx=addNode('hexStruct',1140,200,{schema:'auto'});
+hx.size.w=460; hx.size.h=520; applySize(hx);
+addEdge(fl.id,'bin',pr.id,'bin'); addEdge(pr.id,'rec',tb.id,'rec'); addEdge(pr.id,'rec',hx.id,'rec');
 markWiresDirty();
 });
 preset('Wi-Fi: ESP32 Sniffer → Table and HEX Structure', function(){

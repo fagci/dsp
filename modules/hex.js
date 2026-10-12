@@ -10,6 +10,11 @@ const hxObj=(d,name)=>typeof binObj==='function' ? binObj(d,name||'','') : {d,na
 // схема узла: из JSON-редактора, если он заполнен, иначе из списка. Возвращает {sch, lib, err}
 function hxResolve(n){
   const txt=String(n.p.json||'').trim();
+  if(!txt && n.p.schema==='auto'){                      // схема по содержимому
+    const name=hexDetect(n.buf)||'raw';
+    n.autoName=name;
+    return {sch:hexSchema(name),lib:HEX_LIB,err:'',name};
+  }
   if(n._jsonSrc===txt && n._jsonRes && n._jsonSel===n.p.schema) return n._jsonRes;
   let res;
   try{
@@ -36,6 +41,7 @@ function hxParseNow(n){
   const r=hxResolve(n);
   n.err=r.err;
   n.res=hexParse(r.sch,n.buf,{lib:r.lib});
+  if(r.name) n.res.schema=r.name;
   n.recOut=hexToRec(n.res);
   n.dirty=false; n.uiDirty=true;
 }
@@ -68,7 +74,7 @@ def({ id:'hexStruct', title:'HEX Structure', cat:'Data', kw:'hex bytes packet pa
   ins:[{n:'bin',t:'bin'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'go',t:'num'}],
   outs:[{n:'bin',t:'bin'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'ok',t:'num'},{n:'len',t:'num'},{n:'new',t:'num'}],
   params:[
-    {n:'schema',t:'select',opts:()=>Object.keys(HEX_LIB),d:'eth',label:'structure'},
+    {n:'schema',t:'select',opts:()=>['auto',...Object.keys(HEX_LIB)],d:'auto',label:'structure (auto — by the content)'},
     {n:'width',adv:true,t:'select',opts:['8','16','24','32'],d:'16',label:'bytes per row'},
     {n:'group',adv:true,t:'select',opts:['1','2','4'],d:'1',label:'group bytes'},
     {n:'emitEdit',adv:true,t:'check',d:true,label:'send the packet on edit'},
@@ -108,7 +114,7 @@ def({ id:'hexStruct', title:'HEX Structure', cat:'Data', kw:'hex bytes packet pa
       n.lastRec=rec;
       const hx=rec[n.p.hexcol||'hex'], mode=n.p.recMode;
       if(mode!=='build' && typeof hx==='string' && /^[0-9a-f\s]+$/i.test(hx)){      // запись декодера: байты кадра в поле hex
-        if(n.p.autoSchema && HEX_LIB[rec.hexSchema] && n.p.schema!==rec.hexSchema){
+        if(n.p.autoSchema && (HEX_LIB[rec.hexSchema] || rec.hexSchema==='auto') && n.p.schema!==rec.hexSchema){
           n.p.schema=rec.hexSchema; if(n.set?.schema) n.set.schema(rec.hexSchema); }
         hxSetBuf(n,hexFromHex(hx),true);
       } else if(mode!=='parse'){
@@ -273,3 +279,7 @@ function hxRender(n){
   const rt=name+' · '+buf.length+' B · '+(res.ok&&!n.err ? 'ok' : 'check');
   if(r && r.textContent!==rt) r.textContent=rt;
 }
+
+// HEX View: тот же дамп без схемы — любые байты с шины bin / text
+def({ ...MOD.hexStruct, id:'hexView', title:'HEX View', kw:'hex bytes dump view editor binary raw',
+  params:MOD.hexStruct.params.filter(p=>['width','group','emitEdit','hex'].includes(p.n)).concat([{n:'schema',t:'text',d:'raw',hidden:true}]) });

@@ -8,7 +8,7 @@
 // ?v=N-запросы отдаются из кэша без обращения к сети (cache-first), поэтому любая правка файла требует бампа V.
 // CACHE бампать вместе с ?v=N в index.html (const V и ссылка на styles.css; tools/test-version.mjs следит) — иначе после правки файлов старый список ссылок
 // (со старым ?v=) продолжит переустанавливаться поверх уже закэшированного нового.
-const CACHE='dsp-shell-v308';
+const CACHE='dsp-shell-v310';
 const V=CACHE.replace(/\D/g,'');                 // ?v=N берётся из имени кэша — бампать только CACHE и V в index.html
 const SHELL=[
   './',
@@ -167,6 +167,8 @@ const SHELL=[
   './modules/hex.js?v='+V,
   './modules/wifisniff-kernels.js?v='+V,
   './modules/wifisniff.js?v='+V,
+  './modules/pcap-kernels.js?v='+V,
+  './modules/pcap.js?v='+V,
   './modules/meshtastic-kernels.js?v='+V,
   './modules/meshtastic.js?v='+V,
   './modules/odid-kernels.js?v='+V,

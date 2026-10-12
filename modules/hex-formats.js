@@ -5,16 +5,16 @@
 
 Object.assign(HEX_LIB,{
   /* ---------- Ethernet / IP ---------- */
-  eth:{ title:'Ethernet II', group:'Network', fields:[
+  eth:{ title:'Ethernet II', group:'Network', detect:'_size>=14 && (type==2048 || type==2054 || type==34525)', fields:[
     {n:'dst',t:'bytes',fmt:'mac'}, {n:'src',t:'bytes',fmt:'mac'},
     {n:'type',t:'u16',fmt:'hex',enum:{2048:'IPv4',2054:'ARP',34525:'IPv6',33024:'VLAN'}},
     {n:'payload',t:'rest',sub:{by:'type',map:{2048:'ipv4',2054:'arp',34525:'ipv6'}}}]},
-  arp:{ title:'ARP', group:'Network', fields:[
+  arp:{ title:'ARP', group:'Network', detect:'htype==1 && ptype==2048 && hlen==6 && plen==4 && _size==28', fields:[
     {n:'htype',t:'u16'}, {n:'ptype',t:'u16',fmt:'hex'}, {n:'hlen',t:'u8'}, {n:'plen',t:'u8'},
     {n:'op',t:'u16',enum:{1:'request',2:'reply'}},
     {n:'sha',t:'bytes',fmt:'mac'}, {n:'spa',t:'bytes',fmt:'ipv4'}, {n:'tha',t:'bytes',fmt:'mac'}, {n:'tpa',t:'bytes',fmt:'ipv4'}]},
-  ipv4:{ title:'IPv4', group:'Network', fields:[
-    {n:'ver',t:'bits',w:4}, {n:'ihl',t:'bits',w:4,calc:'payload.off/4'},
+  ipv4:{ title:'IPv4', group:'Network', detect:'ver==4 && ihl>=5 && len==_size', fields:[
+    {n:'ver',t:'bits',w:4}, {n:'ihl',t:'bits',w:4,calc:'payload.$off/4'},
     {n:'dscp',t:'bits',w:6}, {n:'ecn',t:'bits',w:2},
     {n:'len',t:'u16',calc:'_len'}, {n:'id',t:'u16',fmt:'hex'},
     {n:'flags',t:'bits',w:3,flags:{1:'MF',2:'DF'}}, {n:'frag',t:'bits',w:13},
@@ -23,26 +23,30 @@ Object.assign(HEX_LIB,{
     {n:'src',t:'bytes',fmt:'ipv4'}, {n:'dst',t:'bytes',fmt:'ipv4'},
     {n:'opts',t:'bytes',len:'ihl>5 ? (ihl-5)*4 : 0'},
     {n:'payload',t:'rest',sub:{by:'proto',map:{1:'icmp',6:'tcp',17:'udp'}}}]},
-  ipv6:{ title:'IPv6', group:'Network', fields:[
+  ipv6:{ title:'IPv6', group:'Network', detect:'ver==6 && plen+40==_size', fields:[
     {n:'ver',t:'bits',w:4}, {n:'tc',t:'bits',w:8}, {n:'flow',t:'bits',w:20,fmt:'hex'},
-    {n:'plen',t:'u16'}, {n:'next',t:'u8',enum:{6:'TCP',17:'UDP',58:'ICMPv6'}}, {n:'hop',t:'u8'},
+    {n:'plen',t:'u16',calc:'payload.$len'}, {n:'next',t:'u8',enum:{6:'TCP',17:'UDP',58:'ICMPv6'}}, {n:'hop',t:'u8'},
     {n:'src',t:'bytes',fmt:'ipv6'}, {n:'dst',t:'bytes',fmt:'ipv6'},
-    {n:'payload',t:'rest',sub:{by:'next',map:{6:'tcp',17:'udp'}}}]},
+    {n:'payload',t:'rest',sub:{by:'next',map:{6:'tcp',17:'udp',58:'icmpv6'}}}]},
   udp:{ title:'UDP', group:'Network', fields:[
-    {n:'sport',t:'u16'}, {n:'dport',t:'u16'}, {n:'len',t:'u16',calc:'_len'}, {n:'csum',t:'u16',fmt:'hex'},
+    {n:'sport',t:'u16'}, {n:'dport',t:'u16'}, {n:'len',t:'u16',calc:'_len'},
+    {n:'csum',t:'u16',fmt:'hex',calc:'inet16',pseudo:{proto:17},zeroFF:true,optional:true},
     {n:'data',t:'rest'}]},
   tcp:{ title:'TCP', group:'Network', fields:[
     {n:'sport',t:'u16'}, {n:'dport',t:'u16'}, {n:'seq',t:'u32'}, {n:'ack',t:'u32'},
-    {n:'off',t:'bits',w:4,calc:'data.off/4'}, {n:'rsv',t:'bits',w:3},
+    {n:'off',t:'bits',w:4,calc:'data.$off/4'}, {n:'rsv',t:'bits',w:3},
     {n:'flags',t:'bits',w:9,flags:{0:'FIN',1:'SYN',2:'RST',3:'PSH',4:'ACK',5:'URG',6:'ECE',7:'CWR',8:'NS'}},
-    {n:'win',t:'u16'}, {n:'csum',t:'u16',fmt:'hex'}, {n:'urg',t:'u16'},
+    {n:'win',t:'u16'}, {n:'csum',t:'u16',fmt:'hex',calc:'inet16',pseudo:{proto:6}}, {n:'urg',t:'u16'},
     {n:'opts',t:'bytes',len:'off>5 ? (off-5)*4 : 0'}, {n:'data',t:'rest'}]},
+  icmpv6:{ title:'ICMPv6', group:'Network', fields:[
+    {n:'type',t:'u8',enum:{1:'unreachable',3:'time exceeded',128:'echo request',129:'echo reply',133:'router solicitation',134:'router advertisement',135:'neighbor solicitation',136:'neighbor advertisement'}},
+    {n:'code',t:'u8'}, {n:'csum',t:'u16',fmt:'hex',calc:'inet16',pseudo:{proto:58}}, {n:'body',t:'rest'}]},
   icmp:{ title:'ICMP', group:'Network', fields:[
     {n:'type',t:'u8',enum:{0:'echo reply',3:'unreachable',8:'echo request',11:'time exceeded'}}, {n:'code',t:'u8'},
     {n:'csum',t:'u16',fmt:'hex',calc:'inet16'}, {n:'body',t:'rest'}]},
 
   /* ---------- Wi-Fi (IEEE 802.11, кадр как есть: порядок бит LSB, little-endian) ---------- */
-  wifi:{ title:'802.11 frame', group:'Wi-Fi', endian:'le', bitorder:'lsb', fields:[
+  wifi:{ title:'802.11 frame', group:'Wi-Fi', detect:'ver==0 && _size>=10', endian:'le', bitorder:'lsb', fields:[
     {n:'ver',t:'bits',w:2}, {n:'type',t:'bits',w:2,enum:{0:'management',1:'control',2:'data'}}, {n:'subtype',t:'bits',w:4},
     {n:'tods',t:'bits',w:1}, {n:'fromds',t:'bits',w:1}, {n:'morefrag',t:'bits',w:1}, {n:'retry',t:'bits',w:1},
     {n:'pwr',t:'bits',w:1}, {n:'moredata',t:'bits',w:1}, {n:'prot',t:'bits',w:1}, {n:'order',t:'bits',w:1},
@@ -89,7 +93,7 @@ Object.assign(HEX_LIB,{
     {n:'dst',t:'u24'}, {n:'crc',t:'u16',fmt:'hex'}]},
 
   /* ---------- ADS-B / Mode S (112 бит) ---------- */
-  adsb:{ title:'ADS-B / Mode S long', group:'Aviation', fields:[
+  adsb:{ title:'ADS-B / Mode S long', group:'Aviation', detect:'_size==14 && (df==17 || df==18)', fields:[
     {n:'df',t:'bits',w:5,enum:{11:'all-call reply',17:'ADS-B',18:'TIS-B / ADS-R',20:'Comm-B altitude',21:'Comm-B identity'}},
     {n:'ca',t:'bits',w:3}, {n:'icao',t:'bytes',len:3},
     {n:'tc',t:'bits',w:5},
@@ -101,7 +105,7 @@ Object.assign(HEX_LIB,{
     {n:'lat',t:'bits',w:17,when:'tc>=9 && tc<=18'}, {n:'lon',t:'bits',w:17,when:'tc>=9 && tc<=18'},
     {n:'me',t:'bits',w:51,when:'!((tc>=1 && tc<=4) || (tc>=9 && tc<=18))'},
     {n:'pi',t:'bits',w:24,fmt:'hex',calc:'crc24-adsb',to:'pi'}]},
-  'adsb-short':{ title:'Mode S short', group:'Aviation', fields:[
+  'adsb-short':{ title:'Mode S short', group:'Aviation', detect:'_size==7', fields:[
     {n:'df',t:'bits',w:5}, {n:'fs',t:'bits',w:3}, {n:'dr',t:'bits',w:5}, {n:'um',t:'bits',w:6},
     {n:'ac',t:'bits',w:13}, {n:'ap',t:'bits',w:24,fmt:'hex'}]},
 
@@ -143,6 +147,10 @@ Object.assign(HEX_LIB,{
       s6('callsign',7,'type==24 && part==1'), b('bow',9,'type==24 && part==1'), b('stern',9,'type==24 && part==1'),
       b('port',6,'type==24 && part==1'), b('stbd',6,'type==24 && part==1'),
     ]; })()},
+  raw:{ title:'Raw bytes', group:'Other', fields:[{n:'data',t:'rest'}]},
+  radiotap:{ title:'Radiotap + 802.11', group:'Wi-Fi', endian:'le', fields:[
+    {n:'ver',t:'u8'}, {n:'pad',t:'u8'}, {n:'len',t:'u16'}, {n:'hdr',t:'bytes',len:'len-4'},
+    {n:'frame',t:'rest',sub:'wifi'}]},
 
   /* ---------- Для проверки и примеров ---------- */
   'esp-pkt':{ title:'ESP32 sniffer record', group:'Wi-Fi', endian:'le', fields:[

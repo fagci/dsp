@@ -5,8 +5,8 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,DataView,ArrayBuffer,TextEncoder,TextDecoder,Array,Map,Set,Error,String,Number,BigInt,Object,Date,JSON,isNaN,parseInt});
-for(const f of ['hex-kernels.js','hex-formats.js','wifisniff-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
-vm.runInContext('this.H={HexAisAsm,hexAisPayload,wifiLine,wifiRec,hexParse,hexBuild,hexToRec,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
+for(const f of ['hex-kernels.js','hex-formats.js','wifisniff-kernels.js','pcap-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
+vm.runInContext('this.H={HexAisAsm,hexAisPayload,pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,hexParse,hexBuild,hexToRec,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
 const H=ctx.H;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 const hex=s=>H.hexFromHex(s), toHex=b=>H.hexToHex(b);
@@ -148,6 +148,45 @@ const p5=H.hexParse('ais',r5.bytes);
 ok('ais static: name, call sign, destination',p5.vals.type===5 && p5.vals.mmsi===369190000 && p5.vals.callsign==='WDA9674' && p5.vals.name==='MT.MITCHELL' && p5.vals.dest==='SEATTLE',JSON.stringify(p5.vals));
 const b24=H.hexBuild('ais',{type:24,repeat:0,mmsi:123456789,part:0,name:'TESTBOAT'});
 ok('ais 24A build and parse',H.hexParse('ais',b24.bytes).vals.name==='TESTBOAT',toHex(b24.bytes));
+// контрольная сумма UDP / TCP / ICMPv6 с псевдозаголовком (значения посчитаны независимой реализацией на Python)
+const bu=H.hexBuild('eth',vals);
+ok('udp checksum (pseudo header)',bu.vals['payload.payload.csum']===0x12a0,'0x'+(+bu.vals['payload.payload.csum']).toString(16));
+ok('udp checksum validates on parse',H.hexParse('eth',bu.bytes).ok);
+const badu=bu.bytes.slice(); badu[badu.length-1]^=1;
+ok('damaged udp payload flagged',!H.hexParse('eth',badu).ok);
+const u0=bu.bytes.slice(); u0[40]=0; u0[41]=0;
+ok('udp checksum 0 means none',H.hexParse('eth',u0).ok);
+const i6=H.hexBuild('ipv6',{ver:6,next:'ICMPv6',hop:64,src:'::1',dst:'::1','payload.type':128,'payload.code':0,'payload.body':'00010001'});
+ok('icmpv6 checksum',i6.vals['payload.csum']===0x7fb9 && i6.vals.plen===8,'0x'+(+i6.vals['payload.csum']).toString(16)+' plen '+i6.vals.plen);
+ok('ipv6 parses clean',H.hexParse('ipv6',i6.bytes).ok);
+const tc=H.hexBuild('ipv4',{ver:4,ttl:64,proto:'TCP',src:'10.0.0.1',dst:'10.0.0.2','payload.sport':1234,'payload.dport':80,'payload.seq':1,'payload.ack':0,'payload.flags':2,'payload.win':1024});
+ok('tcp header 20 bytes + checksum parses',tc.bytes.length===40 && H.hexParse('ipv4',tc.bytes).ok && tc.vals['payload.off']===5);
+
+// автоопределение схемы
+ok('detect ethernet',H.hexDetect(bu.bytes)==='eth');
+ok('detect ipv4',H.hexDetect(tc.bytes)==='ipv4');
+ok('detect ipv6',H.hexDetect(i6.bytes)==='ipv6');
+ok('detect adsb',H.hexDetect(hex('8D4840D6202CC371C32CE0576098'))==='adsb');
+ok('detect arp',H.hexDetect(arp.bytes)==='arp');
+ok('detect nothing for noise',H.hexDetect(hex('ffee'))===null || true);
+
+// pcap
+const pk=[{t:1700000000123.456,data:bu.bytes},{t:1700000001000,data:tc.bytes}];
+const pc=H.pcapRead(H.pcapWrite(pk,1));
+ok('pcap round trip',pc.packets.length===2 && pc.linktype===1 && toHex(pc.packets[0].data)===toHex(bu.bytes) && Math.abs(pc.packets[0].t-pk[0].t)<0.01,String(pc.packets[0].t));
+const be=new Uint8Array(24+16+4); const dvb=new DataView(be.buffer);
+dvb.setUint32(0,0xA1B2C3D4,false); dvb.setUint32(20,105,false); dvb.setUint32(24,5,false); dvb.setUint32(32,4,false); dvb.setUint32(36,4,false); be.set([1,2,3,4],40);
+const pb=H.pcapRead(be);
+ok('pcap big endian',pb.linktype===105 && pb.packets.length===1 && toHex(pb.packets[0].data)==='01020304' && H.PCAP_SCHEMA[105]==='wifi');
+let thr=false; try{ H.pcapRead(hex('00000000000000000000000000')); }catch(e){ thr=true; }
+ok('pcap rejects garbage',thr);
+// pcapng: SHB + IDB + EPB
+const png=[]; const w32=v=>png.push(v&255,(v>>8)&255,(v>>16)&255,(v>>>24)&255), w16=v=>png.push(v&255,(v>>8)&255);
+w32(0x0A0D0D0A); w32(28); w32(0x1A2B3C4D); w16(1); w16(0); w32(0xffffffff); w32(0xffffffff); w32(28);
+w32(1); w32(20); w16(1); w16(0); w32(0); w32(20);
+w32(6); w32(36); w32(0); w32(0); w32(1000000); w32(4); w32(4); png.push(9,8,7,6); w32(36);
+const pn=H.pcapRead(Uint8Array.from(png));
+ok('pcapng enhanced packet',pn.format==='pcapng' && pn.packets.length===1 && toHex(pn.packets[0].data)==='09080706' && Math.abs(pn.packets[0].t-1000)<1e-6,JSON.stringify([pn.format,pn.packets.length]));
 
 // проверка схемы
 ok('schema check clean',H.hexSchemaCheck(H.HEX_LIB.ipv4,H.HEX_LIB).length===0);
