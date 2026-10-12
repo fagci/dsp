@@ -646,8 +646,12 @@ const def = d => {
 };
 // Группы параметров: defGroups(id,[{n:'Имя', p:'имена параметров через пробел', open:false}, …]).
 // Порядок групп — как в списке, параметры вне групп остаются сверху без заголовка.
-const defGroups=(id,groups)=>{
+// opts.pri — имена главных параметров через пробел.
+const defGroups=(id,groups,opts)=>{
   const d=MOD[id]; if(!d){ console.warn('defGroups: нет модуля '+id); return; }
+  for(const k of (opts?.pri||'').split(/\s+/).filter(Boolean)){            // главные параметры — их оставляет режим «только главное» в тайле
+    const q=d.params.find(x=>x.n===k); if(q) q.pri=true; else console.warn('defGroups '+id+': нет параметра '+k);
+  }
   d.groups=groups.map(({n,open})=>({n,open:open!==false}));
   for(const g of groups) for(const k of g.p.split(/\s+/).filter(Boolean)){
     const q=d.params.find(x=>x.n===k);
