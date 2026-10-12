@@ -268,6 +268,8 @@ const PRESET_CATS={
   'Inmarsat STD-C: EGC Messages (Generator)':'Aircraft, Satellites & Telemetry',
   'Inmarsat STD-C: EGC Messages (USB SDR, 1.5 GHz)':'Aircraft, Satellites & Telemetry',
   'GSM: Receive Bursts (USB SDR)':'Aircraft, Satellites & Telemetry',
+  'GSM: Paging, Assignments and HEX (USB SDR)':'Aircraft, Satellites & Telemetry',
+  'GSM: Paging, Assignments and HEX (Generator)':'Aircraft, Satellites & Telemetry',
   'GSM: ARFCN Scanner (sweep the band, log every cell)':'Aircraft, Satellites & Telemetry',
   'HFDL: Receive Chain (to Symbols)':'Aircraft, Satellites & Telemetry',
   'NOAA APT (AM Envelope)':'Aircraft, Satellites & Telemetry',
@@ -2168,6 +2170,48 @@ addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',gsm.id,'in');
 addEdge(gsm.id,'rec',uniq.id,'rec'); addEdge(uniq.id,'new',log.id,'rec'); addEdge(uniq.id,'count',nv.id,'in');
 addEdge(gsm.id,'nb',gv.id,'rec');
+markWiresDirty();
+});
+preset('GSM: Paging, Assignments and HEX (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The control channels of one GSM cell: tune the spectrum marker to a BCCH carrier (GSM900 935–960 MHz, DCS1800 1805–1880 MHz), GSM: Receive Bursts syncs on FCCH / SCH and reads the BCCH (cell, operator, neighbours, RACH) and the CCCH (paging requests, immediate assignments and rejects: how busy the cell is).\n'+
+  'The table keeps paging and assignment records; HEX Structure shows the last control message (BCCH or CCCH) field by field (structure gsm-l2 from the record). The paging identifiers (TMSI / IMSI) belong to particular subscribers: the node keeps only a marker (parameter «paging identifiers» = hash; none — only counts; show — as is, for your own network or a lab). Traffic of subscribers (SDCCH / TCH) is not decoded.\n'+
+  'Use 2.048 MS/s or less on an RTL-SDR (2.4 MS/s drops samples), a fixed gain rather than AGC. Be sure that receiving is allowed where you are.'});
+nt.size.w=900; nt.size.h=190; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'2048000',freq:942000000,demod:'IQ',auto:false,gainDb:32});
+const bp=addNode('table',40,420,{list:'presets/GSM downlink (ARFCN bands)',initial:false});
+bp.size.w=300; bp.size.h=160; applySize(bp);
+const sa=addNode('sa',720,260,{auto:true,floor:-90,top:-10,split:1});
+sa.size.w=640; sa.size.h=300; applySize(sa);
+const sh=addNode('iqShift',340,260,{});
+const gsm=addNode('gsmRx',340,420,{afc:true,ids:'hash'});
+gsm.size.w=760; gsm.size.h=300; applySize(gsm);
+const fl=addNode('recFilter',1160,260,{expr:"r.kind==='GSM-PCH' || r.kind==='GSM-AGCH'"});
+const tb=addNode('table',1160,420,{list:'@patch',data:''});
+tb.size.w=420; tb.size.h=340; applySize(tb);
+const hx=addNode('hexStruct',1620,260,{schema:'auto',recMode:'parse'});
+hx.size.w=460; hx.size.h=520; applySize(hx);
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(bp.id,'rows',sa.id,'bands');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',gsm.id,'in');
+addEdge(gsm.id,'rec',fl.id,'rec'); addEdge(fl.id,'rec',tb.id,'rec'); addEdge(gsm.id,'rec',hx.id,'rec');
+markWiresDirty();
+});
+preset('GSM: Paging, Assignments and HEX (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The same chain without a radio: the IQ Generator (mode GSM) transmits a test BCCH carrier — FCCH, SCH, System Information 1–4, 2bis, 2ter — and, in the CCCH blocks, paging requests with TMSIs, immediate assignments and rejects. GSM: Receive Bursts decodes them; the table keeps the CCCH records, HEX Structure shows the last message.\n'+
+  'Turn «CCCH combined with SDCCH/4» off in the generator to see all nine CCCH blocks of the multiframe being read (the receiver learns the configuration from SI3). The TMSIs here are made up; with a real cell the node still shows only a marker unless you set «paging identifiers» to show.'});
+nt.size.w=900; nt.size.h=150; applySize(nt);
+const gn=addNode('iqGen',40,230,{sr:'2048000',fc:942000000,mode:'GSM',off:0,lvl:-20,noise:-60,gsmCell:'250-01-1234-5678',bsic:18});
+const gsm=addNode('gsmRx',340,230,{afc:true,ids:'hash'});
+gsm.size.w=760; gsm.size.h=300; applySize(gsm);
+const fl=addNode('recFilter',1160,230,{expr:"r.kind==='GSM-PCH' || r.kind==='GSM-AGCH'"});
+const tb=addNode('table',1160,390,{list:'@patch',data:''});
+tb.size.w=420; tb.size.h=340; applySize(tb);
+const hx=addNode('hexStruct',1620,230,{schema:'auto',recMode:'parse'});
+hx.size.w=460; hx.size.h=520; applySize(hx);
+addEdge(gn.id,'iq',gsm.id,'in');
+addEdge(gsm.id,'rec',fl.id,'rec'); addEdge(fl.id,'rec',tb.id,'rec'); addEdge(gsm.id,'rec',hx.id,'rec');
 markWiresDirty();
 });
 preset('GSM: ARFCN Scanner (sweep the band, log every cell)', function(){
