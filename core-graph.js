@@ -442,6 +442,7 @@ if(!grp){ grp=document.createElement('div'); grp.className='prm wide prmrows'; c
 // сегменты — выпадающим списком, ручки — полоской-строкой
 const q= p.t==='range' ? {...p,knob:false} : p.t==='buttons' ? {...p,t:'select'} : p;
 const r=paramEl(n,q); r.classList.add('pr','pr-'+q.t);
+if(p.pri) r.classList.add('pri');
 const lab=r.querySelector(':scope>label');
 if(lab && lab.textContent.length>24){ r.title=lab.textContent; lab.textContent=shortLabel(lab.textContent); }
 // единица из хвоста подписи («bandwidth, Hz») — тусклым текстом после значения, подпись короче
@@ -1310,7 +1311,7 @@ function dashForget(nodeId){                          // удалённый уз
 function dashAutoPlace(n){                            // первая пустая вкладка (обход в глубину)
   for(const l of dashLeaves(dashEnsureTree())){
     const x=l.tabs.find(x=>x.node==null && !x.view);
-    if(x){ x.node=n.id; delete x.bare; return true; }
+    if(x){ x.node=n.id; delete x.bare; delete x.compact; return true; }
   }
   return false;
 }
@@ -1483,7 +1484,7 @@ function dashRenderLeaf(t){
     const toGraph=sel.value==='@graph';
     if(toGraph){ tab.node=null; tab.view='graph'; }
     else { tab.node=sel.value||null; delete tab.view; }
-    delete tab.bare;
+    delete tab.bare; delete tab.compact;
     dashRenderRoot(); Undo.push();
     if(toGraph) dashGraphFit(); };
   // вкладки: активная — сам селект, остальные — кнопки; полоса прокручивается по горизонтали
@@ -1512,6 +1513,13 @@ function dashRenderLeaf(t){
     bareBtn.classList.toggle('on',!!tab.bare);
     pane.classList.toggle('bare',!!tab.bare);
   }
+  let compactBtn=null;
+  if(n && MOD[n.type].params?.some(p=>p.pri)){          // только главные параметры: остальное прячется, место — дисплею
+    compactBtn=dashBtn2('▤','Main controls only',()=>{
+      tab.compact=!tab.compact; dashRenderRoot(); Undo.push(); },'dash-compact');
+    compactBtn.classList.toggle('on',!!tab.compact);
+    pane.classList.toggle('compact',!!tab.compact);
+  }
   if(n) acts.append(dashBtn2('✎','Rename module',()=>renameNode(n)));
   if(isGraph){
     acts.append(dashBtn2('⊕','Add module (or double-click the canvas)',e=>dashGraphAdd(e.currentTarget)),
@@ -1530,7 +1538,7 @@ function dashRenderLeaf(t){
       t.tabs.splice(t.cur,1); t.cur=Math.min(t.cur,t.tabs.length-1);
       dashRenderRoot(); Undo.push(); }));
   const more=dashBtn2('⋯','Pane actions',()=>tools.classList.toggle('acts'),'dash-more');
-  tools.append(...(bareBtn?[bareBtn]:[]),...(isMax?[bm]:[]),more,acts);   // ⛶ и возврат из максимума — всегда на виду, не под «⋯»
+  tools.append(...(compactBtn?[compactBtn]:[]),...(bareBtn?[bareBtn]:[]),...(isMax?[bm]:[]),more,acts);   // ⛶ и возврат из максимума — всегда на виду, не под «⋯»
   // двойной клик/тап по пустому месту шапки — развернуть/вернуть
   tools.addEventListener('dblclick',e=>{ if(e.target===tools || e.target===strip) dashToggleMax(t.id); });
   // жест по шапке: вниз — разделить вниз, вправо — разделить вправо

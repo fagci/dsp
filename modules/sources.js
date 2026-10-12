@@ -7476,7 +7476,8 @@ defGroups('rtlsdr',[
   {n:'Spectrum', p:'specSize specWin specWinP specFps specAvg specWelch specMode', open:false},
   {n:'Sweep', p:'sweep swLo swHi swHw swFft swAvg swMode swUse swOvl swSmooth swDecay swSettle', open:false},
   {n:'Record IQ', p:'rec recStop recFmt recBand recBw recF tag markTime recTrig recPre recMax', open:false},
-  {n:'IQ file', p:'iqFmt loop seek', open:false}]);
+  {n:'IQ file', p:'iqFmt loop seek', open:false}],
+  {pri:'demod bw sql auto gainDb'});
 defGroups('cam',[
   {n:'Capture', p:'res fps w zoom'},
   {n:'Exposure', p:'ae exp af awb'},

@@ -1013,7 +1013,11 @@ Modules with many settings (USB SDR, Spectrum Analyzer, Video Overlay, Map, Tabl
 
 A module opts in with one line after its definition: `defGroups('id',[{n:'Receiver', p:'sr demod bw'}, {n:'Sweep', p:'sweep swLo swHi', open:false}])` — parameter names per group, groups in the order given, parameters outside any group stay on top. Modules without it look as before.
 
+**Main controls only** (▤ in the pane header, shown for modules that mark their main parameters — USB SDR, Spectrum Analyzer): the pane keeps just those rows and hides the groups, so the display gets the room. A module marks them with `defGroups('id',[…],{pri:'demod bw gainDb'})`. The choice is saved with the layout.
+
 <img src="docs/screenshots/param-groups-dash.png" alt="Parameter groups in a tile">
+
+<img src="docs/screenshots/param-compact-dash.png" alt="Main controls only in a tile">
 
 ### On a phone
 
