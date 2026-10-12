@@ -91,6 +91,15 @@ function hexSum(name){
     let s=0; for(let i=a;i<b;i+=2) s+=(d[i]<<8)|(i+1<b ? d[i+1] : 0);
     while(s>>>16) s=(s&0xFFFF)+(s>>>16);
     return (~s)&0xFFFF; }};
+  if(name==='pocsag-bch') return {w:10, f:(d,a)=>{              // BCH(31,21) слова POCSAG: d[a..a+3], старшие 21 бит
+    let r=(((d[a]<<24)|(d[a+1]<<16)|(d[a+2]<<8)|(d[a+3]&0)) & 0xFFFFF800)>>>0;
+    r>>>=1;
+    for(let i=30;i>=10;i--) if((r>>>i)&1) r=(r^(0x769<<(i-10)))>>>0;
+    return r&0x3FF; }};
+  if(name==='parity32') return {w:1, f:(d,a)=>{                  // чётность слова из 32 бит, сам бит — младший
+    let x=((d[a]<<24)|(d[a+1]<<16)|(d[a+2]<<8)|(d[a+3]&0xFE))>>>0, p=0;
+    while(x){ p^=1; x&=x-1; }
+    return p; }};
   if(name==='xor8') return {w:8, f:(d,a,b)=>{ let x=0; for(let i=a;i<b;i++) x^=d[i]; return x; }};
   if(name==='sum8') return {w:8, f:(d,a,b)=>{ let x=0; for(let i=a;i<b;i++) x=(x+d[i])&255; return x; }};
   if(name==='sum8n') return {w:8, f:(d,a,b)=>{ let x=0; for(let i=a;i<b;i++) x=(x+d[i])&255; return (256-x)&255; }};
