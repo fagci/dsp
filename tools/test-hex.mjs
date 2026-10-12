@@ -188,6 +188,15 @@ w32(6); w32(36); w32(0); w32(0); w32(1000000); w32(4); w32(4); png.push(9,8,7,6)
 const pn=H.pcapRead(Uint8Array.from(png));
 ok('pcapng enhanced packet',pn.format==='pcapng' && pn.packets.length===1 && toHex(pn.packets[0].data)==='09080706' && Math.abs(pn.packets[0].t-1000)<1e-6,JSON.stringify([pn.format,pn.packets.length]));
 
+// POCSAG: служебные слова стандарта — свободное 0x7A89C197 и синхро 0x7CD215D8 — имеют верные BCH и чётность
+ok('pocsag idle word valid',H.hexParse('pocsag-cw',hex('7a89c197')).ok);
+ok('pocsag sync word valid',H.hexParse('pocsag-cw',hex('7cd215d8')).ok);
+const bw=hex('7a89c197'); bw[1]^=0x10;
+ok('pocsag damaged word flagged',!H.hexParse('pocsag-cw',bw).ok);
+const pcm=H.hexBuild('pocsag',{flag:0,addr:0x1234,func:3,'cw[0].flag':1,'cw[0].data':0x12345,'cw[1].flag':1,'cw[1].data':0xABCDE});
+const pcp=H.hexParse('pocsag',pcm.bytes);
+ok('pocsag message build: checksums and parse',pcm.bytes.length===12 && pcp.ok && pcp.vals.addr===0x1234 && pcp.vals.func===3 && pcp.vals['cw[1].data']===0xABCDE,toHex(pcm.bytes)+' '+JSON.stringify(pcp.fields.filter(f=>f.warn).map(f=>f.warn)));
+
 // проверка схемы
 ok('schema check clean',H.hexSchemaCheck(H.HEX_LIB.ipv4,H.HEX_LIB).length===0);
 ok('schema check errors',H.hexSchemaCheck({fields:[{n:'a',t:'u7'},{n:'a',t:'bytes'},{n:'c',t:'u8',when:'a +'}]},H.HEX_LIB).length>=3);

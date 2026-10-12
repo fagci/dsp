@@ -152,6 +152,15 @@ Object.assign(HEX_LIB,{
     {n:'ver',t:'u8'}, {n:'pad',t:'u8'}, {n:'len',t:'u16'}, {n:'hdr',t:'bytes',len:'len-4'},
     {n:'frame',t:'rest',sub:'wifi'}]},
 
+  /* ---------- POCSAG: кодовые слова сообщения (адресное, затем слова данных) ---------- */
+  pocsag:{ title:'POCSAG message', group:'Paging', fields:[
+    {n:'flag',t:'bits',w:1}, {n:'addr',t:'bits',w:18}, {n:'func',t:'bits',w:2,enum:{0:'numeric / A',1:'tone / B',2:'C',3:'alpha / D'}},
+    {n:'bch',t:'bits',w:10,fmt:'hex',calc:'pocsag-bch'}, {n:'par',t:'bits',w:1,calc:'parity32'},
+    {n:'cw',t:'list',sub:'pocsag-cw'}]},
+  'pocsag-cw':{ title:'POCSAG codeword', group:'Paging', detect:'_size==4', fields:[
+    {n:'flag',t:'bits',w:1}, {n:'data',t:'bits',w:20,fmt:'hex'},
+    {n:'bch',t:'bits',w:10,fmt:'hex',calc:'pocsag-bch'}, {n:'par',t:'bits',w:1,calc:'parity32'}]},
+
   /* ---------- Для проверки и примеров ---------- */
   'esp-pkt':{ title:'ESP32 sniffer record', group:'Wi-Fi', endian:'le', fields:[
     {n:'rssi',t:'i8',fmt:'dbm'}, {n:'chan',t:'u8'}, {n:'len',t:'u16'},
