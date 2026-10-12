@@ -197,6 +197,20 @@ const pcm=H.hexBuild('pocsag',{flag:0,addr:0x1234,func:3,'cw[0].flag':1,'cw[0].d
 const pcp=H.hexParse('pocsag',pcm.bytes);
 ok('pocsag message build: checksums and parse',pcm.bytes.length===12 && pcp.ok && pcp.vals.addr===0x1234 && pcp.vals.func===3 && pcp.vals['cw[1].data']===0xABCDE,toHex(pcm.bytes)+' '+JSON.stringify(pcp.fields.filter(f=>f.warn).map(f=>f.warn)));
 
+// запись декодера POCSAG: hex совпадает со словами кодера (pocMessage) и разбирается схемой без ошибок
+{
+  const c2=vm.createContext({Math,Uint8Array,Array,Map,Set,String,Number,Object,IQK:{},popcnt32:x=>{ x=x>>>0; let n=0; while(x){ n++; x&=x-1; } return n; }});
+  vm.runInContext(fs.readFileSync(path.join(root,'modules/pocsag-kernels.js'),'utf8')+';this.P={IQK,pocMessage,pocAlphaBits};',c2);
+  const P=c2.P, bits=P.pocAlphaBits('HELLO WORLD');
+  const n={pend:[]}, d={msg:{ric:1234568,func:3,bits:Array.from({length:Math.ceil(bits.length/20)*20},(_,i)=>bits[i]||0),bad:0,fixed:0,t:0}};
+  P.IQK.pocsagRx.finish(n,{baud:1200},d,0,[]);
+  const rec=n.pend[0].c.values().next().value.rec;
+  const words=P.pocMessage(1234568,3,bits.concat(new Array(Math.ceil(bits.length/20)*20-bits.length).fill(0))).filter(w=>w!==0x7A89C197);
+  ok('pocsag record hex equals the encoder words',rec.hexSchema==='pocsag' && rec.hex===words.map(w=>(w>>>0).toString(16).padStart(8,'0')).join(''),rec.hex+' vs '+words.map(w=>(w>>>0).toString(16)).join(''));
+  const rp=H.hexParse(rec.hexSchema,H.hexFromHex(rec.hex));
+  ok('pocsag record parses clean',rp.ok && rp.vals.addr===1234568>>3 && rp.vals.func===3,JSON.stringify(rp.vals));
+}
+
 // проверка схемы
 ok('schema check clean',H.hexSchemaCheck(H.HEX_LIB.ipv4,H.HEX_LIB).length===0);
 ok('schema check errors',H.hexSchemaCheck({fields:[{n:'a',t:'u7'},{n:'a',t:'bytes'},{n:'c',t:'u8',when:'a +'}]},H.HEX_LIB).length>=3);
