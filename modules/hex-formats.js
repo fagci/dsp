@@ -209,6 +209,17 @@ Object.assign(HEX_LIB,{
     {n:'rach',t:'bytes',len:3,when:'mt==25 || mt==26 || mt==27 || mt==28'},
     {n:'rest',t:'bytes',len:'_left'}]},
 
+  /* ---------- M17 (M17 Specification v2) ---------- */
+  'm17-lsf':{ title:'M17 link setup frame (LSF)', group:'M17', fields:[
+    {n:'dst',t:'bytes',fmt:'m17call'}, {n:'src',t:'bytes',fmt:'m17call'},
+    {n:'rsv',t:'bits',w:4}, {n:'signed',t:'bits',w:1}, {n:'can',t:'bits',w:4}, {n:'sub',t:'bits',w:2,enum:{0:'text',1:'GNSS position',2:'extended callsigns'}},
+    {n:'enc',t:'bits',w:2,enum:{0:'none',1:'scrambler',2:'AES',3:'other'}}, {n:'dtype',t:'bits',w:2,enum:{1:'data',2:'voice',3:'voice + data'}},
+    {n:'stream',t:'bits',w:1,enum:{0:'packet',1:'stream'}},
+    {n:'meta',t:'bytes',len:14}, {n:'crc',t:'u16',fmt:'hex',calc:'crc16-m17',to:'crc'}]},
+  'm17-pkt':{ title:'M17 packet', group:'M17', fields:[
+    {n:'proto',t:'u8',enum:{0:'RAW',1:'AX.25',2:'APRS',3:'6LoWPAN',4:'IPv4',5:'SMS',6:'Winlink'}},
+    {n:'data',t:'rest',sub:{by:'proto',map:{4:'ipv4'}}}]},
+
   /* ---------- Для проверки и примеров ---------- */
   'esp-pkt':{ title:'ESP32 sniffer record', group:'Wi-Fi', endian:'le', fields:[
     {n:'rssi',t:'i8',fmt:'dbm'}, {n:'chan',t:'u8'}, {n:'len',t:'u16'},

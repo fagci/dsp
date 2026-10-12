@@ -71,6 +71,7 @@ const HEX_CRC={
   'crc16-modbus':{w:16,poly:0x8005,init:0xFFFF,refin:1,refout:1,xorout:0},
   'crc32':{w:32,poly:0x04C11DB7,init:0xFFFFFFFF,refin:1,refout:1,xorout:0xFFFFFFFF}, // Ethernet, 802.11 FCS
   'crc24-adsb':{w:24,poly:0xFFF409,init:0,refin:0,refout:0,xorout:0},                // Mode S / ADS-B
+  'crc16-m17':{w:16,poly:0x5935,init:0xFFFF,refin:0,refout:0,xorout:0},                // M17 LSF / пакеты
   'crc32c':{w:32,poly:0x1EDC6F41,init:0xFFFFFFFF,refin:1,refout:1,xorout:0xFFFFFFFF} };
 function hexReflect(v,w){ let r=0; for(let i=0;i<w;i++){ r=r*2+(v&1); v=Math.floor(v/2); } return r; }
 function hexCrc(spec,d,a,b){
@@ -149,7 +150,8 @@ const hexSigned=(v,w)=>typeof v==='bigint'
 const hexNorm=v=>typeof v==='bigint' && v>=-9007199254740991n && v<=9007199254740991n ? Number(v) : v;
 
 /* ---------- форматы значений ---------- */
-const HEX_FIXED={mac:6, ipv4:4, ipv6:16, plmn:3};
+const HEX_M17CS=' ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/.';
+const HEX_FIXED={mac:6, ipv4:4, ipv6:16, plmn:3, m17call:6};
 const hexByte=b=>b.toString(16).padStart(2,'0');
 function hexToHex(b){ let s=''; for(const x of b) s+=hexByte(x); return s; }
 function hexFromHex(s){
@@ -171,6 +173,12 @@ function hexFmtBytes(b,fmt){
       const mcc=[b[0]&15,b[0]>>4,b[1]&15], mnc=[b[2]&15,b[2]>>4];
       if((b[1]>>4)!==15) mnc.push(b[1]>>4);
       return mcc.join('')+'-'+mnc.join(''); }
+    case 'm17call': {                                       // позывной M17: основание 40, первый символ — младший
+      let a=0n; for(const x of b) a=a*256n+BigInt(x);
+      if(a===0xFFFFFFFFFFFFn) return 'BROADCAST';
+      if(a>=0xEE6B28000000n) return '#'+hexToHex(b);
+      let t=''; while(a){ t+=HEX_M17CS[Number(a%40n)]; a/=40n; }
+      return t; }
     case 'ascii': return Array.from(b,x=>x>=32&&x<127 ? String.fromCharCode(x) : '.').join('');
     case 'bcd': return Array.from(b,hexByte).join('');
     default: return hexToHex(b);
@@ -190,6 +198,14 @@ function hexUnfmtBytes(v,fmt,len){
   if(fmt==='plmn'){
     const [m,n]=v.split('-'), d=x=>+x||0, o=new Uint8Array(3);
     o[0]=d(m[0])|(d(m[1])<<4); o[1]=d(m[2])|((n&&n.length>2 ? d(n[2]) : 15)<<4); o[2]=d(n&&n[0])|(d(n&&n[1])<<4);
+    return o;
+  }
+  if(fmt==='m17call'){
+    const o=new Uint8Array(6);
+    if(/^BROADCAST$/i.test(v)){ o.fill(255); return o; }
+    if(v[0]==='#') return hexFromHex(v.slice(1)).slice(0,6);
+    let a=0n; for(let i=Math.min(v.length,9)-1;i>=0;i--){ const k=HEX_M17CS.indexOf(v[i].toUpperCase()); a=a*40n+BigInt(k<0 ? 0 : k); }
+    for(let i=5;i>=0;i--){ o[i]=Number(a&255n); a>>=8n; }
     return o;
   }
   if(fmt==='ascii') return Uint8Array.from(v,ch=>ch.charCodeAt(0)&255);
