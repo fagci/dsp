@@ -66,6 +66,7 @@ const HEX_CRC={
   'crc16-ccitt':{w:16,poly:0x1021,init:0,refin:0,refout:0,xorout:0},                 // XMODEM
   'crc16-ccitt-false':{w:16,poly:0x1021,init:0xFFFF,refin:0,refout:0,xorout:0},
   'crc16-x25':{w:16,poly:0x1021,init:0xFFFF,refin:1,refout:1,xorout:0xFFFF},         // HDLC, AX.25
+  'crc16-gsm':{w:16,poly:0x1021,init:0,refin:0,refout:0,xorout:0xFFFF},                // P25 TSBK / DMR (до маски)
   'crc16-kermit':{w:16,poly:0x1021,init:0,refin:1,refout:1,xorout:0},
   'crc16-arc':{w:16,poly:0x8005,init:0,refin:1,refout:1,xorout:0},
   'crc16-modbus':{w:16,poly:0x8005,init:0xFFFF,refin:1,refout:1,xorout:0},

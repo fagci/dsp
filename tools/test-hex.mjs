@@ -17,6 +17,7 @@ const crc=n=>H.hexSum(n).f(ck,0,9);
 ok('crc32',crc('crc32')===0xCBF43926,crc('crc32').toString(16));
 ok('crc16-ccitt (xmodem)',crc('crc16-ccitt')===0x31C3);
 ok('crc16-ccitt-false',crc('crc16-ccitt-false')===0x29B1);
+ok('crc16-gsm',crc('crc16-gsm')===0xCE3C);
 ok('crc16-x25',crc('crc16-x25')===0x906E);
 ok('crc16-arc',crc('crc16-arc')===0xBB3D);
 ok('crc16-modbus',crc('crc16-modbus')===0x4B37);

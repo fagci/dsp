@@ -220,6 +220,54 @@ Object.assign(HEX_LIB,{
     {n:'proto',t:'u8',enum:{0:'RAW',1:'AX.25',2:'APRS',3:'6LoWPAN',4:'IPv4',5:'SMS',6:'Winlink'}},
     {n:'data',t:'rest',sub:{by:'proto',map:{4:'ipv4'}}}]},
 
+  /* ---------- P25 Phase 1 (TIA-102.BAAA) ---------- */
+  'p25-tsbk':{ title:'P25 TSBK', group:'P25', fields:(()=>{
+    const b=(n,w,when,o)=>Object.assign({n,t:'bits',w,when},o||{}), pad=(w,when)=>({t:'pad',w,when});
+    const G='op==0', U='op==2', X='op==3', C='op==31 || op==32', R='op==44', S='op==58', N='op==59', A='op==60', V='op==56', J='op==57 || op==41';
+    const known='op==0||op==2||op==3||op==31||op==32||op==44||op==58||op==59||op==60||op==56||op==57||op==41';
+    return [
+      b('lb',1), b('prot',1),
+      b('op',6,undefined,{fmt:'hex',enum:{0:'GRP_V_CH_GRANT',2:'GRP_V_CH_GRANT_UPDT',3:'GRP_V_CH_GRANT_UPDT_EXP',4:'UU_V_CH_GRANT',5:'UU_ANS_REQ',6:'UU_V_CH_GRANT_UPDT',8:'TELE_INT_CH_GRANT',
+        20:'SN-DAT_CHN_GNT',22:'SN-DAT_CHN_ANN',31:'CALL_ALERT',32:'ACK_RSP_FNE',33:'QUE_RSP',36:'EXT_FNCT_CMD',39:'DENY_RSP',40:'GRP_AFF_RSP',41:'SCCB_EXP',42:'GRP_AFF_Q',
+        43:'LOC_REG_RSP',44:'U_REG_RSP',45:'U_REG_CMD',46:'AUTH_CMD',47:'U_DE_REG_ACK',51:'IDEN_UP_TDMA',52:'IDEN_UP_VU',53:'TIME_DATE_ANN',56:'SYS_SRV_BCST',57:'SCCB',
+        58:'RFSS_STS_BCST',59:'NET_STS_BCST',60:'ADJ_STS_BCST',61:'IDEN_UP'}}),
+      b('mfid',8,undefined,{fmt:'hex'}),
+      // 0x00 GRP_V_CH_GRANT
+      b('opts',8,G,{fmt:'hex'}), b('ch',16,G,{fmt:'hex'}), b('to',16,G), b('from',24,G),
+      // 0x02 GRP_V_CH_GRANT_UPDT
+      b('ch1',16,U,{fmt:'hex'}), b('to1',16,U), b('ch2',16,U,{fmt:'hex'}), b('to2',16,U),
+      // 0x03 explicit
+      b('opts',8,X,{fmt:'hex'}), pad(8,X), b('ch',16,X,{fmt:'hex'}), b('chrx',16,X,{fmt:'hex'}), b('to',16,X),
+      // 0x1F CALL_ALERT / 0x20 ACK_RSP_FNE
+      pad(8,C+' && op==31'), b('svc',8,'op==32',{fmt:'hex'}), pad(8,C), b('to',24,C), b('from',24,C),
+      // 0x2C U_REG_RSP
+      pad(2,R), b('rv',2,R), b('sysid',12,R,{fmt:'hex'}), b('sid',24,R), b('from',24,R),
+      // 0x3A RFSS_STS_BCST
+      b('lra',8,S), pad(4,S), b('sysid',12,S,{fmt:'hex'}), b('rfss',8,S), b('site',8,S), b('ch',16,S,{fmt:'hex'}), b('svc',8,S,{fmt:'hex'}),
+      // 0x3B NET_STS_BCST
+      b('lra',8,N), b('wacn',20,N,{fmt:'hex'}), b('sysid',12,N,{fmt:'hex'}), b('ch',16,N,{fmt:'hex'}), b('svc',8,N,{fmt:'hex'}),
+      // 0x3C ADJ_STS_BCST
+      b('lra',8,A), b('cfva',4,A), b('sysid',12,A,{fmt:'hex'}), b('rfss',8,A), b('site',8,A), b('ch',16,A,{fmt:'hex'}), pad(8,A),
+      // 0x38 SYS_SRV_BCST
+      pad(8,V), b('svcavail',24,V,{fmt:'hex'}), b('svcsupp',24,V,{fmt:'hex'}), b('prio',8,V),
+      // 0x39 SCCB
+      b('rfss',8,J), b('site',8,J), b('ch1',16,J,{fmt:'hex'}), pad(8,J), b('ch2',16,J,{fmt:'hex'}), pad(8,J),
+      // остальные
+      {n:'data',t:'bytes',len:8,when:'!('+known+')'}
+    ];
+  })().concat([{n:'crc',t:'u16',fmt:'hex',calc:'crc16-gsm',to:'crc',when:'1'}])},
+  'p25-lc':{ title:'P25 Link Control', group:'P25', fields:[
+    {n:'prot',t:'bits',w:1}, {n:'explicit',t:'bits',w:1},
+    {n:'lcf',t:'bits',w:6,enum:{0:'group voice',3:'unit-to-unit voice',15:'call termination'}}, {n:'mfid',t:'u8',fmt:'hex'},
+    {n:'svc',t:'u8',fmt:'hex',when:'lcf==0 || lcf==3',flags:{7:'emergency',6:'encrypted',5:'duplex',4:'packet'}},
+    {n:'rsv',t:'u8',when:'lcf==0'}, {n:'to',t:'u16',when:'lcf==0'},
+    {n:'to',t:'u24',when:'lcf==3 || lcf==15'}, {n:'from',t:'u24',when:'lcf==0 || lcf==3 || lcf==15'},
+    {n:'data',t:'bytes',len:'_left',when:'lcf!=0 && lcf!=3 && lcf!=15'}]},
+  'p25-hdu':{ title:'P25 header data unit', group:'P25', fields:[
+    {n:'mi',t:'bytes',len:9}, {n:'mfid',t:'u8',fmt:'hex'},
+    {n:'algid',t:'u8',fmt:'hex',enum:{128:'clear',129:'DES-OFB',131:'3DES',132:'AES-256',170:'ADP RC4',159:'DES-XL',160:'DVI-XL'}},
+    {n:'kid',t:'u16',fmt:'hex'}, {n:'tgid',t:'u16'}]},
+
   /* ---------- Для проверки и примеров ---------- */
   'esp-pkt':{ title:'ESP32 sniffer record', group:'Wi-Fi', endian:'le', fields:[
     {n:'rssi',t:'i8',fmt:'dbm'}, {n:'chan',t:'u8'}, {n:'len',t:'u16'},

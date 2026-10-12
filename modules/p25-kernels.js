@@ -357,6 +357,7 @@ function p25Lc(b72){                                               // 72 бит�
   else if((mf===0 || mf===1) && op===0x03){ Object.assign(f,{type:'private', svc:y[2], to:id3(3), from:id3(6), emergency:y[2]>>7, encrypted:(y[2]>>6)&1}); }
   else if((mf===0 || mf===1) && op===0x0F){ Object.assign(f,{type:'terminate', to:id3(3), from:id3(6)}); }
   else f.hex=bytesHex(y,2,7);
+  f.hex=bytesHex(y); f.hexSchema='p25-lc';                         // весь блок LC для HEX Structure
   return f;
 }
 
@@ -469,7 +470,7 @@ FSK4.protos.p25={
       if(b){
         const mi=bytesHex(b,0,9), algid=b[10], kid=b[11]*256+b[12], to=b[13]*256+b[14];
         P.crypt={algid, kid, mi}; P.mi=bytesHex(b,0,8);
-        p25Emit(P,L,out,'hdu',{mi, mfid:b[9], algid, algo:P25_ALGO[algid]||'0x'+algid.toString(16), kid, to},
+        p25Emit(P,L,out,'hdu',{mi, mfid:b[9], algid, algo:P25_ALGO[algid]||'0x'+algid.toString(16), kid, to, hex:bytesHex(b,0,15), hexSchema:'p25-hdu'},
           'HDU TG '+to+' '+(P25_ALGO[algid]||'algo 0x'+algid.toString(16))+(algid!==0x80 ? ' key '+kid : ''));
       } else if(L.blind){ fsk4Drop(L); return; } else P.st.bad++;
     } else if(duid===5 || duid===10){ if(!this.ldu(P,L,F,duid,e,out)) return; }
@@ -552,7 +553,7 @@ FSK4.protos.p25={
     if(ok){
       P.st.tsbk++;
       const r=p25Tsbk(P,bits);
-      p25Emit(P,L,out,'tsbk',r.f,r.text);
+      p25Emit(P,L,out,'tsbk',{...r.f, hex:bytesHex(d.bytes), hexSchema:'p25-tsbk'},r.text);
       last=!!bits[0];
     } else if(L.blind){ fsk4Drop(L); return; } else P.st.bad++;
     if(!last && k<3){ L.k++; L.after=this.tail(L,p25Span(56+98*(k+1))); return; }
