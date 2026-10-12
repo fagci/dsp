@@ -149,6 +149,7 @@ function tetraRmDec(w){
 }
 
 /* ---- разбор PDU ---- */
+const tetraHexB=(b,pos,len)=>{ const s=tetraHex(b,pos,len); return s.length&1 ? s+'0' : s; };   // целое число байт — для HEX Structure
 function tetraHex(b,pos,len){ let s=''; for(let i=0;i<len;i+=4){ let v=0; for(let j=0;j<4;j++) v=(v<<1)|(i+j<len ? b[pos+i+j]&1 : 0); s+=v.toString(16); } return s; }
 
 // SYNC PDU (BSCH, 60 бит): системный код 4, цвет 6, TN 2, FN 5, MN 6, режим 2, зарезервированные кадры 3, DTX 1, расширение кадра 18 1, резерв 1, MCC 10, MNC 14, соседи 2, уровень 2, позднее вхождение 1
@@ -621,7 +622,7 @@ IQK.tetraRx={
         if(sy.tn!==L.tn || sy.fn!==L.fn || sy.mn!==L.mn){ L.tn=sy.tn; L.fn=sy.fn; L.mn=sy.mn; }
         this.emit(n,L,out,'sync','SYNC · MCC '+sy.mcc+' MNC '+sy.mnc+' · colour '+sy.cc+' · TN '+sy.tn+' FN '+sy.fn+' MN '+sy.mn+
           (sy.sys===0||sy.sys===1 ? '' : ' · system code '+sy.sys)+(sy.late ? ' · late entry' : ''),
-          {mcc:sy.mcc, mnc:sy.mnc, cc:sy.cc, sharing:sy.sharing, sys:sy.sys, late:!!sy.late, dtx:!!sy.dtx, f18ext:!!sy.f18ext});
+          {mcc:sy.mcc, mnc:sy.mnc, cc:sy.cc, sharing:sy.sharing, sys:sy.sys, late:!!sy.late, dtx:!!sy.dtx, f18ext:!!sy.f18ext, hex:tetraHexB(sb.bits,0,60), hexSchema:'tetra-sync'});
       } else C.crcBad++;
       bbk=soft.subarray(TETRA_SB.bbk,TETRA_SB.bbk+30);
       blocks.push({name:'SB2', s:soft.subarray(TETRA_SB.b2,TETRA_SB.b2+216)});
@@ -719,7 +720,7 @@ IQK.tetraRx={
           n.si=s; n.cnt.sysinfo++;
           this.emit(n,L,out,'sysinfo','SYSINFO · DL '+(s.dlHz/1e6).toFixed(4)+' MHz'+(s.ulHz ? ' · UL '+(s.ulHz/1e6).toFixed(4) : '')+' · LA '+s.la+
             (s.encrypted ? ' · air encryption' : '')+' · '+s.services.join(', '),
-            {dlHz:s.dlHz, ulHz:s.ulHz, la:s.la, band:s.band, carrier:s.carrier, services:s.services, encrypted:s.encrypted, chan});
+            {dlHz:s.dlHz, ulHz:s.ulHz, la:s.la, band:s.band, carrier:s.carrier, services:s.services, encrypted:s.encrypted, chan, hex:tetraHexB(v,0,124), hexSchema:'tetra-sysinfo'});
         } else if(bt===1) this.emit(n,L,out,'access-define','ACCESS-DEFINE',{chan});
         return;
       }

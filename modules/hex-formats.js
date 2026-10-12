@@ -290,6 +290,19 @@ Object.assign(HEX_LIB,{
     ];
   })()},
 
+  /* ---------- TETRA (ETSI EN 300 392-2): SYNC (BSCH) и SYSINFO (MAC-BROADCAST) ---------- */
+  'tetra-sync':{ title:'TETRA SYNC PDU (BSCH, 60 bit)', group:'TETRA', fields:[
+    {n:'sys',t:'bits',w:4}, {n:'cc',t:'bits',w:6}, {n:'tn',t:'bits',w:2}, {n:'fn',t:'bits',w:5}, {n:'mn',t:'bits',w:6},
+    {n:'sharing',t:'bits',w:2}, {n:'reserved',t:'bits',w:3}, {n:'dtx',t:'bits',w:1}, {n:'f18ext',t:'bits',w:1}, {t:'pad',w:1},
+    {n:'mcc',t:'bits',w:10}, {n:'mnc',t:'bits',w:14}, {n:'nbr',t:'bits',w:2}, {n:'svc',t:'bits',w:2}, {n:'late',t:'bits',w:1}]},
+  'tetra-sysinfo':{ title:'TETRA SYSINFO (MAC-BROADCAST, 124 bit)', group:'TETRA', fields:[
+    {n:'pdu',t:'bits',w:2,enum:{2:'MAC-BROADCAST'}}, {n:'bt',t:'bits',w:2,enum:{0:'SYSINFO',1:'ACCESS-DEFINE'}},
+    {n:'carrier',t:'bits',w:12}, {n:'band',t:'bits',w:4}, {n:'off',t:'bits',w:2,enum:{0:'0',1:'+6.25 kHz',2:'−6.25 kHz',3:'+12.5 kHz'}},
+    {n:'duplex',t:'bits',w:3}, {n:'reverse',t:'bits',w:1}, {n:'ncs',t:'bits',w:2}, {n:'txpwr',t:'bits',w:3}, {n:'rxmin',t:'bits',w:4},
+    {n:'access',t:'bits',w:4}, {n:'timeout',t:'bits',w:4}, {n:'cckvalid',t:'bits',w:1}, {n:'cck',t:'bits',w:16,fmt:'hex'}, {n:'opt',t:'bits',w:2},
+    {t:'pad',w:20}, {n:'la',t:'bits',w:14}, {n:'subscr',t:'bits',w:16,fmt:'hex'},
+    {n:'serv',t:'bits',w:12,flags:{11:'registration mandatory',10:'de-registration mandatory',9:'priority cell',8:'no minimum mode',7:'migration',6:'system-wide services',5:'voice',4:'circuit data',2:'SNDCP data',1:'air encryption',0:'advanced link'}}]},
+
   /* ---------- Для проверки и примеров ---------- */
   'esp-pkt':{ title:'ESP32 sniffer record', group:'Wi-Fi', endian:'le', fields:[
     {n:'rssi',t:'i8',fmt:'dbm'}, {n:'chan',t:'u8'}, {n:'len',t:'u16'},
