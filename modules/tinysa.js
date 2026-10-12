@@ -309,3 +309,8 @@ def({ id:'tinysa', lazy:'manual', title:'tinySA', cat:'Sources',
     }
   }
 });
+defGroups('tinysa',[
+  {n:'Sweep', p:'start stop points rbw att hold'},
+  {n:'Screen', p:'capture savePng'},
+  {n:'Generator', p:'gen genPort genFreq genLevel genOn'},
+  {n:'Transfer', p:'fmt zero spur lna', open:false}]);

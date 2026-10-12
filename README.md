@@ -1036,6 +1036,18 @@ The **Tile Layouts** preset category loads a patch together with a ready dashboa
 
 <img width="400" src="docs/screenshots/t-6e6768dc-dark.png" alt="layout 1"> <img width="400" src="docs/screenshots/t-cf25a530-dark.png" alt="layout 2"> <img width="400" src="docs/screenshots/t-ef928755-dark.png" alt="layout 3"> <img width="400" src="docs/screenshots/t-530b8264-dark.png" alt="layout 4"> <img width="400" src="docs/screenshots/t-08174f7a-dark.png" alt="layout 5"> <img width="400" src="docs/screenshots/t-93e4cc36-dark.png" alt="layout 6"> 
 
+### Parameter groups
+
+Modules with many settings (USB SDR, Spectrum Analyzer, Video Overlay, Map, Table, Oscilloscope, Logic Analyzer, IQ Generator, Data Sequencer, Camera, tinySA) sort them into collapsible sections with a header and a count: tap a header to fold or unfold it, the state is saved with the patch. The everyday settings sit in open groups, the rare ones (recording, sweep, markers, waterfall…) in closed ones. A full label that did not fit a row shows on hover.
+
+A module opts in with one line after its definition: `defGroups('id',[{n:'Receiver', p:'sr demod bw'}, {n:'Sweep', p:'sweep swLo swHi', open:false}])` — parameter names per group, groups in the order given, parameters outside any group stay on top. Modules without it look as before.
+
+**Main controls only** (▤ in the pane header, shown for modules that mark their main parameters — USB SDR, Spectrum Analyzer): the pane keeps just those rows and hides the groups, so the display gets the room. A module marks them with `defGroups('id',[…],{pri:'demod bw gainDb'})`. The choice is saved with the layout.
+
+<img src="docs/screenshots/param-groups-dash.png" alt="Parameter groups in a tile">
+
+<img src="docs/screenshots/param-compact-dash.png" alt="Main controls only in a tile">
+
 ### On a phone
 
 - **Screen stays on** while the graph runs (Settings → *Keep screen on*, on by default; needs the Screen Wake Lock API).

@@ -396,3 +396,9 @@ function herm(y0,y1,y2,y3,t){
   const c1=0.5*(y2-y0), c2=y0-2.5*y1+2*y2-0.5*y3, c3=0.5*(y3-y0)+1.5*(y1-y2);
   return ((c3*t+c2)*t+c1)*t+y1;
 }
+defGroups('iqGen',[
+  {n:'Signal', p:'sr fc mode off lvl tone dev depth noise'},
+  {n:'Digital protocols', p:'lrpt dmr fsk4 pocsag ism', open:false},
+  {n:'Analog TV', p:'tv tvm tvdev', open:false},
+  {n:'GSM & RDS', p:'gsmCell bsic ps', open:false},
+  {n:'Impairments', p:'ppm imbG imbP imbD', open:false}]);

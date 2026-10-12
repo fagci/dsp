@@ -7467,3 +7467,19 @@ function captureImgSrc(n){                          // картинка стат
   try{ n.img={data:n.capCx.getImageData(0,0,W,H),w:W,h:H,gray:false,rev:(n.img?.rev|0)+1}; n.status='loaded'; }
   catch(e){ n.img=null; n.status='cross-origin without CORS — frame unreadable'; }
 }
+defGroups('rtlsdr',[
+  {n:'Receiver', p:'sr demod bw deemph samSb stereo agc nb anf'},
+  {n:'Squelch', p:'sql sqlSnr sqlLvl sqlHang'},
+  {n:'Gain', p:'auto gainDb lna vga amp'},
+  {n:'Gain stages', p:'gainMode stLna stLnaAuto stMix stMixAuto stVga', open:false},
+  {n:'Tuner', p:'ppm conv bias dcShift fastTune', open:false},
+  {n:'Spectrum', p:'specSize specWin specWinP specFps specAvg specWelch specMode', open:false},
+  {n:'Sweep', p:'sweep swLo swHi swHw swFft swAvg swMode swUse swOvl swSmooth swDecay swSettle', open:false},
+  {n:'Record IQ', p:'rec recStop recFmt recBand recBw recF tag markTime recTrig recPre recMax', open:false},
+  {n:'IQ file', p:'iqFmt loop seek', open:false}],
+  {pri:'demod bw sql auto gainDb'});
+defGroups('cam',[
+  {n:'Capture', p:'res fps w zoom'},
+  {n:'Exposure', p:'ae exp af awb'},
+  {n:'Brightness zone', p:'roi roiX roiY roiW roiH roiAuto', open:false},
+  {n:'Rolling shutter', p:'scan blank rsNorm', open:false}]);

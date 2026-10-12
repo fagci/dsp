@@ -301,7 +301,8 @@ io.append(ci,mid,co); body.append(io); n.mid=mid;
 // Прячем их за один сворачиваемый хедер, а не превращаем в отдельный узел — логика/значения не
 // меняются, только то, что показано сразу.
 const shown=params.filter(p=>!p.hidden);
-const main=shown.filter(p=>!p.adv), adv=shown.filter(p=>p.adv);
+const loose=shown.filter(p=>!p.g);
+const main=loose.filter(p=>!p.adv), adv=loose.filter(p=>p.adv);
 renderParamRows(mid,n,main);
 if(adv.length){
 const tgl=document.createElement('div'); tgl.className='prm wide advToggle';
@@ -311,7 +312,8 @@ wrap.dataset.count=adv.length;
 renderParamRows(wrap,n,adv);
 tgl.addEventListener('click',()=>setAdvOpen(n,!n.advOpen));
 mid.append(tgl,wrap);
-} }
+}
+renderParamGroups(mid,n,shown.filter(p=>p.g)); }
 if(d.view){ const  c=document.createElement('canvas'); c.className='view main'+(d.pick?' pick':'');
 // без willReadFrequently — этот канвас только пишут (drawImage/putImageData), ни один draw()
 // не читает его обратно через getImageData (это отдельный n.capCx у видео-узлов, см. sources.js).
@@ -440,8 +442,9 @@ if(!grp){ grp=document.createElement('div'); grp.className='prm wide prmrows'; c
 // сегменты — выпадающим списком, ручки — полоской-строкой
 const q= p.t==='range' ? {...p,knob:false} : p.t==='buttons' ? {...p,t:'select'} : p;
 const r=paramEl(n,q); r.classList.add('pr','pr-'+q.t);
+if(p.pri) r.classList.add('pri');
 const lab=r.querySelector(':scope>label');
-if(lab && lab.textContent.length>24) lab.textContent=shortLabel(lab.textContent);
+if(lab && lab.textContent.length>24){ r.title=lab.textContent; lab.textContent=shortLabel(lab.textContent); }
 // единица из хвоста подписи («bandwidth, Hz») — тусклым текстом после значения, подпись короче
 const um=lab && ['range','range2','num'].includes(q.t) && /^(.+?),\s*([^\s,]{1,8})$/.exec(lab.textContent);
 if(um){ lab.textContent=um[1]; const u=document.createElement('span'); u.className='pr-unit'; u.textContent=um[2];
@@ -480,6 +483,38 @@ while(i<params.length && params[i].t==='check'){ grp.append(paramEl(n,params[i])
 container.append(grp);
 } else { container.append(paramEl(n,params[i])); i++; }
 } }
+// Группы параметров (p.g, MOD.groups): сворачиваемые секции с заголовком; состояние — n.gOpen, в патче как go
+function gIsOpen(n,name){
+const v=n.gOpen?.[name]; if(v!=null) return !!v;
+return MOD[n.type].groups?.find(g=>g.n===name)?.open!==false;
+}
+function renderParamGroups(container,n,params){
+if(!params.length) return;
+const order=(MOD[n.type].groups||[]).map(g=>g.n);
+for(const p of params) if(!order.includes(p.g)) order.push(p.g);
+for(const name of order){
+const list=params.filter(p=>p.g===name); if(!list.length) continue;
+const sec=document.createElement('div'); sec.className='prm wide pgrp'; sec.dataset.g=name; sec.dataset.n=list.length;
+const head=document.createElement('div'); head.className='pgh';
+const body=document.createElement('div'); body.className='pgb';
+renderParamRows(body,n,list);
+sec.append(head,body); container.append(sec);
+paintGroup(n,sec,gIsOpen(n,name));
+head.addEventListener('click',()=>setGroupOpen(n,name,!gIsOpen(n,name)));
+}
+}
+function paintGroup(n,sec,open){
+sec.classList.toggle('closed',!open);
+sec.querySelector('.pgb').hidden=!open;
+const name=sec.dataset.g, cnt=sec.dataset.n;
+sec.querySelector('.pgh').innerHTML=`<span class="pgl">${open?'▾':'▸'} ${name.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span><span class="pgn">${cnt}</span>`;
+}
+function setGroupOpen(n,name,v){
+(n.gOpen||(n.gOpen={}))[name]=!!v;
+const sec=[...(n.el?.querySelectorAll('.pgrp')||[])].find(e=>e.dataset.g===name);
+if(sec) paintGroup(n,sec,!!v);
+if(typeof dashFitSoon==='function' && dashMode) dashFitSoon();
+}
 function setAdvOpen(n,v){
 n.advOpen=!!v;
 const wrap=n.el?.querySelector('.advWrap'); if(!wrap) return;
@@ -1276,7 +1311,7 @@ function dashForget(nodeId){                          // удалённый уз
 function dashAutoPlace(n){                            // первая пустая вкладка (обход в глубину)
   for(const l of dashLeaves(dashEnsureTree())){
     const x=l.tabs.find(x=>x.node==null && !x.view);
-    if(x){ x.node=n.id; delete x.bare; return true; }
+    if(x){ x.node=n.id; delete x.bare; delete x.compact; return true; }
   }
   return false;
 }
@@ -1449,7 +1484,7 @@ function dashRenderLeaf(t){
     const toGraph=sel.value==='@graph';
     if(toGraph){ tab.node=null; tab.view='graph'; }
     else { tab.node=sel.value||null; delete tab.view; }
-    delete tab.bare;
+    delete tab.bare; delete tab.compact;
     dashRenderRoot(); Undo.push();
     if(toGraph) dashGraphFit(); };
   // вкладки: активная — сам селект, остальные — кнопки; полоса прокручивается по горизонтали
@@ -1478,6 +1513,13 @@ function dashRenderLeaf(t){
     bareBtn.classList.toggle('on',!!tab.bare);
     pane.classList.toggle('bare',!!tab.bare);
   }
+  let compactBtn=null;
+  if(n && MOD[n.type].params?.some(p=>p.pri)){          // только главные параметры: остальное прячется, место — дисплею
+    compactBtn=dashBtn2('▤','Main controls only',()=>{
+      tab.compact=!tab.compact; dashRenderRoot(); Undo.push(); },'dash-compact');
+    compactBtn.classList.toggle('on',!!tab.compact);
+    pane.classList.toggle('compact',!!tab.compact);
+  }
   if(n) acts.append(dashBtn2('✎','Rename module',()=>renameNode(n)));
   if(isGraph){
     acts.append(dashBtn2('⊕','Add module (or double-click the canvas)',e=>dashGraphAdd(e.currentTarget)),
@@ -1496,7 +1538,7 @@ function dashRenderLeaf(t){
       t.tabs.splice(t.cur,1); t.cur=Math.min(t.cur,t.tabs.length-1);
       dashRenderRoot(); Undo.push(); }));
   const more=dashBtn2('⋯','Pane actions',()=>tools.classList.toggle('acts'),'dash-more');
-  tools.append(...(bareBtn?[bareBtn]:[]),...(isMax?[bm]:[]),more,acts);   // ⛶ и возврат из максимума — всегда на виду, не под «⋯»
+  tools.append(...(compactBtn?[compactBtn]:[]),...(bareBtn?[bareBtn]:[]),...(isMax?[bm]:[]),more,acts);   // ⛶ и возврат из максимума — всегда на виду, не под «⋯»
   // двойной клик/тап по пустому месту шапки — развернуть/вернуть
   tools.addEventListener('dblclick',e=>{ if(e.target===tools || e.target===strip) dashToggleMax(t.id); });
   // жест по шапке: вниз — разделить вниз, вправо — разделить вправо
@@ -1946,7 +1988,7 @@ function serialize(){
 flush();                                            // ← синхронизируем граф перед сериализацией
 return {v:1, view:{...view},
 nodes:Graph.nodes.map(n=>{ const o={id:n.id,type:n.type,x:n.x,y:n.y,
-w:n.size.w,h:n.size.h,p:{...n.p},f:n.lod|0,a:n.advOpen?1:0};
+w:n.size.w,h:n.size.h,p:{...n.p},f:n.lod|0,a:n.advOpen?1:0,...(n.gOpen&&Object.keys(n.gOpen).length?{go:{...n.gOpen}}:{})};
 if(n.name) o.name=n.name;
 if(n.dash) o.dash=1;                                // закреплён (📌) для дашборда
 return o; }),
@@ -2005,6 +2047,7 @@ let max=1;
 for(const n of o.nodes){ const nn=addNode(n.type,n.x,n.y,n.p,n.id);
 if(nn &&n.f) setLod(nn,n.f===LOD_DOT ? LOD_DOT : LOD_CARD);
 if(nn &&n.a) setAdvOpen(nn,true);
+if(nn &&n.go) for(const [k,v] of Object.entries(n.go)) setGroupOpen(nn,k,v);
 if(nn &&n.name) setNodeName(nn,n.name);
 if(nn &&n.w){ nn.size.w=n.w; nn.size.h=n.h||nn.size.h; applySize(nn); }
 // n.dash — старые сохранения с 📌: такие узлы сами занимают свободные панели при входе в тайлы

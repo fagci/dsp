@@ -296,3 +296,9 @@ def({ id:'logan', lazy:'proc', title:'Logic Analyzer', cat:'Analysis',
         : p.proto+' · '+n.nbytes+' bytes'+(n.nerr ? ' · '+n.nerr+' errors' : '')+(p.proto==='UART' && spb<3 ? ' · baud too high for this sample rate' : '')+(n.last ? '\n'+n.last.slice(-60) : ''));
     } }
 });
+defGroups('logan',[
+  {n:'Input', p:'src count names thr hys'},
+  {n:'Capture', p:'span trig tch single arm hold'},
+  {n:'Decoder', p:'proto clr'},
+  {n:'Decoder settings', p:'a b c cs baud bits parity idle order edge', open:false},
+  {n:'USB', p:'urate uconn ufw ustart ustop', open:false}]);

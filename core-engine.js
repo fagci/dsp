@@ -644,3 +644,17 @@ const def = d => {
   if(MOD[d.id]) console.warn('дублирующийся id модуля: '+d.id);   // тихая перезапись — источник трудноуловимых багов
   MOD[d.id]=d;
 };
+// Группы параметров: defGroups(id,[{n:'Имя', p:'имена параметров через пробел', open:false}, …]).
+// Порядок групп — как в списке, параметры вне групп остаются сверху без заголовка.
+// opts.pri — имена главных параметров через пробел.
+const defGroups=(id,groups,opts)=>{
+  const d=MOD[id]; if(!d){ console.warn('defGroups: нет модуля '+id); return; }
+  for(const k of (opts?.pri||'').split(/\s+/).filter(Boolean)){            // главные параметры — их оставляет режим «только главное» в тайле
+    const q=d.params.find(x=>x.n===k); if(q) q.pri=true; else console.warn('defGroups '+id+': нет параметра '+k);
+  }
+  d.groups=groups.map(({n,open})=>({n,open:open!==false}));
+  for(const g of groups) for(const k of g.p.split(/\s+/).filter(Boolean)){
+    const q=d.params.find(x=>x.n===k);
+    if(q) q.g=g.n; else console.warn('defGroups '+id+': нет параметра '+k);
+  }
+};
