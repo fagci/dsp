@@ -4765,3 +4765,9 @@ def({ id:'spectral', title:'Spectral Descriptors', cat:'Analysis',
   draw(n){ n.el.querySelector('.readout').textContent =
     'centroid '+n.centroid.toFixed(0)+' Hz · spread '+n.spread.toFixed(0)+' Hz · flux '+
     n.flux.toFixed(3)+' · rolloff '+n.rolloff.toFixed(0)+' Hz'; }});
+defGroups('sa',[
+  {n:'View', p:'auto frange dbrange log grid peakHold dcCut layout panes'},
+  {n:'Scanner', p:'follow edge paneFrom detect detThr scanStop holdMarker skipClear'},
+  {n:'Markers', p:'snap trk trkBw ant antVf', open:false},
+  {n:'Waterfall', p:'rowMs palette wfMem phosphor phDecay phGain', open:false},
+  {n:'Reference', p:'tol band ref take', open:false}]);
