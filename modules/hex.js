@@ -109,7 +109,11 @@ def({ id:'hexStruct', title:'HEX Structure', cat:'Data', kw:'hex bytes packet pa
         }
       } else if(I.text.trim()) hxSetBuf(n,hexFromHex(I.text),true);
     }
-    let rec=I.rec; if(Array.isArray(rec)) rec=rec[rec.length-1];
+    let rec=I.rec;
+    if(Array.isArray(rec)){                               // из набора записей — последняя с полем hex (кроме режима build)
+      const hc=n.p.hexcol||'hex', withHex=n.p.recMode!=='build' ? rec.slice().reverse().find(r=>r && typeof r[hc]==='string') : null;
+      rec=withHex || rec[rec.length-1];
+    }
     if(rec && typeof rec==='object' && rec!==n.lastRec){
       n.lastRec=rec;
       const hx=rec[n.p.hexcol||'hex'], mode=n.p.recMode;

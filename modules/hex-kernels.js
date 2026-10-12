@@ -11,6 +11,7 @@
      имена: поле, sub.поле, список[0].поле; поле.$off / поле.$len — смещение (от начала схемы) и длина в байтах;
      _left — осталось байт (при разборе), _len — размер схемы в байтах (в calc)
    scale/prec/unit — показать число умноженным (v*scale), значение остаётся целым
+   xor — маска, накладываемая на сумму (DMR: CSBK 0xA5A5, PI 0x6969)
    calc: 'crc16-x25' | 'crc32' | 'inet16' | 'xor8' | 'sum8' | …  — контрольная сумма (from / to / over:'all')
          любая другая строка — выражение, значение пересчитывается при сборке (длины, ihl)
    sub: имя схемы | схема | {by:'выражение', map:{'17':'udp'}} — разбор вложенных байт */
@@ -545,6 +546,7 @@ function hexCalcFields(c){
             val=sum.f(m,0,m.length);
             if(f.zeroFF && val===0) val=0xFFFF;
           } else val=sum.f(src,a,e);
+          if(f.xor!==undefined) val=(val^f.xor)>>>0;                     // маска поверх суммы (DMR CSBK: 0xA5A5)
         } else {
           const env=hexLookup(c,r.prefix,r.ss,r.se);
           val=hexExpr(String(calc))(env);
