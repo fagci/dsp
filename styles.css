@@ -317,7 +317,7 @@ body.noedit #bar .ed{display:none}
   .slidernum input[type=number]{font-size:14px}
   .nhead{padding:8px}
   .nhead .x{padding:0 6px;font-size:14px}
-  .nhead .ren{padding:0 6px;font-size:13px}
+  .nhead .ren,.nhead .rst{padding:0 6px;font-size:13px}
   .rz{width:22px;height:22px}
 }
 /* ---- мобильный UX: карточки не выходят за ширину экрана ---- */
@@ -399,9 +399,9 @@ body.noedit #bar .ed{display:none}
 .nhead{display:flex;align-items:center;gap:6px;padding:5px 7px;cursor:move;user-select:none;-webkit-user-select:none;
   background:var(--panel);border-radius:3px 3px 0 0;box-shadow:inset 0 2px 0 var(--cat,var(--dim))}
 .nhead .ttl{flex:1;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.nhead .x,.nhead .ren{cursor:pointer;color:var(--dim);padding:0 2px}
-.nhead .ren{font-size:10px;opacity:.5}
-.nhead .ren:hover{color:var(--acc);opacity:1}
+.nhead .x,.nhead .ren,.nhead .rst{cursor:pointer;color:var(--dim);padding:0 2px}
+.nhead .ren,.nhead .rst{font-size:10px;opacity:.5}
+.nhead .ren:hover,.nhead .rst:hover{color:var(--acc);opacity:1}
 .nhead .x:hover{color:#e05c5c}
 .nbody{padding:0}
 .io{display:flex;justify-content:space-between;gap:8px}
@@ -415,7 +415,7 @@ body.noedit #bar .ed{display:none}
 /* точка: кружок с инициалами; полное имя — при наведении / выделении */
 #content .node.lod-dot{width:34px!important;height:34px!important;min-width:0;border-radius:50%;
   box-shadow:0 0 0 2px var(--cat,var(--dim)),0 2px 8px #0006}
-#content .node.lod-dot .nbody,#content .node.lod-dot .nhead .x,#content .node.lod-dot .nhead .ren,#content .node.lod-dot .rz{display:none}
+#content .node.lod-dot .nbody,#content .node.lod-dot .nhead .x,#content .node.lod-dot .nhead .ren,#content .node.lod-dot .nhead .rst,#content .node.lod-dot .rz{display:none}
 #content .node.lod-dot .nhead{height:100%;padding:0;border-radius:50%;box-shadow:none;justify-content:center}
 #content .node.lod-dot .nhead .ttl{flex:none;font-size:0}
 #content .node.lod-dot .nhead .ttl::before{content:attr(data-ini);font-size:11px;font-weight:600}

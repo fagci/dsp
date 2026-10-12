@@ -262,9 +262,12 @@ const d=MOD[n.type];
 const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
 const title=nodeTitle(n);
 el.style.setProperty('--cat',catColor(d.cat)); el.dataset.title=title;
-el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span><span class="ren" title="Rename">✎</span><span class="x">✕</span></div> <div class="nbody"></div>`;
+el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span><span class="rst" title="Reset all parameters">↺</span><span class="ren" title="Rename">✎</span><span class="x">✕</span></div> <div class="nbody"></div>`;
 el.querySelector('.ttl').textContent=title;
 el.querySelector('.ren').addEventListener('click',e=>{ e.stopPropagation(); renameNode(n); });
+const rstEl=el.querySelector('.rst');
+if(resettableParams(d).length) rstEl.addEventListener('click',e=>{ e.stopPropagation(); resetNode(n); });
+else rstEl.remove();
 const body=el.querySelector('.nbody');
 const io=document.createElement('div'); io.className='io3';
 const ci=document.createElement('div'); ci.className='col';
@@ -367,6 +370,17 @@ for(const ev of ['pointerdown','pointermove','pointerup','pointerleave','wheel',
 el.addEventListener(ev,()=>{ n._dirty=true; },{capture:true,passive:true});
 el._node=n; n._vis=undefined; visIO.observe(el);
 n.el=el; content.append(el); el.style.zIndex=++zCounter; posNode(n); applySize(n); // новый узел сразу поверх остальных
+}
+function resettableParams(d){                         // параметры с умолчанием; скрытые (служебные) и кнопки не трогаем
+return (d.params||[]).filter(s=>!s.hidden && s.t!=='button' && s.t!=='file' && s.d!==undefined);
+}
+function resetNode(n){
+const d=MOD[n.type];
+for(let pass=0;pass<2;pass++) for(const s of resettableParams(d)){   // два прохода: range2 зажимает концы друг о друга
+if(s.t==='range2') s.keys.forEach((k,i)=>n.set?.[k] ? n.set[k](s.d[i]) : (n.p[k]=s.d[i]));
+else if(pass===0) n.set?.[s.n] ? n.set[s.n](s.d) : (n.p[s.n]=s.d);
+}
+d.onReset?.(n);
 }
 function mergeableParamNames(d){                     // имена параметров, что могут слиться со строкой порта —
 return new Set((d.params||[]).flatMap(s=>            // кроме button/file: у них своя разметка без места под джек (см. paramEl)
