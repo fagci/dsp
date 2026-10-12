@@ -3070,7 +3070,7 @@ function iqBarBuild(n){
     if(!iqEngOn()){ d.paused=false; document.getElementById('run')?.click(); }   // общий Run выключен — запускаем его
     else d.paused=!d.paused;
   });
-  btn('|◂','previous mark',()=>{ const d=n.dev, p=d.pos-d.rate*1.5, a=(n.annSt?.list||[]).filter(x=>x.a0<p).sort((x,y)=>y.a0-x.a0)[0]; if(a) iqSeek(n, a.a0-d.rate*.3); });
+  btn('|◂','previous mark',()=>{ const d=n.dev, p=d.pos-d.rate*1.5, a=(n.annSt?.list||[]).filter(x=>x.a0<p).sort((x,y)=>y.a0-x.a0)[0]; iqSeek(n, a ? a.a0-d.rate*.3 : 0); });   // меток слева нет — в начало
   btn('−10','back 10 s',()=>iqSeek(n, n.dev.pos-n.dev.rate*10));
   U.cv=document.createElement('canvas'); U.cv.style.cssText='order:-1;flex:1 1 100%;min-width:0;height:22px;cursor:pointer;touch-action:none';
   row.append(U.cv);
