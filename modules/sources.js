@@ -4875,6 +4875,10 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
         {n:'rssi',t:'num'},{n:'snr',t:'num'},{n:'sqOpen',t:'num'},
         {n:'rssi2',t:'num'},{n:'snr2',t:'num'},{n:'rssi3',t:'num'},{n:'snr3',t:'num'},{n:'rssi4',t:'num'},{n:'snr4',t:'num'}],
   readout:true,
+  onReset:n=>{                                       // sample rate — на железо; частота центра не сбрасывается (нет умолчания)
+    if(n.dev) n.dev.setSampleRate(rtlSafeSr(n.p.sr)).then(r=>{ n.sourceRate=r; rtlResetRing(n); })
+      .catch(e=>{ n.status='sample rate change error: '+e.message; });
+    rtlResetRing(n); },
   params:[
     {n:'connect',t:'button',label:'Connect',fn:async n=>{ await rtlConnect(n); }},
     {n:'choose',t:'button',label:'Choose…',fn:async n=>{ await rtlConnect(n, true); }},
