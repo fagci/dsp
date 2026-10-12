@@ -134,14 +134,17 @@ function rdsCurrent(n){
 def({ id:'rds', title:'RDS Display', cat:'Radio', kw:'rds rbds fm radio text radiotext station name ps pi pty traffic tmc rt+ now playing', resize:true, w:380,
   ins:[{n:'rec',t:'rec'}],
   outs:[{n:'ps',t:'txt'},{n:'rt',t:'txt'},{n:'artist',t:'txt'},{n:'title',t:'txt'},{n:'pty',t:'num'},{n:'sync',t:'num'}],
-  params:[{n:'hold',t:'range',min:0,max:120,step:1,d:20,label:'dim when silent, s (0 = never)'},
-          {n:'utc',t:'check',d:false,label:'clock in UTC'},
+  params:[{n:'hold',t:'range',min:0,max:120,step:1,d:20,label:'dim when silent, s (0 = never)',adv:true},
+          {n:'utc',t:'check',d:false,label:'clock in UTC',adv:true},
           {n:'clear',t:'button',label:'Clear',fn:n=>{ n.stations.clear(); n.pin=null; n.dirty=true; }}],
   init:n=>{ n.stations=new Map(); n.pin=null; n.ui=null; n.dirty=true; n.key=''; },
   process(n,I){
     for(const r of recList(I.rec)){
       if(!r || r.kind!=='rds' || !r.snap) continue;
+      // пока PI не принят, станция безымянная ('x'); как только он есть — безымянную убираем
       const key=String(r.snap.pi>=0 ? r.snap.pi : 'x');
+      if(key==='x' && n.stations.size && !n.stations.has('x')) continue;
+      if(key!=='x') n.stations.delete('x');
       n.stations.set(key, {key, snap:r.snap, freq:r.freq, seen:Date.now()});
       n.dirty=true;
       if(n.stations.size>RDS_KEEP){ let old=null; for(const x of n.stations.values()) if(!old||x.seen<old.seen) old=x; n.stations.delete(old.key); }
