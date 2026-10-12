@@ -305,6 +305,9 @@ const PRESET_CATS={
   'IR: Tasmota Blaster over MQTT':'Infrared',
   'MQTT: Subscribe and Publish':'Network & IoT',
   'Bytes: File over Any Text Channel (Loopback)':'Network & IoT',
+  'Hex: Parse a Packet (Ethernet / IPv4 / UDP)':'Network & IoT',
+  'Hex: Table Rows → Packets → Table':'Network & IoT',
+  'Wi-Fi: ESP32 Sniffer → Table and HEX Structure':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
   'HID: Reports to Number and Log':'Network & IoT',
   'NFC: Tag Log and Writer':'Network & IoT',
@@ -4513,6 +4516,51 @@ rx.size.w=320; rx.size.h=260; applySize(rx);
 const sv=addNode('binSave',1160,240,{});
 sv.size.w=300; sv.size.h=200; applySize(sv);
 addEdge(fl.id,'bin',tx.id,'bin'); addEdge(tx.id,'text',rx.id,'text'); addEdge(rx.id,'bin',sv.id,'bin');
+markWiresDirty();
+});
+preset('Hex: Parse a Packet (Ethernet / IPv4 / UDP)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'HEX Structure splits bytes into fields by a structure and shows them over the dump: click a field — its bytes are outlined, click a value to edit it (lengths and the IPv4 checksum are recalculated), click a byte and type hex digits to overwrite it.\n'+
+  'The structure is a list (eth, ipv4, udp, tcp, arp, icmp, wifi, adsb, dmr-lc …) or your own JSON under advanced → own structure («Copy chosen structure to JSON» gives a starting point). Nested structures are chosen by a field value (the Ethernet type picks IPv4, the IPv4 protocol picks UDP).\n'+
+  'The rec output carries every field (payload.payload.dport …), the bin / text outputs the bytes — wire them to Serial Out, MQTT Out, a Table or a file. A rec on the input is built into a packet.'});
+nt.size.w=820; nt.size.h=150; applySize(nt);
+const tx=addNode('textsrc',40,230,{text:'ffffffffffff001122334455080045000021000000004011f87bc0a80001c0a800ff13881389000d000068656c6c6f'});
+tx.size.w=320; tx.size.h=160; applySize(tx);
+const hx=addNode('hexStruct',420,200,{schema:'eth'});
+hx.size.w=460; hx.size.h=520; applySize(hx);
+addEdge(tx.id,'text',hx.id,'text');
+markWiresDirty();
+});
+preset('Hex: Table Rows → Packets → Table', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A Table row is built into a packet and the packet is parsed back into a record. Table → HEX Structure (rec): the columns are the field names of the structure (payload.ttl, payload.payload.dport …; «rec field names» maps other column names), the packet comes out on bin / text. The second Table collects the parsed records, one row per packet.\n'+
+  'Fields that are not in the row keep their values; lengths and checksums are recalculated. In the other direction a decoder record with a hex field (DMR, ADS-B, Wi-Fi) is parsed instead of built.'});
+nt.size.w=820; nt.size.h=130; applySize(nt);
+const t1=addNode('table',40,200,{list:'@patch',advance:'rate',rate:1,loop:true,
+  data:'dst,src,type,payload.ver,payload.ttl,payload.proto,payload.src,payload.dst,payload.payload.sport,payload.payload.dport,payload.payload.data\nff:ff:ff:ff:ff:ff,00:11:22:33:44:55,IPv4,4,64,UDP,192.168.0.1,192.168.0.255,5000,5001,68656c6c6f\nff:ff:ff:ff:ff:ff,00:11:22:33:44:66,IPv4,4,32,UDP,192.168.0.2,192.168.0.255,5000,5002,776f726c64\nff:ff:ff:ff:ff:ff,00:11:22:33:44:77,IPv4,4,16,UDP,192.168.0.3,192.168.0.255,6000,5001,6869'});
+t1.size.w=320; t1.size.h=300; applySize(t1);
+const hx=addNode('hexStruct',400,200,{schema:'eth',recMode:'build'});
+hx.size.w=460; hx.size.h=520; applySize(hx);
+const t2=addNode('table',920,200,{list:'@patch',data:''});
+t2.size.w=320; t2.size.h=300; applySize(t2);
+addEdge(t1.id,'rec',hx.id,'rec'); addEdge(hx.id,'rec',t2.id,'rec');
+markWiresDirty();
+});
+preset('Wi-Fi: ESP32 Sniffer → Table and HEX Structure', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'802.11 frames from an ESP32 (flash tools/wifi-sniffer-esp32; press Connect, Chrome / Edge). Every frame is a record (type, addresses, SSID, channel, security, RSSI, hex): the Table keeps them, HEX Structure shows the last one byte by byte (the structure «wifi» is chosen from the record).\n'+
+  'Without hardware the Text Source feeds one sample beacon in the same line format (WIFI,<channel>,<rssi>,<hex>). Use only on your own network or with permission; frames are not decrypted.'});
+nt.size.w=820; nt.size.h=130; applySize(nt);
+const tx=addNode('textsrc',40,200,{text:'WIFI,6,-52,80000000ffffffffffffaabbccddee01aabbccddee01d00415cd5b07000000006400010400084453502d4c61623103010630020100'});
+tx.size.w=300; tx.size.h=160; applySize(tx);
+const ws=addNode('wifiSniff',40,470,{types:'mgmt'});
+ws.size.w=300; ws.size.h=240; applySize(ws);
+const tb=addNode('table',400,200,{list:'@patch',data:'',key:'id'});
+tb.size.w=380; tb.size.h=340; applySize(tb);
+const hx=addNode('hexStruct',840,200,{schema:'wifi',recMode:'parse'});
+hx.size.w=460; hx.size.h=520; applySize(hx);
+addEdge(tx.id,'text',ws.id,'text');
+addEdge(ws.id,'rec',tb.id,'rec'); addEdge(ws.id,'rec',hx.id,'rec');
 markWiresDirty();
 });
 preset('Joystick: Gamepad → Frame → MQTT', function(){

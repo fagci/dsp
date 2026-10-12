@@ -5,8 +5,8 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,DataView,ArrayBuffer,TextEncoder,TextDecoder,Array,Map,Set,Error,String,Number,BigInt,Object,Date,JSON,isNaN,parseInt});
-for(const f of ['hex-kernels.js','hex-formats.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
-vm.runInContext('this.H={hexParse,hexBuild,hexToRec,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
+for(const f of ['hex-kernels.js','hex-formats.js','wifisniff-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
+vm.runInContext('this.H={wifiLine,wifiRec,hexParse,hexBuild,hexToRec,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
 const H=ctx.H;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 const hex=s=>H.hexFromHex(s), toHex=b=>H.hexToHex(b);
@@ -118,6 +118,21 @@ const adb=H.hexBuild('adsb',{df:17,ca:5,icao:'4840d6',tc:4,cat:0,callsign:'KLM10
 ok('adsb build matches',toHex(adb.bytes)==='8d4840d6202cc371c32ce0576098',toHex(adb.bytes));
 const ap=H.hexParse('adsb',hex('8D40621D58C382D690C8AC2863A7'));
 ok('adsb position',ap.vals.tc===11 && ap.vals.alt===0xc38>>0 || ap.vals.tc===11,JSON.stringify(ap.vals));
+
+// Wi-Fi сниффер: строка прошивки → запись
+const beacon=H.hexToHex(bc.bytes);
+const wl=H.wifiLine('WIFI,6,-61,'+beacon);
+ok('sniffer line parsed',wl && wl.chan===6 && wl.rssi===-61 && wl.bytes.length===bc.bytes.length);
+ok('sniffer ignores garbage',H.wifiLine('boot: ets Jun')===null && H.wifiLine('WIFI,x')===null);
+const wr=H.wifiRec(wl,1000);
+ok('sniffer beacon record',wr.kind==='beacon' && wr.ssid==='TestNet' && wr.ap_chan===6 && wr.bssid==='aa:bb:cc:dd:ee:01' && wr.security==='WEP' && wr.hexSchema==='wifi' && wr.hex===beacon,JSON.stringify(wr));
+const dr=H.wifiRec({chan:1,rssi:-40,bytes:hex('c000 3a01 ffffffffffff aabbccddee01 aabbccddee01 1000 0700')},1);
+ok('sniffer deauth record',dr.kind==='deauth' && dr.reason===7 && dr.bssid==='aa:bb:cc:dd:ee:01',JSON.stringify(dr));
+const ar=H.wifiRec({chan:1,rssi:-40,bytes:hex('d400 0000 aabbccddee01')},1);
+ok('sniffer ack record',ar.kind==='ack' && ar.da==='aa:bb:cc:dd:ee:01' && ar.ftype==='ctrl');
+// запись снифера → HEX Structure: hex + hexSchema разбираются обратно в те же поля
+const back=H.hexParse(wr.hexSchema,H.hexFromHex(wr.hex));
+ok('record hex re-parses',back.ok && back.vals['body.ies[0].data.ssid']==='TestNet');
 
 // проверка схемы
 ok('schema check clean',H.hexSchemaCheck(H.HEX_LIB.ipv4,H.HEX_LIB).length===0);
