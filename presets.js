@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=45;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=46;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -163,7 +163,8 @@ const PRESET_CAT_ORDER=['Start Here',
                          'Maps & Locating',
                          'Music: Sequencers & Mixer',
                          'Music: Synth & Tracker',
-                         'Analysis & Measurement'];
+                         'Analysis & Measurement',
+                         'Tile Layouts'];
 const PRESET_CATS={
   'Demo: Sweep and Waterfall':'Start Here',
   'Quick Audio Recording':'Start Here',
@@ -397,6 +398,12 @@ const PRESET_CATS={
   'Phase Scope: Correlation and Lissajous Figures':'Analysis & Measurement',
   'Hilbert: Envelope and Instantaneous Frequency':'Analysis & Measurement',
   'Triggered Scope: Phase Difference Visible':'Analysis & Measurement',
+  'Tiles: Modular Rack':'Tile Layouts',
+  'Tiles: Compact Pattern Editor':'Tile Layouts',
+  'Tiles: Receiver Console':'Tile Layouts',
+  'Tiles: Beat Grid':'Tile Layouts',
+  'Tiles: Bench Instruments':'Tile Layouts',
+  'Tiles: Digital Modes Desk':'Tile Layouts',
 };
 const PRESETS={};
 function preset(name,fn){
@@ -3243,6 +3250,114 @@ preset('Tracker: Synths as Instruments', function(){
   addEdge(tr.id,'clk',dr.id,'clk');
   addEdge(ac.id,'out',mx.id,'a'); addEdge(ps.id,'out',mx.id,'b'); addEdge(dr.id,'out',mx.id,'c');
   addEdge(mx.id,'out',dc.id,'L');
+  markWiresDirty();
+});
+
+/* ---- раскладки тайлов ---- */
+const tileLeaf=(n,bare)=>({t:'leaf',id:dashId(),node:n?n.id:null,...(bare?{bare:true}:{})});
+const TILE_GRID='60:0:2:90;64:0:2:90;67:0:2:90;65:4:1:70;67:5:1:70;69:6:3:110;72:10:2:100;71:12:2:90;67:14:2:90';
+const tileGraph=()=>({t:'leaf',id:dashId(),node:null,view:'graph'});
+const tileSplit=(dir,children,sizes)=>({t:'split',id:dashId(),dir,children,sizes});
+
+// граф-панель слева, справа осциллограф, секвенсор и драм-машина
+preset('Tiles: Modular Rack', function(){
+  clearAll();
+  const ck=addNode('clock',40,40,{bpm:124});
+  const sq=addNode('seq',300,40,{});
+  const sy=addNode('poly4',560,40,{wave:'saw',attack:.01,decay:.25,sustain:.4,release:.3});
+  const dr=addNode('drumseq',300,260,{steps:16,grid:[stepPattern([0,4,8,12]),stepPattern([4,12]),stepPattern([]),stepPattern([2,6,10,14]),stepPattern([]),stepPattern([])].join(';')});
+  const mx=addNode('mixer4',820,40,{ka:.7,kb:.6});
+  const sc=addNode('scope',1080,40,{});
+  const dc=addNode('dac',1080,300,{vol:.4,mode:'mono'});
+  addEdge(ck.id,'clk',sq.id,'clk'); addEdge(ck.id,'clk',dr.id,'clk');
+  addEdge(sq.id,'freq',sy.id,'freq'); addEdge(sq.id,'gate',sy.id,'gate');
+  addEdge(sy.id,'out',mx.id,'a'); addEdge(dr.id,'out',mx.id,'b');
+  addEdge(mx.id,'out',sc.id,'in1'); addEdge(mx.id,'out',dc.id,'L');
+  Graph.dashTree=tileSplit('row',[tileGraph(),
+    tileSplit('col',[tileLeaf(sc,true),tileLeaf(sq),tileLeaf(dr)],[34,33,33])],[58,42]);
+  markWiresDirty();
+});
+
+// канал-вид в центре, список порядка и инструментов по бокам, клавиатура внизу
+preset('Tiles: Compact Pattern Editor', function(){
+  clearAll();
+  const tr=addNode('tracker',40,40,{});
+  tr.p.song='';
+  const dc=addNode('dac',40,330,{vol:.6,mode:'stereo'});
+  addEdge(tr.id,'L',dc.id,'L'); addEdge(tr.id,'R',dc.id,'R');
+  const t={};
+  [['trkbar',340,40],['trkseq',340,160],['trkpat',680,160],['trkinsl',1280,160],['trkkeys',340,580]]
+    .forEach(([k,x,y])=>{ t[k]=addNode(k,x,y,{}); addEdge(tr.id,'song',t[k].id,'song'); });
+  Graph.dashTree=tileSplit('col',[tileLeaf(t.trkbar),
+    tileSplit('row',[tileLeaf(t.trkseq),tileLeaf(t.trkpat),tileLeaf(t.trkinsl)],[14,66,20]),
+    tileLeaf(t.trkkeys)],[17,57,26]);
+  markWiresDirty();
+});
+
+// большой водопад, снизу звук и уровень, сбоку закладки
+preset('Tiles: Receiver Console', function(){
+  clearAll();
+  const sw=addNode('sweep',40,40,{});
+  const ff=addNode('fft',300,40,{size:'2048'});
+  const sa=addNode('sa',560,40,{fmin:0,fmax:12000,split:.35});
+  const sc=addNode('scope',300,300,{});
+  const mt=addNode('meter',560,300);
+  const bk=addNode('table',820,40,{list:'Bookmarks',initial:false});
+  const dc=addNode('dac',820,300,{vol:.2});
+  addEdge(sw.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
+  addEdge(sw.id,'out',sc.id,'in1'); addEdge(sw.id,'out',mt.id,'in'); addEdge(sw.id,'out',dc.id,'L');
+  Graph.dashTree=tileSplit('row',[
+    tileSplit('col',[tileLeaf(sa,true),tileSplit('row',[tileLeaf(sc,true),tileLeaf(mt,true)],[70,30])],[70,30]),
+    tileSplit('col',[tileLeaf(bk),tileGraph()],[55,45])],[78,22]);
+  markWiresDirty();
+});
+
+// секвенсоры друг под другом, микшер справа
+preset('Tiles: Beat Grid', function(){
+  clearAll();
+  const ck=addNode('clock',40,40,{bpm:128});
+  const dr=addNode('drumseq',300,40,{steps:16,grid:[stepPattern([0,4,8,12]),stepPattern([4,12]),stepPattern([2,6,10,14,15]),stepPattern([0,2,4,6,8,10,12,14]),stepPattern([]),stepPattern([7])].join(';')});
+  const pr=addNode('pianoroll',300,360,{grid:TILE_GRID,steps:16});
+  const sy=addNode('poly4',760,360,{wave:'saw'});
+  const mx=addNode('mixer4',1020,200,{ka:.8,kb:.5});
+  const dc=addNode('dac',1280,200,{vol:.4,mode:'mono'});
+  addEdge(ck.id,'clk',dr.id,'clk'); addEdge(ck.id,'clk',pr.id,'clk');
+  addEdge(pr.id,'freq',sy.id,'freq'); addEdge(pr.id,'gate',sy.id,'gate');
+  addEdge(dr.id,'out',mx.id,'a'); addEdge(sy.id,'out',mx.id,'b'); addEdge(mx.id,'out',dc.id,'L');
+  Graph.dashTree=tileSplit('row',[
+    tileSplit('col',[tileLeaf(dr),tileLeaf(pr)],[40,60]),
+    tileSplit('col',[tileLeaf(mx),tileLeaf(sy)],[50,50])],[72,28]);
+  markWiresDirty();
+});
+
+// генератор, осциллограф, спектр, частотомер и уровень на одной странице
+preset('Tiles: Bench Instruments', function(){
+  clearAll();
+  const g=addNode('osc',40,40,{freq:1000,amp:.5,wave:'sine'});
+  const sc=addNode('scope',300,40,{});
+  const ff=addNode('fft',300,300,{size:'2048'});
+  const sa=addNode('sa',560,300,{fmin:0,fmax:6000,split:.4});
+  const fm=addNode('freqmeter',560,40,{});
+  const mt=addNode('meter',820,40);
+  addEdge(g.id,'out',sc.id,'in1'); addEdge(g.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
+  addEdge(g.id,'out',fm.id,'in'); addEdge(g.id,'out',mt.id,'in');
+  Graph.dashTree=tileSplit('col',[
+    tileSplit('row',[tileLeaf(g),tileLeaf(fm,true),tileLeaf(mt,true)],[34,33,33]),
+    tileSplit('row',[tileLeaf(sc,true),tileLeaf(sa,true)],[50,50])],[22,78]);
+  markWiresDirty();
+});
+
+// слоты FT8, спектр и карта
+preset('Tiles: Digital Modes Desk', function(){
+  clearAll();
+  const mic=addNode('mic',40,40,{});
+  const ff=addNode('fft',300,40,{size:'4096'});
+  const sa=addNode('sa',560,40,{fmin:0,fmax:3000,split:.4});
+  const rx=addNode('ft8Rx',300,320,{});
+  const mp=addNode('geoMap',820,40,{});
+  addEdge(mic.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec'); addEdge(mic.id,'out',rx.id,'in');
+  Graph.dashTree=tileSplit('row',[
+    tileSplit('col',[tileLeaf(sa,true),tileLeaf(rx)],[45,55]),tileLeaf(mp,true)],[55,45]);
   markWiresDirty();
 });
 

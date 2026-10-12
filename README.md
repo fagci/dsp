@@ -1001,6 +1001,12 @@ The ▦ button switches to a tiled dashboard built from the modules of the curre
 - **Tile pages**: **+** next to ▦ adds another set of tiles; switch pages with the numbered buttons, tap the active one to rename, duplicate, reorder or delete it. A module can appear on several pages
 - The layout is saved with the patch and works on touch devices (wide scroll rail for long panes)
 
+### Tile layouts
+
+The **Tile Layouts** preset category loads a patch together with a ready dashboard layout (switch on ▦ after loading): *Modular Rack*, *Compact Pattern Editor*, *Receiver Console*, *Beat Grid*, *Bench Instruments*, *Digital Modes Desk*. Each is a starting point for your own arrangement.
+
+<img width="400" src="docs/screenshots/t-6e6768dc-dark.png" alt="layout 1"> <img width="400" src="docs/screenshots/t-cf25a530-dark.png" alt="layout 2"> <img width="400" src="docs/screenshots/t-ef928755-dark.png" alt="layout 3"> <img width="400" src="docs/screenshots/t-530b8264-dark.png" alt="layout 4"> <img width="400" src="docs/screenshots/t-08174f7a-dark.png" alt="layout 5"> <img width="400" src="docs/screenshots/t-93e4cc36-dark.png" alt="layout 6"> 
+
 ### On a phone
 
 - **Screen stays on** while the graph runs (Settings → *Keep screen on*, on by default; needs the Screen Wake Lock API).
