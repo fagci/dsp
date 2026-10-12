@@ -1247,6 +1247,7 @@ function dashNormLeaf(l){
   return l;
 }
 function dashTab(l){ return dashNormLeaf(l).tabs[l.cur]; }
+const dashCopy=t=>t?JSON.parse(JSON.stringify(t)):t;   // снимок без ссылок на живое дерево: dashForget правит его на месте
 function dashLeaf(nodeId){ return {t:'leaf', id:dashId(), tabs:[{node:nodeId??null}], cur:0}; }
 function dashEnsureTree(){ if(!Graph.dashTree) Graph.dashTree=dashLeaf(null); return Graph.dashTree; }
 function dashFind(t,id,parent,idx){                  // {leaf,parent,idx} по id узла дерева, либо null
@@ -1950,8 +1951,8 @@ if(n.name) o.name=n.name;
 if(n.dash) o.dash=1;                                // закреплён (📌) для дашборда
 return o; }),
 edges:Graph.edges.map(e=>({from:e.from,fp:e.fp,to:e.to,tp:e.tp})),
-dashTree:Graph.dashTree,                            // раскладка активной страницы тайлов (старые версии читают только её)
-dashPages:Graph.dashPages.map(pg=>({name:pg.name||'',tree:pg.tree})), dashPage:Graph.dashPage};
+dashTree:dashCopy(Graph.dashTree),                  // раскладка активной страницы тайлов (старые версии читают только её)
+dashPages:Graph.dashPages.map(pg=>({name:pg.name||'',tree:dashCopy(pg.tree)})), dashPage:Graph.dashPage};
 }
 const MIGRATE={                                     // старые узлы → их замена
 dmrRx:   {type:'fskRx', p:{proto:'dmr'}, ports:{}},     // DMR Decoder — тот же движок, протокол dmr
