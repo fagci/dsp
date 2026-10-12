@@ -1071,3 +1071,44 @@ select.aed-b{padding:0 6px}
 .rtc-rv{display:block;width:100%;max-height:260px;object-fit:contain;background:#000}
 .rtc-lv{position:absolute;right:4px;bottom:4px;width:30%;max-height:30%;object-fit:cover;border:1px solid var(--line);border-radius:3px;background:#000}
 .fm-row.armed{background:var(--panel2)}
+
+/* ---- HEX Structure (modules/hex.js): дамп с подсветкой полей, дерево полей, правка ---- */
+.hx-ui{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--txt);box-sizing:border-box;overflow:hidden;
+  grid-column:1/-1;width:100%;min-width:0}
+.hx-bar{display:flex;gap:4px;align-items:center;flex:none;min-width:0}
+.hx-info{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim,#889)}
+.hx-info.bad{color:var(--err)}
+.hx-btn{background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:0 8px;border-radius:3px;cursor:pointer;font-size:10px;height:20px}
+.hx-btn:hover{border-color:var(--acc)}
+.hx-dump{flex:none;max-height:42%;min-height:40px;overflow:auto;background:var(--screen,var(--bg));border:1px solid var(--line);
+  border-radius:3px;padding:3px 4px;font:11px/1.45 ui-monospace,Menlo,Consolas,monospace;outline:none;white-space:nowrap}
+.hx-dump:focus{border-color:var(--acc)}
+.hx-row{display:flex;gap:8px}
+.hx-off{color:#778;user-select:none}
+.hx-hex b{font-weight:400;padding:0 1px;border-radius:2px;cursor:pointer;display:inline-block;min-width:1.7em;text-align:center}
+.hx-asc{color:#99a}
+.hx-asc i{font-style:normal;cursor:pointer;display:inline-block;min-width:.6em;text-align:center}
+.hx-x{color:#667}
+.hx-err{background:rgba(224,92,92,.35)}
+.hx-pad{background:rgba(128,128,128,.18)}
+.hx-c0{background:rgba(95,184,209,.28)} .hx-c1{background:rgba(224,135,95,.28)} .hx-c2{background:rgba(127,209,127,.26)}
+.hx-c3{background:rgba(209,138,209,.28)} .hx-c4{background:rgba(224,176,80,.28)} .hx-c5{background:rgba(111,208,192,.28)}
+.hx-c6{background:rgba(224,127,176,.28)} .hx-c7{background:rgba(180,212,85,.26)}
+.hx-in{outline:1px solid var(--acc);outline-offset:-1px}
+.hx-cur{box-shadow:0 0 0 1px var(--acc)}
+.hx-empty{color:#889;padding:4px}
+.hx-tree{flex:1;min-height:40px;overflow:auto;border:1px solid var(--line);border-radius:3px;background:var(--bg)}
+.hx-f{display:flex;gap:6px;align-items:baseline;padding:1px 4px;cursor:pointer;white-space:nowrap}
+.hx-f:hover{background:var(--panel2)}
+.hx-f.on{background:rgba(95,184,209,.18)}
+.hx-f.bad .hx-val{color:var(--err)}
+.hx-f s{width:8px;height:8px;border-radius:2px;flex:none;align-self:center}
+.hx-n{min-width:60px;flex:none}
+.hx-o{color:#778;min-width:28px;flex:none;font-size:10px}
+.hx-val{overflow:hidden;text-overflow:ellipsis;font-family:ui-monospace,Menlo,Consolas,monospace}
+.hx-val.ed:hover{text-decoration:underline dotted}
+.hx-val u{text-decoration:none;color:#889;margin-left:4px}
+.hx-val em{color:var(--err);font-style:normal;margin-left:4px}
+.hx-edit,.hx-line{min-width:0;width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);color:var(--txt);
+  font:11px ui-monospace,Menlo,Consolas,monospace;padding:2px 4px;flex:none}
+.hx-edit{width:12em}

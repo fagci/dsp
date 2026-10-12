@@ -1290,7 +1290,7 @@ function adsbBits(n,S,x0,u,h,bits,b,now){
     icao=res;
   } else return null;
   if(fix) n.fixed++;
-  const r={t:now, raw:modesHex(b,nb), df, icao:icao.toString(16).toUpperCase().padStart(6,'0')};
+  const r={t:now, raw:modesHex(b,nb), hex:modesHex(b,nb), hexSchema:nb>=14 ? 'adsb' : 'adsb-short', df, icao:icao.toString(16).toUpperCase().padStart(6,'0')};
   if(fix) r.fix=fix;
   return [len,r];
 }
