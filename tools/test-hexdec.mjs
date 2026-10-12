@@ -78,5 +78,29 @@ let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else
   const pk=ev('hexParse("m17-pkt",hexFromHex("0548454c4c4f"))');
   ok('m17 packet: SMS',pk.vals.proto===5 && pk.vals.data==='48454c4c4f');
 }
+
+// P25: TSBK / LC / HDU — поля схемы против разбора p25Tsbk / p25Lc декодера, CRC-16 блока
+{
+  const mk=(b0,mf,data)=>{ const a=new Uint8Array(12); a[0]=b0; a[1]=mf; a.set(data,2); const c=ev(`dmrCrc16(Uint8Array.from([${Array.from(a.subarray(0,10))}]),10)`); a[10]=c>>8; a[11]=c&255; return a; };
+  const cases=[
+    ['grant',mk(0x80|0x00,0,[0x40,0x12,0x34,0x00,0x64,0x00,0xAB,0xCD]),{ch:0x1234,to:100,from:0xABCD,opts:0x40}],
+    ['unit reg response',mk(0x2C,0,[0x08,0x30,0x12,0x34,0x56,0x00,0x00,0x07]),{}],
+    ['rfss status',mk(0x3A,0,[0x01,0x00,0x31,0xAB,0x02,0x03,0x12,0x34,0x00,0x00].slice(0,8)),{}]];
+  for(const [name,a,exp] of cases){
+    ctx.tb=a;
+    const d=ev('p25Tsbk({idens:{}},bitsMsb(tb))'), p=ev('hexParse("p25-tsbk",tb)'), v=p.vals;
+    let agree=p.ok && v.op===d.f.op && v.mfid===d.f.mfid;
+    for(const k of ['to','from','ch','opts','sysid','rfss','site','lra','sid']) if(d.f[k]!==undefined && v[k]!==undefined && d.f[k]!==v[k]) agree=false;
+    ok('p25 tsbk '+name+': schema agrees with the decoder',agree && Object.entries(exp).every(([k,x])=>v[k]===x),JSON.stringify([d.f,v]));
+  }
+  ctx.lcb=Uint8Array.from([0,0,0x80,0,0x00,0x64,0x00,0x12,0x34]);
+  const lc=ev('p25Lc(bitsMsb(lcb))'), lp=ev('hexParse("p25-lc",lcb)');
+  ok('p25 lc: group call',lc.type==='group' && lc.to===lp.vals.to && lc.from===lp.vals.from && lp.vals.lcf===0 && lc.hexSchema==='p25-lc' && lc.hex==='000080000064001234',JSON.stringify([lc,lp.vals]));
+  ctx.lcp=Uint8Array.from([3,0,0x40,0,0,5,0,0,6]);
+  const lc3=ev('p25Lc(bitsMsb(lcp))'), lp3=ev('hexParse("p25-lc",lcp)');
+  ok('p25 lc: private call',lc3.type==='private' && lc3.to===lp3.vals.to && lc3.from===lp3.vals.from && lp3.vals.svc===0x40,JSON.stringify([lc3,lp3.vals]));
+  const hd=ev('hexParse("p25-hdu",hexFromHex("0102030405060708090aa0aaaa0123"))');
+  ok('p25 hdu fields',hd.vals.mfid===0x0a && hd.vals.algid===0xa0 && hd.vals.kid===0xaaaa && hd.vals.tgid===0x123 && hd.fields.find(f=>f.n==='algid').text.startsWith('DVI-XL'),JSON.stringify(hd.vals));
+}
 console.log(bad ? bad+' failed' : 'all ok');
 process.exit(bad?1:0);
