@@ -102,5 +102,18 @@ let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else
   const hd=ev('hexParse("p25-hdu",hexFromHex("0102030405060708090aa0aaaa0123"))');
   ok('p25 hdu fields',hd.vals.mfid===0x0a && hd.vals.algid===0xa0 && hd.vals.kid===0xaaaa && hd.vals.tgid===0x123 && hd.fields.find(f=>f.n==='algid').text.startsWith('DVI-XL'),JSON.stringify(hd.vals));
 }
+
+// NXDN: сообщения слоя 3 от генератора ядра (nxdnVcall / nxdnBitsOf) — схема против nxdnL3 декодера
+{
+  const chk=(name,expr,keys)=>{
+    ctx.nb=ev(`(()=>{ const b=${expr}; return b; })()`);
+    ctx.nbytes=ev('bytesFromBits(nb.subarray(0,nb.length&~7))');
+    const d=ev('nxdnL3(nb)'), p=ev('hexParse("nxdn-l3",nbytes)'), v=p.vals;
+    ok('nxdn '+name+': schema agrees with the decoder',p.ok && v.type===d.type && keys.every(k=>k==='location' ? v[k]===parseInt(d[k],16) : v[k]===d[k]),JSON.stringify([d,v]));
+  };
+  chk('VCALL','nxdnVcall(1,1234,5678,4,3,2,9)',['from','to','ctype','opt','cipher','key']);
+  chk('VCALL_ASSGN','nxdnBitsOf([[4,6,2],[0,8,8],[4,3,16],[0,5,19],[1234,16,24],[5678,16,40],[10,6,56],[321,10,62]],72)',['from','to','timer','channel']);
+  chk('SITE_INFO','nxdnBitsOf([[0x18,6,2],[0x123456,24,8],[0xABCD,16,32],[0x1234,16,48],[0x654321,24,64],[0x112233,24,88],[7,8,112],[3,4,120],[100,10,124],[200,10,134]],144)',['location','cs','svc','rst','ca','version','adj','ch1','ch2']);
+}
 console.log(bad ? bad+' failed' : 'all ok');
 process.exit(bad?1:0);
