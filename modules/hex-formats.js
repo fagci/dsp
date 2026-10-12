@@ -268,6 +268,28 @@ Object.assign(HEX_LIB,{
     {n:'algid',t:'u8',fmt:'hex',enum:{128:'clear',129:'DES-OFB',131:'3DES',132:'AES-256',170:'ADP RC4',159:'DES-XL',160:'DVI-XL'}},
     {n:'kid',t:'u16',fmt:'hex'}, {n:'tgid',t:'u16'}]},
 
+  /* ---------- NXDN (TS 1-A), сообщение слоя 3 ---------- */
+  'nxdn-l3':{ title:'NXDN layer 3 message', group:'NXDN', fields:(()=>{
+    const b=(n,w,when,o)=>Object.assign({n,t:'bits',w,when},o||{});
+    const V='type==1||type==7||type==8||type==17||type==9||type==11||type==56||type==4||type==5||type==14||type==13', AS='type==4||type==5||type==14||type==13', SI='type==24';
+    return [
+      b('f1',1), b('f2',1),
+      b('type',6,undefined,{enum:{0:'CALL_RESP',1:'VCALL',2:'VCALL_REC_REQ',3:'VCALL_IV',4:'VCALL_ASSGN',5:'VCALL_ASSGN_DUP',6:'CALL_CONN_RESP',7:'TX_REL_EX',8:'TX_REL',9:'DCALL_HEADER',
+        10:'DCALL_REC_REQ',11:'DCALL_DATA',12:'DCALL_ACK',13:'DCALL_ASSGN_DUP',14:'DCALL_ASSGN',15:'HEAD_DLY',16:'IDLE',17:'DISC',23:'DST_ID_INFO',24:'SITE_INFO',25:'SRV_INFO',26:'CCH_INFO',
+        27:'ADJ_SITE_INFO',28:'FAIL_STAT_INFO',32:'REG_RESP',34:'REG_C_RESP',35:'REG_COMM',36:'GRP_REG_RESP',40:'AUTH_INQ_REQ',41:'AUTH_INQ_RESP',48:'STAT_INQ_REQ',49:'STAT_INQ_RESP',
+        50:'STAT_REQ',51:'STAT_RESP',52:'REM_CON_REQ',53:'REM_CON_RESP',56:'SDCALL_REQ_HEADER',57:'SDCALL_REQ_DATA',58:'SDCALL_IV',59:'SDCALL_RESP',63:'PROP_FORM'}}),
+      b('emergency',1,V), b('ccopt',7,V),
+      b('ctype',3,V,{enum:{0:'broadcast',1:'conference',2:'unspecified',4:'individual',6:'interconnect',7:'speed dial'}}), b('opt',5,V),
+      b('from',16,V), b('to',16,V),
+      b('timer',6,AS), b('channel',10,AS),
+      b('cipher',2,'('+V+') && !('+AS+')',{enum:{0:'none',1:'scrambler',2:'DES',3:'AES'}}), b('key',6,'('+V+') && !('+AS+')'),
+      b('location',24,SI,{fmt:'hex'}), b('cs',16,SI,{fmt:'hex'}), b('svc',16,SI,{fmt:'hex'}), b('rst',24,SI,{fmt:'hex'}), b('ca',24,SI,{fmt:'hex'}),
+      b('version',8,SI), b('adj',4,SI), b('ch1',10,SI), b('ch2',10,SI),
+      {n:'iv',t:'bytes',len:8,when:'type==3'},
+      {n:'data',t:'bytes',len:'_left',when:'!('+V+') && !('+SI+') && type!=3'}
+    ];
+  })()},
+
   /* ---------- Для проверки и примеров ---------- */
   'esp-pkt':{ title:'ESP32 sniffer record', group:'Wi-Fi', endian:'le', fields:[
     {n:'rssi',t:'i8',fmt:'dbm'}, {n:'chan',t:'u8'}, {n:'len',t:'u16'},
