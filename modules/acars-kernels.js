@@ -160,6 +160,7 @@ IQK.acarsRx={
     if(m.no) rec.no=m.no;
     if(m.flight) rec.flight=m.flight;
     if(m.etb) rec.etb=true;
+    rec.hex=by.map((v,i)=>(i<L-2 ? v&0x7f : v)).map(v=>(v<16 ? '0' : '')+v.toString(16)).join(''); rec.hexSchema='acars';   // блок без битов чётности, затем BCS
     if(fixed) rec.fixed=true;
     rec.text=m.reg+' '+m.label+(m.flight ? ' '+m.flight : '')+(m.txt ? ' · '+m.txt : '');
     const d=new Date(now);

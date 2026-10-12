@@ -846,7 +846,7 @@ class GsmReceiver{
     const fn=gsmFrameNr(this.t1,this.t2,this.t3);
     let hex=''; for(const x of l2) hex+=x.toString(16).padStart(2,'0');
     const rec={t:Date.now(), kind:'GSM-'+si.type, si:si.type, bsic:(this.ncc<<3)|this.bcc,
-      ncc:this.ncc, bcc:this.bcc, fn, tn:0, freq:this.fc, dbm:this.dbm, hex};
+      ncc:this.ncc, bcc:this.bcc, fn, tn:0, freq:this.fc, dbm:this.dbm, hex, hexSchema:'gsm-l2'};
     if(si.ci!=null) rec.ci=si.ci;
     if(si.mcc!=null){ rec.mcc=si.mcc; rec.mnc=si.mnc; rec.plmn=gsmMccMncStr(si); rec.lac=si.lac;
       const op=gsmOperator(rec.plmn); if(op) rec.op=op;

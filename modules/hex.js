@@ -92,7 +92,7 @@ def({ id:'hexStruct', title:'HEX Structure', cat:'Data', kw:'hex bytes packet pa
   ],
   init:n=>{
     n.buf=new Uint8Array(0); n.res=null; n.recOut=null; n.dirty=true; n.uiDirty=true; n.emit=false; n.pulse=0; n.sel=-1;
-    n.lastBin=null; n.lastText=undefined; n.lastRec=undefined; n.prevGo=0; n.binOut=null; n.err=''; n.warn=[];
+    n.lastBin=null; n.aisAsm=new HexAisAsm(); n.lastText=undefined; n.lastRec=undefined; n.prevGo=0; n.binOut=null; n.err=''; n.warn=[];
     if(n.p.hex) n.buf=hexFromHex(n.p.hex);
     n.onResize=ln=>{ if(ln.ui) syncCustomHeight(ln,ln.ui.root,160); };
   },
@@ -100,8 +100,20 @@ def({ id:'hexStruct', title:'HEX Structure', cat:'Data', kw:'hex bytes packet pa
     const go=(I.go||0)>.5, rise=go && !n.prevGo; n.prevGo=go;
     const o=I.bin;
     if(o && o.d && o!==n.lastBin){ n.lastBin=o; hxSetBuf(n,o.d,true); }
-    if(typeof I.text==='string' && I.text!==n.lastText){ n.lastText=I.text; if(I.text.trim()) hxSetBuf(n,hexFromHex(I.text),true); }
-    let rec=I.rec; if(Array.isArray(rec)) rec=rec[rec.length-1];
+    if(typeof I.text==='string' && I.text!==n.lastText){
+      n.lastText=I.text;
+      if(/^\s*[!$]..VD[MO],/.test(I.text)){                // предложения AIS: полезная нагрузка → биты сообщения
+        for(const line of I.text.split(/[\r\n]+/)){
+          const b=n.aisAsm.push(line);
+          if(b){ if(n.p.autoSchema && n.p.schema!=='ais'){ n.p.schema='ais'; if(n.set?.schema) n.set.schema('ais'); } hxSetBuf(n,b.bytes,true); }
+        }
+      } else if(I.text.trim()) hxSetBuf(n,hexFromHex(I.text),true);
+    }
+    let rec=I.rec;
+    if(Array.isArray(rec)){                               // из набора записей — последняя с полем hex (кроме режима build)
+      const hc=n.p.hexcol||'hex', withHex=n.p.recMode!=='build' ? rec.slice().reverse().find(r=>r && typeof r[hc]==='string') : null;
+      rec=withHex || rec[rec.length-1];
+    }
     if(rec && typeof rec==='object' && rec!==n.lastRec){
       n.lastRec=rec;
       const hx=rec[n.p.hexcol||'hex'], mode=n.p.recMode;

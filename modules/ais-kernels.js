@@ -159,13 +159,13 @@ IQK.aisRx={
     const nx=new Float32Array(n.x.length+add); nx.set(n.x); let o=n.x.length;
     for(const p of parts){ nx.set(p,o); o+=p.length; }
     n.x=nx;
-    const out={recs:[], text:[]};
+    const out={recs:[], text:[], raw:[]};
     this.scan(n,out);
     const now=Date.now(), ttl=(+n.p.ttl||30)*60000;
     for(const [k,v] of n.ships) if(now-v.seen>ttl) n.ships.delete(k);
     n.ui={fs:n.fs, M:n.M, frames:n.frames, msgs:n.msgs, ships:n.ships.size,
       age:n.lastMsg ? now-n.lastMsg : null, recent:n.recent.slice(-8)};
-    return {rec:out.recs.length ? out.recs : null, text:out.text.length ? out.text.join('\n') : null};
+    return {rec:out.recs.length ? out.recs : null, text:out.text.length ? out.text.join('\n') : null, raw:out.raw.length ? out.raw : null};
   },
   scan(n,out){
     const x=n.x, N=x.length, sps=n.sps, P=AIS_PH;
@@ -220,6 +220,10 @@ IQK.aisRx={
   message(n,m,lb,L,out){
     const now=Date.now();
     n.msgs++; n.lastMsg=now;
+    const by=new Uint8Array((L+7)>>3); let hx='';
+    for(let i=0;i<L;i++) if(lb[i]) by[i>>3]|=0x80>>(i&7);
+    for(const x of by) hx+=(x<16 ? '0' : '')+x.toString(16);
+    out.raw.push({t:now, src:'AIS', kind:'message', msg:m.type, mmsi:m.mmsi, bits:L, hex:hx, hexSchema:'ais', text:'t'+m.type+' '+m.mmsi});
     out.text.push(...aisNmea(lb,L,n.p.ch||'A',(n.seq=n.seq%9+1)));
     let sh=n.ships.get(m.mmsi);
     if(!sh){ sh={mmsi:m.mmsi, msgs:0, first:now}; n.ships.set(m.mmsi,sh); }

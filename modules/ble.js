@@ -172,7 +172,7 @@ def({ id:'bleAdv', title:'BLE Advertisements (Web Bluetooth)', cat:'Sources', kw
               n.rssi=n.sm; n.tx=typeof e.txPower==='number' ? e.txPower : n.tx; n.seen=Date.now(); n.count++;
               let mfr=''; if(e.manufacturerData && e.manufacturerData.size){ for(const [id,dv] of e.manufacturerData){ mfr=id.toString(16).padStart(4,'0')+': '+bleHex(dv); break; } }
               n.mfr=mfr||n.mfr; n.name=e.name||(e.device&&e.device.name)||n.name||'';
-              n.q.push({t:Date.now(),rssi:r,tx:typeof e.txPower==='number' ? e.txPower : undefined,name:n.name,mfr:mfr||undefined}); if(n.q.length>2000) n.q.shift(); }; },
+              n.q.push({t:Date.now(),rssi:r,tx:typeof e.txPower==='number' ? e.txPower : undefined,name:n.name,mfr:mfr||undefined,hex:hexToHex(bleAdBytes(e)),hexSchema:'ble-adv'}); if(n.q.length>2000) n.q.shift(); }; },
   dispose:n=>{ bleAdvStop(n); },
   process(n){
     const present=n.seen && Date.now()-n.seen<(+n.p.lost||15)*1000 ? 1 : 0;

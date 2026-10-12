@@ -215,13 +215,13 @@ FSK4.protos.nxdn={
         if(c) this.end(P,L,out,'new call');
         P.call={from:f.from, to:f.to, call:f.call, emergency:f.emergency, cipher:f.cipher, t0:P.now, frames:0};
         P.st.calls++;
-        nxdnEmit(P,L,out,'call',{from:f.from, to:f.to, call:f.call, opt:f.opt, emergency:f.emergency, cipher:f.cipher, key:f.key, source:by},
+        nxdnEmit(P,L,out,'call',{from:f.from, to:f.to, call:f.call, opt:f.opt, emergency:f.emergency, cipher:f.cipher, key:f.key, source:by, hex:bytesHex(bytesFromBits(b.subarray(0,b.length&~7))), hexSchema:'nxdn-l3'},
           (f.emergency ? 'EMERGENCY ' : '')+f.call+' call '+f.from+' → '+f.to+(f.cipher ? ' [encrypted]' : ''));
       }
     } else if(f.type===0x08 || f.type===0x11 || f.type===0x07){ this.end(P,L,out,f.name); }
     else if(f.type!==0x10){
       const {type,name,...rest}=f;
-      nxdnEmit(P,L,out,'msg',{msg:name, type, ...rest, source:by},name+('from' in f ? ' '+f.from+' → '+f.to : '')+('channel' in f ? ' ch '+f.channel : '')+('location' in f ? ' site '+f.location+' ch '+f.ch1+(f.ch2 ? '/'+f.ch2 : '') : '')+(f.hex ? ' '+f.hex : ''));
+      nxdnEmit(P,L,out,'msg',{msg:name, type, ...rest, source:by, hex:bytesHex(bytesFromBits(b.subarray(0,b.length&~7))), hexSchema:'nxdn-l3'},name+('from' in f ? ' '+f.from+' → '+f.to : '')+('channel' in f ? ' ch '+f.channel : '')+('location' in f ? ' site '+f.location+' ch '+f.ch1+(f.ch2 ? '/'+f.ch2 : '') : '')+(f.hex ? ' '+f.hex : ''));
     }
     if(P.call) P.call.frames++;
   },
