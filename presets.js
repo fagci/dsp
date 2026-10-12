@@ -203,6 +203,7 @@ const PRESET_CATS={
   'M17: Transmitter Built from Blocks (Loopback)':'Digital Voice & Trunking',
   'Data over 4FSK: Image, File or Text (Loopback)':'Digital Voice & Trunking',
   'Data over DMR: Image, File or Text (Loopback)':'Digital Voice & Trunking',
+  'DMR: Signalling from HEX → Burst → Decoder (Loopback)':'Digital Voice & Trunking',
   'M17: Voice Transmitter, Microphone to Speaker (Loopback)':'Digital Voice & Trunking',
   'TETRA: Test Cell (Generator)':'Digital Voice & Trunking',
   'TETRA: Control Channel (USB SDR)':'Digital Voice & Trunking',
@@ -255,6 +256,7 @@ const PRESET_CATS={
   'POCSAG: Pager Messages (Generator)':'Modems & Data Links',
   'POCSAG: Pager Messages (USB SDR)':'Modems & Data Links',
   'AIS: Vessels on the Map (Generator)':'Aircraft, Satellites & Telemetry',
+  'AIS: Messages → HEX Structure (Generator)':'Aircraft, Satellites & Telemetry',
   'AIS: Vessels on the Map (USB SDR, 162 MHz)':'Aircraft, Satellites & Telemetry',
   'ISM 433: Sensors and Remotes (Generator)':'Aircraft, Satellites & Telemetry',
   'ISM 433: Sensors and Remotes (USB SDR)':'Aircraft, Satellites & Telemetry',
@@ -1624,6 +1626,21 @@ map.size.w=560; map.size.h=460; applySize(map);
 const log=addNode('recLog',340,620,{});
 log.size.w=520; applySize(log);
 addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',map.id,'rec'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('AIS: Messages → HEX Structure (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Every AIS message the decoder hears (not only positions) comes out on raw as a record with the message bits in hex and hexSchema «ais»: HEX Structure splits it into fields — MMSI, status, speed, position in degrees, name, call sign, destination — and shows them over the bits; the Table keeps the list, click a row to look at it.\n'+
+  'A text input takes !AIVDM / !AIVDO sentences too (multi-part messages are joined), so sentences from another receiver or a log can be looked at the same way.'});
+nt.size.w=860; nt.size.h=130; applySize(nt);
+const gn=addNode('iqGen',40,230,{sr:'256000',fc:162000000,mode:'AIS',off:-25000,lvl:-20,noise:-50});
+const de=addNode('aisRx',340,230,{});
+de.size.w=420; de.size.h=260; applySize(de);
+const tb=addNode('table',800,200,{list:'@patch',data:''});
+tb.size.w=360; tb.size.h=320; applySize(tb);
+const hx=addNode('hexStruct',1200,200,{schema:'ais'});
+hx.size.w=460; hx.size.h=520; applySize(hx);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'raw',tb.id,'rec'); addEdge(de.id,'raw',hx.id,'rec');
 markWiresDirty();
 });
 preset('AIS: Vessels on the Map (USB SDR, 162 MHz)', function(){
@@ -4018,6 +4035,30 @@ rx.size.w=360; rx.size.h=300; applySize(rx);
 addEdge(cm.id,'img',tx.id,'img');
 addEdge(tx.id,'blk',pl.id,'blk'); addEdge(pl.id,'out',sh.id,'in'); addEdge(sh.id,'out',fm.id,'in');
 addEdge(fm.id,'iq',de.id,'in'); addEdge(de.id,'rec',rx.id,'rec');
+markWiresDirty();
+});
+preset('DMR: Signalling from HEX → Burst → Decoder (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A DMR link-control word written by hand and decoded back, with no radio: the Text Source holds the 9 bytes of a group call LC (HEX Structure «dmr-lc»: group call to TG 100 from radio 3210), the first HEX Structure shows them as fields.\n'+
+  'DMR Signalling Builder adds Reed-Solomon (RS 12,9), BPTC(196,96), the slot type (Golay) with the colour code and the sync word → bursts with CACH → Symbol Player → RRC Pulse Shaper → FM Modulator → Digital Voice Decoder (DMR). The decoder gives the call (rec with hex): the second HEX Structure shows what came back.\n'+
+  'Change the bytes (a CSBK needs 10 bytes: type «CSBK», structure «dmr-csbk»), the colour code or the burst type and watch both sides. For a real transmission put HackRF TX after FM Modulator and comply with local radio regulations.'});
+nt.size.w=1000; nt.size.h=150; applySize(nt);
+const tx=addNode('textsrc',40,260,{text:'000000 000064 000c8a'});
+tx.size.w=300; tx.size.h=160; applySize(tx);
+const h1=addNode('hexStruct',380,230,{schema:'dmr-lc'});
+h1.size.w=420; h1.size.h=420; applySize(h1);
+const sg=addNode('dmrSig',840,230,{type:'Voice LC header',repeat:8,cc:1});
+sg.size.w=320; sg.size.h=360; applySize(sg);
+const pl=addNode('symPlay',1200,230,{});
+const sh=addNode('symShape',1200,430,{sr:'256000',alpha:.2});
+const fm=addNode('fmMod',1500,230,{off:2000,dev:648});
+const de=addNode('fskRx',1500,470,{proto:'dmr'});
+de.size.w=520; de.size.h=300; applySize(de);
+const h2=addNode('hexStruct',2060,230,{schema:'auto',recMode:'parse'});
+h2.size.w=420; h2.size.h=420; applySize(h2);
+addEdge(tx.id,'text',h1.id,'text'); addEdge(h1.id,'bin',sg.id,'bin');
+addEdge(sg.id,'blk',pl.id,'blk'); addEdge(pl.id,'out',sh.id,'in'); addEdge(sh.id,'out',fm.id,'in');
+addEdge(fm.id,'iq',de.id,'in'); addEdge(de.id,'rec',h2.id,'rec');
 markWiresDirty();
 });
 preset('M17: Voice Transmitter, Microphone to Speaker (Loopback)', function(){

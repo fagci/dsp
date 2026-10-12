@@ -10,6 +10,8 @@
    len, count, when, e — выражения над ранее разобранными полями: (ihl-5)*4, type==0 && subtype==8
      имена: поле, sub.поле, список[0].поле; поле.$off / поле.$len — смещение (от начала схемы) и длина в байтах;
      _left — осталось байт (при разборе), _len — размер схемы в байтах (в calc)
+   scale/prec/unit — показать число умноженным (v*scale), значение остаётся целым
+   xor — маска, накладываемая на сумму (DMR: CSBK 0xA5A5, PI 0x6969)
    calc: 'crc16-x25' | 'crc32' | 'inet16' | 'xor8' | 'sum8' | …  — контрольная сумма (from / to / over:'all')
          любая другая строка — выражение, значение пересчитывается при сборке (длины, ihl)
    sub: имя схемы | схема | {by:'выражение', map:{'17':'udp'}} — разбор вложенных байт */
@@ -65,11 +67,13 @@ const HEX_CRC={
   'crc16-ccitt':{w:16,poly:0x1021,init:0,refin:0,refout:0,xorout:0},                 // XMODEM
   'crc16-ccitt-false':{w:16,poly:0x1021,init:0xFFFF,refin:0,refout:0,xorout:0},
   'crc16-x25':{w:16,poly:0x1021,init:0xFFFF,refin:1,refout:1,xorout:0xFFFF},         // HDLC, AX.25
+  'crc16-gsm':{w:16,poly:0x1021,init:0,refin:0,refout:0,xorout:0xFFFF},                // P25 TSBK / DMR (до маски)
   'crc16-kermit':{w:16,poly:0x1021,init:0,refin:1,refout:1,xorout:0},
   'crc16-arc':{w:16,poly:0x8005,init:0,refin:1,refout:1,xorout:0},
   'crc16-modbus':{w:16,poly:0x8005,init:0xFFFF,refin:1,refout:1,xorout:0},
   'crc32':{w:32,poly:0x04C11DB7,init:0xFFFFFFFF,refin:1,refout:1,xorout:0xFFFFFFFF}, // Ethernet, 802.11 FCS
   'crc24-adsb':{w:24,poly:0xFFF409,init:0,refin:0,refout:0,xorout:0},                // Mode S / ADS-B
+  'crc16-m17':{w:16,poly:0x5935,init:0xFFFF,refin:0,refout:0,xorout:0},                // M17 LSF / пакеты
   'crc32c':{w:32,poly:0x1EDC6F41,init:0xFFFFFFFF,refin:1,refout:1,xorout:0xFFFFFFFF} };
 function hexReflect(v,w){ let r=0; for(let i=0;i<w;i++){ r=r*2+(v&1); v=Math.floor(v/2); } return r; }
 function hexCrc(spec,d,a,b){
@@ -90,6 +94,15 @@ function hexSum(name){
     let s=0; for(let i=a;i<b;i+=2) s+=(d[i]<<8)|(i+1<b ? d[i+1] : 0);
     while(s>>>16) s=(s&0xFFFF)+(s>>>16);
     return (~s)&0xFFFF; }};
+  if(name==='pocsag-bch') return {w:10, f:(d,a)=>{              // BCH(31,21) слова POCSAG: d[a..a+3], старшие 21 бит
+    let r=(((d[a]<<24)|(d[a+1]<<16)|(d[a+2]<<8)|(d[a+3]&0)) & 0xFFFFF800)>>>0;
+    r>>>=1;
+    for(let i=30;i>=10;i--) if((r>>>i)&1) r=(r^(0x769<<(i-10)))>>>0;
+    return r&0x3FF; }};
+  if(name==='parity32') return {w:1, f:(d,a)=>{                  // чётность слова из 32 бит, сам бит — младший
+    let x=((d[a]<<24)|(d[a+1]<<16)|(d[a+2]<<8)|(d[a+3]&0xFE))>>>0, p=0;
+    while(x){ p^=1; x&=x-1; }
+    return p; }};
   if(name==='xor8') return {w:8, f:(d,a,b)=>{ let x=0; for(let i=a;i<b;i++) x^=d[i]; return x; }};
   if(name==='sum8') return {w:8, f:(d,a,b)=>{ let x=0; for(let i=a;i<b;i++) x=(x+d[i])&255; return x; }};
   if(name==='sum8n') return {w:8, f:(d,a,b)=>{ let x=0; for(let i=a;i<b;i++) x=(x+d[i])&255; return (256-x)&255; }};
@@ -139,7 +152,8 @@ const hexSigned=(v,w)=>typeof v==='bigint'
 const hexNorm=v=>typeof v==='bigint' && v>=-9007199254740991n && v<=9007199254740991n ? Number(v) : v;
 
 /* ---------- форматы значений ---------- */
-const HEX_FIXED={mac:6, ipv4:4, ipv6:16};
+const HEX_M17CS=' ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/.';
+const HEX_FIXED={mac:6, ipv4:4, ipv6:16, plmn:3, m17call:6};
 const hexByte=b=>b.toString(16).padStart(2,'0');
 function hexToHex(b){ let s=''; for(const x of b) s+=hexByte(x); return s; }
 function hexFromHex(s){
@@ -157,6 +171,16 @@ function hexFmtBytes(b,fmt){
       const g=[]; for(let i=0;i+1<b.length;i+=2) g.push(((b[i]<<8)|b[i+1]).toString(16));
       let bs=-1,bl=0; for(let i=0;i<g.length;){ if(g[i]!=='0'){ i++; continue; } let j=i; while(j<g.length && g[j]==='0') j++; if(j-i>bl){ bs=i; bl=j-i; } i=j; }
       return bl>1 ? g.slice(0,bs).join(':')+'::'+g.slice(bs+bl).join(':') : g.join(':'); }
+    case 'plmn': {                                         // MCC / MNC в BCD (TS 24.008 10.5.1.3): 3 байта → «250-01»
+      const mcc=[b[0]&15,b[0]>>4,b[1]&15], mnc=[b[2]&15,b[2]>>4];
+      if((b[1]>>4)!==15) mnc.push(b[1]>>4);
+      return mcc.join('')+'-'+mnc.join(''); }
+    case 'm17call': {                                       // позывной M17: основание 40, первый символ — младший
+      let a=0n; for(const x of b) a=a*256n+BigInt(x);
+      if(a===0xFFFFFFFFFFFFn) return 'BROADCAST';
+      if(a>=0xEE6B28000000n) return '#'+hexToHex(b);
+      let t=''; while(a){ t+=HEX_M17CS[Number(a%40n)]; a/=40n; }
+      return t; }
     case 'ascii': return Array.from(b,x=>x>=32&&x<127 ? String.fromCharCode(x) : '.').join('');
     case 'bcd': return Array.from(b,hexByte).join('');
     default: return hexToHex(b);
@@ -171,6 +195,19 @@ function hexUnfmtBytes(v,fmt,len){
     const [a,b]=v.split('::'), pa=a ? a.split(':') : [], pb=b!==undefined && b ? b.split(':') : [];
     const g=b===undefined ? pa : pa.concat(new Array(Math.max(0,8-pa.length-pb.length)).fill('0'),pb);
     const o=new Uint8Array(16); g.slice(0,8).forEach((x,i)=>{ const n=parseInt(x||'0',16)||0; o[i*2]=n>>8; o[i*2+1]=n&255; });
+    return o;
+  }
+  if(fmt==='plmn'){
+    const [m,n]=v.split('-'), d=x=>+x||0, o=new Uint8Array(3);
+    o[0]=d(m[0])|(d(m[1])<<4); o[1]=d(m[2])|((n&&n.length>2 ? d(n[2]) : 15)<<4); o[2]=d(n&&n[0])|(d(n&&n[1])<<4);
+    return o;
+  }
+  if(fmt==='m17call'){
+    const o=new Uint8Array(6);
+    if(/^BROADCAST$/i.test(v)){ o.fill(255); return o; }
+    if(v[0]==='#') return hexFromHex(v.slice(1)).slice(0,6);
+    let a=0n; for(let i=Math.min(v.length,9)-1;i>=0;i--){ const k=HEX_M17CS.indexOf(v[i].toUpperCase()); a=a*40n+BigInt(k<0 ? 0 : k); }
+    for(let i=5;i>=0;i--){ o[i]=Number(a&255n); a>>=8n; }
     return o;
   }
   if(fmt==='ascii') return Uint8Array.from(v,ch=>ch.charCodeAt(0)&255);
@@ -214,7 +251,7 @@ function hexSchemaCheck(s,lib,path){
   if(!s || !Array.isArray(s.fields)){ e.push((path||'schema')+': "fields" array expected'); return e; }
   if(s.endian && s.endian!=='be' && s.endian!=='le') e.push(path+'endian: "be" or "le"');
   if(s.bitorder && s.bitorder!=='msb' && s.bitorder!=='lsb') e.push(path+'bitorder: "msb" or "lsb"');
-  const seen=new Set();
+  const seen=new Map();
   s.fields.forEach((f,i)=>{
     const p=path+(f&&f.n ? f.n : '#'+i);
     if(!f || typeof f!=='object'){ e.push(p+': object expected'); return; }
@@ -222,7 +259,7 @@ function hexSchemaCheck(s,lib,path){
     if(!(m && +m[2]%8===0 && +m[2]>0 && +m[2]<=64) && !HEX_SCALAR.has(t)) e.push(p+': unknown type "'+t+'"');
     if(t==='bits' && !(f.w>0)) e.push(p+': bits needs w');
     if(t==='bytes' && f.len==null && !HEX_FIXED[f.fmt]) e.push(p+': bytes needs len');
-    if(f.n && t!=='pad'){ if(seen.has(f.n)) e.push(p+': duplicate name'); seen.add(f.n); }
+    if(f.n && t!=='pad'){ if(seen.has(f.n) && (!f.when || !seen.get(f.n))) e.push(p+': duplicate name'); seen.set(f.n,seen.get(f.n)===false ? false : !!f.when); }
     for(const k of ['when','len','count','e']) if(typeof f[k]==='string' && f[k]!=='rest'){ try{ hexExpr(f[k]); }catch(x){ e.push(p+'.'+k+': '+x.message); } }
     if(typeof f.sub==='string' && lib && !lib[f.sub] && !HEX_LIB[f.sub]) e.push(p+': unknown sub-schema "'+f.sub+'"');
     if(f.calc && typeof f.calc==='string' && !hexSum(f.calc)){ try{ hexExpr(f.calc); }catch(x){ e.push(p+'.calc: '+x.message); } }
@@ -310,6 +347,7 @@ function hexField(f,sch,c,prefix,depth,env,recs,ss){
     let sv='';
     if(!B){
       for(let i=0;i<nch;i++) sv+=cs[hexBitsGet(c.d,c.bit+i*6,6,'msb')] || '?';
+      if(f.trim) sv=sv.replace(new RegExp('['+(f.pad||'@').replace(/[\\\]^-]/g,'\\$&')+' ]+$'),'');
     } else {
       sv=c.vals[name]===undefined ? '' : String(c.vals[name]);
       if(c.vals[name]===undefined) c.warn.push(name+': no value, empty used');
@@ -470,6 +508,7 @@ function hexNumText(v,w,f){
     const on=[]; for(const k in f.flags) if((Number(v)>>Number(k))&1) on.push(f.flags[k]);
     return on.length ? on.join(' | ') : '—';
   }
+  if(f.scale!==undefined) return (Number(v)*f.scale).toFixed(f.prec!==undefined ? f.prec : 1)+(f.unit ? ' '+f.unit : '');
   if(f.fmt) return hexFmtInt(v,w,f.fmt);
   return String(v);
 }
@@ -507,6 +546,7 @@ function hexCalcFields(c){
             val=sum.f(m,0,m.length);
             if(f.zeroFF && val===0) val=0xFFFF;
           } else val=sum.f(src,a,e);
+          if(f.xor!==undefined) val=(val^f.xor)>>>0;                     // маска поверх суммы (DMR CSBK: 0xA5A5)
         } else {
           const env=hexLookup(c,r.prefix,r.ss,r.se);
           val=hexExpr(String(calc))(env);
@@ -582,6 +622,28 @@ function hexDump(d,width,from,to){
   return L.join('\n');
 }
 
+// !AIVDM / !AIVDO: 6-битная упаковка полезной нагрузки → байты (биты подряд, хвост добит нулями); многочастные сообщения склеиваются
+function hexAisPayload(pl,fill){
+  const bits=[];
+  for(const ch of pl){ let v=ch.charCodeAt(0)-48; if(v>40) v-=8; for(let k=5;k>=0;k--) bits.push((v>>k)&1); }
+  const n=bits.length-(fill||0), out=new Uint8Array((n+7)>>3);
+  for(let i=0;i<n;i++) if(bits[i]) out[i>>3]|=0x80>>(i&7);
+  return {bytes:out, bits:n};
+}
+class HexAisAsm{
+  constructor(){ this.parts=new Map(); }
+  push(line){
+    const m=/^\s*[!$]..VD[MO],(\d+),(\d+),([^,]*),[^,]*,([^,]*),(\d)/.exec(line);
+    if(!m) return null;
+    const total=+m[1], idx=+m[2], id=m[3], pl=m[4], fill=+m[5];
+    if(total===1) return hexAisPayload(pl,fill);
+    let e=this.parts.get(id);
+    if(!e || e.total!==total || idx===1){ e={total,got:[]}; this.parts.set(id,e); }
+    e.got[idx-1]=pl;
+    if(e.got.length===total && e.got.every(x=>x!==undefined)){ this.parts.delete(id); return hexAisPayload(e.got.join(''),fill); }
+    return null;
+  }
+}
 // схема по содержимому: перебирает схемы с полем detect (выражение над разобранными полями и _size)
 function hexDetect(data,lib){
   lib=lib||HEX_LIB;

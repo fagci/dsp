@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,DataView,ArrayBuffer,TextEncoder,TextDecoder,Array,Map,Set,Error,String,Number,BigInt,Object,Date,JSON,isNaN,parseInt});
 for(const f of ['hex-kernels.js','hex-formats.js','wifisniff-kernels.js','pcap-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
-vm.runInContext('this.H={pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,hexParse,hexBuild,hexToRec,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
+vm.runInContext('this.H={HexAisAsm,hexAisPayload,pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,hexParse,hexBuild,hexToRec,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
 const H=ctx.H;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 const hex=s=>H.hexFromHex(s), toHex=b=>H.hexToHex(b);
@@ -17,6 +17,7 @@ const crc=n=>H.hexSum(n).f(ck,0,9);
 ok('crc32',crc('crc32')===0xCBF43926,crc('crc32').toString(16));
 ok('crc16-ccitt (xmodem)',crc('crc16-ccitt')===0x31C3);
 ok('crc16-ccitt-false',crc('crc16-ccitt-false')===0x29B1);
+ok('crc16-gsm',crc('crc16-gsm')===0xCE3C);
 ok('crc16-x25',crc('crc16-x25')===0x906E);
 ok('crc16-arc',crc('crc16-arc')===0xBB3D);
 ok('crc16-modbus',crc('crc16-modbus')===0x4B37);
@@ -134,6 +135,20 @@ ok('sniffer ack record',ar.kind==='ack' && ar.da==='aa:bb:cc:dd:ee:01' && ar.fty
 const back=H.hexParse(wr.hexSchema,H.hexFromHex(wr.hex));
 ok('record hex re-parses',back.ok && back.vals['body.ies[0].data.ssid']==='TestNet');
 
+// AIS: классическое предложение (позиция типа 1, MMSI 477553000)
+const aa=new (H.HexAisAsm)().push('!AIVDM,1,1,,B,177KQJ5000G?tO`K>RA1wUbN0TKH,0*5C');
+const ap1=H.hexParse('ais',aa.bytes);
+ok('ais position',ap1.vals.type===1 && ap1.vals.mmsi===477553000 && ap1.vals.status===5 && ap1.vals.hdg===181 && Math.abs(ap1.vals.lon/600000+122.345832)<1e-5 && Math.abs(ap1.vals.lat/600000-47.582833)<1e-5 && aa.bits===168,JSON.stringify(ap1.vals));
+ok('ais text of scaled values',ap1.fields.find(f=>f.n==='lat').text.startsWith('47.5828'));
+// тип 5 из двух частей
+const asm5=new (H.HexAisAsm)();
+const r5a=asm5.push('!AIVDM,2,1,3,B,55P5TL01VIaAL@7WKO@mBplU@<PDhh000000001S;AJ::4A80?4i@E53,0*3E');
+const r5=asm5.push('!AIVDM,2,2,3,B,1@0000000000000,2*55');
+ok('ais multipart assembled',r5a===null && r5 && r5.bits===424);
+const p5=H.hexParse('ais',r5.bytes);
+ok('ais static: name, call sign, destination',p5.vals.type===5 && p5.vals.mmsi===369190000 && p5.vals.callsign==='WDA9674' && p5.vals.name==='MT.MITCHELL' && p5.vals.dest==='SEATTLE',JSON.stringify(p5.vals));
+const b24=H.hexBuild('ais',{type:24,repeat:0,mmsi:123456789,part:0,name:'TESTBOAT'});
+ok('ais 24A build and parse',H.hexParse('ais',b24.bytes).vals.name==='TESTBOAT',toHex(b24.bytes));
 // контрольная сумма UDP / TCP / ICMPv6 с псевдозаголовком (значения посчитаны независимой реализацией на Python)
 const bu=H.hexBuild('eth',vals);
 ok('udp checksum (pseudo header)',bu.vals['payload.payload.csum']===0x12a0,'0x'+(+bu.vals['payload.payload.csum']).toString(16));
@@ -173,6 +188,29 @@ w32(1); w32(20); w16(1); w16(0); w32(0); w32(20);
 w32(6); w32(36); w32(0); w32(0); w32(1000000); w32(4); w32(4); png.push(9,8,7,6); w32(36);
 const pn=H.pcapRead(Uint8Array.from(png));
 ok('pcapng enhanced packet',pn.format==='pcapng' && pn.packets.length===1 && toHex(pn.packets[0].data)==='09080706' && Math.abs(pn.packets[0].t-1000)<1e-6,JSON.stringify([pn.format,pn.packets.length]));
+
+// POCSAG: служебные слова стандарта — свободное 0x7A89C197 и синхро 0x7CD215D8 — имеют верные BCH и чётность
+ok('pocsag idle word valid',H.hexParse('pocsag-cw',hex('7a89c197')).ok);
+ok('pocsag sync word valid',H.hexParse('pocsag-cw',hex('7cd215d8')).ok);
+const bw=hex('7a89c197'); bw[1]^=0x10;
+ok('pocsag damaged word flagged',!H.hexParse('pocsag-cw',bw).ok);
+const pcm=H.hexBuild('pocsag',{flag:0,addr:0x1234,func:3,'cw[0].flag':1,'cw[0].data':0x12345,'cw[1].flag':1,'cw[1].data':0xABCDE});
+const pcp=H.hexParse('pocsag',pcm.bytes);
+ok('pocsag message build: checksums and parse',pcm.bytes.length===12 && pcp.ok && pcp.vals.addr===0x1234 && pcp.vals.func===3 && pcp.vals['cw[1].data']===0xABCDE,toHex(pcm.bytes)+' '+JSON.stringify(pcp.fields.filter(f=>f.warn).map(f=>f.warn)));
+
+// запись декодера POCSAG: hex совпадает со словами кодера (pocMessage) и разбирается схемой без ошибок
+{
+  const c2=vm.createContext({Math,Uint8Array,Array,Map,Set,String,Number,Object,IQK:{},popcnt32:x=>{ x=x>>>0; let n=0; while(x){ n++; x&=x-1; } return n; }});
+  vm.runInContext(fs.readFileSync(path.join(root,'modules/pocsag-kernels.js'),'utf8')+';this.P={IQK,pocMessage,pocAlphaBits};',c2);
+  const P=c2.P, bits=P.pocAlphaBits('HELLO WORLD');
+  const n={pend:[]}, d={msg:{ric:1234568,func:3,bits:Array.from({length:Math.ceil(bits.length/20)*20},(_,i)=>bits[i]||0),bad:0,fixed:0,t:0}};
+  P.IQK.pocsagRx.finish(n,{baud:1200},d,0,[]);
+  const rec=n.pend[0].c.values().next().value.rec;
+  const words=P.pocMessage(1234568,3,bits.concat(new Array(Math.ceil(bits.length/20)*20-bits.length).fill(0))).filter(w=>w!==0x7A89C197);
+  ok('pocsag record hex equals the encoder words',rec.hexSchema==='pocsag' && rec.hex===words.map(w=>(w>>>0).toString(16).padStart(8,'0')).join(''),rec.hex+' vs '+words.map(w=>(w>>>0).toString(16)).join(''));
+  const rp=H.hexParse(rec.hexSchema,H.hexFromHex(rec.hex));
+  ok('pocsag record parses clean',rp.ok && rp.vals.addr===1234568>>3 && rp.vals.func===3,JSON.stringify(rp.vals));
+}
 
 // проверка схемы
 ok('schema check clean',H.hexSchemaCheck(H.HEX_LIB.ipv4,H.HEX_LIB).length===0);

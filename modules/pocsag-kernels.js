@@ -177,6 +177,11 @@ IQK.pocsagRx={
     const text=kind==='tone' ? '' : kind==='numeric' ? num : alpha;
     const r={src:'POCSAG', kind:'message', id:String(m.ric), to:String(m.ric), ric:m.ric, func:m.func, type:kind, baud:L.baud, text};
     if(kind!=='tone'){ r.alpha=alpha; r.num=num; }
+    {                                                // кодовые слова сообщения: адресное и слова данных (для HEX Structure)
+      const cws=[pocEncode(((m.ric>>3)<<2|m.func)&0x1FFFFF)];
+      for(let i=0;i+20<=m.bits.length;i+=20){ let v=0; for(let k=0;k<20;k++) v=v*2+m.bits[i+k]; cws.push(pocEncode((1<<20)|v)); }
+      r.hex=cws.map(w=>w.toString(16).padStart(8,'0')).join(''); r.hexSchema='pocsag';
+    }
     if(m.bad || m.fixed){ r.errors=m.bad; r.fixed=m.fixed; }
     const score=m.bad*1000+m.fixed, key=m.ric+'|'+m.func+'|'+text;
     for(const p of n.pend) if(p.baud===L.baud && Math.abs(p.start-m.t)<8/L.baud){

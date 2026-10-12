@@ -51,3 +51,20 @@ function bleLines(acc,chunk){
 }
 
 if(typeof module!=='undefined') module.exports={bleUuid,bleDecode,bleParseHex,bleChunks,bleLines,bleHex,BLE_PROFILES,BLE_FORMATS};
+
+// событие рекламы Web Bluetooth → структуры AD (длина, тип, данные): имя, TX power, данные производителя и служб;
+// сырых байт пакета API не даёт, поэтому AD собираются заново — для HEX Structure (схема ble-adv)
+function bleAdBytes(e){
+  const out=[], u8=dv=>Array.from(new Uint8Array(dv.buffer,dv.byteOffset,dv.byteLength));
+  const ad=(type,b)=>{ out.push(b.length+1,type,...b); };
+  if(e.name) ad(0x09,Array.from(typeof TextEncoder!=='undefined' ? new TextEncoder().encode(e.name) : Array.from(e.name,c=>c.charCodeAt(0)&255)).slice(0,29));
+  if(typeof e.txPower==='number') ad(0x0A,[e.txPower&255]);
+  if(e.manufacturerData) for(const [id,dv] of e.manufacturerData) ad(0xFF,[id&255,(id>>8)&255,...u8(dv)]);
+  if(e.serviceData) for(const [uuid,dv] of e.serviceData){
+    const u=String(uuid).toLowerCase(), m=/^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$/.exec(u);
+    if(m){ const v=parseInt(m[1],16); ad(0x16,[v&255,v>>8,...u8(dv)]); }
+    else if(/^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(u)){
+      const h=u.replace(/-/g,''), b=[]; for(let i=30;i>=0;i-=2) b.push(parseInt(h.substr(i,2),16)); ad(0x21,[...b,...u8(dv)]); }
+  }
+  return Uint8Array.from(out);
+}

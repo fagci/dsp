@@ -86,11 +86,11 @@ Object.assign(HEX_LIB,{
   'dmr-csbk':{ title:'DMR CSBK', group:'DMR', fields:[
     {n:'lb',t:'bits',w:1}, {n:'pf',t:'bits',w:1},
     {n:'csbko',t:'bits',w:6,fmt:'hex',enum:{4:'Unit to unit voice request',5:'Unit to unit answer response',7:'BS outbound activation',61:'Preamble'}},
-    {n:'fid',t:'u8',fmt:'hex'}, {n:'data',t:'bytes',len:8}, {n:'crc',t:'u16',fmt:'hex'}]},
+    {n:'fid',t:'u8',fmt:'hex'}, {n:'data',t:'bytes',len:8}, {n:'crc',t:'u16',fmt:'hex',calc:'crc16-gsm',xor:0xA5A5,to:'crc'}]},
 
   'dmr-pi':{ title:'DMR PI header', group:'DMR', fields:[
     {n:'alg',t:'u8',fmt:'hex'}, {n:'fid',t:'u8',fmt:'hex'}, {n:'key',t:'u8'}, {n:'mi',t:'bytes',len:4},
-    {n:'dst',t:'u24'}, {n:'crc',t:'u16',fmt:'hex'}]},
+    {n:'dst',t:'u24'}, {n:'crc',t:'u16',fmt:'hex',calc:'crc16-gsm',xor:0x6969,to:'crc'}]},
 
   /* ---------- ADS-B / Mode S (112 бит) ---------- */
   adsb:{ title:'ADS-B / Mode S long', group:'Aviation', detect:'_size==14 && (df==17 || df==18)', fields:[
@@ -109,10 +109,199 @@ Object.assign(HEX_LIB,{
     {n:'df',t:'bits',w:5}, {n:'fs',t:'bits',w:3}, {n:'dr',t:'bits',w:5}, {n:'um',t:'bits',w:6},
     {n:'ac',t:'bits',w:13}, {n:'ap',t:'bits',w:24,fmt:'hex'}]},
 
+  /* ---------- AIS (ITU-R M.1371), биты сообщения без CRC ---------- */
+  ais:{ title:'AIS message', group:'Marine', fields:(()=>{
+    const A='@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_ !"#$%&\'()*+,-./0123456789:;<=>?';
+    const b=(n,w,when,o)=>Object.assign({n,t:'bits',w,when},o||{});
+    const pad=(w,when)=>({t:'pad',w,when});
+    const s6=(n,len,when)=>({n,t:'str6',len,cs:A,pad:'@',trim:true,when});
+    const lon=(n,when)=>b(n,28,when,{signed:true,scale:1/600000,prec:5,unit:'°'});
+    const lat=(n,when)=>b(n,27,when,{signed:true,scale:1/600000,prec:5,unit:'°'});
+    const P='type>=1 && type<=3', B='type==18', S='type==5', BS='type==4 || type==11', A24='type==24', N21='type==21';
+    return [
+      {n:'type',t:'bits',w:6,enum:{1:'position A',2:'position A (assigned)',3:'position A (interrogated)',4:'base station',5:'static and voyage',9:'SAR aircraft',11:'UTC response',18:'position B',19:'position B extended',21:'aid to navigation',24:'static B'}},
+      b('repeat',2), b('mmsi',30),
+      // 1–3
+      b('status',4,P,{enum:{0:'under way (engine)',1:'at anchor',2:'not under command',3:'restricted manoeuvrability',4:'constrained by draught',5:'moored',6:'aground',7:'fishing',8:'under way (sailing)',15:'not defined'}}),
+      b('rot',8,P,{signed:true}), b('sog',10,P,{scale:.1,unit:'kn'}), b('acc',1,P),
+      lon('lon',P), lat('lat',P), b('cog',12,P,{scale:.1,unit:'°'}), b('hdg',9,P), b('ts',6,P),
+      b('maneuver',2,P), pad(3,P), b('raim',1,P), b('radio',19,P,{fmt:'hex'}),
+      // 4, 11
+      b('year',14,BS), b('month',4,BS), b('day',5,BS), b('hour',5,BS), b('min',6,BS), b('sec',6,BS), b('acc',1,BS),
+      lon('lon',BS), lat('lat',BS), b('epfd',4,BS), pad(10,BS), b('raim',1,BS), b('radio',19,BS,{fmt:'hex'}),
+      // 5
+      b('version',2,S), b('imo',30,S), s6('callsign',7,S), s6('name',20,S),
+      b('shiptype',8,S), b('bow',9,S), b('stern',9,S), b('port',6,S), b('stbd',6,S), b('epfd',4,S),
+      b('etamon',4,S), b('etaday',5,S), b('etahour',5,S), b('etamin',6,S), b('draught',8,S,{scale:.1,unit:'m'}),
+      s6('dest',20,S), b('dte',1,S), pad(1,S),
+      // 18
+      b('reserved',8,B), b('sog',10,B,{scale:.1,unit:'kn'}), b('acc',1,B), lon('lon',B), lat('lat',B),
+      b('cog',12,B,{scale:.1,unit:'°'}), b('hdg',9,B), b('ts',6,B), b('regional',2,B), b('cs',1,B), b('display',1,B),
+      b('dsc',1,B), b('band',1,B), b('msg22',1,B), b('assigned',1,B), b('raim',1,B), b('radio',20,B,{fmt:'hex'}),
+      // 21
+      b('aton',5,N21), s6('name',20,N21), b('acc',1,N21), lon('lon',N21), lat('lat',N21),
+      b('bow',9,N21), b('stern',9,N21), b('port',6,N21), b('stbd',6,N21), b('epfd',4,N21), b('ts',6,N21),
+      // 24
+      b('part',2,A24), s6('name',20,A24+' && part==0'),
+      b('shiptype',8,'type==24 && part==1'), pad(42,'type==24 && part==1'),
+      s6('callsign',7,'type==24 && part==1'), b('bow',9,'type==24 && part==1'), b('stern',9,'type==24 && part==1'),
+      b('port',6,'type==24 && part==1'), b('stbd',6,'type==24 && part==1'),
+    ]; })()},
   raw:{ title:'Raw bytes', group:'Other', fields:[{n:'data',t:'rest'}]},
   radiotap:{ title:'Radiotap + 802.11', group:'Wi-Fi', endian:'le', fields:[
     {n:'ver',t:'u8'}, {n:'pad',t:'u8'}, {n:'len',t:'u16'}, {n:'hdr',t:'bytes',len:'len-4'},
     {n:'frame',t:'rest',sub:'wifi'}]},
+
+  /* ---------- POCSAG: кодовые слова сообщения (адресное, затем слова данных) ---------- */
+  pocsag:{ title:'POCSAG message', group:'Paging', fields:[
+    {n:'flag',t:'bits',w:1}, {n:'addr',t:'bits',w:18}, {n:'func',t:'bits',w:2,enum:{0:'numeric / A',1:'tone / B',2:'C',3:'alpha / D'}},
+    {n:'bch',t:'bits',w:10,fmt:'hex',calc:'pocsag-bch'}, {n:'par',t:'bits',w:1,calc:'parity32'},
+    {n:'cw',t:'list',sub:'pocsag-cw'}]},
+  'pocsag-cw':{ title:'POCSAG codeword', group:'Paging', detect:'_size==4', fields:[
+    {n:'flag',t:'bits',w:1}, {n:'data',t:'bits',w:20,fmt:'hex'},
+    {n:'bch',t:'bits',w:10,fmt:'hex',calc:'pocsag-bch'}, {n:'par',t:'bits',w:1,calc:'parity32'}]},
+
+  /* ---------- ACARS (VHF), блок без битов чётности + BCS ---------- */
+  acars:{ title:'ACARS block', group:'Aviation', endian:'le', fields:[
+    {n:'mode',t:'str',len:1}, {n:'reg',t:'str',len:7}, {n:'ack',t:'u8',fmt:'hex'}, {n:'label',t:'str',len:2}, {n:'blk',t:'u8',fmt:'hex'},
+    {n:'stx',t:'u8',fmt:'hex',when:'_left>3'},
+    {n:'msgno',t:'str',len:4,when:'_left>3 && blk>=48 && blk<=57'}, {n:'flight',t:'str',len:6,when:'_left>3 && blk>=48 && blk<=57'},
+    {n:'text',t:'str',len:'_left>3 ? _left-3 : 0',when:'_left>3'},
+    {n:'end',t:'u8',fmt:'hex',enum:{3:'ETX',23:'ETB'}}, {n:'bcs',t:'u16',fmt:'hex'}]},
+
+  /* ---------- Bluetooth LE: структуры AD рекламы (Core Spec Part A, GAP) ---------- */
+  'ble-adv':{ title:'BLE advertising data', group:'Bluetooth', fields:[{n:'ad',t:'list',sub:'ble-ad'}]},
+  'ble-ad':{ title:'BLE AD structure', group:'Bluetooth', endian:'le', fields:[
+    {n:'len',t:'u8'},
+    {n:'type',t:'u8',fmt:'hex',when:'len>0',enum:{1:'Flags',2:'UUID16 (more)',3:'UUID16',6:'UUID128 (more)',7:'UUID128',8:'Short name',9:'Name',10:'TX power',22:'Service data 16',25:'Appearance',33:'Service data 128',255:'Manufacturer'}},
+    {n:'data',t:'bytes',len:'len-1',when:'len>0',sub:{by:'type',map:{1:'ble-ad-flags',8:'ble-ad-name',9:'ble-ad-name',10:'ble-ad-tx',22:'ble-ad-svc16',255:'ble-ad-mfr'}}}]},
+  'ble-ad-flags':{ fields:[{n:'flags',t:'u8',flags:{0:'LE limited discoverable',1:'LE general discoverable',2:'BR/EDR not supported',3:'LE+BR/EDR controller',4:'LE+BR/EDR host'}}]},
+  'ble-ad-name':{ fields:[{n:'name',t:'str',len:'rest',enc:'utf8'}]},
+  'ble-ad-tx':{ fields:[{n:'tx',t:'i8',fmt:'dbm'}]},
+  'ble-ad-mfr':{ endian:'le', fields:[
+    {n:'company',t:'u16',fmt:'hex',enum:{6:'Microsoft',76:'Apple',117:'Samsung',224:'Google',89:'Nordic Semiconductor',741:'Espressif',301:'Xiaomi'}},
+    {n:'b0',t:'u8',fmt:'hex',when:'_left>0'},
+    {n:'blen',t:'u8',when:'company==76 && b0==2 && _left>0'},
+    {n:'uuid',t:'bytes',len:16,when:'company==76 && b0==2 && blen==21 && _left>=21'},
+    {n:'major',t:'u16',endian:'be',when:'company==76 && b0==2 && blen==21 && _left>=5'},
+    {n:'minor',t:'u16',endian:'be',when:'company==76 && b0==2 && blen==21 && _left>=3'},
+    {n:'tx',t:'i8',fmt:'dbm',when:'company==76 && b0==2 && blen==21 && _left>=1'},
+    {n:'rest',t:'bytes',len:'_left'}]},
+  'ble-ad-svc16':{ endian:'le', fields:[
+    {n:'uuid',t:'u16',fmt:'hex',enum:{65194:'Eddystone',64791:'Exposure Notification',65197:'Tile'}},
+    {n:'etype',t:'u8',fmt:'hex',when:'uuid==65194 && _left>0',enum:{0:'UID',16:'URL',32:'TLM',48:'EID'}},
+    {n:'etx',t:'i8',fmt:'dbm',when:'uuid==65194 && (etype==0 || etype==16) && _left>0'},
+    {n:'ns',t:'bytes',len:10,when:'uuid==65194 && etype==0 && _left>=16'}, {n:'inst',t:'bytes',len:6,when:'uuid==65194 && etype==0 && _left>=6'},
+    {n:'scheme',t:'u8',when:'uuid==65194 && etype==16 && _left>0',enum:{0:'http://www.',1:'https://www.',2:'http://',3:'https://'}},
+    {n:'url',t:'str',len:'rest',when:'uuid==65194 && etype==16'},
+    {n:'rest',t:'bytes',len:'_left'}]},
+
+  /* ---------- GSM: L2-сообщение BCCH (23 байта после деперемежения и FIRE CRC), TS 44.018 ---------- */
+  'gsm-l2':{ title:'GSM BCCH L2 message (System Information)', group:'GSM', fields:[
+    {n:'li',t:'bits',w:6}, {n:'m',t:'bits',w:1}, {n:'el',t:'bits',w:1},
+    {n:'skip',t:'bits',w:4}, {n:'pd',t:'bits',w:4,enum:{6:'RR'}},
+    {n:'mt',t:'u8',fmt:'hex',enum:{0:'SI13',2:'SI2bis',3:'SI2ter',7:'SI2quater',25:'SI1',26:'SI2',27:'SI3',28:'SI4'}},
+    {n:'ci',t:'u16',when:'mt==27'},
+    {n:'plmn',t:'bytes',fmt:'plmn',when:'mt==27 || mt==28'}, {n:'lac',t:'u16',when:'mt==27 || mt==28'},
+    {n:'ctrl',t:'bytes',len:3,when:'mt==27'}, {n:'copt',t:'u8',fmt:'hex',when:'mt==27'},
+    {n:'csel',t:'bytes',len:2,when:'mt==27 || mt==28'},
+    {n:'freqs',t:'bytes',len:16,when:'mt==25 || mt==26'}, {n:'ncc',t:'u8',fmt:'hex',when:'mt==26'},
+    {n:'rach',t:'bytes',len:3,when:'mt==25 || mt==26 || mt==27 || mt==28'},
+    {n:'rest',t:'bytes',len:'_left'}]},
+
+  /* ---------- M17 (M17 Specification v2) ---------- */
+  'm17-lsf':{ title:'M17 link setup frame (LSF)', group:'M17', fields:[
+    {n:'dst',t:'bytes',fmt:'m17call'}, {n:'src',t:'bytes',fmt:'m17call'},
+    {n:'rsv',t:'bits',w:4}, {n:'signed',t:'bits',w:1}, {n:'can',t:'bits',w:4}, {n:'sub',t:'bits',w:2,enum:{0:'text',1:'GNSS position',2:'extended callsigns'}},
+    {n:'enc',t:'bits',w:2,enum:{0:'none',1:'scrambler',2:'AES',3:'other'}}, {n:'dtype',t:'bits',w:2,enum:{1:'data',2:'voice',3:'voice + data'}},
+    {n:'stream',t:'bits',w:1,enum:{0:'packet',1:'stream'}},
+    {n:'meta',t:'bytes',len:14}, {n:'crc',t:'u16',fmt:'hex',calc:'crc16-m17',to:'crc'}]},
+  'm17-pkt':{ title:'M17 packet', group:'M17', fields:[
+    {n:'proto',t:'u8',enum:{0:'RAW',1:'AX.25',2:'APRS',3:'6LoWPAN',4:'IPv4',5:'SMS',6:'Winlink'}},
+    {n:'data',t:'rest',sub:{by:'proto',map:{4:'ipv4'}}}]},
+
+  /* ---------- P25 Phase 1 (TIA-102.BAAA) ---------- */
+  'p25-tsbk':{ title:'P25 TSBK', group:'P25', fields:(()=>{
+    const b=(n,w,when,o)=>Object.assign({n,t:'bits',w,when},o||{}), pad=(w,when)=>({t:'pad',w,when});
+    const G='op==0', U='op==2', X='op==3', C='op==31 || op==32', R='op==44', S='op==58', N='op==59', A='op==60', V='op==56', J='op==57 || op==41';
+    const known='op==0||op==2||op==3||op==31||op==32||op==44||op==58||op==59||op==60||op==56||op==57||op==41';
+    return [
+      b('lb',1), b('prot',1),
+      b('op',6,undefined,{fmt:'hex',enum:{0:'GRP_V_CH_GRANT',2:'GRP_V_CH_GRANT_UPDT',3:'GRP_V_CH_GRANT_UPDT_EXP',4:'UU_V_CH_GRANT',5:'UU_ANS_REQ',6:'UU_V_CH_GRANT_UPDT',8:'TELE_INT_CH_GRANT',
+        20:'SN-DAT_CHN_GNT',22:'SN-DAT_CHN_ANN',31:'CALL_ALERT',32:'ACK_RSP_FNE',33:'QUE_RSP',36:'EXT_FNCT_CMD',39:'DENY_RSP',40:'GRP_AFF_RSP',41:'SCCB_EXP',42:'GRP_AFF_Q',
+        43:'LOC_REG_RSP',44:'U_REG_RSP',45:'U_REG_CMD',46:'AUTH_CMD',47:'U_DE_REG_ACK',51:'IDEN_UP_TDMA',52:'IDEN_UP_VU',53:'TIME_DATE_ANN',56:'SYS_SRV_BCST',57:'SCCB',
+        58:'RFSS_STS_BCST',59:'NET_STS_BCST',60:'ADJ_STS_BCST',61:'IDEN_UP'}}),
+      b('mfid',8,undefined,{fmt:'hex'}),
+      // 0x00 GRP_V_CH_GRANT
+      b('opts',8,G,{fmt:'hex'}), b('ch',16,G,{fmt:'hex'}), b('to',16,G), b('from',24,G),
+      // 0x02 GRP_V_CH_GRANT_UPDT
+      b('ch1',16,U,{fmt:'hex'}), b('to1',16,U), b('ch2',16,U,{fmt:'hex'}), b('to2',16,U),
+      // 0x03 explicit
+      b('opts',8,X,{fmt:'hex'}), pad(8,X), b('ch',16,X,{fmt:'hex'}), b('chrx',16,X,{fmt:'hex'}), b('to',16,X),
+      // 0x1F CALL_ALERT / 0x20 ACK_RSP_FNE
+      pad(8,C+' && op==31'), b('svc',8,'op==32',{fmt:'hex'}), pad(8,C), b('to',24,C), b('from',24,C),
+      // 0x2C U_REG_RSP
+      pad(2,R), b('rv',2,R), b('sysid',12,R,{fmt:'hex'}), b('sid',24,R), b('from',24,R),
+      // 0x3A RFSS_STS_BCST
+      b('lra',8,S), pad(4,S), b('sysid',12,S,{fmt:'hex'}), b('rfss',8,S), b('site',8,S), b('ch',16,S,{fmt:'hex'}), b('svc',8,S,{fmt:'hex'}),
+      // 0x3B NET_STS_BCST
+      b('lra',8,N), b('wacn',20,N,{fmt:'hex'}), b('sysid',12,N,{fmt:'hex'}), b('ch',16,N,{fmt:'hex'}), b('svc',8,N,{fmt:'hex'}),
+      // 0x3C ADJ_STS_BCST
+      b('lra',8,A), b('cfva',4,A), b('sysid',12,A,{fmt:'hex'}), b('rfss',8,A), b('site',8,A), b('ch',16,A,{fmt:'hex'}), pad(8,A),
+      // 0x38 SYS_SRV_BCST
+      pad(8,V), b('svcavail',24,V,{fmt:'hex'}), b('svcsupp',24,V,{fmt:'hex'}), b('prio',8,V),
+      // 0x39 SCCB
+      b('rfss',8,J), b('site',8,J), b('ch1',16,J,{fmt:'hex'}), pad(8,J), b('ch2',16,J,{fmt:'hex'}), pad(8,J),
+      // остальные
+      {n:'data',t:'bytes',len:8,when:'!('+known+')'}
+    ];
+  })().concat([{n:'crc',t:'u16',fmt:'hex',calc:'crc16-gsm',to:'crc',when:'1'}])},
+  'p25-lc':{ title:'P25 Link Control', group:'P25', fields:[
+    {n:'prot',t:'bits',w:1}, {n:'explicit',t:'bits',w:1},
+    {n:'lcf',t:'bits',w:6,enum:{0:'group voice',3:'unit-to-unit voice',15:'call termination'}}, {n:'mfid',t:'u8',fmt:'hex'},
+    {n:'svc',t:'u8',fmt:'hex',when:'lcf==0 || lcf==3',flags:{7:'emergency',6:'encrypted',5:'duplex',4:'packet'}},
+    {n:'rsv',t:'u8',when:'lcf==0'}, {n:'to',t:'u16',when:'lcf==0'},
+    {n:'to',t:'u24',when:'lcf==3 || lcf==15'}, {n:'from',t:'u24',when:'lcf==0 || lcf==3 || lcf==15'},
+    {n:'data',t:'bytes',len:'_left',when:'lcf!=0 && lcf!=3 && lcf!=15'}]},
+  'p25-hdu':{ title:'P25 header data unit', group:'P25', fields:[
+    {n:'mi',t:'bytes',len:9}, {n:'mfid',t:'u8',fmt:'hex'},
+    {n:'algid',t:'u8',fmt:'hex',enum:{128:'clear',129:'DES-OFB',131:'3DES',132:'AES-256',170:'ADP RC4',159:'DES-XL',160:'DVI-XL'}},
+    {n:'kid',t:'u16',fmt:'hex'}, {n:'tgid',t:'u16'}]},
+
+  /* ---------- NXDN (TS 1-A), сообщение слоя 3 ---------- */
+  'nxdn-l3':{ title:'NXDN layer 3 message', group:'NXDN', fields:(()=>{
+    const b=(n,w,when,o)=>Object.assign({n,t:'bits',w,when},o||{});
+    const V='type==1||type==7||type==8||type==17||type==9||type==11||type==56||type==4||type==5||type==14||type==13', AS='type==4||type==5||type==14||type==13', SI='type==24';
+    return [
+      b('f1',1), b('f2',1),
+      b('type',6,undefined,{enum:{0:'CALL_RESP',1:'VCALL',2:'VCALL_REC_REQ',3:'VCALL_IV',4:'VCALL_ASSGN',5:'VCALL_ASSGN_DUP',6:'CALL_CONN_RESP',7:'TX_REL_EX',8:'TX_REL',9:'DCALL_HEADER',
+        10:'DCALL_REC_REQ',11:'DCALL_DATA',12:'DCALL_ACK',13:'DCALL_ASSGN_DUP',14:'DCALL_ASSGN',15:'HEAD_DLY',16:'IDLE',17:'DISC',23:'DST_ID_INFO',24:'SITE_INFO',25:'SRV_INFO',26:'CCH_INFO',
+        27:'ADJ_SITE_INFO',28:'FAIL_STAT_INFO',32:'REG_RESP',34:'REG_C_RESP',35:'REG_COMM',36:'GRP_REG_RESP',40:'AUTH_INQ_REQ',41:'AUTH_INQ_RESP',48:'STAT_INQ_REQ',49:'STAT_INQ_RESP',
+        50:'STAT_REQ',51:'STAT_RESP',52:'REM_CON_REQ',53:'REM_CON_RESP',56:'SDCALL_REQ_HEADER',57:'SDCALL_REQ_DATA',58:'SDCALL_IV',59:'SDCALL_RESP',63:'PROP_FORM'}}),
+      b('emergency',1,V), b('ccopt',7,V),
+      b('ctype',3,V,{enum:{0:'broadcast',1:'conference',2:'unspecified',4:'individual',6:'interconnect',7:'speed dial'}}), b('opt',5,V),
+      b('from',16,V), b('to',16,V),
+      b('timer',6,AS), b('channel',10,AS),
+      b('cipher',2,'('+V+') && !('+AS+')',{enum:{0:'none',1:'scrambler',2:'DES',3:'AES'}}), b('key',6,'('+V+') && !('+AS+')'),
+      b('location',24,SI,{fmt:'hex'}), b('cs',16,SI,{fmt:'hex'}), b('svc',16,SI,{fmt:'hex'}), b('rst',24,SI,{fmt:'hex'}), b('ca',24,SI,{fmt:'hex'}),
+      b('version',8,SI), b('adj',4,SI), b('ch1',10,SI), b('ch2',10,SI),
+      {n:'iv',t:'bytes',len:8,when:'type==3'},
+      {n:'data',t:'bytes',len:'_left',when:'!('+V+') && !('+SI+') && type!=3'}
+    ];
+  })()},
+
+  /* ---------- TETRA (ETSI EN 300 392-2): SYNC (BSCH) и SYSINFO (MAC-BROADCAST) ---------- */
+  'tetra-sync':{ title:'TETRA SYNC PDU (BSCH, 60 bit)', group:'TETRA', fields:[
+    {n:'sys',t:'bits',w:4}, {n:'cc',t:'bits',w:6}, {n:'tn',t:'bits',w:2}, {n:'fn',t:'bits',w:5}, {n:'mn',t:'bits',w:6},
+    {n:'sharing',t:'bits',w:2}, {n:'reserved',t:'bits',w:3}, {n:'dtx',t:'bits',w:1}, {n:'f18ext',t:'bits',w:1}, {t:'pad',w:1},
+    {n:'mcc',t:'bits',w:10}, {n:'mnc',t:'bits',w:14}, {n:'nbr',t:'bits',w:2}, {n:'svc',t:'bits',w:2}, {n:'late',t:'bits',w:1}]},
+  'tetra-sysinfo':{ title:'TETRA SYSINFO (MAC-BROADCAST, 124 bit)', group:'TETRA', fields:[
+    {n:'pdu',t:'bits',w:2,enum:{2:'MAC-BROADCAST'}}, {n:'bt',t:'bits',w:2,enum:{0:'SYSINFO',1:'ACCESS-DEFINE'}},
+    {n:'carrier',t:'bits',w:12}, {n:'band',t:'bits',w:4}, {n:'off',t:'bits',w:2,enum:{0:'0',1:'+6.25 kHz',2:'−6.25 kHz',3:'+12.5 kHz'}},
+    {n:'duplex',t:'bits',w:3}, {n:'reverse',t:'bits',w:1}, {n:'ncs',t:'bits',w:2}, {n:'txpwr',t:'bits',w:3}, {n:'rxmin',t:'bits',w:4},
+    {n:'access',t:'bits',w:4}, {n:'timeout',t:'bits',w:4}, {n:'cckvalid',t:'bits',w:1}, {n:'cck',t:'bits',w:16,fmt:'hex'}, {n:'opt',t:'bits',w:2},
+    {t:'pad',w:20}, {n:'la',t:'bits',w:14}, {n:'subscr',t:'bits',w:16,fmt:'hex'},
+    {n:'serv',t:'bits',w:12,flags:{11:'registration mandatory',10:'de-registration mandatory',9:'priority cell',8:'no minimum mode',7:'migration',6:'system-wide services',5:'voice',4:'circuit data',2:'SNDCP data',1:'air encryption',0:'advanced link'}}]},
 
   /* ---------- Для проверки и примеров ---------- */
   'esp-pkt':{ title:'ESP32 sniffer record', group:'Wi-Fi', endian:'le', fields:[

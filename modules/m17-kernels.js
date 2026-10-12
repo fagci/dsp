@@ -192,7 +192,7 @@ FSK4.protos.m17={
         const d=Uint8Array.from(P.pkt.data), body=d.subarray(0,d.length-2), c=P.call;
         const crc=m17Crc(d,d.length)===0 ? 'ok' : 'bad';
         const proto=body[0], text=proto===5 ? String.fromCharCode(...body.subarray(1).filter(x=>x>=32 && x<127)) : null;
-        m17Emit(P,L,out,'packet',{from:c?c.src:null, to:c?c.dst:null, bytes:d.length-2, proto, crc, message:text, hex:bytesHex(body,0,Math.min(body.length,64))},
+        m17Emit(P,L,out,'packet',{from:c?c.src:null, to:c?c.dst:null, bytes:d.length-2, proto, crc, message:text, hex:bytesHex(body,0,Math.min(body.length,64)), hexSchema:'m17-pkt'},
           'PACKET '+(c ? c.src+' → '+c.dst+' ' : '')+(d.length-2)+' bytes'+(text ? ' "'+text+'"' : '')+(crc==='ok' ? '' : ' [CRC bad]'));
         P.pkt=null;
       }
@@ -216,7 +216,7 @@ FSK4.protos.m17={
     P.lsf={raw:b,f}; P.call={...f, t0:P.now, frames:0};
     P.st.calls++;
     const {meta,...rest}=f;
-    m17Emit(P,L,out,'call',{from:f.src, to:f.dst, call:f.mode, ...rest, meta, source:by},
+    m17Emit(P,L,out,'call',{from:f.src, to:f.dst, call:f.mode, ...rest, meta, source:by, hex:bytesHex(b), hexSchema:'m17-lsf'},
       f.src+' → '+f.dst+' · '+f.mode+' · CAN '+f.can+(f.enc ? ' · '+f.encName : '')+(f.metaText ? ' · "'+f.metaText+'"' : '')+(f.cf1 ? ' · '+f.cf1+(f.cf2 ? ' / '+f.cf2 : '') : '')+(f.lat!=null ? ' · '+f.lat+', '+f.lon : ''));
   },
   end(P,L,out,by){
