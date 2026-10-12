@@ -169,6 +169,33 @@ Object.assign(HEX_LIB,{
     {n:'text',t:'str',len:'_left>3 ? _left-3 : 0',when:'_left>3'},
     {n:'end',t:'u8',fmt:'hex',enum:{3:'ETX',23:'ETB'}}, {n:'bcs',t:'u16',fmt:'hex'}]},
 
+  /* ---------- Bluetooth LE: структуры AD рекламы (Core Spec Part A, GAP) ---------- */
+  'ble-adv':{ title:'BLE advertising data', group:'Bluetooth', fields:[{n:'ad',t:'list',sub:'ble-ad'}]},
+  'ble-ad':{ title:'BLE AD structure', group:'Bluetooth', endian:'le', fields:[
+    {n:'len',t:'u8'},
+    {n:'type',t:'u8',fmt:'hex',when:'len>0',enum:{1:'Flags',2:'UUID16 (more)',3:'UUID16',6:'UUID128 (more)',7:'UUID128',8:'Short name',9:'Name',10:'TX power',22:'Service data 16',25:'Appearance',33:'Service data 128',255:'Manufacturer'}},
+    {n:'data',t:'bytes',len:'len-1',when:'len>0',sub:{by:'type',map:{1:'ble-ad-flags',8:'ble-ad-name',9:'ble-ad-name',10:'ble-ad-tx',22:'ble-ad-svc16',255:'ble-ad-mfr'}}}]},
+  'ble-ad-flags':{ fields:[{n:'flags',t:'u8',flags:{0:'LE limited discoverable',1:'LE general discoverable',2:'BR/EDR not supported',3:'LE+BR/EDR controller',4:'LE+BR/EDR host'}}]},
+  'ble-ad-name':{ fields:[{n:'name',t:'str',len:'rest',enc:'utf8'}]},
+  'ble-ad-tx':{ fields:[{n:'tx',t:'i8',fmt:'dbm'}]},
+  'ble-ad-mfr':{ endian:'le', fields:[
+    {n:'company',t:'u16',fmt:'hex',enum:{6:'Microsoft',76:'Apple',117:'Samsung',224:'Google',89:'Nordic Semiconductor',741:'Espressif',301:'Xiaomi'}},
+    {n:'b0',t:'u8',fmt:'hex',when:'_left>0'},
+    {n:'blen',t:'u8',when:'company==76 && b0==2 && _left>0'},
+    {n:'uuid',t:'bytes',len:16,when:'company==76 && b0==2 && blen==21 && _left>=21'},
+    {n:'major',t:'u16',endian:'be',when:'company==76 && b0==2 && blen==21 && _left>=5'},
+    {n:'minor',t:'u16',endian:'be',when:'company==76 && b0==2 && blen==21 && _left>=3'},
+    {n:'tx',t:'i8',fmt:'dbm',when:'company==76 && b0==2 && blen==21 && _left>=1'},
+    {n:'rest',t:'bytes',len:'_left'}]},
+  'ble-ad-svc16':{ endian:'le', fields:[
+    {n:'uuid',t:'u16',fmt:'hex',enum:{65194:'Eddystone',64791:'Exposure Notification',65197:'Tile'}},
+    {n:'etype',t:'u8',fmt:'hex',when:'uuid==65194 && _left>0',enum:{0:'UID',16:'URL',32:'TLM',48:'EID'}},
+    {n:'etx',t:'i8',fmt:'dbm',when:'uuid==65194 && (etype==0 || etype==16) && _left>0'},
+    {n:'ns',t:'bytes',len:10,when:'uuid==65194 && etype==0 && _left>=16'}, {n:'inst',t:'bytes',len:6,when:'uuid==65194 && etype==0 && _left>=6'},
+    {n:'scheme',t:'u8',when:'uuid==65194 && etype==16 && _left>0',enum:{0:'http://www.',1:'https://www.',2:'http://',3:'https://'}},
+    {n:'url',t:'str',len:'rest',when:'uuid==65194 && etype==16'},
+    {n:'rest',t:'bytes',len:'_left'}]},
+
   /* ---------- Для проверки и примеров ---------- */
   'esp-pkt':{ title:'ESP32 sniffer record', group:'Wi-Fi', endian:'le', fields:[
     {n:'rssi',t:'i8',fmt:'dbm'}, {n:'chan',t:'u8'}, {n:'len',t:'u16'},
