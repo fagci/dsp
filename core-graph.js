@@ -494,7 +494,7 @@ const order=(MOD[n.type].groups||[]).map(g=>g.n);
 for(const p of params) if(!order.includes(p.g)) order.push(p.g);
 for(const name of order){
 const list=params.filter(p=>p.g===name); if(!list.length) continue;
-const sec=document.createElement('div'); sec.className='prm wide pgrp'; sec.dataset.g=name;
+const sec=document.createElement('div'); sec.className='prm wide pgrp'; sec.dataset.g=name; sec.dataset.n=list.length;
 const head=document.createElement('div'); head.className='pgh';
 const body=document.createElement('div'); body.className='pgb';
 renderParamRows(body,n,list);
@@ -506,7 +506,7 @@ head.addEventListener('click',()=>setGroupOpen(n,name,!gIsOpen(n,name)));
 function paintGroup(n,sec,open){
 sec.classList.toggle('closed',!open);
 sec.querySelector('.pgb').hidden=!open;
-const name=sec.dataset.g, cnt=sec.querySelectorAll('.pgb .prm.pr,.pgb button').length;
+const name=sec.dataset.g, cnt=sec.dataset.n;
 sec.querySelector('.pgh').innerHTML=`<span class="pgl">${open?'▾':'▸'} ${name.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span><span class="pgn">${cnt}</span>`;
 }
 function setGroupOpen(n,name,v){

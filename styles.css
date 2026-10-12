@@ -639,6 +639,8 @@ body.noedit #bar .ed{display:none}
 .pgrp.closed .pgh{border-bottom-color:transparent}
 .dash-body .node .io3>.mid>.prm.wide.pgrp{flex:1 1 100%}
 @media (pointer:coarse){ .pgh{min-height:30px} }
+/* списки (таблица, закладки, диапазоны): в тайле список идёт первым и занимает всю высоту, настройки — под ним */
+.dash-body .node .io3>.mid>:is(.tbl-ui,.bm-ui,.bp-ui){order:-1}
 /* режим «только главное» в тайле: остаются строки .pri, группы без них и advanced прячутся */
 .dash-pane.compact :is(.advToggle,.advWrap,.pgh,.pr-btns){display:none}
 .dash-pane.compact .pgrp:not(:has(.pri)){display:none}
