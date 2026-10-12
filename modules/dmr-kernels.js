@@ -570,7 +570,7 @@ function dmrData(n,L,S,bits,st,out){
     const b=dmrMasked(dmrBptcDec(raw),0x6969);
     if(!b){ n.st.bad++; return; }
     const alg=b[0], mi=bytesHex(b,3,4), to=dmrId(b,7);
-    dmrEmit(n,S,L,out,'pi',{alg, fid:b[1], key:b[2], mi, to},'PI (encrypted) alg 0x'+alg.toString(16).toUpperCase()+' key '+b[2]+' MI '+mi+' → '+to,bytesHex(b));
+    dmrEmit(n,S,L,out,'pi',{alg, fid:b[1], key:b[2], mi, to, hex:bytesHex(b), hexSchema:'dmr-pi'},'PI (encrypted) alg 0x'+alg.toString(16).toUpperCase()+' key '+b[2]+' MI '+mi+' → '+to,bytesHex(b));
     S.pi={alg, kid:b[2], mi};
     if(S.call && !S.call.flags.includes('encrypted')) S.call.flags.push('encrypted');
     return; }
@@ -582,11 +582,11 @@ function dmrData(n,L,S,bits,st,out){
       n.st.lc++;
       if(S.d) dmrDataFlush(n,L,S,out,'interrupted');
       S.call={from,to,type:dmrCallName(flco),flags,t0:n.now,late:false}; S.vbursts=0; S.ta=null; S.pi=null;
-      dmrEmit(n,S,L,out,'call',{from,to,call:S.call.type,flags:flags.join(','),flco,fid,source:'LC header'},
+      dmrEmit(n,S,L,out,'call',{from,to,call:S.call.type,flags:flags.join(','),flco,fid,source:'LC header',hex:bytesHex(b),hexSchema:'dmr-lc'},
         'CALL '+S.call.type+' '+from+' → '+to+(flags.length ? ' ['+flags.join(',')+']' : '')+(fid ? ' FID 0x'+fid.toString(16) : ''),'h'+bytesHex(b));
     } else {
       const c=S.call, dur=c ? Math.round(n.now-c.t0) : null;
-      dmrEmit(n,S,L,out,'end',{from,to,call:dmrCallName(flco),voice:S.vbursts,ms:dur,alias:c&&c.alias||undefined},
+      dmrEmit(n,S,L,out,'end',{from,to,call:dmrCallName(flco),voice:S.vbursts,ms:dur,alias:c&&c.alias||undefined,hex:bytesHex(b),hexSchema:'dmr-lc'},
         'END '+dmrCallName(flco)+' '+from+' → '+to+' · '+S.vbursts+' voice bursts',bytesHex(b));
       S.call=null; S.vbursts=0; S.pi=null;
     }
@@ -595,7 +595,7 @@ function dmrData(n,L,S,bits,st,out){
     const bp=dmrBptcDec(raw), b=dmrMasked(bp,dt===3 ? 0xA5A5 : 0xAAAA);
     if(!b){ n.st.bad++; return; }
     n.st.csbk++;
-    const op=b[0]&63, name=DMR_CSBKO[op]||'CSBKO 0x'+op.toString(16), f={op, name, lb:b[0]>>7, pf:(b[0]>>6)&1, fid:b[1], raw:bytesHex(b,0,10)};
+    const op=b[0]&63, name=DMR_CSBKO[op]||'CSBKO 0x'+op.toString(16), f={op, name, lb:b[0]>>7, pf:(b[0]>>6)&1, fid:b[1], raw:bytesHex(b,0,10), hex:bytesHex(b), hexSchema:'dmr-csbk'};
     let text=(dt===4 ? 'MBC ' : 'CSBK ')+name;
     if(op===0x3D){ Object.assign(f,{data:b[2]>>7, group:(b[2]>>6)&1, blocks:b[3], to:dmrId(b,4), from:dmrId(b,7)});
       text+=(f.data ? ' data' : ' CSBK')+' ×'+f.blocks+' '+f.from+' → '+(f.group ? 'TG ' : '')+f.to; }

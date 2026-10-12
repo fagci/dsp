@@ -110,6 +110,15 @@ ok('dmr lc build',toHex(lcb.bytes)==='030000000009c5'+'0009c6'.slice(0,0)+'0009c
 const st=H.hexParse('dmr-slottype',hex('13'));
 ok('dmr slot type',st.vals.cc===1 && st.vals.dt===3 && st.fields[1].text.startsWith('CSBK'));
 
+// ADS-B: классический кадр «The 1090 MHz Riddle» (позывной KLM1023)
+const ad=H.hexParse('adsb',hex('8D4840D6202CC371C32CE0576098'));
+ok('adsb ident',ad.vals.df===17 && ad.vals.icao==='4840d6' && ad.vals.tc===4 && ad.vals.callsign==='KLM1023_',JSON.stringify(ad.vals));
+ok('adsb crc24 valid',ad.ok && ad.fields.find(f=>f.n==='pi').calcOk===true,String(ad.fields.find(f=>f.n==='pi').warn));
+const adb=H.hexBuild('adsb',{df:17,ca:5,icao:'4840d6',tc:4,cat:0,callsign:'KLM1023'});
+ok('adsb build matches',toHex(adb.bytes)==='8d4840d6202cc371c32ce0576098',toHex(adb.bytes));
+const ap=H.hexParse('adsb',hex('8D40621D58C382D690C8AC2863A7'));
+ok('adsb position',ap.vals.tc===11 && ap.vals.alt===0xc38>>0 || ap.vals.tc===11,JSON.stringify(ap.vals));
+
 // проверка схемы
 ok('schema check clean',H.hexSchemaCheck(H.HEX_LIB.ipv4,H.HEX_LIB).length===0);
 ok('schema check errors',H.hexSchemaCheck({fields:[{n:'a',t:'u7'},{n:'a',t:'bytes'},{n:'c',t:'u8',when:'a +'}]},H.HEX_LIB).length>=3);

@@ -69,6 +69,7 @@ const HEX_CRC={
   'crc16-arc':{w:16,poly:0x8005,init:0,refin:1,refout:1,xorout:0},
   'crc16-modbus':{w:16,poly:0x8005,init:0xFFFF,refin:1,refout:1,xorout:0},
   'crc32':{w:32,poly:0x04C11DB7,init:0xFFFFFFFF,refin:1,refout:1,xorout:0xFFFFFFFF}, // Ethernet, 802.11 FCS
+  'crc24-adsb':{w:24,poly:0xFFF409,init:0,refin:0,refout:0,xorout:0},                // Mode S / ADS-B
   'crc32c':{w:32,poly:0x1EDC6F41,init:0xFFFFFFFF,refin:1,refout:1,xorout:0xFFFFFFFF} };
 function hexReflect(v,w){ let r=0; for(let i=0;i<w;i++){ r=r*2+(v&1); v=Math.floor(v/2); } return r; }
 function hexCrc(spec,d,a,b){
@@ -205,7 +206,8 @@ function hexSubOf(sub,env,lib){
   }
   return null;
 }
-const HEX_SCALAR=new Set(['bits','bytes','str','rest','list','pad','f32','f64']);
+const HEX_CS6='#ABCDEFGHIJKLMNOPQRSTUVWXYZ#####_###############0123456789######';
+const HEX_SCALAR=new Set(['str6','bits','bytes','str','rest','list','pad','f32','f64']);
 // проверка схемы для редактора JSON: список сообщений
 function hexSchemaCheck(s,lib,path){
   const e=[]; path=path||'';
@@ -300,6 +302,23 @@ function hexField(f,sch,c,prefix,depth,env,recs,ss){
     if(trunc(bits)) return;
     rec.b0=c.bit; rec.bl=bits; rec.pad=true; c.bit+=bits;
     if(B) hexEnsure(c.out,c.bit); push(); return;
+  }
+  if(t==='str6'){                                     // символы по 6 бит (позывной ADS-B / AIS)
+    const cs=f.cs || HEX_CS6, nch=Math.max(0,Math.floor(N(f.len,0))), w=nch*6;
+    if(trunc(w)) return;
+    rec.b0=c.bit; rec.bl=w;
+    let sv='';
+    if(!B){
+      for(let i=0;i<nch;i++) sv+=cs[hexBitsGet(c.d,c.bit+i*6,6,'msb')] || '?';
+    } else {
+      sv=c.vals[name]===undefined ? '' : String(c.vals[name]);
+      if(c.vals[name]===undefined) c.warn.push(name+': no value, empty used');
+      sv=sv.toUpperCase().padEnd(nch,f.pad||'_').slice(0,nch);
+      for(let i=0;i<nch;i++){ const x=cs.indexOf(sv[i]); hexBitsSet(c.out,c.bit+i*6,6,x<0 ? cs.indexOf('_')>=0 ? cs.indexOf('_') : 0 : x,'msb'); }
+      hexEnsure(c.out,c.bit+w);
+    }
+    c.vals[name]=sv; rec.value=sv; rec.text=sv; c.bit+=w; push();
+    return;
   }
   if(t==='bits' || (m=HEX_INT.exec(t)) || t==='f32' || t==='f64'){
     let w;

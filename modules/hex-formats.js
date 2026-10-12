@@ -84,6 +84,27 @@ Object.assign(HEX_LIB,{
     {n:'csbko',t:'bits',w:6,fmt:'hex',enum:{4:'Unit to unit voice request',5:'Unit to unit answer response',7:'BS outbound activation',61:'Preamble'}},
     {n:'fid',t:'u8',fmt:'hex'}, {n:'data',t:'bytes',len:8}, {n:'crc',t:'u16',fmt:'hex'}]},
 
+  'dmr-pi':{ title:'DMR PI header', group:'DMR', fields:[
+    {n:'alg',t:'u8',fmt:'hex'}, {n:'fid',t:'u8',fmt:'hex'}, {n:'key',t:'u8'}, {n:'mi',t:'bytes',len:4},
+    {n:'dst',t:'u24'}, {n:'crc',t:'u16',fmt:'hex'}]},
+
+  /* ---------- ADS-B / Mode S (112 бит) ---------- */
+  adsb:{ title:'ADS-B / Mode S long', group:'Aviation', fields:[
+    {n:'df',t:'bits',w:5,enum:{11:'all-call reply',17:'ADS-B',18:'TIS-B / ADS-R',20:'Comm-B altitude',21:'Comm-B identity'}},
+    {n:'ca',t:'bits',w:3}, {n:'icao',t:'bytes',len:3},
+    {n:'tc',t:'bits',w:5},
+    {n:'cat',t:'bits',w:3,when:'tc>=1 && tc<=4'},
+    {n:'callsign',t:'str6',len:8,when:'tc>=1 && tc<=4'},
+    {n:'ss',t:'bits',w:2,when:'tc>=9 && tc<=18'}, {n:'nicsb',t:'bits',w:1,when:'tc>=9 && tc<=18'},
+    {n:'alt',t:'bits',w:12,when:'tc>=9 && tc<=18'}, {n:'time',t:'bits',w:1,when:'tc>=9 && tc<=18'},
+    {n:'cpr',t:'bits',w:1,when:'tc>=9 && tc<=18'},
+    {n:'lat',t:'bits',w:17,when:'tc>=9 && tc<=18'}, {n:'lon',t:'bits',w:17,when:'tc>=9 && tc<=18'},
+    {n:'me',t:'bits',w:51,when:'!((tc>=1 && tc<=4) || (tc>=9 && tc<=18))'},
+    {n:'pi',t:'bits',w:24,fmt:'hex',calc:'crc24-adsb',to:'pi'}]},
+  'adsb-short':{ title:'Mode S short', group:'Aviation', fields:[
+    {n:'df',t:'bits',w:5}, {n:'fs',t:'bits',w:3}, {n:'dr',t:'bits',w:5}, {n:'um',t:'bits',w:6},
+    {n:'ac',t:'bits',w:13}, {n:'ap',t:'bits',w:24,fmt:'hex'}]},
+
   /* ---------- Для проверки и примеров ---------- */
   'esp-pkt':{ title:'ESP32 sniffer record', group:'Wi-Fi', endian:'le', fields:[
     {n:'rssi',t:'i8',fmt:'dbm'}, {n:'chan',t:'u8'}, {n:'len',t:'u16'},

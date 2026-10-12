@@ -72,6 +72,9 @@ def({ id:'hexStruct', title:'HEX Structure', cat:'Data', kw:'hex bytes packet pa
     {n:'width',adv:true,t:'select',opts:['8','16','24','32'],d:'16',label:'bytes per row'},
     {n:'group',adv:true,t:'select',opts:['1','2','4'],d:'1',label:'group bytes'},
     {n:'emitEdit',adv:true,t:'check',d:true,label:'send the packet on edit'},
+    {n:'recMode',adv:true,t:'select',opts:['auto','build','parse'],d:'auto',label:'rec input',tip:'auto: a record with a hex field is parsed (decoder output), any other record is built into a packet'},
+    {n:'hexcol',adv:true,t:'text',d:'hex',label:'hex field in a record'},
+    {n:'autoSchema',adv:true,t:'check',d:true,label:'take the structure from hexSchema of the record'},
     {n:'map',adv:true,t:'text',d:'',label:'rec field names (column=field, …)',tip:'maps record keys from a Table to structure fields when the names differ'},
     {n:'json',adv:true,t:'code',d:'',plain:true,label:'own structure (JSON; empty — the list above)',fn:n=>{ n.dirty=true; n.uiDirty=true; }},
     {n:'tojson',adv:true,t:'button',label:'Copy chosen structure to JSON',fn:n=>{
@@ -95,8 +98,15 @@ def({ id:'hexStruct', title:'HEX Structure', cat:'Data', kw:'hex bytes packet pa
     let rec=I.rec; if(Array.isArray(rec)) rec=rec[rec.length-1];
     if(rec && typeof rec==='object' && rec!==n.lastRec){
       n.lastRec=rec;
-      if(n.dirty || !n.res) hxParseNow(n);
-      hxSetBuf(n,hxBuild(n,hexFromRec(hxMapRec(rec,n.p.map))),true);
+      const hx=rec[n.p.hexcol||'hex'], mode=n.p.recMode;
+      if(mode!=='build' && typeof hx==='string' && /^[0-9a-f\s]+$/i.test(hx)){      // запись декодера: байты кадра в поле hex
+        if(n.p.autoSchema && HEX_LIB[rec.hexSchema] && n.p.schema!==rec.hexSchema){
+          n.p.schema=rec.hexSchema; if(n.set?.schema) n.set.schema(rec.hexSchema); }
+        hxSetBuf(n,hexFromHex(hx),true);
+      } else if(mode!=='parse'){
+        if(n.dirty || !n.res) hxParseNow(n);
+        hxSetBuf(n,hxBuild(n,hexFromRec(hxMapRec(rec,n.p.map))),true);
+      }
     }
     if(rise) n.emit=true;
     const schKey=n.p.schema+'|'+n.p.json;
