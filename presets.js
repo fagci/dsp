@@ -255,6 +255,7 @@ const PRESET_CATS={
   'POCSAG: Pager Messages (Generator)':'Modems & Data Links',
   'POCSAG: Pager Messages (USB SDR)':'Modems & Data Links',
   'AIS: Vessels on the Map (Generator)':'Aircraft, Satellites & Telemetry',
+  'AIS: Messages → HEX Structure (Generator)':'Aircraft, Satellites & Telemetry',
   'AIS: Vessels on the Map (USB SDR, 162 MHz)':'Aircraft, Satellites & Telemetry',
   'ISM 433: Sensors and Remotes (Generator)':'Aircraft, Satellites & Telemetry',
   'ISM 433: Sensors and Remotes (USB SDR)':'Aircraft, Satellites & Telemetry',
@@ -1623,6 +1624,21 @@ map.size.w=560; map.size.h=460; applySize(map);
 const log=addNode('recLog',340,620,{});
 log.size.w=520; applySize(log);
 addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',map.id,'rec'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('AIS: Messages → HEX Structure (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Every AIS message the decoder hears (not only positions) comes out on raw as a record with the message bits in hex and hexSchema «ais»: HEX Structure splits it into fields — MMSI, status, speed, position in degrees, name, call sign, destination — and shows them over the bits; the Table keeps the list, click a row to look at it.\n'+
+  'A text input takes !AIVDM / !AIVDO sentences too (multi-part messages are joined), so sentences from another receiver or a log can be looked at the same way.'});
+nt.size.w=860; nt.size.h=130; applySize(nt);
+const gn=addNode('iqGen',40,230,{sr:'256000',fc:162000000,mode:'AIS',off:-25000,lvl:-20,noise:-50});
+const de=addNode('aisRx',340,230,{});
+de.size.w=420; de.size.h=260; applySize(de);
+const tb=addNode('table',800,200,{list:'@patch',data:''});
+tb.size.w=360; tb.size.h=320; applySize(tb);
+const hx=addNode('hexStruct',1200,200,{schema:'ais'});
+hx.size.w=460; hx.size.h=520; applySize(hx);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'raw',tb.id,'rec'); addEdge(de.id,'raw',hx.id,'rec');
 markWiresDirty();
 });
 preset('AIS: Vessels on the Map (USB SDR, 162 MHz)', function(){

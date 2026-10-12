@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,DataView,ArrayBuffer,TextEncoder,TextDecoder,Array,Map,Set,Error,String,Number,BigInt,Object,Date,JSON,isNaN,parseInt});
 for(const f of ['hex-kernels.js','hex-formats.js','wifisniff-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
-vm.runInContext('this.H={wifiLine,wifiRec,hexParse,hexBuild,hexToRec,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
+vm.runInContext('this.H={HexAisAsm,hexAisPayload,wifiLine,wifiRec,hexParse,hexBuild,hexToRec,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
 const H=ctx.H;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 const hex=s=>H.hexFromHex(s), toHex=b=>H.hexToHex(b);
@@ -133,6 +133,21 @@ ok('sniffer ack record',ar.kind==='ack' && ar.da==='aa:bb:cc:dd:ee:01' && ar.fty
 // запись снифера → HEX Structure: hex + hexSchema разбираются обратно в те же поля
 const back=H.hexParse(wr.hexSchema,H.hexFromHex(wr.hex));
 ok('record hex re-parses',back.ok && back.vals['body.ies[0].data.ssid']==='TestNet');
+
+// AIS: классическое предложение (позиция типа 1, MMSI 477553000)
+const aa=new (H.HexAisAsm)().push('!AIVDM,1,1,,B,177KQJ5000G?tO`K>RA1wUbN0TKH,0*5C');
+const ap1=H.hexParse('ais',aa.bytes);
+ok('ais position',ap1.vals.type===1 && ap1.vals.mmsi===477553000 && ap1.vals.status===5 && ap1.vals.hdg===181 && Math.abs(ap1.vals.lon/600000+122.345832)<1e-5 && Math.abs(ap1.vals.lat/600000-47.582833)<1e-5 && aa.bits===168,JSON.stringify(ap1.vals));
+ok('ais text of scaled values',ap1.fields.find(f=>f.n==='lat').text.startsWith('47.5828'));
+// тип 5 из двух частей
+const asm5=new (H.HexAisAsm)();
+const r5a=asm5.push('!AIVDM,2,1,3,B,55P5TL01VIaAL@7WKO@mBplU@<PDhh000000001S;AJ::4A80?4i@E53,0*3E');
+const r5=asm5.push('!AIVDM,2,2,3,B,1@0000000000000,2*55');
+ok('ais multipart assembled',r5a===null && r5 && r5.bits===424);
+const p5=H.hexParse('ais',r5.bytes);
+ok('ais static: name, call sign, destination',p5.vals.type===5 && p5.vals.mmsi===369190000 && p5.vals.callsign==='WDA9674' && p5.vals.name==='MT.MITCHELL' && p5.vals.dest==='SEATTLE',JSON.stringify(p5.vals));
+const b24=H.hexBuild('ais',{type:24,repeat:0,mmsi:123456789,part:0,name:'TESTBOAT'});
+ok('ais 24A build and parse',H.hexParse('ais',b24.bytes).vals.name==='TESTBOAT',toHex(b24.bytes));
 
 // проверка схемы
 ok('schema check clean',H.hexSchemaCheck(H.HEX_LIB.ipv4,H.HEX_LIB).length===0);

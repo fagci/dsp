@@ -105,6 +105,45 @@ Object.assign(HEX_LIB,{
     {n:'df',t:'bits',w:5}, {n:'fs',t:'bits',w:3}, {n:'dr',t:'bits',w:5}, {n:'um',t:'bits',w:6},
     {n:'ac',t:'bits',w:13}, {n:'ap',t:'bits',w:24,fmt:'hex'}]},
 
+  /* ---------- AIS (ITU-R M.1371), биты сообщения без CRC ---------- */
+  ais:{ title:'AIS message', group:'Marine', fields:(()=>{
+    const A='@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_ !"#$%&\'()*+,-./0123456789:;<=>?';
+    const b=(n,w,when,o)=>Object.assign({n,t:'bits',w,when},o||{});
+    const pad=(w,when)=>({t:'pad',w,when});
+    const s6=(n,len,when)=>({n,t:'str6',len,cs:A,pad:'@',trim:true,when});
+    const lon=(n,when)=>b(n,28,when,{signed:true,scale:1/600000,prec:5,unit:'°'});
+    const lat=(n,when)=>b(n,27,when,{signed:true,scale:1/600000,prec:5,unit:'°'});
+    const P='type>=1 && type<=3', B='type==18', S='type==5', BS='type==4 || type==11', A24='type==24', N21='type==21';
+    return [
+      {n:'type',t:'bits',w:6,enum:{1:'position A',2:'position A (assigned)',3:'position A (interrogated)',4:'base station',5:'static and voyage',9:'SAR aircraft',11:'UTC response',18:'position B',19:'position B extended',21:'aid to navigation',24:'static B'}},
+      b('repeat',2), b('mmsi',30),
+      // 1–3
+      b('status',4,P,{enum:{0:'under way (engine)',1:'at anchor',2:'not under command',3:'restricted manoeuvrability',4:'constrained by draught',5:'moored',6:'aground',7:'fishing',8:'under way (sailing)',15:'not defined'}}),
+      b('rot',8,P,{signed:true}), b('sog',10,P,{scale:.1,unit:'kn'}), b('acc',1,P),
+      lon('lon',P), lat('lat',P), b('cog',12,P,{scale:.1,unit:'°'}), b('hdg',9,P), b('ts',6,P),
+      b('maneuver',2,P), pad(3,P), b('raim',1,P), b('radio',19,P,{fmt:'hex'}),
+      // 4, 11
+      b('year',14,BS), b('month',4,BS), b('day',5,BS), b('hour',5,BS), b('min',6,BS), b('sec',6,BS), b('acc',1,BS),
+      lon('lon',BS), lat('lat',BS), b('epfd',4,BS), pad(10,BS), b('raim',1,BS), b('radio',19,BS,{fmt:'hex'}),
+      // 5
+      b('version',2,S), b('imo',30,S), s6('callsign',7,S), s6('name',20,S),
+      b('shiptype',8,S), b('bow',9,S), b('stern',9,S), b('port',6,S), b('stbd',6,S), b('epfd',4,S),
+      b('etamon',4,S), b('etaday',5,S), b('etahour',5,S), b('etamin',6,S), b('draught',8,S,{scale:.1,unit:'m'}),
+      s6('dest',20,S), b('dte',1,S), pad(1,S),
+      // 18
+      b('reserved',8,B), b('sog',10,B,{scale:.1,unit:'kn'}), b('acc',1,B), lon('lon',B), lat('lat',B),
+      b('cog',12,B,{scale:.1,unit:'°'}), b('hdg',9,B), b('ts',6,B), b('regional',2,B), b('cs',1,B), b('display',1,B),
+      b('dsc',1,B), b('band',1,B), b('msg22',1,B), b('assigned',1,B), b('raim',1,B), b('radio',20,B,{fmt:'hex'}),
+      // 21
+      b('aton',5,N21), s6('name',20,N21), b('acc',1,N21), lon('lon',N21), lat('lat',N21),
+      b('bow',9,N21), b('stern',9,N21), b('port',6,N21), b('stbd',6,N21), b('epfd',4,N21), b('ts',6,N21),
+      // 24
+      b('part',2,A24), s6('name',20,A24+' && part==0'),
+      b('shiptype',8,'type==24 && part==1'), pad(42,'type==24 && part==1'),
+      s6('callsign',7,'type==24 && part==1'), b('bow',9,'type==24 && part==1'), b('stern',9,'type==24 && part==1'),
+      b('port',6,'type==24 && part==1'), b('stbd',6,'type==24 && part==1'),
+    ]; })()},
+
   /* ---------- Для проверки и примеров ---------- */
   'esp-pkt':{ title:'ESP32 sniffer record', group:'Wi-Fi', endian:'le', fields:[
     {n:'rssi',t:'i8',fmt:'dbm'}, {n:'chan',t:'u8'}, {n:'len',t:'u16'},

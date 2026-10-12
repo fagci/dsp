@@ -10,6 +10,7 @@
    len, count, when, e — выражения над ранее разобранными полями: (ihl-5)*4, type==0 && subtype==8
      имена: поле, sub.поле, список[0].поле; поле.off / поле.len — смещение (от начала схемы) и длина в байтах;
      _left — осталось байт (при разборе), _len — размер схемы в байтах (в calc)
+   scale/prec/unit — показать число умноженным (v*scale), значение остаётся целым
    calc: 'crc16-x25' | 'crc32' | 'inet16' | 'xor8' | 'sum8' | …  — контрольная сумма (from / to / over:'all')
          любая другая строка — выражение, значение пересчитывается при сборке (длины, ihl)
    sub: имя схемы | схема | {by:'выражение', map:{'17':'udp'}} — разбор вложенных байт */
@@ -214,7 +215,7 @@ function hexSchemaCheck(s,lib,path){
   if(!s || !Array.isArray(s.fields)){ e.push((path||'schema')+': "fields" array expected'); return e; }
   if(s.endian && s.endian!=='be' && s.endian!=='le') e.push(path+'endian: "be" or "le"');
   if(s.bitorder && s.bitorder!=='msb' && s.bitorder!=='lsb') e.push(path+'bitorder: "msb" or "lsb"');
-  const seen=new Set();
+  const seen=new Map();
   s.fields.forEach((f,i)=>{
     const p=path+(f&&f.n ? f.n : '#'+i);
     if(!f || typeof f!=='object'){ e.push(p+': object expected'); return; }
@@ -222,7 +223,7 @@ function hexSchemaCheck(s,lib,path){
     if(!(m && +m[2]%8===0 && +m[2]>0 && +m[2]<=64) && !HEX_SCALAR.has(t)) e.push(p+': unknown type "'+t+'"');
     if(t==='bits' && !(f.w>0)) e.push(p+': bits needs w');
     if(t==='bytes' && f.len==null && !HEX_FIXED[f.fmt]) e.push(p+': bytes needs len');
-    if(f.n && t!=='pad'){ if(seen.has(f.n)) e.push(p+': duplicate name'); seen.add(f.n); }
+    if(f.n && t!=='pad'){ if(seen.has(f.n) && (!f.when || !seen.get(f.n))) e.push(p+': duplicate name'); seen.set(f.n,seen.get(f.n)===false ? false : !!f.when); }
     for(const k of ['when','len','count','e']) if(typeof f[k]==='string' && f[k]!=='rest'){ try{ hexExpr(f[k]); }catch(x){ e.push(p+'.'+k+': '+x.message); } }
     if(typeof f.sub==='string' && lib && !lib[f.sub] && !HEX_LIB[f.sub]) e.push(p+': unknown sub-schema "'+f.sub+'"');
     if(f.calc && typeof f.calc==='string' && !hexSum(f.calc)){ try{ hexExpr(f.calc); }catch(x){ e.push(p+'.calc: '+x.message); } }
@@ -310,6 +311,7 @@ function hexField(f,sch,c,prefix,depth,env,recs,ss){
     let sv='';
     if(!B){
       for(let i=0;i<nch;i++) sv+=cs[hexBitsGet(c.d,c.bit+i*6,6,'msb')] || '?';
+      if(f.trim) sv=sv.replace(new RegExp('['+(f.pad||'@').replace(/[\\\]^-]/g,'\\$&')+' ]+$'),'');
     } else {
       sv=c.vals[name]===undefined ? '' : String(c.vals[name]);
       if(c.vals[name]===undefined) c.warn.push(name+': no value, empty used');
@@ -470,6 +472,7 @@ function hexNumText(v,w,f){
     const on=[]; for(const k in f.flags) if((Number(v)>>Number(k))&1) on.push(f.flags[k]);
     return on.length ? on.join(' | ') : '—';
   }
+  if(f.scale!==undefined) return (Number(v)*f.scale).toFixed(f.prec!==undefined ? f.prec : 1)+(f.unit ? ' '+f.unit : '');
   if(f.fmt) return hexFmtInt(v,w,f.fmt);
   return String(v);
 }
@@ -569,4 +572,27 @@ function hexDump(d,width,from,to){
     L.push(i.toString(16).padStart(4,'0')+'  '+Array.from(row,hexByte).join(' ').padEnd(width*3-1)+'  '+hexFmtBytes(row,'ascii'));
   }
   return L.join('\n');
+}
+
+// !AIVDM / !AIVDO: 6-битная упаковка полезной нагрузки → байты (биты подряд, хвост добит нулями); многочастные сообщения склеиваются
+function hexAisPayload(pl,fill){
+  const bits=[];
+  for(const ch of pl){ let v=ch.charCodeAt(0)-48; if(v>40) v-=8; for(let k=5;k>=0;k--) bits.push((v>>k)&1); }
+  const n=bits.length-(fill||0), out=new Uint8Array((n+7)>>3);
+  for(let i=0;i<n;i++) if(bits[i]) out[i>>3]|=0x80>>(i&7);
+  return {bytes:out, bits:n};
+}
+class HexAisAsm{
+  constructor(){ this.parts=new Map(); }
+  push(line){
+    const m=/^\s*[!$]..VD[MO],(\d+),(\d+),([^,]*),[^,]*,([^,]*),(\d)/.exec(line);
+    if(!m) return null;
+    const total=+m[1], idx=+m[2], id=m[3], pl=m[4], fill=+m[5];
+    if(total===1) return hexAisPayload(pl,fill);
+    let e=this.parts.get(id);
+    if(!e || e.total!==total || idx===1){ e={total,got:[]}; this.parts.set(id,e); }
+    e.got[idx-1]=pl;
+    if(e.got.length===total && e.got.every(x=>x!==undefined)){ this.parts.delete(id); return hexAisPayload(e.got.join(''),fill); }
+    return null;
+  }
 }
