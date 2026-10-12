@@ -4769,5 +4769,10 @@ defGroups('sa',[
   {n:'View', p:'auto frange dbrange log grid peakHold dcCut layout panes'},
   {n:'Scanner', p:'follow edge paneFrom detect detThr scanStop holdMarker skipClear'},
   {n:'Markers', p:'snap trk trkBw ant antVf', open:false},
-  {n:'Waterfall', p:'rowMs palette wfMem phosphor phDecay phGain', open:false},
+  {n:'Waterfall', p:'rowMs palette wfMem', open:false},
+  {n:'Phosphor', p:'phosphor phDecay phGain', open:false},
   {n:'Reference', p:'tol band ref take', open:false}]);
+defGroups('scope',[
+  {n:'Scale', p:'span gain ofs cursors grid stack meas'},
+  {n:'Trigger', p:'trig tlev tpos tmode slope tsrc hyst hold'},
+  {n:'Display', p:'coup avg persist style mode math', open:false}]);

@@ -2023,3 +2023,10 @@ function geoDrawOverlay(n,cx,v){
   }
   cx.restore();
 }
+defGroups('geoMap',[
+  {n:'Display', p:'ttl tiles overlay ovAlpha grid labels cluster follow net'},
+  {n:'Data layers', p:'vfile vclr osmKind osmGo'},
+  {n:'Tracks', p:'trail maxEnt arrows rayKm', open:false},
+  {n:'Export', p:'store csv geojson kml gpx', open:false},
+  {n:'Custom tiles', p:'tileUrl tileUrl2', open:false},
+  {n:'Places', p:'places placesFile', open:false}]);

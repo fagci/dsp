@@ -7477,3 +7477,8 @@ defGroups('rtlsdr',[
   {n:'Sweep', p:'sweep swLo swHi swHw swFft swAvg swMode swUse swOvl swSmooth swDecay swSettle', open:false},
   {n:'Record IQ', p:'rec recStop recFmt recBand recBw recF tag markTime recTrig recPre recMax', open:false},
   {n:'IQ file', p:'iqFmt loop seek', open:false}]);
+defGroups('cam',[
+  {n:'Capture', p:'res fps w zoom'},
+  {n:'Exposure', p:'ae exp af awb'},
+  {n:'Brightness zone', p:'roi roiX roiY roiW roiH roiAuto', open:false},
+  {n:'Rolling shutter', p:'scan blank rsNorm', open:false}]);

@@ -1126,3 +1126,9 @@ function tblAddForm(n,init){
   },()=>tblCloseEditor(n));
   tblOpenEditor(n,'New row',form,null);
 }
+defGroups('table',[
+  {n:'Playback', p:'speed tscale loop interp initial reset unit', open:false},
+  {n:'Rows', p:'order first last maxRows fmt', open:false},
+  {n:'Log', p:'collect key textCsv log period names capture', open:false},
+  {n:'Columns', p:'tcol dwellCol speedCol latCol lonCol textCol', open:false},
+  {n:'Patch data', p:'data', open:false}]);
