@@ -4880,6 +4880,18 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'choose',t:'button',label:'Choose…',fn:async n=>{ await rtlConnect(n, true); }},
     {n:'disconnect',t:'button',label:'Disconnect',fn:async n=>{ await rtlDisconnect(n); }},
     {n:'openFile',t:'button',label:'Open IQ file…',fn:async n=>{ await iqOpenFile(n); }},
+    // все параметры — к умолчаниям; частота, выбранный USB-девайс и подключение остаются
+    {n:'resetAll',t:'button',label:'Reset all parameters',fn:n=>{
+      const keep=new Set(['freq','usbId','devKind']);
+      for(const q of MOD.rtlsdr.params){
+        if(q.t==='button' || q.d===undefined || keep.has(q.n)) continue;
+        if(n.set?.[q.n]) n.set[q.n](q.d); else n.p[q.n]=q.d;
+      }
+      if(n.dev){
+        n.dev.setSampleRate(rtlSafeSr(n.p.sr)).then(r=>{ n.sourceRate=r; rtlResetRing(n); })
+          .catch(e=>{ n.status='sample rate change error: '+e.message; });
+      }
+      rtlResetRing(n); }},
     {n:'iqFmt',t:'select',opts:['auto','cu8','cs8','cs16','cf32','cf64'],d:'auto',label:'IQ file format (raw)',adv:true},
     {n:'recFmt',t:'select',opts:['WAV','SigMF'],d:'WAV',label:'IQ record format',adv:true},
     {n:'rec',t:'button',label:'● Record IQ',fn:async n=>{
