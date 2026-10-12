@@ -40,7 +40,7 @@ eq('µs',K.swFmt(.1234),'123.4 µs'); eq('ms',K.swFmt(12.3456),'12.346 ms'); eq(
 // узел на заглушке движка: sample-часы, сигнал start/stop
 const BLOCKN=64, SR=48000;
 const defs={}, ctx2=vm.createContext({Math,Float32Array,Array,Number,isFinite,Object,String,performance:{now:()=>0,timeOrigin:1.7e12},
-  def:d=>{ defs[d.id]=d; }, BLOCK:BLOCKN, Eng:{sr:SR}, cronParse(){}, cronNext(){}, buf(){}, setMod(){}, clamp(){}});
+  def:d=>{ defs[d.id]=d; }, defGroups(){}, BLOCK:BLOCKN, Eng:{sr:SR}, cronParse(){}, cronNext(){}, buf(){}, setMod(){}, clamp(){}});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/stopwatch-kernels.js'),'utf8'),ctx2);
 vm.runInContext(fs.readFileSync(path.join(root,'modules/sequencer.js'),'utf8').replace(/^const /gm,'var '),ctx2);
 const D=defs.stopwatch, n={p:{clock:'samples',mode:'start/stop',again:'ignore',thr:.5}}; D.init(n);

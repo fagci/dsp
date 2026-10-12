@@ -1123,3 +1123,13 @@ def({ id:'overlay', lazy:true, title:'Video Overlay', cat:'Video', kw:'ar augmen
     cx.fillText(st.join(' · '),rx+rw-6,ry+rh-4);
     cx.globalAlpha=1;
   }});
+defGroups('overlay',[
+  {n:'Camera', p:'fov tilt lag'},
+  {n:'Sky', p:'sky planets starMag deep tshift'},
+  {n:'Terrain', p:'terrain relief vis minLight lights shadows los'},
+  {n:'Objects', p:'labels trails trail ttl'},
+  {n:'Target', p:'find home sethome hud'},
+  {n:'Places', p:'air pop lists featR featDl featDlR', open:false},
+  {n:'Buildings & OSM', p:'bld bldR osm osmR osmLoad', open:false},
+  {n:'3D models', p:'models scale minpx', open:false},
+  {n:'Calibration', p:'calib align dAz dEl dRoll resetc', open:false}]);

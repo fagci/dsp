@@ -554,3 +554,8 @@ def({ id:'stopwatch', title:'Stopwatch', cat:'Control',
     const s=n.st, l1=n.run ? '● '+swFmt(n.elapsed) : n.last!==null ? swFmt(n.last) : '—';
     r.textContent=l1+(s.n ? '\nn '+s.n+' · min '+swFmt(s.min)+' · avg '+swFmt(s.mean)+' · max '+swFmt(s.max)+' · σ '+swFmt(swSd(s)) : ''); }
 });
+defGroups('csvsrc',[
+  {n:'Playback', p:'advance order rate speed tscale loop interp initial reset'},
+  {n:'Range', p:'first last unit header', open:false},
+  {n:'Columns', p:'tcol dwellCol speedCol latCol lonCol textCol', open:false},
+  {n:'Table', p:'apply data', open:false}]);

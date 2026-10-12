@@ -1009,7 +1009,7 @@ The **Tile Layouts** preset category loads a patch together with a ready dashboa
 
 ### Parameter groups
 
-Modules with many settings (USB SDR, Spectrum Analyzer) sort them into collapsible sections with a header and a count: tap a header to fold or unfold it, the state is saved with the patch. The everyday settings sit in open groups, the rare ones (recording, sweep, markers, waterfall…) in closed ones. A full label that did not fit a row shows on hover.
+Modules with many settings (USB SDR, Spectrum Analyzer, Video Overlay, Map, Table, Oscilloscope, Logic Analyzer, IQ Generator, Data Sequencer, Camera, tinySA) sort them into collapsible sections with a header and a count: tap a header to fold or unfold it, the state is saved with the patch. The everyday settings sit in open groups, the rare ones (recording, sweep, markers, waterfall…) in closed ones. A full label that did not fit a row shows on hover.
 
 A module opts in with one line after its definition: `defGroups('id',[{n:'Receiver', p:'sr demod bw'}, {n:'Sweep', p:'sweep swLo swHi', open:false}])` — parameter names per group, groups in the order given, parameters outside any group stay on top. Modules without it look as before.
 
