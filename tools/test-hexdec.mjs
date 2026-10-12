@@ -115,5 +115,15 @@ let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else
   chk('VCALL_ASSGN','nxdnBitsOf([[4,6,2],[0,8,8],[4,3,16],[0,5,19],[1234,16,24],[5678,16,40],[10,6,56],[321,10,62]],72)',['from','to','timer','channel']);
   chk('SITE_INFO','nxdnBitsOf([[0x18,6,2],[0x123456,24,8],[0xABCD,16,32],[0x1234,16,48],[0x654321,24,64],[0x112233,24,88],[7,8,112],[3,4,120],[100,10,124],[200,10,134]],144)',['location','cs','svc','rst','ca','version','adj','ch1','ch2']);
 }
+
+// TETRA: SYNC и SYSINFO от кодеров ядра (tetraSyncBits / tetraSysinfoBits) — схема против tetraSync / tetraSysinfo декодера
+{
+  ctx.sb=ev('tetraSyncBits({sys:1,cc:21,tn:3,fn:7,mn:42,sharing:2,mcc:262,mnc:1010,nbr:1,svc:2,late:1})');
+  const hx=ev('tetraHexB(sb,0,60)'), d=ev('tetraSync(sb)'), p=ev(`hexParse("tetra-sync",hexFromHex("${hx}"))`), v=p.vals;
+  ok('tetra sync: schema agrees with the decoder',v.cc===d.cc && v.tn+1===d.tn && v.fn===d.fn && v.mn===d.mn && v.mcc===d.mcc && v.mnc===d.mnc && v.late===d.late && v.svc===d.svc && hx.length===16,JSON.stringify([d,v,hx]));
+  ctx.si=ev('tetraSysinfoBits({carrier:1500,band:4,off:1,duplex:0,reverse:0,ncs:1,txpwr:3,rxmin:5,access:7,timeout:9,cckValid:1,cck:4660,opt:2,la:1234,subscr:43690,serv:0xC00|0x0A0})');
+  const hs=ev('tetraHexB(si,0,124)'), ds=ev('tetraSysinfo(si)'), ps=ev(`hexParse("tetra-sysinfo",hexFromHex("${hs}"))`), vs=ps.vals;
+  ok('tetra sysinfo: schema agrees with the decoder',vs.carrier===ds.carrier && vs.band===ds.band && vs.off===ds.off && vs.la===ds.la && vs.subscr===ds.subscr && vs.serv===ds.serv && vs.cck===ds.cck && vs.access===ds.access && vs.timeout===ds.timeout,JSON.stringify([ds,vs]));
+}
 console.log(bad ? bad+' failed' : 'all ok');
 process.exit(bad?1:0);
