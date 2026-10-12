@@ -86,11 +86,11 @@ Object.assign(HEX_LIB,{
   'dmr-csbk':{ title:'DMR CSBK', group:'DMR', fields:[
     {n:'lb',t:'bits',w:1}, {n:'pf',t:'bits',w:1},
     {n:'csbko',t:'bits',w:6,fmt:'hex',enum:{4:'Unit to unit voice request',5:'Unit to unit answer response',7:'BS outbound activation',61:'Preamble'}},
-    {n:'fid',t:'u8',fmt:'hex'}, {n:'data',t:'bytes',len:8}, {n:'crc',t:'u16',fmt:'hex'}]},
+    {n:'fid',t:'u8',fmt:'hex'}, {n:'data',t:'bytes',len:8}, {n:'crc',t:'u16',fmt:'hex',calc:'crc16-gsm',xor:0xA5A5,to:'crc'}]},
 
   'dmr-pi':{ title:'DMR PI header', group:'DMR', fields:[
     {n:'alg',t:'u8',fmt:'hex'}, {n:'fid',t:'u8',fmt:'hex'}, {n:'key',t:'u8'}, {n:'mi',t:'bytes',len:4},
-    {n:'dst',t:'u24'}, {n:'crc',t:'u16',fmt:'hex'}]},
+    {n:'dst',t:'u24'}, {n:'crc',t:'u16',fmt:'hex',calc:'crc16-gsm',xor:0x6969,to:'crc'}]},
 
   /* ---------- ADS-B / Mode S (112 бит) ---------- */
   adsb:{ title:'ADS-B / Mode S long', group:'Aviation', detect:'_size==14 && (df==17 || df==18)', fields:[

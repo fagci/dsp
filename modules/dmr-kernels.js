@@ -766,6 +766,18 @@ function dmrDataBurst(cc,dt,raw196,sp){
   b.set(dmrSyncBits(sp),108);
   return b;
 }
+// сигнальный бёрст по готовым байтам (LC 9 байт либо CSBK / PI / заголовок 10 байт; RS(12,9) и CRC-16 считаются здесь):
+// тип → тип данных, вид кодирования и маска; бёрст = BPTC(196,96) + слот-тип (Golay) + синхрослово
+const DMR_SIG={'PI header':{dt:0,lc:false,mask:0x6969}, 'Voice LC header':{dt:1,lc:true,mask:0x96}, 'Terminator LC':{dt:2,lc:true,mask:0x99},
+  'CSBK':{dt:3,lc:false,mask:0xA5A5}, 'MBC header':{dt:4,lc:false,mask:0xAAAA}, 'Data header':{dt:6,lc:false,mask:0xCCCC}};
+function dmrSigBurst(type,bytes,cc,mode){
+  const s=DMR_SIG[type];
+  if(!s) throw new Error('unknown burst type: '+type);
+  if(bytes.length<(s.lc ? 9 : 10)) throw new Error(type+' needs '+(s.lc ? 9 : 10)+' bytes, got '+bytes.length);
+  const raw=s.lc ? dmrEncLc(bytes.subarray(0,9),s.mask) : dmrEncMasked(bytes.subarray(0,10),s.mask);
+  const bits=dmrDataBurst(cc&15,s.dt,raw,dmrSyncFor(mode||'repeater (BS)','data'));
+  return {bits, dib:dmrDib(bits)};
+}
 function dmrVoiceBurst(ambe,mid){ const b=new Uint8Array(264); b.set(ambe.subarray(0,108),0); b.set(mid,108); b.set(ambe.subarray(108),156); return b; }
 function dmrDib(bits){ const d=new Uint8Array(bits.length>>1); for(let i=0;i<d.length;i++) d[i]=bits[2*i]*2+bits[2*i+1]; return d; }
 function dmrIpMsg(from,to,text,udp){

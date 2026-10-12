@@ -125,5 +125,32 @@ let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else
   const hs=ev('tetraHexB(si,0,124)'), ds=ev('tetraSysinfo(si)'), ps=ev(`hexParse("tetra-sysinfo",hexFromHex("${hs}"))`), vs=ps.vals;
   ok('tetra sysinfo: schema agrees with the decoder',vs.carrier===ds.carrier && vs.band===ds.band && vs.off===ds.off && vs.la===ds.la && vs.subscr===ds.subscr && vs.serv===ds.serv && vs.cck===ds.cck && vs.access===ds.access && vs.timeout===ds.timeout,JSON.stringify([ds,vs]));
 }
+
+// DMR: сигнальный бёрст из байт (dmrSigBurst): декодер ядра возвращает те же байты, слот-тип и синхро на месте
+{
+  const lcb=[0,0,0, 0,0,100, 0,0x0c,0x8a];
+  ctx.lcIn=Uint8Array.from(lcb);
+  for(const [type,mask] of [['Voice LC header',0x96],['Terminator LC',0x99]]){
+    ctx.sbt=type;
+    const r=ev('dmrSigBurst(sbt,lcIn,5,"repeater (BS)")');
+    ctx.sbits=r.bits;
+    const lc=ev(`dmrLc(dmrBptcDec(dmrRaw196(sbits)),${mask})`), st=ev('dmrSlotType(sbits,1)');
+    ok('dmr '+type+' burst: LC, colour code and type decode',!!lc && Array.from(lc).slice(0,9).join()===lcb.join() && st.cc===5 && st.dt===(type==='Voice LC header' ? 1 : 2) && r.dib.length===132,JSON.stringify([lc&&Array.from(lc),st]));
+    ok('dmr '+type+' burst: schema reads the decoded LC',ev('hexParse("dmr-lc",dmrLc(dmrBptcDec(dmrRaw196(sbits)),'+mask+'))').vals.dst===100);
+  }
+  ctx.cs=Uint8Array.from([0xBD,0,0xC0,3,0,0x0f,0xa0,0,0x27,0x10]);
+  const rc=ev('dmrSigBurst("CSBK",cs,1,"inbound (MS)")'); ctx.cbits=rc.bits;
+  const dec=ev('dmrMasked(dmrBptcDec(dmrRaw196(cbits)),0xA5A5)');
+  ok('dmr CSBK burst: CRC-16 and BPTC decode',!!dec && Array.from(dec).slice(0,10).join()===Array.from(ctx.cs).join() && ev('dmrSlotType(cbits,1)').dt===3,JSON.stringify(dec&&Array.from(dec)));
+  const hb=ev('hexBuild("dmr-csbk",{lb:1,pf:0,csbko:61,fid:0,data:"c003000fa0002710"})');
+  ok('dmr-csbk schema: the CRC (with the 0xA5A5 mask) equals the encoder input CRC',hb.bytes.length===12 && hb.bytes.slice(0,10).join()===Array.from(ctx.cs).join() && ((hb.bytes[10]<<8)|hb.bytes[11])===(ev('dmrCrc16(cs,10)')^0xA5A5),Array.from(hb.bytes).map(x=>x.toString(16)).join(' '));
+  ctx.csb=hb.bytes;
+  ok('dmr-csbk schema parses its own bytes clean',ev('hexParse("dmr-csbk",csb)').ok);
+  const pi=ev('hexBuild("dmr-pi",{alg:0x21,fid:0,key:5,mi:"01020304",dst:100})');
+  ctx.pib=pi.bytes;
+  ok('dmr-pi schema: CRC with the 0x6969 mask',((pi.bytes[10]<<8)|pi.bytes[11])===(ev('dmrCrc16(pib,10)')^0x6969) && ev('hexParse("dmr-pi",pib)').ok,Array.from(pi.bytes).map(x=>x.toString(16)).join(' ')+' '+JSON.stringify(pi.warn));
+  let thr=false; try{ ev('dmrSigBurst("CSBK",Uint8Array.from([1,2,3]),1)'); }catch(e){ thr=true; }
+  ok('dmr burst rejects short input',thr);
+}
 console.log(bad ? bad+' failed' : 'all ok');
 process.exit(bad?1:0);

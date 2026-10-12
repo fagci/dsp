@@ -283,6 +283,55 @@ def({ id:'dmrTx', title:'DMR Data Builder', cat:'Protocols', kw:'dmr transmit da
     return {blk:dlOut(n,batch,now), busy:n.act||n.busy?1:0}; },
   draw(n){ n.el.querySelector('.readout').textContent=n.text||'…'; }});
 
+/* Сигнальные кадры DMR из байт: LC (9 байт) / CSBK, PI, заголовок (10 байт) — например, из HEX Structure (схемы dmr-lc, dmr-csbk, dmr-pi) —
+   → BPTC(196,96), слот-тип (Golay), синхрослово → бёрсты на блок blk (как у DMR Data Builder) и сам бёрст на bin / text. */
+def({ id:'dmrSig', title:'DMR Signalling Builder', cat:'Protocols', kw:'dmr transmit csbk lc pi header burst bptc tx encoder fec hex', readout:true, tall:true,
+  ins:[{n:'bin',t:'bin'},{n:'text',t:'txt'},{n:'go',t:'num'}], outs:[{n:'blk',t:'blk'},{n:'bin',t:'bin'},{n:'text',t:'txt'},{n:'busy',t:'num'}],
+  params:[{n:'mode',t:'select',opts:DM_MODES,d:DM_MODES[0],label:'repeater downlink (2 slots, CACH), mobile uplink or direct mode'},
+          {n:'cc',t:'range',min:0,max:15,step:1,d:1,label:'colour code'},
+          {n:'slot',t:'select',opts:['1','2'],d:'2',label:'time slot'},
+          {n:'type',t:'select',opts:Object.keys(DMR_SIG),d:'CSBK',label:'burst type (the bytes: LC 9 B; the others 10 B, CRC-16 is added)'},
+          {n:'repeat',t:'range',min:1,max:50,step:1,d:3,label:'bursts in a row'},
+          {n:'send',t:'button',label:'Send',fn:n=>{ n.trig=true; }}],
+  init:n=>{ n.bq=[]; n.fid=0; n.fc=0; n.frame=null; n.prevGo=0; n.trig=false; n.last=null; n.lastText=undefined; n.bytes=null; n.act=false; n.lead=0; n.tail=0; n.ahead=0;
+    n.cach=null; n.idle=null; n.idleKey=''; n.binOut=null; n.txt=''; n.text='wire bytes (HEX Structure bin) and press Send'; },
+  process(n,I){
+    const P=n.p, now=performance.now(), bs=P.mode==='repeater (BS)', cc=P.cc|0, slot=+P.slot-1;
+    const go=(I.go||0)>.5, rise=go && !n.prevGo; n.prevGo=go;
+    if(I.bin && I.bin.d && I.bin!==n.last){ n.last=I.bin; n.bytes=I.bin.d; n.trig=true; }
+    if(typeof I.text==='string' && I.text!==n.lastText){ n.lastText=I.text; if(I.text.trim()){ n.bytes=hexFromHex(I.text); n.trig=true; } }
+    if((n.trig || rise) && n.bytes){
+      try{
+        const b=dmrSigBurst(P.type,n.bytes,cc,P.mode);
+        n.bq=Array.from({length:P.repeat|0},()=>b.dib);
+        const by=bytesFromBits(b.bits);
+        n.binOut=typeof binObj==='function' ? binObj(by,'dmr-burst.bin') : {d:by,id:Date.now()}; n.txt=bytesHex(by).toLowerCase();
+        n.act=true; n.lead=DM_LEAD; n.tail=DM_TAIL; n.ahead=0;
+        n.text=P.type+' · '+n.bytes.length+' bytes · '+n.bq.length+' bursts\n'+P.mode+' · CC '+cc+' · slot '+P.slot;
+      }catch(e){ n.text=String(e.message||e); n.act=false; n.bq=[]; }
+    }
+    n.trig=false;
+    const key=P.mode+'|'+cc; if(n.idleKey!==key){ n.idleKey=key; n.idle=dmrIdleBurst(cc,P.mode); n.cach=dmrCachMaker(); }
+    const batch=[];
+    if(n.act){
+      if(n.ahead<now) n.ahead=now;
+      while(n.act && n.ahead-now<DM_AHEAD_MS && batch.length<32){
+        const mine=(n.fc&1)===slot;
+        let burst=n.idle, data=false;
+        if(mine && n.lead<=0 && n.bq.length){ burst=n.bq.shift(); data=true; }
+        let dib;
+        if(bs) dib=u8cat(n.cach(n.fc),burst);
+        else if(mine) dib=u8cat(burst,new Uint8Array(12).fill(4));
+        else dib=new Uint8Array(144).fill(4);
+        if(n.lead>0 && (bs || mine)) n.lead--;
+        else if(!data && !n.bq.length && mine && --n.tail<=0) n.act=false;
+        batch.push({dib, n:2*dib.length, id:++n.fid, kind:'dmr-tx'});
+        n.fc++; n.ahead+=DM_FRAME_MS;
+      }
+    }
+    return {blk:dlOut(n,batch,now), bin:n.binOut, text:n.txt||null, busy:n.act?1:0}; },
+  draw(n){ n.el.querySelector('.readout').textContent=n.text||'…'; }});
+
 def({ id:'dataRx', title:'Symbols → Data (universal)', cat:'Decoders', kw:'receive file image video frame text bytes 4fsk dmr rx modem depacketizer', readout:true, tall:true, view:{h:100},
   ins:[{n:'blk',t:'blk'},{n:'rec',t:'rec'}], outs:[{n:'text',t:'txt'},{n:'img',t:'img'},{n:'rec',t:'rec'},{n:'progress',t:'num'},{n:'ok',t:'num'},{n:'bin',t:'bin'}],
   params:[{n:'pay',t:'range',min:8,max:255,step:1,d:32,label:'payload per frame, bytes (as in the transmitter)'},
