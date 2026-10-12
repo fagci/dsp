@@ -209,5 +209,26 @@ let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else
   const lo=ev('hexParse("null",Uint8Array.from('+JSON.stringify([2,0,0,0,...ip])+'))');
   ok('pcap loopback: IPv4 → UDP → GSMTAP',lo.ok && lo.vals['payload.payload.data.sub_type']===1);
 }
+
+// GSM CCCH: схема против gsmParseCcch декодера на сообщениях генератора (paging 1 / 2 / 3, immediate assignment, extended, reject)
+{
+  const mk=(type,k)=>ev(`gsmCcchL2(${JSON.stringify(type)},${k},12345,18)`);
+  for(const [type,k] of [['PAG1',7],['PAG2',9],['PAG3',300],['IA',5],['IAREJ',2]]){
+    ctx.cl=mk(type,k);
+    const d=ev('gsmParseCcch(cl)'), p=ev('hexParse("gsm-l2",cl)'), v=p.vals;
+    let agree=p.ok && v.mt===d.mt;
+    if(type==='IA') agree=agree && v.ia_arfcn===d.arfcn && v.ia_tn===d.tn && v.ia_tsc===d.tsc && v.ra===d.ra && v.timing_advance===d.ta && v.ia_chan===4;
+    if(type==='IAREJ') agree=agree && v.rj1_wait===d.refs[0].wait && v.rj4_ra===d.refs[3].ra;
+    if(type==='PAG1') agree=agree && /^TMSI/.test(v.mi1) && d.ids.length===1 && v.mi1==='TMSI '+d.ids[0].value;
+    if(type==='PAG3') agree=agree && d.ids.length===4 && d.ids.every((x,i)=>v['tmsi'+(i+1)]===x.value);
+    if(type==='PAG2') agree=agree && d.ids.length===2 && v.tmsi1===d.ids[0].value && v.tmsi2===d.ids[1].value;
+    ok('gsm ccch '+type+': schema agrees with the decoder parser',agree,JSON.stringify([d,v]));
+  }
+  // Immediate Assignment Extended: два назначения (в генераторе его нет — собираем по схеме)
+  const ie=ev(`hexBuild("gsm-l2",{li:17,m:0,el:1,skip:0,pd:6,mt:57,ie_page_mode:0,ie1_chan:4,ie1_tn:0,ie1_tsc:2,ie1_hop:0,ie1_arfcn:20,ie1_ra:0x4a,ie1_t1:1,ie1_t3:10,ie1_t2:3,ie1_ta:1,ie2_chan:9,ie2_tn:3,ie2_tsc:2,ie2_hop:1,ie2_maio:5,ie2_hsn:7,ie2_ra:0x4b,ie2_t1:1,ie2_t3:11,ie2_t2:4,ie2_ta:2}).bytes`);
+  ctx.ie=Uint8Array.from([...ie,...new Array(Math.max(0,23-ie.length)).fill(0x2b)].slice(0,23));
+  const di=ev('gsmParseCcch(ie)'), pi=ev('hexParse("gsm-l2",ie)');
+  ok('gsm ccch Immediate Assignment Extended: schema agrees with the decoder parser',di.msg==='Immediate Assignment Extended' && pi.vals.ie1_arfcn===di.a.arfcn && pi.vals.ie1_tn===di.a.tn && pi.vals.ie2_maio===di.b.maio && pi.vals.ie2_hsn===di.b.hsn && pi.vals.ie2_ta===di.b.ta && pi.vals.ie2_ra===di.b.ra,JSON.stringify([di,pi.vals]));
+}
 console.log(bad ? bad+' failed' : 'all ok');
 process.exit(bad?1:0);

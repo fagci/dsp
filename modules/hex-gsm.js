@@ -65,7 +65,8 @@ HEX_FMT_EXT['gsm-si3rest']=b=>{                                    // SI3 Rest O
   if(r.bit()){ const ra=r.bits(3), pos=r.bit(); L.push('GPRS: RA colour '+ra+', SI13 on '+(pos ? 'BCCH Ext' : 'BCCH Norm')); }
   return L.length ? L.join(' · ') : 'nothing optional present';
 };
-HEX_FMT_EXT['gsm-mi']=b=>{                                         // Mobile Identity (TS 24.008 10.5.1.4): IMSI / IMEI / TMSI
+HEX_FMT_EXT['gsm-mi']=b=>{
+  if(typeof gsmMobileId==='function'){ const m=gsmMobileId(b); return m.kind==='none' ? 'no identity' : m.kind+' '+m.value; }                                         // Mobile Identity (TS 24.008 10.5.1.4): IMSI / IMEI / TMSI
   if(!b.length) return '';
   const t=b[0]&7, odd=(b[0]>>3)&1;
   if(t===4) return 'TMSI '+hexToHex(b.subarray(1));
@@ -121,10 +122,23 @@ HEX_FMT_EXT['gsm-mi']=b=>{                                         // Mobile Ide
       {n:'tmsi3',t:'bytes',len:4,fmt:'hex',when:'mt==36'}, {n:'tmsi4',t:'bytes',len:4,fmt:'hex',when:'mt==36'},
       // Immediate Assignment
       b('dedicated_mode',4,IA), b('ia_page_mode',4,IA,{enum:{0:'normal paging',1:'extended paging',2:'paging reorganization',3:'same as before'}}),
-      b('ia_chan',5,IA), b('ia_tn',3,IA), b('ia_tsc',3,IA), b('ia_hop',1,IA),
+      b('ia_chan',5,IA,{enum:chan}), b('ia_tn',3,IA), b('ia_tsc',3,IA), b('ia_hop',1,IA),
       pad(2,IA+' && ia_hop==0'), b('ia_arfcn',10,IA+' && ia_hop==0'), b('ia_maio',6,IA+' && ia_hop==1'), b('ia_hsn',6,IA+' && ia_hop==1'),
       {n:'ra',t:'u8',fmt:'hex',when:IA}, b('t1',5,IA), b('t3',6,IA), b('t2',5,IA), {n:'timing_advance',t:'u8',when:IA},
       {n:'malen',t:'u8',when:IA}, {n:'mobile_allocation',t:'bytes',len:'malen',when:IA},
+      // Immediate Assignment Extended (два назначения) и Immediate Assignment Reject (четыре отказа)
+      pad(4,'mt==57'), b('ie_page_mode',4,'mt==57'),
+      b('ie1_chan',5,'mt==57',{enum:chan}), b('ie1_tn',3,'mt==57'), b('ie1_tsc',3,'mt==57'), b('ie1_hop',1,'mt==57'),
+      pad(2,'mt==57 && ie1_hop==0'), b('ie1_arfcn',10,'mt==57 && ie1_hop==0'), b('ie1_maio',6,'mt==57 && ie1_hop==1'), b('ie1_hsn',6,'mt==57 && ie1_hop==1'),
+      {n:'ie1_ra',t:'u8',fmt:'hex',when:'mt==57'}, b('ie1_t1',5,'mt==57'), b('ie1_t3',6,'mt==57'), b('ie1_t2',5,'mt==57'), {n:'ie1_ta',t:'u8',when:'mt==57'},
+      b('ie2_chan',5,'mt==57',{enum:chan}), b('ie2_tn',3,'mt==57'), b('ie2_tsc',3,'mt==57'), b('ie2_hop',1,'mt==57'),
+      pad(2,'mt==57 && ie2_hop==0'), b('ie2_arfcn',10,'mt==57 && ie2_hop==0'), b('ie2_maio',6,'mt==57 && ie2_hop==1'), b('ie2_hsn',6,'mt==57 && ie2_hop==1'),
+      {n:'ie2_ra',t:'u8',fmt:'hex',when:'mt==57'}, b('ie2_t1',5,'mt==57'), b('ie2_t3',6,'mt==57'), b('ie2_t2',5,'mt==57'), {n:'ie2_ta',t:'u8',when:'mt==57'},
+      pad(4,'mt==58'), b('rj_page_mode',4,'mt==58'),
+      {n:'rj1_ra',t:'u8',fmt:'hex',when:'mt==58'}, b('rj1_t1',5,'mt==58'), b('rj1_t3',6,'mt==58'), b('rj1_t2',5,'mt==58'), {n:'rj1_wait',t:'u8',when:'mt==58',unit:'s'},
+      {n:'rj2_ra',t:'u8',fmt:'hex',when:'mt==58'}, b('rj2_t1',5,'mt==58'), b('rj2_t3',6,'mt==58'), b('rj2_t2',5,'mt==58'), {n:'rj2_wait',t:'u8',when:'mt==58',unit:'s'},
+      {n:'rj3_ra',t:'u8',fmt:'hex',when:'mt==58'}, b('rj3_t1',5,'mt==58'), b('rj3_t3',6,'mt==58'), b('rj3_t2',5,'mt==58'), {n:'rj3_wait',t:'u8',when:'mt==58',unit:'s'},
+      {n:'rj4_ra',t:'u8',fmt:'hex',when:'mt==58'}, b('rj4_t1',5,'mt==58'), b('rj4_t3',6,'mt==58'), b('rj4_t2',5,'mt==58'), {n:'rj4_wait',t:'u8',when:'mt==58',unit:'s'},
       // Rest Octets и остальное
       {n:'rest3',t:'bytes',len:'_left',fmt:'gsm-si3rest',when:'mt==27'},
       {n:'si13',t:'bytes',len:'_left',fmt:'gsm-si13',when:'mt==0'},
