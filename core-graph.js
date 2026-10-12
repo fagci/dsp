@@ -2042,7 +2042,7 @@ const r=new FileReader(); r.onload=()=>{ try{ stashIfDirty(); deserialize(JSON.p
 r.readAsText(f); e.target.value=''; };
 document.getElementById('clear').onclick=()=>{
 stashIfDirty();
-clearAll(); markWiresDirty(); currentPatchName=''; buildPatchList(); graphDirty=false;
+clearAll(); markWiresDirty(); currentPatchName=''; syncHash(); buildPatchList(); graphDirty=false;
 };
 // Корзина: только обновляет файлы приложения (кэш и сервис-воркер). Данные — патчи, списки Table (в том числе точки geo/…), кэш рельефа,
 // образцы, настройки — не стираются ни здесь, ни по какому-либо второму вопросу: для переноса и копии есть полный экспорт / импорт (Settings).
@@ -2050,19 +2050,26 @@ let wiping=false;
 document.getElementById('wipe')?.addEventListener('click',async()=>{
 if(!confirm('Refresh app files and cache?\nPatches, tables, terrain and all other data are kept.')) return;
 wiping=true; clearTimeout(autosaveTimer);
-try{ LS.set(AKEY,JSON.stringify(serialize())); }catch(e){}
+try{ saveAuto(); }catch(e){}
 try{ if('caches' in window) for(const k of await caches.keys()) if(k!=='dsp-tiles') await caches.delete(k); }catch(e){}
 try{ if(navigator.serviceWorker) for(const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); }catch(e){}
 location.href=location.pathname+'?_='+Date.now();
 });
 // Автосейв раньше сериализовал весь граф по таймеру каждые 4с, даже если ничего не менялось —
 // на холостом ходу это лишняя нагрузка. Теперь сохраняем с задержкой после реального изменения.
+// Общий ключ — для новой вкладки/перезапуска; свой на вкладку (sessionStorage) — чтобы вкладки не затирали друг друга
+const SS={ get(k){ try{ return sessionStorage.getItem(k); }catch(e){ return null; } },
+set(k,v){ try{ sessionStorage.setItem(k,v); }catch(e){} } };
+function saveAuto(){
+const s=JSON.stringify(serialize());
+LS.set(AKEY,s); SS.set('dsp-tab-graph',s); SS.set('dsp-tab-name',currentPatchName);
+}
 let autosaveTimer=null;
 function scheduleAutosave(){
 clearTimeout(autosaveTimer);
-autosaveTimer=setTimeout(()=>LS.set(AKEY,JSON.stringify(serialize())),2000);
+autosaveTimer=setTimeout(saveAuto,2000);
 }
-window.addEventListener('beforeunload',()=>{ clearTimeout(autosaveTimer); if(!wiping) LS.set(AKEY,JSON.stringify(serialize())); });
+window.addEventListener('beforeunload',()=>{ clearTimeout(autosaveTimer); if(!wiping) saveAuto(); });
 const RUN_PLAY='<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5l12 7-12 7z"/></svg>', RUN_STOP='<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>';
 const runBtn=document.getElementById('run'), stat=document.getElementById('stat');
 // Общая точка синхронизации кнопки — дергается и по клику, и из движка (например, когда
@@ -2237,14 +2244,21 @@ idleT=setTimeout(()=>{ idleT=0; requestAnimationFrame(frame); },Math.max(0,minDt
 applyView();
 (function boot(){
 buildBuiltinPresets();
-const a=LS.get(AKEY)||LS.get('dsp-patch');
-if(a){ try{ deserialize(JSON.parse(a)); }catch(e){ buildDemo(); } } else buildDemo();
+// приоритет: правки этой вкладки (перезагрузка) → патч из адреса (#p=) → последнее состояние любой вкладки
+const hp=hashParam('p'), tg=SS.get('dsp-tab-graph'), tn=SS.get('dsp-tab-name')||'';
+const hpd=hp&&readP()[hp];
+let a=null, nm='';
+if(tg && (!hp || hp===tn)){ a=tg; nm=tn; }
+else if(hpd){ a=JSON.stringify(hpd); nm=hp; }
+else a=LS.get(AKEY)||LS.get('dsp-patch');
+if(a){ try{ deserialize(JSON.parse(a)); }catch(e){ nm=''; buildDemo(); } } else buildDemo();
 if(LS.get('dsp-dash')==='1') setDash(true);
 mobileBoot();
 fitViewWhenReady();                                 // сразу видно весь патч, а не дефолтный центр холста
 Undo.stack=[]; Undo.idx=-1; Undo.push();
 graphDirty=false;                                   // старт приложения — не пользовательское изменение
-currentPatchName='';
+currentPatchName=nm; syncHash(); buildPatchList();
+if(hashParam('d')) loadFromHash();
 })();
 // Совместимость со старым сохранённым DOM: в нём могли остаться нативные range-поля.
 document.querySelectorAll('#content input[type="range"]').forEach(old=>{
