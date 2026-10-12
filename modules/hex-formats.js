@@ -196,6 +196,19 @@ Object.assign(HEX_LIB,{
     {n:'url',t:'str',len:'rest',when:'uuid==65194 && etype==16'},
     {n:'rest',t:'bytes',len:'_left'}]},
 
+  /* ---------- GSM: L2-сообщение BCCH (23 байта после деперемежения и FIRE CRC), TS 44.018 ---------- */
+  'gsm-l2':{ title:'GSM BCCH L2 message (System Information)', group:'GSM', fields:[
+    {n:'li',t:'bits',w:6}, {n:'m',t:'bits',w:1}, {n:'el',t:'bits',w:1},
+    {n:'skip',t:'bits',w:4}, {n:'pd',t:'bits',w:4,enum:{6:'RR'}},
+    {n:'mt',t:'u8',fmt:'hex',enum:{0:'SI13',2:'SI2bis',3:'SI2ter',7:'SI2quater',25:'SI1',26:'SI2',27:'SI3',28:'SI4'}},
+    {n:'ci',t:'u16',when:'mt==27'},
+    {n:'plmn',t:'bytes',fmt:'plmn',when:'mt==27 || mt==28'}, {n:'lac',t:'u16',when:'mt==27 || mt==28'},
+    {n:'ctrl',t:'bytes',len:3,when:'mt==27'}, {n:'copt',t:'u8',fmt:'hex',when:'mt==27'},
+    {n:'csel',t:'bytes',len:2,when:'mt==27 || mt==28'},
+    {n:'freqs',t:'bytes',len:16,when:'mt==25 || mt==26'}, {n:'ncc',t:'u8',fmt:'hex',when:'mt==26'},
+    {n:'rach',t:'bytes',len:3,when:'mt==25 || mt==26 || mt==27 || mt==28'},
+    {n:'rest',t:'bytes',len:'_left'}]},
+
   /* ---------- Для проверки и примеров ---------- */
   'esp-pkt':{ title:'ESP32 sniffer record', group:'Wi-Fi', endian:'le', fields:[
     {n:'rssi',t:'i8',fmt:'dbm'}, {n:'chan',t:'u8'}, {n:'len',t:'u16'},

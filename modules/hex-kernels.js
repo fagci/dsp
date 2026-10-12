@@ -149,7 +149,7 @@ const hexSigned=(v,w)=>typeof v==='bigint'
 const hexNorm=v=>typeof v==='bigint' && v>=-9007199254740991n && v<=9007199254740991n ? Number(v) : v;
 
 /* ---------- форматы значений ---------- */
-const HEX_FIXED={mac:6, ipv4:4, ipv6:16};
+const HEX_FIXED={mac:6, ipv4:4, ipv6:16, plmn:3};
 const hexByte=b=>b.toString(16).padStart(2,'0');
 function hexToHex(b){ let s=''; for(const x of b) s+=hexByte(x); return s; }
 function hexFromHex(s){
@@ -167,6 +167,10 @@ function hexFmtBytes(b,fmt){
       const g=[]; for(let i=0;i+1<b.length;i+=2) g.push(((b[i]<<8)|b[i+1]).toString(16));
       let bs=-1,bl=0; for(let i=0;i<g.length;){ if(g[i]!=='0'){ i++; continue; } let j=i; while(j<g.length && g[j]==='0') j++; if(j-i>bl){ bs=i; bl=j-i; } i=j; }
       return bl>1 ? g.slice(0,bs).join(':')+'::'+g.slice(bs+bl).join(':') : g.join(':'); }
+    case 'plmn': {                                         // MCC / MNC в BCD (TS 24.008 10.5.1.3): 3 байта → «250-01»
+      const mcc=[b[0]&15,b[0]>>4,b[1]&15], mnc=[b[2]&15,b[2]>>4];
+      if((b[1]>>4)!==15) mnc.push(b[1]>>4);
+      return mcc.join('')+'-'+mnc.join(''); }
     case 'ascii': return Array.from(b,x=>x>=32&&x<127 ? String.fromCharCode(x) : '.').join('');
     case 'bcd': return Array.from(b,hexByte).join('');
     default: return hexToHex(b);
@@ -181,6 +185,11 @@ function hexUnfmtBytes(v,fmt,len){
     const [a,b]=v.split('::'), pa=a ? a.split(':') : [], pb=b!==undefined && b ? b.split(':') : [];
     const g=b===undefined ? pa : pa.concat(new Array(Math.max(0,8-pa.length-pb.length)).fill('0'),pb);
     const o=new Uint8Array(16); g.slice(0,8).forEach((x,i)=>{ const n=parseInt(x||'0',16)||0; o[i*2]=n>>8; o[i*2+1]=n&255; });
+    return o;
+  }
+  if(fmt==='plmn'){
+    const [m,n]=v.split('-'), d=x=>+x||0, o=new Uint8Array(3);
+    o[0]=d(m[0])|(d(m[1])<<4); o[1]=d(m[2])|((n&&n.length>2 ? d(n[2]) : 15)<<4); o[2]=d(n&&n[0])|(d(n&&n[1])<<4);
     return o;
   }
   if(fmt==='ascii') return Uint8Array.from(v,ch=>ch.charCodeAt(0)&255);

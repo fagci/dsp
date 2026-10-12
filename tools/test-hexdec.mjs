@@ -48,5 +48,21 @@ let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else
   const raw=ev("hexParse('ble-adv',hexFromHex('020106 1aff4c000215b9407f30f5f8466eaff925556b57fe6d00010002c5'))");
   ok('ibeacon raw advertisement',raw.ok && raw.vals['ad[0].data.flags']===6 && raw.vals['ad[1].data.major']===1,JSON.stringify(raw.vals));
 }
+
+// GSM: L2-сообщения SI3 / SI4 / SI1 — схема против разбора gsmParseSI самого декодера
+{
+  ctx.def=()=>{}; ctx.defIQ=()=>{};
+  vm.runInContext(fs.readFileSync(path.join(root,'modules/gsm.js'),'utf8'),ctx,{filename:'gsm.js'});
+  const si3=[0x59,0x06,0x1b, 0x12,0x34, 0x52,0xf0,0x10, 0x01,0xf4, 0x01,0x02,0x03, 0x45, 0x2a,0x3b, 0x04,0x05,0x06, 0x2b,0x2b,0x2b,0x2b];
+  const si4=[0x31,0x06,0x1c, 0x25,0xf0,0x11, 0x00,0x7b, 0x2a,0x3b, 0x04,0x05,0x06, 0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b,0x2b];
+  ctx.si3=si3; ctx.si4=si4;
+  const d3=ev('gsmParseSI(si3)'), p3=ev(`hexParse('gsm-l2',Uint8Array.from(si3))`);
+  ok('gsm si3 matches the decoder',d3.type==='SI3' && p3.vals.ci===d3.ci && p3.vals.lac===d3.lac && p3.vals.plmn===ev('gsmMccMncStr(gsmParseSI(si3))') && p3.vals.mt===0x1b,JSON.stringify([d3.ci,d3.lac,ev('gsmMccMncStr(gsmParseSI(si3))'),p3.vals]));
+  const d4=ev('gsmParseSI(si4)'), p4=ev(`hexParse('gsm-l2',Uint8Array.from(si4))`);
+  ok('gsm si4 matches the decoder',d4.type==='SI4' && p4.vals.lac===d4.lac && p4.vals.plmn===ev('gsmMccMncStr(gsmParseSI(si4))'),JSON.stringify([d4.lac,ev('gsmMccMncStr(gsmParseSI(si4))'),p4.vals]));
+  ctx.b3=ev(`hexBuild('gsm-l2',{li:22,m:0,el:1,skip:0,pd:6,mt:27,ci:4660,plmn:'250-01',lac:500}).bytes`);
+  const rt=ev('hexParse("gsm-l2",b3)');
+  ok('plmn build round trip',rt.vals.plmn==='250-01' && rt.vals.ci===4660 && rt.vals.lac===500 && ev('gsmParseSI(b3)').mcc===250,JSON.stringify(rt.vals));
+}
 console.log(bad ? bad+' failed' : 'all ok');
 process.exit(bad?1:0);
