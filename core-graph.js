@@ -1395,7 +1395,7 @@ function dashFit(){
   for(const body of dashGridEl.querySelectorAll('.dash-body')){
     const el=body.querySelector(DASH_FILL); if(!el) continue;
     const mid=el.closest('.mid'), padB=mid?parseFloat(getComputedStyle(mid).paddingBottom)||0:12;
-    let after=0; for(let q=el.nextElementSibling;q;q=q.nextElementSibling) if(q.offsetHeight) after+=q.offsetHeight+4;   // кнопка Copy под readout
+    let after=0; for(let q=el.nextElementSibling;q;q=q.nextElementSibling) if(q.offsetHeight && getComputedStyle(q).position!=='absolute') after+=q.offsetHeight+4;   // кнопка Copy под readout; слои поверх канвы (водопад sa) места не занимают
     const h=Math.max(110, Math.floor(body.getBoundingClientRect().bottom-el.getBoundingClientRect().top-padB-after));
     if(Math.abs((parseFloat(el.style.height)||0)-h)>1) el.style.height=h+'px';
   }
