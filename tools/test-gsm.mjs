@@ -65,5 +65,49 @@ ok('masked hex has no identity bytes',/^(TMSI 00000000|no identity)?$/.test(mask
 const rnc=run({nc:true},5), pnc=rnc.rec.filter(x=>x.kind==='GSM-PCH'||x.kind==='GSM-AGCH');
 ok('non-combined CCCH: all nine blocks of the multiframe are read once SI3 says so',rnc.rx.ccchCombined===false && rnc.rx.ccch.blocks>=r.rx.ccch.blocks*2 && rnc.rx.ccch.ok===rnc.rx.ccch.blocks && pnc.length>pch.length+agch.length,JSON.stringify([rnc.rx.ccch,pnc.length,cc.length]));
 ok('SDCCH region of a combined cell is not touched (blocks 22–49 are not decoded as CCCH)',r.rx.ccch.blocks===r.rx.ccch.ok);
+
+// слепой разбор выделенного канала (SDCCH/SACCH): без таблицы позиций — 4 последовательных бёрста TN → xCCH,
+// CRC-40 сама отбраковывает границу; кодируем L3-сообщения тем же gsmBcchEncode, что и BCCH/CCCH
+const dch=ev(`(()=>{
+  const rx=new GsmReceiver(); rx.trackDch(3,5);                               // TN3, TSC5 — как после Immediate Assignment
+  const feed=(l2,tn,ul)=>{ const bursts=gsmBcchEncode(l2); for(const d of bursts) rx.accumDch(tn, gsmNormalBurst(d,5), !!ul); };
+  // CM Service Request (MM 0x20): CKSN/type(1) + Classmark2 LV(1+2) + Mobile Identity LV(TMSI)
+  const cm=new Uint8Array(23).fill(0x2b); cm[0]=0x07; cm[1]=0x05; cm[2]=0x20; cm[3]=0x01; cm[4]=2; cm[5]=0x33; cm[6]=0x22; cm[7]=5; cm.set([0xf4,0x1a,0x2b,0x00,0x01],8);
+  feed(cm,3,false);
+  // Identity Response (MM 0x19): Mobile Identity LV (IMSI, 7 цифр)
+  const idr=new Uint8Array(23).fill(0x2b); idr[0]=0x08; idr[1]=0x05; idr[2]=0x19; idr[3]=4; idr.set([0x11,0x22,0x33,0x44],4);
+  rx.trackDch(3,5); feed(idr,3,true);                                         // тот же TN — аплинк от МС отдельно считается (ulDchBuf)
+  // SACCH: 2-байтный L1-заголовок (TA, Tx power) + SI5 (переиспользует разбор SI2: список соседей)
+  const si5l2=new Uint8Array(21).fill(0x2b); si5l2[0]=0x59; si5l2[1]=0x06; si5l2[2]=0x1d; si5l2.fill(0,3,19); si5l2[3]=0x00; si5l2[18]=0x80;
+  const sacch=new Uint8Array(23); sacch[0]=7; sacch[1]=30; sacch.set(si5l2,2);
+  rx.trackDch(3,5); feed(sacch,3,false);
+  return rx.rec;
+})()`);
+const sdcch=dch.filter(x=>x.kind==='GSM-SDCCH'), sacchRec=dch.filter(x=>x.kind==='GSM-SACCH');
+const cmReq=sdcch.find(x=>x.msg==='CM Service Request' && x.dir==='DL');
+ok('CM Service Request: name, hashed TMSI, no raw bytes in hex',cmReq && cmReq.idKind==='TMSI' && /^TMSI #/.test(cmReq.id) && !/1a2b0001/.test(cmReq.hex),JSON.stringify(cmReq));
+const idResp=sdcch.find(x=>x.msg==='Identity Response');
+ok('Identity Response (uplink): IMSI hashed, dir UL',idResp && idResp.dir==='UL' && idResp.idKind==='IMSI' && !/1122334455/.test(idResp.hex),JSON.stringify(idResp));
+ok('SACCH framing: L1 header (TA/Tx power) read, SI5 neighbours parsed',sacchRec.length>0 && sacchRec[0].ta===7 && sacchRec[0].txPower===30 && sacchRec[0].msg==='SI5',JSON.stringify(sacchRec[0]));
+
+// аплинк: сама физика (resample → привязка по SCH → workUplink/withUl/stepSlot на отдельном буфере) — подаём ОДНУ
+// и ТУ ЖЕ несущую на оба входа 'in' и 'ul'; приёмник анкерует аплинк с лагом +3 таймслота, так что бёрст,
+// который на downlink лежит на TN0 (BCCH), на uplink-стороне того же потока виден со сдвигом −3 TN (mod 8) —
+// т.е. отслеживая TN5 на аплинке, получаем тот же самый декодированный BCCH-контент, но с dir:'UL'
+const ul=ev(`(()=>{
+  const n={p:{gsmCell:'250-01-1234-5678',bsic:18}}, rx=new GsmReceiver();
+  const N=65536, sr=GSM_TARGET_SR;
+  let tracked=false;
+  for(let done=0, total=4*sr; done<total; done+=N){
+    const [re,im]=gsmGenerate(n,sr,N);
+    rx.push(re,im); rx.ulPush(re,im);
+    rx.work();
+    if(rx.state==='sync' && !tracked){ rx.trackDch(5,rx.bcc); tracked=true; }
+  }
+  if(!tracked) return {err:'not synced'};
+  return {rec:rx.rec.filter(x=>x.kind==='GSM-SDCCH'||x.kind==='GSM-SACCH')};
+})()`);
+ok('uplink physical layer: same carrier on both inputs → TN0 downlink content reappears on TN5 uplink (−3TS)',!ul.err && ul.rec.some(x=>x.dir==='UL' && x.tn===5 && /^(SI1|SI2|SI3|SI4|SI13|Immediate Assignment.*|Paging.*)$/.test(x.msg)),JSON.stringify(ul.err||ul.rec.slice(0,4)));
+
 console.log(bad ? bad+' failed' : 'all ok');
 process.exit(bad?1:0);
