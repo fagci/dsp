@@ -10,8 +10,12 @@ Object.assign(BP_COL,{
   VID:'#ff4081', CTL:'#69f0ae', TLM:'#40c4ff', MIL:'#e53935', MIC:'#f48fb1', WIFI:'#29b6f6',
   BT:'#5c6bc0', BLE:'#7e57c2', ZB:'#26c6da', NRF:'#d4e157', LORA:'#ff7043', STAB:'#ffd54f',
   BAND:'#607d8b', GEO:'#8bc34a', SATTV:'#ab47bc', LTE:'#5c6bc0', KEY:'#ffb300', TMP:'#aed581'});
-const bdU=m=>rows=>rows.map(([lo,hi,label,step,col,note,kind])=>
-  [Math.round(lo*m*1e4)/1e4,Math.round(hi*m*1e4)/1e4,label,Math.round((step||0)*m*1e4)/1e4,BP_COL[col]||col||'',note||'',kind||'']);
+// kind 'channel' — точка на центральной частоте (lo=hi), ширина уходит в note
+const bdU=m=>rows=>rows.map(([lo,hi,label,step,col,note,kind])=>{
+  note=note||'';
+  if(kind==='channel'&&hi>lo){ const bw=(hi-lo)*m, c=(lo+hi)/2;
+    note=(bw>=1e6?bw/1e6+' MHz':bw>=1e3?Math.round(bw/10)/100+' kHz':bw+' Hz')+(note?'; '+note:''); lo=hi=c; }
+  return [Math.round(lo*m*1e4)/1e4,Math.round(hi*m*1e4)/1e4,label,Math.round((step||0)*m*1e4)/1e4,BP_COL[col]||col||'',note,kind||''];});
 const bdM=bdU(1e6), bdK=bdU(1e3), bdH=bdU(1);
 const bdC=rows=>bdM(rows.map(([fc,bw,...r])=>[fc-bw/2,fc+bw/2,...r]));
 const rng=(a,b)=>Array.from({length:b-a+1},(_,i)=>a+i);
@@ -365,7 +369,7 @@ P['LoRa/Meshtastic & LoRa APRS']=bdM([
   [868,868.6,'Meshtastic UA_868',0.25,'LORA','Украина 868','region'],[470,510,'Meshtastic CN',0.25,'LORA','Китай 470–510','region'],
   [2400,2483.5,'Meshtastic LORA_24',0.8,'LORA','2.4 GHz LoRa (SX128x)','region'],
   [433.775,433.775,'LoRa APRS 433.775',0.125,'DIGI','EU LoRa APRS (SF12, BW125)','channel'],
-  [868.0,868.6,'LoRa APRS EU868',0.125,'DIGI','экспериментальные трекеры, шлюзы','channel']]);
+  [868.0,868.6,'LoRa APRS EU868',0.125,'DIGI','экспериментальные трекеры, шлюзы','band']]);
 P['LoRa/Sigfox, Z-Wave, wM-Bus, KNX, EnOcean']=bdM([
   [868.034,868.226,'Sigfox RCZ1 uplink (868.13)',0.1,'LORA','UNB DBPSK 100 bps, 192 kHz окно','channel'],[869.525,869.525,'Sigfox RCZ1 downlink',0.1,'LORA','GFSK 600 bps','channel'],
   [902.2,902.2,'Sigfox RCZ2/4 uplink 902.2',0.1,'LORA','США/Мексика/Бразилия','channel'],[905.2,905.2,'Sigfox RCZ2 downlink',0.1,'LORA','США','channel'],
@@ -374,10 +378,10 @@ P['LoRa/Sigfox, Z-Wave, wM-Bus, KNX, EnOcean']=bdM([
   [869,869,'Z-Wave RU 869.0',0.1,'ZB','РФ','channel'],[908.42,908.42,'Z-Wave US 908.42',0.1,'ZB','США/Канада','channel'],
   [916,916,'Z-Wave IL 916.0',0.1,'ZB','Израиль','channel'],[921.42,921.42,'Z-Wave ANZ/BR 921.42',0.1,'ZB','AU/NZ/BR','channel'],
   [865.2,865.2,'Z-Wave IN 865.2',0.1,'ZB','Индия','channel'],[919.8,919.8,'Z-Wave HK/MY 919.8',0.1,'ZB','','channel'],
-  [922.5,926.3,'Z-Wave JP 922.5–926.3',0.1,'ZB','Япония (3 канала)','channel'],
+  [922.5,922.5,'Z-Wave JP 922.5',0.1,'ZB','Япония','channel'],[923.9,923.9,'Z-Wave JP 923.9',0.1,'ZB','Япония','channel'],[926.3,926.3,'Z-Wave JP 926.3',0.1,'ZB','Япония','channel'],
   [868.3,868.3,'wM-Bus S2/T2 868.3',0.1,'SRD','счётчики EU, режим S/T2 (meter→collector T1: 868.95)','channel'],
-  [868.95,868.95,'wM-Bus T1/C1 868.95',0.1,'SRD','счётчики EU','channel'],[868.03,868.63,'wM-Bus R2 868.03–868.63',0.06,'SRD','6 каналов','channel'],
-  [169.4,169.475,'wM-Bus N 169.4–169.475',0.0125,'SRD','Narrowband, 12.5 kHz','channel'],
+  [868.95,868.95,'wM-Bus T1/C1 868.95',0.1,'SRD','счётчики EU','channel'],...rng(0,5).map(i=>{const f=Math.round((868.03+0.12*i)*1e3)/1e3;return [f,f,'wM-Bus R2 ch'+(i+1)+' '+f,0.06,'SRD','R2','channel'];}),
+  ...rng(0,5).map(i=>{const f=Math.round((169.40625+0.0125*i)*1e5)/1e5;return [f,f,'wM-Bus N ch'+(i+1)+' '+f,0.0125,'SRD','Narrowband, 12.5 kHz','channel'];}),
   [868.3,868.3,'KNX RF 868.3',0.1,'SRD','умный дом','channel'],[868.3,868.3,'EnOcean EU 868.3',0.1,'SRD','беспроводные выключатели без батареи','channel'],
   [315,315,'EnOcean US 315',0.1,'SRD','США','channel'],[902.875,902.875,'EnOcean US 902.875',0.1,'SRD','США','channel'],
   [433.42,433.42,'Somfy RTS 433.42',0.025,'KEY','жалюзи/шторы, rolling code','key'],
