@@ -924,7 +924,7 @@ function tblRenderList(n){
       t.forEach((v,k)=>{ if(v.length>wid[k]) wid[k]=v.length; });
       texts.push(t);
     }
-    list.style.setProperty('--tc','4ch '+vc.map((x,k)=>x.w>0 ? x.w+'px' : Math.min(28,wid[k]+1)+'ch').join(' ')+' 56px');
+    list.style.setProperty('--tc','5ch '+vc.map((x,k)=>x.w>0 ? x.w+'px' : Math.min(28,wid[k]+2)+'ch').join(' ')+' 56px');
     const hd=document.createElement('div'); hd.className='tbl-hd';
     hd.append(Object.assign(document.createElement('span'),{textContent:'#',className:'tbl-no'}));
     for(const x of vc) hd.append(Object.assign(document.createElement('span'),{textContent:x.c,title:x.c}));

@@ -262,7 +262,7 @@ const d=MOD[n.type];
 const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
 const title=nodeTitle(n);
 el.style.setProperty('--cat',catColor(d.cat)); el.dataset.title=title;
-el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare?'<span class="xpd" title="Expand canvas">⛶</span>':''}<span class="rst" title="Reset all parameters">↺</span><span class="ren" title="Rename">✎</span><span class="x">✕</span></div> <div class="nbody"></div>`;
+el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare?'<span class="xpd" title="Expand canvas (hide parameters)">⛶</span>':''}<span class="rst" title="Reset all parameters">↺</span><span class="ren" title="Rename">✎</span><span class="x">✕</span></div> <div class="nbody"></div>`;
 el.querySelector('.ttl').textContent=title;
 el.querySelector('.ren').addEventListener('click',e=>{ e.stopPropagation(); renameNode(n); });
 el.querySelector('.xpd')?.addEventListener('click',e=>{ e.stopPropagation(); xpandNode(n); });
@@ -374,36 +374,23 @@ el.addEventListener(ev,()=>{ n._dirty=true; },{capture:true,passive:true});
 el._node=n; n._vis=undefined; visIO.observe(el);
 n.el=el; content.append(el); el.style.zIndex=++zCounter; posNode(n); applySize(n); // новый узел сразу поверх остальных
 }
-// ⛶ в заголовке: основная канва (или список) узла — на весь экран, без параметров и портов. Esc / жест «назад» / ⤡ — вернуть
-function xpandNode(n,on,quiet){   // quiet — пересборка узла: запись «назад» остаётся
+// ⛶ в заголовке: параметры спрятаны, основная канва (или список) занимает весь модуль; размер модуля не меняется, порты остаются
+function xpandApply(n){                                 // (пере)применить к текущему n.el: высота фиксируется до скрытия параметров
+n.el.style.height=(n._xh||n.el.offsetHeight)+'px';
+n.el.classList.add('xp');
+n.el.querySelector('.xpd')?.classList.add('on');
+n._dirty=true; n._drawGen=-1; n.onResize?.(n); markWiresDirty();
+}
+function xpandNode(n,on){
 if(on===undefined) on=!n.xpand;
 if(on===!!n.xpand) return;
-if(on){
-const ov=document.createElement('div'); ov.className='xpand';
-const bar=document.createElement('div'); bar.className='xbar';
-const ttl=document.createElement('span'); ttl.textContent=nodeTitle(n);
-const cl=document.createElement('button'); cl.textContent='⤡'; cl.title='Back to graph (Esc)';
-bar.append(ttl,cl);
-const host=document.createElement('div'); host.className='xbody';
-ov.append(bar,host); document.body.append(ov);
-n._xHome={p:n.el.parentNode,next:n.el.nextSibling};
-host.append(n.el);
-n.xpand=ov; n._xBack||=()=>xpandNode(n,false);
-n._xKey=e=>{ if(e.key==='Escape' && !e.defaultPrevented && !e.target.closest?.('input,textarea,select')){ e.stopPropagation(); xpandNode(n,false); } };
-cl.onclick=()=>xpandNode(n,false);
-addEventListener('keydown',n._xKey,true);
-if(!quiet) Back.push(n._xBack);
-} else {
-const ov=n.xpand, h=n._xHome; n.xpand=null;
-removeEventListener('keydown',n._xKey,true);
-if(!quiet) Back.drop(n._xBack);
-if(h?.p?.isConnected) h.p.insertBefore(n.el,h.next?.parentNode===h.p ? h.next : null); else content.append(n.el);
-ov.remove();
+n.xpand=on;
+if(on){ n._xh=n.el.offsetHeight; xpandApply(n); }
+else {
+n._xh=0; n.el.classList.remove('xp'); n.el.style.height='';
+n.el.querySelector('.xpd')?.classList.remove('on');
+applySize(n); n._dirty=true; n._drawGen=-1; n.onResize?.(n); markWiresDirty();
 }
-n.el.classList.toggle('xp',!!n.xpand);
-if(n.cv) applySize(n);
-n._dirty=true; n._drawGen=-1; n.onResize?.(n); markWiresDirty();
-if(typeof dashFitSoon==='function' && dashMode) dashFitSoon();
 }
 function resettableParams(d){                         // параметры с умолчанием; скрытые (служебные) и кнопки не трогаем
 return (d.params||[]).filter(s=>!s.hidden && s.t!=='button' && s.t!=='file' && s.d!==undefined);
@@ -570,12 +557,11 @@ const sel=n.el.classList.contains('sel');
 fillParamDefaults(n,MOD[n.type]);                  // добить дефолтами новые/переименованные параметры
 n.roCv?.disconnect();                               // старая канва уходит вместе с el, наблюдатель — тоже
 visIO.unobserve(n.el);
-const wasX=!!n.xpand; if(wasX) xpandNode(n,false,true);
 const host=n.el.parentNode, inDash=dashMode && !!dashLeafOf(n.id);   // в тайле новый DOM остаётся в своей панели
 n.el.remove(); buildNodeEl(n);
 if(inDash){ if(host && host!==content) host.append(n.el); else n.el.remove(); applySize(n); n.onResize?.(n); dashFitSoon(); }
 n._drawGen=-1;                                      // новый DOM — lazy-узлу нарисоваться заново
-if(wasX) xpandNode(n,true,true);
+if(n.xpand){ n._xh=n._xh||0; xpandApply(n); }
 if(sel) n.el.classList.add('sel');
 markWiresDirty();
 }
