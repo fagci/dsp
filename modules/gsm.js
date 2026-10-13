@@ -1147,10 +1147,11 @@ class GsmReceiver{
     if(type==='fcch'){
       // измеряем остаточное смещение частоты и корректируем петлю
       const h=this.head; let phaseSum=0;
-      const first=Math.ceil((GSM_GUARD+2*GSM_TAIL)*GSM_OSR)+1, last=first+GSM_USEFUL*GSM_OSR-GSM_TAIL*GSM_OSR;
+      const m=6*GSM_OSR;                                  // запас по краям: при сдвиге слота окно не должно захватывать хвосты/шум
+      const first=Math.ceil((GSM_GUARD+2*GSM_TAIL)*GSM_OSR)+1+m, last=first+GSM_USEFUL*GSM_OSR-GSM_TAIL*GSM_OSR-2*m;
       for(let ii=first;ii<last;ii++) phaseSum+=this.phaseDiff(ii,ii-1)-(Math.PI/2)/GSM_OSR;
       const fo=(phaseSum/(last-first))*GSM_TARGET_SR/(2*Math.PI);
-      if(Math.abs(fo)<GSM_AFC_MAX_STEP){ this.freqOffset=fo; this.freqUpdate=true; }   // выброс = слот сдвинут, не уход частоты
+      if(Math.abs(fo)<GSM_AFC_MAX_STEP){ this.freqOffset=fo*0.5; this.freqUpdate=true; }   // выброс = слот сдвинут, не уход частоты
     }
     else if(type==='sch'){
       const chanRe=new Float32Array(GSM_CHAN_IMP*GSM_OSR), chanIm=new Float32Array(GSM_CHAN_IMP*GSM_OSR);
@@ -1299,9 +1300,22 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
       if(ul) n.rx.ulPush(ul.re,ul.im);
       const {bursts,rec}=n.rx.work();
       // частотная петля
-      if(n.p.afc && n.rx.freqOffset!=null && (n.rx.state!=='fcch' || n.rx.freqUpdate)){
-        n.foff+=n.rx.freqOffset; n.rx.freqOffset=null; n.rx.freqUpdate=false;
-        n.foff=clamp(n.foff,-GSM_TARGET_SR/2,GSM_TARGET_SR/2);
+      // поправка применяется сразу по FCCH, даже если SCH в том же такте не сошёлся из-за ещё не
+      // скорректированной частоты (раньше она терялась и поиск шёл десятки секунд). Уже накопленный
+      // в приёмнике хвост добавочно довращаем, чтобы следующий FCCH не посчитал ту же ошибку второй раз
+      if(n.p.afc && n.rx.freqOffset!=null){
+        const old=n.foff;
+        n.foff=clamp(n.foff+n.rx.freqOffset,-GSM_TARGET_SR/2,GSM_TARGET_SR/2);
+        const d=n.foff-old, rx=n.rx;
+        n.rx.freqOffset=null; n.rx.freqUpdate=false;
+        if(d!==0){
+          const w=-2*Math.PI*d/GSM_TARGET_SR, h=rx.head, L=rx.len-h;
+          for(let k=0;k<L;k++){
+            const c=Math.cos(w*k), s2=Math.sin(w*k), a=rx.re[h+k], b=rx.im[h+k];
+            rx.re[h+k]=a*c-b*s2; rx.im[h+k]=a*s2+b*c;
+          }
+          n.nco+=w*L;
+        }
       }
       // защита от застревания AFC: findFcch() (порт find_fcch_burst из gr-gsm) засекает только
       // УСТОЙЧИВО ПОЛОЖИТЕЛЬНЫЙ наклон фазы — так и должно быть, FCCH всегда на +67.7 кГц выше
