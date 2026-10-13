@@ -35,6 +35,8 @@ class Rt433{
   reset(ch){ this.x.rt_chan_reset(ch); }
   // min_level — нижняя граница уровня импульса, дБ от полной шкалы (по умолчанию −12 дБ); min_snr — превышение над шумом, дБ (9)
   levels(ch,minDb,snrDb){ this.x.rt_chan_levels(ch,minDb,snrDb); }
+  // после пакета нижняя граница уровня канала следует за уровнем этого пакета (3 с): повторы приходят подряд
+  hint(ch,on){ this.x.rt_chan_hint(ch,on?1:0); }
   minPulses(n){ this.x.rt_min_pulses(n); }
   setFreq(ch,f){ this.x.rt_chan_freq(ch,f); }
   // float IQ (полная шкала ±1) → cs16, пачками по block отсчётов

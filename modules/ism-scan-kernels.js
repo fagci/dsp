@@ -90,7 +90,7 @@ IQK.ismScan={
     n.devKey='';
     for(let c=0;c<N;c++){
       const off=N===1 ? 0 : iqChanOff(c,N,sr);
-      n.ch.push(n.rt.chan(n.srOut,(s.fc||0)+off,true));
+      { const h=n.rt.chan(n.srOut,(s.fc||0)+off,true); n.rt.hint(h,true); n.ch.push(h); }
     }
   },
   applyParams(n){

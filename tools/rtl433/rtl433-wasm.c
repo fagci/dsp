@@ -42,6 +42,7 @@ typedef struct {
     pulse_data_t ook, fsk;
     uint64_t pos;
     float base_db, snr_db;             /* заданные границы уровня */
+    int hint_on;                       /* подсказка уровня по прошлому пакету включена */
     int hinted;                        /* нижняя граница поднята по прошлому пакету */
     uint64_t hint_pos;
 } chan_t;
@@ -156,6 +157,7 @@ static void emit_unknown(chan_t *c, pulse_data_t *p, int fsk) {
 /* Повторы пакета приходят подряд: порог следующего берём по уровню предыдущего (нижняя граница импульса = его уровень − 8 дБ),
    иначе первый импульс при низком пороге «прилипает» к шуму перед ним. Через 3 с без пакетов граница возвращается к заданной. */
 static void hint_level(chan_t *c, pulse_data_t *p) {
+    if (!c->hint_on) return;
     float hi = p->ook_high_estimate > 0 ? (float)p->ook_high_estimate : 0;
     if (hi < 1) return;
     float db = c->mag ? 20.0f * log10f(hi) - 84.2884f : 10.0f * log10f(hi) - 42.1442f;
@@ -252,6 +254,7 @@ EXPORT("rt_chan_new") int rt_chan_new(uint32_t sr, double freq, int mag) {
 EXPORT("rt_chan_free") void rt_chan_free(int i) { if (i >= 0 && i < MAX_CHANNELS) chans[i].used = 0; }
 EXPORT("rt_chan_freq") void rt_chan_freq(int i, double f) { chans[i].freq = f; chans[i].fpdm = f > 800e6 ? FSK_PULSE_DETECT_NEW : FSK_PULSE_DETECT_OLD; }
 EXPORT("rt_chan_levels") void rt_chan_levels(int i, float min_level, float min_snr) { chans[i].base_db = min_level; chans[i].snr_db = min_snr; chans[i].hinted = 0; pulse_detect_set_levels(chans[i].pd, chans[i].mag, 0.0f, min_level, min_snr, 0); }
+EXPORT("rt_chan_hint") void rt_chan_hint(int i, int on) { chans[i].hint_on = on != 0; }
 EXPORT("rt_min_pulses") void rt_min_pulses(unsigned n) { min_pulses = n; }
 EXPORT("rt_chan_reset") void rt_chan_reset(int i) {
     chan_t *c = &chans[i];

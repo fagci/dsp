@@ -65,7 +65,7 @@ for(const p of picks) for(let i=0;i<p.len;i++){ R[PAD+i]+=p.iq[0][i]*SCALE; Im[P
 let x=12345; const rnd=()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296; };
 for(let i=0;i<maxLen;i++){ R[i]+=(rnd()-.5)*NOISE; Im[i]+=(rnd()-.5)*NOISE; }
 // гонка: узел и поток
-const n={id:'t',type:'ismScan',p:{N:'auto',plan:process.env.PLAN||'4',gain:process.env.GAIN||'0',dc:process.env.DC||'subtract',devs:'default',only:'',snr:+(process.env.SNR||14),minp:+(process.env.MINP||8),raw:!!process.env.RAW,minBits:16,dedup:0,sel:''},out:{}};
+const n={id:'t',type:'ismScan',p:{N:'auto',plan:process.env.PLAN||'4',gain:process.env.GAIN||'auto',dc:process.env.DC||'subtract',devs:'default',only:'',snr:+(process.env.SNR||20),minp:+(process.env.MINP||8),raw:!!process.env.RAW,minBits:16,dedup:0,sel:''},out:{}};
 const K=ev('IQK.ismScan'); K.init(n);
 const B=16384, recs=[]; let t0=Date.now();
 for(let i=0;i<maxLen;i+=B){
