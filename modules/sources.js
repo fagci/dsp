@@ -5232,7 +5232,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     // полосы канальных фильтров активных каналов — 'sa' рисует их шторками вокруг частот каналов
     if(spOut){
       // линии порога — только на живом спектре: у панорамы sweep своя шкала бинов
-      spOut.chans=n.swActive ? null : rtlChanBands(n, cf, half).map(c=>rtlChanMeter(n, c, !sweepOn));
+      spOut.chans=n.swActive || n.appliedFreq==null || !Number.isFinite(cf) ? null : rtlChanBands(n, cf, half).map(c=>rtlChanMeter(n, c, !sweepOn));
       // обратный канал для 'sa': перетаскивание края шторки задаёт новую ширину полосы ПЧ
       spOut.setChanBw=n._setChanBw||(n._setChanBw=(mode,w)=>{
         const lim=RTL_BW_LIMITS[mode]; if(lim) setMod(n,'bw',Math.round(clamp(w,lim[0],lim[1])));
