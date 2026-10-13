@@ -1142,6 +1142,11 @@ class GsmReceiver{
 
   processTimeslot(){
     const type=this.burstType();
+    // TN1..7 без CBCH/отслеживаемых каналов не нужны для разбора — пропускаем целиком (7/8 всей нагрузки на бёрсты);
+    // allTs включает прежнее поведение (бёрсты всех слотов на выходе burst)
+    if(type==='normal' && this.tn!==0 && !this.allTs && this.tn!==this.cbchTn && !this.dch.some(c=>c.tn===this.tn && c.until>Date.now())){
+      const off=this.advanceBurst(); this.consume(GSM_TS_BITS*GSM_OSR+off); return;
+    }
     this.dbm=this.signalDbm();
     let toConsume=0, adj=0;
     if(type==='fcch'){
@@ -1288,6 +1293,7 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
   readout:true, tall:true,
   params:[{n:'afc',t:'check',d:true,label:'auto frequency correction (FCCH)'},
           {n:'debug',t:'check',d:false,label:'debug: доп. поля SI3/SI4 (Control Ch, Cell Opt, CBCH) + hex'},
+          {n:'allts',t:'check',d:false,label:'decode all timeslots (TN1–7 bursts on the burst output; heavy on CPU)'},
           {n:'ids',t:'select',opts:['hash','none','show'],d:'hash',label:'paging identifiers (TMSI / IMSI): hash — only a marker, none — count only, show — as is'},
           {n:'clr',t:'button',label:'Clear log / resync',fn:gsmRxReset}],
   init:gsmRxReset,
@@ -1300,7 +1306,7 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
     const dl=gsmResampleStream(n.dl,s);
     if(dl && n.p.afc && n.foff!==0) gsmDerotate(dl.re,dl.im,n);
     const ul=(su && su.sr>=GSM_TARGET_SR*0.98) ? gsmResampleStream(n.ulSt,su) : null;   // своя частотная коррекция для аплинка не делается (см. README)
-    if(dl){ n.rx.fc=s.fc||0; n.rx.ids=n.p.ids||'hash'; n.rx.push(dl.re,dl.im);
+    if(dl){ n.rx.fc=s.fc||0; n.rx.ids=n.p.ids||'hash'; n.rx.allTs=!!n.p.allts; n.rx.push(dl.re,dl.im);
       if(ul) n.rx.ulPush(ul.re,ul.im);
       const {bursts,rec}=n.rx.work();
       // частотная петля
@@ -1399,7 +1405,7 @@ const GSM_LP_T=14, GSM_LP_PH=128, GSM_LP_CUT=220e3;
 let GSM_LP_CACHE=null;
 function gsmLpTable(sr){
   if(GSM_LP_CACHE && GSM_LP_CACHE.sr===sr) return GSM_LP_CACHE.h;
-  const T=GSM_LP_T, K=2*T, h=new Float32Array(GSM_LP_PH*K), a=2*GSM_LP_CUT/sr;
+  const T=GSM_LP_T, K=2*T, h=new Float64Array(GSM_LP_PH*K), a=2*GSM_LP_CUT/sr;
   for(let p=0;p<GSM_LP_PH;p++){ let sum=0; const f=p/GSM_LP_PH;
     for(let j=0;j<K;j++){ const d=j-T+1-f, x=Math.PI*a*d;
       const v=(d===0?a:Math.sin(x)/(Math.PI*d))*(0.42+0.5*Math.cos(Math.PI*d/T)+0.08*Math.cos(2*Math.PI*d/T));
@@ -1410,7 +1416,7 @@ function gsmLpTable(sr){
 function gsmResamplePoly(st,s,ratio){
   const T=GSM_LP_T, K=2*T, h=gsmLpTable(s.sr);
   let total=st.lr.length; for(const c of s.chunks) total+=c.re.length;
-  const xr=new Float32Array(total), xi=new Float32Array(total);
+  const xr=new Float64Array(total), xi=new Float64Array(total);
   xr.set(st.lr); xi.set(st.li); let w=st.lr.length;
   for(const c of s.chunks){ xr.set(c.re,w); if(c.im) xi.set(c.im,w); w+=c.re.length; }
   const outR=new Float32Array(Math.ceil(total/ratio)+4), outI=new Float32Array(outR.length);
@@ -1419,9 +1425,10 @@ function gsmResamplePoly(st,s,ratio){
   for(;;){
     const k=Math.floor(pos); if(k+T>total-1) break;
     const base=k-T+1, o=Math.min(GSM_LP_PH-1,Math.round((pos-k)*GSM_LP_PH))*K;
-    let sr_=0, si=0;
-    for(let j=0;j<K;j++){ const c=h[o+j]; sr_+=c*xr[base+j]; si+=c*xi[base+j]; }
-    outR[outN]=sr_; outI[outN]=si; outN++; pos+=ratio;
+    let a0=0,a1=0,b0=0,b1=0;                            // две независимые суммы на канал — короче цепочка зависимостей
+    for(let j=0;j<K;j+=2){ const c0=h[o+j], c1=h[o+j+1], q=base+j;
+      a0+=c0*xr[q]; a1+=c1*xr[q+1]; b0+=c0*xi[q]; b1+=c1*xi[q+1]; }
+    outR[outN]=a0+a1; outI[outN]=b0+b1; outN++; pos+=ratio;
   }
   const keepFrom=Math.max(0,Math.floor(pos)-T);
   st.lr=xr.slice(keepFrom); st.li=xi.slice(keepFrom); st.frac=pos-keepFrom;
