@@ -1113,16 +1113,16 @@ select.aed-b{padding:0 6px}
   font:11px ui-monospace,Menlo,Consolas,monospace;padding:2px 4px;flex:none}
 .hx-edit{width:12em}
 
-/* ⛶ в заголовке узла: модуль на весь видимый холст, как ячейка тайла (core-graph.js, xpandNode) */
+/* ⛶ в заголовке узла: параметры скрыты, канва / список на весь модуль (core-graph.js, xpandNode) */
 .nhead .xpd.on{color:var(--acc);opacity:1}
-.node.xp{display:flex;flex-direction:column;box-shadow:0 0 0 1px var(--acc)}
+.node.xp{display:flex;flex-direction:column}
 .node.xp>.rz{display:none}
-#canvas #content .node.xp .nbody,#canvas #content .node.xp .io3,#canvas #content .node.xp .io3>.mid{flex:1 1 0;min-height:0;display:flex!important;flex-direction:column;padding:0;margin:0}
-.node.xp .io3>.col{display:none}
+#canvas #content .node.xp .nbody{flex:1 1 0;min-height:0;display:flex;flex-direction:column}
+#canvas #content .node.xp .io3{flex:1 1 0;min-height:0}
+#canvas #content .node.xp .io3>.mid{flex:1 1 0;min-height:0;min-width:0;display:flex!important;flex-direction:column;padding:0;margin:0}
 #canvas #content .node.xp .io3>.mid>:not(canvas.view.main):not(.tbl-ui){display:none!important}
 #canvas #content .node.xp canvas.view.main{flex:1 1 0;min-height:0;width:100%!important;height:auto!important;aspect-ratio:auto;margin:0;border-radius:0}
 .node.xp .tbl-ui{flex:1 1 0;min-height:0;height:auto!important;padding:4px}
-.xpanded #wires,.xpanded #wiresFront{visibility:hidden}
 /* Table: сетка колонок (Wireshark-like), панель вида */
 .tbl-list.grid{overflow:auto}
 .tbl-row{background:var(--rb,transparent)}
