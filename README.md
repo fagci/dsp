@@ -1179,3 +1179,29 @@ location ~ ^/proxy/(?<sch>https?):/+(?<hst>[^/]+)(?<pth>/.*)?$ {
 ```
 
 This is an open proxy to any host: restrict it (`allow`/`deny`, basic auth, or a whitelist of hosts) before exposing it. Lists need the CORS header, Kiwi only the WebSocket upgrade.
+
+## Proxy setup (nginx)
+
+The **CORS proxy** from the settings panel is used for list downloads (Satellites, Station Schedule, SDR Receivers Directory…) and for the **KiwiSDR** node. For Kiwi the address `http://host:port/<ts>/SND` is substituted into the proxy URL the same way (`{url}` is replaced by the encoded address, otherwise the address is appended) and the scheme `http(s)` becomes `ws(s)`, so the proxy must pass WebSocket. Without a proxy the node connects to `ws://host:port` directly, which an https page cannot do (mixed content).
+
+nginx, setting `https://example.com/proxy/` (the address is appended):
+
+```nginx
+# http {} block
+map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+
+# server {} block
+location ~ ^/proxy/(?<sch>https?):/+(?<hst>[^/]+)(?<pth>/.*)?$ {
+    resolver 1.1.1.1 ipv6=off;
+    proxy_pass $sch://$hst$pth$is_args$args;
+    proxy_http_version 1.1;
+    proxy_set_header Host $hst;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_ssl_server_name on;
+    proxy_read_timeout 3600s;
+    add_header Access-Control-Allow-Origin * always;
+}
+```
+
+This is an open proxy to any host: restrict it (`allow`/`deny`, basic auth, or a whitelist of hosts) before exposing it. Lists need the CORS header, Kiwi only the WebSocket upgrade.
