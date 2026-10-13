@@ -33,6 +33,12 @@ ok('receiver locks to the generated carrier and decodes SI3',kinds['GSM-SI3']>0 
 const rd=run({ppm:100},12), rdn=run({ppm:-100},12);
 ok('slot timing follows a ±100 ppm sample-clock offset without losing sync',rd.lost===0 && rdn.lost===0 && rd.rx.state==='sync' && rdn.rx.state==='sync' && rd.rec.filter(x=>x.kind==='GSM-SI3').length>5,'lost '+rd.lost+' '+rd.rx.state);
 
+// SI2bis / SI2ter: список соседей из Extended BCCH Frequency List (bitmap0: ARFCN 124 — первый бит)
+{ const l=new Uint8Array(23).fill(0x2b); l[0]=0x59; l[1]=0x06; l[2]=0x02; l.fill(0,3,19); l[3]=0x28; l[18]=0x01; l[19]=0x14; l[20]=0; l[21]=0x80;
+  ctx.l2=l; const b2=ev('gsmParseSI(l2)'); ctx.l2[2]=0x03; const t2=ev('gsmParseSI(l2)');
+  ok('SI2bis: neighbour ARFCNs, extension bit, RACH',b2.type==='SI2bis' && b2.neighborArfcns.join()==='124,1' && b2.extInd && b2.rach.txInteger!=null,JSON.stringify(b2.neighborArfcns));
+  ok('SI2ter: neighbour ARFCNs',t2.type==='SI2ter' && t2.neighborArfcns.join()==='124,1',JSON.stringify(t2.neighborArfcns)); }
+
 // CCCH: paging с TMSI, immediate assignment, reject; по умолчанию идентификаторы — только хэш-маркеры
 const cc=r.rec.filter(x=>x.kind==='GSM-PCH'||x.kind==='GSM-AGCH');
 const pch=cc.filter(x=>x.kind==='GSM-PCH'), agch=cc.filter(x=>x.kind==='GSM-AGCH');

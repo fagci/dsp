@@ -36,7 +36,7 @@
  *            16–19 (объединённый с SDCCH/4) или все девять (по CCCH-CONF из SI3). Идентификаторы абонентов в paging — хэш-маркер
  *            или ничего (параметр ids), подробности — у функции gsmParseCcch
  *
- * Не разобрано: SI2bis/SI2ter — только типизируются. CBCH на другой несущей или
+ * Не разобрано: CBCH на другой несущей или
  * hopping — только детектируется (TN/ARFCN/частота), сам канал не декодируется без
  * отдельного приёма на той частоте.
  * Uplink не принимается — только downlink (FCCH/SCH есть только там).
@@ -554,8 +554,15 @@ function gsmParseSI(b){
     r.rach=gsmDecodeRach(b,19);
   }
   else if(mt===0x00){ r.type='SI13'; r.si13=gsmDecodeSi13(b); }
-  else if(mt===0x02) r.type='SI2bis';
-  else if(mt===0x03) r.type='SI2ter';
+  else if(mt===0x02){                                  // SI2bis: продолжение списка соседей (Extended BCCH Freq List) + RACH
+    r.type='SI2bis'; const fl=gsmDecodeFreqList(b,3,16);
+    r.neighborArfcns=fl.arfcns; r.neighborFmt=fl.format; r.extInd=!!(b[3]&0x20);
+    r.rach=gsmDecodeRach(b,19);
+  }
+  else if(mt===0x03){                                  // SI2ter: соседи в других диапазонах (NCD2), без RACH
+    r.type='SI2ter'; const fl=gsmDecodeFreqList(b,3,16);
+    r.neighborArfcns=fl.arfcns; r.neighborFmt=fl.format; r.extInd=!!(b[3]&0x20);
+  }
   else if(mt===0x07){ r.type='SI2quater'; r.si2q=gsmDecodeSi2quater(b); }
   else r.type='0x'+mt.toString(16);
   return r;
@@ -1200,6 +1207,7 @@ function gsmRecLine(r,debug){
     +gsmRachSuffix(r.rach)+(debug?gsmDebugSuffix(r):'');
   if(r.si==='SI1') return `${t} SI1 своя сота ARFCN: ${gsmArfcnList(r.cellArfcns,r.cellFmt)}`+gsmRachSuffix(r.rach);
   if(r.si==='SI2') return `${t} SI2 соседи ARFCN: ${gsmArfcnList(r.neighborArfcns,r.neighborFmt)}`+gsmRachSuffix(r.rach);
+  if(r.si==='SI2bis' || r.si==='SI2ter') return `${t} ${r.si} соседи ARFCN: ${gsmArfcnList(r.neighborArfcns,r.neighborFmt)}`+(r.extInd?' (+)':'')+gsmRachSuffix(r.rach);
   if(r.si==='SI13') return `${t} SI13 ${gsmSi13Line(r.si13)}`+(debug&&r.si13?gsmSi13DebugSuffix(r.si13):'');
   if(r.si==='SI2quater') return `${t} SI2quater ${gsmSi2qLine(r.si2q)}`;
   if(r.kind==='GSM-CBS') return `${t} CBS [${r.page}/${r.pages}] msgId 0x${r.msgId.toString(16)} (${r.charset}): ${r.text}`;
