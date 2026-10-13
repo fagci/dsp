@@ -17,7 +17,7 @@ const GSM_TS_PER_FRAME=8, GSM_FRAME_BITS=GSM_TS_PER_FRAME*GSM_TS_BITS+2;   // 12
 const GSM_SYNC_POS=39, GSM_SYNC_SEARCH_RANGE=30;
 const GSM_TRAIN_POS=GSM_TAIL+(GSM_DATA_BITS+1)+5, GSM_TRAIN_BEGINNING=5;   // 66
 const GSM_SAFETY_MARGIN=6, GSM_CHAN_IMP=5, GSM_MAX_SCH_ERR=10;
-const GSM_TRACK_MAX=8, GSM_AFC_MAX_STEP=5000;   // слежение за тактом: макс. сдвиг SCH за раз (символы); макс. шаг AFC в синхронном режиме (Гц)
+const GSM_TRACK_MAX=8, GSM_AFC_MAX_STEP=2000;   // слежение за тактом: макс. сдвиг SCH за раз (символы); макс. шаг AFC в синхронном режиме (Гц)
 const GSM_FCCH_HITS=GSM_USEFUL-4, GSM_FCCH_MISS=1, GSM_FCCH_MAX_OFF=100;
 
 const GSM_SYNC_BITS=[

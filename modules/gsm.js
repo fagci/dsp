@@ -1147,10 +1147,11 @@ class GsmReceiver{
     if(type==='fcch'){
       // измеряем остаточное смещение частоты и корректируем петлю
       const h=this.head; let phaseSum=0;
-      const first=Math.ceil((GSM_GUARD+2*GSM_TAIL)*GSM_OSR)+1, last=first+GSM_USEFUL*GSM_OSR-GSM_TAIL*GSM_OSR;
+      const m=6*GSM_OSR;                                  // запас по краям: при сдвиге слота окно не должно захватывать хвосты/шум
+      const first=Math.ceil((GSM_GUARD+2*GSM_TAIL)*GSM_OSR)+1+m, last=first+GSM_USEFUL*GSM_OSR-GSM_TAIL*GSM_OSR-2*m;
       for(let ii=first;ii<last;ii++) phaseSum+=this.phaseDiff(ii,ii-1)-(Math.PI/2)/GSM_OSR;
       const fo=(phaseSum/(last-first))*GSM_TARGET_SR/(2*Math.PI);
-      if(Math.abs(fo)<GSM_AFC_MAX_STEP){ this.freqOffset=fo; this.freqUpdate=true; }   // выброс = слот сдвинут, не уход частоты
+      if(Math.abs(fo)<GSM_AFC_MAX_STEP){ this.freqOffset=fo*0.5; this.freqUpdate=true; }   // выброс = слот сдвинут, не уход частоты
     }
     else if(type==='sch'){
       const chanRe=new Float32Array(GSM_CHAN_IMP*GSM_OSR), chanIm=new Float32Array(GSM_CHAN_IMP*GSM_OSR);
