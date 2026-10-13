@@ -41,6 +41,9 @@ typedef struct {
     demodfm_state_t fm;
     pulse_data_t ook, fsk;
     uint64_t pos;
+    float base_db, snr_db;             /* заданные границы уровня */
+    int hinted;                        /* нижняя граница поднята по прошлому пакету */
+    uint64_t hint_pos;
 } chan_t;
 static chan_t chans[MAX_CHANNELS];
 static chan_t *cur;
@@ -58,6 +61,7 @@ static char unk_buf[UNK_SIZE];
 static unsigned unk_len;
 static int want_unknown;
 static int total_events;
+static unsigned min_pulses;
 
 /* ---------- заглушки логирования и pulse_data (pulse_data.c тянет файлы и rfraw) ---------- */
 void print_log(log_level_t level, char const *src, char const *msg) { (void)level; (void)src; (void)msg; }
@@ -95,7 +99,7 @@ static int cur_fsk;
 static void output_fn(r_device *dev, data_t *data) {
     pulse_data_t *p = cur_pulses;
     data_t *extra = data_str(NULL, "mod", "", NULL, cur_fsk ? "FSK" : "ASK");
-    extra = data_dbl(extra, "freq", "", NULL, (cur_fsk ? p->freq1_hz : p->centerfreq_hz) / 1e6);
+    extra = data_dbl(extra, "freq", "", NULL, p->freq1_hz / 1e6);
     if (cur_fsk) extra = data_dbl(extra, "freq2", "", NULL, p->freq2_hz / 1e6);
     extra = data_dbl(extra, "rssi", "", NULL, p->rssi_db);
     extra = data_dbl(extra, "snr", "", NULL, p->snr_db);
@@ -149,15 +153,29 @@ static void emit_unknown(chan_t *c, pulse_data_t *p, int fsk) {
     if (n < (int)sizeof line) out_append(unk_buf, &unk_len, UNK_SIZE, line, (unsigned)n);
 }
 
+/* Повторы пакета приходят подряд: порог следующего берём по уровню предыдущего (нижняя граница импульса = его уровень − 8 дБ),
+   иначе первый импульс при низком пороге «прилипает» к шуму перед ним. Через 3 с без пакетов граница возвращается к заданной. */
+static void hint_level(chan_t *c, pulse_data_t *p) {
+    float hi = p->ook_high_estimate > 0 ? (float)p->ook_high_estimate : 0;
+    if (hi < 1) return;
+    float db = c->mag ? 20.0f * log10f(hi) - 84.2884f : 10.0f * log10f(hi) - 42.1442f;
+    float lv = db - 8.0f;
+    if (lv < c->base_db) lv = c->base_db;
+    pulse_detect_set_levels(c->pd, c->mag, 0.0f, lv, c->snr_db, 0);
+    c->hinted = 1; c->hint_pos = c->pos;
+}
 static void handle_package(chan_t *c, int type) {
+    if ((type == PULSE_DATA_OOK ? c->ook.num_pulses : c->fsk.num_pulses) < min_pulses) return;
     if (type == PULSE_DATA_OOK) {
         calc_levels(c, &c->ook);
+        hint_level(c, &c->ook);
         cur_pulses = &c->ook; cur_fsk = 0;
         int ev = run_demods(&c->ook, 0);
         total_events += ev;
         if (!ev) emit_unknown(c, &c->ook, 0);
     } else if (type == PULSE_DATA_FSK) {
         calc_levels(c, &c->fsk);
+        hint_level(c, &c->fsk);
         cur_pulses = &c->fsk; cur_fsk = 1;
         int ev = run_demods(&c->fsk, 1);
         total_events += ev;
@@ -174,6 +192,7 @@ static void run_block(chan_t *c, unsigned n) {
         if (type) handle_package(c, type);
     }
     c->pos += n;
+    if (c->hinted && c->pos - c->hint_pos > 3ull * c->sr) { pulse_detect_set_levels(c->pd, c->mag, 0.0f, c->base_db, c->snr_db, 0); c->hinted = 0; }
 }
 
 /* ---------- экспорт ---------- */
@@ -222,7 +241,7 @@ EXPORT("rt_chan_new") int rt_chan_new(uint32_t sr, double freq, int mag) {
         c->used = 1; c->sr = sr; c->freq = freq; c->mag = mag;
         c->fpdm = freq > 800e6 ? FSK_PULSE_DETECT_NEW : FSK_PULSE_DETECT_OLD;
         if (!c->pd) { rt_persist(1); c->pd = pulse_detect_create(); rt_persist(0); }
-        pulse_detect_set_levels(c->pd, mag, 0.0f, -12.1442f, 9.0f, 0);
+        c->base_db = -12.1442f; c->snr_db = 9.0f; pulse_detect_set_levels(c->pd, mag, 0.0f, c->base_db, c->snr_db, 0);
         pulse_detect_reset(c->pd);
         baseband_low_pass_filter_reset(&c->lp);
         baseband_demod_FM_reset(&c->fm);
@@ -232,6 +251,8 @@ EXPORT("rt_chan_new") int rt_chan_new(uint32_t sr, double freq, int mag) {
 }
 EXPORT("rt_chan_free") void rt_chan_free(int i) { if (i >= 0 && i < MAX_CHANNELS) chans[i].used = 0; }
 EXPORT("rt_chan_freq") void rt_chan_freq(int i, double f) { chans[i].freq = f; chans[i].fpdm = f > 800e6 ? FSK_PULSE_DETECT_NEW : FSK_PULSE_DETECT_OLD; }
+EXPORT("rt_chan_levels") void rt_chan_levels(int i, float min_level, float min_snr) { chans[i].base_db = min_level; chans[i].snr_db = min_snr; chans[i].hinted = 0; pulse_detect_set_levels(chans[i].pd, chans[i].mag, 0.0f, min_level, min_snr, 0); }
+EXPORT("rt_min_pulses") void rt_min_pulses(unsigned n) { min_pulses = n; }
 EXPORT("rt_chan_reset") void rt_chan_reset(int i) {
     chan_t *c = &chans[i];
     pulse_detect_reset(c->pd); baseband_low_pass_filter_reset(&c->lp); baseband_demod_FM_reset(&c->fm); c->pos = 0;

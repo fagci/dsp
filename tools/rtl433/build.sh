@@ -6,7 +6,7 @@ set -e
 SRC=${1:?path to an rtl_433 checkout}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=$(mktemp -d)
-CFLAGS="--target=wasm32 -O2 -ffreestanding -fsigned-char -w -I$HERE/stub -I$SRC/include -DNDEBUG"
+CFLAGS="--target=wasm32 -O2 -ffreestanding -fsigned-char -w -I$HERE/stub -I$SRC/include -DNDEBUG -include $HERE/stub/defs.h"
 CORE="bitbuffer bit_util pulse_slicer pulse_detect pulse_detect_fsk decoder_util baseband data abuf compat_time"
 for f in $CORE; do echo "$SRC/src/$f.c"; done > "$OUT/list"
 ls "$SRC"/src/devices/*.c | grep -v "/flex.c$" >> "$OUT/list"

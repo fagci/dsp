@@ -557,7 +557,7 @@ IQK.iqAdd={
 // каналов, число занятых слотов. Коэффициент передачи на центре канала — 1.
 function iqChanProto(N,P,ov){
   const L=N*P, h=new Float32Array(L), mid=(L-1)/2;
-  const fcN=(ov===2 ? 0.5+2.75/P : 0.5)/N;          // срез: ov=2 — полоса до края канала ровная
+  const fcN=(ov===4 ? 2.0 : ov===2 ? 0.5+2.75/P : 0.5)/N;   // срез: ov=2 — полоса до края канала ровная; ov=4 — шире двух шагов (выход 4·sr/N)
   let sum=0;
   for(let i=0;i<L;i++){
     const x=i-mid, sinc=x===0 ? 2*fcN : Math.sin(2*Math.PI*fcN*x)/(Math.PI*x);

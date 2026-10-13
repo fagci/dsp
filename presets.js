@@ -262,6 +262,8 @@ const PRESET_CATS={
   'AIS: Vessels on the Map (USB SDR, 162 MHz)':'Aircraft, Satellites & Telemetry',
   'ISM 433: Sensors and Remotes (Generator)':'Aircraft, Satellites & Telemetry',
   'ISM 433: Sensors and Remotes (USB SDR)':'Aircraft, Satellites & Telemetry',
+  'ISM 433: Wideband Scanner, all rtl_433 decoders (Generator)':'Aircraft, Satellites & Telemetry',
+  'ISM 433: Wideband Scanner, all rtl_433 decoders (USB SDR)':'Aircraft, Satellites & Telemetry',
   'LoRa: Chirp Link (Loopback)':'Modems & Data Links',
   'LoRa: Receive (USB SDR, 868 MHz)':'Modems & Data Links',
   'LoRa: Send a Message (HackRF TX)':'Modems & Data Links',
@@ -2032,6 +2034,45 @@ log.size.w=520; applySize(log);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('ISM 433: Wideband Scanner, all rtl_433 decoders (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The whole 2.4 MHz of the receiver at once, without a radio. ISM Scanner cuts the band into overlapping channels (a polyphase bank, 32 × 75 kHz),\n'+
+  'runs a rtl_433 pulse detector on every channel and tries about 380 rtl_433 decoders on each packet (the real rtl_433 compiled to WebAssembly).\n'+
+  'The generator sends Nexus-type sensor telegrams, an EV1527 remote and an unknown Manchester packet (enable log unidentified packets to see it).\n'+
+  'Rec: Unique by Key keeps one line per device.'});
+nt.size.w=760; nt.size.h=120; applySize(nt);
+const gn=addNode('iqGen',40,200,{sr:'2400000',fc:433920000,mode:'ISM433',off:450000,lvl:-25,noise:-50});
+const de=addNode('ismScan',340,200,{raw:true});
+de.size.w=560; de.size.h=320; applySize(de);
+const log=addNode('recLog',340,580,{});
+log.size.w=560; applySize(log);
+const uniq=addNode('recUniq',940,200,{key:'id'});
+uniq.size.w=420; uniq.size.h=300; applySize(uniq);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec'); addEdge(de.id,'rec',uniq.id,'rec');
+markWiresDirty();
+});
+preset('ISM 433: Wideband Scanner, all rtl_433 decoders (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'RTL-SDR at 2.4 MS/s covers the whole 433.05–434.79 MHz band: weather stations, thermometers, TPMS, door and motion sensors, doorbells, remotes, energy meters — whatever rtl_433 knows.\n'+
+  'Tune 433.92 MHz (or 868.3 / 915 MHz with the matching antenna). IQ DC Block removes the spike of the dongle in the middle; the centre channel is also high-passed.\n'+
+  'The spectrum shows the channel power (busy channels light up). Decoded devices come out as records with the rtl_433 field names (temperature_C, humidity, battery_ok …);\n'+
+  'identical packets within 1 s are dropped. Receive only; do not decode what is not meant for you.'});
+nt.size.w=760; nt.size.h=130; applySize(nt);
+const rx=addNode('rtlsdr',40,220,{sr:'2400000',freq:433920000,demod:'IQ'});
+const dc=addNode('iqDc',340,220,{});
+const de=addNode('ismScan',340,340,{});
+de.size.w=560; de.size.h=320; applySize(de);
+const sa=addNode('sa',960,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const log=addNode('recLog',340,720,{});
+log.size.w=560; applySize(log);
+const uniq=addNode('recUniq',960,360,{key:'id'});
+uniq.size.w=420; uniq.size.h=300; applySize(uniq);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',dc.id,'in'); addEdge(dc.id,'out',de.id,'in');
+addEdge(de.id,'rec',log.id,'rec'); addEdge(de.id,'rec',uniq.id,'rec');
 markWiresDirty();
 });
 preset('LoRa: Chirp Link (Loopback)', function(){

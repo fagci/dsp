@@ -33,6 +33,9 @@ class Rt433{
   chan(sr,freq,mag){ return this.x.rt_chan_new(sr,freq,mag?1:0); }
   free(ch){ this.x.rt_chan_free(ch); }
   reset(ch){ this.x.rt_chan_reset(ch); }
+  // min_level — нижняя граница уровня импульса, дБ от полной шкалы (по умолчанию −12 дБ); min_snr — превышение над шумом, дБ (9)
+  levels(ch,minDb,snrDb){ this.x.rt_chan_levels(ch,minDb,snrDb); }
+  minPulses(n){ this.x.rt_min_pulses(n); }
   setFreq(ch,f){ this.x.rt_chan_freq(ch,f); }
   // float IQ (полная шкала ±1) → cs16, пачками по block отсчётов
   feedF(ch,re,im,n,scale){
