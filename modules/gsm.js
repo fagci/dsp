@@ -1389,12 +1389,40 @@ function gsmHerm(y0,y1,y2,y3,t){
   return ((c3*t+c2)*t+c1)*t+y1;
 }
 // ресемплинг любого sr на OSR·270.833 кГц (кубический Эрмит); st — {lr,li,frac}, своё на каждый вход ('in'/'ul')
+// ФНЧ перед децимацией: без него соседние каналы (±400 кГц) и алиасинг ломают поиск FCCH (синхр. — минуты или срыв)
+const GSM_LP_TAPS=41, GSM_LP_CUT=220e3;
+let GSM_LP_CACHE=null;
+function gsmLpTaps(sr){
+  if(GSM_LP_CACHE && GSM_LP_CACHE.sr===sr) return GSM_LP_CACHE.h;
+  const M=GSM_LP_TAPS, h=new Float32Array((M+1)>>1), mid=(M-1)/2; let sum=0;
+  for(let i=0;i<M;i++){ const k=i-mid, x=2*Math.PI*GSM_LP_CUT/sr*k;
+    const v=(k===0?2*GSM_LP_CUT/sr:Math.sin(x)/(Math.PI*k))*(0.42-0.5*Math.cos(2*Math.PI*i/(M-1))+0.08*Math.cos(4*Math.PI*i/(M-1)));
+    if(i<h.length) h[i]=v; sum+=v; }
+  for(let i=0;i<h.length;i++) h[i]/=sum;
+  GSM_LP_CACHE={sr,h}; return h;
+}
+function gsmLowpass(st,sr,chunks){
+  const h=gsmLpTaps(sr), M=GSM_LP_TAPS, H=M-1;
+  let n=0; for(const c of chunks) n+=c.re.length;
+  const hr=st.hr||new Float32Array(H), hi=st.hi||new Float32Array(H);
+  const ar=new Float32Array(H+n), ai=new Float32Array(H+n); ar.set(hr); ai.set(hi); let w=H;
+  for(const c of chunks){ ar.set(c.re,w); if(c.im) ai.set(c.im,w); w+=c.re.length; }
+  const or=new Float32Array(n), oi=new Float32Array(n), half=(M-1)>>1;
+  for(let j=0;j<n;j++){
+    let sr_=h[half]*ar[j+half], si=h[half]*ai[j+half];
+    for(let t=0;t<half;t++){ const c=h[t]; sr_+=c*(ar[j+t]+ar[j+H-t]); si+=c*(ai[j+t]+ai[j+H-t]); }
+    or[j]=sr_; oi[j]=si;
+  }
+  st.hr=ar.slice(n); st.hi=ai.slice(n);
+  return {re:or,im:oi};
+}
 function gsmResampleStream(st,s){
   const ratio=s.sr/GSM_TARGET_SR;
-  let total=st.lr.length; for(const c of s.chunks) total+=c.re.length;
+  const chunks=ratio>1.2 ? [gsmLowpass(st,s.sr,s.chunks)] : s.chunks;
+  let total=st.lr.length; for(const c of chunks) total+=c.re.length;
   const xr=new Float32Array(total), xi=new Float32Array(total);
   xr.set(st.lr); xi.set(st.li); let w=st.lr.length;
-  for(const c of s.chunks){ xr.set(c.re,w); if(c.im) xi.set(c.im,w); w+=c.re.length; }
+  for(const c of chunks){ xr.set(c.re,w); if(c.im) xi.set(c.im,w); w+=c.re.length; }
   const outR=new Float32Array(Math.ceil(total/ratio)+4), outI=new Float32Array(outR.length);
   let outN=0, pos=st.frac;
   while(Math.floor(pos)+2<=total-1){
