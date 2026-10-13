@@ -36,7 +36,7 @@
  *            16–19 (объединённый с SDCCH/4) или все девять (по CCCH-CONF из SI3). Идентификаторы абонентов в paging — хэш-маркер
  *            или ничего (параметр ids), подробности — у функции gsmParseCcch
  *
- * Не разобрано: SI2bis/SI2ter — только типизируются. CBCH на другой несущей или
+ * Не разобрано: CBCH на другой несущей или
  * hopping — только детектируется (TN/ARFCN/частота), сам канал не декодируется без
  * отдельного приёма на той частоте.
  * Uplink не принимается — только downlink (FCCH/SCH есть только там).
@@ -447,6 +447,14 @@ function gsmArfcnFreq(n){
   if(n>=512 && n<=885) return 1805.2+0.2*(n-512);
   return null;
 }
+// частота downlink → частота uplink той же пары, МГц (дуплексный разнос TS 05.05): 45 МГц GSM900, 95 МГц DCS1800 —
+// подсказка, на что настроить второй приёмник ('ul') на тестовом стенде; null — частота вне известных диапазонов
+function gsmUplinkFreq(dlMHz){
+  if(dlMHz==null) return null;
+  if(dlMHz>=935 && dlMHz<=960) return dlMHz-45;
+  if(dlMHz>=1805.2 && dlMHz<=1879.8) return dlMHz-95;
+  return null;
+}
 
 /* ---------- CBCH/SMSCB (TS 04.12 CBCH block, TS 03.41 CBS message) ----------
  * Физика блока — тот же самый xCCH (4 нормальных бёрста → gsmBcchDecode), что и у BCCH/SDCCH, только
@@ -554,9 +562,21 @@ function gsmParseSI(b){
     r.rach=gsmDecodeRach(b,19);
   }
   else if(mt===0x00){ r.type='SI13'; r.si13=gsmDecodeSi13(b); }
-  else if(mt===0x02) r.type='SI2bis';
-  else if(mt===0x03) r.type='SI2ter';
+  else if(mt===0x02){                                  // SI2bis: продолжение списка соседей (Extended BCCH Freq List) + RACH
+    r.type='SI2bis'; const fl=gsmDecodeFreqList(b,3,16);
+    r.neighborArfcns=fl.arfcns; r.neighborFmt=fl.format; r.extInd=!!(b[3]&0x20);
+    r.rach=gsmDecodeRach(b,19);
+  }
+  else if(mt===0x03){                                  // SI2ter: соседи в других диапазонах (NCD2), без RACH
+    r.type='SI2ter'; const fl=gsmDecodeFreqList(b,3,16);
+    r.neighborArfcns=fl.arfcns; r.neighborFmt=fl.format; r.extInd=!!(b[3]&0x20);
+  }
   else if(mt===0x07){ r.type='SI2quater'; r.si2q=gsmDecodeSi2quater(b); }
+  else if(mt===0x1d){                                   // SI5: тот же список соседей, что SI2, но по SACCH во время разговора
+    r.type='SI5'; const fl=gsmDecodeFreqList(b,3,16);
+    r.neighborArfcns=fl.arfcns; r.neighborFmt=fl.format;
+  }
+  else if(mt===0x1e) r.type='SI6';                       // SI6: LAI+Cell Options(SACCH)+NCC Permitted по SACCH — только типизируется
   else r.type='0x'+mt.toString(16);
   return r;
 }
@@ -629,6 +649,47 @@ function gsmMaskPaging(b){
   else if(mt===0x24) zero(4,16);
   return o;
 }
+/* ---------- SDCCH/SACCH (TS 44.018): слепой разбор выделенного канала ----------
+ * После Immediate Assignment (на той же несущей, без hopping) следим за его TN и пробуем декодировать xCCH-блок
+ * (4 бёрста → gsmBcchDecode) на КАЖДОМ новом бёрсте этого TN, без таблицы позиций 51/102-мультикадра — границу блока
+ * находит сама CRC-40 (FIRE): неверное окно (чужая под-подканал/SACCH-фаза или смесь двух сообщений) её не проходит,
+ * так что ложные срабатывания практически исключены (2^-40). SACCH несёт 2-байтный L1-заголовок (TA, уровень Tx)
+ * перед L2 — определяем это по тому, какое из двух смещений даёт осмысленный PD/MT. Шифрование (A5) после Ciphering
+ * Mode Command делает CRC-40 заведомо неверной — зашифрованные блоки этим декодером не читаются, только отбраковываются. */
+// GSM 04.08/24.008 Mobility Management: коды сообщений, которыми абонент представляется сети до/без шифрования
+// (не проверено по живому перехвату — только самосогласованным тестом генератор↔приёмник, см. tools/test-gsm.mjs)
+const GSM_MM_TYPES={0x01:'IMSI Detach Indication', 0x02:'Location Updating Accept', 0x04:'Location Updating Reject', 0x08:'Location Updating Request',
+  0x11:'Authentication Reject', 0x12:'Authentication Request', 0x14:'Authentication Response',
+  0x18:'Identity Request', 0x19:'Identity Response', 0x1a:'TMSI Reallocation Command', 0x1b:'TMSI Reallocation Complete',
+  0x20:'CM Service Request', 0x21:'CM Service Accept', 0x22:'CM Service Reject', 0x24:'CM Service Abort', 0x25:'CM Re-establishment Request'};
+// общий разбор L2-сообщения на выделенном канале; off — где начинается L2 внутри 23-байтного блока
+// (0 — SDCCH, 2 — SACCH, после L1-заголовка): RR переиспользует уже проверенные gsmParseSI/gsmParseCcch, MM — своя таблица
+function gsmParseL3(b, off){
+  if(off+2>=b.length) return null;
+  if((b[off]>>2)===0) return {type:'idle', pd:null, mt:0};
+  const pd=b[off+1]&0x0f, mt=b[off+2];
+  if(pd===0x06){
+    const nb=b.subarray(off);
+    const si=gsmParseSI(nb); if(si && !si.type.startsWith('0x')) return {pd:'RR', type:si.type, mt, ...si};
+    const cc=gsmParseCcch(nb); if(cc && cc.msg!=='other' && cc.msg!=='idle') return {pd:'RR', type:cc.msg, mt, ...cc};
+    return null;
+  }
+  if(pd===0x05){
+    const name=GSM_MM_TYPES[mt]; if(!name) return null;
+    const r={pd:'MM', type:name, mt};
+    if(mt===0x19){ const l=b[off+3]||0; r.midOff=off+3; r.midLen=1+l; r.mobileId=gsmMobileId(b.subarray(off+4,off+4+l)); }           // Identity Response: Mobile Identity (LV)
+    else if(mt===0x08){                                   // Location Updating Request: LU-type/CKSN(1) + LAI(5) + Classmark1(1) + Mobile Identity (LV)
+      const m=gsmMccMnc(b[off+4],b[off+5],b[off+6]); r.mcc=m.mcc; r.mnc=m.mnc; r.lac=(b[off+7]<<8)|b[off+8];
+      const lo=off+10, l=b[lo]||0; r.midOff=lo; r.midLen=1+l; r.mobileId=gsmMobileId(b.subarray(lo+1,lo+1+l));
+    }
+    else if(mt===0x20){                                    // CM Service Request: тип/CKSN(1) + Classmark2 (LV) + Mobile Identity (LV)
+      const cl=b[off+4]||0, lo=off+5+cl, l=b[lo]||0; r.midOff=lo; r.midLen=1+l; r.mobileId=gsmMobileId(b.subarray(lo+1,lo+1+l));
+    }
+    return r;
+  }
+  return null;
+}
+function gsmMaskRange(b,off,len){ const o=Uint8Array.from(b); for(let i=off;i<off+len && i<o.length;i++) o[i]=0; return o; }
 function gsmIdToken(salt,id){                                  // FNV-1a 32 по соли сеанса и идентификатору
   let h=0x811c9dc5; const s=salt+'|'+id.kind+id.value;
   for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,0x01000193)>>>0; }
@@ -702,22 +763,53 @@ class GsmReceiver{
     this.ids='hash';                                     // идентификаторы абонентов в paging: hash | none | show
     this.salt=Math.random().toString(36).slice(2);       // соль хэша — на один приём
     this.ccch={blocks:0, ok:0, idle:0, paging:0, ids:0, ia:0, rej:0, other:0};
+    this.dch=[];                                         // отслеживаемые выделенные каналы {tn, tsc, until} — из Immediate Assignment на этой же несущей
+    this.dchBuf={}; this.ulDchBuf={};                     // this.dchBuf[tn] / ulDchBuf[tn] — накопленные бёрсты (до 4) слепого разбора SDCCH/SACCH
+    // аплинк (для своего тестового стенда): отдельный буфер IQ той же несущей сетки, физически на 3 таймслота позже
+    // downlink-бёрста того же (FN,TN) — см. anchorUl/workUplink
+    this.ul={re:new Float32Array(0), im:new Float32Array(0), len:0, head:0};
+    this.ulCounter=0; this.ulAnchor=0; this.ulReady=false;
+    this.ulSlot={t1:0,t2:0,t3:0,tn:0,offFrac:0};
   }
   avail(){ return this.len-this.head; }
-  push(re,im){
-    const keep=this.len-this.head, n=re.length;
-    if(this.re.length<keep+n){
-      const cap=Math.max(keep+n, this.re.length*2, 1<<16);
+  pushBuf(buf,re,im){
+    const keep=buf.len-buf.head, n=re.length;
+    if(buf.re.length<keep+n){
+      const cap=Math.max(keep+n, buf.re.length*2, 1<<16);
       const nr=new Float32Array(cap), ni=new Float32Array(cap);
-      nr.set(this.re.subarray(this.head,this.len)); ni.set(this.im.subarray(this.head,this.len));
-      this.re=nr; this.im=ni;
-    } else if(this.head>0){
-      this.re.copyWithin(0,this.head,this.len); this.im.copyWithin(0,this.head,this.len);
+      nr.set(buf.re.subarray(buf.head,buf.len)); ni.set(buf.im.subarray(buf.head,buf.len));
+      buf.re=nr; buf.im=ni;
+    } else if(buf.head>0){
+      buf.re.copyWithin(0,buf.head,buf.len); buf.im.copyWithin(0,buf.head,buf.len);
     }
-    this.len=keep; this.head=0;
-    this.re.set(re,this.len); this.im.set(im,this.len); this.len+=n;
+    buf.len=keep; buf.head=0;
+    buf.re.set(re,buf.len); buf.im.set(im,buf.len); buf.len+=n;
   }
+  push(re,im){ this.pushBuf(this,re,im); }
   consume(k){ this.head+=k; this.dCounter+=k; }
+  // аплинк: буфер своей несущей (та же сетка OSR·270.833 кГц), копится, пока не найдена привязка по SCH
+  ulPush(re,im){
+    this.pushBuf(this.ul,re,im);
+    if(!this.ulReady){ const cap=8*GSM_TARGET_SR; if(this.ul.len-this.ul.head>cap) this.ul.head=this.ul.len-cap; }
+  }
+  ulConsume(k){ this.ul.head+=k; this.ulCounter+=k; }
+  // временно подставляет аплинк-буфер вместо своего под те же re/im/head/len — переиспользует getNormImp/
+  // detectBurst/correlate без их дублирования для второго потока
+  withUl(fn){
+    const re=this.re, im=this.im, head=this.head, len=this.len;
+    this.re=this.ul.re; this.im=this.ul.im; this.head=this.ul.head; this.len=this.ul.len;
+    try{ fn(); } finally {
+      this.ul.re=this.re; this.ul.im=this.im; this.ul.head=this.head; this.ul.len=this.len;
+      this.re=re; this.im=im; this.head=head; this.len=len;
+    }
+  }
+  // привязка: правая граница SCH-бёрста (dCounter+bs) → то же (FN,TN) на аплинке, через 3 таймслота (TS 05.10) —
+  // переустанавливается на каждом удачном SCH, так что слежение за тактом (adj в processTimeslot) не нужно дублировать
+  anchorUl(bs,tn){
+    this.ulAnchor=this.dCounter+bs+3*GSM_TS_BITS*GSM_OSR;
+    this.ulSlot={t1:this.t1,t2:this.t2,t3:this.t3,tn,offFrac:0};
+    this.ulReady=true;
+  }
 
   phaseDiff(i,j){                                      // arg( s[i] · conj(s[j]) )
     const h=this.head, ar=this.re[h+i], ai=this.im[h+i], br=this.re[h+j], bi=this.im[h+j];
@@ -859,14 +951,17 @@ class GsmReceiver{
     if(GSM_SCH_FRAMES.has(t3)) return 'sch';
     return 'normal';
   }
-  advanceBurst(){
-    this.tn++;
-    if(this.tn===GSM_TS_PER_FRAME){ this.tn=0;
-      if(this.t2===25 && this.t3===50) this.t1=(this.t1+1)%(1<<11);
-      this.t2=(this.t2+1)%26; this.t3=(this.t3+1)%51; }
-    this.offFrac+=GSM_GUARD_FRAC*GSM_OSR;
-    const oi=Math.floor(this.offFrac); this.offFrac-=oi; return oi;
+  // шаг на один таймслот вперёд по 51-мультикадру; st — {t1,t2,t3,tn,offFrac}, по умолчанию свой (downlink);
+  // аплинк шагает по собственному st=this.ulSlot той же функцией — сетка одна и та же, просто с других отсчётов
+  stepSlot(st){
+    st.tn++;
+    if(st.tn===GSM_TS_PER_FRAME){ st.tn=0;
+      if(st.t2===25 && st.t3===50) st.t1=(st.t1+1)%(1<<11);
+      st.t2=(st.t2+1)%26; st.t3=(st.t3+1)%51; }
+    st.offFrac+=GSM_GUARD_FRAC*GSM_OSR;
+    const oi=Math.floor(st.offFrac); st.offFrac-=oi; return oi;
   }
+  advanceBurst(){ return this.stepSlot(this); }
 
   // один такт: сколько успеваем — разбираем; возвращает выданные бёрсты и записи
   work(){
@@ -888,6 +983,7 @@ class GsmReceiver{
         const r=gsmDecodeSch(eb);
         if(!r){ this.state='fcch'; continue; }
         this.t1=r.t1; this.t2=r.t2; this.t3=r.t3; this.ncc=r.ncc; this.bcc=r.bcc; this.tn=0; this.offFrac=0;
+        this.anchorUl(bs,0);
         this.advanceBurst();                                     // set(...)++ как в оригинале
         this.consume(bs+GSM_BURST_SIZE*GSM_OSR+4*GSM_OSR);
         this.state='sync'; this.failedSch=0; this.schRef=null;
@@ -899,6 +995,7 @@ class GsmReceiver{
         this.processTimeslot();
       }
     }
+    this.workUplink();
     return {bursts:this.bursts, rec:this.rec};
   }
 
@@ -995,11 +1092,13 @@ class GsmReceiver{
     }
     if(m.msg==='Immediate Assignment'){
       C.ia++;
+      if(!m.hopping && m.freq!=null && Math.abs(m.freq-this.fc/1e6)<0.15) this.trackDch(m.tn,m.tsc);   // та же несущая → отслеживаем SDCCH/SACCH на её TN
       this.rec.push({...base, kind:'GSM-AGCH', msg:m.msg, chan:m.chan, ctn:m.tn, tsc:m.tsc, hopping:m.hopping, arfcn:m.arfcn, maio:m.maio, hsn:m.hsn, ra:m.ra, reqFn:m.fn, ta:m.ta, hex:hx(l2),
         text:'Immediate Assignment · '+m.chan+' TN'+m.tn+' TSC'+m.tsc+(m.hopping ? ' hopping MAIO '+m.maio+' HSN '+m.hsn : ' ARFCN '+m.arfcn)+' · RA 0x'+m.ra.toString(16)+' · TA '+m.ta}); return;
     }
     if(m.msg==='Immediate Assignment Extended'){
       C.ia++;
+      for(const x of [m.a,m.b]) if(!x.hopping && x.freq!=null && Math.abs(x.freq-this.fc/1e6)<0.15) this.trackDch(x.tn,x.tsc);
       this.rec.push({...base, kind:'GSM-AGCH', msg:m.msg, hex:hx(l2), text:'Immediate Assignment Extended · '+[m.a,m.b].map(x=>x.chan+' TN'+x.tn+(x.hopping ? ' hopping' : ' ARFCN '+x.arfcn)).join(' / ')}); return;
     }
     if(m.msg==='Immediate Assignment Reject'){
@@ -1061,16 +1160,20 @@ class GsmReceiver{
         const r=gsmDecodeSch(eb);
         if(r){ this.t1=r.t1; this.t2=r.t2; this.t3=r.t3; this.ncc=r.ncc; this.bcc=r.bcc; this.failedSch=0;
           this.emitSch(bs); this.emitBurst('sch',eb);
-          // слежение за тактом: позиция SCH относительно первой принятой — уход кварца SDR, подтягиваем сетку слотов
+          // слежение за тактом: позиция SCH относительно первой принятой — уход кварца SDR, подтягиваем сетку слотов.
+          // Привязка аплинка (anchorUl) делается только один раз, при первом захвате: это физическая позиция,
+          // пересчитывать её на каждый SCH не нужно и вредно (резкий скачок анкера выбрасывает уже накопленный
+          // в ul-буфере кусок) — вместо этого применяем ТУ ЖЕ самую поправку adj к шагу аплинка (clock общий)
           if(this.schRef==null) this.schRef=bs;
-          else { const err=bs-this.schRef; if(Math.abs(err)<GSM_TRACK_MAX*GSM_OSR) adj=Math.trunc(err/2); } }
+          else { const err=bs-this.schRef; if(Math.abs(err)<GSM_TRACK_MAX*GSM_OSR){ adj=Math.trunc(err/2); this.pendingUlAdj=(this.pendingUlAdj||0)+adj; } } }
         else if(++this.failedSch>=GSM_MAX_SCH_ERR){ this.state='fcch'; }
       }
     }
     else if(type==='normal'){
       const chanRe=new Float32Array(GSM_CHAN_IMP*GSM_OSR), chanIm=new Float32Array(GSM_CHAN_IMP*GSM_OSR);
-      // TSC канала по умолчанию = BCC (общее правило для соты), но у CBCH он свой, из Channel Description
-      const tsc=(this.tn===this.cbchTn && this.cbchTsc!=null) ? this.cbchTsc : this.bcc;
+      // TSC канала по умолчанию = BCC (общее правило для соты), но у CBCH и отслеживаемых выделенных каналов — свой
+      const dchc=this.dch.find(c=>c.tn===this.tn && c.until>Date.now());
+      const tsc=(this.tn===this.cbchTn && this.cbchTsc!=null) ? this.cbchTsc : (dchc ? dchc.tsc : this.bcc);
       const bs=this.getNormImp(tsc,chanRe,chanIm);
       if(bs>=0 && this.head+bs+GSM_BURST_SIZE*GSM_OSR<this.len){
         const eb=new Uint8Array(GSM_BURST_SIZE); this.detectBurst(chanRe,chanIm,bs,eb);
@@ -1081,6 +1184,7 @@ class GsmReceiver{
           const fn=gsmFrameNr(this.t1,this.t2,this.t3), lfn=fn%102;
           for(const start of GSM_CBCH_FN) if(lfn>=start && lfn<start+4) this.accumCbch(eb, lfn-start);
         }
+        if(dchc) this.accumDch(this.tn, eb, false);                      // выделенный канал → слепой разбор SDCCH/SACCH
       }
     }
     const off=this.advanceBurst();
@@ -1094,46 +1198,98 @@ class GsmReceiver{
     for(let i=0;i<GSM_BURST_SIZE;i++) bits[i]=eb[i]?1:-1;
     this.bursts.push({type, fn, tn:this.tn, bits, dbm:this.dbm});
   }
+
+  // регистрирует/продлевает слежение за выделенным каналом на tn (своя несущая, не hopping) — пока не истечёт
+  // (без Channel Release мы не знаем точный момент освобождения, так что держим недолго и перезаписываем новым)
+  trackDch(tn,tsc){
+    const until=Date.now()+60000, ex=this.dch.find(c=>c.tn===tn);
+    if(ex){ ex.tsc=tsc; ex.until=until; } else { this.dch.push({tn,tsc,until}); if(this.dch.length>8) this.dch.shift(); }
+  }
+  // накопление последних 4 бёрстов TN в скользящем окне — см. комментарий у gsmParseL3 про безопасность без таблицы
+  accumDch(tn,eb,ul){
+    const buf=(ul?this.ulDchBuf:this.dchBuf)[tn]||((ul?this.ulDchBuf:this.dchBuf)[tn]=[]);
+    buf.push(this.extractData(eb)); if(buf.length>4) buf.shift();
+    if(buf.length<4) return;
+    const l2=gsmBcchDecode(buf); if(!l2) return;
+    buf.length=0;
+    this.emitDch(tn,l2,ul);
+  }
+  emitDch(tn,l2,ul){
+    const s=ul?this.ulSlot:this, fn=gsmFrameNr(s.t1,s.t2,s.t3);
+    const hx=a=>Array.from(a,x=>x.toString(16).padStart(2,'0')).join('');
+    let off=0, m=gsmParseL3(l2,0);
+    if(!m){ const m2=gsmParseL3(l2,2); if(m2){ off=2; m=m2; } }
+    if(!m || m.type==='idle') return;
+    const base={t:Date.now(), fn, tn, dir:ul?'UL':'DL', freq:this.fc, dbm:this.dbm, bsic:(this.ncc<<3)|this.bcc, hexSchema:'gsm-l2'};
+    let hex=l2;
+    if(m.mobileId && this.ids!=='show') hex=gsmMaskRange(l2,m.midOff,m.midLen);
+    const rec={...base, kind:off===2 ? 'GSM-SACCH' : 'GSM-SDCCH', pd:m.pd, msg:m.type, mt:m.mt, hex:hx(hex)};
+    if(off===2){ rec.ta=l2[0]; rec.txPower=l2[1]; }
+    if(m.mcc!=null){ rec.mcc=m.mcc; rec.mnc=m.mnc; rec.lac=m.lac; }
+    if(m.mobileId && m.mobileId.kind!=='none'){
+      rec.idKind=m.mobileId.kind;
+      if(this.ids==='show') rec.id=m.mobileId.kind+' '+m.mobileId.value;
+      else if(this.ids==='hash') rec.id=gsmIdToken(this.salt,m.mobileId);
+    }
+    rec.text=(ul?'↑ ':'↓ ')+m.pd+' '+m.type+(rec.id ? ' · '+rec.id : rec.idKind ? ' · '+rec.idKind : '');
+    this.rec.push(rec);
+  }
+
+  // аплинк (для своего тестового стенда): шагает по той же TDMA-сетке, что downlink, от точки привязки anchorUl;
+  // декодирует бёрст только на TN отслеживаемых каналов — остальные просто пропускаются, чтобы не терять привязку
+  workUplink(){
+    if(!this.ulReady) return;
+    let guard=0;
+    while(guard++<400){
+      if(this.ulCounter<this.ulAnchor){
+        const gap=this.ulAnchor-this.ulCounter, avail=this.ul.len-this.ul.head;
+        if(avail<gap){ if(avail) this.ulConsume(avail); break; }
+        this.ulConsume(gap); continue;
+      }
+      const need=(GSM_TS_BITS+2*GSM_GUARD)*GSM_OSR+16;
+      if(this.ul.len-this.ul.head<need) break;
+      const tn=this.ulSlot.tn, dchc=this.dch.find(c=>c.tn===tn && c.until>Date.now());
+      if(dchc){
+        const chanRe=new Float32Array(GSM_CHAN_IMP*GSM_OSR), chanIm=new Float32Array(GSM_CHAN_IMP*GSM_OSR);
+        this.withUl(()=>{
+          const bs=this.getNormImp(dchc.tsc,chanRe,chanIm);
+          if(bs>=0 && this.head+bs+GSM_BURST_SIZE*GSM_OSR<this.len){
+            const eb=new Uint8Array(GSM_BURST_SIZE); this.detectBurst(chanRe,chanIm,bs,eb);
+            this.accumDch(tn,eb,true);
+          }
+        });
+      }
+      const off=this.stepSlot(this.ulSlot), nudge=this.pendingUlAdj||0;
+      this.pendingUlAdj=0;
+      this.ulConsume(GSM_TS_BITS*GSM_OSR+off+nudge);
+    }
+  }
 }
 
 /* ---------- DSP-узел ---------- */
 def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
-  ins:[{n:'in',t:'iq'}],
+  ins:[{n:'in',t:'iq'},{n:'ul',t:'iq'}],
   outs:[{n:'rec',t:'rec'},{n:'burst',t:'blk'},{n:'freq',t:'num'},{n:'sync',t:'num'},{n:'nb',t:'rec'}],
   readout:true, tall:true,
   params:[{n:'afc',t:'check',d:true,label:'auto frequency correction (FCCH)'},
           {n:'debug',t:'check',d:false,label:'debug: доп. поля SI3/SI4 (Control Ch, Cell Opt, CBCH) + hex'},
           {n:'ids',t:'select',opts:['hash','none','show'],d:'hash',label:'paging identifiers (TMSI / IMSI): hash — only a marker, none — count only, show — as is'},
           {n:'clr',t:'button',label:'Clear log',fn:n=>{ n.log=[]; n.text='ищу FCCH…'; n.lastSchBsic=-1; }}],
-  init:n=>{ n.rx=new GsmReceiver(); n.foff=0; n.nco=0; n.frac=1; n.lr=new Float32Array(0); n.li=new Float32Array(0);
+  init:n=>{ n.rx=new GsmReceiver(); n.foff=0; n.nco=0;
+            n.dl={lr:new Float32Array(0), li:new Float32Array(0), frac:1};
+            n.ulSt={lr:new Float32Array(0), li:new Float32Array(0), frac:1};
             n.bid=0; n.log=[]; n.text='ищу FCCH…'; n.lastSchBsic=-1; n.fcchSince=null; },
   process(n,I){
-    const s=iqIn(I,'in');
+    const s=iqIn(I,'in'), su=iqIn(I,'ul');
     if(!s || !s.sr){ n.text='нет входного IQ-потока'; return {rec:null, burst:null, freq:n.foff, sync:0}; }
     if(s.sr<GSM_TARGET_SR*0.98){ n.text='sr слишком низкий: нужно ≥ '+(GSM_TARGET_SR/1e6).toFixed(3)+' MS/s (GSM 270.833k×'+GSM_OSR+')'; return {rec:null, burst:null, freq:n.foff, sync:0}; }
-    // ресемплинг любого sr на OSR·270.833 кГц (кубический Эрмит) + дерот. по накопл. смещению
-    const ratio=s.sr/GSM_TARGET_SR, wderot=-2*Math.PI/GSM_TARGET_SR;
-    // склейка: остаток прошлого блока + все чанки
-    let total=n.lr.length; for(const c of s.chunks) total+=c.re.length;
-    const xr=new Float32Array(total), xi=new Float32Array(total);
-    xr.set(n.lr); xi.set(n.li); let w=n.lr.length;
-    for(const c of s.chunks){ xr.set(c.re,w); if(c.im) xi.set(c.im,w); w+=c.re.length; }
-    const outR=new Float32Array(Math.ceil(total/ratio)+4), outI=new Float32Array(outR.length);
-    let outN=0, pos=n.frac;
-    while(Math.floor(pos)+2 <= total-1){
-      const k=Math.floor(pos), t=pos-k;
-      let rr=gsmHerm(xr[k-1<0?0:k-1],xr[k],xr[k+1],xr[k+2],t);
-      let ri=gsmHerm(xi[k-1<0?0:k-1],xi[k],xi[k+1],xi[k+2],t);
-      if(n.p.afc && n.foff!==0){ const cr=Math.cos(n.nco), ci=Math.sin(n.nco);
-        const a=rr*cr-ri*ci, b=rr*ci+ri*cr; rr=a; ri=b;
-        n.nco+=wderot*n.foff; if(n.nco>1e4||n.nco<-1e4) n.nco%=2*Math.PI; }
-      outR[outN]=rr; outI[outN]=ri; outN++;
-      pos+=ratio;
-    }
-    // остаток: держим по одному отсчёту слева от следующей позиции (для k-1)
-    let keepFrom=Math.max(0,Math.floor(pos)-1);
-    n.lr=xr.slice(keepFrom); n.li=xi.slice(keepFrom); n.frac=pos-keepFrom;
-    if(outN){ n.rx.fc=s.fc||0; n.rx.ids=n.p.ids||'hash'; n.rx.push(outR.subarray(0,outN), outI.subarray(0,outN));
+    // ресемплинг на OSR·270.833 кГц — тот же для 'in' и для 'ul' (аплинк, второй приёмник на пару несущей —
+    // своему тестовому стенду), раздельное состояние (остаток блока) на каждый вход
+    const dl=gsmResampleStream(n.dl,s);
+    if(dl && n.p.afc && n.foff!==0) gsmDerotate(dl.re,dl.im,n);
+    const ul=(su && su.sr>=GSM_TARGET_SR*0.98) ? gsmResampleStream(n.ulSt,su) : null;   // своя частотная коррекция для аплинка не делается (см. README)
+    if(dl){ n.rx.fc=s.fc||0; n.rx.ids=n.p.ids||'hash'; n.rx.push(dl.re,dl.im);
+      if(ul) n.rx.ulPush(ul.re,ul.im);
       const {bursts,rec}=n.rx.work();
       // частотная петля
       if(n.p.afc && n.rx.freqOffset!=null && (n.rx.state!=='fcch' || n.rx.freqUpdate)){
@@ -1178,7 +1334,11 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
       const cb=n.rx.cbchTn>=0? ` · CBCH TN${n.rx.cbchTn} бл.${n.rx.cbchOk}/${n.rx.cbchTry} стр.${n.rx.cbsOk}` : '';
       const cc=n.rx.ccch.blocks ? ` · CCCH ${n.rx.ccch.ok}/${n.rx.ccch.blocks} pag ${n.rx.ccch.paging} IA ${n.rx.ccch.ia}` : '';
       const bsicTxt=n.rx.state==='sync'? ` · BSIC ${(n.rx.ncc<<3)|n.rx.bcc}` : '';
-      n.text=st+bsicTxt+` · ${mhz}foff ${n.foff.toFixed(0)} Hz · бёрстов ${n.bid}${bc}${cb}${cc}\n`+n.log.slice(-14).join('\n');
+      // подсказка по частоте для второго приёмника на 'ul' (дуплексный разнос) + сколько выделенных каналов отслеживаем;
+      // UL в счётчике SDCCH/SACCH — её собственные записи с dir:'UL' уже попали в rec/лог выше, здесь просто итог
+      const ulHz=gsmUplinkFreq(s.fc?s.fc/1e6:null);
+      const ulTxt=n.rx.dch.length ? ` · ul: ${n.rx.dch.length} кан.`+(ul?'':' (вход не подключён)')+(ulHz!=null?` · ул. несущая ≈${ulHz.toFixed(3)} МГц`:'') : '';
+      n.text=st+bsicTxt+` · ${mhz}foff ${n.foff.toFixed(0)} Hz · бёрстов ${n.bid}${bc}${cb}${cc}${ulTxt}\n`+n.log.slice(-14).join('\n');
       return {rec:outRec, burst:blk, freq:n.foff, sync:n.rx.state==='sync'?1:0, nb:outNb};
     }
     return {rec:null, burst:null, freq:n.foff, sync:n.rx.state==='sync'?1:0, nb:null};
@@ -1188,6 +1348,35 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
 function gsmHerm(y0,y1,y2,y3,t){
   const c1=0.5*(y2-y0), c2=y0-2.5*y1+2*y2-0.5*y3, c3=0.5*(y3-y0)+1.5*(y1-y2);
   return ((c3*t+c2)*t+c1)*t+y1;
+}
+// ресемплинг любого sr на OSR·270.833 кГц (кубический Эрмит); st — {lr,li,frac}, своё на каждый вход ('in'/'ul')
+function gsmResampleStream(st,s){
+  const ratio=s.sr/GSM_TARGET_SR;
+  let total=st.lr.length; for(const c of s.chunks) total+=c.re.length;
+  const xr=new Float32Array(total), xi=new Float32Array(total);
+  xr.set(st.lr); xi.set(st.li); let w=st.lr.length;
+  for(const c of s.chunks){ xr.set(c.re,w); if(c.im) xi.set(c.im,w); w+=c.re.length; }
+  const outR=new Float32Array(Math.ceil(total/ratio)+4), outI=new Float32Array(outR.length);
+  let outN=0, pos=st.frac;
+  while(Math.floor(pos)+2<=total-1){
+    const k=Math.floor(pos), t=pos-k;
+    outR[outN]=gsmHerm(xr[k-1<0?0:k-1],xr[k],xr[k+1],xr[k+2],t);
+    outI[outN]=gsmHerm(xi[k-1<0?0:k-1],xi[k],xi[k+1],xi[k+2],t);
+    outN++; pos+=ratio;
+  }
+  const keepFrom=Math.max(0,Math.floor(pos)-1);
+  st.lr=xr.slice(keepFrom); st.li=xi.slice(keepFrom); st.frac=pos-keepFrom;
+  return outN ? {re:outR.subarray(0,outN), im:outI.subarray(0,outN)} : null;
+}
+// дерот. входа по накопленному смещению foff (AFC) — отдельным проходом по уже ресемплированным отсчётам,
+// поэтому тот же цикл легко применить только к downlink (аплинк своей коррекции не делает, см. README)
+function gsmDerotate(re,im,n){
+  const wderot=-2*Math.PI/GSM_TARGET_SR;
+  for(let i=0;i<re.length;i++){
+    const cr=Math.cos(n.nco), ci=Math.sin(n.nco);
+    const a=re[i]*cr-im[i]*ci, b=re[i]*ci+im[i]*cr; re[i]=a; im[i]=b;
+    n.nco+=wderot*n.foff; if(n.nco>1e4||n.nco<-1e4) n.nco%=2*Math.PI;
+  }
 }
 // строка лога по записи; debug=true — доп. поля конфигурации соты + сырой hex L2-сообщения
 function gsmRecLine(r,debug){
@@ -1200,9 +1389,11 @@ function gsmRecLine(r,debug){
     +gsmRachSuffix(r.rach)+(debug?gsmDebugSuffix(r):'');
   if(r.si==='SI1') return `${t} SI1 своя сота ARFCN: ${gsmArfcnList(r.cellArfcns,r.cellFmt)}`+gsmRachSuffix(r.rach);
   if(r.si==='SI2') return `${t} SI2 соседи ARFCN: ${gsmArfcnList(r.neighborArfcns,r.neighborFmt)}`+gsmRachSuffix(r.rach);
+  if(r.si==='SI2bis' || r.si==='SI2ter') return `${t} ${r.si} соседи ARFCN: ${gsmArfcnList(r.neighborArfcns,r.neighborFmt)}`+(r.extInd?' (+)':'')+gsmRachSuffix(r.rach);
   if(r.si==='SI13') return `${t} SI13 ${gsmSi13Line(r.si13)}`+(debug&&r.si13?gsmSi13DebugSuffix(r.si13):'');
   if(r.si==='SI2quater') return `${t} SI2quater ${gsmSi2qLine(r.si2q)}`;
   if(r.kind==='GSM-CBS') return `${t} CBS [${r.page}/${r.pages}] msgId 0x${r.msgId.toString(16)} (${r.charset}): ${r.text}`;
+  if(r.kind==='GSM-SDCCH' || r.kind==='GSM-SACCH') return `${t} ${r.kind==='GSM-SACCH'?'SACCH':'SDCCH'} TN${r.tn} ${r.text} · ${r.dbm} dBm`;
   return `${t} ${r.si||r.kind} FN ${r.fn}`;
 }
 // краткая строка SI13: поддерживает ли сота GPRS и как к ней подключаться (PBCCH или по BCCH/CCCH)
