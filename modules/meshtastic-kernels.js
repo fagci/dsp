@@ -2,7 +2,8 @@
 /* ============================ Meshtastic: ядро ============================
    Минимальный protobuf (чтение и запись), разбор FromRadio / MeshPacket / Data и сборка ToRadio.
    Говорим с нодой по её клиентскому API (BLE или Serial), радио-уровень и шифрование остаются на ноде.
-   Номера полей — по meshtastic/protobufs (mesh.proto, portnums.proto, telemetry.proto). Узлы и транспорт — meshtastic.js. */
+   Номера полей — по meshtastic/protobufs (mesh.proto, portnums.proto, telemetry.proto). Узлы и транспорт — meshtastic.js.
+   Разбор кадра прямо из эфира (поверх LoRa Decoder) — AES-CTR и 16-байтный заголовок пакета — meshtastic-air.js. */
 
 const MSH_BLE={svc:'6ba1b218-15a8-461f-9fa8-5dcae273eafd',toRadio:'f75c76d2-129e-4dad-a1dd-7866124401e7',
   fromRadio:'2c55e69e-4993-11ed-b878-0242ac120002',fromNum:'ed9da18c-a800-4f66-a670-aa7547e34453'};
@@ -143,4 +144,106 @@ function mshFramePush(st,bytes){
   return out;
 }
 
-if(typeof module!=='undefined') module.exports={pbRead,pbVarint,mshFromRadio,mshWantConfig,mshTextPacket,mshParseNode,mshNodeId,mshFrameWrap,mshFrameStream,mshFramePush,MSH_BLE,MSH_BROADCAST};
+// ---- AES (только шифрование — довольно для CTR: keystream = AES(key, счётчик) XOR данные), ключи 128 и 256 бит ----
+const AES_SBOX=Uint8Array.from([
+0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
+0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
+0xb7,0xfd,0x93,0x26,0x36,0x3f,0xf7,0xcc,0x34,0xa5,0xe5,0xf1,0x71,0xd8,0x31,0x15,
+0x04,0xc7,0x23,0xc3,0x18,0x96,0x05,0x9a,0x07,0x12,0x80,0xe2,0xeb,0x27,0xb2,0x75,
+0x09,0x83,0x2c,0x1a,0x1b,0x6e,0x5a,0xa0,0x52,0x3b,0xd6,0xb3,0x29,0xe3,0x2f,0x84,
+0x53,0xd1,0x00,0xed,0x20,0xfc,0xb1,0x5b,0x6a,0xcb,0xbe,0x39,0x4a,0x4c,0x58,0xcf,
+0xd0,0xef,0xaa,0xfb,0x43,0x4d,0x33,0x85,0x45,0xf9,0x02,0x7f,0x50,0x3c,0x9f,0xa8,
+0x51,0xa3,0x40,0x8f,0x92,0x9d,0x38,0xf5,0xbc,0xb6,0xda,0x21,0x10,0xff,0xf3,0xd2,
+0xcd,0x0c,0x13,0xec,0x5f,0x97,0x44,0x17,0xc4,0xa7,0x7e,0x3d,0x64,0x5d,0x19,0x73,
+0x60,0x81,0x4f,0xdc,0x22,0x2a,0x90,0x88,0x46,0xee,0xb8,0x14,0xde,0x5e,0x0b,0xdb,
+0xe0,0x32,0x3a,0x0a,0x49,0x06,0x24,0x5c,0xc2,0xd3,0xac,0x62,0x91,0x95,0xe4,0x79,
+0xe7,0xc8,0x37,0x6d,0x8d,0xd5,0x4e,0xa9,0x6c,0x56,0xf4,0xea,0x65,0x7a,0xae,0x08,
+0xba,0x78,0x25,0x2e,0x1c,0xa6,0xb4,0xc6,0xe8,0xdd,0x74,0x1f,0x4b,0xbd,0x8b,0x8a,
+0x70,0x3e,0xb5,0x66,0x48,0x03,0xf6,0x0e,0x61,0x35,0x57,0xb9,0x86,0xc1,0x1d,0x9e,
+0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
+0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16]);
+const AES_RCON=[0,0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36,0x6c,0xd8,0xab,0x4d];
+function aesKeySchedule(key){                                     // key: 16 или 32 байта → {w, Nr}
+  const Nk=key.length/4, Nr=Nk+6, Nb=4, w=[];
+  for(let i=0;i<Nk;i++) w[i]=[key[4*i],key[4*i+1],key[4*i+2],key[4*i+3]];
+  for(let i=Nk;i<Nb*(Nr+1);i++){
+    let t=w[i-1].slice();
+    if(i%Nk===0){ t=[AES_SBOX[t[1]],AES_SBOX[t[2]],AES_SBOX[t[3]],AES_SBOX[t[0]]]; t[0]^=AES_RCON[i/Nk]; }
+    else if(Nk>6 && i%Nk===4) t=t.map(b=>AES_SBOX[b]);
+    w[i]=w[i-Nk].map((b,j)=>b^t[j]);
+  }
+  return {w,Nr};
+}
+const gmul=(a,b)=>{ let p=0; for(let i=0;i<8;i++){ if(b&1) p^=a; const hi=a&0x80; a=(a<<1)&255; if(hi) a^=0x1b; b>>=1; } return p; };
+function aesEncryptBlock(inp,sch){                                 // один блок (16 Б), состояние — столбцы state[r][c]
+  const {w,Nr}=sch, s=[[],[],[],[]];
+  for(let c=0;c<4;c++) for(let r=0;r<4;r++) s[r][c]=inp[r+4*c];
+  const addRK=round=>{ for(let c=0;c<4;c++) for(let r=0;r<4;r++) s[r][c]^=w[round*4+c][r]; };
+  const subShift=()=>{
+    for(let r=0;r<4;r++) for(let c=0;c<4;c++) s[r][c]=AES_SBOX[s[r][c]];
+    for(let r=1;r<4;r++){ const row=s[r].slice(); for(let c=0;c<4;c++) s[r][c]=row[(c+r)%4]; }
+  };
+  addRK(0);
+  for(let round=1;round<Nr;round++){
+    subShift();
+    for(let c=0;c<4;c++){
+      const a0=s[0][c],a1=s[1][c],a2=s[2][c],a3=s[3][c];
+      s[0][c]=gmul(a0,2)^gmul(a1,3)^a2^a3; s[1][c]=a0^gmul(a1,2)^gmul(a2,3)^a3;
+      s[2][c]=a0^a1^gmul(a2,2)^gmul(a3,3); s[3][c]=gmul(a0,3)^a1^a2^gmul(a3,2);
+    }
+    addRK(round);
+  }
+  subShift(); addRK(Nr);
+  const out=new Uint8Array(16);
+  for(let c=0;c<4;c++) for(let r=0;r<4;r++) out[r+4*c]=s[r][c];
+  return out;
+}
+function aesCtrXor(data,key,nonce){                                // CTR: keystream = AES(ctr), ctr++ (128-бит, big-endian) на каждый блок
+  const sch=aesKeySchedule(key), out=new Uint8Array(data.length), ctr=nonce.slice();
+  for(let off=0;off<data.length;off+=16){
+    const ks=aesEncryptBlock(ctr,sch), m=Math.min(16,data.length-off);
+    for(let i=0;i<m;i++) out[off+i]=data[off+i]^ks[i];
+    for(let i=15;i>=0;i--){ ctr[i]=(ctr[i]+1)&255; if(ctr[i]) break; }
+  }
+  return out;
+}
+
+// ---- Meshtastic в эфире: 16-байтный заголовок пакета (LE) + AES-CTR поверх Data, канал PSK ----
+const MSH_DEFAULT_KEY=Uint8Array.of(0xd4,0xf1,0xbb,0x3a,0x20,0x29,0x07,0x59,0xf0,0xbc,0xff,0xab,0xcf,0x4e,0x69,0x37); // defaultpsk прошивки — ключ «публичных» каналов (LongFast и т.п.)
+function mshPskBytes(b64){                                         // base64 → байты PSK; пусто/плохой base64 → 0 байт
+  try{ const s=String(b64||'').trim(); if(!s) return new Uint8Array(0);
+    const bin=atob(s), o=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) o[i]=bin.charCodeAt(i); return o;
+  }catch(e){ return new Uint8Array(0); }
+}
+function mshExpandPsk(b){                                          // 0 Б — без шифрования (null), 1 Б — «простой» ключ от defaultpsk, 16/32 Б — ключ как есть
+  if(!b || !b.length) return null;
+  if(b.length===1) return b[0]===0 ? null : Uint8Array.from(MSH_DEFAULT_KEY,(v,i)=>i===15 ? (v+b[0]-1)&255 : v);
+  if(b.length===16 || b.length===32) return b;
+  return undefined;                                                // неподходящая длина — не ключ вообще
+}
+const mshNonce=(id,from)=>Uint8Array.of(id&255,(id>>>8)&255,(id>>>16)&255,(id>>>24)&255,0,0,0,0,from&255,(from>>>8)&255,(from>>>16)&255,(from>>>24)&255,0,0,0,0);
+function mshAirHeader(b){                                          // 16 Б: dest, from, id (все LE u32), flags, channel hash, next hop, relay node
+  if(b.length<16) return null;
+  const u32=o=>(b[o]|b[o+1]<<8|b[o+2]<<16|b[o+3]<<24)>>>0, flags=b[12];
+  return {dest:u32(0), from:u32(4), id:u32(8), hopLimit:flags&7, wantAck:!!(flags&8), viaMqtt:!!(flags&16), hopStart:(flags>>5)&7,
+    channelHash:b[13], nextHop:b[14], relayNode:b[15], payload:b.subarray(16)};
+}
+// расшифровка пробует ключи по очереди (строка PSK в base64, через запятую; по умолчанию AQ== — публичный LongFast), годный protobuf с известным портом — признак верного ключа
+function mshAirDecode(bytes,pskCsv){
+  const h=mshAirHeader(bytes); if(!h) return null;
+  const list=String(pskCsv==null ? 'AQ==' : pskCsv).split(',').map(s=>s.trim()).filter(Boolean);
+  if(!list.length) list.push('AQ==');
+  for(const b64 of list){
+    const key=mshExpandPsk(mshPskBytes(b64));
+    if(key===undefined) continue;                                  // плохая длина PSK
+    try{
+      const pt=key ? aesCtrXor(h.payload,key,mshNonce(h.id,h.from)) : h.payload;
+      const d=mshData(pt);
+      if(d.port!==undefined && MSH_PORTS[d.port]!==undefined) return {...h, data:d, psk:b64, plain:!key};
+    }catch(e){}
+  }
+  return {...h, encrypted:true};
+}
+
+if(typeof module!=='undefined') module.exports={pbRead,pbVarint,mshFromRadio,mshWantConfig,mshTextPacket,mshParseNode,mshNodeId,mshFrameWrap,mshFrameStream,mshFramePush,MSH_BLE,MSH_BROADCAST,
+  aesKeySchedule,aesEncryptBlock,aesCtrXor,mshPskBytes,mshExpandPsk,mshNonce,mshAirHeader,mshAirDecode,MSH_DEFAULT_KEY};
