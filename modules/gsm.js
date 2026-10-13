@@ -772,6 +772,11 @@ class GsmReceiver{
     this.ulSlot={t1:0,t2:0,t3:0,tn:0,offFrac:0};
   }
   avail(){ return this.len-this.head; }
+  // отставание от потока (UI/GC-пауза, нагрузка): копить дальше нельзя — каждый push копирует остаток, а разбор не успевает,
+  // нагрузка растёт лавиной. Выбрасываем старое, оставляя хвост, и ищем FCCH заново
+  dropBacklog(keep){
+    const k=Math.max(0,this.avail()-keep); this.consume(k); this.state='fcch'; this.dropped=(this.dropped||0)+1;
+  }
   pushBuf(buf,re,im){
     const keep=buf.len-buf.head, n=re.length;
     if(buf.re.length<keep+n){
@@ -1309,6 +1314,7 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
     if(dl){ n.rx.fc=s.fc||0; n.rx.ids=n.p.ids||'hash'; n.rx.allTs=!!n.p.allts; n.rx.push(dl.re,dl.im);
       if(ul) n.rx.ulPush(ul.re,ul.im);
       const {bursts,rec}=n.rx.work();
+      if(n.rx.avail()>GSM_MAX_BACKLOG*GSM_TARGET_SR) n.rx.dropBacklog(0.05*GSM_TARGET_SR);   // после разбора всё ещё не успеваем
       // частотная петля
       // поправка применяется сразу по FCCH, даже если SCH в том же такте не сошёлся из-за ещё не
       // скорректированной частоты (раньше она терялась и поиск шёл десятки секунд). Уже накопленный
@@ -1401,12 +1407,13 @@ function gsmHerm(y0,y1,y2,y3,t){
 // ресемплинг любого sr на OSR·270.833 кГц (кубический Эрмит); st — {lr,li,frac}, своё на каждый вход ('in'/'ul')
 // ФНЧ+децимация за один проход: полифазный КИХ (окно Блэкмана, срез GSM_LP_CUT) в дробной позиции выхода.
 // Без ФНЧ соседние каналы (±400 кГц) и алиасинг ломают поиск FCCH (синхр. — минуты или срыв)
-const GSM_LP_T=14, GSM_LP_PH=128, GSM_LP_CUT=220e3;
+const GSM_MAX_BACKLOG=1;                                  // неразобранный остаток буфера приёмника сверх этого (с) — сброс
+const GSM_LP_T=8, GSM_LP_PH=128, GSM_LP_CUT=180e3;
 let GSM_LP_CACHE=null;
 function gsmLpTable(sr){
   if(GSM_LP_CACHE && GSM_LP_CACHE.sr===sr) return GSM_LP_CACHE.h;
-  const T=GSM_LP_T, K=2*T, h=new Float64Array(GSM_LP_PH*K), a=2*GSM_LP_CUT/sr;
-  for(let p=0;p<GSM_LP_PH;p++){ let sum=0; const f=p/GSM_LP_PH;
+  const T=GSM_LP_T, K=2*T, h=new Float64Array((GSM_LP_PH+1)*K), a=2*GSM_LP_CUT/sr;
+  for(let p=0;p<=GSM_LP_PH;p++){ let sum=0; const f=p/GSM_LP_PH;   // +1 фаза: дробь, округлённая до 1.0, без min()
     for(let j=0;j<K;j++){ const d=j-T+1-f, x=Math.PI*a*d;
       const v=(d===0?a:Math.sin(x)/(Math.PI*d))*(0.42+0.5*Math.cos(Math.PI*d/T)+0.08*Math.cos(2*Math.PI*d/T));
       h[p*K+j]=v; sum+=v; }
@@ -1423,8 +1430,8 @@ function gsmResamplePoly(st,s,ratio){
   let outN=0, pos=st.frac;
   if(pos<T-1) pos=T-1;                                  // начало потока: слева нет истории
   for(;;){
-    const k=Math.floor(pos); if(k+T>total-1) break;
-    const base=k-T+1, o=Math.min(GSM_LP_PH-1,Math.round((pos-k)*GSM_LP_PH))*K;
+    const k=pos|0; if(k+T>total-1) break;
+    const base=k-T+1, o=(((pos-k)*GSM_LP_PH+0.5)|0)*K;
     let a0=0,a1=0,b0=0,b1=0;                            // две независимые суммы на канал — короче цепочка зависимостей
     for(let j=0;j<K;j+=2){ const c0=h[o+j], c1=h[o+j+1], q=base+j;
       a0+=c0*xr[q]; a1+=c1*xr[q+1]; b0+=c0*xi[q]; b1+=c1*xi[q+1]; }
