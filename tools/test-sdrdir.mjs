@@ -30,4 +30,7 @@ l=K.sdParse(spy,'spyserver');
 ok('spyserver nested array',l.length===1 && l[0].server==='spy.example:5555' && l[0].kind==='spyserver',JSON.stringify(l));
 ok('default port',K.sdParse('[{"name":"x","host":"h.example","lat":1,"lon":2}]','spyserver')[0].port===5555);
 ok('garbage → empty',K.sdParse('not a list','kiwisdr').length===0);
+const real='// KiwiSDR.com receiver list\n// Automatically generated from http://kiwisdr.com/public/\n\nvar kiwisdr_com =\n[\n\t{"id":"1","status":"active","offline":"no","name":"Antenna | Montmorillon 86500 FRANCE","sdr_hw":"KiwiSDR 1 v1.902","bands":"10000-32000000","users":"1","users_max":"4","gps":"(46.427049, 0.888543)","loc":"Montmorillon","snr":"41,38","url":"http://109.220.96.34:8073"},\n\t{"id":"2","status":"offline","offline":"yes","name":"Down","gps":"(10, 10)","url":"http://1.2.3.4:8073"}\n];\n';
+l=K.sdParse(real,'kiwisdr');
+ok('real kiwisdr_com.js: one online receiver',l.length===1 && l[0].server==='109.220.96.34:8073' && l[0].users===1 && l[0].usersMax===4 && l[0].snr===41 && Math.abs(l[0].lat-46.427049)<1e-9,JSON.stringify(l));
 console.log(bad?'FAILED':'all ok'); process.exit(bad?1:0);

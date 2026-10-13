@@ -4,7 +4,7 @@
    Клик по точке (sel карты → select) выбирает приёмник; выход server идёт на вход server модуля KiwiSDR. */
 
 const SDRDIR_URLS={
-  kiwisdr:'https://rx.linkfanel.net/kiwisdr_com.js',
+  kiwisdr:'http://rx.linkfanel.net/kiwisdr_com.js',
   spyserver:'https://airspy.com/directory/status.json'
 };
 

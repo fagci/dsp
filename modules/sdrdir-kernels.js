@@ -56,6 +56,7 @@ function sdKiwiHtml(text){
 const sdPick=(o,keys)=>{ for(const k of keys) if(o[k]!=null && o[k]!=='') return o[k]; return null; };
 
 function sdRecord(o,kind){
+  if(String(o.offline).toLowerCase()==='yes' || String(o.status).toLowerCase()==='offline') return null;
   const pos=sdGps(sdPick(o,['gps','location_gps','coordinates','coords','latlon'])) ||
             sdGps({lat:sdPick(o,['lat','latitude']), lon:sdPick(o,['lon','lng','longitude'])});
   if(!pos) return null;
