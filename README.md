@@ -32,7 +32,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Microphone (stereo A+B), audio file, audio stream URL, tab/screen audio capture
 - **Not from this reality** (synthetic, nothing is received): *Strange Attractor* (Lorenz / Rössler / Thomas, three outputs — try the phase scope), *Black Hole Merger* (inspiral chirp → ringdown → silence, with a `sync` pulse), *Pulsar* (period, flicker, missing pulses, scatter tail), *Schumann Resonance* (five Earth–ionosphere modes driven by lightning, a frequency multiplier brings it into the audible range), *Cellular Automaton* (Wolfram rules, rule 30 as a bit generator)
   - These are teaching models, not physics simulations. *Strange Attractor* uses the standard parameters (the largest Lyapunov exponent measured: Lorenz 0.91, Rössler 0.07). *Black Hole Merger* is the Newtonian inspiral chirp (f ∝ (t_c − t)^-3/8, A ∝ f^2/3) with a simple damped ringdown at 1.2 × the merger frequency, the duration is stretched to be audible, the noise is white. *Pulsar* has correlated flicker and a scatter tail (convolution with an exponential), but no dispersion. *Schumann Resonance* has real mode frequencies, the relative amplitudes are set by hand
-- **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, SDRplay RSP1 / MSi2500, RX-888 (mkI/mkII/mkIII) — multiple tuners/demodulators per device, wideband sweep with a panoramic waterfall, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
+- **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, Airspy HF+, SDRplay RSP1 / MSi2500, RX-888 (mkI/mkII/mkIII) — multiple tuners/demodulators per device, wideband sweep with a panoramic waterfall, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
 - **KiwiSDR** remote receivers (public list included)
 - Camera, video, image, accelerometer and Generic Sensor API
 - **Barcode / QR** (Video): reads QR codes and barcodes from a camera, video or image frame (BarcodeDetector — Chrome / Android): the text, a pulse on `go`, records `{format, value}`, a repeat of the same code is ignored for a set time
@@ -149,6 +149,7 @@ For HF: **noise blanker** cuts short impulses (power-line, switching supplies) o
 | RTL-SDR (RTL2832U + R820T/R828D, incl. Blog V4) | up to 3.2 MSPS | 8 bit | `dvb_usb_rtl28xxu` |
 | HackRF One / Jawbreaker / rad1o | 2–20 MSPS | 8 bit | `hackrf` |
 | Airspy R2 / Mini | rates reported by firmware | 12 bit | `airspy` |
+| Airspy HF+ (Dual / Discovery / Ranger) | rates reported by firmware (768 kSPS typical) | 16 bit | — |
 | SDRplay RSP1 and clones, MSi2500 + MSi001 TV sticks | 1.3–15 MSPS | 14 bit up to 6 MSPS, then 12 / 10 / 8 bit | `msi001`, `msi2500` |
 | RX-888 mkI / mkII / mkIII (SDDC, Cypress FX3) | 0.25–10 MSPS out of a 16-bit ADC at up to 66 MSPS | 16 bit ADC, DDC in the browser | — |
 
