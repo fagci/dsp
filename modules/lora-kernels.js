@@ -385,7 +385,8 @@ IQK.loraRx={
     if(!good && P.bad===false) return;
     const text=loraText(r.payload), snr=loraDb(n.dsnr/n.syms.length);
     const rec={t:Date.now(), src:'LoRa', kind:'frame', sf:n.sf, bw:n.bw, cr:'4/'+(4+r.cr), crc:r.crc, crcOk:r.crcOk, hdr:ih ? 'implicit' : 'explicit', len:r.len, sync:n.sw,
-      snr:+snr.toFixed(1), cfo:Math.round(n.cfo), errs:r.errs, fixed:r.fixed, text, hex:bytesHex(r.payload)};
+      snr:+snr.toFixed(1), cfo:Math.round(n.cfo), errs:r.errs, fixed:r.fixed, text, hex:bytesHex(r.payload),
+      hexSchema:n.sw===0x34 ? 'lorawan' : n.sw===0x2B ? 'meshtastic' : n.sw===0x12 ? 'meshcore' : 'auto'};
     out.recs.push(rec);
     if(good) out.text.push(text);
     n.last=rec; n.lastT=Date.now();

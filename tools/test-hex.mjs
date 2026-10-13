@@ -213,6 +213,16 @@ ok('pocsag message build: checksums and parse',pcm.bytes.length===12 && pcp.ok &
 }
 
 // проверка схемы
+// LoRaWAN Join Request: автоопределение и поля
+{ const b=H.hexFromHex('00010000200090970499e610e0019097045b6e115833d7'), p=H.hexParse(H.hexDetect(b),b);
+  ok('lorawan join request',H.hexDetect(b)==='lorawan' && p.vals['body.joineui'].toString(16)==='497900020000001' && p.vals['body.devnonce']===0x6e5b && p.vals['body.mic']==='115833d7',JSON.stringify(p.vals,(k,v)=>typeof v==='bigint'?v.toString(16):v)); }
+// MeshCore: ADVERT (flood, 2 хопа, координаты и имя) и TXT_MSG по транспортному маршруту
+{ const hx=(n,v)=>v.toString(16).padStart(n*2,'0');
+  const adv=H.hexFromHex(hx(1,0x11)+hx(1,2)+'aabb'+'11'.repeat(32)+'80f1a265'+'22'.repeat(64)+hx(1,0x92)+'40420f00'+'80841e00'+Buffer.from('Node1').toString('hex'));
+  const p=H.hexParse('meshcore',adv), v=p.vals;
+  ok('meshcore advert',v.ptype===4 && v.route===1 && v.hops===2 && v['payload.hasloc']===1 && v['payload.hasname']===1 && v['payload.ntype']===2 && v['payload.lat']===1000000 && v['payload.lon']===2000000 && v['payload.name']==='Node1' && !p.err,JSON.stringify(v,(k,x)=>typeof x==='bigint'?x.toString(16):x));
+  const msg=H.hexParse('meshcore',H.hexFromHex(hx(1,0x08)+'1234'+'0000'+hx(1,0x40|1)+'aabb'+'dd'+'ee'+'ff00'+'0102'));
+  ok('meshcore transport txt',msg.vals.ptype===2 && msg.vals.route===0 && msg.vals.tcode1===0x3412 && msg.vals.hops===1 && msg.vals.path==='aabb' && msg.vals['payload.dst']===0xdd,JSON.stringify(msg.vals)); }
 ok('schema check clean',H.hexSchemaCheck(H.HEX_LIB.ipv4,H.HEX_LIB).length===0);
 ok('schema check errors',H.hexSchemaCheck({fields:[{n:'a',t:'u7'},{n:'a',t:'bytes'},{n:'c',t:'u8',when:'a +'}]},H.HEX_LIB).length>=3);
 ok('every library schema is clean',Object.entries(H.HEX_LIB).every(([k,s])=>{ const e=H.hexSchemaCheck(s,H.HEX_LIB); if(e.length) console.log(k,e); return !e.length; }));

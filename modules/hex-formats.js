@@ -207,6 +207,48 @@ Object.assign(HEX_LIB,{
     {n:'proto',t:'u8',enum:{0:'RAW',1:'AX.25',2:'APRS',3:'6LoWPAN',4:'IPv4',5:'SMS',6:'Winlink'}},
     {n:'data',t:'rest',sub:{by:'proto',map:{4:'ipv4'}}}]},
 
+  /* ---------- LoRaWAN 1.0.x (кадр PHYPayload) и Meshtastic ---------- */
+  lorawan:{ title:'LoRaWAN PHYPayload', group:'LoRa', detect:'mtype==0 && rfu==0 && major==0 && _size==23', fields:[
+    {n:'mtype',t:'bits',w:3,enum:{0:'Join Request',1:'Join Accept',2:'Unconfirmed Up',3:'Unconfirmed Down',4:'Confirmed Up',5:'Confirmed Down',6:'Rejoin Request',7:'Proprietary'}},
+    {n:'rfu',t:'bits',w:3}, {n:'major',t:'bits',w:2,enum:{0:'LoRaWAN R1'}},
+    {n:'body',t:'rest',sub:{by:'mtype',map:{0:'lorawan-join',2:'lorawan-data',3:'lorawan-data',4:'lorawan-data',5:'lorawan-data'}}}]},
+  'lorawan-join':{ endian:'le', fields:[
+    {n:'joineui',t:'u64',fmt:'hex'}, {n:'deveui',t:'u64',fmt:'hex'}, {n:'devnonce',t:'u16'}, {n:'mic',t:'bytes',len:4}]},
+  'lorawan-data':{ endian:'le', fields:[
+    {n:'devaddr',t:'u32',fmt:'hex'},
+    {n:'adr',t:'bits',w:1}, {n:'adrackreq',t:'bits',w:1}, {n:'ack',t:'bits',w:1}, {n:'classb_fpending',t:'bits',w:1}, {n:'foptslen',t:'bits',w:4},
+    {n:'fcnt',t:'u16'}, {n:'fopts',t:'bytes',len:'foptslen'},
+    {n:'fport',t:'u8',when:'_left>4'}, {n:'frmpayload',t:'bytes',len:'_left-4',when:'_left>4'},
+    {n:'mic',t:'bytes',len:4}]},
+  meshtastic:{ title:'Meshtastic packet header', group:'LoRa', endian:'le', fields:[
+    {n:'dest',t:'u32',fmt:'hex',enum:{4294967295:'broadcast'}}, {n:'sender',t:'u32',fmt:'hex'}, {n:'id',t:'u32',fmt:'hex'},
+    {n:'hop_start',t:'bits',w:3}, {n:'via_mqtt',t:'bits',w:1}, {n:'want_ack',t:'bits',w:1}, {n:'hop_limit',t:'bits',w:3},
+    {n:'channel',t:'u8',fmt:'hex'}, {n:'next_hop',t:'u8',fmt:'hex'}, {n:'relay_node',t:'u8',fmt:'hex'},
+    {n:'payload',t:'rest'}]},
+  /* MeshCore: docs/packet_format.md, docs/payloads.md (meshcore-dev/MeshCore); sync word private 0x12 */
+  meshcore:{ title:'MeshCore packet', group:'LoRa', endian:'le', fields:[
+    {n:'ver',t:'bits',w:2}, {n:'ptype',t:'bits',w:4,enum:{0:'REQ',1:'RESPONSE',2:'TXT_MSG',3:'ACK',4:'ADVERT',5:'GRP_TXT',6:'GRP_DATA',7:'ANON_REQ',8:'PATH',9:'TRACE',10:'MULTIPART',11:'CONTROL',15:'RAW_CUSTOM'}},
+    {n:'route',t:'bits',w:2,enum:{0:'transport flood',1:'flood',2:'direct',3:'transport direct'}},
+    {n:'tcode1',t:'u16',fmt:'hex',when:'route==0 || route==3'}, {n:'tcode2',t:'u16',fmt:'hex',when:'route==0 || route==3'},
+    {n:'hashsz',t:'bits',w:2}, {n:'hops',t:'bits',w:6},
+    {n:'path',t:'bytes',len:'hops*(hashsz+1)'},
+    {n:'payload',t:'rest',sub:{by:'ptype',map:{0:'meshcore-enc',1:'meshcore-enc',2:'meshcore-enc',8:'meshcore-enc',3:'meshcore-ack',4:'meshcore-advert',5:'meshcore-grp',6:'meshcore-grp',7:'meshcore-anon',11:'meshcore-ctl'}}}]},
+  'meshcore-enc':{ endian:'le', fields:[
+    {n:'dst',t:'u8',fmt:'hex'}, {n:'src',t:'u8',fmt:'hex'}, {n:'mac',t:'bytes',len:2}, {n:'ciphertext',t:'rest'}]},
+  'meshcore-grp':{ endian:'le', fields:[
+    {n:'channel',t:'u8',fmt:'hex'}, {n:'mac',t:'bytes',len:2}, {n:'ciphertext',t:'rest'}]},
+  'meshcore-anon':{ endian:'le', fields:[
+    {n:'dst',t:'u8',fmt:'hex'}, {n:'pubkey',t:'bytes',len:32}, {n:'mac',t:'bytes',len:2}, {n:'ciphertext',t:'rest'}]},
+  'meshcore-ack':{ endian:'le', fields:[{n:'checksum',t:'u32',fmt:'hex'}]},
+  'meshcore-ctl':{ endian:'le', fields:[{n:'flags',t:'u8',fmt:'hex'}, {n:'data',t:'rest'}]},
+  'meshcore-advert':{ endian:'le', fields:[
+    {n:'pubkey',t:'bytes',len:32}, {n:'time',t:'u32',fmt:'time'}, {n:'sig',t:'bytes',len:64},
+    {n:'hasname',t:'bits',w:1,when:'_left>0'}, {n:'hasf2',t:'bits',w:1,when:'_left>0'}, {n:'hasf1',t:'bits',w:1,when:'_left>0'}, {n:'hasloc',t:'bits',w:1,when:'_left>0'},
+    {n:'ntype',t:'bits',w:4,when:'_left>0',enum:{1:'chat',2:'repeater',3:'room server',4:'sensor'}},
+    {n:'lat',t:'i32',when:'hasloc==1'}, {n:'lon',t:'i32',when:'hasloc==1'},
+    {n:'f1',t:'u16',when:'hasf1==1'}, {n:'f2',t:'u16',when:'hasf2==1'},
+    {n:'name',t:'str',len:'rest',enc:'utf8',when:'hasname==1'}]},
+
   /* ---------- P25 Phase 1 (TIA-102.BAAA) ---------- */
   'p25-tsbk':{ title:'P25 TSBK', group:'P25', fields:(()=>{
     const b=(n,w,when,o)=>Object.assign({n,t:'bits',w,when},o||{}), pad=(w,when)=>({t:'pad',w,when});
