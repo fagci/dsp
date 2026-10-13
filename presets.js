@@ -822,7 +822,7 @@ preset('KiwiSDR and SpyServer on the Map', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Receivers directory: pick the kind, press Download list (or load a file) — receivers appear on the map.\n'+
   'Click a point — its host:port goes to KiwiSDR; press Connect there.\n'+
-  'On an https page KiwiSDR needs a wss proxy (see README); SpyServer needs a TCP→WebSocket bridge for IQ over Network.'});
+  'On an https page KiwiSDR needs the proxy from Settings with WebSocket support (see README); SpyServer needs a TCP→WebSocket bridge for IQ over Network.'});
 nt.size.w=560; nt.size.h=130; applySize(nt);
 const rd=addNode('sdrdir',40,200,{kind:'kiwisdr'});
 rd.size.h=150; applySize(rd);

@@ -1154,20 +1154,28 @@ ISS: footprint, ground track ahead, sky plot, next passes and Doppler-corrected 
 
 <img width="1221" height="719" alt="image" src="https://github.com/user-attachments/assets/83aacc0a-e61b-4d46-bed7-65bbfe542233" />
 
-## KiwiSDR behind HTTPS
+## Proxy for KiwiSDR and lists
 
-An https page can only open `wss://`, but public Kiwis speak plain `ws://`. The KiwiSDR node connects to `wss://<your host><proxy>/<host>/<port>/<ts>/SND` (the `proxy` parameter, default `/kiwiproxy`); a reverse proxy on your server forwards it. nginx:
+The **CORS proxy** from the settings panel is used for list downloads (Satellites, Station Schedule, SDR Receivers Directory…) and for the **KiwiSDR** node. For Kiwi the address `http://host:port/<ts>/SND` is substituted into the proxy URL the same way (`{url}` is replaced by the encoded address, otherwise the address is appended) and the scheme `http(s)` becomes `ws(s)`, so the proxy must pass WebSocket. Without a proxy the node connects to `ws://host:port` directly, which an https page cannot do (mixed content).
+
+nginx, setting `https://example.com/proxy/` (the address is appended):
 
 ```nginx
-location ~ ^/kiwiproxy/(?<kh>[A-Za-z0-9.-]+)/(?<kp>[0-9]+)/(?<kpath>.+)$ {
+# http {} block
+map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+
+# server {} block
+location ~ ^/proxy/(?<sch>https?):/+(?<hst>[^/]+)(?<pth>/.*)?$ {
     resolver 1.1.1.1;
-    proxy_pass http://$kh:$kp/$kpath$is_args$args;
+    proxy_pass $sch://$hst$pth$is_args$args;
     proxy_http_version 1.1;
+    proxy_set_header Host $hst;
     proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host $kh:$kp;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_ssl_server_name on;
     proxy_read_timeout 3600s;
+    add_header Access-Control-Allow-Origin * always;
 }
 ```
 
-This is an open proxy to any host: restrict it (`allow`/`deny`, basic auth, or a whitelist of hosts) before exposing it.
+This is an open proxy to any host: restrict it (`allow`/`deny`, basic auth, or a whitelist of hosts) before exposing it. Lists need the CORS header, Kiwi only the WebSocket upgrade.
