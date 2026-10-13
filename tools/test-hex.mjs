@@ -213,6 +213,9 @@ ok('pocsag message build: checksums and parse',pcm.bytes.length===12 && pcp.ok &
 }
 
 // проверка схемы
+// LoRaWAN Join Request: автоопределение и поля
+{ const b=H.hexFromHex('00010000200090970499e610e0019097045b6e115833d7'), p=H.hexParse(H.hexDetect(b),b);
+  ok('lorawan join request',H.hexDetect(b)==='lorawan' && p.vals['body.joineui'].toString(16)==='497900020000001' && p.vals['body.devnonce']===0x6e5b && H.hexToHex(p.vals['body.mic'])==='115833d7',JSON.stringify(p.vals,(k,v)=>typeof v==='bigint'?v.toString(16):v)); }
 ok('schema check clean',H.hexSchemaCheck(H.HEX_LIB.ipv4,H.HEX_LIB).length===0);
 ok('schema check errors',H.hexSchemaCheck({fields:[{n:'a',t:'u7'},{n:'a',t:'bytes'},{n:'c',t:'u8',when:'a +'}]},H.HEX_LIB).length>=3);
 ok('every library schema is clean',Object.entries(H.HEX_LIB).every(([k,s])=>{ const e=H.hexSchemaCheck(s,H.HEX_LIB); if(e.length) console.log(k,e); return !e.length; }));

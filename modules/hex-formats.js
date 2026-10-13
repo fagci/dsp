@@ -207,6 +207,25 @@ Object.assign(HEX_LIB,{
     {n:'proto',t:'u8',enum:{0:'RAW',1:'AX.25',2:'APRS',3:'6LoWPAN',4:'IPv4',5:'SMS',6:'Winlink'}},
     {n:'data',t:'rest',sub:{by:'proto',map:{4:'ipv4'}}}]},
 
+  /* ---------- LoRaWAN 1.0.x (кадр PHYPayload) и Meshtastic ---------- */
+  lorawan:{ title:'LoRaWAN PHYPayload', group:'LoRa', detect:'mtype==0 && rfu==0 && major==0 && _size==23', fields:[
+    {n:'mtype',t:'bits',w:3,enum:{0:'Join Request',1:'Join Accept',2:'Unconfirmed Up',3:'Unconfirmed Down',4:'Confirmed Up',5:'Confirmed Down',6:'Rejoin Request',7:'Proprietary'}},
+    {n:'rfu',t:'bits',w:3}, {n:'major',t:'bits',w:2,enum:{0:'LoRaWAN R1'}},
+    {n:'body',t:'rest',sub:{by:'mtype',map:{0:'lorawan-join',2:'lorawan-data',3:'lorawan-data',4:'lorawan-data',5:'lorawan-data'}}}]},
+  'lorawan-join':{ endian:'le', fields:[
+    {n:'joineui',t:'u64',fmt:'hex'}, {n:'deveui',t:'u64',fmt:'hex'}, {n:'devnonce',t:'u16'}, {n:'mic',t:'bytes',len:4}]},
+  'lorawan-data':{ endian:'le', fields:[
+    {n:'devaddr',t:'u32',fmt:'hex'},
+    {n:'adr',t:'bits',w:1}, {n:'adrackreq',t:'bits',w:1}, {n:'ack',t:'bits',w:1}, {n:'classb_fpending',t:'bits',w:1}, {n:'foptslen',t:'bits',w:4},
+    {n:'fcnt',t:'u16'}, {n:'fopts',t:'bytes',len:'foptslen'},
+    {n:'fport',t:'u8',when:'_left>4'}, {n:'frmpayload',t:'bytes',len:'_left-4',when:'_left>4'},
+    {n:'mic',t:'bytes',len:4}]},
+  meshtastic:{ title:'Meshtastic packet header', group:'LoRa', endian:'le', fields:[
+    {n:'dest',t:'u32',fmt:'hex',enum:{4294967295:'broadcast'}}, {n:'sender',t:'u32',fmt:'hex'}, {n:'id',t:'u32',fmt:'hex'},
+    {n:'hop_start',t:'bits',w:3}, {n:'via_mqtt',t:'bits',w:1}, {n:'want_ack',t:'bits',w:1}, {n:'hop_limit',t:'bits',w:3},
+    {n:'channel',t:'u8',fmt:'hex'}, {n:'next_hop',t:'u8',fmt:'hex'}, {n:'relay_node',t:'u8',fmt:'hex'},
+    {n:'payload',t:'rest'}]},
+
   /* ---------- P25 Phase 1 (TIA-102.BAAA) ---------- */
   'p25-tsbk':{ title:'P25 TSBK', group:'P25', fields:(()=>{
     const b=(n,w,when,o)=>Object.assign({n,t:'bits',w,when},o||{}), pad=(w,when)=>({t:'pad',w,when});
