@@ -26,9 +26,15 @@ function sdHostPort(s,port){
 // массив объектов где угодно в JSON; «var x = [...];» и мусор вокруг допустимы
 function sdExtractArray(text){
   text=String(text||'').trim();
-  try{ const j=JSON.parse(text); const f=sdFindArray(j); if(f) return f; }catch(e){}
+  try{ const f=sdFindArray(JSON.parse(text)); if(f) return f; }catch(e){}
   const a=text.indexOf('['), b=text.lastIndexOf(']');
-  if(a>=0 && b>a){ try{ const f=sdFindArray(JSON.parse(text.slice(a,b+1))); if(f) return f; }catch(e){} }
+  if(a>=0 && b>a){
+    const body=text.slice(a,b+1).replace(/[\x00-\x1f]/g,' ').replace(/,\s*\]$/,']');           // хвостовая запятая в kiwisdr_com.js
+    try{ const f=sdFindArray(JSON.parse(body)); if(f) return f; }catch(e){}
+    const objs=[];                                                  // запасной путь: объекты по одному
+    for(const m of body.matchAll(/\{[^{}]*\}/g)){ try{ objs.push(JSON.parse(m[0])); }catch(e){} }
+    if(objs.length) return objs;
+  }
   const c=text.indexOf('{'), d=text.lastIndexOf('}');
   if(c>=0 && d>c){ try{ return sdFindArray(JSON.parse(text.slice(c,d+1))); }catch(e){} }
   return null;
