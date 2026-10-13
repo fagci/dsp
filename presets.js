@@ -182,8 +182,10 @@ const PRESET_CATS={
   'USB SDR: FM Receiver from Blocks':'SDR Receivers',
   'USB SDR: FM Radio with RDS':'SDR Receivers',
   'Remote SDR: FM Receiver (rtl_tcp over WebSocket)':'SDR Receivers',
+  'Remote SDR: FM Receiver (SpyServer over WebSocket)':'SDR Receivers',
   'USB SDR: HF AM / SSB from Blocks':'SDR Receivers',
   'Sound Card IQ: HF Receiver (SoftRock-style)':'SDR Receivers',
+  'FUNcube Dongle Pro+: Receiver':'SDR Receivers',
   'IQ: Channelizer — Three Signals at Once (Generator)':'SDR Receivers',
   'USB SDR: Listen to the Strongest Channels':'SDR Receivers',
   'tinySA: Spectrum':'SDR Receivers',
@@ -1393,6 +1395,35 @@ const sa=addNode('sa',720,260,{auto:true,floor:-90,top:-20,split:.4});
 sa.size.w=640; sa.size.h=300; applySize(sa);
 const sh=addNode('iqShift',400,560,{});
 const d1=addNode('iqDecim',400,720,{M:'4',cut:.45});
+const sp=addNode('iqSpec',400,900,{size:'2048'});
+const s2=addNode('sa',720,600,{auto:true,floor:-100,top:-20,split:.4});
+s2.size.w=640; s2.size.h=260; applySize(s2);
+const de=addNode('iqDemod',40,900,{mode:'WFM',deemph:'50 µs',stereo:true});
+de.size.w=360; applySize(de);
+const au=addNode('iqAudio',720,900,{});
+const dc=addNode('dac',980,900,{vol:.4});
+addEdge(rx.id,'iq',dcb.id,'in'); addEdge(dcb.id,'out',w0.id,'in'); addEdge(w0.id,'spec',sa.id,'spec');
+addEdge(dcb.id,'out',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',sp.id,'in'); addEdge(sp.id,'spec',s2.id,'spec');
+addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'stereo',au.id,'in');
+addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'q',dc.id,'R');
+markWiresDirty();
+});
+preset('Remote SDR: FM Receiver (SpyServer over WebSocket)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The same broadcast FM receiver, but the IQ comes from a SpyServer (Airspy One / HF+ / RTL-SDR behind Airspy\'s spyserver) on another machine.\n'+
+  'A browser cannot open TCP, so put a TCP → WebSocket bridge next to the server, e.g. `websockify 8766 host:5555`, and enter ws://host:8766 (from the https page — wss:// only).\n'+
+  'The server decimates by powers of two from its maximum, so the node picks the nearest step to «sample rate» and the graph runs at the real one (see the readout).\n'+
+  'Tuning and the gain index (−1 — the server\'s own) are sent when they change; the server\'s digital gain is divided out. Press Connect, tap a station on the upper spectrum.'});
+nt.size.w=760; nt.size.h=180; applySize(nt);
+const rx=addNode('iqnet',40,260,{url:'ws://127.0.0.1:8766',proto:'SpyServer',sr:768000,freq:100000000,spygain:-1});
+rx.size.w=300; rx.size.h=180; applySize(rx);
+const dcb=addNode('iqDc',400,260,{});
+const w0=addNode('iqSpec',400,400,{size:'4096'});
+const sa=addNode('sa',720,260,{auto:true,floor:-90,top:-20,split:.4});
+sa.size.w=640; sa.size.h=300; applySize(sa);
+const sh=addNode('iqShift',400,560,{});
+const d1=addNode('iqDecim',400,720,{M:'2',cut:.45});
 const sp=addNode('iqSpec',400,900,{size:'2048'});
 const s2=addNode('sa',720,600,{auto:true,floor:-100,top:-20,split:.4});
 s2.size.w=640; s2.size.h=260; applySize(s2);
