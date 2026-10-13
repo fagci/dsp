@@ -33,7 +33,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **Not from this reality** (synthetic, nothing is received): *Strange Attractor* (Lorenz / Rössler / Thomas, three outputs — try the phase scope), *Black Hole Merger* (inspiral chirp → ringdown → silence, with a `sync` pulse), *Pulsar* (period, flicker, missing pulses, scatter tail), *Schumann Resonance* (five Earth–ionosphere modes driven by lightning, a frequency multiplier brings it into the audible range), *Cellular Automaton* (Wolfram rules, rule 30 as a bit generator)
   - These are teaching models, not physics simulations. *Strange Attractor* uses the standard parameters (the largest Lyapunov exponent measured: Lorenz 0.91, Rössler 0.07). *Black Hole Merger* is the Newtonian inspiral chirp (f ∝ (t_c − t)^-3/8, A ∝ f^2/3) with a simple damped ringdown at 1.2 × the merger frequency, the duration is stretched to be audible, the noise is white. *Pulsar* has correlated flicker and a scatter tail (convolution with an exponential), but no dispersion. *Schumann Resonance* has real mode frequencies, the relative amplitudes are set by hand
 - **USB SDRs** directly via WebUSB: RTL-SDR, HackRF, Airspy R2/Mini, Airspy HF+, HydraSDR RFOne, SDRplay RSP1 / MSi2500, RX-888 (mkI/mkII/mkIII) — multiple tuners/demodulators per device, wideband sweep with a panoramic waterfall, IQ recording and playback in WAV / SigMF (see [USB SDR](#usb-sdr))
-- **KiwiSDR** remote receivers (public list included)
+- **KiwiSDR** remote receivers (public list included); **SDR Receivers Directory** (Geo) puts public KiwiSDR / SpyServer receivers on the Map — click a point and its host:port goes to the KiwiSDR node (see [KiwiSDR behind HTTPS](#kiwisdr-behind-https))
 - Camera, video, image, accelerometer and Generic Sensor API
 - **Barcode / QR** (Video): reads QR codes and barcodes from a camera, video or image frame (BarcodeDetector — Chrome / Android): the text, a pulse on `go`, records `{format, value}`, a repeat of the same code is ignored for a set time
 - **tinySA / tinySA Ultra** spectrum analyzer over WebSerial: sweep into the spectrum/waterfall, screenshots, signal generator (see [tinySA](#tinysa))
@@ -1153,3 +1153,21 @@ ISS: footprint, ground track ahead, sky plot, next passes and Doppler-corrected 
 <img width="1373" height="721" alt="image" src="https://github.com/user-attachments/assets/e45690c5-187f-46fe-a801-bd0e49b4b05c" />
 
 <img width="1221" height="719" alt="image" src="https://github.com/user-attachments/assets/83aacc0a-e61b-4d46-bed7-65bbfe542233" />
+
+## KiwiSDR behind HTTPS
+
+An https page can only open `wss://`, but public Kiwis speak plain `ws://`. The KiwiSDR node connects to `wss://<your host><proxy>/<host>/<port>/<ts>/SND` (the `proxy` parameter, default `/kiwiproxy`); a reverse proxy on your server forwards it. nginx:
+
+```nginx
+location ~ ^/kiwiproxy/(?<kh>[A-Za-z0-9.-]+)/(?<kp>[0-9]+)/(?<kpath>.+)$ {
+    resolver 1.1.1.1;
+    proxy_pass http://$kh:$kp/$kpath$is_args$args;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $kh:$kp;
+    proxy_read_timeout 3600s;
+}
+```
+
+This is an open proxy to any host: restrict it (`allow`/`deny`, basic auth, or a whitelist of hosts) before exposing it.

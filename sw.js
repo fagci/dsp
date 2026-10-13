@@ -8,7 +8,7 @@
 // ?v=N-запросы отдаются из кэша без обращения к сети (cache-first), поэтому любая правка файла требует бампа V.
 // CACHE бампать вместе с ?v=N в index.html (const V и ссылка на styles.css; tools/test-version.mjs следит) — иначе после правки файлов старый список ссылок
 // (со старым ?v=) продолжит переустанавливаться поверх уже закэшированного нового.
-const CACHE='dsp-shell-v323';
+const CACHE='dsp-shell-v324';
 const V=CACHE.replace(/\D/g,'');                 // ?v=N берётся из имени кэша — бампать только CACHE и V в index.html
 const SHELL=[
   './',
@@ -70,6 +70,8 @@ const SHELL=[
   './modules/logicusb.js?v='+V,
   './modules/logican.js?v='+V,
   './modules/sked.js?v='+V,
+  './modules/sdrdir-kernels.js?v='+V,
+  './modules/sdrdir.js?v='+V,
   './modules/sat.js?v='+V,
   './modules/horizon.js?v='+V,
   './modules/geodata-kernels.js?v='+V,

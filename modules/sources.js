@@ -5489,7 +5489,7 @@ function kiwiDisconnect(n){
 }
 
 def({ id:'kiwisdr', title:'KiwiSDR', cat:'Sources',
-  ins:[{n:'freq',t:'num'}], outs:[{n:'audio',t:'sig'},{n:'rssi',t:'num'}],
+  ins:[{n:'freq',t:'num'},{n:'server',t:'txt'}], outs:[{n:'audio',t:'sig'},{n:'rssi',t:'num'}],
   view:{h:40}, readout:true,
   params:[
     {n:'preset',t:'select',opts:['— custom —',...KIWI_PUBLIC_LIST],d:'— custom —',label:'public receivers',
@@ -5509,6 +5509,10 @@ def({ id:'kiwisdr', title:'KiwiSDR', cat:'Sources',
   dispose:n=>kiwiDisconnect(n),
   process(n,I){
     if(typeof I.freq==='number') setMod(n,'freq',I.freq);
+    if(typeof I.server==='string' && I.server && I.server!==n.p.server){
+      n.p.server=I.server; if(n.set && n.set.server) n.set.server(I.server);
+      if(n.connected||n.connecting){ kiwiDisconnect(n); kiwiConnect(n); }
+    }
     // перестройка частоты у Kiwi — цифровая на стороне сервера и дешёвая, шлём сразу при изменении
     if(n.connected && Math.round(n.p.freq)!==Math.round(n.appliedFreq)){ n.appliedFreq=n.p.freq; kiwiSetMod(n); }
     const oa=buf(n,'audio'), ring=n.ring;
