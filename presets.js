@@ -950,6 +950,29 @@ addEdge(sa.id,'f1',rx.id,'tuneFreq');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
 markWiresDirty();
 });
+preset('Echo Repeater: Record the Transmission, Play It Back (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Squelch opens → Trigger Recorder (gate) records the transmission; when it is saved, `saved` goes through a Logic node to `play`.\n'+
+  'While it plays, `playing` → Logic (NOR) keeps the recorder from recording its own output: trig = squelch AND NOT playing.\n'+
+  'Logic has `not` outputs; a single wired input gives a plain NOT. Output goes to the sound card — wire it to a transmitter.'});
+nt.size.w=560; nt.size.h=130; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'1024000',auto:false,gainDb:30,demod:'NFM',bw:12500,freq:145500000,sql:'SNR',sqlSnr:8});
+const nq=addNode('nlogic',380,260,{op:'OR',inputs:'2'});
+const lg=addNode('nlogic',560,260,{op:'NOR',inputs:'2'});
+const go=addNode('nlogic',560,440,{op:'OR',inputs:'2'});
+const tr=addNode('triggerRecorder',740,260,{mode:'gate',preTime:.3,postTime:.8,maxDuration:30});
+tr.size.w=460; tr.size.h=280; applySize(tr);
+const dc=addNode('dac',1240,260,{vol:.6});
+addEdge(rx.id,'sqOpen',nq.id,'in1');
+addEdge(nq.id,'not',lg.id,'in1');
+addEdge(tr.id,'playing',lg.id,'in2');
+addEdge(lg.id,'out',tr.id,'trig');
+addEdge(rx.id,'audioL',tr.id,'in');
+addEdge(tr.id,'saved',go.id,'in1');
+addEdge(go.id,'out',tr.id,'play');
+addEdge(tr.id,'out',dc.id,'L'); addEdge(tr.id,'out',dc.id,'R');
+markWiresDirty();
+});
 preset('USB SDR: Channel Scan (Channel Scanner + squelch)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Channel list (Table) → Channel Scanner → SDR. The scanner groups the channels into the fewest receiver windows\n'+
