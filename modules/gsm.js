@@ -1389,36 +1389,44 @@ function gsmHerm(y0,y1,y2,y3,t){
   return ((c3*t+c2)*t+c1)*t+y1;
 }
 // ресемплинг любого sr на OSR·270.833 кГц (кубический Эрмит); st — {lr,li,frac}, своё на каждый вход ('in'/'ul')
-// ФНЧ перед децимацией: без него соседние каналы (±400 кГц) и алиасинг ломают поиск FCCH (синхр. — минуты или срыв)
-const GSM_LP_TAPS=41, GSM_LP_CUT=220e3;
+// ФНЧ+децимация за один проход: полифазный КИХ (окно Блэкмана, срез GSM_LP_CUT) в дробной позиции выхода.
+// Без ФНЧ соседние каналы (±400 кГц) и алиасинг ломают поиск FCCH (синхр. — минуты или срыв)
+const GSM_LP_T=14, GSM_LP_PH=128, GSM_LP_CUT=220e3;
 let GSM_LP_CACHE=null;
-function gsmLpTaps(sr){
+function gsmLpTable(sr){
   if(GSM_LP_CACHE && GSM_LP_CACHE.sr===sr) return GSM_LP_CACHE.h;
-  const M=GSM_LP_TAPS, h=new Float32Array((M+1)>>1), mid=(M-1)/2; let sum=0;
-  for(let i=0;i<M;i++){ const k=i-mid, x=2*Math.PI*GSM_LP_CUT/sr*k;
-    const v=(k===0?2*GSM_LP_CUT/sr:Math.sin(x)/(Math.PI*k))*(0.42-0.5*Math.cos(2*Math.PI*i/(M-1))+0.08*Math.cos(4*Math.PI*i/(M-1)));
-    if(i<h.length) h[i]=v; sum+=v; }
-  for(let i=0;i<h.length;i++) h[i]/=sum;
+  const T=GSM_LP_T, K=2*T, h=new Float32Array(GSM_LP_PH*K), a=2*GSM_LP_CUT/sr;
+  for(let p=0;p<GSM_LP_PH;p++){ let sum=0; const f=p/GSM_LP_PH;
+    for(let j=0;j<K;j++){ const d=j-T+1-f, x=Math.PI*a*d;
+      const v=(d===0?a:Math.sin(x)/(Math.PI*d))*(0.42+0.5*Math.cos(Math.PI*d/T)+0.08*Math.cos(2*Math.PI*d/T));
+      h[p*K+j]=v; sum+=v; }
+    for(let j=0;j<K;j++) h[p*K+j]/=sum; }
   GSM_LP_CACHE={sr,h}; return h;
 }
-function gsmLowpass(st,sr,chunks){
-  const h=gsmLpTaps(sr), M=GSM_LP_TAPS, H=M-1;
-  let n=0; for(const c of chunks) n+=c.re.length;
-  const hr=st.hr||new Float32Array(H), hi=st.hi||new Float32Array(H);
-  const ar=new Float32Array(H+n), ai=new Float32Array(H+n); ar.set(hr); ai.set(hi); let w=H;
-  for(const c of chunks){ ar.set(c.re,w); if(c.im) ai.set(c.im,w); w+=c.re.length; }
-  const or=new Float32Array(n), oi=new Float32Array(n), half=(M-1)>>1;
-  for(let j=0;j<n;j++){
-    let sr_=h[half]*ar[j+half], si=h[half]*ai[j+half];
-    for(let t=0;t<half;t++){ const c=h[t]; sr_+=c*(ar[j+t]+ar[j+H-t]); si+=c*(ai[j+t]+ai[j+H-t]); }
-    or[j]=sr_; oi[j]=si;
+function gsmResamplePoly(st,s,ratio){
+  const T=GSM_LP_T, K=2*T, h=gsmLpTable(s.sr);
+  let total=st.lr.length; for(const c of s.chunks) total+=c.re.length;
+  const xr=new Float32Array(total), xi=new Float32Array(total);
+  xr.set(st.lr); xi.set(st.li); let w=st.lr.length;
+  for(const c of s.chunks){ xr.set(c.re,w); if(c.im) xi.set(c.im,w); w+=c.re.length; }
+  const outR=new Float32Array(Math.ceil(total/ratio)+4), outI=new Float32Array(outR.length);
+  let outN=0, pos=st.frac;
+  if(pos<T-1) pos=T-1;                                  // начало потока: слева нет истории
+  for(;;){
+    const k=Math.floor(pos); if(k+T>total-1) break;
+    const base=k-T+1, o=Math.min(GSM_LP_PH-1,Math.round((pos-k)*GSM_LP_PH))*K;
+    let sr_=0, si=0;
+    for(let j=0;j<K;j++){ const c=h[o+j]; sr_+=c*xr[base+j]; si+=c*xi[base+j]; }
+    outR[outN]=sr_; outI[outN]=si; outN++; pos+=ratio;
   }
-  st.hr=ar.slice(n); st.hi=ai.slice(n);
-  return {re:or,im:oi};
+  const keepFrom=Math.max(0,Math.floor(pos)-T);
+  st.lr=xr.slice(keepFrom); st.li=xi.slice(keepFrom); st.frac=pos-keepFrom;
+  return outN ? {re:outR.subarray(0,outN), im:outI.subarray(0,outN)} : null;
 }
 function gsmResampleStream(st,s){
   const ratio=s.sr/GSM_TARGET_SR;
-  const chunks=ratio>1.2 ? [gsmLowpass(st,s.sr,s.chunks)] : s.chunks;
+  if(ratio>1.2) return gsmResamplePoly(st,s,ratio);
+  const chunks=s.chunks;
   let total=st.lr.length; for(const c of chunks) total+=c.re.length;
   const xr=new Float32Array(total), xi=new Float32Array(total);
   xr.set(st.lr); xi.set(st.li); let w=st.lr.length;
@@ -1438,12 +1446,13 @@ function gsmResampleStream(st,s){
 // дерот. входа по накопленному смещению foff (AFC) — отдельным проходом по уже ресемплированным отсчётам,
 // поэтому тот же цикл легко применить только к downlink (аплинк своей коррекции не делает, см. README)
 function gsmDerotate(re,im,n){
-  const wderot=-2*Math.PI/GSM_TARGET_SR;
+  const w=-2*Math.PI*n.foff/GSM_TARGET_SR, rr=Math.cos(w), ri=Math.sin(w);
+  let pr=Math.cos(n.nco), pi=Math.sin(n.nco);
   for(let i=0;i<re.length;i++){
-    const cr=Math.cos(n.nco), ci=Math.sin(n.nco);
-    const a=re[i]*cr-im[i]*ci, b=re[i]*ci+im[i]*cr; re[i]=a; im[i]=b;
-    n.nco+=wderot*n.foff; if(n.nco>1e4||n.nco<-1e4) n.nco%=2*Math.PI;
+    const a=re[i]*pr-im[i]*pi, b=re[i]*pi+im[i]*pr; re[i]=a; im[i]=b;
+    const t=pr*rr-pi*ri; pi=pr*ri+pi*rr; pr=t;
   }
+  n.nco=(n.nco+w*re.length)%(2*Math.PI);
 }
 // строка лога по записи; debug=true — доп. поля конфигурации соты + сырой hex L2-сообщения
 function gsmRecLine(r,debug){
