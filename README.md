@@ -226,7 +226,7 @@ The **IQ over Network** node gives the same `iq` output as the USB SDR, so every
 - **raw stream**: bytes of interleaved I / Q with the format, sample rate and center frequency set by hand. Examples: `rtl_sdr -f 100e6 -s 1024000 - | websocat -b -s 8766`, `hackrf_transfer -r - -f 100000000 -s 2000000 | websocat -b -s 8766` (set *int8*), GNU Radio or SoapySDR with a pipe sink, your own script. Samples that arrive cut in the middle (a byte boundary in a WebSocket message) are put together.
 - The queue holds 2 seconds; when the page cannot keep up the oldest data is dropped, the stream is tagged `gap` and the overflow counter in the readout grows. The readout shows the real received rate next to the set one.
 
-Preset: *Remote SDR: FM Receiver (rtl_tcp over WebSocket)*. SoapyRemote and other protocols with their own framing are not supported yet.
+Presets: *Remote SDR: FM Receiver (rtl_tcp over WebSocket)* and *Remote SDR: FM Receiver (SpyServer over WebSocket)*. SoapyRemote and other protocols with their own framing are not supported yet.
 
 ## tinySA
 
