@@ -966,8 +966,6 @@ tcpdump -i wlan0 -U -w - | websocat -b -s 8767     # channel websocket, ws://hos
 dumpcap -i eth0 -P -w - | websocat -b -s 8767      # the same, pcap (not pcapng) from Wireshark's dumpcap
 websocat -b -s 8767 udp-l:0.0.0.0:5000             # a datagram is a packet, frame: message
 websockify 8767 192.168.1.20:3333                  # a TCP server of a device; frame by its protocol
-socat -u UDP-RECV:5000 - | websocat -b -s 8767     # a byte stream from UDP (use frame: slip / len16be …)
-websocat -t -s 8767 cmd:'cat /dev/ttyUSB0'         # lines from a tty, frame: hex lines
 ```
 
   From an https page the browser blocks `ws://` to other hosts: use `wss://`, localhost, or a local copy of the page over http.
