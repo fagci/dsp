@@ -683,7 +683,7 @@ class GsmReceiver{
     this.re=new Float32Array(0); this.im=new Float32Array(0);
     this.len=0; this.head=0; this.dCounter=0;
     this.state='fcch';                                  // fcch | sch | sync
-    this.fcchStart=0; this.failedSch=0;
+    this.fcchStart=0; this.failedSch=0; this.schRef=null;
     this.t1=0; this.t2=0; this.t3=0; this.tn=0; this.offFrac=0;
     this.ncc=0; this.bcc=0;
     this.bursts=[];                                     // выданные за такт бёрсты
@@ -890,7 +890,7 @@ class GsmReceiver{
         this.t1=r.t1; this.t2=r.t2; this.t3=r.t3; this.ncc=r.ncc; this.bcc=r.bcc; this.tn=0; this.offFrac=0;
         this.advanceBurst();                                     // set(...)++ как в оригинале
         this.consume(bs+GSM_BURST_SIZE*GSM_OSR+4*GSM_OSR);
-        this.state='sync'; this.failedSch=0;
+        this.state='sync'; this.failedSch=0; this.schRef=null;
         this.emitSch(bs);
       }
       else if(this.state==='sync'){
@@ -1044,14 +1044,14 @@ class GsmReceiver{
   processTimeslot(){
     const type=this.burstType();
     this.dbm=this.signalDbm();
-    let toConsume=0;
+    let toConsume=0, adj=0;
     if(type==='fcch'){
       // измеряем остаточное смещение частоты и корректируем петлю
       const h=this.head; let phaseSum=0;
       const first=Math.ceil((GSM_GUARD+2*GSM_TAIL)*GSM_OSR)+1, last=first+GSM_USEFUL*GSM_OSR-GSM_TAIL*GSM_OSR;
       for(let ii=first;ii<last;ii++) phaseSum+=this.phaseDiff(ii,ii-1)-(Math.PI/2)/GSM_OSR;
-      this.freqOffset=(phaseSum/(last-first))*GSM_TARGET_SR/(2*Math.PI);
-      this.freqUpdate=true;
+      const fo=(phaseSum/(last-first))*GSM_TARGET_SR/(2*Math.PI);
+      if(Math.abs(fo)<GSM_AFC_MAX_STEP){ this.freqOffset=fo; this.freqUpdate=true; }   // выброс = слот сдвинут, не уход частоты
     }
     else if(type==='sch'){
       const chanRe=new Float32Array(GSM_CHAN_IMP*GSM_OSR), chanIm=new Float32Array(GSM_CHAN_IMP*GSM_OSR);
@@ -1060,7 +1060,10 @@ class GsmReceiver{
         const eb=new Uint8Array(GSM_BURST_SIZE); this.detectBurst(chanRe,chanIm,bs,eb);
         const r=gsmDecodeSch(eb);
         if(r){ this.t1=r.t1; this.t2=r.t2; this.t3=r.t3; this.ncc=r.ncc; this.bcc=r.bcc; this.failedSch=0;
-          this.emitSch(bs); this.emitBurst('sch',eb); }
+          this.emitSch(bs); this.emitBurst('sch',eb);
+          // слежение за тактом: позиция SCH относительно первой принятой — уход кварца SDR, подтягиваем сетку слотов
+          if(this.schRef==null) this.schRef=bs;
+          else { const err=bs-this.schRef; if(Math.abs(err)<GSM_TRACK_MAX*GSM_OSR) adj=Math.trunc(err/2); } }
         else if(++this.failedSch>=GSM_MAX_SCH_ERR){ this.state='fcch'; }
       }
     }
@@ -1081,7 +1084,7 @@ class GsmReceiver{
       }
     }
     const off=this.advanceBurst();
-    toConsume=GSM_TS_BITS*GSM_OSR+off;
+    toConsume=GSM_TS_BITS*GSM_OSR+off+adj;
     this.consume(toConsume);
   }
 

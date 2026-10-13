@@ -18,14 +18,20 @@ function run(opts,seconds){
   ctx.opts=opts||{}; ctx.secs=seconds;
   return ev(`(()=>{
     const n={p:{gsmCell:'250-01-1234-5678',bsic:18,gsmCombined:opts.nc ? false : undefined}}, rx=new GsmReceiver(); if(opts.ids) rx.ids=opts.ids;
-    const out=[], N=65536, total=Math.floor(secs*GSM_TARGET_SR);
-    for(let done=0;done<total;done+=N){ const [re,im]=gsmGenerate(n,GSM_TARGET_SR,N); rx.push(re,im); const r=rx.work(); for(const x of r.rec) out.push(x); }
-    return {rec:out, rx};
+    const out=[], N=65536, total=Math.floor(secs*GSM_TARGET_SR), sr=GSM_TARGET_SR*(1+(opts.ppm||0)*1e-6);
+    let synced=false, lost=0;
+    for(let done=0;done<total;done+=N){ const [re,im]=gsmGenerate(n,sr,N); rx.push(re,im); const r=rx.work(); for(const x of r.rec) out.push(x);
+      if(rx.state==='sync') synced=true; else if(synced){ lost++; synced=false; } }
+    return {rec:out, rx, lost};
   })()`);
 }
 const r=run({},4);
 const kinds={}; for(const x of r.rec) kinds[x.kind]=(kinds[x.kind]||0)+1;
 ok('receiver locks to the generated carrier and decodes SI3',kinds['GSM-SI3']>0 && r.rx.state==='sync',JSON.stringify(kinds));
+
+// уход тактовой частоты SDR относительно соты (100 ppm ≈ 27 символов/с): тайминг слотов должен отслеживаться по SCH
+const rd=run({ppm:100},12), rdn=run({ppm:-100},12);
+ok('slot timing follows a ±100 ppm sample-clock offset without losing sync',rd.lost===0 && rdn.lost===0 && rd.rx.state==='sync' && rdn.rx.state==='sync' && rd.rec.filter(x=>x.kind==='GSM-SI3').length>5,'lost '+rd.lost+' '+rd.rx.state);
 
 // CCCH: paging с TMSI, immediate assignment, reject; по умолчанию идентификаторы — только хэш-маркеры
 const cc=r.rec.filter(x=>x.kind==='GSM-PCH'||x.kind==='GSM-AGCH');
