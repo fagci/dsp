@@ -1113,29 +1113,26 @@ select.aed-b{padding:0 6px}
   font:11px ui-monospace,Menlo,Consolas,monospace;padding:2px 4px;flex:none}
 .hx-edit{width:12em}
 
-/* ⛶ в заголовке узла: основная канва / список на весь экран (core-graph.js, xpandNode) */
-.xpand{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;background:var(--bg)}
-.xpand .xbar{flex:none;display:flex;align-items:center;gap:8px;padding:5px 10px;background:var(--panel);border-bottom:1px solid var(--line);font-size:12px}
-.xpand .xbar span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.xpand .xbar button{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:3px;cursor:pointer;padding:2px 10px;font-size:14px}
-.xpand .xbar button:hover{border-color:var(--acc);color:var(--acc)}
-.xpand .xbody{flex:1;min-height:0;display:flex;flex-direction:column}
-.xpand .node{position:static;transform:none!important;width:auto!important;flex:1;min-height:0;display:flex;flex-direction:column;border:0;border-radius:0;box-shadow:none}
-.xpand .node>.nhead,.xpand .node>.rz{display:none}
-.xpand .nbody,.xpand .io3,.xpand .io3>.mid{flex:1;min-height:0;display:flex;flex-direction:column;padding:0;margin:0}
-.xpand .io3>.col{display:none}
-.xpand .io3>.mid>:not(canvas.view.main):not(.tbl-ui){display:none!important}
-.xpand canvas.view.main{flex:1;min-height:0;width:100%!important;height:auto!important;margin:0;border-radius:0}
-.xpand .tbl-ui{flex:1;min-height:0;height:auto!important;padding:4px}
-
+/* ⛶ в заголовке узла: параметры скрыты, канва / список на весь модуль (core-graph.js, xpandNode) */
+.nhead .xpd.on{color:var(--acc);opacity:1}
+.node.xp{display:flex;flex-direction:column}
+.node.xp>.rz{display:none}
+#canvas #content .node.xp .nbody{flex:1 1 0;min-height:0;display:flex;flex-direction:column}
+#canvas #content .node.xp .io3{flex:1 1 0;min-height:0}
+#canvas #content .node.xp .io3>.mid{flex:1 1 0;min-height:0;min-width:0;display:flex!important;flex-direction:column;padding:0;margin:0}
+#canvas #content .node.xp .io3>.mid>:not(canvas.view.main):not(.tbl-ui){display:none!important}
+#canvas #content .node.xp canvas.view.main{flex:1 1 0;min-height:0;width:100%!important;height:auto!important;aspect-ratio:auto;margin:0;border-radius:0}
+.node.xp .tbl-ui{flex:1 1 0;min-height:0;height:auto!important;padding:4px}
 /* Table: сетка колонок (Wireshark-like), панель вида */
 .tbl-list.grid{overflow:auto}
 .tbl-row{background:var(--rb,transparent)}
-.tbl-list.grid .tbl-row,.tbl-list.grid .tbl-hd{display:grid;grid-template-columns:var(--tc);gap:0 6px;align-items:center;width:max-content;min-width:100%;box-sizing:border-box}
-.tbl-list.grid .tbl-row{padding:2px 6px;border-bottom:1px solid color-mix(in srgb,var(--line) 50%,transparent);font-variant-numeric:tabular-nums}
+.tbl-list.grid .tbl-row,.tbl-list.grid .tbl-hd{display:grid;grid-template-columns:var(--tc);gap:0;align-items:stretch;width:max-content;min-width:100%;box-sizing:border-box;font-size:11px}
+.tbl-list.grid .tbl-row{padding:0;border-bottom:1px solid color-mix(in srgb,var(--line) 50%,transparent);font-variant-numeric:tabular-nums}
 .tbl-list.grid .tbl-row.on{background:color-mix(in srgb,var(--acc2) 32%,var(--rb,transparent))}
-.tbl-hd{position:sticky;top:0;z-index:1;padding:3px 6px;background:var(--panel2);border-bottom:1px solid var(--line);color:var(--dim);font-size:10px}
-.tbl-hd>span,.tbl-c{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.tbl-hd{position:sticky;top:0;z-index:1;padding:0;background:var(--panel2);border-bottom:1px solid var(--line);color:var(--dim)}
+.tbl-list.grid .tbl-row>*,.tbl-hd>*{padding:2px 5px;border-right:1px solid color-mix(in srgb,var(--txt) 12%,transparent);box-sizing:border-box;min-width:0}
+.tbl-list.grid .tbl-row>:last-child,.tbl-hd>:last-child{border-right:0}
+.tbl-hd>span,.tbl-c{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tbl-c.r{text-align:right}
 .tbl-no{color:var(--dim);font-size:10px;text-align:right}
 .tbl-sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px}
