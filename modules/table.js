@@ -11,7 +11,7 @@
 // Выход: по одной записи (секвенсор из modules/sequencer.js), поля — отдельными проводами,
 // весь список (отмеченные списки) как bands (для 'sa') и rows (для Graph / Map), выбранная запись — lo/mid/hi/span/step.
 
-const TBL_PATCH='@patch', TBL_PRE='presets/', TBL_ROWS=300;
+const TBL_PATCH='@patch', TBL_PRE='presets/', TBL_ROWS=300, TBL_SAVE_MS=3000;
 const TBL_FIXED=new Set([...SEQ_FIXED,'rows','mid','span']);
 const TBL_LO=['lo','low','start','freq','frequency'], TBL_HI=['hi','high','end'],
   TBL_LABEL=['name','label','title'], TBL_COLOR=['color','colour'], TBL_STEP=['step'];
@@ -336,7 +336,11 @@ async function tblAdd(n,recs){
     if(kind==='db') await ListDB.removeMany(drop).catch(()=>{});
     n.idx=Math.max(0,n.idx-drop.length);
   }
-  if(kind==='patch') await tblSave(n);
+  // CSV всех строк (до 1000) + запись параметра на каждый сброс — O(N) дважды в секунду; при потоке записей копим и пишем реже
+  if(kind==='patch'){
+    if(grown || performance.now()-(n.saveT||0)>TBL_SAVE_MS){ n.saveT=performance.now(); n.saveLate=false; await tblSave(n); }
+    else if(!n.saveLate){ n.saveLate=true; setTimeout(()=>{ if(n.saveLate && !n.disposed){ n.saveLate=false; n.saveT=performance.now(); tblSave(n); } },TBL_SAVE_MS); }
+  }
   if(grown) tblSetCols(n,n.cl.slice(),false);
   tblDerive(n);
 }
@@ -594,11 +598,12 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     if(n.ui){
       const vk=[n.p.vcols,n.p.rules,n.p.tint,n.p.vmode];
       if(!n._vk || vk.some((x,i)=>x!==n._vk[i])){ n._vk=vk; n.uiDirty=true; if(n.ui.view && !n.ui.view.hidden) tblRenderView(n); }
-      if(n.uiDirty && performance.now()-(n.uiT||0)>400){ n.uiDirty=false; n.uiT=performance.now(); tblRenderList(n); }
+      // полная перерисовка до 300 строк × колонок — реже на длинном списке
+      if(n.uiDirty && performance.now()-(n.uiT||0)>400+2*Math.min(n.rows.length,TBL_ROWS)){ n.uiDirty=false; n.uiT=performance.now(); tblRenderList(n); }
       tblMark(n);
     }
   },
-  dispose:n=>{ n.pend=[]; }
+  dispose:n=>{ n.pend=[]; n.disposed=true; if(n.saveLate){ n.saveLate=false; tblSave(n); } }
 });
 
 /* ---------- интерфейс ---------- */
