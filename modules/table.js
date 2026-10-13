@@ -102,11 +102,42 @@ function tblPacket(n,r){
   for(const f of spec){
     if(f.src==='*'){ const p=parsed(); if(p) for(const k in p) if(k[0]!=='_' && !(k in o)) o[k]=p[k]; continue; }
     if(!f.alias && f.col in o) continue;
-    let v=r; for(const k of f.src.split('.')){ v=v!=null && typeof v==='object' && !(v instanceof Uint8Array) ? v[k] : undefined; }
+    let v=r;
+    for(const k of f.src.split('.')){
+      if(typeof v==='string' && /^\s*[{[]/.test(v)) try{ v=JSON.parse(v); }catch(e){}     // в списке объекты хранятся текстом
+      v=v!=null && typeof v==='object' && !(v instanceof Uint8Array) ? v[k] : undefined;
+    }
     if(v===undefined){ const p=parsed(); v=p ? p[f.src] : undefined; }
     if(v!==undefined) o[f.col]=v;
   }
   return o;
+}
+// поля пакета — в уже записанные строки (пустые ячейки), новые колонки добавляются
+async function tblBackfill(n){
+  if(tblRO(n) || n.loaded!==n.p.list || !tblPspec(n).length || !n.all.length) return;
+  const dirty=[]; let grown=false;
+  n.all.forEach((row,i)=>{
+    const src={}; for(const c in row) if(row[c]!=='' && row[c]!=null) src[c]=row[c];
+    const res=tblClean(tblPacket(n,src));
+    let hit=false;
+    for(const k in res){
+      if(row[k]!=='' && row[k]!=null) continue;
+      if(!n.cl.includes(k)){ n.cl.push(k); grown=true; }
+      if(res[k]!=='' && res[k]!=null){ row[k]=res[k]; hit=true; }
+    }
+    if(hit) dirty.push(i);
+  });
+  if(!dirty.length && !grown) return;
+  for(const r of n.all) for(const c of n.cl) if(r[c]===undefined) r[c]='';
+  if(tblKind(n.p.list)==='db'){
+    try{
+      for(const i of dirty){ const it=tblToItem(n.all[i],n.cl); await ListDB.update(n.ids[i],{name:it.name,fields:it.fields,value:it.fields.value??''}); }
+      if(grown) await ListDB.setMeta(n.p.list,{cols:n.cl});
+    }catch(e){ alert('storage: '+(e.message||e)); return; }
+  } else await tblSave(n);
+  if(grown) tblSetCols(n,n.cl.slice(),false);
+  tblDerive(n);
+  if(n.ui) tblRenderAll(n);
 }
 // запись для хранения: объекты и байты — в текст
 const tblClean=r=>{ const o={}; for(const k in r){ const v=r[k]; o[k]=v==null ? '' : typeof v==='object' ? recFmt(v,true) : v; } return o; };
@@ -557,6 +588,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     {n:'rowsIn',t:'select',opts:['replace','add'],d:'replace',label:'rows in (wire)',tip:'a set on the rows input is stored in the active list: replace its rows, or add to them'},
     {n:'key',t:'text',d:'',adv:true,label:'upsert key col',tip:'if set, a wired rec with the same value in this column updates its row instead of adding one; count / first / last columns are kept'},
     {n:'pfields',t:'text',d:'',adv:true,label:'packet fields → columns',tip:'extra columns from a wired rec: "col=src, src2". src is a path into the record (a.b.c) or a field of its hex parsed by hexSchema (HEX Structure: mtype_name, body.devaddr …); * — all parsed fields'},
+    {n:'pfillBtn',t:'button',label:'Fill packet fields into existing rows',adv:true,fn:n=>tblBackfill(n)},
     {n:'textCsv',t:'check',d:false,label:'text wire: split into columns',adv:true},
     {n:'log',t:'check',d:false,label:'log inputs a–d',adv:true,fn:n=>{ tblRebuild(n,true); }},
     {n:'period',t:'range',min:.05,max:60,step:.05,d:1,label:'log period, s',adv:true},
@@ -584,6 +616,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     n.extra=new Map(); n.onCount=0;
     n.err=''; n.loaded=null; n.loadedData=null; n.pend=[]; n.lastFlush=0; n.flushing=false;
     n.lastRec=undefined; n.lastText=undefined; n.lastIn={}; n.logT=0; n.pick=null;
+    n._pfSeen=n.p.pfields; n._pfPend=false; n._pfAt=0;
     n.trigPrev=0; n.rowPrev=null; n.pulse=0; n.initialized=false; n.uiDirty=true;
     n.onResize=ln=>{ if(ln.ui) syncCustomHeight(ln,ln.ui.root,150); };
     tblPorts(n); seqReset(n);
@@ -602,6 +635,9 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     if((n.loaded!==p.list || (p.list===TBL_PATCH && n.loadedData!==p.data)) && !n.loading) tblLoad(n);
     else if(n._showRef!==p.show && !n.loading) tblSyncExtra(n);       // галочки изменили извне (undo, патч)
     n.lastIn=I;
+    // packet fields изменили — заполнить ими уже записанные строки, когда ввод затих
+    if(p.pfields!==n._pfSeen){ n._pfSeen=p.pfields; n._pfAt=performance.now(); n._pfPend=true; }
+    else if(n._pfPend && performance.now()-n._pfAt>1000 && !n.loading && n.loaded===p.list){ n._pfPend=false; tblBackfill(n); }
     if(p.collect && !tblRO(n)){
       if(I.rec && I.rec!==n.lastRec){ n.lastRec=I.rec; for(const r of Array.isArray(I.rec) ? I.rec : [I.rec]) if(r && typeof r==='object') n.pend.push(r); }
       if(typeof I.text==='string' && I.text!==n.lastText){ n.lastText=I.text; if(I.text) n.pend.push(...tblTextRows(n,I.text)); }
