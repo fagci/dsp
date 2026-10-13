@@ -903,6 +903,8 @@ function tblRenderCols(n){
 }
 function tblRenderList(n){
   const ui=n.ui, list=ui.list, N=n.rows.length, ro=tblRO(n), grid=n.p.vmode!=='compact';
+  // перерисовка при новых записях не должна сбрасывать прокрутку: запоминаем позицию, у низа в режиме tail — остаёмся у низа
+  const keep=list.scrollTop, atEnd=list.scrollTop+list.clientHeight>=list.scrollHeight-4;
   list.innerHTML='';
   list.classList.toggle('grid',grid);
   ui.count.textContent=(n.p.filter ? N+'/' : '')+n.all.length+' rows';
@@ -938,7 +940,8 @@ function tblRenderList(n){
     m.className='tbl-empty sm';
     list.append(m);
   }
-  ui.marked=-1; tblMark(n);
+  list.scrollTop=ui.tail && atEnd ? list.scrollHeight : keep;
+  ui.marked=-1; tblMark(n,true);
 }
 /* ---------- вид: колонки, форматы, раскраска ---------- */
 // p.vcols = [{c, fmt, w, hide}] — порядок, формат ячейки, ширина (px, 0 — по содержимому), скрытие;
@@ -1093,7 +1096,7 @@ function tblRow(n,i,ro,g){
   return row;
 }
 // подсветка текущей записи (выбранной или выданной секвенсором)
-function tblMark(n){
+function tblMark(n,still){
   const ui=n.ui, want=n.rows.length && (n.started || n.p.sel!=null) ? n.idx : -1;
   if(ui.marked===want) return;
   ui.marked=want;
@@ -1101,7 +1104,7 @@ function tblMark(n){
     if(el.dataset.i===undefined) continue;
     const on=+el.dataset.i===want;
     el.classList.toggle('on',on);
-    if(on){ const t=el.offsetTop-ui.list.clientHeight/2; if(el.offsetTop<ui.list.scrollTop || el.offsetTop+el.offsetHeight>ui.list.scrollTop+ui.list.clientHeight) ui.list.scrollTop=Math.max(0,t); }
+    if(on && !still){ const t=el.offsetTop-ui.list.clientHeight/2; if(el.offsetTop<ui.list.scrollTop || el.offsetTop+el.offsetHeight>ui.list.scrollTop+ui.list.clientHeight) ui.list.scrollTop=Math.max(0,t); }
   }
 }
 // панель «▦ view»: колонки (показ, порядок, формат, ширина), раскладка и правила раскраски строк
