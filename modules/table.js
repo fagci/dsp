@@ -71,6 +71,43 @@ function tblFromTable(table){
   });
   return {cols,rows};
 }
+// поля пакета → колонки. p.pfields: «col=src, src2», src — путь a.b.c в записи или поле разбора hex по её hexSchema
+// (hexSchema нет — схема по содержимому); «*» — все поля разбора. Без «col=» колонка зовётся как src (точки → _)
+function tblPspec(n){
+  const t=String(n.p.pfields||'');
+  if(n._pfSrc!==t){
+    n._pfSrc=t;
+    n._pf=t.split(/[,;\n]/).map(x=>x.trim()).filter(Boolean).map(x=>{
+      const i=x.indexOf('='), src=(i<0 ? x : x.slice(i+1)).trim();
+      return {src, col:i<0 ? src.replace(/\./g,'_') : x.slice(0,i).trim(), alias:i>=0};
+    }).filter(x=>x.src && x.col);
+  }
+  return n._pf;
+}
+function tblHexRec(r){
+  try{
+    const h=r.hex;
+    const b=h instanceof Uint8Array ? h : typeof h==='string' && h ? hexFromHex(h) : null;
+    if(!b || !b.length) return null;
+    const name=r.hexSchema && HEX_LIB[r.hexSchema] ? r.hexSchema : hexDetect(b) || null;
+    return name ? hexToRec(hexParse(hexSchema(name),b)) : null;
+  }catch(e){ return null; }
+}
+function tblPacket(n,r){
+  const spec=tblPspec(n);
+  if(!spec.length || !r || typeof r!=='object') return r;
+  let pk;                                               // разбор hex — только если он понадобился
+  const parsed=()=>pk===undefined ? (pk=tblHexRec(r)) : pk;
+  const o={...r};
+  for(const f of spec){
+    if(f.src==='*'){ const p=parsed(); if(p) for(const k in p) if(k[0]!=='_' && !(k in o)) o[k]=p[k]; continue; }
+    if(!f.alias && f.col in o) continue;
+    let v=r; for(const k of f.src.split('.')){ v=v!=null && typeof v==='object' && !(v instanceof Uint8Array) ? v[k] : undefined; }
+    if(v===undefined){ const p=parsed(); v=p ? p[f.src] : undefined; }
+    if(v!==undefined) o[f.col]=v;
+  }
+  return o;
+}
 // запись для хранения: объекты и байты — в текст
 const tblClean=r=>{ const o={}; for(const k in r){ const v=r[k]; o[k]=v==null ? '' : typeof v==='object' ? recFmt(v,true) : v; } return o; };
 
@@ -307,7 +344,7 @@ async function tblUpsert(n,recs,key){
 // добавление записей; новые поля расширяют колонки (и порты — без потери проводов)
 async function tblAdd(n,recs){
   if(tblRO(n) || !recs.length) return;
-  recs=recs.map(tblClean);
+  recs=recs.map(r=>tblClean(tblPacket(n,r)));
   let grown=false;
   if(n.p.key && n.p.key.trim()){
     const u=await tblUpsert(n,recs,n.p.key.trim());
@@ -519,6 +556,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     {n:'collect',t:'check',d:true,label:'store rec / text wires',adv:true},
     {n:'rowsIn',t:'select',opts:['replace','add'],d:'replace',label:'rows in (wire)',tip:'a set on the rows input is stored in the active list: replace its rows, or add to them'},
     {n:'key',t:'text',d:'',adv:true,label:'upsert key col',tip:'if set, a wired rec with the same value in this column updates its row instead of adding one; count / first / last columns are kept'},
+    {n:'pfields',t:'text',d:'',adv:true,label:'packet fields → columns',tip:'extra columns from a wired rec: "col=src, src2". src is a path into the record (a.b.c) or a field of its hex parsed by hexSchema (HEX Structure: mtype_name, body.devaddr …); * — all parsed fields'},
     {n:'textCsv',t:'check',d:false,label:'text wire: split into columns',adv:true},
     {n:'log',t:'check',d:false,label:'log inputs a–d',adv:true,fn:n=>{ tblRebuild(n,true); }},
     {n:'period',t:'range',min:.05,max:60,step:.05,d:1,label:'log period, s',adv:true},
@@ -646,7 +684,7 @@ function tblInit(n){
       <button class="tbl-btn tbl-viewb" title="columns, their format and row colour rules">▦ view</button>
       <button class="tbl-btn tbl-here" title="new row at my current position (GPS) — with the icon, a photo and a sound in the same form">📍 here</button>
     </div>
-    <div class="tbl-list"></div>
+    <div class="tbl-list" tabindex="0"></div>
     <div class="tbl-edit" hidden></div>
     <input class="tbl-file" type="file" multiple accept=".csv,.tsv,.txt,.json,.jsonl,.kml,.gpx,.geojson,text/*" hidden>
   `;
@@ -661,6 +699,7 @@ function tblInit(n){
     const parts=k.split('/'); parts.pop();
     parts.reduce((a,x)=>{ const path=a ? a+'/'+x : x; n._open.add(path); return path; },'');
   }
+  n.ui.list.addEventListener('keydown',e=>tblKey(n,e));
   n.ui.pick.addEventListener('change',()=>tblPick(n,n.ui.pick.value));
   n.ui.shown.addEventListener('click',()=>tblTreeToggle(n));
   n.ui.tree.addEventListener('click',e=>tblTreeClick(n,e));
@@ -1094,11 +1133,31 @@ function tblRow(n,i,ro,g){
     (row._tail||row).append(ed,del);
   }
   if(!ro) row.addEventListener('dblclick',()=>tblEditForm(n,i,row));
-  row.addEventListener('click',()=>{                    // выбор записи: уходит на выходы
-    n.pick=i; n.idx=i; n.cur={...n.rows[i]}; n.p.sel=n.rowIds[i];
-    tblMark(n);
-  });
+  row.addEventListener('click',()=>{ tblSelect(n,i); n.ui.list.focus({preventScroll:true}); });
   return row;
+}
+function tblSelect(n,i){                                // выбор записи: уходит на выходы
+  n.pick=i; n.idx=i; n.cur={...n.rows[i]}; n.p.sel=n.rowIds[i];
+  tblMark(n);
+}
+// ↑ ↓ PgUp PgDn Home End по списку; без выбора ↓ берёт первую запись, ↑ — последнюю
+function tblKey(n,e){
+  const N=n.rows.length;
+  if(!N || e.altKey || e.ctrlKey || e.metaKey) return;
+  const s=n.ui.tail ? Math.max(0,N-TBL_ROWS) : 0, last=Math.min(N,s+TBL_ROWS)-1;
+  const cur=n.ui.marked, page=Math.max(1,Math.floor(n.ui.list.clientHeight/24)-1);
+  let i;
+  switch(e.key){
+    case 'ArrowDown': i=cur<0 ? s : cur+1; break;
+    case 'ArrowUp': i=cur<0 ? last : cur-1; break;
+    case 'PageDown': i=cur<0 ? s : cur+page; break;
+    case 'PageUp': i=cur<0 ? last : cur-page; break;
+    case 'Home': i=s; break;
+    case 'End': i=last; break;
+    default: return;
+  }
+  e.preventDefault(); e.stopPropagation();
+  tblSelect(n,clamp(i,s,last));
 }
 // подсветка текущей записи (выбранной или выданной секвенсором)
 function tblMark(n,still){

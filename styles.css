@@ -1156,6 +1156,7 @@ select.aed-b{padding:0 6px}
 .tbl-view [hidden]{display:none!important}
 
 /* Table: полосы прокрутки списка заметны (общие — цвета линии на светлом фоне почти не видно) */
+.tbl-list:focus{outline:none;border-color:var(--acc)}
 .tbl-list{scrollbar-width:auto;scrollbar-color:var(--dim) var(--panel2)}
 .tbl-list::-webkit-scrollbar{width:12px;height:12px}
 .tbl-list::-webkit-scrollbar-track,.tbl-list::-webkit-scrollbar-corner{background:var(--panel2)}
@@ -1165,5 +1166,5 @@ select.aed-b{padding:0 6px}
 .readout.gsm-ro{display:flex;flex-direction:column;overflow:hidden;gap:3px}
 .gsm-ro .gsm-st{flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--acc)}
 .gsm-ro .gsm-lg{flex:1;min-height:0;overflow:auto;white-space:pre-wrap;word-break:break-word}
-/* Спектроанализатор в тайле: канва сверху на всю высоту ячейки, параметры — прокруткой ниже */
-.dash-body .node[data-type="sa"] .io3>.mid>canvas.view.main{order:-1;margin-top:0}
+/* Спектроанализатор в тайле: контролы сверху, канва до низа ячейки; в режиме «только главное» (▤) канва сверху, главные контролы под ней */
+.dash-pane.compact .dash-body .node[data-type="sa"] .io3>.mid>canvas.view.main{order:-1;margin-top:0}
