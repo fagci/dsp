@@ -374,35 +374,44 @@ el.addEventListener(ev,()=>{ n._dirty=true; },{capture:true,passive:true});
 el._node=n; n._vis=undefined; visIO.observe(el);
 n.el=el; content.append(el); el.style.zIndex=++zCounter; posNode(n); applySize(n); // новый узел сразу поверх остальных
 }
-// ⛶ в заголовке: основная канва (или список) узла — на весь экран, без параметров и портов. Esc / жест «назад» / ⤡ — вернуть
-function xpandNode(n,on,quiet){   // quiet — пересборка узла: запись «назад» остаётся
+// ⛶ в заголовке: модуль разворачивается на месте во весь видимый холст, как ячейка тайла: параметры и порты спрятаны,
+// основная канва (или список) занимает остаток; заголовок остаётся. Повтор ⛶, Esc или жест «назад» возвращают прежние место и размер
+function xpandGeom(n){
+const r=cv.getBoundingClientRect(), m=6;
+n.x=-view.x+m/view.k; n.y=-view.y+m/view.k;
+n.size.w=Math.max(160,Math.round((r.width-2*m)/view.k));
+n.el.style.height=Math.max(80,Math.round((r.height-2*m)/view.k))+'px';
+}
+function xpandApply(n){                                 // (пере)применить к текущему n.el
+n.el.classList.add('xp'); n.el.style.zIndex=++zCounter;
+xpandGeom(n); applySize(n); posNode(n);
+n.el.querySelector('.xpd')?.classList.add('on');
+document.body.classList.add('xpanded');
+n._dirty=true; n._drawGen=-1; n.onResize?.(n); markWiresDirty();
+}
+function xpandNode(n,on){
 if(on===undefined) on=!n.xpand;
 if(on===!!n.xpand) return;
 if(on){
-const ov=document.createElement('div'); ov.className='xpand';
-const bar=document.createElement('div'); bar.className='xbar';
-const ttl=document.createElement('span'); ttl.textContent=nodeTitle(n);
-const cl=document.createElement('button'); cl.textContent='⤡'; cl.title='Back to graph (Esc)';
-bar.append(ttl,cl);
-const host=document.createElement('div'); host.className='xbody';
-ov.append(bar,host); document.body.append(ov);
-n._xHome={p:n.el.parentNode,next:n.el.nextSibling};
-host.append(n.el);
-n.xpand=ov; n._xBack||=()=>xpandNode(n,false);
-n._xKey=e=>{ if(e.key==='Escape' && !e.defaultPrevented && !e.target.closest?.('input,textarea,select')){ e.stopPropagation(); xpandNode(n,false); } };
-cl.onclick=()=>xpandNode(n,false);
+for(const o of Graph.nodes) if(o!==n && o.xpand) xpandNode(o,false);       // развёрнут один
+n._xs={x:n.x,y:n.y,w:n.size.w,h:n.size.h}; n.xpand=true;
+n._xBack||=()=>xpandNode(n,false);
+n._xKey=e=>{
+if(!n.xpand){ removeEventListener('keydown',n._xKey,true); return; }
+if(e.key==='Escape' && !e.defaultPrevented && !e.target.closest?.('input,textarea,select')){ e.stopPropagation(); xpandNode(n,false); } };
 addEventListener('keydown',n._xKey,true);
-if(!quiet) Back.push(n._xBack);
+Back.push(n._xBack);
+xpandApply(n);
 } else {
-const ov=n.xpand, h=n._xHome; n.xpand=null;
-removeEventListener('keydown',n._xKey,true);
-if(!quiet) Back.drop(n._xBack);
-if(h?.p?.isConnected) h.p.insertBefore(n.el,h.next?.parentNode===h.p ? h.next : null); else content.append(n.el);
-ov.remove();
-}
-n.el.classList.toggle('xp',!!n.xpand);
-if(n.cv) applySize(n);
+const g=n._xs; n._xs=null; n.xpand=false;
+removeEventListener('keydown',n._xKey,true); Back.drop(n._xBack);
+n.el.classList.remove('xp'); n.el.style.height='';
+n.el.querySelector('.xpd')?.classList.remove('on');
+if(g){ n.x=g.x; n.y=g.y; n.size.w=g.w; n.size.h=g.h; }
+applySize(n); posNode(n);
+document.body.classList.toggle('xpanded',Graph.nodes.some(o=>o.xpand));
 n._dirty=true; n._drawGen=-1; n.onResize?.(n); markWiresDirty();
+}
 if(typeof dashFitSoon==='function' && dashMode) dashFitSoon();
 }
 function resettableParams(d){                         // параметры с умолчанием; скрытые (служебные) и кнопки не трогаем
@@ -570,12 +579,11 @@ const sel=n.el.classList.contains('sel');
 fillParamDefaults(n,MOD[n.type]);                  // добить дефолтами новые/переименованные параметры
 n.roCv?.disconnect();                               // старая канва уходит вместе с el, наблюдатель — тоже
 visIO.unobserve(n.el);
-const wasX=!!n.xpand; if(wasX) xpandNode(n,false,true);
 const host=n.el.parentNode, inDash=dashMode && !!dashLeafOf(n.id);   // в тайле новый DOM остаётся в своей панели
 n.el.remove(); buildNodeEl(n);
 if(inDash){ if(host && host!==content) host.append(n.el); else n.el.remove(); applySize(n); n.onResize?.(n); dashFitSoon(); }
 n._drawGen=-1;                                      // новый DOM — lazy-узлу нарисоваться заново
-if(wasX) xpandNode(n,true,true);
+if(n.xpand) xpandApply(n);
 if(sel) n.el.classList.add('sel');
 markWiresDirty();
 }
@@ -2021,8 +2029,8 @@ paletteSearch.addEventListener('input',e=>{ paletteQuery=e.target.value; buildPa
 function serialize(){
 flush();                                            // ← синхронизируем граф перед сериализацией
 return {v:1, view:{...view},
-nodes:Graph.nodes.map(n=>{ const o={id:n.id,type:n.type,x:n.x,y:n.y,
-w:n.size.w,h:n.size.h,p:{...n.p},f:n.lod|0,a:n.advOpen?1:0,...(n.gOpen&&Object.keys(n.gOpen).length?{go:{...n.gOpen}}:{})};
+nodes:Graph.nodes.map(n=>{ const g=n._xs||{x:n.x,y:n.y,w:n.size.w,h:n.size.h}; const o={id:n.id,type:n.type,x:g.x,y:g.y,
+w:g.w,h:g.h,p:{...n.p},f:n.lod|0,a:n.advOpen?1:0,...(n.gOpen&&Object.keys(n.gOpen).length?{go:{...n.gOpen}}:{})};
 if(n.name) o.name=n.name;
 if(n.dash) o.dash=1;                                // закреплён (📌) для дашборда
 return o; }),
