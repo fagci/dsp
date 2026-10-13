@@ -247,7 +247,7 @@ body.noedit #bar .ed{display:none}
 .dash-pane.bare>.dash-rail{display:none!important}
 .dash-pane.bare.scroll>.dash-body{padding-right:0}
 .dash-pane.bare .node .io3>.mid{padding:0}
-.dash-pane.bare .node .io3>.mid>:not(canvas.view.main){display:none!important}
+.dash-pane.bare .node .io3>.mid>:not(canvas.view.main):not(.tbl-ui){display:none!important}
 .dash-pane.bare .dash-body{overflow:hidden}
 .dash-body{flex:1 1 auto;min-height:0;overflow:auto}
 /* в тайлах заголовок узла не нужен: имя уже в селекте панели, кнопки заголовка тут бессмысленны */
@@ -317,7 +317,7 @@ body.noedit #bar .ed{display:none}
   .slidernum input[type=number]{font-size:14px}
   .nhead{padding:8px}
   .nhead .x{padding:0 6px;font-size:14px}
-  .nhead .ren,.nhead .rst{padding:0 6px;font-size:13px}
+  .nhead .ren,.nhead .rst,.nhead .xpd{padding:0 6px;font-size:13px}
   .rz{width:22px;height:22px}
 }
 /* ---- мобильный UX: карточки не выходят за ширину экрана ---- */
@@ -400,9 +400,9 @@ body.noedit #bar .ed{display:none}
 .nhead{display:flex;align-items:center;gap:6px;padding:5px 7px;cursor:move;user-select:none;-webkit-user-select:none;
   background:var(--panel);border-radius:3px 3px 0 0;box-shadow:inset 0 2px 0 var(--cat,var(--dim))}
 .nhead .ttl{flex:1;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.nhead .x,.nhead .ren,.nhead .rst{cursor:pointer;color:var(--dim);padding:0 2px}
-.nhead .ren,.nhead .rst{font-size:10px;opacity:.5}
-.nhead .ren:hover,.nhead .rst:hover{color:var(--acc);opacity:1}
+.nhead .x,.nhead .ren,.nhead .rst,.nhead .xpd{cursor:pointer;color:var(--dim);padding:0 2px}
+.nhead .ren,.nhead .rst,.nhead .xpd{font-size:10px;opacity:.5}
+.nhead .ren:hover,.nhead .rst:hover,.nhead .xpd:hover{color:var(--acc);opacity:1}
 .nhead .x:hover{color:#e05c5c}
 .nbody{padding:0}
 .io{display:flex;justify-content:space-between;gap:8px}
@@ -1112,3 +1112,48 @@ select.aed-b{padding:0 6px}
 .hx-edit,.hx-line{min-width:0;width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);color:var(--txt);
   font:11px ui-monospace,Menlo,Consolas,monospace;padding:2px 4px;flex:none}
 .hx-edit{width:12em}
+
+/* ⛶ в заголовке узла: основная канва / список на весь экран (core-graph.js, xpandNode) */
+.xpand{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;background:var(--bg)}
+.xpand .xbar{flex:none;display:flex;align-items:center;gap:8px;padding:5px 10px;background:var(--panel);border-bottom:1px solid var(--line);font-size:12px}
+.xpand .xbar span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xpand .xbar button{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:3px;cursor:pointer;padding:2px 10px;font-size:14px}
+.xpand .xbar button:hover{border-color:var(--acc);color:var(--acc)}
+.xpand .xbody{flex:1;min-height:0;display:flex;flex-direction:column}
+.xpand .node{position:static;transform:none!important;width:auto!important;flex:1;min-height:0;display:flex;flex-direction:column;border:0;border-radius:0;box-shadow:none}
+.xpand .node>.nhead,.xpand .node>.rz{display:none}
+.xpand .nbody,.xpand .io3,.xpand .io3>.mid{flex:1;min-height:0;display:flex;flex-direction:column;padding:0;margin:0}
+.xpand .io3>.col{display:none}
+.xpand .io3>.mid>:not(canvas.view.main):not(.tbl-ui){display:none!important}
+.xpand canvas.view.main{flex:1;min-height:0;width:100%!important;height:auto!important;margin:0;border-radius:0}
+.xpand .tbl-ui{flex:1;min-height:0;height:auto!important;padding:4px}
+
+/* Table: сетка колонок (Wireshark-like), панель вида */
+.tbl-list.grid{overflow:auto}
+.tbl-row{background:var(--rb,transparent)}
+.tbl-list.grid .tbl-row,.tbl-list.grid .tbl-hd{display:grid;grid-template-columns:var(--tc);gap:0 6px;align-items:center;width:max-content;min-width:100%;box-sizing:border-box}
+.tbl-list.grid .tbl-row{padding:2px 6px;border-bottom:1px solid color-mix(in srgb,var(--line) 50%,transparent);font-variant-numeric:tabular-nums}
+.tbl-list.grid .tbl-row.on{background:color-mix(in srgb,var(--acc2) 32%,var(--rb,transparent))}
+.tbl-hd{position:sticky;top:0;z-index:1;padding:3px 6px;background:var(--panel2);border-bottom:1px solid var(--line);color:var(--dim);font-size:10px}
+.tbl-hd>span,.tbl-c{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.tbl-c.r{text-align:right}
+.tbl-no{color:var(--dim);font-size:10px;text-align:right}
+.tbl-sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.tbl-tail{display:flex;justify-content:flex-end}
+.tbl-view{position:absolute;left:0;right:0;top:32px;z-index:13;max-height:80%;overflow-y:auto;border:1px solid var(--acc);border-radius:4px;
+  background:var(--panel);padding:4px 6px;display:flex;flex-direction:column;gap:3px}
+.tbl-view .tv-top{display:flex;gap:8px;align-items:center;position:sticky;top:-4px;background:var(--panel);padding:2px 0;z-index:1}
+.tbl-view .tv-ttl{flex:1}
+.tbl-view .tv-x,.tbl-view .tv-mv{cursor:pointer;color:var(--dim);padding:0 3px}
+.tbl-view .tv-x:hover,.tbl-view .tv-mv:hover{color:var(--acc)}
+.tbl-view .tv-sec{margin-top:4px;font-size:9px;color:var(--dim);letter-spacing:.06em;text-transform:uppercase}
+.tbl-view .tv-col,.tbl-view .tv-rule,.tbl-view .tv-acts{display:flex;align-items:center;gap:5px;min-width:0}
+.tbl-view .tv-col.off .tv-name{color:var(--dim);text-decoration:line-through}
+.tbl-view .tv-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tbl-view .tv-lbl{color:var(--dim);font-size:10px}
+.tbl-view input[type=checkbox]{margin:0;accent-color:var(--acc2)}
+.tbl-view select,.tbl-view input:not([type=checkbox]):not([type=color]){min-width:0;height:22px;background:var(--bg);border:1px solid var(--line);color:var(--txt);font-size:10px;padding:0 3px;border-radius:3px}
+.tbl-view .tv-w{width:52px}
+.tbl-view .tv-q{flex:1}
+.tbl-view input[type=color]{width:30px;height:22px;padding:0;border:1px solid var(--line);background:none}
+.tbl-view [hidden]{display:none!important}

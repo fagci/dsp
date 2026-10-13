@@ -499,7 +499,7 @@ const tblOuts=n=>{
 
 def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks band plan sequencer data log records rows folder import export',
   ins:tblIns, outs:tblOuts,
-  readout:true, resize:true, w:360, h:420,
+  readout:true, resize:true, w:360, h:420, bare:true,
   params:[
     {n:'list',t:'text',d:'table',hidden:true},
     {n:'filter',t:'text',d:'',hidden:true},
@@ -536,6 +536,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
   init:n=>{
     n.p.list=tblCanon(n.p.list||'table');
     n.p.cols=Array.isArray(n.p.cols) ? n.p.cols : [];
+    if(!Array.isArray(n.p.rules)) n.p.rules=[];
     if(n.p.sel===undefined) n.p.sel=null;
     n.all=[]; n.ids=[]; n.cl=[]; n.rows=[]; n.rowIds=[]; n.headers=[]; n.cols=[]; n.rowsOwn=[]; n.rowsOut=[];
     n.extra=new Map(); n.onCount=0;
@@ -591,6 +592,8 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
       if(r.textContent!==t) r.textContent=t;
     }
     if(n.ui){
+      const vk=[n.p.vcols,n.p.rules,n.p.tint,n.p.vmode];
+      if(!n._vk || vk.some((x,i)=>x!==n._vk[i])){ n._vk=vk; n.uiDirty=true; if(n.ui.view && !n.ui.view.hidden) tblRenderView(n); }
       if(n.uiDirty && performance.now()-(n.uiT||0)>400){ n.uiDirty=false; n.uiT=performance.now(); tblRenderList(n); }
       tblMark(n);
     }
@@ -632,8 +635,10 @@ function tblInit(n){
       <span class="tbl-count"></span>
     </div>
     <div class="tbl-cols" hidden></div>
+    <div class="tbl-view" hidden></div>
     <div class="tbl-acts">
       <button class="tbl-btn pri tbl-add">+ row</button>
+      <button class="tbl-btn tbl-viewb" title="columns, their format and row colour rules">▦ view</button>
       <button class="tbl-btn tbl-here" title="new row at my current position (GPS) — with the icon, a photo and a sound in the same form">📍 here</button>
     </div>
     <div class="tbl-list"></div>
@@ -644,7 +649,7 @@ function tblInit(n){
   syncCustomHeight(n,root,150);
   const q=s=>root.querySelector(s);
   n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), tree:q('.tbl-tree'), pick:q('.tbl-pick'), shown:q('.tbl-shown'),
-    filter:q('.tbl-filter'), cols:q('.tbl-cols'), edit:q('.tbl-edit'), tail:false, marked:-1};
+    filter:q('.tbl-filter'), cols:q('.tbl-cols'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:false, marked:-1};
   n.ui.cols.hidden=!n.colsOpen;                           // пересборка узла (смена колонок) не должна прятать редактор
   n._open=new Set(Array.isArray(n.p.open) ? n.p.open : []);
   if(!Array.isArray(n.p.open)) for(const k of new Set([...tblShow(n),n.p.list])){            // раскрыть пути отмеченных
@@ -665,6 +670,7 @@ function tblInit(n){
   q('.tbl-menub').addEventListener('click',()=>tblMainMenu(n));
   q('.tbl-add').addEventListener('click',()=>tblAddForm(n));
   q('.tbl-here').addEventListener('click',()=>tblHereForm(n));
+  q('.tbl-viewb').addEventListener('click',()=>tblViewToggle(n));
   const file=q('.tbl-file');
   n.ui.fileEl=file;
   file.addEventListener('change',()=>{ const fs=[...file.files]; file.value=''; if(fs.length) tblImport(n,fs); });
@@ -737,7 +743,8 @@ function tblMainMenu(n){
   it('Add template columns…','the data stays',()=>tblTplMenu(n,'apply'));
   it('Delete list','',()=>tblDeleteList(n));
   tblMenuHead(m,'View');
-  it(n.ui.cols.hidden ? 'Show columns…' : 'Hide columns','add and remove columns',()=>{ n.ui.cols.hidden=!n.ui.cols.hidden; n.colsOpen=!n.ui.cols.hidden; });
+  it('Columns & colors…','which columns to show, their order and format; row colour rules',()=>tblViewToggle(n));
+  it(n.ui.cols.hidden ? 'Edit data columns…' : 'Hide data columns','add and remove the columns of the list itself',()=>{ n.ui.cols.hidden=!n.ui.cols.hidden; n.colsOpen=!n.ui.cols.hidden; });
   it('Shown lists…','tick several lists to show them on the map and the bands output',()=>tblTreeToggle(n));
   it(n.ui.tail ? 'Show first rows' : 'Show last rows','',()=>{ n.ui.tail=!n.ui.tail; tblRenderList(n); });
 }
@@ -895,8 +902,9 @@ function tblRenderCols(n){
   }
 }
 function tblRenderList(n){
-  const ui=n.ui, list=ui.list, N=n.rows.length, ro=tblRO(n);
+  const ui=n.ui, list=ui.list, N=n.rows.length, ro=tblRO(n), grid=n.p.vmode!=='compact';
   list.innerHTML='';
+  list.classList.toggle('grid',grid);
   ui.count.textContent=(n.p.filter ? N+'/' : '')+n.all.length+' rows';
   if(!N){
     const e=document.createElement('div');
@@ -904,8 +912,26 @@ function tblRenderList(n){
     e.className='tbl-empty';
     list.append(e); ui.marked=-1; return;
   }
+  n.bgCtx=tblTintCtx(n);
   const s=ui.tail ? Math.max(0,N-TBL_ROWS) : 0, e=Math.min(N,s+TBL_ROWS);
-  for(let i=s;i<e;i++) list.append(tblRow(n,i,ro));
+  let vc=null, texts=null;
+  if(grid){
+    vc=tblViewCols(n).filter(x=>!x.hide);
+    const wid=vc.map(x=>Math.max(x.c.length,2));
+    texts=[];
+    for(let i=s;i<e;i++){
+      const t=vc.map(x=>tblCell(x,n.rows[i][x.c]));
+      t.forEach((v,k)=>{ if(v.length>wid[k]) wid[k]=v.length; });
+      texts.push(t);
+    }
+    list.style.setProperty('--tc','4ch '+vc.map((x,k)=>x.w>0 ? x.w+'px' : Math.min(28,wid[k]+1)+'ch').join(' ')+' 56px');
+    const hd=document.createElement('div'); hd.className='tbl-hd';
+    hd.append(Object.assign(document.createElement('span'),{textContent:'#',className:'tbl-no'}));
+    for(const x of vc) hd.append(Object.assign(document.createElement('span'),{textContent:x.c,title:x.c}));
+    hd.append(document.createElement('span'));
+    list.append(hd);
+  } else list.style.removeProperty('--tc');
+  for(let i=s;i<e;i++) list.append(tblRow(n,i,ro,grid ? {vc,t:texts[i-s]} : null));
   if(N>TBL_ROWS){
     const m=document.createElement('div');
     m.textContent=(ui.tail?'… '+s+' earlier rows hidden':'… '+(N-e)+' more rows')+' — narrow with the filter';
@@ -913,6 +939,84 @@ function tblRenderList(n){
     list.append(m);
   }
   ui.marked=-1; tblMark(n);
+}
+/* ---------- вид: колонки, форматы, раскраска ---------- */
+// p.vcols = [{c, fmt, w, hide}] — порядок, формат ячейки, ширина (px, 0 — по содержимому), скрытие;
+// колонки списка, которых там нет, дописываются в конец. p.rules = [{q, bg, on}] — первое совпавшее правило красит строку
+// (q — тот же язык, что у фильтра). Не совпало ни одно — цвет по умолчанию (p.tint): колонка color → ошибка (err ≠ 0) → severity (err / warn) →
+// значение колонки типа (proto, type, kind, mode…), у каждого значения свой оттенок; '-' — без раскраски.
+const TBL_FMTS=['auto','text','hz','time','hex','num','swatch'];
+const TBL_ERR=['err','error','errors','crc_err','crc_fail','bad'];
+const TBL_SEV=['level','severity','lvl','sev','status'], TBL_CAT=['proto','protocol','type','kind','mode','service','modulation','demod','class','category','dir'];
+function tblViewCols(n){
+  const spec=Array.isArray(n.p.vcols) ? n.p.vcols : [], seen=new Set(), out=[];
+  for(const x of spec) if(x && n.cl.includes(x.c) && !seen.has(x.c)){ seen.add(x.c); out.push({fmt:'auto',w:0,...x}); }
+  for(const c of n.cl) if(!seen.has(c)) out.push({c,fmt:'auto',w:0});
+  return out;
+}
+const tblTime=v=>{ const ms=v>1e11 ? v : v>1e8 ? v*1000 : null; return ms==null ? +v.toFixed(3)+'s' : new Date(ms).toISOString().slice(11,23); };
+function tblCell(x,v){
+  if(v===''||v==null) return '';
+  const low=x.c.toLowerCase(), f=x.fmt||'auto';
+  if(f==='auto'){
+    if(TBL_PHOTO.test(low)){ const k=phIds(v).length; return k ? '📷'+k : ''; }
+    if(TBL_AUDIO.test(low)){ const k=auIds(v).length; return k ? '🔊'+k : ''; }
+    if(TBL_HZ.test(x.c)){ const h=tblHz(v); return isFinite(h) ? fmtHz(h,3) : recFmt(v); }
+    if(/^(t|ts|time|date|datetime)$/.test(low) && typeof v==='number') return tblTime(v);
+    return recFmt(v);
+  }
+  if(f==='hz'){ const h=tblHz(v); return isFinite(h) ? fmtHz(h,3)+'Hz' : recFmt(v); }
+  if(f==='time') return typeof v==='number' ? tblTime(v) : recFmt(v);
+  if(f==='hex') return typeof v==='number' && Number.isInteger(v) ? (v<0?'-':'')+'0x'+Math.abs(v).toString(16) : recFmt(v,true);
+  if(f==='num'){ const k=typeof v==='number' ? v : parseFloat(v); return isFinite(k) ? String(+k.toFixed(3)) : recFmt(v); }
+  return recFmt(v);
+}
+function tblCellEl(n,x,v,text){
+  const el=document.createElement('span'), low=x.c.toLowerCase();
+  el.className='tbl-c'; el.title=text;
+  const ids=TBL_PHOTO.test(low) ? phIds(v) : TBL_AUDIO.test(low) ? auIds(v) : null;
+  if(ids && x.fmt==='auto'){
+    if(ids.length){
+      el.textContent=text; el.classList.add('tbl-ico','warn');
+      el.title=TBL_PHOTO.test(low) ? 'Show the photos' : 'Play the audio';
+      el.addEventListener('click',e=>{ e.stopPropagation(); TBL_PHOTO.test(low) ? phView(ids) : auView(ids); });
+    }
+    return el;
+  }
+  if((x.fmt==='swatch' || (x.fmt==='auto' && TBL_COLOR.includes(low))) && v && CSS.supports('color',String(v))){
+    const sw=document.createElement('i'); sw.className='tbl-sw'; sw.style.background=String(v); el.append(sw);
+  }
+  el.append(text);
+  if(typeof v==='number') el.classList.add('r');
+  return el;
+}
+const tblHue=s=>{ let h=2166136261; for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); } return (h>>>0)%360; };
+function tblTintCtx(n){
+  const t=n.p.tint;
+  if(t==='-') return {off:true};
+  if(t) return {cat:n.cl.includes(t) ? t : null};
+  return {color:n.colorCol, err:tblCol(n.cl,TBL_ERR), sev:tblCol(n.cl,TBL_SEV), cat:tblCol(n.cl,TBL_CAT)};
+}
+function tblRules(n){
+  const rs=Array.isArray(n.p.rules) ? n.p.rules : [];
+  if(n._rcRef!==rs){
+    n._rcRef=rs;
+    n._rc=rs.filter(x=>x && x.on!==false && x.q && x.bg).map(x=>({f:tblFilter(x.q),bg:x.bg})).filter(x=>x.f);
+  }
+  return n._rc;
+}
+function tblRowBg(n,r){
+  for(const x of tblRules(n)) if(x.f(r)) return x.bg;
+  const c=n.bgCtx; if(!c || c.off) return '';
+  if(c.color){ const v=r[c.color]; if(v && CSS.supports('color',String(v))) return String(v); }
+  if(c.err){ const v=r[c.err]; if(v!=='' && v!=null && v!==0 && !/^(0|false|no|ok)$/i.test(String(v))) return '#e05c5c'; }
+  if(c.sev){
+    const v=String(r[c.sev]??'');
+    if(/^(err|fail|crit|fatal|bad|alarm)/i.test(v)) return '#e05c5c';
+    if(/^warn/i.test(v)) return '#e0b23c';
+  }
+  if(c.cat){ const v=r[c.cat]; if(v!=='' && v!=null) return 'hsl('+tblHue(String(v))+' 65% 50%)'; }
+  return '';
 }
 // строка: цвет · имя · значения; диапазон частот — в виде 7.0M-7.2M
 function tblSummary(n,r){
@@ -927,38 +1031,47 @@ function tblSummary(n,r){
   for(const c of n.cl) if(!skip.has(c) && !TBL_PHOTO.test(c.toLowerCase()) && r[c]!=='' && r[c]!=null) parts.push(recFmt(r[c]));
   return parts.join(' / ');
 }
-function tblRow(n,i,ro){
+function tblRow(n,i,ro,g){
   const r=n.rows[i];
   const row=document.createElement('div');
   row.dataset.i=i;
   row.className='tbl-row';
-  if(n.colorCol){
-    const sw=document.createElement('span');
-    sw.style.cssText=`width:9px;height:9px;border-radius:2px;flex-shrink:0;background:${escapeHtml(String(r[n.colorCol]||'#c9c9c9'))};`;
-    row.append(sw);
-  }
-  const name=document.createElement('span');
-  name.textContent=n.nameCol ? String(r[n.nameCol]??'') : '#'+(i+1);
-  name.className='tbl-rname';
-  const val=document.createElement('span');
-  val.textContent=tblSummary(n,r);
-  val.className='tbl-rval';
-  row.append(name,val);
-  const pc=n.cl.find(c=>TBL_PHOTO.test(c.toLowerCase())), pids=pc ? phIds(r[pc]) : [];
-  if(pids.length){
-    const ph=document.createElement('span');
-    ph.textContent='📷'+pids.length; ph.title='Show the photos'; ph.className='tbl-ico warn';
-    ph.addEventListener('click',e=>{ e.stopPropagation(); phView(pids); });
-    row.append(ph);
-  }
-  const ac=n.cl.find(c=>TBL_AUDIO.test(c.toLowerCase())), aids=ac ? auIds(r[ac]) : [];
-  if(aids.length){
-    const au=document.createElement('span');
-    au.textContent='🔊'+aids.length; au.title='Play the audio'; au.className='tbl-ico warn';
-    au.addEventListener('click',e=>{ e.stopPropagation(); auView(aids); });
-    row.append(au);
+  const label=n.nameCol ? String(r[n.nameCol]??'') : '#'+(i+1);
+  const bg=tblRowBg(n,r);
+  if(bg) row.style.setProperty('--rb','color-mix(in srgb,'+bg+' 24%,transparent)');
+  if(g){
+    row.append(Object.assign(document.createElement('span'),{className:'tbl-no',textContent:i+1}));
+    g.vc.forEach((x,k)=>row.append(tblCellEl(n,x,r[x.c],g.t[k])));
+  } else {
+    if(n.colorCol){
+      const sw=document.createElement('span');
+      sw.style.cssText=`width:9px;height:9px;border-radius:2px;flex-shrink:0;background:${escapeHtml(String(r[n.colorCol]||'#c9c9c9'))};`;
+      row.append(sw);
+    }
+    const name=document.createElement('span');
+    name.textContent=label;
+    name.className='tbl-rname';
+    const val=document.createElement('span');
+    val.textContent=tblSummary(n,r);
+    val.className='tbl-rval';
+    row.append(name,val);
+    const pc=n.cl.find(c=>TBL_PHOTO.test(c.toLowerCase())), pids=pc ? phIds(r[pc]) : [];
+    if(pids.length){
+      const ph=document.createElement('span');
+      ph.textContent='📷'+pids.length; ph.title='Show the photos'; ph.className='tbl-ico warn';
+      ph.addEventListener('click',e=>{ e.stopPropagation(); phView(pids); });
+      row.append(ph);
+    }
+    const ac=n.cl.find(c=>TBL_AUDIO.test(c.toLowerCase())), aids=ac ? auIds(r[ac]) : [];
+    if(aids.length){
+      const au=document.createElement('span');
+      au.textContent='🔊'+aids.length; au.title='Play the audio'; au.className='tbl-ico warn';
+      au.addEventListener('click',e=>{ e.stopPropagation(); auView(aids); });
+      row.append(au);
+    }
   }
   row.title=n.cl.filter(c=>r[c]!=='' && r[c]!=null).map(c=>c+': '+(TBL_HZ.test(c)&&isFinite(tblHz(r[c])) ? fmtHz(tblHz(r[c]),4)+'Hz' : recFmt(r[c]))).join('\n');
+  if(g){ const tail=document.createElement('span'); tail.className='tbl-tail'; row.append(tail); row._tail=tail; }
   if(!ro){
     const ed=document.createElement('span');
     ed.textContent='✎'; ed.className='tbl-ico'; ed.title='Edit';
@@ -967,10 +1080,10 @@ function tblRow(n,i,ro){
     del.textContent='🗑'; del.className='tbl-ico'; del.title='Delete';
     del.addEventListener('click',async e=>{
       e.stopPropagation();
-      if(!confirm('Delete row "'+(name.textContent||i+1)+'"?')) return;
+      if(!confirm('Delete row "'+(label||i+1)+'"?')) return;
       await tblRemove(n,i); tblRenderList(n);
     });
-    row.append(ed,del);
+    (row._tail||row).append(ed,del);
   }
   if(!ro) row.addEventListener('dblclick',()=>tblEditForm(n,i,row));
   row.addEventListener('click',()=>{                    // выбор записи: уходит на выходы
@@ -990,6 +1103,72 @@ function tblMark(n){
     el.classList.toggle('on',on);
     if(on){ const t=el.offsetTop-ui.list.clientHeight/2; if(el.offsetTop<ui.list.scrollTop || el.offsetTop+el.offsetHeight>ui.list.scrollTop+ui.list.clientHeight) ui.list.scrollTop=Math.max(0,t); }
   }
+}
+// панель «▦ view»: колонки (показ, порядок, формат, ширина), раскладка и правила раскраски строк
+function tblViewToggle(n){
+  const v=n.ui.view; v.hidden=!v.hidden;
+  n.ui.root.querySelector('.tbl-viewb').classList.toggle('on',!v.hidden);
+  if(!v.hidden) tblRenderView(n);
+}
+function tblViewApply(n,key,val,panel){
+  n.p[key]=val;
+  tblRenderList(n);
+  if(panel) tblRenderView(n);
+  Undo.push();
+}
+function tblViewColEdit(n,fn){ const v=tblViewCols(n).map(x=>({...x})); fn(v); tblViewApply(n,'vcols',v,true); }
+function tblRenderView(n){
+  const box=n.ui.view; box.innerHTML='';
+  const mk=(tag,cls,txt,ev)=>{ const e=document.createElement(tag); if(cls) e.className=cls; if(txt!=null) e.textContent=txt; if(ev) for(const k in ev) e.addEventListener(k,ev[k]); return e; };
+  const sel=(opts,val,fn)=>{ const e=mk('select'); for(const o of opts){ const op=mk('option',null,Array.isArray(o) ? o[1] : o); op.value=Array.isArray(o) ? o[0] : o; e.append(op); } e.value=val; e.addEventListener('change',()=>fn(e.value)); return e; };
+  const top=mk('div','tv-top');
+  top.append(mk('span','tv-ttl','Columns & colors'),
+    sel([['grid','grid (columns)'],['compact','compact (name · values)']],n.p.vmode==='compact' ? 'compact' : 'grid',x=>tblViewApply(n,'vmode',x,true)),
+    mk('span','tv-x','✕',{click:()=>tblViewToggle(n)}));
+  box.append(top);
+  const grid=n.p.vmode!=='compact';
+  if(grid){
+    box.append(mk('div','tv-sec','Columns'));
+    const vc=tblViewCols(n);
+    vc.forEach((x,i)=>{
+      const row=mk('div','tv-col'+(x.hide?' off':''));
+      const cb=mk('input'); cb.type='checkbox'; cb.checked=!x.hide;
+      cb.addEventListener('change',()=>tblViewColEdit(n,v=>{ v[i].hide=!cb.checked; }));
+      const w=mk('input','tv-w'); w.type='number'; w.min=0; w.step=10; w.value=x.w||''; w.placeholder='auto'; w.title='width, px (empty — by content)';
+      w.addEventListener('keydown',e=>e.stopPropagation());
+      w.addEventListener('change',()=>tblViewColEdit(n,v=>{ v[i].w=Math.max(0,+w.value||0); }));
+      row.append(cb,mk('span','tv-name',x.c),sel(TBL_FMTS,x.fmt||'auto',f=>tblViewColEdit(n,v=>{ v[i].fmt=f; })),w,
+        mk('span','tv-mv','▲',{click:()=>{ if(i) tblViewColEdit(n,v=>{ [v[i-1],v[i]]=[v[i],v[i-1]]; }); }}),
+        mk('span','tv-mv','▼',{click:()=>{ if(i<vc.length-1) tblViewColEdit(n,v=>{ [v[i+1],v[i]]=[v[i],v[i+1]]; }); }}));
+      box.append(row);
+    });
+    const ra=mk('div','tv-acts'); ra.append(mk('button','tbl-btn','Reset columns',{click:()=>tblViewApply(n,'vcols',null,true)})); box.append(ra);
+  }
+  box.append(mk('div','tv-sec','Row colors — the first matching rule wins'));
+  const rules=Array.isArray(n.p.rules) ? n.p.rules : [];
+  const setRules=(fn,panel)=>{ const r=rules.map(x=>({...x})); fn(r); tblViewApply(n,'rules',r,panel); };
+  rules.forEach((x,i)=>{
+    const row=mk('div','tv-rule');
+    const cb=mk('input'); cb.type='checkbox'; cb.checked=x.on!==false;
+    cb.addEventListener('change',()=>setRules(r=>{ r[i].on=cb.checked; },false));
+    const q=mk('input','tv-q'); q.value=x.q||''; q.placeholder='filter: err>0  level:warn  proto:tcp';
+    q.title='same syntax as the list filter';
+    q.addEventListener('keydown',e=>e.stopPropagation());
+    q.addEventListener('input',()=>setRules(r=>{ r[i].q=q.value; },false));
+    const c=mk('input'); c.type='color'; c.value=/^#[0-9a-f]{6}$/i.test(x.bg) ? x.bg : '#e05c5c';
+    c.addEventListener('input',()=>setRules(r=>{ r[i].bg=c.value; },false));
+    row.append(cb,q,c,
+      mk('span','tv-mv','▲',{click:()=>{ if(i) setRules(r=>{ [r[i-1],r[i]]=[r[i],r[i-1]]; },true); }}),
+      mk('span','tv-mv','✕',{click:()=>setRules(r=>{ r.splice(i,1); },true)}));
+    box.append(row);
+  });
+  const acts=mk('div','tv-acts');
+  acts.append(mk('button','tbl-btn pri','+ rule',{click:()=>setRules(r=>{ r.push({q:'',bg:'#e05c5c',on:true}); },true)}));
+  const cols=['',...n.cl];
+  const tintVal=n.p.tint==null ? '' : n.p.tint;
+  acts.append(mk('span','tv-lbl','otherwise colour by'),
+    sel([['','auto (color, severity, type…)'],['-','nothing'],...n.cl.map(c=>[c,'value of '+c])],cols.includes(tintVal) || tintVal==='-' ? tintVal : '',x=>tblViewApply(n,'tint',x,false)));
+  box.append(acts);
 }
 function tblForm(n,rec,onSave,onCancel){
   const form=document.createElement('div');
