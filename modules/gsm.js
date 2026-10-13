@@ -1267,6 +1267,16 @@ class GsmReceiver{
 }
 
 /* ---------- DSP-узел ---------- */
+// полный сброс: новый GsmReceiver + сброс AFC (foff/nco) и реземплеров 'in'/'ul'. Переподключение узла на другую
+// частоту (сдвиг маркера спектра) само по себе НЕ сбрасывает накопленную частотную поправку и остаток
+// реземплера от старой несущей — застрявший на старой частоте foff может не дать найти FCCH на новой. Кнопка
+// делает то же самое, что переустановка узла, без необходимости удалять и добавлять его заново.
+function gsmRxReset(n){
+  n.rx=new GsmReceiver(); n.foff=0; n.nco=0;
+  n.dl={lr:new Float32Array(0), li:new Float32Array(0), frac:1};
+  n.ulSt={lr:new Float32Array(0), li:new Float32Array(0), frac:1};
+  n.bid=0; n.log=[]; n.text='ищу FCCH…'; n.lastSchBsic=-1; n.fcchSince=null;
+}
 def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
   ins:[{n:'in',t:'iq'},{n:'ul',t:'iq'}],
   outs:[{n:'rec',t:'rec'},{n:'burst',t:'blk'},{n:'freq',t:'num'},{n:'sync',t:'num'},{n:'nb',t:'rec'}],
@@ -1274,11 +1284,8 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
   params:[{n:'afc',t:'check',d:true,label:'auto frequency correction (FCCH)'},
           {n:'debug',t:'check',d:false,label:'debug: доп. поля SI3/SI4 (Control Ch, Cell Opt, CBCH) + hex'},
           {n:'ids',t:'select',opts:['hash','none','show'],d:'hash',label:'paging identifiers (TMSI / IMSI): hash — only a marker, none — count only, show — as is'},
-          {n:'clr',t:'button',label:'Clear log',fn:n=>{ n.log=[]; n.text='ищу FCCH…'; n.lastSchBsic=-1; }}],
-  init:n=>{ n.rx=new GsmReceiver(); n.foff=0; n.nco=0;
-            n.dl={lr:new Float32Array(0), li:new Float32Array(0), frac:1};
-            n.ulSt={lr:new Float32Array(0), li:new Float32Array(0), frac:1};
-            n.bid=0; n.log=[]; n.text='ищу FCCH…'; n.lastSchBsic=-1; n.fcchSince=null; },
+          {n:'clr',t:'button',label:'Clear log / resync',fn:gsmRxReset}],
+  init:gsmRxReset,
   process(n,I){
     const s=iqIn(I,'in'), su=iqIn(I,'ul');
     if(!s || !s.sr){ n.text='нет входного IQ-потока'; return {rec:null, burst:null, freq:n.foff, sync:0}; }
