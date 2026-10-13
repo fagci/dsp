@@ -942,10 +942,22 @@ Presets: *BLE: Heart Rate Monitor*, *BLE: Find a Beacon by RSSI*, *BLE: UART Ter
 
 - **Outputs:** `text` / `from` / `go` / `snr` — incoming chat messages, one per block; `rec` — every packet as a record `{t, kind, id, name, to, ch, snr, rssi, hop, text, lat, lon, alt, battery, voltage, temp, hum, press…}` (kinds: `text`, `position`, `telemetry`, `nodeinfo`, `node` from the config dump, `encrypted` for a channel the node has no key for). Positions of known nodes are added to their other records, so the records go to the *Map* and the *Table* as they are.
 - **Input:** `text` is sent to *send to* (`^all` or a node id like `!a1b2c3d4`) on the chosen channel index.
-- A node accepts one BLE client at a time: disconnect the phone app first. Not covered: node settings (admin messages), a passive LoRa receiver without a node — for that see *LoRa Decoder* (sync word `2B`).
+- A node accepts one BLE client at a time: disconnect the phone app first. Not covered: node settings (admin messages).
 - The parser is checked against the protobuf layout only (`node tools/test-meshtastic.mjs`), not on real hardware yet.
 
 Preset: *Meshtastic: Chat and Nodes on the Map*.
+
+**Meshtastic Sniffer (LoRa)** (Decoders) is a passive receiver, no node needed: wire *LoRa Decoder*'s `rec` (sync word `2B`) into it. It tries to AES-CTR-decrypt the payload with the channel PSK (base64, comma-separated for several; default `AQ==` — the default public key of the pre-set `LongFast`/`Default` channel, which carries most of the network's open traffic) and, once decrypted, parses it the same way as the live node: text, position, telemetry, nodeinfo, waypoint, traceroute. Frames none of the given PSKs could open (someone else's private channel) are hidden by default (*hide undecrypted*). A channel with its own PSK reads just as well — pass it in.
+
+### MeshCore
+
+**MeshCore Sniffer (LoRa)** (Decoders) is the same idea for [MeshCore](https://github.com/meshcore-dev/meshcore): no node, just *LoRa Decoder*'s `rec` (sync word `12` — the common private/default LoRa sync, shared with other non-Meshtastic LoRa gear too, so content is the only way to tell MeshCore apart). Unlike Meshtastic, most of the packet is plain binary, not protobuf:
+
+- **Advert** (a node announcing itself) is entirely plaintext — public key, name, type (chat / repeater / room / sensor) and an optional position — no key needed. The Ed25519 signature over it is not checked (it only proves authorship, not secrecy; a forged advert is possible but that is a MeshCore protocol property, not a decoder gap).
+- **Group text / group data** are AES-128-ECB with a 2-byte HMAC-SHA256 MAC, keyed by the channel PSK (base64; default `izOH6cXN6mrJ5e26oRXNcg==` — the pre-set `Public` channel most clients ship with). Several PSKs, comma-separated, are tried in turn by their 1-byte channel hash.
+- Direct messages and anything else keyed by a *recipient's* private key (text, request/response, path, ack, …) cannot be read passively — that needs the node that message was sent to, same as a private Meshtastic channel.
+
+**Outputs:** `text` / `from` / `lat` / `lon` / `new`, and `rec` — `{t, kind, route, hop, from, name, text, lat, lon, channelHash, psk, encrypted…}`. The parser is checked against the wire format only (`node tools/test-meshcore.mjs`), not on real hardware yet. See also the `meshcore` structure in *HEX Structure* for a field-by-field dump of the header and path without decrypting anything.
 
 ## MQTT
 
