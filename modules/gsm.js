@@ -1092,13 +1092,13 @@ class GsmReceiver{
     }
     if(m.msg==='Immediate Assignment'){
       C.ia++;
-      if(!m.hopping && m.freq!=null && Math.abs(m.freq-this.fc/1e6)<0.15) this.trackDch(m.tn,m.tsc);   // та же несущая → отслеживаем SDCCH/SACCH на её TN
+      if(!m.hopping && m.freq!=null && Math.abs(m.freq-this.fc/1e6)<0.15) this.trackDch(m.tn,m.tsc,m.chan);   // та же несущая → отслеживаем SDCCH/SACCH на её TN
       this.rec.push({...base, kind:'GSM-AGCH', msg:m.msg, chan:m.chan, ctn:m.tn, tsc:m.tsc, hopping:m.hopping, arfcn:m.arfcn, maio:m.maio, hsn:m.hsn, ra:m.ra, reqFn:m.fn, ta:m.ta, hex:hx(l2),
         text:'Immediate Assignment · '+m.chan+' TN'+m.tn+' TSC'+m.tsc+(m.hopping ? ' hopping MAIO '+m.maio+' HSN '+m.hsn : ' ARFCN '+m.arfcn)+' · RA 0x'+m.ra.toString(16)+' · TA '+m.ta}); return;
     }
     if(m.msg==='Immediate Assignment Extended'){
       C.ia++;
-      for(const x of [m.a,m.b]) if(!x.hopping && x.freq!=null && Math.abs(x.freq-this.fc/1e6)<0.15) this.trackDch(x.tn,x.tsc);
+      for(const x of [m.a,m.b]) if(!x.hopping && x.freq!=null && Math.abs(x.freq-this.fc/1e6)<0.15) this.trackDch(x.tn,x.tsc,x.chan);
       this.rec.push({...base, kind:'GSM-AGCH', msg:m.msg, hex:hx(l2), text:'Immediate Assignment Extended · '+[m.a,m.b].map(x=>x.chan+' TN'+x.tn+(x.hopping ? ' hopping' : ' ARFCN '+x.arfcn)).join(' / ')}); return;
     }
     if(m.msg==='Immediate Assignment Reject'){
@@ -1185,7 +1185,7 @@ class GsmReceiver{
           const fn=gsmFrameNr(this.t1,this.t2,this.t3), lfn=fn%102;
           for(const start of GSM_CBCH_FN) if(lfn>=start && lfn<start+4) this.accumCbch(eb, lfn-start);
         }
-        if(dchc) this.accumDch(this.tn, eb, false);                      // выделенный канал → слепой разбор SDCCH/SACCH
+        if(dchc) this.accumDch(this.tn, eb, false, this.t3%4===dchc.ph);                      // выделенный канал → слепой разбор SDCCH/SACCH
       }
     }
     const off=this.advanceBurst();
@@ -1202,15 +1202,19 @@ class GsmReceiver{
 
   // регистрирует/продлевает слежение за выделенным каналом на tn (своя несущая, не hopping) — пока не истечёт
   // (без Channel Release мы не знаем точный момент освобождения, так что держим недолго и перезаписываем новым)
-  trackDch(tn,tsc){
+  // TCH не отслеживаем (это не сигнализация, слепой разбор даёт только мусор и съедает весь CPU); ph — позиция
+  // последнего кадра блока в 51-мультикадре по модулю 4: SDCCH/8 — 3 (кадры 0..3, 4..7, …), SDCCH/4 — 1 (22..25, 26..29, …)
+  trackDch(tn,tsc,chan){
+    if(/^TCH/.test(chan||'')) return;
+    const ph=/^SDCCH\/4/.test(chan||'') ? 1 : 3;
     const until=Date.now()+60000, ex=this.dch.find(c=>c.tn===tn);
-    if(ex){ ex.tsc=tsc; ex.until=until; } else { this.dch.push({tn,tsc,until}); if(this.dch.length>8) this.dch.shift(); }
+    if(ex){ ex.tsc=tsc; ex.until=until; ex.ph=ph; } else { this.dch.push({tn,tsc,until,ph}); if(this.dch.length>8) this.dch.shift(); }
   }
   // накопление последних 4 бёрстов TN в скользящем окне — см. комментарий у gsmParseL3 про безопасность без таблицы
-  accumDch(tn,eb,ul){
+  accumDch(tn,eb,ul,tryDecode=true){
     const buf=(ul?this.ulDchBuf:this.dchBuf)[tn]||((ul?this.ulDchBuf:this.dchBuf)[tn]=[]);
     buf.push(this.extractData(eb)); if(buf.length>4) buf.shift();
-    if(buf.length<4) return;
+    if(buf.length<4 || !tryDecode) return;   // декодируем только на границе блока: в 4 раза дешевле
     const l2=gsmBcchDecode(buf); if(!l2) return;
     buf.length=0;
     this.emitDch(tn,l2,ul);
