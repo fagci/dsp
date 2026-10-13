@@ -5409,15 +5409,16 @@ function kiwiSetMod(n){
   kiwiSend(n,`SET mod=${n.p.mod} low_cut=${Math.round(lc)} high_cut=${Math.round(hc)} freq=${(n.p.freq/1000).toFixed(3)}`);
 }
 
-// со страницы на https WebSocket обязан быть wss — это mixed content, браузер режет жёстче
-// CSP и без обходов на стороне JS. Почти все публичные Kiwi слушают только голый ws://, так
-// что при https-хостинге инструмента нужен свой wss-прокси с TLS-терминацией (см. комментарий
-// у параметра 'proxy' ниже) — без него узел с https-страницы принципиально не подключится.
-function kiwiWsUrl(n,host,port,path){
-  if(location.protocol==='https:'){
-    const base=String(n.p.proxy||'/kiwiproxy').replace(/\/+$/,'');
-    return `wss://${location.host}${base}/${host}/${port}/${path}`;
+// Через CORS-прокси из настроек (Net.url): адрес Kiwi подставляется как http://host:port/…, схема
+// прокси http(s) → ws(s). Прокси должен пропускать WebSocket (см. README). Без прокси — прямой ws://;
+// с https-страницы это mixed content, поэтому прокси там обязателен.
+function kiwiWsUrl(host,port,path){
+  if(Net.proxy){
+    let u=Net.url(`http://${host}:${port}/${path}`);
+    if(!/^[a-z]+:\/\//i.test(u)) u=new URL(u,location.href).href;
+    return u.replace(/^http/i,'ws');
   }
+  if(location.protocol==='https:') throw new Error('set a proxy in Settings (https page cannot open ws://)');
   return `ws://${host}:${port}/${path}`;
 }
 
@@ -5427,7 +5428,7 @@ function kiwiConnect(n){
   if(!host){ n.status='server address not set'; return; }
   n.connecting=true; n.status='connecting…';
   let ws;
-  try{ ws=new WebSocket(kiwiWsUrl(n,host,port,`${Date.now()}/SND`)); }
+  try{ ws=new WebSocket(kiwiWsUrl(host,port,`${Date.now()}/SND`)); }
   catch(e){ n.connecting=false; n.status='error: '+e.message; return; }
   ws.binaryType='arraybuffer';
   n.ws=ws; n.audioRate=12000; n.rssi=0; kiwiResetRing(n);
@@ -5489,13 +5490,12 @@ function kiwiDisconnect(n){
 }
 
 def({ id:'kiwisdr', title:'KiwiSDR', cat:'Sources',
-  ins:[{n:'freq',t:'num'}], outs:[{n:'audio',t:'sig'},{n:'rssi',t:'num'}],
+  ins:[{n:'freq',t:'num'},{n:'server',t:'txt'}], outs:[{n:'audio',t:'sig'},{n:'rssi',t:'num'}],
   view:{h:40}, readout:true,
   params:[
     {n:'preset',t:'select',opts:['— custom —',...KIWI_PUBLIC_LIST],d:'— custom —',label:'public receivers',
      fn:n=>{ if(n.p.preset!=='— custom —'){ n.p.server=n.p.preset; if(n.set&&n.set.server) n.set.server(n.p.server); } }},
     {n:'server',t:'text',d:'sdr1.on1aff.be:8073',label:'host:port'},
-    {n:'proxy',t:'text',d:'/kiwiproxy',label:'wss proxy (path on your server, see nginx config)'},
     {n:'connect',t:'button',label:'Connect',fn:n=>kiwiConnect(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>kiwiDisconnect(n)},
     {n:'freq',t:'num',d:7000000,label:'frequency, Hz'},
@@ -5509,6 +5509,10 @@ def({ id:'kiwisdr', title:'KiwiSDR', cat:'Sources',
   dispose:n=>kiwiDisconnect(n),
   process(n,I){
     if(typeof I.freq==='number') setMod(n,'freq',I.freq);
+    if(typeof I.server==='string' && I.server && I.server!==n.p.server){
+      n.p.server=I.server; if(n.set && n.set.server) n.set.server(I.server);
+      if(n.connected||n.connecting){ kiwiDisconnect(n); kiwiConnect(n); }
+    }
     // перестройка частоты у Kiwi — цифровая на стороне сервера и дешёвая, шлём сразу при изменении
     if(n.connected && Math.round(n.p.freq)!==Math.round(n.appliedFreq)){ n.appliedFreq=n.p.freq; kiwiSetMod(n); }
     const oa=buf(n,'audio'), ring=n.ring;

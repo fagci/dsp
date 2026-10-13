@@ -368,6 +368,7 @@ const PRESET_CATS={
   'FT8: Propagation Map':'Maps & Locating',
   'Fox Hunt: Locate Transmitter':'Maps & Locating',
   'Internet Radio on the Map':'Maps & Locating',
+  'KiwiSDR and SpyServer on the Map':'Maps & Locating',
   'Wi-Fi: Locate Access Points (Termux)':'Maps & Locating',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
@@ -815,6 +816,24 @@ addEdge(rx.id,'audio',dc.id,'L'); addEdge(rx.id,'audio',dc.id,'R');
 addEdge(st.id,'rec',map.id,'rec');
 addEdge(me.id,'rec',map.id,'rec2');
 addEdge(map.id,'sel',st.id,'select');
+markWiresDirty();
+});
+preset('KiwiSDR and SpyServer on the Map', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Receivers directory: pick the kind, press Download list (or load a file) — receivers appear on the map.\n'+
+  'Click a point — its host:port goes to KiwiSDR; press Connect there.\n'+
+  'On an https page KiwiSDR needs the proxy from Settings with WebSocket support (see README); SpyServer needs a TCP→WebSocket bridge for IQ over Network.'});
+nt.size.w=560; nt.size.h=130; applySize(nt);
+const rd=addNode('sdrdir',40,200,{kind:'kiwisdr'});
+rd.size.h=150; applySize(rd);
+const kw=addNode('kiwisdr',40,400,{freq:7100000,mod:'usb'});
+const dc=addNode('dac',320,400,{vol:.5});
+const map=addNode('geoMap',900,40,{mz:2,mlat:35,mlon:15,labels:false});
+map.size.w=640; map.size.h=560; applySize(map);
+addEdge(rd.id,'rows',map.id,'rows');
+addEdge(map.id,'sel',rd.id,'select');
+addEdge(rd.id,'server',kw.id,'server');
+addEdge(kw.id,'audio',dc.id,'L'); addEdge(kw.id,'audio',dc.id,'R');
 markWiresDirty();
 });
 preset('Internet Radio on the Map', function(){
