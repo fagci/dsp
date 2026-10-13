@@ -1958,7 +1958,7 @@ async function airspyOpenDevice(dev, gain){
   async function setBiasTee(on){ await sdrVendorOut(dev, REQ.GPIO_WRITE, on?1:0, (1<<5)|13); }
   async function resetBuffer(){
     await setMode(0);
-    await dev.clearHalt('in', epIn).catch(()=>{});
+    await dev.clearHalt('in', 1).catch(()=>{});
     conv.reset();
     await setMode(1); rxOn=true;
   }
