@@ -16,7 +16,9 @@ function meshAirHex(n,bytes,psk,now){
   const u=mshNodeUpdate(n,r.from,upd), who=mshWho(n,r.from);
   return mshClean({t:now, src:'Meshtastic', kind:d.portName, id:who.id, name:who.name, from:who.id,
     to:r.dest===MSH_BROADCAST ? 'all' : mshNodeId(r.dest), hop:r.hopLimit, hopStart:r.hopStart||undefined, viaMqtt:r.viaMqtt||undefined, psk:r.plain ? 'none' : r.psk,
-    text:d.text, lat:u.lat, lon:u.lon, alt:d.alt, battery:d.battery, voltage:d.voltage, temp:d.temp, hum:d.hum, press:d.press, uptime:d.uptime, user:d.user});
+    text:d.text, lat:u.lat, lon:u.lon, alt:d.alt, battery:d.battery, voltage:d.voltage, temp:d.temp, hum:d.hum, press:d.press, uptime:d.uptime, user:d.user,
+    wpId:d.wpId, expire:d.expire, lockedTo:d.lockedTo!==undefined ? mshNodeId(d.lockedTo) : undefined, icon:d.icon,
+    route:d.route, snrTowards:d.snrTowards, routeBack:d.routeBack, snrBack:d.snrBack});
 }
 
 def({ id:'meshAir', title:'Meshtastic Sniffer (LoRa)', cat:'Decoders', kw:'meshtastic lora mesh sniff decrypt plaintext longfast default channel psk aes air packet passive',
@@ -40,7 +42,9 @@ def({ id:'meshAir', title:'Meshtastic Sniffer (LoRa)', cat:'Decoders', kw:'mesht
       if(rec && (!rec.encrypted || !n.p.onlyKnown)) out.push(rec);
     }
     for(const rec of out){
-      n.recent.push((rec.encrypted ? '[locked] ' : '')+(rec.name||rec.from||'?')+' → '+rec.to+' · '+rec.kind+(rec.text ? ' "'+String(rec.text).slice(0,80)+'"' : rec.lat!=null ? ' '+rec.lat.toFixed(5)+','+rec.lon.toFixed(5) : ''));
+      const tail=rec.route ? ' '+[rec.from,...rec.route].join(' → ')+(rec.snrTowards&&rec.snrTowards.length ? ' ('+rec.snrTowards.join(',')+' dB)' : '') :
+        rec.text ? ' "'+String(rec.text).slice(0,80)+'"' : rec.lat!=null ? ' '+rec.lat.toFixed(5)+','+rec.lon.toFixed(5) : '';
+      n.recent.push((rec.encrypted ? '[locked] ' : '')+(rec.name||rec.from||'?')+' → '+rec.to+' · '+rec.kind+tail);
       if(rec.text!=null) n.lastText=rec.text;
       if(rec.lat!=null){ n.lastLat=rec.lat; n.lastLon=rec.lon; }
     }

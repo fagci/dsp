@@ -72,13 +72,43 @@ function mshTelemetry(u){
     if(e[1]) o.temp=pbF32(e[1][0]); if(e[2]) o.hum=pbF32(e[2][0]); if(e[3]) o.press=pbF32(e[3][0]); }
   return o;
 }
+function mshWaypoint(u){                                           // Waypoint (mesh.proto): точка на карте, рассылаемая узлом
+  const f=pbRead(u), o={};
+  if(f[1]) o.wpId=f[1][0];
+  if(f[2]) o.lat=pbs32(f[2][0])/1e7;
+  if(f[3]) o.lon=pbs32(f[3][0])/1e7;
+  if(f[4]) o.expire=f[4][0];
+  if(f[5]) o.lockedTo=f[5][0];
+  if(f[6]) o.name=pbStr(f[6][0]);
+  if(f[7]) o.desc=pbStr(f[7][0]);
+  if(f[8]) try{ o.icon=String.fromCodePoint(f[8][0]); }catch(e){}
+  o.text=[o.icon,o.name,o.desc].filter(Boolean).join(' ');
+  return o;
+}
+// repeated fixed32 / varint: proto3 по умолчанию «пакует» их в одно length-delimited поле (f[n] — один Uint8Array), но встречаются и непакованные (несколько элементов f[n], уже числа из pbRead) — разбираем оба случая
+function pbU32List(items){ const o=[]; for(const it of items) if(typeof it==='number') o.push(it>>>0); else for(let i=0;i+4<=it.length;i+=4) o.push((it[i]|it[i+1]<<8|it[i+2]<<16|it[i+3]<<24)>>>0); return o; }
+function pbVarList(items){
+  const o=[], rv=(b,i)=>{ let lo=0,sh=0,x; do{ x=b[i++]; if(sh<28) lo|=(x&0x7f)<<sh; else if(sh<35) lo|=(x&0x0f)<<28; sh+=7; }while(x&0x80); return [lo|0,i]; };
+  for(const it of items) if(typeof it==='number') o.push(it|0); else { let i=0; while(i<it.length){ const [v,ni]=rv(it,i); o.push(v); i=ni; } }
+  return o;
+}
+function mshTraceroute(u){                                          // RouteDiscovery (mesh.proto): узлы и SNR (в четвертях дБ) по пути туда/обратно
+  const f=pbRead(u), o={};
+  if(f[1]) o.route=pbU32List(f[1]).map(mshNodeId);
+  if(f[2]) o.snrTowards=pbVarList(f[2]).map(v=>+(v/4).toFixed(1));
+  if(f[3]) o.routeBack=pbU32List(f[3]).map(mshNodeId);
+  if(f[4]) o.snrBack=pbVarList(f[4]).map(v=>+(v/4).toFixed(1));
+  return o;
+}
 function mshData(u){
   const f=pbRead(u), port=f[1] ? f[1][0] : 0, pl=f[2] ? f[2][0] : new Uint8Array(0), o={port,portName:MSH_PORTS[port]||('port '+port),payload:pl};
   try{
     if(port===1) o.text=pbStr(pl);
     else if(port===3) Object.assign(o,mshPosition(pl));
     else if(port===4){ const us=mshUser(pl); o.user=us; }
+    else if(port===8) Object.assign(o,mshWaypoint(pl));
     else if(port===67) Object.assign(o,mshTelemetry(pl));
+    else if(port===70) Object.assign(o,mshTraceroute(pl));
   }catch(e){ o.err=e.message; }
   if(f[6]) o.requestId=f[6][0];
   return o;
@@ -246,4 +276,4 @@ function mshAirDecode(bytes,pskCsv){
 }
 
 if(typeof module!=='undefined') module.exports={pbRead,pbVarint,mshFromRadio,mshWantConfig,mshTextPacket,mshParseNode,mshNodeId,mshFrameWrap,mshFrameStream,mshFramePush,MSH_BLE,MSH_BROADCAST,
-  aesKeySchedule,aesEncryptBlock,aesCtrXor,mshPskBytes,mshExpandPsk,mshNonce,mshAirHeader,mshAirDecode,MSH_DEFAULT_KEY};
+  aesKeySchedule,aesEncryptBlock,aesCtrXor,mshPskBytes,mshExpandPsk,mshNonce,mshAirHeader,mshAirDecode,MSH_DEFAULT_KEY,mshData,mshWaypoint,mshTraceroute};
