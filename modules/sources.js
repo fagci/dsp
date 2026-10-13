@@ -1869,6 +1869,8 @@ async function hackrfOpenDevice(dev, gain){
 // Airspy R2/Mini: АЦП отдаёт вещественные 12-битные отсчёты (uint16, смещение 2048) на удвоенной
 // частоте, ПЧ = fs/4. В IQ переводим сами, как iqconverter в libairspy: сдвиг на fs/4
 // последовательностью знаков -,-,+,+ (чётные — I, нечётные — Q), полуполосный ФНЧ, прореживание на 2.
+// HydraSDR RFOne (38af:0001) — то же железо (R828D + Si5351) и те же команды; отличия: частота 64 бита,
+// bias-tee отдельной командой, разрядность АЦП из прошивки на каждую частоту (по libhydrasdr).
 // На Linux: rmmod airspy
 function airspyMakeConv(){
   const M=24, N=2*M+1, beta=6;
@@ -1879,14 +1881,16 @@ function airspyMakeConv(){
   for(let j=1;j<=M;j+=2){ const r=j/M; h[j]=Math.sin(Math.PI*j/2)/(Math.PI*j)*i0(beta*Math.sqrt(1-r*r))/i0(beta); sum+=2*h[j]; }
   for(let j=1;j<=M;j+=2) h[j]*=0.5/sum;             // усиление на нуле = 1
   const hist=new Float32Array(2*N);
-  let pos=0, n=0, dc=2048;
+  let pos=0, n=0, dc=2048, mask=0x0fff, mul=16;
   return {
     reset(){ hist.fill(0); pos=0; n=0; },
+    // разрядность АЦП (HydraSDR сообщает её для каждой частоты): маска, середина шкалы, растяжка до int16
+    setBits(b){ mask=(1<<b)-1; mul=1<<(16-b); dc=1<<(b-1); },
     // raw — Uint16Array вещественных отсчётов, out — Int16Array IQ той же длины (можно на месте)
     process(raw, out){
       let w=0;
       for(let k=0;k<raw.length;k++){
-        const v=raw[k]&0x0fff;
+        const v=raw[k]&mask;
         dc+=(v-dc)*1e-4;
         const x=(n&2) ? v-dc : dc-v;
         hist[pos]=x; hist[pos+N]=x;
@@ -1897,8 +1901,8 @@ function airspyMakeConv(){
           let si=0;
           for(let j=1;j<=M;j+=2) si+=h[j]*(hist[c-j]+hist[c+j]);
           const sq=0.5*hist[c];
-          out[w++]=Math.max(-32768, Math.min(32767, Math.round(si*16)));
-          out[w++]=Math.max(-32768, Math.min(32767, Math.round(sq*16)));
+          out[w++]=Math.max(-32768, Math.min(32767, Math.round(si*mul)));
+          out[w++]=Math.max(-32768, Math.min(32767, Math.round(sq*mul)));
         }
         n=(n+1)&3;
       }
@@ -1907,7 +1911,8 @@ function airspyMakeConv(){
 }
 async function airspyOpenDevice(dev, gain){
   const REQ={MODE:1, SET_SAMPLERATE:12, SET_FREQ:13, LNA:14, MIXER:15, VGA:16, LNA_AGC:17, MIXER_AGC:18,
-    GPIO_WRITE:21, GET_SAMPLERATES:25, PACKING:26};
+    RF_BIAS:20, GPIO_WRITE:21, GET_SAMPLERATES:25, PACKING:26, GET_CAPABILITIES:29};
+  const hydra=dev.vendorId===0x38af;
   await dev.open();
   await dev.selectConfiguration(1);
   await dev.claimInterface(0);
@@ -1925,6 +1930,15 @@ async function airspyOpenDevice(dev, gain){
       rates=[]; for(let i=0;i<cnt;i++) rates.push(r.data.getUint32(i*4,true));
     }
   }catch(e){}
+  // HydraSDR: при HYDRASDR_CAP_EXTENDED_SAMPLERATES (бит 21) прошивка отдаёт {rate u32, adc_bits u8, data_format u8, rsv u16} на частоту
+  const bits=rates.map(()=>12);
+  if(hydra) try{
+    const caps=(await sdrVendorIn(dev, REQ.GET_CAPABILITIES, 0, 4)).data.getUint32(0,true);
+    if(caps&(1<<21)){
+      const r=(await dev.controlTransferIn({requestType:'vendor',recipient:'device',request:REQ.GET_SAMPLERATES,value:1,index:rates.length}, rates.length*8)).data;
+      for(let i=0;i<rates.length && r.byteLength>=(i+1)*8;i++){ const b=r.getUint8(i*8+4); if(b>=8 && b<=16) bits[i]=b; }
+    }
+  }catch(e){}
 
   async function setSampleRate(rate){
     let idx=0;
@@ -1932,12 +1946,14 @@ async function airspyOpenDevice(dev, gain){
     const was=rxOn;
     if(was) await setMode(0);
     await sdrVendorIn(dev, REQ.SET_SAMPLERATE, idx, 1);
+    conv.setBits(bits[idx]);
     if(was){ conv.reset(); await setMode(1); }
     return rates[idx];
   }
   async function setCenterFrequency(freq){
     freq=Math.round(freq);
-    const b=new DataView(new ArrayBuffer(4)); b.setUint32(0, freq, true);
+    const b=new DataView(new ArrayBuffer(hydra?8:4)); b.setUint32(0, freq>>>0, true);
+    if(hydra) b.setUint32(4, Math.floor(freq/4294967296), true);
     await sdrVendorOut(dev, REQ.SET_FREQ, 0, 0, b.buffer);
     tuneEpoch++;
     return freq;
@@ -1955,7 +1971,10 @@ async function airspyOpenDevice(dev, gain){
     await sdrVendorIn(dev, REQ.LNA, lna, 1); await sdrVendorIn(dev, REQ.MIXER, mix, 1); await sdrVendorIn(dev, REQ.VGA, vga, 1);
   }
   // bias-tee — GPIO порт 1 пин 13, как airspy_set_rf_bias
-  async function setBiasTee(on){ await sdrVendorOut(dev, REQ.GPIO_WRITE, on?1:0, (1<<5)|13); }
+  async function setBiasTee(on){
+    if(hydra) await sdrVendorOut(dev, REQ.RF_BIAS, 0, on?1:0);
+    else await sdrVendorOut(dev, REQ.GPIO_WRITE, on?1:0, (1<<5)|13);
+  }
   async function resetBuffer(){
     await setMode(0);
     await dev.clearHalt('in', 1).catch(()=>{});
@@ -1976,7 +1995,7 @@ async function airspyOpenDevice(dev, gain){
   }
   await setGain(gain);
   return {setSampleRate, setCenterFrequency, setGain, setBiasTee, resetBuffer, readSamples, close,
-    tunerName:rates.includes(6000000)?'Airspy Mini':'Airspy', kind:'airspy', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
+    tunerName:hydra?'HydraSDR RFOne':rates.includes(6000000)?'Airspy Mini':'Airspy', kind:'airspy', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
 }
 
 // Airspy HF+ (Dual / Discovery / Ranger): наружу идёт int16 IQ (в паре первым слово Q, вторым I) на
@@ -2592,6 +2611,7 @@ const SDR_USB_FILTERS=[
   {vendorId:0x1d50,productId:0x6089},{vendorId:0x1d50,productId:0x604b},{vendorId:0x1d50,productId:0xcc15}, // HackRF One, Jawbreaker, rad1o
   {vendorId:0x1d50,productId:0x60a1},                          // Airspy R2/Mini
   {vendorId:0x03eb,productId:0x800c},                          // Airspy HF+
+  {vendorId:0x38af,productId:0x0001},                          // HydraSDR RFOne
   {vendorId:0x04b4,productId:0x00f3},{vendorId:0x04b4,productId:0x00f1}, // RX-888 / SDDC: загрузчик FX3, с прошивкой
   ...MIRI_USB_IDS.map(([vendorId,productId])=>({vendorId,productId}))
 ];
@@ -2599,6 +2619,7 @@ function sdrOpenDevice(dev, ppm, gain){
   if(MIRI_USB_IDS.some(([v,p])=>v===dev.vendorId && p===dev.productId)) return mirisdrOpenDevice(dev, gain);
   if(rx888Is(dev, RX888_APP)) return rx888OpenDevice(dev, gain);
   if(dev.vendorId===0x03eb) return airspyhfOpenDevice(dev, gain);
+  if(dev.vendorId===0x38af) return airspyOpenDevice(dev, gain);
   if(dev.vendorId===0x1d50) return dev.productId===0x60a1 ? airspyOpenDevice(dev, gain) : hackrfOpenDevice(dev, gain);
   return rtlOpenDevice(dev, ppm, gain);
 }
