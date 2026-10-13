@@ -1462,6 +1462,35 @@ addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,
 addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'out',dc.id,'R');
 markWiresDirty();
 });
+preset('FUNcube Dongle Pro+: Receiver', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'FUNcube Dongle Pro+: the tuner is set over WebHID (FUNcube node → Connect), the IQ comes as USB audio.\n'+
+  'In Microphone choose «FUNcube Dongle» as input A (mode stereo device, sample rate 192000) — the band you see is 192 kHz wide.\n'+
+  'The FUNcube node frequency goes to fc of I/Q → IQ, so the spectrum shows real frequencies. Mirror image → «swap I and Q».\n'+
+  'IQ Balance fixes the gain/phase mismatch of the two channels. Tap a signal on the spectrum; the mode is set in the demodulator.'});
+nt.size.w=660; nt.size.h=170; applySize(nt);
+const fc=addNode('funcube',40,260,{freq:144800000,lna:true,mixer:true,ifg:0});
+const mic=addNode('mic',40,520,{mode:'stereo device',srate:'192000'});
+const mg=addNode('iqMerge',340,260,{fc:0});
+const bal=addNode('iqBalance',340,400,{auto:true});
+const dcb=addNode('iqDc',340,560,{});
+const sp=addNode('iqSpec',40,700,{size:'4096'});
+const sa=addNode('sa',720,40,{auto:true,floor:-110,top:-30,split:.4});
+sa.size.w=640; sa.size.h=340; applySize(sa);
+const sh=addNode('iqShift',720,420,{});
+const d1=addNode('iqDecim',720,560,{M:'8',cut:.3});
+const de=addNode('iqDemod',1000,420,{mode:'NFM',bw:12500});
+const au=addNode('iqAudio',1000,620,{});
+const dc=addNode('dac',1260,620,{vol:.4});
+addEdge(fc.id,'fc',mg.id,'fc');
+addEdge(mic.id,'a',mg.id,'I'); addEdge(mic.id,'b',mg.id,'Q');
+addEdge(mg.id,'iq',bal.id,'in'); addEdge(bal.id,'out',dcb.id,'in');
+addEdge(dcb.id,'out',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
+addEdge(dcb.id,'out',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'out',au.id,'in');
+addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'out',dc.id,'R');
+markWiresDirty();
+});
 preset('Meteor-M LRPT: Image (Generator)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Meteor-M LRPT without a radio: the generator sends CCSDS frames the way M2-3/M2-4 do —\n'+

@@ -1869,6 +1869,8 @@ async function hackrfOpenDevice(dev, gain){
 // Airspy R2/Mini: АЦП отдаёт вещественные 12-битные отсчёты (uint16, смещение 2048) на удвоенной
 // частоте, ПЧ = fs/4. В IQ переводим сами, как iqconverter в libairspy: сдвиг на fs/4
 // последовательностью знаков -,-,+,+ (чётные — I, нечётные — Q), полуполосный ФНЧ, прореживание на 2.
+// HydraSDR RFOne (38af:0001) — то же железо (R828D + Si5351) и те же команды; отличия: частота 64 бита,
+// bias-tee отдельной командой, разрядность АЦП из прошивки на каждую частоту (по libhydrasdr).
 // На Linux: rmmod airspy
 function airspyMakeConv(){
   const M=24, N=2*M+1, beta=6;
@@ -1879,14 +1881,16 @@ function airspyMakeConv(){
   for(let j=1;j<=M;j+=2){ const r=j/M; h[j]=Math.sin(Math.PI*j/2)/(Math.PI*j)*i0(beta*Math.sqrt(1-r*r))/i0(beta); sum+=2*h[j]; }
   for(let j=1;j<=M;j+=2) h[j]*=0.5/sum;             // усиление на нуле = 1
   const hist=new Float32Array(2*N);
-  let pos=0, n=0, dc=2048;
+  let pos=0, n=0, dc=2048, mask=0x0fff, mul=16;
   return {
     reset(){ hist.fill(0); pos=0; n=0; },
+    // разрядность АЦП (HydraSDR сообщает её для каждой частоты): маска, середина шкалы, растяжка до int16
+    setBits(b){ mask=(1<<b)-1; mul=1<<(16-b); dc=1<<(b-1); },
     // raw — Uint16Array вещественных отсчётов, out — Int16Array IQ той же длины (можно на месте)
     process(raw, out){
       let w=0;
       for(let k=0;k<raw.length;k++){
-        const v=raw[k]&0x0fff;
+        const v=raw[k]&mask;
         dc+=(v-dc)*1e-4;
         const x=(n&2) ? v-dc : dc-v;
         hist[pos]=x; hist[pos+N]=x;
@@ -1897,8 +1901,8 @@ function airspyMakeConv(){
           let si=0;
           for(let j=1;j<=M;j+=2) si+=h[j]*(hist[c-j]+hist[c+j]);
           const sq=0.5*hist[c];
-          out[w++]=Math.max(-32768, Math.min(32767, Math.round(si*16)));
-          out[w++]=Math.max(-32768, Math.min(32767, Math.round(sq*16)));
+          out[w++]=Math.max(-32768, Math.min(32767, Math.round(si*mul)));
+          out[w++]=Math.max(-32768, Math.min(32767, Math.round(sq*mul)));
         }
         n=(n+1)&3;
       }
@@ -1907,7 +1911,8 @@ function airspyMakeConv(){
 }
 async function airspyOpenDevice(dev, gain){
   const REQ={MODE:1, SET_SAMPLERATE:12, SET_FREQ:13, LNA:14, MIXER:15, VGA:16, LNA_AGC:17, MIXER_AGC:18,
-    GPIO_WRITE:21, GET_SAMPLERATES:25, PACKING:26};
+    RF_BIAS:20, GPIO_WRITE:21, GET_SAMPLERATES:25, PACKING:26, GET_CAPABILITIES:29};
+  const hydra=dev.vendorId===0x38af;
   await dev.open();
   await dev.selectConfiguration(1);
   await dev.claimInterface(0);
@@ -1925,6 +1930,15 @@ async function airspyOpenDevice(dev, gain){
       rates=[]; for(let i=0;i<cnt;i++) rates.push(r.data.getUint32(i*4,true));
     }
   }catch(e){}
+  // HydraSDR: при HYDRASDR_CAP_EXTENDED_SAMPLERATES (бит 21) прошивка отдаёт {rate u32, adc_bits u8, data_format u8, rsv u16} на частоту
+  const bits=rates.map(()=>12);
+  if(hydra) try{
+    const caps=(await sdrVendorIn(dev, REQ.GET_CAPABILITIES, 0, 4)).data.getUint32(0,true);
+    if(caps&(1<<21)){
+      const r=(await dev.controlTransferIn({requestType:'vendor',recipient:'device',request:REQ.GET_SAMPLERATES,value:1,index:rates.length}, rates.length*8)).data;
+      for(let i=0;i<rates.length && r.byteLength>=(i+1)*8;i++){ const b=r.getUint8(i*8+4); if(b>=8 && b<=16) bits[i]=b; }
+    }
+  }catch(e){}
 
   async function setSampleRate(rate){
     let idx=0;
@@ -1932,12 +1946,14 @@ async function airspyOpenDevice(dev, gain){
     const was=rxOn;
     if(was) await setMode(0);
     await sdrVendorIn(dev, REQ.SET_SAMPLERATE, idx, 1);
+    conv.setBits(bits[idx]);
     if(was){ conv.reset(); await setMode(1); }
     return rates[idx];
   }
   async function setCenterFrequency(freq){
     freq=Math.round(freq);
-    const b=new DataView(new ArrayBuffer(4)); b.setUint32(0, freq, true);
+    const b=new DataView(new ArrayBuffer(hydra?8:4)); b.setUint32(0, freq>>>0, true);
+    if(hydra) b.setUint32(4, Math.floor(freq/4294967296), true);
     await sdrVendorOut(dev, REQ.SET_FREQ, 0, 0, b.buffer);
     tuneEpoch++;
     return freq;
@@ -1955,10 +1971,13 @@ async function airspyOpenDevice(dev, gain){
     await sdrVendorIn(dev, REQ.LNA, lna, 1); await sdrVendorIn(dev, REQ.MIXER, mix, 1); await sdrVendorIn(dev, REQ.VGA, vga, 1);
   }
   // bias-tee — GPIO порт 1 пин 13, как airspy_set_rf_bias
-  async function setBiasTee(on){ await sdrVendorOut(dev, REQ.GPIO_WRITE, on?1:0, (1<<5)|13); }
+  async function setBiasTee(on){
+    if(hydra) await sdrVendorOut(dev, REQ.RF_BIAS, 0, on?1:0);
+    else await sdrVendorOut(dev, REQ.GPIO_WRITE, on?1:0, (1<<5)|13);
+  }
   async function resetBuffer(){
     await setMode(0);
-    await dev.clearHalt('in', epIn).catch(()=>{});
+    await dev.clearHalt('in', 1).catch(()=>{});
     conv.reset();
     await setMode(1); rxOn=true;
   }
@@ -1976,7 +1995,141 @@ async function airspyOpenDevice(dev, gain){
   }
   await setGain(gain);
   return {setSampleRate, setCenterFrequency, setGain, setBiasTee, resetBuffer, readSamples, close,
-    tunerName:rates.includes(6000000)?'Airspy Mini':'Airspy', kind:'airspy', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
+    tunerName:hydra?'HydraSDR RFOne':rates.includes(6000000)?'Airspy Mini':'Airspy', kind:'airspy', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
+}
+
+// Airspy HF+ (Dual / Discovery / Ranger): наружу идёт int16 IQ (в паре первым слово Q, вторым I) на
+// частоте из списка прошивки. Для нулевой ПЧ гетеродин сдвинут на 5 кГц и сдвиг убирается поворотом;
+// IQ-балансировщик libairspyhf не портирован — зеркальный канал у нулевой ПЧ не подавлен.
+// Протокол — по libairspyhf (airspyhf.c).
+async function airspyhfOpenDevice(dev, gain){
+  const REQ={MODE:1, SET_FREQ:2, GET_SAMPLERATES:3, SET_SAMPLERATE:4, CONFIG_READ:5, AGC:10, ATT:12, LNA:13,
+    GET_ARCH:14, GET_FILTER_GAIN:15, GET_FREQ_DELTA:16, SET_VCTCXO:17, SET_FRONTEND:18, GET_ATT_STEPS:19, BIAS_TEE:22};
+  const MIN_ZERO_IF_KHZ=180, MIN_LOW_IF_KHZ=84, IF_SHIFT=5000, CAL_MAGIC=0xA5CA71B0;
+  await dev.open();
+  await dev.selectConfiguration(1);
+  await dev.claimInterface(0);
+  await dev.selectAlternateInterface(0, 1);
+  let tuneEpoch=0, rxOn=false;
+  let rates=[768000], arch=[0], attSteps=[0,6,12,18,24,30,36,42,48];
+  let rate=0, lowIf=false, filterGain=1, calPpb=0;
+  let freqHz=0, freqKhz=0, deltaHz=0, shift=0, rotRe=1, rotIm=0, vecRe=1, vecIm=0;
+  const setMode=m=>sdrVendorOut(dev, REQ.MODE, m, 0);
+  await setMode(0);
+
+  try{
+    const c=(await sdrVendorIn(dev, REQ.GET_SAMPLERATES, 0, 4)).data.getUint32(0,true);
+    if(c>0 && c<100){
+      const r=(await sdrVendorIn(dev, REQ.GET_SAMPLERATES, c, c*4)).data;
+      rates=[]; for(let i=0;i<c;i++) rates.push(r.getUint32(i*4,true));
+      arch=rates.map(()=>0);
+      try{
+        const a=(await sdrVendorIn(dev, REQ.GET_ARCH, c, c*4)).data;
+        for(let i=0;i<c && i<a.byteLength;i++) arch[i]=a.getUint8(i);
+      }catch(e){}                                       // старые прошивки: везде нулевая ПЧ
+    }
+  }catch(e){}
+  try{
+    const c=(await sdrVendorIn(dev, REQ.GET_ATT_STEPS, 0, 4)).data.getUint32(0,true);
+    if(c>0 && c<64){
+      const r=(await sdrVendorIn(dev, REQ.GET_ATT_STEPS, c, c*4)).data;
+      attSteps=[]; for(let i=0;i<c;i++) attSteps.push(r.getFloat32(i*4,true));
+    }
+  }catch(e){}
+  // калибровка из флеша: ppb гетеродина, подстройка VCTCXO, опции входной части
+  try{
+    const c=(await sdrVendorIn(dev, REQ.CONFIG_READ, 0, 256)).data;
+    if(c.byteLength>=16 && c.getUint32(0,true)===CAL_MAGIC){
+      calPpb=c.getInt32(4,true);
+      await sdrVendorOut(dev, REQ.SET_VCTCXO, c.getUint32(8,true)&0xffff, 0);
+      const fe=c.getUint32(12,true);
+      await sdrVendorOut(dev, REQ.SET_FRONTEND, fe&0xffff, fe>>>16);
+    }
+  }catch(e){}
+
+  const sendKhz=async khz=>{
+    const b=new DataView(new ArrayBuffer(4)); b.setUint32(0, khz);
+    await sdrVendorOut(dev, REQ.SET_FREQ, 0, 0, b.buffer);
+    freqKhz=khz;
+  };
+  // гетеродин ставится с шагом 1 кГц, остаток (и поправка прошивки) снимается поворотом IQ
+  async function applyFreq(hz){
+    const adj=hz*(1e9+calPpb)*1e-9;
+    const khz=Math.max(lowIf?MIN_LOW_IF_KHZ:MIN_ZERO_IF_KHZ, Math.round((adj+(lowIf?0:IF_SHIFT))*1e-3));
+    if(khz!==freqKhz){
+      await sendKhz(khz);
+      try{
+        const b=(await sdrVendorIn(dev, REQ.GET_FREQ_DELTA, 0, 4)).data;
+        if(b.byteLength>=4) deltaHz=((((b.getUint8(3)<<24)>>24)<<16)|(b.getUint8(2)<<8)|b.getUint8(1))*1e3/2**b.getUint8(0);
+      }catch(e){}
+    }
+    freqHz=hz;
+    shift=adj-khz*1e3+deltaHz;
+    const a=2*Math.PI*shift/rate;
+    rotRe=Math.cos(a); rotIm=-Math.sin(a);
+  }
+  async function setSampleRate(want){
+    let idx=0;
+    for(let i=1;i<rates.length;i++) if(Math.abs(Math.log(rates[i]/want))<Math.abs(Math.log(rates[idx]/want))) idx=i;
+    rate=rates[idx]; lowIf=!!arch[idx];
+    await dev.clearHalt('in', 1).catch(()=>{});
+    if(!lowIf && freqKhz<MIN_ZERO_IF_KHZ) await sendKhz(MIN_ZERO_IF_KHZ);
+    await sdrVendorOut(dev, REQ.SET_SAMPLERATE, 0, idx);
+    try{ filterGain=10**(-0.05*(await sdrVendorIn(dev, REQ.GET_FILTER_GAIN, 0, 1)).data.getUint8(0)); }
+    catch(e){ filterGain=1; }
+    await applyFreq(freqHz);
+    return rate;
+  }
+  async function setCenterFrequency(freq){
+    await applyFreq(Math.round(freq));
+    tuneEpoch++;
+    return Math.round(freq);
+  }
+  // auto — АРУ; ручной gain 0..49.6 растягиваем на ступени аттенюатора, LNA включается на нулевом ослаблении
+  async function setGain(g){
+    if(g==null){ await sdrVendorOut(dev, REQ.AGC, 1, 0); return; }
+    const top=attSteps[attSteps.length-1], want=top*(1-Math.max(0, Math.min(1, g/49.6)));
+    let idx=0;
+    for(let i=1;i<attSteps.length;i++) if(Math.abs(attSteps[i]-want)<Math.abs(attSteps[idx]-want)) idx=i;
+    await sdrVendorOut(dev, REQ.AGC, 0, 0);
+    await sdrVendorOut(dev, REQ.ATT, idx, 0);
+    await sdrVendorOut(dev, REQ.LNA, idx===0?1:0, 0);
+  }
+  async function setBiasTee(on){ await sdrVendorOut(dev, REQ.BIAS_TEE, on?1:0, 0).catch(()=>{}); }   // не на всех моделях
+  async function resetBuffer(){
+    await setMode(0);
+    await dev.clearHalt('in', 1).catch(()=>{});
+    vecRe=1; vecIm=0;
+    await setMode(1); rxOn=true;
+  }
+  // nBytes — кратно 4. Правим на месте: Q,I → I,Q, усиление фильтра и поворот на остаток гетеродина
+  async function readSamples(nBytes){
+    const res=await dev.transferIn(1, nBytes);
+    const buf=res.data.buffer, n=res.data.byteLength>>2;
+    const s=new Int16Array(buf, res.data.byteOffset, n*2);
+    const g=filterGain, rot=shift!==0;
+    for(let k=0;k<n;k++){
+      let i=s[2*k+1]*g, q=s[2*k]*g;
+      if(rot){
+        let r=vecRe*rotRe-vecIm*rotIm, m=vecRe*rotIm+vecIm*rotRe;
+        const nm=1.99-(r*r+m*m);
+        vecRe=r*nm; vecIm=m*nm;
+        const t=i*vecRe-q*vecIm; q=i*vecIm+q*vecRe; i=t;
+      }
+      s[2*k]=Math.max(-32768, Math.min(32767, Math.round(i)));
+      s[2*k+1]=Math.max(-32768, Math.min(32767, Math.round(q)));
+    }
+    return buf;
+  }
+  async function close(){
+    if(rxOn) await setMode(0).catch(()=>{});
+    await dev.releaseInterface(0).catch(()=>{});
+    await dev.close();
+  }
+  await setSampleRate(rates[0]);
+  await setGain(gain);
+  return {setSampleRate, setCenterFrequency, setGain, setBiasTee, resetBuffer, readSamples, close,
+    tunerName:'Airspy HF+', kind:'airspyhf', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
 }
 
 // SDRplay RSP1 и донглы на Mirics MSi2500 + MSi001. Протокол — по libmirisdr-4 (Slugen, SM5BSZ).
@@ -2457,12 +2610,16 @@ const SDR_USB_FILTERS=[
   {vendorId:0x15f4,productId:0x0131},                          // Astrometa DVB-T2
   {vendorId:0x1d50,productId:0x6089},{vendorId:0x1d50,productId:0x604b},{vendorId:0x1d50,productId:0xcc15}, // HackRF One, Jawbreaker, rad1o
   {vendorId:0x1d50,productId:0x60a1},                          // Airspy R2/Mini
+  {vendorId:0x03eb,productId:0x800c},                          // Airspy HF+
+  {vendorId:0x38af,productId:0x0001},                          // HydraSDR RFOne
   {vendorId:0x04b4,productId:0x00f3},{vendorId:0x04b4,productId:0x00f1}, // RX-888 / SDDC: загрузчик FX3, с прошивкой
   ...MIRI_USB_IDS.map(([vendorId,productId])=>({vendorId,productId}))
 ];
 function sdrOpenDevice(dev, ppm, gain){
   if(MIRI_USB_IDS.some(([v,p])=>v===dev.vendorId && p===dev.productId)) return mirisdrOpenDevice(dev, gain);
   if(rx888Is(dev, RX888_APP)) return rx888OpenDevice(dev, gain);
+  if(dev.vendorId===0x03eb) return airspyhfOpenDevice(dev, gain);
+  if(dev.vendorId===0x38af) return airspyOpenDevice(dev, gain);
   if(dev.vendorId===0x1d50) return dev.productId===0x60a1 ? airspyOpenDevice(dev, gain) : hackrfOpenDevice(dev, gain);
   return rtlOpenDevice(dev, ppm, gain);
 }
@@ -2490,6 +2647,7 @@ ${sdrVendorOut}
 ${hackrfOpenDevice}
 ${airspyMakeConv}
 ${airspyOpenDevice}
+${airspyhfOpenDevice}
 ${mirisdrMakeConv}
 ${mirisdrOpenDevice}
 const MIRI_USB_IDS=${JSON.stringify(MIRI_USB_IDS)};
