@@ -2332,7 +2332,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         else if(n.off) prev=n.off;
         if(prev){
           const tmp=document.createElement('canvas'); tmp.width=Wp; tmp.height=hwP;
-          tmp.getContext('2d').drawImage(prev,0,0,Wp,hwP); prev=tmp;
+          // меняется только высота — строки переносим 1:1 от верха, без растяжки (иначе водопад «прокручивается»); новые — из истории
+          const pw=n.wfW, ph=n.wfH, same=pw===Wp;
+          tmp.getContext('2d').drawImage(prev,0,0,pw,ph,0,0,Wp,same ? ph : hwP); prev=tmp;
         }
         n.wfGl?.gl.getExtension('WEBGL_lose_context')?.loseContext();   // не копить живые WebGL-контексты
         n.wfW=Wp; n.wfH=hwP;
