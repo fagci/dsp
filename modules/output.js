@@ -924,9 +924,9 @@ def({ id:'dac', title:'Sound Card', cat:'Output', readout:true,
     n.peak=pk; if(pk>1) n.clipT=performance.now();
     return {}; },
   draw(n){
-    const db=n.peak>1e-6? (20*Math.log10(n.peak)).toFixed(1)+' dBFS' : '−∞ dBFS';
+    const db=n.peak>1e-6? Math.round(20*Math.log10(n.peak))+' dBFS' : '−∞ dBFS';
     const clip=performance.now()-n.clipT<1000? ' CLIP' : '';
-    n.el.querySelector('.readout').textContent=(n.status? n.status+' · ' : '')+db+clip; }});
+    roText(n,(n.status? n.status+' · ' : '')+db+clip); }});
 
 // шина движка для выбранного устройства; статус — в readout узла
 function dacBus(n){
