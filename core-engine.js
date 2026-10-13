@@ -591,6 +591,11 @@ function evalNode(n, ctx){
 const LAZY_MAX_MS=1000;
 let drawGen=0;
 function redraw(n){ n._dirty=true; }
+// readout с быстро меняющимся значением: не чаще раза в 250 мс и только при смене текста
+function roText(n,s){
+  const r=n.el?.querySelector('.readout'); if(!r || r.textContent===s) return;
+  const t=performance.now(); if(t-(n._roT||0)<250) return;
+  n._roT=t; r.textContent=s; }
 function redrawAll(){ drawGen++; }
 function redrawIf(n,key){ if(key!==n._rk){ n._rk=key; n._dirty=true; } }   // ключ видимого состояния сменился
 // Входы: числа/строки — по значению, объекты с rev (спектр) — по rev, прочие объекты

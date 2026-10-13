@@ -292,7 +292,7 @@ def({ id:'adsr', title:'ADSR Envelope', cat:'Audio', ins:[{n:'gate',t:'sig'}],
       else if(n.stage==='r'){ n.lvl-=n.relFrom/(p.release*sr); if(n.lvl<=0){ n.lvl=0; n.stage='idle'; } }
       o[i]=n.lvl; }
     return {out:o}; },
-  draw(n){ n.el.querySelector('.readout').textContent = n.stage+' · '+n.lvl.toFixed(2); }});
+  draw(n){ roText(n,n.stage+' · '+n.lvl.toFixed(1)); }});
 
 def({ id:'dist', title:'Distortion', cat:'Audio', ins:[{n:'in',t:'sig'},{n:'drive',t:'num'}],
   outs:[{n:'out',t:'sig'}],
@@ -1380,9 +1380,8 @@ def({ id:'humcancel', title:'Hum Canceller (adaptive)', cat:'Processing',
     n.red=n.red*.9+r*.1; n.K=K;
     return {out:o, hum:h, freq:n.f, level:n.lvl}; },
   draw(n){
-    const r=n.el?.querySelector('.readout'); if(!r) return;
-    r.textContent = n.K ? `${n.f.toFixed(3)} Hz · ${n.K} harm · hum ${n.lvl.toFixed(1)} dBFS · reduction ${Math.max(0,n.red).toFixed(1)} dB`
-      : 'no signal'; }});
+    roText(n, n.K ? `${n.f.toFixed(1)} Hz · ${n.K} harm · hum ${Math.round(n.lvl)} dBFS · reduction ${Math.round(Math.max(0,n.red))} dB`
+      : 'no signal'); }});
 
 // Гребенчатый режектор: H(z)=(1+ρ)/2·(1−z^−D)/(1−ρ·z^−D), D=fs/f0 (дробная — линейная
 // интерполяция). Режет все кратные f0 до Найквиста сразу и почти ничего не стоит, но режет
@@ -2299,7 +2298,7 @@ def({ id:'comp', title:'Compressor/Limiter', cat:'Audio', ins:[{n:'in',t:'sig'},
       o[i]=xi*gain; }
     n.grDb=gr;
     return {out:o, gr:-gr}; },
-  draw(n){ n.el.querySelector('.readout').textContent = 'GR: -'+n.grDb.toFixed(1)+' dB'; }});
+  draw(n){ roText(n,'GR: -'+Math.round(n.grDb)+' dB'); }});
 
 
 // формулы Audio EQ Cookbook (RBJ): peak/shelf-биквады с усилением, которых нет в 'biquad'
@@ -2400,7 +2399,7 @@ def({ id:'chorus', title:'Chorus/Flanger/Phaser', cat:'Audio',
         o[i]=xin*(1-n.p.mix)+y*n.p.mix; }
     }
     return {out:o}; },
-  draw(n){ n.el.querySelector('.readout').textContent = n.p.mode+' · '+n.p.rate.toFixed(2)+' Hz'; }});
+  draw(n){ roText(n,n.p.mode+' · '+n.p.rate.toFixed(1)+' Hz'); }});
 
 
 def({ id:'pitch', title:'Pitch Shifter', cat:'Audio', ins:[{n:'in',t:'sig'},{n:'semi',t:'num'},{n:'mix',t:'num'}],

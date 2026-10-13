@@ -3785,7 +3785,7 @@ def({ id:'meter', lazy:'proc', title:'Level', cat:'Analysis', ins:[{n:'in',t:'si
     const g=cx.createLinearGradient(0,0,W,0);
     g.addColorStop(0,themeColor('--acc2')); g.addColorStop(.75,themeColor('--acc')); g.addColorStop(1,themeColor('--err'));
     cx.fillStyle=g; cx.fillRect(0,0,W*v,H);
-    n.el.querySelector('.readout').textContent=n.db.toFixed(1)+' dB'; }});
+    roText(n,Math.round(n.db)+' dB'); }});
 
 
 def({ id:'numview', title:'Number', cat:'Indicators', ins:[{n:'in',t:'num'},{n:'digits',t:'num'}], readout:true,
@@ -3853,7 +3853,7 @@ def({ id:'trend', lazy:'proc', title:'Trend Chart', cat:'Analysis', ins:[{n:'in'
         cx.lineTo(x,y2); }
     }
     cx.stroke();
-    n.el.querySelector('.readout').textContent = typeof n.last==='number'? n.last.toFixed(3) : '—'; }});
+    roText(n,typeof n.last==='number'? n.last.toFixed(2) : '—'); }});
 
 
 def({ id:'imgview', lazy:true, title:'Frame', cat:'Video', ins:[{n:'img',t:'img'}], view:{h:110}, resize:true,
@@ -3952,7 +3952,7 @@ def({ id:'goertzel', lazy:'proc', title:'Goertzel', cat:'Analysis',
     for(let i=0;i<n.hist.length;i++){ const x=i/120*W, y=H-n.hist[i]*H;
       i?cx.lineTo(x,y):cx.moveTo(x,y); }
     cx.stroke();
-    n.el.querySelector('.readout').textContent=n.db.toFixed(1)+' dB'; }});
+    roText(n,Math.round(n.db)+' dB'); }});
 
 
 def({ id:'autocorr', lazy:'proc', title:'Autocorrelator', cat:'Analysis', ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'norm',t:'num'}],

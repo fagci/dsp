@@ -79,7 +79,7 @@ def({ id:'voice', title:'Synth (2 osc)', cat:'Music',
       o[i]=(v1+v2)*n.lvl*velAmt;
       n.ph1=(n.ph1+f1/sr)%1; n.ph2=(n.ph2+f2/sr)%1; }
     return {out:o}; },
-  draw(n){ n.el.querySelector('.readout').textContent = n.stage+' · '+n.lvl.toFixed(2); }});
+  draw(n){ roText(n,n.stage+' · '+n.lvl.toFixed(1)); }});
 
 
 // один голос = осциллятор + ADSR, как у voice, но без второго осциллятора — чтобы 4 штуки
@@ -7391,7 +7391,7 @@ def({ id:'acid', title:'Acid Bass (303)', cat:'Music',
       o[i]=Math.tanh(y*1.4)*.8; }
     n.z=[x1,x2,y1,y2];
     return {out:o}; },
-  draw(n){ n.el.querySelector('.readout').textContent='env '+n.env.toFixed(2); }});
+  draw(n){ roText(n,'env '+n.env.toFixed(1)); }});
 
 
 /* ---------- драм-секвенсор (техно) ---------- */
