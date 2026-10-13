@@ -1068,7 +1068,7 @@ zoomTouch();
 if(nk!==t) wz.raf=requestAnimationFrame(wzStep); else wz=null;
 }
 cv.addEventListener('wheel',e=>{
-if(uiLocked() || e.target.closest?.('.panzoom-exclude.dash-pane,.dash-tools')) return;   // колесо над обычной панелью — её прокрутка
+if(uiLocked() || e.target.closest?.('.panzoom-exclude.dash-pane,.dash-tools,.node.xp')) return;   // колесо над обычной панелью и развёрнутым модулем — их прокрутка
 e.preventDefault();
 let dy=e.deltaY||e.deltaX;
 if(e.deltaMode===1) dy*=16; else if(e.deltaMode===2) dy*=400;   // строки/страницы (Firefox)
@@ -1435,6 +1435,8 @@ let dashFitRaf=0;
 function dashFitSoon(){ if(!dashFitRaf) dashFitRaf=requestAnimationFrame(()=>{ dashFitRaf=0; dashFit(); dashObserve(); }); }
 const dashRO=typeof ResizeObserver!=='undefined' ? new ResizeObserver(()=>dashFitSoon()) : null;
 const dashObserved=new Set();
+// группы параметров сворачиваются без смены размера панели — высоту канвы пересчитать после клика
+document.getElementById('dashGrid')?.addEventListener('click',()=>{ setTimeout(dashFitSoon,80); });
 function dashObserve(){                                 // панель и сам узел (ширина -> перенос контролов, advanced)
   if(!dashRO) return;
   // diff вместо disconnect+observe: повторный observe шлёт начальное уведомление и зацикливает dashFit
@@ -1725,6 +1727,7 @@ function bindDashResizer(rz,t,i){                       // тащим грани
   });
 }
 function setDash(on){
+  if(on) for(const n of Graph.nodes) if(n.xpand) xpandNode(n,false);   // в тайле заголовка с ⛶ нет — развёрнутость не должна остаться
   if(on && !dashGridEl) return;                        // старый закэшированный index.html без #dashGrid — тихо выходим
   dashMode=on; redrawAll();
   LS.set('dsp-dash',on?'1':'');                        // режим переживает перезагрузку страницы

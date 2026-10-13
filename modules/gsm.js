@@ -1350,7 +1350,25 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
     }
     return {rec:null, burst:null, freq:n.foff, sync:n.rx.state==='sync'?1:0, nb:null};
   },
-  draw(n){ const r=n.el.querySelector('.readout'); if(r && r.textContent!==n.text) r.textContent=n.text||''; }});
+  draw(n){ const r=n.el.querySelector('.readout'); if(r) gsmReadout(n,r); }});
+// статус — одной строкой сверху, лог — в своей прокручиваемой области, прижатой к новым строкам: в маленькой ячейке тайла
+// текст не прыгает, когда статус переносится на другое число строк или приходят пакеты
+function gsmReadout(n,r){
+  if(!r._gsm){
+    r._gsm=1; r.classList.add('gsm-ro');
+    Object.defineProperty(r,'textContent',{configurable:true,get:()=>n.text||'',set:()=>{}});   // копирование по клику берёт весь текст
+    r.innerHTML='<div class="gsm-st"></div><div class="gsm-lg"></div>';
+  }
+  const text=n.text||'';
+  if(r._last===text) return;
+  r._last=text;
+  const i=text.indexOf('\n'), st=i<0 ? text : text.slice(0,i), lg=i<0 ? '' : text.slice(i+1);
+  const stEl=r.firstChild, lgEl=r.lastChild;
+  if(stEl.textContent!==st){ stEl.textContent=st; stEl.title=st; }
+  const stick=lgEl.scrollHeight-lgEl.scrollTop-lgEl.clientHeight<24;     // пользователь не листал вверх
+  lgEl.textContent=lg;
+  if(stick) lgEl.scrollTop=lgEl.scrollHeight;
+}
 
 function gsmHerm(y0,y1,y2,y3,t){
   const c1=0.5*(y2-y0), c2=y0-2.5*y1+2*y2-0.5*y3, c3=0.5*(y3-y0)+1.5*(y1-y2);
