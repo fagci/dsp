@@ -30,6 +30,7 @@ async function saveRecordingToDB(n, samples, peak, rms){
   await refreshRecorderList(n);
   const rec = n.recordings.find(r=>r.id===id);
   if(rec) recSelect(n, rec, false);      // выбрать новую запись, но не проигрывать сразу
+  n.savedPulse = true;                   // импульс на выходе saved — запись готова к проигрыванию
 }
 
 async function refreshRecorderList(n){
@@ -57,7 +58,7 @@ def({ id:'triggerRecorder', lazy:'proc', title:'Trigger Recorder', cat:'Output',
   ins:[{n:'in',t:'sig'},{n:'trig',t:'num'},{n:'threshold',t:'num'},{n:'preTime',t:'num'},
        {n:'postTime',t:'num'},{n:'maxDuration',t:'num'},{n:'trigHold',t:'num'},
        {n:'clipId',t:'num'},{n:'play',t:'num'},{n:'rate',t:'num'},{n:'gain',t:'num'}],
-  outs:[{n:'recording',t:'num'},{n:'out',t:'sig'},{n:'clipId',t:'num'}],
+  outs:[{n:'recording',t:'num'},{n:'out',t:'sig'},{n:'clipId',t:'num'},{n:'playing',t:'num'},{n:'saved',t:'num'}],
   h:280, resize:true, readout:true,
   params:[
     // gate: пишет, пока trig выше 0.5 (например, sqOpen приёмника), и postTime после его закрытия
@@ -239,7 +240,8 @@ def({ id:'triggerRecorder', lazy:'proc', title:'Trigger Recorder', cat:'Output',
       }
     }
     
-    return {recording: n.recording ? 1 : 0, out:o, clipId: n.selected};
+    const saved = n.savedPulse ? 1 : 0; n.savedPulse = false;
+    return {recording: n.recording ? 1 : 0, out:o, clipId: n.selected, playing: n.play ? 1 : 0, saved};
   },
   draw(n){
     if(!n.initialized && n.el){ initRecorderUI4(n); n.initialized = true; }
