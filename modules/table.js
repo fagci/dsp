@@ -670,7 +670,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
       if(r.textContent!==t) r.textContent=t;
     }
     if(n.ui){
-      const vk=[n.p.vcols,n.p.rules,n.p.tint,n.p.vmode];
+      const vk=[n.p.vcols,n.p.rules,n.p.tint,n.p.vmode,n.p.tz];
       if(!n._vk || vk.some((x,i)=>x!==n._vk[i])){ n._vk=vk; n.uiDirty=true; if(n.ui.view && !n.ui.view.hidden) tblRenderView(n); }
       // полная перерисовка до 300 строк × колонок — реже на длинном списке
       if(n.uiDirty && performance.now()-(n.uiT||0)>400+2*Math.min(n.rows.length,TBL_ROWS)){ n.uiDirty=false; n.uiT=performance.now(); tblRenderList(n); }
@@ -1002,7 +1002,7 @@ function tblRenderList(n){
     const wid=vc.map(x=>Math.max(x.c.length,2));
     texts=[];
     for(let i=s;i<e;i++){
-      const t=vc.map(x=>tblCell(x,n.rows[i][x.c]));
+      const t=vc.map(x=>tblCell(x,n.rows[i][x.c],n.p.tz==='local'));
       t.forEach((v,k)=>{ if(v.length>wid[k]) wid[k]=v.length; });
       texts.push(t);
     }
@@ -1037,19 +1037,25 @@ function tblViewCols(n){
   for(const c of n.cl) if(!seen.has(c)) out.push({c,fmt:'auto',w:0});
   return out;
 }
-const tblTime=v=>{ const ms=v>1e11 ? v : v>1e8 ? v*1000 : null; return ms==null ? +v.toFixed(3)+'s' : new Date(ms).toISOString().slice(11,23); };
-function tblCell(x,v){
+const tblTime=(v,local)=>{
+  const ms=v>1e11 ? v : v>1e8 ? v*1000 : null;
+  if(ms==null) return +v.toFixed(3)+'s';
+  if(!local) return new Date(ms).toISOString().slice(11,23);
+  const d=new Date(ms), z=(k,w=2)=>String(k).padStart(w,'0');
+  return z(d.getHours())+':'+z(d.getMinutes())+':'+z(d.getSeconds())+'.'+z(d.getMilliseconds(),3);
+};
+function tblCell(x,v,local){
   if(v===''||v==null) return '';
   const low=x.c.toLowerCase(), f=x.fmt||'auto';
   if(f==='auto'){
     if(TBL_PHOTO.test(low)){ const k=phIds(v).length; return k ? '📷'+k : ''; }
     if(TBL_AUDIO.test(low)){ const k=auIds(v).length; return k ? '🔊'+k : ''; }
     if(TBL_HZ.test(x.c)){ const h=tblHz(v); return isFinite(h) ? fmtHz(h,3) : recFmt(v); }
-    if(/^(t|ts|time|date|datetime)$/.test(low) && typeof v==='number') return tblTime(v);
+    if(/^(t|ts|time|date|datetime)$/.test(low) && typeof v==='number') return tblTime(v,local);
     return recFmt(v);
   }
   if(f==='hz'){ const h=tblHz(v); return isFinite(h) ? fmtHz(h,3)+'Hz' : recFmt(v); }
-  if(f==='time') return typeof v==='number' ? tblTime(v) : recFmt(v);
+  if(f==='time') return typeof v==='number' ? tblTime(v,local) : recFmt(v);
   if(f==='hex') return typeof v==='number' && Number.isInteger(v) ? (v<0?'-':'')+'0x'+Math.abs(v).toString(16) : recFmt(v,true);
   if(f==='num'){ const k=typeof v==='number' ? v : parseFloat(v); return isFinite(k) ? String(+k.toFixed(3)) : recFmt(v); }
   return recFmt(v);
@@ -1227,6 +1233,7 @@ function tblRenderView(n){
   const top=mk('div','tv-top');
   top.append(mk('span','tv-ttl','Columns & colors'),
     sel([['grid','grid (columns)'],['compact','compact (name · values)']],n.p.vmode==='compact' ? 'compact' : 'grid',x=>tblViewApply(n,'vmode',x,true)),
+    sel([['utc','time: UTC'],['local','time: local']],n.p.tz==='local' ? 'local' : 'utc',x=>tblViewApply(n,'tz',x,true)),
     mk('span','tv-x','✕',{click:()=>tblViewToggle(n)}));
   box.append(top);
   const grid=n.p.vmode!=='compact';
