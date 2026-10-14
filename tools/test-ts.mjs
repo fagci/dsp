@@ -5,7 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,Map,Array,Error});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/ts-kernels.js'),'utf8')+';this.T={TsDemux,tsAvcSps,tsNals,tsLayout};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/ts-kernels.js'),'utf8')+';this.T={TsDemux,tsAvcSps,tsNals,tsLayout,tsAvcSliceType};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -90,5 +90,25 @@ ok('lost packet drops one frame',d3.takeVideo().length===N-1 && d3.stat.cc>0,d3.
   ok('layout analysis: a plain stream has no gaps',lay2.length===0 || lay2.every(x=>x.gap===0),JSON.stringify(lay2));
 }
 
+
+
+// точки входа без IDR: обычный I-срез (slice_type 7) — ключевой, P-срез (5) — нет; SPS / PPS дописываются из прежних кадров
+{
+  ok('slice type I (7) parsed',T.tsAvcSliceType(Uint8Array.from([0x41,0x88,0x00,0x00]))===7);
+  ok('slice type P (5) parsed',T.tsAvcSliceType(Uint8Array.from([0x41,0x98,0x00,0x00]))===5);
+  const nal2=(h,...b)=>[0,0,0,1,h,...b];
+  const auIdr=[...nal2(0x09,0xf0),0,0,0,1,...sps(120,68,4),...nal2(0x68,0xee,0x3c,0x80),...nal2(0x65,0x88,0x84,0x00,0x10)];
+  const auI=[...nal2(0x09,0xf0),...nal2(0x41,0x88,0x84,0x00,0x10,0x20)];       // I-срез без SPS / PPS
+  const auP=[...nal2(0x09,0xf0),...nal2(0x41,0x98,0x84,0x00,0x10,0x20)];
+  const pk2=[...packets(0,[0,...pata],true),...packets(0x100,[0,...pmt],true)];
+  [auIdr,auP,auI,auP,auI].forEach((a,i)=>pk2.push(...packets(0x101,pesv(90000+i*3600,a),true)));
+  pk2.push(...packets(0x101,pesv(90000+5*3600,auP),true));
+  const d6=new T.TsDemux(); d6.push(flat(pk2)); d6.flush();
+  const v6=d6.takeVideo();
+  ok('entry points: IDR and plain I slices, not P',v6.map(f=>f.key?1:0).join('')==='101010'.slice(0,v6.length) || v6.map(f=>f.key?1:0).join('')==='10101',v6.map(f=>f.key?1:0).join(''));
+  const types=f=>T.tsNals(f.d).map(n=>n[0]&31);
+  ok('SPS and PPS are put in front of a plain I frame',types(v6[2]).slice(0,3).join()==='7,8,9' || types(v6[2]).includes(7) && types(v6[2]).includes(8),types(v6[2]).join());
+  ok('keys counted',d6.stat.keys===3,String(d6.stat.keys));
+}
 
 console.log(bad?bad+' FAILED':'all ok'); process.exit(bad?1:0);

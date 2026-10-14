@@ -27,10 +27,15 @@ function tsvClose(n){ tsvReset(n); n.fileObj=null; }
 
 async function tsvConfigure(n,codec,type){
   if(typeof VideoDecoder==='undefined'){ n.status='WebCodecs is not available in this browser'; return false; }
-  const cfg={codec, optimizeForLatency:true};
+  let cfg={codec, optimizeForLatency:true};
   if(type==='hevc') cfg.hevc={format:'annexb'};
+  if(type==='avc') cfg.avc={format:'annexb'};                  // кадры идут с начальными кодами, без описания AVCC
   let sup=null;
   try{ sup=await VideoDecoder.isConfigSupported(cfg); }catch(e){}
+  if(!sup?.supported && type==='avc'){                          // старые версии браузера: Annex B подразумевался без описания
+    cfg={codec, optimizeForLatency:true};
+    try{ sup=await VideoDecoder.isConfigSupported(cfg); }catch(e){}
+  }
   if(!sup?.supported){ n.status='codec '+codec+' is not supported by the browser'; return false; }
   const dec=new VideoDecoder({
     output:f=>{ if(n.dec!==dec){ f.close(); return; } n.q.push(f); n.decoded++; },
@@ -206,6 +211,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
       if(pl.length) t='programs '+pl.map(p=>p.num+(p===d.cur ? '▶' : '')).join(' ')+' · '+(d.vcodec||'—')+(d.sps ? ' · '+d.sps.w+'×'+d.sps.h : '')+
         ' · '+n.fps.toFixed(1)+' fps'+(d.cur?.apid ? ' · audio '+d.cur.atype+(d.cur.atype==='mp2' ? (n.aInfo ? ' · '+n.aInfo : '') : ' (not decoded)') : '');
       if(st.cc||st.tei||n.dropped||n.m2bad) t+='\nlost packets '+st.cc+' (now '+Math.round(n.ccRate||0)+'/s) · transport errors '+st.tei+(st.sync ? ' · stream breaks '+st.sync+(()=>{ const e=Object.entries(st.gaps).sort((x,y)=>y[1]-x[1])[0]; return e ? ' (usually '+e[0]+' extra bytes ×'+e[1]+')' : ''; })() : '')+(n.dropped ? ' · dropped frames '+n.dropped : '')+(n.m2bad ? ' · bad slices '+n.m2bad : '');
+      if(pl.length) t+='\nvideo frames '+st.frames+' (entry points '+st.keys+') · decoded '+n.decoded+' · shown '+n.shown+(n.dec ? ' · decoder queue '+n.dec.decodeQueueSize : n.decCodec ? '' : ' · decoder not started')+(n.needKey ? ' · waiting for an entry point' : '');
       if(n.status && pl.length && !n.gotFrame) t+='\n'+n.status;
       if(r.textContent!==t) r.textContent=t;
     }
