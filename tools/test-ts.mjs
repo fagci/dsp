@@ -5,7 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,Map,Array,Error});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/ts-kernels.js'),'utf8')+';this.T={TsDemux,tsAvcSps,tsNals,tsLayout,tsAvcSliceType};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/ts-kernels.js'),'utf8')+';this.T={TsDemux,tsAvcSps,tsNals,tsLayout,tsAvcSliceType,tsAvcMaxFs};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -111,4 +111,5 @@ ok('lost packet drops one frame',d3.takeVideo().length===N-1 && d3.stat.cc>0,d3.
   ok('keys counted',d6.stat.keys===3,String(d6.stat.keys));
 }
 
-console.log(bad?bad+' FAILED':'all ok'); process.exit(bad?1:0);
+console.log(bad?bad+' FAILED':'all ok'); ok('MaxFS by level',T.tsAvcMaxFs(30)===1620 && T.tsAvcMaxFs(31)===3600 && T.tsAvcMaxFs(40)===8192 && T.tsAvcMaxFs(51)===36864 && T.tsAvcMaxFs(62)===139264);
+process.exit(bad?1:0);
