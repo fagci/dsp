@@ -50,6 +50,21 @@ function tsAvcMaxFs(level){
   for(const [l,m] of t) if(level<=l) return m;
   return 139264;
 }
+// PES звука AAC (ADTS) → кадры без заголовка: [{d, sr, ch, asc, dt}] (dt — сдвиг по времени от PTS, с); asc — AudioSpecificConfig для декодера
+const TS_AAC_SR=[96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,7350];
+function tsAdtsSplit(es){
+  const out=[]; let i=0, t=0;
+  while(i+7<=es.length){
+    if(es[i]!==0xff || (es[i+1]&0xf6)!==0xf0){ i++; continue; }
+    const hl=(es[i+1]&1) ? 7 : 9, len=((es[i+3]&3)<<11)|(es[i+4]<<3)|(es[i+5]>>5);
+    const sr=TS_AAC_SR[(es[i+2]>>2)&15], ch=((es[i+2]&1)<<2)|(es[i+3]>>6), obj=((es[i+2]>>6)&3)+1;
+    if(!sr || len<hl || i+len>es.length) break;
+    const idx=(es[i+2]>>2)&15;
+    out.push({d:es.subarray(i+hl,i+len), sr, ch:ch||2, asc:new Uint8Array([(obj<<3)|(idx>>1), ((idx&1)<<7)|((ch||2)<<3)]), dt:t});
+    t+=1024/sr; i+=len;
+  }
+  return out;
+}
 const tsHex2=v=>(v<16?'0':'')+v.toString(16);
 
 // slice_type первого среза H.264 (NAL 1 или 5): после заголовка NAL идут first_mb_in_slice и slice_type, оба ue(v). I-срез: 2, 7 (и SI: 4, 9)
