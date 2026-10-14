@@ -1359,6 +1359,7 @@ function rtlMakeCom(dev){
     i2c:{open:openI2C, close:closeI2C, readRegister:readI2CReg, writeRegister:writeI2CReg, writeRegisters:writeI2CRegs, readRegBuffer:readI2CRegBuffer},
     setFastI2C:on=>{ fastI2C=!!on; },
     bulk:{readBuffer:readBulk},
+    raw:{write:writeRegBuffer, read:readRegBuffer},                 // произвольный блок: DVB-донглы шлют I2C другими командами
     iface:{claim:()=>dev.claimInterface(0), release:()=>dev.releaseInterface(0).catch(()=>{})},
     writeEach
   };

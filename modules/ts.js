@@ -174,7 +174,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
           {n:'volume',t:'range',min:0,max:2,step:.01,d:1,label:'volume'},
           {n:'avsync',t:'range',min:-500,max:500,step:10,d:0,label:'audio delay, ms (positive — later)'},
           {n:'reset',t:'button',label:'Reset',fn:n=>{ tsvReset(n); n.dmx.reset(); n.pos=0; n.status='reset'; }}],
-  view:{h:120},
+  view:{h:220}, resize:true, w:380,
   init(n){
     n.dmx=new TsDemux(); n.q=[]; n.fileObj=null; n.pos=0; n.rd=false; n.dec=null; n.decCodec=''; n.cfgBusy=false;
     n.needKey=true; n.lastTs=-1; n.base=null; n.last=null; n.status='waiting for a transport stream';

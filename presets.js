@@ -296,6 +296,7 @@ const PRESET_CATS={
   'WEFAX Transmit (Demo)':'Images & TV',
   'Analog TV: Test Card (Generator)':'Images & TV',
   'Analog TV: FPV / TV Receiver (USB SDR)':'Images & TV',
+  'Digital TV: DVB-T2 Astrometa → TS → Video and Sound':'Images & TV',
   'Analog TV: FPV Multiband Scanner (HackRF)':'Images & TV',
   'Analog TV: FPV Mosaic (one HackRF)':'Images & TV',
   'Analog TV: FPV Channel Scanner (HackRF)':'Images & TV',
@@ -4549,6 +4550,19 @@ const sa=addNode('sa',40,640,{auto:true,floor:-100,top:-30});
 sa.size.w=700; sa.size.h=240; applySize(sa);
 addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'out',dc.id,'in'); addEdge(dc.id,'img',fr.id,'img');
 addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
+markWiresDirty();
+});
+preset('Digital TV: DVB-T2 Astrometa → TS → Video and Sound', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A DVB-T / T2 / C USB stick with RTL2832U + R828D + MN88473 / MN88472 (Astrometa DVB-T2 and similar). 1) Choose the demodulator firmware file once (dvb-demod-mn88473-01.fw or dvb-demod-mn88472-02.fw from the linux-firmware package; it is kept in the browser). 2) Connect USB… 3) Set the channel centre frequency (UHF channel 21 = 474 MHz, step 8 MHz) and press Tune; standard auto tries DVB-T2, then DVB-T. The transport stream goes to TS → Video: H.264 / HEVC through the browser decoder, MPEG-2 and MP2 sound through vendor/mpeg2.wasm. Not tested on a real stick yet — the node log shows every step. On Linux first free the stick from the kernel: rmmod dvb_usb_rtl28xxu; on Windows give it a WinUSB driver (Zadig).'});
+nt.size.w=1000; nt.size.h=150; applySize(nt);
+const rx=addNode('dvbUsb',40,230,{});
+rx.size.w=360; rx.size.h=330; applySize(rx);
+const tv=addNode('tsvid',440,230,{});
+tv.size.w=420; tv.size.h=400; applySize(tv);
+const sc=addNode('dac',900,230,{});
+sc.size.w=260; sc.size.h=200; applySize(sc);
+addEdge(rx.id,'bin',tv.id,'bin'); addEdge(tv.id,'L',sc.id,'L'); addEdge(tv.id,'R',sc.id,'R');
 markWiresDirty();
 });
 preset('Analog TV: FPV / TV Receiver (USB SDR)', function(){
