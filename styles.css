@@ -836,6 +836,21 @@ select.aed-b{padding:0 6px}
 #bootList .bad{color:var(--err);font-weight:bold}
 #boot.err{color:var(--err)}
 #net{color:var(--acc);font-size:11px;font-weight:600}
+#errBadge{color:var(--err);font-size:11px;font-weight:600;white-space:nowrap}
+#errBadge[hidden]{display:none}
+#errPanel{position:fixed;z-index:90;left:50%;top:50%;transform:translate(-50%,-50%);width:min(640px,94vw);max-height:80vh;display:flex;flex-direction:column;background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,.45);font-size:12px}
+#errPanel .ep-head{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line)}
+#errPanel .ep-v{flex:1;color:var(--dim);font:11px var(--mono)}
+#errPanel .ep-list{flex:1;overflow:auto;padding:6px 10px}
+#errPanel .ep-foot{display:flex;gap:8px;padding:8px 10px;border-top:1px solid var(--line)}
+#errPanel .ee{padding:4px 0;border-bottom:1px solid var(--line)}
+#errPanel .ee.old{opacity:.6}
+#errPanel .ee summary{cursor:pointer;color:var(--err);overflow-wrap:anywhere}
+#errPanel .ee-meta{color:var(--dim);font:10px var(--mono);margin-top:2px;overflow-wrap:anywhere}
+#errPanel pre{margin:4px 0 0;font:10px var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--dim)}
+#errPanel .ee-empty{color:var(--dim);padding:8px 0}
+#errPanel button,#bootRep{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:3px;padding:4px 10px;font:12px system-ui,sans-serif;cursor:pointer}
+#bootRep{margin-top:6px}
 
 /* значок модуля: инициалы, цвет — группа, форма — роль: круг = источник, квадрат = обработка, шестиугольник = приёмник */
 .mi{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-right:7px;

@@ -10,7 +10,7 @@
 // новой не подтвердит успешную загрузку ('ok'). Если скрипты не загрузились, страница шлёт 'rollback' —
 // пока сеть отдаёт index.html этой версии, воркер подаёт index.html последней подтверждённой.
 const PFX='dsp-shell-v';
-const CACHE='dsp-shell-v74c20bbd';
+const CACHE='dsp-shell-v544440fd';
 const V=CACHE.slice(PFX.length);
 const META='dsp-meta', STATE_KEY='./__state', PIN_MS=6*3600e3;    // сколько держать откат, пока не выйдет новая версия
 const SHELL=[
@@ -193,6 +193,7 @@ const SHELL=[
   './modules/telemetry.js?v='+V,
   './modules/iqnet.js?v='+V,
   './modules/power.js?v='+V,
+  './modules/errlog.js?v='+V,
   './modules/gamepad.js?v='+V,
   './modules/webhid.js?v='+V,
   './modules/webnfc.js?v='+V,
