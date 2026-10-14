@@ -140,13 +140,13 @@ function dvbSystems(n){
   if(p==='DVB-C') return [DVB_SYS.C];
   return [DVB_SYS.T2,DVB_SYS.T];                                // auto: сперва T2
 }
-async function dvbTune(n){
+async function dvbTune(n,ov){                                   // ov: {sys, f, bw} — для сканирования, минуя параметры узла
   if(!n.dv_connected || n.dv_tuning) return;
   n.dv_tuning=true;
   try{
     const list=dvbSystems(n);
     n.dv_sysIdx=(n.dv_sysIdx||0)%list.length;
-    const sys=list[n.dv_sysIdx], f=Math.round(+n.p.freq*1e6), bw=Math.round(+n.p.bw*1e6);
+    const sys= ov ? ov.sys : list[n.dv_sysIdx], f= ov ? ov.f : Math.round(+n.p.freq*1e6), bw= ov ? ov.bw : Math.round(+n.p.bw*1e6);
     n.dv_sys=sys; n.dv_locked=false; n.dv_tuneAt=performance.now(); n.dv_freq=f; n.dv_bw=bw;
     const t=await n.dv_tuner.tune(sys,f,bw);
     if(!t.lock){ dvbLog(n,sys+' '+(f/1e6)+' MHz: tuner PLL did not lock'); }
@@ -154,6 +154,49 @@ async function dvbTune(n){
     dvbLog(n,'tuned '+sys+' '+(f/1e6)+' MHz, '+(bw/1e6)+' MHz, IF '+(t.ifHz/1000)+' kHz');
   }catch(e){ dvbLog(n,'tune error: '+(e&&e.message||e)); }
   finally{ n.dv_tuning=false; }
+}
+
+
+/* ---- сканирование эфира: каналы UHF 21–69 (8 МГц) и VHF 5–12 (7 МГц), на каждом DVB-T2, затем DVB-T ---- */
+async function dvbScan(n){
+  if(!n.dv_connected || n.dv_scan || n.dv_tuning) return;
+  n.dv_scan=true; n.dv_found=[];
+  const was={f:+n.p.freq, bw:+n.p.bw};
+  const lo=Math.max(5,+n.p.ch1|0), hi=Math.min(69,+n.p.ch2|0), chans=[]; for(let c=lo;c<=hi;c++) if(dvbChannel(c)) chans.push(c);
+  if(!chans.length){ dvbLog(n,'scan: no channels in the range '+lo+'…'+hi); n.dv_scan=false; return; }
+  dvbLog(n,'scan: '+chans.length+' channels, DVB-T2 then DVB-T on each');
+  try{
+    for(let i=0;i<chans.length && n.dv_scan && n.dv_connected;i++){
+      const c=dvbChannel(chans[i]);
+      for(const sys of [DVB_SYS.T2,DVB_SYS.T]){
+        if(!n.dv_scan) break;
+        n.dv_scanTxt='scan '+(i+1)+'/'+chans.length+' · channel '+chans[i]+' · '+(c.f/1e6)+' MHz · '+sys;
+        n.dv_dirty=true;
+        await dvbTune(n,{sys,f:c.f,bw:c.bw});
+        let limit=1600, st=null;
+        const t0=performance.now();
+        while(performance.now()-t0<limit && n.dv_scan){
+          await dvbSleep(200);
+          if(n.dv_stAt>n.dv_tuneAt+250 && n.dv_st){ st=n.dv_st; if(st.lock) break; if(st.signal) limit=6000; }
+        }
+        if(st && (st.signal || st.lock)){
+          const r={ch:chans[i], f:c.f, bw:c.bw, sys, lock:!!st.lock, cnr:st.cnr};
+          n.dv_found.push(r);
+          dvbLog(n,'channel '+r.ch+' ('+(r.f/1e6)+' MHz) '+sys+': '+(r.lock ? 'LOCK' : 'signal, no lock')+(r.cnr!=null ? ', C/N '+r.cnr.toFixed(1)+' dB' : ''));
+          if(st.lock) break;                                    // этот стандарт найден — к следующему каналу
+        }
+      }
+    }
+  }finally{
+    const locks=n.dv_found.filter(r=>r.lock);
+    n.dv_scan=false; n.dv_scanTxt='';
+    dvbLog(n,'scan finished: '+locks.length+' with lock, '+(n.dv_found.length-locks.length)+' with a signal only'+(locks.length ? ' → '+locks.map(r=>r.ch+' '+(r.f/1e6)+' MHz '+r.sys).join(', ') : ''));
+    const best=locks[0]||null;
+    if(best){ setMod(n,'freq',best.f/1e6); setMod(n,'bw',String(best.bw/1e6)); setMod(n,'sys',best.sys); }
+    else{ setMod(n,'freq',was.f); setMod(n,'bw',String(was.bw)); }
+    n.dv_sysIdx=0;
+    await dvbTune(n);
+  }
 }
 
 /* ---- поток и состояние ---- */
@@ -177,11 +220,11 @@ function dvbStream(n){
       if(n.dv_tuning || !n.dv_connected) continue;
       try{
         const st=await n.dv_demod.status(n.dv_sys);
-        n.dv_st=st;
+        n.dv_st=st; n.dv_stAt=performance.now();
         if(st.lock && !n.dv_locked){ n.dv_locked=true; dvbLog(n,'LOCK '+n.dv_sys+(st.cnr!=null ? ', C/N '+st.cnr.toFixed(1)+' dB' : '')); }
         if(!st.lock && n.dv_locked){ n.dv_locked=false; dvbLog(n,'lock lost'); }
         // auto: нет захвата за 3 с — другой стандарт
-        if(!st.lock && performance.now()-n.dv_tuneAt>3000 && dvbSystems(n).length>1){ n.dv_sysIdx=(n.dv_sysIdx||0)+1; await dvbTune(n); }
+        if(!n.dv_scan && !st.lock && performance.now()-n.dv_tuneAt>3000 && dvbSystems(n).length>1){ n.dv_sysIdx=(n.dv_sysIdx||0)+1; await dvbTune(n); }
         n.dv_dirty=true;
       }catch(e){ dvbLog(n,'status: '+e.message); }
     }
@@ -202,7 +245,11 @@ def({ id:'dvbUsb', title:'DVB USB (Astrometa)', cat:'Sources', kw:'dvb t2 dvb-t 
           {n:'bw',t:'select',opts:['8','7','6'],d:'8',label:'channel bandwidth, MHz'},
           {n:'sys',t:'select',opts:['auto','DVB-T2','DVB-T','DVB-C'],d:'auto',label:'standard (auto: T2, then T after 3 s without lock)'},
           {n:'plp',t:'num',d:0,label:'DVB-T2: PLP (stream) number'},
-          {n:'tune',t:'button',label:'Tune',fn:n=>{ n.dv_sysIdx=0; dvbTune(n); }}],
+          {n:'tune',t:'button',label:'Tune',fn:n=>{ n.dv_sysIdx=0; dvbTune(n); }},
+          {n:'ch1',t:'num',d:21,label:'scan: from channel (UHF 21–69, VHF III 5–12)'},
+          {n:'ch2',t:'num',d:69,label:'scan: to channel'},
+          {n:'scan',t:'button',label:'Scan the air',fn:n=>dvbScan(n)},
+          {n:'stopscan',t:'button',label:'Stop scan',fn:n=>{ n.dv_scan=false; }}],
   init(n){ n.dv_logTxt=[]; n.dv_t0=performance.now(); n.dv_status='not connected'; n.dv_rx=[]; n.dv_rxBytes=0; n.dv_run=false; n.dv_connected=false; n.dv_dirty=true; n.dv_pf=null; },
   dispose:n=>{ dvbDisconnect(n,true); },
   process(n,I){
@@ -220,7 +267,7 @@ def({ id:'dvbUsb', title:'DVB USB (Astrometa)', cat:'Sources', kw:'dvb t2 dvb-t 
     const r=n.el.querySelector('.readout'); if(!r) return;
     const now=performance.now();
     if(now-n.dv_rateAt>1000){ n.dv_rate=(n.dv_rxBytes-n.dv_rateB)*8/((now-n.dv_rateAt)/1000); n.dv_rateB=n.dv_rxBytes; n.dv_rateAt=now; }
-    let h= n.dv_connected ? (n.dv_locked ? '● LOCK ' : '○ searching ')+(n.dv_sys||'')+' '+(n.dv_freq?n.dv_freq/1e6:'')+' MHz'+(n.dv_st&&n.dv_st.cnr!=null ? ' · C/N '+n.dv_st.cnr.toFixed(1)+' dB' : '')+(n.dv_st&&n.dv_st.strength!=null ? ' · level '+Math.round(n.dv_st.strength/10.23)+' %' : '')+' · TS '+(n.dv_rate/1e6).toFixed(2)+' Mbit/s' : n.dv_status;
+    let h= n.dv_scanTxt ? n.dv_scanTxt : n.dv_connected ? (n.dv_locked ? '● LOCK ' : '○ searching ')+(n.dv_sys||'')+' '+(n.dv_freq?n.dv_freq/1e6:'')+' MHz'+(n.dv_st&&n.dv_st.cnr!=null ? ' · C/N '+n.dv_st.cnr.toFixed(1)+' dB' : '')+(n.dv_st&&n.dv_st.strength!=null ? ' · level '+Math.round(n.dv_st.strength/10.23)+' %' : '')+' · TS '+(n.dv_rate/1e6).toFixed(2)+' Mbit/s' : n.dv_status;
     const t=h+'\n'+n.dv_logTxt.slice(-8).join('\n');
     if(r.textContent!==t) r.textContent=t; }
 });
