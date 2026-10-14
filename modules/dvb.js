@@ -81,6 +81,9 @@ async function dvbConnect(n){
     const com=rtlMakeCom(dev), bus=dvbBus(com), io=dvbIo(com,dev,bus);
     n.dv_com=com; n.dv_bus=bus; n.dv_io=io;
     // питание и пробы — порядок rtl28xxu: power_ctrl, read_config
+    // донгл мог остаться включённым от прошлого сеанса (страницу перезагрузили, не отключив): сначала полный цикл питания, как при выключении
+    // в драйвере ядра (в том числе сброс конечной точки потока), потом включение
+    try{ await DvbRtl.power(io,false); await dvbSleep(40); }catch(e){}
     await DvbRtl.power(io,true); dvbLog(n,'power on');
     await DvbRtl.gpioProbe(io);
     await bus.gate(true);
@@ -218,12 +221,12 @@ function dvbStream(n){
   const dev=n.dv_dev;
   // много запросов одновременно: пока основной поток занят, устройству есть куда писать (у ядра 6 буферов, у браузера задержки больше).
   // 16 × 32 КБ — полсекунды при 8 Мбит/с, около 150 мс при 28 Мбит/с
-  n.dv_gaps=0; n.dv_gapMax=0; n.dv_lastRx=performance.now();
+  n.dv_gaps=0; n.dv_gapMax=0; n.dv_lastRx=performance.now(); n.dv_rxAt=performance.now(); n.dv_xfers=0; n.dv_recov=0; n.dv_recAt=0;
   const loop=async()=>{
     while(n.dv_run && n.dv_dev===dev){
       try{
         const r=await dev.transferIn(1,32768);
-        const now=performance.now(), gap=now-n.dv_lastRx; n.dv_lastRx=now;
+        const now=performance.now(), gap=now-n.dv_lastRx; n.dv_lastRx=now; n.dv_xfers=(n.dv_xfers||0)+1; if(r.data.byteLength) n.dv_rxAt=now;
         if(n.dv_cap && r.status==='ok'){ n.dv_cap.push(new Uint8Array(r.data.buffer.slice(r.data.byteOffset,r.data.byteOffset+r.data.byteLength))); dvbCapDone(n); }
         if(gap>80 && n.dv_rxBytes>0){ n.dv_gaps++; if(gap>n.dv_gapMax) n.dv_gapMax=gap; }   // долго не было данных: пауза потока или устройства
         if(r.status==='ok' && r.data.byteLength){ n.dv_rx.push(new Uint8Array(r.data.buffer.slice(r.data.byteOffset,r.data.byteOffset+r.data.byteLength))); n.dv_rxBytes+=r.data.byteLength; if(n.dv_rx.length>400) n.dv_rx.splice(0,n.dv_rx.length-200); }   // узел не опрашивают: не копить
@@ -236,6 +239,14 @@ function dvbStream(n){
     while(n.dv_run && n.dv_dev===dev){
       await dvbSleep(400);
       if(n.dv_tuning || !n.dv_connected) continue;
+      // сторож потока: при захвате данных нет дольше 3 с — сбросить конечную точку (как при выключении и включении питания у ядра)
+      const t=performance.now();
+      if(n.dv_locked && t-n.dv_rxAt>3000 && t-n.dv_recAt>6000){
+        n.dv_recAt=t; n.dv_recov++;
+        dvbLog(n,'no TS data for '+Math.round((t-n.dv_rxAt)/1000)+' s while locked (transfers done: '+n.dv_xfers+') — resetting the stream endpoint');
+        try{ await n.dv_io.wrBytes(DVB_REG.EPA_CTL,[0x10,0x02]); await dvbSleep(30); await n.dv_io.wrBytes(DVB_REG.EPA_CTL,[0x00,0x00]); await n.dv_dev.clearHalt('in',1); }
+        catch(e){ dvbLog(n,'endpoint reset: '+e.message); }
+      }
       try{
         const st=await n.dv_demod.status(n.dv_sys);
         n.dv_st=st; n.dv_stAt=performance.now();
@@ -286,7 +297,7 @@ def({ id:'dvbUsb', title:'DVB USB (Astrometa)', cat:'Sources', kw:'dvb t2 dvb-t 
     const r=n.el.querySelector('.readout'); if(!r) return;
     const now=performance.now();
     if(now-n.dv_rateAt>1000){ n.dv_rate=(n.dv_rxBytes-n.dv_rateB)*8/((now-n.dv_rateAt)/1000); n.dv_rateB=n.dv_rxBytes; n.dv_rateAt=now; }
-    let h= n.dv_scanTxt ? n.dv_scanTxt : n.dv_connected ? (n.dv_locked ? '● LOCK ' : '○ searching ')+(n.dv_sys||'')+' '+(n.dv_freq?n.dv_freq/1e6:'')+' MHz'+(n.dv_st&&n.dv_st.cnr!=null ? ' · C/N '+n.dv_st.cnr.toFixed(1)+' dB' : '')+(n.dv_st&&n.dv_st.strength!=null ? ' · level '+Math.round(n.dv_st.strength/10.23)+' %' : '')+' · TS '+(n.dv_rate/1e6).toFixed(2)+' Mbit/s'+(n.dv_gaps ? ' · USB pauses >80 ms: '+n.dv_gaps+' (max '+Math.round(n.dv_gapMax)+' ms)' : '') : n.dv_status;
+    let h= n.dv_scanTxt ? n.dv_scanTxt : n.dv_connected ? (n.dv_locked ? '● LOCK ' : '○ searching ')+(n.dv_sys||'')+' '+(n.dv_freq?n.dv_freq/1e6:'')+' MHz'+(n.dv_st&&n.dv_st.cnr!=null ? ' · C/N '+n.dv_st.cnr.toFixed(1)+' dB' : '')+(n.dv_st&&n.dv_st.strength!=null ? ' · level '+Math.round(n.dv_st.strength/10.23)+' %' : '')+' · TS '+(n.dv_rate/1e6).toFixed(2)+' Mbit/s'+(n.dv_gaps ? ' · USB pauses >80 ms: '+n.dv_gaps+' (max '+Math.round(n.dv_gapMax)+' ms)' : '')+' · transfers '+(n.dv_xfers||0)+(n.dv_recov ? ' · stream resets '+n.dv_recov : '') : n.dv_status;
     const t=h+'\n'+n.dv_logTxt.slice(-8).join('\n');
     if(r.textContent!==t) r.textContent=t; }
 });
