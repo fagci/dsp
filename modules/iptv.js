@@ -73,25 +73,28 @@ async function ipPlaylist(n,text,base,g,ac){
     if(!r.ok) throw new Error('variant: HTTP '+r.status);
     return ipPlaylist(n,await r.text(),r.url||v.url,g,ac);
   }
-  // media playlist: опрос списка и сегменты по очереди
-  let cur=pl;
+  // media playlist: опрос списка и сегменты по очереди; сегменты берём не дальше чем на 1.5 сегмента вперёд от темпа воспроизведения
+  let cur=pl; n.hlsT0=performance.now(); n.hlsDur=0;
   for(;;){
     if(g!==n.gen) return;
     if(cur.fmp4) throw new Error('fMP4 / CMAF segments are not supported (only MPEG-TS)');
     if(cur.encrypted) throw new Error('encrypted HLS (AES-128) is not supported');
-    const todo=iptvNew(cur.segs,n.last,3);
+    const todo=iptvNew(cur.segs,n.last,2);
     n.live=!cur.end;
     for(const s of todo){
       if(g!==n.gen) return;
-      while(n.rxLen>8e6 && g===n.gen) await ipSleep(n,100);
-      const t0=performance.now();
+      for(;;){
+        const ahead=n.hlsDur*1000-(performance.now()-n.hlsT0);
+        if(ahead<0) n.hlsT0=performance.now()-n.hlsDur*1000;        // поток отстал: темп отсчитываем заново
+        if(ahead<=cur.target*1500 || g!==n.gen) break;
+        await ipSleep(n,200);
+      }
+      if(g!==n.gen) return;
       const r=await ipFetch(n,s.url,{signal:ac.signal});
       if(!r.ok) throw new Error('segment '+s.seq+': HTTP '+r.status);
       ipPush(n,new Uint8Array(await r.arrayBuffer()));
-      n.last=s.seq; n.segsDone++;
+      n.last=s.seq; n.segsDone++; n.hlsDur+=s.dur||cur.target;
       ipLog(n,(cur.end ? 'VOD' : 'live')+(n.variant ? ' · '+n.variant : '')+' · segment '+s.seq);
-      const wait=(s.dur||cur.target)*800-(performance.now()-t0);  // темп по длительности сегмента
-      if(wait>0) await ipSleep(n,wait);
     }
     if(cur.end && !todo.length){ ipLog(n,'finished'); n.want=false; return; }
     if(!todo.length) await ipSleep(n,Math.max(1000,cur.target*500));
