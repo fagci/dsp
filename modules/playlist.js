@@ -176,6 +176,7 @@ function plMount(n){
     if(dt?.files?.length) add([...dt.files]); });
   n.mid.append(root);
   n.ui={root,f,btn:{},key:''};
+  applySize(n);
   for(const b of root.querySelectorAll('button[data-a]')) n.ui.btn[b.dataset.a]=b;
   n.dirty=true;
 }
