@@ -42,6 +42,7 @@ function mlMount(n){
   n.off=FileStore.onChange(sp=>{ if(!sp || sp==='files') mlRefresh(n); });
   mlRefresh(n);
   n.ui={root,tree,key:''};
+  applySize(n);
 }
 function mlRender(n){
   if(!n.tree) n.tree=mlTree(n.recs||[],n.rowsIn);

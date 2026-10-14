@@ -550,6 +550,7 @@ n.cv.style.height=n.size.h+'px'; n.resized=true; }
 else if(n.cv){ n.cv.width=midWidth(n); n.cv.height=d.view.h;
 n.cv.style.height=d.view.h+'px'; n.resized=true; }
 if(n.ro  && d.tall) n.ro.style.height=n.size.h+'px';
+const ur=n.ui&&n.ui.root; if(ur && d.resize && n.size.h>0 && ur.matches('.ml,.pl')) ur.style.height=n.size.h+'px';   // Playlist, Media Library: высота рамки = высота списка
 if(n.gv && n.size.h >0) n.gv.style.height=n.size.h+'px';
 else if(n.ta  && n.size.h >0 && !d.gv) n.ta.style.height=n.size.h+'px';
 }
@@ -1397,7 +1398,7 @@ function dashRenderRoot(){
 }
 // основная канва (или список bandplan/bookmarks) узла в панели — до низа панели: контролы над ней
 // переносятся по ширине, поэтому её верх плавает и чистым CSS высоту не задать
-const DASH_FILL='canvas.view.main, .bp-ui, .bm-ui, .tbl-ui, .trk-tile, .chat, .wa, .pl, .eq10, .rds-ui, .ng, .graphview, .readout.tall';
+const DASH_FILL='canvas.view.main, .bp-ui, .bm-ui, .tbl-ui, .trk-tile, .chat, .wa, .pl, .ml, .eq10, .rds-ui, .ng, .graphview, .readout.tall';
 function dashFit(){
   if(!dashMode) return;
   for(const body of dashGridEl.querySelectorAll('.dash-body')){
