@@ -1,15 +1,18 @@
-// Сервис-воркер только для офлайн-шелла: весь DSP — локальный, всё считается в браузере, сеть не
-// нужна для работы. Но без сервис-воркера установленный PWA (иконка на главном экране Android) без
-// связи показывает нативный экран Chrome «нет подключения к интернету» вместо самого приложения —
-// навигация идёт напрямую в сеть, кэшировать нечем. Стратегия — network-first с откатом на кэш:
-// онлайн всегда получаем свежее (та же схема ?v=N, что и в index.html), офлайн — последнее
-// закэшированное вместо ошибки.
+// Сервис-воркер: офлайн-шелл PWA, COOP/COEP и откат на последнюю рабочую версию.
+// Весь DSP локальный, но без воркера установленный PWA без связи показывает нативный экран Chrome
+// «нет подключения» вместо приложения.
 //
-// ?v=N-запросы отдаются из кэша без обращения к сети (cache-first), поэтому любая правка файла требует бампа V.
-// CACHE бампать вместе с ?v=N в index.html (const V и ссылка на styles.css; tools/test-version.mjs следит) — иначе после правки файлов старый список ссылок
-// (со старым ?v=) продолжит переустанавливаться поверх уже закэшированного нового.
-const CACHE='dsp-shell-v344';
-const V=CACHE.replace(/\D/g,'');                 // ?v=N берётся из имени кэша — бампать только CACHE и V в index.html
+// Версия — хэш содержимого файлов SHELL: после правки файлов запустить `node tools/stamp.mjs`
+// (прописывает её в CACHE здесь, в const V и styles.css?v= в index.html; tools/test-version.mjs следит).
+// Файлы ?v=V неизменяемы и отдаются из кэша без сети; index.html — network-first.
+//
+// Откат: установка новой версии атомарна (addAll), прежняя версия живёт в своём кэше, пока страница
+// новой не подтвердит успешную загрузку ('ok'). Если скрипты не загрузились, страница шлёт 'rollback' —
+// пока сеть отдаёт index.html этой версии, воркер подаёт index.html последней подтверждённой.
+const PFX='dsp-shell-v';
+const CACHE='dsp-shell-vbd7b9fc5';
+const V=CACHE.slice(PFX.length);
+const META='dsp-meta', STATE_KEY='./__state', PIN_MS=6*3600e3;    // сколько держать откат, пока не выйдет новая версия
 const SHELL=[
   './',
   './index.html',
@@ -205,16 +208,42 @@ const SHELL=[
   './presets.js?v='+V,
   './core-graph.js?v='+V,
 ];
+// состояние: good — последняя подтверждённая страницей версия, bad/t — версия, из-за которой откатились, и когда
+let stateP=null;
+const getState=()=>stateP||(stateP=caches.open(META).then(c=>c.match(STATE_KEY)).then(r=>r?r.json():{}).catch(()=>({})));
+const setState=s=>{ stateP=Promise.resolve(s); return caches.open(META).then(c=>c.put(STATE_KEY,new Response(JSON.stringify(s),{headers:{'Content-Type':'application/json'}}))); };
+const prune=good=>caches.keys().then(ks=>Promise.all(ks.filter(k=>k.startsWith('dsp-shell-') && k!==CACHE && k!==PFX+good).map(k=>caches.delete(k))));
+// откат действует, пока сеть отдаёт именно плохую версию; со временем снимается — вдруг сбой был случайным
+const pinned=(st,v)=>!!(st.good && v && v===st.bad && Date.now()-st.t<PIN_MS);
+const liveCache=st=>st.bad===V && pinned(st,V) ? PFX+st.good : CACHE;
+const store=(req,res)=>getState().then(st=>caches.open(liveCache(st))).then(c=>c.put(req,res));
+
 self.addEventListener('install',e=>{
-  self.skipWaiting();                                 // не ждать закрытия всех вкладок — как и ручной ?v=N, обновление должно применяться сразу
-  e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)));
+  self.skipWaiting();                                 // не ждать закрытия всех вкладок
+  // cache:'reload' — мимо HTTP-кэша, иначе в новую версию попадут устаревшие файлы; сбой любого файла — версия не ставится
+  e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL.map(u=>new Request(u,{cache:'reload'}))))
+    .catch(err=>caches.delete(CACHE).then(()=>{ throw err; })));
 });
 self.addEventListener('activate',e=>{
-  e.waitUntil(
-    caches.keys()
-      .then(ks=>Promise.all(ks.filter(k=>k!==CACHE && k!=='dsp-tiles' && k!=='dsp-share').map(k=>caches.delete(k))))   // тайлы карты — отдельно, переживают обновления
-      .then(()=>self.clients.claim())
-  );
+  // прежние версии не удаляем: последняя подтверждённая нужна для отката, остальные чистит prune
+  e.waitUntil(getState().then(st=>prune(st.good)).then(()=>self.clients.claim()));
+});
+self.addEventListener('message',e=>{
+  const d=e.data||{}, reply=m=>e.ports[0]&&e.ports[0].postMessage(m);
+  e.waitUntil((async()=>{
+    const st=await getState();
+    if(d.type==='ok'){                                // страница версии d.v загрузилась целиком
+      if(!await caches.has(PFX+d.v)) return reply({ok:false});
+      await setState(st.bad===d.v ? {good:d.v} : {...st,good:d.v});
+      await prune(d.v);
+      reply({ok:true});
+    }else if(d.type==='rollback'){                    // страница версии d.v не загрузилась
+      if(!st.good || st.good===d.v || !await caches.has(PFX+st.good)) return reply({ok:false});
+      await setState({good:st.good,bad:d.v,t:Date.now()});
+      await caches.delete(PFX+d.v);
+      reply({ok:true});
+    }
+  })());
 });
 // COOP/COEP на саму страницу — делают её cross-origin isolated, без этого нет SharedArrayBuffer и
 // движок работает через postMessage с большим выходным буфером. Хостинг (GitHub Pages) заголовки
@@ -236,6 +265,17 @@ async function takeShare(e){
   }catch(err){}
   return new Response(null,{status:303,headers:{Location:'./index.html?share=done'}});
 }
+// index.html: онлайн — свежий, кроме откатной версии; офлайн или после отката — из кэша подтверждённой версии
+async function navigate(req){
+  const st=await getState();
+  let res=null;
+  try{ res=await fetch(req); }catch(err){}
+  if(res && res.ok){
+    const v=/const V='(\w+)'/.exec(await res.clone().text())?.[1];
+    if(!pinned(st,v)) return res;
+  }
+  return (await caches.match('./index.html',{cacheName:liveCache(st)})) || (await caches.match('./index.html')) || res || Response.error();
+}
 self.addEventListener('fetch',e=>{
   const req=e.request;
   if(req.method==='POST' && new URL(req.url).origin===location.origin && new URL(req.url).searchParams.has('share')){ e.respondWith(takeShare(e)); return; }
@@ -243,22 +283,23 @@ self.addEventListener('fetch',e=>{
   if(req.method!=='GET' || new URL(req.url).origin!==location.origin) return;
   // скрипт воркера под изолированной страницей тоже должен нести COEP, иначе браузер его не запустит
   const nav=req.mode==='navigate' || req.destination==='worker';
-  // URL с ?v=N неизменяем (версия = имя кэша) — отдаём из кэша без сети; иначе каждый запуск перекачивает все файлы
+  const wrap=res=>nav?isolate(res):res;
+  if(req.mode==='navigate'){ e.respondWith(navigate(req).then(wrap)); return; }
+  // URL с ?v=N неизменяем — ищем во всех версиях (страница могла загрузиться из прежней), иначе сеть
   if(new URL(req.url).searchParams.has('v')){
     e.respondWith(
-      caches.open(CACHE).then(c=>c.match(req).then(r=>r||fetch(req).then(res=>{
-        if(res.ok) c.put(req,res.clone());
+      caches.match(req).then(r=>r||fetch(req).then(res=>{
+        if(res.ok) store(req,res.clone());
         return res;
-      }))).then(res=>nav?isolate(res):res)
+      })).then(wrap)
     );
     return;
   }
   e.respondWith(
     fetch(req).then(res=>{
-      const copy=res.clone();
-      caches.open(CACHE).then(c=>c.put(req,copy));
+      store(req,res.clone());
       return res;
-    }).catch(()=>caches.match(req).then(r=>r||caches.match('./index.html')))
-      .then(res=>nav?isolate(res):res)
+    }).catch(()=>caches.match(req).then(r=>r||Response.error()))
+      .then(wrap)
   );
 });
