@@ -10,11 +10,7 @@
 // новой не подтвердит успешную загрузку ('ok'). Если скрипты не загрузились, страница шлёт 'rollback' —
 // пока сеть отдаёт index.html этой версии, воркер подаёт index.html последней подтверждённой.
 const PFX='dsp-shell-v';
-<<<<<<< HEAD
-const CACHE='dsp-shell-v23b1ab3c';
-=======
-const CACHE='dsp-shell-vc8793e74';
->>>>>>> origin/claude/tender-mendel-dvdi8q
+const CACHE='dsp-shell-v680ed32d';
 const V=CACHE.slice(PFX.length);
 const META='dsp-meta', STATE_KEY='./__state', PIN_MS=6*3600e3;    // сколько держать откат, пока не выйдет новая версия
 const SHELL=[
