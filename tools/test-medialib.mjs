@@ -1,0 +1,25 @@
+// Ядро медиабиблиотеки: node tools/test-medialib.mjs
+import vm from 'node:vm';
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
+const ctx=vm.createContext({String,Array,Map,JSON,Object});
+vm.runInContext(fs.readFileSync(path.join(root,'modules/medialib-kernels.js'),'utf8')+';this.K={mlTree,mlFind,mlCollect,mlParse};',ctx);
+const K=ctx.K;
+let bad=0;
+const ok=(n,c)=>{ if(!c){ bad++; console.log('FAIL',n); } else console.log('ok  ',n); };
+const R=(id,name,artist,album,title,created)=>({id,name,created,meta:{tag:{artist,album,title}}});
+const recs=[R(1,'b.mp3','Zed','Beta','Two',10),R(2,'a.mp3','Abe','Alpha','One',30),R(3,'c_d.mp3','','','',20),R(4,'e.mp3','Abe','Alpha','Zero',5)];
+const t=K.mlTree(recs,[{url:'http://x/1',label:'Radio 1'},{url:''},{name:'no url'}],2);
+const names=a=>a.map(x=>x.name).join('|');
+ok('music sorted by artist / album / title',names(K.mlFind(t,'music').tracks)==='c d|Abe - One|Abe - Zero|Zed - Two');
+ok('recently added: newest first, limited',names(K.mlFind(t,'recent').tracks)==='Abe - One|c d');
+ok('artists grouped and sorted',K.mlFind(t,'artists').kids.map(k=>k.label).join('|')==='Abe|Unknown artist|Zed');
+ok('albums: untagged go to Unknown album',K.mlFind(t,'albums').kids.some(k=>k.label==='Unknown album'&&k.tracks.length===1));
+ok('branch collects tracks of its children',K.mlCollect(K.mlFind(t,'artists')).length===4);
+ok('radio: only rows with url',K.mlFind(t,'radio').tracks.length===1&&K.mlFind(t,'radio').tracks[0].url==='http://x/1');
+ok('unknown id → null',K.mlFind(t,'nope')===null);
+ok('parse keeps valid tracks only',K.mlParse('[{"fs":3,"name":"a"},{"url":"u"},{"x":1},null]').length===2);
+ok('parse: garbage → empty',K.mlParse('{{').length===0&&K.mlParse('{}').length===0);
+console.log(bad?'FAILED':'all ok'); process.exit(bad?1:0);

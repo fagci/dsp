@@ -202,7 +202,7 @@ function plRender(n){
 def({ id:'playlist', title:'Playlist', cat:'Music', resize:true, w:340, h:300, readout:false,
   kw:'playlist tracks queue winamp music files library radio stations shuffle repeat next previous',
   ins:[{n:'next',t:'num'},{n:'prev',t:'num'},{n:'end',t:'num'},{n:'req',t:'num'},{n:'playing',t:'num'},
-       {n:'add',t:'num'},{n:'url',t:'txt'},{n:'name',t:'txt'},{n:'rows',t:'bands'}],
+       {n:'add',t:'num'},{n:'url',t:'txt'},{n:'name',t:'txt'},{n:'rows',t:'bands'},{n:'set',t:'txt'}],
   outs:[{n:'fs',t:'num'},{n:'url',t:'txt'},{n:'name',t:'txt'},{n:'go',t:'num'},
         {n:'nfs',t:'num'},{n:'nurl',t:'txt'},{n:'index',t:'num'},{n:'count',t:'num'}],
   params:[{n:'shuffle',t:'check',d:false,label:'shuffle',hidden:true,fn:n=>{ plOrder(n); n.dirty=true; }},
@@ -211,10 +211,17 @@ def({ id:'playlist', title:'Playlist', cat:'Music', resize:true, w:340, h:300, r
           {n:'wirePlay',t:'check',d:true,label:'play a station that arrives on the url wire',hidden:true},
           {n:'list',t:'text',d:'[]',hidden:true},
           {n:'cur',t:'range',min:-1,max:100000,step:1,d:-1,hidden:true}],
-  init:n=>{ n.list=[]; n.order=[]; n.cur=-1; n.goV=0; n.dirty=true; n.ui=null; n.edge={}; n.lastUrl=''; n.addPrev=-1; n.rowsIn=null; n.playing=false;
+  init:n=>{ n.list=[]; n.order=[]; n.cur=-1; n.goV=0; n.dirty=true; n.ui=null; n.edge={}; n.lastUrl=''; n.lastSet=''; n.addPrev=-1; n.rowsIn=null; n.playing=false;
     plLoad(n); },
   dispose:n=>{ n.list=[]; },
   process(n,I){
+    if(typeof I.set==='string' && I.set && I.set!==n.lastSet){                           // Media Library: заменить список
+      n.lastSet=I.set;
+      const a=mlParse(I.set);
+      n.list=a.map(x=>({fs:x.url?null:x.fs,url:x.url||'',name:x.name,tag:null,dur:0,size:0,err:''}));
+      n.cur=n.list.length?0:-1; plOrder(n); plSave(n); n.dirty=true;
+      for(const t of n.list) waMeta(t).then(()=>{ n.dirty=true; });
+      if(n.cur>=0) n.goV=.5; }
     const pulse=(k,fn)=>{ const v=typeof I[k]==='number' && I[k]>=.5; if(v && !n.edge[k]) fn(); n.edge[k]=v; };
     n.playing=typeof I.playing==='number' && I.playing>=.5;
     const go=n.playing?1:.5;

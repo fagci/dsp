@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=52;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=53;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -3702,7 +3702,9 @@ preset('Winamp', function(){
   const ls=addNode('playlist',40,290,{}); ls.size.w=360; ls.size.h=300; applySize(ls);
   const eq=addNode('eq10',440,40,{preset:'Flat'}); eq.size.w=360; eq.size.h=260; applySize(eq);
   const dc=addNode('dac',840,40,{vol:.8,mode:'stereo'});
+  const ml=addNode('medialib',40,640,{}); ml.size.w=260; ml.size.h=300; applySize(ml);
   winampLink(pl,ls);
+  addEdge(ml.id,'list',ls.id,'set'); addEdge(ml.id,'play',ls.id,'req');
   addEdge(pl.id,'l',eq.id,'l'); addEdge(pl.id,'r',eq.id,'r');
   addEdge(eq.id,'l',dc.id,'L'); addEdge(eq.id,'r',dc.id,'R');
   const bd=addNode('bands',440,340,{bands:48}); addEdge(eq.id,'l',bd.id,'in');
@@ -3712,6 +3714,7 @@ preset('Winamp', function(){
   Graph.dashTree=tileSplit('row',[
     tileSplit('col',[tileLeaf(pl),tileLeaf(eq),tileLeaf(ls)],[22,30,48]),
     tileSplit('col',[tileLeaf(rd,true),tileLeaf(br,true)],[68,32])],[34,66]);
+  Graph.dashTree=tileSplit('row',[tileLeaf(ml),Graph.dashTree],[18,82]);
   markWiresDirty();
 });
 // Плеер, эквалайзер и отдельный узел Playlist (его можно взять и для другого плеера): «files» или перетаскивание аудио в плейлист

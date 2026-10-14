@@ -370,6 +370,7 @@ body.noedit #bar .ed{display:none}
   #canvas #content .node .io3>.mid>.chat,
   #canvas #content .node .io3>.mid>.wa,
   #canvas #content .node .io3>.mid>.pl,
+  #canvas #content .node .io3>.mid>.ml,
   #canvas #content .node .io3>.mid>.eq10,
   #canvas #content .node .io3>.mid>.rds-ui,
   #canvas #content .node .io3>.mid>.ng,
@@ -1239,6 +1240,14 @@ select.aed-b{padding:0 6px}
 .wa-it .d{flex:none;color:var(--dim)}
 .wa-it .x{display:none;height:auto;min-width:0;padding:0 4px;border:0;background:none}
 .wa-it:hover .x{display:inline}
+.ml{display:flex;flex-direction:column;width:100%;min-height:0;outline:none}
+.ml-tree{flex:1 1 120px;min-height:60px;overflow:auto;background:var(--screen);border:1px solid var(--line);border-radius:4px;font:11px/1.6 var(--mono)}
+.ml-row{display:flex;gap:4px;padding-right:6px;cursor:pointer;color:var(--screen-fg);user-select:none}
+.ml-row:hover{background:var(--panel2)}
+.ml-row.sel{color:var(--acc);font-weight:600}
+.ml-row .tg{flex:none;width:1.2em;color:var(--dim)}
+.ml-row .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ml-row .c{flex:none;color:var(--dim)}
 .eq-top{display:flex;gap:6px;align-items:center}
 .eq-top select{flex:1;min-width:0;height:26px;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:4px;font:11px var(--mono)}
 .eq10 button.on{border-color:var(--acc);color:var(--acc)}
