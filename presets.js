@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=48;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=49;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -164,6 +164,7 @@ const PRESET_CAT_ORDER=['Start Here',
                          'Music: Sequencers & Mixer',
                          'Music: Synth & Tracker',
                          'Music: Visualizers',
+                         'Music: Player',
                          'Analysis & Measurement',
                          'Tile Layouts'];
 const PRESET_CATS={
@@ -396,6 +397,7 @@ const PRESET_CATS={
   '12-Channel Mixer: Full Band':'Music: Sequencers & Mixer',
 
   'Synth: Acid Bass (303)':'Music: Synth & Tracker',
+  'Winamp':'Music: Player',
   'Visualizer: Spectrum Bars (Drums + Band FFT)':'Music: Visualizers',
   'Visualizer: Radial Spectrum + Beat Particles':'Music: Visualizers',
   'Visualizer: Ridgeline + Neon Waveform':'Music: Visualizers',
@@ -3687,6 +3689,23 @@ preset('Visualizer: Ridgeline + Neon Waveform', function(){
 });
 // У Neon Waveform три режима: line (осциллограмма с триггером), ring (кольцо), xy (фигуры Лиссажу: два входа или x(t) против x(t−d)).
 
+
+preset('Winamp', function(){
+  clearAll();
+  const pl=addNode('winamp',40,40,{vol:.8}); pl.size.w=360; pl.size.h=470; applySize(pl);
+  const eq=addNode('eq10',440,40,{preset:'Flat'}); eq.size.w=360; eq.size.h=260; applySize(eq);
+  const dc=addNode('dac',840,40,{vol:.8,mode:'stereo'});
+  addEdge(pl.id,'l',eq.id,'l'); addEdge(pl.id,'r',eq.id,'r');
+  addEdge(eq.id,'l',dc.id,'L'); addEdge(eq.id,'r',dc.id,'R');
+  const bd=addNode('bands',440,340,{bands:20}); addEdge(eq.id,'l',bd.id,'in');
+  vizTile('vizBars',840,200,420,220,bd,'spec',{style:'led',color:'theme',bars:20});
+  const wv=addNode('vizWave',840,460,{mode:'line'}); wv.size.w=420; wv.size.h=180; applySize(wv);
+  addEdge(eq.id,'l',wv.id,'in');
+  markWiresDirty();
+});
+// Плеер как у Winamp, без скинов: «+ files» или перетащи аудиофайлы на плеер (в списке — теги ID3), кнопки prev / play / pause / stop / next
+// (горячие клавиши Z X C V B, когда плеер в фокусе), перемотка, громкость и баланс, shuffle и repeat. Дальше — 10-полосный
+// эквалайзер с пресетами (двойной клик по ползунку — в ноль) → звуковая карта; рядом анализатор спектра и осциллограф.
 
 preset('Ridgeline Spectrum: Air History (RF mode)', function(){
   clearAll();
