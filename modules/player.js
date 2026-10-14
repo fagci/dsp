@@ -9,6 +9,20 @@
 
 const WA_EXT=/\.(mp3|ogg|oga|opus|wav|flac|m4a|aac|weba|webm)$/i;
 const WA_MIME={mp3:'audio/mpeg',ogg:'audio/ogg',oga:'audio/ogg',opus:'audio/ogg',wav:'audio/wav',flac:'audio/flac',m4a:'audio/mp4',aac:'audio/aac',weba:'audio/webm',webm:'audio/webm'};
+const WA_ICO={
+  prev:'<path d="M7 6v12"/><path d="M19 6l-9 6 9 6z"/>', next:'<path d="M17 6v12"/><path d="M5 6l9 6-9 6z"/>',
+  play:'<path d="M7 5l12 7-12 7z"/>', pause:'<path d="M8 5v14M16 5v14"/>', stop:'<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
+  eject:'<path d="M12 5l7 9H5z"/><path d="M5 19h14"/>',
+  shuf:'<path d="M3 7h3c5 0 5 10 10 10h4"/><path d="M3 17h3c1.7 0 2.9-1 3.8-2.3M14 9.3C14.9 8 16.2 7 18 7h2"/><path d="M17 4l3 3-3 3M17 14l3 3-3 3"/>',
+  rep:'<path d="M17 3l3 3-3 3"/><path d="M4 11V9a3 3 0 013-3h13"/><path d="M7 21l-3-3 3-3"/><path d="M20 13v2a3 3 0 01-3 3H4"/>',
+  rep1:'<path d="M17 3l3 3-3 3"/><path d="M4 11V9a3 3 0 013-3h13"/><path d="M7 21l-3-3 3-3"/><path d="M20 13v2a3 3 0 01-3 3H4"/><path d="M11 10l1.5-1v6"/>',
+  vol:'<path d="M4 10v4h4l5 4V6l-5 4z"/><path d="M16.5 9a4 4 0 010 6"/>',
+  bal:'<path d="M12 4v16M6 20h12M5 7h14"/><path d="M7 7l-3 6h6zM17 7l-3 6h6z"/>',
+  lib:'<path d="M3 7a1 1 0 011-1h5l2 2h8a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1z"/>',
+  url:'<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>',
+  radio:'<circle cx="12" cy="12" r="2"/><path d="M7.8 7.8a6 6 0 000 8.4M16.2 7.8a6 6 0 010 8.4M4.9 4.9a10 10 0 000 14.2M19.1 4.9a10 10 0 010 14.2"/>',
+  clr:'<path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/>'};
+const waSvg=k=>'<svg class="i" viewBox="0 0 24 24" aria-hidden="true">'+WA_ICO[k]+'</svg>';
 let waAC=null;
 const waEl=(tag,cls,text)=>{ const e=document.createElement(tag); if(cls) e.className=cls; if(text!=null) e.textContent=text; return e; };
 const waSet=(el,t)=>{ if(el.textContent!==t) el.textContent=t; };
@@ -39,7 +53,7 @@ async function waMeta(t){
       let tag=wpId3(head);
       if(!tag.title) tag=wpId3(new Uint8Array(await r.blob.slice(r.blob.size-128).arrayBuffer()));
       t.tag=tag; }
-    if(r.meta?.duration) t.dur=r.meta.duration;
+    t.size=r.size||0; if(r.meta?.duration) t.dur=r.meta.duration;
   }catch(e){}
 }
 const waTitle=t=>!t ? '' : t.url ? (t.name||t.url) : wpName(t.tag,t.name);
@@ -171,21 +185,20 @@ function waRemove(n,i){
 
 function waMount(n){
   const root=waEl('div','wa'); root.tabIndex=0;
+  const B=(a,t,x)=>'<button data-a="'+a+'" title="'+t+'"'+(x||'')+'>'+waSvg(a)+'</button>';
+  const T=(a,t,l)=>'<button data-a="'+a+'" title="'+t+'">'+waSvg(a)+'<span>'+l+'</span></button>';
   root.innerHTML=
-   '<div class="wa-lcd"><b class="wa-time" data-f="time" title="click: elapsed / remaining">00:00</b>'+
-   '<div class="wa-inf"><div class="wa-title" data-f="title"></div><div class="wa-sub" data-f="info"></div></div></div>'+
+   '<div class="wa-lcd"><div class="wa-clock"><span class="wa-st" data-f="state"></span><b class="wa-time" data-f="time" title="click: elapsed / remaining">00:00</b></div>'+
+   '<div class="wa-inf"><div class="wa-title" data-f="title"></div>'+
+   '<div class="wa-badges"><span data-f="kbps">— kbps</span><span data-f="khz">— kHz</span><span data-f="mono">mono</span><span data-f="stereo">stereo</span></div></div></div>'+
    '<input class="wa-seek" type="range" min="0" max="1000" value="0" data-f="seek">'+
-   '<div class="wa-row"><span class="wa-tr">'+
-     '<button data-a="prev" title="previous (Z)">⏮</button><button data-a="play" title="play (X)">▶</button>'+
-     '<button data-a="pause" title="pause (C)">⏸</button><button data-a="stop" title="stop (V)">⏹</button>'+
-     '<button data-a="next" title="next (B)">⏭</button></span>'+
-     '<label title="volume">🔊<input type="range" min="0" max="1.5" step="0.01" data-f="vol"></label>'+
-     '<label title="balance">⚖<input type="range" min="-1" max="1" step="0.01" data-f="bal"></label></div>'+
-   '<div class="wa-row"><button data-a="shuf">shuffle</button><button data-a="rep">repeat</button>'+
-     '<button data-a="add" title="add files from this device (kept in the library)">+ files</button>'+
-     '<button data-a="lib" title="pick from the file manager: Files / Sample Library">+ library</button>'+
-     '<button data-a="url" title="stream or file URL">+ URL</button><button data-a="clr">clear</button></div>'+
-   '<div class="wa-pl" data-f="pl"></div>';
+   '<div class="wa-row wa-main"><span class="wa-tr">'+B('prev','previous (Z)')+B('play','play (X)')+B('pause','pause (C)')+B('stop','stop (V)')+B('next','next (B)')+
+     B('eject','add files from this device')+'</span><span class="wa-tg">'+B('shuf','shuffle')+B('rep','repeat: off / all / one')+'</span></div>'+
+   '<div class="wa-row wa-sl"><label title="volume">'+waSvg('vol')+'<input type="range" min="0" max="1.5" step="0.01" data-f="vol"></label>'+
+     '<label title="balance (double click: centre)">'+waSvg('bal')+'<input type="range" min="-1" max="1" step="0.01" data-f="bal"></label></div>'+
+   '<div class="wa-pl" data-f="pl"></div>'+
+   '<div class="wa-row wa-foot">'+T('lib','pick from the file manager (Files / Sample Library)','library')+T('url','stream or file URL','URL')+
+     T('radio','add stations from the rows wire (url field)','stations')+T('clr','clear the playlist','clear')+'<select data-f="store" title="files from disk go to: the Music folder of Files (as is) or the Sample Library (mono clips)"><option value="files">→ Files</option><option value="audio">→ Samples</option></select><span class="wa-cnt" data-f="cnt"></span></div>';
   const f={}; for(const e of root.querySelectorAll('[data-f]')) f[e.dataset.f]=e;
   const inp=waEl('input'); inp.type='file'; inp.multiple=true; inp.accept='audio/*'; inp.hidden=true; root.append(inp);
   const act={
@@ -194,7 +207,7 @@ function waMount(n){
     pause:()=>{ if(waHas(n)) waPlayPause(n,!n.play); },
     shuf:()=>{ n.p.shuffle=!n.p.shuffle; waOrder(n); n.nxt=null; n.dirty=true; },
     rep:()=>{ const o=['off','all','one']; n.p.repeat=o[(o.indexOf(n.p.repeat)+1)%3]; n.nxt=null; n.dirty=true; },
-    add:()=>inp.click(), lib:()=>waPick(n),
+    eject:()=>inp.click(), lib:()=>waPick(n), radio:()=>waRows(n),
     url:()=>{ const u=prompt('Audio URL: a stream or a file (the server must send CORS headers)'); if(u&&u.trim()) waAddUrl(n,u,'',false); },
     clr:()=>waClear(n)};
   root.addEventListener('click',e=>{
@@ -208,6 +221,7 @@ function waMount(n){
   f.seek.addEventListener('input',()=>waSeek(n,f.seek.value/1000));
   f.seek.addEventListener('pointerdown',()=>{ n.ui.drag=true; });
   addEventListener('pointerup',()=>{ if(n.ui) n.ui.drag=false; });
+  f.store.addEventListener('change',()=>{ n.p.store=f.store.value; });
   f.vol.addEventListener('input',()=>{ n.p.vol=+f.vol.value; });
   f.bal.addEventListener('input',()=>{ n.p.bal=+f.bal.value; });
   f.bal.addEventListener('dblclick',()=>{ n.p.bal=0; });
@@ -235,26 +249,31 @@ function waShown(n){
 }
 function waRender(n){
   const {f,btn}=n.ui, d=n.data, cur=n.list[n.cur], st=n.mode==='stream';
-  const len=waLen(n), pos=waPos(n), has=waHas(n);
+  const len=waLen(n), pos=waPos(n), has=waHas(n), kb=!st && cur?.size && len ? Math.round(cur.size*8/len/1000) : 0;
+  const state=n.play&&has ? 'play' : has&&pos>0 ? 'pause' : 'stop';
+  if(f.state._s!==state){ f.state._s=state; f.state.innerHTML=waSvg(state); }
   waSet(f.time,wpTime(n.p.remain && len ? pos-len : pos));
-  waSet(f.title,waShown(n));
-  waSet(f.info,cur?.err ? 'error: '+cur.err : st ? (n.sx.connecting?'connecting…':has?'stream':'stopped')+(len?' · '+wpTime(len):'')+(has&&!n.play?' · paused':'')
-    : d ? Math.round(d.sr/1000)+' kHz · '+(d.ch>1?'stereo':'mono')+' · '+wpTime(len)+(n.play?'':n.pos>0?' · paused':' · stopped')
-    : n.list.length+' tracks');
+  waSet(f.title,cur?.err ? 'error: '+cur.err : waShown(n));
+  waSet(f.kbps,(kb||'—')+' kbps'); waSet(f.khz,(d&&!st?Math.round(d.sr/1000):'—')+' kHz');
+  f.mono.classList.toggle('on',!!d&&!st&&d.ch===1); f.stereo.classList.toggle('on',st||(!!d&&d.ch>1));
+  f.title.classList.toggle('bad',!!cur?.err);
+  waSet(f.cnt,n.list.length+' · '+wpTime(n.list.reduce((a,t)=>a+t.dur,0)));
   if(!n.ui.drag) f.seek.value=len?Math.round(pos/len*1000):0;
+  if(f.store.value!==n.p.store) f.store.value=n.p.store;
   if(document.activeElement!==f.vol) f.vol.value=n.p.vol;
   if(document.activeElement!==f.bal) f.bal.value=n.p.bal;
-  btn.play.classList.toggle('on',n.play&&has); btn.pause.classList.toggle('on',!n.play&&has&&pos>0);
+  btn.play.classList.toggle('on',state==='play'); btn.pause.classList.toggle('on',state==='pause');
   btn.shuf.classList.toggle('on',n.p.shuffle);
-  waSet(btn.rep,'repeat: '+n.p.repeat); btn.rep.classList.toggle('on',n.p.repeat!=='off');
-  const key=n.list.length+'|'+n.cur+'|'+n.loading+'|'+n.list.map(t=>(t.dur|0)+(t.err?'!':'')+(t.tag?.title||'')+t.name).join(',');
+  const rp=n.p.repeat; btn.rep.classList.toggle('on',rp!=='off');
+  if(btn.rep._r!==rp){ btn.rep._r=rp; btn.rep.innerHTML=waSvg(rp==='one'?'rep1':'rep'); btn.rep.title='repeat: '+rp; }
+  const key=n.list.length+'|'+n.cur+'|'+n.loading+'|'+n.list.map(t=>(t.dur|0)+(t.err?'!':'')+(t.size|0)+(t.tag?.title||'')+t.name).join(',');
   if(key===n.ui.plKey) return;
   n.ui.plKey=key; n.dirty=false;
   const keep=f.pl.scrollTop; f.pl.textContent='';
   n.list.forEach((t,i)=>{
     const it=waEl('div','wa-it'+(i===n.cur?' cur':'')+(t.err?' bad':'')); it.dataset.i=i;
     if(t.err) it.title=t.err;
-    it.append(waEl('span','i',(i+1)+'.'),waEl('span','t',(t.url?'📻 ':'')+waTitle(t)),waEl('span','d',t.dur?wpTime(t.dur):''),waEl('button','x','×'));
+    it.append(waEl('span','n',(i+1)+'.'),waEl('span','t',(t.url?'📻 ':'')+waTitle(t)),waEl('span','d',t.dur?wpTime(t.dur):''),waEl('button','x','×'));
     f.pl.append(it); });
   f.pl.scrollTop=keep;
   f.pl.querySelector('.cur')?.scrollIntoView({block:'nearest'});
@@ -266,15 +285,14 @@ def({ id:'winamp', title:'Music Player (Winamp)', cat:'Music', resize:true, w:34
        {n:'add',t:'num'},{n:'url',t:'txt'},{n:'name',t:'txt'},{n:'rows',t:'bands'}],
   outs:[{n:'l',t:'sig'},{n:'r',t:'sig'},{n:'pos',t:'num'},{n:'time',t:'num'},{n:'track',t:'num'},
         {n:'playing',t:'num'},{n:'done',t:'num'},{n:'title',t:'txt'}],
-  params:[{n:'vol',t:'range',min:0,max:1.5,step:.01,d:.8,label:'volume'},
-          {n:'bal',t:'range',min:-1,max:1,step:.01,d:0,label:'balance'},
-          {n:'rate',t:'range',min:.5,max:2,step:.01,d:1,label:'speed of files (pitch changes with it)'},
-          {n:'shuffle',t:'check',d:false,label:'shuffle',fn:n=>{ waOrder(n); n.nxt=null; n.dirty=true; }},
-          {n:'repeat',t:'select',opts:['off','all','one'],d:'off',label:'repeat',fn:n=>{ n.nxt=null; n.dirty=true; }},
-          {n:'remain',t:'check',d:false,label:'show remaining time'},
-          {n:'store',t:'select',opts:['files','audio'],d:'files',label:'files from disk go to: files (Music folder, as is) / audio (Sample Library clips, mono)'},
-          {n:'wirePlay',t:'check',d:true,label:'play a station that arrives on the url wire'},
-          {n:'addRows',t:'button',label:'＋ add stations from the rows wire (url field)',fn:n=>waRows(n)},
+  params:[{n:'vol',t:'range',min:0,max:1.5,step:.01,d:.8,label:'volume',hidden:true},
+          {n:'bal',t:'range',min:-1,max:1,step:.01,d:0,label:'balance',hidden:true},
+          {n:'rate',t:'range',min:.5,max:2,step:.01,d:1,label:'speed of files (pitch changes with it)',hidden:true},
+          {n:'shuffle',t:'check',d:false,label:'shuffle',hidden:true,fn:n=>{ waOrder(n); n.nxt=null; n.dirty=true; }},
+          {n:'repeat',t:'select',opts:['off','all','one'],d:'off',label:'repeat',hidden:true,fn:n=>{ n.nxt=null; n.dirty=true; }},
+          {n:'remain',t:'check',d:false,label:'show remaining time',hidden:true},
+          {n:'store',t:'select',opts:['files','audio'],d:'files',label:'files from disk go to: files (Music folder, as is) / audio (Sample Library clips, mono)',hidden:true},
+          {n:'wirePlay',t:'check',d:true,label:'play a station that arrives on the url wire',hidden:true},
           {n:'list',t:'text',d:'[]',hidden:true},
           {n:'cur',t:'range',min:-1,max:100000,step:1,d:-1,hidden:true}],
   init:n=>{ n.list=[]; n.order=[]; n.cur=-1; n.data=null; n.mode='file'; n.pos=0; n.play=false; n.run=0; n.rewind=false; n.loading=false;
@@ -343,9 +361,9 @@ def({ id:'eq10', title:'Graphic Equalizer (10 bands)', cat:'Audio', resize:true,
   kw:'winamp equalizer eq graphic 10 band preamp preset bass treble',
   ins:[{n:'l',t:'sig'},{n:'r',t:'sig'},{n:'on',t:'num'},{n:'preamp',t:'num'}],
   outs:[{n:'l',t:'sig'},{n:'r',t:'sig'}],
-  params:[{n:'on',t:'check',d:true,label:'on'},
-          {n:'preset',t:'select',opts:Object.keys(WP_EQ),d:'Flat',label:'preset',fn:n=>eqApply(n,WP_EQ[n.p.preset])},
-          {n:'preamp',t:'range',min:-12,max:12,step:.1,d:0,label:'preamp, dB'},
+  params:[{n:'on',t:'check',d:true,label:'on',hidden:true},
+          {n:'preset',t:'select',opts:Object.keys(WP_EQ),d:'Flat',label:'preset',hidden:true,fn:n=>eqApply(n,WP_EQ[n.p.preset])},
+          {n:'preamp',t:'range',min:-12,max:12,step:.1,d:0,label:'preamp, dB',hidden:true},
           ...WP_BANDS.map((f,i)=>({n:'b'+i,t:'range',min:-12,max:12,step:.1,d:0,hidden:true,label:WP_BAND_NAMES[i]+' Hz, dB'}))],
   onReset:n=>eqApply(n,WP_EQ.Flat),
   init:n=>{ n.st=[[],[]]; n.ck=''; n.c=null; n.ui=null;
@@ -373,12 +391,12 @@ def({ id:'eq10', title:'Graphic Equalizer (10 bands)', cat:'Audio', resize:true,
     const u=n.ui, p=n.p;
     for(let i=0;i<EQ_BANDS;i++) if(document.activeElement!==u.sl[i] && +u.sl[i].value!==p['b'+i]){ u.sl[i].value=p['b'+i]; u.sl[i].title=p['b'+i].toFixed(1)+' dB'; }
     if(document.activeElement!==u.pre && +u.pre.value!==p.preamp) u.pre.value=p.preamp;
+    u.on.classList.toggle('on',!!p.on); if(u.ps.value!==p.preset && document.activeElement!==u.ps) u.ps.value=p.preset;
     eqCurve(n); }
 });
 function eqApply(n,pr){
   if(!pr) return;
   n.p.preamp=pr.pre; pr.g.forEach((g,i)=>{ n.p['b'+i]=g; });
-  if(n.set?.preamp) n.set.preamp(pr.pre);
 }
 // кривая отклика по десяти полосам (сумма пиков в дБ)
 function eqCurve(n){
@@ -399,9 +417,13 @@ function eqCurve(n){
 }
 function eqMount(n){
   const root=waEl('div','eq10');
-  const top=waEl('div','eq-top'), rs=waEl('button','','reset');
+  const top=waEl('div','eq-top'), rs=waEl('button','','reset'), on=waEl('button','','ON'), ps=waEl('select');
+  for(const k of Object.keys(WP_EQ)) ps.append(new Option(k,k));
+  on.title='equalizer on / off'; ps.title='preset';
+  on.addEventListener('click',()=>{ n.p.on=!n.p.on; });
+  ps.addEventListener('change',()=>{ n.p.preset=ps.value; eqApply(n,WP_EQ[ps.value]); });
   const cv=waEl('canvas','eq-cv'); cv.width=300; cv.height=40;
-  top.append(rs);
+  top.append(on,ps,rs);
   const sl=waEl('div','eq-sl'), box=[], pre=waEl('input');
   const col=(lab,inp)=>{ const c=waEl('div','eq-c'); c.append(inp,waEl('span','',lab)); sl.append(c); };
   pre.type='range'; pre.min=-12; pre.max=12; pre.step=.1; pre.value=0; pre.className='eq-v'; pre.title='preamp'; col('pre',pre);
@@ -412,10 +434,10 @@ function eqMount(n){
     box.push(s); col(WP_BAND_NAMES[i],s); }
   pre.addEventListener('input',()=>{ n.p.preamp=+pre.value; });
   pre.addEventListener('dblclick',()=>{ n.p.preamp=0; pre.value=0; });
-  rs.addEventListener('click',()=>{ n.set?.preset ? n.set.preset('Flat') : (n.p.preset='Flat'); eqApply(n,WP_EQ.Flat); });
+  rs.addEventListener('click',()=>{ n.p.preset='Flat'; eqApply(n,WP_EQ.Flat); });
   root.append(top,cv,sl);
   root.addEventListener('pointerdown',e=>e.stopPropagation());
   root.addEventListener('wheel',e=>e.stopPropagation());
   n.mid.append(root);
-  n.ui={root,sl:box,pre,cv,cx:cv.getContext('2d'),ck:''};
+  n.ui={root,sl:box,pre,on,ps,cv,cx:cv.getContext('2d'),ck:''};
 }

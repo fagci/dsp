@@ -3698,15 +3698,18 @@ preset('Winamp', function(){
   const dc=addNode('dac',840,40,{vol:.8,mode:'stereo'});
   addEdge(pl.id,'l',eq.id,'l'); addEdge(pl.id,'r',eq.id,'r');
   addEdge(eq.id,'l',dc.id,'L'); addEdge(eq.id,'r',dc.id,'R');
-  const bd=addNode('bands',440,340,{bands:20}); addEdge(eq.id,'l',bd.id,'in');
-  vizTile('vizBars',840,200,420,220,bd,'spec',{style:'led',color:'theme',bars:20});
-  const wv=addNode('vizWave',840,460,{mode:'line'}); wv.size.w=420; wv.size.h=180; applySize(wv);
-  addEdge(eq.id,'l',wv.id,'in');
+  const bd=addNode('bands',440,340,{bands:48}); addEdge(eq.id,'l',bd.id,'in');
+  const rd=vizTile('vizRadial',840,200,420,420,bd,'spec',{color:'rainbow'});
+  const br=vizTile('vizBars',1300,200,420,200,bd,'spec',{style:'led',color:'theme',bars:32});
+  // тайлы (▦): слева плеер и эквалайзер, справа визуализатор, как в классическом Winamp
+  Graph.dashTree=tileSplit('row',[
+    tileSplit('col',[tileLeaf(pl),tileLeaf(eq)],[64,36]),
+    tileSplit('col',[tileLeaf(rd,true),tileLeaf(br,true)],[68,32])],[36,64]);
   markWiresDirty();
 });
 // Плеер как у Winamp, без скинов: «+ files» или перетащи аудиофайлы на плеер (в списке — теги ID3), кнопки prev / play / pause / stop / next
 // (горячие клавиши Z X C V B, когда плеер в фокусе), перемотка, громкость и баланс, shuffle и repeat. Дальше — 10-полосный
-// эквалайзер с пресетами (двойной клик по ползунку — в ноль) → звуковая карта; рядом анализатор спектра и осциллограф.
+// эквалайзер с пресетами (двойной клик по ползунку — в ноль) → звуковая карта; рядом радиальный спектр и бары. Режим ▦ — раскладка как в Winamp.
 
 preset('Winamp: Internet Radio Playlist', function(){
   clearAll();
