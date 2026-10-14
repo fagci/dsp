@@ -29,11 +29,14 @@ function tsvClose(n){ tsvReset(n); n.fileObj=null; }
 const TSV_MODES=[{sw:false,idr:false},{sw:false,idr:true},{sw:true,idr:false},{sw:true,idr:true}];
 function tsvMode(n){ return TSV_MODES[(n.mode||0)%4]; }
 function tsvNextMode(n,why){
-  n.mode=((n.mode||0)+1)%4; n.modeAt=performance.now(); n.needKey=true;
+  const ok=n.decoded>(n.decodedAt||0);                          // режим уже давал кадры: ошибка от потерь, режим не меняем
+  if(ok){ try{ localStorage.tsvMode=n.mode||0; }catch(e){} }
+  else n.mode=((n.mode||0)+1)%4;
+  n.modeAt=performance.now(); n.needKey=true;
   try{ n.dec?.close(); }catch(e){}
   n.dec=null; n.decCodec='';
   const m=tsvMode(n);
-  n.notes.push(why+' → '+(m.sw ? 'software' : 'hardware')+' decoder, '+(m.idr ? 'IDR only' : 'any I frame')); if(n.notes.length>4) n.notes.shift();
+  n.notes.push(why+(ok ? ' (mode kept) → ' : ' → ')+(m.sw ? 'software' : 'hardware')+' decoder, '+(m.idr ? 'IDR only' : 'any I frame')); if(n.notes.length>4) n.notes.shift();
 }
 async function tsvConfigure(n,codec,type){
   if(typeof VideoDecoder==='undefined'){ n.status='WebCodecs is not available in this browser'; return false; }
@@ -108,18 +111,22 @@ function tsvAudio(n,a){
 // m отсчётов звука для медиавремени target (секунды); рассинхрон больше 80 мс: пропуск или тишина
 function tsvAudioRead(n,oL,oR,target,g){
   const sr=Eng.sr, B=oL.length;
-  let o=0;
+  let o=0, wait=false, skip=0;
   while(o<B){
     const sg=n.aq[0];
     if(!sg) break;
     const d=sg.t0+sg.i/sr-target-o/sr;
-    if(d>.08) break;
-    if(d<-.08){ sg.i+=Math.ceil(-d*sr); if(sg.i>=sg.L.length) n.aq.shift(); continue; }
+    n.aOff=d;
+    if(d>.08){ wait=true; break; }
+    if(d<-.08){ const k=Math.ceil(-d*sr); skip+=k; sg.i+=k; if(sg.i>=sg.L.length) n.aq.shift(); continue; }
     const c=Math.min(B-o,sg.L.length-sg.i);
     for(let i=0;i<c;i++){ oL[o+i]=sg.L[sg.i+i]*g; oR[o+i]=sg.R[sg.i+i]*g; }
-    sg.i+=c; o+=c;
+    sg.i+=c; o+=c; n.aPlayed=(n.aPlayed||0)+c;
     if(sg.i>=sg.L.length) n.aq.shift();
   }
+  // звук стабильно не совпадает с часами видео (другая отметка времени, разрыв): сдвинуть его, а не молчать
+  if(wait || skip>B/2){ n.aBad=(n.aBad||0)+1; if(n.aBad>sr/B*1.5 && n.aq.length){ const sg=n.aq[0]; n.aSh=(n.aSh||0)+(sg.t0+sg.i/sr-target); n.aBad=0; n.aResync=(n.aResync||0)+1; } }
+  else if(o>=B) n.aBad=0;
 }
 
 function tsvFeed(n,bytes){
@@ -127,6 +134,7 @@ function tsvFeed(n,bytes){
   dm.push(bytes);
   const fr=dm.takeVideo();
   for(const a of dm.takeAudio()) tsvAudio(n,a);
+  if(dm.lostVideo){ dm.lostVideo=false; if(dm.cur?.vtype!=='mpeg2') n.needKey=true; }
   for(const f of fr){
     const type=dm.cur?.vtype;
     if(!dm.vcodec || !type) continue;
@@ -156,7 +164,7 @@ function tsvPresent(n){
   const q=n.q, now=performance.now();
   if(!q.length) return;
   const cap=q[0].rgba ? 24 : 40;
-  if(n.base==null || q.length>cap){ n.ts0=q[0].timestamp; n.wall0=now+(+n.p.delay||0); n.base=1; while(q.length>cap) q.shift().close(); }
+  if(n.base==null || q.length>cap){ n.ts0=q[0].timestamp; n.wall0=now+(+n.p.delay||0); n.base=1; n.aSh=0; while(q.length>cap) q.shift().close(); }
   let pick=-1;
   for(let i=0;i<q.length;i++){ if((q[i].timestamp-n.ts0)/1000<=now-n.wall0) pick=i; else break; }
   if(pick<0) return;
@@ -203,7 +211,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
   view:{h:220}, resize:true, w:380,
   init(n){
     n.dmx=new TsDemux(); n.q=[]; n.fileObj=null; n.pos=0; n.rd=false; n.dec=null; n.decCodec=''; n.cfgBusy=false;
-    n.needKey=true; n.lastTs=-1; n.base=null; n.last=null; n.status='waiting for a transport stream'; n.notes=[]; n.mode=0; n.modeAt=performance.now(); n.errN=0;
+    n.needKey=true; n.lastTs=-1; n.base=null; n.last=null; n.status='waiting for a transport stream'; n.notes=[]; n.mode=(()=>{ try{ return (+localStorage.tsvMode||0)%4; }catch(e){ return 0; } })(); n.modeAt=performance.now(); n.errN=0;
     n.aq=[]; n.aEnd=null; n.aInfo=''; n.decoded=0; n.m2=null; n.m2p=null; n.m2err=0; n.m2bad=0; n.shown=0; n.dropped=0; n.fpsN=0; n.fps=0; n.fpsT=performance.now(); n.gotFrame=false; n.prog=0;
     n.pic=document.createElement('canvas'); n.picCx=n.pic.getContext('2d');
     // у <video> есть videoWidth / videoHeight, их ждут потребители vid
@@ -221,7 +229,11 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
     const now=performance.now();
     if(now-n.fpsT>=1000){ n.fps=n.fpsN*1000/(now-n.fpsT); n.fpsN=0; const cc=n.dmx.stat.cc+n.dmx.stat.tei; n.ccRate=(cc-(n.ccPrev||0))*1000/(now-n.fpsT); n.ccPrev=cc; n.fpsT=now; if(n.fps===0) n.gotFrame=false; }
     const oL=buf(n,'L'), oR=buf(n,'R'); oL.fill(0); oR.fill(0);
-    if(n.base!=null && n.aq.length) tsvAudioRead(n,oL,oR,n.ts0/1e6+(now-n.wall0)/1000-(+n.p.avsync||0)/1000,+n.p.volume);
+    if(n.base==null && n.aq.length){                              // видео нет: часы по звуку, чтобы он шёл без картинки
+      n.aNoV=(n.aNoV||0)+1;
+      if(n.aNoV>60){ n.ts0=n.aq[0].t0*1e6; n.wall0=now+(+n.p.delay||0); n.base=1; n.aSh=0; n.aNoV=0; }
+    }
+    if(n.base!=null && n.aq.length) tsvAudioRead(n,oL,oR,n.ts0/1e6+(now-n.wall0)/1000-(+n.p.avsync||0)/1000+(n.aSh||0),+n.p.volume);
     return {vid:n.gotFrame && n.pic.width ? n.pic : null, L:oL, R:oR, lock:n.gotFrame ? 1 : 0, fps:n.fps}; },
   draw(n,cv,cx){
     const r=n.el.querySelector('.readout');
@@ -233,6 +245,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
         ' · '+n.fps.toFixed(1)+' fps'+(d.cur?.apid ? ' · audio '+d.cur.atype+(d.cur.atype==='mp2' ? (n.aInfo ? ' · '+n.aInfo : '') : ' (not decoded)') : '');
       if(st.cc||st.tei||n.dropped||n.m2bad) t+='\nlost packets '+st.cc+' (now '+Math.round(n.ccRate||0)+'/s) · transport errors '+st.tei+(st.sync ? ' · stream breaks '+st.sync+(()=>{ const e=Object.entries(st.gaps).sort((x,y)=>y[1]-x[1])[0]; return e ? ' (usually '+e[0]+' extra bytes ×'+e[1]+')' : ''; })() : '')+(n.dropped ? ' · dropped frames '+n.dropped : '')+(n.m2bad ? ' · bad slices '+n.m2bad : '');
       if(pl.length) t+='\nvideo frames '+st.frames+' (entry points '+st.keys+') · decoded '+n.decoded+' · shown '+n.shown+(n.dec ? ' · decoder queue '+n.dec.decodeQueueSize : n.decCodec ? '' : ' · decoder not started')+(n.needKey ? ' · waiting for an entry point' : '')+' · '+(tsvMode(n).sw ? 'software' : 'hardware')+' decoder, '+(tsvMode(n).idr ? 'IDR only' : 'any I frame')+' (IDR frames in the stream '+st.idr+')'+(n.notes.length ? '\n'+n.notes.join('\n') : '');
+      if(pl.length && d.cur?.apid) t+='\naudio PES '+(st.apes||0)+' · queued '+(n.aq.reduce((a,g)=>a+(g.L.length-g.i),0)/Eng.sr).toFixed(2)+' s · played '+((n.aPlayed||0)/Eng.sr).toFixed(1)+' s · offset to video '+Math.round((n.aOff||0)*1000)+' ms · resyncs '+(n.aResync||0)+(n.base==null ? ' · no video clock' : '');
       if(n.status && pl.length && !n.gotFrame) t+='\n'+n.status;
       if(r.textContent!==t) r.textContent=t;
     }

@@ -140,11 +140,12 @@ class TsDemux{
     let n=0; for(const c of s.chunks) n+=c.length;
     const d=new Uint8Array(n); let o=0; for(const c of s.chunks){ d.set(c,o); o+=c.length; }
     s.chunks=[];
-    if(s.bad || n<9 || d[0]!==0 || d[1]!==0 || d[2]!==1) return;
+    if(s.bad){ if(s.kind==='v') this.lostVideo=true; return; }       // кадр потерян: следующие ссылаются на него
+    if(n<9 || d[0]!==0 || d[1]!==0 || d[2]!==1) return;
     const hl=d[8], hasPts=(d[7]&0x80)!==0;
     if(9+hl>n) return;
     const pts=hasPts && hl>=5 ? tsPts(d,9) : -1, es=d.subarray(9+hl);
-    if(s.kind==='v') this._video(es,pts); else this.aud.push({pts, d:es, type:this.cur.atype});
+    if(s.kind==='v') this._video(es,pts); else{ this.stat.apes=(this.stat.apes||0)+1; this.aud.push({pts, d:es, type:this.cur.atype}); }
   }
 
   _video(es,pts){
