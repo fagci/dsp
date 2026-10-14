@@ -220,12 +220,12 @@ function dvbStream(n){
   n.dv_run=true; n.dv_rx=[]; n.dv_rxBytes=0; n.dv_rate=0; n.dv_rateAt=performance.now(); n.dv_rateB=0;
   const dev=n.dv_dev;
   // много запросов одновременно: пока основной поток занят, устройству есть куда писать (у ядра 6 буферов, у браузера задержки больше).
-  // 16 × 32 КБ — полсекунды при 8 Мбит/с, около 150 мс при 28 Мбит/с
+  // 32 × 64 КБ = 2 МБ — полсекунды при 32 Мбит/с (при 16 × 32 КБ пауза основного потока в 100 мс уже теряла пакеты)
   n.dv_gaps=0; n.dv_gapMax=0; n.dv_lastRx=performance.now(); n.dv_rxAt=performance.now(); n.dv_xfers=0; n.dv_recov=0; n.dv_recAt=0;
   const loop=async()=>{
     while(n.dv_run && n.dv_dev===dev){
       try{
-        const r=await dev.transferIn(1,32768);
+        const r=await dev.transferIn(1,65536);
         const now=performance.now(), gap=now-n.dv_lastRx; n.dv_lastRx=now; n.dv_xfers=(n.dv_xfers||0)+1; if(r.data.byteLength) n.dv_rxAt=now;
         if(n.dv_cap && r.status==='ok'){ n.dv_cap.push(new Uint8Array(r.data.buffer.slice(r.data.byteOffset,r.data.byteOffset+r.data.byteLength))); dvbCapDone(n); }
         if(gap>80 && n.dv_rxBytes>0){ n.dv_gaps++; if(gap>n.dv_gapMax) n.dv_gapMax=gap; }   // долго не было данных: пауза потока или устройства
@@ -234,7 +234,7 @@ function dvbStream(n){
       }catch(e){ if(n.dv_run){ dvbLog(n,'USB read: '+e.message); await dvbSleep(200); } }
     }
   };
-  for(let i=0;i<16;i++) loop();
+  for(let i=0;i<32;i++) loop();
   const poll=async()=>{
     while(n.dv_run && n.dv_dev===dev){
       await dvbSleep(400);
