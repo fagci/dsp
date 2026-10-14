@@ -8,7 +8,7 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,Array,Error,Promise,Object,JSON});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/dvb-kernels.js'),'utf8')+';this.K={R82xxDvb,Mn8847x,DvbRtl,DVB_SYS,dvbChannel,XC_20P,R82_INIT};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/cxd-sequences.js'),'utf8')+fs.readFileSync(path.join(root,'modules/dvb-kernels.js'),'utf8')+';this.K={R82xxDvb,Mn8847x,Cxd2837er,CXD_SEQ,DvbRtl,DVB_SYS,dvbChannel,XC_20P,R82_INIT};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -82,6 +82,50 @@ for(const kind of [473,472]){
   ok('MN88473 status: CNR 10·(log10(65536/256)+0.2)',Math.abs(s.cnr-10*(Math.log10(65536/256)+0.2))<1e-9,String(s.cnr));
   chip.banks[0][0x62]=0xa5; ok('MN88473 status: no signal',!(await d.status(K.DVB_SYS.T)).signal);
   chip.banks[2][0x8b]=0x0d; ok('MN88473 status: DVB-T2 lock',(await d.status(K.DVB_SYS.T2)).lock);
+}
+
+
+/* ---- Sony CXD2837ER: проигрыш записанных последовательностей ---- */
+{
+  const mem=[{},{}], banks=[0,0], writes=[];
+  const reg=(slv,key)=>mem[slv][key];
+  const bus={ w:async(a,b)=>{ const slv=a===0xdc?0:a===0xd8?1:-1; if(slv<0) return; if(b[0]===0x00) banks[slv]=b[1];
+        for(let i=1;i<b.length;i++){ mem[slv][banks[slv]+':'+(b[0]+i-1)]=b[i]; } writes.push([slv,banks[slv],b[0],b[1]]); },
+      r:async(a,r,l)=>{ const slv=a===0xdc?0:1, o=new Uint8Array(l); for(let i=0;i<l;i++) o[i]=mem[slv][banks[slv]+':'+(r+i)]||0; return o; },
+      gate(){}, sleep:async()=>{} };
+  mem[1]['0:253']=0xb1;
+  const d=new K.Cxd2837er(bus);
+  ok('CXD2837ER: chip id',(await d.chipId())===0xb1);
+  await d.init();
+  ok('CXD2837ER: init → sleep, TS serial, no AGC negation',d.state==='sleep' && (reg(1,'0:196')&0x80)===0x80 && (reg(1,'16:203')&0x40)===0);
+  writes.length=0; await d.tune(K.DVB_SYS.T2,8e6,4570000,0);
+  ok('CXD2837ER: DVB-T2 8 MHz → active, demod mode 2, TS enabled last',d.state==='active' && d.system==='T2' && reg(0,'0:23')===2 && writes[writes.length-1][2]===0xc3 && writes[writes.length-1][3]===0x00,String(writes.length));
+  ok('CXD2837ER: T2 8 MHz timing recovery rate',[0x9f,0xa0].map(r=>reg(1,'32:'+r)).join()==='17,240',[0x9f,0xa0].map(r=>reg(1,'32:'+r)).join());
+  writes.length=0; await d.tune(K.DVB_SYS.T2,7e6,4570000,0);
+  ok('CXD2837ER: retune 7 MHz keeps the mode, rate changes',d.state==='active' && reg(0,'0:23')===2 && reg(1,'32:159')===0x14 && writes.some(w=>w[2]===0xc3 && w[3]===0x01),'TS output is switched off for the retune');
+  await d.tune(K.DVB_SYS.T,8e6,4570000,0);
+  ok('CXD2837ER: switch to DVB-T (sleep, then activate): demod mode 1',d.system==='T' && reg(0,'0:23')===1);
+  let err=null; try{ await d.tune(K.DVB_SYS.T,8e6,3570000,0); }catch(e){ err=e; }
+  ok('CXD2837ER: IF that does not match the sequence is refused',!!err && /IF/.test(err.message));
+  err=null; try{ await d.tune(K.DVB_SYS.T,5e6,3570000,0); }catch(e){ err=e; }
+  ok('CXD2837ER: unsupported bandwidth',!!err);
+  mem[1]['16:16']=0x26; mem[1]['16:40']=0x01; mem[1]['16:41']=0xf4;
+  const st=await d.status(K.DVB_SYS.T);
+  ok('CXD2837ER: DVB-T status — synchronised, TS locked, C/N',st.lock && st.viterbi && Math.abs(st.cnr-100*(Math.floor(Math.log10(500)*100)-Math.floor(Math.log10(5350-500)*100)+285)/1000)<1e-9,JSON.stringify(st));
+  mem[1]['16:16']=0x37; ok('CXD2837ER: invalid hardware state is not a lock',!(await d.status(K.DVB_SYS.T)).lock);
+  mem[1]['16:16']=0x16; ok('CXD2837ER: unlock flag blocks the lock',!(await d.status(K.DVB_SYS.T)).lock);
+  await d.sleep();
+  ok('CXD2837ER: sleep → shutdown',d.state==='shutdown' && !d.active);
+}
+{ // ПЧ тюнера и таблицы Sony согласованы для всех стандартов и полос
+  let all=true, det='';
+  for(const [sys,k] of [[K.DVB_SYS.T,'T'],[K.DVB_SYS.T2,'T2'],[K.DVB_SYS.C,'C']]) for(const bw of [6,7,8]){
+    const bus={ w:async()=>{}, r:async(a,r,l)=>{ const o=new Uint8Array(l); for(let i=0;i<l;i++) o[i]=0xff; return o; }, gate:async()=>{}, sleep:async()=>{} };
+    const t=new K.R82xxDvb(bus,{addr:0x74,xtal:16e6,chip:'R828D'}); t.xtalCap=K.XC_20P; t.initDone=true;
+    await t.tune(sys,474e6,bw*1e6);
+    if(t.intFreq!==K.CXD_SEQ['ifhz.'+k+'.'+bw]){ all=false; det+=` ${k}/${bw}: tuner ${t.intFreq} table ${K.CXD_SEQ['ifhz.'+k+'.'+bw]}`; }
+  }
+  ok('tuner IF equals the IF of the CXD2837ER sequences (T, T2, C × 6 / 7 / 8 MHz)',all,det);
 }
 
 /* ---- RTL2832: порядок обращений ---- */

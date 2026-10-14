@@ -1,7 +1,7 @@
 "use strict";
-/* ============================ DVB-T / T2 / C: USB-донгл Astrometa (RTL2832U + R828D + MN88473 / MN88472) ============================
+/* ============================ DVB-T / T2 / C: USB-донгл Astrometa (RTL2832U + R828D + MN88473 / MN88472 / CXD2837ER) ============================
    Узел «DVB USB (Astrometa)»: WebUSB, настройка по драйверам Linux (dvb-kernels.js), транспортный поток на порт bin.
-   Дальше — TS → Video. Прошивку демодулятора (dvb-demod-mn88473-01.fw / mn88472-02.fw из linux-firmware) пользователь выбирает
+   Дальше — TS → Video. Прошивку демодулятора Panasonic (dvb-demod-mn88473-01.fw / mn88472-02.fw из linux-firmware; у Sony CXD2837ER прошивки нет) пользователь выбирает
    файлом: она запоминается в браузере (IndexedDB). Без железа не проверялось: каждый шаг пишется в журнал узла. */
 
 const DVBU={vid:[0x15f4,0x0bda], filters:[{vendorId:0x15f4,productId:0x0131},{vendorId:0x0bda,productId:0x2832},{vendorId:0x0bda,productId:0x2838}]};
@@ -96,19 +96,18 @@ async function dvbConnect(n){
     if(sid!==0x02 && sid!==0x03) cid=await probe(0xd8,0xfd);
     await bus.gate(false);
     dvbLog(n,'slave probe: 0x38/0xff → '+hex(sid)+(cid!=null || sid==null ? ', 0xd8/0xfd → '+hex(cid) : ''));
-    const kind= sid===0x03 ? 473 : sid===0x02 ? 472 : 0;
-    if(cid===0xb1) throw new Error('this stick has a Sony CXD2837ER demodulator — not supported yet (the log above is what it answered)');
-    if(!kind) throw new Error('no MN88473 / MN88472 demodulator: it answered '+hex(sid)+' (expected 0x03 or 0x02)');
-    dvbLog(n,'demodulator MN8847'+(kind===473?3:2));
+    const kind= sid===0x03 ? 473 : sid===0x02 ? 472 : cid===0xb1 ? 2837 : 0;
+    if(!kind) throw new Error('no known demodulator: 0x38/0xff answered '+hex(sid)+' (MN88473 0x03, MN88472 0x02), 0xd8/0xfd answered '+hex(cid)+' (CXD2837ER 0xb1)');
+    dvbLog(n,'demodulator '+(kind===2837 ? 'Sony CXD2837ER' : 'MN8847'+(kind===473?3:2)));
     await DvbRtl.initEp(io);
     n.dv_tuner=new R82xxDvb(bus,{addr:0x74,xtal:16000000,chip:'R828D'});
-    n.dv_demod=new Mn8847x(bus,kind);
-    await n.dv_demod.probeSleep();
+    n.dv_demod= kind===2837 ? new Cxd2837er(bus) : new Mn8847x(bus,kind);
+    if(n.dv_demod.probeSleep) await n.dv_demod.probeSleep();
     await DvbRtl.slaveTs(io,true); dvbLog(n,'TS passes through RTL2832');
-    const fw=await dvbFwFind(kind); n.dv_fwName=fw.name;
-    if(!fw.data) dvbLog(n,'firmware '+fw.name+' not loaded yet — choose the file in the node (from linux-firmware)');
+    const fw= kind===2837 ? {name:'', data:null} : await dvbFwFind(kind); n.dv_fwName=fw.name;
+    if(kind!==2837 && !fw.data) dvbLog(n,'firmware '+fw.name+' not loaded yet — choose the file in the node (from linux-firmware)');
     await n.dv_demod.init(fw.data,p=>{ n.dv_status='firmware '+Math.round(p*100)+' %'; n.dv_dirty=true; });
-    dvbLog(n,'demodulator ready'+(fw.data ? ', firmware '+fw.data.length+' bytes' : ''));
+    dvbLog(n,'demodulator ready'+(fw.data ? ', firmware '+fw.data.length+' bytes' : kind===2837 ? ' (no firmware needed)' : ''));
     await bus.gate(true); try{ await n.dv_tuner.init(); } finally{ await bus.gate(false); }
     dvbLog(n,'tuner ready (crystal capacitor '+n.dv_tuner.xtalCap+')');
     n.dv_connected=true;
@@ -190,7 +189,7 @@ function dvbStream(n){
   poll();
 }
 
-def({ id:'dvbUsb', title:'DVB USB (Astrometa)', cat:'Sources', kw:'dvb t2 dvb-t dvb-c astrometa rtl2832 r828d mn88473 mn88472 tv television usb stick receiver transport stream', readout:true, always:true, resize:true, w:340,
+def({ id:'dvbUsb', title:'DVB USB (Astrometa)', cat:'Sources', kw:'dvb t2 dvb-t dvb-c astrometa rtl2832 r828d mn88473 mn88472 cxd2837er sony tv television usb stick receiver transport stream', readout:true, always:true, resize:true, w:340,
   ins:[{n:'freq',t:'num'}],
   outs:[{n:'bin',t:'bin'},{n:'lock',t:'num'},{n:'cnr',t:'num'},{n:'level',t:'num'}],
   params:[{n:'connect',t:'button',label:'Connect USB…',fn:n=>dvbConnect(n)},

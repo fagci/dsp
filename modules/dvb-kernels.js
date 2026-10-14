@@ -386,6 +386,88 @@ class Mn8847x{
   }
 }
 
+
+/* ------------------------------- демодулятор Sony CXD2837ER ------------------------------- */
+// Последовательности записи берутся из cxd-sequences.js (записаны запуском функций ядра, tools/cxd-gen); здесь их проигрыш,
+// состояние и чтение статуса (read_status_tc, read_snr_t / t2). Без прошивки. Шина: SLV-X 0xdc, SLV-T 0xd8 (8 бит).
+const CXD_SLV=[0xdc,0xd8];
+const CXD_SYS={'DVB-T':'T','DVB-T2':'T2','DVB-C':'C'};
+
+class Cxd2837er{
+  constructor(bus){ this.bus=bus; this.kind=2837; this.state='shutdown'; this.system=null; this.active=false; this.log=[]; }
+  w(slv,reg,bytes){ return this.bus.w(CXD_SLV[slv],[reg,...bytes]); }
+  async r(slv,reg,len){ return await this.bus.r(CXD_SLV[slv],reg,len||1); }
+  async m(slv,reg,v,mask){
+    if(mask===0xff) return this.w(slv,reg,[v]);
+    const o=(await this.r(slv,reg,1))[0];
+    return this.w(slv,reg,[(v&mask)|(o&(mask^0xff))]);
+  }
+  async run(key,skipTuner){
+    const seq=CXD_SEQ[key];
+    if(!seq) throw new Error('no CXD2837ER sequence '+key);
+    for(const op of seq){
+      if(op[0]==='w') await this.w(op[1],op[2],op[3]);
+      else if(op[0]==='m') await this.m(op[1],op[2],op[3],op[4]);
+      else if(op[0]==='s') await this.bus.sleep(op[1]);
+      // ["t"] — тюнер уже настроен до вызова: порядок «сначала тюнер» (EARLY_TUNE) тот же
+    }
+  }
+  async chipId(){ await this.w(1,0x00,[0x00]); return (await this.r(1,0xfd,1))[0]; }   // 0xb1 — CXD2837ER
+  async init(){
+    if(this.state!=='shutdown') return;
+    await this.run('init'); this.state='sleep';
+    this.active=true;
+  }
+  async sleep(){
+    if(this.state==='active'){ await this.run('sleep.'+this.system); this.state='sleep'; this.system=null; }
+    if(this.state==='sleep'){ await this.run('shutdown'); this.state='shutdown'; }
+    this.active=false;
+  }
+  /* ifHz: ПЧ тюнера; должна совпасть с той, для которой записана последовательность */
+  async tune(delsys,bwHz,ifHz,plp){
+    const sk=CXD_SYS[delsys];
+    if(!sk) throw new Error('standard '+delsys+' is not supported');
+    const bw=delsys===DVB_SYS.C && ![6e6,7e6,8e6].includes(bwHz) ? 8 : Math.round(bwHz/1e6);
+    if(![6,7,8].includes(bw)) throw new Error('bandwidth '+bwHz+' is not supported');
+    const want=CXD_SEQ['ifhz.'+sk+'.'+bw];
+    if(ifHz && ifHz!==want) throw new Error('tuner IF '+ifHz+' Hz, the sequence is for '+want+' Hz');
+    if(this.state==='shutdown') await this.init();
+    if(this.state==='active' && this.system!==sk){ await this.run('sleep.'+this.system); this.state='sleep'; }
+    if(this.state==='sleep'){ await this.run('act.'+sk+'.'+bw); this.state='active'; this.system=sk; }
+    else await this.run('retune.'+sk+'.'+bw);
+  }
+  async status(delsys){
+    const st={signal:false, carrier:false, viterbi:false, lock:false, strength:null, cnr:null};
+    if(this.state!=='active') return st;
+    const T=this.system==='T', T2=this.system==='T2';
+    let sync=0, ts=0, unlock=0;
+    if(T || T2){
+      await this.w(1,0x00,[T ? 0x10 : 0x20]);
+      const d=(await this.r(1,0x10,1))[0];
+      if((d&0x07)!==0x07){ sync=(d&0x07)===0x6 ? 1 : 0; ts=(d&0x20) ? 1 : 0; unlock=(d&0x10) ? 1 : 0; }
+      if(!unlock && sync) Object.assign(st,{signal:true,carrier:true,viterbi:true});
+      if(!unlock && ts) st.lock=true;
+    }else{
+      await this.w(1,0x00,[0x40]);
+      let d=(await this.r(1,0x88,1))[0];
+      if(d&1){ d=(await this.r(1,0x10,1))[0]; if(d&0x20) Object.assign(st,{signal:true,carrier:true,viterbi:true,lock:true}); }
+    }
+    if(st.viterbi && (T || T2)){                                // read_snr_t / read_snr_t2, тысячные доли дБ
+      await this.w(1,0x01,[0x01]);
+      await this.w(1,0x00,[T ? 0x10 : 0x20]);
+      const b=await this.r(1,0x28,2);
+      await this.w(1,0x01,[0x00]);
+      let reg=(b[0]<<8)|b[1];
+      if(reg){
+        const il=x=>Math.floor(Math.log10(x)*100);               // INTLOG10X100
+        if(T){ if(reg>4996) reg=4996; st.cnr=100*((il(reg)-il(5350-reg))+285)/1000; }
+        else{ if(reg>10876) reg=10876; st.cnr=100*((il(reg)-il(12600-reg))+320)/1000; }
+      }else st.cnr=0;
+    }
+    return st;
+  }
+}
+
 /* ------------------------------- RTL2832U: питание, проброс TS ------------------------------- */
 // адреса блоков и регистров как в rtl28xxu.h
 const DVB_REG={SYS_DEMOD_CTL:0x3000, GPIO_OUT_VAL:0x3001, GPIO_OUT_EN:0x3003, GPIO_DIR:0x3004, DEMOD_CTL1:0x300b,
