@@ -193,7 +193,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
     tsvPump(n);
     tsvPresent(n);
     const now=performance.now();
-    if(now-n.fpsT>=1000){ n.fps=n.fpsN*1000/(now-n.fpsT); n.fpsN=0; n.fpsT=now; if(n.fps===0) n.gotFrame=false; }
+    if(now-n.fpsT>=1000){ n.fps=n.fpsN*1000/(now-n.fpsT); n.fpsN=0; const cc=n.dmx.stat.cc+n.dmx.stat.tei; n.ccRate=(cc-(n.ccPrev||0))*1000/(now-n.fpsT); n.ccPrev=cc; n.fpsT=now; if(n.fps===0) n.gotFrame=false; }
     const oL=buf(n,'L'), oR=buf(n,'R'); oL.fill(0); oR.fill(0);
     if(n.base!=null && n.aq.length) tsvAudioRead(n,oL,oR,n.ts0/1e6+(now-n.wall0)/1000-(+n.p.avsync||0)/1000,+n.p.volume);
     return {vid:n.gotFrame && n.pic.width ? n.pic : null, L:oL, R:oR, lock:n.gotFrame ? 1 : 0, fps:n.fps}; },
@@ -205,7 +205,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
       if(n.m2err) t=TSV_M2ERR[n.m2err]||('MPEG-2 error '+n.m2err);
       if(pl.length) t='programs '+pl.map(p=>p.num+(p===d.cur ? '▶' : '')).join(' ')+' · '+(d.vcodec||'—')+(d.sps ? ' · '+d.sps.w+'×'+d.sps.h : '')+
         ' · '+n.fps.toFixed(1)+' fps'+(d.cur?.apid ? ' · audio '+d.cur.atype+(d.cur.atype==='mp2' ? (n.aInfo ? ' · '+n.aInfo : '') : ' (not decoded)') : '');
-      if(st.cc||n.dropped||n.m2bad) t+='\ncontinuity errors '+st.cc+(n.dropped ? ' · dropped '+n.dropped : '')+(n.m2bad ? ' · bad slices '+n.m2bad : '');
+      if(st.cc||st.tei||n.dropped||n.m2bad) t+='\nlost packets '+st.cc+' (now '+Math.round(n.ccRate||0)+'/s) · transport errors '+st.tei+(st.sync ? ' · resyncs '+st.sync : '')+(n.dropped ? ' · dropped frames '+n.dropped : '')+(n.m2bad ? ' · bad slices '+n.m2bad : '');
       if(n.status && pl.length && !n.gotFrame) t+='\n'+n.status;
       if(r.textContent!==t) r.textContent=t;
     }

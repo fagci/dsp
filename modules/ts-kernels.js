@@ -68,7 +68,7 @@ class TsDemux{
     this.sel=0;                             // выбранная программа (0 — первая с видео)
     this.cur=null;
     this.vid=[]; this.aud=[];               // готовые кадры: {pts, key, d}
-    this.stat={packets:0, lost:0, sync:0, cc:0, frames:0, bytes:0};
+    this.stat={packets:0, lost:0, sync:0, cc:0, frames:0, bytes:0, tei:0};
     this.sps=null; this.vcodec='';
   }
   select(n){ this.sel=n|0; this.cur=null; for(const p of this.pids.values()){ p.chunks=[]; } this.vid.length=0; this.aud.length=0; }
@@ -92,8 +92,9 @@ class TsDemux{
 
   _pkt(p){
     this.stat.packets++;
-    if(p[1]&0x80) return;                                              // ошибка транспорта
     const pusi=!!(p[1]&0x40), pid=((p[1]&0x1f)<<8)|p[2], afc=(p[3]>>4)&3, cc=p[3]&15;
+    if(p[1]&0x80){                                                     // ошибка транспорта (демодулятор не исправил пакет)
+      this.stat.tei++; const bs=this.pids.get(pid); if(bs) bs.bad=true; return; }
     let o=4;
     if(afc&2) o+=1+p[4];
     if(!(afc&1) || o>=188) return;
