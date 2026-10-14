@@ -333,8 +333,9 @@ if(moved >6) return;                          // это было перетас�
 const r=c.getBoundingClientRect();
 n.pickT=clamp((ev.clientX-r.left)/r.width,0,1); });
 c.addEventListener('pointercancel',()=>{ tap=null; }); } }
-{ const rz=document.createElement('div'); rz.className='rz'; el.append(rz);   // размер меняется у любого модуля
-bindResize(rz,n); }
+for(const dir of ['r','b','l','br','bl']){                // размер меняется за любой край модуля
+const rz=document.createElement('div'); rz.className='rz rz-'+dir; el.append(rz);
+bindResize(rz,n,dir); }
 if(d.readout){ const r=document.createElement('div'); r.className='readout'+(d.tall?' tall':'');
 r.textContent='—'; mid.append(r); n.ro=r;
 // Модули пишут в readout каждый кадр (до 60 fps), даже если текст не изменился.
@@ -1133,15 +1134,22 @@ n.__moved=true; drawWires(); },
 end(){ activeInteractions--; if(n.__moved) Undo.push(); n.__grp=null; }
 }});
 }
-function bindResize(rzEl,n){
+function bindResize(rzEl,n,dir){
+const left=dir.includes('l'), right=dir.includes('r'), bottom=dir.includes('b');
 interact(rzEl).draggable({ listeners:{
 start(ev){ if(uiLocked()){ ev.interaction.stop(); return; }
-n.__rw=n.size.w; n.__rh=n.size.h; activeInteractions++; },
+n.__rw=n.size.w; n.__rh=n.size.h; n.__rx=n.x;
+n.__rxh=n.xpand ? (n._xh||n.el.offsetHeight) : 0; activeInteractions++; },
 move(ev){ if(uiLocked()) return;
-n.size.w=clamp(Math.round(n.__rw+(ev.clientX-ev.clientX0)/view.k),160,1400);
+const dx=(ev.clientX-ev.clientX0)/view.k, dy=(ev.clientY-ev.clientY0)/view.k;
+if(right||left){
+n.size.w=clamp(Math.round(n.__rw+(left?-dx:dx)),160,1400);
+if(left){ n.x=n.__rx+n.__rw-n.size.w; posNode(n); } }
 const d=MOD[n.type];
-if(d.view||d.resize||d.tall) n.size.h=clamp(Math.round(n.__rh+(ev.clientY-ev.clientY0)/view.k),40,2000);   // у прочих — только ширина (колонки полей)
-applySize(n); drawWires(); },
+if(bottom){
+if(n.xpand){ n._xh=clamp(Math.round(n.__rxh+dy),60,2000); n.el.style.height=n._xh+'px'; }   // развёрнутый: канва тянется за рамкой
+else if(d.view||d.resize||d.tall) n.size.h=clamp(Math.round(n.__rh+dy),40,2000); }   // у прочих — только ширина (колонки полей)
+applySize(n); if(n.xpand){ n._dirty=true; n._drawGen=-1; n.onResize?.(n); } drawWires(); },
 end(){ activeInteractions--; Undo.push(); }
 }});
 }
