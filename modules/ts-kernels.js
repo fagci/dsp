@@ -68,7 +68,7 @@ class TsDemux{
     this.sel=0;                             // выбранная программа (0 — первая с видео)
     this.cur=null;
     this.vid=[]; this.aud=[];               // готовые кадры: {pts, key, d}
-    this.stat={packets:0, lost:0, sync:0, cc:0, frames:0, bytes:0, tei:0};
+    this.stat={packets:0, lost:0, sync:0, cc:0, frames:0, bytes:0, tei:0, gaps:{}}; this.gap=0; this.al=false;
     this.sps=null; this.vcodec='';
   }
   select(n){ this.sel=n|0; this.cur=null; for(const p of this.pids.values()){ p.chunks=[]; } this.vid.length=0; this.aud.length=0; }
@@ -78,12 +78,25 @@ class TsDemux{
     let b=chunk;
     if(this.buf.length){ b=new Uint8Array(this.buf.length+chunk.length); b.set(this.buf); b.set(chunk,this.buf.length); }
     let i=0, n=0;
-    for(;;){
-      while(i<b.length && b[i]!==0x47) i++;                           // поиск синхробайта
-      if(i+188>b.length) break;
-      // три подряд идущих 0x47 через 188 — настоящая синхронизация
-      if((i+188<b.length && b[i+188]!==0x47) || (i+376<b.length && b[i+376]!==0x47)){ i++; this.stat.sync++; continue; }
-      this._pkt(b.subarray(i,i+188)); i+=188; n++;
+    // Пакет идёт сразу за предыдущим (this.al) — его достаточно узнать по 0x47. После лишних байт между пакетами (RTL2832U отдаёт USB-пакетами
+    // по 512 байт: два TS-пакета и остаток) границей считается 0x47, за которым через 188 байт снова 0x47.
+    while(i+188<=b.length){
+      let take=false, wait=false;
+      if(b[i]===0x47){
+        if(this.al) take=true;
+        else if(i+189<=b.length) take= b[i+188]===0x47;
+        else wait=true;                                                // кандидат у края порции: ждём следующую
+      }
+      if(take){
+        if(this.gap>0){                                                // между пакетами были лишние байты — запомнить их число
+          this.stat.sync++;
+          const g=this.stat.gaps, k=this.gap>4096 ? 'big' : String(this.gap);
+          if(k in g || Object.keys(g).length<8) g[k]=(g[k]||0)+1; else g.other=(g.other||0)+1;
+          this.gap=0;
+        }
+        this._pkt(b.subarray(i,i+188)); i+=188; n++; this.al=true;
+      }else if(wait) break;
+      else{ this.al=false; i++; this.gap++; }
     }
     this.buf=b.slice(i);
     this.stat.bytes+=chunk.length;
@@ -178,9 +191,36 @@ class TsDemux{
   }
 
   // Дослать последний PES (конец файла)
-  flush(){ for(const s of this.pids.values()) this._flush(s); }
+  flush(){
+    if(this.buf.length===188 && this.buf[0]===0x47){ this._pkt(this.buf); this.buf=new Uint8Array(0); }       // последний пакет файла
+    for(const s of this.pids.values()) this._flush(s);
+  }
   // Забрать накопленные кадры
   takeVideo(){ const v=this.vid; this.vid=[]; return v; }
   takeAudio(){ const v=this.aud; this.aud=[]; return v; }
   list(){ return [...this.programs.values()].filter(p=>p.vpid || p.apid); }
+}
+
+// Раскладка потока: серии пакетов через 188 байт и лишние байты между сериями. → [{packets, gap, count}], частые первыми.
+// «2 пакета + 136 байт» — USB-пакеты по 512 байт; «много пакетов + 0» — сплошной поток.
+function tsLayout(b){
+  const L=b.length, h=new Map();
+  let p=0, total=0;
+  while(p+189<=L && !(b[p]===0x47 && b[p+188]===0x47)) p++;
+  let first=true;
+  while(p+189<=L){
+    let n=0;
+    while(p+188<=L && b[p]===0x47 && (n>0 || (p+189<=L && b[p+188]===0x47))){ n++; p+=188; }
+    if(n===0) break;
+    total+=n;
+    let q=p;
+    while(q+189<=L && !(b[q]===0x47 && b[q+188]===0x47)) q++;
+    if(q+189>L) break;
+    const key=(n>40 ? 40 : n)+'/'+(q-p);
+    h.set(key,(h.get(key)||0)+1);
+    p=q;
+  }
+  const res=[...h.entries()].map(([k,c])=>{ const [a,g]=k.split('/'); return {packets:+a, gap:+g, count:c}; }).sort((x,y)=>y.count-x.count).slice(0,5);
+  res.total=total;                                                   // всего пакетов, найденных подряд
+  return res;
 }

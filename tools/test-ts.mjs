@@ -5,7 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,Map,Array,Error});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/ts-kernels.js'),'utf8')+';this.T={TsDemux,tsAvcSps,tsNals};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/ts-kernels.js'),'utf8')+';this.T={TsDemux,tsAvcSps,tsNals,tsLayout};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -73,5 +73,22 @@ const lost=pk.slice(); const iv=lost.findIndex((p,i)=>i>10 && (((p[1]&31)<<8)|p[
 if(iv>0) lost.splice(iv,1);
 const d3=new T.TsDemux(); d3.push(flat(lost)); d3.flush();
 ok('lost packet drops one frame',d3.takeVideo().length===N-1 && d3.stat.cc>0,d3.takeVideo().length+' cc '+d3.stat.cc);
+
+
+// USB-пакеты по 512 байт: два TS-пакета и 136 лишних байт (как отдаёт RTL2832U) — все кадры должны сохраниться
+{
+  const junk=n=>Uint8Array.from({length:n},(_,i)=>((i*29+7)&0xff)===0x47 ? 0x48 : (i*29+7)&0xff);
+  const out=[]; for(let i=0;i<pk.length;i+=2){ out.push(pk[i]); if(pk[i+1]) out.push(pk[i+1]); out.push(junk(136)); }
+  const buf=new Uint8Array(out.reduce((a,x)=>a+x.length,0)); let o=0; for(const x of out){ buf.set(x,o); o+=x.length; }
+  const d4=new T.TsDemux(); for(let q=0;q<buf.length;q+=1000) d4.push(buf.subarray(q,q+1000)); d4.flush();
+  const gaps=d4.stat.gaps;
+  ok('padded USB packets: every frame survives',d4.takeVideo().length>=N-1 && d4.stat.cc===0,`${d4.stat.cc} lost, gaps ${JSON.stringify(gaps)}`);
+  ok('padded USB packets: the gap is reported',gaps['136']>10,JSON.stringify(gaps));
+  const lay=T.tsLayout(buf);
+  ok('layout analysis: 2 packets + 136 extra bytes',lay[0].packets===2 && lay[0].gap===136,JSON.stringify(lay));
+  const lay2=T.tsLayout(ts);
+  ok('layout analysis: a plain stream has no gaps',lay2.length===0 || lay2.every(x=>x.gap===0),JSON.stringify(lay2));
+}
+
 
 console.log(bad?bad+' FAILED':'all ok'); process.exit(bad?1:0);
