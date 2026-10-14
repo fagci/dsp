@@ -580,6 +580,20 @@ function camStop(n){
   if(n.video) n.video.srcObject=null;
   n.track=null; n.mode=''; n.fps=0; n.q=[]; n.rq=[]; n.clk=null; n.qT=null; n.fdt=0; n.drop=0;
 }
+// Список всех видеовходов; подписи видны только после разрешения, поэтому сперва короткий getUserMedia
+let camDevs=[];
+async function camList(n){
+  try{
+    try{ (await navigator.mediaDevices.getUserMedia({video:true})).getTracks().forEach(t=>t.stop()); }catch(e){}
+    const d=(await navigator.mediaDevices.enumerateDevices()).filter(x=>x.kind==='videoinput');
+    const seen={};
+    camDevs=d.map((x,i)=>{ let l=x.label||('camera '+(i+1));
+      seen[l]=(seen[l]||0)+1; if(seen[l]>1) l+=' #'+seen[l];
+      return {id:x.deviceId,label:l}; });
+    n.status=camDevs.length+' cameras';
+  }catch(e){ n.status='error: '+(e.message||e.name); }
+  n.set?.cam?.();
+}
 async function camStart(n){
   camStop(n);
   const gen=n.gen, [w,h]=n.p.res.split('x').map(Number), fps=+n.p.fps;
@@ -587,8 +601,10 @@ async function camStart(n){
   n.status='opening…';
   let s;
   try{
+    const dev=camDevs.find(x=>x.label===n.p.cam);
     s=await navigator.mediaDevices.getUserMedia({video:{...n.base,zoom:true,
-      facingMode:n.p.cam==='rear'?{ideal:'environment'}:'user'}});
+      ...(dev?{deviceId:{exact:dev.id}}
+        :{facingMode:n.p.cam==='rear'?{ideal:'environment'}:'user'})}});
   }catch(e){ n.status='error: '+(e.message||e.name); return; }
   if(gen!==n.gen){ s.getTracks().forEach(t=>t.stop()); return; }
   const tr=s.getVideoTracks()[0];
@@ -775,7 +791,9 @@ def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'vid',
   onRun:n=>{ if(!n.track || n.track.readyState==='ended') return camStart(n); },
   onStop:n=>camStop(n),
   params:[{n:'on',t:'button',label:'Turn on camera',fn:n=>camStart(n)},
-          {n:'cam',t:'select',opts:['front','rear'],d:'rear',fn:n=>{ if(n.track) camStart(n); }},
+          {n:'list',t:'button',label:'find all cameras',fn:n=>camList(n)},
+          {n:'cam',t:'select',opts:()=>['front','rear',...camDevs.map(d=>d.label)],d:'rear',
+            fn:n=>{ if(n.track) camStart(n); }},
           {n:'res',t:'select',opts:['160x120','320x240','640x480','1280x720'],d:'320x240',label:'capture',
             fn:n=>{ if(n.track) camStart(n); }},
           {n:'fps',t:'select',opts:['30','60','120','240'],d:'60',label:'frame rate',
