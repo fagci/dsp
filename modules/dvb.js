@@ -199,6 +199,18 @@ async function dvbScan(n){
   }
 }
 
+/* ---- разбор раскладки потока: «Analyse stream» берёт 128 КБ сырых данных ---- */
+function dvbCapDone(n){
+  let len=0; for(const c of n.dv_cap) len+=c.length;
+  if(len<131072) return;
+  const b=new Uint8Array(len); let o=0; for(const c of n.dv_cap){ b.set(c,o); o+=c.length; }
+  n.dv_cap=null;
+  const lay=tsLayout(b), hex=(x,a,m)=>Array.from(x.subarray(a,a+m),v=>v.toString(16).padStart(2,'0')).join(' ');
+  dvbLog(n,'stream layout ('+len+' bytes): '+(lay.length ? lay.map(r=>r.packets+' packets + '+r.gap+' extra bytes ×'+r.count).join('; ') : lay.total ? 'continuous, '+lay.total+' packets without extra bytes' : 'no packets found'));
+  dvbLog(n,'first bytes: '+hex(b,0,24));
+  console.log('DVB raw stream: layout',JSON.stringify(lay),'\nstart',hex(b,0,64),'\nat 376',hex(b,376,40),'\nat 512',hex(b,512,40),'\nat 1024',hex(b,1024,40));
+}
+
 /* ---- поток и состояние ---- */
 function dvbStream(n){
   if(n.dv_run) return;
@@ -212,6 +224,7 @@ function dvbStream(n){
       try{
         const r=await dev.transferIn(1,32768);
         const now=performance.now(), gap=now-n.dv_lastRx; n.dv_lastRx=now;
+        if(n.dv_cap && r.status==='ok'){ n.dv_cap.push(new Uint8Array(r.data.buffer.slice(r.data.byteOffset,r.data.byteOffset+r.data.byteLength))); dvbCapDone(n); }
         if(gap>80 && n.dv_rxBytes>0){ n.dv_gaps++; if(gap>n.dv_gapMax) n.dv_gapMax=gap; }   // долго не было данных: пауза потока или устройства
         if(r.status==='ok' && r.data.byteLength){ n.dv_rx.push(new Uint8Array(r.data.buffer.slice(r.data.byteOffset,r.data.byteOffset+r.data.byteLength))); n.dv_rxBytes+=r.data.byteLength; if(n.dv_rx.length>400) n.dv_rx.splice(0,n.dv_rx.length-200); }   // узел не опрашивают: не копить
         else if(r.status==='stall'){ await dev.clearHalt('in',1); }
@@ -254,7 +267,8 @@ def({ id:'dvbUsb', title:'DVB USB (Astrometa)', cat:'Sources', kw:'dvb t2 dvb-t 
           {n:'ch1',t:'num',d:21,label:'scan: from channel (UHF 21–69, VHF III 5–12)'},
           {n:'ch2',t:'num',d:69,label:'scan: to channel'},
           {n:'scan',t:'button',label:'Scan the air',fn:n=>dvbScan(n)},
-          {n:'stopscan',t:'button',label:'Stop scan',fn:n=>{ n.dv_scan=false; }}],
+          {n:'stopscan',t:'button',label:'Stop scan',fn:n=>{ n.dv_scan=false; }},
+          {n:'analyse',t:'button',label:'Analyse stream',fn:n=>{ if(n.dv_run){ n.dv_cap=[]; dvbLog(n,'analysing the raw stream…'); } }}],
   init(n){ n.dv_logTxt=[]; n.dv_t0=performance.now(); n.dv_status='not connected'; n.dv_rx=[]; n.dv_rxBytes=0; n.dv_run=false; n.dv_connected=false; n.dv_dirty=true; n.dv_pf=null; },
   dispose:n=>{ dvbDisconnect(n,true); },
   process(n,I){
