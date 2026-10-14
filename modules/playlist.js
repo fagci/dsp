@@ -122,7 +122,8 @@ function plAddUrl(n,url,name,play){
 function plRows(n){
   let k=0;
   for(const r of n.rowsIn||[]){ if(r && typeof r.url==='string' && r.url){ plAddUrl(n,r.url,r.label||r.name||'',false); k++; } }
-  if(!k) alert(n.rowsIn ? 'The rows wire carries '+n.rowsIn.length+' rows, none has a url field' :
+  if(!k && !Eng.running) alert('The graph is not running: press ▶ Run — wires carry data only while it runs');
+  else if(!k) alert(n.rowsIn ? 'The rows wire carries '+n.rowsIn.length+' rows, none has a url field' :
     'Nothing has arrived on the rows wire yet (wire Internet Radio → stations and press Search; the graph must be running)');
 }
 function plStep(n,dir,auto){ return wpStep(n.order,n.cur,dir,n.p.repeat,auto); }
