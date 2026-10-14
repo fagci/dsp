@@ -231,7 +231,8 @@ function tsvRoom(n){
   return a<Eng.sr*3;
 }
 function tsvPumpIn(n){
-  for(let k=0;k<2 && n.inq.length && tsvRoom(n);k++){
+  const t0=performance.now();                                    // живой поток DVB ~4.5 МБ/с: кусок за вызов не успевает, кормим по бюджету времени
+  for(let k=0;k<64 && n.inq.length && performance.now()-t0<8 && tsvRoom(n);k++){
     const c=n.inq[0], take=Math.min(c.length,188*128);
     tsvFeed(n,c.subarray(0,take)); n.inqLen-=take;
     if(take>=c.length) n.inq.shift(); else n.inq[0]=c.subarray(take);
