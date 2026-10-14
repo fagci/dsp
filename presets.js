@@ -4565,6 +4565,22 @@ sc.size.w=260; sc.size.h=200; applySize(sc);
 addEdge(rx.id,'bin',tv.id,'bin'); addEdge(tv.id,'L',sc.id,'L'); addEdge(tv.id,'R',sc.id,'R');
 markWiresDirty();
 });
+preset('Digital TV: IPTV (HTTP TS / HLS / M3U) → TS → Video and Sound', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'IPTV over the network. Paste the URL of an HTTP MPEG-TS stream, an HLS playlist (.m3u8 with .ts segments) or an M3U channel list into IPTV and press Play. A channel list fills the Table (rows); pick a channel with «channel» or click a row (its url goes to the url input). The server must send CORS headers — otherwise tick «through the CORS proxy» and set a proxy in Settings. Not supported in a browser: UDP / RTP multicast, RTSP, fMP4 (CMAF) HLS, encrypted HLS. Codecs: H.264 / HEVC through the browser, MPEG-2 and MP2 sound through vendor/mpeg2.wasm.'});
+nt.size.w=1000; nt.size.h=110; applySize(nt);
+const ip=addNode('iptv',40,170,{});
+ip.size.w=360; ip.size.h=280; applySize(ip);
+const tv=addNode('tsvid',440,170,{delay:800});
+tv.size.w=420; tv.size.h=400; applySize(tv);
+const sc=addNode('dac',900,170,{});
+sc.size.w=260; sc.size.h=200; applySize(sc);
+const tb=addNode('table',40,480,{});
+tb.size.w=400; tb.size.h=300; applySize(tb);
+addEdge(ip.id,'bin',tv.id,'bin'); addEdge(tv.id,'L',sc.id,'L'); addEdge(tv.id,'R',sc.id,'R');
+addEdge(ip.id,'rows',tb.id,'rows');
+markWiresDirty();
+});
 preset('Analog TV: FPV / TV Receiver (USB SDR)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Analog video from an SDR with a wide sample rate: FPV (5.6–5.95 GHz, FM, needs a HackRF at 16–20 MS/s) or broadcast TV (UHF, AM negative: set the demodulator to AM (negative), 10 MS/s).\n'+
