@@ -166,6 +166,14 @@ const PRESET_CAT_ORDER=['Start Here',
                          'Analysis & Measurement',
                          'Tile Layouts'];
 const PRESET_CATS={
+  'Echo Repeater: Record the Transmission, Play It Back (USB SDR)':'SDR Receivers',
+  'USB SDR: Channel Scan (Channel Scanner + squelch)':'SDR Receivers',
+  'USB SDR: Channel Scan + Decoder Switch (digital voice / analog)':'SDR Receivers',
+  'ESP-SDR: ESP32 Spectrum':'SDR Receivers',
+  'Measure: Modulation Meter — FM and AM (Generator)':'Analysis & Measurement',
+  'Measure: SINAD of an FM Receiver (Generator)':'Analysis & Measurement',
+  'Measure: IQ Quality — DC and Imbalance (Generator)':'Analysis & Measurement',
+  'Meshtastic: Chat and Nodes on the Map':'Network & IoT',
   'Demo: Sweep and Waterfall':'Start Here',
   'Quick Audio Recording':'Start Here',
   'Find Sound Source (by Frequency)':'Start Here',
@@ -1296,7 +1304,7 @@ nt.size.w=720; nt.size.h=150; applySize(nt);
 const g=addNode('iqGen',40,250,{sr:'256000',fc:100000000,mode:'off',noise:-25});
 const d0=addNode('iqDelay',300,250,{delay:0});
 const dl=addNode('iqDelay',300,420,{delay:3.37});
-const xc=addNode('xcorr',580,250,{});
+const xc=addNode('iqXcorr',580,250,{});
 xc.size.w=620; applySize(xc);
 const n1=addNode('numview',580,430,{label:'delay, samples'});
 const n2=addNode('numview',780,430,{label:'coherence'});
