@@ -918,7 +918,8 @@ wiresFront.style.transform=content.style.transform;
 const jobs=[];
 for(const e of Graph.edges){
 const a= Graph.map[e.from], b=Graph.map[e.to]; if(!a||!b) continue;
-const p1=portPos(a,nodePorts(a).o[e.fp],'o'), p2=portPos(b,nodePorts(b).i[e.tp],'i');
+const pa=nodePorts(a).o[e.fp], pb=nodePorts(b).i[e.tp]; if(!pa||!pb) continue;        // порт на миг пропал (узел пересобирается при смене колонок)
+const p1=portPos(a,pa,'o'), p2=portPos(b,pb,'i');
 jobs.push([e,curve(p1,p2)]);
 }
 for(const [e,d ] of jobs){
