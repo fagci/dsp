@@ -65,7 +65,7 @@ function rbSelect(n,s){
 
 def({ id:'radioDir', title:'Internet Radio', cat:'Sources',
   ins:[{n:'select',t:'rec'}],                          // клик на карте (выход sel)
-  outs:[{n:'rows',t:'bands'},{n:'url',t:'txt'},{n:'name',t:'txt'},{n:'count',t:'num'}],
+  outs:[{n:'rows',t:'bands'},{n:'stations',t:'bands'},{n:'url',t:'txt'},{n:'name',t:'txt'},{n:'count',t:'num'}],
   readout:true, tall:true, w:340,
   params:[{n:'name',t:'text',d:'',label:'name contains'},
           {n:'tag',t:'text',d:'',label:'tag (jazz, news, …)'},
@@ -103,7 +103,10 @@ def({ id:'radioDir', title:'Internet Radio', cat:'Sources',
       }
       n.rowsOut=rec;                                  // набор целиком: после нового поиска точки на карте заменяются
     }
-    return {rows:n.rowsOut||null, url:n.selUrl||null, name:n.sel?.name||null, count:vis.length};
+    // все найденные станции, с координатами или без (для плейлиста): карте нужны только точки, а послушать можно любую
+    if(n.stKey!==n.src+'|'+vis.length+'|'+n.p.https){ n.stKey=n.src+'|'+vis.length+'|'+n.p.https;
+      n.stOut=vis.map(s=>({id:'radio:'+s.id, label:s.name, url:s.url, country:s.country, ...(s.tags?{tags:s.tags}:{}), codec:s.codec+(s.br?' '+s.br+'k':'')})); }
+    return {rows:n.rowsOut||null, stations:n.stOut||null, url:n.selUrl||null, name:n.sel?.name||null, count:vis.length};
   },
   draw(n){
     const vis=n.list.length ? rbFiltered(n).length : 0, s=n.sel;

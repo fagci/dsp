@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=51;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=52;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -3734,7 +3734,7 @@ preset('Winamp: Internet Radio Playlist', function(){
   const map=addNode('geoMap',1200,360,{mz:2,mlat:35,mlon:15,labels:true}); map.size.w=560; map.size.h=420; applySize(map);
   winampLink(pl,ls);
   addEdge(rd.id,'rows',map.id,'rows'); addEdge(map.id,'sel',rd.id,'select');
-  addEdge(rd.id,'url',ls.id,'url'); addEdge(rd.id,'name',ls.id,'name'); addEdge(rd.id,'rows',ls.id,'rows');
+  addEdge(rd.id,'url',ls.id,'url'); addEdge(rd.id,'name',ls.id,'name'); addEdge(rd.id,'stations',ls.id,'rows');
   addEdge(pl.id,'l',eq.id,'l'); addEdge(pl.id,'r',eq.id,'r');
   addEdge(eq.id,'l',dc.id,'L'); addEdge(eq.id,'r',dc.id,'R');
   addEdge(eq.id,'l',bd.id,'in');
