@@ -5,7 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,Map,Array,Error});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/ts-kernels.js'),'utf8')+';this.T={TsDemux,tsAvcSps,tsNals,tsLayout,tsAvcSliceType,tsAvcMaxFs,tsAdtsSplit,tsDvbText,tsDvbTime};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/ts-kernels.js'),'utf8')+';this.T={TsDemux,tsAvcSps,tsNals,tsLayout,tsAvcSliceType,tsAvcMaxFs,tsAdtsSplit,tsDvbText,tsDvbTime,TsTeletext};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -154,5 +154,25 @@ console.log(bad?bad+' FAILED':'all ok'); ok('MaxFS by level',T.tsAvcMaxFs(30)===
   const big=sect(0x42,[0,1],[0,1,0xff,...Array.from({length:6},(_,i)=>sd(10+i,false,1,[...Buffer.from('Provider long name')],[...Buffer.from('Channel number '+i+' with a long name')])).flat()]);
   const d5=new T.TsDemux(); d5.push(flat(packets(0x11,[0,...big],true)));
   ok('multi-packet SDT',d5.svc.size===6 && big.length>183,String(d5.svc.size));
+}
+
+{ // телетекст: заголовок страницы 100 и строка 1 (кириллица, цветной текст, мозаика)
+  const rev=b=>{ let v=0; for(let k=0;k<8;k++) if(b&(1<<k)) v|=0x80>>k; return v; };
+  const ham=d=>(((d&1)<<1)|(((d>>1)&1)<<3)|(((d>>2)&1)<<5)|(((d>>3)&1)<<7)|0x15);   // биты данных на местах 1, 3, 5, 7
+  const par=c=>{ let b=c, n=0; for(let k=0;k<7;k++) n+=(c>>k)&1; if(n%2===0) b|=0x80; return b; };
+  const unit=(mag,row,data)=>{ const a0=ham((mag&7)|((row&1)<<3)), a1=ham(row>>1);
+    return [0x02,44,rev(0xc0),rev(0xe4)>=0?0xe4:0,rev(a0),rev(a1),...data.map(rev)]; };
+  const hdr=[ham(0),ham(0),ham(0),ham(0),ham(0),ham(0),ham(0),ham(0),...Array.from('TEST PAGE'.padEnd(32)).map(c=>par(c.charCodeAt(0)))];
+  const txt=[0x06,...Array.from('КОИ 7').map(c=>0).map(()=>0)];
+  const koi='Привет'; const kc={}; 'юабцдефгхийклмнопярстужвьызшэщчъЮАБЦДЕФГХИЙКЛМНОПЯРСТУЖВЬЫЗШЭЩЧЪ'.split('').forEach((c,i)=>kc[c]=0x40+i);
+  const body=[0x06,...koi.split('').map(c=>par(kc[c])),0x20,0x11,0x3f,0x20,...Array(40-10).fill(par(0x20))].slice(0,40);
+  const es=Uint8Array.from([0x10,...unit(1,0,hdr),...unit(1,1,body),...unit(1,0,hdr.map((v,i)=>i===0?ham(1):v))]);
+  const tt=new T.TsTeletext(); tt.feed(es);
+  ok('teletext page found',tt.list().includes(100),String(tt.list()));
+  ok('teletext Cyrillic',tt.text(100,true).split('\n')[1].trim()==='Привет',JSON.stringify(tt.text(100,true)));
+  const g=tt.render(100,true);
+  ok('teletext colour',g[1][1].fg===6 && g[1][0].fg===7,JSON.stringify(g[1][1]));
+  ok('teletext mosaic',g[1][9].m===1 && g[1][9].c===0x1f,JSON.stringify(g[1][9]));
+  ok('teletext header',tt.text(100,false).startsWith('P100'),tt.text(100,false).slice(0,20));
 }
 process.exit(bad?1:0);

@@ -136,6 +136,95 @@ function tsDvbTime(b,o){
 const TS_SVC_TYPES={1:'TV SD',2:'Radio',3:'Teletext',0x0a:'Radio',0x11:'TV MPEG-2 HD',0x16:'TV SD',0x19:'TV HD',0x1f:'TV UHD',0x0c:'Data'};
 const TS_STREAM_NAMES={0x01:'MPEG-1 video',0x02:'MPEG-2 video',0x03:'MP2',0x04:'MP2',0x06:'private',0x0f:'AAC',0x11:'AAC-LATM',0x1b:'H.264',0x24:'HEVC',0x81:'AC-3',0x87:'E-AC-3'};
 
+
+/* ---- Телетекст DVB (EN 300 472 в PES, страницы по EN 300 706) ---- */
+const TTX_REV=(()=>{ const t=new Uint8Array(256); for(let i=0;i<256;i++){ let v=0; for(let k=0;k<8;k++) if(i&(1<<k)) v|=0x80>>k; t[i]=v; } return t; })();
+const ttxUnham=b=>((b>>1)&1)|(((b>>3)&1)<<1)|(((b>>5)&1)<<2)|(((b>>7)&1)<<3);
+// Кириллица G0 (вариант 1, как КОИ-7): 0x40–0x5F строчные, 0x60–0x7F прописные
+const TTX_KOI='юабцдефгхийклмнопярстужвьызшэщчъЮАБЦДЕФГХИЙКЛМНОПЯРСТУЖВЬЫЗШЭЩЧЪ';
+class TsTeletext{
+  constructor(){ this.reset(); }
+  reset(){ this.pages=new Map(); this.live=new Map(); this.units=0; this.rev=0; }
+  // es: данные PES (data_identifier + блоки данных)
+  feed(es){
+    if(es.length<3 || es[0]<0x10 || es[0]>0x1f) return;
+    for(let i=1;i+2<=es.length;){
+      const id=es[i], len=es[i+1];
+      if(i+2+len>es.length) break;
+      if((id===0x02 || id===0x03) && len===44) this._unit(es.subarray(i+2,i+2+len));
+      i+=2+len;
+    }
+  }
+  _unit(u){
+    const a0=ttxUnham(TTX_REV[u[2]]), a1=ttxUnham(TTX_REV[u[3]]);
+    let mag=a0&7; if(mag===0) mag=8;
+    const row=(a0>>3)|(a1<<1);
+    const d=new Uint8Array(40); for(let k=0;k<40;k++) d[k]=TTX_REV[u[4+k]];
+    this.units++;
+    if(row===0){
+      const un=ttxUnham(d[0]), te=ttxUnham(d[1]);
+      const cur=this.live.get(mag); if(cur) this._commit(cur);
+      if(un>9 || te>9){ this.live.delete(mag); return; }                // 0xFF: заполнитель, не страница
+      const num=mag*100+te*10+un;
+      const pg={num, sub:(ttxUnham(d[2])|(ttxUnham(d[3])&7)<<4)|((ttxUnham(d[4])|(ttxUnham(d[5])&3)<<4)<<8), rows:new Array(25).fill(null), erase:!!(ttxUnham(d[3])&8), sub6:!!(ttxUnham(d[5])&8), nat:(ttxUnham(d[7])>>1)&7};
+      pg.rows[0]=d.subarray(8).map(c=>c&0x7f);
+      this.live.set(mag,pg);
+    }else if(row<=24){
+      const pg=this.live.get(mag); if(!pg) return;
+      pg.rows[row]=d.map(c=>c&0x7f);
+    }
+  }
+  _commit(pg){
+    const old=this.pages.get(pg.num);
+    this.pages.set(pg.num,pg); this.rev++;
+    if(old && old.sub!==pg.sub && !pg.erase) pg.rows.forEach((r,i)=>{ if(!r && old.rows[i]) pg.rows[i]=old.rows[i]; });
+  }
+  list(){ return [...this.pages.keys()].sort((a,b)=>a-b); }
+  // Страница → сетка 25×40 клеток {c, fg, bg, m (мозаика: 0 нет, 1 сплошная, 2 раздельная), h (двойная высота)}
+  render(num,cyr){
+    const pg=this.pages.get(num); if(!pg) return null;
+    const grid=[];
+    for(let r=0;r<25;r++){
+      const src= r===0 ? null : pg.rows[r];
+      const row=[];
+      let fg=7, bg=0, gfx=false, sep=false, dbl=false;
+      if(r===0){
+        const hd=('P'+num+'        ').slice(0,8), rs=pg.rows[0]||new Uint8Array(32);
+        for(let k=0;k<8;k++) row.push({c:hd.charCodeAt(k), fg:7, bg:0, m:0, h:false});
+        for(let k=0;k<32;k++) row.push({c:rs[k]<0x20 ? 0x20 : rs[k], fg:7, bg:0, m:0, h:false});
+        grid.push(row); continue;
+      }
+      if(!src){ for(let k=0;k<40;k++) row.push({c:0x20, fg:7, bg:0, m:0, h:false}); grid.push(row); continue; }
+      for(let k=0;k<40;k++){
+        const c=src[k];
+        if(c<0x20){
+          if(c===0x1c) bg=0; else if(c===0x1d) bg=fg;                     // действуют сразу
+          else if(c===0x19) sep=false; else if(c===0x1a) sep=true;
+          else if(c===0x0c) dbl=false;
+          row.push({c:0x20, fg, bg, m:0, h:dbl});
+          if(c<8){ fg=c; gfx=false; }                                      // действуют со следующей клетки
+          else if(c>=0x10 && c<=0x17){ fg=c-0x10; gfx=true; }
+          else if(c===0x0d) dbl=true;
+          continue;
+        }
+        const cell={c, fg, bg, m:0, h:dbl};
+        if(gfx && ((c>=0x20 && c<=0x3f) || (c>=0x60 && c<=0x7f))){
+          cell.m=sep ? 2 : 1; cell.c= c<0x60 ? c-0x20 : (c-0x60)|0x20;     // 6 бит: клетки 2×3
+        }else if(cyr && c>=0x40) cell.c=TTX_KOI.charCodeAt(c-0x40);
+        row.push(cell);
+      }
+      grid.push(row);
+    }
+    // двойная высота: следующая строка занята верхней/нижней половиной
+    for(let r=1;r<24;r++) if(grid[r].some(c=>c.h)) grid[r+1]=grid[r+1].map(()=>({c:0x20,fg:7,bg:0,m:0,h:false,lower:true}));
+    return grid;
+  }
+  text(num,cyr){
+    const g=this.render(num,cyr); if(!g) return '';
+    return g.map(r=>r.map(c=>c.m ? ' ' : String.fromCharCode(c.c)).join('').replace(/\s+$/,'')).join('\n').replace(/\n+$/,'');
+  }
+}
+
 class TsDemux{
   constructor(){ this.reset(); }
   reset(){
@@ -148,10 +237,10 @@ class TsDemux{
     this.vid=[]; this.aud=[];               // готовые кадры: {pts, key, d}
     this.stat={packets:0, lost:0, sync:0, cc:0, frames:0, bytes:0, tei:0, keys:0, idr:0, gaps:{}}; this.gap=0; this.al=false;
     this.sps=null; this.vcodec='';
-    this.sec=new Map();                     // PID → собираемая секция служебной таблицы
+    this.ttx=[]; this.sec=new Map();                     // PID → собираемая секция служебной таблицы
     this.svc=new Map(); this.events=new Map(); this.net={name:'',id:0,tsid:0,lcn:new Map(),freqs:[]}; this.utc=null; this.pidN=new Map(); this.pidBytes=new Map(); this.t0=0; this.sdtDone=false;
   }
-  select(n){ this.sel=n|0; this.cur=null; for(const p of this.pids.values()){ p.chunks=[]; } this.vid.length=0; this.aud.length=0; }
+  select(n){ this.sel=n|0; this.cur=null; for(const p of this.pids.values()){ p.chunks=[]; } this.vid.length=0; this.aud.length=0; this.ttx.length=0; }
 
   // Подать байты; возвращает число принятых пакетов
   push(chunk){
@@ -198,8 +287,8 @@ class TsDemux{
     if(pid===0){ this._psi(body,pusi,'pat'); return; }
     if(this.pmtPids.has(pid)){ this._psi(body,pusi,'pmt',pid); return; }
     const cur=this.cur;
-    if(!cur || (pid!==cur.vpid && pid!==cur.apid)) return;
-    let s=this.pids.get(pid); if(!s){ s={chunks:[], cc:-1, kind:pid===cur.vpid ? 'v' : 'a'}; this.pids.set(pid,s); }
+    if(!cur || (pid!==cur.vpid && pid!==cur.apid && pid!==cur.tpid)) return;
+    let s=this.pids.get(pid); if(!s){ s={chunks:[], cc:-1, kind:pid===cur.vpid ? 'v' : pid===cur.tpid ? 't' : 'a'}; this.pids.set(pid,s); }
     if(s.cc>=0 && (afc&1) && cc!==((s.cc+1)&15)){ if(cc!==s.cc){ this.stat.cc++; s.bad=true; } else return; } // повтор — отбросить
     s.cc=cc;
     if(pusi){ this._flush(s); s.bad=false; }
@@ -217,7 +306,7 @@ class TsDemux{
     const hl=d[8], hasPts=(d[7]&0x80)!==0;
     if(9+hl>n) return;
     const pts=hasPts && hl>=5 ? tsPts(d,9) : -1, es=d.subarray(9+hl);
-    if(s.kind==='v') this._video(es,pts); else{ this.stat.apes=(this.stat.apes||0)+1; this.aud.push({pts, d:es, type:this.cur.atype}); }
+    if(s.kind==='v') this._video(es,pts); else if(s.kind==='t') this.ttx.push(es); else{ this.stat.apes=(this.stat.apes||0)+1; this.aud.push({pts, d:es, type:this.cur.atype}); }
   }
 
   _video(es,pts){
@@ -302,7 +391,18 @@ class TsDemux{
       const tsid=(s[i]<<8)|s[i+1], dl=((s[i+4]&15)<<8)|s[i+5]; i+=6;
       for(let k=i;k+2<=i+dl && k+2<=s.length;){
         const dt=s[k], l=s[k+1];
-        if(dt===0x5a && l>=11){ const f=((s[k+2]<<24)|(s[k+3]<<16)|(s[k+4]<<8)|s[k+5])>>>0; const mhz=f/100000; if(!net.freqs.some(x=>x.tsid===tsid)) net.freqs.push({tsid, mhz}); }
+        if(dt===0x5a && l>=11){ const f=((s[k+2]<<24)|(s[k+3]<<16)|(s[k+4]<<8)|s[k+5])>>>0; const mhz=f/100000; if(!net.freqs.some(x=>Math.abs(x.mhz-mhz)<.01)) net.freqs.push({tsid, mhz}); }
+        else if(dt===0x7f && l>=7 && s[k+2]===0x04 && l>4){                // T2: частоты по ячейкам
+          const tfs=s[k+7]&1; let q=k+8; const e2=k+2+l;
+          while(q+6<=e2){
+            const fl=[];
+            if(tfs){ const n2=s[q+2]; for(let z=0;z<n2 && q+3+z*4+4<=e2;z+=4) fl.push(((s[q+3+z]<<24)|(s[q+4+z]<<16)|(s[q+5+z]<<8)|s[q+6+z])>>>0); q+=3+n2; }
+            else{ fl.push(((s[q+2]<<24)|(s[q+3]<<16)|(s[q+4]<<8)|s[q+5])>>>0); q+=6; }
+            for(const f of fl){ const mhz=f/100000; if(mhz>30 && !net.freqs.some(x=>Math.abs(x.mhz-mhz)<.01)) net.freqs.push({tsid, mhz, t2:true}); }
+            if(q>=e2) break;
+            q+=1+s[q];
+          }
+        }
         else if(dt===0x83){ for(let q=k+2;q+4<=k+2+l;q+=4){ const sid=(s[q]<<8)|s[q+1]; if(s[q+2]&0x80) net.lcn.set(sid,((s[q+2]&3)<<8)|s[q+3]); } }
         k+=2+l;
       }
@@ -361,7 +461,7 @@ class TsDemux{
       const num=(s[3]<<8)|s[4], pr=this.programs.get(num) || {num, pmt:pid, vpid:0, apid:0};
       const pil=((s[10]&15)<<8)|s[11];
       let i=12+pil; const end=3+len-4;
-      pr.vpid=0; pr.apid=0; pr.vtype=''; pr.atype=''; pr.es=[]; pr.pcr=((s[8]&0x1f)<<8)|s[9];
+      pr.vpid=0; pr.apid=0; pr.vtype=''; pr.atype=''; pr.es=[]; pr.tpid=0; pr.pcr=((s[8]&0x1f)<<8)|s[9];
       while(i+5<=end){
         const st=s[i], ep=((s[i+1]&0x1f)<<8)|s[i+2], il=((s[i+3]&15)<<8)|s[i+4];
         const e={pid:ep, type:st, name:TS_STREAM_NAMES[st]||('0x'+st.toString(16)), lang:''};
@@ -373,6 +473,7 @@ class TsDemux{
           k+=2+dl;
         }
         pr.es.push(e);
+        if(e.name==='teletext' && !pr.tpid) pr.tpid=ep;
         if(TS_VTYPES[st] && !pr.vpid){ pr.vpid=ep; pr.vtype=TS_VTYPES[st]; }
         else if(TS_ATYPES[st] && !pr.apid && st!==6){ pr.apid=ep; pr.atype=TS_ATYPES[st]; }
         i+=5+il;
@@ -395,6 +496,7 @@ class TsDemux{
   // Забрать накопленные кадры
   takeVideo(){ const v=this.vid; this.vid=[]; return v; }
   takeAudio(){ const v=this.aud; this.aud=[]; return v; }
+  takeTtx(){ const v=this.ttx; this.ttx=[]; return v; }
   list(){ return [...this.programs.values()].filter(p=>p.vpid || p.apid); }
 }
 

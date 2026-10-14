@@ -297,6 +297,8 @@ const PRESET_CATS={
   'Analog TV: Test Card (Generator)':'Images & TV',
   'Analog TV: FPV / TV Receiver (USB SDR)':'Images & TV',
   'Digital TV: DVB-T2 Astrometa → TS → Video and Sound':'Images & TV',
+  'Digital TV: DVB-T2 full (channels, programme, teletext, muxes)':'Images & TV',
+  'Digital TV: IPTV (HTTP TS / HLS / M3U) → TS → Video and Sound':'Images & TV',
   'Analog TV: FPV Multiband Scanner (HackRF)':'Images & TV',
   'Analog TV: FPV Mosaic (one HackRF)':'Images & TV',
   'Analog TV: FPV Channel Scanner (HackRF)':'Images & TV',
@@ -4563,6 +4565,25 @@ tv.size.w=420; tv.size.h=400; applySize(tv);
 const sc=addNode('dac',900,230,{});
 sc.size.w=260; sc.size.h=200; applySize(sc);
 addEdge(rx.id,'bin',tv.id,'bin'); addEdge(tv.id,'L',sc.id,'L'); addEdge(tv.id,'R',sc.id,'R');
+markWiresDirty();
+});
+preset('Digital TV: DVB-T2 full (channels, programme, teletext, muxes)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Everything the stream carries. DVB USB receives a multiplex; TS → Video shows the picture and plays the sound, and puts the service tables into two Tables. Channels table: a channel row with its programme rows (names from the SDT, numbers from the NIT, now / next and the schedule from the EIT, bitrate per programme). Pick a row — its program number goes to TS → Video (prog input) and the channel switches; the rows are updated in place (rows in: sync, key id), so the list does not flicker and the selection stays. Muxes table: a band plan (kHz) filled with the multiplex frequencies the NIT announces and the ones the stick found (rows in: new only, key name); its mid output is the tuning frequency of DVB USB. Teletext: set "node window shows" to teletext, page 100 by default (the page input / the ◀ ▶ buttons turn the pages; the text of the page is on the ttxt output). First: Connect USB…, Tune, wait a few seconds for the service tables.'});
+nt.size.w=1000; nt.size.h=170; applySize(nt);
+const rx=addNode('dvbUsb',40,250,{});
+rx.size.w=360; rx.size.h=330; applySize(rx);
+const tv=addNode('tsvid',440,250,{});
+tv.size.w=420; tv.size.h=400; applySize(tv);
+const sc=addNode('dac',900,250,{});
+sc.size.w=260; sc.size.h=200; applySize(sc);
+const ch=addNode('table',40,680,{list:'DVB channels',rowsIn:'sync',key:'id',cols:['id','kind','lcn','program','name','type','scrambled','video','audio','extra','mbit','now','until','next','provider','playing','channel','start','min','title','text','state']});
+ch.size.w=760; ch.size.h=380; applySize(ch);
+const mx=addNode('table',830,680,{list:'DVB muxes',rowsIn:'new only',key:'name',cols:['id','name','lo','hi','step','color','kind','note']});
+mx.size.w=480; mx.size.h=380; applySize(mx);
+addEdge(rx.id,'bin',tv.id,'bin'); addEdge(tv.id,'L',sc.id,'L'); addEdge(tv.id,'R',sc.id,'R');
+addEdge(tv.id,'all',ch.id,'rows'); addEdge(ch.id,'program',tv.id,'prog');
+addEdge(tv.id,'mux',mx.id,'rows'); addEdge(mx.id,'mid',rx.id,'freq');
 markWiresDirty();
 });
 preset('Digital TV: IPTV (HTTP TS / HLS / M3U) → TS → Video and Sound', function(){
