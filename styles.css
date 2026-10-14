@@ -369,6 +369,7 @@ body.noedit #bar .ed{display:none}
   #canvas #content .node .io3>.mid>.graphview,
   #canvas #content .node .io3>.mid>.chat,
   #canvas #content .node .io3>.mid>.wa,
+  #canvas #content .node .io3>.mid>.pl,
   #canvas #content .node .io3>.mid>.eq10,
   #canvas #content .node .io3>.mid>.rds-ui,
   #canvas #content .node .io3>.mid>.ng,
@@ -1201,7 +1202,7 @@ select.aed-b{padding:0 6px}
 /* Спектроанализатор в тайле: контролы сверху, канва до низа ячейки; в режиме «только главное» (▤) канва сверху, главные контролы под ней */
 .dash-pane.compact .dash-body .node[data-type="sa"] .io3>.mid>canvas.view.main{order:-1;margin-top:0}
 
-.wa,.eq10{accent-color:var(--acc);display:flex;flex-direction:column;gap:4px;width:100%;min-height:0;outline:none}
+.wa,.pl,.eq10{accent-color:var(--acc);display:flex;flex-direction:column;gap:4px;width:100%;min-height:0;outline:none}
 .wa-lcd{display:flex;gap:10px;align-items:center;padding:6px 10px;background:var(--screen);border:1px solid var(--line);border-radius:4px}
 .wa-clock{display:flex;align-items:center;gap:6px;flex:none}
 .wa-st{color:var(--dim);display:flex}.wa-st .i{width:12px;height:12px;fill:currentColor;stroke:none}
@@ -1218,14 +1219,15 @@ select.aed-b{padding:0 6px}
 .wa-tr button:last-child{margin-left:6px}
 .wa-sl label{display:flex;align-items:center;gap:4px;flex:1 1 90px;min-width:70px;color:var(--dim)}
 .wa-sl label input{flex:1;min-width:0}
-.wa button,.eq10 button{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:26px;min-width:28px;padding:0 6px;background:var(--panel2);border:1px solid var(--line);border-radius:4px;cursor:pointer;color:var(--txt);font:11px var(--mono)}
-.wa button .i{width:14px;height:14px}
+.wa button,.pl button,.eq10 button{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:26px;min-width:28px;padding:0 6px;background:var(--panel2);border:1px solid var(--line);border-radius:4px;cursor:pointer;color:var(--txt);font:11px var(--mono)}
+.wa button .i,.pl button .i{width:14px;height:14px}
 .wa button[data-a=play] .i{fill:currentColor}
-.wa button:hover,.eq10 button:hover{border-color:var(--acc)}
-.wa button.on{border-color:var(--acc);color:var(--acc)}
+.wa button:hover,.pl button:hover,.eq10 button:hover{border-color:var(--acc)}
+.wa button.on,.pl button.on{border-color:var(--acc);color:var(--acc)}
 .wa-foot{flex:none}
 .wa-foot button{padding:0 8px}
-.wa-foot select{height:26px;min-width:0;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:4px;font:11px var(--mono)}
+.wa-foot select{max-width:110px;height:26px;min-width:0;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:4px;font:11px var(--mono)}
+.pl-head{flex:none}
 .wa-cnt{margin-left:auto;font:10px var(--mono);color:var(--dim)}
 .wa-pl{flex:1 1 120px;min-height:60px;overflow:auto;background:var(--screen);border:1px solid var(--line);border-radius:4px;font:11px/1.55 var(--mono)}
 .wa-it{display:flex;gap:6px;padding:0 6px;cursor:pointer;color:var(--screen-fg)}
