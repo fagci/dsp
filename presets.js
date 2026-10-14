@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=47;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=48;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -163,6 +163,7 @@ const PRESET_CAT_ORDER=['Start Here',
                          'Maps & Locating',
                          'Music: Sequencers & Mixer',
                          'Music: Synth & Tracker',
+                         'Music: Visualizers',
                          'Analysis & Measurement',
                          'Tile Layouts'];
 const PRESET_CATS={
@@ -395,6 +396,10 @@ const PRESET_CATS={
   '12-Channel Mixer: Full Band':'Music: Sequencers & Mixer',
 
   'Synth: Acid Bass (303)':'Music: Synth & Tracker',
+  'Visualizer: Spectrum Bars (Drums + Band FFT)':'Music: Visualizers',
+  'Visualizer: Radial Spectrum + Beat Particles':'Music: Visualizers',
+  'Visualizer: Ridgeline + Neon Waveform':'Music: Visualizers',
+  'Ridgeline Spectrum: Air History (RF mode)':'Analysis & Measurement',
   'Techno: Drum Machine':'Music: Synth & Tracker',
   'Techno: Generative Acid':'Music: Synth & Tracker',
   'Techno: Full Track':'Music: Synth & Tracker',
@@ -3630,6 +3635,70 @@ preset('Drum Machine: Banks A/B', function(){
 });
 // Переключай банк вкладками A/B/C/D в шапке узла, рисуй перетаскиванием,
 // «Копировать»/«Вставить» — гоняет паттерн между банками (и между разными узлами).
+
+// Визуализаторы: ударные + фильтруемая пила → микшер; вместо него можно подключить микрофон или файл
+function vizSource(x,y){
+  const A=[stepPattern([0,4,8,12],16), stepPattern([],16), stepPattern([4,12],16),
+           stepPattern([0,2,4,6,8,10,12,14],16), stepPattern([14],16), stepPattern([],16)].join(';');
+  const dr=addNode('drumseq',x,y,{grid:[A,'','',''].join('|'),steps:16,bpm:128});
+  dr.size.w=520; applySize(dr);
+  const o=addNode('osc',x,y+300,{freq:110,amp:.35,wave:'saw'});
+  const lf=addNode('lfo',x,y+460,{freq:.15,min:150,max:3000});
+  const f=addNode('biquad',x+260,y+300,{type:'lp',freq:800,Q:5});
+  addEdge(o.id,'out',f.id,'in'); addEdge(lf.id,'out',f.id,'freq');
+  const mx=addNode('mixer4',x+560,y,{ka:1,pa:0,kb:.6,pb:0});
+  addEdge(dr.id,'out',mx.id,'a'); addEdge(f.id,'out',mx.id,'b');
+  const dc=addNode('dac',x+560,y+330,{vol:.4,mode:'mono'});
+  addEdge(mx.id,'out',dc.id,'L');
+  return mx;
+}
+function vizTile(type,x,y,w,h,src,port,params){
+  const n=addNode(type,x,y,params); n.size.w=w; n.size.h=h; applySize(n);
+  addEdge(src.id,port,n.id,port==='out'?'in':'spec'); return n;
+}
+preset('Visualizer: Spectrum Bars (Drums + Band FFT)', function(){
+  clearAll();
+  const mx=vizSource(40,40);
+  const bd=addNode('bands',900,40,{bands:24}); addEdge(mx.id,'out',bd.id,'in');
+  const ff=addNode('fft',900,260,{size:'2048'}); addEdge(mx.id,'out',ff.id,'in');
+  vizTile('vizBars',1180,40,460,240,bd,'spec',{style:'round',color:'theme',bars:24});
+  vizTile('vizBars',1180,320,460,240,ff,'spec',{style:'led',color:'theme',bars:32});
+  markWiresDirty();
+});
+// Band FFT — FFT с малым числом полос (4…128, лог / mel / линейная шкала), на выходе бас / середина / верх,
+// бит и темп; Spectrum Bars принимает и его, и обычный FFT (тогда сам группирует в полосы).
+preset('Visualizer: Radial Spectrum + Beat Particles', function(){
+  clearAll();
+  const mx=vizSource(40,40);
+  const bd=addNode('bands',900,40,{bands:48}); addEdge(mx.id,'out',bd.id,'in');
+  vizTile('vizRadial',1180,40,420,420,bd,'spec',{color:'rainbow'});
+  vizTile('vizParticles',1180,500,420,320,bd,'spec',{mode:'burst'});
+  markWiresDirty();
+});
+// У частиц три режима: burst (взрыв на бит), fountain (фонтан по полосам), warp (полёт сквозь звёзды, скорость от баса).
+preset('Visualizer: Ridgeline + Neon Waveform', function(){
+  clearAll();
+  const mx=vizSource(40,40);
+  const bd=addNode('bands',900,40,{bands:72,fall:.08}); addEdge(mx.id,'out',bd.id,'in');
+  vizTile('vizRidge',1180,40,460,360,bd,'spec',{});
+  vizTile('vizWave',1180,440,460,220,mx,'out',{mode:'line'});
+  vizTile('vizWave',1180,700,460,300,mx,'out',{mode:'ring'});
+  markWiresDirty();
+});
+// У Neon Waveform три режима: line (осциллограмма с триггером), ring (кольцо), xy (фигуры Лиссажу: два входа или x(t) против x(t−d)).
+
+
+preset('Ridgeline Spectrum: Air History (RF mode)', function(){
+  clearAll();
+  const sw=addNode('sweep',40,40,{});
+  const o=addNode('osc',40,260,{freq:6000,amp:.2,wave:'sine'});
+  const mx=addNode('mixer4',300,40); addEdge(sw.id,'out',mx.id,'a'); addEdge(o.id,'out',mx.id,'b');
+  const ff=addNode('fft',560,40,{size:'4096'}); addEdge(mx.id,'out',ff.id,'in');
+  vizTile('vizRidge',820,40,520,400,ff,'spec',{mode:'rf',color:'heat',floor:-100,top:-20,rows:48,rate:10,bars:240});
+  markWiresDirty();
+});
+// Режим rf: весь диапазон источника с абсолютными частотами, максимум бинов на столбец (узкие несущие не теряются),
+// ось частот и легенда дБ, выход fpeak. Подключи FFT/спектр от USB SDR или tinySA вместо генераторов; «rows per second» — скорость истории.
 
 preset('Sync: Master Clock', function(){
   clearAll();
