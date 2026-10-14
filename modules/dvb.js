@@ -31,7 +31,11 @@ function dvbBus(com){
       if(b.length<23) await com.raw.write(0x300,(b[0]<<8)|addr8,new Uint8Array(b.slice(1)).buffer);
       else await com.raw.write(0x600,addr8,new Uint8Array(b).buffer);
     },
-    async r(addr8,reg,len){ return new Uint8Array(await com.raw.read(0x300,(reg<<8)|addr8,len)); },
+    async r(addr8,reg,len){
+      const d=new Uint8Array(await com.raw.read(0x300,(reg<<8)|addr8,len));
+      if(d.length<len) throw new Error('I2C 0x'+addr8.toString(16)+' reg 0x'+reg.toString(16)+': no answer ('+d.length+' of '+len+' bytes)');
+      return d;
+    },
     async gate(on){ if(on) await com.i2c.open(); else await com.i2c.close(); },
     sleep:dvbSleep
   };
@@ -80,14 +84,21 @@ async function dvbConnect(n){
     await DvbRtl.power(io,true); dvbLog(n,'power on');
     await DvbRtl.gpioProbe(io);
     await bus.gate(true);
-    const tid=await bus.r(0x74,0,1);
-    if(tid[0]!==0x69){ await bus.gate(false); throw new Error('no R828D tuner on the bus (id '+tid[0].toString(16)+'): this is not an Astrometa DVB-T2 stick'); }
+    const probe=async(a8,reg)=>{ try{ return (await bus.r(a8,reg,1))[0]; }catch(e){ return null; } };
+    const hex=v=>v==null ? 'no answer' : '0x'+v.toString(16);
+    const tid=await probe(0x74,0);
+    if(tid!==0x69){ await bus.gate(false); throw new Error('no R828D tuner on the bus (id '+hex(tid)+'): this is not an Astrometa DVB-T2 stick'); }
     dvbLog(n,'tuner R828D');
     await DvbRtl.slavePower(io);
-    const sid=(await bus.r(0x38,0xff,1))[0];
+    // как rtl2832u_read_config: MN88472 / MN88473 (банк 2, регистр 0xff), затем Sony CXD2837ER (0xd8, регистр 0xfd)
+    let sid=null, cid=null;
+    for(let i=0;i<3 && sid==null;i++){ sid=await probe(0x38,0xff); if(sid==null) await dvbSleep(50); }
+    if(sid!==0x02 && sid!==0x03) cid=await probe(0xd8,0xfd);
     await bus.gate(false);
+    dvbLog(n,'slave probe: 0x38/0xff → '+hex(sid)+(cid!=null || sid==null ? ', 0xd8/0xfd → '+hex(cid) : ''));
     const kind= sid===0x03 ? 473 : sid===0x02 ? 472 : 0;
-    if(!kind) throw new Error('no MN88473 / MN88472 demodulator (id '+sid.toString(16)+')');
+    if(cid===0xb1) throw new Error('this stick has a Sony CXD2837ER demodulator — not supported yet (the log above is what it answered)');
+    if(!kind) throw new Error('no MN88473 / MN88472 demodulator: it answered '+hex(sid)+' (expected 0x03 or 0x02)');
     dvbLog(n,'demodulator MN8847'+(kind===473?3:2));
     await DvbRtl.initEp(io);
     n.dv_tuner=new R82xxDvb(bus,{addr:0x74,xtal:16000000,chip:'R828D'});
