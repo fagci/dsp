@@ -441,13 +441,61 @@ async function tblClear(n){
   tblDerive(n); seqReset(n);
 }
 // набор на входе rows → в активный список: заменить строки или дописать (станции после поиска, любой набор записей)
+// rows in «sync» / «new only»: набор приводится к списку по ключевой колонке на месте, без очистки — выбор строки и позиция не сбиваются
+async function tblSync(n,list,onlyNew){
+  const key=(n.p.key||'').trim() || 'id';
+  const recs=list.filter(r=>r && typeof r==='object').map(r=>tblClean(tblPacket(n,r)));
+  let grown=false;
+  for(const c of [key,...recs.flatMap(r=>Object.keys(r))]) if(!n.cl.includes(c)){ n.cl.push(c); grown=true; }
+  const db=tblKind(n.p.list)==='db';
+  const at=new Map(); n.all.forEach((r,i)=>{ const k=r[key]; if(k!=='' && k!=null) at.set(String(k),i); });
+  const seen=new Set(), fresh=[], dirty=[];
+  for(const r of recs){
+    const kv=r[key]; if(kv==='' || kv==null) continue;
+    const k=String(kv); if(seen.has(k)) continue;
+    seen.add(k);
+    const i=at.get(k);
+    if(i===undefined){ fresh.push(r); continue; }
+    if(onlyNew) continue;
+    const row=n.all[i]; let ch=false;
+    for(const c in r) if(String(row[c]??'')!==String(r[c]??'')){ row[c]=r[c]; ch=true; }
+    if(ch) dirty.push(i);
+  }
+  const stale=[];
+  if(!onlyNew) n.all.forEach((r,i)=>{ const k=r[key]; if(k!=='' && k!=null && !seen.has(String(k))) stale.push(i); });
+  if(!dirty.length && !stale.length && !fresh.length && !grown) return;
+  if(db){
+    try{
+      for(const i of dirty){ const it=tblToItem(n.all[i],n.cl); await ListDB.update(n.ids[i],{name:it.name,fields:it.fields,value:it.fields.value??''}); }
+      if(stale.length) await ListDB.removeMany(stale.map(i=>n.ids[i]));
+    }catch(e){ alert('storage: '+(e.message||e)); return; }
+  }
+  for(let j=stale.length-1;j>=0;j--){ const i=stale[j]; if(n.p.sel===n.ids[i]) n.p.sel=null; n.all.splice(i,1); n.ids.splice(i,1); }
+  const rows=fresh.map(r=>{ const o={}; for(const c of n.cl) o[c]=r[c]??''; return o; });
+  if(rows.length){
+    let ids;
+    if(db){
+      try{ ids=await ListDB.addMany(n.p.list,rows.map(r=>tblToItem(r,n.cl))); }
+      catch(e){ alert('storage: '+(e.message||e)); return; }
+    }
+    n.all.push(...rows); if(ids) n.ids.push(...ids);
+  }
+  if(db){ if(grown) await ListDB.setMeta(n.p.list,{cols:n.cl}); }
+  else{ n.ids=n.all.map((_,j)=>j); await tblSave(n); }
+  if(grown) tblSetCols(n,n.cl.slice(),false);
+  tblDerive(n);
+  n.idx=Math.min(n.idx,Math.max(0,n.rows.length-1));
+}
 async function tblFromRows(n,list){
   if(tblRO(n) || n.loaded!==n.p.list){ n.rowsAgain=list; return; }
   if(n.rowsBusy){ n.rowsAgain=list; return; }
   n.rowsBusy=true;
   try{
-    if(n.p.rowsIn!=='add') await tblClear(n);
-    await tblAdd(n,list.filter(r=>r && typeof r==='object'));
+    if(n.p.rowsIn==='sync' || n.p.rowsIn==='new only') await tblSync(n,list,n.p.rowsIn==='new only');
+    else{
+      if(n.p.rowsIn!=='add') await tblClear(n);
+      await tblAdd(n,list.filter(r=>r && typeof r==='object'));
+    }
     n.uiDirty=true;
   }catch(e){ console.warn('table rows in:',e); }
   finally{
@@ -585,7 +633,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     {n:'initial',t:'check',d:true,label:'first row at start',adv:true},
     {n:'reset',t:'button',label:'Reset',fn:n=>seqReset(n),adv:true},
     {n:'collect',t:'check',d:true,label:'store rec / text wires',adv:true},
-    {n:'rowsIn',t:'select',opts:['replace','add'],d:'replace',label:'rows in (wire)',tip:'a set on the rows input is stored in the active list: replace its rows, or add to them'},
+    {n:'rowsIn',t:'select',opts:['replace','add','sync','new only'],d:'replace',label:'rows in (wire)',tip:'a set on the rows input is stored in the active list: replace its rows, add to them, sync (rows are matched by the upsert key column — default id — and changed, added or removed in place: nothing flickers, the selected row stays) or new only (add the rows whose key is not in the list yet, leave the rest alone)'},
     {n:'key',t:'text',d:'',adv:true,label:'upsert key col',tip:'if set, a wired rec with the same value in this column updates its row instead of adding one; count / first / last columns are kept'},
     {n:'pfields',t:'text',d:'',adv:true,label:'packet fields → columns',tip:'extra columns from a wired rec: "col=src, src2". src is a path into the record (a.b.c) or a field of its hex parsed by hexSchema (HEX Structure: mtype_name, body.devaddr …); * — all parsed fields'},
     {n:'pfillBtn',t:'button',label:'Fill packet fields into existing rows',adv:true,fn:n=>tblBackfill(n)},

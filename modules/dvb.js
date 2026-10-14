@@ -263,7 +263,7 @@ function dvbStream(n){
 
 def({ id:'dvbUsb', title:'DVB USB (Astrometa)', cat:'Sources', kw:'dvb t2 dvb-t dvb-c astrometa rtl2832 r828d mn88473 mn88472 cxd2837er sony tv television usb stick receiver transport stream', readout:true, always:true, resize:true, w:340,
   ins:[{n:'freq',t:'num'}],
-  outs:[{n:'bin',t:'bin'},{n:'lock',t:'num'},{n:'cnr',t:'num'},{n:'level',t:'num'}],
+  outs:[{n:'bin',t:'bin'},{n:'lock',t:'num'},{n:'cnr',t:'num'},{n:'level',t:'num'},{n:'mux',t:'bands'}],
   params:[{n:'connect',t:'button',label:'Connect USB…',fn:n=>dvbConnect(n)},
           {n:'disconnect',t:'button',label:'Disconnect',fn:n=>dvbDisconnect(n)},
           {n:'fw',t:'file',accept:'.fw,application/octet-stream',fn:async(n,f)=>{
@@ -283,7 +283,17 @@ def({ id:'dvbUsb', title:'DVB USB (Astrometa)', cat:'Sources', kw:'dvb t2 dvb-t 
   init(n){ n.dv_logTxt=[]; n.dv_t0=performance.now(); n.dv_status='not connected'; n.dv_rx=[]; n.dv_rxBytes=0; n.dv_run=false; n.dv_connected=false; n.dv_dirty=true; n.dv_pf=null; },
   dispose:n=>{ dvbDisconnect(n,true); },
   process(n,I){
-    if(typeof I.freq==='number' && I.freq>0 && Math.abs(I.freq-n.dv_pf)>1e-6){ n.dv_pf=I.freq; setMod(n,'freq',I.freq); if(n.dv_connected){ n.dv_sysIdx=0; dvbTune(n); } }
+    if(typeof I.freq==='number' && I.freq>0 && Math.abs(I.freq-n.dv_pf)>1e-6){           // МГц; кГц и Гц (колонка плана диапазонов) распознаются по величине
+      n.dv_pf=I.freq; const mhz=I.freq>1e6 ? I.freq/1e6 : I.freq>1e4 ? I.freq/1e3 : I.freq;
+      setMod(n,'freq',mhz); if(n.dv_connected){ n.dv_sysIdx=0; dvbTune(n); } }
+    // найденные мультиплексы (скан и текущий захват) → строки плана диапазонов
+    const mx=n.dv_mux||(n.dv_mux=new Map());
+    for(const r of n.dv_found||[]) if(r.lock) mx.set(r.f/1e6,{mhz:r.f/1e6,bw:r.bw/1e6,sys:r.sys});
+    if(n.dv_locked && n.dv_freq) mx.set(n.dv_freq/1e6,{mhz:n.dv_freq/1e6,bw:+n.p.bw||8,sys:n.dv_sys||'DVB-T'});
+    if(mx.size!==n.dv_muxN){
+      n.dv_muxN=mx.size;
+      n.dv_muxR=[...mx.values()].sort((a,b)=>a.mhz-b.mhz).map(m=>({id:'m'+m.mhz, name:m.sys+' mux '+m.mhz+' MHz', lo:Math.round((m.mhz-m.bw/2)*1000), hi:Math.round((m.mhz+m.bw/2)*1000), step:0, color:'', kind:'TV', note:'found by DVB USB'}));
+    }
     let bin=null;
     if(n.dv_rx && n.dv_rx.length){
       let len=0; for(const c of n.dv_rx) len+=c.length;
@@ -291,7 +301,7 @@ def({ id:'dvbUsb', title:'DVB USB (Astrometa)', cat:'Sources', kw:'dvb t2 dvb-t 
       n.dv_rx=[]; bin={d, name:'', mime:'video/mp2t', id:++DVB_SEQ};
     }
     const st=n.dv_st;
-    return {bin, lock:n.dv_locked ? 1 : 0, cnr:st&&st.cnr!=null ? st.cnr : 0, level:st&&st.strength!=null ? st.strength/1023 : 0};
+    return {bin, lock:n.dv_locked ? 1 : 0, cnr:st&&st.cnr!=null ? st.cnr : 0, level:st&&st.strength!=null ? st.strength/1023 : 0, mux:n.dv_muxR||null};
   },
   draw(n){
     const r=n.el.querySelector('.readout'); if(!r) return;
