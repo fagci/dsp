@@ -19,6 +19,8 @@ function tsvReset(n){
   try{ n.m2?.m2_reset(); }catch(e){}
   try{ n.m2?.a2_reset(); }catch(e){}
   n.aq=[]; n.aEnd=null;
+  try{ n.ad?.close(); }catch(e){}
+  n.ad=null; n.adKey='';
   n.dec=null; n.decCodec=''; n.needKey=true; n.lastTs=-1;
   for(const f of n.q||[]) try{ f.close(); }catch(e){}
   n.q=[]; n.base=null;
@@ -88,7 +90,41 @@ function tsvM2(n,f){
 }
 
 /* ---- звук MP2: wasm → сегменты на частоте движка с метками времени медиа → чтение по часам видео ---- */
+/* ---- звук AAC (ADTS): WebCodecs AudioDecoder → тот же путь сегментов ---- */
+function tsvAacOut(n,ad,data){
+  if(n.ad!==ad){ data.close(); return; }
+  const cnt=data.numberOfFrames, rate=data.sampleRate, nc=Math.min(2,data.numberOfChannels);
+  const pl=[]; for(let c=0;c<nc;c++){ const f=new Float32Array(cnt); data.copyTo(f,{planeIndex:c,format:'f32-planar'}); pl.push(f); }
+  const t0=data.timestamp/1e6; data.close();
+  if(cnt<2) return;
+  const sr=Eng.sr, k=rate/sr, m=Math.floor((cnt-1)/k);
+  const L=new Float32Array(m), R=new Float32Array(m), A=pl[0], B=pl[nc-1];
+  for(let i=0;i<m;i++){ const p=i*k, j=p|0, f=p-j, j1=Math.min(j+1,cnt-1); L[i]=A[j]*(1-f)+A[j1]*f; R[i]=B[j]*(1-f)+B[j1]*f; }
+  let t=t0;
+  if(n.aEnd!=null && Math.abs(t-n.aEnd)<.1) t=n.aEnd;
+  n.aEnd=t+m/sr;
+  n.aq.push({t0:t, i:0, L, R});
+  while(n.aq.length>200) n.aq.shift();
+}
+function tsvAac(n,a){
+  if(typeof AudioDecoder==='undefined'){ n.aInfo='AudioDecoder is not available in this browser'; return; }
+  const fr=tsAdtsSplit(a.d);
+  for(const f of fr){
+    const key=f.sr+'/'+f.ch;
+    if(!n.ad || n.adKey!==key){
+      try{ n.ad?.close(); }catch(e){}
+      const ad=new AudioDecoder({output:d=>tsvAacOut(n,ad,d), error:e=>{ if(n.ad===ad){ n.aInfo='AAC: '+e.message; n.ad=null; } }});
+      try{ ad.configure({codec:'mp4a.40.2', sampleRate:f.sr, numberOfChannels:f.ch, description:f.asc}); }
+      catch(e){ n.aInfo='AAC: '+e.message; return; }
+      n.ad=ad; n.adKey=key; n.aEnd=null;
+    }
+    if(a.pts<0 || n.ad.decodeQueueSize>60) continue;
+    n.aInfo='AAC · '+f.sr+' Hz · '+f.ch+' ch';
+    try{ n.ad.decode(new EncodedAudioChunk({type:'key', timestamp:Math.round((a.pts+f.dt)*1e6), data:f.d})); }catch(e){ n.aInfo='AAC: '+e.message; n.ad=null; return; }
+  }
+}
 function tsvAudio(n,a){
+  if(a.type==='aac'){ tsvAac(n,a); return; }
   if(a.type!=='mp2') return;
   const x=n.m2;
   if(!x){ if(!n.m2p) n.m2p=tsvM2Load().then(e=>{ n.m2=e; },e=>{ n.status='decoder: '+e.message; }); return; }
@@ -244,7 +280,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
       let t=n.status;
       if(n.m2err) t=TSV_M2ERR[n.m2err]||('MPEG-2 error '+n.m2err);
       if(pl.length) t='programs '+pl.map(p=>p.num+(p===d.cur ? '▶' : '')).join(' ')+' · '+(d.vcodec||'—')+(d.sps ? ' · '+d.sps.w+'×'+d.sps.h : '')+
-        ' · '+n.fps.toFixed(1)+' fps'+(d.cur?.apid ? ' · audio '+d.cur.atype+(d.cur.atype==='mp2' ? (n.aInfo ? ' · '+n.aInfo : '') : ' (not decoded)') : '');
+        ' · '+n.fps.toFixed(1)+' fps'+(d.cur?.apid ? ' · audio '+d.cur.atype+(d.cur.atype==='mp2' || d.cur.atype==='aac' ? (n.aInfo ? ' · '+n.aInfo : '') : ' (not decoded)') : '');
       if(st.cc||st.tei||n.dropped||n.m2bad) t+='\nlost packets '+st.cc+' (now '+Math.round(n.ccRate||0)+'/s) · transport errors '+st.tei+(st.sync ? ' · stream breaks '+st.sync+(()=>{ const e=Object.entries(st.gaps).sort((x,y)=>y[1]-x[1])[0]; return e ? ' (usually '+e[0]+' extra bytes ×'+e[1]+')' : ''; })() : '')+(n.dropped ? ' · dropped frames '+n.dropped : '')+(n.m2bad ? ' · bad slices '+n.m2bad : '');
       if(pl.length) t+='\nvideo frames '+st.frames+' (entry points '+st.keys+') · decoded '+n.decoded+' · shown '+n.shown+(n.dec ? ' · decoder queue '+n.dec.decodeQueueSize : n.decCodec ? '' : ' · decoder not started')+(n.needKey ? ' · waiting for an entry point' : '')+' · '+(tsvMode(n).sw || n.bigNote ? 'software' : 'hardware')+' decoder, '+(tsvMode(n).idr ? 'IDR only' : 'any I frame')+' (IDR frames in the stream '+st.idr+')'+(n.notes.length ? '\n'+n.notes.join('\n') : '');
       if(pl.length && d.cur?.apid) t+='\naudio PES '+(st.apes||0)+' · queued '+(n.aq.reduce((a,g)=>a+(g.L.length-g.i),0)/Eng.sr).toFixed(2)+' s · played '+((n.aPlayed||0)/Eng.sr).toFixed(1)+' s · offset to video '+Math.round((n.aOff||0)*1000)+' ms · resyncs '+(n.aResync||0)+(n.base==null ? ' · no video clock' : '');

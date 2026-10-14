@@ -101,17 +101,32 @@ async function ipPlaylist(n,text,base,g,ac){
     if(cur.kind!=='media') throw new Error('playlist changed type');
   }
 }
+// номер (с 1), id / название канала или адрес
+function ipFind(n,v){
+  const L=n.chans||[];
+  if(typeof v==='number' || /^\d+$/.test(String(v).trim())) return +v;
+  const s=String(v).trim().toLowerCase();
+  let i=L.findIndex(c=>c.id && c.id.toLowerCase()===s || c.name.toLowerCase()===s || c.url===v);
+  if(i<0) i=L.findIndex(c=>c.name.toLowerCase().includes(s));
+  return i+1;
+}
+function ipStep(n,d){
+  const L=n.chans?.length; if(!L) return;
+  ipChannel(n,(((n.cur||0)-1+d+L)%L)+1);
+}
 function ipChannel(n,i){
-  const c=n.chans?.[i-1];
+  const c=n.chans?.[i-1]; n.cur=i;
   if(!c){ ipLog(n,'no channel '+i+' in the list'); return; }
   n.name=c.name; ipOpen(n,c.url);
 }
 
 def({ id:'iptv', title:'IPTV', cat:'Sources', kw:'iptv tv television stream m3u m3u8 hls playlist channels mpeg ts http live', readout:true, always:true, resize:true, w:340,
-  ins:[{n:'url',t:'txt'},{n:'channel',t:'num'}],
+  ins:[{n:'url',t:'txt'},{n:'channel',t:'val'},{n:'next',t:'num'}],
   outs:[{n:'bin',t:'bin'},{n:'rows',t:'bands'},{n:'name',t:'txt'},{n:'live',t:'num'},{n:'kbps',t:'num'}],
   params:[{n:'url',t:'text',d:'',label:'URL: TS stream (http), HLS .m3u8 or an M3U channel list'},
           {n:'play',t:'button',label:'Play',fn:n=>ipOpen(n,n.p.url)},
+          {n:'prev',t:'button',label:'◀ Previous channel',fn:n=>ipStep(n,-1)},
+          {n:'nextb',t:'button',label:'Next channel ▶',fn:n=>ipStep(n,1)},
           {n:'stop',t:'button',label:'Stop',fn:n=>{ ipStop(n); n.rx=[]; n.rxLen=0; ipLog(n,'stopped'); }},
           {n:'file',t:'file',accept:'.m3u,.m3u8,audio/x-mpegurl,application/vnd.apple.mpegurl',fn:async(n,f)=>{
               const pl=iptvParse(await f.text(),'');
@@ -122,13 +137,16 @@ def({ id:'iptv', title:'IPTV', cat:'Sources', kw:'iptv tv television stream m3u 
           {n:'reconnect',t:'check',d:true,label:'reconnect a dropped stream'},
           {n:'proxy',t:'check',d:false,label:'through the CORS proxy from Settings'}],
   init(n){ n.rx=[]; n.rxLen=0; n.bytes=0; n.status='enter a URL and press Play'; n.chans=null; n.rows=null; n.name=''; n.warn='';
-    n.rate=0; n.rateAt=performance.now(); n.rateB=0; n.inUrl=''; n.inCh=0; n.live=false; n.gen=0; n.want=false; n.variant=''; n.listOnly=false; },
+    n.rate=0; n.rateAt=performance.now(); n.rateB=0; n.inUrl=''; n.inCh=''; n.nxPrev=false; n.cur=0; n.live=false; n.gen=0; n.want=false; n.variant=''; n.listOnly=false; },
   dispose:n=>{ ipStop(n); },
   process(n,I){
     if(typeof I.url==='string' && I.url && I.url!==n.inUrl){ n.inUrl=I.url; setMod(n,'url',I.url); ipOpen(n,I.url); }
-    const ch=Math.round(I.channel||0);
-    if(ch>0 && ch!==n.inCh){ n.inCh=ch; setMod(n,'channel',ch); if(n.chans) ipChannel(n,ch); }
-    else if(!(ch>0)) n.inCh=0;
+    const cv=I.channel, ck= cv==null || cv==='' || cv===0 ? '' : String(cv);
+    if(ck && ck!==n.inCh){
+      if(/^https?:\/\//i.test(ck)){ n.inCh=ck; setMod(n,'url',ck); ipOpen(n,ck); }
+      else if(n.chans){ n.inCh=ck; const i=ipFind(n,cv); if(i>0){ setMod(n,'channel',i); n.pcPrev=i; ipChannel(n,i); } else ipLog(n,'no channel «'+ck+'» in the list'); }
+    }else if(!ck) n.inCh='';
+    const nx=(I.next||0)>.5; if(nx && !n.nxPrev) ipStep(n,1); n.nxPrev=nx;
     const pc=+n.p.channel|0;
     if(pc>0 && pc!==n.pcPrev && n.chans){ n.pcPrev=pc; ipChannel(n,pc); }
     let bin=null;

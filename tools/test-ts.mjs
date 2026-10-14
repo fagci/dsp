@@ -5,7 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,Map,Array,Error});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/ts-kernels.js'),'utf8')+';this.T={TsDemux,tsAvcSps,tsNals,tsLayout,tsAvcSliceType,tsAvcMaxFs};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/ts-kernels.js'),'utf8')+';this.T={TsDemux,tsAvcSps,tsNals,tsLayout,tsAvcSliceType,tsAvcMaxFs,tsAdtsSplit};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -112,4 +112,12 @@ ok('lost packet drops one frame',d3.takeVideo().length===N-1 && d3.stat.cc>0,d3.
 }
 
 console.log(bad?bad+' FAILED':'all ok'); ok('MaxFS by level',T.tsAvcMaxFs(30)===1620 && T.tsAvcMaxFs(31)===3600 && T.tsAvcMaxFs(40)===8192 && T.tsAvcMaxFs(51)===36864 && T.tsAvcMaxFs(62)===139264);
+{ // ADTS: два кадра AAC-LC 48 кГц стерео, по 10 и 6 байт данных
+  const fr=(n)=>{ const len=7+n, h=[0xff,0xf1,(1<<6)|(3<<2)|0,(2<<6)|((len>>11)&3),(len>>3)&255,((len&7)<<5)|0x1f,0xfc]; return [...h,...Array(n).fill(7)]; };
+  const a=T.tsAdtsSplit(new Uint8Array([...fr(10),...fr(6)]));
+  ok('ADTS: 2 frames',a.length===2 && a[0].d.length===10 && a[1].d.length===6);
+  ok('ADTS: sr / ch / ASC',a[0].sr===48000 && a[0].ch===2 && a[0].asc[0]===0x11 && a[0].asc[1]===0x90,Array.from(a[0].asc).join());
+  ok('ADTS: time step',Math.abs(a[1].dt-1024/48000)<1e-9);
+  ok('ADTS: cut frame dropped',T.tsAdtsSplit(new Uint8Array([...fr(10)].slice(0,12))).length===0);
+}
 process.exit(bad?1:0);
