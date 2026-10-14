@@ -10,7 +10,7 @@
 // новой не подтвердит успешную загрузку ('ok'). Если скрипты не загрузились, страница шлёт 'rollback' —
 // пока сеть отдаёт index.html этой версии, воркер подаёт index.html последней подтверждённой.
 const PFX='dsp-shell-v';
-const CACHE='dsp-shell-v4080bef5';
+const CACHE='dsp-shell-v9d333c3d';
 const V=CACHE.slice(PFX.length);
 const META='dsp-meta', STATE_KEY='./__state', PIN_MS=6*3600e3;    // сколько держать откат, пока не выйдет новая версия
 const SHELL=[
@@ -74,7 +74,9 @@ const SHELL=[
   './modules/viz-kernels.js?v='+V,
   './modules/visualizers.js?v='+V,
   './modules/player-kernels.js?v='+V,
+  './modules/medialib-kernels.js?v='+V,
   './modules/playlist.js?v='+V,
+  './modules/medialib.js?v='+V,
   './modules/player.js?v='+V,
   './modules/logicusb.js?v='+V,
   './modules/logican.js?v='+V,
