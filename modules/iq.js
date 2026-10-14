@@ -179,7 +179,7 @@ defIQ({ id:'iqDelay', title:'IQ Delay', cat:'IQ', kw:'delay fractional phase shi
           {n:'phase',t:'range',min:-180,max:180,step:.5,d:0,label:'phase shift, °'}]},
   n=>n.ui ? 'delay '+n.ui.D.toFixed(2)+' + 16 samples · phase '+n.ui.phase.toFixed(1)+'°' : 'no input');
 
-defIQ({ id:'xcorr', title:'Cross-Correlator (TDOA / interferometer)', cat:'Analysis', kw:'tdoa interferometry direction finding two dongles correlation delay phase coherence bearing clock drift kerberos',
+defIQ({ id:'iqXcorr', title:'Cross-Correlator (TDOA / interferometer)', cat:'Analysis', kw:'tdoa interferometry direction finding two dongles correlation delay phase coherence bearing clock drift kerberos',
   ins:[{n:'a',t:'iq'},{n:'b',t:'iq'}],
   outs:[{n:'delay',t:'num'},{n:'dist',t:'num'},{n:'bearing',t:'num'},{n:'phase',t:'num'},{n:'coh',t:'num'},{n:'drift',t:'num'}],
   params:[{n:'size',t:'select',opts:['1024','2048','4096','8192','16384'],d:'4096',label:'block, samples'},
