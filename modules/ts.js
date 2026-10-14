@@ -262,22 +262,32 @@ function tsvChannels(n){
     rows.push({
       lcn:d.net.lcn.get(sid)||'', program:sid, name:sv?.name||'', type:sv ? (TS_SVC_TYPES[sv.type]||('type '+sv.type)) : (vid ? 'TV' : 'Radio'),
       scrambled:sv?.ca ? 'yes' : '', video:vid ? vid.name+(pr===d.cur && d.sps ? ' '+d.sps.w+'×'+d.sps.h : '') : '', audio:aud.join(', '),
-      extra:sub.join(', '), mbit:+(bits/sec/1e6).toFixed(2), now:nowE?.name||'', until:nowE ? tsvEvEnd(nowE) : '', next:nextE?.name||'',
+      extra:sub.join(', '), mbit:+(bits/sec/1e6).toFixed(1), now:nowE?.name||'', until:nowE ? tsvEvEnd(nowE) : '', next:nextE?.name||'',
       provider:sv?.provider||'', playing:pr && pr===d.cur ? '▶' : '' });
   }
   rows.sort((a,b)=>(+a.lcn||9999)-(+b.lcn||9999) || a.program-b.program);
-  const j=JSON.stringify(rows);
-  if(j!==n.chanJ){ n.chanJ=j; n.chanRows=rows; }
   // телепрограмма: события всех служб
   const evs=[];
   for(const [sid,m] of d.events){
     const sv=d.svc.get(sid);
-    for(const e of m.values()) if(e.name) evs.push({lcn:d.net.lcn.get(sid)||'', program:sid, channel:sv?.name||'', start:e.start+' UTC', min:e.min, title:e.name, text:e.text, state:e.pf||(TSV_RUN[e.run]||''), ms:e.ms});
+    for(const e of m.values()) if(e.name) evs.push({lcn:d.net.lcn.get(sid)||'', program:sid, channel:sv?.name||'', start:tsvLocal(e.ms), min:e.min, title:e.name, text:e.text, state:e.pf||(TSV_RUN[e.run]||''), ms:e.ms});
   }
   evs.sort((a,b)=>a.program-b.program || a.ms-b.ms);
   for(const e of evs) delete e.ms;
-  const j2=JSON.stringify(evs);
-  if(j2!==n.epgJ){ n.epgJ=j2; n.epgRows=evs; }
+  // одна таблица: канал, под ним его передачи. Строки заменяются только при смене содержимого (битрейт не в счёт), иначе таблица мигает
+  const all=[];
+  const by=new Map(); for(const e of evs){ if(!by.has(e.program)) by.set(e.program,[]); by.get(e.program).push(e); }
+  for(const r of rows){ all.push({kind:'channel',...r}); for(const e of by.get(r.program)||[]) all.push({kind:'event',...e}); }
+  for(const [sid,l] of by) if(!rows.some(r=>r.program===sid)) for(const e of l) all.push({kind:'event',...e});
+  const pub=(key,list,min)=>{
+    const j=JSON.stringify(list,(k,v)=>k==='mbit' ? undefined : v);
+    const mb=list.map(r=>r.mbit).join();
+    if(j!==n[key+'J'] || (mb!==n[key+'M'] && now-(n[key+'T']||0)>20000)){
+      if(now-(n[key+'T']||0)<min && n[key+'J']) return;
+      n[key+'J']=j; n[key+'M']=mb; n[key+'T']=now; n[key+'R']=list;
+    }
+  };
+  pub('chan',rows,5000); pub('epg',evs,10000); pub('all',all,10000);
   // сеть и время
   const L=[];
   if(d.net.name) L.push('network '+d.net.name+(d.net.id ? ' ('+d.net.id+')' : ''));
@@ -286,10 +296,11 @@ function tsvChannels(n){
   L.push('services '+rows.length+(d.sdtDone ? '' : ' (names not received yet)'));
   n.infoTxt=L.join('\n');
 }
-function tsvEvEnd(e){
-  const m=e.min+Math.round((e.ms%86400000)/60000), h=Math.floor(m/60)%24, mi=m%60;
-  return (h<10 ? '0' : '')+h+':'+(mi<10 ? '0' : '')+mi;
+function tsvLocal(ms){
+  const d=new Date(ms), p=v=>(v<10 ? '0' : '')+v;
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());
 }
+function tsvEvEnd(e){ return tsvLocal(e.ms+e.min*60000).slice(11); }
 function tsvPump(n){
   if(n.fileObj && !n.rd && n.q.length+(n.dec?.decodeQueueSize||0)<(n.dmx.cur?.vtype==='mpeg2' ? 8 : 24)){
     const f=n.fileObj, pos=n.pos, end=Math.min(f.size,pos+188*64);
@@ -303,7 +314,7 @@ function tsvPump(n){
 }
 
 def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport stream dvb tv video h264 avc hevc webcodecs television broadcast', readout:true, always:true,
-  ins:[{n:'bin',t:'bin'},{n:'prog',t:'num'}], outs:[{n:'vid',t:'vid'},{n:'L',t:'sig'},{n:'R',t:'sig'},{n:'lock',t:'num'},{n:'fps',t:'num'},{n:'chan',t:'bands'},{n:'epg',t:'bands'},{n:'info',t:'txt'}],
+  ins:[{n:'bin',t:'bin'},{n:'prog',t:'num'}], outs:[{n:'vid',t:'vid'},{n:'L',t:'sig'},{n:'R',t:'sig'},{n:'lock',t:'num'},{n:'fps',t:'num'},{n:'all',t:'bands'},{n:'chan',t:'bands'},{n:'epg',t:'bands'},{n:'info',t:'txt'}],
   params:[{n:'file',t:'file',accept:'.ts,.m2ts,.mts,video/mp2t',fn:(n,f)=>{
             tsvReset(n); n.dmx.reset(); n.fileObj=f; n.pos=0; n.status='file '+f.name; }},
           {n:'loop',t:'check',d:true,label:'loop the file'},
@@ -342,7 +353,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
       if(n.aNoV>60){ n.ts0=n.aq[0].t0*1e6; n.wall0=now+(+n.p.delay||0); n.base=1; n.aSh=0; n.aNoV=0; }
     }
     if(n.base!=null && n.aq.length) tsvAudioRead(n,oL,oR,n.ts0/1e6+(now-n.wall0)/1000-(+n.p.avsync||0)/1000+(n.aSh||0),+n.p.volume);
-    return {vid:n.gotFrame && n.pic.width ? n.pic : null, L:oL, R:oR, lock:n.gotFrame ? 1 : 0, fps:n.fps, chan:n.chanRows||null, epg:n.epgRows||null, info:n.infoTxt||''}; },
+    return {vid:n.gotFrame && n.pic.width ? n.pic : null, L:oL, R:oR, lock:n.gotFrame ? 1 : 0, fps:n.fps, chan:n.chanR||null, epg:n.epgR||null, all:n.allR||null, info:n.infoTxt||''}; },
   draw(n,cv,cx){
     const r=n.el.querySelector('.readout');
     if(r){
