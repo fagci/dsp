@@ -139,7 +139,7 @@ class TsDemux{
     }else{
       for(let i=0;i+5<es.length && i<es.length;i++)
         if(es[i]===0 && es[i+1]===0 && es[i+2]===1 && es[i+3]===0){ key=((es[i+5]>>3)&7)===1; break; }
-      this.vcodec='mp4v.20.9';
+      this.vcodec='mpeg2video';
     }
     this.vid.push({pts, key, d:es}); this.stat.frames++;
   }
