@@ -42,7 +42,13 @@ function tsAvcSps(nal){
   const cux=chroma===0||chroma===3 ? 1 : 2, cuy=(chroma===1 ? 2 : 1)*(2-frameMbs);
   const w=mbw*16-(cl+cr)*cux, h=(2-frameMbs)*mbh*16-(ct+cb)*cuy;
   if(!(w>0 && h>0 && w<=8192 && h<=8192)) return null;
-  return {profile, compat, level, w, h};
+  return {profile, compat, level, w, h, mbs:mbw*mbh*(2-frameMbs), mbw, mbh, frameMbs, crop:[cl,cr,ct,cb]};
+}
+// предел размера кадра уровня H.264 в макроблоках (MaxFS); заявленный уровень IPTV-потоков часто занижен
+function tsAvcMaxFs(level){
+  const t=[[10,99],[11,396],[13,396],[20,396],[21,792],[22,1620],[30,1620],[31,3600],[32,5120],[40,8192],[41,8192],[42,8704],[50,22080],[51,36864],[52,36864]];
+  for(const [l,m] of t) if(level<=l) return m;
+  return 139264;
 }
 const tsHex2=v=>(v<16?'0':'')+v.toString(16);
 
