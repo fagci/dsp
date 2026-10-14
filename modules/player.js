@@ -1,78 +1,172 @@
 "use strict";
 /* ============================ PLAYER (Winamp) ============================
-   Music Player — плейлист из файлов и URL, prev / play / pause / stop / next, перемотка, громкость и баланс,
+   Music Player — плейлист (хранится в патче), prev / play / pause / stop / next, перемотка, громкость и баланс,
    shuffle и repeat, теги ID3, стерео на выходе; следующий трек декодируется заранее (без паузы между треками).
+   Дорожки — файлы общего файлового хранилища (FileStore: те же, что в Files и Sample Library; импорт с диска кладёт
+   файл в папку Music пространства files) либо URL (интернет-радио, потоки): они играют через <audio> тем же путём, что
+   Audio Stream. Наполнение: файлы / перетаскивание / библиотека / провода (Files → add, Internet Radio → url + name, rows).
    Graphic Equalizer (10 bands) — десять полос Winamp и предусилитель, пресеты. Ядро — modules/player-kernels.js. */
 
 const WA_EXT=/\.(mp3|ogg|oga|opus|wav|flac|m4a|aac|weba|webm)$/i;
+const WA_MIME={mp3:'audio/mpeg',ogg:'audio/ogg',oga:'audio/ogg',opus:'audio/ogg',wav:'audio/wav',flac:'audio/flac',m4a:'audio/mp4',aac:'audio/aac',weba:'audio/webm',webm:'audio/webm'};
 let waAC=null;
 const waEl=(tag,cls,text)=>{ const e=document.createElement(tag); if(cls) e.className=cls; if(text!=null) e.textContent=text; return e; };
 const waSet=(el,t)=>{ if(el.textContent!==t) el.textContent=t; };
+const waIsAudio=r=>(r.mime||r.type||'').startsWith('audio/') || WA_EXT.test(r.name||'');
 
-async function waDecode(src){
-  const raw=typeof src==='string' ? await (await fetch(src)).arrayBuffer() : await src.arrayBuffer();
+async function waBlob(t){
+  const r=await FileStore.get(t.fs);
+  if(!r) throw new Error('file is missing in the library');
+  return r.blob;
+}
+async function waDecode(t){
+  const raw=await (await waBlob(t)).arrayBuffer();
   const ac=Eng.ctx||waAC||(waAC=new (window.AudioContext||window.webkitAudioContext)());
   const b=await ac.decodeAudioData(raw);
   const L=b.getChannelData(0);
   return {L, R:b.numberOfChannels>1 ? b.getChannelData(1) : L, sr:b.sampleRate, ch:b.numberOfChannels};
 }
-async function waTag(t){
-  if(typeof t.src==='string') return;
+// имя и теги записи библиотеки; ошибка — файла там нет
+async function waMeta(t){
+  if(t.fs==null) return;
   try{
-    const head=new Uint8Array(await t.src.slice(0,524288).arrayBuffer());
-    let tag=wpId3(head);
-    if(!tag.title && t.src.size>=128) tag=wpId3(new Uint8Array(await t.src.slice(t.src.size-128).arrayBuffer()));
-    t.tag=tag;
+    const r=await FileStore.get(t.fs);
+    if(!r){ t.err='missing in the library'; return; }
+    t.name=r.name; t.err='';
+    if(r.meta?.tag) t.tag=r.meta.tag;
+    else if(r.blob && r.mime!=='audio/wav' && r.size>128){
+      const head=new Uint8Array(await r.blob.slice(0,524288).arrayBuffer());
+      let tag=wpId3(head);
+      if(!tag.title) tag=wpId3(new Uint8Array(await r.blob.slice(r.blob.size-128).arrayBuffer()));
+      t.tag=tag; }
+    if(r.meta?.duration) t.dur=r.meta.duration;
   }catch(e){}
 }
-const waTitle=t=>t ? wpName(t.tag, typeof t.src==='string' ? decodeURIComponent(t.src.split('?')[0]) : t.src.name) : '';
+const waTitle=t=>!t ? '' : t.url ? (t.name||t.url) : wpName(t.tag,t.name);
 
+function waSave(n){
+  n.p.list=JSON.stringify(n.list.map(t=>t.url ? {url:t.url,name:t.name||''} : {fs:t.fs,name:t.name||''}));
+  n.p.cur=n.cur; }
 function waOrder(n){ n.order=wpOrder(n.list.length,n.p.shuffle,n.cur); }
-function waAdd(n,srcs){
-  for(const s of srcs){
-    if(typeof s!=='string' && !(s.type.startsWith('audio/') || WA_EXT.test(s.name))) continue;
-    const t={src:s, tag:null, dur:0, err:''}; n.list.push(t);
-    waTag(t).then(()=>{ n.dirty=true; }); }
-  waOrder(n); n.dirty=true;
-  if(n.cur<0 && n.list.length) waStart(n,0,false);
+function waLoadList(n){
+  let a=[]; try{ a=JSON.parse(n.p.list||'[]'); }catch(e){}
+  n.list=a.filter(x=>x&&(x.url||x.fs!=null)).map(x=>({fs:x.url?null:x.fs, url:x.url||'', name:x.name||'', tag:null, dur:0, err:''}));
+  n.cur=n.list.length ? Math.min(Math.max(+n.p.cur|0,0),n.list.length-1) : -1;
+  n.title=waTitle(n.list[n.cur]); waOrder(n);
+  for(const t of n.list) waMeta(t).then(()=>{ n.dirty=true; });
 }
+function waPush(n,t){
+  n.list.push(t); waMeta(t).then(()=>{ n.dirty=true; });
+  waOrder(n); n.nxt=null; waSave(n); n.dirty=true;
+  if(n.cur<0){ n.cur=0; n.title=waTitle(n.list[0]); waSave(n); }
+  return n.list.length-1;
+}
+const waAddIds=(n,ids)=>{ for(const id of ids) if(typeof id==='number' && id>=0) waPush(n,{fs:id,url:'',name:'',tag:null,dur:0,err:''}); };
+function waAddUrl(n,url,name,play){
+  url=String(url||'').trim(); if(!url) return;
+  let i=n.list.findIndex(t=>t.url===url);
+  if(i<0) i=waPush(n,{fs:null,url,name:String(name||'').trim(),tag:null,dur:0,err:''});
+  if(play) waStart(n,i,true);
+}
+async function waMusicFolder(space){
+  const f=(await FileStore.listFolders(space,null)).find(x=>x.name==='Music');
+  return f ? f.id : FileStore.addFolder(space,'Music',null);
+}
+// файлы с диска → хранилище (files/Music или audio — клипами библиотеки семплов) → дорожки
+async function waImport(n,files){
+  const ids=[];
+  for(const f of files){
+    if(!waIsAudio(f)) continue;
+    try{
+      if(n.p.store==='audio'){ ids.push(await FileStore.importFile('audio',f,await waMusicFolder('audio'))); continue; }
+      const ext=(f.name.match(/\.(\w+)$/)||[])[1]?.toLowerCase();
+      let tag=null;
+      try{ tag=wpId3(new Uint8Array(await f.slice(0,524288).arrayBuffer()));
+        if(!tag.title && f.size>=128) tag=wpId3(new Uint8Array(await f.slice(f.size-128).arrayBuffer())); }catch(e){}
+      ids.push(await FileStore.put({space:'files',folderId:await waMusicFolder('files'),name:f.name,
+        mime:f.type||WA_MIME[ext]||'audio/mpeg',blob:f,meta:{tag}}));
+    }catch(e){ alert('Could not add '+f.name+': '+e.message); }
+  }
+  waAddIds(n,ids);
+  if(n.cur>=0 && !n.data && n.mode!=='stream' && !n.loading) n.dirty=true;
+}
+// выбор из файлового менеджера: ＋ выбранный файл / ＋ вся папка
+function waPick(n){
+  const ov=waEl('div','fm-ov'), box=waEl('div','wa-pick');
+  const host=waEl('div','wa-pick-fm'), bar=waEl('div','wa-row');
+  const mk=(t,fn)=>{ const b=waEl('button','',t); b.onclick=fn; bar.append(b); return b; };
+  let fm=null;
+  const close=()=>ov.remove();
+  mk('＋ selected',()=>{ const r=fm.selected; if(r && waIsAudio(r)) waAddIds(n,[r.id]); });
+  mk('＋ all in this folder',async()=>{
+    const a=(await FileStore.list(fm.space,fm.folder)).filter(waIsAudio); waAddIds(n,a.map(r=>r.id)); });
+  mk('close',close);
+  box.append(host,bar); ov.append(box); document.body.append(ov);
+  ov.onclick=e=>{ if(e.target===ov) close(); };
+  fm=fmMount(host,{spaces:['files','audio'],space:'files',accept:waIsAudio,onOpen:r=>waAddIds(n,[r.id])});
+}
+
 function waPrefetch(n){
   const nx=wpStep(n.order,n.cur,1,n.p.repeat,true);
-  if(nx<0 || nx===n.cur || n.nxt?.idx===nx) return;
-  const t=n.list[nx], rec={idx:nx, src:t.src, data:null}; n.nxt=rec;
-  waDecode(t.src).then(d=>{ rec.data=d; t.dur=d.L.length/d.sr; n.dirty=true; }).catch(()=>{ if(n.nxt===rec) n.nxt=null; });
+  if(nx<0 || nx===n.cur || n.list[nx].url || n.nxt?.idx===nx) return;
+  const t=n.list[nx], rec={idx:nx, fs:t.fs, data:null}; n.nxt=rec;
+  waDecode(t).then(d=>{ rec.data=d; t.dur=d.L.length/d.sr; n.dirty=true; }).catch(()=>{ if(n.nxt===rec) n.nxt=null; });
 }
 function waUse(n,idx,d,play){
-  const t=n.list[idx]; n.cur=idx; n.data=d; n.pos=0; n.loading=false; n.rewind=false; n.play=play; t.dur=d.L.length/d.sr; t.err='';
-  n.title=waTitle(t); n.dirty=true; n.fails=0; waPrefetch(n);
+  const t=n.list[idx]; n.cur=idx; n.mode='file'; n.data=d; n.pos=0; n.loading=false; n.rewind=false; n.play=play; t.dur=d.L.length/d.sr; t.err='';
+  n.title=waTitle(t); n.dirty=true; n.fails=0; waSave(n); waPrefetch(n);
 }
+function waStreamEnd(n){ if(n.sx.audioEl) n.sx.audioEl.pause(); streamStop(n.sx); n.sxEnded=false; }
 function waStart(n,idx,play){
   const t=n.list[idx]; if(!t) return;
-  n.cur=idx; n.dirty=true; n.title=waTitle(t);
+  n.cur=idx; n.dirty=true; n.title=waTitle(t); waSave(n);
   const id=++n.lid;
-  if(n.nxt && n.nxt.idx===idx && n.nxt.src===t.src && n.nxt.data){ const d=n.nxt.data; n.nxt=null; waUse(n,idx,d,play); return; }
+  if(t.url){                                           // поток / URL: <audio> → тап в граф, как у Audio Stream
+    n.data=null; n.nxt=null; n.mode='stream'; n.play=play; n.rewind=false; n.pos=0; n.sxEnded=false;
+    waStreamEnd(n);
+    if(play){ n.loading=true; n.sx.p.url=t.url; t.err='';
+      streamPlay(n.sx).then(()=>{ if(id!==n.lid) return;
+        n.loading=false;
+        if(!n.sx.connected){ t.err=(n.sx.status||'error').slice(0,60); n.play=false; n.dirty=true;
+          if(++n.fails<n.list.length) waNext(n,1,true); return; }
+        n.fails=0; n.sx.audioEl?.addEventListener('ended',()=>{ if(id===n.lid) n.sxEnded=true; }); n.dirty=true; }); }
+    return; }
+  waStreamEnd(n); n.mode='file';
+  if(n.nxt && n.nxt.idx===idx && n.nxt.fs===t.fs && n.nxt.data){ const d=n.nxt.data; n.nxt=null; waUse(n,idx,d,play); return; }
   n.nxt=null; n.data=null; n.play=false; n.loading=true;
-  waDecode(t.src).then(d=>{ if(id===n.lid) waUse(n,idx,d,play); })
+  waDecode(t).then(d=>{ if(id===n.lid) waUse(n,idx,d,play); })
     .catch(e=>{ if(id!==n.lid) return;
       n.loading=false; t.err=String(e.message||e).slice(0,60)||'decode error'; n.dirty=true;
       if(play && ++n.fails<n.list.length) waNext(n,1,true); });
 }
 function waNext(n,dir,auto){
   const j=wpStep(n.order,n.cur,dir,n.p.repeat,auto);
-  if(j<0){ n.play=false; n.rewind=true; n.dirty=true; return; }
+  if(j<0){ n.play=false; n.rewind=true; n.dirty=true; if(n.mode==='stream') waStreamEnd(n); return; }
   waStart(n,j,n.play||!!auto);
 }
+const waHas=n=>!!n.data || (n.mode==='stream' && n.sx.connected);
 function waToggle(n){
-  if(!n.data){ if(n.cur>=0 && !n.loading) waStart(n,n.cur,true); return; }
-  n.play=!n.play; n.rewind=false; n.dirty=true;
+  if(!waHas(n)){ if(n.cur>=0 && !n.loading) waStart(n,n.cur,true); else if(n.cur<0 && n.list.length) waStart(n,0,true); return; }
+  waPlayPause(n,!n.play);
 }
-function waStop(n){ n.play=false; n.rewind=true; n.dirty=true; }
+function waPlayPause(n,on){
+  n.play=on; n.rewind=false; n.dirty=true;
+  if(n.mode==='stream' && n.sx.audioEl){ if(on) n.sx.audioEl.play().catch(()=>{}); else n.sx.audioEl.pause(); }
+}
+function waStop(n){
+  n.play=false; n.rewind=true; n.dirty=true;
+  if(n.mode==='stream') waStreamEnd(n); }
+function waLen(n){ return n.mode==='stream' ? (n.sx.audioEl && isFinite(n.sx.audioEl.duration) ? n.sx.audioEl.duration : 0) : n.data ? n.data.L.length/n.data.sr : 0; }
+function waPos(n){ return n.mode==='stream' ? (n.sx.audioEl ? n.sx.audioEl.currentTime : 0) : n.data ? n.pos/n.data.sr : 0; }
+function waSeek(n,fr){
+  if(n.mode==='stream'){ const L=waLen(n); if(L && n.sx.audioEl) n.sx.audioEl.currentTime=fr*L; }
+  else if(n.data) n.pos=fr*(n.data.L.length-1); }
+function waClear(n){ n.lid++; waStreamEnd(n); n.list=[]; n.cur=-1; n.data=null; n.mode='file'; n.play=false; n.loading=false; n.nxt=null; n.title=''; waOrder(n); waSave(n); n.dirty=true; }
 function waRemove(n,i){
   n.list.splice(i,1);
-  if(i===n.cur){ n.lid++; n.data=null; n.play=false; n.loading=false; n.nxt=null; n.cur=Math.min(i,n.list.length-1); n.title='';
-    if(n.cur>=0) waStart(n,n.cur,false); }
+  if(i===n.cur){ n.lid++; waStreamEnd(n); n.data=null; n.mode='file'; n.play=false; n.loading=false; n.nxt=null; n.cur=Math.min(i,n.list.length-1); n.title=waTitle(n.list[n.cur]); }
   else if(i<n.cur) n.cur--;
-  waOrder(n); n.nxt=null; n.dirty=true;
+  waOrder(n); n.nxt=null; waSave(n); n.dirty=true;
 }
 
 function waMount(n){
@@ -85,32 +179,33 @@ function waMount(n){
      '<button data-a="prev" title="previous (Z)">⏮</button><button data-a="play" title="play (X)">▶</button>'+
      '<button data-a="pause" title="pause (C)">⏸</button><button data-a="stop" title="stop (V)">⏹</button>'+
      '<button data-a="next" title="next (B)">⏭</button></span>'+
-     '<label title="volume">🔊<input type="range" min="0" max="1" step="0.01" data-f="vol"></label>'+
+     '<label title="volume">🔊<input type="range" min="0" max="1.5" step="0.01" data-f="vol"></label>'+
      '<label title="balance">⚖<input type="range" min="-1" max="1" step="0.01" data-f="bal"></label></div>'+
    '<div class="wa-row"><button data-a="shuf">shuffle</button><button data-a="rep">repeat</button>'+
-     '<button data-a="add">+ files</button><button data-a="url">+ URL</button><button data-a="clr">clear</button></div>'+
+     '<button data-a="add" title="add files from this device (kept in the library)">+ files</button>'+
+     '<button data-a="lib" title="pick from the file manager: Files / Sample Library">+ library</button>'+
+     '<button data-a="url" title="stream or file URL">+ URL</button><button data-a="clr">clear</button></div>'+
    '<div class="wa-pl" data-f="pl"></div>';
   const f={}; for(const e of root.querySelectorAll('[data-f]')) f[e.dataset.f]=e;
   const inp=waEl('input'); inp.type='file'; inp.multiple=true; inp.accept='audio/*'; inp.hidden=true; root.append(inp);
   const act={
     prev:()=>waNext(n,-1,false), next:()=>waNext(n,1,false), stop:()=>waStop(n),
-    play:()=>{ if(n.data){ n.play=true; n.rewind=false; if(n.pos>=n.data.L.length-1) n.pos=0; } else waToggle(n); n.dirty=true; },
-    pause:()=>{ if(n.data){ n.play=!n.play; n.rewind=false; n.dirty=true; } },
+    play:()=>{ if(waHas(n)){ if(n.mode==='file' && n.pos>=n.data.L.length-1) n.pos=0; waPlayPause(n,true); } else waToggle(n); },
+    pause:()=>{ if(waHas(n)) waPlayPause(n,!n.play); },
     shuf:()=>{ n.p.shuffle=!n.p.shuffle; waOrder(n); n.nxt=null; n.dirty=true; },
     rep:()=>{ const o=['off','all','one']; n.p.repeat=o[(o.indexOf(n.p.repeat)+1)%3]; n.nxt=null; n.dirty=true; },
-    add:()=>inp.click(),
-    url:()=>{ const u=prompt('Audio URL (CORS must allow it)'); if(u&&u.trim()) waAdd(n,[u.trim()]); },
-    clr:()=>{ n.lid++; n.list=[]; n.cur=-1; n.data=null; n.play=false; n.loading=false; n.nxt=null; n.title=''; waOrder(n); n.dirty=true; }};
+    add:()=>inp.click(), lib:()=>waPick(n),
+    url:()=>{ const u=prompt('Audio URL: a stream or a file (the server must send CORS headers)'); if(u&&u.trim()) waAddUrl(n,u,'',false); },
+    clr:()=>waClear(n)};
   root.addEventListener('click',e=>{
     const b=e.target.closest('button[data-a]'); if(b){ act[b.dataset.a](); return; }
     if(e.target.closest('[data-f="time"]')){ n.p.remain=!n.p.remain; n.dirty=true; return; }
     const it=e.target.closest('.wa-it'); if(!it) return;
     const i=+it.dataset.i;
     if(e.target.closest('.x')) waRemove(n,i);
-    else if(i!==n.cur || !n.data) { waStart(n,i,true); } });
-  inp.addEventListener('change',()=>{ waAdd(n,[...inp.files]); inp.value=''; });
-  f.pl.addEventListener('dblclick',e=>{ const it=e.target.closest('.wa-it'); if(it && !e.target.closest('.x')) waStart(n,+it.dataset.i,true); });
-  f.seek.addEventListener('input',()=>{ if(n.data) n.pos=f.seek.value/1000*(n.data.L.length-1); });
+    else if(i!==n.cur || !waHas(n)) waStart(n,i,true); });
+  inp.addEventListener('change',()=>{ waImport(n,[...inp.files]); inp.value=''; });
+  f.seek.addEventListener('input',()=>waSeek(n,f.seek.value/1000));
   f.seek.addEventListener('pointerdown',()=>{ n.ui.drag=true; });
   addEventListener('pointerup',()=>{ if(n.ui) n.ui.drag=false; });
   f.vol.addEventListener('input',()=>{ n.p.vol=+f.vol.value; });
@@ -123,73 +218,102 @@ function waMount(n){
   root.addEventListener('pointerdown',e=>e.stopPropagation());
   root.addEventListener('wheel',e=>e.stopPropagation());
   root.addEventListener('dragover',e=>{ e.preventDefault(); });
-  root.addEventListener('drop',e=>{ e.preventDefault(); if(e.dataTransfer?.files?.length) waAdd(n,[...e.dataTransfer.files]); });
+  root.addEventListener('drop',e=>{
+    e.preventDefault();
+    const id=e.dataTransfer?.getData('application/x-dsp-file');          // файл из Files / Sample Library
+    if(id){ waAddIds(n,[+id]); return; }
+    if(e.dataTransfer?.files?.length) waImport(n,[...e.dataTransfer.files]); });
   n.mid.append(root);
   n.ui={root,f,drag:false,btn:{},plKey:''};
   for(const b of root.querySelectorAll('button[data-a]')) n.ui.btn[b.dataset.a]=b;
   n.dirty=true;
 }
+function waShown(n){
+  const t=n.list[n.cur];
+  if(n.mode==='stream' && n.sx.icyRaw) return n.sx.icyRaw+' · '+waTitle(t);
+  return n.loading ? 'loading… '+waTitle(t) : n.title||(n.list.length?'':'add files, pick from the library or drop audio here');
+}
 function waRender(n){
-  const {f,btn}=n.ui, d=n.data, cur=n.list[n.cur];
-  const len=d?d.L.length/d.sr:0, pos=d?n.pos/d.sr:0;
-  waSet(f.time,wpTime(n.p.remain && d ? pos-len : pos));
-  waSet(f.title,n.loading ? 'loading… '+n.title : n.title||(n.list.length?'':'drop audio files here'));
-  waSet(f.info,cur?.err ? 'error: '+cur.err : d ? Math.round(d.sr/1000)+' kHz · '+(d.ch>1?'stereo':'mono')+' · '+wpTime(len)+(n.play?'':n.pos>0?' · paused':' · stopped')
+  const {f,btn}=n.ui, d=n.data, cur=n.list[n.cur], st=n.mode==='stream';
+  const len=waLen(n), pos=waPos(n), has=waHas(n);
+  waSet(f.time,wpTime(n.p.remain && len ? pos-len : pos));
+  waSet(f.title,waShown(n));
+  waSet(f.info,cur?.err ? 'error: '+cur.err : st ? (n.sx.connecting?'connecting…':has?'stream':'stopped')+(len?' · '+wpTime(len):'')+(has&&!n.play?' · paused':'')
+    : d ? Math.round(d.sr/1000)+' kHz · '+(d.ch>1?'stereo':'mono')+' · '+wpTime(len)+(n.play?'':n.pos>0?' · paused':' · stopped')
     : n.list.length+' tracks');
   if(!n.ui.drag) f.seek.value=len?Math.round(pos/len*1000):0;
   if(document.activeElement!==f.vol) f.vol.value=n.p.vol;
   if(document.activeElement!==f.bal) f.bal.value=n.p.bal;
-  btn.play.classList.toggle('on',n.play); btn.pause.classList.toggle('on',!n.play&&!!d&&n.pos>0);
+  btn.play.classList.toggle('on',n.play&&has); btn.pause.classList.toggle('on',!n.play&&has&&pos>0);
   btn.shuf.classList.toggle('on',n.p.shuffle);
   waSet(btn.rep,'repeat: '+n.p.repeat); btn.rep.classList.toggle('on',n.p.repeat!=='off');
-  const key=n.list.length+'|'+n.cur+'|'+n.loading+'|'+n.list.map(t=>(t.dur|0)+(t.err?'!':'')+(t.tag?.title||'')).join(',');
+  const key=n.list.length+'|'+n.cur+'|'+n.loading+'|'+n.list.map(t=>(t.dur|0)+(t.err?'!':'')+(t.tag?.title||'')+t.name).join(',');
   if(key===n.ui.plKey) return;
   n.ui.plKey=key; n.dirty=false;
   const keep=f.pl.scrollTop; f.pl.textContent='';
   n.list.forEach((t,i)=>{
     const it=waEl('div','wa-it'+(i===n.cur?' cur':'')+(t.err?' bad':'')); it.dataset.i=i;
-    it.append(waEl('span','i',(i+1)+'.'),waEl('span','t',waTitle(t)),waEl('span','d',t.dur?wpTime(t.dur):''),waEl('button','x','×'));
+    if(t.err) it.title=t.err;
+    it.append(waEl('span','i',(i+1)+'.'),waEl('span','t',(t.url?'📻 ':'')+waTitle(t)),waEl('span','d',t.dur?wpTime(t.dur):''),waEl('button','x','×'));
     f.pl.append(it); });
   f.pl.scrollTop=keep;
   f.pl.querySelector('.cur')?.scrollIntoView({block:'nearest'});
 }
 
 def({ id:'winamp', title:'Music Player (Winamp)', cat:'Music', resize:true, w:340, h:430, readout:false,
-  kw:'winamp player playlist mp3 music track next previous shuffle repeat volume balance id3 stereo',
-  ins:[{n:'play',t:'num'},{n:'next',t:'num'},{n:'prev',t:'num'},{n:'stop',t:'num'},{n:'seek',t:'num'},{n:'vol',t:'num'},{n:'bal',t:'num'}],
+  kw:'winamp player playlist mp3 music track next previous shuffle repeat volume balance id3 stereo radio library files',
+  ins:[{n:'play',t:'num'},{n:'next',t:'num'},{n:'prev',t:'num'},{n:'stop',t:'num'},{n:'seek',t:'num'},{n:'vol',t:'num'},{n:'bal',t:'num'},
+       {n:'add',t:'num'},{n:'url',t:'txt'},{n:'name',t:'txt'},{n:'rows',t:'bands'}],
   outs:[{n:'l',t:'sig'},{n:'r',t:'sig'},{n:'pos',t:'num'},{n:'time',t:'num'},{n:'track',t:'num'},
         {n:'playing',t:'num'},{n:'done',t:'num'},{n:'title',t:'txt'}],
   params:[{n:'vol',t:'range',min:0,max:1.5,step:.01,d:.8,label:'volume'},
           {n:'bal',t:'range',min:-1,max:1,step:.01,d:0,label:'balance'},
-          {n:'rate',t:'range',min:.5,max:2,step:.01,d:1,label:'speed (pitch changes with it)'},
+          {n:'rate',t:'range',min:.5,max:2,step:.01,d:1,label:'speed of files (pitch changes with it)'},
           {n:'shuffle',t:'check',d:false,label:'shuffle',fn:n=>{ waOrder(n); n.nxt=null; n.dirty=true; }},
           {n:'repeat',t:'select',opts:['off','all','one'],d:'off',label:'repeat',fn:n=>{ n.nxt=null; n.dirty=true; }},
-          {n:'remain',t:'check',d:false,label:'show remaining time'}],
-  init:n=>{ n.list=[]; n.order=[]; n.cur=-1; n.data=null; n.pos=0; n.play=false; n.run=0; n.rewind=false; n.loading=false;
-    n.lid=0; n.nxt=null; n.title=''; n.fails=0; n.dirty=true; n.ui=null; n.edge={}; },
-  dispose:n=>{ n.lid++; n.data=null; n.nxt=null; n.list=[]; },
+          {n:'remain',t:'check',d:false,label:'show remaining time'},
+          {n:'store',t:'select',opts:['files','audio'],d:'files',label:'files from disk go to: files (Music folder, as is) / audio (Sample Library clips, mono)'},
+          {n:'wirePlay',t:'check',d:true,label:'play a station that arrives on the url wire'},
+          {n:'addRows',t:'button',label:'＋ add stations from the rows wire (url field)',fn:n=>waRows(n)},
+          {n:'list',t:'text',d:'[]',hidden:true},
+          {n:'cur',t:'range',min:-1,max:100000,step:1,d:-1,hidden:true}],
+  init:n=>{ n.list=[]; n.order=[]; n.cur=-1; n.data=null; n.mode='file'; n.pos=0; n.play=false; n.run=0; n.rewind=false; n.loading=false;
+    n.lid=0; n.nxt=null; n.title=''; n.fails=0; n.dirty=true; n.ui=null; n.edge={}; n.lastUrl=''; n.addPrev=-1; n.rowsIn=null; n.sxEnded=false;
+    n.sx={p:{url:'',meta:true,gain:1}, audioEl:null,srcNode:null,tapNode:null,sink:null,ctxRef:null,connected:false,connecting:false,
+          status:'',icyAbort:null,icyReading:false,icyRaw:null,icyArtist:'',icyTitle:'',icyStatus:'',trackPulse:0};
+    waLoadList(n); },
+  dispose:n=>{ n.lid++; n.data=null; n.nxt=null; streamStop(n.sx); n.list=[]; },
   process(n,I){
     const oL=buf(n,'l'), oR=buf(n,'r');
     const pulse=(k,fn)=>{ const v=typeof I[k]==='number' && I[k]>=.5; if(v && !n.edge[k]) fn(); n.edge[k]=v; };
     pulse('play',()=>waToggle(n)); pulse('next',()=>waNext(n,1,false)); pulse('prev',()=>waNext(n,-1,false)); pulse('stop',()=>waStop(n));
     if(typeof I.vol==='number') setMod(n,'vol',I.vol);
     if(typeof I.bal==='number') setMod(n,'bal',I.bal);
-    const d=n.data;
-    if(d && typeof I.seek==='number' && I.seek>=0 && I.seek<=1 && Math.abs(I.seek-(n.seekPrev??-1))>1e-6){
-      n.pos=I.seek*(d.L.length-1); n.seekPrev=I.seek; }
+    if(typeof I.add==='number'){ if(I.add>=0 && I.add!==n.addPrev) waAddIds(n,[I.add]); n.addPrev=I.add; }   // Files → send
+    if(typeof I.url==='string' && I.url && I.url!==n.lastUrl){ n.lastUrl=I.url; waAddUrl(n,I.url,typeof I.name==='string'?I.name:'',n.p.wirePlay); }
+    n.rowsIn=Array.isArray(I.rows) ? I.rows : n.rowsIn;
+    if(n.mode==='stream' && n.sx.connected && n.sx.ctxRef!==Eng.ctx){ n.sx.status='context recreated'; waStop(n); }
+    const d=n.data, st=n.mode==='stream' && n.sx.connected;
+    if(typeof I.seek==='number' && I.seek>=0 && I.seek<=1 && Math.abs(I.seek-(n.seekPrev??-1))>1e-6){ waSeek(n,I.seek); n.seekPrev=I.seek; }
     let done=0;
-    if(!d){ oL.fill(0); oR.fill(0); }
+    const [bl,br]=wpBalance(n.p.bal), vol=n.p.vol, stp=1/(.015*Eng.sr);
+    const ramp=()=>{ const tg=n.play?1:0; return n.run = n.run<tg ? Math.min(tg,n.run+stp) : Math.max(tg,n.run-stp); };   // плавный пуск и остановка без щелчков
+    if(st){
+      const ok=n.play && streamReadBlock(n.sx,oL,oR,1);
+      for(let i=0;i<BLOCK;i++){ const g=ramp()*vol; oL[i]=ok?oL[i]*g*bl:0; oR[i]=ok?oR[i]*g*br:0; }
+      if(n.sxEnded){ n.sxEnded=false; waNext(n,1,true); }
+    }
+    else if(!d){ oL.fill(0); oR.fill(0); }
     else {
-      const [bl,br]=wpBalance(n.p.bal), vol=n.p.vol, r=n.p.rate*d.sr/Eng.sr, len=d.L.length, st=1/(.015*Eng.sr);
+      const r=n.p.rate*d.sr/Eng.sr, len=d.L.length;
       let ended=false;
       for(let i=0;i<BLOCK;i++){
-        const tg=n.play?1:0;
-        n.run = n.run<tg ? Math.min(tg,n.run+st) : Math.max(tg,n.run-st);       // плавный пуск и остановка без щелчков
+        const g=ramp()*vol;
         if(n.run<=0 && !n.play){ if(n.rewind){ n.pos=0; n.rewind=false; } oL[i]=0; oR[i]=0; continue; }
         if(n.pos>=len-1){
           if(n.p.repeat==='one') n.pos=0;
           else { ended=true; for(;i<BLOCK;i++){ oL[i]=0; oR[i]=0; } break; } }
-        const i0=n.pos|0, fr=n.pos-i0, g=vol*n.run;
+        const i0=n.pos|0, fr=n.pos-i0;
         oL[i]=(d.L[i0]*(1-fr)+d.L[i0+1]*fr)*g*bl; oR[i]=(d.R[i0]*(1-fr)+d.R[i0+1]*fr)*g*br;
         n.pos+=r; }
       if(ended){
@@ -198,13 +322,19 @@ def({ id:'winamp', title:'Music Player (Winamp)', cat:'Music', resize:true, w:34
         else if(n.nxt && n.nxt.idx===nx && n.nxt.data){ const dd=n.nxt.data; n.nxt=null; waUse(n,nx,dd,true); }
         else { n.play=true; waStart(n,nx,true); } }
     }
-    const dd=n.data;
-    return {l:oL, r:oR, pos:dd?n.pos/dd.L.length:0, time:dd?n.pos/dd.sr:0, track:n.cur+1,
-            playing:n.play?1:0, done, title:n.title}; },
+    const L=waLen(n);
+    return {l:oL, r:oR, pos:L?waPos(n)/L:0, time:waPos(n), track:n.cur+1,
+            playing:n.play?1:0, done, title:waShown(n)}; },
   draw(n){
     if(!n.ui || !n.ui.root.isConnected) waMount(n);
     waRender(n); }
 });
+// строки с полем url (станции Internet Radio, любая Table) → дорожки-потоки
+function waRows(n){
+  let k=0;
+  for(const r of n.rowsIn||[]){ if(r && typeof r.url==='string' && r.url){ waAddUrl(n,r.url,r.label||r.name||'',false); k++; } }
+  if(!k) alert('No rows with a url field on the rows wire');
+}
 
 
 /* ---------- 10-band equalizer ---------- */

@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=49;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=50;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -398,6 +398,7 @@ const PRESET_CATS={
 
   'Synth: Acid Bass (303)':'Music: Synth & Tracker',
   'Winamp':'Music: Player',
+  'Winamp: Internet Radio Playlist':'Music: Player',
   'Visualizer: Spectrum Bars (Drums + Band FFT)':'Music: Visualizers',
   'Visualizer: Radial Spectrum + Beat Particles':'Music: Visualizers',
   'Visualizer: Ridgeline + Neon Waveform':'Music: Visualizers',
@@ -3707,6 +3708,28 @@ preset('Winamp', function(){
 // (горячие клавиши Z X C V B, когда плеер в фокусе), перемотка, громкость и баланс, shuffle и repeat. Дальше — 10-полосный
 // эквалайзер с пресетами (двойной клик по ползунку — в ноль) → звуковая карта; рядом анализатор спектра и осциллограф.
 
+preset('Winamp: Internet Radio Playlist', function(){
+  clearAll();
+  const nt=addNode('note',40,40,{text:'Winamp + Internet Radio: set a country code / tag and press Search in Internet Radio.\n'+
+    'Click a station on the map — it joins the Winamp playlist and starts. «＋ add stations from the rows wire» in the player\n'+
+    'puts every found station into the playlist at once. The playlist is saved with the patch; files go to Files → Music\n'+
+    '(the same storage as the Files node and the Sample Library: «+ library» picks from it, Files → send adds a file by wire).\n'+
+    'Only streams that send CORS headers can be captured into the graph.'});
+  nt.size.w=620; nt.size.h=130; applySize(nt);
+  const rd=addNode('radioDir',40,200,{cc:'',limit:2000}); rd.size.h=150; applySize(rd);
+  const pl=addNode('winamp',400,200,{vol:.8}); pl.size.w=360; pl.size.h=470; applySize(pl);
+  const eq=addNode('eq10',800,200,{preset:'Flat'}); eq.size.w=360; eq.size.h=260; applySize(eq);
+  const dc=addNode('dac',1200,200,{vol:.8,mode:'stereo'});
+  const bd=addNode('bands',800,500,{bands:20});
+  const map=addNode('geoMap',1200,360,{mz:2,mlat:35,mlon:15,labels:true}); map.size.w=560; map.size.h=420; applySize(map);
+  addEdge(rd.id,'rows',map.id,'rows'); addEdge(map.id,'sel',rd.id,'select');
+  addEdge(rd.id,'url',pl.id,'url'); addEdge(rd.id,'name',pl.id,'name'); addEdge(rd.id,'rows',pl.id,'rows');
+  addEdge(pl.id,'l',eq.id,'l'); addEdge(pl.id,'r',eq.id,'r');
+  addEdge(eq.id,'l',dc.id,'L'); addEdge(eq.id,'r',dc.id,'R');
+  addEdge(eq.id,'l',bd.id,'in');
+  vizTile('vizBars',1200,40,420,150,bd,'spec',{style:'led',color:'theme',bars:20});
+  markWiresDirty();
+});
 preset('Ridgeline Spectrum: Air History (RF mode)', function(){
   clearAll();
   const sw=addNode('sweep',40,40,{});

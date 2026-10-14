@@ -1230,3 +1230,6 @@ select.aed-b{padding:0 6px}
 .eq-sl{display:flex;gap:2px;flex:1;min-height:90px}
 .eq-c{display:flex;flex-direction:column;align-items:center;flex:1;gap:2px;min-width:0;font:9px var(--mono);color:var(--dim)}
 .eq-v{writing-mode:vertical-lr;direction:rtl;flex:1;width:18px;margin:0;min-height:60px}
+.wa-pick{background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:6px;width:min(480px,92vw);height:min(520px,80vh);font:12px var(--mono)}
+.wa-pick-fm{flex:1;min-height:0;display:flex}
+.wa-pick .fm{flex:1;min-height:0}

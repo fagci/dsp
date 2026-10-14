@@ -269,7 +269,7 @@ function fmMount(host,o={}){
         mk('✕','Delete',async e=>{ e.stopPropagation(); if(confirm('Delete "'+r.name+'"?')){ if(S.selected?.id===r.id) select(null); await FileStore.remove(r.id); } }));
       row.onclick=()=>{ select(r); if(o.openOnClick) o.onOpen?.(r); };
       row.ondblclick=()=>{ if(!o.openOnClick) o.onOpen?.(r); };
-      row.ondragstart=e=>{ fmDrag=r.id; e.dataTransfer.setData('text/plain',r.name); };
+      row.ondragstart=e=>{ fmDrag=r.id; e.dataTransfer.setData('text/plain',r.name); e.dataTransfer.setData('application/x-dsp-file',String(r.id)); };
       row.ondragend=()=>{ fmDrag=null; };
       list.append(row);
     }
