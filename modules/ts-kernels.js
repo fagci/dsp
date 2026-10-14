@@ -78,7 +78,7 @@ class TsDemux{
     this.sel=0;                             // выбранная программа (0 — первая с видео)
     this.cur=null;
     this.vid=[]; this.aud=[];               // готовые кадры: {pts, key, d}
-    this.stat={packets:0, lost:0, sync:0, cc:0, frames:0, bytes:0, tei:0, keys:0, gaps:{}}; this.gap=0; this.al=false;
+    this.stat={packets:0, lost:0, sync:0, cc:0, frames:0, bytes:0, tei:0, keys:0, idr:0, gaps:{}}; this.gap=0; this.al=false;
     this.sps=null; this.vcodec='';
   }
   select(n){ this.sel=n|0; this.cur=null; for(const p of this.pids.values()){ p.chunks=[]; } this.vid.length=0; this.aud.length=0; }
@@ -149,15 +149,15 @@ class TsDemux{
 
   _video(es,pts){
     const t=this.cur.vtype;
-    let key=false;
+    let key=false, idr=false; const nalTypes=[];
     if(t==='avc'){
       let hasSps=false, hasPps=false, sliceSeen=false;
       for(const nal of tsNals(es)){
-        const k=nal[0]&31;
+        const k=nal[0]&31; nalTypes.push(k);
         if(k===7){ hasSps=true; this.spsNal=nal.slice();
           if(!this.sps){ const sp=tsAvcSps(nal); if(sp){ this.sps=sp; this.vcodec='avc1.'+tsHex2(sp.profile)+tsHex2(sp.compat)+tsHex2(sp.level); } } }
         else if(k===8){ hasPps=true; this.ppsNal=nal.slice(); }
-        else if(k===5){ key=true; sliceSeen=true; }
+        else if(k===5){ key=true; idr=true; sliceSeen=true; }
         else if(k===1 && !sliceSeen){                                  // вещание часто начинает GOP не с IDR, а с обычного I-кадра
           sliceSeen=true; const st=tsAvcSliceType(nal); if(st===2 || st===7 || st===4 || st===9) key=true;
         }
@@ -175,7 +175,8 @@ class TsDemux{
         if(es[i]===0 && es[i+1]===0 && es[i+2]===1 && es[i+3]===0){ key=((es[i+5]>>3)&7)===1; break; }
       this.vcodec='mpeg2video';
     }
-    this.vid.push({pts, key, d:es}); this.stat.frames++; if(key) this.stat.keys++;
+    if(t!=='avc') idr=key;
+    this.vid.push({pts, key, idr, nals:key ? nalTypes : null, d:es}); this.stat.frames++; if(key) this.stat.keys++; if(idr) this.stat.idr++;
   }
 
   _psi(body,pusi,kind,pid){

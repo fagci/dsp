@@ -25,23 +25,41 @@ function tsvReset(n){
 }
 function tsvClose(n){ tsvReset(n); n.fileObj=null; }
 
+// режимы декодера H.264 по кругу после ошибок: [аппаратный / программный] × [любой I-кадр / только IDR]
+const TSV_MODES=[{sw:false,idr:false},{sw:false,idr:true},{sw:true,idr:false},{sw:true,idr:true}];
+function tsvMode(n){ return TSV_MODES[(n.mode||0)%4]; }
+function tsvNextMode(n,why){
+  n.mode=((n.mode||0)+1)%4; n.modeAt=performance.now(); n.needKey=true;
+  try{ n.dec?.close(); }catch(e){}
+  n.dec=null; n.decCodec='';
+  const m=tsvMode(n);
+  n.notes.push(why+' → '+(m.sw ? 'software' : 'hardware')+' decoder, '+(m.idr ? 'IDR only' : 'any I frame')); if(n.notes.length>4) n.notes.shift();
+}
 async function tsvConfigure(n,codec,type){
   if(typeof VideoDecoder==='undefined'){ n.status='WebCodecs is not available in this browser'; return false; }
+  const sw=tsvMode(n).sw;
   let cfg={codec, optimizeForLatency:true};
+  if(sw) cfg.hardwareAcceleration='prefer-software';
   if(type==='hevc') cfg.hevc={format:'annexb'};
   if(type==='avc') cfg.avc={format:'annexb'};                  // кадры идут с начальными кодами, без описания AVCC
   let sup=null;
   try{ sup=await VideoDecoder.isConfigSupported(cfg); }catch(e){}
   if(!sup?.supported && type==='avc'){                          // старые версии браузера: Annex B подразумевался без описания
-    cfg={codec, optimizeForLatency:true};
+    cfg={codec, optimizeForLatency:true}; if(sw) cfg.hardwareAcceleration='prefer-software';
     try{ sup=await VideoDecoder.isConfigSupported(cfg); }catch(e){}
   }
   if(!sup?.supported){ n.status='codec '+codec+' is not supported by the browser'; return false; }
   const dec=new VideoDecoder({
     output:f=>{ if(n.dec!==dec){ f.close(); return; } n.q.push(f); n.decoded++; },
-    error:e=>{ n.status='decoder: '+e.message; if(n.dec===dec){ n.dec=null; n.needKey=true; } }});
+    error:e=>{
+      if(n.dec!==dec) return;                                   // ошибки уже заменённого декодера не в счёт
+      const k=n.lastKey;
+      n.status='decoder: '+e.message+(k ? ' (entry point '+(k.idr ? 'IDR' : 'I slice')+', '+k.size+' bytes, NAL types '+k.nals.join(',')+')' : '');
+      if(k) console.log('TS → Video decoder error:',e.message,'\nentry point',k.idr ? 'IDR' : 'I slice',k.size,'bytes, NAL types',k.nals.join(','),'\ncodec',codec,'mode',JSON.stringify(tsvMode(n)),'\nstart',k.hex);
+      n.errN=(n.errN||0)+1; tsvNextMode(n,'decoder error');
+    }});
   dec.configure(cfg);
-  n.dec=dec; n.decCodec=codec; n.needKey=true;
+  n.dec=dec; n.decCodec=codec; n.needKey=true; n.modeAt=performance.now(); n.decodedAt=n.decoded;
   return true;
 }
 
@@ -113,20 +131,23 @@ function tsvFeed(n,bytes){
     const type=dm.cur?.vtype;
     if(!dm.vcodec || !type) continue;
     if(type==='mpeg2'){ tsvM2(n,f); continue; }
+    const entry= tsvMode(n).idr ? f.idr : f.key;                // подходит ли кадр как точка входа в нынешнем режиме
+    if(n.needKey && tsvMode(n).idr && performance.now()-n.modeAt>8000){ tsvNextMode(n,'no IDR frame in 8 s'); continue; }
     if(!n.dec || n.decCodec!==dm.vcodec){
       if(n.cfgBusy) return;
-      if(!f.key) continue;
+      if(!entry) continue;
       n.cfgBusy=true;
       tsvConfigure(n,dm.vcodec,type).then(()=>{ n.cfgBusy=false; });
       return;                                                  // этот кадр пропускаем, ждём следующий ключевой
     }
-    if(n.needKey && !f.key) continue;
+    if(n.needKey && !entry) continue;
     if(n.dec.decodeQueueSize>40){ n.needKey=true; n.dropped++; continue; }
+    if(n.needKey && f.key) n.lastKey={idr:f.idr, size:f.d.length, nals:f.nals||[], hex:Array.from(f.d.subarray(0,64),v=>v.toString(16).padStart(2,'0')).join(' ')};
     n.needKey=false;
     let ts=f.pts>=0 ? Math.round(f.pts*1e6) : (n.lastTs>=0 ? n.lastTs+40000 : 0);
     n.lastTs=ts;
     try{ n.dec.decode(new EncodedVideoChunk({type:f.key ? 'key' : 'delta', timestamp:ts, data:f.d})); }
-    catch(e){ n.status='decode: '+e.message; n.needKey=true; }
+    catch(e){ n.status='decode: '+e.message; tsvNextMode(n,'decode() failed'); }
   }
 }
 
@@ -182,7 +203,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
   view:{h:220}, resize:true, w:380,
   init(n){
     n.dmx=new TsDemux(); n.q=[]; n.fileObj=null; n.pos=0; n.rd=false; n.dec=null; n.decCodec=''; n.cfgBusy=false;
-    n.needKey=true; n.lastTs=-1; n.base=null; n.last=null; n.status='waiting for a transport stream';
+    n.needKey=true; n.lastTs=-1; n.base=null; n.last=null; n.status='waiting for a transport stream'; n.notes=[]; n.mode=0; n.modeAt=performance.now(); n.errN=0;
     n.aq=[]; n.aEnd=null; n.aInfo=''; n.decoded=0; n.m2=null; n.m2p=null; n.m2err=0; n.m2bad=0; n.shown=0; n.dropped=0; n.fpsN=0; n.fps=0; n.fpsT=performance.now(); n.gotFrame=false; n.prog=0;
     n.pic=document.createElement('canvas'); n.picCx=n.pic.getContext('2d');
     // у <video> есть videoWidth / videoHeight, их ждут потребители vid
@@ -211,7 +232,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
       if(pl.length) t='programs '+pl.map(p=>p.num+(p===d.cur ? '▶' : '')).join(' ')+' · '+(d.vcodec||'—')+(d.sps ? ' · '+d.sps.w+'×'+d.sps.h : '')+
         ' · '+n.fps.toFixed(1)+' fps'+(d.cur?.apid ? ' · audio '+d.cur.atype+(d.cur.atype==='mp2' ? (n.aInfo ? ' · '+n.aInfo : '') : ' (not decoded)') : '');
       if(st.cc||st.tei||n.dropped||n.m2bad) t+='\nlost packets '+st.cc+' (now '+Math.round(n.ccRate||0)+'/s) · transport errors '+st.tei+(st.sync ? ' · stream breaks '+st.sync+(()=>{ const e=Object.entries(st.gaps).sort((x,y)=>y[1]-x[1])[0]; return e ? ' (usually '+e[0]+' extra bytes ×'+e[1]+')' : ''; })() : '')+(n.dropped ? ' · dropped frames '+n.dropped : '')+(n.m2bad ? ' · bad slices '+n.m2bad : '');
-      if(pl.length) t+='\nvideo frames '+st.frames+' (entry points '+st.keys+') · decoded '+n.decoded+' · shown '+n.shown+(n.dec ? ' · decoder queue '+n.dec.decodeQueueSize : n.decCodec ? '' : ' · decoder not started')+(n.needKey ? ' · waiting for an entry point' : '');
+      if(pl.length) t+='\nvideo frames '+st.frames+' (entry points '+st.keys+') · decoded '+n.decoded+' · shown '+n.shown+(n.dec ? ' · decoder queue '+n.dec.decodeQueueSize : n.decCodec ? '' : ' · decoder not started')+(n.needKey ? ' · waiting for an entry point' : '')+' · '+(tsvMode(n).sw ? 'software' : 'hardware')+' decoder, '+(tsvMode(n).idr ? 'IDR only' : 'any I frame')+' (IDR frames in the stream '+st.idr+')'+(n.notes.length ? '\n'+n.notes.join('\n') : '');
       if(n.status && pl.length && !n.gotFrame) t+='\n'+n.status;
       if(r.textContent!==t) r.textContent=t;
     }
