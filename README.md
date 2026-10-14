@@ -125,6 +125,9 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **Sampler**: polyphonic (4 voices) player of Sample Library clips, pitched by `freq` — plays from the tracker, piano roll or MIDI
 - Piano roll, step sequencer, generative melody, arrangement playlist, master clock
 - MIDI keyboard input, ADSR envelope
+- **Band FFT (few bins)** (Processing): an FFT that outputs only 4…128 bands (log / mel / linear scale, tilt dB/oct, fall time) as a `spec`; also `bass` / `mid` / `treble` / `level` (0…1), a `beat` pulse and the tempo `bpm` (median of the beat intervals)
+- **Visualizers**: **Spectrum Bars** (Analysis; styles bars / round / led / mirror / line, peak markers; takes Band FFT or a plain FFT and groups it into bars itself) and, in Music, **Radial Spectrum** (rotating circle, bass pulse, flash on the beat), **Neon Waveform** (triggered line, ring, XY / Lissajous), **Beat Particles** (burst on the beat, fountain by bands, warp flight) and **Ridgeline Spectrum** (the "Unknown Pleasures" 3D history). Presets in *Music: Visualizers*. Logic: `modules/viz-kernels.js`, `node tools/test-viz.mjs`
+  - Ridgeline **rf mode** is a 3D waterfall for the air: the whole source span with absolute frequencies, the maximum of the bins per column (narrow carriers are kept), a frequency axis and dB legend, `fpeak` output and the peak in the readout — feed it an FFT / spectrum from a USB SDR or tinySA (preset *Ridgeline Spectrum: Air History (RF mode)*)
 
 ### Output & extensibility
 - Sound card output (per-node output device selection, peak/clip meter), WAV / MP3 recording (files named by date and time; optionally streamed straight to a disk file, so the length is not limited by memory — Chrome/Edge), log to a [Table](#table), trigger recorder (modes manual / **gate** — records while `trig` is high, e.g. the receiver's `sqOpen`, plus *post-record* time after it closes / level / edge; *tag* goes into the clip name)
