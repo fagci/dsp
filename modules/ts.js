@@ -63,7 +63,7 @@ async function tsvConfigure(n,codec,type){
       const k=n.lastKey;
       n.status='decoder: '+e.message+(k ? ' (entry point '+(k.idr ? 'IDR' : 'I slice')+', '+k.size+' bytes, NAL types '+k.nals.join(',')+')' : '');
       if(k) console.log('TS → Video decoder error:',e.message,'\nSPS',JSON.stringify(n.dmx.sps),'\nentry point',k.idr ? 'IDR' : 'I slice',k.size,'bytes, NAL types',k.nals.join(','),'\ncodec',codec,'mode',JSON.stringify(tsvMode(n)),'\nstart',k.hex);
-      n.errN=(n.errN||0)+1; tsvNextMode(n,'decoder error');
+      n.errN=(n.errN||0)+1; tsvNextMode(n,'decoder error'+(n.lossAt!=null ? ' ('+((n.fed||0)-n.lossAt)+' frames after the last loss)' : ''));
     }});
   dec.configure(cfg);
   n.dec=dec; n.decCodec=codec; n.needKey=true; n.modeAt=performance.now(); n.decodedAt=n.decoded;
@@ -173,8 +173,9 @@ function tsvFeed(n,bytes){
   const fr=dm.takeVideo();
   for(const a of dm.takeAudio()) tsvAudio(n,a);
   for(const t of dm.takeTtx()) n.tt.feed(t);
-  if(dm.lostVideo){ dm.lostVideo=false; if(n.p.strict && dm.cur?.vtype!=='mpeg2') n.needKey=true; }
+  if(dm.lostVideo){ dm.lostVideo=false; n.lossAt=n.fed||0; if(n.p.strict && dm.cur?.vtype!=='mpeg2') n.needKey=true; }
   for(const f of fr){
+    n.fed=(n.fed||0)+1;
     const type=dm.cur?.vtype;
     if(!dm.vcodec || !type) continue;
     if(type==='mpeg2'){ tsvM2(n,f); continue; }
