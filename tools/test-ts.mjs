@@ -5,7 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,Map,Array,Error});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/ts-kernels.js'),'utf8')+';this.T={TsDemux,tsAvcSps,tsNals,tsLayout,tsAvcSliceType,tsAvcMaxFs,tsAdtsSplit};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/ts-kernels.js'),'utf8')+';this.T={TsDemux,tsAvcSps,tsNals,tsLayout,tsAvcSliceType,tsAvcMaxFs,tsAdtsSplit,tsDvbText,tsDvbTime};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -119,5 +119,40 @@ console.log(bad?bad+' FAILED':'all ok'); ok('MaxFS by level',T.tsAvcMaxFs(30)===
   ok('ADTS: sr / ch / ASC',a[0].sr===48000 && a[0].ch===2 && a[0].asc[0]===0x11 && a[0].asc[1]===0x90,Array.from(a[0].asc).join());
   ok('ADTS: time step',Math.abs(a[1].dt-1024/48000)<1e-9);
   ok('ADTS: cut frame dropped',T.tsAdtsSplit(new Uint8Array([...fr(10)].slice(0,12))).length===0);
+}
+
+{ // служебные таблицы: SDT (две службы, имя в ISO 8859-5 и UTF-8), NIT с LCN, EIT now / next, TDT
+  const ru=[0x01,0xc0,0xde,0xe1,0xe1,0xd8,0xef,0x20,0x31];                       // «Россия 1»
+  ok('text 8859-5',T.tsDvbText(new Uint8Array(ru))==='Россия 1',T.tsDvbText(new Uint8Array(ru)));
+  ok('text UTF-8',T.tsDvbText(new Uint8Array([0x15,...Buffer.from('Матч ТВ')]))==='Матч ТВ');
+  ok('time MJD',T.tsDvbTime(new Uint8Array([0xc0,0x79,0x12,0x45,0x00]),0).str==='1993-10-13 12:45');
+  const svc=(sid,ca,prov,name)=>[sid>>8,sid&255,0xfc,0x80|(ca?0x10:0)|0,0, ]; // длина дескрипторов подставляется ниже
+  const sd=(sid,ca,type,prov,name)=>{ const d=[0x48,3+prov.length+name.length,type,prov.length,...prov,name.length,...name]; return [sid>>8,sid&255,0xfc,0x80|(ca?0x10:0)|(d.length>>8),d.length&255,...d]; };
+  const sdtBody=[0,1,0xff,...sd(1,false,1,[0x50],ru),...sd(2,true,2,[0x50],[...Buffer.from('Radio One')]),...Array(200).fill(0).flatMap(()=>[])];
+  const sdt=sect(0x42,[0,1],sdtBody);
+  const nitDesc=[0x40,3,...Buffer.from('RTR')];
+  const lcnd=[0x83,8,0,1,0xfc,1, 0,2,0xfc,5];
+  const td=[0x5a,11,...[0x02,0xdf,0x79,0x40],0,0,0,0,0,0,0, ...lcnd];
+  const nit=sect(0x40,[0,1],[0xf0,nitDesc.length,...nitDesc, 0xf0,6+td.length, 0,1,0,1,0xf0,td.length, ...td]);
+  const ev=(id,hh,mm,name)=>{ const nm=[...Buffer.from(name)], d=[0x4d,5+nm.length+1,0x72,0x75,0x73,nm.length,...nm,0]; return [id>>8,id&255,0xc0,0x79,hh,mm,0, 0x00,0x30,0, 0x80|(d.length>>8),d.length&255,...d]; };
+  const eit0=sect(0x4e,[0,1],[0,1,0,1,0,0x4e,...ev(7,0x12,0x00,'News')]);
+  eit0[6]=0;                                                                     // section_number 0 = «сейчас»
+  const eit1=sect(0x4e,[0,1],[0,1,0,1,0,0x4e,...ev(8,0x12,0x30,'Film')]); eit1[6]=1;
+  const tdt=[0x70,0x70,5,0xc0,0x79,0x12,0x45,0x00];
+  const pk2=[...packets(0x11,[0,...sdt],true),...packets(0x10,[0,...nit],true),...packets(0x12,[0,...eit0],true),...packets(0x12,[0,...eit1],true),...packets(0x14,[0,...tdt],true),
+    ...packets(0,[0,...pata],true),...packets(0x100,[0,...pmt],true)];
+  const dd=new T.TsDemux(); dd.push(flat(pk2));
+  ok('SDT names',dd.svc.get(1)?.name==='Россия 1' && dd.svc.get(2)?.name==='Radio One',JSON.stringify([...dd.svc.values()]));
+  ok('SDT type / scrambled',dd.svc.get(2).type===2 && dd.svc.get(2).ca && !dd.svc.get(1).ca);
+  ok('NIT network + LCN',dd.net.name==='RTR' && dd.net.lcn.get(1)===1 && dd.net.lcn.get(2)===5,JSON.stringify([dd.net.name,[...dd.net.lcn]]));
+  ok('NIT frequency',dd.net.freqs[0] && Math.abs(dd.net.freqs[0].mhz-482)<.01,JSON.stringify(dd.net.freqs));
+  const evs=[...(dd.events.get(1)||new Map()).values()];
+  ok('EIT now / next',evs.find(e=>e.pf==='now')?.name==='News' && evs.find(e=>e.pf==='next')?.name==='Film',JSON.stringify(evs));
+  ok('TDT time',dd.utc && dd.utc.str==='1993-10-13 12:45',dd.utc?.str);
+  ok('PMT streams',dd.programs.get(1).es.length===2 && dd.programs.get(1).es[0].name==='H.264',JSON.stringify(dd.programs.get(1).es));
+  // секция на несколько пакетов
+  const big=sect(0x42,[0,1],[0,1,0xff,...Array.from({length:6},(_,i)=>sd(10+i,false,1,[...Buffer.from('Provider long name')],[...Buffer.from('Channel number '+i+' with a long name')])).flat()]);
+  const d5=new T.TsDemux(); d5.push(flat(packets(0x11,[0,...big],true)));
+  ok('multi-packet SDT',d5.svc.size===6 && big.length>183,String(d5.svc.size));
 }
 process.exit(bad?1:0);

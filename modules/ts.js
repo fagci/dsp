@@ -18,7 +18,7 @@ function tsvReset(n){
   try{ n.dec?.close(); }catch(e){}
   try{ n.m2?.m2_reset(); }catch(e){}
   try{ n.m2?.a2_reset(); }catch(e){}
-  n.aq=[]; n.aEnd=null; n.inq=[]; n.inqLen=0;
+  n.aq=[]; n.aEnd=null; n.inq=[]; n.inqLen=0; n.rate0=0; n.dmx?.pidN.clear();
   try{ n.ad?.close(); }catch(e){}
   n.ad=null; n.adKey='';
   n.dec=null; n.decCodec=''; n.needKey=true; n.lastTs=-1;
@@ -27,8 +27,8 @@ function tsvReset(n){
 }
 function tsvClose(n){ tsvReset(n); n.fileObj=null; }
 
-// режимы декодера H.264 по кругу после ошибок: [аппаратный / программный] × [любой I-кадр / только IDR]
-const TSV_MODES=[{sw:false,idr:false},{sw:false,idr:true},{sw:true,idr:false},{sw:true,idr:true}];
+// режимы декодера H.264 по кругу после ошибок: аппаратный / программный с любым I-кадром, затем те же только с IDR
+const TSV_MODES=[{sw:false,idr:false},{sw:true,idr:false},{sw:false,idr:true},{sw:true,idr:true}];
 function tsvMode(n){ return TSV_MODES[(n.mode||0)%4]; }
 function tsvNextMode(n,why){
   const ok=n.decoded>(n.decodedAt||0);                          // режим уже давал кадры: ошибка от потерь, режим не меняем
@@ -57,7 +57,7 @@ async function tsvConfigure(n,codec,type){
   }
   if(!sup?.supported){ n.status='codec '+codec+' is not supported by the browser'; return false; }
   const dec=new VideoDecoder({
-    output:f=>{ if(n.dec!==dec){ f.close(); return; } n.q.push(f); n.decoded++; },
+    output:f=>{ if(n.dec!==dec){ f.close(); return; } n.q.push(f); if(++n.decoded===(n.decodedAt||0)+1){ try{ localStorage.tsvMode=n.mode||0; }catch(e){} } },
     error:e=>{
       if(n.dec!==dec) return;                                   // ошибки уже заменённого декодера не в счёт
       const k=n.lastKey;
@@ -172,7 +172,7 @@ function tsvFeed(n,bytes){
   dm.push(bytes);
   const fr=dm.takeVideo();
   for(const a of dm.takeAudio()) tsvAudio(n,a);
-  if(dm.lostVideo){ dm.lostVideo=false; if(dm.cur?.vtype!=='mpeg2') n.needKey=true; }
+  if(dm.lostVideo){ dm.lostVideo=false; if(n.p.strict && dm.cur?.vtype!=='mpeg2') n.needKey=true; }
   for(const f of fr){
     const type=dm.cur?.vtype;
     if(!dm.vcodec || !type) continue;
@@ -242,6 +242,54 @@ function tsvPumpIn(n){
     n.needKey=true; n.dropped++;
   }
 }
+
+// Каналы потока (SDT + PMT + NIT + EIT) → строки для узла Table
+const TSV_RUN=['','not running','starts soon','paused','running','off air'];
+function tsvChannels(n){
+  const d=n.dmx, now=performance.now();
+  if(!n.rate0) n.rate0=now;
+  const sec=Math.max((now-n.rate0)/1000,1);
+  const rows=[], ids=new Set([...d.programs.keys(),...d.svc.keys()]);
+  for(const sid of [...ids].sort((a,b)=>a-b)){
+    const pr=d.programs.get(sid), sv=d.svc.get(sid);
+    if(!pr && !sv) continue;
+    const ev=d.events.get(sid), cur=ev ? [...ev.values()] : [];
+    const nowE=cur.find(e=>e.pf==='now'), nextE=cur.find(e=>e.pf==='next');
+    let bits=0; if(pr) for(const e of pr.es||[]) bits+=(d.pidN.get(e.pid)||0)*188*8;
+    const vid=pr?.es?.find(e=>e.pid===pr.vpid);
+    const aud=(pr?.es||[]).filter(e=>/MP2|AAC|AC-3|DTS/.test(e.name)).map(e=>e.name+(e.lang ? ' '+e.lang : ''));
+    const sub=(pr?.es||[]).filter(e=>e.name==='subtitles' || e.name==='teletext').map(e=>e.name+(e.lang ? ' '+e.lang : ''));
+    rows.push({
+      lcn:d.net.lcn.get(sid)||'', program:sid, name:sv?.name||'', type:sv ? (TS_SVC_TYPES[sv.type]||('type '+sv.type)) : (vid ? 'TV' : 'Radio'),
+      scrambled:sv?.ca ? 'yes' : '', video:vid ? vid.name+(pr===d.cur && d.sps ? ' '+d.sps.w+'×'+d.sps.h : '') : '', audio:aud.join(', '),
+      extra:sub.join(', '), mbit:+(bits/sec/1e6).toFixed(2), now:nowE?.name||'', until:nowE ? tsvEvEnd(nowE) : '', next:nextE?.name||'',
+      provider:sv?.provider||'', playing:pr && pr===d.cur ? '▶' : '' });
+  }
+  rows.sort((a,b)=>(+a.lcn||9999)-(+b.lcn||9999) || a.program-b.program);
+  const j=JSON.stringify(rows);
+  if(j!==n.chanJ){ n.chanJ=j; n.chanRows=rows; }
+  // телепрограмма: события всех служб
+  const evs=[];
+  for(const [sid,m] of d.events){
+    const sv=d.svc.get(sid);
+    for(const e of m.values()) if(e.name) evs.push({lcn:d.net.lcn.get(sid)||'', program:sid, channel:sv?.name||'', start:e.start+' UTC', min:e.min, title:e.name, text:e.text, state:e.pf||(TSV_RUN[e.run]||''), ms:e.ms});
+  }
+  evs.sort((a,b)=>a.program-b.program || a.ms-b.ms);
+  for(const e of evs) delete e.ms;
+  const j2=JSON.stringify(evs);
+  if(j2!==n.epgJ){ n.epgJ=j2; n.epgRows=evs; }
+  // сеть и время
+  const L=[];
+  if(d.net.name) L.push('network '+d.net.name+(d.net.id ? ' ('+d.net.id+')' : ''));
+  if(d.utc) L.push('time '+d.utc.str+' UTC'+(d.offMin!=null ? ' (local '+(d.offMin>=0 ? '+' : '')+d.offMin/60+' h)' : ''));
+  if(d.net.freqs.length) L.push('muxes in NIT: '+d.net.freqs.map(f=>f.mhz.toFixed(2)+' MHz').join(', '));
+  L.push('services '+rows.length+(d.sdtDone ? '' : ' (names not received yet)'));
+  n.infoTxt=L.join('\n');
+}
+function tsvEvEnd(e){
+  const m=e.min+Math.round((e.ms%86400000)/60000), h=Math.floor(m/60)%24, mi=m%60;
+  return (h<10 ? '0' : '')+h+':'+(mi<10 ? '0' : '')+mi;
+}
 function tsvPump(n){
   if(n.fileObj && !n.rd && n.q.length+(n.dec?.decodeQueueSize||0)<(n.dmx.cur?.vtype==='mpeg2' ? 8 : 24)){
     const f=n.fileObj, pos=n.pos, end=Math.min(f.size,pos+188*64);
@@ -255,12 +303,13 @@ function tsvPump(n){
 }
 
 def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport stream dvb tv video h264 avc hevc webcodecs television broadcast', readout:true, always:true,
-  ins:[{n:'bin',t:'bin'}], outs:[{n:'vid',t:'vid'},{n:'L',t:'sig'},{n:'R',t:'sig'},{n:'lock',t:'num'},{n:'fps',t:'num'}],
+  ins:[{n:'bin',t:'bin'},{n:'prog',t:'num'}], outs:[{n:'vid',t:'vid'},{n:'L',t:'sig'},{n:'R',t:'sig'},{n:'lock',t:'num'},{n:'fps',t:'num'},{n:'chan',t:'bands'},{n:'epg',t:'bands'},{n:'info',t:'txt'}],
   params:[{n:'file',t:'file',accept:'.ts,.m2ts,.mts,video/mp2t',fn:(n,f)=>{
             tsvReset(n); n.dmx.reset(); n.fileObj=f; n.pos=0; n.status='file '+f.name; }},
           {n:'loop',t:'check',d:true,label:'loop the file'},
           {n:'program',t:'num',d:0,label:'program number (0 — first with video)'},
           {n:'delay',t:'range',min:0,max:2000,step:50,d:400,label:'buffer, ms (a live stream needs more)'},
+          {n:'strict',t:'check',d:false,label:'after lost packets wait for the next entry point (no artifacts, but freezes)'},
           {n:'volume',t:'range',min:0,max:2,step:.01,d:1,label:'volume'},
           {n:'avsync',t:'range',min:-500,max:500,step:10,d:0,label:'audio delay, ms (positive — later)'},
           {n:'reset',t:'button',label:'Reset',fn:n=>{ tsvReset(n); n.dmx.reset(); n.pos=0; n.status='reset'; }}],
@@ -279,10 +328,12 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
     const o=I.bin;
     if(o && o.d && o!==n.last){ n.last=o; n.inq.push(o.d); n.inqLen+=o.d.length; }
     tsvPumpIn(n);
+    if(typeof I.prog==='number' && I.prog!==n._inProg){ n._inProg=I.prog; setMod(n,'program',Math.round(I.prog)); }
     const pr=+n.p.program|0;
     if(pr!==n.prog){ n.prog=pr; tsvReset(n); n.dmx.select(pr); n.dmx.vcodec=''; n.dmx.sps=null; }
     tsvPump(n);
     tsvPresent(n);
+    if(performance.now()-(n.chanT||0)>1500){ n.chanT=performance.now(); tsvChannels(n); }
     const now=performance.now();
     if(now-n.fpsT>=1000){ n.fps=n.fpsN*1000/(now-n.fpsT); n.fpsN=0; const cc=n.dmx.stat.cc+n.dmx.stat.tei; n.ccRate=(cc-(n.ccPrev||0))*1000/(now-n.fpsT); n.ccPrev=cc; n.fpsT=now; if(n.fps===0) n.gotFrame=false; }
     const oL=buf(n,'L'), oR=buf(n,'R'); oL.fill(0); oR.fill(0);
@@ -291,7 +342,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
       if(n.aNoV>60){ n.ts0=n.aq[0].t0*1e6; n.wall0=now+(+n.p.delay||0); n.base=1; n.aSh=0; n.aNoV=0; }
     }
     if(n.base!=null && n.aq.length) tsvAudioRead(n,oL,oR,n.ts0/1e6+(now-n.wall0)/1000-(+n.p.avsync||0)/1000+(n.aSh||0),+n.p.volume);
-    return {vid:n.gotFrame && n.pic.width ? n.pic : null, L:oL, R:oR, lock:n.gotFrame ? 1 : 0, fps:n.fps}; },
+    return {vid:n.gotFrame && n.pic.width ? n.pic : null, L:oL, R:oR, lock:n.gotFrame ? 1 : 0, fps:n.fps, chan:n.chanRows||null, epg:n.epgRows||null, info:n.infoTxt||''}; },
   draw(n,cv,cx){
     const r=n.el.querySelector('.readout');
     if(r){
@@ -303,6 +354,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
       if(st.cc||st.tei||n.dropped||n.m2bad) t+='\nlost packets '+st.cc+' (now '+Math.round(n.ccRate||0)+'/s) · transport errors '+st.tei+(st.sync ? ' · stream breaks '+st.sync+(()=>{ const e=Object.entries(st.gaps).sort((x,y)=>y[1]-x[1])[0]; return e ? ' (usually '+e[0]+' extra bytes ×'+e[1]+')' : ''; })() : '')+(n.dropped ? ' · dropped frames '+n.dropped : '')+(n.m2bad ? ' · bad slices '+n.m2bad : '');
       if(pl.length) t+='\nvideo frames '+st.frames+' (entry points '+st.keys+') · decoded '+n.decoded+' · shown '+n.shown+(n.inqLen>0 ? ' · input queue '+(n.inqLen/1e6).toFixed(1)+' MB' : '')+(n.dec ? ' · decoder queue '+n.dec.decodeQueueSize : n.decCodec ? '' : ' · decoder not started')+(n.needKey ? ' · waiting for an entry point' : '')+' · '+(tsvMode(n).sw || n.bigNote ? 'software' : 'hardware')+' decoder, '+(tsvMode(n).idr ? 'IDR only' : 'any I frame')+' (IDR frames in the stream '+st.idr+')'+(n.notes.length ? '\n'+n.notes.join('\n') : '');
       if(pl.length && d.cur?.apid) t+='\naudio PES '+(st.apes||0)+' · queued '+(n.aq.reduce((a,g)=>a+(g.L.length-g.i),0)/Eng.sr).toFixed(2)+' s · played '+((n.aPlayed||0)/Eng.sr).toFixed(1)+' s · offset to video '+Math.round((n.aOff||0)*1000)+' ms · resyncs '+(n.aResync||0)+(n.base==null ? ' · no video clock' : '');
+      if(pl.length && n.infoTxt) t+='\n'+n.infoTxt;
       if(n.status && pl.length && !n.gotFrame) t+='\n'+n.status;
       if(r.textContent!==t) r.textContent=t;
     }
