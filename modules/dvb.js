@@ -204,16 +204,21 @@ function dvbStream(n){
   if(n.dv_run) return;
   n.dv_run=true; n.dv_rx=[]; n.dv_rxBytes=0; n.dv_rate=0; n.dv_rateAt=performance.now(); n.dv_rateB=0;
   const dev=n.dv_dev;
+  // много запросов одновременно: пока основной поток занят, устройству есть куда писать (у ядра 6 буферов, у браузера задержки больше).
+  // 16 × 32 КБ — полсекунды при 8 Мбит/с, около 150 мс при 28 Мбит/с
+  n.dv_gaps=0; n.dv_gapMax=0; n.dv_lastRx=performance.now();
   const loop=async()=>{
     while(n.dv_run && n.dv_dev===dev){
       try{
         const r=await dev.transferIn(1,32768);
+        const now=performance.now(), gap=now-n.dv_lastRx; n.dv_lastRx=now;
+        if(gap>80 && n.dv_rxBytes>0){ n.dv_gaps++; if(gap>n.dv_gapMax) n.dv_gapMax=gap; }   // долго не было данных: пауза потока или устройства
         if(r.status==='ok' && r.data.byteLength){ n.dv_rx.push(new Uint8Array(r.data.buffer.slice(r.data.byteOffset,r.data.byteOffset+r.data.byteLength))); n.dv_rxBytes+=r.data.byteLength; if(n.dv_rx.length>400) n.dv_rx.splice(0,n.dv_rx.length-200); }   // узел не опрашивают: не копить
         else if(r.status==='stall'){ await dev.clearHalt('in',1); }
       }catch(e){ if(n.dv_run){ dvbLog(n,'USB read: '+e.message); await dvbSleep(200); } }
     }
   };
-  for(let i=0;i<3;i++) loop();
+  for(let i=0;i<16;i++) loop();
   const poll=async()=>{
     while(n.dv_run && n.dv_dev===dev){
       await dvbSleep(400);
@@ -267,7 +272,7 @@ def({ id:'dvbUsb', title:'DVB USB (Astrometa)', cat:'Sources', kw:'dvb t2 dvb-t 
     const r=n.el.querySelector('.readout'); if(!r) return;
     const now=performance.now();
     if(now-n.dv_rateAt>1000){ n.dv_rate=(n.dv_rxBytes-n.dv_rateB)*8/((now-n.dv_rateAt)/1000); n.dv_rateB=n.dv_rxBytes; n.dv_rateAt=now; }
-    let h= n.dv_scanTxt ? n.dv_scanTxt : n.dv_connected ? (n.dv_locked ? '● LOCK ' : '○ searching ')+(n.dv_sys||'')+' '+(n.dv_freq?n.dv_freq/1e6:'')+' MHz'+(n.dv_st&&n.dv_st.cnr!=null ? ' · C/N '+n.dv_st.cnr.toFixed(1)+' dB' : '')+(n.dv_st&&n.dv_st.strength!=null ? ' · level '+Math.round(n.dv_st.strength/10.23)+' %' : '')+' · TS '+(n.dv_rate/1e6).toFixed(2)+' Mbit/s' : n.dv_status;
+    let h= n.dv_scanTxt ? n.dv_scanTxt : n.dv_connected ? (n.dv_locked ? '● LOCK ' : '○ searching ')+(n.dv_sys||'')+' '+(n.dv_freq?n.dv_freq/1e6:'')+' MHz'+(n.dv_st&&n.dv_st.cnr!=null ? ' · C/N '+n.dv_st.cnr.toFixed(1)+' dB' : '')+(n.dv_st&&n.dv_st.strength!=null ? ' · level '+Math.round(n.dv_st.strength/10.23)+' %' : '')+' · TS '+(n.dv_rate/1e6).toFixed(2)+' Mbit/s'+(n.dv_gaps ? ' · USB pauses >80 ms: '+n.dv_gaps+' (max '+Math.round(n.dv_gapMax)+' ms)' : '') : n.dv_status;
     const t=h+'\n'+n.dv_logTxt.slice(-8).join('\n');
     if(r.textContent!==t) r.textContent=t; }
 });
