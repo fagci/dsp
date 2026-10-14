@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=50;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=51;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -3691,39 +3691,50 @@ preset('Visualizer: Ridgeline + Neon Waveform', function(){
 // У Neon Waveform три режима: line (осциллограмма с триггером), ring (кольцо), xy (фигуры Лиссажу: два входа или x(t) против x(t−d)).
 
 
+// плеер ↔ плейлист: fs / url / name / go / nfs / nurl — туда, next / prev / end / req / playing — обратно
+function winampLink(pl,ls){
+  for(const p of ['fs','url','name','go','nfs','nurl']) addEdge(ls.id,p,pl.id,p);
+  for(const p of ['next','prev','end','req','playing']) addEdge(pl.id,p,ls.id,p);
+}
 preset('Winamp', function(){
   clearAll();
-  const pl=addNode('winamp',40,40,{vol:.8}); pl.size.w=360; pl.size.h=470; applySize(pl);
+  const pl=addNode('winamp',40,40,{vol:.8}); pl.size.w=360; pl.size.h=210; applySize(pl);
+  const ls=addNode('playlist',40,290,{}); ls.size.w=360; ls.size.h=300; applySize(ls);
   const eq=addNode('eq10',440,40,{preset:'Flat'}); eq.size.w=360; eq.size.h=260; applySize(eq);
   const dc=addNode('dac',840,40,{vol:.8,mode:'stereo'});
+  winampLink(pl,ls);
   addEdge(pl.id,'l',eq.id,'l'); addEdge(pl.id,'r',eq.id,'r');
   addEdge(eq.id,'l',dc.id,'L'); addEdge(eq.id,'r',dc.id,'R');
-  const bd=addNode('bands',440,340,{bands:20}); addEdge(eq.id,'l',bd.id,'in');
-  vizTile('vizBars',840,200,420,220,bd,'spec',{style:'led',color:'theme',bars:20});
-  const wv=addNode('vizWave',840,460,{mode:'line'}); wv.size.w=420; wv.size.h=180; applySize(wv);
-  addEdge(eq.id,'l',wv.id,'in');
+  const bd=addNode('bands',440,340,{bands:48}); addEdge(eq.id,'l',bd.id,'in');
+  const rd=vizTile('vizRadial',840,200,420,420,bd,'spec',{color:'rainbow'});
+  const br=vizTile('vizBars',1300,200,420,200,bd,'spec',{style:'led',color:'theme',bars:32});
+  // тайлы (▦) как в классическом Winamp: слева плеер, эквалайзер и плейлист, справа визуализатор
+  Graph.dashTree=tileSplit('row',[
+    tileSplit('col',[tileLeaf(pl),tileLeaf(eq),tileLeaf(ls)],[22,30,48]),
+    tileSplit('col',[tileLeaf(rd,true),tileLeaf(br,true)],[68,32])],[34,66]);
   markWiresDirty();
 });
-// Плеер как у Winamp, без скинов: «+ files» или перетащи аудиофайлы на плеер (в списке — теги ID3), кнопки prev / play / pause / stop / next
-// (горячие клавиши Z X C V B, когда плеер в фокусе), перемотка, громкость и баланс, shuffle и repeat. Дальше — 10-полосный
-// эквалайзер с пресетами (двойной клик по ползунку — в ноль) → звуковая карта; рядом анализатор спектра и осциллограф.
+// Плеер, эквалайзер и отдельный узел Playlist (его можно взять и для другого плеера): «files» или перетаскивание аудио в плейлист
+// (теги ID3), «library» — из файлового менеджера, кнопки prev / play / pause / stop / next (клавиши Z X C V B в фокусе плеера),
+// перемотка, громкость, баланс; shuffle и repeat — в плейлисте. Эквалайзер: двойной клик по ползунку — в ноль. Режим ▦ — раскладка Winamp.
 
 preset('Winamp: Internet Radio Playlist', function(){
   clearAll();
   const nt=addNode('note',40,40,{text:'Winamp + Internet Radio: set a country code / tag and press Search in Internet Radio.\n'+
-    'Click a station on the map — it joins the Winamp playlist and starts. «＋ add stations from the rows wire» in the player\n'+
-    'puts every found station into the playlist at once. The playlist is saved with the patch; files go to Files → Music\n'+
-    '(the same storage as the Files node and the Sample Library: «+ library» picks from it, Files → send adds a file by wire).\n'+
-    'Only streams that send CORS headers can be captured into the graph.'});
+    'Click a station on the map — it joins the Playlist and starts. «stations» in the Playlist puts every found station there at once.\n'+
+    'The playlist is saved with the patch; files go to Files → Music (the same storage as the Files node and the Sample Library:\n'+
+    '«library» picks from it, Files → send adds a file by wire). Only streams that send CORS headers can be captured into the graph.'});
   nt.size.w=620; nt.size.h=130; applySize(nt);
   const rd=addNode('radioDir',40,200,{cc:'',limit:2000}); rd.size.h=150; applySize(rd);
-  const pl=addNode('winamp',400,200,{vol:.8}); pl.size.w=360; pl.size.h=470; applySize(pl);
+  const pl=addNode('winamp',400,200,{vol:.8}); pl.size.w=360; pl.size.h=210; applySize(pl);
+  const ls=addNode('playlist',400,450,{}); ls.size.w=360; ls.size.h=300; applySize(ls);
   const eq=addNode('eq10',800,200,{preset:'Flat'}); eq.size.w=360; eq.size.h=260; applySize(eq);
   const dc=addNode('dac',1200,200,{vol:.8,mode:'stereo'});
   const bd=addNode('bands',800,500,{bands:20});
   const map=addNode('geoMap',1200,360,{mz:2,mlat:35,mlon:15,labels:true}); map.size.w=560; map.size.h=420; applySize(map);
+  winampLink(pl,ls);
   addEdge(rd.id,'rows',map.id,'rows'); addEdge(map.id,'sel',rd.id,'select');
-  addEdge(rd.id,'url',pl.id,'url'); addEdge(rd.id,'name',pl.id,'name'); addEdge(rd.id,'rows',pl.id,'rows');
+  addEdge(rd.id,'url',ls.id,'url'); addEdge(rd.id,'name',ls.id,'name'); addEdge(rd.id,'rows',ls.id,'rows');
   addEdge(pl.id,'l',eq.id,'l'); addEdge(pl.id,'r',eq.id,'r');
   addEdge(eq.id,'l',dc.id,'L'); addEdge(eq.id,'r',dc.id,'R');
   addEdge(eq.id,'l',bd.id,'in');
