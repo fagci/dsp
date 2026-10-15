@@ -784,6 +784,24 @@ function tblInit(n){
     parts.reduce((a,x)=>{ const path=a ? a+'/'+x : x; n._open.add(path); return path; },'');
   }
   n.ui.list.addEventListener('keydown',e=>tblKey(n,e));
+  // один набор обработчиков на список, а не по три на каждую строку
+  n.ui.list.addEventListener('click',e=>{
+    const row=e.target.closest('.tbl-row'); if(!row) return;
+    const i=+row.dataset.i, b=e.target.closest('.tbl-ico[data-act]');
+    if(b?.dataset.act==='edit'){ tblEditForm(n,i,row); return; }
+    if(b?.dataset.act==='del'){
+      const label=n.nameCol ? String(n.rows[i]?.[n.nameCol]??'') : '';
+      if(!confirm('Delete row "'+(label||i+1)+'"?')) return;
+      tblRemove(n,i).then(()=>tblRenderList(n));
+      return;
+    }
+    if(b) return;                                         // фото / звук — свои обработчики
+    tblSelect(n,i); n.ui.list.focus({preventScroll:true});
+  });
+  n.ui.list.addEventListener('dblclick',e=>{
+    const row=e.target.closest('.tbl-row');
+    if(row && !tblRO(n)) tblEditForm(n,+row.dataset.i,row);
+  });
   n.ui.pick.addEventListener('change',()=>tblPick(n,n.ui.pick.value));
   n.ui.shown.addEventListener('click',()=>tblTreeToggle(n));
   n.ui.tree.addEventListener('click',e=>tblTreeClick(n,e));
@@ -1043,6 +1061,7 @@ function tblRenderList(n){
     list.append(e); ui.marked=-1; return;
   }
   n.bgCtx=tblTintCtx(n);
+  const frag=document.createDocumentFragment();
   const s=ui.tail ? Math.max(0,N-TBL_ROWS) : 0, e=Math.min(N,s+TBL_ROWS);
   let vc=null, texts=null;
   if(grid){
@@ -1059,15 +1078,16 @@ function tblRenderList(n){
     hd.append(Object.assign(document.createElement('span'),{textContent:'#',className:'tbl-no'}));
     for(const x of vc) hd.append(Object.assign(document.createElement('span'),{textContent:x.c,title:x.c}));
     hd.append(document.createElement('span'));
-    list.append(hd);
+    frag.append(hd);
   } else list.style.removeProperty('--tc');
-  for(let i=s;i<e;i++) list.append(tblRow(n,i,ro,grid ? {vc,t:texts[i-s]} : null));
+  for(let i=s;i<e;i++) frag.append(tblRow(n,i,ro,grid ? {vc,t:texts[i-s]} : null));
   if(N>TBL_ROWS){
     const m=document.createElement('div');
     m.textContent=(ui.tail?'… '+s+' earlier rows hidden':'… '+(N-e)+' more rows')+' — narrow with the filter';
     m.className='tbl-empty sm';
-    list.append(m);
+    frag.append(m);
   }
+  list.append(frag);                                     // одна вставка вместо сотен
   list.scrollTop=ui.tail && atEnd ? list.scrollHeight : keep;
   ui.marked=-1; tblMark(n,true);
 }
@@ -1116,6 +1136,7 @@ function tblCellEl(n,x,v,text){
     if(ids.length){
       el.textContent=text; el.classList.add('tbl-ico','warn');
       el.title=TBL_PHOTO.test(low) ? 'Show the photos' : 'Play the audio';
+      el.dataset.act='media';
       el.addEventListener('click',e=>{ e.stopPropagation(); TBL_PHOTO.test(low) ? phView(ids) : auView(ids); });
     }
     return el;
@@ -1195,14 +1216,14 @@ function tblRow(n,i,ro,g){
     const pc=n.cl.find(c=>TBL_PHOTO.test(c.toLowerCase())), pids=pc ? phIds(r[pc]) : [];
     if(pids.length){
       const ph=document.createElement('span');
-      ph.textContent='📷'+pids.length; ph.title='Show the photos'; ph.className='tbl-ico warn';
+      ph.textContent='📷'+pids.length; ph.title='Show the photos'; ph.className='tbl-ico warn'; ph.dataset.act='media';
       ph.addEventListener('click',e=>{ e.stopPropagation(); phView(pids); });
       row.append(ph);
     }
     const ac=n.cl.find(c=>TBL_AUDIO.test(c.toLowerCase())), aids=ac ? auIds(r[ac]) : [];
     if(aids.length){
       const au=document.createElement('span');
-      au.textContent='🔊'+aids.length; au.title='Play the audio'; au.className='tbl-ico warn';
+      au.textContent='🔊'+aids.length; au.title='Play the audio'; au.className='tbl-ico warn'; au.dataset.act='media';
       au.addEventListener('click',e=>{ e.stopPropagation(); auView(aids); });
       row.append(au);
     }
@@ -1211,19 +1232,11 @@ function tblRow(n,i,ro,g){
   if(g){ const tail=document.createElement('span'); tail.className='tbl-tail'; row.append(tail); row._tail=tail; }
   if(!ro){
     const ed=document.createElement('span');
-    ed.textContent='✎'; ed.className='tbl-ico'; ed.title='Edit';
-    ed.addEventListener('click',e=>{ e.stopPropagation(); tblEditForm(n,i,row); });
+    ed.textContent='✎'; ed.className='tbl-ico'; ed.title='Edit'; ed.dataset.act='edit';
     const del=document.createElement('span');
-    del.textContent='🗑'; del.className='tbl-ico'; del.title='Delete';
-    del.addEventListener('click',async e=>{
-      e.stopPropagation();
-      if(!confirm('Delete row "'+(label||i+1)+'"?')) return;
-      await tblRemove(n,i); tblRenderList(n);
-    });
+    del.textContent='🗑'; del.className='tbl-ico'; del.title='Delete'; del.dataset.act='del';
     (row._tail||row).append(ed,del);
   }
-  if(!ro) row.addEventListener('dblclick',()=>tblEditForm(n,i,row));
-  row.addEventListener('click',()=>{ tblSelect(n,i); n.ui.list.focus({preventScroll:true}); });
   return row;
 }
 function tblSelect(n,i){                                // выбор записи: уходит на выходы
