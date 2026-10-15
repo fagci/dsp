@@ -13,6 +13,7 @@ self.onmessage=e=>{
         std=m.cfg.std; const t2=std==='DVB-T2', file=t2 ? 'vendor/dvbofdm.wasm' : 'vendor/leandvb.wasm';
         if(!wasm[file]){ const r=await fetch(file+Q); if(!r.ok) throw new Error(file+': HTTP '+r.status); wasm[file]=await r.arrayBuffer(); }
         dvb=t2 ? await DvbOfdm.create(wasm[file]) : await LeanDvb.create(wasm[file]); dvb.init(m.cfg); post({type:'ready'});
+      }else if(m.type==='gap'){ if(dvb && dvb.gap) dvb.gap();
       }else if(m.type==='iq' && dvb){
         dvb.feed(m.f);
         const t=dvb.take();

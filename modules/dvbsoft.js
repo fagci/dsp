@@ -60,7 +60,8 @@ def({ ...TSV, id:'dvbsoft', title:'DVB Receiver (IQ)', cat:'Decoders',
         if(n.dwReady) for(const c of s.chunks){
           if(t2){                                                                  // T2: воркер не успевает — выбрасываем подряд, пока он не разгребёт очередь,
             if(n.dwIn>=600) n.dsHold=true; else if(n.dwIn<=40) n.dsHold=false;       // иначе рвутся все кадры, а так хоть часть кадров приходит целиком
-            if(n.dsHold){ n.dsSkip++; continue; }
+            if(n.dsHold){ n.dsSkip++; n.dsGapPending=true; continue; }
+            if(n.dsGapPending){ n.dsGapPending=false; n.dw.postMessage({type:'gap'}); }      // дыра в потоке: приёмник сбрасывает накопленное
           }else if(n.dwIn>=48){ n.dsSkip++; continue; }                            // воркер не успевает: порция выбрасывается
           const re=c.re, im=iqChunkIm(c), K=re.length, f=new Float32Array(2*K);
           let pw=0;
