@@ -1051,14 +1051,13 @@ function tblRenderList(n){
   const ui=n.ui, list=ui.list, N=n.rows.length, ro=tblRO(n), grid=n.p.vmode!=='compact';
   // перерисовка при новых записях не должна сбрасывать прокрутку: запоминаем позицию, у низа в режиме tail — остаёмся у низа
   const keep=list.scrollTop, atEnd=list.scrollTop+list.clientHeight>=list.scrollHeight-4;
-  list.innerHTML='';
   list.classList.toggle('grid',grid);
   ui.count.textContent=(n.p.filter ? N+'/' : '')+n.all.length+' rows';
   if(!N){
     const e=document.createElement('div');
     e.textContent=n.all.length ? 'nothing matches' : ro ? 'empty' : 'empty — add a row, import a file or wire rec / text';
     e.className='tbl-empty';
-    list.append(e); ui.marked=-1; return;
+    list.replaceChildren(e); ui.marked=-1; return;
   }
   n.bgCtx=tblTintCtx(n);
   const frag=document.createDocumentFragment();
@@ -1087,7 +1086,7 @@ function tblRenderList(n){
     m.className='tbl-empty sm';
     frag.append(m);
   }
-  list.append(frag);                                     // одна вставка вместо сотен
+  list.replaceChildren(frag);                            // одна атомарная замена: прокрутка не сбрасывается
   list.scrollTop=ui.tail && atEnd ? list.scrollHeight : keep;
   ui.marked=-1; tblMark(n,true);
 }

@@ -1165,7 +1165,6 @@ select.aed-b{padding:0 6px}
 .tbl-list.grid .tbl-row.on{background:color-mix(in srgb,var(--acc2) 32%,var(--rb,transparent))}
 .tbl-hd{position:sticky;top:0;z-index:1;padding:0;background:var(--panel2);border-bottom:1px solid var(--line);color:var(--dim)}
 .tbl-list.grid .tbl-row>*,.tbl-hd>*{padding:2px 5px;border-right:1px solid color-mix(in srgb,var(--txt) 12%,transparent);box-sizing:border-box;min-width:0}
-.tbl-list.grid .tbl-row{content-visibility:auto;contain-intrinsic-size:auto 20px}   /* строки вне видимой области не раскладываются и не рисуются */
 .tbl-list.grid .tbl-row>:last-child,.tbl-hd>:last-child{border-right:0}
 .tbl-hd>span,.tbl-c{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tbl-c.r{text-align:right}
