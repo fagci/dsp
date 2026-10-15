@@ -1549,6 +1549,37 @@ function saChannels(n,cx,W,H,plotH){
   }
   cx.globalAlpha=1;
 }
+// Подсказка будущего маркера под курсором: линия на (привязанной к сетке band plan) частоте и,
+// если источник знает полосу канала (spec.pickBw), приглушённая полоса BW — по спектру и водопаду.
+function saHover(n,cx,W,H,top){
+  const x=n._hoverX; if(x==null||!n.s||n._dragActive) return;
+  const f=saSnapFreq(n,saFreq(n,x)), pb=n.s.pickBw;
+  let lo=f, hi=f;
+  if(pb){ lo=pb.mode==='USB'?f:f-pb.pass; hi=pb.mode==='LSB'?f:f+pb.pass; }
+  const x1=saPos(n,lo)*W, x2=saPos(n,hi)*W, xc=saPos(n,f)*W, col=MK_COL(n.active-1);
+  cx.save();
+  if(x2-x1>=1){ cx.globalAlpha=.07; cx.fillStyle=col; cx.fillRect(x1,top,x2-x1,H-top); }
+  cx.globalAlpha=.35; cx.strokeStyle=col; cx.lineWidth=1;
+  cx.beginPath();
+  if(x2-x1>=3){ cx.moveTo(Math.round(x1)+.5,top); cx.lineTo(Math.round(x1)+.5,H); cx.moveTo(Math.round(x2)-.5,top); cx.lineTo(Math.round(x2)-.5,H); }
+  cx.setLineDash([3,3]); cx.moveTo(Math.round(xc)+.5,top); cx.lineTo(Math.round(xc)+.5,H); cx.stroke();
+  cx.restore();
+}
+// Auto диапазона дБ: пол — низкий перцентиль видимой части спектра, потолок — максимум
+function saAutoDb(n){
+  const sp=n.s; if(!sp||!sp.mag||n.p.layout==='panes') return;
+  const [lo,hi]=saBounds(n), N=sp.mag.length;
+  let a=clamp(Math.floor(specBin(sp,lo)),0,N-1), b=clamp(Math.ceil(specBin(sp,hi)),0,N-1);
+  if(b<a){ const t=a; a=b; b=t; }
+  const st=Math.max(1,Math.floor((b-a+1)/2000)), v=[];
+  for(let i=a;i<=b;i+=st) v.push(20*Math.log10(sp.mag[i]+1e-12));
+  if(n.p.peakHold && n.peak && n.peak.length===N) for(let i=a;i<=b;i+=st) v.push(20*Math.log10(n.peak[i]+1e-12));
+  if(!v.length) return;
+  v.sort((p,q)=>p-q);
+  const fl=Math.floor((v[Math.floor(v.length*.05)]-8)/5)*5, tp=Math.ceil((v[v.length-1]+6)/5)*5;
+  const floor=clamp(fl,-140,0), top=clamp(Math.max(tp,floor+20),floor+20,20);
+  setMod(n,'floor',floor); setMod(n,'top',top);
+}
 // Время строк водопада: spec.tl (отсчёты таймлайна источника) на каждую новую строку, новые в конце.
 // Нужно для наложения аннотаций IQ (spec.ann: {a0,a1,lo,hi,label,mark}); возраст строки a — T[T.length-1-a].
 function saWfStamp(n){

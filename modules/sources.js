@@ -3342,8 +3342,8 @@ function rtlChanBands(n, cf, half){
   const mode=n.p.demod; if(mode==='IQ') return [];
   const pl=rtlPlan(mode, n.sourceRate, n.p.bw), out=[];
   for(let ci=0;ci<4;ci++){
-    const ch=n.ch[ci]; if(!ch.active) continue;
-    const f=clamp(ch.tuneFreq==null?sdrCenter(n):ch.tuneFreq, cf-half, cf+half);
+    const ch=n.ch[ci]; if(!ch.active || ch.tuneFreq==null) continue;   // частота не задана — полосу не показываем
+    const f=clamp(ch.tuneFreq, cf-half, cf+half);
     const lo = mode==='USB' ? f : f-pl.pass, hi = mode==='LSB' ? f : f+pl.pass;
     out.push({idx:ci, f, lo, hi, mode});
   }
@@ -5252,6 +5252,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     if(spOut){
       // линии порога — только на живом спектре: у панорамы sweep своя шкала бинов
       spOut.chans=n.swActive || n.appliedFreq==null || !Number.isFinite(cf) ? null : rtlChanBands(n, cf, half).map(c=>rtlChanMeter(n, c, !sweepOn));
+      // полоса канала для подсказки маркера под курсором в 'sa'
+      spOut.pickBw=n.p.demod==='IQ' ? null : {mode:n.p.demod, pass:rtlPlan(n.p.demod, n.sourceRate, n.p.bw).pass};
       // обратный канал для 'sa': перетаскивание края шторки задаёт новую ширину полосы ПЧ
       spOut.setChanBw=n._setChanBw||(n._setChanBw=(mode,w)=>{
         const lim=RTL_BW_LIMITS[mode]; if(lim) setMod(n,'bw',Math.round(clamp(w,lim[0],lim[1])));

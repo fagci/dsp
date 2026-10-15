@@ -206,7 +206,10 @@ function saPanesIngest(n,sp,src=0){
       }
       const db=20*Math.log10(v+1e-12);
       p.lv[x]=db; wcol[touched++]=x;
-      if(n.p.peakHold && !(p.pk[x]>=db)) p.pk[x]=db;
+      if(n.p.peakHold){
+        if(n.p.peakDecay>0 && p.pk[x]===p.pk[x] && p.t) p.pk[x]-=60/n.p.peakDecay*Math.min(5,(now-p.t)/1000);
+        if(!(p.pk[x]>=db)) p.pk[x]=db;
+      }
     }
     if(!touched) continue;
     const gap=p.t ? now-p.t : 1e9, c=(sLo+sHi)/2;
