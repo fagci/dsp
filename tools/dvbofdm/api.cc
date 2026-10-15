@@ -99,6 +99,7 @@ __attribute__((export_name("t2_feed"))) void t2_feed(size_t n) {
   else { tmp.clear(); rs.run(x, n, tmp); if (!tmp.empty()) rx->feed(tmp.data(), tmp.size()); }
   if (!rx->ts.empty()) { tsOut.insert(tsOut.end(), rx->ts.begin(), rx->ts.end()); rx->ts.clear(); }
 }
+__attribute__((export_name("t2_gap"))) void t2_gap(void) { if (rx) rx->gap(); rs.init(fsIn / fsNom); }
 __attribute__((export_name("t2_ts"))) uint8_t *t2_ts(void) { return tsOut.data(); }
 __attribute__((export_name("t2_ts_len"))) size_t t2_ts_len(void) { return tsOut.size(); }
 __attribute__((export_name("t2_ts_clear"))) void t2_ts_clear(void) { tsOut.clear(); }

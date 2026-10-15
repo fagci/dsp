@@ -42,6 +42,12 @@ class T2Receiver {
     buf_.insert(buf_.end(), x, x + n);
     step();
   }
+  // The host dropped samples: what is buffered no longer continues with what comes next
+  void gap() {
+    base_ += (int64_t)buf_.size(); buf_.clear();
+    scanPos_ = base_; expect_ = -1; lastP1_ = -1;
+    st.lock = false;
+  }
 
  private:
   std::vector<cf> buf_; int64_t base_ = 0;
@@ -60,7 +66,7 @@ class T2Receiver {
     return *it->second;
   }
   double eps_ = 0, period_ = 0, n0_ = 1.0;          // CFO rad/sample; measured frame period / nominal
-  int64_t lastP1_ = -1; int64_t lastLen_ = 0;
+  int64_t lastP1_ = -1; int64_t lastLen_ = 0; unsigned giRound_ = 0;
   int back_ = 0;
   int64_t expect_ = -1;                  // expected position of the next P1
 
@@ -115,10 +121,27 @@ class T2Receiver {
     // L1-pre: reuse the previous setup first, otherwise try the guard interval / extended carrier hypotheses
     int tries = 0;
     st.preSnr = -99;
+    // guard interval candidates from the cyclic prefix of the first P2 symbol, best first; only the most likely ones are tried on most preambles
+    int giOrd[7]; int giTry = 7;
+    {
+      const double fr[7] = {1 / 32., 1 / 16., 1 / 8., 1 / 4., 1 / 128., 19 / 128., 19 / 256.};
+      int Gm = N / 4;
+      if (p2 + N + Gm + 8 - base_ > (int64_t)buf_.size()) return 0;
+      std::vector<std::complex<double>> P(Gm + 1, 0); std::vector<double> E(Gm + 1, 0);
+      const cf *a = &buf_[p2 - base_];
+      for (int k = 0; k < Gm; k++) { P[k + 1] = P[k] + std::complex<double>(a[k]) * std::conj(std::complex<double>(a[k + N])); E[k + 1] = E[k] + 0.5 * (cabs2(a[k]) + cabs2(a[k + N])); }
+      double rho[7], q[7], en[7], rmax = 0;
+      for (int g = 0; g < 7; g++) { int G = (int)(N * fr[g] + 0.5); q[g] = std::abs(P[G]); en[g] = E[G]; rho[g] = en[g] > 0 ? q[g] / en[g] : 0; rmax = std::max(rmax, rho[g]); }
+      double lam[7];
+      for (int g = 0; g < 7; g++) { giOrd[g] = g; lam[g] = q[g] - 0.5 * rmax * en[g]; }
+      std::sort(giOrd, giOrd + 7, [&](int x, int y) { return lam[x] > lam[y]; });
+      giTry = (giRound_++ % 4 == 0) ? 7 : 2;
+    }
     for (int pass = 0; pass < 2 && !got; pass++) {
-      for (int gi = 0; gi < 7 && !got; gi++) for (int ext = 0; ext < 2 && !got; ext++) for (int tr = 0; tr < 2 && !got; tr++) {
+      for (int gk = 0; gk < 7 && !got; gk++) for (int ext = 0; ext < 2 && !got; ext++) for (int tr = 0; tr < 2 && !got; tr++) {
+        int gi = giOrd[gk];
         bool prev = haveS_ && Sp_->fftIdx == fftIdx && gi == Sp_->giIdx && ext == Sp_->ext && tr == ((Sp_->papr >> 1) & 1);
-        if (pass == 0) { if (!prev) continue; } else if (prev) continue;
+        if (pass == 0) { if (!prev) continue; } else if (prev || gk >= giTry) continue;
         // tone reservation takes carriers away from P2 too, so the L1 cells sit elsewhere: both layouts are tried
         const T2Setup &s0 = getSetup(fftIdx, gi, ext, miso, 1, tr ? 2 : 0, 1, 0);
         int64_t need = p2 + (int64_t)s0.st->N_P2 * (s0.N + s0.G) + 16;

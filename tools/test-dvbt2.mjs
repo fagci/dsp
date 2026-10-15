@@ -15,7 +15,13 @@ const fsNom=+bw===7 ? 8e6 : +bw*8e6/7;
 d.init({bw:+bw,plp:-1,fs:+rate||fsNom});
 const raw=fs.readFileSync(cap), f=new Float32Array(raw.buffer.slice(raw.byteOffset,raw.byteOffset+(raw.length&~7)));
 const t0=Date.now(), outs=[];
-const CH=+(process.env.CH||131072); for(let i=0;i<f.length;i+=CH){ d.feed(f.subarray(i,i+CH)); const t=d.take(); if(t) outs.push(t); }
+const CH=+(process.env.CH||131072);
+const [gEvery=0,gLen=0]=(process.env.GAP||'').split(',').map(Number);      // GAP=every,len (samples): drops len samples every `every` and tells the receiver
+let sent=0;
+for(let i=0;i<f.length;i+=CH){
+  if(gEvery && sent>=gEvery){ i+=gLen*2; sent=0; d.gap(); if(process.env.JS) console.log('gap at',i/2,JSON.stringify([d.js&&d.js.frames,d.js&&d.js.p1ok,d.js&&d.js.framesOk,d.js&&d.js.text])); if(i>=f.length) break; }
+  const c=f.subarray(i,i+CH); d.feed(c); sent+=c.length/2; if(process.env.JS && (i/2)%1000000<CH/2) console.log('at',(i/2/1e6).toFixed(1),'MS frames',d.js&&d.js.frames,'p1ok',d.js&&d.js.p1ok); const t=d.take(); if(t) outs.push(t);
+}
 const sec=(Date.now()-t0)/1000;
 const ts=Buffer.concat(outs), a=fs.readFileSync(ref), P=188;
 const nb=Math.floor(ts.length/P);
@@ -23,7 +29,7 @@ let first=-1; for(let i=0;i+2<nb;i++) if([0,1,2].every(k=>!(ts[(i+k)*P+1]===0x1f
 let bad=0, good=0, off=-1;
 if(first>=0){ const k=a.indexOf(ts.subarray(first*P,(first+3)*P)); if(k>=0 && k%P===0) off=k/P-first; }
 if(off>=0) for(let i=0;i<nb-1;i++){ const j=i+off; if((j+1)*P>a.length) break; if(ts.compare(a,j*P,(j+1)*P,i*P,(i+1)*P)===0) good++; else bad++; }
-console.log(d.st.info);
+console.log(d.st.info); if(process.env.JS) console.log(JSON.stringify(d.js));
 console.log(`${(f.length/2/1e6).toFixed(1)} MS in ${sec.toFixed(1)} s (${(f.length/2/1e6/sec).toFixed(2)} MS/s), ${nb} packets, ${good} identical, ${bad} different`);
 const okAll=off>=0 && bad===0 && good>100;
 console.log(okAll ? 'ok  T2 stream is bit exact' : 'FAIL');

@@ -94,6 +94,7 @@ class DvbOfdm{
     if(rc) throw new Error('input sample rate '+(o.fs/1e6).toFixed(2)+' MS/s is below the channel rate');
     this.ready=true; this.out=[]; this.outLen=0;
   }
+  gap(){ if(this.ready && this.x.t2_gap) this.x.t2_gap(); }
   feed(f32){
     if(!this.ready) return;
     const cap=this.x.t2_in_cap();
