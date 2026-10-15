@@ -1608,6 +1608,7 @@ function saOvDraw(n,cv){
   const cx=n._ovCx, W=cv.width, H=cv.height, hs=n._hs|0, hw=H-hs, plotH=Math.max(1,hs-14);
   cx.clearRect(0,0,W,H);
   saHover(n,cx,W,H,0);                                // подсказка будущего маркера (спектр и водопад)
+  if(n.s) saUserMarks(n,cx,W,hs,hw,(cv.pxW&&cv.width)?cv.pxW/cv.width:1);   // метки и тики по времени
   saChannels(n,cx,W,hs,plotH);                        // полосы ПЧ каналов rtlsdr и порог шумоподавителя
   if(n.s) saAnnot(n,cx,W,hs,hw,(cv.pxW&&cv.width)?cv.pxW/cv.width:1);   // аннотации IQ поверх водопада
   saBandPlan(n,cx,W,hs,plotH);                        // полосы/закладки — зона спектра, водопад не трогаем
@@ -1874,6 +1875,10 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold){ n.peak=null; if(typeof saPeakClear==='function') saPeakClear(n); } }},
           {n:'peakDecay',t:'range',min:0,max:120,step:1,d:0,label:'peak decay, s per 60 dB (0 = hold forever)',adv:true},
           {n:'autoDb',t:'button',label:'Auto dB',fn:n=>{ if(typeof saAutoDb==='function') saAutoDb(n); }},
+          {n:'markMode',t:'check',d:false,label:'mark mode: drag on the waterfall to label a part of a signal (Alt+drag works always)'},
+          {n:'markLabels',t:'text',d:'preamble, data, voice',label:'mark labels (comma list; 1, 2, 3 … picks one in the dialog)'},
+          {n:'tickSec',t:'select',opts:['off','1','5','10','30','60'],d:'off',label:'time ticks on the waterfall, s'},
+          {n:'clearMarks',t:'button',label:'Clear marks',fn:n=>{ n.userMarks=[]; n._umDrag=null; }},
           {n:'palette',t:'select',opts:['default',...Object.keys(PALETTES)],d:'classic',label:'waterfall palette',adv:true},
           // история водопада в полном разрешении — зум/смена палитры и диапазона дБ перерисовывают её без потерь
           {n:'wfMem',t:'select',opts:['off','32','128','512'],d:'128',label:'waterfall history memory, MB',adv:true,
@@ -1894,7 +1899,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   // mkPhase/mkBin/mkRev — состояние фазового уточнения частоты (fr1..fr4): сравниваем фазу
   // пика с предыдущим кадром спектра и по сдвигу фазы меряем частоту точнее ширины бина —
   // работает, только если источник спектра отдаёт sp.phase/sp.hop ('fft'/'zfft' это делают).
-  init:n=>{n.mk=[null,null,null,null];n.db=[-120,-120,-120,-120];n.snr=[0,0,0,0];n.active=1;
+  init:n=>{n.userMarks=[];n.mk=[null,null,null,null];n.db=[-120,-120,-120,-120];n.snr=[0,0,0,0];n.active=1;
            n.ext=[0,0,0,0];n.pickT=null;n.peak=null;n.peakFreqs=null;n._dragPending=false;n._dragActive=false;
            n.mkPhase=[0,0,0,0];n.mkBin=[null,null,null,null];n.mkRev=[-1,-1,-1,-1];
            n.zoom=null;n._steer=null;n._srcCenter=null;n._lastRange=null;},
@@ -2243,6 +2248,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           drag={mk:mkd.idx, f0:n.mk[mkd.idx], x0:ev.clientX, w:rc.width, range:saFreq(n,1)-saFreq(n,0), pid:ev.pointerId, moved:false};
           cv.setPointerCapture(ev.pointerId); return;
         }
+        if(n.s && (ev.altKey || n.p.markMode) && y>(n._hs||0)+6 && n._wfC?.length){
+          const f=saFreq(n,clamp((ev.clientX-rc.left)/Math.max(1,rc.width),0,1)), t=saRowTime(n,cv,y);
+          drag={um:true, t0:t, f0:f, x0:ev.clientX, y0:ev.clientY, w:rc.width, left:rc.left, moved:false, pid:ev.pointerId};
+          cv.setPointerCapture(ev.pointerId); return;
+        }
         const resize=Math.abs(y-(n._hs||0))<=6;
         if(!resize && !n.s) return;
         drag={x0:ev.clientX, y0:ev.clientY, w:rc.width, h:rc.height,
@@ -2273,6 +2283,15 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           n.mk[drag.mk]=Math.round(drag.f0+dx/Math.max(1,drag.w)*drag.range*0.1);
           n.active=drag.mk+1; saOvKick(n);
           return;
+        }
+        if(drag.um){                                 // рамка новой метки: время по строке под курсором, частота по x
+          ev.preventDefault();
+          if(!drag.moved && Math.hypot(ev.clientX-drag.x0,ev.clientY-drag.y0)<=6) return;
+          drag.moved=true;
+          const rc=cv.getBoundingClientRect(), y=(ev.clientY-rc.top)/rc.height*cv.height;
+          const t=saRowTime(n,cv,y), f=saFreq(n,clamp((ev.clientX-drag.left)/Math.max(1,drag.w),0,1));
+          n._umDrag={t0:drag.t0, t1:t??drag.t0, lo:Math.min(drag.f0,f), hi:Math.max(drag.f0,f), label:''};
+          saOvKick(n); return;
         }
         if(drag.mkLine!=null){                       // перенос выставленного маркера (линия или тело шторки канала)
           ev.preventDefault();
@@ -2322,7 +2341,22 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           }
         }
         if(drag && ev.pointerId===drag.pid && cv.hasPointerCapture(ev.pointerId)) cv.releasePointerCapture(ev.pointerId);
-        if(drag && (drag.edge || (drag.mkLine!=null && drag.moved))){ n.pickT=null; n._noTap=true; }   // core-graph уже поставил бы маркер на место отпускания
+        if(drag && (drag.edge || (drag.mkLine!=null && drag.moved) || drag.um)){ n.pickT=null; n._noTap=true; }
+        if(drag && drag.um){
+          const nm=n._umDrag; n._umDrag=null;
+          if(drag.moved && nm && ev.type==='pointerup'){
+            const list=String(n.p.markLabels||'').split(',').map(x=>x.trim()).filter(Boolean);
+            const ans=prompt('Mark label'+(list.length?' ('+list.map((x,i)=>(i+1)+' '+x).join(', ')+')':'')+':', n._lastMarkLabel||list[0]||'');
+            if(ans!=null && ans.trim()){
+              const k=/^\d+$/.test(ans.trim()) ? list[+ans.trim()-1] : null;
+              nm.label=k||ans.trim(); n._lastMarkLabel=nm.label;
+              (n.userMarks||(n.userMarks=[])).push(nm);
+            }
+          } else if(!drag.moved && ev.type==='pointerup'){        // клик без протаскивания по метке — удалить
+            const b=hitIn(n._umBoxes,ev); if(b && n.userMarks) n.userMarks=n.userMarks.filter(x=>x!==b.m);
+          }
+          saOvKick(n);
+        }   // core-graph уже поставил бы маркер на место отпускания
         if(drag && drag.mk!=null && drag.moved){ n.pickT=null; n._noTap=true; }
         drag=null; n._dragActive=false;
       };
@@ -4844,6 +4878,7 @@ defGroups('sa',[
   {n:'View', p:'auto frange dbrange autoDb log grid peakHold peakDecay dcCut layout panes'},
   {n:'Scanner', p:'follow edge paneFrom detect detThr scanStop holdMarker skipClear'},
   {n:'Markers', p:'snap trk trkBw ant antVf', open:false},
+  {n:'Time marks', p:'markMode markLabels tickSec clearMarks'},
   {n:'Waterfall', p:'rowMs palette wfMem', open:false},
   {n:'Phosphor', p:'phosphor phDecay phGain', open:false},
   {n:'Reference', p:'tol band ref take', open:false}],

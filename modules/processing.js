@@ -1583,6 +1583,8 @@ function saAutoDb(n){
 // Время строк водопада: spec.tl (отсчёты таймлайна источника) на каждую новую строку, новые в конце.
 // Нужно для наложения аннотаций IQ (spec.ann: {a0,a1,lo,hi,label,mark}); возраст строки a — T[T.length-1-a].
 function saWfStamp(n){
+  const C=n._wfC||(n._wfC=[]);                        // настенные часы строк (мс) — для меток и тиков по времени
+  C.push(Date.now()); if(C.length>6144) C.splice(0, 2048);
   const tl=n.s.tl;
   if(tl==null){ n._wfT=null; return; }
   const T=n._wfT||(n._wfT=[]);
@@ -1615,6 +1617,56 @@ function saAnnot(n,cx,W,hs,hw,dpr){
       cx.setLineDash([]); cx.globalAlpha=.75; cx.fillStyle=themeColor('--screen'); cx.fillRect(lx,ly,tw,12);
       cx.globalAlpha=1; cx.fillStyle=col; cx.fillText(a.label,lx+3,ly+10);
     }
+  }
+  cx.restore();
+}
+// Пользовательские метки на водопаде ({t0,t1,lo,hi,label}, время — мс) и тики по таймеру.
+// Метка привязана ко времени строк (n._wfC), поэтому едет вместе с водопадом.
+function saRowTime(n,cv,y){                           // y — координата канвы → время строки (мс)
+  const C=n._wfC; if(!C||!C.length) return null;
+  const dpr=(cv.pxW&&cv.width)?cv.pxW/cv.width:1, hs=n._hs|0, hw=cv.height-hs;
+  const rows=Math.min(C.length, Math.round(hw*dpr));
+  return rows>0 ? C[C.length-1-clamp(Math.round((y-hs)*dpr),0,rows-1)] : null;
+}
+function saMarkColor(label){
+  let h=0; for(let i=0;i<label.length;i++) h=(h*31+label.charCodeAt(i))%360;
+  return 'hsl('+h+',70%,60%)';
+}
+function saUserMarks(n,cx,W,hs,hw,dpr){
+  const C=n._wfC; n._umBoxes=[];
+  if(!C||!C.length) return;
+  const rows=Math.min(C.length, Math.round(hw*dpr)), last=C.length-1, first=last-rows+1;
+  if(rows<1) return;
+  const tA=C[first], tB=C[last], yOf=i=>hs+(last-i)/dpr;
+  cx.save(); cx.beginPath(); cx.rect(0,hs,W,hw); cx.clip();
+  cx.font='9px monospace'; cx.lineWidth=1;
+  const step=(+n.p.tickSec||0)*1000;
+  if(step>0 && tB-tA<step*400){
+    cx.strokeStyle=themeColor('--axis'); cx.fillStyle=themeColor('--axis');
+    for(let t=Math.ceil(tA/step)*step; t<=tB; t+=step){
+      const y=Math.round(yOf(saWfLower(C,t,first,last)))+.5;
+      cx.globalAlpha=.35; cx.beginPath(); cx.moveTo(0,y); cx.lineTo(W,y); cx.stroke();
+      const lb=new Date(t).toLocaleTimeString([], {hour12:false});
+      cx.globalAlpha=.9; cx.fillText(lb, W-cx.measureText(lb).width-3, y-2);
+    }
+  }
+  const list=n._umDrag ? [...(n.userMarks||[]), n._umDrag] : (n.userMarks||[]);
+  for(const m of list){
+    if(m.t1<tA || m.t0>tB) continue;
+    const i0=saWfLower(C,Math.min(m.t0,m.t1),first,last), i1=saWfLower(C,Math.max(m.t0,m.t1)+1,first,last)-1;
+    if(i1<i0) continue;
+    let x1=saPos(n,m.lo)*W, x2=saPos(n,m.hi)*W; if(x1>x2){ const t=x1; x1=x2; x2=t; }
+    if(x2<0||x1>W) continue;
+    const y=yOf(i1), h=Math.max(2,(i1-i0+1)/dpr), col=m.label ? saMarkColor(m.label) : themeColor('--hi');
+    cx.globalAlpha=.14; cx.fillStyle=col; cx.fillRect(x1,y,x2-x1,h);
+    cx.globalAlpha=.95; cx.strokeStyle=col; cx.setLineDash(m===n._umDrag?[4,3]:[]);
+    cx.strokeRect(Math.round(x1)+.5,Math.round(y)+.5,Math.max(1,x2-x1),h);
+    if(m.label){
+      const tw=Math.ceil(cx.measureText(m.label).width)+6, lx=Math.max(1,Math.min(W-tw-1,x1)), ly=Math.max(hs,y);
+      cx.setLineDash([]); cx.globalAlpha=.8; cx.fillStyle=themeColor('--screen'); cx.fillRect(lx,ly,tw,12);
+      cx.globalAlpha=1; cx.fillStyle=col; cx.fillText(m.label,lx+3,ly+9);
+    }
+    if(m!==n._umDrag) n._umBoxes.push({x0:x1,x1:x2,y0:y,y1:y+h,m});
   }
   cx.restore();
 }
