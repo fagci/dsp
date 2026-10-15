@@ -9,22 +9,42 @@ const std={'DVB-S':['QPSK'], 'DVB-S2':['QPSK','8PSK','16APSK','32APSK'], 'DVB-T2
 const T2_FS={'1.7':131e6/71,'5':40e6/7,'6':48e6/7,'7':8e6,'8':64e6/7,'10':80e6/7};      // channel sample rate by bandwidth, MHz
 const dbfs=ss=>20*Math.log10(Math.max(ss,1e-9)/(14.14*4.414));      // SS растёт с амплитудой входа; 4.414·scale — полная шкала при float-scale 14.14
 
-function dsStop(n){ if(n.dw){ n.dw.terminate(); n.dw=null; } n.dwReady=false; n.dwKey=''; n.dwIn=0; n.dsTs=[]; }
+function dsStop(n){ if(n.dw){ n.dw.terminate(); n.dw=null; } if(n.pool){ for(const o of n.pool) o.w.terminate(); n.pool=[]; } n.dwReady=false; n.dwKey=''; n.dwIn=0; n.dsTs=[]; n.dsJobDrop=0; }
 function dsStart(n,cfg,key){
   n.dsStarts=(n.dsStarts||0)+1;
   dsStop(n); n.dsFeedAt=performance.now(); n.dwKey=key; n.dsErr='';
   try{
-    const w=new Worker('dvbsoft-worker.js'+(document.currentScript?.src||'').replace(/^[^?]*/,''));
+    const q=(document.currentScript?.src||'').replace(/^[^?]*/,'');
+    const w=new Worker('dvbsoft-worker.js'+q);
     n.dw=w;
+    // DVB-T2: a frame is independent of the others, so whole frames go to a pool of workers (the main worker only searches, assembles the stream and keeps the order)
+    const hc=navigator.hardwareConcurrency||4, want=cfg.std==='DVB-T2' ? (cfg.threads<0 ? Math.min(6,hc-2) : Math.min(8,cfg.threads)) : 0, k=want>=2 ? want : 0;
+    n.pool=[]; n.dsPoolErr='';
+    for(let i=0;i<k;i++){
+      const pw=new Worker('dvbsoft-pool.js'+q), o={w:pw, busy:-1, ready:false};
+      pw.onmessage=e=>{
+        const m=e.data;
+        if(m.type==='ready') o.ready=true;
+        else if(m.type==='res'){ o.busy=-1; w.postMessage({type:'result', d:m.d},[m.d]); }
+        else if(m.type==='err'){ const sq=o.busy; o.busy=-1; n.dsPoolErr=m.msg; if(sq>=0) w.postMessage({type:'drop', seq:sq}); }
+      };
+      pw.onerror=e=>{ const sq=o.busy; o.busy=-1; o.ready=false; n.dsPoolErr=e.message||'pool worker failed'; if(sq>=0) w.postMessage({type:'drop', seq:sq}); };
+      pw.postMessage({type:'init'}); n.pool.push(o);
+    }
     w.onmessage=e=>{
       const m=e.data;
       if(m.type==='ts') n.dsTs.push(m.d);
+      else if(m.type==='job'){
+        const o=n.pool.find(x=>x.ready && x.busy<0);
+        if(o){ o.busy=m.seq; o.w.postMessage({type:'job', seq:m.seq, d:m.d},[m.d]); }
+        else{ n.dsJobDrop=(n.dsJobDrop||0)+1; w.postMessage({type:'drop', seq:m.seq}); }          // all busy: the frame is skipped, the order is kept
+      }
       else if(m.type==='st'){ n.dwIn=Math.max(0,n.dwIn-m.ack); if(m.st){ n.ds=m.st; n.dsDrop=m.drop; n.dsLost=m.lost; n.dsAt=performance.now(); n.dsInfo=m.info||''; n.dsJs=m.js||null; n.dsMsgs=(n.dsMsgs||0)+1; } }
       else if(m.type==='ready') n.dwReady=true;
       else if(m.type==='err'){ n.dsErr=m.msg; n.dwReady=false; }
     };
     w.onerror=e=>{ n.dsErr=e.message||'worker failed'; n.dwReady=false; };
-    w.postMessage({type:'init', cfg});
+    w.postMessage({type:'init', cfg:{...cfg, par:k>0}});
   }catch(x){ n.dsErr=x.message; }
 }
 
@@ -42,6 +62,7 @@ def({ ...TSV, id:'dvbsoft', title:'DVB Receiver (IQ)', cat:'Decoders',
           {n:'viterbi',t:'check',d:false,label:'DVB-S: force Viterbi decoding (weak signals)'},
           {n:'bw',t:'select',opts:['8','7','6','5','10','1.7'],d:'8',label:'DVB-T2: channel bandwidth, MHz (the input sample rate must be at least 8 MHz × 8/7 = 9.14 MS/s for 8 MHz)'},
           {n:'plp',t:'num',d:-1,label:'DVB-T2: PLP id (-1 — the first data PLP)'},
+          {n:'threads',t:'num',d:-1,label:'DVB-T2: workers decoding frames in parallel (-1 — automatic from the core count, 0 or 1 — a single thread)'},
           ...TSV.params.filter(p=>p.n!=='file'&&p.n!=='loop')],
   init(n){ TSV.init(n); n.dw=null; n.dwReady=false; n.dwKey=''; n.dwIn=0; n.dsTs=[]; n.ds=null; n.dsErr=''; n.dsSent=0; n.dsDrop=0; n.dsLost=0; n.dsSkip=0; n.dsHold=false; },
   dispose:n=>{ dsStop(n); TSV.dispose?.(n); },
@@ -53,7 +74,7 @@ def({ ...TSV, id:'dvbsoft', title:'DVB Receiver (IQ)', cat:'Decoders',
       const sr=Math.round(+p.sr*1000), need=t2 ? T2_FS[p.bw]||T2_FS['8'] : 2*sr;
       if(s.sr<need*0.999) rx=t2 ? 'DVB-T2 '+p.bw+' MHz needs an input of at least '+(need/1e6).toFixed(2)+' MS/s (the input is '+(s.sr/1e6).toFixed(2)+' MS/s)' : 'needs ≥ 2 samples per symbol (input '+s.sr+' S/s, symbol rate '+sr+' Bd)';
       else{
-        const cfg=t2 ? {std:'DVB-T2', bw:+p.bw, plp:Math.round(+p.plp), fs:s.sr} : {std:p.std, cstln:p.std==='DVB-S' ? 'QPSK' : p.cstln, cr:p.cr, sr, fs:s.sr, rolloff:+p.rolloff, derot:+p.offset||0, viterbi:!!p.viterbi};
+        const cfg=t2 ? {std:'DVB-T2', bw:+p.bw, plp:Math.round(+p.plp), threads:Number.isFinite(+p.threads) && p.threads!=='' ? Math.round(+p.threads) : -1, fs:s.sr} : {std:p.std, cstln:p.std==='DVB-S' ? 'QPSK' : p.cstln, cr:p.cr, sr, fs:s.sr, rolloff:+p.rolloff, derot:+p.offset||0, viterbi:!!p.viterbi};
         const key=JSON.stringify(cfg);
         if(key!==n.dwKey) dsStart(n,cfg,key);
         rx=n.dsErr||'';
@@ -88,7 +109,7 @@ def({ ...TSV, id:'dvbsoft', title:'DVB Receiver (IQ)', cat:'Decoders',
     if(r){
       const st=n.ds, fresh=st && performance.now()-n.dsAt<1500;
       if(!n.dsRx && n.p.std==='DVB-T2' && st && n.dwReady){
-        const t=(fresh && st.lock ? 'LOCK' : 'no lock')+' · '+(n.dsInfo||'')+(st.mer!=null ? ' · SNR '+st.mer.toFixed(1)+' dB' : '')+(st.freq!=null ? ' · Δf '+st.freq.toFixed(0)+' Hz' : '')+' · TS '+(st.ts/1e6).toFixed(2)+' MB'+(n.dsSkip ? ' · skipped '+n.dsSkip+' blocks (CPU)' : '');
+        const t=(fresh && st.lock ? 'LOCK' : 'no lock')+' · '+(n.dsInfo||'')+(st.mer!=null ? ' · SNR '+st.mer.toFixed(1)+' dB' : '')+(st.freq!=null ? ' · Δf '+st.freq.toFixed(0)+' Hz' : '')+' · TS '+(st.ts/1e6).toFixed(2)+' MB'+(n.dsSkip ? ' · skipped '+n.dsSkip+' blocks (CPU)' : '')+(n.pool&&n.pool.length ? ' · '+n.pool.length+' workers'+(n.dsJobDrop ? ', '+n.dsJobDrop+' frames skipped (all busy)' : '') : '')+(n.dsPoolErr ? ' · worker: '+n.dsPoolErr : '');
         if(!r.textContent.startsWith(t)) r.textContent=t+'\n'+r.textContent;
         return;
       }

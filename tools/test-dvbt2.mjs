@@ -14,14 +14,24 @@ const d=await ctx.DvbOfdm.create(fs.readFileSync(path.join(root,'vendor/dvbofdm.
 const fsNom=+bw===7 ? 8e6 : +bw*8e6/7;
 d.init({bw:+bw,plp:-1,fs:+rate||fsNom});
 const raw=fs.readFileSync(cap), f=new Float32Array(raw.buffer.slice(raw.byteOffset,raw.byteOffset+(raw.length&~7)));
+const PAR=+(process.env.PAR||0), LAG=+(process.env.LAG||0);      // PAR=n: frames go through n pool instances (jobs/results), LAG=k: results come back k reads late and in reverse order
+const pool=[]; if(PAR){ for(let i=0;i<PAR;i++){ const w=await ctx.DvbOfdm.create(fs.readFileSync(path.join(root,'vendor/dvbofdm.wasm'))); w.initPool(); pool.push(w); } d.setParallel(true); }
+let held=[], jobsRun=0;
+const pump=(all)=>{
+  for(const j of d.takeJobs()){ held.push({at:step, res:pool[jobsRun++%PAR].run(j.d)}); }
+  const due=held.filter(h=>all||step-h.at>=LAG); held=held.filter(h=>!due.includes(h));
+  for(const h of (LAG ? due.reverse() : due)) d.result(h.res);
+};
+let step=0;
 const t0=Date.now(), outs=[];
 const CH=+(process.env.CH||131072);
 const [gEvery=0,gLen=0]=(process.env.GAP||'').split(',').map(Number);      // GAP=every,len (samples): drops len samples every `every` and tells the receiver
 let sent=0;
 for(let i=0;i<f.length;i+=CH){
   if(gEvery && sent>=gEvery){ i+=gLen*2; sent=0; d.gap(); if(process.env.JS) console.log('gap at',i/2,JSON.stringify([d.js&&d.js.frames,d.js&&d.js.p1ok,d.js&&d.js.framesOk,d.js&&d.js.text])); if(i>=f.length) break; }
-  const c=f.subarray(i,i+CH); d.feed(c); sent+=c.length/2; if(process.env.JS && (i/2)%1000000<CH/2) console.log('at',(i/2/1e6).toFixed(1),'MS frames',d.js&&d.js.frames,'p1ok',d.js&&d.js.p1ok); const t=d.take(); if(t) outs.push(t);
+  const c=f.subarray(i,i+CH); d.feed(c); step++; if(PAR) pump(false); sent+=c.length/2; if(process.env.JS && (i/2)%1000000<CH/2) console.log('at',(i/2/1e6).toFixed(1),'MS frames',d.js&&d.js.frames,'p1ok',d.js&&d.js.p1ok); const t=d.take(); if(t) outs.push(t);
 }
+if(PAR){ pump(true); const t=d.take(); if(t) outs.push(t); }
 const sec=(Date.now()-t0)/1000;
 const ts=Buffer.concat(outs), a=fs.readFileSync(ref), P=188;
 const nb=Math.floor(ts.length/P);

@@ -165,6 +165,7 @@ class PlpDecoder {
   int streak = 0, idle = 0;   // consecutive failed FEC blocks; blocks skipped since
   bool lowSnr = false;        // the measured SNR is far below what the mode needs: only probe blocks are decoded
   PlpStats st;
+  std::vector<std::vector<uint8_t>> *sink = nullptr;   // pool worker: decoded BBFRAMEs (bit-packed) are collected here instead of being turned into TS
 
   bool configure(const PlpCfg &c) {
     cfg = c;
@@ -220,7 +221,13 @@ class PlpDecoder {
         if (streak < 8 || (++idle & 15) == 0) { ok = fec.decode(blk.data(), bw.data(), bits.data(), streak < 8 ? maxIter : 12, &it, &fx); streak = ok ? 0 : streak + 1; }
         st.blocks++; st.iters += it;
         if (ok) { st.ok++; if (fx > 0) st.fixed++; } else st.bchFail++;
-        if (ok) bb.process(bits.data(), fec.kbch, ts);
+        if (ok) {
+          if (sink) {
+            std::vector<uint8_t> pk((fec.kbch + 7) / 8, 0);
+            for (int i = 0; i < fec.kbch; i++) if (bits[i]) pk[i >> 3] |= 0x80 >> (i & 7);
+            sink->push_back(std::move(pk));
+          } else bb.process(bits.data(), fec.kbch, ts);
+        }
       }
       base += tot;
     }
