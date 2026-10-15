@@ -2,6 +2,7 @@
 #pragma once
 #include "common.h"
 #include "ldpc.h"
+#include "ldpcq.h"
 #include "bch.h"
 #include "ldpc_gen.h"
 #include "t2bitil_gen.h"
@@ -64,7 +65,7 @@ class T2Fec {
  public:
   bool shortFrame = false; int cod = 0, mod = 0; bool rot = false;
   int N = 0, K = 0, kbch = 0, ncell = 0, m = 0;
-  LdpcCode ldpc; Bch bch; Cstln cs;
+  LdpcCode ldpc; LdpcQ ldpcq; bool fast = true; Bch bch; Cstln cs;
   std::vector<int> map;  // map[cell*m + k] = codeword bit carried by label bit k (MSB first)
   bool ok = false;
 
@@ -73,6 +74,7 @@ class T2Fec {
     FecInfo fi; if (!fecInfo(sf, cod, fi)) return false;
     N = sf ? 16200 : 64800; K = fi.kldpc; kbch = fi.kbch; m = 2 + 2 * mod; ncell = N / m;
     ldpc.build(N, K, fi.tab, fi.rows, fi.cols);
+    ldpcq.build(N, K, fi.tab, fi.rows, fi.cols);
     bch.init(sf, fi.t, kbch);
     cs.init(mod, rot);
     buildMap();
@@ -121,7 +123,7 @@ class T2Fec {
     demap(cell, w, llr.data());
     std::vector<uint8_t> cw(N);
     int it = 0;
-    bool ok2 = ldpc.decode(llr.data(), cw.data(), maxIter, &it, alpha, beta, relBeta);
+    bool ok2 = fast ? ldpcq.decode(llr.data(), cw.data(), maxIter, &it, relBeta > 0 ? relBeta : 0.08f) : ldpc.decode(llr.data(), cw.data(), maxIter, &it, alpha, beta, relBeta);
     if (iters) *iters = it;
     int fixed = bch.decode(cw.data());
     if (bchFixed) *bchFixed = fixed;

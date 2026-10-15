@@ -10,7 +10,7 @@
 // новой не подтвердит успешную загрузку ('ok'). Если скрипты не загрузились, страница шлёт 'rollback' —
 // пока сеть отдаёт index.html этой версии, воркер подаёт index.html последней подтверждённой.
 const PFX='dsp-shell-v';
-const CACHE='dsp-shell-v773f6a5c';
+const CACHE='dsp-shell-v48f9273b';
 const V=CACHE.slice(PFX.length);
 const META='dsp-meta', STATE_KEY='./__state', PIN_MS=6*3600e3;    // сколько держать откат, пока не выйдет новая версия
 const SHELL=[
@@ -35,6 +35,7 @@ const SHELL=[
   './vendor/tetra-acelp.wasm',
   './vendor/mpeg2.wasm',
   './vendor/leandvb.wasm',
+  './vendor/dvbofdm.wasm',
   './vendor/SDDC_FX3.img',
   './core-dsp.js?v='+V,
   './core-engine.js?v='+V,

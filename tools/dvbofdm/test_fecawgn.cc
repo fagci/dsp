@@ -2,6 +2,7 @@
 #include "t2rx.h"
 #include <cstdio>
 #include <random>
+#include <chrono>
 using namespace dvbofdm;
 int main(int argc, char **argv) {
   FILE *f = fopen(argv[1], "rb"); std::vector<cf> x(4500000 + 64);
@@ -17,13 +18,14 @@ int main(int argc, char **argv) {
   PlpCfg c; c.fec = 1; c.cod = 0; c.mod = 2; c.rot = 0; c.tilLen = 3; c.blocks = 139;
   std::mt19937 rng(7); std::normal_distribution<float> nd(0, 1);
   for (double snr = atof(argv[2]); snr <= atof(argv[3]) + 1e-9; snr += atof(argv[4])) {
-    PlpDecoder dec; dec.configure(c); if (getenv("IT")) dec.maxIter = atoi(getenv("IT")); if (getenv("RB")) { dec.fec.relBeta = atof(getenv("RB")); dec.fec.beta = 0; } if (getenv("BETA")) dec.fec.beta = atof(getenv("BETA")); if (getenv("TRUESCALE")) dec.fec.scale_ = 1.0 / pow(10, -snr / 10); if (getenv("ALPHA")) dec.fec.alpha = atof(getenv("ALPHA"));
+    PlpDecoder dec; dec.configure(c); if (getenv("IT")) dec.maxIter = atoi(getenv("IT")); if (getenv("SLOW")) dec.fec.fast = false; if (getenv("RB")) { dec.fec.relBeta = atof(getenv("RB")); dec.fec.beta = 0; } if (getenv("BETA")) dec.fec.beta = atof(getenv("BETA")); if (getenv("TRUESCALE")) dec.fec.scale_ = 1.0 / pow(10, -snr / 10); if (getenv("ALPHA")) dec.fec.alpha = atof(getenv("ALPHA"));
     size_t n = (size_t)c.blocks * dec.fec.ncell;
     std::vector<cf> cells(str.cell.begin(), str.cell.begin() + n); std::vector<float> w(n, 1.f);
     double sg = sqrt(pow(10, -snr / 10) / 2);
     for (auto &z : cells) z += cf(sg * nd(rng), sg * nd(rng));
-    std::vector<uint8_t> ts;
+    std::vector<uint8_t> ts; auto t0 = std::chrono::steady_clock::now();
     dec.decodeFrame(cells.data(), w.data(), c.blocks, ts);
+    { double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); printf("[%.2f s, %.1f ms/block] ", sec, 1000 * sec / dec.st.blocks); }
     printf("Es/N0 %.1f dB: blocks ok %d / %d, avg iters %.1f\n", snr, dec.st.ok, dec.st.blocks, dec.st.iters / (double)dec.st.blocks);
     fflush(stdout);
   }
