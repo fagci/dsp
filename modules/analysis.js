@@ -1622,6 +1622,49 @@ function saOvKick(n){
   if(n._ovRaf) return;
   n._ovRaf=requestAnimationFrame(()=>{ n._ovRaf=0; saOvDraw(n); });
 }
+// Метки с входов row (текст: строки "from=433920 to=433950 label=start t=1231231123") и rec (записи
+// с теми же полями). Ключи: from/to или f+bw — полоса; без них — линия во всю ширину; label, color,
+// t (с, либо мс) и dur (с). Без t метка ставится сразу. Время подписывается, только если нет label.
+const SA_ROW_RE=/([A-Za-z_]\w*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s]+))/g;
+function saRowParse(line){
+  const o={}; let m; SA_ROW_RE.lastIndex=0;
+  while((m=SA_ROW_RE.exec(line))) o[m[1].toLowerCase()]=m[2]??m[3]??m[4];
+  return o;
+}
+function saRowIn(n,I){
+  if(typeof I.row==='string'){
+    if(I.row!==n._rowLast){
+      n._rowLast=I.row;
+      for(const ln of I.row.split(/[\r\n]+/)){ const o=saRowParse(ln); if(Object.keys(o).length) saMarkAdd(n,o); }
+    }
+  } else n._rowLast=null;
+  if(I.rec) for(const r of recList(I.rec).slice(0,50)) if(r && typeof r==='object') saMarkAdd(n,r);
+}
+function saMarkAdd(n,o){
+  const g=(...ks)=>{ for(const k of ks) if(o[k]!=null && o[k]!=='') return o[k]; return null; };
+  const bare=x=>typeof x==='number' || /^[\d.]+$/.test(String(x).trim());
+  const [sl,sh]=specSpan(n.s), pad=(sh-sl)*.05;
+  const fr=g('from','lo'), to=g('to','hi'), f=g('f','freq'), bw=g('bw','width');
+  // голое число — Гц, а если так вне полосы источника — кГц или МГц (433920 → 433.92 МГц)
+  const ref=g('from','lo','f','freq','to','hi');
+  let mul=1;
+  if(n.s && ref!=null && bare(ref)) for(const k of [1,1e3,1e6]) if(+ref*k>=sl-pad && +ref*k<=sh+pad){ mul=k; break; }
+  const hz=x=>bare(x) ? +x*mul : parseHzCell(x);
+  let lo=null, hi=null;
+  if(fr!=null && to!=null){ lo=hz(fr); hi=hz(to); }
+  else if(f!=null){ const c=hz(f), w=bw!=null ? (bare(bw) ? +bw : parseHzCell(bw)) : 0; lo=c-w/2; hi=c+w/2; }
+  else if(fr!=null || to!=null){ lo=hi=hz(fr??to); }
+  const full=!(Number.isFinite(lo) && Number.isFinite(hi));
+  if(lo>hi){ const t=lo; lo=hi; hi=t; }
+  const C=n._wfC, tv=g('t','time');
+  let t0=C&&C.length ? C[C.length-1] : Date.now();
+  if(tv!=null){ const v=bare(tv) ? +tv : Date.parse(tv); if(isFinite(v)) t0=v<1e11 ? v*1000 : v; }
+  const dur=+g('dur')||0, label=String(g('label','text','name')??'').slice(0,60);
+  let color=g('color','colour'); if(color!=null && !(typeof CSS!=='undefined' && CSS.supports('color',String(color)))) color=null;
+  const list=n.userMarks||(n.userMarks=[]);
+  list.push({t0, t1:t0+dur*1000, lo:full?0:lo, hi:full?0:hi, full, label, color});
+  if(list.length>500) list.splice(0,list.length-500);
+}
 function saWfPlace(n){
   const el=n._wfEl, cv=n._wfCv; if(!el || !cv) return;
   if(!n._wfBox) n._wfBox=[cv.offsetLeft, cv.offsetTop, cv.clientWidth];
@@ -1835,7 +1878,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'spec2',t:'spec'},{n:'spec3',t:'spec'},{n:'spec4',t:'spec'},{n:'m1',t:'num'},{n:'m2',t:'num'},{n:'m3',t:'num'},{n:'m4',t:'num'},
        {n:'bLo',t:'num'},{n:'bHi',t:'num'},{n:'floor',t:'num'},{n:'top',t:'num'},
        {n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'split',t:'num'},{n:'tol',t:'num'},
-       {n:'log',t:'num'},{n:'grid',t:'num'},{n:'bands',t:'bands'},{n:'skip',t:'bands'}],
+       {n:'log',t:'num'},{n:'grid',t:'num'},{n:'bands',t:'bands'},{n:'skip',t:'bands'},{n:'row',t:'txt'},{n:'rec',t:'rec'}],
   outs:[{n:'f1',t:'num'},{n:'f2',t:'num'},{n:'f3',t:'num'},{n:'f4',t:'num'},
         {n:'fr1',t:'num'},{n:'fr2',t:'num'},{n:'fr3',t:'num'},{n:'fr4',t:'num'},
         {n:'db1',t:'num'},{n:'db2',t:'num'},{n:'db3',t:'num'},{n:'db4',t:'num'},
@@ -1916,6 +1959,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       return saPanesOut(n);
     }
     for(const k of ['fmin','fmax']) if(typeof I[k]==='number') setMod(n,k,I[k]);
+    saRowIn(n,I);
     // границы поменяли не мы (поле диапазона или провод) — это ручной ввод: auto выключаем,
     // зум сбрасываем, центр введённого диапазона — цель для приёмника (centerFreq)
     if(n._lastRange && (n.p.fmin!==n._lastRange[0] || n.p.fmax!==n._lastRange[1])){

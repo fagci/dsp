@@ -1652,19 +1652,31 @@ function saUserMarks(n,cx,W,hs,hw,dpr){
   }
   const list=n._umDrag ? [...(n.userMarks||[]), n._umDrag] : (n.userMarks||[]);
   for(const m of list){
-    if(m.t1<tA || m.t0>tB) continue;
-    const i0=saWfLower(C,Math.min(m.t0,m.t1),first,last), i1=saWfLower(C,Math.max(m.t0,m.t1)+1,first,last)-1;
-    if(i1<i0) continue;
-    let x1=saPos(n,m.lo)*W, x2=saPos(n,m.hi)*W; if(x1>x2){ const t=x1; x1=x2; x2=t; }
-    if(x2<0||x1>W) continue;
-    const y=yOf(i1), h=Math.max(2,(i1-i0+1)/dpr), col=m.label ? saMarkColor(m.label) : themeColor('--hi');
-    cx.globalAlpha=.14; cx.fillStyle=col; cx.fillRect(x1,y,x2-x1,h);
-    cx.globalAlpha=.95; cx.strokeStyle=col; cx.setLineDash(m===n._umDrag?[4,3]:[]);
-    cx.strokeRect(Math.round(x1)+.5,Math.round(y)+.5,Math.max(1,x2-x1),h);
-    if(m.label){
-      const tw=Math.ceil(cx.measureText(m.label).width)+6, lx=Math.max(1,Math.min(W-tw-1,x1)), ly=Math.max(hs,y);
+    const ta=Math.min(m.t0,m.t1), tb=Math.max(m.t0,m.t1);
+    if(tb<tA || ta>tB) continue;
+    const i0=saWfLower(C,ta,first,last);
+    if(i0>last) continue;
+    const i1=Math.max(i0, saWfLower(C,tb+1,first,last)-1);
+    const col=m.color || (m.label ? saMarkColor(m.label) : themeColor('--hi'));
+    const y=yOf(i1), h=Math.max(2,(i1-i0+1)/dpr), txt=m.label || new Date(m.t0).toLocaleTimeString([], {hour12:false});
+    let x1=0, x2=W;
+    if(!m.full){
+      x1=saPos(n,m.lo)*W; x2=saPos(n,m.hi)*W; if(x1>x2){ const t=x1; x1=x2; x2=t; }
+      if(x2<0||x1>W) continue;
+      if(x2-x1<3){ const c=(x1+x2)/2; x1=c-1.5; x2=c+1.5; }
+    }
+    cx.setLineDash(m===n._umDrag?[4,3]:[]); cx.strokeStyle=col;
+    if(m.full){                                   // без диапазона — линия во всю ширину
+      const yy=Math.round(y+h/2)+.5;
+      cx.globalAlpha=.9; cx.beginPath(); cx.moveTo(0,yy); cx.lineTo(W,yy); cx.stroke();
+    } else {
+      cx.globalAlpha=.14; cx.fillStyle=col; cx.fillRect(x1,y,x2-x1,h);
+      cx.globalAlpha=.95; cx.strokeRect(Math.round(x1)+.5,Math.round(y)+.5,Math.max(1,x2-x1),h);
+    }
+    if(txt){
+      const tw=Math.ceil(cx.measureText(txt).width)+6, lx=Math.max(1,Math.min(W-tw-1,x1)), ly=Math.max(hs,m.full?y+h/2-11:y);
       cx.setLineDash([]); cx.globalAlpha=.8; cx.fillStyle=themeColor('--screen'); cx.fillRect(lx,ly,tw,12);
-      cx.globalAlpha=1; cx.fillStyle=col; cx.fillText(m.label,lx+3,ly+9);
+      cx.globalAlpha=1; cx.fillStyle=col; cx.fillText(txt,lx+3,ly+9);
     }
     if(m!==n._umDrag) n._umBoxes.push({x0:x1,x1:x2,y0:y,y1:y+h,m});
   }
