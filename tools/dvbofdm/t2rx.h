@@ -132,6 +132,7 @@ class T2Receiver {
   };
   struct PlpOutHdr { int32_t id = 0, isCommon = 0, kbch = 0, nb = 0, no = 0, nStored = 0; };
   bool par_ = false, serial_ = false, worker_ = false;
+  unsigned probeRound_ = 0;
   uint32_t epoch_ = 0, seq_ = 0, apply_ = 0;
   std::map<uint32_t, std::vector<uint8_t>> pending_;
   int workerStatus_ = 0, selId_ = -1, commonId_ = -1;
@@ -334,7 +335,11 @@ class T2Receiver {
     // timing from the previous frame: the window start moves with the measured delay
     if (p2 + (int64_t)S_.numSymbols() * symLen + 5200 - base_ > (int64_t)buf_.size()) return 0;   // + room for resampling
     st.frames++;
-    if (par_ && !serial_) { dispatch(p1pos, p2, pre, fftIdx, miso, S_, eps); finish(p1pos, frameLen, eps); return 1; }
+    if (par_ && !serial_) {
+      // with a signal far too weak for the mode (known from an earlier frame) nothing decodes: only every fourth frame goes to the pool, as a probe
+      if (!hopeless(st.mod, st.cod) || (probeRound_++ & 3) == 0) dispatch(p1pos, p2, pre, fftIdx, miso, S_, eps);
+      finish(p1pos, frameLen, eps); return 1;
+    }
     body(p1pos, p2, pre, S_, eps, frameLen);
     return 1;
   }
@@ -399,10 +404,7 @@ class T2Receiver {
       T2Stream str; buildStream(fc, pre, str);
       PlpStats acc;
       std::string msg;
-      {   // C/N for error-free reception in a Gaussian channel (DVB-T2 implementation guidelines, approximate); 3 dB below it nothing decodes
-        static const float need[4][6] = {{1, 2.3f, 3.1f, 4.1f, 4.7f, 5.2f}, {6, 7.5f, 8.7f, 9.9f, 10.7f, 11.3f}, {8.9f, 11, 12.4f, 14.1f, 15.1f, 16}, {12, 14.5f, 16.4f, 18.4f, 19.8f, 20.9f}};
-        for (const PlpCfg *pc : {sel, common}) if (pc) plps_.run[pc->id].dec.lowSnr = pc->mod >= 0 && pc->mod < 4 && pc->cod >= 0 && pc->cod < 6 && st.snrDb < need[pc->mod][pc->cod] - 3;
-      }
+      for (const PlpCfg *pc : {sel, common}) if (pc) plps_.run[pc->id].dec.lowSnr = hopeless(pc->mod, pc->cod);
       plps_.frame(*sel, post, str, acc, msg);
       if (common) plps_.frame(*common, post, str, acc, msg);
       st.plpId = sel->id; st.mod = sel->mod; st.cod = sel->cod; st.rot = sel->rot; st.fecLong = (sel->fec & 3) == 1;
@@ -413,6 +415,12 @@ class T2Receiver {
       else emit(sel->id, common ? common->id : -1);
     }
     if (!worker_) finish(p1pos, frameLen, eps);
+  }
+
+  // the measured SNR is 3 dB or more below what the mode needs (C/N for error-free reception in a Gaussian channel, DVB-T2 implementation guidelines, approximate)
+  bool hopeless(int mod, int cod) const {
+    static const float need[4][6] = {{1, 2.3f, 3.1f, 4.1f, 4.7f, 5.2f}, {6, 7.5f, 8.7f, 9.9f, 10.7f, 11.3f}, {8.9f, 11, 12.4f, 14.1f, 15.1f, 16}, {12, 14.5f, 16.4f, 18.4f, 19.8f, 20.9f}};
+    return mod >= 0 && mod < 4 && cod >= 0 && cod < 6 && st.snrDb < need[mod][cod] - 3;
   }
 
   // transport stream of the selected PLP (merged with its common PLP) of the frame just decoded
