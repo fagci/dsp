@@ -177,13 +177,9 @@ class PlpDecoder {
     return true;
   }
 
-  // Cells of one frame (blocks*cellSize), ti = interleaving blocks per frame. Appends TS bytes.
+  // Cells of one interleaving frame mapped to one T2 frame (blocks*cellSize). Appends TS bytes.
   void decodeFrame(const cf *cell, const float *w, int blocks, std::vector<uint8_t> &ts) {
-    if (key < 0 || blocks <= 0) return;
-    const int cs = fec.ncell;
-    std::vector<cf> mem((size_t)blocks * cs); std::vector<float> mw((size_t)blocks * cs);
     int T = cfg.tilLen;
-    // TI blocks
     std::vector<int> sizes;
     if (T == 0) { for (int i = 0; i < blocks; i++) sizes.push_back(1); }
     else {
@@ -191,6 +187,16 @@ class PlpDecoder {
       if (bigFirst) { for (int i = 0; i < nbig; i++) sizes.push_back(big); for (int i = 0; i < nsmall; i++) sizes.push_back(small); }
       else { for (int i = 0; i < nsmall; i++) sizes.push_back(small); for (int i = 0; i < nbig; i++) sizes.push_back(big); }
     }
+    decodeSizes(cell, w, blocks, sizes, T != 0, ts);
+  }
+  // One time interleaver block of `blocks` FEC blocks (interleaving frame spread over several T2 frames)
+  void decodeOneTi(const cf *cell, const float *w, int blocks, std::vector<uint8_t> &ts) {
+    decodeSizes(cell, w, blocks, std::vector<int>(1, blocks), true, ts);
+  }
+  void decodeSizes(const cf *cell, const float *w, int blocks, const std::vector<int> &sizes, bool ti, std::vector<uint8_t> &ts) {
+    if (key < 0 || blocks <= 0) return;
+    const int cs = fec.ncell;
+    int T = ti ? 1 : 0;
     size_t base = 0;
     std::vector<cf> blk(cs); std::vector<float> bw(cs);
     std::vector<uint8_t> bits(fec.kbch);

@@ -90,7 +90,7 @@ class DvbOfdm{
   }
   constructor(){ this.st={lock:0, mer:null, ss:null, cnr:null, vber:null, freq:null, ts:0, info:''}; this.ready=false; this.out=[]; this.outLen=0; this.lostIn=0; this.drop=0; this.js=null; }
   init(o){
-    const rc=this.x.t2_init(Math.round((o.bw||8)*1000), o.plp==null?-1:o.plp, o.fs||0);
+    const rc=this.x.t2_init(Math.round((o.bw||8)*1000), o.plp==null?-1:o.plp, o.fs||0, o.merge===false?0:1);
     if(rc) throw new Error('input sample rate '+(o.fs/1e6).toFixed(2)+' MS/s is below the channel rate');
     this.ready=true; this.out=[]; this.outLen=0;
   }
@@ -110,7 +110,7 @@ class DvbOfdm{
     if(n){ this.out.push(new Uint8Array(this.mem.buffer,this.x.t2_ts(),n).slice()); this.outLen+=n; this.st.ts+=n; this.x.t2_ts_clear(); }
   }
   status(){
-    const p=this.x.t2_status(); const u=new Uint8Array(this.mem.buffer,p,1024); let e=0; while(e<1024 && u[e]) e++;
+    const p=this.x.t2_status(); const u=new Uint8Array(this.mem.buffer,p,4096); let e=0; while(e<4096 && u[e]) e++;
     if(!e) return;
     let j; try{ j=JSON.parse(new TextDecoder().decode(u.subarray(0,e))); }catch(x){ return; }
     this.js=j;

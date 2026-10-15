@@ -77,6 +77,20 @@ class T2Fec {
     ldpcq.build(N, K, fi.tab, fi.rows, fi.cols);
     bch.init(sf, fi.t, kbch);
     cs.init(mod, rot);
+    if (rot) {
+      int L = m / 2, nl = 1 << L;
+      axLev.resize(nl); for (int a = 0; a < nl; a++) axLev[a] = axisLevel(a);
+      order.resize(nl); for (int i = 0; i < nl; i++) order[i] = i;
+      std::sort(order.begin(), order.end(), [&](int x, int y) { return axLev[x] < axLev[y]; });
+      labelOf.assign((size_t)nl * nl, 0);
+      static const double ang[4] = {29.0, 16.8, 8.6, 3.576334375};
+      cr = (float)cos(ang[mod] * PI / 180); sr = (float)sin(ang[mod] * PI / 180);
+      for (int lab = 0; lab < cs.M; lab++) {
+        int ar = 0, ai = 0;
+        for (int j = 0; j < L; j++) { ar |= ((lab >> (m - 1 - 2 * j)) & 1) << (L - 1 - j); ai |= ((lab >> (m - 2 - 2 * j)) & 1) << (L - 1 - j); }
+        labelOf[(size_t)ar * nl + ai] = lab;
+      }
+    }
     buildMap();
     ok = true;
     return true;
@@ -100,18 +114,29 @@ class T2Fec {
         axisLlr(xi, ww, lev, o, false);
       }
     } else {
+      const int L = m / 2, nl = 1 << L;
       for (int c = 0; c < ncell; c++) {
         float a = cell[c].real(), b = cell[(c + 1) % ncell].imag();
         float wa = w[c], wb = w[(c + 1) % ncell];
         float *o = &lc[(size_t)c * m];
-        float d0[8], d1[8];
+        // undo the rotation to find the grid neighbourhood, then evaluate the exact metric on the 5x5 nearest points
+        float xh = a * cr + b * sr, yh = -a * sr + b * cr;
+        int px = nearestPos(xh), py = nearestPos(yh);
+        float d0[8], d1[8]; float dbest = 1e30f;
         for (int k = 0; k < m; k++) { d0[k] = d1[k] = 1e30f; }
-        for (int s = 0; s < cs.M; s++) {
+        for (int ix = std::max(0, px - 2); ix <= std::min(nl - 1, px + 2); ix++) for (int iy = std::max(0, py - 2); iy <= std::min(nl - 1, py + 2); iy++) {
+          int s = labelOf[(size_t)order[ix] * nl + order[iy]];
           float dr = a - cs.pt[s].real(), di = b - cs.pt[s].imag();
           float d = wa * dr * dr + wb * di * di;
+          if (d < dbest) dbest = d;
           for (int k = 0; k < m; k++) { if ((s >> (m - 1 - k)) & 1) { if (d < d1[k]) d1[k] = d; } else if (d < d0[k]) d0[k] = d; }
         }
-        for (int k = 0; k < m; k++) o[k] = (d1[k] - d0[k]) * scale_;
+        // points outside the 5x5 window are at least ~2.5 level spacings away
+        const float sp = (axLev[order[1]] - axLev[order[0]]) * 2.5f, far = dbest + 0.5f * (wa + wb) * sp * sp;
+        for (int k = 0; k < m; k++) {
+          float x0 = d0[k] > 1e29f ? far : d0[k], x1 = d1[k] > 1e29f ? far : d1[k];
+          o[k] = (x1 - x0) * scale_;
+        }
       }
     }
     for (size_t i = 0; i < lc.size(); i++) llr[map[i]] = lc[i];
@@ -131,6 +156,13 @@ class T2Fec {
     return ok2 && fixed >= 0;
   }
   float scale_ = 4.f, alpha = 0.8f, beta = 0.f, relBeta = 0.f;
+  std::vector<float> axLev; std::vector<int> order, labelOf; float cr = 1, sr = 0;
+  int nearestPos(float x) const {            // position in the sorted level list of the level nearest to x
+    int nl = (int)order.size(), lo = 0, hi = nl - 1;
+    while (lo < hi) { int mid = (lo + hi) / 2; if (axLev[order[mid]] < x) lo = mid + 1; else hi = mid; }
+    if (lo > 0 && fabsf(axLev[order[lo - 1]] - x) < fabsf(axLev[order[lo]] - x)) lo--;
+    return lo;
+  }
 
  private:
   float axisLevel(int a) const {

@@ -3,7 +3,7 @@
 #include "common.h"
 #include "t2p1.h"
 #include "t2demod.h"
-#include "t2plp.h"
+#include "t2plps.h"
 #include <string>
 #include <map>
 #include <memory>
@@ -16,13 +16,14 @@ struct T2Status {
   int fftSize = 0, giIdx = -1, mod = -1, cod = -1, plpId = -1, pp = 0, ext = 0, rot = 0, fecLong = 0;
   double cfoHz = 0, snrDb = 0, delay = 0, sfoPpm = 0;
   uint64_t frames = 0, framesOk = 0, blocks = 0, blocksOk = 0, blocksFix = 0, ts = 0, packets = 0;
-  int numPlp = 0;
+  int numPlp = 0, frameIdx = 0; bool tiSwap = false;
+  std::vector<PlpCfg> plps;
   std::string text;
 };
 
 class T2Receiver {
  public:
-  struct Config { double bwMhz = 8; int plp = -1; bool tiBigFirst = false; };
+  struct Config { double bwMhz = 8; int plp = -1; bool mergeCommon = true; };
   Config cfg;
   T2Status st;
   std::vector<uint8_t> ts;   // output transport stream, drained by the caller
@@ -43,7 +44,7 @@ class T2Receiver {
  private:
   std::vector<cf> buf_; int64_t base_ = 0;
   int64_t scanPos_ = 0;                  // absolute index to continue the P1 search from
-  P1 p1_; L1Decoder l1_; PlpDecoder plp_;
+  P1 p1_; L1Decoder l1_; PlpSet plps_;
   std::map<std::string, std::unique_ptr<T2Setup>> cache_;
   const T2Setup *Sp_ = nullptr; bool haveS_ = false;
   const T2Setup &getSetup(int fftIdx, int gi, int ext, int miso, int pp, int papr, int ndata, int ver) {
@@ -187,26 +188,27 @@ class T2Receiver {
     }
     st.lock = true; st.framesOk++;
     st.fftSize = S_.N; st.giIdx = pre.gi; st.pp = pre.pp; st.ext = pre.bwtExt; st.numPlp = post.numPlp;
-    // PLP selection
-    const PlpCfg *sel = nullptr;
+    // PLP selection: the requested id, otherwise the first data PLP
+    st.plps = post.plp; st.frameIdx = post.frameIdx;
+    const PlpCfg *sel = nullptr, *common = nullptr;
     if (cfg.plp >= 0) { for (auto &p : post.plp) if (p.id == cfg.plp) sel = &p; }
     else { for (auto &p : post.plp) if (p.type != 0) { sel = &p; break; } if (!sel && !post.plp.empty()) sel = &post.plp[0]; }
-    if (sel && sel->blocks > 0) {
-      plp_.bigFirst = cfg.tiBigFirst;
-      plp_.fec.scale_ = 4.f; plp_.fec.beta = 0.f; plp_.fec.relBeta = 0.08f; plp_.maxIter = 50;   // offset min-sum, offset relative to the mean LLR
-      if (plp_.configure(*sel)) {
-        st.plpId = sel->id; st.mod = sel->mod; st.cod = sel->cod; st.rot = sel->rot; st.fecLong = (sel->fec & 3) == 1;
-        T2Stream str; buildStream(fc, pre, str);
-        size_t need = (size_t)sel->blocks * plp_.fec.ncell;
-        if ((size_t)sel->start + need <= str.cell.size() && sel->type != 2) {
-          size_t before = ts.size();
-          int b0 = plp_.st.blocks, o0 = plp_.st.ok, f0 = plp_.st.fixed;
-          plp_.decodeFrame(str.cell.data() + sel->start, str.w.data() + sel->start, sel->blocks, ts);
-          st.blocks += plp_.st.blocks - b0; st.blocksOk += plp_.st.ok - o0; st.blocksFix += plp_.st.fixed - f0;
-          st.ts += ts.size() - before; st.packets = plp_.bb.packets;
-          st.fecOk = (plp_.st.ok - o0) == (plp_.st.blocks - b0);
-        } else st.text = sel->type == 2 ? "type 2 PLP not supported yet" : "PLP outside the frame";
-      }
+    if (sel && cfg.mergeCommon && sel->type != 0) for (auto &p : post.plp) if (p.type == 0 && p.group == sel->group) common = &p;
+    if (sel) {
+      T2Stream str; buildStream(fc, pre, str);
+      PlpStats acc;
+      std::string msg;
+      plps_.frame(*sel, post, str, acc, msg);
+      if (common) plps_.frame(*common, post, str, acc, msg);
+      PlpRun &r = plps_.run[sel->id];
+      st.plpId = sel->id; st.mod = sel->mod; st.cod = sel->cod; st.rot = sel->rot; st.fecLong = (sel->fec & 3) == 1;
+      st.blocks += acc.blocks; st.blocksOk += acc.ok;
+      st.fecOk = acc.blocks > 0 && acc.ok == acc.blocks;
+      if (common) PlpSet::mergeCommonPackets(r.out, plps_.run[common->id].out);
+      st.ts += r.out.size(); ts.insert(ts.end(), r.out.begin(), r.out.end()); r.out.clear();
+      if (common) plps_.run[common->id].out.size() > (1u << 22) ? plps_.run[common->id].out.clear() : (void)0;
+      st.packets = r.dec.bb.packets; st.tiSwap = r.dec.bigFirst;
+      if (!msg.empty()) st.text = msg;
     }
     finish(p1pos, frameLen, eps);
     return 1;
