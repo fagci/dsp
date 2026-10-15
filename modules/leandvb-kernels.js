@@ -98,6 +98,26 @@ class DvbOfdm{
     this.ready=true; this.out=[]; this.outLen=0;
   }
   gap(){ if(this.ready && this.x.t2_gap) this.x.t2_gap(); }
+  // frame level parallelism: frames of the preamble search are decoded by pool workers (run()), the results come back through result()/drop()
+  setParallel(on){ if(this.ready && this.x.t2_par){ this.x.t2_par(on?1:0); this.par=!!on; } }
+  takeJobs(){
+    const o=[];
+    if(!this.par) return o;
+    for(let n;(n=this.x.t2_job_pop());) o.push({seq:this.x.t2_job_seq(), d:new Uint8Array(this.mem.buffer,this.x.t2_job_ptr(),n).slice()});
+    return o;
+  }
+  result(u8){
+    const p=this.x.t2_alloc(u8.length); new Uint8Array(this.mem.buffer,p,u8.length).set(u8);
+    this.x.t2_result(u8.length); this.drain(); this.status();
+  }
+  skipJob(seq){ this.x.t2_drop(seq); this.drain(); }
+  // pool worker: one frame job -> result blob
+  initPool(){ this.x.t2w_init(); }
+  run(u8){
+    const p=this.x.t2w_alloc(u8.length); new Uint8Array(this.mem.buffer,p,u8.length).set(u8);
+    const n=this.x.t2w_run(u8.length), o=new Uint8Array(this.mem.buffer,this.x.t2w_out(),n).slice();
+    this.x.t2w_free(); return o;
+  }
   feed(f32){
     if(!this.ready) return;
     const cap=this.x.t2_in_cap();

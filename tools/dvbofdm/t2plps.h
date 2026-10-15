@@ -17,6 +17,10 @@ class PlpSet {
  public:
   std::map<int, PlpRun> run;
   bool mergeCommon = true;
+  // pool worker mode: decoded blocks are kept per PLP (see PlpDecoder::sink), `last` holds the counts of the latest frame() call
+  bool capture = false, needSerial = false;
+  std::map<int, std::vector<std::vector<uint8_t>>> blocks;
+  std::map<int, std::pair<int, int>> last;
 
   // Cells of a PLP within the frame stream; false when it does not fit
   static bool gather(const PlpCfg &p, int cellsPerBlock, int blocks, const L1Post &post, const T2Stream &str, std::vector<cf> &c, std::vector<float> &w) {
@@ -52,6 +56,8 @@ class PlpSet {
     int PI = p.tilType == 1 ? std::max(p.tilLen, 1) : 1;
     int pos = (rel / interval) % PI;
     if (p.blocks <= 0) return;
+    if (capture && PI > 1) { needSerial = true; return; }     // a time interleaver over several frames needs the previous frames: not for independent workers
+    d.sink = capture ? &blocks[p.id] : nullptr;
     std::vector<cf> c; std::vector<float> w;
     int before = d.st.blocks, okBefore = d.st.ok;
     if (PI == 1) {
@@ -75,6 +81,7 @@ class PlpSet {
     }
     int nb = d.st.blocks - before, no = d.st.ok - okBefore;
     acc.blocks += nb; acc.ok += no; acc.fixed += 0;
+    last[p.id] = {nb, no};
     // none of a good number of blocks decoded: the other order of the time interleaver blocks may be the right one
     if (nb >= 8 && no == 0) { if (++r.idleBad >= 2) { d.bigFirst = !d.bigFirst; r.idleBad = 0; } } else if (no > 0) r.idleBad = 0;
   }

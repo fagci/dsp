@@ -15,6 +15,9 @@ T2Receiver *rx = nullptr;
 std::vector<uint8_t> tsOut;
 char json[4096];
 double fsIn = 0, fsNom = 0;
+uint32_t epochCtr = 0, curEpoch = 0;
+std::vector<uint8_t> curJob, resBuf, jobBuf, resOut;     // parallel mode: job popped for the host / result handed in / pool worker side
+T2Receiver *wrx = nullptr;
 
 // streaming windowed-sinc resampler: out(m) = x(t0 + m * ratio); fixed-point (Q32) position, 16 taps, 1024 phases
 struct Resamp {
@@ -76,6 +79,7 @@ struct Resamp {
   }
 } rs;
 std::vector<cf> tmp;
+void drainTs() { if (rx && !rx->ts.empty()) { tsOut.insert(tsOut.end(), rx->ts.begin(), rx->ts.end()); rx->ts.clear(); } }
 }
 
 extern "C" {
@@ -97,9 +101,35 @@ __attribute__((export_name("t2_feed"))) void t2_feed(size_t n) {
   const cf *x = reinterpret_cast<const cf *>(inbuf);
   if (fabs(fsIn / fsNom - 1.0) < 1e-6) rx->feed(x, n);
   else { tmp.clear(); rs.run(x, n, tmp); if (!tmp.empty()) rx->feed(tmp.data(), tmp.size()); }
-  if (!rx->ts.empty()) { tsOut.insert(tsOut.end(), rx->ts.begin(), rx->ts.end()); rx->ts.clear(); }
+  drainTs();
 }
 __attribute__((export_name("t2_gap"))) void t2_gap(void) { if (rx) rx->gap(); rs.init(fsIn / fsNom); }
+
+// ---- frame level parallelism (see T2Receiver::setParallel). Receiver side:
+__attribute__((export_name("t2_par"))) uint32_t t2_par(int on) { if (!rx) return 0; curEpoch = ++epochCtr; rx->setParallel(on != 0, curEpoch); return curEpoch; }
+__attribute__((export_name("t2_serial"))) int t2_serial(void) { return rx && rx->serial() ? 1 : 0; }
+// takes the next job: returns its size (0: none); the bytes are at t2_job_ptr() until the next call
+__attribute__((export_name("t2_job_pop"))) size_t t2_job_pop(void) {
+  if (!rx || rx->jobsOut.empty()) return 0;
+  curJob = std::move(rx->jobsOut.front()); rx->jobsOut.erase(rx->jobsOut.begin());
+  return curJob.size();
+}
+__attribute__((export_name("t2_job_ptr"))) uint8_t *t2_job_ptr(void) { return curJob.data(); }
+__attribute__((export_name("t2_job_seq"))) uint32_t t2_job_seq(void) { uint32_t q = 0; if (curJob.size() >= 12) memcpy(&q, curJob.data() + 8, 4); return q; }
+__attribute__((export_name("t2_alloc"))) uint8_t *t2_alloc(size_t n) { resBuf.resize(n); return resBuf.data(); }
+__attribute__((export_name("t2_result"))) void t2_result(size_t n) { if (!rx) return; rx->result(resBuf.data(), n); drainTs(); resBuf.clear(); resBuf.shrink_to_fit(); }
+__attribute__((export_name("t2_drop"))) void t2_drop(uint32_t seq) { if (!rx) return; std::vector<uint8_t> b; T2Receiver::dropResult(curEpoch, seq, b); rx->result(b.data(), b.size()); drainTs(); }
+// pool worker side:
+__attribute__((export_name("t2w_init"))) void t2w_init(void) { if (!wrx) wrx = new T2Receiver(); }
+__attribute__((export_name("t2w_alloc"))) uint8_t *t2w_alloc(size_t n) { jobBuf.resize(n); return jobBuf.data(); }
+__attribute__((export_name("t2w_run"))) size_t t2w_run(size_t n) {
+  if (!wrx) return 0;
+  wrx->runJob(jobBuf.data(), n, resOut);
+  jobBuf.clear(); jobBuf.shrink_to_fit();
+  return resOut.size();
+}
+__attribute__((export_name("t2w_out"))) uint8_t *t2w_out(void) { return resOut.data(); }
+__attribute__((export_name("t2w_free"))) void t2w_free(void) { resOut.clear(); resOut.shrink_to_fit(); }
 __attribute__((export_name("t2_ts"))) uint8_t *t2_ts(void) { return tsOut.data(); }
 __attribute__((export_name("t2_ts_len"))) size_t t2_ts_len(void) { return tsOut.size(); }
 __attribute__((export_name("t2_ts_clear"))) void t2_ts_clear(void) { tsOut.clear(); }
