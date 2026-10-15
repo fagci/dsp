@@ -67,7 +67,7 @@ class T2Receiver {
     return *it->second;
   }
   double eps_ = 0, period_ = 0, n0_ = 1.0;          // CFO rad/sample; measured frame period / nominal
-  int64_t lastP1_ = -1; int64_t lastLen_ = 0; unsigned giRound_ = 0;
+  int64_t lastP1_ = -1; int64_t lastLen_ = 0; unsigned giRound_ = 0, searchRound_ = 0;
   int back_ = 0;
   int64_t expect_ = -1;                  // expected position of the next P1
 
@@ -139,7 +139,11 @@ class T2Receiver {
       std::sort(giOrd, giOrd + 7, [&](int x, int y) { return lam[x] > lam[y]; });
       giTry = (giRound_++ % 4 == 0) ? 7 : 2;
     }
+    struct Cand { double sn; std::vector<cf> c; std::vector<float> w; double epsH; };
+    std::vector<Cand> cands; double lastSn = -99;
     for (int pass = 0; pass < 2 && !got; pass++) {
+      // no setup known yet and nothing decoded so far: the full search of layouts costs about 100 ms, so only every third preamble gets it
+      if (pass == 1 && !haveS_ && (searchRound_++ % 3) != 0) break;
       for (int gk = 0; gk < 7 && !got; gk++) for (int ext = 0; ext < 2 && !got; ext++) for (int tr = 0; tr < 2 && !got; tr++) {
         int gi = giOrd[gk];
         bool prev = haveS_ && Sp_->fftIdx == fftIdx && gi == Sp_->giIdx && ext == Sp_->ext && tr == ((Sp_->papr >> 1) & 1);
@@ -152,7 +156,7 @@ class T2Receiver {
         // that fixes only the fraction of a carrier spacing, the whole number (preamble error up to a spacing at 32K) is found by trying the neighbours
         const double epsR = refineCfo(p2, s0, s0.N + s0.G, eps, s0.st->N_P2);
         static const int alias[3] = {0, -1, 1};
-        for (int al = 0; al < 3 && !got; al++) {
+        for (int al = 0; al < 3; al++) {
           T2FrameCells fc;
           double epsH = epsR + alias[al] * 2 * PI / s0.N;
           if (!T2Demod::run(buf_, base_, s0, p2, epsH, s0.N + s0.G, s0.G / 2, fc, true)) return 0;
@@ -163,19 +167,27 @@ class T2Receiver {
             double e = 0, mw = 0;
             for (int i = 0; i < 1840; i++) { cf d = c[i] - cf(c[i].real() >= 0 ? 1.f : -1.f, 0); e += w[i] * cabs2(d); mw += w[i]; }
             double sn = 10 * log10(std::max(mw / 1840.0, 1e-12) / std::max(e / 1840.0, 1e-12));
-              if (sn > st.preSnr) { st.preSnr = sn; st.preGi = gi; st.preExt = ext; st.prePapr = tr; }
+            lastSn = sn;
+            if (sn > st.preSnr) { st.preSnr = sn; st.preGi = gi; st.preExt = ext; st.prePapr = tr; }
           }
           tries++;
-            if (l1_.decodePre(c.data(), w.data(), pre)) {
-            got = true; eps = epsH; trackEps_ = epsH; haveEps_ = true;
-            // noise power before equalisation: |z - s|^2 is sigma^2/|H|^2, times the weight |H|^2
-            double e = 0; for (int i = 0; i < 1840; i++) { cf d = c[i] - cf(c[i].real() >= 0 ? 1.f : -1.f, 0); e += w[i] * cabs2(d); }
-            double mw = 0; for (int i = 0; i < 1840; i++) mw += w[i];
-            n0_ = std::max(1e-12, e / 1840.0);
-            st.snrDb = 10 * log10(std::max(mw / 1840.0, 1e-12) / n0_);
-          }
+          cands.push_back({lastSn, std::move(c), std::move(w), epsH});
         }
       }
+      // the LDPC is the expensive part: only the two layouts whose cells look most like BPSK are decoded
+      std::sort(cands.begin(), cands.end(), [](const Cand &a, const Cand &b) { return a.sn > b.sn; });
+      for (size_t k = 0; k < cands.size() && k < 2 && !got; k++) {
+        if (cands[k].sn < 0) break;
+        if (l1_.decodePre(cands[k].c.data(), cands[k].w.data(), pre)) {
+          got = true; eps = cands[k].epsH; trackEps_ = eps; haveEps_ = true;
+          // noise power before equalisation: |z - s|^2 is sigma^2/|H|^2, times the weight |H|^2
+          double e = 0, mw = 0;
+          for (int i = 0; i < 1840; i++) { cf d = cands[k].c[i] - cf(cands[k].c[i].real() >= 0 ? 1.f : -1.f, 0); e += cands[k].w[i] * cabs2(d); mw += cands[k].w[i]; }
+          n0_ = std::max(1e-12, e / 1840.0);
+          st.snrDb = 10 * log10(std::max(mw / 1840.0, 1e-12) / n0_);
+        }
+      }
+      cands.clear();
     }
     if (!got) { st.preBad++; haveEps_ = false; return -1; }
     Sp_ = &getSetup(fftIdx, pre.gi, pre.bwtExt, miso, pre.pp, pre.papr, pre.nData, pre.ver);
@@ -242,6 +254,10 @@ class T2Receiver {
       T2Stream str; buildStream(fc, pre, str);
       PlpStats acc;
       std::string msg;
+      {   // C/N for error-free reception in a Gaussian channel (DVB-T2 implementation guidelines, approximate); 3 dB below it nothing decodes
+        static const float need[4][6] = {{1, 2.3f, 3.1f, 4.1f, 4.7f, 5.2f}, {6, 7.5f, 8.7f, 9.9f, 10.7f, 11.3f}, {8.9f, 11, 12.4f, 14.1f, 15.1f, 16}, {12, 14.5f, 16.4f, 18.4f, 19.8f, 20.9f}};
+        for (const PlpCfg *pc : {sel, common}) if (pc) plps_.run[pc->id].dec.lowSnr = pc->mod >= 0 && pc->mod < 4 && pc->cod >= 0 && pc->cod < 6 && st.snrDb < need[pc->mod][pc->cod] - 3;
+      }
       plps_.frame(*sel, post, str, acc, msg);
       if (common) plps_.frame(*common, post, str, acc, msg);
       PlpRun &r = plps_.run[sel->id];

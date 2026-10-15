@@ -162,6 +162,8 @@ class PlpDecoder {
   int key = -1;
   bool bigFirst = false;
   int maxIter = 40;
+  int streak = 0, idle = 0;   // consecutive failed FEC blocks; blocks skipped since
+  bool lowSnr = false;        // the measured SNR is far below what the mode needs: only probe blocks are decoded
   PlpStats st;
 
   bool configure(const PlpCfg &c) {
@@ -200,6 +202,8 @@ class PlpDecoder {
     size_t base = 0;
     std::vector<cf> blk(cs); std::vector<float> bw(cs);
     std::vector<uint8_t> bits(fec.kbch);
+    // below the FEC threshold every block runs the decoder to the iteration limit and fails: after a run of failures only every 16th block is tried
+    streak = lowSnr ? 8 : std::min(streak, 4);   // a new frame: a couple of blocks are enough to see whether the signal came back
     for (int F : sizes) {
       if (F == 0) continue;
       size_t tot = (size_t)F * cs;
@@ -212,8 +216,8 @@ class PlpDecoder {
       for (int r = 0; r < F; r++) {
         int shift = cp.nextShift(n);
         for (int j = 0; j < cs; j++) { size_t src = (size_t)r * cs + ((cp.perm[j] + shift) % cs); blk[j] = m[src]; bw[j] = mww[src]; }
-        int it = 0, fx = 0;
-        int ok = fec.decode(blk.data(), bw.data(), bits.data(), maxIter, &it, &fx);
+        int it = 0, fx = 0, ok = 0;
+        if (streak < 8 || (++idle & 15) == 0) { ok = fec.decode(blk.data(), bw.data(), bits.data(), streak < 8 ? maxIter : 12, &it, &fx); streak = ok ? 0 : streak + 1; }
         st.blocks++; st.iters += it;
         if (ok) { st.ok++; if (fx > 0) st.fixed++; } else st.bchFail++;
         if (ok) bb.process(bits.data(), fec.kbch, ts);
