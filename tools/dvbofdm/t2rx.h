@@ -147,7 +147,9 @@ class T2Receiver {
         int64_t need = p2 + (int64_t)s0.st->N_P2 * (s0.N + s0.G) + 16;
         if (need - base_ > (int64_t)buf_.size()) return 0;
         T2FrameCells fc;
-        if (!T2Demod::run(buf_, base_, s0, p2, eps, s0.N + s0.G, s0.G / 2, fc, true)) return 0;
+        // the CFO of the preamble is coarse: with a big FFT a tenth of a carrier spacing already limits the SNR to about 10 dB, so it is refined on the cyclic prefix of the P2 symbols
+        double epsH = refineCfo(p2, s0, s0.N + s0.G, eps, s0.st->N_P2);
+        if (!T2Demod::run(buf_, base_, s0, p2, epsH, s0.N + s0.G, s0.G / 2, fc, true)) return 0;
         int NP = s0.st->N_P2;
         std::vector<cf> c(1840); std::vector<float> w(1840);
         for (int s = 0; s < NP; s++) for (int j = 0; j < 1840 / NP; j++) { c[s + j * NP] = fc.cell[s][j]; w[s + j * NP] = fc.wgt[s][j]; }
@@ -159,7 +161,7 @@ class T2Receiver {
         }
         tries++;
         if (l1_.decodePre(c.data(), w.data(), pre)) {
-          got = true;
+          got = true; eps = epsH;
           // noise power before equalisation: |z - s|^2 is sigma^2/|H|^2, times the weight |H|^2
           double e = 0; for (int i = 0; i < 1840; i++) { cf d = c[i] - cf(c[i].real() >= 0 ? 1.f : -1.f, 0); e += w[i] * cabs2(d); }
           double mw = 0; for (int i = 0; i < 1840; i++) mw += w[i];
@@ -250,10 +252,11 @@ class T2Receiver {
   }
 
   // Carrier offset from the cyclic prefixes of the whole frame: x[n] conj(x[n+N]) has the phase -eps*N
-  double refineCfo(int64_t p2, const T2Setup &S, double spacing, double eps0) {
+  double refineCfo(int64_t p2, const T2Setup &S, double spacing, double eps0, int nSym = 0) {
     std::complex<double> acc = 0;
     const int N = S.N, G = S.G;
-    for (int l = 0; l < S.numSymbols(); l++) {
+    if (nSym <= 0) nSym = S.numSymbols();
+    for (int l = 0; l < nSym; l++) {
       int64_t s0 = p2 + (int64_t)llround(l * spacing);
       if (s0 - base_ < 0 || s0 + N + G - base_ > (int64_t)buf_.size()) break;
       const cf *a = &buf_[s0 - base_];
