@@ -1578,6 +1578,49 @@ function saWfLayer(n,cv){
   n._wfRO.observe(cv); n._wfRO.observe(mid);
   n._wfBox=null; n._wfPlaced=null;
 }
+// Интерактивный слой: отдельная прозрачная канва поверх узла. Маркеры, шторки каналов, band plan и
+// подсказка под курсором перерисовываются дёшево и сразу (rAF по событию мыши), не дожидаясь
+// тяжёлого кадра трассы/водопада, который при живом SDR идёт реже.
+function saOvEnsure(n,cv){
+  const mid=cv.parentNode; if(!mid) return null;
+  let ov=n._ov;
+  if(!ov){
+    ov=n._ov=document.createElement('canvas'); ov.className='sa-ov'; n._ovCx=ov.getContext('2d');
+    Object.assign(ov.style,{position:'absolute',margin:'0',pointerEvents:'none',zIndex:'2'});
+  }
+  if(ov.parentNode!==mid || n._ovCv!==cv){
+    n._ovRO?.disconnect(); mid.style.position='relative'; cv.after(ov); n._ovCv=cv; n._ovKey=null;
+    n._ovRO=new ResizeObserver(()=>{ n._ovKey=null; });
+    n._ovRO.observe(cv); n._ovRO.observe(mid);
+  }
+  const pw=cv.pxW||cv.width, ph=cv.pxH||cv.height, key=pw+'|'+ph+'|'+cv.width+'|'+cv.height;
+  if(key!==n._ovKey){
+    n._ovKey=key;
+    if(ov.width!==pw) ov.width=pw;
+    if(ov.height!==ph) ov.height=ph;
+    Object.assign(ov.style,{left:cv.offsetLeft+'px', top:cv.offsetTop+'px', width:cv.clientWidth+'px', height:cv.clientHeight+'px'});
+    n._ovCx.setTransform(pw/cv.width,0,0,ph/cv.height,0,0);
+  }
+  return ov;
+}
+function saOvDraw(n,cv){
+  cv=cv||n._ovCv; if(!cv || n.p.layout==='panes' || !saOvEnsure(n,cv)) return;
+  const cx=n._ovCx, W=cv.width, H=cv.height, hs=n._hs|0, hw=H-hs, plotH=Math.max(1,hs-14);
+  cx.clearRect(0,0,W,H);
+  saHover(n,cx,W,H,0);                                // подсказка будущего маркера (спектр и водопад)
+  saChannels(n,cx,W,hs,plotH);                        // полосы ПЧ каналов rtlsdr и порог шумоподавителя
+  if(n.s) saAnnot(n,cx,W,hs,hw,(cv.pxW&&cv.width)?cv.pxW/cv.width:1);   // аннотации IQ поверх водопада
+  saBandPlan(n,cx,W,hs,plotH);                        // полосы/закладки — зона спектра, водопад не трогаем
+  saSigTags(n,cx,W,plotH);                            // метки сигналов с 'sigid'
+  saMarkers(n,cx,W,hs);
+  saBandPlanLabels(n,cx);                             // подписи — поверх маркеров
+  saChannelLabels(n,cx,W);
+  saMarkerTabs(n,cx,W);
+}
+function saOvKick(n){
+  if(n._ovRaf) return;
+  n._ovRaf=requestAnimationFrame(()=>{ n._ovRaf=0; saOvDraw(n); });
+}
 function saWfPlace(n){
   const el=n._wfEl, cv=n._wfCv; if(!el || !cv) return;
   if(!n._wfBox) n._wfBox=[cv.offsetLeft, cv.offsetTop, cv.clientWidth];
@@ -2034,6 +2077,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     return o; },
   draw(n,cv,cx){
     cv.style.touchAction=n.p.layout==='panes' ? 'none' : '';
+    if(n._ov) n._ov.style.display = n.p.layout==='panes' ? 'none' : '';
     if(n.p.layout==='panes') return saPanesDraw(n,cv,cx);
     const W=cv.width,H=cv.height;
     if(saSkipDraw(n,cv)) return;                     // ничего не изменилось — канва держит прошлый кадр
@@ -2220,19 +2264,19 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           if(!drag.moved && Math.abs(dx)<=6) return;     // тот же порог, что у тапа: без движения — клик по подписи
           ev.preventDefault(); drag.moved=true;
           n.mk[drag.mk]=Math.round(drag.f0+dx/Math.max(1,drag.w)*drag.range*0.1);
-          n.active=drag.mk+1;
+          n.active=drag.mk+1; saOvKick(n);
           return;
         }
         if(drag.mkLine!=null){                       // перенос выставленного маркера (линия или тело шторки канала)
           ev.preventDefault();
           n.mk[drag.mkLine]=saSnapFreq(n, saFreq(n,clamp((ev.clientX-drag.left)/Math.max(1,drag.w),0,1)));
-          drag.moved=true; return;
+          drag.moved=true; saOvKick(n); return;
         }
         if(drag.edge){                               // ширина полосы ПЧ — от частоты канала до курсора
           ev.preventDefault();
           const {c}=drag.edge, f=saFreq(n,clamp((ev.clientX-drag.left)/Math.max(1,drag.w),0,1));
           const w = c.mode==='USB' ? f-c.f : c.mode==='LSB' ? c.f-f : 2*Math.abs(f-c.f);
-          n.s.setChanBw?.(c.mode, w);
+          n.s.setChanBw?.(c.mode, w); saOvKick(n);
           return;
         }
         if(drag.resize){
@@ -2344,11 +2388,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       cv.addEventListener('pointermove', ev=>{
         { const rc=cv.getBoundingClientRect(), fx=(ev.clientX-rc.left)/rc.width;
           n._hoverX = ev.pointerType==='touch'||drag||fx<0||fx>1||tabHit(ev)||nearBoundary(ev) ? null : fx; }
-        n._bmHoverFreq = bmHit(ev)?.freq ?? null;
+        n._bmHoverFreq = bmHit(ev)?.freq ?? null; saOvKick(n);
         n._mkHoverIdx = n._bmHoverFreq==null ? (mkHit(ev)?.idx ?? null) : null;
         if(!drag) cv.style.cursor = nearBoundary(ev) ? 'ns-resize' : chanEdgeAt(ev) ? 'ew-resize' : mkLineAt(ev)!=null ? 'grab' : '';
       });
-      cv.addEventListener('pointerleave', ()=>{ n._hoverX=null; n._bmHoverFreq=null; n._mkHoverIdx=null; });
+      cv.addEventListener('pointerleave', ()=>{ n._hoverX=null; n._bmHoverFreq=null; n._mkHoverIdx=null; saOvKick(n); });
     }
     if(n.s){
       const dpr=(cv.pxW&&cv.width)?cv.pxW/cv.width:1, Wp=cv.pxW||W, hwP=Math.max(1,Math.round(hw*dpr));
@@ -2525,15 +2569,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     cx.strokeStyle=themeColor('--grid'); cx.beginPath(); cx.moveTo(0,hs+.5); cx.lineTo(W,hs+.5); cx.stroke();
     saBands(n,cx,W,H);
     saDbLabels(n,cx);                                 // подписи уровня — поверх трассы
-    saHover(n,cx,W,hs+hw,0);                          // подсказка будущего маркера (спектр и водопад)
-    saChannels(n,cx,W,hs,plotH);                      // полосы ПЧ каналов rtlsdr и порог шумоподавителя
-    if(n.s) saAnnot(n,cx,W,hs,hw,(cv.pxW&&cv.width)?cv.pxW/cv.width:1);   // аннотации IQ поверх водопада
-    saBandPlan(n,cx,W,hs,plotH);                      // полосы/закладки — зона спектра, водопад не трогаем
-    saSigTags(n,cx,W,plotH);                          // метки сигналов с 'sigid'
-    saMarkers(n,cx,W,hs);
-    saBandPlanLabels(n,cx);                           // подписи — поверх маркеров
-    saChannelLabels(n,cx,W);
-    saMarkerTabs(n,cx,W);
+    saOvDraw(n,cv);                                   // интерактивный слой: маркеры, шторки, подсказка
     // слой водопада: DOM-позиция, видимость и фон под прозрачной канвой
     saWfLayer(n,cv);
     if(n._wfEl){
