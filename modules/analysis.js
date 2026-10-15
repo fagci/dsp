@@ -1731,6 +1731,13 @@ function saSteerIfOutside(n){
 // из истории — зум без потери деталей. Уровни lv[L] — прореживание по максимуму в 4^L раз,
 // чтобы перерисовка стоила ~строки×ширина, а не строки×бины. Сверх бюджета памяти у самых
 // старых строк сначала выкидываются мелкие уровни; самый грубый остаётся всегда.
+// 20·log10(x+1e-12) без Math.log10: log2 из битов float32 + полином (погрешность < 0.001 дБ)
+const SA_F32=new Float32Array(1), SA_U32=new Uint32Array(SA_F32.buffer);
+function saDb(x){
+  SA_F32[0]=x+1e-12; const b=SA_U32[0];
+  SA_U32[0]=(b&0x7fffff)|0x3f800000; const f=SA_F32[0];
+  return 6.020599913*(((b>>>23)-127)+((((-0.08001167895673834*f+0.63551733008045)*f-2.099419264150444)*f+4.04963655245822)*f-2.505622853644049));
+}
 const SA_H_DB0=-160, SA_H_STEP=.75, SA_H_MIN=512;
 function saHistPush(n, s){
   const budget=+n.p.wfMem*1e6;
@@ -1743,7 +1750,7 @@ function saHistPush(n, s){
   // массивы вытесненной строки того же размера — повторно, без мусора на каждый кадр
   const sp=h.spare&&h.spare[0]&&h.spare[0].length===N ? h.spare : null; h.spare=null;
   const q=sp?sp[0]:new Uint8Array(N), k=1/SA_H_STEP;
-  for(let i=0;i<N;i++){ const v=(20*Math.log10(m[i]+1e-12)-SA_H_DB0)*k; q[i]=v<0?0:v>255?255:v; }
+  for(let i=0;i<N;i++){ const v=(saDb(m[i])-SA_H_DB0)*k; q[i]=v<0?0:v>255?255:v; }
   const lv=[q];
   for(let a=q, L=1; a.length>SA_H_MIN; L++){
     const len=Math.ceil(a.length/4), b=sp&&sp[L]&&sp[L].length===len ? sp[L] : new Uint8Array(len);
@@ -2489,7 +2496,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         const pal=paletteLut(n.p.palette);
         const line=n._line;
         for(let x=0;x<Wp;x++){
-          const v=clamp((20*Math.log10(magReduce(m,edgeXwf[x],edgeXwf[x+1])+1e-12)-n.p.floor)/((n.p.top-n.p.floor)||1),0,1);
+          const v=clamp((saDb(magReduce(m,edgeXwf[x],edgeXwf[x+1]))-n.p.floor)/((n.p.top-n.p.floor)||1),0,1);
           const hk=heatIdx(v)*3, k=x*4;
           if(!n._inXwf[x]){ line[k]=line[k+1]=line[k+2]=0; line[k+3]=255; continue; }
           line[k]=pal[hk]; line[k+1]=pal[hk+1]; line[k+2]=pal[hk+2]; line[k+3]=255; }
@@ -2518,7 +2525,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       if(R&&n.p.ref==='show'){                    // reference as a faint line under the current one
         cx.strokeStyle=themeColor('--t-img'); cx.globalAlpha=.55; cx.beginPath();
         for(let x=0;x<W;x++){
-          const y=plotH-clamp((20*Math.log10(magReduce(R,edgeX[x],edgeX[x+1])+1e-12)-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
+          const y=plotH-clamp((saDb(magReduce(R,edgeX[x],edgeX[x+1]))-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
           x?cx.lineTo(x,y):cx.moveTo(x,y); }
         cx.stroke(); cx.globalAlpha=1; }
       if(!n.colTS || ((n.colFrame=(n.colFrame||0)+1)%30===0))  // цвет темы — тоже не каждый кадр
@@ -2530,8 +2537,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       const traceY=new Float32Array(W);
       for(let x=0;x<W;x++){
         const mv=magReduce(m,edgeX[x],edgeX[x+1]);
-        const v=diff? 20*Math.log10((mv+1e-12)/(magReduce(R,edgeX[x],edgeX[x+1])+1e-12))
-                    : 20*Math.log10(mv+1e-12);
+        const v=diff? saDb(mv)-saDb(magReduce(R,edgeX[x],edgeX[x+1]))
+                    : saDb(mv);
         const lo=diff? -40 : n.p.floor, hiv=diff? 40 : n.p.top;
         traceY[x]=n._inX[x] ? plotH-clamp((v-lo)/((hiv-lo)||1),0,1)*(plotH-2)-1 : plotH; }
       let lineY=traceY;
@@ -2553,7 +2560,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       if(n.p.peakHold && n.peak && n.peak.length===N){
         cx.strokeStyle=themeColor('--acc'); cx.lineWidth=1; cx.beginPath();
         for(let x=0;x<W;x++){
-          const v=20*Math.log10(magReduce(n.peak,edgeX[x],edgeX[x+1])+1e-12);
+          const v=saDb(magReduce(n.peak,edgeX[x],edgeX[x+1]));
           const y=plotH-clamp((v-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
           x?cx.lineTo(x,y):cx.moveTo(x,y); }
         cx.stroke();

@@ -2260,6 +2260,7 @@ if(c){ n._cvRef=c; n._pxGen=c.pxGen; n._cvW=c.width; n._cvH=c.height; }
 n._pSnap=Object.assign(n._pSnap||{},n.p);
 }
 matchMedia('(prefers-color-scheme: light)').addEventListener?.('change',redrawAll);
+let drawEma=30;                                     // скользящая стоимость кадра отрисовки, мс (старт — осторожно, как раньше)
 function frame(ts){
 // пока активен живой высокоскоростной источник (rtlsdr) — растягиваем кадр отрисовки. Сама
 // отрисовка (особенно водопад/спектр) синхронно грузит главный поток, а от него же зависит
@@ -2276,7 +2277,9 @@ const rtlBusy=Graph.nodes.some(n=>n.type==='rtlsdr' && n.connected);
 // пробелов между кадрами отрисовки — тот же компромисс, что и раньше, просто сильнее в пользу звука.
 // без ввода интерфейс только показывает данные: после 2 с — 30 к/с, после 10 с — 20 к/с
 const still = ts-lastInput>2000 && !activeInteractions && !panzooming && !zooming;
-const autoDt = TOUCH?33 : (rtlBusy?100 : still ? (ts-lastInput>10000?50:33) : 16);   // на тач-экранах хватает 30 к/с
+// при живом SDR шаг кадра следует за реальной стоимостью отрисовки: лёгкая (≤3 мс) — 30 к/с, тяжёлая — до прежних 10 к/с
+const rtlDt = clamp(Math.round(drawEma)*10, 33, 100);
+const autoDt = TOUCH?33 : (rtlBusy?rtlDt : still ? (ts-lastInput>10000?50:33) : 16);   // на тач-экранах хватает 30 к/с
 const fpsMode=fpsSel.value;                         // переключатель в панели: max — всегда 60 к/с, min — 10 к/с
 const minDt = fpsMode==='max' ? 16 : fpsMode==='min' ? 100 : autoDt;
 if(ts-lastDraw >=minDt  && !activeInteractions  && !panzooming  && !zooming){
@@ -2289,6 +2292,7 @@ if(d.lazy && !needsDraw(n,ts)) continue;
 if(!d.always  && !visible(n)) continue;
 toDraw.push(n);
 }
+const tDraw=performance.now();
 for(const n of toDraw){
 const d=MOD[n.type];
 if(d.lazy) drawnLazy(n,ts);                        // до draw(): он может сам попросить следующий кадр
@@ -2296,6 +2300,7 @@ const pa=Prof.on?performance.now():0;
 try{ d.draw(n,n.cv,n.cx); if(pa){ const dt=performance.now()-pa; n._dAcc=(n._dAcc||0)+dt; Prof.tot.d+=dt; } }
 catch(e){ if(!n.drawErr){ n.drawErr=1; console.error('draw '+n.type+':',e); } }
 }
+if(toDraw.length) drawEma=drawEma*.9+(performance.now()-tDraw)*.1;
 if(Eng.running &&!Eng.paused){
 // статус — ≤4 раз/с и только при изменении строки: ms меняются почти каждый блок
 if(ts-lastStatTs>=250){
