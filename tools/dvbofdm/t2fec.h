@@ -98,22 +98,37 @@ class T2Fec {
 
   // Cells -> LLR (positive = 0) in codeword order
   void demap(const cf *cell, const float *w, float *llr) const {
-    std::vector<float> lc((size_t)ncell * m);
     if (!rot) {
-      // separable: real axis labels and imaginary axis labels
-      int L = m / 2;                     // bits per axis
-      int nl = 1 << L;
-      std::vector<float> lev(nl);
-      std::vector<int> labIdx(nl);       // axis index -> level
-      // axis level of index a: real-axis index composed of the odd label bits (MSB side), see Cstln::init
-      for (int a = 0; a < nl; a++) lev[a] = axisLevel(a);
-      for (int c = 0; c < ncell; c++) {
-        float xr = cell[c].real(), xi = cell[c].imag(), ww = w[c];
-        float *o = &lc[(size_t)c * m];
-        axisLlr(xr, ww, lev, o, true);
-        axisLlr(xi, ww, lev, o, false);
+      // separable: real axis labels and imaginary axis labels; per-axis LLR / weight comes from a table
+      const int L = m / 2;
+      if (lut.empty()) {
+        int nl = 1 << L;
+        std::vector<float> lev(nl); float mx = 0;
+        for (int a = 0; a < nl; a++) { lev[a] = axisLevel(a); mx = std::max(mx, fabsf(lev[a])); }
+        lutR = mx + 1.f; lutN = 2048; lutInv = (lutN - 1) / (2 * lutR);
+        lut.assign((size_t)L * lutN, 0.f);
+        for (int i = 0; i < lutN; i++) {
+          float x = -lutR + i / lutInv;
+          float d0[8], d1[8];
+          for (int j = 0; j < L; j++) d0[j] = d1[j] = 1e30f;
+          for (int a = 0; a < nl; a++) {
+            float dd = (x - lev[a]); dd *= dd;
+            for (int j = 0; j < L; j++) { if ((a >> (L - 1 - j)) & 1) { if (dd < d1[j]) d1[j] = dd; } else if (dd < d0[j]) d0[j] = dd; }
+          }
+          for (int j = 0; j < L; j++) lut[(size_t)j * lutN + i] = (d1[j] - d0[j]) * scale_;
+        }
       }
+      const float lo = -lutR, hi = lutR, kk = 1.f;
+      for (int c = 0; c < ncell; c++) {
+        float xr = cell[c].real(), xi = cell[c].imag(), ww = w[c] * kk;
+        xr = xr < lo ? lo : xr > hi ? hi : xr; xi = xi < lo ? lo : xi > hi ? hi : xi;
+        int ir = (int)((xr - lo) * lutInv + 0.5f), ii = (int)((xi - lo) * lutInv + 0.5f);
+        const int *mp = &map[(size_t)c * m];
+        for (int j = 0; j < L; j++) { llr[mp[2 * j]] = lut[(size_t)j * lutN + ir] * ww; llr[mp[2 * j + 1]] = lut[(size_t)j * lutN + ii] * ww; }
+      }
+      return;
     } else {
+      std::vector<float> lc((size_t)ncell * m);
       const int L = m / 2, nl = 1 << L;
       for (int c = 0; c < ncell; c++) {
         float a = cell[c].real(), b = cell[(c + 1) % ncell].imag();
@@ -138,15 +153,15 @@ class T2Fec {
           o[k] = (x1 - x0) * scale_;
         }
       }
+      for (size_t i = 0; i < lc.size(); i++) llr[map[i]] = lc[i];
     }
-    for (size_t i = 0; i < lc.size(); i++) llr[map[i]] = lc[i];
   }
 
   // Full decode of one FEC block. bits: kbch output bits. Returns 1 ok, 0 residual errors.
   int decode(const cf *cell, const float *w, uint8_t *bits, int maxIter, int *iters = nullptr, int *bchFixed = nullptr) {
-    std::vector<float> llr(N);
+    llrBuf.resize(N); cwBuf.resize(N);
+    std::vector<float> &llr = llrBuf; std::vector<uint8_t> &cw = cwBuf;
     demap(cell, w, llr.data());
-    std::vector<uint8_t> cw(N);
     int it = 0;
     bool ok2 = fast ? ldpcq.decode(llr.data(), cw.data(), maxIter, &it, relBeta > 0 ? relBeta : 0.08f) : ldpc.decode(llr.data(), cw.data(), maxIter, &it, alpha, beta, relBeta);
     if (iters) *iters = it;
@@ -155,6 +170,8 @@ class T2Fec {
     memcpy(bits, cw.data(), kbch);
     return ok2 && fixed >= 0;
   }
+  std::vector<float> llrBuf; std::vector<uint8_t> cwBuf;
+  mutable std::vector<float> lut; mutable float lutR = 0, lutInv = 0; mutable int lutN = 0;
   float scale_ = 4.f, alpha = 0.8f, beta = 0.f, relBeta = 0.f;
   std::vector<float> axLev; std::vector<int> order, labelOf; float cr = 1, sr = 0;
   int nearestPos(float x) const {            // position in the sorted level list of the level nearest to x

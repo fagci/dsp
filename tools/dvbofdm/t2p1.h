@@ -32,7 +32,7 @@ class P1 {
   Fft fft_;
   int8_t rnd_[384];
   cf aTime_[1024];
-  std::vector<double> pc_;  // scratch prefix sums
+  std::vector<double> ey_; std::vector<std::complex<double>> py_, pz_;  // scratch prefix sums
 };
 
 inline void P1::buildTemplate() {
@@ -55,23 +55,35 @@ inline void P1::expectedBits(int s1, int s2, uint8_t *bits) const {
 inline int64_t P1::scan(const cf *x, int n, float thr, float *bestMetric) {
   const int L = 2048, W1 = 542, W2 = 482;
   if (n < L + 8) return -1;
-  const double phi = 2 * PI / 1024;
-  // y[i] = x[i] conj(x[i+542]) e^{-j phi i};  z[i] = x[i] conj(x[i-482]) e^{-j phi i}
+  static float wr[1024], wi[1024]; static bool wInit = false;
+  if (!wInit) { for (int i = 0; i < 1024; i++) { wr[i] = (float)cos(2 * PI * i / 1024); wi[i] = (float)-sin(2 * PI * i / 1024); } wInit = true; }
+  // y[i] = x[i] conj(x[i+542]) e^{-j phi i};  z[i] = x[i] conj(x[i-482]) e^{-j phi i}; prefix sums of both and of |x|^2
   const int m = n - L;  // candidate starts 0..m-1
-  std::vector<double> ey(n + 1, 0.0);  // prefix of |x|^2
-  for (int i = 0; i < n; i++) ey[i + 1] = ey[i] + cabs2(x[i]);
-  std::vector<std::complex<double>> py(n + 1), pz(n + 1);
-  py[0] = pz[0] = 0;
+  if ((int)ey_.size() < n + 1) { ey_.resize(n + 1); py_.resize(n + 1); pz_.resize(n + 1); }
+  double *ey = ey_.data(); std::complex<double> *py = py_.data(), *pz = pz_.data();
+  ey[0] = 0; py[0] = pz[0] = 0;
+  double e = 0, ar = 0, ai = 0, br = 0, bi = 0;
+  const float *xf = reinterpret_cast<const float *>(x);
   for (int i = 0; i < n; i++) {
-    std::complex<double> w(cos(phi * (i & 1023)), -sin(phi * (i & 1023)));
-    std::complex<double> y = (i + W1 < n) ? std::complex<double>(x[i]) * std::conj(std::complex<double>(x[i + W1])) * w : 0.0;
-    std::complex<double> z = (i - W2 >= 0) ? std::complex<double>(x[i]) * std::conj(std::complex<double>(x[i - W2])) * w : 0.0;
-    py[i + 1] = py[i] + y; pz[i + 1] = pz[i] + z;
+    float xr = xf[2 * i], xi = xf[2 * i + 1];
+    e += xr * xr + xi * xi; ey[i + 1] = e;
+    int k = i & 1023;
+    if (i + W1 < n) {
+      float qr = xf[2 * (i + W1)], qi = xf[2 * (i + W1) + 1];
+      float pr = xr * qr + xi * qi, pi = xi * qr - xr * qi;           // x[i] conj(x[i+W1])
+      ar += pr * wr[k] - pi * wi[k]; ai += pr * wi[k] + pi * wr[k];
+    }
+    if (i - W2 >= 0) {
+      float qr = xf[2 * (i - W2)], qi = xf[2 * (i - W2) + 1];
+      float pr = xr * qr + xi * qi, pi = xi * qr - xr * qi;           // x[i] conj(x[i-W2])
+      br += pr * wr[k] - pi * wi[k]; bi += pr * wi[k] + pi * wr[k];
+    }
+    py[i + 1] = std::complex<double>(ar, ai); pz[i + 1] = std::complex<double>(br, bi);
   }
   float best = 0; int64_t bp = -1;
   for (int p = 0; p < m; p++) {
-    double s1 = std::abs(py[p + W1] - py[p]);
-    double s2 = std::abs(pz[p + L] - pz[p + 1566]);
+    std::complex<double> d1 = py[p + W1] - py[p], d2 = pz[p + L] - pz[p + 1566];
+    double s1 = sqrt(d1.real() * d1.real() + d1.imag() * d1.imag()), s2 = sqrt(d2.real() * d2.real() + d2.imag() * d2.imag());
     double e1 = sqrt((ey[p + W1] - ey[p]) * (ey[p + 2 * W1] - ey[p + W1]));
     double e2 = sqrt((ey[p + L] - ey[p + 1566]) * (ey[p + 1566] - ey[p + 1084]));
     double d = e1 + e2;

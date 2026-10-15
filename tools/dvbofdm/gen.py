@@ -149,3 +149,13 @@ T2BitIl::T2BitIl(''' + params + ''')
 res = res.replace(N, 'T2BitIl')
 open(os.path.join(out, 't2bitil_gen.h'), 'w').write(res)
 print('t2bitil_gen.h', len(res))
+
+# ---------------- DVB-T: continual pilot and TPS carrier positions (dvbt_reference_signals) ----------------
+rs = rd('lib/dvbt/dvbt_reference_signals_impl.cc')
+res = HDR
+for nm, key in (('T1_CP_2K', 'd_cpilot_carriers_2k'), ('T1_TPS_2K', 'd_tps_carriers_2k'), ('T1_CP_8K', 'd_cpilot_carriers_8k'), ('T1_TPS_8K', 'd_tps_carriers_8k')):
+    m = re.search(key + r'\[[^\]]*\]\s*=\s*\{([^}]*)\}', rs)
+    vals = [int(v) for v in re.findall(r'\d+', m.group(1))]
+    res += 'static const int %s[%d] = {%s};\n' % (nm, len(vals), ','.join(map(str, vals)))
+open(os.path.join(out, 't1_gen.h'), 'w').write(res)
+print('t1_gen.h', len(res))

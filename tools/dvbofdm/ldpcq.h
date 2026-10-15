@@ -4,6 +4,7 @@
 // (compilers vectorise the byte loops; wasm gets simd128 with -msimd128).
 #pragma once
 #include "common.h"
+#include <cstdlib>
 
 namespace dvbofdm {
 
@@ -40,8 +41,14 @@ class LdpcQ {
 
   // llr > 0: bit 0. Returns true when all checks hold. bits: N hard decisions out. relBeta: offset relative to the mean |llr|.
   bool decode(const float *llr, uint8_t *bits, int maxIter, int *iters = nullptr, float relBeta = 0.08f) {
-    double mean = 0; for (int i = 0; i < N; i++) mean += fabsf(llr[i]); mean /= N;
-    float g = mean > 1e-9 ? (float)(10.0 / mean) : 1.f;
+    // The channel LLRs are scaled so that their median magnitude is 5.5 (int8, clamp 127): a scale from the median, not the mean, keeps the
+    // fixed offset right for dense constellations whose LLR distribution has a long tail
+    static std::vector<float> sm;
+    sm.clear();
+    for (int i = 0; i < N; i += 16) sm.push_back(fabsf(llr[i]));
+    std::nth_element(sm.begin(), sm.begin() + sm.size() / 2, sm.end());
+    float med = sm[sm.size() / 2];
+    float g = med > 1e-9 ? 5.5f / med : 1.f;
     // load: info bit v = r*360+i ; parity bit K + c with c = j + q*m  ->  parity vector j, lane m
     for (int r = 0; r < rows; r++) for (int i = 0; i < 360; i++) V[(size_t)r * LV + i] = clampq(llr[r * 360 + i] * g);
     for (int j = 0; j < q; j++) for (int m = 0; m < 360; m++) V[(size_t)(rows + j) * LV + m] = clampq(llr[K + j + (size_t)q * m] * g);
@@ -68,7 +75,7 @@ class LdpcQ {
   int maxDeg = 0; size_t nconn = 0;
   std::vector<int8_t> V, R, Qb, Tb;
 
-  static int8_t clampq(float v) { int x = (int)lrintf(v); return (int8_t)(x > 63 ? 63 : x < -63 ? -63 : x); }
+  static int8_t clampq(float v) { int x = (int)(v + (v >= 0 ? 0.5f : -0.5f)); return (int8_t)(x > 127 ? 127 : x < -127 ? -127 : x); }
 
   static void rotIn(const int8_t *base, int s, int8_t *t) {          // t[m] = base[(m - s) mod 360]
     if (s == 0) { memcpy(t, base, 360); return; }

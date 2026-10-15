@@ -7,7 +7,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 GR=$(cd "${1:?usage: build.sh <gnuradio checkout>}" && pwd)
 W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
 python3 "$HERE/gen.py" "$GR" "$W" >/dev/null
-clang++ --target=wasm32-wasi -std=c++14 -O3 -msimd128 -fno-exceptions -fno-rtti -w -I"$W" -I"$HERE" \
+clang++ --target=wasm32-wasi -std=c++14 -O3 -msimd128 -fcx-limited-range -fno-math-errno -fno-exceptions -fno-rtti -w -I"$W" -I"$HERE" \
   -Wl,--strip-all -Wl,-z,stack-size=1048576 -Wl,--initial-memory=134217728 -Wl,--max-memory=1073741824 \
   -mexec-model=reactor -o "$HERE/../../vendor/dvbofdm.wasm" "$HERE/api.cc"
 ls -l "$HERE/../../vendor/dvbofdm.wasm"

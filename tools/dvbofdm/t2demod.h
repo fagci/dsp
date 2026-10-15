@@ -65,9 +65,14 @@ class T2Demod {
     std::vector<cf> tmp(N);
     for (int l = 0; l < nSym; l++) {
       int64_t s0 = p2start + (int64_t)llround(l * spacing) + G - back;
-      for (int i = 0; i < N; i++) {
-        double a = -eps * (double)(s0 + i);
-        tmp[i] = buf[s0 + i - base] * cf((float)cos(a), (float)sin(a));
+      {
+        double a0 = std::fmod(-eps * (double)s0, 2 * PI);
+        cf ph((float)cos(a0), (float)sin(a0)), rot((float)cos(-eps), (float)sin(-eps));
+        const cf *src = &buf[s0 - base];
+        for (int i = 0; i < N; i++) {
+          tmp[i] = src[i] * ph; ph *= rot;
+          if ((i & 255) == 255) ph *= 1.f / std::sqrt(cabs2(ph));
+        }
       }
       S.fft.run(tmp.data());
       for (int n = 0; n < C; n++) Y[l][n] = tmp[(S.left + n + N / 2) % N];
@@ -112,7 +117,7 @@ class T2Demod {
         int prev = -1; cf hp;
         for (int n = 0; n < C; n++) {
           cf p; if (!pilotVal(l, n, p)) continue;
-          cf h = Y[l][n] / p;
+          cf h = cdiv(Y[l][n], p);
           if (prev >= 0 && n - prev == Dp) acc += std::complex<double>(h * std::conj(hp));
           prev = n; hp = h;
         }
@@ -126,7 +131,7 @@ class T2Demod {
         std::vector<cf> F(N, cf(0, 0));
         for (int l = 0; l < st.N_P2 && l < 1; l++) for (int n = 0; n < C; n++) {
           cf p; if (n % Dp != r0 || !pilotVal(l, n, p)) continue;
-          F[(S.left + n + N / 2) % N] = Y[l][n] / p;
+          F[(S.left + n + N / 2) % N] = cdiv(Y[l][n], p);
         }
         S.fft.run(F.data(), true);
         int T = N / (2 * Dp) - 1;
@@ -144,9 +149,12 @@ class T2Demod {
         out.cirLo = lo >= 0 ? lo - T : 0; out.cirHi = hi >= 0 ? hi - T : 0;
       }
       out.delay = (float)d;
-      for (int l = 0; l < nSym; l++) for (int n = 0; n < C; n++) {
-        double a = 2 * PI * n * d / N;
-        Y[l][n] *= cf((float)cos(a), (float)sin(a));
+      {
+        cf rot((float)cos(2 * PI * d / N), (float)sin(2 * PI * d / N));
+        for (int l = 0; l < nSym; l++) {
+          cf ph(1, 0);
+          for (int n = 0; n < C; n++) { Y[l][n] *= ph; ph *= rot; if ((n & 255) == 255) ph *= 1.f / std::sqrt(cabs2(ph)); }
+        }
       }
     }
     // window drift from the sampling clock: the ratio of the pilots of the same carriers in symbols l and l-Dy removes the channel,
@@ -161,7 +169,7 @@ class T2Demod {
         for (int n = 0; n < C; n++) {
           if (!scat(l, n) || !scat(l - Dy, n)) continue;
           cf p1, p0; pilotVal(l, n, p1); pilotVal(l - Dy, n, p0);
-          cf R = (Y[l][n] / p1) * std::conj(Y[l - Dy][n] / p0);
+          cf R = cdiv(Y[l][n], p1) * std::conj(cdiv(Y[l - Dy][n], p0));
           if (prevn >= 0 && n - prevn == Dsp) acc += std::complex<double>(R * std::conj(prevR));
           prevn = n; prevR = R;
         }
@@ -176,7 +184,8 @@ class T2Demod {
       if (std::fabs(slope) * (nSym - st.N_P2) > 1.0) {      // more than a sample over the frame: compensate
         for (int l = st.N_P2; l < nSym; l++) {
           double d = slope * (l - st.N_P2);
-          for (int n = 0; n < C; n++) { double a = 2 * PI * n * d / N; Y[l][n] *= cf((float)cos(a), (float)sin(a)); }
+          cf rot((float)cos(2 * PI * d / N), (float)sin(2 * PI * d / N)), ph(1, 0);
+          for (int n = 0; n < C; n++) { Y[l][n] *= ph; ph *= rot; if ((n & 255) == 255) ph *= 1.f / std::sqrt(cabs2(ph)); }
         }
       }
     }
@@ -188,7 +197,7 @@ class T2Demod {
       for (int n = 0; n < C; n++) {
         if (!isCont(l, n) || !isCont(l - 1, n)) continue;
         cf p1, p0; pilotVal(l, n, p1); pilotVal(l - 1, n, p0);
-        acc += std::complex<double>(Y[l][n] / p1 * std::conj(Y[l - 1][n] / p0));
+        acc += std::complex<double>(cdiv(Y[l][n], p1) * std::conj(cdiv(Y[l - 1][n], p0)));
       }
       phi[l] = phi[l - 1] + (std::abs(acc) > 0 ? std::arg(acc) : 0.0);
     }
@@ -214,7 +223,7 @@ class T2Demod {
     // P2: frequency interpolation of dense pilots
     for (int l = 0; l < st.N_P2 && l < nSym; l++) {
       std::vector<int> pn; std::vector<cf> pv;
-      for (int n = 0; n < C; n++) { cf p; if (pilotVal(l, n, p)) { pn.push_back(n); pv.push_back(Y[l][n] / p); } }
+      for (int n = 0; n < C; n++) { cf p; if (pilotVal(l, n, p)) { pn.push_back(n); pv.push_back(cdiv(Y[l][n], p)); } }
       interpFir(pn, pv, H[l], C, K);
       if (getenv("T2DBG3")) { double e = 0; for (size_t i = 0; i < pn.size(); i++) e += cabs2(H[l][pn[i]] - pv[i]); fprintf(stderr, "P2 sym %d: rms(H_est - pilot ratio) %.4f over %zu pilots, kernel R %d\n", l, sqrt(e / pn.size()), pn.size(), K.R); }
     }
@@ -223,7 +232,7 @@ class T2Demod {
       std::vector<std::vector<int>> plist(C);   // symbols with a pilot at carrier n
       std::vector<std::vector<cf>> pval(C);
       for (int l = st.N_P2; l < nSym; l++) for (int n = 0; n < C; n++) {
-        cf p; if (pilotVal(l, n, p)) { plist[n].push_back(l); pval[n].push_back(Y[l][n] / p); }
+        cf p; if (pilotVal(l, n, p)) { plist[n].push_back(l); pval[n].push_back(cdiv(Y[l][n], p)); }
       }
       // include the last P2 symbol as an anchor (its channel is known everywhere)
       std::vector<int> Q;
@@ -240,7 +249,7 @@ class T2Demod {
           for (int i = 0; i < (int)raw.size(); i++) {
             cf acc(0, 0); float ws = 0;
             for (int j = -J; j <= J; j++) { int k2 = i + j; if (k2 < 0 || k2 >= (int)raw.size()) continue; float w = (float)(J + 1 - abs(j)); acc += raw[k2] * w; ws += w; }
-            pv[i] = acc / ws;
+            pv[i] = acc * (1.f / ws);
           }
         }
         size_t k = 0;
@@ -254,10 +263,8 @@ class T2Demod {
           Ht[l - st.N_P2][qi] = v;
         }
       }
-      std::vector<cf> pvq(Q.size());
-      for (int l = st.N_P2; l < nSym; l++) {
-        interpFir(Q, Ht[l - st.N_P2], H[l], C, K);
-      }
+      Plan plQ; plan(Q, C, K, plQ);
+      for (int l = st.N_P2; l < nSym; l++) apply(plQ, Ht[l - st.N_P2], H[l], C);
     }
     // equalise, extract data cells, de-interleave
     out.nP2 = st.N_P2; out.cP2 = st.C_P2; out.cData = st.C_DATA; out.nFc = st.N_FC; out.cFc = st.C_FC; out.nData = st.num_symbols - st.N_P2;
@@ -273,7 +280,7 @@ class T2Demod {
         int t = p2 ? st.p2_carrier_map[n] : fc ? st.fc_carrier_map[n] : st.data_carrier_map[l][n];
         if (t != DATA_CARRIER) continue;
         float h2 = cabs2(H[l][n]);
-        c.push_back(h2 > 1e-12f ? Y[l][n] / H[l][n] : cf(0, 0)); w.push_back(h2);
+        c.push_back(h2 > 1e-12f ? cdiv(Y[l][n], H[l][n]) : cf(0, 0)); w.push_back(h2);
       }
       if ((int)c.size() != cnt) { out.cell[l].clear(); continue; }
       out.cell[l].assign(cnt, cf()); out.wgt[l].assign(cnt, 0.f);
@@ -297,21 +304,44 @@ class T2Demod {
       }
     }
   };
-  static void interpFir(const std::vector<int> &pn, const std::vector<cf> &pv, std::vector<cf> &H, int C, const Kernel &K) {
-    if (pn.empty()) { std::fill(H.begin(), H.end(), cf(1, 0)); return; }
+  // The weights depend only on the pilot carrier set, so they are computed once per set and applied to every symbol.
+  struct Plan {
+    std::vector<int> first, cnt, nearest; std::vector<size_t> off; std::vector<float> w;
+  };
+  static void plan(const std::vector<int> &pn, int C, const Kernel &K, Plan &P) {
+    P.first.assign(C, 0); P.cnt.assign(C, 0); P.nearest.assign(C, 0); P.off.assign(C, 0); P.w.clear();
+    if (pn.empty()) return;
     size_t lo = 0;
     for (int n = 0; n < C; n++) {
       while (lo < pn.size() && pn[lo] < n - K.R) lo++;
-      cf acc(0, 0); float ws = 0;
-      for (size_t i = lo; i < pn.size() && pn[i] <= n + K.R; i++) { float w = K.g[pn[i] - n + K.R]; acc += pv[i] * w; ws += w; }
-      if (ws > 1e-6f) H[n] = acc / ws;
-      else {                                          // outside the support of every node: nearest pilot
+      float ws = 0; size_t i = lo;
+      for (; i < pn.size() && pn[i] <= n + K.R; i++) ws += K.g[pn[i] - n + K.R];
+      P.first[n] = (int)lo; P.off[n] = P.w.size();
+      if (ws > 1e-6f) {
+        P.cnt[n] = (int)(i - lo);
+        for (size_t j = lo; j < i; j++) P.w.push_back(K.g[pn[j] - n + K.R] / ws);
+      } else {                                        // outside the support of every node: nearest pilot
         size_t j = std::lower_bound(pn.begin(), pn.end(), n) - pn.begin();
         if (j >= pn.size()) j = pn.size() - 1;
         if (j > 0 && n - pn[j - 1] < pn[j] - n) j--;
-        H[n] = pv[j];
+        P.nearest[n] = (int)j; P.cnt[n] = 0;
       }
     }
+  }
+  static void apply(const Plan &P, const std::vector<cf> &pv, std::vector<cf> &H, int C) {
+    if (P.first.empty()) { std::fill(H.begin(), H.end(), cf(1, 0)); return; }
+    const float *v = reinterpret_cast<const float *>(pv.data());
+    for (int n = 0; n < C; n++) {
+      int c = P.cnt[n];
+      if (!c) { H[n] = pv[P.nearest[n]]; continue; }
+      const float *w = &P.w[P.off[n]], *x = v + 2 * (size_t)P.first[n];
+      float re = 0, im = 0;
+      for (int i = 0; i < c; i++) { re += w[i] * x[2 * i]; im += w[i] * x[2 * i + 1]; }
+      H[n] = cf(re, im);
+    }
+  }
+  static void interpFir(const std::vector<int> &pn, const std::vector<cf> &pv, std::vector<cf> &H, int C, const Kernel &K) {
+    Plan P; plan(pn, C, K, P); apply(P, pv, H, C);
   }
 };
 

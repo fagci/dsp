@@ -15,7 +15,7 @@ int main(int argc, char **argv) {
   // L1 info taken as known for g1: pp2 (1), 1500 post cells
   pre.postSize = 1500;
   T2Stream str; buildStream(fc, pre, str);
-  PlpCfg c; c.fec = 1; c.cod = 0; c.mod = 2; c.rot = 0; c.tilLen = 3; c.blocks = 139;
+  PlpCfg c; c.fec = 1; c.cod = getenv("COD") ? atoi(getenv("COD")) : 0; c.mod = getenv("MOD") ? atoi(getenv("MOD")) : 2; c.rot = 0; c.tilLen = 3; c.blocks = getenv("BLK") ? atoi(getenv("BLK")) : 139;
   std::mt19937 rng(7); std::normal_distribution<float> nd(0, 1);
   for (double snr = atof(argv[2]); snr <= atof(argv[3]) + 1e-9; snr += atof(argv[4])) {
     PlpDecoder dec; dec.configure(c); if (getenv("IT")) dec.maxIter = atoi(getenv("IT")); if (getenv("SLOW")) dec.fec.fast = false; if (getenv("RB")) { dec.fec.relBeta = atof(getenv("RB")); dec.fec.beta = 0; } if (getenv("BETA")) dec.fec.beta = atof(getenv("BETA")); if (getenv("TRUESCALE")) dec.fec.scale_ = 1.0 / pow(10, -snr / 10); if (getenv("ALPHA")) dec.fec.alpha = atof(getenv("ALPHA"));
