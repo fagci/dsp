@@ -1,7 +1,7 @@
 "use strict";
-/* ============================ DVB-S / DVB-S2 приёмник из IQ: один узел ============================
+/* ============================ DVB-приёмник из IQ с выбором стандарта: один узел ============================
    iq (любой SDR) → vendor/leandvb.wasm в воркере (dvbsoft-worker.js, LeanSDR leandvb) → транспортный поток → тот же разбор, что у «TS → Video»
-   (видео, звук, телетекст, таблицы служб). Выходы: vid, L, R, bin (TS), lock (синхронизация несущей и FEC), level, mer, ber, freq + выходы tsvid. */
+   (видео, звук, телетекст, таблицы служб). Стандарт выбирается параметром std; движок на стандарт — в воркере (сейчас leandvb: DVB-S, DVB-S2). Выходы: vid, L, R, bin (TS), lock (синхронизация несущей и FEC), level, mer, ber, freq + выходы tsvid. */
 
 (function(){
 const TSV=MOD.tsvid, SEQ={n:0};
@@ -26,8 +26,8 @@ function dsStart(n,cfg,key){
   }catch(x){ n.dsErr=x.message; }
 }
 
-def({ ...TSV, id:'dvbsoft', title:'DVB-S/S2 Receiver (IQ)', cat:'Decoders',
-  kw:'dvb-s dvb-s2 satellite tv qo-100 datv iq sdr receiver demodulator video audio transport stream leandvb software',
+def({ ...TSV, id:'dvbsoft', title:'DVB Receiver (IQ)', cat:'Decoders',
+  kw:'dvb dvb-s dvb-s2 dvb-t dvb-t2 standard satellite tv qo-100 datv iq sdr receiver demodulator video audio transport stream leandvb software',
   ins:[{n:'in',t:'iq'},{n:'prog',t:'val'},{n:'page',t:'num'}],
   outs:[...TSV.outs.filter(o=>o.n==='vid'||o.n==='L'||o.n==='R'), {n:'bin',t:'bin'}, {n:'lock',t:'num'}, {n:'level',t:'num'}, {n:'mer',t:'num'}, {n:'ber',t:'num'}, {n:'freq',t:'num'},
     {n:'vlock',t:'num'}, ...TSV.outs.filter(o=>!['vid','L','R','lock'].includes(o.n))],
