@@ -1,0 +1,166 @@
+--- leandvb.cc
++++ leandvb.cc
+@@ -154,13 +154,15 @@
+   fprintf(f, "SR %f\n", cfg.Fm);
+ }
+ 
++scheduler *g_sch;
++
+ int run(config &cfg) {
+ 
+   int w_timeline = 512, h_timeline = 256;
+   int w_fft = 1024, h_fft = 256;
+   int wh_const = 256;
+   
+-  scheduler sch;
++  scheduler &sch = *(g_sch = new scheduler);
+   sch.verbose = cfg.verbose;
+   sch.debug = cfg.debug;
+ 
+@@ -203,7 +205,7 @@
+ 
+   // INPUT
+ 
+-  pipebuf<cf32> p_rawiq(&sch, "rawiq", BUF_BASEBAND);
++  static pipebuf<cf32> p_rawiq(&sch, "rawiq", BUF_BASEBAND);
+ 
+   switch ( cfg.input_format ) {
+   case config::INPUT_U8: {
+@@ -319,7 +321,7 @@
+ 
+   // CNR ESTIMATION
+ 
+-  pipebuf<f32> p_cnr(&sch, "cnr", BUF_SLOW);
++  static pipebuf<f32> p_cnr(&sch, "cnr", BUF_SLOW);
+   cnr_fft<f32> *r_cnr = NULL;
+   if ( cfg.cnr ) {
+     if ( cfg.verbose )
+@@ -424,11 +426,11 @@
+ 
+   // Generic constellation receiver
+ 
+-  pipebuf<softsymbol> p_symbols(&sch, "PSK soft-symbols", BUF_SYMBOLS);
+-  pipebuf<f32> p_freq(&sch, "freq", BUF_SLOW);
+-  pipebuf<f32> p_ss(&sch, "SS", BUF_SLOW);
+-  pipebuf<f32> p_mer(&sch, "MER", BUF_SLOW);
+-  pipebuf<cf32> p_sampled(&sch, "PSK symbols", BUF_BASEBAND);
++  static pipebuf<softsymbol> p_symbols(&sch, "PSK soft-symbols", BUF_SYMBOLS);
++  static pipebuf<f32> p_freq(&sch, "freq", BUF_SLOW);
++  static pipebuf<f32> p_ss(&sch, "SS", BUF_SLOW);
++  static pipebuf<f32> p_mer(&sch, "MER", BUF_SLOW);
++  static pipebuf<cf32> p_sampled(&sch, "PSK symbols", BUF_BASEBAND);
+   sampler_interface<f32> *sampler;
+   switch ( cfg.sampler ) {
+   case config::SAMP_NEAREST:
+@@ -460,7 +462,7 @@
+   default:
+     fatal("Interpolator not implemented");
+   }
+-  cstln_receiver<f32> demod(&sch, sampler,
++  static cstln_receiver<f32> demod(&sch, sampler,
+ 			    *p_preprocessed, p_symbols,
+ 			    &p_freq, &p_ss, &p_mer, &p_sampled);
+   if ( cfg.standard == config::DVB_S ) {
+@@ -525,7 +527,7 @@
+ 
+   // DECONVOLUTION AND SYNCHRONIZATION
+ 
+-  pipebuf<u8> p_bytes(&sch, "bytes", BUF_BYTES);
++  static pipebuf<u8> p_bytes(&sch, "bytes", BUF_BYTES);
+ 
+   deconvol_sync_simple *r_deconv = NULL;
+ 
+@@ -555,9 +557,9 @@
+     new file_writer<u8>(&sch, *p_frames, 1);
+   }
+ 
+-  pipebuf<u8> p_mpegbytes(&sch, "mpegbytes", BUF_MPEGBYTES);
+-  pipebuf<int> p_lock(&sch, "lock", BUF_SLOW);
+-  pipebuf<u32> p_locktime(&sch, "locktime", BUF_PACKETS);
++  static pipebuf<u8> p_mpegbytes(&sch, "mpegbytes", BUF_MPEGBYTES);
++  static pipebuf<int> p_lock(&sch, "lock", BUF_SLOW);
++  static pipebuf<u32> p_locktime(&sch, "locktime", BUF_PACKETS);
+   if ( ! cfg.hdlc ) {
+     mpeg_sync<u8,0> *r_sync =
+       new mpeg_sync<u8,0>(&sch, p_bytes, p_mpegbytes, r_deconv,
+@@ -567,33 +569,33 @@
+ 
+   // DEINTERLEAVING
+ 
+-  pipebuf< rspacket<u8> > p_rspackets(&sch, "RS-enc packets", BUF_PACKETS);
+-  deinterleaver<u8> r_deinter(&sch, p_mpegbytes, p_rspackets);
++  static pipebuf< rspacket<u8> > p_rspackets(&sch, "RS-enc packets", BUF_PACKETS);
++  static deinterleaver<u8> r_deinter(&sch, p_mpegbytes, p_rspackets);
+ 
+   // REED-SOLOMON
+ 
+-  pipebuf<int> p_vbitcount(&sch, "Bits processed", BUF_PACKETS);
+-  pipebuf<int> p_verrcount(&sch, "Bits corrected", BUF_PACKETS);
+-  pipebuf<tspacket> p_rtspackets(&sch, "rand TS packets", BUF_PACKETS);
+-  rs_decoder<u8,0> r_rsdec(&sch, p_rspackets, p_rtspackets,
++  static pipebuf<int> p_vbitcount(&sch, "Bits processed", BUF_PACKETS);
++  static pipebuf<int> p_verrcount(&sch, "Bits corrected", BUF_PACKETS);
++  static pipebuf<tspacket> p_rtspackets(&sch, "rand TS packets", BUF_PACKETS);
++  static rs_decoder<u8,0> r_rsdec(&sch, p_rspackets, p_rtspackets,
+ 			   &p_vbitcount, &p_verrcount);
+ 
+   // BER ESTIMATION
+ 
+-  pipebuf<float> p_vber(&sch, "VBER", BUF_SLOW);
+-  rate_estimator<float> r_vber(&sch, p_verrcount, p_vbitcount, p_vber);
++  static pipebuf<float> p_vber(&sch, "VBER", BUF_SLOW);
++  static rate_estimator<float> r_vber(&sch, p_verrcount, p_vbitcount, p_vber);
+   r_vber.sample_size = cfg.Fm/2;  // About twice per second, depending on CR
+   // Require resolution better than 2E-5
+   if ( r_vber.sample_size < 50000 ) r_vber.sample_size = 50000;
+ 
+   // DERANDOMIZATION
+ 
+-  pipebuf<tspacket> p_tspackets(&sch, "TS packets", BUF_PACKETS);
+-  derandomizer r_derand(&sch, p_rtspackets, p_tspackets);
++  static pipebuf<tspacket> p_tspackets(&sch, "TS packets", BUF_PACKETS);
++  static derandomizer r_derand(&sch, p_rtspackets, p_tspackets);
+ 
+   // OUTPUT
+ 
+-  file_writer<tspacket> r_stdout(&sch, p_tspackets, 1);
++  static file_writer<tspacket> r_stdout(&sch, p_tspackets, 1);
+ 
+   // AUX OUTPUT
+ 
+@@ -658,8 +660,8 @@
+   // TIMELINE SCOPE
+ 
+ #ifdef GUI
+-  pipebuf<float> p_tscount(&sch, "packet counter", BUF_PACKETS*100);
+-  itemcounter<tspacket,float> r_tscounter(&sch, p_tspackets, p_tscount);
++  static pipebuf<float> p_tscount(&sch, "packet counter", BUF_PACKETS*100);
++  static itemcounter<tspacket,float> r_tscounter(&sch, p_tspackets, p_tscount);
+   float max_packet_rate = cfg.Fm / 8 / 204;
+   float pixel_rate = cfg.Fs / demod.meas_decimation;
+   float max_packets_per_pixel = max_packet_rate / pixel_rate;
+@@ -712,14 +714,7 @@
+ 	      "  '^': HDLC framing error\n");
+   }
+ 
+-  sch.run();
+-
+-  sch.shutdown();
+-
+-  if ( cfg.debug ) sch.dump();
+-  
+-  if ( cfg.gui && cfg.linger ) while ( 1 ) { sch.run(); usleep(10000); }
+-
++  // wasm: the host steps the scheduler (lds_feed)
+   return 0;
+ }
+ 
+@@ -1059,7 +1054,7 @@
+ }
+ 
+ int main(int argc, const char *argv[]) {
+-  config cfg;
++  static config cfg;
+ 
+   for ( int i=1; i<argc; ++i ) {
+     if      ( ! strcmp(argv[i], "-h") )

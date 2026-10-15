@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=54;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=55;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -298,6 +298,7 @@ const PRESET_CATS={
   'Analog TV: FPV / TV Receiver (USB SDR)':'Images & TV',
   'Digital TV: DVB-T2 Astrometa → TS → Video and Sound':'Images & TV',
   'Digital TV: DVB-T2 full (channels, programme, teletext, muxes)':'Images & TV',
+  'Digital TV: DVB-S/S2 from IQ (USB SDR → one receiver node)':'Images & TV',
   'Digital TV: IPTV (HTTP TS / HLS / M3U) → TS → Video and Sound':'Images & TV',
   'Analog TV: FPV Multiband Scanner (HackRF)':'Images & TV',
   'Analog TV: FPV Mosaic (one HackRF)':'Images & TV',
@@ -4587,6 +4588,19 @@ addEdge(rx.id,'bin',tv.id,'bin'); addEdge(tv.id,'L',sc.id,'L'); addEdge(tv.id,'R
 addEdge(tv.id,'chan',ch.id,'rows'); addEdge(ch.id,'program',tv.id,'prog');
 addEdge(tv.id,'epg',pg.id,'rows');
 addEdge(tv.id,'mux',mx.id,'rows'); addEdge(mx.id,'mid',rx.id,'freq');
+markWiresDirty();
+});
+preset('Digital TV: DVB-S/S2 from IQ (USB SDR → one receiver node)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Satellite TV from raw IQ, no demodulator chip: the USB SDR (RTL-SDR, Airspy, HackRF…) feeds DVB Receiver (IQ), one node with a choice of standard (DVB-S, DVB-S2 now) that demodulates, corrects errors and shows the picture and plays the sound. Its outputs: vid, L, R, bin (the transport stream), lock (carrier and FEC locked), level (0…1), mer (dB), ber, freq (carrier offset, Hz). Example: amateur DATV on QO-100 (DVB-S/S2, 333 kBd – 1.5 MBd): a 10.49 GHz LNB gives about 740 MHz at the SDR; set the transponder frequency, the symbol rate and the code rate of the transmission. The sample rate must be at least 2 samples per symbol (2.4 MS/s covers up to ~1.2 MBd). Software demodulator: LeanSDR leandvb (vendor/leandvb.wasm, tools/leandvb). DVB-S (QPSK, 1/2…7/8) is checked against the LeanSDR transmitter (node tools/test-leandvb.mjs); DVB-S2 is built in but has no test signal here; not tried on a real satellite. Weak signal? Lower the gain steps, tick force Viterbi, and keep the symbol rate exact.'});
+nt.size.w=1000; nt.size.h=170; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:false,gainDb:30,freq:740000000,demod:'IQ'});
+rx.size.w=360; rx.size.h=330; applySize(rx);
+const tv=addNode('dvbsoft',440,260,{sr:1000,std:'DVB-S',cstln:'QPSK',cr:'3/4'});
+tv.size.w=420; tv.size.h=420; applySize(tv);
+const sc=addNode('dac',900,260,{});
+sc.size.w=260; sc.size.h=200; applySize(sc);
+addEdge(rx.id,'iq',tv.id,'in'); addEdge(tv.id,'L',sc.id,'L'); addEdge(tv.id,'R',sc.id,'R');
 markWiresDirty();
 });
 preset('Digital TV: IPTV (HTTP TS / HLS / M3U) → TS → Video and Sound', function(){
