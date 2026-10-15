@@ -107,8 +107,8 @@ __attribute__((export_name("t2_status"))) const char *t2_status(void) {
   const T2Status &s = rx->st;
   snprintf(json, sizeof json,
     "{\"lock\":%d,\"fecOk\":%d,\"fft\":%d,\"gi\":%d,\"mod\":%d,\"cod\":%d,\"plp\":%d,\"numPlp\":%d,\"pp\":%d,\"ext\":%d,\"rot\":%d,\"long\":%d,"
-    "\"p1ok\":%llu,\"p1bad\":%llu,\"preBad\":%llu,\"met\":%.2f,\"ids\":%.2f,\"s1\":%d,\"s2\":%d,\"snr\":%.1f,\"cfo\":%.1f,\"sfo\":%.1f,\"delay\":%.0f,\"frames\":%llu,\"framesOk\":%llu,\"blocks\":%llu,\"blocksOk\":%llu,\"fixed\":%llu,\"packets\":%llu,\"fs\":%.1f}",
-    s.lock, s.fecOk, s.fftSize, s.giIdx, s.mod, s.cod, s.plpId, s.numPlp, s.pp, s.ext, s.rot, s.fecLong, (unsigned long long)s.p1ok, (unsigned long long)s.p1bad, (unsigned long long)s.preBad, s.metric, s.idScore, s.s1, s.s2, s.snrDb, s.cfoHz, s.sfoPpm, s.delay,
+    "\"p1ok\":%llu,\"p1bad\":%llu,\"preBad\":%llu,\"met\":%.2f,\"ids\":%.2f,\"s1\":%d,\"s2\":%d,\"preSnr\":%.1f,\"preGi\":%d,\"preExt\":%d,\"prePapr\":%d,\"snr\":%.1f,\"cfo\":%.1f,\"sfo\":%.1f,\"delay\":%.0f,\"frames\":%llu,\"framesOk\":%llu,\"blocks\":%llu,\"blocksOk\":%llu,\"fixed\":%llu,\"packets\":%llu,\"fs\":%.1f}",
+    s.lock, s.fecOk, s.fftSize, s.giIdx, s.mod, s.cod, s.plpId, s.numPlp, s.pp, s.ext, s.rot, s.fecLong, (unsigned long long)s.p1ok, (unsigned long long)s.p1bad, (unsigned long long)s.preBad, s.metric, s.idScore, s.s1, s.s2, s.preSnr, s.preGi, s.preExt, s.prePapr, s.snrDb, s.cfoHz, s.sfoPpm, s.delay,
     (unsigned long long)s.frames, (unsigned long long)s.framesOk, (unsigned long long)s.blocks, (unsigned long long)s.blocksOk,
     (unsigned long long)s.blocksFix, (unsigned long long)s.packets, fsNom);
   // list of PLPs

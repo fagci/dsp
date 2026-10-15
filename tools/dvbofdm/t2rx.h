@@ -17,6 +17,7 @@ struct T2Status {
   double cfoHz = 0, snrDb = 0, delay = 0, sfoPpm = 0;
   uint64_t frames = 0, framesOk = 0, blocks = 0, blocksOk = 0, blocksFix = 0, ts = 0, packets = 0;
   int numPlp = 0, frameIdx = 0; bool tiSwap = false;
+  double preSnr = -99; int preGi = -1, preExt = 0, prePapr = 0;
   uint64_t p1ok = 0, p1bad = 0, preBad = 0; double metric = 0, idScore = 0; int s1 = -1, s2 = -1;   // search diagnostics
   std::vector<PlpCfg> plps;
   std::string text;
@@ -113,11 +114,13 @@ class T2Receiver {
     L1Pre pre; bool got = false;
     // L1-pre: reuse the previous setup first, otherwise try the guard interval / extended carrier hypotheses
     int tries = 0;
+    st.preSnr = -99;
     for (int pass = 0; pass < 2 && !got; pass++) {
-      for (int gi = 0; gi < 7 && !got; gi++) for (int ext = 0; ext < 2 && !got; ext++) {
-        if (pass == 0) { if (!(haveS_ && Sp_->fftIdx == fftIdx && gi == Sp_->giIdx && ext == Sp_->ext)) continue; }
-        else if (haveS_ && Sp_->fftIdx == fftIdx && gi == Sp_->giIdx && ext == Sp_->ext) continue;
-        const T2Setup &s0 = getSetup(fftIdx, gi, ext, miso, 1, 0, 1, 0);
+      for (int gi = 0; gi < 7 && !got; gi++) for (int ext = 0; ext < 2 && !got; ext++) for (int tr = 0; tr < 2 && !got; tr++) {
+        bool prev = haveS_ && Sp_->fftIdx == fftIdx && gi == Sp_->giIdx && ext == Sp_->ext && tr == ((Sp_->papr >> 1) & 1);
+        if (pass == 0) { if (!prev) continue; } else if (prev) continue;
+        // tone reservation takes carriers away from P2 too, so the L1 cells sit elsewhere: both layouts are tried
+        const T2Setup &s0 = getSetup(fftIdx, gi, ext, miso, 1, tr ? 2 : 0, 1, 0);
         int64_t need = p2 + (int64_t)s0.st->N_P2 * (s0.N + s0.G) + 16;
         if (need - base_ > (int64_t)buf_.size()) return 0;
         T2FrameCells fc;
@@ -125,6 +128,12 @@ class T2Receiver {
         int NP = s0.st->N_P2;
         std::vector<cf> c(1840); std::vector<float> w(1840);
         for (int s = 0; s < NP; s++) for (int j = 0; j < 1840 / NP; j++) { c[s + j * NP] = fc.cell[s][j]; w[s + j * NP] = fc.wgt[s][j]; }
+        {   // how well do these cells look like BPSK: tells a wrong layout from a bad channel
+          double e = 0, mw = 0;
+          for (int i = 0; i < 1840; i++) { cf d = c[i] - cf(c[i].real() >= 0 ? 1.f : -1.f, 0); e += w[i] * cabs2(d); mw += w[i]; }
+          double sn = 10 * log10(std::max(mw / 1840.0, 1e-12) / std::max(e / 1840.0, 1e-12));
+          if (sn > st.preSnr) { st.preSnr = sn; st.preGi = gi; st.preExt = ext; st.prePapr = tr; }
+        }
         tries++;
         if (l1_.decodePre(c.data(), w.data(), pre)) {
           got = true;
