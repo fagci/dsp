@@ -54,15 +54,18 @@ class L1Decoder {
 
   // cells: the 1840 L1-pre cells (BPSK), w: |H|^2 per cell
   bool decodePre(const cf *cell, const float *w, L1Pre &o) {
+    // channel LLRs are scaled to a unit mean weight: the known (padding) bits must stay far more reliable than any of them
+    double mw = 0; for (int i = 0; i < 1840; i++) mw += w[i];
+    const float sc = 4.f / (float)std::max(mw / 1840.0, 1e-30);
     std::vector<float> llr(16200, 0.f);
-    for (int i = 0; i < 200; i++) llr[i] = cell[i].real() * w[i] * 4;
-    for (int i = 200; i < 3072; i++) llr[i] = 40.f;
-    for (int i = 0; i < 168; i++) llr[3072 + i] = cell[200 + i].real() * w[200 + i] * 4;
+    for (int i = 0; i < 200; i++) llr[i] = cell[i].real() * w[i] * sc;
+    for (int i = 200; i < 3072; i++) llr[i] = kKnown;
+    for (int i = 0; i < 168; i++) llr[3072 + i] = cell[200 + i].real() * w[200 + i] * sc;
     std::vector<uint8_t> punct(12960, 0);
     for (int c = 0; c < 31; c++) for (int c2 = 0; c2 < 360; c2++) punct[c2 * 36 + L1_pre_puncture[c]] = 1;
     for (int c2 = 0; c2 < 328; c2++) punct[c2 * 36 + L1_pre_puncture[31]] = 1;
     int k = 368;
-    for (int i = 0; i < 12960; i++) if (!punct[i]) { llr[3240 + i] = cell[k].real() * w[k] * 4; k++; }
+    for (int i = 0; i < 12960; i++) if (!punct[i]) { llr[3240 + i] = cell[k].real() * w[k] * sc; k++; }
     std::vector<uint8_t> bits(16200);
     pre_.decode(llr.data(), bits.data(), 60);
     bchPre_.decode(bits.data());
@@ -90,6 +93,11 @@ class L1Decoder {
     // soft bits of the transmitted sequence l1_interleave[0..npost)
     std::vector<float> sb(npost, 0.f);
     demapL1(pre.l1mod, cell, w, pre.postSize, sb.data(), npost);
+    {   // unit mean weight, see decodePre
+      double mw = 0; for (int i = 0; i < pre.postSize; i++) mw += w[i];
+      const float sc = 1.f / (float)std::max(mw / std::max(pre.postSize, 1), 1e-30);
+      for (auto &v : sb) v *= sc;
+    }
     // un-interleave (16QAM / 64QAM)
     std::vector<float> seq(npost);
     if (pre.l1mod == 2 || pre.l1mod == 3) {
@@ -117,7 +125,7 @@ class L1Decoder {
     for (int c2 = 0; c2 < npunc - (npunc / 360) * 360; c2++) punct[c2 * 25 + punTab[npunc / 360]] = 1;
     std::vector<float> llr(16200, 0.f);
     int idx = 0;
-    for (int i = 0; i < 7032; i++) llr[i] = pad[i] ? 40.f : seq[idx++];
+    for (int i = 0; i < 7032; i++) llr[i] = pad[i] ? kKnown : seq[idx++];
     for (int i = 0; i < 168; i++) llr[7032 + i] = seq[idx++];
     for (int i = 0; i < 9000; i++) if (!punct[i]) llr[7200 + i] = seq[idx++];
     if (idx != npost) return false;
@@ -128,17 +136,18 @@ class L1Decoder {
     std::vector<uint8_t> info; info.reserve(ksig);
     for (int i = 0; i < 7032 && (int)info.size() < ksig; i++) if (!pad[i]) info.push_back(bits[i]);
     if ((int)info.size() != ksig) return false;
-    if (pre.scrambled) {
+    // the scrambling flag only exists from T2 version 1.3.1 on: older transmitters set the bit to something else, so the CRC decides
+    if (crc32msb(info.data(), ksig) != 0 && pre.scrambled) {
       int sr = 0x4A80;
       for (int i = 0; i < ksig; i++) { int b = ((sr) ^ (sr >> 1)) & 1; info[i] ^= b; sr >>= 1; if (b) sr |= 0x4000; }
     }
-    if (getenv("T2DBG")) fprintf(stderr, "L1-post crc residue %08x scrambled %d ver %d\n", crc32msb(info.data(), ksig), pre.scrambled, pre.ver);
     if (crc32msb(info.data(), ksig) != 0) return false;
     return parsePost(pre, info.data(), ksig - 32, o);
   }
 
  private:
   LdpcCode pre_, post_; Bch bchPre_, bchPost_;
+  static constexpr float kKnown = 1000.f;
 
   static void demapL1(int mod, const cf *cell, const float *w, int ncell, float *out, int nbits) {
     if (mod == 0) { for (int i = 0; i < ncell; i++) out[i] = cell[i].real() * w[i] * 4; return; }

@@ -14,7 +14,7 @@ hw = {'soapy_custom_sink_0', 'uhd_usrp_sink_0', 'blocks_multiply_const_xx_0', 't
 d['blocks'] = [b for b in d['blocks'] if b['name'] not in hw]
 d['connections'] = [c for c in d['connections'] if c[0] not in hw and c[2] not in hw]
 alias = {'rotation': ['rotation'], 'cons': ['constellation'], 'rate': ['rate', 'rate1'], 'pilotpattern': ['pilotpattern'],
-         'papr': ['paprmode1', 'paprmode2'], 'fftsize': ['fftsize', 'fftsize1', 'fftsize2'], 'guardinterval': ['guardinterval'],
+         'papr': ['paprmode1', 'paprmode2'], 'fftsize': ['fftsize', 'fftsize1'], 'guardinterval': ['guardinterval'],
          'carriermode': ['carriermode'], 'numdatasyms': ['numdatasyms'], 'fecblocks': ['fecblocks'], 'tiblocks': ['tiblocks'],
          'framesize': ['framesize', 'framesize1', 'framesize2'], 'bandwidth': ['bandwidth']}
 for b in d['blocks']:
@@ -24,6 +24,14 @@ for b in d['blocks']:
     for k, v in over.items():
         for name in alias.get(k, [k]):
             if name in p: p[name] = v
+# the cyclic prefixer block has the FFT size and the guard interval fixed
+N = {'1K': 1024, '2K': 2048, '4K': 4096, '8K': 8192, '16K': 16384, '32K': 32768}.get(over.get('fftsize', 'FFTSIZE_16K').split('_')[1], 16384)
+GI = {'GI_1_32': '1 // 32', 'GI_1_16': '1 // 16', 'GI_1_8': '1 // 8', 'GI_1_4': '1 // 4', 'GI_1_128': '1 // 128', 'GI_19_128': '19 // 128', 'GI_19_256': '19 // 256'}
+gi = over.get('guardinterval', 'GI_19_128')
+for b in d['blocks']:
+    if b['id'] == 'digital_ofdm_cyclic_prefixer':
+        n, dv = GI[gi].split(' // ')
+        b['parameters'].update(input_size=str(N), cp_len='(%d * %s) // %s' % (N, n, dv))
 d['options']['parameters']['id'] = 't2gen'
 d['options']['parameters']['generate_options'] = 'no_gui'
 w = tempfile.mkdtemp()
