@@ -10,7 +10,7 @@
 // новой не подтвердит успешную загрузку ('ok'). Если скрипты не загрузились, страница шлёт 'rollback' —
 // пока сеть отдаёт index.html этой версии, воркер подаёт index.html последней подтверждённой.
 const PFX='dsp-shell-v';
-const CACHE='dsp-shell-vc36013b3';
+const CACHE='dsp-shell-v34862dd9';
 const V=CACHE.slice(PFX.length);
 const META='dsp-meta', STATE_KEY='./__state', PIN_MS=6*3600e3;    // сколько держать откат, пока не выйдет новая версия
 const SHELL=[
@@ -34,11 +34,13 @@ const SHELL=[
   './vendor/codec2.wasm',
   './vendor/tetra-acelp.wasm',
   './vendor/mpeg2.wasm',
+  './vendor/leandvb.wasm',
   './vendor/SDDC_FX3.img',
   './core-dsp.js?v='+V,
   './core-engine.js?v='+V,
   './core-islands.js?v='+V,
   './iq-worker.js?v='+V,
+  './dvbsoft-worker.js?v='+V,
   './modules/analysis.js?v='+V,
   './modules/bandplan-data.js?v='+V,
   './modules/sa-panes.js?v='+V,
@@ -185,6 +187,8 @@ const SHELL=[
   './modules/cxd-sequences.js?v='+V,
   './modules/dvb-kernels.js?v='+V,
   './modules/dvb.js?v='+V,
+  './modules/leandvb-kernels.js?v='+V,
+  './modules/dvbsoft.js?v='+V,
   './modules/hex-kernels.js?v='+V,
   './modules/hex-formats.js?v='+V,
   './modules/hex-gsm.js?v='+V,
