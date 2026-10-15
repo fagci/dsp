@@ -73,6 +73,9 @@ const T2_FFT_NAMES={1024:'1K',2048:'2K',4096:'4K',8192:'8K',16384:'16K',32768:'3
 const T2_GI_NAMES=['1/32','1/16','1/8','1/4','1/128','19/128','19/256'];
 const T2_MOD_NAMES=['QPSK','16QAM','64QAM','256QAM'];
 const T2_COD_NAMES=['1/2','3/5','2/3','3/4','4/5','5/6'];
+// C/N for error-free reception in a Gaussian channel, dB (approximate, from the DVB-T2 implementation guidelines; real channels need a few dB more)
+const T2_NEED=[[1,2.3,3.1,4.1,4.7,5.2],[6,7.5,8.7,9.9,10.7,11.3],[8.9,11,12.4,14.1,15.1,16],[12,14.5,16.4,18.4,19.8,20.9]];
+const t2Hint=j=>{ const n=j.blocks>=20 && !j.blocksOk && T2_NEED[j.mod] && T2_NEED[j.mod][j.cod]; return n && j.snr<n+2 ? ' — SNR '+j.snr.toFixed(1)+' dB, this mode needs at least '+n.toFixed(0)+' dB: more signal (antenna, gain) or less noise' : ''; };
 class DvbOfdm{
   static async create(bytes){
     const d=new DvbOfdm();
@@ -118,7 +121,7 @@ class DvbOfdm{
     const s=this.st;
     s.lock=j.lock && j.fecOk ? 1 : 0; s.mer=j.lock ? j.snr : null; s.freq=j.cfo; s.cnr=j.snr;
     s.vber=j.blocks ? 1-j.blocksOk/j.blocks : null;
-    s.info=j.lock ? 'DVB-T2 '+(T2_FFT_NAMES[j.fft]||j.fft)+' GI '+(T2_GI_NAMES[j.gi]||j.gi)+(j.plp>=0 ? ' · PLP '+j.plp+'/'+j.numPlp+' '+(T2_MOD_NAMES[j.mod]||'?')+' '+(T2_COD_NAMES[j.cod]||'?')+(j.rot?' rot':'')+(j.long?' 64K':' 16K') : '')+' · FEC blocks '+j.blocksOk+'/'+j.blocks : 'searching for a T2 preamble… (P1 found '+j.p1ok+', rejected '+j.p1bad+(j.p1ok ? ', L1 not decoded '+j.preBad+(j.preBad ? ' — best try: BPSK SNR '+j.preSnr.toFixed(1)+' dB (GI '+(T2_GI_NAMES[j.preGi]||'?')+(j.preExt?', ext':'')+(j.prePapr?', TR':'')+(j.preSnr<6 ? '; low: wrong frequency / bandwidth, or too weak)' : '; fine: the layout or modulation is not known to the decoder)') : '') : ' — no preamble: check frequency, bandwidth and gain')+', best match '+j.met.toFixed(2)+')';
+    s.info=j.lock ? 'DVB-T2 '+(T2_FFT_NAMES[j.fft]||j.fft)+' GI '+(T2_GI_NAMES[j.gi]||j.gi)+(j.plp>=0 ? ' · PLP '+j.plp+'/'+j.numPlp+' '+(T2_MOD_NAMES[j.mod]||'?')+' '+(T2_COD_NAMES[j.cod]||'?')+(j.rot?' rot':'')+(j.long?' 64K':' 16K') : '')+' · FEC blocks '+j.blocksOk+'/'+j.blocks+t2Hint(j) : 'searching for a T2 preamble… (P1 found '+j.p1ok+', rejected '+j.p1bad+(j.p1ok ? ', L1 not decoded '+j.preBad+(j.preBad ? ' — best try: BPSK SNR '+j.preSnr.toFixed(1)+' dB (GI '+(T2_GI_NAMES[j.preGi]||'?')+(j.preExt?', ext':'')+(j.prePapr?', TR':'')+(j.preSnr<6 ? '; low: wrong frequency / bandwidth, or too weak)' : '; fine: the layout or modulation is not known to the decoder)') : '') : ' — no preamble: check frequency, bandwidth and gain')+', best match '+j.met.toFixed(2)+')';
   }
   take(){
     if(!this.outLen) return null;
