@@ -44,7 +44,7 @@ struct T2FrameCells {
   // per symbol (P2 then data), data cells in original (de-interleaved) order
   std::vector<std::vector<cf>> cell;
   std::vector<std::vector<float>> wgt;
-  float snrEst = 0, delay = 0;
+  float snrEst = 0, delay = 0, slope = 0; int cirLo = 0, cirHi = 0;   // slope: window drift in samples per symbol (sampling clock error)
 };
 
 class T2Demod {
@@ -53,7 +53,7 @@ class T2Demod {
   // spacing: samples per symbol (fractional allowed), back: samples the window starts before the useful part
   // Returns false when samples are missing.
   static bool run(const std::vector<cf> &buf, int64_t base, const T2Setup &S, int64_t p2start, double eps, double spacing, int back,
-                  T2FrameCells &out, bool p2only = false) {
+                  T2FrameCells &out, bool p2only = false, int timeSmooth = 2) {
     using namespace gr::dtv;
     const T2Struct &st = *S.st;
     const int N = S.N, G = S.G, nSym = p2only ? st.N_P2 : st.num_symbols, C = st.C_PS;
@@ -118,10 +118,66 @@ class T2Demod {
         }
       }
       double d = std::abs(acc) > 0 ? -std::arg(acc) * N / (2 * PI * Dp) : 0.0;
+      // impulse response from the regular pilot lattice of the first P2 symbol: the window of length G with the most energy
+      {
+        std::vector<int> res(Dp, 0);
+        for (int n = 0; n < C; n++) { cf p; if (pilotVal(0, n, p)) res[n % Dp]++; }
+        int r0 = (int)(std::max_element(res.begin(), res.end()) - res.begin());
+        std::vector<cf> F(N, cf(0, 0));
+        for (int l = 0; l < st.N_P2 && l < 1; l++) for (int n = 0; n < C; n++) {
+          cf p; if (n % Dp != r0 || !pilotVal(l, n, p)) continue;
+          F[(S.left + n + N / 2) % N] = Y[l][n] / p;
+        }
+        S.fft.run(F.data(), true);
+        int T = N / (2 * Dp) - 1;
+        std::vector<double> P(2 * T), cum(2 * T + 1, 0.0);
+        double pk = 0;
+        for (int t = -T; t < T; t++) { P[t + T] = cabs2(F[(t + N) % N]); pk = std::max(pk, P[t + T]); }
+        std::vector<double> srt = P; std::nth_element(srt.begin(), srt.begin() + srt.size() / 2, srt.end());
+        double thr = std::max(pk * 0.003, 15.0 * srt[srt.size() / 2]);
+        for (int i = 0; i < 2 * T; i++) cum[i + 1] = cum[i] + P[i];
+        int best = 0; double be = -1;
+        for (int i = 0; i + G <= 2 * T; i++) { double e = cum[i + G] - cum[i]; if (e > be) { be = e; best = i; } }
+        int lo = -1, hi = -1;
+        for (int i = best; i < best + G && i < 2 * T; i++) if (P[i] > thr) { if (lo < 0) lo = i; hi = i; }
+        if (lo >= 0 && pk > 0) d = 0.5 * ((lo - T) + (hi - T));
+        out.cirLo = lo >= 0 ? lo - T : 0; out.cirHi = hi >= 0 ? hi - T : 0;
+      }
       out.delay = (float)d;
       for (int l = 0; l < nSym; l++) for (int n = 0; n < C; n++) {
         double a = 2 * PI * n * d / N;
         Y[l][n] *= cf((float)cos(a), (float)sin(a));
+      }
+    }
+    // window drift from the sampling clock: the ratio of the pilots of the same carriers in symbols l and l-Dy removes the channel,
+    // what remains is the phase ramp of the delay change; a line is fitted through the accumulated drift and removed
+    {
+      const int Dy = std::max(st.dy, 1), Dsp = st.dx * Dy;
+      std::vector<double> Dd(nSym, 0.0); std::vector<char> okd(nSym, 0);
+      auto scat = [&](int l, int n) { int t = st.data_carrier_map[l][n]; return t == SCATTERED_CARRIER || t == SCATTERED_CARRIER_INVERTED; };
+      for (int l = st.N_P2 + Dy; l < nSym; l++) {
+        if (L_FC && l >= st.num_symbols - 1) break;
+        std::complex<double> acc = 0; int prevn = -1; cf prevR;
+        for (int n = 0; n < C; n++) {
+          if (!scat(l, n) || !scat(l - Dy, n)) continue;
+          cf p1, p0; pilotVal(l, n, p1); pilotVal(l - Dy, n, p0);
+          cf R = (Y[l][n] / p1) * std::conj(Y[l - Dy][n] / p0);
+          if (prevn >= 0 && n - prevn == Dsp) acc += std::complex<double>(R * std::conj(prevR));
+          prevn = n; prevR = R;
+        }
+        if (std::abs(acc) <= 0) continue;
+        double step = -std::arg(acc) * N / (2 * PI * Dsp);
+        Dd[l] = (l - Dy >= st.N_P2 + Dy && okd[l - Dy] ? Dd[l - Dy] : 0.0) + step; okd[l] = 1;
+      }
+      double sx = 0, sy = 0, sxx = 0, sxy = 0; int cnt = 0;
+      for (int l = st.N_P2; l < nSym; l++) if (okd[l]) { sx += l; sy += Dd[l]; sxx += (double)l * l; sxy += l * Dd[l]; cnt++; }
+      double den = cnt * sxx - sx * sx, slope = (cnt > 8 && den > 0) ? (cnt * sxy - sx * sy) / den : 0.0;
+      out.slope = (float)slope;
+      if (std::fabs(slope) * (nSym - st.N_P2) > 1.0) {      // more than a sample over the frame: compensate
+        for (int l = st.N_P2; l < nSym; l++) {
+          double d = slope * (l - st.N_P2);
+          for (int n = 0; n < C; n++) { double a = 2 * PI * n * d / N; Y[l][n] *= cf((float)cos(a), (float)sin(a)); }
+        }
       }
     }
     // common phase error between consecutive data symbols from the continual pilots
@@ -148,13 +204,19 @@ class T2Demod {
       }
       fprintf(stderr, "phi: "); for (int l = st.N_P2; l < std::min(nSym, st.N_P2 + 8); l++) fprintf(stderr, "%.3f ", phi[l]); fprintf(stderr, "\n");
     }
+    if (getenv("T2DBG3")) {
+      int shown = 0;
+      for (int n = 6000; n < C && shown < 12; n++) { cf p; if (pilotVal(0, n, p)) { cf h = Y[0][n] / p; fprintf(stderr, "P2 pilot n %d |h| %.3f arg %.3f\n", n, std::abs(h), std::arg(h)); shown++; } }
+    }
     // channel estimate
+    Kernel K; K.init(N, G, std::max(st.dx, 3));
     std::vector<std::vector<cf>> H(nSym, std::vector<cf>(C));
     // P2: frequency interpolation of dense pilots
     for (int l = 0; l < st.N_P2 && l < nSym; l++) {
       std::vector<int> pn; std::vector<cf> pv;
       for (int n = 0; n < C; n++) { cf p; if (pilotVal(l, n, p)) { pn.push_back(n); pv.push_back(Y[l][n] / p); } }
-      interpFreq(pn, pv, H[l], C);
+      interpFir(pn, pv, H[l], C, K);
+      if (getenv("T2DBG3")) { double e = 0; for (size_t i = 0; i < pn.size(); i++) e += cabs2(H[l][pn[i]] - pv[i]); fprintf(stderr, "P2 sym %d: rms(H_est - pilot ratio) %.4f over %zu pilots, kernel R %d\n", l, sqrt(e / pn.size()), pn.size(), K.R); }
     }
     if (!p2only) {
       // data symbols: time interpolation per pilot carrier, then frequency interpolation
@@ -169,7 +231,18 @@ class T2Demod {
       std::vector<std::vector<cf>> Ht(nSym - st.N_P2, std::vector<cf>(Q.size()));
       for (size_t qi = 0; qi < Q.size(); qi++) {
         int n = Q[qi];
-        const std::vector<int> &pl = plist[n]; const std::vector<cf> &pv = pval[n];
+        const std::vector<int> &pl = plist[n];
+        // smooth the pilot estimates of this carrier along time (static or slowly varying channel): triangular kernel
+        std::vector<cf> pv(pval[n].size());
+        {
+          const int J = timeSmooth;
+          const std::vector<cf> &raw = pval[n];
+          for (int i = 0; i < (int)raw.size(); i++) {
+            cf acc(0, 0); float ws = 0;
+            for (int j = -J; j <= J; j++) { int k2 = i + j; if (k2 < 0 || k2 >= (int)raw.size()) continue; float w = (float)(J + 1 - abs(j)); acc += raw[k2] * w; ws += w; }
+            pv[i] = acc / ws;
+          }
+        }
         size_t k = 0;
         for (int l = st.N_P2; l < nSym; l++) {
           while (k < pl.size() && pl[k] < l) k++;
@@ -183,7 +256,7 @@ class T2Demod {
       }
       std::vector<cf> pvq(Q.size());
       for (int l = st.N_P2; l < nSym; l++) {
-        interpFreq(Q, Ht[l - st.N_P2], H[l], C);
+        interpFir(Q, Ht[l - st.N_P2], H[l], C, K);
       }
     }
     // equalise, extract data cells, de-interleave
@@ -210,15 +283,34 @@ class T2Demod {
   }
 
  private:
-  // linear interpolation of pilot channel estimates (carrier positions pn) to all carriers 0..C-1
-  static void interpFreq(const std::vector<int> &pn, const std::vector<cf> &pv, std::vector<cf> &H, int C) {
+  // Channel interpolation across carriers: windowed-sinc low-pass whose bandwidth is the guard interval (the channel impulse
+  // response lies within it), on the possibly irregular set of pilot carriers pn; weights are normalised.
+  struct Kernel {
+    int R = 0; std::vector<float> g;
+    void init(int N, int G, int Dx) {
+      R = std::max(6 * Dx, 12);
+      double tc = 0.6 * G, a = 2 * tc / N;
+      g.assign(2 * R + 1, 0.f);
+      for (int d = -R; d <= R; d++) {
+        double x = a * d, sinc = d == 0 ? 1.0 : sin(PI * x) / (PI * x);
+        g[d + R] = (float)(a * sinc * (0.5 + 0.5 * cos(PI * d / (R + 1))));
+      }
+    }
+  };
+  static void interpFir(const std::vector<int> &pn, const std::vector<cf> &pv, std::vector<cf> &H, int C, const Kernel &K) {
     if (pn.empty()) { std::fill(H.begin(), H.end(), cf(1, 0)); return; }
-    size_t k = 0;
+    size_t lo = 0;
     for (int n = 0; n < C; n++) {
-      while (k < pn.size() && pn[k] <= n) k++;
-      if (k == 0) H[n] = pv[0];
-      else if (k == pn.size()) H[n] = pv.back();
-      else { float a = (float)(n - pn[k - 1]) / (pn[k] - pn[k - 1]); H[n] = pv[k - 1] * (1 - a) + pv[k] * a; }
+      while (lo < pn.size() && pn[lo] < n - K.R) lo++;
+      cf acc(0, 0); float ws = 0;
+      for (size_t i = lo; i < pn.size() && pn[i] <= n + K.R; i++) { float w = K.g[pn[i] - n + K.R]; acc += pv[i] * w; ws += w; }
+      if (ws > 1e-6f) H[n] = acc / ws;
+      else {                                          // outside the support of every node: nearest pilot
+        size_t j = std::lower_bound(pn.begin(), pn.end(), n) - pn.begin();
+        if (j >= pn.size()) j = pn.size() - 1;
+        if (j > 0 && n - pn[j - 1] < pn[j] - n) j--;
+        H[n] = pv[j];
+      }
     }
   }
 };

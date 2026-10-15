@@ -121,14 +121,14 @@ class T2Fec {
     demap(cell, w, llr.data());
     std::vector<uint8_t> cw(N);
     int it = 0;
-    bool ok2 = ldpc.decode(llr.data(), cw.data(), maxIter, &it);
+    bool ok2 = ldpc.decode(llr.data(), cw.data(), maxIter, &it, alpha, beta, relBeta);
     if (iters) *iters = it;
     int fixed = bch.decode(cw.data());
     if (bchFixed) *bchFixed = fixed;
     memcpy(bits, cw.data(), kbch);
     return ok2 && fixed >= 0;
   }
-  float scale_ = 4.f;
+  float scale_ = 4.f, alpha = 0.8f, beta = 0.f, relBeta = 0.f;
 
  private:
   float axisLevel(int a) const {

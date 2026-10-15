@@ -14,7 +14,7 @@ struct T2Status {
   bool lock = false;           // P1 found, L1 CRC ok in the last frame
   bool fecOk = false;          // FEC blocks of the selected PLP decoded
   int fftSize = 0, giIdx = -1, mod = -1, cod = -1, plpId = -1, pp = 0, ext = 0, rot = 0, fecLong = 0;
-  double cfoHz = 0, snrDb = 0, delay = 0;
+  double cfoHz = 0, snrDb = 0, delay = 0, sfoPpm = 0;
   uint64_t frames = 0, framesOk = 0, blocks = 0, blocksOk = 0, blocksFix = 0, ts = 0, packets = 0;
   int numPlp = 0;
   std::string text;
@@ -56,7 +56,7 @@ class T2Receiver {
     }
     return *it->second;
   }
-  double eps_ = 0, period_ = 0;          // CFO rad/sample; measured frame period / nominal
+  double eps_ = 0, period_ = 0, n0_ = 1.0;          // CFO rad/sample; measured frame period / nominal
   int64_t lastP1_ = -1; int64_t lastLen_ = 0;
   int back_ = 0;
   int64_t expect_ = -1;                  // expected position of the next P1
@@ -124,8 +124,11 @@ class T2Receiver {
         tries++;
         if (l1_.decodePre(c.data(), w.data(), pre)) {
           got = true;
-          double e = 0; for (int i = 0; i < 1840; i++) { cf d = c[i] - cf(c[i].real() >= 0 ? 1.f : -1.f, 0); e += cabs2(d); }
-          st.snrDb = 10 * log10(1840.0 / std::max(e, 1e-9));
+          // noise power before equalisation: |z - s|^2 is sigma^2/|H|^2, times the weight |H|^2
+          double e = 0; for (int i = 0; i < 1840; i++) { cf d = c[i] - cf(c[i].real() >= 0 ? 1.f : -1.f, 0); e += w[i] * cabs2(d); }
+          double mw = 0; for (int i = 0; i < 1840; i++) mw += w[i];
+          n0_ = std::max(1e-12, e / 1840.0);
+          st.snrDb = 10 * log10(std::max(mw / 1840.0, 1e-12) / n0_);
         }
       }
     }
@@ -136,10 +139,11 @@ class T2Receiver {
     const int symLen = S_.N + S_.G;
     int64_t frameLen = 2048 + (int64_t)S_.numSymbols() * symLen;
     // timing from the previous frame: the window start moves with the measured delay
-    if (p2 + (int64_t)S_.numSymbols() * symLen + 16 - base_ > (int64_t)buf_.size()) return 0;
+    if (p2 + (int64_t)S_.numSymbols() * symLen + 5200 - base_ > (int64_t)buf_.size()) return 0;   // + room for resampling
     st.frames++;
     back_ = S_.G / 2;
     double spacing = symLen * (period_ > 0 ? period_ : 1.0);
+    eps = refineCfo(p2, S_, spacing, eps);
     T2FrameCells fc;
     T2Demod::run(buf_, base_, S_, p2, eps, spacing, back_, fc);
     // second pass with the timing measured on the pilots (window should start 'back' samples before the useful part)
@@ -149,9 +153,30 @@ class T2Receiver {
       if (p2 + (int64_t)S_.numSymbols() * symLen + 16 - base_ > (int64_t)buf_.size()) { p2 -= (int64_t)llround(corr); }
       else T2Demod::run(buf_, base_, S_, p2, eps, spacing, back_, fc);
     }
+    // sampling clock error: the window drifts by rho*(N+G) per symbol; resample the frame and demodulate again
+    {
+      double rho = fc.slope / (double)symLen;
+      if (period_ > 0 && fabs(period_ - 1) > fabs(rho)) rho = period_ - 1;
+      if (fabs(rho) > 2e-6 && fabs(rho) < 2e-3) {
+        std::vector<cf> seg;
+        int64_t segStart = p2 - 32;
+        size_t cnt = (size_t)(((double)(S_.numSymbols() * symLen) + 96) * (1 + fabs(rho)) / (1 + rho));
+        if (resample(segStart, cnt, 1 + rho, seg)) {
+          T2Demod::run(seg, segStart, S_, p2, eps, symLen, back_, fc);
+          double corr2 = fc.delay - back_;
+          if (fabs(corr2) > 2) { int64_t p2b = p2 + (int64_t)llround(corr2); if (p2b - segStart >= 0 && p2b - segStart + (int64_t)S_.numSymbols() * symLen + 16 < (int64_t)seg.size()) T2Demod::run(seg, segStart, S_, p2b, eps, symLen, back_, fc); }
+          st.sfoPpm = rho * 1e6;
+        }
+      }
+    }
     st.delay = fc.delay;
-    // L1-post
+    // L1-post; the noise level comes from the L1-pre cells of this (correct) setup
     int NP = S_.st->N_P2, npc = pre.postSize;
+    {
+      double e = 0, mw = 0;
+      for (int u = 0; u < 1840; u++) { int s = u % NP, j = u / NP; cf z = fc.cell[s][j]; cf d = z - cf(z.real() >= 0 ? 1.f : -1.f, 0); e += fc.wgt[s][j] * cabs2(d); mw += fc.wgt[s][j]; }
+      n0_ = std::max(1e-12, e / 1840.0); st.snrDb = 10 * log10(std::max(mw / 1840.0, 1e-12) / n0_);
+    }
     std::vector<cf> pc(npc); std::vector<float> pw(npc);
     for (int u = 0; u < npc; u++) { int s = u % NP, j = 1840 / NP + u / NP; pc[u] = fc.cell[s][j]; pw[u] = fc.wgt[s][j]; }
     L1Post post;
@@ -168,6 +193,7 @@ class T2Receiver {
     else { for (auto &p : post.plp) if (p.type != 0) { sel = &p; break; } if (!sel && !post.plp.empty()) sel = &post.plp[0]; }
     if (sel && sel->blocks > 0) {
       plp_.bigFirst = cfg.tiBigFirst;
+      plp_.fec.scale_ = 4.f; plp_.fec.beta = 0.f; plp_.fec.relBeta = 0.08f; plp_.maxIter = 50;   // offset min-sum, offset relative to the mean LLR
       if (plp_.configure(*sel)) {
         st.plpId = sel->id; st.mod = sel->mod; st.cod = sel->cod; st.rot = sel->rot; st.fecLong = (sel->fec & 3) == 1;
         T2Stream str; buildStream(fc, pre, str);
@@ -184,6 +210,50 @@ class T2Receiver {
     }
     finish(p1pos, frameLen, eps);
     return 1;
+  }
+
+  // Carrier offset from the cyclic prefixes of the whole frame: x[n] conj(x[n+N]) has the phase -eps*N
+  double refineCfo(int64_t p2, const T2Setup &S, double spacing, double eps0) {
+    std::complex<double> acc = 0;
+    const int N = S.N, G = S.G;
+    for (int l = 0; l < S.numSymbols(); l++) {
+      int64_t s0 = p2 + (int64_t)llround(l * spacing);
+      if (s0 - base_ < 0 || s0 + N + G - base_ > (int64_t)buf_.size()) break;
+      const cf *a = &buf_[s0 - base_];
+      for (int i = G / 8; i < G; i++) acc += std::complex<double>(a[i]) * std::conj(std::complex<double>(a[i + N]));
+    }
+    if (std::abs(acc) <= 0) return eps0;
+    double ph = -std::arg(acc);
+    // closest solution to the preamble estimate: eps = (ph + 2 pi k) / N
+    double k = std::round((eps0 * N - ph) / (2 * PI));
+    return (ph + 2 * PI * k) / N;
+  }
+
+  // seg[m] = x(start + m*ratio) with a 16 tap windowed sinc (polyphase table, linear interpolation between phases)
+  bool resample(int64_t start, size_t count, double ratio, std::vector<cf> &seg) {
+    static std::vector<float> tab; const int PH = 256, TP = 16;
+    if (tab.empty()) {
+      tab.assign((PH + 1) * TP, 0.f);
+      for (int p = 0; p <= PH; p++) for (int k = 0; k < TP; k++) {
+        double d = (k - (TP / 2 - 1)) - (double)p / PH;          // tap position relative to the sample
+        double h = d == 0 ? 1.0 : sin(PI * d) / (PI * d);
+        double w = 0.5 + 0.5 * cos(PI * d / (TP / 2));
+        tab[p * TP + k] = (float)(h * w);
+      }
+    }
+    int64_t last = start + (int64_t)(count * ratio) + TP;
+    if (start - TP < base_ || last - base_ > (int64_t)buf_.size()) return false;
+    seg.assign(count, cf());
+    for (size_t m = 0; m < count; m++) {
+      double t = (double)m * ratio; int64_t i0 = (int64_t)floor(t); double fr = t - i0;
+      double pf = fr * PH; int p = (int)pf; float a = (float)(pf - p);
+      const cf *x = &buf_[start + i0 - (TP / 2 - 1) - base_];
+      const float *h0 = &tab[p * TP], *h1 = &tab[(p + 1) * TP];
+      float re = 0, im = 0;
+      for (int k = 0; k < TP; k++) { float h = h0[k] + a * (h1[k] - h0[k]); re += h * x[k].real(); im += h * x[k].imag(); }
+      seg[m] = cf(re, im);
+    }
+    return true;
   }
 
   void finish(int64_t p1pos, int64_t frameLen, double eps) {

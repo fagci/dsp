@@ -161,6 +161,7 @@ class PlpDecoder {
   T2Fec fec; CellPerm cp; BbToTs bb;
   int key = -1;
   bool bigFirst = false;
+  int maxIter = 40;
   PlpStats st;
 
   bool configure(const PlpCfg &c) {
@@ -206,7 +207,7 @@ class PlpDecoder {
         int shift = cp.nextShift(n);
         for (int j = 0; j < cs; j++) { size_t src = (size_t)r * cs + ((cp.perm[j] + shift) % cs); blk[j] = m[src]; bw[j] = mww[src]; }
         int it = 0, fx = 0;
-        int ok = fec.decode(blk.data(), bw.data(), bits.data(), 40, &it, &fx);
+        int ok = fec.decode(blk.data(), bw.data(), bits.data(), maxIter, &it, &fx);
         st.blocks++; st.iters += it;
         if (ok) { st.ok++; if (fx > 0) st.fixed++; } else st.bchFail++;
         if (ok) bb.process(bits.data(), fec.kbch, ts);

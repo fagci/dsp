@@ -35,8 +35,9 @@ struct LdpcCode {
   }
 
   // llr > 0 means bit 0. Returns true when all checks are satisfied. bits: N hard decisions out.
-  bool decode(const float *llr, uint8_t *bits, int maxIter, int *iters = nullptr, float alpha = 0.8f) const {
+  bool decode(const float *llr, uint8_t *bits, int maxIter, int *iters = nullptr, float alpha = 0.8f, float beta = 0.f, float relBeta = 0.f) const {
     std::vector<float> L(llr, llr + N), R(cv.size(), 0.f);
+    if (relBeta > 0) { double m = 0; for (int i = 0; i < N; i++) m += fabsf(llr[i]); beta = (float)(relBeta * m / N); }
     int it = 0;
     bool ok = false;
     {
@@ -61,7 +62,7 @@ struct LdpcCode {
           if (a < m1) { m2 = m1; m1 = a; im = e - s; } else if (a < m2) m2 = a;
         }
         for (int e = s; e < t; e++) {
-          float mag = (e - s == im ? m2 : m1) * alpha;
+          float mag = (e - s == im ? m2 : m1); mag = beta > 0 ? (mag > beta ? mag - beta : 0.f) : mag * alpha;
           bool neg = (sg ^ qs[e - s]) & 1;
           float r = neg ? -mag : mag;
           R[e] = r; L[cv[e]] = q[e - s] + r;

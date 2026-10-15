@@ -55,6 +55,14 @@ int main(int argc, char **argv) {
       FILE *g = fopen("/tmp/out_rx.ts", "wb"); fwrite(ts.data(), 1, ts.size(), g); fclose(g);
     }
   }
+  if (getenv("EVMSYM")) {
+    static const double L64[8] = {7, 5, 1, 3, -7, -5, -1, -3};
+    for (int l = 0; l < (int)fc.cell.size(); l += 6) {
+      if (l < NP) { double e = 0; for (int j = 0; j < 1840 / NP; j++) { cf d = fc.cell[l][j] - cf(fc.cell[l][j].real() >= 0 ? 1.f : -1.f, 0); e += cabs2(d); } printf("sym %d (P2) bpsk err %.4f\n", l, e / (1840 / NP)); continue; }
+      double e = 0; for (auto &z : fc.cell[l]) { double bi = 1e9, bq = 1e9; for (int a = 0; a < 8; a++) { double v = L64[a] / sqrt(42.0); bi = std::min(bi, fabs(z.real() - v)); bq = std::min(bq, fabs(z.imag() - v)); } e += bi * bi + bq * bq; }
+      printf("sym %d evm %.4f\n", l, e / fc.cell[l].size());
+    }
+  }
   // EVM of the data cells of the first data symbol against 64QAM grid
   {
     const std::vector<cf> &cs = fc.cell[NP + 5]; double e = 0, p = 0;
