@@ -1822,6 +1822,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'antVf',t:'range',min:.6,max:1,step:.01,d:.95,label:'antenna shortening factor',adv:true},
           // выключить — тот же жест, что и "очистить": незачем отдельная кнопка (см. fn у 'check' в core-graph.js)
           {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold){ n.peak=null; if(typeof saPeakClear==='function') saPeakClear(n); } }},
+          {n:'peakDecay',t:'range',min:0,max:120,step:1,d:0,label:'peak decay, s per 60 dB (0 = hold forever)',adv:true},
+          {n:'autoDb',t:'button',label:'Auto dB',fn:n=>{ if(typeof saAutoDb==='function') saAutoDb(n); }},
           {n:'palette',t:'select',opts:['default',...Object.keys(PALETTES)],d:'classic',label:'waterfall palette',adv:true},
           // история водопада в полном разрешении — зум/смена палитры и диапазона дБ перерисовывают её без потерь
           {n:'wfMem',t:'select',opts:['off','32','128','512'],d:'128',label:'waterfall history memory, MB',adv:true,
@@ -1993,8 +1995,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       if(!n.peak || n.peak.length!==N || n.peakFreqs!==(sp.freqs||null)){
         n.peak=Float32Array.from(sp.mag); n.peakFreqs=sp.freqs||null;
       } else {
-        for(let i=0;i<N;i++) if(sp.mag[i]>n.peak[i]) n.peak[i]=sp.mag[i];
+        const now=performance.now(), dt=n._peakT?Math.min(5,(now-n._peakT)/1000):0;
+        const k=n.p.peakDecay>0 ? Math.pow(10,-3*dt/n.p.peakDecay) : 1;   // 60 дБ за peakDecay с (амплитуда: 60/20=3 декады)
+        for(let i=0;i<N;i++){ const v=n.peak[i]*k; n.peak[i]=sp.mag[i]>v?sp.mag[i]:v; }
       }
+      n._peakT=performance.now();
     }
     // маркеры — раз на новый спектр (process идёт на каждый блок движка); повтор с тем же rev
     // ещё и сбрасывал фазовое уточнение fr до частоты бина
@@ -2131,6 +2136,21 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         }
         return null;
       };
+      // выставленный маркер под курсором в зоне спектра: его линия ±5px или тело шторки канала
+      const mkLineAt=ev=>{
+        if(!n.s) return null;
+        const rc=cv.getBoundingClientRect();
+        const x=(ev.clientX-rc.left)/rc.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
+        if(y>(n._hs||0)-6) return null;
+        const px=5/Math.max(1,rc.width);
+        for(const c of (n.s.chans||[])){
+          const k=c.idx;
+          if(n.mk[k]==null||n.ext[k]) continue;
+          if(x>=saPos(n,c.lo)-px && x<=saPos(n,c.hi)+px) return k;
+        }
+        for(let k=0;k<4;k++) if(n.mk[k]!=null && !n.ext[k] && Math.abs(saPos(n,n.mk[k])-x)<=px) return k;
+        return null;
+      };
       // Мобилка: без touch-action:none браузер забирает жест под скролл панели дашборда
       // (ближайший скролл-контейнер) и шлёт pointercancel — драг обрывается на полпути.
       cv.style.touchAction='none';
@@ -2164,6 +2184,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         const y=(ev.clientY-rc.top)/rc.height*cv.height;
         const edge=chanEdgeAt(ev);
         if(edge){ drag={edge, pid:ev.pointerId, w:rc.width, left:rc.left}; cv.setPointerCapture(ev.pointerId); return; }
+        const mkl=mkLineAt(ev);
+        if(mkl!=null){ drag={mkLine:mkl, pid:ev.pointerId, w:rc.width, left:rc.left}; n.active=mkl+1; cv.setPointerCapture(ev.pointerId); return; }
         // подпись маркера тянется с верньером: 1/10 скорости обычной панорамы, шаг 1 Гц
         const mkd=mkHit(ev);
         if(mkd && !n.ext[mkd.idx] && n.mk[mkd.idx]!=null && n.s){
@@ -2200,6 +2222,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           n.mk[drag.mk]=Math.round(drag.f0+dx/Math.max(1,drag.w)*drag.range*0.1);
           n.active=drag.mk+1;
           return;
+        }
+        if(drag.mkLine!=null){                       // перенос выставленного маркера (линия или тело шторки канала)
+          ev.preventDefault();
+          n.mk[drag.mkLine]=saSnapFreq(n, saFreq(n,clamp((ev.clientX-drag.left)/Math.max(1,drag.w),0,1)));
+          drag.moved=true; return;
         }
         if(drag.edge){                               // ширина полосы ПЧ — от частоты канала до курсора
           ev.preventDefault();
@@ -2244,7 +2271,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           }
         }
         if(drag && ev.pointerId===drag.pid && cv.hasPointerCapture(ev.pointerId)) cv.releasePointerCapture(ev.pointerId);
-        if(drag && drag.edge){ n.pickT=null; n._noTap=true; }   // core-graph уже поставил бы маркер на место отпускания
+        if(drag && (drag.edge || (drag.mkLine!=null && drag.moved))){ n.pickT=null; n._noTap=true; }   // core-graph уже поставил бы маркер на место отпускания
         if(drag && drag.mk!=null && drag.moved){ n.pickT=null; n._noTap=true; }
         drag=null; n._dragActive=false;
       };
@@ -2315,11 +2342,13 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         } else n.active=mk.idx+1;
       });
       cv.addEventListener('pointermove', ev=>{
+        { const rc=cv.getBoundingClientRect(), fx=(ev.clientX-rc.left)/rc.width;
+          n._hoverX = ev.pointerType==='touch'||drag||fx<0||fx>1||tabHit(ev)||nearBoundary(ev) ? null : fx; }
         n._bmHoverFreq = bmHit(ev)?.freq ?? null;
         n._mkHoverIdx = n._bmHoverFreq==null ? (mkHit(ev)?.idx ?? null) : null;
-        if(!drag) cv.style.cursor = nearBoundary(ev) ? 'ns-resize' : chanEdgeAt(ev) ? 'ew-resize' : '';
+        if(!drag) cv.style.cursor = nearBoundary(ev) ? 'ns-resize' : chanEdgeAt(ev) ? 'ew-resize' : mkLineAt(ev)!=null ? 'grab' : '';
       });
-      cv.addEventListener('pointerleave', ()=>{ n._bmHoverFreq=null; n._mkHoverIdx=null; });
+      cv.addEventListener('pointerleave', ()=>{ n._hoverX=null; n._bmHoverFreq=null; n._mkHoverIdx=null; });
     }
     if(n.s){
       const dpr=(cv.pxW&&cv.width)?cv.pxW/cv.width:1, Wp=cv.pxW||W, hwP=Math.max(1,Math.round(hw*dpr));
@@ -2496,6 +2525,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     cx.strokeStyle=themeColor('--grid'); cx.beginPath(); cx.moveTo(0,hs+.5); cx.lineTo(W,hs+.5); cx.stroke();
     saBands(n,cx,W,H);
     saDbLabels(n,cx);                                 // подписи уровня — поверх трассы
+    saHover(n,cx,W,hs+hw,0);                          // подсказка будущего маркера (спектр и водопад)
     saChannels(n,cx,W,hs,plotH);                      // полосы ПЧ каналов rtlsdr и порог шумоподавителя
     if(n.s) saAnnot(n,cx,W,hs,hw,(cv.pxW&&cv.width)?cv.pxW/cv.width:1);   // аннотации IQ поверх водопада
     saBandPlan(n,cx,W,hs,plotH);                      // полосы/закладки — зона спектра, водопад не трогаем
@@ -4768,7 +4798,7 @@ def({ id:'spectral', title:'Spectral Descriptors', cat:'Analysis',
     'centroid '+n.centroid.toFixed(0)+' Hz · spread '+n.spread.toFixed(0)+' Hz · flux '+
     n.flux.toFixed(3)+' · rolloff '+n.rolloff.toFixed(0)+' Hz'; }});
 defGroups('sa',[
-  {n:'View', p:'auto frange dbrange log grid peakHold dcCut layout panes'},
+  {n:'View', p:'auto frange dbrange autoDb log grid peakHold peakDecay dcCut layout panes'},
   {n:'Scanner', p:'follow edge paneFrom detect detThr scanStop holdMarker skipClear'},
   {n:'Markers', p:'snap trk trkBw ant antVf', open:false},
   {n:'Waterfall', p:'rowMs palette wfMem', open:false},
