@@ -17,6 +17,7 @@ struct T2Status {
   double cfoHz = 0, snrDb = 0, delay = 0, sfoPpm = 0;
   uint64_t frames = 0, framesOk = 0, blocks = 0, blocksOk = 0, blocksFix = 0, ts = 0, packets = 0;
   int numPlp = 0, frameIdx = 0; bool tiSwap = false;
+  uint64_t p1ok = 0, p1bad = 0, preBad = 0; double metric = 0, idScore = 0; int s1 = -1, s2 = -1;   // search diagnostics
   std::vector<PlpCfg> plps;
   std::string text;
 };
@@ -83,7 +84,9 @@ class T2Receiver {
       int64_t pos = from + rel;
       if (pos + 2048 + 64 > availEnd) { scanPos_ = pos; trim(); return; }    // need the whole preamble
       P1Info pi = p1_.identify(&buf_[0], (int)buf_.size(), (int)(pos - base_), met);
-      if (!pi.ok) { scanPos_ = pos + 1024; continue; }
+      st.metric = met; st.idScore = pi.idScore;
+      if (!pi.ok) { st.p1bad++; scanPos_ = pos + 1024; continue; }
+      st.p1ok++; st.s1 = pi.s1; st.s2 = pi.s2;
       if (pi.s1 > 4 || pi.s1 == 2) { scanPos_ = pos + 2048; continue; }       // not a T2 preamble (FEF / other)
       int status = frame(pos, pi);
       if (status == 0) { trim(); return; }                                     // wait for more samples
@@ -133,7 +136,7 @@ class T2Receiver {
         }
       }
     }
-    if (!got) return -1;
+    if (!got) { st.preBad++; return -1; }
     Sp_ = &getSetup(fftIdx, pre.gi, pre.bwtExt, miso, pre.pp, pre.papr, pre.nData, pre.ver);
     const T2Setup &S_ = *Sp_;
     haveS_ = true;

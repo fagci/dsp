@@ -1,6 +1,9 @@
 // WebAssembly API of the DVB-T2 receiver. The host writes interleaved float32 IQ (any sample rate >= the channel rate) into the input
 // buffer and calls t2_feed(); transport stream bytes and a JSON status come back.
 #include "t2rx.h"
+#ifdef __wasm_simd128__
+#include <wasm_simd128.h>
+#endif
 #include <cstdio>
 
 using namespace dvbofdm;
@@ -13,38 +16,63 @@ std::vector<uint8_t> tsOut;
 char json[4096];
 double fsIn = 0, fsNom = 0;
 
-// streaming windowed-sinc resampler: out(m) = x(t0 + m * ratio)
+// streaming windowed-sinc resampler: out(m) = x(t0 + m * ratio); fixed-point (Q32) position, 16 taps, 1024 phases
 struct Resamp {
-  double ratio = 1, pos = 0;                    // pos: input index (relative to hist[0]) of the next output sample
-  std::vector<cf> hist;
-  std::vector<float> tab; int TP = 32, PH = 256;
+  uint64_t pos = 0, step = 0;                   // position of the next output in input samples (relative to hist[0]), Q32
+  std::vector<float> hist;                      // interleaved re, im
+  std::vector<float> tab; int TP = 16, PH = 1024;
   void init(double r) {
-    ratio = r; pos = 0; hist.clear();
+    step = (uint64_t)(r * 4294967296.0 + 0.5);
     double cut = r > 1 ? 1.0 / r : 1.0;          // low-pass at the output Nyquist when decimating
-    tab.assign((PH + 1) * TP, 0.f);
+    tab.assign((size_t)(PH + 1) * TP * 2, 0.f);       // every tap twice (re, im) so the loop below is plain SIMD
     for (int p = 0; p <= PH; p++) for (int k = 0; k < TP; k++) {
       double d = (k - (TP / 2 - 1)) - (double)p / PH;
       double x = d * cut;
       double h = fabs(x) < 1e-12 ? 1.0 : sin(PI * x) / (PI * x);
       double w = 0.5 + 0.5 * cos(PI * d / (TP / 2));
-      tab[p * TP + k] = (float)(h * w * cut);
+      tab[((size_t)p * TP + k) * 2] = tab[((size_t)p * TP + k) * 2 + 1] = (float)(h * w * cut);
     }
+    hist.assign((size_t)(TP / 2) * 2, 0.f);       // zeros in front: the first output sits at index TP/2 - 1 + 1
+    pos = (uint64_t)(TP / 2) << 32;
   }
   void run(const cf *x, size_t n, std::vector<cf> &out) {
-    hist.insert(hist.end(), x, x + n);
-    size_t i0;
-    while ((i0 = (size_t)floor(pos)) + TP / 2 + 1 < hist.size()) {
-      double fr = pos - (double)i0; double pf = fr * PH; int p = (int)pf; float a = (float)(pf - p);
-      if (i0 < (size_t)(TP / 2 - 1)) { pos += ratio; out.push_back(cf()); continue; }
-      const cf *s = &hist[i0 - (TP / 2 - 1)];
-      const float *h0 = &tab[p * TP], *h1 = &tab[(p + 1) * TP];
-      float re = 0, im = 0;
-      for (int k = 0; k < TP; k++) { float h = h0[k] + a * (h1[k] - h0[k]); re += h * s[k].real(); im += h * s[k].imag(); }
-      out.push_back(cf(re, im));
-      pos += ratio;
+    size_t old = hist.size();
+    hist.resize(old + n * 2);
+    memcpy(&hist[old], x, n * sizeof(cf));
+    const size_t avail = hist.size() / 2;
+    size_t maxOut = (size_t)((double)avail / ((double)step / 4294967296.0)) + 8;
+    size_t o0 = out.size();
+    out.resize(o0 + maxOut);
+    float *o = reinterpret_cast<float *>(&out[o0]);
+    size_t cnt = 0;
+    const float *H = hist.data(), *T = tab.data();
+    uint64_t ps = pos;
+    for (;;) {
+      size_t i0 = (size_t)(ps >> 32);
+      if (i0 + TP / 2 + 1 >= avail) break;
+      int p = (int)((((uint32_t)ps) + (1u << 21)) >> 22);             // nearest of 1024 phases (can be 1024)
+      const float *s = H + 2 * (i0 - (TP / 2 - 1));
+      const float *h0 = T + (size_t)p * TP * 2;
+#ifdef __wasm_simd128__
+      v128_t acc = wasm_f32x4_splat(0.f);
+      for (int j = 0; j < TP * 2; j += 4) acc = wasm_f32x4_add(acc, wasm_f32x4_mul(wasm_v128_load(h0 + j), wasm_v128_load(s + j)));
+      o[2 * cnt] = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 2);
+      o[2 * cnt + 1] = wasm_f32x4_extract_lane(acc, 1) + wasm_f32x4_extract_lane(acc, 3);
+#else
+      float a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+      for (int j = 0; j < TP * 2; j += 4) { a0 += h0[j] * s[j]; a1 += h0[j + 1] * s[j + 1]; a2 += h0[j + 2] * s[j + 2]; a3 += h0[j + 3] * s[j + 3]; }
+      o[2 * cnt] = a0 + a2; o[2 * cnt + 1] = a1 + a3;
+#endif
+      cnt++; ps += step;
     }
-    size_t drop = (size_t)floor(pos) > (size_t)TP ? (size_t)floor(pos) - TP : 0;
-    if (drop) { hist.erase(hist.begin(), hist.begin() + drop); pos -= (double)drop; }
+    out.resize(o0 + cnt);
+    pos = ps;
+    size_t i0 = (size_t)(pos >> 32);
+    if (i0 > (size_t)TP * 2) {
+      size_t drop = i0 - TP;
+      hist.erase(hist.begin(), hist.begin() + drop * 2);
+      pos -= (uint64_t)drop << 32;
+    }
   }
 } rs;
 std::vector<cf> tmp;
@@ -79,8 +107,8 @@ __attribute__((export_name("t2_status"))) const char *t2_status(void) {
   const T2Status &s = rx->st;
   snprintf(json, sizeof json,
     "{\"lock\":%d,\"fecOk\":%d,\"fft\":%d,\"gi\":%d,\"mod\":%d,\"cod\":%d,\"plp\":%d,\"numPlp\":%d,\"pp\":%d,\"ext\":%d,\"rot\":%d,\"long\":%d,"
-    "\"snr\":%.1f,\"cfo\":%.1f,\"sfo\":%.1f,\"delay\":%.0f,\"frames\":%llu,\"framesOk\":%llu,\"blocks\":%llu,\"blocksOk\":%llu,\"fixed\":%llu,\"packets\":%llu,\"fs\":%.1f}",
-    s.lock, s.fecOk, s.fftSize, s.giIdx, s.mod, s.cod, s.plpId, s.numPlp, s.pp, s.ext, s.rot, s.fecLong, s.snrDb, s.cfoHz, s.sfoPpm, s.delay,
+    "\"p1ok\":%llu,\"p1bad\":%llu,\"preBad\":%llu,\"met\":%.2f,\"ids\":%.2f,\"s1\":%d,\"s2\":%d,\"snr\":%.1f,\"cfo\":%.1f,\"sfo\":%.1f,\"delay\":%.0f,\"frames\":%llu,\"framesOk\":%llu,\"blocks\":%llu,\"blocksOk\":%llu,\"fixed\":%llu,\"packets\":%llu,\"fs\":%.1f}",
+    s.lock, s.fecOk, s.fftSize, s.giIdx, s.mod, s.cod, s.plpId, s.numPlp, s.pp, s.ext, s.rot, s.fecLong, (unsigned long long)s.p1ok, (unsigned long long)s.p1bad, (unsigned long long)s.preBad, s.metric, s.idScore, s.s1, s.s2, s.snrDb, s.cfoHz, s.sfoPpm, s.delay,
     (unsigned long long)s.frames, (unsigned long long)s.framesOk, (unsigned long long)s.blocks, (unsigned long long)s.blocksOk,
     (unsigned long long)s.blocksFix, (unsigned long long)s.packets, fsNom);
   // list of PLPs

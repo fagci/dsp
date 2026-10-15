@@ -43,7 +43,7 @@ def({ ...TSV, id:'dvbsoft', title:'DVB Receiver (IQ)', cat:'Decoders',
           {n:'bw',t:'select',opts:['8','7','6','5','10','1.7'],d:'8',label:'DVB-T2: channel bandwidth, MHz (the input sample rate must be at least 8 MHz × 8/7 = 9.14 MS/s for 8 MHz)'},
           {n:'plp',t:'num',d:-1,label:'DVB-T2: PLP id (-1 — the first data PLP)'},
           ...TSV.params.filter(p=>p.n!=='file'&&p.n!=='loop')],
-  init(n){ TSV.init(n); n.dw=null; n.dwReady=false; n.dwKey=''; n.dwIn=0; n.dsTs=[]; n.ds=null; n.dsErr=''; n.dsSent=0; n.dsDrop=0; n.dsLost=0; n.dsSkip=0; },
+  init(n){ TSV.init(n); n.dw=null; n.dwReady=false; n.dwKey=''; n.dwIn=0; n.dsTs=[]; n.ds=null; n.dsErr=''; n.dsSent=0; n.dsDrop=0; n.dsLost=0; n.dsSkip=0; n.dsHold=false; },
   dispose:n=>{ dsStop(n); TSV.dispose?.(n); },
   process(n,I){
     const s=iqIn(I,'in'), p=n.p;
@@ -58,7 +58,10 @@ def({ ...TSV, id:'dvbsoft', title:'DVB Receiver (IQ)', cat:'Decoders',
         if(key!==n.dwKey) dsStart(n,cfg,key);
         rx=n.dsErr||'';
         if(n.dwReady) for(const c of s.chunks){
-          if(n.dwIn>=(t2 ? 600 : 48)){ n.dsSkip++; continue; }                    // воркер не успевает: порция выбрасывается
+          if(t2){                                                                  // T2: воркер не успевает — выбрасываем подряд, пока он не разгребёт очередь,
+            if(n.dwIn>=600) n.dsHold=true; else if(n.dwIn<=40) n.dsHold=false;       // иначе рвутся все кадры, а так хоть часть кадров приходит целиком
+            if(n.dsHold){ n.dsSkip++; continue; }
+          }else if(n.dwIn>=48){ n.dsSkip++; continue; }                            // воркер не успевает: порция выбрасывается
           const re=c.re, im=iqChunkIm(c), K=re.length, f=new Float32Array(2*K);
           let pw=0;
           for(let i=0;i<K;i++){ const a=re[i], b=im[i]; f[2*i]=a; f[2*i+1]=b; if((i&15)===0) pw+=a*a+b*b; }
