@@ -9,7 +9,7 @@ let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); 
 
 // ---- ядро
 const kc=vm.createContext({Math,JSON,Int16Array,Uint8Array,String,Number,Object});
-vm.runInContext(rd('modules/openwebrx-kernels.js')+';this.K={owrxAdpcm,owrxParseAddr,owrxPassband,owrxText,owrxDb,OWRX_STEP,OWRX_IDX};',kc);
+vm.runInContext(rd('modules/openwebrx-kernels.js')+';this.K={owrxAdpcm,owrxFft,owrxParseAddr,owrxPassband,owrxText,owrxDb,OWRX_STEP,OWRX_IDX};',kc);
 const K=kc.K;
 ok('step table: 89 entries',K.OWRX_STEP.length===89 && K.OWRX_STEP[0]===7 && K.OWRX_STEP[88]===32767);
 
@@ -44,6 +44,12 @@ for(let i=0;i<two.length;i+=137) tot+=c.decode(two.subarray(i,i+137)).length;
 ok('adpcm: two frames, chunked input',tot===2*N,tot);
 ok('adpcm: garbage before SYNC skipped',K.owrxAdpcm().decode(new Uint8Array([1,2,3,...enc])).length===N);
 
+const f32=new Float32Array([-90,-60.5,-30]); const fr=K.owrxFft(new Uint8Array(f32.buffer),'none');
+ok('fft: float32 dB',fr.length===3 && fr[1]===-60.5);
+const q=new Int16Array(10+4); for(let i=0;i<4;i++) q[10+i]=Math.round((-70+i*10)*100);
+const qe=encode(q).subarray(8);                          // без SYNC/заголовка: чистые полубайты
+const fd=K.owrxFft(qe,'adpcm',K.owrxAdpcm());
+ok('fft: adpcm length minus pad',fd.length===qe.length*2-10,fd.length);
 ok('addr: host only',JSON.stringify(K.owrxParseAddr('sdr.example'))==='{"host":"sdr.example","port":8073,"tls":false}');
 ok('addr: url with port and path',JSON.stringify(K.owrxParseAddr('http://a.b:8074/x'))==='{"host":"a.b","port":8074,"tls":false}');
 ok('addr: wss default port',JSON.stringify(K.owrxParseAddr('wss://a.b/ws/'))==='{"host":"a.b","port":443,"tls":true}');
@@ -70,7 +76,7 @@ vm.runInContext(s.slice(a,b),ctx);
 vm.runInContext(rd('modules/openwebrx.js'),ctx);
 const D=defs.openwebrx;
 const n={p:{server:'rx.example:8073',freq:7100000,mod:'usb',bw:2700}}; D.init(n);
-ok('registered',!!D && D.outs.length===2);
+ok('registered',!!D && D.outs.length===3);
 vm.runInContext('owrxConnect',ctx)(n);
 ok('ws url',wsi.url==='ws://rx.example:8073/ws/',wsi.url);
 wsi.readyState=1; wsi.onopen();
@@ -99,7 +105,12 @@ const ef=new Uint8Array(1+enc.length); ef[0]=2; ef.set(enc,1);
 const before=n.ring.written; wsi.onmessage({data:ef.buffer});
 ok('adpcm frame decoded into ring',n.ring.written-before===N,n.ring.written-before);
 wsi.onmessage({data:new Uint8Array([1,0,0,0,0]).buffer});
-ok('fft frames ignored',n.ring.written-before===N);
+ok('fft frame does not touch audio',n.ring.written-before===N);
+const fb=new Float32Array(8).fill(-60); fb[3]=-20; const ff=new Uint8Array(1+fb.length*4); ff[0]=1; ff.set(new Uint8Array(fb.buffer),1);
+wsi.onmessage({data:ff.buffer});
+const out=D.process(n,{});
+ok('spec output: abs axis, linear mag',out.spec && out.spec.size===8 && Math.abs(out.spec.mag[3]-0.1)<1e-6 && Math.abs(out.spec.mag[0]-0.001)<1e-9 && Math.abs(out.spec.freqs[0]-(7050000-1200000+150000))<1,JSON.stringify(out.spec&&out.spec.freqs[0]));
+const r0=out.spec.rev; wsi.onmessage({data:ff.buffer}); ok('spec rev grows',n.spec.rev===r0+1);
 D.dispose(n);
 ok('disconnect',!n.connected);
 
