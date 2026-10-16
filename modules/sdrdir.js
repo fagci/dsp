@@ -5,7 +5,8 @@
 
 const SDRDIR_URLS={
   kiwisdr:'http://rx.linkfanel.net/kiwisdr_com.js',
-  spyserver:'https://airspy.com/directory/status.json'
+  spyserver:'https://airspy.com/directory/status.json',
+  rxtx:'https://rx-tx.info/map-sdr-points'
 };
 
 function sdrdirLoadText(n,text,src){
@@ -31,7 +32,7 @@ function sdrdirRestore(n){
 def({ id:'sdrdir', title:'SDR Receivers Directory', cat:'Geo', kw:'kiwisdr spyserver websdr remote receivers map list directory',
   ins:[{n:'select',t:'rec'}],                          // клик на карте (выход sel)
   outs:[{n:'rows',t:'bands'},{n:'server',t:'txt'},{n:'name',t:'txt'},{n:'count',t:'num'}], readout:true,
-  params:[{n:'kind',t:'select',opts:['kiwisdr','spyserver'],d:'kiwisdr',label:'receivers',
+  params:[{n:'kind',t:'select',opts:['kiwisdr','spyserver','rxtx'],d:'kiwisdr',label:'receivers',
            fn:n=>{ n.list=[]; n.src=''; n.key=''; n.kindLoaded=n.p.kind; sdrdirRestore(n); }},
           {n:'free',t:'check',d:false,label:'only with free slots'},
           {n:'q',t:'text',d:'',label:'filter: name / place / host'},
@@ -58,5 +59,5 @@ def({ id:'sdrdir', title:'SDR Receivers Directory', cat:'Geo', kw:'kiwisdr spyse
   draw(n){
     const r=n.el.querySelector('.readout'); if(!r) return;
     r.textContent=(n.msg ? n.msg+'\n' : '')+(n.list.length ? n.src+' · '+n.list.length+' receivers · shown '+n.shown+'\n' : '')+
-      (n.sel ? '▶ '+n.sel.name+'\n  '+n.sel.server+(n.sel.users!=null?' · users '+n.sel.users+(n.sel.usersMax!=null?'/'+n.sel.usersMax:''):'')+'\n' : '')+(n.list.length?'':'download the list or load a file (JSON from the directory, or the kiwisdr.com/public page saved as HTML)');
+      (n.sel ? '▶ '+n.sel.name+'\n  '+n.sel.server+(n.sel.users!=null?' · users '+n.sel.users+(n.sel.usersMax!=null?'/'+n.sel.usersMax:''):'')+'\n' : '')+(n.list.length?'':'download the list or load a file (JSON from the directory, the kiwisdr.com/public or rx-tx.info/map-sdr-points page saved as HTML)');
   }});

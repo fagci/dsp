@@ -59,6 +59,22 @@ function sdKiwiHtml(text){
   return out;
 }
 
+// страница rx-tx.info/map-sdr-points: у каждой точки блок .geolocation-location (data-lat/-lng) с h3, ссылкой, локатором, страной и типом
+function sdRxtxHtml(text){
+  const out=[], strip=h=>h.replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&#0?39;|&apos;/g,"'").replace(/&quot;/g,'"').replace(/\s+/g,' ').trim();
+  for(const b of String(text).split(/(?=<div[^>]*class="[^"]*geolocation-location)/).slice(1)){
+    const lat=b.match(/data-lat="([^"]+)"/)||b.match(/property="latitude"\s+content="([^"]+)"/);
+    const lon=b.match(/data-lng="([^"]+)"/)||b.match(/property="longitude"\s+content="([^"]+)"/);
+    const h3=b.match(/<h3[^>]*>([\s\S]*?)<\/h3>/), a=b.match(/<a\s[^>]*href="([^"]+)"/);
+    if(!lat || !lon || !h3 || !a) continue;
+    const lines=(b.match(/<div class="views-field[^>]*>([\s\S]*?)<\/div>/)||[,''])[1].split(/<br\s*\/?>/).map(strip).filter(Boolean);
+    const [title,...loc]=strip(h3[1]).split('|');
+    const type=lines.length>3 ? lines[lines.length-1] : null;
+    out.push({name:title.trim(), loc:loc.join('|').trim()||null, url:a[1], lat:lat[1], lon:lon[1], sdr:type});
+  }
+  return out;
+}
+
 const sdPick=(o,keys)=>{ for(const k of keys) if(o[k]!=null && o[k]!=='') return o[k]; return null; };
 
 function sdRecord(o,kind){
@@ -68,13 +84,13 @@ function sdRecord(o,kind){
   if(!pos) return null;
   const hp=sdHostPort(sdPick(o,['url','address','addr','host','hostname','streamingHost','ip','server']), sdPick(o,['port','streamingPort']));
   if(!hp) return null;
-  const port=hp.port ?? (kind==='kiwisdr' ? 8073 : 5555);
+  const port=hp.port ?? (kind==='kiwisdr' ? 8073 : kind==='rxtx' ? (/^https:/i.test(String(o.url)) ? 443 : 80) : 5555);
   const server=hp.host+':'+port;
   const name=String(sdPick(o,['name','title','description','label']) ?? server).replace(/\s+/g,' ').trim();
   const users=SD_NUM(sdPick(o,['users','clients','connected'])), max=SD_NUM(sdPick(o,['users_max','maxUsers','max_users','slots','maxClients']));
   const loc=sdPick(o,['loc','location','city']);
   const r={id:kind+':'+server, lat:pos.lat, lon:pos.lon, kind, server, host:hp.host, port, name, label:name, track:0,
-           color:kind==='kiwisdr' ? '#f59e0b' : '#38bdf8'};
+           color:kind==='kiwisdr' ? '#f59e0b' : kind==='rxtx' ? '#a3e635' : '#38bdf8'};
   if(users!=null) r.users=users;
   if(max!=null) r.usersMax=max;
   if(loc!=null && typeof loc!=='object') r.loc=String(loc);
@@ -85,9 +101,9 @@ function sdRecord(o,kind){
   return r;
 }
 
-// kind: 'kiwisdr' | 'spyserver'
+// kind: 'kiwisdr' | 'spyserver' | 'rxtx'
 function sdParse(text,kind){
-  let items=sdExtractArray(text);
+  let items=kind==='rxtx' ? sdRxtxHtml(text) : sdExtractArray(text);
   if(!items || !items.length) items=sdKiwiHtml(text);
   const seen=new Set(), out=[];
   for(const o of items){
