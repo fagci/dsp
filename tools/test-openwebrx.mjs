@@ -116,6 +116,14 @@ const frame=new Uint8Array(1+pcm.length*2); frame[0]=2; frame.set(new Uint8Array
 for(let i=0;i<5;i++) wsi.onmessage({data:frame.buffer});
 let peak=0; for(let k=0;k<40;k++){ const r=D.process(n,{}); for(const v of r.audio) peak=Math.max(peak,Math.abs(v)); }
 ok('audio reaches output after buffering',peak>0.2 && peak<0.6,peak);
+ok('delay: backlog trimmed to the buffer, not seconds',n.ring.written-n.readCount<=3*0.3*12000+1,n.ring.written-n.readCount);
+{ const q={p:{...n.p,buf:300},connected:true}; D.init(q); q.connected=true; q.cfg={center:7050000,sr:2400000};
+  q.ring.written=2000; q.ring.filled=2000; q.ring.A.fill(0.5);
+  vm.runInContext('netAudioRead',ctx)(q,new Float32Array(128),3000,0.3);
+  ok('delay: silent below the buffer',q.readCount===0);
+  q.ring.written=3700; q.ring.filled=3700;
+  const o=new Float32Array(128); vm.runInContext('netAudioRead',ctx)(q,o,3000,0.3);
+  ok('delay: plays once 300 ms are in',q.readCount>0 && Math.abs(o[100])>0.1,q.readCount); }
 // ADPCM-режим
 wsi.onmessage({data:JSON.stringify({type:'config',value:{audio_compression:'adpcm'}})});
 const ef=new Uint8Array(1+enc.length); ef[0]=2; ef.set(enc,1);

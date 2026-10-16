@@ -173,6 +173,7 @@ def({ id:'openwebrx', title:'OpenWebRX', cat:'Sources',
      label:'mode (the list comes from the server; digital modes are decoded by it → rec / text)',fn:n=>{ if(n.connected) owrxTune(n); }},
     {n:'under',t:'select',opts:['auto','usb','lsb','am','nfm','cw'],d:'auto',label:'digital mode: underlying modulation (auto — the server\'s first)',fn:n=>{ if(n.connected) owrxTune(n); }},
     {n:'subfreq',t:'num',d:0,label:'digital mode with a secondary spectrum: offset in the passband, Hz (0 — not sent)',fn:n=>{ if(n.connected) owrxTune(n); }},
+    {n:'buf',t:'range',min:100,max:2000,step:50,d:300,label:'audio buffer, ms (less — lower delay, more dropouts on a bad network)'},
     {n:'bw',t:'range',min:200,max:12000,step:100,d:2700,log:true,label:'bandwidth, Hz (analog modes)',fn:n=>{ if(n.connected) owrxTune(n); }}
   ],
   init:n=>{ n.ws=null; n.connected=false; n.connecting=false; n.status='not connected'; n.cfg=null; n.started=false;
@@ -191,12 +192,12 @@ def({ id:'openwebrx', title:'OpenWebRX', cat:'Sources',
     }
     if(n.connected && n.cfg && owrxTuneKey(n)!==n.appliedKey) owrxTune(n);
     const oa=buf(n,'audio'), pl=n.plan || owrxPlan(n.p.mod,null,n.p.under,n.p.bw);
-    netAudioRead(n,oa,pl.mod==='wfm' ? 15000 : Math.max(Math.abs(pl.lo ?? 3000),Math.abs(pl.hi ?? 3000)));
+    netAudioRead(n,oa,pl.mod==='wfm' ? 15000 : Math.max(Math.abs(pl.lo ?? 3000),Math.abs(pl.hi ?? 3000)),(+n.p.buf||300)/1000);
     const rec=n.q.length ? n.q.splice(0) : null, cur=(n.profiles.find(p=>p.id===n.profId)||{}).name ?? null;
     return {audio:oa,rssi:n.rssi,spec:n.connected ? n.spec : null,rec,text:n.lastText||null,profile:cur}; },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     r.textContent = n.connected && n.cfg && !n.outOfRange
-      ? `${n.p.server} · ${n.p.mod}${n.plan && n.plan.sec ? ' on '+n.plan.mod : ''} · ${fmtHz(n.p.freq)} · ${n.rssi.toFixed(0)} dB${n.ver?' · '+n.ver:''}`+
+      ? `${n.p.server} · ${n.p.mod}${n.plan && n.plan.sec ? ' on '+n.plan.mod : ''} · ${fmtHz(n.p.freq)} · ${n.rssi.toFixed(0)} dB · buf ${Math.max(0,Math.round((n.ring.written-n.readCount)/n.audioRate*1000))} ms${n.ver?' · '+n.ver:''}`+
         ((n.profiles.find(p=>p.id===n.profId)||{}).name ? '\nprofile: '+n.profiles.find(p=>p.id===n.profId).name+' ('+n.profiles.length+')' : '')+
         (n.nmsg ? '\n'+n.lastText.slice(0,120) : '')
       : n.status+(n.outOfRange && n.profiles.length>1 ? '\nother profiles: '+n.profiles.map(p=>p.name).join(', ').slice(0,200) : ''); }});
