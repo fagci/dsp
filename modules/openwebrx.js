@@ -2,7 +2,7 @@
 /* ============================ OpenWebRX ============================
    Клиент удалённого приёмника OpenWebRX / OpenWebRX+: WebSocket ws://host:port/ws/, демодуляция на сервере,
    сюда приходит готовый звук. Протокол и разбор — в openwebrx-kernels.js. Звук идёт в кольцо и ресемплируется
-   так же, как у KiwiSDR (netAudioRead). Частота задаётся абсолютной: смещение от центра ленты считается здесь. */
+   так же, как у KiwiSDR (netAudioRead). Выход spec — FFT ленты сервера (абсолютные частоты). Частота задаётся абсолютной: смещение от центра ленты считается здесь. */
 
 const OWRX_MODS=['am','lsb','usb','cw','nfm','wfm'];
 const OWRX_OUT=12000, OWRX_HD=44100;                       // запрошенные частоты звука: обычный и HD (wfm)
@@ -52,16 +52,33 @@ function owrxOnText(n,str){
   if(m.type==='config' && v){
     if(v.center_freq!=null && v.samp_rate!=null) n.cfg={center:+v.center_freq,sr:+v.samp_rate};
     if(typeof v.audio_compression==='string') n.comp=v.audio_compression;
+    if(typeof v.fft_compression==='string') n.fcomp=v.fft_compression;
     if(n.cfg) owrxTune(n);
   }else if(m.type==='smeter' && typeof v==='number') n.rssi=owrxDb(v);
   else if(m.type==='sdr_error' || m.type==='demodulator_error') n.status='server: '+(typeof v==='string' ? v : JSON.stringify(v));
   else if(m.type==='backoff') n.status='server busy, try again later';
 }
 
+// дБ из кадра сервера → линейная амплитуда на абсолютной оси частот ленты
+function owrxSpec(n,body){
+  if(!n.cfg) return;
+  const db=owrxFft(body,n.fcomp,n.fcodec), N=db.length; if(N<2) return;
+  let sp=n.spec;
+  if(!sp || sp.size!==N || n.specC!==n.cfg.center || n.specS!==n.cfg.sr){
+    const f0=n.cfg.center-n.cfg.sr/2, st=n.cfg.sr/N, freqs=new Float64Array(N);
+    for(let i=0;i<N;i++) freqs[i]=f0+(i+.5)*st;
+    sp=n.spec={mag:new Float32Array(N),freqs,sr:n.cfg.sr,size:N,rev:(sp?sp.rev:0)};
+    n.specC=n.cfg.center; n.specS=n.cfg.sr;
+  }
+  for(let i=0;i<N;i++) sp.mag[i]=Math.pow(10,db[i]/20);
+  sp.rev++;
+}
+
 function owrxOnBin(n,buf8){
   if(buf8.length<2) return;
   const t=buf8[0], body=buf8.subarray(1);
-  if(t!==2 && t!==4) return;                               // FFT нам не нужен
+  if(t===1){ owrxSpec(n,body); return; }
+  if(t!==2 && t!==4) return;
   let pcm;
   if(n.comp==='adpcm') pcm=n.codec.decode(body);
   else{ const k=body.length>>1; pcm=new Int16Array(k); const dv=new DataView(body.buffer,body.byteOffset,k*2); for(let i=0;i<k;i++) pcm[i]=dv.getInt16(i*2,true); }
@@ -77,7 +94,7 @@ function owrxConnect(n){
   try{ ws=new WebSocket(owrxWsUrl(a)); }
   catch(e){ n.connecting=false; n.status='error: '+e.message; return; }
   ws.binaryType='arraybuffer';
-  n.ws=ws; n.cfg=null; n.started=false; n.comp='none'; n.codec.reset(); n.rssi=-150; n.audioRate=OWRX_OUT; kiwiResetRing(n);
+  n.ws=ws; n.cfg=null; n.started=false; n.comp='none'; n.fcomp='none'; n.spec=null; n.codec.reset(); n.fcodec.reset(); n.rssi=-150; n.audioRate=OWRX_OUT; kiwiResetRing(n);
   const openTimeout=setTimeout(()=>{
     if(n.connecting){ n.status='no response from server (timeout)'; try{ ws.close(); }catch(e){} }
   },8000);
@@ -102,7 +119,7 @@ function owrxDisconnect(n){
 }
 
 def({ id:'openwebrx', title:'OpenWebRX', cat:'Sources',
-  ins:[{n:'freq',t:'num'},{n:'server',t:'txt'}], outs:[{n:'audio',t:'sig'},{n:'rssi',t:'num'}],
+  ins:[{n:'freq',t:'num'},{n:'server',t:'txt'}], outs:[{n:'audio',t:'sig'},{n:'rssi',t:'num'},{n:'spec',t:'spec'}],
   view:{h:40}, readout:true,
   params:[
     {n:'server',t:'text',d:'',label:'host:port (wss:// — with TLS)'},
@@ -113,7 +130,7 @@ def({ id:'openwebrx', title:'OpenWebRX', cat:'Sources',
     {n:'bw',t:'range',min:200,max:12000,step:100,d:2700,log:true,label:'bandwidth, Hz',fn:n=>{ if(n.connected) owrxTune(n); }}
   ],
   init:n=>{ n.ws=null; n.connected=false; n.connecting=false; n.status='not connected'; n.cfg=null; n.started=false;
-            n.comp='none'; n.codec=owrxAdpcm(); n.ver=''; n.audioRate=OWRX_OUT; n.rssi=-150; n.appliedFreq=null; kiwiResetRing(n); },
+            n.comp='none'; n.fcomp='none'; n.codec=owrxAdpcm(); n.fcodec=owrxAdpcm(); n.spec=null; n.ver=''; n.audioRate=OWRX_OUT; n.rssi=-150; n.appliedFreq=null; kiwiResetRing(n); },
   dispose:n=>owrxDisconnect(n),
   process(n,I){
     if(typeof I.freq==='number') setMod(n,'freq',I.freq);
@@ -124,7 +141,7 @@ def({ id:'openwebrx', title:'OpenWebRX', cat:'Sources',
     if(n.connected && n.cfg && (Math.round(n.p.freq)!==Math.round(n.appliedFreq) || n.p.mod!==n.appliedMod || n.p.bw!==n.appliedBw)) owrxTune(n);
     const oa=buf(n,'audio'), [lo,hi]=owrxPassband(n.p.mod,n.p.bw);
     netAudioRead(n,oa,n.p.mod==='wfm' ? 15000 : Math.max(Math.abs(lo),Math.abs(hi)));
-    return {audio:oa,rssi:n.rssi}; },
+    return {audio:oa,rssi:n.rssi,spec:n.connected ? n.spec : null}; },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     r.textContent = n.connected && n.cfg && !n.outOfRange
       ? `${n.p.server} · ${n.p.mod} · ${fmtHz(n.p.freq)} · ${n.rssi.toFixed(0)} dB${n.ver?' · '+n.ver:''}`

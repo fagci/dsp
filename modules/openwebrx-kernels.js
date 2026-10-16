@@ -42,8 +42,27 @@ function owrxAdpcm(){
       }
       return out.subarray(0,o);
     },
+    decodeRaw(u8){                                           // без SYNC: просто полубайты подряд
+      const out=new Int16Array(u8.length*2);
+      for(let i=0;i<u8.length;i++){ out[i*2]=nib(u8[i]&15); out[i*2+1]=nib(u8[i]>>4); }
+      return out;
+    },
     reset(){ s.step=s.idx=s.pred=s.phase=s.sync=s.bi=s.cnt=0; }
   };
+}
+
+// FFT-кадр (тип 1): float32 дБ как есть или ADPCM без SYNC (кодек сбрасывается на каждый кадр): int16 в сотых долях дБ, первые 10 — выравнивание
+const OWRX_FFT_PAD=10;
+function owrxFft(body,comp,codec){
+  if(comp==='adpcm'){
+    codec.reset();
+    const q=codec.decodeRaw(body), out=new Float32Array(Math.max(0,q.length-OWRX_FFT_PAD));
+    for(let i=0;i<out.length;i++) out[i]=q[i+OWRX_FFT_PAD]/100;
+    return out;
+  }
+  const k=body.length>>2, out=new Float32Array(k), dv=new DataView(body.buffer,body.byteOffset,k*4);
+  for(let i=0;i<k;i++) out[i]=dv.getFloat32(i*4,true);
+  return out;
 }
 
 // «host[:port][/path]» или полный URL → {host,port,tls}
