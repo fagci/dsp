@@ -5423,6 +5423,41 @@ function kiwiResetRing(n){
   n.readPos=0; n.readCount=0; n.rebuffering=false;
 }
 
+// Чтение звука из кольца n.ring (n.audioRate → Eng.sr) в oa; нет данных — тишина. edge — край полосы, Гц (для sinc-фильтра)
+function netAudioRead(n,oa,edge){
+  const ring=n.ring;
+  if(!n.connected || ring.filled<ring.size*0.2){ oa.fill(0); return; }
+  const step=n.audioRate/Eng.sr, need=step*BLOCK;
+  let lag=ring.written-n.readCount;
+  if(lag>ring.size*0.9){ const delta=lag-ring.size*0.5; n.readPos=(n.readPos+delta)%ring.size; n.readCount+=delta; lag=ring.written-n.readCount; }
+  if(n.rebuffering){
+    if(lag<ring.size*0.2){ oa.fill(0); return; }
+    n.rebuffering=false;
+  }
+  if(lag<need){ n.rebuffering=true; oa.fill(0); return; }
+  // Полосовая (sinc) интерполяция вместо линейной: у линейной анти-imaging слишком слабый
+  // (первый ноль ровно на Найквисте потока), а переходная полоса тут узкая — между краем
+  // реальной SSB-полосы и её зеркалом от Найквиста часто меньше октавы, IIR-каскадом это
+  // не выцепить (нужен порядок ~15-20). Windowed sinc с шириной окна ZC даёт нужную крутизну
+  // без нестабильных высоких порядков.
+  const fc=Math.min(edge*1.05, n.audioRate*0.48), fcNorm=fc/n.audioRate;   // доля от исходной частоты (не Найквиста)
+  for(let k=0;k<BLOCK;k++){
+    const base=Math.floor(n.readPos);
+    let acc=0;
+    for(let j=-KIWI_ZC+1;j<=KIWI_ZC;j++){
+      const d=n.readPos-(base+j);
+      if(Math.abs(d)>=KIWI_ZC) continue;
+      const x=2*fcNorm*d, s=x===0?1:Math.sin(Math.PI*x)/(Math.PI*x);
+      const t=(d+KIWI_ZC)/(2*KIWI_ZC), w=0.42-0.5*Math.cos(2*Math.PI*t)+0.08*Math.cos(4*Math.PI*t);
+      const idx=(((base+j)%ring.size)+ring.size)%ring.size;
+      acc += ring.A[idx]*2*fcNorm*s*w;
+    }
+    oa[k]=acc;
+    n.readPos+=step; n.readCount+=step;
+  }
+  n.readPos%=ring.size;
+}
+
 function kiwiSend(n,msg){ if(n.ws && n.ws.readyState===1) n.ws.send(msg); }
 
 function kiwiSetMod(n){
@@ -5536,38 +5571,9 @@ def({ id:'kiwisdr', title:'KiwiSDR', cat:'Sources',
     }
     // перестройка частоты у Kiwi — цифровая на стороне сервера и дешёвая, шлём сразу при изменении
     if(n.connected && Math.round(n.p.freq)!==Math.round(n.appliedFreq)){ n.appliedFreq=n.p.freq; kiwiSetMod(n); }
-    const oa=buf(n,'audio'), ring=n.ring;
-    if(!n.connected || ring.filled<ring.size*0.2){ oa.fill(0); return {audio:oa,rssi:n.rssi}; }
-    const step=n.audioRate/Eng.sr, need=step*BLOCK;
-    let lag=ring.written-n.readCount;
-    if(lag>ring.size*0.9){ const delta=lag-ring.size*0.5; n.readPos=(n.readPos+delta)%ring.size; n.readCount+=delta; lag=ring.written-n.readCount; }
-    if(n.rebuffering){
-      if(lag<ring.size*0.2){ oa.fill(0); return {audio:oa,rssi:n.rssi}; }
-      n.rebuffering=false;
-    }
-    if(lag<need){ n.rebuffering=true; oa.fill(0); return {audio:oa,rssi:n.rssi}; }
-    // Полосовая (sinc) интерполяция вместо линейной: у линейной анти-imaging слишком слабый
-    // (первый ноль ровно на Найквисте потока), а переходная полоса тут узкая — между краем
-    // реальной SSB-полосы и её зеркалом от Найквиста часто меньше октавы, IIR-каскадом это
-    // не выцепить (нужен порядок ~15-20). Windowed sinc с шириной окна ZC даёт нужную крутизну
-    // без нестабильных высоких порядков.
-    const [lc,hc]=kiwiPassband(n.p.mod,n.p.bw), edge=Math.max(Math.abs(lc),Math.abs(hc));
-    const fc=Math.min(edge*1.05, n.audioRate*0.48), fcNorm=fc/n.audioRate;   // доля от исходной частоты (не Найквиста)
-    for(let k=0;k<BLOCK;k++){
-      const base=Math.floor(n.readPos);
-      let acc=0;
-      for(let j=-KIWI_ZC+1;j<=KIWI_ZC;j++){
-        const d=n.readPos-(base+j);
-        if(Math.abs(d)>=KIWI_ZC) continue;
-        const x=2*fcNorm*d, s=x===0?1:Math.sin(Math.PI*x)/(Math.PI*x);
-        const t=(d+KIWI_ZC)/(2*KIWI_ZC), w=0.42-0.5*Math.cos(2*Math.PI*t)+0.08*Math.cos(4*Math.PI*t);
-        const idx=(((base+j)%ring.size)+ring.size)%ring.size;
-        acc += ring.A[idx]*2*fcNorm*s*w;
-      }
-      oa[k]=acc;
-      n.readPos+=step; n.readCount+=step;
-    }
-    n.readPos%=ring.size;
+    const oa=buf(n,'audio');
+    const [lc,hc]=kiwiPassband(n.p.mod,n.p.bw);
+    netAudioRead(n,oa,Math.max(Math.abs(lc),Math.abs(hc)));
     return {audio:oa,rssi:n.rssi}; },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     r.textContent = n.connected
