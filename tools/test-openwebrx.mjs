@@ -84,7 +84,7 @@ const defs={};
 const ctx=vm.createContext({Math,JSON,Int16Array,Uint8Array,Float32Array,DataView,ArrayBuffer,String,Number,Object,Array,RegExp,URL,setTimeout,clearTimeout,
   WebSocket:WS, location:{protocol:'http:',href:'http://x/'}, Net:{proxy:false,url:u=>u}, Eng:{sr:48000}, BLOCK:128,
   def:d=>{ defs[d.id]=d; }, buf:(n,k)=>(n.b||(n.b={}))[k]||(n.b[k]=new Float32Array(128)), setMod:(n,k,v)=>{ n.p[k]=v; },
-  fmtHz:v=>v+' Hz'});
+  fmtHz:v=>v+' Hz',clamp:(v,a,b)=>Math.min(b,Math.max(a,v))});
 vm.runInContext(rd('modules/openwebrx-kernels.js'),ctx);
 vm.runInContext('const KIWI_ZC=12; function kiwiResetRing(n){ const SIZE=Math.max(200000,Math.round((n.audioRate||12000)*4)); n.ring={A:new Float32Array(SIZE),size:SIZE,w:0,filled:0,written:0}; n.readPos=0; n.readCount=0; n.rebuffering=false; }',ctx);
 // netAudioRead берём из sources.js как есть
@@ -93,7 +93,7 @@ vm.runInContext(s.slice(a,b),ctx);
 vm.runInContext(rd('modules/openwebrx.js'),ctx);
 const D=defs.openwebrx;
 const n={p:{server:'rx.example:8073',freq:7100000,mod:'usb',bw:2700}}; D.init(n);
-ok('registered',!!D && D.outs.length===6);
+ok('registered',!!D && D.outs.length===10);
 vm.runInContext('owrxConnect',ctx)(n);
 ok('ws url',wsi.url==='ws://rx.example:8073/ws/',wsi.url);
 wsi.readyState=1; wsi.onopen();
@@ -135,6 +135,14 @@ const fb=new Float32Array(8).fill(-60); fb[3]=-20; const ff=new Uint8Array(1+fb.
 wsi.onmessage({data:ff.buffer});
 const out=D.process(n,{});
 ok('spec output: abs axis, linear mag',out.spec && out.spec.size===8 && Math.abs(out.spec.mag[3]-0.1)<1e-6 && Math.abs(out.spec.mag[0]-0.001)<1e-9 && Math.abs(out.spec.freqs[0]-(7050000-1200000+150000))<1,JSON.stringify(out.spec&&out.spec.freqs[0]));
+ok('spec.chans for sa: curtain around the tuned frequency',out.spec.chans && out.spec.chans.length===1 && out.spec.chans[0].f===7100000 && out.spec.chans[0].mode==='USB' && out.spec.chans[0].lo===7100150 && out.spec.chans[0].hi===7102850,JSON.stringify(out.spec.chans));
+ok('spec.pickBw like usb-sdr: mode + one-sided pass',out.spec.pickBw.mode==='USB' && out.spec.pickBw.pass===2850,JSON.stringify(out.spec.pickBw));
+out.spec.setChanBw('USB',1650); ok('sa edge drag sets bw (offset taken off)',n.p.bw===1500,n.p.bw);
+ok('tuneFreq / bw / band edges on outputs',out.tuneFreq===7100000 && out.freqLo===7050000-1200000 && out.freqHi===7050000+1200000,JSON.stringify([out.tuneFreq,out.freqLo,out.freqHi]));
+D.process(n,{tuneFreq:7120000}); ok('tuneFreq input (sa f1) sets the frequency',n.p.freq===7120000);
+D.process(n,{bw:2400}); ok('bw input',n.p.bw===2400);
+D.process(n,{demod:'LSB'}); ok('demod input maps USB-SDR names',n.p.mod==='lsb',n.p.mod);
+D.process(n,{demod:'USB',bw:2700,tuneFreq:7110000});
 const r0=out.spec.rev; wsi.onmessage({data:ff.buffer}); ok('spec rev grows',n.spec.rev===r0+1);
 D.dispose(n);
 ok('disconnect',!n.connected);
@@ -156,6 +164,8 @@ ok('new profile: start again; band out of range → status lists other profiles'
 k.p.freq=7074000; D.process(k,{});
 ds=sent.map(x=>JSON.parse(x)); const tq=ds.filter(x=>x.params).pop();
 ok('ft8 tune: mod usb + secondary ft8 + bandpass from server',tq && tq.params.mod==='usb' && tq.params.secondary_mod==='ft8' && tq.params.low_cut===0 && tq.params.offset_freq===-26000,JSON.stringify(ds));
+w2.onmessage({data:ff.buffer});
+ok('digital mode: no edge drag, curtain from the server bandpass',(()=>{ const sp=D.process(k,{}).spec; return sp && sp.setChanBw===undefined && sp.chans[0].lo===k.p.freq && sp.chans[0].hi===k.p.freq+3000; })());
 ok('profile output carries current profile name',D.process(k,{}).profile==='40m band');
 w2.onmessage({data:JSON.stringify({type:'secondary_demod',value:{mode:'FT8',msg:'CQ DX K1ABC FN42',db:-12}})});
 w2.onmessage({data:JSON.stringify({type:'metadata',value:{mode:'DMR',slot:1}})});

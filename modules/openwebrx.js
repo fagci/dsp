@@ -62,6 +62,29 @@ function owrxMsg(n,v,kind){
   n.lastText=owrxMsgText(v); n.nmsg++;
 }
 
+// Для 'sa' (как у USB SDR): spec.chans — полоса канала вокруг частоты, spec.pickBw — полоса для подсказки маркера,
+// spec.setChanBw — перетаскивание края шторки меняет bw (только у аналоговых режимов: у цифровых полосу задаёт сервер)
+const OWRX_ANALOG_BW=[200,12000];
+function owrxChan(n){
+  const pl=n.plan; if(!pl || !n.cfg || n.outOfRange) return null;
+  const f=n.p.freq, bw=+n.p.bw||2700, mode=pl.mod.toUpperCase();
+  const lo=pl.lo!=null ? f+pl.lo : f-bw/2, hi=pl.hi!=null ? f+pl.hi : f+bw/2;
+  return {idx:0,f,lo,hi,mode,rssi:n.rssi,snr:null,sql:null,sqOpen:true};
+}
+function owrxSetChanBw(n,mode,w){
+  const pl=n.plan; if(!pl || pl.sec) return;
+  const bw=mode==='USB' ? w-(pl.lo||0) : mode==='LSB' ? w+(pl.hi||0) : w;
+  setMod(n,'bw',Math.round(clamp(bw,OWRX_ANALOG_BW[0],OWRX_ANALOG_BW[1])));
+}
+function owrxSpecOut(n){
+  const sp=n.connected ? n.spec : null; if(!sp) return null;
+  const c=owrxChan(n), pl=n.plan;
+  sp.chans=c ? [c] : null;
+  sp.pickBw=c ? {mode:c.mode,pass:c.mode==='USB' ? pl.hi : c.mode==='LSB' ? -pl.lo : (c.hi-c.lo)/2} : null;
+  sp.setChanBw=c && !pl.sec ? (n._setChanBw||(n._setChanBw=(mode,w)=>owrxSetChanBw(n,mode,w))) : undefined;
+  return sp;
+}
+
 function owrxPush(n,pcm,rate){
   if(rate!==n.audioRate){ n.audioRate=rate; kiwiResetRing(n); }
   const ring=n.ring; let w=ring.w, filled=ring.filled;
@@ -160,7 +183,7 @@ function owrxDisconnect(n){
 }
 
 def({ id:'openwebrx', title:'OpenWebRX', cat:'Sources',
-  ins:[{n:'freq',t:'num'},{n:'server',t:'txt'},{n:'profile',t:'txt'}], outs:[{n:'audio',t:'sig'},{n:'rssi',t:'num'},{n:'spec',t:'spec'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'profile',t:'txt'}],
+  ins:[{n:'freq',t:'num'},{n:'tuneFreq',t:'num'},{n:'steerFreq',t:'num'},{n:'bw',t:'num'},{n:'demod',t:'val'},{n:'server',t:'txt'},{n:'profile',t:'txt'}], outs:[{n:'audio',t:'sig'},{n:'rssi',t:'num'},{n:'spec',t:'spec'},{n:'tuneFreq',t:'num'},{n:'bw',t:'num'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'profile',t:'txt'}],
   view:{h:56}, readout:true,
   params:[
     {n:'server',t:'text',d:'',label:'host:port (wss:// — with TLS)'},
@@ -182,6 +205,9 @@ def({ id:'openwebrx', title:'OpenWebRX', cat:'Sources',
   dispose:n=>owrxDisconnect(n),
   process(n,I){
     if(typeof I.freq==='number') setMod(n,'freq',I.freq);
+    if(typeof I.tuneFreq==='number') setMod(n,'freq',I.tuneFreq);        // выход f1…f4 анализатора спектра, как у USB SDR
+    if(typeof I.bw==='number' && I.bw>0) setMod(n,'bw',Math.round(clamp(I.bw,OWRX_ANALOG_BW[0],OWRX_ANALOG_BW[1])));
+    if(typeof I.demod==='string'){ const d=I.demod.toLowerCase().replace(/^sam$/,'am'); if(d!==n.p.mod && owrxModeNames(n.modes,n.features).includes(d)) setMod(n,'mod',d); }
     if(typeof I.server==='string' && I.server && I.server!==n.p.server){
       n.p.server=I.server; if(n.set && n.set.server) n.set.server(I.server);
       if(n.connected||n.connecting){ owrxDisconnect(n); owrxConnect(n); }
@@ -194,7 +220,8 @@ def({ id:'openwebrx', title:'OpenWebRX', cat:'Sources',
     const oa=buf(n,'audio'), pl=n.plan || owrxPlan(n.p.mod,null,n.p.under,n.p.bw);
     netAudioRead(n,oa,pl.mod==='wfm' ? 15000 : Math.max(Math.abs(pl.lo ?? 3000),Math.abs(pl.hi ?? 3000)),(+n.p.buf||300)/1000);
     const rec=n.q.length ? n.q.splice(0) : null, cur=(n.profiles.find(p=>p.id===n.profId)||{}).name ?? null;
-    return {audio:oa,rssi:n.rssi,spec:n.connected ? n.spec : null,rec,text:n.lastText||null,profile:cur}; },
+    const r=owrxRange(n);
+    return {audio:oa,rssi:n.rssi,spec:owrxSpecOut(n),tuneFreq:n.p.freq,bw:n.p.bw,freqLo:r?r[0]:null,freqHi:r?r[1]:null,rec,text:n.lastText||null,profile:cur}; },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     r.textContent = n.connected && n.cfg && !n.outOfRange
       ? `${n.p.server} · ${n.p.mod}${n.plan && n.plan.sec ? ' on '+n.plan.mod : ''} · ${fmtHz(n.p.freq)} · ${n.rssi.toFixed(0)} dB · buf ${Math.max(0,Math.round((n.ring.written-n.readCount)/n.audioRate*1000))} ms${n.ver?' · '+n.ver:''}`+
