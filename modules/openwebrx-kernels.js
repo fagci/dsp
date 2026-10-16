@@ -98,3 +98,34 @@ function owrxText(str){
 
 // Уровень S-метра: сервер шлёт линейную мощность → дБ
 const owrxDb=v=>v>0 ? 10*Math.log10(v) : -150;
+
+// Режимы: аналоговые идут в mod как есть; цифровые (type 'digimode') — mod = нижележащая модуляция, secondary_mod = сам режим.
+// modes — список сервера (сообщение 'modes') или null до его прихода: тогда всё, что не аналоговое, считаем цифровым поверх usb.
+const OWRX_ANALOG=['am','lsb','usb','cw','nfm','wfm'];
+const OWRX_DIGI_FALLBACK=['ft8','ft4','wspr','jt65','jt9','fst4','fst4w','q65','js8','packet','pocsag','dmr','ysf','dstar','nxdn','m17','freedv'];
+function owrxPlan(mod,modes,under,bw){
+  const list=modes && modes.length ? modes : null, m=list && list.find(x=>x.modulation===mod);
+  if(list && !m && !OWRX_ANALOG.includes(mod)) return {err:'server has no mode '+mod};
+  const digi=m ? m.type==='digimode' : !OWRX_ANALOG.includes(mod);
+  if(!digi){ const [lo,hi]=owrxPassband(mod,bw); return {mod,sec:false,lo,hi,sub:false,unders:[]}; }
+  const ul=m && m.underlying && m.underlying.length ? m.underlying : ['usb'], u=ul.includes(under) ? under : ul[0];
+  const um=list && list.find(x=>x.modulation===u), bp=(m && m.bandpass) || (um && um.bandpass) || null;
+  return {mod:u,sec:mod,lo:bp ? bp.low_cut : null,hi:bp ? bp.high_cut : null,sub:!!(m && m.secondaryFft),unders:ul};
+}
+// режимы, доступные на сервере (requirements — флаги из сообщения 'features'); до списка — запасной набор
+function owrxModeNames(modes,features){
+  if(!modes || !modes.length) return [...OWRX_ANALOG,...OWRX_DIGI_FALLBACK];
+  return modes.filter(m=>!m.requirements || !features || m.requirements.every(r=>features[r])).map(m=>m.modulation);
+}
+// профили: [{id:'sdr|profile', name}] → имя → id (имя, id или подстрока имени без регистра)
+function owrxFindProfile(list,q){
+  q=String(q||'').trim().toLowerCase(); if(!q || !list) return null;
+  return list.find(p=>p.id.toLowerCase()===q || p.name.toLowerCase()===q) || list.find(p=>p.name.toLowerCase().includes(q)) || null;
+}
+// сообщение вторичного демодулятора / метаданные → одна строка для выхода text
+function owrxMsgText(v){
+  if(typeof v==='string') return v;
+  if(!v || typeof v!=='object') return '';
+  const t=v.msg ?? v.message ?? v.text;
+  return ((v.mode||'')+' '+(t!=null ? t : JSON.stringify(v))).trim();
+}

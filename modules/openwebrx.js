@@ -2,9 +2,11 @@
 /* ============================ OpenWebRX ============================
    Клиент удалённого приёмника OpenWebRX / OpenWebRX+: WebSocket ws://host:port/ws/, демодуляция на сервере,
    сюда приходит готовый звук. Протокол и разбор — в openwebrx-kernels.js. Звук идёт в кольцо и ресемплируется
-   так же, как у KiwiSDR (netAudioRead). Выход spec — FFT ленты сервера (абсолютные частоты). Частота задаётся абсолютной: смещение от центра ленты считается здесь. */
+   так же, как у KiwiSDR (netAudioRead). Выход spec — FFT ленты сервера (абсолютные частоты). Частота задаётся абсолютной: смещение от центра ленты считается здесь.
+   Профили сервера (диапазоны / приёмники) — сообщение 'profiles', выбор — 'selectprofile'; режимы — сообщение 'modes', цифровые декодирует сервер,
+   их сообщения идут на rec / text. Смена профиля меняет приёмник у всех слушателей сервера. */
 
-const OWRX_MODS=['am','lsb','usb','cw','nfm','wfm'];
+const OWRX_QMAX=500;                                       // сообщений в очереди на выход rec
 const OWRX_OUT=12000, OWRX_HD=44100;                       // запрошенные частоты звука: обычный и HD (wfm)
 
 function owrxWsUrl(a){
@@ -27,12 +29,37 @@ function owrxTune(n){
   if(n.p.freq<r[0] || n.p.freq>r[1]){
     n.status=`out of range: server covers ${fmtHz(r[0])} … ${fmtHz(r[1])}`; n.outOfRange=true; return;
   }
+  const pl=owrxPlan(n.p.mod,n.modes,n.p.under,n.p.bw);
+  if(pl.err){ n.status=pl.err; return; }
   n.outOfRange=false; n.status='connected';
-  const [lo,hi]=owrxPassband(n.p.mod,n.p.bw);
-  const params={low_cut:Math.round(lo),high_cut:Math.round(hi),offset_freq:off,mod:n.p.mod,squelch_level:-150,secondary_mod:false};
+  const params={offset_freq:off,mod:pl.mod,squelch_level:-150,secondary_mod:pl.sec};
+  if(pl.lo!=null){ params.low_cut=Math.round(pl.lo); params.high_cut=Math.round(pl.hi); }
+  if(pl.sub && +n.p.subfreq) params.secondary_offset_freq=Math.round(+n.p.subfreq);
   if(!n.started){ n.started=true; owrxSend(n,{type:'dspcontrol',action:'start'}); }
   owrxSend(n,{type:'dspcontrol',params});
-  n.appliedFreq=n.p.freq; n.appliedMod=n.p.mod; n.appliedBw=n.p.bw;
+  n.plan=pl; n.appliedKey=owrxTuneKey(n);
+}
+const owrxTuneKey=n=>[Math.round(n.p.freq),n.p.mod,n.p.under,n.p.bw,n.p.subfreq,n.modes?n.modes.length:0].join('|');
+
+// выбор профиля: имя / id / подстрока. Сервер ответит новым config — владеет перестройкой owrxOnText
+function owrxSelectProfile(n,q){
+  const p=owrxFindProfile(n.profiles,q);
+  if(!p){ if(String(q||'').trim()) n.status='no such profile: '+q; return; }
+  if(p.id===n.profId) return;
+  n.status='switching to '+p.name+'…'; owrxSend(n,{type:'selectprofile',params:{profile:p.id}});
+}
+
+// профиль из патча — один раз и только когда известен текущий: иначе переключили бы сервер на тот же профиль
+function owrxInitialProfile(n){
+  if(n.profAsked || !n.p.profile || !n.profId || !n.profiles.length) return;
+  n.profAsked=true; owrxSelectProfile(n,n.p.profile);
+}
+
+// сообщения цифровых режимов и метаданные → очередь rec; одна строка — на text
+function owrxMsg(n,v,kind){
+  const rec=v && typeof v==='object' ? {t:Date.now(),kind,...v} : {t:Date.now(),kind,text:String(v)};
+  n.q.push(rec); if(n.q.length>OWRX_QMAX) n.q.shift();
+  n.lastText=owrxMsgText(v); n.nmsg++;
 }
 
 function owrxPush(n,pcm,rate){
@@ -51,10 +78,24 @@ function owrxOnText(n,str){
   const v=m.value;
   if(m.type==='config' && v){
     if(v.center_freq!=null && v.samp_rate!=null) n.cfg={center:+v.center_freq,sr:+v.samp_rate};
+    if(v.sdr_id!=null || v.profile_id!=null){
+      const id=(v.sdr_id ?? (n.profId||'').split('|')[0])+'|'+(v.profile_id ?? (n.profId||'').split('|')[1]);
+      if(id!==n.profId){ n.profId=id; n.started=false; n.spec=null; }       // новый профиль — заново start и ось спектра
+      owrxInitialProfile(n);
+    }
     if(typeof v.audio_compression==='string') n.comp=v.audio_compression;
     if(typeof v.fft_compression==='string') n.fcomp=v.fft_compression;
     if(n.cfg) owrxTune(n);
-  }else if(m.type==='smeter' && typeof v==='number') n.rssi=owrxDb(v);
+  }else if(m.type==='profiles' && Array.isArray(v)){
+    n.profiles=v.filter(p=>p && p.id!=null).map(p=>({id:String(p.id),name:String(p.name ?? p.id)}));
+    owrxInitialProfile(n);
+  }else if(m.type==='modes' && Array.isArray(v)){ n.modes=v; if(n.cfg) owrxTune(n); }
+  else if(m.type==='features' && v && typeof v==='object') n.features=v;
+  else if(m.type==='secondary_demod' && v!=null) owrxMsg(n,v,'decoded');
+  else if(m.type==='metadata' && v && typeof v==='object'){
+    const k=JSON.stringify(v); if(k!==n.lastMeta){ n.lastMeta=k; owrxMsg(n,v,'metadata'); }
+  }
+  else if(m.type==='smeter' && typeof v==='number') n.rssi=owrxDb(v);
   else if(m.type==='sdr_error' || m.type==='demodulator_error') n.status='server: '+(typeof v==='string' ? v : JSON.stringify(v));
   else if(m.type==='backoff') n.status='server busy, try again later';
 }
@@ -94,7 +135,7 @@ function owrxConnect(n){
   try{ ws=new WebSocket(owrxWsUrl(a)); }
   catch(e){ n.connecting=false; n.status='error: '+e.message; return; }
   ws.binaryType='arraybuffer';
-  n.ws=ws; n.cfg=null; n.started=false; n.comp='none'; n.fcomp='none'; n.spec=null; n.codec.reset(); n.fcodec.reset(); n.rssi=-150; n.audioRate=OWRX_OUT; kiwiResetRing(n);
+  n.ws=ws; n.cfg=null; n.started=false; n.modes=null; n.features=null; n.profiles=[]; n.profId=''; n.profAsked=false; n.q=[]; n.lastMeta=''; n.comp='none'; n.fcomp='none'; n.spec=null; n.codec.reset(); n.fcodec.reset(); n.rssi=-150; n.audioRate=OWRX_OUT; kiwiResetRing(n);
   const openTimeout=setTimeout(()=>{
     if(n.connecting){ n.status='no response from server (timeout)'; try{ ws.close(); }catch(e){} }
   },8000);
@@ -115,22 +156,28 @@ function owrxConnect(n){
 
 function owrxDisconnect(n){
   if(n.ws){ const ws=n.ws; n.ws=null; ws.onclose=null; try{ ws.close(); }catch(e){} }
-  n.connected=false; n.connecting=false; n.cfg=null; n.status='disconnected';
+  n.connected=false; n.connecting=false; n.cfg=null; n.modes=null; n.status='disconnected';
 }
 
 def({ id:'openwebrx', title:'OpenWebRX', cat:'Sources',
-  ins:[{n:'freq',t:'num'},{n:'server',t:'txt'}], outs:[{n:'audio',t:'sig'},{n:'rssi',t:'num'},{n:'spec',t:'spec'}],
-  view:{h:40}, readout:true,
+  ins:[{n:'freq',t:'num'},{n:'server',t:'txt'},{n:'profile',t:'txt'}], outs:[{n:'audio',t:'sig'},{n:'rssi',t:'num'},{n:'spec',t:'spec'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'profile',t:'txt'}],
+  view:{h:56}, readout:true,
   params:[
     {n:'server',t:'text',d:'',label:'host:port (wss:// — with TLS)'},
     {n:'connect',t:'button',label:'Connect',fn:n=>owrxConnect(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>owrxDisconnect(n)},
     {n:'freq',t:'num',d:7100000,label:'frequency, Hz (within the server band)'},
-    {n:'mod',t:'select',opts:OWRX_MODS,d:'am',label:'demodulation',fn:n=>{ if(n.connected) owrxTune(n); }},
-    {n:'bw',t:'range',min:200,max:12000,step:100,d:2700,log:true,label:'bandwidth, Hz',fn:n=>{ if(n.connected) owrxTune(n); }}
+    {n:'profile',t:'select',opts:n=>['',...(n.profiles||[]).map(p=>p.name)],d:'',label:'profile (band / receiver of the server; switching affects all listeners)',
+     fn:n=>{ if(n.connected && n.p.profile) owrxSelectProfile(n,n.p.profile); }},
+    {n:'mod',t:'select',opts:n=>{ const o=owrxModeNames(n.modes,n.features); if(!o.includes(n.p.mod)) o.push(n.p.mod); return o; },d:'am',
+     label:'mode (the list comes from the server; digital modes are decoded by it → rec / text)',fn:n=>{ if(n.connected) owrxTune(n); }},
+    {n:'under',t:'select',opts:['auto','usb','lsb','am','nfm','cw'],d:'auto',label:'digital mode: underlying modulation (auto — the server\'s first)',fn:n=>{ if(n.connected) owrxTune(n); }},
+    {n:'subfreq',t:'num',d:0,label:'digital mode with a secondary spectrum: offset in the passband, Hz (0 — not sent)',fn:n=>{ if(n.connected) owrxTune(n); }},
+    {n:'bw',t:'range',min:200,max:12000,step:100,d:2700,log:true,label:'bandwidth, Hz (analog modes)',fn:n=>{ if(n.connected) owrxTune(n); }}
   ],
   init:n=>{ n.ws=null; n.connected=false; n.connecting=false; n.status='not connected'; n.cfg=null; n.started=false;
-            n.comp='none'; n.fcomp='none'; n.codec=owrxAdpcm(); n.fcodec=owrxAdpcm(); n.spec=null; n.ver=''; n.audioRate=OWRX_OUT; n.rssi=-150; n.appliedFreq=null; kiwiResetRing(n); },
+            n.modes=null; n.features=null; n.profiles=[]; n.profId=''; n.profAsked=false; n.q=[]; n.lastText=''; n.nmsg=0; n.lastMeta=''; n.plan=null;
+            n.comp='none'; n.fcomp='none'; n.codec=owrxAdpcm(); n.fcodec=owrxAdpcm(); n.spec=null; n.ver=''; n.audioRate=OWRX_OUT; n.rssi=-150; n.appliedKey=''; kiwiResetRing(n); },
   dispose:n=>owrxDisconnect(n),
   process(n,I){
     if(typeof I.freq==='number') setMod(n,'freq',I.freq);
@@ -138,11 +185,18 @@ def({ id:'openwebrx', title:'OpenWebRX', cat:'Sources',
       n.p.server=I.server; if(n.set && n.set.server) n.set.server(I.server);
       if(n.connected||n.connecting){ owrxDisconnect(n); owrxConnect(n); }
     }
-    if(n.connected && n.cfg && (Math.round(n.p.freq)!==Math.round(n.appliedFreq) || n.p.mod!==n.appliedMod || n.p.bw!==n.appliedBw)) owrxTune(n);
-    const oa=buf(n,'audio'), [lo,hi]=owrxPassband(n.p.mod,n.p.bw);
-    netAudioRead(n,oa,n.p.mod==='wfm' ? 15000 : Math.max(Math.abs(lo),Math.abs(hi)));
-    return {audio:oa,rssi:n.rssi,spec:n.connected ? n.spec : null}; },
+    if(typeof I.profile==='string' && I.profile && I.profile!==n.lastInProfile){
+      n.lastInProfile=I.profile; n.p.profile=I.profile; if(n.set && n.set.profile) n.set.profile(I.profile);
+      if(n.connected) owrxSelectProfile(n,I.profile);
+    }
+    if(n.connected && n.cfg && owrxTuneKey(n)!==n.appliedKey) owrxTune(n);
+    const oa=buf(n,'audio'), pl=n.plan || owrxPlan(n.p.mod,null,n.p.under,n.p.bw);
+    netAudioRead(n,oa,pl.mod==='wfm' ? 15000 : Math.max(Math.abs(pl.lo ?? 3000),Math.abs(pl.hi ?? 3000)));
+    const rec=n.q.length ? n.q.splice(0) : null, cur=(n.profiles.find(p=>p.id===n.profId)||{}).name ?? null;
+    return {audio:oa,rssi:n.rssi,spec:n.connected ? n.spec : null,rec,text:n.lastText||null,profile:cur}; },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     r.textContent = n.connected && n.cfg && !n.outOfRange
-      ? `${n.p.server} · ${n.p.mod} · ${fmtHz(n.p.freq)} · ${n.rssi.toFixed(0)} dB${n.ver?' · '+n.ver:''}`
-      : n.status; }});
+      ? `${n.p.server} · ${n.p.mod}${n.plan && n.plan.sec ? ' on '+n.plan.mod : ''} · ${fmtHz(n.p.freq)} · ${n.rssi.toFixed(0)} dB${n.ver?' · '+n.ver:''}`+
+        ((n.profiles.find(p=>p.id===n.profId)||{}).name ? '\nprofile: '+n.profiles.find(p=>p.id===n.profId).name+' ('+n.profiles.length+')' : '')+
+        (n.nmsg ? '\n'+n.lastText.slice(0,120) : '')
+      : n.status+(n.outOfRange && n.profiles.length>1 ? '\nother profiles: '+n.profiles.map(p=>p.name).join(', ').slice(0,200) : ''); }});

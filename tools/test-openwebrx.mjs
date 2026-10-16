@@ -9,7 +9,7 @@ let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); 
 
 // ---- ядро
 const kc=vm.createContext({Math,JSON,Int16Array,Uint8Array,String,Number,Object});
-vm.runInContext(rd('modules/openwebrx-kernels.js')+';this.K={owrxAdpcm,owrxFft,owrxParseAddr,owrxPassband,owrxText,owrxDb,OWRX_STEP,OWRX_IDX};',kc);
+vm.runInContext(rd('modules/openwebrx-kernels.js')+';this.K={owrxAdpcm,owrxFft,owrxPlan,owrxModeNames,owrxFindProfile,owrxMsgText,owrxParseAddr,owrxPassband,owrxText,owrxDb,OWRX_STEP,OWRX_IDX};',kc);
 const K=kc.K;
 ok('step table: 89 entries',K.OWRX_STEP.length===89 && K.OWRX_STEP[0]===7 && K.OWRX_STEP[88]===32767);
 
@@ -50,6 +50,23 @@ const q=new Int16Array(10+4); for(let i=0;i<4;i++) q[10+i]=Math.round((-70+i*10)
 const qe=encode(q).subarray(8);                          // без SYNC/заголовка: чистые полубайты
 const fd=K.owrxFft(qe,'adpcm',K.owrxAdpcm());
 ok('fft: adpcm length minus pad',fd.length===qe.length*2-10,fd.length);
+const MODES=[{modulation:'usb',type:'analog',bandpass:{low_cut:300,high_cut:2700},requirements:[]},
+  {modulation:'ft8',type:'digimode',underlying:['usb','lsb'],bandpass:{low_cut:0,high_cut:3000},requirements:['wsjt-x'],secondaryFft:false},
+  {modulation:'packet',type:'digimode',underlying:['nfm'],requirements:['packet'],secondaryFft:true},
+  {modulation:'am',type:'analog',requirements:[]}];
+let pl=K.owrxPlan('ft8',MODES,'auto',2700);
+ok('plan: digital mode = underlying + secondary',pl.mod==='usb' && pl.sec==='ft8' && pl.lo===0 && pl.hi===3000,JSON.stringify(pl));
+ok('plan: chosen underlying',K.owrxPlan('ft8',MODES,'lsb',2700).mod==='lsb' && K.owrxPlan('ft8',MODES,'nfm',2700).mod==='usb');
+pl=K.owrxPlan('packet',MODES,'auto',2700);
+ok('plan: no bandpass anywhere → none sent, secondary fft flag',pl.mod==='nfm' && pl.lo===null && pl.sub===true,JSON.stringify(pl));
+ok('plan: analog uses own bandwidth',K.owrxPlan('usb',MODES,'auto',2700).lo===150);
+ok('plan: unknown mode on server',/no mode/.test(K.owrxPlan('dmr',MODES,'auto',0).err));
+ok('plan: no server list → digital over usb',K.owrxPlan('ft8',null,'auto',0).sec==='ft8' && K.owrxPlan('am',null,'auto',6000).sec===false);
+ok('mode names filtered by features',JSON.stringify(K.owrxModeNames(MODES,{'wsjt-x':true,packet:false}))==='["usb","ft8","am"]');
+ok('mode names fallback has analog + digital',K.owrxModeNames(null).includes('ft8') && K.owrxModeNames(null).includes('wfm'));
+const PR=[{id:'a|1',name:'20m'},{id:'a|2',name:'40m band'},{id:'b|1',name:'2m FM'}];
+ok('profile lookup: exact, id, substring',K.owrxFindProfile(PR,'20M').id==='a|1' && K.owrxFindProfile(PR,'b|1').name==='2m FM' && K.owrxFindProfile(PR,'40m').id==='a|2' && K.owrxFindProfile(PR,'zz')===null);
+ok('message text',K.owrxMsgText({mode:'FT8',msg:'CQ DX'})==='FT8 CQ DX' && K.owrxMsgText('abc')==='abc' && K.owrxMsgText({mode:'DMR',slot:1})==='DMR {"mode":"DMR","slot":1}');
 ok('addr: host only',JSON.stringify(K.owrxParseAddr('sdr.example'))==='{"host":"sdr.example","port":8073,"tls":false}');
 ok('addr: url with port and path',JSON.stringify(K.owrxParseAddr('http://a.b:8074/x'))==='{"host":"a.b","port":8074,"tls":false}');
 ok('addr: wss default port',JSON.stringify(K.owrxParseAddr('wss://a.b/ws/'))==='{"host":"a.b","port":443,"tls":true}');
@@ -76,7 +93,7 @@ vm.runInContext(s.slice(a,b),ctx);
 vm.runInContext(rd('modules/openwebrx.js'),ctx);
 const D=defs.openwebrx;
 const n={p:{server:'rx.example:8073',freq:7100000,mod:'usb',bw:2700}}; D.init(n);
-ok('registered',!!D && D.outs.length===3);
+ok('registered',!!D && D.outs.length===6);
 vm.runInContext('owrxConnect',ctx)(n);
 ok('ws url',wsi.url==='ws://rx.example:8073/ws/',wsi.url);
 wsi.readyState=1; wsi.onopen();
@@ -113,6 +130,36 @@ ok('spec output: abs axis, linear mag',out.spec && out.spec.size===8 && Math.abs
 const r0=out.spec.rev; wsi.onmessage({data:ff.buffer}); ok('spec rev grows',n.spec.rev===r0+1);
 D.dispose(n);
 ok('disconnect',!n.connected);
+
+// ---- профили, режимы, цифровые сообщения
+const k={p:{server:'rx.example:8073',freq:14074000,mod:'ft8',under:'auto',bw:2700,subfreq:0,profile:'40m'}}; D.init(k);
+sent.length=0; const O=vm.runInContext('owrxConnect',ctx); O(k); const w2=wsi; w2.readyState=1; w2.onopen(); sent.length=0;
+w2.onmessage({data:JSON.stringify({type:'config',value:{center_freq:14100000,samp_rate:2400000,sdr_id:'a',profile_id:'1'}})});
+w2.onmessage({data:JSON.stringify({type:'profiles',value:PR})});
+const selp=sent.map(x=>JSON.parse(x)).find(x=>x.type==='selectprofile');
+ok('profile from the patch selected once, after config+profiles',selp && selp.params.profile==='a|2',JSON.stringify(sent));
+sent.length=0; w2.onmessage({data:JSON.stringify({type:'profiles',value:PR})});
+ok('no repeated selectprofile',!sent.some(x=>/selectprofile/.test(x)));
+w2.onmessage({data:JSON.stringify({type:'modes',value:MODES})});
+sent.length=0;
+w2.onmessage({data:JSON.stringify({type:'config',value:{center_freq:7100000,samp_rate:2400000,sdr_id:'a',profile_id:'2'}})});
+let ds=sent.map(x=>JSON.parse(x)); const tp=ds.find(x=>x.params);
+ok('new profile: start again; band out of range → status lists other profiles',ds.some(x=>x.action==='start')===false && /out of range/.test(k.status),JSON.stringify(ds)+k.status);
+k.p.freq=7074000; D.process(k,{});
+ds=sent.map(x=>JSON.parse(x)); const tq=ds.filter(x=>x.params).pop();
+ok('ft8 tune: mod usb + secondary ft8 + bandpass from server',tq && tq.params.mod==='usb' && tq.params.secondary_mod==='ft8' && tq.params.low_cut===0 && tq.params.offset_freq===-26000,JSON.stringify(ds));
+ok('profile output carries current profile name',D.process(k,{}).profile==='40m band');
+w2.onmessage({data:JSON.stringify({type:'secondary_demod',value:{mode:'FT8',msg:'CQ DX K1ABC FN42',db:-12}})});
+w2.onmessage({data:JSON.stringify({type:'metadata',value:{mode:'DMR',slot:1}})});
+w2.onmessage({data:JSON.stringify({type:'metadata',value:{mode:'DMR',slot:1}})});
+const od=D.process(k,{});
+ok('decoded message → rec with kind, text line',od.rec.length===2 && od.rec[0].kind==='decoded' && od.rec[0].msg==='CQ DX K1ABC FN42' && od.rec[1].kind==='metadata' && /DMR/.test(od.text),JSON.stringify(od.rec));
+ok('rec drained after one block, unchanged metadata not repeated',D.process(k,{}).rec===null);
+sent.length=0; k.p.mod='am'; D.process(k,{});
+const ta=sent.map(x=>JSON.parse(x)).find(x=>x.params);
+ok('back to analog: secondary_mod false',ta && ta.params.mod==='am' && ta.params.secondary_mod===false,JSON.stringify(sent));
+sent.length=0; D.process(k,{profile:'b|1'}); ok('profile input selects',sent.some(x=>/"profile":"b\|1"/.test(x)),JSON.stringify(sent));
+D.dispose(k);
 
 // https-страница без прокси — понятная ошибка
 ctx.location.protocol='https:'; const m={p:{server:'rx.example:8073',freq:1e6,mod:'am',bw:6000}}; D.init(m); vm.runInContext('owrxConnect',ctx)(m);
