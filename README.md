@@ -14,6 +14,9 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - Node graph editor: pan/zoom canvas, drag-and-drop modules, typed ports (signal, number, spectrum, image, text, block, IQ stream)
 - Dashboard view (split panes, draggable dividers) for building instrument-like UIs
 - **Tiles-only mode**: open the app with `?readonly-tiles` (e.g. `index.html?readonly-tiles#p=My patch`) — only the tiles are shown, no sidebar, toolbar, pane headers or graph; layout and graph cannot be edited or moved, hotkeys are off, the mode is not saved. Pressing any button on a source module while the engine is stopped starts it
+  - As a standalone window, only the player: `google-chrome --app="https://fagci.github.io/dsp?readonly-tiles=1"` (pin the module to a tile first)
+
+    ![Music Player in a Chrome app window, tiles-only mode](docs/screenshots/app-winamp.png)
 - **Module graph** pane in the dashboard: the regular node canvas inside a tile, next to the modules opened in other panes (SunVox-style) — see [Module graph pane](#module-graph-pane)
 - **Detail levels (LOD)**: double-tap a module's title to collapse it to a compact card (title only), to a **dot** (a circle with initials; the full name shows on hover / when selected) or back to full. Service modules (the auto adapters *IQ → Audio*, *I/Q → IQ*) are added as dots. The **detail** button in the toolbar switches all modules at once: full → compact → dots. The level is saved in patches
 - **Power profile** (⚡ in the toolbar): CPU share of every module (processing + drawing) as a badge on the module and a top-10 list, the total, and battery drain (%/h, where `navigator.getBattery` exists). Click a row to freeze a module. **skip unused** (on by default) does not compute modules whose result nobody uses: no display and no wire to a used module (outputs, sources and control modules are always kept)
