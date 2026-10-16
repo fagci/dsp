@@ -37,4 +37,12 @@ const trail=real.replace('}\n];','},\n]\n;');
 ok('trailing comma before ]',K.sdParse(trail,'kiwisdr').length===1);
 const ctl=real.replace('Montmorillon','Mont\tmorillon');
 ok('raw control char in string: per-object fallback',K.sdParse(ctl,'kiwisdr').length===1);
+const rx='<div class="views-row"><div class="geolocation-location js-hide" id="a1" data-lat="44.79" data-lng="-85.96" typeof="Place"><span property="geo"><meta property="latitude" content="44.79" /></span>'+
+  '<div class="location-content"><div class="views-field views-field-nothing"><h3>0-30 MHz SDR KF8KK-1 (of 2) | Empire, Michigan, MI USA</h3>\n<a href="http://21662.proxy.kiwisdr.com:8073/" rel="nofollow" target="_blank">http://21662.proxy.kiwisdr.com:8073/</a><br />\nEN74as: (44.79, -85.96)<br />\n<b>US</b>: Beulah<br />\nKiwiSDR</div></div></div>'+
+  '<div class="geolocation-location js-hide" id="a2" data-lat="47.85" data-lng="-122.31"><div class="location-content"><div class="views-field"><h3>Web SDR</h3><a href="https://sdr.example/ws">x</a><br />CN87: (47.85, -122.31)<br /><b>US</b>: Seattle<br />WebSDR</div></div></div>'+
+  '<div class="geolocation-location" data-lat="1" data-lng="2"><h3>no link</h3></div></div>';
+l=K.sdParse(rx,'rxtx');
+ok('rxtx: two points, no-link skipped',l.length===2,JSON.stringify(l));
+ok('rxtx fields',l[0].server==='21662.proxy.kiwisdr.com:8073' && l[0].lat===44.79 && l[0].lon===-85.96 && l[0].name==='0-30 MHz SDR KF8KK-1 (of 2)' && l[0].loc==='Empire, Michigan, MI USA' && l[0].hw==='KiwiSDR' && l[0].kind==='rxtx',JSON.stringify(l[0]));
+ok('rxtx https default port',l[1].server==='sdr.example:443' && l[1].hw==='WebSDR',JSON.stringify(l[1]));
 console.log(bad?'FAILED':'all ok'); process.exit(bad?1:0);
