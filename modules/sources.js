@@ -5423,15 +5423,17 @@ function kiwiResetRing(n){
   n.readPos=0; n.readCount=0; n.rebuffering=false;
 }
 
-// Чтение звука из кольца n.ring (n.audioRate → Eng.sr) в oa; нет данных — тишина. edge — край полосы, Гц (для sinc-фильтра)
-function netAudioRead(n,oa,edge){
-  const ring=n.ring;
-  if(!n.connected || ring.filled<ring.size*0.2){ oa.fill(0); return; }
+// Чтение звука из кольца n.ring (n.audioRate → Eng.sr) в oa; нет данных — тишина. edge — край полосы, Гц (для sinc-фильтра).
+// buf — запас в секундах: столько копим перед стартом и после недобора, при отставании больше 3 запасов лишнее выбрасывается.
+// Без buf — прежние доли кольца (20% / 90% → 50%), это несколько секунд задержки.
+function netAudioRead(n,oa,edge,buf){
+  const ring=n.ring, pre=buf ? buf*n.audioRate : ring.size*0.2, hi=buf ? pre*3 : ring.size*0.9, to=buf ? pre*1.2 : ring.size*0.5;
+  if(!n.connected || (buf ? ring.written<pre : ring.filled<pre)){ oa.fill(0); return; }
   const step=n.audioRate/Eng.sr, need=step*BLOCK;
   let lag=ring.written-n.readCount;
-  if(lag>ring.size*0.9){ const delta=lag-ring.size*0.5; n.readPos=(n.readPos+delta)%ring.size; n.readCount+=delta; lag=ring.written-n.readCount; }
+  if(lag>hi){ const delta=lag-to; n.readPos=(n.readPos+delta)%ring.size; n.readCount+=delta; lag=ring.written-n.readCount; }
   if(n.rebuffering){
-    if(lag<ring.size*0.2){ oa.fill(0); return; }
+    if(lag<pre){ oa.fill(0); return; }
     n.rebuffering=false;
   }
   if(lag<need){ n.rebuffering=true; oa.fill(0); return; }
