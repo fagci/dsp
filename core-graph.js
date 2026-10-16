@@ -1284,6 +1284,9 @@ let sideCollapsedPref=false;
 try{ sideCollapsedPref=localStorage.getItem('dsp-side-collapsed')==='1'; }catch(e){}
 function setSideCollapsed(on){ document.getElementById('side').classList.toggle('collapsed',!!on); }
 setSideCollapsed(sideCollapsedPref);
+// ?readonly-tiles — только тайлы: без панелей и правки раскладки, граф и горячие клавиши отключены
+const ROTILES=(()=>{ const v=new URLSearchParams(location.search).get('readonly-tiles'); return v!==null && !/^(0|false|no|off)$/i.test(v); })();
+if(ROTILES) document.body.classList.add('rotiles');
 function uiLocked(){ return dashMode && !dashGraphOn(); }   // в тайлах без панели графа холст закрыт
 /* ---- дашборд: тайловая раскладка закреплённых (📌) узлов, дерево произвольных сплитов (как в tiling WM) ---
    Graph.dashTree — либо null, либо {t:'leaf',id,node} с id узла или null (пустой слот),
@@ -1601,7 +1604,7 @@ addEventListener('pointerdown',e=>{                     // «⋯» закрыв�
    узлы, провода, пан/зум работают как вне тайлов. Узел, занявший другую панель, на холсте
    заменяется заглушкой (n.ghost) с теми же пинами: провода к нему видны, связи можно тянуть. */
 function dashGraphLeaf(){ return dashLeaves(Graph.dashTree).find(l=>dashTab(l).view==='graph')||null; }   // граф в активной вкладке
-function dashGraphOn(){ return dashMode && !!dashGraphLeaf(); }
+function dashGraphOn(){ return dashMode && !ROTILES && !!dashGraphLeaf(); }
 function nodePorts(n){ return n.ghost ? n.ghostPorts : n.ports; }
 function ghostBuild(n){
   const d=MOD[n.type], g=document.createElement('div');
@@ -1740,7 +1743,7 @@ function setDash(on){
   if(on) for(const n of Graph.nodes) if(n.xpand) xpandNode(n,false);   // в тайле заголовка с ⛶ нет — развёрнутость не должна остаться
   if(on && !dashGridEl) return;                        // старый закэшированный index.html без #dashGrid — тихо выходим
   dashMode=on; redrawAll();
-  LS.set('dsp-dash',on?'1':'');                        // режим переживает перезагрузку страницы
+  if(!ROTILES) LS.set('dsp-dash',on?'1':'');                        // режим переживает перезагрузку страницы
   cv.classList.toggle('dashboard',on);
   setSideCollapsed(on ? true : sideCollapsedPref);     // в тайлах сайдбар мешает — прячем, при выходе возвращаем как было
   dashBtn?.classList.toggle('on',on);
@@ -1863,6 +1866,7 @@ stat.textContent='block size '+v+' · inputs need to be re-enabled '; };
 // горячие клавиши: Delete — удалить выбранное, Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y — отмена и повтор; остальное — кнопками в панели
 window.addEventListener('keydown',ev=>{
 const t=ev.target;
+if(ROTILES) return;
 if(t &&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
 if(ev.key==='Delete' &&!ev.ctrlKey &&!ev.metaKey &&!ev.altKey){ ev.preventDefault(); delSel(); }
 const k=ev.key.toLowerCase();
@@ -2170,6 +2174,15 @@ if(!(Eng.running&&!Eng.paused)) askPermissions();
 const on=await Eng.toggle();
 if(!on){ stat.textContent='paused'; stat.classList.remove('warn','crit'); }
 };
+// кнопка источника при остановленном (или на паузе) движке сначала запускает основной контекст
+{ let starting=false;
+  document.addEventListener('click',e=>{
+    if(starting || (Eng.running && !Eng.paused)) return;
+    const b=e.target.closest?.('button'), el=b && b.closest('.node:not(.ghost)');
+    const d=el && MOD[el.dataset.type];
+    if(!d || b.closest('.nhead') || (d.cat!=='Sources' && modRole(d)!=='source')) return;
+    starting=true; Eng.toggle().catch(()=>{}).finally(()=>{ starting=false; });
+  },true); }
 const srSel=document.getElementById('sr');
 if(srSel) srSel.onchange=async e=>{
 const v=+e.target.value||null;
@@ -2334,7 +2347,7 @@ if(tg && (!hp || hp===tn)){ a=tg; nm=tn; }
 else if(hpd){ a=JSON.stringify(hpd); nm=hp; }
 else a=LS.get(AKEY)||LS.get('dsp-patch');
 if(a){ try{ deserialize(JSON.parse(a)); }catch(e){ nm=''; buildDemo(); } } else buildDemo();
-if(LS.get('dsp-dash')==='1') setDash(true);
+if(ROTILES || LS.get('dsp-dash')==='1') setDash(true);
 mobileBoot();
 fitViewWhenReady();                                 // сразу видно весь патч, а не дефолтный центр холста
 Undo.stack=[]; Undo.idx=-1; Undo.push();

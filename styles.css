@@ -1258,3 +1258,6 @@ select.aed-b{padding:0 6px}
 .wa-pick{background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:6px;width:min(480px,92vw);height:min(520px,80vh);font:12px var(--mono)}
 .wa-pick-fm{flex:1;min-height:0;display:flex}
 .wa-pick .fm{flex:1;min-height:0}
+
+/* ?readonly-tiles: только тайлы, без панелей и правки раскладки */
+body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages,body.rotiles .dash-tools,body.rotiles .dash-resizer,body.rotiles .dash-rail,body.rotiles .dash-pane.graph{display:none!important}
