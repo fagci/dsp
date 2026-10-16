@@ -355,6 +355,24 @@ def({ id:'recUniq', title:'Rec: Unique by Key', cat:'Data',
       return `×${e.count} ${lt} ${extra}`; }).join('\n');
     n.el.querySelector('.readout').textContent='unique '+rows.length+'\n'+tail; }});
 
+def({ id:'recMerge', title:'Rec Merge', cat:'Data', kw:'merge join combine concat records sources',
+  // Один провод на вход — поэтому несколько источников записей сводим здесь: на выход идут записи
+  // всех входов за такт, по порядку входов. Необязательная метка источника — в поле src.
+  ins:[{n:'rec1',t:'rec'},{n:'rec2',t:'rec'},{n:'rec3',t:'rec'},{n:'rec4',t:'rec'}],
+  outs:[{n:'rec',t:'rec'},{n:'count',t:'num'}],
+  readout:true,
+  params:[{n:'tags',t:'text',d:'',label:'source names for the src field (comma list: input 1, 2, …; empty — no src)'}],
+  init:n=>{ n.total=0; },
+  process(n,I){
+    const tags=String(n.p.tags||'').split(',').map(x=>x.trim()), out=[];
+    ['rec1','rec2','rec3','rec4'].forEach((k,i)=>{
+      for(const r of recList(I[k])) out.push(tags[i] && r && r.src==null ? {...r, src:tags[i]} : r);
+    });
+    n.total+=out.length;
+    return {rec:out.length?out:null, count:n.total};
+  },
+  draw(n){ n.el.querySelector('.readout').textContent='merged '+n.total; }});
+
 // Условие компилируется импортом blob-модуля: new Function/eval запрещены CSP страницы
 // (нет unsafe-eval), import() из blob: разрешён — так же сделан Module Builder.
 // Пока модуль грузится (доли мс), записи копятся и не теряются.
