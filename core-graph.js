@@ -2180,7 +2180,7 @@ if(!on){ stat.textContent='paused'; stat.classList.remove('warn','crit'); }
     if(starting || (Eng.running && !Eng.paused)) return;
     const b=e.target.closest?.('button'), el=b && b.closest('.node:not(.ghost)');
     const d=el && MOD[el.dataset.type];
-    if(!d || b.closest('.nhead') || (d.cat!=='Sources' && modRole(d)!=='source')) return;
+    if(!d || b.closest('.nhead') || (d.cat!=='Sources' && modRole(d)!=='source' && d.id!=='winamp')) return;
     starting=true; Eng.toggle().catch(()=>{}).finally(()=>{ starting=false; });
   },true); }
 const srSel=document.getElementById('sr');
