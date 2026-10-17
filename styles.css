@@ -355,7 +355,7 @@ body.noedit #bar .ed{display:none}
   #canvas #content .node .io3>.col{
     position:absolute;top:10px;bottom:10px;left:0;width:var(--pov);
     max-width:none;min-height:0;flex-direction:column;justify-content:flex-start;
-    gap:10px;padding:0;background:none;border:0;overflow:visible;pointer-events:none}
+    gap:10px;padding:0;background:none;border:0;overflow:visible;pointer-events:none;z-index:3}   /* выше .rz: пин важнее ресайза */
   #canvas #content .node .io3>.col.o{
     left:auto;right:0;justify-content:flex-start}
   /* колонки по ширине узла: 2 на узком, до 4 на широком (см. @container nio ниже) */
