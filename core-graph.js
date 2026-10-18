@@ -276,7 +276,8 @@ const mid=document.createElement('div'); mid.className='mid';
 const co=document.createElement('div'); co.className='col o';
 n.ports={i:{},o:{}}; n.set={};
 const wire=(e,p,dir)=>{ e.dataset.node=n.id; e.dataset.port=p.n; e.dataset.dir=dir;
-e.addEventListener('pointerdown',ev=>startLink(ev,n,p.n,dir)); };
+e.addEventListener('pointerdown',ev=>startLink(ev,n,p.n,dir));
+e.addEventListener('dblclick',ev=>pinPicker(ev,n,p.n,dir)); };
 // Порт с именем как у параметра — тот же пин в колонке ci/co, что и у обычных портов (слева —
 // вход, справа — выход: провода всегда в привычном месте), но пока не подключён — схлопнут
 // (см. styles.css .port.ctrl) и не ест место. Строка параметра остаётся простым полем без джека.
@@ -1170,6 +1171,13 @@ t.setAttribute('fill','none'); t.setAttribute('stroke','var(--acc)');
 t.setAttribute('vector-effect','non-scaling-stroke');
 t.setAttribute('stroke-dasharray','4 3'); t.setAttribute('stroke-width','1.5');
 wires.append(t); link.tmp=t; }
+function pinPicker(ev,n,port,dir){                  // двойной клик по пину — выбор подходящего модуля сразу
+if(uiLocked()) return;
+ev.preventDefault(); ev.stopPropagation();
+const t=portT(n,dir==='o'?'outs':'ins',port); if(!t) return;
+const at=toCanvas(ev);
+openModPicker(ev.clientX,ev.clientY,{x:at.x+(dir==='o'?70:0),y:at.y},{n,port,dir,type:t});
+}
 let pending=null;
 function clearPending(){ if(pending){ pending.el.classList.remove('lit'); pending=null; } }
 function bindPendingComplete(el,n,param){            // второй тап (клик-клик, без удержания) — довязать провод прямо
@@ -1615,6 +1623,7 @@ function ghostBuild(n){
   for(const dir of ['i','o']) for(const k in n.ports[dir]){
     const e=n.ports[dir][k].cloneNode(true); e.classList.remove('lit');
     e.addEventListener('pointerdown',ev=>startLink(ev,n,k,dir));
+    e.addEventListener('dblclick',ev=>pinPicker(ev,n,k,dir));
     (dir==='i'?ci:co).append(e); gp[dir][k]=e; }
   g.querySelector('.ttl').textContent=nodeTitle(n);
   bindDrag(g.querySelector('.nhead'),n);
