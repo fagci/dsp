@@ -13,7 +13,7 @@ async function samplerScan(){
 }
 async function samplerLoad(n){
   const id = parseInt(n.p.clip);
-  n.data = null; n.status = id ? 'loading…' : 'pick a clip from the Sample Library';
+  n.data = null; n.status = id ? 'loading…' : 'pick a clip from Files › audio';
   if(!id) return;
   const want = n.p.clip;
   const c = await SampleDB.getClip(id).catch(()=>null);

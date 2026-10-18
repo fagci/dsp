@@ -83,7 +83,7 @@ async function auView(ids){
 // выбор готового клипа из библиотеки → id или null
 async function auChoose(){
   const list=await auList();
-  if(!list.length){ alert('The Sample Library is empty'); return null; }
+  if(!list.length){ alert('Files › audio is empty'); return null; }
   return new Promise(res=>{
     const ov=document.createElement('div');
     ov.style.cssText='position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.88);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:#c8d2d6;font:12px ui-monospace,monospace';

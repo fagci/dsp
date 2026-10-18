@@ -140,6 +140,22 @@ const FileStore = (() => {
       for(const x of await this.list(f.space,id)) await this.copy(x.id,nid);
       return nid;
     },
+    // снимок для отмены удаления: папки (с содержимым) и файлы как есть; возвращает функцию возврата
+    async snapshot({d=[],f=[]}){
+      const dirs=[], files=new Map();
+      const walk=async id=>{ const fo=await this.getFolder(id); if(!fo) return; dirs.push(fo);
+        for(const sub of await this.listFolders(fo.space,id)) await walk(sub.id);
+        for(const x of await this.list(fo.space,id)) files.set(x.id,x); };
+      for(const id of d) await walk(id);
+      for(const id of f){ const r=await this.get(id); if(r) files.set(id,r); }
+      const space=(dirs[0]||[...files.values()][0])?.space;
+      return async()=>{
+        const db=await open(), tx=db.transaction(['folders','files'],'readwrite');
+        for(const x of dirs) tx.objectStore('folders').put(x);
+        for(const x of files.values()) tx.objectStore('files').put(x);
+        await doneP(tx); fire(space);
+      };
+    },
     async usage(space){                                // {files, bytes}
       return (await this.listAll(space)).reduce((u,f)=>({files:u.files+1,bytes:u.bytes+(f.size||0)}),{files:0,bytes:0});
     },
@@ -265,6 +281,19 @@ const TableStore = (() => {
     async importFile(space,file,folderId=null){
       const p=fid(folderId); return tblImportFile(file,p ? p+'/' : '');
     },
+    async snapshot({d=[],f=[]}){
+      const names=new Set(f), dirs=new Set((await allDirs()).filter(x=>d.some(y=>x===y || x.startsWith(y+'/'))));
+      for(const x of d) dirs.add(x);
+      for(const n of (await sum()).keys()) if(d.some(y=>n.startsWith(y+'/'))) names.add(n);
+      const lists=[];
+      for(const n of names){ const {cols,rows}=await tblReadList(null,n), m=await ListDB.getMeta(n);
+        lists.push({n,cols,rows,extra:{...(m?.types ? {types:m.types} : {}),...(m?.card ? {card:m.card} : {})}}); }
+      return async()=>{
+        if(dirs.size) await setSaved([...await saved(),...dirs]);
+        for(const l of lists) await tblPut(l.n,l.cols,l.rows,l.extra);
+        FileStore.notify('tables');
+      };
+    },
   };
 })();
 
@@ -315,13 +344,22 @@ async function fmPickFolder(space,exclude,title){
   });
 }
 
+// короткое сообщение внизу host с отменой; host должен быть position:relative
+function dspToast(host,text,undo){
+  const t=document.createElement('div'); t.className='dsp-toast'; t.append(text+' ');
+  const kill=()=>{ clearTimeout(tm); t.remove(); }, tm=setTimeout(kill,7000);
+  if(undo){ const b=document.createElement('button'); b.textContent='Undo'; b.onclick=async()=>{ kill(); try{ await undo(); }catch(e){ alert(e.message||String(e)); } }; t.append(b); }
+  host.querySelectorAll(':scope > .dsp-toast').forEach(x=>x.remove());
+  host.append(t);
+}
+
 const FM_SORT={name:(a,b)=>String(a.name).localeCompare(String(b.name),undefined,{numeric:true}),
   size:(a,b)=>(a.size||0)-(b.size||0), date:(a,b)=>(a.modified||0)-(b.modified||0),
   type:(a,b)=>String(a.mime).localeCompare(String(b.mime))||FM_SORT.name(a,b)};
 
 function fmMount(host,o={}){
   const spaces=o.spaces||FM_SPACES, home=spaces[0];
-  const S={space:o.space||home,folder:null,selected:null,urls:[],gen:0,dead:false,sort:'name',desc:false,q:'',multi:false,marks:new Set(),anchor:null};
+  const S={space:o.space||home,folder:null,selected:null,urls:[],gen:0,pg:0,dead:false,sort:'name',desc:false,q:'',multi:false,marks:new Set(),anchor:null,persisted:false};
   const root=document.createElement('div'); root.className='fm';
   const bar=document.createElement('div'); bar.className='fm-bar';
   const find=document.createElement('div'); find.className='fm-bar';
@@ -340,17 +378,18 @@ function fmMount(host,o={}){
   const search=document.createElement('input'); search.type='search'; search.placeholder='search…'; search.className='fm-q';
   search.oninput=()=>{ S.q=search.value.trim().toLowerCase(); refresh(); };
   const sortSel=document.createElement('select'); sortSel.title='Sort by';
-  for(const k of Object.keys(FM_SORT)){ const op=document.createElement('option'); op.value=op.textContent=k; sortSel.append(op); }
-  sortSel.onchange=()=>{ S.sort=sortSel.value; refresh(); };
-  const dirBtn=mk('↑','Ascending / descending',()=>{ S.desc=!S.desc; dirBtn.textContent=S.desc ? '↓' : '↑'; refresh(); });
-  const selBtn=mk('☑','Select several (or Ctrl / Shift + click)',()=>{ S.multi=!S.multi; selBtn.classList.toggle('on',S.multi); refresh(); });
-  find.append(search,sortSel,dirBtn,selBtn);
+  for(const [k,d,t] of [['name',0,'name ↑'],['name',1,'name ↓'],['date',1,'newest'],['date',0,'oldest'],['size',1,'largest'],['size',0,'smallest'],['type',0,'type']]){
+    const op=document.createElement('option'); op.value=k+':'+d; op.textContent=t; sortSel.append(op); }
+  sortSel.onchange=()=>{ const [k,d]=sortSel.value.split(':'); S.sort=k; S.desc=d==='1'; refresh(); };
+  find.append(search,sortSel);
   bar.append(
     mk('＋ folder','New folder here',guard(async()=>{ const n=prompt('Folder name:'); if(n) await B().addFolder(S.space,n,S.folder); })),
     mk('⤒ import','Add files from this device',()=>inp.click()),
     inp);
+  o.toolbar?.(bar);
   inp.onchange=async()=>{ const fs=[...inp.files]; inp.value=''; await addFiles(fs); };
-  root.append(bar,find,crumbs,bulk,list,info,disk);
+  const prev=document.createElement('div'); prev.className='fm-prev'; prev.hidden=true;
+  root.append(bar,find,crumbs,bulk,list,...(o.preview ? [prev] : []),info,disk);
   root.addEventListener('pointerdown',e=>e.stopPropagation());
   root.addEventListener('wheel',e=>e.stopPropagation());
   root.addEventListener('dragover',e=>{ e.preventDefault(); });
@@ -364,11 +403,12 @@ function fmMount(host,o={}){
       try{ await B().importFile(S.space,f,S.folder); }
       catch(e){ alert('Could not add '+f.name+': '+e.message); }
     }
+    if(!S.persisted){ S.persisted=true; try{ navigator.storage?.persist?.(); }catch(e){} }       // браузер не вытеснит хранилище
   }
   function go(space,folder){
     S.space=space; S.folder=folder; S.marks.clear(); S.anchor=null; search.value=S.q=''; select(null); refresh();
   }
-  // отметки: 'f:id' — файл, 'd:id' — папка; один клик отмечает одну строку, Ctrl / Shift / режим ☑ — несколько
+  // отметки: 'f:id' — файл, 'd:id' — папка; клик отмечает одну строку, долгое нажатие / правая кнопка / Ctrl / Shift — режим выделения нескольких
   const paintMarks=()=>[...list.children].forEach(r=>{ r.classList.toggle('mark',S.marks.has(r._mk)); const c=r.querySelector('input'); if(c) c.checked=S.marks.has(r._mk); });
   function pickRow(k,e){
     const keys=[...list.children].map(r=>r._mk).filter(Boolean);
@@ -376,19 +416,32 @@ function fmMount(host,o={}){
       const i=keys.indexOf(S.anchor), j=keys.indexOf(k);
       for(const x of keys.slice(Math.min(i,j),Math.max(i,j)+1)) S.marks.add(x);
     }else{ S.marks.has(k) ? S.marks.delete(k) : S.marks.add(k); S.anchor=k; }
-    drawBulk(); paintMarks();
+    S.multi=S.marks.size>0; refreshSel(); drawBulk(); paintMarks();
+  }
+  // режим выделения виден флажками в строках
+  function refreshSel(){ [...list.children].forEach(r=>{ const c=r.querySelector('input'); if(r._mk && !!c!==S.multi){ if(c) c.remove(); else addChk(r); } }); }
+  function addChk(row){ const c=document.createElement('input'); c.type='checkbox'; c.checked=S.marks.has(row._mk); c.onclick=e=>{ e.stopPropagation(); pickRow(row._mk,e); }; row.prepend(c); }
+  // долгое нажатие и правая кнопка отмечают строку (папку — без открытия)
+  function arm(row,k,after){
+    let tm=0, fired=false;
+    const stop=()=>clearTimeout(tm);
+    row.addEventListener('pointerdown',e=>{ if(e.button) return; fired=false; stop(); tm=setTimeout(()=>{ fired=true; pickRow(k); after?.(); },450); });
+    for(const ev of ['pointerup','pointerleave','pointercancel']) row.addEventListener(ev,stop);
+    row.addEventListener('contextmenu',e=>{ e.preventDefault(); pickRow(k); after?.(); });
+    row.addEventListener('click',e=>{ if(fired){ fired=false; e.stopImmediatePropagation(); } },true);
   }
   const several=e=>S.multi || !!(e && (e.ctrlKey || e.metaKey || e.shiftKey));
   const picked=()=>{ const f=[],d=[]; for(const k of S.marks) (k[0]==='f' ? f : d).push(idOf(k.slice(2))); return {f,d}; };
   function drawBulk(){
     bulk.textContent='';
     const n=S.marks.size;
-    const act=(t,title,ok,fn)=>{ const b=mk(t,title,guard(async()=>{ await fn(picked()); S.marks.clear(); drawBulk(); })); b.disabled=!n || !ok(picked()); return b; };
-    const lbl=document.createElement('span'); lbl.className='fm-info'; lbl.textContent=n ? n+' selected' : 'nothing selected';
-    bulk.append(lbl);
-    if(S.multi) bulk.append(
-      mk('all','Select everything shown',()=>{ for(const r of list.children) if(r._mk) S.marks.add(r._mk); drawBulk(); paintMarks(); }),
-      mk('none','Clear selection',()=>{ S.marks.clear(); drawBulk(); paintMarks(); }));
+    bulk.hidden=!n;
+    if(!n) return;
+    const act=(t,title,ok,fn)=>{ const b=mk(t,title,guard(async()=>{ await fn(picked()); S.marks.clear(); S.multi=false; drawBulk(); refreshSel(); })); b.disabled=!ok(picked()); return b; };
+    const lbl=document.createElement('span'); lbl.className='fm-info'; lbl.textContent=n+' selected';
+    bulk.append(lbl,
+      mk('all','Select everything shown',()=>{ for(const r of list.children) if(r._mk) S.marks.add(r._mk); S.multi=true; refreshSel(); drawBulk(); paintMarks(); }),
+      mk('none','Clear selection',()=>{ S.marks.clear(); S.multi=false; refreshSel(); drawBulk(); paintMarks(); }));
     bulk.append(
       act('✎','Rename',s=>s.f.length+s.d.length===1,async s=>{
         if(s.d.length){ const f=await B().getFolder(s.d[0]), nm=prompt('New name:',f.name); if(nm) await B().renameFolder(f.id,nm); }
@@ -398,10 +451,26 @@ function fmMount(host,o={}){
       act('⧉','Copy',()=>true,async s=>{ const t=await fmPickFolder(S.space,null,'Copy to…'); if(t===undefined) throw new Error('');
         for(const d of s.d) await B().copyFolder(d,t); for(const f of s.f) await B().copy(f,t); }),
       act('⤓','Download files',s=>s.f.length>0,async s=>{ for(const f of s.f){ const r=await B().get(f); if(r) await fmDownload(r); } }),
-      act('✕','Delete',()=>true,async s=>{ if(!confirm('Delete '+(s.f.length+s.d.length)+' selected item(s)?')) throw new Error('');
-        for(const d of s.d) await B().deleteFolder(d); for(const f of s.f){ if(S.selected?.id===f) select(null); await B().remove(f); } }));
+      act('✕','Delete (can be undone)',()=>true,async s=>{
+        const undo=await B().snapshot(s);
+        for(const d of s.d) await B().deleteFolder(d); for(const f of s.f){ if(S.selected?.id===f) select(null); await B().remove(f); }
+        dspToast(root,'Deleted '+(s.f.length+s.d.length)+' item(s).',undo); }));
   }
-  function select(rec){ S.selected=rec; o.onSelect?.(rec); [...list.children].forEach(r=>r.classList.toggle('sel',!!rec && r._rec===rec.id)); }
+  function select(rec){ S.selected=rec; o.onSelect?.(rec); [...list.children].forEach(r=>r.classList.toggle('sel',!!rec && r._rec===rec.id)); showPrev(rec); }
+  // превью выбранного файла: картинка, волна и длительность клипа, начало текста
+  async function showPrev(rec){
+    if(!o.preview) return;
+    const g=++S.pg; prev.textContent=''; prev.hidden=!rec;
+    if(!rec) return;
+    const m=rec.mime||'';
+    if(m.startsWith('image/') && rec.blob){ const u=URL.createObjectURL(rec.blob); S.urls.push(u); const im=document.createElement('img'); im.src=u; prev.append(im); }
+    else if(rec.meta?.peaks){ const cv=document.createElement('canvas'); cv.width=200; cv.height=28; fmPeaks(cv,rec.meta.peaks); prev.append(cv,' ',fmtDur(rec.meta.duration||0)+' · '+(rec.meta.sr||'')+' Hz'); }
+    else if(m.startsWith('text/') || /json|xml/.test(m) || rec.space==='tables'){
+      const t=await (await fmBlob(rec)).slice(0,500).text(); if(g!==S.pg) return;
+      const pre=document.createElement('pre'); pre.textContent=t; prev.append(pre);
+    } else prev.append((m||'file')+' · '+fmSize(rec.size||0));
+    o.previewExtra?.(rec,prev);
+  }
   async function refresh(){
     const g=++S.gen, be=B(), srch=!!S.q;
     const [folders0,files0,path,use]=await Promise.all([
@@ -414,7 +483,7 @@ function fmMount(host,o={}){
     const files=files0.filter(r=>!srch || r.name.toLowerCase().includes(S.q)).sort((a,b)=>FM_SORT[S.sort](a,b)*sg);
     const dirs=srch ? new Map((await be.allFolders(S.space)).map(f=>[f.id,f])) : null;
     const where=id=>{ const p=[]; for(let f=dirs.get(id);f;f=dirs.get(f.parentId)) p.unshift(f.name); return '/'+p.join('/'); };
-    o.onFolder?.(S.folder);
+    o.onFolder?.(S.folder); o.onNav?.(S.space,S.folder);
     for(const u of S.urls) URL.revokeObjectURL(u); S.urls=[];
     // отметки живут только пока объект на месте
     const have=new Set([...folders0.map(f=>'d:'+f.id),...files0.map(r=>'f:'+r.id)]);
@@ -426,9 +495,7 @@ function fmMount(host,o={}){
     if(S.space!==home){ crumbs.append(' › '); seg(S.space,S.space,null); }
     for(const f of path){ crumbs.append(' › '); seg(f.name,S.space,f.id); }
     list.textContent='';
-    const chk=(row,k)=>{ row._mk=k; row.classList.toggle('mark',S.marks.has(k));
-      if(!S.multi) return; const c=document.createElement('input'); c.type='checkbox'; c.checked=S.marks.has(k);
-      c.onclick=e=>{ e.stopPropagation(); pickRow(k,e); }; row.prepend(c); };
+    const chk=(row,k)=>{ row._mk=k; row.classList.toggle('mark',S.marks.has(k)); if(S.multi) addChk(row); arm(row,k); };
     // остальные хранилища — системные папки корня
     if(S.space===home && S.folder==null && !srch) for(const sp of spaces.slice(1)){
       const row=document.createElement('div'); row.className='fm-row fm-dir fm-sys';
@@ -464,7 +531,7 @@ function fmMount(host,o={}){
       row.onclick=e=>{
         const k='f:'+r.id;
         if(several(e)){ pickRow(k,e); return select(S.marks.has(k) ? r : null); }
-        S.marks=new Set([k]); S.anchor=k; drawBulk(); paintMarks(); select(r);
+        S.marks=new Set([k]); S.anchor=k; S.multi=false; refreshSel(); drawBulk(); paintMarks(); select(r);
         if(o.openOnClick) o.onOpen?.(r);
       };
       row.ondblclick=()=>{ if(!o.openOnClick) o.onOpen?.(r); };
@@ -485,17 +552,11 @@ function fmMount(host,o={}){
     fill.style.width=Math.min(100,f*100).toFixed(1)+'%';
     meter.classList.toggle('warn',f>0.8);
     diskTx.textContent='free '+fmSize(q.free)+' of '+fmSize(q.quota)+' · used '+fmSize(q.usage)+(q.persisted ? ' · persistent' : '');
-    persistBtn.hidden=q.persisted || !navigator.storage?.persist;
   }
-  const persistBtn=mk('⚑ keep','Ask the browser not to evict this storage when space runs low',async()=>{
-    try{ await navigator.storage.persist(); }catch(e){}
-    drawDisk();
-  });
-  bar.append(persistBtn);
   function setSpace(sp){ if(spaces.includes(sp)) go(sp,null); }
   const off=FileStore.onChange(sp=>{ if(!root.isConnected){ off(); S.dead=true; return; } if(!sp || sp===S.space) refresh(); });
   refresh();
-  return { root, refresh, setSpace, get space(){ return S.space; }, get folder(){ return S.folder; }, get selected(){ return S.selected; },
+  return { root, refresh, setSpace, toast:(t,u)=>dspToast(root,t,u), get space(){ return S.space; }, get folder(){ return S.folder; }, get selected(){ return S.selected; },
     async picked(){                                    // отмеченные файлы (записи) в порядке отметки
       const out=[]; for(const k of S.marks) if(k[0]==='f'){ const r=await B().get(idOf(k.slice(2))); if(r) out.push(r); }
       return out;
@@ -504,25 +565,97 @@ function fmMount(host,o={}){
 }
 let fmDrag=null;
 
-/* ---- узел: файловый менеджер ---- */
-def({ id:'files', title:'Files', cat:'Output', kw:'file manager storage samples images folder browser upload download', w:340, h:360, resize:true,
-  ins:[], outs:[{n:'id',t:'num'},{n:'name',t:'txt'},{n:'size',t:'num'},{n:'send',t:'num'},{n:'bin',t:'bin'}],
+/* ---- узел: файловый менеджер ----
+   Выбранный клип из audio проигрывается на выход `out` (▶ под списком, или входы clipId / play), ✎ открывает редактор,
+   ● rec пишет в текущую папку audio — с входа `in`, если он подключён и граф запущен, иначе с микрофона.
+   Это же заменило узел Sample Library (старые патчи открываются как Files). */
+async function fsArm(n,id,autoplay){
+  const clip=await SampleDB.getClip(id); if(!clip) return;
+  n.data=clip.samples; n.dataSr=clip.sr; n.pos=0; n.armed=id; if(autoplay) n.play=true;
+  n.fm?.refresh();
+}
+async function fsRecToggle(n){
+  if(n.rec) return fsRecStop(n);
+  if(n.inWired && Eng.running) n.rec={src:'graph',chunks:[],sr:Eng.sr,t0:performance.now()};
+  else{
+    const ctx=new (window.AudioContext||window.webkitAudioContext)();      // до await — иначе iOS не запустит контекст вне жеста
+    ctx.resume();
+    let st;
+    try{ st=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}}); }
+    catch(e){ ctx.close(); alert('Microphone unavailable: '+e.message); return; }
+    const src=ctx.createMediaStreamSource(st), sp=ctx.createScriptProcessor(4096,1,1);
+    const rec=n.rec={src:'mic',chunks:[],sr:ctx.sampleRate,t0:performance.now(),ctx,st,sp};
+    sp.onaudioprocess=e=>{ if(n.rec===rec) rec.chunks.push(e.inputBuffer.getChannelData(0).slice()); };
+    src.connect(sp); sp.connect(ctx.destination);
+  }
+  n.recTimer=setInterval(()=>fsRecUI(n),250); fsRecUI(n);
+}
+async function fsRecStop(n){
+  const rec=n.rec; n.rec=null;
+  clearInterval(n.recTimer); fsRecUI(n);
+  if(rec.src==='mic'){ rec.sp.disconnect(); rec.st.getTracks().forEach(t=>t.stop()); rec.ctx.close(); }
+  const len=rec.chunks.reduce((a,c)=>a+c.length,0);
+  if(!len){ alert(rec.src==='graph' ? 'Nothing recorded — is the graph running?' : 'Nothing recorded'); return; }
+  const samples=new Float32Array(len); let o=0; for(const c of rec.chunks){ samples.set(c,o); o+=c.length; }
+  const id=await SampleDB.addClip({name:'rec '+new Date().toLocaleTimeString(),folderId:n.fm?.folder??null,sr:rec.sr,samples,
+    peaks:SampleDB.computePeaks(samples),duration:len/rec.sr});
+  await fsArm(n,id,false);
+}
+function fsRecUI(n){
+  const b=n.recBtn; if(!b) return;
+  b.textContent=n.rec ? '■ '+fmtDur((performance.now()-n.rec.t0)/1000)+(n.rec.src==='graph' ? ' in' : ' mic') : '● rec';
+  b.classList.toggle('on',!!n.rec);
+}
+
+def({ id:'files', title:'Files', cat:'Output', kw:'file manager storage samples sample library clips audio record images folder browser upload download', w:340, h:420, resize:true,
+  ins:[{n:'clipId',t:'num'},{n:'play',t:'num'},{n:'in',t:'sig'}],
+  outs:[{n:'id',t:'num'},{n:'name',t:'txt'},{n:'size',t:'num'},{n:'send',t:'num'},{n:'bin',t:'bin'},{n:'out',t:'sig'},{n:'clipId',t:'num'},{n:'pos',t:'num'}],
   params:[{n:'meta',t:'check',d:true,label:'bin: attach name and type (off — bare bytes)'},
+    {n:'loop',t:'check',d:true,label:'loop the played clip'},
     {n:'sendBtn',t:'button',label:'Send selected → (pulse on `send`, bytes on `bin`; several — one per block)',fn:n=>{
       n.fm?.picked().then(a=>{ n.queue.push(...a); }); }}],
-  init:n=>{ n.fm=null; n.sel=null; n.queue=[]; n.busy=false; n.ready=-1; n.binOut=null; },
-  dispose:n=>{ n.fm?.destroy(); n.fm=null; },
-  process(n){ const send=n.ready; n.ready=-1;                                  // импульс: id на один блок, потом -1
+  init:n=>{ n.fm=null; n.sel=null; n.queue=[]; n.busy=false; n.ready=-1; n.binOut=null;
+    n.data=null; n.dataSr=0; n.pos=0; n.play=false; n.playGate=false; n.armed=null; n.rec=null; n.inWired=false; },
+  dispose:n=>{ if(n.rec) fsRecStop(n); n.editor?.close?.(); n.fm?.destroy(); n.fm=null; },
+  process(n,I){ const send=n.ready; n.ready=-1;                                // импульс: id на один блок, потом -1
+    n.inWired=I.in!=null;
+    if(n.rec?.src==='graph' && I.in) n.rec.chunks.push(Float32Array.from(I.in));
+    if(typeof I.clipId==='number' && I.clipId>=0 && I.clipId!==n.armed) fsArm(n,I.clipId,false);
+    if(typeof I.play==='number'){ const g=I.play>0.5; if(g && !n.playGate){ n.pos=0; n.play=true; } n.playGate=g; }
     const r=n.sel;
     if(!n.busy && n.queue.length){                // байты уходят только по кнопке; пульс send идёт вместе с ними, а не раньше
       const q=n.queue.shift(); n.busy=true;
       fmBlob(q).then(b=>b.arrayBuffer()).then(a=>{ n.binOut=n.p.meta ? binObj(new Uint8Array(a),fmFileName(q),q.mime) : binObj(new Uint8Array(a));
         n.ready=typeof q.id==='number' ? q.id : 0; n.busy=false; },()=>{ n.busy=false; });
     }
-    return {id:r && typeof r.id==='number' ? r.id : -1, name:r?.name||'', size:r?.size||0, send, bin:n.binOut}; },
+    const o=buf(n,'out'), d=n.data;
+    if(d && n.play){
+      const rate=(n.dataSr||Eng.sr)/Eng.sr;
+      for(let i=0;i<BLOCK;i++){
+        if(n.pos>=d.length-1){ if(n.p.loop) n.pos=0; else{ n.play=false; o[i]=0; continue; } }
+        const i0=n.pos|0, fr=n.pos-i0; o[i]=d[i0]*(1-fr)+d[i0+1]*fr; n.pos+=rate;
+      }
+    } else o.fill(0);
+    return {id:r && typeof r.id==='number' ? r.id : -1, name:r?.name||'', size:r?.size||0, send, bin:n.binOut,
+      out:o, clipId:n.armed??-1, pos:d ? n.pos/d.length : 0}; },
   draw(n){
+    if(n.playBtn?.isConnected) n.playBtn.textContent=n.armed===n.playId && n.play ? '⏸' : '▶';
     if(n.fm && n.mid.contains(n.fm.root)) return;
     n.fm?.destroy();
-    n.fm=fmMount(n.mid,{onSelect:r=>{ n.sel=r; }});
+    n.fm=fmMount(n.mid,{preview:true,onSelect:r=>{ n.sel=r; },
+      toolbar:bar=>{ n.recBtn=document.createElement('button'); n.recBtn.title='Record into this audio folder: from the `in` port when it is wired and the graph runs, otherwise from the microphone';
+        n.recBtn.hidden=n.fm?.space!=='audio'; n.recBtn.onclick=()=>fsRecToggle(n); bar.append(n.recBtn); fsRecUI(n); },
+      onNav:sp=>{ if(n.recBtn) n.recBtn.hidden=sp!=='audio'; },
+      previewExtra:(r,box)=>{
+        if(r.space!=='audio' || !r.meta?.sr) return;
+        const b=(t,title,f)=>{ const e=document.createElement('button'); e.textContent=t; e.title=title; e.onclick=f; box.append(e); return e; };
+        n.playId=r.id; n.playBtn=b('▶','Play on the `out` port',async()=>{
+          if(n.armed===r.id) n.play=!n.play; else await fsArm(n,r.id,true); });
+        b('✎','Edit the clip',async()=>{
+          if(n.editor) return;
+          const clip=await SampleDB.getClip(r.id); if(!clip) return;
+          n.editor=aedOpen(clip,{onSaved:async sid=>{ if(n.armed===sid) await fsArm(n,sid,false); },onClose:()=>{ n.editor=null; }});
+        });
+      }});
   }
 });
