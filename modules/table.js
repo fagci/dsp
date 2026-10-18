@@ -805,6 +805,10 @@ function tblInit(n){
     vmBtn:q('.tbl-vm'), filter:q('.tbl-filter'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:false, marked:-1};
   n.ui.view.hidden=!n.viewOpen;                           // пересборка узла (смена колонок) не должна прятать панель
   q('.tbl-viewb').classList.toggle('on',!!n.viewOpen);
+  const vw=n.ui.view;                                     // прокрутка и фокус поля «new field» переживают пересборку узла
+  vw.addEventListener('scroll',()=>{ if(!n._vr && !vw.hidden) n.viewScroll=vw.scrollTop; });
+  vw.addEventListener('focusin',e=>{ n.viewNew=e.target.classList.contains('tv-new'); });
+  if(n.viewOpen && n.schema) tblRenderView(n);            // сразу, а не после асинхронной tblRenderAll: панель не схлопывается на пересборке
   n._open=new Set(Array.isArray(n.p.open) ? n.p.open : []);
   if(!Array.isArray(n.p.open)) for(const k of new Set([...tblShow(n),n.p.list])){            // раскрыть пути отмеченных
     const parts=k.split('/'); parts.pop();
@@ -1335,7 +1339,8 @@ function tblViewApply(n,key,val,panel){
 }
 function tblViewColEdit(n,fn){ const v=tblViewCols(n).map(x=>({...x})); fn(v); tblViewApply(n,'vcols',v,true); }
 function tblRenderView(n){
-  const box=n.ui.view; box.innerHTML='';
+  const box=n.ui.view;
+  n._vr=true; box.innerHTML='';
   const mk=(tag,cls,txt,ev)=>{ const e=document.createElement(tag); if(cls) e.className=cls; if(txt!=null) e.textContent=txt; if(ev) for(const k in ev) e.addEventListener(k,ev[k]); return e; };
   const sel=(opts,val,fn)=>{ const e=mk('select'); for(const o of opts){ const op=mk('option',null,Array.isArray(o) ? o[1] : o); op.value=Array.isArray(o) ? o[0] : o; e.append(op); } e.value=val; e.addEventListener('change',()=>fn(e.value)); return e; };
   const top=mk('div','tv-top');
@@ -1370,6 +1375,8 @@ function tblRenderView(n){
   acts.append(mk('span','tv-lbl','otherwise colour by'),
     sel([['','auto (color, severity, type…)'],['-','nothing'],...n.cl.map(c=>[c,'value of '+c])],cols.includes(tintVal) || tintVal==='-' ? tintVal : '',x=>tblViewApply(n,'tint',x,false)));
   box.append(acts);
+  const settle=()=>{ box.scrollTop=n.viewScroll||0; if(n.viewNew) box.querySelector('.tv-new')?.focus({preventScroll:true}); };
+  settle(); requestAnimationFrame(()=>{ settle(); n._vr=false; });             // узел мог ещё не попасть в DOM
 }
 // список колонок одним действием: cl — новый набор, ren — {новое имя: старое}; схема, порядок колонок и раскраска следуют за именами
 async function tblColsApply(n,cl,ren={}){
@@ -1394,9 +1401,9 @@ function tblFieldsPanel(n,box,mk,sel){
     const row=mk('div','tv-col'), inp=mk('input','tv-q'); inp.placeholder='new field name';
     const add=async()=>{
       const v=inp.value.trim(); if(!v) return;
+      n.viewNew=true;
       if(n.cl.includes(v)){ inp.select(); return; }
       await tblColsApply(n,n.cl.concat([v]));
-      box.querySelector('.tv-new')?.focus();
     };
     inp.classList.add('tv-new');
     inp.addEventListener('keydown',e=>{ e.stopPropagation(); if(e.key==='Enter') add(); });
