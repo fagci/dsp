@@ -359,7 +359,7 @@ const FM_SORT={name:(a,b)=>String(a.name).localeCompare(String(b.name),undefined
 
 function fmMount(host,o={}){
   const spaces=o.spaces||FM_SPACES, home=spaces[0];
-  const S={space:o.space||home,folder:null,selected:null,urls:[],gen:0,pg:0,dead:false,sort:'name',desc:false,q:'',multi:false,marks:new Set(),anchor:null,persisted:false};
+  const S={space:o.space||home,folder:null,selected:null,urls:[],pu:[],gen:0,pg:0,dead:false,sort:'name',desc:false,q:'',multi:false,marks:new Set(),anchor:null,persisted:false};
   const root=document.createElement('div'); root.className='fm';
   const bar=document.createElement('div'); bar.className='fm-bar';
   const find=document.createElement('div'); find.className='fm-bar';
@@ -461,9 +461,12 @@ function fmMount(host,o={}){
   async function showPrev(rec){
     if(!o.preview) return;
     const g=++S.pg; prev.textContent=''; prev.hidden=!rec;
+    for(const u of S.pu) URL.revokeObjectURL(u); S.pu=[];                  // свои адреса: список перерисовывается чаще, чем меняется выбор
     if(!rec) return;
-    const m=rec.mime||'';
-    if(m.startsWith('image/') && rec.blob){ const u=URL.createObjectURL(rec.blob); S.urls.push(u); const im=document.createElement('img'); im.src=u; prev.append(im); }
+    const m=rec.mime||'', url=()=>{ const u=URL.createObjectURL(rec.blob); S.pu.push(u); return u; };
+    if(m.startsWith('image/') && rec.blob){ const im=document.createElement('img'); im.src=url(); prev.append(im); }
+    else if(m.startsWith('video/') && rec.blob){ const v=document.createElement('video'); v.src=url(); v.controls=true; v.preload='metadata'; prev.append(v); }
+    else if(m.startsWith('audio/') && rec.blob && !rec.meta?.peaks){ const a=document.createElement('audio'); a.src=url(); a.controls=true; a.preload='metadata'; prev.append(a); }
     else if(rec.meta?.peaks){ const cv=document.createElement('canvas'); cv.width=200; cv.height=28; fmPeaks(cv,rec.meta.peaks); prev.append(cv,' ',fmtDur(rec.meta.duration||0)+' · '+(rec.meta.sr||'')+' Hz'); }
     else if(m.startsWith('text/') || /json|xml/.test(m) || rec.space==='tables'){
       const t=await (await fmBlob(rec)).slice(0,500).text(); if(g!==S.pg) return;
@@ -561,14 +564,55 @@ function fmMount(host,o={}){
       const out=[]; for(const k of S.marks) if(k[0]==='f'){ const r=await B().get(idOf(k.slice(2))); if(r) out.push(r); }
       return out;
     },
-    destroy(){ S.dead=true; off(); for(const u of S.urls) URL.revokeObjectURL(u); root.remove(); } };
+    destroy(){ S.dead=true; off(); for(const u of [...S.urls,...S.pu]) URL.revokeObjectURL(u); root.remove(); } };
 }
 let fmDrag=null;
 
 /* ---- узел: файловый менеджер ----
-   Выбранный клип из audio проигрывается на выход `out` (▶ под списком, или входы clipId / play), ✎ открывает редактор,
-   ● rec пишет в текущую папку audio — с входа `in`, если он подключён и граф запущен, иначе с микрофона.
-   Это же заменило узел Sample Library (старые патчи открываются как Files). */
+   Звук: выбранный клип из audio играет на выход `out` (▶, ползунок перемотки, входы clipId / play / seek), ✎ — редактор клипа.
+   Запись (● rec или вход `rec`: ≥ 0.5 — идёт запись): звук с входа `in` (подключён и граф запущен) либо с микрофона, камера или экран.
+   Формат звука — clip (редактируемый, в audio), wav16 или opus; видео — webm / mp4 (что умеет браузер).
+   Приём: байты на входе `bin` (File → Bytes, Bytes → Frames …) сохраняются файлом. Куда: вход `path` —
+   [хранилище/]папки/[имя.расширение], папки создаются; пусто — открытая папка (запись) или Received (приём).
+   Узел заменил Sample Library и Bytes → File (старые патчи открываются как Files). */
+const FS_REC_AUDIO=['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/mp4'];
+const FS_REC_VIDEO=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4'];
+const fsStamp=()=>{ const d=new Date(), z=k=>String(k).padStart(2,'0'); return z(d.getHours())+'.'+z(d.getMinutes())+'.'+z(d.getSeconds()); };
+const fsExt=m=>m.includes('mp4') ? 'mp4' : m.includes('ogg') ? 'ogg' : 'webm';
+function fsWavI16(samples,sr){
+  const n=samples.length, b=new ArrayBuffer(44+n*2), v=new DataView(b);
+  const w=(o,t)=>{ for(let i=0;i<t.length;i++) v.setUint8(o+i,t.charCodeAt(i)); };
+  w(0,'RIFF'); v.setUint32(4,36+n*2,true); w(8,'WAVEfmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true); w(36,'data'); v.setUint32(40,n*2,true);
+  for(let i=0;i<n;i++) v.setInt16(44+i*2,Math.max(-1,Math.min(1,samples[i]))*32767,true);
+  return new Blob([b],{type:'audio/wav'});
+}
+// куда класть: path = [хранилище/]папки/[имя.расширение]; force — хранилище задано видом файла (клип — только audio)
+async function fsDest(n,path,space,force){
+  const parts=String(path||'').split('/').map(x=>x.trim()).filter(Boolean);
+  if(parts.length && FS_SPACES.includes(parts[0])){ const sp=parts.shift(); if(!force) space=sp; }
+  const name=parts.length && /\.[A-Za-z0-9]{1,5}$/.test(parts[parts.length-1]) ? parts.pop() : '';
+  let folderId=null;
+  if(!path){ if(n.fm?.space===space) folderId=n.fm.folder; }
+  else for(const f of parts){
+    const have=(await FileStore.listFolders(space,folderId)).find(x=>x.name===f);
+    folderId=have ? have.id : await FileStore.addFolder(space,f,folderId);
+  }
+  return {space,folderId,name};
+}
+async function fsSaveBlob(n,blob,name,space){                 // запись/приём → файл
+  const d=await fsDest(n,n.pathIn,space);
+  await FileStore.put({space:d.space,folderId:d.folderId,name:d.name||name,mime:blob.type||'application/octet-stream',blob,meta:{}});
+  n.okP=2;
+}
+async function fsReceive(n,o){
+  const blob=new Blob([o.d],{type:o.mime||'application/octet-stream'}), name=o.name||'data.bin';
+  const space=(o.mime||'').startsWith('image/') ? 'images' : 'files';
+  const d=await fsDest(n,n.pathIn||'Received',space), nm=d.name||name;
+  await FileStore.importFile(d.space,new File([blob],nm,{type:blob.type}),d.folderId,nm);
+  if(n.p.download) fmDownload({name:nm,mime:blob.type,blob});
+  n.okP=2;
+}
 async function fsArm(n,id,autoplay){
   const clip=await SampleDB.getClip(id); if(!clip) return;
   n.data=clip.samples; n.dataSr=clip.sr; n.pos=0; n.armed=id; if(autoplay) n.play=true;
@@ -576,52 +620,95 @@ async function fsArm(n,id,autoplay){
 }
 async function fsRecToggle(n){
   if(n.rec) return fsRecStop(n);
-  if(n.inWired && Eng.running) n.rec={src:'graph',chunks:[],sr:Eng.sr,t0:performance.now()};
-  else{
-    const ctx=new (window.AudioContext||window.webkitAudioContext)();      // до await — иначе iOS не запустит контекст вне жеста
-    ctx.resume();
-    let st;
-    try{ st=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}}); }
-    catch(e){ ctx.close(); alert('Microphone unavailable: '+e.message); return; }
-    const src=ctx.createMediaStreamSource(st), sp=ctx.createScriptProcessor(4096,1,1);
-    const rec=n.rec={src:'mic',chunks:[],sr:ctx.sampleRate,t0:performance.now(),ctx,st,sp};
-    sp.onaudioprocess=e=>{ if(n.rec===rec) rec.chunks.push(e.inputBuffer.getChannelData(0).slice()); };
-    src.connect(sp); sp.connect(ctx.destination);
-  }
-  n.recTimer=setInterval(()=>fsRecUI(n),250); fsRecUI(n);
+  if(n.recBusy) return;
+  n.recBusy=true;
+  try{
+    const src=n.p.recSrc, fmt=n.p.recFmt;
+    if(src==='audio' && n.inWired && Eng.running) n.rec={kind:'pcm',src:'graph',chunks:[],sr:Eng.sr,t0:performance.now()};
+    else if(src==='audio' && fmt!=='opus'){
+      const ctx=new (window.AudioContext||window.webkitAudioContext)();      // до await — иначе iOS не запустит контекст вне жеста
+      ctx.resume();
+      let st;
+      try{ st=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}}); }
+      catch(e){ ctx.close(); alert('Microphone unavailable: '+e.message); return; }
+      const sc=ctx.createMediaStreamSource(st), sp=ctx.createScriptProcessor(4096,1,1);
+      const rec=n.rec={kind:'pcm',src:'mic',chunks:[],sr:ctx.sampleRate,t0:performance.now(),ctx,st,sp};
+      sp.onaudioprocess=e=>{ if(n.rec===rec) rec.chunks.push(e.inputBuffer.getChannelData(0).slice()); };
+      sc.connect(sp); sp.connect(ctx.destination);
+    } else{                                                                   // MediaRecorder: opus с микрофона, камера, экран
+      if(typeof MediaRecorder==='undefined'){ alert('MediaRecorder is unavailable in this browser'); return; }
+      let st;
+      try{
+        st=src==='audio' ? await navigator.mediaDevices.getUserMedia({audio:true})
+          : src==='screen' ? await navigator.mediaDevices.getDisplayMedia({video:true,audio:true})
+          : await navigator.mediaDevices.getUserMedia({video:true,audio:true}).catch(()=>navigator.mediaDevices.getUserMedia({video:true}));
+      }catch(e){ alert((src==='audio' ? 'Microphone' : src==='screen' ? 'Screen' : 'Camera')+' unavailable: '+e.message); return; }
+      const mime=(src==='audio' ? FS_REC_AUDIO : FS_REC_VIDEO).find(t=>MediaRecorder.isTypeSupported(t))||'';
+      const mr=new MediaRecorder(st,mime ? {mimeType:mime} : undefined), chunks=[];
+      const rec=n.rec={kind:'mr',src,mr,st,chunks,t0:performance.now()};
+      mr.ondataavailable=e=>{ if(e.data.size) chunks.push(e.data); };
+      mr.onstop=async()=>{
+        st.getTracks().forEach(t=>t.stop());
+        if(!chunks.length) return;
+        const blob=new Blob(chunks,{type:mr.mimeType||mime});
+        try{ await fsSaveBlob(n,blob,(src==='audio' ? 'rec ' : src+' ')+fsStamp()+'.'+fsExt(blob.type),'files'); }catch(e){ alert('Could not save: '+e.message); }
+      };
+      st.getTracks().forEach(t=>t.addEventListener('ended',()=>{ if(n.rec===rec) fsRecStop(n); }));
+      mr.start(1000);
+    }
+    n.recTimer=setInterval(()=>fsRecUI(n),250); fsRecUI(n);
+  } finally{ n.recBusy=false; }
 }
 async function fsRecStop(n){
-  const rec=n.rec; n.rec=null;
+  const rec=n.rec; if(!rec) return; n.rec=null;
   clearInterval(n.recTimer); fsRecUI(n);
+  if(rec.kind==='mr'){ if(rec.mr.state!=='inactive') rec.mr.stop(); return; }
   if(rec.src==='mic'){ rec.sp.disconnect(); rec.st.getTracks().forEach(t=>t.stop()); rec.ctx.close(); }
   const len=rec.chunks.reduce((a,c)=>a+c.length,0);
   if(!len){ alert(rec.src==='graph' ? 'Nothing recorded — is the graph running?' : 'Nothing recorded'); return; }
   const samples=new Float32Array(len); let o=0; for(const c of rec.chunks){ samples.set(c,o); o+=c.length; }
-  const id=await SampleDB.addClip({name:'rec '+new Date().toLocaleTimeString(),folderId:n.fm?.folder??null,sr:rec.sr,samples,
-    peaks:SampleDB.computePeaks(samples),duration:len/rec.sr});
-  await fsArm(n,id,false);
+  try{
+    if(n.p.recFmt==='clip'){
+      const d=await fsDest(n,n.pathIn,'audio',true);
+      await SampleDB.addClip({name:d.name.replace(/\.[^.]+$/,'')||'rec '+fsStamp(),folderId:d.folderId,sr:rec.sr,samples,
+        peaks:SampleDB.computePeaks(samples),duration:len/rec.sr});
+      n.okP=2;
+    } else await fsSaveBlob(n,fsWavI16(samples,rec.sr),'rec '+fsStamp()+'.wav','files');       // wav16; opus из графа не кодируется — тоже wav16
+  }catch(e){ alert('Could not save: '+e.message); }
 }
 function fsRecUI(n){
   const b=n.recBtn; if(!b) return;
-  b.textContent=n.rec ? '■ '+fmtDur((performance.now()-n.rec.t0)/1000)+(n.rec.src==='graph' ? ' in' : ' mic') : '● rec';
+  b.textContent=n.rec ? '■ '+fmtDur((performance.now()-n.rec.t0)/1000)+' '+(n.rec.src==='graph' ? 'in' : n.rec.src) : '● rec';
   b.classList.toggle('on',!!n.rec);
 }
 
-def({ id:'files', title:'Files', cat:'Output', kw:'file manager storage samples sample library clips audio record images folder browser upload download', w:340, h:420, resize:true,
-  ins:[{n:'clipId',t:'num'},{n:'play',t:'num'},{n:'in',t:'sig'}],
-  outs:[{n:'id',t:'num'},{n:'name',t:'txt'},{n:'size',t:'num'},{n:'send',t:'num'},{n:'bin',t:'bin'},{n:'out',t:'sig'},{n:'clipId',t:'num'},{n:'pos',t:'num'}],
+def({ id:'files', title:'Files', cat:'Output', kw:'file manager storage samples sample library clips audio video record trigger receive save bytes images folder browser upload download', w:340, h:440, resize:true,
+  ins:[{n:'clipId',t:'num'},{n:'play',t:'num'},{n:'seek',t:'num'},{n:'in',t:'sig'},{n:'rec',t:'num'},{n:'bin',t:'bin'},{n:'path',t:'txt'}],
+  outs:[{n:'id',t:'num'},{n:'name',t:'txt'},{n:'size',t:'num'},{n:'send',t:'num'},{n:'bin',t:'bin'},{n:'out',t:'sig'},{n:'clipId',t:'num'},{n:'pos',t:'num'},{n:'ok',t:'num'}],
   params:[{n:'meta',t:'check',d:true,label:'bin: attach name and type (off — bare bytes)'},
     {n:'loop',t:'check',d:true,label:'loop the played clip'},
+    {n:'recSrc',t:'select',opts:['audio','camera','screen'],d:'audio',label:'record from (audio: `in` port when wired, else microphone)'},
+    {n:'recFmt',t:'select',opts:['clip','wav16','opus'],d:'clip',label:'audio format: clip (editable, in audio) · wav16 · opus (microphone)'},
+    {n:'download',t:'check',d:false,label:'also download received files'},
     {n:'sendBtn',t:'button',label:'Send selected → (pulse on `send`, bytes on `bin`; several — one per block)',fn:n=>{
       n.fm?.picked().then(a=>{ n.queue.push(...a); }); }}],
   init:n=>{ n.fm=null; n.sel=null; n.queue=[]; n.busy=false; n.ready=-1; n.binOut=null;
-    n.data=null; n.dataSr=0; n.pos=0; n.play=false; n.playGate=false; n.armed=null; n.rec=null; n.inWired=false; },
+    n.data=null; n.dataSr=0; n.pos=0; n.play=false; n.playGate=false; n.armed=null; n.rec=null; n.recGate=false; n.inWired=false;
+    n.lastBin=null; n.pathIn=''; n.okP=0; n.seekIn=null; },
   dispose:n=>{ if(n.rec) fsRecStop(n); n.editor?.close?.(); n.fm?.destroy(); n.fm=null; },
   process(n,I){ const send=n.ready; n.ready=-1;                                // импульс: id на один блок, потом -1
     n.inWired=I.in!=null;
+    if(typeof I.path==='string') n.pathIn=I.path.trim();
     if(n.rec?.src==='graph' && I.in) n.rec.chunks.push(Float32Array.from(I.in));
+    if(typeof I.rec==='number'){                                                // внешний триггер записи: уровень
+      const g=I.rec>=0.5;
+      if(g && !n.recGate && !n.rec) fsRecToggle(n); else if(!g && n.recGate && n.rec) fsRecStop(n);
+      n.recGate=g;
+    }
+    if(I.bin && I.bin.d && I.bin!==n.lastBin){ n.lastBin=I.bin; fsReceive(n,I.bin).catch(e=>console.warn('Files: receive',e)); }
     if(typeof I.clipId==='number' && I.clipId>=0 && I.clipId!==n.armed) fsArm(n,I.clipId,false);
     if(typeof I.play==='number'){ const g=I.play>0.5; if(g && !n.playGate){ n.pos=0; n.play=true; } n.playGate=g; }
+    if(typeof I.seek==='number' && I.seek!==n.seekIn){ n.seekIn=I.seek; if(n.data) n.pos=Math.min(1,Math.max(0,I.seek))*(n.data.length-1); }
     const r=n.sel;
     if(!n.busy && n.queue.length){                // байты уходят только по кнопке; пульс send идёт вместе с ними, а не раньше
       const q=n.queue.shift(); n.busy=true;
@@ -636,21 +723,31 @@ def({ id:'files', title:'Files', cat:'Output', kw:'file manager storage samples 
         const i0=n.pos|0, fr=n.pos-i0; o[i]=d[i0]*(1-fr)+d[i0+1]*fr; n.pos+=rate;
       }
     } else o.fill(0);
+    const ok=n.okP>0 ? 1 : 0; if(n.okP>0) n.okP--;
     return {id:r && typeof r.id==='number' ? r.id : -1, name:r?.name||'', size:r?.size||0, send, bin:n.binOut,
-      out:o, clipId:n.armed??-1, pos:d ? n.pos/d.length : 0}; },
+      out:o, clipId:n.armed??-1, pos:d ? n.pos/d.length : 0, ok}; },
   draw(n){
-    if(n.playBtn?.isConnected) n.playBtn.textContent=n.armed===n.playId && n.play ? '⏸' : '▶';
+    if(n.playBtn?.isConnected){
+      const here=n.armed===n.playId && n.data;
+      n.playBtn.textContent=here && n.play ? '⏸' : '▶';
+      if(!n.seeking) n.seekEl.value=here ? Math.round(n.pos/n.data.length*1000) : 0;
+      n.timeEl.textContent=fmtDur(here ? n.pos/n.dataSr : 0)+' / '+fmtDur(here ? n.data.length/n.dataSr : n.playDur||0);
+    }
     if(n.fm && n.mid.contains(n.fm.root)) return;
     n.fm?.destroy();
     n.fm=fmMount(n.mid,{preview:true,onSelect:r=>{ n.sel=r; },
-      toolbar:bar=>{ n.recBtn=document.createElement('button'); n.recBtn.title='Record into this audio folder: from the `in` port when it is wired and the graph runs, otherwise from the microphone';
-        n.recBtn.hidden=n.fm?.space!=='audio'; n.recBtn.onclick=()=>fsRecToggle(n); bar.append(n.recBtn); fsRecUI(n); },
-      onNav:sp=>{ if(n.recBtn) n.recBtn.hidden=sp!=='audio'; },
+      toolbar:bar=>{ n.recBtn=document.createElement('button'); n.recBtn.title='Record (settings: record from / audio format); into the open folder or the path input';
+        n.recBtn.onclick=()=>fsRecToggle(n); bar.append(n.recBtn); fsRecUI(n); },
       previewExtra:(r,box)=>{
         if(r.space!=='audio' || !r.meta?.sr) return;
         const b=(t,title,f)=>{ const e=document.createElement('button'); e.textContent=t; e.title=title; e.onclick=f; box.append(e); return e; };
-        n.playId=r.id; n.playBtn=b('▶','Play on the `out` port',async()=>{
+        n.playId=r.id; n.playDur=r.meta.duration||0;
+        n.playBtn=b('▶','Play on the `out` port',async()=>{
           if(n.armed===r.id) n.play=!n.play; else await fsArm(n,r.id,true); });
+        const rg=n.seekEl=document.createElement('input'); rg.type='range'; rg.min=0; rg.max=1000; rg.value=0; rg.className='fm-seek'; rg.title='Seek';
+        rg.oninput=async()=>{ n.seeking=true; if(n.armed!==r.id) await fsArm(n,r.id,false); if(n.data) n.pos=rg.value/1000*(n.data.length-1); };
+        rg.onchange=()=>{ n.seeking=false; };
+        n.timeEl=document.createElement('span'); box.append(rg,n.timeEl);
         b('✎','Edit the clip',async()=>{
           if(n.editor) return;
           const clip=await SampleDB.getClip(r.id); if(!clip) return;

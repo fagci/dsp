@@ -42,7 +42,7 @@ if(!(s.keys[0] in n.p)) n.p[s.keys[0]]=s.d[0];
 if(!(s.keys[1] in n.p)) n.p[s.keys[1]]=s.d[1];
 } else if(!(s.n in n.p)) n.p[s.n]=s.d; }
 }
-const TYPE_ALIAS={sampleLib:'files'};                 // узел заменён: старые патчи открываются новым
+const TYPE_ALIAS={sampleLib:'files',binSave:'files'};                 // узел заменён: старые патчи открываются новым
 function makeNode(type,params,id,x,y){               // узел без DOM — для внутренностей групп
 type=TYPE_ALIAS[type]||type;
 const d=MOD[type]; if(!d) return null;
