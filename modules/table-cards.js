@@ -365,34 +365,3 @@ function tcStep(n,i,d){
   const j=(i+d+N)%N; tblSelect(n,j); tcDetail(n,j);
 }
 
-/* ---------- схема в панели «▦ view» ---------- */
-function tcFieldsPanel(n,box,mk,sel){
-  if(tblRO(n)) return;
-  box.append(mk('div','tv-sec','Fields — type, choices, links, shown on the card'));
-  const lists=(n.treeNames||[]).filter(x=>tblKind(x)!=='preset');
-  const show=new Set(n.schema.card.show||[]);
-  for(const c of n.cl){
-    const d=tcDef(n,c), t=d.t||(tblType(n,c)==='text' ? 'text' : tblType(n,c));
-    const row=mk('div','tv-col');
-    const card=mk('input'); card.type='checkbox'; card.checked=show.has(c); card.title='show on the card';
-    card.addEventListener('change',()=>{ const s=new Set(n.schema.card.show||[]); card.checked ? s.add(c) : s.delete(c);
-      n.schema.card.show=n.cl.filter(x=>s.has(x)); tcSchemaSave(n); tblRenderList(n); });
-    row.append(card,mk('span','tv-name',c),sel(TC_TYPES,t,v=>{
-      const nd={...d,t:v}; if(v!=='choice') delete nd.opts; if(v!=='link'){ delete nd.to; delete nd.multi; }
-      tcSetDef(n,c,nd).then(()=>{ tblRenderView(n); tblRenderList(n); });
-    }));
-    if(t==='choice'){
-      const o=mk('input','tv-q'); o.value=(d.opts||[]).join(', '); o.placeholder='choice 1, choice 2, …';
-      o.addEventListener('keydown',e=>e.stopPropagation());
-      o.addEventListener('change',()=>tcSetDef(n,c,{...d,opts:o.value.split(',').map(s=>s.trim()).filter(Boolean)}));
-      row.append(o);
-    }
-    if(t==='link'){
-      row.append(sel([['','— list —'],...lists.map(x=>[x,tblKind(x)==='patch' ? 'This patch' : x])],d.to||'',v=>tcSetDef(n,c,{...d,to:v})));
-      const m=mk('input'); m.type='checkbox'; m.checked=!!d.multi; m.title='several entries';
-      m.addEventListener('change',()=>tcSetDef(n,c,{...d,multi:m.checked}));
-      row.append(m,mk('span','tv-lbl','many'));
-    }
-    box.append(row);
-  }
-}

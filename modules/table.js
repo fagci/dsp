@@ -515,10 +515,10 @@ async function tblFromRows(n,list){
     if(n.rowsAgain){ const a=n.rowsAgain; n.rowsAgain=null; tblFromRows(n,a); }
   }
 }
-async function tblColsEdit(n,cl){                       // переименование/добавление/удаление колонок
+async function tblColsEdit(n,cl,ren){                   // переименование/добавление/удаление колонок; ren — {новое имя: старое}
   if(tblRO(n)) return;
   const old=n.cl;
-  const rows=n.all.map(r=>{ const o={}; for(const c of cl) o[c]=r[c]??''; return o; });
+  const rows=n.all.map(r=>{ const o={}; for(const c of cl) o[c]=r[ren?.[c]??c]??''; return o; });
   const gone=old.filter(c=>!cl.includes(c));
   n.cl=cl.slice(); n.all=rows;
   if(tblKind(n.p.list)==='db'){
@@ -787,12 +787,11 @@ function tblInit(n){
       <input class="tbl-filter" placeholder="filter: 20m  demod:am  lo>7M  -fm  not proto:tcp" title="words match from the start of any field; col:text, col>5M, col<=100; NOT: -word, !word, not word, col!=x">
       <span class="tbl-count"></span>
     </div>
-    <div class="tbl-cols" hidden></div>
     <div class="tbl-view" hidden></div>
     <div class="tbl-acts">
       <button class="tbl-btn pri tbl-add">+ row</button>
       <button class="tbl-btn tbl-vm" title="view"></button>
-      <button class="tbl-btn tbl-viewb" title="fields (types, links), columns, their format and row colour rules">▦ view</button>
+      <button class="tbl-btn tbl-viewb" title="fields (add, rename, remove, type, links), columns, their format and row colour rules">▦ view</button>
       <button class="tbl-btn tbl-here" title="new row at my current position (GPS) — with the icon, a photo and a sound in the same form">📍 here</button>
     </div>
     <div class="tbl-list" tabindex="0"></div>
@@ -803,8 +802,9 @@ function tblInit(n){
   syncCustomHeight(n,root,150);
   const q=s=>root.querySelector(s);
   n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), tree:q('.tbl-tree'), pick:q('.tbl-pick'), shown:q('.tbl-shown'),
-    vmBtn:q('.tbl-vm'), filter:q('.tbl-filter'), cols:q('.tbl-cols'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:false, marked:-1};
-  n.ui.cols.hidden=!n.colsOpen;                           // пересборка узла (смена колонок) не должна прятать редактор
+    vmBtn:q('.tbl-vm'), filter:q('.tbl-filter'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:false, marked:-1};
+  n.ui.view.hidden=!n.viewOpen;                           // пересборка узла (смена колонок) не должна прятать панель
+  q('.tbl-viewb').classList.toggle('on',!!n.viewOpen);
   n._open=new Set(Array.isArray(n.p.open) ? n.p.open : []);
   if(!Array.isArray(n.p.open)) for(const k of new Set([...tblShow(n),n.p.list])){            // раскрыть пути отмеченных
     const parts=k.split('/'); parts.pop();
@@ -920,8 +920,7 @@ function tblMainMenu(n){
   it('Add template columns…','the data stays',()=>tblTplMenu(n,'apply'));
   it('Delete list','',()=>tblDeleteList(n));
   tblMenuHead(m,'View');
-  it('Columns & colors…','which columns to show, their order and format; row colour rules',()=>tblViewToggle(n));
-  it(n.ui.cols.hidden ? 'Edit data columns…' : 'Hide data columns','add and remove the columns of the list itself',()=>{ n.ui.cols.hidden=!n.ui.cols.hidden; n.colsOpen=!n.ui.cols.hidden; });
+  it('Fields & colors…','add, rename, remove fields; type, shown columns, their order and format; row colour rules',()=>tblViewToggle(n));
   it('Shown lists…','tick several lists to show them on the map and the bands output',()=>tblTreeToggle(n));
   it(n.ui.tail ? 'Show first rows' : 'Show last rows','',()=>{ n.ui.tail=!n.ui.tail; tblRenderList(n); });
 }
@@ -963,8 +962,8 @@ async function tblRenderAll(n){
   n.treeNames=names;
   tblRenderTree(n);
   ui.filter.value=n.p.filter||'';
-  tblRenderCols(n);
   tblRenderList(n);
+  if(n.viewOpen) tblRenderView(n);
   tcOpenPending(n);
 }
 /* ---------- дерево списков ---------- */
@@ -1059,29 +1058,6 @@ async function tblPick(n,list){
   const sh=n.p.show;
   if(Array.isArray(sh) && (!sh.length || (sh.length===1 && tblCanon(sh[0])===n.p.list))) n.p.show=[list];
   await tblUse(n,list);
-}
-function tblRenderCols(n){
-  const box=n.ui.cols, ro=tblRO(n);
-  box.innerHTML='';
-  for(const c of n.cl){
-    const chip=document.createElement('span');
-    chip.className='tbl-chip';
-    chip.innerHTML=`<span>${escapeHtml(c)}</span>`+(ro ? '' : '<span class="x">×</span>');
-    chip.querySelector('.x')?.addEventListener('click',async()=>{
-      if(!confirm('Remove column "'+c+'" from all rows?')) return;
-      await tblColsEdit(n,n.cl.filter(x=>x!==c)); tblRenderAll(n);
-    });
-    box.append(chip);
-  }
-  if(!ro){
-    const add=document.createElement('span');
-    add.textContent='+ col'; add.className='tbl-chip add';
-    add.addEventListener('click',async()=>{
-      const nm=(prompt('New column name:')||'').trim(); if(!nm || n.cl.includes(nm)) return;
-      await tblColsEdit(n,n.cl.concat([nm])); tblRenderAll(n);
-    });
-    box.append(add);
-  }
 }
 function tblRenderList(n,inc){
   const ui=n.ui, list=ui.list, N=n.rows.length, ro=tblRO(n), grid=tcView(n)==='grid';
@@ -1347,7 +1323,7 @@ function tblMark(n,still){
 }
 // панель «▦ view»: колонки (показ, порядок, формат, ширина), раскладка и правила раскраски строк
 function tblViewToggle(n){
-  const v=n.ui.view; v.hidden=!v.hidden;
+  const v=n.ui.view; v.hidden=!v.hidden; n.viewOpen=!v.hidden;
   n.ui.root.querySelector('.tbl-viewb').classList.toggle('on',!v.hidden);
   if(!v.hidden) tblRenderView(n);
 }
@@ -1363,30 +1339,12 @@ function tblRenderView(n){
   const mk=(tag,cls,txt,ev)=>{ const e=document.createElement(tag); if(cls) e.className=cls; if(txt!=null) e.textContent=txt; if(ev) for(const k in ev) e.addEventListener(k,ev[k]); return e; };
   const sel=(opts,val,fn)=>{ const e=mk('select'); for(const o of opts){ const op=mk('option',null,Array.isArray(o) ? o[1] : o); op.value=Array.isArray(o) ? o[0] : o; e.append(op); } e.value=val; e.addEventListener('change',()=>fn(e.value)); return e; };
   const top=mk('div','tv-top');
-  top.append(mk('span','tv-ttl','Columns & colors'),
+  top.append(mk('span','tv-ttl','Fields & colors'),
     sel([['cards','cards (photo, fields)'],['grid','full list (columns)'],['compact','brief list (name · values)']],tcView(n),x=>tblViewApply(n,'vmode',x,true)),
     sel([['utc','time: UTC'],['local','time: local']],n.p.tz==='local' ? 'local' : 'utc',x=>tblViewApply(n,'tz',x,true)),
     mk('span','tv-x','✕',{click:()=>tblViewToggle(n)}));
   box.append(top);
-  tcFieldsPanel(n,box,mk,sel);
-  const grid=tcView(n)==='grid';
-  if(grid){
-    box.append(mk('div','tv-sec','Columns'));
-    const vc=tblViewCols(n);
-    vc.forEach((x,i)=>{
-      const row=mk('div','tv-col'+(x.hide?' off':''));
-      const cb=mk('input'); cb.type='checkbox'; cb.checked=!x.hide;
-      cb.addEventListener('change',()=>tblViewColEdit(n,v=>{ v[i].hide=!cb.checked; }));
-      const w=mk('input','tv-w'); w.type='number'; w.min=0; w.step=10; w.value=x.w||''; w.placeholder='auto'; w.title='width, px (empty — by content)';
-      w.addEventListener('keydown',e=>e.stopPropagation());
-      w.addEventListener('change',()=>tblViewColEdit(n,v=>{ v[i].w=Math.max(0,+w.value||0); }));
-      row.append(cb,mk('span','tv-name',x.c),sel(TBL_FMTS,x.fmt||'auto',f=>tblViewColEdit(n,v=>{ v[i].fmt=f; })),w,
-        mk('span','tv-mv','▲',{click:()=>{ if(i) tblViewColEdit(n,v=>{ [v[i-1],v[i]]=[v[i],v[i-1]]; }); }}),
-        mk('span','tv-mv','▼',{click:()=>{ if(i<vc.length-1) tblViewColEdit(n,v=>{ [v[i+1],v[i]]=[v[i],v[i+1]]; }); }}));
-      box.append(row);
-    });
-    const ra=mk('div','tv-acts'); ra.append(mk('button','tbl-btn','Reset columns',{click:()=>tblViewApply(n,'vcols',null,true)})); box.append(ra);
-  }
+  tblFieldsPanel(n,box,mk,sel);
   box.append(mk('div','tv-sec','Row colors — the first matching rule wins'));
   const rules=Array.isArray(n.p.rules) ? n.p.rules : [];
   const setRules=(fn,panel)=>{ const r=rules.map(x=>({...x})); fn(r); tblViewApply(n,'rules',r,panel); };
@@ -1412,6 +1370,103 @@ function tblRenderView(n){
   acts.append(mk('span','tv-lbl','otherwise colour by'),
     sel([['','auto (color, severity, type…)'],['-','nothing'],...n.cl.map(c=>[c,'value of '+c])],cols.includes(tintVal) || tintVal==='-' ? tintVal : '',x=>tblViewApply(n,'tint',x,false)));
   box.append(acts);
+}
+// список колонок одним действием: cl — новый набор, ren — {новое имя: старое}; схема, порядок колонок и раскраска следуют за именами
+async function tblColsApply(n,cl,ren={}){
+  if(tblRO(n)) return;
+  const fwd={}; for(const k in ren) fwd[ren[k]]=k;
+  const nm=c=>fwd[c]??c, live=c=>cl.includes(nm(c));
+  const sc=n.schema, types={};
+  for(const k in sc.types) if(live(k)) types[nm(k)]=sc.types[k];
+  sc.types=types; sc.card.show=(sc.card.show||[]).filter(live).map(nm);
+  if(Array.isArray(n.p.vcols)) n.p.vcols=n.p.vcols.filter(x=>x && live(x.c)).map(x=>({...x,c:nm(x.c)}));
+  if(n.p.tint) n.p.tint=nm(n.p.tint);
+  const sv=tcSchemaSave(n), done=tblColsEdit(n,cl,ren);   // n.cl уже новый — панель можно перерисовать, не дожидаясь базы
+  tblRenderView(n);
+  await Promise.all([sv,done]);
+  tblRenderList(n);
+}
+// «Fields» панели view: имя (клик — переименовать), тип, показ на карточке; в режиме full list — ещё показ колонки, формат, ширина, порядок
+function tblFieldsPanel(n,box,mk,sel){
+  const ro=tblRO(n), grid=tcView(n)==='grid';
+  box.append(mk('div','tv-sec','Fields'+(grid ? ' — column, name, type, format, width, order' : ' — name, type, shown on the card')));
+  if(!ro){
+    const row=mk('div','tv-col'), inp=mk('input','tv-q'); inp.placeholder='new field name';
+    const add=async()=>{
+      const v=inp.value.trim(); if(!v) return;
+      if(n.cl.includes(v)){ inp.select(); return; }
+      await tblColsApply(n,n.cl.concat([v]));
+      box.querySelector('.tv-new')?.focus();
+    };
+    inp.classList.add('tv-new');
+    inp.addEventListener('keydown',e=>{ e.stopPropagation(); if(e.key==='Enter') add(); });
+    row.append(inp,mk('button','tbl-btn pri','+ field',{click:add}));
+    box.append(row);
+  }
+  const lists=(n.treeNames||[]).filter(x=>tblKind(x)!=='preset');
+  const vc=tblViewCols(n), show=new Set(n.schema.card.show||[]);
+  vc.forEach((x,i)=>{
+    const c=x.c, d=tcDef(n,c), t=d.t||(tblType(n,c)==='text' ? 'text' : tblType(n,c));
+    const row=mk('div','tv-col'+(grid && x.hide ? ' off' : ''));
+    if(grid){
+      const cb=mk('input'); cb.type='checkbox'; cb.checked=!x.hide; cb.title='show as a column';
+      cb.addEventListener('change',()=>tblViewColEdit(n,v=>{ v[i].hide=!cb.checked; }));
+      row.append(cb);
+    }
+    const name=mk('span','tv-name',c);
+    if(!ro){
+      name.title='click to rename'; name.classList.add('tv-ren');
+      name.addEventListener('click',()=>{
+        const e=mk('input','tv-q'); e.value=c;
+        let fin=false;
+        const end=async ok=>{
+          if(fin) return; fin=true;
+          const v=e.value.trim();
+          if(ok && v && v!==c && !n.cl.includes(v)) await tblColsApply(n,n.cl.map(k=>k===c ? v : k),{[v]:c});
+          else tblRenderView(n);
+        };
+        e.addEventListener('keydown',ev=>{ ev.stopPropagation(); if(ev.key==='Enter') end(true); else if(ev.key==='Escape') end(false); });
+        e.addEventListener('blur',()=>end(true));
+        name.replaceWith(e); e.focus(); e.select();
+      });
+    }
+    row.append(name);
+    if(!ro){
+      row.append(sel(TC_TYPES,t,v=>{
+        const nd={...d,t:v}; if(v!=='choice') delete nd.opts; if(v!=='link'){ delete nd.to; delete nd.multi; }
+        tcSetDef(n,c,nd); tblRenderView(n); tblRenderList(n);
+      }));
+      if(t==='choice'){
+        const o=mk('input','tv-q'); o.value=(d.opts||[]).join(', '); o.placeholder='choice 1, choice 2, …';
+        o.addEventListener('keydown',e=>e.stopPropagation());
+        o.addEventListener('change',()=>tcSetDef(n,c,{...d,opts:o.value.split(',').map(s=>s.trim()).filter(Boolean)}));
+        row.append(o);
+      }
+      if(t==='link'){
+        row.append(sel([['','— list —'],...lists.map(k=>[k,tblKind(k)==='patch' ? 'This patch' : k])],d.to||'',v=>tcSetDef(n,c,{...d,to:v})));
+        const m=mk('input'); m.type='checkbox'; m.checked=!!d.multi; m.title='several entries';
+        m.addEventListener('change',()=>tcSetDef(n,c,{...d,multi:m.checked}));
+        row.append(m,mk('span','tv-lbl','many'));
+      }
+      const card=mk('input'); card.type='checkbox'; card.checked=show.has(c); card.title='show on the card';
+      card.addEventListener('change',()=>{ const s=new Set(n.schema.card.show||[]); card.checked ? s.add(c) : s.delete(c);
+        n.schema.card.show=n.cl.filter(k=>s.has(k)); tcSchemaSave(n); tblRenderList(n); });
+      row.append(mk('span','tv-lbl','card'),card);
+    }
+    if(grid){
+      const w=mk('input','tv-w'); w.type='number'; w.min=0; w.step=10; w.value=x.w||''; w.placeholder='auto'; w.title='width, px (empty — by content)';
+      w.addEventListener('keydown',e=>e.stopPropagation());
+      w.addEventListener('change',()=>tblViewColEdit(n,v=>{ v[i].w=Math.max(0,+w.value||0); }));
+      row.append(sel(TBL_FMTS,x.fmt||'auto',f=>tblViewColEdit(n,v=>{ v[i].fmt=f; })),w,
+        mk('span','tv-mv','▲',{click:()=>{ if(i) tblViewColEdit(n,v=>{ [v[i-1],v[i]]=[v[i],v[i-1]]; }); }}),
+        mk('span','tv-mv','▼',{click:()=>{ if(i<vc.length-1) tblViewColEdit(n,v=>{ [v[i+1],v[i]]=[v[i],v[i+1]]; }); }}));
+    }
+    if(!ro) row.append(mk('span','tv-mv','✕',{click:()=>{
+      if(confirm('Remove field "'+c+'" from all rows?')) tblColsApply(n,n.cl.filter(k=>k!==c));
+    }}));
+    box.append(row);
+  });
+  if(grid){ const ra=mk('div','tv-acts'); ra.append(mk('button','tbl-btn','Reset columns',{click:()=>tblViewApply(n,'vcols',null,true)})); box.append(ra); }
 }
 function tblForm(n,rec,onSave,onCancel){
   const form=document.createElement('div');
