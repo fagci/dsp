@@ -144,17 +144,22 @@ const tblClean=r=>{ const o={}; for(const k in r){ const v=r[k]; o[k]=v==null ? 
 
 /* ---------- фильтр ---------- */
 // слова через пробел, все должны совпасть: «20m» — с начала слова любого поля, «col:text» — в конкретном поле,
-// «col>5M», «col<=100», «col=x» — сравнение (числа с k/M/G понимаются); «a|b» — любое из, «-слово» / «-col:x» — исключить,
+// «col>5M», «col<=100», «col=x» — сравнение (числа с k/M/G понимаются); «a|b» — любое из,
+// НЕ: «-слово», «!слово», «not слово», «-col:x», «col!=x», «col!:x» — исключить,
 // «col:» без значения — поле не пусто (to: — записи, где есть адресат)
 function tblFilter(q){
   q=String(q||'').trim().toLowerCase(); if(!q) return null;
-  const terms=q.split(/\s+/).map(w=>{
-    const neg=w.length>1 && w[0]==='-'; if(neg) w=w.slice(1);
-    const m=w.match(/^([^:<>=]+)(:|>=|<=|>|<|=)(.*)$/);
+  const terms=[]; let not=false;
+  for(let w of q.split(/\s+/)){
+    if(w==='not' || w==='!'){ not=!not; continue; }
+    let neg=not; not=false;
+    while(w.length>1 && (w[0]==='-' || w[0]==='!')){ neg=!neg; w=w.slice(1); }
+    const m=w.match(/^([^:<>=!]+)(!=|!:|:|>=|<=|>|<|=)(.*)$/);
     const t=m ? {col:m[1],op:m[2],val:m[3]} : {val:w};
+    if(t.op==='!=' || t.op==='!:'){ neg=!neg; t.op=t.op==='!=' ? '=' : ':'; }
     t.neg=neg; t.alts=t.val.split('|');
-    return t;
-  });
+    terms.push(t);
+  }
   const words=v=>String(v??'').toLowerCase().split(/[\s/()]+/);
   const startsWord=(v,s)=>{ const str=String(v??'').toLowerCase(); return str.startsWith(s) || words(v).some(w=>w.startsWith(s)); };
   const cmp=(v,op,s)=>{
@@ -173,6 +178,7 @@ function tblFilter(q){
     return t.alts.some(a=>cmp(r0[k],t.op,a));
   };
   let r0;
+  if(!terms.length) return null;
   return r=>{ r0=r; return terms.every(t=>test(t)!==t.neg); };
 }
 
@@ -283,7 +289,7 @@ function tblDerive(n){
   if(n.timeCol){ let prev=0; n.tt=n.rows.map(r=>{ const v=seqTime(r[n.timeCol]); if(v!=null) prev=v; return prev; }); }
   n.geo=!!(n.latCol && n.lonCol);
   tblBands(n);
-  n.uiDirty=true;
+  n.uiDirty=true; n.uiFull=true;
 }
 // записи списка для выхода rows: строка как есть, а у строк с частотой — ещё и числовые lo / hi / step и label / color
 // (диапазон для спектра и сканеров; потребителям записей без lo они просто не видны)
@@ -396,10 +402,13 @@ async function tblAdd(n,recs){
       if(grown) await ListDB.setMeta(n.p.list,{cols:n.cl});
     }catch(e){ alert('storage: '+(e.message||e)); return; }
   } else ids=rows.map((_,i)=>n.all.length+i);
+  const wasFull=n.uiFull || !!(n.p.key && n.p.key.trim());     // upsert правит старые строки на месте
   n.all.push(...rows); n.ids.push(...ids);
+  let dropped=false;
   // потолок: старые записи уходят (лог не растёт бесконечно)
   const cap=kind==='patch' ? Math.min(+n.p.maxRows||1000,1000) : +n.p.maxRows||0;
   if(cap>0 && n.all.length>cap){
+    dropped=true;
     const drop=n.ids.splice(0,n.all.length-cap); n.all.splice(0,drop.length);
     if(kind==='db') await ListDB.removeMany(drop).catch(()=>{});
     n.idx=Math.max(0,n.idx-drop.length);
@@ -411,6 +420,7 @@ async function tblAdd(n,recs){
   }
   if(grown) tblSetCols(n,n.cl.slice(),false);
   tblDerive(n);
+  n.uiFull=!!(wasFull || dropped || grown);              // иначе список только дописан: DOM достраивается без перерисовки
 }
 async function tblUpdate(n,i,rec){
   if(tblRO(n)) return;
@@ -719,9 +729,9 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     }
     if(n.ui){
       const vk=[n.p.vcols,n.p.rules,n.p.tint,n.p.vmode,n.p.tz];
-      if(!n._vk || vk.some((x,i)=>x!==n._vk[i])){ n._vk=vk; n.uiDirty=true; if(n.ui.view && !n.ui.view.hidden) tblRenderView(n); }
+      if(!n._vk || vk.some((x,i)=>x!==n._vk[i])){ n._vk=vk; n.uiDirty=true; n.uiFull=true; if(n.ui.view && !n.ui.view.hidden) tblRenderView(n); }
       // полная перерисовка до 300 строк × колонок — реже на длинном списке
-      if(n.uiDirty && performance.now()-(n.uiT||0)>400+2*Math.min(n.rows.length,TBL_ROWS)){ n.uiDirty=false; n.uiT=performance.now(); tblRenderList(n); }
+      if(n.uiDirty && performance.now()-(n.uiT||0)>400+2*Math.min(n.rows.length,TBL_ROWS)){ n.uiDirty=false; n.uiT=performance.now(); tblRenderList(n,true); }
       tblMark(n);
     }
   },
@@ -758,7 +768,7 @@ function tblInit(n){
     </div>
     <div class="tbl-tree" hidden></div>
     <div class="tbl-bar">
-      <input class="tbl-filter" placeholder="filter: 20m  demod:am  lo>7M" title="words match from the start of any field; col:text, col>5M, col<=100">
+      <input class="tbl-filter" placeholder="filter: 20m  demod:am  lo>7M  -fm  not proto:tcp" title="words match from the start of any field; col:text, col>5M, col<=100; NOT: -word, !word, not word, col!=x">
       <span class="tbl-count"></span>
     </div>
     <div class="tbl-cols" hidden></div>
@@ -1047,7 +1057,7 @@ function tblRenderCols(n){
     box.append(add);
   }
 }
-function tblRenderList(n){
+function tblRenderList(n,inc){
   const ui=n.ui, list=ui.list, N=n.rows.length, ro=tblRO(n), grid=n.p.vmode!=='compact';
   // перерисовка при новых записях не должна сбрасывать прокрутку: запоминаем позицию, у низа в режиме tail — остаёмся у низа
   const keep=list.scrollTop, atEnd=list.scrollTop+list.clientHeight>=list.scrollHeight-4;
@@ -1057,15 +1067,47 @@ function tblRenderList(n){
     const e=document.createElement('div');
     e.textContent=n.all.length ? 'nothing matches' : ro ? 'empty' : 'empty — add a row, import a file or wire rec / text';
     e.className='tbl-empty';
-    list.replaceChildren(e); ui.marked=-1; return;
+    list.replaceChildren(e); ui.marked=-1; ui.rend=null; return;
   }
   n.bgCtx=tblTintCtx(n);
+  // только дописанные строки: достраиваем хвост, остальное не трогаем (без мигания и пересборки 300 строк)
+  const rd=ui.rend, oe=rd ? rd.e : 0;
+  if(inc && !n.uiFull && rd && rd.grid===grid && N>oe && (!ui.tail || N<=TBL_ROWS) && ui.tail===rd.tail
+     && n.rows[0]===rd.first && n.rows[oe-1]===rd.last){
+    const e=Math.min(N,TBL_ROWS);
+    let vc=null, texts=null, fit=true;
+    if(grid){
+      vc=rd.vc; texts=[];
+      for(let i=oe;i<e && fit;i++){
+        const t=vc.map(x=>tblCell(x,n.rows[i][x.c],n.p.tz==='local'));
+        t.forEach((v,k)=>{ if(v.length>rd.wid[k]) fit=false; });
+        texts.push(t);
+      }
+    }
+    if(fit){
+      rd.foot?.remove();
+      const frag=document.createDocumentFragment();
+      for(let i=oe;i<e;i++) frag.append(tblRow(n,i,ro,grid ? {vc,t:texts[i-oe]} : null));
+      rd.foot=null;
+      if(N>TBL_ROWS){
+        const m=document.createElement('div');
+        m.textContent='… '+(N-e)+' more rows — narrow with the filter';
+        m.className='tbl-empty sm';
+        frag.append(m); rd.foot=m;
+      }
+      list.append(frag);
+      rd.e=e; rd.last=n.rows[e-1];
+      if(ui.tail && atEnd) list.scrollTop=list.scrollHeight;
+      tblMark(n,true);
+      return;
+    }
+  }
   const frag=document.createDocumentFragment();
   const s=ui.tail ? Math.max(0,N-TBL_ROWS) : 0, e=Math.min(N,s+TBL_ROWS);
-  let vc=null, texts=null;
+  let vc=null, texts=null, wid=null, foot=null;
   if(grid){
     vc=tblViewCols(n).filter(x=>!x.hide);
-    const wid=vc.map(x=>Math.max(x.c.length,2));
+    wid=vc.map(x=>Math.max(x.c.length,2));
     texts=[];
     for(let i=s;i<e;i++){
       const t=vc.map(x=>tblCell(x,n.rows[i][x.c],n.p.tz==='local'));
@@ -1084,8 +1126,10 @@ function tblRenderList(n){
     const m=document.createElement('div');
     m.textContent=(ui.tail?'… '+s+' earlier rows hidden':'… '+(N-e)+' more rows')+' — narrow with the filter';
     m.className='tbl-empty sm';
-    frag.append(m);
+    frag.append(m); foot=m;
   }
+  ui.rend={grid,tail:ui.tail,e,first:n.rows[s],last:n.rows[e-1],vc,wid,foot};
+  n.uiFull=false;
   list.replaceChildren(frag);                            // одна атомарная замена: прокрутка не сбрасывается
   list.scrollTop=ui.tail && atEnd ? list.scrollHeight : keep;
   ui.marked=-1; tblMark(n,true);
