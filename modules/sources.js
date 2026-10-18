@@ -998,13 +998,15 @@ def({ id:'textsrc', title:'Text Source', cat:'Sources',
 // (новое значение) или поле с кнопкой Send; каждая строка уходит с завершающим \n.
 
 async function serialTeardown(n){
-  n.connected=false; n.connecting=false; n.reading=false; if(n.binQ) n.binQ.length=0;
+  n.connected=false; n.connecting=false; n.reading=false; if(n.binQ) n.binQ.length=0; if(n.lineQ) n.lineQ.length=0;
   if(n.reader){ try{ await n.reader.cancel(); }catch(e){} try{ n.reader.releaseLock(); }catch(e){} n.reader=null; }   // порт закрывается только без замков
   if(n.port){ try{ await n.port.close(); }catch(e){} n.port=null; }
 }
 function serialDisconnect(n){ n.status='disconnected'; serialTeardown(n); }
 
 // Границы чтения из порта не совпадают с границами строк — копим в буфер и режем по \n.
+// Строки — в очередь (как в Text over Network): process() выдаёт по одной за такт, поэтому
+// многострочный ответ прошивки (HELP, пакеты пачкой) не сворачивается в последнюю строку.
 async function serialReadLoop(n){
   n.reading=true;
   const reader = n.port.readable.getReader(), dec = new TextDecoder();
@@ -1020,7 +1022,7 @@ async function serialReadLoop(n){
       let idx;
       while((idx=buf.indexOf('\n'))>=0){
         const line = buf.slice(0,idx).replace(/\r$/,''); buf=buf.slice(idx+1);
-        if(line){ n.lastLine=line; n.linePulse=2; }
+        if(line){ n.lineQ.push(line); if(n.lineQ.length>1000) n.lineQ.splice(0,n.lineQ.length-1000); }
       }
     }
     if(n.reading) n.status='port closed by device';   // done без явного disconnect()
@@ -1089,17 +1091,18 @@ def({ id:'webserial', title:'Serial Port (WebSerial)', cat:'Sources',
     {n:'baud',t:'select',opts:['4800','9600','19200','38400','57600','115200'],d:'9600'},
     {n:'connect',t:'button',label:'Connect',fn:n=>serialConnect(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>serialDisconnect(n)},
-    {n:'tx',t:'text',d:'',label:'text to send (\\n \\xHH)'},
+    {n:'tx',t:'text',d:'',label:'text to send'},
     {n:'send',t:'button',label:'Send',fn:n=>{ if(serialSendText(n,n.p.tx)){ n.p.tx=''; n.set?.tx?.(''); } }},
   ],
   init:n=>{
     n.port=null; n.reader=null; n.connected=false; n.connecting=false; n.reading=false;
-    n.lastLine=''; n.linePulse=0; n.status='not connected';
+    n.lastLine=''; n.lineQ=[]; n.status='not connected';
     n.binQ=[]; n.binOut=null; n.lastSend=null; n.lastText=null; n.chain=Promise.resolve(); n.sent=0; n.got=0;
   },
   dispose:n=>{ serialTeardown(n).catch(e=>console.error('serial dispose:',e)); },
   process(n,I){
-    const go = n.linePulse>0?1:0; if(n.linePulse>0) n.linePulse--;
+    let go=0;
+    if(n.lineQ.length){ n.lastLine=n.lineQ.shift(); go=1; }        // по строке за такт — как Text over Network
     if(I.send && I.send.d && I.send!==n.lastSend){ n.lastSend=I.send; if(n.connected) serialWriteBytes(n,I.send.d); }
     if(typeof I.text==='string' && I.text!==n.lastText){ n.lastText=I.text; serialSendText(n,I.text); }
     if(n.binQ.length){                                  // всё, что пришло за такт, одним куском: границы чтения всё равно случайны
