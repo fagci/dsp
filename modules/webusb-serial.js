@@ -2,9 +2,10 @@
 /* ============================ WebSerial поверх WebUSB ============================
    В Chrome на Android нет navigator.serial, зато есть WebUSB: порт собирается из USB-устройства (OTG-кабель).
    Драйверы: CDC-ACM (tinySA, Flipper, Pico, ESP32-C3/S3/C5 по родному USB), CH340/CH341, CP210x.
-   Ставится только там, где navigator.serial нет. Не проверялось на железе. */
+   Ставится там, где navigator.serial нет, и на Android поверх родного: родной показывает системный диалог, а нужен выбор USB. Не проверялось на железе. */
 (()=>{
-if(typeof navigator==='undefined' || navigator.serial || !navigator.usb) return;
+if(typeof navigator==='undefined' || !navigator.usb) return;
+if(navigator.serial && !/Android/i.test(navigator.userAgent)) return;
 
 const bitsOf=o=>({data:o.dataBits||8, stop:o.stopBits===2?2:1, parity:o.parity==='even'?2:o.parity==='odd'?1:0});
 
