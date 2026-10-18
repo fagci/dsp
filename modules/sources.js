@@ -994,6 +994,8 @@ def({ id:'textsrc', title:'Text Source', cat:'Sources',
 // GPS/NMEA-модули, самодельные платы на Arduino/ESP с ADC, простые UART-SDR — всё это
 // на входе просто текстовые строки. Дальше их можно парсить уже в графе (NMEA, CSV и т.п.),
 // этот узел сам ничего не разбирает — только читает порт и отдаёт строку целиком.
+// Отправка текста (для интерактива с прошивками: MODE WIFI, CH 11, PING…) — провод text
+// (новое значение) или поле с кнопкой Send; каждая строка уходит с завершающим \n.
 
 async function serialTeardown(n){
   n.connected=false; n.connecting=false; n.reading=false; if(n.binQ) n.binQ.length=0;
@@ -1053,22 +1055,53 @@ function serialWriteBytes(n,data){
     try{ await w.write(data); n.sent++; } finally{ w.releaseLock(); }
   }).catch(e=>{ n.status='write error: '+e.message; });
 }
+
+// Текст в порт: удобно для команд прошивкам (MODE WIFI, CH 11, PING…). Одна строка без
+// завершающего перевода получает \n сама; \n \r \t \xHH — esc-последовательности в
+// точные байты (обычный текст — UTF-8), так что можно отправить и не-текст. Порядок
+// записей — как у байтов, по цепочке промисов.
+function serialTextBytes(s){
+  const out=[];
+  for(let i=0;i<s.length;i++){
+    const c=s[i];
+    if(c==='\\' && i+1<s.length){
+      const d=s[i+1].toLowerCase();
+      if(d==='n'){ out.push(10); i++; continue; }
+      if(d==='r'){ out.push(13); i++; continue; }
+      if(d==='t'){ out.push(9); i++; continue; }
+      if(d==='x' && /^[0-9a-f]{2}$/.test(s.slice(i+2,i+4).toLowerCase())){ out.push(parseInt(s.slice(i+2,i+4),16)); i+=3; continue; }
+    }
+    for(const b of new TextEncoder().encode(c)) out.push(b);   // обычный текст — UTF-8
+  }
+  return new Uint8Array(out);
+}
+function serialSendText(n,text){
+  if(!n.connected || !n.port?.writable){ n.status='not connected'; return false; }
+  let s=String(text ?? '');
+  if(!s) return false;
+  if(!s.endsWith('\n') && !s.endsWith('\r')) s+='\n';
+  serialWriteBytes(n,serialTextBytes(s));
+  return true;
+}
 def({ id:'webserial', title:'Serial Port (WebSerial)', cat:'Sources',
-  ins:[{n:'send',t:'bin'}], outs:[{n:'line',t:'txt'},{n:'go',t:'num'},{n:'bin',t:'bin'}], readout:true, tall:true,
+  ins:[{n:'send',t:'bin'},{n:'text',t:'txt'}], outs:[{n:'line',t:'txt'},{n:'go',t:'num'},{n:'bin',t:'bin'}], readout:true, tall:true,
   params:[
     {n:'baud',t:'select',opts:['4800','9600','19200','38400','57600','115200'],d:'9600'},
     {n:'connect',t:'button',label:'Connect',fn:n=>serialConnect(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>serialDisconnect(n)},
+    {n:'tx',t:'text',d:'',label:'text to send (\\n \\xHH)'},
+    {n:'send',t:'button',label:'Send',fn:n=>{ if(serialSendText(n,n.p.tx)){ n.p.tx=''; n.set?.tx?.(''); } }},
   ],
   init:n=>{
     n.port=null; n.reader=null; n.connected=false; n.connecting=false; n.reading=false;
     n.lastLine=''; n.linePulse=0; n.status='not connected';
-    n.binQ=[]; n.binOut=null; n.lastSend=null; n.chain=Promise.resolve(); n.sent=0; n.got=0;
+    n.binQ=[]; n.binOut=null; n.lastSend=null; n.lastText=null; n.chain=Promise.resolve(); n.sent=0; n.got=0;
   },
   dispose:n=>{ serialTeardown(n).catch(e=>console.error('serial dispose:',e)); },
   process(n,I){
     const go = n.linePulse>0?1:0; if(n.linePulse>0) n.linePulse--;
     if(I.send && I.send.d && I.send!==n.lastSend){ n.lastSend=I.send; if(n.connected) serialWriteBytes(n,I.send.d); }
+    if(typeof I.text==='string' && I.text!==n.lastText){ n.lastText=I.text; serialSendText(n,I.text); }
     if(n.binQ.length){                                  // всё, что пришло за такт, одним куском: границы чтения всё равно случайны
       const parts=n.binQ.splice(0), d=parts.length>1 ? binCat(...parts) : parts[0];
       n.got+=d.length; n.binOut=binObj(d);
