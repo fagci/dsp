@@ -279,6 +279,17 @@ function tblDerive(n){
     n.rows=[]; n.rowIds=[];
     n.all.forEach((r,i)=>{ if(f(r)){ n.rows.push(r); n.rowIds.push(n.ids[i]); } });
   } else { n.rows=n.all.slice(); n.rowIds=n.ids.slice(); }      // новая ссылка: потребители ключуют кэш по массиву, а n.all дописывается на месте
+  const sc=n.p.sortCol;
+  if(sc && n.cl.includes(sc)){                                  // сортировка по клику на заголовок колонки; пустые — в конец
+    const dir=n.p.sortDir<0 ? -1 : 1, cmp=(a,b)=>{
+      const x=a[sc], y=b[sc], ex=x===''||x==null, ey=y===''||y==null;
+      if(ex||ey) return ex-ey;
+      const nx=typeof x==='number' ? x : parseFloat(x), ny=typeof y==='number' ? y : parseFloat(y);
+      return (isFinite(nx) && isFinite(ny) && String(nx)===String(x).trim() && String(ny)===String(y).trim() ? nx-ny : String(x).localeCompare(String(y),undefined,{numeric:true}))*dir;
+    };
+    const ix=n.rows.map((_,i)=>i).sort((i,j)=>cmp(n.rows[i],n.rows[j])||i-j);
+    n.rows=ix.map(i=>n.rows[i]); n.rowIds=ix.map(i=>n.rowIds[i]);
+  }
   n.headers=n.cl;
   n.nameCol=tblCol(n.cl,TBL_LABEL); n.colorCol=tblCol(n.cl,TBL_COLOR);
   tblPorts(n);
@@ -515,14 +526,14 @@ async function tblFromRows(n,list){
     if(n.rowsAgain){ const a=n.rowsAgain; n.rowsAgain=null; tblFromRows(n,a); }
   }
 }
-async function tblColsEdit(n,cl,ren){                   // переименование/добавление/удаление колонок; ren — {новое имя: старое}
+async function tblColsEdit(n,cl,ren,fill){             // переименование/добавление/удаление колонок; ren — {новое имя: старое}, fill — {колонка: значения по строкам}
   if(tblRO(n)) return;
   const old=n.cl;
-  const rows=n.all.map(r=>{ const o={}; for(const c of cl) o[c]=r[ren?.[c]??c]??''; return o; });
+  const rows=n.all.map((r,k)=>{ const o={}; for(const c of cl) o[c]=fill?.[c] ? fill[c][k]??'' : r[ren?.[c]??c]??''; return o; });
   const gone=old.filter(c=>!cl.includes(c));
   n.cl=cl.slice(); n.all=rows;
   if(tblKind(n.p.list)==='db'){
-    if(gone.length) for(let k=0;k<rows.length;k++){ const it=tblToItem(rows[k],n.cl); await ListDB.update(n.ids[k],{name:it.name,fields:it.fields}); }
+    if(gone.length || fill) for(let k=0;k<rows.length;k++){ const it=tblToItem(rows[k],n.cl); await ListDB.update(n.ids[k],{name:it.name,fields:it.fields}); }
     await tblMetaSet(n.p.list,{cols:n.cl});
   } else await tblSave(n);
   tblSetCols(n,n.cl.slice(),true);
@@ -817,6 +828,12 @@ function tblInit(n){
   n.ui.list.addEventListener('keydown',e=>tblKey(n,e));
   // один набор обработчиков на список, а не по три на каждую строку
   n.ui.list.addEventListener('click',e=>{
+    const hc=e.target.closest('.tbl-hd > span[data-c]');
+    if(hc){                                               // ▲ → ▼ → без сортировки
+      const c=hc.dataset.c;
+      if(n.p.sortCol!==c){ n.p.sortCol=c; n.p.sortDir=1; } else if(n.p.sortDir>0) n.p.sortDir=-1; else n.p.sortCol='';
+      tblDerive(n); tblRenderList(n); Undo.push(); return;
+    }
     const row=e.target.closest('.tbl-row'); if(!row) return;
     const ch=e.target.closest('.tc-chip');
     if(ch?.dataset.to){ tcGo(n,ch.dataset.to,ch.dataset.name); return; }
@@ -1124,7 +1141,10 @@ function tblRenderList(n,inc){
     list.style.setProperty('--tc','5ch '+vc.map((x,k)=>x.w>0 ? x.w+'px' : Math.min(28,wid[k]+2)+'ch').join(' ')+' 56px');
     const hd=document.createElement('div'); hd.className='tbl-hd';
     hd.append(Object.assign(document.createElement('span'),{textContent:'#',className:'tbl-no'}));
-    for(const x of vc) hd.append(Object.assign(document.createElement('span'),{textContent:x.c,title:x.c}));
+    for(const x of vc){
+      const on=n.p.sortCol===x.c, h=Object.assign(document.createElement('span'),{textContent:x.c+(on ? (n.p.sortDir<0 ? ' ▼' : ' ▲') : ''),title:x.c+' — click to sort'});
+      h.dataset.c=x.c; h.style.cursor='pointer'; hd.append(h);
+    }
     hd.append(document.createElement('span'));
     frag.append(hd);
   } else list.style.removeProperty('--tc');
@@ -1350,8 +1370,10 @@ function tblRenderView(n){
     mk('span','tv-x','✕',{click:()=>tblViewToggle(n)}));
   box.append(top);
   tblFieldsPanel(n,box,mk,sel);
-  box.append(mk('div','tv-sec','Row colors — the first matching rule wins'));
   const rules=Array.isArray(n.p.rules) ? n.p.rules : [];
+  const rh=mk('div','tv-sec tv-fold',(n.rulesOpen ? '▾ ' : '▸ ')+'Row colors'+(rules.length ? ' ('+rules.length+')' : '')+' — the first matching rule wins',{click:()=>{ n.rulesOpen=!n.rulesOpen; tblRenderView(n); }});
+  box.append(rh);
+  if(n.rulesOpen){
   const setRules=(fn,panel)=>{ const r=rules.map(x=>({...x})); fn(r); tblViewApply(n,'rules',r,panel); };
   rules.forEach((x,i)=>{
     const row=mk('div','tv-rule');
@@ -1375,11 +1397,12 @@ function tblRenderView(n){
   acts.append(mk('span','tv-lbl','otherwise colour by'),
     sel([['','auto (color, severity, type…)'],['-','nothing'],...n.cl.map(c=>[c,'value of '+c])],cols.includes(tintVal) || tintVal==='-' ? tintVal : '',x=>tblViewApply(n,'tint',x,false)));
   box.append(acts);
+  }
   const settle=()=>{ box.scrollTop=n.viewScroll||0; if(n.viewNew) box.querySelector('.tv-new')?.focus({preventScroll:true}); };
   settle(); requestAnimationFrame(()=>{ settle(); n._vr=false; });             // узел мог ещё не попасть в DOM
 }
 // список колонок одним действием: cl — новый набор, ren — {новое имя: старое}; схема, порядок колонок и раскраска следуют за именами
-async function tblColsApply(n,cl,ren={}){
+async function tblColsApply(n,cl,ren={},fill){
   if(tblRO(n)) return;
   const fwd={}; for(const k in ren) fwd[ren[k]]=k;
   const nm=c=>fwd[c]??c, live=c=>cl.includes(nm(c));
@@ -1388,21 +1411,23 @@ async function tblColsApply(n,cl,ren={}){
   sc.types=types; sc.card.show=(sc.card.show||[]).filter(live).map(nm);
   if(Array.isArray(n.p.vcols)) n.p.vcols=n.p.vcols.filter(x=>x && live(x.c)).map(x=>({...x,c:nm(x.c)}));
   if(n.p.tint) n.p.tint=nm(n.p.tint);
-  const sv=tcSchemaSave(n), done=tblColsEdit(n,cl,ren);   // n.cl уже новый — панель можно перерисовать, не дожидаясь базы
+  const sv=tcSchemaSave(n), done=tblColsEdit(n,cl,ren,fill);   // n.cl уже новый — панель можно перерисовать, не дожидаясь базы
   tblRenderView(n);
   await Promise.all([sv,done]);
   tblRenderList(n);
 }
-// «Fields» панели view: имя (клик — переименовать), тип, показ на карточке; в режиме full list — ещё показ колонки, формат, ширина, порядок
+// «Fields» панели view: строка — показ, имя (клик — переименовать), тип, ⋯ (подробности), ✕; порядок — перетаскиванием.
+// «Показ» — один флажок и для карточки, и для колонки списка; формат, ширина, варианты и связь — под ⋯
 function tblFieldsPanel(n,box,mk,sel){
   const ro=tblRO(n), grid=tcView(n)==='grid';
-  box.append(mk('div','tv-sec','Fields'+(grid ? ' — column, name, type, format, width, order' : ' — name, type, shown on the card')));
+  n.fieldOpen=n.fieldOpen||new Set();
+  box.append(mk('div','tv-sec','Fields'));
   if(!ro){
     const row=mk('div','tv-col'), inp=mk('input','tv-q'); inp.placeholder='new field name';
     const add=async()=>{
       const v=inp.value.trim(); if(!v) return;
-      n.viewNew=true;
       if(n.cl.includes(v)){ inp.select(); return; }
+      n.viewNew=true;
       await tblColsApply(n,n.cl.concat([v]));
     };
     inp.classList.add('tv-new');
@@ -1411,15 +1436,20 @@ function tblFieldsPanel(n,box,mk,sel){
     box.append(row);
   }
   const lists=(n.treeNames||[]).filter(x=>tblKind(x)!=='preset');
-  const vc=tblViewCols(n), show=new Set(n.schema.card.show||[]);
+  const vc=tblViewCols(n), card=new Set(tcShowCols(n));
+  let drag=-1;
   vc.forEach((x,i)=>{
-    const c=x.c, d=tcDef(n,c), t=d.t||(tblType(n,c)==='text' ? 'text' : tblType(n,c));
-    const row=mk('div','tv-col'+(grid && x.hide ? ' off' : ''));
-    if(grid){
-      const cb=mk('input'); cb.type='checkbox'; cb.checked=!x.hide; cb.title='show as a column';
-      cb.addEventListener('change',()=>tblViewColEdit(n,v=>{ v[i].hide=!cb.checked; }));
-      row.append(cb);
-    }
+    const c=x.c, d=tcDef(n,c), t=d.t||(tblType(n,c)==='text' ? 'text' : tblType(n,c)), open=n.fieldOpen.has(c);
+    const on=grid ? !x.hide : card.has(c);
+    const row=mk('div','tv-col'+(on ? '' : ' off'));
+    const cb=mk('input'); cb.type='checkbox'; cb.checked=on; cb.title='show';
+    cb.addEventListener('change',()=>{
+      const s=new Set(tcShowCols(n)); cb.checked ? s.add(c) : s.delete(c);
+      n.schema.card.show=n.cl.filter(k=>s.has(k));
+      if(!ro) tcSchemaSave(n);
+      tblViewColEdit(n,v=>{ v[i].hide=!cb.checked; });
+    });
+    row.append(cb);
     const name=mk('span','tv-name',c);
     if(!ro){
       name.title='click to rename'; name.classList.add('tv-ren');
@@ -1438,42 +1468,72 @@ function tblFieldsPanel(n,box,mk,sel){
       });
     }
     row.append(name);
-    if(!ro){
-      row.append(sel(TC_TYPES,t,v=>{
-        const nd={...d,t:v}; if(v!=='choice') delete nd.opts; if(v!=='link'){ delete nd.to; delete nd.multi; }
-        tcSetDef(n,c,nd); tblRenderView(n); tblRenderList(n);
-      }));
-      if(t==='choice'){
-        const o=mk('input','tv-q'); o.value=(d.opts||[]).join(', '); o.placeholder='choice 1, choice 2, …';
-        o.addEventListener('keydown',e=>e.stopPropagation());
-        o.addEventListener('change',()=>tcSetDef(n,c,{...d,opts:o.value.split(',').map(s=>s.trim()).filter(Boolean)}));
-        row.append(o);
-      }
-      if(t==='link'){
-        row.append(sel([['','— list —'],...lists.map(k=>[k,tblKind(k)==='patch' ? 'This patch' : k])],d.to||'',v=>tcSetDef(n,c,{...d,to:v})));
-        const m=mk('input'); m.type='checkbox'; m.checked=!!d.multi; m.title='several entries';
-        m.addEventListener('change',()=>tcSetDef(n,c,{...d,multi:m.checked}));
-        row.append(m,mk('span','tv-lbl','many'));
-      }
-      const card=mk('input'); card.type='checkbox'; card.checked=show.has(c); card.title='show on the card';
-      card.addEventListener('change',()=>{ const s=new Set(n.schema.card.show||[]); card.checked ? s.add(c) : s.delete(c);
-        n.schema.card.show=n.cl.filter(k=>s.has(k)); tcSchemaSave(n); tblRenderList(n); });
-      row.append(mk('span','tv-lbl','card'),card);
+    if(!ro) row.append(sel(TC_TYPES,t,v=>{
+      const nd={...d,t:v}; if(v!=='choice') delete nd.opts; if(v!=='link'){ delete nd.to; delete nd.multi; }
+      tcSetDef(n,c,nd); tblRenderView(n); tblRenderList(n);
+    }));
+    row.append(mk('span','tv-mv',open ? '▾' : '⋯',{click:()=>{ open ? n.fieldOpen.delete(c) : n.fieldOpen.add(c); tblRenderView(n); }}));
+    // порядок: тащить за строку
+    row.draggable=true;
+    row.addEventListener('dragstart',e=>{ drag=i; e.dataTransfer.effectAllowed='move'; });
+    row.addEventListener('dragover',e=>{ if(drag>=0){ e.preventDefault(); row.classList.add('over'); } });
+    row.addEventListener('dragleave',()=>row.classList.remove('over'));
+    row.addEventListener('drop',e=>{ e.preventDefault(); const from=drag; drag=-1; if(from>=0 && from!==i) tblViewColEdit(n,v=>{ v.splice(i,0,v.splice(from,1)[0]); }); });
+    box.append(row);
+    if(!open) return;
+    const more=mk('div','tv-more');
+    if(!ro && t==='choice'){
+      const o=mk('input','tv-q'); o.value=(d.opts||[]).join(', '); o.placeholder='choice 1, choice 2, …';
+      o.addEventListener('keydown',e=>e.stopPropagation());
+      o.addEventListener('change',()=>tcSetDef(n,c,{...d,opts:o.value.split(',').map(s=>s.trim()).filter(Boolean)}));
+      more.append(o);
+    }
+    if(!ro && t==='link'){
+      more.append(sel([['','— list —'],...lists.map(k=>[k,tblKind(k)==='patch' ? 'This patch' : k])],d.to||'',v=>tcSetDef(n,c,{...d,to:v})));
+      const m=mk('input'); m.type='checkbox'; m.checked=!!d.multi; m.title='several entries';
+      m.addEventListener('change',()=>tcSetDef(n,c,{...d,multi:m.checked}));
+      more.append(m,mk('span','tv-lbl','many'));
     }
     if(grid){
       const w=mk('input','tv-w'); w.type='number'; w.min=0; w.step=10; w.value=x.w||''; w.placeholder='auto'; w.title='width, px (empty — by content)';
       w.addEventListener('keydown',e=>e.stopPropagation());
       w.addEventListener('change',()=>tblViewColEdit(n,v=>{ v[i].w=Math.max(0,+w.value||0); }));
-      row.append(sel(TBL_FMTS,x.fmt||'auto',f=>tblViewColEdit(n,v=>{ v[i].fmt=f; })),w,
-        mk('span','tv-mv','▲',{click:()=>{ if(i) tblViewColEdit(n,v=>{ [v[i-1],v[i]]=[v[i],v[i-1]]; }); }}),
-        mk('span','tv-mv','▼',{click:()=>{ if(i<vc.length-1) tblViewColEdit(n,v=>{ [v[i+1],v[i]]=[v[i],v[i+1]]; }); }}));
+      more.append(sel(TBL_FMTS,x.fmt||'auto',f=>tblViewColEdit(n,v=>{ v[i].fmt=f; })),w);
     }
-    if(!ro) row.append(mk('span','tv-mv','✕',{click:()=>{
-      if(confirm('Remove field "'+c+'" from all rows?')) tblColsApply(n,n.cl.filter(k=>k!==c));
-    }}));
-    box.append(row);
+    if(!ro){
+      more.append(mk('button','tbl-btn','⧉ duplicate',{click:()=>tblFieldDup(n,c)}),
+        mk('button','tbl-btn','✕ remove',{click:()=>tblFieldDel(n,c)}));
+    }
+    box.append(more);
   });
   if(grid){ const ra=mk('div','tv-acts'); ra.append(mk('button','tbl-btn','Reset columns',{click:()=>tblViewApply(n,'vcols',null,true)})); box.append(ra); }
+}
+// копия поля со значениями, типом и настройками колонки — справа от исходного
+async function tblFieldDup(n,c){
+  let nm=c+' copy'; for(let k=2;n.cl.includes(nm);k++) nm=c+' copy '+k;
+  const vals=n.all.map(r=>r[c]), def=tcDef(n,c), vcol=(n.p.vcols||[]).find(x=>x.c===c);
+  const cl=n.cl.slice(); cl.splice(cl.indexOf(c)+1,0,nm);
+  if(def.t) n.schema.types[nm]={...def};
+  if(Array.isArray(n.p.vcols) && vcol) n.p.vcols=[...n.p.vcols,{...vcol,c:nm}];
+  n.fieldOpen?.delete(c);
+  await tblColsApply(n,cl,{},{[nm]:vals});
+}
+// узел после смены колонок собирается заново и не сразу попадает в DOM: тост ждёт живой интерфейс
+function tblToast(n,text,undo,tries=30){
+  if(n.ui?.root.isConnected) dspToast(n.ui.root,text,undo);
+  else if(tries>0) setTimeout(()=>tblToast(n,text,undo,tries-1),100);
+}
+// удаление поля без вопросов — с отменой: значения, тип и настройки колонки возвращаются на то же место
+async function tblFieldDel(n,c){
+  const at=n.cl.indexOf(c), vals=n.all.map(r=>r[c]), def=tcDef(n,c), vcol=(n.p.vcols||[]).find(x=>x.c===c), card=(n.schema.card.show||[]).includes(c);
+  await tblColsApply(n,n.cl.filter(k=>k!==c));
+  tblToast(n,'Removed field "'+c+'".',async()=>{
+    const cl=n.cl.slice(); cl.splice(Math.min(at,cl.length),0,c);
+    if(def.t || def.opts || def.to) n.schema.types[c]=def;
+    if(card) n.schema.card.show=cl.filter(k=>k===c || (n.schema.card.show||[]).includes(k));
+    if(Array.isArray(n.p.vcols) && vcol) n.p.vcols=[...n.p.vcols,vcol];
+    await tblColsApply(n,cl,{},{[c]:vals});
+  });
 }
 function tblForm(n,rec,onSave,onCancel){
   const form=document.createElement('div');

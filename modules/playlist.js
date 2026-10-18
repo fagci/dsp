@@ -1,7 +1,7 @@
 "use strict";
 /* ============================ PLAYLIST ============================
    Отдельный узел-плейлист: список дорожек, который хранится в патче, и общий набор помощников (иконки, импорт, выбор из библиотеки)
-   для плееров. Дорожка — файл общего файлового хранилища (FileStore: тот же, что в Files и Sample Library; файлы с диска
+   для плееров. Дорожка — файл общего файлового хранилища (FileStore: тот же, что в Files и Files › audio; файлы с диска
    кладутся в папку Music пространства files) либо URL (поток, интернет-радио).
    Узел сам ничего не играет: на выходах текущая дорожка (fs / url / name) и импульс go — «запусти её» (1) или «загрузи» (0.5),
    плюс следующая дорожка (nfs / nurl) для предзагрузки. Плеер отвечает импульсами next / prev / end / req и сигналом playing.
@@ -144,9 +144,9 @@ function plMount(n){
   root.innerHTML=
    '<div class="wa-row pl-head">'+B('shuf','shuffle')+B('rep','repeat: off / all / one')+'<span class="wa-cnt" data-f="cnt"></span></div>'+
    '<div class="wa-pl" data-f="pl"></div>'+
-   '<div class="wa-row wa-foot">'+T('file','add files from this device (kept in the library)','files')+T('lib','pick from the file manager (Files / Sample Library)','library')+T('url','stream or file URL','URL')+
+   '<div class="wa-row wa-foot">'+T('file','add files from this device (kept in the library)','files')+T('lib','pick from the file manager (Files / Files › audio)','library')+T('url','stream or file URL','URL')+
      T('radio','add stations from the rows wire (url field)','stations')+T('clr','clear the playlist','clear')+
-     '<select data-f="store" title="files from disk go to: the Music folder of Files (as is) or the Sample Library (mono clips)"><option value="files">→ Files</option><option value="audio">→ Samples</option></select></div>';
+     '<select data-f="store" title="files from disk go to: the Music folder of Files (as is) or the Files › audio (mono clips)"><option value="files">→ Files</option><option value="audio">→ Samples</option></select></div>';
   const f={}; for(const e of root.querySelectorAll('[data-f]')) f[e.dataset.f]=e;
   const inp=waEl('input'); inp.type='file'; inp.multiple=true; inp.accept='audio/*'; inp.hidden=true; root.append(inp);
   const add=async fs=>plAddIds(n,await waImportFiles(fs,n.p.store));
@@ -170,7 +170,7 @@ function plMount(n){
   root.addEventListener('dragover',e=>{ e.preventDefault(); });
   root.addEventListener('drop',e=>{
     e.preventDefault();
-    const dt=e.dataTransfer, id=dt?.getData('application/x-dsp-file');          // файл из Files / Sample Library
+    const dt=e.dataTransfer, id=dt?.getData('application/x-dsp-file');          // файл из Files / Files › audio
     if(from>=0){ const it=e.target.closest('.wa-it'); plMove(n,from,it?+it.dataset.i:n.list.length-1); from=-1; return; }
     if(id){ plAddIds(n,[+id]); return; }
     if(dt?.files?.length) add([...dt.files]); });
@@ -208,7 +208,7 @@ def({ id:'playlist', title:'Playlist', cat:'Music', resize:true, w:340, h:300, r
         {n:'nfs',t:'num'},{n:'nurl',t:'txt'},{n:'index',t:'num'},{n:'count',t:'num'}],
   params:[{n:'shuffle',t:'check',d:false,label:'shuffle',hidden:true,fn:n=>{ plOrder(n); n.dirty=true; }},
           {n:'repeat',t:'select',opts:['off','all','one'],d:'off',label:'repeat',hidden:true,fn:n=>{ n.dirty=true; }},
-          {n:'store',t:'select',opts:['files','audio'],d:'files',label:'files from disk go to: files (Music folder, as is) / audio (Sample Library clips, mono)',hidden:true},
+          {n:'store',t:'select',opts:['files','audio'],d:'files',label:'files from disk go to: files (Music folder, as is) / audio (Files › audio clips, mono)',hidden:true},
           {n:'wirePlay',t:'check',d:true,label:'play a station that arrives on the url wire',hidden:true},
           {n:'list',t:'text',d:'[]',hidden:true},
           {n:'cur',t:'range',min:-1,max:100000,step:1,d:-1,hidden:true}],

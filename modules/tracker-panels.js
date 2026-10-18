@@ -405,7 +405,7 @@ TRK_PANELS.smp = P=>{
       <div class="aed-row trk-wrap">
         ${trkBtn('splay','▶','Play the sample on the cursor channel')}
         ${trkBtn('sload','load','Load an audio file into this slot')}
-        <select class="trk-lib aed-b" title="Take a clip from the Sample Library"><option value="">library…</option></select>
+        <select class="trk-lib aed-b" title="Take a clip from the Files › audio"><option value="">library…</option></select>
         ${trkBtn('sedit','✎ edit','Open in the sample editor')}
         ${trkBtn('swav','⭳ wav','Download as WAV')}
         ${trkBtn('sclear','clear','Empty this slot')}
@@ -483,7 +483,7 @@ TRK_PANELS.smp = P=>{
   };
   P.draw = ()=>{ trkWave(P); trkMap(P); trkEnv(P); };
 };
-async function trkLibOptions(sel){              // клипы Sample Library по всем папкам
+async function trkLibOptions(sel){              // клипы Files › audio по всем папкам
   if(sel._busy) return; sel._busy = true;
   try{
     const out = [], walk = async (fid, path)=>{
@@ -491,7 +491,7 @@ async function trkLibOptions(sel){              // клипы Sample Library п�
       for(const f of await SampleDB.listFolders(fid)) await walk(f.id, path+f.name+'/');
     };
     await walk(null, '');
-    sel.innerHTML = '<option value="">library…</option>' + (out.length ? out.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('') : '<option value="" disabled>(the Sample Library is empty)</option>');
+    sel.innerHTML = '<option value="">library…</option>' + (out.length ? out.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('') : '<option value="" disabled>(the Files › audio is empty)</option>');
   }catch(e){ console.warn(e); }
   sel._busy = false;
 }
