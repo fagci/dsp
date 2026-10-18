@@ -466,7 +466,7 @@ function fmMount(host,o={}){
     const m=rec.mime||'', url=()=>{ const u=URL.createObjectURL(rec.blob); S.pu.push(u); return u; };
     if(m.startsWith('image/') && rec.blob){ const im=document.createElement('img'); im.src=url(); prev.append(im); }
     else if(m.startsWith('video/') && rec.blob){ const v=document.createElement('video'); v.src=url(); v.controls=true; v.preload='metadata'; prev.append(v); }
-    else if(m.startsWith('audio/') && rec.blob && !rec.meta?.peaks){ const a=document.createElement('audio'); a.src=url(); a.controls=true; a.preload='metadata'; prev.append(a); }
+    else if(m.startsWith('audio/') && rec.blob && !rec.meta?.peaks && !o.previewExtra){ const a=document.createElement('audio'); a.src=url(); a.controls=true; a.preload='metadata'; prev.append(a); }
     else if(rec.meta?.peaks){ const cv=document.createElement('canvas'); cv.width=200; cv.height=28; fmPeaks(cv,rec.meta.peaks); prev.append(cv,' ',fmtDur(rec.meta.duration||0)+' · '+(rec.meta.sr||'')+' Hz'); }
     else if(m.startsWith('text/') || /json|xml/.test(m) || rec.space==='tables'){
       const t=await (await fmBlob(rec)).slice(0,500).text(); if(g!==S.pg) return;
@@ -613,9 +613,15 @@ async function fsReceive(n,o){
   if(n.p.download) fmDownload({name:nm,mime:blob.type,blob});
   n.okP=2;
 }
-async function fsArm(n,id,autoplay){
-  const clip=await SampleDB.getClip(id); if(!clip) return;
-  n.data=clip.samples; n.dataSr=clip.sr; n.pos=0; n.armed=id; if(autoplay) n.play=true;
+async function fsArm(n,id,autoplay){                                   // клип библиотеки или любой звуковой файл (декодируется)
+  const r=await FileStore.get(id); if(!r) return;
+  let samples,sr;
+  if(r.meta?.sr){ const clip=await SampleDB.getClip(id); if(!clip) return; ({samples,sr}=clip); }
+  else{
+    try{ ({samples,sr}=await decodeAudioFile(new File([r.blob],r.name,{type:r.mime}))); }
+    catch(e){ alert('Cannot decode '+r.name+': '+e.message); return; }
+  }
+  n.data=samples; n.dataSr=sr; n.pos=0; n.armed=id; if(autoplay) n.play=true;
   n.fm?.refresh();
 }
 async function fsRecToggle(n){
@@ -684,7 +690,7 @@ function fsRecUI(n){
 
 def({ id:'files', title:'Files', cat:'Output', kw:'file manager storage samples sample library clips audio video record trigger receive save bytes images folder browser upload download', w:340, h:440, resize:true,
   ins:[{n:'clipId',t:'num'},{n:'play',t:'num'},{n:'seek',t:'num'},{n:'in',t:'sig'},{n:'rec',t:'num'},{n:'bin',t:'bin'},{n:'path',t:'txt'}],
-  outs:[{n:'id',t:'num'},{n:'name',t:'txt'},{n:'size',t:'num'},{n:'send',t:'num'},{n:'bin',t:'bin'},{n:'out',t:'sig'},{n:'clipId',t:'num'},{n:'pos',t:'num'},{n:'ok',t:'num'}],
+  outs:[{n:'id',t:'num'},{n:'name',t:'txt'},{n:'size',t:'num'},{n:'send',t:'num'},{n:'bin',t:'bin'},{n:'out',t:'sig'},{n:'clipId',t:'num'},{n:'pos',t:'num'},{n:'ok',t:'num'},{n:'vid',t:'vid'}],
   params:[{n:'meta',t:'check',d:true,label:'bin: attach name and type (off — bare bytes)'},
     {n:'loop',t:'check',d:true,label:'loop the played clip'},
     {n:'recSrc',t:'select',opts:['audio','camera','screen'],d:'audio',label:'record from (audio: `in` port when wired, else microphone)'},
@@ -692,7 +698,7 @@ def({ id:'files', title:'Files', cat:'Output', kw:'file manager storage samples 
     {n:'download',t:'check',d:false,label:'also download received files'},
     {n:'sendBtn',t:'button',label:'Send selected → (pulse on `send`, bytes on `bin`; several — one per block)',fn:n=>{
       n.fm?.picked().then(a=>{ n.queue.push(...a); }); }}],
-  init:n=>{ n.fm=null; n.sel=null; n.queue=[]; n.busy=false; n.ready=-1; n.binOut=null;
+  init:n=>{ n.fm=null; n.sel=null; n.vidEl=null; n.queue=[]; n.busy=false; n.ready=-1; n.binOut=null;
     n.data=null; n.dataSr=0; n.pos=0; n.play=false; n.playGate=false; n.armed=null; n.rec=null; n.recGate=false; n.inWired=false;
     n.lastBin=null; n.pathIn=''; n.okP=0; n.seekIn=null; },
   dispose:n=>{ if(n.rec) fsRecStop(n); n.editor?.close?.(); n.fm?.destroy(); n.fm=null; },
@@ -725,7 +731,7 @@ def({ id:'files', title:'Files', cat:'Output', kw:'file manager storage samples 
     } else o.fill(0);
     const ok=n.okP>0 ? 1 : 0; if(n.okP>0) n.okP--;
     return {id:r && typeof r.id==='number' ? r.id : -1, name:r?.name||'', size:r?.size||0, send, bin:n.binOut,
-      out:o, clipId:n.armed??-1, pos:d ? n.pos/d.length : 0, ok}; },
+      out:o, clipId:n.armed??-1, pos:d ? n.pos/d.length : 0, ok, vid:n.vidEl?.isConnected ? n.vidEl : null}; },
   draw(n){
     if(n.playBtn?.isConnected){
       const here=n.armed===n.playId && n.data;
@@ -735,20 +741,21 @@ def({ id:'files', title:'Files', cat:'Output', kw:'file manager storage samples 
     }
     if(n.fm && n.mid.contains(n.fm.root)) return;
     n.fm?.destroy();
-    n.fm=fmMount(n.mid,{preview:true,onSelect:r=>{ n.sel=r; },
+    n.fm=fmMount(n.mid,{preview:true,onSelect:r=>{ n.sel=r; n.vidEl=null; },
       toolbar:bar=>{ n.recBtn=document.createElement('button'); n.recBtn.title='Record (settings: record from / audio format); into the open folder or the path input';
         n.recBtn.onclick=()=>fsRecToggle(n); bar.append(n.recBtn); fsRecUI(n); },
       previewExtra:(r,box)=>{
-        if(r.space!=='audio' || !r.meta?.sr) return;
+        n.vidEl=box.querySelector('video');                                   // выход vid: тот же ролик, что в превью
+        if(!r.mime?.startsWith('audio/') || !r.blob) return;
         const b=(t,title,f)=>{ const e=document.createElement('button'); e.textContent=t; e.title=title; e.onclick=f; box.append(e); return e; };
-        n.playId=r.id; n.playDur=r.meta.duration||0;
+        n.playId=r.id; n.playDur=r.meta?.duration||0;
         n.playBtn=b('▶','Play on the `out` port',async()=>{
           if(n.armed===r.id) n.play=!n.play; else await fsArm(n,r.id,true); });
         const rg=n.seekEl=document.createElement('input'); rg.type='range'; rg.min=0; rg.max=1000; rg.value=0; rg.className='fm-seek'; rg.title='Seek';
         rg.oninput=async()=>{ n.seeking=true; if(n.armed!==r.id) await fsArm(n,r.id,false); if(n.data) n.pos=rg.value/1000*(n.data.length-1); };
         rg.onchange=()=>{ n.seeking=false; };
         n.timeEl=document.createElement('span'); box.append(rg,n.timeEl);
-        b('✎','Edit the clip',async()=>{
+        if(r.meta?.sr) b('✎','Edit the clip',async()=>{
           if(n.editor) return;
           const clip=await SampleDB.getClip(r.id); if(!clip) return;
           n.editor=aedOpen(clip,{onSaved:async sid=>{ if(n.armed===sid) await fsArm(n,sid,false); },onClose:()=>{ n.editor=null; }});
