@@ -1190,7 +1190,7 @@ A module opts in with one line after its definition: `defGroups('id',[{n:'Receiv
 ### On a phone
 
 - **Screen stays on** while the graph runs (Settings → *Keep screen on*, on by default; needs the Screen Wake Lock API).
-- **Background audio**: while running, a silent media element is attached to the audio engine, so the browser treats the page as playing media (it is not put to sleep with the screen off) and the lock screen shows play / pause. Without a sound output Chrome may still throttle the page.
+- **Background audio**: while running, a silent media element is attached to the audio engine, so the browser treats the page as playing media (it is not put to sleep with the screen off) and the lock screen shows play / pause. Without a sound output Chrome may still throttle the page. If the browser suspends the audio context (screen lock, a call, iOS *interrupted*), it is resumed on return; on iOS/Safari the audio session is set to *playback*.
 - **Back gesture** closes what is open — the sidebar sheet, a maximized tile, ⛶ canvas-only mode, the settings panel, the module search — instead of leaving the app.
 - **Files from other apps**: in the installed app, *Share → DSP* or *Open with → DSP* takes CSV / TSV / TXT / GPX / KML / GeoJSON / lists into a Table (a new one if the patch has none) and loads a patch `.json` (Chromium on Android; file handlers also on desktop).
 - **Share out**: Settings → *Patch → Share…* and Table `⋯` → *Share this list…* open the system share menu (a plain download where it is not available).

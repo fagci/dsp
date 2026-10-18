@@ -25,7 +25,9 @@ const BgAudio={ctx:null, el:null,
     if(this.ctx!==ctx){
       try{ this.el?.pause(); }catch(e){}
       this.ctx=ctx; this.el=new Audio(); this.el.srcObject=ctx.createMediaStreamDestination().stream;
+      ctx.addEventListener('statechange',()=>{ if(this.ctx===ctx) this.revive(); });
     }
+    try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(e){}   // iOS: звук не глохнет с экраном и беззвучным переключателем
     this.el.play().catch(()=>{});
     if(ms){
       try{ ms.metadata=new MediaMetadata({title:(typeof currentPatchName==='string' && currentPatchName) || 'DSP', artist:'DSP workbench'}); }catch(e){}
@@ -34,6 +36,15 @@ const BgAudio={ctx:null, el:null,
       for(const a of ['play','pause','stop']) try{ ms.setActionHandler(a,toggle); }catch(e){}
     }
   }};
+// браузер сам усыпил контекст (блокировка экрана, звонок, iOS 'interrupted') — будим, если граф должен работать
+BgAudio.revive=function(){
+  const ctx=this.ctx;
+  if(!ctx || !Eng.running || Eng.paused || Eng.ctx!==ctx || ctx.state==='running' || ctx.state==='closed') return;
+  ctx.resume().catch(()=>{});
+  this.el?.play().catch(()=>{});
+};
+document.addEventListener('visibilitychange',()=>BgAudio.revive());
+addEventListener('pageshow',()=>BgAudio.revive());
 // вызывается при каждом запуске / паузе / остановке движка
 function mobileOnRun(){
   const on=!!(Eng.running && !Eng.paused);
