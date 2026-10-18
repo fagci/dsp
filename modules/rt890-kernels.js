@@ -9,6 +9,7 @@
 const RTB_ACK=6, RTB_FLASH_MODE=0xFF;
 const RTB_PROFILES={
   rt890:{block:0x80, ck:0, erase:[[0x39,0,0,0x55]], size:0xEC00, full:false},
+  rt4d: {block:0x400, ck:72, erase:[[0x39,0x33,0x05,0x10],[0x39,0x33,0x05,0x55]], size:0x3D800, full:true},
 };
 const RTB_DEF={ackMs:3000, eraseMs:10000, retries:3};
 

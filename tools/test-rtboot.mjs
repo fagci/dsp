@@ -74,5 +74,12 @@ await suite('rt890',K.RTB_PROFILES.rt890,1000);
 { const {R,io}=radio(K.RTB_PROFILES.rt890), pr=rep(); await K.rtbFlash(io,K.rtbPrepare(new Uint8Array(256).fill(1),K.RTB_PROFILES.rt890),K.RTB_PROFILES.rt890,{},pr);
   ok('rt890: note about the radio not restarting',/will not restart/.test(pr.L.at(-1)[1])); }
 
+await suite('rt4d',K.RTB_PROFILES.rt4d,5000);
+{ const prof=K.RTB_PROFILES.rt4d, img=K.rtbPrepare(new Uint8Array(10).fill(7),prof);
+  ok('rt4d: image always fills the whole memory',img.length===0x3D800 && img[9]===7 && img[10]===0);
+  const {R,io}=radio(prof), pr=rep(); await K.rtbFlash(io,img,prof,{},pr);
+  ok('rt4d: 246 blocks, address is the low 16 bits of the offset',R.blocks.size===246 && R.blocks.get(100).off===((100*1024)&0xFFFF) && R.badSum===0);
+  ok('rt4d: no restart note for a full image',!/not restart/.test(pr.L.at(-1)[1])); }
+
 console.log(bad ? bad+' FAILED' : 'all ok');
 process.exit(bad ? 1 : 0);
