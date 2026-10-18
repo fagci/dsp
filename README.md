@@ -149,7 +149,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **Serial Out (WebSerial)**: write text or a numeric value to a serial port — Arduino, relays, transceiver CAT control (template `FA{v:11};` turns a frequency into a Kenwood command); device replies come back on the `reply` output
 - **HTTP Out**: webhook request (POST / PUT / GET, custom headers) — text on change, or numbers as a JSON object on a `go` pulse or every period. The server must allow CORS, and from the https demo only `https://` (or localhost) works
 - **MIDI Out** (Web MIDI): `gate` → note on/off, `note` (or `freq` in Hz straight from *MIDI Keyboard*) with velocity, and a `cc` input for control change — drive hardware synths and a DAW from any signal
-- **Firmware flashers** (WebSerial, Chrome/Edge): **Flasher: Quansheng UV-K5** — see [Firmware flashers](#firmware-flashers)
+- **Firmware flashers** (WebSerial, Chrome/Edge): **Flasher: Quansheng UV-K5** and **Flasher: Radtel RT-880** — see [Firmware flashers](#firmware-flashers)
 - Module Builder and Script nodes for writing custom DSP code in the browser
 
 ## USB SDR
@@ -1060,9 +1060,10 @@ The `bin` port (brown pin) carries plain bytes: `{d: Uint8Array, name, mime, id}
 
 ## Firmware flashers
 
-Flasher nodes (Output) write a firmware file to a radio in bootloader mode over a serial port (WebSerial, Chrome/Edge). Common to all of them: the firmware comes from the node's own file field or from a `bin` wire (*File → Bytes*); **Port…** picks the port (the browser asks once and the node remembers it), **Flash** opens it and runs the protocol, **Abort** stops at the next step; a rising edge on `go` also starts flashing. Outputs: `progress` (0…1), `busy`, `ok` (pulse), `status`. Hardware not tried: the protocols are ported from [fagci/k1-fw](https://github.com/fagci/k1-fw) and checked by `node tools/test-uvk5.mjs` against a simulated radio (frames, CRC, retries, lost acknowledgements, errors).
+Flasher nodes (Output) write a firmware file to a radio in bootloader mode over a serial port (WebSerial, Chrome/Edge). Common to all of them: the firmware comes from the node's own file field or from a `bin` wire (*File → Bytes*); **Port…** picks the port (the browser asks once and the node remembers it), **Flash** opens it and runs the protocol, **Abort** stops at the next step; a rising edge on `go` also starts flashing. Outputs: `progress` (0…1), `busy`, `ok` (pulse), `status`. Hardware not tried: the protocols are ported from [fagci/k1-fw](https://github.com/fagci/k1-fw) and [fagci/rt880-fw](https://github.com/fagci/rt880-fw) and checked by `node tools/test-uvk5.mjs` and `node tools/test-rt880.mjs` against simulated radios (frames, checksums, retries, lost acknowledgements, NAKs, errors).
 
 - **Flasher: Quansheng UV-K5** (38400 baud): power the radio on with PTT held, press **Flash**. The node waits for five bootloader beacons, answers with the bootloader version and sends 256-byte pages (up to 120 KiB, a `.bin`), each acknowledged by the radio; a lost or refused page is resent up to 3 times. Frames: `AB CD | len | data | CRC-16/XMODEM | DC BA`, data and CRC XORed with a 16-byte table. Logic: `modules/uvk5-kernels.js`, the shared node and port code: `modules/flasher.js`
+- **Flasher: Radtel RT-880** (115200 baud): put the radio into the bootloader, press **Flash**. The firmware is a `.bin` or an Intel HEX file (*format → auto* takes HEX if the file starts with «:»; addresses are counted from `0x08002800`, the window is 246 KiB, empty space is `0xFF`, records outside it are skipped, checksums are verified). The node sends `connect` ×3 and `update`, then 246 blocks of 1 KiB (`W | addr | data | checksum`), each acknowledged (ACK 6, NAK 255 — the block is resent up to 3 times), then `end`. If the radio reboots without acknowledging the last block, `end` is still sent and the status says so. *iRadio variant* switches the commands and the checksum offset. Logic: `modules/rt880-kernels.js`
 
 ## Packet Link
 
