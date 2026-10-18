@@ -1259,5 +1259,44 @@ select.aed-b{padding:0 6px}
 .wa-pick-fm{flex:1;min-height:0;display:flex}
 .wa-pick .fm{flex:1;min-height:0}
 
+/* Signal Analyzer (sigLab) */
+.sl-ui{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--txt);box-sizing:border-box;overflow:hidden;grid-column:1/-1;width:100%;min-width:0;margin-top:4px}
+.sl-bar{display:flex;gap:4px;align-items:center;flex:none;min-width:0}
+.sl-info{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim)}
+.sl-fm{display:flex;gap:2px}
+.sl-btn{background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:0 8px;border-radius:3px;cursor:pointer;font-size:10px;height:20px}
+.sl-btn:hover,.sl-btn.on{border-color:var(--acc)}
+.sl-btn.on{color:var(--acc)}
+.sl-rng{display:flex;gap:4px;align-items:center;flex:none;flex-wrap:wrap;color:var(--dim)}
+.sl-rng:empty{display:none}
+.sl-rbits{width:52px;height:20px;background:var(--panel2);border:1px solid var(--line);border-radius:3px;padding:0 4px}
+.sl-tbl{flex:1;min-height:60px;overflow:auto;background:var(--screen);border:1px solid var(--line);border-radius:3px;font:11px/1.45 var(--mono);color:var(--scr-txt,var(--txt));outline:none}
+.sl-tbl:focus{border-color:var(--acc)}
+.sl-row{display:flex;gap:8px;padding:0 4px;white-space:pre;cursor:pointer;border-left:3px solid var(--c,transparent);min-width:max-content}
+.sl-row:hover{background:var(--panel2)}
+.sl-row.on{background:rgba(95,184,209,.14)}
+.sl-ruler{color:#778;cursor:default;position:sticky;top:0;background:var(--screen);border-left-color:transparent;z-index:1}
+.sl-ruler:hover{background:var(--screen)}
+.sl-id{flex:none;min-width:30px;color:var(--c,var(--dim));font-weight:600}
+.sl-t{flex:none;min-width:62px;color:#778}
+.sl-n{flex:none;min-width:44px;color:#889}
+.sl-dt i{font-style:normal}
+.sl-d0{opacity:.45}
+.sl-d1{opacity:1}
+.sl-row.on .sl-dt i{cursor:pointer}
+.sl-dt i.sel{outline:1px solid var(--acc);outline-offset:-1px;background:rgba(224,178,60,.3)}
+.sl-l0{background:rgba(95,184,209,.30)} .sl-l1{background:rgba(224,135,95,.30)} .sl-l2{background:rgba(127,209,127,.28)} .sl-l3{background:rgba(209,138,209,.30)}
+.sl-l4{background:rgba(224,176,80,.30)} .sl-l5{background:rgba(111,208,192,.30)} .sl-l6{background:rgba(224,127,176,.30)} .sl-l7{background:rgba(180,212,85,.28)}
+.sl-empty{padding:6px;color:#889}
+.sl-sel{flex:none;min-height:14px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sl-lab{display:flex;flex-wrap:wrap;gap:4px;align-items:center;flex:none}
+.sl-lab:empty{display:none}
+.sl-new{display:flex;gap:4px;align-items:center}
+.sl-name{width:110px;height:20px;background:var(--panel2);border:1px solid var(--line);border-radius:3px;padding:0 4px}
+.sl-chip{border:1px solid var(--c,var(--line));border-radius:3px;padding:0 5px;cursor:pointer;background:var(--panel2)}
+.sl-chip i{font-style:normal;color:var(--dim)}
+.sl-chip b{cursor:pointer;color:var(--dim);font-weight:400;padding-left:2px}
+.sl-chip b:hover{color:var(--err)}
+
 /* ?readonly-tiles: только тайлы, без панелей и правки раскладки */
 body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages,body.rotiles .dash-tools,body.rotiles .dash-resizer,body.rotiles .dash-rail,body.rotiles .dash-pane.graph{display:none!important}
