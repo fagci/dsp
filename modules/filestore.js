@@ -124,6 +124,13 @@ const FileStore = (() => {
       const a=await reqP((await st('files','readonly')).getAll());
       return a.filter(f=>f.space===space).reduce((u,f)=>({files:u.files+1,bytes:u.bytes+(f.size||0)}),{files:0,bytes:0});
     },
+    async quota(){                                     // {usage, quota, free, persisted} браузера; null, если оценки нет
+      if(!navigator.storage?.estimate) return null;
+      try{
+        const e=await navigator.storage.estimate(), quota=e.quota||0, usage=e.usage||0;
+        return {usage,quota,free:Math.max(0,quota-usage),persisted:navigator.storage.persisted ? await navigator.storage.persisted() : false};
+      }catch(err){ return null; }
+    },
     // файл с диска / из сети в нужное пространство; audio — декодируется в клип (peaks, длительность), images — как есть
     async importFile(space,file,folderId=null,name){
       name=name||file.name||'file';
@@ -201,14 +208,22 @@ function fmMount(host,o={}){
   const crumbs=document.createElement('div'); crumbs.className='fm-crumbs';
   const list=document.createElement('div'); list.className='fm-list';
   const info=document.createElement('div'); info.className='fm-info';
+  const disk=document.createElement('div'); disk.className='fm-disk';
+  const meter=document.createElement('div'); meter.className='fm-meter'; const fill=document.createElement('i'); meter.append(fill);
+  const diskTx=document.createElement('span'); disk.append(meter,diskTx);
   const mk=(t,title,fn)=>{ const b=document.createElement('button'); b.textContent=t; b.title=title; b.onclick=fn; return b; };
   const inp=document.createElement('input'); inp.type='file'; inp.multiple=true; inp.hidden=true;
   bar.append(
     mk('＋ folder','New folder',async()=>{ const n=prompt('Folder name:'); if(n) await FileStore.addFolder(S.space,n,S.folder); }),
     mk('⤒ import','Add files from this device',()=>inp.click()),
     inp);
+  const persistBtn=mk('⚑ keep','Ask the browser not to evict this storage when space runs low',async()=>{
+    try{ await navigator.storage.persist(); }catch(e){}
+    drawDisk();
+  });
+  bar.append(persistBtn);
   inp.onchange=async()=>{ const fs=[...inp.files]; inp.value=''; await addFiles(fs); };
-  root.append(...(spaces.length>1 ? [tabs] : []),bar,crumbs,list,info);
+  root.append(...(spaces.length>1 ? [tabs] : []),bar,crumbs,list,info,disk);
   root.addEventListener('pointerdown',e=>e.stopPropagation());
   root.addEventListener('wheel',e=>e.stopPropagation());
   root.addEventListener('dragover',e=>{ e.preventDefault(); });
@@ -216,7 +231,9 @@ function fmMount(host,o={}){
   host.append(root);
 
   async function addFiles(fs){
+    const q=await FileStore.quota();
     for(const f of fs){
+      if(q && f.size>q.free){ alert('Not enough space for '+f.name+': needs '+fmSize(f.size)+', free '+fmSize(q.free)); continue; }
       try{ await FileStore.importFile(S.space,f,S.folder); }
       catch(e){ alert('Could not add '+f.name+': '+e.message); }
     }
@@ -275,6 +292,18 @@ function fmMount(host,o={}){
     }
     if(!list.children.length){ const e=document.createElement('div'); e.className='fm-empty'; e.textContent='empty — import files or drop them here'; list.append(e); }
     info.textContent=use.files+' file'+(use.files===1 ? '' : 's')+' · '+fmSize(use.bytes)+' in '+S.space;
+    drawDisk();
+  }
+  async function drawDisk(){
+    const q=await FileStore.quota();
+    if(S.dead) return;
+    disk.hidden=!q || !q.quota;
+    if(disk.hidden) return;
+    const f=q.usage/q.quota;
+    fill.style.width=Math.min(100,f*100).toFixed(1)+'%';
+    meter.classList.toggle('warn',f>0.8);
+    diskTx.textContent='free '+fmSize(q.free)+' of '+fmSize(q.quota)+' · used '+fmSize(q.usage)+(q.persisted ? ' · persistent' : '');
+    persistBtn.hidden=q.persisted || !navigator.storage?.persist;
   }
   function setSpace(sp){ if(!spaces.includes(sp)) return; S.space=sp; S.folder=null; select(null); refresh(); }
   const off=FileStore.onChange(sp=>{ if(!root.isConnected){ off(); S.dead=true; return; } if(!sp || sp===S.space) refresh(); });

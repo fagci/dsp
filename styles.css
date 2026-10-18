@@ -1098,6 +1098,10 @@ select.aed-b{padding:0 6px}
 .fm-th canvas{width:36px;height:18px}
 .fm-empty{padding:12px;text-align:center;color:var(--dim)}
 .fm-info{flex:0 0 auto;color:var(--dim);font-size:10px}
+.fm-disk{flex:0 0 auto;display:flex;flex-direction:column;gap:2px;color:var(--dim);font-size:10px}
+.fm-meter{height:5px;background:var(--bg);border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.fm-meter i{display:block;height:100%;background:var(--acc)}
+.fm-meter.warn i{background:var(--err,#e5534b)}
 .fm-ov{position:fixed;inset:0;z-index:300;background:var(--scrim);display:flex;align-items:center;justify-content:center}
 .fm-pick{background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:4px;max-width:92vw;max-height:80vh;overflow:auto;font:12px var(--mono)}
 .fm-pick button{text-align:left;background:var(--panel2);border:1px solid var(--line);border-radius:3px;color:var(--txt);padding:6px 10px;cursor:pointer;font:inherit}
