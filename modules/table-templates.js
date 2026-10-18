@@ -31,6 +31,9 @@ const TBL_TEMPLATES=[
    desc:'Signals you noted: time, frequency, mode, bandwidth, level, place.'},
   {id:'track', title:'Track (route)', dir:'tracks', cols:['id','lat','lon','alt','speed','icon','label'],
    desc:'A route for the Sequencer (a moving marker on the Map): rows with the same id are one vehicle; speed in km/h.'},
+  {id:'collection', title:'Collection (cards with a photo)', dir:'collection', cols:['name','photo','category','rating','date','owned','note'],
+   types:{photo:{t:'photo'},category:{t:'choice',opts:['A','B','C']},rating:{t:'num'},date:{t:'date'},owned:{t:'bool'},note:{t:'long'}},
+   desc:'A hand-kept catalogue (like Memento): photo, category (a choice), number, date, checkbox, long note. Shown as cards; add fields and links to other lists in ▦ view → Fields.'},
   {id:'photos', title:'Photo log', dir:'photos', cols:['name','t','lat','lon','alt','photo','audio','note'],
    desc:'Photos with the place and time (the place and time are taken from the picture when it has EXIF).'},
 ];
