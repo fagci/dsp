@@ -6,7 +6,7 @@
    FileStore — данные; fmMount — общий интерфейс менеджера (хлебные крошки, папки, импорт, скачивание, перенос), его же берут узлы. */
 
 const FS_SPACES=['audio','images','files'];
-const FM_SPACES=[...FS_SPACES,'tables'];                // tables — списки Table (ListDB), см. TableStore
+const FM_SPACES=['files','audio','images','tables'];    // первый — корень, остальные лежат в нём системными папками; tables — списки Table (ListDB), см. TableStore
 const FS_ROOT=0;                                       // корень снаружи — 0: null не попадает в индекс IndexedDB
 
 const FileStore = (() => {
@@ -270,8 +270,10 @@ const TableStore = (() => {
 
 /* ---- файловый менеджер ----
    fmMount(host,{space,onSelect(rec|null),onOpen(rec),openOnClick,onFolder(id|null),accept(rec)->bool,extra(rec,row),spaces:[...]})
-   Возвращает {refresh(),setSpace(s),get space,get folder,get selected,destroy()}.
-   Поиск по имени (по всему пространству), сортировка, режим выбора нескольких (перенос, копия, скачивание, удаление). */
+   Возвращает {refresh(),setSpace(s),get space,get folder,get selected,picked()->Promise<rec[]>,destroy()}.
+   Первое из spaces — корень («/»), остальные в нём системные папки; свои папки создаются где угодно. Действия — одна панель над
+   отмеченным (клик — одна строка, Ctrl / Shift / ☑ — несколько): переименовать, перенести, копировать, скачать, удалить.
+   Поиск по имени (в текущем хранилище), сортировка. */
 const fmBE=sp=>sp==='tables' ? TableStore : FileStore;
 const fmIcon=r=>{
   const m=r.mime||'';
@@ -298,7 +300,7 @@ async function fmPickFolder(space,exclude,title){
   const ex=new Set(exclude==null ? [] : Array.isArray(exclude) ? exclude : [exclude]);
   const all=await fmBE(space).allFolders(space), byParent=new Map();
   for(const f of all){ const a=byParent.get(f.parentId)||[]; a.push(f); byParent.set(f.parentId,a); }
-  const rows=[{id:null,label:'/ (root)'}];
+  const rows=[{id:null,label:space==='files' ? '/ (root)' : '/ '+space}];
   const walk=(pid,pre)=>{ for(const f of (byParent.get(pid)||[]).sort((a,b)=>a.name.localeCompare(b.name))){
     if(ex.has(f.id)) continue; rows.push({id:f.id,label:pre+f.name}); walk(f.id,pre+f.name+' / '); } };
   walk(FS_ROOT,'/ ');
@@ -318,22 +320,22 @@ const FM_SORT={name:(a,b)=>String(a.name).localeCompare(String(b.name),undefined
   type:(a,b)=>String(a.mime).localeCompare(String(b.mime))||FM_SORT.name(a,b)};
 
 function fmMount(host,o={}){
-  const spaces=o.spaces||FM_SPACES;
-  const S={space:o.space||spaces[0],folder:null,selected:null,urls:[],gen:0,dead:false,sort:'name',desc:false,q:'',multi:false,marks:new Set()};
+  const spaces=o.spaces||FM_SPACES, home=spaces[0];
+  const S={space:o.space||home,folder:null,selected:null,urls:[],gen:0,dead:false,sort:'name',desc:false,q:'',multi:false,marks:new Set(),anchor:null};
   const root=document.createElement('div'); root.className='fm';
   const bar=document.createElement('div'); bar.className='fm-bar';
-  const tabs=document.createElement('div'); tabs.className='fm-tabs';
   const find=document.createElement('div'); find.className='fm-bar';
   const crumbs=document.createElement('div'); crumbs.className='fm-crumbs';
-  const bulk=document.createElement('div'); bulk.className='fm-bar'; bulk.hidden=true;
+  const bulk=document.createElement('div'); bulk.className='fm-bar';
   const list=document.createElement('div'); list.className='fm-list';
   const info=document.createElement('div'); info.className='fm-info';
   const disk=document.createElement('div'); disk.className='fm-disk';
   const meter=document.createElement('div'); meter.className='fm-meter'; const fill=document.createElement('i'); meter.append(fill);
   const diskTx=document.createElement('span'); disk.append(meter,diskTx);
   const mk=(t,title,fn)=>{ const b=document.createElement('button'); b.textContent=t; b.title=title; b.onclick=fn; return b; };
-  const guard=fn=>async(...a)=>{ try{ return await fn(...a); }catch(e){ alert(e.message||String(e)); } };
+  const guard=fn=>async(...a)=>{ try{ return await fn(...a); }catch(e){ if(e.message!=='') alert(e.message||String(e)); } };
   const B=()=>fmBE(S.space);
+  const idOf=v=>S.space==='tables' ? v : +v;
   const inp=document.createElement('input'); inp.type='file'; inp.multiple=true; inp.hidden=true;
   const search=document.createElement('input'); search.type='search'; search.placeholder='search…'; search.className='fm-q';
   search.oninput=()=>{ S.q=search.value.trim().toLowerCase(); refresh(); };
@@ -341,14 +343,14 @@ function fmMount(host,o={}){
   for(const k of Object.keys(FM_SORT)){ const op=document.createElement('option'); op.value=op.textContent=k; sortSel.append(op); }
   sortSel.onchange=()=>{ S.sort=sortSel.value; refresh(); };
   const dirBtn=mk('↑','Ascending / descending',()=>{ S.desc=!S.desc; dirBtn.textContent=S.desc ? '↓' : '↑'; refresh(); });
-  const selBtn=mk('☑','Select several',()=>{ S.multi=!S.multi; if(!S.multi) S.marks.clear(); selBtn.classList.toggle('on',S.multi); refresh(); });
+  const selBtn=mk('☑','Select several (or Ctrl / Shift + click)',()=>{ S.multi=!S.multi; selBtn.classList.toggle('on',S.multi); refresh(); });
   find.append(search,sortSel,dirBtn,selBtn);
   bar.append(
-    mk('＋ folder','New folder',guard(async()=>{ const n=prompt('Folder name:'); if(n) await B().addFolder(S.space,n,S.folder); })),
+    mk('＋ folder','New folder here',guard(async()=>{ const n=prompt('Folder name:'); if(n) await B().addFolder(S.space,n,S.folder); })),
     mk('⤒ import','Add files from this device',()=>inp.click()),
     inp);
   inp.onchange=async()=>{ const fs=[...inp.files]; inp.value=''; await addFiles(fs); };
-  root.append(...(spaces.length>1 ? [tabs] : []),bar,find,crumbs,bulk,list,info,disk);
+  root.append(bar,find,crumbs,bulk,list,info,disk);
   root.addEventListener('pointerdown',e=>e.stopPropagation());
   root.addEventListener('wheel',e=>e.stopPropagation());
   root.addEventListener('dragover',e=>{ e.preventDefault(); });
@@ -363,32 +365,43 @@ function fmMount(host,o={}){
       catch(e){ alert('Could not add '+f.name+': '+e.message); }
     }
   }
-  // отметки: 'f:id' — файл, 'd:id' — папка
+  function go(space,folder){
+    S.space=space; S.folder=folder; S.marks.clear(); S.anchor=null; search.value=S.q=''; select(null); refresh();
+  }
+  // отметки: 'f:id' — файл, 'd:id' — папка; один клик отмечает одну строку, Ctrl / Shift / режим ☑ — несколько
   const paintMarks=()=>[...list.children].forEach(r=>{ r.classList.toggle('mark',S.marks.has(r._mk)); const c=r.querySelector('input'); if(c) c.checked=S.marks.has(r._mk); });
-  const mark=k=>{ S.marks.has(k) ? S.marks.delete(k) : S.marks.add(k); drawBulk(); paintMarks(); };
+  function pickRow(k,e){
+    const keys=[...list.children].map(r=>r._mk).filter(Boolean);
+    if(e?.shiftKey && S.anchor && keys.includes(S.anchor)){
+      const i=keys.indexOf(S.anchor), j=keys.indexOf(k);
+      for(const x of keys.slice(Math.min(i,j),Math.max(i,j)+1)) S.marks.add(x);
+    }else{ S.marks.has(k) ? S.marks.delete(k) : S.marks.add(k); S.anchor=k; }
+    drawBulk(); paintMarks();
+  }
+  const several=e=>S.multi || !!(e && (e.ctrlKey || e.metaKey || e.shiftKey));
+  const picked=()=>{ const f=[],d=[]; for(const k of S.marks) (k[0]==='f' ? f : d).push(idOf(k.slice(2))); return {f,d}; };
   function drawBulk(){
-    bulk.hidden=!S.multi; bulk.textContent='';
-    if(!S.multi) return;
-    const n=S.marks.size, idOf=v=>S.space==='tables' ? v : +v;
-    const picked=()=>{ const f=[],d=[]; for(const k of S.marks) (k[0]==='f' ? f : d).push(idOf(k.slice(2))); return {f,d}; };
-    const act=(t,title,fn)=>{ const b=mk(t,title,guard(async()=>{ await fn(picked()); })); b.disabled=!n; return b; };
-    const lbl=document.createElement('span'); lbl.className='fm-info'; lbl.textContent=n+' selected';
-    bulk.append(lbl,
+    bulk.textContent='';
+    const n=S.marks.size;
+    const act=(t,title,ok,fn)=>{ const b=mk(t,title,guard(async()=>{ await fn(picked()); S.marks.clear(); drawBulk(); })); b.disabled=!n || !ok(picked()); return b; };
+    const lbl=document.createElement('span'); lbl.className='fm-info'; lbl.textContent=n ? n+' selected' : 'nothing selected';
+    bulk.append(lbl);
+    if(S.multi) bulk.append(
       mk('all','Select everything shown',()=>{ for(const r of list.children) if(r._mk) S.marks.add(r._mk); drawBulk(); paintMarks(); }),
-      mk('none','Clear selection',()=>{ S.marks.clear(); drawBulk(); paintMarks(); }),
-      act('⇢','Move selected',async s=>{ const t=await fmPickFolder(S.space,s.d); if(t===undefined) return;
-        for(const d of s.d) await B().moveFolder(d,t); for(const f of s.f) await B().update(f,{folderId:t}); S.marks.clear(); }),
-      act('⧉','Copy selected',async s=>{ const t=await fmPickFolder(S.space,null,'Copy to…'); if(t===undefined) return;
-        for(const d of s.d) await B().copyFolder(d,t); for(const f of s.f) await B().copy(f,t); S.marks.clear(); }),
-      act('⤓','Download selected',async s=>{ for(const f of s.f){ const r=await B().get(f); if(r) await fmDownload(r); } }),
-      act('✕','Delete selected',async s=>{ if(!confirm('Delete '+(s.f.length+s.d.length)+' selected item(s)?')) return;
-        for(const d of s.d) await B().deleteFolder(d); for(const f of s.f){ if(S.selected?.id===f) select(null); await B().remove(f); } S.marks.clear(); }));
+      mk('none','Clear selection',()=>{ S.marks.clear(); drawBulk(); paintMarks(); }));
+    bulk.append(
+      act('✎','Rename',s=>s.f.length+s.d.length===1,async s=>{
+        if(s.d.length){ const f=await B().getFolder(s.d[0]), nm=prompt('New name:',f.name); if(nm) await B().renameFolder(f.id,nm); }
+        else{ const r=await B().get(s.f[0]), nm=prompt('New name:',r.name); if(nm) await B().update(r.id,{name:nm}); } }),
+      act('⇢','Move',()=>true,async s=>{ const t=await fmPickFolder(S.space,s.d,'Move to…'); if(t===undefined) throw new Error('');
+        for(const d of s.d) await B().moveFolder(d,t); for(const f of s.f) await B().update(f,{folderId:t}); }),
+      act('⧉','Copy',()=>true,async s=>{ const t=await fmPickFolder(S.space,null,'Copy to…'); if(t===undefined) throw new Error('');
+        for(const d of s.d) await B().copyFolder(d,t); for(const f of s.f) await B().copy(f,t); }),
+      act('⤓','Download files',s=>s.f.length>0,async s=>{ for(const f of s.f){ const r=await B().get(f); if(r) await fmDownload(r); } }),
+      act('✕','Delete',()=>true,async s=>{ if(!confirm('Delete '+(s.f.length+s.d.length)+' selected item(s)?')) throw new Error('');
+        for(const d of s.d) await B().deleteFolder(d); for(const f of s.f){ if(S.selected?.id===f) select(null); await B().remove(f); } }));
   }
   function select(rec){ S.selected=rec; o.onSelect?.(rec); [...list.children].forEach(r=>r.classList.toggle('sel',!!rec && r._rec===rec.id)); }
-  function drawTabs(){
-    tabs.textContent='';
-    for(const sp of spaces){ const b=document.createElement('button'); b.textContent=sp; b.className=sp===S.space ? 'on' : ''; b.onclick=()=>setSpace(sp); tabs.append(b); }
-  }
   async function refresh(){
     const g=++S.gen, be=B(), srch=!!S.q;
     const [folders0,files0,path,use]=await Promise.all([
@@ -403,24 +416,32 @@ function fmMount(host,o={}){
     const where=id=>{ const p=[]; for(let f=dirs.get(id);f;f=dirs.get(f.parentId)) p.unshift(f.name); return '/'+p.join('/'); };
     o.onFolder?.(S.folder);
     for(const u of S.urls) URL.revokeObjectURL(u); S.urls=[];
-    drawTabs(); drawBulk();
+    // отметки живут только пока объект на месте
+    const have=new Set([...folders0.map(f=>'d:'+f.id),...files0.map(r=>'f:'+r.id)]);
+    for(const k of [...S.marks]) if(!have.has(k)) S.marks.delete(k);
+    drawBulk();
     crumbs.textContent='';
-    const seg=(t,id)=>{ const b=document.createElement('button'); b.textContent=t; b.onclick=()=>{ S.folder=id; search.value=S.q=''; S.marks.clear(); select(null); refresh(); }; crumbs.append(b); };
-    seg('/',null); for(const f of path){ crumbs.append(' › '); seg(f.name,f.id); }
+    const seg=(t,sp,id)=>{ const b=document.createElement('button'); b.textContent=t; b.onclick=()=>go(sp,id); crumbs.append(b); };
+    seg('/',home,null);
+    if(S.space!==home){ crumbs.append(' › '); seg(S.space,S.space,null); }
+    for(const f of path){ crumbs.append(' › '); seg(f.name,S.space,f.id); }
     list.textContent='';
-    const chk=(row,k)=>{ row._mk=k; if(!S.multi) return; const c=document.createElement('input'); c.type='checkbox'; c.checked=S.marks.has(k);
-      c.onclick=e=>{ e.stopPropagation(); mark(k); }; row.prepend(c); row.classList.toggle('mark',S.marks.has(k)); };
+    const chk=(row,k)=>{ row._mk=k; row.classList.toggle('mark',S.marks.has(k));
+      if(!S.multi) return; const c=document.createElement('input'); c.type='checkbox'; c.checked=S.marks.has(k);
+      c.onclick=e=>{ e.stopPropagation(); pickRow(k,e); }; row.prepend(c); };
+    // остальные хранилища — системные папки корня
+    if(S.space===home && S.folder==null && !srch) for(const sp of spaces.slice(1)){
+      const row=document.createElement('div'); row.className='fm-row fm-dir fm-sys';
+      const nm=document.createElement('span'); nm.className='fm-name'; nm.textContent='🗂 '+sp; nm.title='System folder';
+      row.append(nm); row.onclick=()=>go(sp,null); list.append(row);
+    }
     for(const f of folders){
       const row=document.createElement('div'); row.className='fm-row fm-dir';
       const nm=document.createElement('span'); nm.className='fm-name'; nm.textContent='📁 '+f.name;
       if(srch) nm.title=where(f.parentId);
-      row.append(nm,
-        mk('✎','Rename',guard(async e=>{ e.stopPropagation(); const n=prompt('New name:',f.name); if(n) await be.renameFolder(f.id,n); })),
-        mk('⇢','Move',guard(async e=>{ e.stopPropagation(); const t=await fmPickFolder(S.space,f.id); if(t!==undefined && t!==f.id) await be.moveFolder(f.id,t); })),
-        mk('⧉','Copy',guard(async e=>{ e.stopPropagation(); const t=await fmPickFolder(S.space,null,'Copy to…'); if(t!==undefined) await be.copyFolder(f.id,t); })),
-        mk('✕','Delete folder with contents',guard(async e=>{ e.stopPropagation(); if(confirm('Delete folder "'+f.name+'" and everything in it?')) await be.deleteFolder(f.id); })));
+      row.append(nm);
       chk(row,'d:'+f.id);
-      row.onclick=()=>{ if(S.multi) return mark('d:'+f.id); S.folder=f.id; search.value=S.q=''; select(null); refresh(); };
+      row.onclick=e=>{ if(several(e)) return pickRow('d:'+f.id,e); go(S.space,f.id); };
       row.ondragover=e=>{ e.preventDefault(); row.classList.add('over'); };
       row.ondragleave=()=>row.classList.remove('over');
       row.ondrop=async e=>{ e.preventDefault(); e.stopPropagation(); row.classList.remove('over'); if(fmDrag!=null) await guard(()=>be.update(fmDrag,{folderId:f.id}))(); };
@@ -439,14 +460,13 @@ function fmMount(host,o={}){
       sz.textContent=r.meta?.duration!=null ? fmtDur(r.meta.duration) : r.space==='tables' ? r.meta.rows+' rows · '+fmSize(r.size||0) : fmSize(r.size||0);
       row.append(th,nm,sz);
       o.extra?.(r,row);
-      row.append(
-        mk('✎','Rename',guard(async e=>{ e.stopPropagation(); const n=prompt('New name:',r.name); if(n) await be.update(r.id,{name:n}); })),
-        mk('⇢','Move',guard(async e=>{ e.stopPropagation(); const t=await fmPickFolder(S.space); if(t!==undefined) await be.update(r.id,{folderId:t}); })),
-        mk('⧉','Copy',guard(async e=>{ e.stopPropagation(); const t=await fmPickFolder(S.space,null,'Copy to…'); if(t!==undefined) await be.copy(r.id,t); })),
-        mk('⤓','Download',guard(async e=>{ e.stopPropagation(); await fmDownload(r); })),
-        mk('✕','Delete',guard(async e=>{ e.stopPropagation(); if(confirm('Delete "'+r.name+'"?')){ if(S.selected?.id===r.id) select(null); await be.remove(r.id); } })));
       chk(row,'f:'+r.id);
-      row.onclick=()=>{ select(r); if(S.multi) return mark('f:'+r.id); if(o.openOnClick) o.onOpen?.(r); };
+      row.onclick=e=>{
+        const k='f:'+r.id;
+        if(several(e)){ pickRow(k,e); return select(S.marks.has(k) ? r : null); }
+        S.marks=new Set([k]); S.anchor=k; drawBulk(); paintMarks(); select(r);
+        if(o.openOnClick) o.onOpen?.(r);
+      };
       row.ondblclick=()=>{ if(!o.openOnClick) o.onOpen?.(r); };
       row.ondragstart=e=>{ fmDrag=r.id; e.dataTransfer.setData('text/plain',r.name); e.dataTransfer.setData('application/x-dsp-file',String(r.id)); };
       row.ondragend=()=>{ fmDrag=null; };
@@ -472,10 +492,14 @@ function fmMount(host,o={}){
     drawDisk();
   });
   bar.append(persistBtn);
-  function setSpace(sp){ if(!spaces.includes(sp)) return; S.space=sp; S.folder=null; S.marks.clear(); search.value=S.q=''; select(null); refresh(); }
+  function setSpace(sp){ if(spaces.includes(sp)) go(sp,null); }
   const off=FileStore.onChange(sp=>{ if(!root.isConnected){ off(); S.dead=true; return; } if(!sp || sp===S.space) refresh(); });
   refresh();
   return { root, refresh, setSpace, get space(){ return S.space; }, get folder(){ return S.folder; }, get selected(){ return S.selected; },
+    async picked(){                                    // отмеченные файлы (записи) в порядке отметки
+      const out=[]; for(const k of S.marks) if(k[0]==='f'){ const r=await B().get(idOf(k.slice(2))); if(r) out.push(r); }
+      return out;
+    },
     destroy(){ S.dead=true; off(); for(const u of S.urls) URL.revokeObjectURL(u); root.remove(); } };
 }
 let fmDrag=null;
@@ -484,18 +508,21 @@ let fmDrag=null;
 def({ id:'files', title:'Files', cat:'Output', kw:'file manager storage samples images folder browser upload download', w:340, h:360, resize:true,
   ins:[], outs:[{n:'id',t:'num'},{n:'name',t:'txt'},{n:'size',t:'num'},{n:'send',t:'num'},{n:'bin',t:'bin'}],
   params:[{n:'meta',t:'check',d:true,label:'bin: attach name and type (off — bare bytes)'},
-    {n:'sendBtn',t:'button',label:'Send selected → (pulse on `send`, bytes on `bin`)',fn:n=>{ if(n.sel) n.pend=typeof n.sel.id==='number' ? n.sel.id : 0; }},
-    {n:'space',t:'select',opts:FM_SPACES,d:'files',label:'storage',fn:n=>{ n.fm?.setSpace(n.p.space); }}],
-  init:n=>{ n.fm=null; n.sel=null; n.pend=-1; n.ready=-1; n.binOut=null; },
+    {n:'sendBtn',t:'button',label:'Send selected → (pulse on `send`, bytes on `bin`; several — one per block)',fn:n=>{
+      n.fm?.picked().then(a=>{ n.queue.push(...a); }); }}],
+  init:n=>{ n.fm=null; n.sel=null; n.queue=[]; n.busy=false; n.ready=-1; n.binOut=null; },
   dispose:n=>{ n.fm?.destroy(); n.fm=null; },
-  process(n){ const req=n.pend; n.pend=-1; const send=n.ready; n.ready=-1;     // импульс: id на один блок, потом -1
+  process(n){ const send=n.ready; n.ready=-1;                                  // импульс: id на один блок, потом -1
     const r=n.sel;
-    if(req!==-1 && r)                             // байты уходят только по кнопке; пульс send идёт вместе с ними, а не раньше
-      fmBlob(r).then(b=>b.arrayBuffer()).then(a=>{ n.binOut=n.p.meta ? binObj(new Uint8Array(a),fmFileName(r),r.mime) : binObj(new Uint8Array(a)); n.ready=Math.max(req,0); });
+    if(!n.busy && n.queue.length){                // байты уходят только по кнопке; пульс send идёт вместе с ними, а не раньше
+      const q=n.queue.shift(); n.busy=true;
+      fmBlob(q).then(b=>b.arrayBuffer()).then(a=>{ n.binOut=n.p.meta ? binObj(new Uint8Array(a),fmFileName(q),q.mime) : binObj(new Uint8Array(a));
+        n.ready=typeof q.id==='number' ? q.id : 0; n.busy=false; },()=>{ n.busy=false; });
+    }
     return {id:r && typeof r.id==='number' ? r.id : -1, name:r?.name||'', size:r?.size||0, send, bin:n.binOut}; },
   draw(n){
     if(n.fm && n.mid.contains(n.fm.root)) return;
     n.fm?.destroy();
-    n.fm=fmMount(n.mid,{space:n.p.space,onSelect:r=>{ n.sel=r; }});
+    n.fm=fmMount(n.mid,{onSelect:r=>{ n.sel=r; }});
   }
 });
