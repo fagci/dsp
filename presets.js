@@ -353,6 +353,8 @@ const PRESET_CATS={
   'BLE: Find a Beacon by RSSI':'Network & IoT',
   'BLE: UART Terminal':'Network & IoT',
   'Unknown Signal: Blind Analysis (Generator)':'Unknown Signals',
+  'Signal Analyzer: 433 MHz Remotes (Generator)':'Unknown Signals',
+  'Signal Analyzer: Unknown Signal (Generator)':'Unknown Signals',
   'Preamble Search':'Modems & Data Links',
   'Noise-Resistant Frame':'Modems & Data Links',
   'APRS / AX.25':'Modems & Data Links',
@@ -5747,6 +5749,41 @@ addEdge(eq.id,'out',fd.id,'in'); addEdge(fd.id,'out',rr.id,'in');
 addEdge(be.id,'baud',rr.id,'baud'); addEdge(be.id,'baud',sl.id,'baud');
 addEdge(rr.id,'out',sl.id,'in'); addEdge(sl.id,'out',sy.id,'in');
 addEdge(sy.id,'blk',cv.id,'blk'); addEdge(cv.id,'blk',cr.id,'blk'); addEdge(cr.id,'blk',bv.id,'blk');
+markWiresDirty();
+});
+preset('Signal Analyzer: 433 MHz Remotes (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Signal Analyzer works like Universal Radio Hacker: it captures the IQ, demodulates it (ASK / OOK, FSK or PSK — found by itself), cuts it into messages at the pauses and the symbols at the symbol rate.\n'+
+  'The plot shows the signal with the messages as coloured bands (like bands on the spectrum), the symbols and bits under the curve when you zoom in (wheel; drag pans; double-click a message to zoom to it; Shift+drag measures a span and sets the baud from it).\n'+
+  'The table below lists the messages as bin / hex / ascii, aligned by the sync word; bits that differ between messages stay bright. Click a row, drag over bits and name the field: its value goes into the records.\n'+
+  'The generator (ISM433) sends sensor and remote-control telegrams of several protocols: switch its ism between OOK and FSK, set the capture to single to freeze a buffer. The records go to HEX Field Finder, the bits to Block Viewer.'});
+nt.size.w=1100; nt.size.h=150; applySize(nt);
+const gn=addNode('iqGen',40,230,{sr:'1024000',fc:433920000,mode:'ISM433',ism:'OOK',off:20000,lvl:-20,noise:-45});
+gn.size.w=300; gn.size.h=420; applySize(gn);
+const sl=addNode('sigLab',380,230,{secs:3,mode:'rolling',refresh:2});
+sl.size.w=820; sl.size.h=260; applySize(sl);
+const hs=addNode('hexScan',380,820,{minN:3});
+hs.size.w=520; hs.size.h=240; applySize(hs);
+const bv=addNode('blkview',920,820,{fmt:'text',wrap:32});
+bv.size.w=300; bv.size.h=200; applySize(bv);
+addEdge(gn.id,'iq',sl.id,'iq'); addEdge(sl.id,'rec',hs.id,'rec'); addEdge(sl.id,'blk',bv.id,'blk');
+markWiresDirty();
+});
+preset('Signal Analyzer: Unknown Signal (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A transmission with unknown parameters: Unknown Signal sends 2FSK (change it to GFSK, BPSK or QPSK) with a hidden symbol rate, a sync word and a checksum.\n'+
+  'Signal Analyzer finds the modulation, the noise level, the centre and the symbol rate itself (drag the red noise line and the amber centre line to correct them, or turn "find by itself" off in advanced);\n'+
+  'this transmission has no pauses, so it is one long message: *split* (advanced, here "auto") cuts it into frames at the sync word it finds repeating;\n'+
+  'the bits of every message are in the table. The sync word and the preamble are found by comparing the messages; with *align = sync* the table lines the messages up on it.\n'+
+  'Line code: choose Manchester, NRZ-M and so on if the bits look like a doubled or differential code. On a real signal wire USB SDR iq (decimate it to a few hundred kS/s first).'});
+nt.size.w=1100; nt.size.h=130; applySize(nt);
+const gn=addNode('blindGen',40,210,{sr:'256000',off:20000,mod:'2FSK',baud:9600,dev:4800,word:'B38D2E5A',len:16,crc:'CRC-16/X-25',fec:'none',gap:64,lvl:-20,noise:-50,echo:0});
+gn.size.w=300; gn.size.h=420; applySize(gn);
+const sl=addNode('sigLab',380,210,{secs:1.5,mode:'rolling',refresh:2,split:'auto'});
+sl.size.w=820; sl.size.h=260; applySize(sl);
+const cr=addNode('crcFind',380,800,{min:6,tail:32,maxSkip:2,unknown:true});
+cr.size.w=360; cr.size.h=240; applySize(cr);
+addEdge(gn.id,'iq',sl.id,'iq'); addEdge(sl.id,'blk',cr.id,'blk');
 markWiresDirty();
 });
 preset('Logic Analyzer: UART Decode', function(){
