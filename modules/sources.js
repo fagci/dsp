@@ -6697,6 +6697,19 @@ const ListDB = (() => {
         tx.oncomplete=()=>res(); tx.onerror=tx.onabort=()=>rej(tx.error);
       });
     },
+    // списки одним проходом: {rows, bytes, created, modified}; пустой список с колонками — rows 0
+    async summary(){
+      const all=await reqP((await store('readonly')).getAll()), m=new Map();
+      for(const it of all){
+        let e=m.get(it.listName); if(!e) m.set(it.listName,e={rows:0,bytes:0,created:Infinity,modified:0});
+        e.rows++; e.bytes+=(it.name||'').length;
+        for(const k in it.fields) e.bytes+=k.length+String(it.fields[k]??'').length+2;
+        const t=it.created||0; if(t<e.created) e.created=t; if(t>e.modified) e.modified=t;
+      }
+      for(const k of await ListDB.metaNames()) if(!m.has(k)) m.set(k,{rows:0,bytes:0,created:0,modified:0});
+      for(const e of m.values()) if(e.created===Infinity) e.created=0;
+      return m;
+    },
     async getMeta(listName){ const db=await open(); return reqP(db.transaction('meta','readonly').objectStore('meta').get(listName)); },
     async setMeta(listName,meta){ const db=await open(); return reqP(db.transaction('meta','readwrite').objectStore('meta').put({...meta,listName})); },
     async delMeta(listName){ const db=await open(); return reqP(db.transaction('meta','readwrite').objectStore('meta').delete(listName)); },
@@ -6706,7 +6719,7 @@ const ListDB = (() => {
 // счётчик изменений хранилища: читатели списков (Overlay, Flight Sim) перечитывают их, когда он сменился
 ListDB.rev=0;
 for(const k of ['add','update','remove','renameList','deleteList','addMany','removeMany','setMeta','delMeta']){
-  const f=ListDB[k]; ListDB[k]=async function(...a){ const r=await f.apply(this,a); ListDB.rev++; return r; };
+  const f=ListDB[k]; ListDB[k]=async function(...a){ const r=await f.apply(this,a); ListDB.rev++; if(typeof FileStore!=='undefined') FileStore.notifyLater('tables'); return r; };
 }
 
 // Простой CSV-парсер с поддержкой кавычек и экранированных "" внутри поля.

@@ -541,24 +541,36 @@ async function tblUse(n,list){                          // переключит�
 
 /* ---------- импорт / экспорт ---------- */
 const tblBase=name=>name.replace(/\.[^.]+$/,'');
+// файл → список (или несколько, если это набор dsp-lists); возвращает имя последнего списка
+async function tblImportFile(f,prefix){
+  const text=await f.text(), ext=f.name.toLowerCase().split('.').pop();
+  if(ext==='json'){
+    let bundle=null;
+    try{ const o=JSON.parse(text.replace(/^﻿/,'')); if(o && o['dsp-lists']) bundle=o; }catch(e){}
+    if(bundle){
+      let last=null;
+      for(const name in bundle.lists){ const t=bundle.lists[name]; await tblPut(name,t.cols,t.rows); last=name; }
+      return last;
+    }
+  }
+  const t=tblFromTable(tblParse(text,ext)), name=prefix+tblBase(f.name);
+  await tblPut(name,t.cols,t.rows);
+  return name;
+}
 async function tblImport(n,files){
   const prefix=tblKind(n.p.list)==='db' ? tblDir(n.p.list) : '';
   let last=null;
   for(const f of files){
-    try{
-      const text=await f.text(), ext=f.name.toLowerCase().split('.').pop();
-      let bundle=null;
-      if(ext==='json') try{ const o=JSON.parse(text.replace(/^﻿/,'')); if(o && o['dsp-lists']) bundle=o; }catch(e){}
-      if(bundle){
-        for(const name in bundle.lists){ const t=bundle.lists[name]; await tblPut(name,t.cols,t.rows); last=name; }
-        continue;
-      }
-      const t=tblFromTable(tblParse(text,ext));
-      const name=prefix+tblBase(f.name);
-      await tblPut(name,t.cols,t.rows); last=name;
-    }catch(e){ alert('failed to read '+f.name+': '+e.message); }
+    try{ last=await tblImportFile(f,prefix) || last; }
+    catch(e){ alert('failed to read '+f.name+': '+e.message); }
   }
   if(last) await tblUse(n,last);
+}
+// список из хранилища → CSV-файл (для файлового менеджера)
+async function tblListFile(name){
+  const {cols,rows}=await tblReadList(null,name);
+  return {name:(tblLeaf(name)||'table').replace(/[^\w.-]+/g,'_')+'.csv',
+    blob:new Blob(['\ufeff'+[cols,...rows.map(r=>cols.map(c=>r[c]))].map(r=>r.map(csvCell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'})};
 }
 function tblExportFile(n){
   const cl=n.cl, rows=n.all, fmt=n.p.fmt, base=(tblSplit(n.p.list)[1]||'table').replace(/[^\w.-]+/g,'_');
