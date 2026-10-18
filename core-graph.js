@@ -554,7 +554,9 @@ if(n.ro  && d.tall) n.ro.style.height=n.size.h+'px';
 const ur=n.ui&&n.ui.root; if(ur && d.resize && n.size.h>0 && ur.matches('.ml,.pl')) ur.style.height=n.size.h+'px';   // Playlist, Media Library: высота рамки = высота списка
 if(n.gv && n.size.h >0) n.gv.style.height=n.size.h+'px';
 else if(n.ta  && n.size.h >0 && !d.gv) n.ta.style.height=n.size.h+'px';
+if(!n.xpand) n.el.style.minHeight=(plainH(n,d) && n.size.h>0) ? n.size.h+'px' : '';   // обычный модуль: высота рамки — минимальная
 }
+function plainH(n,d){ return !(d.view||d.resize||d.tall||n.gv||n.ta); }
 function rebuildNode(n){                            // пересобрать DOM, сохранив состояние модуля
 const sel=n.el.classList.contains('sel');
 fillParamDefaults(n,MOD[n.type]);                  // добить дефолтами новые/переименованные параметры
@@ -1142,7 +1144,9 @@ const left=dir.includes('l'), right=dir.includes('r'), bottom=dir.includes('b');
 interact(rzEl).draggable({ listeners:{
 start(ev){ if(uiLocked()){ ev.interaction.stop(); return; }
 n.__rw=n.size.w; n.__rh=n.size.h; n.__rx=n.x;
-n.__rxh=n.xpand ? (n._xh||n.el.offsetHeight) : 0; activeInteractions++; },
+n.__rxh=n.xpand ? (n._xh||n.el.offsetHeight) : 0;
+if(!n.xpand && plainH(n,MOD[n.type]) && !n.size.h) n.__rh=n.el.offsetHeight;
+activeInteractions++; },
 move(ev){ if(uiLocked()) return;
 const dx=(ev.clientX-ev.clientX0)/view.k, dy=(ev.clientY-ev.clientY0)/view.k;
 if(right||left){
@@ -1151,7 +1155,7 @@ if(left){ n.x=n.__rx+n.__rw-n.size.w; posNode(n); } }
 const d=MOD[n.type];
 if(bottom){
 if(n.xpand){ n._xh=clamp(Math.round(n.__rxh+dy),60,2000); n.el.style.height=n._xh+'px'; }   // развёрнутый: канва тянется за рамкой
-else if(d.view||d.resize||d.tall) n.size.h=clamp(Math.round(n.__rh+dy),40,2000); }   // у прочих — только ширина (колонки полей)
+else n.size.h=clamp(Math.round(n.__rh+dy),40,2000); }
 applySize(n); if(n.xpand){ n._dirty=true; n._drawGen=-1; n.onResize?.(n); } drawWires(); },
 end(){ activeInteractions--; Undo.push(); }
 }});
