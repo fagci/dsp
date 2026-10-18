@@ -1093,6 +1093,9 @@ select.aed-b{padding:0 6px}
 .fm-prev img{max-height:70px;max-width:100%;border-radius:2px}
 .fm-prev pre{margin:0;white-space:pre-wrap;word-break:break-all;max-height:80px;overflow:hidden;color:var(--txt);font:inherit;font-family:monospace}
 .fm-prev canvas{color:var(--acc2)}
+.fm-prev video{max-height:80px;max-width:100%}
+.fm-prev audio{height:28px;max-width:100%}
+.fm-seek{flex:1 1 80px;min-width:60px;accent-color:var(--acc2)}
 .dsp-toast{position:absolute;left:6px;right:6px;bottom:6px;z-index:20;background:var(--panel2);border:1px solid var(--acc);border-radius:4px;padding:4px 8px;font-size:11px;display:flex;align-items:center;gap:8px}
 .dsp-toast button{color:var(--acc);background:none;border:0;cursor:pointer;font:inherit}
 .fm-bar button:disabled{opacity:.4;cursor:default}

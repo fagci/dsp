@@ -28,38 +28,7 @@ def({ id:'binFile', title:'File → Bytes', cat:'Sources', kw:'file bytes binary
     return {bin:n.out, size:n.bytes ? n.bytes.length : 0, name:n.fname, new:binPulse(n)}; },
   draw:binReadout });
 
-/* ---------- Bytes → File ---------- */
-async function binStoreFile(n,o){
-  const blob=new Blob([o.d],{type:o.mime||'application/octet-stream'}), name=n.p.name.trim() || o.name || 'data.bin';
-  const sp=(o.mime||'').startsWith('image/') ? 'images' : 'files';
-  try{
-    let folder=(await FileStore.listFolders(sp,null)).find(f=>f.name==='Received');
-    const fid=folder ? folder.id : await FileStore.addFolder(sp,'Received',null);
-    await FileStore.importFile(sp,new File([blob],name,{type:blob.type}),fid,name);
-    n.text=name+' · '+binSizeStr(o.d.length)+' · saved to Received';
-  }catch(e){ n.text='could not save: '+e.message; }
-}
-function binDownload(o,name){
-  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([o.d],{type:o.mime||'application/octet-stream'}));
-  a.download=name||o.name||'data.bin'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),5000);
-}
-def({ id:'binSave', title:'Bytes → File', cat:'Output', kw:'file bytes binary save download receive store', readout:true,
-  ins:[{n:'bin',t:'bin'}], outs:[{n:'size',t:'num'},{n:'name',t:'txt'},{n:'ok',t:'num'}],
-  params:[{n:'store',t:'check',d:true,label:'keep in the file store (Files › Received)'},
-          {n:'download',t:'check',d:false,label:'download automatically'},
-          {n:'name',t:'text',d:'',label:'file name (empty — from the data, else data.bin)'},
-          {n:'save',t:'button',label:'Download last',fn:n=>{ if(n.last) binDownload(n.last,n.p.name.trim()); }}],
-  init:n=>{ n.last=null; n.size=0; n.fname=''; n.pulse=0; n.count=0; n.text='waiting for data'; },
-  process(n,I){
-    const o=I.bin;
-    if(o && o.d && o!==n.last){
-      n.last=o; n.size=o.d.length; n.fname=n.p.name.trim() || o.name; n.pulse=2; n.count++;
-      n.text=(n.fname||'data.bin')+' · '+binSizeStr(n.size)+' · received '+n.count;
-      if(n.p.store) binStoreFile(n,o);
-      if(n.p.download) binDownload(o,n.p.name.trim());
-    }
-    return {size:n.size, name:n.fname, ok:binPulse(n)}; },
-  draw:binReadout });
+/* Bytes → File теперь входы bin / path узла Files (modules/filestore.js) */
 
 /* ---------- Bytes ↔ Text ---------- */
 def({ id:'binToTxt', title:'Bytes → Text', cat:'Data', kw:'bytes binary hex base64 text encode convert', readout:true,
