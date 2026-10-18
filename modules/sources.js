@@ -1322,7 +1322,7 @@ def({ id:'linefilter', title:'Line Filter (regexp)', cat:'Data',
     {n:'group',t:'num',d:0,label:'group (0 = whole line)'},
     {n:'invert',t:'check',d:false,label:'pass NON-matching'},
   ],
-  init:n=>{ n.lastIn=null; n.out=''; n.pulse=0; n.status=''; n.reCache=null; },
+  init:n=>{ n.lastIn=null; n.res=''; n.pulse=0; n.status=''; n.reCache=null; },
   process(n,I){
     if(typeof I.line==='string' && I.line!==n.lastIn){
       n.lastIn=I.line;
@@ -1331,15 +1331,15 @@ def({ id:'linefilter', title:'Line Filter (regexp)', cat:'Data',
         const m=re.exec(I.line);
         const pass = n.p.invert ? !m : !!m;
         if(pass){
-          n.out = (m && n.p.group>0) ? (m[n.p.group]??'') : I.line;
+          n.res = (m && n.p.group>0) ? (m[n.p.group]??'') : I.line;
           n.pulse=2;
         }
       }
     }
     const go=n.pulse>0?1:0; if(n.pulse>0) n.pulse--;
-    return {line:n.out, go};
+    return {line:n.res, go};
   },
-  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent = n.status || (n.out||'no matches'); }
+  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent = n.status || (n.res||'no matches'); }
 });
 
 

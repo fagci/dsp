@@ -11,7 +11,7 @@
 // Выход: по одной записи (секвенсор из modules/sequencer.js), поля — отдельными проводами,
 // весь список (отмеченные списки) как bands (для 'sa') и rows (для Graph / Map), выбранная запись — lo/mid/hi/span/step.
 
-const TBL_PATCH='@patch', TBL_PRE='presets/', TBL_ROWS=300, TBL_SAVE_MS=3000;
+const TBL_PATCH='@patch', TBL_PRE='presets/', TBL_ROWS=matchMedia('(pointer:coarse)').matches?120:300, TBL_SAVE_MS=3000;
 const TBL_FIXED=new Set([...SEQ_FIXED,'rows','mid','span']);
 const TBL_LO=['lo','low','start','freq','frequency'], TBL_HI=['hi','high','end'],
   TBL_LABEL=['name','label','title'], TBL_COLOR=['color','colour'], TBL_STEP=['step'];
