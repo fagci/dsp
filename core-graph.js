@@ -1704,11 +1704,13 @@ function openModPicker(clientX,clientY,at,from){
     else if(e.key==='Escape'){ e.preventDefault(); closeModPicker(); }
   });
   build();
-  const W=Math.min(300,innerWidth-16), H=Math.min(380,innerHeight-16);
+  const mob=TOUCH || innerWidth<=820, vv=window.visualViewport;
+  const vh=mob && vv ? vv.height : innerHeight;
+  const W=Math.min(300,innerWidth-16), H=Math.min(mob?vh*.45:380,vh-16);   // на мобилке — над клавиатурой
   box.style.width=W+'px'; box.style.maxHeight=H+'px';
-  box.style.left=clamp(clientX,8,innerWidth-W-8)+'px';
-  box.style.top=clamp(clientY,8,innerHeight-H-8)+'px';
-  if(!TOUCH) inp.focus();                            // на тач клавиатура только по тапу в поле — список виден сразу
+  if(mob){ box.style.left=Math.round((innerWidth-W)/2)+'px'; box.style.top=((vv?vv.offsetTop:0)+8)+'px'; }
+  else{ box.style.left=clamp(clientX,8,innerWidth-W-8)+'px'; box.style.top=clamp(clientY,8,innerHeight-H-8)+'px'; }
+  inp.focus({preventScroll:true});
 }
 addEventListener('pointerdown',e=>{ if(modPickEl && !modPickEl.contains(e.target)) closeModPicker(); },true);
 cv.addEventListener('dblclick',e=>{                   // пустое место холста — выбрать модуль в эту точку
