@@ -213,7 +213,7 @@ const TableStore = (() => {
     if(to.startsWith(from+'/')) throw new Error('cannot move a folder into itself');
     const names=[...(await sum()).keys()].filter(n=>n.startsWith(from+'/'));
     for(const n of names) await free(to+n.slice(from.length));
-    for(const n of names) await ListDB.renameList(n,to+n.slice(from.length));
+    for(const n of names){ await ListDB.renameList(n,to+n.slice(from.length)); await tcRenameTarget(n,to+n.slice(from.length)); }
     await setSaved((await saved()).map(d=>d===from ? to : d.startsWith(from+'/') ? to+d.slice(from.length) : d));
   }
   const folderRec=d=>({id:d,space:'tables',name:leafOf(d),parentId:dirOf(d)||FS_ROOT,created:0});
@@ -247,12 +247,12 @@ const TableStore = (() => {
       const to=join('folderId' in patch ? fid(patch.folderId) : dirOf(id),name);
       if(to===id) return;
       if(to.startsWith('presets/')) throw new Error('"presets/" is reserved for built-in lists');
-      await free(to); await ListDB.renameList(id,to);
+      await free(to); await ListDB.renameList(id,to); await tcRenameTarget(id,to);
     },
     async remove(id){ await ListDB.deleteList(id); },
     async copy(id,folderId=null){
-      const {cols,rows}=await tblReadList(null,id), to=await uniq(join(fid(folderId),leafOf(id)));
-      await tblPut(to,cols,rows); return to;
+      const {cols,rows}=await tblReadList(null,id), to=await uniq(join(fid(folderId),leafOf(id))), m=await ListDB.getMeta(id);
+      await tblPut(to,cols,rows,{...(m?.types ? {types:m.types} : {}),...(m?.card ? {card:m.card} : {})}); return to;
     },
     async copyFolder(id,parentId=null){
       const base=join(fid(parentId),leafOf(id)), dirs=new Set(await allDirs());

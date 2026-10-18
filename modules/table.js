@@ -132,7 +132,7 @@ async function tblBackfill(n){
   if(tblKind(n.p.list)==='db'){
     try{
       for(const i of dirty){ const it=tblToItem(n.all[i],n.cl); await ListDB.update(n.ids[i],{name:it.name,fields:it.fields,value:it.fields.value??''}); }
-      if(grown) await ListDB.setMeta(n.p.list,{cols:n.cl});
+      if(grown) await tblMetaSet(n.p.list,{cols:n.cl});
     }catch(e){ alert('storage: '+(e.message||e)); return; }
   } else await tblSave(n);
   if(grown) tblSetCols(n,n.cl.slice(),false);
@@ -225,23 +225,23 @@ async function tblLoad(n){
 }
 async function tblLoadRun(n){
   const list=n.p.list, kind=tblKind(list), tok=n.loadTok=(n.loadTok||0)+1;
-  let cols=[], rows=[], ids=[];
+  let cols=[], rows=[], ids=[], schema={types:{},card:{}};
   if(kind==='preset'){ const t=tblPresetRows(list.slice(TBL_PRE.length)); cols=t.cols; rows=t.rows; ids=rows.map((_,i)=>i); }
   else if(kind==='patch'){
     const text=String(n.p.data||'').trim();
     n.err='';
     if(text) try{ const t=tblFromTable(seqParse(text,'',true)); cols=t.cols; rows=t.rows; }catch(e){ n.err=e.message; }
-    ids=rows.map((_,i)=>i);
+    ids=rows.map((_,i)=>i); schema=tcSchemaOf(n.p.schema);
   } else {
     let items=[], meta=null;
     try{ [items,meta]=await Promise.all([ListDB.list(list),ListDB.getMeta(list)]); }
     catch(e){ n.err='storage: '+(e.message||e); }
     if(tok!==n.loadTok) return;
     ({cols,rows}=tblDbRows(items,meta));
-    ids=items.map(it=>it.id);
+    ids=items.map(it=>it.id); schema=tcSchemaOf(meta);
   }
   n.loaded=list; n.loadedData=kind==='patch' ? n.p.data : null;
-  n.all=rows; n.ids=ids; n.cl=cols;
+  n.all=rows; n.ids=ids; n.cl=cols; n.schema=schema;
   // стартовая загрузка не трогает провода: их порты задаёт сохранённый p.cols; смена списка — пользователем
   if(n.wantCols){ n.wantCols=false; tblSetCols(n,cols,true); }
   else if(!n.p.cols.length && cols.length) tblSetCols(n,cols,false);
@@ -348,7 +348,7 @@ async function tblSave(n){                              // записать ит
   }
 }
 async function tblSaveCols(n){
-  if(tblKind(n.p.list)==='db') await ListDB.setMeta(n.p.list,{cols:n.cl});
+  if(tblKind(n.p.list)==='db') await tblMetaSet(n.p.list,{cols:n.cl});
   else await tblSave(n);
 }
 // upsert по ключевой колонке: повтор обновляет строку (непустые поля), count/first/last ведутся сами; → новые строки
@@ -399,7 +399,7 @@ async function tblAdd(n,recs){
   if(kind==='db'){
     try{
       ids=await ListDB.addMany(n.p.list,rows.map(r=>tblToItem(r,n.cl)));
-      if(grown) await ListDB.setMeta(n.p.list,{cols:n.cl});
+      if(grown) await tblMetaSet(n.p.list,{cols:n.cl});
     }catch(e){ alert('storage: '+(e.message||e)); return; }
   } else ids=rows.map((_,i)=>n.all.length+i);
   const wasFull=n.uiFull || !!(n.p.key && n.p.key.trim());     // upsert правит старые строки на месте
@@ -430,6 +430,8 @@ async function tblUpdate(n,i,rec){
   if(tblKind(n.p.list)==='db'){
     const it=tblToItem(o,n.cl);
     await ListDB.update(id,{name:it.name,fields:it.fields,value:it.fields.value??''});
+    const kc=n.nameCol, was=kc ? String(row[kc]??'') : '', now=kc ? String(o[kc]??'') : '';
+    if(kc && was && now && was!==now && await tcRelink(n.p.list,was,now)){ await tblLoad(n); return; }   // связи на запись следуют за её именем
   } else await tblSave(n);
   tblDerive(n);
 }
@@ -490,7 +492,7 @@ async function tblSync(n,list,onlyNew){
     }
     n.all.push(...rows); if(ids) n.ids.push(...ids);
   }
-  if(db){ if(grown) await ListDB.setMeta(n.p.list,{cols:n.cl}); }
+  if(db){ if(grown) await tblMetaSet(n.p.list,{cols:n.cl}); }
   else{ n.ids=n.all.map((_,j)=>j); await tblSave(n); }
   if(grown) tblSetCols(n,n.cl.slice(),false);
   tblDerive(n);
@@ -521,18 +523,18 @@ async function tblColsEdit(n,cl){                       // переименов�
   n.cl=cl.slice(); n.all=rows;
   if(tblKind(n.p.list)==='db'){
     if(gone.length) for(let k=0;k<rows.length;k++){ const it=tblToItem(rows[k],n.cl); await ListDB.update(n.ids[k],{name:it.name,fields:it.fields}); }
-    await ListDB.setMeta(n.p.list,{cols:n.cl});
+    await tblMetaSet(n.p.list,{cols:n.cl});
   } else await tblSave(n);
   tblSetCols(n,n.cl.slice(),true);
   tblDerive(n);
 }
 
 // новый или существующий список: записи добавляются в конец
-async function tblPut(listName,cols,rows){
+async function tblPut(listName,cols,rows,extra){
   const meta=await ListDB.getMeta(listName), have=meta?.cols || [];
   const cl=have.slice(); for(const c of cols) if(!cl.includes(c)) cl.push(c);
   await ListDB.addMany(listName,rows.map(r=>tblToItem(r,cl)));
-  await ListDB.setMeta(listName,{cols:cl});
+  await tblMetaSet(listName,{cols:cl,...extra});
 }
 async function tblUse(n,list){                          // переключить узел на список
   n.p.list=list; n.p.sel=null; n.wantCols=true;
@@ -549,7 +551,7 @@ async function tblImportFile(f,prefix){
     try{ const o=JSON.parse(text.replace(/^﻿/,'')); if(o && o['dsp-lists']) bundle=o; }catch(e){}
     if(bundle){
       let last=null;
-      for(const name in bundle.lists){ const t=bundle.lists[name]; await tblPut(name,t.cols,t.rows); last=name; }
+      for(const name in bundle.lists){ const t=bundle.lists[name]; await tblPut(name,t.cols,t.rows,{...(t.types ? {types:t.types} : {}),...(t.card ? {card:t.card} : {})}); last=name; }
       return last;
     }
   }
@@ -589,6 +591,8 @@ async function tblExportAll(){
     for(const it of items) for(const k in it.fields) if(k!=='name' && !keys.includes(k)) keys.push(k);
     const cols=meta?.cols || ((items.some(i=>i.name) ? ['name'] : []).concat(keys));
     lists[name]={cols,rows:items.map(it=>{ const o={}; for(const c of cols) o[c]=c==='name' ? it.name : it.fields[c] ?? ''; return o; })};
+    if(meta?.types) lists[name].types=meta.types;
+    if(meta?.card) lists[name].card=meta.card;
   }
   dl(new Blob([JSON.stringify({'dsp-lists':1,lists})],{type:'application/json'}),'dsp-lists.json');
 }
@@ -602,7 +606,7 @@ async function tblCopy(n){
     n.p.list=TBL_PATCH; n.cl=cl; n.all=rows; n.ids=rows.map((_,i)=>i); n.wantCols=true;
     await tblSave(n); n.loaded=null; await tblLoad(n);   // перечитать из data
   } else {
-    await tblPut(to,cl,rows);
+    await tblPut(to,cl,rows,{types:{...n.schema.types},card:{...n.schema.card}});
     await tblUse(n,to);
   }
 }
@@ -787,7 +791,8 @@ function tblInit(n){
     <div class="tbl-view" hidden></div>
     <div class="tbl-acts">
       <button class="tbl-btn pri tbl-add">+ row</button>
-      <button class="tbl-btn tbl-viewb" title="columns, their format and row colour rules">▦ view</button>
+      <button class="tbl-btn tbl-vm" title="view"></button>
+      <button class="tbl-btn tbl-viewb" title="fields (types, links), columns, their format and row colour rules">▦ view</button>
       <button class="tbl-btn tbl-here" title="new row at my current position (GPS) — with the icon, a photo and a sound in the same form">📍 here</button>
     </div>
     <div class="tbl-list" tabindex="0"></div>
@@ -798,7 +803,7 @@ function tblInit(n){
   syncCustomHeight(n,root,150);
   const q=s=>root.querySelector(s);
   n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), tree:q('.tbl-tree'), pick:q('.tbl-pick'), shown:q('.tbl-shown'),
-    filter:q('.tbl-filter'), cols:q('.tbl-cols'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:false, marked:-1};
+    vmBtn:q('.tbl-vm'), filter:q('.tbl-filter'), cols:q('.tbl-cols'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:false, marked:-1};
   n.ui.cols.hidden=!n.colsOpen;                           // пересборка узла (смена колонок) не должна прятать редактор
   n._open=new Set(Array.isArray(n.p.open) ? n.p.open : []);
   if(!Array.isArray(n.p.open)) for(const k of new Set([...tblShow(n),n.p.list])){            // раскрыть пути отмеченных
@@ -809,6 +814,8 @@ function tblInit(n){
   // один набор обработчиков на список, а не по три на каждую строку
   n.ui.list.addEventListener('click',e=>{
     const row=e.target.closest('.tbl-row'); if(!row) return;
+    const ch=e.target.closest('.tc-chip');
+    if(ch?.dataset.to){ tcGo(n,ch.dataset.to,ch.dataset.name); return; }
     const i=+row.dataset.i, b=e.target.closest('.tbl-ico[data-act]');
     if(b?.dataset.act==='edit'){ tblEditForm(n,i,row); return; }
     if(b?.dataset.act==='del'){
@@ -819,10 +826,11 @@ function tblInit(n){
     }
     if(b) return;                                         // фото / звук — свои обработчики
     tblSelect(n,i); n.ui.list.focus({preventScroll:true});
+    if(tcView(n)==='cards') tcDetail(n,i);
   });
   n.ui.list.addEventListener('dblclick',e=>{
     const row=e.target.closest('.tbl-row');
-    if(row && !tblRO(n)) tblEditForm(n,+row.dataset.i,row);
+    if(row && !tblRO(n) && tcView(n)!=='cards') tblEditForm(n,+row.dataset.i,row);
   });
   n.ui.pick.addEventListener('change',()=>tblPick(n,n.ui.pick.value));
   n.ui.shown.addEventListener('click',()=>tblTreeToggle(n));
@@ -839,6 +847,7 @@ function tblInit(n){
   q('.tbl-add').addEventListener('click',()=>tblAddForm(n));
   q('.tbl-here').addEventListener('click',()=>tblHereForm(n));
   q('.tbl-viewb').addEventListener('click',()=>tblViewToggle(n));
+  q('.tbl-vm').addEventListener('click',()=>tcViewNext(n));
   const file=q('.tbl-file');
   n.ui.fileEl=file;
   file.addEventListener('change',()=>{ const fs=[...file.files]; file.value=''; if(fs.length) tblImport(n,fs); });
@@ -851,7 +860,7 @@ async function tblRenameList(n){
   const full=nm.includes('/') ? nm : tblDir(n.p.list)+nm;        // «папка/имя» целиком — тоже можно
   if(full===n.p.list) return;
   if(full===TBL_PATCH || full.startsWith(TBL_PRE)){ alert('this name is reserved'); return; }
-  await ListDB.renameList(n.p.list,full);
+  await ListDB.renameList(n.p.list,full); await tcRenameTarget(n.p.list,full);
   n.p.list=full; n.loaded=full; tblRenderAll(n);
 }
 async function tblMoveList(n){
@@ -863,7 +872,7 @@ async function tblMoveList(n){
   const full=(dir ? dir+'/' : '')+tblLeaf(n.p.list);
   if(full===n.p.list) return;
   if(full.startsWith(TBL_PRE)){ alert('this name is reserved'); return; }
-  await ListDB.renameList(n.p.list,full);
+  await ListDB.renameList(n.p.list,full); await tcRenameTarget(n.p.list,full);
   n.p.list=full; n.loaded=full; tblRenderAll(n);
 }
 async function tblDeleteList(n){
@@ -929,13 +938,17 @@ async function tblNewList(n,t){
   const nm=nm0.includes('/') ? nm0 : dir+nm0;                 // имя в текущей папке (или папке шаблона); «папка/имя» — своя
   if(nm===TBL_PATCH || nm.startsWith(TBL_PRE)){ alert('this name is reserved'); return; }
   const have=(await ListDB.listNames()).includes(nm);
-  if(!have) await ListDB.setMeta(nm,{cols:t ? t.cols.slice() : []});
+  if(!have) await ListDB.setMeta(nm,{cols:t ? t.cols.slice() : [],...(t?.types ? {types:{...t.types}} : {})});
   await tblPick(n,nm);
+  if(t?.types && !have) n.p.vmode='cards';
   if(have && t) await tblApplyTemplate(n,t);                  // список уже есть — шаблон только дополняет колонки
 }
 async function tblApplyTemplate(n,t){
   if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }
-  await tblColsEdit(n,tblTemplateCols(n.cl,t)); tblRenderAll(n);
+  await tblColsEdit(n,tblTemplateCols(n.cl,t));
+  if(t.types){ for(const c in t.types) if(!n.schema.types[c]) n.schema.types[c]={...t.types[c]}; await tcSchemaSave(n); }
+  if(t.types && !n.p.vmode) n.p.vmode='cards';
+  tblRenderAll(n);
 }
 // шаблоны колонок для активного списка (mode 'apply')
 function tblTplMenu(n){
@@ -952,6 +965,7 @@ async function tblRenderAll(n){
   ui.filter.value=n.p.filter||'';
   tblRenderCols(n);
   tblRenderList(n);
+  tcOpenPending(n);
 }
 /* ---------- дерево списков ---------- */
 function tblBuildTree(names){
@@ -1070,10 +1084,10 @@ function tblRenderCols(n){
   }
 }
 function tblRenderList(n,inc){
-  const ui=n.ui, list=ui.list, N=n.rows.length, ro=tblRO(n), grid=n.p.vmode!=='compact';
+  const ui=n.ui, list=ui.list, N=n.rows.length, ro=tblRO(n), grid=tcView(n)==='grid';
   // перерисовка при новых записях не должна сбрасывать прокрутку: запоминаем позицию, у низа в режиме tail — остаёмся у низа
   const keep=list.scrollTop, atEnd=list.scrollTop+list.clientHeight>=list.scrollHeight-4;
-  list.classList.toggle('grid',grid);
+  list.classList.toggle('grid',grid); list.classList.toggle('cards',tcView(n)==='cards'); tcViewBtn(n);
   ui.count.textContent=(n.p.filter ? N+'/' : '')+n.all.length+' rows';
   if(!N){
     const e=document.createElement('div');
@@ -1082,6 +1096,7 @@ function tblRenderList(n,inc){
     list.replaceChildren(e); ui.marked=-1; ui.rend=null; return;
   }
   n.bgCtx=tblTintCtx(n);
+  if(tcView(n)==='cards'){ tcCards(n); list.scrollTop=keep; return; }
   // только дописанные строки: достраиваем хвост, остальное не трогаем (без мигания и пересборки 300 строк)
   const rd=ui.rend, oe=rd ? rd.e : 0;
   if(inc && !n.uiFull && rd && rd.grid===grid && N>oe && (!ui.tail || N<=TBL_ROWS) && ui.tail===rd.tail
@@ -1156,8 +1171,8 @@ const TBL_ERR=['err','error','errors','crc_err','crc_fail','bad'];
 const TBL_SEV=['level','severity','lvl','sev','status'], TBL_CAT=['proto','protocol','type','kind','mode','service','modulation','demod','class','category','dir'];
 function tblViewCols(n){
   const spec=Array.isArray(n.p.vcols) ? n.p.vcols : [], seen=new Set(), out=[];
-  for(const x of spec) if(x && n.cl.includes(x.c) && !seen.has(x.c)){ seen.add(x.c); out.push({fmt:'auto',w:0,...x}); }
-  for(const c of n.cl) if(!seen.has(c)) out.push({c,fmt:'auto',w:0});
+  for(const x of spec) if(x && n.cl.includes(x.c) && !seen.has(x.c)){ seen.add(x.c); out.push({fmt:'auto',w:0,...x,ty:tblType(n,x.c)}); }
+  for(const c of n.cl) if(!seen.has(c)) out.push({c,fmt:'auto',w:0,ty:tblType(n,c)});
   return out;
 }
 const tblTime=(v,local)=>{
@@ -1171,8 +1186,9 @@ function tblCell(x,v,local){
   if(v===''||v==null) return '';
   const low=x.c.toLowerCase(), f=x.fmt||'auto';
   if(f==='auto'){
-    if(TBL_PHOTO.test(low)){ const k=phIds(v).length; return k ? '📷'+k : ''; }
-    if(TBL_AUDIO.test(low)){ const k=auIds(v).length; return k ? '🔊'+k : ''; }
+    if(x.ty==='photo'){ const k=phIds(v).length; return k ? '📷'+k : ''; }
+    if(x.ty==='audio'){ const k=auIds(v).length; return k ? '🔊'+k : ''; }
+    if(x.ty==='bool' || x.ty==='link') return x.ty==='bool' ? (tcIsTrue(v) ? '✓' : '✗') : tcLinks(v).join(', ');
     if(TBL_HZ.test(x.c)){ const h=tblHz(v); return isFinite(h) ? fmtHz(h,3) : recFmt(v); }
     if(/^(t|ts|time|date|datetime)$/.test(low) && typeof v==='number') return tblTime(v,local);
     return recFmt(v);
@@ -1186,13 +1202,13 @@ function tblCell(x,v,local){
 function tblCellEl(n,x,v,text){
   const el=document.createElement('span'), low=x.c.toLowerCase();
   el.className='tbl-c'; el.title=text;
-  const ids=TBL_PHOTO.test(low) ? phIds(v) : TBL_AUDIO.test(low) ? auIds(v) : null;
+  const ph=x.ty==='photo', ids=ph ? phIds(v) : x.ty==='audio' ? auIds(v) : null;
   if(ids && x.fmt==='auto'){
     if(ids.length){
       el.textContent=text; el.classList.add('tbl-ico','warn');
-      el.title=TBL_PHOTO.test(low) ? 'Show the photos' : 'Play the audio';
+      el.title=ph ? 'Show the photos' : 'Play the audio';
       el.dataset.act='media';
-      el.addEventListener('click',e=>{ e.stopPropagation(); TBL_PHOTO.test(low) ? phView(ids) : auView(ids); });
+      el.addEventListener('click',e=>{ e.stopPropagation(); ph ? phView(ids) : auView(ids); });
     }
     return el;
   }
@@ -1241,7 +1257,7 @@ function tblSummary(n,r){
     if(isFinite(l)){ const h=hi ? tblHz(r[hi]) : l; parts.push(isFinite(h) && h>l ? fmtHz(l,3)+'-'+fmtHz(h,3) : fmtHz(l,3)); skip.add(lo); if(hi) skip.add(hi); }
   }
   if(lo) skip.add(tblCol(n.cl,TBL_STEP));                // шаг сетки — в подсказке
-  for(const c of n.cl) if(!skip.has(c) && !TBL_PHOTO.test(c.toLowerCase()) && r[c]!=='' && r[c]!=null) parts.push(recFmt(r[c]));
+  for(const c of n.cl) if(!skip.has(c) && tblType(n,c)!=='photo' && r[c]!=='' && r[c]!=null) parts.push(tcText(n,c,r[c]));
   return parts.join(' / ');
 }
 function tblRow(n,i,ro,g){
@@ -1268,14 +1284,14 @@ function tblRow(n,i,ro,g){
     val.textContent=tblSummary(n,r);
     val.className='tbl-rval';
     row.append(name,val);
-    const pc=n.cl.find(c=>TBL_PHOTO.test(c.toLowerCase())), pids=pc ? phIds(r[pc]) : [];
+    const pc=n.cl.find(c=>tblType(n,c)==='photo'), pids=pc ? phIds(r[pc]) : [];
     if(pids.length){
       const ph=document.createElement('span');
       ph.textContent='📷'+pids.length; ph.title='Show the photos'; ph.className='tbl-ico warn'; ph.dataset.act='media';
       ph.addEventListener('click',e=>{ e.stopPropagation(); phView(pids); });
       row.append(ph);
     }
-    const ac=n.cl.find(c=>TBL_AUDIO.test(c.toLowerCase())), aids=ac ? auIds(r[ac]) : [];
+    const ac=n.cl.find(c=>tblType(n,c)==='audio'), aids=ac ? auIds(r[ac]) : [];
     if(aids.length){
       const au=document.createElement('span');
       au.textContent='🔊'+aids.length; au.title='Play the audio'; au.className='tbl-ico warn'; au.dataset.act='media';
@@ -1348,11 +1364,12 @@ function tblRenderView(n){
   const sel=(opts,val,fn)=>{ const e=mk('select'); for(const o of opts){ const op=mk('option',null,Array.isArray(o) ? o[1] : o); op.value=Array.isArray(o) ? o[0] : o; e.append(op); } e.value=val; e.addEventListener('change',()=>fn(e.value)); return e; };
   const top=mk('div','tv-top');
   top.append(mk('span','tv-ttl','Columns & colors'),
-    sel([['grid','grid (columns)'],['compact','compact (name · values)']],n.p.vmode==='compact' ? 'compact' : 'grid',x=>tblViewApply(n,'vmode',x,true)),
+    sel([['cards','cards (photo, fields)'],['grid','full list (columns)'],['compact','brief list (name · values)']],tcView(n),x=>tblViewApply(n,'vmode',x,true)),
     sel([['utc','time: UTC'],['local','time: local']],n.p.tz==='local' ? 'local' : 'utc',x=>tblViewApply(n,'tz',x,true)),
     mk('span','tv-x','✕',{click:()=>tblViewToggle(n)}));
   box.append(top);
-  const grid=n.p.vmode!=='compact';
+  tcFieldsPanel(n,box,mk,sel);
+  const grid=tcView(n)==='grid';
   if(grid){
     box.append(mk('div','tv-sec','Columns'));
     const vc=tblViewCols(n);
@@ -1403,13 +1420,17 @@ function tblForm(n,rec,onSave,onCancel){
   const cl=n.cl.length ? n.cl : ['name'];
   for(const c of cl){
     const l=document.createElement('label');
-    l.className=TBL_PHOTO.test(c.toLowerCase())||TBL_AUDIO.test(c.toLowerCase()) ? 'wide' : '';
+    const ty=tblType(n,c);
+    l.className=ty==='photo'||ty==='audio' ? 'wide' : '';
     let inp;
-    const low=c.toLowerCase();
-    if(TBL_COLOR.includes(low)){
+    const low=c.toLowerCase(), tf=TBL_COLOR.includes(low) ? null : tcFormField(n,c,rec,ty);
+    if(tf){
+      inp=tf.inp; if(tf.wide) l.className='wide';
+      ins[c]=inp; l.append(Object.assign(document.createElement('span'),{textContent:c}),inp,...(tf.bar ? [tf.bar] : [])); form.append(l); continue;
+    } else if(TBL_COLOR.includes(low)){
       inp=document.createElement('input'); inp.type='color'; inp.value=/^#[0-9a-f]{6}$/i.test(rec[c]) ? rec[c] : '#c9c9c9';
       inp.style.cssText='';
-    } else if(TBL_PHOTO.test(low)){                     // фото: добавить с камеры / из галереи, посмотреть; координаты и время из EXIF — в пустые поля
+    } else if(ty==='photo'){                            // фото: добавить с камеры / из галереи, посмотреть; координаты и время из EXIF — в пустые поля
       inp=document.createElement('input'); inp.type='hidden'; inp.value=phJoin(phIds(rec[c]));
       const bar=document.createElement('span'); bar.className='tf-bar';
       const cnt=document.createElement('span'), mkb=(t,f)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=t; b.style.cssText=TBL_BTN; b.addEventListener('click',e=>{ e.preventDefault(); f(); }); return b; };
@@ -1426,7 +1447,7 @@ function tblForm(n,rec,onSave,onCancel){
       const cur=String(rec[c]??''), opts=['',...TBL_ICONS]; if(cur && !opts.includes(cur)) opts.push(cur);
       for(const o of opts){ const op=document.createElement('option'); op.value=o; op.textContent=o||'(default)'; inp.append(op); }
       inp.value=cur; 
-    } else if(TBL_AUDIO.test(low)){                     // звук: записать, файл, клип из библиотеки; прослушать
+    } else if(ty==='audio'){                            // звук: записать, файл, клип из библиотеки; прослушать
       inp=document.createElement('input'); inp.type='hidden'; inp.value=auJoin(auIds(rec[c]));
       const bar=document.createElement('span'); bar.className='tf-bar';
       const cnt=document.createElement('span'), mkb=(t,f)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=t; b.style.cssText=TBL_BTN; b.addEventListener('click',e=>{ e.preventDefault(); f(b); }); return b; };
@@ -1465,8 +1486,8 @@ function tblForm(n,rec,onSave,onCancel){
   save.addEventListener('click',async()=>{
     const o={};
     for(const c of cl){
-      const v=ins[c].value;
-      o[c]=TBL_HZ.test(c) && v.trim() && isFinite(parseHzCell(v)) ? parseHzCell(v) : hostlistCoerce(v);
+      const v=ins[c].value, tv=tcValue(tblType(n,c),ins[c]);
+      o[c]=tv!==undefined ? tv : TBL_HZ.test(c) && v.trim() && isFinite(parseHzCell(v)) ? parseHzCell(v) : hostlistCoerce(v);
     }
     await onSave(o);
   });
