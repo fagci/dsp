@@ -134,6 +134,12 @@ ok('sniffer ack record',ar.kind==='ack' && ar.da==='aa:bb:cc:dd:ee:01' && ar.fty
 // запись снифера → HEX Structure: hex + hexSchema разбираются обратно в те же поля
 const back=H.hexParse(wr.hexSchema,H.hexFromHex(wr.hex));
 ok('record hex re-parses',back.ok && back.vals['body.ies[0].data.ssid']==='TestNet');
+// короткие имена и enum подтипа в rec
+const br=H.hexToRec(back);
+ok('rec aliases',br.ssid==='TestNet' && br.ds_channel===6 && br.beacon_interval===100 && br.subtype_name==='beacon' && br.type_name==='management',JSON.stringify(br));
+const dq=H.hexToRec(H.hexParse('wifi',hex('c000 3a01 ffffffffffff aabbccddee01 aabbccddee01 1000 0700')));
+ok('rec deauth subtype/reason',dq.subtype_name==='deauth' && dq.reason===7 && dq.reason_name==='class 3 frame from non-assoc',JSON.stringify(dq));
+ok('rec ctrl subtype',H.hexToRec(H.hexParse('wifi',hex('d400 0000 aabbccddee01'))).subtype_name==='ack');
 
 // AIS: классическое предложение (позиция типа 1, MMSI 477553000)
 const aa=new (H.HexAisAsm)().push('!AIVDM,1,1,,B,177KQJ5000G?tO`K>RA1wUbN0TKH,0*5C');
