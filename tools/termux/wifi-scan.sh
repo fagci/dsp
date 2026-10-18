@@ -25,26 +25,30 @@ IFACE=${IFACE:-wlan0}
 MAXAGE=${MAXAGE:-15}       # iw: отбрасывать записи старше, с
 PREFIX=${PREFIX:-/data/data/com.termux/files/usr}
 
-# su не наследует окружение Termux — задаём библиотеки явно
+# su не наследует окружение Termux — задаём библиотеки явно; sudo из Termux ключ -n не знает
 rootrun() {
   if [ "$(id -u)" = 0 ]; then "$@"
-  elif command -v sudo >/dev/null; then sudo -n "$@"
+  elif command -v sudo >/dev/null; then sudo "$@"
   else su -c "LD_LIBRARY_PATH=$PREFIX/lib $*"
   fi
 }
 
+# SSID у iw в виде \xNN (UTF-8): управляющие символы гасим в awk, остальное декодирует printf
 iwscan() {
   rootrun "$(command -v iw || echo "$PREFIX/bin/iw")" dev "$IFACE" scan 2>/dev/null | awk '
-    function flush() { if (mac != "" && sig != "") printf "%s\t%s\t%s\t%s\t%s\n", mac, freq, sig, seen, ssid }
-    /^BSS /       { flush(); mac=$2; sub(/\(.*/, "", mac); freq=""; sig=""; seen=0; ssid=""; next }
-    /^\tfreq:/    { freq=int($2); next }
-    /^\tsignal:/  { sig=$2; next }
-    /^\tlast seen:.* ms ago/ { seen=$3; next }
-    /^\tSSID:/    { sub(/^\tSSID: ?/, ""); ssid=$0; next }
-    END           { flush() }' |
+    function flush() { if (mac != "" && sig != "") printf "%s\t%d\t%s\t%d\t%s\n", mac, freq, sig, seen, ssid }
+    /^BSS /                  { flush(); mac=$2; sub(/\(.*/, "", mac); freq=0; sig=""; seen=0; ssid=""; hs=0; next }
+    /^[ \t]+freq:/           { freq=$2; next }
+    /^[ \t]+signal:/         { if (sig == "") sig=$2; next }
+    /^[ \t]+last seen:.* ms ago/ { seen=$3; next }
+    /^[ \t]+SSID:/           { if (!hs) { hs=1; sub(/^[ \t]+SSID: ?/, ""); gsub(/\\x(0[9aAdD])/, " "); ssid=$0 } next }
+    END                      { flush() }' |
+  while IFS=$'\t' read -r mac freq sig seen ssid; do
+    printf '%s\t%s\t%s\t%s\t%b\n' "$mac" "$freq" "$sig" "$seen" "$ssid"
+  done |
   jq -Rsc --argjson max "$MAXAGE" '
     [ split("\n")[] | select(length > 0) | split("\t")
-      | {bssid:.[0], ssid:.[4], rssi:(.[2]|tonumber|floor), freq:(.[1]|tonumber? // null),
+      | {bssid:.[0], ssid:.[4], rssi:(.[2]|tonumber|floor), freq:(.[1]|tonumber),
          age_s:((.[3]|tonumber)/1000|floor)}
       | select(.age_s <= $max) ]'
 }
@@ -59,6 +63,7 @@ while :; do
   aps=; mx=
   if [ "$MODE" = iw ]; then
     aps=$(iwscan)
+    [ -z "$aps" ] || [ "$aps" = "[]" ] && echo "wifi-scan: iw не вернул точек (root, IFACE=$IFACE?)" >&2
   else
     scan=$(termux-wifi-scaninfo 2>/dev/null)
     mx=$(printf '%s' "$scan" | jq -r '[.[].timestamp // empty] | max // empty' 2>/dev/null)
@@ -71,7 +76,8 @@ while :; do
   fi
   if [ -n "$aps" ] && [ "$aps" != "[]" ]; then
     loc=$(termux-location -p "$PROVIDER" -r last 2>/dev/null)
-    [ -z "$loc" ] && loc='{}'
+    case $loc in *latitude*) ;; *) loc=$(termux-location -p network -r last 2>/dev/null) ;; esac
+    case $loc in *latitude*) ;; *) echo "wifi-scan: нет координат (termux-location)" >&2; loc='{}' ;; esac
     jq -nc --argjson loc "$loc" --argjson aps "$aps" '
       if ($loc.latitude == null) then empty else
         [ {id:"me", icon:"me", lat:$loc.latitude, lon:$loc.longitude, acc:$loc.accuracy} ] +
