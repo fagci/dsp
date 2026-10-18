@@ -10,6 +10,8 @@
    len, count, when, e — выражения над ранее разобранными полями: (ihl-5)*4, type==0 && subtype==8
      имена: поле, sub.поле, список[0].поле; поле.$off / поле.$len — смещение (от начала схемы) и длина в байтах;
      _left — осталось байт (при разборе), _len — размер схемы в байтах (в calc)
+   as — короткое имя поля в rec (первое найденное): body.ies[0].data.ssid → ssid
+   enumBy + enums — enum зависит от другого поля: enumBy:'type', enums:{0:{…},1:{…}}
    scale/prec/unit — показать число умноженным (v*scale), значение остаётся целым
    xor — маска, накладываемая на сумму (DMR: CSBK 0xA5A5, PI 0x6969)
    calc: 'crc16-x25' | 'crc32' | 'inet16' | 'xor8' | 'sum8' | …  — контрольная сумма (from / to / over:'all')
@@ -324,6 +326,7 @@ function hexSub(f,env,c){
 }
 
 function hexField(f,sch,c,prefix,depth,env,recs,ss){
+  if(f.enumBy){ let k; try{ k=hexExpr(String(f.enumBy))(env); }catch(e){} f=Object.assign({},f,{enum:(f.enums||{})[k]}); }
   const B=c.build, t=f.t||'u8', name=prefix+(f.n||''), order=sch.bitorder||'msb', endian=f.endian||sch.endian||'be';
   const N=(x,d)=>{ if(x==null) return d; if(typeof x==='number') return x; try{ return hexExpr(String(x))(env); }catch(e){ c.warn.push((f.n||'?')+': '+e.message); return d; } };
   const rec={n:name, name:f.n||'', t, depth, b0:0, bl:0, f, ss, se:0, prefix};
@@ -605,6 +608,7 @@ function hexToRec(res){
     if(r.pad || r.value===undefined || !r.n) continue;
     o[r.n]=r.value;
     if(r.f.enum) o[r.n+'_name']=r.f.enum[r.value] ?? r.f.enum[String(r.value)] ?? '';
+    if(r.f.as && !(r.f.as in o)){ o[r.f.as]=r.value; if(r.f.enum) o[r.f.as+'_name']=o[r.n+'_name']; }
   }
   o._len=res.size; o._ok=res.ok?1:0;
   if(res.schema) o._schema=res.schema;
