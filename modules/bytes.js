@@ -87,6 +87,30 @@ def({ id:'txtToBin', title:'Text → Bytes', cat:'Data', kw:'bytes binary hex ba
     return {bin:n.out, size:n.out ? n.out.d.length : 0, new:binPulse(n)}; },
   draw:binReadout });
 
+/* ---------- Text: Wrap (prefix/suffix with arbitrary bytes) ---------- */
+def({ id:'txtWrap', title:'Text: Wrap (prefix/suffix bytes)', cat:'Data', kw:'text bytes prefix suffix header trailer escape hex \\x terminator eol append insert', readout:true,
+  ins:[{n:'text',t:'txt'},{n:'bin',t:'bin'}], outs:[{n:'bin',t:'bin'},{n:'text',t:'txt'},{n:'size',t:'num'},{n:'new',t:'num'}],
+  params:[{n:'pre',t:'text',d:'',label:'prefix, JS escapes: \\x02 \\u0416 \\r \\n \\0 \\\\'},
+          {n:'suf',t:'text',d:'\\r\\n',label:'suffix'},
+          {n:'enc',t:'select',opts:['utf8','latin1'],d:'utf8',label:'text ↔ bytes'}],
+  init:n=>{ n.key=null; n.out=null; n.str=''; n.pulse=0; n.text='…'; },
+  process(n,I){
+    const src=I.bin&&I.bin.d ? I.bin : null, txt=typeof I.text==='string' ? I.text : null;
+    const key=src ? src.id+'|'+n.p.pre+'|'+n.p.suf+'|'+n.p.enc : txt!==null ? 't|'+txt+'|'+n.p.pre+'|'+n.p.suf+'|'+n.p.enc : null;
+    if(key!==null && key!==n.key){
+      n.key=key;
+      try{
+        const a=binFromEscaped(n.p.pre), b=binFromEscaped(n.p.suf);
+        const body=src ? src.d : n.p.enc==='latin1' ? binFromText(txt,'latin1') : binFromText(txt,'utf8');
+        const d=new Uint8Array(a.length+body.length+b.length);
+        d.set(a); d.set(body,a.length); d.set(b,a.length+body.length);
+        n.out=binObj(d,src?src.name:'',src?src.mime:''); n.str=binToText(d,n.p.enc); n.pulse=2;
+        n.text=d.length+' bytes\n'+binToText(d.subarray(0,48),'hex');
+      }catch(e){ n.text='error: '+e.message; }
+    }
+    return {bin:n.out, text:n.str, size:n.out ? n.out.d.length : 0, new:binPulse(n)}; },
+  draw:binReadout });
+
 /* ---------- Bytes → Frames ---------- */
 def({ id:'binTx', title:'Bytes → Frames', cat:'Protocols', kw:'bytes file packetizer frames chunks crc carousel transfer serial ble mqtt', readout:true, tall:true,
   ins:[{n:'bin',t:'bin'},{n:'go',t:'num'}], outs:[{n:'bin',t:'bin'},{n:'text',t:'txt'},{n:'go',t:'num'},{n:'busy',t:'num'},{n:'progress',t:'num'}],

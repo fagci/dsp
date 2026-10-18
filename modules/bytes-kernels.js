@@ -20,6 +20,22 @@ const binCat=(...a)=>{ let n=0; for(const x of a) n+=x.length; const o=new Uint8
 
 // ---- текстовые представления ----
 const BIN_ENC=['base64','hex','base64url','utf8','latin1'];
+// Строка с JS-экранированием (\xNN, \uNNNN, \u{...}, \r \n \t \0 \\) → байты; обычные символы — UTF-8
+function binFromEscaped(s){
+  const out=[], enc=binEnc8;
+  const re=/\\(?:x([0-9a-fA-F]{2})|u\{([0-9a-fA-F]{1,6})\}|u([0-9a-fA-F]{4})|([nrt0\\]))|([\s\S])/g;
+  let m;
+  while((m=re.exec(String(s)))){
+    if(m[1]!==undefined) out.push(parseInt(m[1],16));
+    else if(m[2]!==undefined||m[3]!==undefined){
+      const cp=parseInt(m[2]!==undefined?m[2]:m[3],16);
+      if(cp>0x10ffff) throw new Error('bad code point');
+      for(const b of enc.encode(String.fromCodePoint(cp))) out.push(b); }
+    else if(m[4]!==undefined) out.push({n:10,r:13,t:9,'0':0,'\\':92}[m[4]]);
+    else for(const b of enc.encode(m[5])) out.push(b);
+  }
+  return Uint8Array.from(out);
+}
 function binToText(u,enc){
   if(enc==='hex'){ let s=''; for(let i=0;i<u.length;i++) s+=(u[i]<16 ? '0' : '')+u[i].toString(16); return s; }
   if(enc==='utf8') return binDec8.decode(u);
