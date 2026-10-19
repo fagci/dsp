@@ -1,3 +1,12 @@
+// textContent на каждом кадре (readout'ы модулей): тот же текст — без записи, иначе меняется data единственного текстового узла,
+// а не пересоздаётся узел — меньше инвалидаций layout / paint
+{ const d=Object.getOwnPropertyDescriptor(Node.prototype,'textContent');
+  Object.defineProperty(Node.prototype,'textContent',{ configurable:true, enumerable:d.enumerable, get:d.get,
+    set(v){
+      const c=this.firstChild;
+      if(c && c.nodeType===3 && !c.nextSibling){ v=v==null ? '' : String(v); if(v==='') return d.set.call(this,'');
+        if(c.data!==v) c.data=v; return; }
+      d.set.call(this,v); } }); }
 const Graph = { nodes:[], edges:[], map:{}, order:[], seq:1, sel:null,
   dashPages:[{name:'',tree:null}], dashPage:0,       // страницы дашборда: у каждой своё дерево тайлов
   get dashTree(){ return this.dashPages[this.dashPage].tree; },

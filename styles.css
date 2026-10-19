@@ -661,7 +661,7 @@ body.noedit #bar .ed{display:none}
 canvas.view{display:block;width:100%;background:var(--screen);
   border-radius:3px;margin-top:5px;cursor:default}
 /* мелкий шрифт и перенос по словам (до 6 строк) — длинные статусы не обрезаются многоточием */
-.readout{margin-top:5px;padding:5px 6px;background:var(--screen);
+.readout{contain:layout;margin-top:5px;padding:5px 6px;background:var(--screen);
   border-radius:3px;font-size:10px;line-height:1.35;color:var(--screen-fg);text-align:center;overflow:hidden;
   white-space:normal;overflow-wrap:anywhere;max-height:calc(6 * 1.35em + 10px);user-select:text;cursor:pointer}
 .readout.copied{outline:1px solid var(--acc)}
@@ -1130,7 +1130,7 @@ select.aed-b{padding:0 6px}
 .hx-info.bad{color:var(--err)}
 .hx-btn{background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:0 8px;border-radius:3px;cursor:pointer;font-size:10px;height:20px}
 .hx-btn:hover{border-color:var(--acc)}
-.hx-dump{contain:content;flex:none;max-height:42%;min-height:40px;overflow:auto;background:var(--screen,var(--bg));border:1px solid var(--line);
+.hx-dump{contain:layout style;flex:none;max-height:42%;min-height:40px;overflow:auto;background:var(--screen,var(--bg));border:1px solid var(--line);
   border-radius:3px;padding:3px 4px;font:11px/1.45 ui-monospace,Menlo,Consolas,monospace;outline:none;white-space:nowrap}
 .hx-dump:focus{border-color:var(--acc)}
 .hx-row{display:flex;gap:8px}
@@ -1147,7 +1147,7 @@ select.aed-b{padding:0 6px}
 .hx-in{outline:1px solid var(--acc);outline-offset:-1px}
 .hx-cur{box-shadow:0 0 0 1px var(--acc)}
 .hx-empty{color:#889;padding:4px}
-.hx-tree{contain:content;flex:1;min-height:40px;overflow:auto;border:1px solid var(--line);border-radius:3px;background:var(--bg)}
+.hx-tree{contain:layout style;flex:1;min-height:40px;overflow:auto;border:1px solid var(--line);border-radius:3px;background:var(--bg)}
 .hx-f{display:flex;gap:6px;align-items:baseline;padding:1px 4px;cursor:pointer;white-space:nowrap}
 .hx-f:hover{background:var(--panel2)}
 .hx-f.on{background:rgba(95,184,209,.18)}
