@@ -1174,7 +1174,7 @@ select.aed-b{padding:0 6px}
 .node.xp .tbl-ui{flex:1 1 0;min-height:0;height:auto!important;padding:4px}
 /* Table: сетка колонок (Wireshark-like), панель вида */
 .tbl-list.grid{overflow:auto}
-.tbl-row{background:var(--rb,transparent)}
+.tbl-row{background:var(--rb,transparent);content-visibility:auto;contain-intrinsic-size:auto 24px}
 .tbl-list.grid .tbl-row,.tbl-list.grid .tbl-hd{display:grid;grid-template-columns:var(--tc);gap:0;align-items:stretch;width:max-content;min-width:100%;box-sizing:border-box;font-size:11px}
 .tbl-list.grid .tbl-row{padding:0;border-bottom:1px solid color-mix(in srgb,var(--line) 50%,transparent);font-variant-numeric:tabular-nums}
 .tbl-list.grid .tbl-row.on{background:color-mix(in srgb,var(--acc2) 32%,var(--rb,transparent))}

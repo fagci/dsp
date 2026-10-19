@@ -885,6 +885,10 @@ function tblInit(n){
     parts.reduce((a,x)=>{ const path=a ? a+'/'+x : x; n._open.add(path); return path; },'');
   }
   n.ui.list.addEventListener('keydown',e=>tblKey(n,e));
+  n.ui.list.addEventListener('pointerover',e=>{
+    const row=e.target.closest?.('.tbl-row');
+    if(row && !row.title && n.rows[+row.dataset.i]) row.title=tblRowTip(n,n.rows[+row.dataset.i]);
+  });
   // один набор обработчиков на список, а не по три на каждую строку
   n.ui.list.addEventListener('click',e=>{
     const hc=e.target.closest('.tbl-hd > span[data-c]');
@@ -1142,7 +1146,8 @@ async function tblPick(n,list){
 function tblRenderList(n,inc){
   const ui=n.ui, list=ui.list, N=n.rows.length, ro=tblRO(n), grid=tcView(n)==='grid';
   // перерисовка при новых записях не должна сбрасывать прокрутку: запоминаем позицию, у низа в режиме tail — остаёмся у низа
-  const keep=list.scrollTop, atEnd=list.scrollTop+list.clientHeight>=list.scrollHeight-4;
+  // чтение scrollTop / scrollHeight форсирует layout — только там, где позиция реально нужна
+  const atEndNow=()=>list.scrollTop+list.clientHeight>=list.scrollHeight-4;
   list.classList.toggle('grid',grid); list.classList.toggle('cards',tcView(n)==='cards'); tcViewBtn(n);
   ui.count.textContent=(n.p.filter ? N+'/' : '')+n.all.length+' rows';
   if(!N){
@@ -1152,7 +1157,7 @@ function tblRenderList(n,inc){
     list.replaceChildren(e); ui.marked=-1; ui.rend=null; return;
   }
   n.bgCtx=tblTintCtx(n);
-  if(tcView(n)==='cards'){ tcCards(n); list.scrollTop=keep; return; }
+  if(tcView(n)==='cards'){ const keep=list.scrollTop; tcCards(n); list.scrollTop=keep; return; }
   // только дописанные строки: достраиваем хвост, остальное не трогаем (без мигания и пересборки 300 строк)
   const rd=ui.rend, oe=rd ? rd.e : 0;
   if(inc && !n.uiFull && rd && rd.grid===grid && N>oe && (!ui.tail || N<=TBL_ROWS) && ui.tail===rd.tail
@@ -1168,6 +1173,7 @@ function tblRenderList(n,inc){
       }
     }
     if(fit){
+      const atEnd=ui.tail && atEndNow();
       rd.foot?.remove();
       const frag=document.createDocumentFragment();
       for(let i=oe;i<e;i++) frag.append(tblRow(n,i,ro,grid ? {vc,t:texts[i-oe]} : null));
@@ -1179,15 +1185,14 @@ function tblRenderList(n,inc){
         frag.append(m); rd.foot=m;
       }
       list.append(frag);
-      rd.e=e; rd.last=n.rows[e-1];
-      if(ui.tail && atEnd) list.scrollTop=list.scrollHeight;
+      rd.e=e; rd.last=n.rows[e-1]; rd.key=null;
+      if(atEnd) list.scrollTop=list.scrollHeight;
       tblMark(n,true);
       return;
     }
   }
-  const frag=document.createDocumentFragment();
   const s=ui.tail ? Math.max(0,N-TBL_ROWS) : 0, e=Math.min(N,s+TBL_ROWS);
-  let vc=null, texts=null, wid=null, foot=null;
+  let vc=null, texts=null, wid=null, foot=null, tc='', hk='';
   if(grid){
     vc=tblViewCols(n).filter(x=>!x.hide);
     wid=vc.map(x=>Math.max(x.c.length,2));
@@ -1197,7 +1202,34 @@ function tblRenderList(n,inc){
       t.forEach((v,k)=>{ if(v.length>wid[k]) wid[k]=v.length; });
       texts.push(t);
     }
-    list.style.setProperty('--tc','5ch '+vc.map((x,k)=>x.w>0 ? x.w+'px' : Math.min(28,wid[k]+2)+'ch').join(' ')+' 56px');
+    tc='5ch '+vc.map((x,k)=>x.w>0 ? x.w+'px' : Math.min(28,wid[k]+2)+'ch').join(' ')+' 56px';
+    hk=vc.map(x=>x.c).join('\n')+'\n'+n.p.sortCol+n.p.sortDir;
+  }
+  // раскладка та же (колонки, ширины, окно строк) — меняем только изменившиеся строки: без пересборки, без скачка прокрутки
+  const sigs=[], base=ui.rend, layoutKey=[grid,ui.tail,s,e,ro,tc,hk,N>TBL_ROWS].join('|');
+  for(let i=s;i<e;i++){
+    const r=n.rows[i], bg=tblRowBg(n,r);
+    sigs.push(grid ? texts[i-s].join('\u0001')+'\u0002'+bg : tcTitle(n,r,i)+'\u0002'+tblSummary(n,r)+'\u0002'+bg+'\u0002'+(n.colorCol ? r[n.colorCol] : '')+'\u0002'+n.cl.filter(c=>{ const t=tblType(n,c); return t==='photo' || t==='audio'; }).map(c=>r[c]).join(','));
+  }
+  if(!n.uiFull && base && base.key===layoutKey && base.els && base.els.length===e-s && list.contains(base.els[0])){
+    let changed=false;
+    for(let k=0;k<sigs.length;k++){
+      if(sigs[k]===base.sigs[k]) continue;
+      const old=base.els[k];
+      if(old.classList.contains('edit')) continue;       // строка в правке: форму не рвём
+      const row=tblRow(n,s+k,ro,grid ? {vc,t:texts[k]} : null);
+      old.replaceWith(row); base.els[k]=row; base.sigs[k]=sigs[k]; changed=true;
+    }
+    if(base.foot){ const t=ui.tail ? '… '+s+' earlier rows hidden — narrow with the filter' : '… '+(N-e)+' more rows — narrow with the filter'; base.foot.textContent=t; }
+    base.first=n.rows[s]; base.last=n.rows[e-1];
+    if(changed) ui.marked=-1;
+    tblMark(n,true);
+    return;
+  }
+  const keep=list.scrollTop, atEnd=ui.tail && atEndNow();
+  const frag=document.createDocumentFragment();
+  if(grid){
+    list.style.setProperty('--tc',tc);
     const hd=document.createElement('div'); hd.className='tbl-hd';
     hd.append(Object.assign(document.createElement('span'),{textContent:'#',className:'tbl-no'}));
     for(const x of vc){
@@ -1207,17 +1239,18 @@ function tblRenderList(n,inc){
     hd.append(document.createElement('span'));
     frag.append(hd);
   } else list.style.removeProperty('--tc');
-  for(let i=s;i<e;i++) frag.append(tblRow(n,i,ro,grid ? {vc,t:texts[i-s]} : null));
+  const els=[];
+  for(let i=s;i<e;i++){ const row=tblRow(n,i,ro,grid ? {vc,t:texts[i-s]} : null); els.push(row); frag.append(row); }
   if(N>TBL_ROWS){
     const m=document.createElement('div');
     m.textContent=(ui.tail?'… '+s+' earlier rows hidden':'… '+(N-e)+' more rows')+' — narrow with the filter';
     m.className='tbl-empty sm';
     frag.append(m); foot=m;
   }
-  ui.rend={grid,tail:ui.tail,e,first:n.rows[s],last:n.rows[e-1],vc,wid,foot};
+  ui.rend={grid,tail:ui.tail,e,first:n.rows[s],last:n.rows[e-1],vc,wid,foot,key:layoutKey,els,sigs};
   n.uiFull=false;
   list.replaceChildren(frag);                            // одна атомарная замена: прокрутка не сбрасывается
-  list.scrollTop=ui.tail && atEnd ? list.scrollHeight : keep;
+  list.scrollTop=atEnd ? list.scrollHeight : keep;
   ui.marked=-1; tblMark(n,true);
 }
 /* ---------- вид: колонки, форматы, раскраска ---------- */
@@ -1319,6 +1352,8 @@ function tblSummary(n,r){
   for(const c of n.cl) if(!skip.has(c) && tblType(n,c)!=='photo' && r[c]!=='' && r[c]!=null) parts.push(tcText(n,c,r[c]));
   return parts.join(' / ');
 }
+// подсказка строки — при наведении, а не на каждую из сотен строк при каждой перерисовке (строки и GC)
+const tblRowTip=(n,r)=>n.cl.filter(c=>r[c]!=='' && r[c]!=null).map(c=>c+': '+(TBL_HZ.test(c)&&isFinite(tblHz(r[c])) ? fmtHz(tblHz(r[c]),4)+'Hz' : recFmt(r[c]))).join('\n');
 function tblRow(n,i,ro,g){
   const r=n.rows[i];
   const row=document.createElement('div');
@@ -1358,7 +1393,6 @@ function tblRow(n,i,ro,g){
       row.append(au);
     }
   }
-  row.title=n.cl.filter(c=>r[c]!=='' && r[c]!=null).map(c=>c+': '+(TBL_HZ.test(c)&&isFinite(tblHz(r[c])) ? fmtHz(tblHz(r[c]),4)+'Hz' : recFmt(r[c]))).join('\n');
   if(g){ const tail=document.createElement('span'); tail.className='tbl-tail'; row.append(tail); row._tail=tail; }
   if(!ro){
     const ed=document.createElement('span');
