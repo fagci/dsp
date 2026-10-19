@@ -173,6 +173,7 @@ const PRESET_CATS={
   'USB SDR: Channel Scan + Decoder Switch (digital voice / analog)':'SDR Receivers',
   'ESP-SDR: ESP32 Spectrum':'SDR Receivers',
   'Measure: Modulation Meter — FM and AM (Generator)':'Analysis & Measurement',
+  'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
   'Measure: SINAD of an FM Receiver (Generator)':'Analysis & Measurement',
   'Measure: IQ Quality — DC and Imbalance (Generator)':'Analysis & Measurement',
   'Meshtastic: Chat and Nodes on the Map':'Network & IoT',
@@ -1325,6 +1326,22 @@ const n1=addNode('numview',580,430,{label:'delay, samples'});
 const n2=addNode('numview',780,430,{label:'coherence'});
 addEdge(g.id,'iq',d0.id,'in'); addEdge(d0.id,'out',xc.id,'a'); addEdge(g.id,'iq',dl.id,'in'); addEdge(dl.id,'out',xc.id,'b');
 addEdge(xc.id,'delay',n1.id,'in'); addEdge(xc.id,'coh',n2.id,'in');
+markWiresDirty();
+});
+preset('Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'IQ Channel Model sits between a transmitter and a receiver and spoils the signal the way a radio path does: noise at a set SNR, multipath with Rayleigh / Rician fading, Doppler shift and drift, phase noise, a sample clock error, impulse noise.\n'+
+  'Here an FM carrier goes through a Rayleigh channel (EPA profile, 30 Hz Doppler spread) with 15 dB SNR plus a drifting Doppler, like a low satellite pass. Watch the carrier breathe and slide on the spectrum; raise the SNR or switch fading to static and it calms down.\n'+
+  'Put it before any decoder to see where the chain stops working: the output `snr` and `level` are numbers on wires.'});
+nt.size.w=720; nt.size.h=150; applySize(nt);
+const g=addNode('iqGen',40,250,{sr:'250000',fc:100000000,mode:'FM',off:20000,lvl:-20,tone:1000,dev:3000,noise:-120});
+const ch=addNode('iqChannel',320,250,{noise:'SNR',snr:15,profile:'EPA',fading:'Rayleigh',fd:30,dop:2000,drift:-300});
+ch.size.w=420; applySize(ch);
+const sp=addNode('iqSpec',780,250,{size:'4096',avg:'4'});
+const n1=addNode('numview',780,520,{label:'SNR, dB'});
+const n2=addNode('numview',980,520,{label:'level, dBFS'});
+addEdge(g.id,'iq',ch.id,'in'); addEdge(ch.id,'out',sp.id,'in');
+addEdge(ch.id,'snr',n1.id,'in'); addEdge(ch.id,'level',n2.id,'in');
 markWiresDirty();
 });
 preset('Measure: SINAD of an FM Receiver (Generator)', function(){

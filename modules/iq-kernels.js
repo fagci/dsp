@@ -1077,6 +1077,138 @@ IQK.iqDelay={
     return {out:o};
   }};
 
+/* ---- IQ Channel Model ---- */
+// Модель радиоканала между передатчиком и приёмником. Порядок: уход тактовой частоты (ppm, кубическая
+// интерполяция Лагранжа) → многолучёвость с замираниями (линия задержки; Рэлей/Райс: сумма синусоид,
+// коэффициент считается раз в L отсчётов и интерполируется линейно) → усиление → доплер (сдвиг + дрейф Гц/с)
+// → фазовый шум (винеровский, по ширине линии) → дисбаланс I/Q и DC → импульсные помехи и AWGN.
+// Шум задаётся от мощности сигнала на выходе канала (скользящее среднее ~0,5 с) или абсолютом, дБFS.
+const CH_PROFILES={               // [задержка, мкс, усиление, дБ]; 3GPP TS 36.101 (EPA, EVA, ETU)
+  '2-ray':[[0,0],[1,-6]],
+  EPA:[[0,0],[.03,-1],[.07,-2],[.09,-3],[.11,-8],[.19,-17.2],[.41,-20.8]],
+  EVA:[[0,0],[.03,-1.5],[.15,-1.4],[.31,-3.6],[.37,-.6],[.71,-9.1],[1.09,-7],[1.73,-12],[2.51,-16.9]],
+  ETU:[[0,-1],[.05,-1],[.12,-1],[.2,0],[.23,0],[.5,0],[1.6,-3],[2.3,-5],[5,-7]]};
+function chTaps(p){
+  let t=CH_PROFILES[p.profile];
+  if(p.profile==='custom'){
+    t=String(p.taps||'').split(/[,;\n]+/).map(s=>s.trim().split(':')).filter(a=>a.length>=1 && isFinite(+a[0]) && a[0]!=='')
+      .map(a=>[Math.max(0,+a[0]), a.length>1 && isFinite(+a[1]) ? +a[1] : 0]).slice(0,16);
+  }
+  if(!t || !t.length) t=[[0,0]];
+  const g=t.map(x=>Math.pow(10,x[1]/20)); let s=0; for(const v of g) s+=v*v;
+  return t.map((x,i)=>({us:x[0], a:g[i]/Math.sqrt(s)}));       // суммарная мощность лучей = 1
+}
+IQK.iqChannel={
+  init(n){ n.key=''; n.ui=null; n.ps=0; n.rh=null; n.rs=false; n.pos=3; n.hr=null; n.hi=null; n.cnt=0; n.ph=0; n.t=0; n.gb=null; n.imL=0; },
+  process(n,I,ctx){
+    const s=iqIn(I,'in');
+    if(!s){ n.ui=null; return {out:null,snr:null,level:null}; }
+    const p=n.p, sr=s.sr, taps=chTaps(p), T=taps.length;
+    const fade=p.fading||'static', fd=Math.max(0,+p.fd||0), K=Math.pow(10,(+p.K||0)/10);
+    const key=[sr,p.profile,p.taps,fade,p.seed,fd>0].join('|');
+    if(key!==n.key){                                          // сменилась конфигурация: линия задержки и генераторы заново
+      n.key=key; n.cnt=0; n.gb=null;
+      let x=((+p.seed||1)*2654435761)>>>0 || 1; n.rng=x;
+      const rnd=()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296; };
+      n.osc=taps.map(()=>{ const M=24, a=new Float64Array(M), b=new Float64Array(M), c=new Float64Array(M);
+        for(let k=0;k<M;k++){ a[k]=Math.cos(2*Math.PI*rnd()); b[k]=2*Math.PI*rnd(); c[k]=2*Math.PI*rnd(); }
+        return {a,b,c,los:2*Math.PI*rnd()}; });
+      n.rng=x;
+      const H=Math.ceil(Math.max(0,...taps.map(t=>t.us))*1e-6*sr)+4;
+      n.hr=new Float32Array(H); n.hi=new Float32Array(H);
+      n.cur=taps.map(()=>[1,0]); n.nxt=taps.map(()=>[1,0]);
+    }
+    let x=n.rng;
+    const rnd=()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296; };
+    let gset=false, gv=0;
+    const gauss=()=>{ if(gset){ gset=false; return gv; } const u=Math.max(rnd(),1e-12), r=Math.sqrt(-2*Math.log(u)), a=2*Math.PI*rnd(); gv=r*Math.sin(a); gset=true; return r*Math.cos(a); };
+
+    const o=iqStream(n,'out',sr,s.fc);
+    const rho=1+(+p.ppm||0)*1e-6, useRs=Math.abs(rho-1)>1e-12;
+    const gain=Math.pow(10,(+p.gain||0)/20);
+    const wd=2*Math.PI*(+p.dop||0)/sr, wdd=2*Math.PI*(+p.drift||0)/sr/sr, pnS=Math.sqrt(2*Math.PI*Math.max(0,+p.pn||0)/sr);
+    const ig=Math.pow(10,(+p.imbG||0)/20), ip=(+p.imbP||0)*Math.PI/180, isn=Math.sin(ip), ics=Math.cos(ip);
+    const dcv=+p.dc>-150 ? Math.pow(10,(+p.dc)/20) : 0;
+    const imp=Math.max(0,+p.imp||0)/sr, impL=Math.max(1,Math.round((+p.impLen||20)*1e-6*sr)), impA=Math.pow(10,(+p.impLvl||0)/20);
+    const Lc=fd>0 ? Math.max(1,Math.min(256,Math.floor(sr/(fd*16)))) : 256;
+    const dyn=fade!=='static';
+    const evalTap=(k,t)=>{                                   // коэффициент луча k в момент t, отсчётов
+      const o=n.osc[k];
+      const w=2*Math.PI*fd*t/sr; let re=0, im=0;
+      for(let m=0;m<o.a.length;m++){ re+=Math.cos(w*o.a[m]+o.b[m]); im+=Math.cos(w*o.a[m]+o.c[m]); }
+      const sc=Math.sqrt(1/o.a.length); re*=sc; im*=sc;
+      if(fade==='Rician' && k===0){ const l=Math.sqrt(K/(K+1)), r=Math.sqrt(1/(K+1)); re=l*Math.cos(o.los)+r*re; im=l*Math.sin(o.los)+r*im; }
+      return [re*taps[k].a, im*taps[k].a];
+    };
+    if(dyn && !n.gb){ for(let k=0;k<T;k++){ n.cur[k]=evalTap(k,0); n.nxt[k]=evalTap(k,Lc); } n.gb=1; }
+
+    let pg=0, pn=0;
+    for(const c of s.chunks){
+      let xr=c.re, xi=iqChunkIm(c), Kc=xr.length;
+      if(useRs){                                             // подстройка тактовой частоты
+        if(!n.rs){ n.rs=true; n.rr=new Float32Array(3); n.ri=new Float32Array(3); n.pos=3; }
+        const br=new Float32Array(Kc+3), bi=new Float32Array(Kc+3); br.set(n.rr); bi.set(n.ri); br.set(xr,3); bi.set(xi,3);
+        const cap=Math.ceil(Kc/rho)+4, orr=new Float32Array(cap), oii=new Float32Array(cap); let m=0, pos=n.pos;
+        while(Math.floor(pos)+2<br.length && m<cap){
+          const i0=Math.floor(pos), f=pos-i0, a=-f*(f-1)*(f-2)/6, b=(f+1)*(f-1)*(f-2)/2, d=-(f+1)*f*(f-2)/2, e=(f+1)*f*(f-1)/6;
+          orr[m]=a*br[i0-1]+b*br[i0]+d*br[i0+1]+e*br[i0+2]; oii[m]=a*bi[i0-1]+b*bi[i0]+d*bi[i0+1]+e*bi[i0+2]; m++; pos+=rho;
+        }
+        n.pos=pos-Kc; n.rr=br.slice(Kc); n.ri=bi.slice(Kc);
+        xr=orr.subarray(0,m); xi=oii.subarray(0,m); Kc=m;
+      } else n.rs=false;
+      const H=n.hr.length, br=new Float32Array(H+Kc), bi=new Float32Array(H+Kc); br.set(n.hr); bi.set(n.hi); br.set(xr,H); bi.set(xi,H);
+      const yr=new Float32Array(Kc), yi=new Float32Array(Kc), dl=taps.map(t=>t.us*1e-6*sr);
+      for(let i=0;i<Kc;i++){
+        let ar=0, ai=0;
+        if(dyn && n.cnt%Lc===0 && n.cnt>0){ for(let k=0;k<T;k++){ n.cur[k]=n.nxt[k]; n.nxt[k]=evalTap(k,n.cnt+Lc); } }
+        const fr=dyn ? (n.cnt%Lc)/Lc : 0;
+        for(let k=0;k<T;k++){
+          const d=dl[k], di=Math.floor(d), df=d-di, j=H+i-di;
+          const sr0=df>0 ? br[j]*(1-df)+br[j-1]*df : br[j], si0=df>0 ? bi[j]*(1-df)+bi[j-1]*df : bi[j];
+          let hr, hi;
+          if(dyn){ hr=n.cur[k][0]+(n.nxt[k][0]-n.cur[k][0])*fr; hi=n.cur[k][1]+(n.nxt[k][1]-n.cur[k][1])*fr; }
+          else { hr=taps[k].a; hi=0; }
+          ar+=hr*sr0-hi*si0; ai+=hr*si0+hi*sr0;
+        }
+        n.cnt++;
+        ar*=gain; ai*=gain;
+        if(wd || wdd || pnS){                                // доплер и фазовый шум
+          n.ph+=wd+wdd*n.t+(pnS ? pnS*gauss() : 0); n.t++;
+          const cp=Math.cos(n.ph), sp=Math.sin(n.ph), r=ar*cp-ai*sp; ai=ar*sp+ai*cp; ar=r;
+        }
+        if(ig!==1 || ip){ ai=ig*(ai*ics+ar*isn); }
+        ar+=dcv;
+        yr[i]=ar; yi[i]=ai; pg+=ar*ar+ai*ai;
+      }
+      n.hr.set(br.subarray(Kc,Kc+H)); n.hi.set(bi.subarray(Kc,Kc+H));
+      pn+=Kc;
+      iqPush(o,yr,yi,c.tag);
+    }
+    // мощность сигнала на выходе канала (до шума)
+    const pc=pn ? pg/pn : 0, al=pn ? 1-Math.exp(-pn/(sr*.5)) : 0;
+    n.ps=n.ps>0 ? n.ps+al*(pc-n.ps) : pc;
+    let nvar=0;
+    const mode=p.noise||'off';
+    if(mode==='SNR') nvar=n.ps/Math.pow(10,(+p.snr)/10);
+    else if(mode==='absolute') nvar=Math.pow(10,(+p.level)/10);
+    const sg=Math.sqrt(nvar/2);
+    if(sg>0 || imp>0){
+      const ia=Math.sqrt(Math.max(n.ps,1e-20))*impA;
+      for(const c of o.chunks){
+        const yr=c.re, yi=c.im, Kc=yr.length;
+        if(sg>0) for(let i=0;i<Kc;i++){ yr[i]+=sg*gauss(); yi[i]+=sg*gauss(); }
+        if(imp>0) for(let i=0;i<Kc;i++){
+          if(n.imL>0){ yr[i]+=ia*gauss(); yi[i]+=ia*gauss(); n.imL--; }
+          else if(rnd()<imp){ n.imL=impL-1; yr[i]+=ia*gauss(); yi[i]+=ia*gauss(); }
+        }
+      }
+    }
+    n.rng=x;
+    const snr=nvar>0 ? 10*Math.log10(n.ps/nvar) : null;
+    n.ui={snr, taps:T, sr, ppm:+p.ppm||0, dop:+p.dop||0, fade:dyn?fade:'static', fd, lvl:10*Math.log10(Math.max(1e-12,n.ps))};
+    return {out:o, snr, level:n.ui.lvl};
+  }};
+
 /* ---- Cross-Correlator (TDOA / интерферометр) ---- */
 // Два IQ-потока одной частоты дискретизации (два донгла на общем источнике: антенна + делитель, шумовой генератор, либо два приёмника
 // одного сигнала). Блоки по N отсчётов (по порядку поступления) → кросс-спектр S = conj(A)·B (окно Ханна).
