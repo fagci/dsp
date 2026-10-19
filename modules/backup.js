@@ -21,7 +21,7 @@ async function bkExport(sel,onMsg){
   const parts=[], w=s=>parts.push(s);
   w('{"format":"'+BK_FORMAT+'","v":'+BK_VER+',"t":'+JSON.stringify(new Date().toISOString())+',"groups":'+JSON.stringify(sel));
   if(sel.includes('settings')){
-    const ls={}; for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); ls[k]=localStorage.getItem(k); }
+    const ls={}; for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k!=='dsp.sync') ls[k]=localStorage.getItem(k); }     // ключ синхронизации в файл не кладём
     w(',"ls":'+JSON.stringify(ls));
   }
   const dbs=BK_GROUPS.filter(g=>sel.includes(g.id)).flatMap(g=>g.db||[]);
@@ -110,7 +110,7 @@ async function bkImport(text,sel,onMsg){
   const o=JSON.parse(text);
   if(o.format!==BK_FORMAT) throw new Error('not a DSP backup file');
   const res={ls:0,rows:0,tiles:0,skipped:[]}; let legacy=false;
-  if(o.ls && sel.includes('settings')){ for(const k in o.ls){ localStorage.setItem(k,o.ls[k]); res.ls++; } }
+  if(o.ls && sel.includes('settings')){ for(const k in o.ls){ if(k==='dsp.sync') continue; localStorage.setItem(k,o.ls[k]); res.ls++; } }
   for(const name in (o.idb||{})){
     const g=BK_GROUPS.find(g=>g.db?.includes(name) || g.imp?.includes(name));
     if(g && !sel.includes(g.id)) continue;
