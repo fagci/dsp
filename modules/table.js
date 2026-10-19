@@ -354,7 +354,7 @@ function tblDerive(n){
   if(n.timeCol){ let prev=0; n.tt=n.rows.map(r=>{ const v=seqTime(r[n.timeCol]); if(v!=null) prev=v; return prev; }); }
   n.geo=!!(n.latCol && n.lonCol);
   tblBands(n);
-  n.uiDirty=true; n.uiFull=true;
+  n.uiDirty=true;                                              // что изменилось в строках — видно по сигнатурам в tblRenderList
 }
 // записи списка для выхода rows: строка как есть, а у строк с частотой — ещё и числовые lo / hi / step и label / color
 // (диапазон для спектра и сканеров; потребителям записей без lo они просто не видны)
@@ -469,13 +469,10 @@ async function tblAdd(n,recs,strict){                  // strict (форма): �
       if(grown) await tblMetaSet(n.p.list,{cols:n.cl});
     }catch(e){ alert('storage: '+(e.message||e)); return; }
   } else ids=rows.map((_,i)=>n.all.length+i);
-  const wasFull=n.uiFull || !!(n.p.key && n.p.key.trim());     // upsert правит старые строки на месте
   n.all.push(...rows); n.ids.push(...ids);
-  let dropped=false;
   // потолок: старые записи уходят (лог не растёт бесконечно)
   const cap=kind==='patch' ? Math.min(+n.p.maxRows||1000,1000) : +n.p.maxRows||0;
   if(cap>0 && n.all.length>cap){
-    dropped=true;
     const drop=n.ids.splice(0,n.all.length-cap); n.all.splice(0,drop.length);
     if(kind==='db') await ListDB.removeMany(drop).catch(()=>{});
     n.idx=Math.max(0,n.idx-drop.length);
@@ -487,7 +484,6 @@ async function tblAdd(n,recs,strict){                  // strict (форма): �
   }
   if(grown) tblSetCols(n,n.cl.slice(),false);
   tblDerive(n);
-  n.uiFull=!!(wasFull || dropped || grown);              // иначе список только дописан: DOM достраивается без перерисовки
 }
 async function tblUpdate(n,i,rec){
   if(tblRO(n)) return;
@@ -1143,6 +1139,12 @@ async function tblPick(n,list){
   if(Array.isArray(sh) && (!sh.length || (sh.length===1 && tblCanon(sh[0])===n.p.list))) n.p.show=[list];
   await tblUse(n,list);
 }
+// строки сменились в основном точечно (иначе одна пересборка дешевле сотни замен): отличаются не больше половины
+function tblFewDiff(old,cur,drop){
+  const len=old.length-drop; let d=0;
+  for(let k=0;k<len;k++) if(old[drop+k]!==cur[k]) d++;
+  return d<=16 || d*2<=len;
+}
 function tblRenderList(n,inc){
   const ui=n.ui, list=ui.list, N=n.rows.length, ro=tblRO(n), grid=tcView(n)==='grid';
   // перерисовка при новых записях не должна сбрасывать прокрутку: запоминаем позицию, у низа в режиме tail — остаёмся у низа
@@ -1158,44 +1160,15 @@ function tblRenderList(n,inc){
   }
   n.bgCtx=tblTintCtx(n);
   if(tcView(n)==='cards'){ const keep=list.scrollTop; tcCards(n); list.scrollTop=keep; return; }
-  // только дописанные строки: достраиваем хвост, остальное не трогаем (без мигания и пересборки 300 строк)
-  const rd=ui.rend, oe=rd ? rd.e : 0;
-  if(inc && !n.uiFull && rd && rd.grid===grid && N>oe && (!ui.tail || N<=TBL_ROWS) && ui.tail===rd.tail
-     && n.rows[0]===rd.first && n.rows[oe-1]===rd.last){
-    const e=Math.min(N,TBL_ROWS);
-    let vc=null, texts=null, fit=true;
-    if(grid){
-      vc=rd.vc; texts=[];
-      for(let i=oe;i<e && fit;i++){
-        const t=vc.map(x=>tblCell(x,n.rows[i][x.c],n.p.tz==='local'));
-        t.forEach((v,k)=>{ if(v.length>rd.wid[k]) fit=false; });
-        texts.push(t);
-      }
-    }
-    if(fit){
-      const atEnd=ui.tail && atEndNow();
-      rd.foot?.remove();
-      const frag=document.createDocumentFragment();
-      for(let i=oe;i<e;i++) frag.append(tblRow(n,i,ro,grid ? {vc,t:texts[i-oe]} : null));
-      rd.foot=null;
-      if(N>TBL_ROWS){
-        const m=document.createElement('div');
-        m.textContent='… '+(N-e)+' more rows — narrow with the filter';
-        m.className='tbl-empty sm';
-        frag.append(m); rd.foot=m;
-      }
-      list.append(frag);
-      rd.e=e; rd.last=n.rows[e-1]; rd.key=null;
-      if(atEnd) list.scrollTop=list.scrollHeight;
-      tblMark(n,true);
-      return;
-    }
-  }
-  const s=ui.tail ? Math.max(0,N-TBL_ROWS) : 0, e=Math.min(N,s+TBL_ROWS);
-  let vc=null, texts=null, wid=null, foot=null, tc='', hk='';
+  // Окно строк [s,e): дописанные записи и сдвиг окна в tail-режиме (сверху убираются, снизу достраиваются), изменившиеся ячейки —
+  // точечно; список целиком пересобирается только при смене колонок / сортировки / режима. Ширины колонок только растут (до смены колонок).
+  const base=ui.rend, s=ui.tail ? Math.max(0,N-TBL_ROWS) : 0, e=Math.min(N,s+TBL_ROWS);
+  let vc=null, texts=null, wid=null, tc='', hk='';
   if(grid){
     vc=tblViewCols(n).filter(x=>!x.hide);
-    wid=vc.map(x=>Math.max(x.c.length,2));
+    hk=vc.map(x=>x.c).join('\n')+'\n'+n.p.sortCol+n.p.sortDir;
+    const prev=base && base.grid && base.hk===hk ? base.wid : null;
+    wid=vc.map((x,k)=>Math.max(x.c.length,2,prev ? prev[k] : 0));
     texts=[];
     for(let i=s;i<e;i++){
       const t=vc.map(x=>tblCell(x,n.rows[i][x.c],n.p.tz==='local'));
@@ -1203,26 +1176,41 @@ function tblRenderList(n,inc){
       texts.push(t);
     }
     tc='5ch '+vc.map((x,k)=>x.w>0 ? x.w+'px' : Math.min(28,wid[k]+2)+'ch').join(' ')+' 56px';
-    hk=vc.map(x=>x.c).join('\n')+'\n'+n.p.sortCol+n.p.sortDir;
   }
-  // раскладка та же (колонки, ширины, окно строк) — меняем только изменившиеся строки: без пересборки, без скачка прокрутки
-  const sigs=[], base=ui.rend, layoutKey=[grid,ui.tail,s,e,ro,tc,hk,N>TBL_ROWS].join('|');
+  const sigs=[];
   for(let i=s;i<e;i++){
     const r=n.rows[i], bg=tblRowBg(n,r);
     sigs.push(grid ? texts[i-s].join('\u0001')+'\u0002'+bg : tcTitle(n,r,i)+'\u0002'+tblSummary(n,r)+'\u0002'+bg+'\u0002'+(n.colorCol ? r[n.colorCol] : '')+'\u0002'+n.cl.filter(c=>{ const t=tblType(n,c); return t==='photo' || t==='audio'; }).map(c=>r[c]).join(','));
   }
-  if(!n.uiFull && base && base.key===layoutKey && base.els && base.els.length===e-s && list.contains(base.els[0])){
-    let changed=false;
-    for(let k=0;k<sigs.length;k++){
-      if(sigs[k]===base.sigs[k]) continue;
-      const old=base.els[k];
-      if(old.classList.contains('edit')) continue;       // строка в правке: форму не рвём
-      const row=tblRow(n,s+k,ro,grid ? {vc,t:texts[k]} : null);
-      old.replaceWith(row); base.els[k]=row; base.sigs[k]=sigs[k]; changed=true;
+  const rowAt=i=>tblRow(n,i,ro,grid ? {vc,t:texts[i-s]} : null);
+  const more=N>TBL_ROWS;
+  const footText=()=>ui.tail ? '… '+s+' earlier rows hidden — narrow with the filter' : '… '+(N-e)+' more rows — narrow with the filter';
+  if(!n.uiFull && base && base.els && base.grid===grid && base.ro===ro && base.hk===hk && base.tail===ui.tail
+     && s>=base.s && s-base.s<=base.els.length && e>=base.e && more===!!base.foot && base.els.length && list.contains(base.els[0])
+     && tblFewDiff(base.sigs,sigs,s-base.s)){
+    const drop=s-base.s, atEnd=ui.tail && (drop || e>base.e) ? atEndNow() : false;
+    let changed=drop>0 || e>base.e;
+    for(let k=0;k<drop;k++) base.els[k].remove();
+    const els=base.els.slice(drop), old=base.sigs.slice(drop);
+    for(let k=0;k<els.length;k++){
+      if(sigs[k]===old[k] || els[k].classList.contains('edit')) continue;   // строка в правке: форму не рвём
+      const row=rowAt(s+k);
+      els[k].replaceWith(row); els[k]=row; old[k]=sigs[k]; changed=true;
     }
-    if(base.foot){ const t=ui.tail ? '… '+s+' earlier rows hidden — narrow with the filter' : '… '+(N-e)+' more rows — narrow with the filter'; base.foot.textContent=t; }
-    base.first=n.rows[s]; base.last=n.rows[e-1];
+    if(grid && tc!==base.tc) list.style.setProperty('--tc',tc);
+    for(let i=base.e;i<e;i++){
+      const row=rowAt(i);
+      base.foot ? base.foot.before(row) : list.append(row);
+      els.push(row); old.push(sigs[i-s]);
+    }
+    let foot=base.foot;
+    if(more){
+      if(!foot){ foot=document.createElement('div'); foot.className='tbl-empty sm'; list.append(foot); }
+      foot.textContent=footText();
+    }
+    ui.rend={grid,tail:ui.tail,s,e,first:n.rows[s],last:n.rows[e-1],vc,wid,tc,hk,ro,foot,els,sigs:old};
     if(changed) ui.marked=-1;
+    if(atEnd) list.scrollTop=list.scrollHeight;
     tblMark(n,true);
     return;
   }
@@ -1240,14 +1228,10 @@ function tblRenderList(n,inc){
     frag.append(hd);
   } else list.style.removeProperty('--tc');
   const els=[];
-  for(let i=s;i<e;i++){ const row=tblRow(n,i,ro,grid ? {vc,t:texts[i-s]} : null); els.push(row); frag.append(row); }
-  if(N>TBL_ROWS){
-    const m=document.createElement('div');
-    m.textContent=(ui.tail?'… '+s+' earlier rows hidden':'… '+(N-e)+' more rows')+' — narrow with the filter';
-    m.className='tbl-empty sm';
-    frag.append(m); foot=m;
-  }
-  ui.rend={grid,tail:ui.tail,e,first:n.rows[s],last:n.rows[e-1],vc,wid,foot,key:layoutKey,els,sigs};
+  for(let i=s;i<e;i++){ const row=rowAt(i); els.push(row); frag.append(row); }
+  let foot=null;
+  if(more){ foot=document.createElement('div'); foot.className='tbl-empty sm'; foot.textContent=footText(); frag.append(foot); }
+  ui.rend={grid,tail:ui.tail,s,e,first:n.rows[s],last:n.rows[e-1],vc,wid,tc,hk,ro,foot,els,sigs};
   n.uiFull=false;
   list.replaceChildren(frag);                            // одна атомарная замена: прокрутка не сбрасывается
   list.scrollTop=atEnd ? list.scrollHeight : keep;
