@@ -696,7 +696,8 @@ function slRenderTable(n){
     const cell=(txt,u,rel0,rel1)=>{
       let diff=0, lab=-1;
       for(let r=rel0;r<=rel1;r++){ const col=r+P; if(col>=0 && col<same.length && !same[col]) diff=1; const j=labAt(r); if(j>=0 && lab<0) lab=j; }
-      const cls='sl-d'+diff+(lab>=0 ? ' sl-l'+(lab%8) : '');
+      const sy=n.alMode==='sync' && n.sg && n.sg.len && rel1>=0 && rel0<n.sg.len;                 // слово синхронизации
+      const cls='sl-d'+diff+(lab>=0 ? ' sl-l'+(lab%8) : '')+(sy ? ' sl-sy' : '');
       return sel ? '<i data-u="'+u+'" class="'+cls+'">'+slEsc(txt)+'</i>' : '<i class="'+cls+'">'+slEsc(txt)+'</i>';
     };
     if(fmt==='bin'){
