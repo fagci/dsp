@@ -262,6 +262,19 @@ for(const kind of ['ook','fsk']){
   const R0=S.slAnalyze(re,im,sr,{mod:'FSK'});
   ok('no split: one message',R0.msgs.length===1);
 }
+/* ---- звук: AFSK 1200 бод, 1200/2200 Гц, без IQ ---- */
+{
+  sd=777;
+  const sr=48000, pk=Array.from({length:4},()=>packet(randPayload(10)));
+  const bits=[]; for(const p of pk){ bits.push(...p); for(let i=0;i<4000/ (sr/1200)*1;i++) bits.push(-1); }
+  const T=sr/1200, n=Math.round(bits.length*T), x=new Float32Array(n+4800); let ph=0;
+  for(let i=0;i<n;i++){ const b=bits[Math.floor(i/T)]; if(b<0){ x[i+2400]=0; continue; } ph+=2*Math.PI*(b?1200:2200)/sr; x[i+2400]=.5*Math.sin(ph)+.02*gauss(); }
+  const R=S.slAnalyze(x,null,sr,{mod:'auto'});
+  ok('AFSK audio: FSK '+R.mod,R.mod==='FSK');
+  ok('AFSK audio: baud '+R.baud.toFixed(0),Math.abs(R.baud/1200-1)<.02);
+  ok('AFSK audio: messages '+R.msgs.length,R.msgs.length===4);
+  if(R.msgs.length===4){ const q=R.msgs.map((m,i)=>Math.max(cmp(Array.from(m.bits),pk[i]),cmp(Array.from(m.bits).map(v=>v^1),pk[i]))); ok('AFSK audio: bits '+Math.min(...q).toFixed(3),Math.min(...q)>.98); }
+}
 /* ---- вырожденные входы ---- */
 {
   const R=S.slAnalyze(new Float32Array(1000),new Float32Array(1000),1e5,{mod:'auto'});

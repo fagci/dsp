@@ -79,6 +79,43 @@ function slPool(x,segs,max){
   return o;
 }
 
+// комплексное БПФ на месте, n — степень двойки; inv — обратное (без деления)
+function slFft(re,im,inv){
+  const n=re.length;
+  for(let i=1,j=0;i<n;i++){
+    let bit=n>>1;
+    for(;j&bit;bit>>=1) j^=bit;
+    j^=bit;
+    if(i<j){ let t=re[i]; re[i]=re[j]; re[j]=t; t=im[i]; im[i]=im[j]; im[j]=t; }
+  }
+  for(let len=2;len<=n;len<<=1){
+    const a=(inv ? 2 : -2)*Math.PI/len, wr=Math.cos(a), wi=Math.sin(a), h=len>>1;
+    for(let i=0;i<n;i+=len){
+      let cr=1, ci=0;
+      for(let k=0;k<h;k++){
+        const u=i+k, v=u+h, xr=re[v]*cr-im[v]*ci, xi=re[v]*ci+im[v]*cr;
+        re[v]=re[u]-xr; im[v]=im[u]-xi; re[u]+=xr; im[u]+=xi;
+        const t=cr*wr-ci*wi; ci=cr*wi+ci*wr; cr=t;
+      }
+    }
+  }
+}
+// вещественный сигнал → аналитический: блоки по 16384 с перекрытием, края блоков отбрасываются
+function slAnalytic(x){
+  const N=x.length, B=16384, O=1024, H=B-2*O, im=new Float32Array(N), re=Float32Array.from(x);
+  const br=new Float64Array(B), bi=new Float64Array(B);
+  for(let s=0;s<N;s+=H){
+    const o=s-O;
+    for(let i=0;i<B;i++){ const j=o+i; br[i]=j>=0 && j<N ? x[j] : 0; bi[i]=0; }
+    slFft(br,bi,false);
+    for(let i=1;i<B/2;i++){ br[i]*=2; bi[i]*=2; }
+    for(let i=B/2+1;i<B;i++){ br[i]=0; bi[i]=0; }
+    slFft(br,bi,true);
+    for(let i=O;i<O+H && s+i-O<N;i++) im[s+i-O]=bi[i]/B;
+  }
+  return {re,im};
+}
+
 /* ---------- Оцу ---------- */
 function slOtsu(v,bins){
   bins=bins||128;
@@ -606,6 +643,7 @@ function slAnalyze(re,im,sr,cfg){
   const R={sr,N,mod:'ASK',noise:0,center:0,T:0,baud:0,conf:0,msgs:[],mag:null,dem:null,segs:[],sync:null,gated:false,lo:0,hi:0,err:''};
   if(N<64){ R.err='too few samples'; return R; }
   const L=cfg.levels===4 ? 4 : 2, auto=cfg.auto!==false;
+  if(!im && cfg.mod!=='ASK'){ const z=slAnalytic(re); re=z.re; im=z.im; }      // звук (AFSK, фазовая манипуляция): аналитический сигнал
   const cache={};
   const mod=cfg.mod==='auto' || !cfg.mod ? slDetectMod(re,im,sr,cache) : cfg.mod;
   R.mod=mod;
