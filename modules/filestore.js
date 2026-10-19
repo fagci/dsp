@@ -570,7 +570,8 @@ let fmDrag=null;
 
 /* ---- узел: файловый менеджер ----
    Звук: выбранный клип из audio играет на выход `out` (▶, ползунок перемотки, входы clipId / play / seek), ✎ — редактор клипа.
-   Запись (● rec или вход `rec`: ≥ 0.5 — идёт запись): звук с входа `in` (подключён и граф запущен) либо с микрофона, камера или экран.
+   Запись (● rec или вход `rec`: ≥ 0.5 — идёт запись): звук с входа `in` (подключён и граф запущен) либо с микрофона, камера, экран
+   или картинка графа (`vid` / `img`: TS → Video, декодеры, Camera …) — как Record Video, но сразу в хранилище.
    Формат звука — clip (редактируемый, в audio), wav16 или opus; видео — webm / mp4 (что умеет браузер).
    Приём: байты на входе `bin` (File → Bytes, Bytes → Frames …) сохраняются файлом. Куда: вход `path` —
    [хранилище/]папки/[имя.расширение], папки создаются; пусто — открытая папка (запись) или Received (приём).
@@ -630,7 +631,22 @@ async function fsRecToggle(n){
   n.recBusy=true;
   try{
     const src=n.p.recSrc, fmt=n.p.recFmt;
-    if(src==='audio' && n.inWired && Eng.running) n.rec={kind:'pcm',src:'graph',chunks:[],sr:Eng.sr,t0:performance.now()};
+    if(src==='video in'){                                                     // кадры графа → канва → MediaRecorder
+      const mime=typeof vrecMime==='function' ? vrecMime('auto') : null;
+      if(!mime){ alert('No video encoder in this browser'); return; }
+      if(!vrecDraw(n.vr)){ alert('No picture on the vid / img input'); return; }
+      const mr=new MediaRecorder(n.vr.cv.captureStream(25),{mimeType:mime,videoBitsPerSecond:4000000}), chunks=[];
+      const rec=n.rec={kind:'mr',src:'video',mr,chunks,t0:performance.now(),timer:setInterval(()=>vrecDraw(n.vr),40)};   // кадры идут и когда источник стоит
+      mr.ondataavailable=e=>{ if(e.data.size) chunks.push(e.data); };
+      mr.onstop=async()=>{
+        clearInterval(rec.timer);
+        if(!chunks.length) return;
+        const blob=new Blob(chunks,{type:mime});
+        try{ await fsSaveBlob(n,blob,'video '+fsStamp()+'.'+fsExt(mime),'files'); }catch(e){ alert('Could not save: '+e.message); }
+      };
+      mr.start(1000);
+    }
+    else if(src==='audio' && n.inWired && Eng.running) n.rec={kind:'pcm',src:'graph',chunks:[],sr:Eng.sr,t0:performance.now()};
     else if(src==='audio' && fmt!=='opus'){
       const ctx=new (window.AudioContext||window.webkitAudioContext)();      // до await — иначе iOS не запустит контекст вне жеста
       ctx.resume();
@@ -689,21 +705,22 @@ function fsRecUI(n){
 }
 
 def({ id:'files', title:'Files', cat:'Output', kw:'file manager storage samples sample library clips audio video record trigger receive save bytes images folder browser upload download', w:340, h:440, resize:true,
-  ins:[{n:'clipId',t:'num'},{n:'play',t:'num'},{n:'seek',t:'num'},{n:'in',t:'sig'},{n:'rec',t:'num'},{n:'bin',t:'bin'},{n:'path',t:'txt'}],
+  ins:[{n:'clipId',t:'num'},{n:'play',t:'num'},{n:'seek',t:'num'},{n:'in',t:'sig'},{n:'rec',t:'num'},{n:'bin',t:'bin'},{n:'path',t:'txt'},{n:'vid',t:'vid'},{n:'img',t:'img'}],
   outs:[{n:'id',t:'num'},{n:'name',t:'txt'},{n:'size',t:'num'},{n:'send',t:'num'},{n:'bin',t:'bin'},{n:'out',t:'sig'},{n:'clipId',t:'num'},{n:'pos',t:'num'},{n:'ok',t:'num'},{n:'vid',t:'vid'}],
   params:[{n:'meta',t:'check',d:true,label:'bin: attach name and type (off — bare bytes)'},
     {n:'loop',t:'check',d:true,label:'loop the played clip'},
-    {n:'recSrc',t:'select',opts:['audio','camera','screen'],d:'audio',label:'record from (audio: `in` port when wired, else microphone)'},
+    {n:'recSrc',t:'select',opts:['audio','camera','screen','video in'],d:'audio',label:'record from (audio: `in` port when wired, else microphone; video in: the `vid` / `img` port)'},
     {n:'recFmt',t:'select',opts:['clip','wav16','opus'],d:'clip',label:'audio format: clip (editable, in audio) · wav16 · opus (microphone)'},
     {n:'download',t:'check',d:false,label:'also download received files'},
     {n:'sendBtn',t:'button',label:'Send selected → (pulse on `send`, bytes on `bin`; several — one per block)',fn:n=>{
       n.fm?.picked().then(a=>{ n.queue.push(...a); }); }}],
   init:n=>{ n.fm=null; n.sel=null; n.vidEl=null; n.queue=[]; n.busy=false; n.ready=-1; n.binOut=null;
     n.data=null; n.dataSr=0; n.pos=0; n.play=false; n.playGate=false; n.armed=null; n.rec=null; n.recGate=false; n.inWired=false;
-    n.lastBin=null; n.pathIn=''; n.okP=0; n.seekIn=null; },
-  dispose:n=>{ if(n.rec) fsRecStop(n); n.editor?.close?.(); n.fm?.destroy(); n.fm=null; },
+    n.lastBin=null; n.pathIn=''; n.okP=0; n.seekIn=null; n.vr={I:{},p:{maxw:0}}; },
+  dispose:n=>{ if(n.rec) fsRecStop(n); clearInterval(n.rec?.timer); n.editor?.close?.(); n.fm?.destroy(); n.fm=null; },
   process(n,I){ const send=n.ready; n.ready=-1;                                // импульс: id на один блок, потом -1
     n.inWired=I.in!=null;
+    n.vr.I={vid:I.vid,img:I.img};
     if(typeof I.path==='string') n.pathIn=I.path.trim();
     if(n.rec?.src==='graph' && I.in) n.rec.chunks.push(Float32Array.from(I.in));
     if(typeof I.rec==='number'){                                                // внешний триггер записи: уровень
