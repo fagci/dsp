@@ -183,10 +183,15 @@ function slApply(n,R,job){
 function slDerive(n){
   const R=n.R;
   const L=R.msgs.map(m=>m.bits);
-  let al=null;
-  const sg=R.sync;
+  let al=null, sg=R.sync;
+  const sp=String(n.p.split||'').trim();
+  if(/^[0-9a-f\s]+$/i.test(sp)){                                  // синхрослово задано руками: по нему и выравниваем
+    const h=sp.replace(/\s/g,''), w=new Uint8Array(h.length*4);
+    for(let i=0;i<h.length;i++){ const v=parseInt(h[i],16); for(let k=0;k<4;k++) w[i*4+k]=(v>>(3-k))&1; }
+    sg={word:w,len:w.length,hex:h.toUpperCase(),pre:0,count:L.length};
+  }
   if(n.p.align==='sync' && sg && sg.len>=8) al=slAlign(L,sg.word.slice(0,Math.min(sg.len,32)),1);
-  n.alMode=al ? 'sync' : 'start';
+  n.sg=sg; n.alMode=al ? 'sync' : 'start';
   n.off=al ? al.map(a=>a.hit ? a.off : 0) : L.map(()=>0);
   const col=slColumns(L,n.off);
   n.P=col.P; n.same=col.same;
@@ -584,7 +589,7 @@ function slInfo(n){
   else {
     t=R.err ? R.err : R.mod+' · '+(R.baud>=1000 ? (R.baud/1000).toFixed(3)+' kBd' : R.baud.toFixed(1)+' Bd')+' · '+R.msgs.length+' msg'
       +(R.code && R.code!=='NRZ' ? ' · '+R.code : '')+(R.conf>0 && R.conf<1 ? ' · conf '+Math.round(R.conf*100)+' %' : '')
-      +(R.sync && R.sync.len ? ' · sync '+R.sync.hex+(R.sync.pre ? ' · preamble '+R.sync.pre+' b' : '') : R.sync && R.sync.pre ? ' · preamble '+R.sync.pre+' b' : '')
+      +((n.sg||R.sync) && (n.sg||R.sync).len ? ' · sync '+(n.sg||R.sync).hex+((n.sg||R.sync).pre ? ' · preamble '+(n.sg||R.sync).pre+' b' : '') : R.sync && R.sync.pre ? ' · preamble '+R.sync.pre+' b' : '')
       +' · '+(c.cplx ? 'iq' : 'sig')+' '+(c.sr/1000).toFixed(c.sr>=1e5 ? 0 : 1)+' kS/s'+(n.cost ? ' · '+n.cost.toFixed(0)+' ms' : '');
   }
   if(u.info.textContent!==t) u.info.textContent=t;
