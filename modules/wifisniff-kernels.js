@@ -13,28 +13,20 @@ function wifiLine(line){
   if(m) return {chan:+m[1], rssi:+m[2], bytes:hexFromHex(m[3])};
   return null;
 }
-function wifiBssid(v){
-  if(v.type===0) return v.addr3;
-  if(v.type===2) return v.tods && v.fromds ? '' : v.tods ? v.addr1 : v.fromds ? v.addr2 : v.addr3;
-  return '';
-}
 // кадр → запись rec
 function wifiRec(frame,now){
-  const res=hexParse('wifi',frame.bytes), v=res.vals;
+  const res=hexParse('wifi',frame.bytes), v=res.vals, o=hexToRec(res);
   const sub=(WIFI_SUB[v.type]||{})[v.subtype] || 'subtype '+v.subtype;
   const r={t:now||Date.now(), src:'WiFi', kind:sub, ftype:WIFI_TYPE[v.type]||'?', chan:frame.chan, rssi:frame.rssi, len:frame.bytes.length,
-    da:v.addr1, sa:v.addr2, bssid:wifiBssid(v), seq:v.seq, retry:v.retry, protected:v.prot,
+    da:o.da, sa:o.sa, bssid:o.bssid||'', seq:v.seq, retry:v.retry, protected:v.prot,
     hex:hexToHex(frame.bytes), hexSchema:'wifi'};
   if(v.type===0 && (v.subtype===8 || v.subtype===5 || v.subtype===4)){
-    let sec=null;
-    for(let i=0;v['body.ies['+i+'].id']!==undefined;i++){
-      const id=v['body.ies['+i+'].id'];
-      if(id===0 && r.ssid===undefined) r.ssid=v['body.ies['+i+'].data.ssid']||'';
-      else if(id===3) r.ap_chan=v['body.ies['+i+'].data.channel'];
-      else if(id===48) sec='WPA2/3';
-      else if(id===221 && !sec && /^0050f2/i.test(String(v['body.ies['+i+'].data']||''))) sec='WPA';
+    r.ssid=o['ie.ssid']||'';
+    r.ap_chan=o['ie.channel'];
+    if(v.subtype!==4){
+      const sec=o['ie.rsn']!==undefined ? 'WPA2/3' : /^0050f2/i.test(String(o['ie.vendor']||'')) ? 'WPA' : null;
+      r.security=sec || ((v['body.capab']&0x10) ? 'WEP' : 'open'); r.interval=v['body.interval'];
     }
-    if(v.subtype!==4){ r.security=sec || ((v['body.capab']&0x10) ? 'WEP' : 'open'); r.interval=v['body.interval']; }
   }
   if(v.type===0 && v.subtype===12 || v.subtype===10 && v.type===0) r.reason=v['body.reason'];
   r.id=(r.bssid||r.sa||'?')+(r.ssid!==undefined && r.kind==='beacon' ? ' '+r.ssid : '');

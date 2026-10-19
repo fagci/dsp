@@ -495,7 +495,7 @@ def({ id:'recEnt', title:'Rec → Entities', cat:'Data', kw:'entity entities lin
   readout:true, tall:true,
   params:[{n:'rules',t:'code',plain:true,d:'',label:'rules: [out:] conditions | fields'},
           {n:'apply',t:'button',label:'Apply outputs',fn:n=>{ rebuildNode(n); markTopoDirty(); }},
-          {n:'tpl',t:'select',opts:['—','GSM cells','Digital voice (DMR / P25 / NXDN)'],d:'—',label:'insert rules',
+          {n:'tpl',t:'select',opts:['—','GSM cells','Digital voice (DMR / P25 / NXDN)','Radio (Wi-Fi / BLE / Zigbee)'],d:'—',label:'insert rules',
            fn:n=>{ const t=ENT_TEMPLATES[n.p.tpl]; if(t){ n.p.rules=(n.p.rules?n.p.rules.trimEnd()+'\n':'')+t; } n.p.tpl='—'; rebuildNode(n); markTopoDirty(); }}],
   init:n=>{ n.in=0; n.outN=0; n.err=''; },
   process(n,I){
@@ -523,6 +523,15 @@ operator: kind~^GSM-SI plmn | id=PLMN {plmn}, type=operator, shape=hexagon
 operator: kind~^GSM-SI plmn op | id=PLMN {plmn}, label={op}
 link: kind~^GSM-SI plmn | id={id}>PLMN {plmn}, from={id}, to=PLMN {plmn}, label=operator
 link: kind~^GSM-SI cellArfcns | id={id}>ARFCN {cellArfcns*}, from={id}, to=ARFCN {cellArfcns*}, label=uses`,
+  'Radio (Wi-Fi / BLE / Zigbee)':
+`# Wi-Fi: точки доступа и станции по BSSID / MAC, связи «кто кому»; BLE и Zigbee — отдельные узлы
+ap: proto=wifi kind=beacon|probe-resp bssid | id={bssid}, type=ap, label={ssid|bssid}, shape=hexagon, chan, rssi
+station: proto=wifi kind~^(probe-req|assoc-req|reassoc-req)$ src | id={src}, type=station, shape=dot
+station: proto=wifi kind~^(qos-)?data$ tods=1 src | id={src}, type=station, shape=dot
+link: proto=wifi kind~^(assoc-req|reassoc-req|assoc-resp|auth|deauth|disassoc|data|qos-data)$ src dst dst!=ff:ff:ff:ff:ff:ff | id={src}>{dst}, from={src}, to={dst}, label={kind}
+ble: proto=ble src | id={src}, type=ble, label={name|src}, shape=triangle, rssi
+zb: proto=zb src net | id=zb:{net}:{src}, type=zigbee, label={src}, shape=square
+zlink: proto=zb src dst net dst!=ffff | id=zb:{net}:{src}>{dst}, from=zb:{net}:{src}, to=zb:{net}:{dst}, label={kind}`,
   'Digital voice (DMR / P25 / NXDN)':
 `# абоненты, группы и связи; префикс сети {src} разводит одинаковые id в разных системах
 subscriber: kind=call from | id={src}:{from}, type=subscriber, label={src} {from}, shape=dot
