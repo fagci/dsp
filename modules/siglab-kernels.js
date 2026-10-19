@@ -818,7 +818,7 @@ function slAnalyzeFull(re,im,sr,cfg){
   R.N=re.length;
   if(R.mag){
     const v=slSample(R.mag,0,R.mag.length,20000).sort();
-    R.magTop=Math.max(v[Math.floor(v.length*.995)]||0,R.noise>0 && isFinite(R.noise) ? R.noise*1.5 : 0,1e-9)*1.15;
+    R.magTop=Math.max(v[Math.floor(v.length*.995)]||0,1e-9)*1.15;     // не зависит от порога: график не прыгает, пока его тянут
     R.pyrM=slPyramid(R.mag,64);
     if(R.mod!=='ASK' && R.dem && R.dem!==R.mag) R.pyrD=slPyramid(R.dem,64);
   }

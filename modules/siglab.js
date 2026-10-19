@@ -23,10 +23,12 @@ def({ id:'sigLab', title:'Signal Analyzer', cat:'Analysis', lazy:'manual', view:
     {n:'levels',t:'select',opts:['2','4'],d:'2',label:'symbol levels (2 — a bit per symbol, 4 — a dibit)'},
     {n:'code',t:'select',opts:['auto',...SL_CODES],d:'auto',label:'line code of the bits (auto: Manchester when the pairs show it, else NRZ)'},
     {n:'inv',t:'check',d:false,label:'invert'},
+    {n:'sync',t:'text',d:'',label:'sync word, hex (e.g. 85CFAB45): the table is aligned on it, the preamble stays before it; empty — found by comparing the messages'},
+    {n:'cut',t:'check',d:false,label:'cut a long message into frames at the sync word (no word given: at a word that repeats)'},
     {n:'mode',t:'select',opts:['rolling','single','trigger'],d:'rolling',label:'capture: rolling window, one buffer, or one buffer on a level'},
     {n:'secs',t:'range',min:.1,max:30,step:.1,d:2,log:true,label:'capture length, s'},
     {n:'run',t:'button',label:'Run / Stop',fn:n=>slRunStop(n)},
-    {n:'ana',t:'button',label:'Analyse',fn:n=>{ n.forceAna=true; }},
+    {n:'ana',t:'button',label:'Analyse',fn:n=>slAnalyze_(n)},
     {n:'clr',t:'button',label:'Clear',fn:n=>slClear(n)},
     {n:'lock',t:'button',label:'Lock baud',fn:n=>{ if(n.R?.baud){ setMod(n,'baud',Math.round(n.R.baud)); setMod(n,'auto',false); n.forceAna=true; } }},
     {n:'auto',t:'check',d:true,label:'find noise level, centre and baud by itself',adv:true},
@@ -35,7 +37,6 @@ def({ id:'sigLab', title:'Signal Analyzer', cat:'Analysis', lazy:'manual', view:
     {n:'center',t:'num',d:0,label:'decision level of the demodulated signal, drag the line on the plot',adv:true},
     {n:'pause',t:'range',min:0,max:64,step:1,d:0,label:'pause between messages, symbols (0 — from the gaps)',adv:true},
     {n:'minBits',t:'range',min:4,max:128,step:1,d:8,label:'shortest message, symbols',adv:true},
-    {n:'split',t:'text',d:'',label:'cut long messages into frames at this sync word (hex; auto — find a repeating word; empty — off)',adv:true},
     {n:'perMsg',t:'check',d:true,label:'own symbol rate for a message that differs from the rest (mixed protocols)',adv:true},
     {n:'gray',t:'check',d:false,label:'Gray code for 4 levels',adv:true},
     {n:'lsb',t:'check',d:false,label:'bytes: least significant bit first',adv:true},
@@ -80,8 +81,7 @@ def({ id:'sigLab', title:'Signal Analyzer', cat:'Analysis', lazy:'manual', view:
       const every=Math.max(+P.refresh,n.cost*(n.sw ? 2 : 8)/1000);
       if(n.forceAna || (n.run && P.mode==='rolling' && n.tA>=every && c.w!==n.anaW)){ n.forceAna=false; n.tA=0; slAnalyze_(n); }
     }
-    const cfgK=[P.mod,P.levels,P.code,P.inv,P.pause,P.minBits,P.split,P.gray,P.perMsg,P.auto,P.baud,P.noise,P.center,P.align,P.lsb].join('|');
-    if(n.cfgK!==cfgK){ n.cfgK=cfgK; if(c && c.w>0) n.forceAna=true; }
+    slCfgCheck(n);
     const o={blk:n.qBlk.length ? n.qBlk.shift() : null, rec:n.qRec.length ? n.qRec.splice(0) : null,
       bin:n.oBin, text:n.oText, baud:n.R ? n.R.baud : 0, count:n.R ? n.R.msgs.length : 0};
     return o; },
@@ -89,15 +89,25 @@ def({ id:'sigLab', title:'Signal Analyzer', cat:'Analysis', lazy:'manual', view:
     if(!n.ui && n.el) slInitUI(n);
     slWire(n,cv);
     slLabelsSync(n);
+    if(!n.run) slCfgCheck(n);                          // параметры правят при остановленном движке
     slPaint(n,cv,cx);
     if(n.ui){ slInfo(n); if(n.tableDirty && performance.now()-(n.tableT||0)>150){ n.tableDirty=false; n.tableT=performance.now(); slRenderTable(n); } }
   } });
+
+// смена параметров разбора — разобрать заново
+function slCfgCheck(n){
+  const P=n.p, k=[P.mod,P.levels,P.code,P.inv,P.pause,P.minBits,P.sync,P.cut,P.gray,P.perMsg,P.auto,P.baud,P.noise,P.center,P.align,P.lsb].join('|');
+  if(n.cfgK===k) return;
+  const first=n.cfgK===undefined;
+  n.cfgK=k;
+  if(!first && n.cap && n.cap.w>0){ if(n.run) n.forceAna=true; else slAnalyze_(n); }
+}
 
 /* ---------- захват ---------- */
 function slCapInit(n,sr,cplx){
   const L=Math.max(1024,Math.min(Math.round(n.p.secs*sr),(n.p.maxS|0)||4000000));
   n.cap={sr,L,re:new Float32Array(L),im:cplx ? new Float32Array(L) : null,w:0,cplx,ep:(n.cap?n.cap.ep:0)+1};
-  n.R=null; n.sel=-1; n.vx=null; n.range=null; n.bsel=null; n.seen.clear(); n.anaW=-1; n.armed=true; n.trigAt=-1;
+  n.R=null; n.sel=-1; n.vx=null; n.range=null; n.crop=null; n.bsel=null; n.seen.clear(); n.anaW=-1; n.armed=true; n.trigAt=-1;
   n.tableDirty=true; redraw(n);
 }
 function slCapPush(n,re,im){
@@ -138,7 +148,7 @@ function slAnalyze_(n){
   if(n.busy){ n.again=true; return; }
   const lin=slCapLinear(n);
   const cfg={mod:P.mod,levels:+P.levels,gray:P.gray,code:P.code,inv:P.inv,pause:+P.pause,minBits:+P.minBits,
-    auto:P.auto,noise:+P.noise,center:+P.center,baud:+P.baud,perMsg:P.perMsg,split:P.split};
+    auto:P.auto,noise:+P.noise,center:+P.center,baud:+P.baud,perMsg:P.perMsg,split:P.cut ? (/^[0-9a-f\s]+$/i.test(String(P.sync||'').trim()) ? String(P.sync).trim() : 'auto') : ''};
   if(n.sw===null && typeof Worker!=='undefined'){
     try{
       const w=new Worker('siglab-worker.js'+SL_Q);
@@ -147,7 +157,11 @@ function slAnalyze_(n){
       n.sw=w;
     }catch(e){ n.sw=false; }
   }
-  const job={abs0:lin.abs0,N:lin.N,ep:c.ep};
+  let job={abs0:lin.abs0,N:lin.N,ep:c.ep};
+  if(n.crop){                                                    // анализ выделенного диапазона
+    const a=Math.max(0,n.crop[0]-lin.abs0), b=Math.min(lin.N,n.crop[1]-lin.abs0);
+    if(b-a>=256){ lin.re=lin.re.subarray(a,b); lin.im=lin.im ? lin.im.subarray(a,b) : null; job={abs0:lin.abs0+a,N:b-a,ep:c.ep}; }
+  }
   if(n.sw){
     job.id=++n.jobId; n.job=job; n.busy=1;
     const re=lin.re.slice(), im=lin.im ? lin.im.slice() : null;
@@ -162,7 +176,7 @@ function slResult(n,m){
   n.busy=0;
   if(m.err){ n.err=new Error(m.err); console.error('[sigLab]',m.err); }
   else if(n.job && m.id===n.job.id && n.cap && n.cap.ep===n.job.ep) slApply(n,m.R,n.job);
-  if(n.again){ n.again=false; n.forceAna=true; }
+  if(n.again){ n.again=false; slAnalyze_(n); }
 }
 function slApply(n,R,job){
   n.cost=R.cost; n.anaW=n.cap ? n.cap.w : 0;
@@ -184,7 +198,7 @@ function slDerive(n){
   const R=n.R;
   const L=R.msgs.map(m=>m.bits);
   let al=null, sg=R.sync;
-  const sp=String(n.p.split||'').trim();
+  const sp=String(n.p.sync||'').trim();
   if(/^[0-9a-f\s]+$/i.test(sp)){                                  // синхрослово задано руками: по нему и выравниваем
     const h=sp.replace(/\s/g,''), w=new Uint8Array(h.length*4);
     for(let i=0;i<h.length;i++){ const v=parseInt(h[i],16); for(let k=0;k<4;k++) w[i*4+k]=(v>>(3-k))&1; }
@@ -467,10 +481,10 @@ function slWire(n,cv){
     }
     if(drag){
       if(drag.k==='ov') slOvTo(n,x);
-      else if(drag.k==='noise' && g.L.mag){ const [y0,y1]=g.L.mag, v=(y1-Math.min(y1,Math.max(y0,y)))/(y1-y0)*R.magTop; setMod(n,'auto',false); setMod(n,'noise',+v.toPrecision(4)); n.forceAna=true; }
+      else if(drag.k==='noise' && g.L.mag){ const [y0,y1]=g.L.mag, v=Math.min(.96,(y1-Math.min(y1,Math.max(y0,y)))/(y1-y0))*R.magTop; setMod(n,'auto',false); setMod(n,'noise',+v.toPrecision(4)); slAnalyze_(n); }
       else if(drag.k==='center'){
         const ln=g.L.dem||g.L.mag, [y0,y1]=ln, lo=g.L.dem && R.mod!=='ASK' ? R.demLo : 0, hi=g.L.dem && R.mod!=='ASK' ? R.demHi : R.magTop;
-        const v=lo+(y1-Math.min(y1,Math.max(y0,y)))/(y1-y0)*(hi-lo); setMod(n,'auto',false); setMod(n,'center',+v.toPrecision(5)); n.forceAna=true; }
+        const v=lo+(y1-Math.min(y1,Math.max(y0,y)))/(y1-y0)*(hi-lo); setMod(n,'auto',false); setMod(n,'center',+v.toPrecision(5)); slAnalyze_(n); }
       else if(drag.k==='range'){ n.range[1]=R.abs0+g.S(x); redraw(n); }
       else if(drag.k==='pan'){
         if(Math.abs(x-drag.x0)>3) drag.moved=true;
@@ -575,8 +589,11 @@ function slInitUI(n){
   });
   q('.sl-lab').addEventListener('keydown',e=>{ if(e.key==='Enter') q('.sl-add')?.click(); });
   q('.sl-rng').addEventListener('click',e=>{
-    const b=e.target.closest('[data-act]'); if(!b || !n.range || !n.R) return;
+    const b=e.target.closest('[data-act]'); if(!b || !n.R) return;
+    if(b.dataset.act==='whole'){ n.crop=null; n.vx=null; n.sel=-1; slAnalyze_(n); redraw(n); return; }
+    if(!n.range) return;
     const lo=Math.min(...n.range), hi=Math.max(...n.range), k=Math.max(1,+q('.sl-rbits')?.value||1);
+    if(b.dataset.act==='crop'){ n.crop=[Math.round(lo),Math.round(hi)]; n.range=null; n.vx=null; n.sel=-1; n.run=false; slAnalyze_(n); redraw(n); return; }
     setMod(n,'auto',false); setMod(n,'baud',+(n.R.sr*k/(hi-lo)).toFixed(3)); n.forceAna=true;
   });
   n.tableDirty=true;
@@ -595,8 +612,15 @@ function slInfo(n){
   if(u.info.textContent!==t) u.info.textContent=t;
   for(const b of u.root.querySelectorAll('[data-f]')) b.classList.toggle('on',b.dataset.f===n.p.fmt);
   const rg=n.range && n.R ? Math.abs(n.range[1]-n.range[0]) : 0;
-  const rt=rg>2 ? '<span>selection '+slFmtT(rg/n.R.sr)+(n.R.T>0 ? ' = '+(rg/n.R.T).toFixed(2)+' sym' : '')+'</span> <span>it is</span> <input class="sl-rbits" type="number" min="1" value="1" title="symbols in the selection"> <span>symbol(s)</span> <button class="sl-btn" data-act="baud">set baud</button>' : '';
-  if(u.rngH!==rt){ u.rngH=rt; if(rt && !u.rng.querySelector('.sl-rbits')) u.rng.innerHTML=rt; else if(!rt) u.rng.innerHTML=''; else u.rng.firstElementChild.textContent='selection '+slFmtT(rg/n.R.sr)+(n.R.T>0 ? ' = '+(rg/n.R.T).toFixed(2)+' sym' : ''); }
+  let rt='';
+  if(rg>2) rt='<span class="sl-rt">selection '+slFmtT(rg/n.R.sr)+(n.R.T>0 ? ' = '+(rg/n.R.T).toFixed(2)+' sym' : '')+'</span> <button class="sl-btn" data-act="crop" title="analyse only the selected span (stops a rolling capture)">analyse selection</button> <span>it is</span> <input class="sl-rbits" type="number" min="1" value="1" title="symbols in the selection"> <span>symbol(s)</span> <button class="sl-btn" data-act="baud">set baud</button>';
+  if(n.crop) rt+=' <button class="sl-btn on" data-act="whole" title="analyse the whole capture again">whole capture</button>';
+  if(u.rngH!==rt){
+    u.rngH=rt;
+    const keep=u.rng.querySelector('.sl-rbits')?.value;
+    u.rng.innerHTML=rt;
+    const inp=u.rng.querySelector('.sl-rbits'); if(keep && inp) inp.value=keep;
+  }
 }
 
 // текст сообщения в формате fmt
