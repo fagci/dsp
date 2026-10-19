@@ -736,7 +736,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     {n:'period',t:'range',min:.05,max:60,step:.05,d:1,label:'log period, s',adv:true},
     {n:'names',t:'text',d:'a,b,c,d',label:'log columns',adv:true},
     {n:'capture',t:'button',label:'Add row from a–d',adv:true,fn:n=>{ n.pend.push(tblLogRow(n,n.lastIn||{})); }},
-    {n:'maxRows',t:'num',min:0,max:1e6,step:100,d:10000,label:'max rows (0=∞)',adv:true},
+    {n:'maxRows',t:'num',min:0,max:1e7,step:100,d:0,label:'max rows (0=∞)',tip:'oldest rows are dropped above this count; 0 — no limit (a list in the patch itself keeps at most 1000)',adv:true},
     {n:'fmt',t:'select',opts:['csv','tsv','json'],d:'csv',label:'export format',adv:true},
     {n:'first',t:'num',min:1,max:1e6,step:1,d:1,adv:true,label:'first row'},
     {n:'last',t:'num',min:0,max:1e6,step:1,d:0,adv:true,label:'last row (0=end)'},
@@ -753,6 +753,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     n.p.list=tblCanon(n.p.list||'table');
     n.p.cols=Array.isArray(n.p.cols) ? n.p.cols : [];
     if(!Array.isArray(n.p.rules)) n.p.rules=[];
+    if(+n.p.maxRows===10000) n.p.maxRows=0;                // прежнее значение по умолчанию: лимита нет
     if(n.p.sel===undefined) n.p.sel=null;
     n.all=[]; n.ids=[]; n.cl=[]; n.rows=[]; n.rowIds=[]; n.headers=[]; n.cols=[]; n.rowsOwn=[]; n.rowsOut=[];
     n.extra=new Map(); n.onCount=0; n._rev=!!n.p.rev;
@@ -1286,9 +1287,10 @@ function tblRenderList(n,inc){
   n.uiFull=false;
   list.replaceChildren(frag);                            // одна атомарная замена: прокрутка не сбрасывается
   if(!ui.rh){                                            // высота строки: измеряем один раз на режим, дальше строкам задаётся --rh
-    let h=0; for(const r of els.slice(0,6)) h=Math.max(h,r.getBoundingClientRect().height);
+    const k=list.offsetHeight ? list.getBoundingClientRect().height/list.offsetHeight : 1;      // холст может быть в масштабе: нужны layout-пиксели
+    let h=0; for(const r of els.slice(0,6)) h=Math.max(h,r.getBoundingClientRect().height/k);
     if(h>0){
-      ui.rh=h; list.style.setProperty('--rh',h+'px'); ui.hdh=hd ? hd.getBoundingClientRect().height : 0; ui.vh=list.clientHeight;
+      ui.rh=h; list.style.setProperty('--rh',h+'px'); ui.hdh=hd ? hd.getBoundingClientRect().height/k : 0; ui.vh=list.clientHeight;
       list.scrollTop=keep; ui.st=keep;
       return tblRenderList(n);                           // окно теперь считается по настоящей высоте
     }
