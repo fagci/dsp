@@ -19,7 +19,7 @@ def({ id:'sigLab', title:'Signal Analyzer', cat:'Analysis', lazy:'manual', view:
   ins:[{n:'iq',t:'iq'},{n:'in',t:'sig'},{n:'go',t:'num'}],
   outs:[{n:'blk',t:'blk'},{n:'rec',t:'rec'},{n:'bin',t:'bin'},{n:'text',t:'txt'},{n:'baud',t:'num'},{n:'count',t:'num'}],
   params:[
-    {n:'mod',t:'select',opts:['auto','ASK','FSK','PSK'],d:'auto',label:'modulation (auto — from the signal; ASK includes OOK)'},
+    {n:'mod',t:'select',opts:['auto','ASK','FSK','PSK','raw'],d:'auto',label:'modulation (auto — from the signal; ASK includes OOK; raw — the input is already demodulated data, e.g. NFM audio of an FSK transmission)'},
     {n:'levels',t:'select',opts:['2','4'],d:'2',label:'symbol levels (2 — a bit per symbol, 4 — a dibit)'},
     {n:'code',t:'select',opts:['auto',...SL_CODES],d:'auto',label:'line code of the bits (auto: Manchester when the pairs show it, else NRZ)'},
     {n:'inv',t:'check',d:false,label:'invert'},

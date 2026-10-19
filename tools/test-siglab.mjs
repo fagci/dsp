@@ -275,6 +275,16 @@ for(const kind of ['ook','fsk']){
   ok('AFSK audio: messages '+R.msgs.length,R.msgs.length===4);
   if(R.msgs.length===4){ const q=R.msgs.map((m,i)=>Math.max(cmp(Array.from(m.bits),pk[i]),cmp(Array.from(m.bits).map(v=>v^1),pk[i]))); ok('AFSK audio: bits '+Math.min(...q).toFixed(3),Math.min(...q)>.98); }
 }
+/* ---- демодулированные данные (звук NFM): mod raw ---- */
+{
+  sd=555;
+  const sr=48000, T=sr/1200, pk=packet(randPayload(12)), n=Math.round(pk.length*T), x=new Float32Array(n+9600); let lp=0;
+  for(let i=0;i<n;i++){ lp+=((pk[Math.floor(i/T)]?1:-1)*.3-lp)*.35; x[i+4800]=lp+.01*gauss(); }
+  const R=S.slAnalyze(x,null,sr,{mod:'raw'});
+  ok('raw baseband: baud '+R.baud.toFixed(0),Math.abs(R.baud/1200-1)<.02);
+  ok('raw baseband: one message',R.msgs.length===1,String(R.msgs.length));
+  if(R.msgs.length===1){ const g=Array.from(R.msgs[0].bits); ok('raw baseband: bits',Math.max(cmp(g,pk),cmp(g.map(v=>v^1),pk))>.98); }
+}
 /* ---- вырожденные входы ---- */
 {
   const R=S.slAnalyze(new Float32Array(1000),new Float32Array(1000),1e5,{mod:'auto'});
