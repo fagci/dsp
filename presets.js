@@ -300,6 +300,7 @@ const PRESET_CATS={
   'Digital TV: DVB-T2 full (channels, programme, teletext, muxes)':'Images & TV',
   'Digital TV: DVB-S/S2 from IQ (USB SDR → one receiver node)':'Images & TV',
   'Digital TV: IPTV (HTTP TS / HLS / M3U) → TS → Video and Sound':'Images & TV',
+  'Digital TV: DVB-T2 → record video to Files (trigger, path)':'Images & TV',
   'Analog TV: FPV Multiband Scanner (HackRF)':'Images & TV',
   'Analog TV: FPV Mosaic (one HackRF)':'Images & TV',
   'Analog TV: FPV Channel Scanner (HackRF)':'Images & TV',
@@ -4568,6 +4569,21 @@ tv.size.w=420; tv.size.h=400; applySize(tv);
 const sc=addNode('dac',900,230,{});
 sc.size.w=260; sc.size.h=200; applySize(sc);
 addEdge(rx.id,'bin',tv.id,'bin'); addEdge(tv.id,'L',sc.id,'L'); addEdge(tv.id,'R',sc.id,'R');
+markWiresDirty();
+});
+preset('Digital TV: DVB-T2 → record video to Files (trigger, path)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Record a TV channel into the file store. DVB USB receives a multiplex, TS → Video decodes the programme; Files records the picture (record from: video in) as webm / mp4 into the folder from its path input. Press ● rec in Files, or wire a level to its rec input (a button, a schedule, a lock from the decoder) — it records while the level is 0.5 or more. The finished file shows in Files with a player and goes out on bin, so it can be sent over any channel (see the preset about files over a channel).'});
+nt.size.w=1000; nt.size.h=110; applySize(nt);
+const rx=addNode('dvbUsb',40,190,{});
+rx.size.w=360; rx.size.h=330; applySize(rx);
+const tv=addNode('tsvid',440,190,{});
+tv.size.w=420; tv.size.h=400; applySize(tv);
+const pt=addNode('textsrc',440,620,{text:'TV/recordings'});
+pt.size.w=260; pt.size.h=80; applySize(pt);
+const fl=addNode('files',900,190,{recSrc:'video in'});
+fl.size.w=380; fl.size.h=420; applySize(fl);
+addEdge(rx.id,'bin',tv.id,'bin'); addEdge(tv.id,'vid',fl.id,'vid'); addEdge(tv.id,'lock',fl.id,'rec'); addEdge(pt.id,'text',fl.id,'path');
 markWiresDirty();
 });
 preset('Digital TV: DVB-T2 full (channels, programme, teletext, muxes)', function(){
