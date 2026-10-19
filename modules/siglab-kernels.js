@@ -79,6 +79,43 @@ function slPool(x,segs,max){
   return o;
 }
 
+// комплексное БПФ на месте, n — степень двойки; inv — обратное (без деления)
+function slFft(re,im,inv){
+  const n=re.length;
+  for(let i=1,j=0;i<n;i++){
+    let bit=n>>1;
+    for(;j&bit;bit>>=1) j^=bit;
+    j^=bit;
+    if(i<j){ let t=re[i]; re[i]=re[j]; re[j]=t; t=im[i]; im[i]=im[j]; im[j]=t; }
+  }
+  for(let len=2;len<=n;len<<=1){
+    const a=(inv ? 2 : -2)*Math.PI/len, wr=Math.cos(a), wi=Math.sin(a), h=len>>1;
+    for(let i=0;i<n;i+=len){
+      let cr=1, ci=0;
+      for(let k=0;k<h;k++){
+        const u=i+k, v=u+h, xr=re[v]*cr-im[v]*ci, xi=re[v]*ci+im[v]*cr;
+        re[v]=re[u]-xr; im[v]=im[u]-xi; re[u]+=xr; im[u]+=xi;
+        const t=cr*wr-ci*wi; ci=cr*wi+ci*wr; cr=t;
+      }
+    }
+  }
+}
+// вещественный сигнал → аналитический: блоки по 16384 с перекрытием, края блоков отбрасываются
+function slAnalytic(x){
+  const N=x.length, B=16384, O=1024, H=B-2*O, im=new Float32Array(N), re=Float32Array.from(x);
+  const br=new Float64Array(B), bi=new Float64Array(B);
+  for(let s=0;s<N;s+=H){
+    const o=s-O;
+    for(let i=0;i<B;i++){ const j=o+i; br[i]=j>=0 && j<N ? x[j] : 0; bi[i]=0; }
+    slFft(br,bi,false);
+    for(let i=1;i<B/2;i++){ br[i]*=2; bi[i]*=2; }
+    for(let i=B/2+1;i<B;i++){ br[i]=0; bi[i]=0; }
+    slFft(br,bi,true);
+    for(let i=O;i<O+H && s+i-O<N;i++) im[s+i-O]=bi[i]/B;
+  }
+  return {re,im};
+}
+
 /* ---------- Оцу ---------- */
 function slOtsu(v,bins){
   bins=bins||128;
@@ -606,11 +643,13 @@ function slAnalyze(re,im,sr,cfg){
   const R={sr,N,mod:'ASK',noise:0,center:0,T:0,baud:0,conf:0,msgs:[],mag:null,dem:null,segs:[],sync:null,gated:false,lo:0,hi:0,err:''};
   if(N<64){ R.err='too few samples'; return R; }
   const L=cfg.levels===4 ? 4 : 2, auto=cfg.auto!==false;
+  if(!im && cfg.mod!=='ASK' && cfg.mod!=='raw'){ const z=slAnalytic(re); re=z.re; im=z.im; }      // звук (AFSK, фазовая манипуляция): аналитический сигнал
   const cache={};
   const mod=cfg.mod==='auto' || !cfg.mod ? slDetectMod(re,im,sr,cache) : cfg.mod;
   R.mod=mod;
-  if(!im && mod!=='ASK'){ R.err=mod+' needs an iq input'; }
-  const mag0=cache.mag0||slMag(re,im), smag=cache.smag||slSmooth(mag0,3);
+  if(!im && mod!=='ASK' && mod!=='raw'){ R.err=mod+' needs an iq input'; }
+  const mag0=cache.mag0||slMag(re,im), ew=mod==='raw' ? Math.max(3,Math.round(sr*.0008)) : 3, smag=mod==='raw' ? slSmooth(mag0,ew) : cache.smag||slSmooth(mag0,3);
+  if(mod==='raw') cache.nz=null;
   const nz=cache.nz||slNoise(smag);
   const noise=auto || !(cfg.noise>0) ? nz.noise : cfg.noise;
   R.noise=noise; R.gated=nz.gated; R.lo=nz.lo; R.hi=nz.hi;
@@ -619,6 +658,7 @@ function slAnalyze(re,im,sr,cfg){
   const M=L===4 ? 4 : 2;
   const makeDem=(segs,w)=>{
     if(mod==='ASK') return slSmooth(mag0,w);
+    if(mod==='raw') return slSmooth(re,w);
     if(mod==='FSK') return slSmooth(fraw||new Float32Array(N),w);
     const d=new Float32Array(N);
     for(const [a,b] of segs) slPsk(re,im,a,b,M,d);
@@ -661,6 +701,7 @@ function slAnalyze(re,im,sr,cfg){
     const segs0=slBudget(mod==='ASK' ? (nz.gated || noise>0 ? slSegments(smag,noise,Math.round(sr*.0005)+8,16) : [[0,N]]) : slSegments(smag,noise,8,16),300000);
     let raw;
     if(mod==='ASK') raw=mag0;
+    else if(mod==='raw') raw=re;
     else if(mod==='FSK') raw=fraw||new Float32Array(N);
     else { raw=new Float32Array(N); for(const [a,b] of segs0) slPsk(re,im,a,b,M,raw); }
     const f=findT(raw,segs0);
@@ -670,7 +711,7 @@ function slAnalyze(re,im,sr,cfg){
   R.T=T; R.baud=sr/T;
   // 2. окончательные сообщения
   const w=Math.max(1,Math.round(T/4));
-  const magW=slSmooth(mag0,w);
+  const magW=slSmooth(mag0,mod==='raw' ? Math.max(w,ew) : w);
   const gap=Math.round(cfg.pause>0 ? cfg.pause*T : slAutoGap(magW,noise,T)), minLen=Math.max(2,cfg.minBits||8)*T;
   R.gap=gap/T;
   const segs=slSegments(magW,noise,gap,minLen);
@@ -699,6 +740,7 @@ function slAnalyze(re,im,sr,cfg){
     Ts=segs.map(([a,b])=>{
       let raw;
       if(mod==='ASK') raw=mag0;
+      else if(mod==='raw') raw=re;
       else if(mod==='FSK') raw=fraw||new Float32Array(N);
       else { slPsk(re,im,a,b,M,praw); raw=praw; }
       const f=findT(raw,[[a,b]]);
@@ -776,7 +818,7 @@ function slAnalyzeFull(re,im,sr,cfg){
   R.N=re.length;
   if(R.mag){
     const v=slSample(R.mag,0,R.mag.length,20000).sort();
-    R.magTop=Math.max(v[Math.floor(v.length*.995)]||0,R.noise>0 && isFinite(R.noise) ? R.noise*1.5 : 0,1e-9)*1.15;
+    R.magTop=Math.max(v[Math.floor(v.length*.995)]||0,1e-9)*1.15;     // не зависит от порога: график не прыгает, пока его тянут
     R.pyrM=slPyramid(R.mag,64);
     if(R.mod!=='ASK' && R.dem && R.dem!==R.mag) R.pyrD=slPyramid(R.dem,64);
   }

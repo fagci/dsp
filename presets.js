@@ -5795,7 +5795,7 @@ const nt=addNode('note',40,40,{text:'A transmission with unknown parameters: Unk
 nt.size.w=1100; nt.size.h=130; applySize(nt);
 const gn=addNode('blindGen',40,210,{sr:'256000',off:20000,mod:'2FSK',baud:9600,dev:4800,word:'B38D2E5A',len:16,crc:'CRC-16/X-25',fec:'none',gap:64,lvl:-20,noise:-50,echo:0});
 gn.size.w=300; gn.size.h=420; applySize(gn);
-const sl=addNode('sigLab',380,210,{secs:1.5,mode:'rolling',refresh:2,split:'auto'});
+const sl=addNode('sigLab',380,210,{secs:1.5,mode:'rolling',refresh:2,cut:true});
 sl.size.w=820; sl.size.h=260; applySize(sl);
 const cr=addNode('crcFind',380,800,{min:6,tail:32,maxSkip:2,unknown:true});
 cr.size.w=360; cr.size.h=240; applySize(cr);
