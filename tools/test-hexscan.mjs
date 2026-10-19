@@ -73,5 +73,55 @@ ok('plain header + encrypted body: header found, body random',re.candidates.some
 ok('too few packets: skipped',S.hexScan(noise.slice(0,5)).length===0);
 // разные длины — разные группы
 ok('groups by packet length',S.hexScan([...noise.slice(0,40),...pk.slice(0,40).map(p=>p.d)]).length===2);
+
+// ---- Физическая величина по эталону ----
+// Метеодатчик, 9 байт: [0xA5][id][seq][флаги: бит 4 — батарея][temp 12 бит с бита 20 = (T+40)·10][влажность u8][давление u16 LE, 0.1 гПа][xor8]
+function makeSensor(n,o={}){
+  const out=[]; let T=15, H=50, P=1005;
+  for(let i=0;i<n;i++){
+    T+=gauss()*.4+Math.sin(i/9)*.15; H=Math.max(10,Math.min(95,H+gauss()*1.2)); P=1005+25*Math.sin(i/11)+gauss()*.3;
+    const b=new Uint8Array(9);
+    b[0]=0xA5; b[1]=0x3C; b[2]=i&255; b[3]=(i%23===0 ? 0x10 : 0);
+    const rt=Math.round((T+40)*10);                                  // 12 бит: байт 4 (старшие 8) и верхняя половина байта 5
+    b[3]|=0; b[4]=(rt>>4)&255; b[5]=((rt&15)<<4)|(o.nib||0);
+    b[6]=Math.round(H); const pp=Math.round(P*10); b[7]=pp&255; b[8]=pp>>8;
+    out.push({d:b,t:1.76e12+i*30000,ref:o.ref==='H' ? H : o.ref==='P' ? P : T+gauss()*.05,T,H,P});
+  }
+  return out;
+}
+const sens=makeSensor(120);
+const rq=S.hexScan(sens,{refName:'temperature',refUnit:'°C'})[0];
+const qt=rq.candidates.filter(c=>c.kind==='quantity');
+const t1=qt[0];
+ok('reference: temperature found at the 12-bit window starting at bit 32',t1 && t1.b0===32 && t1.wb===12,JSON.stringify(t1));
+ok('reference: scale snapped to 0.1, offset −40 ± 0.05, r > 0.999',t1 && t1.scale===.1 && Math.abs(t1.bias+40)<.05 && t1.r>.999,JSON.stringify(t1));
+ok('reference: the label reads like a formula with the unit',t1 && /temperature ≈ 0\.1·x − 40/.test(t1.label) && /°C/.test(t1.label),t1&&t1.label);
+// эталон — влажность: находит байт 6, масштаб 1, смещение 0
+const rh=S.hexScan(makeSensor(120,{ref:'H'}))[0].candidates.find(c=>c.kind==='quantity');
+ok('reference: humidity is the byte at 6 (scale 1, offset 0)',rh && rh.b0===48 && rh.wb===8 && rh.scale===1 && Math.abs(rh.bias)<.3,JSON.stringify(rh));
+// эталон — давление: 16 бит little-endian, 0.1 гПа
+const rp=S.hexScan(makeSensor(120,{ref:'P'}))[0].candidates.find(c=>c.kind==='quantity');
+ok('reference: pressure is a LE u16 at 7, scale 0.1',rp && rp.b0===56 && rp.wb===16 && rp.le===true && rp.scale===.1 && Math.abs(rp.bias)<.2,JSON.stringify(rp));
+// схема: те же пакеты читаются, значение = x·scale + bias совпадает с температурой
+const sch2=S.hexScanSchema(rq,.6), tf=sch2.fields.find(f=>f.bias!==undefined);
+const pr=S.hexParse(sch2,sens[40].d);
+ok('reference: schema has a bits field with scale / bias / unit',tf && tf.t==='bits' && tf.w===12 && tf.scale===.1 && tf.bias===-40 && tf.unit==='°C',JSON.stringify(sch2.fields));
+ok('reference: schema parses a packet to the right temperature (±0.2)',pr.ok!==false && tf && Math.abs(pr.vals[tf.n]*tf.scale+tf.bias-sens[40].T)<.2,JSON.stringify([pr.vals[tf&&tf.n],sens[40].T]));
+// BCD-термометр: три цифры «234» = 23.4
+const bcdPk=Array.from({length:80},(_,i)=>{ const T=20+4*Math.sin(i/7)+gauss()*.05, v=Math.round(T*10), b=new Uint8Array(5); b[0]=0x55; b[1]=((v/100|0)<<4)|((v/10|0)%10); b[2]=((v%10)<<4)|0x0; b[3]=i&255; b[4]=0xEE; return {d:b,t:i*1000,ref:T}; });
+const rb=S.hexScan(bcdPk)[0].candidates.find(c=>c.kind==='quantity');
+ok('reference: BCD digits (3 nibbles from byte 1) → 0.1 per step',rb && rb.bcd && rb.b0===8 && rb.wb===12 && rb.scale===.1,JSON.stringify(rb));
+// счётчик не принимается за величину, даже когда эталон — плавная рампа
+const ramp=Array.from({length:60},(_,i)=>{ const b=new Uint8Array(4); b[0]=1; b[1]=i; b[2]=(rnd()*256)|0; b[3]=(rnd()*256)|0; return {d:b,t:i*1000,ref:i*.5}; });
+ok('reference: a counter is not a quantity (the ref is a ramp)',!S.hexScan(ramp)[0].candidates.some(c=>c.kind==='quantity' && c.off===1));
+// постоянный эталон — совет изменить, ничего не придумывается
+const flat=S.hexScan(sens.map(p=>({...p,ref:20})))[0].candidates;
+ok('reference: constant reference → hint, no quantity',flat.some(c=>c.kind==='refinfo') && !flat.some(c=>c.kind==='quantity'));
+// случайные байты при плавном эталоне: ложных величин нет
+const nz=Array.from({length:120},(_,i)=>({d:Uint8Array.from({length:12},()=>rnd()*256|0),t:i*1000,ref:20+5*Math.sin(i/10)}));
+ok('reference: random packets give no quantity',!S.hexScan(nz)[0].candidates.some(c=>c.kind==='quantity'));
+// без эталона поведение прежнее
+ok('without a reference: no quantity candidates',!S.hexScan(sens.map(p=>p.d))[0].candidates.some(c=>c.kind==='quantity'||c.kind==='refinfo'));
+
 console.log(bad ? bad+' failed' : 'all ok');
 process.exit(bad?1:0);

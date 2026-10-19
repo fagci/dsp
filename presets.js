@@ -173,6 +173,8 @@ const PRESET_CATS={
   'USB SDR: Channel Scan + Decoder Switch (digital voice / analog)':'SDR Receivers',
   'ESP-SDR: ESP32 Spectrum':'SDR Receivers',
   'Measure: Modulation Meter — FM and AM (Generator)':'Analysis & Measurement',
+  'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
+  'Measure: Spectrum Baseline — New Signal and Missing Carrier Alarm (Generator)':'Analysis & Measurement',
   'Measure: SINAD of an FM Receiver (Generator)':'Analysis & Measurement',
   'Measure: IQ Quality — DC and Imbalance (Generator)':'Analysis & Measurement',
   'Meshtastic: Chat and Nodes on the Map':'Network & IoT',
@@ -249,6 +251,7 @@ const PRESET_CATS={
   'ADS-B: Aircraft Map (USB SDR, 1090 MHz)':'Aircraft, Satellites & Telemetry',
   'Meteor-M LRPT: Image (Generator)':'Aircraft, Satellites & Telemetry',
   'Meteor-M LRPT: Image (USB SDR, 137 MHz)':'Aircraft, Satellites & Telemetry',
+  'Satellites: Autopilot — Pass Plan, Doppler and IQ Recording (USB SDR, 137 MHz)':'Aircraft, Satellites & Telemetry',
   'Radiosonde RS41: Map (Generator)':'Aircraft, Satellites & Telemetry',
   'Radiosonde RS41: Map (USB SDR, 400–406 MHz)':'Aircraft, Satellites & Telemetry',
   'NMEA: GPS Track (Table Playback)':'Maps & Locating',
@@ -330,6 +333,7 @@ const PRESET_CATS={
   'Bytes: File over Any Text Channel (Loopback)':'Network & IoT',
   'Hex: Parse a Packet (Ethernet / IPv4 / UDP)':'Network & IoT',
   'Hex: Table Rows → Packets → Table':'Network & IoT',
+  'Hex: Reverse a Sensor — Find the Temperature Field by a Reference':'Unknown Signals',
   'Hex: PCAP File → Packets → HEX Structure':'Network & IoT',
   'Wi-Fi: ESP32 Sniffer → Table and HEX Structure':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
@@ -1327,6 +1331,42 @@ addEdge(g.id,'iq',d0.id,'in'); addEdge(d0.id,'out',xc.id,'a'); addEdge(g.id,'iq'
 addEdge(xc.id,'delay',n1.id,'in'); addEdge(xc.id,'coh',n2.id,'in');
 markWiresDirty();
 });
+preset('Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'IQ Channel Model sits between a transmitter and a receiver and spoils the signal the way a radio path does: noise at a set SNR, multipath with Rayleigh / Rician fading, Doppler shift and drift, phase noise, a sample clock error, impulse noise.\n'+
+  'Here an FM carrier goes through a Rayleigh channel (EPA profile, 30 Hz Doppler spread) with 15 dB SNR plus a drifting Doppler, like a low satellite pass. Watch the carrier breathe and slide on the spectrum; raise the SNR or switch fading to static and it calms down.\n'+
+  'Put it before any decoder to see where the chain stops working: the output `snr` and `level` are numbers on wires.'});
+nt.size.w=720; nt.size.h=150; applySize(nt);
+const g=addNode('iqGen',40,250,{sr:'250000',fc:100000000,mode:'FM',off:20000,lvl:-20,tone:1000,dev:3000,noise:-120});
+const ch=addNode('iqChannel',320,250,{noise:'SNR',snr:15,profile:'EPA',fading:'Rayleigh',fd:30,dop:2000,drift:-300});
+ch.size.w=420; applySize(ch);
+const sp=addNode('iqSpec',780,250,{size:'4096',avg:'4'});
+const n1=addNode('numview',780,520,{label:'SNR, dB'});
+const n2=addNode('numview',980,520,{label:'level, dBFS'});
+addEdge(g.id,'iq',ch.id,'in'); addEdge(ch.id,'out',sp.id,'in');
+addEdge(ch.id,'snr',n1.id,'in'); addEdge(ch.id,'level',n2.id,'in');
+markWiresDirty();
+});
+preset('Measure: Spectrum Baseline — New Signal and Missing Carrier Alarm (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Spectrum Baseline learns what the band normally looks like (every cell remembers its level and spread, and how often a signal was there) and then reports what is different: a new signal, a wideband rise of the floor (a jammer), a carrier that was always there and vanished.\n'+
+  'Here two stable carriers are the "normal" band. After the norm is learned (a few seconds), switch the third generator from off to AM — a new station: it is marked on the analyzer and a record goes out on `rec` (wire it to a Table to keep a log). Switch it off again: an end record with the duration. Switch a stable generator off: "gone".\n'+
+  'A new station that stays on is absorbed into the norm after a while (the `adapt` parameter). On a real receiver put the baseline after a sweep or an IQ Spectrum, let it run for hours (Save norm keeps it), and use the outputs for alarms.'});
+nt.size.w=760; nt.size.h=170; applySize(nt);
+const g1=addNode('iqGen',40,260,{sr:'1024000',fc:100000000,mode:'FM',off:-250000,lvl:-35,tone:1000,dev:3000,noise:-120});
+const g2=addNode('iqGen',40,460,{sr:'1024000',fc:100000000,mode:'AM',off:50000,lvl:-40,tone:700,depth:.5,noise:-70});
+const g3=addNode('iqGen',40,660,{sr:'1024000',fc:100000000,mode:'off',off:200000,lvl:-35,tone:1000,depth:.5,noise:-120});
+const a1=addNode('iqAdd',300,360,{}), a2=addNode('iqAdd',520,460,{});
+const sp=addNode('iqSpec',740,460,{size:'4096',avg:'4',upd:60});
+const bl=addNode('specBase',1000,260,{learn:25,adapt:300,confirm:3,hold:2000});
+const sa=addNode('sa',1000,640,{fmin:99.4e6,fmax:100.6e6});
+sa.size.w=640; sa.size.h=320; applySize(sa);
+const n1=addNode('numview',1480,260,{label:'deviations'});
+addEdge(g1.id,'iq',a1.id,'a'); addEdge(g2.id,'iq',a1.id,'b'); addEdge(a1.id,'out',a2.id,'a'); addEdge(g3.id,'iq',a2.id,'b');
+addEdge(a2.id,'out',sp.id,'in'); addEdge(sp.id,'spec',bl.id,'spec'); addEdge(sp.id,'spec',sa.id,'spec'); addEdge(bl.id,'base',sa.id,'spec2');
+addEdge(bl.id,'bands',sa.id,'bands'); addEdge(bl.id,'count',n1.id,'in');
+markWiresDirty();
+});
 preset('Measure: SINAD of an FM Receiver (Generator)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'SINAD of an FM receiver, the usual bench test: a carrier modulated by 1 kHz at ±3 kHz → demodulator → SINAD.\n'+
@@ -1610,6 +1650,28 @@ const im=addNode('lrptImage',1140,40,{comp:'RGB 123'});
 im.size.w=520; im.size.h=420; applySize(im);
 addEdge(gn.id,'iq',dm.id,'in'); addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
 addEdge(dm.id,'out',de.id,'in'); addEdge(de.id,'rec',im.id,'rec');
+markWiresDirty();
+});
+preset('Satellites: Autopilot — Pass Plan, Doppler and IQ Recording (USB SDR, 137 MHz)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Satellite Autopilot plans the passes of the weather satellites for the next day (TLE of the groups noaa and weather — press Download TLE once; set My Position first) and runs one receiver through them: before every pass its `go` goes high, `freq` follows the Doppler shift of the satellite, `mode` says what to decode.\n'+
+
+  'The SDR sits at 137.5 MHz (2.4 MS/s covers 136.3–138.7 MHz, all NOAA and Meteor channels); `freq` goes to tuneFreq, `go` starts and stops the IQ recording of channel 1 (record trigger: go input, 200 kHz around the satellite, 30 s before AOS … 30 s after LOS). The recording is saved to a file; play it back later into the NOAA / LRPT chains.\n'+
+
+  'Two satellites at once: the better pass (priority, then elevation) is taken, the other is marked busy. Targets are a line in the node ("NOAA 19;;APT, METEOR-M2 3;;LRPT") or a Table wired to `rows` (columns sat, freq, mode, minEl, prio). The pass plan goes to the Table below (`plan`), aos / los events to the log (`rec`).'});
+nt.size.w=760; nt.size.h=210; applySize(nt);
+const pl=addNode('satPlan',40,290,{});
+pl.size.w=440; pl.size.h=380; applySize(pl);
+const rx=addNode('rtlsdr',540,290,{sr:'2400000',freq:137500000,demod:'IQ',recTrig:'go input',recBand:'channel 1',recBw:200000,recPre:5,tag:'autopilot'});
+const sa=addNode('sa',540,560,{auto:true,floor:-90,top:-20,split:1});
+sa.size.w=640; sa.size.h=300; applySize(sa);
+const tb=addNode('table',1230,290,{list:'satplan/passes',key:'id'});
+tb.size.w=520; tb.size.h=320; applySize(tb);
+const lg=addNode('table',1230,640,{list:'satplan/log'});
+lg.size.w=520; lg.size.h=240; applySize(lg);
+addEdge(pl.id,'freq',rx.id,'tuneFreq'); addEdge(pl.id,'go',rx.id,'recGo');
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(pl.id,'plan',tb.id,'rec'); addEdge(pl.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Meteor-M LRPT: Image (USB SDR, 137 MHz)', function(){
@@ -4992,6 +5054,26 @@ hx.size.w=460; hx.size.h=520; applySize(hx);
 const t2=addNode('table',920,200,{list:'@patch',data:''});
 t2.size.w=320; t2.size.h=300; applySize(t2);
 addEdge(t1.id,'rec',hx.id,'rec'); addEdge(hx.id,'rec',t2.id,'rec');
+markWiresDirty();
+});
+preset('Hex: Reverse a Sensor — Find the Temperature Field by a Reference', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'An unknown sensor sends 9-byte packets. Next to it stands a thermometer you trust: its reading goes with every packet (here the column temp of the Table; in a real run — the ref input, e.g. from a serial thermometer, or a field of the record).\n'+
+  'HEX Field Finder correlates every byte, every window of 3–16 bits and every BCD number with the reference and prints the line: temperature ≈ 0.1·x − 40 (r = 0.9999) — the 12-bit field that starts in the middle of a byte, its scale and offset. Constants, the counter and the checksum are found the usual way. «text» is a structure draft for HEX Structure (own structure): the temperature field comes with scale, bias and unit.\n'+
+  'The test sensor here: [A5][id][counter][flags][temperature 12 bit = (°C + 40)·10][humidity][pressure u16 LE, 0.1 hPa][xor8].'});
+nt.size.w=860; nt.size.h=170; applySize(nt);
+let csv='hex,temp';
+for(let i=0;i<150;i++){
+  const T=15+6*Math.sin(i/13)+1.5*Math.sin(i/3.1), H=55+15*Math.sin(i/21), P=1005+20*Math.sin(i/17);
+  const rt=Math.round((T+40)*10), b=[0xA5,0x3C,i&255,0,(rt>>4)&255,((rt&15)<<4),Math.round(H),Math.round(P*10)&255,Math.round(P*10)>>8];
+  let x=0; for(const v of b) x^=v; b.push(x);
+  csv+='\n'+b.map(v=>v.toString(16).padStart(2,'0')).join('')+','+(Math.round(T*100)/100);
+}
+const tb=addNode('table',40,250,{list:'@patch',advance:'rate',rate:25,loop:false,data:csv});
+tb.size.w=320; tb.size.h=320; applySize(tb);
+const hs=addNode('hexScan',420,250,{refcol:'temp',refName:'temperature',refUnit:'°C',minN:20,live:true});
+hs.size.w=640; hs.size.h=420; applySize(hs);
+addEdge(tb.id,'rec',hs.id,'rec');
 markWiresDirty();
 });
 preset('Hex: PCAP File → Packets → HEX Structure', function(){

@@ -3089,12 +3089,13 @@ function iqPreKeep(n, buf, epoch, tl){
 }
 // запись по шумоподавителю канала 1: старт — открылся, стоп — закрылся (hang — sqlHang).
 // Раз в такт из process().
-function iqRecAuto(n){
-  if(n.p.recTrig!=='squelch'){ n.trg=null; n.preQ=null; n.preN=0; return; }
+function iqRecAuto(n,I){
+  const byGo=n.p.recTrig==='go input';                  // вход recGo: > 0,5 — писать (например, окно пролёта спутника)
+  if(n.p.recTrig!=='squelch' && !byGo){ n.trg=null; n.preQ=null; n.preN=0; return; }
   if(!n.connected || !n.dev || n.swActive) return;
   if(n.rec && !n.rec.auto){ n.trg=null; return; }       // ручная запись — триггер не вмешивается
-  if(n.p.sql!=='SNR' && n.p.sql!=='level'){ n.status='record trigger needs squelch enabled'; return; }
-  const st=n.trg||(n.trg={}), open=n.ch[0].sqOpen===true;
+  if(!byGo && n.p.sql!=='SNR' && n.p.sql!=='level'){ n.status='record trigger needs squelch enabled'; return; }
+  const st=n.trg||(n.trg={}), open=byGo ? +I.recGo>0.5 : n.ch[0].sqOpen===true;
   // после остановки (в т.ч. по max length) ждём закрытия, иначе открытый шумоподавитель даст серию записей
   if(st.low){ if(!open) st.low=false; else return; }
   const act=iqaTrig(st, open, !open, performance.now(), {maxMs:(+n.p.recMax||300)*1000, waitMs:2000, armAtStart:true});
@@ -4051,7 +4052,7 @@ async function rtlReadLoop(n){
       if(!n.swActive){
         const tl=iqTlChunk(n, n.dev.fmt==='u8' ? buf.byteLength>>1 : buf.byteLength>>2);
         if(n.rec) iqRecWrite(n, buf, res.epoch, tl);
-        else if(n.p.recTrig==='squelch' && +n.p.recPre>0) iqPreKeep(n, buf, res.epoch, tl);
+        else if((n.p.recTrig==='squelch' || n.p.recTrig==='go input') && +n.p.recPre>0) iqPreKeep(n, buf, res.epoch, tl);
       }
       const u8=new Uint8Array(buf), fmt=n.dev.fmt, s16=fmt==='s16' ? new Int16Array(buf) : null;
       if(n.swHw){ sdrHwSweepFeed(n, u8); continue; }
@@ -5042,7 +5043,7 @@ async function sdrSweepLoop(n){
 
 def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
   ins:[{n:'freq',t:'num'},{n:'steerFreq',t:'num'},{n:'tuneFreq',t:'num'},{n:'tuneFreq2',t:'num'},{n:'tuneFreq3',t:'num'},{n:'tuneFreq4',t:'num'},
-       {n:'gainDb',t:'num'},{n:'bw',t:'num'},{n:'demod',t:'val'},{n:'mark',t:'val'},{n:'markTrg',t:'num'},{n:'rec',t:'rec'}],
+       {n:'gainDb',t:'num'},{n:'bw',t:'num'},{n:'demod',t:'val'},{n:'mark',t:'val'},{n:'markTrg',t:'num'},{n:'rec',t:'rec'},{n:'recGo',t:'num'}],
   outs:[{n:'I',t:'sig'},{n:'Q',t:'sig'},{n:'iq',t:'iq'},
         {n:'audio',t:'sig'},{n:'audio2',t:'sig'},{n:'audio3',t:'sig'},{n:'audio4',t:'sig'},
         {n:'audioL',t:'sig'},{n:'audioR',t:'sig'},{n:'rds',t:'rec'},{n:'ps',t:'val'},{n:'rt',t:'val'},
@@ -5076,7 +5077,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'tag',t:'text',d:'',label:'tag (recording name, SigMF, marks)'},
     {n:'markTime',t:'check',d:true,label:'marks: add local time to the label'},
     // запись по условию до закрытия шумоподавителя; секунды до триггера берутся из накопленных чанков
-    {n:'recTrig',t:'select',opts:['off','squelch'],d:'off',label:'record while squelch is open (channel 1; needs squelch on)'},
+    {n:'recTrig',t:'select',opts:['off','squelch','go input'],d:'off',label:'record while squelch is open (channel 1; needs squelch on) or while the recGo input is above 0.5 (a satellite pass window)'},
     {n:'recPre',t:'range',min:0,max:5,step:.5,d:1,label:'trigger: pre-roll, s'},
     {n:'recMax',t:'range',min:5,max:3600,step:5,log:true,d:300,label:'trigger: max length, s'},
     // только файл: повтор и позиция
@@ -5277,7 +5278,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     if(!n.p.sweep && n.sw){ n.sw=null; n.swErr=null; }
     if(sweepOn && lf==null && !n.swRunning) (n.p.swHw && n.dev.kind==='hackrf' ? sdrHwSweepLoop : sdrSweepLoop)(n);
     if(!n.swActive) rtlUpdateSpec(n);
-    iqRecAuto(n);
+    iqRecAuto(n,I);
     iqMarkIn(n, I);
     // при прослушивании живой спектр ложится на свой участок панорамы
     if(sweepOn && n.sw && !n.swActive && n.spec && n.spec.rev!==n._swOvRev && !n.busy && n.appliedFreq!=null){
