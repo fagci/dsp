@@ -190,18 +190,36 @@ function gvTheme(n){
   const col=themeColor('--acc2'), txt=themeColor('--txt'), line=themeColor('--line'), acc=themeColor('--acc');
   return {col,txt,line,acc,key:col+txt+line+acc};
 }
+// подсветка: узлы, чьё id встречается в любом поле строк hl (найденное фильтром Table), и их соседи; остальное притушено
+function gvHlCalc(n){
+  const rows=n.hlRows;
+  if(!rows || !rows.length){ n.hl=null; return; }
+  const full=new Set(), all=new Set();
+  for(let i=0;i<rows.length && i<5000;i++){
+    const r=rows[i]; if(!r || typeof r!=='object') continue;
+    for(const k in r){ const v=r[k]; if(v==null || v==='') continue; const s=String(v); if(n.dN.has(s)) full.add(s); }
+  }
+  for(const id of full) all.add(id);
+  if(n.p.hlNb) for(const e of n.dE.values()){ if(full.has(e.from)) all.add(e.to); if(full.has(e.to)) all.add(e.from); }
+  n.hl=full.size ? {full,all} : null;      // ничего не нашлось — не гасим весь граф
+}
 function gvNodeItem(n,nd,T){
   const c=nd.color||T.col;
   const it={id:nd.id,label:nd.label,shape:nd.shape||'dot',color:{background:c,border:c,highlight:{background:T.acc,border:T.acc}},
             font:{color:T.txt,size:11}};
+  if(n.hl){
+    if(!n.hl.all.has(nd.id)){ it.opacity=.15; it.font={color:T.line,size:11}; }
+    else if(n.hl.full.has(nd.id)){ it.borderWidth=4; it.color.border=T.acc; }
+  }
   if(nd.size) it.size=nd.size; else it.value=1+nd.deg;
   return it;
 }
 function gvEdgeItem(n,key,e,T){
   const wl=n.p.weights && e.w!==1 ? String(+e.w.toFixed(3)) : '';
   const c=e.color||T.line;
-  return {id:key,from:e.from,to:e.to,value:Math.abs(e.w)||1,label:[e.label,wl].filter(Boolean).join(' ')||undefined,
-          color:{color:c,highlight:T.acc},font:{color:T.txt,size:9,strokeWidth:0},
+  const dim=n.hl && !(n.hl.all.has(e.from) && n.hl.all.has(e.to) && (n.hl.full.has(e.from) || n.hl.full.has(e.to)));
+  return {id:key,from:e.from,to:e.to,value:Math.abs(e.w)||1,label:dim ? undefined : [e.label,wl].filter(Boolean).join(' ')||undefined,
+          color:{color:c,highlight:T.acc,opacity:dim ? .08 : 1},font:{color:T.txt,size:9,strokeWidth:0},
           arrows:n.p.directed ? 'to' : undefined};
 }
 function gvMount(n){
@@ -230,6 +248,7 @@ function gvSync(n){
   if(n.dirty) gvBuild(n);
   if(!n.net || !n.sync) return;
   n.sync=false;
+  gvHlCalc(n);
   const T=gvTheme(n);
   if(n.themeKey!==T.key){ n.themeKey=T.key; n.sigN.clear(); n.sigE.clear(); }
   const diff=(want,sigs,ds,make)=>{
@@ -254,12 +273,13 @@ function gvRemap(n){                                // другие колонк
 function gvRestyle(n){ n.sigN.clear(); n.sigE.clear(); n.sync=true; n.net?.setOptions({physics:{enabled:!!n.p.physics}}); redraw(n); }
 
 def({ id:'graphview', title:'Graph', cat:'Output', kw:'network graph links nodes edges csv vis connections', resize:true, gv:true, readout:true, w:420, h:300,
-  ins:[{n:'text',t:'txt'},{n:'rec',t:'rec'},{n:'rows',t:'bands'}],
+  ins:[{n:'text',t:'txt'},{n:'rec',t:'rec'},{n:'rows',t:'bands'},{n:'hl',t:'bands'}],
   outs:[{n:'nodes',t:'num'},{n:'edges',t:'num'},{n:'sel',t:'txt'}],
   params:[{n:'delim',t:'select',opts:['auto',',',';','tab','|'],d:'auto',label:'delimiter',fn:n=>gvClear(n)},
           {n:'directed',t:'check',d:false,label:'arrows',fn:gvRestyle},
           {n:'weights',t:'check',d:false,label:'weights on edges',fn:gvRestyle},
           {n:'physics',t:'check',d:true,label:'physics (layout)',fn:gvRestyle},
+          {n:'hlNb',t:'check',d:true,label:'highlight neighbours too (hl input)',fn:gvRestyle},
           {n:'max',t:'num',d:500,label:'max nodes',adv:true},
           {n:'fromCol',t:'text',d:'',label:'edge from col (auto)',adv:true,fn:n=>gvRemap(n)},
           {n:'toCol',t:'text',d:'',label:'edge to col (auto)',adv:true,fn:n=>gvRemap(n)},
@@ -284,6 +304,8 @@ def({ id:'graphview', title:'Graph', cat:'Output', kw:'network graph links nodes
       if(list){ if(list!==n[key]){ n[key]=list; set(n,list); } }
       else if(n[key]){ n[key]=null; set(n,[]); }
     }
+    const hl=Array.isArray(I.hl) ? I.hl : null;
+    if(hl!==n.hlRows){ n.hlRows=hl; n.sync=true; }
     if(n.dirty) gvBuild(n);
     return {nodes:n.dN.size, edges:n.dE.size, sel:n.sel||null}; },
   draw(n){

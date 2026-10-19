@@ -152,11 +152,23 @@ function tblCheck(n,recs,strict,except=-1){
 const tblClean=r=>{ const o={}; for(const k in r){ const v=r[k]; o[k]=v==null ? '' : typeof v==='object' ? recFmt(v,true) : v; } return o; };
 
 /* ---------- фильтр ---------- */
+// узел с проводом filter (Graph.sel…): строки, где любое поле целиком равно тексту; вместе с набранным фильтром
+function tblFilterOf(n,err){
+  const f=tblFilter(n.p.filter,err), w=String(n.wf||'').trim().toLowerCase();
+  if(!w) return f;
+  const g=r=>{ for(const k in r) if(String(r[k]??'').toLowerCase()===w) return true; return false; };
+  return f ? r=>f(r) && g(r) : g;
+}
 // слова через пробел, все должны совпасть: «20m» — с начала слова любого поля, «col:text» — в конкретном поле,
 // «col>5M», «col<=100», «col=x» — сравнение (числа с k/M/G понимаются); «a|b» — любое из,
 // НЕ: «-слово», «!слово», «not слово», «-col:x», «col!=x», «col!:x» — исключить,
 // «col:» без значения — поле не пусто (to: — записи, где есть адресат)
-function tblFilter(q){
+// выражение в стиле Wireshark (kind == "beacon" && rssi > -50, wsfilter-kernels.js) — вместо слов; ошибка разбора — в err.msg, фильтр не применяется
+function tblFilter(q,err){
+  if(err) err.msg='';
+  if(wsLooksLike(q)){
+    try{ return wsCompile(q,tblHz); }catch(e){ if(err) err.msg=e.message; return null; }
+  }
   q=String(q||'').trim().toLowerCase(); if(!q) return null;
   const terms=[]; let not=false;
   for(let w of q.split(/\s+/)){
@@ -327,7 +339,8 @@ function tblRefVal(n,c){
 }
 // фильтр, столбцы времени/координат, bands
 function tblDerive(n){
-  const f=tblFilter(n.p.filter);
+  const E={}, f=tblFilterOf(n,E);
+  n.ferr=E.msg||''; n.fOn=!!(String(n.p.filter||'').trim() || n.wf);
   if(f){
     n.rows=[]; n.rowIds=[];
     n.all.forEach((r,i)=>{ if(f(r)){ n.rows.push(r); n.rowIds.push(n.ids[i]); } });
@@ -356,6 +369,7 @@ function tblDerive(n){
   n.geo=!!(n.latCol && n.lonCol);
   tblBands(n);
   n.uiDirty=true;                                              // что изменилось в строках — видно по сигнатурам в tblRenderList
+  tblFilterMark(n);
 }
 // записи списка для выхода rows: строка как есть, а у строк с частотой — ещё и числовые lo / hi / step и label / color
 // (диапазон для спектра и сканеров; потребителям записей без lo они просто не видны)
@@ -375,7 +389,7 @@ function tblRowsOut(cl,rows){
 function tblBands(n){
   n.loCol=tblCol(n.cl,TBL_LO); n.hiCol=tblCol(n.cl,TBL_HI);
   n.rowsOwn=tblRowsOut(n.cl,n.rows);
-  const f=tblFilter(n.p.filter);                        // тот же фильтр — и для остальных отмеченных списков
+  const f=tblFilterOf(n);                               // тот же фильтр — и для остальных отмеченных списков
   for(const e of n.extra.values()){ e.rowsF=f ? e.rows.filter(f) : e.rows; e.out=tblRowsOut(e.cols,e.rowsF); }
   tblMerge(n);
 }
@@ -700,11 +714,11 @@ function tblFlush(n){
 }
 
 /* ---------- узел ---------- */
-const tblIns=n=>[{n:'trig',t:'val'},{n:'row',t:'val'},{n:'t',t:'num'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'rows',t:'bands'},{n:'sigs',t:'bands'}]
+const tblIns=n=>[{n:'trig',t:'val'},{n:'row',t:'val'},{n:'t',t:'num'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'rows',t:'bands'},{n:'sigs',t:'bands'},{n:'filter',t:'txt'}]
   .concat(n.p.log ? ['a','b','c','d'].map(k=>({n:k,t:'num'})) : []);
 const tblOuts=n=>{
   const o=[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'row',t:'num'},{n:'count',t:'num'},{n:'next',t:'num'},
-    {n:'done',t:'num'},{n:'dist',t:'num'},{n:'bearing',t:'num'},{n:'progress',t:'num'},{n:'rows',t:'bands'}];
+    {n:'done',t:'num'},{n:'dist',t:'num'},{n:'bearing',t:'num'},{n:'progress',t:'num'},{n:'rows',t:'bands'},{n:'match',t:'bands'}];
   if(tblCol(n.p.cols||[],TBL_LO)) o.push({n:'mid',t:'num'},{n:'span',t:'num'});
   return o.concat((n.cols||[]).map(c=>({n:c.port,t:'val'})));
 };
@@ -778,6 +792,8 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     if((n.loaded!==p.list || (p.list===TBL_PATCH && n.loadedData!==p.data)) && !n.loading) tblLoad(n);
     else if(n._showRef!==p.show && !n.loading) tblSyncExtra(n);       // галочки изменили извне (undo, патч)
     n.lastIn=I;
+    const wf=typeof I.filter==='string' ? I.filter : '';
+    if(wf!==(n.wf||'') && n.loaded===p.list){ n.wf=wf; tblDerive(n); seqReset(n); n.initDone=true; n.uiDirty=true; n.uiFull=true; }
     // packet fields изменили — заполнить ими уже записанные строки, когда ввод затих
     if(p.pfields!==n._pfSeen){ n._pfSeen=p.pfields; n._pfAt=performance.now(); n._pfPend=true; }
     else if(n._pfPend && performance.now()-n._pfAt>1000 && !n.loading && n.loaded===p.list){ n._pfPend=false; tblBackfill(n); }
@@ -795,6 +811,8 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     for(const c of n.cols) if(c.ref) o[c.port]=tblRefVal(n,c);
     const sigs=Array.isArray(I.sigs) && I.sigs.length ? I.sigs : null;
     if(n._mI!==n.rowsOut || n._mS!==sigs){ n._mI=n.rowsOut; n._mS=sigs; n._merged=sigs ? n.rowsOut.concat(sigs) : n.rowsOut; }
+    if(n._mM!==n.rows || n._mMS!==sigs){ n._mM=n.rows; n._mMS=sigs; n._match=n.fOn ? (sigs ? n.rowsOwn.concat(sigs) : n.rowsOwn) : (sigs || []); }
+    o.match=n._match;                                      // найденное фильтром (свои строки — только если фильтр задан) + sigs: в Graph hl подсветка
     o.rows=n._merged;                                      // записи всех отмеченных списков с общим фильтром (Graph / Map: set, nodes)
     if(!n.started) for(const c of n.cols) delete o[c.port];   // ничего не выбрано — поля не выдаём (как band plan)
     else if(n.loCol && n.cur){
@@ -857,7 +875,7 @@ function tblInit(n){
     </div>
     <div class="tbl-tree" hidden></div>
     <div class="tbl-bar">
-      <input class="tbl-filter" placeholder="filter: 20m  demod:am  lo>7M  -fm  not proto:tcp" title="words match from the start of any field; col:text, col>5M, col<=100; NOT: -word, !word, not word, col!=x">
+      <input class="tbl-filter" placeholder="filter: kind == &quot;beacon&quot; &amp;&amp; rssi > -50   ·   20m  demod:am  -fm" title="Wireshark-style: field == x, != > < >= <=, contains, matches (~), in {a b 1..5}, &amp;&amp; || !, ( ); fields are column names. Also words: 20m, col:text, col>5M, -word, not word">
       <span class="tbl-count"></span>
     </div>
     <div class="tbl-view" hidden></div>
@@ -927,10 +945,12 @@ function tblInit(n){
   n.ui.shown.addEventListener('click',()=>tblTreeToggle(n));
   n.ui.tree.addEventListener('click',e=>tblTreeClick(n,e));
   n.ui.filter.value=n.p.filter||'';
+  n.ui.filter.dataset.tip=n.ui.filter.title; tblFilterMark(n);
   n.ui.filter.addEventListener('keydown',e=>e.stopPropagation());
   n.ui.filter.addEventListener('input',()=>{
     n.p.filter=n.ui.filter.value;
     tblDerive(n); seqReset(n); n.initDone=true;           // новый набор — без повторной выдачи первой строки
+    tblFilterMark(n);
     tblRenderList(n);
   });
   q('.tbl-new').addEventListener('click',()=>tblNewMenu(n));
@@ -1455,6 +1475,13 @@ function tblSelect(n,i){                                // выбор запис
   tblMark(n);
 }
 // ↑ ↓ PgUp PgDn Home End по списку; без выбора ↓ берёт первую запись, ↑ — последнюю
+function tblFilterMark(n){                              // ошибка выражения — красная рамка и текст в подсказке
+  const el=n.ui?.filter; if(!el) return;
+  el.classList.toggle('bad',!!n.ferr);
+  if(n.ferr) el.dataset.err='1'; else delete el.dataset.err;
+  if(n.ferr) el.title='filter: '+n.ferr;
+  else if(el.dataset.tip) el.title=el.dataset.tip;
+}
 function tblKey(n,e){
   const N=n.rows.length;
   if(!N || e.altKey || e.ctrlKey || e.metaKey) return;
