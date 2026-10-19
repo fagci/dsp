@@ -251,6 +251,7 @@ const PRESET_CATS={
   'ADS-B: Aircraft Map (USB SDR, 1090 MHz)':'Aircraft, Satellites & Telemetry',
   'Meteor-M LRPT: Image (Generator)':'Aircraft, Satellites & Telemetry',
   'Meteor-M LRPT: Image (USB SDR, 137 MHz)':'Aircraft, Satellites & Telemetry',
+  'Satellites: Autopilot — Pass Plan, Doppler and IQ Recording (USB SDR, 137 MHz)':'Aircraft, Satellites & Telemetry',
   'Radiosonde RS41: Map (Generator)':'Aircraft, Satellites & Telemetry',
   'Radiosonde RS41: Map (USB SDR, 400–406 MHz)':'Aircraft, Satellites & Telemetry',
   'NMEA: GPS Track (Table Playback)':'Maps & Locating',
@@ -1648,6 +1649,28 @@ const im=addNode('lrptImage',1140,40,{comp:'RGB 123'});
 im.size.w=520; im.size.h=420; applySize(im);
 addEdge(gn.id,'iq',dm.id,'in'); addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
 addEdge(dm.id,'out',de.id,'in'); addEdge(de.id,'rec',im.id,'rec');
+markWiresDirty();
+});
+preset('Satellites: Autopilot — Pass Plan, Doppler and IQ Recording (USB SDR, 137 MHz)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Satellite Autopilot plans the passes of the weather satellites for the next day (TLE of the groups noaa and weather — press Download TLE once; set My Position first) and runs one receiver through them: before every pass its `go` goes high, `freq` follows the Doppler shift of the satellite, `mode` says what to decode.\n'+
+
+  'The SDR sits at 137.5 MHz (2.4 MS/s covers 136.3–138.7 MHz, all NOAA and Meteor channels); `freq` goes to tuneFreq, `go` starts and stops the IQ recording of channel 1 (record trigger: go input, 200 kHz around the satellite, 30 s before AOS … 30 s after LOS). The recording is saved to a file; play it back later into the NOAA / LRPT chains.\n'+
+
+  'Two satellites at once: the better pass (priority, then elevation) is taken, the other is marked busy. Targets are a line in the node ("NOAA 19;;APT, METEOR-M2 3;;LRPT") or a Table wired to `rows` (columns sat, freq, mode, minEl, prio). The pass plan goes to the Table below (`plan`), aos / los events to the log (`rec`).'});
+nt.size.w=760; nt.size.h=210; applySize(nt);
+const pl=addNode('satPlan',40,290,{});
+pl.size.w=440; pl.size.h=380; applySize(pl);
+const rx=addNode('rtlsdr',540,290,{sr:'2400000',freq:137500000,demod:'IQ',recTrig:'go input',recBand:'channel 1',recBw:200000,recPre:5,tag:'autopilot'});
+const sa=addNode('sa',540,560,{auto:true,floor:-90,top:-20,split:1});
+sa.size.w=640; sa.size.h=300; applySize(sa);
+const tb=addNode('table',1230,290,{list:'satplan/passes',key:'id'});
+tb.size.w=520; tb.size.h=320; applySize(tb);
+const lg=addNode('table',1230,640,{list:'satplan/log'});
+lg.size.w=520; lg.size.h=240; applySize(lg);
+addEdge(pl.id,'freq',rx.id,'tuneFreq'); addEdge(pl.id,'go',rx.id,'recGo');
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(pl.id,'plan',tb.id,'rec'); addEdge(pl.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Meteor-M LRPT: Image (USB SDR, 137 MHz)', function(){
