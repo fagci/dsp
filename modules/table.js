@@ -389,6 +389,7 @@ function tblRowsOut(cl,rows){
 function tblBands(n){
   n.loCol=tblCol(n.cl,TBL_LO); n.hiCol=tblCol(n.cl,TBL_HI);
   n.rowsOwn=tblRowsOut(n.cl,n.rows);
+  n.rowsAllOwn=n.fOn ? tblRowsOut(n.cl,n.all) : n.rowsOwn;              // все строки списка, без фильтра
   const f=tblFilterOf(n);                               // тот же фильтр — и для остальных отмеченных списков
   for(const e of n.extra.values()){ e.rowsF=f ? e.rows.filter(f) : e.rows; e.out=tblRowsOut(e.cols,e.rowsF); }
   tblMerge(n);
@@ -714,11 +715,11 @@ function tblFlush(n){
 }
 
 /* ---------- узел ---------- */
-const tblIns=n=>[{n:'trig',t:'val'},{n:'row',t:'val'},{n:'t',t:'num'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'rows',t:'bands'},{n:'sigs',t:'bands'},{n:'filter',t:'txt'}]
+const tblIns=n=>[{n:'trig',t:'val'},{n:'row',t:'val'},{n:'t',t:'num'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'rows',t:'bands'},{n:'sigs',t:'bands'},{n:'hits',t:'bands'},{n:'filter',t:'txt'}]
   .concat(n.p.log ? ['a','b','c','d'].map(k=>({n:k,t:'num'})) : []);
 const tblOuts=n=>{
   const o=[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'row',t:'num'},{n:'count',t:'num'},{n:'next',t:'num'},
-    {n:'done',t:'num'},{n:'dist',t:'num'},{n:'bearing',t:'num'},{n:'progress',t:'num'},{n:'rows',t:'bands'},{n:'match',t:'bands'}];
+    {n:'done',t:'num'},{n:'dist',t:'num'},{n:'bearing',t:'num'},{n:'progress',t:'num'},{n:'rows',t:'bands'},{n:'all',t:'bands'},{n:'match',t:'bands'}];
   if(tblCol(n.p.cols||[],TBL_LO)) o.push({n:'mid',t:'num'},{n:'span',t:'num'});
   return o.concat((n.cols||[]).map(c=>({n:c.port,t:'val'})));
 };
@@ -793,7 +794,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     else if(n._showRef!==p.show && !n.loading) tblSyncExtra(n);       // галочки изменили извне (undo, патч)
     n.lastIn=I;
     const wf=typeof I.filter==='string' ? I.filter : '';
-    if(wf!==(n.wf||'') && n.loaded===p.list){ n.wf=wf; tblDerive(n); seqReset(n); n.initDone=true; n.uiDirty=true; n.uiFull=true; }
+    if(wf!==(n.wf||'') && n.loaded===p.list){ n.wf=wf; n.hlSel=false; tblDerive(n); seqReset(n); n.initDone=true; n.uiDirty=true; n.uiFull=true; }
     // packet fields изменили — заполнить ими уже записанные строки, когда ввод затих
     if(p.pfields!==n._pfSeen){ n._pfSeen=p.pfields; n._pfAt=performance.now(); n._pfPend=true; }
     else if(n._pfPend && performance.now()-n._pfAt>1000 && !n.loading && n.loaded===p.list){ n._pfPend=false; tblBackfill(n); }
@@ -811,8 +812,15 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     for(const c of n.cols) if(c.ref) o[c.port]=tblRefVal(n,c);
     const sigs=Array.isArray(I.sigs) && I.sigs.length ? I.sigs : null;
     if(n._mI!==n.rowsOut || n._mS!==sigs){ n._mI=n.rowsOut; n._mS=sigs; n._merged=sigs ? n.rowsOut.concat(sigs) : n.rowsOut; }
-    if(n._mM!==n.rows || n._mMS!==sigs){ n._mM=n.rows; n._mMS=sigs; n._match=n.fOn ? (sigs ? n.rowsOwn.concat(sigs) : n.rowsOwn) : (sigs || []); }
-    o.match=n._match;                                      // найденное фильтром (свои строки — только если фильтр задан) + sigs: в Graph hl подсветка
+    const hits=Array.isArray(I.hits) ? I.hits : null, pickRow=n.hlSel && n.cur ? n.cur : null;
+    if(n._mM!==n.rows || n._mH!==hits || n._mC!==pickRow){                // match: найденное фильтром, выбранная щелчком строка и hits соседей — для Graph hl
+      n._mM=n.rows; n._mH=hits; n._mC=pickRow;
+      const own=(n.fOn ? n.rowsOwn : []).concat(pickRow ? [pickRow] : []);
+      n._match=hits ? own.concat(hits) : own;
+    }
+    if(n._aA!==n.rowsAllOwn || n._aS!==sigs){ n._aA=n.rowsAllOwn; n._aS=sigs; n._all=sigs ? n.rowsAllOwn.concat(sigs) : n.rowsAllOwn; }
+    o.all=n._all;                                          // rows без фильтра: граф не теряет узлы, когда в таблице набран фильтр
+    o.match=n._match;
     o.rows=n._merged;                                      // записи всех отмеченных списков с общим фильтром (Graph / Map: set, nodes)
     if(!n.started) for(const c of n.cols) delete o[c.port];   // ничего не выбрано — поля не выдаём (как band plan)
     else if(n.loCol && n.cur){
@@ -1471,7 +1479,7 @@ function tblRow(n,i,ro,g){
   return row;
 }
 function tblSelect(n,i){                                // выбор записи: уходит на выходы
-  n.pick=i; n.idx=i; n.cur={...n.rows[i]}; n.p.sel=n.rowIds[i];
+  n.pick=i; n.idx=i; n.cur={...n.rows[i]}; n.p.sel=n.rowIds[i]; n.hlSel=true;
   tblMark(n);
 }
 // ↑ ↓ PgUp PgDn Home End по списку; без выбора ↓ берёт первую запись, ↑ — последнюю

@@ -43,12 +43,28 @@ GV_NAMES.color=/^(color|colour|цвет)$/i;
 // поля записи ищутся по списку имён в порядке предпочтения (from раньше src: у записей декодеров src — протокол),
 // явное имя колонки из параметров перекрывает автоопределение
 const GV_ALIAS={from:['from','source','src','узел1','от'], to:['to','target','dst','dest','узел2','к'],
-  w:['weight','w','value','count','вес'], label:['label','name','text','метка'], color:['color','colour','цвет']};
+  w:['weight','w','value','count','вес'], label:['label','name','text','метка'], color:['color','colour','цвет'], dash:['dashes','dash','пунктир']};
 const GV_NODEA={id:['id','node','name','key','узел'], label:['label','title','text','метка'], shape:['shape','форма'],
-  color:['color','colour','цвет'], size:['size','value','размер'], icon:['icon','значок']};
+  color:['color','colour','цвет'], size:['size','value','размер'], icon:['icon','значок'], note:['note','comment','notes','комментарий','заметка']};
 // значок карты → форма узла, когда колонки shape нет: один и тот же список рисуется и здесь, и на Map
 const GV_ICON_SHAPE={dot:'dot',square:'square',diamond:'diamond',triangle:'triangle',star:'star',flag:'triangle',antenna:'triangle',tx:'triangle',plane:'triangle',ship:'box',sat:'diamond',balloon:'dot'};
+// у строк одной таблицы набор колонок один и тот же: разбор имён запоминается по форме строки (alias × ovr), строка сверяется ключами
+const GV_SHAPES_C=new Map();
 function gvKeys(r,alias,ovr){
+  ovr=ovr||null;
+  let L=GV_SHAPES_C.get(alias); if(!L) GV_SHAPES_C.set(alias,L=[]);
+  for(const e of L){
+    if(e.ovr!==ovr) continue;
+    let i=0; const ks=e.keys;
+    for(const k in r){ if(ks[i++]!==k){ i=-1; break; } }
+    if(i===ks.length) return e.f;
+  }
+  const f=gvKeysScan(r,alias,ovr);
+  const e={ovr,keys:Object.keys(r),f}, at=L.findIndex(x=>x.ovr===ovr);
+  if(at>=0) L[at]=e; else { L.push(e); if(L.length>6) L.shift(); }
+  return f;
+}
+function gvKeysScan(r,alias,ovr){
   const low={}; for(const k in r) low[k.toLowerCase()]=k;
   // у записей декодеров src — имя протокола (рядом kind / msg), а не источник связи
   if(low.src!==undefined && (low.kind!==undefined || low.msg!==undefined)) delete low.src;
@@ -69,21 +85,20 @@ const gvEdgeOvr=n=>{                                // + toTag: «col=value:пр
 };
 const gvNodeOvr=n=>gvOvr(n,{id:'nodeCol',label:'nodeLabelCol'});
 const gvKey=(a,b)=>a+'\u0001'+b;
-const GV_ALIASF=['alias','from_label','fromname'];
+const GV_ALIASF=['alias','from_label','fromname'], GV_ALIASA={a:GV_ALIASF};
 // подпись отправителя: поле alias записи (и записи, где есть только from — псевдоним абонента)
 function gvAliasOf(r,ovr){
   if(!r || typeof r!=='object') return null;
-  const f=gvKeys(r,GV_ALIAS,ovr), low={};
-  for(const k in r) low[k.toLowerCase()]=k;
+  const f=gvKeys(r,GV_ALIAS,ovr);
   if(f.from==null) return null;
-  const a=GV_ALIASF.find(x=>low[x]!==undefined && r[low[x]]!=='' && r[low[x]]!=null);
-  return a ? {id:String(r[f.from]).trim(), label:String(r[low[a]])} : null;
+  const a=gvKeys(r,GV_ALIASA,null).a;
+  return a!=null && r[a]!=='' && r[a]!=null ? {id:String(r[f.from]).trim(), label:String(r[a])} : null;
 }
 function gvEdgeRec(r,ovr){                          // запись → {from,to,w,label,color} или null
   if(!r || typeof r!=='object') return null;
-  const f=gvKeys(r,GV_ALIAS,ovr), ks=Object.keys(r);
+  const f=gvKeys(r,GV_ALIAS,ovr);
   // имён нет вовсе — первые два поля; найдено одно из двух — запись не про связь (псевдоним, голосовой кадр)
-  const bare=f.from==null && f.to==null && !(ovr && (ovr.from || ovr.to));
+  const bare=f.from==null && f.to==null && !(ovr && (ovr.from || ovr.to)), ks=bare ? Object.keys(r) : null;
   const from=f.from ?? (bare ? ks[0] : null), to=f.to ?? (bare ? ks[1] : null);
   if(from==null || to==null) return null;
   const a=String(r[from]??'').trim();
@@ -92,7 +107,8 @@ function gvEdgeRec(r,ovr){                          // запись → {from,to
   const tg=ovr && ovr.tag;
   if(tg){ const k=Object.keys(r).find(c=>c.toLowerCase()===tg.col); if(k!==undefined && String(r[k]).toLowerCase()===tg.val) b=tg.prefix+b; }
   const w=f.w!=null && r[f.w]!=='' ? +String(r[f.w]).replace(',','.') : NaN;
-  return {from:a,to:b,w:Number.isFinite(w) ? w : NaN,label:f.label!=null ? String(r[f.label]??'') : '',color:f.color!=null ? String(r[f.color]||'') : ''};
+  return {from:a,to:b,w:Number.isFinite(w) ? w : NaN,label:f.label!=null ? String(r[f.label]??'') : '',color:f.color!=null ? String(r[f.color]||'') : '',
+          dash:f.dash!=null && /^(1|true|yes|dash|dashed)$/i.test(String(r[f.dash]).trim())};
 }
 // записи набора rows → узлы и связи: связь — запись с непустыми from и to (или их псевдонимами), остальное — узлы;
 // разбор кэшируется по самому массиву, поэтому ссылки стабильны, пока набор не сменился
@@ -109,8 +125,8 @@ function rowsSplit(rows){
 }
 function gvPut(map,e){                              // без веса повтор пары утолщает ребро
   const key=gvKey(e.from,e.to), c=map.get(key);
-  if(!c) map.set(key,{from:e.from,to:e.to,w:Number.isFinite(e.w) ? e.w : 1,label:e.label,color:e.color});
-  else { c.w=Number.isFinite(e.w) ? e.w : c.w+1; if(e.label) c.label=e.label; if(e.color) c.color=e.color; }
+  if(!c) map.set(key,{from:e.from,to:e.to,w:Number.isFinite(e.w) ? e.w : 1,label:e.label,color:e.color,dash:!!e.dash});
+  else { c.w=Number.isFinite(e.w) ? e.w : c.w+1; if(e.label) c.label=e.label; if(e.color) c.color=e.color; c.dash=c.dash && !!e.dash; }   // пара со сплошной связью рисуется сплошной
 }
 function gvAdd(n,from,to,w,label){
   const e=gvEdgeRec({from,to,w,label});
@@ -161,6 +177,7 @@ function gvSetNodes(n,recs){                        // снимок узлов: 
     if(f.shape!=null){ const sh=String(r[f.shape]).trim(); if(GV_SHAPES.has(sh)) a.shape=sh; }
     if(a.shape==null && f.icon!=null){ const sh=GV_ICON_SHAPE[String(r[f.icon]).trim()]; if(sh) a.shape=sh; }
     if(f.color!=null && r[f.color]) a.color=String(r[f.color]);
+    if(f.note!=null && String(r[f.note]).trim()) a.note=String(r[f.note]).trim();
     if(f.size!=null){ const v=+r[f.size]; if(v>0) a.size=v; }
     m.set(id,a);
   }
@@ -183,7 +200,10 @@ function gvBuild(n){
   for(const al of [n.aliasA,n.aliasS]) for(const [id,label] of al){     // псевдонимы — подпись по умолчанию
     const nd=nodes.get(id); if(nd) nd.label=label+'\n'+id;
   }
-  for(const [id,a] of n.sNodes) Object.assign(touch(id),a);
+  for(const [id,a] of n.sNodes){
+    const nd=Object.assign(touch(id),a);
+    if(a.note) nd.label=nd.label+'\n✎ '+a.note;       // комментарий из колонки note — под подписью
+  }
   n.dN=nodes; n.dE=edges; n.sync=true;
 }
 function gvTheme(n){
@@ -207,6 +227,7 @@ function gvNodeItem(n,nd,T){
   const c=nd.color||T.col;
   const it={id:nd.id,label:nd.label,shape:nd.shape||'dot',color:{background:c,border:c,highlight:{background:T.acc,border:T.acc}},
             font:{color:T.txt,size:11}};
+  if(nd.note) it.title=nd.note;
   if(n.hl){
     if(!n.hl.all.has(nd.id)){ it.opacity=.15; it.font={color:T.line,size:11}; }
     else if(n.hl.full.has(nd.id)){ it.borderWidth=4; it.color.border=T.acc; }
@@ -220,7 +241,7 @@ function gvEdgeItem(n,key,e,T){
   const dim=n.hl && !(n.hl.all.has(e.from) && n.hl.all.has(e.to) && (n.hl.full.has(e.from) || n.hl.full.has(e.to)));
   return {id:key,from:e.from,to:e.to,value:Math.abs(e.w)||1,label:dim ? undefined : [e.label,wl].filter(Boolean).join(' ')||undefined,
           color:{color:c,highlight:T.acc,opacity:dim ? .08 : 1},font:{color:T.txt,size:9,strokeWidth:0},
-          arrows:n.p.directed ? 'to' : undefined};
+          dashes:e.dash ? [6,5] : false, arrows:n.p.directed ? 'to' : undefined};
 }
 function gvMount(n){
   const box=document.createElement('div'); box.className='graphview';
