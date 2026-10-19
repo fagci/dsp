@@ -40,6 +40,7 @@ def({ id:'sigLab', title:'Signal Analyzer', cat:'Analysis', lazy:'manual', view:
     {n:'perMsg',t:'check',d:true,label:'own symbol rate for a message that differs from the rest (mixed protocols)',adv:true},
     {n:'gray',t:'check',d:false,label:'Gray code for 4 levels',adv:true},
     {n:'lsb',t:'check',d:false,label:'bytes: least significant bit first',adv:true},
+    {n:'diff',t:'check',d:false,label:'table: dim the columns that are the same in all messages (shows the fields that change)'},
     {n:'align',t:'select',opts:['sync','start'],d:'sync',label:'align messages in the table',adv:true},
     {n:'lanes',t:'select',opts:['both','demod','magnitude'],d:'both',label:'plot',adv:true},
     {n:'refresh',t:'range',min:.5,max:10,step:.5,d:2,label:'rolling: analyse every, s',adv:true},
@@ -669,7 +670,7 @@ function slRenderTable(n){
   const R=n.R, tbl=n.ui.tbl;
   if(!R || !R.msgs.length){ tbl.innerHTML='<div class="sl-empty">'+(R ? 'no messages — adjust the noise level or the symbol rate' : 'waiting for a capture…')+'</div>'; slSelLine(n); return; }
   const fmt=n.p.fmt, P=n.P, labs=n.labels.filter(l=>l.al===n.alMode), lsb=n.p.lsb;
-  const key=[n.cfgK,fmt,lsb,n.sel,P,n.alMode,n.p.labels,R.msgs.map((m,i)=>Math.round((R.abs0+m.a)/R.sr*1e4)+'.'+m.bits.length+'.'+n.off[i]).join(',')].join('|');
+  const key=[n.cfgK,n.p.diff,fmt,lsb,n.sel,P,n.alMode,n.p.labels,R.msgs.map((m,i)=>Math.round((R.abs0+m.a)/R.sr*1e4)+'.'+m.bits.length+'.'+n.off[i]).join(',')].join('|');
   if(key===n.tblKey) return;
   n.tblKey=key;
   const same=n.same;
@@ -696,7 +697,8 @@ function slRenderTable(n){
     const cell=(txt,u,rel0,rel1)=>{
       let diff=0, lab=-1;
       for(let r=rel0;r<=rel1;r++){ const col=r+P; if(col>=0 && col<same.length && !same[col]) diff=1; const j=labAt(r); if(j>=0 && lab<0) lab=j; }
-      const cls='sl-d'+diff+(lab>=0 ? ' sl-l'+(lab%8) : '');
+      const sy=n.alMode==='sync' && n.sg && n.sg.len && rel1>=0 && rel0<n.sg.len;                 // слово синхронизации
+      const cls=(n.p.diff ? 'sl-d'+diff : '')+(lab>=0 ? ' sl-l'+(lab%8) : '')+(sy ? ' sl-sy' : '');
       return sel ? '<i data-u="'+u+'" class="'+cls+'">'+slEsc(txt)+'</i>' : '<i class="'+cls+'">'+slEsc(txt)+'</i>';
     };
     if(fmt==='bin'){

@@ -1308,6 +1308,7 @@ select.aed-b{padding:0 6px}
 .sl-dt i.sel{outline:1px solid var(--acc);outline-offset:-1px;background:rgba(224,178,60,.3)}
 .sl-l0{background:rgba(95,184,209,.30)} .sl-l1{background:rgba(224,135,95,.30)} .sl-l2{background:rgba(127,209,127,.28)} .sl-l3{background:rgba(209,138,209,.30)}
 .sl-l4{background:rgba(224,176,80,.30)} .sl-l5{background:rgba(111,208,192,.30)} .sl-l6{background:rgba(224,127,176,.30)} .sl-l7{background:rgba(180,212,85,.28)}
+.sl-dt i.sl-sy{border-bottom:2px solid var(--acc)}
 .sl-empty{padding:6px;color:#889}
 .sl-sel{flex:none;min-height:14px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sl-lab{display:flex;flex-wrap:wrap;gap:4px;align-items:center;flex:none}
