@@ -652,10 +652,11 @@ function hexRunB(sch,c,prefix,depth){
   hexRun(sch,c,prefix,depth,null);
 }
 // разбор → плоская запись для rec: поле → значение; рядом имя enum, служебные _len/_ok
-function hexToRec(res){
-  const o={};
+function hexToRec(res,flat){                          // flat — без позиционных имён элементов именованных списков (body.ies[0].id…)
+  const o={}, hid=flat ? res.fields.filter(r=>r.key && r.n).map(r=>r.n+'.') : [];
   for(const r of res.fields){
     if(r.pad || r.value===undefined || !r.n) continue;
+    if(hid.length && hid.some(p=>r.n.startsWith(p) || r.n+'.'===p)) continue;
     o[r.n]=r.value;
     if(r.f.enum) o[r.n+'_name']=r.f.enum[r.value] ?? r.f.enum[String(r.value)] ?? '';
     if(r.f.as && !(r.f.as in o)){ o[r.f.as]=r.value; if(r.f.enum) o[r.f.as+'_name']=o[r.n+'_name']; }

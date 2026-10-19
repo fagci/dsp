@@ -412,7 +412,7 @@ def({ id:'recFilter', title:'Rec Filter', cat:'Data',
     (n.err ? 'error: '+n.err+'\n' : '')+'pass '+n.pass+' · reject '+n.drop; }});
 
 /* ---------- Rec → Entities: правила «запись → сущности и связи» ----------
-   Строка правила: [выход:] условия | поля (разделитель — « | » с пробелами). Выход — имя порта (по умолчанию только rec; rec получает всё).
+   Строка правила: [выход[!]:] условия | поля (разделитель — « | » с пробелами). Выход — имя порта (по умолчанию только rec; rec получает всё; «имя!:» — только в порт, мимо rec).
    Условия через пробел, все должны совпасть: field (есть значение), !field, field=a|b, field!=a, field~regex.
    Поля через запятую: name=шаблон, голое name (копия, если поле есть), * (все поля записи). В шаблоне {f} — поле записи,
    {f:x} — число в hex, {a|b} — первое непустое; пусто — правило для записи пропускается.
@@ -440,7 +440,8 @@ function entParse(text){
     try{
       const sep=/\s\|\s/.exec(line);                 // разделитель « | »; | внутри a|b — это «или»
       let head=sep ? line.slice(0,sep.index) : '', body=sep ? line.slice(sep.index+sep[0].length) : line, out='rec';
-      const m=/^([A-Za-z_]\w*)\s*:\s*(.*)$/.exec(head); if(m){ out=m[1]; head=m[2]; }
+      let only=false;
+      const m=/^([A-Za-z_]\w*)(!?)\s*:\s*(.*)$/.exec(head); if(m){ out=m[1]; only=!!m[2]; head=m[3]; }
       if(out==='count') throw new Error('name taken');
       const conds=head.trim().split(/\s+/).filter(Boolean).map(entCond);
       const fields=entSplit(body,',').map(x=>x.trim()).filter(Boolean).map(f=>{
@@ -448,7 +449,7 @@ function entParse(text){
         const e=f.indexOf('='); if(e<0) return {k:f,tpl:'{'+f+'}',opt:true};
         return {k:f.slice(0,e).trim(),tpl:f.slice(e+1)};
       });
-      rules.push({out,conds,fields});
+      rules.push({out,only,conds,fields});
     }catch(e){ errs.push('line '+(i+1)+': '+e.message); }
   });
   return {rules,errs};
@@ -505,7 +506,7 @@ def({ id:'recEnt', title:'Rec → Entities', cat:'Data', kw:'entity entities lin
     const all=[], by={};
     for(const r of recs) for(const rule of n._c.rules){
       const res=entApply(rule,r); if(!res.length) continue;
-      all.push(...res);
+      if(!rule.only) all.push(...res);
       if(rule.out!=='rec') (by[rule.out]||(by[rule.out]=[])).push(...res);
     }
     n.in+=recs.length; n.outN+=all.length;
@@ -527,7 +528,9 @@ link: kind~^GSM-SI cellArfcns | id={id}>ARFCN {cellArfcns*}, from={id}, to=ARFCN
 `# Wi-Fi: точки доступа и станции по BSSID / MAC, связи «кто кому»; BLE и Zigbee — отдельные узлы
 ap: proto=wifi kind=beacon|probe-resp bssid | id={bssid}, type=ap, label={ssid|bssid}, shape=hexagon, chan, rssi
 station: proto=wifi kind~^(probe-req|assoc-req|reassoc-req)$ src | id={src}, type=station, shape=dot
-station: proto=wifi kind~^(qos-)?data$ tods=1 src | id={src}, type=station, shape=dot
+station: proto=wifi kind~^(qos-)?data$ tods=1 src | id={src}, type=station, shape=dot, ap={bssid}
+# пакеты: только в порт pkt (таблица кадров со ссылками на точку и клиента), на граф не идут
+pkt!: proto=wifi src | id={t}:{src}:{seq|len}, t, kind, src, dst, ap={bssid}, chan, rssi
 link: proto=wifi kind~^(assoc-req|reassoc-req|assoc-resp|auth|deauth|disassoc|data|qos-data)$ src dst dst!=ff:ff:ff:ff:ff:ff | id={src}>{dst}, from={src}, to={dst}, label={kind}
 ble: proto=ble src | id={src}, type=ble, label={name|src}, shape=triangle, rssi
 zb: proto=zb src net | id=zb:{net}:{src}, type=zigbee, label={src}, shape=square
