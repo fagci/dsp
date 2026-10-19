@@ -259,6 +259,7 @@ async function tblLoadRun(n){
   seqReset(n);
   if(n.p.sel!=null){ const j=n.rowIds.indexOf(n.p.sel); if(j>=0){ n.pick=j; n.idx=j; n.cur={...n.rows[j]}; } }
   tblSyncExtra(n);
+  tblRefLoad(n);
   if(n.ui) tblRenderAll(n);
 }
 // p.cols (порты) := cols. prune — убрать провода к исчезнувшим портам
@@ -278,9 +279,51 @@ function tblRebuild(n,prune){
   rebuildNode(n);
   markTopoDirty();
 }
+// порты полей: p.pout — отмеченные колонки (нет — все, как в старых патчах); p.pref {связь:[поля]} — поля связанной записи «Связь.Поле»
 function tblPorts(n){
-  const used=new Set(TBL_FIXED);
-  n.cols=(n.p.cols||[]).map(h=>{ let port=h; while(used.has(port)) port+='_'; used.add(port); return {h,port}; });
+  const used=new Set(TBL_FIXED), cols=n.p.cols||[], out=n.p.pout, pref=n.p.pref||{};
+  const hs=(Array.isArray(out) ? cols.filter(h=>out.includes(h)) : cols).map(h=>({h}));
+  for(const c in pref) if(cols.includes(c)) for(const f of pref[c]) hs.push({h:c+'.'+f,ref:[c,f]});
+  n.cols=hs.map(x=>{ let port=x.h; while(used.has(port)) port+='_'; used.add(port); return {...x,port}; });
+}
+function tblPortsApply(n){
+  tblPorts(n);
+  tblRebuild(n,true);
+  Undo.push();
+}
+function tblOutSet(n,c,on){
+  const s=new Set(Array.isArray(n.p.pout) ? n.p.pout : n.p.cols);
+  on ? s.add(c) : s.delete(c);
+  n.p.pout=n.p.cols.filter(k=>s.has(k));
+  tblPortsApply(n);
+}
+function tblRefSet(n,c,f,on){
+  const pr={...(n.p.pref||{})}, a=new Set(pr[c]||[]);
+  on ? a.add(f) : a.delete(f);
+  if(a.size) pr[c]=[...a]; else delete pr[c];
+  n.p.pref=pr;
+  tblRefLoad(n);
+  tblPortsApply(n);
+}
+// записи целевых списков связей по подписи — для портов «Связь.Поле»
+async function tblRefLoad(n){
+  const m=new Map();
+  for(const c in n.p.pref||{}){
+    const list=tcDef(n,c).to;
+    if(!list || m.has(list)) continue;
+    try{
+      const t=list===n.p.list ? {cols:n.cl,rows:n.all} : await tblReadList(n,list);
+      const lf=tcLabelFn(t.cols,await tcCardOf(n,list)), idx=new Map();
+      for(const r of t.rows){ const k=lf(r); if(k && !idx.has(k)) idx.set(k,r); }
+      m.set(list,idx);
+    }catch(e){}
+  }
+  n.refIdx=m;
+}
+function tblRefVal(n,c){
+  const row=n.cur||n.rows[n.idx], nm=row && tcLinks(row[c.ref[0]])[0];
+  const r=nm ? n.refIdx?.get(tcDef(n,c.ref[0]).to)?.get(nm) : null;
+  return r ? r[c.ref[1]]??'' : '';
 }
 // фильтр, столбцы времени/координат, bands
 function tblDerive(n){
@@ -749,6 +792,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     if(n.pend.length && performance.now()-n.lastFlush>500) tblFlush(n);
 
     const o=seqProcess(n,I);
+    for(const c of n.cols) if(c.ref) o[c.port]=tblRefVal(n,c);
     const sigs=Array.isArray(I.sigs) && I.sigs.length ? I.sigs : null;
     if(n._mI!==n.rowsOut || n._mS!==sigs){ n._mI=n.rowsOut; n._mS=sigs; n._merged=sigs ? n.rowsOut.concat(sigs) : n.rowsOut; }
     o.rows=n._merged;                                      // записи всех отмеченных списков с общим фильтром (Graph / Map: set, nodes)
@@ -1432,6 +1476,8 @@ async function tblColsApply(n,cl,ren={},fill){
     if(!/\{[^{}]+\}/.test(sc.card.label)) delete sc.card.label;
   }
   if(Array.isArray(n.p.vcols)) n.p.vcols=n.p.vcols.filter(x=>x && live(x.c)).map(x=>({...x,c:nm(x.c)}));
+  if(Array.isArray(n.p.pout)) n.p.pout=n.p.pout.filter(live).map(nm);
+  if(n.p.pref){ const q={}; for(const k in n.p.pref) if(live(k)) q[nm(k)]=n.p.pref[k]; n.p.pref=q; }
   if(n.p.tint) n.p.tint=nm(n.p.tint);
   const sv=tcSchemaSave(n), done=tblColsEdit(n,cl,ren,fill);   // n.cl уже новый — панель можно перерисовать, не дожидаясь базы
   tblRenderView(n);
@@ -1517,6 +1563,9 @@ function tblFieldsPanel(n,box,mk,sel){
       const nd={...d,t:v}; if(v!=='choice') delete nd.opts; if(v!=='link'){ delete nd.to; delete nd.multi; } if(v!=='calc'){ delete nd.expr; delete nd.mat; } if(v==='calc' || v==='auto'){ delete nd.def; delete nd.req; }
       tcSetDef(n,c,nd); tblRenderView(n); tblRenderList(n);
     }));
+    const po=mk('input'); po.type='checkbox'; po.checked=!Array.isArray(n.p.pout) || n.p.pout.includes(c);
+    po.title='output port: this field as a wire'; po.addEventListener('change',()=>tblOutSet(n,c,po.checked));
+    row.append(mk('span','tv-lbl','→'),po);
     row.append(mk('span','tv-mv',open ? '▾' : '⋯',{click:()=>{ open ? n.fieldOpen.delete(c) : n.fieldOpen.add(c); tblRenderView(n); }}));
     // порядок: тащить за строку
     row.draggable=true;
@@ -1538,6 +1587,17 @@ function tblFieldsPanel(n,box,mk,sel){
       const m=mk('input'); m.type='checkbox'; m.checked=!!d.multi; m.title='several entries';
       m.addEventListener('change',()=>tcSetDef(n,c,{...d,multi:m.checked}));
       more.append(m,mk('span','tv-lbl','many'));
+    }
+    if(t==='link' && d.to){
+      const rf=mk('div','tv-refs'); more.append(rf);
+      (d.to===n.p.list ? Promise.resolve({cols:n.cl}) : tblReadList(n,d.to)).then(tg=>{
+        rf.append(mk('span','tv-lbl','linked record → outputs:'));
+        for(const f of tg.cols){
+          const cb=mk('input'); cb.type='checkbox'; cb.checked=(n.p.pref?.[c]||[]).includes(f);
+          cb.addEventListener('change',()=>tblRefSet(n,c,f,cb.checked));
+          rf.append(cb,mk('span','tv-lbl',f));
+        }
+      }).catch(()=>{});
     }
     if(!ro && t==='calc'){
       const e=mk('input','tv-q'); e.value=d.expr||''; e.placeholder='[price] * [qty]   round([a]/[b],2)   if([x]>5,\'big\',\'small\')';
