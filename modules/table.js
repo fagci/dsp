@@ -292,6 +292,7 @@ function tblDerive(n){
   }
   n.headers=n.cl;
   n.nameCol=tblCol(n.cl,TBL_LABEL); n.colorCol=tblCol(n.cl,TBL_COLOR);
+  n.labelFn=tcLabelFn(n.cl,n.schema?.card);
   tblPorts(n);
   n.timeCol=seqFind(n.cl,n.p.tcol,SEQ_TIME_COLS);
   n.latCol=seqFind(n.cl,n.p.latCol,SEQ_LAT_COLS);
@@ -441,8 +442,8 @@ async function tblUpdate(n,i,rec){
   if(tblKind(n.p.list)==='db'){
     const it=tblToItem(o,n.cl);
     await ListDB.update(id,{name:it.name,fields:it.fields,value:it.fields.value??''});
-    const kc=n.nameCol, was=kc ? String(row[kc]??'') : '', now=kc ? String(o[kc]??'') : '';
-    if(kc && was && now && was!==now && await tcRelink(n.p.list,was,now)){ await tblLoad(n); return; }   // связи на запись следуют за её именем
+    const was=n.labelFn(row), now=n.labelFn(o);
+    if(was && now && was!==now && await tcRelink(n.p.list,was,now)){ await tblLoad(n); return; }   // связи на запись следуют за её именем
   } else await tblSave(n);
   tblDerive(n);
 }
@@ -840,7 +841,7 @@ function tblInit(n){
     const i=+row.dataset.i, b=e.target.closest('.tbl-ico[data-act]');
     if(b?.dataset.act==='edit'){ tblEditForm(n,i,row); return; }
     if(b?.dataset.act==='del'){
-      const label=n.nameCol ? String(n.rows[i]?.[n.nameCol]??'') : '';
+      const label=tcHasName(n) && n.rows[i] ? n.labelFn(n.rows[i]) : '';
       if(!confirm('Delete row "'+(label||i+1)+'"?')) return;
       tblRemove(n,i).then(()=>tblRenderList(n));
       return;
@@ -1265,7 +1266,7 @@ function tblRow(n,i,ro,g){
   const row=document.createElement('div');
   row.dataset.i=i;
   row.className='tbl-row';
-  const label=n.nameCol ? String(r[n.nameCol]??'') : '#'+(i+1);
+  const label=tcTitle(n,r,i);
   const bg=tblRowBg(n,r);
   if(bg) row.style.setProperty('--rb','color-mix(in srgb,'+bg+' 24%,transparent)');
   if(g){
@@ -1409,6 +1410,10 @@ async function tblColsApply(n,cl,ren={},fill){
   const sc=n.schema, types={};
   for(const k in sc.types) if(live(k)) types[nm(k)]=sc.types[k];
   sc.types=types; sc.card.show=(sc.card.show||[]).filter(live).map(nm);
+  if(sc.card.label){                                      // шаблон названия следует за переименованием, убранные поля выпадают
+    sc.card.label=sc.card.label.replace(/\{([^{}]+)\}/g,(m,c)=>live(c) ? '{'+nm(c)+'}' : '');
+    if(!/\{[^{}]+\}/.test(sc.card.label)) delete sc.card.label;
+  }
   if(Array.isArray(n.p.vcols)) n.p.vcols=n.p.vcols.filter(x=>x && live(x.c)).map(x=>({...x,c:nm(x.c)}));
   if(n.p.tint) n.p.tint=nm(n.p.tint);
   const sv=tcSchemaSave(n), done=tblColsEdit(n,cl,ren,fill);   // n.cl уже новый — панель можно перерисовать, не дожидаясь базы
@@ -1433,6 +1438,16 @@ function tblFieldsPanel(n,box,mk,sel){
     inp.classList.add('tv-new');
     inp.addEventListener('keydown',e=>{ e.stopPropagation(); if(e.key==='Enter') add(); });
     row.append(inp,mk('button','tbl-btn pri','+ field',{click:add}));
+    box.append(row);
+  }
+  {
+    const row=mk('div','tv-col'), q=mk('input','tv-q');
+    q.value=n.schema.card.label||''; q.placeholder=n.nameCol ? '{'+n.nameCol+'}' : '{field} {field}';
+    q.title='record name in links and cards: fields in braces, e.g. {Surname} {Name} {Patronymic}; empty — the name column'; q.disabled=ro;
+    q.addEventListener('keydown',e=>{ e.stopPropagation(); if(e.key==='Enter') q.blur(); });
+    q.addEventListener('change',()=>tcSetLabel(n,q.value.trim()));
+    row.append(mk('span','tv-lbl','record name'),q);
+    if(!ro) row.append(sel([['','＋ field'],...n.cl.map(c=>[c,c])],'',c=>{ if(c) tcSetLabel(n,((q.value.trim()+' ').trimStart()+'{'+c+'}')); }));
     box.append(row);
   }
   const lists=(n.treeNames||[]).filter(x=>tblKind(x)!=='preset');
@@ -1641,7 +1656,7 @@ function tblCloseEditor(n){
 function tblEditForm(n,i,row){
   const close=()=>{ tblCloseEditor(n); };
   const form=tblForm(n,n.rows[i],async o=>{ await tblUpdate(n,i,o); close(); tblRenderList(n); },close);
-  const nm=n.nameCol ? String(n.rows[i][n.nameCol]??'') : '';
+  const nm=tcHasName(n) ? n.labelFn(n.rows[i]) : '';
   tblOpenEditor(n,'Edit row '+(i+1)+(nm ? ' · '+nm : ''),form,row);
 }
 // текущая позиция: GPS браузера, при отказе — последняя известная (My Position)
