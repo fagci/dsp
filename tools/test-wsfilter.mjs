@@ -1,0 +1,24 @@
+// Фильтр в стиле Wireshark: node tools/test-wsfilter.mjs
+import vm from 'node:vm';
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
+const ctx=vm.createContext({Math,Number,String,Error,RegExp,isFinite,parseInt,parseFloat,Object});
+vm.runInContext(fs.readFileSync(path.join(root,'modules/wsfilter-kernels.js'),'utf8')+';this.K={wsCompile,wsLooksLike,wsNum};',ctx);
+const K=ctx.K;
+let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n); };
+const R={kind:'beacon',src:'aa:bb:cc:dd:ee:01',ssid:'Home Net',rssi:-48,chan:6,'ie.country':'RU',freq:'7M',empty:''};
+const t=(q,exp,r=R)=>{ let v; try{ const f=K.wsCompile(q); v=f(r); }catch(e){ v='ERR '+e.message; } ok(q+' → '+exp,v===exp,String(v)); };
+t('kind == beacon',true); t('kind == "BEACON"',true); t('kind != beacon',false); t('kind eq probe-req',false);
+t('rssi > -50',true); t('rssi >= -48 && chan == 6',true); t('rssi < -50 || chan == 11',false);
+t('freq > 5M',true); t('freq == 7000000',true); t('chan in {1 6 11}',true); t('chan in {1..5}',false); t('chan in {1..5 6}',true);
+t('ssid contains "home"',true); t('ssid matches "^h.*t$"',true); t('ssid ~ "^x"',false);
+t('!(kind == beacon)',false); t('not kind == probe-req',true); t('(kind == beacon || kind == probe-resp) && src == aa:bb:cc:dd:ee:01',true);
+t('ie.country == RU',true); t('IE.COUNTRY == ru',true); t('ie.country',true); t('empty',false); t('nofield',false);
+t('nofield == x',false); t('nofield != x',true); t('rssi == "-48"',true);
+t('kind ==',"ERR value expected at the end"); t('(kind == beacon',"ERR missing ) at the end"); t('kind == beacon )',"ERR unexpected \")\" at 16");
+ok('empty → null',K.wsCompile('  ')===null);
+ok('looksLike',K.wsLooksLike('kind == beacon') && K.wsLooksLike('rssi > -50') && K.wsLooksLike('a contains "x"') && K.wsLooksLike('(a)') && K.wsLooksLike('chan in {1 2}'));
+ok('old syntax stays',!K.wsLooksLike('20m demod:am lo>7M -fm not proto:tcp') && !K.wsLooksLike('kind!=beacon') && !K.wsLooksLike('to:'));
+console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad ? 1 : 0);

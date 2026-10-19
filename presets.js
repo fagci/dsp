@@ -5111,7 +5111,7 @@ markWiresDirty();
 });
 preset('Radio: ESP32-C5 Bridge → Network Map (Wi-Fi / BLE / Zigbee)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'One node for Wi-Fi (2.4 / 5 GHz, management / control / data), BLE and 802.15.4 (Zigbee, Thread): flash tools/radio-bridge-esp32c5, press Connect (Chrome / Edge). Every frame is a record with the same names for every protocol — proto, kind, src, dst, net (BSSID / PAN), ie.ssid, ad.name, zb_cluster … — so one rule set draws the map (the same rules also fill three linked tables: ap — access points, station — clients with an ap column, pkt — frames with ap and src; join them by id): access points, stations, BLE devices and Zigbee nodes with the links between them (Rec → Entities → Table → Graph), and one condition filters any frame to or from a device (Rec Filter).\n'+
+const nt=addNode('note',40,40,{text:'One node for Wi-Fi (2.4 / 5 GHz, management / control / data), BLE and 802.15.4 (Zigbee, Thread): flash tools/radio-bridge-esp32c5, press Connect (Chrome / Edge). Every frame is a record with the same names for every protocol — proto, kind, src, dst, net (BSSID / PAN), ie.ssid, ad.name, zb_cluster … — so one rule set draws the map (the same rules also fill three linked tables: ap — access points, station — clients with an ap column, pkt — frames with ap and src; join them by id). Click a node in the graph — the three tables show its rows; type a Wireshark-style filter (kind == "beacon" && rssi > -50, ssid contains "cafe", src in {aa:bb:cc:dd:ee:01 aa:bb:cc:dd:ee:09}) in any table — the matches light up on the graph: access points, stations, BLE devices and Zigbee nodes with the links between them (Rec → Entities → Table → Graph), and one condition filters any frame to or from a device (Rec Filter).\n'+
   'Without hardware the Text Source plays sample frames in the firmware line format (RX WIFI <channel> <rssi> <hex>, RX BLE …, RX ZB …). Transmit: the txbin / txrec / tx inputs, or tick auto-reply to answer Probe requests. Use only on your own network or with permission; encrypted payloads stay encrypted.'});
 nt.size.w=1000; nt.size.h=130; applySize(nt);
 const tx=addNode('textsrc',40,200,{text:'RX WIFI 6 -48 80000000ffffffffffffaabbccddee01aabbccddee0110000000000000000000640031040004486f6d65010482848b96030106\nRX WIFI 11 -60 80000000ffffffffffffaabbccddee02aabbccddee021000000000000000000064003104000443616665010482848b9603010b\nRX WIFI 6 -55 40000000ffffffffffffaabbccddee09ffffffffffff10000000010482848b96\nRX WIFI 6 -54 00000000aabbccddee01aabbccddee09aabbccddee01100031040a000004486f6d65010482848b96\nRX WIFI 6 -53 10000000aabbccddee09aabbccddee01aabbccddee011000310400000100010482848b96\nRX WIFI 6 -50 08010000aabbccddee01aabbccddee0affffffffffff1000aaaa0300000008004500001c0001000040110000c0a80001c0a800021f90007b00080000\nRX BLE 11:22:33:44:55:66 -70 0 1 02010605094d794150\nRX BLE 66:55:44:33:22:11 -81 0 0 020106\nRX ZB 15 -60 200 618805621a000034124800000034121e114001060004010107012202\nRX ZB 15 -62 190 618806621a341200004800341200001e12400106000401010809230a'});
@@ -5135,6 +5135,37 @@ const tAp=addNode('table',1220,560,{list:'@patch',key:'id',initial:false}); tAp.
 const tSt=addNode('table',1600,660,{list:'@patch',key:'id',initial:false}); tSt.size.w=340; tSt.size.h=240; applySize(tSt);
 const tPk=addNode('table',1980,660,{list:'@patch',key:'id',initial:false}); tPk.size.w=420; tPk.size.h=240; applySize(tPk);
 addEdge(ent.id,'ap',tAp.id,'rec'); addEdge(ent.id,'station',tSt.id,'rec'); addEdge(ent.id,'pkt',tPk.id,'rec');
+// связка: клик по узлу графа (sel) фильтрует три таблицы; фильтр в любой из них (kind == "beacon" && rssi > -50) подсвечивает найденное на графе (match → hl)
+addEdge(g.id,'sel',tAp.id,'filter'); addEdge(g.id,'sel',tSt.id,'filter'); addEdge(g.id,'sel',tPk.id,'filter');
+addEdge(tAp.id,'match',tSt.id,'hits'); addEdge(tSt.id,'match',tPk.id,'hits'); addEdge(tPk.id,'match',g.id,'hl');
+markWiresDirty();
+});
+preset('Radio: Wi-Fi Network Map (nodes · links · packets · notes)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Wi-Fi survey in three linked tables: Nodes (access points ★ and stations ●, key id, a note column for your comments, count / first / last), Links (who talks to whom: data — solid line, probe — dashed, assoc / auth — solid with the frame name; repeats thicken the line) and Packets (every frame with ap / src / dst). Rec → Entities (Wi-Fi map rules) splits each frame into the three tables.\n'+
+  'Graph: Links.all (with Nodes.all) → rows — filters in the tables never hide the graph. Comments: edit the note cell of a node (✎ in its row) — it is shown under the node label and in the hover tip. Click a node → the three tables show its rows; click a table row or type a Wireshark-style filter (kind == \"probe-req\", rssi > -60 && chan == 6, ssid contains \"cafe\") → matches light up on the graph.\n'+
+  'Without hardware the Text Source plays sample frames (RX WIFI <channel> <rssi> <hex>); with an ESP32-C5 press Connect in Radio Bridge (tools/radio-bridge-esp32c5). Use only on your own network or with permission.'});
+nt.size.w=1100; nt.size.h=150; applySize(nt);
+const tx=addNode('textsrc',40,230,{text:'RX WIFI 6 -48 80000000ffffffffffffaabbccddee01aabbccddee0110000000000000000000640031040004486f6d65010482848b96030106\nRX WIFI 11 -60 80000000ffffffffffffaabbccddee02aabbccddee021000000000000000000064003104000443616665010482848b9603010b\nRX WIFI 6 -55 40000000ffffffffffffaabbccddee09ffffffffffff10000000010482848b96\nRX WIFI 6 -56 40000000aabbccddee01aabbccddee0baabbccddee0110000004486f6d65010482848b96\nRX WIFI 6 -50 50000000aabbccddee0baabbccddee01aabbccddee0110000000000000000000640031040004486f6d65\nRX WIFI 6 -54 00000000aabbccddee01aabbccddee09aabbccddee01100031040a000004486f6d65010482848b96\nRX WIFI 6 -53 10000000aabbccddee09aabbccddee01aabbccddee011000310400000100010482848b96\nRX WIFI 6 -50 08010000aabbccddee01aabbccddee0affffffffffff1000aaaa0300000008004500001c0001000040110000c0a80001c0a800021f90007b00080000\nRX WIFI 6 -47 08020000aabbccddee0aaabbccddee01aabbccddee011000aaaa0300000008004500001c0001000040110000c0a80002c0a800011f90007b00080000'});
+tx.size.w=300; tx.size.h=300; applySize(tx);
+const rb=addNode('radioBridge',380,230,{mode:'WIFI'});
+rb.size.w=300; rb.size.h=300; applySize(rb);
+const ent=addNode('recEnt',720,230,{rules:ENT_TEMPLATES['Wi-Fi map (nodes · links · packets)']});
+ent.size.w=520; ent.size.h=360; applySize(ent);
+const tN=addNode('table',40,620,{list:'@patch',key:'id',initial:false});
+tN.size.w=520; tN.size.h=340; applySize(tN);
+const tL=addNode('table',600,620,{list:'@patch',key:'id',initial:false});
+tL.size.w=520; tL.size.h=340; applySize(tL);
+const tP=addNode('table',1160,620,{list:'@patch',initial:false,follow:true});
+tP.size.w=520; tP.size.h=340; applySize(tP);
+const g=addNode('graphview',1280,230,{directed:true,weights:false});
+g.size.w=620; g.size.h=360; applySize(g);
+addEdge(tx.id,'text',rb.id,'text');
+addEdge(rb.id,'rec',ent.id,'rec');
+addEdge(ent.id,'node',tN.id,'rec'); addEdge(ent.id,'link',tL.id,'rec'); addEdge(ent.id,'pkt',tP.id,'rec');
+addEdge(tN.id,'all',tL.id,'sigs'); addEdge(tL.id,'all',g.id,'rows');
+addEdge(g.id,'sel',tN.id,'filter'); addEdge(g.id,'sel',tL.id,'filter'); addEdge(g.id,'sel',tP.id,'filter');
+addEdge(tN.id,'match',tL.id,'hits'); addEdge(tL.id,'match',tP.id,'hits'); addEdge(tP.id,'match',g.id,'hl');
 markWiresDirty();
 });
 preset('Joystick: Gamepad → Frame → MQTT', function(){

@@ -496,7 +496,7 @@ def({ id:'recEnt', title:'Rec → Entities', cat:'Data', kw:'entity entities lin
   readout:true, tall:true,
   params:[{n:'rules',t:'code',plain:true,d:'',label:'rules: [out:] conditions | fields'},
           {n:'apply',t:'button',label:'Apply outputs',fn:n=>{ rebuildNode(n); markTopoDirty(); }},
-          {n:'tpl',t:'select',opts:['—','GSM cells','Digital voice (DMR / P25 / NXDN)','Radio (Wi-Fi / BLE / Zigbee)'],d:'—',label:'insert rules',
+          {n:'tpl',t:'select',opts:['—','GSM cells','Digital voice (DMR / P25 / NXDN)','Radio (Wi-Fi / BLE / Zigbee)','Wi-Fi map (nodes · links · packets)'],d:'—',label:'insert rules',
            fn:n=>{ const t=ENT_TEMPLATES[n.p.tpl]; if(t){ n.p.rules=(n.p.rules?n.p.rules.trimEnd()+'\n':'')+t; } n.p.tpl='—'; rebuildNode(n); markTopoDirty(); }}],
   init:n=>{ n.in=0; n.outN=0; n.err=''; },
   process(n,I){
@@ -535,6 +535,19 @@ link: proto=wifi kind~^(assoc-req|reassoc-req|assoc-resp|auth|deauth|disassoc|da
 ble: proto=ble src | id={src}, type=ble, label={name|src}, shape=triangle, rssi
 zb: proto=zb src net | id=zb:{net}:{src}, type=zigbee, label={src}, shape=square
 zlink: proto=zb src dst net dst!=ffff | id=zb:{net}:{src}>{dst}, from=zb:{net}:{src}, to=zb:{net}:{dst}, label={kind}`,
+  'Wi-Fi map (nodes · links · packets)':
+`# три порта: node (точки и станции; note — пустая колонка для комментария, повтор записи её не трогает), link (связи; dashes=1 — пунктир), pkt (кадры)
+# unicast: первый октет чётный (regex ^..[02468ace]:) — широковещательные адреса узлами и связями не становятся
+node!: proto=wifi kind=beacon|probe-resp bssid | id={bssid}, type=ap, label={ssid|bssid}, shape=star, color=#e8a200, ssid, chan, rssi, note=
+node!: proto=wifi kind~^(probe-req|assoc-req|reassoc-req|auth)$ src~^[0-9a-f][02468ace]: | id={src}, type=station, label={src}, shape=dot, color=#2a9df4, chan, rssi, note=
+node!: proto=wifi kind~^(qos-)?data$ tods=1 src bssid | id={src}, type=station, label={src}, shape=dot, color=#2a9df4, ap={bssid}, chan, rssi, note=
+node!: proto=wifi kind~^(qos-)?data$ fromds=1 dst~^[0-9a-f][02468ace]: bssid | id={dst}, type=station, label={dst}, shape=dot, color=#2a9df4, ap={bssid}, chan, note=
+link!: proto=wifi kind~^(qos-)?data$ tods=1 src bssid | id={src}>{bssid}:data, from={src}, to={bssid}, label=data, type=data
+link!: proto=wifi kind~^(qos-)?data$ fromds=1 bssid dst~^[0-9a-f][02468ace]: | id={bssid}>{dst}:data, from={bssid}, to={dst}, label=data, type=data
+link!: proto=wifi kind~^(assoc-req|reassoc-req|assoc-resp|reassoc-resp|auth|deauth|disassoc)$ src dst~^[0-9a-f][02468ace]: | id={src}>{dst}:mgmt, from={src}, to={dst}, label={kind}, type=mgmt
+link!: proto=wifi kind=probe-resp src dst~^[0-9a-f][02468ace]: | id={src}>{dst}:probe, from={src}, to={dst}, label=probe, type=probe, dashes=1
+link!: proto=wifi kind=probe-req src dst~^[0-9a-f][02468ace]: | id={src}>{dst}:probe, from={src}, to={dst}, label=probe, type=probe, dashes=1
+pkt!: proto=wifi src | id={t}:{src}:{seq|len}, t, kind, src, dst, ap={bssid}, chan, rssi, len`,
   'Digital voice (DMR / P25 / NXDN)':
 `# абоненты, группы и связи; префикс сети {src} разводит одинаковые id в разных системах
 subscriber: kind=call from | id={src}:{from}, type=subscriber, label={src} {from}, shape=dot
