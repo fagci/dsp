@@ -43,6 +43,7 @@ function hxParseNow(n){
   n.res=hexParse(r.sch,n.buf,{lib:r.lib});
   if(r.name) n.res.schema=r.name;
   n.recOut=hexToRec(n.res);
+  n.recFlat=hexToRec(n.res,true);
   n.dirty=false; n.uiDirty=true;
 }
 // имя поля rec ← колонка: «колонка=поле, …»
@@ -132,7 +133,7 @@ def({ id:'hexStruct', title:'HEX Structure', cat:'Data', kw:'hex bytes packet pa
     if(n.dirty || !n.res) hxParseNow(n);
     if(n.emit){ n.emit=false; n.binOut=hxObj(n.buf,n.res.schema||n.p.schema); n.pulse=2; }
     const v=n.pulse>0 ? 1 : 0; if(n.pulse>0) n.pulse--;
-    return { bin:n.binOut, rec:n.recOut, text:hexToHex(n.buf), ok:n.res.ok?1:0, len:n.buf.length, new:v }; },
+    return { bin:n.binOut, rec:n.recFlat, text:hexToHex(n.buf), ok:n.res.ok?1:0, len:n.buf.length, new:v }; },
   draw(n){
     if(!n.ui && n.el) hxInit(n);
     if(!n.ui) return;
