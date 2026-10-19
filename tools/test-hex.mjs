@@ -131,6 +131,11 @@ const dr=H.wifiRec({chan:1,rssi:-40,bytes:hex('c000 3a01 ffffffffffff aabbccddee
 ok('sniffer deauth record',dr.kind==='deauth' && dr.reason===7 && dr.bssid==='aa:bb:cc:dd:ee:01',JSON.stringify(dr));
 const ar=H.wifiRec({chan:1,rssi:-40,bytes:hex('d400 0000 aabbccddee01')},1);
 ok('sniffer ack record',ar.kind==='ack' && ar.da==='aa:bb:cc:dd:ee:01' && ar.ftype==='ctrl');
+// единые имена: IE по имени, bssid/kind/sa/da одинаковы для любого кадра
+const flat=H.hexToRec(H.hexParse('wifi',bc.bytes));
+ok('wifi flat names',flat.kind==='beacon' && flat.bssid==='aa:bb:cc:dd:ee:01' && flat['ie.ssid']==='TestNet' && flat['ie.channel']===6 && flat.sa===flat.bssid,JSON.stringify(flat));
+const flatD=H.hexToRec(H.hexParse('wifi',hex('c000 3a01 ffffffffffff aabbccddee01 aabbccddee01 1000 0700')));
+ok('wifi flat names deauth',flatD.kind==='deauth' && flatD.bssid==='aa:bb:cc:dd:ee:01' && flatD.da==='ff:ff:ff:ff:ff:ff');
 // запись снифера → HEX Structure: hex + hexSchema разбираются обратно в те же поля
 const back=H.hexParse(wr.hexSchema,H.hexFromHex(wr.hex));
 ok('record hex re-parses',back.ok && back.vals['body.ies[0].data.ssid']==='TestNet');

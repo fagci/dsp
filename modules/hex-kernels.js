@@ -11,6 +11,9 @@
      имена: поле, sub.поле, список[0].поле; поле.$off / поле.$len — смещение (от начала схемы) и длина в байтах;
      _left — осталось байт (при разборе), _len — размер схемы в байтах (в calc)
    as — короткое имя поля в rec (первое найденное): body.ies[0].data.ssid → ssid
+   list: key — поле элемента, дающее ему имя (имя enum или значение), val — поле элемента со значением, as — префикс,
+         keys — свои имена {id:'имя'}: в rec элемент доступен как as.key (ie.ssid), а не по номеру; повторы — ie.vendor, ie.vendor_2
+   derive — вычисляемые поля rec схемы: {имя:[[условие,поле],…]} — берётся поле первого сработавшего условия (bssid)
    enumBy + enums — enum зависит от другого поля: enumBy:'type', enums:{0:{…},1:{…}}
    scale/bias/prec/unit — показать число v*scale+bias, значение остаётся целым
    xor — маска, накладываемая на сумму (DMR: CSBK 0xA5A5, PI 0x6969)
@@ -459,6 +462,7 @@ function hexField(f,sch,c,prefix,depth,env,recs,ss){
       for(const k of c.keys) if(k.startsWith(key)){ const j=parseInt(k.slice(key.length),10); if(j>=0) seen.add(j); }
       cnt=seen.size ? Math.max(...seen)+1 : 0;
     } else cnt=f.count!=null ? N(f.count,0) : Infinity;
+    const keyN={};
     const sub=hexSub(f,env,c) || (f.item ? {fields:[Object.assign({n:'v'},f.item)], endian:sch.endian, bitorder:sch.bitorder} : null);
     if(sub){
       for(let i=0;i<cnt && !c.stop;i++){
@@ -468,6 +472,14 @@ function hexField(f,sch,c,prefix,depth,env,recs,ss){
         const before=c.bit;
         hexRun(sub,c,name+'['+i+'].',depth+2,null);
         irec.bl=c.bit-before;
+        if(f.key){
+          const kn=name+'['+i+'].'+f.key, kr=c.byName[kn], kv=c.vals[kn], en=kr && kr.f.enum;
+          let k=(f.keys && f.keys[kv]) || (en && (en[kv] ?? en[String(kv)])) || (f.key+kv);
+          k=String(k).toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
+          keyN[k]=(keyN[k]||0)+1;
+          irec.key=(f.as||name)+'.'+k+(keyN[k]>1 ? '_'+keyN[k] : '');
+          irec.val=f.val;
+        }
         if(!B && c.bit===before) break;
       }
     }
@@ -582,7 +594,7 @@ function hexParse(schema,data,opts){
   hexRun(sch,c,'',0,null);
   hexCalcFields(c);
   const used=(c.bit+7)>>3;
-  return {schema:sch.name||'', fields:c.recs, vals:c.vals, len:used, rest:data.subarray(Math.min(used,data.length)),
+  return {schema:sch.name||'', derive:sch.derive, fields:c.recs, vals:c.vals, len:used, rest:data.subarray(Math.min(used,data.length)),
     ok:!c.trunc && !c.recs.some(r=>r.err || r.calcOk===false), trunc:c.trunc, warn:c.warn, size:data.length};
 }
 function hexBuild(schema,values,opts){
@@ -609,6 +621,20 @@ function hexToRec(res){
     o[r.n]=r.value;
     if(r.f.enum) o[r.n+'_name']=r.f.enum[r.value] ?? r.f.enum[String(r.value)] ?? '';
     if(r.f.as && !(r.f.as in o)){ o[r.f.as]=r.value; if(r.f.enum) o[r.f.as+'_name']=o[r.n+'_name']; }
+  }
+  for(const ir of res.fields){
+    if(!ir.key) continue;
+    const base=ir.n+'.'+ir.val, own=res.vals[base];
+    if(own!==undefined){ o[ir.key]=own; continue; }
+    const leaves=res.fields.filter(r=>r.n && r.n.startsWith(base+'.') && !r.pad && r.value!==undefined);
+    if(leaves.length===1) o[ir.key]=leaves[0].value;
+    else for(const r of leaves) o[ir.key+'.'+r.n.slice(base.length+1)]=r.value;
+  }
+  if(res.derive) for(const k in res.derive){
+    for(const [cond,from] of res.derive[k]){
+      let hit=false; try{ hit=!!hexExpr(cond)(n=>res.vals[n]); }catch(e){}
+      if(hit){ if(o[from]!==undefined) o[k]=o[from]; break; }
+    }
   }
   o._len=res.size; o._ok=res.ok?1:0;
   if(res.schema) o._schema=res.schema;

@@ -3,6 +3,7 @@
    Тот же JSON, что можно написать руками в узле. Ключ — имя в HEX_LIB; sub ссылается на него по имени.
    title/group — для списка в интерфейсе. */
 
+const WIFI_IE_KEYS={3:'channel',45:'ht_cap',61:'ht_op',127:'ext_cap',191:'vht_cap',50:'ext_rates',11:'bss_load'};  // имена IE в rec: ie.channel
 Object.assign(HEX_LIB,{
   /* ---------- Ethernet / IP ---------- */
   eth:{ title:'Ethernet II', group:'Network', detect:'_size>=14 && (type==2048 || type==2054 || type==34525)', fields:[
@@ -46,7 +47,9 @@ Object.assign(HEX_LIB,{
     {n:'csum',t:'u16',fmt:'hex',calc:'inet16'}, {n:'body',t:'rest'}]},
 
   /* ---------- Wi-Fi (IEEE 802.11, кадр как есть: порядок бит LSB, little-endian) ---------- */
-  wifi:{ title:'802.11 frame', group:'Wi-Fi', detect:'ver==0 && _size>=10', endian:'le', bitorder:'lsb', fields:[
+  wifi:{ title:'802.11 frame', group:'Wi-Fi', detect:'ver==0 && _size>=10', endian:'le', bitorder:'lsb',
+    derive:{ kind:[['1','subtype_name']], da:[['1','addr1']], sa:[['1','addr2']],
+      bssid:[['type==0','addr3'],['type==2 && tods && fromds',''],['type==2 && tods','addr1'],['type==2 && fromds','addr2'],['type==2','addr3']] }, fields:[
     {n:'ver',t:'bits',w:2}, {n:'type',t:'bits',w:2,enum:{0:'management',1:'control',2:'data',3:'extension'}}, {n:'subtype',t:'bits',w:4,enumBy:'type',enums:{
       0:{0:'assoc-req',1:'assoc-resp',2:'reassoc-req',3:'reassoc-resp',4:'probe-req',5:'probe-resp',6:'timing-adv',8:'beacon',9:'atim',10:'disassoc',11:'auth',12:'deauth',13:'action',14:'action-noack'},
       1:{4:'beamforming-report-poll',5:'vht-ndp',6:'control-ext',7:'control-wrapper',8:'block-ack-req',9:'block-ack',10:'ps-poll',11:'rts',12:'cts',13:'ack',14:'cf-end',15:'cf-end-ack'},
@@ -63,11 +66,11 @@ Object.assign(HEX_LIB,{
     {n:'body',t:'rest',sub:{by:'type==0 ? subtype : 99',map:{4:'wifi-probe-req',5:'wifi-beacon',8:'wifi-beacon',10:'wifi-reason',11:'wifi-auth',12:'wifi-reason'}}}]},
   'wifi-beacon':{ title:'Beacon / Probe response', group:'Wi-Fi', endian:'le', fields:[
     {n:'ts',t:'u64'}, {n:'interval',t:'u16',as:'beacon_interval'},
-    {n:'capab',t:'u16',fmt:'hex'}, {n:'ies',t:'list',sub:'wifi-ie'}]},
-  'wifi-probe-req':{ title:'Probe request', group:'Wi-Fi', endian:'le', fields:[{n:'ies',t:'list',sub:'wifi-ie'}]},
+    {n:'capab',t:'u16',fmt:'hex'}, {n:'ies',t:'list',sub:'wifi-ie',key:'id',val:'data',as:'ie',keys:WIFI_IE_KEYS}]},
+  'wifi-probe-req':{ title:'Probe request', group:'Wi-Fi', endian:'le', fields:[{n:'ies',t:'list',sub:'wifi-ie',key:'id',val:'data',as:'ie',keys:WIFI_IE_KEYS}]},
   'wifi-reason':{ title:'Deauth / Disassoc', group:'Wi-Fi', endian:'le', fields:[{n:'reason',t:'u16',as:'reason',enum:{1:'unspecified',2:'auth no longer valid',3:'station leaving',4:'inactivity',5:'AP overloaded',6:'class 2 frame from non-auth',7:'class 3 frame from non-assoc',8:'station left BSS',9:'assoc before auth',15:'4-way handshake timeout',23:'802.1X failed'}}]},
   'wifi-auth':{ title:'Authentication', group:'Wi-Fi', endian:'le', fields:[
-    {n:'algo',t:'u16',enum:{0:'open',1:'shared key',3:'SAE'}}, {n:'seq',t:'u16'}, {n:'status',t:'u16',as:'auth_status',enum:{0:'success',1:'failure'}}, {n:'ies',t:'list',sub:'wifi-ie'}]},
+    {n:'algo',t:'u16',enum:{0:'open',1:'shared key',3:'SAE'}}, {n:'seq',t:'u16'}, {n:'status',t:'u16',as:'auth_status',enum:{0:'success',1:'failure'}}, {n:'ies',t:'list',sub:'wifi-ie',key:'id',val:'data',as:'ie',keys:WIFI_IE_KEYS}]},
   'wifi-ie':{ title:'Information element', group:'Wi-Fi', fields:[
     {n:'id',t:'u8',enum:{0:'SSID',1:'Rates',3:'DS channel',5:'TIM',7:'Country',11:'BSS load',45:'HT capabilities',48:'RSN',50:'Ext rates',61:'HT operation',127:'Ext capabilities',191:'VHT capabilities',221:'Vendor',255:'Extension'}},
     {n:'len',t:'u8'},
