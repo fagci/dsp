@@ -6502,7 +6502,11 @@ const ListDB = (() => {
       const db=await open();
       return new Promise((res,rej)=>{
         const tx=db.transaction('items','readwrite'), s=tx.objectStore('items');
-        for(const id of ids){ const g=s.get(id); g.onsuccess=()=>{ if(g.result) syncNoteDel('t',g.result); s.delete(id); }; }
+        const tomb=typeof syCfg!=='function' || !!syCfg().key;            // чтение записи нужно только ради метки удаления для синхронизации
+        for(const id of ids){
+          if(!tomb){ s.delete(id); continue; }
+          const g=s.get(id); g.onsuccess=()=>{ if(g.result) syncNoteDel('t',g.result); s.delete(id); };
+        }
         tx.oncomplete=()=>res(); tx.onerror=tx.onabort=()=>rej(tx.error);
       });
     },
