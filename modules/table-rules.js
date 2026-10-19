@@ -151,7 +151,7 @@ function trPrepare(n,recs,except=-1,adding=true){
   let bumped=false;
   for(const r of recs){
     const o={...r};
-    for(const c of n.cl){ const d=tcDef(n,c); if(d.def!=null && d.def!=='' && adding && (o[c]===''||o[c]==null) && d.t!=='auto' && d.t!=='calc') o[c]=d.t==='num' && isFinite(+d.def) ? +d.def : d.def; }
+    for(const c of n.cl){ const d=tcDef(n,c); if(d.def!=null && d.def!=='' && adding && (o[c]===''||o[c]==null) && d.t!=='auto' && d.t!=='calc') o[c]=(d.t==='num' || d.t==='progress') && isFinite(+d.def) ? +d.def : d.def; }
     for(const c of auto){
       if(o[c]!=='' && o[c]!=null && isFinite(trNum(o[c]))) used.get(c).push(trNum(o[c]));
     }
