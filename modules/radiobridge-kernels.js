@@ -4,6 +4,8 @@
      RX WIFI <канал> <rssi> <hex>                       RX WIFI! — кадр обрезан по SNAP
      RX BLE <адрес> <rssi> <тип события> <тип адреса> <hex рекламных данных>
      RX ZB <канал> <rssi> <lqi> <hex>                   802.15.4: Zigbee, Thread, Matter-over-Thread
+     STAT <канал> <мс> <кадров> <байт> <rssi max> <rssi avg> <занятость ‰> <потеряно>   окно по каналу (rssi -127 — тишина)
+     CSI <канал> <rssi> <mac> <hex int8: мнимая, вещественная часть на поднесущую>
    Кадр разбирается схемой из hex-formats.js (ядро — hex-kernels.js); запись rec несёт hex и hexSchema,
    поэтому её можно отдать в HEX Structure. Имена полей одинаковы для всех протоколов:
    proto, kind, src, dst, net (BSSID / PAN), chan, rssi, + поля пакета (ie.ssid, ad.name, zb_cluster …).
@@ -20,10 +22,32 @@ function radioLine(line){
   if(m) return {proto:'ble', addr:m[1].toLowerCase(), rssi:+m[2], evtype:+m[3], atype:+m[4], bytes:hexFromHex(m[5])};
   m=/^\s*RX ZB (\d+) (-?\d+) (\d+) ([0-9a-fA-F]+)\s*$/.exec(line);
   if(m) return {proto:'zb', chan:+m[1], rssi:+m[2], lqi:+m[3], bytes:hexFromHex(m[4])};
+  m=/^\s*STAT (\d+) (\d+) (\d+) (\d+) (-?\d+) (-?\d+) (\d+) (\d+)\s*$/.exec(line);
+  if(m) return {stat:true, chan:+m[1], ms:+m[2], frames:+m[3], bytes:+m[4], rmax:+m[5], ravg:+m[6], busy:+m[7], drop:+m[8]};
+  m=/^\s*CSI (\d+) (-?\d+) ((?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}) ([0-9a-fA-F]+)\s*$/.exec(line);
+  if(m) return {csi:true, chan:+m[1], rssi:+m[2], src:m[3].toLowerCase(), bytes:hexFromHex(m[4])};
   return null;
 }
 // ответы прошивки на команды: OK … / ERR … / WARN … / TXZB … / MODE …
 const radioStatus=line=>{ const s=String(line).trim(); return /^(OK|ERR|WARN|TXZB|MODE|ESP32)/.test(s) ? s : null; };
+
+// окно STAT → запись: на таблицу с ключом chan ложится последнее окно канала; занятость в % и доля потерь
+function radioStatRec(f,now){
+  const heard=f.frames>0;
+  return {t:now||Date.now(), proto:'wifi', kind:'chan-stat', id:'ch'+f.chan, chan:f.chan, ms:f.ms, frames:f.frames, bytes:f.bytes,
+    rssi_max:heard ? f.rmax : -127, rssi_avg:heard ? f.ravg : -127, busy:Math.round(f.busy)/10, fps:f.ms ? Math.round(f.frames*1e4/f.ms)/10 : 0,
+    drop:f.drop, text:'ch'+f.chan+' max '+(heard ? f.rmax : '—')+' dBm · busy '+(f.busy/10).toFixed(1)+'% · '+f.frames+' frames'};
+}
+// CSI: амплитуда и фаза по поднесущим (пары int8 мнимая, вещественная); csi / csi_ph — списки через запятую для графика
+function radioCsiRec(f,now){
+  const b=f.bytes, n=b.length>>1, amp=[], ph=[];
+  for(let i=0;i<n;i++){
+    const im=b[2*i]<<24>>24, re=b[2*i+1]<<24>>24;
+    amp.push(Math.round(Math.hypot(re,im)*10)/10); ph.push(Math.round(Math.atan2(im,re)*573)/10);
+  }
+  return {t:now||Date.now(), proto:'wifi', kind:'csi', id:f.src, src:f.src, chan:f.chan, rssi:f.rssi, sc:n,
+    csi:amp.join(','), csi_ph:ph.join(','), text:'csi '+f.src+' ch'+f.chan+' '+n+' subcarriers'};
+}
 
 function radioRec(f,now){
   const res=hexParse(RADIO_SCHEMA[f.proto],f.bytes), o=hexToRec(res);

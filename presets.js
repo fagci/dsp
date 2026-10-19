@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=57;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=58;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -5166,6 +5166,33 @@ addEdge(ent.id,'node',tN.id,'rec'); addEdge(ent.id,'link',tL.id,'rec'); addEdge(
 addEdge(tN.id,'all',tL.id,'sigs'); addEdge(tL.id,'all',g.id,'rows');
 addEdge(g.id,'sel',tN.id,'filter'); addEdge(g.id,'sel',tL.id,'filter'); addEdge(g.id,'sel',tP.id,'filter');
 addEdge(tN.id,'match',tL.id,'hits'); addEdge(tL.id,'match',tP.id,'hits'); addEdge(tP.id,'match',g.id,'hl');
+markWiresDirty();
+});
+preset('Radio: Wi-Fi channel level · occupancy · CSI (Table Chart)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Channel survey from the ESP32-C5 bridge (tools/radio-bridge-esp32c5): tick «channel stats» and «CSI» in Radio Bridge, leave channel 0 to hop. The stat output carries one window per channel (max / mean RSSI, airtime busy %, frames, lost) — Table keeps the latest window per channel (key id), Table Chart draws bars from its rows: peak level (peak hold), occupancy. CSI goes to a plain list: the first chart overlays the last frames as lines over the subcarriers, the second is a waterfall.\n'+
+  'Any Table can be charted the same way: wire its rows to Table Chart, pick x / y columns (series by column «by», a cell like «3,5,4» is a vector). Rec → Entities can aggregate first (e.g. one record per channel or per device). Without hardware the Text Source plays sample STAT / CSI lines. busy is an airtime estimate from frame length and rate.'});
+nt.size.w=1100; nt.size.h=150; applySize(nt);
+const tx=addNode('textsrc',40,230,{text:'STAT 1 250 12 1800 -71 -82 40 0\nSTAT 6 250 96 41000 -44 -63 410 0\nSTAT 11 250 31 9000 -58 -76 120 0\nSTAT 6 250 88 36000 -46 -64 380 0\nSTAT 1 250 15 2100 -69 -80 55 0\nSTAT 11 250 0 0 -127 -127 0 0\nCSI 6 -52 aa:bb:cc:dd:ee:01 00f2fef0fcf0f9eef6eef5f0f2f0eaeee9f1e5f3ddf4dcf8d6fcd500d206d40bd012cf1ad320d427d82ddf30e338ea3cf13df93d004307400f3f173d1d382434262c2c272d1f311a31132c0b2b0529002afc24f821f41bf218f014ef10ef0dee0aee08ec04ee02ed00ef\nCSI 6 -52 aa:bb:cc:dd:ee:01 f8e6f4e7f2e9ebe6e5e6e1e8ddecd8efd6f4cff8cdfecc03cc0ac712c81ace1ece28d42cda31e036e53ced40f53cfd40033b0b3d113818361e32202a2626251d24162712230b2306220220ff1bfc17fa18f612f612f20ff20af308f306f205f103f101f100f0feeefcf0\nCSI 6 -52 aa:bb:cc:dd:ee:01 e9e0e2e0dfe4d9e6d0e8ceeecaf4cafbc500c308c70ec517c71ece23d02bd630dc36e437ea3bf23cfa38003706380d36112e162a1a261b1f1d1a1d141e101e0b1b071a031a0013fe14fc13f90ef90cf80df509f607f607f406f103f302f100effeebfcecf8e8f6ebf2ea\nCSI 6 -52 aa:bb:cc:dd:ee:01 d3decde2cae9c7f0c5f6c1fdc204bf0cc114c71acb21cd28d42dda31e232ea32f034f736fe31022f082c0c2810241422141914141914190f190b150617041501100011fd11fb0efa0df90bf80af609f507f408ef05ef04e901ecffe4fce3f7e0f3e0eddfe9e1e6e4dde3\nCSI 6 -52 aa:bb:cc:dd:ee:01 c6ebc3f2bff9c000c108c010c616cb1cd121d428dc29e12de92cf02bf62cfb2c0026042708240b1f0e1b0d13101312100e0a0f080f0510040f010f0010ff0bfe0cfc0cfa0cf80bf60ff00ded0aee09e807e604e300e0fddcf8daf3daeedae7dae2dcdaddd3dfd0e5cdeb\nCSI 6 -52 aa:bb:cc:dd:ee:01 c4fec404c50bc812ce16d11cd820df22e523ea24f025f623fa23ff1f011c041a071808120a110b0e0e0e0f0b0c0710070f050d020f010d0012fd12fb14f814f513f213ee12ea0fe80ee20ae107dd03d5ffd7f9d4f4d3ebcee6d3e0d5d7d4d4dbcbdec7e4c2ebbff2bffa\nCSI 6 -52 aa:bb:cc:dd:ee:01 cd0dd610d716dd18e11be91aec1ef01ef719fa19fd19001802130410050f080f090e090a0a090b080c060e050e031202160015fe18fb16f81af31aef1aea18e616e114db11d50bd506d201cbfbc8f4c9edc9e5c9e0ced9d1d3d6ccdac9e1c6e8c1efbef6c3fec205c60c\nCSI 6 -52 aa:bb:cc:dd:ee:01 e113e714ed14f114f512f714fb13fd10ff10000f0311030c0710070c090c0b0b0e0b110a1208140618041b011bff1ffb22f620f220ee1fe820e11edb1bd417cf10ce0acb04c7fec6f7c2efc2e7c3e1cad8cbd5d2cfd8c9ddcae6c8edc3f3c7fbc801ca08cd0ed511d816'});
+tx.size.w=300; tx.size.h=300; applySize(tx);
+const rb=addNode('radioBridge',380,230,{mode:'WIFI',stat:true,csi:true});
+rb.size.w=300; rb.size.h=300; applySize(rb);
+const tC=addNode('table',720,230,{list:'@patch',key:'id',initial:false});
+tC.size.w=460; tC.size.h=240; applySize(tC);
+const tS=addNode('table',720,500,{list:'@patch',initial:false,follow:true,maxRows:300});
+tS.size.w=460; tS.size.h=240; applySize(tS);
+const c1=addNode('tblchart',1220,230,{kind:'bar',x:'chan',y:'rssi_max',hold:true,auto:false,lo:-100,hi:-20});
+c1.size.w=520; c1.size.h=240; applySize(c1);
+const c2=addNode('tblchart',1780,230,{kind:'bar',x:'chan',y:'busy',auto:false,lo:0,hi:100});
+c2.size.w=520; c2.size.h=240; applySize(c2);
+const c3=addNode('tblchart',1220,500,{kind:'line',y:'csi',last:6,auto:true});
+c3.size.w=520; c3.size.h=240; applySize(c3);
+const c4=addNode('tblchart',1780,500,{kind:'heat',y:'csi',last:60,auto:true});
+c4.size.w=520; c4.size.h=240; applySize(c4);
+addEdge(tx.id,'text',rb.id,'text');
+addEdge(rb.id,'stat',tC.id,'rec'); addEdge(rb.id,'csi',tS.id,'rec');
+addEdge(tC.id,'all',c1.id,'rows'); addEdge(tC.id,'all',c2.id,'rows');
+addEdge(tS.id,'all',c3.id,'rows'); addEdge(tS.id,'all',c4.id,'rows');
 markWiresDirty();
 });
 preset('Joystick: Gamepad → Frame → MQTT', function(){
