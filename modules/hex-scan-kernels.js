@@ -158,7 +158,112 @@ function hscGroup(rows,times,group,L,o){
     let j=i; while(j+1<L && rnd[j+1] && !used[j+1]) j++;
     out.push(hscCandidate(group,i,j-i+1,'random',.5,'high entropy: encrypted, hash or compressed',{})); i=j;
   }
+  if(o && o.refs) for(const c of hscQuantity(rows,o.refs,L,group,o)) out.push(c);
   return {candidates:out, nonConst, rndCnt, crc:crcFound};
+}
+
+/* ---- Физическая величина по эталону ----
+   Известна величина, которую пакет несёт (термометр рядом с датчиком, вольтметр, пробный источник), и она приходит
+   с каждым пакетом (p.ref). Для каждого столбца значений — байты 1…4 (BE / LE, со знаком и без), любое окно из 3…16 бит
+   (старший бит первым) и BCD из 2…4 цифр — считаются корреляция с эталоном и прямая ref ≈ a·x + b.
+   Лучшие непересекающиеся окна — кандидаты 'quantity'. Масштаб a «прилипает» к круглому (0.1, 0.01, 1/16…), если отличается
+   менее чем на 2 % — тогда b пересчитывается, и поле читается как «температура = x·0.1 − 40». */
+const HSC_NICE=[1,.5,.25,.2,.1,.05,.025,.02,.01,.005,.002,.001,1/16,1/32,1/64,1/128,1/256,1/512,1/1024,2,4,5,10,16,20,25,50,100];
+function hscBitsAt(d,b0,wb){
+  const k=b0>>3, x=(d[k]<<16)|((d[k+1]||0)<<8)|(d[k+2]||0);
+  return (x>>(24-(b0&7)-wb))&((1<<wb)-1);
+}
+function hscVal(h,d){                                    // значение столбца h в пакете d — тем же способом, каким оно искалось
+  if(h.bcd){ let v=0; for(let k=0;k<h.wb/4;k++){ const p=h.b0/4+k; v=v*10+((d[p>>1]>>((p&1) ? 0 : 4))&15); } return v; }
+  if(h.bytes){ const w=h.wb/8; let v=hscRead(d,h.b0/8,w,h.le); if(h.signed && v>=Math.pow(2,8*w-1)) v-=Math.pow(2,8*w); return v; }
+  let v=hscBitsAt(d,h.b0,h.wb); if(h.signed && v>=(1<<(h.wb-1))) v-=(1<<h.wb); return v;
+}
+function hscFit(v,r,n){
+  let sv=0, sr=0; for(let i=0;i<n;i++){ sv+=v[i]; sr+=r[i]; }
+  const mv=sv/n, mr=sr/n; let cvv=0, crr=0, cvr=0;
+  for(let i=0;i<n;i++){ const x=v[i]-mv, y=r[i]-mr; cvv+=x*x; crr+=y*y; cvr+=x*y; }
+  if(cvv<=1e-12 || crr<=1e-12) return null;
+  const a=cvr/cvv, b=mr-a*mv, rr=cvr/Math.sqrt(cvv*crr);
+  return {r:rr, a, b, mv, cvv, crr};
+}
+function hscQuantity(rows,refs,L,group,o){
+  const idx=[]; for(let i=0;i<rows.length;i++) if(typeof refs[i]==='number' && isFinite(refs[i])) idx.push(i);
+  const n=idx.length, minN=(o&&o.minN)||12;
+  if(n<minN || L>64) return [];
+  const R=new Float64Array(n); for(let i=0;i<n;i++) R[i]=refs[idx[i]];
+  let lo=Infinity, hi=-Infinity, dist=new Set(); for(const x of R){ if(x<lo) lo=x; if(x>hi) hi=x; dist.add(x); }
+  if(dist.size<5 || hi-lo<=0) return [{group,off:0,w:0,kind:'refinfo',score:0,label:'the reference does not change: nothing to correlate (vary it while recording)'}];
+  const D=idx.map(i=>rows[i]), hits=[], V=new Float64Array(n), Vi=new Float64Array(n);
+  for(let i=0;i<n;i++) Vi[i]=i;
+  const idxFit=hscFit(Vi,R,n), refRamp=!!idxFit && Math.abs(idxFit.r)>.98;
+  const test=(col,b0,wb,extra)=>{
+    const f=hscFit(col,R,n); if(!f || !isFinite(f.r) || Math.abs(f.r)<.9) return;
+    if(Math.abs(hscFit(col,Vi,n)?.r||0)>.9995) return;                                   // счётчик: совпадает с трендом эталона
+    if(refRamp){                                                                          // эталон — рампа: счётчик (и его старшие биты) коррелирует с ним же
+      let up=0, dn=0, bad=0;
+      for(let i=1;i<n;i++){ const d=col[i]-col[i-1]; if(d===0) continue; if(d===1) up++; else if(d===-1) dn++; else bad++; }
+      if(!bad && (!up || !dn)) return;
+    }
+    hits.push(Object.assign({b0,wb,r:f.r,a:f.a,b:f.b},extra));
+  };
+  // байты
+  for(let w=1;w<=4;w++) for(let off=0;off+w<=L;off++) for(const le of (w>1 ? [false,true] : [false])) for(const sg of [false,true]){
+    if(w<=2 && !le){                                                                      // BE ≤ 16 бит — как окно, ниже
+      continue;
+    }
+    for(let i=0;i<n;i++){ let v=hscRead(D[i],off,w,le); if(sg && v>=Math.pow(2,8*w-1)) v-=Math.pow(2,8*w); V[i]=v; }
+    test(V,8*off,8*w,{le,signed:sg,bcd:false,bytes:true});
+  }
+  // окна 3…16 бит, старший бит первым (в том числе целые байты и слова BE)
+  for(let wb=3;wb<=16;wb++) for(let b0=0;b0+wb<=8*L;b0++) for(const sg of [false,true]){
+    if(sg && wb<4) continue;
+    for(let i=0;i<n;i++){ let v=hscBitsAt(D[i],b0,wb); if(sg && v>=(1<<(wb-1))) v-=(1<<wb); V[i]=v; }
+    test(V,b0,wb,{le:false,signed:sg,bcd:false});
+  }
+  // BCD: 2…4 цифры с любого полубайта
+  for(let m=2;m<=4;m++) for(let p=0;p+m<=2*L;p++){
+    let ok=true;
+    for(let i=0;i<n && ok;i++){ let v=0; for(let k=0;k<m;k++){ const d=(D[i][(p+k)>>1]>>((p+k)&1 ? 0 : 4))&15; if(d>9){ ok=false; break; } v=v*10+d; } V[i]=v; }
+    if(ok) test(V,4*p,4*m,{le:false,signed:false,bcd:true});
+  }
+  if(!hits.length) return [];
+  // лучшие по |r|; из окон, чья необъяснённая доля 1 − r² не хуже лучшей больше чем на 15 %, берётся ближайшее к границе байта и самое узкое
+  // (окно с лишними постоянными битами не лучше, а лишние переменные биты «подгоняют» кривую на доли процента)
+  const alignOf=h=>(h.b0&7)===0 ? 0 : (h.b0&3)===0 ? 1 : 2;
+  const taken=[]; let pool=hits;
+  while(taken.length<4 && pool.length){
+    let best=0; for(const h of pool) best=Math.max(best,Math.abs(h.r));
+    const lim=(1-best*best)*1.15+1e-12, C=pool.filter(h=>1-h.r*h.r<=lim);
+    C.sort((x,y)=>(alignOf(x)-alignOf(y)) || ((x.signed?1:0)-(y.signed?1:0)) || (x.wb-y.wb) || (Math.abs(y.r)-Math.abs(x.r)));
+    const pick=C[0]; taken.push(pick);
+    pool=pool.filter(h=>!(h.b0<pick.b0+pick.wb && pick.b0<h.b0+h.wb));
+  }
+  const out=[];
+  for(const h of taken){
+    // окно, начатое в середине байта, растёт к старшему биту, пока те постоянны (ведущие биты числа)
+    if(!h.bcd && !h.bytes && !h.signed && (h.b0&7) && h.wb<16){
+      const cst=b=>{ const v0=(D[0][b>>3]>>(7-(b&7)))&1; for(let i=1;i<n;i++) if(((D[i][b>>3]>>(7-(b&7)))&1)!==v0) return false; return true; };
+      let b0=h.b0, wb=h.wb; while((b0&7) && wb<16 && cst(b0-1)){ b0--; wb++; }
+      if(wb!==h.wb){ h.b0=b0; h.wb=wb; const col=new Float64Array(n); for(let i=0;i<n;i++) col[i]=hscVal(h,D[i]); const f=hscFit(col,R,n); if(f){ h.a=f.a; h.b=f.b; h.r=f.r; } }
+    }
+    // «круглый» масштаб
+    let a=h.a, b=h.b;
+    for(const s of HSC_NICE){ const t=a<0 ? -s : s; if(Math.abs(a/t-1)<.02){ a=t; break; } }
+    if(a!==h.a){ let sb=0; for(let i=0;i<n;i++) sb+=R[i]-a*hscVal(h,D[i]); b=sb/n; }       // b при выбранном a
+    let se=0;
+    for(let i=0;i<n;i++){ const e=R[i]-(a*hscVal(h,D[i])+b); se+=e*e; }
+    { const bs=Math.round(b/a)*a, sErr=Math.sqrt(se/n)/Math.sqrt(n);                       // смещение — кратное шагу, если укладывается в погрешность
+      if(a!==h.a && Math.abs(b-bs)<3*sErr+.01*Math.abs(a)){ b=+bs.toPrecision(12); se=0; for(let i=0;i<n;i++){ const e=R[i]-(a*hscVal(h,D[i])+b); se+=e*e; } } }
+    const rmse=Math.sqrt(se/n);
+    const num=x=>{ const ax=Math.abs(x); return +x.toPrecision(ax>=100 ? 5 : 4); };
+    const off=h.b0>>3, w=((h.b0+h.wb+7)>>3)-off;
+    const nm=(o&&o.refName)||'value', un=(o&&o.refUnit)||'';
+    const sc=Math.abs(h.r)>=.9 ? Math.min(1,(Math.abs(h.r)-.9)/.099) : 0;
+    out.push(hscCandidate(group,off,w,'quantity',.6+.38*sc,
+      nm+' ≈ '+num(a)+'·x '+(b<0?'− ':'+ ')+num(Math.abs(b))+(un?' '+un:'')+' (r='+h.r.toFixed(4)+', rmse '+num(rmse)+', '+n+' pkts'+(h.wb%8||h.b0%8 ? ', '+h.wb+' bits from bit '+h.b0 : '')+(h.bcd ? ', BCD' : '')+(h.le ? ', LE' : '')+(h.signed ? ', signed' : '')+')',
+      {b0:h.b0,wb:h.wb,le:h.le,signed:h.signed,bcd:h.bcd,scale:a,bias:b,r:+h.r.toFixed(5),rmse:+rmse.toFixed(5),name:nm,unit:un,n}));
+  }
+  return out;
 }
 
 /* packets: [{d:Uint8Array, t?:мс}] (или просто Uint8Array); opts: {minN, group:'length'|'all'} */
@@ -169,8 +274,8 @@ function hexScan(packets,opts){
     const d=p instanceof Uint8Array ? p : p.d, t=p instanceof Uint8Array ? undefined : p.t;
     if(!d || !d.length) continue;
     const key=opts.group==='all' ? 'all' : String(d.length);
-    if(!groups.has(key)) groups.set(key,{rows:[],times:[]});
-    const g=groups.get(key); g.rows.push(d); g.times.push(t);
+    if(!groups.has(key)) groups.set(key,{rows:[],times:[],refs:[]});
+    const g=groups.get(key); g.rows.push(d); g.times.push(t); g.refs.push(p instanceof Uint8Array ? undefined : p.ref);
   }
   // пакеты одной длины бывают разных видов: частая раскладка нулевых байт (заполнение, пустые поля) выделяет вид в свою группу
   for(const [key,g] of Array.from(groups)){
@@ -179,11 +284,11 @@ function hexScan(packets,opts){
     for(const x of sig) cnt.set(x,(cnt.get(x)||0)+1);
     const freq=Array.from(cnt).filter(([x,c])=>c>=Math.max(minN,.15*g.rows.length) && x.includes('0')).sort((a,b)=>b[1]-a[1]);
     if(freq.length<2 && !(freq.length===1 && freq[0][1]<.9*g.rows.length) || freq.reduce((a,[,c])=>a+c,0)<.15*g.rows.length) continue;
-    const keep={rows:[],times:[]};
+    const keep={rows:[],times:[],refs:[]};
     groups.delete(key);
-    for(const [x,c] of freq){ const ng={rows:[],times:[]}; sig.forEach((y,i)=>{ if(y===x){ ng.rows.push(g.rows[i]); ng.times.push(g.times[i]); } }); groups.set(key+' zeros '+x.replace(/1/g,'.').replace(/0/g,'0'),ng); }
+    for(const [x,c] of freq){ const ng={rows:[],times:[],refs:[]}; sig.forEach((y,i)=>{ if(y===x){ ng.rows.push(g.rows[i]); ng.times.push(g.times[i]); ng.refs.push(g.refs[i]); } }); groups.set(key+' zeros '+x.replace(/1/g,'.').replace(/0/g,'0'),ng); }
     const used=new Set(freq.map(f=>f[0]));
-    sig.forEach((y,i)=>{ if(!used.has(y)){ keep.rows.push(g.rows[i]); keep.times.push(g.times[i]); } });
+    sig.forEach((y,i)=>{ if(!used.has(y)){ keep.rows.push(g.rows[i]); keep.times.push(g.times[i]); keep.refs.push(g.refs[i]); } });
     if(keep.rows.length) groups.set(key+' other',keep);
   }
   const res=[];
@@ -192,7 +297,7 @@ function hexScan(packets,opts){
     const L=opts.group==='all' ? Math.min(...g.rows.map(r=>r.length)) : g.rows[0].length;
     if(L>(opts.maxLen||512)) continue;
     const hasT=g.times.every(t=>typeof t==='number' && isFinite(t));
-    const r=hscGroup(g.rows,hasT ? g.times : null,key,L,opts);
+    const r=hscGroup(g.rows,hasT ? g.times : null,key,L,g.refs.some(v=>typeof v==='number') ? Object.assign({},opts,{refs:g.refs}) : opts);
     r.candidates.sort((a,b)=>(b.score-a.score) || (b.w-a.w));
     const share=r.nonConst ? r.rndCnt/r.nonConst : 0;
     const strong=r.candidates.filter(c=>c.score>=.6 && !['random','const'].includes(c.kind));
@@ -204,29 +309,45 @@ function hexScan(packets,opts){
 }
 
 // кандидаты → заготовка схемы HEX Structure (без пересечений: лучшие по оценке, остальное — байты)
+const hscSpan=c=>c.wb ? [c.b0,c.b0+c.wb] : [8*c.off,8*(c.off+c.w)];
 function hexScanPick(group,minScore){
   minScore=minScore==null ? .6 : minScore;
-  const take=[], busy=new Uint8Array(group.len);
+  const take=[], busy=new Uint8Array(8*group.len);
   for(const c of group.candidates){
-    if(c.score<minScore || c.kind==='random') continue;
-    let clash=false; for(let k=c.off;k<c.off+c.w;k++) if(busy[k]) clash=true;
+    if(c.score<minScore || c.kind==='random' || c.kind==='refinfo') continue;
+    const [a,b]=hscSpan(c);
+    let clash=false; for(let k=a;k<b;k++) if(busy[k]) clash=true;
     if(clash) continue;
-    for(let k=c.off;k<c.off+c.w;k++) busy[k]=1;
+    for(let k=a;k<b;k++) busy[k]=1;
     take.push(c);
   }
-  return take.sort((a,b)=>a.off-b.off);
+  return take.sort((x,y)=>hscSpan(x)[0]-hscSpan(y)[0]);
 }
 function hexScanSchema(group,minScore){
   const L=group.len, take=hexScanPick(group,minScore);
   const fields=[], push=f=>fields.push(f);
-  const gap=(a,b)=>{ if(b>a) push({n:'f'+a,t:'bytes',len:b-a}); };
+  const gap=(a,b)=>{                                              // промежуток в битах: байты целиком, края — битами
+    while(a<b){
+      if(a%8===0 && b-a>=8){ const len=Math.floor((b-a)/8); push({n:'f'+(a/8),t:'bytes',len}); a+=8*len; }
+      else { const w=Math.min(b-a,8-(a%8)); push({n:'b'+a,t:'bits',w}); a+=w; }
+    }
+  };
   let pos=0;
-  const names={coord:0,lon:0,angle:0,time:0,counter:0,enum:0,text:0,const:0,checksum:0,bcd:0};
+  const names={coord:0,lon:0,angle:0,time:0,counter:0,enum:0,text:0,const:0,checksum:0,bcd:0,quantity:0};
   for(const c of take){
-    gap(pos,c.off);
-    const nm=c.kind+(names[c.kind]++ ? names[c.kind] : '');
+    const [a,b]=hscSpan(c);
+    if(c.kind==='quantity' && c.bcd && (a%8 || (b-a)%8)) continue;      // BCD не по границе байта HEX Structure не показывает
+    gap(pos,a);
+    const nm=c.kind==='quantity' ? String(c.name||'value').replace(/[^\w]+/g,'_') : c.kind+(names[c.kind]++ ? names[c.kind] : '');
     const endian=c.le ? 'le' : undefined, ty=(c.signed ? 'i' : 'u')+8*c.w;
-    if(c.kind==='const'){ push({n:'c'+c.off,t:'u8',fmt:'hex'}); }
+    if(c.kind==='quantity'){
+      const prec=Math.max(0,Math.min(4,Math.ceil(-Math.log10(Math.abs(c.scale)||1)-1e-9)));
+      const q=Object.assign({scale:+c.scale.toPrecision(6),prec},c.bias ? {bias:+c.bias.toPrecision(6)} : {},c.unit ? {unit:c.unit} : {});
+      if(c.bcd) push({n:nm,t:'bytes',len:(b-a)/8,fmt:'bcd'});
+      else if(a%8===0 && (b-a)%8===0 && [8,16,24,32].includes(b-a)) push(Object.assign({n:nm,t:(c.signed?'i':'u')+(b-a)},endian ? {endian} : {},q));
+      else push(Object.assign({n:nm,t:'bits',w:b-a},c.signed ? {signed:true} : {},q));
+    }
+    else if(c.kind==='const'){ push({n:'c'+c.off,t:'u8',fmt:'hex'}); }
     else if(c.kind==='text'){ push({n:nm,t:'str',len:c.w}); }
     else if(c.kind==='checksum'){ push(Object.assign({n:'crc',t:'u'+8*c.w,fmt:'hex',calc:c.sum,to:'crc'},endian ? {endian} : {})); }
     else if(c.float){ push(Object.assign({n:nm,t:'f'+8*c.w},endian ? {endian} : {})); }
@@ -234,8 +355,8 @@ function hexScanSchema(group,minScore){
     else if(c.kind==='time') push(Object.assign({n:nm,t:'u'+8*c.w,scale:c.scale,unit:'s',prec:3},endian ? {endian} : {}));
     else if(c.kind==='coord' || c.kind==='lon' || c.kind==='angle') push(Object.assign({n:nm,t:ty,scale:c.scale,unit:'°',prec:5},endian ? {endian} : {}));
     else push(Object.assign({n:nm,t:ty},endian ? {endian} : {}));
-    pos=c.off+c.w;
+    pos=b;
   }
-  gap(pos,L);
+  gap(pos,8*L);
   return {name:'scan-'+group.group, fields};
 }

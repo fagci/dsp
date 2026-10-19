@@ -6,10 +6,13 @@
 
 def({ id:'hexScan', title:'HEX Field Finder', cat:'Data', kw:'hex bytes packet fields find detect coordinates time lat lon counter checksum heuristic reverse unknown protocol encrypted',
   readout:true, tall:true, resize:true, w:520,
-  ins:[{n:'rec',t:'rec'},{n:'bin',t:'bin'},{n:'text',t:'txt'},{n:'go',t:'num'}],
+  ins:[{n:'rec',t:'rec'},{n:'bin',t:'bin'},{n:'text',t:'txt'},{n:'go',t:'num'},{n:'ref',t:'num'}],
   outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'count',t:'num'},{n:'found',t:'num'}],
   params:[{n:'group',t:'select',opts:['length','kind + length','all'],d:'length',label:'compare packets of the same'},
           {n:'hexcol',t:'text',d:'hex',label:'hex field in a record (else raw, data)',adv:true},
+          {n:'refcol',t:'text',d:'',label:'reference quantity: a number field of the record (empty — the ref input at the arrival of a packet)'},
+          {n:'refName',t:'text',d:'value',label:'reference name (becomes the field name)'},
+          {n:'refUnit',t:'text',d:'',label:'reference unit (°C, %, V…)'},
           {n:'minN',t:'range',min:6,max:200,step:1,d:12,label:'packets needed in a group'},
           {n:'max',t:'num',min:50,max:100000,step:1000,d:5000,label:'packets kept',adv:true},
           {n:'live',t:'check',d:true,label:'analyse while packets arrive (every 2 s)'},
@@ -18,14 +21,14 @@ def({ id:'hexScan', title:'HEX Field Finder', cat:'Data', kw:'hex bytes packet f
           {n:'clr',t:'button',label:'Clear',fn:n=>{ n.pk=[]; n.res=[]; n.dirty=true; n.schemaText=''; n.text='cleared'; }}],
   init:n=>{ n.pk=[]; n.res=[]; n.dirty=false; n.lastRec=null; n.lastBin=null; n.lastText=undefined; n.prevGo=0; n.t=0; n.recOut=null; n.schemaText=''; n.fresh=0; n.text='wire records with a hex field (decoders, Table, PCAP Reader)'; },
   process(n,I){
-    const P=n.p, add=(d,t,kind)=>{ n.pk.push({d,t,kind}); if(n.pk.length>P.max) n.pk.shift(); n.fresh++; };
+    const P=n.p, refIn=typeof I.ref==='number' && isFinite(I.ref) ? I.ref : undefined, add=(d,t,kind,ref)=>{ n.pk.push({d,t,kind,ref:ref!==undefined ? ref : refIn}); if(n.pk.length>P.max) n.pk.shift(); n.fresh++; };
     let rs=I.rec; if(rs && !Array.isArray(rs)) rs=[rs];
     if(rs && rs!==n.lastRec){
       n.lastRec=rs;
       for(const r of rs){
         if(!r) continue;
         const col=[P.hexcol||'hex','raw','data'].find(c=>typeof r[c]==='string' && r[c].length>=2 && r[c].length%2===0 && /^[0-9a-f]+$/i.test(r[c]));
-        if(col) add(hexFromHex(r[col]),typeof r.t==='number' ? r.t : undefined,r.kind||'');
+        if(col){ const rv=P.refcol ? parseFloat(r[P.refcol]) : NaN; add(hexFromHex(r[col]),typeof r.t==='number' ? r.t : undefined,r.kind||'',isFinite(rv) ? rv : undefined); }
       }
     }
     if(I.bin && I.bin.d && I.bin!==n.lastBin){ n.lastBin=I.bin; add(I.bin.d,undefined,''); }
@@ -39,16 +42,16 @@ def({ id:'hexScan', title:'HEX Field Finder', cat:'Data', kw:'hex bytes packet f
     let out=null;
     if(n.dirty){
       n.dirty=false; n.t=0; n.fresh=0;
-      const pk=n.pk.map(p=>({d:p.d,t:p.t,kind:p.kind}));
+      const pk=n.pk.map(p=>({d:p.d,t:p.t,kind:p.kind,ref:p.ref})), so={minN:P.minN,refName:P.refName,refUnit:P.refUnit};
       let rows=pk;
       if(P.group==='kind + length'){                    // группа = вид записи + длина: подменяем длину ключом
         const by=new Map();
         for(const p of pk){ const k=p.kind||'-'; if(!by.has(k)) by.set(k,[]); by.get(k).push(p); }
-        n.res=[]; for(const [k,v] of by) for(const g of hexScan(v,{minN:P.minN})) { g.group=k+' · '+g.group; n.res.push(g); }
-      } else n.res=hexScan(rows,{minN:P.minN,group:P.group==='all' ? 'all' : 'length'});
+        n.res=[]; for(const [k,v] of by) for(const g of hexScan(v,so)) { g.group=k+' · '+g.group; n.res.push(g); }
+      } else n.res=hexScan(rows,Object.assign({group:P.group==='all' ? 'all' : 'length'},so));
       const recs=[];
       for(const g of n.res) for(const c of g.candidates.filter(c=>c.score>=.6 && c.kind!=='random' && c.kind!=='const'))
-        recs.push({t:Date.now(),src:'HexScan',kind:c.kind,id:g.group+'@'+c.off+'+'+c.w,group:g.group,off:c.off,width:c.w,score:c.score,label:c.label,example:c.example,text:c.kind+' @'+c.off+'+'+c.w+' '+c.label});
+        recs.push({t:Date.now(),src:'HexScan',kind:c.kind,id:g.group+'@'+c.off+'+'+c.w,group:g.group,off:c.off,width:c.w,score:c.score,label:c.label,example:c.example,text:c.kind+' @'+c.off+'+'+c.w+' '+c.label,...(c.kind==='quantity' ? {scale:c.scale,bias:c.bias,r:c.r,bits:c.wb,bit0:c.b0,le:c.le,signed:c.signed} : {})});
       out=recs.length ? recs : null;
       const best=n.res.find(g=>g.candidates.some(c=>c.score>=.6 && !['random','const'].includes(c.kind))) || n.res[0];
       n.schemaText=best ? JSON.stringify(hexScanSchema(best)) : '';
@@ -56,6 +59,7 @@ def({ id:'hexScan', title:'HEX Field Finder', cat:'Data', kw:'hex bytes packet f
       const L=[n.pk.length+' packets, '+n.res.length+' group(s)'];
       for(const g of n.res.slice(0,4)){
         L.push('— '+g.group+': '+g.n+' × '+g.len+' B · '+g.verdict);
+        for(const c of g.candidates.filter(c=>c.kind==='refinfo')) L.push('   '+c.label);
         for(const c of hexScanPick(g,.5).filter(c=>c.kind!=='const').slice(0,8)) L.push('   @'+c.off+'+'+c.w+' '+c.kind+' '+c.score.toFixed(2)+' '+c.label+(c.example!==undefined ? ' · '+c.example : ''));
       }
       n.text=L.join('\n');

@@ -333,6 +333,7 @@ const PRESET_CATS={
   'Bytes: File over Any Text Channel (Loopback)':'Network & IoT',
   'Hex: Parse a Packet (Ethernet / IPv4 / UDP)':'Network & IoT',
   'Hex: Table Rows → Packets → Table':'Network & IoT',
+  'Hex: Reverse a Sensor — Find the Temperature Field by a Reference':'Unknown Signals',
   'Hex: PCAP File → Packets → HEX Structure':'Network & IoT',
   'Wi-Fi: ESP32 Sniffer → Table and HEX Structure':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
@@ -5053,6 +5054,26 @@ hx.size.w=460; hx.size.h=520; applySize(hx);
 const t2=addNode('table',920,200,{list:'@patch',data:''});
 t2.size.w=320; t2.size.h=300; applySize(t2);
 addEdge(t1.id,'rec',hx.id,'rec'); addEdge(hx.id,'rec',t2.id,'rec');
+markWiresDirty();
+});
+preset('Hex: Reverse a Sensor — Find the Temperature Field by a Reference', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'An unknown sensor sends 9-byte packets. Next to it stands a thermometer you trust: its reading goes with every packet (here the column temp of the Table; in a real run — the ref input, e.g. from a serial thermometer, or a field of the record).\n'+
+  'HEX Field Finder correlates every byte, every window of 3–16 bits and every BCD number with the reference and prints the line: temperature ≈ 0.1·x − 40 (r = 0.9999) — the 12-bit field that starts in the middle of a byte, its scale and offset. Constants, the counter and the checksum are found the usual way. «text» is a structure draft for HEX Structure (own structure): the temperature field comes with scale, bias and unit.\n'+
+  'The test sensor here: [A5][id][counter][flags][temperature 12 bit = (°C + 40)·10][humidity][pressure u16 LE, 0.1 hPa][xor8].'});
+nt.size.w=860; nt.size.h=170; applySize(nt);
+let csv='hex,temp';
+for(let i=0;i<150;i++){
+  const T=15+6*Math.sin(i/13)+1.5*Math.sin(i/3.1), H=55+15*Math.sin(i/21), P=1005+20*Math.sin(i/17);
+  const rt=Math.round((T+40)*10), b=[0xA5,0x3C,i&255,0,(rt>>4)&255,((rt&15)<<4),Math.round(H),Math.round(P*10)&255,Math.round(P*10)>>8];
+  let x=0; for(const v of b) x^=v; b.push(x);
+  csv+='\n'+b.map(v=>v.toString(16).padStart(2,'0')).join('')+','+(Math.round(T*100)/100);
+}
+const tb=addNode('table',40,250,{list:'@patch',advance:'rate',rate:25,loop:false,data:csv});
+tb.size.w=320; tb.size.h=320; applySize(tb);
+const hs=addNode('hexScan',420,250,{refcol:'temp',refName:'temperature',refUnit:'°C',minN:20,live:true});
+hs.size.w=640; hs.size.h=420; applySize(hs);
+addEdge(tb.id,'rec',hs.id,'rec');
 markWiresDirty();
 });
 preset('Hex: PCAP File → Packets → HEX Structure', function(){

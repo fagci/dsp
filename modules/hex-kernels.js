@@ -12,7 +12,7 @@
      _left — осталось байт (при разборе), _len — размер схемы в байтах (в calc)
    as — короткое имя поля в rec (первое найденное): body.ies[0].data.ssid → ssid
    enumBy + enums — enum зависит от другого поля: enumBy:'type', enums:{0:{…},1:{…}}
-   scale/prec/unit — показать число умноженным (v*scale), значение остаётся целым
+   scale/bias/prec/unit — показать число v*scale+bias, значение остаётся целым
    xor — маска, накладываемая на сумму (DMR: CSBK 0xA5A5, PI 0x6969)
    calc: 'crc16-x25' | 'crc32' | 'inet16' | 'xor8' | 'sum8' | …  — контрольная сумма (from / to / over:'all')
          любая другая строка — выражение, значение пересчитывается при сборке (длины, ihl)
@@ -513,7 +513,7 @@ function hexNumText(v,w,f){
     const on=[]; for(const k in f.flags) if((Number(v)>>Number(k))&1) on.push(f.flags[k]);
     return on.length ? on.join(' | ') : '—';
   }
-  if(f.scale!==undefined) return (Number(v)*f.scale).toFixed(f.prec!==undefined ? f.prec : 1)+(f.unit ? ' '+f.unit : '');
+  if(f.scale!==undefined) return (Number(v)*f.scale+(f.bias||0)).toFixed(f.prec!==undefined ? f.prec : 1)+(f.unit ? ' '+f.unit : '');
   if(f.fmt) return hexFmtInt(v,w,f.fmt);
   return String(v);
 }
