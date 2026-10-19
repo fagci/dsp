@@ -819,7 +819,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
       const vk=[n.p.vcols,n.p.rules,n.p.tint,n.p.vmode,n.p.tz];
       if(!n._vk || vk.some((x,i)=>x!==n._vk[i])){ n._vk=vk; n.uiDirty=true; n.uiFull=true; if(n.ui.view && !n.ui.view.hidden) tblRenderView(n); }
       // полная перерисовка до 300 строк × колонок — реже на длинном списке
-      if(n.uiDirty && performance.now()-(n.uiT||0)>400+2*Math.min(n.rows.length,TBL_ROWS)){ n.uiDirty=false; n.uiT=performance.now(); tblRenderList(n,true); }
+      if(n.uiDirty && performance.now()-(n.uiT||0)>500){ n.uiDirty=false; n.uiT=performance.now(); tblRenderList(n,true); }
       tblMark(n);
     }
   },
@@ -874,7 +874,7 @@ function tblInit(n){
   syncCustomHeight(n,root,150);
   const q=s=>root.querySelector(s);
   n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), tree:q('.tbl-tree'), pick:q('.tbl-pick'), shown:q('.tbl-shown'),
-    vmBtn:q('.tbl-vm'), filter:q('.tbl-filter'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:!!n.p.follow && !n.p.rev, jump:!!n.p.follow && !n.p.rev, marked:-1};
+    vmBtn:q('.tbl-vm'), filter:q('.tbl-filter'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:!!n.p.follow && !n.p.rev, jump:!!n.p.follow && !n.p.rev, marked:-1, markEl:null, rh:0, hdh:0, vh:0, st:0, atEnd:false};
   n.ui.view.hidden=!n.viewOpen;                           // пересборка узла (смена колонок) не должна прятать панель
   q('.tbl-viewb').classList.toggle('on',!!n.viewOpen);
   const vw=n.ui.view;                                     // прокрутка и фокус поля «new field» переживают пересборку узла
@@ -887,6 +887,10 @@ function tblInit(n){
     parts.reduce((a,x)=>{ const path=a ? a+'/'+x : x; n._open.add(path); return path; },'');
   }
   n.ui.list.addEventListener('keydown',e=>tblKey(n,e));
+  let sq=0;                                               // прокрутка и размер — раз в кадр
+  const onScroll=()=>{ if(!sq) sq=requestAnimationFrame(()=>{ sq=0; if(!n.disposed && n.ui) tblScrolled(n); }); };
+  n.ui.list.addEventListener('scroll',onScroll,{passive:true});
+  if(typeof ResizeObserver!=='undefined') new ResizeObserver(onScroll).observe(n.ui.list);
   n.ui.list.addEventListener('pointerover',e=>{
     const row=e.target.closest?.('.tbl-row');
     if(row && !row.title && n.rows[+row.dataset.i]) row.title=tblRowTip(n,n.rows[+row.dataset.i]);
@@ -1145,18 +1149,38 @@ async function tblPick(n,list){
   if(Array.isArray(sh) && (!sh.length || (sh.length===1 && tblCanon(sh[0])===n.p.list))) n.p.show=[list];
   await tblUse(n,list);
 }
-// Старые строки окна → новые. Список сдвигается (потолок maxRows сбрасывает старые, tail-окно уходит вниз), поэтому ищем смещение off:
-// старая строка off+j стала новой j. Принимаем, если отличаются не больше половины (иначе одна пересборка дешевле сотни замен).
-function tblAlign(old,cur){
-  const miss=off=>{ let d=0; const m=Math.min(old.length-off,cur.length); for(let j=0;j<m;j++) if(old[off+j]!==cur[j]) d++; return d; };
-  let best=0, bd=miss(0), tries=0;
-  for(let off=1;off<old.length && bd>0 && tries<48;off++){
+// Старые строки окна → новые. Окно сдвигается прокруткой (hint — сдвиг индексов), потолок maxRows сбрасывает старые строки сверху
+// (старая строка off+j стала новой j). off<0 — окно ушло вверх: строки дописываются перед старыми. Принимаем, если отличаются не больше
+// половины перекрытия (иначе одна пересборка дешевле сотни замен); NaN — не совмещается.
+function tblAlign(old,cur,hint){
+  const miss=off=>{ let d=0,m=0; for(let j=Math.max(0,-off);j<cur.length && j+off<old.length;j++){ m++; if(old[off+j]!==cur[j]) d++; } return [d,m]; };
+  const ok=(d,m)=>m>0 && (d<=16 || d*2<=m);
+  { const [d,m]=miss(hint); if(ok(d,m)) return hint; }
+  let best=NaN, bd=Infinity, tries=0;
+  for(let off=0;off<old.length && tries<48;off++){
     if(old[off]!==cur[0]) continue;
     tries++;
-    const d=miss(off); if(d<bd){ bd=d; best=off; }
+    const [d,m]=miss(off); if(ok(d,m) && d<bd){ bd=d; best=off; }
   }
-  const kept=Math.min(old.length-best,cur.length);
-  return bd<=16 || bd*2<=kept ? best : -1;
+  return best;
+}
+// Виртуализация: в DOM — видимые строки и буфер, остальное — распорки по высоте (строки однострочные, высота одна: --rh)
+const TBL_BUF=12, TBL_Q=8, TBL_W0=60;
+function tblWindow(n,N){
+  const ui=n.ui, rh=ui.rh, W=rh ? Math.ceil((ui.vh||300)/rh)+2*TBL_BUF : TBL_W0;
+  let s=0;
+  if(ui.tail && (ui.jump || ui.atEnd)) s=N-W;
+  else if(rh) s=Math.floor(Math.max(0,Math.floor(Math.max(0,(ui.st||0)-(ui.hdh||0))/rh)-TBL_BUF)/TBL_Q)*TBL_Q;
+  s=Math.max(0,Math.min(s,N-W));
+  return [s,Math.min(N,s+W)];
+}
+// положение прокрутки и размер видимой области — из события, а не чтением layout на каждой перерисовке
+function tblScrolled(n){
+  const ui=n.ui, list=ui.list;
+  ui.st=list.scrollTop; ui.vh=list.clientHeight; ui.atEnd=ui.st+ui.vh>=list.scrollHeight-4;
+  if(!ui.rend || tcView(n)==='cards') return;
+  const [s,e]=tblWindow(n,n.rows.length);
+  if(s!==ui.rend.s || e!==ui.rend.e) tblRenderList(n);
 }
 function tblRenderList(n,inc){
   const ui=n.ui, list=ui.list, N=n.rows.length, ro=tblRO(n), grid=tcView(n)==='grid';
@@ -1173,9 +1197,11 @@ function tblRenderList(n,inc){
   }
   n.bgCtx=tblTintCtx(n);
   if(tcView(n)==='cards'){ const keep=list.scrollTop; tcCards(n); list.scrollTop=keep; return; }
-  // Окно строк [s,e): дописанные записи и сдвиг окна в tail-режиме (сверху убираются, снизу достраиваются), изменившиеся ячейки —
-  // точечно; список целиком пересобирается только при смене колонок / сортировки / режима. Ширины колонок только растут (до смены колонок).
-  const base=ui.rend, s=ui.tail ? Math.max(0,N-TBL_ROWS) : 0, e=Math.min(N,s+TBL_ROWS);
+  // Окно строк [s,e) — видимые и буфер: дописанные записи, сдвиг прокруткой и потолком maxRows (сверху убираются, снизу достраиваются),
+  // изменившиеся ячейки — точечно; список пересобирается только при смене колонок / сортировки / режима. Ширины колонок только растут.
+  let base=ui.rend;
+  if(!base || base.grid!==grid){ ui.rh=0; list.style.removeProperty('--rh'); }     // режим другой — высоту строки измерить заново
+  const [s,e]=tblWindow(n,N);
   let vc=null, texts=null, wid=null, tc='', hk='';
   if(grid){
     vc=tblViewCols(n).filter(x=>!x.hide);
@@ -1196,17 +1222,21 @@ function tblRenderList(n,inc){
     sigs.push(grid ? texts[i-s].join('\u0001')+'\u0002'+bg : (named ? n.labelFn(r) : '')+'\u0002'+tblSummary(n,r)+'\u0002'+bg+'\u0002'+(n.colorCol ? r[n.colorCol] : '')+'\u0002'+n.cl.filter(c=>{ const t=tblType(n,c); return t==='photo' || t==='audio'; }).map(c=>r[c]).join(','));
   }
   const rowAt=i=>tblRow(n,i,ro,grid ? {vc,t:texts[i-s]} : null);
-  const more=N>TBL_ROWS;
-  const footText=()=>ui.tail ? '… '+s+' earlier rows hidden — narrow with the filter' : '… '+(N-e)+' more rows — narrow with the filter';
-  const off=!n.uiFull && base && base.els && base.els.length && base.grid===grid && base.ro===ro && base.hk===hk && base.tail===ui.tail
-    && more===!!base.foot && list.contains(base.els[0]) ? tblAlign(base.sigs,sigs) : -1;
-  if(off>=0){
-    const els=base.els.slice(), old=base.sigs.slice(), len=e-s;
-    let changed=off>0 || len!==els.length;
-    for(let k=0;k<off;k++) els[k].remove();
-    els.splice(0,off); old.splice(0,off);
+  const spacers=sp=>{ const rh=ui.rh||0; sp.sp0.style.height=s*rh+'px'; sp.sp1.style.height=(N-e)*rh+'px'; };
+  const atEnd=ui.tail && (ui.jump || ui.atEnd);
+  const toEnd=()=>{ list.scrollTop=list.scrollHeight; ui.jump=false; ui.st=list.scrollTop; ui.atEnd=true; };
+  const off=!n.uiFull && base && base.els && base.els.length && base.sp0 && base.grid===grid && base.ro===ro && base.hk===hk && list.contains(base.els[0])
+    ? tblAlign(base.sigs,sigs,s-base.s) : NaN;
+  if(off===off){
+    const sp0=base.sp0, sp1=base.sp1, len=e-s;
+    let els=base.els.slice(), old=base.sigs.slice(), changed=off!==0 || len!==els.length;
+    if(off>0){ for(let k=0;k<off;k++) els[k].remove(); els.splice(0,off); old.splice(0,off); }
+    else if(off<0){
+      const fr=document.createDocumentFragment(), pe=[];
+      for(let j=0;j<-off && j<len;j++){ const row=rowAt(s+j); pe.push(row); fr.append(row); }
+      sp0.after(fr); els=pe.concat(els); old=sigs.slice(0,pe.length).concat(old);
+    }
     while(els.length>len){ els.pop().remove(); old.pop(); }
-    const atEnd=ui.tail && (changed || e>base.e) ? atEndNow() : false;
     for(let k=0;k<els.length;k++){
       const el=els[k], i=s+k;
       if(sigs[k]!==old[k] && !el.classList.contains('edit')){      // строка в правке: форму не рвём
@@ -1222,26 +1252,22 @@ function tblRenderList(n,inc){
     if(grid && tc!==base.tc) list.style.setProperty('--tc',tc);
     for(let i=s+els.length;i<e;i++){
       const row=rowAt(i);
-      base.foot ? base.foot.before(row) : list.append(row);
+      sp1.before(row);
       els.push(row); old.push(sigs[i-s]);
     }
-    let foot=base.foot;
-    if(more){
-      if(!foot){ foot=document.createElement('div'); foot.className='tbl-empty sm'; list.append(foot); }
-      foot.textContent=footText();
-    }
-    ui.rend={grid,tail:ui.tail,s,e,first:n.rows[s],last:n.rows[e-1],vc,wid,tc,hk,ro,foot,els,sigs:old};
+    ui.rend={grid,s,e,vc,wid,tc,hk,ro,sp0,sp1,els,sigs:old};
+    spacers(ui.rend);
     if(changed) ui.marked=-1;
-    if(atEnd) list.scrollTop=list.scrollHeight;
+    if(atEnd) toEnd();
     tblMark(n,true);
     return;
   }
-  const keep=list.scrollTop, atEnd=ui.tail && (ui.jump || atEndNow());
-  ui.jump=false;
+  const keep=list.scrollTop;
   const frag=document.createDocumentFragment();
+  let hd=null;
   if(grid){
     list.style.setProperty('--tc',tc);
-    const hd=document.createElement('div'); hd.className='tbl-hd';
+    hd=document.createElement('div'); hd.className='tbl-hd';
     hd.append(Object.assign(document.createElement('span'),{textContent:'#',className:'tbl-no'}));
     for(const x of vc){
       const on=n.p.sortCol===x.c, h=Object.assign(document.createElement('span'),{textContent:x.c+(on ? (n.p.sortDir<0 ? ' ▼' : ' ▲') : ''),title:x.c+' — click to sort'});
@@ -1250,14 +1276,26 @@ function tblRenderList(n,inc){
     hd.append(document.createElement('span'));
     frag.append(hd);
   } else list.style.removeProperty('--tc');
+  const sp0=document.createElement('div'), sp1=document.createElement('div');
+  sp0.className=sp1.className='tbl-sp';
+  frag.append(sp0);
   const els=[];
   for(let i=s;i<e;i++){ const row=rowAt(i); els.push(row); frag.append(row); }
-  let foot=null;
-  if(more){ foot=document.createElement('div'); foot.className='tbl-empty sm'; foot.textContent=footText(); frag.append(foot); }
-  ui.rend={grid,tail:ui.tail,s,e,first:n.rows[s],last:n.rows[e-1],vc,wid,tc,hk,ro,foot,els,sigs};
+  frag.append(sp1);
+  ui.rend={grid,s,e,vc,wid,tc,hk,ro,sp0,sp1,els,sigs};
   n.uiFull=false;
   list.replaceChildren(frag);                            // одна атомарная замена: прокрутка не сбрасывается
+  if(!ui.rh){                                            // высота строки: измеряем один раз на режим, дальше строкам задаётся --rh
+    let h=0; for(const r of els.slice(0,6)) h=Math.max(h,r.getBoundingClientRect().height);
+    if(h>0){
+      ui.rh=h; list.style.setProperty('--rh',h+'px'); ui.hdh=hd ? hd.getBoundingClientRect().height : 0; ui.vh=list.clientHeight;
+      list.scrollTop=keep; ui.st=keep;
+      return tblRenderList(n);                           // окно теперь считается по настоящей высоте
+    }
+  }
+  spacers(ui.rend);
   list.scrollTop=atEnd ? list.scrollHeight : keep;
+  if(atEnd) toEnd(); else ui.st=keep;
   ui.marked=-1; tblMark(n,true);
 }
 /* ---------- вид: колонки, форматы, раскраска ---------- */
@@ -1418,8 +1456,8 @@ function tblSelect(n,i){                                // выбор запис
 function tblKey(n,e){
   const N=n.rows.length;
   if(!N || e.altKey || e.ctrlKey || e.metaKey) return;
-  const s=n.ui.tail ? Math.max(0,N-TBL_ROWS) : 0, last=Math.min(N,s+TBL_ROWS)-1;
-  const cur=n.ui.marked, page=Math.max(1,Math.floor(n.ui.list.clientHeight/24)-1);
+  const s=0, last=N-1;
+  const cur=n.ui.marked, page=Math.max(1,Math.floor(n.ui.list.clientHeight/(n.ui.rh||24))-1);
   let i;
   switch(e.key){
     case 'ArrowDown': i=cur<0 ? s : cur+1; break;
@@ -1433,17 +1471,19 @@ function tblKey(n,e){
   e.preventDefault(); e.stopPropagation();
   tblSelect(n,clamp(i,s,last));
 }
-// подсветка текущей записи (выбранной или выданной секвенсором)
+// подсветка текущей записи (выбранной или выданной секвенсором); строки вне окна прокрутка подтягивает, перерисовка отметит
 function tblMark(n,still){
   const ui=n.ui, want=n.rows.length && (n.started || n.p.sel!=null) ? n.idx : -1;
   if(ui.marked===want) return;
   ui.marked=want;
-  for(const el of ui.list.children){
-    if(el.dataset.i===undefined) continue;
-    const on=+el.dataset.i===want;
-    el.classList.toggle('on',on);
-    if(on && !still){ const t=el.offsetTop-ui.list.clientHeight/2; if(el.offsetTop<ui.list.scrollTop || el.offsetTop+el.offsetHeight>ui.list.scrollTop+ui.list.clientHeight) ui.list.scrollTop=Math.max(0,t); }
-  }
+  ui.markEl?.classList.remove('on'); ui.markEl=null;
+  const rd=ui.rend, list=ui.list;
+  if(want<0 || !rd) return;
+  const el=want>=rd.s && want<rd.e ? rd.els[want-rd.s] : null;
+  if(el){
+    el.classList.add('on'); ui.markEl=el;
+    if(!still){ const t=el.offsetTop-list.clientHeight/2; if(el.offsetTop<list.scrollTop+(ui.hdh||0) || el.offsetTop+el.offsetHeight>list.scrollTop+list.clientHeight) list.scrollTop=Math.max(0,t); }
+  } else if(!still && ui.rh) list.scrollTop=Math.max(0,want*ui.rh+(ui.hdh||0)-list.clientHeight/2);
 }
 // панель «▦ view»: колонки (показ, порядок, формат, ширина), раскладка и правила раскраски строк
 function tblViewToggle(n){
