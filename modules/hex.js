@@ -183,7 +183,7 @@ function hxEditCell(n,row,k){
   inp.value=rec.f.enum || rec.f.flags ? String(rec.value) : String(rec.value);
   cell.textContent=''; cell.append(inp); inp.focus(); inp.select();
   let done=false;
-  const fin=ok=>{ if(done) return; done=true; if(ok && inp.value!==String(rec.value)) hxCommitField(n,rec,inp.value); n.uiDirty=true; };
+  const fin=ok=>{ if(done) return; done=true; n.ui.trows=null; if(ok && inp.value!==String(rec.value)) hxCommitField(n,rec,inp.value); n.uiDirty=true; };
   inp.addEventListener('keydown',e=>{ e.stopPropagation(); if(e.key==='Enter') fin(true); else if(e.key==='Escape') fin(false); });
   inp.addEventListener('blur',()=>fin(true));
   inp.addEventListener('click',e=>e.stopPropagation());
@@ -240,26 +240,39 @@ function hxRender(n){
     return c;
   };
   const N=Math.min(buf.length,HX_MAX_SHOW);
-  let h='';
-  for(let o=0;o<N;o+=W){
-    h+='<div class="hx-row"><span class="hx-off">'+o.toString(16).padStart(4,'0')+'</span><span class="hx-hex">';
-    for(let i=o;i<o+W;i++){
-      const sep=i>o && (i-o)%G===0 ? ' ' : '';
-      if(i<N){
-        let t=hexByte(buf[i]);
-        if(n.ui.pend!=null && i===n.selByte) t=n.ui.pend.toString(16)+'_';
-        h+=sep+'<b data-i="'+i+'" class="'+cls(i)+'">'+t+'</b>';
-      } else h+=sep+'<b class="hx-x">  </b>';
+  // раскладка дампа (строки, группы) пересобирается только при смене размера; дальше правятся лишь изменившиеся байты
+  const lk=N+'|'+W+'|'+G+'|'+(buf.length>N ? buf.length-N : 0);
+  if(u.layout!==lk){
+    u.layout=lk;
+    let h='';
+    for(let o=0;o<N;o+=W){
+      h+='<div class="hx-row"><span class="hx-off">'+o.toString(16).padStart(4,'0')+'</span><span class="hx-hex">';
+      for(let i=o;i<o+W;i++){
+        const sep=i>o && (i-o)%G===0 ? ' ' : '';
+        h+=i<N ? sep+'<b data-i="'+i+'"></b>' : sep+'<b class="hx-x">  </b>';
+      }
+      h+='</span><span class="hx-asc">';
+      for(let i=o;i<Math.min(N,o+W);i++) h+='<i data-i="'+i+'"></i>';
+      h+='</span></div>';
     }
-    h+='</span><span class="hx-asc">';
-    for(let i=o;i<Math.min(N,o+W);i++){ const c=buf[i]; h+='<i data-i="'+i+'" class="'+cls(i)+'">'+(c>=32&&c<127 ? hxEsc(String.fromCharCode(c)) : '·')+'</i>'; }
-    h+='</span></div>';
+    if(!buf.length) h='<div class="hx-empty">no data — wire <b>bin</b> / <b>text</b>, type hex below or wire a <b>rec</b></div>';
+    if(buf.length>N) h+='<div class="hx-empty">… +'+(buf.length-N)+' bytes not shown</div>';
+    u.dump.innerHTML=h;
+    u.bs=Array.from(u.dump.querySelectorAll('b[data-i]')); u.as=Array.from(u.dump.querySelectorAll('i[data-i]'));
+    u.bt=new Array(N).fill(null); u.at=u.bt.slice(); u.bc=u.bt.slice(); u.ac=u.bt.slice();
   }
-  if(!buf.length) h='<div class="hx-empty">no data — wire <b>bin</b> / <b>text</b>, type hex below or wire a <b>rec</b></div>';
-  if(buf.length>N) h+='<div class="hx-empty">… +'+(buf.length-N)+' bytes not shown</div>';
-  u.dump.innerHTML=h;
-  // дерево
-  let t='';
+  for(let i=0;i<N;i++){
+    const c=cls(i), c0=buf[i];
+    let t=hexByte(c0);
+    if(u.pend!=null && i===n.selByte) t=u.pend.toString(16)+'_';
+    if(u.bt[i]!==t){ u.bt[i]=t; u.bs[i].textContent=t; }
+    if(u.bc[i]!==c){ u.bc[i]=c; u.bs[i].className=c; }
+    const ch=c0>=32&&c0<127 ? String.fromCharCode(c0) : '·';
+    if(u.at[i]!==ch){ u.at[i]=ch; u.as[i].textContent=ch; }
+    if(u.ac[i]!==c){ u.ac[i]=c; u.as[i].className=c; }
+  }
+  // дерево: переписываем только изменившиеся строки
+  const rows=[];
   res.fields.forEach((r,k)=>{
     if(r.pad) return;
     const cont=isCont(r);
@@ -268,12 +281,18 @@ function hxRender(n){
     const rawHex=!cont && typeof r.value==='number' && r.bl>8 && !r.f.enum ? ' <u>0x'+r.value.toString(16)+'</u>' : '';
     const warn=r.warn ? ' <em>'+hxEsc(r.warn)+'</em>' : '';
     const sw=cont ? '' : '<s class="'+(r.color>=0 ? 'hx-c'+r.color : '')+'"></s>';
-    t+='<div class="hx-f'+(n.sel===k ? ' on' : '')+(r.err||r.calcOk===false ? ' bad' : '')+'" data-k="'+k+'" style="padding-left:'+(r.depth*10+2)+'px">'+sw+
+    rows.push('<div class="hx-f'+(n.sel===k ? ' on' : '')+(r.err||r.calcOk===false ? ' bad' : '')+'" data-k="'+k+'" style="padding-left:'+(r.depth*10+2)+'px">'+sw+
       '<span class="hx-n">'+hxEsc(r.name||r.n)+'</span><span class="hx-o">'+off+'</span>'+
-      '<span class="hx-val'+(hxEditable(r)&&!res.trunc ? ' ed' : '')+'">'+hxEsc(val)+rawHex+warn+'</span></div>';
+      '<span class="hx-val'+(hxEditable(r)&&!res.trunc ? ' ed' : '')+'">'+hxEsc(val)+rawHex+warn+'</span></div>');
   });
-  if(res.rest.length) t+='<div class="hx-f"><span class="hx-n">trailing</span><span class="hx-o">'+res.len.toString(16)+'</span><span class="hx-val">'+res.rest.length+' B</span></div>';
-  u.tree.innerHTML=t;
+  if(res.rest.length) rows.push('<div class="hx-f"><span class="hx-n">trailing</span><span class="hx-o">'+res.len.toString(16)+'</span><span class="hx-val">'+res.rest.length+' B</span></div>');
+  const prev=u.trows;
+  if(!prev || prev.length!==rows.length){ u.tree.innerHTML=rows.join(''); }
+  else {
+    const ch=u.tree.children;
+    for(let i=0;i<rows.length;i++) if(rows[i]!==prev[i]) ch[i].outerHTML=rows[i];
+  }
+  u.trows=rows;
   if(document.activeElement!==u.line) u.line.value=Array.from(buf.subarray(0,512),hexByte).join(' ')+(buf.length>512 ? ' …' : '');
   const name=res.schema || n.p.schema;
   const st=n.err ? '⚠ '+n.err : res.trunc ? '⚠ truncated' : res.ok ? 'ok' : '⚠ '+(res.fields.find(r=>r.warn)?.warn||'check');
