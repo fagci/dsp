@@ -131,7 +131,7 @@ Object.assign(HEX_LIB,{
     {n:'mic',t:'bytes',len:16,when:'type==3'}, {n:'datalen',t:'u16',when:'type==3'}, {n:'data',t:'rest'}]},
   'wifi-ie':{ title:'Information element', group:'Wi-Fi', fields:[
     {n:'id',t:'u8',enum:WIFI_IE_NAMES},
-    {n:'len',t:'u8'},
+    {n:'len',t:'u8',calc:'data.$len'},
     {n:'data',t:'bytes',len:'len',sub:{by:'id',map:{0:'wifi-ie-ssid',3:'wifi-ie-chan',5:'wifi-ie-tim',7:'wifi-ie-country',11:'wifi-ie-load',45:'wifi-ie-ht',48:'wifi-ie-rsn',61:'wifi-ie-htop',221:'wifi-ie-vendor',255:'wifi-ie-ext'}}}]},
   'wifi-ie-ssid':{ fields:[{n:'ssid',t:'str',len:'rest',enc:'utf8',as:'ssid'}]},
   'wifi-ie-chan':{ fields:[{n:'channel',t:'u8',as:'ds_channel'}]},
@@ -155,13 +155,13 @@ Object.assign(HEX_LIB,{
   'wifi-vendor-wps':{ endian:'be', fields:[{n:'attrs',t:'list',sub:'wps-attr',key:'type',val:'val',as:'wps'}]},
   'wps-attr':{ endian:'be', fields:[
     {n:'type',t:'u16',fmt:'hex',enum:{0x104a:'version',0x1044:'state',0x1008:'config methods',0x1047:'uuid',0x1054:'primary device type',0x1011:'device name',0x1021:'manufacturer',0x1023:'model name',0x1024:'model number',0x1042:'serial',0x103b:'response type',0x1057:'ap setup locked',0x1012:'device password id',0x103c:'rf bands',0x1049:'vendor extension'}},
-    {n:'len',t:'u16'},
+    {n:'len',t:'u16',calc:'val.$len'},
     {n:'val',t:'bytes',len:'len',sub:{by:'type',map:{0x1011:'wps-str',0x1021:'wps-str',0x1023:'wps-str',0x1024:'wps-str',0x1042:'wps-str'}}}]},
   'wps-str':{ fields:[{n:'v',t:'str',len:'rest',enc:'utf8'}]},
   'wifi-vendor-p2p':{ endian:'le', fields:[{n:'attrs',t:'list',sub:'p2p-attr',key:'id',val:'val',as:'p2p'}]},
   'p2p-attr':{ endian:'le', fields:[
     {n:'id',t:'u8',enum:{0:'status',1:'minor reason',2:'capability',3:'device id',4:'go intent',5:'config timeout',6:'listen channel',7:'group bssid',8:'ext listen timing',9:'interface address',10:'manageability',11:'channel list',12:'notice of absence',13:'device info',14:'group info',15:'group id',16:'interface',17:'operating channel',18:'invitation flags'}},
-    {n:'len',t:'u16'},
+    {n:'len',t:'u16',calc:'val.$len'},
     {n:'val',t:'bytes',len:'len',sub:{by:'id',map:{0:'p2p-u8',2:'p2p-cap',3:'p2p-mac',4:'p2p-u8',7:'p2p-mac',9:'p2p-mac',6:'p2p-chan',17:'p2p-chan',13:'p2p-devinfo',15:'p2p-groupid'}}}]},
   'p2p-u8':{ fields:[{n:'v',t:'u8'}]},
   'p2p-mac':{ fields:[{n:'mac',t:'bytes',len:6,fmt:'mac'}]},

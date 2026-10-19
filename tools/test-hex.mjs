@@ -5,8 +5,8 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,DataView,ArrayBuffer,TextEncoder,TextDecoder,Array,Map,Set,Error,String,Number,BigInt,Object,Date,JSON,isNaN,parseInt});
-for(const f of ['hex-kernels.js','hex-formats.js','hex-gsm.js','wifisniff-kernels.js','pcap-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
-vm.runInContext('this.H={HexAisAsm,hexAisPayload,pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,hexParse,hexBuild,hexToRec,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
+for(const f of ['hex-kernels.js','hex-formats.js','hex-gsm.js','wifisniff-kernels.js','radiobridge-kernels.js','pcap-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
+vm.runInContext('this.H={HexAisAsm,hexAisPayload,pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,radioLine,radioStatus,radioRec,radioTx,radioProbeResp,hexParse,hexBuild,hexToRec,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
 const H=ctx.H;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 const hex=s=>H.hexFromHex(s), toHex=b=>H.hexToHex(b);
@@ -257,6 +257,24 @@ const rsnIe='0100'+'000fac04'+'0100'+'000fac04'+'0100'+'000fac02'+'0c00';
   ok('wifi control frames',c.o.kind==='ps-poll' && c.o.src===cB && br.o.kind==='block-ack-req' && br.o['body.ssc']===0x10,JSON.stringify([c.o,br.o]));
   ok('wifi assoc request has hidden SSID',as.o.kind==='assoc-req' && as.o['ie.ssid']==='' && as.o['ie.rates']==='8284',JSON.stringify(as.o)); }
 
+// Radio Bridge (ESP32-C5): строки прошивки → запись с едиными именами
+{ const prb='4000 0000 ffffffffffff aabbccddee09 ffffffffffff 1000'.replace(/ /g,'')+ie(0,'')+ie(1,'8284');
+  const wl2=H.radioLine('RX WIFI 6 -48 '+prb), r1=H.radioRec(wl2,5);
+  ok('bridge wifi line',wl2.proto==='wifi' && wl2.chan===6 && wl2.rssi===-48 && r1.kind==='probe-req' && r1.src===cB && r1.dst==='ff:ff:ff:ff:ff:ff' && r1.ssid==='' && r1.hexSchema==='wifi' && r1.hex===prb && !Object.keys(r1).some(k=>/\[\d+\]/.test(k)),JSON.stringify(r1));
+  const bl=H.radioLine('RX BLE 11:22:33:44:55:66 -70 0 1 020106050950303031'.replace('050950303031','0509'+'4d794150')), r2=H.radioRec(bl,5);
+  ok('bridge ble line',bl.proto==='ble' && r2.src==='11:22:33:44:55:66' && r2.kind==='adv_ind' && r2.addr_type==='random' && r2.name==='MyAP' && r2.hexSchema==='ble-adv',JSON.stringify(r2));
+  ok('bridge line garbage ignored',H.radioLine('RX WIFI x')===null && H.radioLine('OK MODE WIFI')===null && H.radioStatus('OK MODE WIFI')==='OK MODE WIFI' && H.radioStatus('RX WIFI 1 -1 aa')===null);
+  const zl2=H.radioLine('RX ZB 15 -60 200 '+'61880562 1a0000 3412 4800 0000 3412 1e11 4001 0600 0401 0107 012202'.replace(/ /g,'')), r3=H.radioRec(zl2,5);
+  ok('bridge zigbee line',zl2.proto==='zb' && zl2.chan===15 && zl2.lqi===200 && r3.src==='1234' && r3.net==='1a62' && r3.zb_cluster===6 && r3.zcl_cmd===2,JSON.stringify(r3));
+  ok('bridge tx lines',H.radioTx('aabbcc','WIFI')==='TX WIFI aabbcc' && H.radioTx('zb 01 02 03','WIFI',true)==='TX ZB 010203 CSMA' && H.radioTx({hex:'0a0b',proto:'ble'},'WIFI')==='TX BLE 0a0b' && H.radioTx(hex('ff00'),'ble')==='TX BLE ff00' && H.radioTx('zz','WIFI')===null && H.radioTx('aa','XX')===null); }
+
+// сборка по именам (ie.ssid …) и автоответчик на Probe request
+{ const req=H.radioRec(H.radioLine('RX WIFI 6 -48 '+('4000 0000 ffffffffffff aabbccddee09 ffffffffffff 1000'.replace(/ /g,''))+ie(0,'')+ie(1,'8284')),5);
+  const resp=H.radioProbeResp(req,{ssid:'MyAP',bssid:'02:00:00:00:00:AA',seq:7});
+  const rr=resp && H.radioRec({proto:'wifi',chan:6,rssi:0,bytes:resp},5);
+  ok('probe auto-reply built by names',rr && rr.kind==='probe-resp' && rr.dst===cB && rr.src==='02:00:00:00:00:aa' && rr.ssid==='MyAP' && rr['ie.channel']===6 && rr['ie.rates']==='82848b960c121824',JSON.stringify(rr));
+  const dreq=H.radioRec(H.radioLine('RX WIFI 6 -48 '+('4000 0000 ffffffffffff aabbccddee09 ffffffffffff 1000'.replace(/ /g,''))+ie(0,'4f74686572')),5);
+  ok('auto-reply ignores other SSID and other frames',H.radioProbeResp(dreq,{ssid:'MyAP'})===null && H.radioProbeResp(rr,{ssid:'MyAP'})===null && H.radioProbeResp(req,{ssid:''})===null); }
 // 802.15.4 / Zigbee / BLE
 { const z=rec('ieee802154','6188 05 621a 0000 3412  4800 0000 3412 1e 11  40 01 0600 0401 01 07  01 22 02');
   ok('zigbee ZCL toggle',z.r.ok && z.o.kind==='data' && z.o.src==='1234' && z.o.dst==='0000' && z.o.net==='1a62' && z.o.nwk_src==='1234' && z.o.zb_cluster===6 && z.o.zb_profile===260 && z.o.zcl_cmd===2,JSON.stringify(z.o));

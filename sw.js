@@ -10,7 +10,7 @@
 // новой не подтвердит успешную загрузку ('ok'). Если скрипты не загрузились, страница шлёт 'rollback' —
 // пока сеть отдаёт index.html этой версии, воркер подаёт index.html последней подтверждённой.
 const PFX='dsp-shell-v';
-const CACHE='dsp-shell-veeee6e30';
+const CACHE='dsp-shell-v54a9983e';
 const V=CACHE.slice(PFX.length);
 const META='dsp-meta', STATE_KEY='./__state', PIN_MS=6*3600e3;    // сколько держать откат, пока не выйдет новая версия
 const SHELL=[
@@ -221,6 +221,8 @@ const SHELL=[
   './modules/siglab.js?v='+V,
   './modules/wifisniff-kernels.js?v='+V,
   './modules/wifisniff.js?v='+V,
+  './modules/radiobridge-kernels.js?v='+V,
+  './modules/radiobridge.js?v='+V,
   './modules/pcap-kernels.js?v='+V,
   './modules/pcap.js?v='+V,
   './modules/link-kernels.js?v='+V,

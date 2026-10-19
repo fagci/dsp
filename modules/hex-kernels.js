@@ -458,6 +458,7 @@ function hexField(f,sch,c,prefix,depth,env,recs,ss){
     rec.b0=c.bit; rec.list=true; push();
     const start=c.bit;
     let cnt;
+    if(B && f.key && f.as) hexExpandItems(f,name,env,c);
     if(B){
       const key=name+'[', seen=new Set();
       for(const k of c.keys) if(k.startsWith(key)){ const j=parseInt(k.slice(key.length),10); if(j>=0) seen.add(j); }
@@ -494,6 +495,36 @@ function hexField(f,sch,c,prefix,depth,env,recs,ss){
     return;
   }
   c.warn.push((f.n||'?')+': unknown type '+t);
+}
+// сборка по именам элементов списка: ie.ssid, ie.rates → ies[0].id=0, ies[0].data.ssid …
+// (имя → id по keys / enum поля key; значение — в единственное поле вложенной схемы или в поле val целиком; ie.rsn.akm — поле akm)
+function hexExpandItems(f,name,env,c){
+  const pre=f.as+'.', names=[];
+  for(const k of c.keys) if(k.startsWith(pre)){ const nm=k.slice(pre.length).split('.')[0]; if(names.indexOf(nm)<0) names.push(nm); }
+  if(!names.length || c.keys.some(k=>k.startsWith(name+'['))) return;
+  const sub=hexSub(f,env,c), kf=sub && sub.fields.find(x=>x.n===f.key), vf=sub && sub.fields.find(x=>x.n===f.val);
+  const slug=x=>String(x).toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
+  const idOf=nm=>{
+    for(const id in (f.keys||{})){ const v=f.keys[id]; if(typeof v==='string' && slug(v)===nm) return +id; }
+    const en=kf && kf.enum; if(en) for(const id in en) if(slug(en[id])===nm) return +id;
+    const m=new RegExp('^'+f.key+'(\\d+)$').exec(nm); return m ? +m[1] : undefined;
+  };
+  const put=(k,v)=>{ c.vals[k]=v; c.keys.push(k); };
+  let i=0;
+  for(const nm of names){
+    const id=idOf(nm);
+    if(id===undefined){ c.warn.push(f.n+': unknown item "'+nm+'"'); continue; }
+    const ip=name+'['+i++ +'].';
+    put(ip+f.key,id);
+    const dsub=vf && vf.sub ? hexSubOf(vf.sub,n=>n===f.key ? id : 0,c.lib) : null;
+    const leaves=dsub ? dsub.fields.filter(x=>x.n && x.t!=='pad') : [];
+    for(const k of Object.keys(c.vals)){
+      if(k!==pre+nm && !k.startsWith(pre+nm+'.')) continue;
+      const rest=k.slice((pre+nm).length+1);
+      if(!rest) put(ip+f.val+(dsub && leaves.length===1 ? '.'+leaves[0].n : ''),c.vals[k]);
+      else put(ip+f.val+'.'+rest,c.vals[k]);
+    }
+  }
 }
 function hexEnsure(a,bit){ const n=(bit+7)>>3; while(a.length<n) a.push(0); }
 

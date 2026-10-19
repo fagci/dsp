@@ -5109,6 +5109,30 @@ addEdge(tx.id,'text',ws.id,'text');
 addEdge(ws.id,'rec',tb.id,'rec'); addEdge(ws.id,'rec',hx.id,'rec');
 markWiresDirty();
 });
+preset('Radio: ESP32-C5 Bridge → Network Map (Wi-Fi / BLE / Zigbee)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'One node for Wi-Fi (2.4 / 5 GHz, management / control / data), BLE and 802.15.4 (Zigbee, Thread): flash tools/radio-bridge-esp32c5, press Connect (Chrome / Edge). Every frame is a record with the same names for every protocol — proto, kind, src, dst, net (BSSID / PAN), ie.ssid, ad.name, zb_cluster … — so one rule set draws the map: access points, stations, BLE devices and Zigbee nodes with the links between them (Rec → Entities → Table → Graph), and one condition filters any frame to or from a device (Rec Filter).\n'+
+  'Without hardware the Text Source plays sample frames in the firmware line format (RX WIFI <channel> <rssi> <hex>, RX BLE …, RX ZB …). Transmit: the txbin / txrec / tx inputs, or tick auto-reply to answer Probe requests. Use only on your own network or with permission; encrypted payloads stay encrypted.'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const tx=addNode('textsrc',40,200,{text:'RX WIFI 6 -48 80000000ffffffffffffaabbccddee01aabbccddee0110000000000000000000640031040004486f6d65010482848b96030106\nRX WIFI 11 -60 80000000ffffffffffffaabbccddee02aabbccddee021000000000000000000064003104000443616665010482848b9603010b\nRX WIFI 6 -55 40000000ffffffffffffaabbccddee09ffffffffffff10000000010482848b96\nRX WIFI 6 -54 00000000aabbccddee01aabbccddee09aabbccddee01100031040a000004486f6d65010482848b96\nRX WIFI 6 -53 10000000aabbccddee09aabbccddee01aabbccddee011000310400000100010482848b96\nRX WIFI 6 -50 08010000aabbccddee01aabbccddee0affffffffffff1000aaaa0300000008004500001c0001000040110000c0a80001c0a800021f90007b00080000\nRX BLE 11:22:33:44:55:66 -70 0 1 02010605094d794150\nRX BLE 66:55:44:33:22:11 -81 0 0 020106\nRX ZB 15 -60 200 618805621a000034124800000034121e114001060004010107012202\nRX ZB 15 -62 190 618806621a341200004800341200001e12400106000401010809230a'});
+tx.size.w=300; tx.size.h=300; applySize(tx);
+const rb=addNode('radioBridge',380,200,{mode:'WIFI'});
+rb.size.w=300; rb.size.h=300; applySize(rb);
+const ent=addNode('recEnt',720,200,{rules:ENT_TEMPLATES['Radio (Wi-Fi / BLE / Zigbee)']});
+ent.size.w=460; ent.size.h=320; applySize(ent);
+const col=addNode('table',1220,200,{list:'@patch',key:'id',initial:false});
+col.size.w=340; col.size.h=320; applySize(col);
+const g=addNode('graphview',1600,200,{directed:true});
+g.size.w=520; g.size.h=420; applySize(g);
+const fl=addNode('recFilter',380,560,{expr:"r.src==='aa:bb:cc:dd:ee:09' || r.dst==='aa:bb:cc:dd:ee:09'"});
+fl.size.w=300; fl.size.h=120; applySize(fl);
+const raw=addNode('table',720,560,{list:'@patch',key:'id',initial:false});
+raw.size.w=460; raw.size.h=300; applySize(raw);
+addEdge(tx.id,'text',rb.id,'text');
+addEdge(rb.id,'rec',ent.id,'rec'); addEdge(ent.id,'rec',col.id,'rec'); addEdge(col.id,'rows',g.id,'rows');
+addEdge(rb.id,'rec',fl.id,'rec'); addEdge(fl.id,'rec',raw.id,'rec');
+markWiresDirty();
+});
 preset('Joystick: Gamepad → Frame → MQTT', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'A hardware gamepad drives the same frame as the on-screen pad: Gamepad axes → Joystick inputs ex1…ey2 (a wire overrides the screen and the keys for that axis; the dead zone and expo of the Joystick still apply) → one JSON line → MQTT Out.\n'+
