@@ -174,6 +174,7 @@ const PRESET_CATS={
   'ESP-SDR: ESP32 Spectrum':'SDR Receivers',
   'Measure: Modulation Meter — FM and AM (Generator)':'Analysis & Measurement',
   'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
+  'Measure: Spectrum Baseline — New Signal and Missing Carrier Alarm (Generator)':'Analysis & Measurement',
   'Measure: SINAD of an FM Receiver (Generator)':'Analysis & Measurement',
   'Measure: IQ Quality — DC and Imbalance (Generator)':'Analysis & Measurement',
   'Meshtastic: Chat and Nodes on the Map':'Network & IoT',
@@ -1342,6 +1343,26 @@ const n1=addNode('numview',780,520,{label:'SNR, dB'});
 const n2=addNode('numview',980,520,{label:'level, dBFS'});
 addEdge(g.id,'iq',ch.id,'in'); addEdge(ch.id,'out',sp.id,'in');
 addEdge(ch.id,'snr',n1.id,'in'); addEdge(ch.id,'level',n2.id,'in');
+markWiresDirty();
+});
+preset('Measure: Spectrum Baseline — New Signal and Missing Carrier Alarm (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Spectrum Baseline learns what the band normally looks like (every cell remembers its level and spread, and how often a signal was there) and then reports what is different: a new signal, a wideband rise of the floor (a jammer), a carrier that was always there and vanished.\n'+
+  'Here two stable carriers are the "normal" band. After the norm is learned (a few seconds), switch the third generator from off to AM — a new station: it is marked on the analyzer and a record goes out on `rec` (wire it to a Table to keep a log). Switch it off again: an end record with the duration. Switch a stable generator off: "gone".\n'+
+  'A new station that stays on is absorbed into the norm after a while (the `adapt` parameter). On a real receiver put the baseline after a sweep or an IQ Spectrum, let it run for hours (Save norm keeps it), and use the outputs for alarms.'});
+nt.size.w=760; nt.size.h=170; applySize(nt);
+const g1=addNode('iqGen',40,260,{sr:'1024000',fc:100000000,mode:'FM',off:-250000,lvl:-35,tone:1000,dev:3000,noise:-120});
+const g2=addNode('iqGen',40,460,{sr:'1024000',fc:100000000,mode:'AM',off:50000,lvl:-40,tone:700,depth:.5,noise:-70});
+const g3=addNode('iqGen',40,660,{sr:'1024000',fc:100000000,mode:'off',off:200000,lvl:-35,tone:1000,depth:.5,noise:-120});
+const a1=addNode('iqAdd',300,360,{}), a2=addNode('iqAdd',520,460,{});
+const sp=addNode('iqSpec',740,460,{size:'4096',avg:'4',upd:60});
+const bl=addNode('specBase',1000,260,{learn:25,adapt:300,confirm:3,hold:2000});
+const sa=addNode('sa',1000,640,{fmin:99.4e6,fmax:100.6e6});
+sa.size.w=640; sa.size.h=320; applySize(sa);
+const n1=addNode('numview',1480,260,{label:'deviations'});
+addEdge(g1.id,'iq',a1.id,'a'); addEdge(g2.id,'iq',a1.id,'b'); addEdge(a1.id,'out',a2.id,'a'); addEdge(g3.id,'iq',a2.id,'b');
+addEdge(a2.id,'out',sp.id,'in'); addEdge(sp.id,'spec',bl.id,'spec'); addEdge(sp.id,'spec',sa.id,'spec'); addEdge(bl.id,'base',sa.id,'spec2');
+addEdge(bl.id,'bands',sa.id,'bands'); addEdge(bl.id,'count',n1.id,'in');
 markWiresDirty();
 });
 preset('Measure: SINAD of an FM Receiver (Generator)', function(){
