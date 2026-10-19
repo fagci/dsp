@@ -275,8 +275,8 @@ function tblRebuild(n,prune){
     const vi=new Set(portsOf(n,'ins').map(p=>p.n)), vo=new Set(portsOf(n,'outs').map(p=>p.n));
     Graph.edges.filter(e=>(e.to===n.id && !vi.has(e.tp)) || (e.from===n.id && !vo.has(e.fp))).forEach(delEdge);
   }
-  n.initialized=false;
-  rebuildNode(n);
+  // UI таблицы живёт в .mid: при смене одних портов пересобираем только колонки пинов, список не мигает
+  if(!(n.ui && n.initialized && !n.ghost && !dashMode && rebuildPorts(n))){ n.initialized=false; rebuildNode(n); }
   markTopoDirty();
 }
 // порты полей: p.pout — отмеченные колонки (нет — все, как в старых патчах); p.pref {связь:[поля]} — поля связанной записи «Связь.Поле»
