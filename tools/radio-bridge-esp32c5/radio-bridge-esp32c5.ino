@@ -160,11 +160,14 @@ static void statReset() {
   statT = millis(); statCh = wifiChan; statDrop0 = dropped;
 }
 // rx_ctrl fields differ between chips: pick bb format (cur_bb_format | sig_mode) and mcs when the SDK has them
-template <class T> static auto bbFmt(const T &c, int) -> decltype((void)c.cur_bb_format, uint8_t()) { return c.cur_bb_format; }
-template <class T> static auto bbFmt(const T &c, long) -> decltype((void)c.sig_mode, uint8_t()) { return c.sig_mode; }
-template <class T> static uint8_t bbFmt(const T &, ...) { return 0; }
-template <class T> static auto mcsOf(const T &c, int) -> decltype((void)c.mcs, uint8_t()) { return c.mcs; }
-template <class T> static uint8_t mcsOf(const T &, ...) { return 7; }
+// In a struct: the Arduino prototype generator breaks on top-level templates
+struct RxInfo {
+  template <class T> static auto fmt(const T &c, int) -> decltype((void)c.cur_bb_format, uint8_t()) { return c.cur_bb_format; }
+  template <class T> static auto fmt(const T &c, long) -> decltype((void)c.sig_mode, uint8_t()) { return c.sig_mode; }
+  template <class T> static uint8_t fmt(const T &, ...) { return 0; }
+  template <class T> static auto mcs(const T &c, int) -> decltype((void)c.mcs, uint8_t()) { return c.mcs; }
+  template <class T> static uint8_t mcs(const T &, ...) { return 7; }
+};
 // airtime estimate, us: legacy rate by table, HT/VHT/HE by HT20 MCS 0..7 (overestimates fast HE frames)
 static uint32_t airtimeUs(uint8_t sigMode, uint8_t rate, uint8_t mcs, uint32_t bytes) {
   static const uint16_t leg[16] = {10, 20, 55, 110, 10, 20, 55, 110, 480, 240, 120, 60, 540, 360, 180, 90};   // x100 kbit/s
@@ -518,7 +521,7 @@ extern "C" void wifiPromiscCb(void *buf, wifi_promiscuous_pkt_type_t type) {
   uint32_t sig = pkt->rx_ctrl.sig_len;
   if (statOn) {
     int8_t rs = pkt->rx_ctrl.rssi;
-    uint32_t air = airtimeUs(bbFmt(pkt->rx_ctrl, 0), pkt->rx_ctrl.rate, mcsOf(pkt->rx_ctrl, 0), sig);
+    uint32_t air = airtimeUs(RxInfo::fmt(pkt->rx_ctrl, 0), pkt->rx_ctrl.rate, RxInfo::mcs(pkt->rx_ctrl, 0), sig);
     portENTER_CRITICAL(&stMux);
     st.frames++; st.bytes += sig; st.air += air; st.rssiSum += rs;
     if (rs > st.rssiMax) st.rssiMax = rs;
