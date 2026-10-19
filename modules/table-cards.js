@@ -6,7 +6,7 @@
    Карточка записи — панель с большим фото, всеми полями, связями и обратными связями («кто ссылается на эту запись»). */
 
 const TC_TYPES=[['text','text'],['long','long text'],['num','number'],['bool','checkbox'],['date','date'],['choice','choice'],
-  ['photo','photo'],['audio','audio'],['link','link to a list']];
+  ['photo','photo'],['audio','audio'],['link','link to a list'],['auto','auto number'],['calc','calculated']];
 const TC_VIEWS=[['cards','🃏','cards'],['grid','☰','full list (columns)'],['compact','≡','brief list (name · values)']];
 const TC_SEP=' | ';
 
@@ -63,9 +63,12 @@ async function tcSchemaSave(n){
   Undo.push();
 }
 function tcSetDef(n,c,def){
-  const t=n.schema.types;
-  if(!def || (!def.t || def.t==='text') && !def.opts && !def.to) delete t[c]; else t[c]=def;
-  return tcSchemaSave(n);
+  const t=n.schema.types, was=t[c]?.t;
+  if(!def || (!def.t || def.t==='text') && !def.opts && !def.to && !def.def && !def.req) delete t[c]; else t[c]=def;
+  const sv=tcSchemaSave(n);
+  // вычисляемое или автонумерация включены / выключены / изменены: значения пересчитываются
+  if(was==='calc' || was==='auto' || def?.t==='calc' || def?.t==='auto') return sv.then(()=>trRecalc(n)).then(()=>{ tblRenderView(n); tblRenderList(n); });
+  return sv;
 }
 // другие списки, в схеме которых есть связь с list: [{list, col, def}]
 async function tcLinkCols(list){
@@ -189,6 +192,10 @@ function tcFormField(n,c,rec,ty){
     const inp=document.createElement('textarea'); inp.rows=3; inp.value=v??''; inp.style.cssText=TBL_IN+'resize:vertical;font-family:inherit;';
     inp.addEventListener('keydown',e=>e.stopPropagation());
     return {inp,wide:true};
+  }
+  if(ty==='auto' || ty==='calc'){                         // значение даёт сама таблица
+    const inp=document.createElement('input'); inp.value=v??''; inp.disabled=true; inp.placeholder=ty==='auto' ? 'auto number' : 'calculated';
+    return {inp};
   }
   if(ty==='num'){
     const inp=document.createElement('input'); inp.type='number'; inp.step='any'; inp.value=v??'';

@@ -85,6 +85,7 @@ const SHELL=[
   './modules/table.js?v='+V,
   './modules/table-templates.js?v='+V,
   './modules/table-cards.js?v='+V,
+  './modules/table-rules.js?v='+V,
   './modules/logic.js?v='+V,
   './modules/indicators.js?v='+V,
   './modules/viz-kernels.js?v='+V,

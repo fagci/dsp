@@ -1,0 +1,57 @@
+// Правила полей Table (выражения, автонумерация, уникальность, обязательность): node tools/test-tablerules.mjs
+import vm from 'node:vm';
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
+const ctx=vm.createContext({tcDef:(n,c)=>n.schema.types[c]||{}, tblKind:()=>'patch', tblRO:()=>false, tblSave:async()=>{}, tblDerive(){}, tblToItem(){}, ListDB:{}, console});
+vm.runInContext(fs.readFileSync(path.join(root,'modules/table-rules.js'),'utf8')+';this.K={trCompile,trPrepare,trCalcAll,trCalcRow,trParseUnique,trDupes,trRenameRef,trRecalc,trVirtual};',ctx);
+const K=ctx.K;
+let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
+const ev=(s,r={})=>K.trCompile(s)(r);
+ok('arithmetic and precedence',ev('1+2*3')===7 && ev('(1+2)*3')===9 && ev('10%4')===2 && ev('-[a]+1',{a:3})===-2);
+ok('fields: [name with space] and a bare name',ev('[unit price]*[qty]',{'unit price':2.5,qty:4})===10 && ev('a+b',{a:1,b:2})===3);
+ok('empty operand gives an empty result, no NaN',ev('[a]*2',{a:''})==='' && ev('[a]/0',{a:5})==='' && ev('[a]*[b]',{})==='');
+ok('strings: concat, compare, case',ev("[a]+' '+[b]",{a:'x',b:'y'})==='x y' && ev("upper([a])",{a:'ab'})==='AB' && ev("[a]=='x'",{a:'x'})===1 && ev('"a"<"b"')===1);
+ok('numeric strings are numbers',ev('[a]+[b]',{a:'2',b:'3'})===5);
+ok('ternary, if, logic',ev('[a]>1 ? "big" : "small"',{a:2})==='big' && ev('if([a]>1,1,0)',{a:0})===0 && ev('[a]>1 && [b]',{a:2,b:0})===0 && ev('!0')===1);
+ok('functions',ev('round(2.345,2)')===2.35 && ev('max(1,[a],3)',{a:7})===7 && ev('coalesce([a],[b])',{a:'',b:5})===5 && ev("substr('abcdef',2,3)")==='bcd' && ev('len("abc")')===3);
+ok('syntax errors raise',['1+','(1','foo(1)','1 2','',"'a' ? 1"].every(s=>{ try{ K.trCompile(s); return false; }catch(e){ return true; } }));
+ok('no code is executed',(()=>{ try{ ev('constructor.constructor("return 1")()'); return false; }catch(e){ return true; } })());
+const mk=(types,card={},cl=['id','a','b'],all=[])=>({cl,all,schema:{types,card}});
+// автонумерация
+let n=mk({id:{t:'auto'}});
+let r=K.trPrepare(n,[{a:1},{a:2}]);
+ok('auto: numbers from 1, in order',r.ok.map(x=>x.id).join()==='1,2' && n.schema.card.seq.id===2);
+n.all.push(...r.ok);
+r=K.trPrepare(n,[{a:3}]); ok('auto: continues',r.ok[0].id===3);
+n.all.pop(); n.all.pop(); n.all.push({id:'',a:9});
+r=K.trPrepare(n,[{a:4}]); ok('auto: the counter does not roll back after deletes',r.ok[0].id===4 && n.schema.card.seq.id===4);
+r=K.trPrepare(n,[{id:10,a:5},{a:6}]); ok('auto: a supplied number is kept, the next goes above it',r.ok[0].id===10 && r.ok[1].id===11);
+n=mk({id:{t:'auto'}},{},['id','a'],[{id:1,a:'x'}]);
+r=K.trPrepare(n,[{id:1,a:'y'}]); ok('auto: a duplicate supplied number is refused',r.ok.length===0 && /duplicate/.test(r.bad[0].why));
+// уникальность по нескольким полям
+n=mk({}, {unique:[['a','b']]},['a','b','c'],[{a:'Ivan',b:'Petrov',c:1}]);
+r=K.trPrepare(n,[{a:'ivan ',b:'PETROV'},{a:'Ivan',b:'Sidorov'},{a:'Ivan',b:'Sidorov'}]);
+ok('unique: case/space-insensitive, the same batch counts',r.ok.length===1 && r.bad.length===2 && r.ok[0].b==='Sidorov');
+r=K.trPrepare(n,[{a:'Ivan',b:''},{a:'Ivan',b:''}]); ok('unique: an empty part skips the check',r.ok.length===2);
+r=K.trPrepare(n,[{a:'Ivan',b:'Petrov',c:2}],0,false); ok('unique: editing a row does not collide with itself',r.ok.length===1);
+ok('unique: parse and count existing duplicates',JSON.stringify(K.trParseUnique(n,'a, b; c, zzz; q'))===JSON.stringify([['a','b'],['c']]) && K.trDupes({all:[{a:1,b:1},{a:1,b:1},{a:2,b:1}]},[['a','b']])===1);
+// обязательные и умолчания
+n=mk({a:{req:true},b:{def:'x'},c:{t:'num',def:'5'}},{},['a','b','c']);
+r=K.trPrepare(n,[{a:'',b:'',c:''},{a:'v',b:'',c:''}]);
+ok('required refuses an empty value',r.ok.length===1 && /"a" is required/.test(r.bad[0].why));
+ok('defaults fill empty fields (numbers stay numbers)',r.ok[0].b==='x' && r.ok[0].c===5);
+r=K.trPrepare(n,[{a:'v',b:'',c:''}],-1,false); ok('defaults are not applied on edit',r.ok[0].b==='');
+// вычисляемые
+n=mk({sum:{t:'calc',expr:'[a]+[b]'},dbl:{t:'calc',expr:'[sum]*2'},m:{t:'calc',expr:'[a]*10',mat:true}},{},['a','b','sum','dbl','m'],[{a:1,b:2,sum:'',dbl:'',m:''},{a:3,b:4,sum:'',dbl:'',m:99}]);
+K.trCalcAll(n);
+ok('calc: computed on load, dependent columns in any order',n.all[0].sum===3 && n.all[0].dbl===6);
+ok('calc: non-stored are virtual, stored ones are not',n.virt.has('sum') && !n.virt.has('m'));
+ok('calc: a stored value stays on load, an empty one is filled',n.all[1].m===99 && n.all[0].m===10);
+r=K.trPrepare(n,[{a:5,b:6}]); ok('calc: new records get the values',r.ok[0].sum===11 && r.ok[0].dbl===22 && r.ok[0].m===50);
+n.schema.types.bad={t:'calc',expr:'[a]+'}; n.cl.push('bad'); K.trCalcRow(n,n.all[0]);
+ok('calc: a broken formula is reported, the row survives',!!n.calcErr.bad && n.all[0].bad==='' && n.all[0].sum===3);
+ok('rename: references follow',K.trRenameRef('[old]+old*2+olds+"old"','old','new')==='[new]+new*2+olds+"old"');
+ok('prototype names are not functions or fields',(()=>{ try{ ev('toString(1)'); return false; }catch(e){} return ev('constructor',{})===''; })());
+console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad?1:0);

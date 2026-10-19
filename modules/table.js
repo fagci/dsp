@@ -131,7 +131,7 @@ async function tblBackfill(n){
   for(const r of n.all) for(const c of n.cl) if(r[c]===undefined) r[c]='';
   if(tblKind(n.p.list)==='db'){
     try{
-      for(const i of dirty){ const it=tblToItem(n.all[i],n.cl); await ListDB.update(n.ids[i],{name:it.name,fields:it.fields,value:it.fields.value??''}); }
+      for(const i of dirty){ const it=tblToItem(n.all[i],n.cl,n.virt); await ListDB.update(n.ids[i],{name:it.name,fields:it.fields,value:it.fields.value??''}); }
       if(grown) await tblMetaSet(n.p.list,{cols:n.cl});
     }catch(e){ alert('storage: '+(e.message||e)); return; }
   } else await tblSave(n);
@@ -140,6 +140,15 @@ async function tblBackfill(n){
   if(n.ui) tblRenderAll(n);
 }
 // запись для хранения: объекты и байты — в текст
+// правила полей (table-rules.js) для новых записей: strict — исключение при нарушении, иначе нарушившие пропускаются
+function tblCheck(n,recs,strict,except=-1){
+  const pr=trPrepare(n,recs,except,except<0);
+  if(pr.bad.length){
+    if(strict) throw new Error(pr.bad[0].why);
+    n.rejected=(n.rejected||0)+pr.bad.length; n.lastReject=pr.bad[0].why;
+  }
+  return pr.ok;
+}
 const tblClean=r=>{ const o={}; for(const k in r){ const v=r[k]; o[k]=v==null ? '' : typeof v==='object' ? recFmt(v,true) : v; } return o; };
 
 /* ---------- фильтр ---------- */
@@ -185,7 +194,7 @@ function tblFilter(q){
 /* ---------- хранилище ---------- */
 function tblSplit(name){ const i=name.indexOf('/'); return i<0 ? ['',name] : [name.slice(0,i),name.slice(i+1)]; }
 // DB-запись ↔ строка таблицы: name — поле 'name', остальное — fields
-const tblToItem=(r,cl)=>{ const f={}; for(const k of cl) if(k!=='name') f[k]=r[k]??''; return {name:String(r.name??''),fields:f}; };
+const tblToItem=(r,cl,virt)=>{ const f={}; for(const k of cl) if(k!=='name' && !virt?.has(k)) f[k]=r[k]??''; return {name:virt?.has('name') ? '' : String(r.name??''),fields:f}; };
 function tblPresetRows(name){
   const src=BANDPLAN_PRESETS[name], kd=src.some(r=>r[6]), nt=src.some(r=>r[5]);
   const rows=src.map(([lo,hi,label,step,color,note,kind])=>{
@@ -242,6 +251,7 @@ async function tblLoadRun(n){
   }
   n.loaded=list; n.loadedData=kind==='patch' ? n.p.data : null;
   n.all=rows; n.ids=ids; n.cl=cols; n.schema=schema;
+  trCalcAll(n);
   // стартовая загрузка не трогает провода: их порты задаёт сохранённый p.cols; смена списка — пользователем
   if(n.wantCols){ n.wantCols=false; tblSetCols(n,cols,true); }
   else if(!n.p.cols.length && cols.length) tblSetCols(n,cols,false);
@@ -384,14 +394,15 @@ async function tblUpsert(n,recs,key){
       fresh.set(k,{...r,count:1,first:t,last:t});
     }
   }
+  for(const i of dirty) trCalcRow(n,n.all[i]);
   if(kind==='db') for(const i of dirty){
-    const it=tblToItem(n.all[i],n.cl);
+    const it=tblToItem(n.all[i],n.cl,n.virt);
     await ListDB.update(n.ids[i],{name:it.name,fields:it.fields,value:it.fields.value??''});
   }
   return {fresh:[...fresh.values()],grown};
 }
 // добавление записей; новые поля расширяют колонки (и порты — без потери проводов)
-async function tblAdd(n,recs){
+async function tblAdd(n,recs,strict){                  // strict (форма): нарушение правил — исключение; иначе такие записи пропускаются
   if(tblRO(n) || !recs.length) return;
   recs=recs.map(r=>tblClean(tblPacket(n,r)));
   let grown=false;
@@ -405,12 +416,13 @@ async function tblAdd(n,recs){
     }
   }
   for(const r of recs) for(const k in r) if(!n.cl.includes(k)){ n.cl.push(k); grown=true; }
+  recs=tblCheck(n,recs,strict); if(!recs.length) return;
   const kind=tblKind(n.p.list);
   const rows=recs.map(r=>{ const o={}; for(const c of n.cl) o[c]=r[c]??''; return o; });
   let ids;
   if(kind==='db'){
     try{
-      ids=await ListDB.addMany(n.p.list,rows.map(r=>tblToItem(r,n.cl)));
+      ids=await ListDB.addMany(n.p.list,rows.map(r=>tblToItem(r,n.cl,n.virt)));
       if(grown) await tblMetaSet(n.p.list,{cols:n.cl});
     }catch(e){ alert('storage: '+(e.message||e)); return; }
   } else ids=rows.map((_,i)=>n.all.length+i);
@@ -437,10 +449,11 @@ async function tblAdd(n,recs){
 async function tblUpdate(n,i,rec){
   if(tblRO(n)) return;
   const row=n.rows[i], k=n.all.indexOf(row), id=n.rowIds[i];
+  rec=tblCheck(n,[rec],true,k)[0];
   const o={}; for(const c of n.cl) o[c]=rec[c]??'';
   n.all[k]=o;
   if(tblKind(n.p.list)==='db'){
-    const it=tblToItem(o,n.cl);
+    const it=tblToItem(o,n.cl,n.virt);
     await ListDB.update(id,{name:it.name,fields:it.fields,value:it.fields.value??''});
     const was=n.labelFn(row), now=n.labelFn(o);
     if(was && now && was!==now && await tcRelink(n.p.list,was,now)){ await tblLoad(n); return; }   // связи на запись следуют за её именем
@@ -461,6 +474,7 @@ async function tblClear(n){
   if(tblRO(n)) return;
   if(tblKind(n.p.list)==='db') await ListDB.removeMany(n.ids);
   n.all=[]; n.ids=[]; n.p.sel=null;
+  if(n.schema?.card?.seq){ delete n.schema.card.seq; await trSeqSave(n); }      // счётчик автонумерации начинается заново
   if(tblKind(n.p.list)==='patch') await tblSave(n);
   tblDerive(n); seqReset(n);
 }
@@ -483,23 +497,23 @@ async function tblSync(n,list,onlyNew){
     if(onlyNew) continue;
     const row=n.all[i]; let ch=false;
     for(const c in r) if(String(row[c]??'')!==String(r[c]??'')){ row[c]=r[c]; ch=true; }
-    if(ch) dirty.push(i);
+    if(ch){ trCalcRow(n,row); dirty.push(i); }
   }
   const stale=[];
   if(!onlyNew) n.all.forEach((r,i)=>{ const k=r[key]; if(k!=='' && k!=null && !seen.has(String(k))) stale.push(i); });
   if(!dirty.length && !stale.length && !fresh.length && !grown) return;
   if(db){
     try{
-      for(const i of dirty){ const it=tblToItem(n.all[i],n.cl); await ListDB.update(n.ids[i],{name:it.name,fields:it.fields,value:it.fields.value??''}); }
+      for(const i of dirty){ const it=tblToItem(n.all[i],n.cl,n.virt); await ListDB.update(n.ids[i],{name:it.name,fields:it.fields,value:it.fields.value??''}); }
       if(stale.length) await ListDB.removeMany(stale.map(i=>n.ids[i]));
     }catch(e){ alert('storage: '+(e.message||e)); return; }
   }
   for(let j=stale.length-1;j>=0;j--){ const i=stale[j]; if(n.p.sel===n.ids[i]) n.p.sel=null; n.all.splice(i,1); n.ids.splice(i,1); }
-  const rows=fresh.map(r=>{ const o={}; for(const c of n.cl) o[c]=r[c]??''; return o; });
+  const rows=tblCheck(n,fresh).map(r=>{ const o={}; for(const c of n.cl) o[c]=r[c]??''; return o; });
   if(rows.length){
     let ids;
     if(db){
-      try{ ids=await ListDB.addMany(n.p.list,rows.map(r=>tblToItem(r,n.cl))); }
+      try{ ids=await ListDB.addMany(n.p.list,rows.map(r=>tblToItem(r,n.cl,n.virt))); }
       catch(e){ alert('storage: '+(e.message||e)); return; }
     }
     n.all.push(...rows); if(ids) n.ids.push(...ids);
@@ -532,9 +546,9 @@ async function tblColsEdit(n,cl,ren,fill){             // переименова
   const old=n.cl;
   const rows=n.all.map((r,k)=>{ const o={}; for(const c of cl) o[c]=fill?.[c] ? fill[c][k]??'' : r[ren?.[c]??c]??''; return o; });
   const gone=old.filter(c=>!cl.includes(c));
-  n.cl=cl.slice(); n.all=rows;
+  n.cl=cl.slice(); n.all=rows; n.virt=trVirtual(n);
   if(tblKind(n.p.list)==='db'){
-    if(gone.length || fill) for(let k=0;k<rows.length;k++){ const it=tblToItem(rows[k],n.cl); await ListDB.update(n.ids[k],{name:it.name,fields:it.fields}); }
+    if(gone.length || fill) for(let k=0;k<rows.length;k++){ const it=tblToItem(rows[k],n.cl,n.virt); await ListDB.update(n.ids[k],{name:it.name,fields:it.fields}); }
     await tblMetaSet(n.p.list,{cols:n.cl});
   } else await tblSave(n);
   tblSetCols(n,n.cl.slice(),true);
@@ -1410,6 +1424,9 @@ async function tblColsApply(n,cl,ren={},fill){
   const sc=n.schema, types={};
   for(const k in sc.types) if(live(k)) types[nm(k)]=sc.types[k];
   sc.types=types; sc.card.show=(sc.card.show||[]).filter(live).map(nm);
+  if(sc.card.unique) sc.card.unique=sc.card.unique.filter(a=>a.every(live)).map(a=>a.map(nm));
+  if(sc.card.seq){ const q={}; for(const k in sc.card.seq) if(live(k)) q[nm(k)]=sc.card.seq[k]; sc.card.seq=q; }
+  for(const k in ren) for(const c in types) if(types[c].expr) types[c]={...types[c],expr:trRenameRef(types[c].expr,ren[k],k)};
   if(sc.card.label){                                      // шаблон названия следует за переименованием, убранные поля выпадают
     sc.card.label=sc.card.label.replace(/\{([^{}]+)\}/g,(m,c)=>live(c) ? '{'+nm(c)+'}' : '');
     if(!/\{[^{}]+\}/.test(sc.card.label)) delete sc.card.label;
@@ -1449,6 +1466,19 @@ function tblFieldsPanel(n,box,mk,sel){
     row.append(mk('span','tv-lbl','record name'),q);
     if(!ro) row.append(sel([['','＋ field'],...n.cl.map(c=>[c,c])],'',c=>{ if(c) tcSetLabel(n,((q.value.trim()+' ').trimStart()+'{'+c+'}')); }));
     box.append(row);
+    {                                                    // уникальность по набору полей: «Surname, Name; Phone»
+      const ur=mk('div','tv-col'), u=mk('input','tv-q');
+      u.value=(n.schema.card.unique||[]).map(a=>a.join(', ')).join('; '); u.placeholder='Surname, Name; Phone'; u.disabled=ro;
+      u.title='unique: groups of fields separated by ; — no two rows may repeat the same group (an empty field in a group is ignored)';
+      u.addEventListener('keydown',e=>{ e.stopPropagation(); if(e.key==='Enter') u.blur(); });
+      u.addEventListener('change',async()=>{
+        const sets=trParseUnique(n,u.value), bad=trDupes(n,sets);
+        if(bad && !confirm(bad+' existing row(s) already repeat these fields; they stay, new duplicates will be refused. Continue?')){ u.value=(n.schema.card.unique||[]).map(a=>a.join(', ')).join('; '); return; }
+        if(sets.length) n.schema.card.unique=sets; else delete n.schema.card.unique;
+        await tcSchemaSave(n); tblRenderView(n);
+      });
+      ur.append(mk('span','tv-lbl','unique'),u); box.append(ur);
+    }
   }
   const lists=(n.treeNames||[]).filter(x=>tblKind(x)!=='preset');
   const vc=tblViewCols(n), card=new Set(tcShowCols(n));
@@ -1484,7 +1514,7 @@ function tblFieldsPanel(n,box,mk,sel){
     }
     row.append(name);
     if(!ro) row.append(sel(TC_TYPES,t,v=>{
-      const nd={...d,t:v}; if(v!=='choice') delete nd.opts; if(v!=='link'){ delete nd.to; delete nd.multi; }
+      const nd={...d,t:v}; if(v!=='choice') delete nd.opts; if(v!=='link'){ delete nd.to; delete nd.multi; } if(v!=='calc'){ delete nd.expr; delete nd.mat; } if(v==='calc' || v==='auto'){ delete nd.def; delete nd.req; }
       tcSetDef(n,c,nd); tblRenderView(n); tblRenderList(n);
     }));
     row.append(mk('span','tv-mv',open ? '▾' : '⋯',{click:()=>{ open ? n.fieldOpen.delete(c) : n.fieldOpen.add(c); tblRenderView(n); }}));
@@ -1508,6 +1538,25 @@ function tblFieldsPanel(n,box,mk,sel){
       const m=mk('input'); m.type='checkbox'; m.checked=!!d.multi; m.title='several entries';
       m.addEventListener('change',()=>tcSetDef(n,c,{...d,multi:m.checked}));
       more.append(m,mk('span','tv-lbl','many'));
+    }
+    if(!ro && t==='calc'){
+      const e=mk('input','tv-q'); e.value=d.expr||''; e.placeholder='[price] * [qty]   round([a]/[b],2)   if([x]>5,\'big\',\'small\')';
+      e.title='[Field] — value of a field; + - * / %, == != < > <= >=, && || !, a ? b : c; functions: round floor ceil abs sqrt pow min max if coalesce concat upper lower trim len substr contains num text now year month day';
+      e.addEventListener('keydown',ev=>ev.stopPropagation());
+      e.addEventListener('change',()=>tcSetDef(n,c,{...d,expr:e.value.trim()}));
+      const m=mk('input'); m.type='checkbox'; m.checked=!!d.mat; m.title='stored in the list (frozen until the row is edited or recalculated); otherwise computed on load and not stored';
+      m.addEventListener('change',()=>tcSetDef(n,c,{...d,mat:m.checked}));
+      more.append(e,m,mk('span','tv-lbl','stored'),mk('button','tbl-btn','recalc',{click:async()=>{ await trRecalc(n); tblRenderView(n); tblRenderList(n); }}));
+      if(n.calcErr?.[c]) more.append(mk('span','tv-lbl','⚠ '+n.calcErr[c]));
+    }
+    if(!ro && t!=='calc' && t!=='auto'){
+      if(t!=='photo' && t!=='audio' && t!=='link'){
+        const df=mk('input','tv-q'); df.value=d.def??''; df.placeholder='default for new rows'; df.addEventListener('keydown',ev=>ev.stopPropagation());
+        df.addEventListener('change',()=>tcSetDef(n,c,{...d,def:df.value}));
+        more.append(df);
+      }
+      const rq=mk('input'); rq.type='checkbox'; rq.checked=!!d.req; rq.addEventListener('change',()=>tcSetDef(n,c,{...d,req:rq.checked}));
+      more.append(rq,mk('span','tv-lbl','required'));
     }
     if(grid){
       const w=mk('input','tv-w'); w.type='number'; w.min=0; w.step=10; w.value=x.w||''; w.placeholder='auto'; w.title='width, px (empty — by content)';
@@ -1626,7 +1675,7 @@ function tblForm(n,rec,onSave,onCancel){
       const v=ins[c].value, tv=tcValue(tblType(n,c),ins[c]);
       o[c]=tv!==undefined ? tv : TBL_HZ.test(c) && v.trim() && isFinite(parseHzCell(v)) ? parseHzCell(v) : hostlistCoerce(v);
     }
-    await onSave(o);
+    try{ await onSave(o); }catch(e){ alert(e.message); }       // нарушено правило поля — форма остаётся открытой
   });
   cancel.addEventListener('click',onCancel);
   return form;
@@ -1685,7 +1734,7 @@ async function tblHereForm(n){
 function tblAddForm(n,init){
   if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }
   const form=tblForm(n,init||{},async o=>{
-    await tblAdd(n,[o]); tblCloseEditor(n); tblRenderList(n);
+    await tblAdd(n,[o],true); tblCloseEditor(n); tblRenderList(n);
   },()=>tblCloseEditor(n));
   tblOpenEditor(n,'New row',form,null);
 }
