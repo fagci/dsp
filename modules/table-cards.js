@@ -6,7 +6,7 @@
    Карточка записи — панель с большим фото, всеми полями, связями и обратными связями («кто ссылается на эту запись»). */
 
 const TC_TYPES=[['text','text'],['long','long text'],['num','number'],['bool','checkbox'],['date','date'],['choice','choice'],
-  ['photo','photo'],['audio','audio'],['link','link to a list']];
+  ['photo','photo'],['audio','audio'],['link','link to a list'],['auto','auto number'],['calc','calculated']];
 const TC_VIEWS=[['cards','🃏','cards'],['grid','☰','full list (columns)'],['compact','≡','brief list (name · values)']];
 const TC_SEP=' | ';
 
@@ -24,7 +24,23 @@ const tcJoin=a=>a.join(TC_SEP);
 const tcIsTrue=v=>v===true || v===1 || /^(1|true|yes|y|да)$/i.test(String(v??'').trim());
 // подпись записи в связях: колонка имени, иначе первая непустая
 const tcKeyCol=cols=>tblCol(cols,TBL_LABEL)||cols[0];
-const tcKey=(n,r)=>String(r[n.nameCol||n.cl[0]]??'');
+// шаблон названия записи card.label: «{Фамилия} {Имя}»; пусто — колонка имени
+const tcTplCols=(cols,card)=>[...String(card?.label||'').matchAll(/\{([^{}]+)\}/g)].map(m=>m[1]).filter(c=>cols.includes(c));
+function tcLabelFn(cols,card){
+  const tpl=String(card?.label||'');
+  if(!tcTplCols(cols,card).length){ const kc=tcKeyCol(cols); return r=>String(r[kc]??''); }
+  return r=>tpl.replace(/\{([^{}]+)\}/g,(_,c)=>String(r[c]??'').replace(/\|/g,'/')).replace(/\s+/g,' ').trim();
+}
+const tcKey=(n,r)=>n.labelFn(r);
+// заголовок записи в списке и карточке
+const tcHasName=n=>!!(n.nameCol || tcTplCols(n.cl,n.schema?.card).length);
+const tcTitle=(n,r,i)=>tcHasName(n) ? n.labelFn(r) : '#'+(i+1);
+// card целевого списка связи
+async function tcCardOf(n,list){
+  if(list===n.p.list) return n.schema?.card;
+  const k=tblKind(list);
+  return k==='db' ? (await ListDB.getMeta(list))?.card : k==='patch' ? n.p.schema?.card : null;
+}
 // текст значения для списков и карточек
 function tcText(n,c,v){
   if(v===''||v==null) return '';
@@ -47,9 +63,12 @@ async function tcSchemaSave(n){
   Undo.push();
 }
 function tcSetDef(n,c,def){
-  const t=n.schema.types;
-  if(!def || (!def.t || def.t==='text') && !def.opts && !def.to) delete t[c]; else t[c]=def;
-  return tcSchemaSave(n);
+  const t=n.schema.types, was=t[c]?.t;
+  if(!def || (!def.t || def.t==='text') && !def.opts && !def.to && !def.def && !def.req) delete t[c]; else t[c]=def;
+  const sv=tcSchemaSave(n);
+  // вычисляемое или автонумерация включены / выключены / изменены: значения пересчитываются
+  if(was==='calc' || was==='auto' || def?.t==='calc' || def?.t==='auto') return sv.then(()=>trRecalc(n)).then(()=>{ tblRenderView(n); tblRenderList(n); });
+  return sv;
 }
 // другие списки, в схеме которых есть связь с list: [{list, col, def}]
 async function tcLinkCols(list){
@@ -61,13 +80,14 @@ async function tcLinkCols(list){
   return out;
 }
 // запись переименована: связи на неё в других списках (и в этом) следуют за ней; true — этот список менялся
-async function tcRelink(list,oldName,newName){
+const tcRelink=(list,oldName,newName)=>tcRelinkMap(list,new Map([[oldName,newName]]));
+async function tcRelinkMap(list,map){
   let self=false;
   for(const L of await tcLinkCols(list)){
     for(const it of await ListDB.list(L.list)){
       const v=tcLinks(it.fields[L.col]);
-      if(!v.includes(oldName)) continue;
-      it.fields[L.col]=tcJoin(v.map(x=>x===oldName ? newName : x));
+      if(!v.some(x=>map.has(x))) continue;
+      it.fields[L.col]=tcJoin(v.map(x=>map.get(x)??x));
       await ListDB.update(it.id,{fields:it.fields});
       if(L.list===list) self=true;
     }
@@ -86,9 +106,10 @@ async function tcRenameTarget(oldName,newName){
 async function tcBacklinks(list,name){
   const out=[];
   for(const L of await tcLinkCols(list)){
-    const m=await ListDB.getMeta(L.list), kc=tcKeyCol(m?.cols||[]);
+    const m=await ListDB.getMeta(L.list), cols=m?.cols||[], kc=tcKeyCol(cols), lf=tcLabelFn(cols,m?.card);
+    const tpl=tcTplCols(cols,m?.card).length>0;
     for(const it of await ListDB.list(L.list))
-      if(tcLinks(it.fields[L.col]).includes(name)) out.push({list:L.list,col:L.col,name:kc==='name' ? it.name : String(it.fields[kc]??it.name)});
+      if(tcLinks(it.fields[L.col]).includes(name)) out.push({list:L.list,col:L.col,name:tpl ? lf({...it.fields,name:it.name}) : kc==='name' ? it.name : String(it.fields[kc]??it.name)});
   }
   return out;
 }
@@ -96,14 +117,29 @@ async function tcBacklinks(list,name){
 /* ---------- выбор связанной записи ---------- */
 async function tcTargetNames(n,list){
   const t=list===n.p.list ? {cols:n.cl,rows:n.all} : await tblReadList(n,list);
-  const kc=tcKeyCol(t.cols);
-  return t.rows.map(r=>String(r[kc]??'')).filter(Boolean);
+  const lf=tcLabelFn(t.cols,await tcCardOf(n,list));
+  return t.rows.map(lf).filter(Boolean);
+}
+// смена шаблона: ссылки на записи следуют за новыми названиями
+async function tcSetLabel(n,tpl){
+  if(tblRO(n)) return;
+  const old=n.labelFn;
+  if(tpl) n.schema.card.label=tpl; else delete n.schema.card.label;
+  n.labelFn=tcLabelFn(n.cl,n.schema.card);
+  await tcSchemaSave(n);
+  if(tblKind(n.p.list)==='db'){
+    const map=new Map();
+    for(const r of n.all){ const a=old(r), b=n.labelFn(r); if(a && b && a!==b) map.set(a,b); }
+    if(map.size) await tcRelinkMap(n.p.list,map);
+    await tblLoad(n);
+  } else tblRenderList(n);
+  tblRenderView(n);
 }
 // Promise<имена|undefined>; можно создать новую запись в целевом списке
 function tcPick(n,list,multi,cur){
   return new Promise(async res=>{
-    let names;
-    try{ names=await tcTargetNames(n,list); }catch(e){ alert('Could not read "'+list+'": '+e.message); return res(undefined); }
+    let names, card, tcCols=[];
+    try{ names=await tcTargetNames(n,list); card=await tcCardOf(n,list); tcCols=list===n.p.list ? n.cl : (await tblReadList(n,list)).cols; }catch(e){ alert('Could not read "'+list+'": '+e.message); return res(undefined); }
     const sel=new Set(cur), canNew=tblKind(list)==='db' || list===n.p.list && !tblRO(n);
     const ov=document.createElement('div'); ov.className='fm-ov';
     const box=document.createElement('div'); box.className='fm-pick'; box.style.minWidth='min(320px,90vw)';
@@ -125,7 +161,8 @@ function tcPick(n,list,multi,cur){
         const b=document.createElement('button'); b.textContent='＋ create "'+q.value.trim()+'"';
         b.onclick=async()=>{
           const nm=q.value.trim().replace(/\|/g,'/');
-          try{ if(list===n.p.list) await tblAdd(n,[{[n.nameCol||'name']:nm}]); else await ListDB.add(list,nm,{}); }
+          const fc=tcTplCols(tcCols,card)[0];                  // текст идёт в первую колонку шаблона
+          try{ if(list===n.p.list) await tblAdd(n,[{[fc||n.nameCol||'name']:nm}]); else if(fc && fc!=='name') await ListDB.add(list,'',{[fc]:nm}); else await ListDB.add(list,nm,{}); }
           catch(e){ alert(e.message); return; }
           names.push(nm); sel.add(nm); q.value='';
           if(!multi){ ov.remove(); res([nm]); return; }
@@ -155,6 +192,10 @@ function tcFormField(n,c,rec,ty){
     const inp=document.createElement('textarea'); inp.rows=3; inp.value=v??''; inp.style.cssText=TBL_IN+'resize:vertical;font-family:inherit;';
     inp.addEventListener('keydown',e=>e.stopPropagation());
     return {inp,wide:true};
+  }
+  if(ty==='auto' || ty==='calc'){                         // значение даёт сама таблица
+    const inp=document.createElement('input'); inp.value=v??''; inp.disabled=true; inp.placeholder=ty==='auto' ? 'auto number' : 'calculated';
+    return {inp};
   }
   if(ty==='num'){
     const inp=document.createElement('input'); inp.type='number'; inp.step='any'; inp.value=v??'';
@@ -231,7 +272,7 @@ function tcCard(n,i,ro,show){
   el.dataset.i=i; el.className='tbl-row tbl-card';
   const bg=tblRowBg(n,r);
   if(bg) el.style.setProperty('--rb','color-mix(in srgb,'+bg+' 24%,transparent)');
-  const label=n.nameCol ? String(r[n.nameCol]??'') : '#'+(i+1);
+  const label=tcTitle(n,r,i);
   const cv=document.createElement('div'); cv.className='tc-cover';
   const ids=tcCover(n,r);
   if(ids.length){
@@ -304,7 +345,7 @@ function tcOpenPending(n){
 }
 function tcDetail(n,i){
   const r=n.rows[i]; if(!r) return;
-  const ro=tblRO(n), label=n.nameCol ? String(r[n.nameCol]??'') : '#'+(i+1);
+  const ro=tblRO(n), label=tcTitle(n,r,i);
   const form=document.createElement('div'); form.className='tbl-form tc-detail';
   const mkb=(t,title,f,cls)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=t; b.title=title; b.className='tbl-btn'+(cls?' '+cls:''); b.addEventListener('click',f); return b; };
   form.cancel=mkb('✕','Close',()=>tblCloseEditor(n));
