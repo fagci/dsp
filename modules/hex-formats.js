@@ -3,7 +3,20 @@
    Тот же JSON, что можно написать руками в узле. Ключ — имя в HEX_LIB; sub ссылается на него по имени.
    title/group — для списка в интерфейсе. */
 
-const WIFI_IE_KEYS={3:'channel',45:'ht_cap',61:'ht_op',127:'ext_cap',191:'vht_cap',50:'ext_rates',11:'bss_load'};  // имена IE в rec: ie.channel
+// Wi-Fi: имена IE в rec (ie.channel, ie.p2p …); вендорский IE и Extension выбираются по OUI+тип / ext id
+const WIFI_IE_NAMES={0:'SSID',1:'Rates',3:'DS channel',5:'TIM',7:'Country',11:'BSS load',32:'Power constraint',33:'Power capability',36:'Supported channels',42:'ERP',45:'HT capabilities',48:'RSN',50:'Ext rates',54:'Mobility domain',59:'Supported op classes',61:'HT operation',70:'RM capabilities',74:'Overlap BSS scan',107:'Interworking',127:'Ext capabilities',191:'VHT capabilities',192:'VHT operation',221:'Vendor',255:'Extension'};
+const WIFI_VENDOR_SUB={[0x0050f201]:'wifi-ie-rsn',[0x0050f202]:'wifi-vendor-wmm',[0x0050f204]:'wifi-vendor-wps',[0x506f9a09]:'wifi-vendor-p2p',[0x18fe3404]:'wifi-vendor-espnow'};
+const WIFI_IE_KEYS={3:'channel',11:'bss_load',32:'power_constraint',33:'power_cap',36:'supp_channels',45:'ht_cap',50:'ext_rates',54:'mobility_domain',59:'op_classes',61:'ht_op',70:'rm_caps',127:'ext_cap',191:'vht_cap',192:'vht_op',
+  221:{by:'data.oui*256+data.vtype',def:'vendor',map:{[0x0050f201]:'wpa',[0x0050f202]:'wmm',[0x0050f204]:'wps',[0x506f9a09]:'p2p',[0x506f9a0a]:'wfd',[0x506f9a10]:'hs20',[0x506f9a1c]:'owe',[0x18fe3404]:'espnow'}},
+  255:{by:'data.ext_id',def:'ext',map:{35:'he_cap',36:'he_op',38:'mu_edca',39:'spatial_reuse',106:'eht_op',108:'eht_cap'}}};
+const WIFI_IES={n:'ies',t:'list',sub:'wifi-ie',key:'id',val:'data',as:'ie',keys:WIFI_IE_KEYS};
+const WIFI_CAPAB={0:'ESS',1:'IBSS',4:'privacy',5:'short preamble',8:'spectrum mgmt',10:'short slot',12:'APSD',15:'immediate block ack'};
+const WIFI_STATUS={0:'success',1:'unspecified failure',10:'cannot support all capabilities',12:'denied',13:'algorithm not supported',14:'bad auth sequence',15:'challenge failure',16:'timeout',17:'AP cannot handle more stations',18:'rates not supported',23:'SPP not supported',30:'try again later',31:'MFP violation',53:'invalid PMKID',77:'SAE hash to element',126:'SAE anti-clogging'};
+// адреса 802.15.4: по воздуху младший байт первым, показываем старшим вперёд
+HEX_FIXED.addr16=2; HEX_FIXED.eui64=8;
+HEX_FMT_EXT.addr16=b=>hexToHex(Array.from(b).reverse());
+HEX_FMT_EXT.eui64=b=>Array.from(b).reverse().map(hexByte).join(':');
+HEX_UNFMT_EXT.addr16=HEX_UNFMT_EXT.eui64=v=>hexFromHex(v).reverse();
 Object.assign(HEX_LIB,{
   /* ---------- Ethernet / IP ---------- */
   eth:{ title:'Ethernet II', group:'Network', detect:'_size>=14 && (type==2048 || type==2054 || type==34525)', fields:[
@@ -49,7 +62,9 @@ Object.assign(HEX_LIB,{
   /* ---------- Wi-Fi (IEEE 802.11, кадр как есть: порядок бит LSB, little-endian) ---------- */
   wifi:{ title:'802.11 frame', group:'Wi-Fi', detect:'ver==0 && _size>=10', endian:'le', bitorder:'lsb',
     derive:{ kind:[['1','subtype_name']], da:[['1','addr1']], sa:[['1','addr2']],
-      bssid:[['type==0','addr3'],['type==2 && tods && fromds',''],['type==2 && tods','addr1'],['type==2 && fromds','addr2'],['type==2','addr3']] }, fields:[
+      bssid:[['type==0','addr3'],['type==2 && tods && fromds',''],['type==2 && tods','addr1'],['type==2 && fromds','addr2'],['type==2','addr3']],
+      dst:[['1','addr1']], src:[['1','addr2']], net:[['1','bssid']],
+      action:[['type==0 && (subtype==13 || subtype==14)','body.category_name']] }, fields:[
     {n:'ver',t:'bits',w:2}, {n:'type',t:'bits',w:2,enum:{0:'management',1:'control',2:'data',3:'extension'}}, {n:'subtype',t:'bits',w:4,enumBy:'type',enums:{
       0:{0:'assoc-req',1:'assoc-resp',2:'reassoc-req',3:'reassoc-resp',4:'probe-req',5:'probe-resp',6:'timing-adv',8:'beacon',9:'atim',10:'disassoc',11:'auth',12:'deauth',13:'action',14:'action-noack'},
       1:{4:'beamforming-report-poll',5:'vht-ndp',6:'control-ext',7:'control-wrapper',8:'block-ack-req',9:'block-ack',10:'ps-poll',11:'rts',12:'cts',13:'ack',14:'cf-end',15:'cf-end-ack'},
@@ -63,20 +78,160 @@ Object.assign(HEX_LIB,{
     {n:'frag',t:'bits',w:4,when:'type!=1'}, {n:'seq',t:'bits',w:12,when:'type!=1'},
     {n:'addr4',t:'bytes',fmt:'mac',when:'type==2 && tods && fromds'},
     {n:'qos',t:'u16',fmt:'hex',when:'type==2 && (subtype&8)'},
-    {n:'body',t:'rest',sub:{by:'type==0 ? subtype : 99',map:{4:'wifi-probe-req',5:'wifi-beacon',8:'wifi-beacon',10:'wifi-reason',11:'wifi-auth',12:'wifi-reason'}}}]},
+    {n:'htc',t:'u32',fmt:'hex',when:'order && (type==0 || type==2 && (subtype&8))'},
+    {n:'body',t:'rest',sub:{by:'type==0 ? subtype : type==1 ? 100+subtype : type==2 ? ((subtype&4) ? 99 : prot ? 202 : 201) : 99',map:{
+      0:'wifi-assoc-req',1:'wifi-assoc-resp',2:'wifi-reassoc-req',3:'wifi-assoc-resp',4:'wifi-probe-req',5:'wifi-beacon',8:'wifi-beacon',
+      10:'wifi-reason',11:'wifi-auth',12:'wifi-reason',13:'wifi-action',14:'wifi-action',
+      108:'wifi-bar',109:'wifi-ba',201:'wifi-llc',202:'wifi-data-prot'}}}]},
   'wifi-beacon':{ title:'Beacon / Probe response', group:'Wi-Fi', endian:'le', fields:[
     {n:'ts',t:'u64'}, {n:'interval',t:'u16',as:'beacon_interval'},
-    {n:'capab',t:'u16',fmt:'hex'}, {n:'ies',t:'list',sub:'wifi-ie',key:'id',val:'data',as:'ie',keys:WIFI_IE_KEYS}]},
-  'wifi-probe-req':{ title:'Probe request', group:'Wi-Fi', endian:'le', fields:[{n:'ies',t:'list',sub:'wifi-ie',key:'id',val:'data',as:'ie',keys:WIFI_IE_KEYS}]},
+    {n:'capab',t:'u16',fmt:'hex',flags:WIFI_CAPAB}, WIFI_IES]},
+  'wifi-probe-req':{ title:'Probe request', group:'Wi-Fi', endian:'le', fields:[WIFI_IES]},
+  'wifi-assoc-req':{ title:'Association request', group:'Wi-Fi', endian:'le', fields:[
+    {n:'capab',t:'u16',fmt:'hex',flags:WIFI_CAPAB}, {n:'listen',t:'u16'}, WIFI_IES]},
+  'wifi-reassoc-req':{ title:'Reassociation request', group:'Wi-Fi', endian:'le', fields:[
+    {n:'capab',t:'u16',fmt:'hex',flags:WIFI_CAPAB}, {n:'listen',t:'u16'}, {n:'ap',t:'bytes',fmt:'mac'}, WIFI_IES]},
+  'wifi-assoc-resp':{ title:'Association / reassociation response', group:'Wi-Fi', endian:'le', fields:[
+    {n:'capab',t:'u16',fmt:'hex',flags:WIFI_CAPAB}, {n:'status',t:'u16',enum:WIFI_STATUS}, {n:'aid',t:'u16'}, WIFI_IES]},
   'wifi-reason':{ title:'Deauth / Disassoc', group:'Wi-Fi', endian:'le', fields:[{n:'reason',t:'u16',as:'reason',enum:{1:'unspecified',2:'auth no longer valid',3:'station leaving',4:'inactivity',5:'AP overloaded',6:'class 2 frame from non-auth',7:'class 3 frame from non-assoc',8:'station left BSS',9:'assoc before auth',15:'4-way handshake timeout',23:'802.1X failed'}}]},
   'wifi-auth':{ title:'Authentication', group:'Wi-Fi', endian:'le', fields:[
-    {n:'algo',t:'u16',enum:{0:'open',1:'shared key',3:'SAE'}}, {n:'seq',t:'u16'}, {n:'status',t:'u16',as:'auth_status',enum:{0:'success',1:'failure'}}, {n:'ies',t:'list',sub:'wifi-ie',key:'id',val:'data',as:'ie',keys:WIFI_IE_KEYS}]},
+    {n:'algo',t:'u16',enum:{0:'open',1:'shared key',2:'FT',3:'SAE'}}, {n:'seq',t:'u16'}, {n:'status',t:'u16',as:'auth_status',enum:WIFI_STATUS}, WIFI_IES]},
+  'wifi-action':{ title:'Action frame', group:'Wi-Fi', endian:'le', fields:[
+    {n:'category',t:'u8',enum:{0:'Spectrum mgmt',1:'QoS',2:'DLS',3:'Block ack',4:'Public',5:'Radio measurement',6:'Fast BSS transition',7:'HT',8:'SA query',9:'Protected dual',10:'WNM',14:'Mesh',15:'Multihop',17:'VHT',18:'S1G',21:'Protected FTM',126:'Vendor protected',127:'Vendor'}},
+    {n:'act',t:'u8',when:'category!=127',enumBy:'category',enums:{
+      3:{0:'ADDBA request',1:'ADDBA response',2:'DELBA'}, 4:{0:'ext channel switch',4:'TDLS discovery',6:'GAS request',9:'vendor specific',10:'GAS response',11:'GAS comeback request',12:'GAS comeback response',13:'TDLS discovery response',20:'FILS discovery'},
+      5:{0:'measurement request',1:'measurement report',2:'link measurement request',3:'link measurement report',4:'neighbor report request',5:'neighbor report response'},
+      6:{1:'FT request',2:'FT response',3:'FT confirm',4:'FT ack'}, 8:{0:'SA query request',1:'SA query response'},
+      10:{0:'event request',1:'event report',2:'diagnostic request',4:'BSS transition query',7:'BSS transition request',8:'BSS transition response',26:'notification response'}}},
+    {n:'oui',t:'u24',endian:'be',fmt:'hex',when:'category==127 || category==4 && act==9'},
+    {n:'body',t:'rest',when:'_left>0',sub:{by:'category==127 ? (oui==1637940 ? 1 : oui==5271450 ? 2 : 0) : (category==4 && act==9 && oui==5271450) ? 2 : 0',map:{1:'wifi-espnow',2:'wifi-p2p-action'}}}]},
+  'wifi-espnow':{ title:'ESP-NOW (vendor action)', group:'Wi-Fi', endian:'le', fields:[
+    {n:'rnd',t:'bytes',len:4}, {n:'id',t:'u8',when:'_left>0'}, {n:'len',t:'u8',when:'_left>0'},
+    {n:'oui',t:'u24',endian:'be',fmt:'hex',when:'_left>=3'}, {n:'type',t:'u8',when:'_left>0'}, {n:'version',t:'u8',when:'_left>0'},
+    {n:'payload',t:'rest',as:'espnow'}]},
+  'wifi-p2p-action':{ title:'Wi-Fi Direct (P2P) action', group:'Wi-Fi', endian:'le', fields:[
+    {n:'otype',t:'u8'}, {n:'subtype',t:'u8',as:'p2p_subtype',enum:{0:'GO negotiation request / NoA',1:'GO negotiation response / presence request',2:'GO negotiation confirm / presence response',3:'invitation request / GO discoverability',4:'invitation response',5:'device discoverability request',6:'device discoverability response',7:'provision discovery request',8:'provision discovery response'}},
+    {n:'dialog',t:'u8'}, WIFI_IES]},
+  'wifi-bar':{ title:'Block ack request', group:'Wi-Fi', endian:'le', fields:[{n:'ctl',t:'u16',fmt:'hex'}, {n:'ssc',t:'u16',fmt:'hex'}]},
+  'wifi-ba':{ title:'Block ack', group:'Wi-Fi', endian:'le', fields:[{n:'ctl',t:'u16',fmt:'hex'}, {n:'ssc',t:'u16',fmt:'hex'}, {n:'bitmap',t:'rest'}]},
+  'wifi-data-prot':{ title:'Protected data (CCMP/TKIP header + ciphertext)', group:'Wi-Fi', endian:'le', fields:[
+    {n:'pn0',t:'u8',fmt:'hex'}, {n:'pn1',t:'u8',fmt:'hex'}, {n:'rsv',t:'u8',fmt:'hex'}, {n:'keyid',t:'u8',fmt:'hex'},
+    {n:'pn2',t:'u32',fmt:'hex',when:'keyid&32'}, {n:'enc',t:'rest'}]},
+  'wifi-llc':{ title:'LLC / SNAP', group:'Wi-Fi', endian:'be', fields:[
+    {n:'dsap',t:'u8',fmt:'hex'}, {n:'ssap',t:'u8',fmt:'hex'}, {n:'ctl',t:'u8',fmt:'hex'},
+    {n:'oui',t:'u24',fmt:'hex',when:'dsap==170'},
+    {n:'ethertype',t:'u16',fmt:'hex',as:'ethertype',when:'dsap==170',enum:{2048:'IPv4',2054:'ARP',34525:'IPv6',34958:'EAPOL',35085:'TDLS',34915:'PPPoE discovery',34916:'PPPoE session'}},
+    {n:'payload',t:'rest',sub:{by:'dsap==170 ? ethertype : 0',map:{2048:'ipv4',2054:'arp',34525:'ipv6',34958:'eapol'}}}]},
+  eapol:{ title:'EAPOL / 4-way handshake key', group:'Wi-Fi', endian:'be', fields:[
+    {n:'ver',t:'u8'}, {n:'type',t:'u8',enum:{0:'EAP packet',1:'start',2:'logoff',3:'key',4:'ASF alert'}}, {n:'len',t:'u16'},
+    {n:'desc',t:'u8',when:'type==3',enum:{2:'RSN',254:'WPA'}},
+    {n:'keyinfo',t:'u16',fmt:'hex',when:'type==3',flags:{3:'pairwise',6:'install',7:'ack',8:'mic',9:'secure',10:'error',11:'request',12:'encrypted data'}},
+    {n:'keylen',t:'u16',when:'type==3'}, {n:'replay',t:'u64',when:'type==3'},
+    {n:'nonce',t:'bytes',len:32,when:'type==3'}, {n:'iv',t:'bytes',len:16,when:'type==3'}, {n:'rsc',t:'bytes',len:8,when:'type==3'}, {n:'keyid',t:'bytes',len:8,when:'type==3'},
+    {n:'mic',t:'bytes',len:16,when:'type==3'}, {n:'datalen',t:'u16',when:'type==3'}, {n:'data',t:'rest'}]},
   'wifi-ie':{ title:'Information element', group:'Wi-Fi', fields:[
-    {n:'id',t:'u8',enum:{0:'SSID',1:'Rates',3:'DS channel',5:'TIM',7:'Country',11:'BSS load',45:'HT capabilities',48:'RSN',50:'Ext rates',61:'HT operation',127:'Ext capabilities',191:'VHT capabilities',221:'Vendor',255:'Extension'}},
+    {n:'id',t:'u8',enum:WIFI_IE_NAMES},
     {n:'len',t:'u8'},
-    {n:'data',t:'bytes',len:'len',sub:{by:'id',map:{0:'wifi-ie-ssid',3:'wifi-ie-chan'}}}]},
+    {n:'data',t:'bytes',len:'len',sub:{by:'id',map:{0:'wifi-ie-ssid',3:'wifi-ie-chan',5:'wifi-ie-tim',7:'wifi-ie-country',11:'wifi-ie-load',45:'wifi-ie-ht',48:'wifi-ie-rsn',61:'wifi-ie-htop',221:'wifi-ie-vendor',255:'wifi-ie-ext'}}}]},
   'wifi-ie-ssid':{ fields:[{n:'ssid',t:'str',len:'rest',enc:'utf8',as:'ssid'}]},
   'wifi-ie-chan':{ fields:[{n:'channel',t:'u8',as:'ds_channel'}]},
+  'wifi-ie-tim':{ fields:[{n:'dtim_count',t:'u8'}, {n:'dtim_period',t:'u8',when:'_left>0'}, {n:'bmap_ctrl',t:'u8',when:'_left>0'}, {n:'bitmap',t:'rest'}]},
+  'wifi-ie-country':{ fields:[{n:'cc',t:'str',len:2,enc:'ascii'}, {n:'env',t:'u8',when:'_left>0'}, {n:'triplets',t:'rest'}]},
+  'wifi-ie-load':{ endian:'le', fields:[{n:'stations',t:'u16'}, {n:'util',t:'u8',when:'_left>0'}, {n:'admission',t:'u16',when:'_left>=2'}]},
+  'wifi-ie-ht':{ endian:'le', fields:[{n:'info',t:'u16',fmt:'hex'}, {n:'ampdu',t:'u8',fmt:'hex',when:'_left>0'}, {n:'mcs',t:'bytes',len:16,when:'_left>=16'},
+    {n:'ext',t:'u16',fmt:'hex',when:'_left>=2'}, {n:'txbf',t:'u32',fmt:'hex',when:'_left>=4'}, {n:'asel',t:'u8',fmt:'hex',when:'_left>0'}]},
+  'wifi-ie-htop':{ fields:[{n:'primary',t:'u8'}, {n:'rest',t:'rest'}]},
+  'wifi-ie-rsn':{ title:'RSN / WPA element', endian:'le', fields:[
+    {n:'version',t:'u16'}, {n:'group',t:'bytes',len:4,when:'_left>=4'},
+    {n:'pcount',t:'u16',when:'_left>=2'}, {n:'pairwise',t:'bytes',len:'pcount*4',when:'pcount>0 && _left>=pcount*4'},
+    {n:'acount',t:'u16',when:'_left>=2'}, {n:'akm',t:'bytes',len:'acount*4',when:'acount>0 && _left>=acount*4'},
+    {n:'caps',t:'u16',fmt:'hex',when:'_left>=2'}, {n:'rest',t:'rest'}]},
+  'wifi-ie-ext':{ fields:[{n:'ext_id',t:'u8'}, {n:'rest',t:'rest'}]},
+  'wifi-ie-vendor':{ title:'Vendor element', endian:'le', fields:[
+    {n:'oui',t:'u24',endian:'be',fmt:'hex'}, {n:'vtype',t:'u8',when:'_left>0'},
+    {n:'body',t:'rest',when:'_left>0',sub:{by:'oui*256+vtype',map:WIFI_VENDOR_SUB}}]},
+  'wifi-vendor-wmm':{ fields:[{n:'subtype',t:'u8'}, {n:'version',t:'u8',when:'_left>0'}, {n:'qos',t:'u8',fmt:'hex',when:'_left>0'}, {n:'rest',t:'rest'}]},
+  'wifi-vendor-espnow':{ fields:[{n:'version',t:'u8'}, {n:'payload',t:'rest'}]},
+  'wifi-vendor-wps':{ endian:'be', fields:[{n:'attrs',t:'list',sub:'wps-attr',key:'type',val:'val',as:'wps'}]},
+  'wps-attr':{ endian:'be', fields:[
+    {n:'type',t:'u16',fmt:'hex',enum:{0x104a:'version',0x1044:'state',0x1008:'config methods',0x1047:'uuid',0x1054:'primary device type',0x1011:'device name',0x1021:'manufacturer',0x1023:'model name',0x1024:'model number',0x1042:'serial',0x103b:'response type',0x1057:'ap setup locked',0x1012:'device password id',0x103c:'rf bands',0x1049:'vendor extension'}},
+    {n:'len',t:'u16'},
+    {n:'val',t:'bytes',len:'len',sub:{by:'type',map:{0x1011:'wps-str',0x1021:'wps-str',0x1023:'wps-str',0x1024:'wps-str',0x1042:'wps-str'}}}]},
+  'wps-str':{ fields:[{n:'v',t:'str',len:'rest',enc:'utf8'}]},
+  'wifi-vendor-p2p':{ endian:'le', fields:[{n:'attrs',t:'list',sub:'p2p-attr',key:'id',val:'val',as:'p2p'}]},
+  'p2p-attr':{ endian:'le', fields:[
+    {n:'id',t:'u8',enum:{0:'status',1:'minor reason',2:'capability',3:'device id',4:'go intent',5:'config timeout',6:'listen channel',7:'group bssid',8:'ext listen timing',9:'interface address',10:'manageability',11:'channel list',12:'notice of absence',13:'device info',14:'group info',15:'group id',16:'interface',17:'operating channel',18:'invitation flags'}},
+    {n:'len',t:'u16'},
+    {n:'val',t:'bytes',len:'len',sub:{by:'id',map:{0:'p2p-u8',2:'p2p-cap',3:'p2p-mac',4:'p2p-u8',7:'p2p-mac',9:'p2p-mac',6:'p2p-chan',17:'p2p-chan',13:'p2p-devinfo',15:'p2p-groupid'}}}]},
+  'p2p-u8':{ fields:[{n:'v',t:'u8'}]},
+  'p2p-mac':{ fields:[{n:'mac',t:'bytes',len:6,fmt:'mac'}]},
+  'p2p-cap':{ fields:[{n:'device',t:'u8',fmt:'hex'}, {n:'group',t:'u8',fmt:'hex',when:'_left>0'}]},
+  'p2p-chan':{ fields:[{n:'country',t:'str',len:3,enc:'ascii'}, {n:'op_class',t:'u8',when:'_left>0'}, {n:'channel',t:'u8',when:'_left>0'}]},
+  'p2p-groupid':{ fields:[{n:'mac',t:'bytes',len:6,fmt:'mac'}, {n:'ssid',t:'str',len:'rest',enc:'utf8'}]},
+  'p2p-devinfo':{ endian:'be', fields:[
+    {n:'mac',t:'bytes',len:6,fmt:'mac'}, {n:'config_methods',t:'u16',fmt:'hex'}, {n:'primary_type',t:'bytes',len:8,when:'_left>=8'},
+    {n:'nsec',t:'u8',when:'_left>0'}, {n:'secondary',t:'bytes',len:'nsec*8',when:'nsec>0 && _left>=nsec*8'},
+    {n:'name_type',t:'u16',fmt:'hex',when:'_left>=4'}, {n:'name_len',t:'u16',when:'_left>=2'}, {n:'name',t:'str',len:'name_len',enc:'utf8',when:'name_len>0 && _left>=name_len'}]},
+
+  /* ---------- IEEE 802.15.4 / Zigbee (кадр без FCS, адреса показаны в привычном порядке — старший байт первым) ---------- */
+  ieee802154:{ title:'IEEE 802.15.4 MAC', group:'802.15.4', endian:'le', bitorder:'lsb',
+    derive:{ kind:[['ftype==3 && !sec','body.id_name'],['1','ftype_name']],
+      dst:[['dstmode==2','dst16'],['dstmode==3','dst64']], src:[['srcmode==2','src16'],['srcmode==3','src64']],
+      net:[['srcmode!=0 && !(pancomp && dstmode!=0)','srcpan'],['dstmode!=0','dstpan']] }, fields:[
+    {n:'ftype',t:'bits',w:3,enum:{0:'beacon',1:'data',2:'ack',3:'command',4:'multipurpose',5:'fragment',6:'extended'}},
+    {n:'sec',t:'bits',w:1}, {n:'pending',t:'bits',w:1}, {n:'ackreq',t:'bits',w:1}, {n:'pancomp',t:'bits',w:1}, {n:'rsv',t:'bits',w:1},
+    {n:'seqsup',t:'bits',w:1}, {n:'ieprs',t:'bits',w:1}, {n:'dstmode',t:'bits',w:2,enum:{0:'none',2:'short',3:'extended'}}, {n:'ver',t:'bits',w:2},
+    {n:'srcmode',t:'bits',w:2,enum:{0:'none',2:'short',3:'extended'}},
+    {n:'seq',t:'u8',when:'!seqsup'},
+    {n:'dstpan',t:'bytes',fmt:'addr16',when:'dstmode!=0'},
+    {n:'dst16',t:'bytes',fmt:'addr16',when:'dstmode==2'}, {n:'dst64',t:'bytes',fmt:'eui64',when:'dstmode==3'},
+    {n:'srcpan',t:'bytes',fmt:'addr16',when:'srcmode!=0 && !(pancomp && dstmode!=0)'},
+    {n:'src16',t:'bytes',fmt:'addr16',when:'srcmode==2'}, {n:'src64',t:'bytes',fmt:'eui64',when:'srcmode==3'},
+    {n:'sec_ctl',t:'u8',fmt:'hex',when:'sec'}, {n:'fcnt',t:'u32',when:'sec'},
+    {n:'keyid',t:'bytes',len:'((sec_ctl>>3)&3)==1 ? 1 : ((sec_ctl>>3)&3)==2 ? 5 : ((sec_ctl>>3)&3)==3 ? 9 : 0',when:'sec'},
+    {n:'body',t:'rest',sub:{by:'sec ? 0 : ftype==0 ? 1 : ftype==1 ? ((_peek&60)==8 ? 2 : ((_peek&224)==96 || _peek==65) ? 3 : 0) : ftype==3 ? 4 : 0',
+      map:{1:'ieee802154-beacon',2:'zbee-nwk',3:'lowpan',4:'ieee802154-cmd'}}}]},
+  'ieee802154-beacon':{ title:'802.15.4 beacon', group:'802.15.4', endian:'le', fields:[
+    {n:'superframe',t:'u16',fmt:'hex'}, {n:'gts',t:'u8',fmt:'hex'}, {n:'paddr',t:'u8',fmt:'hex'},
+    {n:'payload',t:'rest',sub:{by:'_peek==0 ? 1 : 0',map:{1:'zbee-beacon'}}}]},
+  'zbee-beacon':{ title:'Zigbee beacon payload', group:'Zigbee', endian:'le', bitorder:'lsb', fields:[
+    {n:'protocol',t:'u8'}, {n:'stack',t:'bits',w:4,as:'zb_stack'}, {n:'nwkver',t:'bits',w:4},
+    {n:'rsv',t:'bits',w:2}, {n:'router_cap',t:'bits',w:1}, {n:'depth',t:'bits',w:4}, {n:'ed_cap',t:'bits',w:1},
+    {n:'epid',t:'bytes',fmt:'eui64',as:'zb_epid'}, {n:'txoffset',t:'bytes',len:3}, {n:'update_id',t:'u8'}]},
+  'ieee802154-cmd':{ title:'802.15.4 MAC command', group:'802.15.4', endian:'le', fields:[
+    {n:'id',t:'u8',enum:{1:'association request',2:'association response',3:'disassociation notification',4:'data request',5:'PAN ID conflict',6:'orphan notification',7:'beacon request',8:'coordinator realignment',9:'GTS request'}},
+    {n:'rest',t:'rest'}]},
+  lowpan:{ title:'6LoWPAN dispatch (Thread / Matter)', group:'802.15.4', fields:[{n:'dispatch',t:'u8',fmt:'hex'}, {n:'data',t:'rest'}]},
+  'zbee-nwk':{ title:'Zigbee NWK', group:'Zigbee', endian:'le', bitorder:'lsb', fields:[
+    {n:'nwktype',t:'bits',w:2,enum:{0:'data',1:'command',3:'inter-pan'}}, {n:'nwkver',t:'bits',w:4}, {n:'discover',t:'bits',w:2},
+    {n:'mcast',t:'bits',w:1}, {n:'nwksec',t:'bits',w:1}, {n:'srcroute',t:'bits',w:1}, {n:'dstieee',t:'bits',w:1}, {n:'srcieee',t:'bits',w:1},
+    {n:'edinit',t:'bits',w:1}, {n:'rsv',t:'bits',w:2},
+    {n:'dst',t:'bytes',len:2,fmt:'addr16',as:'nwk_dst'}, {n:'src',t:'bytes',len:2,fmt:'addr16',as:'nwk_src'},
+    {n:'radius',t:'u8'}, {n:'nwkseq',t:'u8'},
+    {n:'dst64',t:'bytes',fmt:'eui64',when:'dstieee'}, {n:'src64',t:'bytes',fmt:'eui64',when:'srcieee'},
+    {n:'mcctl',t:'u8',fmt:'hex',when:'mcast'},
+    {n:'relays',t:'u8',when:'srcroute'}, {n:'relay_idx',t:'u8',when:'srcroute'}, {n:'relay_list',t:'bytes',len:'relays*2',when:'srcroute && relays>0'},
+    {n:'sec_ctl',t:'u8',fmt:'hex',when:'nwksec'}, {n:'fcnt',t:'u32',when:'nwksec'}, {n:'sec_src',t:'bytes',fmt:'eui64',when:'nwksec'}, {n:'key_seq',t:'u8',when:'nwksec'},
+    {n:'payload',t:'rest',sub:{by:'nwksec ? 0 : nwktype==0 ? 1 : nwktype==1 ? 2 : 0',map:{1:'zbee-aps',2:'zbee-nwk-cmd'}}}]},
+  'zbee-nwk-cmd':{ title:'Zigbee NWK command', group:'Zigbee', fields:[
+    {n:'id',t:'u8',as:'zb_cmd',enum:{1:'route request',2:'route reply',3:'network status',4:'leave',5:'route record',6:'rejoin request',7:'rejoin response',8:'link status',9:'network report',10:'network update',11:'end device timeout request',12:'end device timeout response'}},
+    {n:'rest',t:'rest'}]},
+  'zbee-aps':{ title:'Zigbee APS', group:'Zigbee', endian:'le', bitorder:'lsb', fields:[
+    {n:'apstype',t:'bits',w:2,enum:{0:'data',1:'command',2:'ack',3:'inter-pan'}}, {n:'delivery',t:'bits',w:2,enum:{0:'unicast',2:'broadcast',3:'group'}},
+    {n:'ackfmt',t:'bits',w:1}, {n:'apssec',t:'bits',w:1}, {n:'ackreq',t:'bits',w:1}, {n:'exthdr',t:'bits',w:1},
+    {n:'dstep',t:'u8',when:'(apstype==0 || apstype==2 && !ackfmt) && delivery!=3'},
+    {n:'group',t:'u16',fmt:'hex',when:'apstype==0 && delivery==3'},
+    {n:'cluster',t:'u16',fmt:'hex',as:'zb_cluster',when:'apstype==0 || apstype==2 && !ackfmt'},
+    {n:'profile',t:'u16',fmt:'hex',as:'zb_profile',when:'apstype==0 || apstype==2 && !ackfmt',enum:{0:'ZDP',260:'Home Automation',49246:'Light Link',41440:'Green Power',49413:'Smart Energy'}},
+    {n:'srcep',t:'u8',when:'apstype==0 || apstype==2 && !ackfmt'}, {n:'apscnt',t:'u8'},
+    {n:'payload',t:'rest',sub:{by:'(apssec || apstype!=0) ? 0 : profile==0 ? 1 : (profile==260 || profile==49246) ? 2 : 0',map:{1:'zbee-zdo',2:'zbee-zcl'}}}]},
+  'zbee-zdo':{ title:'Zigbee device object (ZDP)', group:'Zigbee', fields:[{n:'tsn',t:'u8'}, {n:'payload',t:'rest'}]},
+  'zbee-zcl':{ title:'Zigbee cluster library', group:'Zigbee', endian:'le', bitorder:'lsb', fields:[
+    {n:'ftype',t:'bits',w:2,enum:{0:'global',1:'cluster-specific'}}, {n:'manuf',t:'bits',w:1}, {n:'dir',t:'bits',w:1,enum:{0:'client to server',1:'server to client'}},
+    {n:'disdef',t:'bits',w:1}, {n:'rsv',t:'bits',w:3},
+    {n:'mfr',t:'u16',fmt:'hex',when:'manuf'}, {n:'tsn',t:'u8'},
+    {n:'cmd',t:'u8',as:'zcl_cmd',enumBy:'ftype',enums:{0:{0:'read attributes',1:'read attributes response',2:'write attributes',3:'write attributes undivided',4:'write attributes response',5:'write attributes no response',6:'configure reporting',7:'configure reporting response',8:'read reporting configuration',9:'read reporting configuration response',10:'report attributes',11:'default response',12:'discover attributes',13:'discover attributes response'}}},
+    {n:'payload',t:'rest'}]},
 
   /* ---------- DMR (ETSI TS 102 361-2), байты после декодирования FEC ---------- */
   'dmr-slottype':{ title:'DMR Slot Type', group:'DMR', fields:[
@@ -176,10 +331,10 @@ Object.assign(HEX_LIB,{
     {n:'end',t:'u8',fmt:'hex',enum:{3:'ETX',23:'ETB'}}, {n:'bcs',t:'u16',fmt:'hex'}]},
 
   /* ---------- Bluetooth LE: структуры AD рекламы (Core Spec Part A, GAP) ---------- */
-  'ble-adv':{ title:'BLE advertising data', group:'Bluetooth', fields:[{n:'ad',t:'list',sub:'ble-ad'}]},
+  'ble-adv':{ title:'BLE advertising data', group:'Bluetooth', fields:[{n:'ad',t:'list',sub:'ble-ad',key:'type',val:'data',as:'ad'}]},
   'ble-ad':{ title:'BLE AD structure', group:'Bluetooth', endian:'le', fields:[
     {n:'len',t:'u8'},
-    {n:'type',t:'u8',fmt:'hex',when:'len>0',enum:{1:'Flags',2:'UUID16 (more)',3:'UUID16',6:'UUID128 (more)',7:'UUID128',8:'Short name',9:'Name',10:'TX power',22:'Service data 16',25:'Appearance',33:'Service data 128',255:'Manufacturer'}},
+    {n:'type',t:'u8',fmt:'hex',when:'len>0',enum:{1:'Flags',2:'UUID16 (more)',3:'UUID16',4:'UUID32 (more)',5:'UUID32',6:'UUID128 (more)',7:'UUID128',8:'Short name',9:'Name',10:'TX power',13:'Class of device',22:'Service data 16',23:'Public target address',24:'Random target address',25:'Appearance',26:'Adv interval',27:'LE address',28:'LE role',32:'Service data 32',33:'Service data 128',36:'URI',42:'Mesh PB-ADV',43:'Mesh message',44:'Mesh beacon',255:'Manufacturer'}},
     {n:'data',t:'bytes',len:'len-1',when:'len>0',sub:{by:'type',map:{1:'ble-ad-flags',8:'ble-ad-name',9:'ble-ad-name',10:'ble-ad-tx',22:'ble-ad-svc16',255:'ble-ad-mfr'}}}]},
   'ble-ad-flags':{ fields:[{n:'flags',t:'u8',flags:{0:'LE limited discoverable',1:'LE general discoverable',2:'BR/EDR not supported',3:'LE+BR/EDR controller',4:'LE+BR/EDR host'}}]},
   'ble-ad-name':{ fields:[{n:'name',t:'str',len:'rest',enc:'utf8'}]},

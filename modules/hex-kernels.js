@@ -9,7 +9,7 @@
    endian: 'be' | 'le' (поле или схема); bitorder схемы: 'msb' (первый бит — старший) | 'lsb' (802.11)
    len, count, when, e — выражения над ранее разобранными полями: (ihl-5)*4, type==0 && subtype==8
      имена: поле, sub.поле, список[0].поле; поле.$off / поле.$len — смещение (от начала схемы) и длина в байтах;
-     _left — осталось байт (при разборе), _len — размер схемы в байтах (в calc)
+     _left — осталось байт (при разборе), _len — размер схемы в байтах (в calc), _peek — следующий байт (выбор sub по первому байту)
    as — короткое имя поля в rec (первое найденное): body.ies[0].data.ssid → ssid
    list: key — поле элемента, дающее ему имя (имя enum или значение), val — поле элемента со значением, as — префикс,
          keys — свои имена {id:'имя'}: в rec элемент доступен как as.key (ie.ssid), а не по номеру; повторы — ie.vendor, ie.vendor_2
@@ -289,6 +289,7 @@ function hexLookup(c,prefix,ss,se){
   return name=>{
     if(name==='_left') return (c.end-c.bit)>>3;
     if(name==='_len') return se-ss;
+    if(name==='_peek') return c.d ? c.d[c.bit>>3]|0 : 0;
     let k=hexNames(c,prefix,name);
     if(k!==null){ const v=c.vals[k]; return typeof v==='string' ? hexStrNum(v) : v; }
     const dot=name.lastIndexOf('.');
@@ -472,9 +473,15 @@ function hexField(f,sch,c,prefix,depth,env,recs,ss){
         const before=c.bit;
         hexRun(sub,c,name+'['+i+'].',depth+2,null);
         irec.bl=c.bit-before;
-        if(f.key){
-          const kn=name+'['+i+'].'+f.key, kr=c.byName[kn], kv=c.vals[kn], en=kr && kr.f.enum;
-          let k=(f.keys && f.keys[kv]) || (en && (en[kv] ?? en[String(kv)])) || (f.key+kv);
+        const kn=f.key && name+'['+i+'].'+f.key, kv=kn && c.vals[kn];
+        if(f.key && kv!==undefined){
+          const kr=c.byName[kn], en=kr && kr.f.enum;
+          let ks=f.keys && f.keys[kv], k;
+          if(ks && typeof ks==='object'){
+            let v; try{ v=hexExpr(ks.by)(hexLookup(c,name+'['+i+'].',0,0)); }catch(e){}
+            k=(ks.map||{})[v] ?? ks.def;
+          } else k=ks;
+          k=k || (en && (en[kv] ?? en[String(kv)])) || (f.key+kv);
           k=String(k).toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
           keyN[k]=(keyN[k]||0)+1;
           irec.key=(f.as||name)+'.'+k+(keyN[k]>1 ? '_'+keyN[k] : '');
@@ -626,9 +633,9 @@ function hexToRec(res){
     if(!ir.key) continue;
     const base=ir.n+'.'+ir.val, own=res.vals[base];
     if(own!==undefined){ o[ir.key]=own; continue; }
-    const leaves=res.fields.filter(r=>r.n && r.n.startsWith(base+'.') && !r.pad && r.value!==undefined);
+    const leaves=res.fields.filter(r=>r.n && r.n.startsWith(base+'.') && !r.pad && r.value!==undefined && r.n.indexOf('[',base.length)<0);
     if(leaves.length===1) o[ir.key]=leaves[0].value;
-    else for(const r of leaves) o[ir.key+'.'+r.n.slice(base.length+1)]=r.value;
+    else for(const r of leaves) o[ir.key+'.'+r.n.slice(base.length+1).replace(/(^|\.)body\./g,'$1')]=r.value;
   }
   if(res.derive) for(const k in res.derive){
     for(const [cond,from] of res.derive[k]){

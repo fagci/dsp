@@ -234,6 +234,40 @@ ok('pocsag message build: checksums and parse',pcm.bytes.length===12 && pcp.ok &
   ok('meshcore advert',v.ptype===4 && v.route===1 && v.hops===2 && v['payload.hasloc']===1 && v['payload.hasname']===1 && v['payload.ntype']===2 && v['payload.lat']===1000000 && v['payload.lon']===2000000 && v['payload.name']==='Node1' && !p.err,JSON.stringify(v,(k,x)=>typeof x==='bigint'?x.toString(16):x));
   const msg=H.hexParse('meshcore',H.hexFromHex(hx(1,0x08)+'1234'+'0000'+hx(1,0x40|1)+'aabb'+'dd'+'ee'+'ff00'+'0102'));
   ok('meshcore transport txt',msg.vals.ptype===2 && msg.vals.route===0 && msg.vals.tcode1===0x3412 && msg.vals.hops===1 && msg.vals.path==='aabb' && msg.vals['payload.dst']===0xdd,JSON.stringify(msg.vals)); }
+// Wi-Fi: все типы кадров, единые имена в rec
+const rec=(sch,h)=>{ const r=H.hexParse(sch,hex(h)); return {r,o:H.hexToRec(r)}; };
+const mA='aabbccddee01', mB='aabbccddee09', cA='aa:bb:cc:dd:ee:01', cB='aa:bb:cc:dd:ee:09', fr=(fc,a1,a2,a3)=>fc+'0000'+a1+a2+a3+'1000';
+const ie=(id,d)=>id.toString(16).padStart(2,'0')+(d.length/2).toString(16).padStart(2,'0')+d;
+const P2P='506f9a09'+'02'+'0200'+'0500'+'0d'+'1900'+'aabbccddee02'+'0108'+'0050f20400050000'+'00'+'1011'+'0004'+'4d794150';
+const rsnIe='0100'+'000fac04'+'0100'+'000fac04'+'0100'+'000fac02'+'0c00';
+{ const b=rec('wifi',fr('8000','ffffffffffff',mA,mA)+'0000000000000000'+'6400'+'1104'+ie(0,'4d794150')+ie(3,'0b')+ie(48,rsnIe)+ie(221,'0050f204'+'104a000110'+'10110004'+'74657374')+ie(221,P2P));
+  ok('wifi beacon IE by name',b.r.ok && b.o['ie.ssid']==='MyAP' && b.o['ie.channel']===11 && b.o['ie.rsn.pairwise']==='000fac04' && b.o['ie.rsn.akm']==='000fac02' && b.o['wps.device_name']==='test',JSON.stringify(b.o));
+  ok('wifi direct (P2P) attributes',b.o['p2p.device_info.name']==='MyAP' && b.o['p2p.device_info.mac']==='aa:bb:cc:dd:ee:02' && b.o['p2p.capability.device']===5,JSON.stringify(b.o)); }
+{ const a=rec('wifi',fr('d000',mA,mB,mA)+'0409'+'506f9a09'+'00'+'01'+ie(221,P2P));
+  ok('wifi direct action frame',a.r.ok && a.o.kind==='action' && a.o.action==='Public' && a.o.p2p_subtype===0 && a.o['p2p.device_info.name']==='MyAP' && a.o.src===cB && a.o.net===cA,JSON.stringify(a.o)); }
+{ const e=rec('wifi',fr('d000','ffffffffffff',mB,'ffffffffffff')+'7f'+'18fe34'+'11223344'+'dd0b18fe34040100112233445566');
+  ok('esp-now frame',e.r.ok && e.o.action==='Vendor' && e.o.espnow==='00112233445566',JSON.stringify(e.o)); }
+{ const d=rec('wifi',fr('0801',mA,mB,'ffffffffffff')+'aaaa03000000'+'0800'+'4500001c0001000040110000c0a80001c0a80002'+'1f90007b00080000');
+  ok('wifi data → LLC → IPv4 → UDP',d.o.kind==='data' && d.o.bssid===cA && d.o.src===cB && d.o.ethertype===2048 && d.o['body.payload.src']==='192.168.0.1' && d.o['body.payload.payload.dport']===123,JSON.stringify(d.o)); }
+{ const q=rec('wifi',fr('8841',mA,mB,'ffffffffffff')+'0000'+'01020020'+'0000'+'deadbeef');
+  ok('wifi protected qos data',q.r.ok && q.o.kind==='qos-data' && q.o['body.keyid']===32 && q.o['body.enc']==='beef',JSON.stringify(q.o)); }
+{ const k=rec('wifi',fr('0802',mA,mB,'ffffffffffff')+'aaaa030000008e88'.replace(/(..)(..)$/,'$2$1').replace('aaaa030000008e88','aaaa0300000088 8e'.replace(' ',''))+'0103005f'+'02'+'008a'+'0010'+'0000000000000001'+'11'.repeat(32)+'00'.repeat(48)+'0000');
+  ok('wifi EAPOL key (4-way handshake)',k.o['body.payload.type_name']==='key' && k.o['body.payload.keyinfo']===0x8a && k.o['body.payload.nonce']==='11'.repeat(32),JSON.stringify(k.o)); }
+{ const c=rec('wifi','a400 01c0 '+mA+' '+mB), br=rec('wifi','8400 0000 '+mA+' '+mB+' 0400 1000'), as=rec('wifi','0000 0000 '+mA+' '+mB+' '+mA+' 1000 0000 0000 '+ie(0,'')+ie(1,'8284'));
+  ok('wifi control frames',c.o.kind==='ps-poll' && c.o.src===cB && br.o.kind==='block-ack-req' && br.o['body.ssc']===0x10,JSON.stringify([c.o,br.o]));
+  ok('wifi assoc request has hidden SSID',as.o.kind==='assoc-req' && as.o['ie.ssid']==='' && as.o['ie.rates']==='8284',JSON.stringify(as.o)); }
+
+// 802.15.4 / Zigbee / BLE
+{ const z=rec('ieee802154','6188 05 621a 0000 3412  4800 0000 3412 1e 11  40 01 0600 0401 01 07  01 22 02');
+  ok('zigbee ZCL toggle',z.r.ok && z.o.kind==='data' && z.o.src==='1234' && z.o.dst==='0000' && z.o.net==='1a62' && z.o.nwk_src==='1234' && z.o.zb_cluster===6 && z.o.zb_profile===260 && z.o.zcl_cmd===2,JSON.stringify(z.o));
+  const zb=rec('ieee802154','0080 01 621a 0000 ffcf 00 00  00 22 84 1122334455667788 ffffff 00');
+  ok('zigbee beacon',zb.r.ok && zb.o.kind==='beacon' && zb.o.zb_epid==='88:77:66:55:44:33:22:11' && zb.o.net==='1a62',JSON.stringify(zb.o));
+  const bq=rec('ieee802154','0308 02 ffff ffff 07');
+  ok('802.15.4 MAC command',bq.o.kind==='beacon request' && bq.o.dst==='ffff',JSON.stringify(bq.o));
+  const th=rec('ieee802154','61cc 09 621a 1122334455667788 8877665544332211 7a33aabb');
+  ok('thread 6LoWPAN dispatch',th.o.src==='11:22:33:44:55:66:77:88' && th.o['body.dispatch']===0x7a,JSON.stringify(th.o));
+  const adv=rec('ble-adv','020106 0509 4d794150 0aff4c0002 15'.replace(/ /g,'').replace('0aff4c000215','0aff4c000215')+'0102030405060708090a0b0c0d0e0f10'+'0001'+'0002'+'c5');
+  ok('ble advertising by name',adv.o['ad.flags']===6 && adv.o['ad.name']==='MyAP' && adv.o['ad.manufacturer.company']===76,JSON.stringify(adv.o)); }
 ok('schema check clean',H.hexSchemaCheck(H.HEX_LIB.ipv4,H.HEX_LIB).length===0);
 ok('schema check errors',H.hexSchemaCheck({fields:[{n:'a',t:'u7'},{n:'a',t:'bytes'},{n:'c',t:'u8',when:'a +'}]},H.HEX_LIB).length>=3);
 ok('every library schema is clean',Object.entries(H.HEX_LIB).every(([k,s])=>{ const e=H.hexSchemaCheck(s,H.HEX_LIB); if(e.length) console.log(k,e); return !e.length; }));
