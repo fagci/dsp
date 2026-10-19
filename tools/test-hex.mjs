@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,DataView,ArrayBuffer,TextEncoder,TextDecoder,Array,Map,Set,Error,String,Number,BigInt,Object,Date,JSON,isNaN,parseInt});
 for(const f of ['hex-kernels.js','hex-formats.js','hex-gsm.js','wifisniff-kernels.js','radiobridge-kernels.js','pcap-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
-vm.runInContext('this.H={HexAisAsm,hexAisPayload,pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,radioLine,radioStatus,radioRec,radioTx,radioProbeResp,hexParse,hexBuild,hexToRec,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
+vm.runInContext('this.H={HexAisAsm,hexAisPayload,pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,radioLine,radioStatus,radioRec,radioStatRec,radioCsiRec,radioTx,radioProbeResp,hexParse,hexBuild,hexToRec,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
 const H=ctx.H;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 const hex=s=>H.hexFromHex(s), toHex=b=>H.hexToHex(b);
@@ -267,6 +267,11 @@ const rsnIe='0100'+'000fac04'+'0100'+'000fac04'+'0100'+'000fac02'+'0c00';
   const zl2=H.radioLine('RX ZB 15 -60 200 '+'61880562 1a0000 3412 4800 0000 3412 1e11 4001 0600 0401 0107 012202'.replace(/ /g,'')), r3=H.radioRec(zl2,5);
   ok('bridge zigbee line',zl2.proto==='zb' && zl2.chan===15 && zl2.lqi===200 && r3.src==='1234' && r3.net==='1a62' && r3.zb_cluster===6 && r3.zcl_cmd===2,JSON.stringify(r3));
   ok('bridge tx lines',H.radioTx('aabbcc','WIFI')==='TX WIFI aabbcc' && H.radioTx('zb 01 02 03','WIFI',true)==='TX ZB 010203 CSMA' && H.radioTx({hex:'0a0b',proto:'ble'},'WIFI')==='TX BLE 0a0b' && H.radioTx(hex('ff00'),'ble')==='TX BLE ff00' && H.radioTx('zz','WIFI')===null && H.radioTx('aa','XX')===null); }
+  const sl=H.radioLine('STAT 6 250 40 5200 -42 -61 125 3'), sr=H.radioStatRec(sl,5);
+  ok('bridge STAT window → record',sl.stat && sr.kind==='chan-stat' && sr.id==='ch6' && sr.chan===6 && sr.rssi_max===-42 && sr.busy===12.5 && sr.fps===160 && sr.drop===3);
+  ok('bridge STAT empty channel',H.radioStatRec(H.radioLine('STAT 11 250 0 0 -127 -127 0 0'),5).rssi_max===-127);
+  const cl=H.radioLine('CSI 6 -50 AA:BB:CC:00:11:22 0300fd04'), cr=H.radioCsiRec(cl,5);
+  ok('bridge CSI → amplitude / phase lists',cl.csi && cr.kind==='csi' && cr.src==='aa:bb:cc:00:11:22' && cr.sc===2 && cr.csi==='3,5' && cr.csi_ph.split(',').length===2);
 
 // сборка по именам (ie.ssid …) и автоответчик на Probe request
 { const req=H.radioRec(H.radioLine('RX WIFI 6 -48 '+('4000 0000 ffffffffffff aabbccddee09 ffffffffffff 1000'.replace(/ /g,''))+ie(0,'')+ie(1,'8284')),5);

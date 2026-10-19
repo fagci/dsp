@@ -3,11 +3,16 @@
  * USB CDC On Boot: Enabled
  * MODE WIFI|BLE|ZB|OFF; CH n; BAND 2G|5G; HOP ON|OFF [ms];
  * TYPES MGMT,CTRL,DATA|ALL (WiFi RX, default MGMT,CTRL); SNAP n (bytes kept per WiFi frame);
- * BLESCAN PASSIVE|ACTIVE; TX WIFI hex; TX BLE hex; TX ZB hex [CSMA]; INFO; HELP
+ * DSNAP n (bytes kept per WiFi DATA frame, default 96); STAT ms|OFF (per-channel level / airtime lines);
+ * CSI ON [ms]|OFF (WiFi channel state info); BLESCAN PASSIVE|ACTIVE; TX WIFI hex; TX BLE hex; TX ZB hex [CSMA]; INFO; HELP
  * RX lines (hex without FCS):
  *   RX WIFI <ch> <rssi> <hex>              (RX WIFI! - cut by SNAP)
  *   RX BLE <addr> <rssi> <evtype> <atype> <hex>   evtype 0 ADV_IND 1 DIRECT 2 SCAN 3 NONCONN 4 SCAN_RSP; atype 0 public 1 random
  *   RX ZB <ch> <rssi> <lqi> <hex>          (802.15.4: Zigbee, Thread, Matter-over-Thread)
+ *   STAT <ch> <ms> <frames> <bytes> <rssiMax> <rssiAvg> <busy permille> <dropped>   (WiFi, every window or hop; rssiMax -127 = nothing heard)
+ *   CSI <ch> <rssi> <mac> <hex int8 imag,real pairs per subcarrier>
+ * Capture: frames go through a variable-length ring buffer (no 540-byte copies), output is one write per line,
+ * DATA frames are cut to DSNAP bytes. STAT counts every frame the driver delivers (all types), regardless of TYPES.
  * WiFi RX: up to MAX_PKT bytes. TX: 24..1500 without FCS.
  * BLE: legacy advertisement payload <=31 bytes (no extended advertising / coded PHY).
  * ZB: raw IEEE802.15.4, TX <=125 bytes without length/FCS.
@@ -23,10 +28,13 @@
 #include "esp_err.h"
 #include "nvs_flash.h"
 #include "esp_ieee802154.h"
+#include "freertos/ringbuf.h"
 #define MAX_PKT 512
+#define EV_MAX 640                                  // CSI can be longer than a SNAP
 #define ZB_MAX 125
-#define QUEUE_LEN 32
-#define EVENTS_PER_LOOP 8
+#define RING_BYTES 49152
+#define LOOP_US 8000                                // output time budget per loop pass
+#define WITH_CSI 1                                  // 0 if the SDK has no wifi_csi_config_t fields used below
 
 enum Proto { P_WIFI, P_BLE, P_ZB };
 enum RadioMode { MODE_OFF, MODE_WIFI, MODE_BLE, MODE_ZB };
@@ -37,14 +45,16 @@ struct Event {
   uint8_t lqi;
   uint16_t origLen;
   char addr[18];
-  uint8_t data[MAX_PKT];
+  uint8_t data[EV_MAX];
 };
-static QueueHandle_t evtQueue = NULL;
+#define EV_HDR offsetof(Event, data)
+struct Stat { uint32_t frames, bytes, air; int32_t rssiSum; int8_t rssiMax; };
+static RingbufHandle_t evRing = NULL;
 static RadioMode mode = MODE_OFF;
 static uint8_t wifiChan = 6, zbChan = 11;
 static bool wifi5g = false;
 static uint8_t wifiTypes = 3;                       // bit0 mgmt, bit1 ctrl, bit2 data
-static uint16_t snapLen = 320;
+static uint16_t snapLen = 320, dataSnap = 96;
 static bool bleActive = false;
 static bool hopOn = false;
 static uint16_t hopMs = 250;
@@ -53,6 +63,13 @@ static uint8_t hopIdx = 0;
 static const uint8_t HOP5G[] = {36,40,44,48,52,56,60,64,100,104,108,112,116,120,124,128,132,136,140,144,149,153,157,161,165};
 static bool zbTxPending = false;
 static volatile uint32_t dropped = 0, zbDropped = 0;
+static Stat st = {0, 0, 0, 0, -127};
+static bool statOn = false, csiOn = false;
+static uint16_t statMs = 1000, csiMs = 100;
+static uint32_t statT = 0, csiT = 0, statDrop0 = 0;
+static uint8_t statCh = 0;
+static portMUX_TYPE stMux = portMUX_INITIALIZER_UNLOCKED;
+static char outBuf[EV_MAX * 2 + 80];
 static portMUX_TYPE zbMux = portMUX_INITIALIZER_UNLOCKED;
 static uint8_t zbTxBuf[ZB_MAX + 4];
 static char lineBuf[4700];
@@ -68,6 +85,12 @@ int bleGapEventCb(struct ble_gap_event *, void *);
 void wifiPromiscCb(void *, wifi_promiscuous_pkt_type_t);
 }
 
+static char *skipSpace(char *p) { while (*p == ' ' || *p == '\t') ++p; return p; }
+static char *splitToken(char *p) {
+  while (*p && *p != ' ' && *p != '\t') ++p;
+  if (*p) *p++ = 0;
+  return skipSpace(p);
+}
 static bool checkEsp(const char *step, esp_err_t err) {
   if (err == ESP_OK) return true;
   Serial.printf("ERR SDK %s %s (0x%04x)\r\n", step, esp_err_to_name(err), (unsigned)err);
@@ -87,18 +110,6 @@ static int parseHex(const char *s, uint8_t *out, int maxLen) {
   }
   return hi >= 0 ? -1 : n;
 }
-static void printHex(const uint8_t *d, int len) {
-  static const char digits[] = "0123456789abcdef";
-  char chunk[129];
-  while (len > 0) {
-    int n = len > 64 ? 64 : len;
-    for (int i = 0; i < n; ++i) {
-      chunk[2*i] = digits[d[i] >> 4]; chunk[2*i+1] = digits[d[i] & 15];
-    }
-    Serial.write((const uint8_t *)chunk, n * 2);
-    d += n; len -= n;
-  }
-}
 static const char *modeName(RadioMode m) {
   switch (m) {
     case MODE_WIFI: return "WIFI"; case MODE_BLE: return "BLE";
@@ -114,10 +125,13 @@ static bool zbBusy() {
 static void clearZbBusy() {
   portENTER_CRITICAL(&zbMux); zbTxPending = false; portEXIT_CRITICAL(&zbMux);
 }
+static bool evPush(const Event &e) {
+  return xRingbufferSend(evRing, &e, EV_HDR + e.len, 0) == pdTRUE;
+}
 static void IRAM_ATTR queueZbStatusFromISR(bool ok, uint8_t code) {
-  Event e = {}; e.type = 1; e.proto = P_ZB; e.len = ok ? 0 : 1; e.lqi = code;
+  Event e; memset(&e, 0, EV_HDR); e.type = 1; e.proto = P_ZB; e.len = ok ? 0 : 1; e.lqi = code;
   BaseType_t woken = pdFALSE;
-  if (xQueueSendFromISR(evtQueue, &e, &woken) != pdTRUE) zbDropped++;
+  if (xRingbufferSendFromISR(evRing, &e, EV_HDR + e.len, &woken) != pdTRUE) zbDropped++;
   if (woken) portYIELD_FROM_ISR();
 }
 static void stopRadio() {
@@ -138,13 +152,67 @@ static uint32_t wifiFilterMask() {
   if (wifiTypes & 4) m |= WIFI_PROMIS_FILTER_MASK_DATA;
   return m;
 }
+static uint32_t rxFilterMask() {                    // STAT needs to see every frame; forwarding is decided in the callback
+  return statOn ? (WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_CTRL | WIFI_PROMIS_FILTER_MASK_DATA) : wifiFilterMask();
+}
+static void statReset() {
+  portENTER_CRITICAL(&stMux); st = {0, 0, 0, 0, -127}; portEXIT_CRITICAL(&stMux);
+  statT = millis(); statCh = wifiChan; statDrop0 = dropped;
+}
+// airtime estimate, us: legacy rate by table, HT/VHT/HE by HT20 MCS 0..7 (overestimates fast HE frames)
+static uint32_t airtimeUs(uint8_t sigMode, uint8_t rate, uint8_t mcs, uint32_t bytes) {
+  static const uint16_t leg[16] = {10, 20, 55, 110, 10, 20, 55, 110, 480, 240, 120, 60, 540, 360, 180, 90};   // x100 kbit/s
+  static const uint16_t ht[8] = {65, 130, 195, 260, 390, 520, 585, 650};
+  uint32_t r, pre;
+  if (sigMode == 0) { r = leg[rate & 15]; pre = (rate & 15) < 4 ? 192 : (rate & 15) < 8 ? 96 : 20; }
+  else { r = ht[mcs & 7]; pre = 36; }
+  return pre + bytes * 80 / r;
+}
+static void statFlush() {
+  if (!statOn || mode != MODE_WIFI) return;
+  uint32_t now = millis(), el = now - statT;
+  Stat s;
+  portENTER_CRITICAL(&stMux); s = st; st = {0, 0, 0, 0, -127}; portEXIT_CRITICAL(&stMux);
+  uint32_t busy = el ? s.air / el : 0;               // us per ms = permille
+  if (busy > 1000) busy = 1000;
+  int avg = s.frames ? (int)(s.rssiSum / (int32_t)s.frames) : -127;
+  Serial.printf("STAT %u %lu %lu %lu %d %d %lu %lu\r\n", statCh, (unsigned long)el, (unsigned long)s.frames, (unsigned long)s.bytes,
+    s.rssiMax, avg, (unsigned long)busy, (unsigned long)(dropped - statDrop0));
+  statT = now; statCh = wifiChan; statDrop0 = dropped;
+}
+#if WITH_CSI
+static void wifiCsiCb(void *, wifi_csi_info_t *info) {
+  if (!csiOn || !info || !info->buf || info->len <= 0) return;
+  uint32_t now = millis();
+  if (now - csiT < csiMs) return;
+  csiT = now;
+  Event e; memset(&e, 0, EV_HDR);
+  e.type = 2; e.proto = P_WIFI; e.ch = info->rx_ctrl.channel; e.rssi = info->rx_ctrl.rssi;
+  snprintf(e.addr, sizeof(e.addr), "%02x:%02x:%02x:%02x:%02x:%02x",
+    info->mac[0], info->mac[1], info->mac[2], info->mac[3], info->mac[4], info->mac[5]);
+  e.len = info->len > EV_MAX ? EV_MAX : info->len; e.origLen = info->len;
+  memcpy(e.data, info->buf, e.len);
+  if (!evPush(e)) dropped++;
+}
+static bool applyCsi() {
+  if (!csiOn) return checkEsp("esp_wifi_set_csi", esp_wifi_set_csi(false));
+  wifi_csi_config_t cc = {};
+  cc.enable = 1; cc.acquire_csi_legacy = 1; cc.acquire_csi_ht20 = 1;
+  return checkEsp("esp_wifi_set_csi_config", esp_wifi_set_csi_config(&cc)) &&
+         checkEsp("esp_wifi_set_csi_rx_cb", esp_wifi_set_csi_rx_cb(wifiCsiCb, NULL)) &&
+         checkEsp("esp_wifi_set_csi", esp_wifi_set_csi(true));
+}
+#else
+static bool applyCsi() { return !csiOn; }
+#endif
 static bool startWifi() {
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+  cfg.static_rx_buf_num = 16; cfg.dynamic_rx_buf_num = 64; cfg.nvs_enable = 0;   // deeper driver RX queue: fewer silent drops
   if (!checkEsp("esp_wifi_init", esp_wifi_init(&cfg))) return false;
   bool started = false;
   wifi_config_t wc = {};
   wifi_promiscuous_filter_t filt = {};
-  filt.filter_mask = wifiFilterMask();
+  filt.filter_mask = rxFilterMask();
   memcpy(wc.ap.ssid, "bridge", 6);
   wc.ap.ssid_len = 6;
   // Start on a known 2.4 GHz channel; select requested band AFTER start.
@@ -165,7 +233,11 @@ static bool startWifi() {
   if (!checkEsp("esp_wifi_set_channel", esp_wifi_set_channel(wifiChan, WIFI_SECOND_CHAN_NONE))) goto fail;
   if (!checkEsp("esp_wifi_set_promiscuous_filter", esp_wifi_set_promiscuous_filter(&filt))) goto fail;
   if (!checkEsp("esp_wifi_set_promiscuous_rx_cb", esp_wifi_set_promiscuous_rx_cb(wifiPromiscCb))) goto fail;
+  esp_wifi_set_ps(WIFI_PS_NONE);
+  esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
   if (!checkEsp("esp_wifi_set_promiscuous", esp_wifi_set_promiscuous(true))) goto fail;
+  if (csiOn) applyCsi();
+  statReset();
   return true;
 fail:
   if (started) { esp_wifi_set_promiscuous(false); esp_wifi_stop(); }
@@ -218,7 +290,7 @@ static void cmdChannel(int ch) {
       Serial.println("ERR CH BAND"); return;
     }
     if (!checkEsp("esp_wifi_set_channel", esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE))) return;
-    wifiChan = ch;
+    statFlush(); wifiChan = ch; statReset();
   } else if (mode == MODE_ZB) {
     if (ch < 11 || ch > 26) { Serial.println("ERR CH 11..26"); return; }
     if (zbBusy()) { Serial.println("ERR TX BUSY"); return; }
@@ -249,7 +321,7 @@ static void cmdTypes(const char *a) {
   wifiTypes = t;
   if (mode == MODE_WIFI) {
     wifi_promiscuous_filter_t filt = {};
-    filt.filter_mask = wifiFilterMask();
+    filt.filter_mask = rxFilterMask();
     if (!checkEsp("esp_wifi_set_promiscuous_filter", esp_wifi_set_promiscuous_filter(&filt))) return;
   }
   Serial.printf("OK TYPES %u\r\n", (unsigned)wifiTypes);
@@ -258,6 +330,36 @@ static void cmdSnap(int n) {
   if (n < 24 || n > MAX_PKT) { Serial.printf("ERR SNAP 24..%d\r\n", MAX_PKT); return; }
   snapLen = n;
   Serial.printf("OK SNAP %d\r\n", n);
+}
+static void cmdDsnap(int n) {
+  if (n < 24 || n > MAX_PKT) { Serial.printf("ERR DSNAP 24..%d\r\n", MAX_PKT); return; }
+  dataSnap = n;
+  Serial.printf("OK DSNAP %d\r\n", n);
+}
+static void cmdStat(const char *a) {
+  if (!strcasecmp(a, "OFF")) statOn = false;
+  else {
+    char *tail; long v = strtol(a, &tail, 10);
+    if (*tail || v < 100 || v > 60000) { Serial.println("ERR STAT 100..60000 ms|OFF"); return; }
+    statMs = (uint16_t)v; statOn = true;
+  }
+  if (mode == MODE_WIFI) {
+    wifi_promiscuous_filter_t filt = {};
+    filt.filter_mask = rxFilterMask();
+    if (!checkEsp("esp_wifi_set_promiscuous_filter", esp_wifi_set_promiscuous_filter(&filt))) return;
+    statReset();
+  }
+  Serial.printf("OK STAT %s %u\r\n", statOn ? "ON" : "OFF", (unsigned)statMs);
+}
+static void cmdCsi(char *a) {
+  char *ms = splitToken(a);
+  if (!strcasecmp(a, "ON")) {
+    if (*ms) { long v = strtol(ms, NULL, 10); if (v < 0 || v > 5000) { Serial.println("ERR CSI 0..5000 ms"); return; } csiMs = (uint16_t)v; }
+    csiOn = true;
+  } else if (!strcasecmp(a, "OFF")) csiOn = false;
+  else { Serial.println("ERR CSI"); return; }
+  if (mode == MODE_WIFI && !applyCsi()) { Serial.println("ERR CSI SDK"); return; }
+  Serial.printf("OK CSI %s %u\r\n", csiOn ? "ON" : "OFF", (unsigned)csiMs);
 }
 static void cmdBleScan(const char *a) {
   if (!strcasecmp(a, "ACTIVE")) bleActive = true;
@@ -280,10 +382,12 @@ static void cmdHop(char *a) {
 // шаг перебора каналов: WiFi 2.4 — 1..13, 5 ГГц — список HOP5G, 802.15.4 — 11..26
 static void hopStep() {
   if (mode == MODE_WIFI) {
+    statFlush();
     uint8_t ch;
     if (wifi5g) { hopIdx = (hopIdx + 1) % sizeof(HOP5G); ch = HOP5G[hopIdx]; }
     else { hopIdx = (hopIdx + 1) % 13; ch = hopIdx + 1; }
     if (esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE) == ESP_OK) wifiChan = ch;
+    statReset();
   } else if (mode == MODE_ZB && !zbBusy()) {
     hopIdx = (hopIdx + 1) % 16;
     if (esp_ieee802154_set_channel(11 + hopIdx) == ESP_OK) zbChan = 11 + hopIdx;
@@ -327,11 +431,11 @@ static void cmdTxZb(char *args) {
 }
 static void cmdInfo() {
   Serial.printf("MODE %s", modeName(mode));
-  if (mode == MODE_WIFI) Serial.printf(" CH %d BAND %s TYPES %u SNAP %u", wifiChan, wifi5g ? "5G" : "2G", (unsigned)wifiTypes, (unsigned)snapLen);
+  if (mode == MODE_WIFI) Serial.printf(" CH %d BAND %s TYPES %u SNAP %u DSNAP %u STAT %s CSI %s", wifiChan, wifi5g ? "5G" : "2G", (unsigned)wifiTypes, (unsigned)snapLen, (unsigned)dataSnap, statOn ? "ON" : "OFF", csiOn ? "ON" : "OFF");
   if (mode == MODE_ZB) Serial.printf(" CH %d", zbChan);
   if (mode == MODE_BLE) Serial.printf(" SCAN %s", bleActive ? "ACTIVE" : "PASSIVE");
   Serial.printf(" HOP %s %u", hopOn ? "ON" : "OFF", (unsigned)hopMs);
-  Serial.printf(" DROPPED %lu\r\n", (unsigned long)(dropped + zbDropped));
+  Serial.printf(" DROPPED %lu RINGFREE %u\r\n", (unsigned long)(dropped + zbDropped), (unsigned)xRingbufferGetCurFreeSize(evRing));
 }
 static void printHelp() {
   Serial.println("MODE WIFI|BLE|ZB|OFF");
@@ -340,17 +444,14 @@ static void printHelp() {
   Serial.println("HOP ON|OFF [ms] - cycle channels (WIFI 1..13 or 5G list, ZB 11..26), default 250 ms");
   Serial.println("TYPES MGMT,CTRL,DATA|ALL - WIFI frame classes to receive (default MGMT,CTRL)");
   Serial.println("SNAP <n> - WIFI bytes kept per frame, 24..512 (default 320)");
+  Serial.println("DSNAP <n> - WIFI bytes kept per DATA frame, 24..512 (default 96)");
+  Serial.println("STAT <ms>|OFF - WIFI per-channel lines: frames, bytes, max/avg RSSI, airtime (counts all frame types)");
+  Serial.println("CSI ON [min ms between reports]|OFF - WIFI channel state info");
   Serial.println("BLESCAN PASSIVE|ACTIVE - ACTIVE also returns scan responses");
   Serial.println("TX WIFI <hex> - 24..1500 bytes, no FCS");
   Serial.println("TX BLE <hex> - advertisement payload <=31 bytes, repeats");
   Serial.println("TX ZB <hex> [CSMA] - 3..125 bytes, no length/FCS");
   Serial.println("INFO / HELP");
-}
-static char *skipSpace(char *p) { while (*p == ' ' || *p == '\t') ++p; return p; }
-static char *splitToken(char *p) {
-  while (*p && *p != ' ' && *p != '\t') ++p;
-  if (*p) *p++ = 0;
-  return skipSpace(p);
 }
 static void handleLine(char *line) {
   line = skipSpace(line);
@@ -375,20 +476,25 @@ static void handleLine(char *line) {
   else if (!strcasecmp(line, "SNAP") && *args) {
     char *tail; long n = strtol(args, &tail, 10);
     if (*tail) Serial.println("ERR SNAP"); else cmdSnap((int)n);
-  } else if (!strcasecmp(line, "BLESCAN") && *args) cmdBleScan(args);
+  } else if (!strcasecmp(line, "DSNAP") && *args) {
+    char *tail; long n = strtol(args, &tail, 10);
+    if (*tail) Serial.println("ERR DSNAP"); else cmdDsnap((int)n);
+  } else if (!strcasecmp(line, "STAT") && *args) cmdStat(args);
+  else if (!strcasecmp(line, "CSI") && *args) cmdCsi(args);
+  else if (!strcasecmp(line, "BLESCAN") && *args) cmdBleScan(args);
   else if (!strcasecmp(line, "INFO")) cmdInfo();
   else if (!strcasecmp(line, "HELP") || !strcmp(line, "?")) printHelp();
   else Serial.println("ERR CMD (HELP for help)");
 }
 extern "C" void IRAM_ATTR esp_ieee802154_receive_done(uint8_t *frame, esp_ieee802154_frame_info_t *info) {
-  Event e = {}; e.proto = P_ZB; e.ch = zbChan;
+  Event e; memset(&e, 0, EV_HDR); e.proto = P_ZB; e.ch = zbChan;
   e.len = frame[0] >= 2 ? frame[0] - 2 : 0;          // PSDU length includes the 2-byte FCS
   if (e.len > MAX_PKT) e.len = MAX_PKT;
   e.origLen = e.len;
   e.rssi = info->rssi; e.lqi = info->lqi;
   memcpy(e.data, frame + 1, e.len);
   BaseType_t woken = pdFALSE;
-  if (xQueueSendFromISR(evtQueue, &e, &woken) != pdTRUE) zbDropped++;
+  if (xRingbufferSendFromISR(evRing, &e, EV_HDR + e.len, &woken) != pdTRUE) zbDropped++;
   esp_ieee802154_receive_handle_done(frame);
   if (woken) portYIELD_FROM_ISR();
 }
@@ -402,27 +508,36 @@ extern "C" void IRAM_ATTR esp_ieee802154_transmit_failed(const uint8_t *frame, e
   queueZbStatusFromISR(false, (uint8_t)error);
 }
 extern "C" void wifiPromiscCb(void *buf, wifi_promiscuous_pkt_type_t type) {
-  uint8_t bit = type == WIFI_PKT_MGMT ? 1 : type == WIFI_PKT_CTRL ? 2 : type == WIFI_PKT_DATA ? 4 : 0;
-  if (!(wifiTypes & bit)) return;
   const wifi_promiscuous_pkt_t *pkt = (const wifi_promiscuous_pkt_t *)buf;
   uint32_t sig = pkt->rx_ctrl.sig_len;
-  if (sig < 14) return;
+  if (statOn) {
+    int8_t rs = pkt->rx_ctrl.rssi;
+    uint32_t air = airtimeUs(pkt->rx_ctrl.sig_mode, pkt->rx_ctrl.rate, pkt->rx_ctrl.mcs, sig);
+    portENTER_CRITICAL(&stMux);
+    st.frames++; st.bytes += sig; st.air += air; st.rssiSum += rs;
+    if (rs > st.rssiMax) st.rssiMax = rs;
+    portEXIT_CRITICAL(&stMux);
+  }
+  uint8_t bit = type == WIFI_PKT_MGMT ? 1 : type == WIFI_PKT_CTRL ? 2 : type == WIFI_PKT_DATA ? 4 : 0;
+  if (!(wifiTypes & bit) || sig < 14) return;
   sig -= 4;                                           // drop FCS
-  Event e = {}; e.proto = P_WIFI; e.ch = pkt->rx_ctrl.channel; e.rssi = pkt->rx_ctrl.rssi; e.origLen = sig;
-  e.len = sig > snapLen ? snapLen : sig;
+  uint16_t snap = bit == 4 ? dataSnap : snapLen;
+  Event e; memset(&e, 0, EV_HDR);
+  e.proto = P_WIFI; e.ch = pkt->rx_ctrl.channel; e.rssi = pkt->rx_ctrl.rssi; e.origLen = sig;
+  e.len = sig > snap ? snap : sig;
   memcpy(e.data, pkt->payload, e.len);
-  if (xQueueSend(evtQueue, &e, 0) != pdTRUE) dropped++;
+  if (!evPush(e)) dropped++;
 }
 extern "C" int bleGapEventCb(struct ble_gap_event *event, void *arg) {
   if (event->type == BLE_GAP_EVENT_DISC) {
     const struct ble_gap_disc_desc *d = &event->disc;
-    Event e = {}; e.proto = P_BLE; e.rssi = d->rssi; e.origLen = d->length_data;
+    Event e; memset(&e, 0, EV_HDR); e.proto = P_BLE; e.rssi = d->rssi; e.origLen = d->length_data;
     e.evtype = d->event_type; e.atype = d->addr.type;
     e.len = e.origLen > MAX_PKT ? MAX_PKT : e.origLen;
     memcpy(e.data, d->data, e.len);
     snprintf(e.addr, sizeof(e.addr), "%02x:%02x:%02x:%02x:%02x:%02x",
       d->addr.val[5], d->addr.val[4], d->addr.val[3], d->addr.val[2], d->addr.val[1], d->addr.val[0]);
-    if (xQueueSend(evtQueue, &e, 0) != pdTRUE) dropped++;
+    if (!evPush(e)) dropped++;
   }
   return 0;
 }
@@ -431,18 +546,26 @@ static void printEvent(const Event &e) {
     if (e.len == 0) Serial.println("TXZB OK"); else Serial.printf("TXZB ERR %u\r\n", e.lqi);
     return;
   }
-  switch (e.proto) {
-    case P_WIFI: Serial.printf(e.origLen > e.len ? "RX WIFI! %u %d " : "RX WIFI %u %d ", e.ch, e.rssi); break;
-    case P_BLE: Serial.printf("RX BLE %s %d %u %u ", e.addr, e.rssi, e.evtype, e.atype); break;
-    case P_ZB: Serial.printf("RX ZB %u %d %u ", e.ch, e.rssi, e.lqi); break;
+  int h;
+  if (e.type == 2) h = snprintf(outBuf, 80, "CSI %u %d %s ", e.ch, e.rssi, e.addr);
+  else switch (e.proto) {
+    case P_WIFI: h = snprintf(outBuf, 80, e.origLen > e.len ? "RX WIFI! %u %d " : "RX WIFI %u %d ", e.ch, e.rssi); break;
+    case P_BLE: h = snprintf(outBuf, 80, "RX BLE %s %d %u %u ", e.addr, e.rssi, e.evtype, e.atype); break;
+    case P_ZB: h = snprintf(outBuf, 80, "RX ZB %u %d %u ", e.ch, e.rssi, e.lqi); break;
     default: return;
   }
-  printHex(e.data, e.len); Serial.println();
+  static const char digits[] = "0123456789abcdef";
+  char *p = outBuf + h;
+  for (int i = 0; i < e.len; ++i) { *p++ = digits[e.data[i] >> 4]; *p++ = digits[e.data[i] & 15]; }
+  *p++ = '\r'; *p++ = '\n';
+  Serial.write((const uint8_t *)outBuf, p - outBuf);
 }
 void setup() {
+  Serial.setTxBufferSize(16384);                      // before begin(): a burst of frames must not block on the host
+  Serial.setRxBufferSize(2048);
   Serial.begin(115200);
-  evtQueue = xQueueCreate(QUEUE_LEN, sizeof(Event));
-  if (!evtQueue) { Serial.println("ERR QUEUE ALLOC"); return; }
+  evRing = xRingbufferCreate(RING_BYTES, RINGBUF_TYPE_NOSPLIT);
+  if (!evRing) { Serial.println("ERR RING ALLOC"); return; }
   esp_err_t err = nvs_flash_init();
   // Do not erase NVS automatically: report errors instead of deleting user data.
   if (!checkEsp("nvs_flash_init", err)) return;
@@ -465,16 +588,19 @@ void loop() {
     } else if (linePos < sizeof(lineBuf)-1) lineBuf[linePos++] = c;
     else lineOverflow = true;
   }
-  if (evtQueue) {
-    Event e;
-    for (int i = 0; i < EVENTS_PER_LOOP; ++i) {
-      if (xQueueReceive(evtQueue, &e, 0) != pdTRUE) break;
-      printEvent(e);
+  bool busy = false;
+  if (evRing) {
+    uint32_t t0 = micros();
+    size_t sz;
+    while (Event *e = (Event *)xRingbufferReceive(evRing, &sz, 0)) {
+      printEvent(*e); vRingbufferReturnItem(evRing, e); busy = true;
+      if (micros() - t0 > LOOP_US) break;
     }
   }
   if (hopOn && (mode == MODE_WIFI || mode == MODE_ZB) && millis() - hopT >= hopMs) { hopT = millis(); hopStep(); }
+  if (statOn && mode == MODE_WIFI && millis() - statT >= statMs) statFlush();
   static uint32_t droppedShown = 0;
   uint32_t total = dropped + zbDropped;
   if (total != droppedShown) { Serial.printf("WARN DROPPED %lu\r\n", (unsigned long)total); droppedShown = total; }
-  delay(1);
+  if (!busy) delay(1);
 }

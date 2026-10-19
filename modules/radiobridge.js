@@ -3,6 +3,7 @@
    Wi-Fi (2.4 / 5 ГГц, mgmt + ctrl + data), BLE и 802.15.4 (Zigbee / Thread) через USB WebSerial; прошивка — tools/radio-bridge-esp32c5.
    Каждый принятый кадр — запись rec с одинаковыми именами для всех протоколов (proto, kind, src, dst, net, ie.ssid, ad.name …)
    и полем hex: её можно отдать в Rec Filter, Table, Graph, HEX Structure. Передача: входы tx / txrec / txbin → «TX <протокол> <hex>».
+   Выход stat — окно по каналу (макс. RSSI, занятость %), csi — амплитуда / фаза по поднесущим; оба отдельно от rec.
    Без железа узел кормится входом text (те же строки). Ядро — radiobridge-kernels.js. */
 
 async function radioTeardown(n){
@@ -48,6 +49,8 @@ async function radioReadLoop(n){
 function radioFeed(n,line){
   const f=radioLine(line);
   if(!f){ const st=radioStatus(line); if(st) n.reply=st; return; }
+  if(f.stat){ n.pendStat.push(radioStatRec(f)); if(n.pendStat.length>500) n.pendStat.splice(0,n.pendStat.length-500); return; }
+  if(f.csi){ n.pendCsi.push(radioCsiRec(f)); if(n.pendCsi.length>100) n.pendCsi.splice(0,n.pendCsi.length-100); return; }
   n.frames++;
   let r; try{ r=radioRec(f); }catch(e){ return; }
   n.pend.push(r); n.lastBin=f.bytes; n.lastProto=f.proto; n.binId++;
@@ -70,7 +73,11 @@ function radioCfg(n){
   const p=n.p, mode=p.mode;
   const types=[p.tMgmt&&'MGMT',p.tCtrl&&'CTRL',p.tData&&'DATA'].filter(Boolean).join(',');
   let s='';
-  if(mode==='WIFI'){ s+='BAND '+p.band+'\nTYPES '+(types||'MGMT')+'\nSNAP '+p.snap+'\n'; }
+  if(mode==='WIFI'){
+    s+='BAND '+p.band+'\nTYPES '+(types||'MGMT')+'\nSNAP '+p.snap+'\nDSNAP '+p.dsnap+'\n';
+    s+=p.stat ? 'STAT '+p.statMs+'\n' : 'STAT OFF\n';
+    s+=p.csi ? 'CSI ON '+p.csiMs+'\n' : 'CSI OFF\n';
+  }
   if(mode==='BLE') s+='BLESCAN '+p.bleScan+'\n';
   s+='MODE '+mode+'\n';
   if(mode!=='OFF' && mode!=='BLE') s+=p.chan>0 ? 'HOP OFF\nCH '+p.chan+'\n' : 'HOP ON '+p.dwell+'\n';
@@ -90,7 +97,7 @@ function radioTxNow(n,src,proto){
 
 def({ id:'radioBridge', lazy:'manual', title:'Radio Bridge (ESP32-C5)', cat:'Sources', kw:'esp32 c5 wifi ble bluetooth zigbee thread matter 802.15.4 802.11 sniffer inject transmit tx rx packets frames probe beacon p2p wifi direct espnow',
   ins:[{n:'text',t:'txt'},{n:'tx',t:'txt'},{n:'txrec',t:'rec'},{n:'txbin',t:'bin'}],
-  outs:[{n:'rec',t:'rec'},{n:'bin',t:'bin'},{n:'count',t:'num'},{n:'frames',t:'num'}],
+  outs:[{n:'rec',t:'rec'},{n:'stat',t:'rec'},{n:'csi',t:'rec'},{n:'bin',t:'bin'},{n:'count',t:'num'},{n:'frames',t:'num'}],
   readout:true, tall:true, w:420, resize:true,
   params:[{n:'connect',t:'button',label:'Connect ESP32-C5',fn:n=>radioConnect(n)},
           {n:'disconnect',t:'button',label:'Disconnect',fn:n=>{ n.status='disconnected'; radioTeardown(n); }},
@@ -102,6 +109,11 @@ def({ id:'radioBridge', lazy:'manual', title:'Radio Bridge (ESP32-C5)', cat:'Sou
           {n:'chan',t:'num',d:0,label:'channel (0 — hop; Wi-Fi 1…13 / 36…165, ZB 11…26)',fn:n=>radioSend(n,radioCfg(n))},
           {n:'dwell',t:'range',min:20,max:2000,step:10,d:250,label:'hop dwell, ms',fn:n=>radioSend(n,radioCfg(n))},
           {n:'snap',t:'range',min:24,max:512,step:8,d:320,label:'Wi-Fi bytes kept per frame',fn:n=>radioSend(n,radioCfg(n))},
+          {n:'dsnap',t:'range',min:24,max:512,step:8,d:96,label:'Wi-Fi bytes kept per data frame',fn:n=>radioSend(n,radioCfg(n))},
+          {n:'stat',t:'check',d:false,label:'Wi-Fi: channel stats → stat (level / airtime of every frame, even unselected types)',fn:n=>radioSend(n,radioCfg(n))},
+          {n:'statMs',t:'range',min:100,max:5000,step:100,d:1000,label:'stat window, ms (hop: per dwell)',fn:n=>radioSend(n,radioCfg(n))},
+          {n:'csi',t:'check',d:false,label:'Wi-Fi: CSI → csi',fn:n=>radioSend(n,radioCfg(n))},
+          {n:'csiMs',t:'range',min:0,max:2000,step:10,d:100,label:'CSI: min interval, ms',fn:n=>radioSend(n,radioCfg(n))},
           {n:'bleScan',t:'select',opts:['PASSIVE','ACTIVE'],d:'PASSIVE',label:'BLE scan',fn:n=>radioSend(n,radioCfg(n))},
           {n:'arProbe',t:'check',d:false,label:'auto-reply to Probe requests (Wi-Fi; set a fixed channel)'},
           {n:'arSsid',t:'text',d:'',label:'auto-reply: SSID to answer for'},
@@ -109,8 +121,8 @@ def({ id:'radioBridge', lazy:'manual', title:'Radio Bridge (ESP32-C5)', cat:'Sou
           {n:'txProto',t:'select',opts:['WIFI','BLE','ZB'],d:'WIFI',label:'tx: protocol for bare hex'},
           {n:'csma',t:'check',d:false,label:'tx: ZB with CSMA'},
           {n:'baud',t:'num',d:115200,label:'baud (ignored by USB-CDC chips)',adv:true},
-          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.pend=[]; n.frames=0; n.sent=0; n.txCount=0; n.replies=0; }}],
-  init:n=>{ n.pend=[]; n.frames=0; n.sent=0; n.lastText=null; n.lastBin=null; n.lastProto='wifi'; n.binId=0; n.binSent=0; n.binOut=null;
+          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.pend=[]; n.pendStat=[]; n.pendCsi=[]; n.frames=0; n.sent=0; n.txCount=0; n.replies=0; }}],
+  init:n=>{ n.pend=[]; n.pendStat=[]; n.pendCsi=[]; n.frames=0; n.sent=0; n.lastText=null; n.lastBin=null; n.lastProto='wifi'; n.binId=0; n.binSent=0; n.binOut=null;
     n.arLast=new Map(); n.arSeq=0; n.replies=0;
     n.lastTx=null; n.lastTxRec=null; n.lastTxBin=null; n.txCount=0; n.txLast=''; n.txErr=''; n.reply='';
     n.port=null; n.reader=null; n.connected=false; n.connecting=false; n.status='not connected'; },
@@ -127,8 +139,9 @@ def({ id:'radioBridge', lazy:'manual', title:'Radio Bridge (ESP32-C5)', cat:'Sou
     if(I.txrec!==n.lastTxRec){ n.lastTxRec=I.txrec; for(const r of recList(I.txrec)) radioTxNow(n,r); }
     if(I.txbin && I.txbin.id!==n.lastTxBin){ n.lastTxBin=I.txbin.id; if(I.txbin.d && I.txbin.d.length) radioTxNow(n,I.txbin.d); }
     const recs=n.pend; n.pend=[]; n.sent+=recs.length;
+    const st=n.pendStat, cs=n.pendCsi; n.pendStat=[]; n.pendCsi=[];
     if(n.binSent!==n.binId){ n.binSent=n.binId; n.binOut=binObj(n.lastBin,n.lastProto+'-frame'); }
-    return {rec:recs.length ? recs : null, bin:n.binOut, count:n.sent, frames:n.frames};
+    return {rec:recs.length ? recs : null, stat:st.length ? st : null, csi:cs.length ? cs : null, bin:n.binOut, count:n.sent, frames:n.frames};
   },
   drawKey:n=>n.status+'|'+n.frames+'|'+n.txCount+'|'+n.replies+'|'+n.reply+'|'+n.txErr,
   draw(n){
