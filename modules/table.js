@@ -1139,11 +1139,18 @@ async function tblPick(n,list){
   if(Array.isArray(sh) && (!sh.length || (sh.length===1 && tblCanon(sh[0])===n.p.list))) n.p.show=[list];
   await tblUse(n,list);
 }
-// строки сменились в основном точечно (иначе одна пересборка дешевле сотни замен): отличаются не больше половины
-function tblFewDiff(old,cur,drop){
-  const len=old.length-drop; let d=0;
-  for(let k=0;k<len;k++) if(old[drop+k]!==cur[k]) d++;
-  return d<=16 || d*2<=len;
+// Старые строки окна → новые. Список сдвигается (потолок maxRows сбрасывает старые, tail-окно уходит вниз), поэтому ищем смещение off:
+// старая строка off+j стала новой j. Принимаем, если отличаются не больше половины (иначе одна пересборка дешевле сотни замен).
+function tblAlign(old,cur){
+  const miss=off=>{ let d=0; const m=Math.min(old.length-off,cur.length); for(let j=0;j<m;j++) if(old[off+j]!==cur[j]) d++; return d; };
+  let best=0, bd=miss(0), tries=0;
+  for(let off=1;off<old.length && bd>0 && tries<48;off++){
+    if(old[off]!==cur[0]) continue;
+    tries++;
+    const d=miss(off); if(d<bd){ bd=d; best=off; }
+  }
+  const kept=Math.min(old.length-best,cur.length);
+  return bd<=16 || bd*2<=kept ? best : -1;
 }
 function tblRenderList(n,inc){
   const ui=n.ui, list=ui.list, N=n.rows.length, ro=tblRO(n), grid=tcView(n)==='grid';
@@ -1177,28 +1184,37 @@ function tblRenderList(n,inc){
     }
     tc='5ch '+vc.map((x,k)=>x.w>0 ? x.w+'px' : Math.min(28,wid[k]+2)+'ch').join(' ')+' 56px';
   }
-  const sigs=[];
+  const sigs=[], named=tcHasName(n);                  // без имени подпись «#номер» — от позиции, в подпись строки не входит
   for(let i=s;i<e;i++){
     const r=n.rows[i], bg=tblRowBg(n,r);
-    sigs.push(grid ? texts[i-s].join('\u0001')+'\u0002'+bg : tcTitle(n,r,i)+'\u0002'+tblSummary(n,r)+'\u0002'+bg+'\u0002'+(n.colorCol ? r[n.colorCol] : '')+'\u0002'+n.cl.filter(c=>{ const t=tblType(n,c); return t==='photo' || t==='audio'; }).map(c=>r[c]).join(','));
+    sigs.push(grid ? texts[i-s].join('\u0001')+'\u0002'+bg : (named ? n.labelFn(r) : '')+'\u0002'+tblSummary(n,r)+'\u0002'+bg+'\u0002'+(n.colorCol ? r[n.colorCol] : '')+'\u0002'+n.cl.filter(c=>{ const t=tblType(n,c); return t==='photo' || t==='audio'; }).map(c=>r[c]).join(','));
   }
   const rowAt=i=>tblRow(n,i,ro,grid ? {vc,t:texts[i-s]} : null);
   const more=N>TBL_ROWS;
   const footText=()=>ui.tail ? '… '+s+' earlier rows hidden — narrow with the filter' : '… '+(N-e)+' more rows — narrow with the filter';
-  if(!n.uiFull && base && base.els && base.grid===grid && base.ro===ro && base.hk===hk && base.tail===ui.tail
-     && s>=base.s && s-base.s<=base.els.length && e>=base.e && more===!!base.foot && base.els.length && list.contains(base.els[0])
-     && tblFewDiff(base.sigs,sigs,s-base.s)){
-    const drop=s-base.s, atEnd=ui.tail && (drop || e>base.e) ? atEndNow() : false;
-    let changed=drop>0 || e>base.e;
-    for(let k=0;k<drop;k++) base.els[k].remove();
-    const els=base.els.slice(drop), old=base.sigs.slice(drop);
+  const off=!n.uiFull && base && base.els && base.els.length && base.grid===grid && base.ro===ro && base.hk===hk && base.tail===ui.tail
+    && more===!!base.foot && list.contains(base.els[0]) ? tblAlign(base.sigs,sigs) : -1;
+  if(off>=0){
+    const els=base.els.slice(), old=base.sigs.slice(), len=e-s;
+    let changed=off>0 || len!==els.length;
+    for(let k=0;k<off;k++) els[k].remove();
+    els.splice(0,off); old.splice(0,off);
+    while(els.length>len){ els.pop().remove(); old.pop(); }
+    const atEnd=ui.tail && (changed || e>base.e) ? atEndNow() : false;
     for(let k=0;k<els.length;k++){
-      if(sigs[k]===old[k] || els[k].classList.contains('edit')) continue;   // строка в правке: форму не рвём
-      const row=rowAt(s+k);
-      els[k].replaceWith(row); els[k]=row; old[k]=sigs[k]; changed=true;
+      const el=els[k], i=s+k;
+      if(sigs[k]!==old[k] && !el.classList.contains('edit')){      // строка в правке: форму не рвём
+        const row=rowAt(i);
+        el.replaceWith(row); els[k]=row; old[k]=sigs[k]; changed=true;
+      } else if(+el.dataset.i!==i){                                   // строка уехала на другую позицию: только номер
+        el.dataset.i=i; el.removeAttribute('title');
+        if(grid) el.firstChild.textContent=i+1;
+        else if(!named) el.querySelector('.tbl-rname').textContent='#'+(i+1);
+        changed=true;
+      }
     }
     if(grid && tc!==base.tc) list.style.setProperty('--tc',tc);
-    for(let i=base.e;i<e;i++){
+    for(let i=s+els.length;i<e;i++){
       const row=rowAt(i);
       base.foot ? base.foot.before(row) : list.append(row);
       els.push(row); old.push(sigs[i-s]);
