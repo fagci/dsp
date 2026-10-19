@@ -6462,10 +6462,11 @@ const ListDB = (() => {
   function reqP(rq){ return new Promise((res,rej)=>{ rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error); }); }
   // fields — объект {имяПоля:значение}; value дублируется из fields.value для чтения старым кодом
   return {
-    async add(listName,name,fields){ const s=await store('readwrite');
-      return reqP(s.add({listName,name,fields,value:fields?.value??'',created:Date.now()})); },
-    async update(id,patch){ const s=await store('readwrite'); const it=await reqP(s.get(id)); Object.assign(it,patch); return reqP(s.put(it)); },
-    async remove(id){ const s=await store('readwrite'); return reqP(s.delete(id)); },
+    // uid и modified нужны синхронизации устройств (sync.js); extra — чужие uid / created / modified
+    async add(listName,name,fields,extra){ const s=await store('readwrite'); const now=Date.now();
+      return reqP(s.add({listName,name,fields,value:fields?.value??'',created:now,modified:now,uid:syUid(),...extra})); },
+    async update(id,patch){ const s=await store('readwrite'); const it=await reqP(s.get(id)); Object.assign(it,{modified:Date.now()},patch); return reqP(s.put(it)); },
+    async remove(id){ const s=await store('readwrite'); const it=await reqP(s.get(id)); if(it) await syncNoteDel('t',it); return reqP(s.delete(id)); },
     async list(listName){ const s=await store('readonly');
       const items=await reqP(s.index('listName').getAll(listName));
       // старые записи (до появления fields) — доопределяем как одно поле value
@@ -6476,12 +6477,12 @@ const ListDB = (() => {
       return [...new Set([...all.map(x=>x.listName),...meta])].sort(); },
     async renameList(oldName,newName){ const s=await store('readwrite');
       const items=await reqP(s.index('listName').getAll(oldName));
-      for(const it of items){ it.listName=newName; await reqP(s.put(it)); }
+      for(const it of items){ it.uid=it.uid||syLegacyUid(it.listName,it.name,JSON.stringify(it.fields)); it.listName=newName; it.modified=Date.now(); await reqP(s.put(it)); }
       const m=await ListDB.getMeta(oldName);
       if(m){ await ListDB.delMeta(oldName); await ListDB.setMeta(newName,m); } },
     async deleteList(listName){ const s=await store('readwrite');
       const items=await reqP(s.index('listName').getAll(listName));
-      for(const it of items) await reqP(s.delete(it.id));
+      for(const it of items){ await syncNoteDel('t',it); await reqP(s.delete(it.id)); }
       await ListDB.delMeta(listName); },
     // пакетная запись одной транзакцией — для потока записей и импорта
     async addMany(listName,rows){
@@ -6489,7 +6490,8 @@ const ListDB = (() => {
       return new Promise((res,rej)=>{
         const tx=db.transaction('items','readwrite'), s=tx.objectStore('items'), ids=[];
         for(const r of rows){
-          const rq=s.add({listName,name:r.name,fields:r.fields,value:r.fields?.value??'',created:Date.now()});
+          const now=Date.now();
+          const rq=s.add({listName,name:r.name,fields:r.fields,value:r.fields?.value??'',created:now,modified:now,uid:syUid()});
           rq.onsuccess=()=>ids.push(rq.result);
         }
         tx.oncomplete=()=>res(ids); tx.onerror=tx.onabort=()=>rej(tx.error);
@@ -6499,7 +6501,7 @@ const ListDB = (() => {
       const db=await open();
       return new Promise((res,rej)=>{
         const tx=db.transaction('items','readwrite'), s=tx.objectStore('items');
-        for(const id of ids) s.delete(id);
+        for(const id of ids){ const g=s.get(id); g.onsuccess=()=>{ if(g.result) syncNoteDel('t',g.result); s.delete(id); }; }
         tx.oncomplete=()=>res(); tx.onerror=tx.onabort=()=>rej(tx.error);
       });
     },
@@ -6517,8 +6519,8 @@ const ListDB = (() => {
       return m;
     },
     async getMeta(listName){ const db=await open(); return reqP(db.transaction('meta','readonly').objectStore('meta').get(listName)); },
-    async setMeta(listName,meta){ const db=await open(); return reqP(db.transaction('meta','readwrite').objectStore('meta').put({...meta,listName})); },
-    async delMeta(listName){ const db=await open(); return reqP(db.transaction('meta','readwrite').objectStore('meta').delete(listName)); },
+    async setMeta(listName,meta,keepTime){ const db=await open(); return reqP(db.transaction('meta','readwrite').objectStore('meta').put({...meta,listName,modified:keepTime ? meta.modified : Date.now()})); },
+    async delMeta(listName){ const db=await open(); syncNoteDel('m',{listName}); return reqP(db.transaction('meta','readwrite').objectStore('meta').delete(listName)); },
     async metaNames(){ const db=await open(); return reqP(db.transaction('meta','readonly').objectStore('meta').getAllKeys()); },
   };
 })();

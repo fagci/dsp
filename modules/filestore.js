@@ -106,9 +106,10 @@ const FileStore = (() => {
     },
 
     // rec: {space,folderId,name,mime,blob,meta[,id]}; без id номер выдаёт база
-    async put(rec){
-      const now=Date.now(), r={folderId:FS_ROOT,mime:rec.blob?.type||'application/octet-stream',meta:{},created:now,...rec};
-      r.folderId=key(r.folderId); r.size=r.blob?.size||0; r.modified=now;
+    // opts.keepTime — оставить rec.modified (приём из синхронизации); uid — метка записи для синхронизации устройств
+    async put(rec,opts){
+      const now=Date.now(), r={folderId:FS_ROOT,mime:rec.blob?.type||'application/octet-stream',meta:{},created:now,uid:syUid(),...rec};
+      r.folderId=key(r.folderId); r.size=r.blob?.size||0; r.modified=opts?.keepTime ? rec.modified : now;
       if(r.id==null) delete r.id;
       const id=await reqP((await st('files','readwrite')).put(r)); fire(r.space); return id;
     },
@@ -119,8 +120,12 @@ const FileStore = (() => {
       if(patch.blob) r.size=patch.blob.size;
       r.modified=Date.now(); await reqP(s.put(r)); fire(r.space);
     },
+    async stamp(id,patch){                              // служебная правка без смены времени и без уведомлений
+      const s=await st('files','readwrite'), r=await reqP(s.get(id)); if(r){ Object.assign(r,patch); await reqP(s.put(r)); }
+    },
     async remove(id){
       const r=await this.get(id); if(!r) return;
+      await syncNoteDel('f',r);
       await reqP((await st('files','readwrite')).delete(id)); fire(r.space);
     },
     async list(space,folderId=null){
@@ -130,7 +135,7 @@ const FileStore = (() => {
     async listAll(space){ return (await reqP((await st('files','readonly')).getAll())).filter(f=>f.space===space); },
     async copy(id,folderId=null){                      // копия файла; в той же папке — с пометкой в имени
       const r=await this.get(id); if(!r) return;
-      const {id:_,...rest}=r, same=key(folderId)===r.folderId;
+      const {id:_,uid:__,...rest}=r, same=key(folderId)===r.folderId;
       return this.put({...rest,folderId,name:same ? r.name+' copy' : r.name,created:Date.now()});
     },
     async copyFolder(id,parentId=null){                // папка со всем содержимым; возвращает id копии
@@ -152,7 +157,7 @@ const FileStore = (() => {
       return async()=>{
         const db=await open(), tx=db.transaction(['folders','files'],'readwrite');
         for(const x of dirs) tx.objectStore('folders').put(x);
-        for(const x of files.values()) tx.objectStore('files').put(x);
+        for(const x of files.values()) tx.objectStore('files').put({...x,modified:Date.now()});    // позже метки удаления: синхронизация не удалит снова
         await doneP(tx); fire(space);
       };
     },

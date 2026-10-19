@@ -10,7 +10,7 @@
 // новой не подтвердит успешную загрузку ('ok'). Если скрипты не загрузились, страница шлёт 'rollback' —
 // пока сеть отдаёт index.html этой версии, воркер подаёт index.html последней подтверждённой.
 const PFX='dsp-shell-v';
-const CACHE='dsp-shell-vbc5d29c2';
+const CACHE='dsp-shell-v89100ada';
 const V=CACHE.slice(PFX.length);
 const META='dsp-meta', STATE_KEY='./__state', PIN_MS=6*3600e3;    // сколько держать откат, пока не выйдет новая версия
 const SHELL=[
@@ -111,6 +111,8 @@ const SHELL=[
   './modules/geostore.js?v='+V,
   './modules/backup-kernels.js?v='+V,
   './modules/backup.js?v='+V,
+  './modules/sync-kernels.js?v='+V,
+  './modules/sync.js?v='+V,
   './modules/reach-kernels.js?v='+V,
   './modules/reach.js?v='+V,
   './modules/photo-kernels.js?v='+V,
