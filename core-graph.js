@@ -259,24 +259,9 @@ function renameNode(n){
 const v=prompt('Module name (empty — default)',n.name||''); if(v==null) return;
 setNodeName(n,v); Undo.push();
 }
-function buildNodeEl(n){
+function fillPorts(n,ci,co){                          // пины входов/выходов в колонки ci/co
+n.ports={i:{},o:{}};
 const d=MOD[n.type];
-const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
-const title=nodeTitle(n);
-el.style.setProperty('--cat',catColor(d.cat)); el.dataset.title=title;
-el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare?'<span class="xpd" title="Expand canvas (hide parameters)">⛶</span>':''}<span class="rst" title="Reset all parameters">↺</span><span class="ren" title="Rename">✎</span><span class="x">✕</span></div> <div class="nbody"></div>`;
-el.querySelector('.ttl').textContent=title;
-el.querySelector('.ren').addEventListener('click',e=>{ e.stopPropagation(); renameNode(n); });
-el.querySelector('.xpd')?.addEventListener('click',e=>{ e.stopPropagation(); xpandNode(n); });
-const rstEl=el.querySelector('.rst');
-if(resettableParams(d).length) rstEl.addEventListener('click',e=>{ e.stopPropagation(); resetNode(n); });
-else rstEl.remove();
-const body=el.querySelector('.nbody');
-const io=document.createElement('div'); io.className='io3';
-const ci=document.createElement('div'); ci.className='col';
-const mid=document.createElement('div'); mid.className='mid';
-const co=document.createElement('div'); co.className='col o';
-n.ports={i:{},o:{}}; n.set={};
 const wire=(e,p,dir)=>{ e.dataset.node=n.id; e.dataset.port=p.n; e.dataset.dir=dir;
 e.addEventListener('pointerdown',ev=>startLink(ev,n,p.n,dir));
 e.addEventListener('dblclick',ev=>pinPicker(ev,n,p.n,dir)); };
@@ -295,6 +280,35 @@ if(lowPri(p)) e.classList.add('ctrl'); }
 for(const p of baseFirst(portsOf(n,'outs'))){
 const e=portEl(p,'o'); co.append(e); n.ports.o[p.n]=e; wire(e,p,'o');
 if(lowPri(p)) e.classList.add('ctrl'); }
+}
+function rebuildPorts(n){                            // сменились только порты: пересобрать колонки, не трогая mid (UI модуля, канву)
+const io=n.el?.querySelector('.io3'); if(!io) return false;
+const ci=io.querySelector(':scope > .col:not(.o)'), co=io.querySelector(':scope > .col.o'); if(!ci||!co) return false;
+ci.textContent=''; co.textContent='';
+fillPorts(n,ci,co);
+syncLinkedParams(n);
+markWiresDirty();
+return true;
+}
+function buildNodeEl(n){
+const d=MOD[n.type];
+const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
+const title=nodeTitle(n);
+el.style.setProperty('--cat',catColor(d.cat)); el.dataset.title=title;
+el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare?'<span class="xpd" title="Expand canvas (hide parameters)">⛶</span>':''}<span class="rst" title="Reset all parameters">↺</span><span class="ren" title="Rename">✎</span><span class="x">✕</span></div> <div class="nbody"></div>`;
+el.querySelector('.ttl').textContent=title;
+el.querySelector('.ren').addEventListener('click',e=>{ e.stopPropagation(); renameNode(n); });
+el.querySelector('.xpd')?.addEventListener('click',e=>{ e.stopPropagation(); xpandNode(n); });
+const rstEl=el.querySelector('.rst');
+if(resettableParams(d).length) rstEl.addEventListener('click',e=>{ e.stopPropagation(); resetNode(n); });
+else rstEl.remove();
+const body=el.querySelector('.nbody');
+const io=document.createElement('div'); io.className='io3';
+const ci=document.createElement('div'); ci.className='col';
+const mid=document.createElement('div'); mid.className='mid';
+const co=document.createElement('div'); co.className='col o';
+n.set={};
+fillPorts(n,ci,co);
 io.append(ci,mid,co); body.append(io); n.mid=mid;
 { const params=d.params||[];
 // params с hidden:true вообще не рисуются рядом — значение/дефолт/провод (mergeableParamNames
