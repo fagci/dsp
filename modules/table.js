@@ -123,7 +123,7 @@ async function tblBackfill(n){
     for(const k in res){
       if(row[k]!=='' && row[k]!=null) continue;
       if(!n.cl.includes(k)){ n.cl.push(k); grown=true; }
-      if(res[k]!=='' && res[k]!=null){ row[k]=res[k]; hit=true; }
+      if(res[k]!=='' && res[k]!=null){ row[k]=res[k]; hit=true; tblBump(row); }
     }
     if(hit) dirty.push(i);
   });
@@ -434,6 +434,8 @@ async function tblSaveCols(n){
 }
 // upsert по ключевой колонке: повтор обновляет строку (непустые поля), count/first/last ведутся сами; → новые строки
 const TBL_STAT=['count','first','last'];
+// версия строки, меняемой на месте (upsert, sync, backfill): Graph по ней узнаёт, какие строки набора разбирать заново
+const TBL_REV=new WeakMap(), tblBump=r=>TBL_REV.set(r,(TBL_REV.get(r)|0)+1);
 async function tblUpsert(n,recs,key){
   let grown=false;
   for(const c of [key,...TBL_STAT]) if(!n.cl.includes(c)){ n.cl.push(c); grown=true; }
@@ -447,6 +449,7 @@ async function tblUpsert(n,recs,key){
     if(row){
       for(const c in r) if(r[c]!=='' && !TBL_STAT.includes(c)){ row[c]=r[c]; if(!n.cl.includes(c)){ n.cl.push(c); grown=true; } }
       row.count=(+row.count||1)+1; row.last=t; if(row.first===''||row.first==null) row.first=t;
+      tblBump(row);
       if(at.has(k)) dirty.add(at.get(k));
     } else {
       for(const c in r) if(!n.cl.includes(c)){ n.cl.push(c); grown=true; }
@@ -552,7 +555,7 @@ async function tblSync(n,list,onlyNew){
     if(onlyNew) continue;
     const row=n.all[i]; let ch=false;
     for(const c in r) if(String(row[c]??'')!==String(r[c]??'')){ row[c]=r[c]; ch=true; }
-    if(ch){ trCalcRow(n,row); dirty.push(i); }
+    if(ch){ trCalcRow(n,row); tblBump(row); dirty.push(i); }
   }
   const stale=[];
   if(!onlyNew) n.all.forEach((r,i)=>{ const k=r[key]; if(k!=='' && k!=null && !seen.has(String(k))) stale.push(i); });

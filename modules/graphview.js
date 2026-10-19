@@ -157,31 +157,76 @@ function gvRecs(n,recs){
     const e=gvEdgeRec(r,ovr); if(e) gvAdd(n,e.from,e.to,e.w,e.label);
   }
 }
-function gvSetEdges(n,recs){                        // снимок рёбер
-  const m=new Map();
-  const ovr=gvEdgeOvr(n), al=new Map();
-  for(const r of recs){
-    const a=gvAliasOf(r,ovr); if(a) al.set(a.id,a.label);
-    const e=gvEdgeRec(r,ovr); if(e) gvPut(m,e);
-  }
-  n.sEdges=m; n.aliasS=al; n.dirty=true;
+function gvNodeRec(r,ovr){                          // запись → {id,a:{label,shape,color,note,size}} или null
+  const f=gvKeys(r,GV_NODEA,ovr), id=String(r[f.id ?? (ovr.id ? null : Object.keys(r)[0])]??'').trim();
+  if(!id) return null;
+  const a={};
+  if(f.label!=null && r[f.label]!=='') a.label=String(r[f.label]);
+  if(f.shape!=null){ const sh=String(r[f.shape]).trim(); if(GV_SHAPES.has(sh)) a.shape=sh; }
+  if(a.shape==null && f.icon!=null){ const sh=GV_ICON_SHAPE[String(r[f.icon]).trim()]; if(sh) a.shape=sh; }
+  if(f.color!=null && r[f.color]) a.color=String(r[f.color]);
+  if(f.note!=null && String(r[f.note]).trim()) a.note=String(r[f.note]).trim();
+  if(f.size!=null){ const v=+r[f.size]; if(v>0) a.size=v; }
+  return {id,a};
 }
-function gvSetNodes(n,recs){                        // снимок узлов: id[,label,shape,color,size]
-  const m=new Map(), ovr=gvNodeOvr(n);
-  for(const r of recs){
-    if(!r || typeof r!=='object') continue;
-    const f=gvKeys(r,GV_NODEA,ovr), id=String(r[f.id ?? (ovr.id ? null : Object.keys(r)[0])]??'').trim();
-    if(!id) continue;
-    const a={};
-    if(f.label!=null && r[f.label]!=='') a.label=String(r[f.label]);
-    if(f.shape!=null){ const sh=String(r[f.shape]).trim(); if(GV_SHAPES.has(sh)) a.shape=sh; }
-    if(a.shape==null && f.icon!=null){ const sh=GV_ICON_SHAPE[String(r[f.icon]).trim()]; if(sh) a.shape=sh; }
-    if(f.color!=null && r[f.color]) a.color=String(r[f.color]);
-    if(f.note!=null && String(r[f.note]).trim()) a.note=String(r[f.note]).trim();
-    if(f.size!=null){ const v=+r[f.size]; if(v>0) a.size=v; }
-    m.set(id,a);
+/* Снимок rows — по разнице. Для каждой строки (ключ — сам объект) помним версию (TBL_REV у строк Table, меняемых на месте)
+   и вклад в граф: связь, узел, псевдоним. Новая или изменившаяся строка берётся заново, пропавшая — вычитается;
+   неизменные только отмечаются (один проход по Map, без разбора колонок). Рёбра с одной парой from/to складываются:
+   вес = сумма строк без своего веса, либо последний заданный; пунктир — пока нет ни одной сплошной. */
+function gvIncNew(){ return {rows:new Map(), edges:new Map(), nodes:new Map(), gen:0}; }
+function gvEdgeOut(E){ return {from:E.from,to:E.to,w:E.exp!=null ? E.exp : Math.max(1,E.cnt),label:E.label,color:E.color,dash:E.solid===0}; }
+function gvIncApply(n,inc,info,sign){
+  if(info.e){
+    const e=info.e, key=gvKey(e.from,e.to);
+    let E=inc.edges.get(key);
+    if(sign>0){
+      if(!E) inc.edges.set(key,E={from:e.from,to:e.to,cnt:0,exp:null,solid:0,rows:0,label:'',color:''});
+      E.rows++; if(Number.isFinite(e.w)) E.exp=e.w; else E.cnt++;
+      if(!e.dash) E.solid++;
+      if(e.label) E.label=e.label; if(e.color) E.color=e.color;
+    } else if(E){
+      E.rows--; if(!Number.isFinite(e.w)) E.cnt--; if(!e.dash) E.solid--;
+      if(E.rows<=0){ inc.edges.delete(key); n.sEdges.delete(key); E=null; }
+    }
+    if(E) n.sEdges.set(key,gvEdgeOut(E));
   }
-  n.sNodes=m; n.dirty=true;
+  if(info.al){
+    if(sign>0) n.aliasS.set(info.al.id,info.al.label);
+    else if(n.aliasS.get(info.al.id)===info.al.label) n.aliasS.delete(info.al.id);
+  }
+  if(info.nd){
+    const id=info.nd.id;
+    let m=inc.nodes.get(id);
+    if(sign>0){
+      if(!m) inc.nodes.set(id,m=new Map());
+      m.set(info.row,info.nd.a); n.sNodes.set(id,info.nd.a);
+    } else if(m){
+      m.delete(info.row);
+      if(!m.size){ inc.nodes.delete(id); n.sNodes.delete(id); }
+      else { let last; for(const a of m.values()) last=a; n.sNodes.set(id,last); }
+    }
+  }
+}
+function gvRows(n,rows){
+  const inc=n.inc || (n.inc=gvIncNew()), eo=gvEdgeOvr(n), no=gvNodeOvr(n), g=++inc.gen;
+  const rev=typeof TBL_REV!=='undefined' ? TBL_REV : null;
+  let seen=0, changed=false;
+  for(const r of rows){
+    if(!r || typeof r!=='object') continue;
+    seen++;
+    const v=rev ? rev.get(r)|0 : 0;
+    let info=inc.rows.get(r);
+    if(info && info.v===v){ info.g=g; continue; }
+    if(info) gvIncApply(n,inc,info,-1);
+    info={row:r,v,g,e:null,al:null,nd:null};
+    if(rowIsEdge(r)){ info.e=gvEdgeRec(r,eo); info.al=gvAliasOf(r,eo); }
+    else info.nd=gvNodeRec(r,no);
+    inc.rows.set(r,info); gvIncApply(n,inc,info,1); changed=true;
+  }
+  if(inc.rows.size!==seen){                          // кто-то пропал из набора
+    for(const [r,info] of inc.rows) if(info.g!==g){ gvIncApply(n,inc,info,-1); inc.rows.delete(r); changed=true; }
+  }
+  if(changed) n.dirty=true;
 }
 function gvClear(n){                                // накопленное; снимки принадлежат проводам и остаются
   n.edges=new Map(); n.aNodes=new Set(); n.aliasA=new Map(); n.hdr={}; n.dirty=true;
@@ -286,9 +331,9 @@ function gvSync(n){
   diff(n.dN,n.sigN,n.vN,(k,nd)=>gvNodeItem(n,nd,T));    // узлы раньше рёбер
   diff(n.dE,n.sigE,n.vE,(k,e)=>gvEdgeItem(n,k,e,T));
 }
-function gvRemap(n){                                // другие колонки — снимки читаются заново
-  if(n.lastSet) gvSetEdges(n,n.lastSet);
-  if(n.lastNodes) gvSetNodes(n,n.lastNodes);
+function gvIncReset(n){ n.inc=null; n.sEdges=new Map(); n.sNodes=new Map(); n.aliasS=new Map(); n.dirty=true; }
+function gvRemap(n){                                // другие колонки — набор читается заново
+  if(n.lastRows){ gvIncReset(n); gvRows(n,n.lastRows); }
   redraw(n);
 }
 function gvRestyle(n){ n.sigN.clear(); n.sigE.clear(); n.sync=true; n.net?.setOptions({physics:{enabled:!!n.p.physics}}); redraw(n); }
@@ -312,7 +357,7 @@ def({ id:'graphview', title:'Graph', cat:'Output', kw:'network graph links nodes
           {n:'fit',t:'button',label:'Fit',fn:n=>n.net?.fit({animation:true})},
           {n:'clear',t:'button',label:'Clear',fn:n=>{ n.p.csv=''; gvClear(n); }}],
   init:n=>{ n.aliasA=new Map(); n.aliasS=new Map(); n.edges=new Map(); n.aNodes=new Set(); n.sEdges=new Map(); n.sNodes=new Map(); n.dN=new Map(); n.dE=new Map();
-            n.sigN=new Map(); n.sigE=new Map(); n.hdr={}; n.net=null; n.gv=null; n.lastSet=null; n.lastNodes=null;
+            n.sigN=new Map(); n.sigE=new Map(); n.hdr={}; n.net=null; n.gv=null; n.lastRows=null; n.inc=null;
             n.sel=''; n.dirty=true; n.sync=true; n.gvErr=''; n.fresh=true; },
   dispose:n=>{ try{ n.net?.destroy(); }catch(e){} n.net=null; },
   process(n,I){
@@ -320,11 +365,8 @@ def({ id:'graphview', title:'Graph', cat:'Output', kw:'network graph links nodes
     if(typeof I.text==='string' && I.text!==n.lastText){ n.lastText=I.text; gvLines(n,I.text,n.hdr); }
     if(I.rec && I.rec!==n.lastRec){ n.lastRec=I.rec; gvRecs(n,I.rec); }
     // снимок: меняется только вместе с самим набором (по ссылке); отключили провод — слой пуст
-    const sp=Array.isArray(I.rows) ? rowsSplit(I.rows) : null;
-    for(const [list,key,set] of [[sp&&sp.edges,'lastSet',gvSetEdges],[sp&&sp.nodes,'lastNodes',gvSetNodes]]){
-      if(list){ if(list!==n[key]){ n[key]=list; set(n,list); } }
-      else if(n[key]){ n[key]=null; set(n,[]); }
-    }
+    const rows=Array.isArray(I.rows) ? I.rows : null;
+    if(rows!==n.lastRows){ n.lastRows=rows; if(rows) gvRows(n,rows); else gvIncReset(n); }
     const hl=Array.isArray(I.hl) ? I.hl : null;
     if(hl!==n.hlRows){ n.hlRows=hl; n.sync=true; }
     if(n.dirty) gvBuild(n);
