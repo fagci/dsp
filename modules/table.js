@@ -1611,6 +1611,7 @@ function tblFieldsPanel(n,box,mk,sel){
   const ro=tblRO(n), grid=tcView(n)==='grid';
   n.fieldOpen=n.fieldOpen||new Set();
   box.append(mk('div','tv-sec','Fields'));
+  const bar=mk('div','tv-acts'); box.append(bar);
   if(!ro){
     const row=mk('div','tv-col'), inp=mk('input','tv-q'); inp.placeholder='new field name';
     const add=async()=>{
@@ -1649,6 +1650,20 @@ function tblFieldsPanel(n,box,mk,sel){
   }
   const lists=(n.treeNames||[]).filter(x=>tblKind(x)!=='preset');
   const vc=tblViewCols(n), card=new Set(tcShowCols(n));
+  {
+    const anyOn=vc.some(x=>grid ? !x.hide : card.has(x.c));
+    bar.append(mk('button','tbl-btn',anyOn ? '👁 Hide all' : '👁 Show all',{click:()=>{
+      n.schema.card.show=anyOn ? [] : n.cl.slice();
+      if(!ro) tcSchemaSave(n);
+      tblViewColEdit(n,v=>{ for(const x of v) x.hide=anyOn; });
+    }}));
+    if(!ro) bar.append(mk('button','tbl-btn','🗑 Clear fields',{click:async()=>{
+      if(!n.cl.length) return;
+      if(!confirm('Remove all '+n.cl.length+' fields and the '+n.all.length+' row(s) of "'+tblLeaf(n.p.list)+'"? The structure can then be set anew.')) return;
+      await tblClear(n);
+      await tblColsApply(n,[]);
+    }}));
+  }
   let drag=-1;
   vc.forEach((x,i)=>{
     const c=x.c, d=tcDef(n,c), t=d.t||(tblType(n,c)==='text' ? 'text' : tblType(n,c)), open=n.fieldOpen.has(c);
