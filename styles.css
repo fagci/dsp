@@ -1349,3 +1349,4 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 .tc-f{display:flex;flex-direction:column;gap:1px;min-width:0;font-size:12px}
 .tc-nav,.tc-back{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .tc-nav button{padding:0 9px}
+.tbl-view .tv-refs{display:flex;align-items:center;gap:5px;flex-wrap:wrap;width:100%}
