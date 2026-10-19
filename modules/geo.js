@@ -537,16 +537,19 @@ zb: proto=zb src net | id=zb:{net}:{src}, type=zigbee, label={src}, shape=square
 zlink: proto=zb src dst net dst!=ffff | id=zb:{net}:{src}>{dst}, from=zb:{net}:{src}, to=zb:{net}:{dst}, label={kind}`,
   'Wi-Fi map (nodes · links · packets)':
 `# три порта: node (точки и станции; note — пустая колонка для комментария, повтор записи её не трогает), link (связи; dashes=1 — пунктир), pkt (кадры)
-# unicast: первый октет чётный (regex ^..[02468ace]:) — широковещательные адреса узлами и связями не становятся
+# unicast: первый октет чётный (regex [02468ace]:); широковещание ff:ff:ff:ff:ff:ff — отдельный узел «broadcast», на него идут стрелки probe-req / beacon / широковещательных кадров
 node!: proto=wifi kind=beacon|probe-resp bssid | id={bssid}, type=ap, label={ssid|bssid}, shape=star, color=#e8a200, ssid, chan, rssi, note=
 node!: proto=wifi kind~^(probe-req|assoc-req|reassoc-req|auth)$ src~^[0-9a-f][02468ace]: | id={src}, type=station, label={src}, shape=dot, color=#2a9df4, chan, rssi, note=
 node!: proto=wifi kind~^(qos-)?data$ tods=1 src bssid | id={src}, type=station, label={src}, shape=dot, color=#2a9df4, ap={bssid}, chan, rssi, note=
 node!: proto=wifi kind~^(qos-)?data$ fromds=1 dst~^[0-9a-f][02468ace]: bssid | id={dst}, type=station, label={dst}, shape=dot, color=#2a9df4, ap={bssid}, chan, note=
 link!: proto=wifi kind~^(qos-)?data$ tods=1 src bssid | id={src}>{bssid}:data, from={src}, to={bssid}, label=data, type=data
-link!: proto=wifi kind~^(qos-)?data$ fromds=1 bssid dst~^[0-9a-f][02468ace]: | id={bssid}>{dst}:data, from={bssid}, to={dst}, label=data, type=data
-link!: proto=wifi kind~^(assoc-req|reassoc-req|assoc-resp|reassoc-resp|auth|deauth|disassoc)$ src dst~^[0-9a-f][02468ace]: | id={src}>{dst}:mgmt, from={src}, to={dst}, label={kind}, type=mgmt
-link!: proto=wifi kind=probe-resp src dst~^[0-9a-f][02468ace]: | id={src}>{dst}:probe, from={src}, to={dst}, label=probe, type=probe, dashes=1
-link!: proto=wifi kind=probe-req src dst~^[0-9a-f][02468ace]: | id={src}>{dst}:probe, from={src}, to={dst}, label=probe, type=probe, dashes=1
+link!: proto=wifi kind~^(qos-)?data$ fromds=1 bssid dst~^([0-9a-f][02468ace]:|ff:ff:ff:ff:ff:ff$) | id={bssid}>{dst}:data, from={bssid}, to={dst}, label=data, type=data
+link!: proto=wifi kind~^(assoc-req|reassoc-req|assoc-resp|reassoc-resp|auth|deauth|disassoc)$ src dst~^([0-9a-f][02468ace]:|ff:ff:ff:ff:ff:ff$) | id={src}>{dst}:mgmt, from={src}, to={dst}, label={kind}, type=mgmt
+link!: proto=wifi kind=probe-resp src dst~^([0-9a-f][02468ace]:|ff:ff:ff:ff:ff:ff$) | id={src}>{dst}:probe, from={src}, to={dst}, label=probe, type=probe, dashes=1
+link!: proto=wifi kind=probe-req src dst~^([0-9a-f][02468ace]:|ff:ff:ff:ff:ff:ff$) | id={src}>{dst}:probe, from={src}, to={dst}, label=probe, type=probe, dashes=1
+node!: proto=wifi dst=ff:ff:ff:ff:ff:ff | id={dst}, type=broadcast, label=broadcast, shape=triangleDown, color=#8a8a8a, note=
+link!: proto=wifi kind=beacon bssid dst | id={bssid}>{dst}:beacon, from={bssid}, to={dst}, label=beacon, type=beacon, dashes=1, color=#9aa0a6
+link!: proto=wifi kind~^(qos-)?data$ tods=0 fromds=0 src dst~^([0-9a-f][02468ace]:|ff:ff:ff:ff:ff:ff$) | id={src}>{dst}:data, from={src}, to={dst}, label=data, type=data
 pkt!: proto=wifi src | id={t}:{src}:{seq|len}, t, kind, src, dst, ap={bssid}, chan, rssi, len`,
   'Digital voice (DMR / P25 / NXDN)':
 `# абоненты, группы и связи; префикс сети {src} разводит одинаковые id в разных системах
