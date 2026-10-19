@@ -343,6 +343,7 @@ function tblDerive(n){
     const ix=n.rows.map((_,i)=>i).sort((i,j)=>cmp(n.rows[i],n.rows[j])||i-j);
     n.rows=ix.map(i=>n.rows[i]); n.rowIds=ix.map(i=>n.rowIds[i]);
   }
+  if(n.p.rev){ n.rows.reverse(); n.rowIds.reverse(); }          // новые сверху: записи всегда дописываются в конец списка
   n.headers=n.cl;
   n.nameCol=tblCol(n.cl,TBL_LABEL); n.colorCol=tblCol(n.cl,TBL_COLOR);
   n.labelFn=tcLabelFn(n.cl,n.schema?.card);
@@ -715,6 +716,8 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     {n:'list',t:'text',d:'table',hidden:true},
     {n:'filter',t:'text',d:'',hidden:true},
     {n:'advance',t:'select',opts:['rate','dwell','time','distance'],d:'rate',label:'advance'},
+    {n:'follow',t:'check',d:false,label:'follow the end',tip:'show the last rows and keep scrolling to new ones while the list is scrolled to the bottom (like Wireshark); scroll up to stop following'},
+    {n:'rev',t:'check',d:false,label:'newest first',tip:'show the list in reverse: the last added row is at the top (this is also the order the rows are played in)'},
     {n:'order',t:'select',opts:['sequential','ping-pong','random','shuffle'],d:'sequential',adv:true},
     {n:'rate',t:'range',min:0,max:50,step:.1,d:0,label:'rows/s'},
     {n:'speed',t:'range',min:0,max:1000,step:.1,d:50,label:'speed',adv:true},
@@ -752,7 +755,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     if(!Array.isArray(n.p.rules)) n.p.rules=[];
     if(n.p.sel===undefined) n.p.sel=null;
     n.all=[]; n.ids=[]; n.cl=[]; n.rows=[]; n.rowIds=[]; n.headers=[]; n.cols=[]; n.rowsOwn=[]; n.rowsOut=[];
-    n.extra=new Map(); n.onCount=0;
+    n.extra=new Map(); n.onCount=0; n._rev=!!n.p.rev;
     n.err=''; n.loaded=null; n.loadedData=null; n.pend=[]; n.lastFlush=0; n.flushing=false;
     n.lastRec=undefined; n.lastText=undefined; n.lastIn={}; n.logT=0; n.pick=null;
     n._pfSeen=n.p.pfields; n._pfPend=false; n._pfAt=0;
@@ -810,6 +813,9 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
       if(r.textContent!==t) r.textContent=t;
     }
     if(n.ui){
+      const tl=!!n.p.follow && !n.p.rev;                          // при «newest first» конец списка — старые записи: следим за началом
+      if(tl!==!!n.ui.tail){ n.ui.tail=tl; n.ui.jump=tl; n.uiDirty=true; }
+      if(!!n.p.rev!==!!n._rev){ n._rev=!!n.p.rev; if(n.loaded!==null){ tblDerive(n); seqReset(n); } }
       const vk=[n.p.vcols,n.p.rules,n.p.tint,n.p.vmode,n.p.tz];
       if(!n._vk || vk.some((x,i)=>x!==n._vk[i])){ n._vk=vk; n.uiDirty=true; n.uiFull=true; if(n.ui.view && !n.ui.view.hidden) tblRenderView(n); }
       // полная перерисовка до 300 строк × колонок — реже на длинном списке
@@ -868,7 +874,7 @@ function tblInit(n){
   syncCustomHeight(n,root,150);
   const q=s=>root.querySelector(s);
   n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), tree:q('.tbl-tree'), pick:q('.tbl-pick'), shown:q('.tbl-shown'),
-    vmBtn:q('.tbl-vm'), filter:q('.tbl-filter'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:false, marked:-1};
+    vmBtn:q('.tbl-vm'), filter:q('.tbl-filter'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:!!n.p.follow && !n.p.rev, jump:!!n.p.follow && !n.p.rev, marked:-1};
   n.ui.view.hidden=!n.viewOpen;                           // пересборка узла (смена колонок) не должна прятать панель
   q('.tbl-viewb').classList.toggle('on',!!n.viewOpen);
   const vw=n.ui.view;                                     // прокрутка и фокус поля «new field» переживают пересборку узла
@@ -1002,7 +1008,7 @@ function tblMainMenu(n){
   tblMenuHead(m,'View');
   it('Fields & colors…','add, rename, remove fields; type, shown columns, their order and format; row colour rules',()=>tblViewToggle(n));
   it('Shown lists…','tick several lists to show them on the map and the bands output',()=>tblTreeToggle(n));
-  it(n.ui.tail ? 'Show first rows' : 'Show last rows','',()=>{ n.ui.tail=!n.ui.tail; tblRenderList(n); });
+  it(n.p.follow ? 'Stop following the end' : 'Follow the end','show the last rows and scroll to new ones',()=>{ n.p.follow=!n.p.follow; Undo.push(); });
 }
 function tblNewMenu(n){
   const m=tblMenuEl(n);
@@ -1230,7 +1236,8 @@ function tblRenderList(n,inc){
     tblMark(n,true);
     return;
   }
-  const keep=list.scrollTop, atEnd=ui.tail && atEndNow();
+  const keep=list.scrollTop, atEnd=ui.tail && (ui.jump || atEndNow());
+  ui.jump=false;
   const frag=document.createDocumentFragment();
   if(grid){
     list.style.setProperty('--tc',tc);
