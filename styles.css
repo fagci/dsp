@@ -1187,6 +1187,10 @@ select.aed-b{padding:0 6px}
 .tbl-hd>span,.tbl-c{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tbl-c.r{text-align:right}
 .tbl-no{color:var(--dim);font-size:10px;text-align:right}
+.tc-bar{position:relative;display:block;min-width:48px;height:14px;line-height:14px;border-radius:3px;background:color-mix(in srgb,var(--txt) 12%,transparent);overflow:hidden}
+.tc-bar i{position:absolute;left:0;top:0;bottom:0;background:color-mix(in srgb,var(--acc2) 55%,transparent)}
+.tc-bar b{position:relative;display:block;padding:0 4px;font-weight:normal;font-size:10px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tbl-c.tbl-bar{padding-top:3px;padding-bottom:3px}
 .tbl-sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px}
 .tbl-tail{display:flex;justify-content:flex-end}
 .tbl-view{position:absolute;left:0;right:0;top:32px;z-index:13;max-height:80%;overflow-y:auto;border:1px solid var(--acc);border-radius:4px;

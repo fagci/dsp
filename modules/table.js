@@ -1382,6 +1382,7 @@ function tblCellEl(n,x,v,text){
     }
     return el;
   }
+  if(x.ty==='progress' && x.fmt==='auto' && tcFrac(n,x.c,v)!=null){ el.classList.add('tbl-bar'); el.append(tcBar(n,x.c,v,text)); return el; }
   if((x.fmt==='swatch' || (x.fmt==='auto' && TBL_COLOR.includes(low))) && v && CSS.supports('color',String(v))){
     const sw=document.createElement('i'); sw.className='tbl-sw'; sw.style.background=String(v); el.append(sw);
   }
@@ -1696,7 +1697,7 @@ function tblFieldsPanel(n,box,mk,sel){
     }
     row.append(name);
     if(!ro) row.append(sel(TC_TYPES,t,v=>{
-      const nd={...d,t:v}; if(v!=='choice') delete nd.opts; if(v!=='link'){ delete nd.to; delete nd.multi; } if(v!=='calc'){ delete nd.expr; delete nd.mat; } if(v==='calc' || v==='auto'){ delete nd.def; delete nd.req; }
+      const nd={...d,t:v}; if(v!=='choice') delete nd.opts; if(v!=='link'){ delete nd.to; delete nd.multi; } if(v!=='progress'){ delete nd.min; delete nd.max; } if(v!=='calc'){ delete nd.expr; delete nd.mat; } if(v==='calc' || v==='auto'){ delete nd.def; delete nd.req; }
       tcSetDef(n,c,nd); tblRenderView(n); tblRenderList(n);
     }));
     const po=mk('input'); po.type='checkbox'; po.checked=!Array.isArray(n.p.pout) || n.p.pout.includes(c);
@@ -1734,6 +1735,14 @@ function tblFieldsPanel(n,box,mk,sel){
           rf.append(cb,mk('span','tv-lbl',f));
         }
       }).catch(()=>{});
+    }
+    if(!ro && t==='progress'){
+      for(const k of ['min','max']){
+        const e=mk('input','tv-w'); e.type='number'; e.step='any'; e.value=d[k]??''; e.placeholder=k==='min' ? '0' : '100'; e.title=k+' of the scale (empty — '+e.placeholder+')';
+        e.addEventListener('keydown',ev=>ev.stopPropagation());
+        e.addEventListener('change',()=>{ const nd={...d}; e.value.trim()==='' ? delete nd[k] : nd[k]=+e.value; tcSetDef(n,c,nd); tblRenderList(n); });
+        more.append(mk('span','tv-lbl',k),e);
+      }
     }
     if(!ro && t==='calc'){
       const e=mk('input','tv-q'); e.value=d.expr||''; e.placeholder='[price] * [qty]   round([a]/[b],2)   if([x]>5,\'big\',\'small\')';

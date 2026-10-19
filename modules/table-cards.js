@@ -1,11 +1,11 @@
 "use strict";
 /* ============================ Table: типы полей, карточки, связи между списками ============================
    Схема списка: ListDB-meta {cols, types:{колонка:{t, opts, to, multi}}, card:{show:[колонки]}}; у списка в патче (@patch) — n.p.schema.
-   Типы: text, long, num, bool, date, choice (opts), photo, audio, link (to — другой список; в ячейке имена записей через « | »).
+   Типы: text, long, num, progress (min / max — границы шкалы, по умолчанию 0…100), bool, date, choice (opts), photo, audio, link (to — другой список; в ячейке имена записей через « | »).
    Колонки без типа ведут себя как раньше (photo / audio — по имени). Виды: cards (карточки с фото), grid (полный список), compact (краткий).
    Карточка записи — панель с большим фото, всеми полями, связями и обратными связями («кто ссылается на эту запись»). */
 
-const TC_TYPES=[['text','text'],['long','long text'],['num','number'],['bool','checkbox'],['date','date'],['choice','choice'],
+const TC_TYPES=[['text','text'],['long','long text'],['num','number'],['bool','checkbox'],['progress','progress bar'],['date','date'],['choice','choice'],
   ['photo','photo'],['audio','audio'],['link','link to a list'],['auto','auto number'],['calc','calculated']];
 const TC_VIEWS=[['cards','🃏','cards'],['grid','☰','full list (columns)'],['compact','≡','brief list (name · values)']];
 const TC_SEP=' | ';
@@ -18,6 +18,19 @@ function tblType(n,c){
   const t=n.schema?.types?.[c]?.t; if(t) return t;
   const low=c.toLowerCase();
   return TBL_PHOTO.test(low) ? 'photo' : TBL_AUDIO.test(low) ? 'audio' : 'text';
+}
+// progress: доля значения на шкале min…max (0…1); не число — null
+function tcFrac(n,c,v){
+  const d=tcDef(n,c), lo=isFinite(+d.min) && d.min!=='' ? +d.min : 0, hi=isFinite(+d.max) && d.max!=='' ? +d.max : 100, k=typeof v==='number' ? v : parseFloat(v);
+  return isFinite(k) && hi>lo ? Math.min(1,Math.max(0,(k-lo)/(hi-lo))) : null;
+}
+function tcBar(n,c,v,text){
+  const f=tcFrac(n,c,v), el=document.createElement('span');
+  el.className='tc-bar'; el.title=text;
+  if(f==null){ el.textContent=text; return el; }
+  const i=document.createElement('i'); i.style.width=(f*100).toFixed(1)+'%';
+  el.append(i,Object.assign(document.createElement('b'),{textContent:text}));
+  return el;
 }
 const tcLinks=v=>String(v??'').split('|').map(s=>s.trim()).filter(Boolean);
 const tcJoin=a=>a.join(TC_SEP);
@@ -197,8 +210,9 @@ function tcFormField(n,c,rec,ty){
     const inp=document.createElement('input'); inp.value=v??''; inp.disabled=true; inp.placeholder=ty==='auto' ? 'auto number' : 'calculated';
     return {inp};
   }
-  if(ty==='num'){
+  if(ty==='num' || ty==='progress'){
     const inp=document.createElement('input'); inp.type='number'; inp.step='any'; inp.value=v??'';
+    if(ty==='progress'){ inp.min=def.min??0; inp.max=def.max??100; }
     inp.addEventListener('keydown',e=>e.stopPropagation());
     return {inp};
   }
@@ -241,7 +255,7 @@ function tcFormField(n,c,rec,ty){
 function tcValue(ty,inp){
   const v=inp.value;
   switch(ty){
-    case 'num': return String(v).trim()==='' ? '' : isFinite(+v) ? +v : v;
+    case 'num': case 'progress': return String(v).trim()==='' ? '' : isFinite(+v) ? +v : v;
     case 'bool': return inp.checked ? 1 : 0;
     case 'date': case 'choice': case 'long': case 'link': return v;
   }
@@ -373,6 +387,7 @@ function tcDetail(n,i){
     let val;
     if(t==='link') val=tcChips(n,c,v);
     else if(t==='audio'){ const a=auIds(v); val=mkb('🔊 '+a.length,'Play the audio',()=>auView(a)); }
+    else if(t==='progress') val=tcBar(n,c,v,tcText(n,c,v));
     else {
       val=document.createElement('span'); val.className='tc-v'+(t==='long' ? ' pre' : '');
       if(TBL_COLOR.includes(c.toLowerCase()) && CSS.supports('color',String(v))){ const sw=document.createElement('i'); sw.className='tbl-sw'; sw.style.background=String(v); val.append(sw); }
