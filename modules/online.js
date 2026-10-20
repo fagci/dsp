@@ -276,7 +276,8 @@ def({ id:'freeMusic', title:'Free Music', cat:'Music', readout:true, tall:true, 
     const r=n.el.querySelector('.readout'); if(!r) return;
     const t=n.tracks[n.cur-1], L=[];
     if(n.msg) L.push(n.msg);
-    if(!(n.msg==='searching…')) L.push(n.items.length ? n.items.length+' found · page '+n.page+(n.p.source==='Internet Archive' ? ' — pick an album' : '') : 'type a query and press Search ('+n.p.source+')');
+    if(n.items.length) L.push(n.items.length+' found · page '+n.page+(n.p.source==='Internet Archive' ? ' — pick an album' : ''));
+    else if(!n.msg) L.push('type a query and press Search ('+n.p.source+')');
     if(n.album) L.push(n.album+' · '+n.tracks.length+' tracks');
     if(t) L.push('▶ '+(t.artist ? t.artist+' — ' : '')+t.label+'\n  '+[olFmtDur(t.dur),t.license,t.source,t.genre].filter(Boolean).join(' · ')+'\n  '+t.url);
     const s=L.join('\n'); if(r.textContent!==s) r.textContent=s; }
