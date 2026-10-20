@@ -18,7 +18,7 @@ function tsvReset(n){
   try{ n.dec?.close(); }catch(e){}
   try{ n.m2?.m2_reset(); }catch(e){}
   try{ n.m2?.a2_reset(); }catch(e){}
-  n.aq=[]; n.aEnd=null; n.inq=[]; n.inqLen=0; n.rate0=0; n.lastShow=0; n.gapN=0; n.gapMax=0; n.under=false; n.keyWait=0; n.aLateN=0; n.vd=[]; n.vdelay=0; n.dmx?.pidN.clear();
+  n.aq=[]; n.aEnd=null; n.inq=[]; n.inqLen=0; n.rate0=0; n.lastShow=0; n.gapN=0; n.gapMax=0; n.under=false; n.keyWait=0; n.aLateN=0; n.aDry=0; n.aDryT=0; n.gapWhy=''; n.vd=[]; n.vdelay=0; n.dmx?.pidN.clear();
   try{ n.ad?.close(); }catch(e){}
   n.ad=null; n.adKey='';
   n.dec=null; n.decCodec=''; n.needKey=true; n.lastTs=-1;
@@ -63,7 +63,7 @@ async function tsvConfigure(n,codec,type){
       if(n.dec!==dec) return;                                   // ошибки уже заменённого декодера не в счёт
       const k=n.lastKey;
       n.status='decoder: '+e.message+(k ? ' (entry point '+(k.idr ? 'IDR' : 'I slice')+', '+k.size+' bytes, NAL types '+k.nals.join(',')+')' : '');
-      if(k) console.log('TS → Video decoder error:',e.message,'\nSPS',JSON.stringify(n.dmx.sps),'\nentry point',k.idr ? 'IDR' : 'I slice',k.size,'bytes, NAL types',k.nals.join(','),'\ncodec',codec,'mode',JSON.stringify(tsvMode(n)),'\nstart',k.hex);
+      if(k) console.log('TS → Video decoder error:',e.message,'\nSPS',JSON.stringify(n.dmx.sps),'\nentry point',k.idr ? 'IDR' : 'I slice',k.size,'bytes'+(k.pes ? ' (PES length declared/actual '+k.pes+')' : '')+', NAL types',k.nals.join(','),'\ncodec',codec,'mode',JSON.stringify(tsvMode(n)),'\nstart',k.hex);
       n.errN=(n.errN||0)+1; tsvNextMode(n,'decoder error'+(n.lossAt!=null ? ' ('+((n.fed||0)-n.lossAt)+' frames after the last loss)' : ''));
     }});
   dec.configure(cfg);
@@ -166,6 +166,12 @@ function tsvAudioRead(n,oL,oR,target,g){
   // звук приходит позже своего кадра (в мультиплексе видео опережает звук): держать закодированное видео перед декодером, чтобы звук шёл впереди; сдвигать звук нельзя — губы разойдутся
   if(late>.15 && late<2.5 && (n.vdelay||0)<3){ if(++n.aLateN>sr/B*.3){ n.vdelay=Math.min(3,(n.vdelay||0)+late); n.aLateN=0; } }
   else if(o>0) n.aLateN=0;                                       // пустая очередь звука счётчик не сбрасывает: звук идёт порциями
+  // очередь звука пересохла посреди воспроизведения: звук идёт впритык, дать ему запас задержкой видео
+  if(!wait && !skip && o<B && (n.aPlayed||0)>sr*2){
+    const t=performance.now();
+    if(t-(n.aDryT||0)>2000){ n.aDryT=t; n.aDry=0; }
+    if(++n.aDry>=3 && (n.vdelay||0)<2.5){ n.vdelay=Math.min(2.5,(n.vdelay||0)+.2); n.aDry=0; n.aDryT=t; }
+  }
   // звук стабильно не совпадает с часами видео (другая отметка времени, разрыв): сдвинуть его, а не молчать
   if(wait || skip>B/2){ n.aBad=(n.aBad||0)+1; if(n.aBad>sr/B*1.5){ const sg=n.aq[0], dd=sg ? sg.t0+sg.i/sr-target : n.aHeadD||0;   // очередь могла опустеть: берём смещение последнего пропущенного сегмента
       if(dd){ n.aSh=(n.aSh||0)+dd; n.aResync=(n.aResync||0)+1; if(Math.abs(dd)>2.5) n.vdelay=0; }
@@ -215,7 +221,7 @@ function tsvDecodeFrame(n,f){
   }
   if(n.needKey && !entry) return true;
   if(n.dec.decodeQueueSize>40){ n.needKey=true; n.dropped++; return true; }
-  if(n.needKey && f.key) n.lastKey={idr:f.idr, size:f.d.length, nals:f.nals||[], hex:Array.from(f.d.subarray(0,64),v=>v.toString(16).padStart(2,'0')).join(' ')};
+  if(n.needKey && f.key) n.lastKey={idr:f.idr, pes:f.pes, size:f.d.length, nals:f.nals||[], hex:Array.from(f.d.subarray(0,64),v=>v.toString(16).padStart(2,'0')).join(' ')};
   n.needKey=false;
   let ts=f.pts>=0 ? Math.round(f.pts*1e6) : (n.lastTs>=0 ? n.lastTs+40000 : 0);
   n.lastTs=ts;
@@ -227,7 +233,13 @@ function tsvDecodeFrame(n,f){
 // Выдать кадр, которому пора: остальные просроченные закрываются
 function tsvPresent(n){
   const q=n.q, now=performance.now();
-  if(!q.length){ if(n.base!=null && n.lastShow && now-n.lastShow>150) n.under=true; return; }
+  if(!q.length){
+    if(n.base!=null && n.lastShow && now-n.lastShow>150 && !n.under){
+      n.under=true;
+      n.whyEmpty='input '+(n.inqLen/1e6).toFixed(1)+' MB, decoder queue '+(n.dec ? n.dec.decodeQueueSize : 'none')+', held '+n.vd.length+' frames'+(n.needKey ? ', waiting for an entry point' : '');
+    }
+    return;
+  }
   const cap=q[0].rgba ? 24 : 40;
   if(n.under){                                                  // очередь опустела: накопить кадры и взять часы заново, не догонять просроченные
     if((q[q.length-1].timestamp-q[0].timestamp)<3e5 && q.length<12 && now-n.lastShow<2000) return;
@@ -253,7 +265,7 @@ function tsvPresent(n){
     n.picCx.drawImage(f,0,0);
     f.close();
   }
-  if(n.lastShow){ const g=now-n.lastShow; if(g>120){ n.gapN=(n.gapN||0)+1; n.gapMax=Math.max(n.gapMax||0,g); } }
+  if(n.lastShow){ const g=now-n.lastShow; if(g>120){ n.gapN=(n.gapN||0)+1; if(g>(n.gapMax||0)){ n.gapMax=g; n.gapWhy=n.whyEmpty||''; } } }
   n.lastShow=now;
   n.shown++; n.fpsN++; n.gotFrame=true;
 }
@@ -464,8 +476,8 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
       if(n.m2err) t=TSV_M2ERR[n.m2err]||('MPEG-2 error '+n.m2err);
       if(pl.length) t='programs '+pl.map(p=>p.num+(p===d.cur ? '▶' : '')).join(' ')+' · '+(d.vcodec||'—')+(d.sps ? ' · '+d.sps.w+'×'+d.sps.h : '')+
         ' · '+n.fps.toFixed(1)+' fps'+(d.cur?.apid ? ' · audio '+d.cur.atype+(d.cur.atype==='mp2' || d.cur.atype==='aac' ? (n.aInfo ? ' · '+n.aInfo : '') : ' (not decoded)') : '');
-      if(st.cc||st.tei||n.dropped||n.m2bad) t+='\nlost packets '+st.cc+' (now '+Math.round(n.ccRate||0)+'/s) · transport errors '+st.tei+(st.sync ? ' · stream breaks '+st.sync+(()=>{ const e=Object.entries(st.gaps).sort((x,y)=>y[1]-x[1])[0]; return e ? ' (usually '+e[0]+' extra bytes ×'+e[1]+')' : ''; })() : '')+(n.dropped ? ' · dropped frames '+n.dropped : '')+(n.m2bad ? ' · bad slices '+n.m2bad : '');
-      if(pl.length) t+='\nvideo frames '+st.frames+' (entry points '+st.keys+') · decoded '+n.decoded+' · shown '+n.shown+(n.inqLen>0 ? ' · input queue '+(n.inqLen/1e6).toFixed(1)+' MB' : '')+(n.dec ? ' · decoder queue '+n.dec.decodeQueueSize : n.decCodec ? '' : ' · decoder not started')+(n.needKey ? ' · waiting for an entry point' : '')+' · '+(tsvMode(n).sw || n.bigNote ? 'software' : 'hardware')+' decoder, '+(tsvMode(n).idr ? 'IDR only' : 'any I frame')+' (IDR frames in the stream '+st.idr+')'+(n.gapN ? '\npicture pauses >120 ms: '+n.gapN+' (longest '+Math.round(n.gapMax)+' ms) · buffer '+n.q.length+' frames' : '')+(n.tkShow>20 ? '\nslowest node tick in 5 s: '+Math.round(n.tkShow)+' ms' : '')+(n.notes.length ? '\n'+n.notes.join('\n') : '');
+      if(st.cc||st.tei||st.scr||n.dropped||n.m2bad) t+='\nlost packets '+st.cc+(st.scr ? ' · scrambled packets '+st.scr+' (encrypted, dropped)' : '')+' (now '+Math.round(n.ccRate||0)+'/s) · transport errors '+st.tei+(st.sync ? ' · stream breaks '+st.sync+(()=>{ const e=Object.entries(st.gaps).sort((x,y)=>y[1]-x[1])[0]; return e ? ' (usually '+e[0]+' extra bytes ×'+e[1]+')' : ''; })() : '')+(n.dropped ? ' · dropped frames '+n.dropped : '')+(n.m2bad ? ' · bad slices '+n.m2bad : '');
+      if(pl.length) t+='\nvideo frames '+st.frames+' (entry points '+st.keys+') · decoded '+n.decoded+' · shown '+n.shown+(n.inqLen>0 ? ' · input queue '+(n.inqLen/1e6).toFixed(1)+' MB' : '')+(n.dec ? ' · decoder queue '+n.dec.decodeQueueSize : n.decCodec ? '' : ' · decoder not started')+(n.needKey ? ' · waiting for an entry point' : '')+' · '+(tsvMode(n).sw || n.bigNote ? 'software' : 'hardware')+' decoder, '+(tsvMode(n).idr ? 'IDR only' : 'any I frame')+' (IDR frames in the stream '+st.idr+')'+(n.gapN ? '\npicture pauses >120 ms: '+n.gapN+' (longest '+Math.round(n.gapMax)+' ms'+(n.gapWhy ? ': '+n.gapWhy : '')+') · buffer '+n.q.length+' frames' : '')+(n.tkShow>20 ? '\nslowest node tick in 5 s: '+Math.round(n.tkShow)+' ms' : '')+(n.notes.length ? '\n'+n.notes.join('\n') : '');
       if(pl.length && d.cur?.apid) t+='\naudio PES '+(st.apes||0)+' · queued '+(n.aq.reduce((a,g)=>a+(g.L.length-g.i),0)/Eng.sr).toFixed(2)+' s · played '+((n.aPlayed||0)/Eng.sr).toFixed(1)+' s · offset to video '+Math.round((n.aOff||0)*1000)+' ms · resyncs '+(n.aResync||0)+(n.vdelay ? ' · video held '+Math.round(n.vdelay*1000)+' ms' : '')+(n.base==null ? ' · no video clock' : '');
       if(pl.length && n.infoTxt) t+='\n'+n.infoTxt;
       if(n.tt.list().length) t+='\nteletext: '+n.tt.list().length+' pages ('+n.tt.list().slice(0,12).join(' ')+(n.tt.list().length>12 ? ' …' : '')+'), shown '+(+n.p.ttxpage||100);
