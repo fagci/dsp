@@ -247,7 +247,7 @@ body.noedit #bar .ed{display:none}
 .dash-pane.bare>.dash-rail{display:none!important}
 .dash-pane.bare.scroll>.dash-body{padding-right:0}
 .dash-pane.bare .node .io3>.mid{padding:0}
-.dash-pane.bare .node .io3>.mid>:not(canvas.view.main):not(.tbl-ui):not(.sa-ov){display:none!important}
+.dash-pane.bare .node .io3>.mid>:not(canvas.view.main):not(.tbl-ui):not(.chat):not(.sa-ov){display:none!important}
 .dash-pane.bare .dash-body{overflow:hidden}
 .dash-body{flex:1 1 auto;min-height:0;overflow:auto}
 /* в тайлах заголовок узла не нужен: имя уже в селекте панели, кнопки заголовка тут бессмысленны */
@@ -1178,9 +1178,12 @@ select.aed-b{padding:0 6px}
 #canvas #content .node.xp .nbody{flex:1 1 0;min-height:0;display:flex;flex-direction:column}
 #canvas #content .node.xp .io3{flex:1 1 0;min-height:0}
 #canvas #content .node.xp .io3>.mid{flex:1 1 0;min-height:0;min-width:0;display:flex!important;flex-direction:column;padding:0;margin:0}
-#canvas #content .node.xp .io3>.mid>:not(canvas.view.main):not(.tbl-ui):not(.sa-ov){display:none!important}
+#canvas #content .node.xp .io3>.mid>:not(canvas.view.main):not(.tbl-ui):not(.chat):not(.sa-ov){display:none!important}
 #canvas #content .node.xp canvas.view.main{flex:1 1 0;min-height:0;width:100%!important;height:auto!important;aspect-ratio:auto;margin:0;border-radius:0}
 .node.xp .tbl-ui{flex:1 1 0;min-height:0;height:auto!important;padding:4px}
+.node.xp .tbl-ui>:not(.tbl-list){display:none!important}
+.node.xp .chat{flex:1 1 0;min-height:0;padding:4px}
+.node.xp .chat-log{flex:1 1 0;resize:none}
 /* Table: сетка колонок (Wireshark-like), панель вида */
 .tbl-list.grid{overflow:auto}
 .tbl-row{background:var(--rb,transparent)}
