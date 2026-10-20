@@ -292,6 +292,7 @@ class TsDemux{
     if(s.cc>=0 && (afc&1) && cc!==((s.cc+1)&15)){ if(cc!==s.cc){ this.stat.cc++; s.bad=true; } else return; } // повтор — отбросить
     s.cc=cc;
     if(pusi){ this._flush(s); s.bad=false; }
+    if(p[3]&0xc0){ this.stat.scr=(this.stat.scr||0)+1; s.bad=true; }         // полезная нагрузка зашифрована (CA): декодеру её не отдавать
     if(s.chunks.length || pusi) s.chunks.push(body.slice());
   }
 
@@ -303,13 +304,13 @@ class TsDemux{
     s.chunks=[];
     if(s.bad){ if(s.kind==='v') this.lostVideo=true; return; }       // кадр потерян: следующие ссылаются на него
     if(n<9 || d[0]!==0 || d[1]!==0 || d[2]!==1) return;
-    const hl=d[8], hasPts=(d[7]&0x80)!==0;
+    const hl=d[8], hasPts=(d[7]&0x80)!==0, decl=(d[4]<<8)|d[5], cut=decl>0 && decl+6!==n;
     if(9+hl>n) return;
     const pts=hasPts && hl>=5 ? tsPts(d,9) : -1, es=d.subarray(9+hl);
-    if(s.kind==='v') this._video(es,pts); else if(s.kind==='t') this.ttx.push(es); else{ this.stat.apes=(this.stat.apes||0)+1; this.aud.push({pts, d:es, type:this.cur.atype}); }
+    if(s.kind==='v') this._video(es,pts,cut ? decl+'/'+(n-6) : ''); else if(s.kind==='t') this.ttx.push(es); else{ this.stat.apes=(this.stat.apes||0)+1; this.aud.push({pts, d:es, type:this.cur.atype}); }
   }
 
-  _video(es,pts){
+  _video(es,pts,pes){
     const t=this.cur.vtype;
     let key=false, idr=false; const nalTypes=[];
     if(t==='avc'){
@@ -340,7 +341,7 @@ class TsDemux{
       this.vcodec='mpeg2video';
     }
     if(t!=='avc') idr=key;
-    this.vid.push({pts, key, idr, nals:key ? nalTypes : null, d:es}); this.stat.frames++; if(key) this.stat.keys++; if(idr) this.stat.idr++;
+    this.vid.push({pts, key, idr, pes, nals:key ? nalTypes : null, d:es}); this.stat.frames++; if(key) this.stat.keys++; if(idr) this.stat.idr++;
   }
 
 

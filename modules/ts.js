@@ -63,7 +63,7 @@ async function tsvConfigure(n,codec,type){
       if(n.dec!==dec) return;                                   // ошибки уже заменённого декодера не в счёт
       const k=n.lastKey;
       n.status='decoder: '+e.message+(k ? ' (entry point '+(k.idr ? 'IDR' : 'I slice')+', '+k.size+' bytes, NAL types '+k.nals.join(',')+')' : '');
-      if(k) console.log('TS → Video decoder error:',e.message,'\nSPS',JSON.stringify(n.dmx.sps),'\nentry point',k.idr ? 'IDR' : 'I slice',k.size,'bytes, NAL types',k.nals.join(','),'\ncodec',codec,'mode',JSON.stringify(tsvMode(n)),'\nstart',k.hex);
+      if(k) console.log('TS → Video decoder error:',e.message,'\nSPS',JSON.stringify(n.dmx.sps),'\nentry point',k.idr ? 'IDR' : 'I slice',k.size,'bytes'+(k.pes ? ' (PES length declared/actual '+k.pes+')' : '')+', NAL types',k.nals.join(','),'\ncodec',codec,'mode',JSON.stringify(tsvMode(n)),'\nstart',k.hex);
       n.errN=(n.errN||0)+1; tsvNextMode(n,'decoder error'+(n.lossAt!=null ? ' ('+((n.fed||0)-n.lossAt)+' frames after the last loss)' : ''));
     }});
   dec.configure(cfg);
@@ -221,7 +221,7 @@ function tsvDecodeFrame(n,f){
   }
   if(n.needKey && !entry) return true;
   if(n.dec.decodeQueueSize>40){ n.needKey=true; n.dropped++; return true; }
-  if(n.needKey && f.key) n.lastKey={idr:f.idr, size:f.d.length, nals:f.nals||[], hex:Array.from(f.d.subarray(0,64),v=>v.toString(16).padStart(2,'0')).join(' ')};
+  if(n.needKey && f.key) n.lastKey={idr:f.idr, pes:f.pes, size:f.d.length, nals:f.nals||[], hex:Array.from(f.d.subarray(0,64),v=>v.toString(16).padStart(2,'0')).join(' ')};
   n.needKey=false;
   let ts=f.pts>=0 ? Math.round(f.pts*1e6) : (n.lastTs>=0 ? n.lastTs+40000 : 0);
   n.lastTs=ts;
@@ -476,7 +476,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
       if(n.m2err) t=TSV_M2ERR[n.m2err]||('MPEG-2 error '+n.m2err);
       if(pl.length) t='programs '+pl.map(p=>p.num+(p===d.cur ? '▶' : '')).join(' ')+' · '+(d.vcodec||'—')+(d.sps ? ' · '+d.sps.w+'×'+d.sps.h : '')+
         ' · '+n.fps.toFixed(1)+' fps'+(d.cur?.apid ? ' · audio '+d.cur.atype+(d.cur.atype==='mp2' || d.cur.atype==='aac' ? (n.aInfo ? ' · '+n.aInfo : '') : ' (not decoded)') : '');
-      if(st.cc||st.tei||n.dropped||n.m2bad) t+='\nlost packets '+st.cc+' (now '+Math.round(n.ccRate||0)+'/s) · transport errors '+st.tei+(st.sync ? ' · stream breaks '+st.sync+(()=>{ const e=Object.entries(st.gaps).sort((x,y)=>y[1]-x[1])[0]; return e ? ' (usually '+e[0]+' extra bytes ×'+e[1]+')' : ''; })() : '')+(n.dropped ? ' · dropped frames '+n.dropped : '')+(n.m2bad ? ' · bad slices '+n.m2bad : '');
+      if(st.cc||st.tei||st.scr||n.dropped||n.m2bad) t+='\nlost packets '+st.cc+(st.scr ? ' · scrambled packets '+st.scr+' (encrypted, dropped)' : '')+' (now '+Math.round(n.ccRate||0)+'/s) · transport errors '+st.tei+(st.sync ? ' · stream breaks '+st.sync+(()=>{ const e=Object.entries(st.gaps).sort((x,y)=>y[1]-x[1])[0]; return e ? ' (usually '+e[0]+' extra bytes ×'+e[1]+')' : ''; })() : '')+(n.dropped ? ' · dropped frames '+n.dropped : '')+(n.m2bad ? ' · bad slices '+n.m2bad : '');
       if(pl.length) t+='\nvideo frames '+st.frames+' (entry points '+st.keys+') · decoded '+n.decoded+' · shown '+n.shown+(n.inqLen>0 ? ' · input queue '+(n.inqLen/1e6).toFixed(1)+' MB' : '')+(n.dec ? ' · decoder queue '+n.dec.decodeQueueSize : n.decCodec ? '' : ' · decoder not started')+(n.needKey ? ' · waiting for an entry point' : '')+' · '+(tsvMode(n).sw || n.bigNote ? 'software' : 'hardware')+' decoder, '+(tsvMode(n).idr ? 'IDR only' : 'any I frame')+' (IDR frames in the stream '+st.idr+')'+(n.gapN ? '\npicture pauses >120 ms: '+n.gapN+' (longest '+Math.round(n.gapMax)+' ms'+(n.gapWhy ? ': '+n.gapWhy : '')+') · buffer '+n.q.length+' frames' : '')+(n.tkShow>20 ? '\nslowest node tick in 5 s: '+Math.round(n.tkShow)+' ms' : '')+(n.notes.length ? '\n'+n.notes.join('\n') : '');
       if(pl.length && d.cur?.apid) t+='\naudio PES '+(st.apes||0)+' · queued '+(n.aq.reduce((a,g)=>a+(g.L.length-g.i),0)/Eng.sr).toFixed(2)+' s · played '+((n.aPlayed||0)/Eng.sr).toFixed(1)+' s · offset to video '+Math.round((n.aOff||0)*1000)+' ms · resyncs '+(n.aResync||0)+(n.vdelay ? ' · video held '+Math.round(n.vdelay*1000)+' ms' : '')+(n.base==null ? ' · no video clock' : '');
       if(pl.length && n.infoTxt) t+='\n'+n.infoTxt;
