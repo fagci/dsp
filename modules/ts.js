@@ -157,7 +157,7 @@ function tsvAudioRead(n,oL,oR,target,g){
     const d=sg.t0+sg.i/sr-target-o/sr;
     n.aOff=d;
     if(d>.08){ wait=true; break; }
-    if(d<-.08){ late=Math.max(late,-d); const k=Math.ceil(-d*sr); skip+=k; sg.i+=k; if(sg.i>=sg.L.length) n.aq.shift(); continue; }
+    if(d<-.08){ late=Math.max(late,-d); n.aHeadD=d; const k=Math.ceil(-d*sr); skip+=k; sg.i+=k; if(sg.i>=sg.L.length) n.aq.shift(); continue; }
     const c=Math.min(B-o,sg.L.length-sg.i);
     for(let i=0;i<c;i++){ oL[o+i]=sg.L[sg.i+i]*g; oR[o+i]=sg.R[sg.i+i]*g; }
     sg.i+=c; o+=c; n.aPlayed=(n.aPlayed||0)+c;
@@ -167,7 +167,9 @@ function tsvAudioRead(n,oL,oR,target,g){
   if(late>.15 && late<2.5 && (n.vdelay||0)<3){ if(++n.aLateN>sr/B*.3){ n.vdelay=Math.min(3,(n.vdelay||0)+late); n.aLateN=0; } }
   else if(o>0) n.aLateN=0;                                       // пустая очередь звука счётчик не сбрасывает: звук идёт порциями
   // звук стабильно не совпадает с часами видео (другая отметка времени, разрыв): сдвинуть его, а не молчать
-  if(wait || skip>B/2){ n.aBad=(n.aBad||0)+1; if(n.aBad>sr/B*1.5 && n.aq.length){ const sg=n.aq[0]; n.aSh=(n.aSh||0)+(sg.t0+sg.i/sr-target); n.aBad=0; n.aResync=(n.aResync||0)+1; } }
+  if(wait || skip>B/2){ n.aBad=(n.aBad||0)+1; if(n.aBad>sr/B*1.5){ const sg=n.aq[0], dd=sg ? sg.t0+sg.i/sr-target : n.aHeadD||0;   // очередь могла опустеть: берём смещение последнего пропущенного сегмента
+      if(dd){ n.aSh=(n.aSh||0)+dd; n.aResync=(n.aResync||0)+1; if(Math.abs(dd)>2.5) n.vdelay=0; }
+      n.aBad=0; n.aHeadD=0; } }
   else if(o>=B) n.aBad=0;
 }
 
@@ -192,7 +194,7 @@ function tsvVdRelease(n){
   const d=n.vdelay||0;
   while(n.vd.length){
     const a=n.vd[0], b=n.vd[n.vd.length-1];
-    if(d>0 && a.pts>=0 && b.pts>=0 && b.pts-a.pts<d && n.vd.length<d*60) break;
+    if(d>0 && a.pts>=0 && b.pts>=a.pts && b.pts-a.pts<d && n.vd.length<d*60) break;   // разрыв PTS (b<a): не держать
     if(!tsvDecodeFrame(n,a)) break;
     n.vd.shift();
   }
