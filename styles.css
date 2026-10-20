@@ -1051,7 +1051,7 @@ select.aed-b{padding:0 6px}
 .tbl-tree .tt-name{flex:1;overflow:hidden;text-overflow:ellipsis}
 .tbl-tree .tt-cnt{color:var(--dim);font-size:9px}
 .tbl-tree .tt-car{width:9px;color:var(--dim)}
-.tbl-list{flex:1;min-height:0;overflow-y:auto;border:1px solid var(--line);border-radius:3px;background:var(--bg)}
+.tbl-list{position:relative;flex:1;min-height:0;overflow-y:auto;border:1px solid var(--line);border-radius:3px;background:var(--bg)}
 .tbl-row{display:flex;align-items:center;gap:6px;padding:4px 6px;cursor:pointer;border-bottom:1px solid var(--line);min-width:0}
 .tbl-row.on{background:color-mix(in srgb,var(--acc2) 20%,transparent)}
 .tbl-row.edit{box-shadow:inset 2px 0 0 var(--acc)}
