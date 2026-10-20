@@ -56,6 +56,7 @@ async function tsvConfigure(n,codec,type){
     try{ sup=await VideoDecoder.isConfigSupported(cfg); }catch(e){}
   }
   if(!sup?.supported){ n.status='codec '+codec+' is not supported by the browser'; return false; }
+  try{ n.dec?.close(); }catch(e){}
   const dec=new VideoDecoder({
     output:f=>{ if(n.dec!==dec){ f.close(); return; } n.q.push(f); if(++n.decoded===(n.decodedAt||0)+1){ try{ localStorage.tsvMode=n.mode||0; }catch(e){} } },
     error:e=>{
