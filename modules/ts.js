@@ -18,7 +18,7 @@ function tsvReset(n){
   try{ n.dec?.close(); }catch(e){}
   try{ n.m2?.m2_reset(); }catch(e){}
   try{ n.m2?.a2_reset(); }catch(e){}
-  n.aq=[]; n.aEnd=null; n.inq=[]; n.inqLen=0; n.rate0=0; n.lastShow=0; n.gapN=0; n.gapMax=0; n.under=false; n.dmx?.pidN.clear();
+  n.aq=[]; n.aEnd=null; n.inq=[]; n.inqLen=0; n.rate0=0; n.lastShow=0; n.gapN=0; n.gapMax=0; n.under=false; n.keyWait=0; n.dmx?.pidN.clear();
   try{ n.ad?.close(); }catch(e){}
   n.ad=null; n.adKey='';
   n.dec=null; n.decCodec=''; n.needKey=true; n.lastTs=-1;
@@ -180,7 +180,8 @@ function tsvFeed(n,bytes){
     if(!dm.vcodec || !type) continue;
     if(type==='mpeg2'){ tsvM2(n,f); continue; }
     const entry= tsvMode(n).idr ? f.idr : f.key;                // подходит ли кадр как точка входа в нынешнем режиме
-    if(n.needKey && tsvMode(n).idr && performance.now()-n.modeAt>15000){ tsvNextMode(n,'no IDR frame in 15 s'); continue; }
+    if(n.needKey && tsvMode(n).idr){ if(++n.keyWait>300 && performance.now()-n.modeAt>15000){ tsvNextMode(n,'no IDR frame in 15 s'); continue; } }
+    else n.keyWait=0;
     if(!n.dec || n.decCodec!==dm.vcodec){
       if(n.cfgBusy) return;
       if(!entry) continue;
@@ -237,7 +238,9 @@ function tsvPresent(n){
 function tsvRoom(n){
   if(n.q.length+(n.dec?.decodeQueueSize||0)>=(n.dmx.cur?.vtype==='mpeg2' ? 8 : 24)) return false;
   let a=0; for(const g of n.aq) a+=g.L.length-g.i;
-  return a<Eng.sr*3;
+  if(a<Eng.sr*3) return true;
+  if(Math.abs(n.aOff||0)>10){ n.aq=[]; n.aEnd=null; n.aOff=0; return true; }   // звук далеко от часов видео и не играет: выбросить, не держать подачу видео
+  return false;
 }
 function tsvPumpIn(n){
   const t0=performance.now();                                    // живой поток DVB ~4.5 МБ/с: кусок за вызов не успевает, кормим по бюджету времени
