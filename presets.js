@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=59;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=60;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -303,6 +303,7 @@ const PRESET_CATS={
   'Digital TV: DVB-T2 full (channels, programme, teletext, muxes)':'Images & TV',
   'Digital TV: DVB-S/S2 from IQ (USB SDR → one receiver node)':'Images & TV',
   'Digital TV: IPTV (HTTP TS / HLS / M3U) → TS → Video and Sound':'Images & TV',
+  'Webcams: OpenStreetMap map → Picture':'Images & TV',
   'Digital TV: DVB-T2 → record video to Files (trigger, path)':'Images & TV',
   'Analog TV: FPV Multiband Scanner (HackRF)':'Images & TV',
   'Analog TV: FPV Mosaic (one HackRF)':'Images & TV',
@@ -413,6 +414,8 @@ const PRESET_CATS={
   'Synth: Acid Bass (303)':'Music: Synth & Tracker',
   'Winamp':'Music: Player',
   'Winamp: Internet Radio Playlist':'Music: Player',
+  'Free Music: Openverse / Internet Archive → Playlist':'Music: Player',
+  'Podcasts: Search → Episodes → Sound':'Music: Player',
   'Visualizer: Spectrum Bars (Drums + Band FFT)':'Music: Visualizers',
   'Visualizer: Radial Spectrum + Beat Particles':'Music: Visualizers',
   'Visualizer: Ridgeline + Neon Waveform':'Music: Visualizers',
@@ -4722,6 +4725,46 @@ const sk=addNode('streamCheck',40,480,{});
 sk.size.w=300; sk.size.h=150; applySize(sk);
 addEdge(ip.id,'bin',tv.id,'bin'); addEdge(tv.id,'L',sc.id,'L'); addEdge(tv.id,'R',sc.id,'R');
 addEdge(ip.id,'rows',sk.id,'rows'); addEdge(sk.id,'rows',tb.id,'rows');
+markWiresDirty();
+});
+preset('Podcasts: Search → Episodes → Sound', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Podcasts: type a title or topic in Podcasts and press Search (Apple\'s public directory, no key). Put a show name from the results — or any RSS feed URL — in «podcast»: its episodes load into the Table.\n'+
+  'Choose «episode» by number (1 is the newest), with ◀ ▶, or by wiring a Table column to the episode input. The audio goes to Audio Stream (URL) and the Sound Card.\n'+
+  'Many podcast hosts send no CORS headers: if the feed or the audio is blocked, tick «through the CORS proxy» and set the proxy in Settings.'});
+nt.size.w=900; nt.size.h=110; applySize(nt);
+const pc=addNode('podcasts',40,170,{query:'science'}); pc.size.h=300; applySize(pc);
+const st=addNode('stream',440,170,{url:'',auto:true});
+const dc=addNode('dac',800,170,{});
+const tb=addNode('table',440,420,{}); tb.size.w=500; tb.size.h=320; applySize(tb);
+addEdge(pc.id,'url',st.id,'url'); addEdge(st.id,'L',dc.id,'L'); addEdge(st.id,'R',dc.id,'R');
+addEdge(pc.id,'episodes',tb.id,'rows');
+markWiresDirty();
+});
+preset('Free Music: Openverse / Internet Archive → Playlist', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Free Music: search Creative Commons tracks (Openverse: Jamendo, Free Music Archive, Freesound…) or the Internet Archive without any key. Openverse results are tracks at once;\n'+
+  'in the Internet Archive pick an «album» (name or identifier) — its audio files become the tracks. Press «stations» in the Playlist to add every track from the «tracks» wire; the current track (track number, ◀ ▶) is sent to the Playlist on url / name.\n'+
+  'Only files whose server sends CORS headers can be captured into the graph; otherwise tick «through the CORS proxy» (Settings).'});
+nt.size.w=900; nt.size.h=110; applySize(nt);
+const fm=addNode('freeMusic',40,170,{query:'piano'}); fm.size.h=300; applySize(fm);
+const pl=addNode('winamp',440,170,{vol:.8}); pl.size.w=360; pl.size.h=210; applySize(pl);
+const ls=addNode('playlist',440,420,{}); ls.size.w=360; ls.size.h=300; applySize(ls);
+const dc=addNode('dac',840,170,{vol:.8,mode:'stereo'});
+winampLink(pl,ls);
+addEdge(fm.id,'tracks',ls.id,'rows'); addEdge(fm.id,'url',ls.id,'url'); addEdge(fm.id,'name',ls.id,'name');
+addEdge(pl.id,'l',dc.id,'L'); addEdge(pl.id,'r',dc.id,'R');
+markWiresDirty();
+});
+preset('Webcams: OpenStreetMap map → Picture', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Webcams near a point: Webcams asks OpenStreetMap (contact:webcam, man_made=surveillance) for cameras within the radius of lat / lon (or My Position, or wired lat / lon) and shows them on the map.\n'+
+  'Click a camera: a picture or MJPEG stream is shown and refreshed every «refresh» seconds; an HLS stream goes out on «url» (for IPTV); a web page opens with «Open page».\n'+
+  'The picture must come from a server with CORS headers, or tick «through the CORS proxy» (Settings). Only cameras that people entered into OpenStreetMap are found.'});
+nt.size.w=900; nt.size.h=110; applySize(nt);
+const wc=addNode('webcams',40,170,{lat:52.52,lon:13.4,radius:25}); wc.size.h=380; applySize(wc);
+const map=addNode('geoMap',440,170,{mz:8,mlat:52.52,mlon:13.4,labels:true}); map.size.w=560; map.size.h=420; applySize(map);
+addEdge(wc.id,'rows',map.id,'rows'); addEdge(map.id,'sel',wc.id,'select');
 markWiresDirty();
 });
 preset('Analog TV: FPV / TV Receiver (USB SDR)', function(){

@@ -10,7 +10,7 @@
 // новой не подтвердит успешную загрузку ('ok'). Если скрипты не загрузились, страница шлёт 'rollback' —
 // пока сеть отдаёт index.html этой версии, воркер подаёт index.html последней подтверждённой.
 const PFX='dsp-shell-v';
-const CACHE='dsp-shell-vb75c9ee9';
+const CACHE='dsp-shell-vc5d5b1f2';
 const V=CACHE.slice(PFX.length);
 const META='dsp-meta', STATE_KEY='./__state', PIN_MS=6*3600e3;    // сколько держать откат, пока не выйдет новая версия
 const SHELL=[
@@ -136,6 +136,8 @@ const SHELL=[
   './modules/flightsim.js?v='+V,
   './modules/nrf24.js?v='+V,
   './modules/radio.js?v='+V,
+  './modules/online-kernels.js?v='+V,
+  './modules/online.js?v='+V,
   './modules/simd-kernels.js?v='+V,
   './modules/iq-kernels.js?v='+V,
   './modules/ccsds-kernels.js?v='+V,
