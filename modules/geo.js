@@ -690,6 +690,60 @@ function ft8GeoFill(r,grid){
   }
 }
 
+/* ---------- FT8: страна по префиксу, диапазон по частоте ---------- */
+// префиксы ITU/DXCC (укрупнённо): "A-B" — диапазон второго символа, побеждает самый длинный префикс
+const FT8_DXCC=(()=>{
+  const src=`A2:Botswana;A3:Tonga;A4:Oman;A5:Bhutan;A6:UAE;A7:Qatar;A9:Bahrain;AP-AS:Pakistan;AA-AL:USA;K:USA;N:USA;W:USA;KH6:Hawaii;KL:Alaska;KP4:Puerto Rico;KP2:US Virgin Is.;KG4:Guantanamo
+B:China;BV:Taiwan;C2:Nauru;C3:Andorra;C5:Gambia;C6:Bahamas;C8-C9:Mozambique;CA-CE:Chile;CM-CO:Cuba;CN:Morocco;CP:Bolivia;CQ-CT:Portugal;CT3:Madeira;CU:Azores;CX:Uruguay
+D2-D3:Angola;D4:Cape Verde;D6:Comoros;DA-DR:Germany;DU-DZ:Philippines;E3:Eritrea;E4:Palestine;E5:S Cook Is.;E6:Niue;E7:Bosnia;EA-EH:Spain;EA6:Balearic Is.;EA8:Canary Is.;EA9:Ceuta & Melilla;EI-EJ:Ireland;EK:Armenia;EL:Liberia;EP-EQ:Iran;ER:Moldova;ES:Estonia;ET:Ethiopia;EU-EW:Belarus;EX:Kyrgyzstan;EY:Tajikistan;EZ:Turkmenistan
+F:France;TK:Corsica;G:England;M:England;2:England;GM:Scotland;MM:Scotland;2M:Scotland;GW:Wales;MW:Wales;2W:Wales;GI:N. Ireland;MI:N. Ireland;2I:N. Ireland;GJ:Jersey;MJ:Jersey;GU:Guernsey;MU:Guernsey;GD:Isle of Man;MD:Isle of Man
+H2:Cyprus;5B:Cyprus;P3:Cyprus;H4:Solomon Is.;HA:Hungary;HG:Hungary;HB:Switzerland;HB0:Liechtenstein;HC-HD:Ecuador;HH:Haiti;HI:Dominican Rep.;HJ-HK:Colombia;HL:South Korea;HO-HP:Panama;HQ-HR:Honduras;HS:Thailand;HV:Vatican;HZ:Saudi Arabia;7Z:Saudi Arabia;8Z:Saudi Arabia
+I:Italy;IS0:Sardinia;IM0:Sardinia;IT9:Sicily;IB9:Sicily;IE9:Sicily;IF9:Sicily;IG9:Sicily
+J2:Djibouti;J3:Grenada;J5:Guinea-Bissau;J6:St Lucia;J7:Dominica;J8:St Vincent;JA-JS:Japan;7J-7N:Japan;8J-8N:Japan;JT-JV:Mongolia;JW:Svalbard;JX:Jan Mayen;JY:Jordan
+LA-LN:Norway;LO-LW:Argentina;LX:Luxembourg;LY:Lithuania;LZ:Bulgaria
+OA-OC:Peru;OD:Lebanon;OE:Austria;OF-OI:Finland;OH0:Aland Is.;OJ0:Market Reef;OK-OL:Czech Rep.;OM:Slovakia;ON-OT:Belgium;OU-OZ:Denmark;OX:Greenland;OY:Faroe Is.
+P2:Papua New Guinea;P4:Aruba;P5:North Korea;PA-PI:Netherlands;PJ:Curacao;PP-PY:Brazil;PZ:Suriname
+R:European Russia;U:European Russia;RA2:Kaliningrad;RK2:Kaliningrad;RA0:Asiatic Russia;RA8:Asiatic Russia;RA9:Asiatic Russia;UA0:Asiatic Russia;UA8:Asiatic Russia;UA9:Asiatic Russia;RK0:Asiatic Russia;RK9:Asiatic Russia;RW0:Asiatic Russia;RW9:Asiatic Russia;RU0:Asiatic Russia;RU9:Asiatic Russia;RV0:Asiatic Russia;RV9:Asiatic Russia;RZ0:Asiatic Russia;RZ9:Asiatic Russia;RX0:Asiatic Russia;RX9:Asiatic Russia;RN0:Asiatic Russia;RN9:Asiatic Russia;RM0:Asiatic Russia;RM9:Asiatic Russia;RL0:Asiatic Russia;RL9:Asiatic Russia;RJ0:Asiatic Russia;RJ9:Asiatic Russia;RG0:Asiatic Russia;RG9:Asiatic Russia;RF0:Asiatic Russia;RF9:Asiatic Russia;RD0:Asiatic Russia;RD9:Asiatic Russia;RC0:Asiatic Russia;RC9:Asiatic Russia;RB0:Asiatic Russia;RB9:Asiatic Russia;R8:Asiatic Russia;R9:Asiatic Russia;R0:Asiatic Russia;U8:Asiatic Russia;U9:Asiatic Russia;U0:Asiatic Russia;UA2:Kaliningrad;R2:Kaliningrad;U2:Kaliningrad
+S0:W Sahara;S2:Bangladesh;S5:Slovenia;S7:Seychelles;S9:Sao Tome;SA-SM:Sweden;7S:Sweden;8S:Sweden;SN-SR:Poland;HF:Poland;SO:Poland;3Z:Poland;SS-SU:Egypt;SV-SZ:Greece;J4:Greece;SV5:Dodecanese;SV9:Crete
+T2:Tuvalu;T3:Kiribati;T5:Somalia;T7:San Marino;T8:Palau;T9:Bosnia;TA-TC:Turkey;YM:Turkey;TF:Iceland;TG:Guatemala;TI:Costa Rica;TJ:Cameroon;TL:Central Africa;TN:Congo;TR:Gabon;TT:Chad;TU:Cote d'Ivoire;TY:Benin;TZ:Mali
+UJ-UM:Uzbekistan;UN-UQ:Kazakhstan;UR-UZ:Ukraine;EM-EO:Ukraine
+V2:Antigua;V3:Belize;V4:St Kitts;V5:Namibia;V6:Micronesia;V7:Marshall Is.;V8:Brunei;VA-VG:Canada;VO:Canada;VX-VY:Canada;CF-CK:Canada;CY-CZ:Canada;XJ-XO:Canada;VH-VN:Australia;AX:Australia;VP:Falkland Is.;VQ:Diego Garcia;VR:Hong Kong;VU:India;AT-AW:India;8T-8Y:India
+XA-XI:Mexico;4A-4C:Mexico;6D-6J:Mexico;XT:Burkina Faso;XU:Cambodia;XV:Vietnam;3W:Vietnam;XW:Laos;XX:Macao;XY-XZ:Myanmar
+YA:Afghanistan;YB-YH:Indonesia;7A-7I:Indonesia;8A-8I:Indonesia;JZ:Indonesia;PK-PO:Indonesia;YI:Iraq;YJ:Vanuatu;YK:Syria;YL:Latvia;YN:Nicaragua;YO-YR:Romania;YS:El Salvador;YT-YU:Serbia;YZ:Serbia;YV-YY:Venezuela;4M:Venezuela
+Z2:Zimbabwe;Z3:N. Macedonia;ZA:Albania;ZB:Gibraltar;ZG:Gibraltar;ZC4:UK Bases Cyprus;ZF:Cayman Is.;ZK-ZM:New Zealand;ZP:Paraguay;ZR-ZU:South Africa
+3A:Monaco;3B:Mauritius;3C:Eq. Guinea;3D2:Fiji;3DA:Eswatini;3V:Tunisia;TS:Tunisia;3X:Guinea
+4J-4K:Azerbaijan;4L:Georgia;4O:Montenegro;4S:Sri Lanka;4U:United Nations;4X:Israel;4Z:Israel;4W:Timor-Leste
+5A:Libya;5H-5I:Tanzania;5N-5O:Nigeria;5R-5S:Madagascar;5T:Mauritania;5U:Niger;5V:Togo;5W:Samoa;5X:Uganda;5Y-5Z:Kenya;6V-6W:Senegal;6Y:Jamaica;6O:Somalia
+7O:Yemen;7P:Lesotho;7Q:Malawi;7X:Algeria;7T-7Y:Algeria;8P:Barbados;8Q:Maldives;8R:Guyana
+9A:Croatia;9G:Ghana;9H:Malta;9J:Zambia;9K:Kuwait;9L:Sierra Leone;9M:Malaysia;9W:Malaysia;9N:Nepal;9O-9T:DR Congo;9U:Burundi;9V:Singapore;9X:Rwanda;9Y-9Z:Trinidad & Tobago;
+D5:Liberia;A8:Liberia;C4:Cyprus;C7:WMO;E2:Thailand;E8:Eritrea;H3:Panama;H8-H9:Panama;3E-3F:Panama;HM:North Korea;P6-P9:North Korea;HU:El Salvador;OB:Peru;4D-4I:Philippines;SB-SH:Sweden;9B-9D:Iran;EH:Spain;AM-AO:Spain;PQ:Brazil;ZV-ZZ:Brazil;JD:Japan;XP:Greenland;5C:Morocco;5D:Morocco;TV-TX:France;HW-HY:France`;
+  const m=new Map(), up=(a,b)=>{ const o=[]; for(let c=a.charCodeAt(0);c<=b.charCodeAt(0);c++) o.push(String.fromCharCode(c)); return o; };
+  for(const part of src.split(/[;\n]/)){
+    const i=part.indexOf(':'); if(i<1) continue;
+    const name=part.slice(i+1).trim(), key=part.slice(0,i).trim(), r=key.match(/^(.+)-(.+)$/);
+    if(r){ const pre=r[1].slice(0,-1); for(const ch of up(r[1].slice(-1),r[2].slice(-1))) m.set(pre+ch,name); } else m.set(key,name);
+  }
+  return m;
+})();
+function ft8Country(call){
+  const c=String(call||'').toUpperCase().replace(/[<>]/g,'');
+  let base=c;
+  if(c.includes('/')){                               // PREFIX/CALL или CALL/SUFFIX: префиксом считаем более короткую часть
+    const a=c.split('/'); const w=a.filter(x=>x.length>1 && !/^(P|M|MM|AM|QRP|R|\d)$/.test(x));
+    if(w.length>1) base=w.reduce((x,y)=>y.length<x.length&&/\d/.test(y)?y:x); else if(w.length) base=w[0]; }
+  for(let l=Math.min(4,base.length);l>=1;l--){
+    const v=FT8_DXCC.get(base.slice(0,l)); if(v) return v; }
+  return '';
+}
+// диапазон по частоте приёмника, Гц
+function ft8Band(hz){
+  const k=hz/1000;
+  const B=[[1800,2000,'160m'],[3500,4000,'80m'],[5250,5450,'60m'],[7000,7300,'40m'],[10100,10150,'30m'],[14000,14350,'20m'],
+           [18068,18168,'17m'],[21000,21450,'15m'],[24890,24990,'12m'],[28000,29700,'10m'],[50000,54000,'6m'],[144000,148000,'2m']];
+  for(const b of B) if(k>=b[0]&&k<=b[1]) return b[2];
+  return '';
+}
+
 /* ---------- координаты из текста ---------- */
 // ищет в строке координаты разных видов; возвращает [{lat,lon,kind,match}]
 function geoTextFind(text,opt={}){

@@ -784,12 +784,15 @@ function ft8Recs(n,list,mag,frames,bins,b0,b1,slotMs){
     msgs.push(e.msg);
     const info=typeof ft8MsgInfo==='function' ? ft8MsgInfo(e.msg) : null;
     const r={t:slotMs, src:'FT8', msg:e.msg, f:+e.f.toFixed(1), dt:+e.dt.toFixed(2)};
+    r.mode='FT8';
+    if(n.p.freq>0){ r.freq=Math.round(n.p.freq+e.f); if(typeof ft8Band==='function') r.band=ft8Band(n.p.freq); }
     if(e.snr!=null) r.snr=e.snr;
     if(info){
       if(info.from){
         if(info.grid){ n.grids.set(info.from,info.grid); if(n.grids.size>5000) n.grids.delete(n.grids.keys().next().value); }
         const grid=info.grid || n.grids.get(info.from);
         Object.assign(r,{id:info.from, call:info.from, label:info.from, from:info.from});   // from/to — для Table и Graph (src здесь — протокол)
+        if(typeof ft8Country==='function'){ const c=ft8Country(info.from); if(c) r.country=c; }
         if(grid){ r.grid=grid;
           if(typeof ft8GeoFill==='function') ft8GeoFill(r,grid); }
       }
