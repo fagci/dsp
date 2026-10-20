@@ -10,6 +10,28 @@ function tcHeat(t){                                 // 0..1 → тёмно-си�
   t=Math.max(0,Math.min(1,t));
   return 'hsl('+Math.round(240-240*t)+',85%,'+Math.round(22+34*t)+'%)';
 }
+let TC_LUT=null;                                    // 256 цветов теплокарты [r,g,b]
+function tcLut(){
+  if(TC_LUT) return TC_LUT;
+  const c=document.createElement('canvas'); c.width=c.height=1; const x=c.getContext('2d',{willReadFrequently:true});
+  TC_LUT=[];
+  for(let i=0;i<256;i++){ x.fillStyle=tcHeat(i/255); x.fillRect(0,0,1,1); const d=x.getImageData(0,0,1,1).data; TC_LUT.push([d[0],d[1],d[2]]); }
+  return TC_LUT;
+}
+function tcHeatImg(n,R,C,lo,hi){                    // R×C пикселей, масштабируется при отрисовке
+  const key=R+'x'+C+':'+lo+':'+hi;
+  if(n._hk===key && n._hm===n.tc) return n._hc;
+  const cv=n._hc||(n._hc=document.createElement('canvas'));
+  cv.width=C; cv.height=R;
+  const cx=cv.getContext('2d'), img=cx.createImageData(C,R), d=img.data, lut=tcLut(), k=255/(hi-lo);
+  for(let i=0;i<R;i++){ const row=n.tc.rows[i];
+    for(let j=0;j<C;j++){
+      const v=row[j]; if(v==null||!isFinite(v)) continue;
+      const c=lut[Math.max(0,Math.min(255,Math.round((v-lo)*k)))], o=(i*C+j)*4;
+      d[o]=c[0]; d[o+1]=c[1]; d[o+2]=c[2]; d[o+3]=255; } }
+  cx.putImageData(img,0,0); n._hk=key; n._hm=n.tc;
+  return cv;
+}
 function tcTicks(lo,hi,n){
   const step0=(hi-lo)/n, mag=Math.pow(10,Math.floor(Math.log10(step0||1))), r=step0/mag;
   const step=(r<1.5?1:r<3?2:r<7?5:10)*mag, out=[];
@@ -32,10 +54,8 @@ function tcDraw(n,cv,cx){
   const yOf=v=>y1-Math.max(0,Math.min(1,(v-lo)/(hi-lo)))*ph;
   cx.strokeStyle=themeColor('--grid'); cx.fillStyle=themeColor('--axis'); cx.lineWidth=1;
   if(m.kind==='heat'){
-    const R=m.rows, C=m.xs.length, cw=pw/C, rh=ph/Math.max(1,R.length);
-    for(let i=0;i<R.length;i++) for(let j=0;j<C;j++){
-      const v=R[i][j]; if(v==null||!isFinite(v)) continue;
-      cx.fillStyle=tcHeat((v-lo)/(hi-lo)); cx.fillRect(x0+j*cw,y0+i*rh,Math.ceil(cw),Math.ceil(rh)); }
+    const img=tcHeatImg(n,m.rows.length,m.xs.length,lo,hi);
+    cx.imageSmoothingEnabled=false; cx.drawImage(img,x0,y0,pw,ph);
     cx.fillStyle=themeColor('--axis');
     cx.fillText(tcFmt(hi),2,y0+fs); cx.fillText(tcFmt(lo),2,y1);
   } else {
@@ -88,7 +108,7 @@ function tcDraw(n,cv,cx){
   }
 }
 
-def({ id:'tblchart', title:'Table Chart', cat:'Output', kw:'chart plot graph bar line heatmap waterfall table rows csi channel occupancy rssi level series',
+def({ id:'tblchart', lazy:'manual', title:'Table Chart', cat:'Output', kw:'chart plot graph bar line heatmap waterfall table rows csi channel occupancy rssi level series',
   ins:[{n:'rows',t:'bands'}],
   outs:[{n:'max',t:'num'},{n:'count',t:'num'}],
   view:{h:200}, resize:true, readout:true, w:420,
@@ -105,11 +125,12 @@ def({ id:'tblchart', title:'Table Chart', cat:'Output', kw:'chart plot graph bar
   init:n=>{ n.tc=null; n.peak=new Map(); n.lastRows=null; n.lastLen=-1; n.lastT=0; n.dkey=0; },
   process(n,I){
     const rows=Array.isArray(I.rows) ? I.rows : null, now=performance.now();
-    if(!rows){ n.tc=null; n.lastRows=null; return {max:0,count:0}; }
+    if(!rows){ if(n.tc) redraw(n); n.tc=null; n.lastRows=null; return {max:0,count:0}; }
     if(rows!==n.lastRows || rows.length!==n.lastLen || now-n.lastT>250){
       n.lastRows=rows; n.lastLen=rows.length; n.lastT=now;
       const p=n.p;
       n.tc=tcModel(rows,{kind:p.kind,x:p.x,y:p.y,by:p.by,last:p.last,hold:p.hold,peak:n.peak});
+      redraw(n);
     }
     const m=n.tc;
     return {max:m && m.ok ? m.max : 0, count:rows.length};

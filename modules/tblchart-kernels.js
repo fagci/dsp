@@ -77,6 +77,10 @@ function tcModel(rows,o){
   }
   if(!isFinite(lo)) return bad('no numbers in «'+yNames.join(', ')+'»');
   if(m.kind==='bar' && lo>=0) lo=0;
+  if(m.kind==='heat'){                                       // выбросы не должны выедать шкалу: 2–98 процентиль
+    const all=[]; for(const r of m.rows) for(const v of r) if(isFinite(v)) all.push(v);
+    if(all.length>20){ all.sort((a,b)=>a-b); const a=all[Math.floor(all.length*.02)], b=all[Math.ceil(all.length*.98)-1]; if(b>a){ m.max=hi; lo=a; hi=b; m.lo=lo; m.hi=hi; return m; } }
+  }
   m.lo=lo; m.hi=hi; m.max=hi;
   return m;
 }
