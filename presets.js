@@ -304,6 +304,7 @@ const PRESET_CATS={
   'Digital TV: DVB-S/S2 from IQ (USB SDR → one receiver node)':'Images & TV',
   'Digital TV: IPTV (HTTP TS / HLS / M3U) → TS → Video and Sound':'Images & TV',
   'Webcams: OpenStreetMap map → Picture':'Images & TV',
+  'Cameras: Table of links → IP Camera → Frames + Archive':'Images & TV',
   'Digital TV: DVB-T2 → record video to Files (trigger, path)':'Images & TV',
   'Analog TV: FPV Multiband Scanner (HackRF)':'Images & TV',
   'Analog TV: FPV Mosaic (one HackRF)':'Images & TV',
@@ -4725,6 +4726,25 @@ const sk=addNode('streamCheck',40,480,{});
 sk.size.w=300; sk.size.h=150; applySize(sk);
 addEdge(ip.id,'bin',tv.id,'bin'); addEdge(tv.id,'L',sc.id,'L'); addEdge(tv.id,'R',sc.id,'R');
 addEdge(ip.id,'rows',sk.id,'rows'); addEdge(sk.id,'rows',tb.id,'rows');
+markWiresDirty();
+});
+preset('Cameras: Table of links → IP Camera → Frames + Archive', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Camera links live in the Table (name, url): an MJPEG stream, a JPEG snapshot (refreshed every «snapshot: refresh every» s) or HLS (wire IP Camera «url» to IPTV). Replace the example addresses with your own; user:password@host works. '+
+  'Every IP Camera takes one row of the list by its number (or name) in «cam», loads it over HTTP and sends the picture to Frame. Double-click a picture or press ⤢ for fullscreen. '+
+  'Camera Archive records every N seconds (and on motion) into Files → images → Cameras → name; switch it to «playback» to scrub the timeline. The camera must send CORS headers, or tick «through the CORS proxy». RTSP cannot be opened in a browser.'});
+nt.size.w=1000; nt.size.h=120; applySize(nt);
+const tb=addNode('table',40,190,{list:'@patch',data:'name,url\nGate,http://192.168.1.10:8080/video\nYard,http://192.168.1.11/snapshot.jpg\nGarage,http://192.168.1.12/mjpg/video.mjpg\nRoof,http://192.168.1.13/image.jpg'});
+tb.size.w=330; tb.size.h=330; applySize(tb);
+const cams=[];
+for(let i=0;i<4;i++){
+  const c=addNode('ipcam',400+(i%2)*400,190+(i>>1)*330,{cam:String(i+1)});
+  c.size.w=380; c.size.h=300; applySize(c);
+  addEdge(tb.id,'all',c.id,'rows'); cams.push(c);
+}
+const ar=addNode('camarch',1200,190,{cam:'Gate',interval:10,motion:.03});
+ar.size.w=380; ar.size.h=340; applySize(ar);
+addEdge(cams[0].id,'img',ar.id,'img');
 markWiresDirty();
 });
 preset('Podcasts: Search → Episodes → Sound', function(){
