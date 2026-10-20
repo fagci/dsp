@@ -304,10 +304,11 @@ const d=MOD[n.type];
 const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
 const title=nodeTitle(n);
 el.style.setProperty('--cat',catColor(d.cat)); el.dataset.title=title;
-el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare?'<span class="xpd" title="Expand canvas (hide parameters)">⛶</span>':''}<span class="rst" title="Reset all parameters">↺</span><span class="ren" title="Rename">✎</span><span class="x">✕</span></div> <div class="nbody"></div>`;
+el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare?'<span class="xpd" title="Expand canvas (hide parameters)">⛶</span>':''}${d.fs?'<span class="fsb" title="Fullscreen (double-click the picture)">⤢</span>':''}<span class="rst" title="Reset all parameters">↺</span><span class="ren" title="Rename">✎</span><span class="x">✕</span></div> <div class="nbody"></div>`;
 el.querySelector('.ttl').textContent=title;
 el.querySelector('.ren').addEventListener('click',e=>{ e.stopPropagation(); renameNode(n); });
 el.querySelector('.xpd')?.addEventListener('click',e=>{ e.stopPropagation(); xpandNode(n); });
+el.querySelector('.fsb')?.addEventListener('click',e=>{ e.stopPropagation(); nodeFullscreen(n); });
 const rstEl=el.querySelector('.rst');
 if(resettableParams(d).length) rstEl.addEventListener('click',e=>{ e.stopPropagation(); resetNode(n); });
 else rstEl.remove();
@@ -347,6 +348,7 @@ if(d.view){ const  c=document.createElement('canvas'); c.className='view main'+(
 // Флаг форсирует программный (CPU) рендер канвы вместо GPU-композитинга — на крупных канвах
 // (водопад/спектр) это заметно медленнее и не даёт main thread'у обслуживать USB/демод rtlsdr.
 mid.append(c); n.cv=c; n.cx=c.getContext('2d');
+if(d.fs) c.addEventListener('dblclick',ev=>{ ev.stopPropagation(); nodeFullscreen(n); });
 hiDPICanvas(c,n.cx,n);
 if(d.pick){
 let tap=null;
@@ -401,6 +403,18 @@ el.addEventListener(ev,()=>{ n._dirty=true; },{capture:true,passive:true});
 el._node=n; n._vis=undefined; visIO.observe(el);
 n.el=el; content.append(el); el.style.zIndex=++zCounter; posNode(n); applySize(n); // новый узел сразу поверх остальных
 }
+// Развернуть картинку модуля (fs:true в def) на весь экран; где нет Fullscreen API для canvas (iOS) — фиксированный слой поверх страницы
+function nodeFullscreen(n){
+const c=n.cv; if(!c) return;
+const on=document.fullscreenElement===c || c.classList.contains('fs-fb');
+const done=()=>{ n._dirty=true; n._drawGen=-1; };
+if(on){ if(document.fullscreenElement===c) document.exitFullscreen?.(); c.classList.remove('fs-fb'); done(); return; }
+if(c.requestFullscreen){
+c.requestFullscreen().then(done,()=>{ c.classList.add('fs-fb'); done(); });
+if(!c._fsl){ c._fsl=1; document.addEventListener('fullscreenchange',done); }
+}else{ c.classList.add('fs-fb'); done(); }
+}
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') for(const c of document.querySelectorAll('canvas.fs-fb')) c.classList.remove('fs-fb'); });
 // ⛶ в заголовке: параметры спрятаны, основная канва (или список) занимает весь модуль; размер модуля не меняется, порты остаются
 function xpandApply(n){                                 // (пере)применить к текущему n.el: высота фиксируется до скрытия параметров
 n.el.style.height=(n._xh||n.el.offsetHeight)+'px';
@@ -1593,6 +1607,7 @@ function dashRenderLeaf(t){
     pane.classList.toggle('compact',!!tab.compact);
   }
   if(n) acts.append(dashBtn2('✎','Rename module',()=>renameNode(n)));
+  if(n?.cv && MOD[n.type].fs) tools.append(dashBtn2('⤢','Fullscreen (double-click the picture)',()=>nodeFullscreen(n)));
   if(isGraph){
     acts.append(dashBtn2('⊕','Add module (or double-click the canvas)',e=>dashGraphAdd(e.currentTarget)),
       dashBtn2('⤢','Fit patch',dashGraphFit));
