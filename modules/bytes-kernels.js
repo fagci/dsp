@@ -138,4 +138,85 @@ class BinAssembler{
   expire(now,ms){ for(const [k,t] of this.tx) if(now-t.at>ms) this.tx.delete(k); for(const [k,at] of this.done) if(now-at>ms) this.done.delete(k); }
 }
 
-if(typeof module!=='undefined') module.exports={binCrc32,binToText,binFromText,binLineToFrame,binFrame,binPack,binParse,BinStream,BinAssembler,BIN_ENC};
+// ---- картинки ----
+// Формат по сигнатуре: '' — не картинка
+function binSniff(u){
+  const n=u.length, t=(i,s)=>{ for(let k=0;k<s.length;k++) if(u[i+k]!==s.charCodeAt(k)) return false; return true; };
+  if(n>=3 && u[0]===0xFF && u[1]===0xD8 && u[2]===0xFF) return 'jpeg';
+  if(n>=8 && u[0]===0x89 && t(1,'PNG')) return 'png';
+  if(n>=6 && t(0,'GIF8')) return 'gif';
+  if(n>=12 && t(0,'RIFF') && t(8,'WEBP')) return 'webp';
+  if(n>=2 && t(0,'BM')) return 'bmp';
+  if(n>=12 && t(4,'ftyp') && (t(8,'avif') || t(8,'avis'))) return 'avif';
+  return '';
+}
+const BIN_IMG_MIME={jpeg:'image/jpeg',png:'image/png',gif:'image/gif',webp:'image/webp',bmp:'image/bmp',avif:'image/avif'};
+
+// Нарезка потока JPEG (MJPEG, подряд идущие кадры) по структуре: сегменты с длиной пропускаются целиком,
+// поэтому миниатюра внутри EXIF не обрывает кадр. Мусор между кадрами отбрасывается и считается.
+class BinJpegSplitter{
+  constructor(maxFrame=8<<20){ this.max=maxFrame; this.buf=new Uint8Array(1<<16); this.len=0; this.reset(); this.frames=0; this.junk=0; }
+  reset(){ this.sync=false; this.p=0; this.scan=false; }
+  _grow(n){ if(this.len+n>this.buf.length){ const b=new Uint8Array(Math.max(this.buf.length*2,this.len+n)); b.set(this.buf.subarray(0,this.len)); this.buf=b; } }
+  _drop(k){ this.buf.copyWithin(0,k,this.len); this.len-=k; this.junk+=k; }
+  push(chunk){
+    this._grow(chunk.length); this.buf.set(chunk,this.len); this.len+=chunk.length;
+    const out=[];
+    for(;;){
+      if(!this.sync){                                    // ищем FF D8 FF
+        const b=this.buf, n=this.len;
+        let i=0; while(i+2<n && !(b[i]===0xFF && b[i+1]===0xD8 && b[i+2]===0xFF)) i++;
+        if(i+2>=n){ const keep=Math.min(2,n); this._drop(n-keep); return out; }
+        if(i) this._drop(i);
+        this.sync=true; this.p=2; this.scan=false;
+      }
+      const b=this.buf, n=this.len;
+      let end=-1, bad=false, p=this.p;
+      for(;;){
+        if(!this.scan){
+          if(p+1>=n) break;
+          if(b[p]!==0xFF){ bad=true; break; }
+          const m=b[p+1];
+          if(m===0xFF){ p++; continue; }                 // fill
+          if(m===0xD9){ end=p+2; break; }
+          if(m===0xD8){ bad=true; break; }                // новый SOI: предыдущий кадр оборван
+          if(m===0x01 || (m>=0xD0 && m<=0xD7)){ p+=2; continue; }
+          if(p+3>=n) break;
+          const L=(b[p+2]<<8)|b[p+3];
+          if(L<2){ bad=true; break; }
+          p+=2+L; if(m===0xDA) this.scan=true;
+        }else{
+          if(p>=n) break;
+          if(b[p]!==0xFF){ p++; continue; }
+          if(p+1>=n) break;
+          const m=b[p+1];
+          if(m===0 || (m>=0xD0 && m<=0xD7)){ p+=2; continue; }
+          if(m===0xFF){ p++; continue; }
+          this.scan=false;                               // маркер после данных скана
+        }
+      }
+      if(end<0 && !bad && n>this.max) bad=true;
+      if(bad){ this._drop(1); this.reset(); continue; }
+      if(end<0){ this.p=p; return out; }
+      out.push(this.buf.slice(0,end)); this.frames++;
+      this.buf.copyWithin(0,end,n); this.len=n-end; this.reset();
+    }
+  }
+}
+
+// Сырые пиксели → RGBA. fmt: gray8, rgb565 (little-endian), rgb888
+const BIN_RAW_BPP={gray8:1,rgb565:2,rgb888:3};
+function binRawToRGBA(u,w,h,fmt,off=0){
+  const bpp=BIN_RAW_BPP[fmt]; if(!bpp) throw new Error('format '+fmt);
+  const o=new Uint8ClampedArray(w*h*4);
+  for(let i=0,k=off;i<w*h;i++,k+=bpp){
+    let r,g,b;
+    if(bpp===1) r=g=b=u[k];
+    else if(bpp===2){ const v=u[k]|(u[k+1]<<8); r=(v>>11&31)*255/31; g=(v>>5&63)*255/63; b=(v&31)*255/31; }
+    else{ r=u[k]; g=u[k+1]; b=u[k+2]; }
+    o[i*4]=r; o[i*4+1]=g; o[i*4+2]=b; o[i*4+3]=255;
+  }
+  return o;
+}
+
+if(typeof module!=='undefined') module.exports={binCrc32,binSniff,BinJpegSplitter,binRawToRGBA,BIN_IMG_MIME,BIN_RAW_BPP,binToText,binFromText,binLineToFrame,binFrame,binPack,binParse,BinStream,BinAssembler,BIN_ENC};

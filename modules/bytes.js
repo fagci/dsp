@@ -142,3 +142,71 @@ def({ id:'binRx', title:'Frames → Bytes', cat:'Decoders', kw:'bytes file depac
       (prog>0 ? '\nreceiving '+Math.round(prog*100)+'%' : '')+(n.out ? '\nlast: '+(n.out.name||'data')+' · '+binSizeStr(n.out.d.length) : '');
     return {bin:n.out, name:n.out ? n.out.name : '', progress:prog, ok:binPulse(n), rec:n.rec}; },
   draw:binReadout });
+
+/* ---------- Bytes → Image ---------- */
+// bin → img: файл (JPEG/PNG/GIF/WebP/BMP/AVIF), поток JPEG (MJPEG, ESP32-CAM) или сырые пиксели
+def({ id:'binImg', title:'Bytes → Image', cat:'Decoders', kw:'bytes image picture photo jpeg jpg png gif webp bmp avif mjpeg camera esp32-cam serial webserial raw rgb565 frame decode', readout:true, view:{h:120}, resize:true,
+  ins:[{n:'bin',t:'bin'}], outs:[{n:'img',t:'img'},{n:'new',t:'num'},{n:'w',t:'num'},{n:'h',t:'num'},{n:'fps',t:'num'}],
+  params:[{n:'mode',t:'select',opts:['file','stream','raw'],d:'file',label:'file — one picture per bin; stream — JPEG frames cut from a byte stream (MJPEG); raw — pixels without a header'},
+          {n:'fmt',t:'select',opts:Object.keys(BIN_RAW_BPP),d:'rgb565',label:'raw: pixel format'},
+          {n:'rw',t:'range',min:8,max:1280,step:1,d:160,label:'raw: width'},
+          {n:'rh',t:'range',min:8,max:960,step:1,d:120,label:'raw: height'},
+          {n:'maxw',t:'select',opts:['0','1280','960','640','320'],d:'0',label:'max width, px (0 — as is)'},
+          {n:'clear',t:'button',label:'Reset',fn:n=>binImgReset(n)}],
+  init(n){
+    n.capCv=document.createElement('canvas'); n.capCx=n.capCv.getContext('2d',{willReadFrequently:true});
+    binImgReset(n); n.text='no data'; },
+  process(n,I){
+    const o=I.bin;
+    if(o && o.d && o!==n.last){
+      n.last=o; n.bytes+=o.d.length; n.mode=n.p.mode;
+      if(n.p.mode==='stream'){
+        for(const f of n.spl.push(o.d)) binImgQueue(n,f);
+      }else if(n.p.mode==='raw'){
+        const bpp=BIN_RAW_BPP[n.p.fmt], fs=n.p.rw*n.p.rh*bpp;
+        n.rawBuf=binCat(n.rawBuf,o.d);
+        while(n.rawBuf.length>=fs){
+          const px=binRawToRGBA(n.rawBuf,n.p.rw,n.p.rh,n.p.fmt);
+          n.rawBuf=n.rawBuf.subarray(fs);
+          n.capCv.width=n.p.rw; n.capCv.height=n.p.rh;
+          binImgSet(n,new ImageData(px,n.p.rw,n.p.rh),n.capCx);
+        }
+      }else binImgQueue(n,o.d);
+    }
+    const now=performance.now();
+    while(n.ts.length && now-n.ts[0]>1000) n.ts.shift();
+    n.fps=n.ts.length;
+    const a=n.img;
+    n.text=(a ? a.w+'×'+a.h+' · '+(n.fmtName||'raw')+' · ' : '')+n.frames+' frames'+(n.fps ? ' · '+n.fps+' fps' : '')+' · '+binSizeStr(n.bytes)+
+      (n.drop ? ' · '+n.drop+' skipped' : '')+(n.spl && n.spl.junk ? ' · '+binSizeStr(n.spl.junk)+' junk' : '')+(n.err ? '\n'+n.err : '');
+    return {img:n.img, new:binPulse(n), w:n.img ? n.img.w : 0, h:n.img ? n.img.h : 0, fps:n.fps}; },
+  drawKey:n=>n.text+'|'+n.img?.rev,
+  draw(n,cv,cx){ binReadout(n); if(n.img) cx.drawImage(n.capCv,0,0,cv.width,cv.height); }});
+
+function binImgReset(n){
+  n.last=null; n.img=null; n.frames=0; n.bytes=0; n.drop=0; n.err=''; n.fps=0; n.ts=[]; n.pulse=0; n.fmtName='';
+  n.spl=new BinJpegSplitter(); n.rawBuf=new Uint8Array(0); n.busy=false; n.pending=null; n.gen=(n.gen|0)+1;
+}
+function binImgSet(n,imageData,cx){
+  const W=imageData.width, H=imageData.height;
+  n.img={data:imageData,w:W,h:H,gray:false,rev:(n.img?.rev|0)+1};
+  n.frames++; n.pulse=2; n.ts.push(performance.now());
+  cx.putImageData(imageData,0,0);
+}
+// Декодер асинхронный: пока он занят, держим только последний кадр, остальные пропускаем
+function binImgQueue(n,bytes){
+  if(n.busy){ if(n.pending) n.drop++; n.pending=bytes; return; }
+  n.busy=true;
+  const gen=n.gen, fmt=binSniff(bytes);
+  if(!fmt){ n.busy=false; n.err='not an image (no known signature)'; return; }
+  createImageBitmap(new Blob([bytes],{type:BIN_IMG_MIME[fmt]})).then(bm=>{
+    if(gen!==n.gen){ bm.close(); return; }
+    const k=+n.p.maxw && bm.width>+n.p.maxw ? +n.p.maxw/bm.width : 1;
+    const W=Math.max(1,Math.round(bm.width*k)), H=Math.max(1,Math.round(bm.height*k));
+    n.capCv.width=W; n.capCv.height=H;
+    n.capCx.drawImage(bm,0,0,W,H); bm.close();
+    n.fmtName=fmt; n.err='';
+    binImgSet(n,n.capCx.getImageData(0,0,W,H),n.capCx);
+  }).catch(()=>{ if(gen===n.gen) n.err='could not decode the '+fmt; })
+    .finally(()=>{ if(gen!==n.gen) return; n.busy=false; const p=n.pending; n.pending=null; if(p) binImgQueue(n,p); });
+}

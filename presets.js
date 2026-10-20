@@ -331,6 +331,7 @@ const PRESET_CATS={
   'IR: Tasmota Blaster over MQTT':'Infrared',
   'MQTT: Subscribe and Publish':'Network & IoT',
   'Bytes: File over Any Text Channel (Loopback)':'Network & IoT',
+  'Bytes: Serial Stream → Picture (JPEG / MJPEG / raw)':'Network & IoT',
   'Hex: Parse a Packet (Ethernet / IPv4 / UDP)':'Network & IoT',
   'Hex: Table Rows → Packets → Table':'Network & IoT',
   'Hex: Reverse a Sensor — Find the Temperature Field by a Reference':'Unknown Signals',
@@ -5027,6 +5028,20 @@ rx.size.w=320; rx.size.h=260; applySize(rx);
 const sv=addNode('files',1160,240,{});
 sv.size.w=340; sv.size.h=380; applySize(sv);
 addEdge(fl.id,'bin',tx.id,'bin'); addEdge(tx.id,'text',rx.id,'text'); addEdge(rx.id,'bin',sv.id,'bin');
+markWiresDirty();
+});
+preset('Bytes: Serial Stream → Picture (JPEG / MJPEG / raw)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A byte stream from a serial port (WebSerial) becomes a picture. Serial Port gives the raw bytes on bin; Bytes → Image knows JPEG, PNG, GIF, WebP, BMP and AVIF. Mode file — one picture per bin, stream — JPEG frames are cut out of an endless stream (MJPEG, ESP32-CAM, a camera that just writes JPEGs to UART; garbage between frames is skipped), raw — pixels without a header (gray8, RGB565, RGB888; set width and height).\n'+
+  'Press Connect in Serial Port, pick the baud rate of the device. A decoder that is busy keeps only the newest frame, the readout shows fps and skipped frames. The img output goes to Frame, Record Video (a clip) or any image node. To check without hardware, replace Serial Port with File → Bytes.'});
+nt.size.w=900; nt.size.h=150; applySize(nt);
+const sp=addNode('webserial',40,230,{});
+sp.size.w=300; sp.size.h=300; applySize(sp);
+const bi=addNode('binImg',400,230,{mode:'stream'});
+bi.size.w=340; bi.size.h=300; applySize(bi);
+const fr=addNode('imgview',800,230,{});
+fr.size.w=340; fr.size.h=300; applySize(fr);
+addEdge(sp.id,'bin',bi.id,'bin'); addEdge(bi.id,'img',fr.id,'img');
 markWiresDirty();
 });
 preset('Hex: Parse a Packet (Ethernet / IPv4 / UDP)', function(){
