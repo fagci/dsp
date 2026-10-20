@@ -248,6 +248,7 @@ body.noedit #bar .ed{display:none}
 .dash-pane.bare.scroll>.dash-body{padding-right:0}
 .dash-pane.bare .node .io3>.mid{padding:0}
 .dash-pane.bare .node .io3>.mid>:not(canvas.view.main):not(.tbl-ui):not(.chat):not(.sa-ov){display:none!important}
+.dash-pane.bare .tbl-ui>:not(.tbl-list){display:none!important}
 .dash-pane.bare .dash-body{overflow:hidden}
 .dash-body{flex:1 1 auto;min-height:0;overflow:auto}
 /* в тайлах заголовок узла не нужен: имя уже в селекте панели, кнопки заголовка тут бессмысленны */
