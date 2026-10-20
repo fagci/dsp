@@ -83,7 +83,7 @@ function chRender(n){
   n.dirty=false;
 }
 
-def({ id:'chat', title:'Chat', cat:'Output', kw:'chat messages text terminal console send receive', resize:true, w:340,
+def({ id:'chat', title:'Chat', cat:'Output', kw:'chat messages text terminal console send receive', resize:true, w:340, bare:true,
   ins:[{n:'text',t:'txt'},{n:'send',t:'txt'},{n:'from',t:'txt'},{n:'rec',t:'rec'},{n:'rows',t:'bands'}],
   outs:[{n:'text',t:'txt'},{n:'go',t:'num'}],
   params:[{n:'echo',t:'check',d:true,label:'show sent messages'},
