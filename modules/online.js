@@ -110,7 +110,8 @@ async function wcSearch(n){
     try{
       const j=await olGet(n,'s',olNet(n,base),'json',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body,timeout:35});
       if(j.remark && !(j.elements||[]).length) throw new Error('server busy: '+j.remark);
-      n.cams=olWebcams(j); n.msg=n.cams.length ? '' : 'no webcams in OpenStreetMap within '+n.p.radius+' km — raise the radius';
+      const dk=c=>Math.hypot((c.lat-lat)*111.2,(c.lon-lon)*111.2*Math.cos(lat*Math.PI/180));
+      n.cams=olWebcams(j).filter(c=>dk(c)<=+n.p.radius); n.msg=n.cams.length ? '' : 'no webcams in OpenStreetMap within '+n.p.radius+' km — raise the radius';
       n.rowsOut=n.cams.map(c=>({...c,icon:'📷',color:'#7fd0ff',size:7})); n.sel=null; n.img=null;
       return;
     }catch(e){ err=olErr(e); if(!err) return; }

@@ -119,7 +119,8 @@ function olWebcams(j){
   return out;
 }
 function olWebcamQuery(lat,lon,rKm,limit){
-  const a='(around:'+Math.round(rKm*1000)+','+lat+','+lon+')';
+  const dl=rKm/111.2, dn=rKm/(111.2*Math.max(.1,Math.cos(lat*Math.PI/180))), f=x=>+x.toFixed(4);
+  const a='('+[f(lat-dl),f(lon-dn),f(lat+dl),f(lon+dn)]+')';
   return '[out:json][timeout:25];(nwr["contact:webcam"]'+a+';nwr["man_made"="surveillance"]["surveillance:type"="webcam"]'+a+';);out center tags '+(limit|0)+';';
 }
 // первый целый JPEG (FFD8 … FFD9) в куске MJPEG-потока; null — ещё не пришёл

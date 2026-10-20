@@ -18,7 +18,7 @@ const mkFetch=()=>async(u,o)=>{
     blob:async()=>new Blob([body]),body:{getReader:()=>({read:async()=>sent ? {done:true} : (sent=true,{done:false,value:body})})}};
 };
 const ctx=vm.createContext({URL,URLSearchParams,String,Number,Math,Array,Object,Set,Map,Promise,JSON,Uint8Array,TextEncoder,TextDecoder,Blob,
-  AbortController,TypeError,Date,parseInt,isFinite,encodeURIComponent,performance,setTimeout,
+  AbortController,TypeError,Date,parseInt,isFinite,encodeURIComponent,performance,setTimeout,clearTimeout,
   fetch:(...a)=>ctx.__fetch(...a), __fetch:mkFetch(),
   Net:{url:u=>'PROXY/'+encodeURIComponent(u)}, def:d=>{ defs[d.id]=d; },
   setMod:(n,k,v)=>{ n.p[k]=v; }, recNum:v=>typeof v==='number'&&isFinite(v)?v:null, recList:v=>Array.isArray(v)?v:v?[v]:[],
@@ -69,7 +69,7 @@ const wc=K.olWebcams({elements:[
   {type:'node',id:5,lat:1,lon:2,tags:{'surveillance:type':'webcam'}}]});
 ok('webcams: two, duplicates and junk dropped',wc.length===2,JSON.stringify(wc));
 ok('webcams: fields',wc[0].id==='cam:n1' && wc[0].kind==='image' && wc[0].lat===50.12346 && wc[1].id==='cam:w2' && wc[1].lat===51 && wc[1].operator==='City' && wc[1].kind==='page');
-ok('overpass query',K.olWebcamQuery(50,8,25,300)==='[out:json][timeout:25];(nwr["contact:webcam"](around:25000,50,8);nwr["man_made"="surveillance"]["surveillance:type"="webcam"](around:25000,50,8););out center tags 300;');
+ok('overpass query',K.olWebcamQuery(50,8,25,300)==='[out:json][timeout:25];(nwr["contact:webcam"](49.7752,7.6502,50.2248,8.3498);nwr["man_made"="surveillance"]["surveillance:type"="webcam"](49.7752,7.6502,50.2248,8.3498););out center tags 300;');
 const jpg=[0xFF,0xD8,0xFF,0xE0,1,2,0xFF,0xD9], mj=Uint8Array.from([...Buffer.from('--b\r\nContent-Type: image/jpeg\r\n\r\n'),...jpg,...Buffer.from('\r\n--b')]);
 ok('jpeg frame found',K.olJpegFrame(mj).length===8 && K.olJpegFrame(mj)[0]===0xFF);
 ok('jpeg frame incomplete',K.olJpegFrame(Uint8Array.from([0xFF,0xD8,0xFF,0xE0,1,2]))===null && K.olJpegFrame(new Uint8Array(5))===null);
@@ -105,8 +105,8 @@ ok('podcasts: unknown name reported',/no podcast/.test(q.msg),q.msg);
 q=node('podcasts'); defs.podcasts.process(q,{feed:'ftp://x'});
 ok('podcasts: non-http feed refused',/must start with http/.test(q.msg),q.msg);
 
-routes={'overpass-api.de':{status:504},'overpass.kumi.systems':{body:{elements:[{type:'node',id:1,lat:50,lon:8,tags:{name:'Peak','contact:webcam':'https://c/p.jpg'}},{type:'node',id:2,lat:51,lon:9,tags:{name:'Page','contact:webcam':'https://c/x.html'}}]}},'c/p.jpg':{bytes:new Uint8Array(jpg)}};
-let w=node('webcams',{radius:10});
+routes={'overpass-api.de':{status:504},'overpass.kumi.systems':{body:{elements:[{type:'node',id:1,lat:50,lon:8,tags:{name:'Peak','contact:webcam':'https://c/p.jpg'}},{type:'node',id:2,lat:50.2,lon:8.1,tags:{name:'Page','contact:webcam':'https://c/x.html'}}]}},'c/p.jpg':{bytes:new Uint8Array(jpg)}};
+let w=node('webcams',{radius:100});
 await defs.webcams.params.find(q=>q.n==='search').fn(w);
 ok('webcams: no centre',/no centre/.test(w.msg)); 
 defs.webcams.process(w,{lat:50,lon:8});
