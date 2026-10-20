@@ -1536,9 +1536,10 @@ def({ id:'ft8Rx', title:'FT8: Receive Slots', cat:'Decoders',
   params:[{n:'freq',t:'num',min:0,max:3e9,step:1000,d:0,label:'dial frequency, Hz (for band; 0 — unknown)'},
           {n:'fmin',t:'range',min:100,max:3000,step:6.25,d:200},
           {n:'fmax',t:'range',min:200,max:3200,step:6.25,d:2800},
-          {n:'top',t:'range',min:1,max:30,step:1,d:8},
+          {n:'top',t:'range',min:1,max:60,step:1,d:20},
           {n:'thr',t:'range',min:1,max:8,step:.1,d:1.6},
           {n:'keep',t:'range',min:1,max:60,step:1,d:12},
+          {n:'side',t:'select',opts:['auto','USB','LSB'],d:'auto',label:'sideband of the input audio (LSB inverts tones; auto tries both). For LSB, dial = tuned frequency'},
           {n:'tones',t:'check',d:false,label:'show tones'},
           {n:'decode',t:'check',d:true,label:'decode (LDPC)'},
           {n:'now',t:'button',label:'Parse now',fn:n=>ft8Run(n,true)},
@@ -1549,28 +1550,25 @@ def({ id:'ft8Rx', title:'FT8: Receive Slots', cat:'Decoders',
           {n:'budget',t:'range',min:100,max:3000,step:50,d:800,label:'parse budget, ms'},
           {n:'save',t:'button',label:'Save log',fn:n=>ft8Save(n)},
           {n:'clr',t:'button',label:'Clear log',fn:n=>{n.log=[];ft8Text(n);}}],
-  init:n=>{ n.buf=new Float32Array(FT8_SR*15); n.wp=0; n.acc=0; n.sum=0; n.cnt=0;
+  init:n=>{ n.buf=new Float32Array(FT8_SR*15); n.wp=0; n.rs=null; n.rsSr=0; n.o1=new Float32Array(8);
             n.slot=-1; n.log=[]; n.text='waiting for slot boundary…'; n.f=0; n.sc=0; n.dt=0; n.busy=0;
             n.recQ=[]; n.msgOut=''; n.grids=new Map(); },
   process(n,I){
     for(const k of ['fmin','fmax','top','thr','keep','budget']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     if(typeof I.freq==='number' && I.freq>0) setMod(n,'freq',I.freq);
     for(const k of ['tones','decode']) if(typeof I[k]==='number') setMod(n,k,I[k]>=0.5);
-    const step=FT8_SR/Eng.sr;
-    for(let i=0;i<BLOCK;i++){                       // прореживание с усреднением: защита от наложения
-      const x=I.in?I.in[i]:0;
-      n.sum+=x; n.cnt++;
-      n.acc+=step;
-      while(n.acc>=1){ n.acc-=1;
-        n.buf[n.wp]=n.cnt? n.sum/n.cnt : 0;
-        n.sum=0; n.cnt=0;
-        n.wp=(n.wp+1)%n.buf.length; } }
+    if(!n.rs || n.rsSr!==Eng.sr){ n.rs=js8Resampler(Eng.sr,FT8_SR); n.rsSr=Eng.sr; }
+    let got=0;
+    for(let i=0;i<BLOCK;i++){                       // sinc-передискретизация (усреднение давало призраки сильного сигнала)
+      const k=n.rs.push(I.in?I.in[i]:0,n.o1);
+      for(let q=0;q<k;q++){ n.buf[n.wp]=n.o1[q]; n.wp=(n.wp+1)%n.buf.length; }
+      got+=k; }
     const now=Date.now(), slot=Math.floor(now/15000);   // границы слотов кратны 15 с UTC
     if(n.slot<0){ n.slot=slot; n.filled=0; }
     else if(slot!==n.slot){ n.slot=slot;
       if(n.filled>=FT8_SR*14) ft8Run(n,false,(slot-1)*15000);
       n.filled=0; }
-    n.filled=(n.filled||0)+BLOCK*step;
+    n.filled=(n.filled||0)+got;
     n.busy=clamp(n.filled/(FT8_SR*15),0,1);
     const rec=n.recQ.length ? n.recQ.splice(0) : null;
     return {f:n.f, score:n.sc, dt:n.dt, busy:n.busy, msg:n.msgOut, rec}; },
