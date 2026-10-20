@@ -7,15 +7,16 @@
 const olNet=(n,u)=>n.p.proxy ? Net.url(u) : u;
 // один запрос на ключ: новый отменяет прежний
 async function olGet(n,key,url,kind,opt){
+  const {timeout=20,...fo}=opt||{};
   (n.acs ||= {})[key]?.abort();
   const ac=n.acs[key]=new AbortController();
-  const tm=setTimeout(()=>{ ac.timedOut=true; ac.abort(); },20000);
+  const tm=setTimeout(()=>{ ac.timedOut=true; ac.abort(); },timeout*1000);
   try{
-    const r=await fetch(url,{signal:ac.signal,...opt});
+    const r=await fetch(url,{signal:ac.signal,...fo});
     if(!r.ok) throw new Error(r.status===429 ? 'HTTP 429 (rate limit — try later)' : 'HTTP '+r.status);
     return await (kind==='json' ? r.json() : r.text());
   }catch(e){
-    if(ac.timedOut) throw new Error('timeout (20 s) — server not responding, try again or use the CORS proxy');
+    if(ac.timedOut) throw new Error('timeout ('+timeout+' s) — server not responding, try again or use the CORS proxy');
     throw e;
   }finally{ clearTimeout(tm); }
 }
@@ -102,11 +103,13 @@ async function wcSearch(n){
   const lat=n.lat, lon=n.lon;
   if(lat==null || lon==null){ n.msg='no centre — add My Position, wire lat / lon or set them'; return; }
   n.msg='searching OpenStreetMap…';
-  const q=encodeURIComponent(olWebcamQuery(lat,lon,+n.p.radius,+n.p.limit));
+  const body='data='+encodeURIComponent(olWebcamQuery(lat,lon,+n.p.radius,+n.p.limit));
   let err='';
   for(const base of OL_OVERPASS){
+    n.msg='searching OpenStreetMap… ('+base.split('/')[2]+')';
     try{
-      const j=await olGet(n,'s',base+'?data='+q,'json');
+      const j=await olGet(n,'s',olNet(n,base),'json',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body,timeout:35});
+      if(j.remark && !(j.elements||[]).length) throw new Error('server busy: '+j.remark);
       n.cams=olWebcams(j); n.msg=n.cams.length ? '' : 'no webcams in OpenStreetMap within '+n.p.radius+' km — raise the radius';
       n.rowsOut=n.cams.map(c=>({...c,icon:'📷',color:'#7fd0ff',size:7})); n.sel=null; n.img=null;
       return;
@@ -200,7 +203,8 @@ def({ id:'webcams', title:'Webcams', cat:'Sources', readout:true, tall:true, w:3
     if(r){
       const L=[];
       if(n.msg) L.push(n.msg);
-      L.push(n.cams.length ? n.cams.length+' cameras' : 'press «Find webcams» (centre: My Position, wires or lat / lon)');
+      if(n.cams.length) L.push(n.cams.length+' cameras');
+      else if(!n.msg) L.push('press «Find webcams» (centre: My Position, wires or lat / lon)');
       if(n.sel) L.push('📷 '+n.sel.label+' · '+n.sel.kind+(n.shotMsg ? ' · '+n.shotMsg : '')+'\n  '+n.sel.url);
       const t=L.join('\n'); if(r.textContent!==t) r.textContent=t;
     }
