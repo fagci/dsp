@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
-const ctx=vm.createContext({Math,Uint8Array,Uint32Array,DataView,TextEncoder,TextDecoder,btoa,atob,Array,Map,Error,String,Date});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/bytes-kernels.js'),'utf8')+';this.B={binCrc32,binToText,binFromText,binLineToFrame,binPack,binParse,BinStream,BinAssembler,binCat};',ctx);
+const ctx=vm.createContext({Math,Uint8Array,Uint8ClampedArray,Uint32Array,DataView,TextEncoder,TextDecoder,btoa,atob,Array,Map,Error,String,Date});
+vm.runInContext(fs.readFileSync(path.join(root,'modules/bytes-kernels.js'),'utf8')+';this.B={binCrc32,binToText,binFromText,binLineToFrame,binPack,binParse,BinStream,BinAssembler,binCat,binSniff,BinJpegSplitter,binRawToRGBA};',ctx);
 const B=ctx.B;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 const same=(a,b)=>a.length===b.length && a.every((v,i)=>v===b[i]);
@@ -66,4 +66,39 @@ const f6=B.binPack(data,{pay:100,xid:9}), a6=new B.BinAssembler(); let r6=null;
 f6[4]=B.binPack(rand(100),{pay:100,xid:9})[1];                 // кадр с другим телом, но верным CRC кадра
 for(const f of f6) r6=a6.push(B.binParse(f))||r6;
 ok('wrong file CRC rejected',r6===null && a6.badFile===1);
+// ---- картинки ----
+const sig=(...a)=>Uint8Array.from(a);
+ok('sniff jpeg/png/gif',B.binSniff(sig(0xFF,0xD8,0xFF,0xE0))==='jpeg' && B.binSniff(sig(0x89,0x50,0x4E,0x47,13,10,26,10))==='png' && B.binSniff(new TextEncoder().encode('GIF89a'))==='gif');
+ok('sniff webp/bmp',B.binSniff(new TextEncoder().encode('RIFF\0\0\0\0WEBP'))==='webp' && B.binSniff(new TextEncoder().encode('BM\0\0'))==='bmp');
+ok('sniff not an image',B.binSniff(sig(1,2,3,4,5,6,7,8,9,10,11,12))==='');
+
+// синтетический JPEG: EXIF-миниатюра внутри APP1, DQT, SOS с FF00 и RST в данных
+const seg=(m,body)=>[0xFF,m,(body.length+2)>>8,(body.length+2)&255,...body];
+const thumb=[0xFF,0xD8,0xFF,0xDB,0,4,1,2,0xFF,0xD9];
+function jpg(k){
+  const ent=[]; for(let i=0;i<200+k;i++){ const v=rnd()*256|0; ent.push(v); if(v===0xFF) ent.push(0); }
+  ent.push(0xFF,0xD0,5,6,0xFF);
+  return Uint8Array.from([0xFF,0xD8,...seg(0xE1,[69,120,105,102,0,0,...thumb]),...seg(0xDB,[0,1,2,3]),...seg(0xDA,[1,1,0,0,63,0]),...ent,0xFF,0xD9]);
+}
+const j=[jpg(0),jpg(50),jpg(300)];
+const mjStream=B.binCat(sig(1,2,3,0xFF),j[0],sig(9,9),j[1],j[2]);
+{ const sp=new B.BinJpegSplitter(); const got=[];
+  for(let i=0;i<mjStream.length;i+=7) got.push(...sp.push(mjStream.subarray(i,i+7)));
+  ok('mjpeg: 3 frames from 7-byte chunks',got.length===3 && got.every((g,i)=>same(g,j[i])),String(got.length));
+  ok('mjpeg: junk counted',sp.junk>=6,String(sp.junk)); }
+{ const sp=new B.BinJpegSplitter(); const got=sp.push(mjStream);
+  ok('mjpeg: one big chunk',got.length===3 && same(got[1],j[1])); }
+{ const sp=new B.BinJpegSplitter(); const cut=j[0].slice(0,j[0].length-1);
+  const got=sp.push(B.binCat(cut,j[1],j[2]));
+  ok('mjpeg: truncated frame does not kill the mjStream',got.length>=2 && same(got[got.length-1],j[2]) && got.some(g=>same(g,j[1])),String(got.length)); }
+{ const sp=new B.BinJpegSplitter(); sp.push(j[0].slice(0,40));
+  ok('mjpeg: partial frame is held back',sp.frames===0 && sp.push(j[0].slice(40)).length===1); }
+
+const px=B.binRawToRGBA(sig(0,128,255),3,1,'gray8');
+ok('raw gray8',px.length===12 && px[0]===0 && px[4]===128 && px[8]===255 && px[3]===255);
+const p5=B.binRawToRGBA(sig(0x1F,0x00, 0xE0,0x07, 0x00,0xF8),3,1,'rgb565');
+ok('raw rgb565',p5[0]===0&&p5[2]===255 && p5[5]===255&&p5[4]===0 && p5[8]===255&&p5[10]===0);
+const p8=B.binRawToRGBA(sig(1,2,3,4,5,6),2,1,'rgb888');
+ok('raw rgb888',p8[0]===1&&p8[2]===3&&p8[4]===4&&p8[6]===6&&p8[7]===255);
+
 console.log(bad ? bad+' failed' : 'all passed'); process.exit(bad ? 1 : 0);
