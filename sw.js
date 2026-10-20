@@ -10,7 +10,7 @@
 // новой не подтвердит успешную загрузку ('ok'). Если скрипты не загрузились, страница шлёт 'rollback' —
 // пока сеть отдаёт index.html этой версии, воркер подаёт index.html последней подтверждённой.
 const PFX='dsp-shell-v';
-const CACHE='dsp-shell-vee19720b';
+const CACHE='dsp-shell-v1f25da07';
 const V=CACHE.slice(PFX.length);
 const META='dsp-meta', STATE_KEY='./__state', PIN_MS=6*3600e3;    // сколько держать откат, пока не выйдет новая версия
 const SHELL=[
@@ -243,6 +243,7 @@ const SHELL=[
   './modules/gamepad.js?v='+V,
   './modules/webhid.js?v='+V,
   './modules/webnfc.js?v='+V,
+  './modules/webapis.js?v='+V,
   './modules/speech.js?v='+V,
   './modules/webrtc.js?v='+V,
   './modules/rtcmedia.js?v='+V,

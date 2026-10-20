@@ -440,6 +440,8 @@ const GSENSOR_DEFS = {
   'LinearAccelerationSensor':    {fields:['x','y','z']},
   'Gyroscope':                   {fields:['x','y','z']},
   'Magnetometer':                {fields:['x','y','z']},
+  'GravitySensor':               {fields:['x','y','z']},
+  'RelativeOrientationSensor':   {fields:['qx','qy','qz','qw'], get:s=>s.quaternion||[0,0,0,1]},
   'AmbientLightSensor':          {fields:['illuminance']},
 };
 function gsensorFields(n){ return (GSENSOR_DEFS[n.p.type]||GSENSOR_DEFS.Accelerometer).fields; }
@@ -455,6 +457,8 @@ const GSENSOR_MOTION={
   LinearAccelerationSensor:e=>{ const a=e.acceleration; return a&&a.x!=null&&[a.x,a.y,a.z]; },
   Gyroscope:               e=>{ const r=e.rotationRate, k=Math.PI/180;
                                 return r&&r.alpha!=null&&[r.beta*k,r.gamma*k,r.alpha*k]; },
+  GravitySensor:           e=>{ const a=e.accelerationIncludingGravity, l=e.acceleration;
+                                return a&&l&&a.x!=null&&l.x!=null&&[a.x-l.x,a.y-l.y,a.z-l.z]; },
 };
 async function gsensorMotion(n){
   const get=GSENSOR_MOTION[n.p.type];
@@ -475,7 +479,7 @@ function gsensorStart(n){
   try{
     const s = new Cls({frequency:+n.p.freq});
     s.addEventListener('reading', ()=>{
-      n.v = def.fields.map(f=>s[f]??0); n.status='';
+      n.v = def.get ? Array.from(def.get(s)) : def.fields.map(f=>s[f]??0); n.status='';
       ssPush(n,(s.timestamp??performance.now())/1000,n.v); });
     s.addEventListener('error', e=>{ n.status='error: '+(e.error?.message||e.error?.name||'?'); });
     s.start();
@@ -484,7 +488,7 @@ function gsensorStart(n){
     n.status = e.name==='SecurityError' ? 'sensor permission denied' : 'error: '+e.message;
   }
 }
-def({ id:'gsensor', title:'Sensor (Generic Sensor API)', cat:'Sources', kw:'accelerometer gyroscope magnetometer ambient light lux phone',
+def({ id:'gsensor', title:'Sensor (Generic Sensor API)', cat:'Sources', kw:'accelerometer gyroscope magnetometer gravity relative orientation quaternion ambient light lux phone',
   outs: n => { const f=gsensorFields(n);
     return [...f.map(x=>({n:x,t:'num'})), ...f.map(x=>({n:'s'+x,t:'sig'})),
             ...(f.length===3?[{n:'smag',t:'sig'}]:[])]; },
@@ -802,7 +806,14 @@ function camPush(n,r,t){
   if(rq.length>262144) rq.splice(0,rq.length-262144);
 }
 // ручные режимы камеры: автоэкспозиция держит длинную выдержку и роняет fps в полутьме
-function camCtlKey(n){ return [n.p.ae,n.p.exp,n.p.af,n.p.awb,n.p.zoom].join(); }
+function camCtlKey(n){ return [n.p.ae,n.p.exp,n.p.af,n.p.awb,n.p.zoom,n.p.torch].join(); }
+// ImageCapture: снимок в полном разрешении сенсора (не кадр потока), сохраняется файлом
+async function camPhoto(n){
+  if(!n.track || !window.ImageCapture){ n.ctlNote=n.track ? 'no ImageCapture' : 'camera is off'; return; }
+  try{ const blob=await new ImageCapture(n.track).takePhoto();
+    dl(blob,'photo-'+new Date().toISOString().replace(/[:.]/g,'-')+'.jpg'); n.ctlNote='photo '+Math.round(blob.size/1024)+' KB'; }
+  catch(e){ n.ctlNote='photo: '+e.message; }
+}
 async function camApplyCtl(n){
   const tr=n.track, C=n.caps||{}; if(!tr) return;
   const key=camCtlKey(n); n.ctlKey=key; n.ctlBusy=true;
@@ -818,6 +829,8 @@ async function camApplyCtl(n){
   if(!pick('whiteBalance',n.p.awb?['continuous']:['manual','single-shot']) && !n.p.awb) miss.push('WB');
   if(C.zoom) adv.zoom=clamp(+n.p.zoom,C.zoom.min,C.zoom.max);
   else if(+n.p.zoom>1) miss.push('zoom');
+  if(C.torch) adv.torch=!!n.p.torch;
+  else if(n.p.torch) miss.push('torch');
   try{ await tr.applyConstraints({...n.base,advanced:[adv]}); }
   catch(e){                                          // по одному — чтобы отказ одного не рушил остальные
     for(const [k,v] of Object.entries(adv)){
@@ -842,6 +855,8 @@ def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'vid',
           {n:'af',t:'check',d:true,label:'auto focus'},
           {n:'awb',t:'check',d:true,label:'auto white balance'},
           {n:'zoom',t:'range',min:1,max:10,step:.1,d:1,label:'zoom'},
+          {n:'torch',t:'check',d:false,label:'torch (flash light)'},
+          {n:'photo',t:'button',label:'Take photo (full resolution)',fn:n=>camPhoto(n)},
           {n:'w',t:'select',opts:['80','160','320'],d:'160',label:'img width'},
           {n:'roi',t:'check',d:false,label:'brightness zone'},
           {n:'roiX',t:'range',min:0,max:1,step:.01,d:.35,label:'zone: x'},
