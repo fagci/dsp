@@ -236,11 +236,11 @@ class TsDemux{
     this.cur=null;
     this.vid=[]; this.aud=[];               // готовые кадры: {pts, key, d}
     this.stat={packets:0, lost:0, sync:0, cc:0, frames:0, bytes:0, tei:0, keys:0, idr:0, gaps:{}}; this.gap=0; this.al=false;
-    this.sps=null; this.vcodec='';
+    this.sps=null; this.vcodec=''; this.spsNal=null; this.ppsNal=null;
     this.ttx=[]; this.sec=new Map();                     // PID → собираемая секция служебной таблицы
     this.svc=new Map(); this.events=new Map(); this.net={name:'',id:0,tsid:0,lcn:new Map(),freqs:[]}; this.utc=null; this.pidN=new Map(); this.pidBytes=new Map(); this.t0=0; this.sdtDone=false;
   }
-  select(n){ this.sel=n|0; this.cur=null; for(const p of this.pids.values()){ p.chunks=[]; } this.vid.length=0; this.aud.length=0; this.ttx.length=0; }
+  select(n){ this.sel=n|0; this.cur=null; this.sps=null; this.vcodec=''; this.spsNal=null; this.ppsNal=null; for(const p of this.pids.values()){ p.chunks=[]; } this.vid.length=0; this.aud.length=0; this.ttx.length=0; }
 
   // Подать байты; возвращает число принятых пакетов
   push(chunk){
