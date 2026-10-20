@@ -1952,7 +1952,9 @@ return sc;
 function typeCompat(a,b){ return a===b || a==='val' || b==='val' || (a==='iq' && b==='sig') || (a==='sig' && b==='iq'); }
 // порт модуля m, к которому можно подключить провод, идущий от порта типа t (dir 'o' — провод начат с выхода → ищем вход)
 function compatPort(m,t,dir){
-const ps=(dir==='o' ? m.ins : m.outs); if(!Array.isArray(ps)) return null;
+let ps=(dir==='o' ? m.ins : m.outs);
+if(typeof ps==='function'){ try{ ps=ps({type:m.id,p:{},cols:[]}); }catch{ return null; } }   // порты от узла — берём базовые
+if(!Array.isArray(ps)) return null;
 return ps.find(p=>p.t===t) || ps.find(p=>typeCompat(t,p.t)) || null;
 }
 // значок модуля: цвет — группа, форма — роль (круг: источник, квадрат: обработка, шестиугольник: приёмник)
