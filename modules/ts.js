@@ -18,7 +18,7 @@ function tsvReset(n){
   try{ n.dec?.close(); }catch(e){}
   try{ n.m2?.m2_reset(); }catch(e){}
   try{ n.m2?.a2_reset(); }catch(e){}
-  n.aq=[]; n.aEnd=null; n.inq=[]; n.inqLen=0; n.rate0=0; n.lastShow=0; n.gapN=0; n.gapMax=0; n.under=false; n.keyWait=0; n.aVsh=0; n.aLateN=0; n.dmx?.pidN.clear();
+  n.aq=[]; n.aEnd=null; n.inq=[]; n.inqLen=0; n.rate0=0; n.lastShow=0; n.gapN=0; n.gapMax=0; n.under=false; n.keyWait=0; n.aLateN=0; n.vd=[]; n.vdelay=0; n.dmx?.pidN.clear();
   try{ n.ad?.close(); }catch(e){}
   n.ad=null; n.adKey='';
   n.dec=null; n.decCodec=''; n.needKey=true; n.lastTs=-1;
@@ -163,8 +163,8 @@ function tsvAudioRead(n,oL,oR,target,g){
     sg.i+=c; o+=c; n.aPlayed=(n.aPlayed||0)+c;
     if(sg.i>=sg.L.length) n.aq.shift();
   }
-  // звук приходит позже своего кадра (в мультиплексе видео опережает звук): задержать часы видео, а не сдвигать звук, чтобы губы совпадали
-  if(late>.15 && late<2.5 && (n.aVsh||0)<3){ if(++n.aLateN>sr/B*.3){ n.wall0+=late*1000; n.aVsh=(n.aVsh||0)+late; n.aLateN=0; } }
+  // звук приходит позже своего кадра (в мультиплексе видео опережает звук): держать закодированное видео перед декодером, чтобы звук шёл впереди; сдвигать звук нельзя — губы разойдутся
+  if(late>.15 && late<2.5 && (n.vdelay||0)<3){ if(++n.aLateN>sr/B*.3){ n.vdelay=Math.min(3,(n.vdelay||0)+late); n.aLateN=0; } }
   else if(o>0) n.aLateN=0;                                       // пустая очередь звука счётчик не сбрасывает: звук идёт порциями
   // звук стабильно не совпадает с часами видео (другая отметка времени, разрыв): сдвинуть его, а не молчать
   if(wait || skip>B/2){ n.aBad=(n.aBad||0)+1; if(n.aBad>sr/B*1.5 && n.aq.length){ const sg=n.aq[0]; n.aSh=(n.aSh||0)+(sg.t0+sg.i/sr-target); n.aBad=0; n.aResync=(n.aResync||0)+1; } }
@@ -183,25 +183,43 @@ function tsvFeed(n,bytes){
     const type=dm.cur?.vtype;
     if(!dm.vcodec || !type) continue;
     if(type==='mpeg2'){ tsvM2(n,f); continue; }
-    const entry= tsvMode(n).idr ? f.idr : f.key;                // подходит ли кадр как точка входа в нынешнем режиме
-    if(n.needKey && tsvMode(n).idr){ if(++n.keyWait>300 && performance.now()-n.modeAt>15000){ tsvNextMode(n,'no IDR frame in 15 s'); continue; } }
-    else n.keyWait=0;
-    if(!n.dec || n.decCodec!==dm.vcodec){
-      if(n.cfgBusy) return;
-      if(!entry) continue;
-      n.cfgBusy=true;
-      tsvConfigure(n,dm.vcodec,type).then(()=>{ n.cfgBusy=false; });
-      return;                                                  // этот кадр пропускаем, ждём следующий ключевой
-    }
-    if(n.needKey && !entry) continue;
-    if(n.dec.decodeQueueSize>40){ n.needKey=true; n.dropped++; continue; }
-    if(n.needKey && f.key) n.lastKey={idr:f.idr, size:f.d.length, nals:f.nals||[], hex:Array.from(f.d.subarray(0,64),v=>v.toString(16).padStart(2,'0')).join(' ')};
-    n.needKey=false;
-    let ts=f.pts>=0 ? Math.round(f.pts*1e6) : (n.lastTs>=0 ? n.lastTs+40000 : 0);
-    n.lastTs=ts;
-    try{ n.dec.decode(new EncodedVideoChunk({type:f.key ? 'key' : 'delta', timestamp:ts, data:f.d})); }
-    catch(e){ n.status='decode: '+e.message; tsvNextMode(n,'decode() failed'); }
+    n.vd.push(f);
   }
+  tsvVdRelease(n);
+}
+// закодированные кадры ждут перед декодером на n.vdelay секунд: звук, идущий в мультиплексе позади видео, успевает к своему времени
+function tsvVdRelease(n){
+  const d=n.vdelay||0;
+  while(n.vd.length){
+    const a=n.vd[0], b=n.vd[n.vd.length-1];
+    if(d>0 && a.pts>=0 && b.pts>=0 && b.pts-a.pts<d && n.vd.length<d*60) break;
+    if(!tsvDecodeFrame(n,a)) break;
+    n.vd.shift();
+  }
+}
+// false — кадр не взят (ждём настройки декодера)
+function tsvDecodeFrame(n,f){
+  const dm=n.dmx, type=dm.cur?.vtype;
+  if(!dm.vcodec || !type) return true;
+  const entry= tsvMode(n).idr ? f.idr : f.key;                // подходит ли кадр как точка входа в нынешнем режиме
+  if(n.needKey && tsvMode(n).idr){ if(++n.keyWait>300 && performance.now()-n.modeAt>15000){ tsvNextMode(n,'no IDR frame in 15 s'); return true; } }
+  else n.keyWait=0;
+  if(!n.dec || n.decCodec!==dm.vcodec){
+    if(n.cfgBusy) return false;
+    if(!entry) return true;
+    n.cfgBusy=true;
+    tsvConfigure(n,dm.vcodec,type).then(()=>{ n.cfgBusy=false; });
+    return true;                                             // этот кадр пропускаем, ждём следующий ключевой
+  }
+  if(n.needKey && !entry) return true;
+  if(n.dec.decodeQueueSize>40){ n.needKey=true; n.dropped++; return true; }
+  if(n.needKey && f.key) n.lastKey={idr:f.idr, size:f.d.length, nals:f.nals||[], hex:Array.from(f.d.subarray(0,64),v=>v.toString(16).padStart(2,'0')).join(' ')};
+  n.needKey=false;
+  let ts=f.pts>=0 ? Math.round(f.pts*1e6) : (n.lastTs>=0 ? n.lastTs+40000 : 0);
+  n.lastTs=ts;
+  try{ n.dec.decode(new EncodedVideoChunk({type:f.key ? 'key' : 'delta', timestamp:ts, data:f.d})); }
+  catch(e){ n.status='decode: '+e.message; tsvNextMode(n,'decode() failed'); }
+  return true;
 }
 
 // Выдать кадр, которому пора: остальные просроченные закрываются
@@ -214,7 +232,7 @@ function tsvPresent(n){
     n.under=false; n.base=null;
   }
   else if(n.base!=null && (q[0].timestamp-n.ts0)/1000-(now-n.wall0)>1500+(+n.p.delay||0)) n.base=null;  // скачок PTS вперёд
-  if(n.base==null || q.length>cap){ n.ts0=q[0].timestamp; n.wall0=now+(+n.p.delay||0); n.base=1; n.aSh=0; n.aVsh=0; while(q.length>cap) q.shift().close(); }
+  if(n.base==null || q.length>cap){ n.ts0=q[0].timestamp; n.wall0=now+(+n.p.delay||0); n.base=1; n.aSh=0; while(q.length>cap) q.shift().close(); }
   let pick=-1;
   for(let i=0;i<q.length;i++){ if((q[i].timestamp-n.ts0)/1000<=now-n.wall0) pick=i; else break; }
   if(pick<0) return;
@@ -398,7 +416,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
   init(n){
     n.dmx=new TsDemux(); n.inq=[]; n.inqLen=0; n.q=[]; n.fileObj=null; n.pos=0; n.rd=false; n.dec=null; n.decCodec=''; n.cfgBusy=false;
     n.needKey=true; n.lastTs=-1; n.base=null; n.last=null; n.status='waiting for a transport stream'; n.notes=[]; n.mode=(()=>{ try{ return (+localStorage.tsvMode||0)%4; }catch(e){ return 0; } })(); n.modeAt=performance.now(); n.errN=0;
-    n.aq=[]; n.aEnd=null; n.aInfo=''; n.decoded=0; n.m2=null; n.m2p=null; n.m2err=0; n.m2bad=0; n.shown=0; n.dropped=0; n.fpsN=0; n.fps=0; n.fpsT=performance.now(); n.tkN=0; n.tkMax=0; n.tkShow=0; n.gotFrame=false; n.prog=0;
+    n.aq=[]; n.aEnd=null; n.vd=[]; n.vdelay=0; n.aLateN=0; n.aInfo=''; n.decoded=0; n.m2=null; n.m2p=null; n.m2err=0; n.m2bad=0; n.shown=0; n.dropped=0; n.fpsN=0; n.fps=0; n.fpsT=performance.now(); n.tkN=0; n.tkMax=0; n.tkShow=0; n.gotFrame=false; n.prog=0;
     n.pic=document.createElement('canvas'); n.picCx=n.pic.getContext('2d');
     n.tt=new TsTeletext(); n.tpic=document.createElement('canvas'); n.tpic.width=480; n.tpic.height=500; n.tpicCx=n.tpic.getContext('2d'); n.ttRev=-1; n.ttKey=''; n.ttHas=false; n.ttText='';
     Object.defineProperty(n.tpic,'videoWidth',{get(){ return this.width; }});
@@ -432,7 +450,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
     const oL=buf(n,'L'), oR=buf(n,'R'); oL.fill(0); oR.fill(0);
     if(n.base==null && n.aq.length){                              // видео нет: часы по звуку, чтобы он шёл без картинки
       n.aNoV=(n.aNoV||0)+1;
-      if(n.aNoV>60){ n.ts0=n.aq[0].t0*1e6; n.wall0=now+(+n.p.delay||0); n.base=1; n.aSh=0; n.aVsh=0; n.aNoV=0; }
+      if(n.aNoV>60){ n.ts0=n.aq[0].t0*1e6; n.wall0=now+(+n.p.delay||0); n.base=1; n.aSh=0; n.aNoV=0; }
     }
     if(n.base!=null && n.aq.length) tsvAudioRead(n,oL,oR,n.ts0/1e6+(now-n.wall0)/1000-(+n.p.avsync||0)/1000+(n.aSh||0),+n.p.volume);
     return {vid:n.gotFrame && n.pic.width ? n.pic : null, L:oL, R:oR, lock:n.gotFrame ? 1 : 0, fps:n.fps, ttx:n.ttHas ? n.tpic : null, ttxt:n.ttText||'', mux:n.muxR||null, chan:n.chanR||null, epg:n.epgR||null, all:n.allR||null, info:n.infoTxt||''}; },
