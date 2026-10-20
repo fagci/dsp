@@ -1529,11 +1529,12 @@ function ft8Payload(tones){                         // 79 тонов → 174 б�
 
 def({ id:'ft8Rx', title:'FT8: Receive Slots', cat:'Decoders',
   ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'top',t:'num'},{n:'thr',t:'num'},
-       {n:'keep',t:'num'},{n:'tones',t:'num'},{n:'decode',t:'num'},{n:'budget',t:'num'}],
+       {n:'keep',t:'num'},{n:'tones',t:'num'},{n:'decode',t:'num'},{n:'budget',t:'num'},{n:'freq',t:'num'}],
   outs:[{n:'f',t:'num'},{n:'score',t:'num'},{n:'dt',t:'num'},{n:'busy',t:'num'},
         {n:'msg',t:'txt'},{n:'rec',t:'rec'}],        // rec — по записи на сообщение: позывной, локатор, SNR
   readout:true, tall:true,
-  params:[{n:'fmin',t:'range',min:100,max:3000,step:6.25,d:200},
+  params:[{n:'freq',t:'num',min:0,max:3e9,step:1000,d:0,label:'dial frequency, Hz (for band; 0 — unknown)'},
+          {n:'fmin',t:'range',min:100,max:3000,step:6.25,d:200},
           {n:'fmax',t:'range',min:200,max:3200,step:6.25,d:2800},
           {n:'top',t:'range',min:1,max:30,step:1,d:8},
           {n:'thr',t:'range',min:1,max:8,step:.1,d:1.6},
@@ -1553,6 +1554,7 @@ def({ id:'ft8Rx', title:'FT8: Receive Slots', cat:'Decoders',
             n.recQ=[]; n.msgOut=''; n.grids=new Map(); },
   process(n,I){
     for(const k of ['fmin','fmax','top','thr','keep','budget']) if(typeof I[k]==='number') setMod(n,k,I[k]);
+    if(typeof I.freq==='number' && I.freq>0) setMod(n,'freq',I.freq);
     for(const k of ['tones','decode']) if(typeof I[k]==='number') setMod(n,k,I[k]>=0.5);
     const step=FT8_SR/Eng.sr;
     for(let i=0;i<BLOCK;i++){                       // прореживание с усреднением: защита от наложения

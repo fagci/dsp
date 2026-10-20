@@ -391,6 +391,7 @@ const PRESET_CATS={
   'Logic Analyzer: UART Decode':'Analysis & Measurement',
   'Logic Analyzer: USB (fx2lafw)':'Analysis & Measurement',
   'FT8: Propagation Map':'Maps & Locating',
+  'FT8: DX Log (Table)':'Maps & Locating',
   'Fox Hunt: Locate Transmitter':'Maps & Locating',
   'Internet Radio on the Map':'Maps & Locating',
   'KiwiSDR and SpyServer on the Map':'Maps & Locating',
@@ -778,6 +779,26 @@ addEdge(m.id,'a',f8.id,'in');
 addEdge(f8.id,'rec',lg.id,'rec');
 addEdge(lg.id,'rec',map.id,'rec');
 addEdge(me.id,'rec',map.id,'rec2');
+markWiresDirty();
+});
+preset('FT8: DX Log (Table)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Receiver audio (USB, 7074 kHz …) into the mic input; set the dial frequency in FT8: Receive Slots (band column).\n'+
+  'Top table — one row per station (call is the key): country by prefix, locator, last SNR, distance and azimuth from My Position, count / first / last.\n'+
+  'Bottom table — every decoded message. Sort and filter in the Table header.'});
+nt.size.w=560; nt.size.h=120; applySize(nt);
+const m =addNode('mic',40,200,{gainA:2});
+const me=addNode('geoMe',40,380,{});
+const f8=addNode('ft8Rx',300,200,{fmin:200,fmax:2800,top:15,thr:1.6,freq:7074000});
+f8.size.w=420; f8.size.h=300; applySize(f8);
+const st=addNode('table',760,40,{list:'ft8/stations',key:'call',rev:true,
+  cols:['call','country','grid','snr','dist_km','az','band','mode','count','first','last','msg']});
+st.size.w=760; st.size.h=340; applySize(st);
+const am=addNode('table',760,400,{list:'ft8/messages',rev:true,maxRows:2000,
+  cols:['t','call','to','country','grid','snr','dist_km','band','mode','f','dt','msg']});
+am.size.w=760; am.size.h=300; applySize(am);
+addEdge(m.id,'a',f8.id,'in');
+addEdge(f8.id,'rec',st.id,'rec'); addEdge(f8.id,'rec',am.id,'rec');
 markWiresDirty();
 });
 preset('Fox Hunt: Locate Transmitter', function(){
