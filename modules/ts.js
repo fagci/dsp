@@ -18,7 +18,7 @@ function tsvReset(n){
   try{ n.dec?.close(); }catch(e){}
   try{ n.m2?.m2_reset(); }catch(e){}
   try{ n.m2?.a2_reset(); }catch(e){}
-  n.aq=[]; n.aEnd=null; n.inq=[]; n.inqLen=0; n.rate0=0; n.lastShow=0; n.gapN=0; n.gapMax=0; n.dmx?.pidN.clear();
+  n.aq=[]; n.aEnd=null; n.inq=[]; n.inqLen=0; n.rate0=0; n.lastShow=0; n.gapN=0; n.gapMax=0; n.under=false; n.dmx?.pidN.clear();
   try{ n.ad?.close(); }catch(e){}
   n.ad=null; n.adKey='';
   n.dec=null; n.decCodec=''; n.needKey=true; n.lastTs=-1;
@@ -202,8 +202,13 @@ function tsvFeed(n,bytes){
 // Выдать кадр, которому пора: остальные просроченные закрываются
 function tsvPresent(n){
   const q=n.q, now=performance.now();
-  if(!q.length) return;
+  if(!q.length){ if(n.base!=null && n.lastShow && now-n.lastShow>150) n.under=true; return; }
   const cap=q[0].rgba ? 24 : 40;
+  if(n.under){                                                  // очередь опустела: накопить кадры и взять часы заново, не догонять просроченные
+    if((q[q.length-1].timestamp-q[0].timestamp)<3e5 && q.length<12 && now-n.lastShow<2000) return;
+    n.under=false; n.base=null;
+  }
+  else if(n.base!=null && (q[0].timestamp-n.ts0)/1000-(now-n.wall0)>1500+(+n.p.delay||0)) n.base=null;  // скачок PTS вперёд
   if(n.base==null || q.length>cap){ n.ts0=q[0].timestamp; n.wall0=now+(+n.p.delay||0); n.base=1; n.aSh=0; while(q.length>cap) q.shift().close(); }
   let pick=-1;
   for(let i=0;i<q.length;i++){ if((q[i].timestamp-n.ts0)/1000<=now-n.wall0) pick=i; else break; }
