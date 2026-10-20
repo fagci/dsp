@@ -18,7 +18,7 @@ function tsvReset(n){
   try{ n.dec?.close(); }catch(e){}
   try{ n.m2?.m2_reset(); }catch(e){}
   try{ n.m2?.a2_reset(); }catch(e){}
-  n.aq=[]; n.aEnd=null; n.inq=[]; n.inqLen=0; n.rate0=0; n.lastShow=0; n.gapN=0; n.gapMax=0; n.under=false; n.keyWait=0; n.aLateN=0; n.aDry=0; n.aDryT=0; n.gapWhy=''; n.vd=[]; n.vdelay=0; n.dmx?.pidN.clear();
+  n.aq=[]; n.aEnd=null; n.inq=[]; n.inqLen=0; n.rate0=0; n.lastShow=0; n.gapN=0; n.gapMax=0; n.under=false; n.keyWait=0; n.m2bad=0; n.m2err=0; n.aLateN=0; n.aDry=0; n.aDryT=0; n.gapWhy=''; n.vd=[]; n.vdelay=0; n.dmx?.pidN.clear();
   try{ n.ad?.close(); }catch(e){}
   n.ad=null; n.adKey='';
   n.dec=null; n.decCodec=''; n.needKey=true; n.lastTs=-1;
@@ -174,7 +174,7 @@ function tsvAudioRead(n,oL,oR,target,g){
   }
   // звук стабильно не совпадает с часами видео (другая отметка времени, разрыв): сдвинуть его, а не молчать
   if(wait || skip>B/2){ n.aBad=(n.aBad||0)+1; if(n.aBad>sr/B*1.5){ const sg=n.aq[0], dd=sg ? sg.t0+sg.i/sr-target : n.aHeadD||0;   // очередь могла опустеть: берём смещение последнего пропущенного сегмента
-      if(dd){ n.aSh=(n.aSh||0)+dd; n.aResync=(n.aResync||0)+1; if(Math.abs(dd)>2.5) n.vdelay=0; }
+      if(Math.abs(dd)>2.5){ n.aSh=(n.aSh||0)+dd; n.aResync=(n.aResync||0)+1; n.vdelay=0; }   // меньшее смещение — не рассинхрон часов: опоздание закрывает задержка видео, а сдвиг звука сломал бы синхронизацию по PTS
       n.aBad=0; n.aHeadD=0; } }
   else if(o>=B) n.aBad=0;
 }
