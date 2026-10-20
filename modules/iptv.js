@@ -22,6 +22,7 @@ async function ipOpen(n,url){
   url=String(url||'').trim();
   if(!/^https?:\/\//i.test(url)){ ipLog(n,'URL must start with http:// or https://'); return; }
   n.want=true; n.url=url; n.segsDone=0; n.last=null; n.listOnly=false; n.variant='';
+  n.rx=[]; n.rxLen=0; n.stream=(n.stream||0)+1;                   // новый поток: хвост прошлого не отдавать, потребителю сообщить
   const g=n.gen, ac=n.abort=new AbortController();
   n.warn= typeof netInsecure==='function' && netInsecure(url) && !n.p.proxy ? NET_INSECURE_MSG : '';
   try{ await ipRun(n,url,g,ac); }
@@ -155,7 +156,7 @@ def({ id:'iptv', title:'IPTV', cat:'Sources', kw:'iptv tv television stream m3u 
     let bin=null;
     if(n.rx.length){
       const d=new Uint8Array(n.rxLen); let o=0; for(const c of n.rx){ d.set(c,o); o+=c.length; }
-      n.rx=[]; n.rxLen=0; bin=binObj(d,n.name,'video/mp2t');
+      n.rx=[]; n.rxLen=0; bin=binObj(d,n.name,'video/mp2t'); bin.stream=n.stream;
     }
     return {bin, rows:n.rows, name:n.name, live:n.live ? 1 : 0, kbps:n.rate/1000}; },
   draw(n){

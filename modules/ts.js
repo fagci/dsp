@@ -443,7 +443,12 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
   process(n,I){
     const t00=performance.now();
     const o=I.bin;
-    if(o && o.d && o!==n.last){ n.last=o; n.inq.push(o.d); n.inqLen+=o.d.length; }
+    if(o && o.d && o!==n.last){
+      if(o.stream!==undefined && o.stream!==n.srcStream){         // источник открыл другой поток (смена канала): начать с чистого состояния, как по кнопке Reset
+        n.srcStream=o.stream; tsvReset(n); n.tt.reset(); n.ttRev=-1; n.dmx.reset(); n.dmx.select(+n.p.program|0); n.pos=0;
+      }
+      n.last=o; n.inq.push(o.d); n.inqLen+=o.d.length;
+    }
     tsvPumpIn(n);
     if(I.prog!==undefined && I.prog!==n._inProg){                   // номер программы, её название или строка таблицы
       n._inProg=I.prog;
