@@ -9,9 +9,15 @@ const olNet=(n,u)=>n.p.proxy ? Net.url(u) : u;
 async function olGet(n,key,url,kind,opt){
   (n.acs ||= {})[key]?.abort();
   const ac=n.acs[key]=new AbortController();
-  const r=await fetch(url,{signal:ac.signal,...opt});
-  if(!r.ok) throw new Error(r.status===429 ? 'HTTP 429 (rate limit — try later)' : 'HTTP '+r.status);
-  return kind==='json' ? r.json() : r.text();
+  const tm=setTimeout(()=>{ ac.timedOut=true; ac.abort(); },20000);
+  try{
+    const r=await fetch(url,{signal:ac.signal,...opt});
+    if(!r.ok) throw new Error(r.status===429 ? 'HTTP 429 (rate limit — try later)' : 'HTTP '+r.status);
+    return await (kind==='json' ? r.json() : r.text());
+  }catch(e){
+    if(ac.timedOut) throw new Error('timeout (20 s) — server not responding, try again or use the CORS proxy');
+    throw e;
+  }finally{ clearTimeout(tm); }
 }
 const olErr=e=>e.name==='AbortError' ? '' : e.message+(e instanceof TypeError ? ' (no CORS headers on the server, or blocked — try «through the CORS proxy»)' : '');
 const olAbort=n=>{ for(const k in n.acs||{}) try{ n.acs[k].abort(); }catch(e){} };
@@ -217,7 +223,7 @@ async function fmSearch(n,page){
       n.items=olArchiveItems(await olGet(n,'s',olNet(n,u),'json')); n.tracks=[]; n.cur=0; n.album='';
     }
     n.msg=n.items.length ? '' : 'nothing found';
-  }catch(e){ n.msg='search failed: '+olErr(e); }
+  }catch(e){ if(e.name!=='AbortError') n.msg='search failed: '+olErr(e); }
 }
 async function fmItem(n,it){
   n.msg='loading «'+it.label+'»…'; n.album=it.label;
@@ -270,7 +276,7 @@ def({ id:'freeMusic', title:'Free Music', cat:'Music', readout:true, tall:true, 
     const r=n.el.querySelector('.readout'); if(!r) return;
     const t=n.tracks[n.cur-1], L=[];
     if(n.msg) L.push(n.msg);
-    L.push(n.items.length ? n.items.length+' found · page '+n.page+(n.p.source==='Internet Archive' ? ' — pick an album' : '') : 'type a query and press Search ('+n.p.source+')');
+    if(!(n.msg==='searching…')) L.push(n.items.length ? n.items.length+' found · page '+n.page+(n.p.source==='Internet Archive' ? ' — pick an album' : '') : 'type a query and press Search ('+n.p.source+')');
     if(n.album) L.push(n.album+' · '+n.tracks.length+' tracks');
     if(t) L.push('▶ '+(t.artist ? t.artist+' — ' : '')+t.label+'\n  '+[olFmtDur(t.dur),t.license,t.source,t.genre].filter(Boolean).join(' · ')+'\n  '+t.url);
     const s=L.join('\n'); if(r.textContent!==s) r.textContent=s; }
