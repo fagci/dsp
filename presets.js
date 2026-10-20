@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=58;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=59;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -4716,10 +4716,12 @@ const tv=addNode('tsvid',440,170,{delay:800});
 tv.size.w=420; tv.size.h=400; applySize(tv);
 const sc=addNode('dac',900,170,{});
 sc.size.w=260; sc.size.h=200; applySize(sc);
-const tb=addNode('table',40,480,{});
+const tb=addNode('table',40,660,{});
 tb.size.w=400; tb.size.h=300; applySize(tb);
+const sk=addNode('streamCheck',40,480,{});
+sk.size.w=300; sk.size.h=150; applySize(sk);
 addEdge(ip.id,'bin',tv.id,'bin'); addEdge(tv.id,'L',sc.id,'L'); addEdge(tv.id,'R',sc.id,'R');
-addEdge(ip.id,'rows',tb.id,'rows');
+addEdge(ip.id,'rows',sk.id,'rows'); addEdge(sk.id,'rows',tb.id,'rows');
 markWiresDirty();
 });
 preset('Analog TV: FPV / TV Receiver (USB SDR)', function(){
