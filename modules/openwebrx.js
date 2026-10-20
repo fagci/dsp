@@ -46,7 +46,7 @@ function owrxSelectProfile(n,q){
   const p=owrxFindProfile(n.profiles,q);
   if(!p){ if(String(q||'').trim()) n.status='no such profile: '+q; return; }
   if(p.id===n.profId) return;
-  n.status='switching to '+p.name+'…'; owrxSend(n,{type:'selectprofile',params:{profile:p.id}});
+  n.status='switching to '+p.name+'…'; n.specHold=Date.now()+3000; owrxSend(n,{type:'selectprofile',params:{profile:p.id}});
 }
 
 // профиль из патча — один раз и только когда известен текущий: иначе переключили бы сервер на тот же профиль
@@ -100,7 +100,14 @@ function owrxOnText(n,str){
   if(m.type==='hello'){ n.ver=(m.server||'?')+(m.version?' '+m.version:''); return; }
   const v=m.value;
   if(m.type==='config' && v){
-    if(v.center_freq!=null && v.samp_rate!=null) n.cfg={center:+v.center_freq,sr:+v.samp_rate};
+    // сервер шлёт только изменившиеся поля — сливаем с прежним config
+    if(v.center_freq!=null || v.samp_rate!=null){
+      const c=v.center_freq!=null ? +v.center_freq : n.cfg&&n.cfg.center, s=v.samp_rate!=null ? +v.samp_rate : n.cfg&&n.cfg.sr;
+      if(c!=null && s!=null && isFinite(c) && isFinite(s) && s>0){
+        if(n.cfg && (n.cfg.center!==c || n.cfg.sr!==s)) n.spec=null;
+        n.cfg={center:c,sr:s}; n.specHold=0;
+      }
+    }
     if(v.sdr_id!=null || v.profile_id!=null){
       const id=(v.sdr_id ?? (n.profId||'').split('|')[0])+'|'+(v.profile_id ?? (n.profId||'').split('|')[1]);
       if(id!==n.profId){ n.profId=id; n.started=false; n.spec=null; }       // новый профиль — заново start и ось спектра
@@ -125,7 +132,7 @@ function owrxOnText(n,str){
 
 // дБ из кадра сервера → линейная амплитуда на абсолютной оси частот ленты
 function owrxSpec(n,body){
-  if(!n.cfg) return;
+  if(!n.cfg || n.specHold>Date.now()) return;                   // до нового config кадры принадлежат старому профилю
   const db=owrxFft(body,n.fcomp,n.fcodec), N=db.length; if(N<2) return;
   let sp=n.spec;
   if(!sp || sp.size!==N || n.specC!==n.cfg.center || n.specS!==n.cfg.sr){
