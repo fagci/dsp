@@ -345,6 +345,7 @@ const PRESET_CATS={
   'Entities: GSM Cells and Operators (USB SDR)':'Aircraft, Satellites & Telemetry',
   'Network: Same Nodes and Links as Graph and on the Map':'Maps & Locating',
   'Chat: Text In and Out':'Network & IoT',
+  'Chat: Group with Avatars and Contact List':'Network & IoT',
   'Files over WebRTC':'Network & IoT',
   'Call: voice, video, chat and files over WebRTC':'Network & IoT',
   'WebRTC: audio and video of the graph over a connection':'Network & IoT',
@@ -5811,6 +5812,25 @@ c.size.w=340; c.size.h=300; applySize(c);
 const tk=addNode('ticker',760,130,{time:true});
 tk.size.w=360; tk.size.h=140; applySize(tk);
 addEdge(ts.id,'text',c.id,'text'); addEdge(c.id,'text',tk.id,'text');
+markWiresDirty();
+});
+preset('Chat: Group with Avatars and Contact List', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Group chat: the first Table holds the participants (name, avatar, online, typing) in the «list with icons» view and goes to the `rows` pin of Chat — avatars with the online dot above the log, «… is typing» under it. The second Table plays a conversation (from, text, dwell) into `rec`; set «my name» in Chat to Me and what you type is shown as yours. Avatar: an https:// link, a photo from the Photos storage (ph-…), an emoji or nothing (a letter on a colour). online: online / away / busy / offline (or 1 / 0). Change the cells and the chat follows. Right: the same view as a list of received SSTV pictures (image column = thumbnail).'});
+nt.size.w=1100; nt.size.h=110; applySize(nt);
+const pe=addNode('table',40,170,{list:'@patch',vmode:'icons',initial:false,
+  data:'name,avatar,online,typing,note\nAnna,https://i.pravatar.cc/96?img=47,online,1,R1ABC\nBoris,https://i.pravatar.cc/96?img=12,away,,R2DEF\nClara,🦊,busy,,\nDmitry,,online,,R3XYZ\nMe,https://i.pravatar.cc/96?img=68,online,,'});
+pe.size.w=300; pe.size.h=520; applySize(pe);
+const sc=addNode('table',380,640,{list:'@patch',advance:'dwell',loop:true,initial:true,
+  data:'from,text,dwell\nAnna,Hi all! Anyone on 145.500?,3\nBoris,Yes — strong signal here,3\nMe,Calling CQ on the repeater,3\nDmitry,Copy that. QRZ?,3\nClara,Good evening everyone,4'});
+sc.size.w=300; sc.size.h=220; applySize(sc);
+const c=addNode('chat',380,170,{me:'Me'}); c.size.w=360; c.size.h=420; applySize(c);
+const sv=(t,c1,c2)=>{ const s='<svg xmlns="http://www.w3.org/2000/svg" width="80" height="60"><defs><linearGradient id="g"><stop offset="0" stop-color="'+c1+'"/><stop offset="1" stop-color="'+c2+'"/></linearGradient></defs><rect width="80" height="60" fill="url(#g)"/><text x="40" y="36" font-size="16" text-anchor="middle" fill="#fff" font-family="sans-serif">'+t+'</text></svg>'; return '"data:image/svg+xml;base64,'+btoa(s)+'"'; };
+const ss=addNode('table',780,170,{list:'@patch',vmode:'icons',initial:false,
+  schema:{types:{image:{t:'image'}},card:{}},
+  data:'image,name,mode,freq,time\n'+sv('M1','#2a5','#07a')+',R1ABC,Martin M1,145.800M,12:04\n'+sv('S2','#a52','#c80')+',ISS PD120,PD120,145.800M,12:19\n'+sv('R36','#55a','#a0a')+',R2DEF,Robot 36,14.230M,12:41'});
+ss.size.w=320; ss.size.h=300; applySize(ss);
+addEdge(pe.id,'rows',c.id,'rows'); addEdge(sc.id,'rec',c.id,'rec');
 markWiresDirty();
 });
 function gamePreset(name,id,w,h,mqtt){

@@ -6,18 +6,67 @@
    Карточка записи — панель с большим фото, всеми полями, связями и обратными связями («кто ссылается на эту запись»). */
 
 const TC_TYPES=[['text','text'],['long','long text'],['num','number'],['bool','checkbox'],['progress','progress bar'],['date','date'],['choice','choice'],
-  ['photo','photo'],['audio','audio'],['link','link to a list'],['auto','auto number'],['calc','calculated']];
-const TC_VIEWS=[['cards','🃏','cards'],['grid','☰','full list (columns)'],['compact','≡','brief list (name · values)']];
+  ['photo','photo'],['image','avatar / image (URL or photo)'],['online','online status'],['typing','typing'],['audio','audio'],['link','link to a list'],['auto','auto number'],['calc','calculated']];
+const TC_VIEWS=[['cards','🃏','cards'],['grid','☰','full list (columns)'],['compact','≡','brief list (name · values)'],['icons','👤','list with icons (avatar, online, typing)']];
 const TC_SEP=' | ';
 
-const tcView=n=>n.p.vmode==='cards' ? 'cards' : n.p.vmode==='compact' ? 'compact' : 'grid';
+const tcView=n=>n.p.vmode==='cards' ? 'cards' : n.p.vmode==='compact' ? 'compact' : n.p.vmode==='icons' ? 'icons' : 'grid';
+const tcCardish=n=>{ const v=tcView(n); return v==='cards' || v==='icons'; };
 const tcSchemaOf=m=>({types:{...(m?.types||{})},card:{...(m?.card||{})}});
 const tcDef=(n,c)=>n.schema?.types?.[c]||{};
 // тип колонки: из схемы, иначе по имени (photo / audio, как раньше)
 function tblType(n,c){
   const t=n.schema?.types?.[c]?.t; if(t) return t;
   const low=c.toLowerCase();
-  return TBL_PHOTO.test(low) ? 'photo' : TBL_AUDIO.test(low) ? 'audio' : 'text';
+  return TBL_PHOTO.test(low) ? 'photo' : TBL_AUDIO.test(low) ? 'audio' : /^avatars?$/.test(low) ? 'image' : low==='online' ? 'online' : low==='typing' ? 'typing' : 'text';
+}
+// колонки, которые не выводятся значением: показываются аватаркой, точкой статуса, «печатает…»
+const tcMetaType=t=>t==='photo' || t==='image' || t==='online' || t==='typing';
+
+/* ---------- аватарки и статусы (общие с Chat) ---------- */
+// src: URL (http / https / data / blob / путь), id фото «ph-…», эмодзи; иначе — буква на цветном фоне
+function tcAvatar(src,label,px){
+  const w=document.createElement('span'); w.className='av-w';
+  const el=document.createElement('span'); el.className='av'; w.append(el);
+  if(px) w.style.setProperty('--av',px+'px');
+  const s=String(src??'').trim(), name=String(label??'').trim();
+  const ini=()=>{ el.textContent=(name[0]||'·').toUpperCase(); el.classList.add('none'); el.style.setProperty('--h',tblHue(name||'?')); };
+  const img=u=>{
+    const im=document.createElement('img'); im.alt=''; im.loading='lazy'; im.referrerPolicy='no-referrer';
+    im.onerror=()=>{ im.remove(); ini(); };
+    im.src=u; el.append(im);
+  };
+  if(/^(https?:\/\/|data:image\/|blob:|\.{0,2}\/)/i.test(s)) img(s);
+  else if(phIds(s).length) phUrl(phIds(s)[0]).then(u=>{ if(u) img(u); else ini(); });
+  else if(s && [...s].length<=2 && !/^[\w.-]+$/.test(s)){ el.textContent=s; el.classList.add('emo'); }
+  else ini();
+  return w;
+}
+// online / away / busy / '' (нет или offline); true / 1 / «да» = online
+function tcPresence(v){
+  if(v===''||v==null||v===false) return '';
+  const t=String(v).trim().toLowerCase();
+  if(/^(away|idle|afk)$/.test(t)) return 'away';
+  if(/^(busy|dnd|occupied)$/.test(t)) return 'busy';
+  if(/^(offline|off|0|false|no|нет|-)$/.test(t)) return '';
+  return 'online';
+}
+function tcDot(w,st){
+  if(!st) return;
+  const d=document.createElement('i'); d.className='av-dot st-'+st; d.title=st; w.append(d);
+}
+function tcTypingEl(){
+  const e=document.createElement('span'); e.className='tc-typing'; e.title='typing';
+  e.append(document.createElement('i'),document.createElement('i'),document.createElement('i'));
+  return e;
+}
+// участник из записи: имя, аватарка, статус, «печатает» — по именам полей (name / avatar / online / typing)
+function tcPerson(r){
+  if(!r || typeof r!=='object') return null;
+  const key=re=>Object.keys(r).find(k=>re.test(k));
+  const get=re=>{ const k=key(re); return k ? r[k] : undefined; };
+  const name=String(get(/^(name|label|title|nick|user)$/i) ?? Object.values(r)[0] ?? '');
+  return {name, avatar:get(/^(avatar|icon|image|img|picture|pic|photo)$/i), online:tcPresence(get(/^(online|presence|status)$/i)), typing:tcIsTrue(get(/^typing$/i))};
 }
 // progress: доля значения на шкале min…max (0…1); не число — null
 function tcFrac(n,c,v){
@@ -216,7 +265,13 @@ function tcFormField(n,c,rec,ty){
     inp.addEventListener('keydown',e=>e.stopPropagation());
     return {inp};
   }
-  if(ty==='bool'){
+  if(ty==='online'){
+    const inp=document.createElement('select'), cur=String(v??'');
+    for(const o of ['','online','away','busy','offline',...(cur && !['online','away','busy','offline'].includes(cur) ? [cur] : [])]){ const op=document.createElement('option'); op.value=o; op.textContent=o||'—'; inp.append(op); }
+    inp.value=cur;
+    return {inp};
+  }
+  if(ty==='bool' || ty==='typing'){
     const inp=document.createElement('input'); inp.type='checkbox'; inp.checked=tcIsTrue(v); inp.style.cssText='width:18px;height:18px;';
     return {inp};
   }
@@ -256,8 +311,8 @@ function tcValue(ty,inp){
   const v=inp.value;
   switch(ty){
     case 'num': case 'progress': return String(v).trim()==='' ? '' : isFinite(+v) ? +v : v;
-    case 'bool': return inp.checked ? 1 : 0;
-    case 'date': case 'choice': case 'long': case 'link': return v;
+    case 'bool': case 'typing': return inp.checked ? 1 : 0;
+    case 'date': case 'choice': case 'online': case 'long': case 'link': return v;
   }
   return undefined;
 }
@@ -267,7 +322,7 @@ function tcValue(ty,inp){
 function tcShowCols(n){
   const own=(n.schema?.card?.show||[]).filter(c=>n.cl.includes(c));
   if(own.length) return own;
-  return n.cl.filter(c=>c!==n.nameCol && c!==n.colorCol && !['photo','audio','long'].includes(tblType(n,c))).slice(0,3);
+  return n.cl.filter(c=>c!==n.nameCol && c!==n.colorCol && !['photo','audio','long','image','online','typing'].includes(tblType(n,c))).slice(0,3);
 }
 function tcCover(n,r){
   const c=n.cl.find(x=>tblType(n,x)==='photo');
@@ -318,10 +373,41 @@ function tcCard(n,i,ro,show){
   }
   return el;
 }
+// колонка по роли: тип из схемы (image / online / typing); для статуса ещё «status»
+function tcRoleCol(n,t){
+  return n.cl.find(c=>tblType(n,c)===t) || (t==='image' ? n.cl.find(c=>tblType(n,c)==='photo') : t==='online' ? n.cl.find(c=>/^(status|presence)$/i.test(c)) : undefined);
+}
+// строка «список с иконками»: аватарка с точкой статуса · имя · значения или «печатает…»
+function tcIconRow(n,i,ro,cols){
+  const r=n.rows[i], el=document.createElement('div');
+  el.dataset.i=i; el.className='tbl-row tbl-irow';
+  const bg=tblRowBg(n,r);
+  if(bg) el.style.setProperty('--rb','color-mix(in srgb,'+bg+' 24%,transparent)');
+  const label=tcTitle(n,r,i);
+  const av=tcAvatar(cols.img ? r[cols.img] : '',label,38);
+  if(cols.on) tcDot(av,tcPresence(r[cols.on]));
+  const body=document.createElement('div'); body.className='ir-body';
+  body.append(Object.assign(document.createElement('div'),{className:'ir-t',textContent:label||'(no name)'}));
+  const sub=document.createElement('div'); sub.className='ir-s';
+  if(cols.ty && tcIsTrue(r[cols.ty])){ sub.classList.add('typ'); sub.append(tcTypingEl(),' typing'); }
+  else sub.textContent=tblSummary(n,r);
+  body.append(sub);
+  el.append(av,body);
+  if(!ro){
+    const tail=document.createElement('span'); tail.className='tc-tail';
+    for(const [t,title,act] of [['✎','Edit','edit'],['🗑','Delete','del']]){
+      const b=Object.assign(document.createElement('span'),{className:'tbl-ico',textContent:t,title});
+      b.dataset.act=act; tail.append(b);
+    }
+    el.append(tail);
+  }
+  return el;
+}
 function tcCards(n){
-  const ui=n.ui, list=ui.list, ro=tblRO(n), N=n.rows.length, e=Math.min(N,TBL_ROWS), show=tcShowCols(n);
+  const ui=n.ui, list=ui.list, ro=tblRO(n), N=n.rows.length, e=Math.min(N,TBL_ROWS), icons=tcView(n)==='icons', show=icons ? null : tcShowCols(n);
+  const cols=icons ? {img:tcRoleCol(n,'image'),on:tcRoleCol(n,'online'),ty:tcRoleCol(n,'typing')} : null;
   const frag=document.createDocumentFragment();
-  for(let i=0;i<e;i++) frag.append(tcCard(n,i,ro,show));
+  for(let i=0;i<e;i++) frag.append(icons ? tcIconRow(n,i,ro,cols) : tcCard(n,i,ro,show));
   if(N>e){
     const m=document.createElement('div'); m.textContent='… '+(N-e)+' more — narrow with the filter'; m.className='tbl-empty sm'; frag.append(m);
   }

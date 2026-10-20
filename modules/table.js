@@ -946,11 +946,11 @@ function tblInit(n){
     }
     if(b) return;                                         // фото / звук — свои обработчики
     tblSelect(n,i); n.ui.list.focus({preventScroll:true});
-    if(tcView(n)==='cards') tcDetail(n,i);
+    if(tcCardish(n)) tcDetail(n,i);
   });
   n.ui.list.addEventListener('dblclick',e=>{
     const row=e.target.closest('.tbl-row');
-    if(row && !tblRO(n) && tcView(n)!=='cards') tblEditForm(n,+row.dataset.i,row);
+    if(row && !tblRO(n) && !tcCardish(n)) tblEditForm(n,+row.dataset.i,row);
   });
   n.ui.pick.addEventListener('change',()=>tblPick(n,n.ui.pick.value));
   n.ui.shown.addEventListener('click',()=>tblTreeToggle(n));
@@ -1210,7 +1210,7 @@ function tblWindow(n,N){
 function tblScrolled(n){
   const ui=n.ui, list=ui.list;
   ui.st=list.scrollTop; ui.vh=list.clientHeight; ui.atEnd=ui.st+ui.vh>=list.scrollHeight-4;
-  if(!ui.rend || tcView(n)==='cards') return;
+  if(!ui.rend || tcCardish(n)) return;
   const [s,e]=tblWindow(n,n.rows.length);
   if(s!==ui.rend.s || e!==ui.rend.e) tblRenderList(n);
 }
@@ -1219,7 +1219,7 @@ function tblRenderList(n,inc){
   // перерисовка при новых записях не должна сбрасывать прокрутку: запоминаем позицию, у низа в режиме tail — остаёмся у низа
   // чтение scrollTop / scrollHeight форсирует layout — только там, где позиция реально нужна
   const atEndNow=()=>list.scrollTop+list.clientHeight>=list.scrollHeight-4;
-  list.classList.toggle('grid',grid); list.classList.toggle('cards',tcView(n)==='cards'); tcViewBtn(n);
+  list.classList.toggle('grid',grid); list.classList.toggle('cards',tcView(n)==='cards'); list.classList.toggle('icons',tcView(n)==='icons'); tcViewBtn(n);
   ui.count.textContent=(n.p.filter ? N+'/' : '')+n.all.length+' rows';
   if(!N){
     const e=document.createElement('div');
@@ -1228,7 +1228,7 @@ function tblRenderList(n,inc){
     list.replaceChildren(e); ui.marked=-1; ui.rend=null; return;
   }
   n.bgCtx=tblTintCtx(n);
-  if(tcView(n)==='cards'){ const keep=list.scrollTop; tcCards(n); list.scrollTop=keep; return; }
+  if(tcCardish(n)){ const keep=list.scrollTop; tcCards(n); list.scrollTop=keep; return; }
   // Окно строк [s,e) — видимые и буфер: дописанные записи, сдвиг прокруткой и потолком maxRows (сверху убираются, снизу достраиваются),
   // изменившиеся ячейки — точечно; список пересобирается только при смене колонок / сортировки / режима. Ширины колонок только растут.
   let base=ui.rend;
@@ -1428,7 +1428,7 @@ function tblSummary(n,r){
     if(isFinite(l)){ const h=hi ? tblHz(r[hi]) : l; parts.push(isFinite(h) && h>l ? fmtHz(l,3)+'-'+fmtHz(h,3) : fmtHz(l,3)); skip.add(lo); if(hi) skip.add(hi); }
   }
   if(lo) skip.add(tblCol(n.cl,TBL_STEP));                // шаг сетки — в подсказке
-  for(const c of n.cl) if(!skip.has(c) && tblType(n,c)!=='photo' && r[c]!=='' && r[c]!=null) parts.push(tcText(n,c,r[c]));
+  for(const c of n.cl) if(!skip.has(c) && !tcMetaType(tblType(n,c)) && r[c]!=='' && r[c]!=null) parts.push(tcText(n,c,r[c]));
   return parts.join(' / ');
 }
 // подсказка строки — при наведении, а не на каждую из сотен строк при каждой перерисовке (строки и GC)
@@ -1546,7 +1546,7 @@ function tblRenderView(n){
   const sel=(opts,val,fn)=>{ const e=mk('select'); for(const o of opts){ const op=mk('option',null,Array.isArray(o) ? o[1] : o); op.value=Array.isArray(o) ? o[0] : o; e.append(op); } e.value=val; e.addEventListener('change',()=>fn(e.value)); return e; };
   const top=mk('div','tv-top');
   top.append(mk('span','tv-ttl','Fields & colors'),
-    sel([['cards','cards (photo, fields)'],['grid','full list (columns)'],['compact','brief list (name · values)']],tcView(n),x=>tblViewApply(n,'vmode',x,true)),
+    sel([['cards','cards (photo, fields)'],['grid','full list (columns)'],['compact','brief list (name · values)'],['icons','list with icons (avatar, online, typing)']],tcView(n),x=>tblViewApply(n,'vmode',x,true)),
     sel([['utc','time: UTC'],['local','time: local']],n.p.tz==='local' ? 'local' : 'utc',x=>tblViewApply(n,'tz',x,true)),
     mk('span','tv-x','✕',{click:()=>tblViewToggle(n)}));
   box.append(top);
