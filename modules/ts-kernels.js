@@ -316,8 +316,10 @@ class TsDemux{
       let hasSps=false, hasPps=false, sliceSeen=false;
       for(const nal of tsNals(es)){
         const k=nal[0]&31; nalTypes.push(k);
-        if(k===7){ hasSps=true; this.spsNal=nal.slice();
-          if(!this.sps){ const sp=tsAvcSps(nal); if(sp){ this.sps=sp; this.vcodec='avc1.'+tsHex2(sp.profile)+tsHex2(sp.compat)+tsHex2(sp.level); } } }
+        if(k===7){ hasSps=true;
+          const chg=!this.spsNal || this.spsNal.length!==nal.length || nal.some((v,i)=>v!==this.spsNal[i]);   // SPS в потоке сменился: новый профиль / уровень / размер
+          this.spsNal=nal.slice();
+          if(!this.sps || chg){ const sp=tsAvcSps(nal); if(sp){ this.sps=sp; this.vcodec='avc1.'+tsHex2(sp.profile)+tsHex2(sp.compat)+tsHex2(sp.level); } } }
         else if(k===8){ hasPps=true; this.ppsNal=nal.slice(); }
         else if(k===5){ key=true; idr=true; sliceSeen=true; }
         else if(k===1 && !sliceSeen){                                  // вещание часто начинает GOP не с IDR, а с обычного I-кадра
