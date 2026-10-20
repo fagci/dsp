@@ -1121,6 +1121,15 @@ select.aed-b{padding:0 6px}
 .fm-th{flex:0 0 36px;width:36px;height:22px;display:flex;align-items:center;justify-content:center;color:var(--acc);overflow:hidden}
 .fm-th img{max-width:36px;max-height:22px;object-fit:cover}
 .fm-th canvas{width:36px;height:18px}
+.fm-aud{min-height:44px;padding:4px 8px;gap:8px;border-left:3px solid transparent}
+.fm-aud:hover{background:color-mix(in srgb,var(--acc2) 8%,transparent)}
+.fm-aud.sel{border-left-color:var(--acc2);background:color-mix(in srgb,var(--acc2) 14%,var(--panel2))}
+.fm-aud .fm-th{flex:0 0 72px;width:72px;height:30px;background:var(--panel);border:1px solid var(--line);border-radius:4px;color:var(--acc2)}
+.fm-aud .fm-th canvas{width:72px;height:28px}
+.fm-main{flex:1;min-width:30px;display:flex;flex-direction:column;gap:1px}
+.fm-main .fm-name{flex:none;font-size:12px}
+.fm-sub{color:var(--dim);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fm-aud .fm-size{padding:1px 6px;border-radius:9px;background:var(--panel2);border:1px solid var(--line);color:var(--acc2)}
 .fm-empty{padding:12px;text-align:center;color:var(--dim)}
 .fm-info{flex:0 0 auto;color:var(--dim);font-size:10px}
 .fm-disk{flex:0 0 auto;display:flex;flex-direction:column;gap:2px;color:var(--dim);font-size:10px}

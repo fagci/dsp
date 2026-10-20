@@ -529,12 +529,18 @@ function fmMount(host,o={}){
       row.classList.toggle('sel',S.selected?.id===r.id);
       const th=document.createElement('span'); th.className='fm-th';
       if(r.mime?.startsWith('image/') && r.blob){ const u=URL.createObjectURL(r.blob); S.urls.push(u); const im=document.createElement('img'); im.src=u; im.loading='lazy'; th.append(im); }
-      else if(r.meta?.peaks){ const cv=document.createElement('canvas'); cv.width=36; cv.height=18; fmPeaks(cv,r.meta.peaks); th.append(cv); }
+      else if(r.meta?.peaks){ const cv=document.createElement('canvas'); cv.width=72; cv.height=28; fmPeaks(cv,r.meta.peaks); th.append(cv); }
       else th.textContent=fmIcon(r);
       const nm=document.createElement('span'); nm.className='fm-name'; nm.textContent=r.name; nm.title=(srch ? where(r.folderId)+'/' : '')+fmFileName(r);
       const sz=document.createElement('span'); sz.className='fm-size';
       sz.textContent=r.meta?.duration!=null ? fmtDur(r.meta.duration) : r.space==='tables' ? r.meta.rows+' rows · '+fmSize(r.size||0) : fmSize(r.size||0);
-      row.append(th,nm,sz);
+      if(r.mime?.startsWith('audio/') || r.meta?.peaks){       // аудио: волна, под именем — частота и размер, справа длительность
+        row.classList.add('fm-aud');
+        const sub=document.createElement('span'); sub.className='fm-sub';
+        sub.textContent=[r.meta?.sr ? (r.meta.sr/1000).toFixed(r.meta.sr%1000 ? 1 : 0)+' kHz' : '',fmSize(r.size||0),FM_EXT[r.mime]||''].filter(Boolean).join(' · ');
+        const main=document.createElement('span'); main.className='fm-main'; main.append(nm,sub);
+        row.append(th,main,sz);
+      } else row.append(th,nm,sz);
       o.extra?.(r,row);
       chk(row,'f:'+r.id);
       row.onclick=e=>{
