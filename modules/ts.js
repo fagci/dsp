@@ -18,7 +18,7 @@ function tsvReset(n){
   try{ n.dec?.close(); }catch(e){}
   try{ n.m2?.m2_reset(); }catch(e){}
   try{ n.m2?.a2_reset(); }catch(e){}
-  n.aq=[]; n.aEnd=null; n.inq=[]; n.inqLen=0; n.rate0=0; n.lastShow=0; n.gapN=0; n.gapMax=0; n.under=false; n.keyWait=0; n.dmx?.pidN.clear();
+  n.aq=[]; n.aEnd=null; n.inq=[]; n.inqLen=0; n.rate0=0; n.lastShow=0; n.gapN=0; n.gapMax=0; n.under=false; n.keyWait=0; n.aVsh=0; n.aLateN=0; n.dmx?.pidN.clear();
   try{ n.ad?.close(); }catch(e){}
   n.ad=null; n.adKey='';
   n.dec=null; n.decCodec=''; n.needKey=true; n.lastTs=-1;
@@ -150,19 +150,22 @@ function tsvAudio(n,a){
 // m отсчётов звука для медиавремени target (секунды); рассинхрон больше 80 мс: пропуск или тишина
 function tsvAudioRead(n,oL,oR,target,g){
   const sr=Eng.sr, B=oL.length;
-  let o=0, wait=false, skip=0;
+  let o=0, wait=false, skip=0, late=0;
   while(o<B){
     const sg=n.aq[0];
     if(!sg) break;
     const d=sg.t0+sg.i/sr-target-o/sr;
     n.aOff=d;
     if(d>.08){ wait=true; break; }
-    if(d<-.08){ const k=Math.ceil(-d*sr); skip+=k; sg.i+=k; if(sg.i>=sg.L.length) n.aq.shift(); continue; }
+    if(d<-.08){ late=Math.max(late,-d); const k=Math.ceil(-d*sr); skip+=k; sg.i+=k; if(sg.i>=sg.L.length) n.aq.shift(); continue; }
     const c=Math.min(B-o,sg.L.length-sg.i);
     for(let i=0;i<c;i++){ oL[o+i]=sg.L[sg.i+i]*g; oR[o+i]=sg.R[sg.i+i]*g; }
     sg.i+=c; o+=c; n.aPlayed=(n.aPlayed||0)+c;
     if(sg.i>=sg.L.length) n.aq.shift();
   }
+  // звук приходит позже своего кадра (в мультиплексе видео опережает звук): задержать часы видео, а не сдвигать звук, чтобы губы совпадали
+  if(late>.15 && late<2.5 && (n.aVsh||0)<3){ if(++n.aLateN>sr/B*.3){ n.wall0+=late*1000; n.aVsh=(n.aVsh||0)+late; n.aLateN=0; } }
+  else n.aLateN=0;
   // звук стабильно не совпадает с часами видео (другая отметка времени, разрыв): сдвинуть его, а не молчать
   if(wait || skip>B/2){ n.aBad=(n.aBad||0)+1; if(n.aBad>sr/B*1.5 && n.aq.length){ const sg=n.aq[0]; n.aSh=(n.aSh||0)+(sg.t0+sg.i/sr-target); n.aBad=0; n.aResync=(n.aResync||0)+1; } }
   else if(o>=B) n.aBad=0;
@@ -211,7 +214,7 @@ function tsvPresent(n){
     n.under=false; n.base=null;
   }
   else if(n.base!=null && (q[0].timestamp-n.ts0)/1000-(now-n.wall0)>1500+(+n.p.delay||0)) n.base=null;  // скачок PTS вперёд
-  if(n.base==null || q.length>cap){ n.ts0=q[0].timestamp; n.wall0=now+(+n.p.delay||0); n.base=1; n.aSh=0; while(q.length>cap) q.shift().close(); }
+  if(n.base==null || q.length>cap){ n.ts0=q[0].timestamp; n.wall0=now+(+n.p.delay||0); n.base=1; n.aSh=0; n.aVsh=0; while(q.length>cap) q.shift().close(); }
   let pick=-1;
   for(let i=0;i<q.length;i++){ if((q[i].timestamp-n.ts0)/1000<=now-n.wall0) pick=i; else break; }
   if(pick<0) return;
@@ -427,7 +430,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
     const oL=buf(n,'L'), oR=buf(n,'R'); oL.fill(0); oR.fill(0);
     if(n.base==null && n.aq.length){                              // видео нет: часы по звуку, чтобы он шёл без картинки
       n.aNoV=(n.aNoV||0)+1;
-      if(n.aNoV>60){ n.ts0=n.aq[0].t0*1e6; n.wall0=now+(+n.p.delay||0); n.base=1; n.aSh=0; n.aNoV=0; }
+      if(n.aNoV>60){ n.ts0=n.aq[0].t0*1e6; n.wall0=now+(+n.p.delay||0); n.base=1; n.aSh=0; n.aVsh=0; n.aNoV=0; }
     }
     if(n.base!=null && n.aq.length) tsvAudioRead(n,oL,oR,n.ts0/1e6+(now-n.wall0)/1000-(+n.p.avsync||0)/1000+(n.aSh||0),+n.p.volume);
     return {vid:n.gotFrame && n.pic.width ? n.pic : null, L:oL, R:oR, lock:n.gotFrame ? 1 : 0, fps:n.fps, ttx:n.ttHas ? n.tpic : null, ttxt:n.ttText||'', mux:n.muxR||null, chan:n.chanR||null, epg:n.epgR||null, all:n.allR||null, info:n.infoTxt||''}; },
