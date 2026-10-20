@@ -1191,6 +1191,61 @@ Works offline: the vector base map (Natural Earth 10m: coast, lakes, rivers, cou
 
 Presets: *Internet Radio on the Map*, *Satellites: Track and Doppler*, *FT8: Propagation Map*, *Fox Hunt: Locate Transmitter*, *HF: Who Is On Air (Schedule)*, *Map: My Position and Points from CSV*, *HFDL: Receive and Aircraft Map*, *ADS-B: Aircraft Map (Generator)*.
 
+### Rec → Entities rules
+
+One rule per line, `#` starts a comment. The separator is a space-bar-space ` | ` (a bare `|` inside `a|b` means "or").
+
+```
+[out[!]:] conditions | fields
+```
+
+**Conditions** — space-separated, all must match:
+
+| Form | Matches when |
+|---|---|
+| `field` | the field has a value |
+| `!field` | the field is missing or empty |
+| `field=a\|b` | the value equals `a` or `b` |
+| `field!=a` | the value differs from `a` |
+| `field~regex` | the value matches the regex (case-insensitive) |
+
+**Fields** — comma-separated:
+
+| Form | Result |
+|---|---|
+| `name=template` | a field built from the template |
+| `name` | copy of the record field, if present |
+| `*` | all fields of the record |
+| `name=` (empty template) | an empty column, e.g. `note=` for your own comments |
+
+**Template** — `{f}` a record field · `{a\|b}` the first non-empty of `a`, `b` · `{f:x}` a number as hex · `{f*}` an array field, one output record per element. If a template needs a field the record lacks, the rule is skipped for that record. `t` is carried over by itself.
+
+**Output** — no prefix: the result goes to `rec` only. `out:` — to the `out` port and to `rec`. `out!:` — to the `out` port only. Press *Apply outputs* to create the ports. `count` is reserved.
+
+Examples (records are made up):
+
+```
+# {proto:'ble', src:'aa:bb', name:'Band', rssi:-60}  →  port ble: {id:'aa:bb', type:'ble', label:'Band', rssi:-60}
+ble: proto=ble src | id={src}, type=ble, label={name|src}, rssi
+
+# one frame → a node and a link, each to its own port only
+node!: proto=wifi src | id={src}, type=station, label={src}
+link!: proto=wifi src bssid | id={src}>{bssid}, from={src}, to={bssid}, label={kind}
+
+# {id:'250-01-5', cellArfcns:[10,20]}  →  two records: ARFCN 10, ARFCN 20
+arfcn: cellArfcns | id=ARFCN {cellArfcns*}, label=ch {cellArfcns*}
+
+# only beacons and probe responses
+ap!: proto=wifi kind=beacon|probe-resp bssid | id={bssid}, type=ap, label={ssid|bssid}
+
+# only broadcast frames
+bc!: proto=wifi dst=ff:ff:ff:ff:ff:ff | id={dst}, type=broadcast
+```
+
+**Grouping and counting** is not done by the node: it only turns records into records. Put a **Table** with *upsert key col* = `id` (or **Rec: Unique by Key**) after the port — a repeated `id` updates its row and keeps `count`, `first` and `last`. What you put into `id` is the grouping: `{src}` — per device, `ch{chan}` — per channel, `{src}>{dst}` — per pair. Sums and averages need another node.
+
+*insert rules* adds ready sets (GSM cells, Digital voice, Radio, Wi-Fi map) — a good place to start; the *Entities: …* presets use them.
+
 ## Themes
 
 The UI follows the system color scheme (`prefers-color-scheme`). Instrument screens (scopes, spectra, waterfalls) stay dark in both themes.
