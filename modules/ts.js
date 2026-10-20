@@ -165,7 +165,7 @@ function tsvAudioRead(n,oL,oR,target,g){
   }
   // звук приходит позже своего кадра (в мультиплексе видео опережает звук): задержать часы видео, а не сдвигать звук, чтобы губы совпадали
   if(late>.15 && late<2.5 && (n.aVsh||0)<3){ if(++n.aLateN>sr/B*.3){ n.wall0+=late*1000; n.aVsh=(n.aVsh||0)+late; n.aLateN=0; } }
-  else n.aLateN=0;
+  else if(o>0) n.aLateN=0;                                       // пустая очередь звука счётчик не сбрасывает: звук идёт порциями
   // звук стабильно не совпадает с часами видео (другая отметка времени, разрыв): сдвинуть его, а не молчать
   if(wait || skip>B/2){ n.aBad=(n.aBad||0)+1; if(n.aBad>sr/B*1.5 && n.aq.length){ const sg=n.aq[0]; n.aSh=(n.aSh||0)+(sg.t0+sg.i/sr-target); n.aBad=0; n.aResync=(n.aResync||0)+1; } }
   else if(o>=B) n.aBad=0;
@@ -248,7 +248,7 @@ function tsvRoom(n){
 }
 function tsvPumpIn(n){
   const t0=performance.now();                                    // живой поток DVB ~4.5 МБ/с: кусок за вызов не успевает, кормим по бюджету времени
-  for(let k=0;k<64 && n.inq.length && performance.now()-t0<8 && tsvRoom(n);k++){
+  for(let k=0;k<64 && n.inq.length && performance.now()-t0<4 && tsvRoom(n);k++){
     const c=n.inq[0], take=Math.min(c.length,188*128);
     tsvFeed(n,c.subarray(0,take)); n.inqLen-=take;
     if(take>=c.length) n.inq.shift(); else n.inq[0]=c.subarray(take);
@@ -398,7 +398,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
   init(n){
     n.dmx=new TsDemux(); n.inq=[]; n.inqLen=0; n.q=[]; n.fileObj=null; n.pos=0; n.rd=false; n.dec=null; n.decCodec=''; n.cfgBusy=false;
     n.needKey=true; n.lastTs=-1; n.base=null; n.last=null; n.status='waiting for a transport stream'; n.notes=[]; n.mode=(()=>{ try{ return (+localStorage.tsvMode||0)%4; }catch(e){ return 0; } })(); n.modeAt=performance.now(); n.errN=0;
-    n.aq=[]; n.aEnd=null; n.aInfo=''; n.decoded=0; n.m2=null; n.m2p=null; n.m2err=0; n.m2bad=0; n.shown=0; n.dropped=0; n.fpsN=0; n.fps=0; n.fpsT=performance.now(); n.gotFrame=false; n.prog=0;
+    n.aq=[]; n.aEnd=null; n.aInfo=''; n.decoded=0; n.m2=null; n.m2p=null; n.m2err=0; n.m2bad=0; n.shown=0; n.dropped=0; n.fpsN=0; n.fps=0; n.fpsT=performance.now(); n.tkN=0; n.tkMax=0; n.tkShow=0; n.gotFrame=false; n.prog=0;
     n.pic=document.createElement('canvas'); n.picCx=n.pic.getContext('2d');
     n.tt=new TsTeletext(); n.tpic=document.createElement('canvas'); n.tpic.width=480; n.tpic.height=500; n.tpicCx=n.tpic.getContext('2d'); n.ttRev=-1; n.ttKey=''; n.ttHas=false; n.ttText='';
     Object.defineProperty(n.tpic,'videoWidth',{get(){ return this.width; }});
@@ -409,6 +409,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
   },
   dispose:n=>{ tsvClose(n); },
   process(n,I){
+    const t00=performance.now();
     const o=I.bin;
     if(o && o.d && o!==n.last){ n.last=o; n.inq.push(o.d); n.inqLen+=o.d.length; }
     tsvPumpIn(n);
@@ -426,7 +427,8 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
     if(performance.now()-(n.ttT||0)>250){ n.ttT=performance.now(); tsvTtx(n); }
     if(performance.now()-(n.chanT||0)>1500){ n.chanT=performance.now(); tsvChannels(n); }
     const now=performance.now();
-    if(now-n.fpsT>=1000){ n.fps=n.fpsN*1000/(now-n.fpsT); n.fpsN=0; const cc=n.dmx.stat.cc+n.dmx.stat.tei; n.ccRate=(cc-(n.ccPrev||0))*1000/(now-n.fpsT); n.ccPrev=cc; n.fpsT=now; if(n.fps===0) n.gotFrame=false; }
+    if(now-n.fpsT>=1000){ n.fps=n.fpsN*1000/(now-n.fpsT); n.fpsN=0; const cc=n.dmx.stat.cc+n.dmx.stat.tei; n.ccRate=(cc-(n.ccPrev||0))*1000/(now-n.fpsT); n.ccPrev=cc; n.fpsT=now; if(++n.tkN>=5){ n.tkN=0; n.tkShow=n.tkMax||0; n.tkMax=0; } if(n.fps===0) n.gotFrame=false; }
+    const tk=performance.now()-t00; if(tk>(n.tkMax||0)) n.tkMax=tk;
     const oL=buf(n,'L'), oR=buf(n,'R'); oL.fill(0); oR.fill(0);
     if(n.base==null && n.aq.length){                              // видео нет: часы по звуку, чтобы он шёл без картинки
       n.aNoV=(n.aNoV||0)+1;
@@ -443,7 +445,7 @@ def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport st
       if(pl.length) t='programs '+pl.map(p=>p.num+(p===d.cur ? '▶' : '')).join(' ')+' · '+(d.vcodec||'—')+(d.sps ? ' · '+d.sps.w+'×'+d.sps.h : '')+
         ' · '+n.fps.toFixed(1)+' fps'+(d.cur?.apid ? ' · audio '+d.cur.atype+(d.cur.atype==='mp2' || d.cur.atype==='aac' ? (n.aInfo ? ' · '+n.aInfo : '') : ' (not decoded)') : '');
       if(st.cc||st.tei||n.dropped||n.m2bad) t+='\nlost packets '+st.cc+' (now '+Math.round(n.ccRate||0)+'/s) · transport errors '+st.tei+(st.sync ? ' · stream breaks '+st.sync+(()=>{ const e=Object.entries(st.gaps).sort((x,y)=>y[1]-x[1])[0]; return e ? ' (usually '+e[0]+' extra bytes ×'+e[1]+')' : ''; })() : '')+(n.dropped ? ' · dropped frames '+n.dropped : '')+(n.m2bad ? ' · bad slices '+n.m2bad : '');
-      if(pl.length) t+='\nvideo frames '+st.frames+' (entry points '+st.keys+') · decoded '+n.decoded+' · shown '+n.shown+(n.inqLen>0 ? ' · input queue '+(n.inqLen/1e6).toFixed(1)+' MB' : '')+(n.dec ? ' · decoder queue '+n.dec.decodeQueueSize : n.decCodec ? '' : ' · decoder not started')+(n.needKey ? ' · waiting for an entry point' : '')+' · '+(tsvMode(n).sw || n.bigNote ? 'software' : 'hardware')+' decoder, '+(tsvMode(n).idr ? 'IDR only' : 'any I frame')+' (IDR frames in the stream '+st.idr+')'+(n.gapN ? '\npicture pauses >120 ms: '+n.gapN+' (longest '+Math.round(n.gapMax)+' ms) · buffer '+n.q.length+' frames' : '')+(n.notes.length ? '\n'+n.notes.join('\n') : '');
+      if(pl.length) t+='\nvideo frames '+st.frames+' (entry points '+st.keys+') · decoded '+n.decoded+' · shown '+n.shown+(n.inqLen>0 ? ' · input queue '+(n.inqLen/1e6).toFixed(1)+' MB' : '')+(n.dec ? ' · decoder queue '+n.dec.decodeQueueSize : n.decCodec ? '' : ' · decoder not started')+(n.needKey ? ' · waiting for an entry point' : '')+' · '+(tsvMode(n).sw || n.bigNote ? 'software' : 'hardware')+' decoder, '+(tsvMode(n).idr ? 'IDR only' : 'any I frame')+' (IDR frames in the stream '+st.idr+')'+(n.gapN ? '\npicture pauses >120 ms: '+n.gapN+' (longest '+Math.round(n.gapMax)+' ms) · buffer '+n.q.length+' frames' : '')+(n.tkShow>20 ? '\nslowest node tick in 5 s: '+Math.round(n.tkShow)+' ms' : '')+(n.notes.length ? '\n'+n.notes.join('\n') : '');
       if(pl.length && d.cur?.apid) t+='\naudio PES '+(st.apes||0)+' · queued '+(n.aq.reduce((a,g)=>a+(g.L.length-g.i),0)/Eng.sr).toFixed(2)+' s · played '+((n.aPlayed||0)/Eng.sr).toFixed(1)+' s · offset to video '+Math.round((n.aOff||0)*1000)+' ms · resyncs '+(n.aResync||0)+(n.base==null ? ' · no video clock' : '');
       if(pl.length && n.infoTxt) t+='\n'+n.infoTxt;
       if(n.tt.list().length) t+='\nteletext: '+n.tt.list().length+' pages ('+n.tt.list().slice(0,12).join(' ')+(n.tt.list().length>12 ? ' …' : '')+'), shown '+(+n.p.ttxpage||100);
