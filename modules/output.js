@@ -1129,6 +1129,31 @@ def({ id:'notify', title:'Notify', cat:'Output', readout:true,
     if(r.textContent!==t) r.textContent=t; }});
 
 
+// Vibration API: фронт go запускает вибрацию. Вход ms — длительность, иначе параметр; pattern —
+// цепочка «вибрация, пауза, …» в мс (перекрывает длительность). Не поддерживается в Safari и на десктопе.
+function vibrateFire(n,ms){
+  if(!navigator.vibrate){ n.err='Vibration API unavailable (Android Chrome / Firefox)'; return; }
+  const pat=String(n.p.pattern||'').split(/[\s,]+/).map(Number).filter(v=>v>=0&&isFinite(v));
+  const arg=pat.length ? pat : Math.max(1,Math.round(ms||+n.p.ms));
+  if(navigator.vibrate(arg)){ n.fired++; n.err=''; } else n.err='vibration blocked (needs a tap on the page first)';
+}
+def({ id:'vibrate', title:'Vibrate', cat:'Output', kw:'vibration haptic phone buzz', readout:true,
+  ins:[{n:'go',t:'num'},{n:'ms',t:'num'}],
+  params:[{n:'ms',t:'range',min:10,max:2000,step:10,d:200,label:'duration, ms'},
+          {n:'pattern',t:'text',d:'',label:'pattern, ms (on off on…; empty = duration)'},
+          {n:'test',t:'button',label:'Test',fn:n=>vibrateFire(n,0)},
+          {n:'stop',t:'button',label:'Stop',fn:n=>{ if(navigator.vibrate) navigator.vibrate(0); }}],
+  init:n=>{ n.prevGo=0; n.fired=0; n.err=''; },
+  dispose:n=>{ if(navigator.vibrate) navigator.vibrate(0); },
+  process(n,I){
+    const go=(I.go||0)>.5, rise=go && !n.prevGo; n.prevGo=go;
+    if(rise) vibrateFire(n,I.ms);
+    return {}; },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const t=(n.err?n.err+'\n':'')+'fired '+n.fired;
+    if(r.textContent!==t) r.textContent=t; }});
+
+
 // Web MIDI Out: gate (фронт) → note on/off, смена note при поднятом gate — легато, cc → control change.
 // note — номер MIDI, либо freq в Гц (напрямую с «MIDI Keyboard»). Доступ к MIDI общий с «MIDI Keyboard».
 function midiOutPort(n){

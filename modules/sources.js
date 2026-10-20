@@ -484,7 +484,7 @@ function gsensorStart(n){
     n.status = e.name==='SecurityError' ? 'sensor permission denied' : 'error: '+e.message;
   }
 }
-def({ id:'gsensor', title:'Sensor (Generic Sensor API)', cat:'Sources',
+def({ id:'gsensor', title:'Sensor (Generic Sensor API)', cat:'Sources', kw:'accelerometer gyroscope magnetometer ambient light lux phone',
   outs: n => { const f=gsensorFields(n);
     return [...f.map(x=>({n:x,t:'num'})), ...f.map(x=>({n:'s'+x,t:'sig'})),
             ...(f.length===3?[{n:'smag',t:'sig'}]:[])]; },
@@ -512,6 +512,45 @@ def({ id:'gsensor', title:'Sensor (Generic Sensor API)', cat:'Sources',
     return out;
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.status||ssStatus(n)+(n.via?' · '+n.via:''); }});
+
+
+// Ambient Light — освещённость в люксах (AmbientLightSensor, Chrome/Android за флагом
+// #enable-generic-sensor-extra-classes). Firefox и Safari класса не имеют.
+function lightStop(n){
+  if(n.sensor){ try{ n.sensor.stop(); }catch(e){} n.sensor=null; }
+  n.status='stopped';
+}
+function lightStart(n){
+  lightStop(n);
+  if(!window.AmbientLightSensor){ n.status='API unavailable (Chrome on Android, HTTPS; may need #enable-generic-sensor-extra-classes)'; return; }
+  ssInit(n,1);
+  try{
+    const s=new AmbientLightSensor({frequency:+n.p.freq});
+    s.addEventListener('reading',()=>{
+      n.lux=s.illuminance??0; n.status='';
+      ssPush(n,(s.timestamp??performance.now())/1000,[n.lux]); });
+    s.addEventListener('error',e=>{ n.status=e.error?.name==='NotAllowedError' ? 'sensor permission denied' : 'error: '+(e.error?.message||e.error?.name||'?'); });
+    s.start(); n.sensor=s; n.status='starting…';
+  }catch(e){
+    n.status=e.name==='SecurityError' ? 'sensor permission denied' : 'error: '+e.message;
+  }
+}
+def({ id:'light', title:'Ambient Light', cat:'Sources', kw:'lux illuminance brightness light sensor phone',
+  outs:[{n:'lux',t:'num'},{n:'slux',t:'sig'}], readout:true,
+  params:[{n:'freq',t:'select',opts:['1','5','10','30','60'],d:'10',label:'requested rate, Hz',
+            fn:n=>{ if(n.sensor) lightStart(n); }},
+          {n:'go',t:'button',label:'Start',fn:n=>lightStart(n)},
+          {n:'stop',t:'button',label:'Stop',fn:n=>lightStop(n)}],
+  onRun:n=>{ if(!n.sensor) lightStart(n); },
+  onStop:n=>lightStop(n),
+  init:n=>{ n.sensor=null; n.lux=0; n.status='not started'; ssInit(n,1); },
+  dispose:n=>lightStop(n),
+  process(n){
+    const o=buf(n,'slux'), P=ssProcess(n,[o]);
+    return {lux:P[1],slux:o};
+  },
+  draw(n){ const r=n.el.querySelector('.readout');
+    if(r) r.textContent=n.status||`${n.lux.toFixed(1)} lx · `+ssStatus(n); }});
 
 
 // Датчики телефона по WebSocket — протокол приложения SensorServer (Android, F-Droid):
