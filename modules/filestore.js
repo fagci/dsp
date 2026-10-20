@@ -315,7 +315,8 @@ const fmIcon=r=>{
 };
 const fmSize=b=>b<1024 ? b+' B' : b<1048576 ? (b/1024).toFixed(1)+' KB' : (b/1048576).toFixed(1)+' MB';
 const FM_EXT={'audio/wav':'wav','audio/mpeg':'mp3','audio/ogg':'ogg','image/jpeg':'jpg','image/png':'png','image/webp':'webp','text/plain':'txt','application/json':'json','text/csv':'csv'};
-function fmFileName(r){ const e=FM_EXT[r.mime]; return !e || /\.[A-Za-z0-9]{1,5}$/.test(r.name) ? r.name : r.name+'.'+e; }
+const FM_HAS_EXT=/\.(wav|mp3|ogg|oga|opus|flac|m4a|aac|webm|mp4|mov|jpe?g|png|webp|gif|txt|json|csv|bin)$/i;   // «rec 21.39.46» — не расширение
+function fmFileName(r){ const e=FM_EXT[r.mime]; return !e || FM_HAS_EXT.test(r.name) ? r.name : r.name+'.'+e; }
 const fmBlob=async r=>r.getBlob ? r.getBlob() : r.blob;
 async function fmDownload(r){
   const a=document.createElement('a'), u=URL.createObjectURL(await fmBlob(r));
@@ -583,7 +584,8 @@ let fmDrag=null;
    Узел заменил Sample Library и Bytes → File (старые патчи открываются как Files). */
 const FS_REC_AUDIO=['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/mp4'];
 const FS_REC_VIDEO=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4'];
-const fsStamp=()=>{ const d=new Date(), z=k=>String(k).padStart(2,'0'); return z(d.getHours())+'.'+z(d.getMinutes())+'.'+z(d.getSeconds()); };
+const fsStamp=()=>{ const d=new Date(), z=k=>String(k).padStart(2,'0');       // без точек: «.46» принимали за расширение
+  return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate())+'_'+z(d.getHours())+'-'+z(d.getMinutes())+'-'+z(d.getSeconds()); };
 const fsExt=m=>m.includes('mp4') ? 'mp4' : m.includes('ogg') ? 'ogg' : 'webm';
 function fsWavI16(samples,sr){
   const n=samples.length, b=new ArrayBuffer(44+n*2), v=new DataView(b);

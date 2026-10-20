@@ -726,7 +726,7 @@ function ft8Text(n){
       const t0=0.5+c.dt;
       lines.push('   '+c.f.toFixed(1).padStart(7)+' Hz  start +'+t0.toFixed(2)+
         ' s  end +'+(t0+12.64).toFixed(2)+' s  strength '+c.sc.toFixed(2)+
-        '  sync '+(c.sync!=null?c.sync:'?')+'/21');
+        '  sync '+(c.sync!=null?c.sync:'?')+'/21'+(c.inv?'  LSB':''));
       if(c.msg) lines.push('     ► '+c.msg+(c.snr!=null?'   '+(c.snr>0?'+':'')+c.snr+' dB':''));
       else if(c.hex) lines.push('     packet '+c.hex);
       if(c.syms) lines.push('     tones  '+c.syms); }
@@ -774,18 +774,18 @@ function ft8Snr(e,mag,frames,bins,noise){
   return Math.round(10*Math.log10(ratio)-24.3);
 }
 // записи по расшифрованным сообщениям: позывной, корреспондент, локатор (или ранее слышанный), SNR
-function ft8Recs(n,list,mag,frames,bins,b0,b1,slotMs){
+function ft8Recs(n,list,mags,frames,bins,b0,b1,slotMs){
   const dec=list.filter(e=>e.msg);
   if(!dec.length) return;
-  const noise=ft8Noise(mag,frames,bins,b0,b1);
+  const noise=ft8Noise(mags[0]||mags[1],frames,bins,b0,b1);
   const msgs=[];
   for(const e of dec){
-    e.snr=ft8Snr(e,mag,frames,bins,noise);
+    e.snr=ft8Snr(e,mags[e.inv],frames,bins,noise);
     msgs.push(e.msg);
     const info=typeof ft8MsgInfo==='function' ? ft8MsgInfo(e.msg) : null;
     const r={t:slotMs, src:'FT8', msg:e.msg, f:+e.f.toFixed(1), dt:+e.dt.toFixed(2)};
-    r.mode='FT8';
-    if(n.p.freq>0){ r.freq=Math.round(n.p.freq+e.f); if(typeof ft8Band==='function') r.band=ft8Band(n.p.freq); }
+    r.mode='FT8';                                    // LSB: freq — частота настройки, зеркало вокруг 3200 Гц
+    if(n.p.freq>0){ r.freq=Math.round(n.p.freq+e.f-(e.inv?FT8_SR/2:0)); if(typeof ft8Band==='function') r.band=ft8Band(n.p.freq); }
     if(e.snr!=null) r.snr=e.snr;
     if(info){
       if(info.from){
@@ -805,6 +805,49 @@ function ft8Recs(n,list,mag,frames,bins,b0,b1,slotMs){
   if(n.recQ.length>2000) n.recQ.splice(0,n.recQ.length-2000);
   n.msgOut=msgs.join('\n');
 }
+function ft8Mirror(mag,frames,bins){                 // зеркало спектра: сигнал с LSB (инверсия тонов) → как с USB
+  const m=new Float32Array(mag.length);
+  for(let f=0;f<frames;f++){ const o=f*bins; for(let b=1;b<bins;b++) m[o+b]=mag[o+bins-b]; }
+  return m;
+}
+function ft8Cands(mag,frames,bins,b0,b1,maxOff,thr){     // оценка по блокам Костаса для каждой пары (бин, кадр)
+  const W=b1-b0+1, avg=new Float32Array(frames*W);   // среднее по восьми тонам для каждой (кадр, бин): считаем один раз
+  for(let f=0;f<frames;f++) for(let b=b0;b<=b1;b++){
+    let sum=0; for(let q=0;q<8;q++) sum+=mag[f*bins+b+q*FT8_TS];
+    avg[f*W+b-b0]=sum/8+1e-12; }
+  const out=[];
+  for(let b=b0;b<=b1;b++) for(let t=0;t<=maxOff;t++){
+    let sc=0;
+    for(const g of [0,36,72]) for(let k=0;k<7;k++){
+      const f=t+4*(g+k);
+      sc += mag[f*bins+b+FT8_COSTAS[k]*FT8_TS]/avg[f*W+b-b0]; }
+    if(sc/21>=thr) out.push([sc/21,b,t]); }
+  return out;
+}
+function ft8Soft(mag,bins,b,t,llr){                  // 58 символов данных → 174 мягких бита; false — вне спектрограммы
+  let bi=0;
+  for(let s=0;s<FT8_SYMS;s++){
+    if(s<7||(s>=36&&s<43)||s>=72) continue;
+    const fr=(t+4*s)*bins, lg=new Float64Array(8);
+    for(let q=0;q<8;q++) lg[q]=Math.log(mag[fr+b+q*FT8_TS]+1e-12);
+    for(let k=2;k>=0;k--){
+      let m0=-1e9, m1=-1e9;
+      for(let q=0;q<8;q++){
+        const v=FT8_UNGRAY[q];
+        if((v>>k)&1){ if(lg[q]>m1) m1=lg[q]; } else if(lg[q]>m0) m0=lg[q]; }
+      llr[bi++]=m0-m1; } }
+  let sm=0, sq=0; for(let i=0;i<174;i++){ sm+=llr[i]; sq+=llr[i]*llr[i]; }   // как в ft8_lib: дисперсия → масштаб
+  const v=sq/174-(sm/174)**2, k=Math.sqrt(24/(v>1e-9?v:1e-9));
+  for(let i=0;i<174;i++) llr[i]*=k;
+}
+function ft8Try(mag,frames,bins,b,t,llr){            // один заход: мягкие биты → LDPC → CRC → текст
+  if(b<1||b+7*FT8_TS>=bins||t<0||t+4*FT8_SYMS>=frames) return null;
+  ft8Soft(mag,bins,b,t,llr);
+  const dec=ft8Ldpc(llr,50);
+  if(!dec.ok) return null;
+  const k91=[...dec.bits].slice(0,91);
+  return ft8CrcOk(k91) ? ft8Unpack(k91.slice(0,77)) : null;
+}
 function ft8Run(n,manual,slotMs){
   const t0=performance.now();
   const {mag,frames,bins}=ft8Spec(n);
@@ -812,73 +855,53 @@ function ft8Run(n,manual,slotMs){
   const b0=Math.max(1,Math.floor(n.p.fmin/hz)), b1=Math.min(bins-9*FT8_TS,Math.ceil(n.p.fmax/hz));
   const maxOff=frames-4*FT8_SYMS-1;
   if(maxOff<1){ n.text='not enough data'; return; }
-  const budget=n.p.budget||800;
+  const budget=n.p.budget||800, side=n.p.side||'auto';
+  const mags=[mag, side==='USB' ? null : ft8Mirror(mag,frames,bins)];   // [прямой, зеркальный (LSB)]
+  if(side==='LSB') mags[0]=null;
   const cand=[];
-  for(let b=b0;b<=b1;b++) for(let t=0;t<=maxOff;t++){
-    let sc=0;
-    for(const g of [0,36,72]) for(let k=0;k<7;k++){
-      const fr=(t+4*(g+k))*bins;
-      let sum=0; for(let q=0;q<8;q++) sum+=mag[fr+b+q*FT8_TS];
-      sc += mag[fr+b+FT8_COSTAS[k]*FT8_TS]/(sum/8+1e-12); }
-    cand.push([sc/21,b,t]);
-  }
+  mags.forEach((m,inv)=>{ if(m) for(const c of ft8Cands(m,frames,bins,b0,b1,maxOff,n.p.thr)) cand.push([c[0],c[1],c[2],inv]); });
   cand.sort((a,c)=>c[0]-a[0]);
   const picked=[];
   for(const c of cand){
     if(c[0]<n.p.thr) break;
-    if(picked.some(p=>Math.abs(p[1]-c[1])<4*FT8_TS&&Math.abs(p[2]-c[2])<6)) continue;
+    if(picked.some(p=>p[3]===c[3]&&Math.abs(p[1]-c[1])<4*FT8_TS&&Math.abs(p[2]-c[2])<6)) continue;
     picked.push(c);
     if(picked.length>=n.p.top) break;
   }
-  const list=picked.map(([sc,b,t])=>{
-    const e={f:b*hz, dt:(t*FT8_HOP/FT8_SR)-0.5, sc};
-    {
-      const syms=[], conf=[];
-      for(let s=0;s<FT8_SYMS;s++){
-        const fr=(t+4*s)*bins; let best=0,bv=-1,second=-1;
-        for(let q=0;q<8;q++){ const v=mag[fr+b+q*FT8_TS];
-          if(v>bv){ second=bv; bv=v; best=q; } else if(v>second) second=v; }
-        syms.push(best); conf.push(bv/(second+1e-12)); }
-      // качество: во сколько раз выигрывает верный тон, и совпали ли блоки Костаса
-      let sync=0;
-      for(const g of [0,36,72]) for(let k=0;k<7;k++) if(syms[g+k]===FT8_COSTAS[k]) sync++;
-      e.sync=sync;
-      const p=ft8Payload(syms);
-      e.hex=p.hex; e.bits=p.bits;
-      if(n.p.tones) e.syms=syms.join('');
-      if(n.p.decode){                                 // мягкие метрики → LDPC → CRC → текст
-        const llr=new Float64Array(174);
-        for(const dt2 of [0,1,-1,2,-2]){              // мелкая подстройка времени и частоты
-          let done=false;
-          if(performance.now()-t0>budget) break;       // не залезаем в аудиопоток
-          for(const db2 of [0,1,-1]){
-            const bb=b+db2, tt=t+dt2;
-            if(bb<1||bb+7*FT8_TS>=bins||tt<0||tt+4*FT8_SYMS>=frames) continue;
-            let bi2=0;
-            for(let s2=0;s2<FT8_SYMS;s2++){
-              if((s2<7)||(s2>=36&&s2<43)||(s2>=72)) continue;
-              const fr=(tt+4*s2)*bins;
-              const lg=[];
-              let mean=0;
-              for(let q=0;q<8;q++){ const v=Math.log(mag[fr+bb+q*FT8_TS]+1e-12); lg.push(v); mean+=v; }
-              mean/=8;
-              for(let k=2;k>=0;k--){
-                let m0=-1e9, m1=-1e9;
-                for(let q=0;q<8;q++){
-                  const v=FT8_UNGRAY[q], lv=lg[q]-mean;   // нормировка по символу
-                  if((v>>k)&1){ if(lv>m1) m1=lv; } else { if(lv>m0) m0=lv; } }
-                llr[bi2++]=(m0-m1)*2.5; } }
-            const dec=ft8Ldpc(llr,60);
-            if(dec.ok){
-              const k91=[...dec.bits].slice(0,91);
-              if(ft8CrcOk(k91)){
-                e.msg=ft8Unpack(k91.slice(0,77)); e.crc=true;
-                e.f=(bb)*hz; e.dt=(tt*FT8_HOP/FT8_SR)-0.5;
-                done=true; break; } } }
-          if(done) break; }
-      } }
+  const list=picked.map(([sc,b,t,inv])=>{
+    const m=mags[inv], e={f:b*hz, dt:(t*FT8_HOP/FT8_SR)-0.5, sc, inv, b, t};
+    const syms=[];
+    for(let s=0;s<FT8_SYMS;s++){
+      const fr=(t+4*s)*bins; let best=0,bv=-1;
+      for(let q=0;q<8;q++){ const v=m[fr+b+q*FT8_TS]; if(v>bv){ bv=v; best=q; } }
+      syms.push(best); }
+    // качество: совпали ли блоки Костаса
+    let sync=0;
+    for(const g of [0,36,72]) for(let k=0;k<7;k++) if(syms[g+k]===FT8_COSTAS[k]) sync++;
+    e.sync=sync;
+    const p=ft8Payload(syms);
+    e.hex=p.hex; e.bits=p.bits;
+    if(n.p.tones) e.syms=syms.join('');
     return e; });
-  ft8Recs(n,list,mag,frames,bins,b0,b1,slotMs!=null?slotMs:Date.now());
+  if(n.p.decode){
+    const llr=new Float64Array(174), seen=new Set();
+    const hit=(e,msg,b,t)=>{ e.msg=msg; e.crc=true; e.f=b*hz; e.dt=(t*FT8_HOP/FT8_SR)-0.5; seen.add(msg); };
+    for(const e of list){                              // заход 1: в найденной точке
+      if(performance.now()-t0>budget) break;           // не залезаем в аудиопоток
+      const msg=ft8Try(mags[e.inv],frames,bins,e.b,e.t,llr);
+      if(msg) hit(e,msg,e.b,e.t); }
+    for(const dt2 of [0,1,-1,2,-2]) for(const db2 of [1,-1,0]){   // заход 2: подстройка времени и частоты для нерасшифрованных
+      for(const e of list){
+        if(e.msg) continue;
+        if(performance.now()-t0>budget) break;
+        if(!dt2&&!db2) continue;
+        const msg=ft8Try(mags[e.inv],frames,bins,e.b+db2,e.t+dt2,llr);
+        if(msg) hit(e,msg,e.b+db2,e.t+dt2); } }
+    for(let i=list.length-1;i>=0;i--){                 // одно сообщение — одна запись (соседние кандидаты)
+      const e=list[i]; if(!e.msg) continue;
+      if(list.findIndex(x=>x.msg===e.msg)!==i) list.splice(i,1); }
+  }
+  ft8Recs(n,list,mags,frames,bins,b0,b1,slotMs!=null?slotMs:Date.now());
   if(list.length){ n.f=list[0].f; n.sc=list[0].sc; n.dt=list[0].dt; }
   else { n.f=0; n.sc=0; }
   if(Eng.turbo>1) n.warn='speed ×'+Eng.turbo+' breaks slot alignment — set it back to ×1';

@@ -5543,17 +5543,22 @@ function netAudioRead(n,oa,edge,buf){
   // не выцепить (нужен порядок ~15-20). Windowed sinc с шириной окна ZC даёт нужную крутизну
   // без нестабильных высоких порядков.
   const fc=Math.min(edge*1.05, n.audioRate*0.48), fcNorm=fc/n.audioRate;   // доля от исходной частоты (не Найквиста)
+  const OS=64, key=Math.round(fcNorm*1e5);
+  if(!n.nkTab || n.nkKey!==key){                         // ядро (sinc × окно) в таблице: sin/cos на каждый отсчёт съедали ~40% ядра CPU
+    const T=new Float32Array(KIWI_ZC*OS+2);
+    for(let k=0;k<KIWI_ZC*OS;k++){
+      const d=k/OS, x=2*fcNorm*d, s=x===0?1:Math.sin(Math.PI*x)/(Math.PI*x);
+      const t=(d+KIWI_ZC)/(2*KIWI_ZC), w=0.42-0.5*Math.cos(2*Math.PI*t)+0.08*Math.cos(4*Math.PI*t);
+      T[k]=2*fcNorm*s*w; }
+    n.nkTab=T; n.nkKey=key; }
+  const T=n.nkTab, A=ring.A, sz=ring.size;
   for(let k=0;k<BLOCK;k++){
     const base=Math.floor(n.readPos);
-    let acc=0;
+    let acc=0, idx=(((base-KIWI_ZC+1)%sz)+sz)%sz;
     for(let j=-KIWI_ZC+1;j<=KIWI_ZC;j++){
-      const d=n.readPos-(base+j);
-      if(Math.abs(d)>=KIWI_ZC) continue;
-      const x=2*fcNorm*d, s=x===0?1:Math.sin(Math.PI*x)/(Math.PI*x);
-      const t=(d+KIWI_ZC)/(2*KIWI_ZC), w=0.42-0.5*Math.cos(2*Math.PI*t)+0.08*Math.cos(4*Math.PI*t);
-      const idx=(((base+j)%ring.size)+ring.size)%ring.size;
-      acc += ring.A[idx]*2*fcNorm*s*w;
-    }
+      const d=Math.abs(n.readPos-(base+j));
+      if(d<KIWI_ZC){ const u=d*OS, i=u|0; acc+=A[idx]*(T[i]+(T[i+1]-T[i])*(u-i)); }
+      if(++idx===sz) idx=0; }
     oa[k]=acc;
     n.readPos+=step; n.readCount+=step;
   }
