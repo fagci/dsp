@@ -2,11 +2,13 @@
 /* ============================ Table: типы полей, карточки, связи между списками ============================
    Схема списка: ListDB-meta {cols, types:{колонка:{t, opts, to, multi}}, card:{show:[колонки]}}; у списка в патче (@patch) — n.p.schema.
    Типы: text, long, num, progress (min / max — границы шкалы, по умолчанию 0…100), bool, date, choice (opts), photo, audio, link (to — другой список; в ячейке имена записей через « | »).
+   file — в ячейке id файлов из Files: «fl-12 fl-15» (или «ph-…» для фото из пространства images); сами файлы остаются в dsp-files.
+   card.lines — раскладка карточки: [[колонки строки 1],[строки 2]…] под названием; нет — по одному полю из show на строку. card.keys — подписи полей, card.cover=='none' — без блока фото.
    Колонки без типа ведут себя как раньше (photo / audio — по имени). Виды: cards (карточки с фото), grid (полный список), compact (краткий).
    Карточка записи — панель с большим фото, всеми полями, связями и обратными связями («кто ссылается на эту запись»). */
 
 const TC_TYPES=[['text','text'],['long','long text'],['num','number'],['bool','checkbox'],['progress','progress bar'],['date','date'],['choice','choice'],
-  ['photo','photo'],['image','avatar / image (URL or photo)'],['online','online status'],['typing','typing'],['audio','audio'],['link','link to a list'],['auto','auto number'],['calc','calculated']];
+  ['photo','photo'],['image','avatar / image (URL or photo)'],['online','online status'],['typing','typing'],['audio','audio'],['file','file (from Files)'],['link','link to a list'],['auto','auto number'],['calc','calculated']];
 const TC_VIEWS=[['cards','🃏','cards'],['grid','☰','full list (columns)'],['compact','≡','brief list (name · values)'],['icons','👤','list with icons (avatar, online, typing)']];
 const TC_SEP=' | ';
 
@@ -84,6 +86,67 @@ function tcBar(n,c,v,text){
 const tcLinks=v=>String(v??'').split('|').map(s=>s.trim()).filter(Boolean);
 const tcJoin=a=>a.join(TC_SEP);
 const tcIsTrue=v=>v===true || v===1 || /^(1|true|yes|y|да)$/i.test(String(v??'').trim());
+/* ---------- файлы из Files ---------- */
+const tcFileTok=s=>/^(fl-\d+|ph-[a-z0-9]+)$/i.test(s);
+const tcFileIds=v=>[...new Set(String(v??'').split(/[\s,;]+/).filter(tcFileTok))];
+const tcFileRec=id=>FileStore.get(/^fl-/i.test(id) ? +id.slice(3) : id).catch(()=>null);
+const tcFileOf=r=>'fl-'+r.id;
+// выбор файлов в менеджере: двойной клик или «＋ selected»; Promise<[id…]|undefined>
+function tcFilePick(multi){
+  return new Promise(res=>{
+    const got=[], ov=document.createElement('div'); ov.className='fm-ov';
+    const box=document.createElement('div'); box.className='fm-pick'; box.style.cssText+='width:min(560px,92vw);height:70vh';
+    const host=document.createElement('div'); host.style.cssText='flex:1;min-height:0;display:flex;flex-direction:column';
+    const bar=document.createElement('div'); bar.style.cssText='display:flex;gap:6px;align-items:center;justify-content:flex-end';
+    const cnt=document.createElement('span'); cnt.className='fm-info'; cnt.style.marginRight='auto';
+    const done=v=>{ fm.destroy?.(); ov.remove(); res(v); };
+    const add=r=>{
+      if(!r) return;
+      const id=r.space==='images' && !/^\d+$/.test(String(r.id)) ? String(r.id) : tcFileOf(r);
+      if(!multi) return done([id]);
+      if(!got.includes(id)) got.push(id);
+      cnt.textContent=got.length+' picked';
+    };
+    const mk=(t,f)=>{ const b=document.createElement('button'); b.textContent=t; b.onclick=f; return b; };
+    bar.append(cnt,mk('＋ selected',()=>add(fm.selected)),...(multi ? [mk('OK',()=>done(got))] : []),mk('Cancel',()=>done(undefined)));
+    box.append(host,bar); ov.append(box); document.body.append(ov);
+    ov.onclick=e=>{ if(e.target===ov) done(undefined); };
+    const fm=fmMount(host,{spaces:['files','audio','images'],space:'files',onOpen:add});
+  });
+}
+// имя, значок, просмотр / скачивание; имя подставляется, когда файл прочитан
+function tcFileOpen(id){
+  tcFileRec(id).then(async r=>{
+    if(!r){ alert(id+' is not in this browser (import a backup with the files)'); return; }
+    const m=r.mime||'';
+    if(m.startsWith('image/')){ phView([id]); return; }
+    if(m.startsWith('audio/')){
+      const ov=document.createElement('div'); ov.className='fm-ov';
+      const box=document.createElement('div'); box.className='fm-pick';
+      const a=document.createElement('audio'); a.controls=true; a.autoplay=true; a.src=URL.createObjectURL(r.blob);
+      box.append(Object.assign(document.createElement('b'),{textContent:r.name}),a);
+      const x=document.createElement('button'); x.textContent='Close'; box.append(x);
+      const close=()=>{ a.pause(); URL.revokeObjectURL(a.src); ov.remove(); };
+      x.onclick=close; ov.onclick=e=>{ if(e.target===ov) close(); };
+      ov.append(box); document.body.append(ov); return;
+    }
+    fmDownload(r);
+  });
+}
+function tcFileEl(v,preview){
+  const box=document.createElement('span'); box.className='tc-chips';
+  for(const id of tcFileIds(v)){
+    const el=document.createElement('span'); el.className='tc-file'; el.textContent='📎 …'; el.title=id;
+    el.onclick=e=>{ e.stopPropagation(); tcFileOpen(id); };
+    box.append(el);
+    tcFileRec(id).then(async r=>{
+      if(!r){ el.textContent='📎 '+id+' (missing)'; return; }
+      el.textContent='📎 '+r.name; el.title=r.name+' · '+fmSize(r.size ?? r.blob?.size ?? 0);
+      if(preview && (r.mime||'').startsWith('image/')){ const im=document.createElement('img'); im.className='tc-prev'; im.alt=''; phUrl(id).then(u=>{ if(u) im.src=u; }); box.append(im); }
+    });
+  }
+  return box;
+}
 // подпись записи в связях: колонка имени, иначе первая непустая
 const tcKeyCol=cols=>tblCol(cols,TBL_LABEL)||cols[0];
 // шаблон названия записи card.label: «{Фамилия} {Имя}»; пусто — колонка имени
@@ -109,6 +172,7 @@ function tcText(n,c,v){
   const t=tblType(n,c);
   if(t==='bool') return tcIsTrue(v) ? '✓' : '✗';
   if(t==='link') return tcLinks(v).join(', ');
+  if(t==='file') return tcFileIds(v).length ? '📎'+tcFileIds(v).length : '';
   return recFmt(v);
 }
 
@@ -286,6 +350,18 @@ function tcFormField(n,c,rec,ty){
     inp.value=cur;
     return {inp};
   }
+  if(ty==='file'){
+    const inp=document.createElement('input'); inp.type='hidden'; inp.value=tcFileIds(v).join(' ');
+    const bar=document.createElement('span'); bar.className='tf-bar';
+    const box=document.createElement('span');
+    const upd=()=>{ box.textContent=''; if(tcFileIds(inp.value).length) box.append(tcFileEl(inp.value)); else box.textContent='—'; };
+    upd();
+    bar.append(box,mkb('📁 pick',async()=>{
+      const got=await tcFilePick(true); if(!got) return;
+      inp.value=[...new Set([...tcFileIds(inp.value),...got])].join(' '); upd();
+    }),mkb('clear',()=>{ inp.value=''; upd(); }));
+    return {inp,bar,wide:true};
+  }
   if(ty==='link'){
     const inp=document.createElement('input'); inp.type='hidden'; inp.value=tcJoin(tcLinks(v));
     const bar=document.createElement('span'); bar.className='tf-bar';
@@ -312,7 +388,7 @@ function tcValue(ty,inp){
   switch(ty){
     case 'num': case 'progress': return String(v).trim()==='' ? '' : isFinite(+v) ? +v : v;
     case 'bool': case 'typing': return inp.checked ? 1 : 0;
-    case 'date': case 'choice': case 'online': case 'long': case 'link': return v;
+    case 'date': case 'choice': case 'online': case 'long': case 'link': case 'file': return v;
   }
   return undefined;
 }
@@ -336,6 +412,15 @@ function tcChips(n,c,v){
   }
   return box;
 }
+// значение поля для карточки: связи — чипы, шкала, файлы, обычный текст
+function tcValEl(n,c,v){
+  const t=tblType(n,c);
+  if(t==='link') return tcChips(n,c,v);
+  if(t==='progress') return tcBar(n,c,v,tcText(n,c,v));
+  if(t==='file') return tcFileEl(v);
+  return Object.assign(document.createElement('span'),{className:'tc-v',textContent:TBL_HZ.test(c)&&isFinite(tblHz(v)) ? fmtHz(tblHz(v),3) : tcText(n,c,v)});
+}
+const tcHasLines=n=>Array.isArray(n.schema?.card?.lines) && n.schema.card.lines.length>0;
 function tcCard(n,i,ro,show){
   const r=n.rows[i], el=document.createElement('div');
   el.dataset.i=i; el.className='tbl-row tbl-card';
@@ -343,8 +428,9 @@ function tcCard(n,i,ro,show){
   if(bg) el.style.setProperty('--rb','color-mix(in srgb,'+bg+' 24%,transparent)');
   const label=tcTitle(n,r,i);
   const cv=document.createElement('div'); cv.className='tc-cover';
-  const ids=tcCover(n,r);
-  if(ids.length){
+  const ids=tcCover(n,r), lines=tcHasLines(n), keys=!lines || !!n.schema.card.keys;
+  if(n.schema?.card?.cover==='none') cv.hidden=true;
+  else if(ids.length){
     const im=document.createElement('img'); im.loading='lazy'; im.alt=''; cv.append(im);
     phUrl(ids[0]).then(u=>{ if(u) im.src=u; else { im.remove(); cv.textContent='📷'; } });
     if(ids.length>1) cv.append(Object.assign(document.createElement('span'),{className:'tc-n',textContent:'📷'+ids.length}));
@@ -354,13 +440,14 @@ function tcCard(n,i,ro,show){
   }
   const body=document.createElement('div'); body.className='tc-body';
   body.append(Object.assign(document.createElement('div'),{className:'tc-t',textContent:label||'(no name)'}));
-  for(const c of show){
-    const v=r[c]; if(v===''||v==null) continue;
-    const line=document.createElement('div'); line.className='tc-l';
-    line.append(Object.assign(document.createElement('span'),{className:'tc-k',textContent:c}));
-    if(tblType(n,c)==='link') line.append(tcChips(n,c,v));
-    else line.append(Object.assign(document.createElement('span'),{className:'tc-v',textContent:TBL_HZ.test(c)&&isFinite(tblHz(v)) ? fmtHz(tblHz(v),3) : tcText(n,c,v)}));
-    body.append(line);
+  for(const cs of lines ? n.schema.card.lines : show.map(c=>[c])){
+    const line=document.createElement('div'); line.className='tc-l'+(lines ? ' tc-ln' : '');
+    for(const c of cs){
+      const v=r[c]; if(v===''||v==null || !n.cl.includes(c)) continue;
+      if(keys) line.append(Object.assign(document.createElement('span'),{className:'tc-k',textContent:c}));
+      line.append(tcValEl(n,c,v));
+    }
+    if(line.children.length) body.append(line);
   }
   el.append(cv,body);
   if(!ro){
@@ -426,13 +513,63 @@ function tcViewNext(n){
   tblViewApply(n,'vmode',TC_VIEWS[(i+1)%TC_VIEWS.length][0],!n.ui.view.hidden);
 }
 
+/* ---------- раскладка карточки (панель view) ---------- */
+// строки под названием: поля в нужных местах; ▲ ▼ — порядок строк, клик по полю — убрать его
+function tcLayoutPanel(n,box,mk,sel){
+  const ro=tblRO(n), card=n.schema.card, lines=tcHasLines(n) ? card.lines : null;
+  box.append(mk('div','tv-sec','Card layout — title, then lines'));
+  const set=fn=>{
+    const l=(card.lines||[]).map(x=>x.slice()); fn(l);
+    if(l.length) card.lines=l; else delete card.lines;
+    tcSchemaSave(n); tblRenderView(n); tblRenderList(n);
+  };
+  const flag=(txt,title,on,fn)=>{
+    const cb=mk('input'); cb.type='checkbox'; cb.checked=on; cb.disabled=ro; cb.addEventListener('change',()=>fn(cb.checked));
+    const l=mk('span','tv-lbl',txt); l.title=title; return [cb,l];
+  };
+  const acts=mk('div','tv-acts');
+  if(!lines){
+    acts.append(mk('span','tv-lbl','fields from the checkboxes below, one per line'));
+    if(!ro) acts.append(mk('button','tbl-btn','customize',{click:()=>set(l=>{ for(const c of tcShowCols(n)) l.push([c]); if(!l.length) l.push([]); })}));
+  } else {
+    const cols=n.cl.filter(c=>!tcMetaType(tblType(n,c)));
+    lines.forEach((ln,i)=>{
+      const row=mk('div','tv-lay');
+      row.append(mk('span','tv-lbl',(i+1)+'.'));
+      for(const c of ln) if(n.cl.includes(c)) { const ch=mk('span','tc-chip',c,{click:()=>{ if(!ro) set(l=>{ l[i]=l[i].filter(x=>x!==c); }); }}); ch.title='remove from the line'; row.append(ch); }
+      if(!ro){
+        row.append(sel([['','＋ field'],...cols.filter(c=>!ln.includes(c)).map(c=>[c,c])],'',c=>{ if(c) set(l=>{ l.forEach((x,k)=>{ l[k]=x.filter(y=>y!==c); }); l[i].push(c); }); }),
+          mk('span','tv-mv','▲',{click:()=>{ if(i) set(l=>{ [l[i-1],l[i]]=[l[i],l[i-1]]; }); }}),
+          mk('span','tv-mv','▼',{click:()=>{ if(i<lines.length-1) set(l=>{ [l[i+1],l[i]]=[l[i],l[i+1]]; }); }}),
+          mk('span','tv-mv','✕',{click:()=>set(l=>{ l.splice(i,1); })}));
+      }
+      box.append(row);
+    });
+    if(!ro) acts.append(mk('button','tbl-btn pri','+ line',{click:()=>set(l=>{ l.push([]); })}),mk('button','tbl-btn','reset',{click:()=>set(l=>{ l.length=0; })}));
+    acts.append(...flag('captions','field names before the values',!!card.keys,v=>{ if(v) card.keys=true; else delete card.keys; tcSchemaSave(n); tblRenderList(n); }));
+  }
+  acts.append(...flag('photo block','the cover (photo or the first letter) on top of a card',card.cover!=='none',v=>{ if(v) delete card.cover; else card.cover='none'; tcSchemaSave(n); tblRenderList(n); }));
+  box.append(acts);
+}
+
 /* ---------- карточка записи ---------- */
-async function tcGo(n,list,name){                     // перейти к связанной записи
+async function tcGo(n,list,name,back){                // перейти к связанной записи; back — возврат по стрелке, в стопку не кладётся
   if(!list) return;
+  if(!back){
+    n.navBack=n.navBack||[];
+    n.navBack.push({list:n.p.list,name:n.curCard?.name??null});
+    if(n.navBack.length>30) n.navBack.shift();
+  }
   tblCloseEditor(n);
   n.openName=name;                                     // смена списка пересобирает узел: открыть карточку, когда вид готов
   if(list!==n.p.list) await tblPick(n,list);
   tcOpenPending(n);
+}
+async function tcBack(n){
+  const e=n.navBack?.pop(); if(!e) return;
+  if(e.name!=null) return tcGo(n,e.list,e.name,true);
+  tblCloseEditor(n);
+  if(e.list!==n.p.list) await tblPick(n,e.list);
 }
 function tcOpenPending(n){
   if(n.openName==null || !n.ui || n.loaded!==n.p.list || !n.ui.root.isConnected) return;
@@ -448,7 +585,10 @@ function tcDetail(n,i){
   const ro=tblRO(n), label=tcTitle(n,r,i);
   const form=document.createElement('div'); form.className='tbl-form tc-detail';
   const mkb=(t,title,f,cls)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=t; b.title=title; b.className='tbl-btn'+(cls?' '+cls:''); b.addEventListener('click',f); return b; };
-  form.cancel=mkb('✕','Close',()=>tblCloseEditor(n));
+  form.cancel=mkb('✕','Close',()=>{ n.navBack=[]; tblCloseEditor(n); });
+  const prev=n.navBack?.[n.navBack.length-1];
+  if(prev) form.lead=mkb('←','Back to '+(prev.name!=null ? prev.name+' · ' : '')+tblLeaf(prev.list),()=>tcBack(n),'tc-back-btn');
+  n.curCard={list:n.p.list,name:label};
   form.save=ro ? mkb('◀','Previous',()=>tcStep(n,i,-1)) : mkb('✎ edit','Edit this entry',()=>tblEditForm(n,i,null),'pri');
   const wide=el=>{ el.classList.add('wide'); form.append(el); return el; };
   const ph=n.cl.filter(c=>tblType(n,c)==='photo').flatMap(c=>phIds(r[c]));
@@ -468,12 +608,13 @@ function tcDetail(n,i){
   for(const c of n.cl){
     const v=r[c], t=tblType(n,c);
     if(c===n.nameCol || t==='photo' || v===''||v==null) continue;
-    const l=document.createElement('div'); l.className='tc-f'+(t==='long' || t==='link' ? ' wide' : '');
+    const l=document.createElement('div'); l.className='tc-f'+(t==='long' || t==='link' || t==='file' ? ' wide' : '');
     l.append(Object.assign(document.createElement('span'),{className:'tc-k',textContent:c}));
     let val;
     if(t==='link') val=tcChips(n,c,v);
     else if(t==='audio'){ const a=auIds(v); val=mkb('🔊 '+a.length,'Play the audio',()=>auView(a)); }
     else if(t==='progress') val=tcBar(n,c,v,tcText(n,c,v));
+    else if(t==='file') val=tcFileEl(v,true);
     else {
       val=document.createElement('span'); val.className='tc-v'+(t==='long' ? ' pre' : '');
       if(TBL_COLOR.includes(c.toLowerCase()) && CSS.supports('color',String(v))){ const sw=document.createElement('i'); sw.className='tbl-sw'; sw.style.background=String(v); val.append(sw); }
@@ -494,6 +635,7 @@ function tcDetail(n,i){
     back.append(box);
   }).catch(()=>{});
   const nav=wide(document.createElement('div')); nav.className='tc-nav wide';
+  if(form.lead) nav.append(mkb('←','Back',()=>tcBack(n),'tc-back-btn'));
   nav.append(mkb('◀','Previous entry',()=>tcStep(n,i,-1)),Object.assign(document.createElement('span'),{className:'tc-k',textContent:(i+1)+' / '+n.rows.length}),mkb('▶','Next entry',()=>tcStep(n,i,1)));
   if(!ro) nav.append(mkb('🗑','Delete this entry',async()=>{
     if(!confirm('Delete "'+(label||i+1)+'"?')) return;

@@ -946,7 +946,7 @@ function tblInit(n){
     }
     if(b) return;                                         // фото / звук — свои обработчики
     tblSelect(n,i); n.ui.list.focus({preventScroll:true});
-    if(tcCardish(n)) tcDetail(n,i);
+    if(tcCardish(n)){ n.navBack=[]; tcDetail(n,i); }
   });
   n.ui.list.addEventListener('dblclick',e=>{
     const row=e.target.closest('.tbl-row');
@@ -1251,7 +1251,7 @@ function tblRenderList(n,inc){
   const sigs=[], named=tcHasName(n);                  // без имени подпись «#номер» — от позиции, в подпись строки не входит
   for(let i=s;i<e;i++){
     const r=n.rows[i], bg=tblRowBg(n,r);
-    sigs.push(grid ? texts[i-s].join('\u0001')+'\u0002'+bg : (named ? n.labelFn(r) : '')+'\u0002'+tblSummary(n,r)+'\u0002'+bg+'\u0002'+(n.colorCol ? r[n.colorCol] : '')+'\u0002'+n.cl.filter(c=>{ const t=tblType(n,c); return t==='photo' || t==='audio'; }).map(c=>r[c]).join(','));
+    sigs.push(grid ? texts[i-s].join('\u0001')+'\u0002'+bg : (named ? n.labelFn(r) : '')+'\u0002'+tblSummary(n,r)+'\u0002'+bg+'\u0002'+(n.colorCol ? r[n.colorCol] : '')+'\u0002'+n.cl.filter(c=>{ const t=tblType(n,c); return t==='photo' || t==='audio' || t==='file'; }).map(c=>r[c]).join(','));
   }
   const rowAt=i=>tblRow(n,i,ro,grid ? {vc,t:texts[i-s]} : null);
   const spacers=sp=>{ const rh=ui.rh||0; sp.sp0.style.height=s*rh+'px'; sp.sp1.style.height=(N-e)*rh+'px'; };
@@ -1358,6 +1358,7 @@ function tblCell(x,v,local){
   if(f==='auto'){
     if(x.ty==='photo'){ const k=phIds(v).length; return k ? '📷'+k : ''; }
     if(x.ty==='audio'){ const k=auIds(v).length; return k ? '🔊'+k : ''; }
+    if(x.ty==='file'){ const k=tcFileIds(v).length; return k ? '📎'+k : ''; }
     if(x.ty==='bool' || x.ty==='link') return x.ty==='bool' ? (tcIsTrue(v) ? '✓' : '✗') : tcLinks(v).join(', ');
     if(TBL_HZ.test(x.c)){ const h=tblHz(v); return isFinite(h) ? fmtHz(h,3) : recFmt(v); }
     if(/^(t|ts|time|date|datetime)$/.test(low) && typeof v==='number') return tblTime(v,local);
@@ -1372,13 +1373,13 @@ function tblCell(x,v,local){
 function tblCellEl(n,x,v,text){
   const el=document.createElement('span'), low=x.c.toLowerCase();
   el.className='tbl-c'; el.title=text;
-  const ph=x.ty==='photo', ids=ph ? phIds(v) : x.ty==='audio' ? auIds(v) : null;
+  const ph=x.ty==='photo', fl=x.ty==='file', ids=ph ? phIds(v) : fl ? tcFileIds(v) : x.ty==='audio' ? auIds(v) : null;
   if(ids && x.fmt==='auto'){
     if(ids.length){
       el.textContent=text; el.classList.add('tbl-ico','warn');
-      el.title=ph ? 'Show the photos' : 'Play the audio';
+      el.title=ph ? 'Show the photos' : fl ? 'Open the file' : 'Play the audio';
       el.dataset.act='media';
-      el.addEventListener('click',e=>{ e.stopPropagation(); ph ? phView(ids) : auView(ids); });
+      el.addEventListener('click',e=>{ e.stopPropagation(); ph ? phView(ids) : fl ? tcFileOpen(ids[0]) : auView(ids); });
     }
     return el;
   }
@@ -1590,6 +1591,7 @@ async function tblColsApply(n,cl,ren={},fill){
   const sc=n.schema, types={};
   for(const k in sc.types) if(live(k)) types[nm(k)]=sc.types[k];
   sc.types=types; sc.card.show=(sc.card.show||[]).filter(live).map(nm);
+  if(sc.card.lines) sc.card.lines=sc.card.lines.map(l=>l.filter(live).map(nm));
   if(sc.card.unique) sc.card.unique=sc.card.unique.filter(a=>a.every(live)).map(a=>a.map(nm));
   if(sc.card.seq){ const q={}; for(const k in sc.card.seq) if(live(k)) q[nm(k)]=sc.card.seq[k]; sc.card.seq=q; }
   for(const k in ren) for(const c in types) if(types[c].expr) types[c]={...types[c],expr:trRenameRef(types[c].expr,ren[k],k)};
@@ -1649,6 +1651,7 @@ function tblFieldsPanel(n,box,mk,sel){
       ur.append(mk('span','tv-lbl','unique'),u); box.append(ur);
     }
   }
+  if(tcView(n)==='cards') tcLayoutPanel(n,box,mk,sel);
   const lists=(n.treeNames||[]).filter(x=>tblKind(x)!=='preset');
   const vc=tblViewCols(n), card=new Set(tcShowCols(n));
   {
@@ -1755,7 +1758,7 @@ function tblFieldsPanel(n,box,mk,sel){
       if(n.calcErr?.[c]) more.append(mk('span','tv-lbl','⚠ '+n.calcErr[c]));
     }
     if(!ro && t!=='calc' && t!=='auto'){
-      if(t!=='photo' && t!=='audio' && t!=='link'){
+      if(t!=='photo' && t!=='audio' && t!=='link' && t!=='file'){
         const df=mk('input','tv-q'); df.value=d.def??''; df.placeholder='default for new rows'; df.addEventListener('keydown',ev=>ev.stopPropagation());
         df.addEventListener('change',()=>tcSetDef(n,c,{...d,def:df.value}));
         more.append(df);
@@ -1891,7 +1894,7 @@ function tblOpenEditor(n,title,form,rowEl){
   ed.innerHTML='';
   const h=document.createElement('div'); h.className='te-h';
   const t=document.createElement('span'); t.className='te-t'; t.textContent=title;
-  h.append(t,form.cancel,form.save);
+  h.append(...(form.lead ? [form.lead] : []),t,form.cancel,form.save);
   ed.append(h,form);
   ed.hidden=false;
   ui.list.style.paddingBottom=ed.offsetHeight+'px';           // последние строки не прячутся под панелью
@@ -1904,7 +1907,7 @@ function tblOpenEditor(n,title,form,rowEl){
 }
 function tblCloseEditor(n){
   const ui=n.ui; if(!ui?.edit) return;
-  ui.edit.hidden=true; ui.edit.innerHTML=''; ui.list.style.paddingBottom='';
+  ui.edit.hidden=true; ui.edit.innerHTML=''; ui.list.style.paddingBottom=''; n.curCard=null;
   ui.list.querySelectorAll('.tbl-row.edit').forEach(r=>r.classList.remove('edit'));
 }
 function tblEditForm(n,i,row){
