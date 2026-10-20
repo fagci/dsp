@@ -106,7 +106,7 @@ q=node('podcasts'); defs.podcasts.process(q,{feed:'ftp://x'});
 ok('podcasts: non-http feed refused',/must start with http/.test(q.msg),q.msg);
 
 routes={'overpass-api.de':{status:504},'overpass.kumi.systems':{body:{elements:[{type:'node',id:1,lat:50,lon:8,tags:{name:'Peak','contact:webcam':'https://c/p.jpg'}},{type:'node',id:2,lat:50.2,lon:8.1,tags:{name:'Page','contact:webcam':'https://c/x.html'}}]}},'c/p.jpg':{bytes:new Uint8Array(jpg)}};
-let w=node('webcams',{radius:10});
+let w=node('webcams',{radius:100});
 await defs.webcams.params.find(q=>q.n==='search').fn(w);
 ok('webcams: no centre',/no centre/.test(w.msg)); 
 defs.webcams.process(w,{lat:50,lon:8});
