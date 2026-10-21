@@ -72,13 +72,8 @@ function rtcFileMsg(n,d){
 }
 async function rtcStore(n,r){
   const blob=new Blob(r.parts,{type:r.mime||'application/octet-stream'});
-  const sp=(r.mime||'').startsWith('audio/') ? 'audio' : (r.mime||'').startsWith('image/') ? 'images' : 'files';
   try{
-    let folder=(await FileStore.listFolders(sp,null)).find(f=>f.name==='Received');
-    const fid=folder ? folder.id : await FileStore.addFolder(sp,'Received',null);
-    let id;
-    try{ id=await FileStore.importFile(sp,blob,fid,r.name); }
-    catch(e){ id=await FileStore.put({space:'files',folderId:0,name:r.name,mime:blob.type,blob}); }   // не декодируется как звук — просто файл
+    const id=await fxSave(blob,r.name,r.mime);
     n.recvQ.push({id,name:r.name}); n.fstat='received '+r.name+' ('+fmSize(blob.size)+')';
   }catch(e){ n.fstat='could not save '+r.name+': '+e.message; }
   n.prog=0;

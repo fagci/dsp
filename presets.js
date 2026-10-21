@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=65;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=66;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -369,6 +369,7 @@ const PRESET_CATS={
   'Chat: Text In and Out':'Network & IoT',
   'Chat: Group with Avatars and Contact List':'Network & IoT',
   'Sync: Chat Between Your Devices':'Network & IoT',
+  'Sync: Files, Video and Pictures Between Devices':'Network & IoT',
   'QR: Generator and Reader Loop (no hardware)':'Images & TV',
   'Files over WebRTC':'Network & IoT',
   'Call: voice, video, chat and files over WebRTC':'Network & IoT',
@@ -6045,6 +6046,16 @@ const c=addNode('chat',420,170,{}); c.size.w=340; c.size.h=300; applySize(c);
 const tk=addNode('ticker',40,470,{time:true}); tk.size.w=340; tk.size.h=160; applySize(tk);
 addEdge(c.id,'text',sd.id,'send');
 addEdge(sd.id,'line',c.id,'text'); addEdge(sd.id,'line',tk.id,'text');
+markWiresDirty();
+});
+preset('Sync: Files, Video and Pictures Between Devices', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Anything from Files goes to another device over the sync link: tap a file (a video, a recording, an IQ file, a picture) and press «Send selected →», or press Send file… in Sync Data. Choose the device in «send to» (or all). Received files land in the Received folder of the matching storage; the `file` output carries the id of the last one, `got` pulses, and a picture is also on the `img` output (shown here). Pictures of the graph wired to the `img` input are sent as PNG (no more often than «pictures … no more often than»), records on `rec` as JSON. Needs the same key on both devices (Sync devices), the same channel name in Sync Data on both, and the file must be within «largest file». Load this preset on both devices.'});
+nt.size.w=1000; nt.size.h=110; applySize(nt);
+const f=addNode('files',40,170,{}); f.size.w=360; f.size.h=340; applySize(f);
+const sd=addNode('syncdata',440,170,{channel:'files'}); sd.size.w=340; sd.size.h=300; applySize(sd);
+const fv=addNode('imgview',820,170,{}); fv.size.w=260; fv.size.h=220; applySize(fv);
+addEdge(f.id,'send',sd.id,'sendFile'); addEdge(sd.id,'img',fv.id,'img');
 markWiresDirty();
 });
 preset('QR: Generator and Reader Loop (no hardware)', function(){
