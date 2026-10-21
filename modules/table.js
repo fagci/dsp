@@ -858,7 +858,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
 
 /* ---------- интерфейс ---------- */
 // значки карты (geoIcon): имя или любой короткий текст / эмодзи; в форме записи — выбор из списка
-const TBL_ICONS=['dot','square','diamond','triangle','star','flag','cross','plus','antenna','tx','rx','me','plane','ship','sat','balloon','📍','🏠','🚩','⚠','📡','🔊','📷','⛰','🚗','🔋'];
+const TBL_ICONS=['dot','square','diamond','triangle','star','flag','cross','plus','antenna','tx','rx','me','plane','ship','car','truck','bus','train','tram','bike','moto','heli','drone','walk','sat','balloon','📍','🏠','🚩','⚠','📡','🔊','📷','⛰','🚗','🔋'];
 const TBL_AUDIO=/^audio$/;                            // колонка со звуком: в ячейке id клипов «sm-…» (Sample Library, audioattach.js)
 const TBL_PHOTO=/^photos?$/;                           // колонка с фото: в ячейке id «ph-…» (хранилище photos.js)
 const TBL_BTN='background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;';

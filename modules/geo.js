@@ -1344,7 +1344,7 @@ function geoTileGet(src,z,x,y,net){
 const GEO_TILE_OPTS=['none',...Object.keys(GEO_TILES),'custom'], GEO_OV_OPTS=['none',...Object.keys(GEO_OVERLAYS),'custom'];
 def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
   ins:[{n:'rec',t:'rec'},{n:'rec2',t:'rec'},{n:'rec3',t:'rec'},{n:'rows',t:'bands'}],
-  outs:[{n:'pick',t:'rec'},{n:'sel',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'count',t:'num'}],
+  outs:[{n:'pick',t:'rec'},{n:'sel',t:'rec'},{n:'edit',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'count',t:'num'}],
   w:480, view:{h:360}, resize:true,
   params:[{n:'ttl',t:'range',min:0,max:1440,step:1,d:0,label:'keep, min (0 — forever)'},
           {n:'tiles',t:'select',opts:GEO_TILE_OPTS,d:'none',label:'tiles'},
@@ -1355,6 +1355,9 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
           {n:'cluster',t:'check',d:true,label:'cluster'},
           {n:'follow',t:'check',d:false,label:'follow'},
           {n:'net',t:'check',d:true,label:'online'},
+          {n:'mode',t:'select',opts:['view','edit','add'],d:'view',label:'mode: view / edit (select, drag, form) / add (tap = new point)'},
+          {n:'addName',t:'text',d:'P',label:'new point name prefix',adv:true},
+          {n:'addIcon',t:'text',d:'dot',label:'new point icon',adv:true},
           {n:'fit',t:'button',label:'Fit',fn:n=>geoMapFit(n)},
           {n:'clr',t:'button',label:'Clear',fn:n=>{ n.ents.clear(); n.gn.clear(); n.links.clear(); n.gnSrc=n.gsSrc=null; n.rasters?.clear(); n.selKey=null; geoMapChanged(n); }},
           {n:'trail',t:'range',min:1,max:5000,step:1,d:500,label:'track points per id',adv:true},
@@ -1377,7 +1380,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
     if(n.p.mlat==null) n.p.mlat=50;
     if(n.p.mlon==null) n.p.mlon=30;
     if(n.p.mz==null) n.p.mz=3;
-    n.ents=new Map(); n.gn=new Map(); n.gnSrc=null; n.links=new Map(); n.gsSrc=null; n.unplaced=0; n.seq=0; n.selKey=null; n.pickRec=null; n.selOut=null;
+    n.ents=new Map(); n.gn=new Map(); n.gnSrc=null; n.links=new Map(); n.gsSrc=null; n.unplaced=0; n.seq=0; n.selKey=null; n.pickRec=null; n.selOut=null; n.editQ=[]; n.loc=new Map(); n.addSeq=0;
     n.pickLat=null; n.pickLon=null; n.info=null; n.lastPrune=0; n.loadedStore=null;
     geoBaseLoad(); geoPlacesLoad();
     n.vec=null; n.vmsg=''; n.vgen=0; gdVecRestore(n);
@@ -1389,11 +1392,11 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
     if(n.p.store!==n.loadedStore) geoMapRestore(n);
     const now=Date.now();
     if(now-n.lastPrune>1000){ n.lastPrune=now; geoMapPrune(n,now); }
-    const pick=n.pickRec, sel=n.selOut; n.pickRec=null; n.selOut=null;
-    return {pick, sel, lat:n.pickLat, lon:n.pickLon, count:n.ents.size};
+    const pick=n.pickRec, sel=n.selOut, edit=n.editQ.length ? n.editQ.splice(0) : null; n.pickRec=null; n.selOut=null;
+    return {pick, sel, edit, lat:n.pickLat, lon:n.pickLon, count:n.ents.size};
   },
   // секундный тик — только когда на карте есть что-то зависящее от времени (ttl, "seen N s ago", подсказка)
-  drawKey:n=>n.dirtyGen+'|'+GeoBase.gen+'|'+GeoBase.state+'|'+GeoBase.placesState+'|'+GeoTiles.gen+'|'+n.vmsg+'|'+n.selKey+'|'+
+  drawKey:n=>n.dirtyGen+'|'+n.p.mode+'|'+GeoBase.gen+'|'+GeoBase.state+'|'+GeoBase.placesState+'|'+GeoTiles.gen+'|'+n.vmsg+'|'+n.selKey+'|'+
     (n.p.ttl>0 || n.selKey || (n.info && Date.now()-n.info.t<9000) ? Math.floor(Date.now()/1000) : ''),
   draw(n,cv,cx){ geoMapDraw(n,cv,cx); }});
 
@@ -1413,7 +1416,7 @@ function geoNodeRec(r){
   out.id='n:'+id; out.lat=pos.lat; out.lon=pos.lon; out.track=0;
   if(out.label==null && f.label==null) out.label=r.name ?? id;
   if(out.icon==null && f.shape!=null) out.icon=GEO_SHAPE_ICON[r[f.shape]];
-  return {id,rec:out,sig:JSON.stringify(out)};
+  return {id,k,rec:out,sig:JSON.stringify(out)};
 }
 function geoMapNodes(n,src){
   if(src===n.gnSrc) return;
@@ -1557,7 +1560,7 @@ function geoMapWire(n,cv){
   // pointercancel — карта сдвигается на чуть-чуть; ownpinch — щипок не отдавать зуму графа
   cv.style.touchAction='none';
   cv.classList.add('ownpinch');
-  const touches=new Map(); let drag=null, pinch=null, tap=null;
+  const touches=new Map(); let drag=null, pinch=null, tap=null, mv=null;
   cv.addEventListener('wheel',ev=>{
     ev.preventDefault(); ev.stopPropagation();
     const r=cv.getBoundingClientRect(), k=cv.width/r.width;
@@ -1580,6 +1583,10 @@ function geoMapWire(n,cv){
       pinch={d:Math.hypot(a.x-b.x,a.y-b.y)||1}; drag=null; tap=null; return;
     }
     drag={x:ev.clientX,y:ev.clientY}; tap={x:ev.clientX,y:ev.clientY};
+    if(n.p.mode==='edit' && n.selKey){                // тянем выбранную точку, а не карту
+      const r=cv.getBoundingClientRect(), k=cv.width/r.width, e=geoMapHit(n,(ev.clientX-r.left)*k,(ev.clientY-r.top)*k,14);
+      if(e && e.key===n.selKey && geoEditable(n,e)){ mv={e,moved:false}; drag=null; }
+    }
   });
   cv.addEventListener('pointermove',ev=>{
     if(!touches.has(ev.pointerId)) return;
@@ -1590,6 +1597,13 @@ function geoMapWire(n,cv){
       geoMapZoomAt(n,((a.x+b.x)/2-r.left)*k,((a.y+b.y)/2-r.top)*k,Math.log2(d/pinch.d));
       pinch.d=d; return;
     }
+    if(mv){
+      if(!tap || Math.hypot(ev.clientX-tap.x,ev.clientY-tap.y)>=3){
+        const q=geoPxLatLon(n,(ev.clientX-r.left)*k,(ev.clientY-r.top)*k), p=mv.e.pts[mv.e.pts.length-1];
+        p.lat=mv.e.rec.lat=q.lat; p.lon=mv.e.rec.lon=q.lon; mv.moved=true; tap=null; geoMapChanged(n);
+      }
+      return;
+    }
     if(drag){
       geoMapPan(n,(ev.clientX-drag.x)*k,(ev.clientY-drag.y)*k);
       drag.x=ev.clientX; drag.y=ev.clientY;
@@ -1598,6 +1612,10 @@ function geoMapWire(n,cv){
   const up=ev=>{
     touches.delete(ev.pointerId);
     if(touches.size<2) pinch=null;
+    if(mv){
+      if(mv.moved && ev.type==='pointerup'){ const p=mv.e.pts[mv.e.pts.length-1]; geoEmitEdit(n,mv.e,{lat:p.lat,lon:p.lon}); }
+      mv=null; tap=null; drag=null; return;
+    }
     if(tap && ev.type==='pointerup' && Math.hypot(ev.clientX-tap.x,ev.clientY-tap.y)<6){
       const r=cv.getBoundingClientRect(), k=cv.width/r.width;
       geoMapTap(n,(ev.clientX-r.left)*k,(ev.clientY-r.top)*k);
@@ -1606,6 +1624,82 @@ function geoMapWire(n,cv){
   };
   cv.addEventListener('pointerup',up);
   cv.addEventListener('pointercancel',up);
+}
+// правка точек: запись уходит на выход edit (в Table с upsert key = колонка имени), локально обновляется сразу
+function geoEditable(n,e){
+  const g=n.gn.get(e.id);
+  return g ? {k:g.k,id:g.id} : n.loc.get(e.id)||null;
+}
+function geoEmitEdit(n,e,ch){
+  const w=geoEditable(n,e); if(!w) return;
+  for(const c of ['lat','lon']) if(ch[c]!=null) ch[c]=+(+ch[c]).toFixed(6);
+  Object.assign(e.rec,ch);
+  n.editQ.push({[w.k]:w.id,...ch});
+  geoMapChanged(n);
+}
+function geoPxLatLon(n,px,py){
+  const v=geoView(n,n.cv.width,n.cv.height);
+  return {lat:unmercY(clamp((v.oy+py)/v.S,0,1)), lon:unmercX(geoWrapX((v.ox+px)/v.S))};
+}
+function geoMapHit(n,px,py,r){
+  const v=geoView(n,n.cv.width,n.cv.height);
+  let best=null, bd=r;
+  for(const e of n.ents.values()){
+    const p=e.pts[e.pts.length-1]; if(!p) continue;
+    const s=geoProj(v,p.lat,p.lon,px), d=Math.hypot(s.x-px,s.y-py);
+    if(d<bd){ bd=d; best=e; }
+  }
+  return best;
+}
+function geoAddPoint(n,px,py){
+  const {lat,lon}=geoPxLatLon(n,px,py), pre=n.p.addName||'P';
+  let name; do name=pre+(++n.addSeq); while(n.ents.has('id:n:'+name));
+  const rec={id:'n:'+name,name,label:name,lat:+lat.toFixed(6),lon:+lon.toFixed(6),icon:n.p.addIcon||'dot',track:0};
+  n.loc.set(rec.id,{k:'name',id:name});
+  geoMapAdd(n,rec);
+  n.editQ.push({name,lat:rec.lat,lon:rec.lon,icon:rec.icon});
+  n.selKey='id:'+rec.id;
+}
+const GEO_FORM_SKIP=new Set(['id','track','lat','lon','path','approx','label']);
+// форма правки выбранной точки: DOM поверх карты; поля — из самой записи, «＋» добавляет новое
+function geoEditSync(n,cv){
+  const host=cv.parentElement; if(!host) return;
+  const e=n.p.mode==='edit' && n.selKey && n.ents.get(n.selKey), w=e && geoEditable(n,e);
+  const key=w ? n.selKey : '';
+  if(n._formKey===key && (!key || n._formEl?.isConnected)) return;
+  n._formKey=key; n._formEl?.remove(); n._formEl=null;
+  if(!w) return;
+  if(getComputedStyle(host).position==='static') host.style.position='relative';
+  const el=document.createElement('div');
+  el.style.cssText='position:absolute;left:6px;bottom:6px;max-width:62%;max-height:72%;overflow:auto;background:var(--panel);border:1px solid var(--line);color:var(--txt);font-size:11px;padding:4px;border-radius:4px;z-index:3;touch-action:auto;';
+  for(const ev of ['pointerdown','pointerup','wheel','dblclick']) el.addEventListener(ev,x=>x.stopPropagation());
+  const inp='min-width:0;width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);color:var(--txt);font-size:11px;padding:1px 3px;';
+  const rows=[];
+  const row=(k,v)=>{
+    const d=document.createElement('div'); d.style.cssText='display:flex;gap:4px;margin:2px 0;align-items:center;';
+    const l=document.createElement('input'); l.value=k; l.style.cssText=inp+'width:38%;'; l.disabled=k!==''; if(k==='') l.placeholder='field';
+    const i=document.createElement('input'); i.style.cssText=inp;
+    if(typeof v==='boolean'){ i.type='checkbox'; i.checked=v; i.style.width='auto'; } else i.value=v;
+    i.dataset.t=typeof v;
+    d.append(l,i); el.append(d); rows.push([l,i]);
+  };
+  const h=document.createElement('div'); h.style.cssText='font-weight:bold;margin-bottom:2px;'; h.textContent=w.k+': '+w.id; el.append(h);
+  for(const k in e.rec) if(!GEO_FORM_SKIP.has(k) && k!==w.k && typeof e.rec[k]!=='object') row(k,e.rec[k]);
+  const bar=document.createElement('div'); bar.style.cssText='display:flex;gap:4px;margin-top:3px;';
+  const btn=(t,f)=>{ const b=document.createElement('button'); b.textContent=t; b.style.cssText='background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;'; b.onclick=f; bar.append(b); };
+  btn('＋',()=>row('',''));
+  btn('Save',()=>{
+    const ch={};
+    for(const [l,i] of rows){
+      const k=l.value.trim(); if(!k || GEO_FORM_SKIP.has(k) || k===w.k) continue;
+      let v=i.type==='checkbox' ? i.checked : i.value;
+      if(i.dataset.t==='number' || (i.dataset.t==='string' && v!=='' && /^-?\d+(\.\d+)?$/.test(v) && !/^0\d/.test(v))) v=+v;
+      if(v!==e.rec[k]) ch[k]=v;
+    }
+    if(Object.keys(ch).length) geoEmitEdit(n,e,ch);
+  });
+  btn('✕',()=>{ n.selKey=null; geoMapChanged(n); });
+  el.append(bar); host.append(el); n._formEl=el;
 }
 function geoMapTap(n,px,py){
   const v=geoView(n,n.cv.width,n.cv.height);
@@ -1618,6 +1712,7 @@ function geoMapTap(n,px,py){
     if(d<bd){ bd=d; best=e; }
   }
   if(best){ n.selKey=best.key; n.selOut=[{...best.rec}]; return; }
+  if(n.p.mode==='add'){ geoAddPoint(n,px,py); geoMapChanged(n); return; }
   n.selKey=null;
   const lat=unmercY(clamp((v.oy+py)/v.S,0,1)), lon=unmercX(geoWrapX((v.ox+px)/v.S));
   geoMapPick(n,lat,lon);                             // pick уходит с рельефом под точкой (ground), как только он известен
@@ -1663,6 +1758,7 @@ function geoCol(){ return geoLight() ? GEO_COL_LIGHT : GEO_COL_DARK; }
 const GEO_BASE_CAP=matchMedia('(pointer:coarse)').matches ? 4e6 : 1.2e7;   // пикселей буфера подложки
 function geoMapDraw(n,cv,cx){
   geoMapWire(n,cv);
+  geoEditSync(n,cv);
   const W=cv.width, H=cv.height, v=geoView(n,W,H), z=v.z;
   // подложка — в отдельную канву с полями M: при панораме сдвигаем готовую картинку,
   // при зуме растягиваем её и перерисовываем, когда зум успокоился
@@ -1873,6 +1969,7 @@ function geoEntColor(r,e){
   if(e.id!=null){ let h=0; for(const c of e.id) h=(h*31+c.charCodeAt(0))|0; return `hsl(${((h%360)+360)%360},70%,60%)`; }
   return themeColor('--acc')||'#e0b23c';
 }
+const GEO_ROT_ICONS=new Set(['plane','triangle','ship','car','truck','bus','train','tram','bike','moto','heli','drone','walk']);
 function geoIcon(cx,icon,x,y,s,rot,col){
   cx.save(); cx.translate(x,y);
   cx.fillStyle=col; cx.strokeStyle=col; cx.lineWidth=1.5;
@@ -1912,6 +2009,33 @@ function geoIcon(cx,icon,x,y,s,rot,col){
       if(rot!=null){ cx.beginPath(); cx.rotate(rot*D2R); cx.moveTo(0,-s*2.4); cx.lineTo(s*.5,-s*1.5); cx.lineTo(-s*.5,-s*1.5); cx.closePath(); cx.fill(); }
       break;
     case 'flag': cx.moveTo(0,s); cx.lineTo(0,-s*1.2); cx.lineTo(s,-s*.8); cx.lineTo(0,-s*.4); cx.stroke(); cx.fill(); break;
+    // транспорт: вид сверху, нос по курсу
+    case 'car': case 'truck': case 'bus': case 'train': case 'tram': {
+      rotate();
+      const L=s*{car:1.1,truck:1.5,bus:1.5,train:1.9,tram:1.5}[icon], W=s*(icon==='car'?.55:.6), dk='rgba(0,0,0,.6)';
+      if(icon==='truck'){ cx.fillRect(-W,-L,W*2,s*.7); cx.fillRect(-W,-L+s*.85,W*2,L*2-s*.85); }
+      else { cx.roundRect(-W,-L,W*2,L*2,icon==='car'?s*.35:s*.2); cx.fill(); }
+      cx.strokeStyle=dk; cx.lineWidth=.7; cx.stroke(); cx.fillStyle=dk;
+      if(icon==='car') cx.fillRect(-W*.7,-L*.45,W*1.4,s*.5);
+      else if(icon==='truck') cx.fillRect(-W*.7,-L*.85,W*1.4,s*.25);
+      else for(let y=-L+s*.4;y<L-s*.3;y+=icon==='bus'?s*.55:s*.8) cx.fillRect(-W*.6,y,W*1.2,s*.28);
+      break; }
+    case 'bike': case 'moto':
+      rotate(); cx.lineWidth=icon==='bike'?1.6:2.6; cx.moveTo(0,-s*1.1); cx.lineTo(0,s*1.1); cx.moveTo(-s*.55,-s*.5); cx.lineTo(s*.55,-s*.5); cx.stroke();
+      if(icon==='moto'){ cx.beginPath(); cx.ellipse(0,s*.1,s*.3,s*.6,0,0,2*Math.PI); cx.fill(); } break;
+    case 'heli':
+      rotate(); cx.ellipse(0,0,s*.45,s*.8,0,0,2*Math.PI); cx.fill();
+      cx.beginPath(); cx.moveTo(0,s*.6); cx.lineTo(0,s*1.4); cx.moveTo(-s*.4,s*1.4); cx.lineTo(s*.4,s*1.4);
+      cx.moveTo(-s*1.2,-s*.2); cx.lineTo(s*1.2,-s*.2); cx.lineWidth=1.2; cx.stroke(); break;
+    case 'drone':
+      rotate(); cx.moveTo(-s,-s); cx.lineTo(s,s); cx.moveTo(s,-s); cx.lineTo(-s,s); cx.lineWidth=1.8; cx.stroke();
+      cx.fillRect(-s*.35,-s*.35,s*.7,s*.7);
+      for(const [dx,dy] of [[-1,-1],[1,-1],[-1,1],[1,1]]){ cx.beginPath(); cx.arc(dx*s,dy*s,s*.38,0,2*Math.PI); cx.stroke(); }
+      break;
+    case 'walk':
+      cx.arc(0,0,s*.55,0,2*Math.PI); cx.fill(); cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=.8; cx.stroke();
+      if(rot!=null){ cx.beginPath(); cx.rotate(rot*D2R); cx.moveTo(0,-s*1.5); cx.lineTo(s*.5,-s*.8); cx.lineTo(-s*.5,-s*.8); cx.closePath(); cx.fill(); }
+      break;
     case 'sat':                                      // корпус и две панели
       cx.rotate(-Math.PI/4);
       cx.fillRect(-s*.35,-s*.35,s*.7,s*.7);
@@ -2037,7 +2161,7 @@ function geoDrawObjects(n,cx,v){
     let icon=r.icon!=null && r.icon!=='' ? String(r.icon) : 'dot';
     const size=recNum(r.size) ?? 6;
     let rot=recNum(r.heading ?? r.course ?? r.track);
-    if(rot==null && (icon==='plane'||icon==='triangle'||icon==='ship') && e.pts.length>1){
+    if(rot==null && GEO_ROT_ICONS.has(icon) && e.pts.length>1){
       const p0=e.pts[e.pts.length-2]; rot=geoBearing(p0.lat,p0.lon,last.lat,last.lon);
     }
     marks.push({x:s.x,y:s.y,icon,size,rot,col,a:cx.globalAlpha,sel:n.selKey===e.key,lab:r.label ?? e.id,age});
@@ -2124,6 +2248,7 @@ function geoDrawOverlay(n,cx,v){
   cx.restore();
 }
 defGroups('geoMap',[
+  {n:'Edit', p:'mode addName addIcon'},
   {n:'Display', p:'ttl tiles overlay ovAlpha grid labels cluster follow net'},
   {n:'Data layers', p:'vfile vclr osmKind osmGo'},
   {n:'Tracks', p:'trail maxEnt arrows rayKm', open:false},
