@@ -5482,7 +5482,7 @@ nt.size.w=980; nt.size.h=130; applySize(nt);
 const tb=addNode('table',40,200,{list:'demo/trip',show:['demo/trip'],key:'name'});
 tb.size.w=480; tb.size.h=360; applySize(tb);
 const me=addNode('geoMe',40,600,{src:'manual',lat:55.0110,lon:82.6480,look:20,fov:70,fovKm:0.6,rings:'0.25,0.5'});
-const mp=addNode('geoMap',560,200,{mode:'edit',mz:14,mlat:55.0145,mlon:82.6500,cluster:false});
+const mp=addNode('geoMap',560,200,{mode:'edit',mz:14,mlat:55.0145,mlon:82.6500,cluster:false,iconScale:1.6});
 mp.size.w=640; mp.size.h=480; applySize(mp);
 addEdge(tb.id,'rows',mp.id,'rows'); addEdge(mp.id,'edit',tb.id,'rec'); addEdge(me.id,'rec',mp.id,'rec');
 markWiresDirty();

@@ -1401,6 +1401,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
           {n:'overlay',t:'select',opts:GEO_OV_OPTS,d:'none',label:'overlay layer (relief shading, railways, trails…)'},
           {n:'ovAlpha',t:'range',min:.1,max:1,step:.05,d:.7,label:'overlay opacity'},
           {n:'grid',t:'select',opts:['none','lat/lon','maidenhead'],d:'none',label:'grid'},
+          {n:'iconScale',t:'range',min:.5,max:3,step:.1,d:1,label:'icon size ×'},
           {n:'labels',t:'check',d:true,label:'labels'},
           {n:'cluster',t:'check',d:true,label:'cluster'},
           {n:'follow',t:'check',d:false,label:'follow'},
@@ -1760,6 +1761,10 @@ function geoEditSync(n,cv){
   el.style.cssText='position:absolute;left:6px;bottom:6px;max-width:62%;max-height:72%;overflow:auto;background:var(--panel);border:1px solid var(--line);color:var(--txt);font-size:11px;padding:4px;border-radius:4px;z-index:3;touch-action:auto;';
   for(const ev of ['pointerdown','pointerup','wheel','dblclick']) el.addEventListener(ev,x=>x.stopPropagation());
   const inp='min-width:0;width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);color:var(--txt);font-size:11px;padding:1px 3px;';
+  const top=document.createElement('div'); el.append(top);          // чеклист — сверху, чтобы не тонул под полями формы
+  if(chk && w) top.style.cssText='border-bottom:1px solid var(--line);padding-bottom:4px;margin-bottom:4px;';
+  const roll=new Set();                                              // поля-итоги чеклиста (tasks, tasks_done, tasks_total) не правятся
+  if(e) for(const k in e.rec) if(k.endsWith('_total') && e.rec[k.slice(0,-6)]!==undefined){ const b=k.slice(0,-6); roll.add(b); roll.add(b+'_done'); roll.add(k); }
   const rows=[];
   const row=(k,v)=>{
     const d=document.createElement('div'); d.style.cssText='display:flex;gap:4px;margin:2px 0;align-items:center;';
@@ -1771,7 +1776,7 @@ function geoEditSync(n,cv){
   };
   if(w){
   const h=document.createElement('div'); h.style.cssText='font-weight:bold;margin-bottom:2px;'; h.textContent=w.k+': '+w.id; el.append(h);
-  for(const k in e.rec) if(!geoFormSkip(k) && k!==w.k && typeof e.rec[k]!=='object') row(k,e.rec[k]);
+  for(const k in e.rec) if(!geoFormSkip(k) && !roll.has(k) && k!==w.k && typeof e.rec[k]!=='object') row(k,e.rec[k]);
   const bar=document.createElement('div'); bar.style.cssText='display:flex;gap:4px;margin-top:3px;';
   const btn=(t,f)=>{ const b=document.createElement('button'); b.textContent=t; b.style.cssText='background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;'; b.onclick=f; bar.append(b); };
   btn('＋',()=>row('',''));
@@ -1796,11 +1801,11 @@ function geoEditSync(n,cv){
   host.append(el); n._formEl=el;
   if(chk){                                           // пункты чеклиста записи: галочки и добавление; сводка на значке обновится через Table
     const r=se.rec, lab=r.check_key ?? r.label ?? r.name ?? se.id, t=document.createElement('div');
-    t.style.cssText='font-weight:bold;margin:'+(w ? '6px' : '0')+' 0 2px;'; t.textContent=w ? '☑ checklist' : '☑ '+lab;
-    el.append(t);
+    t.style.cssText='font-weight:bold;margin:0 0 2px;'; t.textContent='☑ '+lab;
+    top.append(t);
     tcChkItems(r.check_list,r.check_via,r.check_col).then(s=>{
       if(!s || n._formEl!==el) return;
-      el.append(tcChkView(s,String(r.check_key ?? ''),{}));
+      top.append(tcChkView(s,String(r.check_key ?? ''),{}));
       if(!w){ const x=document.createElement('button'); x.textContent='✕'; x.style.cssText='position:absolute;right:3px;top:3px;font-size:10px;background:none;border:0;color:var(--txt);cursor:pointer;'; x.onclick=()=>{ n.selKey=null; geoMapChanged(n); }; el.append(x); }
     }).catch(()=>{});
   }
@@ -2307,8 +2312,8 @@ function geoIcon(cx,icon,x,y,s,rot,col){
     case 'dot':
       cx.arc(0,0,s*.8,0,2*Math.PI); cx.fill(); cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=1; cx.stroke(); break;
     default:                                         // любой короткий текст/эмодзи как значок, на подложке
-      cx.arc(0,0,s*1.25,0,2*Math.PI); cx.fillStyle=themeRgba('--screen',.85); cx.fill(); cx.lineWidth=1.5; cx.stroke();
-      cx.fillStyle=col; cx.font='bold '+Math.round(s*1.7)+'px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+      cx.arc(0,0,s*1.5,0,2*Math.PI); cx.fillStyle=themeRgba('--screen',.85); cx.fill(); cx.lineWidth=1.5; cx.stroke();
+      cx.fillStyle=col; cx.font='bold '+Math.round(s*2.1)+'px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
       cx.fillText(String(icon).slice(0,4),0,s*.1);
   }
   cx.restore();
@@ -2460,7 +2465,7 @@ function geoDrawObjects(n,cx,v){
     }
     if(!vis || C.member.has(e.key)) continue;
     let icon=r.icon!=null && r.icon!=='' ? String(r.icon) : 'dot';
-    const size=recNum(r.size) ?? 6;
+    const size=(recNum(r.size) ?? 6)*(+n.p.iconScale||1);
     let rot=recNum(r.heading ?? r.course ?? r.track);
     if(rot==null && GEO_ROT_ICONS.has(icon) && e.pts.length>1){
       const p0=e.pts[e.pts.length-2]; rot=geoBearing(p0.lat,p0.lon,last.lat,last.lon);
@@ -2472,10 +2477,12 @@ function geoDrawObjects(n,cx,v){
     geoIcon(cx,m.icon,m.x,m.y,m.size,m.rot,m.col);
     if(m.chk){                                       // чеклист записи: «сделано/всего», зелёный — всё сделано
       const t=m.chk[0]+'/'+m.chk[1], full=m.chk[0]>=m.chk[1];
-      cx.save(); cx.font='bold 9px sans-serif'; cx.textAlign='left'; cx.textBaseline='middle';
-      const w=cx.measureText(t).width+6, bx=m.x+m.size*.6, by=m.y-m.size-4;
-      cx.fillStyle=full ? '#2e9e44' : '#d99a1c'; cx.beginPath(); cx.roundRect(bx,by-6,w,12,5); cx.fill();
-      cx.fillStyle='#fff'; cx.fillText(t,bx+3,by); cx.restore();
+      const fs=Math.max(11,Math.round(m.size*1.3));
+      cx.save(); cx.font='bold '+fs+'px sans-serif'; cx.textAlign='left'; cx.textBaseline='middle';
+      const w=cx.measureText('☑ '+t).width+8, h=fs+4, bx=m.x+m.size*.7, by=m.y-m.size*1.6-h/2;
+      cx.fillStyle=full ? '#2e9e44' : '#c4851a'; cx.strokeStyle='rgba(0,0,0,.55)'; cx.lineWidth=1;
+      cx.beginPath(); cx.roundRect(bx,by-h/2,w,h,h/2); cx.fill(); cx.stroke();
+      cx.fillStyle='#fff'; cx.fillText('☑ '+t,bx+4,by+.5); cx.restore();
     }
     if(m.sel){
       cx.strokeStyle=themeColor('--scr-hi')||'#fff'; cx.lineWidth=1.5;
@@ -2558,7 +2565,7 @@ function geoDrawOverlay(n,cx,v){
 }
 defGroups('geoMap',[
   {n:'Edit', p:'mode addName addIcon drawColor'},
-  {n:'Display', p:'ttl tiles overlay ovAlpha grid labels cluster follow net'},
+  {n:'Display', p:'ttl tiles overlay ovAlpha iconScale grid labels cluster follow net'},
   {n:'Data layers', p:'vfile vclr osmKind osmGo'},
   {n:'Tracks', p:'trail maxEnt arrows rayKm', open:false},
   {n:'Export', p:'store csv geojson kml gpx', open:false},
