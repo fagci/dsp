@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=64;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=65;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -369,6 +369,7 @@ const PRESET_CATS={
   'Chat: Text In and Out':'Network & IoT',
   'Chat: Group with Avatars and Contact List':'Network & IoT',
   'Sync: Chat Between Your Devices':'Network & IoT',
+  'QR: Generator and Reader Loop (no hardware)':'Images & TV',
   'Files over WebRTC':'Network & IoT',
   'Call: voice, video, chat and files over WebRTC':'Network & IoT',
   'WebRTC: audio and video of the graph over a connection':'Network & IoT',
@@ -6044,6 +6045,19 @@ const c=addNode('chat',420,170,{}); c.size.w=340; c.size.h=300; applySize(c);
 const tk=addNode('ticker',40,470,{time:true}); tk.size.w=340; tk.size.h=160; applySize(tk);
 addEdge(c.id,'text',sd.id,'send');
 addEdge(sd.id,'line',c.id,'text'); addEdge(sd.id,'line',tk.id,'text');
+markWiresDirty();
+});
+preset('QR: Generator and Reader Loop (no hardware)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'QR Code turns text into a picture, Barcode / QR reads pictures back (BarcodeDetector where the browser has it, otherwise a built-in reader for QR). Here the code made from the Text Source goes straight into the reader and the Ticker shows what was read. Replace the Barcode input with a Camera or Video source to read real codes; to share a sync key as a QR use Sync devices → Show QR / Scan QR.'});
+nt.size.w=1000; nt.size.h=80; applySize(nt);
+const ts=addNode('textsrc',40,130,{text:'https://example.com/?t=1',repeat:0});
+ts.size.w=300; ts.size.h=100; applySize(ts);
+const q=addNode('qrgen',380,130,{ecc:'M',scale:6}); q.size.w=260; q.size.h=260; applySize(q);
+const fv=addNode('imgview',380,430,{}); fv.size.w=260; fv.size.h=260; applySize(fv);
+const bc=addNode('barcode',680,130,{period:.3}); bc.size.w=300; bc.size.h=120; applySize(bc);
+const tk=addNode('ticker',680,290,{time:true}); tk.size.w=300; tk.size.h=160; applySize(tk);
+addEdge(ts.id,'text',q.id,'text'); addEdge(q.id,'img',bc.id,'img'); addEdge(q.id,'img',fv.id,'img'); addEdge(bc.id,'text',tk.id,'text');
 markWiresDirty();
 });
 preset('Chat: Group with Avatars and Contact List', function(){

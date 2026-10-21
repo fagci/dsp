@@ -10,7 +10,7 @@
 // новой не подтвердит успешную загрузку ('ok'). Если скрипты не загрузились, страница шлёт 'rollback' —
 // пока сеть отдаёт index.html этой версии, воркер подаёт index.html последней подтверждённой.
 const PFX='dsp-shell-v';
-const CACHE='dsp-shell-v84f60897';
+const CACHE='dsp-shell-v52ce3e32';
 const V=CACHE.slice(PFX.length);
 const META='dsp-meta', STATE_KEY='./__state', PIN_MS=6*3600e3;    // сколько держать откат, пока не выйдет новая версия
 const SHELL=[
@@ -29,6 +29,8 @@ const SHELL=[
   './vendor/satellite.min.js?v=5.0.0',
   './vendor/lame.min.js?v=1.2.1',
   './vendor/vis-network.min.js?v=9.1.9',
+  './vendor/qrcode.min.js?v=1.4.4',
+  './vendor/jsqr.min.js?v=1.4.0',
   './vendor/mbelib.wasm',
   './vendor/rtl433.wasm',
   './vendor/codec2.wasm',
@@ -52,6 +54,8 @@ const SHELL=[
   './modules/modulation.js?v='+V,
   './modules/output.js?v='+V,
   './modules/processing.js?v='+V,
+  './modules/qr-kernels.js?v='+V,
+  './modules/qr.js?v='+V,
   './modules/protocols.js?v='+V,
   './modules/sigid.js?v='+V,
   './modules/baseline-kernels.js?v='+V,
