@@ -68,6 +68,7 @@ const Eng = {
                (typeof crossOriginIsolated==='undefined' || crossOriginIsolated);
     this._preload = this.sab ? this.preloadSab : this.preload;
 
+    this._lastUnderrun=0; this.audioUnderruns=0;
     let src, procOpts;
     if(this.sab){
       // Кольцо в общей памяти: воркет пишет вход (микрофон) и читает выход (посчитанный звук)
@@ -81,7 +82,6 @@ const Eng = {
       // звука", которые сам движок раньше никак не считал (см. pumpSAB).
       this._ctrlBuf=new SharedArrayBuffer(3*4);
       this._ctrl=new Int32Array(this._ctrlBuf);
-      this._lastUnderrun=0; this.audioUnderruns=0;
       this._inLBuf=new SharedArrayBuffer(this.RING*4); this._inRBuf=new SharedArrayBuffer(this.RING*4);
       this._outBuf=new SharedArrayBuffer(this.RING*C*4);   // канал c лежит в [c*RING, (c+1)*RING)
       this._inL=new Float32Array(this._inLBuf); this._inR=new Float32Array(this._inRBuf);
