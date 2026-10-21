@@ -643,7 +643,7 @@ function markLive(nodes,edges,map){
   const stack=[];
   for(const n of nodes){
     const d=MOD[n.type];
-    if(!d || d.draw || d.always || PROF_ROOT_CATS.has(d.cat) || !portsOf(n,'outs').length || n._isl){ live.add(n.id); stack.push(n.id); }
+    if(!d || d.draw || d.always || (d.petFeed && typeof Pet!=='undefined' && Pet.on) || PROF_ROOT_CATS.has(d.cat) || !portsOf(n,'outs').length || n._isl){ live.add(n.id); stack.push(n.id); }
   }
   while(stack.length){ const id=stack.pop(); for(const f of ins.get(id)||[]) if(!live.has(f)){ live.add(f); stack.push(f); } }
   for(const n of nodes) n._dead=!live.has(n.id);

@@ -801,7 +801,7 @@ function sidClassify(n,g,plan){
   return {...c, src, band:band?.label||'', hint:sidHint(c,g)};
 }
 
-def({ id:'sigid', title:'Signal Type Identifier', cat:'Analysis', readout:true, tall:true,
+def({ id:'sigid', title:'Signal Type Identifier', cat:'Analysis', readout:true, tall:true, petFeed:true,
   // spec — спектр любого источника (у rtlsdr в нём ещё и сырой IQ для анализа отсчётов);
   // in — аудио: свой спектр, если spec не подключён, и отсчёты для анализа;
   // plan — band plan для контекста. bands — метки на 'sa' (напрямую или через bandplan.sigs).
@@ -838,7 +838,8 @@ def({ id:'sigid', title:'Signal Type Identifier', cat:'Analysis', readout:true, 
       for(const g of n.sigs) g.cls=sidClassify(n,g,I.plan);
       // скобка — по полосе 99% мощности: края сегмента у сильного сигнала захватывают брызги
       n.labels=n.sigs.map(g=>({lo:Math.max(g.lo,g.fc-g.obw/2), hi:Math.min(g.hi,g.fc+g.obw/2), label:g.cls.tag, color:SID_T[g.cls.t]?.c||'#b0bec5',
-        sig:true, db:g.db, conf:g.cls.conf, type:g.cls.t, f:g.fc}));
+        sig:true, db:g.db, conf:g.cls.conf, type:g.cls.t, f:g.fc, snr:g.snr, rf:!!g.rf}));
+      if(typeof Pet!=='undefined' && Pet.on) Pet.feed(n.labels);
       const src=n.p.iq? sidSource(n,s) : null;
       n.text=(n.p.auto? '' : 'range '+fmtHz(n.range[0],3)+'–'+fmtHz(n.range[1],3)+'Hz'+(off? ' — outside the spectrum' : '')+'\n')+
         n.sigs.length+' signal'+(n.sigs.length===1?'':'s')+' · floor '+(n.floorDb??0).toFixed(0)+' dB · samples: '+

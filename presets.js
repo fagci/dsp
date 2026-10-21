@@ -199,6 +199,8 @@ const PRESET_CATS={
   'USB SDR: Multiband Scan (panes + CFAR)':'SDR Receivers',
   'USB SDR ×4: Multiband Scan (4 receivers)':'SDR Receivers',
   'USB SDR: Signal Identifier':'SDR Receivers',
+  'Aether Pet: Signal Hunter (USB SDR)':'Unknown Signals',
+  'Aether Pet: Microphone Hunt':'Unknown Signals',
   'IQ: Receiver from Blocks (Generator)':'SDR Receivers',
   'USB SDR: FM Receiver from Blocks':'SDR Receivers',
   'USB SDR: FM Radio with RDS':'SDR Receivers',
@@ -1252,6 +1254,40 @@ addEdge(bp.id,'rows',sa.id,'bands');
 addEdge(sa.id,'f1',rx.id,'tuneFreq');
 addEdge(sa.id,'centerFreq',rx.id,'steerFreq');
 addEdge(rx.id,'audio',dc.id,'L'); addEdge(rx.id,'audio',dc.id,'R');
+markWiresDirty();
+});
+preset('Aether Pet: Signal Hunter (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The pet lives in the core: switch it on in Settings (sliders button → Aether Pet). While it is on, every Signal Type Identifier\n'+
+  'feeds it, even one nobody looks at. It sets quests from the gear you have plugged in, and pays xp for each new kind of signal:\n'+
+  'the harder to decode and the weaker (lower SNR), the more. Sweep a band, let sigid label the signals, and follow the pet.\n'+
+  'This window only shows it. Lower the sigid threshold (to 5 dB) to catch fainter things and earn more.'});
+nt.size.w=560; nt.size.h=150; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:true,gainDb:30,dcShift:true,demod:'WFM',freq:100000000});
+const sa=addNode('sa',300,260,{auto:true,floor:-90,top:-20,split:.45});
+sa.size.w=560; sa.size.h=360; applySize(sa);
+const si=addNode('sigid',300,660,{period:2,thr:8,maxSig:8});
+si.size.w=480; si.size.h=240; applySize(si);
+const pt=addNode('pet',900,260,{});
+pt.size.w=420; pt.size.h=420; applySize(pt);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'spec',si.id,'spec');
+addEdge(si.id,'bands',sa.id,'bands');
+addEdge(sa.id,'f1',rx.id,'tuneFreq');
+addEdge(sa.id,'centerFreq',rx.id,'steerFreq');
+markWiresDirty();
+});
+preset('Aether Pet: Microphone Hunt', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'No SDR needed. Switch the pet on in Settings (sliders button → Aether Pet), start the engine and enable the microphone.\n'+
+  'Whistle, or play DTMF keypad tones next to it: Signal Type Identifier names them, and the pet turns them into xp and quests.'});
+nt.size.w=520; nt.size.h=110; applySize(nt);
+const mi=addNode('mic',40,200,{});
+const si=addNode('sigid',300,200,{period:1,thr:10,maxSig:6,fftSize:'4096'});
+si.size.w=480; si.size.h=240; applySize(si);
+const pt=addNode('pet',820,200,{});
+pt.size.w=420; pt.size.h=420; applySize(pt);
+addEdge(mi.id,'a',si.id,'in');
 markWiresDirty();
 });
 preset('IQ: Receiver from Blocks (Generator)', function(){
