@@ -93,9 +93,10 @@ button,select,input{font:inherit;color:inherit}
 .pitem:hover .pins,.pitem:hover .pdel{display:block}
 .pitem .pins:hover,.pitem .pdel:hover{color:var(--txt);background:var(--bg)}
 #patchList .pitem{padding-top:4px;padding-bottom:4px}
-#patchList .ptxt{display:block;line-height:1.25}
-#patchList .ptxt em{font-style:normal;color:var(--dim);font-size:10px;margin-right:5px}
-#patchList .ptxt b{display:inline;overflow-wrap:anywhere}
+#patchList .ptxt{line-height:1.25}
+#patchList .ptxt em{font-style:normal;color:var(--dim);font-size:9px;letter-spacing:.04em;text-transform:uppercase;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#patchList .ptxt b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pitem b{font-weight:400;overflow-wrap:anywhere}
 .pitem i{font-style:normal;color:var(--dim);font-size:9px}
 .pitem .prow{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 8px}
