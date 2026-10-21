@@ -529,6 +529,35 @@ async function tblRemove(n,i){
   tblDerive(n);
   n.idx=Math.min(n.idx,Math.max(0,n.rows.length-1));
 }
+// записи с rec: обычные — в очередь (upsert по ключу); _delete — удалить строку; _was — переименовать (ключ был _was, стал значением в колонке key).
+// flush — сразу записать (вызов напрямую, когда движок остановлен и по проводу ничего не идёт)
+function tblIngest(n,recs,flush){
+  if(tblRO(n) || !n.p.collect) return;
+  const del=[], ren=[];
+  for(const r of recs) if(r && typeof r==='object') (r._delete ? del : r._was!=null ? ren : n.pend).push(r);
+  if(del.length) tblDelRecs(n,del);
+  if(ren.length) tblRenameRecs(n,ren);
+  if(flush && n.pend.length) tblFlush(n);
+}
+async function tblRenameRecs(n,recs){
+  const key=String(n.p.key||'').trim();
+  for(const r of recs){
+    const {_was,...rest}=r, k=key ? n.all.findIndex(x=>String(x[key])===String(_was)) : -1;
+    if(k>=0 && String(rest[key])!==String(_was) && !n.loading && !tblRO(n)){
+      const row=n.all[k], o={...row,[key]:rest[key]}, was=n.labelFn(row);
+      n.all[k]=o;
+      if(tblKind(n.p.list)==='db'){
+        const it=tblToItem(o,n.cl,n.virt);
+        await ListDB.update(n.ids[k],{name:it.name,fields:it.fields,value:it.fields.value??''});
+        const now=n.labelFn(o);
+        if(was && now && was!==now && await tcRelink(n.p.list,was,now)){ await tblLoad(n); n.pend.push(rest); continue; }
+      } else await tblSave(n);
+      tblDerive(n); n.uiDirty=true; n.uiFull=true;
+    }
+    n.pend.push(rest);                                    // остальные поля — обычным upsert по новому ключу
+  }
+  if(n.pend.length) tblFlush(n);
+}
 // запись с _delete на rec: удаляет строку с тем же значением в колонке upsert key (так карта удаляет точки)
 async function tblDelRecs(n,recs){
   const key=String(n.p.key||'').trim();
@@ -822,7 +851,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     if(p.pfields!==n._pfSeen){ n._pfSeen=p.pfields; n._pfAt=performance.now(); n._pfPend=true; }
     else if(n._pfPend && performance.now()-n._pfAt>1000 && !n.loading && n.loaded===p.list){ n._pfPend=false; tblBackfill(n); }
     if(p.collect && !tblRO(n)){
-      if(I.rec && I.rec!==n.lastRec){ n.lastRec=I.rec; const del=[]; for(const r of Array.isArray(I.rec) ? I.rec : [I.rec]) if(r && typeof r==='object') (r._delete ? del : n.pend).push(r); if(del.length) tblDelRecs(n,del); }
+      if(I.rec && I.rec!==n.lastRec){ n.lastRec=I.rec; tblIngest(n,Array.isArray(I.rec) ? I.rec : [I.rec],false); }
       if(typeof I.text==='string' && I.text!==n.lastText){ n.lastText=I.text; if(I.text) n.pend.push(...tblTextRows(n,I.text)); }
     }
     if(p.log){ n.logT+=dt; if(n.logT>=Math.max(.05,+p.period||1)){ n.logT=0; n.pend.push(tblLogRow(n,I)); } }
