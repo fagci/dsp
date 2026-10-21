@@ -1757,7 +1757,7 @@ function geoEditSync(n,cv){
   n._formKey=key; n._formEl?.remove(); n._formEl=null;
   if(!w && !chk) return;
   if(getComputedStyle(host).position==='static') host.style.position='relative';
-  const el=document.createElement('div');
+  const el=document.createElement('div'); el.className='geo-ov';
   el.style.cssText='position:absolute;left:6px;bottom:6px;max-width:62%;max-height:72%;overflow:auto;background:var(--panel);border:1px solid var(--line);color:var(--txt);font-size:11px;padding:4px;border-radius:4px;z-index:3;touch-action:auto;';
   for(const ev of ['pointerdown','pointerup','wheel','dblclick']) el.addEventListener(ev,x=>x.stopPropagation());
   const inp='min-width:0;width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);color:var(--txt);font-size:11px;padding:1px 3px;';
@@ -1856,7 +1856,7 @@ function geoDraftSync(n,cv){
   if(!on){ if(n.draft) n.draft=null; if(n._drawEl){ n._drawEl.remove(); n._drawEl=null; } return; }
   if(!n._drawEl?.isConnected){
     if(getComputedStyle(host).position==='static') host.style.position='relative';
-    const el=document.createElement('div');
+    const el=document.createElement('div'); el.className='geo-ov';
     el.style.cssText='position:absolute;left:6px;bottom:6px;display:flex;gap:4px;align-items:center;background:var(--panel);border:1px solid var(--line);color:var(--txt);font-size:11px;padding:3px 5px;border-radius:4px;z-index:3;';
     for(const ev of ['pointerdown','pointerup','wheel','dblclick']) el.addEventListener(ev,x=>x.stopPropagation());
     const btn=(t,tip,f)=>{ const b=document.createElement('button'); b.textContent=t; b.title=tip; b.style.cssText='background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:1px 6px;border-radius:3px;cursor:pointer;font-size:11px;'; b.onclick=()=>{ f(); geoMapChanged(n); }; el.append(b); };
