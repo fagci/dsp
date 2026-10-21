@@ -5,7 +5,7 @@
    Вход: vid (живое видео — камера, видеофайл) или img (фото, кадры IP-камеры). Ядро (IoU, трекинг, подписи) — objdet-kernels.js,
    проверяется tools/test-objdet.mjs. */
 
-const OD_LIBS=['https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js',
+const OD_LIBS=['https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.es2017.min.js',
                'https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js'];
 const odScripts={}, odModels={};
 function odScript(src){
