@@ -6,7 +6,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,JSON,Map,Set,Promise,Blob,ArrayBuffer,Uint8Array,String,Array,Object,crypto,console,Infinity});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/sync-kernels.js'),'utf8')+';this.K={syHash,syLegacyUid,syUid,syKeyGen,syKeyNorm,syPlan,SySession,SY_CHUNK};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/sync-kernels.js'),'utf8')+';this.K={syHash,syLegacyUid,syUid,syKeyGen,syKeyNorm,syLabels,syPlan,SySession,SY_CHUNK};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const M=o=>new Map(Object.entries(o).map(([k,v])=>[k,{m:0,d:0,s:0,...v}]));
@@ -17,6 +17,12 @@ ok('key format',/^([0-9A-Z]{5}-){5}[0-9A-Z]{1}$/.test(k),k);
 ok('key normalisation',K.syKeyNorm(k.toLowerCase().replace(/-/g,' '))===k && K.syKeyNorm('short')===null);
 ok('keys differ',K.syKeyGen()!==K.syKeyGen());
 ok('legacy uid is stable and content-based',K.syLegacyUid('a','b')===K.syLegacyUid('a','b') && K.syLegacyUid('a','b')!==K.syLegacyUid('ab',''));
+
+// подписи устройств
+let lb=K.syLabels([{id:'abcdef',name:'Phone'},{id:'123456',name:'Laptop'},{id:'zzzzzz',name:''}]);
+ok('labels: names, empty name gets an id tail',lb.get('abcdef')==='Phone' && lb.get('123456')==='Laptop' && lb.get('zzzzzz')==='device-zzzz');
+lb=K.syLabels([{id:'abcdef',name:'Phone'},{id:'xyz789',name:'Phone'}]);
+ok('labels: equal names are told apart',lb.get('abcdef')==='Phone#abc' && lb.get('xyz789')==='Phone#xyz');
 
 // план
 let p=K.syPlan(M({a:{m:5}}),M({a:{m:9},b:{m:1}}));

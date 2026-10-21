@@ -5,13 +5,19 @@
    устройствах; запасные пути: ссылка с #sync=… и ввод вручную. По ключу выводятся комната и шифр сигнальных сообщений
    (rtcRoomKey / rtcSeal из webrtc.js) на MQTT-брокере по WebSocket; данные идут напрямую по WebRTC (канал sync), брокер
    видит только зашифрованные offer / answer. Слияние — ядро sync-kernels.js: побеждает более поздняя правка, удаления помнятся
-   метками. Устройств может быть больше двух: каждое соединяется с каждым. */
+   метками. Устройств может быть больше двух: каждое соединяется с каждым.
+   Второй канал соединения (app) — данные графа между устройствами: узел Sync Data шлёт текст всем или выбранному устройству. */
 
 const SY_LS='dsp.sync', SY_SPACES=['files','audio','images'], SY_CRED='dsp-sync';
-const syDefaults={key:'',on:false,url:'wss://broker.emqx.io:8084/mqtt',ice:'stun:stun.l.google.com:19302',maxMB:100};
+const syDefaults={key:'',on:false,url:'wss://broker.emqx.io:8084/mqtt',ice:'stun:stun.l.google.com:19302',maxMB:100,name:''};
 function syCfg(){ try{ return {...syDefaults,...JSON.parse(localStorage.getItem(SY_LS)||'{}')}; }catch(e){ return {...syDefaults}; } }
 function sySave(c){ try{ localStorage.setItem(SY_LS,JSON.stringify(c)); }catch(e){} }
 const syHidden=n=>n==='@patch' || n.startsWith('presets/');
+function syMyName(){                                   // имя этого устройства: своё или случайное, но постоянное
+  const c=syCfg(); if(c.name) return c.name;
+  const n=String(navigator.userAgentData?.platform||navigator.platform||'device').replace(/\s+/g,'')+'-'+Math.random().toString(36).slice(2,6);
+  sySave({...c,name:n}); return n;
+}
 const sySleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 // ---------- метки удаления ----------
@@ -112,7 +118,7 @@ const syStore={
 
 // ---------- соединение ----------
 const SyLink={
-  on:false, s:null, myId:'', hiT:null, chT:null, peers:new Map(), msg:'off', onStatus:null, unsub:null,
+  on:false, s:null, myId:'', nodes:new Set(), hiT:null, chT:null, peers:new Map(), msg:'off', onStatus:null, unsub:null,
   say(t){ if(t!==undefined) this.msg=t; this.onStatus?.(this.text()); },
   text(){
     const open=[...this.peers.values()].filter(p=>p.open);
@@ -156,21 +162,43 @@ const SyLink={
     for(const p of open) p.sess?.start().catch(()=>{});
   },
   syncNow(){ this.kick(); },
+  devices(){                                           // устройства с открытым каналом данных графа
+    const l=[...this.peers.values()].filter(p=>p.ac?.readyState==='open' && p.name!==null);
+    const lab=syLabels(l.map(p=>({id:p.id,name:p.name})));
+    return l.map(p=>({id:p.id,label:lab.get(p.id),p}));
+  },
+  sendApp(ch,to,text){                                 // to пусто — всем; число отправленных
+    let n=0;
+    for(const d of this.devices()) if(!to || d.label===to){ try{ d.p.ac.send(JSON.stringify({t:'msg',c:ch,d:String(text).slice(0,65536)})); n++; }catch(e){} }
+    return n;
+  },
+  appIn(p,data){
+    let m; try{ m=JSON.parse(data); }catch(e){ return; }
+    if(!m) return;
+    if(m.t==='name'){ p.name=String(m.name||'').slice(0,40); this.say(); return; }
+    if(m.t!=='msg' || typeof m.d!=='string') return;
+    const from=this.devices().find(d=>d.p===p)?.label||p.name||'';
+    for(const n of this.nodes) if(n.p.channel===m.c){ n.rx.push({from,d:m.d}); if(n.rx.length>200) n.rx.shift(); }
+  },
   drop(p){
     if(this.peers.get(p.id)===p) this.peers.delete(p.id);
     p.open=false; clearTimeout(p.dead);
     try{ p.dc.onopen=p.dc.onclose=p.dc.onmessage=null; p.dc.close(); }catch(e){}
+    try{ p.ac.onopen=p.ac.onclose=p.ac.onmessage=null; p.ac.close(); }catch(e){}
     try{ p.pc.onconnectionstatechange=null; p.pc.close(); }catch(e){}
     if(this.on) this.say(this.peers.size ? undefined : 'looking for other devices…');
   },
   mkPeer(id,initiator){
     const c=syCfg(), ice=String(c.ice||'').split(/[\s,]+/).filter(Boolean).map(urls=>({urls}));
     const pc=new RTCPeerConnection({iceServers:ice}), dc=pc.createDataChannel('sync',{negotiated:true,id:0}); dc.binaryType='arraybuffer';
-    const p={id,pc,dc,open:false,sess:null,initiator,dead:0};
+    const ac=pc.createDataChannel('app',{negotiated:true,id:1});
+    const p={id,pc,dc,ac,name:null,open:false,sess:null,initiator,dead:0};
     const sess=()=>p.sess||(p.sess=new SySession(syStore,x=>this.tx(p,x),{maxBytes:(+c.maxMB||100)*1048576,on:()=>this.say()}));
     dc.onopen=()=>{ p.open=true; clearTimeout(p.dead); this.say(); if(initiator) sess().start().catch(()=>{}); };
     dc.onmessage=e=>sess().onMessage(e.data);
     dc.onclose=()=>this.drop(p);
+    ac.onopen=()=>{ try{ ac.send(JSON.stringify({t:'name',name:syMyName()})); }catch(e){} };
+    ac.onmessage=e=>{ if(typeof e.data==='string') this.appIn(p,e.data); };
     pc.onconnectionstatechange=()=>{ if(pc.connectionState==='failed' || pc.connectionState==='closed') this.drop(p); };
     p.dead=setTimeout(()=>{ if(!p.open) this.drop(p); },30000);          // не соединились — следующий hi начнёт заново
     this.peers.set(id,p); return p;
@@ -210,6 +238,36 @@ const SyLink={
   },
 };
 
+// ---------- узел графа: данные между устройствами ----------
+def({ id:'syncdata', title:'Sync Data', cat:'Sources', kw:'sync devices send text between my devices phone laptop channel share',
+  ins:[{n:'send',t:'txt'},{n:'to',t:'txt'}],
+  outs:[{n:'line',t:'txt'},{n:'go',t:'num'},{n:'from',t:'txt'},{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'devices',t:'num'}],
+  readout:true, tall:true,
+  params:[
+    {n:'channel',t:'text',d:'data',label:'channel name (receivers take only messages of the same name)'},
+    {n:'device',t:'select',opts:n=>{ const o=['all devices',...SyLink.devices().map(d=>d.label)]; if(n.p.device && !o.includes(n.p.device)) o.push(n.p.device); return o; },d:'all devices',label:'send to (devices that keep the sync on; set their names in Sync devices)'},
+  ],
+  init:n=>{ n.rx=[]; n.lineQ=[]; n.recQ=[]; n.lastLine=''; n.lastFrom=''; n.count=0; n.msgs=0; n.sent=0; n.lastSend=undefined; SyLink.nodes.add(n); },
+  dispose:n=>{ SyLink.nodes.delete(n); },
+  process(n,I){
+    SyLink.nodes.add(n);
+    if(typeof I.send==='string' && I.send!==n.lastSend){
+      n.lastSend=I.send;
+      const to=typeof I.to==='string' && I.to ? I.to : n.p.device==='all devices' ? '' : n.p.device;
+      n.sent+=SyLink.sendApp(n.p.channel,to,I.send);
+    }
+    const it=n.rx.shift(); if(it){ n.lastFrom=it.from; netTextFeed(n,it.d); }
+    let go=0;
+    if(n.lineQ.length){ n.lastLine=n.lineQ.shift(); go=1; n.count++; }
+    const rec=n.recQ.length ? n.recQ.splice(0) : null;
+    return {line:n.lastLine, go, from:n.lastFrom, rec, count:n.count, devices:SyLink.devices().length}; },
+  drawKey:n=>SyLink.on+'|'+SyLink.devices().map(d=>d.label).join()+'|'+n.msgs+'|'+n.sent+'|'+n.lastFrom,
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const d=SyLink.devices();
+    r.textContent=(!SyLink.on ? 'sync is off: open “Sync devices”, enter the key and tick “keep in sync”' : d.length ? 'devices: '+d.map(x=>x.label).join(', ') : 'no other device connected')
+      +'\nme: '+syMyName()+' · sent '+n.sent+' · received '+n.msgs+(n.lastLine ? '\n'+(n.lastFrom ? n.lastFrom+': ' : '')+n.lastLine.slice(0,400) : ''); }
+});
+
 // ---------- ключ в аккаунте ----------
 async function syCredSave(key){
   if(!window.PasswordCredential || !navigator.credentials?.store) throw new Error('this browser cannot store the key in the account password manager');
@@ -238,13 +296,14 @@ function syDialog(){
   const title=document.createElement('b'); title.style.fontSize='13px'; title.textContent='Sync devices';
   const status=document.createElement('div'); status.style.cssText='min-height:1.4em;white-space:pre-wrap';
   const note=document.createElement('div'); note.style.cssText='color:var(--dim);min-height:1.4em;white-space:pre-wrap';
+  const nameIn=inp(syCfg().name||syMyName(),'name of this device');
   const keyIn=inp(syCfg().key,'key of the pair, XXXXX-XXXXX-…');
   const urlIn=inp(syCfg().url,'wss://broker…'), iceIn=inp(syCfg().ice,'stun:…'), mbIn=inp(String(syCfg().maxMB),'MB'); mbIn.style.maxWidth='70px'; mbIn.style.flex='0 0 70px';
   const onChk=document.createElement('input'); onChk.type='checkbox'; onChk.checked=syCfg().on;
   const save=()=>{
     const c=syCfg(), k=syKeyNorm(keyIn.value);
     if(keyIn.value.trim() && !k) throw new Error('the key is not valid (26 characters)');
-    sySave({...c,key:k||'',url:urlIn.value.trim(),ice:iceIn.value.trim(),maxMB:+mbIn.value||100,on:onChk.checked});
+    sySave({...c,name:nameIn.value.trim().slice(0,40),key:k||'',url:urlIn.value.trim(),ice:iceIn.value.trim(),maxMB:+mbIn.value||100,on:onChk.checked});
     keyIn.value=k||'';
   };
   const apply=()=>{ save(); const c=syCfg(); if(c.on && c.key) SyLink.start(); else SyLink.stop(); note.style.color='var(--dim)'; };
@@ -254,6 +313,7 @@ function syDialog(){
     dim('Files (Files, Audio, Images) and Table records are kept the same on all devices that have this key: the newer edit wins, deletions are passed on. Data goes straight between the devices (WebRTC); the broker sees only encrypted connection offers.'),
     status,
     row(onChk,Object.assign(document.createElement('span'),{textContent:'keep in sync while the app is open'})),
+    dim('Name of this device (shown in Sync Data to choose where to send)'), row(nameIn),
     dim('Key of the pair'),
     row(keyIn,btn('New key',mk,'Make a random key for a new pair of devices')),
     row(

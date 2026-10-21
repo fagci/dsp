@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=63;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=64;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -141,8 +141,11 @@ buildPatchList();
 patchSearchEl.addEventListener('input',e=>{ patchQuery=e.target.value; buildPatchList(); });
 // Строит недостающие/устаревшие встроенные пресеты и обновляет версию хранилища.
 // Сами пресеты регистрируются ниже через preset(имя, функция-строитель), см. PRESETS.
+// встроенные пресеты, снятые с поставки: при смене версии стираются из сохранённых
+const PRESETS_GONE=['Aether Pet:'];
 function buildBuiltinPresets(){
 const p=readP(), ver=+(LS.get(VKEY)||0);
+if(ver <PRESET_VER) for(const k of Object.keys(p)) if(PRESETS_GONE.some(g=>k.startsWith(g))) delete p[k];
 for(const [name,fn] of Object.entries(PRESETS)){
 if(ver <PRESET_VER || !p[name]){
 try{ fn(); autoLayout(); p[name]=serialize(); }
@@ -365,6 +368,7 @@ const PRESET_CATS={
   'Network: Same Nodes and Links as Graph and on the Map':'Maps & Locating',
   'Chat: Text In and Out':'Network & IoT',
   'Chat: Group with Avatars and Contact List':'Network & IoT',
+  'Sync: Chat Between Your Devices':'Network & IoT',
   'Files over WebRTC':'Network & IoT',
   'Call: voice, video, chat and files over WebRTC':'Network & IoT',
   'WebRTC: audio and video of the graph over a connection':'Network & IoT',
@@ -6028,6 +6032,18 @@ c.size.w=340; c.size.h=300; applySize(c);
 const tk=addNode('ticker',760,130,{time:true});
 tk.size.w=360; tk.size.h=140; applySize(tk);
 addEdge(ts.id,'text',c.id,'text'); addEdge(c.id,'text',tk.id,'text');
+markWiresDirty();
+});
+preset('Sync: Chat Between Your Devices', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'A text channel between your own devices over the sync link (no codes, no room): open «Sync devices» (the arrows button), give both devices the same key, tick «keep in sync» and name each device. Load this preset on both, type in the Chat — the text arrives on the other device in its Chat. In Sync Data pick one device in «send to» or leave «all devices»; the `to` input overrides it with a device name. Nodes with the same channel name see the same messages; the `from` output names the sender. The Ticker keeps what arrived.'});
+nt.size.w=1000; nt.size.h=110; applySize(nt);
+const sd=addNode('syncdata',40,170,{channel:'chat'});
+sd.size.w=340; sd.size.h=260; applySize(sd);
+const c=addNode('chat',420,170,{}); c.size.w=340; c.size.h=300; applySize(c);
+const tk=addNode('ticker',40,470,{time:true}); tk.size.w=340; tk.size.h=160; applySize(tk);
+addEdge(c.id,'text',sd.id,'send');
+addEdge(sd.id,'line',c.id,'text'); addEdge(sd.id,'line',tk.id,'text');
 markWiresDirty();
 });
 preset('Chat: Group with Avatars and Contact List', function(){

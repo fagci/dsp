@@ -31,6 +31,12 @@ function syKeyNorm(s){
   return k.length===26 && [...k].every(c=>SY_ALPHA.includes(c)) ? k.match(/.{1,5}/g).join('-') : null;
 }
 
+// подписи устройств для выбора адресата: имя, а при повторе или пустом имени — с началом id
+function syLabels(list){
+  const cnt=new Map(); for(const d of list) if(d.name) cnt.set(d.name,(cnt.get(d.name)||0)+1);
+  return new Map(list.map(d=>[d.id,!d.name ? 'device-'+d.id.slice(0,4) : cnt.get(d.name)>1 ? d.name+'#'+d.id.slice(0,3) : d.name]));
+}
+
 // local, remote: Map id → {m,d,s}. Что забрать у соседа и что удалить у себя
 function syPlan(local,remote,maxBytes=Infinity){
   const want=[], del=[]; let skipped=0;
