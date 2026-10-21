@@ -188,6 +188,9 @@ const Eng = {
     this._stallLastT=performance.now();
     this._stallTimer=setInterval(()=>{
       const now=performance.now(), over=(now-this._stallLastT)-100; this._stallLastT=now;
+      // фоновая вкладка: браузер сам душит таймеры до 1/с — это не подвисание
+      if(document.hidden){ this._stallHid=true; return; }
+      if(this._stallHid){ this._stallHid=false; return; }
       if(over>15) console.warn(`[Eng] main-thread stall ~${over.toFixed(0)}ms @ ${now.toFixed(0)}ms`);
     }, 100);                                          // 10 пробуждений/с вместо 50 — порог тот же, ищем отклонение от периода
   },
