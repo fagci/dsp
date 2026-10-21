@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=68;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=70;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -416,6 +416,8 @@ const PRESET_CATS={
   'Indicators: Sky Plot, S-Meter, Text Ticker':'Analysis & Measurement',
   'Indicators: Switches and Attitude':'Analysis & Measurement',
   'Logic Analyzer: UART Decode':'Analysis & Measurement',
+  'Timeline: Periods, Durations and Replies on the Air (Table)':'Analysis & Measurement',
+  'USB SDR: Channel Activity Timeline (PMR446)':'Analysis & Measurement',
   'Logic Analyzer: USB (fx2lafw)':'Analysis & Measurement',
   'FT8: Propagation Map':'Maps & Locating',
   'FT8: DX Log (Table)':'Maps & Locating',
@@ -6316,5 +6318,44 @@ tk.size.w=360; tk.size.h=100; applySize(tk);
 const nv=addNode('numview',1220,900,{});
 addEdge(l.id,'out',tx.id,'go'); addEdge(tx.id,'bit',la.id,'ch1');
 addEdge(la.id,'new',lp.id,'in1'); addEdge(la.id,'text',tk.id,'text'); addEdge(la.id,'byte',nv.id,'in');
+markWiresDirty();
+});
+preset('Timeline: Periods, Durations and Replies on the Air (Table)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'A Table (kept in the patch) holds what was heard: t, dur (seconds), freq, src, kind, rssi. Timeline shows each row as an interval: a lane per subscriber, colour = packet kind, bar height = rssi.\n'+
+  'Sensor A beacons every second (three packets per beacon, merged into one transmission; one beacon is missing), B asks every 2.5 s and the gateway GW answers ~30 ms later (reference events: kind=req → lag), C is irregular.\n'+
+  'Wheel — zoom, drag — pan, drag the ruler — playhead, Shift+drag — measure a span, click an event — details and the same subscriber on all lanes, click a lane name — only that lane, double click — play from the event / fit all. The stats output (one row per lane) goes to the second Table.'});
+nt.size.w=900; nt.size.h=100; applySize(nt);
+let seed=7; const rnd=()=>(seed=(seed*1664525+1013904223)>>>0)/4294967296, r3=v=>Math.round(v*1e4)/1e4, rows=[];
+for(let i=0;i<40;i++){ if(i===17) continue; const b=1+i+(rnd()-.5)*.016;
+  for(let k=0;k<3;k++) rows.push([r3(b+k*.012),.004,433.92,'A','beacon',Math.round(-58-rnd()*4)]); }
+for(let i=0;i<16;i++){ const q=1.4+i*2.5+(rnd()-.5)*.02; rows.push([r3(q),.012,868.1,'B','req',Math.round(-72-rnd()*5)]); rows.push([r3(q+.03+(rnd()-.5)*.01),.008,868.1,'GW','ack',Math.round(-66-rnd()*3)]); }
+let c=0.7; for(let i=0;i<14;i++){ c+=1+rnd()*5; rows.push([r3(c),.02+rnd()*.03,433.92,'C','data',Math.round(-85+rnd()*10)]); }
+rows.sort((a,b)=>a[0]-b[0]);
+const tb=addNode('table',40,160,{list:'@patch',initial:false,data:'t,dur,freq,src,kind,rssi\n'+rows.map(r=>r.join(',')).join('\n')});
+tb.size.w=380; tb.size.h=420; applySize(tb);
+const tl=addNode('timeline',460,160,{by:'src',color:'kind',gap:30,link:'src',ref:'kind=req',rssiH:true});
+tl.size.w=760; tl.size.h=420; applySize(tl);
+const ts=addNode('table',1260,160,{list:'@patch',key:'lane',rowsIn:'sync',initial:false});
+ts.size.w=520; ts.size.h=420; applySize(ts);
+addEdge(tb.id,'rows',tl.id,'rows'); addEdge(tl.id,'stats',ts.id,'rows');
+markWiresDirty();
+});
+preset('USB SDR: Channel Activity Timeline (PMR446)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Connect an RTL-SDR (or another USB SDR) and press Run: it sits on 446.1 MHz with 1 MS/s, Activity Events watches 16 channels of 12.5 kHz (446.00625 … 446.19375 MHz).\n'+
+  'The first 3 s only learn the noise floor of every channel (keep the band quiet); then a channel that rises above its floor by 8 dB is busy until it stays quiet for 300 ms — that is one event: start, length (ms), channel, peak level.\n'+
+  'Events go into the first Table (the storage — export it, or replay later), the Timeline draws a lane per channel (bar height = level) and measures period, duration and duty; the second Table keeps those results per channel.\n'+
+  'Other bands: change the SDR frequency and the first channel / step in Activity Events (0 — start of the spectrum). Wire the spectrum to the SDR sweep for a wider range: channels outside the current window are skipped until the sweep returns.'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'1024000',auto:false,gainDb:35,dcShift:true,freq:446100000});
+const sa=addNode('sa',40,480,{auto:true,floor:-90,top:-20,split:.3}); sa.size.w=520; sa.size.h=300; applySize(sa);
+const ac=addNode('actlog',340,200,{lo:446006250,step:12500,count:16,bw:10000,thr:8,hys:3,hold:300,minDur:40,learn:3000});
+ac.size.w=300; ac.size.h=200; applySize(ac);
+const tb=addNode('table',680,200,{list:'@patch',initial:false,follow:true,maxRows:2000}); tb.size.w=400; tb.size.h=300; applySize(tb);
+const tl=addNode('timeline',1120,200,{by:'freq',rssiH:true,follow:true,win:120,tcol:'t',dcol:'dur',unit:'ms'}); tl.size.w=760; tl.size.h=420; applySize(tl);
+const ts=addNode('table',1120,660,{list:'@patch',key:'lane',rowsIn:'sync',initial:false}); ts.size.w=760; ts.size.h=260; applySize(ts);
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',ac.id,'spec');
+addEdge(ac.id,'rec',tb.id,'rec'); addEdge(tb.id,'all',tl.id,'rows'); addEdge(tl.id,'stats',ts.id,'rows');
 markWiresDirty();
 });
