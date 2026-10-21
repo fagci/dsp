@@ -1611,7 +1611,7 @@ function geoMapWire(n,cv){
   // pointercancel — карта сдвигается на чуть-чуть; ownpinch — щипок не отдавать зуму графа
   cv.style.touchAction='none';
   cv.classList.add('ownpinch');
-  const touches=new Map(); let drag=null, pinch=null, tap=null, mv=null;
+  const touches=new Map(); let drag=null, pinch=null, tap=null, mv=null, lastV=null;
   cv.addEventListener('wheel',ev=>{
     ev.preventDefault(); ev.stopPropagation();
     const r=cv.getBoundingClientRect(), k=cv.width/r.width;
@@ -1634,9 +1634,22 @@ function geoMapWire(n,cv){
       pinch={d:Math.hypot(a.x-b.x,a.y-b.y)||1}; drag=null; tap=null; return;
     }
     drag={x:ev.clientX,y:ev.clientY}; tap={x:ev.clientX,y:ev.clientY};
-    if(n.p.mode==='edit' && n.selKey){                // тянем выбранную точку, а не карту
-      const r=cv.getBoundingClientRect(), k=cv.width/r.width, e=geoMapHit(n,(ev.clientX-r.left)*k,(ev.clientY-r.top)*k,14);
-      if(e && e.key===n.selKey && geoEditable(n,e)){ mv={e,moved:false}; drag=null; }
+    if(n.p.mode==='edit' && n.selKey){                // тянем выбранную точку / вершину, а не карту
+      const r=cv.getBoundingClientRect(), k=cv.width/r.width, px=(ev.clientX-r.left)*k, py=(ev.clientY-r.top)*k;
+      const e0=n.ents.get(n.selKey), h=e0 && geoEditable(n,e0) && geoShapeHandles(n,e0,geoView(n,cv.width,cv.height));
+      const near=(a,d)=>a && Math.hypot(a.x-px,a.y-py)<=d;
+      let vi=h?.verts ? h.verts.findIndex(a=>near(a,12)) : -1, mi=-1;
+      if(vi<0 && h?.mids) mi=h.mids.findIndex(a=>near(a,10));
+      if(vi>=0){ mv={e:e0,vi,moved:false}; drag=null; }
+      else if(mi>=0){                                  // середина ребра: вставить вершину и сразу тянуть
+        const g=h.g.map(q=>q.slice()), a=g[mi], b=g[(mi+1)%g.length], at=h.mids[mi].i+1;
+        g.splice(at,0,[+((a[0]+b[0])/2).toFixed(6),+((a[1]+b[1])/2).toFixed(6)]);
+        e0.rec.geom=JSON.stringify(g); mv={e:e0,vi:at,moved:false,ins:true}; drag=null; geoMapChanged(n);
+      } else if(near(h?.rad,12)){ mv={e:e0,rad:true,moved:false}; drag=null; }
+      else {
+        const e=geoMapHit(n,px,py,14);
+        if(e && e.key===n.selKey && geoEditable(n,e)){ mv={e,moved:false}; drag=null; }
+      }
     }
   });
   cv.addEventListener('pointermove',ev=>{
@@ -1651,8 +1664,16 @@ function geoMapWire(n,cv){
     if(mv){
       if(!tap || Math.hypot(ev.clientX-tap.x,ev.clientY-tap.y)>=3){
         const q=geoPxLatLon(n,(ev.clientX-r.left)*k,(ev.clientY-r.top)*k), p=mv.e.pts[mv.e.pts.length-1];
-        geoShiftGeom(mv.e,q.lat-p.lat,q.lon-p.lon);
-        p.lat=mv.e.rec.lat=q.lat; p.lon=mv.e.rec.lon=q.lon; mv.moved=true; tap=null; geoMapChanged(n);
+        if(mv.vi!=null){
+          const g=geoParseGeom(mv.e.rec.geom).map(a=>a.slice()); g[mv.vi]=[+q.lat.toFixed(6),+q.lon.toFixed(6)];
+          mv.e.rec.geom=JSON.stringify(g);
+        } else if(mv.rad){
+          mv.e.rec.radius=Math.max(1,Math.round(geoDist(p.lat,p.lon,q.lat,q.lon)*1000));
+        } else {
+          geoShiftGeom(mv.e,q.lat-p.lat,q.lon-p.lon);
+          p.lat=mv.e.rec.lat=q.lat; p.lon=mv.e.rec.lon=q.lon;
+        }
+        mv.moved=true; tap=null; geoMapChanged(n);
       }
       return;
     }
@@ -1665,7 +1686,18 @@ function geoMapWire(n,cv){
     touches.delete(ev.pointerId);
     if(touches.size<2) pinch=null;
     if(mv){
-      if(mv.moved && ev.type==='pointerup'){ const p=mv.e.pts[mv.e.pts.length-1]; geoEmitEdit(n,mv.e,{lat:p.lat,lon:p.lon,...(mv.e.rec.geom!=null?{geom:mv.e.rec.geom}:{})}); }
+      if(ev.type!=='pointerup'){ mv=null; tap=null; drag=null; return; }
+      if(mv.vi!=null){
+        const e=mv.e, now=Date.now();
+        if(mv.moved || mv.ins){ lastV=null; geoCommitGeom(n,e); }
+        else if(lastV && lastV.e===e && lastV.vi===mv.vi && now-lastV.t<400){      // второй тап по вершине — удалить её
+          lastV=null;
+          const g=geoParseGeom(e.rec.geom).map(a=>a.slice()), min=String(e.rec.gtype)==='polygon' ? 3 : 2;
+          if(g.length>min){ g.splice(mv.vi,1); e.rec.geom=JSON.stringify(g); geoCommitGeom(n,e); }
+        } else lastV={e,vi:mv.vi,t:now};
+      } else if(mv.rad){
+        if(mv.moved){ const r=mv.e.rec.radius; geoEmitEdit(n,mv.e,{radius:r,area_m2:Math.round(Math.PI*r*r)}); }
+      } else if(mv.moved){ const p=mv.e.pts[mv.e.pts.length-1]; geoEmitEdit(n,mv.e,{lat:p.lat,lon:p.lon,...(mv.e.rec.geom!=null?{geom:mv.e.rec.geom}:{})}); }
       mv=null; tap=null; drag=null; return;
     }
     if(tap && ev.type==='pointerup' && Math.hypot(ev.clientX-tap.x,ev.clientY-tap.y)<6){
@@ -1856,6 +1888,66 @@ function geoDrawShape(n,cx,v,pts,type,col,refX,w,dim){
   }
   cx.restore();
 }
+// ручки правки выбранной фигуры: вершины, середины рёбер (нажатие вставляет вершину), у круга — ручка радиуса
+function geoShapeHandles(n,e,v){
+  const last=e.pts[e.pts.length-1]; if(!last) return null;
+  const g=geoParseGeom(e.rec.geom), type=String(e.rec.gtype||'line');
+  if(g && g.length>1){
+    const verts=[]; let px=geoProj(v,last.lat,last.lon).x;
+    for(const q of g){ const p=geoProj(v,q[0],q[1],px); verts.push({x:p.x,y:p.y}); px=p.x; }
+    const mids=[], m=type==='polygon' ? g.length : g.length-1;
+    for(let i=0;i<m;i++){ const a=verts[i], b=verts[(i+1)%g.length]; mids.push({x:(a.x+b.x)/2,y:(a.y+b.y)/2,i}); }
+    return {g,type,verts,mids};
+  }
+  const rad=recNum(e.rec.radius);
+  if(type==='circle' && rad>0){
+    const q=geoDest(last.lat,last.lon,90,rad/1000), p=geoProj(v,q.lat,q.lon,geoProj(v,last.lat,last.lon).x);
+    return {type,rad:{x:p.x,y:p.y}};
+  }
+  return null;
+}
+function geoDrawHandles(n,cx,v,e,col){
+  const h=geoShapeHandles(n,e,v); if(!h) return;
+  cx.save(); cx.lineWidth=1.5; cx.strokeStyle=col; cx.fillStyle='#fff';
+  for(const m of h.mids||[]){ cx.globalAlpha=.7; cx.beginPath(); cx.arc(m.x,m.y,3,0,2*Math.PI); cx.stroke(); }
+  cx.globalAlpha=1;
+  for(const p of h.verts||[]){ cx.beginPath(); cx.rect(p.x-4,p.y-4,8,8); cx.fill(); cx.stroke(); }
+  if(h.rad){ cx.beginPath(); cx.moveTo(h.rad.x,h.rad.y-5); cx.lineTo(h.rad.x+5,h.rad.y); cx.lineTo(h.rad.x,h.rad.y+5); cx.lineTo(h.rad.x-5,h.rad.y); cx.closePath(); cx.fill(); cx.stroke(); }
+  cx.restore();
+}
+// тап по телу фигуры (внутри полигона / рядом с линией / внутри круга) выбирает её
+function geoShapeAt(n,v,px,py){
+  const ents=[...n.ents.values()].reverse();
+  for(const e of ents){
+    const h=geoShapeHandles(n,e,v), last=e.pts[e.pts.length-1];
+    if(!h) continue;
+    if(h.verts){
+      const V=h.verts, poly=h.type==='polygon' && V.length>2;
+      if(poly){
+        let ins=false;
+        for(let i=0,j=V.length-1;i<V.length;j=i++) if((V[i].y>py)!==(V[j].y>py) && px<(V[j].x-V[i].x)*(py-V[i].y)/(V[j].y-V[i].y)+V[i].x) ins=!ins;
+        if(ins) return e;
+      }
+      const m=poly ? V.length : V.length-1;
+      for(let i=0;i<m;i++){
+        const a=V[i], b=V[(i+1)%V.length], dx=b.x-a.x, dy=b.y-a.y, L=dx*dx+dy*dy;
+        const t=L ? Math.max(0,Math.min(1,((px-a.x)*dx+(py-a.y)*dy)/L)) : 0;
+        if(Math.hypot(px-(a.x+t*dx),py-(a.y+t*dy))<8) return e;
+      }
+    } else if(h.rad){
+      const q=geoPxLatLon(n,px,py);
+      if(geoDist(last.lat,last.lon,q.lat,q.lon)*1000<=recNum(e.rec.radius)) return e;
+    }
+  }
+  return null;
+}
+// форма изменилась (вершина сдвинута / вставлена / удалена): центр и размеры пересчитать, запись — на выход edit
+function geoCommitGeom(n,e){
+  const g=geoParseGeom(e.rec.geom); if(!g) return;
+  const c=[g.reduce((a,q)=>a+q[0],0)/g.length, g.reduce((a,q)=>a+q[1],0)/g.length], p=e.pts[e.pts.length-1];
+  p.lat=c[0]; p.lon=c[1];
+  geoEmitEdit(n,e,{geom:e.rec.geom,lat:c[0],lon:c[1],...geoShapeMetrics(String(e.rec.gtype||'line'),g)});
+}
 // сдвиг фигуры вместе с перетаскиваемой точкой
 function geoShiftGeom(e,dlat,dlon){
   const g=geoParseGeom(e.rec.geom); if(!g) return;
@@ -1873,6 +1965,7 @@ function geoMapTap(n,px,py){
     if(d<bd){ bd=d; best=e; }
   }
   if(best){ n.selKey=best.key; n.selOut=[{...best.rec}]; return; }
+  if(!best && n.p.mode!=='add'){ const sh=geoShapeAt(n,v,px,py); if(sh){ n.selKey=sh.key; n.selOut=[{...sh.rec}]; return; } }
   if(n.p.mode==='add'){ geoAddPoint(n,px,py); geoMapChanged(n); return; }
   n.selKey=null;
   const lat=unmercY(clamp((v.oy+py)/v.S,0,1)), lon=unmercX(geoWrapX((v.ox+px)/v.S));
@@ -2324,6 +2417,7 @@ function geoDrawObjects(n,cx,v){
     }
     const gm=geoParseGeom(r.geom);
     if(gm && gm.length>1) geoDrawShape(n,cx,v,gm,String(r.gtype||'line'),col,s.x,e.key===n.selKey?3:2,e.key===n.selKey);
+    if(n.p.mode==='edit' && e.key===n.selKey && geoEditable(n,e)) geoDrawHandles(n,cx,v,e,col);
     const fov=recNum(r.fov);
     if(fov>0){                                       // поле зрения: сектор вокруг курса / азимута
       let hd=recNum(r.heading ?? r.course ?? r.azimuth ?? r.bearing);
