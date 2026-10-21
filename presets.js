@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=66;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=68;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -370,6 +370,9 @@ const PRESET_CATS={
   'Chat: Group with Avatars and Contact List':'Network & IoT',
   'Sync: Chat Between Your Devices':'Network & IoT',
   'Sync: Files, Video and Pictures Between Devices':'Network & IoT',
+  'Sync: Live Video (MJPEG) Between Devices':'Network & IoT',
+  'Conference: Voice and Video Between Your Devices (Sync Data)':'Network & IoT',
+  'Voice and Video over a Byte Link (KISS / SLIP, no hardware)':'Network & IoT',
   'QR: Generator and Reader Loop (no hardware)':'Images & TV',
   'Files over WebRTC':'Network & IoT',
   'Call: voice, video, chat and files over WebRTC':'Network & IoT',
@@ -6056,6 +6059,55 @@ const f=addNode('files',40,170,{}); f.size.w=360; f.size.h=340; applySize(f);
 const sd=addNode('syncdata',440,170,{channel:'files'}); sd.size.w=340; sd.size.h=300; applySize(sd);
 const fv=addNode('imgview',820,170,{}); fv.size.w=260; fv.size.h=220; applySize(fv);
 addEdge(f.id,'send',sd.id,'sendFile'); addEdge(sd.id,'img',fv.id,'img');
+markWiresDirty();
+});
+preset('Sync: Live Video (MJPEG) Between Devices', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Live picture between your own devices over the sync link, no extra connection: Sync Video Out sends frames of the camera (or any `vid` / `img`) as JPEG, Sync Video In with the same stream name gives them back to the graph. Same key and «keep in sync» on both devices (Sync devices); load this preset on both: this device sends its camera, the other shows it (swap the sources as you like, the other side can send too). Frames go over a channel without retransmits: a slow link drops frames instead of building up a delay, and the JPEG quality lowers itself toward the target frame size. Raise fps / width / quality for a good link, lower them on mobile. Choose the device in «send to».'});
+nt.size.w=1000; nt.size.h=110; applySize(nt);
+const cm=addNode('cam',40,170,{}); cm.size.w=300; cm.size.h=240; applySize(cm);
+const vo=addNode('syVideoOut',380,170,{label:'video'}); vo.size.w=320; vo.size.h=200; applySize(vo);
+const vi=addNode('syVideoIn',380,420,{label:'video'}); vi.size.w=320; vi.size.h=240; applySize(vi);
+const fv=addNode('imgview',740,420,{}); fv.size.w=300; fv.size.h=240; applySize(fv);
+addEdge(cm.id,'vid',vo.id,'vid'); addEdge(vi.id,'img',fv.id,'img');
+markWiresDirty();
+});
+preset('Conference: Voice and Video Between Your Devices (Sync Data)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'A video call over the sync link, no codes and no room. Same key and «keep in sync» on both devices (Sync devices). Voice → Packets turns the microphone into Opus packets (about 17 kbit/s; Codec 2 and μ-law are in the codec list), Sync Data carries them as datagrams (a lost packet is concealed, nothing piles up), Packets → Voice plays them with a short jitter buffer. Video → Packets does the same for the camera (JPEG frames), Packets → Video gives the picture back. Load this preset on both devices; use headphones, or the sound of the other side returns into your microphone. The stream names and the Sync Data channel names must match on both sides. Choose one device in «send to» if more than two are connected.'});
+nt.size.w=1100; nt.size.h=120; applySize(nt);
+const mc=addNode('mic',40,190,{echo:true,ns:true,agc:true});
+const vt=addNode('voiceTx',300,190,{codec:'Opus (WebCodecs, 6–32 kbit/s)',label:'voice'}); vt.size.w=300; vt.size.h=170; applySize(vt);
+const sv=addNode('syncdata',640,190,{channel:'conf-voice'}); sv.size.w=320; sv.size.h=220; applySize(sv);
+const vr=addNode('voiceRx',1000,190,{label:'voice'}); vr.size.w=300; vr.size.h=150; applySize(vr);
+const dc=addNode('dac',1000,380,{});
+const cm=addNode('cam',40,520,{}); cm.size.w=300; cm.size.h=240; applySize(cm);
+const vx=addNode('videoTx',380,520,{fps:'10',maxw:'320',label:'video'}); vx.size.w=300; vx.size.h=200; applySize(vx);
+const sd=addNode('syncdata',720,520,{channel:'conf-video'}); sd.size.w=320; sd.size.h=220; applySize(sd);
+const vi=addNode('videoRx',1080,520,{label:'video'}); vi.size.w=300; vi.size.h=200; applySize(vi);
+const fv=addNode('imgview',1080,740,{}); fv.size.w=300; fv.size.h=240; applySize(fv);
+addEdge(mc.id,'a',vt.id,'in'); addEdge(vt.id,'bin',sv.id,'bin'); addEdge(sv.id,'bin',vr.id,'bin');
+addEdge(vr.id,'out',dc.id,'L'); addEdge(vr.id,'out',dc.id,'R');
+addEdge(cm.id,'vid',vx.id,'vid'); addEdge(vx.id,'bin',sd.id,'bin'); addEdge(sd.id,'bin',vi.id,'bin'); addEdge(vi.id,'img',fv.id,'img');
+markWiresDirty();
+});
+preset('Voice and Video over a Byte Link (KISS / SLIP, no hardware)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'The same voice and picture packets over a plain byte channel — the way a radio modem, a LoRa module on a serial port or a KISS TNC carries them. Voice → Packets (Codec 2 at 1.6 kbit/s, 8 bytes per 40 ms) wraps each packet in KISS, Packet Link cuts the stream back into packets, Packets → Voice plays them (here a 300 Hz tone from the oscillator; wire a microphone instead). Video → Packets sends a small grayscale JPEG every 5 s wrapped in SLIP (a slow-scan picture over a few kbit/s). Here both Packet Link nodes work in «inputs only» mode, which is a loopback with no hardware; for a real modem set «channel» to serial / ble uart / websocket in both, keep «frame» equal to the framing of the Tx node, and put the Packet Link of the other device’s modem on the receiving side. Over a message link (MQTT, WebSocket, Sync Data) leave the framing at «none». Voice and picture can share one link: each Rx takes only its own kind of packet.'});
+nt.size.w=1100; nt.size.h=150; applySize(nt);
+const os=addNode('osc',40,230,{freq:300,amp:.3});
+const vt=addNode('voiceTx',300,230,{codec:'Codec 2 1600 (radio, 1.6 kbit/s)',wrap:'kiss',label:'voice'}); vt.size.w=300; vt.size.h=190; applySize(vt);
+const pl=addNode('plink',640,230,{via:'inputs only',frame:'kiss'}); pl.size.w=340; pl.size.h=190; applySize(pl);
+const vr=addNode('voiceRx',1020,230,{label:'voice',pre:300}); vr.size.w=300; vr.size.h=150; applySize(vr);
+const dc=addNode('dac',1020,420,{});
+const qr=addNode('qrgen',40,560,{text:'radio',scale:3}); qr.size.w=200; qr.size.h=200; applySize(qr);
+const vx=addNode('videoTx',300,560,{fps:'0.2',maxw:'96',gray:true,kb:2,q:.5,wrap:'slip',label:'video'}); vx.size.w=300; vx.size.h=220; applySize(vx);
+const p2=addNode('plink',640,560,{via:'inputs only',frame:'slip'}); p2.size.w=340; p2.size.h=190; applySize(p2);
+const vi=addNode('videoRx',1020,560,{label:'video',w:'160'}); vi.size.w=300; vi.size.h=200; applySize(vi);
+const fv=addNode('imgview',1020,780,{}); fv.size.w=240; fv.size.h=200; applySize(fv);
+addEdge(os.id,'out',vt.id,'in'); addEdge(vt.id,'bin',pl.id,'bin'); addEdge(pl.id,'bin',vr.id,'bin');
+addEdge(vr.id,'out',dc.id,'L'); addEdge(vr.id,'out',dc.id,'R');
+addEdge(qr.id,'img',vx.id,'img'); addEdge(vx.id,'bin',p2.id,'bin'); addEdge(p2.id,'bin',vi.id,'bin'); addEdge(vi.id,'img',fv.id,'img');
 markWiresDirty();
 });
 preset('QR: Generator and Reader Loop (no hardware)', function(){

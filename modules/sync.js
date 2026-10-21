@@ -7,8 +7,10 @@
    видит только зашифрованные offer / answer. Слияние — ядро sync-kernels.js: побеждает более поздняя правка, удаления помнятся
    метками. Устройств может быть больше двух: каждое соединяется с каждым.
    Второй канал соединения (app) — данные графа между устройствами: узел Sync Data шлёт текст, записи, картинки и файлы (в том числе
-   видео из Files) всем или выбранному устройству; файлы идут третьим каналом (file) через XferPort из xfer-kernels.js. */
+   видео из Files) всем или выбранному устройству; файлы идут третьим каналом (file) через XferPort из xfer-kernels.js, кадры живого видео — четвёртым (video,
+   без повторов), см. syncvideo.js. */
 
+const SY_DGRAM=0xD0;                                    // первый байт сообщения канала video: датаграмма узла Sync Data (0xF1 — кадр Sync Video)
 const SY_LS='dsp.sync', SY_SPACES=['files','audio','images'], SY_CRED='dsp-sync';
 const syDefaults={key:'',on:false,url:'wss://broker.emqx.io:8084/mqtt',ice:'stun:stun.l.google.com:19302',maxMB:100,name:''};
 function syCfg(){ try{ return {...syDefaults,...JSON.parse(localStorage.getItem(SY_LS)||'{}')}; }catch(e){ return {...syDefaults}; } }
@@ -181,6 +183,23 @@ const SyLink={
       this.fmsg='received '+m.name+' ('+fmSize(blob.size)+') from '+from; this.say();
     }).catch(e=>{ this.fmsg='could not save '+m.name+': '+e.message; this.say(); });
   },
+  sendBin(ch,to,u8){                                   // датаграмма: без повторов, занятый канал пропускает; число устройств
+    const nm=new TextEncoder().encode(String(ch)).slice(0,60), m=new Uint8Array(2+nm.length+u8.length);
+    m[0]=SY_DGRAM; m[1]=nm.length; m.set(nm,2); m.set(u8,2+nm.length);
+    let k=0;
+    for(const d of this.devices()){
+      const c=d.p.vc; if(!c || c.readyState!=='open' || c.bufferedAmount>262144) continue;
+      if((to && d.label!==to) || m.length>200000) continue;
+      try{ c.send(m); k++; }catch(e){}
+    }
+    return k;
+  },
+  dgramIn(p,data){
+    const u=new Uint8Array(data), l=u[1]; if(u.length<2+l) return;
+    const ch=new TextDecoder().decode(u.subarray(2,2+l)), d=u.slice(2+l);
+    const from=this.devices().find(x=>x.p===p)?.label||p.name||'';
+    for(const n of this.nodes) if(n.p.channel===ch){ n.rbin.push({from,d}); if(n.rbin.length>200) n.rbin.shift(); }
+  },
   sendApp(ch,to,text){                                 // to пусто — всем; число отправленных
     let n=0;
     for(const d of this.devices()) if(!to || d.label===to){ try{ d.p.ac.send(JSON.stringify({t:'msg',c:ch,d:String(text).slice(0,65536)})); n++; }catch(e){} }
@@ -200,6 +219,7 @@ const SyLink={
     try{ p.dc.onopen=p.dc.onclose=p.dc.onmessage=null; p.dc.close(); }catch(e){}
     try{ p.ac.onopen=p.ac.onclose=p.ac.onmessage=null; p.ac.close(); }catch(e){}
     try{ p.fx.close(); p.fc.onmessage=p.fc.onclose=null; p.fc.close(); }catch(e){}
+    try{ p.vc.onmessage=null; p.vc.close(); }catch(e){}
     try{ p.pc.onconnectionstatechange=null; p.pc.close(); }catch(e){}
     if(this.on) this.say(this.peers.size ? undefined : 'looking for other devices…');
   },
@@ -207,7 +227,8 @@ const SyLink={
     const c=syCfg(), ice=String(c.ice||'').split(/[\s,]+/).filter(Boolean).map(urls=>({urls}));
     const pc=new RTCPeerConnection({iceServers:ice}), dc=pc.createDataChannel('sync',{negotiated:true,id:0}); dc.binaryType='arraybuffer';
     const ac=pc.createDataChannel('app',{negotiated:true,id:1}), fc=pc.createDataChannel('file',{negotiated:true,id:2}); fc.binaryType='arraybuffer'; fc.bufferedAmountLowThreshold=1<<18;
-    const p={id,pc,dc,ac,fc,fx:null,name:null,open:false,sess:null,initiator,dead:0};
+    const vc=pc.createDataChannel('video',{negotiated:true,id:3,ordered:true,maxRetransmits:0}); vc.binaryType='arraybuffer';       // кадры живого видео: потерянный не пересылается
+    const p={id,pc,dc,ac,fc,vc,fx:null,name:null,open:false,sess:null,initiator,dead:0};
     const sess=()=>p.sess||(p.sess=new SySession(syStore,x=>this.tx(p,x),{maxBytes:(+c.maxMB||100)*1048576,on:()=>this.say()}));
     dc.onopen=()=>{ p.open=true; clearTimeout(p.dead); this.say(); if(initiator) sess().start().catch(()=>{}); };
     dc.onmessage=e=>sess().onMessage(e.data);
@@ -215,6 +236,7 @@ const SyLink={
     p.fx=new XferPort(x=>this.tx(p,x,fc),{maxBytes:(+c.maxMB||100)*1048576,accept:m=>[...this.nodes].some(n=>n.p.channel===m.c),
       onFile:(m,b)=>this.fileIn(p,m,b),on:()=>{ this.fmsg=p.fx.stat.msg; this.say(); }});
     fc.onmessage=e=>p.fx.onMessage(e.data);
+    vc.onmessage=e=>{ if(typeof e.data==='string') return; if(new Uint8Array(e.data,0,1)[0]===SY_DGRAM) this.dgramIn(p,e.data); else SyVideo.rx(p,e.data); };
     ac.onopen=()=>{ try{ ac.send(JSON.stringify({t:'name',name:syMyName()})); }catch(e){} };
     ac.onmessage=e=>{ if(typeof e.data==='string') this.appIn(p,e.data); };
     pc.onconnectionstatechange=()=>{ if(pc.connectionState==='failed' || pc.connectionState==='closed') this.drop(p); };
@@ -281,8 +303,8 @@ function syNodeFile(n,blob,name,mime){
   SyLink.fmsg=k ? 'sending '+name+' ('+fmSize(blob.size)+') to '+k+' device'+(k>1 ? 's' : '') : 'no device to send '+name+' to'; SyLink.say();
 }
 def({ id:'syncdata', title:'Sync Data', cat:'Sources', kw:'sync devices send text between my devices phone laptop channel share',
-  ins:[{n:'send',t:'txt'},{n:'to',t:'txt'},{n:'sendFile',t:'num'},{n:'img',t:'img'},{n:'rec',t:'rec'}],
-  outs:[{n:'line',t:'txt'},{n:'go',t:'num'},{n:'from',t:'txt'},{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'devices',t:'num'},{n:'file',t:'num'},{n:'got',t:'num'},{n:'img',t:'img'}],
+  ins:[{n:'send',t:'txt'},{n:'to',t:'txt'},{n:'sendFile',t:'num'},{n:'img',t:'img'},{n:'rec',t:'rec'},{n:'bin',t:'bin'}],
+  outs:[{n:'line',t:'txt'},{n:'go',t:'num'},{n:'from',t:'txt'},{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'devices',t:'num'},{n:'file',t:'num'},{n:'got',t:'num'},{n:'img',t:'img'},{n:'bin',t:'bin'}],
   readout:true, tall:true,
   params:[
     {n:'channel',t:'text',d:'data',label:'channel name (receivers take only messages of the same name)'},
@@ -291,7 +313,7 @@ def({ id:'syncdata', title:'Sync Data', cat:'Sources', kw:'sync devices send tex
       inp.onchange=()=>{ const fs=[...inp.files]; inp.remove(); for(const f of fs) syNodeFile(n,f,f.name,f.type); }; inp.oncancel=()=>inp.remove(); document.body.append(inp); inp.click(); }},
     {n:'device',t:'select',opts:n=>{ const o=['all devices',...SyLink.devices().map(d=>d.label)]; if(n.p.device && !o.includes(n.p.device)) o.push(n.p.device); return o; },d:'all devices',label:'send to (devices that keep the sync on; set their names in Sync devices)'},
   ],
-  init:n=>{ n.rx=[]; n.recvQ=[]; n.fgot=0; n.lastFile=-1; n.lastSendId=undefined; n.lastRev=-1; n.imgT=0; n.rimg=null; n.lastRec=null; n.lineQ=[]; n.recQ=[]; n.lastLine=''; n.lastFrom=''; n.count=0; n.msgs=0; n.sent=0; n.lastSend=undefined; SyLink.nodes.add(n); },
+  init:n=>{ n.rx=[]; n.rbin=[]; n.lastBin=null; n.obin=null; n.nbin=0; n.recvQ=[]; n.fgot=0; n.lastFile=-1; n.lastSendId=undefined; n.lastRev=-1; n.imgT=0; n.rimg=null; n.lastRec=null; n.lineQ=[]; n.recQ=[]; n.lastLine=''; n.lastFrom=''; n.count=0; n.msgs=0; n.sent=0; n.lastSend=undefined; SyLink.nodes.add(n); },
   dispose:n=>{ SyLink.nodes.delete(n); },
   process(n,I){
     SyLink.nodes.add(n); n.lastI=I;
@@ -308,6 +330,8 @@ def({ id:'syncdata', title:'Sync Data', cat:'Sources', kw:'sync devices send tex
       syImgBlob(I.img).then(b=>syNodeFile(n,b,'picture-'+Date.now()+'.png','image/png')).catch(()=>{});
     }
     if(Array.isArray(I.rec) && I.rec.length && I.rec!==n.lastRec){ n.lastRec=I.rec; syNodeText(n,JSON.stringify(I.rec)); }
+    if(I.bin && I.bin.d && I.bin!==n.lastBin){ n.lastBin=I.bin; n.sent+=SyLink.sendBin(n.p.channel,syTo(n,I),I.bin.d); }
+    if(n.rbin.length){ const x=n.rbin.shift(); n.lastFrom=x.from; n.obin=binObj(x.d,'sync','application/octet-stream'); n.nbin++; }
     let got=0;
     if(n.recvQ.length){
       const f=n.recvQ.shift(); n.lastFile=f.id; n.lastFrom=f.from; got=1;
@@ -319,12 +343,12 @@ def({ id:'syncdata', title:'Sync Data', cat:'Sources', kw:'sync devices send tex
     let go=0;
     if(n.lineQ.length){ n.lastLine=n.lineQ.shift(); go=1; n.count++; }
     const rec=n.recQ.length ? n.recQ.splice(0) : null;
-    return {line:n.lastLine, go, from:n.lastFrom, rec, count:n.count, devices:SyLink.devices().length, file:n.lastFile, got, img:n.rimg}; },
-  drawKey:n=>SyLink.on+'|'+SyLink.devices().map(d=>d.label).join()+'|'+n.msgs+'|'+n.sent+'|'+n.lastFrom+'|'+SyLink.fmsg+'|'+n.fgot,
+    return {line:n.lastLine, go, from:n.lastFrom, rec, count:n.count, devices:SyLink.devices().length, file:n.lastFile, got, img:n.rimg, bin:n.obin}; },
+  drawKey:n=>SyLink.on+'|'+SyLink.devices().map(d=>d.label).join()+'|'+n.msgs+'|'+n.sent+'|'+n.lastFrom+'|'+SyLink.fmsg+'|'+n.fgot+'|'+n.nbin,
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     const d=SyLink.devices();
     r.textContent=(!SyLink.on ? 'sync is off: open “Sync devices”, enter the key and tick “keep in sync”' : d.length ? 'devices: '+d.map(x=>x.label).join(', ') : 'no other device connected')
-      +'\nme: '+syMyName()+' · sent '+n.sent+' · received '+n.msgs+(n.fgot ? ' · files '+n.fgot : '')+(SyLink.fmsg ? '\nfile: '+SyLink.fmsg : '')+(n.lastLine ? '\n'+(n.lastFrom ? n.lastFrom+': ' : '')+n.lastLine.slice(0,400) : ''); }
+      +'\nme: '+syMyName()+' · sent '+n.sent+' · received '+n.msgs+(n.fgot ? ' · files '+n.fgot : '')+(n.nbin ? ' · packets '+n.nbin : '')+(SyLink.fmsg ? '\nfile: '+SyLink.fmsg : '')+(n.lastLine ? '\n'+(n.lastFrom ? n.lastFrom+': ' : '')+n.lastLine.slice(0,400) : ''); }
 });
 
 // ---------- ключ в аккаунте ----------
