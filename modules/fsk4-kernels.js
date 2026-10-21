@@ -134,6 +134,11 @@ function fsk4Node(pick,title){
         ch.x=nx;
         this.scan(n,ch,out);
       }
+      // голосовые пакеты несут номер отсчёта входа (st) и его частоту (ssr): IQ Recorder по ним вырезает голос из потока
+      if(out.voice.length && s.chunks.length){
+        const lc=s.chunks[s.chunks.length-1], st=lc.t0+lc.re.length;
+        for(const v of out.voice){ v.st=st; v.ssr=s.sr; }
+      }
       const now=Date.now(), ui={fs:n.fs, M:n.M, protos:{}, active:null};
       for(const ch of n.ch) if(ch.lock){ ui.active=ch.lock.proto.id; }
       for(const id of n.ids){
