@@ -7,7 +7,8 @@
    видит только зашифрованные offer / answer. Слияние — ядро sync-kernels.js: побеждает более поздняя правка, удаления помнятся
    метками. Устройств может быть больше двух: каждое соединяется с каждым.
    Второй канал соединения (app) — данные графа между устройствами: узел Sync Data шлёт текст, записи, картинки и файлы (в том числе
-   видео из Files) всем или выбранному устройству; файлы идут третьим каналом (file) через XferPort из xfer-kernels.js. */
+   видео из Files) всем или выбранному устройству; файлы идут третьим каналом (file) через XferPort из xfer-kernels.js, кадры живого видео — четвёртым (video,
+   без повторов), см. syncvideo.js. */
 
 const SY_LS='dsp.sync', SY_SPACES=['files','audio','images'], SY_CRED='dsp-sync';
 const syDefaults={key:'',on:false,url:'wss://broker.emqx.io:8084/mqtt',ice:'stun:stun.l.google.com:19302',maxMB:100,name:''};
@@ -200,6 +201,7 @@ const SyLink={
     try{ p.dc.onopen=p.dc.onclose=p.dc.onmessage=null; p.dc.close(); }catch(e){}
     try{ p.ac.onopen=p.ac.onclose=p.ac.onmessage=null; p.ac.close(); }catch(e){}
     try{ p.fx.close(); p.fc.onmessage=p.fc.onclose=null; p.fc.close(); }catch(e){}
+    try{ p.vc.onmessage=null; p.vc.close(); }catch(e){}
     try{ p.pc.onconnectionstatechange=null; p.pc.close(); }catch(e){}
     if(this.on) this.say(this.peers.size ? undefined : 'looking for other devices…');
   },
@@ -207,7 +209,8 @@ const SyLink={
     const c=syCfg(), ice=String(c.ice||'').split(/[\s,]+/).filter(Boolean).map(urls=>({urls}));
     const pc=new RTCPeerConnection({iceServers:ice}), dc=pc.createDataChannel('sync',{negotiated:true,id:0}); dc.binaryType='arraybuffer';
     const ac=pc.createDataChannel('app',{negotiated:true,id:1}), fc=pc.createDataChannel('file',{negotiated:true,id:2}); fc.binaryType='arraybuffer'; fc.bufferedAmountLowThreshold=1<<18;
-    const p={id,pc,dc,ac,fc,fx:null,name:null,open:false,sess:null,initiator,dead:0};
+    const vc=pc.createDataChannel('video',{negotiated:true,id:3,ordered:true,maxRetransmits:0}); vc.binaryType='arraybuffer';       // кадры живого видео: потерянный не пересылается
+    const p={id,pc,dc,ac,fc,vc,fx:null,name:null,open:false,sess:null,initiator,dead:0};
     const sess=()=>p.sess||(p.sess=new SySession(syStore,x=>this.tx(p,x),{maxBytes:(+c.maxMB||100)*1048576,on:()=>this.say()}));
     dc.onopen=()=>{ p.open=true; clearTimeout(p.dead); this.say(); if(initiator) sess().start().catch(()=>{}); };
     dc.onmessage=e=>sess().onMessage(e.data);
@@ -215,6 +218,7 @@ const SyLink={
     p.fx=new XferPort(x=>this.tx(p,x,fc),{maxBytes:(+c.maxMB||100)*1048576,accept:m=>[...this.nodes].some(n=>n.p.channel===m.c),
       onFile:(m,b)=>this.fileIn(p,m,b),on:()=>{ this.fmsg=p.fx.stat.msg; this.say(); }});
     fc.onmessage=e=>p.fx.onMessage(e.data);
+    vc.onmessage=e=>{ if(typeof e.data!=='string') SyVideo.rx(p,e.data); };
     ac.onopen=()=>{ try{ ac.send(JSON.stringify({t:'name',name:syMyName()})); }catch(e){} };
     ac.onmessage=e=>{ if(typeof e.data==='string') this.appIn(p,e.data); };
     pc.onconnectionstatechange=()=>{ if(pc.connectionState==='failed' || pc.connectionState==='closed') this.drop(p); };

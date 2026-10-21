@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=66;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=67;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -370,6 +370,7 @@ const PRESET_CATS={
   'Chat: Group with Avatars and Contact List':'Network & IoT',
   'Sync: Chat Between Your Devices':'Network & IoT',
   'Sync: Files, Video and Pictures Between Devices':'Network & IoT',
+  'Sync: Live Video (MJPEG) Between Devices':'Network & IoT',
   'QR: Generator and Reader Loop (no hardware)':'Images & TV',
   'Files over WebRTC':'Network & IoT',
   'Call: voice, video, chat and files over WebRTC':'Network & IoT',
@@ -6056,6 +6057,17 @@ const f=addNode('files',40,170,{}); f.size.w=360; f.size.h=340; applySize(f);
 const sd=addNode('syncdata',440,170,{channel:'files'}); sd.size.w=340; sd.size.h=300; applySize(sd);
 const fv=addNode('imgview',820,170,{}); fv.size.w=260; fv.size.h=220; applySize(fv);
 addEdge(f.id,'send',sd.id,'sendFile'); addEdge(sd.id,'img',fv.id,'img');
+markWiresDirty();
+});
+preset('Sync: Live Video (MJPEG) Between Devices', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Live picture between your own devices over the sync link, no extra connection: Sync Video Out sends frames of the camera (or any `vid` / `img`) as JPEG, Sync Video In with the same stream name gives them back to the graph. Same key and «keep in sync» on both devices (Sync devices); load this preset on both: this device sends its camera, the other shows it (swap the sources as you like, the other side can send too). Frames go over a channel without retransmits: a slow link drops frames instead of building up a delay, and the JPEG quality lowers itself toward the target frame size. Raise fps / width / quality for a good link, lower them on mobile. Choose the device in «send to».'});
+nt.size.w=1000; nt.size.h=110; applySize(nt);
+const cm=addNode('cam',40,170,{}); cm.size.w=300; cm.size.h=240; applySize(cm);
+const vo=addNode('syVideoOut',380,170,{label:'video'}); vo.size.w=320; vo.size.h=200; applySize(vo);
+const vi=addNode('syVideoIn',380,420,{label:'video'}); vi.size.w=320; vi.size.h=240; applySize(vi);
+const fv=addNode('imgview',740,420,{}); fv.size.w=300; fv.size.h=240; applySize(fv);
+addEdge(cm.id,'vid',vo.id,'vid'); addEdge(vi.id,'img',fv.id,'img');
 markWiresDirty();
 });
 preset('QR: Generator and Reader Loop (no hardware)', function(){
