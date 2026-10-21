@@ -67,6 +67,12 @@ const Eng = {
     this.sab = typeof SharedArrayBuffer==='function' &&
                (typeof crossOriginIsolated==='undefined' || crossOriginIsolated);
     this._preload = this.sab ? this.preloadSab : this.preload;
+    if(!this.sab && !this._noSabWarned){
+      this._noSabWarned=true;
+      console.warn('[Eng] без SharedArrayBuffer (crossOriginIsolated='+(typeof crossOriginIsolated==='undefined' ? 'n/a' : crossOriginIsolated)+
+        ', service worker: '+!!(navigator.serviceWorker&&navigator.serviceWorker.controller)+') — звук через postMessage, возможны недоборы. '+
+        'Нужен контроль сервис-воркера (перезагрузить страницу) и https/localhost.');
+    }
 
     this._lastUnderrun=0; this.audioUnderruns=0;
     let src, procOpts;
