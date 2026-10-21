@@ -1408,6 +1408,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
           {n:'net',t:'check',d:true,label:'online'},
           {n:'mode',t:'select',opts:['view','edit','add','line','polygon','ruler','circle'],d:'view',label:'mode: view / edit (select, drag, form) / add (tap = new point) / line, polygon, ruler, circle (tap = vertex)'},
           {n:'drawColor',t:'text',d:'#ffb400',label:'color of new shapes',adv:true},
+          {n:'tools',t:'check',d:false,label:'mode buttons on the map (for tiles without settings)'},
           {n:'addName',t:'text',d:'P',label:'new point name prefix',adv:true},
           {n:'addIcon',t:'text',d:'dot',label:'new point icon',adv:true},
           {n:'fit',t:'button',label:'Fit',fn:n=>geoMapFit(n)},
@@ -1750,7 +1751,7 @@ const geoFormSkip=k=>GEO_FORM_SKIP.has(k) || k.startsWith('check_');
 // форма правки выбранной точки: DOM поверх карты; поля — из самой записи, «＋» добавляет новое
 function geoEditSync(n,cv){
   const host=cv.parentElement; if(!host) return;
-  const se=n.selKey && n.ents.get(n.selKey), chk=se && se.rec.check_list && typeof tcChkItems==='function';
+  const se=!GEO_DRAW.has(n.p.mode) && n.selKey && n.ents.get(n.selKey), chk=se && se.rec.check_list && !se.rec.gtype && typeof tcChkItems==='function';
   const e=n.p.mode==='edit' && se, w=e && geoEditable(n,e);
   const key=w||chk ? n.selKey+(w ? '|e' : '')+(chk ? '|c' : '') : '';
   if(n._formKey===key && (!key || n._formEl?.isConnected)) return;
@@ -1765,6 +1766,7 @@ function geoEditSync(n,cv){
   if(chk && w) top.style.cssText='border-bottom:1px solid var(--line);padding-bottom:4px;margin-bottom:4px;';
   const roll=new Set();                                              // поля-итоги чеклиста (tasks, tasks_done, tasks_total) не правятся
   if(e) for(const k in e.rec) if(k.endsWith('_total') && e.rec[k.slice(0,-6)]!==undefined){ const b=k.slice(0,-6); roll.add(b); roll.add(b+'_done'); roll.add(k); }
+  if(e && 'count' in e.rec && 'first' in e.rec && 'last' in e.rec) for(const k of ['count','first','last']) roll.add(k);   // служебные поля Table
   const rows=[];
   const row=(k,v)=>{
     const d=document.createElement('div'); d.style.cssText='display:flex;gap:4px;margin:2px 0;align-items:center;';
@@ -1809,6 +1811,26 @@ function geoEditSync(n,cv){
       if(!w){ const x=document.createElement('button'); x.textContent='✕'; x.style.cssText='position:absolute;right:3px;top:3px;font-size:10px;background:none;border:0;color:var(--txt);cursor:pointer;'; x.onclick=()=>{ n.selKey=null; geoMapChanged(n); }; el.append(x); }
     }).catch(()=>{});
   }
+}
+// кнопки режимов на самой карте: в тайле без панели настроек иначе негде переключить режим
+const GEO_TOOLS=[['view','☝','view only'],['edit','✎','edit: select, drag, form, delete'],['add','＋','add a point: tap'],['line','╱','draw a line'],['polygon','⬠','draw a polygon'],['ruler','📏','ruler: distances and bearings'],['circle','◯','draw a circle: centre, then an edge point']];
+function geoToolsSync(n,cv){
+  const host=cv.parentElement; if(!host) return;
+  if(!n.p.tools){ if(n._toolsEl){ n._toolsEl.remove(); n._toolsEl=null; } return; }
+  if(!n._toolsEl?.isConnected){
+    if(getComputedStyle(host).position==='static') host.style.position='relative';
+    const el=document.createElement('div'); el.className='geo-ov';
+    el.style.cssText='position:absolute;left:6px;top:24px;display:flex;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:2px;z-index:3;';
+    for(const ev of ['pointerdown','pointerup','wheel','dblclick']) el.addEventListener(ev,x=>x.stopPropagation());
+    for(const [m,t,tip] of GEO_TOOLS){
+      const b=document.createElement('button'); b.textContent=t; b.title=tip; b.dataset.m=m;
+      b.style.cssText='background:none;border:1px solid transparent;color:var(--txt);min-width:24px;height:24px;border-radius:3px;cursor:pointer;font-size:13px;padding:0 3px;';
+      b.onclick=()=>{ setMod(n,'mode',m); geoMapChanged(n); };
+      el.append(b);
+    }
+    host.append(el); n._toolsEl=el;
+  }
+  for(const b of n._toolsEl.children){ const on=b.dataset.m===n.p.mode; b.style.background=on ? 'var(--acc)' : 'none'; b.style.color=on ? 'var(--bg)' : 'var(--txt)'; }
 }
 const GEO_DRAW=new Set(['line','polygon','ruler','circle']);
 function geoDraftNeed(t){ return t==='polygon' ? 3 : 2; }
@@ -2017,7 +2039,7 @@ function geoCol(){ return geoLight() ? GEO_COL_LIGHT : GEO_COL_DARK; }
 const GEO_BASE_CAP=matchMedia('(pointer:coarse)').matches ? 4e6 : 1.2e7;   // пикселей буфера подложки
 function geoMapDraw(n,cv,cx){
   geoMapWire(n,cv);
-  geoEditSync(n,cv); geoDraftSync(n,cv);
+  geoEditSync(n,cv); geoDraftSync(n,cv); geoToolsSync(n,cv);
   const W=cv.width, H=cv.height, v=geoView(n,W,H), z=v.z;
   // подложка — в отдельную канву с полями M: при панораме сдвигаем готовую картинку,
   // при зуме растягиваем её и перерисовываем, когда зум успокоился
@@ -2564,7 +2586,7 @@ function geoDrawOverlay(n,cx,v){
   cx.restore();
 }
 defGroups('geoMap',[
-  {n:'Edit', p:'mode addName addIcon drawColor'},
+  {n:'Edit', p:'mode tools addName addIcon drawColor'},
   {n:'Display', p:'ttl tiles overlay ovAlpha iconScale grid labels cluster follow net'},
   {n:'Data layers', p:'vfile vclr osmKind osmGo'},
   {n:'Tracks', p:'trail maxEnt arrows rayKm', open:false},
