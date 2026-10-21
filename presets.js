@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=62;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=63;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -218,6 +218,9 @@ const PRESET_CATS={
   'DMR: Repeater or Direct Mode (USB SDR)':'Digital Voice & Trunking',
   'DMR: Activity Log and Station Map (Generator)':'Digital Voice & Trunking',
   'DMR: Activity Log and Station Map (USB SDR)':'Digital Voice & Trunking',
+  'DMR: Voice Only into One IQ File (Generator)':'Digital Voice & Trunking',
+  'DMR: Voice Only into One IQ File (USB SDR)':'Digital Voice & Trunking',
+  'IQ Files: Play a Saved Recording into the DMR Decoder':'SDR Receivers',
   '4FSK Digital Voice: Auto Detect (Generator)':'Digital Voice & Trunking',
   '4FSK Digital Voice: Any System (USB SDR)':'Digital Voice & Trunking',
   'M17: Receiver Built from Blocks (Generator)':'Digital Voice & Trunking',
@@ -2327,6 +2330,61 @@ addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 const map=addNode('geoMap',940,360,{mz:8,ttl:300,labels:true,trail:3000});
 map.size.w=520; map.size.h=400; applySize(map);
 addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec'); addEdge(de.id,'rec',map.id,'rec');
+markWiresDirty();
+});
+preset('DMR: Voice Only into One IQ File (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Only the voice of a DMR channel, joined into one IQ file. The decoder marks every voice burst with its place in the stream (st), IQ Recorder in "voice only" mode\n'+
+  'keeps those parts (with a margin before and after: a decoder needs the sync word and header before the voice to lock when the file is played back) and saves them to Files/IQ.\n'+
+  'The recorder must sit on the same wire as the decoder. WAV is opened by SDR++ and others; SigMF keeps each voice part as a capture and an annotation (from → to, slot).\n'+
+  'Recording starts by itself; "■ Stop and save" saves what is collected, a new file starts after "start a new file after, MB". Tags, length and frequency show in Files; play the file back with the IQ File Player.'});
+nt.size.w=760; nt.size.h=130; applySize(nt);
+const gn=addNode('iqGen',40,260,{sr:'256000',fc:438000000,mode:'DMR',off:2000,lvl:-20,noise:-45});
+const de=addNode('fskRx',340,260,{proto:'dmr'});
+de.size.w=480; de.size.h=300; applySize(de);
+const rc=addNode('iqRec',340,600,{mode:'voice only',fmt:'WAV',tag:'DMR',autostart:true});
+rc.size.w=480; rc.size.h=200; applySize(rc);
+const fl=addNode('files',860,260,{});
+fl.size.w=420; fl.size.h=440; applySize(fl);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(gn.id,'iq',rc.id,'in'); addEdge(de.id,'voice',rc.id,'voice');
+markWiresDirty();
+});
+preset('DMR: Voice Only into One IQ File (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Collect the voice of a DMR repeater or a direct-mode channel into one IQ file: tune the SDR and tap the signal on the spectrum. IQ Frequency Shift centres the channel,\n'+
+  'the decoder marks the voice bursts, IQ Recorder ("voice only", band "channel", 40 kHz) cuts only those parts out of the channel and saves them to Files/IQ (WAV or SigMF) with tags,\n'+
+  'length and the channel frequency. For the whole band instead of a channel set the recorder band to "whole input" (a lot more data). The recorder must sit on the same wire as the decoder.\n'+
+  'Voice is not decoded to audio; the file can be played back later with IQ File Player into any decoder.'});
+nt.size.w=760; nt.size.h=130; applySize(nt);
+const rx=addNode('rtlsdr',40,220,{sr:'1024000',freq:438000000,demod:'IQ'});
+const sa=addNode('sa',860,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,220,{});
+const de=addNode('fskRx',340,380,{proto:'dmr'});
+de.size.w=480; de.size.h=300; applySize(de);
+const rc=addNode('iqRec',340,720,{mode:'voice only',band:'channel',chBw:40000,fmt:'WAV',tag:'DMR',autostart:true});
+rc.size.w=480; rc.size.h=200; applySize(rc);
+const fl=addNode('files',860,360,{});
+fl.size.w=420; fl.size.h=440; applySize(fl);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',de.id,'in'); addEdge(sh.id,'out',rc.id,'in'); addEdge(de.id,'voice',rc.id,'voice'); addEdge(sa.id,'f1',rc.id,'freq');
+markWiresDirty();
+});
+preset('IQ Files: Play a Saved Recording into the DMR Decoder', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'IQ File Player plays a recording from Files as an iq stream (real time, loop, pause, position, speed) — into any IQ block. "Choose from Files…" lists the recordings with length,\n'+
+  'frequency and tags. Make one first: preset "DMR: Voice Only into One IQ File", or record with USB SDR (record to: Files) or IQ Recorder. Here the file goes to the DMR decoder;\n'+
+  'USB SDR can open the same files too ("Open IQ from Files…") and then spectrum, channels and demodulators work on them as on a live signal.'});
+nt.size.w=760; nt.size.h=110; applySize(nt);
+const pl=addNode('iqPlay',40,200,{loop:true});
+const de=addNode('fskRx',340,200,{proto:'dmr'});
+de.size.w=480; de.size.h=300; applySize(de);
+const log=addNode('recLog',340,540,{});
+log.size.w=480; applySize(log);
+const fl=addNode('files',860,200,{});
+fl.size.w=420; fl.size.h=440; applySize(fl);
+addEdge(pl.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('DMR: Activity Log and Station Map (Generator)', function(){

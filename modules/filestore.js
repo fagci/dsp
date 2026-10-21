@@ -311,7 +311,7 @@ const TableStore = (() => {
 const fmBE=sp=>sp==='tables' ? TableStore : FileStore;
 const fmIcon=r=>{
   const m=r.mime||'';
-  return r.space==='tables' ? '▦' : m.startsWith('audio/') ? '♪' : m.startsWith('image/') ? '▣' : m.startsWith('video/') ? '▶' : m.startsWith('text/')||/json|xml/.test(m) ? '≡' : '·';
+  return r.space==='tables' ? '▦' : r.meta?.iq ? '≈' : m.startsWith('audio/') ? '♪' : m.startsWith('image/') ? '▣' : m.startsWith('video/') ? '▶' : m.startsWith('text/')||/json|xml/.test(m) ? '≡' : '·';
 };
 const fmSize=b=>b<1024 ? b+' B' : b<1048576 ? (b/1024).toFixed(1)+' KB' : (b/1048576).toFixed(1)+' MB';
 const FM_EXT={'audio/wav':'wav','audio/mpeg':'mp3','audio/ogg':'ogg','image/jpeg':'jpg','image/png':'png','image/webp':'webp','text/plain':'txt','application/json':'json','text/csv':'csv'};
@@ -477,7 +477,8 @@ function fmMount(host,o={}){
     else if(m.startsWith('text/') || /json|xml/.test(m) || rec.space==='tables'){
       const t=await (await fmBlob(rec)).slice(0,500).text(); if(g!==S.pg) return;
       const pre=document.createElement('pre'); pre.textContent=t; prev.append(pre);
-    } else prev.append((m||'file')+' · '+fmSize(rec.size||0));
+    } else if(rec.meta?.iq && typeof iqfPreview==='function') iqfPreview(rec,prev);
+    else prev.append((m||'file')+' · '+fmSize(rec.size||0));
     o.previewExtra?.(rec,prev);
   }
   async function refresh(){
@@ -489,7 +490,7 @@ function fmMount(host,o={}){
     if(S.dead || g!==S.gen) return;
     const sg=S.desc ? -1 : 1;
     const folders=folders0.filter(f=>!srch || f.name.toLowerCase().includes(S.q)).sort((a,b)=>FM_SORT.name(a,b)*(S.sort==='name' ? sg : 1));
-    const files=files0.filter(r=>!srch || r.name.toLowerCase().includes(S.q)).sort((a,b)=>FM_SORT[S.sort](a,b)*sg);
+    const files=files0.filter(r=>!srch || (r.name+' '+(r.meta?.tags||[]).join(' ')).toLowerCase().includes(S.q)).sort((a,b)=>FM_SORT[S.sort](a,b)*sg);
     const dirs=srch ? new Map((await be.allFolders(S.space)).map(f=>[f.id,f])) : null;
     const where=id=>{ const p=[]; for(let f=dirs.get(id);f;f=dirs.get(f.parentId)) p.unshift(f.name); return '/'+p.join('/'); };
     o.onFolder?.(S.folder); o.onNav?.(S.space,S.folder);
@@ -533,11 +534,12 @@ function fmMount(host,o={}){
       else th.textContent=fmIcon(r);
       const nm=document.createElement('span'); nm.className='fm-name'; nm.textContent=r.name; nm.title=(srch ? where(r.folderId)+'/' : '')+fmFileName(r);
       const sz=document.createElement('span'); sz.className='fm-size';
-      sz.textContent=r.meta?.duration!=null ? fmtDur(r.meta.duration) : r.space==='tables' ? r.meta.rows+' rows · '+fmSize(r.size||0) : fmSize(r.size||0);
-      if(r.mime?.startsWith('audio/') || r.meta?.peaks){       // аудио: волна, под именем — частота и размер, справа длительность
+      sz.textContent=r.meta?.iq && typeof iqfDur==='function' ? iqfDur(r.meta.duration) : r.meta?.duration!=null ? fmtDur(r.meta.duration) : r.space==='tables' ? r.meta.rows+' rows · '+fmSize(r.size||0) : fmSize(r.size||0);
+      if(r.mime?.startsWith('audio/') || r.meta?.peaks || r.meta?.iq){       // аудио: волна, под именем — частота и размер, справа длительность; IQ — частота, скорость, размер, теги
         row.classList.add('fm-aud');
         const sub=document.createElement('span'); sub.className='fm-sub';
-        sub.textContent=[r.meta?.sr ? (r.meta.sr/1000).toFixed(r.meta.sr%1000 ? 1 : 0)+' kHz' : '',fmSize(r.size||0),FM_EXT[r.mime]||''].filter(Boolean).join(' · ');
+        sub.textContent=r.meta?.iq && typeof iqfSub==='function' ? iqfSub(r) :
+          [r.meta?.sr ? (r.meta.sr/1000).toFixed(r.meta.sr%1000 ? 1 : 0)+' kHz' : '',fmSize(r.size||0),FM_EXT[r.mime]||''].filter(Boolean).join(' · ');
         const main=document.createElement('span'); main.className='fm-main'; main.append(nm,sub);
         row.append(th,main,sz);
       } else row.append(th,nm,sz);

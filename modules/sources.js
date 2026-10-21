@@ -3052,7 +3052,7 @@ async function iqRecStop(n, auto){
   if(!r){ if(n.recDone?.blob) await iqRecSave(n, iqPickSave(n.recDone)); return; }
   n.rec=null;
   // триггерная запись остановилась без жеста пользователя — окно сохранения недоступно, файл скачивается
-  const pick=auto ? null : iqPickSave(r), stop=new Date();
+  const pick=auto || n.p.recDest!=='file / download' ? null : iqPickSave(r), stop=new Date();
   r.anns=iqaSigmf(n.annSt?.list||[], r.tl0, r.nSrc, r.D, r.rate);
   r.annNote=r.anns.length && r.kind==='wav' ? 'annotations are saved only in SigMF, ' : '';
   iqRecMsg(n, 'finishing '+r.name+'…');
@@ -3086,9 +3086,26 @@ async function iqRecStop(n, auto){
   n.recDone=r;
   await iqRecSave(n, pick);
 }
+// запись в Files: имя, метаданные (частота, длина, теги) — как у IQ Recorder
+async function iqRecToFiles(n, r){
+  const samples=r.bytes/r.bps, tags=iqfTagList(r.tag);
+  const meta=iqfMeta({kind:r.kind, rate:r.rate, freq:r.freq, bw:r.bw, n:samples, start:r.start, tags, src:'USB SDR'+(r.hw ? ' · '+r.hw : ''),
+    segs:r.captures.map(c=>({start:c.start, t:Date.parse(c.datetime), label:''}))});
+  meta.iq.dtype=r.fmt==='u8' && r.kind==='sigmf' ? 'cu8' : 'ci16_le';
+  meta.bytes=r.bytes;
+  return iqfStore(r.blob, r.name, meta, n.p.recFolder);
+}
 async function iqRecSave(n, pick){
   const r=n.recDone, info=r.name+' ('+(r.bytes/1e6).toFixed(1)+' MB)', pre=(r.err ? 'recording stopped: '+r.err+', ' : '')+(r.annNote||'');
   try{
+    if(n.p.recDest!=='file / download'){
+      iqRecMsg(n, 'saving '+info+' to Files…');
+      await iqRecToFiles(n, r);
+      iqTmpDrop(r, true);
+      n.recDone=null;
+      iqRecMsg(n, pre+'saved to Files/'+(n.p.recFolder||IQF_FOLDER)+': '+info);
+      return;
+    }
     if(pick){
       const h=await pick;
       iqRecMsg(n, 'saving '+info+'…');
@@ -4632,8 +4649,8 @@ async function rtlStart(n, sr){
 }
 
 // воспроизведение файла IQ вместо устройства
-async function iqOpenFile(n){
-  const files=await new Promise(res=>{
+async function iqOpenFile(n, given){
+  const files=given || await new Promise(res=>{
     const f=document.createElement('input'); f.type='file'; f.multiple=true;
     if(n.p.iqFmt==='auto') f.accept='.wav,.sigmf,.sigmf-meta,'+Object.keys(IQ_RAW_EXT).map(e=>'.'+e).join(',');
     f.onchange=()=>res(f.files); f.click();
@@ -5128,6 +5145,9 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'openFile',t:'button',label:'Open IQ file…',fn:async n=>{ await iqOpenFile(n); }},
     {n:'iqFmt',t:'select',opts:['auto','cu8','cs8','cs16','cf32','cf64'],d:'auto',label:'IQ file format (raw)',adv:true},
     {n:'recFmt',t:'select',opts:['WAV','SigMF'],d:'WAV',label:'IQ record format',adv:true},
+    {n:'recDest',t:'select',opts:['Files','file / download'],d:'Files',label:'IQ record goes to: Files (the app storage, with length / frequency / tags; play it back with Open from Files…) or a file on disk / download'},
+    {n:'recFolder',t:'text',d:'IQ',label:'IQ record: folder in Files',adv:true},
+    {n:'openStored',t:'button',label:'Open IQ from Files…',fn:async n=>{ const r=await iqfPick('Play IQ from Files'); if(r) await iqOpenFile(n, [iqfAsFile(r)]); }},
     {n:'rec',t:'button',label:'● Record IQ',fn:async n=>{
       if(n.rec) return;
       try{ await iqRecStart(n); }catch(e){ if(e.name!=='AbortError') n.status='record error: '+e.message; } }},
@@ -5137,7 +5157,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'recBw',t:'range',min:1000,max:2000000,step:1000,log:true,d:200000,label:'IQ record bandwidth, Hz (channel 1 / custom)'},
     {n:'recF',t:'num',d:0,label:'IQ record centre, Hz (custom; 0 = receiver centre)'},
     // разметка и метки; тег идёт в имя записи, SigMF и подписи аннотаций
-    {n:'tag',t:'text',d:'',label:'tag (recording name, SigMF, marks)'},
+    {n:'tag',t:'text',d:'',label:'tags, comma separated (recording name, SigMF, Files tags, marks)'},
     {n:'markTime',t:'check',d:true,label:'marks: add local time to the label'},
     // запись по условию до закрытия шумоподавителя; секунды до триггера берутся из накопленных чанков
     {n:'recTrig',t:'select',opts:['off','squelch','go input'],d:'off',label:'record while squelch is open (channel 1; needs squelch on) or while the recGo input is above 0.5 (a satellite pass window)'},
