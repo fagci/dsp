@@ -57,9 +57,10 @@ try{ await navigator.clipboard.writeText(url); stat.textContent='link copied ('+
 catch(e){ prompt('Copy link',url); }
 }catch(e){ stat.textContent='link failed: '+e.message; }
 };
-function makePatchItem(name,count){
+function makePatchItem(name,count,label){
 const b=document.createElement('button'); b.className='pitem'+(name===currentPatchName?' on':'');
-b.innerHTML= `<span class="ptxt"><b>${name}</b><i>${count} nodes</i></span><span class="pins" title="Insert into the current graph">＋</span><span class="pdel" title="Delete patch">✕</span>` ;
+b.title=name+' · '+count+' nodes';
+b.innerHTML= `<span class="ptxt"><b>${(label||name).replace(/[&<>"]/g,c=>'&#'+c.charCodeAt(0)+';')}</b></span><span class="pins" title="Insert into the current graph">＋</span><span class="pdel" title="Delete patch">✕</span>` ;
 b.draggable=true;
 b.addEventListener('dragstart',e=>{ e.dataTransfer.setData('text/x-dsp-patch',name); e.dataTransfer.effectAllowed='copy'; });
 const doDelete=e=>{ e.preventDefault(); e.stopPropagation();
@@ -82,26 +83,34 @@ function buildPatchList(){
 patchListEl.innerHTML='';
 const p=readP();
 const q=patchQuery.trim().toLocaleLowerCase('ru');
-const match=name=>!q || name.toLocaleLowerCase('ru').includes(q);
+const match=name=>!q || (presetSub(name)+' '+name).toLocaleLowerCase('ru').includes(q);
 const custom=Object.keys(p).filter(k=>!(k in PRESETS) &&match(k));
 const temp=custom.filter(k=>k.startsWith(TEMP_PREFIX)).sort().reverse();     // новые сверху
 const own=custom.filter(k=>!k.startsWith(TEMP_PREFIX)).sort();
 const builtin=Object.keys(p).filter(k=>(k in PRESETS) &&match(k));
 let matches=0;
-const addGroup=(key,label,keys)=>{
+const addGroup=(key,label,keys,subs)=>{
 if(!keys.length) return;
 const det=makePatchDetails(key,label,q?true:openPatchCats.has(key));
 det.querySelector('summary').insertAdjacentHTML('beforeend', `<span class="cnt">${keys.length}</span>` );
-for(const name of keys){ matches++; det.append(makePatchItem(name,p[name].nodes.length)); }
+const bySub=new Map();                                // подгруппа из одного пресета — без заголовка, под полным именем
+if(subs) for(const name of keys){ const k=presetSub(name); (bySub.get(k)||bySub.set(k,[]).get(k)).push(name); }
+const flat=subs ? keys.filter(n=>bySub.get(presetSub(n)).length<2) : keys;
+const add=(name,sub)=>{ matches++; const it=makePatchItem(name,p[name].nodes.length,sub&&name.startsWith(sub+': ')?name.slice(sub.length+2):name); if(sub) it.classList.add('insub'); det.append(it); };
+for(const name of flat) add(name);
+if(subs) for(const [sub,list] of [...bySub].sort((a,b)=>a[0].localeCompare(b[0]))) if(list.length>1){
+const h=document.createElement('div'); h.className='psub'; h.textContent=sub; det.append(h);
+for(const name of list) add(name,sub);
+}
 patchListEl.append(det);
 };
 addGroup('temp','TEMP (autosave)',temp);
 addGroup('own','MY PATCHES',own);
 const byCat={};                                       // встроенные — по категориям, не одним списком
 for(const name of builtin){ const cat=PRESET_CATS[name]||'Misc'; (byCat[cat]||(byCat[cat]=[])).push(name); }
-for(const cat of PRESET_CAT_ORDER) if(byCat[cat]) addGroup('builtin:'+cat, cat, byCat[cat].sort());
+for(const cat of PRESET_CAT_ORDER) if(byCat[cat]) addGroup('builtin:'+cat, cat, byCat[cat].sort(), true);
 for(const cat of Object.keys(byCat).sort())            // категории вне PRESET_CAT_ORDER — в конец списком
-if(!PRESET_CAT_ORDER.includes(cat)) addGroup('builtin:'+cat, cat, byCat[cat].sort());
+if(!PRESET_CAT_ORDER.includes(cat)) addGroup('builtin:'+cat, cat, byCat[cat].sort(), true);
 patchListEl.classList.toggle('empty',matches===0);
 }
 function openPatch(name){
@@ -455,6 +464,9 @@ const PRESET_CATS={
   'Tiles: Bench Instruments':'Tile Layouts',
   'Tiles: Digital Modes Desk':'Tile Layouts',
 };
+// подгруппа внутри категории: по умолчанию префикс имени до «: »; нестандартную задаём здесь (ищется тоже)
+const PRESET_SUBS={};
+const presetSub=name=>PRESET_SUBS[name] ?? (name.indexOf(': ')>0 ? name.slice(0,name.indexOf(': ')) : '');
 const PRESETS={};
 function preset(name,fn){
 if(PRESETS[name]) console.warn('дублирующееся имя пресета: '+name);

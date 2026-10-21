@@ -72,30 +72,33 @@ button,select,input{font:inherit;color:inherit}
   border-radius:3px;padding:7px 8px;outline:none}
 #paletteSearch:focus{border-color:var(--acc)}
 #palette.empty:after,#patchList.empty:after{content:'Nothing found';display:block;padding:18px 12px;color:var(--dim)}
-.pcat{border-bottom:1px solid var(--line)}
-.pcat summary{display:flex;align-items:center;gap:7px;padding:9px 12px;
-  color:var(--dim);font-size:10px;letter-spacing:.06em;cursor:pointer;
+.pcat summary{display:flex;align-items:center;gap:7px;padding:7px 12px 5px;
+  color:var(--dim);font-size:9px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;
   list-style:none;user-select:none;
-  position:sticky;top:0;z-index:1;background:var(--panel);
-  box-shadow:0 1px 0 var(--panel),0 -1px 0 var(--panel)}
+  position:sticky;top:0;z-index:1;background:var(--bg)}
 .pcat summary::-webkit-details-marker{display:none}
-.pcat summary::before{content:'▸';flex:none;font-size:9px;transition:transform .12s}
+.pcat summary::before{content:'▸';flex:none;font-size:8px;transition:transform .12s}
 .pcat[open] summary::before{transform:rotate(90deg)}
 .pcat summary:hover{color:var(--txt)}
-.pcat summary .cnt{margin-left:auto;color:var(--dim);font-size:9px}
-.pitem{display:flex;align-items:flex-start;width:100%;text-align:left;background:none;
-  border:0;padding:6px 12px;cursor:grab;color:var(--txt);border-left:2px solid transparent}
+.pcat summary .cnt{margin-left:auto;color:var(--dim);font-size:9px;opacity:.7}
+.pcat[open]{padding-bottom:6px}
+.pitem{display:flex;align-items:center;width:100%;text-align:left;background:none;line-height:1.2;
+  border:0;padding:3px 12px 3px 20px;cursor:grab;color:var(--txt);border-left:2px solid transparent}
 .pitem:hover{background:var(--panel2);border-left-color:var(--acc)}
 .pitem.dragging{opacity:.4}
 #canvas.dropok{outline:2px dashed var(--acc);outline-offset:-2px}
-.pitem .ptxt{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
-.pitem .pins,.pitem .pdel{flex:0 0 auto;margin-left:6px;padding:2px 6px;border-radius:4px;
-  color:var(--dim);font-size:11px;line-height:1.6;opacity:.55;cursor:pointer}
-.pitem .pins:hover,.pitem .pdel:hover{opacity:1;color:var(--txt);background:var(--panel2)}
-.pitem b{font-weight:500;overflow-wrap:anywhere}
+.pitem .ptxt{flex:1;min-width:0;display:flex;flex-direction:column;gap:0}
+.pitem .pins,.pitem .pdel{display:none;flex:0 0 auto;margin-left:2px;padding:1px 5px;border-radius:3px;
+  color:var(--dim);font-size:11px;line-height:1.4;cursor:pointer}
+.pitem:hover .pins,.pitem:hover .pdel{display:block}
+.pitem .pins:hover,.pitem .pdel:hover{color:var(--txt);background:var(--bg)}
+#patchList .pitem{padding-top:3px;padding-bottom:3px}
+#patchList .pitem.insub{padding-left:28px;background-image:linear-gradient(var(--line),var(--line));background-repeat:no-repeat;background-size:1px 100%;background-position:15px 0}
+#patchList .ptxt b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pitem b{font-weight:400;overflow-wrap:anywhere}
 .pitem i{font-style:normal;color:var(--dim);font-size:9px}
-.pitem .prow{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 8px}
-.pitem .pio{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-left:auto}
+.pitem .prow{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 8px}
+.pitem .pio{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-left:auto}
 .pitem .pio .grp{display:flex;align-items:center;gap:3px;font-size:8px;
   color:var(--dim);text-transform:uppercase;letter-spacing:.03em}
 .pitem .pio .pin{width:5px;height:5px;border-radius:50%;flex:0 0 5px}
@@ -305,9 +308,9 @@ body.noedit #bar .ed{display:none}
   #bar .sp{display:none}
   #stat{position:fixed;left:0;right:0;bottom:env(safe-area-inset-bottom);height:20px;line-height:20px;padding:0 24px;
     text-align:center;font-size:10px;z-index:1;pointer-events:none;flex:none}
-  .pitem{padding:10px 12px}
+  .pitem{padding:8px 12px 8px 20px}
   /* на тач-устройствах hover недоступен — держим крестик крупнее и заметным всегда */
-  .pitem .pins,.pitem .pdel{padding:6px 10px;font-size:14px;opacity:.8}
+  .pitem .pins,.pitem .pdel{display:block;padding:6px 10px;font-size:14px}
   .prm{flex-wrap:wrap;gap:2px}
   .prm label{flex:1 0 100%;font-size:10px}
   .prm input[type=range]{height:40px;flex:1 1 60%}
@@ -879,10 +882,15 @@ select.aed-b{padding:0 6px}
 .mi[data-role=proc]{border-radius:3px}
 .mi[data-role=sink]{border-radius:0;clip-path:polygon(25% 3%,75% 3%,100% 50%,75% 97%,25% 97%,0 50%)}
 .pcat summary .gdot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--c)}
-.psub{padding:7px 12px 2px;color:var(--dim);font-size:9px;text-transform:uppercase;letter-spacing:.06em}
+.psub{padding:6px 12px 1px 20px;color:var(--dim);font-size:9px;text-transform:uppercase;letter-spacing:.06em}
 #palLegend{display:flex;gap:10px;padding:6px 12px;color:var(--dim);font-size:10px;border-top:1px solid var(--line)}
 #palLegend .mi{width:12px;height:12px;margin:0 3px 0 0;font-size:0;vertical-align:middle;background:var(--dim)}
-.pitem .mi{margin-top:1px}
+.pitem .mi{width:16px;height:16px;margin:0 8px 0 -8px;font-size:7px;border-radius:4px}
+.pitem .mi[data-role=source]{border-radius:50%}
+.pitem .mi[data-role=proc]{border-radius:3px}
+.pitem .pio{display:none}
+.pitem:hover .pio{display:flex}
+.pitem .prow i{opacity:.7}
 .modpick .mp-item .mi{width:18px;height:18px;margin-right:0;font-size:8px}
 .modpick .mp-from{display:flex;align-items:center;gap:5px;padding:6px 8px 0;color:var(--dim);font-size:10px}
 .modpick .mp-from .pin{width:7px;height:7px;border-radius:50%}
