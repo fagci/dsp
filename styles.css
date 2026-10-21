@@ -93,7 +93,7 @@ button,select,input{font:inherit;color:inherit}
 .pitem:hover .pins,.pitem:hover .pdel{display:block}
 .pitem .pins:hover,.pitem .pdel:hover{color:var(--txt);background:var(--bg)}
 #patchList .pitem{padding-top:3px;padding-bottom:3px}
-#patchList .pitem.insub{padding-left:28px}
+#patchList .pitem.insub{padding-left:28px;background-image:linear-gradient(var(--line),var(--line));background-repeat:no-repeat;background-size:1px 100%;background-position:15px 0}
 #patchList .ptxt b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pitem b{font-weight:400;overflow-wrap:anywhere}
 .pitem i{font-style:normal;color:var(--dim);font-size:9px}
