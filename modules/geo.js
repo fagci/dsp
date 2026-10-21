@@ -572,6 +572,10 @@ def({ id:'geoMe', title:'My Position', cat:'Geo',
           {n:'lon',t:'num',d:37.6173,label:'lon, °'},
           {n:'grid',t:'text',d:'',label:'locator (sets lat/lon)'},
           {n:'locate',t:'button',label:'⌖ Locate once',fn:n=>geoMeLocate(n)},
+          {n:'look',t:'num',d:'',label:'look direction, ° (when GPS has no heading)'},
+          {n:'fov',t:'range',min:0,max:360,step:1,d:0,label:'field of view, ° (0 — none)'},
+          {n:'fovKm',t:'num',d:'',label:'field of view range, km'},
+          {n:'rings',t:'text',d:'',label:'distance rings, km (e.g. 1,5,10)'},
           {n:'hi',t:'check',d:true,label:'high accuracy (GPS)',adv:true},
           {n:'id',t:'text',d:'me',label:'record id',adv:true}],
   init:n=>{
@@ -609,6 +613,8 @@ def({ id:'geoMe', title:'My Position', cat:'Geo',
       } else n.msg='enter lat/lon or locator';
     }
     let rec=null;
+    const vk=[n.p.look,n.p.fov,n.p.fovKm,n.p.rings].join('|');
+    if(vk!==n.lastView){ n.lastView=vk; n.newFix=true; }
     if(f){
       GeoMe.lat=f.lat; GeoMe.lon=f.lon; GeoMe.t=Date.now();
       if(n.newFix){
@@ -616,7 +622,9 @@ def({ id:'geoMe', title:'My Position', cat:'Geo',
         rec=[{t:f.t, id:n.p.id||'me', icon:'me', lat:f.lat, lon:f.lon,
               ...(f.acc!=null?{acc:f.acc, radius:f.acc}:{}),
               ...(f.alt!=null?{alt:f.alt}:{}), ...(f.speed!=null?{speed:f.speed}:{}),
-              ...(f.heading!=null?{heading:f.heading}:{}), grid:latLonToGrid(f.lat,f.lon,6)}];
+              ...(f.heading!=null?{heading:f.heading}:recNum(n.p.look)!=null?{heading:recNum(n.p.look)}:{}),
+              ...(n.p.fov>0?{fov:n.p.fov}:{}), ...(recNum(n.p.fovKm)>0?{fov_range:recNum(n.p.fovKm)}:{}),
+              ...(String(n.p.rings||'').trim()?{rings:String(n.p.rings).trim()}:{}), grid:latLonToGrid(f.lat,f.lon,6)}];
       }
     }
     return f ? {lat:f.lat, lon:f.lon, acc:f.acc, alt:f.alt, speed:f.speed, heading:f.heading,
@@ -2055,6 +2063,17 @@ function geoIcon(cx,icon,x,y,s,rot,col){
   cx.restore();
 }
 // линия по большому кругу из точки: азимут/дальность или до второй точки
+function geoRings(x){                                // "1,5,10" или число, км
+  const a=Array.isArray(x) ? x : typeof x==='string' ? x.split(/[,;\s]+/) : x!=null ? [x] : [];
+  return a.map(Number).filter(k=>k>0 && isFinite(k)).sort((p,q)=>p-q).slice(0,12);
+}
+function geoCircleKm(cx,v,c,km,refX){
+  let px=null;
+  for(let i=0;i<=72;i++){
+    const q=geoDest(c.lat,c.lon,i*5,km), p=geoProj(v,q.lat,q.lon,px??refX);
+    if(px==null) cx.moveTo(p.x,p.y); else cx.lineTo(p.x,p.y); px=p.x;
+  }
+}
 function geoGreatCircle(cx,v,lat,lon,brg,km,refX){
   const N=Math.max(8,Math.min(96,Math.ceil(km/100)));
   let prev=null;
@@ -2132,6 +2151,34 @@ function geoDrawObjects(n,cx,v){
         } else cx.arc(s.x,s.y,rp,0,2*Math.PI);
         cx.stroke(); cx.setLineDash([]);
         cx.fillStyle=col; cx.globalAlpha*=.08; cx.fill(); cx.globalAlpha=1-age*0.7; }
+    }
+    const rings=geoRings(r.rings);
+    if(rings.length){                                // кольца расстояния: км от объекта
+      cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash([2,4]); cx.globalAlpha*=.7;
+      for(const km of rings){
+        cx.beginPath(); geoCircleKm(cx,v,last,km,s.x); cx.stroke();
+        if(n.p.labels){
+          const q=geoDest(last.lat,last.lon,0,km), lp=geoProj(v,q.lat,q.lon,s.x);
+          cx.save(); cx.setLineDash([]); cx.font='9px sans-serif'; cx.textAlign='center'; cx.fillStyle=col; cx.fillText(km+' km',lp.x,lp.y-2); cx.restore();
+        }
+      }
+      cx.setLineDash([]); cx.globalAlpha=1-age*0.7;
+    }
+    const fov=recNum(r.fov);
+    if(fov>0){                                       // поле зрения: сектор вокруг курса / азимута
+      let hd=recNum(r.heading ?? r.course ?? r.azimuth ?? r.bearing);
+      if(hd==null && e.pts.length>1){ const p0=e.pts[e.pts.length-2]; hd=geoBearing(p0.lat,p0.lon,last.lat,last.lon); }
+      if(hd!=null){
+        const km=recNum(r.fov_range) ?? recNum(r.range) ?? (rings.length ? rings[rings.length-1] : n.p.rayKm);
+        const w=Math.min(fov,360), N=Math.max(6,Math.ceil(w/5));
+        cx.beginPath(); cx.moveTo(s.x,s.y);
+        let px=s.x;
+        for(let i=0;i<=N;i++){
+          const q=geoDest(last.lat,last.lon,hd-w/2+w*i/N,km), p=geoProj(v,q.lat,q.lon,px); cx.lineTo(p.x,p.y); px=p.x;
+        }
+        if(w<360) cx.closePath();
+        cx.fillStyle=cx.strokeStyle=col; cx.lineWidth=1; cx.globalAlpha*=.18; cx.fill(); cx.globalAlpha=1-age*0.7; cx.stroke();
+      }
     }
     let pth=Array.isArray(r.path) ? r.path : r.path3;
     if(typeof pth==='string' && pth[0]==='['){ try{ pth=JSON.parse(pth); }catch(e){ pth=null; } }          // path3 — ломаная связи (путь сигнала с отражением): [[lat,lon,alt],…]
