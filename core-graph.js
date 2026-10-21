@@ -591,6 +591,7 @@ else if(n.cv){ n.cv.width=midWidth(n); n.cv.height=d.view.h;
 n.cv.style.height=d.view.h+'px'; n.resized=true; }
 if(n.ro  && d.tall) n.ro.style.height=n.size.h+'px';
 const ur=n.ui&&n.ui.root; if(ur && d.resize && n.size.h>0 && ur.matches('.ml,.pl')) ur.style.height=n.size.h+'px';   // Playlist, Media Library: высота рамки = высота списка
+const fr=n.fm?.root; if(fr && d.resize && n.size.h>0) fr.style.height=n.size.h+'px';   // Files: рамка менеджера = высота узла
 if(n.gv && n.size.h >0) n.gv.style.height=n.size.h+'px';
 else if(n.ta  && n.size.h >0 && !d.gv) n.ta.style.height=n.size.h+'px';
 if(!n.xpand) n.el.style.minHeight=(plainH(n,d) && n.size.h>0) ? n.size.h+'px' : '';   // обычный модуль: высота рамки — минимальная
@@ -1193,8 +1194,8 @@ n.size.w=clamp(Math.round(n.__rw+(left?-dx:dx)),160,1400);
 if(left){ n.x=n.__rx+n.__rw-n.size.w; posNode(n); } }
 const d=MOD[n.type];
 if(bottom){
-if(n.xpand){ n._xh=clamp(Math.round(n.__rxh+dy),60,2000); n.el.style.height=n._xh+'px'; }   // развёрнутый: канва тянется за рамкой
-else n.size.h=clamp(Math.round(n.__rh+dy),40,2000); }
+if(n.xpand){ n._xh=clamp(Math.round(n.__rxh+dy),60,20000); n.el.style.height=n._xh+'px'; }   // развёрнутый: канва тянется за рамкой
+else n.size.h=clamp(Math.round(n.__rh+dy),40,20000); }
 applySize(n); if(n.xpand){ n._dirty=true; n._drawGen=-1; n.onResize?.(n); } drawWires(); },
 end(){ activeInteractions--; Undo.push(); }
 }});

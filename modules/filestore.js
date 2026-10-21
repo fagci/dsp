@@ -89,7 +89,7 @@ const FileStore = (() => {
     async deleteFolder(id){
       const f=await this.getFolder(id); if(!f) return;
       for(const sub of await this.listFolders(f.space,id)) await this.deleteFolder(sub.id);
-      for(const x of await this.list(f.space,id)) await this.remove(x.id);
+      await this.removeMany((await this.list(f.space,id)).map(x=>x.id));
       await reqP((await st('folders','readwrite')).delete(id)); fire(f.space);
     },
     async listFolders(space,parentId=null){
@@ -122,6 +122,14 @@ const FileStore = (() => {
     },
     async stamp(id,patch){                              // служебная правка без смены времени и без уведомлений
       const s=await st('files','readwrite'), r=await reqP(s.get(id)); if(r){ Object.assign(r,patch); await reqP(s.put(r)); }
+    },
+    async removeMany(ids){                              // одной транзакцией и одним уведомлением
+      const recs=(await Promise.all(ids.map(i=>this.get(i)))).filter(Boolean);
+      for(const r of recs) await syncNoteDel('f',r);
+      const db=await open(), tx=db.transaction('files','readwrite');
+      for(const r of recs) tx.objectStore('files').delete(r.id);
+      await doneP(tx);
+      for(const sp of new Set(recs.map(r=>r.space))) fire(sp);
     },
     async remove(id){
       const r=await this.get(id); if(!r) return;
@@ -379,7 +387,7 @@ function fmMount(host,o={}){
   const mk=(t,title,fn)=>{ const b=document.createElement('button'); b.textContent=t; b.title=title; b.onclick=fn; return b; };
   const guard=fn=>async(...a)=>{ try{ return await fn(...a); }catch(e){ if(e.message!=='') alert(e.message||String(e)); } };
   const B=()=>fmBE(S.space);
-  const idOf=v=>S.space==='tables' ? v : +v;
+  const idOf=v=>S.space==='tables' || String(+v)!==v ? v : +v;      // id фото из старой базы бывают строками
   const inp=document.createElement('input'); inp.type='file'; inp.multiple=true; inp.hidden=true;
   const search=document.createElement('input'); search.type='search'; search.placeholder='search…'; search.className='fm-q';
   search.oninput=()=>{ S.q=search.value.trim().toLowerCase(); refresh(); };
@@ -459,7 +467,9 @@ function fmMount(host,o={}){
       act('⤓','Download files',s=>s.f.length>0,async s=>{ for(const f of s.f){ const r=await B().get(f); if(r) await fmDownload(r); } }),
       act('✕','Delete (can be undone)',()=>true,async s=>{
         const undo=await B().snapshot(s);
-        for(const d of s.d) await B().deleteFolder(d); for(const f of s.f){ if(S.selected?.id===f) select(null); await B().remove(f); }
+        for(const d of s.d) await B().deleteFolder(d);
+        if(s.f.some(f=>S.selected?.id===f)) select(null);
+        if(B().removeMany) await B().removeMany(s.f); else for(const f of s.f) await B().remove(f);
         dspToast(root,'Deleted '+(s.f.length+s.d.length)+' item(s).',undo); }));
   }
   function select(rec){ S.selected=rec; o.onSelect?.(rec); [...list.children].forEach(r=>r.classList.toggle('sel',!!rec && r._rec===rec.id)); showPrev(rec); }
@@ -773,6 +783,7 @@ def({ id:'files', title:'Files', cat:'Output', kw:'file manager storage samples 
     }
     if(n.fm && n.mid.contains(n.fm.root)) return;
     n.fm?.destroy();
+    setTimeout(()=>applySize(n),0);
     n.fm=fmMount(n.mid,{preview:true,onSelect:r=>{ n.sel=r; n.vidEl=null; },
       toolbar:bar=>{ n.recBtn=document.createElement('button'); n.recBtn.title='Record (settings: record from / audio format); into the open folder or the path input';
         n.recBtn.onclick=()=>fsRecToggle(n); bar.append(n.recBtn); fsRecUI(n); },
