@@ -4,14 +4,14 @@
    Rec → Table (хранилище) → Timeline. Развёртка SDR: канал вне текущего окна не наблюдается, его состояние не меняется.
    Ядро — activity-kernels.js, проверка: node tools/test-activity.mjs */
 
-function actLevels(n,s,lo,step,count,bw){                      // уровни каналов, дБ; null — вне окна спектра
+function actLevels(n,s,lo,step,count,bw,peak){                      // уровни каналов, дБ; null — вне окна спектра
   const [sLo,sHi]=specSpan(s), N=s.mag.length, out=new Array(count).fill(null);
   for(let k=0;k<count;k++){
     const f=lo+k*step, a=f-bw/2, b=f+bw/2;
     if(a<sLo || b>sHi) continue;
     const i0=clamp(Math.round(specBin(s,a)),0,N-1), i1=clamp(Math.round(specBin(s,b)),0,N-1);
-    let p=0,c=0; for(let i=Math.min(i0,i1);i<=Math.max(i0,i1);i++){ p+=s.mag[i]*s.mag[i]; c++; }
-    out[k]=10*Math.log10(p/c+1e-24);
+    let p=0,c=0,mx=0; for(let i=Math.min(i0,i1);i<=Math.max(i0,i1);i++){ const q=s.mag[i]*s.mag[i]; p+=q; c++; if(q>mx) mx=q; }
+    out[k]=10*Math.log10((peak ? mx : p/c)+1e-24);
   }
   return out;
 }
@@ -24,12 +24,15 @@ def({ id:'actlog', title:'Activity Events', cat:'Analysis', readout:true, w:300,
           {n:'step',t:'num',min:1,d:12500,label:'channel step, Hz'},
           {n:'count',t:'range',min:1,max:128,step:1,d:16,label:'channels'},
           {n:'bw',t:'num',min:1,d:0,label:'channel width, Hz (0 — 80 % of the step)'},
-          {n:'thr',t:'range',min:2,max:40,step:.5,d:8,label:'busy above the channel floor, dB'},
+          {n:'level',t:'select',opts:['mean','peak'],d:'mean',label:'channel level: mean power of the band, or its strongest bin (peak: weak narrow carriers, CW, narrow FM stand out more, a bit more false alarms)'},
+          {n:'thr',t:'range',min:2,max:40,step:.5,d:6,label:'busy above the channel floor, dB'},
           {n:'hys',t:'range',min:0,max:20,step:.5,d:3,label:'hysteresis, dB'},
           {n:'hold',t:'range',min:0,max:5000,step:10,d:300,label:'hold, ms (a pause shorter than this does not end a transmission)'},
           {n:'minDur',t:'range',min:0,max:2000,step:5,d:20,label:'shortest event, ms'},
           {n:'learn',t:'range',min:0,max:30000,step:100,d:3000,label:'learn the noise floor first, ms'},
-          {n:'rise',t:'range',min:0,max:20,step:.1,d:1,label:'floor may rise, dB/s (follows the drift)'},
+          {n:'avg',t:'range',min:0,max:500,step:5,d:40,label:'smoothing, ms (averages the noise: a lower threshold is safe)'},
+          {n:'common',t:'check',d:true,label:'ignore band-wide level changes',tip:'the common level of the band (the lower third of the channels) is subtracted: AGC / gain steps and a wideband noise rise do not make every channel busy at once. Off — if most channels are busy most of the time, or with a sweep (few channels per window)'},
+          {n:'rise',t:'range',min:0,max:20,step:.1,d:3,label:'floor adaptation, dB/s (follows the drift; the floor is a low quantile of the level, frozen while busy)'},
           {n:'rst',t:'button',label:'Reset',fn:n=>{ n.st=actNew(); n.cnt=0; n.recent=[]; }}],
   init:n=>{ n.st=actNew(); n.cnt=0; n.recent=[]; n.txt='wire a spectrum'; n.lastT=0; n.lv=null; },
   process(n,I){
@@ -40,10 +43,10 @@ def({ id:'actlog', title:'Activity Events', cat:'Analysis', readout:true, w:300,
     n.lastT=now;
     const p=n.p, step=Math.max(1,+p.step||12500), bw=+p.bw>0 ? +p.bw : step*.8, [sLo]=specSpan(s);
     const lo=+p.lo>0 ? +p.lo : sLo+step/2, count=p.count|0;
-    const key=lo+'|'+step+'|'+count;
+    const key=lo+'|'+step+'|'+count+'|'+p.level+'|'+p.common;
     if(key!==n.key){ n.key=key; n.st=actNew(); }                    // сетка поменялась — пол шума учим заново
-    const lv=n.lv=actLevels(n,s,lo,step,count,bw);
-    const ev=actStep(n.st,lv,now,{thr:+p.thr,hys:+p.hys,hold:+p.hold,minDur:+p.minDur,learn:+p.learn,rise:+p.rise});
+    const lv=n.lv=actLevels(n,s,lo,step,count,bw,p.level==='peak');
+    const ev=actStep(n.st,lv,now,{thr:+p.thr,hys:+p.hys,hold:+p.hold,minDur:+p.minDur,learn:+p.learn,rise:+p.rise,avg:+p.avg,common:!!p.common});
     const wall=Date.now()-now, recs=ev.map(e=>({t:Math.round(wall+e.t0),dur:Math.round(e.dur),freq:Math.round((lo+e.ch*step)/10)/1e5,ch:e.ch+1,
       rssi:Math.round(e.peak*10)/10,avg:Math.round(e.avg*10)/10,snr:Math.round(e.snr*10)/10}));
     n.cnt+=recs.length; if(recs.length) n.recent=n.recent.concat(recs).slice(-6);
