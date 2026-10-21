@@ -59,7 +59,7 @@ catch(e){ prompt('Copy link',url); }
 };
 function makePatchItem(name,count){
 const b=document.createElement('button'); b.className='pitem'+(name===currentPatchName?' on':'');
-b.innerHTML= `<span class="ptxt"><b>${name}</b><i>${count} nodes</i></span><span class="pins" title="Insert into the current graph">＋</span><span class="pdel" title="Delete patch">✕</span>` ;
+b.innerHTML= `<span class="ptxt"><b>${name}</b></span><i class="pcnt" title="nodes">${count}</i><span class="pins" title="Insert into the current graph">＋</span><span class="pdel" title="Delete patch">✕</span>` ;
 b.draggable=true;
 b.addEventListener('dragstart',e=>{ e.dataTransfer.setData('text/x-dsp-patch',name); e.dataTransfer.effectAllowed='copy'; });
 const doDelete=e=>{ e.preventDefault(); e.stopPropagation();
