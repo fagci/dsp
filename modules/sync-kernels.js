@@ -31,6 +31,12 @@ function syKeyNorm(s){
   return k.length===26 && [...k].every(c=>SY_ALPHA.includes(c)) ? k.match(/.{1,5}/g).join('-') : null;
 }
 
+// ключ пары из текста QR: ссылка с #sync=… или сам ключ; null — не ключ
+function syKeyFromText(t){
+  const s=String(t||'').trim(), m=s.match(/[#&?]sync=([^&\s]*)/);
+  let v=m ? m[1] : s; try{ v=decodeURIComponent(v); }catch(e){}
+  return syKeyNorm(v);
+}
 // подписи устройств для выбора адресата: имя, а при повторе или пустом имени — с началом id
 function syLabels(list){
   const cnt=new Map(); for(const d of list) if(d.name) cnt.set(d.name,(cnt.get(d.name)||0)+1);

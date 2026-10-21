@@ -838,7 +838,7 @@ def({ id:'scan', title:'Frame Line', cat:'Video', ins:[{n:'img',t:'img'},{n:'row
     return {out:o}; }});
 
 
-// QR и штрихкоды из кадра через BarcodeDetector (Chrome/Android; в Firefox/Safari нет). Асинхронно, не чаще period
+// QR и штрихкоды из кадра через BarcodeDetector (Chrome/Android); где его нет — только QR через jsQR (qr.js). Асинхронно, не чаще period
 def({ id:'barcode', lazy:'proc', title:'Barcode / QR', cat:'Video',
   ins:[{n:'img',t:'img'}],
   outs:[{n:'text',t:'txt'},{n:'go',t:'num'},{n:'rec',t:'rec'},{n:'count',t:'num'}],
@@ -846,13 +846,13 @@ def({ id:'barcode', lazy:'proc', title:'Barcode / QR', cat:'Video',
   params:[{n:'period',t:'range',min:.1,max:5,step:.1,d:.5,label:'scan every, s'},
           {n:'dup',t:'range',min:0,max:30,step:1,d:3,label:'ignore repeat, s'}],
   init:n=>{ n.det=null; n.busy=false; n.lastT=0; n.lastRev=-1; n.text=''; n.q=[]; n.count=0; n.seen=new Map();
-    n.status=typeof BarcodeDetector==='undefined' ? 'BarcodeDetector is not supported by this browser' : 'waiting for a frame'; },
+    n.status=typeof BarcodeDetector==='undefined' ? 'no BarcodeDetector in this browser: QR codes only' : 'waiting for a frame'; },
   process(n,I){
     const now=performance.now();
-    if(I.img && !I.img.gray && !n.busy && typeof BarcodeDetector!=='undefined' &&
-       now-n.lastT>=n.p.period*1000 && I.img.rev!==n.lastRev){
+    if(I.img && !I.img.gray && !n.busy && now-n.lastT>=n.p.period*1000 && I.img.rev!==n.lastRev){
       n.lastT=now; n.lastRev=I.img.rev; n.busy=true;
-      (n.det||=new BarcodeDetector()).detect(I.img.data).then(res=>{
+      (typeof BarcodeDetector!=='undefined' ? (n.det||=new BarcodeDetector()).detect(I.img.data)
+        : qrScanFrame(I.img.data).then(v=>v ? [{format:'qr_code',rawValue:v}] : [])).then(res=>{
         const t=Date.now(); n.status=res.length ? res.length+' found' : 'no code in frame';
         for(const b of res){
           const k=b.format+'|'+b.rawValue, prev=n.seen.get(k);
