@@ -243,6 +243,7 @@ async function tblLoad(n){
   n.p.list=tblCanon(n.p.list);
   n.loading=true;
   try{ await tblLoadRun(n); } finally{ n.loading=false; }
+  n._chkRev=ListDB.rev; await tcChkRoll(n);
 }
 async function tblLoadRun(n){
   const list=n.p.list, kind=tblKind(list), tok=n.loadTok=(n.loadTok||0)+1;
@@ -528,6 +529,21 @@ async function tblRemove(n,i){
   tblDerive(n);
   n.idx=Math.min(n.idx,Math.max(0,n.rows.length-1));
 }
+// запись с _delete на rec: удаляет строку с тем же значением в колонке upsert key (так карта удаляет точки)
+async function tblDelRecs(n,recs){
+  const key=String(n.p.key||'').trim();
+  if(!key || tblRO(n) || n.loading) return;
+  for(const r of recs){
+    const k=n.all.findIndex(x=>String(x[key])===String(r[key]));
+    if(k<0) continue;
+    const id=n.ids[k];
+    n.all.splice(k,1); n.ids.splice(k,1);
+    if(tblKind(n.p.list)==='db') await ListDB.remove(id);
+    else { n.ids=n.all.map((_,j)=>j); await tblSave(n); }
+    if(n.p.sel===id) n.p.sel=null;
+  }
+  tblDerive(n); n.uiDirty=true; n.uiFull=true;
+}
 async function tblClear(n){
   if(tblRO(n)) return;
   if(tblKind(n.p.list)==='db') await ListDB.removeMany(n.ids);
@@ -746,7 +762,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     {n:'reset',t:'button',label:'Reset',fn:n=>seqReset(n),adv:true},
     {n:'collect',t:'check',d:true,label:'store rec / text wires',adv:true},
     {n:'rowsIn',t:'select',opts:['replace','add','sync','new only'],d:'replace',label:'rows in (wire)',tip:'a set on the rows input is stored in the active list: replace its rows, add to them, sync (rows are matched by the upsert key column — default id — and changed, added or removed in place: nothing flickers, the selected row stays) or new only (add the rows whose key is not in the list yet, leave the rest alone)'},
-    {n:'key',t:'text',d:'',adv:true,label:'upsert key col',tip:'if set, a wired rec with the same value in this column updates its row instead of adding one; count / first / last columns are kept'},
+    {n:'key',t:'text',d:'',adv:true,label:'upsert key col',tip:'if set, a wired rec with the same value in this column updates its row instead of adding one (a rec with _delete removes it); count / first / last columns are kept'},
     {n:'pfields',t:'text',d:'',adv:true,label:'packet fields → columns',tip:'extra columns from a wired rec: "col=src, src2". src is a path into the record (a.b.c) or a field of its hex parsed by hexSchema (HEX Structure: mtype_name, body.devaddr …); * — all parsed fields'},
     {n:'pfillBtn',t:'button',label:'Fill packet fields into existing rows',adv:true,fn:n=>tblBackfill(n)},
     {n:'textCsv',t:'check',d:false,label:'text wire: split into columns',adv:true},
@@ -795,6 +811,10 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     // список/таблицу сменили извне (undo, десериализация, правка data)
     if((n.loaded!==p.list || (p.list===TBL_PATCH && n.loadedData!==p.data)) && !n.loading) tblLoad(n);
     else if(n._showRef!==p.show && !n.loading) tblSyncExtra(n);       // галочки изменили извне (undo, патч)
+    if(n._chkRev!==ListDB.rev && !n.loading && n.loaded===p.list){      // правка хранилища: пункты чеклистов могли измениться
+      n._chkRev=ListDB.rev;
+      if(n.chkCols?.length || n.extra.size){ clearTimeout(n._chkT); n._chkT=setTimeout(()=>tcChkRoll(n),150); }
+    }
     n.lastIn=I;
     const wf=typeof I.filter==='string' ? I.filter : '';
     if(wf!==(n.wf||'') && n.loaded===p.list){ n.wf=wf; n.hlSel=false; tblDerive(n); seqReset(n); n.initDone=true; n.uiDirty=true; n.uiFull=true; }
@@ -802,7 +822,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     if(p.pfields!==n._pfSeen){ n._pfSeen=p.pfields; n._pfAt=performance.now(); n._pfPend=true; }
     else if(n._pfPend && performance.now()-n._pfAt>1000 && !n.loading && n.loaded===p.list){ n._pfPend=false; tblBackfill(n); }
     if(p.collect && !tblRO(n)){
-      if(I.rec && I.rec!==n.lastRec){ n.lastRec=I.rec; for(const r of Array.isArray(I.rec) ? I.rec : [I.rec]) if(r && typeof r==='object') n.pend.push(r); }
+      if(I.rec && I.rec!==n.lastRec){ n.lastRec=I.rec; const del=[]; for(const r of Array.isArray(I.rec) ? I.rec : [I.rec]) if(r && typeof r==='object') (r._delete ? del : n.pend).push(r); if(del.length) tblDelRecs(n,del); }
       if(typeof I.text==='string' && I.text!==n.lastText){ n.lastText=I.text; if(I.text) n.pend.push(...tblTextRows(n,I.text)); }
     }
     if(p.log){ n.logT+=dt; if(n.logT>=Math.max(.05,+p.period||1)){ n.logT=0; n.pend.push(tblLogRow(n,I)); } }
@@ -886,6 +906,7 @@ function tblInit(n){
     </div>
     <div class="tbl-tree" hidden></div>
     <div class="tbl-bar">
+      <button class="tbl-btn tbl-crumb" hidden></button>
       <input class="tbl-filter" placeholder="filter: kind == &quot;beacon&quot; &amp;&amp; rssi > -50   ·   20m  demod:am  -fm" title="Wireshark-style: field == x, != > < >= <=, contains, matches (~), in {a b 1..5}, &amp;&amp; || !, ( ); fields are column names. Also words: 20m, col:text, col>5M, -word, not word">
       <span class="tbl-count"></span>
     </div>
@@ -904,7 +925,7 @@ function tblInit(n){
   syncCustomHeight(n,root,150);
   const q=s=>root.querySelector(s);
   n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), tree:q('.tbl-tree'), pick:q('.tbl-pick'), shown:q('.tbl-shown'),
-    vmBtn:q('.tbl-vm'), filter:q('.tbl-filter'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:!!n.p.follow && !n.p.rev, jump:!!n.p.follow && !n.p.rev, marked:-1, markEl:null, rh:0, hdh:0, vh:0, st:0, atEnd:false};
+    vmBtn:q('.tbl-vm'), crumb:q('.tbl-crumb'), filter:q('.tbl-filter'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:!!n.p.follow && !n.p.rev, jump:!!n.p.follow && !n.p.rev, marked:-1, markEl:null, rh:0, hdh:0, vh:0, st:0, atEnd:false};
   n.ui.view.hidden=!n.viewOpen;                           // пересборка узла (смена колонок) не должна прятать панель
   q('.tbl-viewb').classList.toggle('on',!!n.viewOpen);
   const vw=n.ui.view;                                     // прокрутка и фокус поля «new field» переживают пересборку узла
@@ -936,7 +957,12 @@ function tblInit(n){
     const row=e.target.closest('.tbl-row'); if(!row) return;
     const ch=e.target.closest('.tc-chip');
     if(ch?.dataset.to){ tcGo(n,ch.dataset.to,ch.dataset.name); return; }
-    const i=+row.dataset.i, b=e.target.closest('.tbl-ico[data-act]');
+    const i=+row.dataset.i;
+    const ck=e.target.closest('.tc-chk');
+    if(ck){ tblSelect(n,i); tcChkDrill(n,ck.dataset.c,n.labelFn(n.rows[i])); return; }
+    const tg=e.target.closest('.tc-tog');
+    if(tg){ const r=n.rows[i], c=tg.dataset.c; tblUpdate(n,i,{...r,[c]:tcIsTrue(r[c]) ? 0 : 1}).then(()=>tblRenderList(n)); return; }
+    const b=e.target.closest('.tbl-ico[data-act]');
     if(b?.dataset.act==='edit'){ tblEditForm(n,i,row); return; }
     if(b?.dataset.act==='del'){
       const label=tcHasName(n) && n.rows[i] ? n.labelFn(n.rows[i]) : '';
@@ -966,7 +992,8 @@ function tblInit(n){
   });
   q('.tbl-new').addEventListener('click',()=>tblNewMenu(n));
   q('.tbl-menub').addEventListener('click',()=>tblMainMenu(n));
-  q('.tbl-add').addEventListener('click',()=>tblAddForm(n));
+  q('.tbl-add').addEventListener('click',()=>tblAddForm(n,n.drill ? {[n.drill.via]:n.drill.label} : null));
+  n.ui.crumb.addEventListener('click',()=>tcChkBack(n));
   q('.tbl-here').addEventListener('click',()=>tblHereForm(n));
   q('.tbl-viewb').addEventListener('click',()=>tblViewToggle(n));
   q('.tbl-vm').addEventListener('click',()=>tcViewNext(n));
@@ -1177,6 +1204,10 @@ function tblToggleShow(n,names,on){
 // выбор активного списка; если «показывался» только прежний активный — галочка переходит на новый
 async function tblPick(n,list){
   tblCloseEditor(n);
+  if(n.drill && list!==n.drill.to){                        // ушли из подсписка чеклиста: фильтр, как был
+    n.p.filter=n.drill.prevFilter; n.drill=null;
+    if(n.ui) n.ui.filter.value=n.p.filter;
+  }
   const sh=n.p.show;
   if(Array.isArray(sh) && (!sh.length || (sh.length===1 && tblCanon(sh[0])===n.p.list))) n.p.show=[list];
   await tblUse(n,list);
@@ -1221,6 +1252,8 @@ function tblRenderList(n,inc){
   const atEndNow=()=>list.scrollTop+list.clientHeight>=list.scrollHeight-4;
   list.classList.toggle('grid',grid); list.classList.toggle('cards',tcView(n)==='cards'); list.classList.toggle('icons',tcView(n)==='icons'); tcViewBtn(n);
   ui.count.textContent=(n.p.filter ? N+'/' : '')+n.all.length+' rows';
+  ui.crumb.hidden=!n.drill || n.drill.to!==n.p.list;
+  if(n.drill) ui.crumb.textContent='← '+n.drill.label;
   if(!N){
     const e=document.createElement('div');
     e.textContent=n.all.length ? 'nothing matches' : ro ? 'empty' : 'empty — add a row, import a file or wire rec / text';
@@ -1359,6 +1392,7 @@ function tblCell(x,v,local){
     if(x.ty==='photo'){ const k=phIds(v).length; return k ? '📷'+k : ''; }
     if(x.ty==='audio'){ const k=auIds(v).length; return k ? '🔊'+k : ''; }
     if(x.ty==='file'){ const k=tcFileIds(v).length; return k ? '📎'+k : ''; }
+    if(x.ty==='checklist') return '☑ '+v;
     if(x.ty==='bool' || x.ty==='link') return x.ty==='bool' ? (tcIsTrue(v) ? '✓' : '✗') : tcLinks(v).join(', ');
     if(TBL_HZ.test(x.c)){ const h=tblHz(v); return isFinite(h) ? fmtHz(h,3) : recFmt(v); }
     if(/^(t|ts|time|date|datetime)$/.test(low) && typeof v==='number') return tblTime(v,local);
@@ -1383,6 +1417,8 @@ function tblCellEl(n,x,v,text){
     }
     return el;
   }
+  if(x.ty==='checklist'){ el.textContent=text; el.classList.add('tc-chk','tbl-ico'); el.dataset.c=x.c; el.title='Open the checklist'; return el; }
+  if(x.ty==='bool' && x.fmt==='auto' && n.drill && !tblRO(n)){ el.textContent=text; el.classList.add('tc-tog'); el.dataset.c=x.c; el.title='Tick / untick'; el.style.cursor='pointer'; return el; }
   if(x.ty==='progress' && x.fmt==='auto' && tcFrac(n,x.c,v)!=null){ el.classList.add('tbl-bar'); el.append(tcBar(n,x.c,v,text)); return el; }
   if((x.fmt==='swatch' || (x.fmt==='auto' && TBL_COLOR.includes(low))) && v && CSS.supports('color',String(v))){
     const sw=document.createElement('i'); sw.className='tbl-sw'; sw.style.background=String(v); el.append(sw);
@@ -1700,7 +1736,8 @@ function tblFieldsPanel(n,box,mk,sel){
     }
     row.append(name);
     if(!ro) row.append(sel(TC_TYPES,t,v=>{
-      const nd={...d,t:v}; if(v!=='choice') delete nd.opts; if(v!=='link'){ delete nd.to; delete nd.multi; } if(v!=='progress'){ delete nd.min; delete nd.max; } if(v!=='calc'){ delete nd.expr; delete nd.mat; } if(v==='calc' || v==='auto'){ delete nd.def; delete nd.req; }
+      const nd={...d,t:v}; if(v!=='choice') delete nd.opts; if(v!=='link' && v!=='checklist'){ delete nd.to; } if(v!=='link'){ delete nd.multi; } if(v!=='progress'){ delete nd.min; delete nd.max; } if(v!=='calc'){ delete nd.expr; delete nd.mat; } if(v==='calc' || v==='auto'){ delete nd.def; delete nd.req; }
+      if(v==='checklist' && !nd.to){ tcChkCreate(n,c).then(to=>tcSetDef(n,c,{...nd,to})).then(()=>{ tblRenderView(n); tblRenderList(n); }); return; }
       tcSetDef(n,c,nd); tblRenderView(n); tblRenderList(n);
     }));
     const po=mk('input'); po.type='checkbox'; po.checked=!Array.isArray(n.p.pout) || n.p.pout.includes(c);
@@ -1721,6 +1758,10 @@ function tblFieldsPanel(n,box,mk,sel){
       o.addEventListener('keydown',e=>e.stopPropagation());
       o.addEventListener('change',()=>tcSetDef(n,c,{...d,opts:o.value.split(',').map(s=>s.trim()).filter(Boolean)}));
       more.append(o);
+    }
+    if(!ro && t==='checklist'){
+      more.append(sel([['','— list of items —'],...lists.map(k=>[k,tblKind(k)==='patch' ? 'This patch' : k])],d.to||'',v=>tcSetDef(n,c,{...d,to:v})));
+      more.append(mk('span','tv-lbl','items of this list with a link to the record and a checkbox'));
     }
     if(!ro && t==='link'){
       more.append(sel([['','— list —'],...lists.map(k=>[k,tblKind(k)==='patch' ? 'This patch' : k])],d.to||'',v=>tcSetDef(n,c,{...d,to:v})));

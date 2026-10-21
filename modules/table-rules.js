@@ -92,7 +92,7 @@ function trCompile(src){
 /* ---------- вычисляемые поля ---------- */
 const trCalcCols=n=>n.cl.filter(c=>tcDef(n,c).t==='calc');
 // считаются при загрузке и не лежат в базе; mat-поля хранятся
-const trVirtual=n=>new Set(trCalcCols(n).filter(c=>!tcDef(n,c).mat));
+const trVirtual=n=>new Set([...trCalcCols(n).filter(c=>!tcDef(n,c).mat),...n.cl.filter(c=>tcDef(n,c).t==='checklist')]);
 // значения вычисляемых полей строки на месте; два прохода — поле может ссылаться на соседнее вычисляемое; ошибки → n.calcErr
 function trCalcRow(n,row,cols=trCalcCols(n)){
   for(let pass=0;pass<2;pass++) for(const c of cols){

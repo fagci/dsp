@@ -1713,14 +1713,16 @@ function geoAddPoint(n,px,py){
   n.selKey='id:'+rec.id;
 }
 const GEO_FORM_SKIP=new Set(['id','track','lat','lon','path','approx','label','geom']);
+const geoFormSkip=k=>GEO_FORM_SKIP.has(k) || k.startsWith('check_');
 // форма правки выбранной точки: DOM поверх карты; поля — из самой записи, «＋» добавляет новое
 function geoEditSync(n,cv){
   const host=cv.parentElement; if(!host) return;
-  const e=n.p.mode==='edit' && n.selKey && n.ents.get(n.selKey), w=e && geoEditable(n,e);
-  const key=w ? n.selKey : '';
+  const se=n.selKey && n.ents.get(n.selKey), chk=se && se.rec.check_list && typeof tcChkItems==='function';
+  const e=n.p.mode==='edit' && se, w=e && geoEditable(n,e);
+  const key=w||chk ? n.selKey+(w ? '|e' : '')+(chk ? '|c' : '') : '';
   if(n._formKey===key && (!key || n._formEl?.isConnected)) return;
   n._formKey=key; n._formEl?.remove(); n._formEl=null;
-  if(!w) return;
+  if(!w && !chk) return;
   if(getComputedStyle(host).position==='static') host.style.position='relative';
   const el=document.createElement('div');
   el.style.cssText='position:absolute;left:6px;bottom:6px;max-width:62%;max-height:72%;overflow:auto;background:var(--panel);border:1px solid var(--line);color:var(--txt);font-size:11px;padding:4px;border-radius:4px;z-index:3;touch-action:auto;';
@@ -1735,23 +1737,41 @@ function geoEditSync(n,cv){
     i.dataset.t=typeof v;
     d.append(l,i); el.append(d); rows.push([l,i]);
   };
+  if(w){
   const h=document.createElement('div'); h.style.cssText='font-weight:bold;margin-bottom:2px;'; h.textContent=w.k+': '+w.id; el.append(h);
-  for(const k in e.rec) if(!GEO_FORM_SKIP.has(k) && k!==w.k && typeof e.rec[k]!=='object') row(k,e.rec[k]);
+  for(const k in e.rec) if(!geoFormSkip(k) && k!==w.k && typeof e.rec[k]!=='object') row(k,e.rec[k]);
   const bar=document.createElement('div'); bar.style.cssText='display:flex;gap:4px;margin-top:3px;';
   const btn=(t,f)=>{ const b=document.createElement('button'); b.textContent=t; b.style.cssText='background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;'; b.onclick=f; bar.append(b); };
   btn('＋',()=>row('',''));
   btn('Save',()=>{
     const ch={};
     for(const [l,i] of rows){
-      const k=l.value.trim(); if(!k || GEO_FORM_SKIP.has(k) || k===w.k) continue;
+      const k=l.value.trim(); if(!k || geoFormSkip(k) || k===w.k) continue;
       let v=i.type==='checkbox' ? i.checked : i.value;
       if(i.dataset.t==='number' || (i.dataset.t==='string' && v!=='' && /^-?\d+(\.\d+)?$/.test(v) && !/^0\d/.test(v))) v=+v;
       if(v!==e.rec[k]) ch[k]=v;
     }
     if(Object.keys(ch).length) geoEmitEdit(n,e,ch);
   });
+  btn('🗑',()=>{
+    if(!confirm('Delete "'+w.id+'"?')) return;
+    n.editQ.push({[w.k]:w.id,_delete:1});
+    n.ents.delete(n.selKey); n.gn.delete(e.id); n.loc.delete(e.id); n.selKey=null; geoMapChanged(n);
+  });
   btn('✕',()=>{ n.selKey=null; geoMapChanged(n); });
-  el.append(bar); host.append(el); n._formEl=el;
+  el.append(bar);
+  }
+  host.append(el); n._formEl=el;
+  if(chk){                                           // пункты чеклиста записи: галочки и добавление; сводка на значке обновится через Table
+    const r=se.rec, lab=r.check_key ?? r.label ?? r.name ?? se.id, t=document.createElement('div');
+    t.style.cssText='font-weight:bold;margin:'+(w ? '6px' : '0')+' 0 2px;'; t.textContent=w ? '☑ checklist' : '☑ '+lab;
+    el.append(t);
+    tcChkItems(r.check_list,r.check_via,r.check_col).then(s=>{
+      if(!s || n._formEl!==el) return;
+      el.append(tcChkView(s,String(r.check_key ?? ''),{}));
+      if(!w){ const x=document.createElement('button'); x.textContent='✕'; x.style.cssText='position:absolute;right:3px;top:3px;font-size:10px;background:none;border:0;color:var(--txt);cursor:pointer;'; x.onclick=()=>{ n.selKey=null; geoMapChanged(n); }; el.append(x); }
+    }).catch(()=>{});
+  }
 }
 const GEO_DRAW=new Set(['line','polygon','ruler','circle']);
 function geoDraftNeed(t){ return t==='polygon' ? 3 : 2; }
@@ -2351,11 +2371,18 @@ function geoDrawObjects(n,cx,v){
     if(rot==null && GEO_ROT_ICONS.has(icon) && e.pts.length>1){
       const p0=e.pts[e.pts.length-2]; rot=geoBearing(p0.lat,p0.lon,last.lat,last.lon);
     }
-    marks.push({x:s.x,y:s.y,icon,size,rot,col,a:cx.globalAlpha,sel:n.selKey===e.key,lab:r.label ?? e.id,age});
+    marks.push({x:s.x,y:s.y,icon,size,rot,col,a:cx.globalAlpha,sel:n.selKey===e.key,lab:r.label ?? e.id,age,chk:recNum(r.check_total)>0 ? [recNum(r.check_done)||0,recNum(r.check_total)] : null});
   }
   for(const m of marks){
     cx.globalAlpha=m.a;
     geoIcon(cx,m.icon,m.x,m.y,m.size,m.rot,m.col);
+    if(m.chk){                                       // чеклист записи: «сделано/всего», зелёный — всё сделано
+      const t=m.chk[0]+'/'+m.chk[1], full=m.chk[0]>=m.chk[1];
+      cx.save(); cx.font='bold 9px sans-serif'; cx.textAlign='left'; cx.textBaseline='middle';
+      const w=cx.measureText(t).width+6, bx=m.x+m.size*.6, by=m.y-m.size-4;
+      cx.fillStyle=full ? '#2e9e44' : '#d99a1c'; cx.beginPath(); cx.roundRect(bx,by-6,w,12,5); cx.fill();
+      cx.fillStyle='#fff'; cx.fillText(t,bx+3,by); cx.restore();
+    }
     if(m.sel){
       cx.strokeStyle=themeColor('--scr-hi')||'#fff'; cx.lineWidth=1.5;
       cx.beginPath(); cx.arc(m.x,m.y,m.size+5,0,2*Math.PI); cx.stroke();
@@ -2422,7 +2449,8 @@ function geoDrawOverlay(n,cx,v){
   const e=n.selKey && n.ents.get(n.selKey);
   if(e){
     const p=e.pts[e.pts.length-1];
-    const cut=Math.max(16,Math.floor((W*.4-10)/6)), skip=new Set(['path','id','icon','color','size','lat','lon','approx']);
+    const cut=Math.max(16,Math.floor((W*.4-10)/6)), skip=new Set(['path','id','icon','color','size','lat','lon','approx','check_list','check_via','check_col','check_key','check_done','check_total']);
+    for(const k in e.rec) if(/_(done|total)$/.test(k)) skip.add(k);
     const lines=[...recText(e.rec,skip).split('\n').slice(0,8).map(l=>l.length>cut ? l.slice(0,cut-1)+'…' : l),
       p.lat.toFixed(4)+', '+p.lon.toFixed(4)+' '+latLonToGrid(p.lat,p.lon,6),
       'seen '+Math.round((Date.now()-e.seen)/1000)+' s ago'+(e.pts.length>1?' · track '+e.pts.length:'')];
