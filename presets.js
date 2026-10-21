@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=71;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=72;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -374,6 +374,7 @@ const PRESET_CATS={
   'Conference: Voice and Video Between Your Devices (Sync Data)':'Network & IoT',
   'Voice and Video over a Byte Link (KISS / SLIP, no hardware)':'Network & IoT',
   'QR: Generator and Reader Loop (no hardware)':'Images & TV',
+  'Object Detect: Camera Video and Photo':'Images & TV',
   'Files over WebRTC':'Network & IoT',
   'Call: voice, video, chat and files over WebRTC':'Network & IoT',
   'WebRTC: audio and video of the graph over a connection':'Network & IoT',
@@ -6123,6 +6124,22 @@ const fv=addNode('imgview',380,430,{}); fv.size.w=260; fv.size.h=260; applySize(
 const bc=addNode('barcode',680,130,{period:.3}); bc.size.w=300; bc.size.h=120; applySize(bc);
 const tk=addNode('ticker',680,290,{time:true}); tk.size.w=300; tk.size.h=160; applySize(tk);
 addEdge(ts.id,'text',q.id,'text'); addEdge(q.id,'img',bc.id,'img'); addEdge(q.id,'img',fv.id,'img'); addEdge(bc.id,'text',tk.id,'text');
+markWiresDirty();
+});
+preset('Object Detect: Camera Video and Photo', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Object Detect finds people, animals, vehicles and other everyday objects (80 COCO classes) in a picture. Top: the live camera (press Run, then Turn on camera) with tracking — every object gets an id, the text and rec outputs report only new ones. Bottom: a photo (choose a file or a URL in Image) is detected once. The first start downloads TF.js and the model (about 7 MB); needs a network. Put classes like «person, car» into the node to look only for them.'});
+nt.size.w=1000; nt.size.h=90; applySize(nt);
+const cm=addNode('cam',40,140,{res:'640x480',w:'320'}); cm.size.w=260; cm.size.h=200; applySize(cm);
+const od=addNode('objdet',340,140,{track:true,period:.3}); od.size.w=340; od.size.h=240; applySize(od);
+const fv=addNode('imgview',720,140,{}); fv.size.w=300; fv.size.h=240; applySize(fv);
+const tk=addNode('ticker',1060,140,{time:true}); tk.size.w=300; tk.size.h=240; applySize(tk);
+const is=addNode('imgsrc',40,440,{w:'640'}); is.size.w=260; is.size.h=200; applySize(is);
+const o2=addNode('objdet',340,440,{}); o2.size.w=340; o2.size.h=240; applySize(o2);
+const f2=addNode('imgview',720,440,{}); f2.size.w=300; f2.size.h=240; applySize(f2);
+const t2=addNode('ticker',1060,440,{time:false}); t2.size.w=300; t2.size.h=240; applySize(t2);
+addEdge(cm.id,'vid',od.id,'vid'); addEdge(od.id,'img',fv.id,'img'); addEdge(od.id,'text',tk.id,'text');
+addEdge(is.id,'img',o2.id,'img'); addEdge(o2.id,'img',f2.id,'img'); addEdge(o2.id,'text',t2.id,'text');
 markWiresDirty();
 });
 preset('Chat: Group with Avatars and Contact List', function(){
