@@ -79,11 +79,50 @@ function recsToCsv(recs){
   for(const r of recs) for(const k in r) if(!seen.has(k)){ seen.add(k); keys.push(k); }
   return [keys.join(','), ...recs.map(r=>keys.map(k=>geoCsvCell(r[k])).join(','))].join('\r\n');
 }
+// фигуры: geom — [[lat,lon],…] (массив или JSON-строка), gtype — line | polygon | ruler; круг — точка с radius
+const GEO_GCACHE=new Map();
+function geoParseGeom(g){
+  if(Array.isArray(g)) return g.length && g.every(q=>Array.isArray(q) && isFinite(q[0]) && isFinite(q[1])) ? g : null;
+  if(typeof g!=='string' || g[0]!=='[') return null;
+  let a=GEO_GCACHE.get(g);
+  if(a===undefined){
+    try{ a=geoParseGeom(JSON.parse(g)); }catch(e){ a=null; }
+    if(GEO_GCACHE.size>500) GEO_GCACHE.clear();
+    GEO_GCACHE.set(g,a);
+  }
+  return a;
+}
+function geoPathKm(pts,closed){
+  let km=0;
+  for(let i=1;i<pts.length;i++) km+=geoDist(pts[i-1][0],pts[i-1][1],pts[i][0],pts[i][1]);
+  if(closed && pts.length>2) km+=geoDist(pts[pts.length-1][0],pts[pts.length-1][1],pts[0][0],pts[0][1]);
+  return km;
+}
+function geoAreaKm2(pts){                            // площадь на сфере, км²
+  let a=0;
+  for(let i=0;i<pts.length;i++){
+    const p=pts[i], q=pts[(i+1)%pts.length];
+    let dl=(q[1]-p[1])*D2R; if(dl>Math.PI) dl-=2*Math.PI; else if(dl<-Math.PI) dl+=2*Math.PI;
+    a+=dl*(2+Math.sin(p[0]*D2R)+Math.sin(q[0]*D2R));
+  }
+  return Math.abs(a)*GEO_R*GEO_R/2;
+}
+function geoFmtDist(km){ return km<1 ? Math.round(km*1000)+' m' : km<100 ? km.toFixed(2)+' km' : Math.round(km)+' km'; }
+function geoFmtArea(km2){ return km2<1 ? Math.round(km2*1e6)+' m²' : km2<100 ? km2.toFixed(2)+' km²' : Math.round(km2)+' km²'; }
+function geoShapeMetrics(type,pts){
+  const poly=type==='polygon' && pts.length>2, o={};
+  o.length_m=Math.round(geoPathKm(pts,poly)*1000);
+  if(poly) o.area_m2=Math.round(geoAreaKm2(pts)*1e6);
+  return o;
+}
 function recsToGeoJson(recs){
   const feats=[];
   for(const r of recs){
     const p=geoRecPos(r); if(!p) continue;
-    feats.push({type:'Feature', geometry:{type:'Point', coordinates:[p.lon,p.lat]}, properties:r});
+    const g=geoParseGeom(r.geom), ll=g && g.map(q=>[q[1],q[0]]);
+    const geometry=g && r.gtype==='polygon' && g.length>2 ? {type:'Polygon', coordinates:[[...ll,ll[0]]]}
+      : g && g.length>1 ? {type:'LineString', coordinates:ll} : {type:'Point', coordinates:[p.lon,p.lat]};
+    feats.push({type:'Feature', geometry, properties:r});
   }
   return JSON.stringify({type:'FeatureCollection', features:feats});
 }
@@ -98,8 +137,11 @@ function recsToKml(recs){
     const iso=geoRecIso(r);
     const data=Object.keys(r).filter(k=>r[k]!=null && typeof r[k]!=='object')
       .map(k=>`<Data name="${geoXml(k)}"><value>${geoXml(r[k])}</value></Data>`).join('');
+    const g=geoParseGeom(r.geom), cs=g && g.map(q=>q[1]+','+q[0]).join(' ');
+    const geo=g && r.gtype==='polygon' && g.length>2 ? `<Polygon><outerBoundaryIs><LinearRing><coordinates>${cs} ${g[0][1]},${g[0][0]}</coordinates></LinearRing></outerBoundaryIs></Polygon>`
+      : g && g.length>1 ? `<LineString><coordinates>${cs}</coordinates></LineString>` : `<Point><coordinates>${p.lon},${p.lat}</coordinates></Point>`;
     pm.push(`<Placemark><name>${geoXml(geoRecName(r))}</name>`+(iso?`<TimeStamp><when>${iso}</when></TimeStamp>`:'')+
-      `<ExtendedData>${data}</ExtendedData><Point><coordinates>${p.lon},${p.lat}</coordinates></Point></Placemark>`);
+      `<ExtendedData>${data}</ExtendedData>${geo}</Placemark>`);
   }
   return '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>'+pm.join('')+'</Document></kml>';
 }
@@ -572,6 +614,10 @@ def({ id:'geoMe', title:'My Position', cat:'Geo',
           {n:'lon',t:'num',d:37.6173,label:'lon, °'},
           {n:'grid',t:'text',d:'',label:'locator (sets lat/lon)'},
           {n:'locate',t:'button',label:'⌖ Locate once',fn:n=>geoMeLocate(n)},
+          {n:'look',t:'num',d:'',label:'look direction, ° (when GPS has no heading)'},
+          {n:'fov',t:'range',min:0,max:360,step:1,d:0,label:'field of view, ° (0 — none)'},
+          {n:'fovKm',t:'num',d:'',label:'field of view range, km'},
+          {n:'rings',t:'text',d:'',label:'distance rings, km (e.g. 1,5,10)'},
           {n:'hi',t:'check',d:true,label:'high accuracy (GPS)',adv:true},
           {n:'id',t:'text',d:'me',label:'record id',adv:true}],
   init:n=>{
@@ -609,6 +655,8 @@ def({ id:'geoMe', title:'My Position', cat:'Geo',
       } else n.msg='enter lat/lon or locator';
     }
     let rec=null;
+    const vk=[n.p.look,n.p.fov,n.p.fovKm,n.p.rings].join('|');
+    if(vk!==n.lastView){ n.lastView=vk; n.newFix=true; }
     if(f){
       GeoMe.lat=f.lat; GeoMe.lon=f.lon; GeoMe.t=Date.now();
       if(n.newFix){
@@ -616,7 +664,9 @@ def({ id:'geoMe', title:'My Position', cat:'Geo',
         rec=[{t:f.t, id:n.p.id||'me', icon:'me', lat:f.lat, lon:f.lon,
               ...(f.acc!=null?{acc:f.acc, radius:f.acc}:{}),
               ...(f.alt!=null?{alt:f.alt}:{}), ...(f.speed!=null?{speed:f.speed}:{}),
-              ...(f.heading!=null?{heading:f.heading}:{}), grid:latLonToGrid(f.lat,f.lon,6)}];
+              ...(f.heading!=null?{heading:f.heading}:recNum(n.p.look)!=null?{heading:recNum(n.p.look)}:{}),
+              ...(n.p.fov>0?{fov:n.p.fov}:{}), ...(recNum(n.p.fovKm)>0?{fov_range:recNum(n.p.fovKm)}:{}),
+              ...(String(n.p.rings||'').trim()?{rings:String(n.p.rings).trim()}:{}), grid:latLonToGrid(f.lat,f.lon,6)}];
       }
     }
     return f ? {lat:f.lat, lon:f.lon, acc:f.acc, alt:f.alt, speed:f.speed, heading:f.heading,
@@ -1344,7 +1394,7 @@ function geoTileGet(src,z,x,y,net){
 const GEO_TILE_OPTS=['none',...Object.keys(GEO_TILES),'custom'], GEO_OV_OPTS=['none',...Object.keys(GEO_OVERLAYS),'custom'];
 def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
   ins:[{n:'rec',t:'rec'},{n:'rec2',t:'rec'},{n:'rec3',t:'rec'},{n:'rows',t:'bands'}],
-  outs:[{n:'pick',t:'rec'},{n:'sel',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'count',t:'num'}],
+  outs:[{n:'pick',t:'rec'},{n:'sel',t:'rec'},{n:'edit',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'count',t:'num'}],
   w:480, view:{h:360}, resize:true,
   params:[{n:'ttl',t:'range',min:0,max:1440,step:1,d:0,label:'keep, min (0 — forever)'},
           {n:'tiles',t:'select',opts:GEO_TILE_OPTS,d:'none',label:'tiles'},
@@ -1355,6 +1405,10 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
           {n:'cluster',t:'check',d:true,label:'cluster'},
           {n:'follow',t:'check',d:false,label:'follow'},
           {n:'net',t:'check',d:true,label:'online'},
+          {n:'mode',t:'select',opts:['view','edit','add','line','polygon','ruler','circle'],d:'view',label:'mode: view / edit (select, drag, form) / add (tap = new point) / line, polygon, ruler, circle (tap = vertex)'},
+          {n:'drawColor',t:'text',d:'#ffb400',label:'color of new shapes',adv:true},
+          {n:'addName',t:'text',d:'P',label:'new point name prefix',adv:true},
+          {n:'addIcon',t:'text',d:'dot',label:'new point icon',adv:true},
           {n:'fit',t:'button',label:'Fit',fn:n=>geoMapFit(n)},
           {n:'clr',t:'button',label:'Clear',fn:n=>{ n.ents.clear(); n.gn.clear(); n.links.clear(); n.gnSrc=n.gsSrc=null; n.rasters?.clear(); n.selKey=null; geoMapChanged(n); }},
           {n:'trail',t:'range',min:1,max:5000,step:1,d:500,label:'track points per id',adv:true},
@@ -1377,7 +1431,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
     if(n.p.mlat==null) n.p.mlat=50;
     if(n.p.mlon==null) n.p.mlon=30;
     if(n.p.mz==null) n.p.mz=3;
-    n.ents=new Map(); n.gn=new Map(); n.gnSrc=null; n.links=new Map(); n.gsSrc=null; n.unplaced=0; n.seq=0; n.selKey=null; n.pickRec=null; n.selOut=null;
+    n.ents=new Map(); n.gn=new Map(); n.gnSrc=null; n.links=new Map(); n.gsSrc=null; n.unplaced=0; n.seq=0; n.selKey=null; n.pickRec=null; n.selOut=null; n.editQ=[]; n.loc=new Map(); n.addSeq=0; n.draft=null;
     n.pickLat=null; n.pickLon=null; n.info=null; n.lastPrune=0; n.loadedStore=null;
     geoBaseLoad(); geoPlacesLoad();
     n.vec=null; n.vmsg=''; n.vgen=0; gdVecRestore(n);
@@ -1389,11 +1443,11 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
     if(n.p.store!==n.loadedStore) geoMapRestore(n);
     const now=Date.now();
     if(now-n.lastPrune>1000){ n.lastPrune=now; geoMapPrune(n,now); }
-    const pick=n.pickRec, sel=n.selOut; n.pickRec=null; n.selOut=null;
-    return {pick, sel, lat:n.pickLat, lon:n.pickLon, count:n.ents.size};
+    const pick=n.pickRec, sel=n.selOut, edit=n.editQ.length ? n.editQ.splice(0) : null; n.pickRec=null; n.selOut=null;
+    return {pick, sel, edit, lat:n.pickLat, lon:n.pickLon, count:n.ents.size};
   },
   // секундный тик — только когда на карте есть что-то зависящее от времени (ttl, "seen N s ago", подсказка)
-  drawKey:n=>n.dirtyGen+'|'+GeoBase.gen+'|'+GeoBase.state+'|'+GeoBase.placesState+'|'+GeoTiles.gen+'|'+n.vmsg+'|'+n.selKey+'|'+
+  drawKey:n=>n.dirtyGen+'|'+n.p.mode+'|'+GeoBase.gen+'|'+GeoBase.state+'|'+GeoBase.placesState+'|'+GeoTiles.gen+'|'+n.vmsg+'|'+n.selKey+'|'+
     (n.p.ttl>0 || n.selKey || (n.info && Date.now()-n.info.t<9000) ? Math.floor(Date.now()/1000) : ''),
   draw(n,cv,cx){ geoMapDraw(n,cv,cx); }});
 
@@ -1413,7 +1467,7 @@ function geoNodeRec(r){
   out.id='n:'+id; out.lat=pos.lat; out.lon=pos.lon; out.track=0;
   if(out.label==null && f.label==null) out.label=r.name ?? id;
   if(out.icon==null && f.shape!=null) out.icon=GEO_SHAPE_ICON[r[f.shape]];
-  return {id,rec:out,sig:JSON.stringify(out)};
+  return {id,k,rec:out,sig:JSON.stringify(out)};
 }
 function geoMapNodes(n,src){
   if(src===n.gnSrc) return;
@@ -1557,7 +1611,7 @@ function geoMapWire(n,cv){
   // pointercancel — карта сдвигается на чуть-чуть; ownpinch — щипок не отдавать зуму графа
   cv.style.touchAction='none';
   cv.classList.add('ownpinch');
-  const touches=new Map(); let drag=null, pinch=null, tap=null;
+  const touches=new Map(); let drag=null, pinch=null, tap=null, mv=null, lastV=null;
   cv.addEventListener('wheel',ev=>{
     ev.preventDefault(); ev.stopPropagation();
     const r=cv.getBoundingClientRect(), k=cv.width/r.width;
@@ -1580,6 +1634,23 @@ function geoMapWire(n,cv){
       pinch={d:Math.hypot(a.x-b.x,a.y-b.y)||1}; drag=null; tap=null; return;
     }
     drag={x:ev.clientX,y:ev.clientY}; tap={x:ev.clientX,y:ev.clientY};
+    if(n.p.mode==='edit' && n.selKey){                // тянем выбранную точку / вершину, а не карту
+      const r=cv.getBoundingClientRect(), k=cv.width/r.width, px=(ev.clientX-r.left)*k, py=(ev.clientY-r.top)*k;
+      const e0=n.ents.get(n.selKey), h=e0 && geoEditable(n,e0) && geoShapeHandles(n,e0,geoView(n,cv.width,cv.height));
+      const near=(a,d)=>a && Math.hypot(a.x-px,a.y-py)<=d;
+      let vi=h?.verts ? h.verts.findIndex(a=>near(a,12)) : -1, mi=-1;
+      if(vi<0 && h?.mids) mi=h.mids.findIndex(a=>near(a,10));
+      if(vi>=0){ mv={e:e0,vi,moved:false}; drag=null; }
+      else if(mi>=0){                                  // середина ребра: вставить вершину и сразу тянуть
+        const g=h.g.map(q=>q.slice()), a=g[mi], b=g[(mi+1)%g.length], at=h.mids[mi].i+1;
+        g.splice(at,0,[+((a[0]+b[0])/2).toFixed(6),+((a[1]+b[1])/2).toFixed(6)]);
+        e0.rec.geom=JSON.stringify(g); mv={e:e0,vi:at,moved:false,ins:true}; drag=null; geoMapChanged(n);
+      } else if(near(h?.rad,12)){ mv={e:e0,rad:true,moved:false}; drag=null; }
+      else {
+        const e=geoMapHit(n,px,py,14);
+        if(e && e.key===n.selKey && geoEditable(n,e)){ mv={e,moved:false}; drag=null; }
+      }
+    }
   });
   cv.addEventListener('pointermove',ev=>{
     if(!touches.has(ev.pointerId)) return;
@@ -1590,6 +1661,22 @@ function geoMapWire(n,cv){
       geoMapZoomAt(n,((a.x+b.x)/2-r.left)*k,((a.y+b.y)/2-r.top)*k,Math.log2(d/pinch.d));
       pinch.d=d; return;
     }
+    if(mv){
+      if(!tap || Math.hypot(ev.clientX-tap.x,ev.clientY-tap.y)>=3){
+        const q=geoPxLatLon(n,(ev.clientX-r.left)*k,(ev.clientY-r.top)*k), p=mv.e.pts[mv.e.pts.length-1];
+        if(mv.vi!=null){
+          const g=geoParseGeom(mv.e.rec.geom).map(a=>a.slice()); g[mv.vi]=[+q.lat.toFixed(6),+q.lon.toFixed(6)];
+          mv.e.rec.geom=JSON.stringify(g);
+        } else if(mv.rad){
+          mv.e.rec.radius=Math.max(1,Math.round(geoDist(p.lat,p.lon,q.lat,q.lon)*1000));
+        } else {
+          geoShiftGeom(mv.e,q.lat-p.lat,q.lon-p.lon);
+          p.lat=mv.e.rec.lat=q.lat; p.lon=mv.e.rec.lon=q.lon;
+        }
+        mv.moved=true; tap=null; geoMapChanged(n);
+      }
+      return;
+    }
     if(drag){
       geoMapPan(n,(ev.clientX-drag.x)*k,(ev.clientY-drag.y)*k);
       drag.x=ev.clientX; drag.y=ev.clientY;
@@ -1598,6 +1685,21 @@ function geoMapWire(n,cv){
   const up=ev=>{
     touches.delete(ev.pointerId);
     if(touches.size<2) pinch=null;
+    if(mv){
+      if(ev.type!=='pointerup'){ mv=null; tap=null; drag=null; return; }
+      if(mv.vi!=null){
+        const e=mv.e, now=Date.now();
+        if(mv.moved || mv.ins){ lastV=null; geoCommitGeom(n,e); }
+        else if(lastV && lastV.e===e && lastV.vi===mv.vi && now-lastV.t<400){      // второй тап по вершине — удалить её
+          lastV=null;
+          const g=geoParseGeom(e.rec.geom).map(a=>a.slice()), min=String(e.rec.gtype)==='polygon' ? 3 : 2;
+          if(g.length>min){ g.splice(mv.vi,1); e.rec.geom=JSON.stringify(g); geoCommitGeom(n,e); }
+        } else lastV={e,vi:mv.vi,t:now};
+      } else if(mv.rad){
+        if(mv.moved){ const r=mv.e.rec.radius; geoEmitEdit(n,mv.e,{radius:r,area_m2:Math.round(Math.PI*r*r)}); }
+      } else if(mv.moved){ const p=mv.e.pts[mv.e.pts.length-1]; geoEmitEdit(n,mv.e,{lat:p.lat,lon:p.lon,...(mv.e.rec.geom!=null?{geom:mv.e.rec.geom}:{})}); }
+      mv=null; tap=null; drag=null; return;
+    }
     if(tap && ev.type==='pointerup' && Math.hypot(ev.clientX-tap.x,ev.clientY-tap.y)<6){
       const r=cv.getBoundingClientRect(), k=cv.width/r.width;
       geoMapTap(n,(ev.clientX-r.left)*k,(ev.clientY-r.top)*k);
@@ -1607,7 +1709,252 @@ function geoMapWire(n,cv){
   cv.addEventListener('pointerup',up);
   cv.addEventListener('pointercancel',up);
 }
+// правка точек: запись уходит на выход edit (в Table с upsert key = колонка имени), локально обновляется сразу
+function geoEditable(n,e){
+  const g=n.gn.get(e.id);
+  return g ? {k:g.k,id:g.id} : n.loc.get(e.id)||null;
+}
+function geoEmitEdit(n,e,ch){
+  const w=geoEditable(n,e); if(!w) return;
+  for(const c of ['lat','lon']) if(ch[c]!=null) ch[c]=+(+ch[c]).toFixed(6);
+  Object.assign(e.rec,ch);
+  n.editQ.push({[w.k]:w.id,...ch});
+  geoMapChanged(n);
+}
+function geoPxLatLon(n,px,py){
+  const v=geoView(n,n.cv.width,n.cv.height);
+  return {lat:unmercY(clamp((v.oy+py)/v.S,0,1)), lon:unmercX(geoWrapX((v.ox+px)/v.S))};
+}
+function geoMapHit(n,px,py,r){
+  const v=geoView(n,n.cv.width,n.cv.height);
+  let best=null, bd=r;
+  for(const e of n.ents.values()){
+    const p=e.pts[e.pts.length-1]; if(!p) continue;
+    const s=geoProj(v,p.lat,p.lon,px), d=Math.hypot(s.x-px,s.y-py);
+    if(d<bd){ bd=d; best=e; }
+  }
+  return best;
+}
+function geoAddPoint(n,px,py){
+  const {lat,lon}=geoPxLatLon(n,px,py), pre=n.p.addName||'P';
+  let name; do name=pre+(++n.addSeq); while(n.ents.has('id:n:'+name));
+  const rec={id:'n:'+name,name,label:name,lat:+lat.toFixed(6),lon:+lon.toFixed(6),icon:n.p.addIcon||'dot',track:0};
+  n.loc.set(rec.id,{k:'name',id:name});
+  geoMapAdd(n,rec);
+  n.editQ.push({name,lat:rec.lat,lon:rec.lon,icon:rec.icon});
+  n.selKey='id:'+rec.id;
+}
+const GEO_FORM_SKIP=new Set(['id','track','lat','lon','path','approx','label','geom']);
+const geoFormSkip=k=>GEO_FORM_SKIP.has(k) || k.startsWith('check_');
+// форма правки выбранной точки: DOM поверх карты; поля — из самой записи, «＋» добавляет новое
+function geoEditSync(n,cv){
+  const host=cv.parentElement; if(!host) return;
+  const se=n.selKey && n.ents.get(n.selKey), chk=se && se.rec.check_list && typeof tcChkItems==='function';
+  const e=n.p.mode==='edit' && se, w=e && geoEditable(n,e);
+  const key=w||chk ? n.selKey+(w ? '|e' : '')+(chk ? '|c' : '') : '';
+  if(n._formKey===key && (!key || n._formEl?.isConnected)) return;
+  n._formKey=key; n._formEl?.remove(); n._formEl=null;
+  if(!w && !chk) return;
+  if(getComputedStyle(host).position==='static') host.style.position='relative';
+  const el=document.createElement('div');
+  el.style.cssText='position:absolute;left:6px;bottom:6px;max-width:62%;max-height:72%;overflow:auto;background:var(--panel);border:1px solid var(--line);color:var(--txt);font-size:11px;padding:4px;border-radius:4px;z-index:3;touch-action:auto;';
+  for(const ev of ['pointerdown','pointerup','wheel','dblclick']) el.addEventListener(ev,x=>x.stopPropagation());
+  const inp='min-width:0;width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);color:var(--txt);font-size:11px;padding:1px 3px;';
+  const rows=[];
+  const row=(k,v)=>{
+    const d=document.createElement('div'); d.style.cssText='display:flex;gap:4px;margin:2px 0;align-items:center;';
+    const l=document.createElement('input'); l.value=k; l.style.cssText=inp+'width:38%;'; l.disabled=k!==''; if(k==='') l.placeholder='field';
+    const i=document.createElement('input'); i.style.cssText=inp;
+    if(typeof v==='boolean'){ i.type='checkbox'; i.checked=v; i.style.width='auto'; } else i.value=v;
+    i.dataset.t=typeof v;
+    d.append(l,i); el.append(d); rows.push([l,i]);
+  };
+  if(w){
+  const h=document.createElement('div'); h.style.cssText='font-weight:bold;margin-bottom:2px;'; h.textContent=w.k+': '+w.id; el.append(h);
+  for(const k in e.rec) if(!geoFormSkip(k) && k!==w.k && typeof e.rec[k]!=='object') row(k,e.rec[k]);
+  const bar=document.createElement('div'); bar.style.cssText='display:flex;gap:4px;margin-top:3px;';
+  const btn=(t,f)=>{ const b=document.createElement('button'); b.textContent=t; b.style.cssText='background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;'; b.onclick=f; bar.append(b); };
+  btn('＋',()=>row('',''));
+  btn('Save',()=>{
+    const ch={};
+    for(const [l,i] of rows){
+      const k=l.value.trim(); if(!k || geoFormSkip(k) || k===w.k) continue;
+      let v=i.type==='checkbox' ? i.checked : i.value;
+      if(i.dataset.t==='number' || (i.dataset.t==='string' && v!=='' && /^-?\d+(\.\d+)?$/.test(v) && !/^0\d/.test(v))) v=+v;
+      if(v!==e.rec[k]) ch[k]=v;
+    }
+    if(Object.keys(ch).length) geoEmitEdit(n,e,ch);
+  });
+  btn('🗑',()=>{
+    if(!confirm('Delete "'+w.id+'"?')) return;
+    n.editQ.push({[w.k]:w.id,_delete:1});
+    n.ents.delete(n.selKey); n.gn.delete(e.id); n.loc.delete(e.id); n.selKey=null; geoMapChanged(n);
+  });
+  btn('✕',()=>{ n.selKey=null; geoMapChanged(n); });
+  el.append(bar);
+  }
+  host.append(el); n._formEl=el;
+  if(chk){                                           // пункты чеклиста записи: галочки и добавление; сводка на значке обновится через Table
+    const r=se.rec, lab=r.check_key ?? r.label ?? r.name ?? se.id, t=document.createElement('div');
+    t.style.cssText='font-weight:bold;margin:'+(w ? '6px' : '0')+' 0 2px;'; t.textContent=w ? '☑ checklist' : '☑ '+lab;
+    el.append(t);
+    tcChkItems(r.check_list,r.check_via,r.check_col).then(s=>{
+      if(!s || n._formEl!==el) return;
+      el.append(tcChkView(s,String(r.check_key ?? ''),{}));
+      if(!w){ const x=document.createElement('button'); x.textContent='✕'; x.style.cssText='position:absolute;right:3px;top:3px;font-size:10px;background:none;border:0;color:var(--txt);cursor:pointer;'; x.onclick=()=>{ n.selKey=null; geoMapChanged(n); }; el.append(x); }
+    }).catch(()=>{});
+  }
+}
+const GEO_DRAW=new Set(['line','polygon','ruler','circle']);
+function geoDraftNeed(t){ return t==='polygon' ? 3 : 2; }
+function geoDraftTap(n,px,py){
+  const t=n.p.mode, {lat,lon}=geoPxLatLon(n,px,py), q=[+lat.toFixed(6),+lon.toFixed(6)];
+  if(!n.draft || n.draft.type!==t) n.draft={type:t,pts:[]};
+  const d=n.draft;
+  if(t==='circle'){
+    if(!d.pts.length){ d.pts.push(q); return; }
+    const km=geoDist(d.pts[0][0],d.pts[0][1],q[0],q[1]);
+    if(km>0) geoShapeDone(n,{gtype:'circle',lat:d.pts[0][0],lon:d.pts[0][1],radius:Math.round(km*1000),area_m2:Math.round(Math.PI*km*km*1e6)});
+    n.draft=null; return;
+  }
+  d.pts.push(q);
+}
+function geoShapeDone(n,f){
+  const pre=f.gtype;
+  let name; do name=pre+(++n.addSeq); while(n.ents.has('id:n:'+name));
+  const col=n.p.drawColor||'#ffb400', rec={id:'n:'+name,name,label:name,icon:'dot',size:3,color:col,track:0,...f};
+  n.loc.set(rec.id,{k:'name',id:name});
+  geoMapAdd(n,rec);
+  const {id,track,label,...out}=rec; delete out.size;
+  n.editQ.push(out);
+  n.selKey='id:'+rec.id;
+}
+function geoDraftFinish(n){
+  const d=n.draft; if(!d || d.pts.length<geoDraftNeed(d.type)) return;
+  const g=d.pts, c=[g.reduce((a,q)=>a+q[0],0)/g.length, g.reduce((a,q)=>a+q[1],0)/g.length];
+  geoShapeDone(n,{gtype:d.type,geom:JSON.stringify(g),lat:+c[0].toFixed(6),lon:+c[1].toFixed(6),...geoShapeMetrics(d.type,g)});
+  n.draft=null; geoMapChanged(n);
+}
+function geoDraftText(n){
+  const d=n.draft; if(!d) return n.p.mode==='circle' ? 'tap the centre' : 'tap vertices';
+  const g=d.pts, poly=d.type==='polygon';
+  if(d.type==='circle') return g.length ? 'tap a point on the circle' : 'tap the centre';
+  const t=[g.length+' pts'];
+  if(g.length>1) t.push(geoFmtDist(geoPathKm(g,poly)));
+  if(poly && g.length>2) t.push(geoFmtArea(geoAreaKm2(g)));
+  return t.join(' · ');
+}
+// панель рисования: DOM поверх карты, пока выбран режим фигуры
+function geoDraftSync(n,cv){
+  const host=cv.parentElement; if(!host) return;
+  const on=GEO_DRAW.has(n.p.mode);
+  if(!on){ if(n.draft) n.draft=null; if(n._drawEl){ n._drawEl.remove(); n._drawEl=null; } return; }
+  if(!n._drawEl?.isConnected){
+    if(getComputedStyle(host).position==='static') host.style.position='relative';
+    const el=document.createElement('div');
+    el.style.cssText='position:absolute;left:6px;bottom:6px;display:flex;gap:4px;align-items:center;background:var(--panel);border:1px solid var(--line);color:var(--txt);font-size:11px;padding:3px 5px;border-radius:4px;z-index:3;';
+    for(const ev of ['pointerdown','pointerup','wheel','dblclick']) el.addEventListener(ev,x=>x.stopPropagation());
+    const btn=(t,tip,f)=>{ const b=document.createElement('button'); b.textContent=t; b.title=tip; b.style.cssText='background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:1px 6px;border-radius:3px;cursor:pointer;font-size:11px;'; b.onclick=()=>{ f(); geoMapChanged(n); }; el.append(b); };
+    btn('↶','remove the last vertex',()=>{ n.draft?.pts.pop(); });
+    btn('✓','finish the shape',()=>geoDraftFinish(n));
+    btn('✕','cancel',()=>{ n.draft=null; });
+    const tx=document.createElement('span'); tx.className='geo-dt'; el.append(tx);
+    host.append(el); n._drawEl=el;
+  }
+  const t=geoDraftText(n), tx=n._drawEl.querySelector('.geo-dt');
+  if(tx.textContent!==t) tx.textContent=t;
+}
+// фигура: полилиния / многоугольник / линейка с подписями отрезков
+function geoDrawShape(n,cx,v,pts,type,col,refX,w,dim){
+  if(!pts.length) return;
+  const poly=type==='polygon' && pts.length>2, sp=[]; let px=null;
+  for(const q of pts){ const p=geoProj(v,q[0],q[1],px??refX); sp.push(p); px=p.x; }
+  cx.save(); cx.lineJoin='round'; cx.strokeStyle=cx.fillStyle=col; cx.lineWidth=w;
+  if(type==='ruler') cx.setLineDash([6,4]);
+  cx.beginPath(); sp.forEach((p,i)=>i ? cx.lineTo(p.x,p.y) : cx.moveTo(p.x,p.y));
+  if(poly) cx.closePath();
+  if(poly){ cx.globalAlpha*=.15; cx.fill(); cx.globalAlpha/=.15; }
+  cx.stroke(); cx.setLineDash([]);
+  if(dim || type==='ruler') for(const p of sp){ cx.beginPath(); cx.arc(p.x,p.y,2.5,0,2*Math.PI); cx.fill(); }
+  if(type==='ruler' && n.p.labels){
+    cx.font='10px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle'; cx.strokeStyle=themeRgba('--screen',.85); cx.lineWidth=3;
+    let tot=0;
+    for(let i=1;i<pts.length;i++){
+      const km=geoDist(pts[i-1][0],pts[i-1][1],pts[i][0],pts[i][1]); tot+=km;
+      const x=(sp[i-1].x+sp[i].x)/2, y=(sp[i-1].y+sp[i].y)/2-7, t=geoFmtDist(km)+' · '+Math.round(geoBearing(pts[i-1][0],pts[i-1][1],pts[i][0],pts[i][1]))+'°';
+      cx.strokeText(t,x,y); cx.fillText(t,x,y);
+    }
+    if(pts.length>2){ const l=sp[sp.length-1], t='Σ '+geoFmtDist(tot); cx.textAlign='left'; cx.strokeText(t,l.x+6,l.y+9); cx.fillText(t,l.x+6,l.y+9); }
+  }
+  cx.restore();
+}
+// ручки правки выбранной фигуры: вершины, середины рёбер (нажатие вставляет вершину), у круга — ручка радиуса
+function geoShapeHandles(n,e,v){
+  const last=e.pts[e.pts.length-1]; if(!last) return null;
+  const g=geoParseGeom(e.rec.geom), type=String(e.rec.gtype||'line');
+  if(g && g.length>1){
+    const verts=[]; let px=geoProj(v,last.lat,last.lon).x;
+    for(const q of g){ const p=geoProj(v,q[0],q[1],px); verts.push({x:p.x,y:p.y}); px=p.x; }
+    const mids=[], m=type==='polygon' ? g.length : g.length-1;
+    for(let i=0;i<m;i++){ const a=verts[i], b=verts[(i+1)%g.length]; mids.push({x:(a.x+b.x)/2,y:(a.y+b.y)/2,i}); }
+    return {g,type,verts,mids};
+  }
+  const rad=recNum(e.rec.radius);
+  if(type==='circle' && rad>0){
+    const q=geoDest(last.lat,last.lon,90,rad/1000), p=geoProj(v,q.lat,q.lon,geoProj(v,last.lat,last.lon).x);
+    return {type,rad:{x:p.x,y:p.y}};
+  }
+  return null;
+}
+function geoDrawHandles(n,cx,v,e,col){
+  const h=geoShapeHandles(n,e,v); if(!h) return;
+  cx.save(); cx.lineWidth=1.5; cx.strokeStyle=col; cx.fillStyle='#fff';
+  for(const m of h.mids||[]){ cx.globalAlpha=.7; cx.beginPath(); cx.arc(m.x,m.y,3,0,2*Math.PI); cx.stroke(); }
+  cx.globalAlpha=1;
+  for(const p of h.verts||[]){ cx.beginPath(); cx.rect(p.x-4,p.y-4,8,8); cx.fill(); cx.stroke(); }
+  if(h.rad){ cx.beginPath(); cx.moveTo(h.rad.x,h.rad.y-5); cx.lineTo(h.rad.x+5,h.rad.y); cx.lineTo(h.rad.x,h.rad.y+5); cx.lineTo(h.rad.x-5,h.rad.y); cx.closePath(); cx.fill(); cx.stroke(); }
+  cx.restore();
+}
+// тап по телу фигуры (внутри полигона / рядом с линией / внутри круга) выбирает её
+function geoShapeAt(n,v,px,py){
+  const ents=[...n.ents.values()].reverse();
+  for(const e of ents){
+    const h=geoShapeHandles(n,e,v), last=e.pts[e.pts.length-1];
+    if(!h) continue;
+    if(h.verts){
+      const V=h.verts, poly=h.type==='polygon' && V.length>2;
+      if(poly){
+        let ins=false;
+        for(let i=0,j=V.length-1;i<V.length;j=i++) if((V[i].y>py)!==(V[j].y>py) && px<(V[j].x-V[i].x)*(py-V[i].y)/(V[j].y-V[i].y)+V[i].x) ins=!ins;
+        if(ins) return e;
+      }
+      const m=poly ? V.length : V.length-1;
+      for(let i=0;i<m;i++){
+        const a=V[i], b=V[(i+1)%V.length], dx=b.x-a.x, dy=b.y-a.y, L=dx*dx+dy*dy;
+        const t=L ? Math.max(0,Math.min(1,((px-a.x)*dx+(py-a.y)*dy)/L)) : 0;
+        if(Math.hypot(px-(a.x+t*dx),py-(a.y+t*dy))<8) return e;
+      }
+    } else if(h.rad){
+      const q=geoPxLatLon(n,px,py);
+      if(geoDist(last.lat,last.lon,q.lat,q.lon)*1000<=recNum(e.rec.radius)) return e;
+    }
+  }
+  return null;
+}
+// форма изменилась (вершина сдвинута / вставлена / удалена): центр и размеры пересчитать, запись — на выход edit
+function geoCommitGeom(n,e){
+  const g=geoParseGeom(e.rec.geom); if(!g) return;
+  const c=[g.reduce((a,q)=>a+q[0],0)/g.length, g.reduce((a,q)=>a+q[1],0)/g.length], p=e.pts[e.pts.length-1];
+  p.lat=c[0]; p.lon=c[1];
+  geoEmitEdit(n,e,{geom:e.rec.geom,lat:c[0],lon:c[1],...geoShapeMetrics(String(e.rec.gtype||'line'),g)});
+}
+// сдвиг фигуры вместе с перетаскиваемой точкой
+function geoShiftGeom(e,dlat,dlon){
+  const g=geoParseGeom(e.rec.geom); if(!g) return;
+  e.rec.geom=JSON.stringify(g.map(q=>[+(q[0]+dlat).toFixed(6),+(q[1]+dlon).toFixed(6)]));
+}
 function geoMapTap(n,px,py){
+  if(GEO_DRAW.has(n.p.mode)){ geoDraftTap(n,px,py); geoMapChanged(n); return; }
   const v=geoView(n,n.cv.width,n.cv.height);
   for(const c of n.clusters||[]) if(Math.hypot(c.x-px,c.y-py)<=c.r+3){ geoMapZoomAt(n,c.x,c.y,2); return; }  // тап по кластеру — приблизить
   let best=null, bd=12;
@@ -1618,6 +1965,8 @@ function geoMapTap(n,px,py){
     if(d<bd){ bd=d; best=e; }
   }
   if(best){ n.selKey=best.key; n.selOut=[{...best.rec}]; return; }
+  if(!best && n.p.mode!=='add'){ const sh=geoShapeAt(n,v,px,py); if(sh){ n.selKey=sh.key; n.selOut=[{...sh.rec}]; return; } }
+  if(n.p.mode==='add'){ geoAddPoint(n,px,py); geoMapChanged(n); return; }
   n.selKey=null;
   const lat=unmercY(clamp((v.oy+py)/v.S,0,1)), lon=unmercX(geoWrapX((v.ox+px)/v.S));
   geoMapPick(n,lat,lon);                             // pick уходит с рельефом под точкой (ground), как только он известен
@@ -1663,6 +2012,7 @@ function geoCol(){ return geoLight() ? GEO_COL_LIGHT : GEO_COL_DARK; }
 const GEO_BASE_CAP=matchMedia('(pointer:coarse)').matches ? 4e6 : 1.2e7;   // пикселей буфера подложки
 function geoMapDraw(n,cv,cx){
   geoMapWire(n,cv);
+  geoEditSync(n,cv); geoDraftSync(n,cv);
   const W=cv.width, H=cv.height, v=geoView(n,W,H), z=v.z;
   // подложка — в отдельную канву с полями M: при панораме сдвигаем готовую картинку,
   // при зуме растягиваем её и перерисовываем, когда зум успокоился
@@ -1698,6 +2048,11 @@ function geoMapDraw(n,cv,cx){
   GD.view={n};
   geoDrawRasters(n,cx,v);
   geoDrawObjects(n,cx,v);
+  if(n.draft?.pts.length){                          // фигура в процессе рисования
+    const d=n.draft, c=n.p.drawColor||'#ffb400', f=geoProj(v,d.pts[0][0],d.pts[0][1]);
+    if(d.type==='circle'){ cx.fillStyle=c; cx.beginPath(); cx.arc(f.x,f.y,4,0,2*Math.PI); cx.fill(); }
+    else geoDrawShape(n,cx,v,d.pts,d.type,c,f.x,2,true);
+  }
   geoDrawOverlay(n,cx,v);
 }
 // растры: строка картинки — полоса между своими широтами (карта в меркаторе, картинка линейна по широте)
@@ -1873,6 +2228,7 @@ function geoEntColor(r,e){
   if(e.id!=null){ let h=0; for(const c of e.id) h=(h*31+c.charCodeAt(0))|0; return `hsl(${((h%360)+360)%360},70%,60%)`; }
   return themeColor('--acc')||'#e0b23c';
 }
+const GEO_ROT_ICONS=new Set(['plane','triangle','ship','car','truck','bus','train','tram','bike','moto','heli','drone','walk']);
 function geoIcon(cx,icon,x,y,s,rot,col){
   cx.save(); cx.translate(x,y);
   cx.fillStyle=col; cx.strokeStyle=col; cx.lineWidth=1.5;
@@ -1912,6 +2268,33 @@ function geoIcon(cx,icon,x,y,s,rot,col){
       if(rot!=null){ cx.beginPath(); cx.rotate(rot*D2R); cx.moveTo(0,-s*2.4); cx.lineTo(s*.5,-s*1.5); cx.lineTo(-s*.5,-s*1.5); cx.closePath(); cx.fill(); }
       break;
     case 'flag': cx.moveTo(0,s); cx.lineTo(0,-s*1.2); cx.lineTo(s,-s*.8); cx.lineTo(0,-s*.4); cx.stroke(); cx.fill(); break;
+    // транспорт: вид сверху, нос по курсу
+    case 'car': case 'truck': case 'bus': case 'train': case 'tram': {
+      rotate();
+      const L=s*{car:1.1,truck:1.5,bus:1.5,train:1.9,tram:1.5}[icon], W=s*(icon==='car'?.55:.6), dk='rgba(0,0,0,.6)';
+      if(icon==='truck'){ cx.fillRect(-W,-L,W*2,s*.7); cx.fillRect(-W,-L+s*.85,W*2,L*2-s*.85); }
+      else { cx.roundRect(-W,-L,W*2,L*2,icon==='car'?s*.35:s*.2); cx.fill(); }
+      cx.strokeStyle=dk; cx.lineWidth=.7; cx.stroke(); cx.fillStyle=dk;
+      if(icon==='car') cx.fillRect(-W*.7,-L*.45,W*1.4,s*.5);
+      else if(icon==='truck') cx.fillRect(-W*.7,-L*.85,W*1.4,s*.25);
+      else for(let y=-L+s*.4;y<L-s*.3;y+=icon==='bus'?s*.55:s*.8) cx.fillRect(-W*.6,y,W*1.2,s*.28);
+      break; }
+    case 'bike': case 'moto':
+      rotate(); cx.lineWidth=icon==='bike'?1.6:2.6; cx.moveTo(0,-s*1.1); cx.lineTo(0,s*1.1); cx.moveTo(-s*.55,-s*.5); cx.lineTo(s*.55,-s*.5); cx.stroke();
+      if(icon==='moto'){ cx.beginPath(); cx.ellipse(0,s*.1,s*.3,s*.6,0,0,2*Math.PI); cx.fill(); } break;
+    case 'heli':
+      rotate(); cx.ellipse(0,0,s*.45,s*.8,0,0,2*Math.PI); cx.fill();
+      cx.beginPath(); cx.moveTo(0,s*.6); cx.lineTo(0,s*1.4); cx.moveTo(-s*.4,s*1.4); cx.lineTo(s*.4,s*1.4);
+      cx.moveTo(-s*1.2,-s*.2); cx.lineTo(s*1.2,-s*.2); cx.lineWidth=1.2; cx.stroke(); break;
+    case 'drone':
+      rotate(); cx.moveTo(-s,-s); cx.lineTo(s,s); cx.moveTo(s,-s); cx.lineTo(-s,s); cx.lineWidth=1.8; cx.stroke();
+      cx.fillRect(-s*.35,-s*.35,s*.7,s*.7);
+      for(const [dx,dy] of [[-1,-1],[1,-1],[-1,1],[1,1]]){ cx.beginPath(); cx.arc(dx*s,dy*s,s*.38,0,2*Math.PI); cx.stroke(); }
+      break;
+    case 'walk':
+      cx.arc(0,0,s*.55,0,2*Math.PI); cx.fill(); cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=.8; cx.stroke();
+      if(rot!=null){ cx.beginPath(); cx.rotate(rot*D2R); cx.moveTo(0,-s*1.5); cx.lineTo(s*.5,-s*.8); cx.lineTo(-s*.5,-s*.8); cx.closePath(); cx.fill(); }
+      break;
     case 'sat':                                      // корпус и две панели
       cx.rotate(-Math.PI/4);
       cx.fillRect(-s*.35,-s*.35,s*.7,s*.7);
@@ -1931,6 +2314,17 @@ function geoIcon(cx,icon,x,y,s,rot,col){
   cx.restore();
 }
 // линия по большому кругу из точки: азимут/дальность или до второй точки
+function geoRings(x){                                // "1,5,10" или число, км
+  const a=Array.isArray(x) ? x : typeof x==='string' ? x.split(/[,;\s]+/) : x!=null ? [x] : [];
+  return a.map(Number).filter(k=>k>0 && isFinite(k)).sort((p,q)=>p-q).slice(0,12);
+}
+function geoCircleKm(cx,v,c,km,refX){
+  let px=null;
+  for(let i=0;i<=72;i++){
+    const q=geoDest(c.lat,c.lon,i*5,km), p=geoProj(v,q.lat,q.lon,px??refX);
+    if(px==null) cx.moveTo(p.x,p.y); else cx.lineTo(p.x,p.y); px=p.x;
+  }
+}
 function geoGreatCircle(cx,v,lat,lon,brg,km,refX){
   const N=Math.max(8,Math.min(96,Math.ceil(km/100)));
   let prev=null;
@@ -2009,6 +2403,37 @@ function geoDrawObjects(n,cx,v){
         cx.stroke(); cx.setLineDash([]);
         cx.fillStyle=col; cx.globalAlpha*=.08; cx.fill(); cx.globalAlpha=1-age*0.7; }
     }
+    const rings=geoRings(r.rings);
+    if(rings.length){                                // кольца расстояния: км от объекта
+      cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash([2,4]); cx.globalAlpha*=.7;
+      for(const km of rings){
+        cx.beginPath(); geoCircleKm(cx,v,last,km,s.x); cx.stroke();
+        if(n.p.labels){
+          const q=geoDest(last.lat,last.lon,0,km), lp=geoProj(v,q.lat,q.lon,s.x);
+          cx.save(); cx.setLineDash([]); cx.font='9px sans-serif'; cx.textAlign='center'; cx.fillStyle=col; cx.fillText(km+' km',lp.x,lp.y-2); cx.restore();
+        }
+      }
+      cx.setLineDash([]); cx.globalAlpha=1-age*0.7;
+    }
+    const gm=geoParseGeom(r.geom);
+    if(gm && gm.length>1) geoDrawShape(n,cx,v,gm,String(r.gtype||'line'),col,s.x,e.key===n.selKey?3:2,e.key===n.selKey);
+    if(n.p.mode==='edit' && e.key===n.selKey && geoEditable(n,e)) geoDrawHandles(n,cx,v,e,col);
+    const fov=recNum(r.fov);
+    if(fov>0){                                       // поле зрения: сектор вокруг курса / азимута
+      let hd=recNum(r.heading ?? r.course ?? r.azimuth ?? r.bearing);
+      if(hd==null && e.pts.length>1){ const p0=e.pts[e.pts.length-2]; hd=geoBearing(p0.lat,p0.lon,last.lat,last.lon); }
+      if(hd!=null){
+        const km=recNum(r.fov_range) ?? recNum(r.range) ?? (rings.length ? rings[rings.length-1] : n.p.rayKm);
+        const w=Math.min(fov,360), N=Math.max(6,Math.ceil(w/5));
+        cx.beginPath(); cx.moveTo(s.x,s.y);
+        let px=s.x;
+        for(let i=0;i<=N;i++){
+          const q=geoDest(last.lat,last.lon,hd-w/2+w*i/N,km), p=geoProj(v,q.lat,q.lon,px); cx.lineTo(p.x,p.y); px=p.x;
+        }
+        if(w<360) cx.closePath();
+        cx.fillStyle=cx.strokeStyle=col; cx.lineWidth=1; cx.globalAlpha*=.18; cx.fill(); cx.globalAlpha=1-age*0.7; cx.stroke();
+      }
+    }
     let pth=Array.isArray(r.path) ? r.path : r.path3;
     if(typeof pth==='string' && pth[0]==='['){ try{ pth=JSON.parse(pth); }catch(e){ pth=null; } }          // path3 — ломаная связи (путь сигнала с отражением): [[lat,lon,alt],…]
     if(Array.isArray(pth) && pth.length>1){           // путь вперёд (трасса спутника и т.п.): [[lat,lon],…]
@@ -2037,14 +2462,21 @@ function geoDrawObjects(n,cx,v){
     let icon=r.icon!=null && r.icon!=='' ? String(r.icon) : 'dot';
     const size=recNum(r.size) ?? 6;
     let rot=recNum(r.heading ?? r.course ?? r.track);
-    if(rot==null && (icon==='plane'||icon==='triangle'||icon==='ship') && e.pts.length>1){
+    if(rot==null && GEO_ROT_ICONS.has(icon) && e.pts.length>1){
       const p0=e.pts[e.pts.length-2]; rot=geoBearing(p0.lat,p0.lon,last.lat,last.lon);
     }
-    marks.push({x:s.x,y:s.y,icon,size,rot,col,a:cx.globalAlpha,sel:n.selKey===e.key,lab:r.label ?? e.id,age});
+    marks.push({x:s.x,y:s.y,icon,size,rot,col,a:cx.globalAlpha,sel:n.selKey===e.key,lab:r.label ?? e.id,age,chk:recNum(r.check_total)>0 ? [recNum(r.check_done)||0,recNum(r.check_total)] : null});
   }
   for(const m of marks){
     cx.globalAlpha=m.a;
     geoIcon(cx,m.icon,m.x,m.y,m.size,m.rot,m.col);
+    if(m.chk){                                       // чеклист записи: «сделано/всего», зелёный — всё сделано
+      const t=m.chk[0]+'/'+m.chk[1], full=m.chk[0]>=m.chk[1];
+      cx.save(); cx.font='bold 9px sans-serif'; cx.textAlign='left'; cx.textBaseline='middle';
+      const w=cx.measureText(t).width+6, bx=m.x+m.size*.6, by=m.y-m.size-4;
+      cx.fillStyle=full ? '#2e9e44' : '#d99a1c'; cx.beginPath(); cx.roundRect(bx,by-6,w,12,5); cx.fill();
+      cx.fillStyle='#fff'; cx.fillText(t,bx+3,by); cx.restore();
+    }
     if(m.sel){
       cx.strokeStyle=themeColor('--scr-hi')||'#fff'; cx.lineWidth=1.5;
       cx.beginPath(); cx.arc(m.x,m.y,m.size+5,0,2*Math.PI); cx.stroke();
@@ -2111,7 +2543,8 @@ function geoDrawOverlay(n,cx,v){
   const e=n.selKey && n.ents.get(n.selKey);
   if(e){
     const p=e.pts[e.pts.length-1];
-    const cut=Math.max(16,Math.floor((W*.4-10)/6)), skip=new Set(['path','id','icon','color','size','lat','lon','approx']);
+    const cut=Math.max(16,Math.floor((W*.4-10)/6)), skip=new Set(['path','id','icon','color','size','lat','lon','approx','check_list','check_via','check_col','check_key','check_done','check_total']);
+    for(const k in e.rec) if(/_(done|total)$/.test(k)) skip.add(k);
     const lines=[...recText(e.rec,skip).split('\n').slice(0,8).map(l=>l.length>cut ? l.slice(0,cut-1)+'…' : l),
       p.lat.toFixed(4)+', '+p.lon.toFixed(4)+' '+latLonToGrid(p.lat,p.lon,6),
       'seen '+Math.round((Date.now()-e.seen)/1000)+' s ago'+(e.pts.length>1?' · track '+e.pts.length:'')];
@@ -2124,6 +2557,7 @@ function geoDrawOverlay(n,cx,v){
   cx.restore();
 }
 defGroups('geoMap',[
+  {n:'Edit', p:'mode addName addIcon drawColor'},
   {n:'Display', p:'ttl tiles overlay ovAlpha grid labels cluster follow net'},
   {n:'Data layers', p:'vfile vclr osmKind osmGo'},
   {n:'Tracks', p:'trail maxEnt arrows rayKm', open:false},

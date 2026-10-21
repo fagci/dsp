@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=60;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=61;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -247,6 +247,7 @@ const PRESET_CATS={
   'AR: ADS-B Aircraft in the Sky (Phone + Generator)':'Aircraft, Satellites & Telemetry',
   'Radio Reach: ADS-B Coverage over Terrain (Generator)':'Aircraft, Satellites & Telemetry',
   'Field Survey: Mark Points with Photos → Table, Locator, Map':'Maps & Locating',
+  'Map Editor: Points, Shapes, Rings, Checklists ↔ Table':'Maps & Locating',
   'Signal Paths: Links in 3D (Free Fly)':'Maps & Locating',
   'Coverage: Transmitters from Table → Dead Zones':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
@@ -5450,6 +5451,40 @@ const mp=addNode('geoMap',700,500,{mz:12,mlat:55.0126,mlon:82.6507});
 mp.size.w=520; mp.size.h=360; applySize(mp);
 addEdge(me.id,'lat',mk.id,'lat'); addEdge(me.id,'lon',mk.id,'lon'); addEdge(lf.id,'out',mk.id,'rssi');
 addEdge(mk.id,'rec',tb.id,'rec'); addEdge(mk.id,'rec',lc.id,'rec'); addEdge(mk.id,'rec',mp.id,'rec'); addEdge(lc.id,'rec',mp.id,'rec');
+markWiresDirty();
+});
+// данные демо «Map Editor»: список demo/trip (точки, зона, маршрут, круг, машина) и подсписок задач demo/trip tasks; только если их ещё нет
+async function seedTripDemo(){
+  if(await ListDB.getMeta('demo/trip')) return;
+  const shape=(name,type,g,x)=>{ const c=[g.reduce((a,q)=>a+q[0],0)/g.length,g.reduce((a,q)=>a+q[1],0)/g.length];
+    return {name,gtype:type,geom:JSON.stringify(g),lat:+c[0].toFixed(6),lon:+c[1].toFixed(6),...geoShapeMetrics(type,g),...x}; };
+  const market=[55.0150,82.6400], hw=[55.0090,82.6600], ph=[55.0200,82.6650];
+  const rows=[
+    {name:'Market',lat:market[0],lon:market[1],icon:'🛒',color:'#4cf',note:'groceries'},
+    {name:'Hardware',lat:hw[0],lon:hw[1],icon:'🔧',color:'#fb3',note:'for the shelf'},
+    {name:'Pharmacy',lat:ph[0],lon:ph[1],icon:'🏥',color:'#f66'},
+    {name:'car',lat:55.0120,lon:82.6520,icon:'car',color:'#f80',heading:70,fov:50,fov_range:0.8,rings:'0.5,1'},
+    shape('Zone','polygon',[[55.0170,82.6360],[55.0170,82.6450],[55.0120,82.6450],[55.0120,82.6360]],{color:'#4cf'}),
+    shape('Route','ruler',[market,hw,ph],{color:'#fc4'}),
+    {name:'Detour',gtype:'circle',lat:hw[0],lon:hw[1],radius:350,area_m2:Math.round(Math.PI*350*350),color:'#fb3'}];
+  const cols=['name','lat','lon','icon','color','tasks','gtype','geom','length_m','area_m2','radius','heading','fov','fov_range','rings','note'];
+  await tblPut('demo/trip',cols,rows,{types:{tasks:{t:'checklist',to:'demo/trip tasks'}}});
+  const it=(name,trip,done)=>({name,trip,done:done?1:0});
+  await tblPut('demo/trip tasks',['name','trip','done'],[it('milk','Market',1),it('bread','Market',0),it('tea','Market',0),it('screws','Hardware',0),it('tape','Hardware',1),it('pick up order','Pharmacy',0)],
+    {types:{trip:{t:'link',to:'demo/trip'},done:{t:'bool'}}});
+}
+preset('Map Editor: Points, Shapes, Rings, Checklists ↔ Table', function(){
+clearAll();
+seedTripDemo().catch(e=>console.warn('map editor demo data:',e));
+const nt=addNode('note',40,40,{text:'The Map edits the Table «demo/trip»: mode edit — tap a point or the body of a shape; drag it, edit fields in the form, 🗑 deletes; shapes show squares on the vertices (drag; press a middle circle to add one; double tap to delete). Modes add / line / polygon / ruler / circle draw new things (tap = vertex, ✓ finishes) and every change goes to the Table (edit → rec, upsert key «name»).\n'+
+  'Rows carry rings / fov / heading (the car), My Position has its own view sector. The ☑ field «tasks» is a checklist from the list «demo/trip tasks»: the Map shows 3/7 on the point, a tap opens the items right on the map; in the Table a tap on ☑ opens them, «open list ▸» drops into the sub-list, «← record» comes back.'});
+nt.size.w=980; nt.size.h=130; applySize(nt);
+const tb=addNode('table',40,200,{list:'demo/trip',show:['demo/trip'],key:'name'});
+tb.size.w=480; tb.size.h=360; applySize(tb);
+const me=addNode('geoMe',40,600,{src:'manual',lat:55.0110,lon:82.6480,look:20,fov:70,fovKm:0.6,rings:'0.25,0.5'});
+const mp=addNode('geoMap',560,200,{mode:'edit',mz:14,mlat:55.0145,mlon:82.6500,cluster:false});
+mp.size.w=640; mp.size.h=480; applySize(mp);
+addEdge(tb.id,'rows',mp.id,'rows'); addEdge(mp.id,'edit',tb.id,'rec'); addEdge(me.id,'rec',mp.id,'rec');
 markWiresDirty();
 });
 preset('Signal Paths: Direct and Reflected Between Two Points', function(){

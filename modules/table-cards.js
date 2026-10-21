@@ -8,7 +8,7 @@
    Карточка записи — панель с большим фото, всеми полями, связями и обратными связями («кто ссылается на эту запись»). */
 
 const TC_TYPES=[['text','text'],['long','long text'],['num','number'],['bool','checkbox'],['progress','progress bar'],['date','date'],['choice','choice'],
-  ['photo','photo'],['image','avatar / image (URL or photo)'],['online','online status'],['typing','typing'],['audio','audio'],['file','file (from Files)'],['link','link to a list'],['auto','auto number'],['calc','calculated']];
+  ['photo','photo'],['image','avatar / image (URL or photo)'],['online','online status'],['typing','typing'],['audio','audio'],['file','file (from Files)'],['link','link to a list'],['checklist','checklist (items from another list)'],['auto','auto number'],['calc','calculated']];
 const TC_VIEWS=[['cards','🃏','cards'],['grid','☰','full list (columns)'],['compact','≡','brief list (name · values)'],['icons','👤','list with icons (avatar, online, typing)']];
 const TC_SEP=' | ';
 
@@ -172,6 +172,7 @@ function tcText(n,c,v){
   const t=tblType(n,c);
   if(t==='bool') return tcIsTrue(v) ? '✓' : '✗';
   if(t==='link') return tcLinks(v).join(', ');
+  if(t==='checklist') return '☑ '+v;
   if(t==='file') return tcFileIds(v).length ? '📎'+tcFileIds(v).length : '';
   return recFmt(v);
 }
@@ -194,6 +195,7 @@ function tcSetDef(n,c,def){
   const sv=tcSchemaSave(n);
   // вычисляемое или автонумерация включены / выключены / изменены: значения пересчитываются
   if(was==='calc' || was==='auto' || def?.t==='calc' || def?.t==='auto') return sv.then(()=>trRecalc(n)).then(()=>{ tblRenderView(n); tblRenderList(n); });
+  if(was==='checklist' || def?.t==='checklist') return sv.then(()=>tblLoad(n));
   return sv;
 }
 // другие списки, в схеме которых есть связь с list: [{list, col, def}]
@@ -417,6 +419,7 @@ function tcValEl(n,c,v){
   const t=tblType(n,c);
   if(t==='link') return tcChips(n,c,v);
   if(t==='progress') return tcBar(n,c,v,tcText(n,c,v));
+  if(t==='checklist') return Object.assign(document.createElement('span'),{className:'tc-v',textContent:tcText(n,c,v)});
   if(t==='file') return tcFileEl(v);
   return Object.assign(document.createElement('span'),{className:'tc-v',textContent:TBL_HZ.test(c)&&isFinite(tblHz(v)) ? fmtHz(tblHz(v),3) : tcText(n,c,v)});
 }
@@ -608,10 +611,11 @@ function tcDetail(n,i){
   for(const c of n.cl){
     const v=r[c], t=tblType(n,c);
     if(c===n.nameCol || t==='photo' || v===''||v==null) continue;
-    const l=document.createElement('div'); l.className='tc-f'+(t==='long' || t==='link' || t==='file' ? ' wide' : '');
+    const l=document.createElement('div'); l.className='tc-f'+(t==='long' || t==='link' || t==='file' || t==='checklist' ? ' wide' : '');
     l.append(Object.assign(document.createElement('span'),{className:'tc-k',textContent:c}));
     let val;
     if(t==='link') val=tcChips(n,c,v);
+    else if(t==='checklist') val=tcChkPanel(n,c,label);
     else if(t==='audio'){ const a=auIds(v); val=mkb('🔊 '+a.length,'Play the audio',()=>auView(a)); }
     else if(t==='progress') val=tcBar(n,c,v,tcText(n,c,v));
     else if(t==='file') val=tcFileEl(v,true);
@@ -643,6 +647,149 @@ function tcDetail(n,i){
   }));
   form.addEventListener('click',e=>{ const ch=e.target.closest('.tc-chip'); if(ch?.dataset.to) tcGo(n,ch.dataset.to,ch.dataset.name); });
   tblOpenEditor(n,'Card',form,n.ui.list.querySelector('.tbl-row[data-i="'+i+'"]'));
+}
+/* ============================ Чеклист записи ============================
+   Колонка типа checklist {to} не хранится: «сделано / всего» считается из записей списка to, у которых связь (link) указывает на
+   эту запись, а bool-колонка — «сделано». Значение «3/7» идёт в rows (вместе с check_done / check_total и check_list / check_via /
+   check_col / check_key — по ним Map показывает значок и пункты). Нажатие на «☑ 3/7» — пункты в карточке или провал в подсписок:
+   список to с фильтром по записи, «←» над списком возвращает на карточку. */
+// пункты списка to: {cols, key, via, done, items:[{id, title, done, link:[имена], fields}]}; via / done — явно или по схеме списка
+async function tcChkItems(to,via,done,parent){
+  if(!to || tblKind(to)!=='db') return null;
+  const [items,meta]=await Promise.all([ListDB.list(to),ListDB.getMeta(to)]);
+  const {cols,rows}=tblDbRows(items,meta), types=meta?.types||{};
+  via=via && cols.includes(via) ? via : cols.find(c=>types[c]?.t==='link' && (!parent || types[c].to===parent));
+  done=done && cols.includes(done) ? done : cols.find(c=>types[c]?.t==='bool') || cols.find(c=>/^(done|checked|ok)$/i.test(c));
+  if(!via || !done) return null;
+  const key=tcKeyCol(cols), lf=tcLabelFn(cols,meta?.card);
+  return {to,cols,key,via,done,items:items.map((it,i)=>({id:it.id,fields:it.fields,title:lf(rows[i])||'…',done:tcIsTrue(rows[i][done]),link:tcLinks(rows[i][via])}))};
+}
+async function tcChkToggle(s,it,val){
+  const fields={...it.fields,[s.done]:val ? 1 : 0};
+  await ListDB.update(it.id,{fields});
+  it.fields=fields; it.done=!!val;
+}
+async function tcChkAdd(s,label,title){
+  title=String(title||'').trim(); if(!title) return;
+  const f={[s.via]:label,[s.done]:0};
+  if(s.key!=='name') f[s.key]=title;
+  await ListDB.add(s.to,s.key==='name' ? title : '',f);
+}
+// считает колонки checklist записей rows списка list (meta — его схема); true — что-то изменилось
+async function tcChkApply(list,meta,cols,rows){
+  const cc=cols.filter(c=>meta?.types?.[c]?.t==='checklist');
+  if(!cc.length || !rows.length) return false;
+  const lf=tcLabelFn(cols,meta?.card), sums=[];
+  for(const c of cc){
+    const d=meta.types[c], s=await tcChkItems(d.to,d.via,d.done,list), m=new Map();
+    if(s) for(const it of s.items) for(const k of it.link){ const e=m.get(k)||{d:0,t:0}; e.t++; if(it.done) e.d++; m.set(k,e); }
+    sums.push({c,s,m});
+  }
+  let ch=false;
+  const put=(r,k,v)=>{ if(r[k]!==v){ r[k]=v; ch=true; } };
+  for(const r of rows){
+    const key=lf(r); let D=0,T=0,first=null;
+    for(const x of sums){
+      const e=x.m.get(key)||{d:0,t:0};
+      put(r,x.c,x.s ? e.d+'/'+e.t : ''); put(r,x.c+'_done',e.d); put(r,x.c+'_total',e.t);
+      D+=e.d; T+=e.t; if(!first && x.s) first=x.s;
+    }
+    put(r,'check_done',D); put(r,'check_total',T);
+    if(first){ put(r,'check_list',first.to); put(r,'check_via',first.via); put(r,'check_col',first.done); put(r,'check_key',key); }
+  }
+  return ch;
+}
+// пересчёт для активного списка и отмеченных (extra); вызывается после загрузки и при каждой правке хранилища
+async function tcChkRoll(n){
+  if(n.loading || n.loaded!==n.p.list || tblKind(n.p.list)==='preset') return;
+  const tok=n.loadTok, list=n.p.list;
+  n.chkCols=n.cl.filter(c=>tcDef(n,c).t==='checklist');
+  let ch=false, chx=false;
+  try{
+    if(n.chkCols.length) ch=await tcChkApply(list,n.schema,n.cl,n.all);
+    for(const [k,e] of [...n.extra]){
+      if(k===list || tblKind(k)!=='db') continue;
+      const m=await ListDB.getMeta(k);
+      if(m && await tcChkApply(k,m,e.cols,e.rows)) chx=true;
+    }
+  }catch(e){ return; }
+  if(tok!==n.loadTok) return;
+  if(ch){ tblDerive(n); n.uiDirty=true; }
+  else if(chx){ tblBands(n); n.uiDirty=true; }
+}
+// панель пунктов в карточке записи и на карте: галочки, добавление, провал в подсписок
+function tcChkView(s,label,opts){
+  const box=document.createElement('div'); box.className='tc-chkp'; box.style.cssText='display:flex;flex-direction:column;gap:3px;';
+  const head=document.createElement('div'); head.style.cssText='display:flex;gap:6px;align-items:center;';
+  const sum=document.createElement('span'), bar=document.createElement('span'), fill=document.createElement('i');
+  bar.style.cssText='flex:1;height:6px;border-radius:3px;background:var(--line);overflow:hidden;min-width:40px;';
+  fill.style.cssText='display:block;height:100%;background:#4c4;';
+  bar.append(fill); head.append(sum,bar);
+  if(opts?.open){ const b=document.createElement('button'); b.type='button'; b.className='tbl-btn'; b.textContent='open list ▸'; b.title='Open the items as a list'; b.onclick=opts.open; head.append(b); }
+  const list=document.createElement('div');
+  const add=document.createElement('div'); add.style.cssText='display:flex;gap:4px;';
+  const inp=document.createElement('input'); inp.placeholder='new item'; inp.style.cssText='flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);color:var(--txt);font-size:11px;padding:1px 3px;';
+  const go=document.createElement('button'); go.type='button'; go.className='tbl-btn'; go.textContent='＋';
+  add.append(inp,go); box.append(head,list,add);
+  let cur=s;
+  const draw=()=>{
+    const mine=cur.items.filter(it=>it.link.includes(label)), d=mine.filter(it=>it.done).length;
+    sum.textContent=d+'/'+mine.length; fill.style.width=(mine.length ? d/mine.length*100 : 0)+'%';
+    list.replaceChildren(...mine.map(it=>{
+      const l=document.createElement('label'); l.style.cssText='display:flex;gap:5px;align-items:center;cursor:pointer;';
+      const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=it.done;
+      cb.onchange=async()=>{ cb.disabled=true; try{ await tcChkToggle(cur,it,cb.checked); }finally{ draw(); opts?.changed?.(); } };
+      const t=document.createElement('span'); t.textContent=it.title; if(it.done) t.style.cssText='text-decoration:line-through;opacity:.6;';
+      l.append(cb,t); return l;
+    }));
+  };
+  const reload=async()=>{ const x=await tcChkItems(cur.to,cur.via,cur.done); if(x){ cur=x; draw(); } };
+  const addIt=async()=>{ const t=inp.value; if(!t.trim()) return; inp.value=''; await tcChkAdd(cur,label,t); await reload(); opts?.changed?.(); };
+  go.onclick=addIt;
+  inp.addEventListener('keydown',e=>{ e.stopPropagation(); if(e.key==='Enter') addIt(); });
+  draw();
+  return box;
+}
+function tcChkPanel(n,c,label){
+  const w=document.createElement('div'); w.style.cssText='display:flex;flex-direction:column;gap:2px;';
+  const d=tcDef(n,c);
+  tcChkItems(d.to,d.via,d.done,n.p.list).then(s=>{
+    if(!w.isConnected && !s) return;
+    if(!s){ w.append(Object.assign(document.createElement('span'),{className:'tc-v',textContent:'set the list of items for this field (⋯ → fields → '+c+')'})); return; }
+    w.append(tcChkView(s,label,{open:()=>tcChkDrill(n,c,label),changed:()=>tcChkRoll(n)}));
+  }).catch(()=>{});
+  return w;
+}
+// провал в подсписок: список пунктов с фильтром по записи; n.drill — крошка «← запись» над списком
+async function tcChkDrill(n,c,label){
+  const d=tcDef(n,c), s=await tcChkItems(d.to,d.via,d.done,n.p.list);
+  if(!s){ alert('Set the list of items for "'+c+'" first'); return; }
+  tblCloseEditor(n);
+  n.navBack=n.navBack||[];
+  n.navBack.push({list:n.p.list,name:label});
+  if(n.navBack.length>30) n.navBack.shift();
+  const re='(^| \\| )'+String(label).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'( \\| |$)';
+  n.drill={to:s.to,via:s.via,label,parent:n.p.list,prevFilter:n.p.filter||''};
+  n.p.filter=s.via+' matches "'+re.replace(/[\\"]/g,'\\$&')+'"';
+  if(n.ui) n.ui.filter.value=n.p.filter;
+  if(s.to!==n.p.list) await tblPick(n,s.to); else { tblDerive(n); tblRenderList(n); }
+}
+// «←» над подсписком: на карточку записи, из которой провалились
+async function tcChkBack(n){
+  const d=n.drill; if(!d) return;
+  const k=(n.navBack||[]).map(e=>e.list===d.parent && e.name===d.label).lastIndexOf(true);
+  if(k>=0) n.navBack.length=k+1;
+  else (n.navBack||(n.navBack=[])).push({list:d.parent,name:d.label});
+  await tcBack(n);
+}
+// новый подсписок для checklist: name, связь на этот список, done (bool); возвращает его имя
+async function tcChkCreate(n,c){
+  const parent=n.p.list, to=parent+' '+c, via=tblLeaf(parent);
+  const m=await ListDB.getMeta(to);
+  if(!m){
+    await tblPut(to,['name',via,'done'],[],{types:{[via]:{t:'link',to:parent},done:{t:'bool'}}});
+  }
+  return to;
 }
 function tcStep(n,i,d){
   const N=n.rows.length; if(!N) return;
