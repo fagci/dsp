@@ -59,7 +59,9 @@ catch(e){ prompt('Copy link',url); }
 };
 function makePatchItem(name,count){
 const b=document.createElement('button'); b.className='pitem'+(name===currentPatchName?' on':'');
-b.innerHTML= `<span class="ptxt"><b>${name}</b></span><i class="pcnt" title="nodes">${count}</i><span class="pins" title="Insert into the current graph">＋</span><span class="pdel" title="Delete patch">✕</span>` ;
+const k=name.indexOf(': '), esc=t=>t.replace(/[&<>"]/g,c=>'&#'+c.charCodeAt(0)+';');
+b.title=name+' · '+count+' nodes';
+b.innerHTML= `<span class="ptxt">${k>0?`<em>${esc(name.slice(0,k))}</em>`:''}<b>${esc(k>0?name.slice(k+2):name)}</b></span><span class="pins" title="Insert into the current graph">＋</span><span class="pdel" title="Delete patch">✕</span>` ;
 b.draggable=true;
 b.addEventListener('dragstart',e=>{ e.dataTransfer.setData('text/x-dsp-patch',name); e.dataTransfer.effectAllowed='copy'; });
 const doDelete=e=>{ e.preventDefault(); e.stopPropagation();

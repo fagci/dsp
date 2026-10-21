@@ -92,8 +92,10 @@ button,select,input{font:inherit;color:inherit}
   color:var(--dim);font-size:11px;line-height:1.4;cursor:pointer}
 .pitem:hover .pins,.pitem:hover .pdel{display:block}
 .pitem .pins:hover,.pitem .pdel:hover{color:var(--txt);background:var(--bg)}
-.pitem .pcnt{flex:none;font-style:normal;color:var(--dim);font-size:9px;opacity:.7;margin-left:6px}
-.pitem:hover .pcnt{display:none}
+#patchList .pitem{padding-top:4px;padding-bottom:4px}
+#patchList .ptxt{display:block;line-height:1.25}
+#patchList .ptxt em{font-style:normal;color:var(--dim);font-size:10px;margin-right:5px}
+#patchList .ptxt b{display:inline;overflow-wrap:anywhere}
 .pitem b{font-weight:400;overflow-wrap:anywhere}
 .pitem i{font-style:normal;color:var(--dim);font-size:9px}
 .pitem .prow{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 8px}
@@ -310,7 +312,6 @@ body.noedit #bar .ed{display:none}
   .pitem{padding:8px 12px 8px 20px}
   /* на тач-устройствах hover недоступен — держим крестик крупнее и заметным всегда */
   .pitem .pins,.pitem .pdel{display:block;padding:6px 10px;font-size:14px}
-  .pitem .pcnt{display:none}
   .prm{flex-wrap:wrap;gap:2px}
   .prm label{flex:1 0 100%;font-size:10px}
   .prm input[type=range]{height:40px;flex:1 1 60%}
