@@ -961,7 +961,9 @@ Everything that stands on or near the ground — airfields, runways, towns, peak
 - **Outputs**: `rows` (the selected events as the original rows), `stats` (one row per lane: `lane n t0 t1 span dur… duty rate period… idle ok miss jitter rssi lag…`, seconds; wire it to a Table with key `lane` and *rows in = sync*, or to Table Chart), `rec`, `file`, `on` (events under the playhead), `t`, and for the selection `count`, `period`, `dur`, `duty`, `hit`.
 - Not there yet: dragging clips to edit the Table, audio / video clips mixed on lanes, effects on a lane.
 
-Preset: *Timeline: Periods, Durations and Replies on the Air (Table)*. Check of the kernel: `node tools/test-timeline.mjs`.
+**Activity Events** (Analysis) feeds a Timeline from a spectrum: it takes a grid of channels (*first channel centre*, *step*, *channels*, *width*) from the `spec` of a USB SDR / FFT and turns channel activity into events. Each channel learns its own noise floor (first *learn* ms, then the floor falls at once and may rise by *floor may rise* dB/s, frozen while the channel is busy); a channel is busy when it is *busy above the floor* dB over it and free when it stays below *threshold − hysteresis* for *hold* ms (shorter pauses are bridged); events shorter than *shortest event* are dropped. The `rec` output gives one record per finished transmission — `t` (epoch ms), `dur` (ms), `freq` (MHz), `ch`, `rssi` (peak, dB), `avg`, `snr` — for a Table, which is the storage: Table → Timeline (lanes by `freq`). With a sweeping SDR the channels outside the current window are not observed and keep their state until the sweep comes back (the resolution is then one pass). Outputs `active` (channels busy now) and `count`. Check: `node tools/test-activity.mjs`.
+
+Preset: *Timeline: Periods, Durations and Replies on the Air (Table)*. *USB SDR: Channel Activity Timeline (PMR446)*: RTL-SDR → Activity Events (16 channels of 12.5 kHz) → Table → Timeline → Table with the results per channel (needs the hardware). Check of the kernel: `node tools/test-timeline.mjs`.
 
 ### Sequencer
 

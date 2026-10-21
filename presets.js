@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=69;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=70;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -417,6 +417,7 @@ const PRESET_CATS={
   'Indicators: Switches and Attitude':'Analysis & Measurement',
   'Logic Analyzer: UART Decode':'Analysis & Measurement',
   'Timeline: Periods, Durations and Replies on the Air (Table)':'Analysis & Measurement',
+  'USB SDR: Channel Activity Timeline (PMR446)':'Analysis & Measurement',
   'Logic Analyzer: USB (fx2lafw)':'Analysis & Measurement',
   'FT8: Propagation Map':'Maps & Locating',
   'FT8: DX Log (Table)':'Maps & Locating',
@@ -6338,5 +6339,23 @@ tl.size.w=760; tl.size.h=420; applySize(tl);
 const ts=addNode('table',1260,160,{list:'@patch',key:'lane',rowsIn:'sync',initial:false});
 ts.size.w=520; ts.size.h=420; applySize(ts);
 addEdge(tb.id,'rows',tl.id,'rows'); addEdge(tl.id,'stats',ts.id,'rows');
+markWiresDirty();
+});
+preset('USB SDR: Channel Activity Timeline (PMR446)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Connect an RTL-SDR (or another USB SDR) and press Run: it sits on 446.1 MHz with 1 MS/s, Activity Events watches 16 channels of 12.5 kHz (446.00625 … 446.19375 MHz).\n'+
+  'The first 3 s only learn the noise floor of every channel (keep the band quiet); then a channel that rises above its floor by 8 dB is busy until it stays quiet for 300 ms — that is one event: start, length (ms), channel, peak level.\n'+
+  'Events go into the first Table (the storage — export it, or replay later), the Timeline draws a lane per channel (bar height = level) and measures period, duration and duty; the second Table keeps those results per channel.\n'+
+  'Other bands: change the SDR frequency and the first channel / step in Activity Events (0 — start of the spectrum). Wire the spectrum to the SDR sweep for a wider range: channels outside the current window are skipped until the sweep returns.'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'1024000',auto:false,gainDb:35,dcShift:true,freq:446100000});
+const sa=addNode('sa',40,480,{auto:true,floor:-90,top:-20,split:.3}); sa.size.w=520; sa.size.h=300; applySize(sa);
+const ac=addNode('actlog',340,200,{lo:446006250,step:12500,count:16,bw:10000,thr:8,hys:3,hold:300,minDur:40,learn:3000});
+ac.size.w=300; ac.size.h=200; applySize(ac);
+const tb=addNode('table',680,200,{list:'@patch',initial:false,follow:true,maxRows:2000}); tb.size.w=400; tb.size.h=300; applySize(tb);
+const tl=addNode('timeline',1120,200,{by:'freq',rssiH:true,follow:true,win:120,tcol:'t',dcol:'dur',unit:'ms'}); tl.size.w=760; tl.size.h=420; applySize(tl);
+const ts=addNode('table',1120,660,{list:'@patch',key:'lane',rowsIn:'sync',initial:false}); ts.size.w=760; ts.size.h=260; applySize(ts);
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',ac.id,'spec');
+addEdge(ac.id,'rec',tb.id,'rec'); addEdge(tb.id,'all',tl.id,'rows'); addEdge(tl.id,'stats',ts.id,'rows');
 markWiresDirty();
 });

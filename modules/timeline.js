@@ -262,6 +262,7 @@ def({ id:'timeline', lazy:'manual', title:'Timeline', cat:'Analysis',
     {n:'tol',t:'range',min:1,max:50,step:1,d:10,label:'period tolerance, %',tip:'an interval counts as a repeat when it is a whole multiple of the period within this tolerance (stats: ok = share of such intervals, miss = skipped repeats)'},
     {n:'rssiH',t:'check',d:false,label:'bar height = rssi',tip:'a stronger packet draws a taller bar (needs an rssi / level / power column)'},
     {n:'follow',t:'check',d:false,label:'follow the end',tip:'keep the right edge of the view on the newest event (a Table collecting live packets); any drag or zoom stops it'},
+    {n:'win',t:'num',min:0,d:0,label:'follow window, s (0 — keep the current zoom)',adv:true},
     {n:'lh',t:'range',min:12,max:60,step:1,d:22,label:'lane height',adv:true},
     {n:'tcol',t:'text',d:'',label:'time column (auto)',tip:'t, time, ts, timestamp, start …',adv:true},
     {n:'dcol',t:'text',d:'',label:'duration column (auto)',tip:'dur, duration, len, airtime … ; without it the end column (end / t1 / stop) is used, else the event is a point',adv:true},
@@ -287,7 +288,7 @@ def({ id:'timeline', lazy:'manual', title:'Timeline', cat:'Analysis',
       const grown=rows.length>n.lastLen;
       n.lastRows=rows; n.lastLen=rows.length; n.lastT=now; n.tk=key; n.lastF=ext;
       n.tl=tlBuild(n,rows,ext); n._ck='';
-      if(n.tl.ok && grown && p.follow){ const w=n.v1!=null ? n.v1-n.v0 : n.tl.tmax; n.v1=n.tl.tmax+w*.02; n.v0=n.v1-w; }
+      if(n.tl.ok && grown && p.follow){ const w=+p.win>0 ? +p.win : n.v1!=null ? n.v1-n.v0 : n.tl.tmax; n.v1=n.tl.tmax+w*.02; n.v0=n.v1-w; }
       redraw(n);
     }
     const T=n.tl;
