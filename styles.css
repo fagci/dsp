@@ -149,14 +149,14 @@ body.noedit #bar .ed{display:none}
 #canvas.dashboard{overflow:hidden;background:none}
 #canvas.dashboard:not(.graphOn){cursor:default;touch-action:none}
 /* панель «граф модулей»: сквозь прозрачную панель виден и работает обычный холст под сеткой */
-#canvas.graphOn #content,#canvas.graphOn #wires,#canvas.graphOn #wiresFront{display:block}
+#canvas.graphOn #content,#canvas.graphOn #wires{display:block}
 #canvas.graphOn #dashGrid{position:relative;z-index:1;pointer-events:none}
 #canvas.graphOn .dash-pane:not(.graph),#canvas.graphOn .dash-tools,#canvas.graphOn .dash-resizer{pointer-events:auto}
 .dash-pane.graph{background:none;outline:1px solid var(--line);outline-offset:-1px}
 .dash-pane.graph>.dash-body{overflow:hidden}
 .node.ghost{opacity:.75;border-style:dashed}
 .node.ghost .ghostNote{color:var(--dim);font-size:11px;padding:4px 0}
-#canvas.dashboard:not(.graphOn) #content,#canvas.dashboard:not(.graphOn) #wires,#canvas.dashboard:not(.graphOn) #wiresFront{display:none}
+#canvas.dashboard:not(.graphOn) #content,#canvas.dashboard:not(.graphOn) #wires{display:none}
 #canvas.dashboard #dashGrid{display:flex}
 .dash-split{display:flex;width:100%;height:100%;min-width:0;min-height:0}
 .dash-split.row{flex-direction:row;gap:0}
@@ -348,11 +348,10 @@ body.noedit #bar .ed{display:none}
 #wires{position:absolute;left:-8000px;top:-8000px;width:16000px;height:16000px;overflow:visible;pointer-events:none}
 #wires path{pointer-events:stroke}
 /* провода притушены в состоянии покоя — плотный граф не превращается в сплошной цветной тангл;
-   при наведении core-graph.js подсвечивает клон поверх узлов в #wiresFront (там opacity полная).
+   при наведении (.hv) провод становится ярче и толще.
    hit-путь тоже сюда попадает, но у него stroke:transparent — opacity на нём не видна */
 #wires path{opacity:.55;transition:opacity .12s}
-#wiresFront{position:absolute;left:-8000px;top:-8000px;width:16000px;height:16000px;overflow:visible;
-  pointer-events:none}
+#wires path.hv{opacity:1;stroke-width:2.6}
 
 /* ---- узел ---- */
 .node{position:absolute;left:0;top:0;width:212px;background:var(--panel);
@@ -421,6 +420,9 @@ body.noedit #bar .ed{display:none}
 .nhead .ttl{flex:1;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nhead .x,.nhead .ren,.nhead .rst,.nhead .xpd{cursor:pointer;color:var(--dim);padding:0 2px}
 .nhead .ren,.nhead .rst,.nhead .xpd{font-size:10px;opacity:.5}
+@media (hover:hover){   /* кнопки шапки — только у наведённого/выделенного узла; на тач-экране остаются */
+  #content .node:not(:hover):not(.sel) .nhead :is(.x,.ren,.rst,.xpd){visibility:hidden}
+}
 .nhead .ren:hover,.nhead .rst:hover,.nhead .xpd:hover{color:var(--acc);opacity:1}
 .nhead .x:hover{color:#e05c5c}
 .nbody{padding:0}
@@ -455,10 +457,16 @@ body.noedit #bar .ed{display:none}
 .port{position:relative;height:var(--pin);width:var(--pov);cursor:crosshair;
   pointer-events:auto;flex:none}
 .port .pin{position:absolute;top:50%;transform:translateY(-50%);
-  min-height:var(--pin);min-width:var(--pin);
-  display:flex;align-items:center;justify-content:center;border-radius:999px;flex:none;
-  padding:2px 6px;font-size:8px;font-weight:600;color:#111;white-space:nowrap;
-  border:2px solid var(--line)}
+  width:var(--pin);height:var(--pin);box-sizing:border-box;
+  border-radius:50%;flex:none;font-size:0;border:2px solid var(--line)}
+/* тап-зона шире видимой точки (на мобильном пин мал для пальца) */
+.port .pin::before{content:'';position:absolute;inset:-6px}
+/* имя пина — по наведению и пока тянется провод (.lit) */
+.port:hover .pin::after,.port.lit .pin::after{content:attr(data-n);position:absolute;top:50%;transform:translateY(-50%);
+  padding:1px 5px;border-radius:4px;background:var(--panel2);color:var(--text,#ddd);border:1px solid var(--line);
+  font-size:10px;line-height:14px;white-space:nowrap;z-index:5;pointer-events:none}
+.col:not(.o) .port .pin::after{right:calc(100% + 4px)}
+.col.o .port .pin::after{left:calc(100% + 4px)}
 .col:not(.o) .port .pin{right:0}   /* контейнер сам шириной --pov у края узла — точка просто у его дальней стороны */
 .col.o .port .pin{left:0}
 .port:hover .pin{box-shadow:0 0 0 1px var(--acc)}

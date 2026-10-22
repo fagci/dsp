@@ -37,11 +37,6 @@ function flush(){
   if (topoDirty)  { retopo();    topoDirty  = false; }
   if (wiresDirty) { drawWires(); wiresDirty = false; }
 }
-// Слой для наведённого провода: те же координаты, что у #wires, но стоит в DOM после #content —
-// поэтому рисуется поверх узлов. На проводе — клон path, сам провод остаётся кликабельным в #wires.
-const wiresFront=document.createElementNS('http://www.w3.org/2000/svg','svg');
-wiresFront.id='wiresFront';
-content.insertAdjacentElement('afterend',wiresFront);
 function fillParamDefaults(n,d){                     // дефолты для параметров, которых ещё нет в n.p —
 for(const s of (d.params||[])){                     // при первом создании у зла и при смене состава параметров
 if(s.t==='button'||s.t==='file') continue;
@@ -102,17 +97,14 @@ path.setAttribute('fill','none'); path.setAttribute('stroke',TYPE_COLOR[ft]);
 // non-scaling-stroke — иначе на зуме (view.k до 2.5×) толщина провода растёт вместе с
 // содержимым канвы, а не остаётся постоянной в экранных пикселях, как остальной UI
 path.setAttribute('vector-effect','non-scaling-stroke');
-path.setAttribute('stroke-width','1.6'); path.style.cursor='pointer';
-path.addEventListener('click',()=>{ delEdge(e); Undo.push(); });
+path.setAttribute('stroke-width','1.6'); path.style.pointerEvents='none';   // события ловит только hit
 const hit=document.createElementNS('http://www.w3.org/2000/svg','path');
 hit.setAttribute('fill','none'); hit.setAttribute('stroke','transparent');
 hit.setAttribute('vector-effect','non-scaling-stroke');    // так и хитбокс не "худеет" при отдалении
 hit.setAttribute('stroke-width','10'); hit.style.cursor='pointer';
 hit.addEventListener('click',()=>{ delEdge(e); Undo.push(); });
-hit.addEventListener('pointerenter',()=>{                        // клон поверх узлов, сам провод не трогаем
-e.hoverClone=path.cloneNode(); e.hoverClone.setAttribute('stroke-width','2.6');
-e.hoverClone.style.pointerEvents='none'; wiresFront.append(e.hoverClone); });
-hit.addEventListener('pointerleave',()=>{ e.hoverClone?.remove(); e.hoverClone=null; });
+hit.addEventListener('pointerenter',()=>path.classList.add('hv'));
+hit.addEventListener('pointerleave',()=>path.classList.remove('hv'));
 wires.append(hit,path); e.path=path; e.hit=hit;
 Graph.edges.push(e); markTopoDirty(); markWiresDirty();
 syncLinkedParams(Graph.map[to]); syncLinkedParams(Graph.map[from]);
@@ -149,7 +141,7 @@ addEdge(ad.id,kind.out,to,tp);
 } finally { Undo.busy=was; }
 Undo.push();
 }
-function delEdge(e){ e.path?.remove(); e.hit?.remove(); e.hoverClone?.remove();
+function delEdge(e){ e.path?.remove(); e.hit?.remove();
 Graph.edges=Graph.edges.filter(x=>x!==e); markTopoDirty(); markWiresDirty();
 syncLinkedParams(Graph.map[e.to]); syncLinkedParams(Graph.map[e.from]); }
 function syncLinkedParams(n){                        // гасим поле параметра, если его перебивает провод (linked),
@@ -612,7 +604,7 @@ markWiresDirty();
 }
 function portEl(p,dir){
 const e=document.createElement('div'); e.className='port'; e.dataset.dir=dir;
-e.innerHTML= `<span class="pin" style="background:${TYPE_COLOR[p.t]}">${p.n}</span>` ;
+e.innerHTML= `<span class="pin" data-n="${p.n}" title="${p.n} (${p.t})" style="background:${TYPE_COLOR[p.t]}">${p.n}</span>` ;
 return e;
 }
 function paramBtn(n,s){
@@ -957,7 +949,6 @@ if(typeof dashMode!=='undefined' && uiLocked()) return;
 // и только потом все записи атрибута d. Если чередовать чтение и запись по одному проводу за раз,
 // браузер вынужден на каждой итерации форсировать синхронный reflow, чтобы отдать актуальный offset.
 wires.style.transform=content.style.transform ;        // держим в синхроне на каждый вызов, а не только по panzoomchange
-wiresFront.style.transform=content.style.transform;
 const jobs=[];
 for(const e of Graph.edges){
 const a= Graph.map[e.from], b=Graph.map[e.to]; if(!a||!b) continue;
@@ -967,7 +958,6 @@ jobs.push([e,curve(p1,p2)]);
 }
 for(const [e,d ] of jobs){
 e.path.setAttribute('d',d); e.hit.setAttribute('d',d);
-if(e.hoverClone) e.hoverClone.setAttribute('d',d);
 }
 }
 function curve(p1,p2){
@@ -1083,15 +1073,15 @@ content.addEventListener('panzoomend',  ()=>{ panzooming=false; cv.classList.rem
 // Через 200 мс после последнего шага слои снимаются и один раз перерастеризуются в чёткость.
 let zooming=false, zoomEndT=0;
 function zoomTouch(){
-if(!zooming){ zooming=true; for(const e of [content,wires,wiresFront]) e.style.willChange='transform'; }
+if(!zooming){ zooming=true; for(const e of [content,wires]) e.style.willChange='transform'; }
 clearTimeout(zoomEndT);
-zoomEndT=setTimeout(()=>{ zooming=false; for(const e of [content,wires,wiresFront]) e.style.willChange=''; },200);
+zoomEndT=setTimeout(()=>{ zooming=false; for(const e of [content,wires]) e.style.willChange=''; },200);
 }
 let rescaleT=0, rescaleK=null;
 content.addEventListener('panzoomchange',ev=>{
 view.x=ev.detail.x; view.y=ev.detail.y; view.k=ev.detail.scale;
 if(view.k!==rescaleK){ rescaleK=view.k; clearTimeout(rescaleT); rescaleT=setTimeout(rescaleCanvases,250); }
-wires.style.transform=content.style.transform; wiresFront.style.transform=content.style.transform;
+wires.style.transform=content.style.transform;
 syncGridBg(); });
 function rescaleCanvases(){                          // буферы канв под новый масштаб холста
 if(zooming){ clearTimeout(rescaleT); rescaleT=setTimeout(rescaleCanvases,250); return; }
@@ -1300,7 +1290,7 @@ window.addEventListener('pointercancel',endPointer);
 function applyView(){                                 // программная установка вида (fitView и т.п.)
 panzoom.zoom(view.k,{animate:false});
 panzoom.pan(view.x,view.y,{animate:false});
-wires.style.transform=content.style.transform; wiresFront.style.transform=content.style.transform;
+wires.style.transform=content.style.transform;
 syncGridBg();
 }
 function fitView(box){                              // вписать весь патч в экран (или в box — область холста)
@@ -1694,12 +1684,12 @@ function dashGraphBox(){                               // прямоугольн
 // холст виден только в панели графа: между панелями зазоры, сквозь них узлы видны быть не должны.
 // clip-path — в локальных координатах слоя (до его transform), поэтому пересчёт на каждый пан/зум.
 function syncGraphClip(){
-  const b=cv.classList.contains('graphOn') && dashGraphBox(), layers=[content,wires,wiresFront];
+  const b=cv.classList.contains('graphOn') && dashGraphBox(), layers=[content,wires];
   if(!b){ for(const e of layers) e.style.clipPath=''; return; }
   const k=view.k, x0=b.x/k-view.x, y0=b.y/k-view.y, x1=x0+b.w/k, y1=y0+b.h/k;
   const poly=o=>`polygon(${x0+o}px ${y0+o}px,${x1+o}px ${y0+o}px,${x1+o}px ${y1+o}px,${x0+o}px ${y1+o}px)`;
   content.style.clipPath=poly(0);
-  wires.style.clipPath=wiresFront.style.clipPath=poly(8000);   // слои проводов сдвинуты на -8000px
+  wires.style.clipPath=poly(8000);   // слои проводов сдвинуты на -8000px
 }
 function dashGraphFit(){ requestAnimationFrame(()=>requestAnimationFrame(()=>{ const b=dashGraphBox(); if(b) fitView(b); })); }
 /* ---- выбор модуля прямо на холсте: двойной клик по пустому месту или «+» панели графа ----
