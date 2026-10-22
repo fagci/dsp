@@ -1180,6 +1180,46 @@ def({ id:'vibrate', title:'Vibrate', cat:'Output', kw:'vibration haptic phone bu
     if(r.textContent!==t) r.textContent=t; }});
 
 
+// Бип: фронт go (или кнопка Test) играет короткий тон через собственный AudioContext, независимо от движка.
+// count тонов с паузой gap; вход freq меняет высоту. Браузер включает звук только после касания страницы.
+let beepCtx=null;
+function beepFire(n,freq){
+  try{
+    beepCtx||=new (window.AudioContext||window.webkitAudioContext)();
+    if(beepCtx.state==='suspended') beepCtx.resume();
+    const c=beepCtx, f=freq>0 ? freq : +n.p.freq, d=Math.max(10,+n.p.ms)/1000, g=Math.max(0,+n.p.gap)/1000;
+    for(let i=0;i<Math.max(1,+n.p.count|0);i++){
+      const t=c.currentTime+i*(d+g), o=c.createOscillator(), a=c.createGain();
+      o.type=n.p.wave; o.frequency.value=f;
+      a.gain.setValueAtTime(0,t); a.gain.linearRampToValueAtTime(+n.p.vol,t+.004);
+      a.gain.setValueAtTime(+n.p.vol,t+Math.max(.004,d-.01)); a.gain.linearRampToValueAtTime(0,t+d);
+      o.connect(a); a.connect(c.destination); o.start(t); o.stop(t+d+.01);
+    }
+    n.fired++; n.err=beepCtx.state==='running' ? '' : 'sound is blocked — tap the page first';
+  }catch(e){ n.err='no sound: '+e.message; }
+}
+def({ id:'beep', title:'Beep', cat:'Output', kw:'beep buzzer sound tone alarm alert signal ding', readout:true,
+  ins:[{n:'go',t:'num'},{n:'freq',t:'num'}],
+  params:[{n:'freq',t:'range',min:100,max:4000,step:10,d:880,label:'pitch, Hz (the `freq` input overrides)'},
+          {n:'ms',t:'range',min:20,max:2000,step:10,d:150,label:'tone length, ms'},
+          {n:'count',t:'range',min:1,max:10,step:1,d:1,label:'tones in a row'},
+          {n:'gap',t:'range',min:0,max:1000,step:10,d:100,label:'pause between tones, ms'},
+          {n:'vol',t:'range',min:0,max:1,step:.05,d:.3,label:'volume'},
+          {n:'wave',t:'select',opts:['sine','square','triangle','sawtooth'],d:'sine',label:'wave'},
+          {n:'minGap',t:'range',min:0,max:60,step:.5,d:0,label:'min gap between beeps, s'},
+          {n:'test',t:'button',label:'Test',fn:n=>beepFire(n,0)}],
+  init:n=>{ n.prevGo=0; n.fired=0; n.err=''; n.lastAt=0; },
+  process(n,I){
+    const go=(I.go||0)>.5, rise=go && !n.prevGo; n.prevGo=go;
+    if(rise){
+      const now=performance.now();
+      if(now-n.lastAt>=n.p.minGap*1000){ n.lastAt=now; beepFire(n,I.freq); } }
+    return {}; },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const t=(n.err?n.err+'\n':'')+'beeps '+n.fired;
+    if(r.textContent!==t) r.textContent=t; }});
+
+
 // Web MIDI Out: gate (фронт) → note on/off, смена note при поднятом gate — легато, cc → control change.
 // note — номер MIDI, либо freq в Гц (напрямую с «MIDI Keyboard»). Доступ к MIDI общий с «MIDI Keyboard».
 function midiOutPort(n){
