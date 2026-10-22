@@ -1708,6 +1708,7 @@ function openModPicker(clientX,clientY,at,from){
     h.innerHTML=`<span class="pin" style="background:${TYPE_COLOR[from.type]}"></span>${from.type} ${from.dir==='o'?'→':'←'} <i></i>`;
     h.querySelector('i').textContent=from.port; box.append(h); }
   box.append(inp,list); document.body.append(box); modPickEl=box; Back.push(modPickBack);
+  const t0=performance.now();    // попап открывается на pointerup — следом приходит синтетический click по тому, что оказалось под пальцем
   const mods=Object.values(MOD).filter(m=>!m.legacy && !String(m.id).startsWith('custom:'))
     .sort((a,b)=>catRank(a.cat)-catRank(b.cat)||a.title.localeCompare(b.title));
   let items=[], cur=0;
@@ -1737,7 +1738,7 @@ function openModPicker(clientX,clientY,at,from){
       b.innerHTML=`${modIcon(m)}<b></b>${cp ? '<i class="mp-port"></i>' : ioDots(m)}`;
       b.querySelector('b').textContent=m.title; b.title=m.id;
       if(cp) b.querySelector('.mp-port').textContent=(from.dir==='o'?'→ ':'← ')+cp.n;
-      b.onclick=()=>pick(m); list.append(b); items.push({m,el:b});
+      b.onclick=()=>{ if(performance.now()-t0>400) pick(m); }; list.append(b); items.push({m,el:b});
     }
     if(!items.length){ const e=document.createElement('div'); e.className='mp-cat'; e.textContent='nothing found'; list.append(e); }
     hl();
