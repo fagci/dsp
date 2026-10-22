@@ -101,12 +101,13 @@ path.setAttribute('stroke-width','1.6'); path.style.pointerEvents='none';   // �
 const hit=document.createElementNS('http://www.w3.org/2000/svg','path');
 hit.setAttribute('fill','none'); hit.setAttribute('stroke','transparent');
 hit.setAttribute('vector-effect','non-scaling-stroke');    // так и хитбокс не "худеет" при отдалении
-hit.setAttribute('stroke-width','10'); hit.style.cursor='pointer';
+hit.setAttribute('stroke-width','10'); hit.setAttribute('class','whit'); hit.style.cursor='pointer';
 hit.addEventListener('click',()=>{ delEdge(e); Undo.push(); });
-hit.addEventListener('pointerenter',()=>path.classList.add('hv'));
-hit.addEventListener('pointerleave',()=>path.classList.remove('hv'));
+const ends=()=>[Graph.map[from]?.ports?.o?.[fp],Graph.map[to]?.ports?.i?.[tp]];
+hit.addEventListener('pointerenter',()=>{ path.classList.add('hv'); ends().forEach(p=>p?.classList.add('hot')); });   // концы провода подсвечены, даже если середина под узлом
+hit.addEventListener('pointerleave',()=>{ path.classList.remove('hv'); ends().forEach(p=>p?.classList.remove('hot')); });
 wires.append(hit,path); e.path=path; e.hit=hit;
-Graph.edges.push(e); markTopoDirty(); markWiresDirty();
+Graph.edges.push(e); edgeHl(e); syncWired(Graph.map[from]); syncWired(Graph.map[to]); markTopoDirty(); markWiresDirty();
 syncLinkedParams(Graph.map[to]); syncLinkedParams(Graph.map[from]);
 if(!Undo.busy  && !pasting) Undo.push();
 }
@@ -141,8 +142,19 @@ addEdge(ad.id,kind.out,to,tp);
 } finally { Undo.busy=was; }
 Undo.push();
 }
+// провода выбранных узлов ярче остальных
+function edgeHl(e){ e.path?.classList.toggle('hl',Sel.has(e.from)||Sel.has(e.to)); }
+// .wired у всех пинов узла: подключённый — залитый, свободный — притушен
+function syncWired(n){
+if(!n?.ports) return;
+const ins=new Set(), outs=new Set();
+for(const e of Graph.edges){ if(e.to===n.id) ins.add(e.tp); if(e.from===n.id) outs.add(e.fp); }
+for(const [dir,set] of [['i',ins],['o',outs]]) for(const [k,el] of Object.entries(n.ports[dir]||{})){
+el.classList.toggle('wired',set.has(k)); n.ghostPorts?.[dir]?.[k]?.classList.toggle('wired',set.has(k)); }
+}
 function delEdge(e){ e.path?.remove(); e.hit?.remove();
 Graph.edges=Graph.edges.filter(x=>x!==e); markTopoDirty(); markWiresDirty();
+syncWired(Graph.map[e.from]); syncWired(Graph.map[e.to]);
 syncLinkedParams(Graph.map[e.to]); syncLinkedParams(Graph.map[e.from]); }
 function syncLinkedParams(n){                        // гасим поле параметра, если его перебивает провод (linked),
 const d=n &&MOD[n.type]; if(!d) return;             // и раскрываем схлопнутый пин контрола в ci/co, если он подключён (см. .port.ctrl)
@@ -281,6 +293,21 @@ if(lowPri(p)) e.classList.add('ctrl'); }
 for(const p of baseFirst(portsOf(n,'outs'))){
 const e=portEl(p,'o'); co.append(e); n.ports.o[p.n]=e; wire(e,p,'o');
 if(lowPri(p)) e.classList.add('ctrl'); }
+for(const col of [ci,co]) collapsePorts(col);
+syncWired(n);
+}
+// длинная колонка пинов (> PORT_SHOW): лишние свёрнуты под «+N», подключённые видны всегда
+const PORT_SHOW=8;
+function collapsePorts(col){
+const ps=[...col.querySelectorAll(':scope > .port:not(.ctrl)')];
+if(ps.length<=PORT_SHOW+1) return;
+const rest=ps.slice(PORT_SHOW); rest.forEach(p=>p.classList.add('extra'));
+const b=document.createElement('div'); b.className='pmore'; b.title='Show all pins';
+const upd=()=>{ const open=col.classList.contains('open'); b.firstChild.textContent=open?'−':'+'+rest.length; };
+b.innerHTML='<span></span>'; upd(); col.classList.add('collapsed');
+b.addEventListener('pointerdown',ev=>{ ev.stopPropagation(); });
+b.addEventListener('click',ev=>{ ev.stopPropagation(); col.classList.toggle('open'); upd(); markWiresDirty(); });
+col.append(b);
 }
 function rebuildPorts(n){                            // сменились только порты: пересобрать колонки, не трогая mid (UI модуля, канву)
 const io=n.el?.querySelector('.io3'); if(!io) return false;
@@ -1010,6 +1037,7 @@ if(r) r.disabled=Undo.idx>=Undo.stack.length-1;
 }
 const Sel=new Set();
 function syncSel(){ for(const n of Graph.nodes) n.el.classList.toggle('sel',Sel.has(n.id));
+Graph.edges.forEach(edgeHl); wires.classList.toggle('hasSel',Sel.size>0);
 const cb=document.getElementById('chain'); if(cb) cb.disabled=Sel.size!==1 || (typeof dashMode!=='undefined' && dashMode); }
 function selSet(id,add){
 if(!add){ Sel.clear(); Sel.add(id); }
@@ -1154,6 +1182,7 @@ cv.addEventListener('pointerup',endTouch,{capture:true});
 cv.addEventListener('pointercancel',endTouch,{capture:true});
 syncGridBg();                                         // синхронизировать фон с начальным view
 /* ---- перетаскивание и ресайз узлов — отдано interact.js ---- */
+const GRID=10;
 function bindDrag(headEl,n){
 interact(headEl).draggable({ ignoreFrom:'.x', listeners:{
 start(ev){ if(uiLocked()){ ev.interaction.stop(); return; }
@@ -1163,8 +1192,9 @@ group.forEach(g=>g.el.style.zIndex=++zCounter);
 n.__x0=n.x; n.__y0=n.y;                        // абсолютный отсчёт от старта — без накопления ошибки округления
 n.__grp=group.map(g=>({g,ox:g.x-n.x,oy:g.y-n.y})); n.__moved=false; activeInteractions++; },
 move(ev){ if(uiLocked()) return;
-n.x=Math.round(n.__x0+(ev.clientX-ev.clientX0)/view.k);
-n.y=Math.round(n.__y0+(ev.clientY-ev.clientY0)/view.k);
+const sn=v=>ev.altKey ? Math.round(v) : Math.round(v/GRID)*GRID;    // привязка к сетке, Alt — свободно
+n.x=sn(n.__x0+(ev.clientX-ev.clientX0)/view.k);
+n.y=sn(n.__y0+(ev.clientY-ev.clientY0)/view.k);
 for(const it of n.__grp){ it.g.x=n.x+it.ox; it.g.y=n.y+it.oy;
 posNode(it.g); }
 n.__moved=true; drawWires(); },
@@ -1884,6 +1914,13 @@ function dashPageMove(d){
 addEventListener('pointerdown',e=>{ if(dashMenuEl && !dashMenuEl.contains(e.target)) closeDashMenu(); },true);
 document.getElementById('undo').onclick=()=>Undo.undo();
 document.getElementById('redo').onclick=()=>Undo.redo();
+// выровнять выделенные: по горизонтали (общий верх) или по вертикали (общий левый край) — смотря как они разбросаны
+document.getElementById('align').onclick=()=>{
+  const g=[...Sel].map(id=>Graph.map[id]).filter(Boolean); if(g.length<2) return;
+  const xs=g.map(n=>n.x), ys=g.map(n=>n.y);
+  if(Math.max(...xs)-Math.min(...xs)>=Math.max(...ys)-Math.min(...ys)){ const y=Math.min(...ys); g.forEach(n=>n.y=y); }
+  else{ const x=Math.min(...xs); g.forEach(n=>n.x=x); }
+  g.forEach(posNode); markWiresDirty(); Undo.push(); };
 document.getElementById('dup').onclick=()=>{ copySel(); pasteData(clip,30,30); };
 // «→+»: к выбранному узлу — модуль, подходящий его свободному выходу (нет выходов — входу); новый узел сразу соединён и выбран,
 // так что цепочку можно наращивать тапами (удобно на телефоне, где тянуть провода трудно)
