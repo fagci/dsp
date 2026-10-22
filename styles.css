@@ -355,17 +355,16 @@ body.noedit #bar .ed{display:none}
 #wires path.hl{opacity:1;stroke-width:2.2}
 #wires.hasSel path:not(.hl):not(.hv):not(.whit){opacity:.3}
 @media (pointer:coarse){ #wires path.whit{stroke-width:20px} }   /* палец шире курсора */
-/* свободный пин притушен, подключённый — залит с рамкой; концы наведённого провода — в кольце */
-.port:not(.wired) .pin{opacity:.6}
-.port.wired .pin{border-color:var(--text,#ddd)}
+/* свободный пин притушен; концы наведённого провода — в кольце */
+.port:not(.wired) .pin{opacity:.7}
 .port.lit .pin,.port:hover .pin{opacity:1}
 .port.hot .pin{box-shadow:0 0 0 3px var(--acc)}
 /* длинные колонки пинов: свёрнутые лишние (подключённые видны) и кнопка «+N» */
 .col.collapsed:not(.open) .port.extra:not(.wired){display:none}
 .pmore{position:relative;height:var(--pin);width:var(--pov);flex:none;pointer-events:auto;cursor:pointer}
 .pmore span{position:absolute;top:50%;transform:translateY(-50%);min-width:var(--pin);height:var(--pin);box-sizing:border-box;
-  padding:0 3px;display:flex;align-items:center;justify-content:center;border-radius:999px;font-size:8px;font-weight:600;
-  background:var(--panel2);color:var(--dim);border:2px solid var(--line);white-space:nowrap}
+  padding:0 6px;display:flex;align-items:center;justify-content:center;border-radius:999px;font-size:9px;font-weight:600;
+  background:var(--panel2);color:var(--dim);white-space:nowrap}
 .col:not(.o) .pmore span{right:0}
 .col.o .pmore span{left:0}
 
@@ -473,9 +472,9 @@ body.noedit #bar .ed{display:none}
 .port{position:relative;height:var(--pin);width:var(--pov);cursor:crosshair;
   pointer-events:auto;flex:none}
 .port .pin{position:absolute;top:50%;transform:translateY(-50%);
-  min-width:var(--pin);height:var(--pin);box-sizing:border-box;padding:0 3px;
+  min-width:var(--pin);height:var(--pin);box-sizing:border-box;padding:0 6px;
   display:flex;align-items:center;justify-content:center;border-radius:999px;flex:none;
-  font-size:8px;font-weight:600;color:#111;white-space:nowrap;border:2px solid var(--line)}
+  font-size:9px;font-weight:600;color:#111;white-space:nowrap}
 /* тап-зона шире видимой точки (на мобильном пин мал для пальца) */
 .port .pin::before{content:'';position:absolute;inset:-6px}
 /* полное имя пина — по наведению и пока тянется провод (.lit) */
