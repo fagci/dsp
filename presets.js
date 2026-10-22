@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=73;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=74;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -426,6 +426,7 @@ const PRESET_CATS={
   'Internet Radio on the Map':'Maps & Locating',
   'KiwiSDR and SpyServer on the Map':'Maps & Locating',
   'Wi-Fi: Locate Access Points (Termux)':'Maps & Locating',
+  'Termux: Phone Position, Sensors and Battery':'Maps & Locating',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
   'TDOA: Path Difference (2 mics)':'Maps & Locating',
@@ -967,6 +968,21 @@ addEdge(fresh.id,'rec',loc.id,'rec');
 addEdge(loc.id,'rec',map.id,'rec');
 addEdge(me.id,'rec',map.id,'rec2');
 addEdge(map.id,'sel',loc.id,'select');
+markWiresDirty();
+});
+preset('Termux: Phone Position, Sensors and Battery', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'On the phone (Termux + Termux:API from F-Droid): pkg install nodejs termux-api, then node bridge.mjs (tools/termux/bridge.mjs).\n'+
+  'Open this page on the same phone (or use ws://IP:8765/?token=… with --host 0.0.0.0 --token), press Connect. The node asks the bridge only for the ticked sources.\n'+
+  'rec: gps / battery / sensor / wifi / cell records; lat, lon, speed, ax…az, gx…gz, batt… — numeric outputs for any node.'});
+nt.size.w=760; nt.size.h=130; applySize(nt);
+const tx=addNode('termux',40,200,{url:'ws://127.0.0.1:8765',gps:true,battery:true,accel:true});
+tx.size.w=340; tx.size.h=300; applySize(tx);
+const map=addNode('geoMap',420,200,{mz:16,labels:true,trail:2000});
+map.size.w=560; map.size.h=440; applySize(map);
+const log=addNode('recLog',40,540,{});
+log.size.w=340; applySize(log);
+addEdge(tx.id,'rec',map.id,'rec'); addEdge(tx.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('Quick Sound Level Meter', function(){

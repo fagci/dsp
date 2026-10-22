@@ -1,0 +1,92 @@
+// Мост Termux и разбор его записей: node tools/test-termux.mjs
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import vm from 'node:vm';
+import {fileURLToPath} from 'node:url';
+const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
+const B=await import('./termux/bridge.mjs');
+let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n); };
+
+// --- чистые функции моста ---
+const got=[]; const feed=B.jsonStream(o=>got.push(o));
+feed('{\n "LSM6DSO Accelerometer": {\n  "values": [ 0.1, -0.2, 9.8 ]\n }\n}\n{"a":"}{"'); feed(',"b":[1,{"c":2}]}\n[1,2]');
+ok('jsonStream: split chunks, braces inside strings',got.length===3 && got[1].a==='}{' && got[1].b[1].c===2 && got[2].length===2,JSON.stringify(got));
+const s=B.sensorRecs({'LSM6DSO Accelerometer':{values:[1,2,3]},'BMI Gyroscope':{values:[4,5,6]},'Gyroscope Uncalibrated':{values:[0,0,0]},
+  'Light':{values:[120]},'Magnetometer':{values:[1,2,3]},'Weird':{values:[1]}});
+ok('sensorRecs kinds',s.map(r=>r.sensor).join()==='accel,gyro,light,mag',s.map(r=>r.sensor).join());
+ok('sensorRecs xyz',s[0].x===1 && s[0].z===3 && s[2].x===120 && s[2].y===undefined);
+const g=B.gpsRec({latitude:55.1,longitude:37.2,altitude:150,accuracy:4.5,bearing:90,speed:1.5,provider:'gps',elapsedMs:200});
+ok('gpsRec',g.lat===55.1 && g.lon===37.2 && g.id==='me' && g.acc===4.5 && g.speed===1.5 && !('vacc' in g));
+ok('gpsRec without fix',B.gpsRec({})===null && B.gpsRec(null)===null);
+ok('batteryRec',B.batteryRec({percentage:77,status:'CHARGING',plugged:'PLUGGED_USB',temperature:30.5}).pct===77);
+const w=B.wifiRecs([{bssid:'aa:bb',ssid:'Home',rssi:-50,frequency_mhz:2412,timestamp:10000000},{bssid:'cc:dd',ssid:'Old',rssi:-70,frequency_mhz:5180,timestamp:1000000},
+  {bssid:'ee:ff',ssid:'Fresh',rssi:-60,frequency_mhz:2437,timestamp:9500000}],{lat:1,lon:2,acc:5});
+ok('wifiRecs drops cached old scans, adds position',w.length===2 && w[0].lat===1 && w[0].freq===2412 && w[1].bssid==='ee:ff',JSON.stringify(w));
+ok('wifiRecs without fix has no lat',!('lat' in B.wifiRecs([{bssid:'a',rssi:-1}],null)[0]));
+const c=B.cellRecs([{type:'lte',registered:true,lte:{cid:5,rsrp:-90},x:{y:1}}]);
+ok('cellRecs flatten',c[0].type==='lte' && c[0].cid===5 && c[0].rsrp===-90 && c[0].registered===true,JSON.stringify(c));
+ok('originOk',B.originOk(undefined,[]) && B.originOk('http://localhost:8000',[]) && B.originOk('https://fagci.github.io',B.DEFAULT_ORIGINS)
+  && !B.originOk('https://evil.example',B.DEFAULT_ORIGINS) && B.originOk('https://x.y',['*']) && !B.originOk('null',[]));
+const fr=B.wsFrame('hi'); ok('wsFrame small',fr[0]===0x81 && fr[1]===2 && fr.subarray(2).toString()==='hi');
+ok('wsFrame 300 bytes',B.wsFrame('x'.repeat(300)).readUInt16BE(2)===300);
+
+// --- мост с заглушками termux-* в PATH ---
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'termux-'));
+const stub=(n,body)=>{ fs.writeFileSync(path.join(dir,n),'#!/bin/sh\n'+body+'\n',{mode:0o755}); };
+stub('termux-location','echo \'{"latitude":55.5,"longitude":37.5,"altitude":100,"accuracy":3,"provider":"gps","elapsedMs":10}\'; sleep 30');
+stub('termux-battery-status','echo \'{"percentage":88,"status":"DISCHARGING","plugged":"UNPLUGGED","temperature":29.0}\'');
+stub('termux-sensor','echo "$@" >&2; while :; do printf \'{\\n "Acc Accelerometer": {\\n  "values": [ 0, 0, 9.81 ]\\n },\\n "Gyro Gyroscope": {"values":[1,2,3]}\\n}\\n\'; sleep 0.1; done');
+stub('termux-wifi-scaninfo','echo \'[{"bssid":"aa:bb","ssid":"Home","rssi":-55,"frequency_mhz":2412,"timestamp":5000000}]\'');
+// termux-telephony-cellinfo намеренно нет — должна прийти ошибка, а не падение
+process.env.PATH=dir+path.delimiter+process.env.PATH;
+const br=B.createBridge({port:0,host:'127.0.0.1',token:'k',sources:['gps','battery'],sensorDelay:100,wifiEvery:1});
+const addr=await br.listen(), base='ws://127.0.0.1:'+addr.port;
+const open=(url,opts)=>new Promise((res,rej)=>{ const ws=new WebSocket(url,opts); ws.msgs=[]; ws.onmessage=e=>ws.msgs.push(JSON.parse(e.data)); ws.onopen=()=>res(ws); ws.onerror=()=>rej(new Error('ws error')); });
+const until=async(f,ms=4000)=>{ const t=Date.now(); while(Date.now()-t<ms){ const v=f(); if(v) return v; await new Promise(r=>setTimeout(r,30)); } return null; };
+const refused=async url=>{ try{ (await open(url)).close(); return false; }catch(e){ return true; } };
+ok('no token → refused',await refused(base));
+ok('wrong token → refused',await refused(base+'/?token=x'));
+const a=await open(base+'/?token=k');
+ok('hello',!!await until(()=>a.msgs.find(m=>m.src==='bridge' && m.level==='hello' && m.ver===1)));
+const gp=await until(()=>a.msgs.find(m=>m.src==='gps'));
+ok('default sources: gps',gp && gp.lat===55.5 && gp.id==='me',JSON.stringify(gp));
+ok('default sources: battery',!!await until(()=>a.msgs.find(m=>m.src==='battery' && m.pct===88)));
+ok('no sensors unless asked',!a.msgs.some(m=>m.src==='accel'));
+a.send(JSON.stringify({sub:['accel','gyro','wifi','cell']}));
+const ac=await until(()=>a.msgs.find(m=>m.src==='sensor' && m.sensor==='accel'));
+ok('sub: accelerometer record',ac && ac.z===9.81,JSON.stringify(ac));
+ok('sub: gyro record',!!await until(()=>a.msgs.find(m=>m.sensor==='gyro' && m.y===2)));
+const gl=a.msgs.length; await new Promise(r=>setTimeout(r,300));
+ok('sub replaces defaults (no more gps/battery)',!a.msgs.slice(gl).some(m=>m.src==='gps' || m.src==='battery'));
+const wf=await until(()=>a.msgs.find(m=>m.src==='wifi'));
+ok('wifi record has the last fix',wf && wf.bssid==='aa:bb' && wf.rssi===-55,JSON.stringify(wf));
+ok('missing command is reported, not fatal',!!await until(()=>a.msgs.find(m=>m.src==='bridge' && m.level==='error' && /telephony|cellinfo/.test(m.msg))));
+ok('sensor process asked only for accel+gyro',br.running.has('sensor'));
+const b2=await open(base+'/?token=k');
+b2.send(JSON.stringify({sub:['accel']}));
+ok('second client gets only its own sources',!!await until(()=>b2.msgs.find(m=>m.sensor==='accel')) && !b2.msgs.some(m=>m.sensor==='gyro'));
+a.close(); b2.close();
+ok('sources stop without clients',!!await until(()=>br.running.size===0));
+const web=await fetch('http://127.0.0.1:'+addr.port+'/'); ok('http status page',(await web.text()).includes('Termux bridge'));
+br.close(); fs.rmSync(dir,{recursive:true,force:true});
+
+// --- разбор записей узлом Termux (общие функции в termux-kernels.js) ---
+const kf=path.join(root,'modules/termux-kernels.js');
+if(fs.existsSync(kf)){
+  const ctx=vm.createContext({Math,Number,String,Object,Array,isFinite,Date,JSON});
+  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxApply,termuxSub,termuxLine};',ctx);
+  const K=ctx.K, o={};
+  K.termuxApply(o,{src:'gps',lat:1,lon:2,alt:3,acc:4,speed:5,bearing:6});
+  ok('apply gps',o.lat===1 && o.lon===2 && o.alt===3 && o.acc===4 && o.speed===5 && o.hdg===6);
+  K.termuxApply(o,{src:'sensor',sensor:'accel',x:1,y:2,z:3}); K.termuxApply(o,{src:'sensor',sensor:'gyro',x:4,y:5,z:6});
+  K.termuxApply(o,{src:'sensor',sensor:'mag',x:7,y:8,z:9}); K.termuxApply(o,{src:'sensor',sensor:'light',x:120}); K.termuxApply(o,{src:'sensor',sensor:'pressure',x:1013});
+  ok('apply sensors',o.ax===1 && o.az===3 && o.gx===4 && o.gz===6 && o.mx===7 && o.mz===9 && o.light===120 && o.press===1013);
+  K.termuxApply(o,{src:'battery',pct:50,status:'CHARGING',temp:31});
+  ok('apply battery',o.batt===50 && o.charging===1 && o.temp===31);
+  K.termuxApply(o,{src:'battery',pct:49,status:'DISCHARGING'}); ok('discharging → 0',o.charging===0);
+  ok('apply ignores junk',(K.termuxApply(o,null),K.termuxApply(o,{src:'x'}),true));
+  ok('sub from params',K.termuxSub({gps:true,battery:false,accel:true,gyro:true,wifi:true}).join()==='gps,accel,gyro,wifi');
+  ok('line',K.termuxLine({src:'wifi',bssid:'aa',ssid:'H',rssi:-5}).includes('aa'));
+}
+console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad ? 1 : 0);
