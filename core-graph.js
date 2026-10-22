@@ -2224,6 +2224,10 @@ try{ saveAuto(); }catch(e){}
 const lim=(p,ms=2500)=>Promise.race([p,new Promise(r=>setTimeout(r,ms))]);
 try{ if('caches' in window) await lim((async()=>{ for(const k of await caches.keys()) if(k!=='dsp-tiles') await caches.delete(k); })()); }catch(e){}
 try{ if(navigator.serviceWorker) await lim((async()=>{ for(const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); })()); }catch(e){}
+// воркера уже нет, но HTTP-кэш браузера держит файлы ?v=… — перекачиваем их мимо кэша, иначе после перезагрузки вернётся старая версия
+try{ const sh=window.DSPShell;
+if(sh) await lim((async()=>{ const us=['styles.css',...sh.L].map(u=>u+'?v='+sh.V); let i=0;
+await Promise.all(Array.from({length:8},async()=>{ while(i<us.length){ const u=us[i++]; try{ await fetch(u,{cache:'reload'}); }catch(e){} } })); })(),20000); }catch(e){}
 try{ localStorage.removeItem('coiReload'); }catch(e){}     // иначе после переустановки воркера страница не перезагрузится сама, останется без cross-origin isolation
 location.replace(location.pathname+'?_='+Date.now());
 });
