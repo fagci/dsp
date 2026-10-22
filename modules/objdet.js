@@ -23,8 +23,8 @@ async function odLoad(libs,base,modelUrl){
   return odModels[k] || (odModels[k]=cocoSsd.load(modelUrl ? {modelUrl} : {base}).catch(e=>{ delete odModels[k]; throw e; }));
 }
 
-function odPaint(n,dets){                           // рамки поверх кадра в n.cv
-  const cx=n.cx, W=n.cv.width, H=n.cv.height, fs=Math.max(10,Math.round(H/28));
+function odPaint(n,dets){                           // рамки поверх кадра в n.wk
+  const cx=n.wx, W=n.wk.width, H=n.wk.height, fs=Math.max(10,Math.round(H/28));
   cx.lineWidth=Math.max(2,Math.round(H/160)); cx.font='bold '+fs+'px sans-serif'; cx.textBaseline='top';
   for(const d of dets){
     const c=odColor(d.label), x=d.x*W, y=d.y*H, t=(d.id!=null ? '#'+d.id+' ' : '')+d.label+' '+Math.round(d.score*100)+'%';
@@ -34,17 +34,17 @@ function odPaint(n,dets){                           // рамки поверх �
     cx.fillStyle='#000'; cx.fillText(t,x+3,ty+1);
   }
 }
-// кадр → n.cv (не шире maxw), сеть, рамки; результат в n.oimg, события в n.q
+// кадр → n.wk (не шире maxw), сеть, рамки; результат в n.oimg, события в n.q
 async function odRun(n,src){
   const gen=n.gen;
   const model=await odLoad(n.p.libs,n.p.base,n.p.model);
   if(gen!==n.gen) return;
   const sw=src.videoWidth||src.w, sh=src.videoHeight||src.h, mw=+n.p.maxw;
   const k=mw>0 && sw>mw ? mw/sw : 1, W=Math.max(1,Math.round(sw*k)), H=Math.max(1,Math.round(sh*k));
-  if(n.cv.width!==W || n.cv.height!==H){ n.cv.width=W; n.cv.height=H; }
-  if(src.data) n.cx.putImageData(src.data,0,0); else n.cx.drawImage(src,0,0,W,H);
+  if(n.wk.width!==W || n.wk.height!==H){ n.wk.width=W; n.wk.height=H; }
+  if(src.data) n.wx.putImageData(src.data,0,0); else n.wx.drawImage(src,0,0,W,H);
   const t0=performance.now();
-  const preds=await model.detect(n.cv,30,+n.p.score);
+  const preds=await model.detect(n.wk,30,+n.p.score);
   if(gen!==n.gen) return;
   const ms=performance.now()-t0, t=performance.now()/1000;
   const dets=odFilter(odNorm(preds,W,H),odClasses(n.p.classes));
@@ -52,7 +52,7 @@ async function odRun(n,src){
   if(n.p.track) born=odTrack(n.tr,dets,t,{maxAge:+n.p.age});
   if(n.p.boxes) odPaint(n,dets);
   n.dets=dets; n.text=odText(dets); n.go=n.p.track ? born>0 : dets.length>0;
-  n.oimg={data:n.cx.getImageData(0,0,W,H),w:W,h:H,gray:false,rev:(n.oimg?.rev|0)+1};
+  n.oimg={data:n.wx.getImageData(0,0,W,H),w:W,h:H,gray:false,rev:(n.oimg?.rev|0)+1};
   const ts=Date.now(), newIds=new Set();
   if(n.p.track) for(const d of dets) if(d.age===0) newIds.add(d);
   for(const d of dets){
@@ -81,7 +81,7 @@ def({ id:'objdet', lazy:'manual', title:'Object Detect', cat:'Video', resize:tru
           {n:'libs',t:'text',d:'',label:'script URLs, space-separated (empty — jsDelivr: TF.js, COCO-SSD)',adv:true},
           {n:'model',t:'text',d:'',label:'model.json URL (empty — Google storage by model)',adv:true}],
   init(n){
-    n.cv=document.createElement('canvas'); n.cx=n.cv.getContext('2d',{willReadFrequently:true});
+    n.wk=document.createElement('canvas'); n.wx=n.wk.getContext('2d',{willReadFrequently:true});
     n.busy=false; n.gen=0; n.lastT=0; n.lastKey=''; n.lastCfg=''; n.retryAt=0; n.rev=0;
     n.tr=odNewTracker(); n.q=[]; n.dets=[]; n.text=''; n.go=false; n.oimg=null; n.status='waiting for a picture or video'; },
   dispose:n=>{ n.gen++; },
@@ -107,4 +107,4 @@ def({ id:'objdet', lazy:'manual', title:'Object Detect', cat:'Video', resize:tru
   drawKey:n=>n.status+'|'+n.rev,
   draw(n,cv,cx){
     const r=n.el.querySelector('.readout'); if(r) r.textContent=n.status;
-    if(n.oimg) camPaintTo(cx,n.cv,n.cv.width,n.cv.height,cv.width,cv.height); }});
+    if(n.oimg) camPaintTo(cx,n.wk,n.wk.width,n.wk.height,cv.width,cv.height); }});
