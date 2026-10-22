@@ -923,11 +923,13 @@ def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'vid',
     const pk=cv.width+'|'+cv.height+'|'+cv.pxGen+'|'+n.p.roi+'|'+n.p.roiX+'|'+n.p.roiY+'|'+n.p.roiW+'|'+n.p.roiH;
     if(!fresh && pk===n._prevKey) return;
     n._prevKey=pk;
-    cx.drawImage(v,0,0,cv.width,cv.height);
+    const k=Math.min(cv.width/v.videoWidth,cv.height/v.videoHeight), fw=v.videoWidth*k, fh=v.videoHeight*k, fx=(cv.width-fw)/2, fy=(cv.height-fh)/2;
+    cx.fillStyle='#000'; cx.fillRect(0,0,cv.width,cv.height);
+    cx.drawImage(v,fx,fy,fw,fh);                    // contain: пропорции кадра сохраняются
     if(n.p.roi){                                    // рамка зоны прямо на превью
       cx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--t-num');
       cx.lineWidth=2;
-      cx.strokeRect(n.p.roiX*cv.width,n.p.roiY*cv.height,n.p.roiW*cv.width,n.p.roiH*cv.height); } }});
+      cx.strokeRect(fx+n.p.roiX*fw,fy+n.p.roiY*fh,n.p.roiW*fw,n.p.roiH*fh); } }});
 
 
 // <video> как источник кадров — файл или URL, в отличие от 'cam' не живая камера.
@@ -966,7 +968,8 @@ def({ id:'vidsrc', title:'Video (file/URL)', cat:'Sources', outs:[{n:'img',t:'im
     n.capCx.drawImage(n.video,0,0,W,H);
     try{ n.img={data:n.capCx.getImageData(0,0,W,H),w:W,h:H,gray:false,rev:(n.img?.rev|0)+1}; }
     catch(e){ n.status='cross-origin video without CORS — frame unreadable'; }
-    cx.drawImage(n.capCv,0,0,cv.width,cv.height); }});
+    const k=Math.min(cv.width/W,cv.height/H), w=W*k, h=H*k;
+    cx.fillStyle='#000'; cx.fillRect(0,0,cv.width,cv.height); cx.drawImage(n.capCv,(cv.width-w)/2,(cv.height-h)/2,w,h); }});
 
 
 
@@ -7598,7 +7601,9 @@ def({ id:'imgsrc', lazy:'manual', title:'Image (file/URL)', cat:'Sources', outs:
     return {img:n.img}; },
   draw(n,cv,cx){
     const r=n.el.querySelector('.readout'); if(r) r.textContent=n.status;
-    if(n.img) cx.drawImage(n.capCv,0,0,cv.width,cv.height); }});
+    if(!n.img) return;
+    const k=Math.min(cv.width/n.img.w,cv.height/n.img.h), w=n.img.w*k, h=n.img.h*k;
+    cx.fillStyle='#000'; cx.fillRect(0,0,cv.width,cv.height); cx.drawImage(n.capCv,(cv.width-w)/2,(cv.height-h)/2,w,h); }});
 
 function captureImgSrc(n){                          // картинка статична — захватываем один раз (не на каждый кадр, как vidsrc)
   const W=+n.p.w, H=Math.round(W*(n.imgEl.naturalHeight/n.imgEl.naturalWidth||3/4));

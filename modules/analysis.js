@@ -4023,12 +4023,10 @@ def({ id:'imgview', lazy:true, title:'Frame', cat:'Video', ins:[{n:'img',t:'img'
       for(let k=0;k<b.length;k++){ const v=b[k]*255, j=k*4; d[j]=d[j+1]=d[j+2]=v; d[j+3]=255; }
       n.tcx.putImageData(n.id2,0,0);
     } else n.tcx.putImageData(n.i.data,0,0);
-    cx.imageSmoothingEnabled=false;
-    if(document.fullscreenElement===cv || cv.classList.contains('fs-fb')){        // на весь экран — без искажения пропорций
-      const k=Math.min(cv.width/n.i.w,cv.height/n.i.h), w=n.i.w*k, h=n.i.h*k;
-      cx.fillStyle='#000'; cx.fillRect(0,0,cv.width,cv.height);
-      cx.imageSmoothingEnabled=true; cx.drawImage(n.tmp,(cv.width-w)/2,(cv.height-h)/2,w,h);
-    }else cx.drawImage(n.tmp,0,0,cv.width,cv.height); }});
+    const fs=document.fullscreenElement===cv || cv.classList.contains('fs-fb');   // contain: пропорции кадра сохраняются
+    const k=Math.min(cv.width/n.i.w,cv.height/n.i.h), w=n.i.w*k, h=n.i.h*k;
+    cx.fillStyle='#000'; cx.fillRect(0,0,cv.width,cv.height);
+    cx.imageSmoothingEnabled=fs; cx.drawImage(n.tmp,(cv.width-w)/2,(cv.height-h)/2,w,h); }});
 
 
 def({ id:'specstat', lazy:'proc', title:'Spectrum Statistics', cat:'Analysis', ins:[{n:'spec',t:'spec'},{n:'thr',t:'num'},{n:'tau',t:'num'},{n:'floor',t:'num'},{n:'log',t:'num'}],
