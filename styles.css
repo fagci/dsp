@@ -289,6 +289,9 @@ body.noedit #bar .ed{display:none}
   background:var(--panel2);border:1px solid var(--acc);color:var(--txt);
   padding:6px 14px;border-radius:6px;font-size:12px;white-space:nowrap;
   opacity:0;pointer-events:none;transition:opacity .15s ease,transform .15s ease}
+#updBar{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:90;display:flex;align-items:center;gap:10px;max-width:92vw;padding:8px 12px;background:var(--panel2);color:var(--txt);border:1px solid var(--acc);border-radius:6px;font:13px system-ui,sans-serif;box-shadow:0 2px 10px #0006}
+#updBar button{background:var(--acc);color:var(--bg);border:0;border-radius:3px;padding:4px 10px;font:inherit;cursor:pointer}
+#updBar i{font-style:normal;cursor:pointer;color:var(--dim);padding:0 2px}
 #toast.show{opacity:1;transform:translate(-50%,0)}
 
 @media (max-width:820px), (pointer:coarse){
