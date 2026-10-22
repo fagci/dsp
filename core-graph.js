@@ -1148,6 +1148,62 @@ if(!wz.raf) wz.raf=requestAnimationFrame(wzStep);
 function stopAllDrags(){                              // второй палец не должен параллельно тащить узел
 (interact.interactions?.list||[]).forEach(i=>{ try{ i.stop(); }catch(e){} });
 }
+/* ---- один палец по списку внутри узла/панели: touch-action:none у #canvas и #content (нужен Panzoom) действует и на
+   вложенные прокручиваемые блоки — браузер их пальцем не двигает, поэтому прокручиваем сами (+ инерция) ---- */
+{ const SKIP='.port,input,textarea,select,button,.rz,.ownpinch,.nhead,.dash-rail,.dash-resizer,[contenteditable]';
+  const room=(el,ax,dir)=>{                          // может ли el сдвинуться по оси ax в сторону dir
+    const cs=getComputedStyle(el), ov=ax==='y' ? cs.overflowY : cs.overflowX;
+    if(ov!=='auto' && ov!=='scroll') return false;
+    return ax==='y' ? (dir<0 ? el.scrollTop>0 : el.scrollTop<el.scrollHeight-el.clientHeight-1)
+                    : (dir<0 ? el.scrollLeft>0 : el.scrollLeft<el.scrollWidth-el.clientWidth-1);
+  };
+  const find=(from,host,ax,dir)=>{ for(let el=from; el && el!==host.parentElement; el=el.parentElement) if(room(el,ax,dir)) return el; return null; };
+  let st=null, raf=0, swallow=false;
+  const scrollBy=(dx,dy)=>{
+    const ey=dy && find(st.from,st.host,'y',dy), ex=dx && find(st.from,st.host,'x',dx);
+    if(ey) ey.scrollTop-=dy; if(ex) ex.scrollLeft-=dx;
+    return !!(ey||ex);
+  };
+  cv.addEventListener('pointerdown',e=>{
+    if(e.pointerType!=='touch') return;
+    cancelAnimationFrame(raf); raf=0; st=null;
+    if(!e.isPrimary) return;                             // второй палец — пинч
+    const t=e.target, host=t.closest?.('.node,.dash-pane'); if(!host || t.closest(SKIP)) return;
+    st={id:e.pointerId, host, from:t, x:e.clientX, y:e.clientY, x0:e.clientX, y0:e.clientY, t:e.timeStamp, vx:0, vy:0, on:false};
+  });
+  window.addEventListener('pointermove',e=>{
+    if(!st || e.pointerId!==st.id) return;
+    if(!st.on){
+      if(Math.hypot(e.clientX-st.x0,e.clientY-st.y0)<8) return;
+      // жест начинается на том, что реально может прокрутиться в эту сторону; иначе — не наш (узел тащит interact)
+      const dx=st.x0-e.clientX, dy=st.y0-e.clientY, horiz=Math.abs(dx)>Math.abs(dy);
+      if(!(horiz ? find(st.from,st.host,'x',-dx) : find(st.from,st.host,'y',-dy))){ st=null; return; }
+      st.on=true;
+    }
+    const dt=Math.max(1,e.timeStamp-st.t), dx=e.clientX-st.x, dy=e.clientY-st.y;
+    st.vx=.8*st.vx+.2*dx/dt; st.vy=.8*st.vy+.2*dy/dt;
+    st.x=e.clientX; st.y=e.clientY; st.t=e.timeStamp;
+    scrollBy(dx,dy);
+  },{passive:true});
+  const end=e=>{
+    if(!st || e.pointerId!==st.id) return;
+    const s=st; st=null;
+    if(!s.on) return;
+    swallow=true; setTimeout(()=>{ swallow=false; },350);      // палец отпущен после прокрутки — это не клик по строке
+    if(e.type==='pointercancel' || e.timeStamp-s.t>80) return;
+    let vx=s.vx, vy=s.vy, t0=performance.now(); st=null;
+    const step=now=>{
+      const dt=now-t0; t0=now; const k=Math.pow(.995,dt);
+      vx*=k; vy*=k;
+      if(Math.hypot(vx,vy)<.02 || !scrollBy(vx*dt,vy*dt)){ raf=0; return; }
+      raf=requestAnimationFrame(step);
+    };
+    st={from:s.from,host:s.host,id:-1};
+    raf=requestAnimationFrame(step);
+  };
+  window.addEventListener('pointerup',end); window.addEventListener('pointercancel',end);
+  document.addEventListener('click',e=>{ if(swallow){ swallow=false; e.preventDefault(); e.stopPropagation(); } },true);
+}
 const touches=new Map();
 let pinch=null;
 function relPt(e){ const r=cv.getBoundingClientRect(); return {x:e.clientX-r.left,y:e.clientY-r.top}; }
