@@ -15,11 +15,16 @@ function odScript(src){
     document.head.append(s);
   }));
 }
-async function odLoad(libs,base,modelUrl){
+async function odLoad(libs,base,modelUrl,backend){
   const urls=String(libs||'').trim().split(/\s+/).filter(Boolean);
   for(const u of (urls.length ? urls : OD_LIBS)) await odScript(u);
   if(!window.cocoSsd) throw new Error('coco-ssd is missing in the loaded scripts');
-  const k=base+'|'+modelUrl;
+  if(backend && backend!=='auto' && tf.getBackend()!==backend){      // смена бэкенда делает прежние модели негодными
+    for(const m in odModels) delete odModels[m];
+    if(!await tf.setBackend(backend)) throw new Error('backend '+backend+' is not available here');
+  }
+  await tf.ready();
+  const k=base+'|'+modelUrl+'|'+tf.getBackend();
   return odModels[k] || (odModels[k]=cocoSsd.load(modelUrl ? {modelUrl} : {base}).catch(e=>{ delete odModels[k]; throw e; }));
 }
 
@@ -37,7 +42,7 @@ function odPaint(n,dets){                           // рамки поверх �
 // кадр → n.wk (не шире maxw), сеть, рамки; результат в n.oimg, события в n.q
 async function odRun(n,src){
   const gen=n.gen;
-  const model=await odLoad(n.p.libs,n.p.base,n.p.model);
+  const model=await odLoad(n.p.libs,n.p.base,n.p.model,n.p.backend);
   if(gen!==n.gen) return;
   const sw=src.videoWidth||src.w, sh=src.videoHeight||src.h, mw=+n.p.maxw;
   const k=mw>0 && sw>mw ? mw/sw : 1, W=Math.max(1,Math.round(sw*k)), H=Math.max(1,Math.round(sh*k));
@@ -84,6 +89,7 @@ def({ id:'objdet', lazy:'manual', title:'Object Detect', cat:'Video', resize:tru
           {n:'dsize',t:'select',opts:['224','320','480'],d:'320',label:'detection size, px (smaller — lighter on CPU)'},
           {n:'maxw',t:'select',opts:['320','480','640','960'],d:'480',label:'picture width, px'},
           {n:'base',t:'select',opts:['lite_mobilenet_v2','mobilenet_v2'],d:'lite_mobilenet_v2',label:'model (v2 — more exact, slower)',adv:true},
+          {n:'backend',t:'select',opts:['auto','webgl','cpu'],d:'auto',label:'compute (webgl — GPU, cpu — slower, does not use the GPU driver)',adv:true},
           {n:'libs',t:'text',d:'',label:'script URLs, space-separated (empty — jsDelivr: TF.js, COCO-SSD)',adv:true},
           {n:'model',t:'text',d:'',label:'model.json URL (empty — Google storage by model)',adv:true}],
   init(n){
@@ -96,7 +102,7 @@ def({ id:'objdet', lazy:'manual', title:'Object Detect', cat:'Video', resize:tru
     const v=I.vid && I.vid.videoWidth && I.vid.readyState>=2 ? I.vid : null;
     const im=!v && I.img && !I.img.gray ? I.img : null, src=v||im, now=performance.now();
     if(src && !n.busy && now>=n.retryAt && !document.hidden){
-      const cfg=[n.p.score,n.p.classes,n.p.track,n.p.base,n.p.libs,n.p.model,n.p.boxes,n.p.maxw,n.p.dsize].join('|');
+      const cfg=[n.p.score,n.p.classes,n.p.track,n.p.base,n.p.libs,n.p.model,n.p.boxes,n.p.maxw,n.p.dsize,n.p.backend].join('|');
       const key=v ? 'v'+v.currentTime : 'i'+im.rev;            // фото — один раз на кадр и на смену настроек
       const due= v ? key!==n.lastKey && now-n.lastT>=n.p.period*1000 : key!==n.lastKey;
       if(due || cfg!==n.lastCfg){
