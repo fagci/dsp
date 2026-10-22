@@ -2220,9 +2220,12 @@ document.getElementById('wipe')?.addEventListener('click',async()=>{
 if(!confirm('Refresh app files and cache?\nPatches, tables, terrain and all other data are kept.')) return;
 wiping=true; clearTimeout(autosaveTimer);
 try{ saveAuto(); }catch(e){}
-try{ if('caches' in window) for(const k of await caches.keys()) if(k!=='dsp-tiles') await caches.delete(k); }catch(e){}
-try{ if(navigator.serviceWorker) for(const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); }catch(e){}
-location.href=location.pathname+'?_='+Date.now();
+// каждый шаг с таймаутом: зависший caches.delete / unregister (сервис-воркер занят запросом) не должен оставлять страницу без перезагрузки
+const lim=(p,ms=2500)=>Promise.race([p,new Promise(r=>setTimeout(r,ms))]);
+try{ if('caches' in window) await lim((async()=>{ for(const k of await caches.keys()) if(k!=='dsp-tiles') await caches.delete(k); })()); }catch(e){}
+try{ if(navigator.serviceWorker) await lim((async()=>{ for(const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); })()); }catch(e){}
+try{ localStorage.removeItem('coiReload'); }catch(e){}     // иначе после переустановки воркера страница не перезагрузится сама, останется без cross-origin isolation
+location.replace(location.pathname+'?_='+Date.now());
 });
 // Автосейв раньше сериализовал весь граф по таймеру каждые 4с, даже если ничего не менялось —
 // на холостом ходу это лишняя нагрузка. Теперь сохраняем с задержкой после реального изменения.
