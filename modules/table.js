@@ -8,11 +8,13 @@
 // Списки — дерево папок с галочками (p.show): bands = объединение отмеченных списков (общий фильтр), редактируется и
 // отдаётся построчно активный список (p.list).
 // Вход: файл (CSV/TSV/TXT/JSON/KML/GPX/GeoJSON), провода rec и text, числовые входы a–d (лог).
-// Выход: по одной записи (секвенсор из modules/sequencer.js), поля — отдельными проводами,
+// Выход: выбранная запись (щелчок или вход row), поля — отдельными проводами,
 // весь список (отмеченные списки) как bands (для 'sa') и rows (для Graph / Map), выбранная запись — lo/mid/hi/span/step.
+// Проигрывание строк по триггеру / таймеру / времени / пути — отдельный узел Row Player (modules/rowplayer.js):
+// строки ему идут проводом rows или ссылкой на список (выход list).
 
 const TBL_PATCH='@patch', TBL_PRE='presets/', TBL_ROWS=matchMedia('(pointer:coarse)').matches?120:300, TBL_SAVE_MS=3000;
-const TBL_FIXED=new Set([...SEQ_FIXED,'rows','mid','span']);
+const TBL_FIXED=new Set([...SEQ_FIXED,'rows','list','mid','span']);
 const TBL_LO=['lo','low','start','freq','frequency'], TBL_HI=['hi','high','end'],
   TBL_LABEL=['name','label','title'], TBL_COLOR=['color','colour'], TBL_STEP=['step'];
 const TBL_HZ=/^(lo|hi|low|high|start|end|freq|frequency|step)$/i;
@@ -270,7 +272,7 @@ async function tblLoadRun(n){
   if(n.wantCols){ n.wantCols=false; tblSetCols(n,cols,true); }
   else if(!n.p.cols.length && cols.length) tblSetCols(n,cols,false);
   tblDerive(n);
-  seqReset(n);
+  tblReset(n);
   if(n.p.sel!=null){ const j=n.rowIds.indexOf(n.p.sel); if(j>=0){ n.pick=j; n.idx=j; n.cur={...n.rows[j]}; } }
   tblSyncExtra(n);
   tblRefLoad(n);
@@ -363,12 +365,8 @@ function tblDerive(n){
   n.nameCol=tblCol(n.cl,TBL_LABEL); n.colorCol=tblCol(n.cl,TBL_COLOR);
   n.labelFn=tcLabelFn(n.cl,n.schema?.card);
   tblPorts(n);
-  n.timeCol=seqFind(n.cl,n.p.tcol,SEQ_TIME_COLS);
-  n.latCol=seqFind(n.cl,n.p.latCol,SEQ_LAT_COLS);
-  n.lonCol=seqFind(n.cl,n.p.lonCol,SEQ_LON_COLS);
-  n.tt=null;
-  if(n.timeCol){ let prev=0; n.tt=n.rows.map(r=>{ const v=seqTime(r[n.timeCol]); if(v!=null) prev=v; return prev; }); }
-  n.geo=!!(n.latCol && n.lonCol);
+  n.latCol=seqFind(n.cl,'',SEQ_LAT_COLS);
+  n.lonCol=seqFind(n.cl,'',SEQ_LON_COLS);
   tblBands(n);
   n.uiDirty=true;                                              // что изменилось в строках — видно по сигнатурам в tblRenderList
   tblFilterMark(n);
@@ -580,7 +578,7 @@ async function tblClear(n){
   n.all=[]; n.ids=[]; n.p.sel=null;
   if(n.schema?.card?.seq){ delete n.schema.card.seq; await trSeqSave(n); }      // счётчик автонумерации начинается заново
   if(tblKind(n.p.list)==='patch') await tblSave(n);
-  tblDerive(n); seqReset(n);
+  tblDerive(n); tblReset(n);
 }
 // набор на входе rows → в активный список: заменить строки или дописать (станции после поиска, любой набор записей)
 // rows in «sync» / «new only»: набор приводится к списку по ключевой колонке на месте, без очистки — выбор строки и позиция не сбиваются
@@ -763,12 +761,37 @@ function tblFlush(n){
   tblAdd(n,rows).catch(e=>console.warn('table:',e)).finally(()=>{ n.flushing=false; n.lastFlush=performance.now(); });
 }
 
+/* ---------- выбранная строка ---------- */
+// Выбор строки щелчком или входом row; ход по строкам (триггер, таймер, время, путь) — в Row Player
+function tblReset(n){
+  n.idx=0; n.started=false; n.initDone=false; n.count=0; n.pulse=0;
+  n.cur=n.rows[0] ? {...n.rows[0]} : null;
+}
+function tblSelOut(n,I){
+  const N=n.rows.length, p=n.p, batch=[];
+  if(!N){ n.pulse=0; return {rec:null,text:'',row:0,count:0,next:0}; }
+  const emit=()=>{ batch.push({...n.rows[n.idx]}); n.count++; n.started=true; };
+  if(n.idx>=N) n.idx=N-1;
+  if(!n.initDone){ n.initDone=true; if(p.initial) emit(); }
+  const rw=typeof I.row==='number' && isFinite(I.row) ? I.row : null;
+  if(rw!==null && rw!==n.rowPrev){ n.idx=clamp(Math.round(rw)-1,0,N-1); emit(); }
+  n.rowPrev=rw;
+  if(n.pick!=null){ n.idx=clamp(n.pick,0,N-1); n.pick=null; emit(); }       // клик по строке в таблице
+  if(batch.length) n.cur=batch[batch.length-1];
+  n.pulse=batch.length ? 1 : 0;
+  const cur=n.cur || n.rows[n.idx];
+  const out={rec:batch.length ? batch : null, row:n.idx+1, count:n.count, next:n.pulse};
+  out.text=p.textCol && cur[p.textCol]!==undefined ? String(cur[p.textCol]) : n.headers.map(h=>cur[h]).join(',');
+  for(const c of n.cols) out[c.port]=cur[c.h];
+  return out;
+}
+
 /* ---------- узел ---------- */
-const tblIns=n=>[{n:'trig',t:'val'},{n:'row',t:'val'},{n:'t',t:'num'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'rows',t:'bands'},{n:'sigs',t:'bands'},{n:'hits',t:'bands'},{n:'filter',t:'txt'}]
+const tblIns=n=>[{n:'row',t:'val'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'rows',t:'bands'},{n:'sigs',t:'bands'},{n:'hits',t:'bands'},{n:'filter',t:'txt'}]
   .concat(n.p.log ? ['a','b','c','d'].map(k=>({n:k,t:'num'})) : []);
 const tblOuts=n=>{
   const o=[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'row',t:'num'},{n:'count',t:'num'},{n:'next',t:'num'},
-    {n:'done',t:'num'},{n:'dist',t:'num'},{n:'bearing',t:'num'},{n:'progress',t:'num'},{n:'rows',t:'bands'},{n:'all',t:'bands'},{n:'match',t:'bands'}];
+    {n:'list',t:'txt'},{n:'rows',t:'bands'},{n:'all',t:'bands'},{n:'match',t:'bands'}];
   if(tblCol(n.p.cols||[],TBL_LO)) o.push({n:'mid',t:'num'},{n:'span',t:'num'});
   return o.concat((n.cols||[]).map(c=>({n:c.port,t:'val'})));
 };
@@ -779,17 +802,9 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
   params:[
     {n:'list',t:'text',d:'table',hidden:true},
     {n:'filter',t:'text',d:'',hidden:true},
-    {n:'advance',t:'select',opts:['rate','dwell','time','distance'],d:'rate',label:'advance'},
     {n:'follow',t:'check',d:false,label:'follow the end',tip:'show the last rows and keep scrolling to new ones while the list is scrolled to the bottom (like Wireshark); scroll up to stop following'},
-    {n:'rev',t:'check',d:false,label:'newest first',tip:'show the list in reverse: the last added row is at the top (this is also the order the rows are played in)'},
-    {n:'order',t:'select',opts:['sequential','ping-pong','random','shuffle'],d:'sequential',adv:true},
-    {n:'rate',t:'range',min:0,max:50,step:.1,d:0,label:'rows/s'},
-    {n:'speed',t:'range',min:0,max:1000,step:.1,d:50,label:'speed',adv:true},
-    {n:'tscale',t:'range',min:.01,max:1000,step:.01,log:true,d:1,label:'time ×',adv:true},
-    {n:'loop',t:'check',d:true,adv:true},
-    {n:'interp',t:'check',d:false,label:'interpolate',adv:true},
-    {n:'initial',t:'check',d:true,label:'first row at start',adv:true},
-    {n:'reset',t:'button',label:'Reset',fn:n=>seqReset(n),adv:true},
+    {n:'rev',t:'check',d:false,label:'newest first',tip:'show the list in reverse: the last added row is at the top (the rows output follows this order too)'},
+    {n:'initial',t:'check',d:true,label:'first row at start',tip:'output the first row when the patch starts, before anything is selected',adv:true},
     {n:'collect',t:'check',d:true,label:'store rec / text wires',adv:true},
     {n:'rowsIn',t:'select',opts:['replace','add','sync','new only'],d:'replace',label:'rows in (wire)',tip:'a set on the rows input is stored in the active list: replace its rows, add to them, sync (rows are matched by the upsert key column — default id — and changed, added or removed in place: nothing flickers, the selected row stays) or new only (add the rows whose key is not in the list yet, leave the rest alone)'},
     {n:'key',t:'text',d:'',adv:true,label:'upsert key col',tip:'if set, a wired rec with the same value in this column updates its row instead of adding one (a rec with _delete removes it); count / first / last columns are kept'},
@@ -802,15 +817,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     {n:'capture',t:'button',label:'Add row from a–d',adv:true,fn:n=>{ n.pend.push(tblLogRow(n,n.lastIn||{})); }},
     {n:'maxRows',t:'num',min:0,max:1e7,step:100,d:0,label:'max rows (0=∞)',tip:'oldest rows are dropped above this count; 0 — no limit (a list in the patch itself keeps at most 1000)',adv:true},
     {n:'fmt',t:'select',opts:['csv','tsv','json'],d:'csv',label:'export format',adv:true},
-    {n:'first',t:'num',min:1,max:1e6,step:1,d:1,adv:true,label:'first row'},
-    {n:'last',t:'num',min:0,max:1e6,step:1,d:0,adv:true,label:'last row (0=end)'},
-    {n:'unit',t:'select',opts:['km/h','m/s','knots'],d:'km/h',adv:true,label:'speed unit'},
-    {n:'tcol',t:'text',d:'',adv:true,label:'time col (auto)'},
-    {n:'dwellCol',t:'text',d:'dwell',adv:true,label:'dwell col, s'},
-    {n:'speedCol',t:'text',d:'speed',adv:true,label:'speed col'},
-    {n:'latCol',t:'text',d:'',adv:true,label:'lat col (auto)'},
-    {n:'lonCol',t:'text',d:'',adv:true,label:'lon col (auto)'},
-    {n:'textCol',t:'text',d:'',adv:true,label:'text col (row)'},
+    {n:'textCol',t:'text',d:'',adv:true,label:'text col (row)',tip:'column that goes to the text output; empty — the whole row'},
     {n:'data',t:'code',d:'',adv:true,label:'patch table (list = @patch)',plain:true,fn:n=>{ if(n.p.list===TBL_PATCH) tblLoad(n); }},
   ],
   init:n=>{
@@ -824,9 +831,9 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     n.err=''; n.loaded=null; n.loadedData=null; n.pend=[]; n.lastFlush=0; n.flushing=false;
     n.lastRec=undefined; n.lastText=undefined; n.lastIn={}; n.logT=0; n.pick=null;
     n._pfSeen=n.p.pfields; n._pfPend=false; n._pfAt=0;
-    n.trigPrev=0; n.rowPrev=null; n.pulse=0; n.initialized=false; n.uiDirty=true;
+    n.rowPrev=null; n.pulse=0; n.initialized=false; n.uiDirty=true;
     n.onResize=ln=>{ if(ln.ui) syncCustomHeight(ln,ln.ui.root,150); };
-    tblPorts(n); seqReset(n);
+    tblPorts(n); tblReset(n);
     if(!n.p.cols.length){                                 // порты нужны до загрузки: из data или из пресета
       if(n.p.list===TBL_PATCH){
         const t=String(n.p.data||'').trim();
@@ -847,7 +854,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     }
     n.lastIn=I;
     const wf=typeof I.filter==='string' ? I.filter : '';
-    if(wf!==(n.wf||'') && n.loaded===p.list){ n.wf=wf; n.hlSel=false; tblDerive(n); seqReset(n); n.initDone=true; n.uiDirty=true; n.uiFull=true; }
+    if(wf!==(n.wf||'') && n.loaded===p.list){ n.wf=wf; n.hlSel=false; tblDerive(n); tblReset(n); n.initDone=true; n.uiDirty=true; n.uiFull=true; }
     // packet fields изменили — заполнить ими уже записанные строки, когда ввод затих
     if(p.pfields!==n._pfSeen){ n._pfSeen=p.pfields; n._pfAt=performance.now(); n._pfPend=true; }
     else if(n._pfPend && performance.now()-n._pfAt>1000 && !n.loading && n.loaded===p.list){ n._pfPend=false; tblBackfill(n); }
@@ -861,7 +868,8 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     if(n.pend.length>5000) n.pend.splice(0,n.pend.length-5000);
     if(n.pend.length && performance.now()-n.lastFlush>500) tblFlush(n);
 
-    const o=seqProcess(n,I);
+    const o=tblSelOut(n,I);
+    o.list=tblKind(p.list)==='patch' ? '' : p.list;                  // ссылка на хранилище: Row Player читает список сам
     for(const c of n.cols) if(c.ref) o[c.port]=tblRefVal(n,c);
     const sigs=Array.isArray(I.sigs) && I.sigs.length ? I.sigs : null;
     if(n._mI!==n.rowsOut || n._mS!==sigs){ n._mI=n.rowsOut; n._mS=sigs; n._merged=sigs ? n.rowsOut.concat(sigs) : n.rowsOut; }
@@ -887,15 +895,15 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     const r=n.el.querySelector('.readout');
     if(r){
       const N=n.rows.length;
-      const warn=n.err ? n.err : n.p.advance==='time' && N && !n.tt ? 'no time column' : n.p.advance==='distance' && N && !n.geo ? 'no lat/lon columns' : '';
-      const t=warn ? '⚠ '+warn : (n.p.list)+(n.onCount>1 ? ' (+'+(n.onCount-1)+' on)' : '')+' · '+(N ? 'row '+(n.idx+1)+'/'+N : 'empty')+' · '+n.p.advance+(n.done?' · done':'')+
+      const warn=n.err;
+      const t=warn ? '⚠ '+warn : (n.p.list)+(n.onCount>1 ? ' (+'+(n.onCount-1)+' on)' : '')+' · '+(N ? 'row '+(n.idx+1)+'/'+N : 'empty')+
         (n.pend.length ? ' · +'+n.pend.length : '');
       if(r.textContent!==t) r.textContent=t;
     }
     if(n.ui){
       const tl=!!n.p.follow && !n.p.rev;                          // при «newest first» конец списка — старые записи: следим за началом
       if(tl!==!!n.ui.tail){ n.ui.tail=tl; n.ui.jump=tl; n.uiDirty=true; }
-      if(!!n.p.rev!==!!n._rev){ n._rev=!!n.p.rev; if(n.loaded!==null){ tblDerive(n); seqReset(n); } }
+      if(!!n.p.rev!==!!n._rev){ n._rev=!!n.p.rev; if(n.loaded!==null){ tblDerive(n); tblReset(n); } }
       const vk=[n.p.vcols,n.p.rules,n.p.tint,n.p.vmode,n.p.tz];
       if(!n._vk || vk.some((x,i)=>x!==n._vk[i])){ n._vk=vk; n.uiDirty=true; n.uiFull=true; if(n.ui.view && !n.ui.view.hidden) tblRenderView(n); }
       // полная перерисовка до 300 строк × колонок — реже на длинном списке
@@ -1024,7 +1032,7 @@ function tblInit(n){
   n.ui.filter.addEventListener('keydown',e=>e.stopPropagation());
   n.ui.filter.addEventListener('input',()=>{
     n.p.filter=n.ui.filter.value;
-    tblDerive(n); seqReset(n); n.initDone=true;           // новый набор — без повторной выдачи первой строки
+    tblDerive(n); tblReset(n); n.initDone=true;           // новый набор — без повторной выдачи первой строки
     tblFilterMark(n);
     tblRenderList(n);
   });
@@ -2092,8 +2100,7 @@ function tblAddForm(n,init){
   tblOpenEditor(n,'New row',form,null);
 }
 defGroups('table',[
-  {n:'Playback', p:'speed tscale loop interp initial reset unit', open:false},
-  {n:'Rows', p:'order first last maxRows fmt', open:false},
+  {n:'Output', p:'initial textCol', open:false},
+  {n:'Rows', p:'maxRows fmt', open:false},
   {n:'Log', p:'collect key textCsv log period names capture', open:false},
-  {n:'Columns', p:'tcol dwellCol speedCol latCol lonCol textCol', open:false},
   {n:'Patch data', p:'data', open:false}]);

@@ -1,12 +1,14 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=76;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=77;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
 const Net={ get proxy(){ return (LS.get('dsp-proxy')||'').trim(); },
   url(u){ const p=this.proxy; return !p ? u : p.includes('{url}') ? p.replace('{url}',encodeURIComponent(u)) : p+u; } };
+// Row Player, подключённый к Table проводом rows: проигрывание строк таблицы
+const playRows=(tb,x,y,p)=>{ const pl=addNode('rowplayer',x,y,p); addEdge(tb.id,'rows',pl.id,'rows'); return pl; };
 const patchListEl=document.getElementById('patchList');
 const patchSearchEl=document.getElementById('patchSearch');
 const readP=()=>{ try{ return JSON.parse(LS.get(PKEY))||{}; }catch(e){ return {}; } };
@@ -603,48 +605,51 @@ markWiresDirty();
 });
 preset('Sequencer: Vehicle Track on the Map', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Table drives along the points of its rows at the set speed (advance = distance)\n'+
+const nt=addNode('note',40,40,{text:'Row Player drives along the points of the Table rows at the set speed (advance = distance)\n'+
   'and, with «interpolate», puts the marker between them. Load your own track: KML, GPX, GeoJSON or CSV with lat,lon.\n'+
   'Speed can come from a column (speed col), a wire (speed) or the slider. Rec Log saves what was sent.'});
 nt.size.w=460; nt.size.h=130; applySize(nt);
-const sq=addNode('table',40,200,{list:'@patch',advance:'distance',speed:40,rate:4,interp:true,loop:true,
+const sq=addNode('table',40,200,{list:'@patch',
   data:'id,lat,lon,icon,label\nbus1,55.0302,82.9204,bus,Bus 1\nbus1,55.0350,82.9350,bus,Bus 1\nbus1,55.0410,82.9450,bus,Bus 1\nbus1,55.0450,82.9600,bus,Bus 1\nbus1,55.0420,82.9750,bus,Bus 1'});
 sq.size.w=270; sq.size.h=300; applySize(sq);
+const pl=playRows(sq,40,860,{advance:'distance',speed:40,rate:4,interp:true,loop:true});
 const lg=addNode('recLog',340,200,{}); lg.size.w=210; applySize(lg);
 const map=addNode('geoMap',580,40,{mz:11,mlat:55.04,mlon:82.95});
 map.size.w=620; map.size.h=520; applySize(map);
-addEdge(sq.id,'rec',lg.id,'rec');
+addEdge(pl.id,'rec',lg.id,'rec');
 addEdge(lg.id,'rec',map.id,'rec');
 markWiresDirty();
 });
 preset('Sequencer: Frequency Stepper (CSV → Oscillator)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Each CSV row is held for its dwell seconds (advance = dwell), then the next one is taken.\n'+
+const nt=addNode('note',40,40,{text:'Row Player holds each CSV row of the Table for its dwell seconds (advance = dwell), then takes the next one.\n'+
   'The freq column goes to the oscillator. Any other column can be wired out the same way.'});
 nt.size.w=460; nt.size.h=90; applySize(nt);
-const sq=addNode('table',40,160,{list:'@patch',advance:'dwell',loop:true,data:'freq,dwell\n300,1\n600,1\n1200,0.5\n2400,0.5\n800,2'});
+const sq=addNode('table',40,160,{list:'@patch',data:'freq,dwell\n300,1\n600,1\n1200,0.5\n2400,0.5\n800,2'});
 sq.size.w=260; sq.size.h=300; applySize(sq);
+const pl=playRows(sq,40,820,{advance:'dwell',loop:true});
 const o=addNode('osc',340,160,{amp:.3});
 const sc=addNode('scope',560,160);
 const dc=addNode('dac',560,360,{vol:.2});
-addEdge(sq.id,'freq',o.id,'freq');
+addEdge(pl.id,'freq',o.id,'freq');
 addEdge(o.id,'out',sc.id,'in1');
 addEdge(o.id,'out',dc.id,'L');
 markWiresDirty();
 });
 preset('Sequencer: Random Beacon (Trigger Clock)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Trigger Clock fires at random every 3–8 s (mode random); Table takes a random row\n'+
-  'of its table on every pulse. «text» goes to a transmitter, «rec» to a log. A row with fields = a packet or a call.\n'+
-  'For a fixed beacon use mode interval; for calls at set times use advance = time with Time Base.'});
+const nt=addNode('note',40,40,{text:'Trigger Clock fires at random every 3–8 s (mode random); Row Player takes a random row\n'+
+  'of the Table on every pulse. «text» goes to a transmitter, «rec» to a log. A row with fields = a packet or a call.\n'+
+  'For a fixed beacon use mode interval; for calls at set times use advance = time in Row Player with Time Base.'});
 nt.size.w=480; nt.size.h=130; applySize(nt);
 const ck=addNode('tclock',40,200,{mode:'random',rmin:3,rmax:8});
-const sq=addNode('table',300,200,{list:'@patch',order:'shuffle',initial:false,textCol:'msg',
+const sq=addNode('table',300,200,{list:'@patch',
   data:'src,dst,msg\n101,200,CQ CQ de beacon\n102,200,Test 1 2 3\n103,201,Status OK\n104,201,Battery low'});
 sq.size.w=260; sq.size.h=300; applySize(sq);
+const pl=playRows(sq,300,860,{order:'shuffle',initial:false,textCol:'msg'});
 const lg=addNode('recLog',580,200,{}); lg.size.w=210; applySize(lg);
-addEdge(ck.id,'trig',sq.id,'trig');
-addEdge(sq.id,'rec',lg.id,'rec');
+addEdge(ck.id,'trig',pl.id,'trig');
+addEdge(pl.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Control: Clocks Switch a Tone On and Off', function(){
@@ -1842,20 +1847,21 @@ markWiresDirty();
 });
 preset('NMEA: GPS Track (Table Playback)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'NMEA 0183 without a receiver: the Table plays GGA / RMC / VTG sentences of a walk around a block (one epoch a second, three rows each).\n'+
+const nt=addNode('note',40,40,{text:'NMEA 0183 without a receiver: Row Player plays GGA / RMC / VTG sentences from the Table of a walk around a block (one epoch a second, three rows each).\n'+
   'NMEA Parser: checksum → fields; the three sentences of an epoch are joined into one record (position, altitude, speed, course, satellites, HDOP) → map.\n'+
   'The numeric outputs (lat, lon, sog, cog…) go to any node. A real receiver: Serial Port (WebSerial) or Text over Network (gpsd, Termux) → text of the parser.'});
 nt.size.w=720; nt.size.h=130; applySize(nt);
-const sq=addNode('table',40,200,{list:'@patch',textCol:'nmea',rate:3,loop:true,
+const sq=addNode('table',40,200,{list:'@patch',
   data:'nmea\n"$GPGGA,073000,5501.9500,N,08255.2000,E,1,09,0.9,150.0,M,-35.0,M,,*6C"\n"$GPRMC,073000,A,5501.9500,N,08255.2000,E,5.0,90.0,150625,,,A*48"\n"$GPVTG,90.0,T,,M,5.0,N,9.3,K,A*3B"\n"$GPGGA,073001,5501.9449,N,08255.2679,E,1,09,0.9,150.8,M,-35.0,M,,*61"\n"$GPRMC,073001,A,5501.9449,N,08255.2679,E,5.2,105.0,150625,,,A*72"\n"$GPVTG,105.0,T,,M,5.2,N,9.6,K,A*01"\n"$GPGGA,073002,5501.9299,N,08255.3313,E,1,09,0.9,151.5,M,-35.0,M,,*6D"\n"$GPRMC,073002,A,5501.9299,N,08255.3313,E,5.4,120.0,150625,,,A*73"\n"$GPVTG,120.0,T,,M,5.4,N,10.0,K,A*3E"\n"$GPGGA,073003,5501.9061,N,08255.3856,E,1,09,0.9,152.1,M,-35.0,M,,*64"\n"$GPRMC,073003,A,5501.9061,N,08255.3856,E,5.6,135.0,150625,,,A*7B"\n"$GPVTG,135.0,T,,M,5.6,N,10.4,K,A*3C"\n"$GPGGA,073004,5501.8750,N,08255.4273,E,1,09,0.9,152.6,M,-35.0,M,,*6A"\n"$GPRMC,073004,A,5501.8750,N,08255.4273,E,5.8,150.0,150625,,,A*7F"\n"$GPVTG,150.0,T,,M,5.8,N,10.7,K,A*32"\n"$GPGGA,073005,5501.8388,N,08255.4536,E,1,09,0.9,152.9,M,-35.0,M,,*63"\n"$GPRMC,073005,A,5501.8388,N,08255.4536,E,6.0,165.0,150625,,,A*74"\n"$GPVTG,165.0,T,,M,6.0,N,11.1,K,A*38"\n"$GPGGA,073006,5501.8000,N,08255.4625,E,1,09,0.9,153.0,M,-35.0,M,,*6A"\n"$GPRMC,073006,A,5501.8000,N,08255.4625,E,5.0,180.0,150625,,,A*7D"\n"$GPVTG,180.0,T,,M,5.0,N,9.3,K,A*0B"\n"$GPGGA,073007,5501.7612,N,08255.4536,E,1,09,0.9,152.9,M,-35.0,M,,*68"\n"$GPRMC,073007,A,5501.7612,N,08255.4536,E,5.2,195.0,150625,,,A*71"\n"$GPVTG,195.0,T,,M,5.2,N,9.6,K,A*08"\n"$GPGGA,073008,5501.7250,N,08255.4273,E,1,09,0.9,152.6,M,-35.0,M,,*6C"\n"$GPRMC,073008,A,5501.7250,N,08255.4273,E,5.4,210.0,150625,,,A*72"\n"$GPVTG,210.0,T,,M,5.4,N,10.0,K,A*3E"\n"$GPGGA,073009,5501.6939,N,08255.3856,E,1,09,0.9,152.1,M,-35.0,M,,*65"\n"$GPRMC,073009,A,5501.6939,N,08255.3856,E,5.6,225.0,150625,,,A*78"\n"$GPVTG,225.0,T,,M,5.6,N,10.4,K,A*3E"\n"$GPGGA,073010,5501.6701,N,08255.3313,E,1,09,0.9,151.5,M,-35.0,M,,*65"\n"$GPRMC,073010,A,5501.6701,N,08255.3313,E,5.8,240.0,150625,,,A*72"\n"$GPVTG,240.0,T,,M,5.8,N,10.7,K,A*30"\n"$GPGGA,073011,5501.6551,N,08255.2679,E,1,09,0.9,150.8,M,-35.0,M,,*67"\n"$GPRMC,073011,A,5501.6551,N,08255.2679,E,6.0,255.0,150625,,,A*73"\n"$GPVTG,255.0,T,,M,6.0,N,11.1,K,A*38"\n"$GPGGA,073012,5501.6500,N,08255.2000,E,1,09,0.9,150.0,M,-35.0,M,,*60"\n"$GPRMC,073012,A,5501.6500,N,08255.2000,E,5.0,270.0,150625,,,A*78"\n"$GPVTG,270.0,T,,M,5.0,N,9.3,K,A*07"\n"$GPGGA,073013,5501.6551,N,08255.1321,E,1,09,0.9,149.2,M,-35.0,M,,*6C"\n"$GPRMC,073013,A,5501.6551,N,08255.1321,E,5.2,285.0,150625,,,A*76"\n"$GPVTG,285.0,T,,M,5.2,N,9.6,K,A*0A"\n"$GPGGA,073014,5501.6701,N,08255.0687,E,1,09,0.9,148.5,M,-35.0,M,,*62"\n"$GPRMC,073014,A,5501.6701,N,08255.0687,E,5.4,300.0,150625,,,A*74"\n"$GPVTG,300.0,T,,M,5.4,N,10.0,K,A*3E"\n"$GPGGA,073015,5501.6939,N,08255.0144,E,1,09,0.9,147.9,M,-35.0,M,,*6D"\n"$GPRMC,073015,A,5501.6939,N,08255.0144,E,5.6,315.0,150625,,,A*7E"\n"$GPVTG,315.0,T,,M,5.6,N,10.4,K,A*3C"\n"$GPGGA,073016,5501.7250,N,08254.9727,E,1,09,0.9,147.4,M,-35.0,M,,*6D"\n"$GPRMC,073016,A,5501.7250,N,08254.9727,E,5.8,330.0,150625,,,A*7A"\n"$GPVTG,330.0,T,,M,5.8,N,10.7,K,A*36"\n"$GPGGA,073017,5501.7612,N,08254.9464,E,1,09,0.9,147.1,M,-35.0,M,,*6F"\n"$GPRMC,073017,A,5501.7612,N,08254.9464,E,6.0,345.0,150625,,,A*74"\n"$GPVTG,345.0,T,,M,6.0,N,11.1,K,A*38"\n"$GPGGA,073018,5501.8000,N,08254.9375,E,1,09,0.9,147.0,M,-35.0,M,,*6C"\n"$GPRMC,073018,A,5501.8000,N,08254.9375,E,5.0,0.0,150625,,,A*77"\n"$GPVTG,0.0,T,,M,5.0,N,9.3,K,A*02"\n"$GPGGA,073019,5501.8388,N,08254.9464,E,1,09,0.9,147.1,M,-35.0,M,,*68"\n"$GPRMC,073019,A,5501.8388,N,08254.9464,E,5.2,15.0,150625,,,A*44"\n"$GPVTG,15.0,T,,M,5.2,N,9.6,K,A*31"\n"$GPGGA,073020,5501.8750,N,08254.9727,E,1,09,0.9,147.4,M,-35.0,M,,*62"\n"$GPRMC,073020,A,5501.8750,N,08254.9727,E,5.4,30.0,150625,,,A*4A"\n"$GPVTG,30.0,T,,M,5.4,N,10.0,K,A*0E"\n"$GPGGA,073021,5501.9061,N,08255.0144,E,1,09,0.9,147.9,M,-35.0,M,,*61"\n"$GPRMC,073021,A,5501.9061,N,08255.0144,E,5.6,45.0,150625,,,A*44"\n"$GPVTG,45.0,T,,M,5.6,N,10.4,K,A*0A"\n"$GPGGA,073022,5501.9299,N,08255.0687,E,1,09,0.9,148.5,M,-35.0,M,,*6C"\n"$GPRMC,073022,A,5501.9299,N,08255.0687,E,5.8,60.0,150625,,,A*43"\n"$GPVTG,60.0,T,,M,5.8,N,10.7,K,A*00"\n"$GPGGA,073023,5501.9449,N,08255.1321,E,1,09,0.9,149.2,M,-35.0,M,,*68"\n"$GPRMC,073023,A,5501.9449,N,08255.1321,E,6.0,75.0,150625,,,A*4E"\n"$GPVTG,75.0,T,,M,6.0,N,11.1,K,A*08"'});
 sq.size.w=300; sq.size.h=300; applySize(sq);
+const pl=playRows(sq,40,860,{textCol:'nmea',rate:3,loop:true});
 const pa=addNode('nmea',380,200,{});
 pa.size.w=420; pa.size.h=300; applySize(pa);
 const map=addNode('geoMap',840,40,{mz:16,mlat:55.03,mlon:82.92,ttl:300,labels:false,trail:600});
 map.size.w=560; map.size.h=460; applySize(map);
 const log=addNode('recLog',380,540,{});
 log.size.w=420; applySize(log);
-addEdge(sq.id,'text',pa.id,'text'); addEdge(pa.id,'rec',map.id,'rec'); addEdge(pa.id,'rec',log.id,'rec');
+addEdge(pl.id,'text',pa.id,'text'); addEdge(pa.id,'rec',map.id,'rec'); addEdge(pa.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('NMEA: Network Stream (gpsd, AIS-catcher, Termux)', function(){
@@ -5246,14 +5252,15 @@ clearAll();
 const nt=addNode('note',40,40,{text:'A Table row is built into a packet and the packet is parsed back into a record. Table → HEX Structure (rec): the columns are the field names of the structure (payload.ttl, payload.payload.dport …; «rec field names» maps other column names), the packet comes out on bin / text. The second Table collects the parsed records, one row per packet.\n'+
   'Fields that are not in the row keep their values; lengths and checksums are recalculated. In the other direction a decoder record with a hex field (DMR, ADS-B, Wi-Fi) is parsed instead of built.'});
 nt.size.w=820; nt.size.h=130; applySize(nt);
-const t1=addNode('table',40,200,{list:'@patch',advance:'rate',rate:1,loop:true,
+const t1=addNode('table',40,200,{list:'@patch',
   data:'dst,src,type,payload.ver,payload.ttl,payload.proto,payload.src,payload.dst,payload.payload.sport,payload.payload.dport,payload.payload.data\nff:ff:ff:ff:ff:ff,00:11:22:33:44:55,IPv4,4,64,UDP,192.168.0.1,192.168.0.255,5000,5001,68656c6c6f\nff:ff:ff:ff:ff:ff,00:11:22:33:44:66,IPv4,4,32,UDP,192.168.0.2,192.168.0.255,5000,5002,776f726c64\nff:ff:ff:ff:ff:ff,00:11:22:33:44:77,IPv4,4,16,UDP,192.168.0.3,192.168.0.255,6000,5001,6869'});
 t1.size.w=320; t1.size.h=300; applySize(t1);
+const p1=playRows(t1,40,860,{advance:'rate',rate:1,loop:true});
 const hx=addNode('hexStruct',400,200,{schema:'eth',recMode:'build'});
 hx.size.w=460; hx.size.h=520; applySize(hx);
 const t2=addNode('table',920,200,{list:'@patch',data:''});
 t2.size.w=320; t2.size.h=300; applySize(t2);
-addEdge(t1.id,'rec',hx.id,'rec'); addEdge(hx.id,'rec',t2.id,'rec');
+addEdge(p1.id,'rec',hx.id,'rec'); addEdge(hx.id,'rec',t2.id,'rec');
 markWiresDirty();
 });
 preset('Hex: Reverse a Sensor — Find the Temperature Field by a Reference', function(){
@@ -5269,11 +5276,12 @@ for(let i=0;i<150;i++){
   let x=0; for(const v of b) x^=v; b.push(x);
   csv+='\n'+b.map(v=>v.toString(16).padStart(2,'0')).join('')+','+(Math.round(T*100)/100);
 }
-const tb=addNode('table',40,250,{list:'@patch',advance:'rate',rate:25,loop:false,data:csv});
+const tb=addNode('table',40,250,{list:'@patch',data:csv});
 tb.size.w=320; tb.size.h=320; applySize(tb);
+const pl=playRows(tb,40,910,{advance:'rate',rate:25,loop:false});
 const hs=addNode('hexScan',420,250,{refcol:'temp',refName:'temperature',refUnit:'°C',minN:20,live:true});
 hs.size.w=640; hs.size.h=420; applySize(hs);
-addEdge(tb.id,'rec',hs.id,'rec');
+addEdge(pl.id,'rec',hs.id,'rec');
 markWiresDirty();
 });
 preset('Hex: PCAP File → Packets → HEX Structure', function(){
@@ -5581,9 +5589,10 @@ clearAll();
 const nt=addNode('note',40,40,{text:'What paths can a radio signal take between two points? Signal Paths takes the two ends (a Table row here: lat lon h → lat2 lon2 h2, freq), the Horizon height map and gives: the direct path (line of sight, how much of the first Fresnel zone is clear, diffraction on the main obstacle, loss) and the single reflections off the terrain (the reflection point, extra length and delay, level against the direct one). The side view shows the terrain along the path, the Fresnel zone and the paths; the same records are links: they are drawn on the Map and in 3D.\n'+
   'Change the row (or h, h2, frequency, reflection loss, tolerance) and the paths are recalculated. Fly around with the Joystick (free camera; W / S forward and back along the view, arrows turn and look). «Save to table» keeps the links in the list «analysis/paths» — type it into Video Overlay → own points to see them later without a calculator.'});
 nt.size.w=980; nt.size.h=130; applySize(nt);
-const tb=addNode('table',40,200,{list:'@patch',advance:'rate',rate:1,loop:true,
+const tb=addNode('table',40,200,{list:'@patch',
   data:'name,lat,lon,h,lat2,lon2,h2,freq\nLink 1,55.0100,82.6500,15,55.0420,82.7000,15,145e6'});
 tb.size.w=420; tb.size.h=200; applySize(tb);
+const pl=playRows(tb,40,1100,{advance:'rate',rate:1,loop:true});
 const hz=addNode('horizon',40,440,{radius:20,zoom:11});
 hz.size.w=340; hz.size.h=150; applySize(hz);
 const ps=addNode('paths',500,200,{k:1.33,refl:8,maxn:5,tol:40});
@@ -5595,7 +5604,7 @@ const ov=addNode('overlay',1000,360,{relief:'solid',sky:true,planets:false,starM
 ov.size.w=560; ov.size.h=400; applySize(ov);
 const mp=addNode('geoMap',500,640,{mz:13,mlat:55.026,mlon:82.675});
 mp.size.w=480; mp.size.h=340; applySize(mp);
-addEdge(tb.id,'rec',ps.id,'rec');
+addEdge(pl.id,'rec',ps.id,'rec');
 addEdge(ps.id,'rec',ov.id,'rec2'); addEdge(ps.id,'rec',mp.id,'rec');
 addEdge(js.id,'x2',fs.id,'ail'); addEdge(js.id,'y2',fs.id,'elev'); addEdge(js.id,'x1',fs.id,'rud'); addEdge(js.id,'y1',fs.id,'thr'); addEdge(js.id,'b1',fs.id,'cam');
 addEdge(tb.id,'lat',fs.id,'lat'); addEdge(tb.id,'lon',fs.id,'lon'); addEdge(fs.id,'lat',hz.id,'lat'); addEdge(fs.id,'lon',hz.id,'lon');
@@ -5613,15 +5622,16 @@ const fs=addNode('flightsim',420,200,{mode:'fly',cam:'free',agl0:250,hdg0:0,fspe
 fs.size.w=340; fs.size.h=120; applySize(fs);
 const hz=addNode('horizon',420,420,{radius:20,zoom:11});
 hz.size.w=340; hz.size.h=150; applySize(hz);
-const tb=addNode('table',820,640,{list:'@patch',advance:'rate',rate:8,loop:false,
+const tb=addNode('table',820,640,{list:'@patch',
   data:'id,lat,lon,h,lat2,lon2,h2,label,color,kind\nL1,55.0100,82.6500,120,55.0300,82.6900,80,direct,#ffd84a,direct\nL2,55.0100,82.6500,120,55.0300,82.6900,80,,#ff6bd6,reflect\nL3,55.0020,82.6450,60,55.0210,82.6600,200,TX → RX,#6fd0ff,direct\nL4,55.0000,82.6700,150,55.0100,82.6500,120,backhaul,#7dff9a,direct'});
 tb.size.w=420; tb.size.h=240; applySize(tb);
+const pl=playRows(tb,1260,640,{advance:'rate',rate:8,loop:false});
 const ov=addNode('overlay',820,200,{relief:'solid',sky:true,planets:false,starMag:-1,deep:false,trail:0,labels:false,hud:'KT, AGL:m, VS:m/s, HDG:°'});
 ov.size.w=560; ov.size.h=400; applySize(ov);
 addEdge(js.id,'x2',fs.id,'ail'); addEdge(js.id,'y2',fs.id,'elev'); addEdge(js.id,'x1',fs.id,'rud'); addEdge(js.id,'y1',fs.id,'thr'); addEdge(js.id,'b1',fs.id,'cam');
 addEdge(me.id,'lat',fs.id,'lat'); addEdge(me.id,'lon',fs.id,'lon'); addEdge(fs.id,'lat',hz.id,'lat'); addEdge(fs.id,'lon',hz.id,'lon');
 for(const k of ['lat','lon','alt','az','el','roll','fov','rec']) addEdge(fs.id,k,ov.id,k);
-addEdge(tb.id,'rec',ov.id,'rec2');
+addEdge(pl.id,'rec',ov.id,'rec2');
 markWiresDirty();
 });
 preset('Coverage: Transmitters from Table → Dead Zones', function(){
@@ -5629,9 +5639,10 @@ clearAll();
 const nt=addNode('note',40,40,{text:'Preliminary coverage calculation: where is the signal of your transmitters (a Table: name, lat, lon, h, freq, erp_w, azimuth, beamwidth) weak or absent. For every cell around the point Coverage takes the Horizon height map and calculates the path loss: free space, diffraction on the terrain (Deygout, earth curvature with k) and interference with the ground reflection; the best of the transmitters is shown. Cells below «min» are dead zones: their edge goes to the Map as a dashed line (`poly`), the transmitters as `rec`.\n'+
   'In the field: put measurements (lat, lon, rssi, h, tx) into a Table list and type its name into «meas» — the readout shows the bias and rms against the calculation, «Save residuals» adds the points where the model is wrong, «Calibrate» takes the bias into the clutter loss. «Save to table» keeps the summary in «analysis/coverage».'});
 nt.size.w=980; nt.size.h=130; applySize(nt);
-const tb=addNode('table',40,200,{list:'@patch',advance:'rate',rate:4,loop:false,
+const tb=addNode('table',40,200,{list:'@patch',
   data:'name,lat,lon,h,freq,erp_w,azimuth,beamwidth\nTV tower,55.0300,82.7000,120,5e8,1000,,\nFM,54.9800,82.6200,60,1e8,200,90,120'});
 tb.size.w=420; tb.size.h=200; applySize(tb);
+const pl=playRows(tb,40,1100,{advance:'rate',rate:4,loop:false});
 const me=addNode('geoMe',40,440,{src:'manual',lat:55.0,lon:82.65});
 const hz=addNode('horizon',40,600,{radius:25,zoom:11});
 hz.size.w=340; hz.size.h=150; applySize(hz);
@@ -5639,7 +5650,7 @@ const cv=addNode('coverage',500,200,{radius:20,cell:250,min:-95,rxh:2});
 cv.size.w=500; cv.size.h=460; applySize(cv);
 const mp=addNode('geoMap',1040,200,{mz:11,mlat:55.0,mlon:82.65});
 mp.size.w=480; mp.size.h=420; applySize(mp);
-addEdge(tb.id,'rec',cv.id,'rec'); addEdge(me.id,'lat',cv.id,'lat'); addEdge(me.id,'lon',cv.id,'lon');
+addEdge(pl.id,'rec',cv.id,'rec'); addEdge(me.id,'lat',cv.id,'lat'); addEdge(me.id,'lon',cv.id,'lon');
 addEdge(me.id,'lat',hz.id,'lat'); addEdge(me.id,'lon',hz.id,'lon');
 addEdge(cv.id,'rec',mp.id,'rec'); addEdge(cv.id,'poly',mp.id,'rec'); addEdge(cv.id,'raster',mp.id,'rec');
 markWiresDirty();
@@ -5963,9 +5974,10 @@ preset('Entities: Cells, Operators and Talkgroups (Sample Data)', function(){
 clearAll();
 const nt=addNode('note',40,20,{text:'Entity cards from a record stream. Made-up GSM cells and DMR / P25 calls are played from a table (1 row/s, looped) into «Rec → Entities»: its rules turn every record into entities (cell, operator, subscriber, talkgroup) and links between them. A collecting Table with «upsert key col» = id merges repeats (count, first, last) and its `rows` go to Graph (nodes with shape and colour, edges between them) and to Entity Card: click a node in the graph to see its attributes and links, click a linked entity to walk on, or search by id / name. Open the rules and edit them — the same rules work on real decoder records (see the USB SDR presets). Insert ready-made rule sets with «insert rules».'});
 nt.size.w=1000; nt.size.h=100; applySize(nt);
-const src=addNode('table',40,150,{list:'@patch',advance:'rate',rate:1,loop:true,initial:true,
+const src=addNode('table',40,150,{list:'@patch',
   data:'kind,src,id,plmn,op,lac,ci,from,to,call,alias\nGSM-SI3,,250-01-1f4-3a2b,250-01,MTS,500,14891,,,,\nGSM-SI3,,250-01-1f4-3a2c,250-01,MTS,500,14892,,,,\nGSM-SI3,,250-02-1f5-0102,250-02,MegaFon,501,258,,,,\nGSM-SI3,,250-99-1f6-0007,250-99,Beeline,502,7,,,,\nGSM-SI4,,250-01-1f4-3a2b,250-01,MTS,500,14891,,,,\ncall,DMR,,,,,,2600123,91,group,\ncall,DMR,,,,,,2600124,91,group,\ncall,DMR,,,,,,2600125,91,group,\ncall,DMR,,,,,,2600123,2600124,private,\ncall,DMR,,,,,,2600126,9,group,\ncall,DMR,,,,,,2600126,91,group,\ncall,P25,,,,,,1234567,100,group,\ncall,P25,,,,,,1234568,100,group,\nalias,DMR,,,,,,2600123,,,ALPHA\nalias,DMR,,,,,,2600126,,,Dispatcher'});
 src.size.w=360; src.size.h=420; applySize(src);
+const pl=playRows(src,40,810,{advance:'rate',rate:1,loop:true,initial:true});
 const ent=addNode('recEnt',440,150,{rules:ENT_TEMPLATES['GSM cells']+'\n'+ENT_TEMPLATES['Digital voice (DMR / P25 / NXDN)']});
 ent.size.w=520; ent.size.h=420; applySize(ent);
 const col=addNode('table',1000,150,{list:'@patch',key:'id',initial:false});
@@ -5974,7 +5986,7 @@ const g=addNode('graphview',1400,150,{directed:true});
 g.size.w=520; g.size.h=420; applySize(g);
 const cd=addNode('entcard',1400,600,{});
 cd.size.w=360; cd.size.h=360; applySize(cd);
-addEdge(src.id,'rec',ent.id,'rec'); addEdge(ent.id,'rec',col.id,'rec'); addEdge(col.id,'rows',g.id,'rows'); addEdge(col.id,'rows',cd.id,'rows'); addEdge(g.id,'sel',cd.id,'sel');
+addEdge(pl.id,'rec',ent.id,'rec'); addEdge(ent.id,'rec',col.id,'rec'); addEdge(col.id,'rows',g.id,'rows'); addEdge(col.id,'rows',cd.id,'rows'); addEdge(g.id,'sel',cd.id,'sel');
 markWiresDirty();
 });
 preset('Entities: DMR Subscribers and Talkgroups (USB SDR)', function(){
@@ -6162,16 +6174,17 @@ nt.size.w=1100; nt.size.h=110; applySize(nt);
 const pe=addNode('table',40,170,{list:'@patch',vmode:'icons',initial:false,
   data:'name,avatar,online,typing,note\nAnna,https://i.pravatar.cc/96?img=47,online,1,R1ABC\nBoris,https://i.pravatar.cc/96?img=12,away,,R2DEF\nClara,🦊,busy,,\nDmitry,,online,,R3XYZ\nMe,https://i.pravatar.cc/96?img=68,online,,'});
 pe.size.w=300; pe.size.h=520; applySize(pe);
-const sc=addNode('table',380,640,{list:'@patch',advance:'dwell',loop:true,initial:true,
+const sc=addNode('table',380,640,{list:'@patch',
   data:'from,text,dwell\nAnna,Hi all! Anyone on 145.500?,3\nBoris,Yes — strong signal here,3\nMe,Calling CQ on the repeater,3\nDmitry,Copy that. QRZ?,3\nClara,Good evening everyone,4'});
 sc.size.w=300; sc.size.h=220; applySize(sc);
+const pls=playRows(sc,700,640,{advance:'dwell',loop:true,initial:true});
 const c=addNode('chat',380,170,{me:'Me'}); c.size.w=360; c.size.h=420; applySize(c);
 const sv=(t,c1,c2)=>{ const s='<svg xmlns="http://www.w3.org/2000/svg" width="80" height="60"><defs><linearGradient id="g"><stop offset="0" stop-color="'+c1+'"/><stop offset="1" stop-color="'+c2+'"/></linearGradient></defs><rect width="80" height="60" fill="url(#g)"/><text x="40" y="36" font-size="16" text-anchor="middle" fill="#fff" font-family="sans-serif">'+t+'</text></svg>'; return '"data:image/svg+xml;base64,'+btoa(s)+'"'; };
 const ss=addNode('table',780,170,{list:'@patch',vmode:'icons',initial:false,
   schema:{types:{image:{t:'image'}},card:{}},
   data:'image,name,mode,freq,time\n'+sv('M1','#2a5','#07a')+',R1ABC,Martin M1,145.800M,12:04\n'+sv('S2','#a52','#c80')+',ISS PD120,PD120,145.800M,12:19\n'+sv('R36','#55a','#a0a')+',R2DEF,Robot 36,14.230M,12:41'});
 ss.size.w=320; ss.size.h=300; applySize(ss);
-addEdge(pe.id,'rows',c.id,'rows'); addEdge(sc.id,'rec',c.id,'rec');
+addEdge(pe.id,'rows',c.id,'rows'); addEdge(pls.id,'rec',c.id,'rec');
 markWiresDirty();
 });
 function gamePreset(name,id,w,h,mqtt){
