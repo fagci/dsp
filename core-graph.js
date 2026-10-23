@@ -636,7 +636,7 @@ markWiresDirty();
 }
 function portEl(p,dir){
 const e=document.createElement('div'); e.className='port'; e.dataset.dir=dir;
-e.innerHTML= `<span class="pin" data-n="${p.n}" title="${p.n===p.t ? p.n : p.n+' ('+p.t+')'}" style="background:${TYPE_COLOR[p.t]}">${p.n}</span>` ;
+e.innerHTML= `<span class="pin" data-n="${p.n}" title="${(p.n===p.t ? p.n : p.n+' ('+p.t+')')+(p.tip ? ' — '+p.tip.replace(/"/g,'&quot;') : '')}" style="background:${TYPE_COLOR[p.t]}">${p.n}</span>` ;
 return e;
 }
 function paramBtn(n,s){
