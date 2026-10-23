@@ -30,6 +30,7 @@ const tblRO=n=>tblKind(n.p.list)==='preset';
 // настройки списка живут в его схеме (card), а не в узле, и переезжают вместе со списком:
 // key — колонка upsert, text — колонка выхода text, max — потолок строк, csv — строки text разбираются по колонкам,
 // hexAll — все поля разбора hex; types[колонка].src — поле пакета, из которого колонка заполняется;
+// initial — выдать первую строку при старте (false — нет), rowsIn — что делает набор на входе rows (replace / add / sync / new only);
 // sort / sortDir — порядок по колонке (щелчок по заголовку или роль колонки), rev — новые сверху
 const tblUpKey=n=>String(n.schema?.card?.key||'').trim();
 const tblHz=v=>typeof v==='number' ? v : parseHzCell(v);
@@ -245,14 +246,14 @@ async function tblReadList(n,name){
 }
 
 // старые параметры узла (key, textCol, maxRows, pfields, textCsv) → схема списка; один раз при загрузке списка
-const TBL_LEGACY=['key','textCol','maxRows','pfields','textCsv','collect','fmt','rev','sortCol','sortDir'];
+const TBL_LEGACY=['key','textCol','maxRows','pfields','textCsv','collect','fmt','rev','sortCol','sortDir','initial','rowsIn','follow'];
 async function tblLegacy(n,list,kind,schema,failed){
   const p=n.p;
   if(failed || !TBL_LEGACY.some(k=>k in p)) return;
   if(kind!=='preset'){
     const c=schema.card, ty=schema.types; let ch=false;
     const set=(k,v)=>{ if(v && !c[k]){ c[k]=v; ch=true; } };
-    set('key',String(p.key||'').trim()); set('text',String(p.textCol||'').trim()); set('max',+p.maxRows>0 ? +p.maxRows : 0); set('csv',!!p.textCsv); set('rev',!!p.rev); set('sort',String(p.sortCol||'').trim()); if(c.sort && p.sortDir<0 && !c.sortDir){ c.sortDir=-1; ch=true; }
+    set('key',String(p.key||'').trim()); set('text',String(p.textCol||'').trim()); set('max',+p.maxRows>0 ? +p.maxRows : 0); set('csv',!!p.textCsv); set('rev',!!p.rev); set('rowsIn',p.rowsIn && p.rowsIn!=='replace' ? p.rowsIn : ''); if(p.initial===false && c.initial===undefined){ c.initial=false; ch=true; } set('sort',String(p.sortCol||'').trim()); if(c.sort && p.sortDir<0 && !c.sortDir){ c.sortDir=-1; ch=true; }
     for(const x of String(p.pfields||'').split(/[,;\n]/).map(x=>x.trim()).filter(Boolean)){
       const i=x.indexOf('='), src=(i<0 ? x : x.slice(i+1)).trim(), col=i<0 ? src.replace(/\./g,'_') : x.slice(0,i).trim();
       if(src==='*'){ if(!c.hexAll){ c.hexAll=true; ch=true; } }
@@ -657,9 +658,10 @@ async function tblFromRows(n,list){
   if(n.rowsBusy){ n.rowsAgain=list; return; }
   n.rowsBusy=true;
   try{
-    if(n.p.rowsIn==='sync' || n.p.rowsIn==='new only') await tblSync(n,list,n.p.rowsIn==='new only');
+    const mode=n.schema?.card?.rowsIn||'replace';
+    if(mode==='sync' || mode==='new only') await tblSync(n,list,mode==='new only');
     else{
-      if(n.p.rowsIn!=='add') await tblClear(n);
+      if(mode!=='add') await tblClear(n);
       await tblAdd(n,list.filter(r=>r && typeof r==='object'));
     }
     n.uiDirty=true;
@@ -793,7 +795,7 @@ function tblSelOut(n,I){
   if(!N){ n.pulse=0; return {rec:null,text:'',row:0,count:0,next:0}; }
   const emit=()=>{ batch.push({...n.rows[n.idx]}); n.count++; n.started=true; };
   if(n.idx>=N) n.idx=N-1;
-  if(!n.initDone){ n.initDone=true; if(p.initial) emit(); }
+  if(!n.initDone){ n.initDone=true; if(n.schema?.card?.initial!==false) emit(); }
   const rw=typeof I.row==='number' && isFinite(I.row) ? I.row : null;
   if(rw!==null && rw!==n.rowPrev){ n.idx=clamp(Math.round(rw)-1,0,N-1); emit(); }
   n.rowPrev=rw;
@@ -823,9 +825,6 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
   params:[
     {n:'list',t:'text',d:'table',hidden:true},
     {n:'filter',t:'text',d:'',hidden:true},
-    {n:'follow',t:'check',d:false,label:'follow the end',tip:'show the last rows and keep scrolling to new ones while the list is scrolled to the bottom (like Wireshark); scroll up to stop following'},
-    {n:'initial',t:'check',d:true,label:'first row at start',tip:'output the first row when the patch starts, before anything is selected',adv:true},
-    {n:'rowsIn',t:'select',opts:['replace','add','sync','new only'],d:'replace',label:'rows in (wire)',tip:'a set on the rows input is stored in the active list: replace its rows, add to them, sync (rows are matched by the upsert key column — default id — and changed, added or removed in place: nothing flickers, the selected row stays) or new only (add the rows whose key is not in the list yet, leave the rest alone)'},
     {n:'data',t:'code',d:'',hidden:true,label:'patch table (list = @patch)',plain:true,fn:n=>{ if(n.p.list===TBL_PATCH) tblLoad(n); }},
   ],
   init:n=>{
@@ -899,7 +898,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
       if(r.textContent!==t){ r.textContent=t; r.style.display=t ? '' : 'none'; }
     }
     if(n.ui){
-      const tl=!!n.p.follow && !n.schema?.card?.rev;                          // при «newest first» конец списка — старые записи: следим за началом
+      const tl=!n.schema?.card?.rev;                              // при «newest first» конец списка — старые записи: остаёмся у начала
       if(tl!==!!n.ui.tail){ n.ui.tail=tl; n.ui.jump=tl; n.uiDirty=true; }
       const vk=[n.p.vcols,n.p.rules,n.p.tint,n.p.vmode,n.p.tz];
       if(!n._vk || vk.some((x,i)=>x!==n._vk[i])){ n._vk=vk; n.uiDirty=true; n.uiFull=true; if(n.ui.view && !n.ui.view.hidden) tblRenderView(n); }
@@ -998,7 +997,7 @@ function tblInit(n){
   syncCustomHeight(n,root,150);
   const q=s=>root.querySelector(s);
   n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), tree:q('.tbl-tree'), pick:q('.tbl-pick'), shown:q('.tbl-shown'),
-    vmBtn:q('.tbl-vm'), crumb:q('.tbl-crumb'), filter:q('.tbl-filter'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:!!n.p.follow && !n.schema?.card?.rev, jump:!!n.p.follow && !n.schema?.card?.rev, marked:-1, markEl:null, rh:0, hdh:0, vh:0, st:0, atEnd:false};
+    vmBtn:q('.tbl-vm'), crumb:q('.tbl-crumb'), filter:q('.tbl-filter'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:!n.schema?.card?.rev, jump:false, marked:-1, markEl:null, rh:0, hdh:0, vh:0, st:0, atEnd:false};
   n.ui.view.hidden=!n.viewOpen;                           // пересборка узла (смена колонок) не должна прятать панель
   q('.tbl-viewb').classList.toggle('on',!!n.viewOpen);
   const vw=n.ui.view;                                     // прокрутка и фокус поля «new field» переживают пересборку узла
@@ -1035,7 +1034,7 @@ function tblInit(n){
     const tg=e.target.closest('.tc-tog');
     if(tg){ const r=n.rows[i], c=tg.dataset.c; tblUpdate(n,i,{...r,[c]:tcIsTrue(r[c]) ? 0 : 1}).then(()=>tblRenderList(n)); return; }
     const b=e.target.closest('.tbl-ico[data-act]');
-    if(b?.dataset.act==='edit'){ tblEditForm(n,i,row); return; }
+    if(b?.dataset.act==='edit'){ if(!n.ui.edit.hidden && n.ui.edit.dataset.k==='edit:'+i) tblCloseEditor(n); else tblEditForm(n,i,row); return; }
     if(b?.dataset.act==='del'){
       const label=tcHasName(n) && n.rows[i] ? n.labelFn(n.rows[i]) : '';
       if(!confirm('Delete row "'+(label||i+1)+'"?')) return;
@@ -1064,7 +1063,7 @@ function tblInit(n){
   });
   q('.tbl-new').addEventListener('click',()=>tblNewMenu(n));
   q('.tbl-menub').addEventListener('click',()=>tblMainMenu(n));
-  q('.tbl-add').addEventListener('click',()=>tblAddForm(n,n.drill ? {[n.drill.via]:n.drill.label} : null));
+  q('.tbl-add').addEventListener('click',()=>{ if(!n.ui.edit.hidden && n.ui.edit.dataset.k==='new') tblCloseEditor(n); else tblAddForm(n,n.drill ? {[n.drill.via]:n.drill.label} : null); });
   n.ui.crumb.addEventListener('click',()=>tcChkBack(n));
   q('.tbl-here').addEventListener('click',()=>tblHereForm(n));
   q('.tbl-viewb').addEventListener('click',()=>tblViewToggle(n));
@@ -1109,9 +1108,11 @@ async function tblClearRows(n){
   await tblClear(n); tblRenderAll(n);
 }
 // выпадающее меню над списком: заголовки групп и пункты (подсказка — описание)
-function tblMenuEl(n,keep){                              // keep — элемент, нажатие на который не закрывает меню (он закрывает его сам)
-  const root=n.ui.root; root.querySelector('.tbl-menu')?.remove();
-  const m=document.createElement('div'); m.className='tbl-menu';
+// key — кнопка, открывающая меню, повторное нажатие закрывает его (null вместо меню)
+function tblMenuEl(n,keep,key){                          // keep — элемент, нажатие на который не закрывает меню (он закрывает его сам)
+  const root=n.ui.root, old=root.querySelector('.tbl-menu');
+  if(old){ const same=key && old.dataset.k===key; old.remove(); if(same) return null; }
+  const m=document.createElement('div'); m.className='tbl-menu'; if(key) m.dataset.k=key;
   root.append(m);
   const off=e=>{ if(!m.contains(e.target) && !keep?.contains(e.target)){ m.remove(); document.removeEventListener('pointerdown',off,true); } };
   setTimeout(()=>document.addEventListener('pointerdown',off,true));
@@ -1126,7 +1127,8 @@ function tblMenuItem(m,title,desc,fn,cols,compact){
   d.addEventListener('click',()=>{ m.remove(); fn(); }); m.append(d);
 }
 function tblMainMenu(n){
-  const m=tblMenuEl(n), it=(t,d,f)=>tblMenuItem(m,t,d,f,null,true);
+  const m=tblMenuEl(n,n.ui.root.querySelector('.tbl-menub'),'main'); if(!m) return;
+  const it=(t,d,f)=>tblMenuItem(m,t,d,f,null,true);
   tblMenuHead(m,'Rows');
   it('Clear all rows','delete every row of the active list',()=>tblClearRows(n));
   tblMenuHead(m,'Data');
@@ -1145,10 +1147,9 @@ function tblMainMenu(n){
   tblMenuHead(m,'View');
   it('Fields & colors…','add, rename, remove fields; type, shown columns, their order and format; row colour rules',()=>tblViewToggle(n));
   it('Shown lists…','tick several lists to show them on the map and the bands output',()=>tblTreeToggle(n));
-  it(n.p.follow ? 'Stop following the end' : 'Follow the end','show the last rows and scroll to new ones',()=>{ n.p.follow=!n.p.follow; Undo.push(); });
 }
 function tblNewMenu(n){
-  const m=tblMenuEl(n);
+  const m=tblMenuEl(n,n.ui.root.querySelector('.tbl-new'),'new'); if(!m) return;
   tblMenuItem(m,'Empty list','columns appear from the first rows you add or import',()=>tblNewList(n,null));
   tblMenuHead(m,'From a template');
   for(const t of TBL_TEMPLATES) tblMenuItem(m,t.title,t.desc,()=>tblNewList(n,t),t.cols.join(', '));
@@ -1958,7 +1959,7 @@ function tblFieldsPanel(n,box,mk,sel){
 // настройки списка целиком (не колонки): название записи, уникальность, потолок строк, разбор входящих, раскладка карточки
 function tblListSettings(n,box,mk,sel){
   const ro=tblRO(n), c=n.schema.card;
-  const sum=[c.key ? 'key '+c.key : '',c.max ? 'max '+c.max : '',c.unique?.length ? 'unique' : '',c.csv ? 'csv' : '',c.hexAll ? 'packet' : '',c.rev ? 'newest first' : ''].filter(Boolean).join(' · ');
+  const sum=[c.key ? 'key '+c.key : '',c.max ? 'max '+c.max : '',c.unique?.length ? 'unique' : '',c.csv ? 'csv' : '',c.hexAll ? 'packet' : '',c.rev ? 'newest first' : '',c.rowsIn||''].filter(Boolean).join(' · ');
   box.append(mk('div','tv-sec tv-fold',(n.listOpen ? '▾ ' : '▸ ')+'List'+(sum ? ' — '+sum : ''),{click:()=>{ n.listOpen=!n.listOpen; tblRenderView(n); }}));
   if(!n.listOpen) return;
   const g=mk('div','tv-f tv-grid'), line=(label,tip)=>{ const l=mk('span','tv-lbl',label), cc=mk('div','tv-ctl'); if(tip) l.title=tip; g.append(l,cc); return cc; };
@@ -1989,6 +1990,19 @@ function tblListSettings(n,box,mk,sel){
     mx.addEventListener('keydown',e=>e.stopPropagation());
     mx.addEventListener('change',()=>{ const v=Math.max(0,+mx.value||0); if(v) c.max=v; else delete c.max; tcSchemaSave(n); tblRenderView(n); });
     line('max rows','oldest rows are dropped above this count').append(mx);
+  }
+  {
+    const e=mk('select'); for(const o of [['replace','replace the rows'],['add','add to the rows'],['sync','sync by key'],['new only','new by key only']]){ const op=mk('option',null,o[1]); op.value=o[0]; e.append(op); }
+    e.value=c.rowsIn||'replace'; e.disabled=ro;
+    e.title='what a set on the rows input does: replace the rows, add to them, sync (rows are matched by the key column — default id — and changed, added or removed in place: nothing flickers, the selected row stays) or new only (add the rows whose key is not in the list yet)';
+    e.addEventListener('change',()=>{ if(e.value==='replace') delete c.rowsIn; else c.rowsIn=e.value; tcSchemaSave(n); tblRenderView(n); });
+    line('rows wire','what a set on the rows input does').append(e);
+  }
+  {
+    const cb=mk('input'); cb.type='checkbox'; cb.checked=c.initial!==false;
+    cb.title='output the first row when the patch starts, before anything is selected';
+    cb.addEventListener('change',()=>{ if(cb.checked) delete c.initial; else c.initial=false; tcSchemaSave(n); tblRenderView(n); });
+    line('at start','output the first row when the patch starts').append(cb,mk('span','tv-lbl','first row selected'));
   }
   let first=true;
   const flag=(k,label,tip)=>{
@@ -2115,9 +2129,9 @@ function tblForm(n,rec,onSave,onCancel){
   return form;
 }
 // правка — панелью снизу поверх списка: не прокручивается со строками, высота списка не меняется
-function tblOpenEditor(n,title,form,rowEl){
+function tblOpenEditor(n,title,form,rowEl,key){
   const ui=n.ui, ed=ui.edit;
-  ed.innerHTML='';
+  ed.innerHTML=''; ed.dataset.k=key||'';
   const h=document.createElement('div'); h.className='te-h';
   const t=document.createElement('span'); t.className='te-t'; t.textContent=title;
   h.append(...(form.lead ? [form.lead] : []),t,form.cancel,form.save);
@@ -2133,14 +2147,14 @@ function tblOpenEditor(n,title,form,rowEl){
 }
 function tblCloseEditor(n){
   const ui=n.ui; if(!ui?.edit) return;
-  ui.edit.hidden=true; ui.edit.innerHTML=''; ui.list.style.paddingBottom=''; n.curCard=null;
+  ui.edit.hidden=true; ui.edit.innerHTML=''; ui.edit.dataset.k=''; ui.list.style.paddingBottom=''; n.curCard=null;
   ui.list.querySelectorAll('.tbl-row.edit').forEach(r=>r.classList.remove('edit'));
 }
 function tblEditForm(n,i,row){
   const close=()=>{ tblCloseEditor(n); };
   const form=tblForm(n,n.rows[i],async o=>{ await tblUpdate(n,i,o); close(); tblRenderList(n); },close);
   const nm=tcHasName(n) ? n.labelFn(n.rows[i]) : '';
-  tblOpenEditor(n,'Edit row '+(i+1)+(nm ? ' · '+nm : ''),form,row);
+  tblOpenEditor(n,'Edit row '+(i+1)+(nm ? ' · '+nm : ''),form,row,'edit:'+i);
 }
 // текущая позиция: GPS браузера, при отказе — последняя известная (My Position)
 function tblPosition(){
@@ -2170,7 +2184,5 @@ function tblAddForm(n,init){
   const form=tblForm(n,init||{},async o=>{
     await tblAdd(n,[o],true); tblCloseEditor(n); tblRenderList(n);
   },()=>tblCloseEditor(n));
-  tblOpenEditor(n,'New row',form,null);
+  tblOpenEditor(n,'New row',form,null,'new');
 }
-defGroups('table',[
-  {n:'Rows', p:'initial rowsIn', open:false}]);
