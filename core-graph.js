@@ -2250,6 +2250,40 @@ for(const e of o.edges) if(maps.has(e.to) && (e.tp==='rec2'||e.tp==='rec3')) e.t
 for(const e of o.edges) if(sas.has(e.to)){ if(e.tp==='row') e.tp='marksTxt'; else if(e.tp==='rec') e.tp='marksRec'; } }
 const tbls=new Set(o.nodes.filter(n=>n.type==='table').map(n=>n.id));
 for(const e of o.edges) if(tbls.has(e.from) && e.fp==='bands') e.fp='rows';   // выходы bands и rows у Table слиты в rows
+// ход по строкам у Table вынесен в Row Player: параметры, провода trig / t и выходы хода переезжают на новый узел,
+// строки ему идут проводом rows от Table
+{ const PLAY=['advance','order','rate','speed','tscale','loop','interp','first','last','unit','tcol','dwellCol','speedCol','latCol','lonCol'];
+const KEEP=new Set(['rows','all','match','list']);          // выходы, оставшиеся у Table
+let mx=Math.max(0,...o.nodes.map(n=>+String(n.id).slice(1)||0));
+for(const t of o.nodes.filter(n=>n.type==='table')){
+const p=t.p||(t.p={});
+const play=(p.advance||'rate')!=='rate' || +p.rate>0
+  || o.edges.some(e=>e.to===t.id && (e.tp==='trig' || e.tp==='t'))
+  || o.edges.some(e=>e.from===t.id && ['done','dist','bearing','progress'].includes(e.fp));
+if(play){
+const pp={}; for(const k of PLAY) if(k in p) pp[k]=p[k];
+for(const k of ['initial','textCol','cols']) if(k in p) pp[k]=Array.isArray(p[k]) ? p[k].slice() : p[k];
+const id='n'+(++mx), refs=new Set(Object.entries(p.pref||{}).flatMap(([c,fs])=>fs.map(f=>c+'.'+f)));   // поля связанных записей остаются у Table
+o.nodes.push({id,type:'rowplayer',x:t.x||0,y:(t.y||0)+Math.max(t.h||0,620)+30,p:pp});
+for(const e of o.edges){
+if(e.to===t.id && (e.tp==='trig' || e.tp==='t' || e.tp==='row')) e.to=id;
+else if(e.from===t.id && !KEEP.has(e.fp) && !refs.has(e.fp)) e.from=id; }
+o.edges.push({from:t.id,fp:'rows',to:id,tp:'rows'});
+}
+for(const k of PLAY) delete p[k];
+} }
+// лог входов a–d у Table вынесен в Value Log: провода a–d и параметры переезжают, его rec идёт в rec таблицы
+{ let mx=Math.max(0,...o.nodes.map(n=>+String(n.id).slice(1)||0));
+for(const t of o.nodes.filter(n=>n.type==='table')){
+const p=t.p||(t.p={});
+if(p.log){
+const id='n'+(++mx);
+o.nodes.push({id,type:'vallog',x:(t.x||0)-280,y:t.y||0,p:{period:p.period??1,names:p.names??'a,b,c,d'}});
+for(const e of o.edges) if(e.to===t.id && /^[a-d]$/.test(e.tp)) e.to=id;
+o.edges.push({from:id,fp:'rec',to:t.id,tp:'rec'});
+}
+for(const k of ['log','period','names','capture']) delete p[k];
+} }
 // входы nodes / set у карты, Graph и Video Overlay слиты в rows; Internet Radio выдаёт набор rows вместо потока rec
 { const types={}; for(const n of o.nodes) types[n.id]=n.type;
 for(const e of o.edges){
