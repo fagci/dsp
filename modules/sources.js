@@ -6577,13 +6577,13 @@ const ListDB = (() => {
       for(const it of items) if(!it.fields) it.fields={value:it.value};
       return items;
     },
-    // имена — по ключам индекса (nextunique), без чтения самих записей
-    async listNames(){ const s=await store('readonly');
-      const names=await new Promise((res,rej)=>{
-        const out=[], rq=s.index('listName').openKeyCursor(null,'nextunique');
-        rq.onsuccess=()=>{ const c=rq.result; if(c){ out.push(c.key); c.continue(); } else res(out); };
-        rq.onerror=()=>rej(rq.error);
-      });
+    // имена — по ключам индекса: от каждого найденного прыжок к следующему (nextunique в Chromium идёт по всем записям)
+    async listNames(){ const s=await store('readonly'), ix=s.index('listName'), names=[];
+      for(let rg=null;;){
+        const c=await reqP(ix.openKeyCursor(rg));
+        if(!c) break;
+        names.push(c.key); rg=IDBKeyRange.lowerBound(c.key,true);
+      }
       const meta=await ListDB.metaNames();               // пустой список с колонками тоже существует
       return [...new Set([...names,...meta])].sort(); },
     async renameList(oldName,newName){ const s=await store('readwrite');
