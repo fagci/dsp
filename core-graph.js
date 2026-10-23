@@ -636,7 +636,7 @@ markWiresDirty();
 }
 function portEl(p,dir){
 const e=document.createElement('div'); e.className='port'; e.dataset.dir=dir;
-e.innerHTML= `<span class="pin" data-n="${p.n}" title="${p.n===p.t ? p.n : p.n+' ('+p.t+')'}" style="background:${TYPE_COLOR[p.t]}">${p.n}</span>` ;
+e.innerHTML= `<span class="pin" data-n="${p.n}" title="${(p.n===p.t ? p.n : p.n+' ('+p.t+')')+(p.tip ? ' — '+p.tip.replace(/"/g,'&quot;') : '')}" style="background:${TYPE_COLOR[p.t]}">${p.n}</span>` ;
 return e;
 }
 function paramBtn(n,s){
@@ -2243,6 +2243,8 @@ for(const q of outs) for(const e of src) if(e.to===q.from) o.edges.push({from:e.
 o.nodes=o.nodes.filter(n=>!gone.has(n.id)); } }
 { const maps=new Set(o.nodes.filter(n=>n.type==='geoMap').map(n=>n.id));
 for(const e of o.edges) if(maps.has(e.to) && (e.tp==='rec2'||e.tp==='rec3')) e.tp='rec'; }
+{ const sas=new Set(o.nodes.filter(n=>n.type==='sa').map(n=>n.id));   // входы row / rec анализатора спектра → marksTxt / marksRec
+for(const e of o.edges) if(sas.has(e.to)){ if(e.tp==='row') e.tp='marksTxt'; else if(e.tp==='rec') e.tp='marksRec'; } }
 const tbls=new Set(o.nodes.filter(n=>n.type==='table').map(n=>n.id));
 for(const e of o.edges) if(tbls.has(e.from) && e.fp==='bands') e.fp='rows';   // выходы bands и rows у Table слиты в rows
 // входы nodes / set у карты, Graph и Video Overlay слиты в rows; Internet Radio выдаёт набор rows вместо потока rec
