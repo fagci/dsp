@@ -219,10 +219,10 @@ function tblPresetRows(name){
 }
 // список из DB: колонки и строки (общий разбор для активного и отмеченных списков)
 function tblDbRows(items,meta){
-  const keys=[]; let hasName=false;
+  const keys=[], seen=new Set(); let hasName=false;
   for(const it of items){
     if(it.name) hasName=true;
-    for(const k in it.fields) if(k!=='name' && !keys.includes(k)) keys.push(k);
+    for(const k in it.fields) if(k!=='name' && !seen.has(k)){ seen.add(k); keys.push(k); }
   }
   const cols=meta?.cols ? meta.cols.slice() : (hasName ? ['name'] : []).concat(keys);
   if(hasName && !cols.includes('name')) cols.unshift('name');
@@ -1135,13 +1135,15 @@ function tblTplMenu(n){
 }
 async function tblRenderAll(n){
   if(!n.ui) return;
-  const names=await tblNames(), ui=n.ui;
+  const ui=n.ui;
+  ui.filter.value=n.p.filter||'';
+  tblRenderList(n);                                     // строки не ждут имён списков
+  if(n.viewOpen) tblRenderView(n);
+  const names=await tblNames();
+  if(n.disposed || n.ui!==ui) return;
   if(!names.includes(n.p.list)) names.push(n.p.list);   // пустой, ещё не записанный
   n.treeNames=names;
   tblRenderTree(n);
-  ui.filter.value=n.p.filter||'';
-  tblRenderList(n);
-  if(n.viewOpen) tblRenderView(n);
   tcOpenPending(n);
 }
 /* ---------- дерево списков ---------- */
@@ -1162,6 +1164,7 @@ const tblFilesOf=d=>[...d.files.map(f=>f.name),...[...d.dirs.values()].flatMap(t
 const tblByName=(a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'});
 function tblRenderTree(n){
   const ui=n.ui, sh=tblShow(n), html=[];
+  if(ui.tree.hidden){ tblRenderPick(n); return; }       // дерево строится при открытии
   const walk=(d,depth)=>{
     for(const sub of [...d.dirs.values()].sort((a,b)=>tblByName(a.name,b.name))){
       const all=tblFilesOf(sub), on=all.filter(f=>sh.has(f)).length, open=n._open.has(sub.path);
@@ -1204,7 +1207,7 @@ function tblRenderPick(n){
   ui.shown.textContent='☑ '+tblShow(n).size;
   ui.shown.classList.toggle('on',!ui.tree.hidden);
 }
-function tblTreeToggle(n){ n.ui.tree.hidden=!n.ui.tree.hidden; n.ui.shown.classList.toggle('on',!n.ui.tree.hidden); }
+function tblTreeToggle(n){ n.ui.tree.hidden=!n.ui.tree.hidden; if(!n.ui.tree.hidden) tblRenderTree(n); n.ui.shown.classList.toggle('on',!n.ui.tree.hidden); }
 function tblTreeClick(n,e){
   if(e.target.closest('.tt-close')){ tblTreeToggle(n); return; }
   if(e.target.closest('.tt-none')){ tblSetShow(n,[]); return; }

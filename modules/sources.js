@@ -6573,12 +6573,19 @@ const ListDB = (() => {
     async remove(id){ const s=await store('readwrite'); const it=await reqP(s.get(id)); if(it) await syncNoteDel('t',it); return reqP(s.delete(id)); },
     async list(listName){ const s=await store('readonly');
       const items=await reqP(s.index('listName').getAll(listName));
-      // старые записи (до появления fields) — доопределяем как одно поле value
-      return items.map(it=>({...it, fields: it.fields || {value: it.value}}));
+      // старые записи (до появления fields) — доопределяем как одно поле value; getAll отдаёт свежие копии, правим на месте
+      for(const it of items) if(!it.fields) it.fields={value:it.value};
+      return items;
     },
-    async listNames(){ const s=await store('readonly'); const all=await reqP(s.getAll());
+    // имена — по ключам индекса (nextunique), без чтения самих записей
+    async listNames(){ const s=await store('readonly');
+      const names=await new Promise((res,rej)=>{
+        const out=[], rq=s.index('listName').openKeyCursor(null,'nextunique');
+        rq.onsuccess=()=>{ const c=rq.result; if(c){ out.push(c.key); c.continue(); } else res(out); };
+        rq.onerror=()=>rej(rq.error);
+      });
       const meta=await ListDB.metaNames();               // пустой список с колонками тоже существует
-      return [...new Set([...all.map(x=>x.listName),...meta])].sort(); },
+      return [...new Set([...names,...meta])].sort(); },
     async renameList(oldName,newName){ const s=await store('readwrite');
       const items=await reqP(s.index('listName').getAll(oldName));
       for(const it of items){ it.uid=it.uid||syLegacyUid(it.listName,it.name,JSON.stringify(it.fields)); it.listName=newName; it.modified=Date.now(); await reqP(s.put(it)); }
