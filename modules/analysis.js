@@ -1633,7 +1633,7 @@ function saOvKick(n){
   if(n._ovRaf) return;
   n._ovRaf=requestAnimationFrame(()=>{ n._ovRaf=0; saOvDraw(n); });
 }
-// Метки с входов row (текст: строки "from=433920 to=433950 label=start t=1231231123") и rec (записи
+// Метки с входов marksTxt (текст: строки "from=433920 to=433950 label=start t=1231231123") и marksRec (записи
 // с теми же полями). Ключи: from/to или f+bw — полоса; без них — линия во всю ширину; label, color,
 // t (с, либо мс) и dur (с). Без t метка ставится сразу. Время подписывается, только если нет label.
 const SA_ROW_RE=/([A-Za-z_]\w*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s]+))/g;
@@ -1643,13 +1643,13 @@ function saRowParse(line){
   return o;
 }
 function saRowIn(n,I){
-  if(typeof I.row==='string'){
-    if(I.row!==n._rowLast){
-      n._rowLast=I.row;
-      for(const ln of I.row.split(/[\r\n]+/)){ const o=saRowParse(ln); if(Object.keys(o).length) saMarkAdd(n,o); }
+  if(typeof I.marksTxt==='string'){
+    if(I.marksTxt!==n._marksTxtLast){
+      n._marksTxtLast=I.marksTxt;
+      for(const ln of I.marksTxt.split(/[\r\n]+/)){ const o=saRowParse(ln); if(Object.keys(o).length) saMarkAdd(n,o); }
     }
-  } else n._rowLast=null;
-  if(I.rec) for(const r of recList(I.rec).slice(0,50)) if(r && typeof r==='object') saMarkAdd(n,r);
+  } else n._marksTxtLast=null;
+  if(I.marksRec) for(const r of recList(I.marksRec).slice(0,50)) if(r && typeof r==='object') saMarkAdd(n,r);
 }
 function saMarkAdd(n,o){
   const g=(...ks)=>{ for(const k of ks) if(o[k]!=null && o[k]!=='') return o[k]; return null; };
@@ -1890,8 +1890,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         {n:'spec',t:'spec'},
         {n:'bands',t:'bands'},
         {n:'skip',t:'bands'},
-        {n:'row',t:'txt',tip:'text marks: lines like "from=433920 to=433950 label=start t=1231231123"'},
-        {n:'rec',t:'rec',tip:'records with the same fields as row (from/to, label, color, t, dur) — drawn as marks'},
+        {n:'marksTxt',t:'txt',tip:'marks as text, one per line: from=433920 to=433950 label=start t=1231231123'},
+        {n:'marksRec',t:'rec',tip:'marks as records with the same fields (from/to, label, color, t, dur)'},
         {n:'m1',t:'num'},
         {n:'m2',t:'num'},
         {n:'m3',t:'num'},
