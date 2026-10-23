@@ -571,6 +571,18 @@ function pairOut(n,p){
   const st=(n._pb||(n._pb={}))[p.n] || (n._pb[p.n]=pairHid('iqMerge',{fc:0,swap:false}));
   n.out[p.n]=MOD.iqMerge.process(st,{I:a,Q:b})?.iq ?? null;
 }
+// На входы rec и bands можно вести несколько проводов: значения идут одним списком в порядке проводов
+const MULTI_T=new Set(['rec','bands']);
+function mergeIn(g,es){
+  let out=null;
+  for(const e of es){
+    const v=g.map[e.from]?.out?.[e.fp];
+    if(v==null) continue;
+    if(!out) out=[];
+    if(Array.isArray(v)) for(const x of v) out.push(x); else out.push(v);
+  }
+  return out;
+}
 function evalNode(n, ctx){
   const d = MOD[n.type]; if(!d) return;
   const g = ctx || Graph;
@@ -582,7 +594,8 @@ function evalNode(n, ctx){
   for(const p of portsOf(n,'ins')){
     const key = keys[p.n] || (keys[p.n]=n.id+'\u0001'+p.n);
     const e = idx ? idx.get(key) : g.edges.find(e=>e.to===n.id && e.tp===p.n);
-    I[p.n] = e ? (g.map[e.from]?.out?.[e.fp] ?? null) : null;
+    if(Array.isArray(e)) I[p.n] = e.length===1 ? (g.map[e[0].from]?.out?.[e[0].fp] ?? null) : mergeIn(g,e);
+    else I[p.n] = e ? (g.map[e.from]?.out?.[e.fp] ?? null) : null;
   }
   if(d._pair===undefined) d._pair=(Array.isArray(d.ins) && d.ins.some(p=>p.pair)) || (Array.isArray(d.outs) && d.outs.some(p=>p.pair));
   if(d._pair) for(const p of portsOf(n,'ins')) if(p.pair) pairIn(n,I,p);

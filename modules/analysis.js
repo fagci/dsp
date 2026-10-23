@@ -628,9 +628,20 @@ function cfarPopcount(x){ let c=0; for(;x;x&=x-1) c++; return c; }
 def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'skip',t:'bands'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'guard',t:'num'},
        {n:'train',t:'num'},{n:'thr',t:'num'},{n:'minW',t:'num'},{n:'top',t:'num'},{n:'hold',t:'num'}],
-  outs:[{n:'count',t:'num'},{n:'f1',t:'num'},{n:'l1',t:'num'},{n:'f2',t:'num'},{n:'l2',t:'num'},
-        {n:'f3',t:'num'},{n:'l3',t:'num'},{n:'f4',t:'num'},{n:'l4',t:'num'},
-        {n:'snr1',t:'num'},{n:'floor',t:'num'},{n:'bw1',t:'num'},{n:'rec',t:'rec'}],
+  outs:[
+        {n:'count',t:'num'},
+        {n:'rec',t:'rec'},
+        {n:'f1',t:'num'},
+        {n:'l1',t:'num'},
+        {n:'snr1',t:'num'},
+        {n:'bw1',t:'num'},
+        {n:'floor',t:'num'},
+        {n:'f2',t:'num'},
+        {n:'l2',t:'num'},
+        {n:'f3',t:'num'},
+        {n:'l3',t:'num'},
+        {n:'f4',t:'num'},
+        {n:'l4',t:'num'}],
   readout:true, tall:true,
   params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)',fn:n=>{ if(n.p.auto) n.zoom=null; }},
           {n:'fmin',t:'range',min:1,max:6e9,step:1,log:true,d:100},
@@ -1875,17 +1886,57 @@ function saSkipDraw(n,cv){
   return false;
 }
 def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
-  ins:[{n:'spec',t:'spec'},{n:'spec2',t:'spec'},{n:'spec3',t:'spec'},{n:'spec4',t:'spec'},{n:'m1',t:'num'},{n:'m2',t:'num'},{n:'m3',t:'num'},{n:'m4',t:'num'},
-       {n:'bLo',t:'num'},{n:'bHi',t:'num'},{n:'floor',t:'num'},{n:'top',t:'num'},
-       {n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'split',t:'num'},{n:'tol',t:'num'},
-       {n:'log',t:'num'},{n:'grid',t:'num'},{n:'bands',t:'bands'},{n:'skip',t:'bands'},{n:'row',t:'txt'},{n:'rec',t:'rec'}],
-  outs:[{n:'f1',t:'num'},{n:'f2',t:'num'},{n:'f3',t:'num'},{n:'f4',t:'num'},
-        {n:'fr1',t:'num'},{n:'fr2',t:'num'},{n:'fr3',t:'num'},{n:'fr4',t:'num'},
-        {n:'db1',t:'num'},{n:'db2',t:'num'},{n:'db3',t:'num'},{n:'db4',t:'num'},
-        {n:'snr1',t:'num'},{n:'snr2',t:'num'},{n:'snr3',t:'num'},{n:'snr4',t:'num'},
+  ins:[
+        {n:'spec',t:'spec'},
+        {n:'bands',t:'bands'},
+        {n:'skip',t:'bands'},
+        {n:'row',t:'txt'},
+        {n:'rec',t:'rec'},
+        {n:'m1',t:'num'},
+        {n:'m2',t:'num'},
+        {n:'m3',t:'num'},
+        {n:'m4',t:'num'},
+        {n:'bLo',t:'num'},
+        {n:'bHi',t:'num'},
+        {n:'floor',t:'num'},
+        {n:'top',t:'num'},
+        {n:'fmin',t:'num'},
+        {n:'fmax',t:'num'},
+        {n:'split',t:'num'},
+        {n:'tol',t:'num'},
+        {n:'log',t:'num'},
+        {n:'grid',t:'num'},
+        {n:'spec2',t:'spec'},
+        {n:'spec3',t:'spec'},
+        {n:'spec4',t:'spec'}],
+  outs:[
+        {n:'rec',t:'rec'},
+        {n:'count',t:'num'},
+        {n:'f1',t:'num'},
+        {n:'db1',t:'num'},
+        {n:'snr1',t:'num'},
+        {n:'detF',t:'num'},
         {n:'centerFreq',t:'num'},
-        {n:'count',t:'num'},{n:'detF',t:'num'},{n:'holdF',t:'num'},{n:'rec',t:'rec'},
-        {n:'count2',t:'num'},{n:'detF2',t:'num'},{n:'count3',t:'num'},{n:'detF3',t:'num'},{n:'count4',t:'num'},{n:'detF4',t:'num'}],   // count/detF/holdF/rec — панели (layout=panes)
+        {n:'holdF',t:'num'},
+        {n:'f2',t:'num'},
+        {n:'db2',t:'num'},
+        {n:'snr2',t:'num'},
+        {n:'f3',t:'num'},
+        {n:'db3',t:'num'},
+        {n:'snr3',t:'num'},
+        {n:'f4',t:'num'},
+        {n:'db4',t:'num'},
+        {n:'snr4',t:'num'},
+        {n:'fr1',t:'num'},
+        {n:'fr2',t:'num'},
+        {n:'fr3',t:'num'},
+        {n:'fr4',t:'num'},
+        {n:'count2',t:'num'},
+        {n:'detF2',t:'num'},
+        {n:'count3',t:'num'},
+        {n:'detF3',t:'num'},
+        {n:'count4',t:'num'},
+        {n:'detF4',t:'num'}],   // count/detF/holdF/rec — панели (layout=panes)
   view:{h:280}, pick:true, resize:true,
   params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)',fn:n=>{ if(n.p.auto) n.zoom=null; }},
           {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[0,4000],label:'range, Hz'},
@@ -3332,19 +3383,7 @@ def({ id:'bookmarks', title:'Bookmarks (freq list)', cat:'Radio', legacy:true,  
 
 // 'sa' принимает только один вход 'bands' — этот узел склеивает несколько источников (bandplan +
 // bookmarks и т.д.) в один массив, чтобы можно было подключить оба сразу.
-def({ id:'bandsmerge', title:'Merge Band Plans', cat:'Radio',
-  ins:[{n:'a',t:'bands'},{n:'b',t:'bands'},{n:'c',t:'bands'},{n:'d',t:'bands'}],
-  outs:[{n:'bands',t:'bands'}],
-  readout:true,
-  process(n,I){
-    const out=[];
-    for(const k of ['a','b','c','d']) if(Array.isArray(I[k])) out.push(...I[k]);
-    n.count=out.length;
-    return {bands:out};
-  },
-  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=(n.count||0)+' entries'; }});
-
-// Автосканер полос: гуляет по списку диапазонов ('bands' — с 'bandplan'/'bandsmerge') окном
+// Автосканер полос: гуляет по списку диапазонов ('bands' — с 'bandplan', можно несколько проводов) окном
 // ширины span (реальная захваченная полоса приёмника — freqLo/freqHi c 'rtlsdr'), проверяя
 // на каждой позиции активность ('active' — обычно cfar.count). Есть активность — держим центр
 // (до timeout, даже если активность не пропадает — иначе можно залипнуть на постоянной несущей
@@ -3524,7 +3563,7 @@ function chanList(bands,skip){
   }
   return [...m].sort((a,b)=>a[0]-b[0]).map(([f,label])=>({f,label}));
 }
-// сигнатура списка по содержимому: bandsmerge отдаёт новый массив на каждом тике
+// сигнатура списка по содержимому: слитые несколько проводов bands дают новый массив на каждом тике
 function chanSig(a){
   if(!Array.isArray(a)) return '';
   let h=0; for(const b of a) if(b) h=(h*31+(b.lo||0)+7*(b.hi||0)+13*(b.step||0)+(b.sig?1:0))%1e12;

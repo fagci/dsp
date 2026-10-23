@@ -944,9 +944,16 @@ const HFDL_GS_STATIONS = {
 
 def({ id:'hfdlStack', title:'HFDL: LPDU→HFNPDU→ACARS→ADS-C', cat:'Decoders', readout:true, resize:true,
   ins:[{n:'blk',t:'blk'},{n:'freq',t:'num'}],
-  outs:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'trig',t:'num'},{n:'id',t:'txt'},
-        {n:'gsLat',t:'num'},{n:'gsLon',t:'num'},{n:'gsTrig',t:'num'},{n:'gsName',t:'txt'},
-        {n:'rec',t:'rec'}],                          // записи для карты: самолёты и наземные станции
+  outs:[
+        {n:'rec',t:'rec'},
+        {n:'lat',t:'num'},
+        {n:'lon',t:'num'},
+        {n:'trig',t:'num'},
+        {n:'id',t:'txt'},
+        {n:'gsLat',t:'num'},
+        {n:'gsLon',t:'num'},
+        {n:'gsTrig',t:'num'},
+        {n:'gsName',t:'txt'}],                          // записи для карты: самолёты и наземные станции
   params:[{n:'freq',t:'num',d:11384,label:'frequency, kHz'}],
   init:n=>{ n.bid=-1; n.lastLat=0; n.lastLon=0; n.lastId=''; n.log='no data';
     n.gsLat=0; n.gsLon=0; n.gsName=''; },

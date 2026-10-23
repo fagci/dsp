@@ -730,8 +730,8 @@ function fsRecUI(n){
 }
 
 def({ id:'files', title:'Files', cat:'Output', kw:'file manager storage samples sample library clips audio video record trigger receive save bytes images folder browser upload download', w:340, h:440, resize:true,
-  ins:[{n:'clipId',t:'num'},{n:'play',t:'num'},{n:'seek',t:'num'},{n:'in',t:'sig'},{n:'rec',t:'num'},{n:'bin',t:'bin'},{n:'path',t:'txt'},{n:'vid',t:'vid'},{n:'img',t:'img'}],
-  outs:[{n:'id',t:'num'},{n:'name',t:'txt'},{n:'size',t:'num'},{n:'send',t:'num'},{n:'bin',t:'bin'},{n:'out',t:'sig'},{n:'clipId',t:'num'},{n:'pos',t:'num'},{n:'ok',t:'num'},{n:'vid',t:'vid'}],
+  ins:[{n:'in',t:'sig'},{n:'bin',t:'bin'},{n:'vid',t:'vid'},{n:'img',t:'img'},{n:'path',t:'txt'},{n:'rec',t:'num'},{n:'play',t:'num'},{n:'seek',t:'num'},{n:'clipId',t:'num'}],
+  outs:[{n:'out',t:'sig'},{n:'bin',t:'bin'},{n:'vid',t:'vid'},{n:'pos',t:'num'},{n:'ok',t:'num'},{n:'name',t:'txt'},{n:'id',t:'num'},{n:'size',t:'num'},{n:'send',t:'num'},{n:'clipId',t:'num'}],
   params:[{n:'meta',t:'check',d:true,label:'bin: attach name and type (off — bare bytes)'},
     {n:'loop',t:'check',d:true,label:'loop the played clip'},
     {n:'recSrc',t:'select',opts:['audio','camera','screen','video in'],d:'audio',label:'record from (audio: `in` port when wired, else microphone; video in: the `vid` / `img` port)'},

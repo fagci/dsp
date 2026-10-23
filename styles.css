@@ -480,12 +480,6 @@ body.noedit #bar .ed{display:none}
   font-size:9px;font-weight:600;color:#111;white-space:nowrap}
 /* тап-зона шире видимой точки (на мобильном пин мал для пальца) */
 .port .pin::before{content:'';position:absolute;inset:-6px}
-/* полное имя пина — по наведению и пока тянется провод (.lit) */
-.port:hover .pin::after,.port.lit .pin::after{content:attr(data-n);position:absolute;top:50%;transform:translateY(-50%);
-  padding:1px 5px;border-radius:4px;background:var(--panel2);color:var(--text,#ddd);border:1px solid var(--line);
-  font-size:10px;line-height:14px;white-space:nowrap;z-index:5;pointer-events:none}
-.col:not(.o) .port .pin::after{right:calc(100% + 4px)}
-.col.o .port .pin::after{left:calc(100% + 4px)}
 .col:not(.o) .port .pin{right:0}   /* контейнер сам шириной --pov у края узла — точка просто у его дальней стороны */
 .col.o .port .pin{left:0}
 .port:hover .pin{box-shadow:0 0 0 1px var(--acc)}

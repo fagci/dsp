@@ -1,8 +1,16 @@
 // Мост nRF24L01+ ↔ USB-UART для модуля nRF24 рабочего стенда DSP.
 // Не проверено на железе: собрано по документации библиотеки RF24 (TMRh20), сверьте пины со своей платой.
 //
-// Плата: Arduino Nano / Uno (ATmega328P) — nRF24L01+: CE → D9, CSN → D10, SCK → D13, MOSI → D11, MISO → D12, VCC → 3.3 В
-// (модулю нужен конденсатор 10 мкФ у питания; PA+LNA-модули — отдельное питание). Библиотека: RF24 (менеджер библиотек Arduino IDE).
+// Плата: Arduino Nano / Uno (ATmega328P). Подключение: вывод модуля nRF24L01+ → пин Arduino:
+//   GND → GND
+//   VCC → 3.3V (не 5V!)
+//   CE (Chip Enable) → D9
+//   CSN (Chip Select Not) → D10
+//   SCK (SPI Clock) → D13
+//   MOSI (SPI Master Out, Slave In) → D11
+//   MISO (SPI Master In, Slave Out) → D12
+//   IRQ — не подключается
+// Модулю нужен конденсатор 10 мкФ у питания; PA+LNA-модули — отдельное питание. Библиотека: RF24 (менеджер библиотек Arduino IDE).
 //
 // Протокол, 115200 бод, строки с '\n':
 //   PING                    → PONG nrf24-bridge 1 chip=<0|1>

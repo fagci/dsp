@@ -304,7 +304,7 @@ function syNodeFile(n,blob,name,mime){
 }
 def({ id:'syncdata', title:'Sync Data', cat:'Sources', kw:'sync devices send text between my devices phone laptop channel share',
   ins:[{n:'send',t:'txt'},{n:'to',t:'txt'},{n:'sendFile',t:'num'},{n:'img',t:'img'},{n:'rec',t:'rec'},{n:'bin',t:'bin'}],
-  outs:[{n:'line',t:'txt'},{n:'go',t:'num'},{n:'from',t:'txt'},{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'devices',t:'num'},{n:'file',t:'num'},{n:'got',t:'num'},{n:'img',t:'img'},{n:'bin',t:'bin'}],
+  outs:[{n:'line',t:'txt'},{n:'go',t:'num'},{n:'from',t:'txt'},{n:'rec',t:'rec'},{n:'img',t:'img'},{n:'bin',t:'bin'},{n:'count',t:'num'},{n:'devices',t:'num'},{n:'file',t:'num'},{n:'got',t:'num'}],
   readout:true, tall:true,
   params:[
     {n:'channel',t:'text',d:'data',label:'channel name (receivers take only messages of the same name)'},

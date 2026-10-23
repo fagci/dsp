@@ -3,8 +3,8 @@
 // В устройство:  TX <Гц> <мкс> <мкс> …\n     Из устройства:  RX <мкс> <мкс> …\n   (метка, пауза, метка, …)
 #include <IRremote.hpp>
 
-const uint8_t PIN_RX = 2;                  // выход ИК-приёмника (TSOP / VS1838)
-const uint8_t PIN_TX = 3;                  // ИК-светодиод через транзистор
+const uint8_t PIN_RX = 2;                  // пин Arduino D2 ← вывод OUT (Signal) ИК-приёмника (TSOP / VS1838)
+const uint8_t PIN_TX = 3;                  // пин Arduino D3 → база транзистора ИК-светодиода
 const uint16_t MAX_PULSES = 250;           // на AVR с 2 КБ ОЗУ — не больше ~200
 const uint16_t LINE_MAX = 1400;
 

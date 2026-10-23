@@ -411,7 +411,7 @@ function tsvPump(n){
 }
 
 def({ id:'tsvid', title:'TS → Video', cat:'Decoders', kw:'mpeg ts transport stream dvb tv video h264 avc hevc webcodecs television broadcast', readout:true, always:true,
-  ins:[{n:'bin',t:'bin'},{n:'prog',t:'val'},{n:'page',t:'num'}], outs:[{n:'vid',t:'vid'},{n:'L',t:'sig'},{n:'R',t:'sig'},{n:'lock',t:'num'},{n:'fps',t:'num'},{n:'ttx',t:'vid'},{n:'ttxt',t:'txt'},{n:'mux',t:'bands'},{n:'all',t:'bands'},{n:'chan',t:'bands'},{n:'epg',t:'bands'},{n:'info',t:'txt'}],
+  ins:[{n:'bin',t:'bin'},{n:'prog',t:'val'},{n:'page',t:'num'}], outs:[{n:'vid',t:'vid'},{n:'L',t:'sig'},{n:'R',t:'sig'},{n:'lock',t:'num'},{n:'fps',t:'num'},{n:'info',t:'txt'},{n:'ttx',t:'vid'},{n:'ttxt',t:'txt'},{n:'mux',t:'bands'},{n:'all',t:'bands'},{n:'chan',t:'bands'},{n:'epg',t:'bands'}],
   params:[{n:'file',t:'file',accept:'.ts,.m2ts,.mts,video/mp2t',fn:(n,f)=>{
             tsvReset(n); n.dmx.reset(); n.fileObj=f; n.pos=0; n.status='file '+f.name; }},
           {n:'loop',t:'check',d:true,label:'loop the file'},

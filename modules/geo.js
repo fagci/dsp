@@ -397,24 +397,6 @@ def({ id:'recUniq', title:'Rec: Unique by Key', cat:'Data',
       return `×${e.count} ${lt} ${extra}`; }).join('\n');
     n.el.querySelector('.readout').textContent='unique '+rows.length+'\n'+tail; }});
 
-def({ id:'recMerge', title:'Rec Merge', cat:'Data', kw:'merge join combine concat records sources',
-  // Один провод на вход — поэтому несколько источников записей сводим здесь: на выход идут записи
-  // всех входов за такт, по порядку входов. Необязательная метка источника — в поле src.
-  ins:[{n:'rec1',t:'rec'},{n:'rec2',t:'rec'},{n:'rec3',t:'rec'},{n:'rec4',t:'rec'}],
-  outs:[{n:'rec',t:'rec'},{n:'count',t:'num'}],
-  readout:true,
-  params:[{n:'tags',t:'text',d:'',label:'source names for the src field (comma list: input 1, 2, …; empty — no src)'}],
-  init:n=>{ n.total=0; },
-  process(n,I){
-    const tags=String(n.p.tags||'').split(',').map(x=>x.trim()), out=[];
-    ['rec1','rec2','rec3','rec4'].forEach((k,i)=>{
-      for(const r of recList(I[k])) out.push(tags[i] && r && r.src==null ? {...r, src:tags[i]} : r);
-    });
-    n.total+=out.length;
-    return {rec:out.length?out:null, count:n.total};
-  },
-  draw(n){ n.el.querySelector('.readout').textContent='merged '+n.total; }});
-
 // Условие компилируется импортом blob-модуля: new Function/eval запрещены CSP страницы
 // (нет unsafe-eval), import() из blob: разрешён — так же сделан Module Builder.
 // Пока модуль грузится (доли мс), записи копятся и не теряются.
@@ -1393,7 +1375,7 @@ function geoTileGet(src,z,x,y,net){
 /* ---------- узел карты ---------- */
 const GEO_TILE_OPTS=['none',...Object.keys(GEO_TILES),'custom'], GEO_OV_OPTS=['none',...Object.keys(GEO_OVERLAYS),'custom'];
 def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
-  ins:[{n:'rec',t:'rec'},{n:'rec2',t:'rec'},{n:'rec3',t:'rec'},{n:'rows',t:'bands'},{n:'links',t:'bands'}],
+  ins:[{n:'rec',t:'rec'},{n:'rows',t:'bands'},{n:'links',t:'bands'}],
   outs:[{n:'pick',t:'rec'},{n:'sel',t:'rec'},{n:'edit',t:'rec'},{n:'link',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'count',t:'num'}],
   w:480, view:{h:360}, resize:true,
   params:[{n:'ttl',t:'range',min:0,max:1440,step:1,d:0,label:'keep, min (0 — forever)'},
@@ -1439,7 +1421,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
     n.vec=null; n.vmsg=''; n.vgen=0; gdVecRestore(n);
   },
   process(n,I){
-    for(const k of ['rec','rec2','rec3']) for(const r of recList(I[k])) geoMapAdd(n,r);
+    for(const r of recList(I.rec)) geoMapAdd(n,r);
     const sp=Array.isArray(I.rows) ? rowsSplit(I.rows) : null;     // rows: записи с координатами — точки, с from / to — связи
     const sl=Array.isArray(I.links) ? rowsSplit(I.links) : null;   // links: отдельная таблица связей (from, to, label, weight…)
     const ea=sp&&sp.edges, eb=sl&&sl.edges;
