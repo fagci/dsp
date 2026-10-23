@@ -912,10 +912,13 @@ const TBL_AUDIO=/^audio$/;                            // колонка со з�
 const TBL_PHOTO=/^photos?$/;                           // колонка с фото: в ячейке id «ph-…» (хранилище photos.js)
 const TBL_BTN='background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;';
 const TBL_IN='min-width:0;background:var(--bg);border:1px solid var(--line);color:var(--txt);font-size:11px;padding:1px 3px;';
+const tblBaseNames=()=>{                                 // имена без обращения к хранилищу: патч и встроенные
+  const legacy=window.BP_LEGACY;                          // старые плоские имена — только для совместимости патчей
+  return [TBL_PATCH,...Object.keys(BANDPLAN_PRESETS).filter(k=>!legacy?.has(k)).map(k=>TBL_PRE+k)];
+};
 async function tblNames(){
   const db=await ListDB.listNames().catch(()=>[]);
-  const legacy=window.BP_LEGACY;                          // старые плоские имена — только для совместимости патчей
-  return [TBL_PATCH,...Object.keys(BANDPLAN_PRESETS).filter(k=>!legacy?.has(k)).map(k=>TBL_PRE+k),...db.filter(x=>x!==TBL_PATCH && !x.startsWith(TBL_PRE))];
+  return [...tblBaseNames(),...db.filter(x=>x!==TBL_PATCH && !x.startsWith(TBL_PRE))];
 }
 /* Вид: сверху выбор списка (папки — группы выпадающего списка) и «⋯» со всеми действиями, ниже фильтр,
    две частые кнопки, список строк фиксированной высоты. Правка строки — панелью снизу поверх списка:
@@ -1139,6 +1142,10 @@ async function tblRenderAll(n){
   ui.filter.value=n.p.filter||'';
   tblRenderList(n);                                     // строки не ждут имён списков
   if(n.viewOpen) tblRenderView(n);
+  if(!n.treeNames){                                     // селект не пустой, пока хранилище отвечает
+    n.treeNames=[...tblBaseNames(),...(n.p.list!==TBL_PATCH && !n.p.list.startsWith(TBL_PRE) ? [n.p.list] : [])];
+    tblRenderTree(n);
+  }
   const names=await tblNames();
   if(n.disposed || n.ui!==ui) return;
   if(!names.includes(n.p.list)) names.push(n.p.list);   // пустой, ещё не записанный
