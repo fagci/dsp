@@ -6642,17 +6642,18 @@ const ListDB = (() => {
         tx.oncomplete=()=>res(); tx.onerror=tx.onabort=()=>rej(tx.error);
       });
     },
-    // списки одним проходом: {rows, bytes, created, modified}; пустой список с колонками — rows 0
+    // списки: {rows, bytes, created, modified}; пустой список с колонками — rows 0. Записи целиком не читаются (в базе их могут быть миллионы):
+    // число — по индексу, размер — по выборке из первых записей, даты — по первой и последней записи (ключи растут со временем)
     async summary(){
-      const all=await reqP((await store('readonly')).getAll()), m=new Map();
-      for(const it of all){
-        let e=m.get(it.listName); if(!e) m.set(it.listName,e={rows:0,bytes:0,created:Infinity,modified:0});
-        e.rows++; e.bytes+=(it.name||'').length;
-        for(const k in it.fields) e.bytes+=k.length+String(it.fields[k]??'').length+2;
-        const t=it.created||0; if(t<e.created) e.created=t; if(t>e.modified) e.modified=t;
+      const m=new Map(), meta=new Set(await ListDB.metaNames());
+      for(const k of await ListDB.listNames()){
+        const ix=(await store('readonly')).index('listName'), r=IDBKeyRange.only(k);
+        const [rows,head,last]=await Promise.all([reqP(ix.count(r)),reqP(ix.getAll(r,64)),reqP(ix.openCursor(r,'prev'))]);
+        let sz=0;
+        for(const it of head){ sz+=(it.name||'').length; for(const f in it.fields) sz+=f.length+String(it.fields[f]??'').length+2; }
+        m.set(k,{rows,bytes:head.length ? Math.round(sz/head.length*rows) : 0,created:head[0]?.created||0,modified:last?.value.created||0});
       }
-      for(const k of await ListDB.metaNames()) if(!m.has(k)) m.set(k,{rows:0,bytes:0,created:0,modified:0});
-      for(const e of m.values()) if(e.created===Infinity) e.created=0;
+      for(const k of meta) if(!m.has(k)) m.set(k,{rows:0,bytes:0,created:0,modified:0});
       return m;
     },
     async getMeta(listName){ const db=await open(); return reqP(db.transaction('meta','readonly').objectStore('meta').get(listName)); },
@@ -6663,8 +6664,9 @@ const ListDB = (() => {
 })();
 // счётчик изменений хранилища: читатели списков (Overlay, Flight Sim) перечитывают их, когда он сменился
 ListDB.rev=0;
+ListDB.watch=new Set();                                  // слушатели правок хранилища (реестр имён списков Table)
 for(const k of ['add','update','remove','renameList','deleteList','addMany','removeMany','setMeta','delMeta']){
-  const f=ListDB[k]; ListDB[k]=async function(...a){ const r=await f.apply(this,a); ListDB.rev++; if(typeof FileStore!=='undefined') FileStore.notifyLater('tables'); return r; };
+  const f=ListDB[k]; ListDB[k]=async function(...a){ const r=await f.apply(this,a); ListDB.rev++; for(const w of ListDB.watch) try{ w(); }catch(e){} if(typeof FileStore!=='undefined') FileStore.notifyLater('tables'); return r; };
 }
 
 // Простой CSV-парсер с поддержкой кавычек и экранированных "" внутри поля.
