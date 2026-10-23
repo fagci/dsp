@@ -326,25 +326,28 @@ def({ id:'costas', lazy:'proc', title:'Carrier Acquisition', cat:'Modulation',
       'offset '+(n.fo*Eng.sr).toFixed(1)+' Hz · lock '+(n.lk*100).toFixed(0)+'%'; }});
 
 
-def({ id:'rrc', title:'Matched Filter', cat:'Modulation', ins:[{n:'in',t:'sig'},{n:'baud',t:'num'},{n:'beta',t:'num'},{n:'span',t:'num'}],
-  outs:[{n:'out',t:'sig'}],
+def({ id:'rrc', title:'Matched Filter', cat:'Modulation', ins:[{n:'in',t:'sig'},{n:'iq',t:'iq',pair:['I','Q']},{n:'I',t:'sig',hide:true},{n:'Q',t:'sig',hide:true},{n:'baud',t:'num'},{n:'beta',t:'num'},{n:'span',t:'num'}],
+  outs:[{n:'out',t:'sig'},{n:'iq',t:'iq',pair:['I','Q']},{n:'I',t:'sig',hide:true},{n:'Q',t:'sig',hide:true}],
   params:[{n:'baud',t:'range',min:10,max:30000,step:.01,d:1800,log:true},
           {n:'beta',t:'range',min:.05,max:1,step:.01,d:.35},
           {n:'span',t:'range',min:2,max:16,step:1,d:8}],
   init:n=>{n.key='';},
   process(n,I){
     for(const k of ['baud','beta','span']) if(typeof I[k]==='number') setMod(n,k,I[k]);
-    const o=buf(n,'out'), sps=Eng.sr/n.p.baud;
+    const sps=Eng.sr/n.p.baud;
     const key=n.p.baud+'/'+n.p.beta+'/'+n.p.span+'/'+Eng.sr;
-    if(n.key!==key){ n.key=key; n.h=rrcTaps(sps,n.p.beta,n.p.span);
-      n.z=new Float32Array(n.h.length); n.zi=0; }
-    const h=n.h, z=n.z, L=h.length;
-    for(let i=0;i<BLOCK;i++){
-      z[n.zi]=I.in?I.in[i]:0;
-      let acc=0, k=n.zi;
-      for(let j=0;j<L;j++){ acc+=h[j]*z[k]; k=k? k-1 : L-1; }
-      n.zi=(n.zi+1)%L; o[i]=acc; }
-    return {out:o}; }});
+    if(n.key!==key){ n.key=key; n.h=rrcTaps(sps,n.p.beta,n.p.span); n.st={}; }
+    const run=(name,src,out)=>{                        // один канал: свой хвост отсчётов на каждый вход
+      const st=n.st[name] || (n.st[name]={z:new Float32Array(n.h.length), zi:0});
+      const h=n.h, z=st.z, L=h.length, o=buf(n,out);
+      for(let i=0;i<BLOCK;i++){
+        z[st.zi]=src?src[i]:0;
+        let acc=0, k=st.zi;
+        for(let j=0;j<L;j++){ acc+=h[j]*z[k]; k=k? k-1 : L-1; }
+        st.zi=(st.zi+1)%L; o[i]=acc; }
+      return o; };
+    if(I.I || I.Q) return {I:run('I',I.I,'I'), Q:run('Q',I.Q,'Q')};
+    return {out:run('in',I.in,'out')}; }});
 
 
 function rrcTaps(sps,beta,span){                     // корень из приподнятого косинуса

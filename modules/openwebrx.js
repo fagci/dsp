@@ -190,7 +190,7 @@ function owrxDisconnect(n){
 }
 
 def({ id:'openwebrx', title:'OpenWebRX', cat:'Sources',
-  ins:[{n:'freq',t:'num'},{n:'tuneFreq',t:'num'},{n:'steerFreq',t:'num'},{n:'bw',t:'num'},{n:'demod',t:'val'},{n:'server',t:'txt'},{n:'profile',t:'txt'}], outs:[{n:'audio',t:'sig'},{n:'rssi',t:'num'},{n:'spec',t:'spec'},{n:'tuneFreq',t:'num'},{n:'bw',t:'num'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'profile',t:'txt'}],
+  ins:[{n:'freq',t:'num'},{n:'tuneFreq',t:'num'},{n:'steerFreq',t:'num'},{n:'bw',t:'num'},{n:'demod',t:'val'},{n:'server',t:'txt'},{n:'profile',t:'txt'}], outs:[{n:'audio',t:'sig'},{n:'spec',t:'spec'},{n:'rssi',t:'num'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'tuneFreq',t:'num'},{n:'bw',t:'num'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},{n:'profile',t:'txt'}],
   view:{h:56}, readout:true,
   params:[
     {n:'server',t:'text',d:'',label:'host:port (wss:// — with TLS)'},

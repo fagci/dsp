@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=74;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=75;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -598,7 +598,7 @@ const map=addNode('geoMap',520,40,{mz:3,mlat:50,mlon:30});
 map.size.w=620; map.size.h=560; applySize(map);
 addEdge(me.id,'rec',map.id,'rec');
 addEdge(csv.id,'rec',lg.id,'rec');
-addEdge(lg.id,'rec',map.id,'rec2');
+addEdge(lg.id,'rec',map.id,'rec');
 markWiresDirty();
 });
 preset('Sequencer: Vehicle Track on the Map', function(){
@@ -814,7 +814,7 @@ map.size.w=640; map.size.h=560; applySize(map);
 addEdge(m.id,'a',f8.id,'in');
 addEdge(f8.id,'rec',lg.id,'rec');
 addEdge(lg.id,'rec',map.id,'rec');
-addEdge(me.id,'rec',map.id,'rec2');
+addEdge(me.id,'rec',map.id,'rec');
 markWiresDirty();
 });
 preset('FT8: DX Log (Table)', function(){
@@ -857,8 +857,8 @@ addEdge(me.id,'lat',mk.id,'lat');
 addEdge(me.id,'lon',mk.id,'lon');
 addEdge(mk.id,'rec',loc.id,'rec');
 addEdge(mk.id,'rec',map.id,'rec');
-addEdge(loc.id,'rec',map.id,'rec2');
-addEdge(me.id,'rec',map.id,'rec3');
+addEdge(loc.id,'rec',map.id,'rec');
+addEdge(me.id,'rec',map.id,'rec');
 markWiresDirty();
 });
 preset('HF: Who Is On Air (Schedule)', function(){
@@ -878,7 +878,7 @@ map.size.w=620; map.size.h=520; applySize(map);
 addEdge(kw.id,'audio',dc.id,'L'); addEdge(kw.id,'audio',dc.id,'R');
 addEdge(kw.id,'freq',sk.id,'freq');
 addEdge(sk.id,'rec',map.id,'rec');
-addEdge(me.id,'rec',map.id,'rec2');
+addEdge(me.id,'rec',map.id,'rec');
 markWiresDirty();
 });
 preset('Satellites: Track and Doppler', function(){
@@ -902,7 +902,7 @@ addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(st.id,'bands',sa.id,'bands');
 addEdge(rx.id,'audio',dc.id,'L'); addEdge(rx.id,'audio',dc.id,'R');
 addEdge(st.id,'rec',map.id,'rec');
-addEdge(me.id,'rec',map.id,'rec2');
+addEdge(me.id,'rec',map.id,'rec');
 addEdge(map.id,'sel',st.id,'select');
 markWiresDirty();
 });
@@ -966,7 +966,7 @@ addEdge(net.id,'rec',me.id,'rec');
 addEdge(net.id,'rec',fresh.id,'rec');
 addEdge(fresh.id,'rec',loc.id,'rec');
 addEdge(loc.id,'rec',map.id,'rec');
-addEdge(me.id,'rec',map.id,'rec2');
+addEdge(me.id,'rec',map.id,'rec');
 addEdge(map.id,'sel',loc.id,'select');
 markWiresDirty();
 });
@@ -2859,7 +2859,6 @@ wf.size.w=560; wf.size.h=300; applySize(wf);
 const bp=addNode('biquad',320,40,{type:'bp',freq:1800,Q:1.2});
 const co=addNode('costas',580,40,{f0:1800,order:'8PSK',loopHz:5,lp:2500});
 const fi=addNode('rrc',840,40,{baud:1800,beta:.35,span:8});
-const fq=addNode('rrc',840,260,{baud:1800,beta:.35,span:8});
 const ga=addNode('gardner',1100,40,{baud:1800,gain:.02});
 const sl=addNode('pskdec',1360,40,{order:'8',diff:true,fmt:'hex'});
 sl.size.w=320; sl.size.h=220; applySize(sl);
@@ -2868,10 +2867,9 @@ cn.size.w=320; cn.size.h=240; applySize(cn);
 addEdge(m.id,'a',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
 addEdge(m.id,'a',bp.id,'in'); addEdge(wf.id,'f1',bp.id,'freq');
 addEdge(bp.id,'out',co.id,'in'); addEdge(wf.id,'f1',co.id,'f0');
-addEdge(co.id,'I',fi.id,'in'); addEdge(co.id,'Q',fq.id,'in');
-addEdge(fi.id,'out',ga.id,'I'); addEdge(fq.id,'out',ga.id,'Q');
-addEdge(ga.id,'sI',sl.id,'I'); addEdge(ga.id,'sQ',sl.id,'Q'); addEdge(ga.id,'clk',sl.id,'clk');
-addEdge(ga.id,'sI',cn.id,'I'); addEdge(ga.id,'sQ',cn.id,'Q');
+addEdge(co.id,'iq',fi.id,'iq'); addEdge(fi.id,'iq',ga.id,'iq');
+addEdge(ga.id,'iq',sl.id,'iq'); addEdge(ga.id,'clk',sl.id,'clk');
+addEdge(ga.id,'iq',cn.id,'iq');
 markWiresDirty();
 });
 preset('FT8: Find Signals in Slot', function(){
@@ -3003,9 +3001,9 @@ addEdge(m.id,'a',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
 addEdge(m.id,'a',bp.id,'in');
 addEdge(wf.id,'f1',bp.id,'freq'); addEdge(wf.id,'f1',co.id,'f0');
 addEdge(bp.id,'out',co.id,'in');
-addEdge(co.id,'I',ga.id,'I'); addEdge(co.id,'Q',ga.id,'Q');
-addEdge(ga.id,'sI',sl.id,'I'); addEdge(ga.id,'sQ',sl.id,'Q'); addEdge(ga.id,'clk',sl.id,'clk');
-addEdge(ga.id,'sI',cn.id,'I'); addEdge(ga.id,'sQ',cn.id,'Q');
+addEdge(co.id,'iq',ga.id,'iq');
+addEdge(ga.id,'iq',sl.id,'iq'); addEdge(ga.id,'clk',sl.id,'clk');
+addEdge(ga.id,'iq',cn.id,'iq');
 markWiresDirty();
 });
 preset('Feld Hell', function(){
@@ -3516,8 +3514,8 @@ bv.size.w=400; bv.size.h=220; applySize(bv);
 addEdge(m.id,'a',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
 addEdge(m.id,'a',sb.id,'in'); addEdge(sa.id,'f1',sb.id,'freq');
 addEdge(sb.id,'out',co.id,'in');
-addEdge(co.id,'I',ga.id,'I'); addEdge(co.id,'Q',ga.id,'Q');
-addEdge(ga.id,'sI',sl.id,'I'); addEdge(ga.id,'sQ',sl.id,'Q'); addEdge(ga.id,'clk',sl.id,'clk');
+addEdge(co.id,'iq',ga.id,'iq');
+addEdge(ga.id,'iq',sl.id,'iq'); addEdge(ga.id,'clk',sl.id,'clk');
 addEdge(co.id,'I',cr.id,'in'); addEdge(co.id,'I',cm.id,'in');
 addEdge(co.id,'I',fr.id,'in'); addEdge(ga.id,'clk',fr.id,'clk');
 addEdge(cm.id,'peak',fr.id,'trig');
@@ -4132,7 +4130,7 @@ preset('Hilbert: Envelope and Instantaneous Frequency', function(){
   const dc=addNode('dac',1000,400,{vol:.25,mode:'mono'});
   addEdge(lf.id,'out',o1.id,'amp');
   addEdge(o1.id,'out',hb.id,'in');
-  addEdge(hb.id,'I',pl.id,'I'); addEdge(hb.id,'Q',pl.id,'Q');
+  addEdge(hb.id,'iq',pl.id,'iq');
   addEdge(pl.id,'mag',sc.id,'in1'); addEdge(pl.id,'dphase',sc.id,'in2');
   addEdge(o1.id,'out',dc.id,'L');
   markWiresDirty();
@@ -4389,7 +4387,6 @@ preset('HFDL: Receive and Aircraft Map', function(){
   const bp=addNode('biquad',320,300,{type:'bp',freq:1455,Q:1.2});
   const co=addNode('costas',580,300,{f0:1455,order:'BPSK',loopHz:20,lp:2500});
   const fi=addNode('rrc',840,220,{baud:1800,beta:.35,span:8});
-  const fq=addNode('rrc',840,400,{baud:1800,beta:.35,span:8});
   const ga=addNode('gardner',1100,300,{baud:1800,gain:.02});
 
   const m1=addNode('hfdlM1Match',1360,80,{baud:1800,thr:.5,dead:1500});
@@ -4408,12 +4405,11 @@ preset('HFDL: Receive and Aircraft Map', function(){
   addEdge(m.id,'a',bp.id,'in');
   addEdge(bp.id,'out',co.id,'in');
   addEdge(sched.id,'order',co.id,'order');             // ЦИКЛ: order по фреймеру, а не фикс. параметр
-  addEdge(co.id,'I',fi.id,'in'); addEdge(co.id,'Q',fq.id,'in');
-  addEdge(fi.id,'out',ga.id,'I'); addEdge(fq.id,'out',ga.id,'Q');
+  addEdge(co.id,'iq',fi.id,'iq'); addEdge(fi.id,'iq',ga.id,'iq');
 
-  addEdge(fi.id,'out',m1.id,'in');
+  addEdge(fi.id,'I',m1.id,'in');
 
-  addEdge(ga.id,'sI',s2b.id,'I'); addEdge(ga.id,'sQ',s2b.id,'Q'); addEdge(ga.id,'clk',s2b.id,'clk');
+  addEdge(ga.id,'iq',s2b.id,'iq'); addEdge(ga.id,'clk',s2b.id,'clk');
   addEdge(m1.id,'go',s2b.id,'go'); addEdge(m1.id,'m1',s2b.id,'m1'); addEdge(m1.id,'flip',s2b.id,'flip');
 
   addEdge(ga.id,'clk',sched.id,'clk');
@@ -5645,7 +5641,7 @@ const mp=addNode('geoMap',1040,200,{mz:11,mlat:55.0,mlon:82.65});
 mp.size.w=480; mp.size.h=420; applySize(mp);
 addEdge(tb.id,'rec',cv.id,'rec'); addEdge(me.id,'lat',cv.id,'lat'); addEdge(me.id,'lon',cv.id,'lon');
 addEdge(me.id,'lat',hz.id,'lat'); addEdge(me.id,'lon',hz.id,'lon');
-addEdge(cv.id,'rec',mp.id,'rec'); addEdge(cv.id,'poly',mp.id,'rec2'); addEdge(cv.id,'raster',mp.id,'rec3');
+addEdge(cv.id,'rec',mp.id,'rec'); addEdge(cv.id,'poly',mp.id,'rec'); addEdge(cv.id,'raster',mp.id,'rec');
 markWiresDirty();
 });
 preset('Radio Reach: ADS-B Coverage over Terrain (Generator)', function(){

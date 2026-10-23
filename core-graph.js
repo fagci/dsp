@@ -90,7 +90,7 @@ if(!Graph.map[from] || !Graph.map[to]) return;    // узел не создал�
 const ft=portsOf(Graph.map[from],'outs').find(o=>o.n===fp)?.t;
 const tt=portsOf(Graph.map[to],'ins').find(o=>o.n===tp)?.t;
 if(ft!==tt && ft!=='val' && tt!=='val') return;   // val — универсальный пин, совместим с любым типом
-Graph.edges.filter(e=>e.to===to &&e.tp===tp).forEach(delEdge);   // один вход — одна связь
+Graph.edges.filter(e=>e.to===to &&e.tp===tp &&(!MULTI_T.has(tt) ||(e.from===from &&e.fp===fp))).forEach(delEdge);   // один вход — одна связь; rec / bands — сколько угодно
 const e={id:'e'+(Graph.seq++),from,fp,to,tp};
 const path=document.createElementNS('http://www.w3.org/2000/svg','path');
 path.setAttribute('fill','none'); path.setAttribute('stroke',TYPE_COLOR[ft]);
@@ -187,7 +187,11 @@ function retopo(){
 Graph.order=topoOrder(Graph.nodes,Graph.edges,Graph.map);
 markLive(Graph.nodes,Graph.edges,Graph.map);
 const idx=new Map();                                // "узел+порт → провод" — см. комментарий в evalNode
-for(const e of Graph.edges) idx.set(e.to+'\u0001'+e.tp, e);
+for(const e of Graph.edges){
+const k=e.to+'\u0001'+e.tp, t=portT(Graph.map[e.to],'ins',e.tp);
+if(!MULTI_T.has(t)){ idx.set(k,e); continue; }
+const a=idx.get(k); if(a) a.push(e); else idx.set(k,[e]);
+}
 Graph.inIndex=idx;
 Islands.rebuild();                                  // состав островов зависит от проводов
 }
@@ -2200,6 +2204,15 @@ n.p={devA: oldSlot===0?(old.dev||'default'):'default', gainA: oldSlot===0?(old.g
      echo:!!old.echo, ns:!!old.ns, agc:!!old.agc};
 }
 }
+// Rec Merge / Merge Band Plans убраны: на вход rec / bands идёт сколько угодно проводов — источники сразу к потребителям
+{ const gone=new Set(o.nodes.filter(n=>n.type==='recMerge'||n.type==='bandsmerge').map(n=>n.id));
+if(gone.size){
+const src=o.edges.filter(e=>gone.has(e.to)), outs=o.edges.filter(e=>gone.has(e.from) && !gone.has(e.to));
+o.edges=o.edges.filter(e=>!gone.has(e.to) && !gone.has(e.from));
+for(const q of outs) for(const e of src) if(e.to===q.from) o.edges.push({from:e.from,fp:e.fp,to:q.to,tp:q.tp});
+o.nodes=o.nodes.filter(n=>!gone.has(n.id)); } }
+{ const maps=new Set(o.nodes.filter(n=>n.type==='geoMap').map(n=>n.id));
+for(const e of o.edges) if(maps.has(e.to) && (e.tp==='rec2'||e.tp==='rec3')) e.tp='rec'; }
 const tbls=new Set(o.nodes.filter(n=>n.type==='table').map(n=>n.id));
 for(const e of o.edges) if(tbls.has(e.from) && e.fp==='bands') e.fp='rows';   // выходы bands и rows у Table слиты в rows
 // входы nodes / set у карты, Graph и Video Overlay слиты в rows; Internet Radio выдаёт набор rows вместо потока rec
