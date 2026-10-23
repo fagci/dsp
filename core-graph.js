@@ -446,13 +446,13 @@ n.el.classList.add('xp');
 n.el.querySelector('.xpd')?.classList.add('on');
 n._dirty=true; n._drawGen=-1; n.onResize?.(n); markWiresDirty();
 }
-function xpandNode(n,on){
+function xpandNode(n,on,h){                             // h — высота развёрнутого вида; иначе прежняя (до сворачивания) или текущая
 if(on===undefined) on=!n.xpand;
 if(on===!!n.xpand) return;
 n.xpand=on;
-if(on){ n._xh=n.el.offsetHeight; xpandApply(n); }
+if(on){ n._xh=h||n._xhMem||n.el.offsetHeight; xpandApply(n); }
 else {
-n._xh=0; n.el.classList.remove('xp'); n.el.style.height='';
+n._xhMem=n._xh; n._xh=0; n.el.classList.remove('xp'); n.el.style.height='';
 n.el.querySelector('.xpd')?.classList.remove('on');
 applySize(n); n._dirty=true; n._drawGen=-1; n.onResize?.(n); markWiresDirty();
 }
@@ -1059,6 +1059,7 @@ clip={
 nodes:Graph.nodes.filter(n=>Sel.has(n.id)).map(n=>{
 const o={id:n.id,type:n.type,x:n.x,y:n.y,w:n.size.w,h:n.size.h,p:{...n.p}};
 if(n.name) o.name=n.name;
+if(n.xpand) o.xh=n._xh||n.el.offsetHeight;
 return o; }),
 edges:Graph.edges.filter(e=>Sel.has(e.from) &&Sel.has(e.to)).map(e=>
 ({from:e.from,fp:e.fp,to:e.to,tp:e.tp}))
@@ -1078,6 +1079,7 @@ map[nd.id]=nn.id;
 if(nd.f) setLod(nn,nd.f===LOD_DOT ? LOD_DOT : LOD_CARD);
 if(nd.name) setNodeName(nn,nd.name);
 if(nd.w){ nn.size.w=nd.w; nn.size.h=nd.h||nn.size.h; applySize(nn); }
+if(nd.xh) xpandNode(nn,true,nd.xh);
 Sel.add(nn.id); }
 for(const e of data.edges)
 if(map[e.from] &&map[e.to]) addEdge(map[e.from],e.fp,map[e.to],e.tp);
