@@ -29,7 +29,8 @@ const tblShow=n=>new Set((Array.isArray(n.p.show) ? n.p.show : [n.p.list]).map(t
 const tblRO=n=>tblKind(n.p.list)==='preset';
 // настройки списка живут в его схеме (card), а не в узле, и переезжают вместе со списком:
 // key — колонка upsert, text — колонка выхода text, max — потолок строк, csv — строки text разбираются по колонкам,
-// hexAll — все поля разбора hex; types[колонка].src — поле пакета, из которого колонка заполняется
+// hexAll — все поля разбора hex; types[колонка].src — поле пакета, из которого колонка заполняется;
+// sort / sortDir — порядок по колонке (щелчок по заголовку или роль колонки), rev — новые сверху
 const tblUpKey=n=>String(n.schema?.card?.key||'').trim();
 const tblHz=v=>typeof v==='number' ? v : parseHzCell(v);
 const tblSame=(a,b)=>a.length===b.length && a.every((x,i)=>x===b[i]);
@@ -244,14 +245,14 @@ async function tblReadList(n,name){
 }
 
 // старые параметры узла (key, textCol, maxRows, pfields, textCsv) → схема списка; один раз при загрузке списка
-const TBL_LEGACY=['key','textCol','maxRows','pfields','textCsv','collect','fmt'];
+const TBL_LEGACY=['key','textCol','maxRows','pfields','textCsv','collect','fmt','rev','sortCol','sortDir'];
 async function tblLegacy(n,list,kind,schema,failed){
   const p=n.p;
   if(failed || !TBL_LEGACY.some(k=>k in p)) return;
   if(kind!=='preset'){
     const c=schema.card, ty=schema.types; let ch=false;
     const set=(k,v)=>{ if(v && !c[k]){ c[k]=v; ch=true; } };
-    set('key',String(p.key||'').trim()); set('text',String(p.textCol||'').trim()); set('max',+p.maxRows>0 ? +p.maxRows : 0); set('csv',!!p.textCsv);
+    set('key',String(p.key||'').trim()); set('text',String(p.textCol||'').trim()); set('max',+p.maxRows>0 ? +p.maxRows : 0); set('csv',!!p.textCsv); set('rev',!!p.rev); set('sort',String(p.sortCol||'').trim()); if(c.sort && p.sortDir<0 && !c.sortDir){ c.sortDir=-1; ch=true; }
     for(const x of String(p.pfields||'').split(/[,;\n]/).map(x=>x.trim()).filter(Boolean)){
       const i=x.indexOf('='), src=(i<0 ? x : x.slice(i+1)).trim(), col=i<0 ? src.replace(/\./g,'_') : x.slice(0,i).trim();
       if(src==='*'){ if(!c.hexAll){ c.hexAll=true; ch=true; } }
@@ -374,9 +375,9 @@ function tblDerive(n){
     n.rows=[]; n.rowIds=[];
     n.all.forEach((r,i)=>{ if(f(r)){ n.rows.push(r); n.rowIds.push(n.ids[i]); } });
   } else { n.rows=n.all.slice(); n.rowIds=n.ids.slice(); }      // новая ссылка: потребители ключуют кэш по массиву, а n.all дописывается на месте
-  const sc=n.p.sortCol;
+  const cd=n.schema?.card||{}, sc=cd.sort;
   if(sc && n.cl.includes(sc)){                                  // сортировка по клику на заголовок колонки; пустые — в конец
-    const dir=n.p.sortDir<0 ? -1 : 1, cmp=(a,b)=>{
+    const dir=cd.sortDir<0 ? -1 : 1, cmp=(a,b)=>{
       const x=a[sc], y=b[sc], ex=x===''||x==null, ey=y===''||y==null;
       if(ex||ey) return ex-ey;
       const nx=typeof x==='number' ? x : parseFloat(x), ny=typeof y==='number' ? y : parseFloat(y);
@@ -385,7 +386,7 @@ function tblDerive(n){
     const ix=n.rows.map((_,i)=>i).sort((i,j)=>cmp(n.rows[i],n.rows[j])||i-j);
     n.rows=ix.map(i=>n.rows[i]); n.rowIds=ix.map(i=>n.rowIds[i]);
   }
-  if(n.p.rev){ n.rows.reverse(); n.rowIds.reverse(); }          // новые сверху: записи всегда дописываются в конец списка
+  if(cd.rev){ n.rows.reverse(); n.rowIds.reverse(); }          // новые сверху: записи всегда дописываются в конец списка
   n.headers=n.cl;
   n.nameCol=tblCol(n.cl,TBL_LABEL); n.colorCol=tblCol(n.cl,TBL_COLOR);
   n.labelFn=tcLabelFn(n.cl,n.schema?.card);
@@ -823,10 +824,9 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     {n:'list',t:'text',d:'table',hidden:true},
     {n:'filter',t:'text',d:'',hidden:true},
     {n:'follow',t:'check',d:false,label:'follow the end',tip:'show the last rows and keep scrolling to new ones while the list is scrolled to the bottom (like Wireshark); scroll up to stop following'},
-    {n:'rev',t:'check',d:false,label:'newest first',tip:'show the list in reverse: the last added row is at the top (the rows output follows this order too)'},
     {n:'initial',t:'check',d:true,label:'first row at start',tip:'output the first row when the patch starts, before anything is selected',adv:true},
     {n:'rowsIn',t:'select',opts:['replace','add','sync','new only'],d:'replace',label:'rows in (wire)',tip:'a set on the rows input is stored in the active list: replace its rows, add to them, sync (rows are matched by the upsert key column — default id — and changed, added or removed in place: nothing flickers, the selected row stays) or new only (add the rows whose key is not in the list yet, leave the rest alone)'},
-    {n:'data',t:'code',d:'',adv:true,label:'patch table (list = @patch)',plain:true,fn:n=>{ if(n.p.list===TBL_PATCH) tblLoad(n); }},
+    {n:'data',t:'code',d:'',hidden:true,label:'patch table (list = @patch)',plain:true,fn:n=>{ if(n.p.list===TBL_PATCH) tblLoad(n); }},
   ],
   init:n=>{
     n.p.list=tblCanon(n.p.list||'table');
@@ -834,7 +834,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     if(!Array.isArray(n.p.rules)) n.p.rules=[];
     if(n.p.sel===undefined) n.p.sel=null;
     n.all=[]; n.ids=[]; n.cl=[]; n.rows=[]; n.rowIds=[]; n.headers=[]; n.cols=[]; n.rowsOwn=[]; n.rowsOut=[];
-    n.extra=new Map(); n.onCount=0; n._rev=!!n.p.rev;
+    n.extra=new Map(); n.onCount=0;
     n.err=''; n.loaded=null; n.loadedData=null; n.pend=[]; n.lastFlush=0; n.flushing=false;
     n.lastRec=undefined; n.lastText=undefined; n.pick=null;
     n.rowPrev=null; n.pulse=0; n.initialized=false; n.uiDirty=true;
@@ -893,18 +893,14 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
   },
   draw(n){
     if(!n.initialized && n.el){ tblInit(n); n.initialized=true; }
-    const r=n.el.querySelector('.readout');
+    const r=n.el.querySelector('.readout');                       // строка узла — только для ошибки
     if(r){
-      const N=n.rows.length;
-      const warn=n.err;
-      const t=warn ? '⚠ '+warn : (n.p.list)+(n.onCount>1 ? ' (+'+(n.onCount-1)+' on)' : '')+' · '+(N ? 'row '+(n.idx+1)+'/'+N : 'empty')+
-        (n.pend.length ? ' · +'+n.pend.length : '');
-      if(r.textContent!==t) r.textContent=t;
+      const t=n.err ? '⚠ '+n.err : '';
+      if(r.textContent!==t){ r.textContent=t; r.style.display=t ? '' : 'none'; }
     }
     if(n.ui){
-      const tl=!!n.p.follow && !n.p.rev;                          // при «newest first» конец списка — старые записи: следим за началом
+      const tl=!!n.p.follow && !n.schema?.card?.rev;                          // при «newest first» конец списка — старые записи: следим за началом
       if(tl!==!!n.ui.tail){ n.ui.tail=tl; n.ui.jump=tl; n.uiDirty=true; }
-      if(!!n.p.rev!==!!n._rev){ n._rev=!!n.p.rev; if(n.loaded!==null){ tblDerive(n); tblReset(n); } }
       const vk=[n.p.vcols,n.p.rules,n.p.tint,n.p.vmode,n.p.tz];
       if(!n._vk || vk.some((x,i)=>x!==n._vk[i])){ n._vk=vk; n.uiDirty=true; n.uiFull=true; if(n.ui.view && !n.ui.view.hidden) tblRenderView(n); }
       // полная перерисовка до 300 строк × колонок — реже на длинном списке
@@ -1002,7 +998,7 @@ function tblInit(n){
   syncCustomHeight(n,root,150);
   const q=s=>root.querySelector(s);
   n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), tree:q('.tbl-tree'), pick:q('.tbl-pick'), shown:q('.tbl-shown'),
-    vmBtn:q('.tbl-vm'), crumb:q('.tbl-crumb'), filter:q('.tbl-filter'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:!!n.p.follow && !n.p.rev, jump:!!n.p.follow && !n.p.rev, marked:-1, markEl:null, rh:0, hdh:0, vh:0, st:0, atEnd:false};
+    vmBtn:q('.tbl-vm'), crumb:q('.tbl-crumb'), filter:q('.tbl-filter'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:!!n.p.follow && !n.schema?.card?.rev, jump:!!n.p.follow && !n.schema?.card?.rev, marked:-1, markEl:null, rh:0, hdh:0, vh:0, st:0, atEnd:false};
   n.ui.view.hidden=!n.viewOpen;                           // пересборка узла (смена колонок) не должна прятать панель
   q('.tbl-viewb').classList.toggle('on',!!n.viewOpen);
   const vw=n.ui.view;                                     // прокрутка и фокус поля «new field» переживают пересборку узла
@@ -1028,8 +1024,7 @@ function tblInit(n){
     const hc=e.target.closest('.tbl-hd > span[data-c]');
     if(hc){                                               // ▲ → ▼ → без сортировки
       const c=hc.dataset.c;
-      if(n.p.sortCol!==c){ n.p.sortCol=c; n.p.sortDir=1; } else if(n.p.sortDir>0) n.p.sortDir=-1; else n.p.sortCol='';
-      tblDerive(n); tblRenderList(n); Undo.push(); return;
+      tblSortSet(n,n.schema.card.sort!==c ? c : n.schema.card.sortDir<0 ? '' : c,n.schema.card.sort!==c ? 1 : -1); return;
     }
     const row=e.target.closest('.tbl-row'); if(!row) return;
     const ch=e.target.closest('.tc-chip');
@@ -1395,7 +1390,7 @@ function tblRenderList(n,inc){
   let vc=null, texts=null, wid=null, tc='', hk='';
   if(grid){
     vc=tblViewCols(n).filter(x=>!x.hide);
-    hk=vc.map(x=>x.c).join('\n')+'\n'+n.p.sortCol+n.p.sortDir;
+    hk=vc.map(x=>x.c).join('\n')+'\n'+n.schema.card.sort+n.schema.card.sortDir;
     const prev=base && base.grid && base.hk===hk ? base.wid : null;
     wid=vc.map((x,k)=>Math.max(x.c.length,2,prev ? prev[k] : 0));
     texts=[];
@@ -1460,7 +1455,7 @@ function tblRenderList(n,inc){
     hd=document.createElement('div'); hd.className='tbl-hd';
     hd.append(Object.assign(document.createElement('span'),{textContent:'#',className:'tbl-no'}));
     for(const x of vc){
-      const on=n.p.sortCol===x.c, h=Object.assign(document.createElement('span'),{textContent:x.c+(on ? (n.p.sortDir<0 ? ' ▼' : ' ▲') : ''),title:x.c+' — click to sort'});
+      const on=n.schema.card.sort===x.c, h=Object.assign(document.createElement('span'),{textContent:x.c+(on ? (n.schema.card.sortDir<0 ? ' ▼' : ' ▲') : ''),title:x.c+' — click to sort'});
       h.dataset.c=x.c; h.style.cursor='pointer'; hd.append(h);
     }
     hd.append(document.createElement('span'));
@@ -1643,6 +1638,15 @@ function tblRow(n,i,ro,g){
     (row._tail||row).append(ed,del);
   }
   return row;
+}
+// порядок списка хранится в схеме (sort / sortDir / rev) и переживает перезагрузку вместе со списком
+async function tblSortSet(n,col,dir,rev){
+  const c=n.schema.card;
+  if(col!==undefined){ if(col){ c.sort=col; if(dir<0) c.sortDir=-1; else delete c.sortDir; } else { delete c.sort; delete c.sortDir; } }
+  if(rev!==undefined){ if(rev) c.rev=true; else delete c.rev; }
+  tblDerive(n); if(rev!==undefined) tblReset(n); tblRenderList(n);
+  if(n.ui && !n.ui.view.hidden) tblRenderView(n);
+  await tcSchemaSave(n);
 }
 function tblSelect(n,i){                                // выбор записи: уходит на выходы
   n.pick=i; n.idx=i; n.cur={...n.rows[i]}; n.p.sel=n.rowIds[i]; n.hlSel=true;
@@ -1924,6 +1928,10 @@ function tblFieldsPanel(n,box,mk,sel){
         cb.addEventListener('change',async()=>{ if(cb.checked) n.schema.card[k]=c; else delete n.schema.card[k]; await tcSchemaSave(n); tblRenderView(n); });
         const g=mk('span'); g.style.whiteSpace='nowrap'; g.append(cb,mk('span','tv-lbl',label)); cc.append(g);
       };
+      {
+        const cc2=ln('sort'), cs=n.schema.card;
+        cc2.append(sel([['','not sorted'],['a','▲ ascending'],['d','▼ descending']],cs.sort===c ? (cs.sortDir<0 ? 'd' : 'a') : '',v=>tblSortSet(n,v ? c : '',v==='d' ? -1 : 1)));
+      }
       role('key','key','a record (rec, rows wire) with the same value here updates the row instead of adding one; a rec with _delete removes it');
       role('text','text out','this column goes to the text output; none — the whole row');
       const sr=mk('input','tv-q'); sr.value=d.src||''; sr.placeholder='a.b.c or hex field';
@@ -1950,7 +1958,7 @@ function tblFieldsPanel(n,box,mk,sel){
 // настройки списка целиком (не колонки): название записи, уникальность, потолок строк, разбор входящих, раскладка карточки
 function tblListSettings(n,box,mk,sel){
   const ro=tblRO(n), c=n.schema.card;
-  const sum=[c.key ? 'key '+c.key : '',c.max ? 'max '+c.max : '',c.unique?.length ? 'unique' : '',c.csv ? 'csv' : '',c.hexAll ? 'packet' : ''].filter(Boolean).join(' · ');
+  const sum=[c.key ? 'key '+c.key : '',c.max ? 'max '+c.max : '',c.unique?.length ? 'unique' : '',c.csv ? 'csv' : '',c.hexAll ? 'packet' : '',c.rev ? 'newest first' : ''].filter(Boolean).join(' · ');
   box.append(mk('div','tv-sec tv-fold',(n.listOpen ? '▾ ' : '▸ ')+'List'+(sum ? ' — '+sum : ''),{click:()=>{ n.listOpen=!n.listOpen; tblRenderView(n); }}));
   if(!n.listOpen) return;
   const g=mk('div','tv-f tv-grid'), line=(label,tip)=>{ const l=mk('span','tv-lbl',label), cc=mk('div','tv-ctl'); if(tip) l.title=tip; g.append(l,cc); return cc; };
@@ -1990,6 +1998,11 @@ function tblListSettings(n,box,mk,sel){
   };
   flag('csv','text lines → columns','lines on the text wire are split into the columns of the list (a line is a CSV row); otherwise a line is one record with a text field');
   flag('hexAll','all packet fields','a rec with hex gets every field of its parsing as a column');
+  {
+    const cb=mk('input'); cb.type='checkbox'; cb.checked=!!c.rev; cb.disabled=ro;
+    cb.addEventListener('change',()=>tblSortSet(n,undefined,0,cb.checked));
+    const cc=line('order','the last added row on top (the rows output follows this order too)'); cc.append(cb,mk('span','tv-lbl','newest first'));
+  }
   box.append(g);
   if(tcView(n)==='cards') tcLayoutPanel(n,box,mk,sel);
 }
@@ -2160,5 +2173,4 @@ function tblAddForm(n,init){
   tblOpenEditor(n,'New row',form,null);
 }
 defGroups('table',[
-  {n:'Rows', p:'initial rowsIn', open:false},
-  {n:'Patch data', p:'data', open:false}]);
+  {n:'Rows', p:'initial rowsIn', open:false}]);
