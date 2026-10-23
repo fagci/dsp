@@ -6557,12 +6557,20 @@ const ListDB = (() => {
         }
         if(!db.objectStoreNames.contains('meta')) db.createObjectStore('meta',{keyPath:'listName'});   // порядок колонок списка
       };
-      rq.onsuccess = e => res(e.target.result);
-      rq.onerror = e => rej(e.target.error);
+      rq.onsuccess = e => {
+        const db = e.target.result;
+        db.onclose = () => { dbp = null; };                  // браузер закрыл соединение (очистка данных, нехватка места) — открыть заново
+        db.onversionchange = () => { db.close(); dbp = null; };
+        res(db);
+      };
+      rq.onerror = e => { dbp = null; rej(e.target.error); };
     });
     return dbp;
   }
-  async function store(mode){ const db=await open(); return db.transaction('items',mode).objectStore('items'); }
+  async function store(mode){
+    try{ return (await open()).transaction('items',mode).objectStore('items'); }
+    catch(e){ if(e?.name!=='InvalidStateError') throw e; dbp = null; return (await open()).transaction('items',mode).objectStore('items'); }
+  }
   function reqP(rq){ return new Promise((res,rej)=>{ rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error); }); }
   // fields — объект {имяПоля:значение}; value дублируется из fields.value для чтения старым кодом
   return {
