@@ -6586,12 +6586,25 @@ const ListDB = (() => {
       for(const it of items) if(!it.fields) it.fields={value:it.value};
       return items;
     },
-    // имена — по ключам индекса: от каждого найденного прыжок к следующему (nextunique в Chromium идёт по всем записям)
-    async listNames(){ const s=await store('readonly'), ix=s.index('listName'), names=[];
-      for(let rg=null;;){
-        const c=await reqP(ix.openKeyCursor(rg));
-        if(!c) break;
-        names.push(c.key); rg=IDBKeyRange.lowerBound(c.key,true);
+    // имена — по ключам индекса: от каждого найденного прыжок к следующему (nextunique в Chromium идёт по всем записям).
+    // Следующий запрос — прямо в onsuccess предыдущего: транзакция точно активна. Сбой — запасной путь через чтение всех записей
+    async listNames(){
+      let names;
+      try{
+        const db=await open();
+        names=await new Promise((res,rej)=>{
+          const tx=db.transaction('items','readonly'), ix=tx.objectStore('items').index('listName'), out=[];
+          tx.onerror=tx.onabort=()=>rej(tx.error||new Error('transaction aborted'));
+          const step=rg=>{
+            const rq=ix.openKeyCursor(rg);
+            rq.onsuccess=()=>{ const c=rq.result; if(!c) return res(out); out.push(c.key); step(IDBKeyRange.lowerBound(c.key,true)); };
+          };
+          step(null);
+        });
+      }catch(e){
+        console.warn('[lists] имена по индексу не прочитались, читаю все записи:',e);
+        const all=await reqP((await store('readonly')).getAll());
+        names=[...new Set(all.map(x=>x.listName))];
       }
       const meta=await ListDB.metaNames();               // пустой список с колонками тоже существует
       return [...new Set([...names,...meta])].sort(); },
