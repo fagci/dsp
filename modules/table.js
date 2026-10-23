@@ -898,6 +898,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
       const vk=[n.p.vcols,n.p.rules,n.p.tint,n.p.vmode,n.p.tz];
       if(!n._vk || vk.some((x,i)=>x!==n._vk[i])){ n._vk=vk; n.uiDirty=true; n.uiFull=true; if(n.ui.view && !n.ui.view.hidden) tblRenderView(n); }
       // полная перерисовка до 300 строк × колонок — реже на длинном списке
+      if(n._namesRev!==ListDB.rev && performance.now()-(n._namesAt||0)>2000) tblRefreshNames(n);
       if(n.uiDirty && performance.now()-(n.uiT||0)>500){ n.uiDirty=false; n.uiT=performance.now(); tblRenderList(n,true); }
       tblMark(n);
     }
@@ -917,7 +918,11 @@ const tblBaseNames=()=>{                                 // имена без о
   return [TBL_PATCH,...Object.keys(BANDPLAN_PRESETS).filter(k=>!legacy?.has(k)).map(k=>TBL_PRE+k)];
 };
 async function tblNames(){
-  const db=await ListDB.listNames().catch(()=>[]);
+  let db=[];
+  for(let k=0;k<3;k++){                                   // сбой чтения имён не должен молча оставлять селект без пользовательских списков
+    try{ db=await ListDB.listNames(); break; }
+    catch(e){ if(k===2) console.warn('[table] list names:',e); else await new Promise(r=>setTimeout(r,300)); }
+  }
   return [...tblBaseNames(),...db.filter(x=>x!==TBL_PATCH && !x.startsWith(TBL_PRE))];
 }
 /* Вид: сверху выбор списка (папки — группы выпадающего списка) и «⋯» со всеми действиями, ниже фильтр,
@@ -931,7 +936,7 @@ function tblInit(n){
   root.className='tbl-ui';
   root.innerHTML=`
     <div class="tbl-head">
-      <select class="tbl-pick" title="active list: rows, edit, sequencer"></select>
+      <button type="button" class="tbl-pick" title="active list: rows, edit, sequencer"></button>
       <button class="tbl-btn tbl-shown" title="lists shown on the map and the bands output — tick as many as you need"></button>
       <button class="tbl-btn tbl-new" title="new list">＋</button>
       <button class="tbl-btn tbl-menub" title="actions">⋯</button>
@@ -1010,7 +1015,7 @@ function tblInit(n){
     const row=e.target.closest('.tbl-row');
     if(row && !tblRO(n) && !tcCardish(n)) tblEditForm(n,+row.dataset.i,row);
   });
-  n.ui.pick.addEventListener('change',()=>tblPick(n,n.ui.pick.value));
+  n.ui.pick.addEventListener('click',()=>tblPickToggle(n));
   n.ui.shown.addEventListener('click',()=>tblTreeToggle(n));
   n.ui.tree.addEventListener('click',e=>tblTreeClick(n,e));
   n.ui.filter.value=n.p.filter||'';
@@ -1068,11 +1073,11 @@ async function tblClearRows(n){
   await tblClear(n); tblRenderAll(n);
 }
 // выпадающее меню над списком: заголовки групп и пункты (подсказка — описание)
-function tblMenuEl(n){
+function tblMenuEl(n,keep){                              // keep — элемент, нажатие на который не закрывает меню (он закрывает его сам)
   const root=n.ui.root; root.querySelector('.tbl-menu')?.remove();
   const m=document.createElement('div'); m.className='tbl-menu';
   root.append(m);
-  const off=e=>{ if(!m.contains(e.target)){ m.remove(); document.removeEventListener('pointerdown',off,true); } };
+  const off=e=>{ if(!m.contains(e.target) && !keep?.contains(e.target)){ m.remove(); document.removeEventListener('pointerdown',off,true); } };
   setTimeout(()=>document.addEventListener('pointerdown',off,true));
   return m;
 }
@@ -1142,16 +1147,24 @@ async function tblRenderAll(n){
   ui.filter.value=n.p.filter||'';
   tblRenderList(n);                                     // строки не ждут имён списков
   if(n.viewOpen) tblRenderView(n);
-  if(!n.treeNames){                                     // селект не пустой, пока хранилище отвечает
-    n.treeNames=[...tblBaseNames(),...(n.p.list!==TBL_PATCH && !n.p.list.startsWith(TBL_PRE) ? [n.p.list] : [])];
-    tblRenderTree(n);
-  }
-  const names=await tblNames();
-  if(n.disposed || n.ui!==ui) return;
-  if(!names.includes(n.p.list)) names.push(n.p.list);   // пустой, ещё не записанный
-  n.treeNames=names;
-  tblRenderTree(n);
+  if(!n.treeNames) n.treeNames=tblBaseNames();
+  if(!n.treeNames.includes(n.p.list)) n.treeNames=[...n.treeNames,n.p.list];
+  tblRenderTree(n);                                     // селект не пустой, пока хранилище отвечает (и у пересобранного узла)
+  await tblRefreshNames(n);
   tcOpenPending(n);
+}
+// имена списков из хранилища → дерево и селект; при смене хранилища (ListDB.rev) — заново, не чаще раза в 2 с
+async function tblRefreshNames(n){
+  const ui=n.ui;
+  if(!ui || n._namesBusy) return;
+  n._namesBusy=true; n._namesRev=ListDB.rev; n._namesAt=performance.now();
+  try{
+    const names=await tblNames();
+    if(n.disposed || n.ui!==ui) return;
+    if(!names.includes(n.p.list)) names.push(n.p.list);   // пустой, ещё не записанный
+    n.treeNames=names;
+    tblRenderTree(n);
+  } finally{ n._namesBusy=false; }
 }
 /* ---------- дерево списков ---------- */
 function tblBuildTree(names){
@@ -1191,28 +1204,70 @@ function tblRenderTree(n){
   ui.tree.scrollTop=keep;
   tblRenderPick(n);
 }
-// выбор активного списка: папки — группы, видно только имя без пути
-function tblRenderPick(n){
-  const ui=n.ui, sel=ui.pick, names=(n.treeNames||[n.p.list]).slice().sort(tblByName);
+// выбор активного списка: кнопка и панель с поиском; папки — группы, видно только имя без пути
+const tblPickLabel=g=>g==='' ? 'Lists' : g==='presets' ? 'Built-in (read-only)' : g.startsWith('presets/') ? 'Built-in · '+g.slice(8) : g;
+function tblPickGroups(n){
   const groups=new Map();
-  for(const f of names){
-    const g=tblKind(f)==='db' ? tblDir(f).slice(0,-1) : tblKind(f)==='patch' ? '' : tblDir(f).slice(0,-1);
+  for(const f of (n.treeNames||[n.p.list]).slice().sort(tblByName)){
+    const g=tblKind(f)==='patch' ? '' : tblDir(f).slice(0,-1);
     if(!groups.has(g)) groups.set(g,[]);
     groups.get(g).push(f);
   }
-  const label=g=>g==='' ? 'Lists' : g==='presets' ? 'Built-in (read-only)' : g.startsWith('presets/') ? 'Built-in · '+g.slice(8) : g;
-  const many=groups.size>1;
-  sel.innerHTML='';
-  for(const g of [...groups.keys()].sort((a,b)=>(a==='')?-1:(b==='')?1:(a.startsWith('presets')-b.startsWith('presets'))||tblByName(a,b))){
-    const host=many ? Object.assign(document.createElement('optgroup'),{label:label(g)}) : sel;
-    for(const f of groups.get(g)){
-      const o=document.createElement('option'); o.value=f; o.textContent=tblKind(f)==='patch' ? 'This patch' : tblLeaf(f); host.append(o);
-    }
-    if(many) sel.append(host);
-  }
-  sel.value=n.p.list;
+  return [...groups.keys()].sort((a,b)=>(a==='')?-1:(b==='')?1:(a.startsWith('presets')-b.startsWith('presets'))||tblByName(a,b)).map(g=>[g,groups.get(g)]);
+}
+function tblRenderPick(n){
+  const ui=n.ui;
+  ui.pick.textContent=(tblKind(n.p.list)==='patch' ? 'This patch' : tblLeaf(n.p.list))+' ▾';
+  ui.pick.title=n.p.list;
+  if(ui.pickBox?.isConnected) tblPickFill(n);
   ui.shown.textContent='☑ '+tblShow(n).size;
   ui.shown.classList.toggle('on',!ui.tree.hidden);
+}
+function tblPickToggle(n){
+  const ui=n.ui, old=ui.root.querySelector('.tbl-pickm');
+  if(old){ old.remove(); return; }
+  const m=tblMenuEl(n,ui.pick); m.classList.add('tbl-pickm');
+  const inp=document.createElement('input'), box=document.createElement('div');
+  inp.className='tp-q'; inp.placeholder='search lists…'; inp.spellcheck=false;
+  m.append(inp,box); ui.pickBox=box; ui.pickHi=-1;
+  inp.addEventListener('input',()=>{ ui.pickHi=-1; tblPickFill(n); });
+  inp.addEventListener('keydown',e=>{
+    e.stopPropagation();
+    const its=[...box.querySelectorAll('.tm-i')];
+    if(e.key==='Escape'){ m.remove(); ui.pick.focus(); return; }
+    if(e.key==='Enter'){ const it=its[Math.max(0,ui.pickHi)]; if(it){ m.remove(); tblPick(n,it.dataset.name); } return; }
+    if(e.key!=='ArrowDown' && e.key!=='ArrowUp') return;
+    e.preventDefault();
+    if(!its.length) return;
+    ui.pickHi=(Math.max(0,ui.pickHi)+(e.key==='ArrowDown' ? (ui.pickHi<0 ? 0 : 1) : -1)+its.length)%its.length;
+    its.forEach((x,k)=>x.classList.toggle('hi',k===ui.pickHi));
+    its[ui.pickHi].scrollIntoView({block:'nearest'});
+  });
+  box.addEventListener('click',e=>{
+    const it=e.target.closest('.tm-i'); if(!it) return;
+    m.remove(); tblPick(n,it.dataset.name);
+  });
+  tblPickFill(n);
+  inp.focus();
+  box.querySelector('.tm-i.act')?.scrollIntoView({block:'center'});
+}
+// строки панели выбора по запросу: все слова — в имени списка или папки
+function tblPickFill(n){
+  const ui=n.ui, box=ui.pickBox, q=(ui.pickBox.previousElementSibling?.value||'').toLowerCase().split(/\s+/).filter(Boolean);
+  const frag=document.createDocumentFragment(); let cnt=0;
+  for(const [g,files] of tblPickGroups(n)){
+    const hit=files.filter(f=>{ const h=(tblPickLabel(g)+' '+f).toLowerCase(); return q.every(w=>h.includes(w)); });
+    if(!hit.length) continue;
+    const h=document.createElement('div'); h.className='tm-h'; h.textContent=tblPickLabel(g); frag.append(h);
+    for(const f of hit){
+      const d=document.createElement('div'); d.className='tm-i tm-s'+(f===n.p.list ? ' act' : ''); d.dataset.name=f;
+      d.textContent=tblKind(f)==='patch' ? 'This patch' : tblLeaf(f); frag.append(d); cnt++;
+    }
+  }
+  if(!cnt){ const e=document.createElement('div'); e.className='tm-d tm-none'; e.textContent='nothing found'; frag.append(e); }
+  box.replaceChildren(frag);
+  const its=box.querySelectorAll('.tm-i');
+  if(ui.pickHi>=0 || q.length) its[Math.max(0,ui.pickHi)]?.classList.add('hi');
 }
 function tblTreeToggle(n){ n.ui.tree.hidden=!n.ui.tree.hidden; if(!n.ui.tree.hidden) tblRenderTree(n); n.ui.shown.classList.toggle('on',!n.ui.tree.hidden); }
 function tblTreeClick(n,e){
