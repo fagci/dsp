@@ -241,8 +241,8 @@ async function tblReadList(n,name){
 
 async function tblLoad(n){
   n.p.list=tblCanon(n.p.list);
-  n.loading=true;
-  try{ await tblLoadRun(n); } finally{ n.loading=false; }
+  n.loading=(n.loading|0)+1;                            // счётчик: устаревшая загрузка не должна гасить флаг идущей новой, иначе process перезапускает её по кругу
+  try{ await tblLoadRun(n); } finally{ n.loading--; }
   n._chkRev=ListDB.rev; await tcChkRoll(n);
 }
 async function tblLoadRun(n){
