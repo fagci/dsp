@@ -1037,6 +1037,8 @@ function tblInit(n){
   const file=q('.tbl-file');
   n.ui.fileEl=file;
   file.addEventListener('change',()=>{ const fs=[...file.files]; file.value=''; if(fs.length) tblImport(n,fs); });
+  const back=()=>{ if(n.disposed || !n.ui?.root.isConnected){ document.removeEventListener('visibilitychange',back); removeEventListener('focus',back); return; } if(!document.hidden){ n._namesAt=0; tblRefreshNames(n); } };
+  document.addEventListener('visibilitychange',back); addEventListener('focus',back);   // вернулись на вкладку — имена списков перечитать
   tblRenderAll(n);
 }
 // действия над списком / данными — из меню «⋯»
@@ -1153,18 +1155,20 @@ async function tblRenderAll(n){
   await tblRefreshNames(n);
   tcOpenPending(n);
 }
-// имена списков из хранилища → дерево и селект; при смене хранилища (ListDB.rev) — заново, не чаще раза в 2 с
+// имена списков из хранилища → дерево и селект; при смене хранилища (ListDB.rev) — заново, не чаще раза в 2 с.
+// Зависший запрос (>5 с) не блокирует следующие: результат устаревшего отбрасывается по номеру
 async function tblRefreshNames(n){
   const ui=n.ui;
-  if(!ui || n._namesBusy) return;
+  if(!ui || (n._namesBusy && performance.now()-n._namesAt<5000)) return;
+  const tok=n._namesTok=(n._namesTok|0)+1;
   n._namesBusy=true; n._namesRev=ListDB.rev; n._namesAt=performance.now();
   try{
     const names=await tblNames();
-    if(n.disposed || n.ui!==ui) return;
+    if(n.disposed || n.ui!==ui || tok!==n._namesTok) return;
     if(!names.includes(n.p.list)) names.push(n.p.list);   // пустой, ещё не записанный
     n.treeNames=names;
     tblRenderTree(n);
-  } finally{ n._namesBusy=false; }
+  } finally{ if(tok===n._namesTok) n._namesBusy=false; }
 }
 /* ---------- дерево списков ---------- */
 function tblBuildTree(names){
@@ -1226,6 +1230,7 @@ function tblRenderPick(n){
 function tblPickToggle(n){
   const ui=n.ui, old=ui.root.querySelector('.tbl-pickm');
   if(old){ old.remove(); return; }
+  n._namesAt=0; tblRefreshNames(n);                     // свежие имена: панель перерисуется, когда придут
   const m=tblMenuEl(n,ui.pick); m.classList.add('tbl-pickm');
   const inp=document.createElement('input'), box=document.createElement('div');
   inp.className='tp-q'; inp.placeholder='search lists…'; inp.spellcheck=false;
