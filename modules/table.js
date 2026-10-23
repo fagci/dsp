@@ -895,12 +895,11 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
       const vk=[n.p.vcols,n.p.rules,n.p.tint,n.p.vmode,n.p.tz];
       if(!n._vk || vk.some((x,i)=>x!==n._vk[i])){ n._vk=vk; n.uiDirty=true; n.uiFull=true; if(n.ui.view && !n.ui.view.hidden) tblRenderView(n); }
       // полная перерисовка до 300 строк × колонок — реже на длинном списке
-      if(n._namesRev!==ListDB.rev && performance.now()-(n._namesAt||0)>2000) tblRefreshNames(n);
       if(n.uiDirty && performance.now()-(n.uiT||0)>500){ n.uiDirty=false; n.uiT=performance.now(); tblRenderList(n,true); }
       tblMark(n);
     }
   },
-  dispose:n=>{ n.pend=[]; n.disposed=true; if(n.saveLate){ n.saveLate=false; tblSave(n); } }
+  dispose:n=>{ n.pend=[]; n.disposed=true; n._namesOff?.(); if(n.saveLate){ n.saveLate=false; tblSave(n); } }
 });
 
 /* ---------- интерфейс ---------- */
@@ -914,13 +913,44 @@ const tblBaseNames=()=>{                                 // имена без о
   const legacy=window.BP_LEGACY;                          // старые плоские имена — только для совместимости патчей
   return [TBL_PATCH,...Object.keys(BANDPLAN_PRESETS).filter(k=>!legacy?.has(k)).map(k=>TBL_PRE+k)];
 };
-async function tblNames(){
-  let db=[];
-  for(let k=0;k<3;k++){                                   // сбой чтения имён не должен молча оставлять селект без пользовательских списков
-    try{ db=await ListDB.listNames(); tblNames.err=''; break; }
-    catch(e){ if(k===2){ console.warn('[table] list names:',e); tblNames.err=String(e?.message||e); } else await new Promise(r=>setTimeout(r,300)); }
-  }
-  return [...tblBaseNames(),...db.filter(x=>x!==TBL_PATCH && !x.startsWith(TBL_PRE))];
+// Общий реестр имён пользовательских списков для всех таблиц. Имена из прошлого запуска (localStorage) видны сразу,
+// настоящие дочитываются из хранилища в фоне и рассылаются подписчикам; правка хранилища, возврат на вкладку и открытие
+// панели выбора перечитывают их заново. Подписчик рисует в текущий UI узла, так что пересборка узла ничего не теряет
+const TblNames=(()=>{
+  const KEY='dsp.listNames', subs=new Set();
+  let db=[], err='', run=null, again=false, timer=0;
+  try{ const a=JSON.parse(localStorage.getItem(KEY)||'[]'); if(Array.isArray(a)) db=a.filter(x=>typeof x==='string'); }catch(e){}
+  const read=async()=>{
+    for(let k=0;;k++){
+      try{ return await ListDB.listNames(); }
+      catch(e){ if(k>=2) throw e; await new Promise(r=>setTimeout(r,300)); }
+    }
+  };
+  const refresh=()=>{
+    if(run){ again=true; return run; }
+    return run=(async()=>{
+      do{
+        again=false;
+        try{
+          const next=await read(), same=next.length===db.length && next.every((x,i)=>x===db[i]);
+          db=next; err='';
+          if(!same) try{ localStorage.setItem(KEY,JSON.stringify(db)); }catch(e){}
+        }catch(e){ err=String(e?.message||e); console.warn('[table] list names:',e); }
+        for(const f of subs) try{ f(); }catch(e){ console.warn(e); }
+      } while(again);
+    })().finally(()=>{ run=null; });
+  };
+  ListDB.watch.add(()=>{ clearTimeout(timer); timer=setTimeout(refresh,400); });          // поток записей не должен перечитывать имена на каждую
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden) refresh(); });
+  return {refresh, err:()=>err, sub:f=>{ subs.add(f); return ()=>subs.delete(f); },
+    all:cur=>{ const a=[...tblBaseNames(),...db.filter(x=>x!==TBL_PATCH && !x.startsWith(TBL_PRE))]; if(cur && !a.includes(cur)) a.push(cur); return a; }};
+})();
+// имена и ошибка хранилища — в дерево, селект и строку состояния узла
+function tblNamesApply(n){
+  if(!n.ui || n.disposed) return;
+  n.treeNames=TblNames.all(n.p.list);
+  if(TblNames.err() && !n.err) n.err='storage: '+TblNames.err();
+  tblRenderTree(n);
 }
 /* Вид: сверху выбор списка (папки — группы выпадающего списка) и «⋯» со всеми действиями, ниже фильтр,
    две частые кнопки, список строк фиксированной высоты. Правка строки — панелью снизу поверх списка:
@@ -1034,8 +1064,7 @@ function tblInit(n){
   const file=q('.tbl-file');
   n.ui.fileEl=file;
   file.addEventListener('change',()=>{ const fs=[...file.files]; file.value=''; if(fs.length) tblImport(n,fs); });
-  const back=()=>{ if(n.disposed || !n.ui?.root.isConnected){ document.removeEventListener('visibilitychange',back); removeEventListener('focus',back); return; } if(!document.hidden){ n._namesAt=0; tblRefreshNames(n); } };
-  document.addEventListener('visibilitychange',back); addEventListener('focus',back);   // вернулись на вкладку — имена списков перечитать
+  n._namesOff?.(); n._namesOff=TblNames.sub(()=>tblNamesApply(n));
   tblRenderAll(n);
 }
 // действия над списком / данными — из меню «⋯»
@@ -1149,27 +1178,9 @@ async function tblRenderAll(n){
   ui.filter.value=n.p.filter||'';
   tblRenderList(n);                                     // строки не ждут имён списков
   if(n.viewOpen) tblRenderView(n);
-  if(!n.treeNames) n.treeNames=tblBaseNames();
-  if(!n.treeNames.includes(n.p.list)) n.treeNames=[...n.treeNames,n.p.list];
-  tblRenderTree(n);                                     // селект не пустой, пока хранилище отвечает (и у пересобранного узла)
-  await tblRefreshNames(n);
+  tblNamesApply(n);                                     // имена из реестра — сразу, свежие придут подпиской
+  TblNames.refresh();
   tcOpenPending(n);
-}
-// имена списков из хранилища → дерево и селект; при смене хранилища (ListDB.rev) — заново, не чаще раза в 2 с.
-// Зависший запрос (>5 с) не блокирует следующие: результат устаревшего отбрасывается по номеру
-async function tblRefreshNames(n){
-  const ui=n.ui;
-  if(!ui || (n._namesBusy && performance.now()-n._namesAt<5000)) return;
-  const tok=n._namesTok=(n._namesTok|0)+1;
-  n._namesBusy=true; n._namesRev=ListDB.rev; n._namesAt=performance.now();
-  try{
-    const names=await tblNames();
-    if(n.disposed || n.ui!==ui || tok!==n._namesTok) return;
-    if(tblNames.err) n.err='storage: '+tblNames.err;       // база списков не открывается — видно в строке состояния узла
-    if(!names.includes(n.p.list)) names.push(n.p.list);   // пустой, ещё не записанный
-    n.treeNames=names;
-    tblRenderTree(n);
-  } finally{ if(tok===n._namesTok) n._namesBusy=false; }
 }
 /* ---------- дерево списков ---------- */
 function tblBuildTree(names){
@@ -1231,7 +1242,7 @@ function tblRenderPick(n){
 function tblPickToggle(n){
   const ui=n.ui, old=ui.root.querySelector('.tbl-pickm');
   if(old){ old.remove(); return; }
-  n._namesAt=0; tblRefreshNames(n);                     // свежие имена: панель перерисуется, когда придут
+  TblNames.refresh();                                   // свежие имена: панель перерисуется, когда придут
   const m=tblMenuEl(n,ui.pick); m.classList.add('tbl-pickm');
   const inp=document.createElement('input'), box=document.createElement('div');
   inp.className='tp-q'; inp.placeholder='search lists…'; inp.spellcheck=false;
