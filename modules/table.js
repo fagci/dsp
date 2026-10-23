@@ -256,6 +256,7 @@ async function tblLoadRun(n){
     ids=rows.map((_,i)=>i); schema=tcSchemaOf(n.p.schema);
   } else {
     let items=[], meta=null;
+    n.err='';
     try{ [items,meta]=await Promise.all([ListDB.list(list),ListDB.getMeta(list)]); }
     catch(e){ n.err='storage: '+(e.message||e); }
     if(tok!==n.loadTok) return;
@@ -920,8 +921,8 @@ const tblBaseNames=()=>{                                 // имена без о
 async function tblNames(){
   let db=[];
   for(let k=0;k<3;k++){                                   // сбой чтения имён не должен молча оставлять селект без пользовательских списков
-    try{ db=await ListDB.listNames(); break; }
-    catch(e){ if(k===2) console.warn('[table] list names:',e); else await new Promise(r=>setTimeout(r,300)); }
+    try{ db=await ListDB.listNames(); tblNames.err=''; break; }
+    catch(e){ if(k===2){ console.warn('[table] list names:',e); tblNames.err=String(e?.message||e); } else await new Promise(r=>setTimeout(r,300)); }
   }
   return [...tblBaseNames(),...db.filter(x=>x!==TBL_PATCH && !x.startsWith(TBL_PRE))];
 }
@@ -1124,8 +1125,11 @@ async function tblNewList(n,t){
   const nm0=(prompt('New list name:','')||'').trim(); if(!nm0) return;
   const nm=nm0.includes('/') ? nm0 : dir+nm0;                 // имя в текущей папке (или папке шаблона); «папка/имя» — своя
   if(nm===TBL_PATCH || nm.startsWith(TBL_PRE)){ alert('this name is reserved'); return; }
-  const have=(await ListDB.listNames()).includes(nm);
-  if(!have) await ListDB.setMeta(nm,{cols:t ? t.cols.slice() : [],...(t?.types ? {types:{...t.types}} : {})});
+  let have;
+  try{
+    have=(await ListDB.listNames()).includes(nm);
+    if(!have) await ListDB.setMeta(nm,{cols:t ? t.cols.slice() : [],...(t?.types ? {types:{...t.types}} : {})});
+  }catch(e){ alert('Cannot create the list — storage error: '+(e?.message||e)); return; }
   await tblPick(n,nm);
   if(t?.types && !have) n.p.vmode='cards';
   if(have && t) await tblApplyTemplate(n,t);                  // список уже есть — шаблон только дополняет колонки
@@ -1165,6 +1169,7 @@ async function tblRefreshNames(n){
   try{
     const names=await tblNames();
     if(n.disposed || n.ui!==ui || tok!==n._namesTok) return;
+    if(tblNames.err) n.err='storage: '+tblNames.err;       // база списков не открывается — видно в строке состояния узла
     if(!names.includes(n.p.list)) names.push(n.p.list);   // пустой, ещё не записанный
     n.treeNames=names;
     tblRenderTree(n);

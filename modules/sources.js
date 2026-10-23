@@ -6563,6 +6563,7 @@ const ListDB = (() => {
         db.onversionchange = () => { db.close(); dbp = null; };
         res(db);
       };
+      rq.onblocked = () => console.warn('[lists] база списков занята другой вкладкой — закройте её');
       rq.onerror = e => { dbp = null; rej(e.target.error); };
     });
     return dbp;
