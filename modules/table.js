@@ -27,6 +27,10 @@ const tblLeaf=name=>name.slice(name.lastIndexOf('/')+1);
 // отмеченные для показа списки; без p.show (старые патчи) — только активный
 const tblShow=n=>new Set((Array.isArray(n.p.show) ? n.p.show : [n.p.list]).map(tblCanon));
 const tblRO=n=>tblKind(n.p.list)==='preset';
+// настройки списка живут в его схеме (card), а не в узле, и переезжают вместе со списком:
+// key — колонка upsert, text — колонка выхода text, max — потолок строк, csv — строки text разбираются по колонкам,
+// hexAll — все поля разбора hex; types[колонка].src — поле пакета, из которого колонка заполняется
+const tblUpKey=n=>String(n.schema?.card?.key||'').trim();
 const tblHz=v=>typeof v==='number' ? v : parseHzCell(v);
 const tblSame=(a,b)=>a.length===b.length && a.every((x,i)=>x===b[i]);
 
@@ -73,16 +77,15 @@ function tblFromTable(table){
   });
   return {cols,rows};
 }
-// поля пакета → колонки. p.pfields: «col=src, src2», src — путь a.b.c в записи или поле разбора hex по её hexSchema
-// (hexSchema нет — схема по содержимому); «*» — все поля разбора. Без «col=» колонка зовётся как src (точки → _)
+// поля пакета → колонки. У колонки types[c].src — путь a.b.c в записи или поле разбора hex по её hexSchema
+// (hexSchema нет — схема по содержимому); card.hexAll — ещё и все поля разбора
 function tblPspec(n){
-  const t=String(n.p.pfields||'');
-  if(n._pfSrc!==t){
-    n._pfSrc=t;
-    n._pf=t.split(/[,;\n]/).map(x=>x.trim()).filter(Boolean).map(x=>{
-      const i=x.indexOf('='), src=(i<0 ? x : x.slice(i+1)).trim();
-      return {src, col:i<0 ? src.replace(/\./g,'_') : x.slice(0,i).trim(), alias:i>=0};
-    }).filter(x=>x.src && x.col);
+  const ty=n.schema?.types||{}, hx=!!n.schema?.card?.hexAll;
+  let sig=hx ? '*' : '';
+  for(const c in ty) if(ty[c].src) sig+='\n'+c+'='+ty[c].src;
+  if(n._pfSrc!==sig){
+    n._pfSrc=sig;
+    n._pf=(hx ? [{src:'*',col:'*'}] : []).concat(Object.keys(ty).filter(c=>ty[c].src).map(c=>({src:String(ty[c].src).trim(),col:c}))).filter(x=>x.src && x.col);
   }
   return n._pf;
 }
@@ -103,7 +106,6 @@ function tblPacket(n,r){
   const o={...r};
   for(const f of spec){
     if(f.src==='*'){ const p=parsed(); if(p) for(const k in p) if(k[0]!=='_' && !(k in o)) o[k]=p[k]; continue; }
-    if(!f.alias && f.col in o) continue;
     let v=r;
     for(const k of f.src.split('.')){
       if(typeof v==='string' && /^\s*[{[]/.test(v)) try{ v=JSON.parse(v); }catch(e){}     // в списке объекты хранятся текстом
@@ -241,6 +243,27 @@ async function tblReadList(n,name){
   return tblDbRows(items,meta);
 }
 
+// старые параметры узла (key, textCol, maxRows, pfields, textCsv) → схема списка; один раз при загрузке списка
+const TBL_LEGACY=['key','textCol','maxRows','pfields','textCsv','collect','fmt'];
+async function tblLegacy(n,list,kind,schema,failed){
+  const p=n.p;
+  if(failed || !TBL_LEGACY.some(k=>k in p)) return;
+  if(kind!=='preset'){
+    const c=schema.card, ty=schema.types; let ch=false;
+    const set=(k,v)=>{ if(v && !c[k]){ c[k]=v; ch=true; } };
+    set('key',String(p.key||'').trim()); set('text',String(p.textCol||'').trim()); set('max',+p.maxRows>0 ? +p.maxRows : 0); set('csv',!!p.textCsv);
+    for(const x of String(p.pfields||'').split(/[,;\n]/).map(x=>x.trim()).filter(Boolean)){
+      const i=x.indexOf('='), src=(i<0 ? x : x.slice(i+1)).trim(), col=i<0 ? src.replace(/\./g,'_') : x.slice(0,i).trim();
+      if(src==='*'){ if(!c.hexAll){ c.hexAll=true; ch=true; } }
+      else if(src && col && !ty[col]?.src){ ty[col]={...ty[col],src}; ch=true; }
+    }
+    if(ch){
+      if(kind==='db'){ try{ await tblMetaSet(list,{types:ty,card:c}); }catch(e){ console.warn('[table] settings → list:',e); return; } }
+      else n.p.schema={types:ty,card:c};
+    }
+  }
+  for(const k of TBL_LEGACY) delete p[k];
+}
 async function tblLoad(n){
   n.p.list=tblCanon(n.p.list);
   n.loading=(n.loading|0)+1;                            // счётчик: устаревшая загрузка не должна гасить флаг идущей новой, иначе process перезапускает её по кругу
@@ -265,6 +288,8 @@ async function tblLoadRun(n){
     ({cols,rows}=tblDbRows(items,meta));
     ids=items.map(it=>it.id); schema=tcSchemaOf(meta);
   }
+  await tblLegacy(n,list,kind,schema,/^storage:/.test(n.err||''));
+  if(tok!==n.loadTok) return;
   n.loaded=list; n.loadedData=kind==='patch' ? n.p.data : null;
   n.all=rows; n.ids=ids; n.cl=cols; n.schema=schema;
   trCalcAll(n);
@@ -468,8 +493,8 @@ async function tblAdd(n,recs,strict){                  // strict (форма): �
   if(tblRO(n) || !recs.length) return;
   recs=recs.map(r=>tblClean(tblPacket(n,r)));
   let grown=false;
-  if(n.p.key && n.p.key.trim()){
-    const u=await tblUpsert(n,recs,n.p.key.trim());
+  if(tblUpKey(n)){
+    const u=await tblUpsert(n,recs,tblUpKey(n));
     recs=u.fresh; grown=u.grown;
     if(!recs.length){
       await tblSaveCols(n);
@@ -490,7 +515,7 @@ async function tblAdd(n,recs,strict){                  // strict (форма): �
   } else ids=rows.map((_,i)=>n.all.length+i);
   n.all.push(...rows); n.ids.push(...ids);
   // потолок: старые записи уходят (лог не растёт бесконечно)
-  const cap=kind==='patch' ? Math.min(+n.p.maxRows||1000,1000) : +n.p.maxRows||0;
+  const max=+n.schema?.card?.max||0, cap=kind==='patch' ? Math.min(max||1000,1000) : max;
   if(cap>0 && n.all.length>cap){
     const drop=n.ids.splice(0,n.all.length-cap); n.all.splice(0,drop.length);
     if(kind==='db') await ListDB.removeMany(drop).catch(()=>{});
@@ -531,7 +556,7 @@ async function tblRemove(n,i){
 // записи с rec: обычные — в очередь (upsert по ключу); _delete — удалить строку; _was — переименовать (ключ был _was, стал значением в колонке key).
 // flush — сразу записать (вызов напрямую, когда движок остановлен и по проводу ничего не идёт)
 function tblIngest(n,recs,flush){
-  if(tblRO(n) || !n.p.collect) return;
+  if(tblRO(n)) return;
   const del=[], ren=[];
   for(const r of recs) if(r && typeof r==='object') (r._delete ? del : r._was!=null ? ren : n.pend).push(r);
   if(del.length) tblDelRecs(n,del);
@@ -539,7 +564,7 @@ function tblIngest(n,recs,flush){
   if(flush && n.pend.length) tblFlush(n);
 }
 async function tblRenameRecs(n,recs){
-  const key=String(n.p.key||'').trim();
+  const key=tblUpKey(n);
   for(const r of recs){
     const {_was,...rest}=r, k=key ? n.all.findIndex(x=>String(x[key])===String(_was)) : -1;
     if(k>=0 && String(rest[key])!==String(_was) && !n.loading && !tblRO(n)){
@@ -559,7 +584,7 @@ async function tblRenameRecs(n,recs){
 }
 // запись с _delete на rec: удаляет строку с тем же значением в колонке upsert key (так карта удаляет точки)
 async function tblDelRecs(n,recs){
-  const key=String(n.p.key||'').trim();
+  const key=tblUpKey(n);
   if(!key || tblRO(n) || n.loading) return;
   for(const r of recs){
     const k=n.all.findIndex(x=>String(x[key])===String(r[key]));
@@ -583,7 +608,7 @@ async function tblClear(n){
 // набор на входе rows → в активный список: заменить строки или дописать (станции после поиска, любой набор записей)
 // rows in «sync» / «new only»: набор приводится к списку по ключевой колонке на месте, без очистки — выбор строки и позиция не сбиваются
 async function tblSync(n,list,onlyNew){
-  const key=(n.p.key||'').trim() || 'id';
+  const key=tblUpKey(n) || 'id';
   const recs=list.filter(r=>r && typeof r==='object').map(r=>tblClean(tblPacket(n,r)));
   let grown=false;
   for(const c of [key,...recs.flatMap(r=>Object.keys(r))]) if(!n.cl.includes(c)){ n.cl.push(c); grown=true; }
@@ -702,8 +727,8 @@ async function tblListFile(name){
   return {name:(tblLeaf(name)||'table').replace(/[^\w.-]+/g,'_')+'.csv',
     blob:new Blob(['\ufeff'+[cols,...rows.map(r=>cols.map(c=>r[c]))].map(r=>r.map(csvCell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'})};
 }
-function tblExportFile(n){
-  const cl=n.cl, rows=n.all, fmt=n.p.fmt, base=(tblSplit(n.p.list)[1]||'table').replace(/[^\w.-]+/g,'_');
+function tblExportFile(n,fmt='csv'){
+  const cl=n.cl, rows=n.all, base=(tblSplit(n.p.list)[1]||'table').replace(/[^\w.-]+/g,'_');
   if(fmt==='json') return {name:base+'.json', blob:new Blob([JSON.stringify(rows.map(r=>{ const o={}; for(const c of cl) o[c]=r[c]; return o; }),null,1)],{type:'application/json'})};
   if(fmt==='tsv'){
     const cell=v=>String(v??'').replace(/[\t\r\n]+/g,' ');
@@ -711,7 +736,7 @@ function tblExportFile(n){
   }
   return {name:base+'.csv', blob:new Blob(['\ufeff'+[cl,...rows.map(r=>cl.map(c=>r[c]))].map(r=>r.map(csvCell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'})};
 }
-function tblExport(n,share){ const f=tblExportFile(n); if(share) shareFile(f.blob,f.name); else dl(f.blob,f.name); }
+function tblExport(n,share,fmt){ const f=tblExportFile(n,fmt); if(share) shareFile(f.blob,f.name); else dl(f.blob,f.name); }
 async function tblExportAll(){
   const lists={};
   for(const name of await ListDB.listNames()){
@@ -742,7 +767,7 @@ async function tblCopy(n){
 /* ---------- запись потока ---------- */
 function tblTextRows(n,text){
   const lines=String(text).split(/\r?\n/).filter(l=>l.trim());
-  if(!n.p.textCsv) return lines.map(l=>({text:l}));
+  if(!n.schema?.card?.csv) return lines.map(l=>({text:l}));
   const t=geoCsvParse(String(text),'');
   let cl=n.cl.length ? n.cl : null, body=t;
   if(!cl){ cl=hostlistDedupFieldNames(t[0]); body=t.slice(1); }
@@ -776,7 +801,8 @@ function tblSelOut(n,I){
   n.pulse=batch.length ? 1 : 0;
   const cur=n.cur || n.rows[n.idx];
   const out={rec:batch.length ? batch : null, row:n.idx+1, count:n.count, next:n.pulse};
-  out.text=p.textCol && cur[p.textCol]!==undefined ? String(cur[p.textCol]) : n.headers.map(h=>cur[h]).join(',');
+  const tc=n.schema?.card?.text;
+  out.text=tc && cur[tc]!==undefined ? String(cur[tc]) : n.headers.map(h=>cur[h]).join(',');
   for(const c of n.cols) out[c.port]=cur[c.h];
   return out;
 }
@@ -799,28 +825,18 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     {n:'follow',t:'check',d:false,label:'follow the end',tip:'show the last rows and keep scrolling to new ones while the list is scrolled to the bottom (like Wireshark); scroll up to stop following'},
     {n:'rev',t:'check',d:false,label:'newest first',tip:'show the list in reverse: the last added row is at the top (the rows output follows this order too)'},
     {n:'initial',t:'check',d:true,label:'first row at start',tip:'output the first row when the patch starts, before anything is selected',adv:true},
-    {n:'collect',t:'check',d:true,label:'store rec / text wires',adv:true},
     {n:'rowsIn',t:'select',opts:['replace','add','sync','new only'],d:'replace',label:'rows in (wire)',tip:'a set on the rows input is stored in the active list: replace its rows, add to them, sync (rows are matched by the upsert key column — default id — and changed, added or removed in place: nothing flickers, the selected row stays) or new only (add the rows whose key is not in the list yet, leave the rest alone)'},
-    {n:'key',t:'text',d:'',adv:true,label:'upsert key col',tip:'if set, a wired rec with the same value in this column updates its row instead of adding one (a rec with _delete removes it); count / first / last columns are kept'},
-    {n:'pfields',t:'text',d:'',adv:true,label:'packet fields → columns',tip:'extra columns from a wired rec: "col=src, src2". src is a path into the record (a.b.c) or a field of its hex parsed by hexSchema (HEX Structure: mtype_name, body.devaddr …); * — all parsed fields'},
-    {n:'pfillBtn',t:'button',label:'Fill packet fields into existing rows',adv:true,fn:n=>tblBackfill(n)},
-    {n:'textCsv',t:'check',d:false,label:'text wire: split into columns',adv:true},
-    {n:'maxRows',t:'num',min:0,max:1e7,step:100,d:0,label:'max rows (0=∞)',tip:'oldest rows are dropped above this count; 0 — no limit (a list in the patch itself keeps at most 1000)',adv:true},
-    {n:'fmt',t:'select',opts:['csv','tsv','json'],d:'csv',label:'export format',adv:true},
-    {n:'textCol',t:'text',d:'',adv:true,label:'text col (row)',tip:'column that goes to the text output; empty — the whole row'},
     {n:'data',t:'code',d:'',adv:true,label:'patch table (list = @patch)',plain:true,fn:n=>{ if(n.p.list===TBL_PATCH) tblLoad(n); }},
   ],
   init:n=>{
     n.p.list=tblCanon(n.p.list||'table');
     n.p.cols=Array.isArray(n.p.cols) ? n.p.cols : [];
     if(!Array.isArray(n.p.rules)) n.p.rules=[];
-    if(+n.p.maxRows===10000) n.p.maxRows=0;                // прежнее значение по умолчанию: лимита нет
     if(n.p.sel===undefined) n.p.sel=null;
     n.all=[]; n.ids=[]; n.cl=[]; n.rows=[]; n.rowIds=[]; n.headers=[]; n.cols=[]; n.rowsOwn=[]; n.rowsOut=[];
     n.extra=new Map(); n.onCount=0; n._rev=!!n.p.rev;
     n.err=''; n.loaded=null; n.loadedData=null; n.pend=[]; n.lastFlush=0; n.flushing=false;
     n.lastRec=undefined; n.lastText=undefined; n.pick=null;
-    n._pfSeen=n.p.pfields; n._pfPend=false; n._pfAt=0;
     n.rowPrev=null; n.pulse=0; n.initialized=false; n.uiDirty=true;
     n.onResize=ln=>{ if(ln.ui) syncCustomHeight(ln,ln.ui.root,150); };
     tblPorts(n); tblReset(n);
@@ -844,10 +860,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     }
     const wf=typeof I.filter==='string' ? I.filter : '';
     if(wf!==(n.wf||'') && n.loaded===p.list){ n.wf=wf; n.hlSel=false; tblDerive(n); tblReset(n); n.initDone=true; n.uiDirty=true; n.uiFull=true; }
-    // packet fields изменили — заполнить ими уже записанные строки, когда ввод затих
-    if(p.pfields!==n._pfSeen){ n._pfSeen=p.pfields; n._pfAt=performance.now(); n._pfPend=true; }
-    else if(n._pfPend && performance.now()-n._pfAt>1000 && !n.loading && n.loaded===p.list){ n._pfPend=false; tblBackfill(n); }
-    if(p.collect && !tblRO(n)){
+    if(!tblRO(n)){
       if(I.rec && I.rec!==n.lastRec){ n.lastRec=I.rec; tblIngest(n,Array.isArray(I.rec) ? I.rec : [I.rec],false); }
       if(typeof I.text==='string' && I.text!==n.lastText){ n.lastText=I.text; if(I.text) n.pend.push(...tblTextRows(n,I.text)); }
     }
@@ -1124,7 +1137,8 @@ function tblMainMenu(n){
   tblMenuHead(m,'Data');
   it('Import file…','CSV, TSV, TXT, JSON, KML, GPX, GeoJSON — each file becomes a list',()=>n.ui.fileEl.click());
   it('Open data…','objects from open sources (cell towers, masts, repeaters, peaks, own Overpass query) and terrain elevation for rows with lat / lon',()=>gdOpenMenu(n));
-  it('Export this list','format in advanced',()=>tblExport(n));
+  it('Export CSV','this list as a CSV file',()=>tblExport(n,false,'csv'));
+  it('Export TSV / JSON','tab-separated or JSON',()=>tblExport(n,false,confirm('OK — JSON, Cancel — TSV') ? 'json' : 'tsv'));
   it('Share this list…','send it through the system share menu',()=>tblExport(n,true));
   it('Export all lists','all lists in one JSON file (import brings them back)',()=>tblExportAll());
   tblMenuHead(m,'List');
@@ -1740,6 +1754,7 @@ async function tblColsApply(n,cl,ren={},fill){
   sc.types=types; sc.card.show=(sc.card.show||[]).filter(live).map(nm);
   if(sc.card.lines) sc.card.lines=sc.card.lines.map(l=>l.filter(live).map(nm));
   if(sc.card.unique) sc.card.unique=sc.card.unique.filter(a=>a.every(live)).map(a=>a.map(nm));
+  for(const k of ['key','text']) if(sc.card[k]){ if(!n.cl.includes(sc.card[k]) || live(sc.card[k])) sc.card[k]=nm(sc.card[k]); else delete sc.card[k]; }
   if(sc.card.seq){ const q={}; for(const k in sc.card.seq) if(live(k)) q[nm(k)]=sc.card.seq[k]; sc.card.seq=q; }
   for(const k in ren) for(const c in types) if(types[c].expr) types[c]={...types[c],expr:trRenameRef(types[c].expr,ren[k],k)};
   if(sc.card.label){                                      // шаблон названия следует за переименованием, убранные поля выпадают
@@ -1796,6 +1811,22 @@ function tblFieldsPanel(n,box,mk,sel){
         await tcSchemaSave(n); tblRenderView(n);
       });
       ur.append(mk('span','tv-lbl','unique'),u); box.append(ur);
+    }
+    {                                                    // как список принимает записи: потолок строк и разбор входящих
+      const r=mk('div','tv-col'), c=n.schema.card, mx=mk('input','tv-w');
+      mx.type='number'; mx.min=0; mx.step=100; mx.value=c.max||''; mx.placeholder='∞'; mx.disabled=ro;
+      mx.title='oldest rows are dropped above this count; empty — no limit (a list in the patch itself keeps at most 1000)';
+      mx.addEventListener('keydown',e=>e.stopPropagation());
+      mx.addEventListener('change',()=>{ const v=Math.max(0,+mx.value||0); if(v) c.max=v; else delete c.max; tcSchemaSave(n); });
+      r.append(mk('span','tv-lbl','max rows'),mx);
+      const flag=(k,label,tip)=>{
+        const cb=mk('input'); cb.type='checkbox'; cb.checked=!!c[k]; cb.disabled=ro; cb.title=tip;
+        cb.addEventListener('change',async()=>{ if(cb.checked) c[k]=true; else delete c[k]; await tcSchemaSave(n); if(k==='hexAll') tblBackfill(n); });
+        const g=mk('span'); g.style.whiteSpace='nowrap'; g.append(cb,mk('span','tv-lbl',label)); r.append(g);
+      };
+      flag('csv','text → columns','lines on the text wire are split into the columns of the list (a line is a CSV row); otherwise a line is one record with a text field');
+      flag('hexAll','all packet fields','a rec with hex gets every field of its parsing as a column');
+      box.append(r);
     }
   }
   if(tcView(n)==='cards') tcLayoutPanel(n,box,mk,sel);
@@ -1917,6 +1948,20 @@ function tblFieldsPanel(n,box,mk,sel){
       }
       const rq=mk('input'); rq.type='checkbox'; rq.checked=!!d.req; rq.addEventListener('change',()=>tcSetDef(n,c,{...d,req:rq.checked}));
       more.append(rq,mk('span','tv-lbl','required'));
+    }
+    if(!ro){
+      const role=(k,label,tip)=>{                      // роль колонки в списке: одна на список
+        const cb=mk('input'); cb.type='checkbox'; cb.checked=n.schema.card[k]===c; cb.title=tip;
+        cb.addEventListener('change',async()=>{ if(cb.checked) n.schema.card[k]=c; else delete n.schema.card[k]; await tcSchemaSave(n); tblRenderView(n); });
+        const g=mk('span'); g.style.whiteSpace='nowrap'; g.append(cb,mk('span','tv-lbl',label)); more.append(g);
+      };
+      role('key','key','a record (rec, rows wire) with the same value here updates the row instead of adding one; a rec with _delete removes it');
+      role('text','text out','this column goes to the text output; none — the whole row');
+      const sr=mk('input','tv-q'); sr.value=d.src||''; sr.placeholder='from packet: a.b.c or a hex field';
+      sr.title='filled from a wired rec: a path into the record (a.b.c) or a field of its hex parsed by hexSchema (HEX Structure: mtype_name, body.devaddr …)';
+      sr.addEventListener('keydown',e=>e.stopPropagation());
+      sr.addEventListener('change',async()=>{ const nd={...d,src:sr.value.trim()}; if(!nd.src) delete nd.src; await tcSetDef(n,c,nd); tblBackfill(n); });
+      more.append(sr);
     }
     if(grid){
       const w=mk('input','tv-w'); w.type='number'; w.min=0; w.step=10; w.value=x.w||''; w.placeholder='auto'; w.title='width, px (empty — by content)';
@@ -2099,7 +2144,5 @@ function tblAddForm(n,init){
   tblOpenEditor(n,'New row',form,null);
 }
 defGroups('table',[
-  {n:'Output', p:'initial textCol', open:false},
-  {n:'Rows', p:'maxRows fmt', open:false},
-  {n:'Records in', p:'collect key textCsv', open:false},
+  {n:'Rows', p:'initial rowsIn', open:false},
   {n:'Patch data', p:'data', open:false}]);
