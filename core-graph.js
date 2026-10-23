@@ -2176,6 +2176,7 @@ return {v:1, view:{...view},
 nodes:Graph.nodes.map(n=>{ const o={id:n.id,type:n.type,x:n.x,y:n.y,
 w:n.size.w,h:n.size.h,p:{...n.p},f:n.lod|0,a:n.advOpen?1:0,...(n.gOpen&&Object.keys(n.gOpen).length?{go:{...n.gOpen}}:{})};
 if(n.name) o.name=n.name;
+if(n.xpand) o.xh=n._xh||n.el.offsetHeight;      // развёрнут (⛶)
 if(n.dash) o.dash=1;                                // закреплён (📌) для дашборда
 return o; }),
 edges:Graph.edges.map(e=>({from:e.from,fp:e.fp,to:e.to,tp:e.tp})),
@@ -2277,6 +2278,7 @@ if(nn &&n.go) for(const [k,v] of Object.entries(n.go)) setGroupOpen(nn,k,v);
 if(nn &&n.name) setNodeName(nn,n.name);
 if(nn &&n.w){ nn.size.w=n.w; nn.size.h=n.h||nn.size.h; applySize(nn); }
 else if(nn &&n.mh){ nn.size.h=n.mh; applySize(nn); }
+if(nn &&n.xh) xpandNode(nn,true,n.xh);
 // n.dash — старые сохранения с 📌: такие узлы сами занимают свободные панели при входе в тайлы
 if(nn &&n.dash) nn.dash=true;
 max=Math.max(max,+String(n.id).slice(1)||0); }
