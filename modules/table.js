@@ -972,8 +972,8 @@ function tblInit(n){
   root.innerHTML=`
     <div class="tbl-head">
       <button type="button" class="tbl-pick" title="active list: rows, edit, sequencer"></button>
-      <button class="tbl-btn tbl-shown" title="lists shown on the map and the bands output — tick as many as you need"></button>
       <button class="tbl-btn tbl-new" title="new list">＋</button>
+      <button class="tbl-btn tbl-shown" title="lists shown on the map and the bands output — tick as many as you need"></button>
       <button class="tbl-btn tbl-menub" title="actions">⋯</button>
     </div>
     <div class="tbl-tree" hidden></div>
@@ -987,7 +987,6 @@ function tblInit(n){
       <button class="tbl-btn pri tbl-add">+ row</button>
       <button class="tbl-btn tbl-vm" title="view"></button>
       <button class="tbl-btn tbl-viewb" title="fields (add, rename, remove, type, links), columns, their format and row colour rules">▦ view</button>
-      <button class="tbl-btn tbl-here" title="new row at my current position (GPS) — with the icon, a photo and a sound in the same form">📍 here</button>
     </div>
     <div class="tbl-list" tabindex="0"></div>
     <div class="tbl-edit" hidden></div>
@@ -1065,7 +1064,6 @@ function tblInit(n){
   q('.tbl-menub').addEventListener('click',()=>tblMainMenu(n));
   q('.tbl-add').addEventListener('click',()=>{ if(!n.ui.edit.hidden && n.ui.edit.dataset.k==='new') tblCloseEditor(n); else tblAddForm(n,n.drill ? {[n.drill.via]:n.drill.label} : null); });
   n.ui.crumb.addEventListener('click',()=>tcChkBack(n));
-  q('.tbl-here').addEventListener('click',()=>tblHereForm(n));
   q('.tbl-viewb').addEventListener('click',()=>tblViewToggle(n));
   q('.tbl-vm').addEventListener('click',()=>tcViewNext(n));
   const file=q('.tbl-file');
@@ -1130,6 +1128,7 @@ function tblMainMenu(n){
   const m=tblMenuEl(n,n.ui.root.querySelector('.tbl-menub'),'main'); if(!m) return;
   const it=(t,d,f)=>tblMenuItem(m,t,d,f,null,true);
   tblMenuHead(m,'Rows');
+  it('Add row here (GPS)','new row at my current position — with the icon, a photo and a sound in the same form',()=>tblHereForm(n));
   it('Clear all rows','delete every row of the active list',()=>tblClearRows(n));
   tblMenuHead(m,'Data');
   it('Import file…','CSV, TSV, TXT, JSON, KML, GPX, GeoJSON — each file becomes a list',()=>n.ui.fileEl.click());
