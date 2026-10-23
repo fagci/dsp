@@ -369,43 +369,8 @@ def({ id:'timebase', title:'Time Base', cat:'Control',
     r.textContent=new Date(n.t*1000).toISOString().slice(0,19).replace('T',' ')+' UTC'; }
 });
 
-/* ---------- Cron ---------- */
-// Расписание как у crontab (см. cronParse в core-dsp.js). Время — вход t (Time Base) или системные часы.
-// Импульс trig — один блок; gate держится dur секунд после срабатывания («писать 10 минут каждый час»).
-// Пропущенное срабатывание (перемотка, вкладка спала > 2 мин) не догоняется.
-def({ id:'cron', title:'Cron', cat:'Control',
-  ins:[{n:'t',t:'num'}],
-  outs:[{n:'trig',t:'num'},{n:'gate',t:'num'},{n:'n',t:'num'},{n:'next',t:'num'}],
-  readout:true,
-  params:[
-    {n:'expr',t:'text',d:'*/15 * * * *',label:'cron: min hour day month weekday (or @hourly @daily @weekly @monthly)'},
-    {n:'tz',t:'select',opts:['UTC','local'],d:'UTC',label:'zone'},
-    {n:'dur',t:'range',min:0,max:86400,step:1,log:false,d:0,label:'gate length, s'},
-    {n:'run',t:'check',d:true,label:'run'},
-  ],
-  init:n=>{ n.src=null; n.c=null; n.nextAt=null; n.fired=0; n.hi=false; n.gateEnd=-1; n.err=false; n.lastT=null; },
-  process(n,I){
-    const p=n.p, cur=typeof I.t==='number' ? (I.t>1e11 ? I.t/1000 : I.t) : Date.now()/1000;
-    const off=p.tz==='local' ? -new Date(cur*1000).getTimezoneOffset()*60 : 0;
-    const key=p.expr+'|'+p.tz;
-    if(key!==n.src){ n.src=key; n.c=cronParse(p.expr); n.err=!n.c; n.nextAt=n.c ? cronNext(n.c,cur,off) : null; }
-    if(n.lastT!=null && (cur<n.lastT || cur-n.lastT>120)) n.nextAt=n.c ? cronNext(n.c,cur,off) : null;   // перемотка: не догоняем
-    n.lastT=cur;
-    let fire=false;
-    if(n.hi) n.hi=false;
-    else if(p.run && n.c && n.nextAt!=null && cur>=n.nextAt){
-      fire=true; n.hi=true; n.fired++; n.gateEnd=cur+p.dur; n.nextAt=cronNext(n.c,cur,off);
-    }
-    n.cur=cur;
-    return {trig:fire?1:0, gate:p.dur>0 && cur<n.gateEnd ? 1 : 0, n:n.fired, next:n.nextAt!=null ? Math.max(0,n.nextAt-cur) : 0};
-  },
-  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
-    const nx=n.nextAt!=null ? new Date(n.nextAt*1000+((n.p.tz==='local' ? -new Date(n.nextAt*1000).getTimezoneOffset()*60 : 0))*1000).toISOString().slice(0,16).replace('T',' ') : '—';
-    r.textContent=n.err ? 'bad cron expression' : (n.p.run ? '' : 'stopped · ')+'fired '+n.fired+' · next '+nx+(n.p.tz==='local'?' local':' UTC'); }
-});
-
 /* ---------- Trigger Clock ---------- */
-// interval / random / poisson / schedule. Импульс держится один блок, между двумя событиями
+// interval / random / poisson / schedule / cron. Импульс держится один блок, между двумя событиями
 // всегда есть блок без импульса (чтобы потребитель увидел фронт).
 function tcSchedule(s){                               // "08:00, 12:30:15, */15s, */5m" → [{tod}|{every}]
   const out=[];
@@ -425,26 +390,40 @@ function tcNextInterval(n){
 }
 function tcReset(n){
   n.time=0; n.next=+n.p.delay||0; n.inBurst=0; n.fired=0; n.hi=false; n.pending=false;
-  n.gateEnd=-1; n.wall=0; n.prevT=null; n.stopped=false;
+  n.gateEnd=-1; n.wall=0; n.prevT=null; n.stopped=false; n.cronSrc=null; n.lastT=null; n.cnext=null;
 }
+// Расписание crontab (cronParse в core-dsp.js): время — вход t (Time Base) или системные часы.
+// Пропущенное срабатывание (перемотка, вкладка спала > 2 мин) не догоняется.
+function tcCron(n,I){
+  const p=n.p, cur=typeof I.t==='number' ? (I.t>1e11 ? I.t/1000 : I.t) : Date.now()/1000;
+  const off=p.tz==='local' ? -new Date(cur*1000).getTimezoneOffset()*60 : 0;
+  const key=p.expr+'|'+p.tz;
+  if(key!==n.cronSrc){ n.cronSrc=key; n.c=cronParse(p.expr); n.cerr=!n.c; n.cnext=n.c ? cronNext(n.c,cur,off) : null; }
+  if(n.lastT!=null && (cur<n.lastT || cur-n.lastT>120)) n.cnext=n.c ? cronNext(n.c,cur,off) : null;
+  n.lastT=cur;
+  if(n.c && n.cnext!=null && cur>=n.cnext){ n.pending=true; n.cnext=cronNext(n.c,cur,off); }
+  n.cur=cur;
+}
+const tcIf=(...ms)=>n=>ms.includes(n.p.mode);
 def({ id:'tclock', title:'Trigger Clock', cat:'Control',
   ins:[{n:'t',t:'num'},{n:'reset',t:'val'}],
   outs:[{n:'trig',t:'num'},{n:'gate',t:'num'},{n:'n',t:'num'},{n:'next',t:'num'}],
   readout:true,
   params:[
-    {n:'mode',t:'select',opts:['interval','random','poisson','schedule'],d:'interval',
+    {n:'mode',t:'select',opts:['interval','random','poisson','schedule','cron'],d:'interval',
       label:'mode'},
-    {n:'interval',t:'range',min:.02,max:3600,step:.01,log:true,d:1,label:'interval, s'},
-    {n:'jitter',t:'range',min:0,max:100,step:1,d:0,label:'jitter, %'},
-    {n:'rmin',t:'range',min:.02,max:3600,step:.01,log:true,d:1,label:'min, s'},
-    {n:'rmax',t:'range',min:.02,max:3600,step:.01,log:true,d:5,label:'max, s'},
+    {n:'interval',t:'range',min:.02,max:3600,step:.01,log:true,d:1,label:'interval, s',if:tcIf('interval','poisson')},
+    {n:'jitter',t:'range',min:0,max:100,step:1,d:0,label:'jitter, %',if:tcIf('interval')},
+    {n:'rmin',t:'range',min:.02,max:3600,step:.01,log:true,d:1,label:'min, s',if:tcIf('random')},
+    {n:'rmax',t:'range',min:.02,max:3600,step:.01,log:true,d:5,label:'max, s',if:tcIf('random')},
     {n:'width',t:'range',min:0,max:3600,step:.01,d:0,label:'gate, s'},
-    {n:'burst',t:'range',min:1,max:100,step:1,d:1,label:'burst'},
-    {n:'gap',t:'range',min:.02,max:60,step:.01,log:true,d:.2,label:'gap, s'},
-    {n:'delay',t:'range',min:0,max:3600,step:.1,d:0,label:'delay, s'},
+    {n:'burst',t:'range',min:1,max:100,step:1,d:1,label:'burst',if:tcIf('interval','random','poisson')},
+    {n:'gap',t:'range',min:.02,max:60,step:.01,log:true,d:.2,label:'gap, s',if:tcIf('interval','random','poisson')},
+    {n:'delay',t:'range',min:0,max:3600,step:.1,d:0,label:'delay, s',if:tcIf('interval','random','poisson')},
     {n:'count',t:'range',min:0,max:100000,step:1,d:0,label:'max N (0=∞)'},
-    {n:'at',t:'text',d:'*/30s',label:'schedule'},
-    {n:'tz',t:'select',opts:['UTC','local'],d:'UTC',label:'zone'},
+    {n:'at',t:'text',d:'*/30s',label:'schedule: 08:00, 12:30:15, */15s, */5m',if:tcIf('schedule')},
+    {n:'expr',t:'text',d:'*/15 * * * *',label:'cron: min hour day month weekday (or @hourly @daily @weekly @monthly)',if:tcIf('cron')},
+    {n:'tz',t:'select',opts:['UTC','local'],d:'UTC',label:'zone',if:tcIf('schedule','cron')},
     {n:'run',t:'check',d:true,label:'run'},
     {n:'reset',t:'button',label:'Reset',fn:n=>tcReset(n)},
   ],
@@ -469,6 +448,8 @@ def({ id:'tclock', title:'Trigger Clock', cat:'Control',
               const occ=d*86400+e.tod-off; if(occ>prev && occ<=cur) n.pending=true; }
           }
         }
+      } else if(p.mode==='cron'){
+        tcCron(n,I);
       } else {
         n.time+=dt;
         if(n.time>=n.next){
@@ -485,9 +466,13 @@ def({ id:'tclock', title:'Trigger Clock', cat:'Control',
       if(p.count>0 && n.fired>=p.count) n.stopped=true;
     }
     const gate=p.width>0 && n.wall<n.gateEnd ? 1 : 0;
-    return {trig:fire?1:0, gate, n:n.fired, next:p.mode==='schedule' ? 0 : Math.max(0,n.next-n.time)};
+    return {trig:fire?1:0, gate, n:n.fired, next:p.mode==='schedule' ? 0 : p.mode==='cron' ? (n.cnext!=null ? Math.max(0,n.cnext-n.cur) : 0) : Math.max(0,n.next-n.time)};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    if(n.p.mode==='cron'){
+      const off=n.p.tz==='local' && n.cnext!=null ? -new Date(n.cnext*1000).getTimezoneOffset()*60 : 0;
+      const nx=n.cnext!=null ? new Date((n.cnext+off)*1000).toISOString().slice(0,16).replace('T',' ') : '—';
+      r.textContent=n.cerr ? 'bad cron expression' : (n.p.run ? '' : 'stopped · ')+'fired '+n.fired+' · next '+nx+(n.p.tz==='local'?' local':' UTC'); return; }
     r.textContent=(n.stopped?'stopped · ':'')+'triggers '+n.fired+(n.p.mode==='schedule'?' · '+n.p.at:' · next in '+Math.max(0,n.next-n.time).toFixed(1)+' s'); }
 });
 

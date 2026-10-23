@@ -193,6 +193,7 @@ if(!MULTI_T.has(t)){ idx.set(k,e); continue; }
 const a=idx.get(k); if(a) a.push(e); else idx.set(k,[e]);
 }
 Graph.inIndex=idx;
+Graph.outUsed=new Set(Graph.edges.map(e=>e.from+'\u0001'+e.fp));
 Islands.rebuild();                                  // состав островов зависит от проводов
 }
 /* ---- DOM узла ---- */
@@ -2186,13 +2187,42 @@ spectrum:{type:'sa', ports:{fsel:'f1', lsel:'snr1'}},
 // l1..l4 (уровень 0..1 между floor/top) убраны — провода переносим на snr1..snr4
 sa:      {type:'sa', ports:{fsel:'f1', l1:'snr1', l2:'snr2', l3:'snr3', l4:'snr4'}},
 gate:    {type:'thresh', ports:{in:'num', out:'num'}},
+meter:   {type:'stats', p:{view:'bar'}, ports:{}, h:26},          // Level — столбик в узле Level (stats)
+signalID:{type:'sigid', ports:{prob:'conf'}},                    // грубая эвристика по звуку — в Signal Type Identifier
+sigwin:  {type:'thresh', p:{mode:'window'}, ports:{in:'sig', out:'sig', hit:'num'}},     // Value Window — режим window в Threshold
+sigmap:  {type:'scale', ports:{}},                                                          // Signal Scale / Number Scale / Calibration — один Scale
+map:     {type:'scale', ports:{in:'num', out:'num'}},
+cal:     {type:'scale', ports:{in:'num', out:'num'}},
+sum:     {type:'mixer', p:{channels:'2'}, ports:{}},                                        // Summer / Mixer 4 / Mixer 12 — один Mixer
+mixer4:  {type:'mixer', p:{channels:'4'}, ports:{}},
+mixer12: {type:'mixer', p:{channels:'12', ...Object.fromEntries(Array.from({length:12},(_,i)=>['p'+String.fromCharCode(97+i), +(i/11*2-1).toFixed(2)]))}, ports:{}},
+lfft:    {type:'fft', p:{band:'low frequency', size:'1024'}, ports:{}},                      // Low-Frequency FFT — режим low frequency в FFT
+combnotch:{type:'humcancel', p:{mode:'comb'}, ports:{}},                                    // Comb Notch — режим comb в Hum Filter
+demod:   {type:'iqDemod', ports:{in:'audio', out:'audio'}, fix:n=>{                         // AM/FM/SSB Demodulator — в Demodulator со входом audio
+  const o=n.p||{}, mode=o.mode||'FM', bw=+o.bw||2400, g=Math.max(.01,+o.gain||2), db=20*Math.log10(g), p={};
+  if(o.freq!=null) p.freq=o.freq;
+  if(mode==='SSB'){ p.mode=o.side==='LSB' ? 'LSB' : 'USB'; p.bw=Math.min(10000,Math.max(500,bw)); p.agc=false; p.gain=Math.round(db+2.86); }
+  else { p.mode=mode==='AM' ? 'AM' : 'FM'; p.fbw=bw; p.dc=false; p.agc=false;
+    if(mode!=='AM'){ p.dev=Math.max(50,bw/2); p.gain=Math.round(db); }
+    else p.gain=Math.round(db);
+    if(mode==='WFM') p.deemph={'50':'50 µs','75':'75 µs'}[o.deemph]||'off'; }
+  n.p=p; }},
+cron:    {type:'tclock', p:{mode:'cron'}, ports:{}, rename:{dur:'width'}},   // Cron — режим cron в Trigger Clock
+notch:   {type:'humcancel', p:{preset:'custom'}, ports:{}},       // Mains Notch — в Hum Canceller
 slice:   {type:'thresh', ports:{in:'sig', out:'sig'}}
 };
+const MIGRATE_GONE=new Set(['scanner']);              // узлы без замены: убираются вместе с проводами
 function migrate(o){
 const map={};
+if(o.nodes.some(n=>MIGRATE_GONE.has(n.type))){
+const gone=new Set(o.nodes.filter(n=>MIGRATE_GONE.has(n.type)).map(n=>n.id));
+o.nodes=o.nodes.filter(n=>!gone.has(n.id)); o.edges=o.edges.filter(e=>!gone.has(e.from) && !gone.has(e.to)); }
 for(const n of o.nodes){
 const m=MIGRATE[n.type];
-if(m){ map[n.id]=m; n.type=m.type; if(m.p) n.p={...m.p,...(n.p||{})}; continue; }
+if(m){ map[n.id]=m; n.type=m.type; if(m.p) n.p={...m.p,...(n.p||{})}; if(m.h && !n.w) n.mh=m.h;
+if(m.fix) m.fix(n);
+if(m.rename && n.p) for(const [a,b] of Object.entries(m.rename)) if(a in n.p){ n.p[b]=n.p[a]; delete n.p[a]; }
+continue; }
 // 'mic' успел дважды сменить форму (mic/mic2 → один узел с выбором канала → оба канала сразу
 // одним узлом с двумя выходами) — старые сохранения отличаем по отсутствию devA и досаживаем.
 if((n.type==='mic'||n.type==='mic2') && (!n.p || n.p.devA===undefined)){
@@ -2242,6 +2272,7 @@ if(nn &&n.a) setAdvOpen(nn,true);
 if(nn &&n.go) for(const [k,v] of Object.entries(n.go)) setGroupOpen(nn,k,v);
 if(nn &&n.name) setNodeName(nn,n.name);
 if(nn &&n.w){ nn.size.w=n.w; nn.size.h=n.h||nn.size.h; applySize(nn); }
+else if(nn &&n.mh){ nn.size.h=n.mh; applySize(nn); }
 // n.dash — старые сохранения с 📌: такие узлы сами занимают свободные панели при входе в тайлы
 if(nn &&n.dash) nn.dash=true;
 max=Math.max(max,+String(n.id).slice(1)||0); }
@@ -2436,7 +2467,18 @@ n._pSnap=Object.assign(n._pSnap||{},n.p);
 }
 matchMedia('(prefers-color-scheme: light)').addEventListener?.('change',redrawAll);
 let drawEma=30;                                     // скользящая стоимость кадра отрисовки, мс (старт — осторожно, как раньше)
+// Параметр с if:n=>bool виден только в своём режиме (скрытое значение остаётся в n.p и работает как раньше)
+function syncParamVis(n){
+const d=MOD[n.type], vs=d._vs||(d._vs=(d.params||[]).filter(q=>typeof q.if==='function'));
+if(!vs.length || !n.el) return;
+const key=vs.map(q=>q.if(n)?1:0).join('');
+if(key===n._vis && n._visEl===n.el) return;
+n._vis=key; n._visEl=n.el;
+vs.forEach((q,i)=>{ for(const k of q.t==='range2' ? q.keys : [q.n]){
+const row=n.el.querySelector(`[data-param="${k}"]`)?.closest('.prm'); if(row) row.style.display=key[i]==='1' ? '' : 'none'; } });
+}
 function frame(ts){
+for(const n of Graph.nodes) syncParamVis(n);
 // пока активен живой высокоскоростной источник (rtlsdr) — растягиваем кадр отрисовки. Сама
 // отрисовка (особенно водопад/спектр) синхронно грузит главный поток, а от него же зависит
 // обслуживание промисов USB-чтения и сообщений воркера демодуляции: то, что интерфейс реже

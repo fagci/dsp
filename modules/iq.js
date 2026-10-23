@@ -65,15 +65,23 @@ defIQ({ id:'iqInterp', title:'IQ Interpolator', cat:'IQ',
           {n:'tpp',t:'select',opts:['4','8','16'],d:'8',label:'taps per input',adv:true}]},
   n=>n.ui ? (n.ui.srIn/1000)+' → '+(n.ui.srOut/1000)+' kS/s' : 'no input');
 
-defIQ({ id:'iqDemod', title:'IQ Demodulator', cat:'IQ',
-  ins:[{n:'in',t:'iq'}], outs:[{n:'out',t:'iq'},{n:'stereo',t:'iq'},{n:'ps',t:'txt'},{n:'rt',t:'txt'},{n:'pilot',t:'num'},{n:'lock',t:'num'}],
+// Демодулятор. Вход iq — радиочастотный поток; вход audio — звук (сигнал в звуковом диапазоне на несущей freq):
+// узел сам переносит несущую в нуль и фильтрует (как Quadrature Shift), дальше всё то же. Выход audio — звук для sig-входов.
+const iqdAudio=n=>Graph.edges.some(e=>e.to===n.id && e.tp==='audio');
+defIQ({ id:'iqDemod', title:'AM/FM/SSB Demodulator', cat:'IQ', kw:'am fm ssb usb lsb wfm sam audio baseband sstv fax subcarrier',
+  audioIn:{pin:'audio', to:'in', fc:'freq', cut:n=>/^(USB|LSB|SAM)$/.test(n.p.mode) ? +n.p.bw : +n.p.fbw/2}, audioOut:{from:'out', pin:'audio'},
+  ins:[{n:'in',t:'iq'},{n:'audio',t:'sig'}],
+  outs:[{n:'out',t:'iq'},{n:'audio',t:'sig'},{n:'stereo',t:'iq'},{n:'ps',t:'txt'},{n:'rt',t:'txt'},{n:'pilot',t:'num'},{n:'lock',t:'num'}],
   params:[{n:'mode',t:'select',opts:['FM','WFM','AM','SAM','USB','LSB'],d:'FM'},
-          {n:'dev',t:'range',min:500,max:100000,step:100,d:5000,log:true,label:'FM deviation, Hz'},
+          {n:'freq',t:'range',min:100,max:()=>Eng.sr/2,step:1,d:1000,log:true,label:'audio input: carrier, Hz (SSB: the suppressed carrier)',if:iqdAudio},
+          {n:'fbw',t:'range',min:50,max:8000,step:10,d:2400,log:true,label:'audio input: channel width, Hz (AM, FM; SSB and SAM use the bandwidth below)',if:n=>iqdAudio(n) && !/^(USB|LSB|SAM)$/.test(n.p.mode)},
+          {n:'dev',t:'range',min:50,max:100000,step:10,d:5000,log:true,label:'FM deviation, Hz'},
           {n:'deemph',t:'select',opts:['off','50 µs','75 µs'],d:'off',label:'FM de-emphasis'},
           {n:'stereo',t:'check',d:true,label:'WFM stereo'},
           {n:'samSb',t:'select',opts:['both','USB','LSB','ISB'],d:'both',label:'SAM sideband (ISB: upper → left, lower → right)'},
           {n:'bw',t:'range',min:500,max:10000,step:50,d:2700,label:'SSB bandwidth / SAM sideband width, Hz'},
           {n:'agc',t:'check',d:true,label:'AGC (AM, SAM, SSB)'},
+          {n:'dc',t:'check',d:true,label:'remove DC from the output (turn off for baseband data and images)'},
           {n:'gain',t:'range',min:-20,max:40,step:1,d:0,label:'gain, dB'}]},
   n=>{ const u=n.ui; if(!u) return 'no input';
     const r=u.sr/1000+(u.ar!==u.sr ? ' → '+(u.ar/1000).toFixed(1) : '')+' kS/s';
@@ -281,18 +289,22 @@ const IQM_D=63;
 const IQM_H=(()=>{ const h=new Float32Array(IQM_D+1);      // h[k] — нечётные k, антисимметричная
   for(let k=1;k<=IQM_D;k+=2) h[k]=2/(Math.PI*k)*(0.54+0.46*Math.cos(Math.PI*k/(IQM_D+1)));
   return h; })();
-def({ id:'iqMod', title:'IQ Modulator', cat:'IQ',
-  ins:[{n:'in',t:'sig'},{n:'fc',t:'num'},{n:'off',t:'num'}], outs:[{n:'iq',t:'iq'}], readout:true,
+// sr = audio: поток идёт на частоте движка, несущая off — прямо в звуковом диапазоне; выход audio — готовый звук
+// (AM/FM/SSB на звуковой несущей: для тестов приёмников, SSTV/FAX-подносчиков, обучения).
+const iqmAudio=n=>n.p.sr==='audio';
+def({ id:'iqMod', title:'AM/FM/SSB Modulator', cat:'IQ', kw:'am fm ssb usb lsb wfm transmit hackrf audio carrier',
+  audioOut:{from:'iq', pin:'audio'},
+  ins:[{n:'in',t:'sig'},{n:'fc',t:'num'},{n:'off',t:'num'}], outs:[{n:'iq',t:'iq'},{n:'audio',t:'sig'}], readout:true,
   params:[{n:'mode',t:'select',opts:['NFM','WFM','AM','USB','LSB'],d:'NFM'},
-          {n:'sr',t:'select',opts:['2000000','2048000','2400000','8000000','10000000','12000000','16000000','20000000'],d:'2000000',label:'sample rate'},
-          {n:'fc',t:'num',d:100000000,label:'center frequency, Hz'},
-          {n:'off',t:'num',d:100000,label:'carrier offset from center, Hz (transmit on center + offset)'},
+          {n:'sr',t:'select',opts:['2000000','2048000','2400000','8000000','10000000','12000000','16000000','20000000','audio'],d:'2000000',label:'sample rate (audio — the engine rate: the carrier sits in the audio band, take the audio output)'},
+          {n:'fc',t:'num',d:100000000,label:'center frequency, Hz',if:n=>!iqmAudio(n)},
+          {n:'off',t:'num',d:100000,label:'carrier offset from center, Hz (transmit on center + offset; audio: the carrier itself)'},
           {n:'dev',t:'range',min:500,max:100000,step:100,d:5000,log:true,label:'FM deviation, Hz'},
           {n:'depth',t:'range',min:0,max:1,step:.01,d:.8,label:'AM depth'},
           {n:'lvl',t:'range',min:-60,max:0,step:1,d:-6,label:'output level, dBFS'}],
   init:n=>{ n.t=0; n.th=0; n.ext=new Float32Array(3+BLOCK); n.hist=new Float32Array(2*IQM_D); n.hb=null; n.state='no input'; },
   process(n,I){
-    const sr=+n.p.sr, fc=pv(n,I,'fc'), off=pv(n,I,'off'), mode=n.p.mode, step=Eng.sr/sr;
+    const sr=iqmAudio(n) ? Eng.sr : +n.p.sr, fc=iqmAudio(n) ? 0 : pv(n,I,'fc'), off=pv(n,I,'off'), mode=n.p.mode, step=Eng.sr/sr;
     const s=iqStream(n,'iq',sr,fc);
     if(n.ext.length!==3+BLOCK){ n.ext=new Float32Array(3+BLOCK); n.t=0; }
     const A=n.ext, B=n.hb && n.hb.length===A.length ? n.hb : (n.hb=new Float32Array(A.length));
@@ -328,7 +340,7 @@ def({ id:'iqMod', title:'IQ Modulator', cat:'IQ',
     }
     n.t=t-BLOCK; n.th=th%(2*Math.PI);
     iqPush(s, k===K ? re : re.subarray(0,k), k===K ? im : im.subarray(0,k));
-    n.state=mode+' · '+((fc+off)/1e6).toFixed(4)+' MHz · '+(sr/1e6)+' MS/s'+(x ? '' : ' · no audio input');
+    n.state=mode+' · '+(iqmAudio(n) ? off.toFixed(0)+' Hz · audio' : ((fc+off)/1e6).toFixed(4)+' MHz · '+(sr/1e6)+' MS/s')+(x ? '' : ' · no audio input');
     return {iq:s};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.state||''; }});

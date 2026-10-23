@@ -183,67 +183,66 @@ def({ id:'div', title:'Divider', cat:'Processing', ins:[{n:'a',t:'sig'},{n:'b',t
       o[i]=clamp((I.a?I.a[i]:0)/(Math.abs(b)<e?(b<0?-e:e):b),-8,8); } return {out:o}; }});
 
 
-def({ id:'sum', title:'Summer', cat:'Processing', ins:[{n:'a',t:'sig'},{n:'b',t:'sig'},{n:'ka',t:'num'},{n:'kb',t:'num'}],
-  outs:[{n:'out',t:'sig'}],
-  params:[{n:'ka',t:'range',min:-2,max:2,step:.01,d:1},{n:'kb',t:'range',min:-2,max:2,step:.01,d:1}],
-  process(n,I){ if(typeof I.ka==='number') setMod(n,'ka',I.ka);
-    if(typeof I.kb==='number') setMod(n,'kb',I.kb);
+// Масштаб: range — линейный перевод диапазона (с ограничением и сглаживанием числа); dB offset / linear scale —
+// калибровка показаний (сдвиг в дБ или множитель, «взять текущее за эталон»). Работает и с сигналом (in → out), и с числом (num → num).
+const scIf=(...ms)=>n=>ms.includes(n.p.mode||'range');
+def({ id:'scale', title:'Scale', cat:'Processing', kw:'map range remap normalize calibration offset gain convert units',
+  ins:[{n:'in',t:'sig'},{n:'num',t:'num'}], outs:[{n:'out',t:'sig'},{n:'num',t:'num'}], readout:true,
+  params:[{n:'mode',t:'select',opts:['range','dB offset','linear scale'],d:'range',label:'range: input span → output span · offset: calibration of readings'},
+          {n:'inMin',t:'num',d:0,if:scIf('range')},{n:'inMax',t:'num',d:1,if:scIf('range')},
+          {n:'outMin',t:'num',d:0,if:scIf('range')},{n:'outMax',t:'num',d:1,if:scIf('range')},
+          {n:'clamp',t:'check',d:true,if:scIf('range')},
+          {n:'smooth',t:'range',min:0,max:.99,step:.01,d:0,label:'smoothing (number)',if:scIf('range')},
+          {n:'ofs',t:'num',d:0,label:'offset',if:scIf('dB offset','linear scale')},
+          {n:'ref',t:'num',d:94,label:'reference value',if:scIf('dB offset','linear scale')},
+          {n:'unit',t:'text',d:'dB SPL',label:'units',if:scIf('dB offset','linear scale')},
+          {n:'take',t:'button',label:'Take current as reference',if:scIf('dB offset','linear scale'),fn:n=>{
+            if(typeof n.raw==='number' && isFinite(n.raw)){
+              const v=n.p.mode==='dB offset' ? n.p.ref-n.raw : n.p.ref/(n.raw||1e-9);
+              if(n.set && n.set.ofs) n.set.ofs(v); else n.p.ofs=v; } }}],
+  init:n=>{ n.sm=0; n.raw=0; n.v=0; n.hasNum=false; },
+  process(n,I){
+    if(typeof I.clamp==='number') setMod(n,'clamp',I.clamp>=0.5);
+    const p=n.p, mode=p.mode||'range', k=(p.outMax-p.outMin)/((p.inMax-p.inMin)||1);
+    const lo=Math.min(p.outMin,p.outMax), hi=Math.max(p.outMin,p.outMax);
+    const f=mode==='dB offset' ? x=>x+p.ofs : mode==='linear scale' ? x=>x*p.ofs
+      : x=>{ const v=p.outMin+(x-p.inMin)*k; return p.clamp ? clamp(v,lo,hi) : v; };
     const o=buf(n,'out');
-    for(let i=0;i<BLOCK;i++) o[i]=(I.a?I.a[i]:0)*n.p.ka+(I.b?I.b[i]:0)*n.p.kb; return {out:o}; }});
+    for(let i=0;i<BLOCK;i++) o[i]=f(I.in ? I.in[i] : 0);
+    n.hasNum=typeof I.num==='number' && isFinite(I.num);
+    n.raw=n.hasNum ? I.num : 0;
+    let v=f(n.raw);
+    if(mode==='range'){ n.sm=n.sm*p.smooth+v*(1-p.smooth); v=n.sm; }
+    n.v=v;
+    return {out:o, num:v}; },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    r.textContent = !n.hasNum ? '' : n.p.mode==='range' ? n.v.toFixed(3) : n.v.toFixed(2)+' '+n.p.unit+'  (input '+n.raw.toFixed(2)+')'; }});
 
 
-// Микшер на 4 входа со своим уровнем/панорамой/мьютом на канал — свести sum→sum→sum для
-// 4 источников (например, каналов rtlsdr) неудобно. Панорама — по закону равной мощности
-// (sin/cos), не линейная: иначе сигнал в центре звучит тише разведённых по краям.
-def({ id:'mixer4', title:'Mixer (4 channels)', cat:'Processing',
-  ins:[{n:'a',t:'sig'},{n:'b',t:'sig'},{n:'c',t:'sig'},{n:'d',t:'sig'},
-       {n:'ka',t:'num'},{n:'kb',t:'num'},{n:'kc',t:'num'},{n:'kd',t:'num'}],
+// Микшер на 2…12 каналов: уровень (минус — вычитание), панорама и мьют на канал. Панорама — по закону
+// равной мощности (sin/cos), не линейная: иначе сигнал в центре звучит тише разведённых по краям.
+const MIX_CH=Array.from({length:12},(_,i)=>String.fromCharCode(97+i));   // 'a'..'l'
+const MIX_COUNTS=['2','3','4','5','6','7','8','9','10','11','12'];
+const MIX_PAN=[-.6,-.2,.2,.6];                       // стартовая панорама первых четырёх; остальные — по центру
+const mixN=n=>Math.min(12,Math.max(2,+n.p.channels||4));
+function mixResize(n){                               // после смены числа каналов — убрать провода к исчезнувшим портам
+  const valid=new Set(portsOf(n,'ins').map(p=>p.n));
+  Graph.edges.filter(e=>e.to===n.id && !valid.has(e.tp)).forEach(delEdge);
+  rebuildNode(n); markTopoDirty();
+}
+def({ id:'mixer', title:'Mixer', cat:'Processing', kw:'sum add mix summer channels pan mute level',
+  ins:n=>{ const c=MIX_CH.slice(0,mixN(n)); return [...c.map(x=>({n:x,t:'sig'})), ...c.map(x=>({n:'k'+x,t:'num'}))]; },
   outs:[{n:'out',t:'sig'},{n:'L',t:'sig'},{n:'R',t:'sig'}],
-  params:[
-    {n:'ka',t:'range',min:0,max:2,step:.01,d:1,label:'A level'},
-    {n:'pa',t:'range',min:-1,max:1,step:.01,d:-.6,label:'A pan'},
-    {n:'ma',t:'check',d:false,label:'A mute'},
-    {n:'kb',t:'range',min:0,max:2,step:.01,d:1,label:'B level'},
-    {n:'pb',t:'range',min:-1,max:1,step:.01,d:-.2,label:'B pan'},
-    {n:'mb',t:'check',d:false,label:'B mute'},
-    {n:'kc',t:'range',min:0,max:2,step:.01,d:1,label:'C level'},
-    {n:'pc',t:'range',min:-1,max:1,step:.01,d:.2,label:'C pan'},
-    {n:'mc',t:'check',d:false,label:'C mute'},
-    {n:'kd',t:'range',min:0,max:2,step:.01,d:1,label:'D level'},
-    {n:'pd',t:'range',min:-1,max:1,step:.01,d:.6,label:'D pan'},
-    {n:'md',t:'check',d:false,label:'D mute'}],
+  params:[{n:'channels',t:'select',opts:MIX_COUNTS,d:'4',label:'channels',fn:mixResize},
+    ...MIX_CH.flatMap((c,i)=>{ const on=n=>i<mixN(n), U=c.toUpperCase();
+      return [{n:'k'+c,t:'range',min:-2,max:2,step:.01,d:1,label:U+' level',if:on},
+              {n:'p'+c,t:'range',min:-1,max:1,step:.01,d:MIX_PAN[i]??0,label:U+' pan',if:on},
+              {n:'m'+c,t:'check',d:false,label:U+' mute',if:on}]; })],
   process(n,I){
-    for(const k of ['ka','kb','kc','kd']) if(typeof I[k]==='number') setMod(n,k,I[k]);
+    const N=mixN(n), chs=MIX_CH.slice(0,N);
+    for(const c of chs) if(typeof I['k'+c]==='number') setMod(n,'k'+c,I['k'+c]);
     const o=buf(n,'out'), oL=buf(n,'L'), oR=buf(n,'R');
-    const chans=[['a','ka','pa','ma'],['b','kb','pb','mb'],['c','kc','pc','mc'],['d','kd','pd','md']];
-    const active=chans.map(([sig,kk,pp,mm])=>{
-      if(n.p[mm]) return null;
-      const k=n.p[kk], ang=(clamp(n.p[pp],-1,1)+1)*Math.PI/4;
-      return {sig, k, gl:Math.cos(ang)*k, gr:Math.sin(ang)*k};
-    }).filter(Boolean);
-    for(let i=0;i<BLOCK;i++){
-      let m=0,l=0,r=0;
-      for(const g of active){ const x=I[g.sig]?I[g.sig][i]:0;
-        m+=x*g.k; l+=x*g.gl; r+=x*g.gr; }
-      o[i]=clamp(m,-4,4); oL[i]=clamp(l,-4,4); oR[i]=clamp(r,-4,4);
-    }
-    return {out:o, L:oL, R:oR}; }});
-
-
-// 12 каналов — та же схема, что у mixer4, только каналы a..l генерируются циклом,
-// чтобы не расписывать вручную 36 параметров (уровень/панорама/мьют на каждый).
-const MIXER12_CH=Array.from({length:12},(_,i)=>String.fromCharCode(97+i));   // 'a'..'l'
-def({ id:'mixer12', title:'Mixer (12 channels)', cat:'Processing',
-  ins:[...MIXER12_CH.map(c=>({n:c,t:'sig'})), ...MIXER12_CH.map(c=>({n:'k'+c,t:'num'}))],
-  outs:[{n:'out',t:'sig'},{n:'L',t:'sig'},{n:'R',t:'sig'}],
-  params:MIXER12_CH.flatMap((c,i)=>[
-    {n:'k'+c,t:'range',min:0,max:2,step:.01,d:1,label:c.toUpperCase()+' level'},
-    {n:'p'+c,t:'range',min:-1,max:1,step:.01,d:+(i/11*2-1).toFixed(2),label:c.toUpperCase()+' pan'},
-    {n:'m'+c,t:'check',d:false,label:c.toUpperCase()+' mute'}]),
-  process(n,I){
-    for(const c of MIXER12_CH) if(typeof I['k'+c]==='number') setMod(n,'k'+c,I['k'+c]);
-    const o=buf(n,'out'), oL=buf(n,'L'), oR=buf(n,'R');
-    const active=MIXER12_CH.map(c=>{
+    const active=chs.map(c=>{
       if(n.p['m'+c]) return null;
       const k=n.p['k'+c], ang=(clamp(n.p['p'+c],-1,1)+1)*Math.PI/4;
       return {sig:c, k, gl:Math.cos(ang)*k, gr:Math.sin(ang)*k};
@@ -688,11 +687,21 @@ def({ id:'dc', title:'Remove DC', cat:'Processing', ins:[{n:'in',t:'sig'},{n:'fr
     return {out:o}; }});
 
 
-def({ id:'fft', title:'FFT', cat:'Processing', ins:[{n:'in',t:'sig'}], outs:[{n:'spec',t:'spec'}],
-  params:[{n:'size',t:'select',opts:['512','1024','2048','4096','8192','16384','32768','65536'],d:'2048'},
-          {n:'win',t:'select',opts:WINDOW_KINDS,d:'hann'}],
+const fftLow=n=>n.p.band==='low frequency';
+def({ id:'fft', title:'FFT', cat:'Processing', kw:'spectrum low frequency infrasound slow decimate', ins:[{n:'in',t:'sig'}], outs:[{n:'spec',t:'spec'}],
+  readout:true,
+  params:[{n:'band',t:'select',opts:['audio','low frequency'],d:'audio',label:'audio: spectrum of the whole band · low frequency: decimates first, for infrasound and slow processes'},
+          {n:'size',t:'select',opts:['256','512','1024','2048','4096','8192','16384','32768','65536'],d:'2048'},
+          {n:'win',t:'select',opts:WINDOW_KINDS,d:'hann'},
+          {n:'fs',t:'select',opts:['16','32','64','128','256','512','1024'],d:'64',label:'decimate to, Hz',if:fftLow},
+          {n:'upd',t:'select',opts:['0.05','0.1','0.2','0.5','1','2'],d:'0.1',label:'update every, s',if:fftLow},
+          {n:'avg',t:'select',opts:['off','1','3','10','30','100','300','inf'],d:'3',label:'averaging, s',if:fftLow},
+          {n:'clr',t:'button',label:'Reset average',if:fftLow,fn:n=>{ const L=n.lf; if(L){ L.avgN=0; L.pw?.fill(0); } }}],
   init:n=>{n.N=0;},
   process(n,I){
+    if(fftLow(n)){                                 // низкочастотный режим — своё состояние в n.lf
+      const L=n.lf||(n.lf={key:''}); L.p=n.p;
+      const r=lfftRun(L,I); roText(n,lfftText(L)); return r; }
     const N=Math.max(+n.p.size, BLOCK*2);          // окно не короче блока
     if(n.N!==N||n.wk!==n.p.win){ n.N=N; n.wk=n.p.win; n.ring=new Float32Array(N);
       n.xw=new Float32Array(N); n.zr=new Float32Array(N/2); n.zi=new Float32Array(N/2);
@@ -783,16 +792,9 @@ function lfftFrame(n,hop){
   sp.mag=n.mag; sp.phase=n.phase; sp.psd=n.psd; sp.hop=hop; sp.sr=n.fs; sp.size=N; sp.freqs=null;
   sp.rev=(sp.rev|0)+1;
 }
-def({ id:'lfft', title:'Low-Frequency FFT', cat:'Processing', ins:[{n:'in',t:'sig'}], outs:[{n:'spec',t:'spec'}],
-  readout:true,
-  params:[{n:'fs',t:'select',opts:['16','32','64','128','256','512','1024'],d:'64',label:'decimate to, Hz'},
-          {n:'size',t:'select',opts:['256','512','1024','2048','4096','8192','16384','32768','65536'],d:'1024'},
-          {n:'win',t:'select',opts:WINDOW_KINDS,d:'hann'},
-          {n:'upd',t:'select',opts:['0.05','0.1','0.2','0.5','1','2'],d:'0.1',label:'update every, s'},
-          {n:'avg',t:'select',opts:['off','1','3','10','30','100','300','inf'],d:'3',label:'averaging, s'},
-          {n:'clr',t:'button',label:'Reset average',fn:n=>{ n.avgN=0; n.pw?.fill(0); }}],
-  init:n=>{ n.key=''; },
-  process(n,I){
+// Режим low frequency у FFT: децимация до fs и спектр инфразвука/медленных процессов. Состояние живёт в n.lf,
+// чтобы не пересекаться с полями обычного режима; параметры (fs, size, win, upd, avg) — общие с узлом.
+function lfftRun(n,I){
     if(n.key!==[Eng.sr,n.p.fs,n.p.size,n.p.win].join()) lfftSetup(n);
     const x=I.in, D1=n.D1, h=n.h, fr=n.fr, N=n.N, hop=Math.max(1,Math.min(N,Math.round(+n.p.upd*n.fs)));
     for(let i=0;i<BLOCK;i++){
@@ -808,14 +810,15 @@ def({ id:'lfft', title:'Low-Frequency FFT', cat:'Processing', ins:[{n:'in',t:'si
       if(n.filled<N) n.filled++;
       if(n.filled>=Math.min(N,32) && ++n.since>=hop){ n.since=0; lfftFrame(n,hop); }
     }
-    return {spec:n.sp}; },
-  draw(n){ const r=n.el.querySelector('.readout'); if(!r||!n.fs) return;
-    const win=n.N/n.fs;
-    r.textContent=`fs ${n.fs.toFixed(2)} Hz · Δf ${(n.fs/n.N).toFixed(4)} Hz · window ${win<120?win.toFixed(1)+' s':(win/60).toFixed(1)+' min'}`+
-      (n.filled<n.N?` · filling ${Math.round(n.filled/n.N*100)}%`:'')+
-      (n.p.avg==='inf'?` · avg ${n.avgN} frames`:''); }});
-
-
+  return {spec:n.sp};
+}
+function lfftText(n){
+  if(!n.fs) return '';
+  const win=n.N/n.fs;
+  return `fs ${n.fs.toFixed(2)} Hz · Δf ${(n.fs/n.N).toFixed(4)} Hz · window ${win<120?win.toFixed(1)+' s':(win/60).toFixed(1)+' min'}`+
+    (n.filled<n.N?` · filling ${Math.round(n.filled/n.N*100)}%`:'')+
+    (n.p.avg==='inf'?` · avg ${n.avgN} frames`:'');
+}
 
 def({ id:'scan', title:'Frame Line', cat:'Video', ins:[{n:'img',t:'img'},{n:'row',t:'num'},{n:'gain',t:'num'}],
   outs:[{n:'out',t:'sig'}],
@@ -1101,23 +1104,6 @@ def({ id:'script', title:'Script', cat:'Builder',
     n.err? '⚠ '+n.err : 'n1 = '+n.n1.toFixed(4); }});
 
 
-def({ id:'cal', title:'Calibration', cat:'Processing',
-  ins:[{n:'in',t:'num'}], outs:[{n:'out',t:'num'}], readout:true,
-  params:[{n:'mode',t:'select',opts:['dB offset','linear scale'],d:'dB offset'},
-          {n:'ofs',t:'num',d:0,label:'offset'},
-          {n:'ref',t:'num',d:94,label:'reference value'},
-          {n:'unit',t:'text',d:'dB SPL',label:'units'},
-          {n:'take',t:'button',label:'Take current as reference',fn:n=>{
-            if(typeof n.raw==='number'&&isFinite(n.raw)){
-              const v=n.p.mode==='dB offset'? n.p.ref-n.raw : n.p.ref/(n.raw||1e-9);
-              if(n.set&&n.set.ofs) n.set.ofs(v); else n.p.ofs=v; } }}],
-  init:n=>{n.raw=0;n.v=0;},
-  process(n,I){
-    n.raw=(typeof I.in==='number'&&isFinite(I.in))?I.in:0;
-    n.v = n.p.mode==='dB offset'? n.raw+n.p.ofs : n.raw*n.p.ofs;
-    return {out:n.v}; },
-  draw(n){ n.el.querySelector('.readout').textContent =
-    n.v.toFixed(2)+' '+n.p.unit+'  (input '+n.raw.toFixed(2)+')'; }});
 
 
 def({ id:'nlms', lazy:'proc', title:'Adaptive Filter', cat:'Processing',
@@ -1265,30 +1251,6 @@ def({ id:'squelch', title:'Squelch', cat:'Radio',
     (n.db>-119?n.db.toFixed(1):'—')+' dB · '+((n.open||n.hCount>0)?'open':'closed'); }});
 
 
-def({ id:'notch', title:'Mains Notch', cat:'Processing', ins:[{n:'in',t:'sig'},{n:'f0',t:'num'},{n:'n',t:'num'},{n:'Q',t:'num'}],
-  outs:[{n:'out',t:'sig'}],
-  params:[{n:'f0',t:'range',min:10,max:400,step:.1,d:50},
-          {n:'n',t:'range',min:1,max:12,step:1,d:5,label:'harmonics'},
-          {n:'Q',t:'range',min:5,max:200,step:1,d:40}],
-  init:n=>{n.key='';},
-  process(n,I){
-    if(typeof I.n==='number') setMod(n,'n',I.n);
-    if(typeof I.Q==='number') setMod(n,'Q',I.Q);
-    const o=buf(n,'out'), f0=pv(n,I,'f0'), N=n.p.n;
-    const key=f0+'/'+N+'/'+n.p.Q+'/'+Eng.sr;
-    if(n.key!==key){ n.key=key; n.c=[]; n.z=[];
-      for(let k=1;k<=N;k++){ const f=f0*k;
-        if(f>=Eng.sr/2-50) break;
-        n.c.push(biquadCoef('notch',f,n.p.Q,Eng.sr)); n.z.push([0,0,0,0]); } }
-    for(let i=0;i<BLOCK;i++){
-      let x=I.in?I.in[i]:0;
-      for(let s=0;s<n.c.length;s++){                 // каскад режекторов на гармониках
-        const [b0,b1,b2,a1,a2]=n.c[s], z=n.z[s];
-        const y=b0*x+b1*z[0]+b2*z[1]-a1*z[2]-a2*z[3];
-        z[1]=z[0]; z[0]=x; z[3]=z[2]; z[2]=y; x=y; }
-      o[i]=x; }
-    return {out:o}; }});
-
 // Частоты наводок: сеть 50/60 Гц, ж/д 16.7 Гц, бортсеть 400 Гц; custom — поле f0
 const HUM_PRESETS=['50','60','16.7','25','400','custom'];
 const humPreset=n=>{ if(n.p.preset!=='custom') setMod(n,'f0',+n.p.preset); };
@@ -1322,19 +1284,42 @@ def({ id:'anf', title:'Auto Notch (NLMS)', cat:'Processing',
     }
     return {out:o, tones:t};
   }});
-def({ id:'humcancel', title:'Hum Canceller (adaptive)', cat:'Processing',
+// Гребенчатый режектор: H(z)=(1+ρ)/2·(1−z^−D)/(1−ρ·z^−D), D=fs/f0 (дробная — линейная
+// интерполяция). Режет все кратные f0 до Найквиста сразу и почти ничего не стоит, но режет
+// и DC, и не подстраивается сам — f0 можно завести с выхода freq у самого узла в режиме adaptive.
+function humComb(n,I){
+  if(typeof I.bw==='number') setMod(n,'bw',I.bw);
+  const sr=Eng.sr, f0=Math.max(1,pv(n,I,'f0'));
+  const D=clamp(sr/f0, 2, sr);
+  const N=pow2ge(Math.ceil(sr)+4);
+  if(n.N!==N){ n.N=N; n.xb=new Float32Array(N); n.yb=new Float32Array(N); n.wi=0; }
+  const r=Math.max(0,1-Math.PI*n.p.bw/sr), rho=Math.pow(r,D), gk=(1+rho)/2;
+  const xb=n.xb, yb=n.yb, m=N-1, Di=Math.floor(D), fr=D-Di, o=buf(n,'out');
+  let wi=n.wi;
+  for(let i=0;i<BLOCK;i++){
+    const x=I.in?I.in[i]:0;
+    const j0=(wi-Di)&m, j1=(wi-Di-1)&m;
+    const xd=xb[j0]+(xb[j1]-xb[j0])*fr, yd=yb[j0]+(yb[j1]-yb[j0])*fr;
+    const y=gk*(x-xd)+rho*yd;
+    xb[wi]=x; yb[wi]=y; o[i]=y; wi=(wi+1)&m; }
+  n.wi=wi; n.f=f0;
+  return {out:o, hum:null, freq:f0, level:null};
+}
+def({ id:'humcancel', title:'Hum Filter', cat:'Processing', kw:'mains notch comb 50 60 hz interference harmonics adaptive',
   ins:[{n:'in',t:'sig'},{n:'f0',t:'num'},{n:'n',t:'num'},{n:'bw',t:'num'}],
   outs:[{n:'out',t:'sig'},{n:'hum',t:'sig'},{n:'freq',t:'num'},{n:'level',t:'num'}],
   readout:true,
-  params:[{n:'preset',t:'select',opts:HUM_PRESETS,d:'50',label:'interference',fn:humPreset},
+  params:[{n:'mode',t:'select',opts:['adaptive','comb'],d:'adaptive',label:'adaptive: subtracts the hum and tracks its frequency · comb: fixed filter on all harmonics, almost free'},
+          {n:'preset',t:'select',opts:HUM_PRESETS,d:'50',label:'interference',fn:humPreset},
           {n:'f0',t:'range',min:5,max:1000,step:.01,d:50,log:true,label:'fundamental, Hz'},
-          {n:'n',t:'range',min:1,max:60,step:1,d:20,label:'harmonics'},
+          {n:'n',t:'range',min:1,max:60,step:1,d:20,label:'harmonics',if:n=>n.p.mode!=='comb'},
           {n:'bw',t:'range',min:.05,max:20,step:.05,d:1,log:true,label:'notch width, Hz (speed)'},
-          {n:'track',t:'check',d:true,label:'track frequency'},
-          {n:'range',t:'range',min:.1,max:5,step:.1,d:1,label:'tracking range, ±Hz',adv:true},
-          {n:'rst',t:'button',label:'Reset',fn:n=>{ n.a=null; }}],
-  init:n=>{ n.a=null; n.ph=0; n.f=null; n.fKey=null; n.th=null; n.lvl=-200; n.red=0; },
+          {n:'track',t:'check',d:true,label:'track frequency',if:n=>n.p.mode!=='comb'},
+          {n:'range',t:'range',min:.1,max:5,step:.1,d:1,label:'tracking range, ±Hz',adv:true,if:n=>n.p.mode!=='comb'},
+          {n:'rst',t:'button',label:'Reset',fn:n=>{ n.a=null; },if:n=>n.p.mode!=='comb'}],
+  init:n=>{ n.a=null; n.ph=0; n.f=null; n.fKey=null; n.th=null; n.lvl=-200; n.red=0; n.N=0; },
   process(n,I){
+    if(n.p.mode==='comb') return humComb(n,I);
     if(typeof I.n==='number') setMod(n,'n',Math.round(I.n));
     if(typeof I.bw==='number') setMod(n,'bw',I.bw);
     const sr=Eng.sr, f0=pv(n,I,'f0');
@@ -1380,37 +1365,9 @@ def({ id:'humcancel', title:'Hum Canceller (adaptive)', cat:'Processing',
     n.red=n.red*.9+r*.1; n.K=K;
     return {out:o, hum:h, freq:n.f, level:n.lvl}; },
   draw(n){
+    if(n.p.mode==='comb') return roText(n, `${(+n.f||0).toFixed(1)} Hz · comb`);
     roText(n, n.K ? `${n.f.toFixed(1)} Hz · ${n.K} harm · hum ${Math.round(n.lvl)} dBFS · reduction ${Math.round(Math.max(0,n.red))} dB`
       : 'no signal'); }});
-
-// Гребенчатый режектор: H(z)=(1+ρ)/2·(1−z^−D)/(1−ρ·z^−D), D=fs/f0 (дробная — линейная
-// интерполяция). Режет все кратные f0 до Найквиста сразу и почти ничего не стоит, но режет
-// и DC, и не подстраивается сам — f0 можно завести с выхода freq у Hum Canceller.
-def({ id:'combnotch', title:'Comb Notch (all harmonics)', cat:'Processing',
-  ins:[{n:'in',t:'sig'},{n:'f0',t:'num'},{n:'bw',t:'num'}],
-  outs:[{n:'out',t:'sig'}],
-  params:[{n:'preset',t:'select',opts:HUM_PRESETS,d:'50',label:'interference',fn:humPreset},
-          {n:'f0',t:'range',min:5,max:1000,step:.01,d:50,log:true,label:'fundamental, Hz'},
-          {n:'bw',t:'range',min:.1,max:20,step:.1,d:2,log:true,label:'notch width, Hz'}],
-  init:n=>{ n.N=0; },
-  process(n,I){
-    if(typeof I.bw==='number') setMod(n,'bw',I.bw);
-    const sr=Eng.sr, f0=Math.max(1,pv(n,I,'f0'));
-    const D=clamp(sr/f0, 2, sr);
-    const N=pow2ge(Math.ceil(sr)+4);
-    if(n.N!==N){ n.N=N; n.xb=new Float32Array(N); n.yb=new Float32Array(N); n.wi=0; }
-    const r=Math.max(0,1-Math.PI*n.p.bw/sr), rho=Math.pow(r,D), gk=(1+rho)/2;
-    const xb=n.xb, yb=n.yb, m=N-1, Di=Math.floor(D), fr=D-Di, o=buf(n,'out');
-    let wi=n.wi;
-    for(let i=0;i<BLOCK;i++){
-      const x=I.in?I.in[i]:0;
-      const j0=(wi-Di)&m, j1=(wi-Di-1)&m;
-      const xd=xb[j0]+(xb[j1]-xb[j0])*fr, yd=yb[j0]+(yb[j1]-yb[j0])*fr;
-      const y=gk*(x-xd)+rho*yd;
-      xb[wi]=x; yb[wi]=y; o[i]=y; wi=(wi+1)&m; }
-    n.wi=wi;
-    return {out:o}; }});
-
 
 function irMeasure(n){
   const N=n.N; if(!N) return;
@@ -1468,18 +1425,6 @@ def({ id:'numsig', title:'Number → Signal', cat:'Processing',
     return {out:o}; }});
 
 
-def({ id:'map', title:'Number Scale', cat:'Processing', ins:[{n:'in',t:'num'},{n:'smooth',t:'num'}],
-  outs:[{n:'out',t:'num'}],
-  params:[{n:'inMin',t:'num',d:0},{n:'inMax',t:'num',d:1},
-          {n:'outMin',t:'num',d:0},{n:'outMax',t:'num',d:1000},
-          {n:'smooth',t:'range',min:0,max:.99,step:.01,d:.5}],
-  // sm — сглаженное значение. НЕ n.y: занято движком под позицию узла на холсте.
-  init:n=>{n.sm=0;},
-  process(n,I){ if(typeof I.smooth==='number') setMod(n,'smooth',I.smooth);
-    const x=I.in||0, p=n.p;
-    const t=clamp((x-p.inMin)/((p.inMax-p.inMin)||1),0,1);
-    const v=p.outMin+(p.outMax-p.outMin)*t;
-    n.sm=n.sm*p.smooth+v*(1-p.smooth); return {out:n.sm}; }});
 
 
 function setMod(n,key,v){                            // применить внешнее значение к параметру: через n.set (с рендером),
@@ -2092,21 +2037,32 @@ function saDbLabels(n,cx){
   }
 }
 
-def({ id:'thresh', title:'Threshold', cat:'Processing',
+const thIf=m=>n=>(n.p.mode||'level')===m;
+def({ id:'thresh', title:'Threshold', cat:'Processing', kw:'slicer comparator window level schmitt hysteresis',
   ins:[{n:'num',t:'num'},{n:'sig',t:'sig'},{n:'thr',t:'num'},{n:'hys',t:'num'},{n:'hold',t:'num'},
        {n:'auto',t:'num'},{n:'invert',t:'num'}],
   outs:[{n:'num',t:'num'},{n:'sig',t:'sig'}],
-  params:[{n:'thr',t:'range',min:-1,max:1,step:.005,d:.5},
-          {n:'hys',t:'range',min:0,max:.5,step:.005,d:.05},
-          {n:'hold',t:'range',min:0,max:2000,step:5,d:0},
-          {n:'auto',t:'check',d:false},
-          {n:'invert',t:'check',d:false}],
-  init:n=>{n.s=false;n.h=0;n.mn=0;n.mx=1;},
+  params:[{n:'mode',t:'select',opts:['level','window'],d:'level',label:'level: ±1 slicer with hysteresis · window: 1 while the value stays between lo and hi for at least min ms'},
+          {n:'thr',t:'range',min:-1,max:1,step:.005,d:.5,if:thIf('level')},
+          {n:'hys',t:'range',min:0,max:.5,step:.005,d:.05,if:thIf('level')},
+          {n:'hold',t:'range',min:0,max:2000,step:5,d:0,if:thIf('level')},
+          {n:'auto',t:'check',d:false,if:thIf('level')},
+          {n:'invert',t:'check',d:false,if:thIf('level')},
+          {n:'lo',t:'num',d:1150,if:thIf('window')},{n:'hi',t:'num',d:1350,if:thIf('window')},
+          {n:'minMs',t:'range',min:0,max:100,step:.5,d:3,label:'min, ms',if:thIf('window')}],
+  init:n=>{n.s=false;n.h=0;n.mn=0;n.mx=1;n.run=0;},
   process(n,I){
     for(const k of ['thr','hys','hold']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     for(const k of ['auto','invert']) if(typeof I[k]==='number') setMod(n,k,I[k]>=0.5);
     const os=buf(n,'sig'), dt=BLOCK/Eng.sr*1000;
     const hasSig=!!I.sig;
+    if(n.p.mode==='window'){                          // окно значений: единица, пока значение в [lo, hi] не меньше minMs
+      const need=n.p.minMs*Eng.sr/1000;
+      let hit=0;
+      for(let i=0;i<BLOCK;i++){ const v=hasSig ? I.sig[i] : (I.num||0);
+        if(v>=n.p.lo && v<=n.p.hi) n.run++; else n.run=0;
+        os[i]=n.run>=need ? 1 : 0; hit=hit||os[i]; }
+      return {num:hit, sig:os}; }
     for(let i=0;i<BLOCK;i++){
       const v=hasSig? I.sig[i] : (I.num||0);
       let thr=n.p.thr, hys=n.p.hys;

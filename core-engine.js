@@ -565,6 +565,25 @@ function pairIn(n,I,p){
   if(I[p.pair[0]]==null) I[p.pair[0]]=r.out;
   if(I[p.pair[1]]==null) I[p.pair[1]]=r.q;
 }
+// Звук на iq-вход: несущая переносится в нуль, ФНЧ из пяти звеньев с частотой среза cut (глубокая режекция зеркала
+// f+fc, иначе ЧМ-детектор слышит его как помеху), I/Q сводятся в поток iq скрытым узлом I/Q → IQ.
+function audioToIq(n,x,a){
+  const st=n._ab||(n._ab={ph:0, li:new Float64Array(5), lq:new Float64Array(5), I:new Float32Array(BLOCK), Q:new Float32Array(BLOCK), m:pairHid('iqMerge',{fc:0,swap:false})});
+  const fc=+n.p[a.fc]||1000, cut=Math.max(10,a.cut(n)), k=Math.exp(-2*Math.PI*cut/Eng.sr), dp=fc/Eng.sr, li=st.li, lq=st.lq;
+  for(let i=0;i<BLOCK;i++){
+    const w=2*Math.PI*st.ph, v=x[i];
+    let vi=v*Math.cos(w), vq=-v*Math.sin(w);
+    for(let j=0;j<5;j++){ li[j]=li[j]*k+(j?li[j-1]:vi)*(1-k); lq[j]=lq[j]*k+(j?lq[j-1]:vq)*(1-k); }
+    st.I[i]=li[4]*2; st.Q[i]=lq[4]*2; st.ph=(st.ph+dp)%1; }
+  return MOD.iqMerge.process(st.m,{I:st.I,Q:st.Q})?.iq ?? null;
+}
+// Поток iq на выходе → звук на sig-выход (как автоматический переходник IQ → Audio).
+function iqToAudio(n,a){
+  const s=n.out?.[a.from];
+  if(!s || !s.chunks){ n.out[a.pin]=null; return; }
+  const st=(n._pb||(n._pb={}))[a.pin] || (n._pb[a.pin]=pairHid('iqAudio',{lat:100,gain:0}));
+  n.out[a.pin]=MOD.iqAudio.process(st,{in:s})?.out ?? null;
+}
 function pairOut(n,p){
   const a=n.out[p.pair[0]], b=n.out[p.pair[1]];
   if(!a || !b) return;
@@ -600,9 +619,11 @@ function evalNode(n, ctx){
   if(d._pair===undefined) d._pair=(Array.isArray(d.ins) && d.ins.some(p=>p.pair)) || (Array.isArray(d.outs) && d.outs.some(p=>p.pair));
   if(d._pair) for(const p of portsOf(n,'ins')) if(p.pair) pairIn(n,I,p);
   applyControlWires(n,I);
+  if(d.audioIn && I[d.audioIn.pin] && !I[d.audioIn.to]) I[d.audioIn.to]=audioToIq(n,I[d.audioIn.pin],d.audioIn);
   // узел острова (core-islands.js) считается в воркере — здесь только прокси
   try{ n.out = (n._isl && g===Graph ? islProcess(n,I) : d.process(n, I, g)) || {}; }catch(err){ n.err = err; }
   if(d._pair) for(const p of portsOf(n,'outs')) if(p.pair) pairOut(n,p);
+  if(d.audioOut && (!g.outUsed || g.outUsed.has(n.id+'\u0001'+d.audioOut.pin))) iqToAudio(n,d.audioOut);   // звук — только если на выходе есть провод
   fillControlOuts(n);
   if(d.lazy==='proc') n._dirty=true; else if(d.lazy===true) markInputs(n,I);
 }

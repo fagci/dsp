@@ -59,7 +59,8 @@ function islConfigure(isl, nodes, ids){
     const fi=ids.has(e.from), ti=ids.has(e.to);
     if(fi && ti) inner.push({from:e.from, fp:e.fp, to:e.to, tp:e.tp});
     else if(ti) (isl.ext.get(e.to)||isl.ext.set(e.to,[]).get(e.to)).push(e.tp);
-    else if(fi){ const s=isl.outs.get(e.from)||isl.outs.set(e.from,new Set()).get(e.from); s.add(e.fp); }
+    else if(fi){ const s=isl.outs.get(e.from)||isl.outs.set(e.from,new Set()).get(e.from); s.add(e.fp);
+      const ao=MOD[Graph.map[e.from].type].audioOut; if(ao && e.fp===ao.pin) s.add(ao.from); }   // звуковой выход считается на этой стороне из потока iq
   }
   for(const id of [...isl.hold.keys()]) if(!ids.has(id)){ isl.hold.delete(id); isl.pending.delete(id); }
   isl.w.postMessage({type:'config', nodes:nodes.map(n=>({id:n.id, type:n.type})), edges:inner,
@@ -76,7 +77,9 @@ function islProcess(n,I){
   const isl=n._isl;
   if(n.id===isl.first || !isl.msg) isl.msg={type:'tick', block:BLOCK, sr:Eng.sr, in:{}};
   const inp={p:islParams(n.p)}, ext=isl.ext.get(n.id);
-  if(ext){ inp.I={}; for(const port of ext) inp.I[port]=islPack(I[port]); }
+  if(ext){ inp.I={};
+    const au=MOD[n.type].audioIn;                     // звук на вход audio уходит в воркер уже как поток iq (вход 'in')
+    for(const port of ext){ const k=au && port===au.pin ? au.to : port; inp.I[k]=islPack(I[k]); } }
   isl.msg.in[n.id]=inp;
   const out=islTake(isl,n);
   if(n.id===isl.last){

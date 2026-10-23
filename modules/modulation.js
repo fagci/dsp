@@ -84,57 +84,6 @@ def({ id:'fsk', lazy:'proc', title:'FSK Demodulator', cat:'Modulation',
       'separation '+(n.q*100).toFixed(0)+'%'; }});
 
 
-def({ id:'demod', title:'AM/FM/SSB Demodulator', cat:'Modulation',
-  ins:[{n:'in',t:'sig'},{n:'freq',t:'num'},{n:'bw',t:'num'},{n:'gain',t:'num'}],
-  outs:[{n:'iq',t:'iq',pair:['I','Q']},{n:'out',t:'sig'},{n:'I',t:'sig',hide:true},{n:'Q',t:'sig',hide:true}],
-  params:[{n:'mode',t:'select',opts:['AM','FM','WFM','SSB'],d:'FM'},
-          {n:'freq',t:'range',min:100,max:()=>Eng.sr/2,step:1,d:1000,log:true},
-          {n:'bw',t:'range',min:5,max:8000,step:1,d:2400,log:true},
-          {n:'side',t:'select',opts:['USB','LSB'],d:'USB'},          // только SSB
-          {n:'deemph',t:'select',opts:['50','75','off'],d:'50'},     // только WFM
-          {n:'smooth',t:'range',min:0,max:.99,step:.01,d:.3},        // только FM/WFM
-          {n:'gain',t:'range',min:.1,max:20,step:.1,d:2}],
-  init:n=>{n.p1=0;n.p2=0;n.li=[0,0,0,0,0];n.lq=[0,0,0,0,0];n.pp=0;n.f=0;n.de=0;},
-  process(n,I){
-    for(const k of ['bw','gain','smooth']) if(typeof I[k]==='number') setMod(n,k,I[k]);
-    const o=buf(n,'out'), oi=buf(n,'I'), oq=buf(n,'Q');
-    const freq=pv(n,I,'freq'), half=Math.max(1,n.p.bw/2), gain=n.p.gain;
-    const mode=n.p.mode, usb=n.p.side==='USB', sgn=usb?-1:1;
-    // общий фронтенд: перенос на несущую (SSB — со сдвигом на половину полосы), ФНЧ 5 полюсов
-    const f1 = mode==='SSB' ? (usb? freq+half : freq-half) : freq;
-    const a=Math.exp(-2*Math.PI*half/Eng.sr);
-    const sm=n.p.smooth;
-    const deTau = n.p.deemph==='75'?75e-6:(n.p.deemph==='50'?50e-6:0);
-    const da = deTau ? Math.exp(-1/(Eng.sr*deTau)) : 0;
-    for(let i=0;i<BLOCK;i++){
-      const x=I.in?I.in[i]:0, w1=2*Math.PI*n.p1;
-      let vi=x*Math.cos(w1), vq=-x*Math.sin(w1);
-      for(let k=0;k<5;k++){
-        n.li[k]=n.li[k]*a+(k?n.li[k-1]:vi)*(1-a);
-        n.lq[k]=n.lq[k]*a+(k?n.lq[k-1]:vq)*(1-a); }
-      const li=n.li[4], lq=n.lq[4];
-      oi[i]=li*gain; oq[i]=lq*gain;
-      let v;
-      if(mode==='AM'){
-        v=Math.hypot(li,lq)*gain;                    // огибающая
-      } else if(mode==='SSB'){
-        const w2=2*Math.PI*n.p2;                      // метод Уивера: обратный перенос
-        v=(li*Math.cos(w2)+sgn*lq*Math.sin(w2))*gain*4;
-        n.p2=(n.p2+half/Eng.sr)%1;
-      } else {
-        const ph=Math.atan2(lq,li);                   // ЧМ-дискриминатор по разности фазы
-        let d=ph-n.pp; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI;
-        n.pp=ph;
-        const fHz=d*Eng.sr/(2*Math.PI);
-        n.f=n.f*sm+fHz*(1-sm);
-        v=(n.f/half)*gain;                             // нормировка девиации на полосу
-        if(mode==='WFM' && da){ n.de=n.de*da+v*(1-da); v=n.de; } // деэмфазис
-      }
-      o[i]=v;
-      n.p1=(n.p1+f1/Eng.sr)%1; }
-    return {out:o,I:oi,Q:oq}; }});
-
-
 function freqMeasure(n){
   const N=n.ring.length, x=new Float32Array(N);
   let mean=0;
@@ -176,30 +125,6 @@ function freqMeasure(n){
   n.f=f;
 }
 
-def({ id:'sigmap', title:'Signal Scale', cat:'Processing', ins:[{n:'in',t:'sig'},{n:'clamp',t:'num'}],
-  outs:[{n:'out',t:'sig'}],
-  params:[{n:'inMin',t:'num',d:1500},{n:'inMax',t:'num',d:2300},
-          {n:'outMin',t:'num',d:0},{n:'outMax',t:'num',d:1},
-          {n:'clamp',t:'check',d:true}],
-  process(n,I){ if(typeof I.clamp==='number') setMod(n,'clamp',I.clamp>=0.5);
-    const o=buf(n,'out'), p=n.p, k=(p.outMax-p.outMin)/((p.inMax-p.inMin)||1);
-    for(let i=0;i<BLOCK;i++){ let v=p.outMin+((I.in?I.in[i]:0)-p.inMin)*k;
-      o[i]=p.clamp?clamp(v,Math.min(p.outMin,p.outMax),Math.max(p.outMin,p.outMax)):v; }
-    return {out:o}; }});
-
-
-def({ id:'sigwin', title:'Value Window', cat:'Processing', ins:[{n:'in',t:'sig'},{n:'minMs',t:'num'}],
-  outs:[{n:'out',t:'sig'},{n:'hit',t:'num'}],
-  params:[{n:'lo',t:'num',d:1150},{n:'hi',t:'num',d:1350},
-          {n:'minMs',t:'range',min:0,max:100,step:.5,d:3}],
-  init:n=>{n.run=0;n.hit=0;},
-  process(n,I){ if(typeof I.minMs==='number') setMod(n,'minMs',I.minMs);
-    const o=buf(n,'out'), need=n.p.minMs*Eng.sr/1000;
-    let hit=0;
-    for(let i=0;i<BLOCK;i++){ const v=I.in?I.in[i]:0;
-      if(v>=n.p.lo&&v<=n.p.hi) n.run++; else n.run=0;
-      o[i]=n.run>=need?1:0; hit=hit||o[i]; }
-    n.hit=hit; return {out:o,hit}; }});
 
 
 function paintImage(n,force){                        // растр → canvas (моно или три полосы в RGB)

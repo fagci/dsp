@@ -3967,19 +3967,6 @@ function mIdle(n){                                 // добить символ,
   if(!n.space && t>g*5 && n.text && !n.text.endsWith(' ')){ n.text+=' '; n.space=true; }
 }
 
-def({ id:'meter', lazy:'proc', title:'Level', cat:'Analysis', ins:[{n:'in',t:'sig'}], outs:[{n:'db',t:'num'}],
-  view:{h:26}, readout:true,
-  init:n=>{n.db=-120;},
-  process(n,I){ const r=I.in?rms(I.in):0;
-    const db=20*Math.log10(r+1e-9); n.db=Math.max(db,n.db-3); return {db:n.db}; },
-  draw(n,cv,cx){ const W=cv.width,H=cv.height,v=clamp((n.db+80)/80,0,1);
-    cx.clearRect(0,0,W,H);
-    const g=cx.createLinearGradient(0,0,W,0);
-    g.addColorStop(0,themeColor('--acc2')); g.addColorStop(.75,themeColor('--acc')); g.addColorStop(1,themeColor('--err'));
-    cx.fillStyle=g; cx.fillRect(0,0,W*v,H);
-    roText(n,Math.round(n.db)+' dB'); }});
-
-
 def({ id:'numview', title:'Number', cat:'Indicators', ins:[{n:'in',t:'num'},{n:'digits',t:'num'}], readout:true,
   params:[{n:'digits',t:'range',min:0,max:6,step:1,d:2}],
   process(n,I){ if(typeof I.digits==='number') setMod(n,'digits',I.digits); n.v=I.in; return {}; },
@@ -4185,299 +4172,6 @@ def({ id:'autocorr', lazy:'proc', title:'Autocorrelator', cat:'Analysis', ins:[{
       ' ('+(n.conf*100).toFixed(0)+'%)'; }});
 
 
-def({ id:'scanner', title:'Auto Frequency Scanner', cat:'Radio',
-  ins:[{n:'in',t:'sig'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'step',t:'num'},
-       {n:'threshold',t:'num'},{n:'snr',t:'num'},{n:'hold',t:'num'},{n:'speed',t:'num'}],
-  outs:[{n:'freq',t:'num'},{n:'level',t:'num'},{n:'active',t:'num'}],
-  readout:true, tall:true,
-  params:[{n:'fmin',t:'range',min:100,max:()=>Eng.sr/2,step:100,d:1000,log:true},
-          {n:'fmax',t:'range',min:200,max:()=>Eng.sr/2,step:100,d:3000,log:true},
-          {n:'step',t:'range',min:50,max:1000,step:50,d:100,label:'step, Hz'},
-          {n:'threshold',t:'range',min:0.001,max:0.1,step:0.001,d:0.01,label:'sensitivity'},
-          {n:'snr',t:'range',min:0,max:40,step:1,d:0,label:'over noise, dB (0 = fixed sensitivity)'},
-          {n:'hold',t:'range',min:0.1,max:5,step:0.1,d:1,label:'hold time, s'},
-          {n:'speed',t:'range',min:1,max:100,step:1,d:20,label:'scan speed'}],
-  init:n=>{ 
-    n.freq = 0;
-    n.hits = [];
-    n.phase = 0;
-    n.holdTimer = 0;
-    n.currentFreq = 0;
-    n.signalLevel = 0;
-    n.scanning = true;
-    n.lastFound = '';
-  },
-  process(n,I){
-    for(const k of ['fmin','fmax','step','threshold','snr','hold','speed'])
-      if(typeof I[k]==='number') setMod(n,k,I[k]);
-    const dt = BLOCK / Eng.sr;
-    const fmin = n.p.fmin;
-    const fmax = n.p.fmax;
-    const step = n.p.step;
-    const speed = n.p.speed;
-    const N = 2048;
-    
-    // Быстрый детектор уровня на заданной частоте
-    if(!n.buf || n.buf.length !== N){
-      n.buf = new Float32Array(N);
-      n.w = 0;
-      n.levels = [];
-      n.re = new Float32Array(N); n.im = new Float32Array(N);   // переиспользуем — раньше аллоцировались на каждый БПФ
-      n.win = window_('hann', N);
-    }
-    
-    for(let i=0;i<BLOCK;i++){
-      n.buf[n.w] = I.in ? I.in[i] : 0;
-      n.w = (n.w+1) % N;
-    }
-    
-    // БПФ каждые 512 отсчётов
-    if(n.w % 512 < BLOCK){
-      const re = n.re, im = n.im, win = n.win;
-      im.fill(0);                                    // im мог остаться грязным с прошлого БПФ (fft считает in-place)
-      for(let i=0;i<N;i++){
-        re[i] = n.buf[(n.w+i)%N] * win[i];
-      }
-      fft(re, im);
-      
-      // Сканируем текущую частоту
-      const bin = Math.floor(n.currentFreq / Eng.sr * N);
-      const bw = Math.floor(step * 2 / Eng.sr * N);
-      let sum = 0;
-      for(let i=Math.max(1, bin-bw); i<Math.min(N/2, bin+bw); i++){
-        sum += Math.hypot(re[i], im[i]);
-      }
-      n.signalLevel = sum / (bw*2 + 1);
-      // порог относительно шума. Пол — по медиане первых 33 измерений (сигналы на части позиций её не сдвигают),
-      // дальше быстро вниз, медленно вверх, а на сигнале (выше 3× пола) почти не растёт — удержание не «съедает» цель
-      if(n.p.snr > 0){
-        const L = n.signalLevel;
-        if(n.noise == null){
-          (n.nbuf || (n.nbuf = [])).push(L);
-          if(n.nbuf.length >= 33){ n.noise = n.nbuf.slice().sort((x,y)=>x-y)[16]; n.nbuf = null; }
-          n.thr = Infinity;                          // пока учимся — ничего не находим
-        } else {
-          if(L < n.noise) n.noise += (L - n.noise) * 0.2;
-          else if(L < 3*n.noise) n.noise += (L - n.noise) * 0.02;
-          else n.noise *= 1.0005;
-          n.thr = Math.max(n.noise * Math.pow(10, n.p.snr/20), 1e-9);
-        }
-      } else n.thr = n.p.threshold;
-      
-      // Движемся дальше
-      if(n.signalLevel < n.thr){
-        n.holdTimer = 0;
-        n.currentFreq += step * speed / 10;
-        if(n.currentFreq > fmax) n.currentFreq = fmin;
-        n.scanning = true;
-      } else {
-        n.holdTimer += dt;
-        if(n.holdTimer > n.p.hold){
-          // Нашли сигнал!
-          const foundFreq = Math.round(n.currentFreq / 10) * 10;
-          if(!n.hits.some(h => Math.abs(h.freq - foundFreq) < step*2)){
-            n.hits.push({
-              freq: foundFreq,
-              level: n.signalLevel,
-              time: Date.now()
-            });
-            if(n.hits.length > 20) n.hits.shift();
-          }
-          n.currentFreq += step * 2; // перешагиваем
-          if(n.currentFreq > fmax) n.currentFreq = fmin;
-          n.scanning = true;
-          n.holdTimer = 0;
-        }
-      }
-      
-      n.freq = n.currentFreq;
-    }
-    
-    // Формируем текст для вывода
-    let text = `🔍 Scanning: ${Math.round(n.currentFreq)} Hz\n`;
-    text += `📊 Level: ${(n.signalLevel*1000).toFixed(0)} mV`+(n.p.snr>0 && n.noise!=null ? ` · noise ${(n.noise*1000).toFixed(1)} mV, threshold +${n.p.snr} dB` : '')+'\n';
-    text += n.scanning ? '⏳ Searching...\n' : '🔒 Holding\n';
-    text += '\n📡 Signals found:\n';
-    const now = Date.now();
-    const recent = n.hits.filter(h => now - h.time < 60000);
-    recent.slice(-10).forEach(h => {
-      text += `  ${h.freq} Hz  (${(h.level*1000).toFixed(0)} mV)\n`;
-    });
-    n.text = text;
-    
-    return {
-      freq: n.currentFreq,
-      level: n.signalLevel,
-      active: n.signalLevel > (n.thr ?? n.p.threshold) ? 1 : 0
-    };
-  },
-  draw(n){
-    const r = n.el.querySelector('.readout');
-    if(r.textContent !== n.text) r.textContent = n.text || 'scanning...';
-  }
-});
-
-
-def({ id:'signalID', title:'Signal Recognition', cat:'Analysis',
-  ins:[{n:'in',t:'sig'},{n:'sensitivity',t:'num'}],
-  outs:[{n:'type',t:'txt'},{n:'prob',t:'num'}],
-  readout:true,
-  params:[{n:'sensitivity',t:'range',min:0.1,max:2,step:0.1,d:1,label:'sensitivity'}],
-  init:n=>{ 
-    n.history=[];
-    n.lastType='';
-    n.prob=0;
-    n.text='waiting...';
-  },
-  process(n,I){
-    if(typeof I.sensitivity==='number') setMod(n,'sensitivity',I.sensitivity);
-    const dt = BLOCK / Eng.sr;
-    const N = 2048;
-    
-    // Накопление буфера
-    if(!n.buf){ n.buf = new Float32Array(N); n.w=0;
-      n.re = new Float32Array(N); n.im = new Float32Array(N);   // переиспользуем — раньше аллоцировались на каждый БПФ
-      n.win = window_('hann', N); }
-    for(let i=0;i<Math.min(BLOCK,N);i++){
-      n.buf[n.w] = I.in ? I.in[i] : 0;
-      n.w = (n.w+1) % N;
-    }
-    
-    // Анализ каждые 2048 отсчётов
-    if(n.w % 512 < BLOCK){
-      // 1. БПФ для анализа спектра
-      const re = n.re, im = n.im, win = n.win;
-      im.fill(0);                                    // im мог остаться грязным с прошлого БПФ (fft считает in-place)
-      for(let i=0;i<N;i++) re[i] = n.buf[(n.w+i)%N] * win[i];
-      fft(re, im);
-      
-      // 2. Извлечение признаков
-      let energy = 0;
-      let peakFreq = 0;
-      let peakAmp = 0;
-      let harmonics = 0;
-      let bandwidth = 0;
-      let entropy = 0;
-      
-      const half = N/2;
-      let totalEnergy = 0;
-      let mean = 0;
-      
-      // Первый проход: энергия и пик
-      for(let i=1; i<half; i++){
-        const amp = Math.hypot(re[i], im[i]);
-        energy += amp*amp;
-        if(amp > peakAmp){ peakAmp = amp; peakFreq = i * Eng.sr / N; }
-        mean += amp;
-      }
-      mean /= half;
-      
-      // Второй проход: статистика
-      let sumVar = 0;
-      let peakCount = 0;
-      let spectralCentroid = 0;
-      
-      for(let i=1; i<half-1; i++){
-        const amp = Math.hypot(re[i], im[i]);
-        const amp2 = Math.hypot(re[i+1], im[i+1]);
-        const amp0 = Math.hypot(re[i-1], im[i-1]);
-        
-        // Локальные пики (гармоники)
-        if(amp > amp0 * 1.2 && amp > amp2 * 1.2 && amp > mean*3) {
-          peakCount++;
-          const f = i * Eng.sr / N;
-          if(f > peakFreq * 1.8 && f < peakFreq * 2.2) harmonics++;
-        }
-        
-        spectralCentroid += amp * i;
-        sumVar += (amp - mean) * (amp - mean);
-        bandwidth += amp * Math.abs(i - peakFreq * N / Eng.sr);
-      }
-      
-      const variance = sumVar / half;
-      bandwidth /= (energy + 0.001);
-      spectralCentroid /= (energy + 0.001);
-      
-      // 3. Классификация
-      const s = n.p.sensitivity;
-      let type = 'unknown';
-      let prob = 0;
-      
-      // CW: narrow band, many harmonics, high peak/noise ratio
-      if(peakAmp > mean*10 && bandwidth < 200 && peakFreq < 3000){
-        if(harmonics > 3 && peakFreq > 300 && peakFreq < 2000){
-          type = '📡 CW (Morse)';
-          prob = 0.9;
-        } else {
-          type = '🔊 Tone';
-          prob = 0.8;
-        }
-      }
-      // RTTY/FSK: two peaks
-      else if(peakCount > 1 && peakCount < 4 && bandwidth > 100 && bandwidth < 500){
-        type = '📟 RTTY / FSK';
-        prob = 0.8;
-      }
-      // PSK: spectrum with two sidebands
-      else if(peakCount > 2 && peakCount < 6 && variance > 1000){
-        type = '📶 PSK / QPSK';
-        prob = 0.75;
-      }
-      // Voice: wide spectrum, smooth rolloff
-      else if(energy > 0.1 && bandwidth > 1000 && bandwidth < 4000 && variance < 10000){
-        type = '🎤 Voice / music';
-        prob = 0.85;
-      }
-      // Noise: flat spectrum
-      else if(energy < 0.01 && variance < 100){
-        type = '❄️ Noise / silence';
-        prob = 0.9;
-      }
-      // SSTV: periodic peaks
-      else if(peakCount > 5 && peakCount < 15 && variance > 10000 && bandwidth > 1000){
-        type = '🖼️ SSTV / fax';
-        prob = 0.7;
-      }
-      // Modulated signal (AM/FM)
-      else if(bandwidth > 3000 && bandwidth < 8000 && peakAmp > mean*5){
-        type = '📻 AM / FM';
-        prob = 0.75;
-      }
-      // OFDM (DRM/DAB): many peaks
-      else if(peakCount > 10 && bandwidth > 5000){
-        type = '📶 OFDM (DRM/DAB)';
-        prob = 0.8;
-      }
-      
-      // Усреднение истории для стабильности
-      n.history.push({type, prob});
-      if(n.history.length > 20) n.history.shift();
-      
-      // Сглаженный вывод
-      const types = {};
-      for(const h of n.history){
-        types[h.type] = (types[h.type] || 0) + h.prob;
-      }
-      let bestType = 'unknown';
-      let bestProb = 0;
-      for(const [t,p] of Object.entries(types)){
-        if(p > bestProb){ bestProb = p; bestType = t; }
-      }
-      
-      n.lastType = bestType;
-      n.prob = Math.min(1, bestProb / n.history.length);
-      n.text = `${bestType} (${(n.prob*100).toFixed(0)}%)`;
-    }
-    
-    return {type: n.lastType, prob: n.prob};
-  },
-  draw(n){
-    const r = n.el.querySelector('.readout');
-    if(r.textContent !== n.text) r.textContent = n.text || 'waiting...';
-  }
-});
-
-
 def({ id:'xcorr', lazy:'proc', title:'Cross-Correlation', cat:'Analysis',
   ins:[{n:'A',t:'sig'},{n:'B',t:'sig'},{n:'maxMs',t:'num'},{n:'smooth',t:'num'}],
   outs:[{n:'lagMs',t:'num'},{n:'lagN',t:'num'},{n:'peak',t:'num'}],
@@ -4611,18 +4305,19 @@ def({ id:'harm', title:'Harmonics & THD', cat:'Analysis',
     if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
 
-def({ id:'stats', lazy:true, title:'Level Statistics', cat:'Analysis', ins:[{n:'in',t:'sig'},{n:'tau',t:'num'}],
-  outs:[{n:'rms',t:'num'},{n:'peak',t:'num'},{n:'crest',t:'num'},{n:'dbfs',t:'num'}],
+def({ id:'stats', lazy:'proc', title:'Level', cat:'Analysis', ins:[{n:'in',t:'sig'},{n:'tau',t:'num'}],
+  outs:[{n:'db',t:'num'},{n:'rms',t:'num'},{n:'peak',t:'num'},{n:'crest',t:'num'},{n:'dbfs',t:'num'}],
   view:{h:100}, resize:true, readout:true, tall:true,
-  params:[{n:'tau',t:'range',min:.05,max:10,step:.05,d:1,label:'time constant, s'},
+  params:[{n:'view',t:'select',opts:['full','bar'],d:'full',label:'view: statistics and distribution, or a level bar'},
+          {n:'tau',t:'range',min:.05,max:10,step:.05,d:1,label:'time constant, s'},
           {n:'bins',t:'select',opts:['32','64','128','256'],d:'64'},
           {n:'rst',t:'button',label:'Reset',fn:n=>{n.h&&n.h.fill(0);n.pk=0;}}],
-  init:n=>{n.h=null;n.ms=0;n.pk=0;n.text='';},
+  init:n=>{n.h=null;n.ms=0;n.pk=0;n.text='';n.db=-120;},
   process(n,I){
     if(typeof I.tau==='number') setMod(n,'tau',I.tau);
     const B=+n.p.bins;
     if(!n.h||n.h.length!==B) n.h=new Float32Array(B);
-    const x=I.in; if(!x) return {rms:0,peak:0,crest:0,dbfs:-120};
+    const x=I.in; if(!x){ n.db=Math.max(-120,n.db-3); return {db:n.db,rms:0,peak:0,crest:0,dbfs:-120}; }
     const a=Math.exp(-BLOCK/Eng.sr/n.p.tau);
     let ms=0,pk=0;
     for(let i=0;i<BLOCK;i++){
@@ -4631,15 +4326,21 @@ def({ id:'stats', lazy:true, title:'Level Statistics', cat:'Analysis', ins:[{n:'
       const k=clamp(Math.floor((v*.5+.5)*B),0,B-1);   // распределение мгновенных значений
       n.h[k]+=1; }
     ms/=BLOCK;
+    n.db=Math.max(10*Math.log10(ms+1e-18),n.db-3);       // быстрая атака, медленный спад — для столбика и выхода db
     n.ms=n.ms*a+ms*(1-a);
     n.pk=Math.max(pk,n.pk*0.999);
     const rms=Math.sqrt(n.ms), crest=rms>0? n.pk/rms : 0;
     n.text='RMS '+(20*Math.log10(rms+1e-12)).toFixed(1)+' dBFS   peak '+
       (20*Math.log10(n.pk+1e-12)).toFixed(1)+' dBFS\ncrest factor '+crest.toFixed(2)+
       ' ('+(20*Math.log10(crest+1e-12)).toFixed(1)+' dB)';
-    return {rms, peak:n.pk, crest, dbfs:20*Math.log10(rms+1e-12)}; },
+    return {db:n.db, rms, peak:n.pk, crest, dbfs:20*Math.log10(rms+1e-12)}; },
   draw(n,cv,cx){
     const W=cv.width,H=cv.height; cx.clearRect(0,0,W,H);
+    if(n.p.view==='bar'){
+      const v=clamp((n.db+80)/80,0,1), g=cx.createLinearGradient(0,0,W,0);
+      g.addColorStop(0,themeColor('--acc2')); g.addColorStop(.75,themeColor('--acc')); g.addColorStop(1,themeColor('--err'));
+      cx.fillStyle=g; cx.fillRect(0,0,W*v,H);
+      roText(n,Math.round(n.db)+' dB'); return; }
     if(!n.h) return;
     let mx=1e-9; for(const v of n.h) if(v>mx) mx=v;
     const B=n.h.length, bw=W/B;
