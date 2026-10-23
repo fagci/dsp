@@ -3,7 +3,7 @@ let BLOCK = 512;                   // размер блока обработки
 // Пять цветовых групп вместо четырнадцати: тип виден в подсказке пина, совместимость считает addEdge
 const TYPE_COLOR = {sig:'var(--t-sig)',rtc:'var(--t-sig)',iq:'var(--t-iq)',
                     num:'var(--t-num)',val:'var(--acc)',
-                    spec:'var(--t-spec)',bands:'var(--t-spec)',blk:'var(--t-spec)',
+                    spec:'var(--t-spec)',bands:'var(--t-bands)',blk:'var(--t-spec)',
                     img:'var(--t-img)',vid:'var(--t-img)',trk:'var(--t-img)',
                     txt:'var(--t-txt)',rec:'var(--t-txt)',bin:'var(--t-txt)'};
 // Canvas 2D (в отличие от SVG/CSS) не резолвит var(...) сам — цвет для fillStyle/strokeStyle
