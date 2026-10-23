@@ -14,7 +14,7 @@ defIQ({ id:'pocsagRx', title:'POCSAG Decoder', cat:'Decoders', tall:true, resize
 
 /* ============================ POCSAG: передатчик ============================
    POCSAG Encode: сообщение (RIC, функция, текст / цифры / тональный вызов) → преамбула, пакеты, BCH → сигнал ±1 (1 — нижняя
-   частота) на частоте движка. Дальше: IQ Modulator (NFM, девиация 4500 Гц) → HackRF TX; `tx` включает передачу на время
+   частота) на частоте движка. Дальше: AM/FM/SSB Modulator (NFM, девиация 4500 Гц) → HackRF TX; `tx` включает передачу на время
    сообщения. Биты строит pocTxBits (pocsag-kernels.js), здесь только очередь и выдача по отсчётам. */
 
 function pocsagTxQueue(n,ric,text){

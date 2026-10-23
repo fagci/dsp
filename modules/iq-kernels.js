@@ -289,7 +289,7 @@ IQK.iqDemod={
     const s=iqIn(I,'in');
     if(!s){ n.ui=null; return {out:null, stereo:null}; }
     const sr=s.sr, mode=n.p.mode, g=Math.pow(10,n.p.gain/20), agc=n.p.agc!==false;
-    const key=[mode,sr,n.p.bw,n.p.deemph,n.p.samSb].join('|');
+    const key=[mode,sr,n.p.bw,n.p.deemph,n.p.samSb,n.p.dc].join('|');
     if(key!==n.key) iqDemodSetup(n,sr,mode);
     const ar=n.ar, o=iqStream(n,'out',ar,0), os=iqStream(n,'stereo',ar,0);
     const kf=sr/(2*Math.PI*(mode==='WFM' ? 75000 : n.p.dev));
@@ -353,7 +353,7 @@ IQK.iqDemod={
 function iqBq(z,o,q,x){ const v=q[0]*x+q[1]*z[o]+q[2]*z[o+1]-q[3]*z[o+2]-q[4]*z[o+3];
   z[o+1]=z[o]; z[o]=x; z[o+3]=z[o+2]; z[o+2]=v; return v; }
 function iqDemodSetup(n,sr,mode){
-  n.key=[mode,sr,n.p.bw,n.p.deemph,n.p.samSb].join('|');
+  n.key=[mode,sr,n.p.bw,n.p.deemph,n.p.samSb,n.p.dc].join('|');
   n.pr=0; n.pi=0; n.avg=0; n.aAvg=1-Math.exp(-1/(sr*0.2));
   n.ar=sr; n.dcL=0; n.dcR=0; n.deL=0; n.deR=0;
   if(mode==='WFM'){
@@ -386,7 +386,7 @@ function iqDemodSetup(n,sr,mode){
     const w=(mode==='USB' ? -1 : 1)*Math.PI*n.p.bw/sr; n.cw=Math.cos(w); n.sw=Math.sin(w); n.wr=1; n.wi=0;
     n.agcPk=0.3/1000; n.agcHold=0; n.agcHoldN=Math.round(0.3*sr); n.agcRel=Math.exp(-1/(0.4*sr));
   }
-  n.hp=1-Math.exp(-2*Math.PI*20/n.ar);                               // DC-блок 20 Гц
+  n.hp=n.p.dc===false ? 0 : 1-Math.exp(-2*Math.PI*20/n.ar);          // DC-блок 20 Гц (dc выключен — без него)
   const tau=mode==='WFM' || mode==='FM' ? {'50 µs':50e-6,'75 µs':75e-6}[n.p.deemph] : 0;
   n.de=tau ? 1-Math.exp(-1/(tau*n.ar)) : 0;
 }

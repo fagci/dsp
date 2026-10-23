@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=75;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=76;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -500,7 +500,7 @@ const sc=addNode('scope',560,40);
 const ff=addNode('fft',300,300,{size:'2048'});
 const wf=addNode('sa',560,300,{fmin:0,fmax:6000,split:.4});
 const dc=addNode('dac',820,40,{vol:.25});
-const mt=addNode('meter',820,220);
+const mt=addNode('stats',820,220,{view:'bar'}); mt.size.h=26; applySize(mt);
 addEdge(o1.id,'out',f.id,'in');
 addEdge(lf.id,'out',f.id,'freq');
 addEdge(f.id,'out',sc.id,'in1');
@@ -520,7 +520,7 @@ nt.size.w=380; nt.size.h=160; applySize(nt);
 const m =addNode('mic',40,240,{gainA:1,echo:false,ns:false,agc:false});
 const tr=addNode('triggerRecorder',420,40,{mode:'level',threshold:.02,preTime:.5,postTime:1.5,maxDuration:20});
 tr.size.w=460; tr.size.h=280; applySize(tr);
-const mt=addNode('meter',420,360);
+const mt=addNode('stats',420,360,{view:'bar'}); mt.size.h=26; applySize(mt);
 const sc=addNode('scope',900,40,{span:4096,gain:2});
 sc.size.w=480; sc.size.h=200; applySize(sc);
 addEdge(m.id,'a',tr.id,'in');
@@ -673,7 +673,7 @@ const nt=addNode('note',40,40,{text:'Cron fires like crontab: here every 15 minu
   'Time Base runs ×600, so a virtual quarter of an hour passes in 1.5 s. Try "0 9 * * mon-fri", "30 6 1 * *" or @hourly; the readout shows the next firing.'});
 nt.size.w=620; nt.size.h=110; applySize(nt);
 const tb=addNode('timebase',40,220,{source:'manual',speed:600});
-const cr=addNode('cron',300,220,{expr:'*/15 * * * *',dur:300});
+const cr=addNode('tclock',300,220,{mode:'cron',expr:'*/15 * * * *',width:300});
 const m=addNode('nmath',560,300,{op:'sum',k:.25});
 const o=addNode('osc',760,220,{freq:660,amp:0});
 const dc=addNode('dac',960,220,{vol:.3});
@@ -690,7 +690,7 @@ const nt=addNode('note',40,40,{text:'Spectrum Archive records the spectrum into 
   'The rows stay in IndexedDB after a reload.'});
 nt.size.w=700; nt.size.h=130; applySize(nt);
 const tb=addNode('timebase',40,230,{source:'manual',speed:60});
-const cr=addNode('cron',300,230,{expr:'* * * * *',dur:20});
+const cr=addNode('tclock',300,230,{mode:'cron',expr:'* * * * *',width:20});
 const o=addNode('osc',40,420,{freq:1500,amp:.4});
 const f=addNode('fft',300,420,{});
 const a=addNode('specArchive',560,300,{mode:'gate',period:5,acc:'mean',maxBins:'512'});
@@ -706,7 +706,7 @@ const nt=addNode('note',40,40,{text:'LFO swells the tone level; Level measures i
 nt.size.w=560; nt.size.h=110; applySize(nt);
 const l=addNode('lfo',40,240,{freq:.2,min:0,max:.5});
 const o=addNode('osc',260,240,{freq:500,amp:0});
-const mt=addNode('meter',480,240,{});
+const mt=addNode('stats',480,240,{view:'bar'}); mt.size.h=26; applySize(mt);
 const c=addNode('ncmp',720,240,{thr:-24,hys:6,span:20});
 c.size.w=300; c.size.h=140; applySize(c);
 const k=addNode('ncount',1060,240,{mod:0});
@@ -758,7 +758,7 @@ const os=addNode('nshot',X[2],Y[2]+440,{width:.4});
 const m5=addNode('nmath',X[3],Y[2]+480,{op:'sum',k:.2});
 const o2=addNode('osc',X[4],Y[2]+440,{freq:500,amp:0});
 // выход: сумма, осциллограф с hit, счётчик срабатываний
-const sm=addNode('sum',X[5]-10,Y[2]+100,{});
+const sm=addNode('mixer',X[5]-10,Y[2]+100,{channels:'2'});
 const dc=addNode('dac',X[5]+240,Y[2]+100,{vol:.3});
 const sc=addNode('scope',X[5]+240,Y[0]-20,{});
 const hc=addNode('ncount',X[5]+240,Y[2]+580,{mod:0});
@@ -991,7 +991,7 @@ const nt=addNode('note',40,40,{text:'Quick loudness estimate: level bar + LUFS-l
   '«Reset integrated» on the loudness node — start the measurement over.'});
 nt.size.w=380; nt.size.h=140; applySize(nt);
 const m =addNode('mic',40,220,{gainA:1});
-const mt=addNode('meter',420,40);
+const mt=addNode('stats',420,40,{view:'bar'}); mt.size.h=26; applySize(mt);
 const ld=addNode('loud',420,120);
 const sc=addNode('scope',420,220,{span:8192,gain:2});
 sc.size.w=460; sc.size.h=200; applySize(sc);
@@ -1128,7 +1128,7 @@ de.size.w=480; de.size.h=300; applySize(de);
 const vc=addNode('mbeVoice',1040,600,{}); vc.size.w=340; applySize(vc);
 const fm=addNode('iqDemod',1040,760,{mode:'FM',dev:3500});
 const au=addNode('iqAudio',1280,760,{});
-const sm=addNode('sum',1300,600,{});
+const sm=addNode('mixer',1300,600,{channels:'2'});
 const dc=addNode('dac',1520,600,{vol:.5});
 const sa=addNode('sa',720,40,{auto:true,floor:-100,top:-30,split:.4});
 sa.size.w=640; sa.size.h=200; applySize(sa);
@@ -1239,7 +1239,7 @@ const sa=addNode('sa',40,1020,{layout:'panes',panes:4,detect:true,detThr:10,edge
 sa.size.w=1300; sa.size.h=460; applySize(sa);
 const lg=addNode('table',1460,300,{list:'Scan log',initial:false});
 lg.size.w=420; lg.size.h=260; applySize(lg);
-const mx=addNode('mixer4',1460,620,{});
+const mx=addNode('mixer',1460,620,{});
 const dc=addNode('dac',1460,860,{vol:.4});
 const SP=['spec','spec2','spec3','spec4'], CN=['count','count2','count3','count4'], DF=['detF','detF2','detF3','detF4'], AU=['a','b','c','d'];
 const bs0=[];
@@ -1970,7 +1970,7 @@ markWiresDirty();
 preset('POCSAG: Transmitter Loopback (no radio)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'POCSAG paging transmitter checked against the decoder without a radio: POCSAG Transmit builds the signal (preamble, sync word, address and message codewords with BCH, 1 = lower frequency),\n'+
-  'IQ Modulator makes NFM with ±4.5 kHz deviation, POCSAG Decoder reads it back. Edit the text, RIC, type (text / numeric / tone) and baud rate and press Send.\n'+
+  'AM/FM/SSB Modulator makes NFM with ±4.5 kHz deviation, POCSAG Decoder reads it back. Edit the text, RIC, type (text / numeric / tone) and baud rate and press Send.\n'+
   'Numeric messages take 0–9 * U space - [ ] ( ( and ) become [ and ]).'});
 nt.size.w=760; nt.size.h=110; applySize(nt);
 const tx=addNode('pocsagTx',40,200,{text:'Hello from the DSP workbench',ric:1234567,func:'3',type:'alpha',baud:'1200'});
@@ -1985,7 +1985,7 @@ markWiresDirty();
 });
 preset('POCSAG: Send a Page (HackRF TX)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Page a pager with a HackRF: POCSAG Transmit → IQ Modulator (NFM, ±4.5 kHz) → HackRF TX. Set the carrier frequency of your pager (center frequency + offset in IQ Modulator),\n'+
+const nt=addNode('note',40,40,{text:'Page a pager with a HackRF: POCSAG Transmit → AM/FM/SSB Modulator (NFM, ±4.5 kHz) → HackRF TX. Set the carrier frequency of your pager (center frequency + offset in AM/FM/SSB Modulator),\n'+
   'its RIC (the capcode), the baud rate and the message type (a pager takes what its code plug allows: text on function 3, numeric on function 0 is common). If the pager stays silent, try the *invert* switch.\n'+
   'Press Connect in HackRF TX, then Send in POCSAG Transmit: the tx pin turns the transmitter on for the length of the message. TX VGA and amp are off by default — start at the lowest power, close to the pager.\n'+
   'You must comply with local radio regulations: transmit only on frequencies and with power the law allows you (a licence, a test cable or a shielded box).'});
@@ -2133,7 +2133,7 @@ nt.size.w=900; nt.size.h=130; applySize(nt);
 const tx=addNode('tbskTx',40,230,{});
 tx.size.w=340; tx.size.h=360; applySize(tx);
 const no=addNode('osc',40,620,{wave:'noise',amp:.1});
-const sm=addNode('sum',420,300,{});
+const sm=addNode('mixer',420,300,{channels:'2'});
 const rx=addNode('tbskRx',620,230,{});
 rx.size.w=440; rx.size.h=360; applySize(rx);
 const log=addNode('recLog',620,620,{});
@@ -2626,7 +2626,7 @@ const s2=addNode('sa',640,380,{auto:true,floor:-110,top:0,split:1});
 s2.size.w=620; s2.size.h=200; applySize(s2);
 const d1=addNode('iqDemod',640,640,{mode:'FM',dev:3000}), d2=addNode('iqDemod',640,840,{mode:'AM'}), d3=addNode('iqDemod',640,1040,{mode:'USB'});
 const u1=addNode('iqAudio',900,640,{}), u2=addNode('iqAudio',900,840,{}), u3=addNode('iqAudio',900,1040,{});
-const mx=addNode('mixer4',1160,640,{pa:-.8,pb:0,pc:.8,kc:1.5});
+const mx=addNode('mixer',1160,640,{pa:-.8,pb:0,pc:.8,kc:1.5});
 const dc=addNode('dac',1420,640,{vol:.3});
 addEdge(g1.id,'iq',a1.id,'a'); addEdge(g2.id,'iq',a1.id,'b');
 addEdge(a1.id,'out',a2.id,'a'); addEdge(g3.id,'iq',a2.id,'b');
@@ -2651,7 +2651,7 @@ sa.size.w=620; sa.size.h=320; applySize(sa);
 const ch=addNode('iqChan',360,260,{N:'64',ov:'2',K:'4',sel:'strongest',thr:10,hold:2,skipDc:true});
 const s2=addNode('sa',680,400,{auto:true,floor:-100,top:-20,split:1});
 s2.size.w=620; s2.size.h=200; applySize(s2);
-const mx=addNode('mixer4',1340,640,{pa:-.8,pb:-.3,pc:.3,pd:.8});
+const mx=addNode('mixer',1340,640,{pa:-.8,pb:-.3,pc:.3,pd:.8});
 const dc=addNode('dac',1600,640,{vol:.4});
 ['a','b','c','d'].forEach((k,i)=>{
   const d=addNode('iqDemod',680,640+i*180,{mode:'FM',dev:2500});
@@ -2754,7 +2754,7 @@ clearAll();
 const tx=addNode('serialTx',40,40,{text:'RYRY DE TEST',baud:45.45,loop:true});
 const md=addNode('mod',300,40,{mode:'FSK',f0:1275,shift:170,amp:.3});
 const nz=addNode('osc',300,300,{wave:'noise',amp:.02});
-const mx=addNode('sum',560,40,{ka:1,kb:1});
+const mx=addNode('mixer',560,40,{channels:'2',ka:1,kb:1});
 const ff=addNode('fft',560,200,{size:'4096'});
 const wf=addNode('sa',560,340,{fmin:900,fmax:1800,split:.4});
 wf.size.w=560; wf.size.h=300; applySize(wf);
@@ -2795,21 +2795,21 @@ const m =addNode('mic',40,40,{gainA:2});
 const ff=addNode('fft',40,240,{size:'4096'});
 const wf=addNode('sa',40,400,{fmin:1000,fmax:2500,split:.4});
 wf.size.w=560; wf.size.h=300; applySize(wf);
-// demod вместо fft+peak (см. пресет WEFAX): peak.freq — число раз в блок, а sigmap/sigwin
+// demod вместо fft+peak (см. пресет WEFAX): peak.freq — число раз в блок, а scale/threshold(window)
 // ждут sig (посэмплово) — раньше эти рёбра просто не создавались из-за несовпадения типов.
-const dmL=addNode('demod',340,40,{mode:'FM',freq:1900,bw:800,gain:1});      // 1500..2300 Гц → -1..1, яркость
-const mp=addNode('sigmap',600,40,{inMin:-1,inMax:1,outMin:0,outMax:1});
-const dmS=addNode('demod',340,260,{mode:'FM',freq:1200,bw:200,gain:1});     // 1100..1300 Гц → -1..1, синхро-тон
-const sy=addNode('sigwin',600,260,{lo:-1,hi:1,minMs:3});
+const dmL=addNode('iqDemod',340,40,{mode:'FM',freq:1900,fbw:800,dev:400,dc:false});      // 1500..2300 Гц → -1..1, яркость
+const mp=addNode('scale',600,40,{inMin:-1,inMax:1,outMin:0,outMax:1});
+const dmS=addNode('iqDemod',340,260,{mode:'FM',freq:1200,fbw:200,dev:100,dc:false});     // 1100..1300 Гц → -1..1, синхро-тон
+const sy=addNode('thresh',600,260,{mode:'window',lo:-1,hi:1,minMs:3});
 const pa=addNode('paint',880,40,{std:'Martin M1',lineMs:446.446,width:'960',height:'256',
 rgb:true,sync:'edge'});
 pa.size.w=420; pa.size.h=320; applySize(pa);
 addEdge(m.id,'a',ff.id,'in');
 addEdge(ff.id,'spec',wf.id,'spec');                 // водопад — только для визуальной настройки
-addEdge(m.id,'a',dmL.id,'in'); addEdge(dmL.id,'out',mp.id,'in');
-addEdge(m.id,'a',dmS.id,'in'); addEdge(dmS.id,'out',sy.id,'in');
+addEdge(m.id,'a',dmL.id,'audio'); addEdge(dmL.id,'audio',mp.id,'in');
+addEdge(m.id,'a',dmS.id,'audio'); addEdge(dmS.id,'audio',sy.id,'sig');
 addEdge(mp.id,'out',pa.id,'level');
-addEdge(sy.id,'out',pa.id,'sync');
+addEdge(sy.id,'sig',pa.id,'sync');
 markWiresDirty();
 });
 preset('Decode Protocol as Raster', function(){
@@ -2820,14 +2820,14 @@ const wf=addNode('sa',560,40,{fmin:0,fmax:4000,split:.4});
 wf.size.w=560; wf.size.h=300; applySize(wf);
 // demod вместо peak: тянет частоту посэмпльно, а не раз в блок; маркер f1 задаёт центр напрямую
 // через вход 'freq' (peak.fc так и не был совместим по типу с sigmap.in — sig, а не num).
-const dm=addNode('demod',300,340,{mode:'FM',freq:1900,bw:300,gain:1});      // bw=300 ~ прежний tol=150 в обе стороны
-const mp=addNode('sigmap',560,340,{inMin:-1,inMax:1,outMin:0,outMax:1});
+const dm=addNode('iqDemod',300,340,{mode:'FM',freq:1900,fbw:300,dev:150,dc:false});      // fbw=300 ~ прежний tol=150 в обе стороны
+const mp=addNode('scale',560,340,{inMin:-1,inMax:1,outMin:0,outMax:1});
 const pa=addNode('paint',840,340,{lineMs:500,width:'512',height:'256',sync:'free'});
 pa.size.w=440; pa.size.h=300; applySize(pa);
 addEdge(m.id,'a',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
 addEdge(wf.id,'f1',dm.id,'freq');
-addEdge(m.id,'a',dm.id,'in');
-addEdge(dm.id,'out',mp.id,'in'); addEdge(mp.id,'out',pa.id,'level');
+addEdge(m.id,'a',dm.id,'audio');
+addEdge(dm.id,'audio',mp.id,'in'); addEdge(mp.id,'out',pa.id,'level');
 markWiresDirty();
 });
 preset('Morse: Encoder + Decoder', function(){
@@ -2835,7 +2835,7 @@ clearAll();
 const tx=addNode('morseTx',40,40,{text:'CQ DE R1ABC',wpm:15,loop:true});
 const md=addNode('mod',300,40,{mode:'OOK',f0:800,amp:.3,rise:4});
 const nz=addNode('osc',300,300,{wave:'noise',amp:.03});
-const mx=addNode('sum',560,140);
+const mx=addNode('mixer',560,140,{channels:'2'});
 const ff=addNode('fft',820,140,{size:'2048'});
 const pk=addNode('peak',1080,140,{fmin:500,fmax:1200,thr:-55,hold:40,track:true});
 const mo=addNode('morseRx',1340,140,{auto:true,thr:.45});
@@ -2914,7 +2914,7 @@ nt.size.w=560; nt.size.h=110; applySize(nt);
 const tx=addNode('js8Tx',40,180,{text:'W9XYZ: HELLO FROM JS8',mycall:'K1ABC',mygrid:'FN42',freq:1500,lvl:.5});
 tx.size.w=380; tx.size.h=300; applySize(tx);
 const nz=addNode('osc',480,180,{wave:'noise',amp:.15});
-const mx=addNode('sum',480,400,{ka:1,kb:1});
+const mx=addNode('mixer',480,400,{channels:'2',ka:1,kb:1});
 const ff=addNode('fft',760,40,{size:'16384'});
 const wf=addNode('sa',760,220,{fmin:200,fmax:2800,floor:-110,top:-30,split:.4});
 wf.size.w=560; wf.size.h=280; applySize(wf);
@@ -2936,15 +2936,15 @@ preset('Weather Fax WEFAX 120', function(){
   // peak пересчитывал частоту раз в аудио-блок (~10.6мс при block=512) — это в разы
   // медленнее пикселя WEFAX (~0.28мс при 1810 столбцах / 500мс), картинка размазывалась
   // в блоки по ~38 столбцов независимо от подбора fmin/fmax/tol.
-  const dm=addNode('demod',340,40,{mode:'FM',freq:1900,bw:800,gain:1});
-  const mp=addNode('sigmap',600,40,{inMin:-1,inMax:1,outMin:0,outMax:1});
+  const dm=addNode('iqDemod',340,40,{mode:'FM',freq:1900,fbw:800,dev:400,dc:false});
+  const mp=addNode('scale',600,40,{inMin:-1,inMax:1,outMin:0,outMax:1});
   const pa=addNode('paint',880,40,{std:'WEFAX 120 lpm IOC576',lineMs:500,width:'1810',
   height:'600',sync:'free',palette:'gray'});
   pa.size.w=620; pa.size.h=420; applySize(pa);
   addEdge(m.id,'a',ff.id,'in');
   addEdge(ff.id,'spec',wf.id,'spec');   // водопад — только для визуальной настройки, на демод не влияет
-  addEdge(m.id,'a',dm.id,'in');
-  addEdge(dm.id,'out',mp.id,'in');
+  addEdge(m.id,'a',dm.id,'audio');
+  addEdge(dm.id,'audio',mp.id,'in');
   addEdge(mp.id,'out',pa.id,'level');
   markWiresDirty();
 });
@@ -2964,7 +2964,7 @@ clearAll();
 const m =addNode('mic',40,40,{gainA:2});
 const bp=addNode('biquad',300,40,{type:'bp',freq:2400,Q:1.5});
 const en=addNode('env',560,40,{atk:.2,rel:.4});
-const mp=addNode('sigmap',820,40,{inMin:0,inMax:.5,outMin:0,outMax:1});
+const mp=addNode('scale',820,40,{inMin:0,inMax:.5,outMin:0,outMax:1});
 const pa=addNode('paint',1080,40,{std:'NOAA APT',lineMs:500,width:'2080',
 height:'600',sync:'free'});
 pa.size.w=640; pa.size.h=420; applySize(pa);
@@ -3014,7 +3014,7 @@ const wf=addNode('sa',40,460,{fmin:300,fmax:2000,split:.4});
 wf.size.w=560; wf.size.h=300; applySize(wf);
 const bp=addNode('biquad',340,40,{type:'bp',freq:1000,Q:12});
 const en=addNode('env',600,40,{atk:1,rel:2});
-const mp=addNode('sigmap',860,40,{inMin:0,inMax:.3,outMin:0,outMax:1});
+const mp=addNode('scale',860,40,{inMin:0,inMax:.3,outMin:0,outMax:1});
 const pa=addNode('paint',1120,40,{std:'Feld Hell',lineMs:114.2857,width:'640',height:'14',
 dir:'columns',sync:'free'});
 pa.size.w=620; pa.size.h=200; applySize(pa);
@@ -3030,15 +3030,15 @@ const m =addNode('mic',40,40,{gainA:2});
 const ff=addNode('fft',40,260,{size:'16384'});
 const wf=addNode('sa',40,420,{fmin:0,fmax:12000,split:.4});
 wf.size.w=560; wf.size.h=300; applySize(wf);
-const sb=addNode('demod',340,40,{mode:'SSB',freq:10000,bw:2400,side:'USB',gain:3});
+const sb=addNode('iqDemod',340,40,{mode:'USB',freq:10000,bw:2400,agc:false,gain:12});
 const fm=addNode('freqmeter',620,40,{fmin:100,fmax:4000,win:'0.5',digits:2});
 const sc=addNode('scope',620,240,{span:4096,gain:2});
 const dc=addNode('dac',900,40,{vol:.3,mode:'mono',pan:0});
 addEdge(m.id,'a',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
-addEdge(m.id,'a',sb.id,'in');
+addEdge(m.id,'a',sb.id,'audio');
 addEdge(wf.id,'f1',sb.id,'freq');                // маркер 1 = частота настройки на несущую
-addEdge(sb.id,'out',fm.id,'in'); addEdge(sb.id,'out',sc.id,'in1');
-addEdge(sb.id,'out',dc.id,'L');
+addEdge(sb.id,'audio',fm.id,'in'); addEdge(sb.id,'audio',sc.id,'in1');
+addEdge(sb.id,'audio',dc.id,'L');
 markWiresDirty();
 });
 preset('Band Occupancy', function(){
@@ -3066,7 +3066,7 @@ tc.size.w=320; tc.size.h=140; applySize(tc);
 const tx=addNode('morseTx',420,40,{wpm:18});
 const md=addNode('mod',680,40,{mode:'OOK',f0:800,amp:.3,rise:4});
 const nz=addNode('osc',680,260,{wave:'noise',amp:.02});
-const mx=addNode('sum',920,40);
+const mx=addNode('mixer',920,40,{channels:'2'});
 const dc=addNode('dac',920,260,{vol:.25,mode:'mono',pan:0});
 const ff=addNode('fft',1160,40,{size:'2048'});
 const pk=addNode('peak',1160,240,{fmin:500,fmax:1200,thr:-55,hold:40,track:true});
@@ -3101,8 +3101,8 @@ const ac=addNode('accel',40,40);
 const nx=addNode('numsig',320,40,{gain:1,dc:true,dcHz:.3});
 const ny=addNode('numsig',320,240,{gain:1,dc:true,dcHz:.3});
 const nz=addNode('numsig',320,440,{gain:1,dc:true,dcHz:.3});
-const s1=addNode('sum',600,40,{ka:1,kb:1});
-const s2=addNode('sum',600,240,{ka:1,kb:1});
+const s1=addNode('mixer',600,40,{channels:'2',ka:1,kb:1});
+const s2=addNode('mixer',600,240,{channels:'2',ka:1,kb:1});
 const wv=addNode('wavelet',880,40,{fmin:.5,fmax:40,bands:'144',Q:8,floor:-80,top:0});
 const sa=addNode('sa',880,260,{fmin:.5,fmax:40,log:true,floor:-60,top:10,split:.4,tol:1});
 sa.size.w=640; sa.size.h=360; applySize(sa);
@@ -3130,7 +3130,7 @@ const nt=addNode('note',40,40,{text:'Sensor samples are placed by their timestam
   'Peaks here are mechanical vibration or aliases of 50/100 Hz hum (e.g. 50 Hz at 60 Hz rate → 10 Hz).'});
 nt.size.w=560; nt.size.h=160; applySize(nt);
 const ac=addNode('accel',40,220);                 // devicemotion: в Firefox — сотни Гц, в Chrome — 60
-const lf=addNode('lfft',320,220,{fs:'128',size:'2048',upd:'0.1',avg:'10'});
+const lf=addNode('fft',320,220,{band:'low frequency',fs:'128',size:'2048',upd:'0.1',avg:'10'});
 const sa=addNode('sa',600,220,{fmin:1,fmax:50,floor:-110,top:-30,split:.45,tol:1});
 sa.size.w=640; sa.size.h=360; applySize(sa);
 addEdge(ac.id,'smag',lf.id,'in');
@@ -3168,8 +3168,8 @@ const s1=addNode('sa',800,320,{fmin:0,fmax:8000,split:.4});
 s1.size.w=560; s1.size.h=300; applySize(s1);
 const s2=addNode('sa',800,660,{fmin:0,fmax:8000,split:.4});
 s2.size.w=560; s2.size.h=300; applySize(s2);
-const df=addNode('sum',440,620,{ka:1,kb:-1});       // разность каналов — проверка фазировки пары
-const sd=addNode('meter',440,760);
+const df=addNode('mixer',440,620,{channels:'2',ka:1,kb:-1});       // разность каналов — проверка фазировки пары
+const sd=addNode('stats',440,760,{view:'bar'}); sd.size.h=26; applySize(sd);
 addEdge(m1.id,'a',sc.id,'in1'); addEdge(m2.id,'a',sc.id,'in2');
 addEdge(m1.id,'a',f1.id,'in'); addEdge(m2.id,'a',f2.id,'in');
 addEdge(f1.id,'spec',s1.id,'spec'); addEdge(f2.id,'spec',s2.id,'spec');
@@ -3188,7 +3188,7 @@ const m1=addNode('mic',40,280,{gainA:2});
 const m2=addNode('mic',40,480,{gainA:2});
 const lf=addNode('lfo',40,680,{freq:.15,min:-90,max:90,wave:'tri'});
 const bm=addNode('beam',420,280,{dist:15,useManual:false});
-const mt=addNode('meter',420,480);
+const mt=addNode('stats',420,480,{view:'bar'}); mt.size.h=26; applySize(mt);
 const nv=addNode('numview',420,560,{digits:0});
 const sc=addNode('scope',780,40,{span:4096,gain:3,stack:true});
 sc.size.w=520; sc.size.h=200; applySize(sc);
@@ -3347,15 +3347,15 @@ const sa=addNode('sa',360,40,{fmin:20,fmax:20000,log:true,split:.45});
 sa.size.w=620; sa.size.h=340; applySize(sa);
 const st=addNode('stats',360,420,{tau:1});
 st.size.w=420; st.size.h=200; applySize(st);
-const cl=addNode('cal',820,420,{mode:'dB offset',ref:94,unit:'dB SPL'});
+const cl=addNode('scale',820,420,{mode:'dB offset',ref:94,unit:'dB SPL'});
 const lg=addNode('table',1120,40,{list:'logs/sound level',log:true,period:1,names:'dB_SPL,crest,f_peak,level'});
 lg.size.w=420; lg.size.h=260; applySize(lg);
 const pk=addNode('peak',1120,360,{fmin:20,fmax:20000,thr:-90});
 addEdge(m.id,'a',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
 addEdge(ff.id,'spec',pk.id,'spec');
 addEdge(m.id,'a',st.id,'in');
-addEdge(st.id,'dbfs',cl.id,'in');
-addEdge(cl.id,'out',lg.id,'a'); addEdge(st.id,'crest',lg.id,'b');
+addEdge(st.id,'dbfs',cl.id,'num');
+addEdge(cl.id,'num',lg.id,'a'); addEdge(st.id,'crest',lg.id,'b');
 addEdge(pk.id,'freq',lg.id,'c'); addEdge(pk.id,'level',lg.id,'d');
 markWiresDirty();
 });
@@ -3420,7 +3420,7 @@ const mA=addNode('mic',40,260,{gainA:2});
 const mB=addNode('mic',40,460,{gainA:2});
 const ad=addNode('nlms',420,40,{taps:'256',mu:.3});
 const bm=addNode('beam',420,240,{dist:15,ang:0,useManual:false});
-const nt2=addNode('notch',420,440,{f0:50,n:5,Q:40});
+const nt2=addNode('humcancel',420,440,{f0:50,n:5,bw:1.25});
 const ag=addNode('agc',420,600,{target:.3});
 const ff=addNode('fft',760,600,{size:'4096'});
 const sa=addNode('sa',760,40,{fmin:0,fmax:8000,split:.4});
@@ -3446,7 +3446,7 @@ const nt=addNode('note',40,40,{text:'Mains hum removal (50/60 Hz and harmonics)\
 nt.size.w=460; nt.size.h=170; applySize(nt);
 const m =addNode('mic',40,260,{gainA:2});
 const hc=addNode('humcancel',540,40,{preset:'50',f0:50,n:20,bw:1});
-const cb=addNode('combnotch',540,420,{preset:'50',f0:50,bw:2});
+const cb=addNode('humcancel',540,420,{mode:'comb',preset:'50',f0:50,bw:2});
 const ff=addNode('fft',540,600,{size:'8192'});
 const sa=addNode('sa',900,40,{fmin:0,fmax:1000,split:.4});
 sa.size.w=600; sa.size.h=320; applySize(sa);
@@ -3494,7 +3494,7 @@ const m =addNode('mic',40,340,{gainA:2});
 const ff=addNode('fft',40,540,{size:'8192'});
 const sa=addNode('sa',480,40,{fmin:0,fmax:3500,split:.4});
 sa.size.w=560; sa.size.h=300; applySize(sa);
-const sb=addNode('demod',480,380,{mode:'SSB',freq:1440,bw:2600,side:'USB',gain:3});
+const sb=addNode('iqDemod',480,380,{mode:'USB',freq:1440,bw:2600,agc:false,gain:12});
 const co=addNode('costas',480,560,{f0:1800,order:'8PSK',loopHz:5,lp:2500});
 const ga=addNode('gardner',800,560,{baud:1800,gain:.005});
 const sl=addNode('pskdec',1080,560,{order:'8',diff:true,fmt:'bits'});
@@ -3512,8 +3512,8 @@ const ds=addNode('hfdlDescr',1560,680,{baud:1800});
 const bv=addNode('blkview',1960,420,{fmt:'hex',wrap:48});
 bv.size.w=400; bv.size.h=220; applySize(bv);
 addEdge(m.id,'a',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
-addEdge(m.id,'a',sb.id,'in'); addEdge(sa.id,'f1',sb.id,'freq');
-addEdge(sb.id,'out',co.id,'in');
+addEdge(m.id,'a',sb.id,'audio'); addEdge(sa.id,'f1',sb.id,'freq');
+addEdge(sb.id,'audio',co.id,'in');
 addEdge(co.id,'iq',ga.id,'iq');
 addEdge(ga.id,'iq',sl.id,'iq'); addEdge(ga.id,'clk',sl.id,'clk');
 addEdge(co.id,'I',cr.id,'in'); addEdge(co.id,'I',cm.id,'in');
@@ -3585,7 +3585,7 @@ preset('Techno: Full Track', function(){
   sq.size.w=420; applySize(sq);
   const ac=addNode('acid',620,320,{cutoff:450,envAmt:2400,reso:.82,decay:.16,slide:.04});
   const ds=addNode('dist',620,480,{drive:2.5,mix:.5});
-  const mx=addNode('mixer4',900,180,{ka:1,pa:0,kb:.9,pb:0});
+  const mx=addNode('mixer',900,180,{ka:1,pa:0,kb:.9,pb:0});
   const cp=addNode('comp',1160,180,{threshold:-10,ratio:4});
   const dc=addNode('dac',1400,180,{vol:.45,mode:'mono'});
   addEdge(dr.id,'out',mx.id,'a');
@@ -3662,7 +3662,7 @@ preset('Tracker: Synths as Instruments', function(){
               stepPattern([2,6,10,14]), stepPattern([]), stepPattern([])].join(';');
   const dr=addNode('drumseq',560,620,{grid,steps:16});
   dr.size.w=460; applySize(dr);
-  const mx=addNode('mixer4',1100,200,{ka:.8,kb:.35,kc:.8,kd:0});
+  const mx=addNode('mixer',1100,200,{ka:.8,kb:.35,kc:.8,kd:0});
   const dc=addNode('dac',1360,200,{vol:.5,mode:'mono'});
   addEdge(tr.id,'song',vw.id,'song'); addEdge(tr.id,'song',i1.id,'song'); addEdge(tr.id,'song',i2.id,'song');
   addEdge(i1.id,'freq',ac.id,'freq'); addEdge(i1.id,'gate',ac.id,'gate');
@@ -3686,7 +3686,7 @@ preset('Tiles: Modular Rack', function(){
   const sq=addNode('seq',300,40,{});
   const sy=addNode('poly4',560,40,{wave:'saw',attack:.01,decay:.25,sustain:.4,release:.3});
   const dr=addNode('drumseq',300,260,{steps:16,grid:[stepPattern([0,4,8,12]),stepPattern([4,12]),stepPattern([]),stepPattern([2,6,10,14]),stepPattern([]),stepPattern([])].join(';')});
-  const mx=addNode('mixer4',820,40,{ka:.7,kb:.6});
+  const mx=addNode('mixer',820,40,{ka:.7,kb:.6});
   const sc=addNode('scope',1080,40,{});
   const dc=addNode('dac',1080,300,{vol:.4,mode:'mono'});
   addEdge(ck.id,'clk',sq.id,'clk'); addEdge(ck.id,'clk',dr.id,'clk');
@@ -3721,7 +3721,7 @@ preset('Tiles: Receiver Console', function(){
   const ff=addNode('fft',300,40,{size:'2048'});
   const sa=addNode('sa',560,40,{fmin:0,fmax:12000,split:.35});
   const sc=addNode('scope',300,300,{});
-  const mt=addNode('meter',560,300);
+  const mt=addNode('stats',560,300,{view:'bar'}); mt.size.h=26; applySize(mt);
   const bk=addNode('table',820,40,{list:'Bookmarks',initial:false});
   const dc=addNode('dac',820,300,{vol:.2});
   addEdge(sw.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
@@ -3739,7 +3739,7 @@ preset('Tiles: Beat Grid', function(){
   const dr=addNode('drumseq',300,40,{steps:16,grid:[stepPattern([0,4,8,12]),stepPattern([4,12]),stepPattern([2,6,10,14,15]),stepPattern([0,2,4,6,8,10,12,14]),stepPattern([]),stepPattern([7])].join(';')});
   const pr=addNode('pianoroll',300,360,{grid:TILE_GRID,steps:16});
   const sy=addNode('poly4',760,360,{wave:'saw'});
-  const mx=addNode('mixer4',1020,200,{ka:.8,kb:.5});
+  const mx=addNode('mixer',1020,200,{ka:.8,kb:.5});
   const dc=addNode('dac',1280,200,{vol:.4,mode:'mono'});
   addEdge(ck.id,'clk',dr.id,'clk'); addEdge(ck.id,'clk',pr.id,'clk');
   addEdge(pr.id,'freq',sy.id,'freq'); addEdge(pr.id,'gate',sy.id,'gate');
@@ -3758,7 +3758,7 @@ preset('Tiles: Bench Instruments', function(){
   const ff=addNode('fft',300,300,{size:'2048'});
   const sa=addNode('sa',560,300,{fmin:0,fmax:6000,split:.4});
   const fm=addNode('freqmeter',560,40,{});
-  const mt=addNode('meter',820,40);
+  const mt=addNode('stats',820,40,{view:'bar'}); mt.size.h=26; applySize(mt);
   addEdge(g.id,'out',sc.id,'in1'); addEdge(g.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
   addEdge(g.id,'out',fm.id,'in'); addEdge(g.id,'out',mt.id,'in');
   Graph.dashTree=tileSplit('col',[
@@ -3845,7 +3845,7 @@ function vizSource(x,y){
   const lf=addNode('lfo',x,y+460,{freq:.15,min:150,max:3000});
   const f=addNode('biquad',x+260,y+300,{type:'lp',freq:800,Q:5});
   addEdge(o.id,'out',f.id,'in'); addEdge(lf.id,'out',f.id,'freq');
-  const mx=addNode('mixer4',x+560,y,{ka:1,pa:0,kb:.6,pb:0});
+  const mx=addNode('mixer',x+560,y,{ka:1,pa:0,kb:.6,pb:0});
   addEdge(dr.id,'out',mx.id,'a'); addEdge(f.id,'out',mx.id,'b');
   const dc=addNode('dac',x+560,y+330,{vol:.4,mode:'mono'});
   addEdge(mx.id,'out',dc.id,'L');
@@ -3944,7 +3944,7 @@ preset('Ridgeline Spectrum: Air History (RF mode)', function(){
   clearAll();
   const sw=addNode('sweep',40,40,{});
   const o=addNode('osc',40,260,{freq:6000,amp:.2,wave:'sine'});
-  const mx=addNode('mixer4',300,40); addEdge(sw.id,'out',mx.id,'a'); addEdge(o.id,'out',mx.id,'b');
+  const mx=addNode('mixer',300,40); addEdge(sw.id,'out',mx.id,'a'); addEdge(o.id,'out',mx.id,'b');
   const ff=addNode('fft',560,40,{size:'4096'}); addEdge(mx.id,'out',ff.id,'in');
   vizTile('vizRidge',820,40,520,400,ff,'spec',{mode:'rf',color:'heat',floor:-100,top:-20,rows:48,rate:10,bars:240});
   markWiresDirty();
@@ -3964,7 +3964,7 @@ preset('Sync: Master Clock', function(){
   pr.size.w=520; applySize(pr);
   const vc =addNode('voice',620,460,{wave1:'saw',level1:.7,wave2:'square',level2:0,
                                       attack:.005,decay:.2,sustain:.4,release:.15});
-  const mx =addNode('mixer4',1140,300,{ka:1,pa:-.3,kb:1,pb:.3});
+  const mx =addNode('mixer',1140,300,{ka:1,pa:-.3,kb:1,pb:.3});
   const dc =addNode('dac',1400,300,{vol:.4,mode:'mono'});
   addEdge(ck.id,'pulse',dr.id,'clk'); addEdge(ck.id,'pulse',pr.id,'clk');   // оба секвенсора — от одного клока
   addEdge(dr.id,'out',mx.id,'a');
@@ -4021,7 +4021,7 @@ preset('Arrangement: Intro → Verse → Chorus', function(){
   // все 4 голоса пиано-ролла — один poly4 вместо ручной сборки osc+adsr+mul на каждый
   const py=addNode('poly4',1320,460,{wave:'tri',attack:.015,decay:.25,sustain:.6,release:.3,spread:.5});
 
-  const mx=addNode('mixer4',1620,300,{ka:1,pa:-.3,kb:.9,pb:.2});
+  const mx=addNode('mixer',1620,300,{ka:1,pa:-.3,kb:.9,pb:.2});
   const dc=addNode('dac',1900,300,{vol:.4,mode:'mono'});
 
   addEdge(ck.id,'pulse',dr.id,'clk'); addEdge(ck.id,'pulse',pr.id,'clk'); addEdge(ck.id,'pulse',sg.id,'clk');
@@ -4072,7 +4072,7 @@ preset('12-Channel Mixer: Full Band', function(){
   const vc=addNode('voice',620,700,{wave1:'square',level1:.5,wave2:'sine',level2:.3,
                                      attack:.005,decay:.15,sustain:.4,release:.15});
 
-  const mx=addNode('mixer12',1120,300,{
+  const mx=addNode('mixer',1120,300,{
     ka:1,pa:0,                 // барабаны — по центру
     kb:.8,pb:-.4,              // аккорды — влево
     kc:.9,pc:0,                // бас — по центру
@@ -4107,7 +4107,7 @@ preset('Phase Scope: Correlation and Lissajous Figures', function(){
   const ap=addNode('biquad',360,40,{type:'ap',freq:220,Q:.9});        // АЧХ не трогает, только сдвигает фазу
   const xy=addNode('xyscope',680,40,{gain:1,persist:.85});
   xy.size.w=420; xy.size.h=300; applySize(xy);
-  const sm=addNode('sum',360,260,{ka:.6,kb:.6});                      // сухой + сдвинутый по фазе сигнал вместе
+  const sm=addNode('mixer',360,260,{channels:'2',ka:.6,kb:.6});                      // сухой + сдвинутый по фазе сигнал вместе
   const dc=addNode('dac',680,400,{vol:.3,mode:'mono'});
   addEdge(lf.id,'out',ap.id,'freq'); addEdge(o1.id,'out',ap.id,'in');
   addEdge(o1.id,'out',xy.id,'x'); addEdge(ap.id,'out',xy.id,'y');
@@ -4199,7 +4199,7 @@ const src=addNode('lfo',40,40,{freq:.15,min:0,max:63,wave:'saw'});
 const tx=addNode('chirpTx',300,40,{sf:'6',bw:2000,f0:1000,amp:.5});
 const dl=addNode('delay',300,260,{ms:6,fb:0,mix:.35});         // короткое эхо — имитация переотражения
 const nz=addNode('osc',300,420,{wave:'noise',amp:.05});
-const mx=addNode('sum',560,140,{ka:1,kb:1});
+const mx=addNode('mixer',560,140,{channels:'2',ka:1,kb:1});
 const ff=addNode('fft',820,40,{size:'2048',win:'hann'});
 const wf=addNode('sa',820,220,{fmin:0,fmax:3200,split:.4});
 wf.size.w=480; wf.size.h=300; applySize(wf);
@@ -4234,7 +4234,7 @@ const tx=addNode('ax25Tx',40,220,{src:'RA1ABC-1',dst:'APRS',path:'WIDE1-1,WIDE2-
 tx.size.w=400; tx.size.h=300; applySize(tx);
 const md=addNode('mod',480,220,{mode:'FSK',f0:1200,shift:1000,amp:.3,rise:.5});
 const nz=addNode('osc',480,480,{wave:'noise',amp:.01});
-const mx=addNode('sum',760,220,{ka:1,kb:1});
+const mx=addNode('mixer',760,220,{channels:'2',ka:1,kb:1});
 const dm=addNode('fsk',1000,220,{f0:1200,shift:1000,bw:600,center:false});
 const hd=addNode('ax25Rx',1000,480,{baud:1200,nrzi:true,ax25:true});
 hd.size.w=440; hd.size.h=280; applySize(hd);
@@ -4282,7 +4282,7 @@ nt.size.w=420; nt.size.h=100; applySize(nt);
 const tx=addNode('oliviaTx',40,180,{text:'CQ CQ DE TEST OLIVIA',tones:'8',bw:'250',f0:1000,amp:.5,loop:true});
 tx.size.w=380; tx.size.h=260; applySize(tx);
 const nz=addNode('osc',480,180,{wave:'noise',amp:.15});
-const mx=addNode('sum',480,400,{ka:1,kb:1});
+const mx=addNode('mixer',480,400,{channels:'2',ka:1,kb:1});
 const ff=addNode('fft',760,40,{size:'4096'});
 const wf=addNode('sa',760,220,{fmin:800,fmax:1200,split:.4});
 wf.size.w=480; wf.size.h=280; applySize(wf);
@@ -4302,7 +4302,7 @@ nt.size.w=420; nt.size.h=100; applySize(nt);
 const tx=addNode('contestiaTx',40,180,{text:'CQ CQ DE TEST CONTESTIA',tones:'8',bw:'500',f0:1000,amp:.5,loop:true});
 tx.size.w=380; tx.size.h=260; applySize(tx);
 const nz=addNode('osc',480,180,{wave:'noise',amp:.15});
-const mx=addNode('sum',480,400,{ka:1,kb:1});
+const mx=addNode('mixer',480,400,{channels:'2',ka:1,kb:1});
 const ff=addNode('fft',760,40,{size:'4096'});
 const wf=addNode('sa',760,220,{fmin:700,fmax:1300,split:.4});
 wf.size.w=480; wf.size.h=280; applySize(wf);
@@ -4325,7 +4325,7 @@ const t2=addNode('txt2bits',40,220,{text:'CQ CQ DE TEST OFDM WORKBENCH',coding:'
 const tx=addNode('ofdmTx',420,220,{carriers:16,spacing:31.25,f0:800,cp:25,mod:'BPSK',amp:.5,loop:true});
 tx.size.w=380; tx.size.h=260; applySize(tx);
 const nz=addNode('osc',420,520,{wave:'noise',amp:.1});
-const mx=addNode('sum',820,220,{ka:1,kb:1});
+const mx=addNode('mixer',820,220,{channels:'2',ka:1,kb:1});
 const ff=addNode('fft',1080,40,{size:'4096'});
 const wf=addNode('sa',1080,220,{fmin:700,fmax:1400,split:.4});
 wf.size.w=460; wf.size.h=260; applySize(wf);
@@ -4989,7 +4989,7 @@ const nt=addNode('note',40,20,{text:'Visual indicators on number wires. An LFO s
 nt.size.w=760; nt.size.h=100; applySize(nt);
 const l=addNode('lfo',40,170,{freq:.25,min:0,max:.5});
 const o=addNode('osc',260,160,{freq:500,amp:0});
-const mt=addNode('meter',480,160,{});
+const mt=addNode('stats',480,160,{view:'bar'}); mt.size.h=26; applySize(mt);
 const lb=addNode('ledbar',780,170,{min:-60,max:0,warn:-18,crit:-6});
 lb.size.w=300; lb.size.h=34; applySize(lb);
 const gg=addNode('gauge',780,470,{min:-60,max:0,warn:-18,crit:-6,unit:'dB'});
