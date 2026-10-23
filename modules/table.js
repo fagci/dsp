@@ -1128,7 +1128,6 @@ function tblMainMenu(n){
   const m=tblMenuEl(n,n.ui.root.querySelector('.tbl-menub'),'main'); if(!m) return;
   const it=(t,d,f)=>tblMenuItem(m,t,d,f,null,true);
   tblMenuHead(m,'Rows');
-  it('Add row here (GPS)','new row at my current position — with the icon, a photo and a sound in the same form',()=>tblHereForm(n));
   it('Clear all rows','delete every row of the active list',()=>tblClearRows(n));
   tblMenuHead(m,'Data');
   it('Import file…','CSV, TSV, TXT, JSON, KML, GPX, GeoJSON — each file becomes a list',()=>n.ui.fileEl.click());
@@ -2154,29 +2153,6 @@ function tblEditForm(n,i,row){
   const form=tblForm(n,n.rows[i],async o=>{ await tblUpdate(n,i,o); close(); tblRenderList(n); },close);
   const nm=tcHasName(n) ? n.labelFn(n.rows[i]) : '';
   tblOpenEditor(n,'Edit row '+(i+1)+(nm ? ' · '+nm : ''),form,row,'edit:'+i);
-}
-// текущая позиция: GPS браузера, при отказе — последняя известная (My Position)
-function tblPosition(){
-  return new Promise(res=>{
-    const last=()=>res(typeof GeoMe!=='undefined' && GeoMe.lat!=null ? {lat:GeoMe.lat,lon:GeoMe.lon} : null);
-    if(!navigator.geolocation) return last();
-    navigator.geolocation.getCurrentPosition(p=>res({lat:+p.coords.latitude.toFixed(6),lon:+p.coords.longitude.toFixed(6),
-      alt:p.coords.altitude!=null ? Math.round(p.coords.altitude) : null}),last,{enableHighAccuracy:true,timeout:8000,maximumAge:5000});
-  });
-}
-// «📍 here»: форма новой строки с позицией и временем; значок, фото и звук — в той же форме
-async function tblHereForm(n){
-  if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }
-  if(!tblCol(n.cl,['lat']) || !tblCol(n.cl,['lon'])){
-    if(!confirm('This list has no lat / lon columns. Add the columns of «Map points» (name, lat, lon, alt, h, icon, color, note, photo, audio)?')) return;
-    await tblColsEdit(n,tblTemplateCols(n.cl,TBL_TEMPLATES.find(t=>t.id==='points'))); tblRenderAll(n);
-  }
-  const pos=await tblPosition();
-  if(!pos) alert('Position unknown (no GPS access): type lat / lon by hand, or take them from the photo');
-  const set=(c,v)=>{ const k=tblCol(n.cl,c); if(k && v!=null) rec[k]=v; }, rec={};
-  set(['lat'],pos?.lat); set(['lon'],pos?.lon); set(['alt','altitude'],pos?.alt); set(['t','time'],Date.now());
-  const nm=tblCol(n.cl,TBL_LABEL); if(nm) rec[nm]='P'+(n.all.length+1);
-  tblAddForm(n,rec);
 }
 function tblAddForm(n,init){
   if(tblRO(n)){ alert('built-in list is read-only: copy it first'); return; }

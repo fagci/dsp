@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=77;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=78;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -255,6 +255,7 @@ const PRESET_CATS={
   'AR: ADS-B Aircraft in the Sky (Phone + Generator)':'Aircraft, Satellites & Telemetry',
   'Radio Reach: ADS-B Coverage over Terrain (Generator)':'Aircraft, Satellites & Telemetry',
   'Field Survey: Mark Points with Photos → Table, Locator, Map':'Maps & Locating',
+  'Map Points: Mark My Position → Table → Map':'Maps & Locating',
   'Map Editor: Points, Shapes, Rings, Checklists ↔ Table':'Maps & Locating',
   'Signal Paths: Links in 3D (Free Fly)':'Maps & Locating',
   'Coverage: Transmitters from Table → Dead Zones':'Maps & Locating',
@@ -5524,6 +5525,22 @@ addEdge(gn.id,'iq',dm.id,'in'); addEdge(dm.id,'rec',de.id,'rec'); addEdge(de.id,
 addEdge(or.id,'az',ov.id,'az'); addEdge(or.id,'el',ov.id,'el'); addEdge(or.id,'roll',ov.id,'roll');
 addEdge(me.id,'lat',ov.id,'lat'); addEdge(me.id,'lon',ov.id,'lon'); addEdge(me.id,'alt',ov.id,'alt');
 addEdge(me.id,'lat',hz.id,'lat'); addEdge(me.id,'lon',hz.id,'lon');
+markWiresDirty();
+});
+preset('Map Points: Mark My Position → Table → Map', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Drop a point where you stand. My Position (GPS on a phone; here a fixed spot) → Mark Point: ● Mark (or 📷 Mark + photo, or a pulse on go — e.g. a Joystick button) writes a record with your position, a name P1, P2… and an icon.\n'+
+  'The Table keeps them in the list «map/points» (rename a point or change its icon later, add a photo or a sound in the row form); the Map shows the whole list. For measurements (level, bearing, source) see Field Survey.'});
+nt.size.w=760; nt.size.h=110; applySize(nt);
+const me=addNode('geoMe',40,200,{src:'manual',lat:55.0126,lon:82.6507});
+const mk=addNode('geoMark',320,200,{prefix:'P',icon:'flag'});
+mk.size.w=300; mk.size.h=170; applySize(mk);
+const tb=addNode('table',700,200,{list:'map/points'});
+tb.size.w=380; tb.size.h=300; applySize(tb);
+const mp=addNode('geoMap',1120,200,{mz:14,mlat:55.0126,mlon:82.6507});
+mp.size.w=520; mp.size.h=420; applySize(mp);
+addEdge(me.id,'lat',mk.id,'lat'); addEdge(me.id,'lon',mk.id,'lon');
+addEdge(mk.id,'rec',tb.id,'rec'); addEdge(tb.id,'rows',mp.id,'rows');
 markWiresDirty();
 });
 preset('Field Survey: Mark Points with Photos → Table, Locator, Map', function(){
