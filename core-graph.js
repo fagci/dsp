@@ -629,11 +629,9 @@ if(n.xpand){ n._xh=n._xh||0; xpandApply(n); }
 if(sel) n.el.classList.add('sel');
 markWiresDirty();
 }
-// короткая подпись пина: до 3 символов целиком, иначе 2 буквы + хвостовые цифры (snr1 → sn1); полное имя — в подсказке
-function pinLabel(n){ if(n.length<=3) return n; const d=/\d{1,2}$/.exec(n)?.[0]||''; return n.slice(0,2)+d; }
 function portEl(p,dir){
 const e=document.createElement('div'); e.className='port'; e.dataset.dir=dir;
-e.innerHTML= `<span class="pin" data-n="${p.n}" title="${p.n===p.t ? p.n : p.n+' ('+p.t+')'}" style="background:${TYPE_COLOR[p.t]}">${pinLabel(p.n)}</span>` ;
+e.innerHTML= `<span class="pin" data-n="${p.n}" title="${p.n===p.t ? p.n : p.n+' ('+p.t+')'}" style="background:${TYPE_COLOR[p.t]}">${p.n}</span>` ;
 return e;
 }
 function paramBtn(n,s){
