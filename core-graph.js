@@ -2272,6 +2272,18 @@ o.edges.push({from:t.id,fp:'rows',to:id,tp:'rows'});
 }
 for(const k of PLAY) delete p[k];
 } }
+// лог входов a–d у Table вынесен в Value Log: провода a–d и параметры переезжают, его rec идёт в rec таблицы
+{ let mx=Math.max(0,...o.nodes.map(n=>+String(n.id).slice(1)||0));
+for(const t of o.nodes.filter(n=>n.type==='table')){
+const p=t.p||(t.p={});
+if(p.log){
+const id='n'+(++mx);
+o.nodes.push({id,type:'vallog',x:(t.x||0)-280,y:t.y||0,p:{period:p.period??1,names:p.names??'a,b,c,d'}});
+for(const e of o.edges) if(e.to===t.id && /^[a-d]$/.test(e.tp)) e.to=id;
+o.edges.push({from:id,fp:'rec',to:t.id,tp:'rec'});
+}
+for(const k of ['log','period','names','capture']) delete p[k];
+} }
 // входы nodes / set у карты, Graph и Video Overlay слиты в rows; Internet Radio выдаёт набор rows вместо потока rec
 { const types={}; for(const n of o.nodes) types[n.id]=n.type;
 for(const e of o.edges){

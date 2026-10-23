@@ -7,7 +7,7 @@
 //   presets/…  — встроенные band plan'ы (папки, modules/bandplan-data.js), только чтение (копируются кнопкой copy).
 // Списки — дерево папок с галочками (p.show): bands = объединение отмеченных списков (общий фильтр), редактируется и
 // отдаётся построчно активный список (p.list).
-// Вход: файл (CSV/TSV/TXT/JSON/KML/GPX/GeoJSON), провода rec и text, числовые входы a–d (лог).
+// Вход: файл (CSV/TSV/TXT/JSON/KML/GPX/GeoJSON), провода rec и text. Лог числовых входов — узел Value Log (modules/vallog.js).
 // Выход: выбранная запись (щелчок или вход row), поля — отдельными проводами,
 // весь список (отмеченные списки) как bands (для 'sa') и rows (для Graph / Map), выбранная запись — lo/mid/hi/span/step.
 // Проигрывание строк по триггеру / таймеру / времени / пути — отдельный узел Row Player (modules/rowplayer.js):
@@ -749,11 +749,6 @@ function tblTextRows(n,text){
   else if(t[0] && String(t[0][0]).trim().toLowerCase()===String(cl[0]).toLowerCase()) body=t.slice(1);
   return body.map(r=>{ const o={}; r.forEach((v,i)=>o[cl[i] ?? 'col'+(i+1)]=hostlistCoerce(v)); return o; });
 }
-function tblLogRow(n,I){
-  const names=String(n.p.names||'').split(',').map(s=>s.trim()), r={t:Date.now()};
-  ['a','b','c','d'].forEach((k,i)=>{ if(typeof I[k]==='number' && isFinite(I[k])) r[names[i]||k]=I[k]; });
-  return r;
-}
 function tblFlush(n){
   if(n.flushing || !n.pend.length || n.loaded!==n.p.list) return;
   n.flushing=true;
@@ -787,8 +782,7 @@ function tblSelOut(n,I){
 }
 
 /* ---------- узел ---------- */
-const tblIns=n=>[{n:'row',t:'val'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'rows',t:'bands'},{n:'sigs',t:'bands'},{n:'hits',t:'bands'},{n:'filter',t:'txt'}]
-  .concat(n.p.log ? ['a','b','c','d'].map(k=>({n:k,t:'num'})) : []);
+const tblIns=n=>[{n:'row',t:'val'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'rows',t:'bands'},{n:'sigs',t:'bands'},{n:'hits',t:'bands'},{n:'filter',t:'txt'}];
 const tblOuts=n=>{
   const o=[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'row',t:'num'},{n:'count',t:'num'},{n:'next',t:'num'},
     {n:'list',t:'txt'},{n:'rows',t:'bands'},{n:'all',t:'bands'},{n:'match',t:'bands'}];
@@ -811,10 +805,6 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     {n:'pfields',t:'text',d:'',adv:true,label:'packet fields → columns',tip:'extra columns from a wired rec: "col=src, src2". src is a path into the record (a.b.c) or a field of its hex parsed by hexSchema (HEX Structure: mtype_name, body.devaddr …); * — all parsed fields'},
     {n:'pfillBtn',t:'button',label:'Fill packet fields into existing rows',adv:true,fn:n=>tblBackfill(n)},
     {n:'textCsv',t:'check',d:false,label:'text wire: split into columns',adv:true},
-    {n:'log',t:'check',d:false,label:'log inputs a–d',adv:true,fn:n=>{ tblRebuild(n,true); }},
-    {n:'period',t:'range',min:.05,max:60,step:.05,d:1,label:'log period, s',adv:true},
-    {n:'names',t:'text',d:'a,b,c,d',label:'log columns',adv:true},
-    {n:'capture',t:'button',label:'Add row from a–d',adv:true,fn:n=>{ n.pend.push(tblLogRow(n,n.lastIn||{})); }},
     {n:'maxRows',t:'num',min:0,max:1e7,step:100,d:0,label:'max rows (0=∞)',tip:'oldest rows are dropped above this count; 0 — no limit (a list in the patch itself keeps at most 1000)',adv:true},
     {n:'fmt',t:'select',opts:['csv','tsv','json'],d:'csv',label:'export format',adv:true},
     {n:'textCol',t:'text',d:'',adv:true,label:'text col (row)',tip:'column that goes to the text output; empty — the whole row'},
@@ -829,7 +819,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     n.all=[]; n.ids=[]; n.cl=[]; n.rows=[]; n.rowIds=[]; n.headers=[]; n.cols=[]; n.rowsOwn=[]; n.rowsOut=[];
     n.extra=new Map(); n.onCount=0; n._rev=!!n.p.rev;
     n.err=''; n.loaded=null; n.loadedData=null; n.pend=[]; n.lastFlush=0; n.flushing=false;
-    n.lastRec=undefined; n.lastText=undefined; n.lastIn={}; n.logT=0; n.pick=null;
+    n.lastRec=undefined; n.lastText=undefined; n.pick=null;
     n._pfSeen=n.p.pfields; n._pfPend=false; n._pfAt=0;
     n.rowPrev=null; n.pulse=0; n.initialized=false; n.uiDirty=true;
     n.onResize=ln=>{ if(ln.ui) syncCustomHeight(ln,ln.ui.root,150); };
@@ -852,7 +842,6 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
       n._chkRev=ListDB.rev;
       if(n.chkCols?.length || n.extra.size){ clearTimeout(n._chkT); n._chkT=setTimeout(()=>tcChkRoll(n),150); }
     }
-    n.lastIn=I;
     const wf=typeof I.filter==='string' ? I.filter : '';
     if(wf!==(n.wf||'') && n.loaded===p.list){ n.wf=wf; n.hlSel=false; tblDerive(n); tblReset(n); n.initDone=true; n.uiDirty=true; n.uiFull=true; }
     // packet fields изменили — заполнить ими уже записанные строки, когда ввод затих
@@ -862,7 +851,6 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
       if(I.rec && I.rec!==n.lastRec){ n.lastRec=I.rec; tblIngest(n,Array.isArray(I.rec) ? I.rec : [I.rec],false); }
       if(typeof I.text==='string' && I.text!==n.lastText){ n.lastText=I.text; if(I.text) n.pend.push(...tblTextRows(n,I.text)); }
     }
-    if(p.log){ n.logT+=dt; if(n.logT>=Math.max(.05,+p.period||1)){ n.logT=0; n.pend.push(tblLogRow(n,I)); } }
     if(Array.isArray(I.rows) && I.rows!==n.lastRowsIn){ n.lastRowsIn=I.rows; if(!tblRO(n)) tblFromRows(n,I.rows); }
     else if(n.rowsAgain && !n.rowsBusy && n.loaded===n.p.list && !tblRO(n)){ const a=n.rowsAgain; n.rowsAgain=null; tblFromRows(n,a); }
     if(n.pend.length>5000) n.pend.splice(0,n.pend.length-5000);
@@ -2102,5 +2090,5 @@ function tblAddForm(n,init){
 defGroups('table',[
   {n:'Output', p:'initial textCol', open:false},
   {n:'Rows', p:'maxRows fmt', open:false},
-  {n:'Log', p:'collect key textCsv log period names capture', open:false},
+  {n:'Records in', p:'collect key textCsv', open:false},
   {n:'Patch data', p:'data', open:false}]);
