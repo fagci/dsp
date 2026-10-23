@@ -191,7 +191,7 @@ async function tcSchemaSave(n){
 }
 function tcSetDef(n,c,def){
   const t=n.schema.types, was=t[c]?.t;
-  if(!def || (!def.t || def.t==='text') && !def.opts && !def.to && !def.def && !def.req) delete t[c]; else t[c]=def;
+  if(!def || (!def.t || def.t==='text') && !def.opts && !def.to && !def.def && !def.req && !def.src) delete t[c]; else t[c]=def;
   const sv=tcSchemaSave(n);
   // вычисляемое или автонумерация включены / выключены / изменены: значения пересчитываются
   if(was==='calc' || was==='auto' || def?.t==='calc' || def?.t==='auto') return sv.then(()=>trRecalc(n)).then(()=>{ tblRenderView(n); tblRenderList(n); });
