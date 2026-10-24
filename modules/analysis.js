@@ -739,10 +739,13 @@ function cfarBlList(n){
   }
   return n._bl;
 }
+// списки cfar лежат в параметрах патча, а программная правка параметра автосохранение не запускает — сохраняем рабочую копию сразу
+function cfarKeep(){ try{ if(typeof Undo!=='undefined') Undo.push(); if(typeof saveAuto==='function') saveAuto(); }catch(e){} }
 function cfarBlSave(n,list){
   const v=JSON.stringify(list.map(x=>({f:Math.round(x.f),w:Math.round(x.w)})));
   n._blSrc=v; n._bl=list;
   if(n.set && n.set.skipList) n.set.skipList(v); else n.p.skipList=v;
+  cfarKeep();
   n.skip=[...(n._skipExt||[]), ...list.map(x=>({lo:x.f-x.w/2,hi:x.f+x.w/2}))];
   n.tracks=(n.tracks||[]).filter(t=>!cfarSkipped(n.skip,cfarF(t),t.w)); n.list=n.list.filter(t=>!cfarSkipped(n.skip,cfarF(t),t.w));
 }
@@ -774,6 +777,7 @@ function cfarFavSave(n,list){
   const v=JSON.stringify(list.map(x=>({f:Math.round(x.f),w:Math.round(x.w)})));
   n._favSrc=v; n._fav=list;
   if(n.set && n.set.favList) n.set.favList(v); else n.p.favList=v;
+  cfarKeep();
 }
 // действие кнопки / пина / пульта; одно и то же нажатие, пришедшее и напрямую, и по проводу, считается один раз (350 мс)
 function cfarDo(n,k){

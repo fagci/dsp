@@ -2446,6 +2446,9 @@ clearTimeout(autosaveTimer);
 autosaveTimer=setTimeout(saveAuto,2000);
 }
 window.addEventListener('beforeunload',()=>{ clearTimeout(autosaveTimer); if(!wiping) saveAuto(); });
+// телефон: beforeunload не приходит, когда ОС выгружает вкладку, — сохраняем и при уходе в фон / pagehide
+window.addEventListener('pagehide',()=>{ clearTimeout(autosaveTimer); if(!wiping) saveAuto(); });
+document.addEventListener('visibilitychange',()=>{ if(document.hidden && !wiping){ clearTimeout(autosaveTimer); saveAuto(); } });
 const RUN_PLAY='<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5l12 7-12 7z"/></svg>', RUN_STOP='<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>';
 const runBtn=document.getElementById('run'), stat=document.getElementById('stat');
 // Общая точка синхронизации кнопки — дергается и по клику, и из движка (например, когда
