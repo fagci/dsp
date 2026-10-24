@@ -9,7 +9,7 @@ const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Array,Object,Date,Uint8Array,Uint8ClampedArray,Uint16Array,Uint32Array,Float32Array,Float64Array,DataView,ArrayBuffer,TextEncoder});
 const src=f=>fs.readFileSync(path.join(root,f),'utf8');
 vm.runInContext(src('modules/camtools-kernels.js')+
-  ';this.T={mvGray,mvStep,mvGate,ppgResample,ppgBox,ppgBand,ppgSpectrum,ppgBeats,ppgRmssd,ppgFinger,ppgAnalyze,tlDue,tlGains,tlLength,zipCrc,zipStore,colXYZ,colCCT,colHSV,colHex,colName,colMean,specProfile,specNm,specX,specClean,specPeaks,wlRGB,specFit,specMatchRef,SPEC_REF};',ctx);
+  ';this.T={mvGray,mvStep,mvGate,ppgResample,ppgBox,ppgBand,ppgSpectrum,ppgBeats,ppgRmssd,ppgFinger,ppgAnalyze,tlDue,tlGains,tlLength,zipCrc,zipStore,colXYZ,colCCT,colHSV,colHex,colName,colMean,specProfile,specNm,specX,specClean,specPeaks,wlRGB,specFit,specMatchRef,SPEC_REF,scrRect,scrFit,scrUnfit,colParseHex};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 const near=(a,b,e)=>Math.abs(a-b)<=e;
@@ -167,6 +167,15 @@ print(sorted(z.namelist())); print(z.read('a.txt').decode()); print(len(z.read('
   const m=T.specMatchRef([{x:.7,v:1},{x:.25,v:.9},{x:.55,v:.8},{x:.9,v:.3}],T.SPEC_REF);
   ok('reference matching uses the brightest lines in order',m && m.xs.join()==='0.25,0.55,0.7' && m.nms[0]===436.6 && m.nms[2]===611.6,m&&m.xs.join());
   ok('one peak is not enough',T.specMatchRef([{x:.2,v:1}],T.SPEC_REF)===null);
+}
+{
+  const r=T.scrRect(.5,.5,101,51,1); ok('pixel square in the middle',r.x===50 && r.y===25 && r.w===3 && r.h===3,JSON.stringify(r));
+  const c=T.scrRect(0,1,100,50,2); ok('pixel square is clipped at the corner',c.x0===0 && c.y0===47 && c.w===3 && c.h===3 && c.x===0 && c.y===49,JSON.stringify(c));
+  ok('pixel square outside → clamped',T.scrRect(5,-3,10,10,0).x===9 && T.scrRect(5,-3,10,10,0).y===0);
+  const f=T.scrFit(300,100,160,90); ok('fit keeps the aspect ratio and centres',Math.abs(f.w/f.h-160/90)<1e-9 && f.h===100 && Math.abs(f.x-(300-f.w)/2)<1e-9);
+  const u=T.scrUnfit(f,f.x+f.w/2,f.y+f.h/4); ok('unfit is the inverse',Math.abs(u[0]-.5)<1e-9 && Math.abs(u[1]-.25)<1e-9);
+  const o=T.scrUnfit(f,-50,999); ok('click in the black bars is clamped',o[0]===0 && o[1]===1);
+  ok('hex parse',T.colParseHex('#ff8000').join()==='1,0.5019607843137255,0' && T.colParseHex('0f0').join()==='0,1,0' && T.colParseHex('#12345')===null && T.colParseHex('')===null);
 }
 console.log(bad?'FAILED '+bad:'all ok');
 process.exit(bad?1:0);

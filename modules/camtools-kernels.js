@@ -287,3 +287,20 @@ function specMatchRef(peaks,ref){
   const top=peaks.slice(0,ref.length).sort((a,b)=>a.x-b.x);
   return top.length<2 ? null : {xs:top.map(p=>p.x), nms:ref.slice(0,top.length).map(r=>r.nm)};
 }
+
+/* ---------------------------------- Screen: пиксель экрана ---------------------------------- */
+// квадрат (2r+1)² вокруг точки (fx,fy — доли кадра w×h), обрезанный по кадру
+function scrRect(fx,fy,w,h,r){
+  const x=Math.min(w-1,Math.max(0,Math.round(fx*(w-1)))), y=Math.min(h-1,Math.max(0,Math.round(fy*(h-1))));
+  const x0=Math.max(0,x-r), y0=Math.max(0,y-r), x1=Math.min(w,x+r+1), y1=Math.min(h,y+r+1);
+  return {x0,y0,w:x1-x0,h:y1-y0,x,y};
+}
+// кадр w×h «вписан» в холст W×H с сохранением пропорций → {k,x,y,w,h}; и обратно: точка холста → доли кадра
+function scrFit(W,H,w,h){ const k=Math.min(W/w,H/h); return {k,x:(W-w*k)/2,y:(H-h*k)/2,w:w*k,h:h*k}; }
+function scrUnfit(f,px,py){ return [Math.min(1,Math.max(0,(px-f.x)/f.w)),Math.min(1,Math.max(0,(py-f.y)/f.h))]; }
+// '#rrggbb' / '#rgb' / 'rrggbb' → [r,g,b] 0…1 или null (EyeDropper отдаёт sRGBHex)
+function colParseHex(s){
+  const m=/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(s||'').trim()); if(!m) return null;
+  let h=m[1]; if(h.length===3) h=h.replace(/./g,c=>c+c);
+  return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16)/255);
+}
