@@ -84,3 +84,13 @@ function wsFileName(url){
 }
 // стенограмма с временем: "[0:03] текст"
 function wsStamp(sec){ sec=Math.max(0,Math.round(sec)); return '['+Math.floor(sec/60)+':'+String(sec%60).padStart(2,'0')+']'; }
+
+// файлы модели для ручной загрузки: ссылки открываются в новой вкладке, скачанное выбирается кнопкой «выбрать файлы»
+const WS_FILES=['config.json','generation_config.json','preprocessor_config.json','tokenizer.json','tokenizer_config.json',
+                'onnx/encoder_model_quantized.onnx','onnx/decoder_model_merged_quantized.onnx'];
+const wsFileUrl=(repo,path)=>'https://huggingface.co/'+repo+'/resolve/main/'+path;
+// имя скачанного файла → имя в Offline data: у браузера пропадает папка, а .onnx лежат в onnx/
+function wsManualName(repo,fname){
+  const f=String(fname||'').replace(/^.*[\\/]/,'').replace(/ \(\d+\)(?=\.[^.]*$)/,'');     // «tokenizer (1).json» → tokenizer.json
+  return 'Whisper · '+repo+' · '+(/\.onnx(_data.*)?$/.test(f) ? 'onnx/' : '')+f;
+}
