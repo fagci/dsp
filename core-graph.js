@@ -977,6 +977,18 @@ const r=pin.offsetHeight/2;
 const cx = dir==='o' ? px+pin.offsetWidth-r  : px+r;
 return {x:n.x+cx, y:n.y+py+el.offsetHeight/2};
 }
+// Пока тащат узел/тянут ресайз: смещения портов от узла не меняются, так что layout читаем один раз на порт
+// (posCache), а не на каждое движение; hit-пути (невидимые, только для тапов) не трогаем — обновятся в конце
+let posCache=null, wireRaf=0;
+function dragWiresStart(){ posCache=new Map(); }
+function dragWiresEnd(){ posCache=null; cancelAnimationFrame(wireRaf); wireRaf=0; drawWires(); }
+function drawWiresSoon(){ if(!wireRaf) wireRaf=requestAnimationFrame(()=>{ wireRaf=0; drawWires(); }); }   // несколько pointermove за кадр — один пересчёт
+function portPosC(n,el,dir,port){
+if(!posCache) return portPos(n,el,dir);
+const k=n.id+'\u0001'+dir+port; let r=posCache.get(k);
+if(!r){ const q=portPos(n,el,dir); posCache.set(k,r={dx:q.x-n.x,dy:q.y-n.y}); }
+return {x:n.x+r.dx,y:n.y+r.dy};
+}
 function drawWires(){
 if(typeof dashMode!=='undefined' && uiLocked()) return;
 // Сначала все чтения геометрии (portPos читает offsetLeft/offsetParent — это layout reads),
@@ -987,12 +999,13 @@ const jobs=[], items=[];
 for(const e of Graph.edges){
 const a= Graph.map[e.from], b=Graph.map[e.to]; if(!a||!b) continue;
 const pa=nodePorts(a).o[e.fp], pb=nodePorts(b).i[e.tp]; if(!pa||!pb) continue;        // порт на миг пропал (узел пересобирается при смене колонок)
-items.push({e,from:e.from,to:e.to,p1:portPos(a,pa,'o'),p2:portPos(b,pb,'i')});
+items.push({e,from:e.from,to:e.to,p1:portPosC(a,pa,'o',e.fp),p2:portPosC(b,pb,'i',e.tp)});
 }
 const ds=bundleOn ? bundleCurves(items) : null;
 items.forEach((it,i)=>jobs.push([it.e,ds?.[i] ?? curve(it.p1,it.p2)]));
 for(const [e,d ] of jobs){
-e.path.setAttribute('d',d); e.hit.setAttribute('d',d);
+if(e._d!==d){ e._d=d; e.path.setAttribute('d',d); }      // не менялся — не трогаем DOM (не инвалидируем растр)
+if(!posCache && e._hd!==d){ e._hd=d; e.hit.setAttribute('d',d); }
 }
 }
 // сегмент кривой от p1 к p2 (без M): им же рисуются куски жгутов
@@ -1305,15 +1318,15 @@ if(!Sel.has(n.id)) selSet(n.id,ev.shiftKey);
 const group=[...Sel].map(id=>Graph.map[id]).filter(Boolean);
 group.forEach(g=>g.el.style.zIndex=++zCounter);
 n.__x0=n.x; n.__y0=n.y;                        // абсолютный отсчёт от старта — без накопления ошибки округления
-n.__grp=group.map(g=>({g,ox:g.x-n.x,oy:g.y-n.y})); n.__moved=false; activeInteractions++; },
+n.__grp=group.map(g=>({g,ox:g.x-n.x,oy:g.y-n.y})); n.__moved=false; activeInteractions++; dragWiresStart(); },
 move(ev){ if(uiLocked()) return;
 const sn=v=>ev.altKey ? Math.round(v) : Math.round(v/GRID)*GRID;    // привязка к сетке, Alt — свободно
 n.x=sn(n.__x0+(ev.clientX-ev.clientX0)/view.k);
 n.y=sn(n.__y0+(ev.clientY-ev.clientY0)/view.k);
 for(const it of n.__grp){ it.g.x=n.x+it.ox; it.g.y=n.y+it.oy;
 posNode(it.g); }
-n.__moved=true; drawWires(); },
-end(){ activeInteractions--; if(n.__moved) Undo.push(); n.__grp=null; }
+n.__moved=true; drawWiresSoon(); },
+end(){ activeInteractions--; dragWiresEnd(); if(n.__moved) Undo.push(); n.__grp=null; }
 }});
 }
 function bindResize(rzEl,n,dir){
@@ -1333,8 +1346,8 @@ const d=MOD[n.type];
 if(bottom){
 if(n.xpand){ n._xh=clamp(Math.round(n.__rxh+dy),60,20000); n.el.style.height=n._xh+'px'; }   // развёрнутый: канва тянется за рамкой
 else n.size.h=clamp(Math.round(n.__rh+dy),40,20000); }
-applySize(n); if(n.xpand){ n._dirty=true; n._drawGen=-1; n.onResize?.(n); } drawWires(); },
-end(){ activeInteractions--; Undo.push(); }
+applySize(n); if(n.xpand){ n._dirty=true; n._drawGen=-1; n.onResize?.(n); } drawWiresSoon(); },
+end(){ activeInteractions--; dragWiresEnd(); Undo.push(); }
 }});
 }
 function startLink(ev,n,port,dir){ if(uiLocked()) return;
