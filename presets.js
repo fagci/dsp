@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=95;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=96;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -382,6 +382,7 @@ const PRESET_CATS={
   'Sound Classifier (YAMNet): What Is That Sound':'Digital Voice & Trunking',
   'Notes (Basic Pitch): Chord and Microphone':'Digital Voice & Trunking',
   'Echo Canceller (AEC): Speaker + Microphone, or One Microphone':'Digital Voice & Trunking',
+  'Voice Restore: Muffled Mumbling Speech → Clear':'Digital Voice & Trunking',
   'Pulse: Fingertip on the Phone Camera (torch)':'Images & TV',
   'Camera Alarm: Motion → Archive + Beep':'Images & TV',
   'Timelapse: Camera Frames → Video':'Images & TV',
@@ -6347,6 +6348,31 @@ const a2=addNode('aec',560,650,{ms:'256',minDelay:100}); a2.size.w=260; a2.size.
 const s2=addNode('scope',840,650,{span:4096,gain:2}); s2.size.w=480; s2.size.h=200; applySize(s2);
 addEdge(fg.id,'out',d2.id,'in'); addEdge(d2.id,'out',a2.id,'mic');
 addEdge(d2.id,'out',s2.id,'in1'); addEdge(a2.id,'out',s2.id,'in2');
+markWiresDirty();
+});
+preset('Voice Restore: Muffled Mumbling Speech → Clear', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Speech that went through a narrow filter sounds muffled and mumbling: the top (consonants, «s», «sh») is gone and the bottom booms. Voice Restore learns from the speech itself (about 1 s): it compares the long-term spectrum with a typical speech spectrum, corrects the bands (never lifting the noise floor) and rebuilds the missing top above the cut-off it found. Here a buzzy voice-like source with hiss is muffled by a 1.2 kHz low-pass; the left spectrum is the muffled sound, the right one is the restored. To use it on real speech wire a receiver\'s audio or the Microphone into the filter in place of the oscillators (or straight into Voice Restore). Honest limit: the rebuilt top is plausible, not the original. For a hum or drone put the Hum Filter before it; the rumble cut is a parameter.'});
+nt.size.w=1100; nt.size.h=110; applySize(nt);
+const v =addNode('osc',40,170,{wave:'saw',freq:140,amp:.25});
+const h =addNode('osc',40,330,{wave:'noise',amp:.05});
+const lf=addNode('lfo',40,490,{freq:3,min:.2,max:1});
+const g =addNode('gain',300,170,{});
+const mx=addNode('mixer',540,170,{channels:'2'});
+const f1=addNode('biquad',780,170,{type:'lp',freq:1200,Q:.7});
+const f2=addNode('biquad',1020,170,{type:'lp',freq:1200,Q:.7});
+const vr=addNode('voicerestore',1020,330,{}); vr.size.w=260; vr.size.h=150; applySize(vr);
+const dc=addNode('dac',1300,330,{vol:.2});
+const fa=addNode('fft',780,520,{size:'2048'});
+const sa=addNode('sa',1020,520,{fmin:0,fmax:8000,split:.4}); sa.size.w=380; sa.size.h=220; applySize(sa);
+const fb=addNode('fft',780,760,{size:'2048'});
+const sb=addNode('sa',1020,760,{fmin:0,fmax:8000,split:.4}); sb.size.w=380; sb.size.h=220; applySize(sb);
+addEdge(v.id,'out',g.id,'in'); addEdge(lf.id,'out',g.id,'k');
+addEdge(g.id,'out',mx.id,'a'); addEdge(h.id,'out',mx.id,'b');
+addEdge(mx.id,'out',f1.id,'in'); addEdge(f1.id,'out',f2.id,'in');
+addEdge(f2.id,'out',vr.id,'in'); addEdge(vr.id,'out',dc.id,'L');
+addEdge(f2.id,'out',fa.id,'in'); addEdge(fa.id,'spec',sa.id,'spec');
+addEdge(vr.id,'out',fb.id,'in'); addEdge(fb.id,'spec',sb.id,'spec');
 markWiresDirty();
 });
 preset('Pulse: Fingertip on the Phone Camera (torch)', function(){
