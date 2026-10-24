@@ -637,6 +637,9 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
         {n:'bw1',t:'num'},
         {n:'floor',t:'num'},
         {n:'bands',t:'bands'},
+        {n:'listenF',t:'num'},
+        {n:'todo',t:'num'},
+        {n:'gate',t:'num'},
         {n:'f2',t:'num'},
         {n:'l2',t:'num'},
         {n:'f3',t:'num'},
@@ -659,11 +662,15 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
           {n:'top',t:'range',min:1,max:30,step:1,d:10,label:'how many to show'},
           {n:'hold',t:'range',min:0,max:5000,step:50,d:500,label:'hold time, ms'},
           {n:'idRes',t:'select',opts:['auto','100','1000','5000','12500','25000','100000'],d:'auto',label:'rec: same signal within, Hz',adv:true},
+          // очередь прослушивания: сигналы окна слушаются по очереди (по частоте), каждый — пока есть или dwell мс
+          {n:'dwell',t:'range',min:0,max:30000,step:100,d:4000,label:'listen to each signal at most, ms (0 = while it lasts)'},
+          {n:'blCur',t:'button',label:'Blacklist this signal',fn:n=>cfarBlCur(n)},
+          {n:'skipSig',t:'button',label:'Skip signal in this window',fn:n=>{ n._skipCur=true; }},
           // чёрный список: найденное сейчас — в список (несущая гуляет, поэтому ширина не меньше 12.5 кГц), плюс вход skip
           {n:'blAdd',t:'button',label:'Blacklist found signals',fn:n=>cfarBlAdd(n)},
           {n:'blClear',t:'button',label:'Clear blacklist',fn:n=>cfarBlSave(n,[])},
           {n:'skipList',t:'text',d:'',label:'blacklist, Hz (f/width, …)',adv:true}],
-  init:n=>{n.list=[];n.text='';n.tracks=[];n.floorDb=null;n.recs=[];},
+  init:n=>{n.list=[];n.text='';n.tracks=[];n.floorDb=null;n.recs=[];n.cur=null;n.todo=0;},
   process(n,I){
     const s=I.spec;
     // тот же трюк, что у 'sa': ручной диапазон не пересекается с реальными данными источника
@@ -684,10 +691,11 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
     // мутируется на месте — сверяем rev, у кого его нет — ссылку.
     const fresh = s.rev!=null ? s.rev!==n._lastRev : s!==n._lastSpecRef;
     if(fresh){ n._lastRev=s.rev; n._lastSpecRef=s; cfarFrame(n,s); }
+    cfarListen(n,performance.now());
     const [a,b,c,d]=n.list;
     const rec=n.recs.length ? n.recs.splice(0) : null;
     const bands=n.list.map(t=>({lo:t.f-Math.max(t.bw,1)/2, hi:t.f+Math.max(t.bw,1)/2, label:fmtHz(t.f,3), db:t.db, sig:true}));
-    return {count:n.list.length, rec, bands,
+    return {count:n.list.length, rec, bands, listenF:n.cur?n.cur.f:null, todo:n.todo, gate:n.cur?1:0,
       f1:a?a.f:null, l1:a?a.db:null, f2:b?b.f:null, l2:b?b.db:null,
       f3:c?c.f:null, l3:c?c.db:null, f4:d?d.f:null, l4:d?d.db:null,
       snr1:a?a.snr:null, floor:n.floorDb, bw1:a?a.bw:null}; },
@@ -708,6 +716,26 @@ function cfarBlSave(n,list){
   if(n.set && n.set.skipList) n.set.skipList(v); else n.p.skipList=v;
   n.skip=[...(n._skipExt||[]), ...list.map(x=>({lo:x.f-x.w/2,hi:x.f+x.w/2}))];
   n.tracks=(n.tracks||[]).filter(t=>!cfarSkipped(n.skip,t.f,t.w)); n.list=n.list.filter(t=>!cfarSkipped(n.skip,t.f,t.w));
+}
+// очередь: слушаем по очереди все подтверждённые сигналы окна (по возрастанию частоты); сигнал оставляем, когда он пропал,
+// истёк dwell или нажали skip; todo — сколько ещё не прослушано (с текущим): пока >0, сканер стоит на окне
+function cfarListen(n,now){
+  const L=n.list;
+  if(n.cur && !L.includes(n.cur)) n.cur=null;
+  if(n.cur && (n._skipCur || (+n.p.dwell>0 && now-n.curT0>=+n.p.dwell))){ n.cur.seen=true; n.cur=null; }
+  n._skipCur=false;
+  if(!n.cur){
+    const c=L.filter(t=>!t.seen).sort((a,b)=>a.f-b.f);
+    if(c.length){ const lf=n._lastF ?? -Infinity; n.cur=c.find(t=>t.f>lf)||c[0]; n.curT0=now; }
+  }
+  if(n.cur) n._lastF=n.cur.f;
+  n.todo=L.filter(t=>!t.seen).length;
+}
+function cfarBlCur(n){
+  if(!n.cur) return;
+  const list=cfarBlList(n).slice();
+  list.push({f:n.cur.f, w:Math.max(n.cur.bw*1.5,12500)});
+  n.cur=null; cfarBlSave(n,list);
 }
 function cfarBlAdd(n){
   const list=cfarBlList(n).slice();
@@ -828,7 +856,7 @@ function cfarFrame(n,s){
   // не дожидаясь hold — иначе он продолжит тянуть tuneFreq к старой частоте.
   n.tracks=n.tracks.filter(t=>inWin(t) || (n.keepOutside && t.ok));
   n.list=n.tracks.filter(t=>t.ok).sort((a,b)=>b.db-a.db).slice(0,n.p.top);
-  n.text='found '+n.list.length+' · floor '+n.floorDb.toFixed(1)+' dB'+(n.skip&&n.skip.length ? ' · skip '+n.skip.length : '')+'\n'+n.list.map(v=>
+  n.text='found '+n.list.length+(n.cur ? ' · listening '+fmtHz(n.cur.f,3)+'Hz' : '')+' · floor '+n.floorDb.toFixed(1)+' dB'+(n.skip&&n.skip.length ? ' · skip '+n.skip.length : '')+'\n'+n.list.map(v=>
     fmtHz(v.f).padStart(8)+'Hz  bw '+fmtHz(v.bw).padStart(4)+
     'Hz  '+v.db.toFixed(0).padStart(4)+' dB  SNR '+v.snr.toFixed(0).padStart(3)+'  '+((now-v.t0)/1000).toFixed(1)+' s').join('\n');
 }
