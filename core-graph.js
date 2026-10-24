@@ -983,13 +983,14 @@ if(typeof dashMode!=='undefined' && uiLocked()) return;
 // и только потом все записи атрибута d. Если чередовать чтение и запись по одному проводу за раз,
 // браузер вынужден на каждой итерации форсировать синхронный reflow, чтобы отдать актуальный offset.
 wires.style.transform=content.style.transform ;        // держим в синхроне на каждый вызов, а не только по panzoomchange
-const jobs=[];
+const jobs=[], items=[];
 for(const e of Graph.edges){
 const a= Graph.map[e.from], b=Graph.map[e.to]; if(!a||!b) continue;
 const pa=nodePorts(a).o[e.fp], pb=nodePorts(b).i[e.tp]; if(!pa||!pb) continue;        // порт на миг пропал (узел пересобирается при смене колонок)
-const p1=portPos(a,pa,'o'), p2=portPos(b,pb,'i');
-jobs.push([e,curve(p1,p2)]);
+items.push({e,key:e.from+'\u0001'+e.to,p1:portPos(a,pa,'o'),p2:portPos(b,pb,'i')});
 }
+const ds=bundleOn ? bundleCurves(items) : null;
+items.forEach((it,i)=>jobs.push([it.e,ds?.[i] ?? curve(it.p1,it.p2)]));
 for(const [e,d ] of jobs){
 e.path.setAttribute('d',d); e.hit.setAttribute('d',d);
 }
@@ -1007,6 +1008,35 @@ const dx=ddx>=0 ? Math.max(ddx*.5,12) : Math.max(40,-ddx*.5);
 const back=clamp(-ddx/60,0,1);
 const dy=back*(60+Math.abs(p2.y-p1.y)*.3)*(p2.y>=p1.y?1:-1);
 return  `M${p1.x+8000},${p1.y+8000} C${p1.x+dx+8000},${p1.y+dy+8000} ${p2.x-dx+8000},${p2.y+dy+8000} ${p2.x+8000},${p2.y+8000}` ;
+}
+// Жгуты: два и больше провода от одного узла к другому идут общей «магистралью» — расходятся веером у выходов,
+// сходятся у входов, а между узлами лежат рядом (3 px друг от друга). Каждый провод остаётся отдельным path
+// (свой цвет, подсветка, удаление). Если узлы стоят тесно или вход левее выхода — обычные кривые.
+const BUNDLE_MIN_SPAN=60, BUNDLE_LANE=3;
+let bundleOn=true;
+try{ bundleOn=localStorage.getItem('dsp-bundle')!=='0'; }catch(e){}
+// items: [{key,p1,p2}] → массив d той же длины (undefined — провод не в жгуте)
+function bundleCurves(items){
+const groups=new Map();
+items.forEach((it,i)=>{ let g=groups.get(it.key); if(!g) groups.set(it.key,g=[]); g.push(i); });
+const out=new Array(items.length), O=8000;
+for(const g of groups.values()){
+if(g.length<2) continue;
+let x1=-Infinity,x2=Infinity,ya=0,yb=0;
+for(const i of g){ const {p1,p2}=items[i]; x1=Math.max(x1,p1.x); x2=Math.min(x2,p2.x); ya+=p1.y; yb+=p2.y; }
+if(x2-x1<BUNDLE_MIN_SPAN) continue;
+ya/=g.length; yb/=g.length;
+const gap=Math.min(36,(x2-x1)/4), sx=x1+gap, ex=x2-gap, t=(ex-sx)/2;
+const order=g.slice().sort((i,j)=>(items[i].p1.y+items[i].p2.y)-(items[j].p1.y+items[j].p2.y));
+order.forEach((i,k)=>{
+const {p1,p2}=items[i], l=(k-(order.length-1)/2)*BUNDLE_LANE, sy=ya+l, ey=yb+l;
+const d1=(sx-p1.x)/2, d2=(p2.x-ex)/2, X=O, Y=O;
+out[i]=`M${p1.x+X},${p1.y+Y} C${p1.x+d1+X},${p1.y+Y} ${sx-d1+X},${sy+Y} ${sx+X},${sy+Y}`
++` C${sx+t+X},${sy+Y} ${ex-t+X},${ey+Y} ${ex+X},${ey+Y}`
++` C${ex+d2+X},${ey+Y} ${p2.x-d2+X},${p2.y+Y} ${p2.x+X},${p2.y+Y}`;
+});
+}
+return out;
 }
 /* ---- история, выделение, буфер обмена ---- */
 let graphDirty=false;                                // есть ли несохранённые изменения с последней загрузки/сохранения патча
@@ -1418,6 +1448,14 @@ function fitViewWhenReady(){
 requestAnimationFrame(()=>requestAnimationFrame(()=>fitView()));
 }
 document.getElementById('fit').onclick=()=>fitView();
+// кнопка жгутов: провода между одной парой узлов лежат рядом (по умолчанию включено, выбор помнится в браузере)
+const bundleBtn=document.getElementById('bundle');
+bundleBtn.classList.toggle('on',bundleOn);
+bundleBtn.onclick=()=>{
+bundleOn=!bundleOn; bundleBtn.classList.toggle('on',bundleOn);
+try{ localStorage.setItem('dsp-bundle',bundleOn?'1':'0'); }catch(e){}
+showToast(bundleOn?'wire bundles: on':'wire bundles: off'); drawWires();
+};
 // кнопка детализации: все узлы разом — полные → карточки → точки → полные
 document.getElementById('lod').onclick=()=>{
 const next=((Graph.nodes.reduce((m,n)=>Math.max(m,n.lod|0),0))+1)%3;
