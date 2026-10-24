@@ -869,7 +869,8 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     if(Array.isArray(I.rows) && I.rows!==n.lastRowsIn){ n.lastRowsIn=I.rows; if(!tblRO(n)) tblFromRows(n,I.rows); }
     else if(n.rowsAgain && !n.rowsBusy && n.loaded===n.p.list && !tblRO(n)){ const a=n.rowsAgain; n.rowsAgain=null; tblFromRows(n,a); }
     if(n.pend.length>5000) n.pend.splice(0,n.pend.length-5000);
-    if(n.pend.length && performance.now()-n.lastFlush>500) tblFlush(n);
+    // редкие записи (кнопка, провод) — почти сразу; поток — пачками раз в 500 мс
+    if(n.pend.length && performance.now()-n.lastFlush>(n.pend.length>100 ? 500 : 60)) tblFlush(n);
 
     const o=tblSelOut(n,I);
     o.list=tblKind(p.list)==='patch' ? '' : p.list;                  // ссылка на хранилище: Row Player читает список сам
@@ -906,7 +907,8 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
       const vk=[n.p.vcols,n.p.rules,n.p.tint,n.p.vmode,n.p.tz];
       if(!n._vk || vk.some((x,i)=>x!==n._vk[i])){ n._vk=vk; n.uiDirty=true; n.uiFull=true; if(n.ui.view && !n.ui.view.hidden) tblRenderView(n); }
       // полная перерисовка до 300 строк × колонок — реже на длинном списке
-      if(n.uiDirty && performance.now()-(n.uiT||0)>500){ n.uiDirty=false; n.uiT=performance.now(); tblRenderList(n,true); }
+      // короткий список перерисовывается без ожидания, длинный — реже (до 300 строк × колонок)
+      if(n.uiDirty && performance.now()-(n.uiT||0)>Math.min(500,40+n.rows.length*3)){ n.uiDirty=false; n.uiT=performance.now(); tblRenderList(n,true); }
       tblMark(n);
     }
   },
