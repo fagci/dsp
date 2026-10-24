@@ -24,6 +24,11 @@ const OD_LITE_FILES=['model.json','group1-shard1of5','group1-shard2of5','group1-
 const OD_LITE_URL='https://storage.googleapis.com/tfjs-models/savedmodel/ssdlite_mobilenet_v2/';
 OfflineData.fileItem({id:'objdet',label:'Object Detect: TF.js and the model',mb:19,
   files:[...OD_LOCAL.map(l=>[l[0],[l[1],l[2]]]), ...OD_LITE_FILES.map(f=>['COCO-SSD lite '+f,['vendor/objdet/ssdlite_mobilenet_v2/'+f,OD_LITE_URL+f]])]});
+let odTfP=null;
+function odTf(){                                    // TF.js общий с другими нейро-узлами (Basic Pitch…): грузится один раз
+  if(window.tf) return Promise.resolve();
+  return odTfP || (odTfP=odLocalScript(OD_LOCAL[0]).catch(e=>{ odTfP=null; throw e; }));
+}
 async function odLocalScript(l){
   const b=await OfflineData.blob(l[0],[l[1],l[2]]), u=URL.createObjectURL(b);
   try{ await odScript(u); } finally{ URL.revokeObjectURL(u); }
@@ -36,7 +41,7 @@ async function odLiteModel(){                       // lite_mobilenet_v2 цел�
 async function odLoad(libs,base,modelUrl,backend){
   const urls=String(libs||'').trim().split(/\s+/).filter(Boolean);
   if(urls.length) for(const u of urls) await odScript(u);
-  else if(!window.cocoSsd) await (odLocalP || (odLocalP=(async()=>{ for(const l of OD_LOCAL) await odLocalScript(l); })().catch(e=>{ odLocalP=null; throw e; })));
+  else if(!window.cocoSsd) await (odLocalP || (odLocalP=(async()=>{ await odTf(); await odLocalScript(OD_LOCAL[1]); })().catch(e=>{ odLocalP=null; throw e; })));
   if(!window.cocoSsd) throw new Error('coco-ssd is missing in the loaded scripts');
   if(backend && backend!=='auto' && tf.getBackend()!==backend){      // смена бэкенда делает прежние модели негодными
     for(const m in odModels) delete odModels[m];
