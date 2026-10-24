@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=92;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=93;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -379,6 +379,7 @@ const PRESET_CATS={
   'QR: Generator and Reader Loop (no hardware)':'Images & TV',
   'Object Detect: Camera Video and Photo':'Images & TV',
   'Neural Denoiser (RNNoise): Noisy Voice → Clean Voice':'Digital Voice & Trunking',
+  'Sound Classifier (YAMNet): What Is That Sound':'Digital Voice & Trunking',
   'Pulse: Fingertip on the Phone Camera (torch)':'Images & TV',
   'Camera Alarm: Motion → Archive + Beep':'Images & TV',
   'Timelapse: Camera Frames → Video':'Images & TV',
@@ -6289,6 +6290,20 @@ addEdge(v.id,'out',mx.id,'a'); addEdge(ns.id,'out',mx.id,'b');
 addEdge(mx.id,'out',rn.id,'in');
 addEdge(mx.id,'out',sc.id,'in1'); addEdge(rn.id,'out',sc.id,'in2');
 addEdge(rn.id,'out',dc.id,'L');
+markWiresDirty();
+});
+preset('Sound Classifier (YAMNet): What Is That Sound', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'YAMNet (a neural network, runs in the browser) names the sound it hears out of 521 classes: speech, music, siren, engine, dog, door, beeps, noise… The first start loads about 11 MB into Files → Offline data (or press ⇩ offline in Files); after that it works without a network. Here the microphone and a test beep are mixed; open the Oscillator and set amp to 0 to listen to the room only. «watch for» lists classes to follow (speech, siren…): the hit output goes high while one is heard and a line goes to the ticker. Put a demodulated radio channel into «in» instead of the microphone to tag what is on the air.'});
+nt.size.w=1000; nt.size.h=100; applySize(nt);
+const m =addNode('mic',40,170,{gainA:1,echo:false,ns:false,agc:false});
+const o =addNode('osc',40,330,{wave:'sine',freq:1000,amp:.15});
+const mx=addNode('mixer',300,170,{channels:'2'});
+const yn=addNode('yamnet',560,170,{period:1,top:5,watch:'speech, siren, alarm, dog'}); yn.size.w=300; yn.size.h=220; applySize(yn);
+const tk=addNode('ticker',900,170,{time:true}); tk.size.w=320; tk.size.h=220; applySize(tk);
+addEdge(m.id,'a',mx.id,'a'); addEdge(o.id,'out',mx.id,'b');
+addEdge(mx.id,'out',yn.id,'in');
+addEdge(yn.id,'rec',tk.id,'rec');
 markWiresDirty();
 });
 preset('Pulse: Fingertip on the Phone Camera (torch)', function(){
