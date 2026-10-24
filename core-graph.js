@@ -1103,8 +1103,17 @@ y:(ev.clientY-r.top +cv.scrollTop)/view.k-view.y}; }
 /* ---- пан/зум/пинч канваса — отдан Panzoom, узлы (.panzoom-exclude) им не трогаются ---- */
 let panzooming=false;
 const panzoom=Panzoom(content,{canvas:true,maxScale:2.5,minScale:.25,step:.1,excludeClass:'panzoom-exclude'});
-content.addEventListener('panzoomstart',()=>{ panzooming=true; cv.classList.add('grab'); });
-content.addEventListener('panzoomend',  ()=>{ panzooming=false; cv.classList.remove('grab'); });
+// Пан пальцем: слои узлов и проводов (SVG 16000×16000) без will-change перерисовываются на каждый pointermove.
+// Поднимаем их в отдельные композитные слои на время жеста — двигается готовый растр.
+// Слой берём на первом сдвиге, не на касании: тап по узлу слой не создаёт.
+let panLayers=false, panEndT=0;
+function panLift(on){
+clearTimeout(panEndT);
+if(on){ if(panLayers) return; panLayers=true; for(const e of [content,wires]) e.style.willChange='transform'; return; }
+panEndT=setTimeout(()=>{ if(zooming||panzooming) return; panLayers=false; for(const e of [content,wires]) e.style.willChange=''; },200);   // инерция/следующий жест — слои не дёргаем
+}
+content.addEventListener('panzoomstart',()=>{ panzooming=true; cv.classList.add('grab'); clearTimeout(panEndT); });
+content.addEventListener('panzoomend',  ()=>{ panzooming=false; cv.classList.remove('grab'); if(panLayers) panLift(false); });
 // Зум колесом/пинчем: panzoomstart/end не приходят. Пока идёт зум — не рисуем узлы и держим
 // слои с will-change: браузер масштабирует готовый растр, а не перерисовывает всё на каждом шаге.
 // Через 200 мс после последнего шага слои снимаются и один раз перерастеризуются в чёткость.
@@ -1112,13 +1121,14 @@ let zooming=false, zoomEndT=0;
 function zoomTouch(){
 if(!zooming){ zooming=true; for(const e of [content,wires]) e.style.willChange='transform'; }
 clearTimeout(zoomEndT);
-zoomEndT=setTimeout(()=>{ zooming=false; for(const e of [content,wires]) e.style.willChange=''; },200);
+zoomEndT=setTimeout(()=>{ zooming=false; if(!panzooming){ panLayers=false; clearTimeout(panEndT); for(const e of [content,wires]) e.style.willChange=''; } },200);
 }
 let rescaleT=0, rescaleK=null;
 content.addEventListener('panzoomchange',ev=>{
 view.x=ev.detail.x; view.y=ev.detail.y; view.k=ev.detail.scale;
 if(view.k!==rescaleK){ rescaleK=view.k; clearTimeout(rescaleT); rescaleT=setTimeout(rescaleCanvases,250); }
 wires.style.transform=content.style.transform;
+if(panzooming) panLift(true);
 syncGridBg(); });
 function rescaleCanvases(){                          // буферы канв под новый масштаб холста
 if(zooming){ clearTimeout(rescaleT); rescaleT=setTimeout(rescaleCanvases,250); return; }
