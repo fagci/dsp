@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=83;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=84;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -426,6 +426,7 @@ const PRESET_CATS={
   'FT8: Propagation Map':'Maps & Locating',
   'FT8: DX Log (Table)':'Maps & Locating',
   'Fox Hunt: Locate Transmitter':'Maps & Locating',
+  'Trilateration: Type RSSI, Phone GPS → Locator, Map':'Maps & Locating',
   'Internet Radio on the Map':'Maps & Locating',
   'KiwiSDR and SpyServer on the Map':'Maps & Locating',
   'Wi-Fi: Locate Access Points (Termux)':'Maps & Locating',
@@ -865,6 +866,28 @@ addEdge(mk.id,'rec',loc.id,'rec');
 addEdge(mk.id,'rec',map.id,'rec');
 addEdge(loc.id,'rec',map.id,'rec');
 addEdge(me.id,'rec',map.id,'rec');
+markWiresDirty();
+});
+preset('Trilateration: Type RSSI, Phone GPS → Locator, Map', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Trilateration by hand. Open on a phone over HTTPS, allow location (My Position is in «gps» mode).\n'+
+  '1. Stand at a spot, read the level off any receiver and type it into «level by hand, dBm» of Mark Point (e.g. -73).\n'+
+  '2. Press ● Mark: the point = phone GPS + that RSSI. Walk 20–50 m or more to the next spot, repeat. Marks on one line do not give a fix — go around the source.\n'+
+  '3. From the 3rd mark with a spread of positions Source Locator draws the estimate with an error radius (Map). More marks around = better.\n'+
+  'Marks are also kept in the Table «field/trilateration». A wrong mark: press Clear on the Locator and re-mark. Same antenna, height and receiver gain at every spot! Path loss n: 2 open field, 2.7–3.5 town, 4+ indoors.'});
+nt.size.w=820; nt.size.h=170; applySize(nt);
+const me=addNode('geoMe',40,250,{src:'gps'});
+const mk=addNode('geoMark',320,250,{prefix:'P',icon:'dot',tx:'tx',rssiM:''});
+mk.size.w=320; mk.size.h=230; applySize(mk);
+const lc=addNode('geoLocate',320,520,{field:'rssi',method:'strength',group:'tx',labelField:'tx',pathN:2.7,sigmaDb:6});
+lc.size.w=340; lc.size.h=360; applySize(lc);
+const tb=addNode('table',680,250,{list:'field/trilateration'});
+tb.size.w=420; tb.size.h=260; applySize(tb);
+const mp=addNode('geoMap',700,540,{mz:17,follow:true,store:'trilat'});
+mp.size.w=640; mp.size.h=520; applySize(mp);
+addEdge(me.id,'lat',mk.id,'lat'); addEdge(me.id,'lon',mk.id,'lon'); addEdge(me.id,'alt',mk.id,'alt');
+addEdge(mk.id,'rec',tb.id,'rec'); addEdge(mk.id,'rec',lc.id,'rec');
+addEdge(mk.id,'rec',mp.id,'rec'); addEdge(lc.id,'rec',mp.id,'rec'); addEdge(me.id,'rec',mp.id,'rec');
 markWiresDirty();
 });
 preset('HF: Who Is On Air (Schedule)', function(){

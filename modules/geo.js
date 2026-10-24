@@ -855,6 +855,7 @@ def({ id:'geoMark', title:'Mark Point', cat:'Geo',
   readout:true,
   params:[{n:'mark',t:'button',label:'● Mark',fn:n=>{ n.req=true; }},
           {n:'markp',t:'button',label:'📷 Mark + photo',fn:n=>geoMarkPhoto(n)},
+          {n:'rssiM',t:'num',d:'',label:'level by hand, dBm (used while the rssi input is not wired)'},
           {n:'auto',t:'range',min:0,max:120,step:1,d:0,label:'auto every, s (0 — off)'},
           {n:'session',t:'select',opts:['field','quiet'],d:'field',label:'session: field (moving about) or quiet (a calm place, a long listen for locating)'},
           {n:'tx',t:'text',d:'',label:'source being measured (field «tx»: Source Locator groups by it)'},
@@ -867,7 +868,7 @@ def({ id:'geoMark', title:'Mark Point', cat:'Geo',
   init:n=>{ n.req=false; n.prevGo=0; n.count=0; n.lastT=0; n.lastRec=null; n.msg=''; n.snap={}; n.emit=null; },
   process(n,I){
     const go=typeof I.go==='number' ? I.go : 0, edge=go>0.5 && n.prevGo<=0.5; n.prevGo=go;
-    n.snap={lat:I.lat,lon:I.lon,alt:I.alt,rssi:I.rssi,snr:I.snr,azimuth:I.azimuth,elevation:I.elevation,freq:I.freq};
+    n.snap={lat:I.lat,lon:I.lon,alt:I.alt,rssi:recNum(I.rssi)!=null ? I.rssi : n.p.rssiM,snr:I.snr,azimuth:I.azimuth,elevation:I.elevation,freq:I.freq};
     const now=Date.now();
     let fire=n.req || edge || (n.p.auto>0 && now-n.lastT>=n.p.auto*1000);
     n.req=false;
