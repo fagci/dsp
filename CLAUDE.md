@@ -21,3 +21,11 @@
 - `*-worker.js`, `vendor/` (wasm, библиотеки), `data/` — воркеры, внешнее, данные.
 - `README.md` — список возможностей по разделам; новую фичу описывай там же.
 - Поиск: `grep -n "id:'имя'" modules/*.js` — модуль по id; `grep -n "<id=\"…\"" index.html` — кнопка тулбара.
+
+## Грабли
+- **Поля узла.** Модуль не пишет в `n.x`/`n.y` (координаты на холсте), а также в `id, type, p, size, el, ports, out, b, lod`. Состояние держи в своих полях (`n.sx`, `n.buf`…). Иначе в проводах `NaN`, а сохранение портится. Проверка: `node tools/test-nodefields.mjs`.
+- **Проверка в браузере.** Playwright и Chromium уже стоят (`require('playwright')`). Статику отдавай через `python3 -m http.server`, не `file://`. Страница один раз перезагружается ради cross-origin isolation — жди `window.crossOriginIsolated===true`. `MOD` — глобальная `const`, а не `window.MOD`. WebGPU в headless: флаги `--enable-unsafe-webgpu --use-angle=swiftshader` (только корректность, не скорость). Сохранение `FileSystemFileHandle` в IndexedDB в headless роняет браузер — проверяй руками.
+- **Оптимизации сначала меряй.** SIMD для `leandvb` дал 0.99×, для `mpeg2` 1.20×; WebGPU не выигрывает у FFT на CPU (~0.11 мс на 4096 точек). Выигрыш подтверждай замером до коммита; счётчики — в `core-perf.js` (`Perf`, `Dev`).
+- **Пересборка wasm.** `tools/*/build.sh` воспроизводят `vendor/*.wasm` байт-в-байт (проверено на leandvb и mpeg2). Для wasi: `apt-get update && apt-get install wasi-libc libc++-18-dev-wasm32 libclang-rt-18-dev-wasm32`.
+- **Service worker.** `navigate()` в `sw.js` намеренно ходит с `no-cache`, поэтому Navigation Preload не включай: он идёт через HTTP-кэш и отдаст старую версию.
+- **Узлы холста.** `content-visibility:auto` включается из `cvArm` (`core-graph.js`) после первой раскладки, класс `cvis`. То, что торчит за рамку узла, не должно выходить дальше `overflow-clip-margin:80px` в `styles.css`, иначе обрежется.
