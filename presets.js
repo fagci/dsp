@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=94;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=95;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -381,6 +381,7 @@ const PRESET_CATS={
   'Neural Denoiser (RNNoise): Noisy Voice → Clean Voice':'Digital Voice & Trunking',
   'Sound Classifier (YAMNet): What Is That Sound':'Digital Voice & Trunking',
   'Notes (Basic Pitch): Chord and Microphone':'Digital Voice & Trunking',
+  'Echo Canceller (AEC): Speaker + Microphone, or One Microphone':'Digital Voice & Trunking',
   'Pulse: Fingertip on the Phone Camera (torch)':'Images & TV',
   'Camera Alarm: Motion → Archive + Beep':'Images & TV',
   'Timelapse: Camera Frames → Video':'Images & TV',
@@ -6320,6 +6321,32 @@ const pn=addNode('pitchnn',560,170,{period:.5,thr:.3}); pn.size.w=300; pn.size.h
 const tk=addNode('ticker',900,170,{time:true}); tk.size.w=320; tk.size.h=200; applySize(tk);
 addEdge(a.id,'out',mx.id,'a'); addEdge(b.id,'out',mx.id,'b'); addEdge(c.id,'out',mx.id,'c'); addEdge(m.id,'a',mx.id,'d');
 addEdge(mx.id,'out',pn.id,'in'); addEdge(pn.id,'rec',tk.id,'rec');
+markWiresDirty();
+});
+preset('Echo Canceller (AEC): Speaker + Microphone, or One Microphone', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Echo canceller. Top: a simulated call — the far voice (filtered noise, ref) plays from the speaker, comes back to the microphone through a room (70 ms delay, lower level) together with a near voice (a steady 600 Hz tone). Echo Canceller learns the path from ref to mic by itself (a few seconds) and subtracts the echo; the scope shows the microphone (1) and the result (2); «suppressed» is how many dB the microphone level dropped (it is low while a loud near voice speaks), «delay» is the path it found. Real use: Microphone → mic, what plays on the speaker → ref (or a second microphone near the noise source). Bottom: one microphone with no reference — the node removes a repeat of the signal that comes later than «remove repeats later than» (echo, a repeater doubling the signal, a long reverb); the voice itself stays.'});
+nt.size.w=1100; nt.size.h=110; applySize(nt);
+const fv=addNode('osc',40,170,{wave:'noise',amp:.4});
+const vf=addNode('biquad',170,170,{type:'lp',freq:3000,Q:.7});
+const lf=addNode('lfo',40,330,{freq:1.7,min:.1,max:1});
+const fg=addNode('gain',300,170,{});
+const dl=addNode('delay',300,330,{ms:70,fb:0,mix:1});
+const lv=addNode('gain',540,330,{k:.5});
+const nr=addNode('osc',300,490,{wave:'sine',freq:600,amp:.01});
+const mx=addNode('mixer',780,330,{channels:'2'});
+const ac=addNode('aec',1020,170,{ms:'128'}); ac.size.w=260; ac.size.h=170; applySize(ac);
+const sc=addNode('scope',1020,360,{span:4096,gain:2}); sc.size.w=480; sc.size.h=200; applySize(sc);
+addEdge(fv.id,'out',vf.id,'in'); addEdge(vf.id,'out',fg.id,'in'); addEdge(lf.id,'out',fg.id,'k');
+addEdge(fg.id,'out',dl.id,'in'); addEdge(dl.id,'out',lv.id,'in');
+addEdge(lv.id,'out',mx.id,'a'); addEdge(nr.id,'out',mx.id,'b');
+addEdge(mx.id,'out',ac.id,'mic'); addEdge(fg.id,'out',ac.id,'ref');
+addEdge(mx.id,'out',sc.id,'in1'); addEdge(ac.id,'out',sc.id,'in2');
+const d2=addNode('delay',300,650,{ms:150,fb:0,mix:.4});     // голос + повтор через 150 мс
+const a2=addNode('aec',560,650,{ms:'256',minDelay:100}); a2.size.w=260; a2.size.h=170; applySize(a2);
+const s2=addNode('scope',840,650,{span:4096,gain:2}); s2.size.w=480; s2.size.h=200; applySize(s2);
+addEdge(fg.id,'out',d2.id,'in'); addEdge(d2.id,'out',a2.id,'mic');
+addEdge(d2.id,'out',s2.id,'in1'); addEdge(a2.id,'out',s2.id,'in2');
 markWiresDirty();
 });
 preset('Pulse: Fingertip on the Phone Camera (torch)', function(){
