@@ -1,0 +1,3 @@
+MediaPipe Tasks Audio 1.1.1 (audio_bundle.mjs, audio_wasm_internal.js/.wasm) — Apache License 2.0, (c) The MediaPipe Authors.
+YAMNet (yamnet.tflite, float32) — Apache License 2.0, (c) Google (AudioSet classes, CC BY 4.0 labels).
+http://www.apache.org/licenses/LICENSE-2.0
