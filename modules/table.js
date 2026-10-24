@@ -1252,13 +1252,13 @@ function tblPickToggle(n){
     e.stopPropagation();
     const its=[...box.querySelectorAll('.tm-i')];
     if(e.key==='Escape'){ m.remove(); ui.pick.focus(); return; }
-    if(e.key==='Enter'){ const it=its[Math.max(0,ui.pickHi)]; if(it){ m.remove(); tblPick(n,it.dataset.name); } return; }
+    if(e.key==='Enter'){ const it=its[Math.max(0,ui.pickHi)]; if(it){ m.remove(); tblPick(n,it.dataset.name,true); } return; }
     if(e.key!=='ArrowDown' && e.key!=='ArrowUp') return;
     e.preventDefault();
     if(!its.length) return;
     ui.pickHi=(Math.max(0,ui.pickHi)+(e.key==='ArrowDown' ? (ui.pickHi<0 ? 0 : 1) : -1)+its.length)%its.length;
     its.forEach((x,k)=>x.classList.toggle('hi',k===ui.pickHi));
-    its[ui.pickHi].scrollIntoView({block:'nearest'});
+    tblPickScroll(m,its[ui.pickHi],false);
   });
   box.addEventListener('click',e=>{
     const cb=e.target.closest('.tp-cb');
@@ -1273,11 +1273,19 @@ function tblPickToggle(n){
       n.p.open=[...n._open]; tblPickFill(n); return;
     }
     const it=e.target.closest('.tm-i'); if(!it) return;
-    m.remove(); tblPick(n,it.dataset.name);             // имя — сделать активным
+    m.remove(); tblPick(n,it.dataset.name,true);        // строка — только сделать активной; что показывать, решают галочки
   });
   tblPickFill(n);
-  inp.focus();
-  box.querySelector('.tm-i.act')?.scrollIntoView({block:'center'});
+  if(!matchMedia('(pointer:coarse)').matches) inp.focus();          // на телефоне фокус поднял бы клавиатуру и сдвинул экран
+  tblPickScroll(m,box.querySelector('.tm-i.act'),true);
+}
+// прокрутка только самой панели (scrollIntoView крутит и всё вокруг: холст, страницу)
+function tblPickScroll(m,el,center){
+  if(!el) return;
+  const r=el.getBoundingClientRect(), b=m.getBoundingClientRect();
+  if(center) m.scrollTop+=r.top-b.top-(b.height-r.height)/2;
+  else if(r.top<b.top) m.scrollTop+=r.top-b.top;
+  else if(r.bottom>b.bottom) m.scrollTop+=r.bottom-b.bottom;
 }
 // строки панели: дерево папок со сворачиванием (при поиске раскрыто всё найденное); у папки галочка на все найденные в ней списки
 function tblPickFill(n){
@@ -1318,15 +1326,17 @@ function tblToggleShow(n,names,on){
   for(const k of names) on ? sh.add(k) : sh.delete(k);
   tblSetShow(n,[...sh]);
 }
-// выбор активного списка; если «показывался» только прежний активный — галочка переходит на новый
-async function tblPick(n,list){
+// выбор активного списка; если «показывался» только прежний активный — галочка переходит на новый.
+// keepShow (строка панели списков): галочки не трогаем — показ меняют только они сами
+async function tblPick(n,list,keepShow){
   tblCloseEditor(n);
   if(n.drill && list!==n.drill.to){                        // ушли из подсписка чеклиста: фильтр, как был
     n.p.filter=n.drill.prevFilter; n.drill=null;
     if(n.ui) n.ui.filter.value=n.p.filter;
   }
   const sh=n.p.show;
-  if(Array.isArray(sh) && (!sh.length || (sh.length===1 && tblCanon(sh[0])===n.p.list))) n.p.show=[list];
+  if(keepShow){ if(!Array.isArray(sh)) n.p.show=[n.p.list]; }
+  else if(Array.isArray(sh) && (!sh.length || (sh.length===1 && tblCanon(sh[0])===n.p.list))) n.p.show=[list];
   await tblUse(n,list);
 }
 // Старые строки окна → новые. Окно сдвигается прокруткой (hint — сдвиг индексов), потолок maxRows сбрасывает старые строки сверху
