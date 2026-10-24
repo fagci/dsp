@@ -212,6 +212,8 @@ async function fsWavDecode(blob){                      // только свой 
    Лежат в Files → «Offline data»: видно, сколько места занято, можно удалить, выгрузить или подложить свой файл с тем же именем.
    OfflineData.blob(имя, [адреса]) — из хранилища, иначе по первому ответившему адресу (и туда же сохраняется).
    Модули регистрируют то, что стоит иметь заранее: fileItem — файлы в «Offline data», item — своё хранилище (has/get).
+   Вручную («by hand»): у каждого пункта ссылки на источники (в новой вкладке; у файлов приложения — скачивание) и выбор скачанного;
+   у item — manual:()=>[{name,url,label?,has?()}] и ingest(файл,запись), иначе выбранный файл просто ложится в «Offline data» под своим именем.
    Кнопка «⇩ offline» в менеджере файлов качает выбранное; auto-пункты докачиваются сами при первом запуске с сетью
    (не на мобильной сети и не в режиме экономии трафика). */
 const OfflineData = (() => {
@@ -251,7 +253,8 @@ const OfflineData = (() => {
   // o: {id,label,mb,auto,has():Promise<bool>,get():Promise}; повторная регистрация с тем же id заменяет пункт
   const item=o=>{ const i=items.findIndex(x=>x.id===o.id); if(i>=0) items[i]=o; else items.push(o); };
   // ссылки для ручной загрузки: [{name, url}] — url из http(s)-адресов пункта (свой vendor/ не годится: он лежит в самом приложении)
-  const manualOf=o=>o.manual ? o.manual() : (o.files||[]).map(f=>({name:f[0],url:[].concat(f[1]).filter(u=>/^https?:/.test(u)).pop()})).filter(f=>f.url);
+  // свой адрес (data/, vendor/) годится как запасной: файл лежит в самом приложении, его можно скачать и унести на другое устройство
+  const manualOf=o=>o.manual ? o.manual() : (o.files||[]).map(f=>{ const us=[].concat(f[1]); return {name:f[0],url:us.filter(u=>/^https?:/.test(u)).pop()||us[us.length-1]}; }).filter(f=>f.url);
   const fileItem=o=>item({...o,
     has:async()=>{ for(const f of o.files) if(!await has(f[0])) return false; return true; },
     get:async()=>{ for(const f of o.files) await blob(f[0],f[1]); }});
@@ -261,34 +264,51 @@ const OfflineData = (() => {
     for(const o of items) if(o.auto) try{ if(!await o.has()) await o.get(); }catch(e){}
   }
   // «вручную»: ссылки открываются в новой вкладке (браузер сохраняет файл), скачанное выбирается кнопкой и ложится под нужным именем
+  // Пункты со своим хранилищем (item) принимают файл через o.ingest(файл, запись): у каждой ссылки своя кнопка выбора,
+  // запись — {name,url,label?,has?()}; has — свой признак «сохранено», иначе проверяется файл в Offline data.
   function manualBox(o,man,title){
     const d=document.createElement('details'), sm=document.createElement('summary'), ls=document.createElement('div'), note=document.createElement('div');
     d.style.margin='0 0 6px 22px'; sm.textContent='by hand (no network access?)'; sm.style.opacity='.7'; sm.style.cursor='pointer';
+    const done=()=>o.has().then(h=>{ if(h) title.textContent=o.label+' · ~'+o.mb+' MB · ✓ downloaded'; }).catch(()=>{});
+    const choose=(multi,onFiles)=>{
+      const i=document.createElement('input'); i.type='file'; i.multiple=multi;
+      i.onchange=()=>onFiles([...i.files]); i.click();
+    };
     const refresh=async()=>{
       ls.textContent='';
       for(const f of man){
         const r=document.createElement('div'), a=document.createElement('a'), st=document.createElement('span');
-        a.href=f.url; a.target='_blank'; a.rel='noopener'; a.textContent='↗ '+f.name.replace(/^.* · /,''); a.style.marginRight='8px';
-        st.textContent=await has(f.name) ? '✓ saved' : 'not saved'; r.append(a,st); ls.append(r);
+        a.href=f.url; a.target='_blank'; a.rel='noopener'; a.textContent='↗ '+(f.label||f.name.replace(/^.* · /,'')); a.style.marginRight='8px';
+        if(!/^https?:/.test(f.url)) a.download=f.url.split('/').pop().split('?')[0];     // свой файл приложения — сохранить, а не открыть
+        st.textContent=await (f.has ? f.has() : has(f.name)).catch(()=>false) ? '✓ saved' : 'not saved'; st.style.marginRight='8px';
+        r.append(a,st);
+        if(o.ingest){
+          const b=document.createElement('button'); b.textContent='choose file…';
+          b.onclick=()=>choose(false,async fs=>{
+            try{ await o.ingest(fs[0],f); note.textContent='saved: '+(f.label||f.name); }
+            catch(e){ note.textContent='not saved: '+(e.message||e); }
+            refresh(); done(); });
+          r.append(b);
+        }
+        ls.append(r);
       }
     };
-    const pick=document.createElement('button'); pick.textContent='choose downloaded files…';
-    pick.onclick=()=>{
-      const i=document.createElement('input'); i.type='file'; i.multiple=true;
-      i.onchange=async()=>{
+    d.append(sm,ls);
+    if(!o.ingest){
+      const pick=document.createElement('button'); pick.textContent='choose downloaded files…';
+      pick.onclick=()=>choose(true,async fs=>{
         let ok=0, skip=[];
-        for(const f of i.files){
+        for(const f of fs){
           const base=f.name.replace(/ \(\d+\)(?=\.[^.]*$)/,''), m=man.find(x=>x.url.split('/').pop().split('?')[0]===base);
           const name=m ? m.name : o.saveAs ? o.saveAs(f.name) : null;
           if(!name){ skip.push(f.name); continue; }
           try{ await save(name,f); ok++; }catch(e){ skip.push(f.name); }
         }
         note.textContent='saved '+ok+' file(s)'+(skip.length ? '; not recognised: '+skip.join(', ') : '');
-        refresh(); o.has().then(h=>{ if(h) title.textContent=o.label+' · ~'+o.mb+' MB · ✓ downloaded'; }).catch(()=>{});
-      };
-      i.click();
-    };
-    d.append(sm,ls,pick,note); d.ontoggle=()=>{ if(d.open) refresh(); };
+        refresh(); done(); });
+      d.append(pick);
+    }
+    d.append(note); d.ontoggle=()=>{ if(d.open) refresh(); };
     return d;
   }
   // панель выбора в менеджере файлов
