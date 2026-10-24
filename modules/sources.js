@@ -6607,7 +6607,9 @@ const ListDB = (() => {
     tx.objectStore('items').openCursor().onsuccess = e => {
       const c = e.target.result;
       if(!c){ db.deleteObjectStore('items'); return; }
-      const it = c.value; let t = seen.get(it.listName);
+      const it = c.value;
+      if(typeof it.listName!=='string' && typeof it.listName!=='number') it.listName = 'recovered';   // без имени (старый индекс их не видел) — не терять и не срывать перенос
+      let t = seen.get(it.listName);
       if(t===undefined){ t=next++; seen.set(it.listName,t); mkStore(db,t); T.put({listName:it.listName,t}); }
       tx.objectStore(sn(t)).put(it); L.put({id:it.id,t});
       c.continue();
