@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=98;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=99;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -316,6 +316,9 @@ const PRESET_CATS={
   'Decode Protocol as Raster':'Images & TV',
   'Weather Fax WEFAX 120':'Images & TV',
   'WEFAX Transmit (Demo)':'Images & TV',
+  'Nipkow Disk: 30-Line Mechanical Television (Generator)':'Images & TV',
+  'Nipkow Disk: Interlaced Two-Spiral Disk, In-Band Sync, Noisy Line (Generator)':'Images & TV',
+  'Nipkow Disk: Receive from the Microphone (no sync)':'Images & TV',
   'Analog TV: Test Card (Generator)':'Images & TV',
   'Analog TV: FPV / TV Receiver (USB SDR)':'Images & TV',
   'Digital TV: DVB-T2 Astrometa → TS → Video and Sound':'Images & TV',
@@ -3028,6 +3031,46 @@ preset('WEFAX Transmit (Demo)', function(){
   // addEdge(o.id,'out', <твой узел вывода на динамики>.id, 'in');  ← подставь свой id узла категории «Вывод»,
   // этого файла у меня нет, я не знаю его имя в твоём проекте.
   markWiresDirty();
+});
+preset('Nipkow Disk: 30-Line Mechanical Television (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Mechanical television: a disk with holes on a spiral turns the picture into a one-dimensional sound signal, one line per hole, one turn = one picture. Here is a Baird-style 30-line disk (12.5 pictures/s = 750 rpm). The transmitter sends a test pattern (or a picture / video from its img and vid pins) as sound, the sync pulse goes once per turn on its own wire. The receiver builds the picture back. Pick another disk in the std field of both nodes (they must match): 2 spirals interlaced, in-band sync, 48 lines, slow scan… Sound Card lets you hear the signal (about 375 lines per second — a buzz). Scene / view = disk shows the picture as seen through the holes of a real disk: lines become arcs.'});
+nt.size.w=520; nt.size.h=170; applySize(nt);
+const bd={...NIP_STD['Baird 30-line, 12.5 fps'],std:'Baird 30-line, 12.5 fps'};
+const tx=addNode('nipkowTx',40,230,bd);
+const rx=addNode('nipkowRx',420,230,bd);
+const fr=addNode('imgview',800,230,{}); fr.size.w=300; fr.size.h=380; applySize(fr);
+const dc=addNode('dac',420,560,{vol:.1});
+addEdge(tx.id,'level',rx.id,'level'); addEdge(tx.id,'sync',rx.id,'sync');
+addEdge(rx.id,'img',fr.id,'img');
+addEdge(tx.id,'level',dc.id,'L');
+markWiresDirty();
+});
+preset('Nipkow Disk: Interlaced Two-Spiral Disk, In-Band Sync, Noisy Line (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'A disk with two spirals shifted by half a line: one turn = two fields, odd and even lines, 2×24 = 48 lines per picture. There is no separate sync wire: before every field the disk has an extra hole and the signal drops below black; the receiver finds the start of the field by it, and the long mark tells it which field is the first (watch the lock output and the measured rpm). The Oscillator in noise mode adds noise to the line; raise its amp and see the picture sink into it (the auto level stretches what is left). The Tx / Rx nodes use the disk geometry (scene / view = disk) here: the lines are arcs of the spiral and the picture is a sector, as on a real televisor.'});
+nt.size.w=560; nt.size.h=190; applySize(nt);
+const std={...NIP_STD['Interlaced 2×24, in-band sync'],std:'Interlaced 2×24, in-band sync'};     // std в addNode не раскладывает поля — берём их из таблицы
+const tx=addNode('nipkowTx',40,250,{...std,scene:'disk'});
+const nz=addNode('osc',40,620,{wave:'noise',amp:.15});
+const mx=addNode('mixer',420,250,{channels:'2'});
+const rx=addNode('nipkowRx',700,250,{...std,view:'disk'});
+const fr=addNode('imgview',1080,250,{}); fr.size.w=300; fr.size.h=380; applySize(fr);
+addEdge(tx.id,'level',mx.id,'a'); addEdge(nz.id,'out',mx.id,'b');
+addEdge(mx.id,'out',rx.id,'level');
+addEdge(rx.id,'img',fr.id,'img');
+markWiresDirty();
+});
+preset('Nipkow Disk: Receive from the Microphone (no sync)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Receive a mechanical-television picture off the air or from a speaker: play the signal of a Nipkow Transmit node (another device, or another tab) near the microphone, or feed the line input. Without a sync wire the receiver finds the turn period itself (auto: autocorrelation of the sound over a few turns; wait 2–3 s), but it cannot tell where the picture begins — turn the shift slider until the picture sits straight in the frame (it is shifted cyclically). The std field must match the transmitter. For a signal with an in-band sync or a sync pulse change the sync field: the picture is then aligned by itself.'});
+nt.size.w=520; nt.size.h=190; applySize(nt);
+const m =addNode('mic',40,250,{gainA:2});
+const rx=addNode('nipkowRx',340,250,{...NIP_STD['Baird 30-line, 12.5 fps'],std:'Baird 30-line, 12.5 fps',sync:'auto'});
+const fr=addNode('imgview',720,250,{}); fr.size.w=300; fr.size.h=380; applySize(fr);
+addEdge(m.id,'a',rx.id,'level');
+addEdge(rx.id,'img',fr.id,'img');
+markWiresDirty();
 });
 preset('NOAA APT (AM Envelope)', function(){
 clearAll();

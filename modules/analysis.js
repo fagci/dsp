@@ -3679,7 +3679,7 @@ def({ id:'imgview', lazy:true, title:'Frame', cat:'Video', ins:[{n:'img',t:'img'
   process(n,I){ n.i=I.img; return {}; },
   draw(n,cv,cx){ if(!n.i) return;
     n.tmp=n.tmp||document.createElement('canvas');
-    if(n.tmp.width!==n.i.w){ n.tmp.width=n.i.w; n.tmp.height=n.i.h;
+    if(n.tmp.width!==n.i.w || n.tmp.height!==n.i.h){ n.tmp.width=n.i.w; n.tmp.height=n.i.h;
       n.tcx=n.tmp.getContext('2d'); n.id2=null; }
     if(n.i.gray){                                   // серый буфер растра
       if(!n.id2) n.id2=n.tcx.createImageData(n.i.w,n.i.h);
