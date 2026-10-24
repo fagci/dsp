@@ -642,6 +642,7 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
         {n:'floor',t:'num'},
         {n:'bands',t:'bands'},
         {n:'fav',t:'rec',tip:'a record each time a signal is marked as interesting'},
+        {n:'bl',t:'rec',tip:'a record (freq, lo, hi) each time a signal is blacklisted: wire to the Table that feeds the skip input'},
         {n:'listenF',t:'num'},
         {n:'todo',t:'num'},
         {n:'gate',t:'num'},
@@ -702,7 +703,7 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
     if(pin('favCur')) cfarFavCur(n);
     if(pin('favClear')) cfarFavSave(n,[]);
     n.plan=Array.isArray(I.plan) ? I.plan.filter(b=>b && !b.sig && b.hi>b.lo && b.step>0) : null;
-    if(!s) return {count:0};
+    if(!s) return {count:0, bl:n._blRecs&&n._blRecs.length ? n._blRecs.splice(0) : null, fav:n._favRecs&&n._favRecs.length ? n._favRecs.splice(0) : null};
     // список пропуска (Table → bands): цели внутри его диапазонов не считаются; частота без ширины — с допуском по ширине цели
     n._skipExt=Array.isArray(I.skip) ? I.skip.filter(b=>b && !b.sig && isFinite(b.lo)).map(b=>({lo:b.lo,hi:Math.max(b.lo,b.hi)})) : [];
     n.skip=[...n._skipExt, ...cfarBlList(n).map(x=>({lo:x.f-x.w/2,hi:x.f+x.w/2}))];
@@ -715,16 +716,18 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
     const [a,b,c,d]=n.list;
     const rec=n.recs.length ? n.recs.splice(0) : null;
     const fav=n._favRecs&&n._favRecs.length ? n._favRecs.splice(0) : null;
-    const bands=n.list.map(t=>({lo:t.f-Math.max(t.bw,1)/2, hi:t.f+Math.max(t.bw,1)/2, label:(t.fav?'★ ':'')+fmtHz(t.f,3), db:t.db, sig:true, color:t.fav?'#ffd54f':undefined}));
-    return {count:n.list.length, rec, fav, bands, listenF:n.cur?n.cur.f:null, todo:n.todo, gate:n.cur && performance.now()-n.cur.t<=250 ? 1 : 0,   // gate — цель видна прямо сейчас (без hold)
+    const bl=n._blRecs&&n._blRecs.length ? n._blRecs.splice(0) : null;
+    const bands=n.list.map(t=>({lo:cfarF(t)-Math.max(t.bw,1)/2, hi:cfarF(t)+Math.max(t.bw,1)/2, label:(t.fav?'★ ':'')+fmtHz(cfarF(t),3), db:t.db, sig:true, color:t.fav?'#ffd54f':undefined}));
+    return {count:n.list.length, rec, fav, bl, bands, listenF:n.cur?cfarF(n.cur):null, todo:n.todo, gate:n.cur && performance.now()-n.cur.t<=250 ? 1 : 0,   // gate — цель видна прямо сейчас (без hold)
      
-      f1:a?a.f:null, l1:a?a.db:null, f2:b?b.f:null, l2:b?b.db:null,
-      f3:c?c.f:null, l3:c?c.db:null, f4:d?d.f:null, l4:d?d.db:null,
+      f1:a?cfarF(a):null, l1:a?a.db:null, f2:b?cfarF(b):null, l2:b?b.db:null,
+      f3:c?cfarF(c):null, l3:c?c.db:null, f4:d?cfarF(d):null, l4:d?d.db:null,
       snr1:a?a.snr:null, floor:n.floorDb, bw1:a?a.bw:null}; },
   draw(n){ const r=n.el.querySelector('.readout');
     if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
 // канал диапазона плана со ступенью step, в который попадает f: центр lo + k·step (±полшага)
+const cfarF=t=>t.c ?? t.f;                            // частота результата: центр канала сетки, иначе реальная несущая
 function cfarChan(plan,f){
   for(const r of plan){
     const k=Math.round((f-r.lo)/r.step);
@@ -751,7 +754,7 @@ function cfarBlSave(n,list){
 // истёк dwell или нажали skip; todo — сколько ещё не прослушано (с текущим): пока >0, сканер стоит на окне
 function cfarListen(n,now){
   const L=n.list, favs=cfarFavList(n);
-  for(const t of n.tracks) t.fav=favs.some(x=>Math.abs(x.f-t.f)<=x.w/2);
+  for(const t of n.tracks) t.fav=favs.some(x=>Math.abs(x.f-cfarF(t))<=x.w/2);
   if(n.cur && !L.includes(n.cur)) n.cur=null;
   if(n.cur && (n._skipCur || (+n.p.dwell>0 && !n.cur.fav && now-n.curT0>=+n.p.dwell))){ n.cur.seen=true; n.cur=null; }
   n._skipCur=false;
@@ -779,19 +782,25 @@ function cfarFavSave(n,list){
 function cfarFavCur(n){
   const t=n.cur; if(!t) return;
   const list=cfarFavList(n).slice();
-  if(!list.some(x=>Math.abs(x.f-t.f)<=x.w/2)) list.push({f:t.f, w:Math.max(t.bw*1.5,12500)});
+  if(!list.some(x=>Math.abs(x.f-cfarF(t))<=x.w/2)) list.push({f:cfarF(t), w:Math.max(t.bw*1.5,12500)});
   cfarFavSave(n,list);
-  (n._favRecs||(n._favRecs=[])).push({t:Date.now(), src:'CFAR', kind:'interesting', id:Math.round(t.f), freq:Math.round(t.f), bw:Math.round(t.bw), db:+t.db.toFixed(1), snr:+t.snr.toFixed(1)});
+  (n._favRecs||(n._favRecs=[])).push({t:Date.now(), src:'CFAR', kind:'interesting', id:Math.round(cfarF(t)), freq:Math.round(cfarF(t)), freqReal:Math.round(t.f), bw:Math.round(t.bw), db:+t.db.toFixed(1), snr:+t.snr.toFixed(1)});
+}
+// запись о занесении в чёрный список — на выход bl (→ Table «Scan skip»: строки lo / hi идут обратно на вход skip)
+function cfarBlRec(n,t){
+  const w=Math.max(t.bw*1.5,12500);
+  (n._blRecs||(n._blRecs=[])).push({t:Date.now(), src:'CFAR', kind:'blacklist', id:Math.round(cfarF(t)), freq:Math.round(cfarF(t)), freqReal:Math.round(t.f), lo:Math.round(cfarF(t)-w/2), hi:Math.round(cfarF(t)+w/2), bw:Math.round(t.bw), db:+t.db.toFixed(1)});
 }
 function cfarBlCur(n){
   if(!n.cur) return;
   const list=cfarBlList(n).slice();
-  list.push({f:n.cur.f, w:Math.max(n.cur.bw*1.5,12500)});
+  list.push({f:cfarF(n.cur), w:Math.max(n.cur.bw*1.5,12500)});
+  cfarBlRec(n,n.cur);
   n.cur=null; cfarBlSave(n,list);
 }
 function cfarBlAdd(n){
   const list=cfarBlList(n).slice();
-  for(const t of n.list) list.push({f:t.f, w:Math.max(t.bw*1.5,12500)});
+  for(const t of n.list){ list.push({f:cfarF(t), w:Math.max(t.bw*1.5,12500)}); cfarBlRec(n,t); }
   cfarBlSave(n,list);
 }
 // шаг сетки id записей: явный из idRes, auto — ширина цели по ряду 1-2-5
@@ -899,15 +908,15 @@ function cfarFrame(n,s){
     const bw=cfarBw(s,pw,nz,h.pi,lo,hi,n.p.bwDb,thr);
     const tol=Math.max(15,wid,2*binHz);              // цель та же, если рядом по частоте
     let tr=(ch && n.tracks.find(t=>t.key===ch.key)) || n.tracks.find(t=>Math.abs(t.f-f)<=tol);   // в сетке цель — канал: дрейф несущей внутри него — та же цель
-    if(tr){ tr.key=ch ? ch.key : tr.key; tr.f=tr.f*.7+f*.3; tr.w=Math.max(tr.w,wid); tr.db=h.peak; tr.snr=h.snr; tr.bw=tr.bw*.7+bw*.3; tr.t=now; }
-    else n.tracks.push(tr={f,w:wid,bw,db:h.peak,snr:h.snr,t0:now,t:now,hist:0,ok:false,key:ch?ch.key:null});
+    if(tr){ tr.key=ch ? ch.key : tr.key; tr.c=ch ? ch.c : null; tr.f=tr.f*.7+f*.3; tr.w=Math.max(tr.w,wid); tr.db=h.peak; tr.snr=h.snr; tr.bw=tr.bw*.7+bw*.3; tr.t=now; }
+    else n.tracks.push(tr={f,w:wid,bw,db:h.peak,snr:h.snr,t0:now,t:now,hist:0,ok:false,key:ch?ch.key:null,c:ch?ch.c:null});
     tr.hist|=1; tr.hit=true;
     if(!tr.ok && cfarPopcount(tr.hist)>=M){
       tr.ok=true;
       // запись о появлении сигнала: id — частота, округлённая до сетки idRes (одна и та же станция → один id
       // для Rec: Unique by Key; Table копит строки как есть)
       const q=cfarIdStep(n.p.idRes, Math.max(wid,2*binHz));
-      n.recs.push({t:Date.now(), src:'CFAR', kind:'signal', id:ch ? Math.round(ch.c) : Math.round(f/q)*q, freq:Math.round(f), width:Math.round(wid), bw:Math.round(tr.bw),
+      n.recs.push({t:Date.now(), src:'CFAR', kind:'signal', id:ch ? Math.round(ch.c) : Math.round(f/q)*q, freq:Math.round(ch ? ch.c : f), freqReal:Math.round(f), width:Math.round(wid), bw:Math.round(tr.bw),
         db:+h.peak.toFixed(1), snr:+h.snr.toFixed(1)});
       if(n.recs.length>1000) n.recs.shift();
     } }
@@ -920,8 +929,8 @@ function cfarFrame(n,s){
   // не дожидаясь hold — иначе он продолжит тянуть tuneFreq к старой частоте.
   n.tracks=n.tracks.filter(t=>inWin(t) || (n.keepOutside && t.ok));
   n.list=n.tracks.filter(t=>t.ok).sort((a,b)=>b.db-a.db).slice(0,n.p.top);
-  n.text='found '+n.list.length+(n.cur ? ' · listening '+fmtHz(n.cur.f,3)+'Hz' : '')+' · floor '+n.floorDb.toFixed(1)+' dB'+(n.skip&&n.skip.length ? ' · skip '+n.skip.length : '')+'\n'+n.list.map(v=>
-    fmtHz(v.f).padStart(8)+'Hz  bw '+fmtHz(v.bw).padStart(4)+
+  n.text='found '+n.list.length+(n.cur ? ' · listening '+fmtHz(cfarF(n.cur),3)+'Hz' : '')+' · floor '+n.floorDb.toFixed(1)+' dB'+(n.skip&&n.skip.length ? ' · skip '+n.skip.length : '')+'\n'+n.list.map(v=>
+    fmtHz(cfarF(v)).padStart(8)+'Hz  bw '+fmtHz(v.bw).padStart(4)+
     'Hz  '+v.db.toFixed(0).padStart(4)+' dB  SNR '+v.snr.toFixed(0).padStart(3)+'  '+((now-v.t0)/1000).toFixed(1)+' s').join('\n');
 }
 

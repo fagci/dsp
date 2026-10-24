@@ -2306,6 +2306,10 @@ for(const sa of o.nodes.filter(n=>n.type==='sa')){
   for(const k of ['detect','detThr','scanStop','dcCut','skipList']) delete p[k];
 }
 }
+// Table, из которой cfar берёт список пропуска, получает записи о новых занесениях (выход bl)
+{ const tb=new Set(o.nodes.filter(n=>n.type==='table').map(n=>n.id)), cf=new Set(o.nodes.filter(n=>n.type==='cfar').map(n=>n.id));
+for(const e of o.edges.filter(e=>cf.has(e.to) && e.tp==='skip' && tb.has(e.from)))
+  if(!o.edges.some(q=>q.from===e.to && q.fp==='bl' && q.to===e.from)) o.edges.push({from:e.to,fp:'bl',to:e.from,tp:'rec'}); }
 const tbls=new Set(o.nodes.filter(n=>n.type==='table').map(n=>n.id));
 for(const e of o.edges) if(tbls.has(e.from) && e.fp==='bands') e.fp='rows';   // выходы bands и rows у Table слиты в rows
 // ход по строкам у Table вынесен в Row Player: параметры, провода trig / t и выходы хода переезжают на новый узел,
