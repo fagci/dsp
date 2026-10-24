@@ -169,7 +169,7 @@ def({ id:'timelapse', lazy:'proc', title:'Timelapse', cat:'Video', readout:true,
           {n:'zip',t:'button',label:'Download frames (zip)',fn:n=>tlZip(n)},
           {n:'clear',t:'button',label:'Delete all frames',fn:n=>{ if(!n.frames.length || confirm('Delete '+n.frames.length+' frames?')) tlClear(n); }}],
   init(n){ n.frames=[]; n.bytes=0; n.on=false; n.last=null; n.busy=false; n.snapNow=false; n.gate=false; n.sg=false; n.pend=false;
-    n.cv=document.createElement('canvas'); n.cx=n.cv.getContext('2d',{willReadFrequently:true});
+    n.gcv=document.createElement('canvas'); n.gcx=n.gcv.getContext('2d',{willReadFrequently:true});
     n.sm=document.createElement('canvas'); n.sm.width=16; n.sm.height=12; n.smx=n.sm.getContext('2d',{willReadFrequently:true});
     n.prog=''; n.note=''; n.thumb=null; n.thumbT=0; n.t0=0; },
   dispose:n=>{ n.on=false; n.frames=[]; n.abort=true; },
@@ -199,7 +199,7 @@ def({ id:'timelapse', lazy:'proc', title:'Timelapse', cat:'Video', readout:true,
 
 function tlToggle(n){ n.on=!n.on; n.note=''; if(n.on){ n.last=null; if(!n.frames.length) n.t0=Date.now(); } }
 function tlClear(n){ n.frames=[]; n.bytes=0; n.thumb=null; n.last=null; n.note=''; n.prog=''; }
-// кадр источника → n.cv; false, если кадра нет
+// кадр источника → n.gcv; false, если кадра нет
 function tlGrab(n){
   const I=n.I||{}, v=I.vid, im=I.img;
   let src=null, w=0, h=0;
@@ -210,18 +210,18 @@ function tlGrab(n){
     n.tcx.putImageData(ctData(im,n),0,0); src=n.tc; w=im.w; h=im.h; }
   if(!src) return false;
   const mw=+n.p.maxw||0, k=mw && w>mw ? mw/w : 1, W=Math.max(2,Math.round(w*k)&~1), H=Math.max(2,Math.round(h*k)&~1);
-  if(n.cv.width!==W||n.cv.height!==H){ n.cv.width=W; n.cv.height=H; }
-  n.cx.drawImage(src,0,0,W,H);
-  n.smx.drawImage(n.cv,0,0,16,12);                    // средняя яркость кадра — для выравнивания мерцания
+  if(n.gcv.width!==W||n.gcv.height!==H){ n.gcv.width=W; n.gcv.height=H; }
+  n.gcx.drawImage(src,0,0,W,H);
+  n.smx.drawImage(n.gcv,0,0,16,12);                    // средняя яркость кадра — для выравнивания мерцания
   const d=n.smx.getImageData(0,0,16,12).data; let s=0; for(let i=0;i<d.length;i+=4) s+=d[i]*.299+d[i+1]*.587+d[i+2]*.114;
   n.curMean=s/(d.length/4)/255;
   return true;
 }
 function tlStore(n){
   const mean=n.curMean, t=Date.now();
-  const th=document.createElement('canvas'); th.width=160; th.height=Math.max(1,Math.round(160*n.cv.height/n.cv.width));
-  th.getContext('2d').drawImage(n.cv,0,0,th.width,th.height);
-  n.cv.toBlob(b=>{
+  const th=document.createElement('canvas'); th.width=160; th.height=Math.max(1,Math.round(160*n.gcv.height/n.gcv.width));
+  th.getContext('2d').drawImage(n.gcv,0,0,th.width,th.height);
+  n.gcv.toBlob(b=>{
     n.busy=false;
     if(!b){ n.note='could not encode a frame'; return; }
     n.frames.push({b,mean,t}); n.bytes+=b.size; n.thumb=th; n.pend=true; n.note='';
@@ -370,3 +370,105 @@ defGroups('colorsp',[
   {n:'Color', p:'zx zy zw zh avg'},
   {n:'Spectrum', p:'by bh flip sm rel hold setdark cleardark clrhold'},
   {n:'Calibration', p:'x1 nm1 x2 nm2 fit', open:false}]);
+
+/* ---------------------------------- Screen (video) ---------------------------------- */
+// getDisplayMedia: вкладка, окно или экран → vid / img и цвет выбранного пикселя вживую. EyeDropper (Chrome) — разовая пипетка: цвет под курсором один раз,
+// живого цвета у неё нет, поэтому «живой» пиксель — из кадра захвата (кликните по превью).
+function scrStop(n){
+  n.gen=(n.gen|0)+1;
+  n.stream?.getTracks().forEach(t=>t.stop()); n.stream=null;
+  if(n.video) n.video.srcObject=null;
+  n.live=false; n.img=null;
+}
+async function scrStart(n){
+  if(n.busy) return;
+  if(!navigator.mediaDevices?.getDisplayMedia){ n.status='screen capture is not supported here (needs https and a desktop browser)'; return; }
+  scrStop(n); n.busy=true; n.status='choose a screen, window or tab…'; const gen=n.gen;
+  try{
+    const s=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:+n.p.fps}},audio:false});
+    if(gen!==n.gen){ s.getTracks().forEach(t=>t.stop()); return; }
+    n.stream=s; n.video.srcObject=s; n.video.play().catch(()=>{});
+    n.live=true; n.status='';
+    s.getVideoTracks()[0].addEventListener('ended',()=>{ if(n.stream===s){ n.status='sharing stopped by the browser'; scrStop(n); } });
+    const cb=()=>{ if(gen!==n.gen) return; n.fresh=true; n.video.requestVideoFrameCallback(cb); };
+    if(n.video.requestVideoFrameCallback) n.video.requestVideoFrameCallback(cb); else n.noRvfc=true;
+  }catch(e){ n.status=e.name==='NotAllowedError' ? 'cancelled' : 'error: '+(e.message||e.name); }
+  finally{ n.busy=false; }
+}
+async function scrPick(n){
+  if(typeof EyeDropper==='undefined'){ n.status='EyeDropper is only in Chrome / Edge (desktop)'; return; }
+  try{
+    const r=await new EyeDropper().open(), c=colParseHex(r.sRGBHex); if(!c) return;
+    n.pick=c; setMod(n,'src','eyedropper'); n.status='';
+  }catch(e){ if(e.name!=='AbortError') n.status='eyedropper: '+(e.message||e.name); }
+}
+// клик / перетаскивание по превью выбирает пиксель
+function scrWire(n,cv){
+  if(n._wcv===cv) return; n._wcv=cv;
+  let down=false;
+  const set=ev=>{ const r=cv.getBoundingClientRect(), v=n.video; if(!v?.videoWidth) return;
+    const f=scrFit(cv.width,cv.height,v.videoWidth,v.videoHeight), [fx,fy]=scrUnfit(f,(ev.clientX-r.left)/r.width*cv.width,(ev.clientY-r.top)/r.height*cv.height);
+    setMod(n,'px',+fx.toFixed(4)); setMod(n,'py',+fy.toFixed(4)); if(n.p.src==='eyedropper') setMod(n,'src','screen pixel'); };
+  cv.addEventListener('pointerdown',ev=>{ if(!n.live) return; ev.stopPropagation(); down=true; cv.setPointerCapture(ev.pointerId); set(ev); });
+  cv.addEventListener('pointermove',ev=>{ if(down) set(ev); });
+  cv.addEventListener('pointerup',()=>{ down=false; });
+}
+def({ id:'screen', title:'Screen (video)', cat:'Sources', resize:true, readout:true, always:true, view:{h:130}, w:340,
+  kw:'screen capture share display window tab desktop video pixel color colour picker eyedropper sample monitor getdisplaymedia',
+  // vid — живое видео экрана (Record Video, Files, Video Overlay…), img — уменьшенный кадр (Color / Spectrometer, Motion Detect, Object Detect…)
+  ins:[{n:'x',t:'num'},{n:'y',t:'num'}],
+  outs:[{n:'vid',t:'vid'},{n:'img',t:'img'},{n:'r',t:'num'},{n:'g',t:'num'},{n:'b',t:'num'},{n:'hex',t:'txt'},{n:'name',t:'txt'},{n:'fps',t:'num'}],
+  params:[{n:'go',t:'button',label:'Share screen / window / tab',fn:n=>scrStart(n)},
+          {n:'stop',t:'button',label:'Stop sharing',fn:n=>{ scrStop(n); n.status='stopped'; }},
+          {n:'pick',t:'button',label:'Eyedropper: one pixel anywhere on the screen (once)',fn:n=>scrPick(n)},
+          {n:'src',t:'select',opts:['screen pixel','eyedropper'],d:'screen pixel',label:'colour outputs from (screen pixel: live, from the shared picture)'},
+          {n:'px',t:'range',min:0,max:1,step:.0001,d:.5,label:'pixel: x (click the preview)'},
+          {n:'py',t:'range',min:0,max:1,step:.0001,d:.5,label:'pixel: y'},
+          {n:'rad',t:'select',opts:['0','1','2','4','8'],d:'0',label:'average around the pixel, ± px (0 — exactly one)'},
+          {n:'w',t:'select',opts:['160','320','640','960','1280'],d:'320',label:'img width, px'},
+          {n:'fps',t:'select',opts:['5','10','15','30','60'],d:'15',label:'frames per second to read (img and pixel)'}],
+  init(n){ n.video=document.createElement('video'); n.video.playsInline=true; n.video.muted=true;
+    n.capCv=document.createElement('canvas'); n.capCx=n.capCv.getContext('2d',{willReadFrequently:true});
+    n.pxCv=document.createElement('canvas'); n.pxCx=n.pxCv.getContext('2d',{willReadFrequently:true});
+    n.stream=null; n.live=false; n.busy=false; n.fresh=false; n.img=null; n.col=[0,0,0]; n.pick=null; n.status='not shared'; n.lastRead=0; n.fpsN=0; n.fpsT=0; n.fps=0; n.gen=0; },
+  dispose:n=>scrStop(n),
+  process(n,I){
+    if(typeof I.x==='number') setMod(n,'px',clamp(I.x,0,1));
+    if(typeof I.y==='number') setMod(n,'py',clamp(I.y,0,1));
+    const v=n.video, now=performance.now();
+    if(n.live && v.videoWidth && now-n.lastRead>=1000/+n.p.fps-4 && (n.fresh || n.noRvfc)){
+      n.fresh=false; n.lastRead=now; n.fpsN++;
+      if(now-n.fpsT>=1000){ n.fps=n.fpsN*1000/(now-n.fpsT); n.fpsN=0; n.fpsT=now; }
+      const vw=v.videoWidth, vh=v.videoHeight;
+      try{
+        const q=scrRect(n.p.px,n.p.py,vw,vh,+n.p.rad);          // пиксель(и) — в полном разрешении захвата, не из уменьшенного кадра
+        if(n.pxCv.width!==q.w||n.pxCv.height!==q.h){ n.pxCv.width=q.w; n.pxCv.height=q.h; }
+        n.pxCx.drawImage(v,q.x0,q.y0,q.w,q.h,0,0,q.w,q.h);
+        n.col=colMean(n.pxCx.getImageData(0,0,q.w,q.h),[0,0,1,1],1);
+        if(Graph.edges.some(e=>e.from===n.id&&e.fp==='img')){
+          const W=+n.p.w, H=Math.max(1,Math.round(W*vh/vw));
+          if(n.capCv.width!==W||n.capCv.height!==H){ n.capCv.width=W; n.capCv.height=H; }
+          n.capCx.drawImage(v,0,0,W,H);
+          n.img={data:n.capCx.getImageData(0,0,W,H),w:W,h:H,gray:false,rev:(n.img?.rev|0)+1,t:now/1000};
+        } else n.img=null;
+      }catch(e){ n.status='cannot read the picture: '+(e.message||e.name); }
+    }
+    const c=n.p.src==='eyedropper' && n.pick ? n.pick : n.col;
+    return {vid:n.live?v:null,img:n.img,r:c[0],g:c[1],b:c[2],hex:colHex(c[0],c[1],c[2]),name:colName(c[0],c[1],c[2]),fps:n.fps}; },
+  draw(n,cv,cx){
+    scrWire(n,cv);
+    const W=cv.width, H=cv.height, v=n.video, ro=n.el.querySelector('.readout'); cx.fillStyle='#000'; cx.fillRect(0,0,W,H);
+    const c=n.p.src==='eyedropper' && n.pick ? n.pick : n.col, hex=colHex(c[0],c[1],c[2]);
+    if(n.live && v.videoWidth){
+      const f=scrFit(W,H,v.videoWidth,v.videoHeight); cx.drawImage(v,f.x,f.y,f.w,f.h);
+      if(n.p.src!=='eyedropper'){
+        const mx=f.x+n.p.px*f.w, my=f.y+n.p.py*f.h;
+        cx.lineWidth=3; cx.strokeStyle='#000'; cx.beginPath(); cx.arc(mx,my,7,0,7); cx.stroke();
+        cx.lineWidth=1.5; cx.strokeStyle='#fff'; cx.beginPath(); cx.arc(mx,my,7,0,7); cx.stroke(); }
+    } else { cx.fillStyle='#fff8'; cx.font='11px sans-serif'; cx.textAlign='center'; cx.fillText(n.status||'press «Share screen»',W/2,H/2); cx.textAlign='left'; }
+    cx.fillStyle=hex; cx.fillRect(W-34,4,30,30); cx.strokeStyle='#fff'; cx.lineWidth=1; cx.strokeRect(W-34.5,3.5,31,31);
+    if(ro) ro.textContent=(n.live ? `${v.videoWidth}×${v.videoHeight} · ${n.fps.toFixed(0)} fps · ` : (n.status?n.status+' · ':''))+
+      `${hex} ${colName(c[0],c[1],c[2])}`+(n.p.src==='eyedropper'?' (eyedropper)':n.live?` · pixel ${(n.p.px*100).toFixed(1)}% ${(n.p.py*100).toFixed(1)}%`:''); }});
+defGroups('screen',[
+  {n:'Pixel', p:'src px py rad pick'},
+  {n:'Picture', p:'w fps', open:false}]);

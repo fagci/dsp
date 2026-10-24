@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=87;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=88;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -382,6 +382,7 @@ const PRESET_CATS={
   'Camera Alarm: Motion → Archive + Beep':'Images & TV',
   'Timelapse: Camera Frames → Video':'Images & TV',
   'Color Meter and Spectrometer (camera + grating)':'Images & TV',
+  'Screen: Live Pixel Color + Video Recording':'Images & TV',
   'Files over WebRTC':'Network & IoT',
   'Call: voice, video, chat and files over WebRTC':'Network & IoT',
   'WebRTC: audio and video of the graph over a connection':'Network & IoT',
@@ -6281,6 +6282,17 @@ const co=addNode('colorsp',340,160,{mode:'color'}); co.size.w=300; co.size.h=240
 const sp=addNode('colorsp',680,160,{mode:'spectrum'}); sp.size.w=380; sp.size.h=300; applySize(sp);
 const sc=addNode('scope',680,490,{}); sc.size.w=380; sc.size.h=200; applySize(sc);
 addEdge(cm.id,'img',co.id,'img'); addEdge(cm.id,'img',sp.id,'img'); addEdge(sp.id,'profile',sc.id,'in1');
+markWiresDirty();
+});
+preset('Screen: Live Pixel Color + Video Recording', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Screen (video) shares a screen, a window or a browser tab (press Share…, the browser asks which). Click the preview: the circle is a pixel read LIVE from the shared picture — `r` `g` `b` `hex` `name` follow it while the screen changes (a game, a video, an indicator light of another program). The browser Eyedropper button picks one pixel anywhere on the screen, but only once — it has no live colour. Right: Color / Spectrometer averages a zone of the same picture (its colour temperature in K), Record Video saves the screen as webm / mp4. Tip: share another window, not this one, or the picture looks into itself.'});
+nt.size.w=1000; nt.size.h=100; applySize(nt);
+const sc=addNode('screen',40,150,{w:'320',fps:'15'}); sc.size.w=340; sc.size.h=280; applySize(sc);
+const tk=addNode('ticker',420,150,{time:true}); tk.size.w=260; tk.size.h=130; applySize(tk);
+const co=addNode('colorsp',420,310,{mode:'color',zx:.4,zy:.4,zw:.2,zh:.2}); co.size.w=260; co.size.h=190; applySize(co);
+const vr=addNode('vidrec',720,150,{}); vr.size.w=300; vr.size.h=210; applySize(vr);
+addEdge(sc.id,'hex',tk.id,'text'); addEdge(sc.id,'img',co.id,'img'); addEdge(sc.id,'vid',vr.id,'vid');
 markWiresDirty();
 });
 preset('Chat: Group with Avatars and Contact List', function(){
