@@ -1314,7 +1314,7 @@ function geoPlacesSet(c,save){
   for(const a of cells.values()) a.sort((i,j)=>c.pop[j]-c.pop[i]);
   GeoBase.places={...c, cells};
   GeoBase.placesState=c.name.length+' places'; GeoBase.gen++;
-  if(save) geoPut('places',{name:c.name, lon:c.lon, lat:c.lat, pop:c.pop}).catch(e=>{ GeoBase.placesState='not saved: '+e.message; });
+  if(save) return geoPut('places',{name:c.name, lon:c.lon, lat:c.lat, pop:c.pop}).catch(e=>{ GeoBase.placesState='not saved: '+e.message; });
 }
 function geoPlacesFromList(list){
   const N=list.length, c={name:new Array(N), lon:new Float32Array(N), lat:new Float32Array(N), pop:new Int32Array(N)};
@@ -1344,7 +1344,9 @@ function geoPlacesParse(text){
   return rows.map(r=>({name:r[iN], lat:+r[iLa], lon:+r[iLo], pop:iP>=0 ? +r[iP] : 0}));
 }
 OfflineData.item({id:'places',label:'Cities and towns (GeoNames)',mb:25,
-  has:async()=>!!await geoGet('places').catch(()=>null), get:()=>geoPlacesDownload()});
+  has:async()=>!!await geoGet('places').catch(()=>null), get:()=>geoPlacesDownload(),
+  manual:()=>[{name:'places',label:'cities.json (GeoNames); a GeoNames dump or CSV with name, lat, lon also works',url:GEO_PLACES_URL,has:async()=>!!await geoGet('places').catch(()=>null)}],
+  ingest:async f=>{ GeoBase.placesState='importing…'; try{ await geoPlacesSet(geoPlacesFromList(geoPlacesParse(await f.text())),true); }catch(e){ GeoBase.placesState='error: '+e.message; throw e; } }});
 async function geoPlacesDownload(){
   GeoBase.placesState='downloading…';
   try{

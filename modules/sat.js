@@ -87,7 +87,7 @@ function satTxSet(list,save){
             uh:t.uplink_high||null, mode:t.mode||'', baud:t.baud||null, inv:!!t.invert});
   }
   Sat.tx=m; Sat.txState=m.size+' satellites with transmitters';
-  if(save) geoPut('satnogs:tx',list.map(t=>({norad_cat_id:t.norad_cat_id,status:t.status,description:t.description,
+  if(save) return geoPut('satnogs:tx',list.map(t=>({norad_cat_id:t.norad_cat_id,status:t.status,description:t.description,
     downlink_low:t.downlink_low,downlink_high:t.downlink_high,uplink_low:t.uplink_low,uplink_high:t.uplink_high,
     mode:t.mode,baud:t.baud,invert:t.invert}))).catch(e=>{ Sat.txState='not saved: '+e.message; });
 }
@@ -99,13 +99,18 @@ async function satTxDownload(n){
   }catch(e){ Sat.txState='transmitters: '+e.message+' — set a CORS proxy in Settings or import the JSON file'; }
 }
 OfflineData.item({id:'satnogs',label:'Satellite transmitters (SatNOGS)',mb:3,
-  has:async()=>!!await geoGet('satnogs:tx').catch(()=>null), get:()=>satTxDownload()});
+  has:async()=>!!await geoGet('satnogs:tx').catch(()=>null), get:()=>satTxDownload(),
+  manual:()=>[{name:'satnogs:tx',label:'transmitters.json (SatNOGS)',url:SAT_TX_URL,has:async()=>!!await geoGet('satnogs:tx').catch(()=>null)}],
+  ingest:async f=>{ const list=JSON.parse(await f.text()); if(!Array.isArray(list) || !list.some(t=>t && t.norad_cat_id)) throw new Error('no transmitters in the file');
+    await satTxSet(list,true); }});
 OfflineData.item({id:'tle',label:'Satellite orbits, all CelesTrak groups (TLE)',mb:3,
   has:async()=>{ for(const g of SAT_GROUPS) if(!await geoGet('tle:'+g).catch(()=>null)) return false; return true; },
   get:async()=>{ for(const g of SAT_GROUPS){
     const r=await fetch(Net.url(SAT_TLE_URL.replace('{g}',g))); if(!r.ok) throw new Error(g+': HTTP '+r.status);
     const text=await r.text(); if(!satParseTle(text).length) throw new Error(g+': no TLE in response');
-    await geoPut('tle:'+g,{t:Date.now(),text}); } }});
+    await geoPut('tle:'+g,{t:Date.now(),text}); } },
+  manual:()=>SAT_GROUPS.map(g=>({name:'tle:'+g,label:'TLE · '+g,url:SAT_TLE_URL.replace('{g}',g),has:async()=>!!await geoGet('tle:'+g).catch(()=>null)})),
+  ingest:async(f,m)=>{ const text=await f.text(); if(!satParseTle(text).length) throw new Error('no TLE in the file'); await geoPut(m.name,{t:Date.now(),text}); }});
 function satFmtMHz(hz){ return (hz/1e6).toFixed(hz%1000 ? 4 : 3); }
 function satTxText(norad){
   const a=Sat.tx?.get(norad); if(!a?.length) return '';
