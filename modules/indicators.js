@@ -429,9 +429,11 @@ function indWire(n,cv,h){
   const pos=ev=>{ const r=cv.getBoundingClientRect();
     return [(ev.clientX-r.left)/r.width*cv.width, (ev.clientY-r.top)/r.height*cv.height]; };
   cv.style.cursor='pointer'; cv.style.touchAction='none';
-  cv.addEventListener('pointerdown',ev=>{ ev.stopPropagation(); cv.setPointerCapture(ev.pointerId); h.down(...pos(ev)); });
+  cv.addEventListener('pointerdown',ev=>{ ev.stopPropagation(); cv.setPointerCapture(ev.pointerId); h.down(...pos(ev),ev); });
   const up=ev=>{ h.up && h.up(...pos(ev)); };
   cv.addEventListener('pointerup',up); cv.addEventListener('pointercancel',()=>h.up && h.up(-1,-1));
+  if(h.move) cv.addEventListener('pointermove',ev=>{ if(cv.hasPointerCapture(ev.pointerId)) h.move(...pos(ev),ev); });
+  if(h.wheel) cv.addEventListener('wheel',ev=>{ ev.preventDefault(); ev.stopPropagation(); h.wheel(...pos(ev),ev); },{passive:false});
 }
 const indRot=(cx,x,y,a,fn)=>{ cx.save(); cx.translate(x,y); cx.rotate(a); fn(); cx.restore(); };
 
@@ -773,5 +775,257 @@ def({ id:'passplot', lazy:'proc', title:'Pass', cat:'Indicators', kw:'satellite 
     cx.fillText(status,pl,2);
     cx.textAlign='right'; cx.fillStyle=themeColor('--axis');
     cx.fillText((n.el!==null ? 'el '+Math.round(n.el)+'°' : '')+(n.az!==null ? '  az '+Math.round(n.az)+'°' : '')+(have && n.mx!==null ? '  max '+Math.round(n.mx)+'°' : ''),W-pr,2);
+    cx.textAlign='start'; cx.textBaseline='alphabetic'; }
+});
+
+
+/* ---------- Knob / Fader (банки ручек и ползунков) ---------- */
+// общая часть: значения лежат в n.val[], сохраняются в n.p.state; выходы out1…outN
+const CTL_COUNTS=['1','2','3','4','6','8','12','16'];
+function ctlResize(n){
+  const valid=new Set(portsOf(n,'outs').map(p=>p.n));
+  Graph.edges.filter(e=>e.from===n.id && !valid.has(e.fp)).forEach(delEdge);
+  n.val=ctlParse(n.p.state,+n.p.count||4,+n.p.init||0);
+  rebuildNode(n); markTopoDirty();
+}
+const ctlOuts=n=>Array.from({length:+n.p.count||4},(_,k)=>({n:'out'+(k+1),t:'num'}));
+const ctlSave=n=>{ n.p.state=n.val.map(v=>+v.toPrecision(8)).join(','); };
+const ctlT=(n,v)=>ctlNorm(v,+n.p.min,+n.p.max,n.p.scale==='log');
+function ctlSet(n,k,t){
+  const p=n.p, v=ctlValue(t,+p.min,+p.max,p.scale==='log',+p.step);
+  if(v!==n.val[k]){ n.val[k]=v; ctlSave(n); } redraw(n);
+}
+const ctlFmt=(n,v)=>indFmt(v)+(n.p.unit ? ' '+n.p.unit : '');
+const CTL_PARAMS=[
+  {n:'min',t:'num',d:0},{n:'max',t:'num',d:1},
+  {n:'init',t:'num',d:0,label:'reset value (double click)'},
+  {n:'step',t:'num',d:0,label:'step (0 — smooth)'},
+  {n:'scale',t:'select',opts:['linear','log'],d:'linear',label:'scale (log needs min > 0)'},
+  {n:'unit',t:'text',d:''},
+  {n:'labels',t:'text',d:'',label:'labels (comma separated)'},
+  {n:'colors',t:'text',d:'amber',label:'colors: '+IND_COLORS.join(', ')+' or #rrggbb, cycled'},
+  {n:'state',t:'text',d:'',hidden:true}];
+// перетаскивание: ручка — вертикально (Shift — точнее), фейдер — абсолютно по высоте дорожки
+function ctlWire(n,cv,cellAt,fader){
+  indWire(n,cv,{
+    down:(x,y,ev)=>{
+      const k=cellAt(x,y); if(k<0) return;
+      const now=performance.now();
+      if(n.lastK===k && now-n.lastT<350){ n.val[k]=+n.p.init||0; ctlSave(n); redraw(n); n.lastT=0; n.drag=null; return; }
+      n.lastK=k; n.lastT=now;
+      n.drag={k,y0:y,t0:ctlT(n,n.val[k])};
+      if(fader) ctlSet(n,k,fader(k,y)); },
+    move:(x,y,ev)=>{
+      const d=n.drag; if(!d) return;
+      if(fader) ctlSet(n,d.k,fader(d.k,y));
+      else ctlSet(n,d.k,d.t0+(d.y0-y)/(ev.shiftKey ? 800 : 160)); },
+    up:()=>{ n.drag=null; },
+    wheel:(x,y,ev)=>{
+      const k=cellAt(x,y); if(k<0) return;
+      const p=n.p, st=+p.step>0 ? +p.step/Math.abs(p.max-p.min||1) : (ev.shiftKey ? .005 : .02);
+      ctlSet(n,k,ctlT(n,n.val[k])+(ev.deltaY<0 ? st : -st)); }});
+}
+const ctlProc=n=>{ const o={}; for(let k=0;k<(+n.p.count||4);k++) o['out'+(k+1)]=n.val[k]!==undefined ? n.val[k] : 0; return o; };
+const ctlInit=n=>{ n.val=ctlParse(n.p.state,+n.p.count||4,+n.p.init||0); n.drag=null; n.lastK=-1; n.lastT=0; };
+
+def({ id:'knob', lazy:'proc', title:'Knob', cat:'Indicators', kw:'dial rotary potentiometer control encoder knobs',
+  outs:ctlOuts, view:{h:110}, resize:true,
+  params:[{n:'count',t:'select',opts:CTL_COUNTS,d:'4',label:'knobs',fn:ctlResize},...CTL_PARAMS],
+  init:ctlInit, process:ctlProc,
+  draw(n,cv,cx){
+    const W=cv.width, H=cv.height, p=n.p, N=+p.count||4, g=ctlGrid(N,W,H,96,24);
+    const labels=String(p.labels||'').split(','), cols=String(p.colors||'').split(',');
+    ctlWire(n,cv,(x,y)=>{ const g=ctlGrid(+n.p.count||4,cv.width,cv.height,96,24), k=Math.floor(y/g.ch)*g.c+Math.floor(x/g.cw);
+      return x<0 || k<0 || k>=(+n.p.count||4) ? -1 : k; });
+    cx.clearRect(0,0,W,H); cx.lineCap='round';
+    const A0=Math.PI*5/6, SW=Math.PI*4/3;
+    for(let k=0;k<N;k++){
+      const X=(k%g.c+.5)*g.cw, r=g.s/2, Y=Math.floor(k/g.c)*g.ch+r+3, col=indColor(cols[k%cols.length]);
+      const t=ctlT(n,n.val[k]!==undefined ? n.val[k] : 0), a=A0+SW*t;
+      cx.lineWidth=Math.max(2,r*.16);
+      cx.strokeStyle=themeColor('--axis'); cx.globalAlpha=.35; cx.beginPath(); cx.arc(X,Y,r*.9,A0,A0+SW); cx.stroke(); cx.globalAlpha=1;
+      if(t>0){ cx.strokeStyle=col; cx.shadowColor=col; cx.shadowBlur=r*.3; cx.beginPath(); cx.arc(X,Y,r*.9,A0,a); cx.stroke(); cx.shadowBlur=0; }
+      cx.fillStyle=themeColor('--scr-panel'); cx.strokeStyle=themeColor('--axis'); cx.lineWidth=1.5;
+      cx.beginPath(); cx.arc(X,Y,r*.68,0,7); cx.fill(); cx.stroke();
+      cx.strokeStyle=themeColor('--scr-hi'); cx.lineWidth=Math.max(2,r*.12);
+      cx.beginPath(); cx.moveTo(X+Math.cos(a)*r*.2,Y+Math.sin(a)*r*.2); cx.lineTo(X+Math.cos(a)*r*.6,Y+Math.sin(a)*r*.6); cx.stroke();
+      indFont(cx,Math.min(11,Math.max(8,r*.36))); cx.textAlign='center'; cx.textBaseline='top';
+      cx.fillStyle=themeColor('--scr-hi'); cx.fillText(ctlFmt(n,n.val[k]!==undefined ? n.val[k] : 0),X,Y+r+2);
+      const lb=(labels[k]||'').trim(); if(lb){ cx.fillStyle=themeColor('--axis'); cx.fillText(lb,X,Y+r+2+Math.min(11,Math.max(8,r*.36))+1); }
+    }
+    cx.lineCap='butt'; cx.textAlign='start'; cx.textBaseline='alphabetic'; }
+});
+
+def({ id:'fader', lazy:'proc', title:'Fader', cat:'Indicators', kw:'slider mixer channel strip level control',
+  outs:ctlOuts, view:{h:150}, resize:true,
+  params:[{n:'count',t:'select',opts:CTL_COUNTS,d:'4',label:'faders',fn:ctlResize},...CTL_PARAMS],
+  init:ctlInit, process:ctlProc,
+  draw(n,cv,cx){
+    const W=cv.width, H=cv.height, p=n.p, N=+p.count||4, lab=36;
+    const labels=String(p.labels||'').split(','), cols=String(p.colors||'').split(',');
+    const cw=W/N, tr=(k)=>({top:8,bot:H-lab-6});                  // дорожка: от top до bot
+    ctlWire(n,cv,(x,y)=>{ const k=Math.floor(x/(cv.width/(+n.p.count||4))); return x<0 || k<0 || k>=(+n.p.count||4) ? -1 : k; },
+      (k,y)=>{ const T=tr(k); return 1-(y-T.top)/(T.bot-T.top); });
+    cx.clearRect(0,0,W,H);
+    const T=tr(0), len=T.bot-T.top, kw=Math.min(cw*.5,26), kh=Math.min(len*.12,14);
+    indFont(cx,Math.min(11,Math.max(8,cw*.2))); cx.textAlign='center'; cx.textBaseline='top';
+    for(let k=0;k<N;k++){
+      const X=(k+.5)*cw, col=indColor(cols[k%cols.length]), t=ctlT(n,n.val[k]!==undefined ? n.val[k] : 0), y=T.bot-len*t;
+      cx.strokeStyle=themeColor('--axis'); cx.lineWidth=1; cx.globalAlpha=.5;
+      for(let i=0;i<=10;i++){ const yy=T.bot-len*i/10, w=i%5===0 ? 6 : 3; cx.beginPath(); cx.moveTo(X-kw/2-2-w,yy); cx.lineTo(X-kw/2-2,yy); cx.stroke(); }
+      cx.globalAlpha=1;
+      cx.lineCap='round'; cx.lineWidth=4; cx.strokeStyle=themeColor('--scr-panel'); cx.beginPath(); cx.moveTo(X,T.top); cx.lineTo(X,T.bot); cx.stroke();
+      cx.strokeStyle=col; cx.shadowColor=col; cx.shadowBlur=4; cx.beginPath(); cx.moveTo(X,T.bot); cx.lineTo(X,y); cx.stroke(); cx.shadowBlur=0; cx.lineCap='butt';
+      cx.save(); cx.shadowColor='#000'; cx.shadowBlur=4; cx.fillStyle=themeColor('--scr-hi');
+      cx.beginPath(); cx.roundRect(X-kw/2,y-kh/2,kw,kh,3); cx.fill(); cx.restore();
+      cx.strokeStyle=col; cx.lineWidth=2; cx.beginPath(); cx.moveTo(X-kw/2+3,y); cx.lineTo(X+kw/2-3,y); cx.stroke();
+      cx.fillStyle=themeColor('--scr-hi'); cx.fillText(ctlFmt(n,n.val[k]!==undefined ? n.val[k] : 0),X,T.bot+kh/2+5);
+      const lb=(labels[k]||'').trim()||String(k+1); cx.fillStyle=themeColor('--axis'); cx.fillText(lb,X,H-12);
+    }
+    cx.textAlign='start'; cx.textBaseline='alphabetic'; }
+});
+
+/* ---------- XY Pad (двумерная панель) ---------- */
+def({ id:'xypad', lazy:'proc', title:'XY Pad', cat:'Indicators', kw:'touchpad joystick 2d control pan tilt trackpad',
+  outs:[{n:'x',t:'num'},{n:'y',t:'num'},{n:'touch',t:'num'}], view:{h:150}, resize:true,
+  params:[{n:'xmin',t:'num',d:0},{n:'xmax',t:'num',d:1},{n:'ymin',t:'num',d:0},{n:'ymax',t:'num',d:1},
+          {n:'spring',t:'check',d:false,label:'spring back to centre on release'},
+          {n:'grid',t:'range',min:0,max:16,step:1,d:4,label:'grid lines'},
+          {n:'snap',t:'check',d:false,label:'snap to grid'},
+          {n:'color',t:'text',d:'teal',label:'color: '+IND_COLORS.join(', ')+' or #rrggbb'},
+          {n:'state',t:'text',d:'',hidden:true}],
+  init:n=>{ const a=ctlParse(n.p.state,2,.5); n.tx=a[0]; n.ty=a[1]; n.touch=0; },
+  process(n){
+    const p=n.p;
+    return {x:p.xmin+(p.xmax-p.xmin)*n.tx, y:p.ymin+(p.ymax-p.ymin)*n.ty, touch:n.touch}; },
+  draw(n,cv,cx){
+    const W=cv.width, H=cv.height, p=n.p, m=6, w=W-2*m, h=H-2*m, col=indColor(p.color);
+    const put=(x,y)=>{ let u=clamp((x-m)/w,0,1), v=clamp(1-(y-m)/h,0,1);
+      const g=Math.round(+n.p.grid); if(n.p.snap && g>0){ u=Math.round(u*g)/g; v=Math.round(v*g)/g; }
+      n.tx=u; n.ty=v; n.p.state=+u.toFixed(5)+','+(+v.toFixed(5)); redraw(n); };
+    indWire(n,cv,{
+      down:(x,y)=>{ n.touch=1; put(x,y); }, move:(x,y)=>put(x,y),
+      up:()=>{ n.touch=0; if(n.p.spring){ n.tx=n.ty=.5; n.p.state='.5,.5'; } redraw(n); }});
+    cx.clearRect(0,0,W,H);
+    cx.fillStyle=themeColor('--scr-panel'); cx.strokeStyle=themeColor('--axis'); cx.lineWidth=1.5;
+    cx.beginPath(); cx.roundRect(m,m,w,h,6); cx.fill(); cx.stroke();
+    const g=Math.round(+p.grid);
+    cx.globalAlpha=.3; cx.lineWidth=1;
+    for(let i=1;i<g;i++){ cx.beginPath(); cx.moveTo(m+w*i/g,m); cx.lineTo(m+w*i/g,m+h); cx.moveTo(m,m+h*i/g); cx.lineTo(m+w,m+h*i/g); cx.stroke(); }
+    cx.globalAlpha=.6; cx.setLineDash([4,4]); cx.beginPath(); cx.moveTo(m+w/2,m); cx.lineTo(m+w/2,m+h); cx.moveTo(m,m+h/2); cx.lineTo(m+w,m+h/2); cx.stroke(); cx.setLineDash([]);
+    cx.globalAlpha=1;
+    const X=m+w*n.tx, Y=m+h*(1-n.ty);
+    cx.strokeStyle=col; cx.globalAlpha=.6; cx.beginPath(); cx.moveTo(X,m); cx.lineTo(X,m+h); cx.moveTo(m,Y); cx.lineTo(m+w,Y); cx.stroke(); cx.globalAlpha=1;
+    cx.save(); cx.fillStyle=col; cx.shadowColor=col; cx.shadowBlur=n.touch ? 16 : 6;
+    cx.beginPath(); cx.arc(X,Y,n.touch ? 9 : 7,0,7); cx.fill(); cx.restore();
+    indFont(cx,Math.min(11,Math.max(8,h*.07))); cx.fillStyle=themeColor('--scr-hi'); cx.textBaseline='top';
+    cx.textAlign='left'; cx.fillText('x '+indFmt(p.xmin+(p.xmax-p.xmin)*n.tx),m+4,m+3);
+    cx.textAlign='right'; cx.fillText('y '+indFmt(p.ymin+(p.ymax-p.ymin)*n.ty),m+w-4,m+3);
+    cx.textAlign='start'; cx.textBaseline='alphabetic'; }
+});
+
+/* ---------- Tank (бак / термометр с порогами) ---------- */
+def({ id:'tank', lazy:'proc', title:'Tank', cat:'Indicators', kw:'level thermometer fill vessel bar progress battery fuel alarm',
+  ins:[{n:'in',t:'num'}], outs:[{n:'low',t:'num'},{n:'high',t:'num'}],
+  view:{h:150}, resize:true,
+  params:[{n:'min',t:'num',d:0},{n:'max',t:'num',d:100},
+          {n:'lo',t:'num',d:20,label:'low alarm below'},{n:'hi',t:'num',d:90,label:'high alarm above'},
+          {n:'unit',t:'text',d:'%'},
+          {n:'tau',t:'range',min:0,max:3,step:.01,d:.2,label:'damping, s'},
+          {n:'minmax',t:'check',d:true,label:'min / max markers (click to reset)'}],
+  init:n=>{ n.v=null; n.sv=0; n.mn=Infinity; n.mx=-Infinity; n.lowF=0; n.highF=0; },
+  process(n,I){
+    const p=n.p, v=indNum(I.in); n.v=v;
+    if(v===null) return {low:0,high:0};
+    const lo=Math.min(p.min,p.max), hi=Math.max(p.min,p.max);
+    n.sv=indSmooth(n.sv,clamp(v,lo,hi),+p.tau);
+    n.mn=Math.min(n.mn,v); n.mx=Math.max(n.mx,v);
+    n.lowF=v<p.lo ? 1 : 0; n.highF=v>p.hi ? 1 : 0;
+    return {low:n.lowF,high:n.highF}; },
+  draw(n,cv,cx){
+    const W=cv.width, H=cv.height, p=n.p, vert=H>=W*.8;
+    indWire(n,cv,{down:()=>{ n.mn=Infinity; n.mx=-Infinity; redraw(n); }});
+    const lo=Math.min(p.min,p.max), hi=Math.max(p.min,p.max), rng=hi-lo||1, T=v=>clamp((v-lo)/rng,0,1);
+    cx.clearRect(0,0,W,H); indFont(cx,Math.min(11,Math.max(8,(vert ? W : H)*.12)));
+    const bad=n.lowF || n.highF, col=n.v===null ? themeColor('--axis') : n.highF ? themeColor('--err') : n.lowF ? themeColor('--acc') : themeColor('--t-blk');
+    // трубка: вертикально — слева шкала, справа значение; горизонтально — шкала под трубкой
+    const tw=vert ? Math.min(W*.34,46) : 0, bx=vert ? Math.max(30,W*.28) : 8, by=vert ? 8 : H*.22;
+    const bw=vert ? tw : W-16, bh=vert ? H-16 : Math.min(H*.36,40);
+    const pos=t=>vert ? [bx,by+bh*(1-t)] : [bx+bw*t,by];
+    cx.fillStyle=themeColor('--scr-panel'); cx.strokeStyle=themeColor('--axis'); cx.lineWidth=1.5;
+    cx.beginPath(); cx.roundRect(bx,by,bw,bh,Math.min(bw,bh)*.25); cx.fill(); cx.stroke();
+    cx.save(); cx.beginPath(); cx.roundRect(bx,by,bw,bh,Math.min(bw,bh)*.25); cx.clip();
+    const t=T(n.sv); cx.fillStyle=col; cx.globalAlpha=.9;
+    if(vert) cx.fillRect(bx,by+bh*(1-t),bw,bh*t); else cx.fillRect(bx,by,bw*t,bh);
+    cx.globalAlpha=1; cx.restore();
+    cx.textBaseline='middle'; cx.fillStyle=themeColor('--axis'); cx.strokeStyle=themeColor('--axis');
+    for(let i=0;i<=5;i++){
+      const tt=i/5, [x,y]=pos(tt), v=lo+rng*tt;
+      cx.lineWidth=1; cx.beginPath();
+      if(vert){ cx.moveTo(bx-4,y); cx.lineTo(bx,y); cx.stroke(); cx.textAlign='right'; cx.fillText(indFmt(v),bx-6,y); }
+      else { cx.moveTo(x,by+bh); cx.lineTo(x,by+bh+4); cx.stroke(); cx.textAlign='center'; cx.textBaseline='top'; cx.fillText(indFmt(v),x,by+bh+6); cx.textBaseline='middle'; }
+    }
+    const mark=(v,c,dash)=>{ const [x,y]=pos(T(v)); cx.strokeStyle=c; cx.lineWidth=1.5; cx.setLineDash(dash); cx.beginPath();
+      if(vert){ cx.moveTo(bx-3,y); cx.lineTo(bx+bw+3,y); } else { cx.moveTo(x,by-3); cx.lineTo(x,by+bh+3); } cx.stroke(); cx.setLineDash([]); };
+    if(p.lo>lo) mark(p.lo,themeColor('--acc'),[4,3]);
+    if(p.hi<hi) mark(p.hi,themeColor('--err'),[4,3]);
+    if(p.minmax && isFinite(n.mn)){ mark(n.mn,themeColor('--acc2'),[1,2]); mark(n.mx,themeColor('--acc2'),[1,2]); }
+    cx.fillStyle=bad ? col : themeColor('--scr-hi'); cx.textAlign=vert ? 'left' : 'center'; cx.textBaseline='middle';
+    indFont(cx,Math.min(18,Math.max(10,(vert ? W-bx-bw : H)*.28)));
+    const txt=(n.v===null ? '—' : indFmt(n.v))+(p.unit ? ' '+p.unit : '');
+    if(vert) cx.fillText(txt,bx+bw+8,by+bh/2); else cx.fillText(txt,W/2,H-12);
+    cx.textAlign='start'; cx.textBaseline='alphabetic'; }
+});
+
+/* ---------- Trend (самописец) ---------- */
+const TREND_N=240;
+def({ id:'trend', lazy:'proc', title:'Trend', cat:'Indicators', kw:'chart recorder strip history sparkline plot log time series',
+  ins:[{n:'in',t:'num'},{n:'in2',t:'num'}],
+  view:{h:110}, resize:true,
+  params:[{n:'win',t:'range',min:5,max:600,step:5,d:60,label:'window, s'},
+          {n:'auto',t:'check',d:true,label:'auto range'},
+          {n:'min',t:'num',d:0},{n:'max',t:'num',d:1},
+          {n:'thr',t:'text',d:'',label:'threshold line (empty — off)'},
+          {n:'unit',t:'text',d:''},
+          {n:'fill',t:'check',d:true,label:'fill under the line'}],
+  init:n=>{ n.h=[]; n.h2=[]; n.acc=[0,0]; n.cnt=[0,0]; n.tt=0; n.pause=false; },
+  process(n,I){
+    if(n.pause) return {};
+    const v=[indNum(I.in),indNum(I.in2)];
+    for(let k=0;k<2;k++) if(v[k]!==null){ n.acc[k]+=v[k]; n.cnt[k]++; }
+    n.tt+=indDt();
+    const step=Math.max(.01,n.p.win/TREND_N);
+    if(n.tt>=step){
+      n.tt-=step; if(n.tt>step) n.tt=0;
+      [n.h,n.h2].forEach((h,k)=>{ trendPush(h,n.cnt[k] ? n.acc[k]/n.cnt[k] : NaN,TREND_N); });
+      n.acc=[0,0]; n.cnt=[0,0];
+    }
+    return {}; },
+  draw(n,cv,cx){
+    const W=cv.width, H=cv.height, p=n.p, pl=34, pr=6, pt=6, pb=6, w=W-pl-pr, h=H-pt-pb;
+    const thr=String(p.thr).trim()==='' ? NaN : +p.thr;
+    indWire(n,cv,{down:()=>{ n.pause=!n.pause; redraw(n); }});
+    cx.clearRect(0,0,W,H);
+    const all=[...n.h,...n.h2].filter(isFinite);
+    let lo=Math.min(p.min,p.max), hi=Math.max(p.min,p.max);
+    if(p.auto && all.length){ lo=Math.min(...all); hi=Math.max(...all); if(isFinite(thr)){ lo=Math.min(lo,thr); hi=Math.max(hi,thr); }
+      const m=(hi-lo)*.08||1; lo-=m; hi+=m; }
+    const rng=hi-lo||1, X=i=>pl+w*(i+(TREND_N-n.h.length))/(TREND_N-1), Y=v=>pt+h*(1-clamp((v-lo)/rng,0,1));
+    indFont(cx,Math.min(10,Math.max(8,h*.1))); cx.fillStyle=themeColor('--axis'); cx.strokeStyle=themeColor('--axis'); cx.lineWidth=1;
+    cx.textAlign='right'; cx.textBaseline='middle';
+    for(let i=0;i<=4;i++){ const y=pt+h*i/4; cx.globalAlpha=.25; cx.beginPath(); cx.moveTo(pl,y); cx.lineTo(pl+w,y); cx.stroke(); cx.globalAlpha=1; cx.fillText(indFmt(hi-rng*i/4),pl-4,y); }
+    if(isFinite(thr)){ cx.strokeStyle=themeColor('--err'); cx.setLineDash([5,4]); cx.beginPath(); cx.moveTo(pl,Y(thr)); cx.lineTo(pl+w,Y(thr)); cx.stroke(); cx.setLineDash([]); }
+    const line=(hs,col,fill)=>{
+      cx.strokeStyle=col; cx.lineWidth=1.6; cx.beginPath();
+      let on=false, x0=0, xl=0;
+      hs.forEach((v,i)=>{ if(!isFinite(v)){ on=false; return; } const x=X(i+(n.h.length-hs.length)), y=Y(v); if(on) cx.lineTo(x,y); else { cx.moveTo(x,y); x0=x; } on=true; xl=x; });
+      cx.stroke();
+      if(fill && hs.length>1 && isFinite(hs[hs.length-1])){ cx.lineTo(xl,pt+h); cx.lineTo(x0,pt+h); cx.globalAlpha=.15; cx.fillStyle=col; cx.fill(); cx.globalAlpha=1; }
+    };
+    if(n.h.length>1) line(n.h,themeColor('--acc2'),p.fill);
+    if(n.h2.length>1) line(n.h2,themeColor('--acc'),false);
+    indFont(cx,Math.min(11,Math.max(8,h*.12))); cx.textBaseline='top'; cx.textAlign='right'; cx.fillStyle=themeColor('--scr-hi');
+    const last=n.h[n.h.length-1];
+    cx.fillText((n.pause ? '❚❚ ' : '')+(isFinite(last) ? indFmt(last)+(p.unit ? ' '+p.unit : '') : '—'),pl+w-4,pt+2);
     cx.textAlign='start'; cx.textBaseline='alphabetic'; }
 });
