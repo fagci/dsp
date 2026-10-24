@@ -3513,6 +3513,12 @@ function rtlChanLevel(n, ch, db){
   ch.rssiChunk=db;
   ch.rssi = prev==null ? db : prev*0.7+db*0.3;
   const mode=n.p.sql;
+  if(mode==='input'){                                 // шумодав по внешнему сигналу: открыт, пока вход > 0.5 (+ hang)
+    const now=performance.now();
+    if(n._sqGate){ ch.sqOpen=true; ch.sqT=now; }
+    else if(ch.sqOpen===undefined || (ch.sqOpen && now-(ch.sqT||0)>(+n.p.sqlHang||0))) ch.sqOpen=false;
+    return;
+  }
   if(mode!=='SNR' && mode!=='level'){ ch.sqOpen=true; return; }
   let v = mode==='level' ? db : ch.snr;
   const thr = mode==='level' ? +n.p.sqlLvl : +n.p.sqlSnr;
@@ -5138,7 +5144,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
         {n:'mark',t:'val'},
         {n:'markTrg',t:'num'},
         {n:'rec',t:'rec'},
-        {n:'recGo',t:'num'}],
+        {n:'recGo',t:'num'},
+        {n:'sqlGate',t:'num',tip:'squelch «input»: open while > 0.5 (e.g. Band Scanner listening)'}],
   outs:[{n:'iq',t:'iq'},{n:'audio',t:'sig'},{n:'spec',t:'spec'},
         {n:'rssi',t:'num'},{n:'snr',t:'num'},{n:'sqOpen',t:'num'},
         {n:'freqLo',t:'num'},{n:'freqHi',t:'num'},{n:'tuneFreq',t:'num'},{n:'demod',t:'val'},{n:'bw',t:'num'},
@@ -5196,7 +5203,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'nb',t:'select',opts:['off','low','mid','high'],d:'off',label:'noise blanker'},
     {n:'anf',t:'check',d:false,label:'auto notch'},
     // шумоподавитель на каждый канал: SNR — по спектру вокруг канала (не зависит от усиления), level — RSSI, dBFS
-    {n:'sql',t:'select',opts:['off','SNR','level'],d:'off',label:'squelch'},
+    {n:'sql',t:'select',opts:['off','SNR','level','input'],d:'off',label:'squelch (input: opened by the sqlGate wire, e.g. the Band Scanner listening)'},
     {n:'sqlSnr',t:'range',min:0,max:40,step:.5,d:6,label:'squelch SNR, dB'},
     {n:'sqlLvl',t:'range',min:-120,max:0,step:1,d:-50,label:'squelch level, dBFS'},
     {n:'sqlHang',t:'range',min:0,max:3000,step:50,d:300,label:'squelch hang, ms',adv:true},
@@ -5280,6 +5287,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     // steerFreq: отсекаем эхо — 'sa' сам сдвигает окно вслед за новым спектром после перестройки
     // (центр окна отличается от центра приёмника на доли бина), и паузу после приоритетов 1-2,
     // пока спектр со старой частотой ещё может встретиться в 'sa'
+    n._sqGate=+I.sqlGate>0.5;
     if(typeof I.steerFreq==='number' && I.steerFreq!==n._inSteer){
       const first=n._inSteer===undefined;             // первое значение после загрузки — точка отсчёта, не команда
       n._inSteer=I.steerFreq;
