@@ -4,7 +4,7 @@
 
 // словарь JSC для сжатого текста (data/js8-jsc.txt, ~2 МБ) — один раз, при первой необходимости; хранится в Files → Offline data, докачивается заранее
 const JS8_DICT_NAME='JS8 dictionary (JSC).txt';
-OfflineData.want(JS8_DICT_NAME,['data/js8-jsc.txt']);
+OfflineData.fileItem({id:'js8',label:'JS8 text dictionary',mb:2,auto:true,files:[[JS8_DICT_NAME,['data/js8-jsc.txt']]]});
 const JS8Dict={state:'idle', err:'', p:null};
 function js8DictLoad(){
   if(JS8_JSC.words) return Promise.resolve();

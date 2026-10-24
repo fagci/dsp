@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=90;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=91;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -6258,7 +6258,7 @@ markWiresDirty();
 });
 preset('Object Detect: Camera Video and Photo', function(){
 clearAll();
-const nt=addNode('note',40,20,{text:'Object Detect finds people, animals, vehicles and other everyday objects (80 COCO classes) in a picture. Top: the live camera (press Run, then Turn on camera) with tracking — every object gets an id, the text and rec outputs report only new ones, and Beep sounds on each new one (tap the page once so the browser allows sound). Bottom: a photo (choose a file or a URL in Image) is detected once. The first start downloads TF.js and the model (about 19 MB) into Files → Offline data; after that it works without a network. Put classes like «person, car» into the node to look only for them.'});
+const nt=addNode('note',40,20,{text:'Object Detect finds people, animals, vehicles and other everyday objects (80 COCO classes) in a picture. Top: the live camera (press Run, then Turn on camera) with tracking — every object gets an id, the text and rec outputs report only new ones, and Beep sounds on each new one (tap the page once so the browser allows sound). Bottom: a photo (choose a file or a URL in Image) is detected once. The first start downloads TF.js and the model (about 19 MB) into Files → Offline data; after that it works without a network (or press ⇩ offline in Files to download it in advance). Put classes like «person, car» into the node to look only for them.'});
 nt.size.w=1000; nt.size.h=90; applySize(nt);
 const cm=addNode('cam',40,140,{res:'640x480',w:'320'}); cm.size.w=260; cm.size.h=200; applySize(cm);
 const od=addNode('objdet',340,140,{track:true,period:.3}); od.size.w=340; od.size.h=240; applySize(od);
