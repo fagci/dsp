@@ -2587,7 +2587,7 @@ function geoDrawObjects(n,cx,v){
     const rad=recNum(r.radius);
     if(rad!=null && rad>0){
       const rp=rad/mpp(last.lat);
-      if(rp>2 && rp<1e5){ cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash([4,3]); cx.beginPath();
+      if(rp>2 && rp<1e5){ cx.beginPath();
         if(rad>300000){                              // большой круг в Меркаторе — не окружность
           let px=null;
           for(let i=0;i<=72;i++){
@@ -2595,8 +2595,10 @@ function geoDrawObjects(n,cx,v){
             if(px==null) cx.moveTo(p.x,p.y); else cx.lineTo(p.x,p.y); px=p.x;
           }
         } else cx.arc(s.x,s.y,rp,0,2*Math.PI);
-        cx.stroke(); cx.setLineDash([]);
-        cx.fillStyle=col; cx.globalAlpha*=.08; cx.fill(); cx.globalAlpha=1-age*0.7; }
+        const a0=cx.globalAlpha;                     // тёмная подложка под цветной линией: круг виден и на светлой карте
+        cx.strokeStyle='rgba(0,0,0,.55)'; cx.lineWidth=4; cx.stroke();
+        cx.strokeStyle=col; cx.lineWidth=2; cx.setLineDash([6,4]); cx.stroke(); cx.setLineDash([]);
+        cx.fillStyle=col; cx.globalAlpha=a0*.16; cx.fill(); cx.globalAlpha=a0; }
     }
     const rings=geoRings(r.rings);
     if(rings.length){                                // кольца расстояния: км от объекта
