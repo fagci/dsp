@@ -5,7 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,Float64Array,Array,Set,String,RegExp});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/whisper-kernels.js'),'utf8')+';this.T={wsTo16k,wsSegmenter,wsJunk,wsLoop,wsAppend,wsFileName,wsStamp};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/whisper-kernels.js'),'utf8')+';this.T={wsTo16k,wsSegmenter,wsJunk,wsLoop,wsAppend,wsFileName,wsStamp,wsManualName,wsFileUrl,WS_FILES};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -53,4 +53,7 @@ ok('append caps and cuts on a word',T.wsAppend('aaa bbb ccc','ddd',9)==='ccc ddd
 ok('file name',T.wsFileName('https://huggingface.co/onnx-community/whisper-tiny/resolve/main/onnx/encoder_model_quantized.onnx')==='Whisper · onnx-community/whisper-tiny · onnx/encoder_model_quantized.onnx'
   && T.wsFileName('https://example.com/a')===null);
 ok('stamp',T.wsStamp(65)==='[1:05]' && T.wsStamp(-3)==='[0:00]');
+ok('manual name: onnx goes to onnx/',T.wsManualName('a/b','encoder_model_quantized (1).onnx')==='Whisper · a/b · onnx/encoder_model_quantized.onnx'
+  && T.wsManualName('a/b','C:\\x\\tokenizer.json')==='Whisper · a/b · tokenizer.json');
+ok('manual names match the automatic ones',T.WS_FILES.every(f=>T.wsFileName(T.wsFileUrl('a/b',f))===T.wsManualName('a/b',f.split('/').pop())));
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad?1:0);

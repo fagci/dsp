@@ -242,6 +242,12 @@ const OfflineData = (() => {
     inflight.set(name,p); return p;
   }
   async function has(name){ try{ return !!await find(name); }catch(e){ return false; } }
+  // файл, скачанный пользователем руками (ссылка в новой вкладке → «выбрать файл»): кладём под тем же именем, что и скачанный сам
+  async function save(name,b){
+    const old=await find(name).catch(()=>null);
+    if(old) await FileStore.remove(old.id).catch(()=>{});
+    await FileStore.put({space:'files',folderId:await dirId(true),name,mime:b.type,blob:b,meta:{offline:true}});
+  }
   // o: {id,label,mb,auto,has():Promise<bool>,get():Promise}; повторная регистрация с тем же id заменяет пункт
   const item=o=>{ const i=items.findIndex(x=>x.id===o.id); if(i>=0) items[i]=o; else items.push(o); };
   const fileItem=o=>item({...o,
@@ -280,7 +286,7 @@ const OfflineData = (() => {
     el.append(head,list,go,st);
   }
   if(typeof addEventListener==='function') addEventListener('load',()=>setTimeout(warm,20000));
-  return {blob,has,item,fileItem,warm,draw};
+  return {blob,has,save,item,fileItem,warm,draw};
 })();
 
 /* ---- таблицы Table как пространство 'tables' ----
