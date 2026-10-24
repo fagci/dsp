@@ -76,7 +76,7 @@ def({ id:'pulsar', title:'Pulsar', cat:'Sources', kw:'pulsar neutron star radio 
           {n:'tail',t:'range',min:0,max:1,step:.01,d:.3,label:'scatter tail'},
           {n:'noise',t:'range',min:0,max:1,step:.01,d:.15,label:'noise'},
           {n:'amp',t:'range',min:0,max:1,step:.01,d:.6}],
-  init:n=>{ n.ph=0; n.a=1; n.s=.5; n.y=0; n.nk=''; n.norm=1; },
+  init:n=>{ n.ph=0; n.a=1; n.s=.5; n.yv=0; n.nk=''; n.norm=1; },
   process(n){
     const o=buf(n,'out'), os=buf(n,'sync'), dph=1000/n.p.period/Eng.sr;
     const w=n.p.width/100/2.355, c=.15, k=n.p.tail>0 ? Math.exp(-1/(Eng.sr*n.p.period/1000*.3*n.p.tail)) : 0;
@@ -91,8 +91,8 @@ def({ id:'pulsar', title:'Pulsar', cat:'Sources', kw:'pulsar neutron star radio 
         n.s=.8*n.s+.2*Math.random();                     // мерцание коррелировано от импульса к импульсу
         n.a=Math.random()<n.p.null ? 0 : 1-n.p.scint*n.s*2; }
       const d=(n.ph-c)/w, g=n.a*Math.exp(-.5*d*d);
-      n.y=k*n.y+(1-k)*g;                                 // рассеяние в среде: экспоненциальный хвост
-      o[i]=(n.y*n.norm+(Math.random()*2-1)*n.p.noise)*n.p.amp; os[i]=mark;
+      n.yv=k*n.yv+(1-k)*g;                                 // рассеяние в среде: экспоненциальный хвост
+      o[i]=(n.yv*n.norm+(Math.random()*2-1)*n.p.noise)*n.p.amp; os[i]=mark;
     }
     return {out:o,sync:os}; }});
 

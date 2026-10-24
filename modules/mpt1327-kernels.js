@@ -46,7 +46,7 @@ IQK.mpt1327Rx={
     n.lp=cplx ? kaiserLP(n.fs,.6*stop,stop,255) : null;
     if(n.lp){ n.lr=new Float32Array(n.lp.length-1); n.li=new Float32Array(n.lp.length-1); }
     n.pr=0; n.pi=0; n.dc=0;
-    n.x=new Float32Array(0); n.xb=0; n.tNext=0; n.jj=0;
+    n.sx=new Float32Array(0); n.xb=0; n.tNext=0; n.jj=0;
     n.w0=new Uint32Array(MPT_PH); n.w1=new Uint32Array(MPT_PH); n.w2=new Uint32Array(MPT_PH);
     n.ends=[];
   },
@@ -73,9 +73,9 @@ IQK.mpt1327Rx={
       n.dc=dc; parts.push(y);
     }
     let add=0; for(const p of parts) add+=p.length;
-    const nx=new Float32Array(n.x.length+add); nx.set(n.x); let o=n.x.length;
+    const nx=new Float32Array(n.sx.length+add); nx.set(n.sx); let o=n.sx.length;
     for(const p of parts){ nx.set(p,o); o+=p.length; }
-    n.x=nx;
+    n.sx=nx;
     const recs=this.scan(n);
     const now=Date.now();
     n.ui={fs:n.fs, M:n.M, syncs:n.syncs, words:n.words, addr:n.addr, data:n.data, inv:n.inv, chan:n.chan,
@@ -83,7 +83,7 @@ IQK.mpt1327Rx={
     return {rec:recs.length ? recs : null};
   },
   scan(n){
-    const x=n.x, N=x.length, sps=n.sps, fs=n.fs, recs=[];
+    const x=n.sx, N=x.length, sps=n.sps, fs=n.fs, recs=[];
     // префиксные суммы произведений с квадратурами обоих тонов (фаза — по абсолютному номеру отсчёта)
     const P=[new Float64Array(N+1),new Float64Array(N+1),new Float64Array(N+1),new Float64Array(N+1)];
     const fr=[1200/fs,1800/fs];
@@ -115,7 +115,7 @@ IQK.mpt1327Rx={
     }
     n.tNext=n.xb+tj;
     const keep=Math.max(0,Math.floor(tj)-2);
-    if(keep>0){ n.x=x.slice(keep); n.xb+=keep; }
+    if(keep>0){ n.sx=x.slice(keep); n.xb+=keep; }
     return recs;
   },
   // te — момент конца слова (в отсчётах); w2 — 16 бит перед словом

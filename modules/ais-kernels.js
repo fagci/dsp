@@ -128,7 +128,7 @@ IQK.aisRx={
     n.lp=cplx ? kaiserLP(n.fs,Math.min(9500,.6*stop),stop,255) : null;
     if(n.lp){ n.lr=new Float32Array(n.lp.length-1); n.li=new Float32Array(n.lp.length-1); }
     n.pr=0; n.pi=0;
-    n.x=new Float32Array(0); n.xb=0; n.tNext=0; n.jj=0;
+    n.sx=new Float32Array(0); n.xb=0; n.tNext=0; n.jj=0;
     n.ph=[]; for(let i=0;i<AIS_PH;i++) n.ph.push({prev:0, ones:0, inF:false, len:0, buf:new Uint8Array(AIS_MAXBITS)});
     n.ends=[];
   },
@@ -156,9 +156,9 @@ IQK.aisRx={
       parts.push(y);
     }
     let add=0; for(const p of parts) add+=p.length;
-    const nx=new Float32Array(n.x.length+add); nx.set(n.x); let o=n.x.length;
+    const nx=new Float32Array(n.sx.length+add); nx.set(n.sx); let o=n.sx.length;
     for(const p of parts){ nx.set(p,o); o+=p.length; }
-    n.x=nx;
+    n.sx=nx;
     const out={recs:[], text:[], raw:[]};
     this.scan(n,out);
     const now=Date.now(), ttl=(+n.p.ttl||30)*60000;
@@ -168,7 +168,7 @@ IQK.aisRx={
     return {rec:out.recs.length ? out.recs : null, text:out.text.length ? out.text.join('\n') : null, raw:out.raw.length ? out.raw : null};
   },
   scan(n,out){
-    const x=n.x, N=x.length, sps=n.sps, P=AIS_PH;
+    const x=n.sx, N=x.length, sps=n.sps, P=AIS_PH;
     const S=new Float64Array(N+1);
     for(let i=0;i<N;i++) S[i+1]=S[i]+x[i];
     const integ=t=>{ if(t<=0) return 0; if(t>=N) return S[N]; const a=Math.floor(t); return S[a]+(t-a)*x[a]; };
@@ -183,7 +183,7 @@ IQK.aisRx={
     }
     n.tNext=n.xb+tj;
     const keep=Math.floor(tj-half-2*sps);
-    if(keep>0){ n.x=x.slice(keep); n.xb+=keep; }
+    if(keep>0){ n.sx=x.slice(keep); n.xb+=keep; }
   },
   // один символ одной фазы: NRZI → HDLC
   feed(n,st,lvl,te,out){
