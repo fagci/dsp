@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,Float32Array,Float64Array,Array,Map,Set,Error,String,Number,Object,JSON,isNaN,isFinite,Infinity,NaN});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/siglab-kernels.js'),'utf8'),ctx,{filename:'siglab-kernels.js'});
-vm.runInContext('this.S={slMag,slFreq,slRuns,slAnalyze,slDecode,slBitLen,slSyncGuess,slAlign,slColumns,slHex,slAscii,slBin,slField,slSymBits,slDetectMod,slSegments,slNoise,slSmooth,slPyramid,slOtsu,slLevels}',ctx);
+vm.runInContext('this.S={slMag,slFreq,slRuns,slAnalyze,slDecode,slBitLen,slSyncGuess,slAlign,slColumns,slHex,slAscii,slBin,slField,slSymBits,slDetectMod,slSegments,slNoise,slSmooth,slPyramid,slOtsu,slLevels,slAnalyzeFull,slSpectrogram,slBandpass}',ctx);
 const S=ctx.S;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 let sd=987654321; const rnd=()=>{ sd^=sd<<13; sd^=sd>>>17; sd^=sd<<5; return (sd>>>0)/4294967296; };
@@ -292,6 +292,36 @@ for(const kind of ['ook','fsk']){
   const n=Float32Array.from({length:50000},()=>gauss()*.01), m=Float32Array.from({length:50000},()=>gauss()*.01);
   const R2=S.slAnalyze(n,m,1e5,{mod:'auto'});
   ok('noise only: no crash',Array.isArray(R2.msgs),R2.msgs.length+' msgs');
+}
+/* ---- спектрограмма и полосовой фильтр (выбор полосы мышью → выходы freq / bw) ---- */
+{
+  sd=777;
+  const sr=250000, tone=(n,f,a)=>{ const re=new Float32Array(n), im=new Float32Array(n); for(let i=0;i<n;i++){ re[i]=a*Math.cos(2*Math.PI*f*i/sr); im[i]=a*Math.sin(2*Math.PI*f*i/sr); } return {re,im}; };
+  const t=tone(200000,40000,.5), g=S.slSpectrogram(t.re,t.im,sr,512);
+  ok('spectrogram: size '+g.cols+'×'+g.bins,g.cols>100 && g.bins===512 && g.data.length===g.cols*g.bins);
+  let best=0; for(let k=0;k<g.bins;k++) if(g.data[(g.cols>>1)*g.bins+k]>g.data[(g.cols>>1)*g.bins+best]) best=k;
+  const fpk=g.f0+(best+.5)*(g.f1-g.f0)/g.bins;
+  ok('spectrogram: tone at +40 kHz is '+(fpk/1e3).toFixed(1)+' kHz',Math.abs(fpk-40000)<700);
+  ok('spectrogram: level '+g.hi.toFixed(1)+' dBFS (tone −6 dB)',g.hi-2>-9 && g.hi-2<-3,String(g.hi));
+  const x=new Float32Array(100000); for(let i=0;i<x.length;i++) x[i]=Math.sin(2*Math.PI*10000*i/sr);
+  const gr=S.slSpectrogram(x,null,sr,512); let br=0; for(let k=0;k<gr.bins;k++) if(gr.data[10*gr.bins+k]>gr.data[10*gr.bins+br]) br=k;
+  ok('spectrogram, real input: 0…sr/2, tone at '+((br+.5)*sr/2/gr.bins/1e3).toFixed(1)+' kHz',gr.f0===0 && gr.f1===sr/2 && Math.abs((br+.5)*sr/2/gr.bins-10000)<700);
+  // фильтр: пропускает полосу, давит соседа
+  const A=tone(60000,30000,1), B=tone(60000,-50000,1), mix={re:A.re.map((v,i)=>v+B.re[i]),im:A.im.map((v,i)=>v+B.im[i])};
+  const f=S.slBandpass(mix.re,mix.im,sr,30000,20000), rms=(a,b,c)=>{ let e=0; for(let i=c;i<a.length-c;i++) e+=a[i]*a[i]+b[i]*b[i]; return Math.sqrt(e/(a.length-2*c)); };
+  ok('bandpass: the band keeps its level, rms '+rms(f.re,f.im,2000).toFixed(3),Math.abs(rms(f.re,f.im,2000)-1)<.03);
+  const f2=S.slBandpass(mix.re,mix.im,sr,-30000,20000);
+  ok('bandpass: other band: rms '+rms(f2.re,f2.im,2000).toFixed(4),rms(f2.re,f2.im,2000)<.005);
+  const e=S.slBandpass(A.re,A.im,sr,30000+10000,20000);
+  ok('bandpass: −3 dB at the band edge, rms '+rms(e.re,e.im,2000).toFixed(3),Math.abs(rms(e.re,e.im,2000)-.707)<.06);
+  // два передатчика: сильный несущий в стороне ломает разбор, фильтр на нужной полосе его возвращает
+  const pk=Array.from({length:5},()=>packet(randPayload(10))), o=synth({kind:'fsk',sr,baud:9600,dev:15000,off:60000,snr:22,syms:pk});
+  const cw=tone(o.re.length,-70000,1.2), re=o.re.map((v,i)=>v+cw.re[i]), im=o.im.map((v,i)=>v+cw.im[i]);
+  const R0=S.slAnalyzeFull(re,im,sr,{mod:'auto'}), R1=S.slAnalyzeFull(re,im,sr,{mod:'auto',band:{f0:60000,bw:60000}});
+  ok('two transmitters: filter on the wanted one: '+R1.msgs.length+' msg (without: '+R0.msgs.length+')',R1.msgs.length===5 && R1.filt===true && !R0.filt);
+  if(R1.msgs.length===5){ const q=R1.msgs.map((m,i)=>Math.max(cmp(Array.from(m.bits),pk[i]),cmp(Array.from(m.bits).map(v=>v^1),pk[i]))); ok('two transmitters: bits '+Math.min(...q).toFixed(3),Math.min(...q)>.98); }
+  ok('analyseFull gives a spectrogram',R1.sgram && R1.sgram.cols>0 && R1.N===re.length);
+  ok('sg:false skips it',S.slAnalyzeFull(re,im,sr,{mod:'auto',sg:false}).sgram===null);
 }
 console.log(bad ? 'FAILED: '+bad : 'all ok');
 process.exit(bad?1:0);

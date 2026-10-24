@@ -812,10 +812,77 @@ function slAnalyze(re,im,sr,cfg){
 }
 
 // разбор + всё, что нужно для рисования (пирамиды min/max, пределы); так же считает воркер
+/* ---------- спектрограмма и полосовой фильтр ---------- */
+// Спектрограмма захвата (как у URH): столбец — кусок времени, строка — частота (снизу вверх). Каждый столбец — среднее
+// мощности до 4 окон Ханна по F отсчётов. Комплексный вход: −sr/2…+sr/2, вещественный: 0…sr/2. data — Uint8 0…255 между lo и hi дБFS,
+// индекс col*bins+k, k=0 — нижняя частота. Диапазон: шум (медиана) −4 дБ … 99.9-й процентиль.
+function slSpectrogram(re,im,sr,fft){
+  const N=re.length;
+  let F=64; while(F<(fft||512) && F*2<=N/2) F*=2;
+  if(N<F) return null;
+  const half=!im, bins=half ? F>>1 : F, cols=Math.max(1,Math.min(2048,Math.floor(N/(F/2)))), colLen=N/cols;
+  const win=new Float64Array(F); let sw=0;
+  for(let i=0;i<F;i++){ win[i]=.5-.5*Math.cos(2*Math.PI*i/F); sw+=win[i]; }
+  const pr=new Float64Array(F), pi=new Float64Array(F), acc=new Float64Array(bins), db=new Float32Array(cols*bins), norm=1/(sw*sw);
+  for(let c=0;c<cols;c++){
+    const start=c*colLen, segs=Math.max(1,Math.min(4,Math.floor(colLen/F)));
+    acc.fill(0);
+    for(let g=0;g<segs;g++){
+      let pos=Math.round(segs===1 ? start+(colLen-F)/2 : start+g*(colLen-F)/(segs-1));
+      pos=Math.max(0,Math.min(N-F,pos));
+      for(let i=0;i<F;i++){ pr[i]=re[pos+i]*win[i]; pi[i]=half ? 0 : im[pos+i]*win[i]; }
+      slFft(pr,pi,false);
+      for(let j=0;j<bins;j++){ const k=half ? j : (j+(F>>1))%F; acc[j]+=pr[k]*pr[k]+pi[k]*pi[k]; }
+    }
+    for(let j=0;j<bins;j++) db[c*bins+j]=10*Math.log10(acc[j]/segs*norm*(half ? 4 : 1)+1e-20);
+  }
+  const v=slSample(db,0,db.length,20000).sort(), med=v[v.length>>1], top=v[Math.floor(v.length*.999)];
+  const lo=med-4, hi=Math.max(top+2,lo+25), data=new Uint8Array(db.length), k=255/(hi-lo);
+  for(let i=0;i<db.length;i++) data[i]=Math.max(0,Math.min(255,Math.round((db[i]-lo)*k)));
+  return {cols,bins,data,lo,hi,f0:half ? 0 : -sr/2,f1:sr/2,F};
+}
+// полосовой фильтр: полоса с центром f0 (Гц от центра потока) и шириной bw переносится в 0 Гц, дальше ФНЧ в частотной области
+// (блоки по 8192 с перекрытием, края блоков отбрасываются): 0 дБ в полосе, −3 дБ на ±bw/2, скат cos шириной 30 % bw (не уже 6 бинов),
+// дальше — стоп; стоимость не зависит от ширины
+function slBandpass(re,im,sr,f0,bw){
+  const N=re.length, or=new Float32Array(N), oi=new Float32Array(N);
+  const w=-2*Math.PI*f0/sr, wr=Math.cos(w), wi=Math.sin(w);
+  let cr=1, ci=0;
+  for(let i=0;i<N;i++){
+    const a=re[i], b=im ? im[i] : 0;
+    or[i]=a*cr-b*ci; oi[i]=a*ci+b*cr;
+    const t=cr*wr-ci*wi; ci=cr*wi+ci*wr; cr=t;
+    if((i&1023)===1023){ const g=1/Math.sqrt(cr*cr+ci*ci); cr*=g; ci*=g; }
+  }
+  if(bw>=sr*.98) return {re:or,im:oi};
+  const B=8192, O=1024, H=B-2*O, df=sr/B, tw=Math.max(.3*bw,6*df), h=new Float64Array(B);
+  for(let j=0;j<B;j++){
+    const a=Math.abs((j<B/2 ? j : j-B)*df), e=a-bw/2;
+    h[j]=e<=-tw/2 ? 1 : e>=tw/2 ? 0 : Math.cos((e/tw+.5)*Math.PI/2);
+  }
+  const br=new Float64Array(B), bi=new Float64Array(B), sc=1/B, yr=new Float32Array(N), yi=new Float32Array(N);
+  for(let s=0;s<N;s+=H){
+    const o=s-O;
+    for(let i=0;i<B;i++){ const j=o+i; if(j>=0 && j<N){ br[i]=or[j]; bi[i]=oi[j]; } else { br[i]=0; bi[i]=0; } }
+    slFft(br,bi,false);
+    for(let i=0;i<B;i++){ br[i]*=h[i]; bi[i]*=h[i]; }
+    slFft(br,bi,true);
+    for(let i=O;i<O+H && s+i-O<N;i++){ yr[s+i-O]=br[i]*sc; yi[s+i-O]=bi[i]*sc; }
+  }
+  return {re:yr,im:yi};
+}
+
 function slAnalyzeFull(re,im,sr,cfg){
   const t0=Date.now();
-  const R=slAnalyze(re,im,sr,cfg);
-  R.N=re.length;
+  let are=re, aim=im, filt=false;
+  const b=cfg.band;
+  if(b && b.bw>0 && cfg.mod!=='raw'){                              // полоса из спектрограммы: в 0 Гц и ФНЧ, дальше как обычно
+    if(!aim){ const z=slAnalytic(are); are=z.re; aim=z.im; }
+    const f=slBandpass(are,aim,sr,b.f0,b.bw); are=f.re; aim=f.im; filt=true;
+  }
+  const R=slAnalyze(are,aim,sr,cfg);
+  R.N=re.length; R.filt=filt;
+  R.sgram=cfg.sg===false ? null : slSpectrogram(re,im,sr,cfg.fft);
   if(R.mag){
     const v=slSample(R.mag,0,R.mag.length,20000).sort();
     R.magTop=Math.max(v[Math.floor(v.length*.995)]||0,1e-9)*1.15;     // не зависит от порога: график не прыгает, пока его тянут

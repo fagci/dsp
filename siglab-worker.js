@@ -7,6 +7,7 @@ self.onmessage=e=>{
   try{
     const R=slAnalyzeFull(d.re,d.im,d.sr,d.cfg), tr=[], seen=new Set();
     for(const k of ['mag','dem','pyrM','pyrD']){ const a=R[k]; if(a && !seen.has(a.buffer)){ seen.add(a.buffer); tr.push(a.buffer); } }
+    if(R.sgram && !seen.has(R.sgram.data.buffer)) tr.push(R.sgram.data.buffer);
     self.postMessage({id:d.id,R},tr);
   }catch(x){ self.postMessage({id:d.id,err:x.message||String(x)}); }
 };
