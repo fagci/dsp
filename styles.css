@@ -1074,21 +1074,6 @@ select.aed-b{padding:0 6px}
   font-size:11px;padding:0 6px;border-radius:3px}
 .tbl-ui .tbl-count{color:var(--dim);font-size:10px;white-space:nowrap}
 .tbl-ui [hidden]{display:none!important}
-.tbl-tree{position:absolute;left:0;right:0;top:32px;z-index:12;max-height:70%;overflow-y:auto;border:1px solid var(--acc);border-radius:4px;
-  background:var(--bg);box-shadow:0 4px 14px #0007}
-.tbl-tree .tt-top{position:sticky;top:0;z-index:1;display:flex;gap:10px;align-items:center;padding:5px 8px;background:var(--panel2);
-  border-bottom:1px solid var(--line);color:var(--dim);font-size:10px}
-.tbl-tree .tt-ttl{flex:1}
-.tbl-tree .tt-none,.tbl-tree .tt-close{cursor:pointer}
-.tbl-tree .tt-none:hover,.tbl-tree .tt-close:hover{color:var(--acc)}
-.tbl-tree .tt-dir,.tbl-tree .tt-file{padding-top:6px!important;padding-bottom:6px!important}
-.tbl-tree input[type=checkbox]{width:16px;height:16px}
-.tbl-tree .tt-dir,.tbl-tree .tt-file{display:flex;align-items:center;gap:4px;padding:3px 4px;cursor:pointer;white-space:nowrap}
-.tbl-tree .tt-dir:hover,.tbl-tree .tt-file:hover{background:var(--panel2)}
-.tbl-tree .tt-file.act{background:color-mix(in srgb,var(--acc2) 20%,transparent);color:var(--acc2)}
-.tbl-tree .tt-name{flex:1;overflow:hidden;text-overflow:ellipsis}
-.tbl-tree .tt-cnt{color:var(--dim);font-size:9px}
-.tbl-tree .tt-car{width:9px;color:var(--dim)}
 .tbl-list{position:relative;flex:1;min-height:0;overflow-y:auto;border:1px solid var(--line);border-radius:3px;background:var(--bg)}
 .tbl-row{display:flex;align-items:center;gap:6px;padding:4px 6px;cursor:pointer;border-bottom:1px solid var(--line);min-width:0}
 .tbl-row.on{background:color-mix(in srgb,var(--acc2) 20%,transparent)}
@@ -1122,6 +1107,19 @@ select.aed-b{padding:0 6px}
 .tbl-menu .tm-i.act{color:var(--acc2)}
 .tbl-menu .tm-i.hi{background:color-mix(in srgb,var(--acc2) 20%,transparent)}
 .tbl-menu .tm-none{padding:8px 10px}
+.tbl-menu .tp-top{display:flex;gap:10px;align-items:center;padding:3px 10px;background:var(--panel2);border-bottom:1px solid var(--line);color:var(--dim);font-size:10px}
+.tbl-menu .tp-cnt{flex:1}
+.tbl-menu .tp-none{cursor:pointer}
+.tbl-menu .tp-none:hover{color:var(--acc)}
+.tbl-menu .tm-h{display:flex;align-items:center;gap:6px}
+.tbl-menu .tp-dir{cursor:pointer}
+.tbl-menu .tp-dir:hover{background:color-mix(in srgb,var(--acc2) 12%,var(--panel2))}
+.tbl-menu .tp-car{width:9px;color:var(--dim);flex:none}
+.tbl-menu .tp-gn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.tbl-menu .tp-n{color:var(--dim);font-size:9px}
+.tbl-menu .tm-s{display:flex;align-items:center;gap:6px}
+.tbl-menu .tp-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.tbl-menu .tp-cb{margin:0;width:15px;height:15px;accent-color:var(--acc2);cursor:pointer;flex:none}
 .tbl-menu .tm-h{padding:5px 10px 2px;font-size:9px;color:var(--dim);letter-spacing:.06em;text-transform:uppercase;background:var(--panel2)}
 .tbl-menu .tm-i{padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--line)}
 .tbl-menu .tm-i:hover{background:color-mix(in srgb,var(--acc2) 20%,transparent)}
