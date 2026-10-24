@@ -508,43 +508,6 @@ async function clearAllRecordings2(n){
   refreshRecorderList(n);
 }
 
-def({ id:'csv', title:'CSV Log', cat:'Output', legacy:true,   // заменён узлом 'table' (log inputs a–d)
-  ins:[{n:'a',t:'num'},{n:'b',t:'num'},{n:'c',t:'num'},{n:'d',t:'num'},{n:'period',t:'num'},{n:'max',t:'num'}],
-  outs:[{n:'rows',t:'num'}], readout:true, tall:true,
-  params:[{n:'period',t:'range',min:.05,max:60,step:.05,d:1,label:'period, s'},
-          {n:'max',t:'range',min:100,max:100000,step:100,d:10000,label:'max rows'},
-          {n:'names',t:'text',d:'a,b,c,d',label:'headers'},
-          {n:'rec',t:'button',label:'Record / stop',fn:n=>{n.on=!n.on;}},
-          {n:'save',t:'button',label:'Save CSV',fn:n=>csvSave(n)},
-          {n:'clr',t:'button',label:'Clear',fn:n=>{n.rows=[];}}],
-  init:n=>{n.rows=[];n.on=false;n.t=0;n.t0=0;},
-  process(n,I){
-    if(typeof I.period==='number') setMod(n,'period',I.period);
-    if(typeof I.max==='number') setMod(n,'max',I.max);
-    const dt=BLOCK/Eng.sr;
-    if(!n.on) return {rows:n.rows.length};
-    if(!n.t0) n.t0=Date.now();
-    n.t+=dt;
-    if(n.t>=n.p.period){
-      n.t=0;
-      const row=[((Date.now()-n.t0)/1000).toFixed(3),
-        fmtN(I.a), fmtN(I.b), fmtN(I.c), fmtN(I.d)];
-      n.rows.push(row);
-      if(n.rows.length>n.p.max) n.rows.shift(); }
-    return {rows:n.rows.length}; },
-  draw(n){ const r=n.el.querySelector('.readout');
-    const tail=n.rows.slice(-6).map(x=>x.join('  ')).join('\n');
-    const t=(n.on?'● recording':'stopped')+' · rows '+n.rows.length+'\n'+tail;
-    if(r.textContent!==t) r.textContent=t; }});
-
-function fmtN(v){ return (typeof v==='number'&&isFinite(v))? v.toFixed(6) : ''; }
-function csvSave(n){
-  const names=String(n.p.names).split(',').map(s=>s.trim());
-  const head=['t_s',...names].join(',');
-  const body=n.rows.map(r=>r.join(',')).join('\n');
-  dl(new Blob([head+'\n'+body],{type:'text/csv'}),'log-'+Date.now()+'.csv');
-}
-
 def({ id:'geiger', title:'Geiger Counter', cat:'Output',
   ins:[{n:'in',t:'num'},{n:'minRate',t:'num'},{n:'maxRate',t:'num'},{n:'toneFreq',t:'num'},
        {n:'volume',t:'num'},{n:'smooth',t:'num'},{n:'invert',t:'num'}],

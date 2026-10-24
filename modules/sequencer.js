@@ -1,5 +1,5 @@
 "use strict";
-/* ============================ DATA SEQUENCER, TRIGGER CLOCK, TIME BASE ============================ */
+/* ============================ ВЫДАЧА СТРОК ТАБЛИЦЫ (для Table), TRIGGER CLOCK, TIME BASE ============================ */
 // Таблица любых полей (CSV / KML / GPX / GeoJSON) выдаётся по строке: по триггеру, таймеру,
 // паузе из колонки, меткам времени из данных или по пройденному расстоянию между точками.
 // Trigger Clock — универсальный источник импульсов, Time Base — виртуальные часы (ручное время).
@@ -101,44 +101,6 @@ function seqFind(headers,want,list){
   return null;
 }
 
-/* ---------- таблица узла ---------- */
-function seqSetup(n){
-  const text=String(n.p.data||'').trim();
-  n.rows=[]; n.headers=[]; n.cols=[]; n.err='';
-  if(text){
-    try{
-      const table=seqParse(text,'',n.p.header);
-      n.headers=hostlistDedupFieldNames(table[0]);
-      n.rows=table.slice(1).map(r=>{ const o={}; n.headers.forEach((h,i)=>o[h]=hostlistCoerce(r[i]??'')); return o; });
-    }catch(e){ n.err=e.message; }
-  }
-  const used=new Set(SEQ_FIXED);
-  n.cols=n.headers.map(h=>{ let port=h; while(used.has(port)) port+='_'; used.add(port); return {h,port}; });
-  n.timeCol=seqFind(n.headers,n.p.tcol,SEQ_TIME_COLS);
-  n.latCol=seqFind(n.headers,n.p.latCol,SEQ_LAT_COLS);
-  n.lonCol=seqFind(n.headers,n.p.lonCol,SEQ_LON_COLS);
-  n.tt=null;
-  if(n.timeCol){                                      // метки времени, дыры заполняем предыдущим значением
-    let prev=0; n.tt=n.rows.map(r=>{ const v=seqTime(r[n.timeCol]); if(v!=null) prev=v; return prev; });
-  }
-  n.geo=!!(n.latCol && n.lonCol);
-  seqReset(n);
-}
-function seqLoad(n,file){
-  const rd=new FileReader();
-  rd.onload=()=>{
-    const ext=file.name.toLowerCase().split('.').pop();
-    let table; try{ table=seqParse(String(rd.result),ext,n.p.header); }
-    catch(e){ alert('failed to read '+file.name+': '+e.message); return; }
-    n.name=file.name;
-    const csv=seqToCsv(table);
-    if(n.set?.data) n.set.data(csv); else n.p.data=csv;
-    seqApply(n);
-  };
-  rd.readAsText(file);
-}
-function seqApply(n){ seqSetup(n); rebuildNode(n); markTopoDirty(); }
-
 /* ---------- порядок выдачи ---------- */
 function seqRange(n){
   const N=n.rows.length, lo=clamp((n.p.first|0)-1,0,Math.max(0,N-1)), t=n.p.last|0;
@@ -197,49 +159,6 @@ function seqSegment(n,a,b){                           // расстояние (�
   if(![la,lo,lb,ob].every(v=>typeof v==='number')) return {d:0,b:0};
   return {d:geoDist(la,lo,lb,ob), b:geoBearing(la,lo,lb,ob)};
 }
-
-/* ---------- узел ---------- */
-def({ id:'csvsrc', title:'Data Sequencer', cat:'Sources', legacy:true,   // заменён узлом 'table'
-  ins:[{n:'trig',t:'val'},{n:'row',t:'val'},{n:'t',t:'num'}],
-  outs:n=>[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'row',t:'num'},{n:'count',t:'num'},
-           {n:'next',t:'num'},{n:'done',t:'num'},{n:'dist',t:'num'},{n:'bearing',t:'num'},
-           {n:'progress',t:'num'},...(n.cols||[]).map(c=>({n:c.port,t:'val'}))],
-  readout:true, tall:true, w:260,
-  params:[
-    {n:'file',t:'file',accept:'.csv,.tsv,.txt,.kml,.gpx,.geojson,.json,text/csv',fn:(n,f)=>seqLoad(n,f)},
-    {n:'advance',t:'select',opts:['rate','dwell','time','distance'],d:'rate',
-      label:'advance'},
-    {n:'order',t:'select',opts:['sequential','ping-pong','random','shuffle'],d:'sequential'},
-    {n:'rate',t:'range',min:0,max:50,step:.1,d:0,label:'rows/s'},
-    {n:'speed',t:'range',min:0,max:1000,step:.1,d:50,label:'speed'},
-    {n:'tscale',t:'range',min:.01,max:1000,step:.01,log:true,d:1,label:'time ×'},
-    {n:'loop',t:'check',d:true},
-    {n:'interp',t:'check',d:false,label:'interpolate'},
-    {n:'initial',t:'check',d:true,label:'first row at start'},
-    {n:'reset',t:'button',label:'Reset',fn:n=>{ seqReset(n); }},
-    {n:'apply',t:'button',label:'Apply table',fn:n=>seqApply(n)},
-    {n:'first',t:'num',min:1,max:1e6,step:1,d:1,adv:true,label:'first row'},
-    {n:'last',t:'num',min:0,max:1e6,step:1,d:0,adv:true,label:'last row (0=end)'},
-    {n:'unit',t:'select',opts:['km/h','m/s','knots'],d:'km/h',adv:true,label:'speed unit'},
-    {n:'header',t:'check',d:true,adv:true,label:'header line'},
-    {n:'tcol',t:'text',d:'',adv:true,label:'time col (auto)'},
-    {n:'dwellCol',t:'text',d:'dwell',adv:true,label:'dwell col, s'},
-    {n:'speedCol',t:'text',d:'speed',adv:true,label:'speed col'},
-    {n:'latCol',t:'text',d:'',adv:true,label:'lat col (auto)'},
-    {n:'lonCol',t:'text',d:'',adv:true,label:'lon col (auto)'},
-    {n:'textCol',t:'text',d:'',adv:true,label:'text col (row)'},
-    {n:'data',t:'code',d:'',adv:true,label:'table'},
-  ],
-  init:n=>{ n.name=''; n.trigPrev=0; n.rowPrev=null; n.pulse=0; seqSetup(n); },
-  process:(n,I)=>seqProcess(n,I),
-  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
-    const N=n.rows.length;
-    const warn = n.err ? n.err : !N ? 'no data: load a file or fill «table» and press Apply table' :
-      n.p.advance==='time' && !n.tt ? 'no time column' : n.p.advance==='distance' && !n.geo ? 'no lat/lon columns' : '';
-    r.textContent = warn ? '⚠ '+warn : 
-      (n.name?n.name+' · ':'')+'row '+(n.idx+1)+'/'+N+' · '+n.p.advance+(n.done?' · done':'')+
-      (n.cur?'\n'+n.headers.slice(0,6).map(h=>h+': '+recFmt(n.cur[h])).join('\n'):''); }
-});
 
 // общий ход секвенсора: им же пользуется узел 'table' (modules/table.js)
 function seqProcess(n,I){
@@ -539,8 +458,3 @@ def({ id:'stopwatch', title:'Stopwatch', cat:'Control',
     const s=n.st, l1=n.run ? '● '+swFmt(n.elapsed) : n.last!==null ? swFmt(n.last) : '—';
     r.textContent=l1+(s.n ? '\nn '+s.n+' · min '+swFmt(s.min)+' · avg '+swFmt(s.mean)+' · max '+swFmt(s.max)+' · σ '+swFmt(swSd(s)) : ''); }
 });
-defGroups('csvsrc',[
-  {n:'Playback', p:'advance order rate speed tscale loop interp initial reset'},
-  {n:'Range', p:'first last unit header', open:false},
-  {n:'Columns', p:'tcol dwellCol speedCol latCol lonCol textCol', open:false},
-  {n:'Table', p:'apply data', open:false}]);
