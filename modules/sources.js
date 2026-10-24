@@ -5496,6 +5496,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
         (n.ch[0].rssi!=null ? ` · RSSI ${n.ch[0].rssi.toFixed(0)} dBFS` : '')+
         (n.ch[0].snr!=null ? ` · SNR ${n.ch[0].snr.toFixed(0)} dB` : '')+
         (n.p.sql!=='off' ? (n.ch[0].sqOpen===false ? ' · SQL closed' : ' · SQL open') : '')+
+        (n.ch[0].aring && n.ch[0].active && n.sourceRate ? ' · audio lag '+Math.round(1000*(n.ch[0].aring.written-(n.ch[0].readCount||0))/(n.sourceRate/(n.decim||1)))+' ms' : '')+
         (n.workerMs!=null?` · dsp ${n.workerMs.toFixed(1)}/${(n.roundtripMs||0).toFixed(1)} ms`:'')+
         // разбивка по стадии, где реально теряются данные: demod — воркер не успел (вход),
         // ovf — consumer (Eng.tick) отстал, кольцо переполнилось и пришлось прыгнуть вперёд,
