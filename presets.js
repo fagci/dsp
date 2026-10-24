@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=84;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=85;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -874,7 +874,7 @@ const nt=addNode('note',40,40,{text:'Trilateration by hand. Open on a phone over
   '1. Stand at a spot, read the level off any receiver and type it into «level by hand, dBm» of Mark Point (e.g. -73).\n'+
   '2. Press ● Mark: the point = phone GPS + that RSSI. Walk 20–50 m or more to the next spot, repeat. Marks on one line do not give a fix — go around the source.\n'+
   '3. From the 3rd mark with a spread of positions Source Locator draws the estimate with an error radius (Map). More marks around = better.\n'+
-  'Marks are also kept in the Table «field/trilateration». A wrong mark: press Clear on the Locator and re-mark. Same antenna, height and receiver gain at every spot! Path loss n: 2 open field, 2.7–3.5 town, 4+ indoors.'});
+  'Marks are also kept in the Table «field/trilateration». The Locator takes the whole Table list, so a wrong mark is simply deleted in the Table — the estimate is recomputed. Same antenna, height and receiver gain at every spot! Path loss n: 2 open field, 2.7–3.5 town, 4+ indoors.'});
 nt.size.w=820; nt.size.h=170; applySize(nt);
 const me=addNode('geoMe',40,250,{src:'gps'});
 const mk=addNode('geoMark',320,250,{prefix:'P',icon:'dot',tx:'tx',rssiM:''});
@@ -886,7 +886,7 @@ tb.size.w=420; tb.size.h=260; applySize(tb);
 const mp=addNode('geoMap',700,540,{mz:17,follow:true,store:'trilat'});
 mp.size.w=640; mp.size.h=520; applySize(mp);
 addEdge(me.id,'lat',mk.id,'lat'); addEdge(me.id,'lon',mk.id,'lon'); addEdge(me.id,'alt',mk.id,'alt');
-addEdge(mk.id,'rec',tb.id,'rec'); addEdge(mk.id,'rec',lc.id,'rec');
+addEdge(mk.id,'rec',tb.id,'rec'); addEdge(tb.id,'rows',lc.id,'rows');
 addEdge(mk.id,'rec',mp.id,'rec'); addEdge(lc.id,'rec',mp.id,'rec'); addEdge(me.id,'rec',mp.id,'rec');
 markWiresDirty();
 });
@@ -5596,7 +5596,7 @@ markWiresDirty();
 preset('Field Survey: Mark Points with Photos → Table, Locator, Map', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Field measurements as points. On a phone: My Position in «gps» mode, press ● Mark (or 📷 Mark + photo — the camera opens, the photo goes to the browser database and its place and time come from EXIF when there is no GPS) at every spot; the level here is a slow LFO standing in for a receiver — wire Level / S-Meter / Spectrum Peak instead.\n'+
-  'Every mark is a record with lat, lon, alt, h (antenna height), rssi, azimuth, freq, tx (the source), session (field / quiet), rx_ant, rx_gain, note, photo. They are stored in the Table list «field/measurements» (📷 opens the photos; edit any field later), drawn on the Map and given to Source Locator, which groups by tx and finds the source from levels and bearings. Mark in a calm place with «session = quiet» for a long listen; filter the Table by session to feed either set to the Locator.'});
+  'Every mark is a record with lat, lon, alt, h (antenna height), rssi, azimuth, freq, tx (the source), session (field / quiet), rx_ant, rx_gain, note, photo. They are stored in the Table list «field/measurements» (📷 opens the photos; edit any field later), drawn on the Map and the Table gives its whole list to Source Locator, which groups by tx and finds the source from levels and bearings; only added or deleted rows are recomputed. Mark in a calm place with «session = quiet» for a long listen; filter the Table by session to feed either set to the Locator.'});
 nt.size.w=980; nt.size.h=130; applySize(nt);
 const me=addNode('geoMe',40,200,{src:'manual',lat:55.0126,lon:82.6507});
 const lf=addNode('lfo',40,380,{freq:.05,min:-90,max:-50});
@@ -5609,7 +5609,7 @@ lc.size.w=340; lc.size.h=260; applySize(lc);
 const mp=addNode('geoMap',700,500,{mz:12,mlat:55.0126,mlon:82.6507});
 mp.size.w=520; mp.size.h=360; applySize(mp);
 addEdge(me.id,'lat',mk.id,'lat'); addEdge(me.id,'lon',mk.id,'lon'); addEdge(lf.id,'out',mk.id,'rssi');
-addEdge(mk.id,'rec',tb.id,'rec'); addEdge(mk.id,'rec',lc.id,'rec'); addEdge(mk.id,'rec',mp.id,'rec'); addEdge(lc.id,'rec',mp.id,'rec');
+addEdge(mk.id,'rec',tb.id,'rec'); addEdge(tb.id,'rows',lc.id,'rows'); addEdge(mk.id,'rec',mp.id,'rec'); addEdge(lc.id,'rec',mp.id,'rec');
 markWiresDirty();
 });
 // данные демо «Map Editor»: список demo/trip (точки, зона, маршрут, круг, машина) и подсписок задач demo/trip tasks; только если их ещё нет

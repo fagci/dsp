@@ -1010,9 +1010,62 @@ function geoLocShown(n){
   let best=null; for(const g of n.groups.values()) if(g.sol && (!best || g.t>best.t)) best=g;
   return best || n.groups.values().next().value || null;
 }
+// запись → замер {key,m}: позиция, уровень/пеленг/угол места, группа; null — запись не подходит
+function geoLocMeas(n,r,gf){
+  const pos=geoRecPos(r); if(!pos) return null;
+  const sv=recNum(r[n.p.field]), az=recNum(r.azimuth ?? r.bearing), el=recNum(r.elevation);
+  if(sv==null && az==null) return null;
+  let key='';
+  if(gf){ const v=r[gf]; if(v==null || v==='') return null; key=String(v); }
+  const hz=typeof Horizon!=='undefined' && Horizon.hAt ? Horizon.hAt(pos.lat,pos.lon) : null;
+  const m={lat:pos.lat, lon:pos.lon, s:sv, az:az!=null ? ((az%360)+360)%360 : null, el, alt:recNum(r.alt), h:recNum(r.h)};
+  m.alt3=l3MeasAlt(m,hz);
+  return {key,m};
+}
+// Список из Table целиком. Кэш n.tbl: подпись строки → {c: сколько раз, key, m}. Новая ссылка на набор сравнивается
+// с кэшем: считаются только добавленные и убранные строки, остальные замеры остаются как есть.
+function geoLocRows(n,rows,gf,lf){
+  const next=new Map();
+  for(const r of rows){
+    if(!r || typeof r!=='object') continue;
+    const q=geoLocMeas(n,r,gf); if(!q) continue;
+    const m=q.m, sig=[q.key,m.lat,m.lon,m.s,m.az,m.el,m.alt,m.h].join('|');
+    const e=next.get(sig);
+    if(e) e.c++; else next.set(sig,{c:1,key:q.key,m,label:lf && r[lf]!=null && r[lf]!=='' ? String(r[lf]) : ''});
+  }
+  const now=Date.now();
+  for(const [sig,o] of n.tbl){                                       // убранные (или стало меньше повторов)
+    const e=next.get(sig), drop=o.ms.length-(e ? e.c : 0);
+    if(drop<=0) continue;
+    const g=n.groups.get(o.key);
+    for(const m of o.ms.splice(o.ms.length-drop,drop)){
+      if(!g) continue;
+      const i=g.meas.indexOf(m); if(i>=0){ g.meas.splice(i,1); g.dirty=true; g.t=now; n.total--; }
+    }
+    if(g && !g.meas.length){ n.groups.delete(o.key); if(n.showKey===o.key) n.showKey=null; }
+    if(!o.ms.length) n.tbl.delete(sig);
+  }
+  for(const [sig,e] of next){                                        // добавленные
+    let o=n.tbl.get(sig); if(!o) n.tbl.set(sig,o={key:e.key,ms:[]});
+    if(e.label) geoLocGroup(n,e.key).label=e.label;
+    for(let i=o.ms.length;i<e.c;i++){
+      const m=i ? {...e.m} : e.m; m.tbl=true;
+      const g=geoLocGroup(n,e.key); g.meas.push(m); g.dirty=true; g.t=now; n.total++; o.ms.push(m);
+    }
+  }
+}
+// сменились поле уровня / группа / подпись — замеры из Table пересобираются заново
+function geoLocRowsDrop(n){
+  for(const o of n.tbl.values()){
+    const g=n.groups.get(o.key); if(!g) continue;
+    g.meas=g.meas.filter(m=>!m.tbl); g.dirty=true; n.total-=o.ms.length;
+    if(!g.meas.length){ n.groups.delete(o.key); if(n.showKey===o.key) n.showKey=null; }
+  }
+  n.tbl.clear();
+}
 function geoLocFmtErr(km){ return km>=1 ? km.toFixed(1)+' km' : Math.round(km*1000)+' m'; }
 def({ id:'geoLocate', lazy:'manual', title:'Source Locator', cat:'Geo',
-  ins:[{n:'rec',t:'rec'},{n:'select',t:'rec'}],        // select — клик на карте: показать эту группу
+  ins:[{n:'rec',t:'rec'},{n:'rows',t:'bands'},{n:'select',t:'rec'}],        // rows — весь список из Table; select — клик на карте: показать эту группу
   outs:[{n:'rec',t:'rec'},{n:'rays',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'alt',t:'num'},{n:'err',t:'num'},{n:'count',t:'num'}],
   view:{h:260}, resize:true, readout:true,
   params:[{n:'field',t:'select',opts:['rssi','snr','level'],d:'rssi',label:'level field'},
@@ -1030,27 +1083,29 @@ def({ id:'geoLocate', lazy:'manual', title:'Source Locator', cat:'Geo',
           {n:'rays',t:'check',d:true,label:'rays: links from the marks to the estimate (Map, 3D)'},
           {n:'save',t:'text',d:'analysis/sources',label:'Table list for the estimates',adv:true},
           {n:'tosave',t:'button',label:'Save estimates to table',fn:n=>geoLocSave(n)},
-          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.groups.clear(); n.showKey=null; }}],
-  init:n=>{ n.groups=new Map(); n.showKey=null; n.lastSolve=0; n.pkey=''; n.total=0; },
+          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.groups.clear(); n.showKey=null; n.tbl.clear(); n.lastRows=null; }}],
+  init:n=>{ n.groups=new Map(); n.showKey=null; n.lastSolve=0; n.pkey=''; n.total=0; n.tbl=new Map(); n.lastRows=null; n.tkey=''; },
   process(n,I){
     const gf=String(n.p.group||'').trim(), lf=String(n.p.labelField||'').trim();
     for(const r of recList(I.select)){
       const id=String(r.id||''); if(id.startsWith('loc:')) n.showKey=id.slice(4);
     }
     for(const r of recList(I.rec)){
-      const pos=geoRecPos(r); if(!pos) continue;
-      const sv=recNum(r[n.p.field]), az=recNum(r.azimuth ?? r.bearing), el=recNum(r.elevation);
-      if(sv==null && az==null) continue;
-      let key='';
-      if(gf){ const v=r[gf]; if(v==null || v==='') continue; key=String(v); }
-      const g=geoLocGroup(n,key);
+      const q=geoLocMeas(n,r,gf); if(!q) continue;
+      const g=geoLocGroup(n,q.key);
       if(lf && r[lf]!=null && r[lf]!=='') g.label=String(r[lf]);
-      const last=g.meas[g.meas.length-1];
-      if(last && last.lat===pos.lat && last.lon===pos.lon && last.s===sv && last.az===az) continue;   // повтор того же скана
-      const hz=typeof Horizon!=='undefined' && Horizon.hAt ? Horizon.hAt(pos.lat,pos.lon) : null, m3={lat:pos.lat, lon:pos.lon, s:sv, az:az!=null ? ((az%360)+360)%360 : null, el, alt:recNum(r.alt), h:recNum(r.h)};
-      m3.alt3=l3MeasAlt(m3,hz); g.meas.push(m3);
-      if(g.meas.length>n.p.max) g.meas.splice(0,g.meas.length-n.p.max);
+      const last=g.meas[g.meas.length-1], m3=q.m;
+      if(last && last.lat===m3.lat && last.lon===m3.lon && last.s===m3.s && last.az===m3.az) continue;   // повтор того же скана
+      g.meas.push(m3);
+      while(g.meas.length>n.p.max){ const i=g.meas.findIndex(x=>!x.tbl); if(i<0) break; g.meas.splice(i,1); }   // замеры из Table не вытесняются
       g.dirty=true; g.t=Date.now(); n.total++;
+    }
+    // весь список из Table: набор запоминается, пересчёт — только групп, где строки добавились или убрались
+    const tk=[n.p.field,gf,lf,n.p.h0].join();
+    if(tk!==n.tkey){ n.tkey=tk; n.lastRows=null; geoLocRowsDrop(n); }
+    if(Array.isArray(I.rows) ? I.rows!==n.lastRows : n.lastRows){
+      n.lastRows=Array.isArray(I.rows) ? I.rows : null;
+      geoLocRows(n,n.lastRows||[],gf,lf);
     }
     const pkey=[n.p.method,n.p.pathN,n.p.sigmaDb,n.p.sigmaAz,n.p.area,n.p.minSpread].join();
     if(pkey!==n.pkey){ n.pkey=pkey; for(const g of n.groups.values()) g.dirty=true; }
