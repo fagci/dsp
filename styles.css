@@ -1112,6 +1112,11 @@ select.aed-b{padding:0 6px}
 .tbl-menu .tp-none{cursor:pointer}
 .tbl-menu .tp-none:hover{color:var(--acc)}
 .tbl-menu .tm-h{display:flex;align-items:center;gap:6px}
+.tbl-menu .tp-dir{cursor:pointer}
+.tbl-menu .tp-dir:hover{background:color-mix(in srgb,var(--acc2) 12%,var(--panel2))}
+.tbl-menu .tp-car{width:9px;color:var(--dim);flex:none}
+.tbl-menu .tp-gn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.tbl-menu .tp-n{color:var(--dim);font-size:9px}
 .tbl-menu .tm-s{display:flex;align-items:center;gap:6px}
 .tbl-menu .tp-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .tbl-menu .tp-cb{margin:0;width:15px;height:15px;accent-color:var(--acc2);cursor:pointer;flex:none}

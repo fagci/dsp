@@ -1001,6 +1001,11 @@ function tblInit(n){
   vw.addEventListener('scroll',()=>{ if(!n._vr && !vw.hidden) n.viewScroll=vw.scrollTop; });
   vw.addEventListener('focusin',e=>{ n.viewNew=e.target.classList.contains('tv-new'); });
   if(n.viewOpen && n.schema) tblRenderView(n);            // сразу, а не после асинхронной tblRenderAll: панель не схлопывается на пересборке
+  n._open=new Set(Array.isArray(n.p.open) ? n.p.open : []);
+  if(!Array.isArray(n.p.open)) for(const k of new Set([...tblShow(n),n.p.list])){            // раскрыть пути отмеченных
+    const parts=k.split('/'); parts.pop();
+    parts.reduce((a,x)=>{ const path=a ? a+'/'+x : x; n._open.add(path); return path; },'');
+  }
   n.ui.list.addEventListener('keydown',e=>tblKey(n,e));
   let sq=0;                                               // прокрутка и размер — раз в кадр
   const onScroll=()=>{ if(!sq) sq=requestAnimationFrame(()=>{ sq=0; if(!n.disposed && n.ui) tblScrolled(n); }); };
@@ -1184,15 +1189,19 @@ async function tblRenderAll(n){
 const tblByName=(a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'});
 // выбор списка: кнопка и панель с поиском. Строка — галочка (список идёт на выход rows и на карту — отмечай сколько нужно)
 // и имя (сделать активным, панель закрывается); у папки — галочка на все найденные в ней списки
-const tblPickLabel=g=>g==='' ? 'Lists' : g==='presets' ? 'Built-in (read-only)' : g.startsWith('presets/') ? 'Built-in · '+g.slice(8) : g;
-function tblPickGroups(n){
-  const groups=new Map();
-  for(const f of (n.treeNames||[n.p.list]).slice().sort(tblByName)){
-    const g=tblKind(f)==='patch' ? '' : tblDir(f).slice(0,-1);
-    if(!groups.has(g)) groups.set(g,[]);
-    groups.get(g).push(f);
+// дерево папок по именам списков: у каждой папки dirs / files; путь и имя папки — для раскрытия и подписи
+function tblBuildTree(names){
+  const root={dirs:new Map(),files:[],path:'',name:''};
+  for(const full of names){
+    const parts=full.split('/'), leaf=parts.pop();
+    let d=root;
+    for(const x of parts){
+      if(!d.dirs.has(x)) d.dirs.set(x,{dirs:new Map(),files:[],path:d.path ? d.path+'/'+x : x,name:x});
+      d=d.dirs.get(x);
+    }
+    d.files.push({name:full,leaf});
   }
-  return [...groups.keys()].sort((a,b)=>(a==='')?-1:(b==='')?1:(a.startsWith('presets')-b.startsWith('presets'))||tblByName(a,b)).map(g=>[g,groups.get(g)]);
+  return root;
 }
 function tblRenderPick(n){
   const ui=n.ui, k=tblShow(n).size;
@@ -1226,8 +1235,14 @@ function tblPickToggle(n){
   box.addEventListener('click',e=>{
     const cb=e.target.closest('.tp-cb');
     if(cb){                                             // галочка — отдельно: панель остаётся открытой
-      const names=cb.dataset.group!=null ? JSON.parse(cb.dataset.names) : [cb.closest('.tm-i').dataset.name];
+      const names=cb.dataset.names ? JSON.parse(cb.dataset.names) : [cb.closest('.tm-i').dataset.name];
       tblToggleShow(n,names,cb.checked); return;
+    }
+    const dir=e.target.closest('.tp-dir');
+    if(dir){                                            // папка: свернуть / раскрыть
+      const path=dir.dataset.path;
+      if(n._open.has(path)) n._open.delete(path); else n._open.add(path);
+      n.p.open=[...n._open]; tblPickFill(n); return;
     }
     const it=e.target.closest('.tm-i'); if(!it) return;
     m.remove(); tblPick(n,it.dataset.name);             // имя — сделать активным
@@ -1236,25 +1251,34 @@ function tblPickToggle(n){
   inp.focus();
   box.querySelector('.tm-i.act')?.scrollIntoView({block:'center'});
 }
-// строки панели по запросу: все слова — в имени списка или папки
+// строки панели: дерево папок со сворачиванием (при поиске раскрыто всё найденное); у папки галочка на все найденные в ней списки
 function tblPickFill(n){
   const ui=n.ui, box=ui.pickBox, sh=tblShow(n), q=(ui.pickQ?.value||'').toLowerCase().split(/\s+/).filter(Boolean);
   const mk=(tag,cls,txt)=>{ const e=document.createElement(tag); e.className=cls; if(txt!=null) e.textContent=txt; return e; };
+  const names=(n.treeNames||[n.p.list]).filter(f=>{ const h=(tblKind(f)==='patch' ? 'this patch' : f).toLowerCase(); return q.every(w=>h.includes(w)); });
   const frag=document.createDocumentFragment(); let cnt=0;
-  for(const [g,files] of tblPickGroups(n)){
-    const hit=files.filter(f=>{ const h=(tblPickLabel(g)+' '+f).toLowerCase(); return q.every(w=>h.includes(w)); });
-    if(!hit.length) continue;
-    const h=mk('div','tm-h'), on=hit.filter(f=>sh.has(f)).length, gc=mk('input','tp-cb');
-    gc.type='checkbox'; gc.dataset.group=g; gc.dataset.names=JSON.stringify(hit); gc.checked=on===hit.length; gc.indeterminate=on>0 && on<hit.length;
-    gc.title='all lists of this folder';
-    h.append(gc,mk('span','tp-gn',tblPickLabel(g))); frag.append(h);
-    for(const f of hit){
-      const d=mk('div','tm-i tm-s'+(f===n.p.list ? ' act' : '')), cb=mk('input','tp-cb');
-      d.dataset.name=f; cb.type='checkbox'; cb.checked=sh.has(f); cb.title='show on the map and the rows output';
-      d.append(cb,mk('span','tp-name',tblKind(f)==='patch' ? 'This patch' : tblLeaf(f))); frag.append(d); cnt++;
+  const filesOf=d=>[...d.files.map(f=>f.name),...[...d.dirs.values()].flatMap(filesOf)];
+  const walk=(d,depth)=>{
+    const files=d.files.slice().sort((a,b)=>tblKind(a.name)==='patch' ? -1 : tblKind(b.name)==='patch' ? 1 : tblByName(a.leaf,b.leaf));
+    for(const f of files){
+      const el=mk('div','tm-i tm-s'+(f.name===n.p.list ? ' act' : '')), cb=mk('input','tp-cb');
+      el.dataset.name=f.name; el.style.paddingLeft=(depth*14+10)+'px';
+      cb.type='checkbox'; cb.checked=sh.has(f.name); cb.title='show on the map and the rows output';
+      el.append(cb,mk('span','tp-name',tblKind(f.name)==='patch' ? 'This patch' : f.leaf)); frag.append(el); cnt++;
     }
-  }
-  if(!cnt){ frag.append(mk('div','tm-d tm-none','nothing found')); }
+    const dirs=[...d.dirs.values()].sort((a,b)=>(a.path==='presets')-(b.path==='presets') || tblByName(a.name,b.name));
+    for(const sub of dirs){
+      const all=filesOf(sub), on=all.filter(f=>sh.has(f)).length, open=q.length>0 || n._open.has(sub.path);
+      const h=mk('div','tm-h tp-dir'), gc=mk('input','tp-cb');
+      h.dataset.path=sub.path; h.style.paddingLeft=(depth*14+10)+'px';
+      gc.type='checkbox'; gc.dataset.names=JSON.stringify(all); gc.checked=on===all.length; gc.indeterminate=on>0 && on<all.length; gc.title='all lists of this folder';
+      h.append(mk('span','tp-car',open ? '▾' : '▸'),gc,mk('span','tp-gn',sub.path==='presets' ? 'presets (built-in, read-only)' : sub.name),mk('span','tp-n',(on ? on+'/' : '')+all.length));
+      frag.append(h);
+      if(open) walk(sub,depth+1);
+    }
+  };
+  walk(tblBuildTree(names),0);
+  if(!cnt) frag.append(mk('div','tm-d tm-none','nothing found'));
   box.replaceChildren(frag);
   ui.pickTop.querySelector('.tp-cnt').textContent='on the map / rows output · '+sh.size;
   const its=box.querySelectorAll('.tm-i');
