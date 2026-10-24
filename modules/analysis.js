@@ -789,17 +789,28 @@ function cfarHeard(n){
   const h=n.lastHeard;
   return h && performance.now()-h.at<15000 ? h : null;
 }
+// запись на выход port и сразу в подключённые Table (не ждём такта движка: на нагруженной странице он мог прийти через секунды);
+// у записи _u — Table, получив её ещё и по проводу, второй раз не добавит
+let _cfarU=0;
+function cfarEmit(n,port,list,rec){
+  rec._u=n.id+':'+(++_cfarU);
+  (n[list]||(n[list]=[])).push(rec);
+  for(const e of Graph.edges) if(e.from===n.id && e.fp===port){
+    const t=Graph.map[e.to];
+    if(t && t.type==='table' && e.tp==='rec' && typeof tblIngest==='function') tblIngest(t,[rec],true);
+  }
+}
 function cfarFavCur(n){
   const t=cfarHeard(n); if(!t) return;
   const list=cfarFavList(n).slice();
   if(!list.some(x=>Math.abs(x.f-cfarF(t))<=x.w/2)) list.push({f:cfarF(t), w:cfarW(t)});
   cfarFavSave(n,list);
-  (n._favRecs||(n._favRecs=[])).push({t:Date.now(), src:'CFAR', kind:'interesting', id:Math.round(cfarF(t)), freq:Math.round(cfarF(t)), freqReal:Math.round(t.f), bw:Math.round(t.bw), db:+t.db.toFixed(1), snr:+t.snr.toFixed(1)});
+  cfarEmit(n,'fav','_favRecs',{t:Date.now(), src:'CFAR', kind:'interesting', id:Math.round(cfarF(t)), freq:Math.round(cfarF(t)), freqReal:Math.round(t.f), bw:Math.round(t.bw), db:+t.db.toFixed(1), snr:+t.snr.toFixed(1)});
 }
 // запись о занесении в чёрный список — на выход bl (→ Table «Scan skip»: строки lo / hi идут обратно на вход skip)
 function cfarBlRec(n,t){
   const w=cfarW(t);
-  (n._blRecs||(n._blRecs=[])).push({t:Date.now(), src:'CFAR', kind:'blacklist', id:Math.round(cfarF(t)), freq:Math.round(cfarF(t)), freqReal:Math.round(t.f), lo:Math.round(cfarF(t)-w/2), hi:Math.round(cfarF(t)+w/2), bw:Math.round(t.bw), db:+t.db.toFixed(1)});
+  cfarEmit(n,'bl','_blRecs',{t:Date.now(), src:'CFAR', kind:'blacklist', id:Math.round(cfarF(t)), freq:Math.round(cfarF(t)), freqReal:Math.round(t.f), lo:Math.round(cfarF(t)-w/2), hi:Math.round(cfarF(t)+w/2), bw:Math.round(t.bw), db:+t.db.toFixed(1)});
 }
 function cfarBlCur(n){
   const t=cfarHeard(n); if(!t) return;

@@ -137,7 +137,7 @@ async function tblBackfill(n){
   for(const r of n.all) for(const c of n.cl) if(r[c]===undefined) r[c]='';
   if(tblKind(n.p.list)==='db'){
     try{
-      for(const i of dirty){ const it=tblToItem(n.all[i],n.cl,n.virt); await ListDB.update(n.ids[i],{name:it.name,fields:it.fields,value:it.fields.value??''}); }
+      for(const i of dirty){ const it=tblToItem(n.all[i],n.cl,n.virt); await ListDB.update(await tblRealId(n,n.ids[i]),{name:it.name,fields:it.fields,value:it.fields.value??''}); }
       if(grown) await tblMetaSet(n.p.list,{cols:n.cl});
     }catch(e){ alert('storage: '+(e.message||e)); return; }
   } else await tblSave(n);
@@ -486,9 +486,20 @@ async function tblUpsert(n,recs,key){
   for(const i of dirty) trCalcRow(n,n.all[i]);
   if(kind==='db') for(const i of dirty){
     const it=tblToItem(n.all[i],n.cl,n.virt);
-    await ListDB.update(n.ids[i],{name:it.name,fields:it.fields,value:it.fields.value??''});
+    await ListDB.update(await tblRealId(n,n.ids[i]),{name:it.name,fields:it.fields,value:it.fields.value??''});
   }
   return {fresh:[...fresh.values()],grown};
+}
+// Строка db-списка показывается сразу, а в IndexedDB пишется следом (транзакция может ждать очереди за потоком записей другого списка:
+// на телефоне это секунды). До записи у строки временный id < 0; операции с хранилищем сначала дожидаются записи и берут настоящий id
+async function tblRealId(n,id){
+  if(!(id<0)) return id;
+  await n._persist;
+  return n._idMap?.get(id) ?? id;
+}
+async function tblRealIds(n,ids){
+  if(ids.some(x=>x<0)) await n._persist;
+  return ids.map(x=>x<0 ? (n._idMap?.get(x) ?? null) : x).filter(x=>x!=null);
 }
 // добавление записей; новые поля расширяют колонки (и порты — без потери проводов)
 async function tblAdd(n,recs,strict){                  // strict (форма): нарушение правил — исключение; иначе такие записи пропускаются
@@ -510,17 +521,22 @@ async function tblAdd(n,recs,strict){                  // strict (форма): �
   const rows=recs.map(r=>{ const o={}; for(const c of n.cl) o[c]=r[c]??''; return o; });
   let ids;
   if(kind==='db'){
-    try{
-      ids=await ListDB.addMany(n.p.list,rows.map(r=>tblToItem(r,n.cl,n.virt)));
-      if(grown) await tblMetaSet(n.p.list,{cols:n.cl});
-    }catch(e){ alert('storage: '+(e.message||e)); return; }
+    ids=rows.map(()=>-(n._tmpSeq=(n._tmpSeq||0)+1));
+    const list=n.p.list, items=rows.map(r=>tblToItem(r,n.cl,n.virt)), cols=grown ? n.cl.slice() : null, tmp=ids;
+    n._persist=(n._persist||Promise.resolve()).then(async()=>{
+      const real=await ListDB.addMany(list,items);
+      if(cols) await tblMetaSet(list,{cols});
+      const m=n._idMap||(n._idMap=new Map());
+      tmp.forEach((t,i)=>{ m.set(t,real[i]); const k=n.ids.indexOf(t); if(k>=0) n.ids[k]=real[i]; });
+      if(m.size>4000) for(const k of [...m.keys()].slice(0,2000)) m.delete(k);
+    }).catch(e=>{ alert('storage: '+(e.message||e)); if(n.loaded===list) tblLoad(n); });
   } else ids=rows.map((_,i)=>n.all.length+i);
   n.all.push(...rows); n.ids.push(...ids);
   // потолок: старые записи уходят (лог не растёт бесконечно)
   const max=+n.schema?.card?.max||0, cap=kind==='patch' ? Math.min(max||1000,1000) : max;
   if(cap>0 && n.all.length>cap){
     const drop=n.ids.splice(0,n.all.length-cap); n.all.splice(0,drop.length);
-    if(kind==='db') await ListDB.removeMany(drop).catch(()=>{});
+    if(kind==='db') await ListDB.removeMany(await tblRealIds(n,drop)).catch(()=>{});
     n.idx=Math.max(0,n.idx-drop.length);
   }
   // CSV всех строк (до 1000) + запись параметра на каждый сброс — O(N) дважды в секунду; при потоке записей копим и пишем реже
@@ -539,7 +555,7 @@ async function tblUpdate(n,i,rec){
   n.all[k]=o;
   if(tblKind(n.p.list)==='db'){
     const it=tblToItem(o,n.cl,n.virt);
-    await ListDB.update(id,{name:it.name,fields:it.fields,value:it.fields.value??''});
+    await ListDB.update(await tblRealId(n,id),{name:it.name,fields:it.fields,value:it.fields.value??''});
     const was=n.labelFn(row), now=n.labelFn(o);
     if(was && now && was!==now && await tcRelink(n.p.list,was,now)){ await tblLoad(n); return; }   // связи на запись следуют за её именем
   } else await tblSave(n);
@@ -549,7 +565,7 @@ async function tblRemove(n,i){
   if(tblRO(n)) return;
   const row=n.rows[i], k=n.all.indexOf(row), id=n.ids[k];
   n.all.splice(k,1); n.ids.splice(k,1);
-  if(tblKind(n.p.list)==='db') await ListDB.remove(id);
+  if(tblKind(n.p.list)==='db') await ListDB.remove(await tblRealId(n,id));
   else { n.ids=n.all.map((_,j)=>j); await tblSave(n); }
   if(n.p.sel===id) n.p.sel=null;
   tblDerive(n);
@@ -559,6 +575,14 @@ async function tblRemove(n,i){
 // flush — сразу записать (вызов напрямую, когда движок остановлен и по проводу ничего не идёт)
 function tblIngest(n,recs,flush){
   if(tblRO(n)) return;
+  // запись с _u могла прийти и напрямую (кнопка узла-источника), и по проводу — второй экземпляр отбрасываем; _u в колонки не попадает
+  recs=recs.map(r=>{
+    if(!r || typeof r!=='object' || r._u==null) return r;
+    const q=n._seenU||(n._seenU=new Set()), {_u,...rest}=r;
+    if(q.has(_u)) return null;
+    q.add(_u); if(q.size>300) q.delete(q.values().next().value);
+    return rest;
+  }).filter(Boolean);
   const del=[], ren=[];
   for(const r of recs) if(r && typeof r==='object') (r._delete ? del : r._was!=null ? ren : n.pend).push(r);
   if(del.length) tblDelRecs(n,del);
@@ -574,7 +598,7 @@ async function tblRenameRecs(n,recs){
       n.all[k]=o;
       if(tblKind(n.p.list)==='db'){
         const it=tblToItem(o,n.cl,n.virt);
-        await ListDB.update(n.ids[k],{name:it.name,fields:it.fields,value:it.fields.value??''});
+        await ListDB.update(await tblRealId(n,n.ids[k]),{name:it.name,fields:it.fields,value:it.fields.value??''});
         const now=n.labelFn(o);
         if(was && now && was!==now && await tcRelink(n.p.list,was,now)){ await tblLoad(n); n.pend.push(rest); continue; }
       } else await tblSave(n);
@@ -593,7 +617,7 @@ async function tblDelRecs(n,recs){
     if(k<0) continue;
     const id=n.ids[k];
     n.all.splice(k,1); n.ids.splice(k,1);
-    if(tblKind(n.p.list)==='db') await ListDB.remove(id);
+    if(tblKind(n.p.list)==='db') await ListDB.remove(await tblRealId(n,id));
     else { n.ids=n.all.map((_,j)=>j); await tblSave(n); }
     if(n.p.sel===id) n.p.sel=null;
   }
@@ -606,7 +630,7 @@ async function tblClear(n){
   n.all=[]; n.ids=[]; n.p.sel=null;
   tblDerive(n); tblReset(n); n.uiDirty=true; n.uiFull=true;
   if(n.ui) tblRenderAll(n);
-  if(gone) await ListDB.removeMany(gone);
+  if(gone) await ListDB.removeMany(await tblRealIds(n,gone));
   if(n.schema?.card?.seq){ delete n.schema.card.seq; await trSeqSave(n); }      // счётчик автонумерации начинается заново
   if(tblKind(n.p.list)==='patch') await tblSave(n);
 }
@@ -636,8 +660,8 @@ async function tblSync(n,list,onlyNew){
   if(!dirty.length && !stale.length && !fresh.length && !grown) return;
   if(db){
     try{
-      for(const i of dirty){ const it=tblToItem(n.all[i],n.cl,n.virt); await ListDB.update(n.ids[i],{name:it.name,fields:it.fields,value:it.fields.value??''}); }
-      if(stale.length) await ListDB.removeMany(stale.map(i=>n.ids[i]));
+      for(const i of dirty){ const it=tblToItem(n.all[i],n.cl,n.virt); await ListDB.update(await tblRealId(n,n.ids[i]),{name:it.name,fields:it.fields,value:it.fields.value??''}); }
+      if(stale.length) await ListDB.removeMany(await tblRealIds(n,stale.map(i=>n.ids[i])));
     }catch(e){ alert('storage: '+(e.message||e)); return; }
   }
   for(let j=stale.length-1;j>=0;j--){ const i=stale[j]; if(n.p.sel===n.ids[i]) n.p.sel=null; n.all.splice(i,1); n.ids.splice(i,1); }
@@ -681,7 +705,7 @@ async function tblColsEdit(n,cl,ren,fill){             // переименова
   const gone=old.filter(c=>!cl.includes(c));
   n.cl=cl.slice(); n.all=rows; n.virt=trVirtual(n);
   if(tblKind(n.p.list)==='db'){
-    if(gone.length || fill) for(let k=0;k<rows.length;k++){ const it=tblToItem(rows[k],n.cl,n.virt); await ListDB.update(n.ids[k],{name:it.name,fields:it.fields}); }
+    if(gone.length || fill) for(let k=0;k<rows.length;k++){ const it=tblToItem(rows[k],n.cl,n.virt); await ListDB.update(await tblRealId(n,n.ids[k]),{name:it.name,fields:it.fields}); }
     await tblMetaSet(n.p.list,{cols:n.cl});
   } else await tblSave(n);
   tblSetCols(n,n.cl.slice(),true);
@@ -784,7 +808,7 @@ function tblFlush(n){
   if(n.flushing || !n.pend.length || n.loaded!==n.p.list) return;
   n.flushing=true;
   const rows=n.pend; n.pend=[];
-  tblAdd(n,rows).catch(e=>console.warn('table:',e)).finally(()=>{ n.flushing=false; n.lastFlush=performance.now(); });
+  tblAdd(n,rows).catch(e=>console.warn('table:',e)).finally(()=>{ n.flushing=false; n.lastFlush=performance.now(); if(n.pend.length && !n.disposed) tblFlush(n); });
 }
 
 /* ---------- выбранная строка ---------- */
