@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=93;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=94;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -380,6 +380,7 @@ const PRESET_CATS={
   'Object Detect: Camera Video and Photo':'Images & TV',
   'Neural Denoiser (RNNoise): Noisy Voice → Clean Voice':'Digital Voice & Trunking',
   'Sound Classifier (YAMNet): What Is That Sound':'Digital Voice & Trunking',
+  'Notes (Basic Pitch): Chord and Microphone':'Digital Voice & Trunking',
   'Pulse: Fingertip on the Phone Camera (torch)':'Images & TV',
   'Camera Alarm: Motion → Archive + Beep':'Images & TV',
   'Timelapse: Camera Frames → Video':'Images & TV',
@@ -6304,6 +6305,21 @@ const tk=addNode('ticker',900,170,{time:true}); tk.size.w=320; tk.size.h=220; ap
 addEdge(m.id,'a',mx.id,'a'); addEdge(o.id,'out',mx.id,'b');
 addEdge(mx.id,'out',yn.id,'in');
 addEdge(yn.id,'rec',tk.id,'rec');
+markWiresDirty();
+});
+preset('Notes (Basic Pitch): Chord and Microphone', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Basic Pitch (a neural network from Spotify, runs in the browser) hears several notes at once — chords, a melody, a voice. Three saw oscillators play a C major chord (C4 E4 G4) and the node names the notes; the ticker logs each note when it starts. Mute the oscillators (amp 0) and play or sing near the microphone — it works for any instrument. It looks at the last 2 seconds, so the answer lags about a second. The first start loads about 2 MB into Files → Offline data (or press ⇩ offline in Files); after that it works without a network. Heavy on the CPU: raise «analyse every» on a slow device.'});
+nt.size.w=1000; nt.size.h=100; applySize(nt);
+const a =addNode('osc',40,170,{wave:'saw',freq:261.63,amp:.08});
+const b =addNode('osc',40,300,{wave:'saw',freq:329.63,amp:.08});
+const c =addNode('osc',40,430,{wave:'saw',freq:392,amp:.08});
+const m =addNode('mic',40,560,{gainA:1,echo:false,ns:false,agc:false});
+const mx=addNode('mixer',300,170,{channels:'4'});
+const pn=addNode('pitchnn',560,170,{period:.5,thr:.3}); pn.size.w=300; pn.size.h=200; applySize(pn);
+const tk=addNode('ticker',900,170,{time:true}); tk.size.w=320; tk.size.h=200; applySize(tk);
+addEdge(a.id,'out',mx.id,'a'); addEdge(b.id,'out',mx.id,'b'); addEdge(c.id,'out',mx.id,'c'); addEdge(m.id,'a',mx.id,'d');
+addEdge(mx.id,'out',pn.id,'in'); addEdge(pn.id,'rec',tk.id,'rec');
 markWiresDirty();
 });
 preset('Pulse: Fingertip on the Phone Camera (torch)', function(){
