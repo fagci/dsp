@@ -12,12 +12,19 @@ const slFmtT=t=>{ const a=Math.abs(t);
   return a>=1 ? t.toFixed(a>=10 ? 2 : 3)+' s' : a>=1e-3 ? (t*1e3).toFixed(a>=.01 ? 2 : 3)+' ms' : (t*1e6).toFixed(a>=1e-5 ? 1 : 2)+' µs'; };
 const slFmtV=v=>{ const a=Math.abs(v);
   return a>=1e6 ? (v/1e6).toFixed(2)+'M' : a>=1e3 ? (v/1e3).toFixed(2)+'k' : a>=10 ? v.toFixed(1) : a>=.01 ? v.toFixed(3) : v.toExponential(1); };
+const slFmtF=(v,step,short)=>{ const a=Math.abs(v), st=Math.max(step||1,1e-3);
+  return a>=1e6 ? (v/1e6).toFixed(Math.min(6,Math.max(1,Math.ceil(6-Math.log10(st)))))+(short ? 'M' : ' MHz') : a>=1e3 ? (v/1e3).toFixed(Math.max(0,Math.min(3,Math.ceil(3-Math.log10(st)))))+(short ? 'k' : ' kHz') : v.toFixed(0)+(short ? '' : ' Hz'); };
+const SL_LUT=(()=>{ const stops=[[0,8,10,40],[.25,30,40,140],[.5,0,170,200],[.75,240,220,60],[1,255,255,255]], o=new Uint8Array(768);
+  for(let i=0;i<256;i++){ const t=i/255; let j=0; while(j<3 && t>stops[j+1][0]) j++;
+    const a=stops[j], b=stops[j+1], u=(t-a[0])/(b[0]-a[0]); for(let c=0;c<3;c++) o[i*3+c]=Math.round(a[c+1]+(b[c+1]-a[c+1])*u); }
+  return o; })();
 const slEsc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 def({ id:'sigLab', title:'Signal Analyzer', cat:'Analysis', lazy:'manual', view:{h:230}, resize:true, w:620,
   kw:'urh universal radio hacker signal analysis bits symbols demodulate ook ask fsk psk manchester protocol reverse engineering packet baud decode unknown waveform oscilloscope',
   ins:[{n:'iq',t:'iq'},{n:'in',t:'sig'},{n:'go',t:'num'}],
-  outs:[{n:'blk',t:'blk'},{n:'rec',t:'rec'},{n:'bin',t:'bin'},{n:'text',t:'txt'},{n:'baud',t:'num'},{n:'count',t:'num'}],
+  outs:[{n:'blk',t:'blk'},{n:'rec',t:'rec'},{n:'bin',t:'bin'},{n:'text',t:'txt'},{n:'baud',t:'num'},{n:'count',t:'num'},
+    {n:'freq',t:'num'},{n:'offset',t:'num'},{n:'bw',t:'num'}],
   params:[
     {n:'mod',t:'select',opts:['auto','ASK','FSK','PSK','raw'],d:'auto',label:'modulation (auto — from the signal; ASK includes OOK; raw — the input is already demodulated data, e.g. NFM audio of an FSK transmission)'},
     {n:'levels',t:'select',opts:['2','4'],d:'2',label:'symbol levels (2 — a bit per symbol, 4 — a dibit)'},
@@ -46,6 +53,11 @@ def({ id:'sigLab', title:'Signal Analyzer', cat:'Analysis', lazy:'manual', view:
     {n:'refresh',t:'range',min:.5,max:10,step:.5,d:2,label:'rolling: analyse every, s',adv:true},
     {n:'trig',t:'range',min:-80,max:0,step:1,d:-30,label:'trigger level, dBFS',adv:true},
     {n:'maxS',t:'num',d:4000000,label:'samples kept at most',adv:true},
+    {n:'sgram',t:'check',d:true,label:'spectrogram above the plot (time → right, frequency ↑): drag up/down on it to pick a band; outputs freq / offset / bw give the band for IQ Frequency Shift and IQ Decimator'},
+    {n:'bpOn',t:'check',d:false,label:'band-pass filter: analyse only the picked band (it is moved to 0 Hz first)'},
+    {n:'bpF',t:'num',d:0,label:'band centre, Hz (absolute: the stream centre + offset; for a sound signal — from 0)',adv:true},
+    {n:'bpW',t:'num',d:0,label:'band width, Hz (0 — no band); set by dragging on the spectrogram',adv:true},
+    {n:'fftSize',t:'select',opts:['256','512','1024','2048'],d:'512',label:'spectrogram: FFT size (resolution vs time)',adv:true},
     {n:'fmt',t:'text',d:'bin',hidden:true},
     {n:'labels',t:'text',d:'[]',hidden:true}],
   init:n=>{ n.cap=null; n.R=null; n.run=true; n.sel=-1; n.vx=null; n.hover=null; n.range=null; n.bsel=null;
@@ -55,12 +67,12 @@ def({ id:'sigLab', title:'Signal Analyzer', cat:'Analysis', lazy:'manual', view:
   dispose:n=>{ if(n.sw){ n.sw.terminate(); n.sw=null; } n.cap=null; n.R=null; },
   process(n,I){
     const P=n.p, s=iqIn(I,'iq');
-    let sr=0, cplx=false, chunks=null;
-    if(s && s.sr){ sr=s.sr; cplx=true; chunks=s.chunks; }
+    let sr=0, cplx=false, chunks=null, fc=0;
+    if(s && s.sr){ sr=s.sr; cplx=true; chunks=s.chunks; fc=s.fc||0; }
     else if(I.in && I.in.length){ sr=Eng.sr; chunks=[{re:I.in}]; }
     const go=(I.go||0)>.5, rise=go && !n.prevGo; n.prevGo=go;
     if(rise){ if(P.mode==='rolling') n.forceAna=true; else slRunStop(n,true); }
-    if(sr && (!n.cap || n.cap.sr!==sr || n.cap.cplx!==cplx || (n.run && n.cap.L!==Math.max(1024,Math.min(Math.round(P.secs*sr),(P.maxS|0)||4000000))))) slCapInit(n,sr,cplx);
+    if(sr && (!n.cap || n.cap.sr!==sr || n.cap.cplx!==cplx || Math.abs(n.cap.fc-fc)>1 || (n.run && n.cap.L!==Math.max(1024,Math.min(Math.round(P.secs*sr),(P.maxS|0)||4000000))))) slCapInit(n,sr,cplx,fc);
     const c=n.cap;
     if(n._mode!==P.mode){ const first=n._mode===undefined; n._mode=P.mode; if(!first && c && P.mode!=='rolling') slRunStop(n,true); }      // новый буфер для single / trigger
     if(c && !n.R && performance.now()-(n._rt||0)>250){ n._rt=performance.now(); redraw(n); }      // ход первого захвата
@@ -84,7 +96,8 @@ def({ id:'sigLab', title:'Signal Analyzer', cat:'Analysis', lazy:'manual', view:
     }
     slCfgCheck(n);
     const o={blk:n.qBlk.length ? n.qBlk.shift() : null, rec:n.qRec.length ? n.qRec.splice(0) : null,
-      bin:n.oBin, text:n.oText, baud:n.R ? n.R.baud : 0, count:n.R ? n.R.msgs.length : 0};
+      bin:n.oBin, text:n.oText, baud:n.R ? n.R.baud : 0, count:n.R ? n.R.msgs.length : 0,
+      freq:P.bpW>0 ? +P.bpF : null, offset:P.bpW>0 && c ? P.bpF-c.fc : null, bw:P.bpW>0 ? +P.bpW : null};
     return o; },
   draw(n,cv,cx){
     if(!n.ui && n.el) slInitUI(n);
@@ -97,17 +110,17 @@ def({ id:'sigLab', title:'Signal Analyzer', cat:'Analysis', lazy:'manual', view:
 
 // смена параметров разбора — разобрать заново
 function slCfgCheck(n){
-  const P=n.p, k=[P.mod,P.levels,P.code,P.inv,P.pause,P.minBits,P.sync,P.cut,P.gray,P.perMsg,P.auto,P.baud,P.noise,P.center,P.align,P.lsb].join('|');
-  if(n.cfgK===k) return;
+  const P=n.p, k=[P.mod,P.levels,P.code,P.inv,P.pause,P.minBits,P.sync,P.cut,P.gray,P.perMsg,P.auto,P.baud,P.noise,P.center,P.align,P.lsb,P.sgram,P.fftSize,P.bpOn&&P.bpW>0 ? P.bpF+'/'+P.bpW : 0].join('|');
+  if(n.bandDrag || n.cfgK===k) return;
   const first=n.cfgK===undefined;
   n.cfgK=k;
   if(!first && n.cap && n.cap.w>0){ if(n.run) n.forceAna=true; else slAnalyze_(n); }
 }
 
 /* ---------- захват ---------- */
-function slCapInit(n,sr,cplx){
+function slCapInit(n,sr,cplx,fc){
   const L=Math.max(1024,Math.min(Math.round(n.p.secs*sr),(n.p.maxS|0)||4000000));
-  n.cap={sr,L,re:new Float32Array(L),im:cplx ? new Float32Array(L) : null,w:0,cplx,ep:(n.cap?n.cap.ep:0)+1};
+  n.cap={sr,L,re:new Float32Array(L),im:cplx ? new Float32Array(L) : null,w:0,cplx,fc:fc!==undefined ? fc : (n.cap?n.cap.fc:0),ep:(n.cap?n.cap.ep:0)+1};
   n.R=null; n.sel=-1; n.vx=null; n.range=null; n.crop=null; n.bsel=null; n.seen.clear(); n.anaW=-1; n.armed=true; n.trigAt=-1;
   n.tableDirty=true; redraw(n);
 }
@@ -134,12 +147,12 @@ function slCapLinear(n){
 function slFreeze(n){ n.run=false; n.forceAna=true; redraw(n); }
 function slRunStop(n,arm){
   if(arm || !n.run){
-    if(n.p.mode!=='rolling' && n.cap) slCapInit(n,n.cap.sr,n.cap.cplx);
+    if(n.p.mode!=='rolling' && n.cap) slCapInit(n,n.cap.sr,n.cap.cplx,n.cap.fc);
     n.run=true;
   } else n.run=false;
   redraw(n);
 }
-function slClear(n){ if(n.cap) slCapInit(n,n.cap.sr,n.cap.cplx); n.qBlk=[]; n.qRec=[]; n.oBin=null; n.oText=null; redraw(n); }
+function slClear(n){ if(n.cap) slCapInit(n,n.cap.sr,n.cap.cplx,n.cap.fc); n.qBlk=[]; n.qRec=[]; n.oBin=null; n.oText=null; redraw(n); }
 
 /* ---------- разбор ---------- */
 // считается в воркере; нет воркера (file://, политика) — в главном потоке
@@ -149,7 +162,8 @@ function slAnalyze_(n){
   if(n.busy){ n.again=true; return; }
   const lin=slCapLinear(n);
   const cfg={mod:P.mod,levels:+P.levels,gray:P.gray,code:P.code,inv:P.inv,pause:+P.pause,minBits:+P.minBits,
-    auto:P.auto,noise:+P.noise,center:+P.center,baud:+P.baud,perMsg:P.perMsg,split:P.cut ? (/^[0-9a-f\s]+$/i.test(String(P.sync||'').trim()) ? String(P.sync).trim() : 'auto') : ''};
+    auto:P.auto,noise:+P.noise,center:+P.center,baud:+P.baud,perMsg:P.perMsg,band:P.bpOn && P.bpW>0 ? {f0:P.bpF-c.fc,bw:+P.bpW} : null,sg:!!P.sgram,fft:+P.fftSize,
+    split:P.cut ? (/^[0-9a-f\s]+$/i.test(String(P.sync||'').trim()) ? String(P.sync).trim() : 'auto') : ''};
   if(n.sw===null && typeof Worker!=='undefined'){
     try{
       const w=new Worker('siglab-worker.js'+SL_Q);
@@ -180,7 +194,7 @@ function slResult(n,m){
   if(n.again){ n.again=false; slAnalyze_(n); }
 }
 function slApply(n,R,job){
-  n.cost=R.cost; n.anaW=n.cap ? n.cap.w : 0;
+  n.cost=R.cost; R.fc=n.cap ? n.cap.fc : 0; n.anaW=n.cap ? n.cap.w : 0;
   R.abs0=job.abs0; R.N=job.N;
   const was=n.R && n.R.msgs[n.sel] ? n.R.abs0+n.R.msgs[n.sel].a : null;       // выбранное сообщение остаётся тем же, пока оно в окне
   n.R=R; n.pyrM=R.pyrM||null; n.pyrD=R.pyrD||null;
@@ -268,12 +282,14 @@ function slSetView(n,a,b){
   redraw(n);
 }
 function slLanes(n,H){
-  const R=n.R, top=SL_AXH, bot=H-SL_OVH-2, h=bot-top;
+  const R=n.R, top0=SL_AXH, bot=H-SL_OVH-2;
+  const sgh=n.p.sgram && R && R.sgram ? Math.max(36,Math.round((bot-top0)*.34)) : 0, top=top0+sgh, h=bot-top;
+  const sg=sgh ? [top0,top-2] : null;
   const both=n.p.lanes==='both' && R && R.mod!=='ASK';
   const strip=Math.min(46,h*.35);                                 // место под полосы символов, бит и полей
-  if(both){ const mh=Math.round(h*.3); return {mag:[top,top+mh-2],dem:[top+mh,bot],strip,top,bot}; }
+  if(both){ const mh=Math.round(h*.3); return {mag:[top,top+mh-2],dem:[top+mh,bot],strip,top,bot,sg}; }
   const onlyMag=n.p.lanes==='magnitude' || (R && R.mod==='ASK');
-  return onlyMag ? {mag:[top,bot],dem:null,strip,top,bot} : {mag:null,dem:[top,bot],strip,top,bot};
+  return onlyMag ? {mag:[top,bot],dem:null,strip,top,bot,sg} : {mag:null,dem:[top,bot],strip,top,bot,sg};
 }
 const slNice=x=>{ const e=Math.pow(10,Math.floor(Math.log10(x))), f=x/e; return (f<1.5?1:f<3.5?2:f<7.5?5:10)*e; };
 
@@ -295,6 +311,7 @@ function slPaint(n,cv,cx){
   const sr=R.sr, N=R.N, [v0,v1]=slView(n), span=v1-v0, L=slLanes(n,H);
   const X=s=>(s-v0)/span*W, S=x=>v0+x/W*span;
   n._geo={W,H,v0,v1,span,L,X,S};
+  if(L.sg) slPaintSg(n,cx,R,n._geo,txt,acc);
   // сетка времени
   const step=slNice(span/sr/Math.max(2,W/90));
   cx.strokeStyle=grid; cx.fillStyle=axis; cx.lineWidth=1;
@@ -349,6 +366,7 @@ function slPaint(n,cv,cx){
   if(n.hover){
     const hx=n.hover.x; cx.strokeStyle=axis; cx.beginPath(); cx.moveTo(hx+.5,SL_AXH); cx.lineTo(hx+.5,H-SL_OVH); cx.stroke();
     const s=S(hx), line=[slFmtT(s/sr)];
+    if(L.sg && n.hover.y>=L.sg[0] && n.hover.y<=L.sg[1]){ const fr=slSgFreq(n,n.hover.y); line.push(slFmtF(R.fc+fr,(R.sgram.f1-R.sgram.f0)/1e4)); }
     const mi=R.msgs.findIndex(m=>s>=m.a && s<=m.b);
     if(mi>=0){ const m=R.msgs[mi], k=Math.max(0,Math.min(m.n-1,m.bnd.findIndex((b,j)=>j+1<m.bnd.length && s>=b && s<m.bnd[j+1])));
       line.push('#'+(mi+1)+' sym '+k+' = '+m.sym[k]); }
@@ -378,6 +396,57 @@ function slPaint(n,cv,cx){
   cx.fillStyle=n.run ? acc2 : bad; cx.fillText(n.run ? (n.p.mode==='trigger' && n.armed ? 'ARMED' : 'RUN') : 'STOP',4,10);
   cx.fillStyle=txt; cx.fillText(info.join(' · '),38,10);
 }
+// спектрограмма: время по X (общее с графиком ниже), частота по Y; полоса фильтра — светлая лента через всё окно
+function slSgFreq(n,y){
+  const g=n._geo, sg=n.R.sgram, [y0,y1]=g.L.sg;
+  return sg.f0+(y1-Math.min(y1,Math.max(y0,y)))/(y1-y0)*(sg.f1-sg.f0);
+}
+function slSgY(n,f){
+  const g=n._geo, sg=n.R.sgram, [y0,y1]=g.L.sg;
+  return y1-(f-sg.f0)/(sg.f1-sg.f0)*(y1-y0);
+}
+function slPaintSg(n,cx,R,g,txt,acc){
+  const sg=R.sgram, [y0,y1]=g.L.sg, W=g.W, N=R.N;
+  if(n._sgFor!==sg){                                               // картинка строится один раз на результат разбора
+    const cv=n._sgCv||(n._sgCv=document.createElement('canvas'));
+    cv.width=sg.cols; cv.height=sg.bins;
+    const c2=cv.getContext('2d'), img=c2.createImageData(sg.cols,sg.bins), d=img.data;
+    for(let c=0;c<sg.cols;c++) for(let k=0;k<sg.bins;k++){
+      const v=sg.data[c*sg.bins+k]*3, o=((sg.bins-1-k)*sg.cols+c)*4;
+      d[o]=SL_LUT[v]; d[o+1]=SL_LUT[v+1]; d[o+2]=SL_LUT[v+2]; d[o+3]=255;
+    }
+    c2.putImageData(img,0,0); n._sgFor=sg;
+  }
+  const sx=g.v0/N*sg.cols, sw=Math.max(1,g.span/N*sg.cols);
+  cx.imageSmoothingEnabled=true;
+  cx.drawImage(n._sgCv,sx,0,Math.min(sw,sg.cols-sx),sg.bins,0,y0,W,y1-y0+1);
+  // шкала частот (абсолютных: центр потока + смещение)
+  const df=sg.f1-sg.f0, st=slNice(df/Math.max(2,(y1-y0)/26)), a0=Math.ceil((R.fc+sg.f0)/st)*st;
+  cx.font='9px monospace'; cx.textAlign='left';
+  for(let f=a0;f<R.fc+sg.f1;f+=st){
+    const y=Math.round(slSgY(n,f-R.fc))+.5; if(y<y0+6 || y>y1-1) continue;
+    const t=slFmtF(f,st,true), w=cx.measureText(t).width;
+    cx.fillStyle='rgba(0,0,0,.45)'; cx.fillRect(0,y-5,w+4,10);
+    cx.fillStyle='#dfe8ee'; cx.fillText(t,2,y+3);
+    cx.fillStyle='rgba(255,255,255,.35)'; cx.fillRect(w+4,y-.5,5,1);
+  }
+  // полоса фильтра
+  const P=n.p;
+  if(P.bpW>0){
+    const c0=P.bpF-R.fc, ya=Math.max(y0,slSgY(n,c0+P.bpW/2)), yb=Math.min(y1,slSgY(n,c0-P.bpW/2));
+    if(yb>y0 && ya<y1){
+      cx.fillStyle=P.bpOn ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.12)'; cx.fillRect(0,ya,W,Math.max(1,yb-ya));
+      cx.strokeStyle=acc; cx.lineWidth=1; cx.setLineDash(P.bpOn ? [] : [4,3]); cx.beginPath();
+      cx.moveTo(0,Math.round(ya)+.5); cx.lineTo(W,Math.round(ya)+.5); cx.moveTo(0,Math.round(yb)+.5); cx.lineTo(W,Math.round(yb)+.5); cx.stroke(); cx.setLineDash([]);
+      const t=slFmtF(P.bpF,P.bpW/10)+' ± '+slFmtF(P.bpW/2,P.bpW/10)+(P.bpOn ? ' · filter' : ''), w=cx.measureText(t).width;
+      cx.fillStyle='rgba(0,0,0,.55)'; cx.fillRect(W-w-8,Math.max(y0,(ya+yb)/2-6),w+6,12);
+      cx.fillStyle=acc; cx.fillText(t,W-w-5,Math.max(y0,(ya+yb)/2-6)+9);
+    }
+  }
+  if(n.hover && n.hover.y>=y0 && n.hover.y<=y1 && !n.bandDrag){ cx.strokeStyle='rgba(255,255,255,.4)'; cx.beginPath(); cx.moveTo(0,Math.round(n.hover.y)+.5); cx.lineTo(W,Math.round(n.hover.y)+.5); cx.stroke(); }
+  cx.strokeStyle=themeColor('--grid'); cx.beginPath(); cx.moveTo(0,y1+1.5); cx.lineTo(W,y1+1.5); cx.stroke();
+}
+
 // вид сигнала: огибающая min/max для плотных участков, ломаная — для растянутых
 function slTrace(cx,x,pyr,v0,v1,W,Y,col){
   const spp=(v1-v0)/W;
@@ -466,6 +535,17 @@ function slWire(n,cv){
     const [x,y]=pos(ev); ptr.set(ev.pointerId,[x,y]);
     if(ptr.size===2){ const [a,b]=[...ptr.values()]; pinch={d:Math.hypot(a[0]-b[0],a[1]-b[1]),v:[g.v0,g.v1]}; drag=null; return; }
     if(y>g.H-SL_OVH){ drag={k:'ov'}; slOvTo(n,x); return; }
+    if(g.L.sg && R.sgram && y>=g.L.sg[0] && y<=g.L.sg[1] && !(ev.shiftKey || ev.ctrlKey)){      // спектрограмма: тянуть полосу по частоте
+      const P=n.p, fr=slSgFreq(n,y);
+      drag={k:'band',y0:y,anchor:fr,moved:false,mv:null};
+      if(P.bpW>0){
+        const c0=P.bpF-R.fc, lo=c0-P.bpW/2, hi=c0+P.bpW/2, yh=slSgY(n,hi), yl=slSgY(n,lo);
+        if(Math.abs(y-yh)<5) drag.anchor=lo;
+        else if(Math.abs(y-yl)<5) drag.anchor=hi;
+        else if(fr>lo && fr<hi){ drag.mv=fr-c0; drag.moved=true; }
+      }
+      n.bandDrag=true; return;
+    }
     if(n._ny!=null && Math.abs(y-n._ny)<5){ drag={k:'noise'}; return; }
     if(n._cy!=null && Math.abs(y-n._cy)<5){ drag={k:'center'}; return; }
     drag={k:ev.shiftKey || ev.ctrlKey ? 'range' : 'pan',x0:x,y0:y,v0:g.v0,v1:g.v1,moved:false};
@@ -486,6 +566,16 @@ function slWire(n,cv){
       else if(drag.k==='center'){
         const ln=g.L.dem||g.L.mag, [y0,y1]=ln, lo=g.L.dem && R.mod!=='ASK' ? R.demLo : 0, hi=g.L.dem && R.mod!=='ASK' ? R.demHi : R.magTop;
         const v=lo+(y1-Math.min(y1,Math.max(y0,y)))/(y1-y0)*(hi-lo); setMod(n,'auto',false); setMod(n,'center',+v.toPrecision(5)); slAnalyze_(n); }
+      else if(drag.k==='band' && R.sgram){
+        if(Math.abs(y-drag.y0)>3) drag.moved=true;
+        if(drag.moved){
+          const sg=R.sgram, fr=slSgFreq(n,y), min=(sg.f1-sg.f0)/Math.max(sg.F,8);
+          let c0, bw;
+          if(drag.mv!=null){ bw=n.p.bpW; c0=Math.max(sg.f0+bw/2,Math.min(sg.f1-bw/2,fr-drag.mv)); }
+          else { bw=Math.max(min,Math.abs(fr-drag.anchor)); c0=(fr+drag.anchor)/2; }
+          setMod(n,'bpF',Math.round(R.fc+c0)); setMod(n,'bpW',Math.round(bw)); redraw(n);
+        }
+      }
       else if(drag.k==='range'){ n.range[1]=R.abs0+g.S(x); redraw(n); }
       else if(drag.k==='pan'){
         if(Math.abs(x-drag.x0)>3) drag.moved=true;
@@ -493,7 +583,7 @@ function slWire(n,cv){
       }
       return;
     }
-    n.hover={x,y}; cv.style.cursor=(n._ny!=null && Math.abs(y-n._ny)<5) || (n._cy!=null && Math.abs(y-n._cy)<5) ? 'ns-resize' : '';
+    n.hover={x,y}; cv.style.cursor=(n._ny!=null && Math.abs(y-n._ny)<5) || (n._cy!=null && Math.abs(y-n._cy)<5) ? 'ns-resize' : g.L.sg && R.sgram && y>=g.L.sg[0] && y<=g.L.sg[1] ? (n.p.bpW>0 && (Math.abs(y-slSgY(n,n.p.bpF-R.fc+n.p.bpW/2))<5 || Math.abs(y-slSgY(n,n.p.bpF-R.fc-n.p.bpW/2))<5) ? 'ns-resize' : 'crosshair') : '';
     redraw(n);
   });
   const end=ev=>{
@@ -504,6 +594,7 @@ function slWire(n,cv){
       const [x]=pos(ev), s=g.S(x), i=R.msgs.findIndex(m=>s>=m.a && s<=m.b);
       if(i>=0) slSelect(n,i,false);
     }
+    if(drag && drag.k==='band'){ n.bandDrag=false; n.tableDirty=true; }
     if(drag && drag.k==='range' && n.range && Math.abs(n.range[1]-n.range[0])<3) n.range=null;
     if(drag && drag.k==='range') n.tableDirty=true;
     drag=null; redraw(n);
@@ -513,7 +604,9 @@ function slWire(n,cv){
   cv.addEventListener('dblclick',ev=>{
     ev.stopPropagation();
     const g=n._geo, R=n.R; if(!g || !R) return;
-    const [x]=pos(ev), s=g.S(x), i=R.msgs.findIndex(m=>s>=m.a && s<=m.b);
+    const [x,y]=pos(ev);
+    if(g.L.sg && R.sgram && y>=g.L.sg[0] && y<=g.L.sg[1] && !ev.shiftKey){ setMod(n,'bpW',0); redraw(n); return; }      // двойной щелчок на спектрограмме — убрать полосу
+    const s=g.S(x), i=R.msgs.findIndex(m=>s>=m.a && s<=m.b);
     if(i>=0 && (g.span>(R.msgs[i].b-R.msgs[i].a)*1.3 || g.span<(R.msgs[i].b-R.msgs[i].a)*.9)){ const m=R.msgs[i], p=(m.b-m.a)*.06; slSetView(n,m.a-p,m.b+p); slSelect(n,i,false); }
     else { n.vx=null; redraw(n); }
   });
@@ -592,6 +685,8 @@ function slInitUI(n){
   q('.sl-rng').addEventListener('click',e=>{
     const b=e.target.closest('[data-act]'); if(!b || !n.R) return;
     if(b.dataset.act==='whole'){ n.crop=null; n.vx=null; n.sel=-1; slAnalyze_(n); redraw(n); return; }
+    if(b.dataset.act==='bpon'){ setMod(n,'bpOn',!n.p.bpOn); redraw(n); return; }
+    if(b.dataset.act==='bpclr'){ setMod(n,'bpW',0); setMod(n,'bpOn',false); redraw(n); return; }
     if(!n.range) return;
     const lo=Math.min(...n.range), hi=Math.max(...n.range), k=Math.max(1,+q('.sl-rbits')?.value||1);
     if(b.dataset.act==='crop'){ n.crop=[Math.round(lo),Math.round(hi)]; n.range=null; n.vx=null; n.sel=-1; n.run=false; slAnalyze_(n); redraw(n); return; }
@@ -615,6 +710,7 @@ function slInfo(n){
   const rg=n.range && n.R ? Math.abs(n.range[1]-n.range[0]) : 0;
   let rt='';
   if(rg>2) rt='<span class="sl-rt">selection '+slFmtT(rg/n.R.sr)+(n.R.T>0 ? ' = '+(rg/n.R.T).toFixed(2)+' sym' : '')+'</span> <button class="sl-btn" data-act="crop" title="analyse only the selected span (stops a rolling capture)">analyse selection</button> <span>it is</span> <input class="sl-rbits" type="number" min="1" value="1" title="symbols in the selection"> <span>symbol(s)</span> <button class="sl-btn" data-act="baud">set baud</button>';
+  if(n.p.bpW>0 && R && R.sgram) rt+=(rt ? ' ' : '')+'<span class="sl-rt">band '+slFmtF(n.p.bpF,n.p.bpW/10)+' ± '+slFmtF(n.p.bpW/2,n.p.bpW/10)+'</span> <button class="sl-btn'+(n.p.bpOn ? ' on' : '')+'" data-act="bpon" title="analyse only this band (moved to 0 Hz, low-passed)">band-pass filter</button> <button class="sl-btn" data-act="bpclr" title="drop the band; the outputs freq / offset / bw go empty">clear band</button>';
   if(n.crop) rt+=' <button class="sl-btn on" data-act="whole" title="analyse the whole capture again">whole capture</button>';
   if(u.rngH!==rt){
     u.rngH=rt;
