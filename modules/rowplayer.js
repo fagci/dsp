@@ -32,7 +32,7 @@ function rpDerive(n){
 }
 // порты полей изменились вместе со списком: провода к исчезнувшим уходят (как в Table)
 function rpRebuild(n){
-  if(!n.el) return;
+  if(!n.el || n.disposed || Graph.map[n.id]!==n) return;
   const vo=new Set(portsOf(n,'outs').map(q=>q.n));
   Graph.edges.filter(e=>e.from===n.id && !vo.has(e.fp)).forEach(delEdge);
   rebuildNode(n); markTopoDirty();

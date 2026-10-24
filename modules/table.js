@@ -286,12 +286,12 @@ async function tblLoadRun(n){
     n.err='';
     try{ [items,meta]=await Promise.all([ListDB.list(list),ListDB.getMeta(list)]); }
     catch(e){ n.err='storage: '+(e.message||e); }
-    if(tok!==n.loadTok) return;
+    if(tok!==n.loadTok || n.disposed) return;
     ({cols,rows}=tblDbRows(items,meta));
     ids=items.map(it=>it.id); schema=tcSchemaOf(meta);
   }
   await tblLegacy(n,list,kind,schema,/^storage:/.test(n.err||''));
-  if(tok!==n.loadTok) return;
+  if(tok!==n.loadTok || n.disposed) return;
   n.loaded=list; n.loadedData=kind==='patch' ? n.p.data : null;
   n.all=rows; n.ids=ids; n.cl=cols; n.schema=schema;
   trCalcAll(n);
@@ -313,7 +313,7 @@ function tblSetCols(n,cols,prune){
   tblRebuild(n,prune);
 }
 function tblRebuild(n,prune){
-  if(!n.el) return;                                     // init: DOM ещё не собран, порты возьмутся из n.cols
+  if(!n.el || n.disposed || Graph.map[n.id]!==n) return;       // удалённый узел (пресеты строятся и стираются при смене версии): ни проводов, ни DOM его id не трогаем                                     // init: DOM ещё не собран, порты возьмутся из n.cols
   if(prune){
     const vi=new Set(portsOf(n,'ins').map(p=>p.n)), vo=new Set(portsOf(n,'outs').map(p=>p.n));
     Graph.edges.filter(e=>(e.to===n.id && !vi.has(e.tp)) || (e.from===n.id && !vo.has(e.fp))).forEach(delEdge);

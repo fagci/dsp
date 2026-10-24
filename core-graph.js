@@ -314,7 +314,8 @@ b.addEventListener('pointerdown',ev=>{ ev.stopPropagation(); });
 b.addEventListener('click',ev=>{ ev.stopPropagation(); col.classList.toggle('open'); upd(); markWiresDirty(); });
 col.append(b);
 }
-function rebuildPorts(n){                            // сменились только порты: пересобрать колонки, не трогая mid (UI модуля, канву)
+function rebuildPorts(n){ if(Graph.map[n.id]!==n) return false;
+                            // сменились только порты: пересобрать колонки, не трогая mid (UI модуля, канву)
 const io=n.el?.querySelector('.io3'); if(!io) return false;
 const ci=io.querySelector(':scope > .col:not(.o)'), co=io.querySelector(':scope > .col.o'); if(!ci||!co) return false;
 ci.textContent=''; co.textContent='';
@@ -621,7 +622,8 @@ else if(n.ta  && n.size.h >0 && !d.gv) n.ta.style.height=n.size.h+'px';
 if(!n.xpand) n.el.style.minHeight=(plainH(n,d) && n.size.h>0) ? n.size.h+'px' : '';   // обычный модуль: высота рамки — минимальная
 }
 function plainH(n,d){ return !(d.view||d.resize||d.tall||n.gv||n.ta); }
-function rebuildNode(n){                            // пересобрать DOM, сохранив состояние модуля
+function rebuildNode(n){ if(Graph.map[n.id]!==n) return;   // узел уже удалён (загрузка закончилась после clearAll): иначе DOM-«зомби» вне графа
+                            // пересобрать DOM, сохранив состояние модуля
 const sel=n.el.classList.contains('sel');
 fillParamDefaults(n,MOD[n.type]);                  // добить дефолтами новые/переименованные параметры
 n.roCv?.disconnect();                               // старая канва уходит вместе с el, наблюдатель — тоже
