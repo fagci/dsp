@@ -17,8 +17,12 @@ const wsKey=repo=>'dsp-whisper-files:'+repo;
 OfflineData.fileItem({id:'whisper-rt',label:'Whisper: runtime (Transformers.js + ONNX Runtime)',mb:15,files:WS_RT.map(f=>[f[0],f[1]])});
 // модель: что именно запросил Transformers.js, запоминаем при загрузке — по этому списку и проверяем, что она скачана
 OfflineData.item({id:'whisper-tiny',label:'Whisper: tiny model (speech to text, many languages)',mb:WS_MB.tiny,
-  has:async()=>{ try{ const l=JSON.parse(LS.get(wsKey(wsRepo('tiny')))||'[]'); if(!l.length) return false; for(const f of l) if(!await OfflineData.has(f)) return false; return true; }catch(e){ return false; } },
-  get:()=>wsLoad(wsRepo('tiny'))});
+  has:async()=>{ try{ const l=JSON.parse(LS.get(wsKey(wsRepo('tiny')))||'[]'); if(!l.length) l.push(...WS_FILES.map(f=>wsManualName(wsRepo('tiny'),f.split('/').pop())));   // записи нет (файлы принесли руками) — по списку по умолчанию
+    for(const f of l) if(!await OfflineData.has(f)) return false; return true; }catch(e){ return false; } },
+  get:()=>wsLoad(wsRepo('tiny')),
+  // вручную: ссылки на файлы tiny; чего нет в списке, узнаётся по имени (.onnx → onnx/)
+  manual:()=>WS_FILES.map(f=>({name:wsManualName(wsRepo('tiny'),f.split('/').pop()),url:wsFileUrl(wsRepo('tiny'),f)})),
+  saveAs:fn=>wsManualName(wsRepo('tiny'),fn)});
 
 const WS={w:null, repo:'', ready:'', files:[], prog:'', loading:null, chain:Promise.resolve(), pend:new Map(), jid:0};
 async function wsRuntimeUrls(){
@@ -72,39 +76,6 @@ function wsDownload(text,name){
   const a=document.createElement('a'), u=URL.createObjectURL(new Blob([text],{type:'text/plain'}));
   a.href=u; a.download=name; document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u),10000);
 }
-// ручная загрузка: окно со ссылками (открыть в новой вкладке → браузер скачает файл) и выбором скачанных файлов
-function wsManual(n){
-  const repo=wsCfg(n).repo, ov=document.createElement('div'), box=document.createElement('div');
-  ov.style.cssText='position:fixed;inset:0;background:#0008;z-index:99999;display:flex;align-items:center;justify-content:center';
-  box.style.cssText='background:var(--panel,#222);color:var(--fg,#ddd);padding:14px;border-radius:8px;max-width:min(560px,94vw);max-height:90vh;overflow:auto;font:13px sans-serif';
-  const rows=document.createElement('div'), note=document.createElement('div');
-  const h=document.createElement('b'); h.textContent='Whisper · '+repo+' · files by hand';
-  const hint=document.createElement('div'); hint.style.cssText='margin:6px 0;opacity:.8';
-  hint.textContent='If the model cannot be downloaded here (no access to huggingface.co from this network), open each link in a new tab, let the browser save the file, then press «choose downloaded files» and pick them all. The names are matched automatically; .onnx files go to onnx/.';
-  const refresh=async()=>{
-    rows.textContent='';
-    for(const f of WS_FILES){
-      const r=document.createElement('div'), a=document.createElement('a'), st=document.createElement('span');
-      a.href=wsFileUrl(repo,f); a.target='_blank'; a.rel='noopener'; a.textContent='↗ '+f; a.style.marginRight='8px';
-      const has=await OfflineData.has(wsManualName(repo,f)); st.textContent=has ? '✓ saved' : 'not saved'; st.style.opacity=has ? '1' : '.6';
-      r.append(a,st); rows.append(r);
-    }
-  };
-  const pick=document.createElement('button'); pick.textContent='choose downloaded files…'; pick.style.marginRight='8px';
-  pick.onclick=()=>{
-    const i=document.createElement('input'); i.type='file'; i.multiple=true;
-    i.onchange=async()=>{
-      let ok=0;
-      for(const f of i.files) try{ await OfflineData.save(wsManualName(repo,f.name),f); ok++; }catch(e){ note.textContent='could not save '+f.name+': '+(e.message||e); }
-      if(ok){ note.textContent='saved '+ok+' file(s) in Files → Offline data'; n.err=''; n.retryAt=0; n.pre=false; if(WS.ready!==repo) WS.loading=null; n.rev++; redraw(n); }
-      refresh();
-    };
-    i.click();
-  };
-  const close=document.createElement('button'); close.textContent='close'; close.onclick=()=>ov.remove();
-  ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
-  box.append(h,hint,rows,note,document.createElement('br'),pick,close); ov.append(box); document.body.append(ov); refresh();
-}
 function wsCfg(n){ const p=n.p; return {repo:wsRepo(p.model,p.custom), language:p.lang, task:p.task}; }
 function wsSegCfg(n){ const p=n.p; return {thr:Math.pow(10,p.thr/20), pre:.35, hang:+p.pause, max:+p.maxlen, min:.4}; }
 
@@ -130,7 +101,7 @@ function wsPump(n){
 }
 function wsStatus(n){
   const cfg=wsCfg(n);
-  if(n.err) return 'error: '+n.err+' (no network? «Model files by hand…» lets you open the links in a new tab and load the files)';
+  if(n.err) return 'error: '+n.err+' (no network? Files → Offline data → «by hand» lets you open the links in a new tab and load the files)';
   if(WS.ready!==cfg.repo){
     if(WS.loading) return 'loading Whisper '+cfg.repo.replace(/^.*\//,'')+(WS.prog ? ' · '+WS.prog : '')+' (once — then kept in Files → Offline data)…';
     return 'model is not loaded yet'+(n.p.listen ? ' — loads when sound arrives' : '');
@@ -188,7 +159,6 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
           {n:'junk',t:'check',d:true,label:'drop typical Whisper inventions on silence ("Thank you.", [BLANK_AUDIO], loops)'},
           {n:'stamps',t:'check',d:false,label:'time stamps [m:ss] in the transcript'},
           {n:'file',t:'button',label:'Transcribe file… / stop',fn:n=>wsPickFile(n)},
-          {n:'manual',t:'button',label:'Model files by hand…',fn:n=>wsManual(n)},
           {n:'clear',t:'button',label:'Clear',fn:n=>{ n.full=''; n.text=''; n.count=0; n.skipped=0; n.dropped=0; n.rev++; redraw(n); }},
           {n:'save',t:'button',label:'Save text',fn:n=>{ if(n.full) wsDownload(n.full,'whisper-'+Date.now()+'.txt'); }},
           {n:'custom',t:'text',d:'',label:'own model repo on huggingface.co (ONNX for Transformers.js), e.g. onnx-community/whisper-large-v3-turbo; empty — by «model»',adv:true}],
