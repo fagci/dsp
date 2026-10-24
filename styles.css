@@ -1472,3 +1472,6 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
 }
+
+/* узлы холста вне экрана не раскладываются и не рисуются (см. cvArm в core-graph.js) */
+#canvas #content .node.cvis{content-visibility:auto;overflow-clip-margin:80px}   /* paint-containment обрезал бы выступающие порты и подписи */

@@ -427,6 +427,22 @@ for(const ev of ['pointerdown','pointermove','pointerup','pointerleave','wheel',
 el.addEventListener(ev,()=>{ n._dirty=true; },{capture:true,passive:true});
 el._node=n; n._vis=undefined; visIO.observe(el);
 n.el=el; content.append(el); el.style.zIndex=++zCounter; posNode(n); applySize(n); // новый узел сразу поверх остальных
+cvArm(n);
+}
+// content-visibility:auto — браузер не раскладывает и не рисует узлы вне экрана (на патче из ~130 узлов ×8 кадров/с).
+// Включаем не сразу: у невиданного узла высота «авто» заменилась бы заглушкой, а от offsetHeight зависят nodeH, раскладка и вписывание.
+// Поэтому после первой раскладки запоминаем реальный размер в contain-intrinsic-size и только тогда ставим класс.
+const CVIS=typeof CSS!=='undefined' && CSS.supports && CSS.supports('content-visibility','auto');
+function cvArm(n){
+  if(!CVIS) return;
+  const el=n.el;
+  requestAnimationFrame(()=>{
+    if(n.el!==el || !el.isConnected || el.parentNode!==content) return;
+    const h=el.offsetHeight, w=el.offsetWidth;
+    if(h<20 || w<20) return;                     // ещё не разложен (свёрнут/скрыт) — останется как был
+    el.style.containIntrinsicSize='auto '+w+'px auto '+h+'px';
+    el.classList.add('cvis');
+  });
 }
 // Развернуть картинку модуля (fs:true в def) на весь экран; где нет Fullscreen API для canvas (iOS) — фиксированный слой поверх страницы
 function nodeFullscreen(n){
