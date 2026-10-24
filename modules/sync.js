@@ -51,6 +51,7 @@ async function syScan(){
   for(const sp of SY_SPACES){
     const byId=new Map((await FileStore.allFolders(sp)).map(f=>[f.id,f]));
     for(const f of await FileStore.listAll(sp)){
+      if(f.meta?.offline) continue;                     // докачанные данные (Offline data) на каждом устройстве свои
       let uid=f.uid;
       if(!uid){ uid=syLegacyUid(sp,(await syFolderPath(sp,f.folderId,byId)).join('/'),f.name,f.size||0); await FileStore.stamp(f.id,{uid}); }
       const id='f:'+uid, m=f.modified||f.created||0;

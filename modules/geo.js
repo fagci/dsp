@@ -1238,8 +1238,10 @@ function mercY(lat){
 function unmercX(x){ return x*360-180; }
 function unmercY(y){ return Math.atan(Math.sinh(Math.PI*(1-2*y)))/D2R; }
 
-// Подложка Natural Earth: data/basemap.json (tools/basemap.mjs), после первой загрузки — из IndexedDB
+// Подложка Natural Earth: data/basemap.json (tools/basemap.mjs), после первой загрузки — из Files → Offline data (старый кэш в IndexedDB читаем как раньше)
 const GEO_BASE_TAG='ne10m-3';                        // сменить при пересборке data/basemap.json
+const GEO_BASE_NAME='Natural Earth basemap '+GEO_BASE_TAG+'.json';   // в Files → Offline data; докачивается заранее
+OfflineData.want(GEO_BASE_NAME,['data/basemap.json']);
 const GeoBase={state:'idle', data:null, err:'', p:null, places:null, placesState:'', placesP:null, gen:0};
 // подложка (4 МБ) на мобильной сети может оборваться, а запись в кэше — оказаться битой: повторяем 3 раза с паузой
 function geoBaseLoad(){
@@ -1250,10 +1252,8 @@ function geoBaseLoad(){
     try{ const c=await geoGet('basemap'); if(c && c.tag===GEO_BASE_TAG) data=geoBasePrep(JSON.parse(c.text)); }catch(e){ data=null; }   // битый кэш — качаем заново
     if(!data){
       GeoBase.state='downloading';
-      const r=await fetch('data/basemap.json'); if(!r.ok) throw new Error('HTTP '+r.status);
-      const text=await r.text();
+      const text=await (await OfflineData.blob(GEO_BASE_NAME,['data/basemap.json'])).text();
       data=geoBasePrep(JSON.parse(text));
-      try{ await geoPut('basemap',{tag:GEO_BASE_TAG, text}); }catch(e){}
     }
     GeoBase.data=data; GeoBase.tries=0; GeoBase.err='';
     GeoBase.state='ready'; GeoBase.gen++;

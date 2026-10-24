@@ -1,13 +1,15 @@
 "use strict";
 /* ============================ Object Detect ============================
-   Распознавание объектов на фото и видео: COCO-SSD (80 классов) на TensorFlow.js. Скрипты и модель (~7 МБ) грузятся при первом
-   запуске узла (jsDelivr + storage.googleapis.com); для работы без сети положите их в vendor/ и укажите пути в libs / model.
+   Распознавание объектов на фото и видео: COCO-SSD (80 классов) на TensorFlow.js. Скрипты и модель (~19 МБ) грузятся при первом
+   запуске узла из vendor/objdet/ (запасной путь — jsDelivr и storage.googleapis.com) и дальше лежат в Files → Offline data, так что
+   узел работает без сети; свои копии можно указать в libs / model.
    Вход: vid (живое видео — камера, видеофайл) или img (фото, кадры IP-камеры). Ядро (IoU, трекинг, подписи) — objdet-kernels.js,
    проверяется tools/test-objdet.mjs. */
 
 const OD_LIBS=['https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.es2017.min.js',
                'https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js'];
 const odScripts={}, odModels={};
+let odLocalP=null;
 function odScript(src){
   return odScripts[src] || (odScripts[src]=new Promise((res,rej)=>{
     const s=document.createElement('script'); s.src=src;
@@ -15,9 +17,24 @@ function odScript(src){
     document.head.append(s);
   }));
 }
+// без своих адресов: файлы берём из vendor/objdet/ (иначе с CDN) и храним в Files → Offline data
+const OD_LOCAL=[['TF.js 4.22.0 (tf.es2017.min.js)','vendor/objdet/tf.es2017.min.js',OD_LIBS[0]],
+                ['COCO-SSD 2.2.3 (coco-ssd.min.js)','vendor/objdet/coco-ssd.min.js',OD_LIBS[1]]];
+const OD_LITE_FILES=['model.json','group1-shard1of5','group1-shard2of5','group1-shard3of5','group1-shard4of5','group1-shard5of5'];
+const OD_LITE_URL='https://storage.googleapis.com/tfjs-models/savedmodel/ssdlite_mobilenet_v2/';
+async function odLocalScript(l){
+  const b=await OfflineData.blob(l[0],[l[1],l[2]]), u=URL.createObjectURL(b);
+  try{ await odScript(u); } finally{ URL.revokeObjectURL(u); }
+}
+async function odLiteModel(){                       // lite_mobilenet_v2 целиком из Files; имена шардов должны совпасть с model.json
+  const fs=[];
+  for(const f of OD_LITE_FILES) fs.push(new File([await OfflineData.blob('COCO-SSD lite '+f,['vendor/objdet/ssdlite_mobilenet_v2/'+f,OD_LITE_URL+f])],f));
+  return tf.io.browserFiles(fs);
+}
 async function odLoad(libs,base,modelUrl,backend){
   const urls=String(libs||'').trim().split(/\s+/).filter(Boolean);
-  for(const u of (urls.length ? urls : OD_LIBS)) await odScript(u);
+  if(urls.length) for(const u of urls) await odScript(u);
+  else if(!window.cocoSsd) await (odLocalP || (odLocalP=(async()=>{ for(const l of OD_LOCAL) await odLocalScript(l); })().catch(e=>{ odLocalP=null; throw e; })));
   if(!window.cocoSsd) throw new Error('coco-ssd is missing in the loaded scripts');
   if(backend && backend!=='auto' && tf.getBackend()!==backend){      // смена бэкенда делает прежние модели негодными
     for(const m in odModels) delete odModels[m];
@@ -25,7 +42,7 @@ async function odLoad(libs,base,modelUrl,backend){
   }
   await tf.ready();
   const k=base+'|'+modelUrl+'|'+tf.getBackend();
-  return odModels[k] || (odModels[k]=cocoSsd.load(modelUrl ? {modelUrl} : {base}).catch(e=>{ delete odModels[k]; throw e; }));
+  return odModels[k] || (odModels[k]=(modelUrl ? Promise.resolve({modelUrl}) : base==='lite_mobilenet_v2' ? odLiteModel().then(modelUrl=>({modelUrl})) : Promise.resolve({base})).then(c=>cocoSsd.load(c)).catch(e=>{ delete odModels[k]; throw e; }));
 }
 
 function odPaint(n,dets){                           // рамки поверх кадра в n.wk
@@ -108,7 +125,7 @@ def({ id:'objdet', lazy:'manual', title:'Object Detect', cat:'Video', resize:tru
       if(due || cfg!==n.lastCfg){
         if(cfg!==n.lastCfg) n.tr=odNewTracker();
         n.lastT=now; n.lastKey=key; n.lastCfg=cfg; n.busy=true;
-        if(!window.cocoSsd) n.status='loading TF.js and the model (about 7 MB)…';
+        if(!window.cocoSsd) n.status='loading TF.js and the model (about 19 MB, once — then kept in Files → Offline data)…';
         const gen=n.gen;
         odRun(n,src).catch(e=>{ if(gen!==n.gen) return;
             n.status='error: '+(e.message||e); n.retryAt=performance.now()+5000; n.lastCfg=''; redraw(n); })
