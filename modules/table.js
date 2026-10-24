@@ -523,13 +523,14 @@ async function tblAdd(n,recs,strict){                  // strict (форма): �
   if(kind==='db'){
     ids=rows.map(()=>-(n._tmpSeq=(n._tmpSeq||0)+1));
     const list=n.p.list, items=rows.map(r=>tblToItem(r,n.cl,n.virt)), cols=grown ? n.cl.slice() : null, tmp=ids;
+    n._saving=(n._saving||0)+1; n._saveErr='';
     n._persist=(n._persist||Promise.resolve()).then(async()=>{
       const real=await ListDB.addMany(list,items);
       if(cols) await tblMetaSet(list,{cols});
       const m=n._idMap||(n._idMap=new Map());
       tmp.forEach((t,i)=>{ m.set(t,real[i]); const k=n.ids.indexOf(t); if(k>=0) n.ids[k]=real[i]; });
       if(m.size>4000) for(const k of [...m.keys()].slice(0,2000)) m.delete(k);
-    }).catch(e=>{ alert('storage: '+(e.message||e)); if(n.loaded===list) tblLoad(n); });
+    }).catch(e=>{ n._saveErr=String(e.message||e); alert('storage: '+n._saveErr); if(n.loaded===list) tblLoad(n); }).finally(()=>{ n._saving--; });
   } else ids=rows.map((_,i)=>n.all.length+i);
   n.all.push(...rows); n.ids.push(...ids);
   // потолок: старые записи уходят (лог не растёт бесконечно)
@@ -922,7 +923,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     if(!n.initialized && n.el){ tblInit(n); n.initialized=true; }
     const r=n.el.querySelector('.readout');                       // строка узла — только для ошибки
     if(r){
-      const t=n.err ? '⚠ '+n.err : '';
+      const t=n.err ? '⚠ '+n.err : n._saveErr ? '⚠ not saved: '+n._saveErr : n._saving>0 ? 'saving…' : '';
       if(r.textContent!==t){ r.textContent=t; r.style.display=t ? '' : 'none'; }
     }
     if(n.ui){
