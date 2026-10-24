@@ -1467,3 +1467,8 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 .tc-nav,.tc-back{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .tc-nav button{padding:0 9px}
 .tbl-view .tv-refs{display:flex;align-items:center;gap:5px;flex-wrap:wrap;width:100%}
+
+/* уважаем системную настройку «меньше движения»: без анимаций и плавных переходов */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
+}

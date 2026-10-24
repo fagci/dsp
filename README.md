@@ -30,7 +30,8 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - 160+ built-in presets: demos, quick scenarios, radio protocols, music, analysis
 - Adjustable block size, sample rate and run speed (×1…×32); redraw rate switch in the settings panel (the sliders button in the toolbar, together with run speed, block size, sample rate, **All data → Export… / Import…** and the global **CORS proxy** used by Satellites, Horizon and Station Schedule — `{url}` in it is replaced by the encoded address, otherwise the address is appended): *fps max* (default; always 60 fps — the waterfall does not slow down at rest, but the main thread has less time for USB and audio), *fps auto* (60 → 30 → 20 fps as the interface sits idle, 10 fps with a USB SDR connected) and *fps min* (10 fps, lightest on CPU)
 - AudioWorklet engine, SharedArrayBuffer path when cross-origin isolated
-- Installable PWA with offline support
+- Installable PWA with offline support; app badge while the engine runs; autosave runs in idle time under a Web Lock (no double saves from two tabs); `prefers-reduced-motion` is respected
+- Built-in performance counters (long tasks/frames, slow input events, `Perf.time` marks, device profile) are appended to the error report (`core-perf.js`)
 
 ### Sources
 - Oscillator, sweep/jammer, constant, LFO (a `sync` input restarts the phase on a rising edge, the `sync` output pulses at the start of every period — chain it with the oscillator's `sync` or another LFO), text source
