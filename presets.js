@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=82;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=83;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -1190,7 +1190,7 @@ lg.size.w=420; lg.size.h=260; applySize(lg);
 const sa=addNode('sa',1080,40,{auto:true,floor:-90,top:-20,split:.4});
 sa.size.w=700; sa.size.h=420; applySize(sa);
 const dc=addNode('dac',740,820,{vol:.4});
-addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',cf.id,'spec'); addEdge(rx.id,'spec',bs.id,'spec'); addEdge(cf.id,'rec',lg.id,'rec'); addEdge(sk.id,'rows',cf.id,'skip');
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',cf.id,'spec'); addEdge(rx.id,'spec',bs.id,'spec'); addEdge(cf.id,'rec',lg.id,'rec'); addEdge(sk.id,'rows',cf.id,'skip'); addEdge(cf.id,'bl',sk.id,'rec');
 addEdge(cf.id,'bands',sa.id,'sigs'); addEdge(bs.id,'edge',cf.id,'edge');
 addEdge(bp.id,'rows',bs.id,'bands'); addEdge(bp.id,'rows',cf.id,'plan');
 addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi');
@@ -1234,7 +1234,7 @@ lg.size.w=420; lg.size.h=260; applySize(lg);
 const dc=addNode('dac',1420,620,{vol:.4});
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(bp.id,'rows',sa.id,'bands'); addEdge(bp.id,'rows',bs.id,'bands'); addEdge(bp.id,'rows',cf.id,'plan');
-addEdge(rx.id,'spec',cf.id,'spec'); addEdge(sk.id,'rows',cf.id,'skip'); addEdge(cf.id,'bands',sa.id,'sigs');
+addEdge(rx.id,'spec',cf.id,'spec'); addEdge(sk.id,'rows',cf.id,'skip'); addEdge(cf.id,'bl',sk.id,'rec'); addEdge(cf.id,'bands',sa.id,'sigs');
 addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi'); addEdge(rx.id,'spec',bs.id,'spec');
 addEdge(cf.id,'todo',bs.id,'active'); addEdge(sa.id,'holdF',bs.id,'hold');
 addEdge(bs.id,'edge',sa.id,'edge'); addEdge(bs.id,'edge',cf.id,'edge');
@@ -1279,7 +1279,7 @@ for(let i=0;i<4;i++){
   addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi');
   const cf=addNode('cfar',1380+(i%2)*310,1020+(i>>1)*220,{auto:true,thr:10,confM:2,confN:3,hold:1500});
   cf.size.w=300; cf.size.h=200; applySize(cf);
-  addEdge(rx.id,'spec',cf.id,'spec'); addEdge(sk.id,'rows',cf.id,'skip'); addEdge(bp.id,'rows',cf.id,'plan');
+  addEdge(rx.id,'spec',cf.id,'spec'); addEdge(sk.id,'rows',cf.id,'skip'); addEdge(cf.id,'bl',sk.id,'rec'); addEdge(bp.id,'rows',cf.id,'plan');
   addEdge(cf.id,'bands',sa.id,'sigs'); addEdge(cf.id,'rec',lg.id,'rec');
   addEdge(bs.id,'edge',sa.id,'edge'); addEdge(bs.id,'edge',cf.id,'edge');
   addEdge(cf.id,'todo',bs.id,'active'); addEdge(cf.id,'gate',rx.id,'sqlGate'); addEdge(bs.id,'freq',rx.id,'freq'); addEdge(cf.id,'listenF',rx.id,'tuneFreq');
