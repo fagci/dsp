@@ -727,6 +727,7 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
     if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
 // канал диапазона плана со ступенью step, в который попадает f: центр lo + k·step (±полшага)
+const cfarW=t=>Math.max(t.bw*1.5,12500,t.step||0);     // ширина записи списка: не меньше канала сетки — несущая у края канала тоже попадает
 const cfarF=t=>t.c ?? t.f;                            // частота результата: центр канала сетки, иначе реальная несущая
 function cfarChan(plan,f){
   for(const r of plan){
@@ -748,7 +749,7 @@ function cfarBlSave(n,list){
   n._blSrc=v; n._bl=list;
   if(n.set && n.set.skipList) n.set.skipList(v); else n.p.skipList=v;
   n.skip=[...(n._skipExt||[]), ...list.map(x=>({lo:x.f-x.w/2,hi:x.f+x.w/2}))];
-  n.tracks=(n.tracks||[]).filter(t=>!cfarSkipped(n.skip,t.f,t.w)); n.list=n.list.filter(t=>!cfarSkipped(n.skip,t.f,t.w));
+  n.tracks=(n.tracks||[]).filter(t=>!cfarSkipped(n.skip,cfarF(t),t.w)); n.list=n.list.filter(t=>!cfarSkipped(n.skip,cfarF(t),t.w));
 }
 // очередь: слушаем по очереди все подтверждённые сигналы окна (по возрастанию частоты); сигнал оставляем, когда он пропал,
 // истёк dwell или нажали skip; todo — сколько ещё не прослушано (с текущим): пока >0, сканер стоит на окне
@@ -782,25 +783,25 @@ function cfarFavSave(n,list){
 function cfarFavCur(n){
   const t=n.cur; if(!t) return;
   const list=cfarFavList(n).slice();
-  if(!list.some(x=>Math.abs(x.f-cfarF(t))<=x.w/2)) list.push({f:cfarF(t), w:Math.max(t.bw*1.5,12500)});
+  if(!list.some(x=>Math.abs(x.f-cfarF(t))<=x.w/2)) list.push({f:cfarF(t), w:cfarW(t)});
   cfarFavSave(n,list);
   (n._favRecs||(n._favRecs=[])).push({t:Date.now(), src:'CFAR', kind:'interesting', id:Math.round(cfarF(t)), freq:Math.round(cfarF(t)), freqReal:Math.round(t.f), bw:Math.round(t.bw), db:+t.db.toFixed(1), snr:+t.snr.toFixed(1)});
 }
 // запись о занесении в чёрный список — на выход bl (→ Table «Scan skip»: строки lo / hi идут обратно на вход skip)
 function cfarBlRec(n,t){
-  const w=Math.max(t.bw*1.5,12500);
+  const w=cfarW(t);
   (n._blRecs||(n._blRecs=[])).push({t:Date.now(), src:'CFAR', kind:'blacklist', id:Math.round(cfarF(t)), freq:Math.round(cfarF(t)), freqReal:Math.round(t.f), lo:Math.round(cfarF(t)-w/2), hi:Math.round(cfarF(t)+w/2), bw:Math.round(t.bw), db:+t.db.toFixed(1)});
 }
 function cfarBlCur(n){
   if(!n.cur) return;
   const list=cfarBlList(n).slice();
-  list.push({f:cfarF(n.cur), w:Math.max(n.cur.bw*1.5,12500)});
+  list.push({f:cfarF(n.cur), w:cfarW(n.cur)});
   cfarBlRec(n,n.cur);
   n.cur=null; cfarBlSave(n,list);
 }
 function cfarBlAdd(n){
   const list=cfarBlList(n).slice();
-  for(const t of n.list){ list.push({f:cfarF(t), w:Math.max(t.bw*1.5,12500)}); cfarBlRec(n,t); }
+  for(const t of n.list){ list.push({f:cfarF(t), w:cfarW(t)}); cfarBlRec(n,t); }
   cfarBlSave(n,list);
 }
 // шаг сетки id записей: явный из idRes, auto — ширина цели по ряду 1-2-5
@@ -904,12 +905,12 @@ function cfarFrame(n,s){
       }
       n._chSeen.set(ch.key,h.peak);
     }
-    if(n.skip && cfarSkipped(n.skip,f,Math.max(wid,2*binHz))) continue;
+    if(n.skip && cfarSkipped(n.skip,ch ? ch.c : f,Math.max(wid,2*binHz))) continue;
     const bw=cfarBw(s,pw,nz,h.pi,lo,hi,n.p.bwDb,thr);
     const tol=Math.max(15,wid,2*binHz);              // цель та же, если рядом по частоте
     let tr=(ch && n.tracks.find(t=>t.key===ch.key)) || n.tracks.find(t=>Math.abs(t.f-f)<=tol);   // в сетке цель — канал: дрейф несущей внутри него — та же цель
-    if(tr){ tr.key=ch ? ch.key : tr.key; tr.c=ch ? ch.c : null; tr.f=tr.f*.7+f*.3; tr.w=Math.max(tr.w,wid); tr.db=h.peak; tr.snr=h.snr; tr.bw=tr.bw*.7+bw*.3; tr.t=now; }
-    else n.tracks.push(tr={f,w:wid,bw,db:h.peak,snr:h.snr,t0:now,t:now,hist:0,ok:false,key:ch?ch.key:null,c:ch?ch.c:null});
+    if(tr){ tr.key=ch ? ch.key : tr.key; tr.c=ch ? ch.c : null; tr.step=ch ? ch.r.step : 0; tr.f=tr.f*.7+f*.3; tr.w=Math.max(tr.w,wid); tr.db=h.peak; tr.snr=h.snr; tr.bw=tr.bw*.7+bw*.3; tr.t=now; }
+    else n.tracks.push(tr={f,w:wid,bw,db:h.peak,snr:h.snr,t0:now,t:now,hist:0,ok:false,key:ch?ch.key:null,c:ch?ch.c:null,step:ch?ch.r.step:0});
     tr.hist|=1; tr.hit=true;
     if(!tr.ok && cfarPopcount(tr.hist)>=M){
       tr.ok=true;
