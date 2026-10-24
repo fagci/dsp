@@ -2510,7 +2510,7 @@ LS.set(AKEY,s); SS.set('dsp-tab-graph',s); SS.set('dsp-tab-name',currentPatchNam
 let autosaveTimer=null;
 function scheduleAutosave(){
 clearTimeout(autosaveTimer);
-autosaveTimer=setTimeout(saveAuto,2000);
+autosaveTimer=setTimeout(()=>Idle.run(()=>Locks.tryRun('autosave',saveAuto)),2000);   // не в кадре и не одновременно из двух вкладок
 }
 window.addEventListener('beforeunload',()=>{ clearTimeout(autosaveTimer); if(!wiping) saveAuto(); });
 // телефон: beforeunload не приходит, когда ОС выгружает вкладку, — сохраняем и при уходе в фон / pagehide
@@ -2525,7 +2525,7 @@ const on=Eng.running&&!Eng.paused;
 runBtn.innerHTML = on?RUN_STOP:RUN_PLAY;
 runBtn.classList.toggle('on',on);
 }
-Eng.onRunChange=()=>{ syncRunBtn(); wakeDraw(); mobileOnRun();
+Eng.onRunChange=()=>{ syncRunBtn(); wakeDraw(); mobileOnRun(); Badge.set(Eng.running&&!Eng.paused);
 if(!(Eng.running&&!Eng.paused))                      // стоп — источники выключаем совсем (индикатор камеры, датчики)
 for(const n of Graph.nodes){ try{ MOD[n.type].onStop?.(n); }catch(e){} } };
 // запуск просит все разрешения сразу (камера, датчики): модулям с onRun не нужно жать «Start» руками;
