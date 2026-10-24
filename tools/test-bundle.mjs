@@ -31,11 +31,15 @@ ok('fan-out wires still end at their own inputs',ends(fo[0])[3]===8000&&ends(fo[
 // провода из разных узлов в один — сходятся у входа
 const fi=f([it('a','c',0,0,300,50),it('b','c',0,100,300,60)]);
 ok('fan-in from different nodes converges',fi[0]&&fi[1]);
-// тесные узлы: веера нет, но и ошибок нет
-ok('close nodes get no fan',f([it('a','b',0,0,20,0),it('a','b',0,10,20,10)]).every(d=>d===undefined));
-// вход левее выхода: веер не строится у стороны без места, путь всё равно непрерывный
+// положение целей не важно: тесные, обратные и вертикально стоящие узлы тоже жгутуются
+const close=f([it('a','b',0,0,20,0),it('a','b',0,10,20,10)]);
+ok('close nodes are bundled',close.every(d=>d&&nums(d).every(Number.isFinite)));
 const back=f([it('a','b',200,0,100,0),it('a','b',200,10,100,10)]);
-ok('backward wires are not bundled',back.every(d=>d===undefined));
+ok('backward wires are bundled',back.every(d=>d&&nums(d).every(Number.isFinite)));
+const col=f([it('a','b',200,0,0,800),it('a','b',200,12,0,812),it('a','b',200,24,0,824)]);   // b строго под a, входы левее выходов
+ok('vertically stacked nodes are bundled',col.every(d=>d));
+const mid=i=>{ const n=nums(col[i]); return n[n.length-8]; };    // конец ствола у веера входов — x общий для всех
+ok('stacked wires share the trunk',col.every((d,i)=>Math.abs(nums(d)[8]-nums(col[0])[8])<1e-9&&Math.abs(mid(i)-mid(0))<1e-9));
 // веер у выхода: у узла с несколькими выходами отдалённый вход правее самого дальнего выхода
 const fan=f([it('a','b',0,0,300,0),it('a','b',20,10,320,10)]);
 ok('fan starts right of the farthest output',nums(fan[0])[6]>=20+8000);
