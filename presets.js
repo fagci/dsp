@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=96;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=97;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -1250,7 +1250,7 @@ const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the
   'SEARCH: the Signal Detector (CFAR) works on the receiver spectrum (threshold, dB over the noise). Its signals are marked ▼ on the panes (sigs), its count stops\n'+
   'the scanner and the strongest is tuned and played. SKIP: «Blacklist found signals» on the detector puts what it sees now on its blacklist (it is stored in the patch,\n'+
   '«Clear blacklist» wipes it); the «Scan skip» table is a skip list by ranges (lo / hi) for pagers and beacons.\n'+
-  'Gestures: pinch — zoom (across: frequency, up-down: a pane dB range), drag up/down — shift the dB range of a pane, double tap — reset, swipe a title — page; «⇕ dB» fits every pane to its data. Tap a pane — marker 1–4; tap a pane title — retune. The receiver squelch (SNR) keeps the speaker quiet while the scan is not on a signal.'});
+  'Gestures: pinch — zoom (across: frequency, up-down: a pane dB range), drag up/down — shift the dB range of a pane, double tap — reset, swipe a title — page; «⇕ dB» fits every pane to its data. «⤓ csv» saves the peaks of all ranges (frequency, level, SNR, age), «⤓ png» the picture. «Averaging» (0.6) smooths the traces across passes, «Fade old data» (30 s) dims the part of a trace the scanner has not visited for that long; the noise floor for SNR is the lower 20% of a pane, so crowded ranges do not raise it; hover over a waterfall shows when the row was recorded. Tap a pane — marker 1–4; tap a pane title — retune. The receiver squelch (SNR) keeps the speaker quiet while the scan is not on a signal.'});
 nt.size.w=720; nt.size.h=250; applySize(nt);
 const rx=addNode('rtlsdr',40,300,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:100000000,sql:'input',sqlHang:100});
 const bp=addNode('table',360,300,{list:'@patch',initial:false,data:'name,lo,hi,step\n'+
@@ -1262,7 +1262,7 @@ const sk=addNode('table',1080,300,{list:'Scan skip',initial:false});
 sk.size.w=300; sk.size.h=220; applySize(sk);
 const cf=addNode('cfar',1160,620,{auto:true,thr:10,confM:2,confN:3,hold:1500});
 cf.size.w=240; cf.size.h=240; applySize(cf);
-const sa=addNode('sa',40,620,{layout:'panes',panes:2,follow:true,holdMarker:true,peakHold:true,floor:-90,top:-20,split:.45});
+const sa=addNode('sa',40,620,{layout:'panes',panes:2,follow:true,holdMarker:true,peakHold:true,avg:.6,ageFade:30,floor:-90,top:-20,split:.45});
 sa.size.w=1100; sa.size.h=440; applySize(sa);
 const lg=addNode('table',1420,300,{list:'Scan log',initial:false});
 lg.size.w=420; lg.size.h=260; applySize(lg);
@@ -1297,7 +1297,7 @@ const bp=addNode('table',1100,300,{list:'@patch',initial:false,data:'name,lo,hi,
 bp.size.w=340; bp.size.h=280; applySize(bp);
 const sk=addNode('table',1100,620,{list:'Scan skip',initial:false});
 sk.size.w=300; sk.size.h=220; applySize(sk);
-const sa=addNode('sa',40,1020,{layout:'panes',panes:4,follow:true,holdMarker:true,peakHold:true,floor:-90,top:-20,split:.45});
+const sa=addNode('sa',40,1020,{layout:'panes',panes:4,follow:true,holdMarker:true,peakHold:true,avg:.6,ageFade:30,floor:-90,top:-20,split:.45});
 sa.size.w=1300; sa.size.h=460; applySize(sa);
 const lg=addNode('table',1460,300,{list:'Scan log',initial:false});
 lg.size.w=420; lg.size.h=260; applySize(lg);

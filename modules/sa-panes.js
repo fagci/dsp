@@ -6,11 +6,11 @@
 // каждое окно раскладывается по ВСЕМ диапазонам списка, куда попало; остальное держит прошлые данные.
 // Панелей на экране panes штук, остальные диапазоны копят данные и листаются (колесо на заголовке,
 // стрелки внизу, либо сами следуют за сканером — follow).
-// Состояние диапазона не зависит от размера канвы: SAP_RES столбцов спектра, SAP_WRES × SAP_ROWS водопада.
+// Состояние диапазона не зависит от размера канвы: p.res столбцов спектра (1024…4096 по шагу диапазона, sapResFor), SAP_WRES × SAP_ROWS водопада.
 // Края окна приёмника проседают (фильтр) — edge, % окна с каждой стороны, отбрасывается: без этого в
 // широком диапазоне видны периодические «горбы» по шагу окна.
 
-const SAP_RES=2048, SAP_WRES=1024, SAP_ROWS=96, SAP_GAP=4, SAP_AXIS=14, SAP_TITLE=13, SAP_MAXB=128;
+const SAP_RMAX=4096, SAP_WRES=1024, SAP_ROWS=96, SAP_GAP=4, SAP_AXIS=14, SAP_TITLE=13, SAP_MAXB=128;
 // история водопада — 1 байт на пиксель (0 — пусто); картинка RGBA живёт только у панелей на экране
 const SAP_DB0=-160, SAP_DBS=.75;
 const sapCode=db=>db!==db ? 0 : Math.max(1,Math.min(255,Math.round((db-SAP_DB0)/SAP_DBS)+1));
@@ -22,8 +22,9 @@ function saPaneList(n){
   const src=n.bandsData, len=src ? src.length : 0;
   if(n._plSrc===src && n._plLen===len) return n._pl;
   n._plSrc=src; n._plLen=len;
-  n._pl=(Array.isArray(src) ? src : []).filter(b=>b && !b.sig && isFinite(b.lo) && isFinite(b.hi) && b.hi>b.lo)
-    .slice().sort((a,b)=>a.lo-b.lo).slice(0,SAP_MAXB);
+  const ok=(Array.isArray(src) ? src : []).filter(b=>b && !b.sig && isFinite(b.lo) && isFinite(b.hi) && b.hi>b.lo);
+  n._plSkip=(Array.isArray(src) ? src.filter(b=>b && !b.sig).length : 0)-Math.min(ok.length,SAP_MAXB);   // неверные строки и всё сверх SAP_MAXB — показываем числом
+  n._pl=ok.slice().sort((a,b)=>a.lo-b.lo).slice(0,SAP_MAXB);
   if(n._pnStore) for(const k of [...n._pnStore.keys()]) if(!n._pl.some(b=>b.lo+'-'+b.hi===k)) n._pnStore.delete(k);
   return n._pl;
 }
@@ -31,13 +32,16 @@ function saPaneList(n){
 function saPaneGet(n,b){
   const store=n._pnStore||(n._pnStore=new Map()), key=b.lo+'-'+b.hi;
   let p=store.get(key);
+  const res=sapResFor(b.hi-b.lo,b.step||0);
+  if(p && p.res!==res){ const db=p.db; store.delete(key); p=null; n._pnKeepDb=db; }     // шаг диапазона сменился — столбцов стало иначе, копим заново
   if(!p){
-    p={key, lo:b.lo, hi:b.hi, label:'', color:'', lv:new Float32Array(SAP_RES).fill(NaN), pk:new Float32Array(SAP_RES).fill(NaN),
+    p={key, res, lo:b.lo, hi:b.hi, label:'', color:'', lv:new Float32Array(res).fill(NaN), pk:new Float32Array(res).fill(NaN), ts:new Float64Array(res), rowTs:new Float64Array(SAP_ROWS), medT:0,
       wdb:new Uint8Array(SAP_WRES*SAP_ROWS), db:null,
       t:0, img:null, off:null, ocx:null, dirty:false, med:-120, zoom:null,
       // строка водопада достраивается полосками за проход диапазона; сдвиг — только когда она закончена (rowLv — уровни текущей строки)
-      rowLv:new Float32Array(SAP_RES).fill(NaN), rowN:0, rowFull:false, rowOpen:false, rowT0:0, lastC:null, curWin:null};
+      rowLv:new Float32Array(res).fill(NaN), rowN:0, rowFull:false, rowOpen:false, rowT0:0, lastC:null, curWin:null};
     try{ const o=JSON.parse(n.p.paneDb||'{}'); if(Array.isArray(o[key])) p.db=o[key]; }catch(e){}
+    if(n._pnKeepDb){ p.db=n._pnKeepDb; n._pnKeepDb=null; }
     store.set(key,p);
   }
   p.label=b.label||''; p.color=b.color||''; p.step=b.step||0;
@@ -122,15 +126,15 @@ function saPanesIngest(n,sp,src=0){
     const cw=(sLo+sHi)/2, idx=list.findIndex(b=>cw>=b.lo && cw<=b.hi), k=Math.max(1,n.p.panes|0), from=n.p.paneFrom|0;
     if(idx>=0 && (idx<from || idx>=from+k)) saSetFrom(n,Math.floor(idx/k)*k,false);
   }
-  const pal=paletteLut(n.p.palette);
+  const pal=paletteLut(n.p.palette), avg=clamp(+n.p.avg||0,0,.95);
   for(const b of list){
     if(b.hi<sLo || b.lo>sHi) continue;
     const p=saPaneGet(n,b), span=p.hi-p.lo, [pfl,ptp]=saPaneRange(n,p), rng=(ptp-pfl)||1;
-    const x0=Math.max(0,Math.floor((sLo-p.lo)/span*SAP_RES)), x1=Math.min(SAP_RES-1,Math.ceil((sHi-p.lo)/span*SAP_RES));
+    const RES=p.res, x0=Math.max(0,Math.floor((sLo-p.lo)/span*RES)), x1=Math.min(RES-1,Math.ceil((sHi-p.lo)/span*RES));
     let touched=0;
-    const wcol=n._wcol||(n._wcol=new Int32Array(SAP_RES));
+    const wcol=n._wcol||(n._wcol=new Int32Array(SAP_RMAX));
     for(let x=x0;x<=x1;x++){
-      const fa=p.lo+span*x/SAP_RES, fb=p.lo+span*(x+1)/SAP_RES;
+      const fa=p.lo+span*x/RES, fb=p.lo+span*(x+1)/RES;
       if(fb<sLo || fa>sHi) continue;
       // середина окна пишется всегда, проседающий край — только в ещё пустой столбец (дыр нет, горбов нет там, где окна перекрыты)
       if((fb<uLo || fa>uHi) && p.lv[x]===p.lv[x]) continue;
@@ -145,7 +149,7 @@ function saPanesIngest(n,sp,src=0){
         v=m[i0]+(m[i1]-m[i0])*(bf-i0);
       }
       const db=20*Math.log10(v+1e-12);
-      p.lv[x]=db; wcol[touched++]=x;
+      p.lv[x]=sapEma(p.lv[x],db,avg); p.ts[x]=now; wcol[touched++]=x;
       if(n.p.peakHold){
         if(n.p.peakDecay>0 && p.pk[x]===p.pk[x] && p.t) p.pk[x]-=60/n.p.peakDecay*Math.min(5,(now-p.t)/1000);
         if(!(p.pk[x]>=db)) p.pk[x]=db;
@@ -156,7 +160,7 @@ function saPanesIngest(n,sp,src=0){
     p.t=now;
     // строка водопада: полоска окна добавляется в текущую строку; новая строка (сдвиг вниз) — когда прежняя закончена и начался
     // новый заход (пауза в данных, другое окно, прошёл rowMs — стоим на месте), либо сканер пошёл заново (центр окна вернулся назад)
-    const d=p.img?p.img.data:null, row=SAP_WRES*4, k=SAP_RES/SAP_WRES, rowMs=Math.max(100,+n.p.rowMs||400);
+    const d=p.img?p.img.data:null, row=SAP_WRES*4, k=RES/SAP_WRES, rowMs=Math.max(100,+n.p.rowMs||400);
     const wrap=!n._pnMulti && p.lastC!=null && c<p.lastC-1e3;    // при нескольких приёмниках окна приходят не по порядку
     // диапазон шире окна: строка достраивается за проход, сдвиг — только когда сканер вернулся в начало (центр окна пошёл назад);
     // диапазон в одно окно: строка готова сразу — новая на каждый заход (пауза в данных) и раз в rowMs, пока стоим на месте
@@ -165,14 +169,15 @@ function saPanesIngest(n,sp,src=0){
     let multiNew=false;
     if(n._pnMulti && !single && p.rowFull){
       let already=0; for(let i=0;i<touched;i++){ const v=p.rowLv[wcol[i]]; if(v===v) already++; }
-      multiNew=already>=.5*touched && touched>=.3*Math.min(SAP_RES,(uHi-uLo)/span*SAP_RES);
+      multiNew=already>=.5*touched && touched>=.3*Math.min(RES,(uHi-uLo)/span*RES);
     }
     if(!p.rowOpen || wrap || multiNew || (single && p.rowFull && (gap>250 || now-p.rowT0>=rowMs))){
       if(d) d.copyWithin(row,0,row*(SAP_ROWS-1)); p.wdb.copyWithin(SAP_WRES,0,SAP_WRES*(SAP_ROWS-1));
+      p.rowTs.copyWithin(1,0,SAP_ROWS-1); p.rowTs[0]=now;
       p.rowLv.fill(NaN); p.rowN=0; p.rowFull=false; p.rowOpen=true; p.rowT0=now;
     }
     for(let i=0;i<touched;i++){ const x=wcol[i]; if(!(p.rowLv[x]===p.rowLv[x])) p.rowN++; p.rowLv[x]=p.lv[x]; }
-    if(p.rowN>=.97*SAP_RES) p.rowFull=true;
+    if(p.rowN>=.97*RES) p.rowFull=true;
     p.lastC=c; p.curWin=c;
     for(let x=0,o=0;x<SAP_WRES;x++,o+=4){                 // верхняя строка — из rowLv (ещё не пройденное — чёрное); столбец водопада — максимум соседних
       let db=NaN;
@@ -185,8 +190,8 @@ function saPanesIngest(n,sp,src=0){
     }
     if(d) p.dirty=true;
     // шумовая полка панели — медиана последних уровней (для SNR маркеров)
-    const t=Float32Array.from(p.lv).filter(v=>v===v).sort();
-    p.med=t.length ? t[t.length>>1] : -120;
+    // полка пересчитывается не чаще раза в 700 мс: сортировка столбцов на каждый кадр была главной статьёй расхода
+    if(now-p.medT>700){ p.medT=now; const f=sapFloor(p.lv,.2,n._fltTmp||(n._fltTmp=new Float32Array(SAP_RMAX))); p.med=f===f ? f : -120; }
   }
   n._pnRevDraw=(n._pnRevDraw|0)+1;
 }
@@ -202,9 +207,9 @@ function saPanesOut(n){
     const f=n.mk[k], q=k+1; o['f'+q]=f; o['fr'+q]=null;
     const p=f==null ? null : all.find(x=>f>=x.lo && f<=x.hi);
     if(!p){ o['db'+q]=null; o['snr'+q]=null; n.db[k]=-120; n.snr[k]=0; continue; }
-    const span=p.hi-p.lo, c=clamp(Math.floor((f-p.lo)/span*SAP_RES),0,SAP_RES-1), r=Math.max(1,Math.round(n.p.tol/(span/SAP_RES)));
+    const span=p.hi-p.lo, c=clamp(Math.floor((f-p.lo)/span*p.res),0,p.res-1), r=Math.max(1,Math.round(n.p.tol/(span/p.res)));
     let mx=-Infinity;
-    for(let i=Math.max(0,c-r);i<=Math.min(SAP_RES-1,c+r);i++) if(p.lv[i]>mx) mx=p.lv[i];
+    for(let i=Math.max(0,c-r);i<=Math.min(p.res-1,c+r);i++) if(p.lv[i]>mx) mx=p.lv[i];
     if(mx===-Infinity){ o['db'+q]=null; o['snr'+q]=null; n.db[k]=-120; n.snr[k]=0; continue; }
     n.db[k]=mx; n.snr[k]=mx-p.med; o['db'+q]=mx; o['snr'+q]=mx-p.med;
   }
@@ -218,6 +223,22 @@ function saPanesLayout(n,W,H){
   return {k, w, hs, plotTop:SAP_TITLE, plotH:Math.max(1,hs-SAP_AXIS-SAP_TITLE)};
 }
 const saPanesBump=n=>{ n._pnRevDraw=(n._pnRevDraw|0)+1; };
+function saDownload(blob,name){
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+}
+const saStamp=()=>new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+// пики всех диапазонов в CSV: частота, уровень, SNR к полке, возраст
+function saPanesCsv(n){
+  const now=performance.now(), rows=[];
+  for(const p of (n._pnStore||new Map()).values()){
+    const f=sapFloor(p.lv,.2); if(f!==f) continue;
+    for(const t of sapPeaks(p.lv,p.ts,p.lo,p.hi,f,6,Math.max(2,Math.round(p.res/512)),50))
+      rows.push({band:p.label||fmtHz((p.lo+p.hi)/2,3), f:t.f, db:t.db, snr:t.snr, age:t.ts>0 ? (now-t.ts)/1000 : null});
+  }
+  saDownload(new Blob([sapCsv(rows)],{type:'text/csv'}),'panes-peaks-'+saStamp()+'.csv');
+}
+function saPanesPng(n,cv){ cv.toBlob(b=>{ if(b) saDownload(b,'panes-'+saStamp()+'.png'); },'image/png'); }
 function saPanesWire(n,cv){
   if(n._pnWired) return;
   n._pnWired=true;
@@ -233,7 +254,7 @@ function saPanesWire(n,cv){
     return {i, p, v, fx, f:v[0]+(v[1]-v[0])*fx, x, y, L, x0:i*(L.w+SAP_GAP)};
   };
   const zoomBy=(h,k)=>{
-    const p=h.p, span=h.v[1]-h.v[0], full=p.hi-p.lo, ns=clamp(span*k,full/SAP_RES*24,full);
+    const p=h.p, span=h.v[1]-h.v[0], full=p.hi-p.lo, ns=clamp(span*k,full/p.res*24,full);
     let a=h.f-(h.f-h.v[0])*(ns/span), b=a+ns;
     if(a<p.lo){ b+=p.lo-a; a=p.lo; } if(b>p.hi){ a-=b-p.hi; b=p.hi; }
     p.zoom=ns>=full*.999 ? null : [Math.max(p.lo,a),Math.min(p.hi,b)];
@@ -280,6 +301,8 @@ function saPanesWire(n,cv){
       else if(b.act==='park'){ if(n.set && n.set.holdMarker) n.set.holdMarker(!n.p.holdMarker); else n.p.holdMarker=!n.p.holdMarker; saPanesBump(n); }
       else if(b.act==='pkclr'){ saPeakClear(n); saPanesBump(n); }
       else if(b.act==='dbauto') saDbAuto(n);
+      else if(b.act==='csv') saPanesCsv(n);
+      else if(b.act==='png') saPanesPng(n,cv);
       else if(b.act==='resume'){ for(let k=0;k<4;k++) n.mk[k]=null; saPanesBump(n); }                    // снять маркеры — сканер продолжает
       else { if(n.set && n.set.follow) n.set.follow(!n.p.follow); else n.p.follow=!n.p.follow; saPanesBump(n); }
       return;
@@ -306,7 +329,7 @@ function saPanesWire(n,cv){
       const [a,b]=[...ptrs.values()], p=n._pn[pc.i]; if(!p) return;
       const mx=(a.x+b.x)/2, my=(a.y+b.y)/2, L=pc.L;
       if(pc.dx>24){                                     // частота: масштаб по расстоянию по x, точка под центром щипка остаётся под ним
-        const span0=pc.v[1]-pc.v[0], full=p.hi-p.lo, ns=clamp(span0*pc.dx/Math.max(1,Math.abs(a.x-b.x)),full/SAP_RES*24,full);
+        const span0=pc.v[1]-pc.v[0], full=p.hi-p.lo, ns=clamp(span0*pc.dx/Math.max(1,Math.abs(a.x-b.x)),full/p.res*24,full);
         let lo=pc.f-(mx-pc.x0)/L.w*ns, hi=lo+ns;
         if(lo<p.lo){ hi+=p.lo-lo; lo=p.lo; } if(hi>p.hi){ lo-=hi-p.hi; hi=p.hi; }
         p.zoom=ns>=full*.999 ? null : [Math.max(p.lo,lo),Math.min(p.hi,hi)];
@@ -377,6 +400,7 @@ function saPanesDraw(n,cv,cx){
   const key=W+'|'+H+'|'+cv.pxGen+'|'+n._pnRevDraw+'|'+panes.map(p=>p.key+':'+p.zoom).join(',')+'|'+n._pnSel+'|'+n.p.floor+'|'+n.p.top+'|'+panes.map(p=>p.db).join(';')+'|'+
     n.p.split+'|'+n.p.peakHold+'|'+n.p.grid+'|'+n.mk+'|'+n.active+'|'+n._sigKey+'|'+n.p.paneFrom+'|'+n.p.follow+'|'+n.p.holdMarker+'|'+n._pnHoldF;
   if(key===n._pnDrawKey && now-(n._pnDrawT||0)<500) return;
+  if(now-(n._pnDrawT||0)<50) return;                     // кадры приходят чаще, чем нужно глазу (особенно с четырьмя приёмниками)
   n._pnDrawKey=key; n._pnDrawT=now;
   cx.clearRect(0,0,W,H);
   const screen=themeColor('--screen')||'#0a0d0e', fg=themeColor('--scr-txt')||'#c8d2d6', dim=themeColor('--dim')||'#6c7a80';
@@ -413,35 +437,42 @@ function saPanesDraw(n,cv,cx){
     const stale=p.t && now-p.t>4000;
     // уровень на столбец экрана: максимум по накопленным столбцам, при сильном увеличении — интерполяция
     const sample=(arr,fa,fb)=>{
-      const ia=(fa-p.lo)/pspan*SAP_RES, ib=(fb-p.lo)/pspan*SAP_RES;
-      const i0=Math.max(0,Math.floor(ia)), i1=Math.min(SAP_RES-1,Math.floor(ib));
+      const ia=(fa-p.lo)/pspan*p.res, ib=(fb-p.lo)/pspan*p.res;
+      const i0=Math.max(0,Math.floor(ia)), i1=Math.min(p.res-1,Math.floor(ib));
       if(i1>i0){ let m=NaN; for(let q=i0;q<=i1;q++){ const a=arr[q]; if(a===a && !(m>=a)) m=a; } return m; }
-      const c=(ia+ib)/2-.5, j=Math.floor(c), fr=c-j, a=arr[clamp(j,0,SAP_RES-1)], b=arr[clamp(j+1,0,SAP_RES-1)];
+      const c=(ia+ib)/2-.5, j=Math.floor(c), fr=c-j, a=arr[clamp(j,0,p.res-1)], b=arr[clamp(j+1,0,p.res-1)];
       return a===a && b===b ? a+(b-a)*fr : a===a ? a : b;
     };
-    const trace=(arr,col,alpha,fill)=>{
+    // столбец не обновлялся дольше ageFade с — рисуем бледнее (участок трассы, где сканер давно не был)
+    const fade=+n.p.ageFade||0;
+    const oldAt=(fa,fb)=>fade>0 && sapOld(p.ts[clamp(Math.floor(((fa+fb)/2-p.lo)/pspan*p.res),0,p.res-1)],now,fade);
+    const trace=(arr,col,alpha,fill,aged)=>{
       const bot=L.plotTop+L.plotH, segs=[];
       let cur=null;
       for(let px=0;px<w;px++){
-        const val=sample(arr,v[0]+vs*px/w,v[0]+vs*(px+1)/w);
+        const fa=v[0]+vs*px/w, fb=v[0]+vs*(px+1)/w, val=sample(arr,fa,fb);
         if(val!==val){ cur=null; continue; }
-        if(!cur) segs.push(cur=[]);
+        const old=aged ? oldAt(fa,fb) : false;
+        if(cur && cur.old!==old){ const lx=cur[cur.length-2], ly=cur[cur.length-1]; segs.push(cur=[lx,ly]); cur.old=old; }   // смена свежести — новый отрезок, стык общий
+        if(!cur){ segs.push(cur=[]); cur.old=old; }
         cur.push(x0+px,yOf(val));
       }
       cx.strokeStyle=col; cx.fillStyle=col; cx.lineWidth=1;
       for(const s of segs){
-        cx.globalAlpha=alpha; cx.beginPath(); cx.moveTo(s[0],s[1]);
+        if(s.length<4 && s.old) continue;
+        const al=s.old ? alpha*.4 : alpha;
+        cx.globalAlpha=al; cx.beginPath(); cx.moveTo(s[0],s[1]);
         for(let i=2;i<s.length;i+=2) cx.lineTo(s[i],s[i+1]);
         cx.stroke();
         if(fill){
-          cx.globalAlpha=alpha*.18;
+          cx.globalAlpha=al*.18;
           cx.lineTo(s[s.length-2],bot); cx.lineTo(s[0],bot); cx.closePath(); cx.fill();
         }
       }
       cx.globalAlpha=1;
     };
     if(n.p.peakHold) trace(p.pk,acc2,stale?.35:.8,false);
-    trace(p.lv,acc,stale?.4:1,true);
+    trace(p.lv,acc,stale?.4:1,true,true);
     cx.save(); cx.beginPath(); cx.rect(x0,0,w,H); cx.clip();
     // сигналы от детектора (вход sigs): треугольник у пика; подписаны сильнейшие
     const ps=(n.sigsData||[]).filter(t=>t && t.sig && (t.lo+t.hi)/2>=Math.max(p.lo,v[0]) && (t.lo+t.hi)/2<=Math.min(p.hi,v[1]));
@@ -460,7 +491,7 @@ function saPanesDraw(n,cv,cx){
       const x=Math.round(X(f)), act=n.active-1===k;
       cx.strokeStyle=MK_COL(k); cx.lineWidth=act?1.5:1;
       cx.beginPath(); cx.moveTo(x+.5,L.plotTop); cx.lineTo(x+.5,H); cx.stroke();
-      const c=clamp(Math.floor((f-p.lo)/pspan*SAP_RES),0,SAP_RES-1), lv=p.lv[c];
+      const c=clamp(Math.floor((f-p.lo)/pspan*p.res),0,p.res-1), lv=p.lv[c];
       const t=(k+1)+': '+fmtHz(f,3).replace(/[kMG]$/,'')+(lv===lv ? ' '+lv.toFixed(0)+' / '+Math.max(0,lv-p.med).toFixed(0) : '');
       const tw=cx.measureText(t).width, tx=clamp(x-tw/2,x0+2,x0+w-tw-2), ty=L.plotTop+L.plotH-14-k*13;
       cx.fillStyle=MK_COL(k); cx.globalAlpha=act?.95:.75; cx.fillRect(tx-3,ty,tw+6,12);
@@ -468,7 +499,7 @@ function saPanesDraw(n,cv,cx){
     }
     // подписи: имя диапазона (число целей, увеличение), границы и середина оси
     cx.textBaseline='alphabetic';
-    if(p.color){ cx.fillStyle=p.color; cx.fillRect(x0+2,2,6,6); }
+    if(p.color){ cx.fillStyle=p.color; cx.fillRect(x0+2,2,6,6); cx.globalAlpha=.7; cx.fillRect(x0,0,w,2); cx.globalAlpha=1; }
     cx.fillStyle=fg; cx.textAlign='left';
     const nd=ps.length, zm=p.zoom ? ' ×'+(pspan/vs).toFixed(pspan/vs<10?1:0) : '';
     // возраст данных — видно, как часто сканер заходит в диапазон (не обновлялся дольше 3 с)
@@ -497,10 +528,14 @@ function saPanesDraw(n,cv,cx){
   const h=n._pnHover;
   if(h && panes[h.i]){
     const p=panes[h.i], v=saPaneView(p), x0=Math.round(h.i*(L.w+SAP_GAP)), w=Math.round(L.w), f=v[0]+(v[1]-v[0])*h.fx;
-    const val=p.lv[clamp(Math.floor((f-p.lo)/(p.hi-p.lo)*SAP_RES),0,SAP_RES-1)];
+    const ci=clamp(Math.floor((f-p.lo)/(p.hi-p.lo)*p.res),0,p.res-1), val=p.lv[ci];
     const x=x0+h.fx*w;
     cx.strokeStyle=themeRgba('--scr-hi',.5); cx.lineWidth=1; cx.beginPath(); cx.moveTo(x+.5,L.plotTop); cx.lineTo(x+.5,H); cx.stroke();
-    const t=fmtHz(f,4)+'Hz'+(val===val ? ' · '+val.toFixed(1)+' dB' : ''); cx.font='10px sans-serif';
+    let t=fmtHz(f,4)+'Hz'+(val===val ? ' · '+val.toFixed(1)+' dB' : ''); cx.font='10px sans-serif';
+    if(h.y>L.hs){                                               // над водопадом — когда записана строка
+      const ri=clamp(Math.floor((h.y-L.hs)/Math.max(1,H-L.hs)*SAP_ROWS),0,SAP_ROWS-1), rt=p.rowTs[ri];
+      if(rt>0) t+=' · '+Math.max(0,Math.round((performance.now()-rt)/1000))+' s ago';
+    }
     const tw=cx.measureText(t).width+8, tx=clamp(x+6,x0,x0+w-tw);
     cx.fillStyle=themeRgba('--screen',.85); cx.fillRect(tx,L.plotTop+2,tw,13);
     cx.fillStyle=fg; cx.textAlign='left'; cx.fillText(t,tx+4,L.plotTop+12);
@@ -522,7 +557,8 @@ function saPanesDraw(n,cv,cx){
     if(n._pnHoldF!=null) items.push({t:'▶ resume', act:'resume', col:acc2});
     items.push({t:(n.p.holdMarker?'● ':'○ ')+'⏸ park', act:'park', col:n.p.holdMarker?acc2:dim});
     if(n.p.peakHold) items.push({t:'⌫ peak', act:'pkclr', col:dim});
-    items.push({t:'⇕ dB', act:'dbauto', col:dim});
+    items.push({t:'⇕ dB', act:'dbauto', col:dim},{t:'⤓ csv', act:'csv', col:dim},{t:'⤓ png', act:'png', col:dim});
+    if(n._plSkip>0) items.unshift({t:'⚠ '+n._plSkip+' skipped', col:acc2});
     if(paged) items.push({t:'◀',act:'prev'},{t:(from+1)+'–'+(from+panes.length)+' / '+list.length,col:dim},{t:'▶',act:'next'},
       {t:(n.p.follow?'● ':'○ ')+'follow',act:'follow',col:n.p.follow?acc:dim});
     cx.font='10px sans-serif'; cx.textBaseline='middle'; cx.textAlign='left';
