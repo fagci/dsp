@@ -627,7 +627,10 @@ function cfarPopcount(x){ let c=0; for(;x;x&=x-1) c++; return c; }
 // Цель подтверждается, если попала в M из последних N кадров спектра — одиночные выбросы шума отсеиваются.
 def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'skip',t:'bands'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'guard',t:'num'},
-       {n:'train',t:'num'},{n:'thr',t:'num'},{n:'minW',t:'num'},{n:'top',t:'num'},{n:'hold',t:'num'},{n:'edge',t:'num'}],
+       {n:'train',t:'num'},{n:'thr',t:'num'},{n:'minW',t:'num'},{n:'top',t:'num'},{n:'hold',t:'num'},{n:'edge',t:'num'},
+       {n:'plan',t:'bands',tip:'band plan with a channel step: signals snap to channels, one per channel'},
+       {n:'blCur',t:'num',tip:'pulse: blacklist the signal being heard'},{n:'skipSig',t:'num',tip:'pulse: skip the signal being heard in this window'},
+       {n:'blAdd',t:'num',tip:'pulse: blacklist all found signals'},{n:'blClear',t:'num',tip:'pulse: clear the blacklist'}],
   outs:[
         {n:'count',t:'num'},
         {n:'rec',t:'rec'},
@@ -660,7 +663,10 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
           {n:'confM',t:'range',min:1,max:8,step:1,d:2,label:'confirm: hits (M)'},
           {n:'confN',t:'range',min:1,max:8,step:1,d:4,label:'confirm: of last frames (N)'},
           {n:'top',t:'range',min:1,max:30,step:1,d:10,label:'how many to show'},
-          {n:'hold',t:'range',min:0,max:5000,step:50,d:500,label:'hold time, ms'},
+          {n:'hold',t:'range',min:0,max:5000,step:50,d:500,label:'hold time, ms (a signal that vanished is waited for this long: the scanner stays, the gate is already closed)'},
+          // сетка каналов диапазона (вход plan): один сигнал на канал, слабые соседи ±1 канала — побочные продукты сильного
+          {n:'grid',t:'check',d:true,label:'snap to the channel step of the plan ranges (one signal per channel)'},
+          {n:'adjDb',t:'range',min:0,max:60,step:1,d:25,label:'adjacent channel: drop a signal this many dB below its neighbour (0 = off)'},
           {n:'idRes',t:'select',opts:['auto','100','1000','5000','12500','25000','100000'],d:'auto',label:'rec: same signal within, Hz',adv:true},
           // очередь прослушивания: сигналы окна слушаются по очереди (по частоте), каждый — пока есть или dwell мс
           {n:'dwell',t:'range',min:0,max:30000,step:100,d:4000,label:'listen to each signal at most, ms (0 = while it lasts)'},
@@ -682,6 +688,13 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
     }
     for(const k of ['fmin','fmax','guard','train','thr','minW','top','hold','edge'])
       if(typeof I[k]==='number') setMod(n,k,I[k]);
+    n._pin||={};
+    const pin=(k)=>{ const hi=+I[k]>.5, r=hi && !n._pin[k]; n._pin[k]=hi; return r; };
+    if(pin('blCur')) cfarBlCur(n);
+    if(pin('skipSig')) n._skipCur=true;
+    if(pin('blAdd')) cfarBlAdd(n);
+    if(pin('blClear')) cfarBlSave(n,[]);
+    n.plan=Array.isArray(I.plan) ? I.plan.filter(b=>b && !b.sig && b.hi>b.lo && b.step>0) : null;
     if(!s) return {count:0};
     // список пропуска (Table → bands): цели внутри его диапазонов не считаются; частота без ширины — с допуском по ширине цели
     n._skipExt=Array.isArray(I.skip) ? I.skip.filter(b=>b && !b.sig && isFinite(b.lo)).map(b=>({lo:b.lo,hi:Math.max(b.lo,b.hi)})) : [];
@@ -695,13 +708,22 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
     const [a,b,c,d]=n.list;
     const rec=n.recs.length ? n.recs.splice(0) : null;
     const bands=n.list.map(t=>({lo:t.f-Math.max(t.bw,1)/2, hi:t.f+Math.max(t.bw,1)/2, label:fmtHz(t.f,3), db:t.db, sig:true}));
-    return {count:n.list.length, rec, bands, listenF:n.cur?n.cur.f:null, todo:n.todo, gate:n.cur?1:0,
+    return {count:n.list.length, rec, bands, listenF:n.cur?n.cur.f:null, todo:n.todo, gate:n.cur && performance.now()-n.cur.t<=250 ? 1 : 0,   // gate — цель видна прямо сейчас (без hold)
+     
       f1:a?a.f:null, l1:a?a.db:null, f2:b?b.f:null, l2:b?b.db:null,
       f3:c?c.f:null, l3:c?c.db:null, f4:d?d.f:null, l4:d?d.db:null,
       snr1:a?a.snr:null, floor:n.floorDb, bw1:a?a.bw:null}; },
   draw(n){ const r=n.el.querySelector('.readout');
     if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
+// канал диапазона плана со ступенью step, в который попадает f: центр lo + k·step (±полшага)
+function cfarChan(plan,f){
+  for(const r of plan){
+    const k=Math.round((f-r.lo)/r.step);
+    if(f>=r.lo-r.step/2 && f<=r.hi+r.step/2 && k>=0 && r.lo+k*r.step<=r.hi+r.step/2) return {r,k,c:r.lo+k*r.step,key:r.lo+':'+k};
+  }
+  return null;
+}
 function cfarBlList(n){
   if(n._blSrc!==n.p.skipList){
     n._blSrc=n.p.skipList;
@@ -827,23 +849,35 @@ function cfarFrame(n,s){
   const mask=(1<<n.p.confN)-1, M=Math.min(n.p.confM,n.p.confN);
   n.tracks=n.tracks||[];
   for(const t of n.tracks){ t.hist=(t.hist<<1)&mask; t.hit=false; }
+  n._chSeen=new Map();
   for(const h of hits){
     // параболическая интерполяция пика по логарифму мощности: частота точнее бина
     const pa=Math.log(pw[h.pi-1]+1e-30), pb=Math.log(pw[h.pi]+1e-30), pc=Math.log(pw[h.pi+1]+1e-30), den=pa-2*pb+pc;
     const f=specHz(s,h.pi+(den<0 ? clamp(.5*(pa-pc)/den,-.5,.5) : 0)), wid=Math.max(1,specHz(s,h.b)-specHz(s,h.a));
+    // сетка: канал диапазона (lo + k·step); один сигнал на канал, слабый сосед ±1 канала — побочный продукт сильного (в т.ч. занесённого в чёрный список)
+    const ch=n.p.grid && n.plan ? cfarChan(n.plan,f) : null;
+    if(ch){
+      if(n._chSeen.has(ch.key)) continue;
+      if(+n.p.adjDb>0){
+        let sp=false;
+        for(const d of [-1,1]){ const o=n._chSeen.get(ch.r.lo+':'+(ch.k+d)); if(o!=null && o-h.peak>=+n.p.adjDb) sp=true; }
+        if(sp) continue;
+      }
+      n._chSeen.set(ch.key,h.peak);
+    }
     if(n.skip && cfarSkipped(n.skip,f,Math.max(wid,2*binHz))) continue;
     const bw=cfarBw(s,pw,nz,h.pi,lo,hi,n.p.bwDb,thr);
     const tol=Math.max(15,wid,2*binHz);              // цель та же, если рядом по частоте
-    let tr=n.tracks.find(t=>Math.abs(t.f-f)<=tol);
-    if(tr){ tr.f=tr.f*.7+f*.3; tr.w=Math.max(tr.w,wid); tr.db=h.peak; tr.snr=h.snr; tr.bw=tr.bw*.7+bw*.3; tr.t=now; }
-    else n.tracks.push(tr={f,w:wid,bw,db:h.peak,snr:h.snr,t0:now,t:now,hist:0,ok:false});
+    let tr=(ch && n.tracks.find(t=>t.key===ch.key)) || n.tracks.find(t=>Math.abs(t.f-f)<=tol);   // в сетке цель — канал: дрейф несущей внутри него — та же цель
+    if(tr){ tr.key=ch ? ch.key : tr.key; tr.f=tr.f*.7+f*.3; tr.w=Math.max(tr.w,wid); tr.db=h.peak; tr.snr=h.snr; tr.bw=tr.bw*.7+bw*.3; tr.t=now; }
+    else n.tracks.push(tr={f,w:wid,bw,db:h.peak,snr:h.snr,t0:now,t:now,hist:0,ok:false,key:ch?ch.key:null});
     tr.hist|=1; tr.hit=true;
     if(!tr.ok && cfarPopcount(tr.hist)>=M){
       tr.ok=true;
       // запись о появлении сигнала: id — частота, округлённая до сетки idRes (одна и та же станция → один id
       // для Rec: Unique by Key; Table копит строки как есть)
       const q=cfarIdStep(n.p.idRes, Math.max(wid,2*binHz));
-      n.recs.push({t:Date.now(), src:'CFAR', kind:'signal', id:Math.round(f/q)*q, freq:Math.round(f), width:Math.round(wid), bw:Math.round(tr.bw),
+      n.recs.push({t:Date.now(), src:'CFAR', kind:'signal', id:ch ? Math.round(ch.c) : Math.round(f/q)*q, freq:Math.round(f), width:Math.round(wid), bw:Math.round(tr.bw),
         db:+h.peak.toFixed(1), snr:+h.snr.toFixed(1)});
       if(n.recs.length>1000) n.recs.shift();
     } }
