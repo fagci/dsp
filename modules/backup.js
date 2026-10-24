@@ -2,7 +2,7 @@
 /* ============================ Резервная копия: экспорт и импорт всех данных ============================
    Один файл .dspbackup (JSON): настройки и патчи (localStorage), все базы IndexedDB приложения (списки Table, рельеф и кэши,
    образцы, трекер, архив спектров) и кэш тайлов карты. Импорт ничего не стирает: записи с теми же ключами заменяются,
-   остальное остаётся; списки Table заменяются по имени списка. Ядро кодирования — backup-kernels.js. */
+   остальное остаётся; списки Table заменяются по имени списка (у каждого своё хранилище, пишутся через ListDB). Ядро кодирования — backup-kernels.js. */
 
 const BK_FORMAT='dsp-backup', BK_VER=1;
 const bkReq=r=>new Promise((res,rej)=>{ r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); });
@@ -86,21 +86,27 @@ async function bkOpenForRestore(name,d){
     rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error);
   });
 }
+// списки Table — через ListDB: у каждого списка своё хранилище, в копии они (или общее items старой версии) под чужими номерами.
+// Список из файла заменяет одноимённый, ключи записей новые; каталог и старые id (tables, legacy) не переносятся
+async function bkRestoreLists(d,onMsg){
+  const by=new Map(); let rows=0;
+  for(const sn in d.stores){
+    if(sn==='meta' || sn==='tables' || sn==='legacy') continue;
+    for(const r of d.stores[sn].rows){ const it=bkDec(r[1]); if(it?.listName==null) continue; if(!by.has(it.listName)) by.set(it.listName,[]); by.get(it.listName).push(it); }
+  }
+  for(const [ln,items] of by){ onMsg('importing table '+ln+'…'); rows+=await ListDB.replaceList(ln,items); }
+  for(const r of d.stores.meta?.rows||[]){ const m=bkDec(r[1]); if(m?.listName==null) continue; await ListDB.setMeta(m.listName,m,true); rows++; }
+  return {rows,skipped:[]};
+}
 async function bkRestoreDb(name,d,onMsg){
+  if(name==='dsp-lists' && typeof ListDB!=='undefined') return bkRestoreLists(d,onMsg);
   const db=await bkOpenForRestore(name,d), skipped=[]; let rows=0;
   for(const sn in d.stores){
     const m=d.stores[sn];
     if(!db.objectStoreNames.contains(sn)){ skipped.push(sn); continue; }
     onMsg('importing '+name+' / '+sn+'…');
     const tx=db.transaction(sn,'readwrite'), st=tx.objectStore(sn), inline=st.keyPath!==null;
-    if(name==='dsp-lists' && sn==='items'){               // списки Table: список из файла заменяет одноимённый, ключи записей новые
-      const names=new Set(m.rows.map(r=>bkDec(r[1]).listName));
-      const ix=st.index('listName');
-      for(const ln of names){ const ks=await bkReq(ix.getAllKeys(ln)); for(const k of ks) st.delete(k); }
-      for(const r of m.rows){ const it=bkDec(r[1]); delete it.id; st.add(it); rows++; }
-    } else {
-      for(const r of m.rows){ if(inline) st.put(bkDec(r[1])); else st.put(bkDec(r[1]),bkDec(r[0])); rows++; }
-    }
+    for(const r of m.rows){ if(inline) st.put(bkDec(r[1])); else st.put(bkDec(r[1]),bkDec(r[0])); rows++; }
     await bkDone(tx);
   }
   db.close();

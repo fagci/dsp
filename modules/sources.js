@@ -6549,8 +6549,10 @@ function escapeHtml(s){
 
 /* ============================ СПИСКИ (IndexedDB + CSV) ============================ */
 // Хранилище именованных списков "имя → значение" (адреса SDR, URL потоков и т.п.).
-// Один список = все записи с одинаковым listName. Ключ хранения — имя списка,
-// а не n.id узла, чтобы список переживал пересборку/копирование узла.
+// Каждый список — своё хранилище (object store) L<номер> в базе dsp-lists; каталог tables: имя списка → номер.
+// Ключ — имя списка, а не n.id узла, чтобы список переживал пересборку/копирование узла; переименование меняет только каталог.
+// id записи = номер таблицы · 2³² + номер в таблице: по id сразу видно хранилище. Записи из общего хранилища items (версия 2)
+// перенесены со старыми id (< 2³²) — их таблица в legacy. Новое хранилище и удаление таблицы — обновление версии базы.
 
 // запись — с relaxed durability: браузер подтверждает транзакцию, когда данные отданы ОС, не дожидаясь сброса на диск
 // (в Chromium строгое подтверждение на телефоне — сотни мс на запись, в очереди за потоком записей — секунды); где опция неизвестна — обычная
@@ -6558,85 +6560,200 @@ const ldbTx=(db,names,mode)=>{
   if(mode!=='readwrite') return db.transaction(names,mode);
   try{ return db.transaction(names,mode,{durability:'relaxed'}); }catch(e){ return db.transaction(names,mode); }
 };
+const LDB_ROWS=2**32;
 const ListDB = (() => {
-  let dbp = null;
+  let dbp = null, cur = null, chain = Promise.resolve();
+  const sn = t => 'L'+t;
+  const reqP = rq => new Promise((res,rej)=>{ rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error); });
+  const doneP = tx => new Promise((res,rej)=>{ tx.oncomplete=()=>res(); tx.onerror=tx.onabort=()=>rej(tx.error||new Error('transaction aborted')); });
+  const tables = db => [...db.objectStoreNames].filter(s=>/^L\d+$/.test(s));
+  const maxT = db => Math.max(0,...tables(db).map(s=>+s.slice(1)));
+  // новое хранилище; счётчик ключей поднят до t·2³² (удалённая запись его не опускает)
+  function mkStore(db,t){ const s=db.createObjectStore(sn(t),{keyPath:'id',autoIncrement:true}); s.put({id:t*LDB_ROWS}); s.delete(t*LDB_ROWS); return s; }
+
+  // v=0 — текущая версия (новую базу не создаём: null); up(db,tx) — правка схемы в транзакции обновления
+  function openV(v,up){
+    return new Promise((res,rej)=>{
+      const rq = v ? indexedDB.open('dsp-lists',v) : indexedDB.open('dsp-lists');
+      rq.onupgradeneeded = () => { if(!v) return rq.transaction.abort(); try{ up(rq.result,rq.transaction); }catch(e){ console.warn('[lists] схема:',e); rq.transaction.abort(); } };
+      let bt = 0;                                        // своё соединение закрывается, дождавшись транзакций, — короткое ожидание не в счёт
+      rq.onsuccess = () => { clearTimeout(bt); res(rq.result); };
+      rq.onblocked = () => { clearTimeout(bt); bt = setTimeout(()=>console.warn('[lists] база списков занята другой вкладкой — закройте её'),2000); };
+      rq.onerror = () => { clearTimeout(bt); if(!v && rq.error?.name==='AbortError') res(null); else rej(rq.error); };
+    });
+  }
+  // следующая версия; другая вкладка успела поднять её раньше — берём ещё следующую
+  async function bump(v,up){
+    for(let i=0;;i++){
+      try{ return await openV(v+1,up); }
+      catch(e){ if(e?.name!=='VersionError' || i>4) throw e; const d=await openV(0); v=d ? d.version : v+1; d?.close(); }
+    }
+  }
+  function attach(db){
+    cur = db;
+    const drop = () => { if(cur===db){ cur=null; dbp=null; } };
+    db.onclose = drop;                                   // браузер закрыл соединение (очистка данных, нехватка места) — открыть заново
+    db.onversionchange = () => { db.close(); drop(); };  // другая вкладка (или эта же) меняет схему
+    return db;
+  }
+  // версия 2 и раньше: всё в items с индексом listName — раскладываем по таблицам, id прежние
+  function migrate(db,tx){
+    if(!db.objectStoreNames.contains('meta')) db.createObjectStore('meta',{keyPath:'listName'});   // порядок колонок, типы, карточка
+    const T = db.objectStoreNames.contains('tables') ? tx.objectStore('tables') : db.createObjectStore('tables',{keyPath:'listName'});
+    const L = db.objectStoreNames.contains('legacy') ? tx.objectStore('legacy') : db.createObjectStore('legacy',{keyPath:'id'});
+    if(!L.indexNames.contains('t')) L.createIndex('t','t');
+    if(!db.objectStoreNames.contains('items')) return;
+    const seen = new Map(); let next = maxT(db)+1;
+    tx.objectStore('items').openCursor().onsuccess = e => {
+      const c = e.target.result;
+      if(!c){ db.deleteObjectStore('items'); return; }
+      const it = c.value; let t = seen.get(it.listName);
+      if(t===undefined){ t=next++; seen.set(it.listName,t); mkStore(db,t); T.put({listName:it.listName,t}); }
+      tx.objectStore(sn(t)).put(it); L.put({id:it.id,t});
+      c.continue();
+    };
+  }
   function open(){
     if(dbp) return dbp;
-    dbp = new Promise((res,rej)=>{
-      const rq = indexedDB.open('dsp-lists', 2);
-      rq.onupgradeneeded = e => {
-        const db = e.target.result;
-        if(!db.objectStoreNames.contains('items')){
-          const s = db.createObjectStore('items',{keyPath:'id',autoIncrement:true});
-          s.createIndex('listName','listName');
-        }
-        if(!db.objectStoreNames.contains('meta')) db.createObjectStore('meta',{keyPath:'listName'});   // порядок колонок списка
+    const p = dbp = (async()=>{
+      let db = await openV(0);
+      if(!db || !db.objectStoreNames.contains('tables') || db.objectStoreNames.contains('items')){
+        const v = db ? db.version : 0; db?.close();
+        db = await bump(Math.max(v,2),migrate);
+      }
+      return attach(db);
+    })();
+    p.catch(()=>{ if(dbp===p) dbp=null; });
+    return p;
+  }
+  // правка схемы: по одной за раз, соединение переоткрывается на следующей версии
+  function upgrade(up){
+    const run = async()=>{
+      const db = await open(), v = db.version;
+      const p = dbp = (async()=>{ db.close(); if(cur===db) cur=null; return attach(await bump(v,up)); })();
+      p.catch(()=>{ if(dbp===p) dbp=null; });
+      return p;
+    };
+    return chain = chain.then(run,run);
+  }
+  // names — список хранилищ или функция от базы; соединение закрыто (схему меняют) — ещё раз на новом
+  async function txn(names,mode){
+    for(let i=0;;i++){
+      const p = open(), db = await p;
+      try{ return ldbTx(db,typeof names==='function' ? names(db) : names,mode); }
+      catch(e){ if(i || (e?.name!=='InvalidStateError' && e?.name!=='NotFoundError')) throw e; if(dbp===p) dbp=null; }
+    }
+  }
+  // номер таблицы по имени; undefined — такой нет
+  async function tOf(name){
+    const tx = await txn('tables','readonly'), r = await reqP(tx.objectStore('tables').get(name));
+    return r && tx.db.objectStoreNames.contains(sn(r.t)) ? r.t : undefined;
+  }
+  async function ensure(name){
+    const t = await tOf(name); if(t!==undefined) return t;
+    await upgrade((db,tx)=>{
+      const T = tx.objectStore('tables');
+      T.get(name).onsuccess = e => {
+        const r = e.target.result;
+        if(r && db.objectStoreNames.contains(sn(r.t))) return;             // создала другая вкладка
+        const nt = maxT(db)+1; mkStore(db,nt); T.put({listName:name,t:nt});
       };
-      rq.onsuccess = e => {
-        const db = e.target.result;
-        db.onclose = () => { dbp = null; };                  // браузер закрыл соединение (очистка данных, нехватка места) — открыть заново
-        db.onversionchange = () => { db.close(); dbp = null; };
-        res(db);
-      };
-      rq.onblocked = () => console.warn('[lists] база списков занята другой вкладкой — закройте её');
-      rq.onerror = e => { dbp = null; rej(e.target.error); };
     });
-    return dbp;
+    return tOf(name);
   }
-  async function store(mode){
-    try{ return ldbTx(await open(),'items',mode).objectStore('items'); }
-    catch(e){ if(e?.name!=='InvalidStateError') throw e; dbp = null; return ldbTx(await open(),'items',mode).objectStore('items'); }
+  // таблица записи; старые id — по legacy
+  async function tOfIds(ids){
+    const out = new Map(), old = ids.filter(id=>!(id>=LDB_ROWS));
+    for(const id of ids) if(id>=LDB_ROWS) out.set(id,Math.floor(id/LDB_ROWS));
+    if(old.length){
+      const L = (await txn('legacy','readonly')).objectStore('legacy');
+      const rs = await Promise.all(old.map(id=>reqP(L.get(id))));
+      old.forEach((id,i)=>{ if(rs[i]) out.set(id,rs[i].t); });
+    }
+    const db = await open();
+    for(const [id,t] of out) if(!db.objectStoreNames.contains(sn(t))) out.delete(id);
+    return out;
   }
-  function reqP(rq){ return new Promise((res,rej)=>{ rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error); }); }
+  const tOfId = async id => (await tOfIds([id])).get(id);
+  // удаление таблицы целиком: хранилище, запись каталога, старые id
+  const dropTable = (name,t) => upgrade((db,tx)=>{
+    if(db.objectStoreNames.contains(sn(t))) db.deleteObjectStore(sn(t));
+    const T = tx.objectStore('tables');
+    T.get(name).onsuccess = e => { if(e.target.result?.t===t) T.delete(name); };
+    tx.objectStore('legacy').index('t').openKeyCursor(IDBKeyRange.only(t)).onsuccess = e => { const c=e.target.result; if(c){ tx.objectStore('legacy').delete(c.primaryKey); c.continue(); } };
+  });
+  // имена — каталог и число записей в каждой таблице одной транзакцией
+  async function counts(){
+    const tx = await txn(db=>['tables',...tables(db)],'readonly'), st = [...tx.objectStoreNames];
+    const dir = await reqP(tx.objectStore('tables').getAll()), live = dir.filter(d=>st.includes(sn(d.t)));
+    const n = await Promise.all(live.map(d=>reqP(tx.objectStore(sn(d.t)).count())));
+    return live.map((d,i)=>({name:d.listName,t:d.t,rows:n[i]}));
+  }
   // fields — объект {имяПоля:значение}; value дублируется из fields.value для чтения старым кодом
   return {
     // uid и modified нужны синхронизации устройств (sync.js); extra — чужие uid / created / modified
-    async add(listName,name,fields,extra){ const s=await store('readwrite'); const now=Date.now();
+    async add(listName,name,fields,extra){ const t=await ensure(listName), s=(await txn(sn(t),'readwrite')).objectStore(sn(t)); const now=Date.now();
       return reqP(s.add({listName,name,fields,value:fields?.value??'',created:now,modified:now,uid:syUid(),...extra})); },
-    async update(id,patch){ const s=await store('readwrite'); const it=await reqP(s.get(id)); Object.assign(it,{modified:Date.now()},patch); return reqP(s.put(it)); },
-    async remove(id){ const s=await store('readwrite'); const it=await reqP(s.get(id)); if(it) await syncNoteDel('t',it); return reqP(s.delete(id)); },
-    async list(listName){ const s=await store('readonly');
-      const items=await reqP(s.index('listName').getAll(listName));
+    // patch.listName другой таблицы — запись переезжает туда с новым id (он и возвращается)
+    async update(id,patch){
+      const t=await tOfId(id); if(t===undefined) throw new Error('no record '+id);
+      const t2=patch.listName!==undefined ? await ensure(patch.listName) : t;
+      const tx=await txn(t2===t ? [sn(t)] : [sn(t),sn(t2),'legacy'],'readwrite'), s=tx.objectStore(sn(t));
+      const it=await reqP(s.get(id)); if(!it) throw new Error('no record '+id);
+      Object.assign(it,{modified:Date.now()},patch);
+      if(t2===t) return reqP(s.put(it));
+      s.delete(id); tx.objectStore('legacy').delete(id); delete it.id;
+      return reqP(tx.objectStore(sn(t2)).add(it));
+    },
+    async remove(id){
+      const t=await tOfId(id); if(t===undefined) return;
+      const it=await reqP((await txn(sn(t),'readonly')).objectStore(sn(t)).get(id));
+      if(it) await syncNoteDel('t',it);
+      const tx=await txn([sn(t),'legacy'],'readwrite'); tx.objectStore(sn(t)).delete(id); tx.objectStore('legacy').delete(id);
+      return doneP(tx);
+    },
+    async list(listName){
+      const t=await tOf(listName); if(t===undefined) return [];
+      const items=await reqP((await txn(sn(t),'readonly')).objectStore(sn(t)).getAll());
       // старые записи (до появления fields) — доопределяем как одно поле value; getAll отдаёт свежие копии, правим на месте
       for(const it of items) if(!it.fields) it.fields={value:it.value};
       return items;
     },
-    // имена — по ключам индекса: от каждого найденного прыжок к следующему (nextunique в Chromium идёт по всем записям).
-    // Следующий запрос — прямо в onsuccess предыдущего: транзакция точно активна. Сбой — запасной путь через чтение всех записей
+    // пустая таблица без колонок в meta не считается списком (как раньше: список — это его записи)
     async listNames(){
-      let names;
-      try{
-        const db=await open();
-        names=await new Promise((res,rej)=>{
-          const tx=db.transaction('items','readonly'), ix=tx.objectStore('items').index('listName'), out=[];
-          tx.onerror=tx.onabort=()=>rej(tx.error||new Error('transaction aborted'));
-          const step=rg=>{
-            const rq=ix.openKeyCursor(rg);
-            rq.onsuccess=()=>{ const c=rq.result; if(!c) return res(out); out.push(c.key); step(IDBKeyRange.lowerBound(c.key,true)); };
-          };
-          step(null);
-        });
-      }catch(e){
-        console.warn('[lists] имена по индексу не прочитались, читаю все записи:',e);
-        const all=await reqP((await store('readonly')).getAll());
-        names=[...new Set(all.map(x=>x.listName))];
-      }
+      const names=(await counts()).filter(d=>d.rows>0).map(d=>d.name);
       const meta=await ListDB.metaNames();               // пустой список с колонками тоже существует
       return [...new Set([...names,...meta])].sort(); },
-    async renameList(oldName,newName){ const s=await store('readwrite');
-      const items=await reqP(s.index('listName').getAll(oldName));
-      for(const it of items){ it.uid=it.uid||syLegacyUid(it.listName,it.name,JSON.stringify(it.fields)); it.listName=newName; it.modified=Date.now(); await reqP(s.put(it)); }
+    async renameList(oldName,newName){
+      if(oldName===newName) return;
+      const t=await tOf(oldName);
+      if(t!==undefined){
+        const t2=await tOf(newName);
+        if(t2===undefined){                              // обычный случай: меняется только каталог (и поле listName записей)
+          const tx=await txn(['tables',sn(t)],'readwrite'), T=tx.objectStore('tables');
+          T.delete(oldName); T.put({listName:newName,t});
+          tx.objectStore(sn(t)).openCursor().onsuccess=e=>{ const c=e.target.result; if(!c) return; const it=c.value;
+            it.uid=it.uid||syLegacyUid(it.listName,it.name,JSON.stringify(it.fields)); it.listName=newName; it.modified=Date.now(); c.update(it); c.continue(); };
+          await doneP(tx);
+        } else {                                         // такое имя уже есть — записи дописываются в ту таблицу
+          const tx=await txn([sn(t),sn(t2)],'readwrite'), A=tx.objectStore(sn(t)), B=tx.objectStore(sn(t2));
+          for(const it of await reqP(A.getAll())){ it.uid=it.uid||syLegacyUid(it.listName,it.name,JSON.stringify(it.fields)); it.listName=newName; it.modified=Date.now(); delete it.id; B.add(it); }
+          A.clear(); await doneP(tx); await dropTable(oldName,t);
+        }
+      }
       const m=await ListDB.getMeta(oldName);
       if(m){ await ListDB.delMeta(oldName); await ListDB.setMeta(newName,m); } },
-    async deleteList(listName){ const s=await store('readwrite');
-      const items=await reqP(s.index('listName').getAll(listName));
-      for(const it of items){ await syncNoteDel('t',it); await reqP(s.delete(it.id)); }
+    async deleteList(listName){
+      const t=await tOf(listName);
+      if(t!==undefined){
+        for(const it of await reqP((await txn(sn(t),'readonly')).objectStore(sn(t)).getAll())) await syncNoteDel('t',it);
+        await dropTable(listName,t);
+      }
       await ListDB.delMeta(listName); },
     // пакетная запись одной транзакцией — для потока записей и импорта
     async addMany(listName,rows){
-      const db=await open();
+      const t=await ensure(listName), tx=await txn(sn(t),'readwrite'), s=tx.objectStore(sn(t)), ids=[];
       return new Promise((res,rej)=>{
-        const tx=ldbTx(db,'items','readwrite'), s=tx.objectStore('items'), ids=[];
         for(const r of rows){
           const now=Date.now();
           const rq=s.add({listName,name:r.name,fields:r.fields,value:r.fields?.value??'',created:now,modified:now,uid:syUid()});
@@ -6646,12 +6763,23 @@ const ListDB = (() => {
         tx.oncomplete=()=>res(ids); tx.onerror=tx.onabort=()=>rej(tx.error);
       });
     },
+    // записи целиком заменяют таблицу (восстановление из копии): id новые, остальное как в записи
+    async replaceList(listName,items){
+      const t=await ensure(listName), tx=await txn([sn(t),'legacy'],'readwrite'), s=tx.objectStore(sn(t)), L=tx.objectStore('legacy');
+      s.clear();
+      L.index('t').openKeyCursor(IDBKeyRange.only(t)).onsuccess=e=>{ const c=e.target.result; if(c){ L.delete(c.primaryKey); c.continue(); } };
+      for(const it0 of items){ const {id,...it}=it0; s.add({...it,listName}); }
+      await doneP(tx); return items.length;
+    },
     async removeMany(ids){
-      const db=await open();
+      const by=await tOfIds(ids), st=[...new Set([...by.values()].map(sn))];
+      if(!st.length) return;
+      const tx=await txn([...st,'legacy'],'readwrite'), L=tx.objectStore('legacy');
       return new Promise((res,rej)=>{
-        const tx=ldbTx(db,'items','readwrite'), s=tx.objectStore('items');
         const tomb=typeof syCfg!=='function' || !!syCfg().key;            // чтение записи нужно только ради метки удаления для синхронизации
-        for(const id of ids){
+        for(const [id,t] of by){
+          const s=tx.objectStore(sn(t));
+          if(!(id>=LDB_ROWS)) L.delete(id);
           if(!tomb){ s.delete(id); continue; }
           const g=s.get(id); g.onsuccess=()=>{ if(g.result) syncNoteDel('t',g.result); s.delete(id); };
         }
@@ -6659,30 +6787,31 @@ const ListDB = (() => {
         tx.oncomplete=()=>res(); tx.onerror=tx.onabort=()=>rej(tx.error);
       });
     },
-    // списки: {rows, bytes, created, modified}; пустой список с колонками — rows 0. Записи целиком не читаются (в базе их могут быть миллионы):
-    // число — по индексу, размер — по выборке из первых записей, даты — по первой и последней записи (ключи растут со временем)
+    // списки: {rows, bytes, created, modified}; пустой список с колонками — rows 0. Записи целиком не читаются (в таблице их могут быть миллионы):
+    // число — count таблицы, размер — по выборке из первых записей, даты — по первой и последней записи (ключи растут со временем)
     async summary(){
       const m=new Map(), meta=new Set(await ListDB.metaNames());
-      for(const k of await ListDB.listNames()){
-        const ix=(await store('readonly')).index('listName'), r=IDBKeyRange.only(k);
-        const [rows,head,last]=await Promise.all([reqP(ix.count(r)),reqP(ix.getAll(r,64)),reqP(ix.openCursor(r,'prev'))]);
+      for(const d of await counts()){
+        if(!d.rows) continue;
+        const s=(await txn(sn(d.t),'readonly')).objectStore(sn(d.t));
+        const [head,last]=await Promise.all([reqP(s.getAll(null,64)),reqP(s.openCursor(null,'prev'))]);
         let sz=0;
         for(const it of head){ sz+=(it.name||'').length; for(const f in it.fields) sz+=f.length+String(it.fields[f]??'').length+2; }
-        m.set(k,{rows,bytes:head.length ? Math.round(sz/head.length*rows) : 0,created:head[0]?.created||0,modified:last?.value.created||0});
+        m.set(d.name,{rows:d.rows,bytes:head.length ? Math.round(sz/head.length*d.rows) : 0,created:head[0]?.created||0,modified:last?.value.created||0});
       }
       for(const k of meta) if(!m.has(k)) m.set(k,{rows:0,bytes:0,created:0,modified:0});
       return m;
     },
-    async getMeta(listName){ const db=await open(); return reqP(db.transaction('meta','readonly').objectStore('meta').get(listName)); },
-    async setMeta(listName,meta,keepTime){ const db=await open(); return reqP(ldbTx(db,'meta','readwrite').objectStore('meta').put({...meta,listName,modified:keepTime ? meta.modified : Date.now()})); },
-    async delMeta(listName){ const db=await open(); syncNoteDel('m',{listName}); return reqP(ldbTx(db,'meta','readwrite').objectStore('meta').delete(listName)); },
-    async metaNames(){ const db=await open(); return reqP(db.transaction('meta','readonly').objectStore('meta').getAllKeys()); },
+    async getMeta(listName){ return reqP((await txn('meta','readonly')).objectStore('meta').get(listName)); },
+    async setMeta(listName,meta,keepTime){ return reqP((await txn('meta','readwrite')).objectStore('meta').put({...meta,listName,modified:keepTime ? meta.modified : Date.now()})); },
+    async delMeta(listName){ syncNoteDel('m',{listName}); return reqP((await txn('meta','readwrite')).objectStore('meta').delete(listName)); },
+    async metaNames(){ return reqP((await txn('meta','readonly')).objectStore('meta').getAllKeys()); },
   };
 })();
 // счётчик изменений хранилища: читатели списков (Overlay, Flight Sim) перечитывают их, когда он сменился
 ListDB.rev=0;
 ListDB.watch=new Set();                                  // слушатели правок хранилища (реестр имён списков Table)
-for(const k of ['add','update','remove','renameList','deleteList','addMany','removeMany','setMeta','delMeta']){
+for(const k of ['add','update','remove','renameList','deleteList','addMany','replaceList','removeMany','setMeta','delMeta']){
   const f=ListDB[k]; ListDB[k]=async function(...a){ const r=await f.apply(this,a); ListDB.rev++; for(const w of ListDB.watch) try{ w(); }catch(e){} if(typeof FileStore!=='undefined') FileStore.notifyLater('tables'); return r; };
 }
 
