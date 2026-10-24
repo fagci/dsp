@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,Float64Array,Uint8Array,TextEncoder,TextDecoder,Array,String,Number,isFinite});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/control-kernels.js'),'utf8')+
-  ';this.K={joyTarget,joyStep,joyShape,joyBits,joyInvY,joyHexFrame,joyFormat,nrfHex,nrfTextToHex,nrfHexToText,nrfCfgLine,nrfParseLine,nrfScanSpec};',ctx);
+  ';this.K={joyTarget,joyStep,joyShape,joyBits,joyInvY,joyHexFrame,joyFormat,nrfHex,nrfTextToHex,nrfHexToText,nrfCfgLine,nrfParseLine,nrfScanSpec,ctlValue,ctlNorm,ctlParse,ctlGrid,trendPush};',ctx);
 const K=ctx.K;
 let bad=0; const eq=(n,a,b)=>{ if(JSON.stringify(a)!==JSON.stringify(b)){ bad++; console.log('FAIL',n,JSON.stringify(a),'!=',JSON.stringify(b)); } else console.log('ok  ',n); };
 const near=(n,a,b,e=1e-6)=>{ if(Math.abs(a-b)>e){ bad++; console.log('FAIL',n,a,'≉',b); } else console.log('ok  ',n); };
@@ -50,4 +50,14 @@ eq('parse scan',K.nrfParseLine('SCAN '+sc.join(',')).counts.length,126); eq('par
 const sp=K.nrfScanSpec(sc,10,3);
 near('scan: busy channel',20*Math.log10(sp.mag[40]),-40,1e-3); near('scan: idle channel',20*Math.log10(sp.mag[0]),-100,1e-3); near('scan: half',20*Math.log10(sp.mag[41]),-70,1e-3);
 eq('scan freqs',[sp.freqs[0],sp.freqs[125],sp.size,sp.rev],[2400e6,2525e6,126,3]);
+// ручки / фейдеры
+near('ctl lin mid',K.ctlValue(.5,0,10,false,0),5); near('ctl clamp',K.ctlValue(2,0,10,false,0),10); near('ctl step',K.ctlValue(.33,0,10,false,1),3);
+near('ctl log mid',K.ctlValue(.5,10,1000,true,0),100); near('ctl log falls back to lin',K.ctlValue(.5,0,10,true,0),5);
+near('ctl step from min',K.ctlValue(.5,1,10,false,2),5); near('ctl reversed range',K.ctlValue(.25,10,0,false,0),7.5);
+near('ctl norm lin',K.ctlNorm(2.5,0,10,false),.25); near('ctl norm log',K.ctlNorm(100,10,1000,true),.5); near('ctl norm clamp',K.ctlNorm(50,0,10,false),1); near('ctl norm flat',K.ctlNorm(3,5,5,false),0);
+eq('ctl parse',K.ctlParse('1,2.5,,x',5,7),[1,2.5,7,7,7]); eq('ctl parse empty',K.ctlParse('',2,0),[0,0]);
+const gr=K.ctlGrid(4,400,100,96,24); eq('ctl grid wide → one row',[gr.c,gr.r],[4,1]);
+const gt=K.ctlGrid(4,100,400,96,24); eq('ctl grid tall → one column',[gt.c,gt.r],[1,4]);
+eq('trend push cap',K.trendPush([1,2,3],4,3),[2,3,4]);
+
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad?1:0);

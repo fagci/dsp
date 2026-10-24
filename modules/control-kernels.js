@@ -102,3 +102,34 @@ function nrfScanSpec(counts,passes,rev){
   for(let i=0;i<N;i++){ mag[i]=Math.pow(10,(-100+60*Math.min(1,counts[i]/mx))/20); freqs[i]=(2400+i)*1e6; }
   return {mag,freqs,sr:N*1e6,size:N,rev:rev|0};
 }
+
+// ---------- ручки, фейдеры, XY-пад (экранные органы управления) ----------
+// нормированное положение t (0…1) → значение; log работает только при min>0, step>0 — шаг от min
+function ctlValue(t,min,max,log,step){
+  t=Math.min(1,Math.max(0,+t||0));
+  let v=log && min>0 && max>0 ? min*Math.pow(max/min,t) : min+(max-min)*t;
+  if(step>0){ v=min+Math.round((v-min)/step)*step; v=Math.min(Math.max(v,Math.min(min,max)),Math.max(min,max)); }
+  return +v.toPrecision(12);
+}
+function ctlNorm(v,min,max,log){
+  if(!(max!==min)) return 0;
+  const t=log && min>0 && max>0 && v>0 ? Math.log(v/min)/Math.log(max/min) : (v-min)/(max-min);
+  return Math.min(1,Math.max(0,t));
+}
+// сохранённые значения «1,2.5,…» → массив из n чисел; пустые и испорченные берут def
+function ctlParse(s,n,def){
+  const a=String(s==null ? '' : s).split(','), o=[];
+  for(let k=0;k<n;k++){ const v=a[k]===undefined || a[k].trim()==='' ? NaN : +a[k]; o.push(isFinite(v) ? v : def); }
+  return o;
+}
+// сетка c×r, в которой элементы выходят крупнее всего (ограничение размера ячейки cap, место под подпись lab)
+function ctlGrid(N,W,H,cap,lab,aspect){
+  let best=null;
+  for(let c=1;c<=N;c++){
+    const r=Math.ceil(N/c), s=Math.min(W/c*.9/(aspect||1),(H/r-lab)*.95,cap);
+    if(!best || s>best.s) best={c,r,s};
+  }
+  return {...best,cw:W/best.c,ch:H/best.r};
+}
+// самописец: кольцевой буфер значений за окно, огибающая min/max на пиксель
+function trendPush(buf,v,max){ buf.push(v); if(buf.length>max) buf.splice(0,buf.length-max); return buf; }
