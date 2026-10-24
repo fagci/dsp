@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=97;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=98;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -380,6 +380,7 @@ const PRESET_CATS={
   'Object Detect: Camera Video and Photo':'Images & TV',
   'Neural Denoiser (RNNoise): Noisy Voice → Clean Voice':'Digital Voice & Trunking',
   'Sound Classifier (YAMNet): What Is That Sound':'Digital Voice & Trunking',
+  'Speech to Text (Whisper): Microphone or File → Text':'Digital Voice & Trunking',
   'Notes (Basic Pitch): Chord and Microphone':'Digital Voice & Trunking',
   'Echo Canceller (AEC): Speaker + Microphone, or One Microphone':'Digital Voice & Trunking',
   'Voice Restore: Muffled Mumbling Speech → Clear':'Digital Voice & Trunking',
@@ -6307,6 +6308,17 @@ const tk=addNode('ticker',900,170,{time:true}); tk.size.w=320; tk.size.h=220; ap
 addEdge(m.id,'a',mx.id,'a'); addEdge(o.id,'out',mx.id,'b');
 addEdge(mx.id,'out',yn.id,'in');
 addEdge(yn.id,'rec',tk.id,'rec');
+markWiresDirty();
+});
+preset('Speech to Text (Whisper): Microphone or File → Text', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Whisper (OpenAI, a neural network, runs in the browser) turns speech into text in about 100 languages, Russian included, and can translate it into English. The stream is cut into phrases at pauses; every phrase is recognised and goes to the ticker (and to the «full» output as a transcript). The first start loads the runtime (about 15 MB) and the model (base ≈ 85 MB) from huggingface.co into Files → Offline data (or press ⇩ offline in Files); after that it works without a network. Here the microphone is the source: speak, and the text appears after the pause. To read a recording press «Transcribe file…» on the node (faster than real time). To hear a radio channel put a demodulated signal (NFM/AM/SSB) into «in» instead of the microphone and set the language by hand: on noisy radio it is more reliable than «auto». Models: tiny is the fastest, small is the most exact; .en — English only. Heavy on the CPU: for a slow device take tiny.'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const m =addNode('mic',40,200,{gainA:1,echo:false,ns:true,agc:true});
+const w =addNode('whisper',320,200,{model:'base',lang:'auto',pause:.7}); w.size.w=340; w.size.h=260; applySize(w);
+const tk=addNode('ticker',700,200,{time:true}); tk.size.w=340; tk.size.h=260; applySize(tk);
+addEdge(m.id,'a',w.id,'in');
+addEdge(w.id,'rec',tk.id,'rec');
 markWiresDirty();
 });
 preset('Notes (Basic Pitch): Chord and Microphone', function(){
