@@ -6552,6 +6552,12 @@ function escapeHtml(s){
 // Один список = все записи с одинаковым listName. Ключ хранения — имя списка,
 // а не n.id узла, чтобы список переживал пересборку/копирование узла.
 
+// запись — с relaxed durability: браузер подтверждает транзакцию, когда данные отданы ОС, не дожидаясь сброса на диск
+// (в Chromium строгое подтверждение на телефоне — сотни мс на запись, в очереди за потоком записей — секунды); где опция неизвестна — обычная
+const ldbTx=(db,names,mode)=>{
+  if(mode!=='readwrite') return db.transaction(names,mode);
+  try{ return db.transaction(names,mode,{durability:'relaxed'}); }catch(e){ return db.transaction(names,mode); }
+};
 const ListDB = (() => {
   let dbp = null;
   function open(){
@@ -6578,8 +6584,8 @@ const ListDB = (() => {
     return dbp;
   }
   async function store(mode){
-    try{ return (await open()).transaction('items',mode).objectStore('items'); }
-    catch(e){ if(e?.name!=='InvalidStateError') throw e; dbp = null; return (await open()).transaction('items',mode).objectStore('items'); }
+    try{ return ldbTx(await open(),'items',mode).objectStore('items'); }
+    catch(e){ if(e?.name!=='InvalidStateError') throw e; dbp = null; return ldbTx(await open(),'items',mode).objectStore('items'); }
   }
   function reqP(rq){ return new Promise((res,rej)=>{ rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error); }); }
   // fields — объект {имяПоля:значение}; value дублируется из fields.value для чтения старым кодом
@@ -6630,24 +6636,26 @@ const ListDB = (() => {
     async addMany(listName,rows){
       const db=await open();
       return new Promise((res,rej)=>{
-        const tx=db.transaction('items','readwrite'), s=tx.objectStore('items'), ids=[];
+        const tx=ldbTx(db,'items','readwrite'), s=tx.objectStore('items'), ids=[];
         for(const r of rows){
           const now=Date.now();
           const rq=s.add({listName,name:r.name,fields:r.fields,value:r.fields?.value??'',created:now,modified:now,uid:syUid()});
           rq.onsuccess=()=>ids.push(rq.result);
         }
+        try{ tx.commit?.(); }catch(e){}                      // все запросы поставлены — не ждать авто-закрытия транзакции
         tx.oncomplete=()=>res(ids); tx.onerror=tx.onabort=()=>rej(tx.error);
       });
     },
     async removeMany(ids){
       const db=await open();
       return new Promise((res,rej)=>{
-        const tx=db.transaction('items','readwrite'), s=tx.objectStore('items');
+        const tx=ldbTx(db,'items','readwrite'), s=tx.objectStore('items');
         const tomb=typeof syCfg!=='function' || !!syCfg().key;            // чтение записи нужно только ради метки удаления для синхронизации
         for(const id of ids){
           if(!tomb){ s.delete(id); continue; }
           const g=s.get(id); g.onsuccess=()=>{ if(g.result) syncNoteDel('t',g.result); s.delete(id); };
         }
+        if(!tomb) try{ tx.commit?.(); }catch(e){}            // запросы из onsuccess ещё впереди — коммит только когда их нет
         tx.oncomplete=()=>res(); tx.onerror=tx.onabort=()=>rej(tx.error);
       });
     },
@@ -6666,8 +6674,8 @@ const ListDB = (() => {
       return m;
     },
     async getMeta(listName){ const db=await open(); return reqP(db.transaction('meta','readonly').objectStore('meta').get(listName)); },
-    async setMeta(listName,meta,keepTime){ const db=await open(); return reqP(db.transaction('meta','readwrite').objectStore('meta').put({...meta,listName,modified:keepTime ? meta.modified : Date.now()})); },
-    async delMeta(listName){ const db=await open(); syncNoteDel('m',{listName}); return reqP(db.transaction('meta','readwrite').objectStore('meta').delete(listName)); },
+    async setMeta(listName,meta,keepTime){ const db=await open(); return reqP(ldbTx(db,'meta','readwrite').objectStore('meta').put({...meta,listName,modified:keepTime ? meta.modified : Date.now()})); },
+    async delMeta(listName){ const db=await open(); syncNoteDel('m',{listName}); return reqP(ldbTx(db,'meta','readwrite').objectStore('meta').delete(listName)); },
     async metaNames(){ const db=await open(); return reqP(db.transaction('meta','readonly').objectStore('meta').getAllKeys()); },
   };
 })();
