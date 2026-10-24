@@ -15,7 +15,7 @@ const SAP_RES=2048, SAP_WRES=1024, SAP_ROWS=96, SAP_GAP=4, SAP_AXIS=14, SAP_TITL
 const SAP_DB0=-160, SAP_DBS=.75;
 const sapCode=db=>db!==db ? 0 : Math.max(1,Math.min(255,Math.round((db-SAP_DB0)/SAP_DBS)+1));
 const SAP_HINT='wheel / pinch — zoom · drag — pan (zoomed) · vertical drag, Ctrl+wheel, vertical pinch — dB range of a pane · double click / double tap — reset view · wheel on a title or swipe it — next/previous bands\n'+
-  'tap — marker · tap a title — retune the receiver · Shift+tap / long press / «⊘ skip» button + tap on a ▼ signal — skip it (the same on a ⊘ — return it)';
+  'tap — marker · tap a title — retune the receiver';
 
 // все диапазоны списка по возрастанию lo
 function saPaneList(n){
@@ -34,33 +34,14 @@ function saPaneGet(n,b){
   if(!p){
     p={key, lo:b.lo, hi:b.hi, label:'', color:'', lv:new Float32Array(SAP_RES).fill(NaN), pk:new Float32Array(SAP_RES).fill(NaN),
       wdb:new Uint8Array(SAP_WRES*SAP_ROWS), db:null,
-      t:0, img:null, off:null, ocx:null, dirty:false, med:-120, det:null, zoom:null,
+      t:0, img:null, off:null, ocx:null, dirty:false, med:-120, zoom:null,
       // строка водопада достраивается полосками за проход диапазона; сдвиг — только когда она закончена (rowLv — уровни текущей строки)
       rowLv:new Float32Array(SAP_RES).fill(NaN), rowN:0, rowFull:false, rowOpen:false, rowT0:0, lastC:null, curWin:null};
     try{ const o=JSON.parse(n.p.paneDb||'{}'); if(Array.isArray(o[key])) p.db=o[key]; }catch(e){}
     store.set(key,p);
   }
   p.label=b.label||''; p.color=b.color||''; p.step=b.step||0;
-  if(n.p.detect && !p.det){
-    // фасад: list/floorDb — сводка; у каждого источника спектра (приёмника) свой cfarFrame — кадры разных приёмников не сбивают
-    // подтверждение цели друг другу; цели вне окна приёмника живут дольше (keepOutside)
-    p.det={list:[], floorDb:null, srcs:[]};
-  } else if(!n.p.detect && p.det) p.det=null;
   return p;
-}
-// детектор приёмника src в диапазоне p (заглушка узла для cfarFrame)
-function saDetSrc(n,p,src){
-  return p.det.srcs[src]||(p.det.srcs[src]={p:{auto:false,fmin:p.lo,fmax:p.hi,method:'OS',guard:4,train:32,thr:n.p.detThr,minW:2,confM:2,
-    confN:3,top:10,hold:1500,idRes:'auto'}, keepOutside:30000, list:[], tracks:[], recs:[], skip:null, floorDb:null});
-}
-// сводный список целей панели: от всех приёмников, без повторов одной и той же частоты
-function saDetMerge(p){
-  const L=[];
-  for(const d of p.det.srcs) if(d) for(const t of d.list) L.push(t);
-  L.sort((a,b)=>b.db-a.db);
-  const out=[];
-  for(const t of L) if(!out.some(o=>Math.abs(o.f-t.f)<=Math.max(5000,o.w,t.w))) out.push(t);
-  p.det.list=out.slice(0,10);
 }
 // панели на экране
 function saPaneState(n){
@@ -80,33 +61,6 @@ function saSetFrom(n,v,manual){
   n._pnRevDraw=(n._pnRevDraw|0)+1;
 }
 
-/* ---------- список пропуска ---------- */
-// свой список (p.skipList: [{f,w}]) + вход skip (диапазоны Table); общий вид — диапазоны {lo,hi} для cfarFrame
-function saSkipSync(n){
-  if(n._skSrc!==n.p.skipList){
-    n._skSrc=n.p.skipList;
-    try{ const a=JSON.parse(n.p.skipList||'[]'); n._skipInt=Array.isArray(a) ? a.filter(x=>x && isFinite(x.f) && isFinite(x.w)) : []; }
-    catch(e){ n._skipInt=[]; }
-    n._skKey=null;
-  }
-  const ext=n._skipExt||[], key=n._skSrc+'|'+ext.length;
-  if(n._skKey===key) return n._skipR;
-  n._skKey=key;
-  n._skipR=[...ext, ...n._skipInt.map(x=>({lo:x.f-x.w/2, hi:x.f+x.w/2}))];
-  for(const p of (n._pnStore ? n._pnStore.values() : [])) if(p.det){
-    for(const d of p.det.srcs) if(d){
-      d.skip=n._skipR;
-      d.tracks=d.tracks.filter(t=>!cfarSkipped(n._skipR,t.f,t.w));
-      d.list=d.list.filter(t=>!cfarSkipped(n._skipR,t.f,t.w));
-    }
-    saDetMerge(p);
-  }
-  return n._skipR;
-}
-function saSkipSave(n){
-  n.p.skipList=JSON.stringify(n._skipInt.map(x=>({f:Math.round(x.f),w:Math.round(x.w)})));
-  saSkipSync(n); n._pnRevDraw=(n._pnRevDraw|0)+1;
-}
 // диапазон дБ панели: свой (жесты) или общий floor/top
 const saPaneRange=(n,p)=>p.db||[n.p.floor,n.p.top];
 function saDbSave(n){
@@ -144,7 +98,6 @@ function saPeakClear(n){
   if(n._pnStore) for(const p of n._pnStore.values()) p.pk.fill(NaN);
   n._pnRevDraw=(n._pnRevDraw|0)+1;
 }
-function saSkipClear(n){ n._skipInt=[]; saSkipSave(n); }
 
 /* ---------- накопление ---------- */
 // новое окно спектра → диапазоны
@@ -163,25 +116,12 @@ function saPanesIngest(n,sp,src=0){
   if(st.cKey!==undefined && st.cKey!==cKey){ st.cKey=cKey; return; }
   st.cKey=cKey;
   const cut=(sHi-sLo)*clamp(+n.p.edge||0,0,40)/100, uLo=sLo+cut, uHi=sHi-cut;
-  // пик на центре окна приёмника (утечка гетеродина / DC) есть в каждом окне и выглядит как сигнал: центральные бины заменяем
-  // интерполяцией соседних (только для окон одного приёмника — у широкой развёртки середина спектра не особая)
-  let m=sp.mag, sc=sp;
-  const dcHz=Math.max(0,+n.p.dcCut||0)*1000;
-  if(dcHz>0 && sp.freqs && sHi-sLo<=12e6){
-    const ci=N>>1, binHz=Math.abs(specHz(sp,ci)-specHz(sp,ci-1))||1, w=Math.max(3,Math.ceil(dcHz/binHz)), wMax=Math.max(w,Math.ceil(dcHz*5/binHz));
-    // юбка пика несимметрична и шире заданного: вырез расширяется в каждую сторону, пока уровень выше шума (медиана +3 дБ)
-    const thr=Float32Array.from(sp.mag).sort()[N>>1]*1.41;
-    let a=Math.max(0,ci-w-1), b=Math.min(N-1,ci+w+1);
-    while(a>0 && ci-a<wMax && sp.mag[a]>thr) a--;
-    while(b<N-1 && b-ci<wMax && sp.mag[b]>thr) b++;
-    if(b-a>2){ m=Float32Array.from(sp.mag); for(let i=a+1;i<b;i++) m[i]=sp.mag[a]+(sp.mag[b]-sp.mag[a])*(i-a)/(b-a); sc={...sp, mag:m}; }
-  }
+  const m=sp.mag;
   // следование за сканером: окно ушло в диапазон вне экрана — перелистнуть на его страницу
   if(src===0 && n.p.follow && !(n._pnManT && now-n._pnManT<10000)){
     const cw=(sLo+sHi)/2, idx=list.findIndex(b=>cw>=b.lo && cw<=b.hi), k=Math.max(1,n.p.panes|0), from=n.p.paneFrom|0;
     if(idx>=0 && (idx<from || idx>=from+k)) saSetFrom(n,Math.floor(idx/k)*k,false);
   }
-  const skipR=saSkipSync(n);
   const pal=paletteLut(n.p.palette);
   for(const b of list){
     if(b.hi<sLo || b.lo>sHi) continue;
@@ -247,27 +187,7 @@ function saPanesIngest(n,sp,src=0){
     // шумовая полка панели — медиана последних уровней (для SNR маркеров)
     const t=Float32Array.from(p.lv).filter(v=>v===v).sort();
     p.med=t.length ? t[t.length>>1] : -120;
-    if(p.det){
-      const ds=saDetSrc(n,p,src);
-      ds.p.thr=n.p.detThr; ds.skip=skipR;
-      cfarFrame(ds,sc);
-      p.det.floorDb=ds.floorDb;
-      saDetMerge(p);
-      for(const r of ds.recs.splice(0)){ r.band=p.label; (n._pnRecs||(n._pnRecs=[])).push(r); }
-      if(n._pnRecs && n._pnRecs.length>1000) n._pnRecs.splice(0,n._pnRecs.length-1000);
-    }
   }
-  // цели в окне приёмника — для остановки сканера (count) и подстройки (detF)
-  // (по каждому приёмнику отдельно: у каждого свой Band Scanner и своя частота)
-  let cnt=0, best=null;
-  for(const p of n._pnStore.values()) if(p.det){
-    const ds=p.det.srcs[src]; if(!ds) continue;
-    for(const t of ds.list){
-      if(t.f<sLo || t.f>sHi) continue;
-      cnt++; if(!best || t.db>best.db) best=t;
-    }
-  }
-  (n._pnCnt||(n._pnCnt=[]))[src]=cnt; (n._pnDetFs||(n._pnDetFs=[]))[src]=best ? best.f : null;
   n._pnRevDraw=(n._pnRevDraw|0)+1;
 }
 // выходы режима panes: маркеры берут уровень из накопленных данных панели, а не из текущего окна приёмника
@@ -276,13 +196,7 @@ function saPanesOut(n){
   const mkHold=n.p.holdMarker ? n.mk.find(f=>f!=null) : null;
   const hk=n.p.holdMarker ? n.mk.findIndex(f=>f!=null) : -1;
   if(n._pnHoldF!==mkHold || n._pnHoldK!==hk){ n._pnHoldF=mkHold ?? null; n._pnHoldK=hk; saPanesBump(n); }   // для плашки «сканер припаркован»
-  const o={centerFreq:n._steer ?? null, holdF:mkHold ?? null, rec:null};
-  for(let k=0;k<4;k++){                                  // count/detF — приёмник 1; count2/detF2 … — приёмники 2–4
-    const q=k?k+1:'';
-    o['count'+q]=n.p.scanStop==='marker only' ? 0 : ((n._pnCnt&&n._pnCnt[k])|0);
-    o['detF'+q]=(k===0 ? mkHold : null) ?? (n._pnDetFs&&n._pnDetFs[k]) ?? null;
-  }
-  if(n._pnRecs && n._pnRecs.length) o.rec=n._pnRecs.splice(0);
+  const o={centerFreq:n._steer ?? null, holdF:mkHold ?? null};
   const all=n._pnStore ? [...n._pnStore.values()] : [];
   for(let k=0;k<4;k++){
     const f=n.mk[k], q=k+1; o['f'+q]=f; o['fr'+q]=null;
@@ -317,20 +231,6 @@ function saPanesWire(n,cv){
     if(i<0 || i>=L.k || x-i*(L.w+SAP_GAP)>L.w || !n._pn || !n._pn[i]) return null;
     const p=n._pn[i], v=saPaneView(p), fx=(x-i*(L.w+SAP_GAP))/L.w;
     return {i, p, v, fx, f:v[0]+(v[1]-v[0])*fx, x, y, L, x0:i*(L.w+SAP_GAP)};
-  };
-  // ближайшая цель детектора / запись списка пропуска у точки клика (в пределах 8 px по x)
-  const near=(h)=>{
-    const px=(f)=>h.x0+(f-h.v[0])/(h.v[1]-h.v[0])*h.L.w;
-    let det=null, sk=null, dd=8, ds=8;
-    if(h.p.det) for(const t of h.p.det.list){ const d=Math.abs(px(t.f)-h.x); if(d<dd){ dd=d; det=t; } }
-    for(const s of n._skipInt||[]){ if(s.f<h.p.lo || s.f>h.p.hi) continue; const d=Math.abs(px(s.f)-h.x); if(d<ds){ ds=d; sk=s; } }
-    return {det, sk};
-  };
-  // ширина пропуска — не меньше канала диапазона (шаг сетки, иначе 12.5 кГц): несущая гуляет, узкий пропуск её теряет
-  const skipToggle=({det,sk},p)=>{
-    if(sk) n._skipInt.splice(n._skipInt.indexOf(sk),1);
-    else if(det) n._skipInt.push({f:det.f, w:Math.max(det.w*1.5, p && p.step>=1000 ? p.step : 12500)});
-    saSkipSave(n);
   };
   const zoomBy=(h,k)=>{
     const p=h.p, span=h.v[1]-h.v[0], full=p.hi-p.lo, ns=clamp(span*k,full/SAP_RES*24,full);
@@ -377,7 +277,6 @@ function saPanesWire(n,cv){
       const k=Math.max(1,n.p.panes|0);
       if(b.act==='prev') saSetFrom(n,(n.p.paneFrom|0)-k,true);
       else if(b.act==='next') saSetFrom(n,(n.p.paneFrom|0)+k,true);
-      else if(b.act==='skipmode'){ n._pnSkipMode=!n._pnSkipMode; saPanesBump(n); }
       else if(b.act==='park'){ if(n.set && n.set.holdMarker) n.set.holdMarker(!n.p.holdMarker); else n.p.holdMarker=!n.p.holdMarker; saPanesBump(n); }
       else if(b.act==='pkclr'){ saPeakClear(n); saPanesBump(n); }
       else if(b.act==='dbauto') saDbAuto(n);
@@ -399,11 +298,6 @@ function saPanesWire(n,cv){
     }
     if(ptrs.size>2) return;
     const d=n._pnDrag={i:h.i, x, y, v:h.v.slice(), moved:false, axis:null, id:ev.pointerId, done:false, title:h.y<SAP_TITLE, db:saPaneRange(n,h.p).slice()};
-    // долгое нажатие на ▼ / ⊘ — пропуск (где нет Shift: телефон)
-    if(h.y>=SAP_TITLE){
-      const t=near(h);
-      if(t.det||t.sk) n._pnLP=setTimeout(()=>{ if(n._pnDrag===d && !d.moved){ d.done=true; skipToggle(t,h.p); } },550);
-    }
   });
   on('pointermove',ev=>{
     const {x,y}=pt(ev), q=ptrs.get(ev.pointerId); if(q){ q.x=x; q.y=y; }
@@ -456,17 +350,13 @@ function saPanesWire(n,cv){
     const h=hit(ev); if(!h || h.i!==d.i) return;
     if(h.y<SAP_TITLE){ n._steer=(h.v[0]+h.v[1])/2; n._pnSel=h.i; }   // заголовок — перестроить приёмник на панель
     else {
-      const {det,sk}=near(h);
-      if((ev.shiftKey || n._pnSkipMode) && (det||sk)){              // Shift+тап или режим ⊘: цель — в список пропуска, ⊘ — обратно
-        skipToggle({det,sk},h.p); return;
-      }
       // двойной клик / двойной тап (сброс вида) — это два тапа: запоминаем маркер до первого и вернём его
       const u=n._pnMkUndo, tnow=performance.now();
       if(u && tnow-u.t<500 && u.k===n.active-1) u.t=tnow; else n._pnMkUndo={k:n.active-1, prev:n.mk[n.active-1], t:tnow};
       const lt=n._pnTap;
       if(ev.pointerType==='touch' && lt && lt.i===h.i && tnow-lt.t<350 && Math.abs(lt.x-h.x)<20){ n._pnTap=null; dbl(h); return; }   // на телефоне dblclick не приходит
       n._pnTap={i:h.i, x:h.x, t:tnow};
-      n.mk[n.active-1]=det ? det.f : h.f;                           // обычный тап — активный маркер (на цель — точно на неё)
+      n.mk[n.active-1]=h.f;                                         // тап — активный маркер
     }
     saPanesBump(n);
   });
@@ -483,10 +373,9 @@ function saPanesDraw(n,cv,cx){
   const rk=n.p.floor+'|'+n.p.top+'|'+n.p.palette;                // общий диапазон/палитра сменились — перекрасить водопады
   if(n._pnRk!==rk){ if(n._pnRk!==undefined) for(const p of (n._pnStore||new Map()).values()) saPaneRepaint(n,p); n._pnRk=rk; }
   n.pickT=null; n._wfVis=false; saWfPlace(n);            // GL-водопад одиночного режима прячем
-  saSkipSync(n);
   const panes=saPaneState(n), list=n._pl||[], now=performance.now();
   const key=W+'|'+H+'|'+cv.pxGen+'|'+n._pnRevDraw+'|'+panes.map(p=>p.key+':'+p.zoom).join(',')+'|'+n._pnSel+'|'+n.p.floor+'|'+n.p.top+'|'+panes.map(p=>p.db).join(';')+'|'+
-    n.p.split+'|'+n.p.peakHold+'|'+n.p.grid+'|'+n.mk+'|'+n.active+'|'+n.p.detect+'|'+n.p.detThr+'|'+n.p.paneFrom+'|'+n.p.follow+'|'+n._pnSkipMode+'|'+n.p.holdMarker+'|'+n._pnHoldF;
+    n.p.split+'|'+n.p.peakHold+'|'+n.p.grid+'|'+n.mk+'|'+n.active+'|'+n._sigKey+'|'+n.p.paneFrom+'|'+n.p.follow+'|'+n.p.holdMarker+'|'+n._pnHoldF;
   if(key===n._pnDrawKey && now-(n._pnDrawT||0)<500) return;
   n._pnDrawKey=key; n._pnDrawT=now;
   cx.clearRect(0,0,W,H);
@@ -554,33 +443,17 @@ function saPanesDraw(n,cv,cx){
     if(n.p.peakHold) trace(p.pk,acc2,stale?.35:.8,false);
     trace(p.lv,acc,stale?.4:1,true);
     cx.save(); cx.beginPath(); cx.rect(x0,0,w,H); cx.clip();
-    // порог детектора: полка шума + threshold
-    if(p.det && p.det.floorDb!=null && p.t){
-      const y=yOf(p.det.floorDb+n.p.detThr);
-      cx.setLineDash([3,3]); cx.strokeStyle=acc2; cx.globalAlpha=stale?.25:.55; cx.beginPath(); cx.moveTo(x0,y+.5); cx.lineTo(x0+w,y+.5); cx.stroke();
-      cx.setLineDash([]); cx.globalAlpha=1;
-    }
-    // пропущенные сигналы (⊘): полоса и отметка
-    for(const s of n._skipInt||[]){
-      if(s.f+s.w/2<v[0] || s.f-s.w/2>v[1] || s.f<p.lo || s.f>p.hi) continue;
-      const xa=X(s.f-s.w/2), xb=X(s.f+s.w/2), xc=X(s.f);
-      cx.fillStyle='rgba(160,160,160,.18)'; cx.fillRect(xa,L.plotTop,Math.max(2,xb-xa),L.plotH);
-      cx.fillStyle=dim; cx.textAlign='center'; cx.fillText('⊘',xc,L.plotTop+L.plotH-3);
-    }
-    // найденные сигналы (CFAR): треугольник у пика; подписаны сильнейшие
-    if(p.det){
-      p.det.list.forEach((t,ti)=>{
-        if(t.f<v[0] || t.f>v[1]) return;
-        const x=X(t.f), y=yOf(t.db), old=now-t.t>2500;
-        cx.globalAlpha=old?.4:1; cx.fillStyle=acc2;
-        cx.beginPath(); cx.moveTo(x,y-2); cx.lineTo(x-3.5,y-9); cx.lineTo(x+3.5,y-9); cx.closePath(); cx.fill();
-        if(ti<3){
-          const lab=fmtHz(t.f,3), tw=cx.measureText(lab).width;
-          cx.fillStyle=fg; cx.textAlign='center'; cx.fillText(lab,clamp(x,x0+tw/2+2,x0+w-tw/2-2),Math.max(L.plotTop+9,y-12));
-        }
-        cx.globalAlpha=1;
-      });
-    }
+    // сигналы от детектора (вход sigs): треугольник у пика; подписаны сильнейшие
+    const ps=(n.sigsData||[]).filter(t=>t && t.sig && (t.lo+t.hi)/2>=Math.max(p.lo,v[0]) && (t.lo+t.hi)/2<=Math.min(p.hi,v[1]));
+    ps.forEach((t,ti)=>{
+      const f=(t.lo+t.hi)/2, x=X(f), y=yOf(t.db ?? ptp);
+      cx.fillStyle=acc2;
+      cx.beginPath(); cx.moveTo(x,y-2); cx.lineTo(x-3.5,y-9); cx.lineTo(x+3.5,y-9); cx.closePath(); cx.fill();
+      if(ti<3){
+        const lab=t.label||fmtHz(f,3), tw=cx.measureText(lab).width;
+        cx.fillStyle=fg; cx.textAlign='center'; cx.fillText(lab,clamp(x,x0+tw/2+2,x0+w-tw/2-2),Math.max(L.plotTop+9,y-12));
+      }
+    });
     // маркеры 1–4 этой панели
     for(let k=0;k<4;k++){
       const f=n.mk[k]; if(f==null || f<v[0] || f>v[1]) continue;
@@ -597,7 +470,7 @@ function saPanesDraw(n,cv,cx){
     cx.textBaseline='alphabetic';
     if(p.color){ cx.fillStyle=p.color; cx.fillRect(x0+2,2,6,6); }
     cx.fillStyle=fg; cx.textAlign='left';
-    const nd=p.det ? p.det.list.length : 0, zm=p.zoom ? ' ×'+(pspan/vs).toFixed(pspan/vs<10?1:0) : '';
+    const nd=ps.length, zm=p.zoom ? ' ×'+(pspan/vs).toFixed(pspan/vs<10?1:0) : '';
     // возраст данных — видно, как часто сканер заходит в диапазон (не обновлялся дольше 3 с)
     const age=!p.t ? ' · no data' : now-p.t>3000 ? ' · '+Math.round((now-p.t)/1000)+'s ago' : '';
     cx.fillText((p.label||fmtHz((p.lo+p.hi)/2,3))+(nd ? ' · '+nd+'▼' : '')+zm+age,x0+(p.color?11:3),10);
@@ -642,7 +515,7 @@ function saPanesDraw(n,cv,cx){
     cx.fillStyle=acc2; cx.fillText(t,tx+7,L.plotTop+13.5);
     cx.textBaseline='alphabetic';
   }
-  // нижний ряд: кнопка режима пропуска (⊘ skip) и листатель полос ◀ 5–8 / 12 ▶ со следованием за сканером
+  // нижний ряд: листатель полос ◀ 5–8 / 12 ▶ со следованием за сканером
   {
     const paged=list.length>panes.length, from=clamp(n.p.paneFrom|0,0,Math.max(0,list.length-1));
     const items=[];
@@ -650,7 +523,6 @@ function saPanesDraw(n,cv,cx){
     items.push({t:(n.p.holdMarker?'● ':'○ ')+'⏸ park', act:'park', col:n.p.holdMarker?acc2:dim});
     if(n.p.peakHold) items.push({t:'⌫ peak', act:'pkclr', col:dim});
     items.push({t:'⇕ dB', act:'dbauto', col:dim});
-    if(n.p.detect) items.push({t:(n._pnSkipMode?'● ':'○ ')+'⊘ skip', act:'skipmode', col:n._pnSkipMode?acc2:dim});
     if(paged) items.push({t:'◀',act:'prev'},{t:(from+1)+'–'+(from+panes.length)+' / '+list.length,col:dim},{t:'▶',act:'next'},
       {t:(n.p.follow?'● ':'○ ')+'follow',act:'follow',col:n.p.follow?acc:dim});
     cx.font='10px sans-serif'; cx.textBaseline='middle'; cx.textAlign='left';
