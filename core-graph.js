@@ -1015,8 +1015,9 @@ function curve(p1,p2){ return `M${p1.x+8000},${p1.y+8000} `+seg(p1,p2); }
 // в общий жгут у этой стороны (веер у пинов, дальше лежат рядом, 3 px друг от друга) и расходятся уже
 // у цели. Провода к разным узлам делят выход общим стволом и расходятся к своим входам, провода из разных
 // узлов в один вход-узел — сходятся. Каждый провод остаётся отдельным path (цвет, подсветка, удаление).
-// Если места на веер нет (узлы вплотную, меньше BUNDLE_MIN_GAP) — эта сторона без веера.
-const BUNDLE_LANE=3, BUNDLE_GAP=28, BUNDLE_MIN_GAP=10;
+// Положение целей не важно: веер всегда у пинов своего узла, а если цель левее/выше/ниже — ствол идёт к ней
+// обычной кривой (с обходом назад), все провода жгута вместе.
+const BUNDLE_LANE=3, BUNDLE_GAP=28;
 let bundleOn=true;
 try{ bundleOn=localStorage.getItem('dsp-bundle')!=='0'; }catch(e){}
 // items: [{from,to,p1,p2}] → массив d той же длины (undefined — провод не в жгуте)
@@ -1027,24 +1028,21 @@ const groups=new Map(), res=new Array(items.length);
 items.forEach((it,i)=>{ const k=it[key]; let g=groups.get(k); if(!g) groups.set(k,g=[]); g.push(i); });
 for(const g of groups.values()){
 if(g.length<2) continue;
-const {x,y,gap}=pick(g);
-if(gap<BUNDLE_MIN_GAP) continue;
+const {x,y}=pick(g);
 const order=g.slice().sort((i,j)=>(items[i].p1.y+items[i].p2.y)-(items[j].p1.y+items[j].p2.y));
 order.forEach((i,k)=>{ res[i]=P(x,y+(k-(order.length-1)/2)*BUNDLE_LANE); });
 }
 return res;
 };
 const S=side('from',g=>{                          // веер у выходов
-let x=-Infinity,y=0,m=Infinity;
-for(const i of g){ const {p1,p2}=items[i]; x=Math.max(x,p1.x); y+=p1.y; m=Math.min(m,p2.x); }
-const gap=Math.min(BUNDLE_GAP,(m-x)/3);
-return {x:x+gap,y:y/g.length,gap};
+let x=-Infinity,y=0;
+for(const i of g){ const {p1}=items[i]; x=Math.max(x,p1.x); y+=p1.y; }
+return {x:x+BUNDLE_GAP,y:y/g.length};
 });
 const E=side('to',g=>{                            // веер у входов
-let x=Infinity,y=0,m=-Infinity;
-for(const i of g){ const {p1,p2}=items[i]; x=Math.min(x,p2.x); y+=p2.y; m=Math.max(m,p1.x); }
-const gap=Math.min(BUNDLE_GAP,(x-m)/3);
-return {x:x-gap,y:y/g.length,gap};
+let x=Infinity,y=0;
+for(const i of g){ const {p2}=items[i]; x=Math.min(x,p2.x); y+=p2.y; }
+return {x:x-BUNDLE_GAP,y:y/g.length};
 });
 return items.map(({p1,p2},i)=>{
 const s=S[i], e=E[i]; if(!s && !e) return undefined;
