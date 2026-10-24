@@ -256,18 +256,32 @@ function iqpDecode(buf, dtype){
   for(let i=0;i<m;i++){ re[i]=(view[2*i]-o)*k; im[i]=(view[2*i+1]-o)*k; }
   return [re, im];
 }
+function iqpSetup(n, src, rec, name){
+  if(!(src.rate>0)) throw new Error('the file has no sample rate');
+  n.src=src; n.bps=IQP_BPS[src.dtype]; n.total=Math.floor(src.size/n.bps);
+  n.caps=src.captures.map(c=>({start:c.start, freq:c.freq})).sort((a,b)=>a.start-b.start);
+  n.rec=rec; n.name=name; n.pos=0; n.acc=0; n.p.seek=n.appliedSeek=0;
+  n.blk=Math.max(1<<14, Math.min(Math.round(src.rate/2), Math.floor((8<<20)/n.bps)));
+  n.msg='';
+}
 async function iqpLoad(n, id){
-  n.loadedId=id; n.src=null; n.cur=n.ahead=null; n.pos=0; n.msg='';
+  n.loadedId=id; n.loadedKey=''; n.src=null; n.cur=n.ahead=null; n.pos=0; n.msg='';
   try{
     const rec=await FileStore.get(id);
     if(!rec){ n.msg='file not found in Files'; return; }
-    const src=await iqParseFiles([iqfAsFile(rec)], 'auto');
-    if(!(src.rate>0)) throw new Error('the file has no sample rate');
-    n.src=src; n.bps=IQP_BPS[src.dtype]; n.total=Math.floor(src.size/n.bps);
-    n.caps=src.captures.map(c=>({start:c.start, freq:c.freq})).sort((a,b)=>a.start-b.start);
-    n.rec=rec; n.name=rec.name; n.pos=0; n.acc=0; n.p.seek=n.appliedSeek=0;
-    n.blk=Math.max(1<<14, Math.min(Math.round(src.rate/2), Math.floor((8<<20)/n.bps)));
-    n.msg='';
+    iqpSetup(n, await iqParseFiles([iqfAsFile(rec)], 'auto'), rec, rec.name);
+  }catch(e){ n.msg='cannot open: '+e.message; n.src=null; }
+}
+// файл прямо с диска (File System Access): блоки читаются срезами File, копии в Files нет.
+// prompt=true — из клика (можно спросить разрешение); из process() — только если оно уже есть
+async function iqpLoadDisk(n, key, prompt){
+  n.loadedKey=key; n.loadedId=0; n.src=null; n.cur=n.ahead=null; n.pos=0; n.msg='';
+  try{
+    const r=await FSA.files(key, prompt);
+    if(r.gone){ n.msg='file not found on the device: '+(r.error||'choose it again'); return; }
+    if(r.need){ n.msg='allow access to '+r.names.join(', ')+' — press “Reopen”'; n.needGrant=true; return; }
+    n.needGrant=false;
+    iqpSetup(n, await iqParseFiles(r.files, 'auto'), null, r.files.map(f=>f.name).join(' + '));
   }catch(e){ n.msg='cannot open: '+e.message; n.src=null; }
 }
 // блок отсчётов [a, a+blk) читается упреждающе
@@ -287,15 +301,24 @@ def({ id:'iqPlay', title:'IQ File Player', cat:'Sources', kw:'iq play file files
   readout:true, w:320,
   params:[
     {n:'pick',t:'button',label:'Choose from Files…',fn:async n=>{ const r=await iqfPick('Play IQ from Files'); if(r){ n.p.fileId=r.id; await iqpLoad(n, r.id); } }},
+    {n:'disk',t:'button',label:'Open from disk…',fn:async n=>{
+      if(!window.FSA?.supported){ n.msg='this browser cannot open files in place — use “Choose from Files…”'; return; }
+      const r=await FSA.pick({multiple:true}); if(!r) return;
+      if(n.p.diskKey) FSA.forget(n.p.diskKey);
+      n.p.diskKey=r.key; n.p.fileId=0; await iqpLoadDisk(n, r.key, true); }},
+    {n:'reopen',t:'button',label:'Reopen the disk file',fn:async n=>{ if(n.p.diskKey) await iqpLoadDisk(n, n.p.diskKey, true); }},
     {n:'fileId',t:'num',d:0,hidden:true},
+    {n:'diskKey',t:'text',d:'',hidden:true},
     {n:'loop',t:'check',d:true,label:'loop'},
     {n:'paused',t:'check',d:false,label:'pause (the pause input pauses too)'},
     {n:'speed',t:'range',min:.25,max:16,step:.25,d:1,label:'speed (1 = real time; the decoder keeps up only at the rate it can process)'},
     {n:'seek',t:'range',min:0,max:100,step:.1,d:0,label:'position, %'}],
-  init:n=>{ n.src=null; n.loadedId=0; n.loading=false; n.pos=0; n.acc=0; n.cur=null; n.ahead=null; n.msg=''; n.name=''; n.appliedSeek=0; n.endP=0; },
+  init:n=>{ n.src=null; n.loadedId=0; n.loadedKey=''; n.loading=false; n.pos=0; n.acc=0; n.cur=null; n.ahead=null; n.msg=''; n.name=''; n.appliedSeek=0; n.endP=0; },
   process(n,I){
     const id=+n.p.fileId||0;
+    const dk=id ? '' : n.p.diskKey||'';
     if(id && id!==n.loadedId && !n.loading){ n.loading=true; iqpLoad(n,id).finally(()=>{ n.loading=false; }); }
+    else if(dk && dk!==n.loadedKey && !n.loading && window.FSA){ n.loading=true; iqpLoadDisk(n,dk,false).finally(()=>{ n.loading=false; }); }
     const src=n.src;
     if(!src) return {iq:null, fc:null, pos:0, sec:0, end:0};
     const sr=src.rate, s=iqStream(n,'iq',sr,iqpFreqAt(n,n.pos));
@@ -325,7 +348,7 @@ def({ id:'iqPlay', title:'IQ File Player', cat:'Sources', kw:'iq play file files
   },
   draw(n){
     const el=n.el.querySelector('.readout'); if(!el) return;
-    if(!n.src){ el.textContent=n.msg || 'choose a recording from Files'; return; }
+    if(!n.src){ el.textContent=n.msg || 'choose a recording from Files or open one from disk'; return; }
     const q=n.rec?.meta?.iq;
     n.p.seek=n.appliedSeek=n.pos/n.total*100;
     el.textContent=n.name+'\n'+iqfRate(n.src.rate)+' @ '+iqfFreq(iqpFreqAt(n,n.pos))+(q?.bw ? ' · bw '+iqfFreq(q.bw) : '')+
