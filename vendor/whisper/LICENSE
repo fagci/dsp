@@ -1,0 +1,4 @@
+Whisper runtime in the browser:
+- transformers.min.js — Transformers.js 4.3.1 (@huggingface/transformers), Apache License 2.0, (c) Hugging Face.
+- ort-wasm-simd-threaded.{mjs,wasm} — ONNX Runtime Web 1.31 (onnxruntime-web), MIT License, (c) Microsoft.
+- Whisper models (OpenAI, MIT) in the ONNX form from huggingface.co/onnx-community are not stored here: they are downloaded once into Files → Offline data.
