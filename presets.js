@@ -1155,7 +1155,7 @@ preset('USB SDR: Auto Scan (CFAR + Band Scanner)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the band plan in windows of the SDR span;\n'+
   'the CFAR detector looks for signals in each window — its threshold is dB over the local noise floor,\n'+
-  'so it does not depend on gain. When something is there the scanner stops, the strongest target is\n'+
+  'so it does not depend on gain. When something is there the scanner stops (the «pause» tick and the «Next window» button on the scanner are manual overrides), the strongest target is\n'+
   'tuned and played, and when it goes quiet (or the listen timeout ends) the scan goes on.\n'+
   'Every new signal also lands in the «Scan log» table (time, frequency, width, level, SNR) — it is kept in the browser,\n'+
   'export it from the table. Pick another band plan in the first table; set the demodulator to match the band.\n'+
@@ -1165,7 +1165,7 @@ nt.size.w=560; nt.size.h=170; applySize(nt);
 const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:150000000});
 const bp=addNode('table',360,260,{list:'presets/Utility / services (RU)',initial:false});
 bp.size.w=340; bp.size.h=200; applySize(bp);
-const bs=addNode('bandscan',740,260,{timeout:4000,settle:250});
+const bs=addNode('bandscan',740,260,{timeout:4000,settle:90,frames:3,edge:10});
 bs.size.w=300; bs.size.h=200; applySize(bs);
 const cf=addNode('cfar',360,520,{auto:true,thr:10,confM:2,confN:3});
 cf.size.w=300; cf.size.h=220; applySize(cf);
@@ -1176,7 +1176,8 @@ lg.size.w=420; lg.size.h=260; applySize(lg);
 const sa=addNode('sa',1080,40,{auto:true,floor:-90,top:-20,split:.4});
 sa.size.w=700; sa.size.h=420; applySize(sa);
 const dc=addNode('dac',740,820,{vol:.4});
-addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',cf.id,'spec'); addEdge(cf.id,'rec',lg.id,'rec'); addEdge(sk.id,'rows',cf.id,'skip');
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',cf.id,'spec'); addEdge(rx.id,'spec',bs.id,'spec'); addEdge(cf.id,'rec',lg.id,'rec'); addEdge(sk.id,'rows',cf.id,'skip');
+addEdge(cf.id,'bands',sa.id,'sigs'); addEdge(bs.id,'edge',cf.id,'edge');
 addEdge(bp.id,'rows',bs.id,'bands');
 addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi');
 addEdge(cf.id,'count',bs.id,'active');
@@ -1195,7 +1196,7 @@ const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the
   'Order «band by band»: a range is walked to its end, then the next one (the scanner can be switched to «interleave»: one window of every range in turn).\n'+
   'More ranges than panes: the page turns after the scanner (follow); or use ◀ ▶ / the wheel on a pane title.\n'+
   'View: wheel on a pane — zoom, drag — pan, double click — back. Humps at the window step come from the filter edges: the scanner, the analyzer and the detector\n'+
-  'drop 15% of each window (the «edge» parameter — keep them equal), so the useful middle is stitched without a gap.\n'+
+  'drop 15% of each window (set «edge» on the Band Scanner only — its edge output feeds the other two), so the useful middle is stitched without a gap.\n'+
   'SEARCH: the Signal Detector (CFAR) works on the receiver spectrum (threshold, dB over the noise). Its signals are marked ▼ on the panes (sigs), its count stops\n'+
   'the scanner and the strongest is tuned and played. SKIP: «Blacklist found signals» on the detector puts what it sees now on its blacklist (it is stored in the patch,\n'+
   '«Clear blacklist» wipes it); the «Scan skip» table is a skip list by ranges (lo / hi) for pagers and beacons.\n'+
@@ -1209,9 +1210,9 @@ const bs=addNode('bandscan',740,300,{timeout:3000,settle:90,frames:2,edge:15,ord
 bs.size.w=300; bs.size.h=200; applySize(bs);
 const sk=addNode('table',1080,300,{list:'Scan skip',initial:false});
 sk.size.w=300; sk.size.h=220; applySize(sk);
-const cf=addNode('cfar',1080,620,{auto:true,thr:10,edge:15,confM:2,confN:3,hold:1500});
+const cf=addNode('cfar',1080,620,{auto:true,thr:10,confM:2,confN:3,hold:1500});
 cf.size.w=300; cf.size.h=240; applySize(cf);
-const sa=addNode('sa',40,620,{layout:'panes',panes:2,edge:15,follow:true,holdMarker:true,peakHold:true,floor:-90,top:-20,split:.45});
+const sa=addNode('sa',40,620,{layout:'panes',panes:2,follow:true,holdMarker:true,peakHold:true,floor:-90,top:-20,split:.45});
 sa.size.w=1100; sa.size.h=440; applySize(sa);
 const lg=addNode('table',1420,300,{list:'Scan log',initial:false});
 lg.size.w=420; lg.size.h=260; applySize(lg);
@@ -1221,6 +1222,7 @@ addEdge(bp.id,'rows',sa.id,'bands'); addEdge(bp.id,'rows',bs.id,'bands');
 addEdge(rx.id,'spec',cf.id,'spec'); addEdge(sk.id,'rows',cf.id,'skip'); addEdge(cf.id,'bands',sa.id,'sigs');
 addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi'); addEdge(rx.id,'spec',bs.id,'spec');
 addEdge(cf.id,'count',bs.id,'active'); addEdge(sa.id,'holdF',bs.id,'hold');
+addEdge(bs.id,'edge',sa.id,'edge'); addEdge(bs.id,'edge',cf.id,'edge');
 addEdge(bs.id,'freq',rx.id,'freq');
 addEdge(cf.id,'f1',rx.id,'tuneFreq');
 addEdge(cf.id,'rec',lg.id,'rec');
@@ -1243,7 +1245,7 @@ const bp=addNode('table',1100,300,{list:'@patch',initial:false,data:'name,lo,hi,
 bp.size.w=340; bp.size.h=280; applySize(bp);
 const sk=addNode('table',1100,620,{list:'Scan skip',initial:false});
 sk.size.w=300; sk.size.h=220; applySize(sk);
-const sa=addNode('sa',40,1020,{layout:'panes',panes:4,edge:15,follow:true,holdMarker:true,peakHold:true,floor:-90,top:-20,split:.45});
+const sa=addNode('sa',40,1020,{layout:'panes',panes:4,follow:true,holdMarker:true,peakHold:true,floor:-90,top:-20,split:.45});
 sa.size.w=1300; sa.size.h=460; applySize(sa);
 const lg=addNode('table',1460,300,{list:'Scan log',initial:false});
 lg.size.w=420; lg.size.h=260; applySize(lg);
@@ -1258,10 +1260,11 @@ for(let i=0;i<4;i++){
   addEdge(rx.id,'spec',sa.id,SP[i]); addEdge(rx.id,'spec',bs.id,'spec');
   addEdge(bp.id,'rows',bs.id,'bands');
   addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi');
-  const cf=addNode('cfar',1080+i*10,1020+i*30,{auto:true,thr:10,edge:15,confM:2,confN:3,hold:1500});
+  const cf=addNode('cfar',1080+i*10,1020+i*30,{auto:true,thr:10,confM:2,confN:3,hold:1500});
   cf.size.w=300; cf.size.h=200; applySize(cf);
   addEdge(rx.id,'spec',cf.id,'spec'); addEdge(sk.id,'rows',cf.id,'skip');
   addEdge(cf.id,'bands',sa.id,'sigs'); addEdge(cf.id,'rec',lg.id,'rec');
+  addEdge(bs.id,'edge',sa.id,'edge'); addEdge(bs.id,'edge',cf.id,'edge');
   addEdge(cf.id,'count',bs.id,'active'); addEdge(bs.id,'freq',rx.id,'freq'); addEdge(cf.id,'f1',rx.id,'tuneFreq');
   addEdge(rx.id,'audio',mx.id,AU[i]);
   if(i===0) addEdge(sa.id,'holdF',bs.id,'hold');

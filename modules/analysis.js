@@ -627,7 +627,7 @@ function cfarPopcount(x){ let c=0; for(;x;x&=x-1) c++; return c; }
 // Цель подтверждается, если попала в M из последних N кадров спектра — одиночные выбросы шума отсеиваются.
 def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
   ins:[{n:'spec',t:'spec'},{n:'skip',t:'bands'},{n:'fmin',t:'num'},{n:'fmax',t:'num'},{n:'guard',t:'num'},
-       {n:'train',t:'num'},{n:'thr',t:'num'},{n:'minW',t:'num'},{n:'top',t:'num'},{n:'hold',t:'num'}],
+       {n:'train',t:'num'},{n:'thr',t:'num'},{n:'minW',t:'num'},{n:'top',t:'num'},{n:'hold',t:'num'},{n:'edge',t:'num'}],
   outs:[
         {n:'count',t:'num'},
         {n:'rec',t:'rec'},
@@ -673,7 +673,7 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
       const [lo0,hi0]=specSpan(s);
       if(n.p.fmax<=lo0 || n.p.fmin>=hi0){ n.set.fmin?.(lo0); n.set.fmax?.(hi0); }
     }
-    for(const k of ['fmin','fmax','guard','train','thr','minW','top','hold'])
+    for(const k of ['fmin','fmax','guard','train','thr','minW','top','hold','edge'])
       if(typeof I[k]==='number') setMod(n,k,I[k]);
     if(!s) return {count:0};
     // список пропуска (Table → bands): цели внутри его диапазонов не считаются; частота без ширины — с допуском по ширине цели
@@ -1918,6 +1918,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   ins:[
         {n:'spec',t:'spec'},
         {n:'bands',t:'bands'},
+        {n:'edge',t:'num'},
         {n:'sigs',t:'bands',tip:'detected signals (Signal Detector → bands): triangles over the peaks'},
         {n:'marksTxt',t:'txt',tip:'marks as text, one per line: from=433920 to=433950 label=start t=1231231123'},
         {n:'marksRec',t:'rec',tip:'marks as records with the same fields (from/to, label, color, t, dur)'},
@@ -2016,6 +2017,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     if(n.p.layout==='panes'){                          // несколько диапазонов рядом: свой путь без одноосевой логики
       for(const k of ['floor','top']) if(typeof I[k]==='number') setMod(n,k,I[k]);
       if(Array.isArray(I.bands)) n.bandsData=I.bands;
+      if(typeof I.edge==='number') setMod(n,'edge',I.edge);
       n.sigsData=Array.isArray(I.sigs) ? I.sigs : null;
       const sk=n.sigsData ? n.sigsData.map(b=>Math.round(b.lo)+':'+Math.round(b.db)).join() : '';
       if(sk!==n._sigKey){ n._sigKey=sk; n._pnRevDraw=(n._pnRevDraw|0)+1; }
@@ -3418,10 +3420,12 @@ function bandscanWindows(bands,span,overlap,inter,lanes,lane){
 def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
   ins:[{n:'bands',t:'bands'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},{n:'active',t:'num'},
        {n:'overlap',t:'num'},{n:'timeout',t:'num'},{n:'settle',t:'num'},{n:'hold',t:'num'},{n:'spec',t:'spec'}],
-  outs:[{n:'freq',t:'num'},{n:'listening',t:'num'},{n:'idx',t:'num'},{n:'bandLo',t:'num'},{n:'step',t:'num'}],
+  outs:[{n:'freq',t:'num'},{n:'listening',t:'num'},{n:'idx',t:'num'},{n:'bandLo',t:'num'},{n:'step',t:'num'},{n:'edge',t:'num'}],   // edge — на sa и cfar: одно значение на всех
   readout:true, tall:true,
-  params:[{n:'overlap',t:'range',min:0,max:2000000,step:1000,log:true,d:0,label:'overlap, Hz'},
-          {n:'edge',t:'range',min:0,max:40,step:1,d:0,label:'drop window edges, % (the useful part is the middle; same as Spectrum Analyzer panes)'},
+  params:[{n:'pause',t:'check',d:false,label:'pause (stay on the current window)'},
+          {n:'next',t:'button',label:'Next window ▶',fn:n=>{ n._next=true; }},
+          {n:'overlap',t:'range',min:0,max:2000000,step:1000,log:true,d:0,label:'overlap, Hz'},
+          {n:'edge',t:'range',min:0,max:40,step:1,d:0,label:'drop window edges, % (the useful part is the middle; the edge output sets the same value on Spectrum Analyzer and Signal Detector)'},
           {n:'timeout',t:'range',min:100,max:30000,step:100,d:3000,label:'listen timeout, ms'},
           {n:'settle',t:'range',min:0,max:2000,step:10,d:200,label:'settle time, ms (minimum wait after a retune)'},
           // с проводом spec: решение — после N свежих кадров спектра уже нового окна (а не по таймеру); 3 — детектору хватает подтвердить цель
@@ -3527,14 +3531,21 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
       if(n.curFreq!==holdF){ n.curFreq=holdF; n.settleUntil=now+n.p.settle; }
       const curBand0=bands[n.idx];
       n.text='hold · '+fmtHz(holdF)+'Hz (marker)'+(n.off ? ' (receiver offset '+fmtHz(n.off)+'Hz)' : '');
-      return {freq:holdF-n.off, listening:1, idx:n.idx, bandLo:curBand0.lo, step:curBand0.step||0};
+      return {freq:holdF-n.off, listening:1, idx:n.idx, bandLo:curBand0.lo, step:curBand0.step||0, edge:n.p.edge};
     }
     if(n.state==='hold'){                                // отпустили — вернуться к месту остановки
       const r=n._resume||{}; n.idx=clamp(r.idx|0,0,bands.length-1);
       n.curFreq=r.curFreq; n.state='seek'; n.settleUntil=now+n.p.settle; n._resume=null;
       if(inter && !listMode && n.pos) n.curFreq=n.pos[n.idx];
     }
-    if(n.state==='listen'){
+    if(n.p.pause && n.state!=='done'){
+      const cb=bands[n.idx];
+      n.text='paused · range '+(n.idx+1)+'/'+bands.length+' "'+(cb.label||'')+'"\nfreq '+fmtHz(n.curFreq)+'Hz — untick «pause» to go on';
+      n._frPrev=n._fr;
+      return {freq:n.curFreq-n.off, listening:active?1:0, idx:n.idx, bandLo:cb.lo, step:cb.step||0, edge:n.p.edge};
+    }
+    if(n._next){ n._next=false; if(n.state!=='done') advance(); }
+    else if(n.state==='listen'){
       if(!active || now>=n.listenUntil) advance();
     } else if(n.state==='seek'){
       if(now>=n.settleUntil){                           // ждём, пока спектр обновится на новом центре, прежде чем решать
@@ -3550,14 +3561,14 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
       }
     }
     const curBand=bands[n.idx];                          // не 'band': advance() выше мог сдвинуть n.idx на новый диапазон
-    n.text=(n.state==='done' ? 'done (pass finished, «loop» is off — tick it to keep scanning)' : n.state)+' · '+(inter?'interleave':'band by band')+(listMode ? ' · lane '+lane+'/'+lanes+' window '+(n.wp+1)+'/'+n.wl.length : '')+' · range '+(n.idx+1)+'/'+bands.length+' "'+(curBand.label||'')+'"\n'+
+    n.text=(n.state==='done' ? 'done (pass finished, «loop» is off — tick it to keep scanning)' : n.state)+' · '+(inter?'interleave':'band by band')+(listMode ? ' · lane '+lane+'/'+lanes+' window '+(n.wp+1)+'/'+n.wl.length : '')+' · range '+(n.idx+1)+'/'+bands.length+' "'+(curBand.label||'')+'"'+(!listMode&&!inter ? ' · window '+(Math.round((n.curFreq-half-curBand.lo)/Math.max(span*0.05,span-n.p.overlap))+1)+'/'+(Math.ceil(Math.max(0,curBand.hi-curBand.lo-span)/Math.max(span*0.05,span-n.p.overlap))+1) : '')+'\n'+
       'freq '+fmtHz(n.curFreq)+'Hz'+(n.off ? ' (receiver offset '+fmtHz(n.off)+'Hz)' : '')+
       (n.state==='listen'? '  · listening '+((n.listenUntil-now)/1000).toFixed(1)+'s left' : '');
     // bandLo/step — начало текущего диапазона и его сетка каналов (канал 1 = bandLo, канал 2 =
     // bandLo+step, …), для узлов вроде 'chandet', которым нужно знать сетку, а не только freq.
     n._frPrev=n._fr;
     return {freq:n.curFreq-n.off, listening:n.state==='listen'?1:0, idx:n.idx,
-      bandLo:curBand.lo, step:curBand.step||0};
+      bandLo:curBand.lo, step:curBand.step||0, edge:n.p.edge};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(r && r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
