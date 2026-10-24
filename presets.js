@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=85;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=86;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -421,6 +421,7 @@ const PRESET_CATS={
   'Indicators: Switches and Attitude':'Analysis & Measurement',
   'Logic Analyzer: UART Decode':'Analysis & Measurement',
   'Timeline: Periods, Durations and Replies on the Air (Table)':'Analysis & Measurement',
+  'Timeline: Clip Arranger (edit with the mouse, mix, markers)':'Analysis & Measurement',
   'USB SDR: Channel Activity Timeline (PMR446)':'Analysis & Measurement',
   'Logic Analyzer: USB (fx2lafw)':'Analysis & Measurement',
   'FT8: Propagation Map':'Maps & Locating',
@@ -6451,6 +6452,20 @@ tl.size.w=760; tl.size.h=420; applySize(tl);
 const ts=addNode('table',1260,160,{list:'@patch',key:'lane',rowsIn:'sync',initial:false});
 ts.size.w=520; ts.size.h=420; applySize(ts);
 addEdge(tb.id,'rows',tl.id,'rows'); addEdge(tl.id,'stats',ts.id,'rows');
+markWiresDirty();
+});
+preset('Timeline: Clip Arranger (edit with the mouse, mix, markers)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'The Table is the storage of the clips (t, dur in seconds, track, file, gain, fade, id); the Timeline shows them and edits them with the mouse, «edited» goes back into the same Table (rows in = sync, key = id), so every change is saved there.\n'+
+  'Edit mode (on): drag a clip — move (also to another track), drag its edge — length, Alt+drag — copy, Ctrl+click — add to the selection, Delete — remove, Ctrl+D — duplicate, arrows — nudge, double click on an empty spot — new clip, Ctrl+Z / Ctrl+Y — undo / redo, Shift while dragging — without snapping. M — a marker at the playhead (double click it — rename). Space — play.\n'+
+  'Put audio files into Files (any audio / video) and write their names or ids into the file column («Set a column on the selected clips…» does it for a selection): with «mix clips to the audio output» they are mixed lane by lane (gain in dB, fade in s, lane effects: lines like  Voice: gain=-3 hp=150 echo=250,.3 ), «audio» goes to the sound card. An IQ file in the file column goes to the «iq» output with «replay IQ files» (a raw file needs the rate in its name: rec_2Msps.cu8).'});
+nt.size.w=900; nt.size.h=170; applySize(nt);
+const rows=[[0,3,'Music','',0,0.3,'c1'],[0,1.2,'Voice','',-3,0.05,'c2'],[2,1.5,'Voice','',-3,0.05,'c3'],[3.5,2,'Effects','',-6,0,'c4'],[5.5,1,'Voice','',-3,0.05,'c5']];
+const tb=addNode('table',40,210,{list:'@patch',initial:false,rowsIn:'sync',key:'id',data:'t,dur,track,file,gain,fade,id\n'+rows.map(r=>r.join(',')).join('\n')});
+tb.size.w=420; tb.size.h=360; applySize(tb);
+const tl=addNode('timeline',500,210,{by:'track',edit:true,mix:true,lanefx:'Voice: hp=150\nEffects: echo=250,.3'}); tl.size.w=820; tl.size.h=360; applySize(tl);
+const dc=addNode('dac',1360,210,{vol:.5});
+addEdge(tb.id,'rows',tl.id,'rows'); addEdge(tl.id,'edited',tb.id,'rows'); addEdge(tl.id,'audio',dc.id,'L'); addEdge(tl.id,'audio',dc.id,'R');
 markWiresDirty();
 });
 preset('USB SDR: Channel Activity Timeline (PMR446)', function(){
