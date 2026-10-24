@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=91;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=92;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -378,6 +378,7 @@ const PRESET_CATS={
   'Voice and Video over a Byte Link (KISS / SLIP, no hardware)':'Network & IoT',
   'QR: Generator and Reader Loop (no hardware)':'Images & TV',
   'Object Detect: Camera Video and Photo':'Images & TV',
+  'Neural Denoiser (RNNoise): Noisy Voice → Clean Voice':'Digital Voice & Trunking',
   'Pulse: Fingertip on the Phone Camera (torch)':'Images & TV',
   'Camera Alarm: Motion → Archive + Beep':'Images & TV',
   'Timelapse: Camera Frames → Video':'Images & TV',
@@ -6271,6 +6272,23 @@ const f2=addNode('imgview',720,440,{}); f2.size.w=300; f2.size.h=240; applySize(
 const t2=addNode('ticker',1060,440,{time:false}); t2.size.w=300; t2.size.h=240; applySize(t2);
 addEdge(cm.id,'vid',od.id,'vid'); addEdge(od.id,'img',fv.id,'img'); addEdge(od.id,'text',tk.id,'text'); addEdge(od.id,'go',bp.id,'go');
 addEdge(is.id,'img',o2.id,'img'); addEdge(o2.id,'img',f2.id,'img'); addEdge(o2.id,'text',t2.id,'text');
+markWiresDirty();
+});
+
+preset('Neural Denoiser (RNNoise): Noisy Voice → Clean Voice', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'RNNoise is a small neural network (112 KB, runs in the browser) that removes noise from speech. Here a voice-like buzz (saw, 140 Hz) with hiss added is cleaned: the scope shows the noisy signal (1) and the cleaned one (2); «speech» is the network\'s confidence that this is speech. Replace the oscillators with the Microphone or a demodulated channel (a narrow-FM or SSB receiver) to clean real radio voice. Mix = 0 passes the original, 1 — fully cleaned. Delay is 10 ms; it works on 48 kHz (other rates are resampled).'});
+nt.size.w=1000; nt.size.h=100; applySize(nt);
+const v =addNode('osc',40,170,{wave:'saw',freq:140,amp:.25});
+const ns=addNode('osc',40,330,{wave:'noise',amp:.12});
+const mx=addNode('mixer',300,170,{channels:'2'});
+const rn=addNode('rnnoise',560,170,{mix:1,thr:.6});
+const sc=addNode('scope',820,170,{span:4096,gain:2}); sc.size.w=480; sc.size.h=220; applySize(sc);
+const dc=addNode('dac',560,360,{vol:.2});
+addEdge(v.id,'out',mx.id,'a'); addEdge(ns.id,'out',mx.id,'b');
+addEdge(mx.id,'out',rn.id,'in');
+addEdge(mx.id,'out',sc.id,'in1'); addEdge(rn.id,'out',sc.id,'in2');
+addEdge(rn.id,'out',dc.id,'L');
 markWiresDirty();
 });
 preset('Pulse: Fingertip on the Phone Camera (torch)', function(){

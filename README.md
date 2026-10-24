@@ -92,6 +92,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 
 ### Processing
 - Filters, gain, mixers (4/12 ch), AGC, squelch, mains notch, adaptive hum canceller (tracks mains frequency, all harmonics), comb notch, adaptive filter, spectral denoiser
+- **Neural audio** (`modules/nnaudio.js`, streaming wrapper in `modules/nnaudio-kernels.js`, `node tools/test-nnaudio.mjs`; models run in the browser, no network needed): **Denoiser (RNNoise)** (Audio) — a small recurrent network (112 KB WASM, `vendor/rnnoise.wasm`, Xiph RNNoise 0.1 built by Jitsi) that suppresses noise in speech; `in` → `out`, `mix` (0…1), outputs `vad` (speech probability) and `speech` (1 above the threshold). 10 ms delay; the net works on 48 kHz frames, other engine rates are resampled (linear). It needs a few seconds to learn stationary noise. Big models of this family are kept in Files → Offline data and listed under *⇩ offline*.
 - FFT, Zoom-FFT (I/Q), Hilbert transform, quadrature shift, magnitude/phase, wavelet (constant-Q), cepstrum
 - Beamformer, phase scope (X-Y), envelope, calibration, capture & loop
 - Audio effects: delay, reverb, distortion, compressor/limiter, EQ, chorus/flanger/phaser, pitch shifter
