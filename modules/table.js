@@ -979,13 +979,11 @@ function tblInit(n){
       <button class="tbl-btn tbl-crumb" hidden></button>
       <input class="tbl-filter" placeholder="filter: kind == &quot;beacon&quot; &amp;&amp; rssi > -50   ·   20m  demod:am  -fm" title="Wireshark-style: field == x, != > < >= <=, contains, matches (~), in {a b 1..5}, &amp;&amp; || !, ( ); fields are column names. Also words: 20m, col:text, col>5M, -word, not word">
       <span class="tbl-count"></span>
+      <button class="tbl-btn pri tbl-add" title="add a row">+ row</button>
+      <button class="tbl-btn tbl-vm" title="view: cards, full list, brief list, list with icons"></button>
+      <button class="tbl-btn tbl-viewb" title="schema: fields, their types and roles, columns, row colours, list settings"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="M4 10h16M10 10v9"/></svg></button>
     </div>
     <div class="tbl-view" hidden></div>
-    <div class="tbl-acts">
-      <button class="tbl-btn pri tbl-add">+ row</button>
-      <button class="tbl-btn tbl-vm" title="view"></button>
-      <button class="tbl-btn tbl-viewb" title="fields (add, rename, remove, type, links), columns, their format and row colour rules">▦ view</button>
-    </div>
     <div class="tbl-list" tabindex="0"></div>
     <div class="tbl-edit" hidden></div>
     <input class="tbl-file" type="file" multiple accept=".csv,.tsv,.txt,.json,.jsonl,.kml,.gpx,.geojson,text/*" hidden>
