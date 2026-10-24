@@ -2,13 +2,15 @@
 /* JS8Call (Normal, 15 с): узлы приёма слотов и передачи. Кодек и поиск сигналов — в js8-kernels.js.
    Время и тоны те же, что у FT8 (символ 0.16 с, шаг 6.25 Гц), поэтому SNR и спектрограмма берутся от ft8Noise/ft8Snr. */
 
-// словарь JSC для сжатого текста (data/js8-jsc.txt, ~2 МБ) — один раз, при первой необходимости
+// словарь JSC для сжатого текста (data/js8-jsc.txt, ~2 МБ) — один раз, при первой необходимости; хранится в Files → Offline data, докачивается заранее
+const JS8_DICT_NAME='JS8 dictionary (JSC).txt';
+OfflineData.want(JS8_DICT_NAME,['data/js8-jsc.txt']);
 const JS8Dict={state:'idle', err:'', p:null};
 function js8DictLoad(){
   if(JS8_JSC.words) return Promise.resolve();
   if(JS8Dict.p) return JS8Dict.p;
   JS8Dict.state='loading';
-  return JS8Dict.p=fetch('data/js8-jsc.txt').then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.text(); })
+  return JS8Dict.p=OfflineData.blob(JS8_DICT_NAME,['data/js8-jsc.txt']).then(b=>b.text())
     .then(t=>{ js8JscSet(t); JS8Dict.state='ready'; })
     .catch(e=>{ JS8Dict.state='error'; JS8Dict.err=e.message; JS8Dict.p=null; });
 }

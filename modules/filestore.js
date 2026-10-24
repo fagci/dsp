@@ -208,6 +208,48 @@ async function fsWavDecode(blob){                      // только свой 
   const b=await blob.arrayBuffer(); return new Float32Array(b.slice(44));
 }
 
+/* ---- Офлайн-данные: крупные файлы, которые модули качают один раз (модель распознавания, словарь JS8, подложка карты) ----
+   Лежат в Files → «Offline data»: видно, сколько места занято, можно удалить, выгрузить или подложить свой файл с тем же именем.
+   OfflineData.blob(имя, [адреса]) — из хранилища, иначе по первому ответившему адресу (и туда же сохраняется).
+   want() — что стоит докачать заранее: при первом запуске с сетью, без трафика на мобильной сети и в режиме экономии. */
+const OfflineData = (() => {
+  const DIR='Offline data', inflight=new Map(), wanted=[];
+  const dirId=async make=>{                            // папку находим заново: пользователь мог её удалить или переименовать
+    const f=(await FileStore.listFolders('files',null)).find(x=>x.name===DIR);
+    return f ? f.id : make ? FileStore.addFolder('files',DIR,null) : null;
+  };
+  async function find(name){
+    const id=await dirId(false);
+    return id==null ? null : (await FileStore.list('files',id)).find(f=>f.name===name && f.blob && f.blob.size) || null;
+  }
+  async function blob(name,urls){
+    if(inflight.has(name)) return inflight.get(name);
+    const p=(async()=>{
+      try{ const r=await find(name); if(r) return r.blob; }catch(e){}
+      let err=null;
+      for(const u of [].concat(urls)){
+        try{
+          const res=await fetch(u); if(!res.ok) throw new Error(u+' HTTP '+res.status);
+          const b=await res.blob();
+          try{ await FileStore.put({space:'files',folderId:await dirId(true),name,mime:b.type,blob:b,meta:{offline:true}}); }catch(e){}
+          return b;
+        }catch(e){ err=e; }
+      }
+      throw err||new Error(name+': no source');
+    })().finally(()=>inflight.delete(name));
+    inflight.set(name,p); return p;
+  }
+  async function has(name){ try{ return !!await find(name); }catch(e){ return false; } }
+  const want=(name,urls)=>{ wanted.push({name,urls}); };
+  async function warm(){
+    const c=navigator.connection;
+    if(!navigator.onLine || c?.saveData || c?.type==='cellular') return;
+    for(const w of wanted) try{ if(!await has(w.name)) await blob(w.name,w.urls); }catch(e){}
+  }
+  if(typeof addEventListener==='function') addEventListener('load',()=>setTimeout(warm,20000));
+  return {blob,has,want,warm};
+})();
+
 /* ---- таблицы Table как пространство 'tables' ----
    Списки лежат в ListDB под именем «папка/имя»; папки — префиксы имён (пустые держим в meta). id списка и папки — строка-путь,
    корень — null/0. Интерфейс тот же, что у FileStore, поэтому менеджер работает с обоими одинаково. */
