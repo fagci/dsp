@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=86;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=87;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -378,6 +378,10 @@ const PRESET_CATS={
   'Voice and Video over a Byte Link (KISS / SLIP, no hardware)':'Network & IoT',
   'QR: Generator and Reader Loop (no hardware)':'Images & TV',
   'Object Detect: Camera Video and Photo':'Images & TV',
+  'Pulse: Fingertip on the Phone Camera (torch)':'Images & TV',
+  'Camera Alarm: Motion → Archive + Beep':'Images & TV',
+  'Timelapse: Camera Frames → Video':'Images & TV',
+  'Color Meter and Spectrometer (camera + grating)':'Images & TV',
   'Files over WebRTC':'Network & IoT',
   'Call: voice, video, chat and files over WebRTC':'Network & IoT',
   'WebRTC: audio and video of the graph over a connection':'Network & IoT',
@@ -6235,6 +6239,48 @@ const f2=addNode('imgview',720,440,{}); f2.size.w=300; f2.size.h=240; applySize(
 const t2=addNode('ticker',1060,440,{time:false}); t2.size.w=300; t2.size.h=240; applySize(t2);
 addEdge(cm.id,'vid',od.id,'vid'); addEdge(od.id,'img',fv.id,'img'); addEdge(od.id,'text',tk.id,'text'); addEdge(od.id,'go',bp.id,'go');
 addEdge(is.id,'img',o2.id,'img'); addEdge(o2.id,'img',f2.id,'img'); addEdge(o2.id,'text',t2.id,'text');
+markWiresDirty();
+});
+preset('Pulse: Fingertip on the Phone Camera (torch)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Heart rate from the camera. Press Run (allow the camera), cover the REAR lens and the flash with a fingertip — the torch is on — and hold still for about 10 seconds. Pulse reads the colour of the picture over time: `bpm`, `conf` (how sure), `beat` (a tick per heartbeat), `hrv`. With a face instead of a finger: torch off, *Pulse → only a zone* on the forehead, channel green. Not a medical device.'});
+nt.size.w=900; nt.size.h=90; applySize(nt);
+const cm=addNode('cam',40,140,{cam:'rear',res:'320x240',fps:'30',w:'80',torch:true}); cm.size.w=260; cm.size.h=240; applySize(cm);
+const pu=addNode('pulse',340,140,{}); pu.size.w=330; pu.size.h=240; applySize(pu);
+const bp=addNode('beep',710,140,{freq:880,ms:40,vol:.15,minGap:.25}); bp.size.w=260; bp.size.h=150; applySize(bp);
+addEdge(cm.id,'img',pu.id,'img'); addEdge(pu.id,'beat',bp.id,'go');
+markWiresDirty();
+});
+preset('Camera Alarm: Motion → Archive + Beep', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'A camera alarm. Run, allow the camera. Motion Detect compares frames: `go` beeps at the start of a motion, `on` (held for 5 s after it stops) switches Camera Archive on — frames are saved to Files → images → Cameras → webcam, one every 10 s and one more on a motion (see the archive: set its mode to playback). The right picture is the map of changes (red), the yellow cross is where it happens. Lower *pixel change* or the alarm % for more sensitivity; *background* mode catches slow movement and left objects.'});
+nt.size.w=1000; nt.size.h=100; applySize(nt);
+const cm=addNode('cam',40,150,{cam:'rear',res:'640x480',fps:'30',w:'160'}); cm.size.w=260; cm.size.h=220; applySize(cm);
+const mv=addNode('motion',340,150,{hold:5,thr:2}); mv.size.w=320; mv.size.h=240; applySize(mv);
+const bp=addNode('beep',700,150,{minGap:3}); bp.size.w=260; bp.size.h=150; applySize(bp);
+const ar=addNode('camarch',340,430,{mode:'record',cam:'webcam',interval:10,motion:.03}); ar.size.w=360; ar.size.h=260; applySize(ar);
+addEdge(cm.id,'img',mv.id,'img'); addEdge(mv.id,'go',bp.id,'go');
+addEdge(cm.id,'img',ar.id,'img'); addEdge(mv.id,'on',ar.id,'rec');
+markWiresDirty();
+});
+preset('Timelapse: Camera Frames → Video', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Timelapse. Run, allow the camera, press Start / stop in Timelapse: a frame every 5 s (full camera resolution, JPEG in memory — they are lost when the tab closes). Render video… plays them at 24 fps into a webm / mp4 file (a minute of video = 1440 frames = two hours at 5 s); Download frames (zip) saves the JPEGs. *even out flicker* levels the brightness of neighbouring frames. For nights and days on a disk use Camera Archive; keep the phone plugged in and the screen on.'});
+nt.size.w=900; nt.size.h=100; applySize(nt);
+const cm=addNode('cam',40,150,{cam:'rear',res:'1280x720',fps:'30',w:'80'}); cm.size.w=260; cm.size.h=220; applySize(cm);
+const tl=addNode('timelapse',340,150,{interval:5,maxw:'1280',defl:true}); tl.size.w=340; tl.size.h=260; applySize(tl);
+addEdge(cm.id,'vid',tl.id,'vid');
+markWiresDirty();
+});
+preset('Color Meter and Spectrometer (camera + grating)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Left: the colour of the middle of the frame (RGB, HSV, name, colour temperature in K — a white sheet under a lamp: about 2700 K warm, 6500 K daylight). Right: a spectrometer — put a piece of a CD or a diffraction grating film in front of the lens and look at a lamp through a narrow slit, the rainbow must lie across the frame at the strip. Press *Calibrate on a fluorescent lamp* while a CFL / fluorescent tube is in view (lines 436.6, 546.1, 611.6 nm), then LEDs, bulbs and the sun show up with their wavelengths. Turn auto exposure and white balance off in Camera for steady values; *Take dark frame* with the lens covered removes the background.'});
+nt.size.w=1000; nt.size.h=110; applySize(nt);
+const cm=addNode('cam',40,160,{cam:'rear',res:'640x480',fps:'30',w:'320',ae:false,awb:false}); cm.size.w=260; cm.size.h=240; applySize(cm);
+const co=addNode('colorsp',340,160,{mode:'color'}); co.size.w=300; co.size.h=240; applySize(co);
+const sp=addNode('colorsp',680,160,{mode:'spectrum'}); sp.size.w=380; sp.size.h=300; applySize(sp);
+const sc=addNode('scope',680,490,{}); sc.size.w=380; sc.size.h=200; applySize(sc);
+addEdge(cm.id,'img',co.id,'img'); addEdge(cm.id,'img',sp.id,'img'); addEdge(sp.id,'profile',sc.id,'in1');
 markWiresDirty();
 });
 preset('Chat: Group with Avatars and Contact List', function(){
