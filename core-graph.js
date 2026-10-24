@@ -61,6 +61,8 @@ const myId=n.id;
 d.init?.(n);
 for(const k of ['id','type','p','size','el','ports']){          // служебные поля модулю нельзя
 if(k==='id' &&n.id!==myId){ console.error('узел '+type+' затёр n.id в init'); n.id=myId; } }
+// x/y — координаты узла на холсте; модуль, положивший туда буфер состояния, ломает провода (NaN в path) и сохранение
+if(typeof n.x!=='number' || typeof n.y!=='number'){ console.error('узел '+type+' затёр n.x/n.y в init — храни состояние в другом поле'); n.x=x; n.y=y; }
 if('out' in n  && n.out!==undefined  && typeof n.out!=='object')
 console.error('узел '+type+' использует n.out — это поле движка');
 n.out={};

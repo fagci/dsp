@@ -1266,9 +1266,9 @@ def({ id:'anf', title:'Auto Notch (NLMS)', cat:'Processing',
   ins:[{n:'in',t:'sig'}], outs:[{n:'out',t:'sig'},{n:'tones',t:'sig'}],
   params:[{n:'mu',t:'range',min:.001,max:.1,step:.001,d:.01,log:true,label:'adaptation speed'},
           {n:'on',t:'check',d:true,label:'on'}],
-  init:n=>{ const L=ANF_N+ANF_D+1; n.w=new Float32Array(ANF_N); n.x=new Float32Array(2*L); n.L=L; n.pos=0; n.pw=0; },
+  init:n=>{ const L=ANF_N+ANF_D+1; n.w=new Float32Array(ANF_N); n.sx=new Float32Array(2*L); n.L=L; n.pos=0; n.pw=0; },
   process(n,I){
-    const o=buf(n,'out'), t=buf(n,'tones'), x=n.x, w=n.w, L=n.L, mu=n.p.mu, lk=1-1e-5;
+    const o=buf(n,'out'), t=buf(n,'tones'), x=n.sx, w=n.w, L=n.L, mu=n.p.mu, lk=1-1e-5;
     if(!I.in){ o.fill(0); t.fill(0); return {out:o, tones:t}; }
     for(let i=0;i<BLOCK;i++){
       const v=I.in[i];

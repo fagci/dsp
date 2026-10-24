@@ -67,7 +67,7 @@ IQK.pocsagRx={
     n.lp=cplx ? kaiserLP(n.fs,Math.min(8000,.6*stop),stop,255) : null;
     if(n.lp){ n.lr=new Float32Array(n.lp.length-1); n.li=new Float32Array(n.lp.length-1); }
     n.pr=0; n.pi=0;
-    n.x=new Float32Array(0); n.xb=0;
+    n.sx=new Float32Array(0); n.xb=0;
     const sel=String(n.p.baud||'auto');
     n.lanes=POC_BAUDS.filter(b=>sel==='auto' || +sel===b).map(b=>{
       const sps=n.fs/b, lane={baud:b, sps, tNext:0, jj:0, ph:[]};
@@ -100,9 +100,9 @@ IQK.pocsagRx={
       parts.push(y);
     }
     let add=0; for(const p of parts) add+=p.length;
-    const nx=new Float32Array(n.x.length+add); nx.set(n.x); let o=n.x.length;
+    const nx=new Float32Array(n.sx.length+add); nx.set(n.sx); let o=n.sx.length;
     for(const p of parts){ nx.set(p,o); o+=p.length; }
-    n.x=nx;
+    n.sx=nx;
     const recs=[];
     this.scan(n,recs);
     this.flush(n,recs);
@@ -112,7 +112,7 @@ IQK.pocsagRx={
     return {rec:recs.length ? recs : null};
   },
   scan(n,recs){
-    const x=n.x, N=x.length, P=POC_PH;
+    const x=n.sx, N=x.length, P=POC_PH;
     const S=new Float64Array(N+1);
     for(let i=0;i<N;i++) S[i+1]=S[i]+x[i];
     const integ=t=>{ if(t<=0) return 0; if(t>=N) return S[N]; const a=Math.floor(t); return S[a]+(t-a)*x[a]; };
@@ -130,7 +130,7 @@ IQK.pocsagRx={
       L.tNext=n.xb+tj;
       keep=Math.min(keep,Math.floor(tj-half-2*sps));
     }
-    if(keep>0){ n.x=x.slice(keep); n.xb+=keep; }
+    if(keep>0){ n.sx=x.slice(keep); n.xb+=keep; }
   },
   // один бит одной фазы одной скорости
   feed(n,L,d,bit,te,recs){

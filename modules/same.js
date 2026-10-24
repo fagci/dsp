@@ -56,18 +56,18 @@ def({ id:'sameRx', title:'SAME / EAS Decoder', cat:'Decoders', readout:true, tal
   kw:'same eas noaa weather radio alert tornado warning nwr',
   ins:[{n:'in',t:'sig'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'new',t:'num'}],
   params:[{n:'wait',t:'range',min:2,max:10,step:.5,d:4,label:'close a message after this silence, s (the 3 repeats are voted)'}],
-  init:n=>{ n.key=''; n.msgs=0; n.recent=[]; n.last=''; n.samp=0; n.x=new Float32Array(0); n.xb=0; n.tNext=0; n.jj=0; n.ph=[]; n.cand=[]; n.group=null; n.bursts=0; n.lvl=0; },
+  init:n=>{ n.key=''; n.msgs=0; n.recent=[]; n.last=''; n.samp=0; n.sx=new Float32Array(0); n.xb=0; n.tNext=0; n.jj=0; n.ph=[]; n.cand=[]; n.group=null; n.bursts=0; n.lvl=0; },
   process(n,I){
     const sr=Eng.sr, sps=sr/SAME_BAUD;
     if(n.key!==String(sr)){
-      n.key=String(sr); n.x=new Float32Array(0); n.xb=n.samp; n.tNext=n.samp; n.jj=0;
+      n.key=String(sr); n.sx=new Float32Array(0); n.xb=n.samp; n.tNext=n.samp; n.jj=0;
       n.ph=[]; for(let i=0;i<SAME_PH;i++) n.ph.push({reg:0, mode:0, str:'', cnt:0, cur:0});
     }
     const x=I.in, recs=[], texts=[];
     if(x){ let e=0; for(let i=0;i<BLOCK;i++) e+=x[i]*x[i]; n.lvl=n.lvl*.9+Math.sqrt(e/BLOCK)*.1; }
-    const nx=new Float32Array(n.x.length+BLOCK); nx.set(n.x); if(x) nx.set(x.subarray(0,BLOCK),n.x.length); n.x=nx;
+    const nx=new Float32Array(n.sx.length+BLOCK); nx.set(n.sx); if(x) nx.set(x.subarray(0,BLOCK),n.sx.length); n.sx=nx;
     n.samp+=BLOCK;
-    const xs=n.x, N=xs.length, step=sps/SAME_PH;
+    const xs=n.sx, N=xs.length, step=sps/SAME_PH;
     // суммы произведений с квадратурами обоих тонов (фаза — по абсолютному номеру отсчёта)
     const P=[new Float64Array(N+1),new Float64Array(N+1),new Float64Array(N+1),new Float64Array(N+1)], fr=[SAME_MARK/sr,SAME_SPACE/sr];
     for(let i=0;i<N;i++){
@@ -90,7 +90,7 @@ def({ id:'sameRx', title:'SAME / EAS Decoder', cat:'Decoders', readout:true, tal
     }
     n.tNext=n.xb+tj;
     const keep=Math.max(0,Math.floor(tj)-2);
-    if(keep>0){ n.x=xs.slice(keep); n.xb+=keep; }
+    if(keep>0){ n.sx=xs.slice(keep); n.xb+=keep; }
     sameFlush(n,n.samp/sr,recs,texts);
     return {rec:recs.length ? recs : null, text:texts.length ? texts.join('\n') : null, new:recs.length ? 1 : 0};
   },
