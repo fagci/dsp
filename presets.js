@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=88;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=89;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -424,6 +424,7 @@ const PRESET_CATS={
   'Indicators: Lamps, Gauge, LED Bar, Compass, Display':'Analysis & Measurement',
   'Indicators: Sky Plot, S-Meter, Text Ticker':'Analysis & Measurement',
   'Indicators: Switches and Attitude':'Analysis & Measurement',
+  'Indicators: Knobs, Faders, XY Pad and Tank':'Analysis & Measurement',
   'Logic Analyzer: UART Decode':'Analysis & Measurement',
   'Timeline: Periods, Durations and Replies on the Air (Table)':'Analysis & Measurement',
   'Timeline: Clip Arranger (edit with the mouse, mix, markers)':'Analysis & Measurement',
@@ -5128,6 +5129,36 @@ at.size.w=320; at.size.h=330; applySize(at);
 addEdge(sw.id,'out1',lp.id,'in1'); addEdge(sw.id,'out2',lp.id,'in2'); addEdge(sw.id,'out3',lp.id,'in3'); addEdge(sw.id,'out4',lp.id,'in4');
 addEdge(sr.id,'out1',lr.id,'in1'); addEdge(sr.id,'out2',lr.id,'in2'); addEdge(sr.id,'out3',lr.id,'in3');
 addEdge(r.id,'out',at.id,'roll'); addEdge(pc.id,'out',at.id,'pitch'); addEdge(sk.id,'out',at.id,'slip');
+markWiresDirty();
+});
+preset('Indicators: Knobs, Faders, XY Pad and Tank', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'On-screen controls: drag a Knob up / down (Shift — fine, wheel — step, double click — reset), click or drag a Fader, touch the XY Pad. Values are saved in the patch.\n'+
+  'Knob 1 sets the LFO frequency, Knob 2 the rate of a second LFO; the Tank (low / high alarm lines, min / max markers) and the Trend Chart show the first LFO; LFO B is free for you to wire.\n'+
+  'Faders drive Lamps in brightness mode; the XY Pad turns the Compass (x, 0…360°) and sets the Gauge (y).'});
+nt.size.w=1000; nt.size.h=110; applySize(nt);
+const kb=addNode('knob',40,170,{count:'2',min:.05,max:2,init:.5,scale:'log',unit:'Hz',labels:'freq A, freq B',colors:'amber, teal',state:'0.4,1'});
+kb.size.w=300; kb.size.h=150; applySize(kb);
+const l1=addNode('lfo',380,170,{freq:.4,min:0,max:100});
+const l2=addNode('lfo',380,440,{freq:1,min:0,max:100,wave:'tri'});
+const tk=addNode('tank',700,170,{min:0,max:100,lo:20,hi:85,unit:'%'});
+tk.size.w=300; tk.size.h=190; applySize(tk);
+const tr=addNode('trend',1040,170,{span:30,auto:true});
+tr.size.w=380; tr.size.h=190; applySize(tr);
+const fd=addNode('fader',40,640,{count:'4',min:0,max:10,step:1,labels:'A, B, C, D',colors:'green, amber, red, blue',state:'3,6,9,1'});
+fd.size.w=320; fd.size.h=190; applySize(fd);
+const lp=addNode('lamps',400,680,{count:'4',mode:'brightness',thr:10,labels:'A, B, C, D',colors:'green, amber, red, blue',hold:0});
+lp.size.w=300; lp.size.h=90; applySize(lp);
+const xy=addNode('xypad',740,600,{xmin:0,xmax:360,ymin:0,ymax:100,grid:6,state:'0.25,0.6'});
+xy.size.w=280; xy.size.h=240; applySize(xy);
+const cp=addNode('compass',1060,600,{});
+cp.size.w=240; cp.size.h=240; applySize(cp);
+const gg=addNode('gauge',1340,600,{min:0,max:100,warn:70,crit:90});
+gg.size.w=240; gg.size.h=190; applySize(gg);
+addEdge(kb.id,'out1',l1.id,'freq'); addEdge(kb.id,'out2',l2.id,'freq');
+addEdge(l1.id,'out',tk.id,'in'); addEdge(l1.id,'out',tr.id,'in');
+for(let k=1;k<=4;k++) addEdge(fd.id,'out'+k,lp.id,'in'+k);
+addEdge(xy.id,'x',cp.id,'az'); addEdge(xy.id,'y',gg.id,'in');
 markWiresDirty();
 });
 preset('ADS-B: Radar and Attitude (Generator)', function(){

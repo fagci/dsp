@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,Float64Array,Uint8Array,TextEncoder,TextDecoder,Array,String,Number,isFinite});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/control-kernels.js'),'utf8')+
-  ';this.K={joyTarget,joyStep,joyShape,joyBits,joyInvY,joyHexFrame,joyFormat,nrfHex,nrfTextToHex,nrfHexToText,nrfCfgLine,nrfParseLine,nrfScanSpec,ctlValue,ctlNorm,ctlParse,ctlGrid,trendPush};',ctx);
+  ';this.K={joyTarget,joyStep,joyShape,joyBits,joyInvY,joyHexFrame,joyFormat,nrfHex,nrfTextToHex,nrfHexToText,nrfCfgLine,nrfParseLine,nrfScanSpec,ctlValue,ctlNorm,ctlParse,ctlGrid};',ctx);
 const K=ctx.K;
 let bad=0; const eq=(n,a,b)=>{ if(JSON.stringify(a)!==JSON.stringify(b)){ bad++; console.log('FAIL',n,JSON.stringify(a),'!=',JSON.stringify(b)); } else console.log('ok  ',n); };
 const near=(n,a,b,e=1e-6)=>{ if(Math.abs(a-b)>e){ bad++; console.log('FAIL',n,a,'≉',b); } else console.log('ok  ',n); };
@@ -58,6 +58,5 @@ near('ctl norm lin',K.ctlNorm(2.5,0,10,false),.25); near('ctl norm log',K.ctlNor
 eq('ctl parse',K.ctlParse('1,2.5,,x',5,7),[1,2.5,7,7,7]); eq('ctl parse empty',K.ctlParse('',2,0),[0,0]);
 const gr=K.ctlGrid(4,400,100,96,24); eq('ctl grid wide → one row',[gr.c,gr.r],[4,1]);
 const gt=K.ctlGrid(4,100,400,96,24); eq('ctl grid tall → one column',[gt.c,gt.r],[1,4]);
-eq('trend push cap',K.trendPush([1,2,3],4,3),[2,3,4]);
 
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad?1:0);

@@ -131,5 +131,3 @@ function ctlGrid(N,W,H,cap,lab,aspect){
   }
   return {...best,cw:W/best.c,ch:H/best.r};
 }
-// самописец: кольцевой буфер значений за окно, огибающая min/max на пиксель
-function trendPush(buf,v,max){ buf.push(v); if(buf.length>max) buf.splice(0,buf.length-max); return buf; }
