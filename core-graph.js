@@ -2250,6 +2250,44 @@ o.nodes=o.nodes.filter(n=>!gone.has(n.id)); } }
 for(const e of o.edges) if(maps.has(e.to) && (e.tp==='rec2'||e.tp==='rec3')) e.tp='rec'; }
 { const sas=new Set(o.nodes.filter(n=>n.type==='sa').map(n=>n.id));   // входы row / rec анализатора спектра → marksTxt / marksRec
 for(const e of o.edges) if(sas.has(e.to)){ if(e.tp==='row') e.tp='marksTxt'; else if(e.tp==='rec') e.tp='marksRec'; } }
+// детектор из панелей 'sa' вынесен в узел 'cfar': старый sa с detect / проводами count, detF, rec, skip получает по cfar на приёмник
+{ const LEG=/^(count|detF)[234]?$|^rec$/;
+let mx=Math.max(0,...o.nodes.map(n=>+String(n.id).slice(1)||0));
+const has=(f,fp,t,tp)=>o.edges.some(e=>e.from===f && e.fp===fp && e.to===t && e.tp===tp);
+const add=(f,fp,t,tp)=>{ if(!has(f,fp,t,tp)) o.edges.push({from:f,fp,to:t,tp}); };
+for(const sa of o.nodes.filter(n=>n.type==='sa')){
+  const p=sa.p||(sa.p={});
+  const legacy=o.edges.some(e=>(e.from===sa.id && LEG.test(e.fp)) || (e.to===sa.id && e.tp==='skip'));
+  if(!p.detect && !legacy) { for(const k of ['detect','detThr','scanStop','dcCut','skipList']) delete p[k]; continue; }
+  const byId=Object.fromEntries(o.nodes.map(n=>[n.id,n]));
+  const tbl=nm=>o.nodes.find(n=>n.type==='table' && n.p && n.p.list===nm);
+  const skipT=tbl('Scan skip'), logT=tbl('Scan log');
+  const skipSrc=o.edges.filter(e=>e.to===sa.id && e.tp==='skip').map(e=>e);
+  const legOut=o.edges.filter(e=>e.from===sa.id && LEG.test(e.fp));
+  o.edges=o.edges.filter(e=>!(e.to===sa.id && e.tp==='skip') && !(e.from===sa.id && LEG.test(e.fp)));
+  ['spec','spec2','spec3','spec4'].forEach((port,i)=>{
+    const inE=o.edges.find(e=>e.to===sa.id && e.tp===port); if(!inE) return;
+    const rx=byId[inE.from], q=i?i+1:'';
+    const cf={id:'n'+(++mx), type:'cfar', x:(sa.x||0)+(sa.w||600)+20, y:(sa.y||0)+i*230, w:260, h:220, f:0, a:0,
+      p:{auto:true, thr:+p.detThr||10, confM:2, confN:3, hold:1500, skipList:i===0 ? (p.skipList||'') : ''}};
+    o.nodes.push(cf);
+    add(inE.from,inE.fp,cf.id,'spec'); add(cf.id,'bands',sa.id,'sigs');
+    for(const e of skipSrc) add(e.from,e.fp,cf.id,'skip');
+    if(!skipSrc.length && skipT) add(skipT.id,'rows',cf.id,'skip');
+    const lo=legOut.filter(e=>e.fp==='count'+q || e.fp==='detF'+q || (i===0 && e.fp==='rec'));
+    // провода есть — переносим; потеряны при прошлой загрузке — восстанавливаем по соседям (сканер приёмника, Scan log)
+    const bs=o.nodes.find(n=>n.type==='bandscan' && o.edges.some(e=>e.from===n.id && e.fp==='freq' && e.to===inE.from));
+    if(lo.length){ for(const e of lo) add(cf.id, e.fp.startsWith('detF') ? 'f1' : e.fp.startsWith('count') ? 'count' : 'rec', e.to, e.tp); }
+    else {
+      if(bs && p.scanStop!=='marker only') add(cf.id,'count',bs.id,'active');
+      if(rx && rx.type==='rtlsdr') add(cf.id,'f1',rx.id,'tuneFreq');
+      if(logT) add(cf.id,'rec',logT.id,'rec');
+    }
+    if(bs){ add(bs.id,'edge',cf.id,'edge'); add(bs.id,'edge',sa.id,'edge'); }
+  });
+  for(const k of ['detect','detThr','scanStop','dcCut','skipList']) delete p[k];
+}
+}
 const tbls=new Set(o.nodes.filter(n=>n.type==='table').map(n=>n.id));
 for(const e of o.edges) if(tbls.has(e.from) && e.fp==='bands') e.fp='rows';   // выходы bands и rows у Table слиты в rows
 // ход по строкам у Table вынесен в Row Player: параметры, провода trig / t и выходы хода переезжают на новый узел,
