@@ -958,7 +958,7 @@ function tblNamesApply(n){
   if(!n.ui || n.disposed) return;
   n.treeNames=TblNames.all(n.p.list);
   if(TblNames.err() && !n.err) n.err='storage: '+TblNames.err();
-  tblRenderTree(n);
+  tblRenderPick(n);
 }
 /* Вид: сверху выбор списка (папки — группы выпадающего списка) и «⋯» со всеми действиями, ниже фильтр,
    две частые кнопки, список строк фиксированной высоты. Правка строки — панелью снизу поверх списка:
@@ -973,10 +973,8 @@ function tblInit(n){
     <div class="tbl-head">
       <button type="button" class="tbl-pick" title="active list: rows, edit, sequencer"></button>
       <button class="tbl-btn tbl-new" title="new list">＋</button>
-      <button class="tbl-btn tbl-shown" title="lists shown on the map and the bands output — tick as many as you need"></button>
       <button class="tbl-btn tbl-menub" title="actions">⋯</button>
     </div>
-    <div class="tbl-tree" hidden></div>
     <div class="tbl-bar">
       <button class="tbl-btn tbl-crumb" hidden></button>
       <input class="tbl-filter" placeholder="filter: kind == &quot;beacon&quot; &amp;&amp; rssi > -50   ·   20m  demod:am  -fm" title="Wireshark-style: field == x, != > < >= <=, contains, matches (~), in {a b 1..5}, &amp;&amp; || !, ( ); fields are column names. Also words: 20m, col:text, col>5M, -word, not word">
@@ -995,7 +993,7 @@ function tblInit(n){
   mid.append(root);
   syncCustomHeight(n,root,150);
   const q=s=>root.querySelector(s);
-  n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), tree:q('.tbl-tree'), pick:q('.tbl-pick'), shown:q('.tbl-shown'),
+  n.ui={root, list:q('.tbl-list'), count:q('.tbl-count'), pick:q('.tbl-pick'),
     vmBtn:q('.tbl-vm'), crumb:q('.tbl-crumb'), filter:q('.tbl-filter'), view:q('.tbl-view'), edit:q('.tbl-edit'), tail:!n.schema?.card?.rev, jump:false, marked:-1, markEl:null, rh:0, hdh:0, vh:0, st:0, atEnd:false};
   n.ui.view.hidden=!n.viewOpen;                           // пересборка узла (смена колонок) не должна прятать панель
   q('.tbl-viewb').classList.toggle('on',!!n.viewOpen);
@@ -1003,11 +1001,6 @@ function tblInit(n){
   vw.addEventListener('scroll',()=>{ if(!n._vr && !vw.hidden) n.viewScroll=vw.scrollTop; });
   vw.addEventListener('focusin',e=>{ n.viewNew=e.target.classList.contains('tv-new'); });
   if(n.viewOpen && n.schema) tblRenderView(n);            // сразу, а не после асинхронной tblRenderAll: панель не схлопывается на пересборке
-  n._open=new Set(Array.isArray(n.p.open) ? n.p.open : []);
-  if(!Array.isArray(n.p.open)) for(const k of new Set([...tblShow(n),n.p.list])){            // раскрыть пути отмеченных
-    const parts=k.split('/'); parts.pop();
-    parts.reduce((a,x)=>{ const path=a ? a+'/'+x : x; n._open.add(path); return path; },'');
-  }
   n.ui.list.addEventListener('keydown',e=>tblKey(n,e));
   let sq=0;                                               // прокрутка и размер — раз в кадр
   const onScroll=()=>{ if(!sq) sq=requestAnimationFrame(()=>{ sq=0; if(!n.disposed && n.ui) tblScrolled(n); }); };
@@ -1049,8 +1042,6 @@ function tblInit(n){
     if(row && !tblRO(n) && !tcCardish(n)) tblEditForm(n,+row.dataset.i,row);
   });
   n.ui.pick.addEventListener('click',()=>tblPickToggle(n));
-  n.ui.shown.addEventListener('click',()=>tblTreeToggle(n));
-  n.ui.tree.addEventListener('click',e=>tblTreeClick(n,e));
   n.ui.filter.value=n.p.filter||'';
   n.ui.filter.dataset.tip=n.ui.filter.title; tblFilterMark(n);
   n.ui.filter.addEventListener('keydown',e=>e.stopPropagation());
@@ -1144,7 +1135,6 @@ function tblMainMenu(n){
   it('Delete list','',()=>tblDeleteList(n));
   tblMenuHead(m,'View');
   it('Fields & colors…','add, rename, remove fields; type, shown columns, their order and format; row colour rules',()=>tblViewToggle(n));
-  it('Shown lists…','tick several lists to show them on the map and the bands output',()=>tblTreeToggle(n));
 }
 function tblNewMenu(n){
   const m=tblMenuEl(n,n.ui.root.querySelector('.tbl-new'),'new'); if(!m) return;
@@ -1190,45 +1180,10 @@ async function tblRenderAll(n){
   TblNames.refresh();
   tcOpenPending(n);
 }
-/* ---------- дерево списков ---------- */
-function tblBuildTree(names){
-  const root={dirs:new Map(),files:[],path:'',name:''};
-  for(const full of names){
-    const parts=full.split('/'), leaf=parts.pop();
-    let d=root;
-    for(const x of parts){
-      if(!d.dirs.has(x)) d.dirs.set(x,{dirs:new Map(),files:[],path:d.path ? d.path+'/'+x : x,name:x});
-      d=d.dirs.get(x);
-    }
-    d.files.push({name:full,leaf});
-  }
-  return root;
-}
-const tblFilesOf=d=>[...d.files.map(f=>f.name),...[...d.dirs.values()].flatMap(tblFilesOf)];
+/* ---------- выбор списка ---------- */
 const tblByName=(a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'});
-function tblRenderTree(n){
-  const ui=n.ui, sh=tblShow(n), html=[];
-  if(ui.tree.hidden){ tblRenderPick(n); return; }       // дерево строится при открытии
-  const walk=(d,depth)=>{
-    for(const sub of [...d.dirs.values()].sort((a,b)=>tblByName(a.name,b.name))){
-      const all=tblFilesOf(sub), on=all.filter(f=>sh.has(f)).length, open=n._open.has(sub.path);
-      html.push(`<div class="tt-dir" data-path="${escapeHtml(sub.path)}" style="padding-left:${depth*12+2}px">`+
-        `<span class="tt-car">${open?'▾':'▸'}</span><input type="checkbox" class="tt-cb" data-ind="${on&&on<all.length?1:0}"${on&&on===all.length?' checked':''}>`+
-        `<span class="tt-name">${escapeHtml(sub.path==='presets' ? 'presets (built-in)' : sub.name)}</span><span class="tt-cnt">${on?on+'/':''}${all.length}</span></div>`);
-      if(open) walk(sub,depth+1);
-    }
-    for(const f of d.files.slice().sort((a,b)=>tblByName(a.leaf,b.leaf)))
-      html.push(`<div class="tt-file${f.name===n.p.list?' act':''}" data-name="${escapeHtml(f.name)}" style="padding-left:${depth*12+14}px">`+
-        `<input type="checkbox" class="tt-cb"${sh.has(f.name)?' checked':''}><span class="tt-name" title="${escapeHtml(f.name)}">${escapeHtml(f.leaf)}</span></div>`);
-  };
-  walk(tblBuildTree(n.treeNames||[]),0);
-  const keep=ui.tree.scrollTop;
-  ui.tree.innerHTML='<div class="tt-top"><span class="tt-ttl">Shown on the map / bands · '+sh.size+'</span><span class="tt-none" title="untick all">none</span><span class="tt-close" title="close">✕</span></div>'+html.join('');
-  ui.tree.querySelectorAll('[data-ind="1"]').forEach(c=>{ c.indeterminate=true; });
-  ui.tree.scrollTop=keep;
-  tblRenderPick(n);
-}
-// выбор активного списка: кнопка и панель с поиском; папки — группы, видно только имя без пути
+// выбор списка: кнопка и панель с поиском. Строка — галочка (список идёт на выход rows и на карту — отмечай сколько нужно)
+// и имя (сделать активным, панель закрывается); у папки — галочка на все найденные в ней списки
 const tblPickLabel=g=>g==='' ? 'Lists' : g==='presets' ? 'Built-in (read-only)' : g.startsWith('presets/') ? 'Built-in · '+g.slice(8) : g;
 function tblPickGroups(n){
   const groups=new Map();
@@ -1240,21 +1195,21 @@ function tblPickGroups(n){
   return [...groups.keys()].sort((a,b)=>(a==='')?-1:(b==='')?1:(a.startsWith('presets')-b.startsWith('presets'))||tblByName(a,b)).map(g=>[g,groups.get(g)]);
 }
 function tblRenderPick(n){
-  const ui=n.ui;
-  ui.pick.textContent=(tblKind(n.p.list)==='patch' ? 'This patch' : tblLeaf(n.p.list))+' ▾';
-  ui.pick.title=n.p.list;
+  const ui=n.ui, k=tblShow(n).size;
+  ui.pick.textContent=(tblKind(n.p.list)==='patch' ? 'This patch' : tblLeaf(n.p.list))+(k>1 ? ' ☑'+k : '')+' ▾';
+  ui.pick.title=n.p.list+(k>1 ? ' · '+k+' lists on the map and the rows output' : '');
   if(ui.pickBox?.isConnected) tblPickFill(n);
-  ui.shown.textContent='☑ '+tblShow(n).size;
-  ui.shown.classList.toggle('on',!ui.tree.hidden);
 }
 function tblPickToggle(n){
   const ui=n.ui, old=ui.root.querySelector('.tbl-pickm');
   if(old){ old.remove(); return; }
   TblNames.refresh();                                   // свежие имена: панель перерисуется, когда придут
   const m=tblMenuEl(n,ui.pick); m.classList.add('tbl-pickm');
-  const inp=document.createElement('input'), box=document.createElement('div');
+  const inp=document.createElement('input'), box=document.createElement('div'), top=document.createElement('div');
   inp.className='tp-q'; inp.placeholder='search lists…'; inp.spellcheck=false;
-  m.append(inp,box); ui.pickBox=box; ui.pickHi=-1;
+  top.className='tp-top'; top.innerHTML='<span class="tp-cnt"></span><span class="tp-none" title="untick all">none</span>';
+  m.append(inp,top,box); ui.pickBox=box; ui.pickQ=inp; ui.pickTop=top; ui.pickHi=-1;
+  top.querySelector('.tp-none').addEventListener('click',()=>tblSetShow(n,[]));
   inp.addEventListener('input',()=>{ ui.pickHi=-1; tblPickFill(n); });
   inp.addEventListener('keydown',e=>{
     e.stopPropagation();
@@ -1269,52 +1224,43 @@ function tblPickToggle(n){
     its[ui.pickHi].scrollIntoView({block:'nearest'});
   });
   box.addEventListener('click',e=>{
+    const cb=e.target.closest('.tp-cb');
+    if(cb){                                             // галочка — отдельно: панель остаётся открытой
+      const names=cb.dataset.group!=null ? JSON.parse(cb.dataset.names) : [cb.closest('.tm-i').dataset.name];
+      tblToggleShow(n,names,cb.checked); return;
+    }
     const it=e.target.closest('.tm-i'); if(!it) return;
-    m.remove(); tblPick(n,it.dataset.name);
+    m.remove(); tblPick(n,it.dataset.name);             // имя — сделать активным
   });
   tblPickFill(n);
   inp.focus();
   box.querySelector('.tm-i.act')?.scrollIntoView({block:'center'});
 }
-// строки панели выбора по запросу: все слова — в имени списка или папки
+// строки панели по запросу: все слова — в имени списка или папки
 function tblPickFill(n){
-  const ui=n.ui, box=ui.pickBox, q=(ui.pickBox.previousElementSibling?.value||'').toLowerCase().split(/\s+/).filter(Boolean);
+  const ui=n.ui, box=ui.pickBox, sh=tblShow(n), q=(ui.pickQ?.value||'').toLowerCase().split(/\s+/).filter(Boolean);
+  const mk=(tag,cls,txt)=>{ const e=document.createElement(tag); e.className=cls; if(txt!=null) e.textContent=txt; return e; };
   const frag=document.createDocumentFragment(); let cnt=0;
   for(const [g,files] of tblPickGroups(n)){
     const hit=files.filter(f=>{ const h=(tblPickLabel(g)+' '+f).toLowerCase(); return q.every(w=>h.includes(w)); });
     if(!hit.length) continue;
-    const h=document.createElement('div'); h.className='tm-h'; h.textContent=tblPickLabel(g); frag.append(h);
+    const h=mk('div','tm-h'), on=hit.filter(f=>sh.has(f)).length, gc=mk('input','tp-cb');
+    gc.type='checkbox'; gc.dataset.group=g; gc.dataset.names=JSON.stringify(hit); gc.checked=on===hit.length; gc.indeterminate=on>0 && on<hit.length;
+    gc.title='all lists of this folder';
+    h.append(gc,mk('span','tp-gn',tblPickLabel(g))); frag.append(h);
     for(const f of hit){
-      const d=document.createElement('div'); d.className='tm-i tm-s'+(f===n.p.list ? ' act' : ''); d.dataset.name=f;
-      d.textContent=tblKind(f)==='patch' ? 'This patch' : tblLeaf(f); frag.append(d); cnt++;
+      const d=mk('div','tm-i tm-s'+(f===n.p.list ? ' act' : '')), cb=mk('input','tp-cb');
+      d.dataset.name=f; cb.type='checkbox'; cb.checked=sh.has(f); cb.title='show on the map and the rows output';
+      d.append(cb,mk('span','tp-name',tblKind(f)==='patch' ? 'This patch' : tblLeaf(f))); frag.append(d); cnt++;
     }
   }
-  if(!cnt){ const e=document.createElement('div'); e.className='tm-d tm-none'; e.textContent='nothing found'; frag.append(e); }
+  if(!cnt){ frag.append(mk('div','tm-d tm-none','nothing found')); }
   box.replaceChildren(frag);
+  ui.pickTop.querySelector('.tp-cnt').textContent='on the map / rows output · '+sh.size;
   const its=box.querySelectorAll('.tm-i');
   if(ui.pickHi>=0 || q.length) its[Math.max(0,ui.pickHi)]?.classList.add('hi');
 }
-function tblTreeToggle(n){ n.ui.tree.hidden=!n.ui.tree.hidden; if(!n.ui.tree.hidden) tblRenderTree(n); n.ui.shown.classList.toggle('on',!n.ui.tree.hidden); }
-function tblTreeClick(n,e){
-  if(e.target.closest('.tt-close')){ tblTreeToggle(n); return; }
-  if(e.target.closest('.tt-none')){ tblSetShow(n,[]); return; }
-  const row=e.target.closest('.tt-dir,.tt-file'); if(!row) return;
-  const isCb=e.target.classList.contains('tt-cb');
-  if(row.classList.contains('tt-file')){
-    if(isCb) tblToggleShow(n,[row.dataset.name],e.target.checked);
-    else tblPick(n,row.dataset.name);
-    return;
-  }
-  const path=row.dataset.path;
-  if(isCb){
-    const d=[...n.treeNames].filter(x=>x.startsWith(path+'/'));
-    tblToggleShow(n,d,e.target.checked);
-  } else {
-    if(n._open.has(path)) n._open.delete(path); else n._open.add(path);
-    n.p.open=[...n._open]; tblRenderTree(n);
-  }
-}
-function tblSetShow(n,list){ n.p.show=list; tblSyncExtra(n); tblRenderTree(n); }
+function tblSetShow(n,list){ n.p.show=list; tblSyncExtra(n); tblRenderPick(n); }
 function tblToggleShow(n,names,on){
   const sh=tblShow(n);
   for(const k of names) on ? sh.add(k) : sh.delete(k);
