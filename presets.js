@@ -1202,7 +1202,7 @@ const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the
   '«Clear blacklist» wipes it); the «Scan skip» table is a skip list by ranges (lo / hi) for pagers and beacons.\n'+
   'Gestures: pinch — zoom (across: frequency, up-down: a pane dB range), drag up/down — shift the dB range of a pane, double tap — reset, swipe a title — page; «⇕ dB» fits every pane to its data. Tap a pane — marker 1–4; tap a pane title — retune. The receiver squelch (SNR) keeps the speaker quiet while the scan is not on a signal.'});
 nt.size.w=720; nt.size.h=250; applySize(nt);
-const rx=addNode('rtlsdr',40,300,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:100000000,sql:'SNR',sqlSnr:8,fastTune:true});
+const rx=addNode('rtlsdr',40,300,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:100000000,sql:'input',sqlHang:400,fastTune:true});
 const bp=addNode('table',360,300,{list:'@patch',initial:false,data:'name,lo,hi,step\n'+
   'VHF,144M,176M,25k\nUHF,400M,470M,25k'});
 bp.size.w=340; bp.size.h=280; applySize(bp);
@@ -1210,8 +1210,8 @@ const bs=addNode('bandscan',740,300,{timeout:3000,settle:90,frames:2,edge:15,ord
 bs.size.w=300; bs.size.h=200; applySize(bs);
 const sk=addNode('table',1080,300,{list:'Scan skip',initial:false});
 sk.size.w=300; sk.size.h=220; applySize(sk);
-const cf=addNode('cfar',1080,620,{auto:true,thr:10,confM:2,confN:3,hold:1500});
-cf.size.w=300; cf.size.h=240; applySize(cf);
+const cf=addNode('cfar',1160,620,{auto:true,thr:10,confM:2,confN:3,hold:1500});
+cf.size.w=240; cf.size.h=240; applySize(cf);
 const sa=addNode('sa',40,620,{layout:'panes',panes:2,follow:true,holdMarker:true,peakHold:true,floor:-90,top:-20,split:.45});
 sa.size.w=1100; sa.size.h=440; applySize(sa);
 const lg=addNode('table',1420,300,{list:'Scan log',initial:false});
@@ -1226,6 +1226,7 @@ addEdge(bs.id,'edge',sa.id,'edge'); addEdge(bs.id,'edge',cf.id,'edge');
 addEdge(bs.id,'freq',rx.id,'freq');
 addEdge(cf.id,'f1',rx.id,'tuneFreq');
 addEdge(cf.id,'rec',lg.id,'rec');
+addEdge(bs.id,'listening',rx.id,'sqlGate');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
 markWiresDirty();
 });
@@ -1254,18 +1255,18 @@ const dc=addNode('dac',1460,860,{vol:.4});
 const SP=['spec','spec2','spec3','spec4'], AU=['a','b','c','d'];
 const bs0=[];
 for(let i=0;i<4;i++){
-  const rx=addNode('rtlsdr',40+i*250,280,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:100000000+i*1000000,sql:'SNR',sqlSnr:8,fastTune:true});
+  const rx=addNode('rtlsdr',40+i*250,280,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:100000000+i*1000000,sql:'input',sqlHang:400,fastTune:true});
   const bs=addNode('bandscan',40+i*320,640,{timeout:3000,settle:90,frames:2,edge:15,order:'interleave',lanes:4,lane:i});
   bs.size.w=300; bs.size.h=200; applySize(bs);
   addEdge(rx.id,'spec',sa.id,SP[i]); addEdge(rx.id,'spec',bs.id,'spec');
   addEdge(bp.id,'rows',bs.id,'bands');
   addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi');
-  const cf=addNode('cfar',1080+i*10,1020+i*30,{auto:true,thr:10,confM:2,confN:3,hold:1500});
+  const cf=addNode('cfar',1380+(i%2)*310,1020+(i>>1)*220,{auto:true,thr:10,confM:2,confN:3,hold:1500});
   cf.size.w=300; cf.size.h=200; applySize(cf);
   addEdge(rx.id,'spec',cf.id,'spec'); addEdge(sk.id,'rows',cf.id,'skip');
   addEdge(cf.id,'bands',sa.id,'sigs'); addEdge(cf.id,'rec',lg.id,'rec');
   addEdge(bs.id,'edge',sa.id,'edge'); addEdge(bs.id,'edge',cf.id,'edge');
-  addEdge(cf.id,'count',bs.id,'active'); addEdge(bs.id,'freq',rx.id,'freq'); addEdge(cf.id,'f1',rx.id,'tuneFreq');
+  addEdge(cf.id,'count',bs.id,'active'); addEdge(bs.id,'listening',rx.id,'sqlGate'); addEdge(bs.id,'freq',rx.id,'freq'); addEdge(cf.id,'f1',rx.id,'tuneFreq');
   addEdge(rx.id,'audio',mx.id,AU[i]);
   if(i===0) addEdge(sa.id,'holdF',bs.id,'hold');
 }
