@@ -29,7 +29,8 @@ const FileStore = (() => {
       rq.onerror=()=>{ dbp=null; rej(rq.error); };
     }).then(async db=>{ await migrate(db,false); return db; }));
   }
-  async function st(name,mode){ return (await open()).transaction(name,mode).objectStore(name); }
+  const fsTx=(db,names,mode)=>{ if(mode!=='readwrite') return db.transaction(names,mode); try{ return db.transaction(names,mode,{durability:'relaxed'}); }catch(e){ return db.transaction(names,mode); } };   // relaxed durability: см. ldbTx в sources.js
+  async function st(name,mode){ return fsTx(await open(),name,mode).objectStore(name); }
 
   // ---- перенос старых баз ----
   const openOld=name=>new Promise(res=>{
@@ -126,8 +127,9 @@ const FileStore = (() => {
     async removeMany(ids){                              // одной транзакцией и одним уведомлением
       const recs=(await Promise.all(ids.map(i=>this.get(i)))).filter(Boolean);
       await Promise.all(recs.map(r=>syncNoteDel('f',r)));
-      const db=await open(), tx=db.transaction('files','readwrite');
+      const db=await open(), tx=fsTx(db,'files','readwrite');
       for(const r of recs) tx.objectStore('files').delete(r.id);
+      try{ tx.commit?.(); }catch(e){}
       await doneP(tx);
       for(const sp of new Set(recs.map(r=>r.space))) fire(sp);
     },
