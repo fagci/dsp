@@ -616,6 +616,7 @@ def({ id:'wssensor', title:'Sensor (WebSocket)', cat:'Sources',
 // пересчитанный на частоту движка; так видно мерцание 50/100 Гц и при камере на 30 к/с.
 const CAM_LAG=.06;                                  // запас часов выдачи от свежего кадра, с
 function camStop(n){
+  camRecStop(n);
   n.gen=(n.gen|0)+1;
   try{ n.reader?.cancel(); }catch(e){}
   n.reader=null;
@@ -623,6 +624,32 @@ function camStop(n){
   if(n.video) n.video.srcObject=null;
   n.track=null; n.mode=''; n.fps=0; n.q=[]; n.rq=[]; n.clk=null; n.qT=null; n.fdt=0; n.drop=0;
 }
+// Запись видео (со звуком микрофона по желанию) прямо с дорожки камеры: тот же поток, что на превью, без перекодирования кадров графа
+async function camRecStart(n){
+  if(n.vrec || n.vrecBusy) return;
+  if(!n.track || n.track.readyState!=='live'){ n.ctlNote='camera is off'; return; }
+  const mime=typeof vrecMime==='function' ? vrecMime('auto') : null;
+  if(!mime){ n.ctlNote='no video encoder in this browser'; return; }
+  n.vrecBusy=true;
+  try{
+    const tracks=[n.track];
+    if(n.p.recAudio){
+      try{ const a=await navigator.mediaDevices.getUserMedia({audio:true}); tracks.push(...a.getAudioTracks()); n.vrecAudio=a; }
+      catch(e){ n.ctlNote='no sound: '+(e.message||e.name); }
+    }
+    if(!n.track || n.track.readyState!=='live'){ n.vrecAudio?.getTracks().forEach(t=>t.stop()); n.vrecAudio=null; return; }
+    const mr=new MediaRecorder(new MediaStream(tracks),{mimeType:mime}), chunks=[], stamp=recStamp();
+    n.vrec={mr,t0:performance.now(),chunks,bytes:0};
+    mr.ondataavailable=e=>{ if(e.data.size){ chunks.push(e.data); if(n.vrec) n.vrec.bytes+=e.data.size; } };
+    mr.onstop=()=>{
+      n.vrecAudio?.getTracks().forEach(t=>t.stop()); n.vrecAudio=null; n.vrec=null;
+      if(chunks.length){ const b=new Blob(chunks,{type:mime});
+        dl(b,'video-'+stamp+'.'+(mime.startsWith('video/mp4')?'mp4':'webm')); n.ctlNote='video '+(b.size/1048576).toFixed(1)+' MB'; }
+    };
+    mr.start(1000);
+  } finally { n.vrecBusy=false; }
+}
+function camRecStop(n){ if(n.vrec?.mr.state==='recording') n.vrec.mr.stop(); }
 // Список всех видеовходов; подписи видны только после разрешения, поэтому сперва короткий getUserMedia
 let camDevs=[];
 async function camList(n){
@@ -839,7 +866,7 @@ async function camApplyCtl(n){
   n.ctlBusy=false;
 }
 def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'vid',t:'vid'},{n:'bright',t:'num'},{n:'rows',t:'sig'}],
-  ins:[{n:'roiX',t:'num'},{n:'roiY',t:'num'},{n:'roiW',t:'num'},{n:'roiH',t:'num'}],
+  ins:[{n:'roiX',t:'num'},{n:'roiY',t:'num'},{n:'roiW',t:'num'},{n:'roiH',t:'num'},{n:'rec',t:'num'}],
   onRun:n=>{ if(!n.track || n.track.readyState==='ended') return camStart(n); },
   onStop:n=>camStop(n),
   params:[{n:'on',t:'button',label:'Turn on camera',fn:n=>camStart(n)},
@@ -857,6 +884,8 @@ def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'vid',
           {n:'zoom',t:'range',min:1,max:10,step:.1,d:1,label:'zoom'},
           {n:'torch',t:'check',d:false,label:'torch (flash light)'},
           {n:'photo',t:'button',label:'Take photo (full resolution)',fn:n=>camPhoto(n)},
+          {n:'recVid',t:'button',label:'Record video (start / stop, saved as a file)',fn:n=>{ n.vrec ? camRecStop(n) : camRecStart(n); }},
+          {n:'recAudio',t:'check',d:false,label:'record: with sound from the microphone'},
           {n:'w',t:'select',opts:['80','160','320'],d:'160',label:'img width'},
           {n:'roi',t:'check',d:false,label:'brightness zone'},
           {n:'roiX',t:'range',min:0,max:1,step:.01,d:.35,label:'zone: x'},
@@ -876,6 +905,10 @@ def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'vid',
   view:{h:100}, readout:true, always:true,
   process(n,I){
     for(const k of ['roiX','roiY','roiW','roiH']) if(typeof I[k]==='number') setMod(n,k,I[k]);
+    if(typeof I.rec==='number'){                    // внешний триггер записи: по уровню
+      const g=I.rec>=.5;
+      if(g && !n.recGate && !n.vrec) camRecStart(n); else if(!g && n.recGate) camRecStop(n);
+      n.recGate=g; }
     const o=buf(n,'rows'), q=n.q, rq=n.rq, sr=Eng.sr;
     if(n.qT==null){ o.fill(n.rv); return {img:n.img||null, vid:n.track?n.video:null, bright:n.bright, rows:o}; }
     const err=n.qT-CAM_LAG-n.clk;
@@ -907,6 +940,7 @@ def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'vid',
           ` · ${st.width||v.videoWidth}×${st.height||v.videoHeight} · ${n.mode}`+
           (n.drop?` · drop ${n.drop}`:'')+
           (!n.p.ae&&st.exposureTime?` · ${(st.exposureTime/10).toFixed(1)} ms`:'')+
+          (n.vrec?` · ● rec ${Math.floor((performance.now()-n.vrec.t0)/60000)}:${String(Math.floor((performance.now()-n.vrec.t0)/1000)%60).padStart(2,'0')} ${(n.vrec.bytes/1048576).toFixed(1)} MB`:'')+
           (n.ctlNote?` · ${n.ctlNote}`:''); }
     }
     if(!v.videoWidth) return;
@@ -917,7 +951,7 @@ def({ id:'cam', title:'Camera', cat:'Sources', outs:[{n:'img',t:'img'},{n:'vid',
       if(fresh || !n.img || n.img.w!==W || n.img.h!==H){
         if(n.capCv.width!==W||n.capCv.height!==H){ n.capCv.width=W; n.capCv.height=H; }
         n.capCx.drawImage(v,0,0,W,H);
-        n.img={data:n.capCx.getImageData(0,0,W,H),w:W,h:H,gray:false,rev:(n.img?.rev|0)+1};
+        n.img={data:n.capCx.getImageData(0,0,W,H),w:W,h:H,gray:false,rev:(n.img?.rev|0)+1,t:n.lastFrameAt/1000||performance.now()/1000};   // t — когда пришёл кадр (с), для Pulse
       }
     } else n.img=null;
     const pk=cv.width+'|'+cv.height+'|'+cv.pxGen+'|'+n.p.roi+'|'+n.p.roiX+'|'+n.p.roiY+'|'+n.p.roiW+'|'+n.p.roiH;
@@ -7475,4 +7509,5 @@ defGroups('cam',[
   {n:'Capture', p:'res fps w zoom'},
   {n:'Exposure', p:'ae exp af awb'},
   {n:'Brightness zone', p:'roi roiX roiY roiW roiH roiAuto', open:false},
-  {n:'Rolling shutter', p:'scan blank rsNorm', open:false}]);
+  {n:'Rolling shutter', p:'scan blank rsNorm', open:false},
+  {n:'Video recording', p:'recVid recAudio', open:false}]);
