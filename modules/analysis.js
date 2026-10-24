@@ -630,7 +630,8 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
        {n:'train',t:'num'},{n:'thr',t:'num'},{n:'minW',t:'num'},{n:'top',t:'num'},{n:'hold',t:'num'},{n:'edge',t:'num'},
        {n:'plan',t:'bands',tip:'band plan with a channel step: signals snap to channels, one per channel'},
        {n:'blCur',t:'num',tip:'pulse: blacklist the signal being heard'},{n:'skipSig',t:'num',tip:'pulse: skip the signal being heard in this window'},
-       {n:'blAdd',t:'num',tip:'pulse: blacklist all found signals'},{n:'blClear',t:'num',tip:'pulse: clear the blacklist'}],
+       {n:'blAdd',t:'num',tip:'pulse: blacklist all found signals'},{n:'blClear',t:'num',tip:'pulse: clear the blacklist'},
+       {n:'favCur',t:'num',tip:'pulse: mark the signal being heard as interesting'},{n:'favClear',t:'num',tip:'pulse: clear the interesting list'}],
   outs:[
         {n:'count',t:'num'},
         {n:'rec',t:'rec'},
@@ -640,6 +641,7 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
         {n:'bw1',t:'num'},
         {n:'floor',t:'num'},
         {n:'bands',t:'bands'},
+        {n:'fav',t:'rec',tip:'a record each time a signal is marked as interesting'},
         {n:'listenF',t:'num'},
         {n:'todo',t:'num'},
         {n:'gate',t:'num'},
@@ -671,11 +673,14 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
           // очередь прослушивания: сигналы окна слушаются по очереди (по частоте), каждый — пока есть или dwell мс
           {n:'dwell',t:'range',min:0,max:30000,step:100,d:4000,label:'listen to each signal at most, ms (0 = while it lasts)'},
           {n:'blCur',t:'button',label:'Blacklist this signal',fn:n=>cfarBlCur(n)},
+          {n:'favCur',t:'button',label:'Mark as interesting ★',fn:n=>cfarFavCur(n)},
+          {n:'favClear',t:'button',label:'Clear interesting',fn:n=>cfarFavSave(n,[])},
           {n:'skipSig',t:'button',label:'Skip signal in this window',fn:n=>{ n._skipCur=true; }},
           // чёрный список: найденное сейчас — в список (несущая гуляет, поэтому ширина не меньше 12.5 кГц), плюс вход skip
           {n:'blAdd',t:'button',label:'Blacklist found signals',fn:n=>cfarBlAdd(n)},
           {n:'blClear',t:'button',label:'Clear blacklist',fn:n=>cfarBlSave(n,[])},
-          {n:'skipList',t:'text',d:'',label:'blacklist, Hz (f/width, …)',adv:true}],
+          {n:'skipList',t:'text',d:'',label:'blacklist, Hz (f/width, …)',adv:true},
+          {n:'favList',t:'text',d:'',label:'interesting, Hz (f/width, …): heard first and as long as they last',adv:true}],
   init:n=>{n.list=[];n.text='';n.tracks=[];n.floorDb=null;n.recs=[];n.cur=null;n.todo=0;},
   process(n,I){
     const s=I.spec;
@@ -694,6 +699,8 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
     if(pin('skipSig')) n._skipCur=true;
     if(pin('blAdd')) cfarBlAdd(n);
     if(pin('blClear')) cfarBlSave(n,[]);
+    if(pin('favCur')) cfarFavCur(n);
+    if(pin('favClear')) cfarFavSave(n,[]);
     n.plan=Array.isArray(I.plan) ? I.plan.filter(b=>b && !b.sig && b.hi>b.lo && b.step>0) : null;
     if(!s) return {count:0};
     // список пропуска (Table → bands): цели внутри его диапазонов не считаются; частота без ширины — с допуском по ширине цели
@@ -707,8 +714,9 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
     cfarListen(n,performance.now());
     const [a,b,c,d]=n.list;
     const rec=n.recs.length ? n.recs.splice(0) : null;
-    const bands=n.list.map(t=>({lo:t.f-Math.max(t.bw,1)/2, hi:t.f+Math.max(t.bw,1)/2, label:fmtHz(t.f,3), db:t.db, sig:true}));
-    return {count:n.list.length, rec, bands, listenF:n.cur?n.cur.f:null, todo:n.todo, gate:n.cur && performance.now()-n.cur.t<=250 ? 1 : 0,   // gate — цель видна прямо сейчас (без hold)
+    const fav=n._favRecs&&n._favRecs.length ? n._favRecs.splice(0) : null;
+    const bands=n.list.map(t=>({lo:t.f-Math.max(t.bw,1)/2, hi:t.f+Math.max(t.bw,1)/2, label:(t.fav?'★ ':'')+fmtHz(t.f,3), db:t.db, sig:true, color:t.fav?'#ffd54f':undefined}));
+    return {count:n.list.length, rec, fav, bands, listenF:n.cur?n.cur.f:null, todo:n.todo, gate:n.cur && performance.now()-n.cur.t<=250 ? 1 : 0,   // gate — цель видна прямо сейчас (без hold)
      
       f1:a?a.f:null, l1:a?a.db:null, f2:b?b.f:null, l2:b?b.db:null,
       f3:c?c.f:null, l3:c?c.db:null, f4:d?d.f:null, l4:d?d.db:null,
@@ -742,16 +750,38 @@ function cfarBlSave(n,list){
 // очередь: слушаем по очереди все подтверждённые сигналы окна (по возрастанию частоты); сигнал оставляем, когда он пропал,
 // истёк dwell или нажали skip; todo — сколько ещё не прослушано (с текущим): пока >0, сканер стоит на окне
 function cfarListen(n,now){
-  const L=n.list;
+  const L=n.list, favs=cfarFavList(n);
+  for(const t of n.tracks) t.fav=favs.some(x=>Math.abs(x.f-t.f)<=x.w/2);
   if(n.cur && !L.includes(n.cur)) n.cur=null;
-  if(n.cur && (n._skipCur || (+n.p.dwell>0 && now-n.curT0>=+n.p.dwell))){ n.cur.seen=true; n.cur=null; }
+  if(n.cur && (n._skipCur || (+n.p.dwell>0 && !n.cur.fav && now-n.curT0>=+n.p.dwell))){ n.cur.seen=true; n.cur=null; }
   n._skipCur=false;
   if(!n.cur){
-    const c=L.filter(t=>!t.seen).sort((a,b)=>a.f-b.f);
-    if(c.length){ const lf=n._lastF ?? -Infinity; n.cur=c.find(t=>t.f>lf)||c[0]; n.curT0=now; }
+    const c=L.filter(t=>!t.seen).sort((a,b)=>a.f-b.f), fv=c.filter(t=>t.fav);     // интересные — первыми
+    if(c.length){ const lf=n._lastF ?? -Infinity; n.cur=fv[0]||c.find(t=>t.f>lf)||c[0]; n.curT0=now; }
   }
   if(n.cur) n._lastF=n.cur.f;
   n.todo=L.filter(t=>!t.seen).length;
+}
+// интересные: как чёрный список — {f,w}; слушаются первыми и без ограничения dwell, помечены ★ на спектре
+function cfarFavList(n){
+  if(n._favSrc!==n.p.favList){
+    n._favSrc=n.p.favList;
+    try{ const a=JSON.parse(n.p.favList||'[]'); n._fav=Array.isArray(a) ? a.filter(x=>x && isFinite(x.f) && isFinite(x.w)) : []; }
+    catch(e){ n._fav=[]; }
+  }
+  return n._fav;
+}
+function cfarFavSave(n,list){
+  const v=JSON.stringify(list.map(x=>({f:Math.round(x.f),w:Math.round(x.w)})));
+  n._favSrc=v; n._fav=list;
+  if(n.set && n.set.favList) n.set.favList(v); else n.p.favList=v;
+}
+function cfarFavCur(n){
+  const t=n.cur; if(!t) return;
+  const list=cfarFavList(n).slice();
+  if(!list.some(x=>Math.abs(x.f-t.f)<=x.w/2)) list.push({f:t.f, w:Math.max(t.bw*1.5,12500)});
+  cfarFavSave(n,list);
+  (n._favRecs||(n._favRecs=[])).push({t:Date.now(), src:'CFAR', kind:'interesting', id:Math.round(t.f), freq:Math.round(t.f), bw:Math.round(t.bw), db:+t.db.toFixed(1), snr:+t.snr.toFixed(1)});
 }
 function cfarBlCur(n){
   if(!n.cur) return;
@@ -3479,9 +3509,30 @@ function bandscanWindows(bands,span,overlap,inter,lanes,lane){
   else per.forEach((a,b)=>a.forEach(c=>all.push({b,c})));
   return all.filter((_,w)=>w%lanes===lane);
 }
+// Пульт сканирования: кнопки (и выходы-импульсы на те же действия) для Band Scanner и Signal Detector (CFAR).
+// Каждая кнопка даёт импульс 150 мс — его ловят пины pause/next у сканера и blCur/skipSig/blAdd/blClear/favCur/favClear у детектора.
+const SPAD_PULSE=[['next','Next window ▶'],['skip','Skip signal'],['bl','Blacklist this signal'],['fav','Mark interesting ★'],
+  ['blAll','Blacklist all found'],['blClear','Clear blacklist'],['favClear','Clear interesting']];
+def({ id:'scanpad', title:'Scan Panel', cat:'Radio',
+  ins:[{n:'freq',t:'num',tip:'the signal being heard (Signal Detector listenF)'},{n:'todo',t:'num',tip:'signals still to hear in the window (Signal Detector todo)'},
+       {n:'idx',t:'num',tip:'current range (Band Scanner idx)'}],
+  outs:[{n:'pause',t:'num'},...SPAD_PULSE.map(([k])=>({n:k,t:'num'}))],
+  readout:true,
+  params:[{n:'pause',t:'check',d:false,label:'pause scan (stay on the current window)'},
+          ...SPAD_PULSE.map(([k,l])=>({n:k+'Btn',t:'button',label:l,fn:n=>{ (n._pl||(n._pl={}))[k]=performance.now()+150; }}))],
+  init:n=>{ n._pl={}; n.text=''; },
+  process(n,I){
+    const now=performance.now(), o={pause:n.p.pause?1:0};
+    for(const [k] of SPAD_PULSE) o[k]=n._pl[k]>now ? 1 : 0;
+    const f=typeof I.freq==='number' && isFinite(I.freq) ? I.freq : null, todo=+I.todo>0 ? I.todo|0 : 0;
+    n.text=(n.p.pause ? '⏸ paused' : f!=null ? '🔊 '+fmtHz(f,3)+'Hz' : 'scanning')+(todo ? ' · to hear: '+todo : '')+(typeof I.idx==='number' && I.idx>=0 ? ' · range '+(I.idx+1) : '');
+    return o;
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(r && r.textContent!==n.text) r.textContent=n.text||'…'; }});
 def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
   ins:[{n:'bands',t:'bands'},{n:'freqLo',t:'num'},{n:'freqHi',t:'num'},{n:'active',t:'num'},
-       {n:'overlap',t:'num'},{n:'timeout',t:'num'},{n:'settle',t:'num'},{n:'hold',t:'num'},{n:'spec',t:'spec'}],
+       {n:'overlap',t:'num'},{n:'timeout',t:'num'},{n:'settle',t:'num'},{n:'hold',t:'num'},{n:'spec',t:'spec'},
+       {n:'pause',t:'num',tip:'> 0.5: stay on the current window'},{n:'next',t:'num',tip:'pulse: go to the next window'}],
   outs:[{n:'freq',t:'num'},{n:'listening',t:'num'},{n:'idx',t:'num'},{n:'bandLo',t:'num'},{n:'step',t:'num'},{n:'edge',t:'num'}],   // edge — на sa и cfar: одно значение на всех
   readout:true, tall:true,
   params:[{n:'pause',t:'check',d:false,label:'pause (stay on the current window)'},
@@ -3501,6 +3552,8 @@ def({ id:'bandscan', title:'Band Scanner', cat:'Radio',
   init:n=>{ n.state='seek'; n.idx=0; n.curFreq=null; n.text=''; n.off=0; n._offM=null; n.pos=[]; n.done=[]; n.wl=null; n.wp=0; },
   process(n,I){
     for(const k of ['overlap','timeout','settle']) if(typeof I[k]==='number') setMod(n,k,I[k]);
+    if(typeof I.pause==='number') setMod(n,'pause',I.pause>.5);
+    { const hi=+I.next>.5; if(hi && !n._nextHi) n._next=true; n._nextHi=hi; }
     const bands=(Array.isArray(I.bands)?I.bands:[]).filter(b=>b && !b.sig && b.hi>b.lo).slice().sort((a,b)=>a.lo-b.lo);
     if(!bands.length){ n.state='idle'; n.curFreq=null; n.text='no bands'; return {freq:0,listening:0,idx:-1,bandLo:0,step:0}; }
     // список диапазонов сменился целиком (другой пресет/правка) — сканируем заново с первого

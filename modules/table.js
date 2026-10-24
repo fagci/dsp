@@ -601,11 +601,14 @@ async function tblDelRecs(n,recs){
 }
 async function tblClear(n){
   if(tblRO(n)) return;
-  if(tblKind(n.p.list)==='db') await ListDB.removeMany(n.ids);
+  // таблица пустеет сразу, строки из хранилища удаляются следом: удаление тысяч записей по одной занимало секунды
+  const gone=tblKind(n.p.list)==='db' ? n.ids : null;
   n.all=[]; n.ids=[]; n.p.sel=null;
+  tblDerive(n); tblReset(n); n.uiDirty=true; n.uiFull=true;
+  if(n.ui) tblRenderAll(n);
+  if(gone) await ListDB.removeMany(gone);
   if(n.schema?.card?.seq){ delete n.schema.card.seq; await trSeqSave(n); }      // счётчик автонумерации начинается заново
   if(tblKind(n.p.list)==='patch') await tblSave(n);
-  tblDerive(n); tblReset(n);
 }
 // набор на входе rows → в активный список: заменить строки или дописать (станции после поиска, любой набор записей)
 // rows in «sync» / «new only»: набор приводится к списку по ключевой колонке на месте, без очистки — выбор строки и позиция не сбиваются

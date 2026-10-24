@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=81;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=82;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -1151,6 +1151,20 @@ addEdge(sw.id,'out2',fm.id,'in'); addEdge(fm.id,'out',au.id,'in'); addEdge(au.id
 addEdge(sm.id,'out',dc.id,'L'); addEdge(sm.id,'out',dc.id,'R');
 markWiresDirty();
 });
+// пульт сканирования: кнопки и пины для всех Band Scanner / Signal Detector патча + таблица «Interesting» для отмеченных ★
+function addScanPad(x,y){
+  const pad=addNode('scanpad',x,y,{}), fav=addNode('table',x,y+260,{list:'Interesting',initial:false});
+  fav.size.w=300; fav.size.h=200; applySize(fav);
+  for(const bs of Graph.nodes.filter(n=>n.type==='bandscan')){ addEdge(pad.id,'pause',bs.id,'pause'); addEdge(pad.id,'next',bs.id,'next'); }
+  const cfs=Graph.nodes.filter(n=>n.type==='cfar');
+  for(const cf of cfs){
+    for(const [o,i] of [['skip','skipSig'],['bl','blCur'],['fav','favCur'],['blAll','blAdd'],['blClear','blClear'],['favClear','favClear']]) addEdge(pad.id,o,cf.id,i);
+    addEdge(cf.id,'fav',fav.id,'rec');
+  }
+  if(cfs[0]){ addEdge(cfs[0].id,'listenF',pad.id,'freq'); addEdge(cfs[0].id,'todo',pad.id,'todo'); }
+  const b0=Graph.nodes.find(n=>n.type==='bandscan'); if(b0) addEdge(b0.id,'idx',pad.id,'idx');
+  return pad;
+}
 preset('USB SDR: Auto Scan (CFAR + Band Scanner)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the band plan in windows of the SDR span;\n'+
@@ -1184,6 +1198,7 @@ addEdge(cf.id,'todo',bs.id,'active');
 addEdge(bs.id,'freq',rx.id,'freq');
 addEdge(cf.id,'listenF',rx.id,'tuneFreq'); addEdge(cf.id,'gate',rx.id,'sqlGate');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
+addScanPad(1200,520);
 markWiresDirty();
 });
 preset('USB SDR: Multiband Scan (panes + CFAR)', function(){
@@ -1228,6 +1243,7 @@ addEdge(cf.id,'listenF',rx.id,'tuneFreq');
 addEdge(cf.id,'rec',lg.id,'rec');
 addEdge(cf.id,'gate',rx.id,'sqlGate');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
+addScanPad(1200,520);
 markWiresDirty();
 });
 preset('USB SDR ×4: Multiband Scan (4 receivers)', function(){
@@ -1272,6 +1288,7 @@ for(let i=0;i<4;i++){
 }
 addEdge(bp.id,'rows',sa.id,'bands');
 addEdge(mx.id,'L',dc.id,'L'); addEdge(mx.id,'R',dc.id,'R');
+addScanPad(1200,520);
 markWiresDirty();
 });
 preset('USB SDR: Signal Identifier', function(){

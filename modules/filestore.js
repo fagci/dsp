@@ -125,7 +125,7 @@ const FileStore = (() => {
     },
     async removeMany(ids){                              // одной транзакцией и одним уведомлением
       const recs=(await Promise.all(ids.map(i=>this.get(i)))).filter(Boolean);
-      for(const r of recs) await syncNoteDel('f',r);
+      await Promise.all(recs.map(r=>syncNoteDel('f',r)));
       const db=await open(), tx=db.transaction('files','readwrite');
       for(const r of recs) tx.objectStore('files').delete(r.id);
       await doneP(tx);
