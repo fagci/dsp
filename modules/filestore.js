@@ -250,6 +250,8 @@ const OfflineData = (() => {
   }
   // o: {id,label,mb,auto,has():Promise<bool>,get():Promise}; повторная регистрация с тем же id заменяет пункт
   const item=o=>{ const i=items.findIndex(x=>x.id===o.id); if(i>=0) items[i]=o; else items.push(o); };
+  // ссылки для ручной загрузки: [{name, url}] — url из http(s)-адресов пункта (свой vendor/ не годится: он лежит в самом приложении)
+  const manualOf=o=>o.manual ? o.manual() : (o.files||[]).map(f=>({name:f[0],url:[].concat(f[1]).filter(u=>/^https?:/.test(u)).pop()})).filter(f=>f.url);
   const fileItem=o=>item({...o,
     has:async()=>{ for(const f of o.files) if(!await has(f[0])) return false; return true; },
     get:async()=>{ for(const f of o.files) await blob(f[0],f[1]); }});
@@ -257,6 +259,37 @@ const OfflineData = (() => {
     const c=navigator.connection;
     if(!navigator.onLine || c?.saveData || c?.type==='cellular') return;
     for(const o of items) if(o.auto) try{ if(!await o.has()) await o.get(); }catch(e){}
+  }
+  // «вручную»: ссылки открываются в новой вкладке (браузер сохраняет файл), скачанное выбирается кнопкой и ложится под нужным именем
+  function manualBox(o,man,title){
+    const d=document.createElement('details'), sm=document.createElement('summary'), ls=document.createElement('div'), note=document.createElement('div');
+    d.style.margin='0 0 6px 22px'; sm.textContent='by hand (no network access?)'; sm.style.opacity='.7'; sm.style.cursor='pointer';
+    const refresh=async()=>{
+      ls.textContent='';
+      for(const f of man){
+        const r=document.createElement('div'), a=document.createElement('a'), st=document.createElement('span');
+        a.href=f.url; a.target='_blank'; a.rel='noopener'; a.textContent='↗ '+f.name.replace(/^.* · /,''); a.style.marginRight='8px';
+        st.textContent=await has(f.name) ? '✓ saved' : 'not saved'; r.append(a,st); ls.append(r);
+      }
+    };
+    const pick=document.createElement('button'); pick.textContent='choose downloaded files…';
+    pick.onclick=()=>{
+      const i=document.createElement('input'); i.type='file'; i.multiple=true;
+      i.onchange=async()=>{
+        let ok=0, skip=[];
+        for(const f of i.files){
+          const base=f.name.replace(/ \(\d+\)(?=\.[^.]*$)/,''), m=man.find(x=>x.url.split('/').pop().split('?')[0]===base);
+          const name=m ? m.name : o.saveAs ? o.saveAs(f.name) : null;
+          if(!name){ skip.push(f.name); continue; }
+          try{ await save(name,f); ok++; }catch(e){ skip.push(f.name); }
+        }
+        note.textContent='saved '+ok+' file(s)'+(skip.length ? '; not recognised: '+skip.join(', ') : '');
+        refresh(); o.has().then(h=>{ if(h) title.textContent=o.label+' · ~'+o.mb+' MB · ✓ downloaded'; }).catch(()=>{});
+      };
+      i.click();
+    };
+    d.append(sm,ls,pick,note); d.ontoggle=()=>{ if(d.open) refresh(); };
+    return d;
   }
   // панель выбора в менеджере файлов
   async function draw(el){
@@ -270,6 +303,8 @@ const OfflineData = (() => {
       const done=await o.has().catch(()=>false);
       c.checked=!done; t.textContent=o.label+' · ~'+o.mb+' MB'+(done ? ' · ✓ downloaded' : '');
       rows.push({o,c,t,done}); list.append(r);
+      const man=manualOf(o);
+      if(man.length) list.append(manualBox(o,man,t));
     }
     const st=document.createElement('div'); st.className='fm-info';
     const go=document.createElement('button'); go.textContent='⇩ download selected';
