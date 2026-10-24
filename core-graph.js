@@ -2258,7 +2258,14 @@ for(const e of o.edges) if(cfs.has(e.from)){
     e.fp='listenF';
     // шумодав приёмника — по сканеру (он стоит на окне, пока есть что слушать), а не по порогу SNR: цель cfar может быть ниже него
     const rx=o.nodes.find(n=>n.id===e.to), bs=o.nodes.find(n=>n.type==='bandscan' && o.edges.some(q=>q.from===n.id && q.fp==='freq' && q.to===e.to));
-    if(bs && rx.p && (rx.p.sql==='SNR' || rx.p.sql==='level') && !o.edges.some(q=>q.to===rx.id && q.tp==='sqlGate')){ rx.p.sql='input'; o.edges.push({from:bs.id,fp:'listening',to:rx.id,tp:'sqlGate'}); } } } }
+    if(bs && rx.p && (rx.p.sql==='SNR' || rx.p.sql==='level') && !o.edges.some(q=>q.to===rx.id && q.tp==='sqlGate')){ rx.p.sql='input'; rx.p.sqlHang=Math.min(+rx.p.sqlHang||300,100); o.edges.push({from:e.from,fp:'gate',to:rx.id,tp:'sqlGate'}); } } }
+  // шумодав — по присутствию цели у детектора (быстро глохнет), сканер ждёт дольше (hold); сетка каналов — план сканера на вход plan
+  for(const q of o.edges) if(q.fp==='listening' && q.tp==='sqlGate' && bss.has(q.from)){
+    const cfE=o.edges.find(x=>cfs.has(x.from) && x.fp==='todo' && x.to===q.from);
+    if(cfE){ q.from=cfE.from; q.fp='gate'; } }
+  for(const cf of cfs) if(!o.edges.some(e=>e.to===cf && e.tp==='plan')){
+    const bsId=(o.edges.find(e=>e.from===cf && e.fp==='todo')||{}).to;
+    for(const e of o.edges.filter(e=>e.to===bsId && e.tp==='bands')) o.edges.push({from:e.from,fp:e.fp,to:cf,tp:'plan'}); } }
 // детектор из панелей 'sa' вынесен в узел 'cfar': старый sa с detect / проводами count, detF, rec, skip получает по cfar на приёмник
 { const LEG=/^(count|detF)[234]?$|^rec$/;
 let mx=Math.max(0,...o.nodes.map(n=>+String(n.id).slice(1)||0));
@@ -2293,7 +2300,8 @@ for(const sa of o.nodes.filter(n=>n.type==='sa')){
       if(logT) add(cf.id,'rec',logT.id,'rec');
     }
     if(bs){ add(bs.id,'edge',cf.id,'edge'); add(bs.id,'edge',sa.id,'edge'); }
-    if(bs && rx && rx.type==='rtlsdr'){ add(bs.id,'listening',rx.id,'sqlGate'); (rx.p||(rx.p={})).sql='input'; }
+    if(bs){ for(const e of o.edges.filter(e=>e.to===bs.id && e.tp==='bands')) add(e.from,e.fp,cf.id,'plan'); }
+    if(bs && rx && rx.type==='rtlsdr'){ add(cf.id,'gate',rx.id,'sqlGate'); const rp=rx.p||(rx.p={}); rp.sql='input'; rp.sqlHang=Math.min(+rp.sqlHang||300,100); }
   });
   for(const k of ['detect','detThr','scanStop','dcCut','skipList']) delete p[k];
 }
