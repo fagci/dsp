@@ -10,6 +10,8 @@
      sweep      — с какого края начинается развёртка (внешний / внутренний радиус);
      rot        — направление вращения (в «дисковой» геометрии зеркалит картинку);
      aspect     — пропорции окна → внутренний радиус спирали подбирается так, чтобы окно было такой формы;
+     color      — кадрово-последовательный цвет: красная, зелёная и синяя картинки идут по очереди (как у цветных дисков с RGB-фильтрами);
+                  цикл = 3 картинки (в чересстрочном — 3 кадра), его начало отмечает синхро (импульс раз в цикл или длинная метка in-band);
      sync       — pulse (отдельный сигнал раз в оборот), in-band (лишнее «синхроотверстие» в каждом поле:
                   уровень −1, ниже чёрного; у поля 0 — весь слот, у остальных — только его половина),
                   none / free (без синхронизации), auto (период по автокорреляции).
@@ -18,17 +20,19 @@
    Без DOM: файл грузится и в тесты через vm. Все функции начинаются с nip. */
 
 const NIP_STD={
-  'Baird 30-line, 12.5 fps':       {lines:'30',spirals:'1',interlace:false,fps:12.5,px:'auto',aspect:'3:7', sweep:'outer → inner',rot:'cw', sync:'pulse'},
-  'Classic 24-line, 10 fps':       {lines:'24',spirals:'1',interlace:false,fps:10,  px:'auto',aspect:'3:4', sweep:'outer → inner',rot:'cw', sync:'pulse'},
-  'Jenkins-style 48-line, 15 fps': {lines:'48',spirals:'1',interlace:false,fps:15,  px:'auto',aspect:'1:1', sweep:'outer → inner',rot:'cw', sync:'pulse'},
-  'Bell Labs-style 50-line, 18 fps':{lines:'50',spirals:'1',interlace:false,fps:18, px:'auto',aspect:'4:3', sweep:'outer → inner',rot:'cw', sync:'pulse'},
-  '2 spirals, 2×24 interlaced, 12.5 fps':{lines:'24',spirals:'2',interlace:true, fps:12.5,px:'auto',aspect:'3:4',sweep:'outer → inner',rot:'cw',sync:'pulse'},
-  '3 spirals, 3×16 interlaced, 10 fps':  {lines:'16',spirals:'3',interlace:true, fps:10,  px:'auto',aspect:'3:4',sweep:'outer → inner',rot:'cw',sync:'pulse'},
-  '2 spirals, 2 pictures per turn, 30-line':{lines:'30',spirals:'2',interlace:false,fps:25,px:'auto',aspect:'3:7',sweep:'outer → inner',rot:'cw',sync:'pulse'},
-  'Inner-start 32-line, CCW':      {lines:'32',spirals:'1',interlace:false,fps:12.5,px:'auto',aspect:'1:2', sweep:'inner → outer',rot:'ccw',sync:'pulse'},
-  'Baird 30-line, in-band sync':   {lines:'30',spirals:'1',interlace:false,fps:12.5,px:'auto',aspect:'3:7', sweep:'outer → inner',rot:'cw', sync:'in-band'},
-  'Interlaced 2×24, in-band sync': {lines:'24',spirals:'2',interlace:true, fps:12.5,px:'auto',aspect:'3:4', sweep:'outer → inner',rot:'cw', sync:'in-band'},
-  'Slow scan 64-line, 1 fps':      {lines:'64',spirals:'1',interlace:false,fps:1,   px:'auto',aspect:'1:1', sweep:'outer → inner',rot:'cw', sync:'pulse'},
+  'Baird 30-line, 12.5 fps':       {lines:'30',spirals:'1',interlace:false,fps:12.5,px:'auto',aspect:'3:7', sweep:'outer → inner',rot:'cw', sync:'pulse',color:false},
+  'Classic 24-line, 10 fps':       {lines:'24',spirals:'1',interlace:false,fps:10,  px:'auto',aspect:'3:4', sweep:'outer → inner',rot:'cw', sync:'pulse',color:false},
+  'Jenkins-style 48-line, 15 fps': {lines:'48',spirals:'1',interlace:false,fps:15,  px:'auto',aspect:'1:1', sweep:'outer → inner',rot:'cw', sync:'pulse',color:false},
+  'Bell Labs-style 50-line, 18 fps':{lines:'50',spirals:'1',interlace:false,fps:18, px:'auto',aspect:'4:3', sweep:'outer → inner',rot:'cw', sync:'pulse',color:false},
+  '2 spirals, 2×24 interlaced, 12.5 fps':{lines:'24',spirals:'2',interlace:true, fps:12.5,px:'auto',aspect:'3:4',sweep:'outer → inner',rot:'cw',sync:'pulse',color:false},
+  '3 spirals, 3×16 interlaced, 10 fps':  {lines:'16',spirals:'3',interlace:true, fps:10,  px:'auto',aspect:'3:4',sweep:'outer → inner',rot:'cw',sync:'pulse',color:false},
+  '2 spirals, 2 pictures per turn, 30-line':{lines:'30',spirals:'2',interlace:false,fps:25,px:'auto',aspect:'3:7',sweep:'outer → inner',rot:'cw',sync:'pulse',color:false},
+  'Inner-start 32-line, CCW':      {lines:'32',spirals:'1',interlace:false,fps:12.5,px:'auto',aspect:'1:2', sweep:'inner → outer',rot:'ccw',sync:'pulse',color:false},
+  'Baird 30-line, in-band sync':   {lines:'30',spirals:'1',interlace:false,fps:12.5,px:'auto',aspect:'3:7', sweep:'outer → inner',rot:'cw', sync:'in-band',color:false},
+  'Interlaced 2×24, in-band sync': {lines:'24',spirals:'2',interlace:true, fps:12.5,px:'auto',aspect:'3:4', sweep:'outer → inner',rot:'cw', sync:'in-band',color:false},
+  'Slow scan 64-line, 1 fps':      {lines:'64',spirals:'1',interlace:false,fps:1,   px:'auto',aspect:'1:1', sweep:'outer → inner',rot:'cw', sync:'pulse',color:false},
+  'Colour 30-line, RGB in turn, 8.3 colour fps':{lines:'30',spirals:'1',interlace:false,fps:25,px:'auto',aspect:'3:7',sweep:'outer → inner',rot:'cw',sync:'in-band',color:true},
+  'Colour 2×24 interlaced, RGB in turn, 5 colour fps':{lines:'24',spirals:'2',interlace:true,fps:15,px:'auto',aspect:'3:4',sweep:'outer → inner',rot:'cw',sync:'pulse',color:true},
 };
 const NIP_ASPECTS=['3:7','1:2','3:4','1:1','4:3','16:9'];
 
@@ -40,6 +44,7 @@ function nipCfg(o,sr){
   const il=!!o.interlace && k>1, fps=nipClamp(+o.fps||12.5,.05,100);
   const sk=o.sync==='in-band' ? 'band' : o.sync==='pulse' ? 'pulse' : o.sync==='auto' ? 'auto' : 'free';
   const S=sk==='band'?1:0, R=il?N*k:N, fieldRate=il?fps*k:fps, revRate=fieldRate/k;
+  const cc=o.color?3:1, F=cc>1 ? (il ? k*3 : (k%3 ? k*3 : k)) : k;   // F — полей в цикле (метка начала — раз в цикл)
   let M=Math.round(+o.px)||0;
   if(!M) M=nipClamp(Math.floor(sr/(4*fieldRate*(N+S))),8,128);     // ~4 отсчёта на пиксель: приёмник попадает в центр пикселя с запасом ±1 отсчёт
   M=nipClamp(M,4,512);
@@ -50,33 +55,42 @@ function nipCfg(o,sr){
   let lo=.02, hi=.98;                                              // w/h растёт с внутренним радиусом
   for(let i=0;i<40;i++){ const mid=(lo+hi)/2, b=bb(mid); if(b.w/b.h<asp) lo=mid; else hi=mid; }
   const rin=(lo+hi)/2, b=bb(rin);
-  return {N,k,il,R,S,M,fps,fieldRate,revRate,sk,alpha,rin,umax:b.umax,vmax:b.vmax,vmin:b.vmin,bw:b.w,bh:b.h,
+  return {N,k,il,R,S,M,fps,fieldRate,revRate,cc,F,color:cc>1,cycRate:fieldRate/F,sk,alpha,rin,umax:b.umax,vmax:b.vmax,vmin:b.vmin,bw:b.w,bh:b.h,
     outer:o.sweep!=='inner → outer', mirror:o.rot==='ccw', black:S?-.6:-1};
 }
 function nipRad(c,l){ const dr=(1-c.rin)/c.R; return c.outer ? 1-(l+.5)*dr : c.rin+(l+.5)*dr; }
 
 /* ---- тестовая картинка и источник ---- */
-// Смайлик на градиенте с рамкой: видно ориентацию, пропорции и кривизну. → Float32Array w*h, 0…1.
-function nipTestPattern(w,h){
-  const g=new Float32Array(w*h);
-  for(let y=0;y<h;y++) for(let x=0;x<w;x++){
-    const u=(x+.5)/w, v=(y+.5)/h; let s=.12+.28*v;
-    const dx=(u-.5)/.38, dy=(v-.5)/.38*(h/w), r2=dx*dx+dy*dy;
-    if(r2<1){ s=.85;
-      const ex=Math.abs(Math.abs(dx)-.38), ey=dy+.28; if(ex*ex+ey*ey<.025) s=.08;
-      const my=dy-.3; if(r2>.30 && r2<.45 && my>-.05 && my*my<.09*(1-dx*dx*3)) s=.1; }
-    if(u<.03||u>.97||v<.025||v>.975) s=1;
-    if(u<.07 && v<.1 && u>.03 && v>.025) s=0;                      // метка верхнего левого угла
-    g[y*w+x]=s; }
-  return g;
+// Смайлик на градиенте с рамкой: видно ориентацию, пропорции и кривизну. Тип пикселя: 0 фон, 1 лицо, 2 глаз, 3 рот, 4 рамка, 5 метка угла.
+function nipTestType(u,v,w,h){
+  let t=0;
+  const dx=(u-.5)/.38, dy=(v-.5)/.38*(h/w), r2=dx*dx+dy*dy;
+  if(r2<1){ t=1;
+    const ex=Math.abs(Math.abs(dx)-.38), ey=dy+.28; if(ex*ex+ey*ey<.025) t=2;
+    const my=dy-.3; if(r2>.30 && r2<.45 && my>-.05 && my*my<.09*(1-dx*dx*3)) t=3; }
+  if(u<.03||u>.97||v<.025||v>.975) t=4;
+  if(u<.07 && v<.1 && u>.03 && v>.025) t=5;
+  return t;
 }
-// img-объект блока (серый буфер или ImageData) → {g,w,h} яркость 0…1.
-function nipGray(img){
+// → Float32Array w*h, 0…1; с color — {r,g,b} (жёлтое лицо, синие глаза, красный рот на сине-зелёном фоне).
+function nipTestPattern(w,h,color){
+  const n=w*h, g=new Float32Array(color?0:n), r=new Float32Array(color?n:0), gg=new Float32Array(color?n:0), b=new Float32Array(color?n:0);
+  const GRAY=[null,.85,.08,.1,1,0], RGB=[null,[1,.85,.15],[.1,.2,.85],[.85,.1,.1],[1,1,1],[0,0,0]];
+  for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+    const u=(x+.5)/w, v=(y+.5)/h, t=nipTestType(u,v,w,h), i=y*w+x;
+    if(!color){ g[i]=t ? GRAY[t] : .12+.28*v; continue; }
+    const c=t ? RGB[t] : [.08,.2+.3*v,.55-.2*v];
+    r[i]=c[0]; gg[i]=c[1]; b[i]=c[2]; }
+  return color ? {r,g:gg,b} : g;
+}
+// img-объект блока (серый буфер или ImageData) → {g,w,h}: ch 0…2 — красный, зелёный, синий, иначе яркость (0…1).
+function nipGray(img,ch){
   if(!img || !img.w || !img.h) return null;
   const w=img.w, h=img.h, g=new Float32Array(w*h);
   if(img.gray && img.buf){ for(let i=0;i<w*h;i++) g[i]=img.buf[i]; return {g,w,h}; }
   const d=img.data && img.data.data; if(!d) return null;
-  for(let i=0;i<w*h;i++) g[i]=(d[i*4]*.299+d[i*4+1]*.587+d[i*4+2]*.114)/255;
+  if(ch>=0 && ch<=2) for(let i=0;i<w*h;i++) g[i]=d[i*4+ch]/255;
+  else for(let i=0;i<w*h;i++) g[i]=(d[i*4]*.299+d[i*4+1]*.587+d[i*4+2]*.114)/255;
   return {g,w,h};
 }
 
@@ -113,16 +127,17 @@ function nipPixels(c,map,g,gw,gh,out,invert){
     out[i]=invert?1-v:v; }
 }
 function nipTxNew(){ return {ph:0,pl:0}; }
-// len отсчётов сигнала: level (−1…1), sync (импульс раз в оборот; только sync='pulse').
+// len отсчётов сигнала: level (−1…1), sync (импульс раз в цикл; только sync='pulse'). pix — R*M пикселей (цвет: три плоскости подряд).
 function nipTxRun(st,c,sr,pix,level,sync,len){
-  const dph=c.revRate/sr, k=c.k, S=c.S, N=c.N, M=c.M, slots=N+S, black=c.black;
+  const dph=c.cycRate/sr, k=c.k, F=c.F, S=c.S, N=c.N, M=c.M, slots=N+S, black=c.black, RM=c.R*M;
   const pw=Math.max(1,Math.ceil(.15*sr/(c.fieldRate*slots)));
   for(let i=0;i<len;i++){
     if(st.ph>=1){ st.ph-=1; st.pl=pw; }                            // начало оборота: фаза отсчёта 0…1 отсчёта
-    const q=st.ph*k, f=Math.min(k-1,Math.floor(q)), sl=(q-f)*slots, s=Math.min(slots-1,Math.floor(sl)), t=sl-s;
+    const q=st.ph*F, f=Math.min(F-1,Math.floor(q)), sl=(q-f)*slots, s=Math.min(slots-1,Math.floor(sl)), t=sl-s;
     let v;
     if(S && s===0) v=(f===0 || t<.5) ? -1 : black;                 // синхро-слот: поле 0 целиком, остальные — первая половина
-    else { const j=s-S, row=c.il?j*k+f:j; v=black+(1-black)*pix[row*M+Math.min(M-1,Math.floor(t*M))]; }
+    else { const j=s-S, row=c.il?j*k+f%k:j, ch=c.cc===1?0:c.il?Math.floor(f/k):f%3;
+      v=black+(1-black)*pix[ch*RM+row*M+Math.min(M-1,Math.floor(t*M))]; }
     level[i]=v;
     if(sync){ sync[i]=c.sk==='pulse' && st.pl>0 ? 1 : 0; }
     if(st.pl>0) st.pl--;
@@ -132,15 +147,15 @@ function nipTxRun(st,c,sr,pix,level,sync,len){
 /* ---- приём ---- */
 function nipRxNew(c,sr){
   const Pf=sr/c.fieldRate;
-  return {Pf,Pr:Pf*c.k,Pnom:Pf*c.k,fld:0,fp:0,scan:new Float32Array(c.R*c.M),cur:-1,acc:0,cnt:0,
+  return {Pf,Pr:Pf*c.F,Pnom:Pf*c.F,fld:0,fp:0,scan:new Float32Array(c.R*c.M*c.cc),cur:-1,acc:0,cnt:0,
     in:0,rs:0,lc:0,hc:0,ev:0,last:0,psy:0,since:1e9,age:1e9,fields:0,dirty:false,bd:9,bv:0,
-    hb:c.sk==='auto' ? new Float32Array(Math.ceil(Pf*c.k*2.4)+8) : null,hp:0,hn:0,sa:0,strength:0,lo:0,hi:1,tune:0};
+    hb:c.sk==='auto' ? new Float32Array(Math.ceil(Pf*c.F*2.4)+8) : null,hp:0,hn:0,sa:0,strength:0,lo:0,hi:1,tune:0};
 }
 // Один поток отсчётов. o: {shift (доля поля), trim (ppm), invert}.
 function nipRxRun(st,c,sr,x,sy,len,o){
-  const k=c.k, S=c.S, N=c.N, M=c.M, slots=N+S, black=c.black, thr=(-1+black)/2;
-  if(c.sk==='free'){ st.Pr=st.Pnom*(1+(+o.trim||0)*1e-6); st.Pf=st.Pr/k; }
-  else if(c.sk==='auto' && !st.strength){ st.Pr=st.Pnom*(1+(+o.trim||0)*1e-6); st.Pf=st.Pr/k; }
+  const k=c.k, F=c.F, S=c.S, N=c.N, M=c.M, slots=N+S, black=c.black, thr=(-1+black)/2, RM=c.R*M;
+  if(c.sk==='free'){ st.Pr=st.Pnom*(1+(+o.trim||0)*1e-6); st.Pf=st.Pr/F; }
+  else if(c.sk==='auto' && !st.strength){ st.Pr=st.Pnom*(1+(+o.trim||0)*1e-6); st.Pf=st.Pr/F; }
   const shift=+o.shift||0;
   for(let i=0;i<len;i++){
     const raw=x?x[i]:0;
@@ -148,7 +163,7 @@ function nipRxRun(st,c,sr,x,sy,len,o){
     if(c.sk==='pulse' && sy){
       const e=sy[i]>.5;
       if(e && st.psy<=.5){
-        if(st.since>.8*st.Pr && st.since<1.2*st.Pr){ st.Pr+=.25*(st.since-st.Pr); st.Pf=st.Pr/k; }
+        if(st.since>.8*st.Pr && st.since<1.2*st.Pr){ st.Pr+=.25*(st.since-st.Pr); st.Pf=st.Pr/F; }
         if(st.fp>.5){ st.fields++; st.dirty=true; }
         st.fld=0; st.fp=0; st.since=0; st.age=0; }
       st.psy=e?1:0; }
@@ -163,9 +178,9 @@ function nipRxRun(st,c,sr,x,sy,len,o){
           st.ev=1;
           const iv=st.since-st.rs;
           if(iv>.8*st.Pf && iv<1.2*st.Pf) st.Pf+=.2*(iv-st.Pf);
-          if(st.fp>.5){ st.fld=(st.fld+1)%k; st.fields++; st.dirty=true; }
+          if(st.fp>.5){ st.fld=(st.fld+1)%F; st.fields++; st.dirty=true; }
           st.fp=st.rs/st.Pf; st.since=st.rs; st.age=0; } }
-      else if(st.in && ++st.hc>2){ st.in=0; if(k>1 && st.last+1>.75*slotLen) st.fld=0; } }
+      else if(st.in && ++st.hc>2){ st.in=0; if(F>1 && st.last+1>.75*slotLen) st.fld=0; } }
     else if(c.sk==='auto'){
       st.hb[st.hp]=raw; st.hp=(st.hp+1)%st.hb.length; if(st.hn<st.hb.length) st.hn++;
       if(++st.sa>=sr && st.hn===st.hb.length){ st.sa=0; nipAutoStep(st,c); } }
@@ -174,14 +189,14 @@ function nipRxRun(st,c,sr,x,sy,len,o){
     const sl=fpe*slots, s=Math.min(slots-1,Math.floor(sl)), t=sl-s;
     if(S && s===0){ nipFlush(st); st.cur=-1; }
     else {
-      const j=s-S, row=c.il?j*k+st.fld:j, idx=row*M+Math.min(M-1,Math.floor(t*M));
+      const j=s-S, row=c.il?j*k+st.fld%k:j, ch=c.cc===1?0:c.il?Math.floor(st.fld/k):st.fld%3, idx=ch*RM+row*M+Math.min(M-1,Math.floor(t*M));
       if(idx!==st.cur){ nipFlush(st); st.cur=idx; }
       let p=(raw-black)/(1-black); if(o.invert) p=1-p;
       const dc=Math.abs(t*M-Math.floor(t*M)-.5);                    // расстояние до центра пикселя; края пикселя не берём — они смешиваются с соседним
       if(dc<.2){ st.acc+=p; st.cnt++; }
       if(dc<st.bd){ st.bd=dc; st.bv=p; } }
     st.fp+=1/st.Pf;
-    if(st.fp>=1){ st.fp-=1; st.fld=(st.fld+1)%k; st.fields++; st.dirty=true; }
+    if(st.fp>=1){ st.fp-=1; st.fld=(st.fld+1)%F; st.fields++; st.dirty=true; }
   }
 }
 function nipFlush(st){
@@ -196,7 +211,7 @@ function nipAutoStep(st,c){
   for(let i=0;i<L;i++) a[i]=st.hb[(st.hp+i)%L];                    // от старого к новому
   const lim=.06, r=nipPeriod(a,nipClamp(st.Pr,st.Pnom*(1-lim),st.Pnom*(1+lim)),st.strength?.02:lim);
   if(!r || r.s<.25){ st.strength*=.5; return; }
-  st.Pr=nipClamp(st.strength ? st.Pr+.5*(r.P-st.Pr) : r.P,st.Pnom*(1-lim),st.Pnom*(1+lim)); st.Pf=st.Pr/c.k; st.strength=r.s;
+  st.Pr=nipClamp(st.strength ? st.Pr+.5*(r.P-st.Pr) : r.P,st.Pnom*(1-lim),st.Pnom*(1+lim)); st.Pf=st.Pr/c.F; st.strength=r.s;
 }
 // Период повторения сигнала около P (отсчётов): автокорреляция в окне длиной P, лаги P·(1±tol).
 // Сначала на прореженном сигнале, потом уточнение на полном. → {P, s} (s — нормированная корреляция) или null.

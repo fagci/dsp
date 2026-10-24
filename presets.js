@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=99;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=100;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -319,6 +319,7 @@ const PRESET_CATS={
   'Nipkow Disk: 30-Line Mechanical Television (Generator)':'Images & TV',
   'Nipkow Disk: Interlaced Two-Spiral Disk, In-Band Sync, Noisy Line (Generator)':'Images & TV',
   'Nipkow Disk: Receive from the Microphone (no sync)':'Images & TV',
+  'Nipkow Disk: Colour, Red-Green-Blue in Turn (Generator)':'Images & TV',
   'Analog TV: Test Card (Generator)':'Images & TV',
   'Analog TV: FPV / TV Receiver (USB SDR)':'Images & TV',
   'Digital TV: DVB-T2 Astrometa → TS → Video and Sound':'Images & TV',
@@ -3070,6 +3071,20 @@ const rx=addNode('nipkowRx',340,250,{...NIP_STD['Baird 30-line, 12.5 fps'],std:'
 const fr=addNode('imgview',720,250,{}); fr.size.w=300; fr.size.h=380; applySize(fr);
 addEdge(m.id,'a',rx.id,'level');
 addEdge(rx.id,'img',fr.id,'img');
+markWiresDirty();
+});
+preset('Nipkow Disk: Colour, Red-Green-Blue in Turn (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Colour mechanical television: one disk and a wheel of red, green and blue filters. The disk turns out three pictures in a row — one through each filter — and the receiver puts the three planes together. Here 30 lines at 25 pictures a second give 8.3 colour frames a second (the picture flickers in colour like the first colour experiments did). There is no sync wire: the extra hole before every field marks the start, and the longest mark means "red". Connect a Camera (vid) or Image to the transmitter instead of the built-in test pattern. Tick off colour in both nodes to get the black-and-white disk back; the std field picks other colour variants (interlaced 2×24 with a sync pulse).'});
+nt.size.w=540; nt.size.h=170; applySize(nt);
+const cl={...NIP_STD['Colour 30-line, RGB in turn, 8.3 colour fps'],std:'Colour 30-line, RGB in turn, 8.3 colour fps'};
+const tx=addNode('nipkowTx',40,230,cl);
+const rx=addNode('nipkowRx',420,230,cl);
+const fr=addNode('imgview',800,230,{}); fr.size.w=300; fr.size.h=380; applySize(fr);
+const dc=addNode('dac',420,560,{vol:.1});
+addEdge(tx.id,'level',rx.id,'level');
+addEdge(rx.id,'img',fr.id,'img');
+addEdge(tx.id,'level',dc.id,'L');
 markWiresDirty();
 });
 preset('NOAA APT (AM Envelope)', function(){

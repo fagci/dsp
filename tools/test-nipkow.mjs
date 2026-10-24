@@ -14,8 +14,10 @@ const SR=48000, BLK=512;
 // Передатчик → n отсчётов (блоками, как движок); drift — во сколько раз «ход» передатчика отличается от приёма
 function tx(o,frames,{optical=false,drift=1,skip=0}={}){
   const c=T.nipCfg(o,SR), map=T.nipSrcMap(c,optical);
-  const w=96, h=Math.round(96*c.bh/c.bw), g=T.nipTestPattern(w,h), pix=new Float32Array(c.R*c.M);
-  T.nipPixels(c,map,g,w,h,pix,false);
+  const w=96, h=Math.round(96*c.bh/c.bw), RM=c.R*c.M, pix=new Float32Array(RM*c.cc);
+  const tp=T.nipTestPattern(w,h,c.color), g=c.color?tp.g:tp;
+  if(c.color) [tp.r,tp.g,tp.b].forEach((pl,i)=>T.nipPixels(c,map,pl,w,h,pix.subarray(i*RM,(i+1)*RM),false));
+  else T.nipPixels(c,map,g,w,h,pix,false);
   const len=Math.ceil(frames*SR/c.fps), lvl=new Float32Array(len+BLK), syn=new Float32Array(len+BLK), st=T.nipTxNew();
   const sr=SR*drift;
   for(let p=0;p<len;p+=BLK) T.nipTxRun(st,c,sr,pix,lvl.subarray(p,p+BLK),syn.subarray(p,p+BLK),BLK);
@@ -132,6 +134,36 @@ for(const [name,s] of Object.entries(T.NIP_STD)){
   ok('rotation mirrors the disk scene',Math.abs(m0.X[5]-(1-m1.X[5]))<1e-5 && Math.abs(m0.Y[5]-m1.Y[5])<1e-5);
   ok('rotation does not change the flat scene',maxErr(f0.X,f1.X)===0 && maxErr(f0.Y,f1.Y)===0);
   ok('sweep from the inner edge flips the disk scene vertically',Math.abs(m0.Y[0]-(1-m2.Y[0]))<.05 && m0.Y[0]<.2 && m2.Y[0]>.8,m0.Y[0].toFixed(2)+' '+m2.Y[0].toFixed(2));
+}
+
+/* ---- цвет: кадрово-последовательный RGB ---- */
+{
+  const col=std('Colour 30-line, RGB in turn, 8.3 colour fps'), il=std('Colour 2×24 interlaced, RGB in turn, 5 colour fps');
+  const c1=T.nipCfg(col,SR), c2=T.nipCfg(il,SR), c3=T.nipCfg({...col,spirals:'2',sync:'pulse'},SR);
+  ok('colour cycle: 3 fields; interlaced: 3 frames of k fields; two pictures per turn: lcm(k,3)',c1.F===3 && c2.F===6 && c3.F===6 && !T.nipCfg(std('Baird 30-line, 12.5 fps'),SR).color);
+  ok('disk still turns at the field rate over spirals (rpm does not depend on colour)',Math.abs(c1.revRate*60-c1.fieldRate*60)<1e-9);
+  const planes=pix=>[0,1,2].map(i=>pix.subarray(i*c1.R*c1.M,(i+1)*c1.R*c1.M));
+  // три плоскости разные: красная ≠ синей на лице, на фоне
+  const t=tx(col,14), [pr,pg,pb]=planes(t.pix); let diff=0; for(let i=0;i<pr.length;i++) diff=Math.max(diff,Math.abs(pr[i]-pb[i]));
+  ok('colour test pattern has different R and B planes',diff>.5,diff.toFixed(2));
+  for(const skip of [0,3333,21111]){
+    const tt=tx(col,24,{skip}), r=rx(col,tt);
+    ok('colour in-band: all three planes recovered, start anywhere (skip '+skip+')',maxErr(r.st.scan,tt.pix)<1e-5 && T.nipLock(r.st,r.c)===1,maxErr(r.st.scan,tt.pix).toExponential(1));
+  }
+  const t2=tx({...col,sync:'pulse'},24,{skip:5000}), r2=rx({...col,sync:'pulse'},t2);
+  ok('colour pulse: planes land in the right place (pulse = start of the cycle)',maxErr(r2.st.scan,t2.pix)<1e-5);
+  const t3=tx(il,20), r3=rx(il,t3);
+  ok('colour interlaced: 6 fields per cycle, planes and lines in place',maxErr(r3.st.scan,t3.pix)<1e-5,maxErr(r3.st.scan,t3.pix).toExponential(1));
+  // в in-band у цветного цикла длинная метка только у первого поля — начало с любого места
+  const il2={...il,sync:'in-band'}, t4=tx(il2,30,{skip:9999}), r4=rx(il2,t4);
+  ok('colour interlaced in-band: finds the first field of the cycle',maxErr(r4.st.scan,t4.pix)<1e-5,maxErr(r4.st.scan,t4.pix).toExponential(1));
+  // auto: период цикла (три оборота) по автокорреляции при уходе скорости
+  const sa={...col,sync:'auto'}, t5=tx({...col,sync:'none'},60,{drift:1.01}), c5=T.nipCfg(sa,SR), st5=T.nipRxNew(c5,SR);
+  for(let p=0;p<t5.lvl.length;p+=BLK){ const e=Math.min(t5.lvl.length,p+BLK); T.nipRxRun(st5,c5,SR,t5.lvl.subarray(p,e),null,e-p,{}); }
+  const want=SR/c5.fieldRate*1.01;
+  ok('colour auto: period of one field found from the whole cycle',Math.abs(st5.Pf-want)/want<3e-4,st5.Pf.toFixed(3)+' vs '+want.toFixed(3));
+  const rgb={w:2,h:1,gray:false,data:{data:new Uint8ClampedArray([255,0,51,255,0,255,0,255])}};
+  ok('channel picker reads R, G, B',T.nipGray(rgb,0).g[0]===1 && T.nipGray(rgb,1).g[0]===0 && Math.abs(T.nipGray(rgb,2).g[0]-.2)<1e-6 && T.nipGray(rgb,2).g[1]===0);
 }
 
 /* ---- прочее ---- */
