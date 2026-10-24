@@ -1587,13 +1587,16 @@ function saUserMarks(n,cx,W,hs,hw,dpr){
   cx.font='9px monospace'; cx.lineWidth=1;
   const step=(+n.p.tickSec||0)*1000;
   if(step>0 && tB-tA<step*400){
-    cx.strokeStyle=themeColor('--axis'); cx.fillStyle=themeColor('--axis');
+    const ink=themeColor('--scr-hi')||'#fff', bg=themeColor('--screen')||'#000';
     for(let t=Math.ceil(tA/step)*step; t<=tB; t+=step){
       const y=Math.round(yOf(saWfLower(C,t,first,last)))+.5;
-      cx.globalAlpha=.35; cx.beginPath(); cx.moveTo(0,y); cx.lineTo(W,y); cx.stroke();
-      const lb=new Date(t).toLocaleTimeString([], {hour12:false});
-      cx.globalAlpha=.9; cx.fillText(lb, W-cx.measureText(lb).width-3, y-2);
+      cx.globalAlpha=.55; cx.strokeStyle=bg; cx.beginPath(); cx.moveTo(0,y+1); cx.lineTo(W,y+1); cx.stroke();      // тёмная кромка — линия видна и на светлом водопаде
+      cx.globalAlpha=.9; cx.strokeStyle=ink; cx.setLineDash([3,3]); cx.beginPath(); cx.moveTo(0,y); cx.lineTo(W,y); cx.stroke(); cx.setLineDash([]);
+      const lb=new Date(t).toLocaleTimeString([], {hour12:false}), tw=Math.ceil(cx.measureText(lb).width)+6;
+      cx.globalAlpha=.8; cx.fillStyle=bg; cx.fillRect(W-tw-1,y-11,tw,11);
+      cx.globalAlpha=1; cx.fillStyle=ink; cx.fillText(lb,W-tw+2,y-2);
     }
+    cx.globalAlpha=1;
   }
   const list=n._umDrag ? [...(n.userMarks||[]), n._umDrag] : (n.userMarks||[]);
   for(const m of list){
@@ -1759,7 +1762,7 @@ function saBandPlan(n,cx,W,H,plotH){
 // Метки сигналов с 'sigid' (записи sig:true в bands): скобка над сигналом на уровне его пика,
 // подпись типа над ней. Подписи, налезающие на уже поставленные, поднимаются выше.
 function saSigTags(n,cx,W,plotH){
-  const list=n.bandsData; if(!list||!list.length) return;
+  const list=n.sigsData&&n.sigsData.length ? (n.bandsData||[]).concat(n.sigsData) : n.bandsData; if(!list||!list.length) return;
   const tags=[], span=(n.p.top-n.p.floor)||1;
   for(const b of list){
     if(!b || !b.sig || typeof b.lo!=='number') continue;

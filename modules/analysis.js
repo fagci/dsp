@@ -636,6 +636,7 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
         {n:'snr1',t:'num'},
         {n:'bw1',t:'num'},
         {n:'floor',t:'num'},
+        {n:'bands',t:'bands'},
         {n:'f2',t:'num'},
         {n:'l2',t:'num'},
         {n:'f3',t:'num'},
@@ -651,12 +652,17 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
           {n:'train',t:'range',min:4,max:128,step:1,d:32,label:'training bins'},
           {n:'thr',t:'range',min:1,max:30,step:.5,d:8,label:'threshold, dB'},
           {n:'minW',t:'range',min:1,max:64,step:1,d:2,label:'min width'},
+          {n:'edge',t:'range',min:0,max:40,step:1,d:0,label:'trim edges, % (receiver windows sag at the edges)'},
           {n:'bwDb',t:'range',min:1,max:40,step:1,d:10,label:'occupied bandwidth: dB below peak (not below threshold)'},
           {n:'confM',t:'range',min:1,max:8,step:1,d:2,label:'confirm: hits (M)'},
           {n:'confN',t:'range',min:1,max:8,step:1,d:4,label:'confirm: of last frames (N)'},
           {n:'top',t:'range',min:1,max:30,step:1,d:10,label:'how many to show'},
           {n:'hold',t:'range',min:0,max:5000,step:50,d:500,label:'hold time, ms'},
-          {n:'idRes',t:'select',opts:['auto','100','1000','5000','12500','25000','100000'],d:'auto',label:'rec: same signal within, Hz',adv:true}],
+          {n:'idRes',t:'select',opts:['auto','100','1000','5000','12500','25000','100000'],d:'auto',label:'rec: same signal within, Hz',adv:true},
+          // чёрный список: найденное сейчас — в список (несущая гуляет, поэтому ширина не меньше 12.5 кГц), плюс вход skip
+          {n:'blAdd',t:'button',label:'Blacklist found signals',fn:n=>cfarBlAdd(n)},
+          {n:'blClear',t:'button',label:'Clear blacklist',fn:n=>cfarBlSave(n,[])},
+          {n:'skipList',t:'text',d:'',label:'blacklist, Hz (f/width, …)',adv:true}],
   init:n=>{n.list=[];n.text='';n.tracks=[];n.floorDb=null;n.recs=[];},
   process(n,I){
     const s=I.spec;
@@ -671,7 +677,8 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
       if(typeof I[k]==='number') setMod(n,k,I[k]);
     if(!s) return {count:0};
     // список пропуска (Table → bands): цели внутри его диапазонов не считаются; частота без ширины — с допуском по ширине цели
-    n.skip=Array.isArray(I.skip) ? I.skip.filter(b=>b && !b.sig && isFinite(b.lo)) : null;
+    n._skipExt=Array.isArray(I.skip) ? I.skip.filter(b=>b && !b.sig && isFinite(b.lo)).map(b=>({lo:b.lo,hi:Math.max(b.lo,b.hi)})) : [];
+    n.skip=[...n._skipExt, ...cfarBlList(n).map(x=>({lo:x.f-x.w/2,hi:x.f+x.w/2}))];
     // считаем только на новом кадре спектра: иначе один кадр засчитывался бы в M-из-N много раз
     // (спектр rtlsdr обновляется раз в ~80мс, движок тикает чаще). У части узлов объект спектра
     // мутируется на месте — сверяем rev, у кого его нет — ссылку.
@@ -679,13 +686,34 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
     if(fresh){ n._lastRev=s.rev; n._lastSpecRef=s; cfarFrame(n,s); }
     const [a,b,c,d]=n.list;
     const rec=n.recs.length ? n.recs.splice(0) : null;
-    return {count:n.list.length, rec,
+    const bands=n.list.map(t=>({lo:t.f-Math.max(t.bw,1)/2, hi:t.f+Math.max(t.bw,1)/2, label:fmtHz(t.f,3), db:t.db, sig:true}));
+    return {count:n.list.length, rec, bands,
       f1:a?a.f:null, l1:a?a.db:null, f2:b?b.f:null, l2:b?b.db:null,
       f3:c?c.f:null, l3:c?c.db:null, f4:d?d.f:null, l4:d?d.db:null,
       snr1:a?a.snr:null, floor:n.floorDb, bw1:a?a.bw:null}; },
   draw(n){ const r=n.el.querySelector('.readout');
     if(r.textContent!==n.text) r.textContent=n.text||'…'; }});
 
+function cfarBlList(n){
+  if(n._blSrc!==n.p.skipList){
+    n._blSrc=n.p.skipList;
+    try{ const a=JSON.parse(n.p.skipList||'[]'); n._bl=Array.isArray(a) ? a.filter(x=>x && isFinite(x.f) && isFinite(x.w)) : []; }
+    catch(e){ n._bl=[]; }
+  }
+  return n._bl;
+}
+function cfarBlSave(n,list){
+  const v=JSON.stringify(list.map(x=>({f:Math.round(x.f),w:Math.round(x.w)})));
+  n._blSrc=v; n._bl=list;
+  if(n.set && n.set.skipList) n.set.skipList(v); else n.p.skipList=v;
+  n.skip=[...(n._skipExt||[]), ...list.map(x=>({lo:x.f-x.w/2,hi:x.f+x.w/2}))];
+  n.tracks=(n.tracks||[]).filter(t=>!cfarSkipped(n.skip,t.f,t.w)); n.list=n.list.filter(t=>!cfarSkipped(n.skip,t.f,t.w));
+}
+function cfarBlAdd(n){
+  const list=cfarBlList(n).slice();
+  for(const t of n.list) list.push({f:t.f, w:Math.max(t.bw*1.5,12500)});
+  cfarBlSave(n,list);
+}
 // шаг сетки id записей: явный из idRes, auto — ширина цели по ряду 1-2-5
 function cfarIdStep(res,w){
   if(res && res!=='auto') return +res;
@@ -711,7 +739,8 @@ function cfarBw(s,pw,nz,pi,lo,hi,db,thr){
 }
 function cfarFrame(n,s){
   const N=s.mag.length, G=n.p.guard, T=n.p.train, meth=n.p.method;
-  const [specLo,specHi]=n.p.auto? specSpan(s) : [n.p.fmin,n.p.fmax];
+  let [specLo,specHi]=n.p.auto? specSpan(s) : [n.p.fmin,n.p.fmax];
+  const cut=(specHi-specLo)*clamp(+n.p.edge||0,0,40)/100; specLo+=cut; specHi-=cut;
   const lo=clamp(Math.floor(specBin(s,specLo)),1,N-2),
         hi=clamp(Math.ceil (specBin(s,specHi)),1,N-2);
   if(!n.pwBuf || n.pwBuf.length!==N){
@@ -1889,7 +1918,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
   ins:[
         {n:'spec',t:'spec'},
         {n:'bands',t:'bands'},
-        {n:'skip',t:'bands'},
+        {n:'sigs',t:'bands',tip:'detected signals (Signal Detector → bands): triangles over the peaks'},
         {n:'marksTxt',t:'txt',tip:'marks as text, one per line: from=433920 to=433950 label=start t=1231231123'},
         {n:'marksRec',t:'rec',tip:'marks as records with the same fields (from/to, label, color, t, dur)'},
         {n:'m1',t:'num'},
@@ -1910,12 +1939,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         {n:'spec3',t:'spec'},
         {n:'spec4',t:'spec'}],
   outs:[
-        {n:'rec',t:'rec'},
-        {n:'count',t:'num'},
         {n:'f1',t:'num'},
         {n:'db1',t:'num'},
         {n:'snr1',t:'num'},
-        {n:'detF',t:'num'},
         {n:'centerFreq',t:'num'},
         {n:'holdF',t:'num'},
         {n:'f2',t:'num'},
@@ -1930,13 +1956,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         {n:'fr1',t:'num'},
         {n:'fr2',t:'num'},
         {n:'fr3',t:'num'},
-        {n:'fr4',t:'num'},
-        {n:'count2',t:'num'},
-        {n:'detF2',t:'num'},
-        {n:'count3',t:'num'},
-        {n:'detF3',t:'num'},
-        {n:'count4',t:'num'},
-        {n:'detF4',t:'num'}],   // count/detF/holdF/rec — панели (layout=panes)
+        {n:'fr4',t:'num'}],   // holdF — панели (layout=panes)
   view:{h:280}, pick:true, resize:true,
   params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)',fn:n=>{ if(n.p.auto) n.zoom=null; }},
           {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[0,4000],label:'range, Hz'},
@@ -1950,15 +1970,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'panes',t:'range',min:1,max:8,step:1,d:4,label:'Panes on screen',tip:'how many band ranges are shown side by side, each with its own spectrum and waterfall'},
           {n:'paneFrom',t:'range',min:0,max:500,step:1,d:0,label:'First pane range #',tip:'index of the first range shown (the page turns with ◀ ▶)',adv:true},
           {n:'follow',t:'check',d:true,label:'Follow scanner',tip:'turn the page after the scanner when it moves to a range that is not shown'},
-          {n:'dcCut',t:'range',min:0,max:20,step:.5,d:3,label:'Hide centre spike, kHz',tip:'cut the receiver centre spike, minimum — it widens to its skirt (0 = off)'},
           {n:'rowMs',t:'range',min:100,max:5000,step:100,d:400,label:'Row interval, ms',tip:'waterfall row interval while the scanner is parked on a range',adv:true},
           {n:'edge',t:'range',min:0,max:40,step:1,d:10,label:'Trim edges, %',tip:'drop window edges (humps); same as in Band Scanner'},
-          {n:'detect',t:'check',d:false,label:'Detect signals',tip:'CFAR signal detector in every pane',fn:n=>{ n._pnRevDraw=(n._pnRevDraw|0)+1; }},
-          {n:'detThr',t:'range',min:3,max:30,step:.5,d:10,label:'Detector threshold, dB',tip:'detector threshold, dB over noise'},
-          {n:'scanStop',t:'select',opts:['signals + marker','marker only'],d:'signals + marker',label:'Stop scan on',tip:'signals + marker, or marker only (the scan does not stop on signals)'},
-          {n:'holdMarker',t:'check',d:false,label:'Park on marker',tip:'park the scanner on a marker until it is cleared'},
-          {n:'skipClear',t:'button',label:'Clear skipped signals',fn:n=>{ if(typeof saSkipClear==='function') saSkipClear(n); }},
-          {n:'skipList',t:'text',d:'',hidden:true},
+          {n:'holdMarker',t:'check',d:false,label:'Park on marker',tip:'holdF output: a marker stops the scanner on its frequency until it is cleared'},
           {n:'paneDb',t:'text',d:'',hidden:true},
           {n:'snap',t:'check',d:true,label:'snap to band plan step',adv:true},
           {n:'trk',t:'check',d:false,label:'markers: follow the carrier within bw'},
@@ -2002,7 +2016,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     if(n.p.layout==='panes'){                          // несколько диапазонов рядом: свой путь без одноосевой логики
       for(const k of ['floor','top']) if(typeof I[k]==='number') setMod(n,k,I[k]);
       if(Array.isArray(I.bands)) n.bandsData=I.bands;
-      n._skipExt=Array.isArray(I.skip) ? I.skip.filter(b=>b && !b.sig && isFinite(b.lo)).map(b=>({lo:b.lo,hi:Math.max(b.lo,b.hi)})) : null;
+      n.sigsData=Array.isArray(I.sigs) ? I.sigs : null;
+      const sk=n.sigsData ? n.sigsData.map(b=>Math.round(b.lo)+':'+Math.round(b.db)).join() : '';
+      if(sk!==n._sigKey){ n._sigKey=sk; n._pnRevDraw=(n._pnRevDraw|0)+1; }
       // spec2…spec4 — ещё приёмники: каждый со своим Band Scanner (lanes), спектры накапливаются в одних и тех же панелях
       n._pnMulti=!!(I.spec2||I.spec3||I.spec4);
       saPanesIngest(n,sp,0);
@@ -2010,6 +2026,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       return saPanesOut(n);
     }
     for(const k of ['fmin','fmax']) if(typeof I[k]==='number') setMod(n,k,I[k]);
+    n.sigsData=Array.isArray(I.sigs) ? I.sigs : null;
     saRowIn(n,I);
     // границы поменяли не мы (поле диапазона или провод) — это ручной ввод: auto выключаем,
     // зум сбрасываем, центр введённого диапазона — цель для приёмника (centerFreq)
@@ -4661,8 +4678,8 @@ def({ id:'spectral', title:'Spectral Descriptors', cat:'Analysis',
     'centroid '+n.centroid.toFixed(0)+' Hz · spread '+n.spread.toFixed(0)+' Hz · flux '+
     n.flux.toFixed(3)+' · rolloff '+n.rolloff.toFixed(0)+' Hz'; }});
 defGroups('sa',[
-  {n:'View', p:'auto frange dbrange autoDb log grid peakHold peakDecay dcCut layout panes'},
-  {n:'Scanner', p:'follow edge paneFrom detect detThr scanStop holdMarker skipClear'},
+  {n:'View', p:'auto frange dbrange autoDb log grid peakHold peakDecay layout panes'},
+  {n:'Panes', p:'follow edge paneFrom holdMarker'},
   {n:'Markers', p:'snap trk trkBw ant antVf', open:false},
   {n:'Time marks', p:'markMode markLabels tickSec clearMarks'},
   {n:'Waterfall', p:'rowMs palette wfMem', open:false},
