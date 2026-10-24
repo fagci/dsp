@@ -211,9 +211,11 @@ async function fsWavDecode(blob){                      // только свой 
 /* ---- Офлайн-данные: крупные файлы, которые модули качают один раз (модель распознавания, словарь JS8, подложка карты) ----
    Лежат в Files → «Offline data»: видно, сколько места занято, можно удалить, выгрузить или подложить свой файл с тем же именем.
    OfflineData.blob(имя, [адреса]) — из хранилища, иначе по первому ответившему адресу (и туда же сохраняется).
-   want() — что стоит докачать заранее: при первом запуске с сетью, без трафика на мобильной сети и в режиме экономии. */
+   Модули регистрируют то, что стоит иметь заранее: fileItem — файлы в «Offline data», item — своё хранилище (has/get).
+   Кнопка «⇩ offline» в менеджере файлов качает выбранное; auto-пункты докачиваются сами при первом запуске с сетью
+   (не на мобильной сети и не в режиме экономии трафика). */
 const OfflineData = (() => {
-  const DIR='Offline data', inflight=new Map(), wanted=[];
+  const DIR='Offline data', inflight=new Map(), items=[];
   const dirId=async make=>{                            // папку находим заново: пользователь мог её удалить или переименовать
     const f=(await FileStore.listFolders('files',null)).find(x=>x.name===DIR);
     return f ? f.id : make ? FileStore.addFolder('files',DIR,null) : null;
@@ -240,14 +242,45 @@ const OfflineData = (() => {
     inflight.set(name,p); return p;
   }
   async function has(name){ try{ return !!await find(name); }catch(e){ return false; } }
-  const want=(name,urls)=>{ wanted.push({name,urls}); };
+  // o: {id,label,mb,auto,has():Promise<bool>,get():Promise}; повторная регистрация с тем же id заменяет пункт
+  const item=o=>{ const i=items.findIndex(x=>x.id===o.id); if(i>=0) items[i]=o; else items.push(o); };
+  const fileItem=o=>item({...o,
+    has:async()=>{ for(const f of o.files) if(!await has(f[0])) return false; return true; },
+    get:async()=>{ for(const f of o.files) await blob(f[0],f[1]); }});
   async function warm(){
     const c=navigator.connection;
     if(!navigator.onLine || c?.saveData || c?.type==='cellular') return;
-    for(const w of wanted) try{ if(!await has(w.name)) await blob(w.name,w.urls); }catch(e){}
+    for(const o of items) if(o.auto) try{ if(!await o.has()) await o.get(); }catch(e){}
+  }
+  // панель выбора в менеджере файлов
+  async function draw(el){
+    el.textContent='';
+    const rows=[], head=document.createElement('div'); head.className='fm-info';
+    head.textContent='Download for working without a network. Stored in Files → Offline data and in the app\'s own storage.';
+    const list=document.createElement('div');
+    for(const o of items){
+      const r=document.createElement('label'), c=document.createElement('input'), t=document.createElement('span');
+      c.type='checkbox'; r.append(c,t); r.style.display='flex'; r.style.gap='6px'; r.style.alignItems='center';
+      const done=await o.has().catch(()=>false);
+      c.checked=!done; t.textContent=o.label+' · ~'+o.mb+' MB'+(done ? ' · ✓ downloaded' : '');
+      rows.push({o,c,t,done}); list.append(r);
+    }
+    const st=document.createElement('div'); st.className='fm-info';
+    const go=document.createElement('button'); go.textContent='⇩ download selected';
+    go.onclick=async()=>{
+      if(!navigator.onLine){ st.textContent='no network'; return; }
+      go.disabled=true; let bad=0;
+      for(const r of rows) if(r.c.checked){
+        r.t.textContent=r.o.label+' · downloading…';
+        try{ await r.o.get(); if(!await r.o.has()) throw new Error('not saved'); }catch(e){ bad++; r.t.textContent=r.o.label+' · error: '+(e.message||e); continue; }
+        r.t.textContent=r.o.label+' · ✓ downloaded'; r.c.checked=false;
+      }
+      st.textContent=bad ? bad+' failed — check the network (some sources need a CORS proxy in Settings)' : 'done'; go.disabled=false;
+    };
+    el.append(head,list,go,st);
   }
   if(typeof addEventListener==='function') addEventListener('load',()=>setTimeout(warm,20000));
-  return {blob,has,want,warm};
+  return {blob,has,item,fileItem,warm,draw};
 })();
 
 /* ---- таблицы Table как пространство 'tables' ----
@@ -421,6 +454,7 @@ function fmMount(host,o={}){
   const root=document.createElement('div'); root.className='fm';
   const bar=document.createElement('div'); bar.className='fm-bar';
   const find=document.createElement('div'); find.className='fm-bar';
+  const offP=document.createElement('div'); offP.className='fm-off'; offP.hidden=true;
   const crumbs=document.createElement('div'); crumbs.className='fm-crumbs';
   const bulk=document.createElement('div'); bulk.className='fm-bar';
   const list=document.createElement('div'); list.className='fm-list';
@@ -443,11 +477,12 @@ function fmMount(host,o={}){
   bar.append(
     mk('＋ folder','New folder here',guard(async()=>{ const n=prompt('Folder name:'); if(n) await B().addFolder(S.space,n,S.folder); })),
     mk('⤒ import','Add files from this device',()=>inp.click()),
+    mk('⇩ offline','Download data for working without a network (map, satellites, models, dictionaries)',()=>{ offP.hidden=!offP.hidden; if(!offP.hidden) OfflineData.draw(offP); }),
     inp);
   o.toolbar?.(bar);
   inp.onchange=async()=>{ const fs=[...inp.files]; inp.value=''; await addFiles(fs); };
   const prev=document.createElement('div'); prev.className='fm-prev'; prev.hidden=true;
-  root.append(bar,find,crumbs,bulk,list,...(o.preview ? [prev] : []),info,disk);
+  root.append(bar,offP,find,crumbs,bulk,list,...(o.preview ? [prev] : []),info,disk);
   root.addEventListener('pointerdown',e=>e.stopPropagation());
   root.addEventListener('wheel',e=>e.stopPropagation());
   root.addEventListener('dragover',e=>{ e.preventDefault(); });

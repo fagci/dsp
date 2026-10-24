@@ -98,6 +98,14 @@ async function satTxDownload(n){
     satTxSet(await r.json(),true);
   }catch(e){ Sat.txState='transmitters: '+e.message+' — set a CORS proxy in Settings or import the JSON file'; }
 }
+OfflineData.item({id:'satnogs',label:'Satellite transmitters (SatNOGS)',mb:3,
+  has:async()=>!!await geoGet('satnogs:tx').catch(()=>null), get:()=>satTxDownload()});
+OfflineData.item({id:'tle',label:'Satellite orbits, all CelesTrak groups (TLE)',mb:3,
+  has:async()=>{ for(const g of SAT_GROUPS) if(!await geoGet('tle:'+g).catch(()=>null)) return false; return true; },
+  get:async()=>{ for(const g of SAT_GROUPS){
+    const r=await fetch(Net.url(SAT_TLE_URL.replace('{g}',g))); if(!r.ok) throw new Error(g+': HTTP '+r.status);
+    const text=await r.text(); if(!satParseTle(text).length) throw new Error(g+': no TLE in response');
+    await geoPut('tle:'+g,{t:Date.now(),text}); } }});
 function satFmtMHz(hz){ return (hz/1e6).toFixed(hz%1000 ? 4 : 3); }
 function satTxText(norad){
   const a=Sat.tx?.get(norad); if(!a?.length) return '';

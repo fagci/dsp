@@ -1135,6 +1135,8 @@ select.aed-b{padding:0 6px}
 .fm button{background:var(--panel2);border:1px solid var(--line);border-radius:3px;color:var(--txt);cursor:pointer;padding:2px 6px;font:inherit}
 .fm button:hover{border-color:var(--acc)}
 .fm-bar{display:flex;gap:4px;flex:0 0 auto;flex-wrap:wrap}
+.fm-off{flex:0 0 auto;display:flex;flex-direction:column;gap:4px;padding:4px 6px;border:1px solid var(--line);border-radius:3px;background:var(--panel2)}
+.fm-off[hidden]{display:none}
 .fm-crumbs{flex:0 0 auto;color:var(--dim)}
 .fm-crumbs button{border:0;background:none;padding:0 2px;color:var(--acc2)}
 .fm-list{flex:1 1 120px;min-height:60px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:3px}

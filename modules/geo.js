@@ -1241,7 +1241,7 @@ function unmercY(y){ return Math.atan(Math.sinh(Math.PI*(1-2*y)))/D2R; }
 // Подложка Natural Earth: data/basemap.json (tools/basemap.mjs), после первой загрузки — из Files → Offline data (старый кэш в IndexedDB читаем как раньше)
 const GEO_BASE_TAG='ne10m-3';                        // сменить при пересборке data/basemap.json
 const GEO_BASE_NAME='Natural Earth basemap '+GEO_BASE_TAG+'.json';   // в Files → Offline data; докачивается заранее
-OfflineData.want(GEO_BASE_NAME,['data/basemap.json']);
+OfflineData.fileItem({id:'basemap',label:'Map basemap (Natural Earth)',mb:4.3,auto:true,files:[[GEO_BASE_NAME,['data/basemap.json']]]});
 const GeoBase={state:'idle', data:null, err:'', p:null, places:null, placesState:'', placesP:null, gen:0};
 // подложка (4 МБ) на мобильной сети может оборваться, а запись в кэше — оказаться битой: повторяем 3 раза с паузой
 function geoBaseLoad(){
@@ -1343,6 +1343,8 @@ function geoPlacesParse(text){
   if(iN<0 || iLa<0 || iLo<0) throw new Error('need name, lat, lon columns');
   return rows.map(r=>({name:r[iN], lat:+r[iLa], lon:+r[iLo], pop:iP>=0 ? +r[iP] : 0}));
 }
+OfflineData.item({id:'places',label:'Cities and towns (GeoNames)',mb:25,
+  has:async()=>!!await geoGet('places').catch(()=>null), get:()=>geoPlacesDownload()});
 async function geoPlacesDownload(){
   GeoBase.placesState='downloading…';
   try{

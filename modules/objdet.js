@@ -22,6 +22,8 @@ const OD_LOCAL=[['TF.js 4.22.0 (tf.es2017.min.js)','vendor/objdet/tf.es2017.min.
                 ['COCO-SSD 2.2.3 (coco-ssd.min.js)','vendor/objdet/coco-ssd.min.js',OD_LIBS[1]]];
 const OD_LITE_FILES=['model.json','group1-shard1of5','group1-shard2of5','group1-shard3of5','group1-shard4of5','group1-shard5of5'];
 const OD_LITE_URL='https://storage.googleapis.com/tfjs-models/savedmodel/ssdlite_mobilenet_v2/';
+OfflineData.fileItem({id:'objdet',label:'Object Detect: TF.js and the model',mb:19,
+  files:[...OD_LOCAL.map(l=>[l[0],[l[1],l[2]]]), ...OD_LITE_FILES.map(f=>['COCO-SSD lite '+f,['vendor/objdet/ssdlite_mobilenet_v2/'+f,OD_LITE_URL+f]])]});
 async function odLocalScript(l){
   const b=await OfflineData.blob(l[0],[l[1],l[2]]), u=URL.createObjectURL(b);
   try{ await odScript(u); } finally{ URL.revokeObjectURL(u); }
