@@ -1875,7 +1875,7 @@ function openModPicker(clientX,clientY,at,from){
     h.querySelector('i').textContent=from.port; box.append(h); }
   box.append(inp,list); document.body.append(box); modPickEl=box; Back.push(modPickBack);
   const t0=performance.now();    // попап открывается на pointerup — следом приходит синтетический click по тому, что оказалось под пальцем
-  const mods=Object.values(MOD).filter(m=>!m.legacy && !String(m.id).startsWith('custom:'))
+  const mods=Object.values(MOD).filter(m=>!String(m.id).startsWith('custom:'))
     .sort((a,b)=>catRank(a.cat)-catRank(b.cat)||a.title.localeCompare(b.title));
   let items=[], cur=0;
   const pick=m=>{ closeModPicker();
@@ -2112,7 +2112,6 @@ document.getElementById('panelPatches').classList.toggle('on',t.dataset.tab==='p
 }));
 /* ---- палитра ---- */
 const pal=document.getElementById('palette');
-let showLegacy=false;
 let paletteQuery='';
 const openCats=new Set();                            // какие категории раскрыты вручную — переживает перестройку палитры
 const catRank=c=>{ const i=CAT_ORDER.indexOf(c); return i<0?999:i; };
@@ -2201,7 +2200,7 @@ function buildPalette(){
 pal.innerHTML='';
 const q=paletteQuery.trim().toLocaleLowerCase('ru');
 let matches=0;
-const visible=m=>(showLegacy||!m.legacy) && (!q || modScore(m,q)>0);
+const visible=m=>!q || modScore(m,q)>0;
 for(const g of CAT_GROUPS){
 const gcats=cats.filter(c=>g.cats.includes(c) || (g===CAT_GROUPS[CAT_GROUPS.length-1] && !CAT_GROUPS.some(x=>x.cats.includes(c))));
 const byCat=gcats.map(c=>[c,Object.values(MOD).filter(m=>m.cat===c&&visible(m))]).filter(x=>x[1].length);
@@ -2218,11 +2217,6 @@ for(const m of list){ matches++; det.append(makeCatItem(m)); }
 }
 pal.append(det);
 }
-if(Object.values(MOD).some(m=>m.legacy)){
-const t=document.createElement('button'); t.className='pitem';
-t.innerHTML=' <b>'+(showLegacy?'hide':'show')+' legacy </b>';
-t.addEventListener('click',()=>{ showLegacy=!showLegacy; buildPalette(); });
-pal.append(t); }
 pal.classList.toggle('empty',matches===0);
 }
 buildPalette();
