@@ -2250,6 +2250,15 @@ o.nodes=o.nodes.filter(n=>!gone.has(n.id)); } }
 for(const e of o.edges) if(maps.has(e.to) && (e.tp==='rec2'||e.tp==='rec3')) e.tp='rec'; }
 { const sas=new Set(o.nodes.filter(n=>n.type==='sa').map(n=>n.id));   // входы row / rec анализатора спектра → marksTxt / marksRec
 for(const e of o.edges) if(sas.has(e.to)){ if(e.tp==='row') e.tp='marksTxt'; else if(e.tp==='rec') e.tp='marksRec'; } }
+// cfar слушает сигналы окна по очереди: count → todo (сколько ещё слушать), f1 → listenF (текущая цель); сканер ждёт все сигналы, не больше timeout
+{ const cfs=new Set(o.nodes.filter(n=>n.type==='cfar').map(n=>n.id)), bss=new Map(o.nodes.filter(n=>n.type==='bandscan').map(n=>[n.id,n])), rxs=new Set(o.nodes.filter(n=>n.type==='rtlsdr').map(n=>n.id));
+for(const e of o.edges) if(cfs.has(e.from)){
+  if(e.fp==='count' && e.tp==='active' && bss.has(e.to)){ e.fp='todo'; const b=bss.get(e.to); if(b.p && !(+b.p.timeout>=15000)) b.p.timeout=20000; }
+  else if(e.fp==='f1' && e.tp==='tuneFreq' && rxs.has(e.to)){
+    e.fp='listenF';
+    // шумодав приёмника — по сканеру (он стоит на окне, пока есть что слушать), а не по порогу SNR: цель cfar может быть ниже него
+    const rx=o.nodes.find(n=>n.id===e.to), bs=o.nodes.find(n=>n.type==='bandscan' && o.edges.some(q=>q.from===n.id && q.fp==='freq' && q.to===e.to));
+    if(bs && rx.p && (rx.p.sql==='SNR' || rx.p.sql==='level') && !o.edges.some(q=>q.to===rx.id && q.tp==='sqlGate')){ rx.p.sql='input'; o.edges.push({from:bs.id,fp:'listening',to:rx.id,tp:'sqlGate'}); } } } }
 // детектор из панелей 'sa' вынесен в узел 'cfar': старый sa с detect / проводами count, detF, rec, skip получает по cfar на приёмник
 { const LEG=/^(count|detF)[234]?$|^rec$/;
 let mx=Math.max(0,...o.nodes.map(n=>+String(n.id).slice(1)||0));
@@ -2277,13 +2286,14 @@ for(const sa of o.nodes.filter(n=>n.type==='sa')){
     const lo=legOut.filter(e=>e.fp==='count'+q || e.fp==='detF'+q || (i===0 && e.fp==='rec'));
     // провода есть — переносим; потеряны при прошлой загрузке — восстанавливаем по соседям (сканер приёмника, Scan log)
     const bs=o.nodes.find(n=>n.type==='bandscan' && o.edges.some(e=>e.from===n.id && e.fp==='freq' && e.to===inE.from));
-    if(lo.length){ for(const e of lo) add(cf.id, e.fp.startsWith('detF') ? 'f1' : e.fp.startsWith('count') ? 'count' : 'rec', e.to, e.tp); }
+    if(lo.length){ for(const e of lo) add(cf.id, e.fp.startsWith('detF') ? 'listenF' : e.fp.startsWith('count') ? 'todo' : 'rec', e.to, e.tp); }
     else {
-      if(bs && p.scanStop!=='marker only') add(cf.id,'count',bs.id,'active');
-      if(rx && rx.type==='rtlsdr') add(cf.id,'f1',rx.id,'tuneFreq');
+      if(bs && p.scanStop!=='marker only') add(cf.id,'todo',bs.id,'active');
+      if(rx && rx.type==='rtlsdr') add(cf.id,'listenF',rx.id,'tuneFreq');
       if(logT) add(cf.id,'rec',logT.id,'rec');
     }
     if(bs){ add(bs.id,'edge',cf.id,'edge'); add(bs.id,'edge',sa.id,'edge'); }
+    if(bs && rx && rx.type==='rtlsdr'){ add(bs.id,'listening',rx.id,'sqlGate'); (rx.p||(rx.p={})).sql='input'; }
   });
   for(const k of ['detect','detThr','scanStop','dcCut','skipList']) delete p[k];
 }

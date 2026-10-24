@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=79;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=80;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -1162,10 +1162,10 @@ const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the
   'The «Scan skip» table is a skip list: add rows with lo / hi (or a single freq) for pagers, beacons and\n'+
   'other permanent carriers — the detector ignores targets inside them and the scanner does not stop there.'});
 nt.size.w=560; nt.size.h=170; applySize(nt);
-const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:150000000});
+const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:150000000,sql:'input',sqlHang:400});
 const bp=addNode('table',360,260,{list:'presets/Utility / services (RU)',initial:false});
 bp.size.w=340; bp.size.h=200; applySize(bp);
-const bs=addNode('bandscan',740,260,{timeout:4000,settle:90,frames:3,edge:10});
+const bs=addNode('bandscan',740,260,{timeout:20000,settle:250,frames:3,edge:10});
 bs.size.w=300; bs.size.h=200; applySize(bs);
 const cf=addNode('cfar',360,520,{auto:true,thr:10,confM:2,confN:3});
 cf.size.w=300; cf.size.h=220; applySize(cf);
@@ -1180,9 +1180,9 @@ addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',cf.id,'spec'); addEdge(
 addEdge(cf.id,'bands',sa.id,'sigs'); addEdge(bs.id,'edge',cf.id,'edge');
 addEdge(bp.id,'rows',bs.id,'bands');
 addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi');
-addEdge(cf.id,'count',bs.id,'active');
+addEdge(cf.id,'todo',bs.id,'active');
 addEdge(bs.id,'freq',rx.id,'freq');
-addEdge(cf.id,'f1',rx.id,'tuneFreq');
+addEdge(cf.id,'listenF',rx.id,'tuneFreq'); addEdge(bs.id,'listening',rx.id,'sqlGate');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
 markWiresDirty();
 });
@@ -1192,7 +1192,7 @@ const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the
   '(layout «panes») shows every range as its own pane — a spectrum on top, a waterfall below — and keeps what each window saw,\n'+
   'so the bands stay on the screen while the receiver visits them (the pane being received is outlined, old data is dimmed).\n'+
   'The scanner waits for 2 fresh spectrum frames of the new window (spec wire, «fresh frames»), not for a timer: the USB queue still holds ~40 ms of the old frequency\n'+
-  'after a retune, (the analyzer drops the first one, the second is recorded; raise «fresh frames» to 3–4 for the detector to confirm signals). «settle» 90 ms is a minimum wait.\n'+
+  'after a retune, (the analyzer drops the first one, the second is recorded; raise «fresh frames» to 3–4 for the detector to confirm signals). «settle» 250 ms is a minimum wait. The detector listens to every signal of a window in turn (by frequency, each until it ends or «listen to each signal at most»); «Blacklist this signal» / «Skip signal in this window» on it act on the one being heard; the receiver squelch follows the scanner (input).\n'+
   'Order «band by band»: a range is walked to its end, then the next one (the scanner can be switched to «interleave»: one window of every range in turn).\n'+
   'More ranges than panes: the page turns after the scanner (follow); or use ◀ ▶ / the wheel on a pane title.\n'+
   'View: wheel on a pane — zoom, drag — pan, double click — back. Humps at the window step come from the filter edges: the scanner, the analyzer and the detector\n'+
@@ -1202,11 +1202,11 @@ const nt=addNode('note',40,40,{text:'Connect the SDR. The Band Scanner walks the
   '«Clear blacklist» wipes it); the «Scan skip» table is a skip list by ranges (lo / hi) for pagers and beacons.\n'+
   'Gestures: pinch — zoom (across: frequency, up-down: a pane dB range), drag up/down — shift the dB range of a pane, double tap — reset, swipe a title — page; «⇕ dB» fits every pane to its data. Tap a pane — marker 1–4; tap a pane title — retune. The receiver squelch (SNR) keeps the speaker quiet while the scan is not on a signal.'});
 nt.size.w=720; nt.size.h=250; applySize(nt);
-const rx=addNode('rtlsdr',40,300,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:100000000,sql:'input',sqlHang:400,fastTune:true});
+const rx=addNode('rtlsdr',40,300,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:100000000,sql:'input',sqlHang:400});
 const bp=addNode('table',360,300,{list:'@patch',initial:false,data:'name,lo,hi,step\n'+
   'VHF,144M,176M,25k\nUHF,400M,470M,25k'});
 bp.size.w=340; bp.size.h=280; applySize(bp);
-const bs=addNode('bandscan',740,300,{timeout:3000,settle:90,frames:2,edge:15,order:'band by band'});
+const bs=addNode('bandscan',740,300,{timeout:20000,settle:250,frames:2,edge:15,order:'band by band'});
 bs.size.w=300; bs.size.h=200; applySize(bs);
 const sk=addNode('table',1080,300,{list:'Scan skip',initial:false});
 sk.size.w=300; sk.size.h=220; applySize(sk);
@@ -1221,10 +1221,10 @@ addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(bp.id,'rows',sa.id,'bands'); addEdge(bp.id,'rows',bs.id,'bands');
 addEdge(rx.id,'spec',cf.id,'spec'); addEdge(sk.id,'rows',cf.id,'skip'); addEdge(cf.id,'bands',sa.id,'sigs');
 addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi'); addEdge(rx.id,'spec',bs.id,'spec');
-addEdge(cf.id,'count',bs.id,'active'); addEdge(sa.id,'holdF',bs.id,'hold');
+addEdge(cf.id,'todo',bs.id,'active'); addEdge(sa.id,'holdF',bs.id,'hold');
 addEdge(bs.id,'edge',sa.id,'edge'); addEdge(bs.id,'edge',cf.id,'edge');
 addEdge(bs.id,'freq',rx.id,'freq');
-addEdge(cf.id,'f1',rx.id,'tuneFreq');
+addEdge(cf.id,'listenF',rx.id,'tuneFreq');
 addEdge(cf.id,'rec',lg.id,'rec');
 addEdge(bs.id,'listening',rx.id,'sqlGate');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
@@ -1255,8 +1255,8 @@ const dc=addNode('dac',1460,860,{vol:.4});
 const SP=['spec','spec2','spec3','spec4'], AU=['a','b','c','d'];
 const bs0=[];
 for(let i=0;i<4;i++){
-  const rx=addNode('rtlsdr',40+i*250,280,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:100000000+i*1000000,sql:'input',sqlHang:400,fastTune:true});
-  const bs=addNode('bandscan',40+i*320,640,{timeout:3000,settle:90,frames:2,edge:15,order:'interleave',lanes:4,lane:i});
+  const rx=addNode('rtlsdr',40+i*250,280,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'NFM',bw:12500,freq:100000000+i*1000000,sql:'input',sqlHang:400});
+  const bs=addNode('bandscan',40+i*320,640,{timeout:20000,settle:250,frames:2,edge:15,order:'interleave',lanes:4,lane:i});
   bs.size.w=300; bs.size.h=200; applySize(bs);
   addEdge(rx.id,'spec',sa.id,SP[i]); addEdge(rx.id,'spec',bs.id,'spec');
   addEdge(bp.id,'rows',bs.id,'bands');
@@ -1266,7 +1266,7 @@ for(let i=0;i<4;i++){
   addEdge(rx.id,'spec',cf.id,'spec'); addEdge(sk.id,'rows',cf.id,'skip');
   addEdge(cf.id,'bands',sa.id,'sigs'); addEdge(cf.id,'rec',lg.id,'rec');
   addEdge(bs.id,'edge',sa.id,'edge'); addEdge(bs.id,'edge',cf.id,'edge');
-  addEdge(cf.id,'count',bs.id,'active'); addEdge(bs.id,'listening',rx.id,'sqlGate'); addEdge(bs.id,'freq',rx.id,'freq'); addEdge(cf.id,'f1',rx.id,'tuneFreq');
+  addEdge(cf.id,'todo',bs.id,'active'); addEdge(bs.id,'listening',rx.id,'sqlGate'); addEdge(bs.id,'freq',rx.id,'freq'); addEdge(cf.id,'listenF',rx.id,'tuneFreq');
   addEdge(rx.id,'audio',mx.id,AU[i]);
   if(i===0) addEdge(sa.id,'holdF',bs.id,'hold');
 }
