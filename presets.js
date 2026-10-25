@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=111;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=112;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -6299,7 +6299,7 @@ clearAll();
 const nt=addNode('note',40,20,{text:'A calculated field can look a value up in another list: lookup(\'list\',\'key column\',[Field],\'result column\'[,mode]) and between(\'list\',\'from\',\'to\',[Field],\'result column\').\n'+
   'Reference lists (Files → ⇩ offline, they download themselves on the first start with a network): «MAC vendors (OUI)» ~52 000 prefixes, «Signals (intercept)» ~1000 ranges, «TSCM bands», «Wi-Fi SSID patterns», «MAC prefixes (drones, trackers, cameras)», «BLE trackers», «WEFAX stations». They are normal lists of Table — open, filter, edit.\n'+
   'Modes: mac — start of an address (the longest prefix wins, separators do not matter), prefix, contains, default — exact. The list is indexed once, a lookup costs microseconds even on tens of thousands of rows.\n'+
-  'Top table: type a MAC / SSID, or wire `rec` from Wi-Fi Sniffer, Remote ID, BLE Advertisements. Bottom: a frequency in Hz → what is known to transmit there and whether it is a surveillance band. Data: IEEE OUI via nmap, signals / TSCM / drones from smittix/intercept (Apache-2.0).'});
+  'Top table: type a MAC / SSID, or wire `rec` from Wi-Fi Sniffer, Remote ID, BLE Advertisements. Bottom: a frequency in Hz → what is known to transmit there and whether it is a surveillance band, and a number station / diplomatic network on that exact frequency (4625000 → UVB-76). Data: IEEE OUI via nmap, signals / TSCM / drones from smittix/intercept (Apache-2.0).'});
 nt.size.w=1000; nt.size.h=170; applySize(nt);
 const dv=addNode('table',40,220,{list:'@patch',
   data:'mac,ssid,vendor,kind\n60:60:1F:AA:BB:CC,DJI-MAVIC3-7F2A,,\nF4:5C:89:12:34:56,iPhone,,\nC4:E7:11:22:33:44,,,\nAC:CF:85:00:11:22,CAM_LIVING,,\n00:1B:C5:0A:B1:23,,,\nB8:27:EB:00:00:01,HomeNet,,',
@@ -6308,12 +6308,13 @@ const dv=addNode('table',40,220,{list:'@patch',
     kind:{t:'calc',expr:"coalesce(lookup('MAC prefixes (drones, trackers, cameras)','prefix',[mac],'kind','mac'),lookup('Wi-Fi SSID patterns','pattern',[ssid],'kind','contains'))"}},card:{}}});
 dv.size.w=760; dv.size.h=300; applySize(dv);
 const fq=addNode('table',40,550,{list:'@patch',
-  data:'freq,signal,mod,surveillance,risk\n98100000,,,,\n131550000,,,,\n137100000,,,,\n433920000,,,,\n868300000,,,,\n1090000000,,,,\n2437000000,,,,',
+  data:'freq,signal,mod,surveillance,risk,station\n4625000,,,,,\n98100000,,,,,\n131550000,,,,,\n137100000,,,,,\n433920000,,,,,\n868300000,,,,,\n1090000000,,,,,\n2437000000,,,,,',
   schema:{types:{
     signal:{t:'calc',expr:"between('Signals (intercept)','lo','hi',[freq],'name')"},
     mod:{t:'calc',expr:"between('Signals (intercept)','lo','hi',[freq],'mod')"},
     surveillance:{t:'calc',expr:"between('TSCM bands','lo','hi',[freq],'name')"},
-    risk:{t:'calc',expr:"between('TSCM bands','lo','hi',[freq],'risk')"}},card:{}}});
+    risk:{t:'calc',expr:"between('TSCM bands','lo','hi',[freq],'risk')"},
+    station:{t:'calc',expr:"lookup('Spy stations','hz',[freq],'nickname')"}},card:{}}});
 fq.size.w=760; fq.size.h=300; applySize(fq);
 markWiresDirty();
 });
