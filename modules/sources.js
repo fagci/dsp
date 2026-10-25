@@ -1613,7 +1613,11 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
     const arr=await readRegBuffer(0x00,5);
     let filterCap=arr[4]&0x0f;
     if(filterCap===0x0f) filterCap=0;
-    return (filterCap!==0 && firstTry) ? await calibrateFilter(false) : filterCap;
+    // как в r82xx_set_tv_standard: код 0 (или 0x0f) — калибровка не сошлась, повторяем один раз; годный код оставляем.
+    // Раньше условие было обратным (повтор при годном коде, при нулевом — нет): на «горячем» донгле (после перезагрузки
+    // страницы) первое чтение часто нулевое, фильтр оставался нескалиброванным — приёмник «глухой» при любом усилении
+    if(filterCap===0 && firstTry){ hasPllLock=false; return await calibrateFilter(false); }   // PLL на 56 МГц ставится заново, как в цикле librtlsdr
+    return filterCap;
   }
   async function setMux(freq){
     const mhz=freq/1e6; let i=0;
