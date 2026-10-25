@@ -16,7 +16,27 @@ const UDEC_REG=[
   {id:'mpt1327Rx',  proto:'MPT1327', kind:'mpt1327', bands:[[136e6,174e6],[400e6,470e6]], p:{}},
   {id:'tetraRx',    proto:'TETRA',  kind:'tetra',    bands:[[380e6,470e6]], p:{}},
   {id:'rs41Rx',     proto:'RS41',   kind:'rs41',     bands:[[400e6,406e6]], p:{}},
+  // адаптеры: декодер из двух частей. ADS-B — демодулятор кадров + таблица бортов (adsb-kernels.js), на выходе записи самолётов для карты; нужен поток ≥ 2 МС/с
+  {id:'adsbDemod',  proto:'ADS-B',  kind:'adsb',     bands:[[1085e6,1095e6]], minSr:1.9e6, post:'adsb', p:{thr:6, fix:'1 bit'}},
+  // LoRa: у декодера параметры сети — по записи на типовую настройку (SF, ширина, слово синхронизации)
+  {id:'loraRx',     proto:'LoRaWAN', kind:'lorawan', variant:true, alias:['lora125'], bands:[[433e6,435e6],[863e6,870e6],[902e6,928e6]], minSr:125e3,
+    p:{sf:'7', bw:'125000', sync:'34', hdr:'explicit', ldro:'auto', len:16, cr:'4/5', crc:true, thr:9, bad:true, invert:false}},
+  {id:'loraRx',     proto:'Meshtastic', kind:'meshtastic', variant:true, alias:['lora','longfast','meshair'], bands:[[433e6,435e6],[863e6,870e6],[902e6,928e6]], minSr:250e3,
+    p:{sf:'11', bw:'250000', sync:'2B', hdr:'explicit', ldro:'auto', len:16, cr:'4/5', crc:true, thr:9, bad:true, invert:false}},
 ];
+// вторая часть адаптера: записи первой (кадры) → итоговые записи. state — свой на экземпляр; params узла udec — P
+const UDEC_POST={
+  adsb:{
+    init(k){ k.ac=new Map(); k.msgs=0; k.maxRange=0; k.lastPrune=0; k.p={maxKm:0}; },
+    run(k,frames,P,now){
+      const ref=(+P.rlat || +P.rlon) ? {lat:+P.rlat, lon:+P.rlon} : null, changed=new Set();
+      for(const r of frames) if(r && r.raw) adsbFeed(k,r.raw,r.t||now,r.rssi,ref,changed);
+      if(now-k.lastPrune>1000){ k.lastPrune=now; for(const [a,v] of k.ac) if(now-v.seen>60000) k.ac.delete(a); }
+      return adsbRecs(k,changed);
+    },
+    info(k){ return 'aircraft '+k.ac.size+' · frames '+k.msgs; }
+  }
+};
 // Подсказка, на которую декодер молчит giveUp мс, считается ложной.
 // подсказка → запись реестра: строка (id / proto / kind без регистра), запись с полями decoder / kind / type, массив — по первому подходящему
 function udecFind(h){
@@ -30,17 +50,17 @@ function udecFind(h){
 IQK.udec={
   init(n){ n.hintId=null; n.hintT=0; n.hintBad=null; n.kids=new Map(); n.st='search'; n.lock=null; n.lastRec=0; n.counts={}; n.last=null; n.recent=[]; n.ui=null; },
   kid(n,r){
-    let k=n.kids.get(r.id);
-    if(!k){ k={p:{...r.p}, out:{}, id:r.id}; IQK[r.id].init(k); n.kids.set(r.id,k); }
+    let k=n.kids.get(r.proto);
+    if(!k){ k={p:{...r.p}, out:{}, id:r.id}; IQK[r.id].init(k); if(r.post){ k.post={}; UDEC_POST[r.post].init(k.post); } n.kids.set(r.proto,k); }
     return k;
   },
   process(n,I){
     const s=iqIn(I,'in'), now=Date.now(), P=n.p;
     const manual=P.mode==='manual' ? UDEC_REG.find(r=>r.proto===P.proto) : null, h=udecFind(I.hint);
     // ложная подсказка: подсказанный декодер молчит дольше giveUp мс — подсказку не слушаем, пока она не сменится (sigid мог ошибиться)
-    if((h?.id||null)!==n.hintId){ n.hintId=h?.id||null; n.hintT=now; n.hintBad=null; }
-    if(h && !manual && n.hintBad!==h.id && now-Math.max(n.hintT,n.lastRec)>(+P.giveUp||8000)) n.hintBad=h.id;
-    const hint=h && n.hintBad!==h.id ? h : null;
+    if((h?.proto||null)!==n.hintId){ n.hintId=h?.proto||null; n.hintT=now; n.hintBad=null; }
+    if(h && !manual && n.hintBad!==h.proto && now-Math.max(n.hintT,n.lastRec)>(+P.giveUp||8000)) n.hintBad=h.proto;
+    const hint=h && n.hintBad!==h.proto ? h : null;
     let act, st;
     if(manual){ act=[manual]; st='manual'; n.lock=null; }
     else if(hint){ act=[hint]; st='hint'; n.lock=null; }
@@ -49,17 +69,23 @@ IQK.udec={
       n.lock=null; st='search';
       // частота потока известна — слушают только декодеры её диапазонов (не нашлось ни одного — все: частота могла быть задана неточно)
       const fc=s?.fc||0, byBand=fc>0 ? UDEC_REG.filter(r=>!r.bands || r.bands.some(b=>fc>=b[0] && fc<=b[1])) : [];
-      act=byBand.length ? byBand : UDEC_REG;
+      // декодер, которому не хватает полосы потока (ADS-B ≥ 2 МС/с), не слушает; не осталось ни одного — слушают все подходящие по полосе
+      const sr=s?.sr||0, fit=l=>sr ? l.filter(r=>!r.minSr || sr>=r.minSr) : l;
+      act=fit(byBand.length ? byBand : UDEC_REG);
+      if(!act.length) act=fit(UDEC_REG);
+      if(!act.length) act=UDEC_REG;
     }
     n.st=st;
-    for(const id of [...n.kids.keys()]) if(!act.some(r=>r.id===id)) n.kids.delete(id);    // не нужен — состояние долой: вернётся чистым
+    for(const pr of [...n.kids.keys()]) if(!act.some(r=>r.proto===pr)) n.kids.delete(pr);    // не нужен — состояние долой: вернётся чистым
     const recs=[], text=[];
     if(s) for(const r of act){
       const k=this.kid(n,r);
       let o; try{ o=IQK[r.id].process(k,{in:s},{}) || {}; }catch(e){ o={}; k.err=e.message; }
       const got=Array.isArray(o.rec) ? o.rec : o.rec ? [o.rec] : [];
+      // адаптер из двух частей: кадры первой — на вход второй; живость — по кадрам, на выход — итоговые записи
+      const outRecs=r.post && got.length ? UDEC_POST[r.post].run(k.post,got,P,now) : got;
       if(got.length){
-        for(const x of got) recs.push({...x, proto:x.proto||r.proto, decoder:r.id});
+        for(const x of outRecs) recs.push({...x, proto:x.proto||r.proto, decoder:r.id});
         n.counts[r.proto]=(n.counts[r.proto]||0)+got.length;
         n.last=r.proto; n.lastRec=now;
         if(st==='search') n.lock=r;                      // кто заговорил первым — тот и остаётся
@@ -71,9 +97,9 @@ IQK.udec={
     for(const t of text) n.recent.push(t);
     if(n.recent.length>12) n.recent.splice(0,n.recent.length-12);
     const lead=n.lock || act[0];
-    const kui=act.length===1 && n.kids.get(act[0].id)?.ui || null;
+    const kid1=act.length===1 ? n.kids.get(act[0].proto) : null, kui=kid1?.ui || null, info=kid1?.post && UDEC_POST[act[0].post]?.info ? UDEC_POST[act[0].post].info(kid1.post) : '';
     n.ui={st, act:act.map(r=>r.proto), proto:n.lock?.proto || (st==='hint'||st==='manual' ? act[0].proto : ''), last:n.last,
-      hintBad:n.hintBad, counts:{...n.counts}, ago:n.lastRec? now-n.lastRec : null, recent:n.recent.slice(-8), kid:kui, none:!s};
+      hintBad:n.hintBad, counts:{...n.counts}, ago:n.lastRec? now-n.lastRec : null, recent:n.recent.slice(-8), kid:kui, info, none:!s};
     return {rec:recs.length ? recs : null, text:text.length ? text.join('\n') : null,
       proto:n.ui.proto, locked:n.lock || st==='hint' || st==='manual' ? 1 : 0};
   }};
