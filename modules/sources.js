@@ -6874,6 +6874,25 @@ const ListDB = (() => {
       for(const it of items) if(!it.fields) it.fields={value:it.value};
       return items;
     },
+    // обход таблицы страницами (по ключу) с паузой между ними: список в десятки тысяч записей целиком десериализуется на главном потоке
+    // сотнями мс (подвисает звук SDR), страница в 1000 записей — ~10 мс. fn(it) может быть async и менять таблицу: обход идёт по ключам
+    async each(listName,fn,page=1000){
+      const t=await tOf(listName); if(t===undefined) return;
+      for(let last=null;;){
+        const st=(await txn(sn(t),'readonly')).objectStore(sn(t));
+        const items=await reqP(st.getAll(last===null ? null : IDBKeyRange.lowerBound(last,true),page));
+        for(const it of items){ if(!it.fields) it.fields={value:it.value}; await fn(it); }
+        if(items.length<page) return;
+        last=items[items.length-1].id;
+        await new Promise(r=>setTimeout(r,8));
+      }
+    },
+    async getOne(id){
+      const t=await tOfId(id); if(t===undefined) return null;
+      const it=await reqP((await txn(sn(t),'readonly')).objectStore(sn(t)).get(id));
+      if(it && !it.fields) it.fields={value:it.value};
+      return it||null;
+    },
     // пустая таблица без колонок в meta не считается списком (как раньше: список — это его записи)
     async listNames(){
       const names=(await counts()).filter(d=>d.rows>0).map(d=>d.name);
