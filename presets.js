@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=107;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=108;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -188,6 +188,7 @@ const PRESET_CATS={
   'Signal Catalog: Pick a Type, the SDR Tunes and Decodes (USB SDR)':'SDR Receivers',
   'Signal Database: What Is It and How to Decode (USB SDR)':'SDR Receivers',
   'Universal Decoder: One Node, Any Protocol (Generator)':'Digital Voice & Trunking',
+  'Several Signals at Once: Find, Cut Out and Decode Each (Generator)':'SDR Receivers',
   'Universal Decoder: ADS-B Aircraft and LoRa Frames in One Node (Generator)':'Aircraft, Satellites & Telemetry',
   'Signal to Decoder, Fully Automatic: Find, Tune, Decode (Generator)':'SDR Receivers',
   'USB SDR: Find a Signal, Tune and Decode — Fully Automatic':'SDR Receivers',
@@ -1579,6 +1580,29 @@ ud.size.w=460; ud.size.h=260; applySize(ud);
 const map=addNode('geoMap',860,280,{mz:7,ttl:5,labels:true,trail:500,tiles:'none'});
 map.size.w=600; map.size.h=420; applySize(map);
 addEdge(gn.id,'iq',ud.id,'in'); addEdge(ud.id,'rec',map.id,'rec');
+markWiresDirty();
+});
+preset('Several Signals at Once: Find, Cut Out and Decode Each (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Several channels in one Universal Decoder. The window holds two signals — AIS at 161.700 MHz and POCSAG at 162.050 MHz. Signal Type Identifier marks every signal; wired to the «sigs» input, each mark gets its own channel in the decoder:\n'+
+  'its own frequency shift and decimation (by the needed bandwidth), its own choice of the decoder (the hint of the mark, otherwise the protocols of the band), its own lock. The node shows a line per channel; records carry «f» (the frequency of the channel) and «ch».\n'+
+  '«maxCh» — how many signals are followed at once (the strongest), «chHold» — when a channel is dropped after its signal is gone. Replace the generators by a USB SDR (iq → decoder, spec → identifier) for the real air.'});
+nt.size.w=820; nt.size.h=170; applySize(nt);
+const g1=addNode('iqGen',40,240,{sr:'1024000',fc:161900000,mode:'AIS',off:-200000,lvl:-20,noise:-60});
+const g2=addNode('iqGen',40,560,{sr:'1024000',fc:161900000,mode:'POCSAG',off:150000,lvl:-20,noise:-120});
+const ad=addNode('iqAdd',340,400,{ka:0,kb:0});
+const sp=addNode('iqSpec',540,400,{size:'8192',avg:'16'});
+const sa=addNode('sa',720,240,{auto:true,floor:-110,top:-30,split:.4});
+sa.size.w=700; sa.size.h=300; applySize(sa);
+const si=addNode('sigid',540,640,{period:2,thr:8,maxSig:4,rangeCtx:true,need:true,deep:0});
+si.size.w=480; si.size.h=240; applySize(si);
+const ud=addNode('udec',1060,640,{mode:'auto',maxCh:4,chHold:8000,hold:6000,giveUp:8000});
+ud.size.w=500; ud.size.h=280; applySize(ud);
+const lg=addNode('recLog',1600,640,{});
+lg.size.w=420; lg.size.h=280; applySize(lg);
+addEdge(g1.id,'iq',ad.id,'a'); addEdge(g2.id,'iq',ad.id,'b'); addEdge(ad.id,'out',sp.id,'in'); addEdge(ad.id,'out',ud.id,'in');
+addEdge(sp.id,'spec',sa.id,'spec'); addEdge(sp.id,'spec',si.id,'spec'); addEdge(si.id,'bands',sa.id,'bands');
+addEdge(si.id,'bands',ud.id,'sigs'); addEdge(ud.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 // Сквозная цепочка: источник (spec + iq) → Signal ID (где сигнал, какая полоса, чем декодировать) → сдвиг и прореживание канала → Universal Decoder
