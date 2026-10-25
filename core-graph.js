@@ -531,6 +531,11 @@ return s||t;
 }
 // подряд идущие кнопки/галочки — в один ряд; общая раскладка для основных и adv-параметров
 function renderParamRows(container,n,params){
+// одинаковые короткие подписи («RTL-SDR», «band plan») нечитаемы: у таких берём хвост после «:» (или поле short)
+const shortCnt={}; for(const p of params){ const l=p.label||p.n; if(l.length>24){ const k=shortLabel(l); shortCnt[k]=(shortCnt[k]||0)+1; } }
+const shortOf=p=>{ const l=p.label||p.n; if(p.short) return p.short; const k=shortLabel(l);
+  if(shortCnt[k]>1){ const i=l.search(/:\s/); if(i>3){ const w=l.slice(i+2).replace(/\s*\([^)]*\)/g,'').split(/\s+/); let t=''; for(const x of w){ if((t+' '+x).length>30) break; t+=(t?' ':'')+x; } return k+': '+t; } }
+  return k; };
 // строки «подпись — значение» (по умолчанию; rows:false у модуля — прежняя раскладка): числа, выборы,
 // галочки, поля ввода — строками в сетке до 4 колонок; подряд идущие кнопки — одним рядом;
 // остальное (code, file, бесконечная крутилка) — как раньше
@@ -549,7 +554,7 @@ const q= p.t==='range' ? {...p,knob:false} : p.t==='buttons' ? {...p,t:'select'}
 const r=paramEl(n,q); r.classList.add('pr','pr-'+q.t);
 if(p.pri) r.classList.add('pri');
 const lab=r.querySelector(':scope>label');
-if(lab && lab.textContent.length>24){ r.title=lab.textContent; lab.textContent=shortLabel(lab.textContent); }
+if(lab && (p.short || lab.textContent.length>24)){ r.title=lab.textContent; lab.textContent=shortOf(p); }
 // единица из хвоста подписи («bandwidth, Hz») — тусклым текстом после значения, подпись короче
 const um=lab && ['range','range2','num'].includes(q.t) && /^(.+?),\s*([^\s,]{1,8})$/.exec(lab.textContent);
 if(um){ lab.textContent=um[1]; const u=document.createElement('span'); u.className='pr-unit'; u.textContent=um[2];
