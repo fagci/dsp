@@ -78,14 +78,30 @@ for(const [sr,df,noise,name] of [[105000,0,0,'105 кС/с, чисто'],[250000,
   }
   const r=decode(burst(0,[40,100,160,220,280],105000,0,.005),105000);
   ok(!r.recs.some(x=>x.kind==='message'),'пять ошибок сверх предела: кадр отвергнут, ложного сообщения нет (FEC ошибок '+(r.ui.cnt.badFec)+')'); }
+// XID, X.25, CLNP, COTP, ES-IS: сценарии тестового эфира (vdl2SimFrames)
+ev(`globalThis.mk2=function(k){ return vdl2BuildBurst(vdl2SimFrames(k)); }`);
+const scen=k=>{ ctx.__s=ev(`mk2(${k})`); const [re,im]=ev(`vdl2Modulate(__s,105000,40,200)`); return decode({re,im},105000).recs; };
+{ let r=scen(3)[0], x=r?.xid;
+  ok(r?.kind==='xid' && x.name==='GSIF' && x.gsif && r.from==='1B4002' && r.toType==='All stations','GSIF: маяк наземной станции ('+(r?.text||'нет')+')');
+  ok(x && x.p.nearest_airport_id==='EHAM' && x.p.gs_location==='52.3N 4.8E' && /136\.975 \(1B4002\), 136\.725/.test(x.p.frequency_support) && x.p.modulation_support==='VDL-M2' && x.freqs===2,'GSIF: аэропорт, координаты, список частот, модуляция');
+  r=scen(4)[0]; x=r?.xid;
+  ok(r?.kind==='xid' && x.name==='XID_CMD_LE' && r.from==='4840D6' && x.p.dest_airport==='EDDF' && x.p.ac_location==='50.1N 8.6E 12000 ft' && x.p.xid_sequencing==='seq 1 retry 0','XID Link Establishment: аэропорт назначения, координаты борта, нумерация XID');
+  r=scen(5)[0]; x=r?.x25;
+  ok(r?.kind==='x25' && x.type==='Call Request' && x.called==='1234' && x.calling==='5678' && x.compression===1 && x.esis?.type==='IS Hello' && x.esis.net==='47002702000000004840d6000000000000000001','X.25 Call Request: адреса, SNDCF, ES-IS IS Hello с NET борта ('+(r?.text||'нет')+')');
+  r=scen(6)[0]; x=r?.x25;
+  ok(r?.kind==='x25' && x.type==='Data' && x.clnp?.compressed && x.clnp.lref===5 && x.clnp.pduId===7 && x.cotp?.[0].type==='DT' && x.cotp[0].eot===1 && x.cotp[0].seq===0 && x.data==='deadbeef','X.25 Data → сжатый CLNP (lref 5) → COTP DT/EOT → данные ('+(r?.text||'нет')+')');
+  const rr=scen(7);
+  ok(rr.length===2 && rr[0].x25.clnp?.reasm==='in progress' && rr[1].x25.clnp?.reasm==='complete' && rr[1].x25.cotp?.[0].type==='DT' && rr[1].x25.data==='0102030405' && rr[1].x25.clnp.src==='4700270200000000'+'4840d6000000000000000001','CLNP: два сегмента собраны по смещению ('+(rr[1]?.text||'нет')+')');
+  r=scen(8)[0]; x=r?.x25;
+  ok(r?.kind==='x25' && x.type==='Clear Request' && x.cause===0 && x.diag===0x91,'X.25 Clear Request: причина и диагностика'); }
 // пачка: несколько пакетов подряд через генератор IQK.iqGen
 ev(`globalThis.G={p:{sr:'250000',fc:136975000,mode:'VDL2',off:500,lvl:-10,tone:1000,dev:5000,depth:.5,noise:-45,pocsag:'1200',ism:'OOK'}}; IQK.iqGen.init(G);
     globalThis.R2={p:{}}; IQK.vdl2Rx.init(R2);`);
-{ const regs=new Set(); let n=0;
-  for(let i=0;i<250000*4/1024;i++){
+{ const kinds={}; const regs=new Set();
+  for(let i=0;i<250000*5.5/1024;i++){
     const o=ev(`(()=>{ const g=IQK.iqGen.process(G,{},{block:1024,sr:250000}); const o=IQK.vdl2Rx.process(R2,{in:g.iq},{}); return o.rec||[]; })()`);
-    for(const r of o){ if(r.kind==='message'){ n++; regs.add(r.reg); } } }
-  ok(n>=4 && regs.size===2,'IQ Generator VDL2 → вся цепочка: '+n+' сообщений, борта '+[...regs]); }
+    for(const r of o){ kinds[r.kind]=(kinds[r.kind]||0)+1; if(r.kind==='message') regs.add(r.reg); } }
+  ok(kinds.message>=3 && kinds.xid>=2 && kinds.x25>=3 && regs.size===2,'IQ Generator VDL2 → вся цепочка: '+JSON.stringify(kinds)+', борта '+[...regs]); }
 // ложные срабатывания: чистый шум не даёт кадров
 { const L=250000*3, re=new Float32Array(L), im=new Float32Array(L); for(let i=0;i<L;i++){ re[i]=.2*gauss(); im[i]=.2*gauss(); }
   const r=decode({re,im},250000);

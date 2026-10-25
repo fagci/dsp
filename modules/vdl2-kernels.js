@@ -155,7 +155,7 @@ function vdl2Addr(b,o){
 }
 const vdl2Hex=(b,from,to)=>{ let s=''; for(let i=from;i<to;i++) s+=(b[i]<16 ? '0' : '')+b[i].toString(16); return s; };
 // кадр AVLC (с FCS) → запись или null (короткий / FCS не сошёлся)
-function vdl2Avlc(b,meta){
+function vdl2Avlc(b,meta,cx){
   if(b.length<11) return null;
   if(vdl2Crc(b,b.length)!==0xF0B8) return null;
   const len=b.length-2;
@@ -167,18 +167,272 @@ function vdl2Avlc(b,meta){
   const body=b.subarray(9,len);
   let kind='avlc', text='';
   if((lcf&3)===1){ r.frame='S'; r.cmd=VDL2_S_CMD[(lcf>>2)&3]; r.rseq=(lcf>>5)&7; r.pf=(lcf>>4)&1; text=r.cmd; }
-  else if((lcf&3)===3){ const mf=(lcf>>2)&0x3b; r.frame='U'; r.cmd=VDL2_U_CMD[mf]||'0x'+mf.toString(16); r.pf=(lcf>>4)&1; text=r.cmd; }
+  else if((lcf&3)===3){ const mf=(lcf>>2)&0x3b; r.frame='U'; r.cmd=VDL2_U_CMD[mf]||'0x'+mf.toString(16); r.pf=(lcf>>4)&1; text=r.cmd;
+    if(mf===0x2b){ const xi=vdl2Xid(body,src.status,r.pf); if(xi){ kind='xid'; r.xid=xi; text=xi.name+(xi.p.dest_airport ? ' → '+xi.p.dest_airport : '')+(xi.p.nearest_airport_id ? ' '+xi.p.nearest_airport_id : '')
+        +(xi.lat!=null && xi.gsif ? ' @'+vdl2LocStr({lat:xi.lat,lon:xi.lon}) : '')+(xi.p.frequency_support ? ' · '+xi.p.frequency_support : '')+(xi.p.lcr_cause ? ' · '+xi.p.lcr_cause : '')+(xi.p.autotune_frequency ? ' → '+xi.p.autotune_frequency : ''); } } }
   else { r.frame='I'; r.sseq=(lcf>>1)&7; r.rseq=(lcf>>5)&7; r.poll=(lcf>>4)&1; text='I-frame';
     if(body.length>3 && body[0]===0xff && body[1]===0xff && body[2]===0x01){
       const a=vdl2Acars(body.subarray(3));
       if(a){ kind='message'; Object.assign(r,a); text=a.reg+' '+a.label+(a.flight ? ' '+a.flight : '')+(a.txt ? ' · '+a.txt : ''); }
       else { kind='data'; r.proto='ACARS'; text='ACARS (broken)'; }
-    } else { kind='data'; r.proto=body.length ? 'X.25/ATN' : ''; text='data '+body.length+' B'; }
-  }
+    } else {
+      const x=vdl2X25(body,{asm:cx.asm, from:r.from, to:r.to, now:cx.now});
+      if(x){ kind='x25'; r.x25=x; text=vdl2X25Text(x); r.proto='X.25'; }
+      else { kind='data'; r.proto=body.length ? 'X.25/ATN' : ''; text='data '+body.length+' B'; }
+    } }
   r.kind=kind;
-  if(kind!=='message') r.hex=vdl2Hex(body,0,Math.min(body.length,96));
+  if(kind==='data' || kind==='avlc' || kind==='xid' || kind==='x25') r.hex=vdl2Hex(body,0,Math.min(body.length,96));
   r.text=r.from+'>'+r.to+' '+text;
   return r;
+}
+
+// ---- TLV и вспомогательное ----
+const vdl2U16=(b,o)=>(b[o]<<8)|b[o+1], vdl2U32=(b,o)=>((b[o]*16777216)+(b[o+1]<<16)+(b[o+2]<<8)+b[o+3]);
+const vdl2Ascii=b=>Array.from(b,c=>c>=32 && c<127 ? String.fromCharCode(c) : '.').join('');
+const vdl2HexS=b=>vdl2Hex(b,0,b.length);
+// список TLV с однобайтовой длиной; null — обрыв или нулевая длина (как в dumpvdl2)
+function vdl2Tlv(b){
+  const out=[]; let p=0;
+  while(b.length-p>=2){
+    const t=b[p], l=b[p+1]; p+=2;
+    if(l>b.length-p || l===0) return null;
+    out.push({t, d:b.subarray(p,p+l)}); p+=l;
+  }
+  return out;
+}
+const vdl2Hex24=a=>a.toString(16).toUpperCase().padStart(6,'0');
+const vdl2AddrList=d=>{ if(d.length%4) return null; const o=[]; for(let i=0;i<d.length;i+=4) o.push(vdl2Hex24(vdl2Addr(d,i).addr)); return o; };
+
+// ---- XID (ICAO 9776, таблица 5.12) ----
+const VDL2_XID_NAMES=[['',''],['XID_CMD_LCR','Link Connection Refused'],['XID_CMD_HO','Handoff Request / Broadcast Handoff'],['GSIF','Ground Station Information Frame'],
+  ['XID_CMD_LE','Link Establishment'],['',''],['XID_CMD_HO','Handoff Initiation'],['XID_CMD_LPM','Link Parameter Modification'],['',''],['',''],['',''],['',''],
+  ['XID_RSP_LE','Link Establishment Response'],['XID_RSP_LCR','Link Connection Refused Response'],['XID_RSP_HO','Handoff Response'],['XID_RSP_LPM','Link Parameter Modification Response']];
+const VDL2_LCR={0:'Bad local parameter',1:'Out of link layer resources',2:'Out of packet layer resources',3:'Terrestrial network not available',4:'Terrestrial network congestion',5:'Cannot support autotune',
+  6:'Station cannot support initiating handoff',0x7f:'Other unspecified local reason',0x80:'Bad global parameter',0x81:'Protocol violation',0x82:'Ground system out of resources',0xff:'Other unspecified system reason'};
+function vdl2Freq(d,o){            // 12 бит: (f+10000)·10 кГц, округление до 25 кГц; старшие 4 бита — поддерживаемые модуляции
+  const mods=d[o]>>4; let k=((vdl2U16(d,o)&0xfff)+10000)*10;
+  if(k%25) k=k+25-k%25;
+  return {mhz:k/1000, mods:(mods&2 ? ['VDL-M2'] : []).concat(mods&4 ? ['VDL-M3'] : [])};
+}
+const vdl2S12=v=>v&0x800 ? v-0x1000 : v;
+function vdl2Loc(d,o){ return {lat:vdl2S12(vdl2U16(d,o)>>4)/10, lon:vdl2S12(vdl2U16(d,o+1)&0xfff)/10}; }
+const vdl2LocStr=l=>Math.abs(l.lat).toFixed(1)+(l.lat<0 ? 'S' : 'N')+' '+Math.abs(l.lon).toFixed(1)+(l.lon<0 ? 'W' : 'E');
+const VDL2_XID_PUB={1:['param_set_id','Parameter set ID','a'],2:['procedure_classes','Procedure classes','x'],3:['hdlc_options','HDLC options','x'],5:['n1_downlink','N1-downlink','x'],6:['n1_uplink','N1-uplink','x'],
+  7:['k_downlink','k-downlink','x'],8:['k_uplink','k-uplink','x'],9:['timer_t1_downlink','Timer T1_downlink','x'],10:['counter_n2','Counter N2','x'],11:['timer_t2','Timer T2','x']};
+const VDL2_XID_VDL={0:['param_set_id','Parameter set ID','a'],2:['sqp','SQP','x'],4:['avlc_specific_options','AVLC specific options','x'],5:['expedited_sn_connection','Expedited SN connection','x'],
+  0x42:['timer_t4','Timer T4','x'],0x43:['mac_persistence','MAC persistence','x'],0x44:['counter_m1','Counter M1','x'],0x45:['timer_tm2','Timer TM2','x'],0x46:['timer_tg5','Timer TG5','x'],0x47:['timer_t3min','Timer T3min','x'],
+  0x49:['broadcast_connection','Broadcast connection','x'],0xC1:['airport_coverage','Airport coverage','x'],0xC3:['nearest_airport_id','Nearest airport ID','a'],0xC4:['atn_router_nets','ATN router NETs','x'],
+  0xC6:['timer_tg3','Timer TG3','x'],0xC7:['timer_tg4','Timer TG4','x'],0x83:['dest_airport','Destination airport','a']};
+function vdl2XidTag(t,d,o){
+  const PUB=o.pub, tab=PUB ? VDL2_XID_PUB : VDL2_XID_VDL;
+  if(!PUB){
+    if(t===0x01 && d.length>=1){ o.cm=d[0]; o.p.conn_mgmt='h='+(d[0]&1)+' r='+((d[0]>>1)&1)+' x='+((d[0]>>2)&1)+' v='+((d[0]>>3)&1); return; }
+    if(t===0x03 && d.length>=1){ o.p.xid_sequencing='seq '+(d[0]&7)+' retry '+(d[0]>>4); return; }
+    if(t===0x06 && d.length>=3){ const c=d[0]; o.p.lcr_cause=c+' ('+(VDL2_LCR[c]||'unknown')+') delay '+vdl2U16(d,1)+(d.length>3 ? ' data '+vdl2HexS(d.subarray(3)) : ''); return; }
+    if(t===0x81 && d.length>=1){ o.p.modulation_support=[(d[0]&2 ? 'VDL-M2' : ''),(d[0]&4 ? 'VDL-M3' : '')].filter(Boolean).join('+')||('0x'+d[0].toString(16)); return; }
+    if(t===0x82 || t===0x41 || t===0x48 || t===0xC5){ const l=vdl2AddrList(d); if(l){ o.p[{0x82:'alternate_ground_stations',0x41:'replacement_ground_stations',0x48:'gs_address_filter',0xC5:'system_mask'}[t]]=l.join(' '); return; } }
+    if(t===0x84 && d.length>=4){ const l=vdl2Loc(d,0); o.p.ac_location=vdl2LocStr(l)+' '+(d[3]*1000)+' ft'; o.lat=l.lat; o.lon=l.lon; return; }
+    if(t===0x40 && d.length>=2){ const f=vdl2Freq(d,0); o.p.autotune_frequency=f.mhz.toFixed(3)+' MHz'+(f.mods.length ? ' ('+f.mods.join('+')+')' : ''); o.freq=f.mhz; return; }
+    if(t===0xC0 && d.length%6===0){ const fl=[]; for(let i=0;i<d.length;i+=6){ const f=vdl2Freq(d,i); fl.push(f.mhz.toFixed(3)+' ('+vdl2Hex24(vdl2Addr(d,i+2).addr)+')'); }
+      o.p.frequency_support=fl.join(', '); o.freqs=fl.length; return; }
+    if(t===0xC8 && d.length>=3){ const l=vdl2Loc(d,0); o.p.gs_location=vdl2LocStr(l); o.lat=l.lat; o.lon=l.lon; return; }
+  }
+  const e=tab[t];
+  if(e) o.p[e[0]]=e[2]==='a' ? vdl2Ascii(d) : vdl2HexS(d);
+  else o.p['tag_'+t.toString(16)]=vdl2HexS(d);
+}
+// информационное поле XID → {name, descr, p, …} или null
+function vdl2Xid(b,cr,pf){
+  if(b.length<7 || b[0]!==0x82) return null;
+  let p=1, pubSeen=false, vdlSeen=false;
+  const o={p:{}, cm:0xff};
+  while(b.length-p>=3){
+    const gid=b[p], gl=vdl2U16(b,p+1); p+=3;
+    if(gl>b.length-p) return null;
+    if(gid===0x80 || gid===0xF0){
+      if(gid===0x80 ? pubSeen : vdlSeen) return null;
+      const tl=vdl2Tlv(b.subarray(p,p+gl));
+      if(tl===null) return null;
+      if(gid===0x80) pubSeen=true; else vdlSeen=true;
+      o.pub=gid===0x80;
+      for(const t of tl) vdl2XidTag(t.t,t.d,o);
+    }
+    p+=gl;
+  }
+  if(!vdlSeen) return null;
+  const type=(cr<<3)|(pf<<2)|(((o.cm>>0)&1)<<1)|((o.cm>>1)&1), nm=VDL2_XID_NAMES[type];
+  delete o.pub; delete o.cm;
+  return {name:nm[0]||('XID '+type), descr:nm[1], gsif:nm[0]==='GSIF', ...o};
+}
+
+// ---- X.25 (ISO 8208, режим mod 8) / SNDCF / CLNP / COTP / ES-IS ----
+const VDL2_X25_NAMES={0x0b:'Call Request',0x0f:'Call Accepted',0x13:'Clear Request',0x17:'Clear Confirm',0x00:'Data',0x01:'Receive Ready',0x09:'Receive Reject',0x1b:'Reset Request',0x1f:'Reset Confirm',0xfb:'Restart Request',0xff:'Restart Confirm',0xf1:'Diagnostics'};
+const VDL2_COTP_NAMES={0xe0:'CR',0xd0:'CC',0x80:'DR',0xc0:'DC',0xf0:'DT',0x10:'ED',0x60:'AK',0x20:'EA',0x50:'RJ',0x70:'ER'};
+const VDL2_CLNP_ERR={0:'Reason not specified',1:'Protocol procedure error',2:'Incorrect checksum',3:'PDU discarded due to congestion',4:'Header syntax error',5:'Segmentation needed but not permitted',6:'Incomplete PDU received',
+  7:'Duplicate option',8:'Unknown PDU type',0x80:'Destination address unreachable',0x81:'Destination address unknown',0xa0:'Lifetime expired in transit',0xa1:'Lifetime expired during reassembly',0xb0:'Unsupported option'};
+// сборка фрагментов по смещению: возвращает целый буфер или null (пока не хватает)
+function vdl2Frag(map,key,off,data,total,now){
+  let e=map.get(key);
+  if(!e || now-e.t>10000){ e={t:now, parts:new Map(), total}; map.set(key,e); }
+  e.t=now; e.parts.set(off,data);
+  if(total>0) e.total=total;
+  if(e.total){
+    let n=0; const buf=new Uint8Array(e.total);
+    for(const [o,d] of e.parts){ if(o+d.length<=e.total){ buf.set(d,o); n+=d.length; } }
+    if(n>=e.total){ map.delete(key); return buf; }
+  }
+  if(map.size>64) for(const [k,v] of map) if(now-v.t>10000) map.delete(k);
+  return null;
+}
+function vdl2Nsap(d){ return vdl2HexS(d); }
+// ES-IS: заголовок 9 байт, NET, параметры
+function vdl2Esis(b,x){
+  if(b.length<10 || b[2]!==1) return false;
+  const type=b[4]&0x1f, hold=vdl2U16(b,5);
+  if(type!==2 && type!==4) return false;
+  const nl=b[9]; if(b.length<10+nl) return false;
+  x.esis={type:type===2 ? 'ES Hello' : 'IS Hello', hold, net:vdl2Nsap(b.subarray(10,10+nl))};
+  return true;
+}
+// COTP: цепочка TPDU подряд; возвращает массив TPDU и «хвост» пользовательских данных
+function vdl2Cotp(b,x){
+  const list=[]; let p=0, ud=null;
+  while(b.length-p>=4){
+    const li=b[p]; if(li===0 || li===255 || b.length-p-1<li) break;
+    const code=b[p+1], hi=code&0xf0, c=hi===0xe0||hi===0xd0||hi===0x60||hi===0x50 ? hi : hi===0xf0 ? (code&0xfe) : code;
+    const t={type:VDL2_COTP_NAMES[c&0xf0]||('0x'+c.toString(16)), dst:vdl2U16(b,p+2)};
+    let final=false;
+    if(c===0xe0||c===0xd0||c===0x80){ if(li<6) break; t.src=vdl2U16(b,p+4); if(c===0x80) t.reason=b[p+6]; else t.cls=b[p+6]>>4; final=true; }
+    else if(c===0xf0||c===0x10){ if(li&1){ if(li<7) break; t.eot=b[p+4]>>7; t.seq=vdl2U32(b,p+4)&0x7fffffff; } else { if(li<4) break; t.eot=b[p+4]>>7; t.seq=b[p+4]&0x7f; } final=true; }
+    else if(c===0x60||c===0x20){ if(li&1){ if(li<7) break; t.seq=vdl2U32(b,p+4)&0x7fffffff; } else { if(li<4) break; t.seq=b[p+4]&0x7f; } }
+    list.push(t);
+    p+=li+1;
+    if(final){ if(p<b.length) ud=b.subarray(p); else if(t.type==='DT') ud=new Uint8Array(0); p=b.length; break; }
+  }
+  if(!list.length) return false;
+  x.cotp=list; if(ud && ud.length) x.data=vdl2Hex(ud,0,Math.min(ud.length,96)); x.dataLen=ud ? ud.length : 0;
+  return true;
+}
+function vdl2Transport(b,x){          // после заголовка CLNP
+  if(!b.length) return;
+  if(b[0]===0x82){ if(vdl2Esis(b,x)) return; }
+  else if(b[0]===0x85){ x.idrp=true; x.data=vdl2Hex(b,0,Math.min(b.length,96)); x.dataLen=b.length; return; }
+  else if(vdl2Cotp(b,x)) return;
+  x.data=vdl2Hex(b,0,Math.min(b.length,96)); x.dataLen=b.length;
+}
+function vdl2Clnp(b,x,ctx){
+  if(b.length<9 || b[1]===255 || b[1]>b.length || b[2]!==1) return false;
+  const hl=b[1], type=b[4]&0x1f, sp=b[4]>>7, ms=(b[4]>>6)&1;
+  let p=9;
+  const rd=()=>{ if(p>=hl) return null; const l=b[p]; if(p+1+l>hl) return null; const d=b.subarray(p+1,p+1+l); p+=1+l; return d; };
+  const dst=rd(), src=dst&&rd();
+  if(!dst || !src) return false;
+  const c={compressed:false, lifetime:b[3]/2, dst:vdl2Nsap(dst), src:vdl2Nsap(src), type:type===0x1c ? 'DT' : type===0x1d ? 'MD' : type===1 ? 'ER' : 'type 0x'+type.toString(16)};
+  let id=0, off=0, total=0;
+  if(sp){ if(hl-p<6) return false; id=vdl2U16(b,p); off=vdl2U16(b,p+2); total=vdl2U16(b,p+4); p+=6; c.pduId=id; c.offset=off; c.total=total; }
+  const opt=vdl2Tlv(b.subarray(p,hl));
+  if(opt) for(const t of opt){ if(t.t===5) c.lref=vdl2HexS(t.d); else if(t.t===0xcd) c.priority=t.d[0]; else if(t.t===0xc1 && t.d.length===2) c.discard=(VDL2_CLNP_ERR[t.d[0]]||t.d[0]); }
+  x.clnp=c;
+  let pay=b.subarray(hl);
+  if(type===1){ const y={}; vdl2Clnp(pay,y,ctx); if(y.clnp) x.errPdu=y.clnp; return true; }
+  if(!pay.length) return true;
+  if(sp){ pay=vdl2Frag(ctx.asm.clnp,ctx.from+'>'+ctx.to+'#'+id,off,pay,total,ctx.now); if(!pay){ c.reasm='in progress'; return true; } c.reasm='complete'; }
+  vdl2Transport(pay,x);
+  return true;
+}
+function vdl2ClnpC(b,x,ctx){
+  if(b.length<4) return false;
+  const type=b[0]>>4, exp=b[3]>>7, derived=type===6||type===7||type===9||type===10, segp=type===1||type===3||derived;
+  let hl=4+(exp ? 1 : 0)+(segp ? 2 : 0)+(derived ? 4 : 0);
+  if(b.length<hl) return false;
+  let p=4;
+  const c={compressed:true, prio:b[0]&0xf, lifetime:b[1]/2, flags:b[2], lref:exp ? ((b[3]&0x7f)<<8)|b[p++] : b[3]&0x7f};
+  let id=0, off=0, total=0;
+  if(segp){ id=vdl2U16(b,p); p+=2; c.pduId=id; }
+  if(derived){ off=vdl2U16(b,p); total=vdl2U16(b,p+2); p+=4; c.offset=off; c.total=total; }
+  x.clnp=c;
+  let pay=b.subarray(p);
+  if(derived){
+    if(off+pay.length>total || !pay.length) return false;
+    const whole=vdl2Frag(ctx.asm.clnp,ctx.from+'>'+ctx.to+'#c'+id,off,pay,total,ctx.now);
+    if(!whole){ c.reasm='in progress'; return true; }
+    c.reasm='complete'; pay=whole;
+  }
+  vdl2Transport(pay,x);
+  return true;
+}
+function vdl2UserData(b,x,ctx){
+  if(!b.length) return;
+  const proto=b[0], t=proto>>4;
+  if(proto===0x81){ if(vdl2Clnp(b,x,ctx)) return; }
+  else if(proto===0x82){ if(vdl2Esis(b,x)) return; }
+  else if(t<4 || t===6 || t===7 || t===9 || t===10){ if(vdl2ClnpC(b,x,ctx)) return; }
+  else if(proto===0xe0 && b.length>=3){ x.sndcfErr={code:b[1], lref:b[2]}; if(b.length>3){ const y={}; vdl2UserData(b.subarray(3),y,ctx); x.errPdu=y.clnp||y; } return; }
+  x.data=vdl2Hex(b,0,Math.min(b.length,96)); x.dataLen=b.length;
+}
+function vdl2X25(b,ctx){
+  if(b.length<3 || (b[0]>>4)!==1) return null;
+  const tv=b[2], x={ch:((b[0]&15)<<8)|b[1]};
+  let type, p=3;
+  if((tv&1)===0){ type=0; x.sseq=(tv>>1)&7; x.more=(tv>>4)&1; x.rseq=(tv>>5)&7; }
+  else { const t=tv&0x1f; type=(t===1||t===9) ? t : tv; if(t===1||t===9) x.rseq=tv>>5; }
+  const nm=VDL2_X25_NAMES[type];
+  if(nm===undefined) return null;
+  x.type=nm;
+  if(type===0x0b || type===0x0f){
+    if(b.length<=p) return null;
+    const cl=b[p]>>4, cd=b[p]&15, nn=cl+cd, nb=(nn+1)>>1;
+    if(b.length<p+1+nb) return null;
+    let digs=''; for(let i=0;i<nn;i++){ const by=b[p+1+(i>>1)]; digs+=((i&1) ? by&15 : by>>4).toString(16); }
+    x.called=digs.slice(0,cd); x.calling=digs.slice(cd);
+    p+=1+nb;
+    if(b.length<=p) return null;
+    const fl=b[p]; if(b.length<p+1+fl) return null;
+    if(fl) x.facilities=vdl2Hex(b,p+1,p+1+fl);
+    p+=1+fl;
+    if(type===0x0b){
+      if(b.length<p+2 || b[p]!==0xc1) return null;
+      const sl=b[p+1]; if(sl<4 || b.length<p+2+sl || b[p+2]!==1) return null;
+      x.compression=b[p+5]; p+=2+sl;
+    } else { if(b.length<=p) return null; x.compression=b[p++]; }
+    vdl2UserData(b.subarray(p),x,ctx);
+  } else if(type===0x00){
+    const pay=b.subarray(p), key=ctx.from+'>'+ctx.to+'#x';
+    const q=ctx.asm.x25, pend=q.get(key);
+    let whole=null;
+    if(x.more){
+      if(pend && ctx.now-pend.t<3000 && pend.next===x.sseq){ pend.parts.push(pay); pend.next=(x.sseq+1)&7; pend.t=ctx.now; }
+      else q.set(key,{parts:[pay], next:(x.sseq+1)&7, t:ctx.now});
+      x.reasm='in progress';
+    } else if(pend && ctx.now-pend.t<3000 && pend.next===x.sseq){
+      pend.parts.push(pay); q.delete(key);
+      let n=0; for(const a of pend.parts) n+=a.length;
+      whole=new Uint8Array(n); n=0; for(const a of pend.parts){ whole.set(a,n); n+=a.length; }
+      x.reasm='complete';
+    } else { q.delete(key); whole=pay; }
+    if(whole) vdl2UserData(whole,x,ctx);
+  } else if(type===0x13 || type===0x1b || type===0xfb){
+    if(b.length<=p) return null;
+    x.cause=(b[p]&0x80) ? 0 : b[p]; p++;
+    if(b.length>p) x.diag=b[p];
+  } else if(type===0xf1){
+    if(b.length<=p) return null;
+    x.diag=b[p++]; if(b.length>p) x.diagData=vdl2Hex(b,p,Math.min(b.length,p+32));
+  }
+  return x;
+}
+// текст слоёв X.25 → строка для журнала
+function vdl2X25Text(x){
+  const a=['X.25 '+x.type+(x.sseq!=null ? ' S'+x.sseq+(x.more ? '+' : '')+' R'+x.rseq : x.rseq!=null ? ' R'+x.rseq : '')+' ch'+x.ch];
+  if(x.called!=null) a.push('called '+x.called+' calling '+x.calling);
+  if(x.cause!=null) a.push('cause 0x'+x.cause.toString(16)+(x.diag!=null ? '/0x'+x.diag.toString(16) : ''));
+  if(x.clnp){ const c=x.clnp; a.push('CLNP'+(c.compressed ? 'c lref '+c.lref : ' '+c.type+' '+c.src+'→'+c.dst)+(c.reasm ? ' ('+c.reasm+')' : '')); }
+  if(x.esis) a.push('ES-IS '+x.esis.type+' NET '+x.esis.net);
+  if(x.cotp) a.push('COTP '+x.cotp.map(t=>t.type+(t.seq!=null ? ' #'+t.seq+(t.eot ? '/EOT' : '') : '')).join('+'));
+  if(x.sndcfErr) a.push('SNDCF error '+x.sndcfErr.code);
+  if(x.idrp) a.push('IDRP');
+  if(x.dataLen) a.push(x.dataLen+' B');
+  return a.join(' › ');
 }
 // блок ACARS внутри AVLC: …, ETX/ETB, BCS (2 байта), DEL
 function vdl2Acars(b){
@@ -342,7 +596,7 @@ function vdl2Sample(n,v,re,im,recs,now){
     if(frames){
       const meta={rssi:+(10*Math.log10(Math.max(v.pwr,1e-9))).toFixed(1), df:Math.round(v.dphi*VDL2_BAUD/(2*Math.PI)), fixed:v.fixes};
       for(const f of frames){
-        const r=vdl2Avlc(f,meta);
+        const r=vdl2Avlc(f,meta,{asm:v.asm, now});
         if(r){ n.frames++; v.cnt.good++; if(v.fixes) n.fixed++; if(r.kind==='message') n.acars++; recs.push(r); n.last=now;
           n.recent.push(new Date(now).toTimeString().slice(0,8)+' '+r.text.slice(0,100)); if(n.recent.length>20) n.recent.shift(); }
         else v.cnt.badFcs++;
@@ -355,7 +609,7 @@ IQK.vdl2Rx={
   init(n){
     n.key=''; n.frames=0; n.fixed=0; n.acars=0; n.last=0; n.recent=[]; n.rt=0; n.ui=null;
     n.vd={bs:vdl2Bs(32768), sb:new Float64Array(VDL2_SBL), sbi:0, st:{lfsr:0}, prevPhi:0, dphi:0, prevDphi:0, mag:0,
-      cnt:{bursts:0, good:0, badHdr:0, badFec:0, badStuff:0, badFcs:0}};
+      cnt:{bursts:0, good:0, badHdr:0, badFec:0, badStuff:0, badFcs:0}, asm:{x25:new Map(), clnp:new Map()}};
     vdl2Reset(n.vd);
   },
   process(n,I){
@@ -414,12 +668,55 @@ function vdl2AcarsBytes(m,k){
   by.push(crc&0xFF,crc>>8,0x7f);
   return by;
 }
-// кадр I с ACARS (адреса — {addr,type,status}) → байты с FCS
-function vdl2BuildFrame(dst,src,sseq,rseq,payload){
-  const b=[...vdl2AddrBytes(dst),...vdl2AddrBytes(src),((rseq&7)<<5)|((sseq&7)<<1),...payload];
+// кадр AVLC (адреса — {addr,type,status}, lcf — управляющий байт) → байты с FCS
+function vdl2BuildFrame(dst,src,sseq,rseq,payload,lcf){
+  const b=[...vdl2AddrBytes(dst),...vdl2AddrBytes(src),lcf!=null ? lcf : ((rseq&7)<<5)|((sseq&7)<<1),...payload];
   const fcs=vdl2Crc(b,b.length)^0xFFFF;
   b.push(fcs&0xFF,fcs>>8);
   return Uint8Array.from(b);
+}
+const vdl2Tl=(t,d)=>[t,d.length,...d];
+const vdl2Asc=s=>Array.from(s,c=>c.charCodeAt(0));
+const vdl2LocB=(lat,lon)=>{ const a=Math.round(lat*10)&0xfff, o=Math.round(lon*10)&0xfff; return [a>>4,((a&15)<<4)|(o>>8),o&255]; };
+const vdl2FreqB=(mhz,mods)=>{ const f=(Math.floor(mhz*100)-10000)&0xfff; return [(mods<<4)|(f>>8),f&255]; };
+function vdl2XidBytes(pub,vdl){ const g=(id,t)=>t.length ? [id,t.length>>8,t.length&255,...t] : []; return [0x82,...g(0x80,pub),...g(0xF0,vdl)]; }
+// X.25: заголовок (канал 1), данные / Call Request
+const vdl2X25Hdr=(type)=>[0x10,0x01,type];
+const vdl2X25Data=(sseq,rseq,more,pay)=>[...vdl2X25Hdr(((rseq&7)<<5)|((more ? 1 : 0)<<4)|((sseq&7)<<1)),...pay];
+const vdl2Clnp0=(src,dst,id,off,total,data)=>{          // полный CLNP DT с сегментацией
+  const hl=9+1+dst.length+1+src.length+6;
+  return [0x81,hl,1,0x3c,0x9c,(hl+data.length)>>8,(hl+data.length)&255,0,0,dst.length,...dst,src.length,...src,id>>8,id&255,off>>8,off&255,total>>8,total&255,...data];
+};
+const VDL2_GS=0x1B4002, VDL2_AC=0x4840D6;
+const VDL2_NSAP_GS=[0x47,0x00,0x27,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xfe];
+const VDL2_NSAP_AC=[0x47,0x00,0x27,0x02,0x00,0x00,0x00,0x00,0x48,0x40,0xd6,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01];
+// сценарии тестового эфира: ACARS (3 сообщения), маяк GSIF, XID Link Establishment, X.25 Call Request + ES-IS, данные X.25 → CLNP (сжатый) → COTP, фрагментированный полный CLNP
+function vdl2SimFrames(k){
+  const ac={addr:VDL2_AC,type:1,status:0}, all={addr:0xFFFFFF,type:7,status:0}, G={addr:VDL2_GS,type:4,status:0};
+  const sc=k%9;
+  if(sc<3){ const m=VDL2_SIM[sc], pay=[0xff,0xff,0x01,...vdl2AcarsBytes(m.text,k)];
+    return [vdl2BuildFrame({addr:m.to,type:m.to===VDL2_GS ? 4 : 1,status:0},{addr:m.from,type:m.from===VDL2_GS ? 4 : 1,status:0},k&7,(k+1)&7,pay)]; }
+  if(sc===3){            // GSIF
+    const vdl=[...vdl2Tl(0,vdl2Asc('V')),...vdl2Tl(0xC8,vdl2LocB(52.3,4.8)),...vdl2Tl(0xC3,vdl2Asc('EHAM')),
+      ...vdl2Tl(0xC0,[...vdl2FreqB(136.975,2),...vdl2AddrBytes({addr:VDL2_GS,type:4,status:0}),...vdl2FreqB(136.725,2),...vdl2AddrBytes({addr:VDL2_GS,type:4,status:0})]),
+      ...vdl2Tl(0x81,[2])];
+    return [vdl2BuildFrame(all,G,0,0,vdl2XidBytes(vdl2Tl(1,vdl2Asc('A')),vdl),0xAF)]; }
+  if(sc===4){            // XID_CMD_LE от борта: P=1, h=0 r=0
+    const vdl=[...vdl2Tl(0,vdl2Asc('V')),...vdl2Tl(1,[0x00]),...vdl2Tl(3,[0x01]),...vdl2Tl(0x81,[2]),...vdl2Tl(0x83,vdl2Asc('EDDF')),...vdl2Tl(0x84,[...vdl2LocB(50.1,8.6),12])];
+    return [vdl2BuildFrame({addr:VDL2_GS,type:4,status:0},ac,0,0,vdl2XidBytes(vdl2Tl(1,vdl2Asc('A')),vdl),0xBF)]; }
+  if(sc===5){            // X.25 Call Request с SNDCF и ES-IS Hello в данных
+    const net=VDL2_NSAP_AC, esis=[0x82,9+1+net.length,1,0,4,0x03,0x84,0,0,net.length,...net];
+    const pay=[...vdl2X25Hdr(0x0b),0x44,0x12,0x34,0x56,0x78,0x00,0xc1,0x04,0x01,0x00,0x00,0x01,...esis];
+    return [vdl2BuildFrame({addr:VDL2_GS,type:4,status:0},ac,k&7,(k+1)&7,pay)]; }
+  if(sc===6){            // данные: X.25 → сжатый CLNP (тип 1: сегментация разрешена, lref 5) → COTP DT
+    const pay=[...vdl2X25Data(0,1,false,[0x10,0x3c,0x00,0x05,0x00,0x07,0x04,0xf0,0x00,0x01,0x80,0xde,0xad,0xbe,0xef])];
+    return [vdl2BuildFrame({addr:VDL2_GS,type:4,status:0},ac,k&7,(k+1)&7,pay)]; }
+  if(sc===7){            // полный CLNP, два сегмента в двух пакетах X.25 (more-бит)
+    const data=[0x04,0xf0,0x00,0x01,0x80,0x01,0x02,0x03,0x04,0x05], total=data.length;
+    const f1=vdl2Clnp0(VDL2_NSAP_AC,VDL2_NSAP_GS,0x1234,0,total,data.slice(0,5)), f2=vdl2Clnp0(VDL2_NSAP_AC,VDL2_NSAP_GS,0x1234,5,total,data.slice(5));
+    return [vdl2BuildFrame({addr:VDL2_GS,type:4,status:0},ac,0,0,vdl2X25Data(0,0,false,f1)), vdl2BuildFrame({addr:VDL2_GS,type:4,status:0},ac,1,0,vdl2X25Data(1,0,false,f2))]; }
+  // X.25 Clear Request: причина 0, диагностика 0x91
+  return [vdl2BuildFrame(ac,{addr:VDL2_GS,type:4,status:0},k&7,(k+1)&7,[...vdl2X25Hdr(0x13),0x00,0x91])];
 }
 // кадры (байты) → индексы разностной фазы (0…7) пакета, включая преамбулу: [символы фазы]
 function vdl2BuildBurst(frames){
@@ -509,10 +806,7 @@ function vdl2Generate(n,sr,N){
   const re=new Float32Array(N), im=new Float32Array(N);
   for(let i=0;i<N;i++){
     if(!g.buf || g.pos>=g.buf[0].length){
-      const m=VDL2_SIM[g.k%VDL2_SIM.length];
-      const pay=[0xff,0xff,0x01,...vdl2AcarsBytes(m.text,g.k)];
-      const fr=vdl2BuildFrame({addr:m.to,type:m.to===0x1B4002 ? 4 : 1,status:0},{addr:m.from,type:m.from===0x1B4002 ? 4 : 1,status:0},g.k&7,(g.k+1)&7,pay);
-      g.buf=vdl2Modulate(vdl2BuildBurst([fr]),sr,Math.round(.05*VDL2_BAUD),Math.round(.4*VDL2_BAUD)); g.pos=0; g.k++;
+      g.buf=vdl2Modulate(vdl2BuildBurst(vdl2SimFrames(g.k)),sr,Math.round(.05*VDL2_BAUD),Math.round(.4*VDL2_BAUD)); g.pos=0; g.k++;
     }
     re[i]=g.buf[0][g.pos]; im[i]=g.buf[1][g.pos]; g.pos++;
   }
