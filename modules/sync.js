@@ -60,12 +60,13 @@ async function syScan(){
   }
   for(const name of await ListDB.listNames()){
     if(syHidden(name)) continue;
-    for(const it of await ListDB.list(name)){
+    // страницами и без хранения записей целиком: списки по десятки тысяч строк иначе подвешивают главный поток (рвётся звук SDR) и держат десятки МБ
+    await ListDB.each(name,async it=>{
       let uid=it.uid;
       if(!uid){ uid=syLegacyUid(it.listName,it.name,JSON.stringify(it.fields)); await ListDB.update(it.id,{uid,modified:it.modified||it.created||0}); it.uid=uid; }
       const id='t:'+uid, m=it.modified||it.created||0;
-      man.set(id,{m,d:0,s:0}); idx.set(id,{k:'t',lid:it.id,m,it});
-    }
+      man.set(id,{m,d:0,s:0}); idx.set(id,{k:'t',lid:it.id,m});
+    });
     const meta=await ListDB.getMeta(name);
     if(meta){ const m=meta.modified||1; man.set('m:'+name,{m,d:0,s:0}); idx.set('m:'+name,{k:'m',m,name,meta}); }
   }
@@ -91,7 +92,7 @@ const syStore={
       const path=(await FileStore.path(r.folderId)).map(f=>f.name);
       return {head:await bkEnc({k:'f',id,space:r.space,path,name:r.name,mime:r.mime,meta:r.meta,created:r.created,modified:r.modified}),blob:r.blob};
     }
-    if(x.k==='t'){ const t=x.it; return {head:await bkEnc({k:'t',id,listName:t.listName,name:t.name,fields:t.fields,value:t.value,created:t.created,modified:x.m}),blob:null}; }
+    if(x.k==='t'){ const t=await ListDB.getOne(x.lid); if(!t) return null; return {head:await bkEnc({k:'t',id,listName:t.listName,name:t.name,fields:t.fields,value:t.value,created:t.created,modified:x.m}),blob:null}; }
     return {head:await bkEnc({k:'m',id,listName:x.name,meta:x.meta,modified:x.m}),blob:null};
   },
   async apply(h0,blob){
