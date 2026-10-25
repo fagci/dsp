@@ -6711,7 +6711,13 @@ const LDB_ROWS=2**32;
 const ListDB = (() => {
   let dbp = null, cur = null, chain = Promise.resolve();
   const sn = t => 'L'+t;
-  const reqP = rq => new Promise((res,rej)=>{ rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error); });
+  // результат запроса десериализуется на главном потоке при первом обращении к rq.result: большая таблица (десятки МБ) —
+  // сотни мс подвисания (звук SDR рвётся). Медленный результат пишем в консоль вместе со стеком вызывающего
+  const reqP = rq => { const st=new Error().stack; return new Promise((res,rej)=>{
+    rq.onsuccess=()=>{ const t=performance.now(), r=rq.result, dt=performance.now()-t;
+      if(dt>40) console.warn('[ListDB] медленный результат запроса: '+dt.toFixed(0)+' мс, хранилище '+(rq.source?.name||'?')+(Array.isArray(r)?', записей '+r.length:'')+'\n'+st);
+      res(r); };
+    rq.onerror=()=>rej(rq.error); }); };
   const doneP = tx => new Promise((res,rej)=>{ tx.oncomplete=()=>res(); tx.onerror=tx.onabort=()=>rej(tx.error||new Error('transaction aborted')); });
   const tables = db => [...db.objectStoreNames].filter(s=>/^L\d+$/.test(s));
   const maxT = db => Math.max(0,...tables(db).map(s=>+s.slice(1)));
