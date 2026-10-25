@@ -38,7 +38,7 @@ ok(rows.length===SIGCAT.length && rows.every(r=>r.length===8 && r[0]===r[1] && r
 const tsrc=rd('modules/table.js'), m=tsrc.match(/function tblPresetRows\(name\)\{[\s\S]*?\n\}/);
 ok(!!m,'tblPresetRows найден');
 const tctx=vm.createContext({BANDPLAN_PRESETS:{x:rows,y:[[1,2,'a',0,'','n','k']]}});
-vm.runInContext(m[0]+';globalThis.f=tblPresetRows;',tctx);
+vm.runInContext(rd('modules/bandmode-kernels.js')+m[0]+';globalThis.f=tblPresetRows;',tctx);   // правила demod / bw для планов без своих колонок
 const t=tctx.f('x');
 ok(['demod','bw','sr','branch','decoder'].every(k=>t.cols.includes(k)),'колонки ext в таблице: '+t.cols);
 ok(t.rows[0].demod==='IQ' && t.rows[0].lo===t.rows[0].hi,'значения строк');

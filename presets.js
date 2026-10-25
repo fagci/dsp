@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=108;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=109;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -194,6 +194,7 @@ const PRESET_CATS={
   'USB SDR: Find a Signal, Tune and Decode — Fully Automatic':'SDR Receivers',
   'Signal ID: Weak Signal in Noise, Frequency Range and Needed Bandwidth (Generator)':'Analysis & Measurement',
   'USB SDR: Follow a Signal — Tune, Bandwidth and Mode by the Signal ID':'SDR Receivers',
+  'USB SDR: Band Plan Autotune — Mode, Bandwidth and Gain by Range':'SDR Receivers',
   'ESP-SDR: ESP32 Spectrum':'SDR Receivers',
   'Measure: Modulation Meter — FM and AM (Generator)':'Analysis & Measurement',
   'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
@@ -1603,6 +1604,25 @@ lg.size.w=420; lg.size.h=280; applySize(lg);
 addEdge(g1.id,'iq',ad.id,'a'); addEdge(g2.id,'iq',ad.id,'b'); addEdge(ad.id,'out',sp.id,'in'); addEdge(ad.id,'out',ud.id,'in');
 addEdge(sp.id,'spec',sa.id,'spec'); addEdge(sp.id,'spec',si.id,'spec'); addEdge(si.id,'bands',sa.id,'bands');
 addEdge(si.id,'bands',ud.id,'sigs'); addEdge(ud.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('USB SDR: Band Plan Autotune — Mode, Bandwidth and Gain by Range', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Tune anywhere — the receiver sets demodulation, bandwidth and gain itself. The Table holds several band plans (FM broadcast, airband, marine, amateur by mode, PMR / LPD / CB, HF broadcast, and «Tuner / RTL-SDR gain by range»); its rows go to the plan input of the USB SDR.\n'+
+  'For every setting the most specific (narrowest) range under the tuned frequency wins: a CB or PMR channel beats the whole band, ADS-B 1090 beats the general gain. Demodulation and bandwidth come from the columns demod and bw, gain from the column gain — they may sit in different rows (mode from «Airband», gain from the gain plan). The values are applied when the range changes; a tweak by hand stays until the next range.\n'+
+  'Tap the spectrum (marker 1) or turn the dial: 100 MHz → WFM 180 kHz, 20 dB; 125 MHz → AM 10 kHz, 36 dB; 145.5 MHz → NFM 12.5 kHz, 38 dB; 7.1 MHz → LSB. Built-in plans get the columns from rules (name, note, frequency); in your own list add columns demod, bw (12.5k / 180 kHz) and gain, dB.\n'+
+  'The gain values are typical starting points: they depend on the antenna, cable, filters and neighbours on the air — copy the gain list into your own table and fix them.'});
+nt.size.w=860; nt.size.h=200; applySize(nt);
+const rx=addNode('rtlsdr',40,290,{sr:'1024000',auto:false,gainDb:30,demod:'WFM',freq:100000000});
+const tb=addNode('table',40,570,{list:'presets/Services/Airband',initial:false,
+  show:['presets/Broadcast/FM','presets/Services/Airband','presets/Services/Marine VHF','presets/Voice/CB 27 MHz (40 ch)','presets/Voice/PMR446 + LPD433 + FRS + GMRS + MURS + Freenet','presets/Amateur/By mode (IARU R1, RU)','presets/Broadcast/HF 5 kHz channels','presets/Tuner/RTL-SDR gain by range']});
+tb.size.w=380; tb.size.h=320; applySize(tb);
+const sa=addNode('sa',520,290,{auto:true,floor:-90,top:-20,split:.4});
+sa.size.w=700; sa.size.h=360; applySize(sa);
+const dc=addNode('dac',1260,290,{vol:.4});
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(sa.id,'f1',rx.id,'tuneFreq');
+addEdge(tb.id,'rows',rx.id,'plan'); addEdge(tb.id,'rows',sa.id,'bands');
+addEdge(rx.id,'audio',dc.id,'L'); addEdge(rx.id,'audio',dc.id,'R');
 markWiresDirty();
 });
 // Сквозная цепочка: источник (spec + iq) → Signal ID (где сигнал, какая полоса, чем декодировать) → сдвиг и прореживание канала → Universal Decoder

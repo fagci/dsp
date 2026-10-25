@@ -5169,6 +5169,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
   ins:[
         {n:'freq',t:'num'},
         {n:'sr',t:'num',tip:'sample rate, Hz: snaps to the nearest supported value (e.g. from a Table column of the signal catalog)'},
+        {n:'plan',t:'bands',tip:'band plan (Table rows): the most specific range under the tuned frequency sets demodulation, bandwidth (columns demod, bw) and gain (column gain)'},
         {n:'steerFreq',t:'num'},
         {n:'gainDb',t:'num'},
         {n:'demod',t:'val'},
@@ -5234,6 +5235,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'bw',t:'range',min:500,max:300000,step:100,d:190000,log:true,label:'bandwidth, Hz'},
     {n:'deemph',t:'select',opts:['50','75','off'],d:'50',label:'WFM de-emphasis, µs'},
     {n:'agc',t:'check',d:true,label:'AGC'},
+    {n:'planMode',t:'check',d:true,label:'band plan (plan input): set demodulation and bandwidth by the most specific range under the tuned frequency, when the range changes'},
+    {n:'planGain',t:'check',d:true,label:'band plan (plan input): set the gain by the most specific range that has a gain column (AGC off)'},
     // SAM: какую боковую слушать после когерентного детектора (обе — DSB, ISB — верхняя в L, нижняя в R)
     {n:'samSb',t:'select',opts:['DSB','USB','LSB','ISB'],d:'DSB',label:'SAM sideband (ISB: L upper, R lower)'},
     {n:'nb',t:'select',opts:['off','low','mid','high'],d:'off',label:'noise blanker'},
@@ -5359,6 +5362,25 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
       // каналы, чья частота не попадает в новую полосу, возвращаем к центру
       for(const ch of n.ch) if(ch.tuneFreq!=null && Math.abs(ch.tuneFreq-target-(n.dcOff||0))>half0) ch.tuneFreq=null;
     }
+    // band plan на входе plan: вид модуляции, полоса и усиление самой специфичной (узкой) строки под частотой канала 1 — для каждого признака своя;
+    // применяется при смене строки (перестройка в другой диапазон), правка руками после этого остаётся до следующей смены
+    if(Array.isArray(I.plan)){
+      if(I.plan!==n._planSrc){ n._planSrc=I.plan; n._planRows=bpNorm(I.plan); }
+      const f0=n.ch[0].tuneFreq ?? n.actualFreq ?? n.p.freq, pk=bpPick(n._planRows,f0), K=n._pk||(n._pk={});
+      const fresh=(a,row)=>{ const k=row ? row.key : ''; if(K[a]===k) return false; K[a]=k; return !!row; };
+      if(n.p.planMode!==false){
+        if(fresh('demod',pk.demod) && pk.demod.demod!==n.p.demod) setMod(n,'demod',pk.demod.demod);
+        if(fresh('bw',pk.bw)){
+          const mode=n.p.demod, lim=RTL_BW_LIMITS[mode];
+          if(lim){ const v=Math.round(clamp(pk.bw.bw,lim[0],lim[1])); n.p['if'+mode]=v; if(n.p.bw!==v) setMod(n,'bw',v); }
+        }
+      }
+      if(n.p.planGain!==false && fresh('gain',pk.gain)){
+        if(n.p.auto){ if(n.set?.auto) n.set.auto(false); else n.p.auto=false; }
+        setMod(n,'gainDb',clamp(pk.gain.gain,0,50));
+      }
+      n.planInfo=[pk.demod&&pk.demod.label, pk.gain&&pk.gain.label&&pk.gain.label!==pk.demod?.label ? 'gain: '+pk.gain.label : ''].filter(Boolean).join(' · ');
+    } else if(n._planSrc){ n._planSrc=null; n._pk=null; n.planInfo=''; }
     // gainDb/demod/bw — часто одновременно и подключены (например, с выбранной закладки), и хочется
     // покрутить руками поверх — setModWired (processing.js) даёт ручной правке победить, пока сам
     // провод не укажет на другое значение (та же идея, что у freq/steerFreq выше, общим хелпером).
@@ -5542,6 +5564,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
         ((n.underrunsWorker||n.underrunsOverflow||n.underrunsStarve)?
           ` · errors demod:${n.underrunsWorker||0} ovf:${n.underrunsOverflow||0} dry:${n.underrunsStarve||0}`:'')+
         (n.adcPk!=null ? ` · ADC pk ${n.adcPk.toFixed(1)} rms ${n.adcRms.toFixed(0)} dBFS` : '')+
+        (n.planInfo ? ` · plan: ${n.planInfo}` : '')+
         (sdrAdcOvl(n) ? ` · ⚠ OVERLOAD ${(100*n.adcOvlClip).toFixed(2)}% — reduce gain` : '')+
         (n.busy?' · …':'')+
         (n.dev?.kind==='file' ? ` · ${iqFmtTime(n.dev.pos/n.dev.rate)} / ${iqFmtTime(n.dev.total/n.dev.rate)}`+(n.dev.ended?' (end)':'') : '')+

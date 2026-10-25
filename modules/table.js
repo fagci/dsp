@@ -215,8 +215,10 @@ function tblSplit(name){ const i=name.indexOf('/'); return i<0 ? ['',name] : [na
 const tblToItem=(r,cl,virt)=>{ const f={}; for(const k of cl) if(k!=='name' && !virt?.has(k)) f[k]=r[k]??''; return {name:virt?.has('name') ? '' : String(r.name??''),fields:f}; };
 function tblPresetRows(name){
   const src=BANDPLAN_PRESETS[name], kd=src.some(r=>r[6]), nt=src.some(r=>r[5]);
-  const ext=[]; for(const r of src) if(r[7]) for(const k in r[7]) if(!ext.includes(k)) ext.push(k);   // r[7] — свои колонки записи (Protocols/Signal catalog: demod, bw, sr…)
-  const rows=src.map(([lo,hi,label,step,color,note,kind,x])=>{
+  // r[7] — свои колонки записи (Protocols/Signal catalog: demod, bw, sr…); у строк без них вид модуляции и полоса — по правилам (bandmode-kernels.js)
+  const src2=src.map(r=>r[7] ? r : (()=>{ const m=bpModeOf(r[2],r[5],r[6],r[0],r[1],name,r[3]); if(!m) return r; const a=r.slice(0,7); while(a.length<7) a.push(undefined); return [...a,m]; })());
+  const ext=[]; for(const r of src2) if(r[7]) for(const k in r[7]) if(!ext.includes(k)) ext.push(k);
+  const rows=src2.map(([lo,hi,label,step,color,note,kind,x])=>{
     const o={name:label,lo,hi,step:step||0,color:color||''};
     if(kd) o.kind=kind||'';
     if(nt) o.note=note||'';
