@@ -1684,8 +1684,9 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
   // снимок для диагностики «кривого» старта: что реально в регистрах тюнера (0x00–0x1f, как читает чип) и что считает теневая копия
   async function dump(){
     const hx=a=>Array.from(a,b=>b.toString(16).padStart(2,'0')).join(' ');
-    const r=await readRegBuffer(0x00,32);
-    return {hw:hx(r), shadow:hx(shadow), cal:calCap, calTries, lock:hasPllLock, band:curBand};
+    // за раз чип отдаёт не больше 8 байт: больше — пустой ответ
+    let hw=''; for(let a=0;a<32;a+=8){ try{ hw+=(a?' | ':'')+hx(await readRegBuffer(a,8)); }catch(e){ hw+=' err:'+e.message; break; } }
+    return {hw, shadow:hx(shadow), cal:calCap, calTries, lock:hasPllLock, band:curBand};
   }
   async function checkLock(){ await getPllLock(true); return hasPllLock; }
   // rfFreq — истинная целевая RF-частота (без добавленного IF), нужна только для выбора входа/нотчей у R828D
@@ -4797,7 +4798,7 @@ async function rtlLogTuner(n){
     n.busy=true;
     const d=await dev.tunerDump();
     n.tunerDump=d;
-    console.info('[rtlsdr] tuner dump ('+(n._startNo=(n._startNo||0)+1)+', first open of the session: '+!!n._firstOpenLog+') '+JSON.stringify({freq:n.actualFreq, gain:sdrGainArg(n), ...d}));
+    console.info('[rtlsdr] tuner dump ('+(n._startNo=(n._startNo||0)+1)+', first open of the session: '+!!n._firstOpenLog+') '+JSON.stringify({freq:n.actualFreq, gain:sdrGainArg(n), adcPk:n.adcPk, adcRms:n.adcRms, sr:n.sourceRate, ...d}));
   }catch(e){ console.warn('[rtlsdr] tuner dump failed:', e.message); }
   n.busy=false;
 }
