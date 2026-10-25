@@ -9,7 +9,7 @@ let bad=0; const ok=(c,m)=>{ if(!c){ bad++; console.error('FAIL: '+m); } };
 
 // ---- ядро: sidWeakFind / sidRefine / sidNeedBw ----
 const kc=vm.createContext({Math,Float32Array,Float64Array,Object,Array});
-vm.runInContext(rd('modules/sigid-kernels.js')+';globalThis.K={sidWeakFind,sidRefine,sidNeedBw,sidStdBw};',kc);
+vm.runInContext(rd('modules/sigid-kernels.js')+';globalThis.K={sidWeakFind,sidRefine,sidNeedBw,sidStdBw,sidDemodOf};',kc);
 const K=kc.K;
 let seed=12345; const rnd=()=>{ seed=(seed+0x6D2B79F5)|0; let t=Math.imul(seed^(seed>>>15),1|seed); t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; };   // mulberry32
 const gauss=()=>Math.sqrt(-2*Math.log(rnd()+1e-12))*Math.cos(2*Math.PI*rnd());
@@ -37,6 +37,8 @@ const car=spec(8192,64,[{a:5000,w:3,db:2}]); const rc=K.sidWeakFind(car,flat,1,8
 ok(rc.length===1 && Math.abs(rc[0].a-5001)<8,'узкая слабая несущая найдена');
 ok(K.sidStdBw(13e3)===15e3 && K.sidStdBw(11e3)===12.5e3 && K.sidStdBw(30e3)===30e3,'округление до стандартной ширины');
 ok(K.sidNeedBw(10e3,{bw:25e3})===25e3 && K.sidNeedBw(10e3,null)===12.5e3,'нужная полоса: каталог, иначе измеренная + запас');
+
+ok(K.sidDemodOf('NFM')==='NFM' && K.sidDemodOf('SSB')==='USB' && K.sidDemodOf('FSK')==='' && K.sidDemodOf('?')==='','вид сигнала → режим демодулятора');
 
 // ---- учёт диапазона: sidRangeCtx ----
 const m=rd('modules/sigid.js'), fn=m.match(/const SID_GENERIC=[\s\S]*?\n\}\n/);

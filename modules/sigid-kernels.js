@@ -40,6 +40,9 @@ function sidWeakFind(pw,fl,ia,ib,zthr,widths){
   for(const c of out) if(!keep.some(k=>c.a<=k.b0 && c.b>=k.a0)) keep.push(c);
   return keep;
 }
+// вид сигнала sigid → режим демодулятора USB SDR; '' — нечем слушать (цифровой: нужен IQ и декодер из каталога)
+const SID_DEMOD={NFM:'NFM',WFM:'WFM',AM:'AM',USB:'USB',LSB:'LSB',SSB:'USB',CW:'USB',CAR:'AM'};
+function sidDemodOf(t){ return SID_DEMOD[t]||''; }
 // g: {obw, fc}; cat — запись каталога сигналов (или null). Возвращает нужную ширину приёма, Гц
 function sidNeedBw(obw,cat){
   if(cat && cat.bw>0) return Math.max(cat.bw,0);

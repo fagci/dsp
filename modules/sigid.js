@@ -905,7 +905,7 @@ def({ id:'sigid', title:'Signal Type Identifier', cat:'Analysis', readout:true, 
     const top=n.sigs[0];
     const cat=top?.cls.cat;
     return {bands:n.labels, type:top? top.cls.tag : '', f:top? top.fc : null, conf:top? top.cls.conf : 0, count:n.sigs.length,
-      bw:top? (top.cls.need||sidNeedBw(top.obw,cat)) : null, tune:cat? cat.f : null, demod:cat? cat.demod : '', sr:cat? cat.sr : null, branch:cat? cat.branch : null, decoder:cat? cat.decoder : ''};
+      bw:top? (top.cls.need||sidNeedBw(top.obw,cat)) : null, tune:cat? cat.f : null, demod:cat? cat.demod : top? sidDemodOf(top.cls.t) : '', sr:cat? cat.sr : null, branch:cat? cat.branch : null, decoder:cat? cat.decoder : ''};
   },
   dispose:n=>{ if(n.worker){ n.worker.terminate(); n.worker=null; } },
   draw(n){ const r=n.el.querySelector('.readout');
