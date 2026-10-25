@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=104;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=105;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -187,6 +187,7 @@ const PRESET_CATS={
   'USB SDR: Channel Scan + Decoder Switch (digital voice / analog)':'SDR Receivers',
   'Signal Catalog: Pick a Type, the SDR Tunes and Decodes (USB SDR)':'SDR Receivers',
   'Signal Database: What Is It and How to Decode (USB SDR)':'SDR Receivers',
+  'Universal Decoder: One Node, Any Protocol (Generator)':'Digital Voice & Trunking',
   'Signal ID: Weak Signal in Noise, Frequency Range and Needed Bandwidth (Generator)':'Analysis & Measurement',
   'USB SDR: Follow a Signal — Tune, Bandwidth and Mode by the Signal ID':'SDR Receivers',
   'ESP-SDR: ESP32 Spectrum':'SDR Receivers',
@@ -1543,6 +1544,24 @@ const dc=addNode('dac',1100,260,{vol:.4});
 addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',si.id,'spec'); addEdge(si.id,'bands',sa.id,'bands');
 addEdge(si.id,'f',rx.id,'tuneFreq'); addEdge(si.id,'bw',rx.id,'bw'); addEdge(si.id,'demod',rx.id,'demod');
 addEdge(rx.id,'audio',dc.id,'L'); addEdge(rx.id,'audio',dc.id,'R');
+markWiresDirty();
+});
+preset('Universal Decoder: One Node, Any Protocol (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'One decoder node instead of a row of decoders with a switch. Universal Decoder (AIS, POCSAG, ISM 433, ACARS) takes the IQ of a channel and gives one stream of records with a «proto» field.\n'+
+  'Modes: manual — the protocol you pick; hint — the «hint» input names it (a decoder id, protocol or catalog kind: here from Signal Type Identifier, which knows the frequency range); auto — with no hint all protocols listen at once and the first to decode stays (it goes back to the search after «silence» ms). A hint that does not decode within «giveUp» ms is dropped until it changes.\n'+
+  'Change the generator: mode AIS / POCSAG / ACARS / ISM433 (the carrier frequency of the type: 161.975, 466.075, 131.55, 433.92 MHz) — the node picks the decoder itself. A new protocol is one entry in UDEC_REG (udec-kernels.js) and in the signal catalog.'});
+nt.size.w=820; nt.size.h=170; applySize(nt);
+const gn=addNode('iqGen',40,260,{sr:'1024000',fc:161975000,mode:'AIS',off:0,lvl:-20,noise:-60});
+const sp=addNode('iqSpec',300,260,{size:'8192',avg:'16'});
+const si=addNode('sigid',300,400,{period:2,thr:8,maxSig:4,rangeCtx:true});
+si.size.w=480; si.size.h=240; applySize(si);
+const ud=addNode('udec',820,260,{mode:'auto',hold:6000,giveUp:8000});
+ud.size.w=480; ud.size.h=280; applySize(ud);
+const sa=addNode('sa',820,580,{auto:true,floor:-110,top:-40,split:.4});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+addEdge(gn.id,'iq',sp.id,'in'); addEdge(gn.id,'iq',ud.id,'in'); addEdge(sp.id,'spec',si.id,'spec'); addEdge(sp.id,'spec',sa.id,'spec');
+addEdge(si.id,'bands',sa.id,'bands'); addEdge(si.id,'decoder',ud.id,'hint');
 markWiresDirty();
 });
 preset('Measure: Cross-Correlator — Delay Between Two Receivers (Generator)', function(){
