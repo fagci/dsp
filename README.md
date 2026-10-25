@@ -1518,28 +1518,8 @@ location ~ ^/proxy/(?<sch>https?):/+(?<hst>[^/]+)(?<pth>/.*)?$ {
 
 This is an open proxy to any host: restrict it (`allow`/`deny`, basic auth, or a whitelist of hosts) before exposing it. Lists need the CORS header, Kiwi only the WebSocket upgrade.
 
-## Proxy setup (nginx)
-
-The **CORS proxy** from the settings panel is used for list downloads (Satellites, Station Schedule, SDR Receivers Directory…) and for the **KiwiSDR** node. For Kiwi the address `http://host:port/<ts>/SND` is substituted into the proxy URL the same way (`{url}` is replaced by the encoded address, otherwise the address is appended) and the scheme `http(s)` becomes `ws(s)`, so the proxy must pass WebSocket. Without a proxy the node connects to `ws://host:port` directly, which an https page cannot do (mixed content).
-
-nginx, setting `https://example.com/proxy/` (the address is appended):
-
-```nginx
-# http {} block
-map $http_upgrade $connection_upgrade { default upgrade; '' close; }
-
-# server {} block
-location ~ ^/proxy/(?<sch>https?):/+(?<hst>[^/]+)(?<pth>/.*)?$ {
-    resolver 1.1.1.1 ipv6=off;
-    proxy_pass $sch://$hst$pth$is_args$args;
-    proxy_http_version 1.1;
-    proxy_set_header Host $hst;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $connection_upgrade;
-    proxy_ssl_server_name on;
-    proxy_read_timeout 3600s;
-    add_header Access-Control-Allow-Origin * always;
-}
-```
-
-This is an open proxy to any host: restrict it (`allow`/`deny`, basic auth, or a whitelist of hosts) before exposing it. Lists need the CORS header, Kiwi only the WebSocket upgrade.
+Pitfalls:
+- The `location` prefix must match the one set in Settings (`/proxy/`, `/p/`…).
+- An address with `.php` in the path (e.g. Celestrak `gp.php`) is caught by `location ~ \.php$` if that one comes earlier in the file: among regex locations the first match wins. Put the proxy `location` above it, otherwise you get a 404 without the CORS header.
+- `always` in `add_header` is required: without it the header is not added to 4xx/5xx responses, and the browser shows "blocked by CORS policy" instead of the real error.
+- Check: `curl -s -D- 'https://example.com/proxy/https://celestrak.org/NORAD/elements/gp.php?GROUP=amateur&FORMAT=tle' | head` — expect `200` and `Access-Control-Allow-Origin: *`.
