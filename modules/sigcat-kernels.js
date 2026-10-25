@@ -24,6 +24,8 @@ const SIGCAT=(()=>{
     A('acars','ACARS 131.725',MHz(131.725),25e3,1.024e6,'acarsRx',0,'авиа-сообщения, AM-MSK 2400 Bd; Европа'),
     A('acars','ACARS 130.025',MHz(130.025),25e3,1.024e6,'acarsRx',0,'авиа-сообщения, AM-MSK 2400 Bd; США'),
     A('same','NOAA Weather 162.550',MHz(162.55),12.5e3,1.024e6,'sameRx',0,'предупреждения SAME/EAS (США); каналы 162.400–162.550 МГц','NFM'),
+    A('lorawan','LoRaWAN EU868 868.1',MHz(868.1),125e3,1.024e6,'loraRx',0,'LoRaWAN, ширина 125 кГц, SF7–12; Европа (868.1 / 868.3 / 868.5 МГц)'),
+    A('lorawan','LoRaWAN US915 902.3',MHz(902.3),125e3,1.024e6,'loraRx',0,'LoRaWAN, ширина 125 кГц; США (ап-линк 902.3 МГц + 200 кГц)'),
     A('lora','Meshtastic EU 869.525',MHz(869.525),250e3,1.024e6,'meshAir',0,'LoRa LongFast, ширина 250 кГц; Европа'),
     A('lora','Meshtastic US 906.875',MHz(906.875),250e3,1.024e6,'meshAir',0,'LoRa LongFast, ширина 250 кГц; США'),
   ];
@@ -31,7 +33,7 @@ const SIGCAT=(()=>{
 
 // имя записи Signal Database (sigdb-kernels.js) → вид записей каталога; по нему sigDb предлагает, чем декодировать
 const SIGCAT_OF={'ADS-B / Mode S':'adsb','AIS':'ais','POCSAG':'pocsag','ISM 433 OOK/ASK':'ism','ISM FSK (датчики)':'ism','ACARS (VHF)':'acars',
-  'NOAA Weather Radio':'same','LoRa 250 / 500 кГц':'lora'};
+  'NOAA Weather Radio':'same','LoRa 250 / 500 кГц':'lora','LoRa 125 кГц':'lorawan'};
 // запись каталога вида kind: ближайшая к измеренной частоте freq (Гц; 0 — первая); null, если вида нет
 function sigcatPick(kind,freq){
   let best=null, bd=Infinity;

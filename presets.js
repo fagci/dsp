@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=106;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=107;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -188,6 +188,7 @@ const PRESET_CATS={
   'Signal Catalog: Pick a Type, the SDR Tunes and Decodes (USB SDR)':'SDR Receivers',
   'Signal Database: What Is It and How to Decode (USB SDR)':'SDR Receivers',
   'Universal Decoder: One Node, Any Protocol (Generator)':'Digital Voice & Trunking',
+  'Universal Decoder: ADS-B Aircraft and LoRa Frames in One Node (Generator)':'Aircraft, Satellites & Telemetry',
   'Signal to Decoder, Fully Automatic: Find, Tune, Decode (Generator)':'SDR Receivers',
   'USB SDR: Find a Signal, Tune and Decode — Fully Automatic':'SDR Receivers',
   'Signal ID: Weak Signal in Noise, Frequency Range and Needed Bandwidth (Generator)':'Analysis & Measurement',
@@ -1564,6 +1565,20 @@ const sa=addNode('sa',820,580,{auto:true,floor:-110,top:-40,split:.4});
 sa.size.w=600; sa.size.h=280; applySize(sa);
 addEdge(gn.id,'iq',sp.id,'in'); addEdge(gn.id,'iq',ud.id,'in'); addEdge(sp.id,'spec',si.id,'spec'); addEdge(sp.id,'spec',sa.id,'spec');
 addEdge(si.id,'bands',sa.id,'bands'); addEdge(si.id,'decoder',ud.id,'hint');
+markWiresDirty();
+});
+preset('Universal Decoder: ADS-B Aircraft and LoRa Frames in One Node (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Adapters of Universal Decoder: protocols that are a chain, not one block. ADS-B = demodulator of 1090 MHz frames + the table of aircraft — the node gives ready aircraft records (position, altitude, speed, callsign) straight to the map. It needs the stream ≥ 2 MS/s, so feed it the wide IQ of the SDR (no decimation); at 1090 MHz only this decoder listens.\n'+
+  'LoRa has no single setting: the node holds the typical networks as separate entries — LoRaWAN (SF7, 125 kHz, sync 0x34) and Meshtastic (SF11, 250 kHz, sync 0x2B) — and in the 433 / 868 / 915 MHz bands both listen; the one whose SF, width and sync word match decodes (proto says which). Add a network = one entry in UDEC_REG.\n'+
+  'Here: the generator sends ADS-B; set the receiver position (rlat / rlon) to get surface positions and the distance filter. Replace the generator by a USB SDR at 1090 MHz, 2.4 MS/s for the real sky.'});
+nt.size.w=820; nt.size.h=190; applySize(nt);
+const gn=addNode('iqGen',40,280,{sr:'2400000',fc:1090000000,mode:'ADS-B',off:0,lvl:-20,noise:-40});
+const ud=addNode('udec',340,280,{mode:'auto',hold:6000,giveUp:8000});
+ud.size.w=460; ud.size.h=260; applySize(ud);
+const map=addNode('geoMap',860,280,{mz:7,ttl:5,labels:true,trail:500,tiles:'none'});
+map.size.w=600; map.size.h=420; applySize(map);
+addEdge(gn.id,'iq',ud.id,'in'); addEdge(ud.id,'rec',map.id,'rec');
 markWiresDirty();
 });
 // Сквозная цепочка: источник (spec + iq) → Signal ID (где сигнал, какая полоса, чем декодировать) → сдвиг и прореживание канала → Universal Decoder
