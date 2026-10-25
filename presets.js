@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=103;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=104;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -188,6 +188,7 @@ const PRESET_CATS={
   'Signal Catalog: Pick a Type, the SDR Tunes and Decodes (USB SDR)':'SDR Receivers',
   'Signal Database: What Is It and How to Decode (USB SDR)':'SDR Receivers',
   'Signal ID: Weak Signal in Noise, Frequency Range and Needed Bandwidth (Generator)':'Analysis & Measurement',
+  'USB SDR: Follow a Signal — Tune, Bandwidth and Mode by the Signal ID':'SDR Receivers',
   'ESP-SDR: ESP32 Spectrum':'SDR Receivers',
   'Measure: Modulation Meter — FM and AM (Generator)':'Analysis & Measurement',
   'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
@@ -1525,6 +1526,23 @@ si.size.w=520; si.size.h=260; applySize(si);
 const n1=addNode('numview',1300,280,{label:'needed bandwidth, Hz'});
 addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec'); addEdge(sp.id,'spec',si.id,'spec');
 addEdge(si.id,'bands',sa.id,'bands'); addEdge(si.id,'bw',n1.id,'in');
+markWiresDirty();
+});
+preset('USB SDR: Follow a Signal — Tune, Bandwidth and Mode by the Signal ID', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The receiver follows the strongest signal of its window by itself. Signal Type Identifier looks at the spectrum of the SDR and gives the carrier (f), the bandwidth needed to receive it (bw: a catalog entry or the measured width with a margin, to a standard channel width) and the demodulator (demod: NFM, AM, WFM, USB/LSB by the type; a catalog signal — its own mode).\n'+
+  'f → tuneFreq, bw → bw, demod → demod of the USB SDR: the channel (not the centre, so the window and the measurement do not move) is retuned and narrowed to the signal, the spectrum shows the needed band. The audio goes to the speaker.\n'+
+  'Digital types (ADS-B, AIS, POCSAG, ISM…) come out as IQ: feed the SDR iq into the Decoder Switch with the branch output (see «Signal Catalog»). Turn on «weak signals: deep integration» to catch what is under the one-frame threshold.'});
+nt.size.w=820; nt.size.h=170; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'1024000',auto:false,gainDb:35,demod:'NFM',freq:162000000});
+const sa=addNode('sa',360,260,{auto:true,floor:-100,top:-30,split:.4});
+sa.size.w=700; sa.size.h=320; applySize(sa);
+const si=addNode('sigid',40,640,{period:2,thr:8,maxSig:8,rangeCtx:true,need:true,deep:0});
+si.size.w=520; si.size.h=260; applySize(si);
+const dc=addNode('dac',1100,260,{vol:.4});
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',si.id,'spec'); addEdge(si.id,'bands',sa.id,'bands');
+addEdge(si.id,'f',rx.id,'tuneFreq'); addEdge(si.id,'bw',rx.id,'bw'); addEdge(si.id,'demod',rx.id,'demod');
+addEdge(rx.id,'audio',dc.id,'L'); addEdge(rx.id,'audio',dc.id,'R');
 markWiresDirty();
 });
 preset('Measure: Cross-Correlator — Delay Between Two Receivers (Generator)', function(){
