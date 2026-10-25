@@ -21,7 +21,7 @@ ok(F('aisRx')?.proto==='AIS' && F('POCSAG')?.id==='pocsagRx' && F('ism')?.id==='
 ok(F({decoder:'aisRx'})?.id==='aisRx' && F({kind:'pocsag'})?.id==='pocsagRx' && F(['x','ism'])?.id==='ismRx','подсказка: запись и массив');
 ok(F('adsbDemod → adsbDecode')===null && F('')===null && F(null)===null && F(7)===null,'неизвестное — null');
 // параметры по умолчанию реестра совпадают с описаниями модулей
-const defs={aisRx:'ais.js',pocsagRx:'pocsag.js',ismRx:'ism.js',acarsRx:'acars.js'};
+const defs={aisRx:'ais.js',pocsagRx:'pocsag.js',ismRx:'ism.js',acarsRx:'acars.js',fskRx:'fsk4.js',mpt1327Rx:'mpt1327.js',tetraRx:'tetra.js',rs41Rx:'sonde.js'};
 ev(`globalThis.REG=UDEC_REG;`);
 for(const r of ctx.REG){
   const src=fs.readFileSync(path.join(root,'modules',defs[r.id]),'utf8');
@@ -36,8 +36,8 @@ for(const r of ctx.REG){
 
 // генератор → udec
 const SR=1024000, BLK=1024;
-function run(mode,genP,udP,hint,seconds){
-  ev(`globalThis.G={p:Object.assign({sr:'${SR}',fc:100e6,mode:'${mode}',off:0,lvl:-20,tone:1000,dev:5000,depth:.5,noise:-60,pocsag:'1200',ism:'OOK'},${JSON.stringify(genP)})}; IQK.iqGen.init(G);
+function run(mode,genP,udP,hint,seconds,fc){
+  ev(`globalThis.G={p:Object.assign({sr:'${SR}',fc:${fc??100e6},mode:'${mode}',off:0,lvl:-20,tone:1000,dev:5000,depth:.5,noise:-60,pocsag:'1200',ism:'OOK'},${JSON.stringify(genP)})}; IQK.iqGen.init(G);
          globalThis.U={p:Object.assign({mode:'auto',proto:'AIS',hold:6000},${JSON.stringify(udP||{})})}; IQK.udec.init(U);`);
   const recs=[], protos=new Set(), sts=new Set();
   const N=Math.round(seconds*SR/BLK);
@@ -49,24 +49,35 @@ function run(mode,genP,udP,hint,seconds){
   }
   return {recs, protos:[...protos], sts:[...sts], last:ev('U.ui')};
 }
-const cases=[['AIS',{},'AIS'],['POCSAG',{},'POCSAG'],['ISM433',{ism:'OOK'},'ISM'],['ACARS',{},'ACARS']];
-for(const [mode,gp,proto] of cases){
-  // auto: без подсказки слушают все, остаётся тот, кто заговорил
-  let r=run(mode,gp,{},null,6);
-  ok(r.recs.length>0 && r.recs.every(x=>x.proto===proto),mode+' auto: записи есть и все с proto '+proto+' (получено '+r.recs.length+', '+[...new Set(r.recs.map(x=>x.proto))]+')');
-  ok(r.protos.includes(proto) && r.last.st==='lock',mode+' auto: захват '+proto+', состояние '+r.last.st);
+// [режим генератора, частота (Гц), декодер, секунд, auto тоже?]; у частоты свой диапазон — слушает только пара декодеров
+const cases=[['AIS',161.975e6,'aisRx',6,true],['POCSAG',466.075e6,'pocsagRx',6,true],['ISM433',433.92e6,'ismRx',6,true],['ACARS',131.55e6,'acarsRx',6,true],
+  ['DMR',450e6,'fskRx',3,false],['TETRA',420e6,'tetraRx',4,false],['MPT1327',150e6,'mpt1327Rx',3,false],['RS41',403e6,'rs41Rx',3,false]];
+for(const [mode,fc,dec,secs,auto] of cases){
+  const kind=ctx.REG.find(r=>r.id===dec).kind;
+  let r;
+  if(auto){
+    // auto: слушают декодеры диапазона частоты, остаётся тот, кто заговорил
+    r=run(mode,{},{},null,secs,fc);
+    ok(r.recs.length>0 && r.recs.every(x=>x.decoder===dec),mode+' auto: записи есть и все от '+dec+' (получено '+r.recs.length+', '+[...new Set(r.recs.map(x=>x.decoder))]+')');
+    ok(r.last.st==='lock' && r.last.act.length===1,mode+' auto: захват, состояние '+r.last.st);
+  }
   // hint: сразу один декодер
-  r=run(mode,gp,{},proto.toLowerCase(),6);
-  ok(r.recs.length>0 && r.sts.length===1 && r.sts[0]==='hint' && r.last.act.length===1,mode+' hint: один декодер, состояние hint');
-  // manual
-  r=run(mode,gp,{mode:'manual',proto},null,6);
-  ok(r.recs.length>0 && r.last.st==='manual',mode+' manual');
+  r=run(mode,{},{},kind,secs,fc);
+  ok(r.recs.length>0 && r.recs.every(x=>x.decoder===dec) && r.sts.length===1 && r.sts[0]==='hint' && r.last.act.length===1,mode+' hint: один декодер '+dec+', состояние hint');
 }
+// manual
+{ const r=run('AIS',{},{mode:'manual',proto:'AIS'},null,4,161.975e6); ok(r.recs.length>0 && r.last.st==='manual','AIS manual'); }
+// диапазон: у частоты 161.975 МГц декодеры только этого диапазона; частота вне всех диапазонов или неизвестна — слушают все
+{ const r=run('AIS',{},{},null,0.05,161.975e6); ok(r.last.act.includes('AIS') && !r.last.act.includes('TETRA') && !r.last.act.includes('RS41'),'диапазон: 161.975 МГц → '+r.last.act);
+  const r2=run('AIS',{},{},null,0.05,2.0e9); ok(r2.last.act.length===ctx.REG.length,'частота вне диапазонов → слушают все ('+r2.last.act.length+')');
+  const r3=run('AIS',{},{},null,0.05,0); ok(r3.last.act.length===ctx.REG.length,'частота неизвестна → слушают все'); }
+// без диапазона (fc=0) всё равно находит нужный: слушают все, остаётся AIS
+{ const r=run('AIS',{},{},null,3,0); ok(r.recs.length>0 && r.recs.every(x=>x.decoder==='aisRx') && r.last.st==='lock','fc неизвестна: поиск среди всех находит AIS, состояние '+r.last.st); }
 // чужой протокол в manual не декодирует
-{ const r=run('AIS',{},{mode:'manual',proto:'ACARS'},null,4);
+{ const r=run('AIS',{},{mode:'manual',proto:'ACARS'},null,4,161.975e6);
   ok(r.recs.length===0,'AIS в manual ACARS: чужой сигнал не декодируется ('+r.recs.length+')'); }
 // ложная подсказка: сигнал AIS, подсказка acars — через giveUp узел слушает всех и находит AIS
-{ const r=run('AIS',{},{giveUp:2000},'acars',8);
+{ const r=run('AIS',{},{giveUp:2000},'acars',8,161.975e6);
   ok(r.recs.length>0 && r.recs.every(x=>x.proto==='AIS') && r.last.st==='lock','ложная подсказка: откат к поиску и захват AIS, состояние '+r.last.st); }
 // после тишины — обратно в поиск
 {
