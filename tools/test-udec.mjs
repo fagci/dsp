@@ -41,7 +41,7 @@ for(const r of ctx.REG){
 { const act=(fc,sr)=>{ ev(`globalThis.UQ={p:{mode:'auto',proto:'AIS',hold:6000}}; IQK.udec.init(UQ);`);
     ctx.__s={sr,fc,chunks:[{re:new Float32Array(256),im:new Float32Array(256),t0:0}]};
     ev(`IQK.udec.process(UQ,{in:__s},{})`); return ev('UQ.ui.act'); };
-  const fit=sr=>ctx.REG.filter(r=>!r.route && (!r.minSr || sr>=r.minSr)).length;
+  const fit=sr=>ctx.REG.filter(r=>!r.route && (!r.minSr || sr>=r.minSr) && (!r.maxSr || sr<=r.maxSr)).length;
   ok(!act(1090e6,256000).includes('ADS-B') && act(1090e6,256000).length===fit(256000),'1090 МГц при 256 кС/с: ADS-B не слушает, слушают все подходящие по полосе');
   ok(act(1090e6,2.4e6).join()==='ADS-B','1090 МГц при 2.4 МС/с: только ADS-B');
   ok(act(868.1e6,1024000).includes('LoRaWAN') && act(868.1e6,1024000).includes('Meshtastic') && act(868.1e6,1024000).includes('ISM (wideband)'),'868.1 МГц: широкий ISM и обе настройки LoRa');
@@ -107,7 +107,7 @@ ok(F('lorawan')?.proto==='LoRaWAN' && F('lora')?.proto==='Meshtastic' && F('mesh
 { const r=run('AIS',{},{mode:'manual',proto:'AIS'},null,4,161.975e6); ok(r.recs.length>0 && r.last.st==='manual','AIS manual'); }
 // диапазон: у частоты 161.975 МГц декодеры только этого диапазона; частота вне всех диапазонов или неизвестна — слушают все
 { const r=run('AIS',{},{},null,0.05,161.975e6); ok(r.last.act.includes('AIS') && !r.last.act.includes('TETRA') && !r.last.act.includes('RS41'),'диапазон: 161.975 МГц → '+r.last.act);
-  const r2=run('AIS',{},{},null,0.05,2.0e9); const fitN=sr=>ctx.REG.filter(r=>!r.route && (!r.minSr || sr>=r.minSr)).length;
+  const r2=run('AIS',{},{},null,0.05,2.0e9); const fitN=sr=>ctx.REG.filter(r=>!r.route && (!r.minSr || sr>=r.minSr) && (!r.maxSr || sr<=r.maxSr)).length;
   ok(r2.last.act.length===fitN(SR),'частота вне диапазонов → слушают все, кому хватает полосы потока ('+r2.last.act.length+' из '+ctx.REG.length+')');
   const r3=run('AIS',{},{},null,0.05,0); ok(r3.last.act.length===fitN(SR),'частота неизвестна → слушают все, кому хватает полосы потока ('+r3.last.act.length+')'); }
 // без диапазона (fc=0) всё равно находит нужный: слушают все, остаётся AIS

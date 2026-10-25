@@ -180,7 +180,8 @@ IQK.udec={
       const outRecs=r.post && got.length ? UDEC_POST[r.post].run(k.post,got,P,now) : got;
       // видео: картинка декодера (аналоговое ТВ) уходит на video; живость — по захвату синхронизации
       if(r.liveImg && o.img) video=o.img;
-      const alive=got.length>0 || (r.liveImg && (o.lock>0 || !!o.img));
+      // неопознанные пакеты (kind unknown) — выводятся, но захват не дают: чужой всплеск (AIS) у ISM-сканера тоже «пакет импульсов»
+      const alive=got.some(x=>x && x.kind!=='unknown') || (r.liveImg && (o.lock>0 || !!o.img));
       if(alive){
         for(const x of outRecs) recs.push({...x, proto:x.proto||r.proto, decoder:r.id});
         n.counts[r.proto]=(n.counts[r.proto]||0)+(got.length || (o.img ? 1 : 0));
