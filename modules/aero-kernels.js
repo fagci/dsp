@@ -358,7 +358,7 @@ function aeroSimFrame(g,N){
 function aeroGenerate(n,sr,N,baud){
   baud=baud||600;
   let g=n.aero;
-  if(!g || g.sr!==sr || g.baud!==baud) g=n.aero={sr, baud, t:0, ph:0, bits:[], pos:0, q:[], qk:0, fk:0, enc:{r:0}};
+  if(!g || g.sr!==sr || g.baud!==baud) g=n.aero={sr, baud, t:0, ph:0, bits:[], pos:0, q:[], qk:n.aeroQ0||0, fk:0, enc:{r:0}};
   const re=new Float32Array(N), im=new Float32Array(N), dt=baud/sr, dph=Math.PI/2*dt, nn=baud===1200 ? 9 : 6;
   for(let i=0;i<N;i++){
     while(g.bits.length-g.pos<4){ if(g.pos>0){ g.bits=g.bits.slice(g.pos); g.pos=0; } for(const b of aeroSimFrame(g,nn)) g.bits.push(b); }
@@ -370,3 +370,129 @@ function aeroGenerate(n,sr,N,baud){
   }
   return [re,im];
 }
+
+// три канала P600 на разных частотах (разный сценарий SU) и CW-помеха — для сканера
+function aeroGenMulti(n,sr,N){
+  const CH=[[-37500,1],[12500,.7],[37500,.5]];
+  if(!n.aeroM) n.aeroM=CH.map((c,i)=>({aeroQ0:i, th:0}));
+  const re=new Float32Array(N), im=new Float32Array(N);
+  CH.forEach(([f,a],k)=>{
+    const g=n.aeroM[k], [r,q]=aeroGenerate(g,sr,N,600), w=2*Math.PI*f/sr;
+    for(let i=0;i<N;i++){ const c=Math.cos(g.th), s=Math.sin(g.th); re[i]+=a*(r[i]*c-q[i]*s); im[i]+=a*(r[i]*s+q[i]*c); g.th+=w; }
+    g.th%=2*Math.PI;
+  });
+  const g=n.aeroM, w=2*Math.PI*10000/sr; g.cw=g.cw||0;
+  for(let i=0;i<N;i++){ re[i]+=.12*Math.cos(g.cw); im[i]+=.12*Math.sin(g.cw); g.cw+=w; }
+  g.cw%=2*Math.PI;
+  const sc=1/1.6; for(let i=0;i<N;i++){ re[i]*=sc; im[i]*=sc; }
+  return [re,im];
+}
+
+/* ---- сканер: широкая запись → все несущие P-каналов, на каждой свой приёмник ---- */
+// Спектр усредняется, узкие несущие (≥ thr дБ над локальной медианой на 20 кГц) пробуются: канал получает смеситель, децимацию
+// и свой IQK.aeroRx. Остаётся тот, где за AERO_SC_PROBE секунд сошёлся хотя бы один CRC; молчащий дольше AERO_SC_DROP — снимается.
+// Время — по числу отсчётов потока, не по часам.
+const AERO_SC_PROBE=25, AERO_SC_DROP=120, AERO_SC_BLACK=600, AERO_SC_EVERY=2;
+function aeroScSetup(n,sr,baud){
+  n.key=sr+'|'+baud; n.baud=baud; n.sr=sr; n.ch=[]; n.black=[]; n.t=0; n.nextScan=AERO_SC_EVERY; n.scans=0;
+  n.fN=Math.min(65536,Math.max(1024,pow2ge(Math.round(sr/120))));
+  n.fw=new Float32Array(n.fN); for(let i=0;i<n.fN;i++) n.fw[i]=.5-.5*Math.cos(2*Math.PI*i/n.fN);
+  n.fbr=new Float32Array(n.fN); n.fbi=new Float32Array(n.fN); n.fi=0; n.P=null; n.blk=new Float64Array(n.fN); n.blkN=0;
+  n.D=Math.max(1,Math.floor(sr/(3*AERO_SPS*baud))); n.chSr=sr/n.D;
+}
+function aeroScCand(n){
+  const N=n.fN, df=n.sr/N, K=Math.max(1,Math.round(1500/df)), P=n.P, sm=new Float64Array(N), cs=new Float64Array(N+1);
+  // сглаживание ±1.5 кГц по кольцу
+  for(let i=0;i<N;i++) cs[i+1]=cs[i]+P[i];
+  for(let i=0;i<N;i++){ let a=i-K, b=i+K+1, s=0;
+    if(a<0){ s+=cs[N]-cs[N+a]; a=0; } if(b>N){ s+=cs[b-N]; b=N; } s+=cs[b]-cs[a]; sm[i]=s/(2*K+1); }
+  // тренд — медиана по блокам; порядок бинов: 0 → центр, затем отрицательные частоты
+  const BL=Math.max(16,Math.round(Math.min(20e3,n.sr/4)/df)), tr=new Float64Array(N);
+  const order=new Float64Array(N); for(let j=0;j<N;j++) order[j]=sm[(j+N/2)%N];      // по возрастанию частоты
+  for(let i=0;i<N;i+=BL){ const seg=Array.from(order.subarray(i,Math.min(N,i+BL))).sort((x,y)=>x-y), md=seg[seg.length>>1]; for(let j=i;j<Math.min(N,i+BL);j++) tr[j]=md; }
+  const out=[];
+  for(let j=1;j<N-1;j++){
+    const f=(j-N/2)*df; if(Math.abs(f)>.42*n.sr || Math.abs(f)<4000) continue;
+    const r=10*Math.log10(Math.max(order[j],1e-30)/Math.max(tr[j],1e-30));
+    if(r>=n.thr && order[j]>=order[j-1] && order[j]>=order[j+1]) out.push({f, r});
+  }
+  out.sort((a,b)=>b.r-a.r);
+  const pick=[]; for(const c of out) if(pick.every(p=>Math.abs(p.f-c.f)>2400)) pick.push(c);
+  return pick;
+}
+function aeroScAdd(n,f){
+  const ch={f, born:n.t, last:n.t, ok:0, probe:true, w:2*Math.PI*f/n.sr, pr:1, pi:0, ar:0, ai:0, cnt:0, node:{p:{baud:String(n.baud)}}};
+  IQK.aeroRx.init(ch.node); n.ch.push(ch);
+}
+IQK.aeroScan={
+  init(n){ n.key=''; n.ch=[]; n.recent=[]; n.msgs=0; n.ui=null; n.frames=0; },
+  process(n,I){
+    const s=iqIn(I,'in');
+    if(!s || !s.sr){ n.ui=null; return {rec:null, text:null, locked:0}; }
+    const sr=s.sr, baud=+n.p.baud===1200 ? 1200 : 600, now=Date.now(), recs=[];
+    if(sr<24e3){ n.ui={err:'sample rate '+(sr/1000).toFixed(1)+' kS/s is too low for a scan: ≥ 24 kS/s', recent:n.recent}; return {rec:null, text:null, locked:0}; }
+    if(n.key!==sr+'|'+baud) aeroScSetup(n,sr,baud);
+    n.thr=+n.p.thr||1.2; const MAXC=Math.max(1,Math.min(16,+n.p.max||8)), D=n.D, fc0=s.fc||0;
+    for(const c of s.chunks){
+      const xr=c.re, xi=iqChunkIm(c), K=xr.length;
+      // спектр
+      for(let i=0;i<K;i++){
+        n.fbr[n.fi]=xr[i]*n.fw[n.fi]; n.fbi[n.fi]=xi[i]*n.fw[n.fi];
+        if(++n.fi===n.fN){
+          n.fi=0; const a=Float64Array.from(n.fbr), b=Float64Array.from(n.fbi); fft(a,b);
+          for(let j=0;j<n.fN;j++) n.blk[j]+=a[j]*a[j]+b[j]*b[j]; n.blkN++;
+        }
+      }
+      // каналы
+      for(const ch of n.ch){
+        const cw=Math.cos(ch.w), sw=Math.sin(ch.w), M=Math.ceil((ch.cnt+K)/D), orr=new Float32Array(M), oi=new Float32Array(M);
+        let pr=ch.pr, pi=ch.pi, ar=ch.ar, ai=ch.ai, cnt=ch.cnt, o=0;
+        for(let i=0;i<K;i++){
+          ar+=xr[i]*pr-xi[i]*pi; ai+=xr[i]*pi+xi[i]*pr;
+          const t=pr*cw+pi*sw; pi=pi*cw-pr*sw; pr=t;
+          if(++cnt===D){ orr[o]=ar/D; oi[o]=ai/D; o++; ar=0; ai=0; cnt=0; }
+        }
+        const m=1/Math.hypot(pr,pi); ch.pr=pr*m; ch.pi=pi*m; ch.ar=ar; ch.ai=ai; ch.cnt=cnt;
+        if(!o) continue;
+        const r=IQK.aeroRx.process(ch.node,{in:{sr:n.chSr, fc:fc0+ch.f, chunks:[{re:orr.subarray(0,o), im:oi.subarray(0,o), t0:0}]}},{});
+        if(r.rec) for(const x of r.rec){
+          x.freq=Math.round(fc0+ch.f+(ch.node.ae ? ch.node.ae.fc : 0));
+          x.text=(x.freq/1e6).toFixed(4)+' · '+x.text;
+          recs.push(x); if(x.kind==='message') n.msgs++;
+          n.recent.push(new Date(now).toTimeString().slice(0,8)+' '+x.text.slice(0,110)); if(n.recent.length>24) n.recent.shift();
+        }
+      }
+      n.t+=K/sr;
+    }
+    // жизнь каналов: подтверждённые, пробные, дубли
+    for(const ch of n.ch){ if(ch.node.suOk>ch.ok){ ch.ok=ch.node.suOk; ch.last=n.t; ch.probe=false; } }
+    const lockedF=ch=>ch.node.ae && ch.node.ae.lock ? ch.f+ch.node.ae.fc : null;
+    for(const ch of n.ch){
+      const cf=lockedF(ch); if(cf==null) continue;
+      for(const o of n.ch){ if(o===ch || o.dead || ch.dead) continue; const of=lockedF(o);
+        if(of!=null && Math.abs(of-cf)<400){ const drop=(ch.ok>o.ok || (ch.ok===o.ok && ch.born<o.born)) ? o : ch; drop.dead=true; } }
+    }
+    n.ch=n.ch.filter(ch=>{
+      if(ch.dead) return false;
+      if(ch.probe && n.t-ch.born>AERO_SC_PROBE){ n.black.push({f:ch.f, until:n.t+AERO_SC_BLACK}); return false; }
+      if(!ch.probe && n.t-ch.last>AERO_SC_DROP) return false;
+      return true;
+    });
+    n.black=n.black.filter(b=>b.until>n.t);
+    // раз в AERO_SC_EVERY с: накопленный спектр → новые кандидаты
+    if(n.t>=n.nextScan && n.blkN>0){
+      n.nextScan=n.t+AERO_SC_EVERY; n.scans++;
+      const N=n.fN; if(!n.P) n.P=new Float64Array(N);
+      for(let j=0;j<N;j++){ const v=n.blk[j]/n.blkN; n.P[j]=n.scans===1 ? v : .75*n.P[j]+.25*v; n.blk[j]=0; } n.blkN=0;
+      if(n.scans>=2) for(const c of aeroScCand(n)){
+        if(n.ch.length>=MAXC) break;
+        if(n.ch.some(h=>Math.abs(h.f-c.f)<1500 || (lockedF(h)!=null && Math.abs(lockedF(h)-c.f)<1500))) continue;
+        if(n.black.some(b=>Math.abs(b.f-c.f)<1500)) continue;
+        aeroScAdd(n,c.f); n.ch[n.ch.length-1].r=c.r;
+      }
+    }
+    const list=n.ch.map(ch=>{ const u=ch.node.ui||{}, a=ch.node.ae; return {f:fc0+ch.f+(a ? a.fc : 0), probe:ch.probe, lock:!!(a&&a.lock), frames:ch.node.frames, suOk:ch.node.suOk, suBad:ch.node.suBad, ber:ch.node.ber, msgs:ch.node.msgs, age:ch.node.last ? now-ch.node.last : null, r:ch.r}; }).sort((a,b)=>a.f-b.f);
+    n.ui={fs:sr, fc:fc0, baud, chans:list, frames:list.reduce((x,c)=>x+c.frames,0), suOk:list.reduce((x,c)=>x+c.suOk,0), suBad:list.reduce((x,c)=>x+c.suBad,0), msgs:n.msgs, recent:n.recent, scans:n.scans, black:n.black.length};
+    const text=recs.map(r=>r.text);
+    return {rec:recs.length ? recs : null, text:text.length ? text.join('\n') : null, locked:list.filter(c=>c.lock&&!c.probe).length};
+  }};

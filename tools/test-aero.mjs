@@ -101,6 +101,26 @@ ev(`globalThis.etbT=function(){
 { const r=decode({re:new Float32Array(2000),im:new Float32Array(2000)},4000,600);
   ok(/too low/.test(r.ui.err||''),'sr 4 кС/с: сообщение об ошибке'); }
 
+// СКАНЕР: широкая запись с тремя каналами P600 и CW-помехой на 250 кС/с → три канала с верной частотой, помеха не остаётся
+{ ev(`globalThis.GM={}`); ctx.__sr=250000;
+  ctx.__p={baud:'600',max:8,thr:1.2}; ev(`globalThis.RS={p:__p}; IQK.aeroScan.init(RS);`);
+  const recs=[]; const BLK=8192;
+  for(let i=0;i<45*250000;i+=BLK){
+    ctx.__N=BLK; const [re,im]=ev(`aeroGenMulti(GM,__sr,__N)`);
+    for(let j=0;j<BLK;j++){ re[j]+=.15*gauss(); im[j]+=.15*gauss(); }
+    ctx.__c={sr:250000,fc:1545.1e6,chunks:[{re,im,t0:i}]};
+    const o=ev('IQK.aeroScan.process(RS,{in:__c},{})'); if(o.rec) recs.push(...o.rec);
+  }
+  const u=ev('RS.ui'), f=u.chans.map(c=>c.f/1e6);
+  ok(u.chans.length===3 && u.chans.every(c=>!c.probe && c.lock),'сканер: найдено и подтверждено три канала, CW-помеха на +10 кГц отброшена ('+f.map(x=>x.toFixed(4))+')');
+  ok([1545.0625,1545.1125,1545.1375].every((e,i)=>Math.abs(f[i]-e)<.0005),'сканер: частоты несущих с точностью 0.5 кГц');
+  ok(u.chans.every(c=>c.suBad===0 && c.msgs>=5),'сканер: на каждом канале все SU сошлись и принято по ACARS ('+u.chans.map(c=>c.msgs)+')');
+  const m=recs.find(r=>r.kind==='message');
+  ok(m && /^1545\.\d{4} · AES /.test(m.text) && m.freq>1544.99e6 && m.freq<1545.2e6,'сканер: запись с частотой канала и в тексте ('+m?.text.slice(0,50)+')');
+  ctx.__p={baud:'600'}; ev(`globalThis.RS2={p:__p}; IQK.aeroScan.init(RS2);`);
+  const e=ev(`(()=>{ IQK.aeroScan.process(RS2,{in:{sr:8000,chunks:[{re:new Float32Array(100),im:new Float32Array(100)}]}},{}); return RS2.ui.err; })()`);
+  ok(/too low/.test(e||''),'сканер: низкая частота дискретизации — сообщение'); }
+
 // ЖИВОЙ ЭФИР: канал P600 Inmarsat (1545.0792 МГц), 2.9 с, 8 кС/с, один полный кадр; запись повторена трижды, чтобы несущая успела
 // захватиться до кадра. Кадр принят из эфира с BER ~2.5 %: шесть SU с верным CRC, таблица индекса, служебные SU.
 { const raw=fs.readFileSync(path.join(root,'tools/data/aero-p600-8k.i8')), n=raw.length/2, reps=3;

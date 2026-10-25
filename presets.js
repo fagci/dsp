@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=117;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=118;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -320,6 +320,8 @@ const PRESET_CATS={
   'Inmarsat STD-C: EGC Messages (USB SDR, 1.5 GHz)':'Aircraft, Satellites & Telemetry',
   'Inmarsat Aero: ACARS and Voice Channels (Generator)':'Aircraft, Satellites & Telemetry',
   'Inmarsat Aero: P Channel 1.5 GHz (USB SDR)':'Aircraft, Satellites & Telemetry',
+  'Inmarsat Aero: Channel Scanner (Generator)':'Aircraft, Satellites & Telemetry',
+  'Inmarsat Aero: Channel Scanner 1.5 GHz (USB SDR)':'Aircraft, Satellites & Telemetry',
   'GSM: Receive Bursts (USB SDR)':'Aircraft, Satellites & Telemetry',
   'GSM: Paging, Assignments and HEX (USB SDR)':'Aircraft, Satellites & Telemetry',
   'GSM: Paging, Assignments and HEX (Generator)':'Aircraft, Satellites & Telemetry',
@@ -2931,6 +2933,41 @@ log.size.w=560; applySize(log);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Inmarsat Aero: Channel Scanner (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'One wideband recording, several Aero channels: the generator sends three P600 carriers (-37.5, +12.5 and +37.5 kHz from the centre, different content)\n'+
+  'and a CW spur at +10 kHz. Aero Scanner averages the spectrum for a few seconds, takes the narrow carriers over the local noise, gives each its own mixer,\n'+
+  'decimator and decoder and keeps the ones where a frame with a valid CRC has come out; the spur never gets one and is dropped after 25 s. Records carry the carrier\n'+
+  'frequency (field freq, also in the text). A carrier within 4 kHz of the centre is skipped (the SDR DC spike) — tune the centre between the channels.'});
+nt.size.w=820; nt.size.h=104; applySize(nt);
+const gn=addNode('iqGen',40,180,{sr:'250000',fc:1545100000,mode:'Aero ×3',off:0,lvl:-20,noise:-32});
+const sp=addNode('iqSpec',340,180,{size:'8192',avg:'8'});
+const sa=addNode('sa',340,320,{auto:true,floor:-110,top:-30,split:.4});
+sa.size.w=520; sa.size.h=240; applySize(sa);
+const de=addNode('aeroScan',920,180,{baud:'600',max:8,thr:1.2});
+de.size.w=600; de.size.h=380; applySize(de);
+const log=addNode('recLog',920,600,{});
+log.size.w=600; applySize(log);
+addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec'); addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Inmarsat Aero: Channel Scanner 1.5 GHz (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'All Inmarsat Aero P channels in the receiver band at once: control channels (satellite tables, log-ons, voice-call assignments with frequencies) and the data\n'+
+  'channels with ACARS. 1024 kS/s at 1545.1 MHz covers 1544.6–1545.6 MHz; up to 8 carriers are decoded in parallel (P600 — switch baud to 1200 for the other rate).\n'+
+  'Keep it running: ACARS comes only when an aircraft has traffic through that station, a quiet channel stays in the list for 2 minutes. 10.5 kbit/s channels are\n'+
+  'listed in the system tables ("P channel … at 10500 bit/s") but not decoded. Antenna: L-band patch, bias-T/LNA, a free view to the satellite. Records go to the log (save CSV).'});
+nt.size.w=900; nt.size.h=104; applySize(nt);
+const rx=addNode('rtlsdr',40,180,{sr:'1024000',freq:1545100000,demod:'IQ'});
+const sa=addNode('sa',340,40,{auto:true,floor:-100,top:-40,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const de=addNode('aeroScan',340,360,{baud:'600',max:8,thr:1.2});
+de.size.w=600; de.size.h=380; applySize(de);
+const log=addNode('recLog',980,360,{});
+log.size.w=600; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('GSM: Receive Bursts (USB SDR)', function(){
