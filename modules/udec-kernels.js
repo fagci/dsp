@@ -11,7 +11,11 @@ const UDEC_DEC=[1,2,3,4,5,8,10,16,20,25,32,40,50,64];       // коэффици�
 const UDEC_REG=[
   {id:'aisRx',      proto:'AIS',    kind:'ais',      bands:[[156e6,163e6]], p:{ch:'A', ttl:30}},
   {id:'pocsagRx',   proto:'POCSAG', kind:'pocsag',   bands:[[138e6,174e6],[310e6,330e6],[430e6,470e6],[929e6,932e6]], p:{baud:'auto', fix:'2'}},
-  {id:'ismRx',      proto:'ISM',    kind:'ism',      bands:[[300e6,320e6],[430e6,436e6],[863e6,870e6],[900e6,930e6]], p:{mod:'OOK', bw:'100000', snr:12, reset:12000, minBits:16, raw:true, dedup:1000}},
+  // ISM: узкий декодер слушает только ±bw/2 у центра потока — для узкого канала; широкий поток (всё окно SDR, вся полоса LPD 433.05–434.79)
+  // разбирает ISM Scanner (rtl_433): режет окно на каналы, на каждом детектор и декодеры rtl_433. Выбор — по частоте дискретизации потока
+  {id:'ismRx',      proto:'ISM',    kind:'ism',      bands:[[300e6,320e6],[430e6,436e6],[863e6,870e6],[900e6,930e6]], maxSr:600e3, p:{mod:'OOK', bw:'100000', snr:12, reset:12000, minBits:16, raw:true, dedup:1000}},
+  {id:'ismScan',    proto:'ISM (wideband)', kind:'ism', variant:true, alias:['ism433','lpd','rtl_433','rtl433'], bands:[[300e6,320e6],[430e6,436e6],[863e6,870e6],[900e6,930e6]], minSr:600e3,
+    p:{plan:'4', gain:'auto', dc:'subtract', snr:20, devs:'default', only:'', minp:8, raw:true, minBits:16, dedup:1000}},
   {id:'acarsRx',    proto:'ACARS',  kind:'acars',    bands:[[129e6,137e6]], p:{fix:true}},
   {id:'fskRx',      proto:'DigVoice', kind:'digvoice', alias:['dmr','p25','nxdn','ysf','m17','dstar','d-star','dpmr'], bands:[[136e6,174e6],[300e6,520e6],[764e6,870e6]], p:{proto:'auto'}},
   {id:'mpt1327Rx',  proto:'MPT1327', kind:'mpt1327', bands:[[136e6,174e6],[400e6,470e6]], p:{}},
@@ -24,7 +28,19 @@ const UDEC_REG=[
     p:{sf:'7', bw:'125000', sync:'34', hdr:'explicit', ldro:'auto', len:16, cr:'4/5', crc:true, thr:9, bad:true, invert:false}},
   {id:'loraRx',     proto:'Meshtastic', kind:'meshtastic', variant:true, alias:['lora','longfast','meshair'], bands:[[433e6,435e6],[863e6,870e6],[902e6,928e6]], minSr:250e3,
     p:{sf:'11', bw:'250000', sync:'2B', hdr:'explicit', ldro:'auto', len:16, cr:'4/5', crc:true, thr:9, bad:true, invert:false}},
+  // видео: аналоговое ТВ. TV Decoder ждёт уже демодулированный сигнал, поэтому адаптер из двух ступеней (pre): TV Demodulator → TV Decoder; картинка уходит на video,
+  // живость — по захвату синхронизации. FM — FPV 5.8 ГГц и спутниковое, AM (negative) — эфирное ТВ (на частоту несущей изображения)
+  {id:'tvDecode',   proto:'Analog TV (FM)', kind:'fpv', liveImg:true, alias:['atv','fm-tv','fpv'], bands:[[1000e6,1400e6],[5645e6,5945e6]], minSr:6e6,
+    pre:{id:'tvDemod', p:{mode:'FM', dev:8e6, bw:5e6, inv:false}},
+    p:{std:'auto', sync:'auto', trim:0, width:'600', invert:'auto', interlace:'weave', color:true, bright:0, contrast:1, hshift:0, vshift:0}},
+  {id:'tvDecode',   proto:'Analog TV (AM)', kind:'atvam', liveImg:true, variant:true, alias:['pal','ntsc','secam','tv','analogtv'], bands:[[48e6,862e6]], minSr:6e6,
+    pre:{id:'tvDemod', p:{mode:'AM (negative)', dev:8e6, bw:5e6, inv:false}},
+    p:{std:'auto', sync:'auto', trim:0, width:'600', invert:'auto', interlace:'weave', color:true, bright:0, contrast:1, hshift:0, vshift:0}},
+  // маршрут без декодирования: DVB разбирает «DVB Receiver (IQ)» — узел главного потока со своим пулом воркеров (leandvb), в ядре он жить не может.
+  // Узел по подсказке (dvbs / dvbt / dvbsoft) или вручную отдаёт IQ канала на выход iq — его и подключают к DVB Receiver; сам такой протокол в поиске не участвует
+  {id:null, route:'dvbsoft', proto:'DVB', kind:'dvb', alias:['dvbs','dvbs2','dvbt','dvbt2','dvbsoft','dvb-s','dvb-s2','dvb-t2'], bands:[[174e6,862e6],[10.7e9,12.75e9]], minSr:2e6, p:{}},
 ];
+const UDEC_LIVE=UDEC_REG.filter(r=>!r.route);       // кто реально декодирует (маршруты — нет)
 // вторая часть адаптера: записи первой (кадры) → итоговые записи. state — свой на экземпляр; params узла udec — P
 const UDEC_POST={
   adsb:{
@@ -39,6 +55,11 @@ const UDEC_POST={
   }
 };
 // Подсказка, на которую декодер молчит giveUp мс, считается ложной.
+function udecCopyIq(n,s){
+  const o=iqStream(n,'iq',s.sr,s.fc);
+  for(const c of s.chunks) iqPush(o,Float32Array.from(c.re),c.im ? Float32Array.from(c.im) : null,c.tag);
+  return o;
+}
 // подсказка → запись реестра: строка (id / proto / kind без регистра), запись с полями decoder / kind / type, массив — по первому подходящему
 function udecFind(h){
   if(h==null) return null;
@@ -46,13 +67,28 @@ function udecFind(h){
   if(typeof h==='object') return udecFind(h.decoder) || udecFind(h.kind) || udecFind(h.type) || udecFind(h.proto);
   const s=String(h).trim().toLowerCase();
   if(!s) return null;
-  return UDEC_REG.find(r=>r.id.toLowerCase()===s || r.proto.toLowerCase()===s || r.kind===s || r.alias?.includes(s)) || null;
+  return udecFindAll(s)[0] || null;
 }
+// все записи под подсказкой-строкой (у ISM их две: узкая и широкая — выбор по ширине потока, udecFit)
+function udecFindAll(h){
+  if(h==null) return [];
+  if(Array.isArray(h)){ for(const x of h){ const r=udecFindAll(x); if(r.length) return r; } return []; }
+  if(typeof h==='object'){ for(const k of ['decoder','kind','type','proto']){ const r=udecFindAll(h[k]); if(r.length) return r; } return []; }
+  const s=String(h).trim().toLowerCase();
+  if(!s) return [];
+  const m=r=>(r.id||'').toLowerCase()===s || r.proto.toLowerCase()===s || r.kind===s || r.alias?.includes(s);
+  const out=UDEC_REG.filter(m);
+  // id декодера называет одну запись; если оно у нескольких (две настройки LoRa, ТВ) — первая и все с тем же видом
+  return out;
+}
+// подходит ли декодер потоку по частоте дискретизации (sr неизвестна — подходит)
+const udecFit=(r,sr)=>!sr || ((!r.minSr || sr>=r.minSr) && (!r.maxSr || sr<=r.maxSr));
 IQK.udec={
   init(n){ n.chs=[]; n.chId=0; n.hintId=null; n.hintT=0; n.hintBad=null; n.kids=new Map(); n.st='search'; n.lock=null; n.lastRec=0; n.counts={}; n.last=null; n.recent=[]; n.ui=null; },
   kid(n,r){
     let k=n.kids.get(r.proto);
-    if(!k){ k={p:{...r.p}, out:{}, id:r.id}; IQK[r.id].init(k); if(r.post){ k.post={}; UDEC_POST[r.post].init(k.post); } n.kids.set(r.proto,k); }
+    if(!k){ k={p:{...r.p}, out:{}, id:r.id}; IQK[r.id].init(k); if(r.post){ k.post={}; UDEC_POST[r.post].init(k.post); }
+      if(r.pre){ k.pre={p:{...r.pre.p}}; IQK[r.pre.id].init(k.pre); } n.kids.set(r.proto,k); }
     return k;
   },
   // вход sigs (метки sigid) — режим нескольких каналов: каждому сигналу свой сдвиг, децимация и своя логика выбора; иначе один канал
@@ -81,27 +117,33 @@ IQK.udec={
       ch.sr=s.sr;
     }
     n.chs=n.chs.filter(c=>now-(c.seen||c.t)<=hold);
-    const recs=[], text=[], rows=[];
-    for(const ch of n.chs){
+    const recs=[], text=[], rows=[], voices=[], outIdx=Math.max(1,Math.min(n.chs.length||1,+P.outCh||1))-1;
+    let iq=null, video=null;
+    for(const [ci,ch] of n.chs.entries()){
       let x=null;
       if(s && ch.seen===now){
         x=IQK.iqShift.process(ch.sh,{in:s,freq:ch.f}).out;
         if(x && ch.dc) x=IQK.iqDecim.process(ch.dc,{in:x}).out;
       }
       const hint=ch.dec || I.hint;
+      ch.sub.wantIq=!!P.passIq && ci===outIdx;           // IQ вырезанного канала — только выбранного (outCh): копия стоит
       const o=this.step(ch.sub,x,hint,now);
       if(o.rec) for(const r of o.rec) recs.push({...r, f:ch.f, ch:ch.id});
+      if(o.voice) for(const v of o.voice) voices.push({...v, f:ch.f, ch:ch.id});
+      if(ci===outIdx){ iq=o.iq; video=o.video; }
       if(o.text) for(const l of String(o.text).split('\n')) if(l) text.push('['+Math.round(ch.f/1e3)/1e3+'] '+l);
       rows.push({ch:ch.id, f:ch.f, bw:ch.bw, st:ch.sub.ui?.st||'', proto:o.proto||'', hint:ch.dec||'', counts:ch.sub.ui?.counts||{}, ago:ch.sub.ui?.ago??null, sr:x?.sr||0, M:ch.M});
     }
     for(const t of text) n.recent.push(t);
     if(n.recent.length>12) n.recent.splice(0,n.recent.length-12);
     n.ui={multi:true, st:'multi', rows, recent:n.recent.slice(-8), counts:{}, act:[], none:!s, nsig:want.length};
-    return {rec:recs.length ? recs : null, text:text.length ? text.join('\n') : null, proto:'', locked:rows.some(r=>r.st==='lock'||r.st==='hint'||r.st==='manual') ? 1 : 0, count:rows.length};
+    return {rec:recs.length ? recs : null, text:text.length ? text.join('\n') : null, voice:voices.length ? voices : null, video, iq, proto:'', locked:rows.some(r=>r.st==='lock'||r.st==='hint'||r.st==='manual') ? 1 : 0, count:rows.length};
   },
   step(n,s,hintIn,now){
     const P=n.p;
-    const manual=P.mode==='manual' ? UDEC_REG.find(r=>r.proto===P.proto) : null, h=udecFind(hintIn);
+    // подсказка с учётом ширины потока: «ism» на окне 1–2.4 МС/с — широкий ISM Scanner, на узком канале — ISM 433 Decoder
+    const hs=udecFindAll(hintIn), h=hs.find(r=>udecFit(r,s?.sr||0)) || hs[0] || null;
+    const manual=P.mode==='manual' ? UDEC_REG.find(r=>r.proto===P.proto) : null;
     // ложная подсказка: подсказанный декодер молчит дольше giveUp мс — подсказку не слушаем, пока она не сменится (sigid мог ошибиться)
     if((h?.proto||null)!==n.hintId){ n.hintId=h?.proto||null; n.hintT=now; n.hintBad=null; }
     if(h && !manual && n.hintBad!==h.proto && now-Math.max(n.hintT,n.lastRec)>(+P.giveUp||8000)) n.hintBad=h.proto;
@@ -113,38 +155,54 @@ IQK.udec={
     else {
       n.lock=null; st='search';
       // частота потока известна — слушают только декодеры её диапазонов (не нашлось ни одного — все: частота могла быть задана неточно)
-      const fc=s?.fc||0, byBand=fc>0 ? UDEC_REG.filter(r=>!r.bands || r.bands.some(b=>fc>=b[0] && fc<=b[1])) : [];
+      const fc=s?.fc||0, byBand=fc>0 ? UDEC_LIVE.filter(r=>!r.bands || r.bands.some(b=>fc>=b[0] && fc<=b[1])) : [];
       // декодер, которому не хватает полосы потока (ADS-B ≥ 2 МС/с), не слушает; не осталось ни одного — слушают все подходящие по полосе
-      const sr=s?.sr||0, fit=l=>sr ? l.filter(r=>!r.minSr || sr>=r.minSr) : l;
-      act=fit(byBand.length ? byBand : UDEC_REG);
-      if(!act.length) act=fit(UDEC_REG);
-      if(!act.length) act=UDEC_REG;
+      const sr=s?.sr||0, fit=l=>l.filter(r=>udecFit(r,sr));
+      act=fit(byBand.length ? byBand : UDEC_LIVE);
+      if(!act.length) act=fit(UDEC_LIVE);
+      if(!act.length) act=UDEC_LIVE;
     }
     n.st=st;
     for(const pr of [...n.kids.keys()]) if(!act.some(r=>r.proto===pr)) n.kids.delete(pr);    // не нужен — состояние долой: вернётся чистым
-    const recs=[], text=[];
+    const recs=[], text=[], voices=[], route=act.find(r=>r.route)||null;
+    let video=null;
     if(s) for(const r of act){
+      if(r.route) continue;                                // маршрут: декодера в ядре нет
       const k=this.kid(n,r);
-      let o; try{ o=IQK[r.id].process(k,{in:s},{}) || {}; }catch(e){ o={}; k.err=e.message; }
+      let o;
+      try{
+        let feed=s;
+        if(r.pre){ feed=(IQK[r.pre.id].process(k.pre,{in:s},{}) || {}).out; }     // ступень перед декодером (TV Demodulator)
+        o=feed ? IQK[r.id].process(k,{in:feed},{}) || {} : {};
+      }catch(e){ o={}; k.err=e.message; }
       const got=Array.isArray(o.rec) ? o.rec : o.rec ? [o.rec] : [];
       // адаптер из двух частей: кадры первой — на вход второй; живость — по кадрам, на выход — итоговые записи
       const outRecs=r.post && got.length ? UDEC_POST[r.post].run(k.post,got,P,now) : got;
-      if(got.length){
+      // видео: картинка декодера (аналоговое ТВ) уходит на video; живость — по захвату синхронизации
+      if(r.liveImg && o.img) video=o.img;
+      // неопознанные пакеты (kind unknown) — выводятся, но захват не дают: чужой всплеск (AIS) у ISM-сканера тоже «пакет импульсов»
+      const alive=got.some(x=>x && x.kind!=='unknown') || (r.liveImg && (o.lock>0 || !!o.img));
+      if(alive){
         for(const x of outRecs) recs.push({...x, proto:x.proto||r.proto, decoder:r.id});
-        n.counts[r.proto]=(n.counts[r.proto]||0)+got.length;
+        n.counts[r.proto]=(n.counts[r.proto]||0)+(got.length || (o.img ? 1 : 0));
         n.last=r.proto; n.lastRec=now;
         if(st==='search') n.lock=r;                      // кто заговорил первым — тот и остаётся
         else if(st==='lock') n.lock=r;
       }
+      // звук: кадры голоса декодера (DMR / P25 / NXDN / TETRA…) — на выход voice, дальше Vocoder (mbelib) → звук
+      if(o.voice){ const vl=Array.isArray(o.voice) ? o.voice : [o.voice]; for(const v of vl) voices.push({...v, proto:v.proto||r.proto, decoder:r.id}); }
       if(o.text) for(const line of String(o.text).split('\n')) if(line) text.push('['+r.proto+'] '+line);
     }
+    // IQ канала на выход: по параметру passIq, а у маршрута — всегда (его и подключают к DVB Receiver). Копия: буферы входа уходят дальше по графу
+    const wantIq=n.wantIq ?? !!P.passIq;
+    const iq=s && (wantIq || route) ? udecCopyIq(n,s) : null;
     if(st==='lock' && recs.length) n.lastRec=now;
     for(const t of text) n.recent.push(t);
     if(n.recent.length>12) n.recent.splice(0,n.recent.length-12);
     const lead=n.lock || act[0];
     const kid1=act.length===1 ? n.kids.get(act[0].proto) : null, kui=kid1?.ui || null, info=kid1?.post && UDEC_POST[act[0].post]?.info ? UDEC_POST[act[0].post].info(kid1.post) : '';
-    n.ui={st, act:act.map(r=>r.proto), proto:n.lock?.proto || (st==='hint'||st==='manual' ? act[0].proto : ''), last:n.last,
+    n.ui={st, act:act.map(r=>r.proto), route:route?.route||'', proto:n.lock?.proto || (st==='hint'||st==='manual' ? act[0].proto : ''), last:n.last,
       hintBad:n.hintBad, counts:{...n.counts}, ago:n.lastRec? now-n.lastRec : null, recent:n.recent.slice(-8), kid:kui, info, none:!s};
-    return {rec:recs.length ? recs : null, text:text.length ? text.join('\n') : null,
+    return {rec:recs.length ? recs : null, text:text.length ? text.join('\n') : null, voice:voices.length ? voices : null, video, iq,
       proto:n.ui.proto, locked:n.lock || st==='hint' || st==='manual' ? 1 : 0};
   }};

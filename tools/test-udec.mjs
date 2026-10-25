@@ -12,6 +12,8 @@ ctx.self=ctx;
 for(const f of files) vm.runInContext(fs.readFileSync(path.join(root,f),'utf8'),ctx,{filename:f});
 let bad=0; const ok=(c,m)=>{ if(!c){ bad++; console.error('FAIL: '+m); } };
 const ev=s=>vm.runInContext(s,ctx);
+// rtl_433 (wasm) для ISM Scanner: в приложении воркер грузит его сам
+ev(`globalThis.__setRt=m=>{ ISM_RT.mod=m; };`); ctx.__setRt(new WebAssembly.Module(fs.readFileSync(path.join(root,'vendor/rtl433.wasm'))));
 ok(ev('typeof IQK.udec')==='object','IQK.udec есть в воркере');
 
 // подсказки
@@ -21,9 +23,10 @@ ok(F('aisRx')?.proto==='AIS' && F('POCSAG')?.id==='pocsagRx' && F('ism')?.id==='
 ok(F({decoder:'aisRx'})?.id==='aisRx' && F({kind:'pocsag'})?.id==='pocsagRx' && F(['x','ism'])?.id==='ismRx','подсказка: запись и массив');
 ok(F('adsbDemod → adsbDecode')===null && F('')===null && F(null)===null && F(7)===null,'неизвестное — null');
 // параметры по умолчанию реестра совпадают с описаниями модулей
-const defs={aisRx:'ais.js',pocsagRx:'pocsag.js',ismRx:'ism.js',acarsRx:'acars.js',fskRx:'fsk4.js',mpt1327Rx:'mpt1327.js',tetraRx:'tetra.js',rs41Rx:'sonde.js',adsbDemod:'adsb.js',loraRx:'lora.js'};
+const defs={aisRx:'ais.js',pocsagRx:'pocsag.js',ismRx:'ism.js',acarsRx:'acars.js',fskRx:'fsk4.js',mpt1327Rx:'mpt1327.js',tetraRx:'tetra.js',rs41Rx:'sonde.js',adsbDemod:'adsb.js',loraRx:'lora.js',tvDecode:'video.js',ismScan:'ism.js'};
 ev(`globalThis.REG=UDEC_REG;`);
 for(const r of ctx.REG){
+  if(!r.id) continue;                                 // маршрут без декодера (DVB)
   const src=fs.readFileSync(path.join(root,'modules',defs[r.id]),'utf8');
   const blk=src.slice(src.indexOf("id:'"+r.id+"'"), src.indexOf('n=>{',src.indexOf("id:'"+r.id+"'")));
   for(const k in r.p){
@@ -38,10 +41,12 @@ for(const r of ctx.REG){
 { const act=(fc,sr)=>{ ev(`globalThis.UQ={p:{mode:'auto',proto:'AIS',hold:6000}}; IQK.udec.init(UQ);`);
     ctx.__s={sr,fc,chunks:[{re:new Float32Array(256),im:new Float32Array(256),t0:0}]};
     ev(`IQK.udec.process(UQ,{in:__s},{})`); return ev('UQ.ui.act'); };
-  const fit=sr=>ctx.REG.filter(r=>!r.minSr || sr>=r.minSr).length;
+  const fit=sr=>ctx.REG.filter(r=>!r.route && (!r.minSr || sr>=r.minSr) && (!r.maxSr || sr<=r.maxSr)).length;
   ok(!act(1090e6,256000).includes('ADS-B') && act(1090e6,256000).length===fit(256000),'1090 МГц при 256 кС/с: ADS-B не слушает, слушают все подходящие по полосе');
   ok(act(1090e6,2.4e6).join()==='ADS-B','1090 МГц при 2.4 МС/с: только ADS-B');
-  ok(act(868.1e6,1024000).includes('LoRaWAN') && act(868.1e6,1024000).includes('Meshtastic') && act(868.1e6,1024000).includes('ISM'),'868.1 МГц: ISM и обе настройки LoRa');
+  ok(act(868.1e6,1024000).includes('LoRaWAN') && act(868.1e6,1024000).includes('Meshtastic') && act(868.1e6,1024000).includes('ISM (wideband)'),'868.1 МГц: широкий ISM и обе настройки LoRa');
+  ok(act(433.92e6,2400000).includes('ISM (wideband)') && !act(433.92e6,2400000).includes('ISM'),'окно 2.4 МС/с: только широкий ISM (rtl_433 по каналам)');
+  ok(act(433.92e6,250000).includes('ISM') && !act(433.92e6,250000).includes('ISM (wideband)'),'узкий канал 250 кС/с: узкий ISM 433 Decoder');
   ok(act(868.1e6,125000).includes('LoRaWAN') && !act(868.1e6,125000).includes('Meshtastic'),'868.1 МГц при 125 кС/с: Meshtastic (250 кГц) не слушает'); }
 
 // генератор → udec
@@ -60,7 +65,7 @@ function run(mode,genP,udP,hint,seconds,fc,sr=SR){
   return {recs, protos:[...protos], sts:[...sts], last:ev('U.ui')};
 }
 // [режим генератора, частота (Гц), декодер, секунд, auto тоже?]; у частоты свой диапазон — слушает только пара декодеров
-const cases=[['AIS',161.975e6,'aisRx',6,true],['POCSAG',466.075e6,'pocsagRx',6,true],['ISM433',433.92e6,'ismRx',6,true],['ACARS',131.55e6,'acarsRx',6,true],
+const cases=[['AIS',161.975e6,'aisRx',6,true],['POCSAG',466.075e6,'pocsagRx',6,true],['ISM433',433.92e6,'ismScan',6,true],['ISM433',433.92e6,'ismRx',6,false,256000],['ACARS',131.55e6,'acarsRx',6,true],
   ['ADS-B',1090e6,'adsbDemod',4,true,2.4e6],['DMR',450e6,'fskRx',3,false],['TETRA',420e6,'tetraRx',4,false],['MPT1327',150e6,'mpt1327Rx',3,false],['RS41',403e6,'rs41Rx',3,false]];
 for(const [mode,fc,dec,secs,auto,sr] of cases){
   const kind=ctx.REG.find(r=>r.id===dec).kind;
@@ -102,7 +107,7 @@ ok(F('lorawan')?.proto==='LoRaWAN' && F('lora')?.proto==='Meshtastic' && F('mesh
 { const r=run('AIS',{},{mode:'manual',proto:'AIS'},null,4,161.975e6); ok(r.recs.length>0 && r.last.st==='manual','AIS manual'); }
 // диапазон: у частоты 161.975 МГц декодеры только этого диапазона; частота вне всех диапазонов или неизвестна — слушают все
 { const r=run('AIS',{},{},null,0.05,161.975e6); ok(r.last.act.includes('AIS') && !r.last.act.includes('TETRA') && !r.last.act.includes('RS41'),'диапазон: 161.975 МГц → '+r.last.act);
-  const r2=run('AIS',{},{},null,0.05,2.0e9); const fitN=sr=>ctx.REG.filter(r=>!r.minSr || sr>=r.minSr).length;
+  const r2=run('AIS',{},{},null,0.05,2.0e9); const fitN=sr=>ctx.REG.filter(r=>!r.route && (!r.minSr || sr>=r.minSr) && (!r.maxSr || sr<=r.maxSr)).length;
   ok(r2.last.act.length===fitN(SR),'частота вне диапазонов → слушают все, кому хватает полосы потока ('+r2.last.act.length+' из '+ctx.REG.length+')');
   const r3=run('AIS',{},{},null,0.05,0); ok(r3.last.act.length===fitN(SR),'частота неизвестна → слушают все, кому хватает полосы потока ('+r3.last.act.length+')'); }
 // без диапазона (fc=0) всё равно находит нужный: слушают все, остаётся AIS

@@ -1777,6 +1777,9 @@ async function rtlOpenDevice(dev, ppm, gain){
   await dev.open();
   await dev.selectConfiguration(1);
   const com=rtlMakeCom(dev);
+  // пробная запись, как в librtlsdr: не прошла — донгл в плохом состоянии после прошлой сессии, сброс USB и заново
+  try{ await com.writeEach([[RTL_CMD.REG, RTL_BLOCK.USB, RTL_REG.SYSCTL, 0x09, 1]]); }
+  catch(e){ await dev.reset(); await dev.selectConfiguration(1); }
   await com.writeEach([
     [RTL_CMD.REG, RTL_BLOCK.USB, RTL_REG.SYSCTL, 0x09, 1],
     [RTL_CMD.REG, RTL_BLOCK.USB, RTL_REG.EPA_MAXPKT, 0x0200, 2],
@@ -3723,6 +3726,10 @@ let isAM=false, isSSB=false, isFM=false, discScale=1, deA=null, deA1=0, hpA=0, h
 let rawI0=0, rawQ0=0, prevI=0, prevQ=0, ampDc=0, audDc=0, de=0;
 // АРУ для SSB: мгновенная атака по пику, удержание, затем спад; предел усиления — чтобы шум не раздувать бесконечно
 const AGC_TARGET=0.3, AGC_MAXGAIN=1000;
+// Мягкий ограничитель выхода: до 0.7 линейно, выше плавно к 1 (tanh). FM нормирован так, что номинальная девиация — 1.0, а шум без сигнала,
+// перемодуляция и AM / SSB без АРУ дают в 2–3 раза больше — без него выход резался жёстко (хрип). Хвост tanh не доходит до 1: дальше не клипует
+const LIM_T=0.7, LIM_K=1-LIM_T;
+function lim(x){ return x>LIM_T ? LIM_T+LIM_K*Math.tanh((x-LIM_T)/LIM_K) : x<-LIM_T ? -LIM_T-LIM_K*Math.tanh((-x-LIM_T)/LIM_K) : x; }
 let agcPk=AGC_TARGET/AGC_MAXGAIN, agcHold=0, agcHoldN=0, agcRel=0;
 let offsetHz=0, offCos=1, offSin=0, offPhI=1, offPhQ=0;
 let bufPool=[];
@@ -4016,7 +4023,7 @@ self.onmessage=function(e){
       audDc=audDc*hpA+l*hpA1; audDcR=audDcR*hpA+r*hpA1;
       let ol=l-audDc, orr=r-audDcR;
       if(deA!=null){ de=de*deA+ol*deA1; ol=de; deR=deR*deA+orr*deA1; orr=deR; }
-      out[wIdx]=ol; outR[wIdx++]=orr;
+      out[wIdx]=lim(ol); outR[wIdx++]=lim(orr);
       continue;
     }
     audDc=audDc*hpA+v*hpA1;
@@ -4032,7 +4039,8 @@ self.onmessage=function(e){
       else agcPk=Math.max(AGC_TARGET/AGC_MAXGAIN, agcPk*agcRel);
       o*=AGC_TARGET/agcPk;
     }
-    out[wIdx]=o; outR[wIdx++]=isb ? oR : o;
+    o=lim(o);
+    out[wIdx]=o; outR[wIdx++]=isb ? lim(oR) : o;
   }
   decA.pos=posA; decA.cnt=cntA; B.pos=posB; B.cnt=cntB;
   if(C) C.pos=posC;
@@ -4684,6 +4692,7 @@ const sdrGainArg=n=>sdrStages(n) ? sdrStageArg(n) : (n.p.auto ? null : n.p.gainD
 const sdrGainKey=n=>n.dev?.kind==='hackrf' ? `h${n.p.lna}|${n.p.vga}|${!!n.p.amp}`
   : sdrStages(n) ? `s${n.p.stLna}|${!!n.p.stLnaAuto}|${n.p.stMix}|${!!n.p.stMixAuto}|${n.p.stVga}` : (n.p.auto ? 'auto' : 'g'+n.p.gainDb);
 
+const RTL_WARM=new Set();                          // донглы, уже открытые за эту сессию (первое открытие — с повтором, см. rtlConnect)
 async function rtlConnect(n, choose){
   if(!navigator.usb){ n.status='WebUSB unavailable (needs Chrome/Edge/Opera)'; return; }
   if(n.connected && n.dev?.kind==='file') await rtlDisconnect(n);
@@ -4694,9 +4703,21 @@ async function rtlConnect(n, choose){
     n.usbDev=usbDev;
     const gain=n.p.auto?null:n.p.gainDb;
     // сначала пробуем открыть донгл в USB-воркере; без WebUSB в воркерах — по-старому, на главном потоке
-    n.dev=await rtlOpenInWorker(usbDev, gain).catch(e=>{
+    const open=async()=>await rtlOpenInWorker(usbDev, gain).catch(e=>{
       console.warn('[rtlsdr] USB-воркер не открыл донгл, читаем с главного потока:', e.message); return null; })
       || await sdrOpenDevice(usbDev, 0, gain);
+    n.dev=await open();
+    // Холодный старт RTL-SDR: первое открытие донгла после включения иногда даёт приёмник без сигнала, и помогает только
+    // Disconnect / Connect (перестройка — нет). Делаем это сами: при первом подключении донгла за сессию — открыть, закрыть, открыть заново
+    const uid=sdrUsbId(usbDev);
+    if(n.dev.kind==='rtl' && n.p.warmStart!==false && !RTL_WARM.has(uid)){
+      RTL_WARM.add(uid);
+      n.status='first start of the dongle: reopening…';
+      try{ await n.dev.close(); }catch(e){}
+      n.dev=null;
+      await sdrSleep(200);
+      n.dev=await open();
+    }
     const srSafe=rtlSafeSr(n.p.sr);
     if(srSafe!==+n.p.sr) n.status='sample rate in settings is stale, using '+srSafe+' Hz';
     n.p.usbId=sdrUsbId(usbDev);
@@ -5308,6 +5329,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'bw',t:'range',min:500,max:300000,step:100,d:190000,log:true,label:'bandwidth, Hz'},
     {n:'deemph',t:'select',opts:['50','75','off'],d:'50',label:'WFM de-emphasis, µs'},
     {n:'agc',t:'check',d:true,label:'AGC'},
+    {n:'warmStart',t:'check',d:true,label:'RTL-SDR: on the first connect of the dongle in this session open it, close it and open it again (what Disconnect / Connect does by hand: the first open after power-up sometimes gives no signal)'},
     {n:'autoRecover',t:'check',d:true,label:'RTL-SDR: a second after connecting check that the tuner PLL holds the lock; if not, restart the tuner by itself (up to 3 times) — Blog V4 does not always start with a visible signal'},
     {n:'planMode',t:'check',d:true,label:'band plan (plan input): set demodulation and bandwidth by the most specific range under the tuned frequency, when the range changes'},
     {n:'planGain',t:'check',d:true,label:'band plan (plan input): set the gain by the most specific range that has a gain column (AGC off)'},
