@@ -102,10 +102,10 @@ function sdbMatch(m,top){
   if(!have.length && !fq) return [];
   const out=[];
   for(const e of SDB){
-    let s=1;
+    let s=1, svc=false, rw=0;
     for(const [k,i] of have) s*=e[i] ? sdbRange(m[k],e[i]) : 0.85;
-    if(fq && e[5]){ let hit=false; for(const r of e[5]) if(fq>=r[0] && fq<=r[1]){ hit=true; break; } if(!hit) s*=0.2; }
-    out.push({n:e[0], mod:e[1], score:s, note:e[6]});
+    if(fq && e[5]){ let hit=false; for(const r of e[5]) if(fq>=r[0] && fq<=r[1]){ hit=true; rw=rw? Math.min(rw,r[1]-r[0]) : r[1]-r[0]; } if(!hit) s*=0.2; else svc=true; }
+    out.push({n:e[0], mod:e[1], score:s, note:e[6], svc, rw});        // svc — частота попала в диапазон службы, rw — его ширина, МГц (уже — конкретнее)
   }
   out.sort((a,b)=>b.score-a.score);
   return out.slice(0,top||5);

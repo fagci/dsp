@@ -104,6 +104,28 @@ function sidFloor(n,pw,N){
   const t0=(nb-1)*B+h; if(t0<N) fl.fill(op[nb-1],t0);
   return fl;
 }
+// глубокое усреднение (EMA по n.p.deep с) + согласованные фильтры: слабые сигналы, которых нет в одном кадре (sid*Weak* — sigid-kernels.js)
+function sidWeakAdd(n,s,pw,m,out,ia,ib,binHz){
+  const N=pw.length, now=performance.now(), key=N+'|'+s.sr+'|'+(s.freqs? s.freqs[0]+':'+s.freqs[N-1] : 'a');
+  let dp=n._dp;
+  if(!dp || dp.length!==N || n._dpKey!==key){ dp=n._dp=new Float32Array(N); n._dpKey=key; n._dpT=0; n._dh=null; }
+  const dt=n._dpT? Math.min(10,(now-n._dpT)/1000) : 0, al=n._dpT? Math.min(1,Math.max(dt,.05)/n.p.deep) : 1;
+  n._dpT=now;
+  for(let i=0;i<N;i++) dp[i]+=(pw[i]-dp[i])*al;
+  const fd=sidFloor(n._dh||(n._dh={}),dp,N);
+  for(const w of sidWeakFind(dp,fd,ia,ib,n.p.zthr)){
+    const [a,b]=sidRefine(dp,fd,ia,ib,w.a,w.b,w.snr);
+    const lo=specHz(s,a)-binHz/2, hi=specHz(s,b)+binHz/2, l=Math.min(lo,hi), h=Math.max(lo,hi);
+    // уже найден обычным путём — пропуск; узкие всплески внутри (несущая, свист манипуляции) — часть широкого слабого сигнала, он их заменяет
+    const ov=out.filter(o=>l<=o.hi && h>=o.lo);
+    if(ov.some(o=>o.obw*4>=h-l)) continue;
+    for(const o of ov) out.splice(out.indexOf(o),1);
+    let tot=0, cen=0, pk=a;
+    for(let i=a;i<=b;i++){ const e=Math.max(0,dp[i]-fd[i]); tot+=e; cen+=e*i; if(m[i]>m[pk]) pk=i; }
+    out.push({lo:l, hi:h, fc:specHz(s,tot>0? cen/tot : (a+b)/2), obw:(b-a+1)*binHz, bw3:(b-a+1)*binHz, flat:.5, carDb:0, asym:0,
+      snr:w.snr, db:20*Math.log10(m[pk]+1e-12), floorDb:10*Math.log10(fd[(a+b)>>1]||1e-30), weak:true});
+  }
+}
 function sidSegments(n,s){
   const m=s.mag, N=m.length;
   if(N<16) return [];
@@ -167,6 +189,7 @@ function sidSegments(n,s){
       asym:i1>i0? (cen/tot-(i0+i1)/2)/(i1-i0+1) : 0,
       snr, db:20*Math.log10(m[pk]+1e-12), floorDb:10*Math.log10(fl[pk])});
   }
+  if(n.p.deep>0) sidWeakAdd(n,s,pw,m,out,ia,ib,binHz);
   out.sort((x,y)=>y.snr-x.snr);
   // слабые «сигналы» вплотную к сильному — его боковые лепестки
   for(let i=out.length-1;i>0;i--){ const w=out[i];
@@ -196,7 +219,7 @@ function sidTrack(n,segs,s,now){
       const kw=g.hi-g.lo>t.hi-t.lo? .6 : .2;
       t.lo+=(g.lo-t.lo)*kw; t.hi+=(g.hi-t.hi)*kw;
       for(const f of ['fc','obw','bw3','flat','carDb','asym','snr','floorDb']) t[f]=e(t[f],g[f]);
-      t.db=g.db;
+      t.db=g.db; t.weak=!!g.weak;
     }
     t.hist|=1; t.hit=true; t.t=now;
     // слабый узкий — 3 из 4 кадров: шумовой выброс в одном месте дважды почти не повторяется
@@ -243,7 +266,7 @@ function sidGroup(n,ts,ext){
   return {key:ts.map(t=>t.id).join('+'), tracks:ts, lead, lo, hi,
     fc:ts.length>1? (ts[0].fc+ts[ts.length-1].fc)/2 : lead.fc,
     obw:ts.length>1? ts[ts.length-1].fc-ts[0].fc+Math.max(...ts.map(t=>t.obw)) : lead.obw,
-    snr:lead.snr, db:Math.max(...ts.map(t=>t.db)), duty, trans, binHz:n.binHz, rf:n.rf, ...ext};
+    snr:lead.snr, weak:!!lead.weak, db:Math.max(...ts.map(t=>t.db)), duty, trans, binHz:n.binHz, rf:n.rf, ...ext};
 }
 
 // ---- классификация по спектру (без отсчётов) ----
@@ -798,7 +821,30 @@ function sidClassify(n,g,plan){
   if(!g.rf && ['USB','LSB','SSB','NFM','WFM'].includes(c.t)) c={t:'VOICE', conf:.3, tag:'voice?', det:'wideband audio'};
   const band=sidPlanBand(plan,g.fc);
   if(band && SID_PLAN_RX[c.t]?.test(band.label||'')) c.conf=Math.min(.95,c.conf+.15);
-  return {...c, src, band:band?.label||'', hint:sidHint(c,g)};
+  let hint=sidHint(c,g), cat=null;
+  if(n.p.rangeCtx && g.rf){ const r=sidRangeCtx(g,c,hint); c=r.c; hint=r.hint; cat=r.cat; }
+  if(g.weak) c={...c, det:(c.det? c.det+' · ' : '')+'weak — found by deep integration'};
+  return {...c, src, band:band?.label||'', hint, cat, need:n.p.need? sidNeedBw(g.weak? g.obw*1.45 : g.obw,cat) : 0};   // у слабого края тонут в шуме — запас шире
+}
+// диапазон частот как довод: службы из базы сигналов, в чей диапазон попала частота и чья ширина подходит.
+// Общий (NFM, цифровой, FSK…) вид заменяется названием службы со ссылкой на декодер из каталога; уверенный — остаётся, служба идёт в подсказку.
+const SID_GENERIC=new Set(['DIG','UNK','NFM','FSK','MFSK','PSK']);
+function sidRangeCtx(g,c,hint){
+  const F=g.fc;
+  // боковая по обычаю диапазона: ниже 10 МГц LSB, выше USB
+  if(c.t==='SSB' && F>=1.6e6) c={...c, t:F<10e6? 'LSB':'USB', tag:F<10e6? 'LSB':'USB', conf:.35, det:'sideband by the usual practice for this range'};
+  // WFM вне диапазона вещания — просто широкий FM
+  if(c.t==='WFM' && !(F>=64e6 && F<=108e6)) c={...c, tag:'wide FM', conf:Math.min(c.conf,.35), det:(c.det? c.det+' · ' : '')+'outside the FM broadcast range'};
+  const cands=sdbMatch({bw:g.obw,freq:F,baud:c.baud||0,dev:0},200).filter(x=>x.svc && x.score>=.7)
+    .sort((x,y)=>(y.score>.95)-(x.score>.95) || x.rw-y.rw || y.score-x.score).slice(0,2);   // конкретнее — службы с узким диапазоном
+  if(!cands.length) return {c,hint,cat:null};
+  let cat=null; for(const x of cands){ const k=SIGCAT_OF[x.n]; if(k){ cat=sigcatPick(k,F); break; } }
+  const names=cands.map(x=>x.n).join(' / ');
+  const dec=cat? ' → '+cat.decoder+' @ '+fmtHz(cat.f,4)+'Hz' : '';
+  if(SID_GENERIC.has(c.t) || c.conf<.4)
+    return {c:{...c, tag:names+'?', conf:Math.max(c.conf,Math.min(.65,.3+.35*cands[0].score)), det:(c.det? c.det+' · ' : '')+'by frequency range'},
+      hint:(hint? hint+' · ' : '')+names+dec, cat};
+  return {c, hint:hint+(dec? ' · '+cands[0].n+dec : ''), cat};
 }
 
 def({ id:'sigid', title:'Signal Type Identifier', cat:'Analysis', readout:true, tall:true,
@@ -807,14 +853,19 @@ def({ id:'sigid', title:'Signal Type Identifier', cat:'Analysis', readout:true, 
   // plan — band plan для контекста. bands — метки на 'sa' (напрямую или через bandplan.sigs).
   // fmin/fmax — область поиска (например, lo/hi выбранной полосы 'bandplan'); новое значение снимает «весь спектр»
   ins:[{n:'spec',t:'spec'},{n:'in',t:'sig'},{n:'plan',t:'bands'},{n:'fmin',t:'num'},{n:'fmax',t:'num'}],
-  outs:[{n:'bands',t:'bands'},{n:'type',t:'txt'},{n:'f',t:'num'},{n:'conf',t:'num'},{n:'count',t:'num'}],
+  outs:[{n:'bands',t:'bands'},{n:'type',t:'txt'},{n:'f',t:'num'},{n:'conf',t:'num'},{n:'count',t:'num'},
+        {n:'bw',t:'num'},{n:'tune',t:'num'},{n:'demod',t:'val'},{n:'sr',t:'num'},{n:'branch',t:'num'},{n:'decoder',t:'txt'}],
   params:[{n:'auto',t:'check',d:true,label:'whole spectrum'},
           {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[100,3000],label:'search range, Hz'},
           {n:'fftSize',t:'select',opts:['2048','4096','8192','16384'],d:'8192',label:'FFT size (audio input)'},
           {n:'period',t:'range',min:.5,max:5,step:.5,d:2,label:'analysis period, s'},
           {n:'thr',t:'range',min:3,max:30,step:.5,d:8,label:'detection threshold, dB'},
           {n:'maxSig',t:'range',min:1,max:20,step:1,d:8,label:'signals to label'},
-          {n:'iq',t:'check',d:true,label:'sample analysis (IQ / audio)'}],
+          {n:'iq',t:'check',d:true,label:'sample analysis (IQ / audio)'},
+          {n:'rangeCtx',t:'check',d:true,label:'use the frequency range: a service of the signal database whose band holds the signal names it (and the decoder from the catalog)'},
+          {n:'deep',t:'range',min:0,max:60,step:1,d:0,label:'weak signals: deep integration, s (0 — off). Averages the spectrum for that long and looks for signals with matched filters of several widths'},
+          {n:'zthr',t:'range',min:3,max:8,step:.25,d:5,label:'weak signals: detection threshold, σ of the smoothed spectrum (lower — more weak signals and false ones)'},
+          {n:'need',t:'check',d:false,label:'mark the bandwidth needed to receive the signal on the spectrum (catalog entry or measured width + margin, to the standard channel width)'}],
   init:n=>{ n.tracks=[]; n.tid=0; n.wid=0; n.wPend=new Map(); n.fxs=[]; n.noPair=new Set(); n.sigs=[]; n.labels=[]; n.text='waiting for spectrum…'; n.aring=null; n.os=null; },
   process(n,I){
     n.inOn=!!I.in;
@@ -838,20 +889,23 @@ def({ id:'sigid', title:'Signal Type Identifier', cat:'Analysis', readout:true, 
       for(const g of n.sigs) g.cls=sidClassify(n,g,I.plan);
       // скобка — по полосе 99% мощности: края сегмента у сильного сигнала захватывают брызги
       n.labels=n.sigs.map(g=>({lo:Math.max(g.lo,g.fc-g.obw/2), hi:Math.min(g.hi,g.fc+g.obw/2), label:g.cls.tag, color:SID_T[g.cls.t]?.c||'#b0bec5',
-        sig:true, db:g.db, conf:g.cls.conf, type:g.cls.t, f:g.fc}));
+        sig:true, db:g.db, conf:g.cls.conf, type:g.cls.t, f:g.fc,
+        ...(g.cls.need? {nlo:g.fc-g.cls.need/2, nhi:g.fc+g.cls.need/2, nbw:g.cls.need} : {})}));
       const src=n.p.iq? sidSource(n,s) : null;
       n.text=(n.p.auto? '' : 'range '+fmtHz(n.range[0],3)+'–'+fmtHz(n.range[1],3)+'Hz'+(off? ' — outside the spectrum' : '')+'\n')+
         n.sigs.length+' signal'+(n.sigs.length===1?'':'s')+' · floor '+(n.floorDb??0).toFixed(0)+' dB · samples: '+
         (src? (s.iq? 'IQ '+fmtHz(src.sr,2)+'S/s' : 'audio') : 'none')+'\n'+
         n.sigs.map((g,i)=>{ const c=g.cls;
           return (i+1)+'. '+fmtHz(g.fc,g.rf?4:2).padStart(9)+'Hz  '+c.tag+'  ('+Math.round(c.conf*100)+'%, '+c.src+')\n'+
-            '   bw '+fmtHz(g.obw,1)+'Hz · SNR '+g.snr.toFixed(0)+' dB'+(c.det? ' · '+c.det : '')+(c.band? ' · in '+c.band : '')+
+            '   bw '+fmtHz(g.obw,1)+'Hz'+(c.need? ' (receive '+fmtHz(c.need,1)+'Hz)' : '')+' · SNR '+g.snr.toFixed(0)+' dB'+(c.det? ' · '+c.det : '')+(c.band? ' · in '+c.band : '')+
             (c.hint? '\n   → '+c.hint : ''); }).join('\n');
     }
     if(n.p.iq) sidFocusStep(n,sidSource(n,s),n.sigs,now);
     else n.fxs=[];
     const top=n.sigs[0];
-    return {bands:n.labels, type:top? top.cls.tag : '', f:top? top.fc : null, conf:top? top.cls.conf : 0, count:n.sigs.length};
+    const cat=top?.cls.cat;
+    return {bands:n.labels, type:top? top.cls.tag : '', f:top? top.fc : null, conf:top? top.cls.conf : 0, count:n.sigs.length,
+      bw:top? (top.cls.need||sidNeedBw(top.obw,cat)) : null, tune:cat? cat.f : null, demod:cat? cat.demod : '', sr:cat? cat.sr : null, branch:cat? cat.branch : null, decoder:cat? cat.decoder : ''};
   },
   dispose:n=>{ if(n.worker){ n.worker.terminate(); n.worker=null; } },
   draw(n){ const r=n.el.querySelector('.readout');
