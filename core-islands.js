@@ -15,7 +15,7 @@ const Islands={
   setEnabled(v){ this.enabled=!!v; this.rebuild(); },
   // Связные компоненты узлов с ядром; воркер переиспользуется, если остров сохранил хоть один узел
   rebuild(){
-    const kn=this.enabled ? Graph.order.filter(n=>MOD[n.type]?.kernel) : [];
+    const kn=this.enabled ? Graph.order.filter(n=>MOD[n.type]?.kernel && !MOD[n.type].mainWhen?.(n)) : [];     // mainWhen: узел сейчас нужен главному потоку (Universal Decoder со звуковыми декодерами)
     const par=new Map(kn.map(n=>[n.id,n.id]));
     const root=id=>{ while(par.get(id)!==id){ par.set(id,par.get(par.get(id))); id=par.get(id); } return id; };
     for(const e of Graph.edges) if(par.has(e.from) && par.has(e.to)) par.set(root(e.from), root(e.to));
