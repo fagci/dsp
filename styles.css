@@ -1475,5 +1475,6 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
 }
 
-/* узлы холста вне экрана не раскладываются и не рисуются (см. cvArm в core-graph.js) */
-#canvas #content .node.cvis{content-visibility:auto;overflow-clip-margin:80px}   /* paint-containment обрезал бы выступающие порты и подписи */
+/* узлы холста вне экрана не раскладываются и не рисуются (см. cvArm в core-graph.js).
+   Только тело узла (.mid): paint-containment обрезает и клики, а пины торчат за рамку узла — в соседних колонках, вне .mid, их он не трогает */
+#canvas #content .node.cvis .io3>.mid{content-visibility:auto;overflow-clip-margin:80px;contain-intrinsic-size:auto 200px auto 60px}

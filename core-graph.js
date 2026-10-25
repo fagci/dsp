@@ -433,16 +433,18 @@ cvArm(n);
 }
 // content-visibility:auto — браузер не раскладывает и не рисует узлы вне экрана (на патче из ~130 узлов ×8 кадров/с).
 // Включаем не сразу: у невиданного узла высота «авто» заменилась бы заглушкой, а от offsetHeight зависят nodeH, раскладка и вписывание.
-// Поэтому после первой раскладки запоминаем реальный размер в contain-intrinsic-size и только тогда ставим класс.
+// Поэтому после первой раскладки запоминаем реальный размер тела узла (.mid) в contain-intrinsic-size и только тогда ставим класс.
 const CVIS=typeof CSS!=='undefined' && CSS.supports && CSS.supports('content-visibility','auto');
 function cvArm(n){
   if(!CVIS) return;
   const el=n.el;
   requestAnimationFrame(()=>{
     if(n.el!==el || !el.isConnected || el.parentNode!==content) return;
-    const h=el.offsetHeight, w=el.offsetWidth;
+    const mid=el.querySelector(':scope > .nbody > .io3 > .mid');   // content-visibility — на теле узла, не на узле: иначе обрезаются клики по пинам за рамкой
+    if(!mid) return;
+    const h=mid.offsetHeight, w=mid.offsetWidth;
     if(h<20 || w<20) return;                     // ещё не разложен (свёрнут/скрыт) — останется как был
-    el.style.containIntrinsicSize='auto '+w+'px auto '+h+'px';
+    mid.style.containIntrinsicSize='auto '+w+'px auto '+h+'px';
     el.classList.add('cvis');
   });
 }
