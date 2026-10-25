@@ -23,6 +23,7 @@ const SIGCAT=(()=>{
     A('acars','ACARS 131.550',MHz(131.55),25e3,1.024e6,'acarsRx',0,'авиа-сообщения, AM-MSK 2400 Bd; основная частота США / мира'),
     A('acars','ACARS 131.725',MHz(131.725),25e3,1.024e6,'acarsRx',0,'авиа-сообщения, AM-MSK 2400 Bd; Европа'),
     A('acars','ACARS 130.025',MHz(130.025),25e3,1.024e6,'acarsRx',0,'авиа-сообщения, AM-MSK 2400 Bd; США'),
+    A('vdl2','VDL Mode 2 136.975',MHz(136.975),25e3,1.024e6,'vdl2Rx',0,'авиа-линк данных D8PSK 10.5 кБод 31.5 кбит/с: ACARS и ATN поверх AVLC; основная частота 136.975 (также 136.650 / 136.725 / 136.775 / 136.800 / 136.825 / 136.875 / 136.900 / 136.925)'),
     A('same','NOAA Weather 162.550',MHz(162.55),12.5e3,1.024e6,'sameRx',0,'предупреждения SAME/EAS (США); каналы 162.400–162.550 МГц','NFM'),
     A('ax25','APRS 144.800',MHz(144.8),25e3,1.024e6,'ax25Rx',0,'APRS / AX.25, Bell 202 1200 Bd, NFM; Европа (США — 144.390 МГц)','NFM'),
     A('wwv','WWV 10 MHz',MHz(10),10e3,1.024e6,'wwv',0,'службы времени WWV / WWVH / CHU: секундные метки и код времени, AM; также 2.5, 5, 15, 20 МГц, CHU 3.33 / 7.85 / 14.67 МГц','AM'),
@@ -41,7 +42,7 @@ const SIGCAT=(()=>{
 })();
 
 // имя записи Signal Database (sigdb-kernels.js) → вид записей каталога; по нему sigDb предлагает, чем декодировать
-const SIGCAT_OF={'ADS-B / Mode S':'adsb','AIS':'ais','POCSAG':'pocsag','ISM 433 OOK/ASK':'ism','ISM FSK (датчики)':'ism','ACARS (VHF)':'acars',
+const SIGCAT_OF={'ADS-B / Mode S':'adsb','AIS':'ais','POCSAG':'pocsag','ISM 433 OOK/ASK':'ism','ISM FSK (датчики)':'ism','ACARS (VHF)':'acars','VDL Mode 2':'vdl2',
   'NOAA Weather Radio':'same','LoRa 250 / 500 кГц':'lora','LoRa 125 кГц':'lorawan','DVB-T / DVB-T2':'dvbt','Аналоговое ТВ PAL/SECAM':'atv','Аналоговое FPV-видео':'atv'};
 // запись каталога вида kind: ближайшая к измеренной частоте freq (Гц; 0 — первая); null, если вида нет
 function sigcatPick(kind,freq){

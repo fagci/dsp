@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=114;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=115;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -190,6 +190,7 @@ const PRESET_CATS={
   'Universal Decoder: One Node, Any Protocol (Generator)':'Digital Voice & Trunking',
   'Universal Decoder: Sound Out — Digital Voice to the Speaker (Generator)':'Digital Voice & Trunking',
   'Universal Decoder: Video Out — Analog TV Picture (Generator)':'Images & TV',
+  'VDL Mode 2: ACARS over D8PSK (Generator)':'Aircraft, Satellites & Telemetry',
   'Universal Decoder: Audio and Main-Thread Decoders — SAME, DTMF, FT8 (Generator)':'HF Modes & Morse',
   'Universal Decoder: DVB Through the Router (USB SDR)':'Images & TV',
   'Several Signals at Once: Find, Cut Out and Decode Each (Generator)':'SDR Receivers',
@@ -1668,6 +1669,22 @@ const ud=addNode('udec',440,260,{mode:'manual',proto:'DVB',passIq:true}); ud.siz
 const tv=addNode('dvbsoft',900,260,{sr:1000,std:'DVB-S',cstln:'QPSK',cr:'3/4'}); tv.size.w=420; tv.size.h=420; applySize(tv);
 const sc=addNode('dac',1360,260,{}); sc.size.w=260; sc.size.h=200; applySize(sc);
 addEdge(rx.id,'iq',ud.id,'in'); addEdge(ud.id,'iq',tv.id,'in'); addEdge(tv.id,'L',sc.id,'L'); addEdge(tv.id,'R',sc.id,'R');
+markWiresDirty();
+});
+preset('VDL Mode 2: ACARS over D8PSK (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'VDL Mode 2 — the main digital air-ground data link (136.650–136.975 MHz, 25 kHz channels). D8PSK, 10500 Bd, 31.5 kbit/s: the burst starts with a 16-symbol preamble, then a 25-bit header (length, 5-bit check with single-error correction), the scrambler x^15+x+1, Reed–Solomon RS(255,249) over interleaved blocks, HDLC frames with an FCS and AVLC inside; most of the traffic is ACARS (position reports, ATC and airline messages) in I-frames, XID frames are the ground stations\' beacons.\n'+
+  'The generator is a test transmitter: three aircraft/ground messages one after another, +500 Hz off the centre and with noise. VDL2 Decoder cuts the stream to 105 kS/s, finds the preamble by the phase pattern (the same regression gives the frequency error — the «df» field), corrects bytes by FEC and gives records with the AVLC addresses (ICAO 24-bit), registration, label, flight and text. A real receiver: USB SDR at 136.975 MHz (a 250 kS/s stream or more, the channel may be 1–2 kHz off), or put Universal Decoder after it — the hint «vdl2», or the auto search by the band 136–137 MHz.'});
+nt.size.w=860; nt.size.h=210; applySize(nt);
+const gn=addNode('iqGen',40,300,{sr:'250000',fc:136975000,mode:'VDL2',off:500,lvl:-15,noise:-45});
+const sp=addNode('iqSpec',340,300,{size:'4096',avg:'8'});
+const sa=addNode('sa',340,440,{auto:true,floor:-110,top:-30,split:.4});
+sa.size.w=520; sa.size.h=240; applySize(sa);
+const de=addNode('vdl2Rx',920,300,{});
+de.size.w=520; de.size.h=300; applySize(de);
+const log=addNode('recLog',920,640,{});
+log.size.w=520; applySize(log);
+addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec'); addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('Universal Decoder: Audio and Main-Thread Decoders — SAME, DTMF, FT8 (Generator)', function(){
