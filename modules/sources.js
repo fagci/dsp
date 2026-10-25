@@ -1671,6 +1671,11 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
     await com.writeRegister(RTL_BLOCK.SYS, 0x3001, on?(gpo|m):(gpo&~m), 1);
   }
   async function init(){ await initRegisters(REGISTERS); await initElectronics(); }
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));            // без внешних имён: функция целиком уходит в USB-воркер через toString
+  // полная переинициализация тюнера (регистры, калибровка фильтра, состояние входов): теневая копия и выбранные входы — с нуля
+  async function reinit(){ curBand=null; curInput=null; hasPllLock=false; await init(); }
+  // захват PLL держится бит в регистре 0x02: читаем заново (после перестройки он мог сорваться)
+  async function checkLock(){ await getPllLock(true); return hasPllLock; }
   // rfFreq — истинная целевая RF-частота (без добавленного IF), нужна только для выбора входа/нотчей у R828D
   async function setFrequency(freq, rfFreq){
     const rf=rfFreq!=null?rfFreq:freq;
@@ -1738,7 +1743,21 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
     await writeEach([[0x06,0xb1,0xff],[0x05,0xb3,0xff],[0x07,0x3a,0xff],[0x08,0x40,0xff],[0x09,0xc0,0xff],
       [0x0a,0x36,0xff],[0x0c,0x35,0xff],[0x0f,0x68,0xff],[0x11,0x03,0xff],[0x17,0xf4,0xff],[0x19,0x0c,0xff]]);
   }
-  return {init, setFrequency, setAutoGain, setManualGain, setStageGain, setGpio, close, setFast:on=>{ fast=!!on; }};
+  // Перестройка, которая не отдаёт приёмник без захвата PLL: на холодном старте (особенно Blog V4 / R828D) PLL бывает не захватывает частоту с нескольких
+  // попыток подряд — сигнала нет, пока пользователь не перестроит руками. Дальше: попытки с растущей паузой, последняя — после полной переинициализации
+  // тюнера; afterReinit() вернёт усиление (регистры при переинициализации сбрасываются). locked() скажет, чем кончилось.
+  async function setFrequencyRobust(freq, rfFreq, afterReinit){
+    let r=await setFrequency(freq, rfFreq);
+    for(let a=0; a<3 && !hasPllLock; a++){ await sleep(25*(a+1)); r=await setFrequency(freq, rfFreq); }
+    if(!hasPllLock){
+      await sleep(50); await reinit();
+      if(afterReinit) await afterReinit();
+      await sleep(30);
+      r=await setFrequency(freq, rfFreq);
+    }
+    return r;
+  }
+  return {init, reinit, checkLock, setFrequency, setFrequencyRobust, locked:()=>hasPllLock, setAutoGain, setManualGain, setStageGain, setGpio, close, setFast:on=>{ fast=!!on; }};
 }
 // проверка чипа по ID-регистру на конкретном I2C-адресе (0x69 у обеих версий R82xx)
 rtlMakeR820T.checkAt = async function(com, addr){
@@ -1804,8 +1823,10 @@ async function rtlOpenDevice(dev, ppm, gain){
     [RTL_CMD.DEMODREG,1,0x1b,mult&0xff,1],[RTL_CMD.DEMODREG,1,0x15,0x01,1]
   ]);
   await tuner.init();
+  await new Promise(r=>setTimeout(r,30));          // дать тюнеру устояться после калибровки: сигнал «не с первого запуска» — частая жалоба на V4
   if(gain==null) await tuner.setAutoGain(); else if(typeof gain==='object') await tuner.setStageGain(gain); else await tuner.setManualGain(gain);
   await com.i2c.close();
+  let curGain=gain;                                 // для возврата усиления после переинициализации тюнера
 
   async function setSampleRate(rate){
     rate=Math.min(rate, 3200000);
@@ -1831,17 +1852,40 @@ async function rtlOpenDevice(dev, ppm, gain){
   async function setCenterFrequency(freq){
     const t0=performance.now();
     await com.i2c.open();
-    const actual=await tuner.setFrequency(freq+IF, freq);
-    await com.i2c.close();
+    let actual;
+    try{ actual=await tuner.setFrequencyRobust(freq+IF, freq, ()=>applyGain(curGain)); }
+    finally{ await com.i2c.close(); }
     // быстрый режим пропускает паузы PLL: до следующего захвата отсчёты идут с недосевшей частотой
     if(fastOn){ const w=15-(performance.now()-t0); if(w>0) await new Promise(r=>setTimeout(r,w)); }
     tuneEpoch++;
     return actual-IF;
   }
+  async function applyGain(g){ if(g==null) await tuner.setAutoGain(); else if(typeof g==='object') await tuner.setStageGain(g); else await tuner.setManualGain(g); }
   async function setGain(g){
     await com.i2c.open();
-    if(g==null) await tuner.setAutoGain(); else if(typeof g==='object') await tuner.setStageGain(g); else await tuner.setManualGain(g);
-    await com.i2c.close();
+    try{ curGain=g; await applyGain(g); }
+    finally{ await com.i2c.close(); }
+  }
+  // PLL тюнера держит захват? (регистр читается заново)
+  async function pllLock(){
+    await com.i2c.open();
+    try{ return await tuner.checkLock(); }
+    finally{ await com.i2c.close(); }
+  }
+  // мягкий перезапуск тюнера: переинициализация, возврат частоты и усиления, сброс буфера — как «Disconnect / Connect», но без USB
+  async function recover(freq, g){
+    await com.i2c.open();
+    let actual;
+    try{
+      if(g!==undefined) curGain=g;
+      await tuner.reinit();
+      await new Promise(r=>setTimeout(r,30));
+      await applyGain(curGain);
+      actual=await tuner.setFrequencyRobust(freq+IF, freq, ()=>applyGain(curGain));
+    }finally{ await com.i2c.close(); }
+    tuneEpoch++;
+    await resetBuffer();
+    return {f:actual-IF, locked:tuner.locked()};
   }
   // быстрая перестройка: без пустых чтений после записи в демодулятор и без необязательных шагов PLL (см. rtlMakeR820T)
   function setFastTune(on){ fastOn=!!on; tuner.setFast(on); com.setFastI2C(on); }
@@ -1855,7 +1899,7 @@ async function rtlOpenDevice(dev, ppm, gain){
     await com.iface.release();
     await dev.close();
   }
-  return {setSampleRate, setCenterFrequency, setGain, setBiasTee, setFastTune, resetBuffer, readSamples, close,
+  return {setSampleRate, setCenterFrequency, setGain, setBiasTee, setFastTune, resetBuffer, readSamples, close, pllLock, recover,
     tunerName:found.name+(isV4?' (Blog V4)':''), kind:'rtl', fmt:'u8', bps:2, epoch:()=>tuneEpoch};
 }
 
@@ -2891,6 +2935,8 @@ async function rtlOpenInWorker(usbDev, gain){
     setGain:gain=>call('setGain',{gain}),
     setBiasTee:on=>call('dev',{m:'setBiasTee',a:[on]}),
     setFastTune:info.kind==='rtl' ? on=>call('dev',{m:'setFastTune',a:[on]}) : undefined,
+    pllLock:info.kind==='rtl' ? ()=>call('dev',{m:'pllLock',a:[]}) : undefined,
+    recover:info.kind==='rtl' ? async(freq,gain)=>{ const r=await call('dev',{m:'recover',a:[freq,gain]}); epoch=await call('dev',{m:'epoch',a:[]}).catch(()=>epoch); return r; } : undefined,
     setHackrfGain:(lna,vga,amp)=>call('dev',{m:'setHackrfGain',a:[lna,vga,amp]}),
     startSweep:async(...a)=>epoch=await call('dev',{m:'startSweep',a}),
     stopSweep:async()=>epoch=await call('dev',{m:'stopSweep',a:[]}),
@@ -4688,7 +4734,34 @@ async function rtlStart(n, sr){
   n.adcAcc=null; n.adcPk=null; n.adcRms=null; n.adcClip=null; n.adcOvlT=null;
   for(const ch of n.ch){ ch.rssi=null; ch.rssiChunk=null; ch.snr=null; ch.noiseDb=null; ch.nzRef=null; ch.sqOpen=undefined; ch.sqG=1; }
   n.status='connected ('+n.dev.tunerName+(n.dev.worker?', USB in worker':'')+')';
-  rtlReadLoop(n);
+  n.tunerMsg=''; rtlReadLoop(n);
+  rtlHealthCheck(n);
+}
+// «не с первого запуска»: через ~1 с после подключения (RTL-SDR, особенно Blog V4) проверяем, держит ли PLL захват; сорван — тюнер
+// перезапускается сам (переинициализация, частота, усиление, сброс буфера; до трёх раз), без ручного Disconnect / Connect
+async function rtlHealthCheck(n){
+  const dev=n.dev;
+  if(!dev?.pllLock || n.p.autoRecover===false) return;
+  for(let k=0, t=0; k<3 && t<15; t++){
+    await sdrSleep(k ? 1200 : 900);
+    if(n.dev!==dev || !n.connected) return;
+    if(n.busy || n.swActive) continue;               // перестройка в процессе — проверим позже
+    let ok=false;
+    try{ ok=await dev.pllLock(); }catch(e){ return; }
+    if(n.dev!==dev || !n.connected) return;          // отключили, пока читали регистр
+    if(ok){ if(k){ n.tunerMsg='tuner restarted ×'+k; n.tunerMsgT=performance.now(); } return; }
+    n.busy=true; k++;
+    n.tunerMsg='tuner is not locked — restarting ('+k+'/3)…'; n.tunerMsgT=performance.now();
+    try{
+      const r=await dev.recover(Math.round(n.actualFreq ?? n.p.freq), sdrGainArg(n));
+      if(r && r.f) n.actualFreq=r.f;
+      n.appliedFreq=null; n.appliedGainKey=null;       // обычный путь перестройки заново применит частоту и усиление
+      n.specRing && (n.specRing.filled=0);
+      n.tunerMsg=r?.locked ? 'tuner restarted ×'+k : 'tuner is not locked — restarting ('+k+'/3)…';
+    }catch(e){ n.tunerMsg='tuner restart error: '+e.message; }
+    n.busy=false;
+  }
+  if(n.dev===dev && n.connected){ n.tunerMsg='⚠ tuner PLL does not lock — check the antenna / power, reconnect'; n.tunerMsgT=performance.now(); }
 }
 
 // воспроизведение файла IQ вместо устройства
@@ -5235,6 +5308,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'bw',t:'range',min:500,max:300000,step:100,d:190000,log:true,label:'bandwidth, Hz'},
     {n:'deemph',t:'select',opts:['50','75','off'],d:'50',label:'WFM de-emphasis, µs'},
     {n:'agc',t:'check',d:true,label:'AGC'},
+    {n:'autoRecover',t:'check',d:true,label:'RTL-SDR: a second after connecting check that the tuner PLL holds the lock; if not, restart the tuner by itself (up to 3 times) — Blog V4 does not always start with a visible signal'},
     {n:'planMode',t:'check',d:true,label:'band plan (plan input): set demodulation and bandwidth by the most specific range under the tuned frequency, when the range changes'},
     {n:'planGain',t:'check',d:true,label:'band plan (plan input): set the gain by the most specific range that has a gain column (AGC off)'},
     // SAM: какую боковую слушать после когерентного детектора (обе — DSB, ISB — верхняя в L, нижняя в R)
@@ -5565,6 +5639,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
           ` · errors demod:${n.underrunsWorker||0} ovf:${n.underrunsOverflow||0} dry:${n.underrunsStarve||0}`:'')+
         (n.adcPk!=null ? ` · ADC pk ${n.adcPk.toFixed(1)} rms ${n.adcRms.toFixed(0)} dBFS` : '')+
         (n.planInfo ? ` · plan: ${n.planInfo}` : '')+
+        (n.tunerMsg && performance.now()-(n.tunerMsgT||0)<30000 ? ` · ${n.tunerMsg}` : '')+
         (sdrAdcOvl(n) ? ` · ⚠ OVERLOAD ${(100*n.adcOvlClip).toFixed(2)}% — reduce gain` : '')+
         (n.busy?' · …':'')+
         (n.dev?.kind==='file' ? ` · ${iqFmtTime(n.dev.pos/n.dev.rate)} / ${iqFmtTime(n.dev.total/n.dev.rate)}`+(n.dev.ended?' (end)':'') : '')+
