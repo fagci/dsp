@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=115;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=116;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -1673,8 +1673,8 @@ markWiresDirty();
 });
 preset('VDL Mode 2: ACARS over D8PSK (Generator)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'VDL Mode 2 — the main digital air-ground data link (136.650–136.975 MHz, 25 kHz channels). D8PSK, 10500 Bd, 31.5 kbit/s: the burst starts with a 16-symbol preamble, then a 25-bit header (length, 5-bit check with single-error correction), the scrambler x^15+x+1, Reed–Solomon RS(255,249) over interleaved blocks, HDLC frames with an FCS and AVLC inside; most of the traffic is ACARS (position reports, ATC and airline messages) in I-frames, XID frames are the ground stations\' beacons.\n'+
-  'The generator is a test transmitter: three aircraft/ground messages one after another, +500 Hz off the centre and with noise. VDL2 Decoder cuts the stream to 105 kS/s, finds the preamble by the phase pattern (the same regression gives the frequency error — the «df» field), corrects bytes by FEC and gives records with the AVLC addresses (ICAO 24-bit), registration, label, flight and text. A real receiver: USB SDR at 136.975 MHz (a 250 kS/s stream or more, the channel may be 1–2 kHz off), or put Universal Decoder after it — the hint «vdl2», or the auto search by the band 136–137 MHz.'});
+const nt=addNode('note',40,40,{text:'VDL Mode 2 — the main digital air-ground data link (136.650–136.975 MHz, 25 kHz channels). D8PSK, 10500 Bd, 31.5 kbit/s: the burst starts with a 16-symbol preamble, then a 25-bit header (length, 5-bit check with single-error correction), the scrambler x^15+x+1, Reed–Solomon RS(255,249) over interleaved blocks, HDLC frames with an FCS and AVLC inside; most of the traffic is ACARS (position reports, ATC and airline messages) in I-frames, the rest of the I-frames is X.25 → CLNP → COTP of the ATN (CPDLC, ADS-C and context management above it are not decoded), XID frames are the ground stations\' beacons and the link establishment.\n'+
+  'The generator is a test transmitter, +500 Hz off the centre and with noise: three ACARS messages, a ground station beacon (GSIF — location, airport, frequency list), a link establishment XID, X.25 (call request with ES-IS, data through the compressed CLNP into COTP, a CLNP PDU in two segments, a clear request) one after another — look at the «kind» of the records: message / xid / x25. VDL2 Decoder cuts the stream to 105 kS/s, finds the preamble by the phase pattern (the same regression gives the frequency error — the «df» field), corrects bytes by FEC and gives records with the AVLC addresses (ICAO 24-bit), registration, label, flight and text. A real receiver: USB SDR at 136.975 MHz (a 250 kS/s stream or more, the channel may be 1–2 kHz off), or put Universal Decoder after it — the hint «vdl2», or the auto search by the band 136–137 MHz.'});
 nt.size.w=860; nt.size.h=210; applySize(nt);
 const gn=addNode('iqGen',40,300,{sr:'250000',fc:136975000,mode:'VDL2',off:500,lvl:-15,noise:-45});
 const sp=addNode('iqSpec',340,300,{size:'4096',avg:'8'});
