@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=105;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=106;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -188,6 +188,8 @@ const PRESET_CATS={
   'Signal Catalog: Pick a Type, the SDR Tunes and Decodes (USB SDR)':'SDR Receivers',
   'Signal Database: What Is It and How to Decode (USB SDR)':'SDR Receivers',
   'Universal Decoder: One Node, Any Protocol (Generator)':'Digital Voice & Trunking',
+  'Signal to Decoder, Fully Automatic: Find, Tune, Decode (Generator)':'SDR Receivers',
+  'USB SDR: Find a Signal, Tune and Decode — Fully Automatic':'SDR Receivers',
   'Signal ID: Weak Signal in Noise, Frequency Range and Needed Bandwidth (Generator)':'Analysis & Measurement',
   'USB SDR: Follow a Signal — Tune, Bandwidth and Mode by the Signal ID':'SDR Receivers',
   'ESP-SDR: ESP32 Spectrum':'SDR Receivers',
@@ -1562,6 +1564,57 @@ const sa=addNode('sa',820,580,{auto:true,floor:-110,top:-40,split:.4});
 sa.size.w=600; sa.size.h=280; applySize(sa);
 addEdge(gn.id,'iq',sp.id,'in'); addEdge(gn.id,'iq',ud.id,'in'); addEdge(sp.id,'spec',si.id,'spec'); addEdge(sp.id,'spec',sa.id,'spec');
 addEdge(si.id,'bands',sa.id,'bands'); addEdge(si.id,'decoder',ud.id,'hint');
+markWiresDirty();
+});
+// Сквозная цепочка: источник (spec + iq) → Signal ID (где сигнал, какая полоса, чем декодировать) → сдвиг и прореживание канала → Universal Decoder
+function autoDecodeChain(src){
+  const sa=addNode('sa',480,260,{auto:true,floor:-100,top:-30,split:.4});
+  sa.size.w=700; sa.size.h=300; applySize(sa);
+  const sp=addNode('iqSpec',300,260,{size:'8192',avg:'16'});
+  addEdge(src.id,'iq',sp.id,'in');
+  const si=addNode('sigid',40,640,{period:2,thr:8,maxSig:4,rangeCtx:true,need:true,deep:0});
+  si.size.w=500; si.size.h=240; applySize(si);
+  const sh=addNode('iqShift',600,640,{});
+  const dm=addNode('iqDecim',600,780,{M:'4'});
+  const ud=addNode('udec',860,640,{mode:'auto',hold:6000,giveUp:8000});
+  ud.size.w=460; ud.size.h=260; applySize(ud);
+  const lg=addNode('recLog',1340,640,{});
+  lg.size.w=420; lg.size.h=260; applySize(lg);
+  addEdge(sp.id,'spec',sa.id,'spec'); addEdge(sp.id,'spec',si.id,'spec'); addEdge(si.id,'bands',sa.id,'bands');
+  addEdge(src.id,'iq',sh.id,'in'); addEdge(si.id,'f',sh.id,'freq');
+  addEdge(sh.id,'out',dm.id,'in'); addEdge(dm.id,'out',ud.id,'in'); addEdge(si.id,'decoder',ud.id,'hint');
+  addEdge(ud.id,'rec',lg.id,'rec');
+  markWiresDirty();
+}
+preset('Signal to Decoder, Fully Automatic: Find, Tune, Decode (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'No wires to pick by hand. Signal Type Identifier finds the strongest signal on the spectrum, says where it is (f), what it can be by the frequency range (decoder → hint) and how wide it is;\n'+
+  'IQ Frequency Shift moves the channel to the carrier, IQ Decimator narrows the stream, and Universal Decoder picks the decoder: by the hint, otherwise among the protocols of the band of the stream frequency, the first to decode stays. Records go to the log.\n'+
+  'The generator sends AIS 30 kHz off the centre. Change its mode to POCSAG, ISM433, ACARS (and the centre frequency to 466.075 / 433.92 / 131.55 MHz) — the chain follows. With a real receiver use the next patch.'});
+nt.size.w=820; nt.size.h=170; applySize(nt);
+const gn=addNode('iqGen',40,260,{sr:'1024000',fc:161975000,mode:'AIS',off:30000,lvl:-20,noise:-60});
+autoDecodeChain(gn);
+});
+preset('USB SDR: Find a Signal, Tune and Decode — Fully Automatic', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The same chain on a real receiver: the strongest signal of the SDR window is found by Signal Type Identifier, the channel is shifted to it and narrowed, Universal Decoder picks the decoder (hint from the range, otherwise the protocols of the band; digital voice, TETRA, MPT 1327, RS41, POCSAG, ISM, AIS, ACARS).\n'+
+  'Point the SDR at a band with a signal (AIS 162 MHz, pagers 466 MHz, ACARS 131.5 MHz, sensors 433.92 MHz); 1.024 MS/s window. The receiver is not retuned — the channel is cut out of the window digitally, so the spectrum and the measurement stay put. Turn on «weak signals: deep integration» of the identifier to find weak ones.'});
+nt.size.w=820; nt.size.h=150; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'1024000',auto:false,gainDb:35,demod:'IQ',freq:162000000});
+const sa=addNode('sa',360,260,{auto:true,floor:-100,top:-30,split:.4});
+sa.size.w=700; sa.size.h=300; applySize(sa);
+const si=addNode('sigid',40,640,{period:2,thr:8,maxSig:4,rangeCtx:true,need:true,deep:0});
+si.size.w=500; si.size.h=240; applySize(si);
+const sh=addNode('iqShift',600,640,{});
+const dm=addNode('iqDecim',600,780,{M:'4'});
+const ud=addNode('udec',860,640,{mode:'auto',hold:6000,giveUp:8000});
+ud.size.w=460; ud.size.h=260; applySize(ud);
+const lg=addNode('recLog',1340,640,{});
+lg.size.w=420; lg.size.h=260; applySize(lg);
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',si.id,'spec'); addEdge(si.id,'bands',sa.id,'bands');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(si.id,'f',sh.id,'freq');
+addEdge(sh.id,'out',dm.id,'in'); addEdge(dm.id,'out',ud.id,'in'); addEdge(si.id,'decoder',ud.id,'hint');
+addEdge(ud.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Measure: Cross-Correlator — Delay Between Two Receivers (Generator)', function(){
