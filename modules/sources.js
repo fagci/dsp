@@ -6986,7 +6986,7 @@ const ListDB = (() => {
 ListDB.rev=0;
 ListDB.watch=new Set();                                  // слушатели правок хранилища (реестр имён списков Table)
 for(const k of ['add','update','remove','renameList','deleteList','addMany','replaceList','removeMany','setMeta','delMeta']){
-  const f=ListDB[k]; ListDB[k]=async function(...a){ const r=await f.apply(this,a); ListDB.rev++; for(const w of ListDB.watch) try{ w(); }catch(e){} if(typeof FileStore!=='undefined') FileStore.notifyLater('tables'); return r; };
+  const f=ListDB[k]; ListDB[k]=async function(...a){ const r=await f.apply(this,a); ListDB.rev++; if(typeof LU!=='undefined') LU.touched(k,a); for(const w of ListDB.watch) try{ w(); }catch(e){} if(typeof FileStore!=='undefined') FileStore.notifyLater('tables'); return r; };
 }
 
 // Простой CSV-парсер с поддержкой кавычек и экранированных "" внутри поля.

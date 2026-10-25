@@ -5,7 +5,9 @@
    types[c] = {t:'calc', expr, mat}         вычисляемое поле; mat — значение хранится в базе (иначе считается при загрузке)
    types[c].def / .req                      значение по умолчанию и обязательность
    card.unique = [[колонки], …]             уникальность по набору полей (пустая часть набора — не участвует, как NULL в SQL)
-   Выражения: свои, без eval (CSP): числа, 'строки', [Поле], + - * / %, сравнения, && || !, ?:, функции TR_FN. */
+   Выражения: свои, без eval (CSP): числа, 'строки', [Поле], + - * / %, сравнения, && || !, ?:, функции TR_FN.
+   Поиск по другой таблице: lookup('список','ключ',[Поле],'результат'[,'eq|mac|prefix|contains']), between('список','от','до',[Поле],'результат') —
+   справочник заранее превращается в индекс (modules/lookup-kernels.js, table-lookup.js); имена списка и колонок — только литералы в кавычках. */
 
 /* ---------- выражения ---------- */
 const trNum=v=>typeof v==='number' ? v : typeof v==='string' && v.trim()!=='' ? Number(v) : NaN;
@@ -29,7 +31,11 @@ const TR_FN={
   year:t=>{ const d=new Date(trNum(t)||t); return isNaN(d) ? '' : d.getFullYear(); },
   month:t=>{ const d=new Date(trNum(t)||t); return isNaN(d) ? '' : d.getMonth()+1; },
   day:t=>{ const d=new Date(trNum(t)||t); return isNaN(d) ? '' : d.getDate(); },
+  lookup:(list,key,val,ret,mode)=>hostlistCoerce(luLookup(list,key,val,ret,mode==null ? 'eq' : mode)),
+  between:(list,lo,hi,val,ret)=>hostlistCoerce(luBetween(list,lo,hi,val,ret)),
 };
+// функции со ссылкой на другой список: какие аргументы — литералы в кавычках (индекс строится до расчёта, по тексту выражения)
+const TR_REF={ lookup:{lit:[0,1,3,4],min:4,max:5}, between:{lit:[0,1,2,4],min:5,max:5} };
 const TR_PREC=[['||'],['&&'],['==','!='],['<','<=','>','>='],['+','-'],['*','/','%']];
 const trArith=f=>(a,b)=>{ const x=trNum(a), y=trNum(b); if(!isFinite(x) || !isFinite(y)) return ''; const v=f(x,y); return isFinite(v) ? v : ''; };
 const trCmp=f=>(a,b)=>{ const x=trNum(a), y=trNum(b); return (isFinite(x) && isFinite(y) ? f(x,y) : f(String(a??''),String(b??''))) ? 1 : 0; };
@@ -44,6 +50,7 @@ const TR_CACHE=new Map();
 function trCompile(src){
   src=String(src||'');
   let f=TR_CACHE.get(src); if(f) return f;
+  const deps=[];
   const T=src.match(/\[[^\]]+\]|'[^']*'|"[^"]*"|\d+\.?\d*(?:e[-+]?\d+)?|[A-Za-z_][\w.]*|<=|>=|==|!=|&&|\|\||[-+*\/%!<>?:(),]|\S/gi)||[];
   let i=0;
   const prim=()=>{
@@ -51,13 +58,20 @@ function trCompile(src){
     if(t===undefined) throw new Error('expression ended early');
     if(t==='('){ const v=top(); if(T[i++]!==')') throw new Error('missing )'); return v; }
     if(t[0]==='[') { const c=t.slice(1,-1).trim(); return r=>trRef(r,c); }
-    if(t[0]==="'" || t[0]==='"'){ const s=t.slice(1,-1); return ()=>s; }
+    if(t[0]==="'" || t[0]==='"'){ const s=t.slice(1,-1), g=()=>s; g.lit=s; return g; }
     if(/^\d/.test(t)){ const v=Number(t); return ()=>v; }
     if(/^[A-Za-z_]/.test(t)){
       if(T[i]==='('){
         i++; const fn=Object.hasOwn(TR_FN,t.toLowerCase()) ? TR_FN[t.toLowerCase()] : null; if(!fn) throw new Error('unknown function '+t);
         const args=[];
         if(T[i]===')') i++; else for(;;){ args.push(top()); const s=T[i++]; if(s===')') break; if(s!==',') throw new Error('expected , or ) in '+t+'()'); }
+        const ref=TR_REF[t.toLowerCase()];
+        if(ref){                                           // lookup / between: что индексировать — известно из литералов
+          if(args.length<ref.min || args.length>ref.max) throw new Error(t+'() takes '+(ref.min===ref.max ? ref.min : ref.min+'–'+ref.max)+' arguments');
+          for(const k of ref.lit) if(args[k] && args[k].lit===undefined) throw new Error(t+'(): list, column and mode names go in quotes');
+          const l=k=>args[k]?.lit;
+          deps.push(t.toLowerCase()==='lookup' ? {list:l(0),mode:l(4)??'eq',c1:l(1),c2:''} : {list:l(0),mode:'range',c1:l(1),c2:l(2)});
+        }
         return r=>fn(...args.map(a=>a(r)));
       }
       return r=>trRef(r,t);
@@ -84,6 +98,7 @@ function trCompile(src){
   if(!T.length) throw new Error('empty expression');
   f=top();
   if(i<T.length) throw new Error('extra "'+T[i]+'"');
+  f.deps=deps;
   if(TR_CACHE.size>500) TR_CACHE.clear();
   TR_CACHE.set(src,f);
   return f;
@@ -110,6 +125,7 @@ function trCalcAll(n){
 async function trRecalc(n){
   if(tblRO(n)) return;
   n.virt=trVirtual(n);
+  await luPrepare(n);
   for(const c of trAutoCols(n)){                           // пустым строкам — номера по порядку
     let m=trNextAuto(n,c,[])-1;
     for(const row of n.all) if(row[c]==='' || row[c]==null) row[c]=++m;
