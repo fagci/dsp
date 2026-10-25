@@ -215,13 +215,15 @@ function tblSplit(name){ const i=name.indexOf('/'); return i<0 ? ['',name] : [na
 const tblToItem=(r,cl,virt)=>{ const f={}; for(const k of cl) if(k!=='name' && !virt?.has(k)) f[k]=r[k]??''; return {name:virt?.has('name') ? '' : String(r.name??''),fields:f}; };
 function tblPresetRows(name){
   const src=BANDPLAN_PRESETS[name], kd=src.some(r=>r[6]), nt=src.some(r=>r[5]);
-  const rows=src.map(([lo,hi,label,step,color,note,kind])=>{
+  const ext=[]; for(const r of src) if(r[7]) for(const k in r[7]) if(!ext.includes(k)) ext.push(k);   // r[7] — свои колонки записи (Protocols/Signal catalog: demod, bw, sr…)
+  const rows=src.map(([lo,hi,label,step,color,note,kind,x])=>{
     const o={name:label,lo,hi,step:step||0,color:color||''};
     if(kd) o.kind=kind||'';
     if(nt) o.note=note||'';
+    for(const k of ext) o[k]=x?.[k]??'';
     return o;
   });
-  return {cols:['name','lo','hi','step','color',...(kd?['kind']:[]),...(nt?['note']:[])],rows};
+  return {cols:['name','lo','hi','step','color',...(kd?['kind']:[]),...(nt?['note']:[]),...ext],rows};
 }
 // список из DB: колонки и строки (общий разбор для активного и отмеченных списков)
 function tblDbRows(items,meta){

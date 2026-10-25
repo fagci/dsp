@@ -5164,9 +5164,11 @@ async function sdrSweepLoop(n){
   }
 }
 
+const RTL_SR_OPTS=[960000,1024000,1920000,2048000,2400000,2500000,3000000,3200000,6000000,8000000,10000000,12000000,16000000,20000000];
 def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
   ins:[
         {n:'freq',t:'num'},
+        {n:'sr',t:'num',tip:'sample rate, Hz: snaps to the nearest supported value (e.g. from a Table column of the signal catalog)'},
         {n:'steerFreq',t:'num'},
         {n:'gainDb',t:'num'},
         {n:'demod',t:'val'},
@@ -5222,7 +5224,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     // только файл: повтор и позиция
     {n:'loop',t:'check',d:true,label:'loop playback'},
     {n:'seek',t:'range',min:0,max:100,step:.1,d:0,label:'position, %'},
-    {n:'sr',t:'select',opts:['960000','1024000','1920000','2048000','2400000','2500000','3000000','3200000','6000000','8000000','10000000','12000000','16000000','20000000'],d:'1024000',label:'sample rate',
+    {n:'sr',t:'select',opts:RTL_SR_OPTS.map(String),d:'1024000',label:'sample rate',
      fn:async n=>{ if(n.dev){ try{ n.sourceRate=await n.dev.setSampleRate(rtlSafeSr(n.p.sr)); rtlResetRing(n); }
        catch(e){ n.status='sample rate change error: '+e.message; } } }},
     // режим демодуляции/полоса/де-эмфазис — ОБЩИЕ на все 4 канала (проще UI); частота у каждого своя
@@ -5362,6 +5364,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     // провод не укажет на другое значение (та же идея, что у freq/steerFreq выше, общим хелпером).
     setModWired(n,'gainDb', I.gainDb, typeof I.gainDb==='number');
     if(typeof I.gainDb==='number' && n.p.auto){ if(n.set?.auto) n.set.auto(false); else n.p.auto=false; }   // провод на gain — ручной режим
+    { const w=typeof I.sr==='number' && I.sr>0 ? String(RTL_SR_OPTS.reduce((a,b)=>Math.abs(b-I.sr)<Math.abs(a-I.sr)?b:a)) : null;
+      setModWired(n,'sr', w, w!==null); }                 // вход sr: ближайшая из поддерживаемых
     setModWired(n,'demod', I.demod, typeof I.demod==='string' && DEMOD_OPTS.includes(I.demod));
     setModWired(n,'bw', I.bw, typeof I.bw==='number');
     { const mode=n.p.demod, lim=RTL_BW_LIMITS[mode];
