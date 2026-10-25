@@ -6875,8 +6875,8 @@ const ListDB = (() => {
       return items;
     },
     // обход таблицы страницами (по ключу) с паузой между ними: список в десятки тысяч записей целиком десериализуется на главном потоке
-    // сотнями мс (подвисает звук SDR), страница в 1000 записей — ~10 мс. fn(it) может быть async и менять таблицу: обход идёт по ключам
-    async each(listName,fn,page=1000){
+    // сотнями мс (подвисает звук SDR), страница в 250 записей — ~10–15 мс даже у тяжёлых записей. fn(it) может быть async и менять таблицу: обход идёт по ключам
+    async each(listName,fn,page=250){
       const t=await tOf(listName); if(t===undefined) return;
       for(let last=null;;){
         const st=(await txn(sn(t),'readonly')).objectStore(sn(t));
@@ -6884,7 +6884,7 @@ const ListDB = (() => {
         for(const it of items){ if(!it.fields) it.fields={value:it.value}; await fn(it); }
         if(items.length<page) return;
         last=items[items.length-1].id;
-        await new Promise(r=>setTimeout(r,8));
+        await new Promise(r=>setTimeout(r,12));
       }
     },
     async getOne(id){
