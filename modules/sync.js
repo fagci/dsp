@@ -15,7 +15,7 @@ const SY_LS='dsp.sync', SY_SPACES=['files','audio','images'], SY_CRED='dsp-sync'
 const syDefaults={key:'',on:false,url:'wss://broker.emqx.io:8084/mqtt',ice:'stun:stun.l.google.com:19302',maxMB:100,name:''};
 function syCfg(){ try{ return {...syDefaults,...JSON.parse(localStorage.getItem(SY_LS)||'{}')}; }catch(e){ return {...syDefaults}; } }
 function sySave(c){ try{ localStorage.setItem(SY_LS,JSON.stringify(c)); }catch(e){} }
-const syHidden=n=>n==='@patch' || n.startsWith('presets/');
+const syHidden=n=>n==='@patch' || n.startsWith('presets/') || n.startsWith('Reference/');     // Reference/ — справочники, на каждом устройстве скачиваются сами (reflists.js)
 function syMyName(){                                   // имя этого устройства: своё или случайное, но постоянное
   const c=syCfg(); if(c.name) return c.name;
   const n=String(navigator.userAgentData?.platform||navigator.platform||'device').replace(/\s+/g,'')+'-'+Math.random().toString(36).slice(2,6);

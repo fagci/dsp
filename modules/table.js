@@ -298,6 +298,8 @@ async function tblLoadRun(n){
   if(tok!==n.loadTok || n.disposed) return;
   n.loaded=list; n.loadedData=kind==='patch' ? n.p.data : null;
   n.all=rows; n.ids=ids; n.cl=cols; n.schema=schema;
+  await luPrepare(n);                                   // справочники для lookup() / between() — до расчёта
+  if(tok!==n.loadTok || n.disposed) return;
   trCalcAll(n);
   // стартовая загрузка не трогает провода: их порты задаёт сохранённый p.cols; смена списка — пользователем
   if(n.wantCols){ n.wantCols=false; tblSetCols(n,cols,true); }
@@ -1911,8 +1913,8 @@ function tblFieldsPanel(n,box,mk,sel){
       }
     }
     if(!ro && t==='calc'){
-      const e=mk('input','tv-q'); e.value=d.expr||''; e.placeholder='[price] * [qty]   round([a]/[b],2)   if([x]>5,\'big\',\'small\')';
-      e.title='[Field] — value of a field; + - * / %, == != < > <= >=, && || !, a ? b : c; functions: round floor ceil abs sqrt pow min max if coalesce concat upper lower trim len substr contains num text now year month day';
+      const e=mk('input','tv-q'); e.value=d.expr||''; e.placeholder='[price] * [qty]   round([a]/[b],2)   lookup(\'MAC vendors (OUI)\',\'prefix\',[mac],\'vendor\',\'mac\')';
+      e.title='[Field] — value of a field; + - * / %, == != < > <= >=, && || !, a ? b : c; functions: round floor ceil abs sqrt pow min max if coalesce concat upper lower trim len substr contains num text now year month day;\nlookup(\'list\',\'key column\',[Field],\'result column\'[,\'mac|prefix|contains\']) — value from another list by match (Files → ⇩ offline gives Reference/… lists: OUI vendors, signal catalog…); between(\'list\',\'from\',\'to\',[Field],\'result\') — row whose range contains the value';
       e.addEventListener('keydown',ev=>ev.stopPropagation());
       e.addEventListener('change',()=>tcSetDef(n,c,{...d,expr:e.value.trim()}));
       ln('formula').append(e);
