@@ -4700,6 +4700,12 @@ async function rtlConnect(n, choose){
   try{
     let usbDev=await sdrPickDevice(n, choose);
     if(rx888Is(usbDev, RX888_BOOT)) usbDev=await rx888Boot(n, usbDev);
+    // донгл один, а открыть его два узла не могут: второе открытие рвёт первое и даёт «не те» сигналы и другой шум.
+    // Свободный донгл sdrPickDevice уже выбрал; если свободных нет — забираем у прежнего владельца, закрыв его чисто
+    for(const o of Graph.nodes) if(o!==n && o.type===n.type && o.usbDev===usbDev && (o.connected || o.dev)){
+      n.status='taking the dongle over from another USB SDR…'; o.status='dongle taken by another USB SDR node — press Connect';
+      await rtlDisconnect(o); o.status='dongle taken by another USB SDR node — press Connect'; await sdrSleep(200);
+    }
     n.usbDev=usbDev;
     const gain=n.p.auto?null:n.p.gainDb;
     // сначала пробуем открыть донгл в USB-воркере; без WebUSB в воркерах — по-старому, на главном потоке
