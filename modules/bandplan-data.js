@@ -635,6 +635,9 @@ P['Voice/PMR446 + LPD433 + FRS + GMRS + MURS + Freenet']=bdC([
   ...[151.82,151.88,151.94,154.57,154.6].map((f,i)=>[f,0.0125,'MURS ch'+(i+1)+' '+f,0.0125,'SRD','США, без лицензии, 2 W','channel']),
   ...[149.025,149.0375,149.05,149.0625,149.075,149.0875].map((f,i)=>[f,0.0125,'Freenet '+(i+1)+' '+f,0.0125,'SRD','РФ/DE 149 MHz, 12.5 kHz','channel'])]);
 
+/* ---------- Protocols: тип сигнала → настройка приёмника и декодер (ядро — sigcat-kernels.js) ---------- */
+P['Protocols/Signal catalog (tune + decode)']=sigcatRows();
+
 /* ---------- Регистрация и перенос старых имён ---------- */
 const MOVE={'Russia (full)':'Combined/Russia (full)','ISM / license-free':'ISM & SRD/ISM license-free','FM broadcast':'Broadcast/FM',
   'Broadcast (LW/MW/SW/FM/TV)':'Broadcast/LW MW SW FM TV','Utility / services (RU)':'Services/Utility (RU)','Airband':'Services/Airband',

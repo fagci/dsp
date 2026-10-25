@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=100;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=101;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -185,6 +185,7 @@ const PRESET_CATS={
   'Echo Repeater: Record the Transmission, Play It Back (USB SDR)':'SDR Receivers',
   'USB SDR: Channel Scan (Channel Scanner + squelch)':'SDR Receivers',
   'USB SDR: Channel Scan + Decoder Switch (digital voice / analog)':'SDR Receivers',
+  'Signal Catalog: Pick a Type, the SDR Tunes and Decodes (USB SDR)':'SDR Receivers',
   'ESP-SDR: ESP32 Spectrum':'SDR Receivers',
   'Measure: Modulation Meter — FM and AM (Generator)':'Analysis & Measurement',
   'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
@@ -1189,6 +1190,34 @@ addEdge(sw.id,'out1',de.id,'in'); addEdge(de.id,'lock',sw.id,'ev1');
 addEdge(de.id,'voice',vc.id,'voice'); addEdge(vc.id,'out',sm.id,'a');
 addEdge(sw.id,'out2',fm.id,'in'); addEdge(fm.id,'out',au.id,'in'); addEdge(au.id,'out',sm.id,'b');
 addEdge(sm.id,'out',dc.id,'L'); addEdge(sm.id,'out',dc.id,'R');
+markWiresDirty();
+});
+preset('Signal Catalog: Pick a Type, the SDR Tunes and Decodes (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Pick a signal type in the table — the USB SDR tunes to its typical frequency, mode, bandwidth and sample rate, and the Decoder Switch sends the IQ to the matching decoder.\n'+
+  'The catalog (presets/Protocols/Signal catalog) has one row per channel: ADS-B 1090, AIS A/B, POCSAG, ISM 315 / 433.92 / 868.3 / 915, ACARS, NOAA SAME, Meshtastic. Columns mid → freq, demod, bw, sr go to the SDR, branch → switch «sel».\n'+
+  'Branches: 1 ADS-B, 2 AIS, 3 POCSAG, 4 ISM. Rows with branch 0 (ACARS, SAME, Meshtastic) leave the switch on automatic search: it tries the branches and keeps the one whose decoder shows life — for those types put the matching decoder (acarsRx, sameRx, meshAir; id in the «decoder» column) on a branch of your own.\n'+
+  'Connect the SDR and tap a row. Frequencies are typical (≈): they depend on the region and the operator — copy the table into your own list and fix them.'});
+nt.size.w=820; nt.size.h=150; applySize(nt);
+const tb=addNode('table',40,240,{list:'presets/Protocols/Signal catalog (tune + decode)',initial:false});
+tb.size.w=420; tb.size.h=420; applySize(tb);
+const rx=addNode('rtlsdr',500,240,{sr:'2400000',auto:false,gainDb:40,demod:'IQ',freq:1090000000});
+const sa=addNode('sa',760,240,{auto:true,floor:-100,top:-20,split:.4});
+sa.size.w=620; sa.size.h=240; applySize(sa);
+const sw=addNode('decswitch',500,500,{slots:4,n1:'ADS-B',n2:'AIS',n3:'POCSAG',n4:'ISM',fallback:0,trial:2500,hold:5000});
+sw.size.w=300; sw.size.h=200; applySize(sw);
+const dm=addNode('adsbDemod',840,520,{});
+const d1=addNode('adsbDecode',1100,520,{}); d1.size.w=520; d1.size.h=260; applySize(d1);
+const d2=addNode('aisRx',840,720,{}); d2.size.w=420; d2.size.h=240; applySize(d2);
+const d3=addNode('pocsagRx',1280,720,{}); d3.size.w=420; d3.size.h=240; applySize(d3);
+const d4=addNode('ismRx',840,980,{}); d4.size.w=420; d4.size.h=240; applySize(d4);
+addEdge(tb.id,'mid',rx.id,'freq'); addEdge(tb.id,'demod',rx.id,'demod'); addEdge(tb.id,'bw',rx.id,'bw'); addEdge(tb.id,'sr',rx.id,'sr');
+addEdge(tb.id,'branch',sw.id,'sel');
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sw.id,'in');
+addEdge(sw.id,'out1',dm.id,'in'); addEdge(dm.id,'rec',d1.id,'rec');
+addEdge(sw.id,'out2',d2.id,'in'); addEdge(sw.id,'out3',d3.id,'in'); addEdge(sw.id,'out4',d4.id,'in');
+addEdge(d1.id,'rec',sw.id,'ev1'); addEdge(d2.id,'rec',sw.id,'ev2'); addEdge(d3.id,'rec',sw.id,'ev3'); addEdge(d4.id,'rec',sw.id,'ev4');
 markWiresDirty();
 });
 // пульт сканирования: кнопки и пины для всех Band Scanner / Signal Detector патча + таблица «Interesting» для отмеченных ★
