@@ -16,7 +16,7 @@ defIQ({ id:'aeroRx', title:'Inmarsat Aero Decoder', cat:'Decoders', tall:true, r
 
 defIQ({ id:'aeroScan', title:'Inmarsat Aero Scanner', cat:'Decoders', tall:true, resize:true, w:520,
   kw:'inmarsat aero scanner scan channels carriers wideband l-band 1545 jaero acars satellite',
-  ins:[{n:'in',t:'iq'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'locked',t:'num'}],
+  ins:[{n:'in',t:'iq'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'locked',t:'num'},{n:'bands',t:'bands'},{n:'panes',t:'bands'}],
   params:[{n:'baud',t:'select',opts:['600','1200'],d:'600',label:'P channel rate, bit/s'},
           {n:'max',t:'range',min:1,max:16,step:1,d:8,label:'channels decoded at once'},
           {n:'thr',t:'range',min:.5,max:6,step:.1,d:1.2,label:'carrier threshold, dB over the local noise (spectrum averaged over seconds)',adv:true}]},

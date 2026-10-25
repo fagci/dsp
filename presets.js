@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=118;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=119;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -2940,7 +2940,7 @@ clearAll();
 const nt=addNode('note',40,40,{text:'One wideband recording, several Aero channels: the generator sends three P600 carriers (-37.5, +12.5 and +37.5 kHz from the centre, different content)\n'+
   'and a CW spur at +10 kHz. Aero Scanner averages the spectrum for a few seconds, takes the narrow carriers over the local noise, gives each its own mixer,\n'+
   'decimator and decoder and keeps the ones where a frame with a valid CRC has come out; the spur never gets one and is dropped after 25 s. Records carry the carrier\n'+
-  'frequency (field freq, also in the text). A carrier within 4 kHz of the centre is skipped (the SDR DC spike) — tune the centre between the channels.'});
+  'frequency (field freq, also in the text) and the found channels are marked on the spectrum (green — a frame decoded, grey — probing). A carrier within 4 kHz of the centre is skipped (the SDR DC spike) — tune the centre between the channels.'});
 nt.size.w=820; nt.size.h=104; applySize(nt);
 const gn=addNode('iqGen',40,180,{sr:'250000',fc:1545100000,mode:'Aero ×3',off:0,lvl:-20,noise:-32});
 const sp=addNode('iqSpec',340,180,{size:'8192',avg:'8'});
@@ -2950,7 +2950,7 @@ const de=addNode('aeroScan',920,180,{baud:'600',max:8,thr:1.2});
 de.size.w=600; de.size.h=380; applySize(de);
 const log=addNode('recLog',920,600,{});
 log.size.w=600; applySize(log);
-addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec'); addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec'); addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec'); addEdge(de.id,'bands',sa.id,'sigs');
 markWiresDirty();
 });
 preset('Inmarsat Aero: Channel Scanner 1.5 GHz (USB SDR)', function(){
@@ -2967,7 +2967,7 @@ const de=addNode('aeroScan',340,360,{baud:'600',max:8,thr:1.2});
 de.size.w=600; de.size.h=380; applySize(de);
 const log=addNode('recLog',980,360,{});
 log.size.w=600; applySize(log);
-addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec'); addEdge(de.id,'bands',sa.id,'sigs');
 markWiresDirty();
 });
 preset('GSM: Receive Bursts (USB SDR)', function(){

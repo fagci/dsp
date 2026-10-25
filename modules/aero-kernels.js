@@ -428,7 +428,7 @@ IQK.aeroScan={
   init(n){ n.key=''; n.ch=[]; n.recent=[]; n.msgs=0; n.ui=null; n.frames=0; },
   process(n,I){
     const s=iqIn(I,'in');
-    if(!s || !s.sr){ n.ui=null; return {rec:null, text:null, locked:0}; }
+    if(!s || !s.sr){ n.ui=null; return {rec:null, text:null, locked:0, bands:[], panes:[]}; }
     const sr=s.sr, baud=+n.p.baud===1200 ? 1200 : 600, now=Date.now(), recs=[];
     if(sr<24e3){ n.ui={err:'sample rate '+(sr/1000).toFixed(1)+' kS/s is too low for a scan: ≥ 24 kS/s', recent:n.recent}; return {rec:null, text:null, locked:0}; }
     if(n.key!==sr+'|'+baud) aeroScSetup(n,sr,baud);
@@ -493,6 +493,10 @@ IQK.aeroScan={
     }
     const list=n.ch.map(ch=>{ const u=ch.node.ui||{}, a=ch.node.ae; return {f:fc0+ch.f+(a ? a.fc : 0), probe:ch.probe, lock:!!(a&&a.lock), frames:ch.node.frames, suOk:ch.node.suOk, suBad:ch.node.suBad, ber:ch.node.ber, msgs:ch.node.msgs, age:ch.node.last ? now-ch.node.last : null, r:ch.r}; }).sort((a,b)=>a.f-b.f);
     n.ui={fs:sr, fc:fc0, baud, chans:list, frames:list.reduce((x,c)=>x+c.frames,0), suOk:list.reduce((x,c)=>x+c.suOk,0), suBad:list.reduce((x,c)=>x+c.suBad,0), msgs:n.msgs, recent:n.recent, scans:n.scans, black:n.black.length};
+    // каналы — в Spectrum Analyzer: bands (sigs) — скобки с подписью над несущими; panes — диапазоны вокруг них (Multiband view)
+    const hw=baud*.75, bands=list.map(c=>({lo:c.f-hw, hi:c.f+hw, label:'P'+baud+(c.probe ? ' …' : ' · '+c.suOk+' SU'+(c.msgs ? ' · '+c.msgs+' ACARS' : '')), sig:true,
+      color:c.probe ? '#90a4ae' : c.lock ? '#66bb6a' : '#ffb74d'}));
+    const panes=list.filter(c=>!c.probe).map(c=>({lo:c.f-4000, hi:c.f+4000, label:(c.f/1e6).toFixed(4)}));
     const text=recs.map(r=>r.text);
-    return {rec:recs.length ? recs : null, text:text.length ? text.join('\n') : null, locked:list.filter(c=>c.lock&&!c.probe).length};
+    return {rec:recs.length ? recs : null, text:text.length ? text.join('\n') : null, locked:list.filter(c=>c.lock&&!c.probe).length, bands, panes};
   }};
