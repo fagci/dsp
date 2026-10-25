@@ -9,7 +9,7 @@ const rd=p=>fs.readFileSync(path.join(root,p),'utf8');
 const ctx=vm.createContext({Math,Object,Array,Set,Map,Number,String,JSON,isFinite,Float64Array,Date,
   hostlistCoerce:v=>{ const s=String(v??'').trim(); return s!=='' && /^-?\d+(\.\d+)?$/.test(s) ? Number(s) : s; },
   parseHzCell:s=>{ const m=/^([\d.]+)\s*([kMG]?)(?:Hz)?$/i.exec(String(s).trim()); return m ? +m[1]*({'':1,k:1e3,m:1e6,g:1e9}[m[2].toLowerCase()]) : NaN; }});
-vm.runInContext(rd('modules/lookup-kernels.js')+rd('modules/table-rules.js')+';globalThis.K={LU,luIndex,luLookup,luBetween,luParseNmapMac,luParseSignals,luParseWefax,luParseIds,trCompile,luSame};',ctx);
+vm.runInContext(rd('modules/lookup-kernels.js')+rd('modules/table-rules.js')+';globalThis.K={LU,luIndex,luLookup,luBetween,luParseNmapMac,luParseSignals,luParseWefax,luParseIds,luParseSpy,trCompile,luSame};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(c,m)=>{ if(!c){ bad++; console.error('FAIL: '+m); } };
 const eq=(a,b,m)=>ok(a===b,m+' (получено '+JSON.stringify(a)+', ждали '+JSON.stringify(b)+')');
@@ -99,6 +99,10 @@ build('SS','contains','pattern','',ids.ssid.rows,ids.ssid.cols);
 eq(K.luLookup('SS','pattern','DJI-MAVIC3-AB12','kind','contains'),'drone','SSID: DJI → drone');
 build('MM','mac','prefix','',ids.mac.rows,ids.mac.cols);
 eq(K.luLookup('MM','prefix','48:1c:b9:11:22:33','vendor','mac'),'DJI','MAC дрона: DJI');
+const spy=K.luParseSpy(fs.readFileSync(path.join(root,'data/intercept-spy.json'),'utf8'));
+ok(spy.rows.length===135,'spy: 135 частот, получено '+spy.rows.length);
+build('SP','eq','hz','',spy.rows,spy.cols);
+eq(K.luLookup('SP','hz',4625000,'nickname'),'The Buzzer','spy: 4625 кГц → UVB-76');
 let e=''; try{ K.luParseNmapMac('# only comments'); }catch(x){ e=x.message; } ok(e,'пустой OUI-файл → ошибка');
 e=''; try{ K.luParseSignals('{}'); }catch(x){ e=x.message; } ok(e,'не тот JSON → ошибка');
 

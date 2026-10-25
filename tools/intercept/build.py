@@ -1,7 +1,8 @@
 """Справочники smittix/intercept (Apache-2.0) → data/*.json приложения.
 Запуск:  python3 -I tools/intercept/build.py <каталог intercept/data> <куда писать (data/)>
 signals.json и wefax_stations.json копируются как есть; patterns.py и tscm_frequencies.py разбираются через ast (код не выполняется)
-в data/intercept-ids.json: {tscm, ssid, mac, ble} — плоские строки для Table (modules/lookup-kernels.js, luParseIds)."""
+в data/intercept-ids.json: {tscm, ssid, mac, ble} — плоские строки для Table (modules/lookup-kernels.js, luParseIds).
+routes/spy_stations.py (список STATIONS: number stations и дипломатические сети, по priyom.org) → data/intercept-spy.json (по строке на частоту)."""
 import ast, json, shutil, sys, os
 
 src, dst = sys.argv[1], sys.argv[2]
@@ -49,3 +50,13 @@ json.dump({'tscm': rows_tscm, 'ssid': ssid, 'mac': mac, 'ble': ble}, open(os.pat
 shutil.copyfile(os.path.join(src, 'signals.json'), os.path.join(dst, 'intercept-signals.json'))
 shutil.copyfile(os.path.join(src, 'wefax_stations.json'), os.path.join(dst, 'intercept-wefax.json'))
 print(len(rows_tscm), 'tscm,', len(ssid), 'ssid,', len(mac), 'mac,', len(ble), 'ble')
+
+spy = None
+for node in ast.parse(open(os.path.join(src, '..', 'routes', 'spy_stations.py'), encoding='utf-8').read()).body:
+    if isinstance(node, ast.Assign) and getattr(node.targets[0], 'id', '') == 'STATIONS': spy = ast.literal_eval(node.value)
+rows_spy = [{'name': s['name'], 'nickname': s.get('nickname', ''), 'type': s.get('type', ''), 'country': s.get('country', ''),
+             'hz': int(round(f['freq_khz'] * 1000)), 'primary': 1 if f.get('primary') else 0, 'mode': s.get('mode', ''),
+             'operator': s.get('operator', ''), 'schedule': s.get('schedule', ''), 'description': s.get('description', ''), 'url': s.get('source_url', '')}
+            for s in spy for f in s['frequencies']]
+json.dump(rows_spy, open(os.path.join(dst, 'intercept-spy.json'), 'w', encoding='utf-8'), ensure_ascii=False, separators=(',', ':'))
+print(len(rows_spy), 'spy frequencies')

@@ -173,3 +173,8 @@ function luParseIds(text){
     ble:{cols:['company','name','risk','patterns','description'],rows:o.ble},
   };
 }
+// intercept-spy.json (tools/intercept/build.py из routes/spy_stations.py): по строке на частоту станции
+function luParseSpy(text){
+  const o=JSON.parse(String(text).replace(/^\uFEFF/,'')); if(!Array.isArray(o) || !o.length || !('hz' in o[0])) throw new Error('intercept-spy.json: unexpected format');
+  return {cols:['name','nickname','type','country','hz','primary','mode','operator','schedule','description','url'],rows:o};
+}

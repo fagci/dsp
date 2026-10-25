@@ -5,6 +5,7 @@
      Reference/MAC vendors (OUI)        prefix, vendor, bits              — IEEE OUI (MA-L / MA-M / MA-S) из nmap-mac-prefixes; lookup('…','prefix',[mac],'vendor','mac')
      Reference/Signals (intercept)      name, lo, hi, bw_lo, bw_hi, mod…  — каталог сигналов с sigidwiki: between('…','lo','hi',[freq],'name')
      Reference/WEFAX stations           name, callsign, country, hz…      — станции метеофакса
+     Reference/Spy stations             name, nickname, type, country, hz, primary, mode…  — number stations и дипломатические HF-сети (priyom.org)
      Reference/TSCM bands               group, name, lo, hi, risk         — частоты подслушивающих устройств
      Reference/Wi-Fi SSID patterns      pattern, kind, vendor             — дроны, камеры: lookup('…','pattern',[ssid],'kind','contains')
      Reference/MAC prefixes (drones, trackers, cameras)   prefix, vendor, kind
@@ -14,7 +15,7 @@
 
 const REF_DIR='Reference/', REF_VER='1';
 const REF_OUI=REF_DIR+'MAC vendors (OUI)', REF_SIG=REF_DIR+'Signals (intercept)', REF_WEFAX=REF_DIR+'WEFAX stations', REF_TSCM=REF_DIR+'TSCM bands',
-  REF_SSID=REF_DIR+'Wi-Fi SSID patterns', REF_MAC=REF_DIR+'MAC prefixes (drones, trackers, cameras)', REF_BLE=REF_DIR+'BLE trackers';
+  REF_SSID=REF_DIR+'Wi-Fi SSID patterns', REF_MAC=REF_DIR+'MAC prefixes (drones, trackers, cameras)', REF_BLE=REF_DIR+'BLE trackers', REF_SPY=REF_DIR+'Spy stations';
 const REF_RAW='https://raw.githubusercontent.com/smittix/intercept/main/data/';
 
 // id пункта в Offline data; names — списки, которые он создаёт; urls — по порядку; parse(text) → {имя списка: {cols, rows}}
@@ -25,6 +26,8 @@ const REF_SRC=[
     urls:['data/intercept-signals.json',REF_RAW+'signals.json'], parse:t=>({[REF_SIG]:luParseSignals(t)})},
   {id:'wefax', label:'WEFAX stations (intercept)', mb:0.03, names:[REF_WEFAX],
     urls:['data/intercept-wefax.json',REF_RAW+'wefax_stations.json'], parse:t=>({[REF_WEFAX]:luParseWefax(t)})},
+  {id:'spy', label:'Number stations and diplomatic HF networks (intercept / priyom.org)', mb:0.05, names:[REF_SPY],
+    urls:['data/intercept-spy.json'], parse:t=>({[REF_SPY]:luParseSpy(t)})},
   {id:'ids', label:'Drones, trackers, cameras, TSCM bands (intercept)', mb:0.01, names:[REF_TSCM,REF_SSID,REF_MAC,REF_BLE],
     urls:['data/intercept-ids.json'], parse:t=>{ const o=luParseIds(t); return {[REF_TSCM]:o.tscm,[REF_SSID]:o.ssid,[REF_MAC]:o.mac,[REF_BLE]:o.ble}; }},
 ];
