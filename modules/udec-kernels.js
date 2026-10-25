@@ -7,6 +7,7 @@
    (hold мс после последней записи — и снова поиск); при известной частоте потока (fc) слушают только декодеры её диапазонов (bands). Декодеры только читают входной поток, поэтому делят его без копий.
    В реестр идут только декодеры, которым нужен обычный IQ канала (stdcDecode ждёт символы после PSK Demodulator — не подходит).
    Новый протокол — запись в UDEC_REG (p — параметры по умолчанию ядра: воркер описаний модулей не видит). */
+const UDEC_DEC=[1,2,3,4,5,8,10,16,20,25,32,40,50,64];       // коэффициенты IQ Decimator
 const UDEC_REG=[
   {id:'aisRx',      proto:'AIS',    kind:'ais',      bands:[[156e6,163e6]], p:{ch:'A', ttl:30}},
   {id:'pocsagRx',   proto:'POCSAG', kind:'pocsag',   bands:[[138e6,174e6],[310e6,330e6],[430e6,470e6],[929e6,932e6]], p:{baud:'auto', fix:'2'}},
@@ -48,15 +49,59 @@ function udecFind(h){
   return UDEC_REG.find(r=>r.id.toLowerCase()===s || r.proto.toLowerCase()===s || r.kind===s || r.alias?.includes(s)) || null;
 }
 IQK.udec={
-  init(n){ n.hintId=null; n.hintT=0; n.hintBad=null; n.kids=new Map(); n.st='search'; n.lock=null; n.lastRec=0; n.counts={}; n.last=null; n.recent=[]; n.ui=null; },
+  init(n){ n.chs=[]; n.chId=0; n.hintId=null; n.hintT=0; n.hintBad=null; n.kids=new Map(); n.st='search'; n.lock=null; n.lastRec=0; n.counts={}; n.last=null; n.recent=[]; n.ui=null; },
   kid(n,r){
     let k=n.kids.get(r.proto);
     if(!k){ k={p:{...r.p}, out:{}, id:r.id}; IQK[r.id].init(k); if(r.post){ k.post={}; UDEC_POST[r.post].init(k.post); } n.kids.set(r.proto,k); }
     return k;
   },
+  // вход sigs (метки sigid) — режим нескольких каналов: каждому сигналу свой сдвиг, децимация и своя логика выбора; иначе один канал
   process(n,I){
-    const s=iqIn(I,'in'), now=Date.now(), P=n.p;
-    const manual=P.mode==='manual' ? UDEC_REG.find(r=>r.proto===P.proto) : null, h=udecFind(I.hint);
+    const s=iqIn(I,'in'), now=Date.now();
+    if(Array.isArray(I.sigs)) return this.multi(n,s,I,now);
+    return this.step(n,s,I.hint,now);
+  },
+  multi(n,s,I,now){
+    const P=n.p, maxCh=Math.max(1,+P.maxCh||4), hold=+P.chHold||8000;
+    n.chs=n.chs||[];
+    const want=I.sigs.filter(b=>b && isFinite(b.f) && b.f>0).sort((a,b)=>(b.db??-200)-(a.db??-200)).slice(0,maxCh);
+    const seen=new Set();
+    if(s) for(const g of want){
+      const bw=g.nbw>0 ? g.nbw : Math.max(g.hi-g.lo,0) || 25e3;
+      let ch=n.chs.find(c=>!seen.has(c) && Math.abs(c.f-g.f)<=Math.max(5e3,.5*bw,.5*c.bw));
+      if(!ch){
+        if(n.chs.length>=maxCh) continue;
+        ch={f:g.f, bw, id:++n.chId||(n.chId=1), sh:{p:{offset:0}}, dc:null, M:0, sub:{p:P}, t:now};
+        IQK.iqShift.init(ch.sh); IQK.udec.init(ch.sub); n.chs.push(ch);
+      }
+      seen.add(ch); ch.f=g.f; ch.bw=bw; ch.seen=now; ch.dec=g.dec||'';
+      // децимация: выход ≥ 2.5 ширины канала, но не уже 48 кС/с; ширина потока декодера всё равно уйдёт внутрь (AIS, POCSAG…)
+      const target=Math.min(s.sr,Math.max(48e3,2.5*bw)), M=UDEC_DEC.reduce((m,d)=>s.sr/d>=target ? d : m,1);
+      if(M!==ch.M){ ch.M=M; ch.dc=M>1 ? {p:{M:String(M), cut:.4, tpp:'16'}} : null; if(ch.dc) IQK.iqDecim.init(ch.dc); }
+      ch.sr=s.sr;
+    }
+    n.chs=n.chs.filter(c=>now-(c.seen||c.t)<=hold);
+    const recs=[], text=[], rows=[];
+    for(const ch of n.chs){
+      let x=null;
+      if(s && ch.seen===now){
+        x=IQK.iqShift.process(ch.sh,{in:s,freq:ch.f}).out;
+        if(x && ch.dc) x=IQK.iqDecim.process(ch.dc,{in:x}).out;
+      }
+      const hint=ch.dec || I.hint;
+      const o=this.step(ch.sub,x,hint,now);
+      if(o.rec) for(const r of o.rec) recs.push({...r, f:ch.f, ch:ch.id});
+      if(o.text) for(const l of String(o.text).split('\n')) if(l) text.push('['+Math.round(ch.f/1e3)/1e3+'] '+l);
+      rows.push({ch:ch.id, f:ch.f, bw:ch.bw, st:ch.sub.ui?.st||'', proto:o.proto||'', hint:ch.dec||'', counts:ch.sub.ui?.counts||{}, ago:ch.sub.ui?.ago??null, sr:x?.sr||0, M:ch.M});
+    }
+    for(const t of text) n.recent.push(t);
+    if(n.recent.length>12) n.recent.splice(0,n.recent.length-12);
+    n.ui={multi:true, st:'multi', rows, recent:n.recent.slice(-8), counts:{}, act:[], none:!s, nsig:want.length};
+    return {rec:recs.length ? recs : null, text:text.length ? text.join('\n') : null, proto:'', locked:rows.some(r=>r.st==='lock'||r.st==='hint'||r.st==='manual') ? 1 : 0, count:rows.length};
+  },
+  step(n,s,hintIn,now){
+    const P=n.p;
+    const manual=P.mode==='manual' ? UDEC_REG.find(r=>r.proto===P.proto) : null, h=udecFind(hintIn);
     // ложная подсказка: подсказанный декодер молчит дольше giveUp мс — подсказку не слушаем, пока она не сменится (sigid мог ошибиться)
     if((h?.proto||null)!==n.hintId){ n.hintId=h?.proto||null; n.hintT=now; n.hintBad=null; }
     if(h && !manual && n.hintBad!==h.proto && now-Math.max(n.hintT,n.lastRec)>(+P.giveUp||8000)) n.hintBad=h.proto;
