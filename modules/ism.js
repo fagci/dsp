@@ -13,7 +13,9 @@ defIQ({ id:'ismRx', title:'ISM 433 Decoder', cat:'Decoders', tall:true, resize:t
           {n:'raw',t:'check',d:true,label:'log unidentified packets'},
           {n:'dedup',t:'range',min:0,max:5000,step:50,d:1000,label:'skip identical packets within, ms'}]},
   n=>{ const u=n.ui; if(!u) return 'no input';
-    const head=(u.fs/1000).toFixed(0)+' kS/s'+(u.M>1 ? ' (÷'+u.M+')' : '')+' · '+u.packets+' packets ('+u.dec+' decoded, '+u.unk+' unknown, '+u.dups+' repeats skipped)'+
+    // слушает только ±bw/2 у центра потока: на широком окне (вся полоса LPD) остальное не видно — для него ISM Scanner (rtl_433)
+    const wide=u.fs*u.M>2.5*(+n.p.bw||100000) ? '⚠ listens only ±'+((+n.p.bw||100000)/2000).toFixed(0)+' kHz around the centre of the stream — for the whole band (e.g. all of LPD 433) use ISM Scanner (rtl_433) or Universal Decoder\n' : '';
+    const head=wide+(u.fs/1000).toFixed(0)+' kS/s'+(u.M>1 ? ' (÷'+u.M+')' : '')+' · '+u.packets+' packets ('+u.dec+' decoded, '+u.unk+' unknown, '+u.dups+' repeats skipped)'+
       ' · signal '+u.hi.toFixed(0)+' dB, noise '+u.nz.toFixed(0)+' dB'+(u.age!=null ? ' · last '+(u.age/1000).toFixed(0)+' s ago' : '');
     return head+(u.recent.length ? '\n'+u.recent.join('\n') : '\nno packet yet'); });
 

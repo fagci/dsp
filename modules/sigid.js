@@ -889,7 +889,7 @@ def({ id:'sigid', title:'Signal Type Identifier', cat:'Analysis', readout:true, 
       for(const g of n.sigs) g.cls=sidClassify(n,g,I.plan);
       // скобка — по полосе 99% мощности: края сегмента у сильного сигнала захватывают брызги
       n.labels=n.sigs.map(g=>({lo:Math.max(g.lo,g.fc-g.obw/2), hi:Math.min(g.hi,g.fc+g.obw/2), label:g.cls.tag, color:SID_T[g.cls.t]?.c||'#b0bec5',
-        sig:true, db:g.db, conf:g.cls.conf, type:g.cls.t, f:g.fc, dec:g.cls.cat?.decoder||'',
+        sig:true, db:g.db, conf:g.cls.conf, type:g.cls.t, f:g.fc, dec:g.cls.cat?.hint||g.cls.cat?.decoder||'',
         ...(g.cls.need? {nlo:g.fc-g.cls.need/2, nhi:g.fc+g.cls.need/2, nbw:g.cls.need} : {})}));
       const src=n.p.iq? sidSource(n,s) : null;
       n.text=(n.p.auto? '' : 'range '+fmtHz(n.range[0],3)+'–'+fmtHz(n.range[1],3)+'Hz'+(off? ' — outside the spectrum' : '')+'\n')+

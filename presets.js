@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=109;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=110;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -188,6 +188,9 @@ const PRESET_CATS={
   'Signal Catalog: Pick a Type, the SDR Tunes and Decodes (USB SDR)':'SDR Receivers',
   'Signal Database: What Is It and How to Decode (USB SDR)':'SDR Receivers',
   'Universal Decoder: One Node, Any Protocol (Generator)':'Digital Voice & Trunking',
+  'Universal Decoder: Sound Out — Digital Voice to the Speaker (Generator)':'Digital Voice & Trunking',
+  'Universal Decoder: Video Out — Analog TV Picture (Generator)':'Images & TV',
+  'Universal Decoder: DVB Through the Router (USB SDR)':'Images & TV',
   'Several Signals at Once: Find, Cut Out and Decode Each (Generator)':'SDR Receivers',
   'Universal Decoder: ADS-B Aircraft and LoRa Frames in One Node (Generator)':'Aircraft, Satellites & Telemetry',
   'Signal to Decoder, Fully Automatic: Find, Tune, Decode (Generator)':'SDR Receivers',
@@ -1623,6 +1626,46 @@ const dc=addNode('dac',1260,290,{vol:.4});
 addEdge(rx.id,'spec',sa.id,'spec'); addEdge(sa.id,'f1',rx.id,'tuneFreq');
 addEdge(tb.id,'rows',rx.id,'plan'); addEdge(tb.id,'rows',sa.id,'bands');
 addEdge(rx.id,'audio',dc.id,'L'); addEdge(rx.id,'audio',dc.id,'R');
+markWiresDirty();
+});
+preset('Universal Decoder: Sound Out — Digital Voice to the Speaker (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Sound from Universal Decoder. The digital voice decoders (DMR, P25, NXDN, YSF, M17, D-STAR, dPMR, TETRA) give raw vocoder frames; the node collects them from every decoder it runs on the «voice» output (each frame carries «proto» and «decoder»; with several channels also «f» and «ch»).\n'+
+  'voice → Vocoder (mbelib) → speaker: the same wiring as with a single 4FSK Digital Voice decoder, but the node picks the protocol itself (hint from the Signal Type Identifier, otherwise by the band and the first to decode). The generator sends M17 voice; change its 4FSK parameter to P25 / NXDN / YSF / D-STAR / dPMR — the sound follows.\n'+
+  'Records («rec») go to the log. Encrypted voice stays silent: keys go into the vocoder node.'});
+nt.size.w=820; nt.size.h=150; applySize(nt);
+const gn=addNode('iqGen',40,230,{sr:'256000',fc:433000000,mode:'4FSK',fsk4:'M17 voice stream',off:2000,lvl:-20,noise:-45});
+const ud=addNode('udec',340,230,{mode:'auto',hold:6000,giveUp:8000}); ud.size.w=480; ud.size.h=260; applySize(ud);
+const vc=addNode('mbeVoice',860,230,{}); vc.size.w=340; applySize(vc);
+const dc=addNode('dac',860,420,{vol:.5});
+const lg=addNode('recLog',340,560,{}); lg.size.w=480; lg.size.h=260; applySize(lg);
+addEdge(gn.id,'iq',ud.id,'in'); addEdge(ud.id,'voice',vc.id,'voice'); addEdge(vc.id,'out',dc.id,'L'); addEdge(vc.id,'out',dc.id,'R'); addEdge(ud.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Universal Decoder: Video Out — Analog TV Picture (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Video from Universal Decoder. Analog TV is a two-stage adapter inside the node: TV Demodulator (FM for FPV 5.8 GHz and satellite, AM negative for broadcast TV — by the band) → TV Decoder; the picture comes out on the «video» output into the Frame node.\n'+
+  'In the 5.8 GHz band only the FM variant listens, in 48–862 MHz the AM one; the sample rate of the stream must be ≥ 6 MS/s (12 MS/s here, colour needs 10.6 MS/s). Digital TV (DVB) is routed — see the DVB patch.\n'+
+  'The generator sends a PAL test card frequency-modulated like an FPV transmitter. 12 MS/s is heavy: lower the run speed if the browser cannot keep up.'});
+nt.size.w=820; nt.size.h=130; applySize(nt);
+const gn=addNode('iqGen',40,210,{sr:'12000000',fc:5800000000,mode:'Analog TV',tv:'PAL',tvm:'FM',tvdev:8000000,off:0,lvl:-20,noise:-50});
+const ud=addNode('udec',340,210,{mode:'auto',hold:6000,giveUp:8000}); ud.size.w=480; ud.size.h=220; applySize(ud);
+const fr=addNode('imgview',860,200,{}); fr.size.w=520; fr.size.h=440; applySize(fr);
+addEdge(gn.id,'iq',ud.id,'in'); addEdge(ud.id,'video',fr.id,'img');
+markWiresDirty();
+});
+preset('Universal Decoder: DVB Through the Router (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'DVB (S / S2 / T2) is not decoded inside Universal Decoder: DVB Receiver (IQ) is a node of the main thread with its own pool of workers. The node routes it: the protocol «DVB» (manual, or the hint dvbs / dvbt / dvbsoft from the Signal Type Identifier or the catalog) passes the IQ of the channel on the «iq» output, which goes to DVB Receiver; picture and sound come out of that node.\n'+
+  'Set the standard, symbol rate and code rate in DVB Receiver (for QO-100 narrow-band DATV and the like, see the DVB patch). With the Signal Type Identifier wired to the «hint» input the router switches to DVB by itself when it sees a DVB signal in the band, and back to the decoders otherwise.\n'+
+  'Analog TV (picture on the «video» output) and digital voice (sound through the «voice» output) need no routing.'});
+nt.size.w=860; nt.size.h=170; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:false,gainDb:30,freq:740000000,demod:'IQ'});
+rx.size.w=360; rx.size.h=330; applySize(rx);
+const ud=addNode('udec',440,260,{mode:'manual',proto:'DVB',passIq:true}); ud.size.w=420; ud.size.h=220; applySize(ud);
+const tv=addNode('dvbsoft',900,260,{sr:1000,std:'DVB-S',cstln:'QPSK',cr:'3/4'}); tv.size.w=420; tv.size.h=420; applySize(tv);
+const sc=addNode('dac',1360,260,{}); sc.size.w=260; sc.size.h=200; applySize(sc);
+addEdge(rx.id,'iq',ud.id,'in'); addEdge(ud.id,'iq',tv.id,'in'); addEdge(tv.id,'L',sc.id,'L'); addEdge(tv.id,'R',sc.id,'R');
 markWiresDirty();
 });
 // Сквозная цепочка: источник (spec + iq) → Signal ID (где сигнал, какая полоса, чем декодировать) → сдвиг и прореживание канала → Universal Decoder
