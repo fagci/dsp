@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=112;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=113;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -6653,10 +6653,10 @@ markWiresDirty();
 });
 preset('Speech to Text (Whisper): Microphone or File → Text', function(){
 clearAll();
-const nt=addNode('note',40,20,{text:'Whisper (OpenAI, a neural network, runs in the browser) turns speech into text in about 100 languages, Russian included, and can translate it into English. The stream is cut into phrases at pauses; every phrase is recognised and goes to the ticker (and to the «full» output as a transcript). The first start loads the runtime (about 15 MB) and the model (base ≈ 85 MB) from huggingface.co into Files → Offline data (or press ⇩ offline in Files); after that it works without a network. Here the microphone is the source: speak, and the text appears after the pause. To read a recording press «Transcribe file…» on the node (faster than real time). To hear a radio channel put a demodulated signal (NFM/AM/SSB) into «in» instead of the microphone and set the language by hand: on noisy radio it is more reliable than «auto». Models: tiny is the fastest, small is the most exact; .en — English only. Heavy on the CPU: for a slow device take tiny.'});
+const nt=addNode('note',40,20,{text:'Whisper (OpenAI, a neural network, runs in the browser) turns speech into text in about 100 languages, Russian included, and can translate it into English. The stream is cut into phrases at pauses; every phrase is recognised and goes to the ticker (and to the «full» output as a transcript). The first start loads the runtime (about 15 MB) and the model (base ≈ 85 MB) from huggingface.co into Files → Offline data (or press ⇩ offline in Files); after that it works without a network. Here the microphone is the source: speak, and the text appears after the pause. To read a recording press «Transcribe file…» on the node (faster than real time). To hear a radio channel put a demodulated signal (NFM/AM/SSB) into «in» instead of the microphone and set the language by hand: on noisy radio it is more reliable than «auto». Models: tiny is the fastest, small is the default here, large-v3-turbo (≈800 MB) is the most exact but heavy; «norep» stops the word loops Whisper falls into on noisy radio; .en — English only. Heavy on the CPU: for a slow device take tiny.'});
 nt.size.w=1000; nt.size.h=130; applySize(nt);
 const m =addNode('mic',40,200,{gainA:1,echo:false,ns:true,agc:true});
-const w =addNode('whisper',320,200,{model:'base',lang:'auto',pause:.7}); w.size.w=340; w.size.h=260; applySize(w);
+const w =addNode('whisper',320,200,{model:'small',lang:'auto',pause:.7,norep:true}); w.size.w=340; w.size.h=260; applySize(w);
 const tk=addNode('ticker',700,200,{time:true}); tk.size.w=340; tk.size.h=260; applySize(tk);
 addEdge(m.id,'a',w.id,'in');
 addEdge(w.id,'rec',tk.id,'rec');

@@ -38,6 +38,7 @@ onmessage=async e=>{
     else if(m.t==='run'){
       await load(m);
       const o={chunk_length_s:30,return_timestamps:false};
+      if(m.norep) o.no_repeat_ngram_size=5;               // не даём декодеру зациклиться на одном слове (типично для шумного радио)
       if(!/\.en$/.test(m.model)){ if(m.language && m.language!=='auto') o.language=m.language; o.task=m.task==='translate' ? 'translate' : 'transcribe'; }   // у .en-моделей языка и задачи нет
       const t0=performance.now(), r=await asr(m.audio,o);
       postMessage({t:'res',jid:m.jid,text:String(Array.isArray(r) ? r.map(x=>x.text).join(' ') : r.text||'').trim(),ms:performance.now()-t0});
