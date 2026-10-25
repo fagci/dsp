@@ -5,7 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,Float64Array,Array,Set,String,RegExp});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/whisper-kernels.js'),'utf8')+';this.T={wsTo16k,wsSegmenter,wsJunk,wsLoop,wsAppend,wsFileName,wsStamp,wsManualName,wsFileUrl,WS_FILES};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/whisper-kernels.js'),'utf8')+';this.T={wsTo16k,wsSegmenter,wsJunk,wsLoop,wsDeloop,wsAppend,wsFileName,wsStamp,wsManualName,wsFileUrl,WS_FILES};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -48,6 +48,7 @@ ok('steady noise gives few phrases',g4.length<=1,String(g4.length));
 
 ok('junk',['', ' . ',' [BLANK_AUDIO] ','(music)','Thank you.','Thanks for watching!','Спасибо за просмотр','♪♪'].every(T.wsJunk));
 ok('real text is not junk',!T.wsJunk('Thank you for the report, we are moving on')&&!T.wsJunk('Привет, как дела')&&!T.wsJunk('Break one, over'));
+ok('deloop',T.wsDeloop('Сегодня в Москве слово слово слово слово слово дальше')==='Сегодня в Москве слово дальше'&&T.wsDeloop('да нет да нет да нет да нет конец')==='да нет конец'&&T.wsDeloop('очень очень хорошо')==='очень очень хорошо'&&T.wsDeloop('Привет, как дела')==='Привет, как дела');
 ok('loop',T.wsLoop(Array(20).fill('ha').join(' '))&&!T.wsLoop('one two three four five six seven eight nine ten eleven twelve'));
 ok('append caps and cuts on a word',T.wsAppend('aaa bbb ccc','ddd',9)==='ccc ddd' && T.wsAppend('','x',9)==='x',T.wsAppend('aaa bbb ccc','ddd',9));
 ok('file name',T.wsFileName('https://huggingface.co/onnx-community/whisper-tiny/resolve/main/onnx/encoder_model_quantized.onnx')==='Whisper · onnx-community/whisper-tiny · onnx/encoder_model_quantized.onnx'

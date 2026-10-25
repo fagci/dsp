@@ -10,7 +10,7 @@
 const WS_RT=[['Whisper runtime · transformers.min.js',['vendor/whisper/transformers.min.js','https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1/dist/transformers.min.js'],'text/javascript'],
              ['Whisper runtime · ort-wasm-simd-threaded.mjs',['vendor/whisper/ort-wasm-simd-threaded.mjs','https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.0-dev.20260914-8d85527a0/dist/ort-wasm-simd-threaded.mjs'],'text/javascript'],
              ['Whisper runtime · ort-wasm-simd-threaded.wasm',['vendor/whisper/ort-wasm-simd-threaded.wasm','https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.0-dev.20260914-8d85527a0/dist/ort-wasm-simd-threaded.wasm'],'application/wasm']];
-const WS_MB={tiny:45,base:85,small:270,'tiny.en':45,'base.en':85,'small.en':270};
+const WS_MB={tiny:45,base:85,small:270,'tiny.en':45,'base.en':85,'small.en':270,'large-v3-turbo':800};
 const wsRepo=(id,custom)=>custom && custom.trim() ? custom.trim() : 'onnx-community/whisper-'+id;
 const wsKey=repo=>'dsp-whisper-files:'+repo;
 
@@ -66,7 +66,7 @@ function wsRun(audio,o){
   const job=WS.chain.then(async()=>{
     await wsLoad(o.repo);
     const jid=++WS.jid, w=wsWorker();
-    return new Promise((res,rej)=>{ WS.pend.set(jid,{res,rej}); w.postMessage({t:'run',jid,audio,model:o.repo,language:o.language,task:o.task,threads:2},[audio.buffer]); });
+    return new Promise((res,rej)=>{ WS.pend.set(jid,{res,rej}); w.postMessage({t:'run',jid,audio,model:o.repo,language:o.language,task:o.task,norep:o.norep,threads:2},[audio.buffer]); });
   });
   WS.chain=job.catch(()=>{});
   return job;
@@ -76,7 +76,7 @@ function wsDownload(text,name){
   const a=document.createElement('a'), u=URL.createObjectURL(new Blob([text],{type:'text/plain'}));
   a.href=u; a.download=name; document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u),10000);
 }
-function wsCfg(n){ const p=n.p; return {repo:wsRepo(p.model,p.custom), language:p.lang, task:p.task}; }
+function wsCfg(n){ const p=n.p; return {repo:wsRepo(p.model,p.custom), language:p.lang, task:p.task, norep:!!p.norep}; }
 function wsSegCfg(n){ const p=n.p; return {thr:Math.pow(10,p.thr/20), pre:.35, hang:+p.pause, max:+p.maxlen, min:.4}; }
 
 // фраза в очередь распознавания; sec — время её конца от начала потока или файла
@@ -90,7 +90,7 @@ function wsPump(n){
   const j=n.jobs.shift(), cfg=wsCfg(n), gen=n.gen; n.busy=true;
   wsRun(j.audio,cfg).then(r=>{
     if(gen!==n.gen) return;
-    const text=r.text; n.ms=r.ms;
+    const text=n.p.norep ? wsDeloop(r.text) : r.text; n.ms=r.ms;
     if(!text || (n.p.junk && (wsJunk(text) || wsLoop(text)))){ n.skipped++; return; }
     const line=n.p.stamps ? wsStamp(j.sec)+' '+text : text;
     n.text=text; n.full=wsAppend(n.full,line,20000,'\n'); n.count++; n.go=true;
@@ -149,7 +149,7 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
   // in — звук; text — последняя фраза, full — вся стенограмма, go — импульс на новую фразу, rec — событие, busy — фраз в работе
   ins:[{n:'in',t:'sig'}],
   outs:[{n:'text',t:'txt'},{n:'full',t:'txt'},{n:'go',t:'num'},{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'busy',t:'num'}],
-  params:[{n:'model',t:'select',opts:['tiny','base','small','tiny.en','base.en','small.en'],d:'base',label:'model (tiny ≈45 MB fast, base ≈85, small ≈270 more exact; .en — English only)'},
+  params:[{n:'model',t:'select',opts:['tiny','base','small','large-v3-turbo','tiny.en','base.en','small.en'],d:'base',label:'model (tiny ≈45 MB fast, base ≈85, small ≈270 more exact, large-v3-turbo ≈800 MB — the most accurate, heavy: needs a fast PC; .en — English only)'},
           {n:'lang',t:'select',opts:['auto','en','ru','uk','de','fr','es','it','pt','nl','pl','cs','tr','ar','zh','ja','ko'],d:'auto',label:'language (auto — detect each phrase; a fixed one is more reliable on radio)'},
           {n:'task',t:'select',opts:['transcribe','translate'],d:'transcribe',label:'transcribe, or translate to English'},
           {n:'listen',t:'check',d:true,label:'listen to the input'},
@@ -157,6 +157,7 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
           {n:'pause',t:'range',min:.3,max:2.5,step:.05,d:.7,label:'pause that ends a phrase, s'},
           {n:'maxlen',t:'range',min:5,max:28,step:1,d:20,label:'longest phrase, s'},
           {n:'junk',t:'check',d:true,label:'drop typical Whisper inventions on silence ("Thank you.", [BLANK_AUDIO], loops)'},
+          {n:'norep',t:'check',d:true,label:'fight word loops («слово слово слово…»): decoder bans repeated 5-grams, long runs are collapsed'},
           {n:'stamps',t:'check',d:false,label:'time stamps [m:ss] in the transcript'},
           {n:'file',t:'button',label:'Transcribe file… / stop',fn:n=>wsPickFile(n)},
           {n:'clear',t:'button',label:'Clear',fn:n=>{ n.full=''; n.text=''; n.count=0; n.skipped=0; n.dropped=0; n.rev++; redraw(n); }},

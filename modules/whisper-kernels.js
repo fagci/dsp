@@ -73,6 +73,12 @@ function wsLoop(text){
   const u=new Set(w.map(x=>x.toLowerCase().replace(/[^\p{L}\p{N}]/gu,'')));
   return u.size<=Math.max(2,w.length/6);
 }
+// «слово слово слово слово…» (или короткая фраза, повторённая ≥4 раза подряд) — зацикливание декодера: оставляем одно вхождение
+function wsDeloop(text){
+  let t=String(text||'');
+  for(let k=1;k<=4;k++) t=t.replace(new RegExp('(^|\\s)((?:\\S+\\s+){'+(k-1)+'}\\S+?[.,!?…]*)(?:\\s+\\2){3,}(?=\\s|$)','giu'),'$1$2');
+  return t.trim();
+}
 function wsAppend(full,text,cap,sep){
   const s=full ? full+(sep||' ')+text : text;
   return s.length>cap ? s.slice(s.length-cap).replace(/^\S*\s/,'') : s;
