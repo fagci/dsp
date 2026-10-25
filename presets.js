@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=113;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=114;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -190,6 +190,7 @@ const PRESET_CATS={
   'Universal Decoder: One Node, Any Protocol (Generator)':'Digital Voice & Trunking',
   'Universal Decoder: Sound Out — Digital Voice to the Speaker (Generator)':'Digital Voice & Trunking',
   'Universal Decoder: Video Out — Analog TV Picture (Generator)':'Images & TV',
+  'Universal Decoder: Audio and Main-Thread Decoders — SAME, DTMF, FT8 (Generator)':'HF Modes & Morse',
   'Universal Decoder: DVB Through the Router (USB SDR)':'Images & TV',
   'Several Signals at Once: Find, Cut Out and Decode Each (Generator)':'SDR Receivers',
   'Universal Decoder: ADS-B Aircraft and LoRa Frames in One Node (Generator)':'Aircraft, Satellites & Telemetry',
@@ -1667,6 +1668,42 @@ const ud=addNode('udec',440,260,{mode:'manual',proto:'DVB',passIq:true}); ud.siz
 const tv=addNode('dvbsoft',900,260,{sr:1000,std:'DVB-S',cstln:'QPSK',cr:'3/4'}); tv.size.w=420; tv.size.h=420; applySize(tv);
 const sc=addNode('dac',1360,260,{}); sc.size.w=260; sc.size.h=200; applySize(sc);
 addEdge(rx.id,'iq',ud.id,'in'); addEdge(ud.id,'iq',tv.id,'in'); addEdge(tv.id,'L',sc.id,'L'); addEdge(tv.id,'R',sc.id,'R');
+markWiresDirty();
+});
+preset('Universal Decoder: Audio and Main-Thread Decoders — SAME, DTMF, FT8 (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Decoders of the sound domain (SAME / EAS, SELCAL, Morse, DTMF, RTTY, AX.25 / APRS, WWV / CHU, FT8, JS8Call, Olivia, TBSK) and GSM live in the main thread, not in the worker of the IQ island. Universal Decoder gets them through a bridge: channel → IQ Decimator → demodulator (FM / AM / USB / envelope) → blocks of sound → the decoder block. The node moves to the main thread by itself when the hint or the manual choice names one of them (or turn «audio» on).\n'+
+  'Three transmitters here: SAME (NFM, press Send in the test node), DTMF (NFM, loops) and FT8 (USB, a message every 15 s slot, the slot boundary is the UTC clock). Each goes through AM / FM / SSB Modulator at the engine sample rate into its own Universal Decoder, and the hint names the protocol: «same», «dtmf», «ft8». On a real receiver the same nodes sit after USB SDR: with the stream frequency known the auto search listens to the decoders of the band (162.4–162.55 MHz — SAME, 14.074 MHz — FT8, Morse, RTTY…), without it — only by the hint.\n'+
+  'In the auto search the audio decoders listen only when the frequency of the stream (fc) is known: a demodulator for each of them is too much to run blind. TBSK (an acoustic modem with the carrier of the transmitter) never takes part in the search: hint «tbsk» or manual.'});
+nt.size.w=900; nt.size.h=220; applySize(nt);
+const s1=addNode('sameTx',40,300,{});
+s1.size.w=300; s1.size.h=300; applySize(s1);
+const m1=addNode('iqMod',380,300,{mode:'NFM',sr:'audio',off:0,dev:5000,lvl:-6});
+const u1=addNode('udec',640,300,{mode:'auto',audio:true});
+u1.size.w=480; u1.size.h=300; applySize(u1);
+const h1=addNode('textsrc',380,440,{text:'same'});
+h1.size.w=240; h1.size.h=110; applySize(h1);
+const s2=addNode('dtmfTx',40,660,{text:'1234567890',toneMs:100,gapMs:60,loop:true});
+s2.size.w=300; s2.size.h=200; applySize(s2);
+const m2=addNode('iqMod',380,660,{mode:'NFM',sr:'audio',off:0,dev:3000,lvl:-6});
+const h2=addNode('textsrc',380,800,{text:'dtmf'});
+h2.size.w=240; h2.size.h=110; applySize(h2);
+const u2=addNode('udec',640,660,{mode:'auto',audio:true});
+u2.size.w=480; u2.size.h=300; applySize(u2);
+const s3=addNode('ft8Tx',40,1000,{text:'CQ K1ABC FN42',freq:1000});
+s3.size.w=300; s3.size.h=140; applySize(s3);
+const m3=addNode('iqMod',380,1000,{mode:'USB',sr:'audio',off:0,lvl:-6});
+const h3=addNode('textsrc',380,1160,{text:'ft8'});
+h3.size.w=240; h3.size.h=110; applySize(h3);
+const u3=addNode('udec',640,1000,{mode:'auto',audio:true});
+u3.size.w=480; u3.size.h=300; applySize(u3);
+const log=addNode('recLog',1160,300,{});
+log.size.w=560; log.size.h=520; applySize(log);
+addEdge(s1.id,'out',m1.id,'in'); addEdge(m1.id,'iq',u1.id,'in');
+addEdge(s2.id,'out',m2.id,'in'); addEdge(m2.id,'iq',u2.id,'in');
+addEdge(s3.id,'out',m3.id,'in'); addEdge(m3.id,'iq',u3.id,'in');
+addEdge(h1.id,'text',u1.id,'hint'); addEdge(h2.id,'text',u2.id,'hint'); addEdge(h3.id,'text',u3.id,'hint');
+addEdge(u1.id,'rec',log.id,'rec'); addEdge(u2.id,'rec',log.id,'rec'); addEdge(u3.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 // Сквозная цепочка: источник (spec + iq) → Signal ID (где сигнал, какая полоса, чем декодировать) → сдвиг и прореживание канала → Universal Decoder
