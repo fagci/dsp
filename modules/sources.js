@@ -1772,9 +1772,12 @@ rtlMakeR820T.detect = async function(com){
 };
 
 // открывает и настраивает донгл целиком, отдаёт команды верхнего уровня
-async function rtlOpenDevice(dev, ppm, gain){
+async function rtlOpenDevice(dev, ppm, gain, hardReset){
   const XTAL=28800000, IF=3570000;
   await dev.open();
+  // донгл после перезагрузки страницы остаётся в состоянии прошлой сессии (поток шёл, close() не вызвали): ручной Disconnect / Connect
+  // это лечит — делаем USB-сброс сами; не вышел (ОС не даёт) — продолжаем как есть
+  if(hardReset){ try{ await dev.reset(); }catch(e){} }
   await dev.selectConfiguration(1);
   const com=rtlMakeCom(dev);
   // пробная запись, как в librtlsdr: не прошла — донгл в плохом состоянии после прошлой сессии, сброс USB и заново
@@ -2817,13 +2820,13 @@ const SDR_USB_FILTERS=[
   {vendorId:0x04b4,productId:0x00f3},{vendorId:0x04b4,productId:0x00f1}, // RX-888 / SDDC: загрузчик FX3, с прошивкой
   ...MIRI_USB_IDS.map(([vendorId,productId])=>({vendorId,productId}))
 ];
-function sdrOpenDevice(dev, ppm, gain){
+function sdrOpenDevice(dev, ppm, gain, hardReset){
   if(MIRI_USB_IDS.some(([v,p])=>v===dev.vendorId && p===dev.productId)) return mirisdrOpenDevice(dev, gain);
   if(rx888Is(dev, RX888_APP)) return rx888OpenDevice(dev, gain);
   if(dev.vendorId===0x03eb) return airspyhfOpenDevice(dev, gain);
   if(dev.vendorId===0x38af) return airspyOpenDevice(dev, gain);
   if(dev.vendorId===0x1d50) return dev.productId===0x60a1 ? airspyOpenDevice(dev, gain) : hackrfOpenDevice(dev, gain);
-  return rtlOpenDevice(dev, ppm, gain);
+  return rtlOpenDevice(dev, ppm, gain, hardReset);
 }
 
 // ---- чтение USB в отдельном воркере ----
@@ -2891,7 +2894,7 @@ self.onmessage=async e=>{
       // одинаковые донглы (один серийник) различаются порядковым номером среди подходящих — тем же, что в главном потоке
       usb=devs.filter(d=>d.vendorId===args.vendorId && d.productId===args.productId && (!args.serial || d.serialNumber===args.serial))[args.index||0];
       if(!usb) throw new Error('device is not visible from the worker');
-      try{ api=await sdrOpenDevice(usb, 0, args.gain); }
+      try{ api=await sdrOpenDevice(usb, 0, args.gain, args.reset); }
       catch(err){ try{ await usb.close(); }catch(e2){} usb=null; throw err; }
       r={tunerName:api.tunerName, kind:api.kind, fmt:api.fmt, bps:api.bps};
     }
@@ -2910,7 +2913,7 @@ self.onmessage=async e=>{
 `;
 
 // null — WebUSB в воркере недоступен (старый браузер), тогда вызывающий открывает донгл сам
-async function rtlOpenInWorker(usbDev, gain){
+async function rtlOpenInWorker(usbDev, gain, hardReset){
   if(typeof Worker==='undefined') return null;
   const url=URL.createObjectURL(new Blob([RTL_USB_WORKER_SRC], {type:'application/javascript'}));
   const w=new Worker(url);
@@ -2928,7 +2931,7 @@ async function rtlOpenInWorker(usbDev, gain){
   try{
     if(!await call('probe')){ drop(); return null; }
     const same=(await navigator.usb.getDevices()).filter(d=>d.vendorId===usbDev.vendorId && d.productId===usbDev.productId && (!usbDev.serialNumber || d.serialNumber===usbDev.serialNumber));
-    info=await call('open', {vendorId:usbDev.vendorId, productId:usbDev.productId, serial:usbDev.serialNumber, gain, index:Math.max(0,same.indexOf(usbDev))});
+    info=await call('open', {vendorId:usbDev.vendorId, productId:usbDev.productId, serial:usbDev.serialNumber, gain, reset:!!hardReset, index:Math.max(0,same.indexOf(usbDev))});
   }catch(e){ drop(); throw e; }
   return {
     worker:true, tunerName:info.tunerName, kind:info.kind, fmt:info.fmt, bps:info.bps,
@@ -4709,19 +4712,19 @@ async function rtlConnect(n, choose){
     n.usbDev=usbDev;
     const gain=n.p.auto?null:n.p.gainDb;
     // сначала пробуем открыть донгл в USB-воркере; без WebUSB в воркерах — по-старому, на главном потоке
-    const open=async()=>await rtlOpenInWorker(usbDev, gain).catch(e=>{
+    const uid0=sdrUsbId(usbDev), firstOpen=!RTL_WARM.has(uid0);
+    const open=async()=>await rtlOpenInWorker(usbDev, gain, firstOpen).catch(e=>{
       console.warn('[rtlsdr] USB-воркер не открыл донгл, читаем с главного потока:', e.message); return null; })
-      || await sdrOpenDevice(usbDev, 0, gain);
+      || await sdrOpenDevice(usbDev, 0, gain, firstOpen);
     n.dev=await open();
     // Холодный старт RTL-SDR: первое открытие донгла после включения иногда даёт приёмник без сигнала, и помогает только
     // Disconnect / Connect (перестройка — нет). Делаем это сами: при первом подключении донгла за сессию — открыть, закрыть, открыть заново
-    const uid=sdrUsbId(usbDev);
-    if(n.dev.kind==='rtl' && n.p.warmStart!==false && !RTL_WARM.has(uid)){
-      RTL_WARM.add(uid);
+    RTL_WARM.add(uid0);
+    if(n.dev.kind==='rtl' && n.p.warmStart!==false && firstOpen){
       n.status='first start of the dongle: reopening…';
       try{ await n.dev.close(); }catch(e){}
       n.dev=null;
-      await sdrSleep(200);
+      await sdrSleep(500);
       n.dev=await open();
     }
     const srSafe=rtlSafeSr(n.p.sr);
@@ -4740,7 +4743,7 @@ async function rtlStart(n, sr){
   n.sourceRate=await n.dev.setSampleRate(sr);
   await sdrTune(n);
   // у HackRF свои ступени — применит rtlApplyPending; bias-tee после открытия выключен, GPIO не трогаем
-  n.appliedGainKey=(n.dev.kind==='hackrf' || sdrStages(n)) ? null : sdrGainKey(n); n.appliedBias=false;   // ступени — применит rtlApplyPending
+  n.appliedGainKey=null; n.appliedBias=false;   // усиление применит rtlApplyPending уже после настройки частоты и захвата PLL: из open() оно могло не прижиться   // ступени — применит rtlApplyPending
   await n.dev.resetBuffer();
   // отключение/переподключение — каналы поднимаем с нуля; активные до дисконнекта воркеры
   // уже терминированы в rtlDisconnect, но на всякий случай подчистим прежде, чем ресайзить кольца
