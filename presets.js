@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=116;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=117;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -318,6 +318,8 @@ const PRESET_CATS={
   'ACARS: VHF Messages (USB SDR, 131 MHz)':'Aircraft, Satellites & Telemetry',
   'Inmarsat STD-C: EGC Messages (Generator)':'Aircraft, Satellites & Telemetry',
   'Inmarsat STD-C: EGC Messages (USB SDR, 1.5 GHz)':'Aircraft, Satellites & Telemetry',
+  'Inmarsat Aero: ACARS and Voice Channels (Generator)':'Aircraft, Satellites & Telemetry',
+  'Inmarsat Aero: P Channel 1.5 GHz (USB SDR)':'Aircraft, Satellites & Telemetry',
   'GSM: Receive Bursts (USB SDR)':'Aircraft, Satellites & Telemetry',
   'GSM: Paging, Assignments and HEX (USB SDR)':'Aircraft, Satellites & Telemetry',
   'GSM: Paging, Assignments and HEX (Generator)':'Aircraft, Satellites & Telemetry',
@@ -2880,6 +2882,55 @@ log.size.w=520; applySize(log);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',dm.id,'in'); addEdge(dm.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Inmarsat Aero: ACARS and Voice Channels (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Inmarsat Aero without a dish: the P channel (satellite → aircraft) is MSK, 600 Bd (the other rate is\n'+
+  '1200). The generator sends frames of 1200 bits: unique word 0xE15AE893, a header and 1152 coded bits\n'+
+  '(interleaver 64×6, K=7 code, scrambler) = 6 signalling units with CRC-16. In them: system tables\n'+
+  '(satellite, ground-station channels), a voice-channel assignment (aircraft ICAO address, RX/TX\n'+
+  'frequency) and two ACARS messages in ISU + SSU.\n'+
+  'Aero Decoder finds the carrier itself from the two lines of the squared signal (offset +800 Hz\n'+
+  'here), picks the clock phase by the sync word, runs Viterbi with the neighbour frames and checks the\n'+
+  'CRC of every SU. Records: kind sys / call / message. The real P600 channels around 1545 MHz look the\n'+
+  'same.'});
+nt.size.w=820; nt.size.h=184; applySize(nt);
+const gn=addNode('iqGen',40,260,{sr:'48000',fc:1545000000,mode:'Aero',off:800,lvl:-20,noise:-35});
+const sp=addNode('iqSpec',340,260,{size:'4096',avg:'8'});
+const sa=addNode('sa',340,400,{auto:true,floor:-110,top:-30,split:.4});
+sa.size.w=520; sa.size.h=240; applySize(sa);
+const de=addNode('aeroRx',920,260,{baud:'600'});
+de.size.w=560; de.size.h=340; applySize(de);
+const log=addNode('recLog',920,640,{});
+log.size.w=560; applySize(log);
+addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec'); addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Inmarsat Aero: P Channel 1.5 GHz (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'ACARS over satellite and voice-call assignments from the geostationary Inmarsat satellites (L band,\n'+
+  'P channels around 1545 MHz).\n'+
+  'Antenna: an L-band patch or helix aimed at the satellite (a geostationary one stands low in the sky\n'+
+  'at mid-latitudes; the view must be open — through a wall the signal is under the noise) with an LNA\n'+
+  'and bias-T.\n'+
+  'Tune ~1545.1 MHz, find the narrow (~1 kHz) carriers on the spectrum and tap one: the frequency goes\n'+
+  'to IQ Frequency Shift, ×32 gives 32 kS/s. The channels are P600 or P1200 (switch baud); the line\n'+
+  'pair of the squared signal (+dB in the decoder) shows that a carrier really is MSK. "sat N, lon"\n'+
+  'appears after the first system table. 10.5 kbit/s channels are not decoded.'});
+nt.size.w=820; nt.size.h=184; applySize(nt);
+const rx=addNode('rtlsdr',40,280,{sr:'1024000',freq:1545100000,demod:'IQ'});
+const sa=addNode('sa',760,40,{auto:true,floor:-100,top:-40,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,280,{});
+const d1=addNode('iqDecim',340,440,{M:'32',cut:.3});
+const de=addNode('aeroRx',760,360,{baud:'600'});
+de.size.w=560; de.size.h=340; applySize(de);
+const log=addNode('recLog',760,740,{});
+log.size.w=560; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('GSM: Receive Bursts (USB SDR)', function(){
