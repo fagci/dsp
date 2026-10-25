@@ -17,6 +17,7 @@ const UDEC_REG=[
   {id:'ismScan',    proto:'ISM (wideband)', kind:'ism', variant:true, alias:['ism433','lpd','rtl_433','rtl433'], bands:[[300e6,320e6],[430e6,436e6],[863e6,870e6],[900e6,930e6]], minSr:600e3,
     p:{plan:'4', gain:'auto', dc:'subtract', snr:20, devs:'default', only:'', minp:8, raw:true, minBits:16, dedup:1000}},
   {id:'acarsRx',    proto:'ACARS',  kind:'acars',    bands:[[129e6,137e6]], p:{fix:true}},
+  {id:'aeroRx',     proto:'Aero',   kind:'aero',     alias:['inmarsat','inmarsat aero','jaero','satcom'], bands:[[1525e6,1559e6]], minSr:8e3, p:{baud:'600'}},
   {id:'vdl2Rx',     proto:'VDL2',   kind:'vdl2',     alias:['vdlm2','vdl'], bands:[[136e6,137e6]], minSr:48e3, p:{}},
   {id:'fskRx',      proto:'DigVoice', kind:'digvoice', alias:['dmr','p25','nxdn','ysf','m17','dstar','d-star','dpmr'], bands:[[136e6,174e6],[300e6,520e6],[764e6,870e6]], p:{proto:'auto'}},
   {id:'mpt1327Rx',  proto:'MPT1327', kind:'mpt1327', bands:[[136e6,174e6],[400e6,470e6]], p:{}},

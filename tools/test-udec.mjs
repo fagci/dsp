@@ -23,7 +23,7 @@ ok(F('aisRx')?.proto==='AIS' && F('POCSAG')?.id==='pocsagRx' && F('ism')?.id==='
 ok(F({decoder:'aisRx'})?.id==='aisRx' && F({kind:'pocsag'})?.id==='pocsagRx' && F(['x','ism'])?.id==='ismRx','подсказка: запись и массив');
 ok(F('adsbDemod → adsbDecode')===null && F('')===null && F(null)===null && F(7)===null,'неизвестное — null');
 // параметры по умолчанию реестра совпадают с описаниями модулей
-const defs={aisRx:'ais.js',pocsagRx:'pocsag.js',ismRx:'ism.js',acarsRx:'acars.js',fskRx:'fsk4.js',mpt1327Rx:'mpt1327.js',tetraRx:'tetra.js',rs41Rx:'sonde.js',adsbDemod:'adsb.js',loraRx:'lora.js',tvDecode:'video.js',ismScan:'ism.js',vdl2Rx:'vdl2.js',sameRx:'same.js',selcalRx:'selcal.js',morseRx:'analysis.js',dtmfRx:'protocols.js',afskRx:'protocols.js',ax25Rx:'protocols.js',wwv:'modulation.js',ft8Rx:'protocols.js',js8Rx:'js8.js',oliviaRx:'protocols.js',tbskRx:'tbsk.js',gsmRx:'gsm.js',ccsdsDecode:'lrpt.js'};
+const defs={aisRx:'ais.js',pocsagRx:'pocsag.js',ismRx:'ism.js',acarsRx:'acars.js',fskRx:'fsk4.js',mpt1327Rx:'mpt1327.js',tetraRx:'tetra.js',rs41Rx:'sonde.js',adsbDemod:'adsb.js',loraRx:'lora.js',tvDecode:'video.js',ismScan:'ism.js',vdl2Rx:'vdl2.js',aeroRx:'aero.js',sameRx:'same.js',selcalRx:'selcal.js',morseRx:'analysis.js',dtmfRx:'protocols.js',afskRx:'protocols.js',ax25Rx:'protocols.js',wwv:'modulation.js',ft8Rx:'protocols.js',js8Rx:'js8.js',oliviaRx:'protocols.js',tbskRx:'tbsk.js',gsmRx:'gsm.js',ccsdsDecode:'lrpt.js'};
 ev(`globalThis.REG=UDEC_REG;`);
 for(const r of ctx.REG){
   if(!r.id) continue;                                 // маршрут без декодера (DVB)
@@ -70,6 +70,7 @@ function run(mode,genP,udP,hint,seconds,fc,sr=SR){
 // [режим генератора, частота (Гц), декодер, секунд, auto тоже?]; у частоты свой диапазон — слушает только пара декодеров
 const cases=[['AIS',161.975e6,'aisRx',6,true],['POCSAG',466.075e6,'pocsagRx',6,true],['ISM433',433.92e6,'ismScan',6,true],['ISM433',433.92e6,'ismRx',6,false,256000],['ACARS',131.55e6,'acarsRx',6,true],
   ['VDL2',136.975e6,'vdl2Rx',4,true,250000],
+  ['Aero',1545e6,'aeroRx',8,true,250000],
   ['ADS-B',1090e6,'adsbDemod',4,true,2.4e6],['DMR',450e6,'fskRx',3,false],['TETRA',420e6,'tetraRx',4,false],['MPT1327',150e6,'mpt1327Rx',3,false],['RS41',403e6,'rs41Rx',3,false]];
 for(const [mode,fc,dec,secs,auto,sr] of cases){
   const kind=ctx.REG.find(r=>r.id===dec).kind;
