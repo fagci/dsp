@@ -1761,6 +1761,7 @@ function saBandPlan(n,cx,W,H,plotH){
 }
 // Метки сигналов с 'sigid' (записи sig:true в bands): скобка над сигналом на уровне его пика,
 // подпись типа над ней. Подписи, налезающие на уже поставленные, поднимаются выше.
+const TOPN=18;                                         // верх залитой нужной полосы — под подписями закладок
 function saSigTags(n,cx,W,plotH){
   const list=n.sigsData&&n.sigsData.length ? (n.bandsData||[]).concat(n.sigsData) : n.bandsData; if(!list||!list.length) return;
   const tags=[], span=(n.p.top-n.p.floor)||1;
@@ -1772,6 +1773,21 @@ function saSigTags(n,cx,W,plotH){
     tags.push({b,x1,x2:Math.max(x2,x1+3),y});
   }
   if(!tags.length) return;
+  // нужная полоса приёма (sigid, «need»): заливка на всю высоту, чёткие края и подпись ширины внизу — под неё и ставят bw приёмника
+  for(const t of tags){
+    const b=t.b; if(!(b.nbw>0)) continue;
+    const nx1=Math.round(saPos(n,b.nlo)*W), nx2=Math.round(saPos(n,b.nhi)*W);
+    if(nx2<0 || nx1>W) continue;
+    const col=b.color||'#b0bec5', w=Math.max(nx2-nx1,2);
+    cx.globalAlpha=.13; cx.fillStyle=col; cx.fillRect(nx1,TOPN,w,plotH-TOPN);
+    cx.globalAlpha=.9; cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash([]);
+    cx.beginPath(); cx.moveTo(nx1+.5,TOPN); cx.lineTo(nx1+.5,plotH); cx.moveTo(nx2-.5,TOPN); cx.lineTo(nx2-.5,plotH); cx.stroke();
+    cx.font=BP_FONT; const txt='◂ '+fmtHz(b.nbw,b.nbw<1e4?1:0)+'Hz ▸', tw=Math.ceil(cx.measureText(txt).width)+6;
+    const lx=clamp(Math.round((nx1+nx2)/2-tw/2),2,Math.max(2,W-tw-2));
+    cx.globalAlpha=.85; cx.fillStyle=col; cx.fillRect(lx,plotH-14,tw,12);
+    cx.globalAlpha=1; cx.fillStyle=contrastText(col); cx.fillText(txt,lx+3,plotH-4);
+  }
+  cx.globalAlpha=1;
   tags.sort((a,b)=>a.y-b.y);                          // сильные — первыми, им место у пика
   cx.font=BP_FONT;
   const placed=[], TH=14, TOP=18;                     // потолок — подписи закладок (см. saBandPlan)

@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=102;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=103;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -187,6 +187,7 @@ const PRESET_CATS={
   'USB SDR: Channel Scan + Decoder Switch (digital voice / analog)':'SDR Receivers',
   'Signal Catalog: Pick a Type, the SDR Tunes and Decodes (USB SDR)':'SDR Receivers',
   'Signal Database: What Is It and How to Decode (USB SDR)':'SDR Receivers',
+  'Signal ID: Weak Signal in Noise, Frequency Range and Needed Bandwidth (Generator)':'Analysis & Measurement',
   'ESP-SDR: ESP32 Spectrum':'SDR Receivers',
   'Measure: Modulation Meter — FM and AM (Generator)':'Analysis & Measurement',
   'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
@@ -1506,6 +1507,24 @@ const cl=addNode('chanLog',820,640,{});
 cl.size.w=520; cl.size.h=300; applySize(cl);
 addEdge(g1.id,'iq',ad.id,'a'); addEdge(g2.id,'iq',ad.id,'b'); addEdge(ad.id,'out',sp.id,'in');
 addEdge(sp.id,'spec',si.id,'spec'); addEdge(si.id,'bands',cl.id,'bands');
+markWiresDirty();
+});
+preset('Signal ID: Weak Signal in Noise, Frequency Range and Needed Bandwidth (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The Signal Type Identifier with three extras. The generator sends a 9600 Bd GFSK signal 20 kHz above 161.975 MHz, buried in noise: in one frame it is below the detection threshold (only a spur of its carrier is seen).\n'+
+  '1) Weak signals: «deep integration» averages the spectrum for that many seconds and looks for signals with matched filters of several widths (threshold in σ of the smoothed spectrum) — wait ~10–20 s, the signal appears on the spectrum. Set it to 0 and it disappears again.\n'+
+  '2) Frequency range: a service of the signal database whose band holds the signal names it («NXDN? / dPMR?» here), with the decoder of the signal catalog in the hint; the sideband of SSB follows the practice of the range (LSB below 10 MHz).\n'+
+  '3) Needed bandwidth: «need» fills the receive band on the spectrum — a catalog entry or the measured width with a margin, rounded to a standard channel width; the bw output carries it (wire to USB SDR bw). With a real SDR connect its spec instead of the generator.'});
+nt.size.w=820; nt.size.h=190; applySize(nt);
+const gn=addNode('blindGen',40,280,{sr:'256000',fc:161975000,off:20000,mod:'GFSK',baud:9600,dev:2400,lvl:-50,noise:-35,gap:8});
+const sp=addNode('iqSpec',300,280,{size:'8192',avg:'16'});
+const sa=addNode('sa',560,280,{auto:true,floor:-110,top:-60,split:.4});
+sa.size.w=700; sa.size.h=320; applySize(sa);
+const si=addNode('sigid',40,600,{period:2,thr:8,maxSig:8,rangeCtx:true,deep:20,zthr:5,need:true});
+si.size.w=520; si.size.h=260; applySize(si);
+const n1=addNode('numview',1300,280,{label:'needed bandwidth, Hz'});
+addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec'); addEdge(sp.id,'spec',si.id,'spec');
+addEdge(si.id,'bands',sa.id,'bands'); addEdge(si.id,'bw',n1.id,'in');
 markWiresDirty();
 });
 preset('Measure: Cross-Correlator — Delay Between Two Receivers (Generator)', function(){
