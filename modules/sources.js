@@ -1552,7 +1552,7 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
   const REGISTERS=[0x83,0x32,0x75,0xc0,0x40,0xd6,0x6c,0xf5,0x63,0x75,0x68,0x6c,0x83,0x80,0x00,0x0f,0x00,0xc0,0x30,0x48,0xcc,0x60,0x00,0x54,0xae,0x4a,0xc0];
   const MUX_CFGS=[[0,0x08,0x02,0xdf],[50,0x08,0x02,0xbe],[55,0x08,0x02,0x8b],[60,0x08,0x02,0x7b],[65,0x08,0x02,0x69],[70,0x08,0x02,0x58],[75,0x00,0x02,0x44],[90,0x00,0x02,0x34],[110,0x00,0x02,0x24],[140,0x00,0x02,0x14],[180,0x00,0x02,0x13],[250,0x00,0x02,0x11],[280,0x00,0x02,0x00],[310,0x00,0x41,0x00],[588,0x00,0x40,0x00]];
   const BIT_REVS=[0x0,0x8,0x4,0xc,0x2,0xa,0x6,0xe,0x1,0x9,0x5,0xd,0x3,0xb,0x7,0xf];
-  let hasPllLock=false, shadow, curBand=null, curInput=null, fast=false;
+  let hasPllLock=false, shadow, curBand=null, curInput=null, fast=false, calCap=null, calTries=0;
   const isR828D = i2cAddr===0x74;
 
   async function readRegBuffer(addr,length){
@@ -1601,6 +1601,7 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
     // "шипит после первого подключения, реконнект чинит" — реконнект просто даёт больше
     // времени пройти между инициализацией и калибровкой). Пробуем несколько раз с паузой,
     // прежде чем смиряться с некалиброванным фильтром.
+    calTries++;
     for(let attempt=0; attempt<3 && !hasPllLock; attempt++){
       if(attempt>0) await new Promise(r=>setTimeout(r,25));
       await setPll(56000000);
@@ -1613,6 +1614,7 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
     const arr=await readRegBuffer(0x00,5);
     let filterCap=arr[4]&0x0f;
     if(filterCap===0x0f) filterCap=0;
+    calCap=filterCap;
     // как в r82xx_set_tv_standard: код 0 (или 0x0f) — калибровка не сошлась, повторяем один раз; годный код оставляем.
     // Раньше условие было обратным (повтор при годном коде, при нулевом — нет): на «горячем» донгле (после перезагрузки
     // страницы) первое чтение часто нулевое, фильтр оставался нескалиброванным — приёмник «глухой» при любом усилении
@@ -1679,6 +1681,12 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
   // полная переинициализация тюнера (регистры, калибровка фильтра, состояние входов): теневая копия и выбранные входы — с нуля
   async function reinit(){ curBand=null; curInput=null; hasPllLock=false; await init(); }
   // захват PLL держится бит в регистре 0x02: читаем заново (после перестройки он мог сорваться)
+  // снимок для диагностики «кривого» старта: что реально в регистрах тюнера (0x00–0x1f, как читает чип) и что считает теневая копия
+  async function dump(){
+    const hx=a=>Array.from(a,b=>b.toString(16).padStart(2,'0')).join(' ');
+    const r=await readRegBuffer(0x00,32);
+    return {hw:hx(r), shadow:hx(shadow), cal:calCap, calTries, lock:hasPllLock, band:curBand};
+  }
   async function checkLock(){ await getPllLock(true); return hasPllLock; }
   // rfFreq — истинная целевая RF-частота (без добавленного IF), нужна только для выбора входа/нотчей у R828D
   async function setFrequency(freq, rfFreq){
@@ -1761,7 +1769,7 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
     }
     return r;
   }
-  return {init, reinit, checkLock, setFrequency, setFrequencyRobust, locked:()=>hasPllLock, setAutoGain, setManualGain, setStageGain, setGpio, close, setFast:on=>{ fast=!!on; }};
+  return {init, reinit, dump, checkLock, setFrequency, setFrequencyRobust, locked:()=>hasPllLock, setAutoGain, setManualGain, setStageGain, setGpio, close, setFast:on=>{ fast=!!on; }};
 }
 // проверка чипа по ID-регистру на конкретном I2C-адресе (0x69 у обеих версий R82xx)
 rtlMakeR820T.checkAt = async function(com, addr){
@@ -1877,6 +1885,11 @@ async function rtlOpenDevice(dev, ppm, gain, hardReset){
     finally{ await com.i2c.close(); }
   }
   // PLL тюнера держит захват? (регистр читается заново)
+  async function tunerDump(){
+    await com.i2c.open();
+    try{ return await tuner.dump(); }
+    finally{ await com.i2c.close(); }
+  }
   async function pllLock(){
     await com.i2c.open();
     try{ return await tuner.checkLock(); }
@@ -1909,7 +1922,7 @@ async function rtlOpenDevice(dev, ppm, gain, hardReset){
     await com.iface.release();
     await dev.close();
   }
-  return {setSampleRate, setCenterFrequency, setGain, setBiasTee, setFastTune, resetBuffer, readSamples, close, pllLock, recover,
+  return {setSampleRate, setCenterFrequency, setGain, setBiasTee, setFastTune, resetBuffer, readSamples, close, pllLock, recover, tunerDump,
     tunerName:found.name+(isV4?' (Blog V4)':''), kind:'rtl', fmt:'u8', bps:2, epoch:()=>tuneEpoch};
 }
 
@@ -2946,6 +2959,7 @@ async function rtlOpenInWorker(usbDev, gain, hardReset){
     setBiasTee:on=>call('dev',{m:'setBiasTee',a:[on]}),
     setFastTune:info.kind==='rtl' ? on=>call('dev',{m:'setFastTune',a:[on]}) : undefined,
     pllLock:info.kind==='rtl' ? ()=>call('dev',{m:'pllLock',a:[]}) : undefined,
+    tunerDump:info.kind==='rtl' ? ()=>call('dev',{m:'tunerDump',a:[]}) : undefined,
     recover:info.kind==='rtl' ? async(freq,gain)=>{ const r=await call('dev',{m:'recover',a:[freq,gain]}); epoch=await call('dev',{m:'epoch',a:[]}).catch(()=>epoch); return r; } : undefined,
     setHackrfGain:(lna,vga,amp)=>call('dev',{m:'setHackrfGain',a:[lna,vga,amp]}),
     startSweep:async(...a)=>epoch=await call('dev',{m:'startSweep',a}),
@@ -4723,6 +4737,7 @@ async function rtlConnect(n, choose){
     n.dev=await open();
     // Холодный старт RTL-SDR: первое открытие донгла после включения иногда даёт приёмник без сигнала, и помогает только
     // Disconnect / Connect (перестройка — нет). Делаем это сами: при первом подключении донгла за сессию — открыть, закрыть, открыть заново
+    n._firstOpenLog=firstOpen;
     RTL_WARM.add(uid0);
     if(n.dev.kind==='rtl' && n.p.warmStart!==false && firstOpen){
       n.status='first start of the dongle: reopening…';
@@ -4770,6 +4785,21 @@ async function rtlStart(n, sr){
   n.status='connected ('+n.dev.tunerName+(n.dev.worker?', USB in worker':'')+')';
   n.tunerMsg=''; rtlReadLoop(n);
   rtlHealthCheck(n);
+  rtlLogTuner(n);
+}
+// снимок регистров тюнера через 3 с после подключения — в консоль (сравнить «кривой» старт с хорошим после Disconnect / Connect)
+async function rtlLogTuner(n){
+  const dev=n.dev;
+  if(!dev?.tunerDump) return;
+  await sdrSleep(3000);
+  if(n.dev!==dev || !n.connected || n.busy) return;
+  try{
+    n.busy=true;
+    const d=await dev.tunerDump();
+    n.tunerDump=d;
+    console.info('[rtlsdr] tuner dump ('+(n._startNo=(n._startNo||0)+1)+', first open of the session: '+!!n._firstOpenLog+') '+JSON.stringify({freq:n.actualFreq, gain:sdrGainArg(n), ...d}));
+  }catch(e){ console.warn('[rtlsdr] tuner dump failed:', e.message); }
+  n.busy=false;
 }
 // «не с первого запуска»: через ~1 с после подключения (RTL-SDR, особенно Blog V4) проверяем, держит ли PLL захват; сорван — тюнер
 // перезапускается сам (переинициализация, частота, усиление, сброс буфера; до трёх раз), без ручного Disconnect / Connect
