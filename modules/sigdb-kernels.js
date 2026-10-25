@@ -118,8 +118,14 @@ IQK.sigDb={
     const r=sdbMatch(m,+n.p.top), min=+n.p.min/100;
     n.ui={r:r.filter(x=>x.score>=min), m};
     const b=n.ui.r[0];
+    // каталог сигналов: лучший из кандидатов, для которого есть настройка приёмника и декодер
+    let cat=null;
+    for(const x of n.ui.r){ const k=SIGCAT_OF[x.n]; if(k){ cat=sigcatPick(k,m.freq); x.cat=cat; break; } }
+    n.ui.cat=cat;
+    const fm=h=>h>=1e6 ? +(h/1e6).toFixed(4)+' MHz' : +(h/1e3).toFixed(2)+' kHz';
     return {name:b ? b.n : '', mod:b ? b.mod : '', score:b ? b.score : 0,
-      text:n.ui.r.map(x=>(x.score*100).toFixed(0)+'% '+x.n+' ('+x.mod+') — '+x.note).join('\n')};
+      tune:cat ? cat.f : null, demod:cat ? cat.demod : '', bw:cat ? cat.bw : null, sr:cat ? cat.sr : null, branch:cat ? cat.branch : null, decoder:cat ? cat.decoder : '',
+      text:n.ui.r.map(x=>(x.score*100).toFixed(0)+'% '+x.n+' ('+x.mod+') — '+x.note+(x.cat ? ' → '+x.cat.decoder+' @ '+fm(x.cat.f) : '')).join('\n')};
   }};
 
 /* ============================ Channel Activity: реестр каналов по меткам sigid ============================

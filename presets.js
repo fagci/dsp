@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=101;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=102;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -186,6 +186,7 @@ const PRESET_CATS={
   'USB SDR: Channel Scan (Channel Scanner + squelch)':'SDR Receivers',
   'USB SDR: Channel Scan + Decoder Switch (digital voice / analog)':'SDR Receivers',
   'Signal Catalog: Pick a Type, the SDR Tunes and Decodes (USB SDR)':'SDR Receivers',
+  'Signal Database: What Is It and How to Decode (USB SDR)':'SDR Receivers',
   'ESP-SDR: ESP32 Spectrum':'SDR Receivers',
   'Measure: Modulation Meter — FM and AM (Generator)':'Analysis & Measurement',
   'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
@@ -1455,6 +1456,23 @@ const db=addNode('sigDb',340,380,{dev:2500});
 db.size.w=520; db.size.h=260; applySize(db);
 addEdge(gn.id,'iq',mm.id,'in');
 addEdge(mm.id,'obw',db.id,'bw'); addEdge(mm.id,'freq',db.id,'freq');
+markWiresDirty();
+});
+preset('Signal Database: What Is It and How to Decode (USB SDR)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Tune the SDR to a signal. Signal Meter measures its bandwidth and carrier, Signal Database lists what it can be and — for types of the signal catalog\n'+
+  '(ADS-B, AIS, POCSAG, ISM, ACARS, SAME, LoRa) — adds «→ decoder @ frequency». Outputs tune / demod / bw / sr / branch / decoder carry the best catalog entry:\n'+
+  'wire tune → USB SDR freq, demod, bw, sr (as the Table of presets/Protocols/Signal catalog does) and branch → Decoder Switch sel to retune and decode in one go.\n'+
+  'Add the symbol rate (Baud Estimator) or the deviation (Modulation Meter) on the database inputs to narrow the list. The SDR is not retuned here: that would change the measurement.'});
+nt.size.w=760; nt.size.h=140; applySize(nt);
+const rx=addNode('rtlsdr',40,240,{sr:'1024000',auto:false,gainDb:35,demod:'IQ',freq:162000000});
+const mm=addNode('sigMeter',340,240,{}); mm.size.w=620; applySize(mm);
+const db=addNode('sigDb',340,400,{}); db.size.w=620; db.size.h=280; applySize(db);
+const n1=addNode('numview',1000,240,{label:'tune, Hz'});
+const n2=addNode('numview',1000,360,{label:'decoder branch (1 ADS-B, 2 AIS, 3 POCSAG, 4 ISM)'});
+addEdge(rx.id,'iq',mm.id,'in');
+addEdge(mm.id,'obw',db.id,'bw'); addEdge(mm.id,'freq',db.id,'freq');
+addEdge(db.id,'tune',n1.id,'in'); addEdge(db.id,'branch',n2.id,'in');
 markWiresDirty();
 });
 preset('Measure: EVM of a QPSK Signal (Generator)', function(){
