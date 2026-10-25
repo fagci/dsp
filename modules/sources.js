@@ -1923,7 +1923,14 @@ async function rtlOpenDevice(dev, ppm, gain, hardReset){
     await com.iface.release();
     await dev.close();
   }
-  return {setSampleRate, setCenterFrequency, setGain, setBiasTee, setFastTune, resetBuffer, readSamples, close, pllLock, recover, tunerDump,
+  // Всё, что трогает тюнер, идёт строго по очереди. Воркер обрабатывает сообщения параллельно: перестройка, смена усиления
+  // и проверка захвата перемежались на «await», и одна закрывала I2C-шлюз (регистр демодулятора 0x01), пока другая писала —
+  // запись пропадала на пути к чипу, а теневая копия уже считала её сделанной (вход триплексера V4 оставался от прошлой частоты:
+  // регистр 0x05 читался 0x19 вместо 0x79). Первая перестройка после подключения долгая — окно гонки самое широкое
+  let tq=Promise.resolve();
+  const ser=fn=>(...a)=>{ const r=tq.then(()=>fn(...a)); tq=r.then(()=>{},()=>{}); return r; };
+  return {setSampleRate:ser(setSampleRate), setCenterFrequency:ser(setCenterFrequency), setGain:ser(setGain), setBiasTee:ser(setBiasTee),
+    setFastTune, resetBuffer:ser(resetBuffer), readSamples, close:ser(close), pllLock:ser(pllLock), recover:ser(recover), tunerDump:ser(tunerDump),
     tunerName:found.name+(isV4?' (Blog V4)':''), kind:'rtl', fmt:'u8', bps:2, epoch:()=>tuneEpoch};
 }
 
