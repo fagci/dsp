@@ -29,6 +29,16 @@ const SIGCAT=(()=>{
   ];
 })();
 
+// имя записи Signal Database (sigdb-kernels.js) → вид записей каталога; по нему sigDb предлагает, чем декодировать
+const SIGCAT_OF={'ADS-B / Mode S':'adsb','AIS':'ais','POCSAG':'pocsag','ISM 433 OOK/ASK':'ism','ISM FSK (датчики)':'ism','ACARS (VHF)':'acars',
+  'NOAA Weather Radio':'same','LoRa 250 / 500 кГц':'lora'};
+// запись каталога вида kind: ближайшая к измеренной частоте freq (Гц; 0 — первая); null, если вида нет
+function sigcatPick(kind,freq){
+  let best=null, bd=Infinity;
+  for(const e of SIGCAT){ if(e.kind!==kind) continue; const d=freq>0 ? Math.abs(e.f-freq) : 0; if(d<bd){ bd=d; best=e; } }
+  return best;
+}
+
 // строки band plan: [lo, hi, label, step, color, note, kind, ext] — ext добавляет колонки таблицы (demod, bw, sr, branch, decoder)
 function sigcatRows(list){
   return (list||SIGCAT).map(e=>[e.f,e.f,e.name,25e3,'',e.note,e.kind,{demod:e.demod,bw:e.bw,sr:e.sr,branch:e.branch,decoder:e.decoder}]);

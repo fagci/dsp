@@ -161,7 +161,8 @@ defIQ({ id:'sigMeter', title:'Signal Meter', cat:'IQ', kw:'snr occupied bandwidt
 
 defIQ({ id:'sigDb', title:'Signal Database', cat:'Analysis', kw:'signal identification wiki bandwidth deviation baud symbol rate frequency lookup what is this signal',
   ins:[{n:'bw',t:'num'},{n:'dev',t:'num'},{n:'baud',t:'num'},{n:'freq',t:'num'}],
-  outs:[{n:'name',t:'txt'},{n:'mod',t:'txt'},{n:'score',t:'num'},{n:'text',t:'txt'}], tall:true, resize:true, w:420,
+  outs:[{n:'name',t:'txt'},{n:'mod',t:'txt'},{n:'score',t:'num'},{n:'text',t:'txt'},
+    {n:'tune',t:'num'},{n:'demod',t:'val'},{n:'bw',t:'num'},{n:'sr',t:'num'},{n:'branch',t:'num'},{n:'decoder',t:'txt'}], tall:true, resize:true, w:420,
   params:[{n:'bw',t:'num',d:0,label:'occupied bandwidth, Hz (0 — unknown)'},
           {n:'baud',t:'num',d:0,label:'symbol rate, Bd (0 — unknown)'},
           {n:'dev',t:'num',d:0,label:'FM deviation, Hz (0 — unknown)'},
