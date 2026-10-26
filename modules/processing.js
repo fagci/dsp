@@ -1595,11 +1595,11 @@ function saAutoDb(n,soft){
 }
 // Новое окно дБ (жесты): в режиме «диапазон» — floor/top, в режиме tinySA — потолок и дБ/дел (размах кратен 10 делениям)
 function saVScale(n,fl,tp){
-  const span=clamp(tp-fl,10,160);
+  const span=clamp(tp-fl,1,160);
   tp=clamp(tp,-140+span,20); fl=tp-span;
   if(n.p.vscale!=='range'){
-    setMod(n,'refLvl',Math.round(tp+(n._lvOff||0)));
-    const d=[1,2,5,10,20].reduce((a,c)=>Math.abs(c*10-span)<Math.abs(a*10-span)?c:a);
+    setMod(n,'refLvl',Math.round((tp+(n._lvOff||0))*10)/10);   // мелкий масштаб — потолок с точностью 0.1 дБ
+    const d=SA_DIVS.reduce((a,c)=>Math.abs(c*10-span)<Math.abs(a*10-span)?c:a);
     setMod(n,'dbDiv',String(d));
   } else { setMod(n,'top',Math.round(tp*10)/10); setMod(n,'floor',Math.round(fl*10)/10); }
 }
@@ -2297,7 +2297,7 @@ function saGrid(n,cx,W,hs,H,plotH,diff){            // сетка частот �
   // шкала та же, что у трассы: floor..top, в режиме diff — ±40 дБ
   const dLo=diff?-40:n.p.floor, dHi=diff?40:n.p.top, dr=(dHi-dLo)||1;
   const want=Math.max(2,Math.floor(plotH/28));       // не чаще ~28 px между линиями
-  const dStep=[1,2,5,10,20,50].find(s=>dr/s<=want)||100;
+  const dStep=!diff && n.p.vscale!=='range' ? (+n.p.dbDiv||10) : [.1,.2,.5,1,2,5,10,20,50].find(s=>dr/s<=want)||100;   // tinySA: линия на каждое деление
   const labels=n._dbLabels=(n._dbLabels||[]); labels.length=0;   // подписи рисует saDbLabels — поверх трассы
   const off=diff ? 0 : (n._lvOff||0), un=diff ? 'dB' : saUnit(n);   // калибровка: линии на круглых значениях в выбранных единицах
   for(let vd=Math.ceil((dLo+off)/dStep)*dStep; vd<=dHi+off; vd+=dStep){
