@@ -1465,11 +1465,20 @@ function saBands(n,cx,W,H){                        // закраска поло�
   cx.globalAlpha=1;
 }
 
+// Контракт spec.chans (rtlsdr, OpenWebRX): список каналов приёмника. Поля: idx 0–3 (номер маркера, он же цвет),
+// f (частота настройки), lo/hi (края полосы, Гц), mode ('USB', 'LSB', 'NFM'…); необязательные — rssi, snr,
+// sql, sqOpen, thrDb, lvDb. Запись без конечных lo<hi или с idx вне 0–3 пропускается здесь, остальной код
+// берёт каналы только отсюда. Рядом в spec: pickBw {mode,pass} — полоса подсказки, setChanBw(mode,w) — правка края.
+function saChans(n){
+  const l=n.s&&n.s.chans; if(!l||!l.length) return null;
+  const ok=l.filter(c=>c && Number.isFinite(c.lo) && Number.isFinite(c.hi) && c.hi>c.lo && Number.isFinite(c.f) && c.idx>=0 && c.idx<4);
+  return ok.length ? ok : null;
+}
 // Шторки каналов приёмника (spec.chans от rtlsdr): полоса канального фильтра ПЧ вокруг частоты
 // каждого канала, цветом маркера с тем же номером. Подпись (режим и ширина) — отдельным проходом
 // saChannelLabels, после маркеров, чтобы линия маркера её не перекрывала.
 function saChannels(n,cx,W,H,plotH){
-  const list=n.s&&n.s.chans; if(!list||!list.length) return;
+  const list=saChans(n); if(!list) return;
   const TOP=Math.max(16,n._topH||0);
   const yDb=db=>plotH-clamp((db-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
   for(const c of list){
@@ -1633,22 +1642,26 @@ function saUserMarks(n,cx,W,hs,hw,dpr){
 }
 // канал приёмника, на частоте которого стоит маркер (маркер ведёт tuneFreq канала)
 function saChanAtMarker(n,f){
-  const list=n.s&&n.s.chans; if(!list||!list.length||f==null) return null;
+  const list=saChans(n); if(!list||f==null) return null;
   const tol=Math.max(1, Math.abs(specHz(n.s,1)-specHz(n.s,0))/2);
   return list.find(c=>Math.abs(c.f-f)<=tol) || null;
 }
 // подпись на плашке цвета канала; не влезает в шторку — выносим вбок от неё
 function saChannelLabels(n,cx,W){
-  const list=n.s&&n.s.chans; if(!list||!list.length) return;
+  const list=saChans(n); if(!list) return;
   cx.font=BP_FONT;
+  const used=[...(n._sgRects||[])];                 // метки сигналов уже стоят — подписи каналов обходят их
   for(const c of list){
     const x1=saPos(n,c.lo)*W, x2=saPos(n,c.hi)*W;
     if(x2<0||x1>W) continue;
     const col=MK_COL(c.idx), bw=c.hi-c.lo, t=c.mode+' '+fmtHz(bw, bw%1000?1:0)+(c.sql ? (c.sqOpen?' SQL open':' SQL closed') : '');
-    const tw=Math.ceil(cx.measureText(t).width), ty=Math.max(16,n._topH||0)+4+c.idx*15;
+    const tw=Math.ceil(cx.measureText(t).width);
     let tx=(x1+x2-tw)/2;
     if(x2-x1<tw+8) tx = x2+4+tw<=W ? x2+4 : x1-tw-4;
     tx=clamp(Math.round(tx), 3, W-tw-3);
+    let ty=Math.max(16,n._topH||0)+4+c.idx*15;
+    for(let k=0;k<8 && used.some(u=>tx-3<u.x+u.w && tx+tw+3>u.x && ty<u.y+u.h && ty+14>u.y);k++) ty+=15;
+    used.push({x:tx-3,y:ty,w:tw+6,h:14});
     cx.globalAlpha=1; cx.fillStyle=col; cx.fillRect(tx-3,ty,tw+6,14);
     cx.fillStyle=contrastText(col); cx.fillText(t,tx,ty+11);
   }
@@ -1670,6 +1683,11 @@ const BP_FONT='11px monospace';
 // нечитаемое пятно. H — вся зона спектра (для вертикальных линий точек), plotH — она же БЕЗ
 // зоны подписей оси частот снизу (см. AXIS_H в draw()) — именно от неё дорожки полос растут вверх,
 // вплотную над осью, но не поверх её подписей. Водопад ни здесь, ни в вызывающем draw() не трогаем.
+// фильтр записей band plan (параметр bandFilter): остаются те, где в имени, kind или note есть любое из слов
+function saBandFilter(n){
+  const ft=String(n.p.bandFilter||'').toLowerCase().split(',').map(x=>x.trim()).filter(Boolean);
+  return b=>!ft.length || ft.some(w=>(String(b.label||'')+' '+(b.kind||'')+' '+(b.note||'')).toLowerCase().includes(w));
+}
 function saBandPlan(n,cx,W,H,plotH){
   const list=n.bandsData;
   const bpBoxes=n._bpBoxes=(n._bpBoxes||[]); bpBoxes.length=0;
@@ -1677,9 +1695,10 @@ function saBandPlan(n,cx,W,H,plotH){
   if(!list||!list.length){ if(n._bmBoxes) n._bmBoxes.length=0; if(n._bpLabels) n._bpLabels.length=0; return; }
   const [lo0,hi0]=saBounds(n);
   const ranges=[], points=[];
+  const pass=saBandFilter(n);
   const labels=n._bpLabels=(n._bpLabels||[]); labels.length=0;   // подписи полос — рисует saBandPlanLabels поверх маркеров
   for(const b of list){
-    if(!b || b.sig || typeof b.lo!=='number' || isNaN(b.lo)) continue;
+    if(!b || b.sig || typeof b.lo!=='number' || isNaN(b.lo) || !pass(b)) continue;
     const hi=(typeof b.hi==='number' && !isNaN(b.hi)) ? b.hi : b.lo;
     if(hi===b.lo){
       if(b.lo<lo0-1 || b.lo>hi0+1) continue;            // точка вне окна — не рисуем вовсе
@@ -1721,17 +1740,25 @@ function saBandPlan(n,cx,W,H,plotH){
     // уходят в одну дорожку, а не расползаются по разным. При одинаковом lo первой кладём более
     // широкую полосу — она первой займёт нижнюю дорожку, а узкая (более специфичная),
     // перекрывающая её от той же точки, уйдёт выше — не наоборот.
-    ranges.sort((x,y)=>x.lo-y.lo || (y.hi-y.lo)-(x.hi-x.lo));
-    const laneEnd=[], stripEnd=[];
+    // порядок раскладки — по важности, а не по началу: сначала полосы под маркерами, затем узкие
+    // (конкретные); широкие и поздние при нехватке дорожек уходят в тонкие полоски. Готовые дорожки
+    // потом упорядочиваем сверху вниз от узких к широким — широкая полоса снова внизу, у оси.
     const LANE_H=14, MAX_LANES=4, STRIP_H=3, MAX_STRIPS=3;
-    for(const r of ranges){
-      let lane=laneEnd.findIndex(e=>e<=r.lo);
-      if(lane>=0){ laneEnd[lane]=r.hi; r._lane=lane; continue; }
-      if(laneEnd.length<MAX_LANES){ laneEnd.push(r.hi); r._lane=laneEnd.length-1; continue; }
-      let s=stripEnd.findIndex(e=>e<=r.lo);
-      if(s<0){ if(stripEnd.length<MAX_STRIPS){ stripEnd.push(-Infinity); s=stripEnd.length-1; } else s=stripEnd.length-1; }
-      stripEnd[s]=r.hi; r._strip=s;
+    const mks=n.mk.filter(v=>v!=null), pr=r=>mks.some(f=>f>=r.lo&&f<=r.hi)?0:1;
+    const fits=(L,r)=>!L.some(q=>r.lo<q.hi && r.hi>q.lo);
+    const lanes=[], strips=[];
+    for(const r of ranges.slice().sort((a,b)=>pr(a)-pr(b) || (a.hi-a.lo)-(b.hi-b.lo) || a.lo-b.lo)){
+      let L=lanes.find(l=>fits(l,r));
+      if(!L && lanes.length<MAX_LANES){ L=[]; lanes.push(L); }
+      if(L){ L.push(r); continue; }
+      let S=strips.find(l=>fits(l,r));
+      if(!S){ if(strips.length<MAX_STRIPS){ S=[]; strips.push(S); } else S=strips[strips.length-1]; }
+      S.push(r);
     }
+    const lw=L=>L.reduce((a,r)=>a+(r.hi-r.lo),0)/L.length;
+    lanes.sort((a,b)=>lw(b)-lw(a)).forEach((L,i)=>L.forEach(r=>{ r._lane=i; }));
+    strips.forEach((S,i)=>S.forEach(r=>{ r._strip=i; }));
+    const laneEnd=lanes, stripEnd=strips;
     lanesH=laneEnd.length*LANE_H; stripsH=stripEnd.length ? stripEnd.length*(STRIP_H+1)+1 : 0;
     cx.font=BP_FONT;
     const scr=hexToRgb(themeColor('--screen')||'#0a0d0e'), FILL_A=.5;
@@ -1800,7 +1827,7 @@ function saBandPlan(n,cx,W,H,plotH){
 // подпись типа над ней. Подписи, налезающие на уже поставленные, поднимаются выше; не нашедшие
 // места — маленький треугольник над скобкой (подробности в подсказке под курсором).
 function saSigTags(n,cx,W,plotH){
-  const sgBoxes=n._sgBoxes=(n._sgBoxes||[]); sgBoxes.length=0;
+  const sgBoxes=n._sgBoxes=(n._sgBoxes||[]); sgBoxes.length=0; n._sgRects=[];
   const list=n.sigsData&&n.sigsData.length ? (n.bandsData||[]).concat(n.sigsData) : n.bandsData; if(!list||!list.length) return;
   const tags=[], span=(n.p.top-n.p.floor)||1, TOPN=n._topH||4;
   for(const b of list){
@@ -1867,6 +1894,7 @@ function saSigTags(n,cx,W,plotH){
     cx.globalAlpha=1; cx.fillStyle=contrastText(col); cx.fillText(txt,lx+3,ly+11);
     placed.push({x:lx,y:ly,w:tw,h:TH});
   }
+  n._sgRects=placed;
   cx.globalAlpha=1; cx.lineWidth=1;
 }
 // Подсказка под курсором: что лежит под ним — закладки, полосы band plan (все вложенные, от широкой
@@ -1877,8 +1905,7 @@ function saHz(v){
   const a=Math.abs(v), [d,u,dp]=a>=1e9?[1e9,'G',5]:a>=1e6?[1e6,'M',5]:a>=1e3?[1e3,'k',3]:[1,'',0];
   return +(v/d).toFixed(dp)+u+'Hz';
 }
-function saTip(n,cx,W,H){
-  const hx=n._hoverX, hy=n._hoverY; if(hx==null||hy==null||n._dragActive) return;
+function saTipRows(n,W,hx,hy){
   const mx=hx*W, pad=2, inB=b=>mx>=b.x0-pad&&mx<=b.x1+pad&&hy>=b.y0-pad&&hy<=b.y1+pad;
   const f=saFreq(n,hx), rows=[], seen=new Set();
   const add=(col,head,sub)=>{ const k=head+'|'+sub; if(!seen.has(k)){ seen.add(k); rows.push({col,head,sub}); } };
@@ -1907,11 +1934,20 @@ function saTip(n,cx,W,H){
     if(g.dec) a.push('→ '+g.dec);
     add(g.color||'#b0bec5',g.label||'?',a.join(' · '));
   }
+  rows.band=bh.length>0;
+  return rows;
+}
+// Рисует подсказку: у курсора, а на телефоне — у точки долгого нажатия (n._tipPin, снимается следующим касанием).
+function saTip(n,cx,W,H){
+  const pin=n._tipPin, hx=pin ? pin.x/W : n._hoverX, hy=pin ? pin.y : n._hoverY;
+  if(hx==null||hy==null||n._dragActive) return;
+  const rows=saTipRows(n,W,hx,hy), mx=hx*W;
   if(!rows.length) return;
-  const MAXR=8, shown=rows.slice(0,MAXR), more=rows.length-shown.length;
+  const MAXR=8, shown=rows.slice(0,MAXR), more=rows.length-shown.length, hint=rows.band && !pin ? '2× click — zoom to the band' : '';
   cx.font='11px monospace';
   let tw=0; for(const r of shown) tw=Math.max(tw,cx.measureText(r.head).width,cx.measureText(r.sub).width*.9);
-  tw=Math.ceil(tw)+22; const th=shown.length*26+(more>0?14:0)+6;
+  if(hint) tw=Math.max(tw,cx.measureText(hint).width);
+  tw=Math.ceil(tw)+22; const th=shown.length*26+(more>0||hint?14:0)+6;
   let x=mx+14, y=hy+16; if(x+tw>W-2) x=mx-tw-10; if(x<2) x=2; if(y+th>H-2) y=hy-th-10; if(y<2) y=2;
   cx.globalAlpha=.95; cx.fillStyle=themeColor('--screen'); cx.fillRect(x,y,tw,th);
   cx.globalAlpha=.6; cx.strokeStyle=themeColor('--axis'); cx.lineWidth=1; cx.strokeRect(x+.5,y+.5,tw-1,th-1);
@@ -1922,7 +1958,7 @@ function saTip(n,cx,W,H){
     cx.fillStyle=themeColor('--acc'); cx.font='11px monospace'; cx.fillText(r.head,x+13,yy+10);
     cx.globalAlpha=.7; cx.fillStyle=themeColor('--axis'); cx.font='10px monospace'; cx.fillText(r.sub,x+13,yy+21); cx.globalAlpha=1;
   });
-  if(more>0){ cx.fillStyle=themeColor('--axis'); cx.font='10px monospace'; cx.fillText('+'+more+' more',x+13,y+th-5); }
+  if(more>0||hint){ cx.fillStyle=themeColor('--axis'); cx.font='10px monospace'; cx.globalAlpha=.8; cx.fillText((more>0?'+'+more+' more'+(hint?' · ':''):'')+hint,x+13,y+th-5); cx.globalAlpha=1; }
 }
 // snap клика к сетке каналов полосы из bandplan (n.bandsData) — НЕ к пикселям, а к шагу канала в
 // Гц (поле 'step' у полосы: например, LPD433 — 25кГц, HF Broadcast — 5кГц; см. BANDPLAN_PRESETS в
@@ -1969,10 +2005,12 @@ function saMarkerBw(n,k){
   const w=n.p.trk&&n._trkWin?.[k];
   return w ? [f-w/2,f+w/2] : null;
 }
-// Маркеры на водопаде — только пока курсор над ним: линия, полоса пропускания и подпись с шириной.
+// Маркеры на водопаде: по умолчанию только пока курсор над ним (wfMk: hover), 'active' — активный всегда, 'all' — все всегда.
+// Раньше было: линия, полоса пропускания и подпись с шириной.
 function saMarkersWf(n,cx,W,hs,H){
-  if(n._hoverX==null || n._hoverY==null || n._hoverY<=hs || n._dragActive) return;
-  const present=[0,1,2,3].filter(k=>n.mk[k]!=null); if(!present.length) return;
+  const mode=n.p.wfMk||'hover', over=n._hoverX!=null && n._hoverY!=null && n._hoverY>hs && !n._dragActive;
+  if(mode==='hover' && !over) return;
+  const present=[0,1,2,3].filter(k=>n.mk[k]!=null && (mode!=='active' || n.active-1===k)); if(!present.length) return;
   cx.save(); cx.font='10px monospace';
   const placed=[];
   present.forEach(k=>{

@@ -20,13 +20,21 @@ const SAP_HINT='wheel / pinch — zoom · drag — pan (zoomed) · vertical drag
 // все диапазоны списка по возрастанию lo
 function saPaneList(n){
   const src=n.bandsData, len=src ? src.length : 0;
-  if(n._plSrc===src && n._plLen===len) return n._pl;
-  n._plSrc=src; n._plLen=len;
-  const ok=(Array.isArray(src) ? src : []).filter(b=>b && !b.sig && isFinite(b.lo) && isFinite(b.hi) && b.hi>b.lo);
+  const flt=String(n.p.bandFilter||'');
+  if(n._plSrc===src && n._plLen===len && n._plFlt===flt) return n._pl;
+  n._plSrc=src; n._plLen=len; n._plFlt=flt;
+  const pass=saBandFilter(n);
+  const ok=(Array.isArray(src) ? src : []).filter(b=>b && !b.sig && isFinite(b.lo) && isFinite(b.hi) && b.hi>b.lo && pass(b));
   n._plSkip=(Array.isArray(src) ? src.filter(b=>b && !b.sig).length : 0)-Math.min(ok.length,SAP_MAXB);   // неверные строки и всё сверх SAP_MAXB — показываем числом
   n._pl=ok.slice().sort((a,b)=>a.lo-b.lo).slice(0,SAP_MAXB);
   if(n._pnStore) for(const k of [...n._pnStore.keys()]) if(!n._pl.some(b=>b.lo+'-'+b.hi===k)) n._pnStore.delete(k);
   return n._pl;
+}
+// закладки: записи списка без ширины (hi пуст или равен lo), с учётом bandFilter
+function saPaneMarks(n){
+  const src=n.bandsData; if(!Array.isArray(src)) return [];
+  const pass=saBandFilter(n);
+  return src.filter(b=>b && !b.sig && Number.isFinite(b.lo) && !(b.hi>b.lo) && pass(b));
 }
 // состояние диапазона (создаётся при первом обращении, живёт, пока диапазон в списке)
 function saPaneGet(n,b){
@@ -485,6 +493,14 @@ function saPanesDraw(n,cv,cx){
         cx.fillStyle=fg; cx.textAlign='center'; cx.fillText(lab,clamp(x,x0+tw/2+2,x0+w-tw/2-2),Math.max(L.plotTop+9,y-12));
       }
     });
+    // закладки (точки списка bands): тонкая линия и засечка у потолка; имя — в подсказке под курсором
+    for(const b of saPaneMarks(n)){
+      if(b.lo<v[0] || b.lo>v[1]) continue;
+      const x=Math.round(X(b.lo));
+      cx.globalAlpha=.4; cx.strokeStyle=b.color||fg; cx.lineWidth=1; cx.setLineDash([3,3]);
+      cx.beginPath(); cx.moveTo(x+.5,L.plotTop+5); cx.lineTo(x+.5,L.hs); cx.stroke(); cx.setLineDash([]);
+      cx.globalAlpha=.9; cx.fillStyle=b.color||fg; cx.fillRect(x-1,L.plotTop,3,5); cx.globalAlpha=1;
+    }
     // маркеры 1–4 этой панели
     for(let k=0;k<4;k++){
       const f=n.mk[k]; if(f==null || f<v[0] || f>v[1]) continue;
@@ -535,6 +551,14 @@ function saPanesDraw(n,cv,cx){
     if(h.y>L.hs){                                               // над водопадом — когда записана строка
       const ri=clamp(Math.floor((h.y-L.hs)/Math.max(1,H-L.hs)*SAP_ROWS),0,SAP_ROWS-1), rt=p.rowTs[ri];
       if(rt>0) t+=' · '+Math.max(0,Math.round((performance.now()-rt)/1000))+' s ago';
+    }
+    {                                                          // закладка или сигнал рядом с курсором (±5 px) — по имени
+      const px=f=>x0+(f-v[0])/(v[1]-v[0])*w;
+      const near=[];
+      for(const b of saPaneMarks(n)) if(Math.abs(px(b.lo)-x)<=5) near.push('★ '+(b.label||fmtHz(b.lo,4)+'Hz'));
+      for(const g of n.sigsData||[]){ if(!g||!g.sig) continue; const gf=(g.lo+g.hi)/2; if(Math.abs(px(gf)-x)<=Math.max(5,(px(g.hi)-px(g.lo))/2))
+        near.push((g.label||'?')+(g.db!=null ? ' '+Math.round(g.db)+' dB' : '')+(g.conf!=null ? ' '+Math.round(g.conf*100)+'%' : '')); }
+      if(near.length) t+=' · '+near.slice(0,3).join(' · ')+(near.length>3 ? ' · +'+(near.length-3) : '');
     }
     const tw=cx.measureText(t).width+8, tx=clamp(x+6,x0,x0+w-tw);
     cx.fillStyle=themeRgba('--screen',.85); cx.fillRect(tx,L.plotTop+2,tw,13);
