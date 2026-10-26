@@ -302,7 +302,8 @@ class StRig{
     }
     const m=this.ins[0]; const clip=ac.createWaveShaper(), cc=new Float32Array(4097);        // мягкий потолок над лимитером: не выше 1.0
     for(let i=0;i<cc.length;i++){ const x=i/2048-1, a=Math.abs(x); cc[i]=a<=.8?x:Math.sign(x)*(.8+.2*Math.tanh((a-.8)/.2)); }
-    clip.curve=cc; m.out.connect(lim); lim.connect(clip); clip.connect(an); an.connect(dest||ac.destination); this.masterAn=an; this.lim=lim;
+    clip.curve=cc; m.out.connect(lim); lim.connect(clip); clip.connect(an);
+    this.dac=stGain(ac,1); an.connect(this.dac); this.dac.connect(dest||ac.destination); this.masterAn=an; this.lim=lim;
     for(let i=1;i<=ST_INSERTS;i++) this.ins[i].out.connect(m.in);
     for(let i=0;i<=ST_INSERTS;i++) this.buildInsert(i);
     for(const ch of P.channels) this.addChannel(ch);
@@ -429,12 +430,13 @@ class StSched{
 class StEngine{
   constructor(P){
     this.P=P; this.ac=null; this.rig=null; this.sched=null; this.view={mode:'song'}; this.samples={};
-    this.playing=false; this.sp=0; this.anchors=[]; this.timer=0; this.held=new Map(); this.onstop=null; this.metro=false;
+    this.playing=false; this.sp=0; this.anchors=[]; this.timer=0; this.held=new Map(); this.onstop=null; this.metro=false; this.direct=true; this.tapNode=null; this.ring=null;
   }
   ensure(){
     if(!this.ac){
       this.ac=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
       this.rig=new StRig(this.ac,this.P,this.samples); this.sched=new StSched(this.rig,this.P);
+      if(this.direct===false) this.rig.dac.gain.value=0;
       // браузер может приостановить контекст (смена устройства вывода, фон, iOS «interrupted») — поднимаем обратно, пока играем
       this.ac.onstatechange=()=>{ if(this.playing && this.ac && this.ac.state!=='running' && this.ac.state!=='closed') this.ac.resume().catch(()=>{}); };
       document.addEventListener('visibilitychange',this._vis=()=>{ if(this.playing && this.ac && this.ac.state!=='running' && this.ac.state!=='closed') this.ac.resume().catch(()=>{}); });
@@ -444,7 +446,7 @@ class StEngine{
   }
   setProject(P){
     this.stop(); this.P=P;
-    if(this.ac){ document.removeEventListener('visibilitychange',this._vis); this.ac.onstatechange=null; this.ac.close(); this.ac=null; this.rig=null; this.sched=null; }
+    if(this.ac){ document.removeEventListener('visibilitychange',this._vis); this.ac.onstatechange=null; this.tapNode=null; this.ring=null; this.ac.close(); this.ac=null; this.rig=null; this.sched=null; }
   }
   toTime(tick){ const a=this.sa; return a.t0+stSec(tick-a.tick0,this.P.bpm); }
   // таймер планировщика в воркере: у фоновой вкладки setInterval тормозится до 1 раза в секунду, а воркер — нет
@@ -517,6 +519,36 @@ class StEngine{
   noteOff(chId,key){
     const id=chId+':'+key, v=this.held.get(id); if(!v) return;
     this.held.delete(id); v.release(this.ac.currentTime+.01);
+  }
+  // выходы L/R узла: мастер уходит в граф DSP, а на звуковую карту напрямую — только пока они не подключены
+  setDirect(on){ if(on===this.direct) return; this.direct=on; if(this.rig && this.ac) stTC(this.rig.dac.gain,on?1:0,null,this.ac,.02); }
+  async tapInit(){
+    if(this.tapNode || this.tapBusy || !this.ac || !this.ac.audioWorklet || !this.rig) return; this.tapBusy=1; const ac=this.ac;
+    try{
+      const url=URL.createObjectURL(new Blob(["class T extends AudioWorkletProcessor{process(i){const a=i[0];if(a&&a[0]){const n=a[0].length,o=new Float32Array(n*2);o.set(a[0],0);o.set(a[1]||a[0],n);this.port.postMessage(o,[o.buffer]);}return true;}}registerProcessor('stu-tap',T);"],{type:'text/javascript'}));
+      await ac.audioWorklet.addModule(url); URL.revokeObjectURL(url);
+      if(ac===this.ac && this.rig){
+        const node=new AudioWorkletNode(ac,'stu-tap',{numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[1]});
+        node.port.onmessage=e=>this.tapPush(e.data);
+        const z=stGain(ac,0); node.connect(z); z.connect(ac.destination);
+        this.rig.masterAn.connect(node); this.tapNode=node;
+      }
+    }catch(e){ console.warn('studio tap',e); }
+    this.tapBusy=0;
+  }
+  tapPush(o){
+    const n=o.length>>1, r=this.ring||(this.ring={l:new Float32Array(16384),r:new Float32Array(16384),w:0,p:-1});
+    for(let i=0;i<n;i++){ r.l[r.w&16383]=o[i]; r.r[r.w&16383]=o[n+i]; r.w++; }
+  }
+  // блок для графа DSP: передискретизация (линейная) из частоты контекста в Eng.sr
+  tapPull(L,R,sr){
+    const r=this.ring; if(!r || !this.ac){ L.fill(0); R.fill(0); return; }
+    const step=this.ac.sampleRate/sr, need=L.length*step;
+    if(r.p<0 || r.w-r.p>8192 || r.w<r.p) r.p=r.w-2048;                // держим небольшую задержку, убегаем от накопления
+    if(r.w-r.p<need+2){ L.fill(0); R.fill(0); return; }
+    for(let i=0;i<L.length;i++){ const q=r.p+i*step, k=Math.floor(q), f=q-k;
+      L[i]=r.l[k&16383]*(1-f)+r.l[(k+1)&16383]*f; R[i]=r.r[k&16383]*(1-f)+r.r[(k+1)&16383]*f; }
+    r.p+=need;
   }
   async loadSample(chId,file){
     this.ensure();
