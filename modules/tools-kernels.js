@@ -131,3 +131,192 @@ function tlTorchOn(pattern,hz,t){
   if(pattern==='SOS') return TL_SOS[Math.floor(t/.2)%TL_SOS.length]===1;
   return true;
 }
+
+/* ---- радио: длина волны, антенна, бюджет линии, КСВ, закон Ома, LC ---- */
+const RF_C=299792458;
+// k — коэффициент укорочения провода (≈0.95), vf — скорость в кабеле / среде
+function rfWave(fHz,k){
+  if(!(fHz>0)) return null;
+  const lam=RF_C/fHz, kk=k>0 ? k : 1;
+  return {lambda:lam, quarter:lam/4*kk, half:lam/2*kk, full:lam*kk};
+}
+const rfFspl=(dKm,fMHz)=>dKm>0 && fMHz>0 ? 32.44+20*Math.log10(dKm)+20*Math.log10(fMHz) : null;
+// все в дБ / дБм / дБи; возвращает потери трассы, уровень на входе приёмника, запас и дальность при нулевом запасе
+function rfLink(o){
+  const fs=rfFspl(o.dKm,o.fMHz); if(fs===null) return null;
+  const eirp=o.pt+o.gt-o.lossTx, pr=eirp+o.gr-o.lossRx-fs, margin=pr-o.sens;
+  const rng=Math.pow(10,(eirp+o.gr-o.lossRx-o.sens-32.44-20*Math.log10(o.fMHz))/20);
+  return {fspl:fs,eirp,pr,margin,range:rng};
+}
+function rfSwr(swr){
+  if(!(swr>=1)) return null;
+  const g=(swr-1)/(swr+1);
+  return {gamma:g, rl:g>0 ? -20*Math.log10(g) : Infinity, ml:-10*Math.log10(1-g*g), refl:g*g*100};
+}
+const rfSwrFromRl=rl=>{ if(!(rl>=0)) return null; const g=Math.pow(10,-rl/20); return g<1 ? (1+g)/(1-g) : Infinity; };
+// два из V, I, R, P (0 / пусто — неизвестно) → остальные
+function rfOhm(V,I,R,P){
+  const k=[V,I,R,P].map(x=>x>0 ? 1 : 0);
+  if(k[0]+k[1]+k[2]+k[3]!==2) return null;
+  if(k[0] && k[1]) return {V,I,R:V/I,P:V*I};
+  if(k[0] && k[2]) return {V,I:V/R,R,P:V*V/R};
+  if(k[0] && k[3]) return {V,I:P/V,R:V*V/P,P};
+  if(k[1] && k[2]) return {V:I*R,I,R,P:I*I*R};
+  if(k[1] && k[3]) return {V:P/I,I,R:P/(I*I),P};
+  return {V:Math.sqrt(P*R),I:Math.sqrt(P/R),R,P};
+}
+// резонанс: L в мкГн, C в пФ → f в Гц
+const rfLc=(Luh,Cpf)=>Luh>0 && Cpf>0 ? 1/(2*Math.PI*Math.sqrt(Luh*1e-6*Cpf*1e-12)) : null;
+// ёмкость для заданной частоты и индуктивности, пФ
+const rfLcC=(fHz,Luh)=>fHz>0 && Luh>0 ? 1/(Math.pow(2*Math.PI*fHz,2)*Luh*1e-6)*1e12 : null;
+
+/* ---- координаты ---- */
+const CO_A=6378137, CO_F=1/298.257223563, CO_K0=.9996;
+const CO_N=CO_F/(2-CO_F), CO_AA=CO_A/(1+CO_N)*(1+CO_N*CO_N/4+Math.pow(CO_N,4)/64);
+const CO_AL=[CO_N/2-2*CO_N*CO_N/3+5*Math.pow(CO_N,3)/16, 13*CO_N*CO_N/48-3*Math.pow(CO_N,3)/5, 61*Math.pow(CO_N,3)/240];
+const CO_BE=[CO_N/2-2*CO_N*CO_N/3+37*Math.pow(CO_N,3)/96, CO_N*CO_N/48+Math.pow(CO_N,3)/15, 17*Math.pow(CO_N,3)/480];
+const CO_DE=[2*CO_N-2*CO_N*CO_N/3-2*Math.pow(CO_N,3), 7*CO_N*CO_N/3-8*Math.pow(CO_N,3)/5, 56*Math.pow(CO_N,3)/15];
+const CO_BANDS='CDEFGHJKLMNPQRSTUVWX';
+const coBand=lat=>lat>=84||lat<-80 ? '' : CO_BANDS[Math.min(19,Math.floor((lat+80)/8))];
+function coZone(lat,lon){
+  let z=Math.floor((lon+180)/6)+1; if(z>60) z=60; if(z<1) z=1;
+  if(lat>=56 && lat<64 && lon>=3 && lon<12) z=32;                        // Норвегия
+  if(lat>=72 && lat<84){ if(lon>=0 && lon<9) z=31; else if(lon>=9 && lon<21) z=33; else if(lon>=21 && lon<33) z=35; else if(lon>=33 && lon<42) z=37; }   // Шпицберген
+  return z;
+}
+function coUtm(lat,lon,zone){
+  if(!(Math.abs(lat)<=84 || lat>-80) || !isFinite(lat) || !isFinite(lon) || lat>84 || lat<-80) return null;
+  const z=zone||coZone(lat,lon), l0=((z-1)*6-180+3)*Math.PI/180, f=lat*Math.PI/180, dl=lon*Math.PI/180-l0;
+  const q=2*Math.sqrt(CO_N)/(1+CO_N), s=Math.sin(f);
+  const t=Math.sinh(Math.atanh(s)-q*Math.atanh(q*s));
+  const xp=Math.atan2(t,Math.cos(dl)), ep=Math.atanh(Math.sin(dl)/Math.sqrt(1+t*t));
+  let x=xp, e=ep;
+  for(let j=1;j<=3;j++){ x+=CO_AL[j-1]*Math.sin(2*j*xp)*Math.cosh(2*j*ep); e+=CO_AL[j-1]*Math.cos(2*j*xp)*Math.sinh(2*j*ep); }
+  return {zone:z, band:coBand(lat), north:lat>=0, E:500000+CO_K0*CO_AA*e, N:CO_K0*CO_AA*x+(lat<0?1e7:0)};
+}
+function coFromUtm(zone,north,E,N){
+  const l0=((zone-1)*6-180+3)*Math.PI/180;
+  const x=((north ? N : N-1e7))/(CO_K0*CO_AA), e=(E-500000)/(CO_K0*CO_AA);
+  let xp=x, ep=e;
+  for(let j=1;j<=3;j++){ xp-=CO_BE[j-1]*Math.sin(2*j*x)*Math.cosh(2*j*e); ep-=CO_BE[j-1]*Math.cos(2*j*x)*Math.sinh(2*j*e); }
+  const chi=Math.asin(Math.sin(xp)/Math.cosh(ep));
+  let f=chi; for(let j=1;j<=3;j++) f+=CO_DE[j-1]*Math.sin(2*j*chi);
+  const lon=l0+Math.atan2(Math.sinh(ep),Math.cos(xp));
+  return {lat:f*180/Math.PI, lon:lon*180/Math.PI};
+}
+const CO_COL=['ABCDEFGH','JKLMNPQR','STUVWXYZ'], CO_ROW='ABCDEFGHJKLMNPQRSTUV';
+// digits — 1…5 цифр на ось (10 км … 1 м)
+function coMgrs(lat,lon,digits){
+  const u=coUtm(lat,lon); if(!u) return null;
+  const d=Math.max(1,Math.min(5,digits||5)), e=Math.floor(u.E), n=Math.floor(u.N);
+  const col=CO_COL[(u.zone-1)%3][Math.floor(e/100000)-1], row=CO_ROW[(Math.floor(n/100000)+(u.zone%2===0?5:0))%20];
+  const pad=v=>String(v%100000).padStart(5,'0').slice(0,d);
+  return u.zone+u.band+' '+col+row+' '+pad(e)+' '+pad(n);
+}
+function coUtmText(lat,lon){
+  const u=coUtm(lat,lon); if(!u) return null;
+  return `${u.zone}${u.band} ${Math.round(u.E)} ${Math.round(u.N)}`;
+}
+// «18T WL 85628 11322» → центр клетки
+function coFromMgrs(s){
+  const m=/^\s*(\d{1,2})\s*([C-HJ-NP-X])\s*([A-HJ-NP-Z])\s*([A-HJ-NP-V])\s*((?:\d\s*){0,10})\s*$/i.exec(s); if(!m) return null;
+  const zone=+m[1], band=m[2].toUpperCase(), c=m[3].toUpperCase(), r=m[4].toUpperCase();
+  const dg=m[5].replace(/\s/g,''); if(dg.length%2 || zone<1 || zone>60) return null;
+  const h=dg.length/2, step=Math.pow(10,5-h), mid=h ? step/2 : 50000;     // центр клетки
+  const ci=CO_COL[(zone-1)%3].indexOf(c); if(ci<0) return null;
+  const E=(ci+1)*100000+(h ? +dg.slice(0,h)*step : 0)+mid;
+  const rowN=((CO_ROW.indexOf(r)-(zone%2===0?5:0))%20+20)%20*100000+(h ? +dg.slice(h)*step : 0)+mid;
+  const north=band>='N', lat0=(CO_BANDS.indexOf(band))*8-80;
+  const lonC=(zone-1)*6-180+3;
+  let minN=coUtm(Math.max(-80,lat0),lonC,zone).N;
+  if(!north) minN=coUtm(lat0,lonC,zone).N;
+  let N=rowN; while(N<minN-1e-6) N+=2e6;
+  return coFromUtm(zone,north,E,N);
+}
+function coMaiden(lat,lon,len){
+  if(!(lat>=-90 && lat<=90 && lon>=-180 && lon<=180)) return null;
+  len=[4,6,8,10].includes(len) ? len : 6;
+  let x=(lon+180)/20, y=(lat+90)/10, out='';
+  const A='ABCDEFGHIJKLMNOPQR', a='abcdefghijklmnopqrstuvwx';
+  const fx=Math.min(17,Math.floor(x)), fy=Math.min(17,Math.floor(y)); out+=A[fx]+A[fy]; x=(x-fx)*10; y=(y-fy)*10;
+  const sx=Math.min(9,Math.floor(x)), sy=Math.min(9,Math.floor(y)); out+=sx+''+sy; x=(x-sx)*24; y=(y-sy)*24;
+  if(len>=6){ const ux=Math.min(23,Math.floor(x)), uy=Math.min(23,Math.floor(y)); out+=a[ux]+a[uy]; x=(x-ux)*10; y=(y-uy)*10; }
+  if(len>=8){ const vx=Math.min(9,Math.floor(x)), vy=Math.min(9,Math.floor(y)); out+=vx+''+vy; x=(x-vx)*24; y=(y-vy)*24; }
+  if(len>=10){ const wx=Math.min(23,Math.floor(x)), wy=Math.min(23,Math.floor(y)); out+=a[wx]+a[wy]; }
+  return out;
+}
+function coFromMaiden(s){
+  const m=/^\s*([A-R]{2})(\d{2})(?:([A-X]{2})(?:(\d{2})(?:([A-X]{2}))?)?)?\s*$/i.exec(s); if(!m) return null;
+  const A='ABCDEFGHIJKLMNOPQR', a='abcdefghijklmnopqrstuvwx';
+  let lon=-180+A.indexOf(m[1][0].toUpperCase())*20, lat=-90+A.indexOf(m[1][1].toUpperCase())*10, w=20, h=10;
+  lon+=+m[2][0]*2; lat+=+m[2][1]; w=2; h=1;
+  if(m[3]){ lon+=a.indexOf(m[3][0].toLowerCase())*5/60; lat+=a.indexOf(m[3][1].toLowerCase())*2.5/60; w=5/60; h=2.5/60; }
+  if(m[4]){ lon+=+m[4][0]*w/10; lat+=+m[4][1]*h/10; w/=10; h/=10; }
+  if(m[5]){ lon+=a.indexOf(m[5][0].toLowerCase())*w/24; lat+=a.indexOf(m[5][1].toLowerCase())*h/24; w/=24; h/=24; }
+  return {lat:lat+h/2, lon:lon+w/2};
+}
+const coP=(v,p)=>v.toFixed(p);
+function coDD(lat,lon,p){ p=p??5; return coP(lat,p)+', '+coP(lon,p); }
+function coDMS(lat,lon){
+  const one=(v,pos,neg)=>{ const h=v<0?neg:pos; v=Math.abs(v); let d=Math.floor(v), m=Math.floor((v-d)*60), s=((v-d)*60-m)*60;
+    if(+s.toFixed(2)>=60){ s=0; m++; } if(m>=60){ m=0; d++; }
+    return `${d}°${String(m).padStart(2,'0')}'${s.toFixed(2).padStart(5,'0')}"${h}`; };
+  return one(lat,'N','S')+' '+one(lon,'E','W');
+}
+function coDDM(lat,lon){
+  const one=(v,pos,neg)=>{ const h=v<0?neg:pos; v=Math.abs(v); let d=Math.floor(v), m=(v-d)*60;
+    if(+m.toFixed(4)>=60){ m=0; d++; }
+    return `${d}°${m.toFixed(4).padStart(7,'0')}'${h}`; };
+  return one(lat,'N','S')+' '+one(lon,'E','W');
+}
+// любой формат → {lat,lon,fmt}: MGRS, UTM «33U 500000 5500000», локатор, DD / DDM / DMS с буквами или со знаком
+function coParse(s){
+  s=String(s??'').trim(); if(!s) return null;
+  let r=coFromMaiden(s); if(r) return {...r,fmt:'Maidenhead'};
+  const u=/^(\d{1,2})\s*([C-HJ-NP-X])\s+(\d+(?:\.\d+)?)\s*m?[\s,;]+(\d+(?:\.\d+)?)\s*m?$/i.exec(s);
+  if(u){ const zone=+u[1], band=u[2].toUpperCase(); r=coFromUtm(zone,band>='N',+u[3],+u[4]); return r ? {...r,fmt:'UTM'} : null; }
+  r=coFromMgrs(s); if(r) return {...r,fmt:'MGRS'};
+  const T=s.replace(/[°º'′"″]/g,' ').match(/[NSEWСЮВЗ]|-?\d+(?:[.,]\d+)?/gi); if(!T) return null;
+  const map={'С':'N','Ю':'S','В':'E','З':'W'}, isH=t=>/^[NSEWСЮВЗ]$/i.test(t), hem=t=>map[t.toUpperCase()]||t.toUpperCase();
+  const groups=[];
+  if(isH(T[0])){                                       // буква перед числами: N 55 02.25  E 82 55.5
+    let h=null, nums=[];
+    for(const t of T){
+      if(isH(t)){ if(h && nums.length) groups.push({nums,h}); h=hem(t); nums=[]; }
+      else nums.push(+t.replace(',','.'));
+    }
+    if(h && nums.length) groups.push({nums,h});
+  } else {                                             // буква после чисел или её нет
+    let nums=[];
+    for(const t of T){
+      if(isH(t)){ if(nums.length) groups.push({nums,h:hem(t)}); nums=[]; }
+      else nums.push(+t.replace(',','.'));
+    }
+    if(nums.length) groups.push({nums,h:null});
+  }
+  const val=g=>{ const [d,m=0,sec=0]=g.nums; if(g.nums.length>3) return NaN; const sg=(d<0||Object.is(d,-0)||g.h==='S'||g.h==='W')?-1:1; return sg*(Math.abs(d)+m/60+sec/3600); };
+  let lat,lon;
+  if(groups.length===2 && groups.every(g=>g.h)){
+    for(const g of groups){ if(g.h==='N'||g.h==='S') lat=val(g); else lon=val(g); }
+  } else {
+    const all=groups.flatMap(g=>g.nums), n=all.length;
+    if(![2,4,6].includes(n)) return null;
+    const half=n/2, a={nums:all.slice(0,half),h:null}, b={nums:all.slice(half),h:null};
+    lat=val(a); lon=val(b);
+  }
+  if(!isFinite(lat) || !isFinite(lon) || Math.abs(lat)>90 || Math.abs(lon)>180) return null;
+  return {lat,lon,fmt:'DD / DMS'};
+}
+const CO_FMT=['DD','DMS','DDM','UTM','MGRS','Maidenhead'];
+function coFormat(lat,lon,fmt,digits){
+  if(!(Math.abs(lat)<=90 && Math.abs(lon)<=180)) return null;
+  switch(String(fmt).toLowerCase()){
+    case 'dd': return coDD(lat,lon);
+    case 'dms': return coDMS(lat,lon);
+    case 'ddm': return coDDM(lat,lon);
+    case 'utm': return coUtmText(lat,lon);
+    case 'mgrs': return coMgrs(lat,lon,digits);
+    case 'maidenhead': case 'locator': case 'qth': return coMaiden(lat,lon,6);
+  }
+  return null;
+}
