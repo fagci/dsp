@@ -1634,6 +1634,7 @@ function saSliceFeed(n,sp){
   sl.lastRev=sp.rev; sl.lastSp=sp;
   sl.t[sl.w]=performance.now(); sl.v[sl.w]=n.db[ak]; sl.w=(sl.w+1)%L; sl.c=Math.min(L,sl.c+1);
 }
+const SA_DIVS=[.1,.2,.5,1,2,5,10,20];                // ряд «дБ на деление» (режим tinySA)
 const SA_TRC=['','#ffb300','#ec407a','#26c6da'];       // цвета трасс 2–4
 function saTraces(n,sp){
   const N=sp.mag.length;
@@ -2262,8 +2263,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'adTrack',t:'check',d:false,label:'Auto dB: keep refitting while it runs (moves only for changes over 3 dB)',adv:true},
           // режим tinySA: потолок (reference level) и дБ на деление вместо пары floor/top; дно = потолок − 10 делений
           {n:'vscale',t:'select',opts:['range','ref + dB/div'],d:'range',label:'vertical scale: range (floor … top) or tinySA style (reference level + dB per division)'},
-          {n:'refLvl',t:'range',min:-200,max:60,step:1,d:-20,label:'reference level (ceiling), in the level unit',adv:true},
-          {n:'dbDiv',t:'select',opts:['1','2','5','10','20'],d:'10',label:'dB per division (10 divisions)',adv:true},
+          {n:'refLvl',t:'range',min:-200,max:60,step:.1,d:-20,label:'reference level (ceiling), in the level unit',adv:true},
+          {n:'dbDiv',t:'select',opts:['0.1','0.2','0.5','1','2','5','10','20'],d:'10',label:'vertical resolution: dB per division (10 divisions)',adv:true},
           {n:'rbwHz',t:'select',opts:['native','1k','3k','10k','30k','100k','300k','1M'],d:'native',label:'RBW, Hz (tinySA style: bins are merged up to it; not below the native bin; overrides ×k)',adv:true},
           {n:'markMode',t:'check',d:false,label:'mark mode: drag on the waterfall to label a part of a signal (Alt+drag works always)'},
           {n:'markLabels',t:'text',d:'preamble, data, voice',label:'mark labels (comma list; 1, 2, 3 … picks one in the dialog)'},
@@ -2337,7 +2338,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     n._gainIn=typeof I.gain==='number'&&isFinite(I.gain) ? I.gain : 0;
     n._lvOff=n.p.unit==='dBFS' ? 0 : n.p.lvlOff-n._gainIn+(n.p.unit==='dBµV' ? 107 : 0);
     if(n.p.vscale!=='range'){                         // tinySA: потолок и дБ/дел задают floor/top
-      const tp=clamp(n.p.refLvl-n._lvOff,-120,20), fl=clamp(tp-10*(+n.p.dbDiv||10),-140,tp-10);
+      const tp=clamp(n.p.refLvl-n._lvOff,-120,20), fl=clamp(tp-10*(+n.p.dbDiv||10),-140,tp-1);
       if(n.p.top!==tp) setMod(n,'top',tp);
       if(n.p.floor!==fl) setMod(n,'floor',fl);
     }
@@ -2562,10 +2563,10 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           if(y>=hs) return;
           const fl=n.p.floor, tp=n.p.top;
           if(n.p.vscale!=='range'){                  // tinySA: шаг по ряду дБ/дел, потолок на месте
-            const L=[1,2,5,10,20], i=L.indexOf(+n.p.dbDiv), j=clamp((i<0?3:i)+(ev.deltaY<0?-1:1),0,L.length-1);
+            const L=SA_DIVS, i=L.indexOf(+n.p.dbDiv), j=clamp((i<0?6:i)+(ev.deltaY<0?-1:1),0,L.length-1);
             setMod(n,'dbDiv',String(L[j]));
           } else {
-            const span=clamp((tp-fl)*(ev.deltaY<0?.96:1.04),10,160), at=tp-(y/plotH)*(tp-fl), nt=at+(y/plotH)*span;
+            const span=clamp((tp-fl)*(ev.deltaY<0?.96:1.04),2,160), at=tp-(y/plotH)*(tp-fl), nt=at+(y/plotH)*span;
             saVScale(n,nt-span,nt);
           }
           return;
@@ -2729,7 +2730,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           const [fullLo,fullHi]=specSpan(n.s);
           const {mx,d,dy}=pinchState();
           if(pinch.dy0>24 && dy>24 && pinch.cy<(n._hs||0)){      // пальцы разведены по вертикали — масштаб дБ вокруг уровня между ними
-            const span0=pinch.tp0-pinch.fl0, ns=clamp(span0*pinch.dy0/dy,10,160), plotH=Math.max(1,(n._hs|0)-14);
+            const span0=pinch.tp0-pinch.fl0, ns=clamp(span0*pinch.dy0/dy,2,160), plotH=Math.max(1,(n._hs|0)-14);
             const at=pinch.tp0-(pinch.cy/plotH)*span0, nt=at+(pinch.cy/plotH)*ns;
             saVScale(n,nt-ns,nt);
           }
