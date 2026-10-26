@@ -1671,6 +1671,8 @@ const BP_FONT='11px monospace';
 // вплотную над осью, но не поверх её подписей. Водопад ни здесь, ни в вызывающем draw() не трогаем.
 function saBandPlan(n,cx,W,H,plotH){
   const list=n.bandsData;
+  const bpBoxes=n._bpBoxes=(n._bpBoxes||[]); bpBoxes.length=0;
+  n._topH=4; n._bpH=0; n._bpAll=[];
   if(!list||!list.length){ if(n._bmBoxes) n._bmBoxes.length=0; if(n._bpLabels) n._bpLabels.length=0; return; }
   const [lo0,hi0]=saBounds(n);
   const ranges=[], points=[];
@@ -1684,11 +1686,34 @@ function saBandPlan(n,cx,W,H,plotH){
     } else {
       const a=Math.min(b.lo,hi), c=Math.max(b.lo,hi);
       if(c<lo0 || a>hi0) continue;                      // полоса целиком вне окна
-      ranges.push({lo:a,hi:c,label:b.label,color:b.color});
+      ranges.push({lo:a,hi:c,label:b.label,color:b.color,b});
     }
   }
+  n._bpAll=ranges;
+  // ---- закладки: подписи раскладываем по рядам сверху (жадно слева направо); что не влезло в
+  // BM_ROWS рядов — маленький засечкой с линией, имя в подсказке. Вся раскладка нужна до полос и
+  // меток сигналов: они отступают от неё (n._topH) ----
+  const BM_H=12, BM_ROWS=3, SC=[]; cx.font='9px monospace';
+  const hoverF=n._bmHoverFreq, rowEnd=[-Infinity,-Infinity,-Infinity], tabsX=W-96;   // вкладки маркеров занимают правый верх (saMarkerTabs)
+  for(const p of points){
+    const x=Math.round(saPos(n,p.lo)*W); if(x<-2||x>W+2) continue;
+    const t=p.label||fmtHz(p.lo), bw=Math.ceil(cx.measureText(t).width)+6;
+    SC.push({p,x,t,bw});
+  }
+  SC.sort((a,b)=>a.x-b.x);
+  let rows=0;
+  for(const o of SC){
+    o.bx=clamp(Math.round(o.x-o.bw/2),1,W-o.bw-1); o.row=-1;
+    for(let r=0;r<BM_ROWS;r++){
+      if(o.bx<rowEnd[r]+2 || (r<2 && o.bx+o.bw>tabsX)) continue;
+      o.row=r; rowEnd[r]=o.bx+o.bw; if(r+1>rows) rows=r+1; break;
+    }
+  }
+  n._topH=rows ? rows*BM_H+3 : (SC.length ? 8 : 4);
   // ---- полосы: дорожки СНИЗУ ВВЕРХ от границы зоны оси частот (plotH) — единой лентой прямо над
-  // подписями оси, не наползая на них ----
+  // подписями оси, не наползая на них. Первые MAX_LANES дорожек с подписями, остальное — тонкие
+  // полоски без текста над ними (имена — в подсказке под курсором) ----
+  let lanesH=0, stripsH=0;
   if(ranges.length){
     // сортируем по началу (lo) — жадная раскраска по началу оптимальна по числу дорожек:
     // не пересекающиеся (даже впритык, по общей границе — см. e<=r.lo ниже) полосы стабильно
@@ -1696,23 +1721,35 @@ function saBandPlan(n,cx,W,H,plotH){
     // широкую полосу — она первой займёт нижнюю дорожку, а узкая (более специфичная),
     // перекрывающая её от той же точки, уйдёт выше — не наоборот.
     ranges.sort((x,y)=>x.lo-y.lo || (y.hi-y.lo)-(x.hi-x.lo));
-    const laneEnd=[];                                   // laneEnd[i] — правая граница последней полосы в дорожке i
-    const LANE_H=16, MAX_LANES=4;
+    const laneEnd=[], stripEnd=[];
+    const LANE_H=14, MAX_LANES=4, STRIP_H=3, MAX_STRIPS=3;
     for(const r of ranges){
       let lane=laneEnd.findIndex(e=>e<=r.lo);
-      if(lane<0){ if(laneEnd.length>=MAX_LANES) lane=laneEnd.length-1; else { lane=laneEnd.length; laneEnd.push(-Infinity); } }
-      laneEnd[lane]=r.hi; r._lane=lane;
+      if(lane>=0){ laneEnd[lane]=r.hi; r._lane=lane; continue; }
+      if(laneEnd.length<MAX_LANES){ laneEnd.push(r.hi); r._lane=laneEnd.length-1; continue; }
+      let s=stripEnd.findIndex(e=>e<=r.lo);
+      if(s<0){ if(stripEnd.length<MAX_STRIPS){ stripEnd.push(-Infinity); s=stripEnd.length-1; } else s=stripEnd.length-1; }
+      stripEnd[s]=r.hi; r._strip=s;
     }
+    lanesH=laneEnd.length*LANE_H; stripsH=stripEnd.length ? stripEnd.length*(STRIP_H+1)+1 : 0;
     cx.font=BP_FONT;
     const scr=hexToRgb(themeColor('--screen')||'#0a0d0e'), FILL_A=.5;
     for(const r of ranges){
       const x1=Math.round(saPos(n,r.lo)*W), x2=Math.round(saPos(n,r.hi)*W);
       if(x2<0||x1>W) continue;                            // целиком вне канвы — сам прямоугольник не рисуем
-      const w=Math.max(1,x2-x1), y=plotH-(r._lane+1)*LANE_H, col=r.color||'#5fb8d1';
+      const w=Math.max(1,x2-x1), col=r.color||'#5fb8d1';
+      if(r._strip!=null){
+        const y=plotH-lanesH-(r._strip+1)*(STRIP_H+1);
+        cx.globalAlpha=.85; cx.fillStyle=col; cx.fillRect(x1,y,Math.max(2,w),STRIP_H);
+        bpBoxes.push({x0:x1,x1:Math.max(x2,x1+2),y0:y-1,y1:y+STRIP_H+1,r});
+        continue;
+      }
+      const y=plotH-(r._lane+1)*LANE_H;
       cx.globalAlpha=FILL_A; cx.fillStyle=col; cx.fillRect(x1,y,w,LANE_H-1);
       cx.globalAlpha=1; cx.fillRect(x1,y,w,2);            // яркий верхний кант — граница полосы видна на любом шуме
       cx.fillStyle=themeColor('--screen');                 // тёмные разделители — соседние сегменты не сливаются
       cx.fillRect(x1,y,1,LANE_H-1); cx.fillRect(x2-1,y,1,LANE_H-1);
+      bpBoxes.push({x0:x1,x1:x2,y0:y,y1:y+LANE_H,r});
       // подпись — по центру ВИДИМОЙ (обрезанной канвой) части полосы: у широкой полосы, уходящей
       // за край экрана, подпись иначе уезжала бы за канву. Не влезает — обрезаем с '…'.
       const vx1=Math.max(x1,0), vx2=Math.min(x2,W), vw=vx2-vx1;
@@ -1730,41 +1767,41 @@ function saBandPlan(n,cx,W,H,plotH){
     }
     cx.globalAlpha=1;
   }
-  // ---- точки (закладки): штриховая линия во всю H + подпись у ПОТОЛКА спектра, залитая своим
-  // цветом и отцентрированная НА линии (не сбоку от неё) — не сливается ни с полосами снизу, ни с
-  // флажками маркеров, которые теперь тоже снизу (см. saMarkers). n._bmBoxes — прямоугольники
-  // подписей в пикселях канвы, читает sa's draw() (analysis.js) для клика/наведения; наведённая
-  // (n._bmHoverFreq) рисуется ПОСЛЕДНЕЙ, поверх соседних — иначе близко стоящие подписи
-  // перекрывают друг друга и не разобрать, на какую навели.
-  if(points.length){
+  n._bpH=lanesH+stripsH;
+  // ---- точки (закладки): штриховая линия вниз от подписи + подпись залитая своим цветом,
+  // отцентрированная НА линии. n._bmBoxes — прямоугольники подписей в пикселях канвы, читает sa's
+  // draw() (analysis.js) для клика/наведения; наведённая (n._bmHoverFreq) рисуется ПОСЛЕДНЕЙ,
+  // поверх соседних, и всегда с именем — даже если в раскладке ей не хватило места. ----
+  const boxes=n._bmBoxes=(n._bmBoxes||[]); boxes.length=0;
+  if(SC.length){
     cx.font='9px monospace'; cx.setLineDash([3,3]);
-    const boxes=n._bmBoxes=(n._bmBoxes||[]); boxes.length=0;
-    const hoverF=n._bmHoverFreq;
-    const ordered = hoverF!=null && points.some(p=>p.lo===hoverF)
-      ? [...points.filter(p=>p.lo!==hoverF), ...points.filter(p=>p.lo===hoverF)]
-      : points;
-    for(const p of ordered){
-      const x=Math.round(saPos(n,p.lo)*W); if(x<-2||x>W+2) continue;
-      const col=p.color||'#c9c9c9', hovered=hoverF===p.lo;
-      cx.strokeStyle=col; cx.lineWidth=1; cx.globalAlpha=.7;
-      cx.beginPath(); cx.moveTo(x+.5,0); cx.lineTo(x+.5,H); cx.stroke();
-      cx.globalAlpha=1;
-      const t=p.label||fmtHz(p.lo), ty=12;
-      const tw=cx.measureText(t).width;
-      const tx=clamp(Math.round(x-tw/2), 2, W-tw-2);           // по центру линии, не сбоку
-      cx.globalAlpha=hovered?1:.85; cx.fillStyle=col; cx.fillRect(tx-3,ty-9,tw+6,12);
-      cx.globalAlpha=1; cx.fillStyle=contrastText(col); cx.fillText(t,tx,ty);
-      boxes.push({x0:tx-3,y0:ty-9,x1:tx+tw+3,y1:ty+3,freq:p.lo});
+    const ordered = hoverF!=null && SC.some(o=>o.p.lo===hoverF)
+      ? [...SC.filter(o=>o.p.lo!==hoverF), ...SC.filter(o=>o.p.lo===hoverF)]
+      : SC;
+    for(const o of ordered){
+      const p=o.p, col=p.color||'#c9c9c9', hovered=hoverF===p.lo, x=o.x;
+      const show=o.row>=0 || hovered, row=o.row>=0 ? o.row : 0, ty=2+row*BM_H;
+      cx.strokeStyle=col; cx.lineWidth=1; cx.globalAlpha=hovered?.95:o.row>=0?.45:.3;
+      cx.beginPath(); cx.moveTo(x+.5,show?ty+BM_H-1:0); cx.lineTo(x+.5,H); cx.stroke();
+      if(!show){                                           // не влезло — засечка у потолка
+        cx.setLineDash([]); cx.globalAlpha=.9; cx.fillStyle=col; cx.fillRect(x-1,0,3,6); cx.setLineDash([3,3]);
+        boxes.push({x0:x-3,y0:0,x1:x+4,y1:BM_H+2,freq:p.lo,b:p,hid:true}); continue;
+      }
+      const bx=hovered&&o.row<0 ? clamp(Math.round(x-o.bw/2),1,W-o.bw-1) : o.bx;
+      cx.globalAlpha=hovered?1:.88; cx.fillStyle=col; cx.fillRect(bx,ty,o.bw,BM_H-1);
+      cx.globalAlpha=1; cx.fillStyle=contrastText(col); cx.fillText(o.t,bx+3,ty+8);
+      boxes.push({x0:bx,y0:ty,x1:bx+o.bw,y1:ty+BM_H,freq:p.lo,b:p});
     }
     cx.setLineDash([]);
-  } else if(n._bmBoxes) n._bmBoxes.length=0;
+  }
 }
 // Метки сигналов с 'sigid' (записи sig:true в bands): скобка над сигналом на уровне его пика,
-// подпись типа над ней. Подписи, налезающие на уже поставленные, поднимаются выше.
-const TOPN=18;                                         // верх залитой нужной полосы — под подписями закладок
+// подпись типа над ней. Подписи, налезающие на уже поставленные, поднимаются выше; не нашедшие
+// места — маленький треугольник над скобкой (подробности в подсказке под курсором).
 function saSigTags(n,cx,W,plotH){
+  const sgBoxes=n._sgBoxes=(n._sgBoxes||[]); sgBoxes.length=0;
   const list=n.sigsData&&n.sigsData.length ? (n.bandsData||[]).concat(n.sigsData) : n.bandsData; if(!list||!list.length) return;
-  const tags=[], span=(n.p.top-n.p.floor)||1;
+  const tags=[], span=(n.p.top-n.p.floor)||1, TOPN=n._topH||4;
   for(const b of list){
     if(!b || !b.sig || typeof b.lo!=='number') continue;
     const x1=Math.round(saPos(n,b.lo)*W), x2=Math.round(saPos(n,b.hi)*W);
@@ -1773,37 +1810,56 @@ function saSigTags(n,cx,W,plotH){
     tags.push({b,x1,x2:Math.max(x2,x1+3),y});
   }
   if(!tags.length) return;
-  // нужная полоса приёма (sigid, «need»): заливка на всю высоту, чёткие края и подпись ширины внизу — под неё и ставят bw приёмника
+  const hx=n._hoverX!=null ? n._hoverX*W : null, hy=n._hoverY;
+  // нужная полоса приёма (sigid, «need»): тонкие пунктирные края у всех, заливка и подпись ширины —
+  // у того, над кем курсор (или если сигналов мало); подпись стоит над лентой полос, не на ней
+  const few=tags.length<=3, nb=[];
   for(const t of tags){
     const b=t.b; if(!(b.nbw>0)) continue;
     const nx1=Math.round(saPos(n,b.nlo)*W), nx2=Math.round(saPos(n,b.nhi)*W);
     if(nx2<0 || nx1>W) continue;
+    t.nx1=nx1; t.nx2=nx2;
+    const focus=few || (hx!=null && hx>=Math.min(t.x1,nx1)-3 && hx<=Math.max(t.x2,nx2)+3 && (hy==null || hy<plotH));
     const col=b.color||'#b0bec5', w=Math.max(nx2-nx1,2);
-    cx.globalAlpha=.13; cx.fillStyle=col; cx.fillRect(nx1,TOPN,w,plotH-TOPN);
-    cx.globalAlpha=.9; cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash([]);
+    cx.globalAlpha=focus?.1:.04; cx.fillStyle=col; cx.fillRect(nx1,TOPN,w,plotH-TOPN);
+    cx.globalAlpha=focus?.85:.4; cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash(focus?[]:[2,3]);
     cx.beginPath(); cx.moveTo(nx1+.5,TOPN); cx.lineTo(nx1+.5,plotH); cx.moveTo(nx2-.5,TOPN); cx.lineTo(nx2-.5,plotH); cx.stroke();
-    cx.font=BP_FONT; const txt='◂ '+fmtHz(b.nbw,b.nbw<1e4?1:0)+'Hz ▸', tw=Math.ceil(cx.measureText(txt).width)+6;
-    const lx=clamp(Math.round((nx1+nx2)/2-tw/2),2,Math.max(2,W-tw-2));
-    cx.globalAlpha=.85; cx.fillStyle=col; cx.fillRect(lx,plotH-14,tw,12);
-    cx.globalAlpha=1; cx.fillStyle=contrastText(col); cx.fillText(txt,lx+3,plotH-4);
+    cx.setLineDash([]);
+    if(focus) nb.push({t,col,nx1,nx2});
+  }
+  cx.font=BP_FONT;
+  const nbPlaced=[];
+  for(const o of nb){
+    const b=o.t.b, txt='◂ '+fmtHz(b.nbw,b.nbw<1e4?1:0)+'Hz ▸', tw=Math.ceil(cx.measureText(txt).width)+6;
+    if(tw>o.nx2-o.nx1+40) continue;
+    const ly=plotH-(n._bpH||0)-14, lx=clamp(Math.round((o.nx1+o.nx2)/2-tw/2),2,Math.max(2,W-tw-2));
+    if(nbPlaced.some(q=>lx<q.x+q.w+2 && lx+tw+2>q.x)) continue;
+    nbPlaced.push({x:lx,w:tw});
+    cx.globalAlpha=.85; cx.fillStyle=o.col; cx.fillRect(lx,ly,tw,12);
+    cx.globalAlpha=1; cx.fillStyle=contrastText(o.col); cx.fillText(txt,lx+3,ly+9);
   }
   cx.globalAlpha=1;
   tags.sort((a,b)=>a.y-b.y);                          // сильные — первыми, им место у пика
-  cx.font=BP_FONT;
-  const placed=[], TH=14, TOP=18;                     // потолок — подписи закладок (см. saBandPlan)
+  const placed=[], TH=14, TOP=TOPN+2;
   for(const t of tags){
     const col=t.b.color||'#b0bec5', txt=t.b.label||'?', tw=Math.ceil(cx.measureText(txt).width)+6;
     const by=Math.max(TOP+TH+4,Math.round(t.y)-5);
     cx.strokeStyle=col; cx.lineWidth=1.5; cx.globalAlpha=.9;
     cx.beginPath(); cx.moveTo(t.x1+.5,by+5); cx.lineTo(t.x1+.5,by+.5); cx.lineTo(t.x2-.5,by+.5); cx.lineTo(t.x2-.5,by+5); cx.stroke();
     const mx=Math.round((t.x1+t.x2)/2), lx=clamp(mx-(tw>>1),2,W-tw-2);
-    let ly=by-TH-2;
-    for(let k=0;k<8;k++){
-      const hit=placed.find(p=>lx<p.x+p.w && lx+tw>p.x && ly<p.y+p.h && ly+TH>p.y);
-      if(!hit) break;
+    let ly=by-TH-2, ok=false;
+    for(let k=0;k<6;k++){
+      if(ly<TOP) break;
+      const hit=placed.find(p=>lx<p.x+p.w+1 && lx+tw+1>p.x && ly<p.y+p.h && ly+TH>p.y);
+      if(!hit){ ok=true; break; }
       ly=hit.y-TH-2;
     }
-    if(ly<TOP) ly=TOP;
+    const box={x0:Math.min(t.x1,lx)-1,x1:Math.max(t.x2,lx+tw)+1,y0:ok?ly:by-8,y1:by+6,b:t.b,t};
+    sgBoxes.push(box);
+    if(!ok){                                         // места нет: треугольник над скобкой
+      cx.globalAlpha=.95; cx.fillStyle=col; cx.beginPath(); cx.moveTo(mx-4,by-8); cx.lineTo(mx+4,by-8); cx.lineTo(mx,by-2); cx.fill();
+      continue;
+    }
     if(ly<by-TH-2){ cx.lineWidth=1; cx.beginPath(); cx.moveTo(mx+.5,ly+TH); cx.lineTo(mx+.5,by); cx.stroke(); }
     cx.globalAlpha=.6+.4*clamp(t.b.conf??1,0,1);      // уверенность — плотностью подложки
     cx.fillStyle=col; cx.fillRect(lx,ly,tw,TH);
@@ -1811,6 +1867,54 @@ function saSigTags(n,cx,W,plotH){
     placed.push({x:lx,y:ly,w:tw,h:TH});
   }
   cx.globalAlpha=1; cx.lineWidth=1;
+}
+// Подсказка под курсором: что лежит под ним — закладки, полосы band plan (все вложенные, от широкой
+// к узкой) и метки сигналов. Срабатывает только над самими элементами (подписи, ленты, скобки),
+// не над пустым спектром — чтобы не мешать ставить маркер.
+// частота без хвоста нулей: 99.5M, 100.0125M, 433.92M
+function saHz(v){
+  const a=Math.abs(v), [d,u,dp]=a>=1e9?[1e9,'G',5]:a>=1e6?[1e6,'M',5]:a>=1e3?[1e3,'k',3]:[1,'',0];
+  return +(v/d).toFixed(dp)+u+'Hz';
+}
+function saTip(n,cx,W,H){
+  const hx=n._hoverX, hy=n._hoverY; if(hx==null||hy==null||n._dragActive) return;
+  const mx=hx*W, pad=2, inB=b=>mx>=b.x0-pad&&mx<=b.x1+pad&&hy>=b.y0-pad&&hy<=b.y1+pad;
+  const f=saFreq(n,hx), rows=[], seen=new Set();
+  const add=(col,head,sub)=>{ const k=head+'|'+sub; if(!seen.has(k)){ seen.add(k); rows.push({col,head,sub}); } };
+  for(const b of n._bmBoxes||[]) if(inB(b)) add(b.b.color||'#c9c9c9','★ '+(b.b.label||saHz(b.freq)),saHz(b.freq)+(b.b.note?' · '+b.b.note:''));
+  const bh=(n._bpBoxes||[]).filter(inB);
+  if(bh.length){
+    for(const r of (n._bpAll||[]).filter(r=>r.lo<=f&&r.hi>=f).sort((a,b)=>(b.hi-b.lo)-(a.hi-a.lo))){
+      const bb=r.b||{}, st=+bb.step;
+      add(r.color||'#5fb8d1',r.label||saHz(r.lo),saHz(r.lo)+' – '+saHz(r.hi)+(st>0?' · step '+fmtHz(st,st%1e3?1:0)+'Hz':'')+(bb.note?' · '+bb.note:''));
+    }
+  }
+  for(const b of n._sgBoxes||[]) if(inB(b)){
+    const g=b.b, a=[];
+    a.push(saHz(g.f??(g.lo+g.hi)/2));
+    if(g.db!=null) a.push(Math.round(g.db)+' dB');
+    if(g.hi>g.lo) a.push('bw '+fmtHz(g.hi-g.lo,g.hi-g.lo<1e4?1:0)+'Hz');
+    if(g.conf!=null) a.push(Math.round(g.conf*100)+'%');
+    if(g.nbw>0) a.push('need '+fmtHz(g.nbw,g.nbw<1e4?1:0)+'Hz');
+    if(g.dec) a.push('→ '+g.dec);
+    add(g.color||'#b0bec5',g.label||'?',a.join(' · '));
+  }
+  if(!rows.length) return;
+  const MAXR=8, shown=rows.slice(0,MAXR), more=rows.length-shown.length;
+  cx.font='11px monospace';
+  let tw=0; for(const r of shown) tw=Math.max(tw,cx.measureText(r.head).width,cx.measureText(r.sub).width*.9);
+  tw=Math.ceil(tw)+22; const th=shown.length*26+(more>0?14:0)+6;
+  let x=mx+14, y=hy+16; if(x+tw>W-2) x=mx-tw-10; if(x<2) x=2; if(y+th>H-2) y=hy-th-10; if(y<2) y=2;
+  cx.globalAlpha=.95; cx.fillStyle=themeColor('--screen'); cx.fillRect(x,y,tw,th);
+  cx.globalAlpha=.6; cx.strokeStyle=themeColor('--axis'); cx.lineWidth=1; cx.strokeRect(x+.5,y+.5,tw-1,th-1);
+  cx.globalAlpha=1; cx.textBaseline='alphabetic';
+  shown.forEach((r,i)=>{
+    const yy=y+4+i*26;
+    cx.fillStyle=r.col; cx.fillRect(x+4,yy+1,4,22);
+    cx.fillStyle=themeColor('--acc'); cx.font='11px monospace'; cx.fillText(r.head,x+13,yy+10);
+    cx.globalAlpha=.7; cx.fillStyle=themeColor('--axis'); cx.font='10px monospace'; cx.fillText(r.sub,x+13,yy+21); cx.globalAlpha=1;
+  });
+  if(more>0){ cx.fillStyle=themeColor('--axis'); cx.font='10px monospace'; cx.fillText('+'+more+' more',x+13,y+th-5); }
 }
 // snap клика к сетке каналов полосы из bandplan (n.bandsData) — НЕ к пикселям, а к шагу канала в
 // Гц (поле 'step' у полосы: например, LPD433 — 25кГц, HF Broadcast — 5кГц; см. BANDPLAN_PRESETS в
