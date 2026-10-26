@@ -2036,7 +2036,7 @@ function saMarkers(n,cx,W,H){
     const tw=cx.measureText(t2).width;
     // по центру линии маркера; дорожка стека — по месту среди выставленных маркеров (present), а не
     // по порядку рисования — иначе позиции соседних подписей "прыгали" бы при каждой смене наведения
-    const tx=clamp(Math.round(x-tw/2), 2, W-tw-2), ty=baseY-present.indexOf(k)*14;
+    const tx=clamp(Math.round(x-tw/2), 2, W-tw-2), ty=baseY-14-present.indexOf(k)*14;
     cx.globalAlpha=hovered?1:(act?.95:.75); cx.fillStyle=MK_COL(k);
     cx.fillRect(tx-3,ty,tw+6,12);
     cx.globalAlpha=1; cx.fillStyle=contrastText(MK_COL(k));
