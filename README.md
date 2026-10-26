@@ -1112,6 +1112,17 @@ Small instruments for the phone (category Tools); sensors come from the wires (A
 - **True North (declination)** — adds the magnetic declination to a heading (for Compass).
 - **Slope / Level / Plumb** — slope in degrees, percent and the uphill direction, a bubble level and a plumb line from gravity; zeroing on a flat surface; `level` pin.
 - **Flashlight** — the phone LED (Chrome / Android) or a white screen; steady, strobe, SOS.
+- **Rangefinder** — distance to a point on the ground from the angle down and the eye height, or to an object of a known height from the angles to its top and base (Orientation → `el`).
+- **Protractor** — the angle between two marked directions (azimuth + elevation, 3D) and the differences of azimuth and elevation.
+- **Sound Level Meter** — dB(A) / dB(Z), fast / slow, Leq, max, peak, 60 s history; calibrate against a known level (the phone microphone is only good to a few dB).
+- **Light Meter** — lux → EV → shutter or aperture for the ISO (Ambient Light or typed).
+- **Metal Detector** — change of the magnetic field strength |B| against a slowly following reference (magnetometer from Sensor (Generic Sensor API)); finds iron and steel.
+- **Calculator** — an expression of `a b c d` (pins or typed) with the Table formula functions, without `eval`.
+- **Sun & Moon** — sunrise, noon, sunset, day length, solar elevation and azimuth, moon phase for a place (NOAA formulas, ±1–2 min, no refraction).
+- **Timer** — countdown with beep, vibration and flash, optional repeat, a big fullscreen clock; `start` and `done` pins.
+- **Random** — dice (`2d6+3`), coin, number, password (no look-alike characters), pick from a list; unbiased, `crypto.getRandomValues`.
+- **Alarm Siren** — siren / two-tone / beeps with a flashing screen, switched by the `on` pin.
+- **Motion Guard** — a phone alarm: arms after a delay, latches when the acceleration vector changes; `alarm` pin → Alarm Siren.
 - **Pedometer** — steps, steps per minute and distance from the acceleration peaks. While the graph runs the screen stays awake and a silent sound keeps the page alive; a locked screen can still pause the sensors in some browsers.
 
 Presets: the *Tools* group (*Unit Converter*, *Screen Ruler*, *Height Meter*, *Compass with True North*, *Slope Meter*, *Bubble Level and Plumb*, *Flashlight*, *Pedometer*). Logic: `modules/tools-kernels.js`, tests: `node tools/test-tools.mjs`.
