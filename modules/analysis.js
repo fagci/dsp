@@ -1605,6 +1605,111 @@ function saNoiseFloor(sp,f,tol){
 // Слежение за несущей: маркер ищет пик в окне ±bw/2 вокруг себя (bw — полоса канала приёмника под
 // маркером, иначе trkBw) и едет за ним. Нет пика выше шумовой полки на 6 дБ — маркер стоит.
 // Раз на новый спектр; провод mN (n.ext) хозяин маркера — не двигаем
+
+// ---- трассы, RBW, детекторы (ядро — sa-trace-kernels.js) ----
+// Раз на новый спектр: база (живой спектр, при RBW > родной — со слитыми бинами) и четыре трассы.
+// Живая трасса не копируется — потребитель берёт n._base. Смена оси частот сбрасывает накопленное.
+const SA_TRC=['','#ffb300','#ec407a','#26c6da'];       // цвета трасс 2–4
+function saTraces(n,sp){
+  const N=sp.mag.length;
+  if(sp===n._trSp && sp.rev===n._trRev) return;
+  n._trSp=sp; n._trRev=sp.rev;
+  const k=n.p.rbw==='native' ? 1 : (parseInt(String(n.p.rbw).replace('×',''))||1);
+  let base=sp.mag;
+  if(k>1){
+    if(!n._lm || n._lm.length!==N){ n._lm=new Float32Array(N); n._lmPre=new Float64Array(N+1); }
+    base=saRbwMerge(sp.mag,n._lm,k,sp.enbw,n._lmPre);
+  } else n._lm=null;
+  n._base=base; n._rbwK=k;
+  if(!n.tr) n.tr=[0,1,2,3].map(()=>({mode:'off',arr:null,pw:null,cnt:0,key:null}));
+  const key=sp.freqs||null, modes=[n.p.tr1,n.p.tr2,n.p.tr3,n.p.tr4];
+  for(let i=0;i<4;i++) saTraceStep(n.tr[i],base,modes[i],n.p.avgN,key);
+  // эталон из файла живёт в своей оси (частота/дБ) и пересчитывается под текущие бины
+  if(n.refSrc && (n._refN!==N || n._refKey!==key || n._refFa!==specHz(sp,0)+'|'+specHz(sp,N-1))){
+    n.refMag=saRefResample(n.refSrc,i=>specHz(sp,i),N); n._refN=N; n._refKey=key; n._refFa=specHz(sp,0)+'|'+specHz(sp,N-1);
+  }
+}
+const saTrArrs=n=>{ const b=n._base; return b&&n.tr ? n.tr.map(t=>saTraceArr(t,b)) : [b||null,null,null,null]; };
+function saMarkTrace(n,sp){
+  const a=saTrArrs(n), i=(+n.p.mkTrace||1)-1;
+  return a[i] && a[i].length===sp.mag.length ? a[i] : sp.mag;
+}
+// Измерение у активного маркера (по сырым бинам, не по RBW): n.meas = {val, text, bands:[{lo,hi,col}]}
+function saMeasure(n,sp){
+  n.meas=null;
+  const mode=n.p.meas, ak=n.active-1, fc=n.mk[ak];
+  if(!sp || mode==='off' || fc==null) return;
+  const m=sp.mag, N=m.length, enb=sp.enbw>0?sp.enbw:SA_ENBW, binHz=Math.abs(specHz(sp,1)-specHz(sp,0))||1;
+  const ch=saChanAtMarker(n,fc), bw=ch&&ch.hi>ch.lo ? ch.hi-ch.lo : n.p.measBw, col=MK_COL(ak);
+  const bins=(lo,hi)=>[clamp(Math.round(specBin(sp,lo)),0,N-1),clamp(Math.round(specBin(sp,hi)),0,N-1)].sort((a,b)=>a-b);
+  const [i0,i1]=bins(fc-bw/2,fc+bw/2);
+  const hz=v=>fmtHz(v,v<1e4?2:1)+'Hz', sg=v=>(v>=0?'+':'')+v.toFixed(1);
+  const bandsOf=(c,w)=>({lo:c-w/2,hi:c+w/2,col});
+  if(mode==='channel power'){
+    const v=saChanPower(m,i0,i1,enb);
+    n.meas={val:v,text:'ChP '+v.toFixed(1)+' dB in '+hz(bw),bands:[bandsOf(fc,bw)]};
+  } else if(mode==='noise density'){
+    const v=saNoiseDensity(m,i0,i1,binHz,enb);
+    n.meas={val:v,text:'N '+v.toFixed(1)+' dB/Hz in '+hz(bw),bands:[bandsOf(fc,bw)]};
+  } else if(mode==='OBW'){
+    const o=saObw(m,i0,i1,n.p.measPct); if(!o) return;
+    const lo=specHz(sp,o.lo)-binHz/2, hi=specHz(sp,o.hi)+binHz/2;
+    n.meas={val:hi-lo,text:'OBW '+(+n.p.measPct)+'% '+hz(hi-lo),bands:[{lo,hi,col}]};
+  } else if(mode==='x dB bandwidth'){
+    let ip=i0; for(let i=i0;i<=i1;i++) if(m[i]>m[ip]) ip=i;
+    const r=saXdbBw(m,ip,i0,i1,n.p.measX);
+    const f=b=>specHz(sp,0)+(specHz(sp,N-1)-specHz(sp,0))*b/(N-1), lo=f(r.lo), hi=f(r.hi), w=hi-lo, open=r.openLo||r.openHi;
+    n.meas={val:w,text:'BW −'+(+n.p.measX)+' dB '+(open?'> ':'')+hz(w),bands:[{lo,hi,col}]};
+  } else if(mode==='ACPR'){
+    const off=n.p.acpOff, lo=bins(fc-off-bw/2,fc-off+bw/2), up=bins(fc+off-bw/2,fc+off+bw/2);
+    const a=saAcpr(m,[i0,i1],lo,up,enb);
+    n.meas={val:Math.max(a.low,a.up),text:'ACPR '+sg(a.low)+' / '+sg(a.up)+' dBc',bands:[bandsOf(fc,bw),bandsOf(fc-off,bw),bandsOf(fc+off,bw)]};
+  }
+}
+// ---- экспорт ----
+function saPickFile(accept,cb){
+  const el=document.createElement('input'); el.type='file'; el.accept=accept; el.style.display='none';
+  el.onchange=()=>{ const f=el.files&&el.files[0]; el.remove(); if(f) f.text().then(cb); };
+  document.body.appendChild(el); el.click();
+}
+function saExportCsv(n){
+  const sp=n.s; if(!sp) return;
+  const N=sp.mag.length, a=saTrArrs(n), cols=a.map((x,i)=>({name:'T'+(i+1)+'_db',arr:x}));
+  if(n.refMag && n.refMag.length===N) cols.push({name:'ref_db',arr:n.refMag});
+  saDownload(new Blob([saTraceCsv(N,i=>specHz(sp,i),cols)],{type:'text/csv'}),'spectrum-'+saStamp()+'.csv');
+}
+function saRefSave(n){
+  const sp=n.s; if(!sp) return;
+  const N=sp.mag.length, arr=n.refMag&&n.refMag.length===N ? n.refMag : (saTrArrs(n)[0]||sp.mag);
+  saDownload(new Blob([saTraceCsv(N,i=>specHz(sp,i),[{name:'level_db',arr}])],{type:'text/csv'}),'reference-'+saStamp()+'.csv');
+}
+function saRefLoad(n){
+  saPickFile('.csv,.txt,text/csv,text/plain',t=>{
+    const r=saRefParse(t); if(!r){ n.err='reference: no frequency / level columns'; return; }
+    n.refSrc=r; n._refN=null;                          // пересчёт под бины — в saTraces на следующем спектре
+    if(n.p.ref==='none') setMod(n,'ref','show');
+    if(n.s) saTraces(Object.assign(n,{_trSp:null}),n.s);
+    n._drawKey=null; saOvKick(n);
+  });
+}
+// PNG: фон, водопад из истории (он на отдельном WebGL-слое и в канве не лежит), трасса и интерактивный слой
+function saExportPng(n){
+  const cv=n._ovCv||n._wfCv; if(!cv) return;
+  const Wp=cv.pxW||cv.width, Hp=cv.pxH||cv.height, sy=Hp/cv.height, hs=Math.round((n._hs|0)*sy);
+  const out=document.createElement('canvas'); out.width=Wp; out.height=Hp;
+  const cx=out.getContext('2d');
+  cx.fillStyle=themeColor('--screen')||'#0a0d0e'; cx.fillRect(0,0,Wp,Hp);
+  try{
+    const hwP=Hp-hs;
+    if(n.hist && n.hist.rows.length && hwP>0){
+      const im=new ImageData(saHistRender(n,Wp,hwP,true),Wp,hwP), t=document.createElement('canvas'); t.width=Wp; t.height=hwP;
+      t.getContext('2d').putImageData(im,0,0); cx.drawImage(t,0,hs);
+    } else if(n.off) cx.drawImage(n.off,0,hs,Wp,hwP);
+  }catch(e){}
+  cx.drawImage(cv,0,0,Wp,Hp);
+  if(n._ov) cx.drawImage(n._ov,0,0,Wp,Hp);
+  out.toBlob(b=>{ if(b) saDownload(b,'spectrum-'+saStamp()+'.png'); },'image/png');
+}
 function saTrackCarrier(n,sp){
   if(sp.rev===n._trkRev) return; n._trkRev=sp.rev;
   n._trkWin=n._trkWin||[null,null,null,null];
@@ -1780,6 +1885,7 @@ function saOvDraw(n,cv){
   saBandPlan(n,cx,W,hs,plotH);                        // полосы/закладки — зона спектра, водопад не трогаем
   saSigTags(n,cx,W,plotH);                            // метки сигналов с 'sigid'
   saMarkers(n,cx,W,hs);
+  saTraceInfo(n,cx,W,hs,plotH);                       // RBW, трассы, измерение
   saMarkersWf(n,cx,W,hs,H);                           // полоса маркеров на водопаде — по наведению
   saBandPlanLabels(n,cx);                             // подписи — поверх маркеров
   saChannelLabels(n,cx,W);
@@ -2085,7 +2191,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         {n:'fr1',t:'num'},
         {n:'fr2',t:'num'},
         {n:'fr3',t:'num'},
-        {n:'fr4',t:'num'}],   // holdF — панели (layout=panes)
+        {n:'fr4',t:'num'},
+        {n:'dF',t:'num',tip:'delta markers: frequency of the first other marker minus the reference marker, Hz'},
+        {n:'dDb',t:'num',tip:'delta markers: level difference of the same pair, dB'},
+        {n:'meas',t:'num',tip:'the value of the selected measurement: dB (channel power, ACPR worst side, noise density) or Hz (OBW, x dB bandwidth)'},
+        {n:'measTxt',t:'txt'}],   // holdF — панели (layout=panes)
   view:{h:280}, pick:true, resize:true,
   params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)',fn:n=>{ if(n.p.auto) n.zoom=null; }},
           {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[0,4000],label:'range, Hz'},
@@ -2120,6 +2230,26 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'markLabels',t:'text',d:'preamble, data, voice',label:'mark labels (comma list; 1, 2, 3 … picks one in the dialog)'},
           {n:'tickSec',t:'select',opts:['off','1','5','10','30','60'],d:'off',label:'time ticks on the waterfall, s'},
           {n:'clearMarks',t:'button',label:'Clear marks',fn:n=>{ n.userMarks=[]; n._umDrag=null; }},
+          // трассы: 1 — основная (по умолчанию живая), 2–4 — дополнительные; усреднение по мощности, удержание максимума/минимума, заморозка
+          {n:'tr1',t:'select',opts:['live','average','max hold','min hold','view'],d:'live',label:'trace 1'},
+          {n:'tr2',t:'select',opts:['off','live','average','max hold','min hold','view'],d:'off',label:'trace 2'},
+          {n:'tr3',t:'select',opts:['off','live','average','max hold','min hold','view'],d:'off',label:'trace 3'},
+          {n:'tr4',t:'select',opts:['off','live','average','max hold','min hold','view'],d:'off',label:'trace 4'},
+          {n:'avgN',t:'range',min:2,max:200,step:1,d:16,label:'average: frames (a true mean first, then a sliding window)'},
+          {n:'det',t:'select',opts:['auto','peak','negpeak','sample','rms','average'],d:'auto',label:'detector (a pixel column that holds several bins; auto = peak)'},
+          {n:'rbw',t:'select',opts:['native','×2','×4','×8','×16','×32','×64'],d:'native',label:'RBW: bins merged (carriers keep the level, noise grows by 10·lg k)'},
+          {n:'mkTrace',t:'select',opts:['1','2','3','4'],d:'1',label:'markers read trace'},
+          {n:'clrTr',t:'button',label:'Clear traces',fn:n=>{ n.tr=null; n._drawKey=null; saOvKick(n); }},
+          {n:'dRef',t:'select',opts:['off','1','2','3','4'],d:'off',label:'delta markers: reference marker (the others show Δf and ΔdB to it)'},
+          {n:'meas',t:'select',opts:['off','channel power','OBW','x dB bandwidth','ACPR','noise density'],d:'off',label:'measure at the active marker'},
+          {n:'measBw',t:'range',min:100,max:2e6,step:10,log:true,d:12500,label:'measure: channel width, Hz (a receiver channel under the marker sets its own)'},
+          {n:'measPct',t:'range',min:50,max:99.9,step:.1,d:99,label:'OBW: % of the power'},
+          {n:'measX',t:'range',min:1,max:60,step:1,d:26,label:'x dB bandwidth: dB below the peak'},
+          {n:'acpOff',t:'range',min:100,max:2e6,step:10,log:true,d:25000,label:'ACPR: adjacent channel offset, Hz'},
+          {n:'saveCsv',t:'button',label:'⤓ Traces to CSV',fn:n=>saExportCsv(n)},
+          {n:'savePng',t:'button',label:'⤓ Picture (PNG)',fn:n=>saExportPng(n)},
+          {n:'refSave',t:'button',label:'⤓ Reference to a file',adv:true,fn:n=>saRefSave(n)},
+          {n:'refLoad',t:'button',label:'⤒ Reference from a file',adv:true,fn:n=>saRefLoad(n)},
           {n:'palette',t:'select',opts:['default',...Object.keys(PALETTES)],d:'classic',label:'waterfall palette',adv:true},
           // история водопада в полном разрешении — зум/смена палитры и диапазона дБ перерисовывают её без потерь
           {n:'wfMem',t:'select',opts:['off','32','128','512'],d:'128',label:'waterfall history memory, MB',adv:true,
@@ -2132,7 +2262,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'band',t:'select',opts:['none','by inputs','1–2','3–4'],d:'by inputs',label:'band',adv:true},
           {n:'ref',t:'select',opts:['none','show','diff'],d:'none',label:'reference',adv:true},
           {n:'take',t:'button',label:'Capture reference',adv:true,fn:n=>{
-            if(n.s) n.refMag=Float32Array.from(n.s.mag); }}],
+            if(n.s){ n.refMag=Float32Array.from(n.s.mag); n.refSrc=null; } }}],
   // Активный маркер/очистка — больше не отдельные параметры (были 'active'/'clr'/'clrAll'):
   // теперь это вкладки 1-4 прямо на графике (см. saMarkerTabs в processing.js) — n.active
   // (обычное поле узла, не n.p.*, специально: это чисто UI-фокус "куда упадёт следующий тап",
@@ -2302,22 +2432,24 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       }
       n._peakT=performance.now();
     }
+    if(sp) saTraces(n,sp);
     // маркеры — раз на новый спектр (process идёт на каждый блок движка); повтор с тем же rev
     // ещё и сбрасывал фазовое уточнение fr до частоты бина
     if(sp && n.p.trk) saTrackCarrier(n,sp);
-    const mkKey=sp?sp.rev+'|'+n.mk+'|'+n.p.tol:null;
+    const mkKey=sp?sp.rev+'|'+n.mk+'|'+n.p.tol+'|'+n.p.mkTrace+'|'+n.p.rbw+'|'+n.p.dRef+'|'+n.p.meas+'|'+n.p.measBw+'|'+n.p.measPct+'|'+n.p.measX+'|'+n.p.acpOff+'|'+n.active:null;
     if(sp && sp===n._mkSp && mkKey===n._mkKey){ Object.assign(o,n._mkOut); return o; }
     n._mkSp=sp; n._mkKey=mkKey; const mo=n._mkOut={};
+    const mArr=sp ? saMarkTrace(n,sp) : null, msp=mArr&&mArr!==sp.mag ? Object.assign(Object.create(sp),{mag:mArr}) : sp;
     for(let k=0;k<4;k++){
       const f=n.mk[k];
       if(f==null||!sp){ o['f'+(k+1)]=f==null?null:f; o['snr'+(k+1)]=null; o['fr'+(k+1)]=null; o['db'+(k+1)]=null;
                          n.mkRev[k]=-1; continue; }
       const lo=clamp(Math.floor(specBin(sp,f-n.p.tol)),0,N-1),
             hi=clamp(Math.ceil (specBin(sp,f+n.p.tol)),0,N-1);
-      let mx=0, bin=lo; for(let i=lo;i<=hi;i++) if(sp.mag[i]>mx){ mx=sp.mag[i]; bin=i; }
+      let mx=0, bin=lo; for(let i=lo;i<=hi;i++) if(msp.mag[i]>mx){ mx=msp.mag[i]; bin=i; }
       n.db[k]=20*Math.log10(mx+1e-12);
       // db — пик в окне ±tol в дБ; snr — он же над шумовой полкой вокруг маркера (см. saNoiseFloor)
-      n.snr[k]=n.db[k]-saNoiseFloor(sp,f,n.p.tol);
+      n.snr[k]=n.db[k]-saNoiseFloor(msp,f,n.p.tol);
       o['f'+(k+1)]=f; o['db'+(k+1)]=n.db[k]; o['snr'+(k+1)]=n.snr[k];
       // фазовое уточнение: только между соседними кадрами (rev не пропущен) и если пик
       // не перескочил больше чем на 1 бин — иначе это, скорее всего, другой сигнал, не дрейф
@@ -2331,7 +2463,14 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       }
       if(sp.phase){ n.mkPhase[k]=sp.phase[bin]; n.mkBin[k]=bin; n.mkRev[k]=sp.rev; }
       o['fr'+(k+1)]=fr; }
+    // дельта-маркеры: первый из остальных маркеров относительно опорного
+    o.dF=null; o.dDb=null;
+    const rk=n.p.dRef==='off' ? -1 : (+n.p.dRef)-1;
+    if(sp && rk>=0 && n.mk[rk]!=null) for(let k=0;k<4;k++) if(k!==rk && n.mk[k]!=null){ o.dF=n.mk[k]-n.mk[rk]; o.dDb=n.db[k]-n.db[rk]; break; }
+    saMeasure(n,sp);
+    o.meas=n.meas ? n.meas.val : null; o.measTxt=n.meas ? n.meas.text : '';
     for(let k=1;k<=4;k++) for(const q of ['f','db','snr','fr']) mo[q+k]=o[q+k];
+    for(const q of ['dF','dDb','meas','measTxt']) mo[q]=o[q];
     return o; },
   draw(n,cv,cx){
     cv.style.touchAction=n.p.layout==='panes' ? 'none' : '';
@@ -2843,9 +2982,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       cx.strokeStyle=n.colTS;
       cx.lineWidth=1;
       const traceY=new Float32Array(W);
+      // трасса 1 (живая, усреднённая, удержание…) и детектор столбца; водопад и эталон — по-прежнему по пику
+      const trs=saTrArrs(n), t1=trs[0]&&trs[0].length===N ? trs[0] : m, dr=(arr,b0,b1)=>saDetect(arr,N,b0,b1,n.p.det);
       for(let x=0;x<W;x++){
-        const mv=magReduce(m,edgeX[x],edgeX[x+1]);
-        const v=diff? saDb(mv)-saDb(magReduce(R,edgeX[x],edgeX[x+1]))
+        const mv=dr(t1,edgeX[x],edgeX[x+1]);
+        const v=diff? saDb(mv)-saDb(dr(R,edgeX[x],edgeX[x+1]))
                     : saDb(mv);
         const lo=diff? -40 : n.p.floor, hiv=diff? 40 : n.p.top;
         traceY[x]=n._inX[x] ? plotH-clamp((v-lo)/((hiv-lo)||1),0,1)*(plotH-2)-1 : plotH; }
@@ -2870,6 +3011,14 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         for(let x=0;x<W;x++){
           const v=saDb(magReduce(n.peak,edgeX[x],edgeX[x+1]));
           const y=plotH-clamp((v-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
+          x?cx.lineTo(x,y):cx.moveTo(x,y); }
+        cx.stroke();
+      }
+      if(!diff) for(let k=1;k<4;k++){                  // трассы 2–4
+        const a=trs[k]; if(!a||a.length!==N) continue;
+        cx.strokeStyle=SA_TRC[k]; cx.lineWidth=1; cx.beginPath();
+        for(let x=0;x<W;x++){
+          const y=n._inX[x] ? plotH-clamp((saDb(dr(a,edgeX[x],edgeX[x+1]))-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1 : plotH;
           x?cx.lineTo(x,y):cx.moveTo(x,y); }
         cx.stroke();
       }
@@ -4338,7 +4487,10 @@ defGroups('sa',[
   {n:'Time marks', p:'markMode markLabels tickSec clearMarks'},
   {n:'Waterfall', p:'rowMs palette wfMem', open:false},
   {n:'Phosphor', p:'phosphor phDecay phGain', open:false},
-  {n:'Reference', p:'tol band ref take', open:false}],
+  {n:'Traces', p:'tr1 tr2 tr3 tr4 avgN det rbw mkTrace clrTr', open:false},
+  {n:'Measure', p:'dRef meas measBw measPct measX acpOff', open:false},
+  {n:'Export', p:'saveCsv savePng', open:false},
+  {n:'Reference', p:'tol band ref take refSave refLoad', open:false}],
   {pri:'auto frange dbrange peakHold layout'});
 defGroups('scope',[
   {n:'Scale', p:'span gain ofs cursors grid stack meas'},

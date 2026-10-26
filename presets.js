@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=122;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=123;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -202,6 +202,7 @@ const PRESET_CATS={
   'USB SDR: Band Plan Autotune — Mode, Bandwidth and Gain by Range':'SDR Receivers',
   'ESP-SDR: ESP32 Spectrum':'SDR Receivers',
   'Spectrum Analyzer: Dense Overlay — Bookmarks, Band Plan and Signal Tags (Generator)':'Analysis & Measurement',
+  'Spectrum Analyzer: Traces, Delta Markers and Measurements (Generator)':'Analysis & Measurement',
   'Measure: Modulation Meter — FM and AM (Generator)':'Analysis & Measurement',
   'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
   'Measure: Spectrum Baseline — New Signal and Missing Carrier Alarm (Generator)':'Analysis & Measurement',
@@ -1451,6 +1452,22 @@ const sa=addNode('sa',820,40,{auto:true,floor:-100,top:-20,split:.45});
 sa.size.w=1100; sa.size.h=560; applySize(sa);
 addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
 addEdge(t1.id,'rows',sa.id,'bands'); addEdge(t2.id,'rows',sa.id,'sigs');
+markWiresDirty();
+});
+preset('Spectrum Analyzer: Traces, Delta Markers and Measurements (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Bench-analyzer tools in the Spectrum Analyzer. An FM carrier with a 1 kHz tone (±5 kHz deviation) over noise; markers 1 (on the carrier) and 2 (25 kHz up) come from two Constants.\n'+
+  'Traces: 1 is live, 2 holds the maximum, 3 averages power over 16 frames (a sliding window after that), 4 is off — each trace has one of live / average / max hold / min hold / view (freeze), and a chip at the top right names it. Markers read the trace set in «markers read trace». Detector (peak, negative peak, sample, rms, average) decides what a pixel column that holds several bins shows: rms and average read the noise floor honestly, peak never loses a narrow carrier. RBW merges bins (×2…×64): a carrier keeps its level, noise grows by 10·lg k; the chip shows the resulting RBW.\n'+
+  'Delta markers: set the reference marker (here 1, tagged ◆ref); the other flags show Δf and ΔdB to it, and outputs dF, dDb carry the first pair. Measure at the active marker: channel power, OBW (% of the power), x dB bandwidth, ACPR (adjacent channels at the offset, dBc) and noise density (dB/Hz) — the band is shaded, the result is a chip and goes to the outputs meas / measTxt. A receiver channel under the marker sets the width, otherwise «measure: channel width».\n'+
+  'Export: ⤓ Traces to CSV (frequency and every active trace in dB), ⤓ Picture (spectrum, waterfall, overlay), ⤓ / ⤒ Reference to a file and back (it is resampled to the current bins, so it survives a change of the FFT size).'});
+nt.size.w=900; nt.size.h=290; applySize(nt);
+const gn=addNode('iqGen',40,360,{sr:'1024000',fc:100000000,mode:'FM',off:100000,lvl:-30,tone:1000,dev:5000,depth:.6,noise:-60});
+const sp=addNode('iqSpec',40,660,{size:'8192',avg:'4'});
+const c1=addNode('const',40,820,{v:100100000}), c2=addNode('const',40,900,{v:100125000});
+const sa=addNode('sa',960,40,{auto:true,floor:-100,top:-20,split:.5,tr2:'max hold',tr3:'average',avgN:16,det:'rms',dRef:'1',meas:'OBW',measBw:60000,measPct:99,acpOff:25000});
+sa.size.w=1100; sa.size.h=620; applySize(sa);
+addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
+addEdge(c1.id,'out',sa.id,'m1'); addEdge(c2.id,'out',sa.id,'m2');
 markWiresDirty();
 });
 preset('Measure: Modulation Meter — FM and AM (Generator)', function(){
