@@ -12,6 +12,13 @@ const stNoiseBuf=ac=>{
   let s=22222; for(let i=0;i<n;i++){ s=(s*1664525+1013904223)>>>0; d[i]=s/2147483648-1; }
   return ac._stNoise=b;
 };
+// «металл» хэта и тарелки: шесть меандров 80…328 Гц одним зацикленным буфером (вместо шести осцилляторов на удар)
+function stMetalBuf(ac){
+  if(ac._stMetal) return ac._stMetal;
+  const n=ac.sampleRate*2, b=ac.createBuffer(1,n,ac.sampleRate), d=b.getChannelData(0);
+  for(const f of [80,120,166,217,272,328]) for(let i=0;i<n;i++) d[i]+=((i*f/ac.sampleRate)%1<.5?1:-1)*.17;
+  return ac._stMetal=b;
+}
 const stCurveCache=new Map();
 const stCurve=(a,t)=>{ const k=t+Math.round(a*40); let c=stCurveCache.get(k); if(!c){ c=stDriveCurve(a,t); stCurveCache.set(k,c); } return c; };
 function stNoiseSrc(ac,t){
@@ -165,7 +172,8 @@ function stDrumVoice(rig,ch,p,key,vel,t){
     g.gain.setValueAtTime(v*1.4,t+.034); g.gain.setTargetAtTime(0,t+.036,.07*dec); end=t+.6*dec+.1;
   }else if(kind==='chat' || kind==='ohat' || kind==='crash'){
     const hp=stBiq(ac,'highpass',kind==='crash'?4000:6500+p.tone*2500), bp=stBiq(ac,'bandpass',kind==='crash'?7500:10000,.7), g=stGain(ac,0);
-    for(const r of [2,3,4.16,5.43,6.79,8.21]){ const o=osc('square',40*r*k2*(kind==='crash'?1.3:1)), s=stGain(ac,.17); o.connect(s); s.connect(bp); }
+    const ms=ac.createBufferSource(); ms.buffer=stMetalBuf(ac); ms.loop=true; ms.playbackRate.value=k2*(kind==='crash'?1.3:1);
+    ms.start(t,Math.random()*1.5); stops.push(ms); ms.connect(bp);
     const n=noise(), ns=stGain(ac,.3+p.tone*.4); n.connect(ns); ns.connect(bp);
     bp.connect(hp); hp.connect(g); g.connect(dst);
     const tau=(kind==='chat'?.022:kind==='ohat'?.12:.55)*dec;
@@ -207,19 +215,28 @@ function stSynthVoice(rig,ch,p,key,vel,t,off){
   const gmul=1/Math.sqrt(uni);
   const mk=(type,freq,cents)=>{ const o=ac.createOscillator(); o.type=type; o.frequency.value=freq; o.detune.value=cents; oscs.push(o); stops.push(o); return o; };
   const prev=p.mono ? rig.monoLast[ch.id] : null;
+  // уровень и панорама — общие на группу L/C/R и слой: на унисон остаются только осцилляторы
+  const pans={}, sinks={};
+  const sink=(gi,layer,level)=>{
+    const k=gi*2+layer; if(sinks[k]) return sinks[k];
+    const g=stGain(ac,level*gmul*.6);
+    if(uni>1 && spr>0 && gi!==1){ const pn=pans[gi]||(pans[gi]=ac.createStereoPanner()); pn.pan.value=(gi-1)*spr; pn.connect(bus); g.connect(pn); }
+    else g.connect(bus);
+    return sinks[k]=g;
+  };
   for(let u=0;u<uni;u++){
-    const pos=uni===1?0:u/(uni-1)*2-1, det=pos*p.det, pn=ac.createStereoPanner(); pn.pan.value=pos*spr; pn.connect(bus);
+    const pos=uni===1?0:u/(uni-1)*2-1, det=pos*p.det, gi=pos<-.34?0:pos>.34?2:1;
     const fr1=f0*Math.pow(2,p.o1+p.s1/12), fr2=f0*Math.pow(2,p.o2+p.s2/12);
     if(p.l1>0 || p.fm>0){
-      const o1=mk(stOscT[p.w1],fr1,det), g1=stGain(ac,p.l1*gmul*.6); o1.connect(g1); g1.connect(pn);
+      const o1=mk(stOscT[p.w1],fr1,det); o1.connect(sink(gi,0,p.l1));
       if(prev && p.gl>0){ o1.frequency.setValueAtTime(prev.f*Math.pow(2,p.o1+p.s1/12),t); o1.frequency.exponentialRampToValueAtTime(fr1,t+p.gl); }
       if(p.fm>0 || p.l2>0){
         const o2=mk(stOscT[p.w2],fr2,det+p.dt2);
         if(p.fm>0){ const mg=stGain(ac,p.fm*fr2*6); o2.connect(mg); mg.connect(o1.frequency); }
-        if(p.l2>0){ const g2=stGain(ac,p.l2*gmul*.6); o2.connect(g2); g2.connect(pn); }
+        if(p.l2>0) o2.connect(sink(gi,1,p.l2));
       }
     }else if(p.l2>0){
-      const o2=mk(stOscT[p.w2],fr2,det+p.dt2), g2=stGain(ac,p.l2*gmul*.6); o2.connect(g2); g2.connect(pn);
+      mk(stOscT[p.w2],fr2,det+p.dt2).connect(sink(gi,1,p.l2));
     }
   }
   if(p.sub>0){ const o=mk('sine',f0/2,0), g=stGain(ac,p.sub*.7); o.connect(g); g.connect(bus); }
@@ -340,7 +357,11 @@ class StRig{
     const v=ch.type==='drum' ? stDrumVoice(this,ch,p,key,vel,t) : ch.type==='sampler' ? stSampleVoice(this,ch,p,key,vel,t,off)
       : stSynthVoice(this,ch,p,key,vel,t,off);
     const vs=this.voices; vs.push(v);
-    if(vs.length>400){ const now=this.ac.currentTime; this.voices=vs.filter(x=>!(x.end<now)); }
+    if(vs.length>60){                                    // звучащих слишком много — убрать закончившиеся, затем самые старые
+      const now=this.ac.currentTime; let live=vs.filter(x=>!(x.end<now));
+      while(live.length>72){ const o=live.shift(); try{ o.kill(now); }catch(e){} }
+      this.voices=live;
+    }
     return v;
   }
   // уровни вставок: пик 0..1
@@ -363,7 +384,9 @@ class StSched{
       const ch=P.channels.find(c=>c.id===e.ch); if(!ch) continue;
       const any=P.channels.some(c=>c.solo); if(ch.mute || (any && !ch.solo)) continue;
       const t=toTime(e.t), off=toTime(e.t+e.l)-.005;
-      rig.note(ch,e.k,e.v,Math.max(t,rig.ac.currentTime),off>t?off:t+.03,this.autoCh[ch.id]);
+      const now=rig.ac.currentTime;
+      if(now-t>.06) continue;                            // основной поток подвис и нота безнадёжно опоздала — пропускаем, а не играем залпом
+      rig.note(ch,e.k,e.v,Math.max(t,now),off>t?off:t+.03,this.autoCh[ch.id]);
     }
   }
   autos(a,b,toTime){
@@ -420,18 +443,32 @@ class StEngine{
     if(this.ac){ this.ac.close(); this.ac=null; this.rig=null; this.sched=null; }
   }
   toTime(tick){ const a=this.sa; return a.t0+stSec(tick-a.tick0,this.P.bpm); }
+  // таймер планировщика в воркере: у фоновой вкладки setInterval тормозится до 1 раза в секунду, а воркер — нет
+  startTimer(fn){
+    this.stopTimer();
+    try{
+      const url=URL.createObjectURL(new Blob(['let t=0;onmessage=e=>{clearInterval(t);if(e.data)t=setInterval(()=>postMessage(0),e.data)}'],{type:'text/javascript'}));
+      const w=new Worker(url); URL.revokeObjectURL(url); w.onmessage=fn; w.postMessage(20); this.tw=w; return;
+    }catch(e){ this.tw=null; }
+    this.timer=setInterval(fn,25);
+  }
+  stopTimer(){ if(this.tw){ this.tw.postMessage(0); this.tw.terminate(); this.tw=null; } clearInterval(this.timer); this.timer=0; }
   play(from){
     this.ensure(); this.stop();
-    const t0=this.ac.currentTime+.08;
-    this.sa={t0,tick0:from}; this.anchors=[{t0,tick0:from,bpm:this.P.bpm}]; this.sp=from; this.playing=true; this._bpm=this.P.bpm;
-    this.sched=new StSched(this.rig,this.P);
-    this.timer=setInterval(()=>this.pump(),25); this.pump();
+    this.playing=true; this.sa=null; this.anchors=[]; this.pendFrom=from; const gen=this.gen=(this.gen||0)+1;
+    const go=()=>{
+      if(!this.playing || gen!==this.gen) return;
+      const t0=this.ac.currentTime+.12;                  // отсчёт от уже идущих часов контекста (после resume они стоят на месте)
+      this.sa={t0,tick0:from}; this.anchors=[{t0,tick0:from,bpm:this.P.bpm}]; this.sp=from; this._bpm=this.P.bpm;
+      this.sched=new StSched(this.rig,this.P); this.startTimer(()=>this.pump()); this.pump();
+    };
+    if(this.ac.state==='running') go(); else this.ac.resume().then(go,go);
   }
   pump(){
-    const ac=this.ac, P=this.P; if(!this.playing) return;
+    const ac=this.ac, P=this.P; if(!this.playing || !this.sa) return;
     if(P.bpm!==this._bpm){ this.sa={t0:this.toTime(this.sp),tick0:this.sp}; this.anchors.push({t0:this.sa.t0,tick0:this.sp,bpm:P.bpm}); this._bpm=P.bpm; this.rig.setBpm(P.bpm); }
     let guard=0;
-    while(this.toTime(this.sp)<ac.currentTime+.2 && guard++<64){
+    while(this.toTime(this.sp)<ac.currentTime+.3 && guard++<96){
       const a=this.sp; let b=a+12, wrap=false, lp=null;
       if(this.view.mode==='song'){
         lp=P.playlist.loop;
@@ -450,7 +487,7 @@ class StEngine{
   }
   stopSoon(){ this.stop(); if(this.onstop) this.onstop(); }
   stop(keepRig){
-    clearInterval(this.timer); this.timer=0; this.playing=false;
+    this.stopTimer(); this.playing=false; this.gen=(this.gen||0)+1;
     if(this.rig && !keepRig){                      // оборвать звучащие и ещё не начавшиеся голоса
       const t=this.ac.currentTime;
       for(const v of this.rig.voices) if(!(v.end<t)) try{ v.kill(t); }catch(e){}
@@ -460,6 +497,7 @@ class StEngine{
   getTick(){
     if(!this.playing) return null;
     const ct=this.ac.currentTime, A=this.anchors;
+    if(!A.length) return this.pendFrom||0;                 // контекст ещё запускается
     while(A.length>1 && A[1].t0<=ct) A.shift();
     const a=A[0]; return Math.max(0,a.tick0+stTicks(ct-a.t0,a.bpm));
   }
