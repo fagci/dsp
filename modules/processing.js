@@ -1470,15 +1470,16 @@ function saBands(n,cx,W,H){                        // закраска поло�
 // saChannelLabels, после маркеров, чтобы линия маркера её не перекрывала.
 function saChannels(n,cx,W,H,plotH){
   const list=n.s&&n.s.chans; if(!list||!list.length) return;
+  const TOP=Math.max(16,n._topH||0);
   const yDb=db=>plotH-clamp((db-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
   for(const c of list){
     const x1=saPos(n,c.lo)*W, x2=saPos(n,c.hi)*W;
     if(x2<0||x1>W) continue;
     const col=MK_COL(c.idx);
-    cx.globalAlpha=.08; cx.fillStyle=col; cx.fillRect(x1,16,Math.max(1,x2-x1),H-16);
+    cx.globalAlpha=.08; cx.fillStyle=col; cx.fillRect(x1,TOP,Math.max(1,x2-x1),H-TOP);
     cx.globalAlpha=.9; cx.strokeStyle=col; cx.lineWidth=1;
     const e1=Math.round(x1)+.5, e2=Math.round(x2)-.5;
-    cx.beginPath(); cx.moveTo(e1,16); cx.lineTo(e1,H); cx.moveTo(e2,16); cx.lineTo(e2,H); cx.stroke();
+    cx.beginPath(); cx.moveTo(e1,TOP); cx.lineTo(e1,H); cx.moveTo(e2,TOP); cx.lineTo(e2,H); cx.stroke();
     // шумоподавитель: пунктир — порог, сплошная — текущий средний уровень в полосе канала
     // (в той же шкале, что трасса); сплошная выше пунктира — открыт (с гистерезисом 3 дБ и hang)
     if(c.thrDb!=null && plotH){
@@ -1644,7 +1645,7 @@ function saChannelLabels(n,cx,W){
     const x1=saPos(n,c.lo)*W, x2=saPos(n,c.hi)*W;
     if(x2<0||x1>W) continue;
     const col=MK_COL(c.idx), bw=c.hi-c.lo, t=c.mode+' '+fmtHz(bw, bw%1000?1:0)+(c.sql ? (c.sqOpen?' SQL open':' SQL closed') : '');
-    const tw=Math.ceil(cx.measureText(t).width), ty=20+c.idx*15;
+    const tw=Math.ceil(cx.measureText(t).width), ty=Math.max(16,n._topH||0)+4+c.idx*15;
     let tx=(x1+x2-tw)/2;
     if(x2-x1<tw+8) tx = x2+4+tw<=W ? x2+4 : x1-tw-4;
     tx=clamp(Math.round(tx), 3, W-tw-3);
@@ -1882,6 +1883,13 @@ function saTip(n,cx,W,H){
   const f=saFreq(n,hx), rows=[], seen=new Set();
   const add=(col,head,sub)=>{ const k=head+'|'+sub; if(!seen.has(k)){ seen.add(k); rows.push({col,head,sub}); } };
   for(const b of n._bmBoxes||[]) if(inB(b)) add(b.b.color||'#c9c9c9','★ '+(b.b.label||saHz(b.freq)),saHz(b.freq)+(b.b.note?' · '+b.b.note:''));
+  for(const b of n._mkBoxes||[]) if(inB(b)){
+    const k=b.idx, mf=n.mk[k], bw=saMarkerBw(n,k), ch=saChanAtMarker(n,mf), a=[];
+    if(ch && ch.rssi!=null) a.push(Math.round(ch.rssi)+' dBFS'+(ch.snr!=null?' · SNR '+Math.round(ch.snr):'')); else if(n.db[k]>-119) a.push(Math.round(n.db[k])+' dB · SNR '+Math.max(0,Math.round(n.snr?.[k]??0)));
+    if(bw) a.push('bw '+fmtHz(bw[1]-bw[0],bw[1]-bw[0]<1e4?1:0)+'Hz');
+    if(ch&&ch.mode) a.push(ch.mode);
+    add(MK_COL(k),'Marker '+(k+1)+' · '+saHz(mf),a.join(' · ')||'—');
+  }
   const bh=(n._bpBoxes||[]).filter(inB);
   if(bh.length){
     for(const r of (n._bpAll||[]).filter(r=>r.lo<=f&&r.hi>=f).sort((a,b)=>(b.hi-b.lo)-(a.hi-a.lo))){
@@ -1953,9 +1961,45 @@ function contrastText(hex){
 // n._mkBoxes — прямоугольники подписей маркеров в пикселях канвы (читает sa's draw() в analysis.js
 // для клика/наведения), n._mkHoverIdx — номер наведённого (0-3), рисуется последним (поверх
 // соседних), как и у точечных закладок в saBandPlan.
+// Полоса маркера: канал приёмника под ним, иначе окно слежения за несущей. null — ширина неизвестна.
+function saMarkerBw(n,k){
+  const f=n.mk[k]; if(f==null) return null;
+  const ch=saChanAtMarker(n,f);
+  if(ch && ch.hi>ch.lo) return [ch.lo,ch.hi];
+  const w=n.p.trk&&n._trkWin?.[k];
+  return w ? [f-w/2,f+w/2] : null;
+}
+// Маркеры на водопаде — только пока курсор над ним: линия, полоса пропускания и подпись с шириной.
+function saMarkersWf(n,cx,W,hs,H){
+  if(n._hoverX==null || n._hoverY==null || n._hoverY<=hs || n._dragActive) return;
+  const present=[0,1,2,3].filter(k=>n.mk[k]!=null); if(!present.length) return;
+  cx.save(); cx.font='10px monospace';
+  const placed=[];
+  present.forEach(k=>{
+    const f=n.mk[k], x=saPos(n,f)*W; if(x<-2||x>W+2) return;
+    const col=MK_COL(k), bw=saMarkerBw(n,k), xr=Math.round(x)+.5;
+    if(bw){
+      const x1=saPos(n,bw[0])*W, x2=saPos(n,bw[1])*W;
+      cx.globalAlpha=.12; cx.fillStyle=col; cx.fillRect(x1,hs,Math.max(2,x2-x1),H-hs);
+      if(x2-x1>=3){ cx.globalAlpha=.8; cx.strokeStyle=col; cx.lineWidth=1; cx.beginPath();
+        cx.moveTo(Math.round(x1)+.5,hs); cx.lineTo(Math.round(x1)+.5,H); cx.moveTo(Math.round(x2)-.5,hs); cx.lineTo(Math.round(x2)-.5,H); cx.stroke(); }
+    }
+    cx.globalAlpha=.85; cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash([3,3]);
+    cx.beginPath(); cx.moveTo(xr,hs); cx.lineTo(xr,H); cx.stroke(); cx.setLineDash([]);
+    const t=(k+1)+': '+fmtHz(f,3).replace(/[kMG]$/,'')+(bw?' · '+fmtHz(bw[1]-bw[0],bw[1]-bw[0]<1e4?1:0)+'Hz':'');
+    const tw=Math.ceil(cx.measureText(t).width)+6;
+    let lx=clamp(Math.round(x-tw/2),2,W-tw-2), ly=hs+3;
+    for(let i=0;i<4;i++){ const hit=placed.find(q=>lx<q.x+q.w+1&&lx+tw+1>q.x&&ly<q.y+13&&ly+12>q.y); if(!hit) break; ly=hit.y+13; }
+    placed.push({x:lx,y:ly,w:tw});
+    cx.globalAlpha=.9; cx.fillStyle=col; cx.fillRect(lx,ly,tw,12);
+    cx.globalAlpha=1; cx.fillStyle=contrastText(col); cx.fillText(t,lx+3,ly+9);
+  });
+  cx.restore();
+}
 function saMarkers(n,cx,W,H){
   cx.lineWidth=1; cx.globalAlpha=1; cx.font='10px monospace';
-  const TOP_H=16;                                    // потолок с подписями закладок (см. saBandPlan) — не залезаем
+  const TOP_H=Math.max(16,n._topH||0);               // потолок с подписями закладок (см. saBandPlan) — не залезаем
+  const baseY=H-14-(n._bpH||0);                      // флажки стоят над лентой band plan, а не на ней
   const boxes=n._mkBoxes=(n._mkBoxes||[]); boxes.length=0;
   n._hbBoxes=[]; n._hbRows=[0,0];
   const hoverK=n._mkHoverIdx;
@@ -1990,9 +2034,9 @@ function saMarkers(n,cx,W,H){
     const ant=n.p.ant==='antenna'||n.p.ant==='both', hrm=n.p.ant==='harmonics'||n.p.ant==='both';
     const t2=ant ? t+' λ/4 '+fmtLen(antennaDims(f,n.p.antVf).quarter) : t;
     const tw=cx.measureText(t2).width;
-    // по центру линии маркера; дорожка стека — по НОМЕРУ маркера (k), а не по порядку рисования —
-    // иначе позиции соседних подписей "прыгали" бы при каждой смене наведения
-    const tx=clamp(Math.round(x-tw/2), 2, W-tw-2), ty=H-14-k*14;
+    // по центру линии маркера; дорожка стека — по месту среди выставленных маркеров (present), а не
+    // по порядку рисования — иначе позиции соседних подписей "прыгали" бы при каждой смене наведения
+    const tx=clamp(Math.round(x-tw/2), 2, W-tw-2), ty=baseY-present.indexOf(k)*14;
     cx.globalAlpha=hovered?1:(act?.95:.75); cx.fillStyle=MK_COL(k);
     cx.fillRect(tx-3,ty,tw+6,12);
     cx.globalAlpha=1; cx.fillStyle=contrastText(MK_COL(k));

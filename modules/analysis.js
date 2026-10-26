@@ -1780,6 +1780,7 @@ function saOvDraw(n,cv){
   saBandPlan(n,cx,W,hs,plotH);                        // полосы/закладки — зона спектра, водопад не трогаем
   saSigTags(n,cx,W,plotH);                            // метки сигналов с 'sigid'
   saMarkers(n,cx,W,hs);
+  saMarkersWf(n,cx,W,hs,H);                           // полоса маркеров на водопаде — по наведению
   saBandPlanLabels(n,cx);                             // подписи — поверх маркеров
   saChannelLabels(n,cx,W);
   saMarkerTabs(n,cx,W);
