@@ -1783,6 +1783,7 @@ function saOvDraw(n,cv){
   saBandPlanLabels(n,cx);                             // подписи — поверх маркеров
   saChannelLabels(n,cx,W);
   saMarkerTabs(n,cx,W);
+  saTip(n,cx,W,hs);                                   // подсказка: что под курсором
 }
 function saOvKick(n){
   if(n._ovRaf) return;
@@ -2670,12 +2671,13 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       });
       cv.addEventListener('pointermove', ev=>{
         { const rc=cv.getBoundingClientRect(), fx=(ev.clientX-rc.left)/rc.width;
-          n._hoverX = ev.pointerType==='touch'||drag||fx<0||fx>1||tabHit(ev)||nearBoundary(ev) ? null : fx; }
+          n._hoverX = ev.pointerType==='touch'||drag||fx<0||fx>1||tabHit(ev)||nearBoundary(ev) ? null : fx;
+          n._hoverY = (ev.clientY-rc.top)/rc.height*cv.height; }
         n._bmHoverFreq = bmHit(ev)?.freq ?? null; saOvKick(n);
         n._mkHoverIdx = n._bmHoverFreq==null ? (mkHit(ev)?.idx ?? null) : null;
         if(!drag) cv.style.cursor = nearBoundary(ev) ? 'ns-resize' : chanEdgeAt(ev) ? 'ew-resize' : mkLineAt(ev)!=null ? 'grab' : '';
       });
-      cv.addEventListener('pointerleave', ()=>{ n._hoverX=null; n._bmHoverFreq=null; n._mkHoverIdx=null; saOvKick(n); });
+      cv.addEventListener('pointerleave', ()=>{ n._hoverX=null; n._hoverY=null; n._bmHoverFreq=null; n._mkHoverIdx=null; saOvKick(n); });
     }
     if(n.s){
       const dpr=(cv.pxW&&cv.width)?cv.pxW/cv.width:1, Wp=cv.pxW||W, hwP=Math.max(1,Math.round(hw*dpr));

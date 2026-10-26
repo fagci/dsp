@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=119;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=120;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -201,6 +201,7 @@ const PRESET_CATS={
   'USB SDR: Follow a Signal — Tune, Bandwidth and Mode by the Signal ID':'SDR Receivers',
   'USB SDR: Band Plan Autotune — Mode, Bandwidth and Gain by Range':'SDR Receivers',
   'ESP-SDR: ESP32 Spectrum':'SDR Receivers',
+  'Spectrum Analyzer: Dense Overlay — Bookmarks, Band Plan and Signal Tags (Generator)':'Analysis & Measurement',
   'Measure: Modulation Meter — FM and AM (Generator)':'Analysis & Measurement',
   'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
   'Measure: Spectrum Baseline — New Signal and Missing Carrier Alarm (Generator)':'Analysis & Measurement',
@@ -1426,6 +1427,28 @@ addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
 addEdge(gn.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',dm.id,'in'); addEdge(dm.id,'out',de.id,'in'); addEdge(de.id,'out',au.id,'in');
 addEdge(au.id,'out',sc.id,'in1'); addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'out',dc.id,'R');
+markWiresDirty();
+});
+preset('Spectrum Analyzer: Dense Overlay — Bookmarks, Band Plan and Signal Tags (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A crowded view to check the overlay of the Spectrum Analyzer: close bookmarks, stacked band plan ranges and a lot of signal tags on one screen. Both lists are Tables in the patch (edit the rows): the first holds point bookmarks (hi empty) and ranges, the second holds signal tags (sig=1 with db, conf and the needed bandwidth nlo / nhi / nbw — the same fields the Signal Type Identifier emits).\n'+
+  'Bookmarks are placed in up to three rows at the top; a name that finds no room becomes a small tick with a line (hover shows it, a click puts the marker there). Band plan: four labelled lanes above the axis, the rest as thin strips over them. Signal tags climb above their peak and, with no room left, shrink to a triangle. The needed bandwidth shows dashed edges, fill and width only under the cursor.\n'+
+  'Hover a bookmark, a band lane or strip, or a tag: a tooltip lists everything there — every range that holds the frequency (wide to narrow, with step and note), bookmark names and frequencies, signal type, level, width, confidence, needed bandwidth and decoder.'});
+nt.size.w=760; nt.size.h=230; applySize(nt);
+const M=1e6, bm=[[99.55,'Radio Alpha 99.55'],[99.6,'Alpha relay'],[99.62,'Test'],[99.68,'Maximum'],[99.7,'Jazz FM 99.7'],[99.9,'Station 99.9'],[99.93,'Traffic'],[99.97,'News 24 99.97'],[100.0,'Center 100.0'],[100.02,'Pilot'],[100.04,'Aux'],[100.05,'Retro FM 100.05'],[100.3,'Local 100.3'],[100.31,'Local B'],[100.33,'Kids 100.33'],[100.45,'Classic']];
+const bp=[[87.5,108,'FM broadcast','#5fb8d1'],[99.5,100.1,'Region A (long band name)','#ffb74d'],[99.55,99.8,'Metro','#81c784'],[99.6,99.7,'Sub 1','#ba68c8'],[99.65,99.69,'Sub 2','#e57373'],[99.9,100.0,'Block B','#4db6ac'],[99.95,100.2,'Block C wide label here','#f06292'],[100.0,100.05,'Ch 1','#aed581'],[100.02,100.04,'Ch 2','#ffd54f'],[100.3,100.5,'Edge band','#7986cb'],[100.31,100.4,'Part','#4dd0e1'],[100.33,100.36,'Mini','#ff8a65']];
+const sg=[[99.6,'WFM',-35,.9],[99.62,'RDS',-50,.5],[99.9,'WFM stereo',-30,1],[99.95,'Pager POCSAG',-60,.6],[100.0,'WFM',-28,1],[100.01,'Carrier',-55,.4],[100.02,'FSK 1200',-62,.7],[100.3,'NFM voice',-45,.8],[100.31,'Unknown',-58,.2],[100.33,'DMR',-52,.9],[100.45,'AM',-48,.5]];
+const csv1='lo,hi,label,color\n'+bm.map(r=>[r[0]*M,'',r[1],'#c9c9c9'].join(',')).join('\n')+'\n'+bp.map(r=>[r[0]*M,r[1]*M,r[2],r[3]].join(',')).join('\n');
+const csv2='lo,hi,label,color,sig,db,conf,nbw,nlo,nhi\n'+sg.map((r,i)=>{ const f=r[0]*M, w=[200e3,6e3][i%2];
+  return [f-w/2,f+w/2,r[1],['#ffb74d','#4dd0e1','#e57373'][i%3],1,r[2],r[3],w*1.5,f-w*.75,f+w*.75].join(','); }).join('\n');
+const gn=addNode('iqGen',40,300,{sr:'1024000',fc:100000000,mode:'FM',off:100000,lvl:-20,dev:3000,noise:-70});
+const sp=addNode('iqSpec',40,600,{size:'8192'});
+const t1=addNode('table',40,760,{list:'@patch',data:csv1}); t1.size.w=380; t1.size.h=300; applySize(t1);
+const t2=addNode('table',460,760,{list:'@patch',data:csv2}); t2.size.w=380; t2.size.h=300; applySize(t2);
+const sa=addNode('sa',820,40,{auto:true,floor:-100,top:-20,split:.45});
+sa.size.w=1100; sa.size.h=560; applySize(sa);
+addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
+addEdge(t1.id,'rows',sa.id,'bands'); addEdge(t2.id,'rows',sa.id,'sigs');
 markWiresDirty();
 });
 preset('Measure: Modulation Meter — FM and AM (Generator)', function(){
