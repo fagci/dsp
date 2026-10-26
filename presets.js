@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=137;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=138;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -515,6 +515,9 @@ const PRESET_CATS={
   'Studio: DAW (Piano Roll, Playlist, Mixer)':'Music: Synth & Tracker',
   'Studio (tiles)':'Music: Synth & Tracker',
   'Studio: Graph Synth as Instrument':'Music: Synth & Tracker',
+  'Studio: Drum Machine → Sampler':'Music: Sequencers & Mixer',
+  'Studio: Playlist → Piano Roll → Synth':'Music: Sequencers & Mixer',
+  'Studio: Sleep Mixer':'Music: Sequencers & Mixer',
   'Synth: Acid Bass (303)':'Music: Synth & Tracker',
   'Winamp':'Music: Player',
   'Winamp: Internet Radio Playlist':'Music: Player',
@@ -613,6 +616,72 @@ preset('Studio: Graph Synth as Instrument', function(){
     '(volume, pan, FX, sends). Replace the synth with any generator of yours. «graph latency» compensates\n'+
     'the round trip through the graph. L / R feed the DAC: while they are wired the sound goes through the graph.'});
   nt.size.w=420; nt.size.h=180; applySize(nt);
+  markWiresDirty();
+});
+
+// Drum Machine (Studio) как самый простой сэмплер: Master Clock → шаги, ворота строк g1 / g2 → Sampler, свои звуки — прямо на DAC
+preset('Studio: Drum Machine → Sampler', function(){
+  clearAll();
+  const ck=addNode('clock',40,40,{bpm:124,div:'1/16'});
+  const dm=addNode('studrum',40,200,{gain:.7});
+  const sp=addNode('sampler',760,200,{});
+  const dc=addNode('dac',760,420,{vol:.5,mode:'stereo'});
+  addEdge(ck.id,'pulse',dm.id,'clk');
+  addEdge(dm.id,'g3',sp.id,'gate'); addEdge(dm.id,'g4',sp.id,'gate2');            // строки Hat и Open Hat запускают сэмплер
+  addEdge(dm.id,'L',dc.id,'L'); addEdge(dm.id,'R',dc.id,'R');
+  const nt=addNode('note',760,40,{text:'Drum Machine (Studio) is a stand-alone node: steps on clk (Master Clock) or its own bpm,\n'+
+    'a gate pin per row (g1…g8) for any trigger input, built-in drum sounds on L / R.\n'+
+    'Sampler: pick a clip from Files › audio — the hat rows then trigger it.\n'+
+    'Or add a «Clip row» in the machine itself: it plays the clip without any other node.'});
+  nt.size.w=360; nt.size.h=130; applySize(nt);
+  dm.size.w=640; dm.size.h=560; applySize(dm);
+  markWiresDirty();
+});
+
+// Pattern Playlist (Studio) выбирает паттерн Piano Roll по номеру (p1), ворота полосы g1 — когда играть; Piano Roll → Synth → DAC
+preset('Studio: Playlist → Piano Roll → Synth', function(){
+  clearAll();
+  const ck=addNode('clock',40,40,{bpm:112,div:'1/16'});
+  const P=stuRollDefault(), pat=stAddPattern(P,'Pattern 2',2), chid=P.channels[0].id;       // второй паттерн мелодии
+  pat.notes[chid]=[]; [[0,3,60],[3,3,63],[6,2,67],[8,4,70],[16,3,67],[19,3,63],[22,2,60],[24,6,58]].forEach(([s,l,k])=>pat.notes[chid].push({t:s*ST_STEP,l:l*ST_STEP,k,v:96}));
+  const A=stuArrDefault(); A.patterns.length=0; A.playlist.clips=[]; const a1=stAddPattern(A,'Melody 1',2), a2=stAddPattern(A,'Melody 2',2);
+  A.playlist.clips.push({id:stNextId(A),kind:'pat',pat:a1.id,tr:0,t:0,l:2*ST_BAR},{id:stNextId(A),kind:'pat',pat:a2.id,tr:0,t:2*ST_BAR,l:2*ST_BAR}); A.playlist.loop=[0,4*ST_BAR];
+  const ar=addNode('stuarr',40,200,{data:JSON.stringify(A)});
+  const pr=addNode('stuprl',40,660,{data:JSON.stringify(P)});
+  const sy=addNode('voice',900,660,{wave1:'saw',level1:.7,wave2:'square',level2:.2,attack:.01,decay:.2,sustain:.5,release:.3});
+  const dc=addNode('dac',1180,660,{vol:.4,mode:'mono'});
+  addEdge(ck.id,'pulse',ar.id,'clk'); addEdge(ck.id,'pulse',pr.id,'clk');
+  addEdge(ar.id,'p1',pr.id,'pat');
+  addEdge(pr.id,'freq',sy.id,'freq'); addEdge(pr.id,'gate',sy.id,'gate'); addEdge(pr.id,'vel',sy.id,'vel');
+  addEdge(sy.id,'out',dc.id,'L');
+  const nt=addNode('note',900,40,{text:'Pattern Playlist (Studio): arrange pattern blocks on lanes; lane k gives gate gK (clip playing)\n'+
+    'and pK (index of its pattern, 0-based). Here p1 picks the pattern of the Piano Roll (pin pat).\n'+
+    'All three nodes share the Master Clock; without a clk wire each runs on its own bpm.'});
+  nt.size.w=420; nt.size.h=110; applySize(nt);
+  ar.size.w=780; ar.size.h=440; applySize(ar); pr.size.w=780; pr.size.h=540; applySize(pr);
+  markWiresDirty();
+});
+
+// Mixer (Studio) как микшер для музыки для сна: генераторы на входах, реверб-шина, таймер сна с плавным затуханием
+preset('Studio: Sleep Mixer', function(){
+  clearAll();
+  const M=stuMixDefault(); M.name='Sleep mix';
+  M.mixer[1].name='Drone'; M.mixer[2].name='Fifth'; M.mixer[3].name='Rain'; M.mixer[1].vol=.5; M.mixer[2].vol=.35; M.mixer[3].vol=.35;
+  M.mixer[1].sends[8]=.5; M.mixer[2].sends[8]=.6; M.mixer[3].fx.push({id:stNextId(M),type:'filter',on:true,p:stFillP(ST_FX.filter.p,{type:'lp',cut:1400,res:.7,mix:1})});
+  M.mixer[0].fx.push({id:stNextId(M),type:'eq',on:true,p:stFillP(ST_FX.eq.p,{hi:-6,hf:5000})});
+  const mx=addNode('stumixer',500,40,{data:JSON.stringify(M),timer:30,fade:120});
+  const o1=addNode('osc',40,40,{wave:'sine',freq:55,amp:.5}), o2=addNode('osc',40,200,{wave:'sine',freq:82.4,amp:.4}), nz=addNode('osc',40,360,{wave:'noise',amp:.5});
+  const lf=addNode('lfo',40,520,{freq:.07,min:.2,max:.5});
+  const dc=addNode('dac',1340,40,{vol:.5,mode:'stereo'});
+  addEdge(o1.id,'out',mx.id,'in1'); addEdge(o2.id,'out',mx.id,'in2'); addEdge(nz.id,'out',mx.id,'in3');
+  addEdge(lf.id,'out',o2.id,'amp');
+  addEdge(mx.id,'L',dc.id,'L'); addEdge(mx.id,'R',dc.id,'R');
+  const nt=addNode('note',40,640,{text:'Mixer (Studio) mixes any signals: 8 inputs (in1…in8) with level, pan, mute / solo, FX chain per strip,\n'+
+    'sends to the reverb bus (strip 8), master FX and a SLEEP TIMER: after «sleep timer» minutes the sound fades out\n'+
+    'over «fade-out» seconds (output left = seconds remaining; ↻ restarts). Gate inputs g1…g8 fade strips in and out\n'+
+    '(wire them from Pattern Playlist lanes). Here: a low drone, a fifth that breathes with the LFO, and rain (noise → low-pass).'});
+  nt.size.w=620; nt.size.h=130; applySize(nt);
+  mx.size.w=780; mx.size.h=540; applySize(mx);
   markWiresDirty();
 });
 

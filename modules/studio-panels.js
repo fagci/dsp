@@ -104,7 +104,7 @@ class StuRack extends StuPanel{
     };
     sw.addEventListener('pointerdown',ev=>{ const b=ev.target.closest('.stu-st'); if(!b||ev.button!==0) return; ev.preventDefault();
       if(A.cur.ch!==ch.id){ A.cur.ch=ch.id; this.host.querySelectorAll('.stu-ch').forEach(r=>r.classList.toggle('sel',r===row)); A.dirty('roll'); A.each('inst',i=>i.refresh()); }
-      mode=!b.classList.contains('on'); toggle(b,mode); sw.setPointerCapture(ev.pointerId); });
+      mode=!b.classList.contains('on'); toggle(b,mode); try{ sw.setPointerCapture(ev.pointerId); }catch(e){} });
     sw.addEventListener('pointermove',ev=>{ if(mode==null) return; const el=document.elementFromPoint(ev.clientX,ev.clientY); const b=el&&el.closest&&el.closest('.stu-st'); if(b&&sw.contains(b)) toggle(b,mode); });
     const end=()=>{ if(mode!=null){ mode=null; A.commit(); } };
     sw.addEventListener('pointerup',end); sw.addEventListener('pointercancel',end);
@@ -229,11 +229,14 @@ class StuInst extends StuPanel{
       const b=stuEl('button','stu-b','Load file…'); b.addEventListener('click',async()=>{ const f=await stuPick('audio/*'); if(!f) return;
         try{ await A.eng.loadSample(ch.id,f); ch.p.sname=f.name; ch.p.clip=''; A.commit(); this.refresh(); }catch(e){ alert('Cannot decode: '+e.message); } });
       head.append(sel,rs,b,stuEl('span','stu-dim',stuEsc(ch.p.clip||ch.p.sname||'no sample')));
+    }else if(A.liteKind){
+      head.append(stuEl('span','stu-dim','Trigger row: no sound of its own — only its gate pin fires on every step. Wire it to a Sampler or any trigger input.'));
     }else{
       head.append(stuEl('span','stu-dim','Notes of this channel go to the pins <b>freq / gate / vel</b> of the Studio (DAW) node (voices '+ch.p['slot']+'…'+Math.min(4,ch.p.slot-1+ch.p.voices)+'); wire your generator there and its audio back to <b>in'+(ch.p.ret>1?ch.p.ret:'')+'</b>. The graph engine must be running.'));
     }
     if(ch.type!=='ext'){ const test=stuEl('button','stu-b','▶ Test'); test.addEventListener('click',()=>A.audition(ch.id,ch.type==='sampler'?ch.p.root:60,100,.7)); head.append(test); }
     host.append(head);
+    if(ch.type==='ext' && A.liteKind){ host.append(head); return; }
     const pan=stuParams(ST_CHDEF[ch.type],ch.p,(k,v)=>{ ch.p[k]=v; },()=>{ A.commit(); this.drawEnv(); if(ch.type==='ext'){ A.eng.extSetup(); A.eng.extRoute(); this.refresh(); } },k=>'ch:'+ch.id+':'+k,t=>A.autoFor(t));
     host.append(pan);
     if(ch.type==='synth'){ const cv=stuEl('canvas','stu-env'); cv.width=520; cv.height=90; this.envCv=cv; host.insertBefore(cv,pan); this.drawEnv(); pan.addEventListener('pointerup',()=>this.drawEnv()); }
