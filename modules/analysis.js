@@ -1639,7 +1639,9 @@ function saTraces(n,sp){
   const N=sp.mag.length;
   if(sp===n._trSp && sp.rev===n._trRev) return;
   n._trSp=sp; n._trRev=sp.rev;
-  const k=n.p.rbw==='native' ? 1 : (parseInt(String(n.p.rbw).replace('×',''))||1);
+  const binHz0=Math.abs(specHz(sp,1)-specHz(sp,0))||1;
+  n._rbwAsk=n.p.rbwHz!=='native' ? parseHzCell(n.p.rbwHz) : 0;
+  const k=n._rbwAsk>0 ? Math.max(1,Math.round(n._rbwAsk/binHz0)) : n.p.rbw==='native' ? 1 : (parseInt(String(n.p.rbw).replace('×',''))||1);
   let base=sp.mag;
   if(k>1){
     if(!n._lm || n._lm.length!==N){ n._lm=new Float32Array(N); n._lmPre=new Float64Array(N+1); }
@@ -2255,6 +2257,14 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold){ n.peak=null; if(typeof saPeakClear==='function') saPeakClear(n); } }},
           {n:'peakDecay',t:'range',min:0,max:120,step:1,d:0,label:'peak decay, s per 60 dB (0 = hold forever)',adv:true},
           {n:'autoDb',t:'button',label:'Auto dB',fn:n=>{ if(typeof saAutoDb==='function') saAutoDb(n); }},
+          {n:'adHead',t:'range',min:0,max:40,step:1,d:20,label:'Auto dB: headroom above the strongest signal, dB',adv:true},
+          {n:'adMargin',t:'range',min:0,max:15,step:1,d:3,label:'Auto dB: margin under the noise, dB (the noise sits right at the bottom)',adv:true},
+          {n:'adTrack',t:'check',d:false,label:'Auto dB: keep refitting while it runs (moves only for changes over 3 dB)',adv:true},
+          // режим tinySA: потолок (reference level) и дБ на деление вместо пары floor/top; дно = потолок − 10 делений
+          {n:'vscale',t:'select',opts:['range','ref + dB/div'],d:'range',label:'vertical scale: range (floor … top) or tinySA style (reference level + dB per division)'},
+          {n:'refLvl',t:'range',min:-200,max:60,step:1,d:-20,label:'reference level (ceiling), in the level unit',adv:true},
+          {n:'dbDiv',t:'select',opts:['1','2','5','10','20'],d:'10',label:'dB per division (10 divisions)',adv:true},
+          {n:'rbwHz',t:'select',opts:['native','1k','3k','10k','30k','100k','300k','1M'],d:'native',label:'RBW, Hz (tinySA style: bins are merged up to it; not below the native bin; overrides ×k)',adv:true},
           {n:'markMode',t:'check',d:false,label:'mark mode: drag on the waterfall to label a part of a signal (Alt+drag works always)'},
           {n:'markLabels',t:'text',d:'preamble, data, voice',label:'mark labels (comma list; 1, 2, 3 … picks one in the dialog)'},
           {n:'tickSec',t:'select',opts:['off','1','5','10','30','60'],d:'off',label:'time ticks on the waterfall, s'},
@@ -2326,6 +2336,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     for(const k of ['fmin','fmax']) if(typeof I[k]==='number') setMod(n,k,I[k]);
     n._gainIn=typeof I.gain==='number'&&isFinite(I.gain) ? I.gain : 0;
     n._lvOff=n.p.unit==='dBFS' ? 0 : n.p.lvlOff-n._gainIn+(n.p.unit==='dBµV' ? 107 : 0);
+    if(n.p.vscale!=='range'){                         // tinySA: потолок и дБ/дел задают floor/top
+      const tp=clamp(n.p.refLvl-n._lvOff,-120,20), fl=clamp(tp-10*(+n.p.dbDiv||10),-140,tp-10);
+      if(n.p.top!==tp) setMod(n,'top',tp);
+      if(n.p.floor!==fl) setMod(n,'floor',fl);
+    }
     n.sigsData=Array.isArray(I.sigs) ? I.sigs : null;
     saRowIn(n,I);
     // границы поменяли не мы (поле диапазона или провод) — это ручной ввод: auto выключаем,
@@ -2469,6 +2484,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       n._peakT=performance.now();
     }
     if(sp) saTraces(n,sp);
+    if(sp && n.p.adTrack && n.p.vscale==='range'){ const t=performance.now(); if(!n._adT || t-n._adT>1000){ n._adT=t; saAutoDb(n,true); } }
     // маркеры — раз на новый спектр (process идёт на каждый блок движка); повтор с тем же rev
     // ещё и сбрасывал фазовое уточнение fr до частоты бина
     if(sp && n.p.trk) saTrackCarrier(n,sp);
@@ -2539,6 +2555,19 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           const st=ev.ctrlKey||ev.metaKey ? 1 : ev.shiftKey ? 100 : 10, k=mkw.idx;
           n.mk[k]=Math.round(n.mk[k]/st)*st+(ev.deltaY<0?st:-st)*(ev.deltaY?1:0);
           n.active=k+1; n.pickT=null;
+          return;
+        }
+        if(ev.ctrlKey || ev.metaKey){                // Ctrl+колесо (и щипок на тачпаде) — масштаб по дБ вокруг уровня под курсором
+          const rc=cv.getBoundingClientRect(), y=(ev.clientY-rc.top)/rc.height*cv.height, hs=n._hs|0, plotH=Math.max(1,hs-14);
+          if(y>=hs) return;
+          const fl=n.p.floor, tp=n.p.top;
+          if(n.p.vscale!=='range'){                  // tinySA: шаг по ряду дБ/дел, потолок на месте
+            const L=[1,2,5,10,20], i=L.indexOf(+n.p.dbDiv), j=clamp((i<0?3:i)+(ev.deltaY<0?-1:1),0,L.length-1);
+            setMod(n,'dbDiv',String(L[j]));
+          } else {
+            const span=clamp((tp-fl)*(ev.deltaY<0?.96:1.04),10,160), at=tp-(y/plotH)*(tp-fl), nt=at+(y/plotH)*span;
+            saVScale(n,nt-span,nt);
+          }
           return;
         }
         const [fullLo,fullHi]=specSpan(n.s);
@@ -2649,7 +2678,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       let pinch=null, gesture=false;
       const pinchState=()=>{
         const [a,b]=[...touches.values()], rc=cv.getBoundingClientRect();
-        return {mx:((a.x+b.x)/2-rc.left)/Math.max(1,rc.width), d:Math.max(20,Math.abs(a.x-b.x))};
+        return {mx:((a.x+b.x)/2-rc.left)/Math.max(1,rc.width), d:Math.max(20,Math.abs(a.x-b.x)), dy:Math.abs(a.y-b.y), cy:((a.y+b.y)/2-rc.top)/Math.max(1,rc.height)*cv.height};
       };
       cv.addEventListener('pointerdown', ev=>{
         if(ev.pointerType==='touch'){
@@ -2661,8 +2690,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           if(touches.size>=2){
             drag=null; n._dragActive=false; gesture=true; n.pickT=null;
             if(touches.size===2 && n.s){
-              const {mx,d}=pinchState();
-              pinch={d0:d, f0:saFreq(n,mx), r0:saFreq(n,1)-saFreq(n,0)};
+              const {mx,d,dy,cy}=pinchState();
+              pinch={d0:d, f0:saFreq(n,mx), r0:saFreq(n,1)-saFreq(n,0), dy0:dy, cy, fl0:n.p.floor, tp0:n.p.top};
             }
             return;
           }
@@ -2687,7 +2716,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         }
         const resize=Math.abs(y-(n._hs||0))<=6;
         if(!resize && !n.s) return;
-        drag={x0:ev.clientX, y0:ev.clientY, w:rc.width, h:rc.height,
+        drag={x0:ev.clientX, y0:ev.clientY, yc:y, w:rc.width, h:rc.height,
               lo0:n.s?saFreq(n,0):0, hi0:n.s?saFreq(n,1):0,
               pid:ev.pointerId, resize, split0:n.p.split};
         cv.setPointerCapture(ev.pointerId);
@@ -2698,7 +2727,12 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           ev.preventDefault();
           if(!n.s) return;
           const [fullLo,fullHi]=specSpan(n.s);
-          const {mx,d}=pinchState();
+          const {mx,d,dy}=pinchState();
+          if(pinch.dy0>24 && dy>24 && pinch.cy<(n._hs||0)){      // пальцы разведены по вертикали — масштаб дБ вокруг уровня между ними
+            const span0=pinch.tp0-pinch.fl0, ns=clamp(span0*pinch.dy0/dy,10,160), plotH=Math.max(1,(n._hs|0)-14);
+            const at=pinch.tp0-(pinch.cy/plotH)*span0, nt=at+(pinch.cy/plotH)*ns;
+            saVScale(n,nt-ns,nt);
+          }
           const newRange=clamp(pinch.r0*pinch.d0/d, 10, fullHi-fullLo);
           let newLo=pinch.f0-mx*newRange, newHi=newLo+newRange;
           if(newLo<fullLo){ newLo=fullLo; newHi=newLo+newRange; }
@@ -2745,6 +2779,19 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         }
         if(!n.s) return;
         const dx=ev.clientX-drag.x0;
+        {                                            // ось жеста выбирается один раз: по спектру вертикально — окно дБ, иначе панорама
+          const dyc=ev.clientY-drag.y0;
+          if(!drag.axis && (Math.abs(dx)>6 || Math.abs(dyc)>6)){
+            drag.axis=(Math.abs(dyc)>Math.abs(dx) && drag.yc<(n._hs||0)-6) ? 'y' : 'x';
+            if(drag.axis==='y'){ drag.fl0=n.p.floor; drag.tp0=n.p.top; }
+          }
+          if(drag.axis==='y'){
+            ev.preventDefault(); n._dragActive=true; drag.movedY=true;
+            const plotH=Math.max(1,(n._hs|0)-14), d=dyc/drag.h*cv.height*(drag.tp0-drag.fl0)/plotH;   // тянем вниз — картинка вниз, диапазон вверх
+            saVScale(n,drag.fl0+d,drag.tp0+d);
+            return;
+          }
+        }
         if(Math.abs(dx)<=6) return;                  // тот же порог, что у тапа — см. комментарий выше
         ev.preventDefault();
         const {lo0,hi0,w}=drag, dt=dx/Math.max(1,w-1);
@@ -2773,7 +2820,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           }
         }
         if(drag && ev.pointerId===drag.pid && cv.hasPointerCapture(ev.pointerId)) cv.releasePointerCapture(ev.pointerId);
-        if(drag && (drag.edge || (drag.mkLine!=null && drag.moved) || drag.um)){ n.pickT=null; n._noTap=true; }
+        if(drag && (drag.edge || (drag.mkLine!=null && drag.moved) || drag.um || drag.movedY)){ n.pickT=null; n._noTap=true; }
         if(drag && drag.um){
           const nm=n._umDrag; n._umDrag=null;
           if(drag.moved && nm && ev.type==='pointerup'){
@@ -4517,14 +4564,14 @@ def({ id:'spectral', title:'Spectral Descriptors', cat:'Analysis',
     'centroid '+n.centroid.toFixed(0)+' Hz · spread '+n.spread.toFixed(0)+' Hz · flux '+
     n.flux.toFixed(3)+' · rolloff '+n.rolloff.toFixed(0)+' Hz'; }});
 defGroups('sa',[
-  {n:'View', p:'auto frange dbrange autoDb log grid peakHold peakDecay layout panes'},
+  {n:'View', p:'auto frange dbrange autoDb vscale refLvl dbDiv adHead adMargin adTrack log grid peakHold peakDecay layout panes'},
   {n:'Panes', p:'follow edge paneFrom holdMarker avg ageFade'},
   {n:'Markers', p:'snap trk trkBw wfMk ant antVf', open:false},
   {n:'Overlay', p:'bandFilter', open:false},
   {n:'Time marks', p:'markMode markLabels tickSec clearMarks'},
   {n:'Waterfall', p:'rowMs palette wfMem', open:false},
   {n:'Phosphor', p:'phosphor phDecay phGain', open:false},
-  {n:'Traces', p:'tr1 tr2 tr3 tr4 avgN det rbw mkTrace clrTr', open:false},
+  {n:'Traces', p:'tr1 tr2 tr3 tr4 avgN det rbw rbwHz mkTrace clrTr', open:false},
   {n:'Measure', p:'dRef meas measBw measPct measX acpOff unit lvlOff calMk slice sliceSec', open:false},
   {n:'Export', p:'saveCsv savePng', open:false},
   {n:'Reference', p:'tol band ref take refSave refLoad', open:false}],

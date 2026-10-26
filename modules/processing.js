@@ -1518,7 +1518,8 @@ function saTraceInfo(n,cx,W,hs,plotH){
     cx.moveTo(Math.round(x1)+.5,TOP); cx.lineTo(Math.round(x1)+.5,plotH); cx.moveTo(Math.round(x2)-.5,TOP); cx.lineTo(Math.round(x2)-.5,plotH); cx.stroke(); cx.setLineDash([]);
   }
   const chips=[], sp=n.s, binHz=Math.abs(specHz(sp,1)-specHz(sp,0))||1, k=n._rbwK||1, enb=sp.enbw>0?sp.enbw:SA_ENBW, rb=binHz*(k>1?k:enb);
-  chips.push({t:'RBW '+fmtHz(rb,rb<1e4?2:1)+'Hz'+(n.p.det!=='auto'?' · '+n.p.det:'')});
+  chips.push({t:'RBW '+fmtHz(rb,rb<1e4?2:1)+'Hz'+(n._rbwAsk>0 && k===1 && n._rbwAsk<rb ? ' (asked '+fmtHz(n._rbwAsk,0)+')' : '')+(n.p.det!=='auto'?' · '+n.p.det:'')});
+  if(n.p.vscale!=='range') chips.push({t:'ref '+n.p.refLvl+' · '+n.p.dbDiv+' dB/div'});
   const modes=[n.p.tr1,n.p.tr2,n.p.tr3,n.p.tr4];
   modes.forEach((m,i)=>{ if(i===0 ? m!=='live' : m!=='off') chips.push({t:'T'+(i+1)+' '+(m==='average'?'avg '+n.p.avgN:m),col:i ? SA_TRC[i] : themeColor('--t-spec')}); });
   if(n.p.mkTrace!=='1') chips.push({t:'mk→T'+n.p.mkTrace});
@@ -1578,20 +1579,29 @@ function saHover(n,cx,W,H,top){
   cx.setLineDash([3,3]); cx.moveTo(Math.round(xc)+.5,top); cx.lineTo(Math.round(xc)+.5,H); cx.stroke();
   cx.restore();
 }
-// Auto диапазона дБ: пол — низкий перцентиль видимой части спектра, потолок — максимум
-function saAutoDb(n){
-  const sp=n.s; if(!sp||!sp.mag||n.p.layout==='panes') return;
+// Auto диапазона дБ: дно — прямо под шумом (нижний процентиль пиков кусков спектра, как их рисует детектор) минус
+// adMargin, потолок — над самым сильным сигналом на adHead дБ (по умолчанию 20), размах не меньше 30 дБ.
+// soft — для слежения (adTrack): применяется, только если границы ушли больше чем на 3 дБ.
+function saAutoDb(n,soft){
+  const sp=n.s; if(!sp||!sp.mag||n.p.layout==='panes'||n.p.vscale!=='range') return;
   const [lo,hi]=saBounds(n), N=sp.mag.length;
   let a=clamp(Math.floor(specBin(sp,lo)),0,N-1), b=clamp(Math.ceil(specBin(sp,hi)),0,N-1);
   if(b<a){ const t=a; a=b; b=t; }
-  const st=Math.max(1,Math.floor((b-a+1)/2000)), v=[];
-  for(let i=a;i<=b;i+=st) v.push(20*Math.log10(sp.mag[i]+1e-12));
-  if(n.p.peakHold && n.peak && n.peak.length===N) for(let i=a;i<=b;i+=st) v.push(20*Math.log10(n.peak[i]+1e-12));
-  if(!v.length) return;
-  v.sort((p,q)=>p-q);
-  const fl=Math.floor((v[Math.floor(v.length*.05)]-8)/5)*5, tp=Math.ceil((v[v.length-1]+6)/5)*5;
-  const floor=clamp(fl,-140,0), top=clamp(Math.max(tp,floor+20),floor+20,20);
-  setMod(n,'floor',floor); setMod(n,'top',top);
+  const base=n._base&&n._base.length===N ? n._base : sp.mag;
+  const r=saAutoRange(base,a,b,{head:n.p.adHead,margin:n.p.adMargin,extra:n.p.peakHold&&n.peak&&n.peak.length===N ? n.peak : null});
+  if(!r) return;
+  if(soft && Math.abs(r.floor-n.p.floor)<3 && Math.abs(r.top-n.p.top)<3 && r.peak<n.p.top-n.p.adHead*.5) return;
+  setMod(n,'floor',r.floor); setMod(n,'top',r.top);
+}
+// Новое окно дБ (жесты): в режиме «диапазон» — floor/top, в режиме tinySA — потолок и дБ/дел (размах кратен 10 делениям)
+function saVScale(n,fl,tp){
+  const span=clamp(tp-fl,10,160);
+  tp=clamp(tp,-140+span,20); fl=tp-span;
+  if(n.p.vscale!=='range'){
+    setMod(n,'refLvl',Math.round(tp+(n._lvOff||0)));
+    const d=[1,2,5,10,20].reduce((a,c)=>Math.abs(c*10-span)<Math.abs(a*10-span)?c:a);
+    setMod(n,'dbDiv',String(d));
+  } else { setMod(n,'top',Math.round(tp*10)/10); setMod(n,'floor',Math.round(fl*10)/10); }
 }
 // Время строк водопада: spec.tl (отсчёты таймлайна источника) на каждую новую строку, новые в конце.
 // Нужно для наложения аннотаций IQ (spec.ann: {a0,a1,lo,hi,label,mark}); возраст строки a — T[T.length-1-a].
