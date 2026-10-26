@@ -54,7 +54,8 @@ class StuApp{
   async load(){
     let rec=null; try{ rec=await StuDB.get(this.projId); }catch(e){ console.warn('studio db',e); }
     if(this.dead) return;
-    if(rec) this.adopt(stLoad(rec.json),rec.samples); else this.adopt(stDemoProject());
+    const mk=ST_EXAMPLES[this.node.p.demo];                      // пресет задаёт стартовую композицию
+    if(rec) this.adopt(stLoad(rec.json),rec.samples); else this.adopt(mk?mk():stDemoProject());
     this.undo=[JSON.stringify(this.P)];
   }
   adopt(P,samples){
@@ -68,7 +69,11 @@ class StuApp{
     const e=this.eng; if(!e.ac) return;
     for(const id in e.samples){ const s=e.samples[id]; if(!s.buf && s.data && !s.busy){ s.busy=1;
       try{ s.buf=await e.ac.decodeAudioData(s.data.slice(0)); }catch(err){ console.warn('sample',err); } s.busy=0; } }
-    if(e.rig) e.rig.samples=e.samples;
+    for(const ch of this.P.channels) if(ch.type==='sampler' && ch.p.clip && !e.samples[ch.id] && !this._clipBusy){      // клипы Files › audio подтягиваем по id
+      const id=parseInt(ch.p.clip); if(!id) continue; this._clipBusy=1;
+      try{ await e.loadClip(ch.id,id); this.each('inst',i=>i.refresh()); }catch(err){ console.warn('studio clip',err); } this._clipBusy=0;
+    }
+    e.extSetup(); if(e.rig) e.rig.samples=e.samples;
   }
   commit(){
     const s=JSON.stringify(this.P); if(s===this.undo[this.undo.length-1]){ this.saveSoon(); return; }
@@ -185,20 +190,21 @@ class StuApp{
     for(const n of Object.keys(ST_PATCHES).slice(1)) items.push({label:'Synth: '+n,fn:()=>this.addChannel('synth',n,stPatchP(n))});
     items.push({sep:1});
     for(const n of Object.keys(ST_KITS)) items.push({label:'Drum: '+n,fn:()=>this.addChannel('drum',n,ST_KITS[n])});
-    items.push({sep:1},{label:'Sampler (load audio…)',fn:()=>this.addSampler()});
+    items.push({sep:1},{label:'Sampler (Files › audio library / file)',fn:()=>this.addSampler()},
+      {label:'External generator (your graph synth on the node pins)',fn:()=>this.addChannel('ext','Graph synth',{})});
     stuMenu(x,y,items);
   }
   addChannel(type,name,p){
     const P=this.P, ch=stAddChannel(P,type,name,p,0);
     ch.mix=this.freeInsert(); if(ch.mix) P.mixer[ch.mix].name=name;
-    this.cur.ch=ch.id; if(this.eng.rig) this.eng.rig.sync(); this.commit(); this.refreshAll(); this.eng.ensure(); this.audition(ch.id,60,100,.4);
+    this.cur.ch=ch.id; if(this.eng.rig) this.eng.rig.sync(); this.commit(); this.refreshAll(); this.eng.ensure(); this.eng.extSetup(); this.audition(ch.id,60,100,.4);
   }
   freeInsert(){ const used=new Set(this.P.channels.map(c=>c.mix)); for(let i=1;i<=ST_INSERTS;i++) if(!used.has(i) && !this.P.mixer[i].fx.length) return i; return 0; }
+  // сэмплер: клип берётся из Files › audio (список в редакторе инструмента) или грузится файлом
   async addSampler(){
-    const f=await stuPick('audio/*'); if(!f) return;
-    const P=this.P, ch=stAddChannel(P,'sampler',f.name.replace(/\.\w+$/,''),{},0); ch.mix=this.freeInsert();
-    try{ await this.eng.loadSample(ch.id,f); }catch(e){ alert('Cannot decode audio: '+e.message); stRemoveChannel(P,ch.id); return; }
-    ch.p.sname=f.name; this.cur.ch=ch.id; if(this.eng.rig) this.eng.rig.sync(); this.commit(); this.refreshAll();
+    const P=this.P, ch=stAddChannel(P,'sampler','Sampler',{},0); ch.mix=this.freeInsert(); if(ch.mix) P.mixer[ch.mix].name='Sampler';
+    this.cur.ch=ch.id; if(this.eng.rig) this.eng.rig.sync(); this.commit(); this.refreshAll(); this.focusTab('inst');
+    if(typeof samplerScan==='function' && (!SamplerClips.length)) samplerScan().then(()=>this.each('inst',i=>i.refresh()));
   }
   stepKey(ch){ return ch.type==='drum' ? 60 : ch.type==='sampler' ? ch.p.root : (ch.stepKey||60); }
   // прослушивание: len — секунды (автоотпускание)
@@ -329,39 +335,48 @@ class StuFull{
 }
 
 /* ---------- узлы ---------- */
-// Studio (DAW): обычные пины. Выходы: L / R — мастер в граф DSP (sig), clk — импульс на каждую 1/16 (sig),
-// bpm / bar / beat / playing — числа. Входы: play (0→1 старт, 1→0 стоп), bpm. Пока L/R не подключены, звук идёт на звуковую карту напрямую.
+// Studio (DAW): обычные пины, как у остальных музыкальных модулей.
+// Выходы: L / R — мастер в граф DSP, clk — импульс на 1/16, bpm / bar / beat / playing — числа; freq / gate / vel ×4 — ноты каналов
+// «External generator» (те же пины, что у Piano Roll и Synth — подключайте свой генератор). Входы: play, bpm; in … in4 — звук внешних генераторов обратно в микшер.
+const STU_NOTE_OUTS=[]; for(let k=1;k<=4;k++){ const q=k>1?k:''; STU_NOTE_OUTS.push({n:'freq'+q,t:'num'},{n:'gate'+q,t:'sig'},{n:'vel'+q,t:'num'}); }
 def({ id:'studio', lazy:'manual', title:'Studio (DAW)', cat:'Music', readout:true, w:230,
-  ins:[{n:'play',t:'num'},{n:'bpm',t:'num'}],
-  outs:[{n:'L',t:'sig'},{n:'R',t:'sig'},{n:'clk',t:'sig'},{n:'bpm',t:'num'},{n:'bar',t:'num'},{n:'beat',t:'num'},{n:'playing',t:'num'}],
+  ins:[{n:'play',t:'num'},{n:'bpm',t:'num'},{n:'in',t:'sig'},{n:'in2',t:'sig'},{n:'in3',t:'sig'},{n:'in4',t:'sig'}],
+  outs:[{n:'L',t:'sig'},{n:'R',t:'sig'},{n:'clk',t:'sig'},{n:'bpm',t:'num'},{n:'bar',t:'num'},{n:'beat',t:'num'},{n:'playing',t:'num'},...STU_NOTE_OUTS],
   params:[
     {n:'open',t:'button',label:'🎹 Open Studio',fn:n=>{ if(n.S) n.S.open(); }},
-    {n:'proj',t:'text',d:'',hidden:true}],
+    {n:'latency',t:'num',d:90,label:'graph latency, ms'},
+    {n:'proj',t:'text',d:'',hidden:true},{n:'demo',t:'text',d:'',hidden:true}],
   init(n){ n.S=new StuApp(n); n._pl=0; n._c16=-1; },
   dispose(n){ if(n.S){ n.S.destroy(); n.S=null; } },
   process(n,I,g){
     const S=n.S, L=buf(n,'L'), R=buf(n,'R'), C=buf(n,'clk'); C.fill(0);
-    if(!S){ L.fill(0); R.fill(0); return {L,R,clk:C,bpm:0,bar:0,beat:0,playing:0}; }
+    const G=[0,1,2,3].map(k=>buf(n,'gate'+(k?k+1:'')));
+    const none=()=>{ const o={L,R,clk:C,bpm:0,bar:0,beat:0,playing:0}; for(let k=0;k<4;k++){ const q=k?k+1:''; G[k].fill(0); o['freq'+q]=0; o['gate'+q]=G[k]; o['vel'+q]=0; } return o; };
+    if(!S) return none();
     const e=S.eng;
     if(typeof I.play==='number'){ const on=I.play>.5?1:0; if(on!==n._pl){ n._pl=on; if(on&&!e.playing) S.togglePlay(); else if(!on&&e.playing) S.togglePlay(); } }
     if(typeof I.bpm==='number' && I.bpm>=40 && I.bpm<=300 && Math.round(I.bpm)!==S.P.bpm){ S.P.bpm=Math.round(I.bpm); S.each('bar',p=>p.refresh()); }
-    if(n._ord!==g.order){ n._ord=g.order; n._wired=g.edges.some(x=>x.from===n.id && (x.fp==='L'||x.fp==='R')); }
+    if(n._ord!==g.order){ n._ord=g.order; n._wired=g.edges.some(x=>x.from===n.id && (x.fp==='L'||x.fp==='R'));
+      n._extIn=g.edges.some(x=>x.to===n.id && /^in[234]?$/.test(x.tp)); }
     e.setDirect(!n._wired);
     if(n._wired){ if(!e.tapNode) e.tapInit(); e.tapPull(L,R,Eng.sr); } else{ L.fill(0); R.fill(0); }
+    if(n._extIn && e.extNode) e.extPush([I.in,I.in2,I.in3,I.in4],Eng.sr);
     const gt=e.playing?e.getTick():null, t=gt==null?S.pos:gt, s16=Math.floor(t/ST_STEP);
     if(e.playing && s16!==n._c16){ C[0]=1; } n._c16=s16;
-    return {L,R,clk:C,bpm:S.P.bpm,bar:Math.floor(t/ST_BAR)+1,beat:Math.floor(t%ST_BAR/ST_PPQ)+1,playing:e.playing?1:0};
+    const o={L,R,clk:C,bpm:S.P.bpm,bar:Math.floor(t/ST_BAR)+1,beat:Math.floor(t%ST_BAR/ST_PPQ)+1,playing:e.playing?1:0};
+    const X=e.extTick((+n.p.latency||0)/1000);
+    for(let k=0;k<4;k++){ const q=k?k+1:'', sl=X?X[k]:null, gb=G[k];
+      if(sl && sl.on){ gb.fill(1); if(sl.retrig){ gb.fill(0,0,Math.min(24,gb.length)); sl.retrig=0; } o['freq'+q]=stHz(sl.k); o['vel'+q]=sl.v/127; }
+      else{ gb.fill(0); o['freq'+q]=sl?stHz(sl.k):0; o['vel'+q]=0; }
+      o['gate'+q]=gb; }
+    return o;
   },
   drawKey(n){ const S=n.S; return S ? S.P.name+'|'+S.P.bpm+'|'+S.eng.playing+'|'+S.msg : ''; },
   draw(n){ if(n.ro) n.ro.textContent=n.S ? n.S.P.name+' · '+n.S.P.bpm+' bpm'+(n.S.eng.playing?' · ▶':'') : ''; }
 });
 
-// узел Studio (DAW), подключённый к тайлу любым своим выходом (num: bpm / bar / beat / playing)
-function stuSource(n){
-  const e=Graph.edges.find(e=>e.to===n.id && e.tp==='link');
-  const m=e && Graph.map[e.from];
-  return m && m.type==='studio' && m.S ? m : null;
-}
+// панели-тайлы сами находят студию патча — без проводов (как вид на данные)
+function stuSource(n){ return Graph.nodes.find(x=>x.type==='studio' && x.S) || null; }
 // каждая панель — свой узел-тайл: раскладывайте их по дашборду как свою студию
 const STU_TILES=[
   ['stubar', 'Studio: Transport',     'bar',  900, 56],
@@ -372,7 +387,6 @@ const STU_TILES=[
   ['stuinst','Studio: Instrument',    'inst', 620, 400]];
 const STU_PANEL={bar:()=>StuBar,rack:()=>StuRack,roll:()=>StuRoll,list:()=>StuList,mix:()=>StuMixer,inst:()=>StuInst};
 for(const [id,title,kind,w,h] of STU_TILES) def({ id, lazy:'manual', title, cat:'Music', w, h, resize:true,
-  ins:[{n:'link',t:'num'}],
   init:n=>{ n.onResize=ln=>{ if(ln.tile) syncCustomHeight(ln,ln.tile,50); }; },
   drawKey:n=>{ const s=stuSource(n); return s?s.id+'|'+(s.S?'1':'0'):''; },
   draw(n){ stuTileSync(n,kind); },
@@ -385,7 +399,7 @@ function stuTileSync(n,kind){
   if(n.P && src && n.P.app===src.S && n.P.el.isConnected) return;
   if(n.P){ n.P.destroy(); n.P=null; }
   n.tile.innerHTML='';
-  if(!src){ n.tile.innerHTML='<div class="stu-empty">wire any output (bpm / bar / beat / playing) of a <b>Studio (DAW)</b> node to <b>link</b></div>'; return; }
+  if(!src){ n.tile.innerHTML='<div class="stu-empty">add a <b>Studio (DAW)</b> node to the patch</div>'; return; }
   n.P=new (STU_PANEL[kind]())(src.S); n.tile.append(n.P.el); n.P.refresh();
   if(n.P.resize) requestAnimationFrame(()=>n.P.resize());
 }

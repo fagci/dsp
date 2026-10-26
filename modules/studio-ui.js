@@ -66,6 +66,7 @@ function stuCheck(o){
 function stuParams(defs,p,onInput,onChange,targetOf,auto){
   const root=stuEl('div','stu-params'), groups=new Map(), ctl={};
   for(const d of defs){
+    if(d.hidden) continue;
     let g=groups.get(d.g||''); if(!g){ g=stuEl('div','stu-grp'); if(d.g) g.append(stuEl('h4',null,stuEsc(d.g))); const kn=stuEl('div','stu-knobs'); g.append(kn); g._k=kn; groups.set(d.g||'',g); root.append(g); }
     const o={d,v:p[d.k],onInput:v=>onInput(d.k,v),onChange:v=>onChange&&onChange(d.k,v),target:targetOf?targetOf(d.k):null,auto};
     const e=d.t==='sel'?stuSelect(o):d.t==='chk'?stuCheck(o):stuKnob(o);
