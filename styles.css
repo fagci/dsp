@@ -1575,3 +1575,10 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 .stu-knob.sm{width:30px} .stu-knob.sm .stu-kl,.stu-knob.sm .stu-kv{display:none} .stu-knob.sm.on .stu-kv{display:block;position:absolute;margin-top:-14px;background:var(--panel);padding:0 3px;border-radius:3px;z-index:3}
 .stu-knob.sm{position:relative}
 .stu-chn{width:76px}
+
+/* самостоятельные узлы Studio (Drum Machine, Piano Roll, Playlist, Mixer) */
+.stu-lite{display:flex;flex-direction:column;background:var(--bg)}
+.stu-lite .stu-mixsel,.stu-lite .stu-pr{display:none}
+.stu-lite>.stu-panel{min-height:0}
+.stu-lite .stu-p-rack{overflow:auto;flex:1 1 55%}
+.stu-lite .stu-p-inst{flex:1 1 45%}
