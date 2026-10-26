@@ -1522,6 +1522,7 @@ function saTraceInfo(n,cx,W,hs,plotH){
   const modes=[n.p.tr1,n.p.tr2,n.p.tr3,n.p.tr4];
   modes.forEach((m,i)=>{ if(i===0 ? m!=='live' : m!=='off') chips.push({t:'T'+(i+1)+' '+(m==='average'?'avg '+n.p.avgN:m),col:i ? SA_TRC[i] : themeColor('--t-spec')}); });
   if(n.p.mkTrace!=='1') chips.push({t:'mk→T'+n.p.mkTrace});
+  if(n.p.unit!=='dBFS') chips.push({t:n.p.unit+(n._gainIn ? ' · gain '+(+n._gainIn.toFixed(1))+' dB' : '')});
   if(ms) chips.push({t:ms.text,col:MK_COL(n.active-1)});
   cx.font='10px monospace'; cx.textAlign='left';
   let y=Math.max(21,TOP+2), x=W-4;
@@ -1533,6 +1534,33 @@ function saTraceInfo(n,cx,W,hs,plotH){
     else { cx.globalAlpha=.55; cx.fillStyle=themeColor('--axis'); }
     cx.fillText(c.t,x+4,y+9); cx.globalAlpha=1; x-=3;
   }
+}
+// Уровень у активного маркера от времени (n._sl — ряд по спектрам): вставка поверх водопада справа внизу.
+function saSlice(n,cx,W,H,hs){
+  const sl=n._sl; if(n.p.slice==='off' || !sl || sl.c<2 || !n.s) return;
+  const sec=+n.p.sliceSec||30, now=performance.now(), L=sl.t.length, off=n._lvOff||0;
+  const w=Math.min(300,Math.round(W*.45)), h=Math.min(64,Math.max(36,Math.round((H-hs)*.4))), x0=W-w-4, y0=H-h-4;
+  let mn=Infinity, mx=-Infinity, last=NaN, cnt=0;
+  const pts=[];
+  for(let i=0;i<sl.c;i++){
+    const j=(sl.w-1-i+L)%L, a=(now-sl.t[j])/1000; if(a>sec) break;
+    const v=sl.v[j]+off; pts.push(a,v); cnt++; if(v<mn) mn=v; if(v>mx) mx=v; if(i===0) last=v;
+  }
+  if(cnt<2) return;
+  const span=Math.max(20,mx-mn+6), lo=(mn+mx)/2-span/2, col=MK_COL(n.active-1);
+  cx.save();
+  cx.globalAlpha=.82; cx.fillStyle=themeColor('--screen'); cx.fillRect(x0,y0,w,h);
+  cx.globalAlpha=.5; cx.strokeStyle=themeColor('--axis'); cx.lineWidth=1; cx.strokeRect(x0+.5,y0+.5,w-1,h-1);
+  cx.globalAlpha=1; cx.strokeStyle=col; cx.lineWidth=1.2; cx.beginPath();
+  for(let i=0;i<pts.length;i+=2){
+    const x=x0+w-1-pts[i]/sec*(w-2), y=y0+h-2-(pts[i+1]-lo)/span*(h-4);
+    i?cx.lineTo(x,y):cx.moveTo(x,y);
+  }
+  cx.stroke();
+  const un=n.p.unit==='dBFS' ? 'dB' : n.p.unit;
+  cx.font='9px monospace'; cx.textAlign='left'; cx.fillStyle=themeColor('--axis');
+  cx.fillText((n.active)+': now '+last.toFixed(0)+' · max '+mx.toFixed(0)+' · min '+mn.toFixed(0)+' '+un+' · '+sec+' s',x0+3,y0+9);
+  cx.restore();
 }
 // Подсказка будущего маркера под курсором: линия на (привязанной к сетке band plan) частоте и,
 // если источник знает полосу канала (spec.pickBw), приглушённая полоса BW — по спектру и водопаду.
@@ -1942,7 +1970,8 @@ function saTipRows(n,W,hx,hy){
   for(const b of n._bmBoxes||[]) if(inB(b)) add(b.b.color||'#c9c9c9','★ '+(b.b.label||saHz(b.freq)),saHz(b.freq)+(b.b.note?' · '+b.b.note:''));
   for(const b of n._mkBoxes||[]) if(inB(b)){
     const k=b.idx, mf=n.mk[k], bw=saMarkerBw(n,k), ch=saChanAtMarker(n,mf), a=[];
-    if(ch && ch.rssi!=null) a.push(Math.round(ch.rssi)+' dBFS'+(ch.snr!=null?' · SNR '+Math.round(ch.snr):'')); else if(n.db[k]>-119) a.push(Math.round(n.db[k])+' dB · SNR '+Math.max(0,Math.round(n.snr?.[k]??0)));
+    const lo=n._lvOff||0, un=n.p.unit==='dBFS' ? 'dBFS' : n.p.unit;
+    if(ch && ch.rssi!=null) a.push(Math.round(ch.rssi+lo)+' '+un+(ch.snr!=null?' · SNR '+Math.round(ch.snr):'')); else if(n.db[k]>-119) a.push(Math.round(n.db[k]+lo)+' '+un+' · SNR '+Math.max(0,Math.round(n.snr?.[k]??0)));
     if(bw) a.push('bw '+fmtHz(bw[1]-bw[0],bw[1]-bw[0]<1e4?1:0)+'Hz');
     if(ch&&ch.mode) a.push(ch.mode);
     add(MK_COL(k),'Marker '+(k+1)+' · '+saHz(mf),a.join(' · ')||'—');
@@ -1957,7 +1986,7 @@ function saTipRows(n,W,hx,hy){
   for(const b of n._sgBoxes||[]) if(inB(b)){
     const g=b.b, a=[];
     a.push(saHz(g.f??(g.lo+g.hi)/2));
-    if(g.db!=null) a.push(Math.round(g.db)+' dB');
+    if(g.db!=null) a.push(Math.round(g.db+(n._lvOff||0))+' '+(n.p.unit==='dBFS' ? 'dB' : n.p.unit));
     if(g.hi>g.lo) a.push('bw '+fmtHz(g.hi-g.lo,g.hi-g.lo<1e4?1:0)+'Hz');
     if(g.conf!=null) a.push(Math.round(g.conf*100)+'%');
     if(g.nbw>0) a.push('need '+fmtHz(g.nbw,g.nbw<1e4?1:0)+'Hz');
@@ -2097,8 +2126,8 @@ function saMarkers(n,cx,W,H){
     // иначе пик в окне ±tol / SNR над шумовой полкой (см. saNoiseFloor)
     const ch=saChanAtMarker(n,f);
     const t=(k+1)+': '+fv+(ch && ch.rssi!=null
-      ? ' '+ch.rssi.toFixed(0)+'dBFS / '+(ch.snr!=null?ch.snr.toFixed(0):'—')
-      : n.db[k]>-119?' '+n.db[k].toFixed(0)+' / '+Math.max(0,n.snr?.[k]??0).toFixed(0):'');
+      ? ' '+(ch.rssi+(n._lvOff||0)).toFixed(0)+(n.p.unit==='dBFS' ? 'dBFS' : '')+' / '+(ch.snr!=null?ch.snr.toFixed(0):'—')
+      : n.db[k]>-119?' '+(n.db[k]+(n._lvOff||0)).toFixed(0)+' / '+Math.max(0,n.snr?.[k]??0).toFixed(0):'');
     const ant=n.p.ant==='antenna'||n.p.ant==='both', hrm=n.p.ant==='harmonics'||n.p.ant==='both';
     let t2=ant ? t+' λ/4 '+fmtLen(antennaDims(f,n.p.antVf).quarter) : t;
     const rk=n.p.dRef==='off' ? -1 : (+n.p.dRef)-1;     // дельта-маркеры: у опорного — метка, у остальных Δf и ΔdB к нему
@@ -2260,11 +2289,12 @@ function saGrid(n,cx,W,hs,H,plotH,diff){            // сетка частот �
   const want=Math.max(2,Math.floor(plotH/28));       // не чаще ~28 px между линиями
   const dStep=[1,2,5,10,20,50].find(s=>dr/s<=want)||100;
   const labels=n._dbLabels=(n._dbLabels||[]); labels.length=0;   // подписи рисует saDbLabels — поверх трассы
-  for(let v=Math.ceil(dLo/dStep)*dStep; v<=dHi; v+=dStep){
-    const y=Math.round(plotH-clamp((v-dLo)/dr,0,1)*(plotH-2)-1)+.5;
+  const off=diff ? 0 : (n._lvOff||0), un=diff ? 'dB' : saUnit(n);   // калибровка: линии на круглых значениях в выбранных единицах
+  for(let vd=Math.ceil((dLo+off)/dStep)*dStep; vd<=dHi+off; vd+=dStep){
+    const v=vd-off, y=Math.round(plotH-clamp((v-dLo)/dr,0,1)*(plotH-2)-1)+.5;
     if(y<14||y>plotH-2) continue;                    // верх — зона закладок, низ — край графика
     cx.beginPath(); cx.moveTo(0,y); cx.lineTo(W,y); cx.stroke();
-    labels.push({t:(diff&&v>0?'+':'')+v+'dB',y});
+    labels.push({t:(diff&&vd>0?'+':'')+Math.round(vd*10)/10+un,y});
   }
 }
 function saDbLabels(n,cx){

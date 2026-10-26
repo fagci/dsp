@@ -89,6 +89,7 @@ const db=x=>20*Math.log10(x+1e-12), near=(a,b,e=.05)=>Math.abs(a-b)<=e;
   const L=t.trim().split('\n');
   ok('csv: header skips an empty trace',L[0]==='freq_hz,T1_db' && L.length===5,L[0]);
   ok('csv: levels in dB',L[1]==='100000000,0' && L[2]==='100001000,-20',L[1]+' '+L[2]);
+  ok('csv: calibration offset is added to every level',K.saTraceCsv(2,i=>i,[{name:'a',arr:Float32Array.from([1,.1])}],-30).includes('0,-30') && K.saTraceCsv(2,i=>i,[{name:'a',arr:Float32Array.from([1,.1])}],-30).includes('1,-50'));
   const ref=K.saRefParse(t);
   ok('ref: parsed back, header skipped',ref && ref.f.length===4 && near(ref.db[1],-20,.01));
   const rs=K.saRefResample(ref,i=>100e6+i*500,8);

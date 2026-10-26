@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=123;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=124;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -203,6 +203,8 @@ const PRESET_CATS={
   'ESP-SDR: ESP32 Spectrum':'SDR Receivers',
   'Spectrum Analyzer: Dense Overlay — Bookmarks, Band Plan and Signal Tags (Generator)':'Analysis & Measurement',
   'Spectrum Analyzer: Traces, Delta Markers and Measurements (Generator)':'Analysis & Measurement',
+  'Zero-span: Level vs Time, Trigger and Pulse Measurements (Generator)':'Analysis & Measurement',
+  'USB SDR: Best Gain by SNR (Gain Optimizer, dBm Scale)':'SDR Receivers',
   'Measure: Modulation Meter — FM and AM (Generator)':'Analysis & Measurement',
   'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
   'Measure: Spectrum Baseline — New Signal and Missing Carrier Alarm (Generator)':'Analysis & Measurement',
@@ -1468,6 +1470,33 @@ const sa=addNode('sa',960,40,{auto:true,floor:-100,top:-20,split:.5,tr2:'max hol
 sa.size.w=1100; sa.size.h=620; applySize(sa);
 addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
 addEdge(c1.id,'out',sa.id,'m1'); addEdge(c2.id,'out',sa.id,'m2');
+markWiresDirty();
+});
+preset('Zero-span: Level vs Time, Trigger and Pulse Measurements (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Zero-span: the level at ONE frequency against time, like a bench analyzer with the span at zero. An AM carrier (500 Hz, 100 % depth) at +100 kHz of a 1.024 MS/s stream; the node mixes the offset to zero, filters with the RBW (two poles) and shows the envelope in dB.\n'+
+  'Trigger: rise / fall / free, the level line (dashed) and the pre-trigger share set where the event stands; auto draws a free frame when nothing triggers, normal holds the last one, single stops after one capture (Arm re-arms). Measurements of the frame: peak, mean, pulse width, period, duty, 10–90 % rise time — chips and outputs. Autoset fits the scale and puts the trigger at the middle.\n'+
+  'Try: RBW 200 kHz (fast edges) against 2 kHz (slow, the envelope smears); sweep 0.5…5 ms; offset 0 (nothing there). The Spectrum Analyzer next to it has «level vs time at the active marker» on: the inset over the waterfall plots the marker level (a slow process — seconds and minutes; fast pulses need the zero-span node).'});
+nt.size.w=880; nt.size.h=240; applySize(nt);
+const gn=addNode('iqGen',40,320,{sr:'1024000',fc:100000000,mode:'AM',off:100000,lvl:-20,tone:500,depth:1,noise:-80});
+const zs=addNode('zerospan',400,320,{off:100000,rbw:20000,sweep:'5',trig:'rise',tmode:'auto',level:-35,tpos:.25}); zs.size.w=620; zs.size.h=360; applySize(zs);
+const sp=addNode('iqSpec',40,620,{size:'4096',avg:'1'});
+const sa=addNode('sa',1060,40,{auto:true,floor:-100,top:-10,split:.55,slice:'marker',sliceSec:'10'}); sa.size.w=880; sa.size.h=520; applySize(sa);
+const c1=addNode('const',40,780,{v:100100000});
+addEdge(gn.id,'iq',zs.id,'in'); addEdge(gn.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec'); addEdge(c1.id,'out',sa.id,'m1');
+markWiresDirty();
+});
+preset('USB SDR: Best Gain by SNR (Gain Optimizer, dBm Scale)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Gain calibration by SNR. Tune the USB SDR to a signal, press «Find the best gain» in the Gain Optimizer: it steps the gain (coarse, then 1 dB around the best), waits for the hardware, averages the SNR of the target over several spectrum frames and keeps the gain with the best SNR — never one where the ADC clips (the `clip` pin of the USB SDR), and within 0.5 dB of the best it takes the lower gain for headroom.\n'+
+  'The target is the frequency on the `f` pin, otherwise the strongest signal when the search starts. `gain` goes to the USB SDR `gainDb` (it switches the receiver to manual gain) and to the analyzer `gain`: with the unit dBm / dBµV the shown level is dBFS − gain + offset, so the scale holds when the gain changes. Calibrate the offset once: set a marker on a signal of a known level and press «Calibrate…» (the unit becomes dBm). Without a calibration source the dBm are only as good as your estimate: the tuner response, antenna and cable add a few dB.\n'+
+  'Records of every step (gain, SNR, peak, floor, clip) come out on `rec`. «repeat every» runs the search again from time to time — it moves the gain, so not while you listen.'});
+nt.size.w=900; nt.size.h=250; applySize(nt);
+const rx=addNode('rtlsdr',40,320,{sr:'1024000',auto:false,gainDb:30,demod:'WFM',freq:100000000});
+const go=addNode('gainopt',400,320,{gStep:4,settle:500,frames:6}); go.size.w=360; go.size.h=420; applySize(go);
+const sa=addNode('sa',800,320,{auto:true,floor:-100,top:-20,split:.4,unit:'dBm',lvlOff:-60}); sa.size.w=800; sa.size.h=420; applySize(sa);
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',go.id,'spec'); addEdge(rx.id,'clip',go.id,'clip');
+addEdge(go.id,'gain',rx.id,'gainDb'); addEdge(go.id,'gain',sa.id,'gain'); addEdge(sa.id,'f1',rx.id,'tuneFreq');
 markWiresDirty();
 });
 preset('Measure: Modulation Meter — FM and AM (Generator)', function(){
