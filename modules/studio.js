@@ -139,9 +139,10 @@ class StuApp{
   projMenu(ev){
     const P=this.P;
     stuMenu(ev.clientX,ev.clientY,[
-      {label:'New empty project',fn:()=>this.newProject(false)},
-      {label:'Load demo project',fn:()=>this.newProject(true)},
+      {label:'New empty project',fn:()=>this.newProject(null)},
+      {label:'Examples ▸',fn:()=>this.examplesMenu(ev.clientX,ev.clientY)},
       {label:'Open…',fn:()=>this.openList()},
+      {label:(P.lite?'✓ ':'')+'Low CPU mode (fewer voices, short reverb)',fn:()=>{ P.lite=!P.lite; if(this.eng.rig) this.eng.rig.sync(); this.commit(); this.say(P.lite?'low CPU mode on':'low CPU mode off'); }},
       {label:'Rename…',fn:()=>{ const n=prompt('Project name',P.name); if(n){ P.name=n; this.commit(); this.refreshAll(); } }},
       {sep:1},
       {label:'Export WAV (song)',fn:()=>this.exportWav('song')},
@@ -155,9 +156,12 @@ class StuApp{
     stuMenu(innerWidth/2-120,80,all.length?all.map(r=>({label:(r.id===this.projId?'● ':'')+r.name+'  ·  '+new Date(r.mod).toLocaleString(),
       fn:()=>{ this.saveNow(); this.projId=r.id; this.node.p.proj=r.id; this.adopt(stLoad(r.json),r.samples); this.undo=[JSON.stringify(this.P)]; }})):[{label:'No saved projects',dis:1}]);
   }
-  newProject(demo){
+  examplesMenu(x,y){
+    stuMenu(x,y,Object.keys(ST_EXAMPLES).map(n=>({label:n,fn:()=>this.newProject(ST_EXAMPLES[n])})));
+  }
+  newProject(make){
     this.saveNow(); this.projId='stu'+Date.now().toString(36); this.node.p.proj=this.projId;
-    let P; if(demo) P=stDemoProject(); else{ P=stNewProject(); const pat=stAddPattern(P,'Pattern 1',1);
+    let P; if(make) P=make(); else{ P=stNewProject(); const pat=stAddPattern(P,'Pattern 1',1);
       const k=stAddChannel(P,'drum','Kick',ST_KITS['Kick 909'],1), s=stAddChannel(P,'drum','Snare',ST_KITS.Snare,2), h=stAddChannel(P,'drum','Hat',ST_KITS['Closed Hat'],3),
         sy=stAddChannel(P,'synth','Synth',stPatchP('Supersaw Lead'),4);
       for(const c of [k,s,h,sy]) pat.notes[c.id]=[]; stAddClip(P,pat,0,0,4); P.playlist.loop=[0,4*ST_BAR]; }

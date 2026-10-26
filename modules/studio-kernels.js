@@ -181,7 +181,7 @@ function stWav(L,R,sr,float32){
 /* ---------- проект ---------- */
 function stBlankMixer(){
   const m=[];
-  for(let i=0;i<=ST_INSERTS;i++) m.push({name:i?'Insert '+i:'Master',vol:i?.8:.85,pan:0,mute:false,solo:false,fx:[],sends:{}});
+  for(let i=0;i<=ST_INSERTS;i++) m.push({name:i?'Insert '+i:'Master',vol:i?.8:.7,pan:0,mute:false,solo:false,fx:[],sends:{}});
   return m;
 }
 function stNewProject(){
@@ -362,3 +362,162 @@ function stDemoProject(){
   P.playlist.loop=[0,32*ST_BAR];
   return P;
 }
+
+/* ---------- готовые композиции для проверки ---------- */
+// маленький конструктор: шаги строкой ('x' — удар, 'X' — акцент, '.' — пауза; 16 шагов на такт), аккорды, микшер
+function stBuilder(name,bpm){
+  const P=stNewProject(); P.name=name; P.bpm=bpm;
+  const B={P,
+    ch(type,nm,p,ins,vol){ const c=stAddChannel(P,type,nm,p,ins); if(vol!=null) c.vol=vol; if(ins) P.mixer[ins].name=nm; return c; },
+    pat(nm,bars,chs){ const p=stAddPattern(P,nm,bars); chs.forEach(c=>p.notes[c.id]=[]); return p; },
+    x(pat,c,str,key,vel,len){ [...str.replace(/\s/g,'')].forEach((s,i)=>{ if(s==='x'||s==='X') pat.notes[c.id].push({t:i*ST_STEP,l:(len||1)*ST_STEP,k:key,v:s==='X'?118:(vel||95)}); }); },
+    n(pat,c,step,len,key,vel){ pat.notes[c.id].push({t:step*ST_STEP,l:len*ST_STEP,k:key,v:vel||95}); },
+    chord(pat,c,step,len,root,type,vel){ for(const d of ST_CHORDS[type]) B.n(pat,c,step,len,root+d,vel||80); },
+    fx(i,type,p){ P.mixer[i].fx.push({id:stNextId(P),type,on:true,p:stFillP(ST_FX[type].p,p)}); },
+    send(i,t,v){ P.mixer[i].sends[t]=v; },
+    vol(i,v){ P.mixer[i].vol=v; },
+    clip(pat,tr,bar,bars){ return stAddClip(P,pat,tr,bar*ST_BAR,bars); },
+    // общие шины: 14 — ревербератор, 15 — дилей
+    buses(rev,del){ P.mixer[14].name='Reverb'; P.mixer[15].name='Delay'; B.fx(14,'reverb',Object.assign({mix:1},rev||{})); B.fx(15,'delay',Object.assign({mix:1},del||{})); },
+    auto(tr,bar,bars,target,pts){ const l=bars*ST_BAR; P.playlist.clips.push({id:stNextId(P),kind:'auto',tr,t:bar*ST_BAR,l,target,pts:pts.map(q=>[q[0]*l,q[1]])}); },
+    loop(bars){ P.playlist.loop=[0,bars*ST_BAR]; P.playlist.tracks=Math.max(P.playlist.tracks,10); return P; }};
+  return B;
+}
+// мелодия: [шаг, длина, нота] через пробел → массив
+const stMel=s=>s.trim().split(/\s+/).map(t=>t.split(',').map(Number));
+
+function stExTrance(){
+  const B=stBuilder('Trance Lift',138), P=B.P; P.mixer[0].fx.push({id:stNextId(P),type:'comp',on:true,p:stFillP(ST_FX.comp.p,{thr:-9,ratio:2,gain:2})});
+  const kick=B.ch('drum','Kick',ST_KITS['Kick 909'],1,.95), clap=B.ch('drum','Clap',ST_KITS.Clap,2,.7), oh=B.ch('drum','Open Hat',ST_KITS['Open Hat'],3,.55),
+    hat=B.ch('drum','Hat',ST_KITS['Closed Hat'],3,.4), bass=B.ch('synth','Bass',stPatchP('Reese Bass'),4,.8), pad=B.ch('synth','Pad',stPatchP('Warm Pad'),5,.55),
+    arp=B.ch('synth','Pluck',stPatchP('Trance Pluck'),6,.6), lead=B.ch('synth','Lead',stPatchP('Supersaw Lead'),7,.65);
+  B.buses({size:3.6,damp:.5},{div:'1/8.',fb:.45});
+  B.fx(4,'pump',{depth:.9,rel:.5}); B.fx(5,'pump',{depth:.75,rel:.55}); B.fx(7,'pump',{depth:.5,rel:.5}); B.fx(6,'eq',{lo:-3}); B.fx(1,'comp',{thr:-14,ratio:3});
+  B.send(5,14,.35); B.send(6,14,.2); B.send(6,15,.3); B.send(7,14,.3); B.send(7,15,.35); B.send(2,14,.2);
+  const roots=[45,41,48,43];
+  const drums=B.pat('Drums',1,[kick,clap,oh,hat]); B.x(drums,kick,'x...x...x...x...',60,120); B.x(drums,clap,'....x.......x...',60,100); B.x(drums,oh,'..x...x...x...x.',60,85); B.x(drums,hat,'x.x.x.x.x.x.x.x.',60,50);
+  const kk=B.pat('Kick only',1,[kick]); B.x(kk,kick,'x...x...x...x...',60,120);
+  const bp=B.pat('Bass',4,[bass]), cp=B.pat('Chords',4,[pad]), ap=B.pat('Pluck',4,[arp]), lp=B.pat('Lead',4,[lead]);
+  for(let c=0;c<4;c++){ const o=c*16;
+    for(let i=0;i<16;i++) if(i%4!==0) B.n(bp,bass,o+i,1,roots[c]-12+(i%8===6?12:0),i%4===2?105:85);
+    B.chord(cp,pad,o,16,roots[c]+12,c%4===1||c%4===3?'maj':'min');
+    for(let i=0;i<16;i++) B.n(ap,arp,o+i,1,roots[c]+24+[0,7,12,7][i%4]+(c===3&&i>7?2:0),i%4===0?100:70); }
+  const mel=stMel('0,3,81 3,3,84 6,2,88 8,4,86 12,4,84  16,3,81 19,3,84 22,2,89 24,4,88 28,4,84  32,3,84 35,3,88 38,2,91 40,4,88 44,4,84  48,3,83 51,3,86 54,2,91 56,8,95');
+  for(const [s,l,k] of mel) B.n(lp,lead,s,l,k,100);
+  // 8 тактов интро, 8 бридж (без бочки), 16 дроп
+  B.clip(kk,0,0,8); B.clip(bp,1,0,8); B.clip(cp,2,4,12); B.clip(ap,3,4,4);
+  B.clip(cp,2,16,16); B.clip(lp,5,16,16); B.clip(drums,0,16,16); B.clip(bp,1,16,16); B.clip(ap,3,16,16);
+  B.clip(drums,0,8,8); B.clip(bp,1,8,8); B.clip(ap,3,12,4);
+  B.auto(6,4,12,'fx:4:0:depth',[[0,.2],[1,.95]]);
+  return B.loop(32);
+}
+function stExHouse(){
+  const B=stBuilder('Deep House',122), P=B.P; P.swing=.18; P.mixer[0].vol=.95;
+  const kick=B.ch('drum','Kick',ST_KITS['Kick Deep'],1,.95), clap=B.ch('drum','Clap',ST_KITS.Clap,2,.6), hat=B.ch('drum','Hat',ST_KITS['Closed Hat'],3,.5),
+    oh=B.ch('drum','Open Hat',ST_KITS['Open Hat'],3,.5), rim=B.ch('drum','Rim',ST_KITS.Rim,3,.4), bass=B.ch('synth','Bass',stPatchP('Sub Bass'),4,.85),
+    keys=B.ch('synth','Keys',stPatchP('Soft Keys'),5,.65), pad=B.ch('synth','Pad',stPatchP('Warm Pad'),6,.4);
+  B.buses({size:2.4,damp:.6},{div:'1/8',fb:.35});
+  B.fx(4,'pump',{depth:.6,rel:.4}); B.fx(5,'chorus',{mix:.3}); B.fx(5,'pump',{depth:.4}); B.fx(6,'filter',{type:'lp',cut:2400,mix:1});
+  B.send(5,14,.3); B.send(5,15,.25); B.send(6,14,.4); B.send(2,14,.25);
+  const dm=[50,55,48,53]; // Dm7, G7, Cmaj7, Fmaj7
+  const dr=B.pat('Drums',1,[kick,clap,hat,oh,rim]); B.x(dr,kick,'x...x...x...x...',60,115); B.x(dr,clap,'....x.......x...',60,95); B.x(dr,hat,'x.xxx.xxx.xxx.xx',60,55); B.x(dr,oh,'..x...x...x...x.',60,70); B.x(dr,rim,'.....x.....x..x.',60,60);
+  const bp=B.pat('Bass',4,[bass]), kp=B.pat('Keys',4,[keys]), pp=B.pat('Pad',4,[pad]);
+  const types=['min7','7','maj7','maj7'];
+  for(let c=0;c<4;c++){ const o=c*16, r=dm[c]-12;
+    [0,3,6,10,12,14].forEach((s,j)=>B.n(bp,bass,o+s,j%2?1:2,r+(j===4?7:j===5?12:0),95));
+    B.chord(kp,keys,o,3,dm[c]+12,types[c],85); B.chord(kp,keys,o+6,2,dm[c]+12,types[c],70); B.chord(kp,keys,o+10,2,dm[c]+12,types[c],80);
+    B.chord(pp,pad,o,16,dm[c]+12,types[c],55); }
+  B.clip(dr,0,0,32); B.clip(bp,1,4,28); B.clip(kp,2,8,24); B.clip(pp,3,0,32);
+  return B.loop(32);
+}
+function stExDnb(){
+  const B=stBuilder('Drum & Bass',174), P=B.P;
+  const kick=B.ch('drum','Kick',ST_KITS['Kick Hard'],1,.95), sn=B.ch('drum','Snare',{kind:'snare',tone:.7,dec:.9},2,.85), hat=B.ch('drum','Hat',ST_KITS['Closed Hat'],3,.5),
+    oh=B.ch('drum','Open Hat',ST_KITS['Open Hat'],3,.45), bass=B.ch('synth','Reese',stPatchP('Reese Bass'),4,.85), sub=B.ch('synth','Sub',stPatchP('Sub Bass'),5,.8),
+    pad=B.ch('synth','Pad',stPatchP('Warm Pad'),6,.45), stab=B.ch('synth','Stab',stPatchP('Hoover'),7,.4);
+  B.buses({size:2.8,damp:.5},{div:'1/8.',fb:.4});
+  B.fx(4,'dist',{drive:.3,mix:.4,type:'tube'}); B.fx(4,'pump',{depth:.5,rel:.3}); B.fx(6,'pump',{depth:.6,rel:.35}); B.send(6,14,.4); B.send(7,14,.3); B.send(7,15,.3); B.send(2,14,.15);
+  const dr=B.pat('Beat',1,[kick,sn,hat,oh]); B.x(dr,kick,'x.........x.....',60,120); B.x(dr,sn,'....X.......X...',60,110); B.x(dr,sn,'..............x.',60,60); B.x(dr,hat,'x.x.x.x.x.x.x.x.',60,60); B.x(dr,oh,'.x.x.x.x.x.x.x.x',60,0);
+  dr.notes[oh.id]=[{t:6*24,l:24,k:60,v:80},{t:14*24,l:24,k:60,v:80}];
+  const fill=B.pat('Fill',1,[kick,sn,hat,oh]); B.x(fill,kick,'x.........x.....',60,120); B.x(fill,sn,'....X...x.x.xxxx',60,100); B.x(fill,hat,'x.x.x.x.x.x.....',60,60);
+  const bp=B.pat('Reese',4,[bass]), sp=B.pat('Sub',4,[sub]), pp=B.pat('Pad',4,[pad]), st=B.pat('Stab',4,[stab]);
+  const r=[38,38,41,36]; // D D F C
+  for(let c=0;c<4;c++){ const o=c*16;
+    B.n(bp,bass,o,6,r[c],100); B.n(bp,bass,o+6,2,r[c]+12,90); B.n(bp,bass,o+8,6,r[c],100); B.n(bp,bass,o+14,2,r[c]+7,90);
+    B.n(sp,sub,o,6,r[c]-12,100); B.n(sp,sub,o+8,6,r[c]-12,100);
+    B.chord(pp,pad,o,16,r[c]+24,c===2?'maj7':'min7',55);
+    B.chord(st,stab,o+3,1,r[c]+24,'power',90); B.chord(st,stab,o+11,1,r[c]+24,'power',85); }
+  B.clip(dr,0,0,12); B.clip(fill,0,12,1); B.clip(dr,0,13,19); B.clip(pp,3,0,32); B.clip(bp,1,8,24); B.clip(sp,2,8,24); B.clip(st,4,16,16);
+  return B.loop(32);
+}
+function stExAcid(){
+  const B=stBuilder('Acid Techno',132), P=B.P;
+  const kick=B.ch('drum','Kick',ST_KITS['Kick Hard'],1,.95), clap=B.ch('drum','Clap',ST_KITS.Clap,2,.6), hat=B.ch('drum','Hat',ST_KITS['Closed Hat'],3,.45),
+    oh=B.ch('drum','Open Hat',ST_KITS['Open Hat'],3,.5), acid=B.ch('synth','Acid',stPatchP('Acid 303'),4,.8), pad=B.ch('synth','Drone',stPatchP('Warm Pad'),5,.35);
+  B.buses({size:2.2,damp:.7},{div:'1/8.',fb:.5});
+  B.fx(4,'dist',{drive:.45,mix:.6,type:'hard'}); B.send(4,15,.4); B.send(4,14,.15); B.send(5,14,.5); B.fx(5,'filter',{type:'lp',cut:1200}); B.fx(1,'comp',{thr:-12,ratio:3}); B.send(2,14,.2);
+  const dr=B.pat('Drums',1,[kick,clap,hat,oh]); B.x(dr,kick,'x...x...x...x...',60,120); B.x(dr,clap,'....x.......x...',60,100); B.x(dr,hat,'x.x.x.x.x.x.x.x.',60,50); B.x(dr,oh,'..x...x...x...x.',60,85);
+  const ap=B.pat('Acid',2,[acid]), dp=B.pat('Drone',2,[pad]);
+  // 303-линия: [шаг, длина, нота, акцент]
+  const line=[[0,1,36,1],[1,1,36,0],[3,1,48,0],[4,1,36,1],[6,1,39,0],[7,2,36,0],[10,1,43,1],[12,1,36,0],[13,1,48,1],[14,1,46,0],
+              [16,1,36,1],[17,1,36,0],[19,1,51,1],[20,1,36,0],[22,1,34,0],[23,1,36,1],[25,2,43,0],[28,1,36,1],[29,1,48,0],[30,2,39,1]];
+  for(const [s,l,k,a] of line) B.n(ap,acid,s,l,k,a?118:80);
+  B.chord(dp,pad,0,32,36+12,'power',60);
+  B.clip(dr,0,0,32); B.clip(ap,1,4,28); B.clip(dp,2,0,32);
+  // свип среза по всей песне, потом резонанс
+  B.auto(4,4,16,'ch:'+acid.id+':cut',[[0,.15],[.5,.7],[1,.95]]); B.auto(4,20,12,'ch:'+acid.id+':cut',[[0,.9],[.5,.3],[1,.8]]);
+  B.auto(5,8,24,'ch:'+acid.id+':res',[[0,.2],[1,.8]]);
+  return B.loop(32);
+}
+function stExDubstep(){
+  const B=stBuilder('Dubstep',140), P=B.P;
+  const kick=B.ch('drum','Kick',ST_KITS['Kick Hard'],1,.95), sn=B.ch('drum','Snare',{kind:'snare',tone:.4,dec:1.3},2,.9), hat=B.ch('drum','Hat',ST_KITS['Closed Hat'],3,.45),
+    crash=B.ch('drum','Crash',ST_KITS.Crash,3,.4), wob=B.ch('synth','Wobble',stPatchP('Wobble'),4,.8), sub=B.ch('synth','Sub',stPatchP('Sub Bass'),5,.85),
+    pad=B.ch('synth','Pad',stPatchP('Warm Pad'),6,1), lead=B.ch('synth','Lead',stPatchP('Supersaw Lead'),7,.55);
+  B.buses({size:3,damp:.55},{div:'1/4',fb:.4});
+  B.fx(4,'dist',{drive:.5,mix:.7,type:'fold'}); B.fx(4,'comp',{thr:-16,ratio:4}); B.fx(6,'pump',{depth:.7}); B.send(6,14,.5); B.send(7,14,.35); B.send(7,15,.3); B.send(2,14,.3);
+  const hs=B.pat('Halftime',2,[kick,sn,hat]); B.x(hs,kick,'x.........x.....x.......x.....',60,120); B.x(hs,sn,'........X.......'+'........X.......',60,115); B.x(hs,hat,'x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.',60,50);
+  const wp=B.pat('Wobble',2,[wob]), sp=B.pat('Sub',2,[sub]), pp=B.pat('Pad',2,[pad]), lp=B.pat('Lead',2,[lead]), cr=B.pat('Crash',1,[crash]);
+  B.x(cr,crash,'x...............',60,100);
+  const wl=[[0,6,34],[8,2,34],[10,4,41],[16,6,32],[24,2,32],[26,6,39]];
+  for(const [s,l,k] of wl){ B.n(wp,wob,s,l,k+12,105); B.n(sp,sub,s,l,k-12,100); }
+  B.chord(pp,pad,0,16,58,'min',60); B.chord(pp,pad,16,16,56,'maj',60);
+  stMel('0,4,70 4,4,73 8,4,77 12,4,73 16,6,72 22,2,70 24,8,68').forEach(([s,l,k])=>B.n(lp,lead,s,l,k+12,95));
+  B.clip(pp,3,0,16); B.clip(lp,4,8,8); B.clip(cr,0,8,1); B.clip(hs,0,8,24); B.clip(wp,1,8,24); B.clip(sp,2,8,24);
+  B.auto(4,8,24,'ch:'+wob.id+':lr',[[0,.45],[.5,.7],[.75,.55],[1,.9]]); B.auto(4,8,24,'ch:'+wob.id+':cut',[[0,.3],[.5,.6],[1,.4]]);
+  return B.loop(32);
+}
+function stExLofi(){
+  const B=stBuilder('Lo-fi Chill',80), P=B.P; P.swing=.4; P.mixer[0].vol=.9;
+  const kick=B.ch('drum','Kick',ST_KITS['Kick Deep'],1,.85), sn=B.ch('drum','Snare',{kind:'snare',tone:.3,dec:.8},2,.7), hat=B.ch('drum','Hat',ST_KITS['Closed Hat'],3,.35),
+    bass=B.ch('synth','Bass',stPatchP('Sub Bass'),4,.8), keys=B.ch('synth','Rhodes',stPatchP('Soft Keys'),5,.65), bell=B.ch('synth','Bell',stPatchP('FM Bell'),6,.35);
+  B.buses({size:2.6,damp:.8},{div:'1/8.',fb:.35});
+  B.fx(5,'crush',{bits:10,mix:.35}); B.fx(5,'chorus',{rate:.3,depth:.7,mix:.45}); B.fx(5,'filter',{type:'lp',cut:3800}); B.fx(0,'filter',{type:'lp',cut:9000});
+  B.send(5,14,.3); B.send(6,14,.5); B.send(6,15,.4); B.send(2,14,.2);
+  const dr=B.pat('Drums',1,[kick,sn,hat]); B.x(dr,kick,'x.....x...x.....',60,105); B.x(dr,sn,'....x.......x...',60,85); B.x(dr,hat,'x.x.x.x.xxx.x.x.',60,45);
+  const bp=B.pat('Bass',4,[bass]), kp=B.pat('Keys',4,[keys]), bl=B.pat('Bell',4,[bell]);
+  const r=[53,52,50,48], t=['maj7','min7','min7','7']; // Fmaj7 Em7 Dm7 C7
+  for(let c=0;c<4;c++){ const o=c*16;
+    B.n(bp,bass,o,3,r[c]-24,95); B.n(bp,bass,o+6,2,r[c]-24,80); B.n(bp,bass,o+10,4,r[c]-17,85);
+    B.chord(kp,keys,o,5,r[c]-5,t[c],75); B.chord(kp,keys,o+6,3,r[c]-5,t[c],60); B.chord(kp,keys,o+11,5,r[c]-5,t[c],70); }
+  stMel('4,2,84 7,1,81 12,3,79 20,2,77 24,3,79 36,2,76 40,4,74 52,2,72 58,2,76').forEach(([s,l,k])=>B.n(bl,bell,s,l,k,80));
+  B.clip(kp,2,0,16); B.clip(bp,1,2,14); B.clip(dr,0,2,14); B.clip(bl,3,4,12);
+  return B.loop(16);
+}
+function stExAmbient(){
+  const B=stBuilder('Ambient Drift',70), P=B.P; P.mixer[0].vol=.95;
+  const pad=B.ch('synth','Pad',stPatchP('Warm Pad'),1,.6), pad2=B.ch('synth','Air',Object.assign(stPatchP('Warm Pad'),{o1:1,o2:1,cut:5000,uni:6,det:40,vol:.3}),2,.4),
+    bell=B.ch('synth','Bell',stPatchP('FM Bell'),3,.5), sub=B.ch('synth','Sub',stPatchP('Sub Bass'),4,.6), pl=B.ch('synth','Pluck',stPatchP('Arp Square'),5,.3);
+  B.buses({size:5.5,damp:.35},{div:'1/4',fb:.55});
+  B.send(1,14,.5); B.send(2,14,.7); B.send(3,14,.6); B.send(3,15,.5); B.send(5,15,.6); B.send(5,14,.4); B.fx(2,'phaser',{rate:.12,mix:.4}); B.fx(1,'chorus',{rate:.2,mix:.35});
+  const cp=B.pat('Chords',8,[pad,pad2,sub]), bl=B.pat('Bells',8,[bell]), pp=B.pat('Pluck',4,[pl]);
+  const prog=[[45,'min7'],[41,'maj7'],[43,'7'],[40,'min7']];
+  prog.forEach(([r,t],i)=>{ const o=i*32; B.chord(cp,pad,o,32,r+12,t,60); B.chord(cp,pad2,o,32,r+24,t,45); B.n(cp,sub,o,30,r-12,90); });
+  stMel('0,6,81 12,4,84 20,6,79 32,8,77 44,4,81 52,8,76 64,6,79 76,4,83 84,8,81 96,6,76 108,4,79 116,10,72').forEach(([s,l,k])=>B.n(bl,bell,s,l,k,75));
+  for(let i=0;i<32;i+=3) B.n(pp,pl,i,1,[69,72,76,79,76,72][i/3%6|0]+(i>16?12:0),55);
+  B.clip(cp,0,0,16); B.clip(bl,1,4,12); B.clip(pp,2,8,8);
+  B.auto(3,0,16,'fx:2:0:depth',[[0,.2],[.5,.9],[1,.3]]);
+  return B.loop(16);
+}
+const ST_EXAMPLES={'Night Drive — techno 126':stDemoProject,'Trance Lift — 138':stExTrance,'Deep House — 122':stExHouse,'Drum & Bass — 174':stExDnb,
+  'Acid Techno — 132':stExAcid,'Dubstep — 140':stExDubstep,'Lo-fi Chill — 80':stExLofi,'Ambient Drift — 70':stExAmbient};
