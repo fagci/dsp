@@ -280,3 +280,84 @@ def({ id:'steps', lazy:'proc', title:'Pedometer', cat:'Tools', readout:true, tal
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     const S=n.S;
     r.textContent=n.has ? `${S.count} steps\n${S.spm.toFixed(0)} steps/min · ${(S.count*+n.p.stride).toFixed(0)} m` : 'wire accel → x y z, start the graph (the screen stays on and a silent sound keeps the page alive)'; }});
+
+/* ---- калькулятор радиолюбителя ---- */
+const rfF=v=>tlFmt(+v.toPrecision(5));
+def({ id:'rfcalc', lazy:'proc', title:'Radio Calculator', cat:'Tools', readout:true, tall:true, w:340,
+  kw:'radio calculator antenna wavelength dipole quarter wave link budget fspl path loss swr return loss ohm law resonance lc ham радиолюбитель антенна ксв',
+  ins:[{n:'f',t:'num'},{n:'d',t:'num'},{n:'swr',t:'num'}], outs:[{n:'out',t:'num'},{n:'out2',t:'num'}],
+  params:[{n:'mode',t:'select',opts:['antenna','link budget','SWR','Ohm','LC resonance'],d:'antenna'},
+          {n:'f',t:'num',d:145,label:'frequency, MHz (the f pin is in Hz and wins)',if:n=>n.p.mode==='antenna' || n.p.mode==='link budget' || (n.p.mode==='LC resonance' && n.p.solve==='C for f')},
+          {n:'k',t:'range',min:.85,max:1,step:.005,d:.95,label:'wire shortening factor',if:n=>n.p.mode==='antenna'},
+          {n:'dist',t:'num',d:10,label:'distance, km (the d pin wins)',if:n=>n.p.mode==='link budget'},
+          {n:'pt',t:'num',d:30,label:'transmitter power, dBm (30 dBm = 1 W)',if:n=>n.p.mode==='link budget'},
+          {n:'gt',t:'num',d:0,label:'transmit antenna gain, dBi',if:n=>n.p.mode==='link budget'},
+          {n:'gr',t:'num',d:0,label:'receive antenna gain, dBi',if:n=>n.p.mode==='link budget'},
+          {n:'lt',t:'num',d:0,label:'transmit cable / connector loss, dB',if:n=>n.p.mode==='link budget'},
+          {n:'lr',t:'num',d:0,label:'receive cable loss, dB',if:n=>n.p.mode==='link budget'},
+          {n:'sens',t:'num',d:-110,label:'receiver sensitivity, dBm',if:n=>n.p.mode==='link budget'},
+          {n:'from',t:'select',opts:['SWR','return loss, dB'],d:'SWR',if:n=>n.p.mode==='SWR'},
+          {n:'swr',t:'num',d:1.5,label:'value (the swr pin wins)',if:n=>n.p.mode==='SWR'},
+          {n:'V',t:'num',d:0,label:'voltage, V (0 — unknown; give two values)',if:n=>n.p.mode==='Ohm'},
+          {n:'I',t:'num',d:0,label:'current, A',if:n=>n.p.mode==='Ohm'},
+          {n:'R',t:'num',d:0,label:'resistance, Ω',if:n=>n.p.mode==='Ohm'},
+          {n:'P',t:'num',d:0,label:'power, W',if:n=>n.p.mode==='Ohm'},
+          {n:'solve',t:'select',opts:['f','C for f'],d:'f',label:'find',if:n=>n.p.mode==='LC resonance'},
+          {n:'L',t:'num',d:10,label:'inductance, µH',if:n=>n.p.mode==='LC resonance'},
+          {n:'C',t:'num',d:100,label:'capacitance, pF',if:n=>n.p.mode==='LC resonance' && n.p.solve==='f'}],
+  init:n=>{ n.txt=''; },
+  process(n,I){
+    const p=n.p, m=p.mode, fHz=TLN(I.f)!==null ? I.f : +p.f*1e6, L=[];
+    let a=null, b=null;
+    if(m==='antenna'){
+      const w=rfWave(fHz,+p.k);
+      if(w){ a=w.quarter; b=w.half;
+        L.push(`${rfF(fHz/1e6)} MHz`,`wavelength ${rfF(w.lambda)} m`,`1/4 wave ${rfF(w.quarter)} m  (${rfF(w.quarter/.0254)} in)`,`1/2 wave (dipole) ${rfF(w.half)} m  (each arm ${rfF(w.half/2)} m)`,`full wave ${rfF(w.full)} m`); }
+      else L.push('frequency?');
+    } else if(m==='link budget'){
+      const d=TLN(I.d)!==null ? I.d : +p.dist;
+      const r=rfLink({pt:+p.pt,gt:+p.gt,gr:+p.gr,lossTx:+p.lt,lossRx:+p.lr,dKm:d,fMHz:fHz/1e6,sens:+p.sens});
+      if(r){ a=r.pr; b=r.margin;
+        L.push(`path loss ${rfF(r.fspl)} dB (free space, ${rfF(d)} km)`,`EIRP ${rfF(r.eirp)} dBm`,`received ${rfF(r.pr)} dBm`,`margin ${rfF(r.margin)} dB`+(r.margin<0 ? '  ✗ no link' : r.margin<10 ? '  ~ thin' : '  ✓'),`range at zero margin ${rfF(r.range)} km`,'(free space: real links are shorter)'); }
+      else L.push('frequency and distance?');
+    } else if(m==='SWR'){
+      const v=TLN(I.swr)!==null ? I.swr : +p.swr, swr=p.from==='SWR' ? v : rfSwrFromRl(v), r=rfSwr(swr);
+      if(r){ a=r.rl; b=r.ml;
+        L.push(`SWR ${isFinite(swr) ? rfF(swr) : '∞'} : 1`,`return loss ${isFinite(r.rl) ? rfF(r.rl) : '∞'} dB`,`reflection Γ ${rfF(r.gamma)}`,`reflected power ${rfF(r.refl)} %`,`mismatch loss ${rfF(r.ml)} dB`); }
+      else L.push('SWR must be ≥ 1');
+    } else if(m==='Ohm'){
+      const r=rfOhm(+p.V,+p.I,+p.R,+p.P);
+      if(r){ a=r.P; b=r.R; L.push(`V ${rfF(r.V)} V`,`I ${rfF(r.I)} A`,`R ${rfF(r.R)} Ω`,`P ${rfF(r.P)} W`); }
+      else L.push('give exactly two of V, I, R, P (the others 0)');
+    } else {
+      if(p.solve==='f'){ const f=rfLc(+p.L,+p.C);
+        if(f){ a=f; b=Math.sqrt(+p.L*1e-6/(+p.C*1e-12)); L.push(`resonance ${rfF(f/1e6)} MHz`,`wavelength ${rfF(RF_C/f)} m`,`characteristic Z ${rfF(b)} Ω`); } else L.push('L and C?'); }
+      else { const c=rfLcC(fHz,+p.L);
+        if(c){ a=c; L.push(`${rfF(fHz/1e6)} MHz with ${rfF(+p.L)} µH → C = ${rfF(c)} pF`); } else L.push('frequency and L?'); }
+    }
+    n.txt=L.join('\n');
+    return {out:a,out2:b}; },
+  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.txt; }});
+
+/* ---- координаты ---- */
+def({ id:'coords', lazy:'proc', title:'Coordinates', cat:'Tools', readout:true, tall:true, w:360,
+  kw:'coordinates latitude longitude dms utm mgrs maidenhead qth locator grid convert gps координаты широта долгота',
+  ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'text',t:'txt'}],
+  outs:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'text',t:'txt'}],
+  params:[{n:'input',t:'text',d:'55.0375, 82.925',label:'a point in any form: 55.03, 82.92 · 55°02′15″N 82°55′30″E · 33U 500000 5500000 · 18T WL 85628 11322 · NO15la (wired lat / lon or text win)'},
+          {n:'fmt',t:'select',opts:CO_FMT,d:'MGRS',label:'output «text» format'},
+          {n:'digits',t:'range',min:1,max:5,step:1,d:5,label:'MGRS digits per axis (5 — 1 m, 3 — 100 m)'}],
+  init:n=>{ n.pos=null; n.from=''; n.txt=''; },
+  process(n,I){
+    let pos=null, from='';
+    const w=typeof I.text==='string' && I.text.trim() ? coParse(I.text) : null;
+    if(w){ pos=w; from='wire text → '+w.fmt; }
+    else if(TLN(I.lat)!==null && TLN(I.lon)!==null && Math.abs(I.lat)<=90 && Math.abs(I.lon)<=180){ pos={lat:I.lat,lon:I.lon}; from='wired lat / lon'; }
+    else { const q=coParse(n.p.input); if(q){ pos=q; from='typed → '+q.fmt; } }
+    n.pos=pos; n.from=from;
+    if(!pos){ n.txt='no point — type coordinates or wire lat / lon'; return {lat:null,lon:null,text:''}; }
+    const lines=[from];
+    for(const f of CO_FMT) lines.push(f.padEnd(11)+(coFormat(pos.lat,pos.lon,f,+n.p.digits)??'— (outside UTM / MGRS 80°S…84°N)'));
+    n.txt=lines.join('\n');
+    return {lat:pos.lat,lon:pos.lon,text:coFormat(pos.lat,pos.lon,n.p.fmt,+n.p.digits)??''}; },
+  draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.txt; }});

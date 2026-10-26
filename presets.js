@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=130;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=131;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -185,6 +185,8 @@ const PRESET_CAT_ORDER=['Start Here',
 const PRESET_CATS={
   'Tools: Unit Converter (type a value or wire one)':'Tools',
   'Tools: Unit Conversion in a Table Formula (convert)':'Tools',
+  'Tools: Radio Calculator (antenna, link budget, SWR, Ohm, LC)':'Tools',
+  'Tools: Coordinates (DD, DMS, UTM, MGRS, Maidenhead, Table formulas)':'Tools',
   'Tools: Screen Ruler (mm, inches, two marks, fullscreen)':'Tools',
   'Tools: Height Meter (Phone Camera Angle)':'Tools',
   'Tools: Compass with True North (Phone)':'Tools',
@@ -7396,5 +7398,34 @@ const tb=addNode('table',40,200,{list:'@patch',
   schema:{types:{
     result:{t:'calc',expr:"convert([value],[unit],[to])"}}, card:{}}});
 tb.size.w=820; tb.size.h=320; applySize(tb);
+markWiresDirty();
+});
+preset('Tools: Radio Calculator (antenna, link budget, SWR, Ohm, LC)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Radio Calculator: antenna — wavelength, 1/4 and 1/2 wave with a shortening factor (a wire is ≈0.95 of the free-space length); link budget — free-space path loss, received level, margin and range at zero margin; SWR — return loss, reflected power and mismatch loss (from SWR or from return loss); Ohm — any two of V, I, R, P; LC resonance — frequency, or the capacitor for a frequency.\n'+
+  'The f / d / swr pins take a value from the graph (f in Hz — e.g. from a receiver), the typed value is then ignored. The outputs «out» and «out2» carry the two main results (see the lines), so a margin can drive a lamp or a tone. The link budget is free space: obstacles and the horizon make real links shorter.'});
+nt.size.w=860; nt.size.h=150; applySize(nt);
+const a=addNode('rfcalc',40,230,{mode:'antenna',f:145}); a.size.w=340; a.size.h=230; applySize(a);
+const l=addNode('rfcalc',400,230,{mode:'link budget',f:433.92,dist:5,pt:20,gt:2,gr:2,sens:-115}); l.size.w=360; l.size.h=250; applySize(l);
+const s=addNode('rfcalc',780,230,{mode:'SWR',swr:1.5}); s.size.w=320; s.size.h=230; applySize(s);
+markWiresDirty();
+});
+preset('Tools: Coordinates (DD, DMS, UTM, MGRS, Maidenhead, Table formulas)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Coordinates: type a point in any form — decimal degrees, degrees-minutes-seconds (N/S/E/W or С/Ю/В/З), UTM, MGRS or a Maidenhead locator — and see it in all of them; «text» goes out in the chosen format, lat / lon as numbers. Wired lat / lon (or a text) win over the typed one: below the second block follows the manual position of Me (map). UTM and MGRS cover 80°S…84°N.\n'+
+  'In a Table calculated field: coord([lat],[lon],\'MGRS\') (DD DMS DDM UTM MGRS Maidenhead), geolat(\'text\') and geolon(\'text\') read any form back.'});
+nt.size.w=860; nt.size.h=150; applySize(nt);
+const c1=addNode('coords',40,230,{input:'55°02\'15"N 82°55\'30"E',fmt:'MGRS'}); c1.size.w=380; c1.size.h=250; applySize(c1);
+const me=addNode('geoMe',460,230,{src:'manual',lat:40.7484,lon:-73.9857});
+const c2=addNode('coords',740,230,{fmt:'Maidenhead'}); c2.size.w=380; c2.size.h=250; applySize(c2);
+addEdge(me.id,'lat',c2.id,'lat'); addEdge(me.id,'lon',c2.id,'lon');
+const tb=addNode('table',40,520,{list:'@patch',
+  data:'place,lat,lon,mgrs,locator,text\nNovosibirsk,55.0375,82.925,,,\nNew York,40.7484,-73.9857,,,\nSydney,-33.8688,151.2093,,,\n,,,,,"48°51\'30\"N 2°17\'40\"E"',
+  schema:{types:{
+    lat:{t:'calc',expr:"if([text]=='',[lat],geolat([text]))"},
+    lon:{t:'calc',expr:"if([text]=='',[lon],geolon([text]))"},
+    mgrs:{t:'calc',expr:"coord([lat],[lon],'MGRS',4)"},
+    locator:{t:'calc',expr:"coord([lat],[lon],'Maidenhead')"}},card:{}}});
+tb.size.w=860; tb.size.h=260; applySize(tb);
 markWiresDirty();
 });
