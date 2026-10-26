@@ -1,0 +1,31 @@
+// Ядро студии: node tools/test-studio.mjs
+import vm from 'node:vm';
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
+const ctx=vm.createContext({Math,Float32Array,ArrayBuffer,DataView,JSON,Object,Number,String,Map,Infinity});
+vm.runInContext(fs.readFileSync(path.join(root,'modules/studio-kernels.js'),'utf8')+
+ ';this.K={stAdsrAt,stCollect,stDemoProject,stLoad,stWav,stReverbIR,stToNorm,stFromNorm,stAutoValue,stNewProject,stAddChannel,stAddPattern,stAddClip,stSwing,stSnapScale,ST_SYNTH,ST_FX,stDriveCurve};',ctx);
+const K=ctx.K;
+let bad=0; const ok=(n,c)=>{ if(!c){ bad++; console.log('FAIL',n); } else console.log('ok  ',n); };
+const near=(a,b,e=1e-3)=>Math.abs(a-b)<e;
+ok('adsr: attack linear',near(K.stAdsrAt(.05,.1,.2,.5,.3,null),.5));
+ok('adsr: sustain',near(K.stAdsrAt(5,.01,.1,.6,.3,null),.6,.01));
+ok('adsr: release decays',K.stAdsrAt(1.5,.01,.1,.6,.3,1)<.01);
+const P=K.stDemoProject();
+ok('demo: channels/patterns',P.channels.length===8 && P.patterns.length===6);
+const ev=K.stCollect(P,{mode:'song'},0,384*4);
+ok('song: intro kicks + pad',ev.filter(e=>e.ch===P.channels[0].id).length===16 && ev.some(e=>e.ch===P.channels[5].id));
+const ev2=K.stCollect(P,{mode:'pat',pat:P.patterns[0].id},0,384*3);
+ok('pattern loops',ev2.length===3*K.stCollect(P,{mode:'pat',pat:P.patterns[0].id},0,384).length);
+const half=K.stCollect(P,{mode:'song'},384*4+100,384*4+200);
+ok('window slice',half.every(e=>e.t>=384*4+100 && e.t<384*4+200));
+ok('json roundtrip',K.stLoad(JSON.stringify(P)).channels.length===8);
+ok('norm roundtrip',(()=>{ const d=K.ST_SYNTH.find(x=>x.k==='cut'); return near(K.stFromNorm(d,K.stToNorm(d,1000)),1000,2); })());
+const w=new Uint8Array(K.stWav(new Float32Array(10),new Float32Array(10),44100));
+ok('wav header',w.length===44+40 && String.fromCharCode(...w.slice(0,4))==='RIFF');
+const ir=K.stReverbIR(8000,1,.5); ok('ir decays',Math.abs(ir[0][7900])<Math.abs(ir[0][400])+1e-9 && ir[0].length===8000);
+ok('scale snap',K.stSnapScale(61,60,'major')!==61);
+ok('swing',K.stSwing(24,1)>24 && K.stSwing(48,1)===48);
+process.exit(bad?1:0);

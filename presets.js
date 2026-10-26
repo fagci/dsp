@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=132;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=133;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -512,6 +512,7 @@ const PRESET_CATS={
   'Arrangement: Intro → Verse → Chorus':'Music: Sequencers & Mixer',
   '12-Channel Mixer: Full Band':'Music: Sequencers & Mixer',
 
+  'Studio: DAW (Piano Roll, Playlist, Mixer)':'Music: Synth & Tracker',
   'Synth: Acid Bass (303)':'Music: Synth & Tracker',
   'Winamp':'Music: Player',
   'Winamp: Internet Radio Playlist':'Music: Player',
@@ -561,6 +562,17 @@ if(PRESETS[name]) console.warn('дублирующееся имя пресета
 PRESETS[name]=fn;
 if(!(name in PRESET_CATS)) console.warn('у пресета "'+name+'" нет категории — попадёт в «Разное»');
 }
+preset('Studio: DAW (Piano Roll, Playlist, Mixer)', function(){
+  clearAll();
+  const st=addNode('studio',40,40,{});
+  const nt=addNode('note',320,40,{text:'Studio — a full music workstation (FL Studio style).\n'+
+    '«Open Studio» opens the demo song: channel rack with a step sequencer, Piano Roll, Playlist,\n'+
+    'Mixer with FX chains and sends, synth / drum / sampler editors. Space — play, Ctrl+Z — undo,\n'+
+    'A W S E D F … — computer keyboard as a piano (Z / X — octave), MIDI keyboards work too.\n'+
+    'Right click a knob → automation clip. Project ☰ → export WAV. The project is saved in the browser.'});
+  nt.size.w=420; nt.size.h=150; applySize(nt);
+});
+
 /* ---- демо-патч ---- */
 function buildDemo(){
 clearAll();
