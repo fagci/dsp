@@ -135,3 +135,25 @@ function saRefResample(ref,freqAt,N){
   }
   return out;
 }
+
+// ---- авто-диапазон по дБ ----
+// Дно — прямо под шумом, потолок — над самым сильным сигналом с запасом. Видимая часть mag[i0..i1] режется на
+// куски, в каждом берётся максимум (как рисует детектор peak: шум на экране — это пики кусков, а не среднее);
+// шум — нижний процентиль этих значений (сигналы его не поднимают), дно = шум − margin. Потолок = пик + head,
+// округлённый вверх до 5 дБ; размах не меньше minSpan. Возвращает {floor,top,noise,peak} в дБ или null.
+function saAutoRange(mag,i0,i1,o){
+  o=o||{}; const head=o.head??20, margin=o.margin??3, minSpan=o.minSpan??30, q=o.q??.03, extra=o.extra||null;
+  const n=i1-i0+1; if(!(n>=2)) return null;
+  const C=Math.max(2,Math.min(512,n>>1)), pk=new Float32Array(C);
+  let peak=0;
+  for(let c=0;c<C;c++){
+    const a=i0+Math.floor(c*n/C), b=i0+Math.floor((c+1)*n/C)-1; let mx=0;
+    for(let i=a;i<=Math.max(a,b);i++){ const v=mag[i]; if(v>mx) mx=v; }
+    pk[c]=20*Math.log10(mx+1e-12);
+    if(mx>peak) peak=mx;
+  }
+  if(extra) for(let i=i0;i<=i1;i++) if(extra[i]>peak) peak=extra[i];       // peak hold учитывается только в потолке
+  const s=Float32Array.from(pk).sort(), noise=s[Math.min(C-1,Math.floor(C*q))], pdb=20*Math.log10(peak+1e-12);
+  const lo=Math.min(Math.max(Math.floor(noise-margin),-140),0), tp=Math.min(Math.max(Math.ceil((pdb+head)/5)*5,lo+minSpan),20);
+  return {floor:lo, top:Math.max(tp,lo+10), noise, peak:pdb};
+}

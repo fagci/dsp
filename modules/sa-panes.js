@@ -96,12 +96,12 @@ function saPaneRepaint(n,p){
   if(!p.img) return;
   saPaneFill(n,p); saPanesBump(n);
 }
-// подогнать диапазон каждой панели под её данные: от шума −8 дБ до максимума +8 дБ
+// подогнать диапазон каждой панели под её данные: дно — под шумом (adMargin), потолок — над максимумом (adHead)
 function saDbAuto(n){
   for(const p of (n._pnStore||new Map()).values()){
     const t=Float32Array.from(p.lv).filter(v=>v===v).sort();
     if(t.length<8) continue;
-    const lo=t[Math.floor(t.length*.05)]-8, hi=Math.max(t[t.length-1]+8,lo+30);
+    const lo=t[Math.floor(t.length*.03)]-(n.p.adMargin??3), hi=Math.max(t[t.length-1]+(n.p.adHead??20),lo+30);
     p.db=[Math.floor(lo),Math.ceil(hi)]; saPaneRepaint(n,p);
   }
   saDbSave(n);

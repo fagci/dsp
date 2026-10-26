@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,Float64Array,Object,String,Number,Array});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/sa-trace-kernels.js'),'utf8')+
-  ';this.K={saRbwMerge,saDetect,saTraceStep,saTraceArr,saChanPower,saObw,saXdbBw,saNoiseDensity,saAcpr,saTraceCsv,saRefParse,saRefResample};',ctx);
+  ';this.K={saRbwMerge,saDetect,saTraceStep,saTraceArr,saChanPower,saObw,saXdbBw,saNoiseDensity,saAcpr,saTraceCsv,saRefParse,saRefResample,saAutoRange};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const db=x=>20*Math.log10(x+1e-12), near=(a,b,e=.05)=>Math.abs(a-b)<=e;
@@ -97,5 +97,25 @@ const db=x=>20*Math.log10(x+1e-12), near=(a,b,e=.05)=>Math.abs(a-b)<=e;
   ok('ref: outside coverage is −200 dB',db(rs[7])>-200 && db(K.saRefResample(ref,i=>50e6,1)[0])<-190);
   ok('ref: garbage → null',K.saRefParse('hello\nworld')===null);
   ok('ref: sorted by frequency',K.saRefParse('200,-10\n100,-20').f[0]===100);
+}
+// авто-диапазон
+{
+  const N=4096, m=new Float32Array(N); for(let i=0;i<N;i++) m[i]=Math.pow(10,(-100+((i*7919)%100)/100*4)/20);   // шум −100…−96 дБ
+  for(let i=2000;i<2004;i++) m[i]=Math.pow(10,-40/20);
+  const r=K.saAutoRange(m,0,N-1);
+  ok('auto: the floor sits right under the noise',r.floor>=-106 && r.floor<=-100,JSON.stringify(r));
+  ok('auto: the ceiling keeps ≥ 20 dB over the strongest signal',r.top>=-40+20 && r.top<=-40+25,r.top);
+  ok('auto: reports noise and peak',near(r.peak,-40,.1) && r.noise<-95,JSON.stringify(r));
+  const h=K.saAutoRange(m,0,N-1,{head:30,margin:6});
+  ok('auto: head and margin are parameters',h.top>=-10 && h.floor<=r.floor-2,JSON.stringify(h));
+  const flat=new Float32Array(N).fill(Math.pow(10,-80/20)), f=K.saAutoRange(flat,0,N-1);
+  ok('auto: noise only → span is not below the minimum',f.top-f.floor>=30,JSON.stringify(f));
+  const sig=new Float32Array(N).fill(Math.pow(10,-30/20)); sig[5]=Math.pow(10,-90/20);
+  ok('auto: a narrow dip does not drag the floor down (percentile of chunk peaks)',K.saAutoRange(sig,0,N-1).floor>-40);
+  const loud=new Float32Array(N).fill(Math.pow(10,-3/20)), l=K.saAutoRange(loud,0,N-1);
+  ok('auto: the ceiling is capped at +20 dB',l.top<=20);
+  ok('auto: tiny window → null',K.saAutoRange(m,5,5)===null);
+  const pk=new Float32Array(N); pk[10]=Math.pow(10,-20/20);
+  ok('auto: peak hold raises only the ceiling',K.saAutoRange(m,0,N-1,{extra:pk}).top>r.top && K.saAutoRange(m,0,N-1,{extra:pk}).floor===r.floor);
 }
 console.log(bad?'FAILED '+bad:'all ok'); process.exit(bad?1:0);
