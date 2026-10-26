@@ -1,7 +1,7 @@
 "use strict";
 let BLOCK = 512;                   // размер блока обработки (меняется на ходу)
 // У каждого типа пина свой цвет (--p-*); совместимость типов считает addEdge
-const TYPE_COLOR = Object.fromEntries(['sig','rtc','iq','num','val','spec','bands','blk','img','vid','trk','txt','rec','bin'].map(t=>[t,`var(--p-${t})`]));
+const TYPE_COLOR = Object.fromEntries(['sig','rtc','iq','num','val','spec','bands','blk','img','vid','trk','stu','txt','rec','bin'].map(t=>[t,`var(--p-${t})`]));
 // Canvas 2D (в отличие от SVG/CSS) не резолвит var(...) сам — цвет для fillStyle/strokeStyle
 // нужен уже вычисленным. Общий кэш на все модули разом: одна getComputedStyle раз в 0.5с на
 // переменную, а не по разу на каждый canvas-узел на каждый кадр (их десятки, кадров 60/с).

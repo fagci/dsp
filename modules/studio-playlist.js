@@ -5,12 +5,12 @@
 
 let STU_LCLIP=null;
 
-class StuList{
-  constructor(app,host){
-    this.app=app; this.host=host; this.sel=new Set(); this.dirty=1; this.drag=null;
+class StuList extends StuPanel{
+  constructor(app){
+    super(app,'list'); const host=this.host=this.el; this.sel=new Set(); this.dirty=1; this.drag=null;
     this.x0=0; this.zx=.16; this.y0=0; this.th=44; this.tool='draw'; this.lsnap=ST_BAR;
     this.HW=96; this.RH=24;
-    host.innerHTML=`<div class="stu-lp"><div class="stu-lt">
+    host.innerHTML=`<div class="stu-lt">
         <button class="stu-b on" data-tool="draw" title="Place / move / resize clips. Right click: delete. Ctrl+drag: copy">✎ Draw</button>
         <button class="stu-b" data-tool="select" title="Box select">▭ Select</button>
         <button class="stu-b" data-tool="erase" title="Erase">⌫ Erase</button>
@@ -19,7 +19,7 @@ class StuList{
         <button class="stu-b" data-act="trk+">＋ Track</button>
         <button class="stu-b" data-act="fit">Fit song</button>
         <span class="stu-dim">Wheel: scroll · Ctrl+wheel: zoom · Alt+wheel: height</span></div>
-        <div class="stu-lb"><div class="stu-pal" data-r="pal"></div><div class="stu-cw"><canvas></canvas></div></div></div>`;
+        <div class="stu-lb"><div class="stu-pal" data-r="pal"></div><div class="stu-cw"><canvas></canvas></div></div>`;
     this.cv=host.querySelector('canvas'); this.wrap=host.querySelector('.stu-cw'); this.pal=host.querySelector('[data-r=pal]');
     host.addEventListener('click',ev=>{
       const t=ev.target.closest('[data-tool]'); if(t){ this.tool=t.dataset.tool; host.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('on',b===t)); return; }
@@ -34,8 +34,11 @@ class StuList{
     cv.addEventListener('pointerup',ev=>this.up(ev)); cv.addEventListener('pointercancel',ev=>this.up(ev));
     cv.addEventListener('contextmenu',ev=>ev.preventDefault()); cv.addEventListener('wheel',ev=>this.wheel(ev),{passive:false});
     cv.addEventListener('dblclick',ev=>this.dbl(ev));
-    new ResizeObserver(()=>this.resize()).observe(this.wrap);
+    this.ro=new ResizeObserver(()=>this.resize()); this.ro.observe(this.wrap);
   }
+  refresh(){ this.dirty=1; this._pk=null; }
+  frame(){ if(this.dirty||this.app.eng.playing) this.draw(); }
+  destroy(){ this.ro.disconnect(); super.destroy(); }
   get P(){ return this.app.P; }
   tx(t){ return this.HW+(t-this.x0)*this.zx; } xt(x){ return this.x0+(x-this.HW)/this.zx; }
   ty(tr){ return this.RH+tr*this.th-this.y0; } yt(y){ return Math.floor((y-this.RH+this.y0)/this.th); }
@@ -50,8 +53,8 @@ class StuList{
     for(const p of P.patterns){
       const b=document.createElement('button'); b.className='stu-pb'+(p.id===app.cur.pat?' on':''); b.style.setProperty('--c',this.patColor(p.id));
       b.textContent=p.name; b.title='Click: use as brush and edit · double click: rename';
-      b.addEventListener('click',()=>{ app.cur.pat=p.id; app.refreshTop(); app.refreshRack(); app.roll.dirty=1; this.buildPalette(); this.dirty=1; if(app.mode==='pat') app.restartIfPlaying(); });
-      b.addEventListener('dblclick',()=>{ const n=prompt('Pattern name',p.name); if(n){ p.name=n; app.commit(); app.refreshTop(); this.buildPalette(); } });
+      b.addEventListener('click',()=>{ app.cur.pat=p.id; app.refreshPats(); if(app.mode==='pat') app.restartIfPlaying(); });
+      b.addEventListener('dblclick',()=>{ const n=prompt('Pattern name',p.name); if(n){ p.name=n; app.commit(); app.refreshPats(); } });
       pal.append(b);
     }
     const add=document.createElement('button'); add.className='stu-b'; add.textContent='＋ New pattern'; add.addEventListener('click',()=>app.action('newpat')); pal.append(add);
@@ -199,7 +202,7 @@ class StuList{
   }
   dbl(ev){
     const [x,y]=this.pos(ev), h=this.hit(x,y); if(!h) return; const c=h.c;
-    if(c.kind==='pat'){ this.app.cur.pat=c.pat; this.app.refreshTop(); this.app.refreshRack(); this.app.setTab('roll'); this.app.roll.fit(); }
+    if(c.kind==='pat'){ this.app.cur.pat=c.pat; this.app.refreshPats(); this.app.focusTab('roll'); this.app.each('roll',r=>r.fit()); }
     else if(h.head){ if(confirm('Delete automation clip?')) this.del(c); }
   }
   del(c){ const pl=this.P.playlist; pl.clips=pl.clips.filter(x=>x!==c); this.sel.delete(c); this.dirty=1; }

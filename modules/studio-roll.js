@@ -5,9 +5,9 @@
 
 let STU_CLIP=null;                       // буфер обмена нот: {notes:[{t,l,k,v}], len}
 
-class StuRoll{
-  constructor(app,host){
-    this.app=app; this.host=host; this.sel=new Set(); this.dirty=1; this.live_=new Set();
+class StuRoll extends StuPanel{
+  constructor(app){
+    super(app,'roll'); const host=this.host=this.el; this.sel=new Set(); this.dirty=1; this.live_=new Set();
     this.x0=0; this.y0=84; this.zx=.5; this.zy=15; this.tool='draw'; this.root=0; this.scale='chromatic'; this.snapScale=false; this.chord='off';
     this.lastLen=ST_STEP; this.drag=null; this.cursorT=0; this.vel=true;
     this.KW=58; this.RH=20; this.VH=70;
@@ -51,8 +51,11 @@ class StuRoll{
     cv.addEventListener('pointerup',ev=>this.up(ev)); cv.addEventListener('pointercancel',ev=>this.up(ev));
     cv.addEventListener('contextmenu',ev=>ev.preventDefault());
     cv.addEventListener('wheel',ev=>this.wheel(ev),{passive:false});
-    new ResizeObserver(()=>this.resize()).observe(this.wrap);
+    this.ro=new ResizeObserver(()=>this.resize()); this.ro.observe(this.wrap);
   }
+  refresh(){ this.dirty=1; }
+  frame(){ if(this.dirty||this.app.eng.playing) this.draw(); }
+  destroy(){ this.ro.disconnect(); super.destroy(); }
   /* ----- геометрия ----- */
   get gh(){ return this.H-this.RH-(this.vel?this.VH:0); }
   tx(t){ return this.KW+(t-this.x0)*this.zx; }
@@ -230,7 +233,7 @@ class StuRoll{
     if(d.type==='move'||d.type==='resize'||d.type==='draw'||d.type==='erase'||d.type==='vel'){ this.changed(); }
     this.dirty=1;
   }
-  changed(){ const a=this.app; a.commit(); a.refreshRack(); a.list.dirty=1; this.dirty=1; }
+  changed(){ const a=this.app; a.commit(); a.refreshRack(); a.dirty('list'); this.dirty=1; }
   del(n){ const pat=this.app.patObj(), ch=this.app.chObj(); pat.notes[ch.id]=pat.notes[ch.id].filter(x=>x!==n); this.sel.delete(n); this.dirty=1; }
   setVel(x,y,ev){
     const ns=this.notes(), t=this.xt(x); const v=stClamp(Math.round((1-(y-(this.H-this.VH)-4)/(this.VH-8))*127),1,127);

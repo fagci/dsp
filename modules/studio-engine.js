@@ -283,7 +283,9 @@ class StRig{
       o.pan.connect(o.vol); o.vol.connect(o.out); o.out.connect(o.an);
       this.ins.push(o);
     }
-    const m=this.ins[0]; m.out.connect(lim); lim.connect(an); an.connect(dest||ac.destination); this.masterAn=an; this.lim=lim;
+    const m=this.ins[0]; const clip=ac.createWaveShaper(), cc=new Float32Array(4097);        // мягкий потолок над лимитером: не выше 1.0
+    for(let i=0;i<cc.length;i++){ const x=i/2048-1, a=Math.abs(x); cc[i]=a<=.8?x:Math.sign(x)*(.8+.2*Math.tanh((a-.8)/.2)); }
+    clip.curve=cc; m.out.connect(lim); lim.connect(clip); clip.connect(an); an.connect(dest||ac.destination); this.masterAn=an; this.lim=lim;
     for(let i=1;i<=ST_INSERTS;i++) this.ins[i].out.connect(m.in);
     for(let i=0;i<=ST_INSERTS;i++) this.buildInsert(i);
     for(const ch of P.channels) this.addChannel(ch);
