@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=134;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=135;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -570,7 +570,7 @@ preset('Studio: DAW (Piano Roll, Playlist, Mixer)', function(){
     '«Open Studio» opens the demo song full-screen: channel rack with a step sequencer, Piano Roll,\n'+
     'Playlist, Mixer with FX chains and sends, synth / drum / sampler editors. Space — play, Ctrl+Z — undo,\n'+
     'A W S E D F … — computer keyboard as a piano (Z / X — octave), MIDI keyboards work too.\n'+
-    'Right click a knob → automation clip. Project ☰ → export WAV. The project is saved in the browser.\n'+
+    'Right click a knob → automation clip. Project ☰ → Examples: 8 ready tracks (techno, trance, house, D&B,\nacid, dubstep, lo-fi, ambient) to try everything on; export WAV. The project is saved in the browser.\n'+
     'Every panel is also its own node (Studio: Transport / Channel Rack / Piano Roll / Playlist / Mixer /\n'+
     'Instrument): see the preset «Studio (tiles)» and turn on ▦.'});
   nt.size.w=460; nt.size.h=170; applySize(nt);

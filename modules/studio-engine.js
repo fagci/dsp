@@ -72,16 +72,16 @@ function stMakeFx(ac,type,p,bpm){
         const t=ST_DIV[q.div]*60/b; stTC(dL.delayTime,t,w,ac,.03); stTC(dR.delayTime,t,w,ac,.03);
         stTC(tone.frequency,q.tone,w,ac);
         stTC(fbA.gain,q.pp?q.fb:0,w,ac); stTC(fbB.gain,q.pp?q.fb:0,w,ac); stTC(fbS.gain,q.pp?0:q.fb,w,ac);
-        pL.pan.value=q.pp?-.8:0; pR.pan.value=q.pp?.8:0; stTC(wet.gain,q.mix,w,ac); }; break; }
+        pL.pan.value=q.pp?-.8:0; pR.pan.value=q.pp?.8:0; stTC(wet.gain,q.mix,w,ac); stTC(dry.gain,Math.min(1,2*(1-q.mix)),w,ac); }; break; }
     case 'reverb':{
       const pre=ac.createDelay(.5), cv=ac.createConvolver(), lc=stBiq(ac,'highpass',120), wet=stGain(ac,0), dry=stGain(ac);
       inn.connect(dry); dry.connect(out); inn.connect(pre); pre.connect(cv); cv.connect(lc); lc.connect(wet); wet.connect(out);
       let key='';
       fx.update=(q,b,w)=>{
-        const k=q.size.toFixed(2)+'|'+q.damp.toFixed(2);
-        if(k!==key){ key=k; const ir=stReverbIR(ac.sampleRate,q.size,q.damp), buf=ac.createBuffer(2,ir[0].length,ac.sampleRate);
+        const sz=ac._stLite?Math.min(q.size,1.2):q.size, k=sz.toFixed(2)+'|'+q.damp.toFixed(2);
+        if(k!==key){ key=k; const ir=stReverbIR(ac.sampleRate,sz,q.damp), buf=ac.createBuffer(2,ir[0].length,ac.sampleRate);
           buf.copyToChannel(ir[0],0); buf.copyToChannel(ir[1],1); cv.buffer=buf; }
-        stTC(pre.delayTime,q.pre,w,ac); stTC(lc.frequency,q.lc,w,ac); stTC(wet.gain,q.mix*.6,w,ac); stTC(dry.gain,1-q.mix*.35,w,ac); }; break; }
+        stTC(pre.delayTime,q.pre,w,ac); stTC(lc.frequency,q.lc,w,ac); stTC(wet.gain,q.mix*.7,w,ac); stTC(dry.gain,Math.min(1,2*(1-q.mix)),w,ac); }; break; }
     case 'chorus':{
       const wet=stGain(ac,0), dry=stGain(ac), lfo=ac.createOscillator(), dl=[ac.createDelay(.1),ac.createDelay(.1)], dg=[stGain(ac),stGain(ac)];
       inn.connect(dry); dry.connect(out);
@@ -200,7 +200,7 @@ function stDrumVoice(rig,ch,p,key,vel,t){
 
 function stSynthVoice(rig,ch,p,key,vel,t,off){
   const ac=rig.ac, f0=stHz(key), v=Math.pow(vel/127,1.2)*p.vol;
-  const uni=Math.max(1,p.uni|0), spr=p.spr, oscs=[], stops=[];
+  const uni=Math.max(1,Math.min(p.uni|0,ac._stLite?2:7)), spr=p.spr, oscs=[], stops=[];
   const bus=stGain(ac), flt=stBiq(ac,stFiltT[p.ft]||'lowpass',1000,p.res), vca=stGain(ac,0);
   const cutHz=Math.min(18000,Math.max(30,p.cut*Math.pow(2,(key-60)/12*p.fkey)));
   flt.frequency.value=cutHz;
@@ -290,7 +290,7 @@ function stReverseBuf(ac,b){
 /* ---------- граф проекта ---------- */
 class StRig{
   constructor(ac,P,samples,dest){
-    this.ac=ac; this.P=P; this.samples=samples||{}; this.hatVoice={}; this.monoLast={}; this.voices=[]; this.ins=[]; this.chs=new Map(); this.ac._stOffline=ac instanceof OfflineAudioContext;
+    this.ac=ac; this.P=P; this.samples=samples||{}; this.hatVoice={}; this.monoLast={}; this.voices=[]; this.ins=[]; this.chs=new Map(); this.ac._stOffline=ac instanceof OfflineAudioContext; this.ac._stLite=!!P.lite;
     this.bpm=P.bpm;
     const lim=ac.createDynamicsCompressor(); lim.threshold.value=-1.5; lim.knee.value=0; lim.ratio.value=20; lim.attack.value=.002; lim.release.value=.08;
     const an=ac.createAnalyser(); an.fftSize=2048; an.smoothingTimeConstant=.7;
@@ -344,6 +344,7 @@ class StRig{
   }
   // после структурных правок проекта (каналы, цепочки, откат): подогнать граф под модель
   sync(){
+    this.ac._stLite=!!this.P.lite;
     for(const id of [...this.chs.keys()]) if(!this.P.channels.some(c=>c.id===id)) this.removeChannel({id});
     for(const ch of this.P.channels){ if(!this.chs.has(ch.id)) this.addChannel(ch); else this.routeChannel(ch); }
     for(let i=0;i<=ST_INSERTS;i++) this.buildInsert(i);
@@ -357,9 +358,9 @@ class StRig{
     const v=ch.type==='drum' ? stDrumVoice(this,ch,p,key,vel,t) : ch.type==='sampler' ? stSampleVoice(this,ch,p,key,vel,t,off)
       : stSynthVoice(this,ch,p,key,vel,t,off);
     const vs=this.voices; vs.push(v);
-    if(vs.length>60){                                    // звучащих слишком много — убрать закончившиеся, затем самые старые
+    if(!this.ac._stOffline && vs.length>150){            // только вживую: убрать закончившиеся, а при настоящем перегрузе — самые старые
       const now=this.ac.currentTime; let live=vs.filter(x=>!(x.end<now));
-      while(live.length>72){ const o=live.shift(); try{ o.kill(now); }catch(e){} }
+      while(live.length>180){ const o=live.shift(); try{ o.kill(now); }catch(e){} }
       this.voices=live;
     }
     return v;
@@ -434,13 +435,16 @@ class StEngine{
     if(!this.ac){
       this.ac=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
       this.rig=new StRig(this.ac,this.P,this.samples); this.sched=new StSched(this.rig,this.P);
+      // браузер может приостановить контекст (смена устройства вывода, фон, iOS «interrupted») — поднимаем обратно, пока играем
+      this.ac.onstatechange=()=>{ if(this.playing && this.ac && this.ac.state!=='running' && this.ac.state!=='closed') this.ac.resume().catch(()=>{}); };
+      document.addEventListener('visibilitychange',this._vis=()=>{ if(this.playing && this.ac && this.ac.state!=='running' && this.ac.state!=='closed') this.ac.resume().catch(()=>{}); });
     }
     if(this.ac.state!=='running') this.ac.resume();
     return this.ac;
   }
   setProject(P){
     this.stop(); this.P=P;
-    if(this.ac){ this.ac.close(); this.ac=null; this.rig=null; this.sched=null; }
+    if(this.ac){ document.removeEventListener('visibilitychange',this._vis); this.ac.onstatechange=null; this.ac.close(); this.ac=null; this.rig=null; this.sched=null; }
   }
   toTime(tick){ const a=this.sa; return a.t0+stSec(tick-a.tick0,this.P.bpm); }
   // таймер планировщика в воркере: у фоновой вкладки setInterval тормозится до 1 раза в секунду, а воркер — нет
@@ -466,7 +470,10 @@ class StEngine{
   }
   pump(){
     const ac=this.ac, P=this.P; if(!this.playing || !this.sa) return;
-    if(P.bpm!==this._bpm){ this.sa={t0:this.toTime(this.sp),tick0:this.sp}; this.anchors.push({t0:this.sa.t0,tick0:this.sp,bpm:P.bpm}); this._bpm=P.bpm; this.rig.setBpm(P.bpm); }
+    if(P.bpm!==this._bpm){                                // смена темпа: точку перехода считаем по СТАРОМУ темпу, дальше идём по новому
+      const a=this.sa, t0=a.t0+stSec(this.sp-a.tick0,this._bpm);
+      this.sa={t0,tick0:this.sp}; this.anchors.push({t0,tick0:this.sp,bpm:P.bpm}); this._bpm=P.bpm; this.rig.setBpm(P.bpm);
+    }
     let guard=0;
     while(this.toTime(this.sp)<ac.currentTime+.3 && guard++<96){
       const a=this.sp; let b=a+12, wrap=false, lp=null;
