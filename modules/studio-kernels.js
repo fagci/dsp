@@ -31,7 +31,7 @@ function stAdsrAt(t,a,d,s,r,off){
   if(off==null || t<off) return held(t);
   return held(off)*Math.exp(-(t-off)/Math.max(r/4,.001));
 }
-const stRelEnd=r=>r*1.3+.05;            // когда после отпускания хвост можно обрывать
+const stRelEnd=r=>r*1.1+.04;            // когда после отпускания хвост можно обрывать
 
 /* ---------- параметры инструментов и эффектов: описание для UI, движка и пресетов ---------- */
 const ST_SYNTH=[
@@ -69,8 +69,13 @@ const ST_SAMPLER=[
   {g:'Sample',k:'rev',t:'chk',d:0,label:'reverse'},{g:'Sample',k:'loop',t:'chk',d:0,label:'loop'},
   {g:'Sample',k:'one',t:'chk',d:1,label:'full length'},
   {g:'Env',k:'a',min:.002,max:2,log:1,d:.002,label:'A',u:'s'},{g:'Env',k:'r',min:.005,max:4,log:1,d:.08,label:'R',u:'s'},
-  {g:'Out',k:'vol',min:0,max:1,step:.01,d:.8,label:'gain'}];
-const ST_CHDEF={synth:ST_SYNTH,drum:ST_DRUM,sampler:ST_SAMPLER};
+  {g:'Out',k:'vol',min:0,max:1,step:.01,d:.8,label:'gain'},
+  {k:'clip',t:'txt',d:'',hidden:1},{k:'sname',t:'txt',d:'',hidden:1}];
+// внешний генератор: ноты канала уходят на пины узла Studio (freq / gate / vel ×4, как у Piano Roll), звук приходит обратно на вход in…in4
+const ST_EXT=[
+  {g:'Graph pins',k:'slot',min:1,max:4,step:1,d:1,label:'first output'},{g:'Graph pins',k:'voices',min:1,max:4,step:1,d:4,label:'voices'},
+  {g:'Graph pins',k:'ret',min:1,max:4,step:1,d:1,label:'audio in'},{g:'Out',k:'vol',min:0,max:1,step:.01,d:.8,label:'gain'}];
+const ST_CHDEF={synth:ST_SYNTH,drum:ST_DRUM,sampler:ST_SAMPLER,ext:ST_EXT};
 
 const ST_FX={
   eq:{name:'EQ',p:[{k:'lo',min:-18,max:18,step:.1,d:0,label:'low',u:'dB'},{k:'mid',min:-18,max:18,step:.1,d:0,label:'mid',u:'dB'},
@@ -519,5 +524,17 @@ function stExAmbient(){
   B.auto(3,0,16,'fx:2:0:depth',[[0,.2],[.5,.9],[1,.3]]);
   return B.loop(16);
 }
+function stExExternal(){
+  const B=stBuilder('External Generator',124), P=B.P;
+  const kick=B.ch('drum','Kick',ST_KITS['Kick 909'],1,.9), clap=B.ch('drum','Clap',ST_KITS.Clap,2,.6), hat=B.ch('drum','Hat',ST_KITS['Closed Hat'],2,.45),
+    ext=B.ch('ext','Graph synth',{slot:1,voices:2,ret:1},3,.8);
+  B.buses({size:2.4,damp:.6},{div:'1/8.',fb:.4}); B.send(3,14,.25); B.send(3,15,.3); B.fx(3,'pump',{depth:.6});
+  const dr=B.pat('Drums',1,[kick,clap,hat]); B.x(dr,kick,'x...x...x...x...',60,115); B.x(dr,clap,'....x.......x...',60,95); B.x(dr,hat,'..x...x...x...x.',60,60);
+  const mp=B.pat('Melody',4,[ext]), roots=[57,53,60,55];
+  for(let c=0;c<4;c++){ const o=c*16; B.n(mp,ext,o,8,roots[c]-12,100); B.n(mp,ext,o+8,6,roots[c]-12,90);
+    for(let i=0;i<16;i++) if(i%2===1||i%4===0) B.n(mp,ext,o+i,1,roots[c]+[0,7,12,16,12,7][i%6],i%4===0?105:80); }
+  B.clip(dr,0,0,16); B.clip(mp,1,2,14);
+  return B.loop(16);
+}
 const ST_EXAMPLES={'Night Drive — techno 126':stDemoProject,'Trance Lift — 138':stExTrance,'Deep House — 122':stExHouse,'Drum & Bass — 174':stExDnb,
-  'Acid Techno — 132':stExAcid,'Dubstep — 140':stExDubstep,'Lo-fi Chill — 80':stExLofi,'Ambient Drift — 70':stExAmbient};
+  'Acid Techno — 132':stExAcid,'Dubstep — 140':stExDubstep,'Lo-fi Chill — 80':stExLofi,'Ambient Drift — 70':stExAmbient,'External Generator — graph synth':stExExternal};

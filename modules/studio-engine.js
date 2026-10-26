@@ -200,7 +200,11 @@ function stDrumVoice(rig,ch,p,key,vel,t){
 
 function stSynthVoice(rig,ch,p,key,vel,t,off){
   const ac=rig.ac, f0=stHz(key), v=Math.pow(vel/127,1.2)*p.vol;
-  const uni=Math.max(1,Math.min(p.uni|0,ac._stLite?2:7)), spr=p.spr, oscs=[], stops=[];
+  let uni=Math.max(1,Math.min(p.uni|0,ac._stLite?2:7)); const spr=p.spr, oscs=[], stops=[];
+  if(!ac._stOffline){                                  // бюджет голосов: в плотном месте новые ноты получают меньше унисона, а не глушат всё
+    const live=rig.liveOsc(), layers=(p.l1>0||p.fm>0?1:0)+(p.l2>0?1:0)||1, budget=ac._stLite?56:128;
+    while(uni>1 && live+uni*layers>budget) uni--;
+  }
   const bus=stGain(ac), flt=stBiq(ac,stFiltT[p.ft]||'lowpass',1000,p.res), vca=stGain(ac,0);
   const cutHz=Math.min(18000,Math.max(30,p.cut*Math.pow(2,(key-60)/12*p.fkey)));
   flt.frequency.value=cutHz;
@@ -251,7 +255,7 @@ function stSynthVoice(rig,ch,p,key,vel,t,off){
   }
   for(const o of oscs) if(o.start) try{ o.start(t); }catch(e){}
   stEnvOn(vca.gain,t,v,p.a,p.d,p.s,0);
-  const voice={f:f0, end:Infinity};
+  const voice={f:f0, end:Infinity, n:oscs.length+3};
   voice.release=(tt)=>{
     stEnvOff(vca.gain,t,tt,v,p.a,p.d,p.s,p.r,0);
     if(peakC!==0) stEnvOff(flt.detune,t,tt,peakC,p.fa,p.fd,p.fs,p.fr,0);
@@ -290,7 +294,7 @@ function stReverseBuf(ac,b){
 /* ---------- граф проекта ---------- */
 class StRig{
   constructor(ac,P,samples,dest){
-    this.ac=ac; this.P=P; this.samples=samples||{}; this.hatVoice={}; this.monoLast={}; this.voices=[]; this.ins=[]; this.chs=new Map(); this.ac._stOffline=ac instanceof OfflineAudioContext; this.ac._stLite=!!P.lite;
+    this.ac=ac; this.P=P; this.samples=samples||{}; this.hatVoice={}; this.monoLast={}; this.voices=[]; this.ext={q:[],free:[0,0,0,0],id:0,reset:0,slots:[0,1,2,3].map(()=>({on:0,k:60,v:100,id:0,retrig:0}))}; this.ins=[]; this.chs=new Map(); this.ac._stOffline=ac instanceof OfflineAudioContext; this.ac._stLite=!!P.lite;
     this.bpm=P.bpm;
     const lim=ac.createDynamicsCompressor(); lim.threshold.value=-1.5; lim.knee.value=0; lim.ratio.value=20; lim.attack.value=.002; lim.release.value=.08;
     const an=ac.createAnalyser(); an.fftSize=2048; an.smoothingTimeConstant=.7;
@@ -349,14 +353,24 @@ class StRig{
     for(const id of [...this.chs.keys()]) if(!this.P.channels.some(c=>c.id===id)) this.removeChannel({id});
     for(const ch of this.P.channels){ if(!this.chs.has(ch.id)) this.addChannel(ch); else this.routeChannel(ch); }
     for(let i=0;i<=ST_INSERTS;i++) this.buildInsert(i);
-    this.refresh();
+    this.refresh(); if(this.onSync) this.onSync();
   }
   refresh(){ for(const ch of this.P.channels) this.refreshChannel(ch); for(let i=0;i<=ST_INSERTS;i++) this.refreshInsert(i); }
   setBpm(b){ this.bpm=b; this.P.mixer.forEach((m,i)=>m.fx.forEach((f,j)=>{ if(this.ins[i].fx[j] && (f.type==='delay')) this.ins[i].fx[j].update(f.p,b); })); }
+  liveOsc(){ const now=this.ac.currentTime; let n=0; for(const v of this.voices) if(!(v.end<now)) n+=v.n||3; return n; }
+  // внешний генератор: ноты в очередь, из неё их забирает узел Studio (выходы freq/gate/vel)
+  extNote(ch,key,vel,t,off){
+    const X=this.ext, p=ch.p, base=stClamp((p.slot|0)-1,0,3), nv=stClamp(p.voices|0,1,4), last=Math.min(3,base+nv-1);
+    let s=-1; for(let i=base;i<=last;i++) if(X.free[i]<=t){ s=i; break; }
+    if(s<0){ s=base; for(let i=base;i<=last;i++) if(X.free[i]<X.free[s]) s=i; }
+    const id=++X.id, e=Math.max(off,t+.03); X.free[s]=e;
+    X.q.push({t,on:1,s,k:key,v:vel,id},{t:e,on:0,s,id});
+    return {end:e,release(){},kill(){}};
+  }
   // нота: key, vel 1..127, t — время контекста, off — время отпускания или null (держится, release вызывает вызывающий)
   note(ch,key,vel,t,off,over){
     const p=over ? Object.assign({},ch.p,over) : ch.p;
-    const v=ch.type==='drum' ? stDrumVoice(this,ch,p,key,vel,t) : ch.type==='sampler' ? stSampleVoice(this,ch,p,key,vel,t,off)
+    const v=ch.type==='ext' ? this.extNote(ch,key,vel,t,off) : ch.type==='drum' ? stDrumVoice(this,ch,p,key,vel,t) : ch.type==='sampler' ? stSampleVoice(this,ch,p,key,vel,t,off)
       : stSynthVoice(this,ch,p,key,vel,t,off);
     const vs=this.voices; vs.push(v);
     if(!this.ac._stOffline && vs.length>150){            // только вживую: убрать закончившиеся, а при настоящем перегрузе — самые старые
@@ -430,7 +444,7 @@ class StSched{
 class StEngine{
   constructor(P){
     this.P=P; this.ac=null; this.rig=null; this.sched=null; this.view={mode:'song'}; this.samples={};
-    this.playing=false; this.sp=0; this.anchors=[]; this.timer=0; this.held=new Map(); this.onstop=null; this.metro=false; this.direct=true; this.tapNode=null; this.ring=null;
+    this.playing=false; this.sp=0; this.anchors=[]; this.timer=0; this.held=new Map(); this.onstop=null; this.metro=false; this.direct=true; this.tapNode=null; this.ring=null; this.extNode=null;
   }
   ensure(){
     if(!this.ac){
@@ -438,6 +452,7 @@ class StEngine{
       this.rig=new StRig(this.ac,this.P,this.samples); this.sched=new StSched(this.rig,this.P);
       if(this.direct===false) this.rig.dac.gain.value=0;
       // браузер может приостановить контекст (смена устройства вывода, фон, iOS «interrupted») — поднимаем обратно, пока играем
+      this.extSetup();
       this.ac.onstatechange=()=>{ if(this.playing && this.ac && this.ac.state!=='running' && this.ac.state!=='closed') this.ac.resume().catch(()=>{}); };
       document.addEventListener('visibilitychange',this._vis=()=>{ if(this.playing && this.ac && this.ac.state!=='running' && this.ac.state!=='closed') this.ac.resume().catch(()=>{}); });
     }
@@ -501,6 +516,7 @@ class StEngine{
       const t=this.ac.currentTime;
       for(const v of this.rig.voices) if(!(v.end<t)) try{ v.kill(t); }catch(e){}
       this.rig.voices=[]; this.rig.monoLast={}; this.held.clear();
+      const X=this.rig.ext; X.q.length=0; X.free=[0,0,0,0]; X.reset=1;
     }
   }
   getTick(){
@@ -549,6 +565,47 @@ class StEngine{
     for(let i=0;i<L.length;i++){ const q=r.p+i*step, k=Math.floor(q), f=q-k;
       L[i]=r.l[k&16383]*(1-f)+r.l[(k+1)&16383]*f; R[i]=r.r[k&16383]*(1-f)+r.r[(k+1)&16383]*f; }
     r.p+=need;
+  }
+  // внешние генераторы: узел Studio отдаёт ноты на пины, а звук генератора (входы in…in4) возвращается в каналы типа ext
+  extSetup(){
+    if(!this.ac || !this.rig) return;
+    this.rig.onSync=()=>this.extSetup();
+    if(!this.P.channels.some(c=>c.type==='ext')) return;
+    if(!this.extNode) this.extInit(); else this.extRoute();
+  }
+  async extInit(){
+    if(this.extNode || this.extBusy || !this.ac || !this.ac.audioWorklet) return; this.extBusy=1; const ac=this.ac;
+    try{
+      const url=URL.createObjectURL(new Blob(["class S extends AudioWorkletProcessor{constructor(){super();this.sr=48000;this.r=[0,1,2,3].map(()=>({b:new Float32Array(16384),w:0,p:-1}));this.port.onmessage=e=>{const d=e.data;if(d.sr){this.sr=d.sr;return;}const n=d.length>>2;for(let k=0;k<4;k++){const r=this.r[k];for(let i=0;i<n;i++){r.b[r.w&16383]=d[k*n+i];r.w++;}}};}process(i,o){const st=this.sr/sampleRate;for(let k=0;k<4;k++){const out=o[k][0],r=this.r[k];if(r.p<0||r.w-r.p>8192||r.w<r.p)r.p=r.w-2048;const need=out.length*st;if(r.w-r.p<need+2){out.fill(0);continue;}for(let j=0;j<out.length;j++){const q=r.p+j*st,a=Math.floor(q),f=q-a;out[j]=r.b[a&16383]*(1-f)+r.b[(a+1)&16383]*f;}r.p+=need;}return true;}}registerProcessor('stu-in',S);"],{type:'text/javascript'}));
+      await ac.audioWorklet.addModule(url); URL.revokeObjectURL(url);
+      if(ac===this.ac){ const node=new AudioWorkletNode(ac,'stu-in',{numberOfInputs:0,numberOfOutputs:4,outputChannelCount:[1,1,1,1]}); this.extNode=node; this.extSr=0; this.extRoute(); }
+    }catch(e){ console.warn('studio ext',e); }
+    this.extBusy=0;
+  }
+  extRoute(){
+    if(!this.extNode || !this.rig) return;
+    try{ this.extNode.disconnect(); }catch(e){}
+    for(const ch of this.P.channels) if(ch.type==='ext'){ const c=this.rig.chs.get(ch.id); if(c) this.extNode.connect(c.gain,stClamp((ch.p.ret|0)-1,0,3),0); }
+  }
+  extPush(ins,sr){
+    if(!this.extNode) return; if(this.extSr!==sr){ this.extSr=sr; this.extNode.port.postMessage({sr}); }
+    const n=ins[0].length, a=new Float32Array(n*4); for(let k=0;k<4;k++) if(ins[k]) a.set(ins[k],k*n);
+    this.extNode.port.postMessage(a,[a.buffer]);
+  }
+  // события, чьё время наступило (с упреждением lat сек на круг через граф), → состояние четырёх выходов
+  extTick(lat){
+    const r=this.rig; if(!r||!this.ac) return null; const X=r.ext, now=this.ac.currentTime+lat;
+    if(X.reset){ X.reset=0; for(const s of X.slots) s.on=0; }
+    const q=X.q; if(q.length>1) q.sort((a,b)=>a.t-b.t);
+    while(q.length && q[0].t<=now){ const e=q.shift(), s=X.slots[e.s];
+      if(e.on){ s.retrig=s.on?1:0; s.on=1; s.k=e.k; s.v=e.v; s.id=e.id; } else if(s.id===e.id) s.on=0; }
+    return X.slots;
+  }
+  // клип из Files › audio (SampleDB): моно-массив → AudioBuffer
+  async loadClip(chId,clipId){
+    this.ensure(); const c=await SampleDB.getClip(clipId); if(!c) throw new Error('clip not found');
+    const buf=this.ac.createBuffer(1,c.samples.length,c.sr); buf.copyToChannel(c.samples,0);
+    this.samples[chId]={buf,name:c.name,lib:clipId,data:null}; if(this.rig) this.rig.samples=this.samples; return buf;
   }
   async loadSample(chId,file){
     this.ensure();

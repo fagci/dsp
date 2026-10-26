@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,ArrayBuffer,DataView,JSON,Object,Number,String,Map,Infinity});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/studio-kernels.js'),'utf8')+
- ';this.K={stAdsrAt,stCollect,stDemoProject,stLoad,stWav,stReverbIR,stToNorm,stFromNorm,stAutoValue,stNewProject,stTargetDef,ST_EXAMPLES,stAddChannel,stAddPattern,stAddClip,stSwing,stSnapScale,ST_SYNTH,ST_FX,stDriveCurve};',ctx);
+ ';this.K={stAdsrAt,stCollect,stDemoProject,stLoad,stWav,stReverbIR,stToNorm,stFromNorm,stAutoValue,stNewProject,stTargetDef,ST_EXAMPLES,stAddChannel,stAddPattern,stAddClip,stSwing,stSnapScale,ST_SYNTH,ST_FX,stDriveCurve,ST_CHDEF};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c)=>{ if(!c){ bad++; console.log('FAIL',n); } else console.log('ok  ',n); };
 const near=(a,b,e=1e-3)=>Math.abs(a-b)<e;
@@ -28,6 +28,13 @@ ok('wav header',w.length===44+40 && String.fromCharCode(...w.slice(0,4))==='RIFF
 const ir=K.stReverbIR(8000,1,.5); ok('ir decays',Math.abs(ir[0][7900])<Math.abs(ir[0][400])+1e-9 && ir[0].length===8000);
 ok('scale snap',K.stSnapScale(61,60,'major')!==61);
 ok('swing',K.stSwing(24,1)>24 && K.stSwing(48,1)===48);
+{ // внешний генератор и клип библиотеки переживают сохранение
+  const P=K.stNewProject(), e=K.stAddChannel(P,'ext','Graph synth',{slot:2,voices:3},1), m=K.stAddChannel(P,'sampler','Smp',{clip:'7: kick',sname:'x.wav'},2);
+  const L=K.stLoad(JSON.stringify(P)), le=L.channels.find(c=>c.type==='ext'), lm=L.channels.find(c=>c.type==='sampler');
+  ok('ext channel params kept',le.p.slot===2 && le.p.voices===3 && le.p.ret===1);
+  ok('sampler clip id kept',lm.p.clip==='7: kick' && lm.p.sname==='x.wav');
+  ok('ext notes collected like any channel',(()=>{ const pat=K.stAddPattern(P,'p',1); pat.notes[e.id]=[{t:0,l:24,k:60,v:100}]; return K.stCollect(P,{mode:'pat',pat:pat.id},0,384).some(n=>n.ch===e.id); })());
+}
 for(const [name,make] of Object.entries(K.ST_EXAMPLES)){
   const E=make(), L=K.stLoad(JSON.stringify(E)), ids=new Set(E.patterns.map(p=>p.id));
   ok('example '+name+': loads',L.channels.length===E.channels.length && L.patterns.length===E.patterns.length);
