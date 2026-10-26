@@ -28,6 +28,17 @@ function tlConvert(cat,from,to,v){
   const r=Array.isArray(t) ? t[1](base) : base/t;
   return isFinite(r) ? r : null;
 }
+// ASCII-написания для формул Table: convert(5,'km2','ha'), convert(36.6,'C','F')
+const TL_ALIAS={C:'°C',F:'°F',R:'°R',deg:'°',um:'µm',us:'µs',m2:'m²',km2:'km²',cm2:'cm²',mm2:'mm²',mi2:'mi²',yd2:'yd²',ft2:'ft²',in2:'in²',
+  m3:'m³',cm3:'cm³',ft3:'ft³',in3:'in³',l:'L',ml:'mL',kph:'km/h',kmh:'km/h'};
+// категория не нужна: берётся первая, где есть обе единицы (cat — подсказка при совпадении имён)
+function tlConvertAuto(v,from,to,cat){
+  from=String(from??'').trim(); to=String(to??'').trim();
+  from=TL_ALIAS[from]||from; to=TL_ALIAS[to]||to;
+  const cats=cat && TL_UNITS[cat] ? [cat] : tlCats();
+  for(const c of cats) if(from in TL_UNITS[c] && to in TL_UNITS[c]) return tlConvert(c,from,to,v);
+  return null;
+}
 // 5 значащих цифр; очень большие и малые — в экспоненциальной записи
 function tlFmt(v){
   if(v===null || !isFinite(v)) return '—';
