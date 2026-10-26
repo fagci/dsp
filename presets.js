@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=131;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=132;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -183,6 +183,15 @@ const PRESET_CAT_ORDER=['Start Here',
                          'Tools',
                          'Tile Layouts'];
 const PRESET_CATS={
+  'Tools: Rangefinder and Protractor (Phone Camera Angles)':'Tools',
+  'Tools: Sound Level Meter (Microphone, dBA)':'Tools',
+  'Tools: Light Meter (Ambient Light, Exposure)':'Tools',
+  'Tools: Metal Detector (Magnetometer)':'Tools',
+  'Tools: Calculator (Expression, Pins a b c d)':'Tools',
+  'Tools: Sun and Moon (Sunrise, Sunset, Phase)':'Tools',
+  'Tools: Timer (Countdown with Alarm)':'Tools',
+  'Tools: Random (Dice, Coin, Number, Password)':'Tools',
+  'Tools: Phone Guard (Motion Alarm and Siren)':'Tools',
   'Tools: Unit Converter (type a value or wire one)':'Tools',
   'Tools: Unit Conversion in a Table Formula (convert)':'Tools',
   'Tools: Radio Calculator (antenna, link budget, SWR, Ohm, LC)':'Tools',
@@ -7427,5 +7436,90 @@ const tb=addNode('table',40,520,{list:'@patch',
     mgrs:{t:'calc',expr:"coord([lat],[lon],'MGRS',4)"},
     locator:{t:'calc',expr:"coord([lat],[lon],'Maidenhead')"}},card:{}}});
 tb.size.w=860; tb.size.h=260; applySize(tb);
+markWiresDirty();
+});
+preset('Tools: Rangefinder and Protractor (Phone Camera Angles)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Camera angles from Orientation (aim the back camera like a gun sight, start it and allow the sensor).\n'+
+  'Rangefinder: «ground point» — aim at the foot of an object, the distance comes from the angle down and the eye height (a phone held at 1.6 m); «object size» — you know the height, mark its top and base. Protractor: mark point A and point B — the angle between the two directions (3D) with the azimuth and elevation differences; before B is marked it follows the live direction.'});
+nt.size.w=840; nt.size.h=130; applySize(nt);
+const or=addNode('orient',40,230,{});
+const rf=addNode('rangef',380,200,{mode:'ground point',eye:1.6}); rf.size.w=330; rf.size.h=200; applySize(rf);
+const ro=addNode('rangef',380,430,{mode:'object size',size:2}); ro.size.w=330; ro.size.h=230; applySize(ro);
+const pr=addNode('protractor',750,200,{}); pr.size.w=340; pr.size.h=240; applySize(pr);
+addEdge(or.id,'el',rf.id,'el'); addEdge(or.id,'el',ro.id,'el'); addEdge(or.id,'az',pr.id,'az'); addEdge(or.id,'el',pr.id,'el');
+markWiresDirty();
+});
+preset('Tools: Sound Level Meter (Microphone, dBA)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Sound Level Meter: A-weighted level with fast / slow time weighting, Leq, max hold, peak and a 60 s history. The microphone is not calibrated: put a calibrator (94 dB at 1 kHz) or a reference meter next to it, set «calibrator level» and press «Calibrate» — the offset is then stored. Echo cancellation, noise suppression and auto gain of the microphone are off here — they ruin the measurement. A phone microphone is good to a few dB in the voice range, not for a precise measurement.'});
+nt.size.w=840; nt.size.h=130; applySize(nt);
+const mc=addNode('mic',40,230,{echo:false,ns:false,agc:false});
+const sp=addNode('spl',420,210,{weight:'A',speed:'fast'}); sp.size.w=420; sp.size.h=260; applySize(sp);
+addEdge(mc.id,'a',sp.id,'in');
+markWiresDirty();
+});
+preset('Tools: Light Meter (Ambient Light, Exposure)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Light Meter: the illuminance (lux) from Ambient Light (Chrome on Android; not every phone has the sensor — otherwise type it into «illuminance») becomes an exposure value, and the missing one of shutter / aperture is found for your ISO. Sunny 16: 80 000 lux, ISO 100, f/16 → 1/125. It is incident light for a mid-grey subject; for a bright or dark one correct by 1–2 stops.'});
+nt.size.w=840; nt.size.h=120; applySize(nt);
+const li=addNode('light',40,220,{});
+const ex=addNode('exposure',380,200,{iso:'100',solve:'shutter',N:'5.6'}); ex.size.w=340; ex.size.h=190; applySize(ex);
+addEdge(li.id,'lux',ex.id,'lux');
+markWiresDirty();
+});
+preset('Tools: Metal Detector (Magnetometer)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Metal Detector: the magnetic field strength |B| (a rotation does not change it) against a slowly following reference; steel, magnets, wires with current and rebar change it. Hold the phone away from metal, press «Zero here» and sweep slowly; the bar goes red past the threshold. The sensor is Magnetometer in Sensor (Generic Sensor API): Chrome on Android; start it. Gold, copper and aluminium are not magnetic — it only finds iron and steel.'});
+nt.size.w=840; nt.size.h=120; applySize(nt);
+const gs=addNode('gsensor',40,220,{type:'Magnetometer'});
+const md=addNode('magdet',420,200,{}); md.size.w=340; md.size.h=210; applySize(md);
+addEdge(gs.id,'x',md.id,'x'); addEdge(gs.id,'y',md.id,'y'); addEdge(gs.id,'z',md.id,'z');
+markWiresDirty();
+});
+preset('Tools: Calculator (Expression, Pins a b c d)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Calculator: an expression of a, b, c, d (typed or from wires) with the same functions as a Table formula: round, sqrt, pow, min, max, abs, if, convert(…), coord(…). Without «eval». The result goes out as a number and as text. Below: the area of a ring, a speed in km/h and a unit conversion.'});
+nt.size.w=840; nt.size.h=110; applySize(nt);
+const c1=addNode('calc',40,200,{expr:'round(3.14159265*(a*a-b*b),2)',a:5,b:3}); c1.size.w=320; c1.size.h=150; applySize(c1);
+const c2=addNode('calc',380,200,{expr:'round(a/b*3.6,1)',a:100,b:9.58}); c2.size.w=320; c2.size.h=150; applySize(c2);
+const c3=addNode('calc',720,200,{expr:'round(convert(a,\'mi\',\'km\')/b,2)',a:26.2,b:4}); c3.size.w=320; c3.size.h=150; applySize(c3);
+markWiresDirty();
+});
+preset('Tools: Sun and Moon (Sunrise, Sunset, Phase)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Sun & Moon: sunrise, noon, sunset, day length, the elevation and azimuth of the sun now and the phase of the moon for a place. Type the coordinates or wire lat / lon (here from Me, a map position). Times are in the device time zone; no atmospheric refraction (the real sunrise is a minute or two earlier); the moon by the mean cycle (±0.5 day). The outputs el / az / day / moon feed any indicator.'});
+nt.size.w=840; nt.size.h=120; applySize(nt);
+const me=addNode('geoMe',40,220,{src:'manual',lat:55.0375,lon:82.925});
+const sm=addNode('sunmoon',360,200,{}); sm.size.w=420; sm.size.h=260; applySize(sm);
+addEdge(me.id,'lat',sm.id,'lat'); addEdge(me.id,'lon',sm.id,'lon');
+markWiresDirty();
+});
+preset('Tools: Timer (Countdown with Alarm)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Timer: set minutes and seconds, press Start / pause (or send a pulse to «start»). At the end it beeps, vibrates and flashes; «start again by itself» makes an interval timer. The «done» output is 1 for three seconds — here it switches on the Alarm Siren (the «on» pin of the siren is wired to it). Double-click the picture for a big fullscreen clock.'});
+nt.size.w=840; nt.size.h=120; applySize(nt);
+const tm=addNode('timer',40,220,{min:0,sec:10,sound:true}); tm.size.w=340; tm.size.h=170; applySize(tm);
+const si=addNode('siren',420,220,{sound:'two-tone',vol:.4}); si.size.w=300; si.size.h=150; applySize(si);
+addEdge(tm.id,'done',si.id,'on');
+markWiresDirty();
+});
+preset('Tools: Random (Dice, Coin, Number, Password)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Random: dice (2d6+3, d20), a coin, a number in a range, a password (without look-alike characters l 1 I O 0, at least one character of every chosen set) or an item picked from a list. The source is the system generator (crypto.getRandomValues), the draw is unbiased. A pulse on «go» draws as well, so a button, a timer or a sensor can start it.'});
+nt.size.w=840; nt.size.h=110; applySize(nt);
+addNode('rand',40,200,{kind:'dice',expr:'2d6+3'});
+addNode('rand',380,200,{kind:'password',len:16,symbols:true});
+addNode('rand',720,200,{kind:'pick from list',list:'tea\ncoffee\ncocoa'});
+markWiresDirty();
+});
+preset('Tools: Phone Guard (Motion Alarm and Siren)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Phone Guard: press Arm, put the phone down — after the delay it remembers its position; if it is moved, lifted or knocked (the acceleration vector changes by more than the threshold for the set time) the alarm latches until Disarm, the phone vibrates and the Alarm Siren sounds. Keep the screen on and the graph running (the screen stays awake by itself, a silent sound keeps the page alive). Raise the threshold on a vibrating table.'});
+nt.size.w=840; nt.size.h=130; applySize(nt);
+const ac=addNode('accel',40,230,{grav:true});
+const gd=addNode('guard',380,210,{delay:5,sens:.8}); gd.size.w=340; gd.size.h=210; applySize(gd);
+const si=addNode('siren',760,210,{sound:'siren',vol:.7}); si.size.w=300; si.size.h=150; applySize(si);
+addEdge(ac.id,'x',gd.id,'x'); addEdge(ac.id,'y',gd.id,'y'); addEdge(ac.id,'z',gd.id,'z'); addEdge(gd.id,'alarm',si.id,'on');
 markWiresDirty();
 });
