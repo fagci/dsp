@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=120;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=121;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -1433,7 +1433,8 @@ preset('Spectrum Analyzer: Dense Overlay — Bookmarks, Band Plan and Signal Tag
 clearAll();
 const nt=addNode('note',40,40,{text:'A crowded view to check the overlay of the Spectrum Analyzer: close bookmarks, stacked band plan ranges and a lot of signal tags on one screen. Both lists are Tables in the patch (edit the rows): the first holds point bookmarks (hi empty) and ranges, the second holds signal tags (sig=1 with db, conf and the needed bandwidth nlo / nhi / nbw — the same fields the Signal Type Identifier emits).\n'+
   'Bookmarks are placed in up to three rows at the top; a name that finds no room becomes a small tick with a line (hover shows it, a click puts the marker there). Band plan: four labelled lanes above the axis, the rest as thin strips over them. Signal tags climb above their peak and, with no room left, shrink to a triangle. The needed bandwidth shows dashed edges, fill and width only under the cursor.\n'+
-  'Hover a bookmark, a band lane or strip, or a tag: a tooltip lists everything there — every range that holds the frequency (wide to narrow, with step and note), bookmark names and frequencies, signal type, level, width, confidence, needed bandwidth and decoder.'});
+  'Tap the spectrum to set markers 1–4: their flags stack above the band plan, and with the cursor over the waterfall every marker shows its line, passband (receiver channel or carrier search window) and width there.\n'+
+  'Hover a bookmark, a band lane or strip, a marker flag or a tag: a tooltip lists everything there — every range that holds the frequency (wide to narrow, with step and note), bookmark names and frequencies, signal type, level, width, confidence, needed bandwidth and decoder.'});
 nt.size.w=760; nt.size.h=230; applySize(nt);
 const M=1e6, bm=[[99.55,'Radio Alpha 99.55'],[99.6,'Alpha relay'],[99.62,'Test'],[99.68,'Maximum'],[99.7,'Jazz FM 99.7'],[99.9,'Station 99.9'],[99.93,'Traffic'],[99.97,'News 24 99.97'],[100.0,'Center 100.0'],[100.02,'Pilot'],[100.04,'Aux'],[100.05,'Retro FM 100.05'],[100.3,'Local 100.3'],[100.31,'Local B'],[100.33,'Kids 100.33'],[100.45,'Classic']];
 const bp=[[87.5,108,'FM broadcast','#5fb8d1'],[99.5,100.1,'Region A (long band name)','#ffb74d'],[99.55,99.8,'Metro','#81c784'],[99.6,99.7,'Sub 1','#ba68c8'],[99.65,99.69,'Sub 2','#e57373'],[99.9,100.0,'Block B','#4db6ac'],[99.95,100.2,'Block C wide label here','#f06292'],[100.0,100.05,'Ch 1','#aed581'],[100.02,100.04,'Ch 2','#ffd54f'],[100.3,100.5,'Edge band','#7986cb'],[100.31,100.4,'Part','#4dd0e1'],[100.33,100.36,'Mini','#ff8a65']];
