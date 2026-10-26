@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=128;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=129;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -180,8 +180,17 @@ const PRESET_CAT_ORDER=['Start Here',
                          'Music: Visualizers',
                          'Music: Player',
                          'Analysis & Measurement',
+                         'Tools',
                          'Tile Layouts'];
 const PRESET_CATS={
+  'Tools: Unit Converter (type a value or wire one)':'Tools',
+  'Tools: Screen Ruler (mm, inches, two marks, fullscreen)':'Tools',
+  'Tools: Height Meter (Phone Camera Angle)':'Tools',
+  'Tools: Compass with True North (Phone)':'Tools',
+  'Tools: Slope Meter (Phone on the Surface)':'Tools',
+  'Tools: Bubble Level and Plumb (Phone)':'Tools',
+  'Tools: Flashlight (LED, Strobe, SOS)':'Tools',
+  'Tools: Pedometer (Phone, Screen Stays On)':'Tools',
   'Echo Repeater: Record the Transmission, Play It Back (USB SDR)':'SDR Receivers',
   'USB SDR: Channel Scan (Channel Scanner + squelch)':'SDR Receivers',
   'USB SDR: Channel Scan + Decoder Switch (digital voice / analog)':'SDR Receivers',
@@ -7299,5 +7308,80 @@ const tl=addNode('timeline',1120,200,{by:'freq',rssiH:true,follow:true,win:120,t
 const ts=addNode('table',1120,660,{list:'@patch',key:'lane',rowsIn:'sync',initial:false}); ts.size.w=760; ts.size.h=260; applySize(ts);
 addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',ac.id,'spec');
 addEdge(ac.id,'rec',tb.id,'rec'); addEdge(tb.id,'all',tl.id,'rows'); addEdge(tl.id,'stats',ts.id,'rows');
+markWiresDirty();
+});
+preset('Tools: Unit Converter (type a value or wire one)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Unit Converter: pick the quantity and the two units, type a value (or wire a number into «in» — then the typed value is ignored). The result goes out of «out», so it can feed any indicator. Units: length, area, volume, mass, speed, temperature, pressure, energy, power (W, dBm, dBW), force, angle, time, frequency, data.\n'+
+  'Below: metres → feet, °C → °F and dBm → mW; «⇄ swap» turns a converter around.'});
+nt.size.w=720; nt.size.h=130; applySize(nt);
+addNode('unitconv',40,220,{cat:'length',from:'m',to:'ft',value:100});
+addNode('unitconv',380,220,{cat:'temperature',from:'°C',to:'°F',value:36.6});
+addNode('unitconv',720,220,{cat:'power',from:'dBm',to:'mW',value:20});
+markWiresDirty();
+});
+preset('Tools: Screen Ruler (mm, inches, two marks, fullscreen)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Screen Ruler: millimetres along one edge, inches along the other. Tap or drag on it to put two red marks — the distance between them is written in mm and inches. Double-click the picture (or ⤢) for fullscreen.\n'+
+  'The browser does not know the physical pixel size, so calibrate once: tick «card outline» and move «scale» until the dashed rectangle covers a real bank card (85.6 × 54 mm). Or type the screen diagonal in inches into «diag» — the scale then follows from it.'});
+nt.size.w=760; nt.size.h=130; applySize(nt);
+const rl=addNode('ruler',40,220,{card:true}); rl.size.w=640; rl.size.h=200; applySize(rl);
+markWiresDirty();
+});
+preset('Tools: Height Meter (Phone Camera Angle)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Height Meter on a phone: aim the back camera at the TOP of a tree / building and press ①, then at its BASE and press ②.\n'+
+  'distance known — type the distance to the object (a pace count or a map); eye height — the distance is found from the angle to the base and your eye height. barometer — wire a pressure sensor (Termux / WebSocket sensor, hPa) to «p»: press «Set reference here» at the bottom and climb; accuracy about a metre, drifts with the weather.\n'+
+  'The «el» pin comes from Orientation (start it, allow the sensor).'});
+nt.size.w=820; nt.size.h=150; applySize(nt);
+const or=addNode('orient',40,240,{});
+const hm=addNode('heightm',380,220,{mode:'eye height'}); hm.size.w=360; hm.size.h=230; applySize(hm);
+addEdge(or.id,'el',hm.id,'el');
+markWiresDirty();
+});
+preset('Tools: Compass with True North (Phone)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Phone compass: Orientation (the back camera is the pointer) → True North → Compass. The needle shows true north; the diamond on the rim is the magnetic heading. Type your magnetic declination into True North (east is +; NOAA has a calculator).\n'+
+  'Keep the phone away from magnets and metal; on iOS allow motion access when asked.'});
+nt.size.w=760; nt.size.h=120; applySize(nt);
+const or=addNode('orient',40,220,{});
+const dc=addNode('declin',380,220,{decl:0});
+const cp=addNode('compass',700,200,{}); cp.size.w=300; cp.size.h=240; applySize(cp);
+addEdge(or.id,'az',dc.id,'az'); addEdge(dc.id,'az',cp.id,'az'); addEdge(or.id,'az',cp.id,'az2');
+markWiresDirty();
+});
+preset('Tools: Slope Meter (Phone on the Surface)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Slope Meter: lay the phone flat on a slope (a roof, a ramp, a path) — the angle, the percent and the uphill direction come from gravity. First lay it on a surface you know to be level and press «Zero here» to cancel the sensor offset. «upright» in pose is for a phone held against a wall.'});
+nt.size.w=760; nt.size.h=100; applySize(nt);
+const ac=addNode('accel',40,200,{grav:true});
+const tl=addNode('tilt',380,180,{view:'slope',pose:'flat'}); tl.size.w=420; tl.size.h=240; applySize(tl);
+addEdge(ac.id,'x',tl.id,'x'); addEdge(ac.id,'y',tl.id,'y'); addEdge(ac.id,'z',tl.id,'z');
+markWiresDirty();
+});
+preset('Tools: Bubble Level and Plumb (Phone)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Bubble level: the phone lies flat, the bubble runs to the high side and turns green within the threshold. Plumb: hold the phone upright against a wall or a post — the line shows the lean from vertical (pose «upright»). «Zero here» calibrates the sensor on a surface you trust. The «level» pin gives 1 when level (feed it to a lamp or a tone).'});
+nt.size.w=760; nt.size.h=100; applySize(nt);
+const ac=addNode('accel',40,200,{grav:true});
+const lv=addNode('tilt',380,180,{view:'bubble level',pose:'flat'}); lv.size.w=300; lv.size.h=260; applySize(lv);
+const pl=addNode('tilt',720,180,{view:'plumb',pose:'upright'}); pl.size.w=300; pl.size.h=260; applySize(pl);
+for(const t of [lv,pl]){ addEdge(ac.id,'x',t.id,'x'); addEdge(ac.id,'y',t.id,'y'); addEdge(ac.id,'z',t.id,'z'); }
+markWiresDirty();
+});
+preset('Tools: Flashlight (LED, Strobe, SOS)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Flashlight: tick «on». «camera flash» lights the phone LED (Chrome on Android, asks for camera access; iOS has no torch in the browser), «screen» turns the screen into a white lamp — double-click for fullscreen. Patterns: steady, strobe (Hz), SOS. The «on» pin lets another node switch it. The graph has to be running.'});
+nt.size.w=760; nt.size.h=100; applySize(nt);
+const tc=addNode('torch',40,200,{mode:'camera flash',pattern:'steady'}); tc.size.w=340; tc.size.h=170; applySize(tc);
+markWiresDirty();
+});
+preset('Tools: Pedometer (Phone, Screen Stays On)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Pedometer: counts peaks of the acceleration while you walk (the first steps are confirmed after a short series, so a shake does not count). Set the stride length for the distance. While the graph runs the screen stays awake and a silent sound is played, which keeps the page alive in the background on most phones; browsers may still pause sensors when the screen is locked — if the count stops, keep the screen on.'});
+nt.size.w=760; nt.size.h=120; applySize(nt);
+const ac=addNode('accel',40,220,{grav:true});
+const st=addNode('steps',380,200,{}); st.size.w=340; st.size.h=170; applySize(st);
+addEdge(ac.id,'x',st.id,'x'); addEdge(ac.id,'y',st.id,'y'); addEdge(ac.id,'z',st.id,'z');
 markWiresDirty();
 });

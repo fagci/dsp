@@ -20,14 +20,14 @@ function themeRgba(name,a){
 }
 // порядок разделов в палитре — иначе порядок зависит от того, в каком файле модуль зарегистрирован
 const CAT_ORDER = ['Sources','Music','Processing','Modulation','Analysis','Radio','IQ','Radar',
-                    'Protocols','IR','Decoders','Audio','Video','Geo','Data','Control','Indicators','Output','Builder','Misc'];
+                    'Protocols','IR','Decoders','Audio','Video','Geo','Data','Control','Indicators','Tools','Output','Builder','Misc'];
 
-// Верхний уровень палитры: 21 категория → 6 групп. Цвет значка — по группе, форма — по роли (источник/обработка/приёмник).
+// Верхний уровень палитры: 22 категории → 6 групп. Цвет значка — по группе, форма — по роли (источник/обработка/приёмник).
 const CAT_GROUPS = [
   {id:'Input',     color:'var(--t-num)',   cats:['Sources','Radio','IQ','Control']},
   {id:'Signal',    color:'var(--t-sig)',   cats:['Processing','Modulation','Audio','Video','Radar']},
   {id:'Decode',    color:'var(--t-txt)',   cats:['Protocols','Decoders','IR']},
-  {id:'Analysis',  color:'var(--t-spec)',  cats:['Analysis','Indicators','Geo','Data']},
+  {id:'Analysis',  color:'var(--t-spec)',  cats:['Analysis','Indicators','Tools','Geo','Data']},
   {id:'Music',     color:'var(--t-trk)',   cats:['Music']},
   {id:'Output',    color:'var(--t-img)',   cats:['Output','Builder','Misc']},
 ];

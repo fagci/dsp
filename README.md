@@ -1102,6 +1102,20 @@ Code fields (Script, Builder, Note, tables) are a plain text area with a light s
 
 Presets: *Indicators: Lamps, Gauge, LED Bar, Compass, Display*, *Indicators: Sky Plot, S-Meter, Text Ticker*, *Indicators: Switches and Attitude*, *ADS-B: Radar and Attitude (Generator)*, *Satellites: Pass and Sky Plot*.
 
+### Tools (phone)
+
+Small instruments for the phone (category Tools); sensors come from the wires (Accelerometer, Orientation, Termux, WebSocket sensor), the blocks only compute and draw.
+
+- **Unit Converter** — length, area, volume, mass, speed, temperature, pressure, energy, power (W, dBm, dBW), force, angle, time, frequency, data; the value is typed or comes from a wire.
+- **Screen Ruler** — mm and inches, two draggable marks with the distance, fullscreen. The browser does not know the pixel size, so calibrate with a bank card outline or by the screen diagonal.
+- **Height Meter** — from the camera angle (Orientation → `el`) to the top and the base of an object: with a known distance or with the eye height; or by pressure difference (a barometer from Termux / a WebSocket sensor).
+- **True North (declination)** — adds the magnetic declination to a heading (for Compass).
+- **Slope / Level / Plumb** — slope in degrees, percent and the uphill direction, a bubble level and a plumb line from gravity; zeroing on a flat surface; `level` pin.
+- **Flashlight** — the phone LED (Chrome / Android) or a white screen; steady, strobe, SOS.
+- **Pedometer** — steps, steps per minute and distance from the acceleration peaks. While the graph runs the screen stays awake and a silent sound keeps the page alive; a locked screen can still pause the sensors in some browsers.
+
+Presets: the *Tools* group (*Unit Converter*, *Screen Ruler*, *Height Meter*, *Compass with True North*, *Slope Meter*, *Bubble Level and Plumb*, *Flashlight*, *Pedometer*). Logic: `modules/tools-kernels.js`, tests: `node tools/test-tools.mjs`.
+
 ### Measuring instruments
 
 Meters with numeric outputs: a value can go to a *Number*, *Gauge*, *Compare* or a log. Presets: *Measure: Modulation Meter — FM and AM (Generator)*, *Measure: SINAD of an FM Receiver (Generator)*, *Measure: IQ Quality — DC and Imbalance (Generator)*.
