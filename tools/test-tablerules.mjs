@@ -5,6 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({tcDef:(n,c)=>n.schema.types[c]||{}, tblKind:()=>'patch', tblRO:()=>false, tblSave:async()=>{}, tblDerive(){}, tblToItem(){}, ListDB:{}, console});
+vm.runInContext(fs.readFileSync(path.join(root,'modules/tools-kernels.js'),'utf8')+';this.tlConvertAuto=tlConvertAuto;',ctx);
 vm.runInContext(fs.readFileSync(path.join(root,'modules/table-rules.js'),'utf8')+';this.K={trCompile,trPrepare,trCalcAll,trCalcRow,trParseUnique,trDupes,trRenameRef,trRecalc,trVirtual};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
@@ -16,6 +17,8 @@ ok('strings: concat, compare, case',ev("[a]+' '+[b]",{a:'x',b:'y'})==='x y' && e
 ok('numeric strings are numbers',ev('[a]+[b]',{a:'2',b:'3'})===5);
 ok('ternary, if, logic',ev('[a]>1 ? "big" : "small"',{a:2})==='big' && ev('if([a]>1,1,0)',{a:0})===0 && ev('[a]>1 && [b]',{a:2,b:0})===0 && ev('!0')===1);
 ok('functions',ev('round(2.345,2)')===2.35 && ev('max(1,[a],3)',{a:7})===7 && ev('coalesce([a],[b])',{a:'',b:5})===5 && ev("substr('abcdef',2,3)")==='bcd' && ev('len("abc")')===3);
+ok('convert: units from a field and literals',Math.abs(ev("convert([d],'km','mi')",{d:10})-6.2137119)<1e-6 && ev("convert([t],'C','F')",{t:100})===212 && ev("convert(1,[u],'m')",{u:'ft'})===0.3048);
+ok('convert: bad value or units give an empty result',ev("convert([d],'km','mi')",{d:''})==='' && ev("convert(1,'m','kg')")==='' && ev("convert(1,'zz','m')")==='');
 ok('syntax errors raise',['1+','(1','foo(1)','1 2','',"'a' ? 1"].every(s=>{ try{ K.trCompile(s); return false; }catch(e){ return true; } }));
 ok('no code is executed',(()=>{ try{ ev('constructor.constructor("return 1")()'); return false; }catch(e){ return true; } })());
 const mk=(types,card={},cl=['id','a','b'],all=[])=>({cl,all,schema:{types,card}});

@@ -1914,7 +1914,7 @@ function tblFieldsPanel(n,box,mk,sel){
     }
     if(!ro && t==='calc'){
       const e=mk('input','tv-q'); e.value=d.expr||''; e.placeholder='[price] * [qty]   round([a]/[b],2)   lookup(\'MAC vendors (OUI)\',\'prefix\',[mac],\'vendor\',\'mac\')';
-      e.title='[Field] — value of a field; + - * / %, == != < > <= >=, && || !, a ? b : c; functions: round floor ceil abs sqrt pow min max if coalesce concat upper lower trim len substr contains num text now year month day;\nlookup(\'list\',\'key column\',[Field],\'result column\'[,\'mac|prefix|contains\']) — value from another list by match (Files → ⇩ offline gives Reference/… lists: OUI vendors, signal catalog…); between(\'list\',\'from\',\'to\',[Field],\'result\') — row whose range contains the value';
+      e.title='[Field] — value of a field; + - * / %, == != < > <= >=, && || !, a ? b : c; functions: round floor ceil abs sqrt pow min max if coalesce concat upper lower trim len substr contains num text now year month day;\nconvert(value,\'from\',\'to\') — units (km mi m ft °C °F kg lb kn km/h hPa dBm mW…, same as the Unit Converter); lookup(\'list\',\'key column\',[Field],\'result column\'[,\'mac|prefix|contains\']) — value from another list by match (Files → ⇩ offline gives Reference/… lists: OUI vendors, signal catalog…); between(\'list\',\'from\',\'to\',[Field],\'result\') — row whose range contains the value';
       e.addEventListener('keydown',ev=>ev.stopPropagation());
       e.addEventListener('change',()=>tcSetDef(n,c,{...d,expr:e.value.trim()}));
       ln('formula').append(e);

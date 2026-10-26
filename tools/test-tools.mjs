@@ -5,7 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Number,Array,String,Object,isFinite,JSON});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/tools-kernels.js'),'utf8')+';this.K={TL_UNITS,tlCats,tlUnits,tlConvert,tlFmt,tlRulerTicks,tlLenText,tlHeightDist,tlHeightEye,tlBaro,tlTilt,tlStepNew,tlStepPush,tlTorchOn,TL_SOS}',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/tools-kernels.js'),'utf8')+';this.K={TL_UNITS,tlCats,tlUnits,tlConvert,tlConvertAuto,tlFmt,tlRulerTicks,tlLenText,tlHeightDist,tlHeightEye,tlBaro,tlTilt,tlStepNew,tlStepPush,tlTorchOn,TL_SOS}',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(a,b,e=1e-6)=>Math.abs(a-b)<=e*Math.max(1,Math.abs(b));
@@ -28,6 +28,11 @@ ok('unknown unit',K.tlConvert('length','m','kg',1)===null);
 ok('NaN in',K.tlConvert('length','m','km',NaN)===null);
 ok('round trip all',K.tlCats().every(c=>{ const u=K.tlUnits(c); return u.every(a=>u.every(b=>near(K.tlConvert(c,b,a,K.tlConvert(c,a,b,5)),5,1e-9))); }));
 ok('fmt',K.tlFmt(1/3)==='0.3333333' && K.tlFmt(0)==='0' && K.tlFmt(null)==='—' && K.tlFmt(1.5e12).includes('e'),K.tlFmt(1.5e12));
+
+ok('auto: category found',near(K.tlConvertAuto(10,'km','mi'),6.213711922,1e-8) && K.tlConvertAuto(100,'C','F')===212);
+ok('auto: aliases',near(K.tlConvertAuto(1,'m2','ft²'),10.7639104,1e-6) && near(K.tlConvertAuto(1000,'um','mm'),1));
+ok('auto: ambiguous names resolved by pair',near(K.tlConvertAuto(2,'min','s'),120) && near(K.tlConvertAuto(1,'mi','km'),1.609344));
+ok('auto: different categories → null',K.tlConvertAuto(1,'m','kg')===null && K.tlConvertAuto(1,'nope','m')===null);
 
 // линейка
 const tm=K.tlRulerTicks(100,false);

@@ -6,6 +6,7 @@
    types[c].def / .req                      значение по умолчанию и обязательность
    card.unique = [[колонки], …]             уникальность по набору полей (пустая часть набора — не участвует, как NULL в SQL)
    Выражения: свои, без eval (CSP): числа, 'строки', [Поле], + - * / %, сравнения, && || !, ?:, функции TR_FN.
+   Единицы: convert([Поле],'км','mi') — число из одних единиц в другие (список — Tools → Unit Converter, modules/tools-kernels.js).
    Поиск по другой таблице: lookup('список','ключ',[Поле],'результат'[,'eq|mac|prefix|contains']), between('список','от','до',[Поле],'результат') —
    справочник заранее превращается в индекс (modules/lookup-kernels.js, table-lookup.js); имена списка и колонок — только литералы в кавычках. */
 
@@ -31,6 +32,7 @@ const TR_FN={
   year:t=>{ const d=new Date(trNum(t)||t); return isNaN(d) ? '' : d.getFullYear(); },
   month:t=>{ const d=new Date(trNum(t)||t); return isNaN(d) ? '' : d.getMonth()+1; },
   day:t=>{ const d=new Date(trNum(t)||t); return isNaN(d) ? '' : d.getDate(); },
+  convert:(x,from,to,cat)=>{ const r=typeof tlConvertAuto==='function' ? tlConvertAuto(trNum(x),from,to,cat) : null; return r===null ? '' : r; },
   lookup:(list,key,val,ret,mode)=>hostlistCoerce(luLookup(list,key,val,ret,mode==null ? 'eq' : mode)),
   between:(list,lo,hi,val,ret)=>hostlistCoerce(luBetween(list,lo,hi,val,ret)),
 };

@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=129;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=130;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -184,6 +184,7 @@ const PRESET_CAT_ORDER=['Start Here',
                          'Tile Layouts'];
 const PRESET_CATS={
   'Tools: Unit Converter (type a value or wire one)':'Tools',
+  'Tools: Unit Conversion in a Table Formula (convert)':'Tools',
   'Tools: Screen Ruler (mm, inches, two marks, fullscreen)':'Tools',
   'Tools: Height Meter (Phone Camera Angle)':'Tools',
   'Tools: Compass with True North (Phone)':'Tools',
@@ -7383,5 +7384,17 @@ nt.size.w=760; nt.size.h=120; applySize(nt);
 const ac=addNode('accel',40,220,{grav:true});
 const st=addNode('steps',380,200,{}); st.size.w=340; st.size.h=170; applySize(st);
 addEdge(ac.id,'x',st.id,'x'); addEdge(ac.id,'y',st.id,'y'); addEdge(ac.id,'z',st.id,'z');
+markWiresDirty();
+});
+preset('Tools: Unit Conversion in a Table Formula (convert)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A calculated field can change units: convert([Field],\'from\',\'to\'). Units are the same as in Unit Converter (km mi m ft in nmi kg lb kn km/h mph hPa mmHg °C °F K dBm mW MiB…); C, F, m2, um are accepted too. The units may come from fields: convert([value],[unit],[to]), as in the table below. A bad value or a mismatch (m → kg) gives an empty cell.\n'+
+  'Edit a value, a unit or the target and «result» follows.'});
+nt.size.w=820; nt.size.h=130; applySize(nt);
+const tb=addNode('table',40,200,{list:'@patch',
+  data:'what,value,unit,to,result\nheight of a tree,12.5,m,ft,\nrun,5,km,mi,\nhike,3.2,mi,km,\nbody temperature,36.6,C,F,\npressure,1013,hPa,inHg,\nwind,25,kn,km/h,\ntransmitter,2,W,dBm,\nfile,700,MiB,MB,',
+  schema:{types:{
+    result:{t:'calc',expr:"convert([value],[unit],[to])"}}, card:{}}});
+tb.size.w=820; tb.size.h=320; applySize(tb);
 markWiresDirty();
 });
