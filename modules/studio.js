@@ -61,7 +61,7 @@ class StuApp{
     for(const id in samples||{}) this.eng.samples[id]={name:samples[id].name,data:samples[id].data};
     this.eng.setProject(P);
     this.cur.pat=P.patterns[0]?P.patterns[0].id:0; this.cur.ch=P.channels[0]?P.channels[0].id:0; this.cur.ins=1; this.cur.slot=-1;
-    this.pos=0; this.refreshAll();
+    this.pos=0; this.mode=P.playlist.clips.some(c=>c.kind==='pat')?'song':'pat'; this.refreshAll();
   }
   async prepAudio(){
     const e=this.eng; if(!e.ac) return;
@@ -117,6 +117,7 @@ class StuApp{
     else this.startPlay(this.pos);
   }
   startPlay(from){
+    if(this.mode==='song' && !this.P.playlist.clips.some(c=>c.kind==='pat')){ this.mode='pat'; this.say('playlist is empty — playing the current pattern'); }
     this.eng.view=this.mode==='song'?{mode:'song'}:{mode:'pat',pat:this.cur.pat};
     this.playFrom=from; this.eng.play(from); this.prepAudio();
   }
@@ -235,6 +236,7 @@ class StuApp{
 
   /* ----- клавиатура и MIDI ----- */
   onKey(ev,down){
+    if(!down && ev.key===' '){ ev.preventDefault(); return; }       // иначе пробел на фокусной кнопке ещё и «кликнет» её
     const tg=ev.target; if(tg && /^(INPUT|SELECT|TEXTAREA)$/.test(tg.tagName) && !(tg.type==='range'||tg.type==='button')) return;
     const k=ev.key, mod=ev.ctrlKey||ev.metaKey;
     if(down){
