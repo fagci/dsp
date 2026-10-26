@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=127;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=128;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -206,6 +206,9 @@ const PRESET_CATS={
   'Zero-span: Level vs Time, Trigger and Pulse Measurements (Generator)':'Analysis & Measurement',
   'USB SDR: Best Gain by SNR (Gain Optimizer, dBm Scale)':'SDR Receivers',
   'USB SDR: Antenna Aiming by Ear — Peak Tone and Best Hold (Antenna Peaker)':'SDR Receivers',
+  'Rig Control: Dial, Mode, PTT Lock and S-Meter (Simulator)':'Control & Remote',
+  'Rotator: Compass, Jog and Limits (Simulator)':'Control & Remote',
+  'Rotator: Circular Scan for the Best Azimuth (Simulator)':'Control & Remote',
   'Antenna Aiming: Peak Tone, Best Hold and Hot/Cold on a Moving Level (Generator)':'Analysis & Measurement',
   'Measure: Modulation Meter — FM and AM (Generator)':'Analysis & Measurement',
   'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
@@ -1523,6 +1526,35 @@ const lf=addNode('lfo',40,260,{freq:.12,min:8,max:30,wave:'sine'});
 const ap=addNode('antpeak',340,240,{mode:'best',range:10}); ap.size.w=360; ap.size.h=150; applySize(ap);
 const tr=addNode('trend',340,660,{span:60}); tr.size.w=360; tr.size.h=130; applySize(tr);
 addEdge(lf.id,'out',ap.id,'in'); addEdge(ap.id,'snr',tr.id,'in');
+markWiresDirty();
+});
+preset('Rig Control: Dial, Mode, PTT Lock and S-Meter (Simulator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Rig Control on a virtual rig (no hardware): click the upper half of a digit to raise that decade, the lower half to lower it (or use the wheel over a digit), click a mode, watch the S-meter. PTT is locked until «allow PTT» is ticked and releases itself after the time-out.\n'+
+  'A real transceiver: run rigctld from Hamlib (rigctld -m <model> -r /dev/ttyUSB0 -t 4532), then a WebSocket bridge (websockify 8768 127.0.0.1:4532), set «channel» to websocket and the URL to ws://127.0.0.1:8768. An https page can only open wss:// or ws://localhost. The `f` out goes to a USB SDR `tuneFreq`, so the receiver follows the rig; the `f` in tunes the rig from the graph. Not tried on real hardware.'});
+nt.size.w=900; nt.size.h=170; applySize(nt);
+const rg=addNode('rigctl',40,240,{via:'simulator',auto:true}); rg.size.w=460; rg.size.h=170; applySize(rg);
+const tr=addNode('trend',560,240,{span:60}); tr.size.w=360; tr.size.h=170; applySize(tr);
+addEdge(rg.id,'s',tr.id,'in');
+markWiresDirty();
+});
+preset('Rotator: Compass, Jog and Limits (Simulator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Rotator on a virtual turntable (12°/s): click or drag on the compass to set the target (the dashed line, the circle is the target; the solid needle is the actual position), the wheel gives ±1° (Shift ±10°), buttons N/E/S/W, ±1/±10° and Stop/Park are in the parameters. With «elevation» on, the radius is the elevation: the rim is the horizon, the centre is the zenith.\n'+
+  'Limits (advanced): azimuth from…to… shades the forbidden sector; for a rotator with 450° travel set 0…450, the target is then reached the short way through the overlap. The `az` / `el` pins steer the rotator from the graph (a satellite pass, a bearing from the map); `stop` and `park` take a pulse.\n'+
+  'A real rotator: rotctld -m <model> -r /dev/ttyUSB0 -t 4533 + websockify 8769 127.0.0.1:4533 (protocol rotctld), or straight from the controller over Web Serial: GS-232 (Yaesu, 9600) or EasyComm II (SatNOGS). Not tried on real hardware.'});
+nt.size.w=900; nt.size.h=190; applySize(nt);
+const rt=addNode('rotator',40,260,{via:'simulator',auto:true,elOn:true}); rt.size.w=420; rt.size.h=300; applySize(rt);
+markWiresDirty();
+});
+preset('Rotator: Circular Scan for the Best Azimuth (Simulator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Where is the signal? The simulator plays a beacon at 217° seen through an antenna beam (±22°, with a bit of noise): the level appears on the `lvl` out whenever nothing is wired to the `lvl` in. «Circular scan» turns the rotator in steps, stops for the dwell time at each, averages the level on the `lvl` pin and draws it on the compass as wedges (longer = stronger); at the end the best azimuth (white-green line, `best` pin) is refined by the shape of the peak and the rotator turns to it.\n'+
+  'On a real signal feed `lvl` with the `snr` of an Antenna Peaker (or a Signal Meter, RSSI) and keep the gain fixed. Tune step, dwell and sector in the parameters: a narrow sector around a rough guess is quicker than the full circle.'});
+nt.size.w=900; nt.size.h=170; applySize(nt);
+const rt=addNode('rotator',40,240,{via:'simulator',auto:true,scanStep:10,scanDwell:.6,simRate:40,simBeam:217}); rt.size.w=420; rt.size.h=280; applySize(rt);
+const tr=addNode('trend',520,240,{span:60}); tr.size.w=360; tr.size.h=160; applySize(tr);
+addEdge(rt.id,'lvl',tr.id,'in');
 markWiresDirty();
 });
 preset('Measure: Modulation Meter — FM and AM (Generator)', function(){
