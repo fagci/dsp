@@ -4,7 +4,7 @@
   --t-sig:#4ec9b0; --t-num:#e0b23c; --t-spec:#c586c0; --t-img:#569cd6;
   --t-txt:#d18ad1; --t-blk:#7fd17f; --t-bands:#5fb8d1; --t-rec:#e0875f; --t-trk:#e07fb0; --t-iq:#b4d455; --t-vid:#e6d36a; --t-rtc:#6fd0c0; --t-bin:#e0b050; --err:#e05c5c;
   /* цвета пинов по типам: 14 разных оттенков, по кругу */
-  --p-rec:#da7a62; --p-val:#daa262; --p-num:#dabe62; --p-vid:#d6da62; --p-iq:#aeda62; --p-blk:#62da66; --p-sig:#62dabe; --p-rtc:#62c2da; --p-img:#6292da; --p-bands:#6262da; --p-spec:#9a62da; --p-txt:#d262da; --p-trk:#da62a2; --p-bin:#da6272;
+  --p-rec:#da7a62; --p-val:#daa262; --p-num:#dabe62; --p-vid:#d6da62; --p-iq:#aeda62; --p-blk:#62da66; --p-sig:#62dabe; --p-rtc:#62c2da; --p-img:#6292da; --p-bands:#6262da; --p-spec:#9a62da; --p-txt:#d262da; --p-trk:#da62a2; --p-stu:#e0875f; --p-bin:#da6272;
   /* --grid/--axis — сетка/подписи осей на canvas.view. Тот canvas всегда на тёмном --screen
      (см. ниже — --screen НЕ переопределён в светлой теме, экран прибора тёмный в обеих темах),
      так что и эти двое — не по теме, а константа, как --screen/--screen-fg сами; если сделать
@@ -26,7 +26,7 @@
     --txt:#1c2226; --dim:#5c6670; --acc:#a8720f; --acc2:#0f9488;
     --t-sig:#0f9488; --t-num:#a8720f; --t-spec:#9333ea; --t-img:#2563eb;
     --t-txt:#a83fa8; --t-blk:#2f9e4f; --t-bands:#1b7f96; --t-rec:#b8541f; --t-trk:#b83d7c; --t-iq:#5f8a0e; --t-vid:#8a7a0a; --t-rtc:#1d8a78; --t-bin:#a9770f; --err:#c23b3b;
-    --p-rec:#a33114; --p-val:#a36114; --p-num:#a38214; --p-vid:#9fa314; --p-iq:#6fa314; --p-blk:#14a319; --p-sig:#14a382; --p-rtc:#1487a3; --p-img:#144da3; --p-bands:#1414a3; --p-spec:#5714a3; --p-txt:#9a14a3; --p-trk:#a31461; --p-bin:#a31427;
+    --p-rec:#a33114; --p-val:#a36114; --p-num:#a38214; --p-vid:#9fa314; --p-iq:#6fa314; --p-blk:#14a319; --p-sig:#14a382; --p-rtc:#1487a3; --p-img:#144da3; --p-bands:#1414a3; --p-spec:#5714a3; --p-txt:#9a14a3; --p-trk:#a31461; --p-stu:#b8541f; --p-bin:#a31427;
     --hi:#000000; --scrim:#0004;
     --canvas:#d3d9df;
     --screen:#f3f5f7; --screen-fg:#0b7c72; --grid:#dde2e6; --axis:#68737b; --scr-panel:#e4e8eb; --scr-hi:#111111;
@@ -1478,3 +1478,100 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 /* узлы холста вне экрана не раскладываются и не рисуются (см. cvArm в core-graph.js).
    Только тело узла (.mid): paint-containment обрезает и клики, а пины торчат за рамку узла — в соседних колонках, вне .mid, их он не трогает */
 #canvas #content .node.cvis .io3>.mid{content-visibility:auto;overflow-clip-margin:80px;contain-intrinsic-size:auto 200px auto 60px}
+
+/* ============ Studio (DAW) ============ */
+.stu{color:var(--txt);font-size:12px;user-select:none}
+.stu-full{position:fixed;inset:0;z-index:49;display:flex;flex-direction:column;background:var(--bg);
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.stu-tile{grid-column:1/-1;width:100%;min-width:0;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+.stu-tile>.stu-panel{flex:1;min-height:0}
+.stu-tile .stu-x,.stu-full .stu-open{display:none}
+.stu-panel{min-width:0}
+.stu-p-rack{display:flex;flex-direction:column;background:var(--panel);min-height:0}
+.stu-p-roll,.stu-p-list{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0}
+.stu-p-mix{display:flex;flex-direction:row;flex:1;min-height:0}
+.stu-p-inst{display:flex;flex-direction:column;overflow:auto;flex:1;min-height:0}
+.stu-pane>.stu-panel{flex:1;min-height:0}
+.stu-rack>.stu-p-rack{flex:1}
+.stu-tile .stu-top{flex-wrap:wrap;align-content:flex-start;overflow:auto}
+.stu button,.stu select,.stu input{font:inherit;color:inherit}
+.stu-top{display:flex;align-items:center;gap:6px;padding:5px 8px;background:var(--panel);border-bottom:1px solid var(--line);overflow-x:auto;flex:0 0 auto;scrollbar-width:thin}
+.stu-b{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:4px 9px;cursor:pointer;white-space:nowrap;min-height:26px}
+.stu-b:hover{border-color:var(--dim)} .stu-b.on{background:var(--acc);color:#111;border-color:var(--acc)}
+.stu-play{min-width:36px;font-size:14px} .stu-recb.on{background:#d33;border-color:#d33;color:#fff}
+.stu-sep{width:1px;align-self:stretch;background:var(--line);margin:0 2px;flex:0 0 1px} .stu-fill{flex:1}
+.stu-time{font:600 15px var(--mono);background:var(--screen);color:var(--screen-fg);padding:3px 8px;border-radius:4px;min-width:84px;text-align:center}
+.stu-f{display:flex;align-items:center;gap:4px;white-space:nowrap;color:var(--dim)}
+.stu-f input[type=number]{width:56px} .stu-f input[type=range]{width:70px}
+.stu select,.stu input[type=number]{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:3px}
+.stu-master{border:1px solid var(--line);border-radius:3px;flex:0 0 auto} .stu-stat{color:var(--dim);min-width:70px;white-space:nowrap}
+.stu-main{flex:1;display:flex;min-height:0}
+.stu-rack{flex:0 0 auto;width:min(640px,50vw);display:flex;flex-direction:column;border-right:1px solid var(--line);background:var(--panel);min-width:0}
+.stu-rack-in{flex:1;overflow:auto;padding:4px}
+.stu-rack-add{padding:6px;border-top:1px solid var(--line)}
+.stu-ch{display:flex;align-items:stretch;gap:6px;margin-bottom:3px;background:var(--panel2);border:1px solid transparent;border-radius:4px;padding:3px;min-width:min-content}
+.stu-ch.sel{border-color:var(--acc)} .stu-ch.mute .stu-steps{opacity:.4}
+.stu-chh{display:flex;align-items:center;gap:4px;flex:0 0 auto;position:sticky;left:0;background:inherit;z-index:1}
+.stu-led{width:14px;height:14px;border-radius:50%;border:1px solid #0008;background:#333;cursor:pointer;padding:0;flex:0 0 14px}
+.stu-led.on{background:var(--c,var(--t-blk));box-shadow:0 0 6px var(--c,var(--t-blk))}
+.stu-chn{width:84px;text-align:left;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:4px 6px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stu-s,.stu-mini,.stu-pr{background:var(--bg);border:1px solid var(--line);border-radius:3px;cursor:pointer;padding:1px 5px;min-width:20px}
+.stu-s.on{background:var(--acc2);color:#111} .stu-mixsel{width:42px;padding:2px}
+.stu-steps{display:flex;gap:2px;align-items:center;flex:1 0 auto}
+.stu-st{width:21px;height:28px;background:#2a3238;border-radius:3px;cursor:pointer;flex:0 0 21px;border:1px solid #0006}
+.stu-st.alt{background:#343e45} .stu-st.on{background:var(--c,var(--acc));box-shadow:inset 0 0 0 1px #fff3} .stu-st.cur{outline:2px solid #fff;outline-offset:-2px}
+.stu-st:nth-child(4n+1){margin-left:4px}
+.stu-work{flex:1;display:flex;flex-direction:column;min-width:0}
+.stu-tabs{display:flex;gap:2px;padding:4px 6px 0;background:var(--panel);border-bottom:1px solid var(--line)}
+.stu-tabs button{background:transparent;border:1px solid transparent;border-bottom:none;border-radius:4px 4px 0 0;padding:5px 14px;cursor:pointer;color:var(--dim)}
+.stu-tabs button.on{background:var(--bg);border-color:var(--line);color:var(--txt);font-weight:600}
+.stu-tab-rack{display:none}
+.stu-pane{display:none;flex:1;min-height:0;overflow:hidden} .stu-pane.on{display:flex}
+.stu-rt,.stu-lt{display:flex;align-items:center;gap:8px;padding:5px 8px;background:var(--panel);border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:thin;flex:0 0 auto}
+.stu-lb{flex:1;display:flex;min-height:0}
+.stu-pal{flex:0 0 120px;overflow:auto;background:var(--panel);border-right:1px solid var(--line);padding:6px;display:flex;flex-direction:column;gap:4px}
+.stu-pal h4{margin:0 0 2px;color:var(--dim);font-weight:500}
+.stu-pb{text-align:left;background:var(--panel2);border:1px solid var(--line);border-left:5px solid var(--c);border-radius:3px;padding:5px 6px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stu-pb.on{background:var(--c);color:#111;font-weight:600}
+.stu-cw{flex:1;min-height:0;min-width:0;position:relative;overflow:hidden} .stu-cw canvas{position:absolute;left:0;top:0;touch-action:none}
+.stu-dim{color:var(--dim)} .stu-grp-t{color:var(--dim)}
+.stu-empty{padding:30px;color:var(--dim)}
+/* микшер */
+.stu-strips{flex:1;display:flex;gap:3px;overflow:auto;padding:6px;align-items:flex-start;min-width:0}
+.stu-strip{flex:0 0 78px;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:4px;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer}
+.stu-strip.sel{border-color:var(--acc)} .stu-strip.master{flex-basis:90px;background:var(--panel)}
+.stu-sn{width:100%;text-align:center;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stu-sfx{width:100%;min-height:34px;font-size:10px;line-height:1.25;overflow:hidden}
+.stu-sfx i{display:block;font-style:normal;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis} .stu-sfx i.on{color:var(--acc2)} .stu-sfx i.none{opacity:.4}
+.stu-fad{touch-action:none;cursor:ns-resize;border-radius:3px} .stu-ms{display:flex;gap:3px} .stu-sno{color:var(--dim);font-size:10px}
+.stu-fxp{flex:0 0 320px;overflow:auto;border-left:1px solid var(--line);background:var(--panel);padding:8px}
+.stu-fxp h3{margin:2px 0 6px;font-size:12px;color:var(--dim);font-weight:600}
+.stu-slot{display:flex;align-items:center;gap:4px;padding:3px 5px;margin-bottom:2px;background:var(--panel2);border:1px solid var(--line);border-radius:3px;cursor:pointer}
+.stu-slot.sel{border-color:var(--acc)} .stu-slot.empty{opacity:.55} .stu-slot .n{flex:1}
+.stu-sends{display:flex;flex-wrap:wrap;gap:6px;align-items:flex-end;margin-bottom:6px}
+/* ручки */
+.stu-params{display:flex;flex-wrap:wrap;gap:8px;padding:8px}
+.stu-grp{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:4px 8px 6px}
+.stu-grp h4{margin:0 0 4px;font-size:10px;letter-spacing:.06em;color:var(--dim);text-transform:uppercase;font-weight:500}
+.stu-knobs{display:flex;flex-wrap:wrap;gap:6px;align-items:flex-end}
+.stu-knob{display:flex;flex-direction:column;align-items:center;width:52px;cursor:ns-resize;touch-action:none}
+.stu-knob.sm{width:40px} .stu-knob canvas{display:block}
+.stu-kl{font-size:10px;color:var(--dim);text-align:center;white-space:nowrap;overflow:hidden;max-width:100%} .stu-kv{font:10px var(--mono);color:var(--txt);height:12px}
+.stu-knob.on .stu-kv{color:var(--acc)}
+.stu-sel{display:flex;flex-direction:column;align-items:center;gap:2px;width:70px} .stu-sel select{width:68px}
+.stu-chk{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:4px 8px;cursor:pointer;align-self:center} .stu-chk.on{background:var(--acc);color:#111}
+.stu-ihead{display:flex;align-items:center;gap:10px;padding:8px;background:var(--panel);border-bottom:1px solid var(--line);flex:0 0 auto}
+.stu-ihead i{color:var(--dim);font-weight:400;font-style:normal;margin-left:4px}
+.stu-env{margin:8px;border:1px solid var(--line);border-radius:4px;max-width:calc(100% - 16px);flex:0 0 auto}
+.stu-menu{font:12px/1.3 system-ui,sans-serif;color:var(--txt);position:fixed;z-index:60;background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:3px;box-shadow:0 6px 24px #0008;max-height:70vh;overflow:auto;min-width:170px}
+.stu-menu button{font:inherit;color:inherit;display:block;width:100%;text-align:left;background:transparent;border:none;padding:6px 10px;cursor:pointer;border-radius:3px}
+.stu-menu button:hover{background:var(--panel2)} .stu-menu button:disabled{opacity:.4} .stu-menu .sep{height:1px;background:var(--line);margin:3px 0}
+@media (max-width:900px){
+  .stu-main{position:relative} .stu-rack{position:absolute;inset:0;z-index:5;width:auto;display:none}
+  .stu-full.rackopen .stu-rack{display:flex} .stu-tab-rack{display:block}
+  .stu-fxp{flex-basis:240px}
+}
+
+.stu-knob.sm{width:30px} .stu-knob.sm .stu-kl,.stu-knob.sm .stu-kv{display:none} .stu-knob.sm.on .stu-kv{display:block;position:absolute;margin-top:-14px;background:var(--panel);padding:0 3px;border-radius:3px;z-index:3}
+.stu-knob.sm{position:relative}
+.stu-chn{width:76px}
