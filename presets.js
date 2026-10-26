@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=126;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=127;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -205,6 +205,8 @@ const PRESET_CATS={
   'Spectrum Analyzer: Traces, Delta Markers and Measurements (Generator)':'Analysis & Measurement',
   'Zero-span: Level vs Time, Trigger and Pulse Measurements (Generator)':'Analysis & Measurement',
   'USB SDR: Best Gain by SNR (Gain Optimizer, dBm Scale)':'SDR Receivers',
+  'USB SDR: Antenna Aiming by Ear — Peak Tone and Best Hold (Antenna Peaker)':'SDR Receivers',
+  'Antenna Aiming: Peak Tone, Best Hold and Hot/Cold on a Moving Level (Generator)':'Analysis & Measurement',
   'Measure: Modulation Meter — FM and AM (Generator)':'Analysis & Measurement',
   'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
   'Measure: Spectrum Baseline — New Signal and Missing Carrier Alarm (Generator)':'Analysis & Measurement',
@@ -1498,6 +1500,29 @@ const go=addNode('gainopt',400,320,{gStep:4,settle:500,frames:6}); go.size.w=360
 const sa=addNode('sa',800,320,{auto:true,floor:-100,top:-20,split:.4,unit:'dBm',lvlOff:-60}); sa.size.w=800; sa.size.h=420; applySize(sa);
 addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'spec',go.id,'spec'); addEdge(rx.id,'clip',go.id,'clip');
 addEdge(go.id,'gain',rx.id,'gainDb'); addEdge(go.id,'gain',sa.id,'gain'); addEdge(sa.id,'f1',rx.id,'tuneFreq');
+markWiresDirty();
+});
+preset('USB SDR: Antenna Aiming by Ear — Peak Tone and Best Hold (Antenna Peaker)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Aiming an antenna at a constant signal (a beacon, a repeater, a broadcast carrier). Tune the USB SDR to it, set the frequency on the Antenna Peaker `f` (otherwise it locks on the strongest signal) and turn the antenna — you can listen instead of looking.\n'+
+  'The SNR of the target (peak over the noise floor around it; «band» measures the whole channel) is averaged by a fast filter (0.3 s) and a slow one (4 s). The tone is highest at the BEST position found so far and falls by ~10 dB of loss to the lowest pitch: turn until the pitch stops growing, go past it, come back to the top. The bar is zoomed under the best (white tick = best, orange = slow mean), Δ is the loss from the best in dB; the dead zone of 0.3 dB counts as «at the best».\n'+
+  'Mode «trend» is a hot/cold game: the pitch goes up while it gets better, down while worse, the middle when you stand still. «Reset best» forgets the best (after moving the mast); «best fades» lowers it for a fading signal. Keep the gain fixed (not AGC), otherwise SNR hides the antenna. Sound needs a tap on the page first. The `tone` pin feeds Beep or any synth.'});
+nt.size.w=900; nt.size.h=240; applySize(nt);
+const rx=addNode('rtlsdr',40,320,{sr:'1024000',auto:false,gainDb:30,demod:'NFM',freq:145800000});
+const ap=addNode('antpeak',400,320,{mode:'best',meas:'peak',tol:5000}); ap.size.w=360; ap.size.h=150; applySize(ap);
+const sa=addNode('sa',800,320,{auto:true,floor:-100,top:-20,split:.4}); sa.size.w=800; sa.size.h=420; applySize(sa);
+addEdge(rx.id,'spec',ap.id,'spec'); addEdge(rx.id,'spec',sa.id,'spec'); addEdge(sa.id,'f1',ap.id,'f');
+markWiresDirty();
+});
+preset('Antenna Aiming: Peak Tone, Best Hold and Hot/Cold on a Moving Level (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Antenna Peaker without hardware: an LFO plays the signal level while you «turn the antenna» (a slow sweep 8…30 dB). The tone follows the level: highest at the best position found so far; Δ shows the loss from it, the white tick on the bar is the best, orange is the slow mean.\n'+
+  'Click «Reset best» in the middle of a sweep and watch the best being found again. Switch mode to «trend» for hot/cold: up when it gets better, down when worse. On a real signal wire a spectrum to `spec` (see the USB SDR preset) or any level in dB (SNR of the Signal Meter, RSSI) to `in`. Sound needs a tap on the page first.'});
+nt.size.w=760; nt.size.h=170; applySize(nt);
+const lf=addNode('lfo',40,260,{freq:.12,min:8,max:30,wave:'sine'});
+const ap=addNode('antpeak',340,240,{mode:'best',range:10}); ap.size.w=360; ap.size.h=150; applySize(ap);
+const tr=addNode('trend',340,660,{span:60}); tr.size.w=360; tr.size.h=130; applySize(tr);
+addEdge(lf.id,'out',ap.id,'in'); addEdge(ap.id,'snr',tr.id,'in');
 markWiresDirty();
 });
 preset('Measure: Modulation Meter — FM and AM (Generator)', function(){
