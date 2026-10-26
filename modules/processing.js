@@ -1504,6 +1504,36 @@ function saChannels(n,cx,W,H,plotH){
   }
   cx.globalAlpha=1;
 }
+
+// Шапка анализатора (справа сверху, под вкладками маркеров): RBW, детектор, включённые трассы, чтение маркеров
+// с другой трассы и результат измерения; плюс полосы измерения на спектре.
+function saTraceInfo(n,cx,W,hs,plotH){
+  if(!n.s) return;
+  const TOP=Math.max(16,n._topH||0);
+  const ms=n.meas;
+  if(ms) for(const b of ms.bands){
+    const x1=saPos(n,b.lo)*W, x2=saPos(n,b.hi)*W; if(x2<0||x1>W) continue;
+    cx.globalAlpha=.1; cx.fillStyle=b.col; cx.fillRect(x1,TOP,Math.max(2,x2-x1),plotH-TOP);
+    cx.globalAlpha=.7; cx.strokeStyle=b.col; cx.lineWidth=1; cx.setLineDash([4,3]); cx.beginPath();
+    cx.moveTo(Math.round(x1)+.5,TOP); cx.lineTo(Math.round(x1)+.5,plotH); cx.moveTo(Math.round(x2)-.5,TOP); cx.lineTo(Math.round(x2)-.5,plotH); cx.stroke(); cx.setLineDash([]);
+  }
+  const chips=[], sp=n.s, binHz=Math.abs(specHz(sp,1)-specHz(sp,0))||1, k=n._rbwK||1, enb=sp.enbw>0?sp.enbw:SA_ENBW, rb=binHz*(k>1?k:enb);
+  chips.push({t:'RBW '+fmtHz(rb,rb<1e4?2:1)+'Hz'+(n.p.det!=='auto'?' · '+n.p.det:'')});
+  const modes=[n.p.tr1,n.p.tr2,n.p.tr3,n.p.tr4];
+  modes.forEach((m,i)=>{ if(i===0 ? m!=='live' : m!=='off') chips.push({t:'T'+(i+1)+' '+(m==='average'?'avg '+n.p.avgN:m),col:i ? SA_TRC[i] : themeColor('--t-spec')}); });
+  if(n.p.mkTrace!=='1') chips.push({t:'mk→T'+n.p.mkTrace});
+  if(ms) chips.push({t:ms.text,col:MK_COL(n.active-1)});
+  cx.font='10px monospace'; cx.textAlign='left';
+  let y=Math.max(21,TOP+2), x=W-4;
+  for(const c of chips.reverse()){                    // справа налево: RBW у края, измерение крайнее слева
+    const tw=Math.ceil(cx.measureText(c.t).width)+8;
+    if(x-tw<4) break;
+    x-=tw;
+    if(c.col){ cx.globalAlpha=.85; cx.fillStyle=c.col; cx.fillRect(x,y,tw,12); cx.globalAlpha=1; cx.fillStyle=contrastText(c.col); }
+    else { cx.globalAlpha=.55; cx.fillStyle=themeColor('--axis'); }
+    cx.fillText(c.t,x+4,y+9); cx.globalAlpha=1; x-=3;
+  }
+}
 // Подсказка будущего маркера под курсором: линия на (привязанной к сетке band plan) частоте и,
 // если источник знает полосу канала (spec.pickBw), приглушённая полоса BW — по спектру и водопаду.
 function saHover(n,cx,W,H,top){
@@ -2070,7 +2100,13 @@ function saMarkers(n,cx,W,H){
       ? ' '+ch.rssi.toFixed(0)+'dBFS / '+(ch.snr!=null?ch.snr.toFixed(0):'—')
       : n.db[k]>-119?' '+n.db[k].toFixed(0)+' / '+Math.max(0,n.snr?.[k]??0).toFixed(0):'');
     const ant=n.p.ant==='antenna'||n.p.ant==='both', hrm=n.p.ant==='harmonics'||n.p.ant==='both';
-    const t2=ant ? t+' λ/4 '+fmtLen(antennaDims(f,n.p.antVf).quarter) : t;
+    let t2=ant ? t+' λ/4 '+fmtLen(antennaDims(f,n.p.antVf).quarter) : t;
+    const rk=n.p.dRef==='off' ? -1 : (+n.p.dRef)-1;     // дельта-маркеры: у опорного — метка, у остальных Δf и ΔdB к нему
+    if(rk>=0 && present.includes(rk)){
+      if(k===rk) t2+=' ◆ref';
+      else { const df=f-n.mk[rk], dd=n.db[k]-n.db[rk];
+        t2+=' Δ'+(df<0?'−':'+')+fmtHz(Math.abs(df),Math.abs(df)<1e4?2:1)+'Hz '+(dd<0?'−':'+')+Math.abs(dd).toFixed(1)+'dB'; }
+    }
     const tw=cx.measureText(t2).width;
     // по центру линии маркера; дорожка стека — по месту среди выставленных маркеров (present), а не
     // по порядку рисования — иначе позиции соседних подписей "прыгали" бы при каждой смене наведения
