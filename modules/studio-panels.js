@@ -52,8 +52,9 @@ class StuBar extends StuPanel{
     md.classList.toggle('on',A.mode==='pat'); this.q('.stu-recb').classList.toggle('on',A.rec); this.q('[data-a=metro]').classList.toggle('on',!!e.metro);
     const st=this.q('[data-r=stat]'); if(st.textContent!==A.msg) st.textContent=A.msg;
     const mc=this.q('[data-r=master]'), c=mc.getContext('2d'), lv=A.levels(); this.mm=Math.max(lv?lv[0]:0,this.mm*.92);
-    c.fillStyle='#0a0d0e'; c.fillRect(0,0,mc.width,mc.height); const w=Math.min(1,Math.pow(this.mm,.5))*mc.width;
-    const g=c.createLinearGradient(0,0,mc.width,0); g.addColorStop(0,'#3a9d5d'); g.addColorStop(.75,'#d4c24a'); g.addColorStop(1,'#e05c5c'); c.fillStyle=g; c.fillRect(0,4,w,mc.height-8);
+    const w=Math.round(Math.min(1,Math.pow(this.mm,.5))*mc.width); if(w===this._mw) return; this._mw=w;
+    c.fillStyle='#0a0d0e'; c.fillRect(0,0,mc.width,mc.height);
+    const g=this._g||(this._g=(()=>{ const q=c.createLinearGradient(0,0,mc.width,0); q.addColorStop(0,'#3a9d5d'); q.addColorStop(.75,'#d4c24a'); q.addColorStop(1,'#e05c5c'); return q; })()); c.fillStyle=g; c.fillRect(0,4,w,mc.height-8);
   }
 }
 
@@ -192,9 +193,11 @@ class StuMixer extends StuPanel{
     for(let i=0;i<this.stripCv.length;i++){
       const cv=this.stripCv[i]; if(!cv) continue; const c=cv.getContext('2d'), W=cv.width, H=cv.height, m=P.mixer[i];
       const lvl=lv?lv[i]:0; this.meters[i]=Math.max(lvl,this.meters[i]*.92); this.hold[i]=Math.max(lvl,this.hold[i]-.004);
+      const mh=Math.round(Math.min(1,Math.pow(this.meters[i],.5))*H), hh=Math.round(Math.min(1,Math.pow(this.hold[i],.5))*H), key=mh+'|'+hh+'|'+m.vol+'|'+m.mute;
+      if(cv._k===key) continue; cv._k=key;                 // ничего не изменилось — не рисуем
       c.fillStyle='#0a0d0e'; c.fillRect(0,0,W,H);
-      const mh=Math.min(1,Math.pow(this.meters[i],.5))*H, g=c.createLinearGradient(0,H,0,0); g.addColorStop(0,'#3a9d5d'); g.addColorStop(.7,'#d4c24a'); g.addColorStop(1,'#e05c5c');
-      c.fillStyle=g; c.fillRect(W-18,H-mh,12,mh); c.fillStyle='#fff'; c.fillRect(W-18,H-Math.min(1,Math.pow(this.hold[i],.5))*H,12,1);
+      const g=cv._g||(cv._g=(()=>{ const q=c.createLinearGradient(0,H,0,0); q.addColorStop(0,'#3a9d5d'); q.addColorStop(.7,'#d4c24a'); q.addColorStop(1,'#e05c5c'); return q; })());
+      c.fillStyle=g; c.fillRect(W-18,H-mh,12,mh); c.fillStyle='#fff'; c.fillRect(W-18,H-hh,12,1);
       const y=H-m.vol/1.25*H; c.fillStyle='#2a3136'; c.fillRect(10,0,3,H);
       c.fillStyle=m.mute?'#666':'#e0b23c'; c.fillRect(4,Math.max(0,y-5),16,10);
     }

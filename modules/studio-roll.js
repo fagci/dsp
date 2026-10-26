@@ -54,7 +54,10 @@ class StuRoll extends StuPanel{
     this.ro=new ResizeObserver(()=>this.resize()); this.ro.observe(this.wrap);
   }
   refresh(){ this.dirty=1; }
-  frame(){ if(this.dirty||this.app.eng.playing) this.draw(); }
+  frame(){
+    if(this.dirty){ this.draw(); return; }
+    if(this.app.eng.playing || this.px!=null){ const x=this.phx(), r=x==null?null:Math.round(x); if(r!==this._lx) this.present(false); }
+  }
   destroy(){ this.ro.disconnect(); super.destroy(); }
   /* ----- геометрия ----- */
   get gh(){ return this.H-this.RH-(this.vel?this.VH:0); }
@@ -66,6 +69,7 @@ class StuRoll extends StuPanel{
     const w=this.wrap.clientWidth, h=this.wrap.clientHeight; if(!w||!h) return;
     const dpr=Math.min(2,window.devicePixelRatio||1); this.W=w; this.H=h;
     this.cv.width=w*dpr; this.cv.height=h*dpr; this.cv.style.width=w+'px'; this.cv.style.height=h+'px'; this.dpr=dpr; this.dirty=1;
+    this.off=this.off||document.createElement('canvas'); this.off.width=this.cv.width; this.off.height=this.cv.height; this.px=null;
   }
   fit(){
     const ch=this.app.chObj(), pat=this.app.patObj(); if(!ch||!pat) return;
@@ -81,7 +85,7 @@ class StuRoll extends StuPanel{
 
   /* ----- рисование ----- */
   draw(){
-    const cv=this.cv, c=cv.getContext('2d'); if(!this.W) { this.resize(); if(!this.W) return; }
+    const cv=this.cv; if(!this.W){ this.resize(); if(!this.W) return; } const c=this.off.getContext('2d');
     this.dirty=0; const app=this.app, ch=app.chObj(), pat=app.patObj(), W=this.W, H=this.H, KW=this.KW, RH=this.RH, gh=this.gh, dpr=this.dpr;
     c.setTransform(dpr,0,0,dpr,0,0);
     const bg='#0a0d0e', line='#2a3136', txt='#c8d2d6', dim='#929fa7', acc='#e0b23c';
@@ -150,8 +154,16 @@ class StuRoll extends StuPanel{
         c.fillStyle=this.sel.has(n)?'#fff':ch.color; c.fillRect(x,H-h-2,Math.max(3,Math.min(6,n.l*this.zx)),h); c.fillStyle=ch.color; c.fillRect(x-1,H-h-3,5,3); }
     }
     // позиция воспроизведения
-    const ph=this.playTick();
-    if(ph!=null){ const x=this.tx(ph); if(x>=KW&&x<=W){ c.fillStyle='#fff'; c.fillRect(Math.round(x),0,1,H-0); c.fillStyle=acc; c.beginPath(); c.moveTo(x-5,0); c.lineTo(x+5,0); c.lineTo(x,8); c.fill(); } }
+    this.present(true);
+  }
+  // тяжёлая сцена рисуется в закадровый холст; на кадре обновляется только полоска у playhead
+  phx(){ const ph=this.playTick(); if(ph==null) return null; const x=this.tx(ph); return x<this.KW||x>this.W?null:x; }
+  present(full){
+    const m=this.cv.getContext('2d'), d=this.dpr; m.setTransform(1,0,0,1,0,0);
+    if(full) m.drawImage(this.off,0,0);
+    else if(this.px!=null){ const x=Math.max(0,Math.floor((this.px-7)*d)), w=Math.ceil(14*d); m.drawImage(this.off,x,0,w,this.off.height,x,0,w,this.off.height); }
+    const x=this.phx(); this.px=x; this._lx=x==null?null:Math.round(x); if(x==null) return;
+    m.setTransform(d,0,0,d,0,0); m.fillStyle='#fff'; m.fillRect(Math.round(x),0,1,this.H); m.fillStyle='#e0b23c'; m.beginPath(); m.moveTo(x-5,0); m.lineTo(x+5,0); m.lineTo(x,8); m.fill();
   }
   playTick(){
     const app=this.app, t=app.tickHead; if(t==null) return null; const pat=app.patObj(); if(!pat) return null; const L=stPatLen(pat);

@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=135;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=136;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -572,8 +572,10 @@ preset('Studio: DAW (Piano Roll, Playlist, Mixer)', function(){
     'A W S E D F … — computer keyboard as a piano (Z / X — octave), MIDI keyboards work too.\n'+
     'Right click a knob → automation clip. Project ☰ → Examples: 8 ready tracks (techno, trance, house, D&B,\nacid, dubstep, lo-fi, ambient) to try everything on; export WAV. The project is saved in the browser.\n'+
     'Every panel is also its own node (Studio: Transport / Channel Rack / Piano Roll / Playlist / Mixer /\n'+
-    'Instrument): see the preset «Studio (tiles)» and turn on ▦.'});
-  nt.size.w=460; nt.size.h=170; applySize(nt);
+    'Instrument): see the preset «Studio (tiles)» and turn on ▦.\n'+
+    'Outputs: L / R audio into the graph (then the sound goes through it, not straight to the sound card),\n'+
+    'clk (1/16 pulses), bpm / bar / beat / playing. Inputs: play (0→1 start, 1→0 stop), bpm.'});
+  nt.size.w=460; nt.size.h=200; applySize(nt);
 });
 
 // студия из тайлов: транспорт сверху, стойка слева, плейлист и piano roll справа, микшер и инструмент снизу
@@ -582,7 +584,7 @@ preset('Studio (tiles)', function(){
   const st=addNode('studio',40,40,{});
   const tile={};
   [['stubar',340,40],['sturack',340,160],['stulist',1000,160],['stuseq',1000,580],['stumix',340,580],['stuinst',1700,160]]
-    .forEach(([t,x,y])=>{ tile[t]=addNode(t,x,y,{}); addEdge(st.id,'studio',tile[t].id,'studio'); });
+    .forEach(([t,x,y])=>{ tile[t]=addNode(t,x,y,{}); addEdge(st.id,'playing',tile[t].id,'link'); });
   const leaf=n=>({t:'leaf',id:dashId(),node:n?n.id:null});
   const split=(dir,children,sizes)=>({t:'split',id:dashId(),dir,children,sizes});
   Graph.dashTree=split('col',[

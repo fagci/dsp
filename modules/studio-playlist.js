@@ -37,7 +37,10 @@ class StuList extends StuPanel{
     this.ro=new ResizeObserver(()=>this.resize()); this.ro.observe(this.wrap);
   }
   refresh(){ this.dirty=1; this._pk=null; }
-  frame(){ if(this.dirty||this.app.eng.playing) this.draw(); }
+  frame(){
+    if(this.dirty){ this.draw(); return; }
+    if(this.app.eng.playing || this.px!=null){ const x=this.phx(), r=x==null?null:Math.round(x); if(r!==this._lx) this.present(false); }
+  }
   destroy(){ this.ro.disconnect(); super.destroy(); }
   get P(){ return this.app.P; }
   tx(t){ return this.HW+(t-this.x0)*this.zx; } xt(x){ return this.x0+(x-this.HW)/this.zx; }
@@ -45,6 +48,7 @@ class StuList extends StuPanel{
   resize(){
     const w=this.wrap.clientWidth, h=this.wrap.clientHeight; if(!w||!h) return; const dpr=Math.min(2,window.devicePixelRatio||1);
     this.W=w; this.H=h; this.dpr=dpr; this.cv.width=w*dpr; this.cv.height=h*dpr; this.cv.style.width=w+'px'; this.cv.style.height=h+'px'; this.dirty=1;
+    this.off=this.off||document.createElement('canvas'); this.off.width=this.cv.width; this.off.height=this.cv.height; this.px=null;
   }
   fit(){ const e=Math.max(stSongEnd(this.P),ST_BAR*8); this.x0=0; this.zx=stClamp((this.W-this.HW-20)/e,.02,2); this.dirty=1; }
   patColor(id){ const i=this.P.patterns.findIndex(p=>p.id===id); return ST_COLORS[(i<0?0:i)%ST_COLORS.length]; }
@@ -64,7 +68,7 @@ class StuList extends StuPanel{
   draw(){
     const cv=this.cv; if(!this.W){ this.resize(); if(!this.W) return; }
     if(this._pk!==this.P.patterns.map(p=>p.name+p.id).join()+this.app.cur.pat){ this._pk=this.P.patterns.map(p=>p.name+p.id).join()+this.app.cur.pat; this.buildPalette(); }
-    this.dirty=0; const c=cv.getContext('2d'), app=this.app, P=this.P, W=this.W, H=this.H, HW=this.HW, RH=this.RH, dpr=this.dpr, pl=P.playlist;
+    this.dirty=0; const c=this.off.getContext('2d'), app=this.app, P=this.P, W=this.W, H=this.H, HW=this.HW, RH=this.RH, dpr=this.dpr, pl=P.playlist;
     c.setTransform(dpr,0,0,dpr,0,0);
     const bg='#0a0d0e', line='#2a3136', txt='#c8d2d6', dim='#929fa7', acc='#e0b23c';
     c.fillStyle=bg; c.fillRect(0,0,W,H);
@@ -80,9 +84,6 @@ class StuList extends StuPanel{
     if(pl.loop){ c.fillStyle='#e0b23c18'; c.fillRect(this.tx(pl.loop[0]),RH,(pl.loop[1]-pl.loop[0])*this.zx,H-RH); }
     // клипы
     for(const cl of pl.clips) this.drawClip(c,cl);
-    // позиция
-    const ph=app.tickHead!=null&&app.mode==='song'?app.tickHead:app.pos;
-    if(ph!=null){ const x=this.tx(ph); c.fillStyle=app.tickHead!=null&&app.mode==='song'?'#fff':'#ffffff80'; c.fillRect(Math.round(x),RH,1,H-RH); }
     if(this.drag&&this.drag.type==='box'){ const d=this.drag; c.strokeStyle='#fff'; c.setLineDash([4,3]); c.strokeRect(d.x0,d.y0,d.x1-d.x0,d.y1-d.y0); c.setLineDash([]); }
     c.restore();
     // заголовки дорожек
@@ -96,7 +97,18 @@ class StuList extends StuPanel{
     c.fillStyle=txt; c.font='10px sans-serif';
     for(let t=Math.floor(tA/ST_BAR)*ST_BAR;t<=tB;t+=ST_BAR){ if((t/ST_BAR)%(sub/ST_BAR)) continue; const x=this.tx(t); if(x<HW) continue; c.fillText(String(t/ST_BAR+1),x+3,RH/2-2); c.fillStyle='#46515a'; c.fillRect(Math.round(x),0,1,RH); c.fillStyle=txt; }
     c.fillStyle='#161a1d'; c.fillRect(0,0,HW,RH); c.fillStyle=dim; c.fillText('drag ruler: loop',6,RH/2);
-    if(ph!=null){ const x=this.tx(ph); if(x>=HW){ c.fillStyle=acc; c.beginPath(); c.moveTo(x-5,0); c.lineTo(x+5,0); c.lineTo(x,9); c.fill(); } }
+    this.present(true);
+  }
+  // тяжёлая сцена — в закадровый холст; на кадре обновляется только полоска у позиции
+  phx(){ const a=this.app, ph=a.tickHead!=null&&a.mode==='song'?a.tickHead:a.pos; if(ph==null) return null; const x=this.tx(ph); return x<this.HW||x>this.W?null:x; }
+  present(full){
+    const a=this.app, m=this.cv.getContext('2d'), d=this.dpr; m.setTransform(1,0,0,1,0,0);
+    if(full) m.drawImage(this.off,0,0);
+    else if(this.px!=null){ const x=Math.max(0,Math.floor((this.px-7)*d)), w=Math.ceil(14*d); m.drawImage(this.off,x,0,w,this.off.height,x,0,w,this.off.height); }
+    const x=this.phx(); this.px=x; this._lx=x==null?null:Math.round(x); if(x==null) return;
+    const live=a.tickHead!=null&&a.mode==='song';
+    m.setTransform(d,0,0,d,0,0); m.fillStyle=live?'#fff':'#ffffff80'; m.fillRect(Math.round(x),this.RH,1,this.H-this.RH);
+    m.fillStyle='#e0b23c'; m.beginPath(); m.moveTo(x-5,0); m.lineTo(x+5,0); m.lineTo(x,9); m.fill();
   }
   drawClip(c,cl){
     const x=this.tx(cl.t), w=cl.l*this.zx, y=this.ty(cl.tr); if(x+w<this.HW||x>this.W||y>this.H||y+this.th<this.RH) return;

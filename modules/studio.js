@@ -38,6 +38,7 @@ class StuApp{
   frame(){
     this.raf=0; if(!this.panels.size || this.dead) return;
     this.raf=requestAnimationFrame(()=>this.frame());
+    const now=performance.now(); if(now-(this._lf||0)<28) return; this._lf=now;      // не чаще ~35 кадров/с: интерфейс не должен мешать планировщику звука
     const e=this.eng; this.tickHead=e.playing?e.getTick():null;
     this.lv=e.rig&&e.ac&&e.ac.state==='running' ? e.rig.levels() : null;
     for(const p of [...this.panels]) if(p.el.isConnected && p.el.offsetParent!==null) p.frame();
@@ -328,24 +329,36 @@ class StuFull{
 }
 
 /* ---------- узлы ---------- */
+// Studio (DAW): обычные пины. Выходы: L / R — мастер в граф DSP (sig), clk — импульс на каждую 1/16 (sig),
+// bpm / bar / beat / playing — числа. Входы: play (0→1 старт, 1→0 стоп), bpm. Пока L/R не подключены, звук идёт на звуковую карту напрямую.
 def({ id:'studio', lazy:'manual', title:'Studio (DAW)', cat:'Music', readout:true, w:230,
-  outs:[{n:'studio',t:'stu'},{n:'bpm',t:'num'},{n:'bar',t:'num'},{n:'playing',t:'num'}],
+  ins:[{n:'play',t:'num'},{n:'bpm',t:'num'}],
+  outs:[{n:'L',t:'sig'},{n:'R',t:'sig'},{n:'clk',t:'sig'},{n:'bpm',t:'num'},{n:'bar',t:'num'},{n:'beat',t:'num'},{n:'playing',t:'num'}],
   params:[
     {n:'open',t:'button',label:'🎹 Open Studio',fn:n=>{ if(n.S) n.S.open(); }},
     {n:'proj',t:'text',d:'',hidden:true}],
-  init(n){ n.S=new StuApp(n); },
+  init(n){ n.S=new StuApp(n); n._pl=0; n._c16=-1; },
   dispose(n){ if(n.S){ n.S.destroy(); n.S=null; } },
-  process(n){
-    const S=n.S; if(!S) return {};
-    const t=S.tickHead==null?S.pos:S.tickHead;
-    return {bpm:S.P.bpm,bar:Math.floor(t/ST_BAR)+1,playing:S.eng.playing?1:0};
+  process(n,I,g){
+    const S=n.S, L=buf(n,'L'), R=buf(n,'R'), C=buf(n,'clk'); C.fill(0);
+    if(!S){ L.fill(0); R.fill(0); return {L,R,clk:C,bpm:0,bar:0,beat:0,playing:0}; }
+    const e=S.eng;
+    if(typeof I.play==='number'){ const on=I.play>.5?1:0; if(on!==n._pl){ n._pl=on; if(on&&!e.playing) S.togglePlay(); else if(!on&&e.playing) S.togglePlay(); } }
+    if(typeof I.bpm==='number' && I.bpm>=40 && I.bpm<=300 && Math.round(I.bpm)!==S.P.bpm){ S.P.bpm=Math.round(I.bpm); S.each('bar',p=>p.refresh()); }
+    if(n._ord!==g.order){ n._ord=g.order; n._wired=g.edges.some(x=>x.from===n.id && (x.fp==='L'||x.fp==='R')); }
+    e.setDirect(!n._wired);
+    if(n._wired){ if(!e.tapNode) e.tapInit(); e.tapPull(L,R,Eng.sr); } else{ L.fill(0); R.fill(0); }
+    const gt=e.playing?e.getTick():null, t=gt==null?S.pos:gt, s16=Math.floor(t/ST_STEP);
+    if(e.playing && s16!==n._c16){ C[0]=1; } n._c16=s16;
+    return {L,R,clk:C,bpm:S.P.bpm,bar:Math.floor(t/ST_BAR)+1,beat:Math.floor(t%ST_BAR/ST_PPQ)+1,playing:e.playing?1:0};
   },
   drawKey(n){ const S=n.S; return S ? S.P.name+'|'+S.P.bpm+'|'+S.eng.playing+'|'+S.msg : ''; },
   draw(n){ if(n.ro) n.ro.textContent=n.S ? n.S.P.name+' · '+n.S.P.bpm+' bpm'+(n.S.eng.playing?' · ▶':'') : ''; }
 });
 
-function stuSource(n){                                // узел Studio (DAW) на входе studio
-  const e=Graph.edges.find(e=>e.to===n.id && e.tp==='studio');
+// узел Studio (DAW), подключённый к тайлу любым своим выходом (num: bpm / bar / beat / playing)
+function stuSource(n){
+  const e=Graph.edges.find(e=>e.to===n.id && e.tp==='link');
   const m=e && Graph.map[e.from];
   return m && m.type==='studio' && m.S ? m : null;
 }
@@ -359,7 +372,7 @@ const STU_TILES=[
   ['stuinst','Studio: Instrument',    'inst', 620, 400]];
 const STU_PANEL={bar:()=>StuBar,rack:()=>StuRack,roll:()=>StuRoll,list:()=>StuList,mix:()=>StuMixer,inst:()=>StuInst};
 for(const [id,title,kind,w,h] of STU_TILES) def({ id, lazy:'manual', title, cat:'Music', w, h, resize:true,
-  ins:[{n:'studio',t:'stu'}],
+  ins:[{n:'link',t:'num'}],
   init:n=>{ n.onResize=ln=>{ if(ln.tile) syncCustomHeight(ln,ln.tile,50); }; },
   drawKey:n=>{ const s=stuSource(n); return s?s.id+'|'+(s.S?'1':'0'):''; },
   draw(n){ stuTileSync(n,kind); },
@@ -372,7 +385,7 @@ function stuTileSync(n,kind){
   if(n.P && src && n.P.app===src.S && n.P.el.isConnected) return;
   if(n.P){ n.P.destroy(); n.P=null; }
   n.tile.innerHTML='';
-  if(!src){ n.tile.innerHTML='<div class="stu-empty">wire <b>studio</b> from a Studio (DAW) node</div>'; return; }
+  if(!src){ n.tile.innerHTML='<div class="stu-empty">wire any output (bpm / bar / beat / playing) of a <b>Studio (DAW)</b> node to <b>link</b></div>'; return; }
   n.P=new (STU_PANEL[kind]())(src.S); n.tile.append(n.P.el); n.P.refresh();
   if(n.P.resize) requestAnimationFrame(()=>n.P.resize());
 }
