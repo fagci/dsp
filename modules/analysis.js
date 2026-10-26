@@ -1609,6 +1609,31 @@ function saNoiseFloor(sp,f,tol){
 // ---- трассы, RBW, детекторы (ядро — sa-trace-kernels.js) ----
 // Раз на новый спектр: база (живой спектр, при RBW > родной — со слитыми бинами) и четыре трассы.
 // Живая трасса не копируется — потребитель берёт n._base. Смена оси частот сбрасывает накопленное.
+// единица уровня для подписей: dBFS / dBm / dBµV (suffix — '/Hz' для плотности)
+const saUnit=(n,suffix)=>(n.p.unit==='dBFS' ? 'dB' : n.p.unit)+(suffix||'');
+// калибровка: у активного маркера известный уровень — подбираем смещение при текущем усилении
+function saCalibrate(n){
+  const ak=n.active-1;
+  if(n.mk[ak]==null || !(n.db[ak]>-119)){ return; }
+  const nv=prompt('Known level at marker '+(ak+1)+' ('+(n.p.unit==='dBFS' ? 'dBm' : n.p.unit)+'):','');
+  if(nv==null) return;
+  const v=parseFloat(nv); if(!isFinite(v)) return;
+  const unit=n.p.unit==='dBFS' ? 'dBm' : n.p.unit;
+  if(n.p.unit==='dBFS') setMod(n,'unit',unit);
+  setMod(n,'lvlOff',Math.round((v-n.db[ak]+(n._gainIn||0)-(unit==='dBµV' ? 107 : 0))*10)/10);
+  n._drawKey=null; n._mkKey=null;
+}
+// ряд «уровень у активного маркера от времени» — по одному значению на новый спектр
+function saSliceFeed(n,sp){
+  const ak=n.active-1;
+  if(n.p.slice==='off' || !sp || n.mk[ak]==null || !(n.db[ak]>-119)){ if(n._sl && n.p.slice==='off') n._sl=null; return; }
+  const L=4000;
+  if(!n._sl || n._sl.k!==ak) n._sl={k:ak,t:new Float64Array(L),v:new Float32Array(L),w:0,c:0};
+  const sl=n._sl;
+  if(sl.lastRev===sp.rev && sl.lastSp===sp) return;
+  sl.lastRev=sp.rev; sl.lastSp=sp;
+  sl.t[sl.w]=performance.now(); sl.v[sl.w]=n.db[ak]; sl.w=(sl.w+1)%L; sl.c=Math.min(L,sl.c+1);
+}
 const SA_TRC=['','#ffb300','#ec407a','#26c6da'];       // цвета трасс 2–4
 function saTraces(n,sp){
   const N=sp.mag.length;
@@ -1647,10 +1672,12 @@ function saMeasure(n,sp){
   const bandsOf=(c,w)=>({lo:c-w/2,hi:c+w/2,col});
   if(mode==='channel power'){
     const v=saChanPower(m,i0,i1,enb);
-    n.meas={val:v,text:'ChP '+v.toFixed(1)+' dB in '+hz(bw),bands:[bandsOf(fc,bw)]};
+    const lv=v+(n._lvOff||0);
+    n.meas={val:lv,text:'ChP '+lv.toFixed(1)+' '+saUnit(n)+' in '+hz(bw),bands:[bandsOf(fc,bw)]};
   } else if(mode==='noise density'){
     const v=saNoiseDensity(m,i0,i1,binHz,enb);
-    n.meas={val:v,text:'N '+v.toFixed(1)+' dB/Hz in '+hz(bw),bands:[bandsOf(fc,bw)]};
+    const lv=v+(n._lvOff||0);
+    n.meas={val:lv,text:'N '+lv.toFixed(1)+' '+saUnit(n,'/Hz')+' in '+hz(bw),bands:[bandsOf(fc,bw)]};
   } else if(mode==='OBW'){
     const o=saObw(m,i0,i1,n.p.measPct); if(!o) return;
     const lo=specHz(sp,o.lo)-binHz/2, hi=specHz(sp,o.hi)+binHz/2;
@@ -1676,12 +1703,12 @@ function saExportCsv(n){
   const sp=n.s; if(!sp) return;
   const N=sp.mag.length, a=saTrArrs(n), cols=a.map((x,i)=>({name:'T'+(i+1)+'_db',arr:x}));
   if(n.refMag && n.refMag.length===N) cols.push({name:'ref_db',arr:n.refMag});
-  saDownload(new Blob([saTraceCsv(N,i=>specHz(sp,i),cols)],{type:'text/csv'}),'spectrum-'+saStamp()+'.csv');
+  saDownload(new Blob([saTraceCsv(N,i=>specHz(sp,i),cols,n._lvOff||0)],{type:'text/csv'}),'spectrum-'+saStamp()+'.csv');
 }
 function saRefSave(n){
   const sp=n.s; if(!sp) return;
   const N=sp.mag.length, arr=n.refMag&&n.refMag.length===N ? n.refMag : (saTrArrs(n)[0]||sp.mag);
-  saDownload(new Blob([saTraceCsv(N,i=>specHz(sp,i),[{name:'level_db',arr}])],{type:'text/csv'}),'reference-'+saStamp()+'.csv');
+  saDownload(new Blob([saTraceCsv(N,i=>specHz(sp,i),[{name:'level_db',arr}],n._lvOff||0)],{type:'text/csv'}),'reference-'+saStamp()+'.csv');
 }
 function saRefLoad(n){
   saPickFile('.csv,.txt,text/csv,text/plain',t=>{
@@ -1886,6 +1913,7 @@ function saOvDraw(n,cv){
   saSigTags(n,cx,W,plotH);                            // метки сигналов с 'sigid'
   saMarkers(n,cx,W,hs);
   saTraceInfo(n,cx,W,hs,plotH);                       // RBW, трассы, измерение
+  saSlice(n,cx,W,H,hs);                               // уровень у маркера от времени
   saMarkersWf(n,cx,W,hs,H);                           // полоса маркеров на водопаде — по наведению
   saBandPlanLabels(n,cx);                             // подписи — поверх маркеров
   saChannelLabels(n,cx,W);
@@ -2170,6 +2198,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         {n:'tol',t:'num'},
         {n:'log',t:'num'},
         {n:'grid',t:'num'},
+        {n:'gain',t:'num',tip:'receiver gain, dB: the displayed level follows it (dBm / dBµV units), e.g. from the Gain Optimizer'},
         {n:'spec2',t:'spec'},
         {n:'spec3',t:'spec'},
         {n:'spec4',t:'spec'}],
@@ -2240,6 +2269,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'rbw',t:'select',opts:['native','×2','×4','×8','×16','×32','×64'],d:'native',label:'RBW: bins merged (carriers keep the level, noise grows by 10·lg k)'},
           {n:'mkTrace',t:'select',opts:['1','2','3','4'],d:'1',label:'markers read trace'},
           {n:'clrTr',t:'button',label:'Clear traces',fn:n=>{ n.tr=null; n._drawKey=null; saOvKick(n); }},
+          {n:'unit',t:'select',opts:['dBFS','dBm','dBµV'],d:'dBFS',label:'level unit (dBm / dBµV: shown level = dBFS − gain + offset)'},
+          {n:'lvlOff',t:'range',min:-200,max:200,step:.1,d:0,label:'level offset at 0 dB gain, dB (the range sliders stay in dBFS)'},
+          {n:'calMk',t:'button',label:'Calibrate: the active marker has a known level…',fn:n=>saCalibrate(n)},
+          {n:'slice',t:'select',opts:['off','marker'],d:'off',label:'level vs time at the active marker (inset over the waterfall)'},
+          {n:'sliceSec',t:'select',opts:['5','10','30','60','300'],d:'30',label:'time inset: window, s'},
           {n:'dRef',t:'select',opts:['off','1','2','3','4'],d:'off',label:'delta markers: reference marker (the others show Δf and ΔdB to it)'},
           {n:'meas',t:'select',opts:['off','channel power','OBW','x dB bandwidth','ACPR','noise density'],d:'off',label:'measure at the active marker'},
           {n:'measBw',t:'range',min:100,max:2e6,step:10,log:true,d:12500,label:'measure: channel width, Hz (a receiver channel under the marker sets its own)'},
@@ -2290,6 +2324,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       return saPanesOut(n);
     }
     for(const k of ['fmin','fmax']) if(typeof I[k]==='number') setMod(n,k,I[k]);
+    n._gainIn=typeof I.gain==='number'&&isFinite(I.gain) ? I.gain : 0;
+    n._lvOff=n.p.unit==='dBFS' ? 0 : n.p.lvlOff-n._gainIn+(n.p.unit==='dBµV' ? 107 : 0);
     n.sigsData=Array.isArray(I.sigs) ? I.sigs : null;
     saRowIn(n,I);
     // границы поменяли не мы (поле диапазона или провод) — это ручной ввод: auto выключаем,
@@ -2450,7 +2486,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       n.db[k]=20*Math.log10(mx+1e-12);
       // db — пик в окне ±tol в дБ; snr — он же над шумовой полкой вокруг маркера (см. saNoiseFloor)
       n.snr[k]=n.db[k]-saNoiseFloor(msp,f,n.p.tol);
-      o['f'+(k+1)]=f; o['db'+(k+1)]=n.db[k]; o['snr'+(k+1)]=n.snr[k];
+      o['f'+(k+1)]=f; o['db'+(k+1)]=n.db[k]+(n._lvOff||0); o['snr'+(k+1)]=n.snr[k];
       // фазовое уточнение: только между соседними кадрами (rev не пропущен) и если пик
       // не перескочил больше чем на 1 бин — иначе это, скорее всего, другой сигнал, не дрейф
       let fr=specHz(sp,bin);
@@ -2467,6 +2503,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
     o.dF=null; o.dDb=null;
     const rk=n.p.dRef==='off' ? -1 : (+n.p.dRef)-1;
     if(sp && rk>=0 && n.mk[rk]!=null) for(let k=0;k<4;k++) if(k!==rk && n.mk[k]!=null){ o.dF=n.mk[k]-n.mk[rk]; o.dDb=n.db[k]-n.db[rk]; break; }
+    saSliceFeed(n,sp);
     saMeasure(n,sp);
     o.meas=n.meas ? n.meas.val : null; o.measTxt=n.meas ? n.meas.text : '';
     for(let k=1;k<=4;k++) for(const q of ['f','db','snr','fr']) mo[q+k]=o[q+k];
@@ -4488,7 +4525,7 @@ defGroups('sa',[
   {n:'Waterfall', p:'rowMs palette wfMem', open:false},
   {n:'Phosphor', p:'phosphor phDecay phGain', open:false},
   {n:'Traces', p:'tr1 tr2 tr3 tr4 avgN det rbw mkTrace clrTr', open:false},
-  {n:'Measure', p:'dRef meas measBw measPct measX acpOff', open:false},
+  {n:'Measure', p:'dRef meas measBw measPct measX acpOff unit lvlOff calMk slice sliceSec', open:false},
   {n:'Export', p:'saveCsv savePng', open:false},
   {n:'Reference', p:'tol band ref take refSave refLoad', open:false}],
   {pri:'auto frange dbrange peakHold layout'});

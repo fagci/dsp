@@ -101,13 +101,13 @@ function saAcpr(mag,main,low,up,enbw){
 }
 
 // ---- CSV: трассы и эталон ----
-// cols — [{name,arr}] (линейные амплитуды), freqAt(i) → Гц; уровень пишется в дБ, пустая трасса пропускается
-function saTraceCsv(N,freqAt,cols){
+// cols — [{name,arr}] (линейные амплитуды), freqAt(i) → Гц; уровень пишется в дБ (+ off — калибровка), пустая трасса пропускается
+function saTraceCsv(N,freqAt,cols,off){
   const c=cols.filter(x=>x.arr && x.arr.length===N);
   let t='freq_hz,'+c.map(x=>x.name).join(',')+'\n';
   for(let i=0;i<N;i++){
     let row=String(Math.round(freqAt(i)*100)/100);
-    for(const x of c) row+=','+(Math.round(20*Math.log10(x.arr[i]+1e-12)*100)/100);
+    for(const x of c) row+=','+(Math.round((20*Math.log10(x.arr[i]+1e-12)+(off||0))*100)/100);
     t+=row+'\n';
   }
   return t;
