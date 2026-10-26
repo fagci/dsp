@@ -2108,6 +2108,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           {n:'snap',t:'check',d:true,label:'snap to band plan step',adv:true},
           {n:'trk',t:'check',d:false,label:'markers: follow the carrier within bw'},
           {n:'trkBw',t:'range',min:100,max:1e6,step:10,log:true,d:5000,label:'carrier search bw, Hz (a receiver channel under the marker sets its own)',adv:true},
+          {n:'wfMk',t:'select',opts:['hover','active','all'],d:'hover',label:'markers on the waterfall: line, passband and width (hover — only under the cursor, active — the active marker always, all — every marker always)',adv:true},
+          {n:'bandFilter',t:'text',d:'',label:'show only bookmarks and ranges whose name, kind or note has any of these words (comma list; empty — all)',adv:true},
           {n:'ant',t:'select',opts:['off','antenna','harmonics','both'],d:'off',label:'markers: antenna length / harmonic source f/k'},
           {n:'antVf',t:'range',min:.6,max:1,step:.01,d:.95,label:'antenna shortening factor',adv:true},
           // выключить — тот же жест, что и "очистить": незачем отдельная кнопка (см. fn у 'check' в core-graph.js)
@@ -2390,6 +2392,16 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       }, {passive:false});
       cv.addEventListener('dblclick', ev=>{
         ev.preventDefault();
+        {                                                  // двойной клик по ленте band plan — окно на эту полосу (с запасом)
+          const rc=cv.getBoundingClientRect(), mx=(ev.clientX-rc.left)/rc.width*cv.width, my=(ev.clientY-rc.top)/rc.height*cv.height;
+          const bx=(n._bpBoxes||[]).filter(b=>mx>=b.x0-2&&mx<=b.x1+2&&my>=b.y0-2&&my<=b.y1+2);
+          if(bx.length && n.s){
+            const r=bx.sort((a,b)=>(a.r.hi-a.r.lo)-(b.r.hi-b.r.lo))[0].r, pad=(r.hi-r.lo)*.06;
+            const [fl,fh]=specSpan(n.s);
+            let lo=Math.max(fl,r.lo-pad), hi=Math.min(fh,r.hi+pad);
+            if(hi-lo>10){ n.zoom=[lo,hi]; saSteerIfOutside(n); return; }
+          }
+        }
         n.zoom=null; if(!n.p.auto) n.set.auto?.(true);   // сброс зума — во всю полосу источника
       });
       // перетаскивание — панорама простым зажатием и движением (без Shift/колеса), интуитивнее
@@ -2425,7 +2437,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       let drag=null;
       // край шторки канала rtlsdr (spec.chans) под курсором в зоне спектра, ±5px
       const chanEdgeAt=ev=>{
-        const list=n.s&&n.s.chans; if(!list||!list.length||!n.s.setChanBw) return null;
+        const list=saChans(n); if(!list||!n.s.setChanBw) return null;
         const rc=cv.getBoundingClientRect();
         const x=(ev.clientX-rc.left)/rc.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
         if(y>(n._hs||0)-6) return null;
@@ -2443,7 +2455,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         const x=(ev.clientX-rc.left)/rc.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
         if(y>(n._hs||0)-6) return null;
         const px=5/Math.max(1,rc.width);
-        for(const c of (n.s.chans||[])){
+        for(const c of (saChans(n)||[])){
           const k=c.idx;
           if(n.mk[k]==null||n.ext[k]) continue;
           if(x>=saPos(n,c.lo)-px && x<=saPos(n,c.hi)+px) return k;
@@ -2678,6 +2690,23 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         n._mkHoverIdx = n._bmHoverFreq==null ? (mkHit(ev)?.idx ?? null) : null;
         if(!drag) cv.style.cursor = nearBoundary(ev) ? 'ns-resize' : chanEdgeAt(ev) ? 'ew-resize' : mkLineAt(ev)!=null ? 'grab' : '';
       });
+      // телефон: долгое нажатие на закладку, полосу, метку или флажок — подсказка (hover там нет); следующее касание её снимает
+      {
+        let lp=null;
+        const lpStop=()=>{ if(lp){ clearTimeout(lp.t); lp=null; } };
+        cv.addEventListener('pointerdown', ev=>{
+          if(n._tipPin){ n._tipPin=null; saOvKick(n); }
+          if(ev.pointerType!=='touch') return;
+          const rc=cv.getBoundingClientRect(), x=(ev.clientX-rc.left)/rc.width*cv.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
+          lpStop();
+          lp={x:ev.clientX,y:ev.clientY,t:setTimeout(()=>{
+            lp=null;
+            if(saTipRows(n,cv.width,x/cv.width,y).length){ n._tipPin={x,y}; n._noTap=true; n.pickT=null; saOvKick(n); }
+          },450)};
+        });
+        cv.addEventListener('pointermove', ev=>{ if(lp && Math.hypot(ev.clientX-lp.x,ev.clientY-lp.y)>8) lpStop(); });
+        cv.addEventListener('pointerup', lpStop); cv.addEventListener('pointercancel', lpStop);
+      }
       cv.addEventListener('pointerleave', ()=>{ n._hoverX=null; n._hoverY=null; n._bmHoverFreq=null; n._mkHoverIdx=null; saOvKick(n); });
     }
     if(n.s){
@@ -4304,7 +4333,8 @@ def({ id:'spectral', title:'Spectral Descriptors', cat:'Analysis',
 defGroups('sa',[
   {n:'View', p:'auto frange dbrange autoDb log grid peakHold peakDecay layout panes'},
   {n:'Panes', p:'follow edge paneFrom holdMarker avg ageFade'},
-  {n:'Markers', p:'snap trk trkBw ant antVf', open:false},
+  {n:'Markers', p:'snap trk trkBw wfMk ant antVf', open:false},
+  {n:'Overlay', p:'bandFilter', open:false},
   {n:'Time marks', p:'markMode markLabels tickSec clearMarks'},
   {n:'Waterfall', p:'rowMs palette wfMem', open:false},
   {n:'Phosphor', p:'phosphor phDecay phGain', open:false},

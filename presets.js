@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=121;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=122;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -1434,6 +1434,7 @@ clearAll();
 const nt=addNode('note',40,40,{text:'A crowded view to check the overlay of the Spectrum Analyzer: close bookmarks, stacked band plan ranges and a lot of signal tags on one screen. Both lists are Tables in the patch (edit the rows): the first holds point bookmarks (hi empty) and ranges, the second holds signal tags (sig=1 with db, conf and the needed bandwidth nlo / nhi / nbw — the same fields the Signal Type Identifier emits).\n'+
   'Bookmarks are placed in up to three rows at the top; a name that finds no room becomes a small tick with a line (hover shows it, a click puts the marker there). Band plan: four labelled lanes above the axis, the rest as thin strips over them. Signal tags climb above their peak and, with no room left, shrink to a triangle. The needed bandwidth shows dashed edges, fill and width only under the cursor.\n'+
   'Tap the spectrum to set markers 1–4: their flags stack above the band plan, and with the cursor over the waterfall every marker shows its line, passband (receiver channel or carrier search window) and width there.\n'+
+  'Band lanes go to the ranges under a marker first, then to the narrow ones; the wide rest becomes strips. Double click a lane — the window goes to that band. On a phone a long press shows the tooltip. Parameters: *markers on the waterfall* (hover / active / all) and *show only … words* (try «jazz, region»). With *layout → panes* the same data shows as ticks and names in the pane tooltip.\n'+
   'Hover a bookmark, a band lane or strip, a marker flag or a tag: a tooltip lists everything there — every range that holds the frequency (wide to narrow, with step and note), bookmark names and frequencies, signal type, level, width, confidence, needed bandwidth and decoder.'});
 nt.size.w=760; nt.size.h=230; applySize(nt);
 const M=1e6, bm=[[99.55,'Radio Alpha 99.55'],[99.6,'Alpha relay'],[99.62,'Test'],[99.68,'Maximum'],[99.7,'Jazz FM 99.7'],[99.9,'Station 99.9'],[99.93,'Traffic'],[99.97,'News 24 99.97'],[100.0,'Center 100.0'],[100.02,'Pilot'],[100.04,'Aux'],[100.05,'Retro FM 100.05'],[100.3,'Local 100.3'],[100.31,'Local B'],[100.33,'Kids 100.33'],[100.45,'Classic']];
