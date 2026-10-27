@@ -23,8 +23,9 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Режим высокой скорости без кодека. Сессия constrained high-speed принимает поверхность предпросмотра (SurfaceTexture), а кодер → декодер
- * на этом телефоне не успевал дальше 10–15 к/с. Здесь каждый кадр рисуется видеокартой в крохотную картинку (усреднение), берётся её средняя
- * яркость — отсчёт на каждый кадр камеры (до 120–240 в секунду). Для просмотра раз в ~100 мс рисуется картинка побольше (JPEG).
+ * на этом телефоне не успевал дальше 10–15 к/с. Здесь каждый кадр рисуется видеокартой в крохотную картинку 32×18 (усреднение), второй проход сводит её
+ * к одному числу — яркости — и пишет в текстуру-накопитель; с видеокарты данные читаются раз в ~50 мс (чтение на каждый кадр останавливало конвейер и
+ * отбрасывало кадры: из 120 выходило 20–30). Для просмотра раз в ~250 мс рисуется картинка побольше (JPEG).
  */
 class HsGl(
     private val w: Int, private val h: Int, private val rot: Int, private val quality: Int, private val fps: Int,
@@ -44,17 +45,19 @@ class HsGl(
     private var st: SurfaceTexture? = null
     private var tex = 0
     private var prog = 0
+    private var progB = 0
     private var aPos = 0; private var uCell = 0; private var uColor = 0; private var uTex = 0
-    private val fbo = IntArray(2); private val fbt = IntArray(2)
-    private val sw = 64; private val sh = 36                          // кадр для яркости
-    private val pw = if (w >= 320) 320 else w; private val ph = (pw * h / w).coerceAtLeast(2)    // кадр для просмотра
-    private val smallBuf = ByteBuffer.allocateDirect(sw * sh * 4).order(ByteOrder.nativeOrder())
+    private var aPosB = 0; private var uSmall = 0
+    private val fbo = IntArray(3); private val fbt = IntArray(3)       // 0 — малая картинка, 1 — для просмотра, 2 — накопитель яркостей (ACC×1)
+    private val sw = 32; private val sh = 18                          // кадр для яркости
+    private val acc = 256
+    private val pw = if (w >= 240) 240 else w; private val ph = (pw * h / w).coerceAtLeast(2)    // кадр для просмотра
+    private val accBuf = ByteBuffer.allocateDirect(acc * 4).order(ByteOrder.nativeOrder())
+    private val tsBuf = LongArray(acc)
+    private var nk = 0
     private val bigBuf = ByteBuffer.allocateDirect(pw * ph * 4).order(ByteOrder.nativeOrder())
     private val quad: FloatBuffer = ByteBuffer.allocateDirect(8 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().also { it.put(floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)); it.position(0) }
 
-    private val batch = FloatArray(512)
-    private var nb = 0
-    private var tFirst = 0L; private var tLast = 0L
     private var lastFlush = 0L; private var lastPic = 0L
 
     fun start() {
@@ -98,8 +101,8 @@ class HsGl(
             varying vec2 uv; uniform samplerExternalOES tex; uniform vec2 cell; uniform float color;
             void main(){
               vec3 s = vec3(0.0);
-              for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++) s += texture2D(tex, uv + (vec2(float(i), float(j)) - 1.5) / 4.0 * cell).rgb;
-              s /= 16.0;
+              for (int i = 0; i < 6; i++) for (int j = 0; j < 6; j++) s += texture2D(tex, uv + (vec2(float(i), float(j)) - 2.5) / 6.0 * cell).rgb;
+              s /= 36.0;
               float y = dot(s, vec3(0.299, 0.587, 0.114));
               gl_FragColor = color > 0.5 ? vec4(s, 1.0) : vec4(y, y, y, 1.0);
             }""".trimIndent())
@@ -107,6 +110,21 @@ class HsGl(
         GLES20.glAttachShader(prog, vs); GLES20.glAttachShader(prog, fs); GLES20.glLinkProgram(prog)
         val ok = IntArray(1); GLES20.glGetProgramiv(prog, GLES20.GL_LINK_STATUS, ok, 0)
         if (ok[0] == 0) throw RuntimeException("program: " + GLES20.glGetProgramInfoLog(prog).take(120))
+        val fb = shader(GLES20.GL_FRAGMENT_SHADER, """
+            precision highp float;
+            uniform sampler2D small;
+            void main(){
+              float s = 0.0;
+              for (int i = 0; i < $sw; i++) for (int j = 0; j < $sh; j++) s += texture2D(small, vec2((float(i) + 0.5) / ${sw}.0, (float(j) + 0.5) / ${sh}.0)).r;
+              float v = floor(s / ${sw * sh}.0 * 65535.0 + 0.5);
+              float hi = floor(v / 256.0);
+              gl_FragColor = vec4(hi / 255.0, (v - hi * 256.0) / 255.0, 0.0, 1.0);
+            }""".trimIndent())
+        progB = GLES20.glCreateProgram()
+        GLES20.glAttachShader(progB, vs); GLES20.glAttachShader(progB, fb); GLES20.glLinkProgram(progB)
+        GLES20.glGetProgramiv(progB, GLES20.GL_LINK_STATUS, ok, 0)
+        if (ok[0] == 0) throw RuntimeException("program B: " + GLES20.glGetProgramInfoLog(progB).take(120))
+        aPosB = GLES20.glGetAttribLocation(progB, "p"); uSmall = GLES20.glGetUniformLocation(progB, "small")
         aPos = GLES20.glGetAttribLocation(prog, "p"); uCell = GLES20.glGetUniformLocation(prog, "cell")
         uColor = GLES20.glGetUniformLocation(prog, "color"); uTex = GLES20.glGetUniformLocation(prog, "tex")
 
@@ -118,9 +136,9 @@ class HsGl(
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
 
-        GLES20.glGenFramebuffers(2, fbo, 0); GLES20.glGenTextures(2, fbt, 0)
-        for (i in 0..1) {
-            val ww = if (i == 0) sw else pw; val hh = if (i == 0) sh else ph
+        GLES20.glGenFramebuffers(3, fbo, 0); GLES20.glGenTextures(3, fbt, 0)
+        for (i in 0..2) {
+            val ww = if (i == 0) sw else if (i == 1) pw else acc; val hh = if (i == 0) sh else if (i == 1) ph else 1
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fbt[i])
             GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, ww, hh, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null)
             GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
@@ -154,31 +172,40 @@ class HsGl(
     }
 
     private fun frame() {
-        val s = st ?: return
+        val st0 = st ?: return
         if (!alive) return
         try {
-            s.updateTexImage()
-            val ts = s.timestamp
-            draw(0, sw, sh)
-            smallBuf.rewind()
-            GLES20.glReadPixels(0, 0, sw, sh, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, smallBuf)
-            var sum = 0L
-            for (k in 0 until sw * sh) sum += smallBuf.get(k * 4).toInt() and 0xff
-            if (nb == 0) tFirst = ts
-            tLast = ts
-            if (nb < batch.size) batch[nb++] = sum.toFloat() / (sw * sh)
+            st0.updateTexImage()
+            val ts = st0.timestamp
+            draw(0, sw, sh)                                           // кадр камеры → 32×18
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[2])   // 32×18 → одно число в текстуру-накопитель, без чтения на CPU
+            GLES20.glViewport(nk, 0, 1, 1)
+            GLES20.glUseProgram(progB)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fbt[0])
+            GLES20.glUniform1i(uSmall, 0)
+            GLES20.glEnableVertexAttribArray(aPosB)
+            GLES20.glVertexAttribPointer(aPosB, 2, GLES20.GL_FLOAT, false, 0, quad)
+            GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+            tsBuf[nk++] = ts
             val now = SystemClock.elapsedRealtime()
-            if (nb >= (fps / 15).coerceIn(1, 16) || now - lastFlush > 80) flush(now)
-            if (now - lastPic >= 100) { lastPic = now; picture() }
+            if (nk >= acc || now - lastFlush >= 50) flush(now)
+            if (now - lastPic >= 250) { lastPic = now; picture() }
         } catch (e: Exception) { if (alive) { alive = false; onFail(e.message ?: e.javaClass.simpleName) } }
     }
 
+    /** Читает накопленные яркости одним обращением к видеокарте. */
     private fun flush(now: Long) {
         lastFlush = now
-        if (nb == 0) return
-        val dt = if (nb > 1 && tLast > tFirst) (tLast - tFirst) / 1e6 / (nb - 1) else 1000.0 / fps
-        onLum(batch.copyOf(nb), nb, dt)
-        nb = 0
+        val n = nk; if (n == 0) return
+        nk = 0
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[2])
+        accBuf.rewind()
+        GLES20.glReadPixels(0, 0, n, 1, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, accBuf)
+        val v = FloatArray(n)
+        for (i in 0 until n) v[i] = (((accBuf.get(i * 4).toInt() and 0xff) * 256 + (accBuf.get(i * 4 + 1).toInt() and 0xff)) / 65535f) * 255f
+        val dt = if (n > 1 && tsBuf[n - 1] > tsBuf[0]) (tsBuf[n - 1] - tsBuf[0]) / 1e6 / (n - 1) else 1000.0 / fps
+        onLum(v, n, dt)
     }
 
     private fun picture() {
