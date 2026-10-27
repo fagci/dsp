@@ -10,6 +10,8 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.hardware.TriggerEvent
+import android.hardware.TriggerEventListener
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
@@ -40,8 +42,14 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
             "gamerot" to Sensor.TYPE_GAME_ROTATION_VECTOR, "georot" to Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR,
             "accelraw" to Sensor.TYPE_ACCELEROMETER_UNCALIBRATED, "gyroraw" to Sensor.TYPE_GYROSCOPE_UNCALIBRATED, "magraw" to Sensor.TYPE_MAGNETIC_FIELD_UNCALIBRATED,
             "ambtemp" to Sensor.TYPE_AMBIENT_TEMPERATURE, "humidity" to Sensor.TYPE_RELATIVE_HUMIDITY,
-            "steps" to Sensor.TYPE_STEP_COUNTER, "hinge" to Sensor.TYPE_HINGE_ANGLE, "heading" to Sensor.TYPE_HEADING,
+            "steps" to Sensor.TYPE_STEP_COUNTER, "step" to Sensor.TYPE_STEP_DETECTOR, "hinge" to Sensor.TYPE_HINGE_ANGLE, "heading" to Sensor.TYPE_HEADING,
+            "devorient" to Sensor.TYPE_DEVICE_ORIENTATION,
         )
+        /** Одноразовые датчики: срабатывают раз, после чего их надо взводить заново. */
+        val TRIGGERS = linkedMapOf(
+            "sigmotion" to Sensor.TYPE_SIGNIFICANT_MOTION, "stationary" to Sensor.TYPE_STATIONARY_DETECT, "motion" to Sensor.TYPE_MOTION_DETECT,
+        )
+        val ALL: Set<String> = TYPES.keys + TRIGGERS.keys
         private val XYZ = setOf("accel", "gyro", "mag", "gravity", "linear", "rotation", "gamerot", "georot", "accelraw", "gyroraw", "magraw")
         private val QUAT = setOf("rotation", "gamerot", "georot")      // x, y, z, w — кватернион
         private val UNCAL = setOf("accelraw", "gyroraw", "magraw")     // x, y, z и смещение bx, by, bz
@@ -49,7 +57,50 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
 
     private val kindOf = TYPES.entries.associate { it.value to it.key }
 
-    fun available(): List<String> = TYPES.filter { sm.getDefaultSensor(it.value) != null }.keys.toList()
+    private val armed = HashSet<String>()
+    private val trig = object : TriggerEventListener() {
+        override fun onTrigger(e: TriggerEvent) {
+            val kind = TRIGGERS.entries.firstOrNull { it.value == e.sensor.type }?.key ?: return
+            val t = System.currentTimeMillis() - (SystemClock.elapsedRealtimeNanos() - e.timestamp) / 1_000_000
+            emit(kind, Json.obj("src" to "\"sensor\"", "sensor" to "\"$kind\"", "t" to t.toString(), "x" to "1"))
+            synchronized(this@SensorHub) {
+                if (kind in armed) { armed.remove(kind); arm(kind) }       // сработал — взвести снова, пока подписка жива
+            }
+        }
+    }
+
+    private fun arm(kind: String): Boolean {
+        val sensor = sm.getDefaultSensor(TRIGGERS[kind] ?: return false) ?: return false
+        if (kind in armed) return true
+        if (!sm.requestTriggerSensor(trig, sensor)) return false
+        armed.add(kind)
+        return true
+    }
+
+    fun available(): List<String> =
+        (TYPES + TRIGGERS).filter { sm.getDefaultSensor(it.value) != null }.keys.toList()
+
+    /** Строки для /status: «имя (изготовитель) до N Гц». */
+    fun lines(): String = sm.getSensorList(Sensor.TYPE_ALL).joinToString("") {
+        "  ${it.name} (${it.vendor})" + (if (it.minDelay > 0) " up to ${1_000_000 / it.minDelay} Hz" else "") + "\n"
+    }
+
+    /** Все датчики телефона (в том числе незнакомые мосту): имя, изготовитель, предел, шаг, частота, питание. */
+    fun info(): String {
+        val known = (TYPES + TRIGGERS).entries.associate { it.value to it.key }
+        return Json.rows(sm.getSensorList(Sensor.TYPE_ALL).map { s ->
+            val minUs = s.minDelay
+            Json.obj(
+                "name" to Json.str(s.name), "vendor" to Json.str(s.vendor), "type" to s.type.toString(),
+                "kind" to known[s.type]?.let { Json.str(it) }, "stype" to Json.str(s.stringType),
+                "max" to Json.num(s.maximumRange.toDouble()), "res" to Json.num(s.resolution.toDouble(), 1e9),
+                "maxHz" to if (minUs > 0) Json.num(1e6 / minUs, 10.0) else null,
+                "minHz" to if (s.maxDelay > 0) Json.num(1e6 / s.maxDelay, 1e3) else null,
+                "mA" to Json.num(s.power.toDouble(), 1e3), "fifo" to s.fifoMaxEventCount.toString(),
+                "wake" to if (s.isWakeUpSensor) "1" else null, "dynamic" to if (s.isDynamicSensor) "1" else null,
+            )
+        })
+    }
 
     /** Включает нужные датчики с частотой hz, лишние выключает. Возвращает виды, которых на телефоне нет. */
     @Synchronized
@@ -66,11 +117,19 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
                 sm.unregisterListener(this, sensor)
             }
         }
+        for (kind in TRIGGERS.keys) {
+            if (kind in want) { if (!arm(kind)) missing.add(kind) }
+            else if (armed.remove(kind)) sm.cancelTriggerSensor(trig, sm.getDefaultSensor(TRIGGERS[kind]!!))
+        }
         return missing
     }
 
     @Synchronized
-    fun stop() { sm.unregisterListener(this); active.clear() }
+    fun stop() {
+        sm.unregisterListener(this); active.clear()
+        for (kind in armed) sm.cancelTriggerSensor(trig, sm.getDefaultSensor(TRIGGERS[kind]!!))
+        armed.clear()
+    }
 
     fun close() { stop(); thread.quitSafely() }
 

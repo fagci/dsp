@@ -9,6 +9,8 @@ object Json {
 
     fun arr(l: List<String>): String = l.joinToString(",", "[", "]") { str(it) }
 
+    fun rows(l: List<String>): String = l.joinToString(",", "[", "]")
+
     fun map(m: Map<String, String>): String = m.entries.joinToString(",", "{", "}") { str(it.key) + ":" + str(it.value) }
 
     fun str(s: String?): String = JSONObject.quote(s ?: "")

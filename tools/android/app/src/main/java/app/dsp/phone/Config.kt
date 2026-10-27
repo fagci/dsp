@@ -31,6 +31,11 @@ class Config(ctx: Context) {
         get() = sp.getString("origins", DEFAULT_ORIGIN) ?: ""
         set(v) { sp.edit().putString("origins", v).apply() }
 
+    /** Перехват пакетов через root (su + tcpdump). Выключено: любая страница с доступом к порту иначе могла бы запросить root. */
+    var sniffer: Boolean
+        get() = sp.getBoolean("sniffer", false)
+        set(v) { sp.edit().putBoolean("sniffer", v).apply() }
+
     /** Пусто — без токена. */
     var token: String
         get() = sp.getString("token", "") ?: ""

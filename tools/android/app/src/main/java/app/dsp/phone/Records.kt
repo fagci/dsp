@@ -129,3 +129,112 @@ object Bt {
         0x0500 -> "PERIPHERAL"; 0x0600 -> "IMAGING"; 0x0700 -> "WEARABLE"; 0x0800 -> "TOY"; 0x0900 -> "HEALTH"; else -> "UNCATEGORIZED"
     }
 }
+
+/** Разбор потока pcap (tcpdump -w -): заголовок файла, затем записи; пакеты отдаются по мере накопления байт. */
+class PcapReader(private val onPacket: (tsMs: Long, link: Int, orig: Int, data: ByteArray) -> Unit) {
+    private var buf = ByteArray(1 shl 16)
+    private var len = 0
+    private var le = true
+    private var nano = false
+    var link = 1; private set
+    private var head = false
+
+    /** false — это не pcap (поток дальше не разбирается). */
+    var valid = true; private set
+
+    private fun u32(o: Int): Long {
+        val b = buf
+        val v = if (le) (b[o].toLong() and 255) or ((b[o + 1].toLong() and 255) shl 8) or ((b[o + 2].toLong() and 255) shl 16) or ((b[o + 3].toLong() and 255) shl 24)
+        else (b[o + 3].toLong() and 255) or ((b[o + 2].toLong() and 255) shl 8) or ((b[o + 1].toLong() and 255) shl 16) or ((b[o].toLong() and 255) shl 24)
+        return v
+    }
+
+    fun feed(b: ByteArray, n: Int = b.size) {
+        if (!valid) return
+        if (len + n > buf.size) buf = buf.copyOf(maxOf(buf.size * 2, len + n))
+        System.arraycopy(b, 0, buf, len, n); len += n
+        var p = 0
+        if (!head) {
+            if (len < 24) return
+            val m = ((buf[0].toLong() and 255) shl 24) or ((buf[1].toLong() and 255) shl 16) or ((buf[2].toLong() and 255) shl 8) or (buf[3].toLong() and 255)
+            when (m) {
+                0xa1b2c3d4L -> { le = false; nano = false }
+                0xd4c3b2a1L -> { le = true; nano = false }
+                0xa1b23c4dL -> { le = false; nano = true }
+                0x4d3cb2a1L -> { le = true; nano = true }
+                else -> { valid = false; return }
+            }
+            link = u32(20).toInt(); head = true; p = 24
+        }
+        while (len - p >= 16) {
+            val incl = u32(p + 8)
+            if (incl > 262144) { valid = false; return }
+            if (len - p < 16 + incl) break
+            val ms = u32(p) * 1000 + (if (nano) u32(p + 4) / 1_000_000 else u32(p + 4) / 1000)
+            onPacket(ms, link, u32(p + 12).toInt(), buf.copyOfRange(p + 16, p + 16 + incl.toInt()))
+            p += 16 + incl.toInt()
+        }
+        if (p > 0) { System.arraycopy(buf, p, buf, 0, len - p); len -= p }
+    }
+}
+
+/** Заголовки пакета: Ethernet / Linux cooked / чистый IP → MAC, IP, протокол, порты. Данные — hex самого кадра. */
+object Frame {
+    class Info(
+        val link: String, val srcMac: String?, val dstMac: String?, val ethType: Int, val ifIndex: Int,
+        val ver: Int, val src: String?, val dst: String?, val proto: Int, val sport: Int, val dport: Int,
+    )
+
+    fun linkName(t: Int): String = when (t) { 1 -> "eth"; 101, 12 -> "ip"; 113 -> "sll"; 276 -> "sll2"; 0 -> "null"; 105 -> "wifi"; 127 -> "radiotap"; else -> "link$t" }
+
+    private fun u8(b: ByteArray, o: Int) = b[o].toInt() and 255
+    private fun u16(b: ByteArray, o: Int) = (u8(b, o) shl 8) or u8(b, o + 1)
+    private fun mac(b: ByteArray, o: Int) = (0 until 6).joinToString(":") { String.format("%02x", u8(b, o + it)) }
+    private fun v4(b: ByteArray, o: Int) = "${u8(b, o)}.${u8(b, o + 1)}.${u8(b, o + 2)}.${u8(b, o + 3)}"
+    private fun v6(b: ByteArray, o: Int) = (0 until 8).joinToString(":") { Integer.toHexString(u16(b, o + 2 * it)) }
+
+    fun parse(link: Int, b: ByteArray): Info {
+        var off = 0; var type = 0; var sm: String? = null; var dm: String? = null; var ifx = 0
+        when (link) {
+            1 -> if (b.size >= 14) {
+                dm = mac(b, 0); sm = mac(b, 6); type = u16(b, 12); off = 14
+                while ((type == 0x8100 || type == 0x88a8) && b.size >= off + 4) { type = u16(b, off + 2); off += 4 }
+            }
+            113 -> if (b.size >= 16) { type = u16(b, 14); off = 16; if (u16(b, 4) == 6) sm = mac(b, 6) }
+            276 -> if (b.size >= 20) { type = u16(b, 0); ifx = (u8(b, 4) shl 24) or (u8(b, 5) shl 16) or (u8(b, 6) shl 8) or u8(b, 7); off = 20; if (u8(b, 11) == 6) sm = mac(b, 12) }
+            101, 12 -> if (b.isNotEmpty()) type = when (u8(b, 0) shr 4) { 4 -> 0x0800; 6 -> 0x86dd; else -> 0 }
+        }
+        var ver = 0; var src: String? = null; var dst: String? = null; var proto = 0; var sp = 0; var dp = 0
+        if (type == 0x0800 && b.size >= off + 20) {
+            ver = 4; val ihl = (u8(b, off) and 15) * 4; proto = u8(b, off + 9)
+            src = v4(b, off + 12); dst = v4(b, off + 16)
+            if ((proto == 6 || proto == 17) && ihl >= 20 && b.size >= off + ihl + 4) { sp = u16(b, off + ihl); dp = u16(b, off + ihl + 2) }
+        } else if (type == 0x86dd && b.size >= off + 40) {
+            ver = 6; proto = u8(b, off + 6); src = v6(b, off + 8); dst = v6(b, off + 24)
+            if ((proto == 6 || proto == 17) && b.size >= off + 44) { sp = u16(b, off + 40); dp = u16(b, off + 42) }
+        }
+        return Info(linkName(link), sm, dm, type, ifx, ver, src, dst, proto, sp, dp)
+    }
+}
+
+/** Что просить у системы под каждый источник; проверка строк, которые уходят в оболочку root. */
+object Perms {
+    private val LOC = listOf("android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION")
+    private val POSITION = setOf("gps", "wifi", "ble", "bt", "gnss", "gnssraw", "nmea", "cell")
+
+    /** Разрешения, нужные для набора источников (sdk — версия Android). Выданные отсеивает вызывающий. */
+    fun forSubs(subs: Set<String>, sdk: Int, camera: Boolean): List<String> {
+        val l = LinkedHashSet<String>()
+        if (subs.any { it in POSITION }) l.addAll(LOC)
+        if (sdk >= 31 && subs.any { it == "ble" || it == "bt" }) { l.add("android.permission.BLUETOOTH_SCAN"); l.add("android.permission.BLUETOOTH_CONNECT") }
+        if (sdk >= 29 && ("steps" in subs || "step" in subs)) l.add("android.permission.ACTIVITY_RECOGNITION")
+        if ("mic" in subs) l.add("android.permission.RECORD_AUDIO")
+        if (camera) l.add("android.permission.CAMERA")
+        return l.toList()
+    }
+
+    private val IFACE = Regex("[A-Za-z0-9_.:-]{1,32}")
+    private val FILTER = Regex("[A-Za-z0-9 .:()!&|<>=\\[\\]/_-]{0,200}")
+    fun iface(s: String): String? = s.trim().ifEmpty { "any" }.takeIf { IFACE.matches(it) }
+    fun filter(s: String): String? = s.trim().takeIf { FILTER.matches(it) }
+}

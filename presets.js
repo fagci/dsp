@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=146;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=147;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -505,6 +505,7 @@ const PRESET_CATS={
   'Phone App: Camera, Sensors and Wi-Fi in the Background':'Maps & Locating',
   'Phone App: Satellites, Bluetooth and Wi-Fi Scan':'Maps & Locating',
   'Phone App: Orientation and Environment Sensors':'Maps & Locating',
+  'Phone App: Microphone, Cell and Packets':'Maps & Locating',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
   'TDOA: Path Difference (2 mics)':'Maps & Locating',
@@ -1276,6 +1277,27 @@ t3.size.w=360; t3.size.h=170; applySize(t3);
 const log=addNode('recLog',840,400,{});
 log.size.w=380; applySize(log);
 addEdge(tx.id,'yaw',t1.id,'in'); addEdge(tx.id,'gz',t2.id,'in'); addEdge(tx.id,'press',t3.id,'in');
+addEdge(tx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Microphone, Cell and Packets', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Android app (tools/android): the phone microphone as a signal (output mic, 16 kHz by default, raw input when the phone has one) — also with the screen locked; cell towers (operator, cell id, band, RSRP / RSRQ / SINR; the serving cell goes to cdbm / crsrp); motion triggers (stationary / motion → still).\n'+
+  'Packet capture (tick «packet capture», needs root + tcpdump and «Allow packet capture» in the app Settings): every frame as hex in rec (Ethernet / IP header fields included) → Rec Log. Without root Android gives no access to frames. The permissions are asked when an option is ticked.'});
+nt.size.w=800; nt.size.h=150; applySize(nt);
+const tx=addNode('termux',40,220,{url:'ws://127.0.0.1:8765',gps:false,battery:false,mic:true,micHz:'16000',cell:true,cellEvery:5,stationary:true,motion:true});
+tx.size.w=380; tx.size.h=560; applySize(tx);
+const sc=addNode('scope',460,220,{});
+sc.size.w=380; sc.size.h=170; applySize(sc);
+const ff=addNode('fft',460,410,{size:'2048'});
+const wf=addNode('sa',720,410,{fmin:0,fmax:8000,split:.4});
+wf.size.w=380; wf.size.h=240; applySize(wf);
+const t1=addNode('trend',860,220,{span:120,auto:true});
+t1.size.w=340; t1.size.h=170; applySize(t1);
+const log=addNode('recLog',460,670,{});
+log.size.w=380; applySize(log);
+addEdge(tx.id,'mic',sc.id,'in1'); addEdge(tx.id,'mic',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
+addEdge(tx.id,'cdbm',t1.id,'in');
 addEdge(tx.id,'rec',log.id,'rec');
 markWiresDirty();
 });

@@ -1,7 +1,7 @@
 "use strict";
 /* Termux: записи моста tools/termux/bridge.mjs → значения выходов узла. Без DOM — проверяется в tools/test-termux.mjs */
 
-const TERMUX_SUBS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','heading','hinge','wifi','cell','ble','bt','gnss','gnssraw','nmea'];
+const TERMUX_SUBS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','step','devorient','sigmotion','stationary','motion','heading','hinge','wifi','cell','ble','bt','gnss','gnssraw','nmea','mic','pkt'];
 
 // какие источники просить у моста по чекбоксам узла
 function termuxSub(p){ return TERMUX_SUBS.filter(k=>p[k]); }
@@ -11,6 +11,9 @@ function termuxSubMsg(p){
   const m={sub:termuxSub(p)}, hz=+p.hz;
   if(hz>0) m.hz=hz;
   if(+p.wifiEvery>0 && p.wifi) m.wifiEvery=+p.wifiEvery;
+  if(+p.cellEvery>0 && p.cell) m.cellEvery=+p.cellEvery;
+  if(+p.micHz>0 && p.mic) m.micHz=+p.micHz;
+  if(p.pkt){ m.iface=String(p.iface||'any').trim(); m.filter=String(p.filter||'').trim(); m.snap=+p.snap||256; }
   return m;
 }
 
@@ -32,6 +35,15 @@ function termuxEuler(r){
   return [Math.atan2(r1,r4)*d, Math.asin(Math.max(-1,Math.min(1,-r7)))*d, Math.atan2(-r6,r8)*d];
 }
 
+// запись mic: PCM 16 бит little-endian в base64 → Float32Array [-1,1)
+function termuxPcm(r){
+  if(!r || typeof r.pcm!=='string') return null;
+  let bin; try{ bin=atob(r.pcm); }catch(e){ return null; }
+  const n=bin.length>>1, o=new Float32Array(n);
+  for(let i=0;i<n;i++){ let v=bin.charCodeAt(2*i)|(bin.charCodeAt(2*i+1)<<8); if(v&0x8000) v-=0x10000; o[i]=v/32768; }
+  return o;
+}
+
 // запись моста → o (последние значения по выходам)
 function termuxApply(o,r){
   if(!r || typeof r!=='object') return;
@@ -42,6 +54,8 @@ function termuxApply(o,r){
       set('batt',r.pct); set('temp',r.temp);
       if(r.status) o.charging=/^(CHARGING|FULL)$/i.test(r.status) ? 1 : 0;
       break;
+    case 'cell': if(r.reg==1 || r.reg===true){ set('cdbm',r.dbm); set('crsrp',r.rsrp); set('crsrq',r.rsrq); set('csinr',r.sinr); } break;
+    case 'mic': set('micdb',r.rms); break;
     case 'gnss': if(r.kind==='fix'){ set('nsat',r.n); set('nused',r.used); set('cn0',r.cn0); } break;
     case 'sensor': {
       const k={accel:['ax','ay','az'], gyro:['gx','gy','gz'], mag:['mx','my','mz']}[r.sensor];
@@ -53,6 +67,10 @@ function termuxApply(o,r){
       else if(r.sensor==='humidity') set('humid',r.x);
       else if(r.sensor==='steps') set('steps',r.x);
       else if(r.sensor==='heading') set('heading',r.x);
+      else if(r.sensor==='devorient') set('orient',r.x);
+      else if(r.sensor==='stationary') o.still=1;
+      else if(r.sensor==='motion') o.still=0;
+      else if(r.sensor==='sigmotion') o.sigm=(o.sigm||0)+1;
       else if(r.sensor==='hinge') set('hinge',r.x);
       else if(r.sensor==='rotation'){ const e=termuxEuler(r); if(e){ o.yaw=e[0]; o.pitch=e[1]; o.roll=e[2]; } }
       break;
@@ -67,6 +85,9 @@ function termuxLine(r){
     case 'gps': return 'gps '+f(r.lat,5)+', '+f(r.lon,5)+(r.acc!=null ? ' ±'+f(r.acc,0)+' m' : '');
     case 'battery': return 'battery '+r.pct+'% '+(r.status||'');
     case 'sensor': return r.sensor+' '+[r.x,r.y,r.z].filter(v=>v!=null).map(v=>f(v,2)).join(' ');
+    case 'cell': return 'cell '+(r.type||'')+(r.reg ? ' *' : '')+' '+(r.mcc!=null ? r.mcc+'-'+r.mnc+' ' : '')+'cid '+(r.cid ?? '—')+(r.pci!=null ? ' pci '+r.pci : '')+(r.dbm!=null ? ' '+r.dbm+' dBm' : '');
+    case 'pkt': return 'pkt '+r.iface+' '+(r.ip ? r.ip+(r.sport ? ':'+r.sport : '')+' → '+r.dip+(r.dport ? ':'+r.dport : '') : (r.smac||'')+' → '+(r.dmac||''))+' '+r.len+' B';
+    case 'mic': return 'mic '+f(r.rms,0)+' dBFS';
     case 'wifi': return 'wifi '+r.bssid+' '+r.rssi+' dBm'+(r.ch ? ' ch '+r.ch : '')+' '+(r.ssid||'');
     case 'wificonn': return 'connected '+(r.ssid||r.bssid)+' '+r.rssi+' dBm '+(r.speed!=null ? r.speed+' Mbit/s' : '');
     case 'ble': return 'ble '+r.addr+' '+r.rssi+' dBm '+(r.name||'');
@@ -74,7 +95,6 @@ function termuxLine(r){
     case 'gnss': return r.kind==='sat' ? 'gnss '+r.con+' '+r.svid+' '+f(r.cn0,0)+' dB-Hz el '+f(r.el,0)+(r.used ? ' used' : '') : 'gnss '+r.used+'/'+r.n+' sats, '+f(r.cn0,0)+' dB-Hz';
     case 'gnssraw': return r.kind==='meas' ? 'raw '+r.con+' '+r.svid+' '+f(r.cn0,0)+' dB-Hz' : 'raw clock';
     case 'nmea': return r.line||'';
-    case 'cell': return 'cell '+(r.type||'')+(r.cid!=null ? ' cid '+r.cid : '');
     default: return r.src+' '+(r.msg||'');
   }
 }

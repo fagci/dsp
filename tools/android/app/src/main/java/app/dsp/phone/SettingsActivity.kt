@@ -19,6 +19,7 @@ class SettingsActivity : Activity() {
     private lateinit var share: Switch
     private lateinit var strict: Switch
     private lateinit var check: Switch
+    private lateinit var sniff: Switch
     private lateinit var port: EditText
     private lateinit var token: EditText
     private lateinit var origins: EditText
@@ -40,6 +41,8 @@ class SettingsActivity : Activity() {
         root.addView(strict)
         check = Switch(this).apply { text = "Check the site of browsers (Origin); off — any page may connect"; isChecked = cfg.checkOrigin; setPadding(0, pad, 0, 0) }
         root.addView(check)
+        sniff = Switch(this).apply { text = "Allow packet capture (needs root: su + tcpdump)"; isChecked = cfg.sniffer; setPadding(0, pad, 0, 0) }
+        root.addView(sniff)
         text("Port"); port = edit(cfg.port.toString(), true)
         text("Token (empty — no token, anyone who can reach the port gets in)"); token = edit(cfg.token)
         text("Sites allowed when the Origin check is on (origins, comma separated; the app itself and localhost are always allowed)"); origins = edit(cfg.origins)
@@ -63,7 +66,7 @@ class SettingsActivity : Activity() {
         val p = port.text.toString().toIntOrNull()
         if (p == null || p < 1024 || p > 65535) { Toast.makeText(this, "Port: 1024–65535", Toast.LENGTH_SHORT).show(); return }
         val t = token.text.toString().trim()
-        cfg.port = p; cfg.token = t; cfg.shareLan = share.isChecked; cfg.strict = strict.isChecked; cfg.checkOrigin = check.isChecked
+        cfg.port = p; cfg.token = t; cfg.shareLan = share.isChecked; cfg.strict = strict.isChecked; cfg.checkOrigin = check.isChecked; cfg.sniffer = sniff.isChecked
         cfg.origins = origins.text.toString().trim()
         BridgeService.start(this, reload = true)
         show()
