@@ -55,6 +55,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     private var note = ""                                    // пометка к статусу камеры: чем закончился запрос высокой скорости
     private val noHs = HashMap<String, String>()                // камера → почему сессия высокой скорости не создалась
     private var lastEnc = 0L
+    private var hsNoteT = 0L
     private var pool: ExecutorService? = null                 // кодирование кадров параллельно: один поток упирался в ~25 к/с (YUV → NV21 → поворот → JPEG)
     private val busy = AtomicInteger()
     private var frameNo = 0L
@@ -361,7 +362,8 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                 val t = SystemClock.elapsedRealtime()
                 if (lastPub > 0) { val dt = (t - lastPub).toDouble(); emaMs = if (emaMs == 0.0) dt else emaMs * 0.9 + dt * 0.1 }
                 lastPub = t
-                if (t - infoT > 1000 && emaMs > 0) { infoT = t; info = infoBase + " · " + Math.round(1000 / emaMs) + " fps" }   // реальная частота выданных кадров
+                if (t - infoT > 1000 && emaMs > 0) { infoT = t; info = infoBase + " · " + Math.round(1000 / emaMs) + " fps" }
+                if (hsRange != null && t - hsNoteT > 3000 && emaMs > 0) { hsNoteT = t; onNote?.invoke("camera: $info") }          // режим высокой скорости: размер и реальная частота — в узел телефона   // реальная частота выданных кадров
                 lock.notifyAll()
             }
         } catch (e: Exception) {
