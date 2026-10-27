@@ -77,18 +77,22 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
         val m = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         val listed = m.cameraIdList.toSet()
         val rows = ArrayList<String>()
-        fun row(id: String, ch: CameraCharacteristics, logical: String?) {
+        fun row(id: String, ch: CameraCharacteristics, logical: String?, hidden: Boolean = false) {
             val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             val fm = map?.outputFormats?.toSet() ?: emptySet()
             val nir = ch.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT) == 5      // COLOR_FILTER_ARRANGEMENT_NIR
             val pick = Cam.pick(fm)
             val big = pick?.let { f -> map?.getOutputSizes(f)?.maxByOrNull { it.width * it.height } }
             val fl = ch.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
+            // предел частоты в обычном режиме (диапазоны автоэкспозиции) и в режиме высокой скорости (если камера его умеет)
+            val fps = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.maxOfOrNull { it.upper }
+            val hs = try { map?.highSpeedVideoFpsRanges?.maxOfOrNull { it.upper } } catch (e: Exception) { null }
             rows.add(Json.obj("id" to Json.str(id), "facing" to Json.str(when (ch.get(CameraCharacteristics.LENS_FACING)) {
                 CameraCharacteristics.LENS_FACING_BACK -> "back"; CameraCharacteristics.LENS_FACING_FRONT -> "front"; CameraCharacteristics.LENS_FACING_EXTERNAL -> "external"; else -> "unknown" }),
                 "kind" to Json.str(Cam.kind(fm, nir)), "formats" to Json.arr(fm.sorted().map { "0x" + Integer.toHexString(it) }),
                 "w" to big?.width?.toString(), "h" to big?.height?.toString(), "focal" to fl?.let { Json.num(it.toDouble(), 10.0) },
-                "logical" to logical?.let { Json.str(it) }))
+                "fps" to fps?.toString(), "hs" to hs?.toString(),
+                "logical" to logical?.let { Json.str(it) }, "hidden" to if (hidden) "1" else null))
         }
         for (id in listed) {
             val ch = m.getCameraCharacteristics(id)
@@ -98,6 +102,9 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                 try { row("$id/$ph", m.getCameraCharacteristics(ph), id) } catch (e: Exception) { rows.add(Json.obj("id" to Json.str("$id/$ph"), "facing" to Json.str("unknown"), "kind" to Json.str("other"), "logical" to Json.str(id))) }
             }
         }
+        // камеры, которых нет в списке, но сервис отдаёт их характеристики (и часто открывает): вспомогательные, макро, глубина…
+        for (n in 0..15) { val id = n.toString(); if (id in listed) continue
+            try { row(id, m.getCameraCharacteristics(id), null, hidden = true) } catch (e: Exception) { /* такой камеры нет */ } }
         Json.rows(rows)
     } catch (e: Exception) { "[]" }
 
@@ -167,7 +174,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
         try {
             val mgr = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
             val want = c.id?.split("/", limit = 2)                    // «0/2»: логическая камера 0, физическая 2 (скрытая от списка камер)
-            val id = (if (want != null) mgr.cameraIdList.firstOrNull { it == want[0] }
+            val id = (if (want != null) want[0].takeIf { it in mgr.cameraIdList || hasCharacteristics(mgr, it) }       // камера вне списка: открывается, если сервис отдаёт её характеристики
                 else mgr.cameraIdList.firstOrNull { mgr.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == c.facing })
                 ?: run { error = "no such camera"; return false }
             phys = want?.getOrNull(1)?.takeIf { Build.VERSION.SDK_INT >= 28 }
@@ -207,6 +214,8 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
         stopLocked()
         return false
     }
+
+    private fun hasCharacteristics(mgr: CameraManager, id: String) = try { mgr.getCameraCharacteristics(id); true } catch (e: Exception) { false }
 
     private fun fail(msg: String) { error = msg; synchronized(lock) { stopLocked() }; onUsers() }
 
