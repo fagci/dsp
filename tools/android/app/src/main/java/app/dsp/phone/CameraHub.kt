@@ -48,6 +48,8 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     private var sensorRot = 0
     private var fmt = ImageFormat.YUV_420_888
     private var phys: String? = null
+    private var hsRange: android.util.Range<Int>? = null       // режим высокой скорости (constrained high-speed): fps выше предела автоэкспозиции
+    private val noHs = HashSet<String>()                       // камеры, на которых сессия высокой скорости не создалась
     private var lastEnc = 0L
     private var pool: ExecutorService? = null                 // кодирование кадров параллельно: один поток упирался в ~25 к/с (YUV → NV21 → поворот → JPEG)
     private val busy = AtomicInteger()
@@ -182,7 +184,15 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
             val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             // YUV, а у тепловизоров и камер глубины — 16-битный кадр (Y16 / DEPTH16): он уходит в картинку с автоконтрастом
             fmt = Cam.pick(map?.outputFormats?.toSet() ?: emptySet()) ?: run { error = "camera has no YUV / Y16 / DEPTH16 output"; return false }
-            val sizes = map?.getOutputSizes(fmt)
+            // fps выше обычного предела: диапазон высокой скорости (фиксированный — первым), размеры берутся из него
+            val normalMax = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.maxOfOrNull { it.upper } ?: 30
+            hsRange = null
+            if (c.fps > normalMax && phys == null && (c.id ?: "f${c.facing}") !in noHs) try {
+                val rs = map?.highSpeedVideoFpsRanges ?: emptyArray()
+                hsRange = rs.filter { it.upper >= c.fps }.sortedWith(compareBy({ it.upper }, { if (it.lower == it.upper) 0 else 1 })).firstOrNull() ?: rs.maxByOrNull { it.upper }
+                if (hsRange != null && ImageFormat.YUV_420_888 in (map?.outputFormats ?: IntArray(0))) fmt = ImageFormat.YUV_420_888 else hsRange = null
+            } catch (e: Exception) { hsRange = null }
+            val sizes = hsRange?.let { map?.getHighSpeedVideoSizesFor(it) } ?: map?.getOutputSizes(fmt)
             if (sizes.isNullOrEmpty()) { error = "camera has no output sizes"; return false }
             // ближайшая по ширине к запрошенной (при равенстве — с меньшей площадью)
             val size = sizes.sortedWith(compareBy<android.util.Size>({ Math.abs(it.width - c.width) }, { it.width * it.height })).first()
@@ -196,7 +206,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
             val rd = ImageReader.newInstance(size.width, size.height, fmt, workers + 2)
             rd.setOnImageAvailableListener({ onImage(it, c) }, h)
             reader = rd
-            infoBase = "${size.width}×${size.height}"; info = infoBase
+            infoBase = "${size.width}×${size.height}" + (hsRange?.let { " · high-speed ${it.upper}" } ?: ""); info = infoBase
             mgr.openCamera(id, object : CameraDevice.StateCallback() {
                 override fun onOpened(d: CameraDevice) {
                     device = d
@@ -226,6 +236,15 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                 override fun onConfigured(s: CameraCaptureSession) {
                     session = s
                     try {
+                        val hr = hsRange
+                        if (hr != null) {
+                            val hs = s as android.hardware.camera2.CameraConstrainedHighSpeedCaptureSession
+                            val rq = d.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
+                            rq.addTarget(rd.surface)
+                            rq.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, hr)
+                            hs.setRepeatingBurst(hs.createHighSpeedRequestList(rq.build()), null, h)
+                            return
+                        }
                         val rq = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
                         rq.addTarget(rd.surface)
                         // диапазон кадров, ближайший сверху к нужному fps: меньше fps — меньше нагрев и батареи
@@ -235,8 +254,15 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                         s.setRepeatingRequest(rq.build(), null, h)
                     } catch (e: Exception) { fail("camera: ${e.message}") }
                 }
-                override fun onConfigureFailed(s: CameraCaptureSession) { fail("camera: could not configure") }
+                override fun onConfigureFailed(s: CameraCaptureSession) {
+                    if (hsRange == null) { fail("camera: could not configure"); return }
+                    // высокая скорость с этим приёмником кадров не принята: запоминаем и открываем заново в обычном режиме (зритель ждёт тот же поток)
+                    noHs.add(c.id ?: "f${c.facing}")
+                    main.post { synchronized(lock) { if (cfg == c) { stopLocked(); error = ""; if (startLocked(c)) info = "$infoBase · high-speed unavailable" } } }
+                }
             }
+            val hr = hsRange
+            if (hr != null) { d.createConstrainedHighSpeedCaptureSession(listOf(rd.surface), cb, h); return }
             val ph = phys
             if (ph != null && Build.VERSION.SDK_INT >= 28) {
                 val oc = android.hardware.camera2.params.OutputConfiguration(rd.surface)

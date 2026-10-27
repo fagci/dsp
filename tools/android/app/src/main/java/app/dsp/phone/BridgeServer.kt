@@ -243,7 +243,7 @@ class BridgeServer(
         // cam=back|front или номер камеры из cameraInfo (внешняя, тепловизор, ИК): cam=3
         val id = cam.takeIf { it != "back" && it != "front" && Regex("[A-Za-z0-9_.:/-]{1,32}").matches(it) }
         val rot = (int("rot", 0, 0, 359) / 90 * 90)
-        return CameraHub.Cfg(facing, int("w", 640, 16, 8192), int("fps", 10, 1, 120), int("q", 70, 1, 100), rot, id, if (q["pal"] == "iron") "iron" else "gray")
+        return CameraHub.Cfg(facing, int("w", 640, 16, 8192), int("fps", 10, 1, 240), int("q", 70, 1, 100), rot, id, if (q["pal"] == "iron") "iron" else "gray")
     }
 
     private fun serveMjpeg(sock: Socket, req: Req, origin: String?) {

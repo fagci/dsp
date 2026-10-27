@@ -508,6 +508,7 @@ const PRESET_CATS={
   'Wi-Fi: Locate Access Points (Termux)':'Maps & Locating',
   'Termux: Phone Position, Sensors and Battery':'Maps & Locating',
   'Phone App: Camera, Sensors and Wi-Fi in the Background':'Maps & Locating',
+  'Phone App: High-Speed Camera — Lamp Flicker':'Images & TV',
   'Phone App: Satellites, Bluetooth and Wi-Fi Scan':'Maps & Locating',
   'Phone App: Orientation and Environment Sensors':'Maps & Locating',
   'Phone App: Microphone, Cell and Packets':'Maps & Locating',
@@ -1245,6 +1246,22 @@ log.size.w=340; applySize(log);
 addEdge(tx.id,'camurl',cam.id,'url');
 addEdge(tx.id,'az',t1.id,'in'); addEdge(tx.id,'gz',t2.id,'in');
 addEdge(tx.id,'rec',map.id,'rec'); addEdge(tx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: High-Speed Camera — Lamp Flicker', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Lamp flicker (100/120 Hz from mains, PWM of LED lamps) with the phone camera in the Android app. Camera fps above the normal limit (usually 30) switches the camera to high-speed mode: 120 or 240 fps, smaller picture (the camera list shows «hs240» for cameras that can). Point the camera at a lamp or a wall it lights, pick a camera with hs in the list, set fps to the highest it offers.\n'+
+  'Brightness of the zone per frame goes to the trend and the spectrum. Honest limits: the stream is JPEG, the phone may encode fewer frames than the camera shoots — the frame rate the stream really gives is in the camera status; a flicker faster than half of it shows up as a slow beat (aliasing), not at its true frequency. If high-speed is not accepted the camera opens in normal mode and says so.'});
+nt.size.w=860; nt.size.h=170; applySize(nt);
+const tx=addNode('termux',40,240,{url:'ws://127.0.0.1:8765',cam:'back',camw:'640',camfps:120,camq:50});
+tx.size.w=360; tx.size.h=420; applySize(tx);
+const cam=addNode('ipcam',440,240,{maxw:'640'});
+cam.size.w=340; cam.size.h=260; applySize(cam);
+const cs=addNode('colorsp',440,520,{mode:'color',zx:.3,zy:.3,zw:.4,zh:.4,avg:0});
+cs.size.w=340; applySize(cs);
+const tr=addNode('trend',820,240,{span:2,auto:true});
+tr.size.w=380; tr.size.h=200; applySize(tr);
+addEdge(tx.id,'camurl',cam.id,'url'); addEdge(cam.id,'img',cs.id,'img'); addEdge(cs.id,'v',tr.id,'in');
 markWiresDirty();
 });
 preset('Phone App: Satellites, Bluetooth and Wi-Fi Scan', function(){
