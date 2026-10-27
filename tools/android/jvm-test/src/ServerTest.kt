@@ -65,13 +65,16 @@ fun main() {
     }
     ok("status page", get("/status").body() == "status-text")
     ok("404", get("/nope").statusCode() == 404)
+    ok("default: any origin may connect", get("/status", "https://evil.example").statusCode() == 200)
+    cfg.checkOrigin = true
     val ev = get("/status", "https://evil.example")
-    ok("foreign origin refused", ev.statusCode() == 403, ev.statusCode().toString())
+    ok("Origin check on: foreign origin refused", ev.statusCode() == 403, ev.statusCode().toString())
     val good = get("/status", "https://fagci.github.io")
     ok("allowed origin: ACAO + PNA", good.statusCode() == 200 && good.headers().firstValue("access-control-allow-origin").orElse("") == "https://fagci.github.io" &&
         good.headers().firstValue("access-control-allow-private-network").orElse("") == "true")
     ok("app origin allowed", get("/status", Config.APP_ORIGIN).statusCode() == 200)
     ok("localhost origin allowed", get("/status", "http://localhost:8000").statusCode() == 200)
+    cfg.checkOrigin = false
     val pre = get("/camera.mjpg", "https://fagci.github.io", "OPTIONS")
     ok("preflight 204", pre.statusCode() == 204 && pre.headers().firstValue("access-control-allow-private-network").isPresent)
     ok("camera without permission: 503 with reason", get("/snapshot.jpg").let { it.statusCode() == 503 && it.body().contains("permission") }, get("/snapshot.jpg").body())
@@ -93,6 +96,10 @@ fun main() {
     ok("onSubs called", subsChanged.get() >= 2)
     val w = srv.wanted()
     ok("wanted: subs and hz", w.subs == setOf("accel", "gyro") && w.hz == 200 && w.wifiEvery == 10, w.toString())
+    ws.sendText("""{"sub":["accel"],"hz":800}""", true).get()
+    ok("rates above 200 Hz are passed on", until { srv.wanted().hz == 800 }, srv.wanted().toString())
+    ws.sendText("""{"sub":["accel","gyro"],"hz":200}""", true).get()
+    until { srv.wanted().hz == 200 }
     for (i in 0 until 5) srv.emit("accel", """{"src":"sensor","sensor":"accel","x":$i}""")
     srv.emit("light", """{"src":"sensor","sensor":"light","x":1}""")            // не подписан
     srv.emit("gyro", """{"src":"sensor","sensor":"gyro","x":9}""")
@@ -113,6 +120,8 @@ fun main() {
 
     // токен: чужой адрес (эмулируем strict) и query sources
     cfg.strict = true
+    ok("strict without a token set: open", get("/status").statusCode() == 200)
+    cfg.token = "secret123"
     ok("strict: no token → 401", get("/status").statusCode() == 401)
     ok("strict: token → 200", get("/status?token=" + cfg.token).statusCode() == 200)
     cfg.strict = false

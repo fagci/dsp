@@ -21,17 +21,19 @@ class Config(ctx: Context) {
         get() = sp.getBoolean("strict", false)
         set(v) { sp.edit().putBoolean("strict", v).apply() }
 
-    /** Сайты (Origin) через запятую, которым можно подключаться, кроме приложения и localhost. */
+    /** Проверять Origin браузера (CORS-подобная защита от чужих сайтов). Выключено: пускаем любые страницы. */
+    var checkOrigin: Boolean
+        get() = sp.getBoolean("checkOrigin", false)
+        set(v) { sp.edit().putBoolean("checkOrigin", v).apply() }
+
+    /** Сайты (Origin) через запятую, когда проверка включена, которым можно подключаться, кроме приложения и localhost. */
     var origins: String
         get() = sp.getString("origins", DEFAULT_ORIGIN) ?: ""
         set(v) { sp.edit().putString("origins", v).apply() }
 
+    /** Пусто — без токена. */
     var token: String
-        get() {
-            val t = sp.getString("token", "") ?: ""
-            if (t.isNotEmpty()) return t
-            return newToken().also { sp.edit().putString("token", it).apply() }
-        }
+        get() = sp.getString("token", "") ?: ""
         set(v) { sp.edit().putString("token", v).apply() }
 
     fun allowedOrigins(): Set<String> =

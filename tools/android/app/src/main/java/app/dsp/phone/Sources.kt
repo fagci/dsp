@@ -25,7 +25,7 @@ typealias Emit = (src: String, json: String) -> Unit
 fun Context.granted(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 fun Context.hasLocation() = granted(Manifest.permission.ACCESS_FINE_LOCATION) || granted(Manifest.permission.ACCESS_COARSE_LOCATION)
 
-/** Акселерометр, гироскоп и прочие датчики до 200 Гц (в фоне только пока работает foreground-сервис). */
+/** Акселерометр, гироскоп и прочие датчики до 1000 Гц (в фоне только пока работает foreground-сервис). */
 class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
     private val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val thread = HandlerThread("dsp-sensors").also { it.start() }
@@ -55,7 +55,7 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
                 if (sensor == null) { missing.add(kind); continue }
                 if (active[kind] == hz) continue
                 sm.unregisterListener(this, sensor)
-                if (sm.registerListener(this, sensor, 1_000_000 / hz.coerceIn(1, 200), handler)) active[kind] = hz
+                if (sm.registerListener(this, sensor, 1_000_000 / hz.coerceIn(1, 1000), handler)) active[kind] = hz
             } else if (active.remove(kind) != null) {
                 sm.unregisterListener(this, sensor)
             }
@@ -152,7 +152,7 @@ class WifiHub(private val ctx: Context, private val gps: GpsHub, private val emi
     /** false — нет разрешения на геолокацию (без него Android не отдаёт список). */
     @Synchronized
     fun update(want: Boolean, everySec: Int): Boolean {
-        every = everySec.coerceIn(2, 600)
+        every = everySec.coerceIn(1, 3600)
         if (want == on) return true
         if (!want) {
             on = false; handler.removeCallbacksAndMessages(null)

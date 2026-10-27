@@ -38,7 +38,7 @@ class BridgeServer(
         @Volatile var hz = 0
         @Volatile var wifiEvery = 0
         @Volatile var dead = false
-        val out = LinkedBlockingQueue<ByteArray>(512)
+        val out = LinkedBlockingQueue<ByteArray>(4096)
         fun send(text: String) { out.offer(frame(text.toByteArray(Charsets.UTF_8))) }   // переполнена — медленный клиент теряет записи
     }
 
@@ -92,7 +92,7 @@ class BridgeServer(
             if (c.hz > hz) hz = c.hz
             if (c.wifiEvery > 0 && (wifi == 0 || c.wifiEvery < wifi)) wifi = c.wifiEvery
         }
-        return Want(subs, if (hz > 0) hz.coerceIn(1, 200) else 20, if (wifi > 0) wifi else 10)
+        return Want(subs, if (hz > 0) hz.coerceIn(1, 1000) else 20, if (wifi > 0) wifi else 10)
     }
 
     /** Запись от источника; уйдёт подписанным клиентам в ближайшей пачке. */
@@ -134,14 +134,15 @@ class BridgeServer(
         sock.soTimeout = 10_000
         val req = readRequest(BufferedInputStream(sock.getInputStream(), 4096)) ?: return
         val origin = req.headers["origin"]
-        if (!originOk(origin)) return respond(sock, 403, "Forbidden", "text/plain", "origin not allowed — add it in the DSP app settings", null)
+        if (cfg.checkOrigin && !originOk(origin)) return respond(sock, 403, "Forbidden", "text/plain", "origin not allowed — add it in the DSP app settings or turn the Origin check off", null)
         if (req.method == "OPTIONS") {
             val h = "Access-Control-Allow-Methods: GET, OPTIONS\r\nAccess-Control-Allow-Headers: " +
                 (req.headers["access-control-request-headers"] ?: "authorization, content-type") + "\r\nAccess-Control-Max-Age: 600\r\n"
             return respond(sock, 204, "No Content", "text/plain", "", origin, h)
         }
         val remote = !sock.inetAddress.isLoopbackAddress
-        if ((remote || cfg.strict) && !MessageDigest.isEqual((req.query["token"] ?: "").toByteArray(), cfg.token.toByteArray()))
+        val token = cfg.token
+        if (token.isNotEmpty() && (remote || cfg.strict) && !MessageDigest.isEqual((req.query["token"] ?: "").toByteArray(), token.toByteArray()))
             return respond(sock, 401, "Unauthorized", "text/plain", "token required", origin)
         when {
             req.headers["upgrade"]?.equals("websocket", true) == true -> serveWs(sock, req)
@@ -215,7 +216,7 @@ class BridgeServer(
         val facing = if (q["cam"] == "front") android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT
             else android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK
         val rot = (int("rot", 0, 0, 359) / 90 * 90)
-        return CameraHub.Cfg(facing, int("w", 640, 160, 3840), int("fps", 10, 1, 30), int("q", 70, 20, 100), rot)
+        return CameraHub.Cfg(facing, int("w", 640, 16, 8192), int("fps", 10, 1, 120), int("q", 70, 1, 100), rot)
     }
 
     private fun serveMjpeg(sock: Socket, req: Req, origin: String?) {
