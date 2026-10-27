@@ -49,6 +49,7 @@ class BridgeService : Service() {
         camera = CameraHub(this) { main.post { refresh() } }
         camera.onNeedPermission = { main.post { requestPerms(listOf(android.Manifest.permission.CAMERA)) } }
         server = BridgeServer(cfg, camera, ::helloJson, ::statusText) { refresh() }
+        camera.onNote = { m -> server.note("warn", m) }
         usb = AndroidUsb(this)
         server.usb = usb
         actions = PhoneActions(this, { s, j -> server.emit(s, j) }, { p -> main.post { requestPerms(p) } }, { camera.describe() }, cfg)

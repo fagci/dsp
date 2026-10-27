@@ -35,6 +35,8 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     private var seq = 0L
     private var jpeg: ByteArray? = null
     @Volatile var error = ""
+    /** Сообщение странице (запись моста level=warn): страница показывает его в узле телефона. */
+    @Volatile var onNote: ((String) -> Unit)? = null
     @Volatile var info = ""
 
     /** Зритель пришёл, а разрешения на камеру нет: сервис просит его окном или уведомлением (иначе поток вечно отвечал бы 503). */
@@ -188,11 +190,20 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
             // fps выше обычного предела: диапазон высокой скорости (фиксированный — первым), размеры берутся из него
             val normalMax = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.maxOfOrNull { it.upper } ?: 30
             hsRange = null
-            if (c.fps > normalMax && phys == null && (c.id ?: "f${c.facing}") !in noHs) try {
-                val rs = map?.highSpeedVideoFpsRanges ?: emptyArray()
-                hsRange = rs.filter { it.upper >= c.fps }.sortedWith(compareBy({ it.upper }, { if (it.lower == it.upper) 0 else 1 })).firstOrNull() ?: rs.maxByOrNull { it.upper }
-                if (hsRange != null && ImageFormat.YUV_420_888 in (map?.outputFormats ?: IntArray(0))) fmt = ImageFormat.YUV_420_888 else hsRange = null
-            } catch (e: Exception) { hsRange = null }
+            if (c.fps <= normalMax) note = ""
+            var hsWhy = ""                                            // почему высокая скорость не включена, хотя fps выше обычного предела — в статус и на страницу
+            if (c.fps > normalMax) {
+                if (phys != null) hsWhy = "not for hidden physical cameras"
+                else if ((c.id ?: "f${c.facing}") in noHs) hsWhy = "the phone refused it earlier"
+                else try {
+                    val rs = map?.highSpeedVideoFpsRanges ?: emptyArray()
+                    hsRange = rs.filter { it.upper >= c.fps }.sortedWith(compareBy({ it.upper }, { if (it.lower == it.upper) 0 else 1 })).firstOrNull() ?: rs.maxByOrNull { it.upper }
+                    if (hsRange == null) hsWhy = "this camera has no high-speed ranges (normal limit $normalMax)"
+                    else if (ImageFormat.YUV_420_888 !in (map?.outputFormats ?: IntArray(0))) { hsRange = null; hsWhy = "no YUV output" }
+                    else fmt = ImageFormat.YUV_420_888
+                } catch (e: Exception) { hsRange = null; hsWhy = "query failed: ${e.message}" }
+            }
+            if (hsWhy.isNotEmpty()) { note = " · high-speed off: $hsWhy"; onNote?.invoke("camera: high-speed off: $hsWhy") }
             val sizes = hsRange?.let { map?.getHighSpeedVideoSizesFor(it) } ?: map?.getOutputSizes(fmt)
             if (sizes.isNullOrEmpty()) { error = "camera has no output sizes"; return false }
             // ближайшая по ширине к запрошенной (при равенстве — с меньшей площадью)
@@ -282,7 +293,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     /** Высокая скорость не принята: запоминаем камеру и открываем заново в обычном режиме (зритель ждёт тот же поток). */
     private fun hsGiveUp(c: Cfg, why: String) {
         noHs.add(c.id ?: "f${c.facing}")
-        main.post { synchronized(lock) { if (cfg == c) { stopLocked(); error = ""; note = " · high-speed refused: ${why.take(90)}"; startLocked(c) } } }
+        main.post { synchronized(lock) { if (cfg == c) { stopLocked(); error = ""; note = " · high-speed refused: ${why.take(90)}"; onNote?.invoke("camera: high-speed refused: $why"); startLocked(c) } } }
     }
 
     /** fps выше предела автоэкспозиции без сессии высокой скорости: выдержка и длительность кадра вручную (предел — минимальная длительность кадра для размера). */
