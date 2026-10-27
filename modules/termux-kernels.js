@@ -26,7 +26,7 @@ function termuxCamOpts(info,cur){
   return o;
 }
 // значение списка → то, что просим у моста: back / front или номер камеры
-function termuxCamId(v){ const m=/^#([A-Za-z0-9_.:-]+)/.exec(String(v||'')); return m ? m[1] : String(v||''); }
+function termuxCamId(v){ const m=/^#([A-Za-z0-9_.:\/-]+)/.exec(String(v||'')); return m ? m[1] : String(v||''); }
 
 // адрес камеры приложения DSP на том же порту, что и WebSocket (→ вход url узла IP Camera); null — камера выключена
 function termuxCamUrl(url,p){

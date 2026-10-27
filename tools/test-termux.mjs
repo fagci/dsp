@@ -109,7 +109,7 @@ if(fs.existsSync(kf)){
   const co=K.termuxCamOpts(info,'off');
   ok('camera list: off, back, front and every camera of the phone',co.slice(0,3).join()==='off,back,front' && co.length===7 && co[5]==='#3 thermal external 160×120' && co[6]==='#4 depth back',co.join('|'));
   ok('camera list: the saved choice stays even before the list arrives; no info → three basics',K.termuxCamOpts(null,'#3 thermal external 160×120').includes('#3 thermal external 160×120') && K.termuxCamOpts(undefined,'back').join()==='off,back,front');
-  ok('camera id from the list value',K.termuxCamId('#3 thermal external 160×120')==='3' && K.termuxCamId('#12.a:b x')==='12.a:b' && K.termuxCamId('front')==='front');
+  ok('camera id from the list value (a hidden physical camera is logical/physical)',K.termuxCamId('#3 thermal external 160×120')==='3' && K.termuxCamId('#0/2 visible back 4000×3000')==='0/2' && K.termuxCamId('#12.a:b x')==='12.a:b' && K.termuxCamId('front')==='front');
   const cu2=K.termuxCamUrl('ws://10.0.0.2:8765/?token=k',{cam:'#3 thermal external 160×120',camw:'640',camfps:10,camq:70,campal:'iron'});
   ok('camera url: by id, palette, token',/cam=3&/.test(cu2) && cu2.includes('pal=iron') && cu2.includes('token=k') && !K.termuxCamUrl('ws://h:1',{cam:'front',camw:'640',camfps:10,camq:70,campal:'gray'}).includes('pal='),cu2);
   ok('apply sensors',o.ax===1 && o.az===3 && o.gx===4 && o.gz===6 && o.mx===7 && o.mz===9 && o.light===120 && o.press===1013);

@@ -264,19 +264,11 @@ class PhoneActions(
         val before = count()
         val (code, out) = when (cmd) {
             "cam.root.info" -> RootSh.run(RootCam.INFO)
-            "cam.root.unhide" -> {
-                val script = RootCam.unhideScript(ctx.packageName) ?: return done(c, id, cmd, "bad package name")
-                val r = RootSh.run(script)
-                // прежние значения запоминаем один раз — по ним откат; повторный запуск их не затирает
-                if (r.first == 0 && cfg.camProps.isEmpty()) cfg.camProps = RootCam.toJson(RootCam.parseOld(r.second))
-                if (r.first == 0) Thread.sleep(4000)                   // камерный сервис поднимается заново
-                r
-            }
             else -> {
-                val script = RootCam.restoreScript(RootCam.fromJson(cfg.camProps)) ?: return done(c, id, cmd, "nothing to restore (the properties were not changed from here)")
+                val script = (if (cmd == "cam.root.unhide") RootCam.unhideScript(ctx.packageName) else RootCam.restoreScript(ctx.packageName)) ?: return done(c, id, cmd, "bad package name")
                 val r = RootSh.run(script)
-                if (r.first == 0) { cfg.camProps = ""; Thread.sleep(4000) }
-                r
+                if (RootCam.done(r.second)) { Thread.sleep(4000); 0 to r.second }       // камерный сервис поднимается заново; перезапуск мог убить и оболочку — код выхода не смотрим
+                else r
             }
         }
         if (code != 0) return done(c, id, cmd, if (code < 0) "no root (su): " + RootCam.clip(out, 200) else "su exit $code: " + RootCam.clip(out, 300))
