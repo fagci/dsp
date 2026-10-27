@@ -224,10 +224,18 @@ class BridgeService : Service() {
 
         /** Остановить мост (то же, что кнопка Stop в уведомлении). */
         fun stop(ctx: Context) {
+            userStopped = true
             ctx.startService(Intent(ctx, BridgeService::class.java).setAction(ACTION_STOP))
         }
 
+        /** Остановлен кнопкой: возврат в окно (onRestart / onNewIntent) его не запускает; запуск приложения — да. */
+        @Volatile var userStopped = false
+
+        /** Окно вернулось на экран (singleTask: onCreate заново не зовётся). Сервис, которого система убила, поднимаем снова; запущенному это не мешает. */
+        fun resume(ctx: Context) { if (!userStopped) try { ctx.startForegroundService(Intent(ctx, BridgeService::class.java)) } catch (e: Exception) {} }
+
         fun start(ctx: Context, reload: Boolean = false) {
+            userStopped = false
             val i = Intent(ctx, BridgeService::class.java)
             if (reload) i.action = ACTION_RELOAD
             ctx.startForegroundService(i)
