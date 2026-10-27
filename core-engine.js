@@ -456,6 +456,9 @@ const Eng = {
     // load>1 при turbo=1 означает реальные подвисания звука (очередь воркета не успевает наполняться).
     const budgetMs = reps*BLOCK/this.sr*1000;
     this.load = this.load*0.8 + (this.t/budgetMs)*0.2;   // сглаживание — иначе скачет от блока к блоку
+    // живые обои (modules/wallpaper.js): такты движка идут из AudioWorklet и не замирают, когда страница не видна,
+    // в отличие от requestAnimationFrame — единственный надёжный способ достучаться досюда в фоне
+    if(typeof wallpaperTick==='function') wallpaperTick();
   },
   allocOuts(){
     this.outs=Array.from({length:2*this.NBUS},()=>new Float32Array(BLOCK));
