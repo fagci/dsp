@@ -17,6 +17,9 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Камера (Camera2) → кадры JPEG. Открыта, пока есть хотя бы один зритель; работает при погашенном экране (foreground-сервис). */
 class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
@@ -46,6 +49,14 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     private var fmt = ImageFormat.YUV_420_888
     private var phys: String? = null
     private var lastEnc = 0L
+    private var pool: ExecutorService? = null                 // кодирование кадров параллельно: один поток упирался в ~25 к/с (YUV → NV21 → поворот → JPEG)
+    private val busy = AtomicInteger()
+    private var frameNo = 0L
+    private var shownNo = 0L
+    private var lastPub = 0L
+    private var emaMs = 0.0
+    private var infoT = 0L
+    private var infoBase = ""
     private val idleStop = Runnable { synchronized(lock) { if (users == 0) stopLocked() } }
 
     val viewers: Int get() = synchronized(lock) { users }
@@ -147,6 +158,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
         try { reader?.close() } catch (e: Exception) {}
         session = null; device = null; reader = null
         thread?.quitSafely(); thread = null; handler = null
+        pool?.shutdownNow(); pool = null
         jpeg = null
         lock.notifyAll()
     }
@@ -171,10 +183,13 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
             val th = HandlerThread("dsp-camera").also { it.start() }
             val h = Handler(th.looper)
             thread = th; handler = h; cfg = c; lastEnc = 0
-            val rd = ImageReader.newInstance(size.width, size.height, fmt, 2)
+            val workers = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+            pool = Executors.newFixedThreadPool(workers) { r -> Thread(r, "dsp-enc").also { it.isDaemon = true } }
+            busy.set(0); frameNo = 0; shownNo = 0; lastPub = 0; emaMs = 0.0; infoT = 0
+            val rd = ImageReader.newInstance(size.width, size.height, fmt, workers + 2)
             rd.setOnImageAvailableListener({ onImage(it, c) }, h)
             reader = rd
-            info = "${size.width}×${size.height}"
+            infoBase = "${size.width}×${size.height}"; info = infoBase
             mgr.openCamera(id, object : CameraDevice.StateCallback() {
                 override fun onOpened(d: CameraDevice) {
                     device = d
@@ -206,7 +221,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                         rq.addTarget(rd.surface)
                         // диапазон кадров, ближайший сверху к нужному fps: меньше fps — меньше нагрев и батареи
                         val ranges = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
-                        ranges?.sortedWith(compareBy<android.util.Range<Int>>({ Math.abs(it.upper - c.fps) }, { it.lower }))?.firstOrNull()
+                        ranges?.sortedWith(compareBy<android.util.Range<Int>>({ Math.abs(it.upper - c.fps) }, { -it.lower }))?.firstOrNull()
                             ?.let { rq.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
                         s.setRepeatingRequest(rq.build(), null, h)
                     } catch (e: Exception) { fail("camera: ${e.message}") }
@@ -224,21 +239,39 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
 
     private fun onImage(r: ImageReader, c: Cfg) {
         val img = r.acquireLatestImage() ?: return
+        val now = SystemClock.elapsedRealtime()
+        val p = pool
+        // нужный fps выдержан, все потоки заняты (камера быстрее кодирования) или остановка — кадр пропускаем
+        if (p == null || now - lastEnc < 1000L / c.fps - 5 || busy.get() >= (Runtime.getRuntime().availableProcessors().coerceIn(2, 4))) { img.close(); return }
+        lastEnc = now
+        val no = ++frameNo
+        busy.incrementAndGet()
+        try { p.execute { encode(img, c, no) } } catch (e: Exception) { busy.decrementAndGet(); img.close() }
+    }
+
+    private fun encode(img: Image, c: Cfg, no: Long) {
         try {
-            val now = SystemClock.elapsedRealtime()
-            if (now - lastEnc < 1000L / c.fps - 5) return
-            lastEnc = now
             val w = img.width; val h = img.height
             val rot = ((sensorRot + c.rot) % 360 + 360) % 360
             val nv = Yuv.rotate(if (img.format == ImageFormat.YUV_420_888) Yuv.toNv21(img) else Yuv.fromGray16(img, c.pal), w, h, rot)
             val (nw, nh) = if (rot == 90 || rot == 270) h to w else w to h
             val bos = ByteArrayOutputStream(nw * nh / 6)
             YuvImage(nv, ImageFormat.NV21, nw, nh, null).compressToJpeg(Rect(0, 0, nw, nh), c.quality, bos)
-            synchronized(lock) { jpeg = bos.toByteArray(); seq++; lock.notifyAll() }
+            val out = bos.toByteArray()
+            synchronized(lock) {
+                if (no <= shownNo || cfg == null) return                       // кадр обогнал более поздний или камеру уже остановили
+                shownNo = no; jpeg = out; seq++
+                val t = SystemClock.elapsedRealtime()
+                if (lastPub > 0) { val dt = (t - lastPub).toDouble(); emaMs = if (emaMs == 0.0) dt else emaMs * 0.9 + dt * 0.1 }
+                lastPub = t
+                if (t - infoT > 1000 && emaMs > 0) { infoT = t; info = infoBase + " · " + Math.round(1000 / emaMs) + " fps" }   // реальная частота выданных кадров
+                lock.notifyAll()
+            }
         } catch (e: Exception) {
             error = "encode: ${e.message}"
         } finally {
-            img.close()
+            try { img.close() } catch (e: Exception) {}
+            busy.decrementAndGet()
         }
     }
 }
@@ -263,7 +296,8 @@ object Yuv {
         val w = img.width; val h = img.height
         val out = ByteArray(w * h * 3 / 2)
         val y = img.planes[0]
-        for (row in 0 until h) {
+        if (y.rowStride == w) { y.buffer.position(0); y.buffer.get(out, 0, w * h) }         // строки подряд — одним куском
+        else for (row in 0 until h) {
             y.buffer.position(row * y.rowStride)
             y.buffer.get(out, row * w, w)
         }

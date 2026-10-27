@@ -9,3 +9,10 @@ function pipRatio(w,h){
   r=Math.max(1/2.39,Math.min(2.39,r));
   return [Math.round(r*1000),1000];
 }
+
+// вписать картинку w×h в окно W×H без искажений (как object-fit: contain); возвращает целые размеры
+function pipFit(w,h,W,H){
+  if(!(w>0) || !(h>0) || !(W>0) || !(H>0)) return [Math.max(1,W|0),Math.max(1,H|0)];
+  const k=Math.min(W/w,H/h);
+  return [Math.max(1,Math.floor(w*k)),Math.max(1,Math.floor(h*k))];
+}
