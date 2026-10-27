@@ -5,12 +5,12 @@ let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else
 const ctx=vm.createContext({Math,Number,String,Object,Array,JSON,Map,Set,Uint8Array,DataView,TextDecoder,TextEncoder,parseInt,isFinite,Error,Infinity});
 const load=f=>vm.runInContext(fs.readFileSync(new URL('../modules/'+f,import.meta.url),'utf8'),ctx);
 load('ble-kernels.js'); load('dnsq-kernels.js'); load('phonelink-kernels.js');
-vm.runInContext('this.K={plGattCmd,plNetCmd,plScanOpts,plDecode,plLine,plAdvCmd,plDnsReply,dnsParse}',ctx);
+vm.runInContext('this.K={plGattCmd,plNetCmd,plScanOpts,plDecode,plLine,plAdvCmd,plDnsReply,dnsParse,plSysCmd,PL_SYS_ACTIONS}',ctx);
 const K=ctx.K, J=o=>JSON.stringify(o);
 
 // скан
 ok('scan options: defaults send nothing',K.plScanOpts({})===null && K.plScanOpts({bleMode:'low_latency',blePhy:'all',bleMatch:'default'})===null);
-const so=K.plScanOpts({bleMode:'low_power',bleLegacy:'extended',blePhy:'coded',bleDelay:2000,bleName:' Mi ',bleAddr:'aa:bb:cc:dd:ee:ff',bleUuid:'180d',bleMfr:'0x004C'});
+const so=K.plScanOpts({bleMode:'low_power',bleLegacy:'extended only',blePhy:'coded',bleDelay:2000,bleName:' Mi ',bleAddr:'aa:bb:cc:dd:ee:ff',bleUuid:'180d',bleMfr:'0x004C'});
 ok('scan options: mode, extended, coded PHY, batching, filters',so.mode==='low_power' && so.legacy===false && so.phy==='coded' && so.delay===2000 && so.name==='Mi' && so.addr==='AA:BB:CC:DD:EE:FF' && so.uuid==='180d' && so.mfr==='004C',J(so));
 ok('scan options: bad address / company ignored',K.plScanOpts({bleAddr:'zz',bleMfr:'xyz'})===null);
 
@@ -54,4 +54,15 @@ const rr=K.plDnsReply({hex:'123481800001000100000000076578616d706c6503636f6d0000
 ok('dns reply → rec rows',rr.rows.length===1 && rr.rows[0].data==='93.184.216.34' && rr.rows[0].src==='dns' && rr.rows[0].ms===12.5 && rr.rows[0].server==='8.8.8.8',J(rr.rows));
 // строки
 ok('lines for readouts',K.plLine({src:'gatt',ev:'char',svc:'180d',chr:'2a37',props:['notify']}).includes('2a37') && K.plLine({src:'net',ev:'ping',host:'h',ok:1,ms:12.34,ttl:64,seq:1}).includes('12.3') && K.plLine({src:'speech',final:0,text:'hel'}).startsWith('…') && K.plLine({src:'sys',ev:'screen',on:1}).includes('screen'));
+
+// автоматизация, речь, управление
+ok('PL_SYS_ACTIONS has the basics',K.PL_SYS_ACTIONS.includes('speech start') && K.PL_SYS_ACTIONS.includes('ui tap') && K.PL_SYS_ACTIONS.includes('tts speak'));
+ok('speech start/stop',K.plSysCmd({action:'speech start',lang:'ru-RU',partial:true}).cmd==='speech.start' && K.plSysCmd({action:'speech start',lang:'ru-RU'}).lang==='ru-RU' && K.plSysCmd({action:'speech stop'}).cmd==='speech.stop');
+ok('volume: pct or level, ringer',(c=>c.cmd==='vol.set' && c.pct===50)(K.plSysCmd({action:'vol set',stream:'music',volPct:50})) && K.plSysCmd({action:'vol ringer',ringer:'silent'}).mode==='silent');
+ok('tts: needs text, rate/pitch pass through',K.plSysCmd({action:'tts speak',text:''}).error && K.plSysCmd({action:'tts speak',text:'hi',rate:1.5}).rate===1.5);
+ok('clipboard',K.plSysCmd({action:'clip set',text:'x'}).cmd==='clip.set' && K.plSysCmd({action:'clip get'}).cmd==='clip.get');
+ok('the text input overrides the field',K.plSysCmd({action:'toast',text:'field'},{text:'wire'}).text==='wire');
+ok('app launch needs pkg',K.plSysCmd({action:'app launch',pkg:''}).error && K.plSysCmd({action:'app launch',pkg:'com.example'}).cmd==='app.launch');
+ok('intent kinds',K.plSysCmd({action:'intent broadcast',intentAction:'android.intent.action.VIEW'}).kind==='broadcast' && K.plSysCmd({action:'intent activity',pkg:'com.x'}).kind==='activity' && K.plSysCmd({action:'intent broadcast'}).error);
+ok('ui: tap/swipe use wire coordinates, click/text need text',K.plSysCmd({action:'ui tap',x:1,y:2},{x:10,y:20}).x===10 && K.plSysCmd({action:'ui swipe',x:0,y:0,x2:5,y2:5}).cmd==='ui.swipe' && K.plSysCmd({action:'ui click',text:''}).error && K.plSysCmd({action:'ui back'}).action==='back');
 console.log(bad?bad+' FAILED':'all ok'); process.exit(bad?1:0);

@@ -14,7 +14,7 @@ const plIsHex=s=>{ const h=plHex(s); return h.length>0 && h.length%2===0 && PL_H
 function plScanOpts(p){
   const o={};
   if(p.bleMode && p.bleMode!=='low_latency') o.mode=p.bleMode;
-  if(p.bleLegacy===false || p.bleLegacy==='extended') o.legacy=false;
+  if(p.bleLegacy==='extended only') o.legacy=false;
   if(p.blePhy && p.blePhy!=='all') o.phy=p.blePhy;
   if(p.bleMatch && p.bleMatch!=='default') o.match=p.bleMatch;
   if(+p.bleDelay>0) o.delay=Math.round(+p.bleDelay);
@@ -166,3 +166,46 @@ function plDnsReply(r,q){
 }
 
 if(typeof module!=='undefined') module.exports={plGattCmd,plNetCmd,plScanOpts,plDecode,plLine,plAdvCmd,plDnsReply};
+
+// ---------- автоматизация, речь, управление ----------
+const PL_SYS_ACTIONS=['speech start','speech stop','vol get','vol set','vol ringer','tts speak','tts stop','clip set','clip get',
+  'media play/pause','media next','media prev','screen wake','toast','app list','app launch','intent broadcast','intent service','intent activity',
+  'ui tap','ui swipe','ui back','ui home','ui recents','ui click','ui text','ui screen'];
+// I: {text, pkg, x, y, x2, y2} со входов (приоритетнее полей узла)
+function plSysCmd(p,I={}){
+  const text=I.text!=null && I.text!=='' ? String(I.text) : String(p.text||'');
+  const pkg=String(I.pkg||p.pkg||'').trim();
+  switch(p.action){
+    case 'speech start': return {cmd:'speech.start',lang:String(p.lang||'').trim(),partial:p.partial!==false,offline:!!p.offline};
+    case 'speech stop': return {cmd:'speech.stop'};
+    case 'vol get': return {cmd:'vol.get',stream:p.stream||'music'};
+    case 'vol set': return {cmd:'vol.set',stream:p.stream||'music',...(p.volPct!=null && p.volPct!=='' ? {pct:+p.volPct} : {level:+p.volLevel||0}),ui:!!p.volUi};
+    case 'vol ringer': return {cmd:'vol.ringer',mode:p.ringer||'normal'};
+    case 'tts speak': return text ? {cmd:'tts.speak',text,lang:String(p.lang||'').trim(),rate:+p.rate||1,pitch:+p.pitch||1,queue:!!p.queue} : {error:'text'};
+    case 'tts stop': return {cmd:'tts.stop'};
+    case 'clip set': return text ? {cmd:'clip.set',text} : {error:'text'};
+    case 'clip get': return {cmd:'clip.get'};
+    case 'media play/pause': return {cmd:'media',key:'toggle'};
+    case 'media next': return {cmd:'media',key:'next'};
+    case 'media prev': return {cmd:'media',key:'prev'};
+    case 'screen wake': return {cmd:'screen.wake',ms:+p.wakeMs||5000};
+    case 'toast': return text ? {cmd:'toast',text} : {error:'text'};
+    case 'app list': return {cmd:'app.list',q:String(p.q||''),limit:+p.limit||200};
+    case 'app launch': return pkg ? {cmd:'app.launch',pkg,root:!!p.root} : {error:'pkg: package name (from app.list)'};
+    case 'intent broadcast': case 'intent service': case 'intent activity': {
+      const ia=String(p.intentAction||'').trim(), id=String(p.intentData||'').trim();
+      return ia||id||pkg ? {cmd:'intent',kind:p.action.split(' ')[1],action:ia,data:id,pkg,root:!!p.root} : {error:'action, data or pkg'};
+    }
+    case 'ui tap': return {cmd:'ui.tap',x:+(I.x??p.x)||0,y:+(I.y??p.y)||0};
+    case 'ui swipe': return {cmd:'ui.swipe',x:+(I.x??p.x)||0,y:+(I.y??p.y)||0,x2:+(I.x2??p.x2)||0,y2:+(I.y2??p.y2)||0,ms:+p.swipeMs||300};
+    case 'ui back': return {cmd:'ui.global',action:'back'};
+    case 'ui home': return {cmd:'ui.global',action:'home'};
+    case 'ui recents': return {cmd:'ui.global',action:'recents'};
+    case 'ui click': return text ? {cmd:'ui.click',text} : {error:'text: the button\'s visible label'};
+    case 'ui text': return text ? {cmd:'ui.text',text} : {error:'text'};
+    case 'ui screen': return {cmd:'ui.screen'};
+  }
+  return {error:'unknown action'};
+}
+
+if(typeof module!=='undefined') Object.assign(module.exports,{plSysCmd,PL_SYS_ACTIONS});

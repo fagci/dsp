@@ -12,6 +12,7 @@ function termuxSubMsg(p){
   if(hz>0) m.hz=hz;
   if(+p.wifiEvery>0 && p.wifi) m.wifiEvery=+p.wifiEvery;
   if(+p.cellEvery>0 && p.cell) m.cellEvery=+p.cellEvery;
+  if(p.ble && typeof plScanOpts==='function'){ const bo=plScanOpts(p); if(bo) m.ble=bo; }
   if(+p.micHz>0 && p.mic) m.micHz=+p.micHz;
   if(p.pkt){ m.iface=String(p.iface||'any').trim(); m.filter=String(p.filter||'').trim(); m.snap=+p.snap||256; }
   return m;

@@ -19,6 +19,8 @@ ok('buttons: ids from labels, unique, at most three', b.length === 3 && b[0].id 
 ok('notify command', JSON.stringify(K.phoneCmd({ action: 'notify', title: 'T', body: 'hello', buttons: 'A', open: false })) === JSON.stringify({ cmd: 'notify', title: 'T', text: 'hello', actions: [{ id: 'a', label: 'A' }], open: false }));
 ok('the text input overrides the field', K.phoneCmd({ action: 'sms.send', to: ' +79001234567 ', body: 'field' }, 'from wire').text === 'from wire' && K.phoneCmd({ action: 'sms.send', to: ' +79001234567 ', body: 'field' }, '').text === 'field' && K.phoneCmd({ action: 'sms.send', to: ' +79001234567 ' }, null).to === '+79001234567');
 ok('torch commands', K.phoneCmd({ action: 'torch on', level: 0 }).on === true && K.phoneCmd({ action: 'torch on', level: 3 }).level === 3 && K.phoneCmd({ action: 'torch off' }).on === false && !('level' in K.phoneCmd({ action: 'torch on', level: 0 })));
+ok('vibrate: ms, amplitude only when set', K.phoneCmd({ action: 'vibrate', vibMs: 500 }).ms === 500 && !('amp' in K.phoneCmd({ action: 'vibrate', vibMs: 500, vibAmp: 0 })) && K.phoneCmd({ action: 'vibrate', vibAmp: 200 }).amp === 200 && K.phoneCmd({ action: 'vibrate stop' }).cmd === 'vibrate.stop');
+ok('sms.data: hex cleaned, port', K.phoneCmd({ action: 'sms.data', to: '123', dataHex: 'de:ad BE-EF', dport: 9200 }).hex === 'deadbeef' && K.phoneCmd({ action: 'sms.data', to: '123', dport: 9200 }).port === 9200);
 ok('list commands', K.phoneCmd({ action: 'sms.list', box: 'inbox', q: 'bank', limit: 20 }).box === 'inbox' && K.phoneCmd({ action: 'contacts.find', q: 'Ann' }).limit === 50 && K.phoneCmd({ action: 'nope' }) === null);
 
 // ИК: кадр кодека → команда излучателю
