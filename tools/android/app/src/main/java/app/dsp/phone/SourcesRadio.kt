@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.BroadcastReceiver
@@ -19,6 +20,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
+import android.os.ParcelUuid
+import org.json.JSONObject
 
 private fun Context.btAdapter(): BluetoothAdapter? = (getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
 
@@ -35,25 +38,56 @@ private fun lat(l: android.location.Location?) = arrayOf(
 /** BLE: каждая реклама — запись (адрес, имя, RSSI, данные производителя, службы, сырые байты) с последним положением. */
 class BleHub(private val ctx: Context, private val gps: GpsHub, private val emit: Emit) : ScanCallback() {
     private var on = false
+    private var cur = ""
     @Volatile var lastError = ""
 
-    /** false — нет разрешения или Bluetooth выключен (причина в lastError). */
+    /**
+     * Настройки скана (то, чего нет в Web Bluetooth): mode low_latency | balanced | low_power | opportunistic, legacy (false — и расширенная
+     * реклама), phy all | 1m | coded, match aggressive | sticky, delay (мс, пакетная выдача), фильтры name / addr / uuid / mfr (hex id компании).
+     */
+    class Opts(val json: String) {
+        val o = try { JSONObject(json.ifEmpty { "{}" }) } catch (e: Exception) { JSONObject() }
+        fun settings(): ScanSettings {
+            val b = ScanSettings.Builder().setScanMode(when (o.optString("mode", "low_latency")) {
+                "balanced" -> ScanSettings.SCAN_MODE_BALANCED; "low_power" -> ScanSettings.SCAN_MODE_LOW_POWER
+                "opportunistic" -> ScanSettings.SCAN_MODE_OPPORTUNISTIC; else -> ScanSettings.SCAN_MODE_LOW_LATENCY })
+            if (o.has("legacy")) b.setLegacy(o.optBoolean("legacy", true))
+            when (o.optString("phy", "all")) { "1m" -> b.setPhy(android.bluetooth.BluetoothDevice.PHY_LE_1M); "coded" -> b.setPhy(android.bluetooth.BluetoothDevice.PHY_LE_CODED); else -> b.setPhy(ScanSettings.PHY_LE_ALL_SUPPORTED) }
+            if (o.optString("match") == "sticky") b.setMatchMode(ScanSettings.MATCH_MODE_STICKY) else if (o.optString("match") == "aggressive") b.setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
+            val d = o.optLong("delay", 0); if (d > 0) b.setReportDelay(d.coerceAtMost(60_000))
+            return b.build()
+        }
+        fun filters(): List<ScanFilter>? {
+            val f = ScanFilter.Builder(); var any = false
+            o.optString("name").takeIf { it.isNotEmpty() }?.let { f.setDeviceName(it); any = true }
+            Args.mac(o.optString("addr"))?.let { f.setDeviceAddress(it); any = true }
+            Args.uuid(o.optString("uuid"))?.let { f.setServiceUuid(ParcelUuid(it)); any = true }
+            o.optString("mfr").toIntOrNull(16)?.let { f.setManufacturerData(it, ByteArray(0), ByteArray(0)); any = true }
+            return if (any) listOf(f.build()) else null
+        }
+    }
+
+    /** false — нет разрешения или Bluetooth выключен (причина в lastError). opts — JSON настроек скана (см. Opts). */
     @Synchronized
-    fun update(want: Boolean): Boolean {
-        if (want == on) return true
+    fun update(want: Boolean, opts: String = ""): Boolean {
+        if (want == on && (!want || opts == cur)) return true
         val sc = ctx.btAdapter()?.takeIf { it.isEnabled }?.bluetoothLeScanner
-        if (!want) { on = false; try { sc?.stopScan(this) } catch (e: Exception) {}; return true }
+        if (on) { on = false; try { sc?.stopScan(this) } catch (e: Exception) {} }
+        if (!want) return true
         if (!ctx.canScanBt()) { lastError = "ble: allow Nearby devices (Bluetooth) for the DSP app"; return false }
         if (sc == null) { lastError = "ble: Bluetooth is off"; return false }
         return try {
-            sc.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), this)
-            on = true; true
+            val o = Opts(opts)
+            sc.startScan(o.filters(), o.settings(), this)
+            on = true; cur = opts; true
         } catch (e: Exception) { lastError = "ble: ${e.message}"; false }
     }
 
     fun close() { update(false) }
 
     override fun onScanFailed(code: Int) { on = false; lastError = "ble: scan failed ($code)" }
+
+    override fun onBatchScanResults(l: MutableList<ScanResult>) { for (r in l) onScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES, r) }
 
     override fun onScanResult(type: Int, r: ScanResult) {
         val bytes = r.scanRecord?.bytes ?: ByteArray(0)
@@ -65,7 +99,12 @@ class BleHub(private val ctx: Context, private val gps: GpsHub, private val emit
         (ad.name ?: r.scanRecord?.deviceName)?.let { kv.add("name" to Json.str(it)) }
         kv.add("rssi" to r.rssi.toString())
         txp?.let { kv.add("txp" to it.toString()) }
-        if (Build.VERSION.SDK_INT >= 26) kv.add("conn" to if (r.isConnectable) "1" else "0")
+        if (Build.VERSION.SDK_INT >= 26) {
+            kv.add("conn" to if (r.isConnectable) "1" else "0"); kv.add("legacy" to if (r.isLegacy) "1" else "0")
+            kv.add("pphy" to r.primaryPhy.toString()); kv.add("sphy" to r.secondaryPhy.toString())      // 1 — 1M, 2 — 2M, 3 — Coded, 0 — нет
+            if (r.advertisingSid != ScanResult.SID_NOT_PRESENT) kv.add("sid" to r.advertisingSid.toString())
+            if (r.periodicAdvertisingInterval != 0) kv.add("pint" to r.periodicAdvertisingInterval.toString())
+        }
         ad.flags?.let { kv.add("flags" to it.toString()) }
         ad.appearance?.let { kv.add("app" to it.toString()) }
         if (ad.uuids.isNotEmpty()) kv.add("uuids" to Json.arr(ad.uuids))

@@ -36,6 +36,11 @@ class Config(ctx: Context) {
         get() = sp.getBoolean("sniffer", false)
         set(v) { sp.edit().putBoolean("sniffer", v).apply() }
 
+    /** Действия (сеть, соединения Bluetooth, речь, управление телефоном) — не только странице приложения, а любой странице с доступом к порту. SMS и контакты это не открывает. */
+    var openCmds: Boolean
+        get() = sp.getBoolean("openCmds", false)
+        set(v) { sp.edit().putBoolean("openCmds", v).apply() }
+
     /** Пусто — без токена. */
     var token: String
         get() = sp.getString("token", "") ?: ""

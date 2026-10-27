@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">DSP</string>
+    <string name="ui_service_desc">Lets patches of the DSP workbench tap, swipe, press Back / Home, click buttons by their text and read the text on the screen. Only this app's own page (or pages you allowed in the app Settings) can send these commands.</string>
 </resources>
