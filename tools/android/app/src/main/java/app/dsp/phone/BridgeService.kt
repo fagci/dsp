@@ -46,6 +46,12 @@ class BridgeService : Service() {
     override fun onCreate() {
         super.onCreate()
         cfg = Config(this)
+        // падение приложения (не нативное): трассировка в файл, команда crash.last в Phone Actions её отдаёт
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            try { java.io.File(filesDir, CRASH_FILE).writeText("${java.util.Date()} thread ${t.name}\n" + android.util.Log.getStackTraceString(e).take(4000)) } catch (x: Exception) {}
+            prev?.uncaughtException(t, e)
+        }
         camera = CameraHub(this) { main.post { refresh() } }
         camera.onNeedPermission = { main.post { requestPerms(listOf(android.Manifest.permission.CAMERA)) } }
         server = BridgeServer(cfg, camera, ::helloJson, ::statusText) { refresh() }
@@ -217,6 +223,7 @@ class BridgeService : Service() {
         const val ACTION_STOP = "app.dsp.phone.STOP"
         const val ACTION_RELOAD = "app.dsp.phone.RELOAD"
         private const val CH = "bridge"
+        const val CRASH_FILE = "last-crash.txt"
         private const val CH_PERM = "perm"
         private const val ID = 1
         const val PERM_ID = 2

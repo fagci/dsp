@@ -321,7 +321,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     }
 
     private fun onImage(r: ImageReader, c: Cfg) {
-        val img = r.acquireLatestImage() ?: return
+        val img = (try { r.acquireLatestImage() } catch (e: Exception) { null }) ?: return      // превышен maxImages: кадр пропускаем, а не роняем приложение
         val now = SystemClock.elapsedRealtime()
         val p = pool
         // нужный fps выдержан, все потоки заняты (камера быстрее кодирования) или остановка — кадр пропускаем
