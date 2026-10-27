@@ -43,7 +43,7 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
             "accelraw" to Sensor.TYPE_ACCELEROMETER_UNCALIBRATED, "gyroraw" to Sensor.TYPE_GYROSCOPE_UNCALIBRATED, "magraw" to Sensor.TYPE_MAGNETIC_FIELD_UNCALIBRATED,
             "ambtemp" to Sensor.TYPE_AMBIENT_TEMPERATURE, "humidity" to Sensor.TYPE_RELATIVE_HUMIDITY,
             "steps" to Sensor.TYPE_STEP_COUNTER, "step" to Sensor.TYPE_STEP_DETECTOR, "hinge" to Sensor.TYPE_HINGE_ANGLE, "heading" to Sensor.TYPE_HEADING,
-            "devorient" to Sensor.TYPE_DEVICE_ORIENTATION,
+            "devorient" to 27,      // TYPE_DEVICE_ORIENTATION: скрыт в публичном SDK, число из AOSP
         )
         /** Одноразовые датчики: срабатывают раз, после чего их надо взводить заново. */
         val TRIGGERS = linkedMapOf(
