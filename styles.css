@@ -1582,3 +1582,4 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 .stu-lite>.stu-panel{min-height:0}
 .stu-lite .stu-p-rack{overflow:auto;flex:1 1 55%}
 .stu-lite .stu-p-inst{flex:1 1 45%}
+.stu-scn{width:62px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 4px;font-size:10px;text-align:center}
