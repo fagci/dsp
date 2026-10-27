@@ -11,6 +11,24 @@ defIQ({ id:'dmrParse', title:'DMR Frame Parser', cat:'Decoders', kw:'dmr frames 
 /* ---- журнал: звонки, станции, разговорные группы ---- */
 // Копит записи DMR (Digital Voice Decoder): кто с кем, когда, сколько; по станциям и группам — счётчики. Станции с позицией (LRRP / NMEA)
 // уходят на карту. Длительность — по записи end (время потока), без неё — по числу голосовых пакетов (60 мс на слот).
+// имена: RadioID (позывной, имя, место) и названия групп; файлы качает OfflineData (Files → ⇩ offline), пока их нет — журнал работает с числами
+const DMR_ID_FILE='radioid-user.csv', DMR_TG_FILE='dmr-talkgroups.json';
+OfflineData.fileItem({id:'dmrids',label:'DMR: RadioID database (callsigns)',mb:25,files:[[DMR_ID_FILE,['https://radioid.net/static/user.csv']]]});
+OfflineData.fileItem({id:'dmrtg',label:'DMR: talkgroup names (BrandMeister)',mb:.2,saveAs:f=>/talk|tg/i.test(f) ? DMR_TG_FILE : null,
+  files:[[DMR_TG_FILE,['https://api.brandmeister.network/v2/talkgroup']]]});
+function dmrLogLoad(n){
+  if(!n.p.names || n.ld==='load' || n.ld==='ok' || Date.now()<n.ldRetry) return;
+  n.ld='load';
+  const get=(f,u,parse)=>OfflineData.blob(f,u).then(b=>b.text()).then(parse).catch(e=>{ n.ldErr=String(e.message||e); return null; });
+  Promise.all([get(DMR_ID_FILE,['https://radioid.net/static/user.csv'],dmrIdParse), get(DMR_TG_FILE,['https://api.brandmeister.network/v2/talkgroup'],dmrTgParse)]).then(([ids,tg])=>{
+    if(ids) n.ids=ids; if(tg) n.tgn=tg;
+    n.ld=ids&&tg ? 'ok' : ''; n.ldRetry=Date.now()+60000;   // чего нет — повторяем раз в минуту
+  });
+}
+const dmrLogWho=(n,id)=>n.p.names ? n.ids?.get(id) : null;
+const dmrLogTgName=(n,id)=>n.p.names ? n.tgn?.get(id) : null;
+const dmrLogNames=n=>!n.p.names ? '' : n.ld==='load' ? ' · names: loading…' : n.ids||n.tgn ? ' · names: '+(n.ids?n.ids.size+' IDs':'no IDs')+(n.tgn?', '+n.tgn.size+' groups':', no groups')
+  : ' · names: no data'+(n.ldErr ? ' ('+n.ldErr+')' : '')+' — Files → ⇩ offline';
 function dmrLogStation(n,id,t){
   let s=n.st.get(id);
   if(!s){ s={radio:id, alias:'', calls:0, seconds:0, msgs:0, emergency:0, encrypted:0, first:t, last:t, tg:null, slot:null}; n.st.set(id,s); }
@@ -26,14 +44,19 @@ function dmrLogClose(n,c,dur,voice,by,out,t){
   c.dur=dur; c.voice=voice; c.by=by; c.open=false;
   s.seconds+=dur; g.seconds+=dur;
   n.calls.push(c); if(n.calls.length>n.p.max) n.calls.splice(0,n.calls.length-n.p.max);
-  out.calls.push(dmrLogCallRec(c));
+  out.calls.push(dmrLogCallRec(n,c));
 }
-function dmrLogCallRec(c){
-  return {t:c.t0, src:'DMR', kind:'call-log', radio:c.from, to:c.to, call:c.type, slot:c.slot, cc:c.cc, seconds:+c.dur.toFixed(1), voice:c.voice, alias:c.alias||undefined, flags:c.flags||undefined,
-    text:c.from+(c.alias ? ' "'+c.alias+'"' : '')+' → '+(c.type==='group' ? 'TG ' : '')+c.to+' · '+c.dur.toFixed(1)+' s'};
+// участник вызова: «ID ПОЗЫВНОЙ "алиас"»; группа: «TG 91 (название)»
+function dmrLogParty(n,id,alias){ const w=dmrLogWho(n,id); return id+(w ? ' '+w.call : '')+(alias ? ' "'+alias+'"' : ''); }
+function dmrLogDest(n,c){ if(c.type!=='group') return dmrLogParty(n,c.to); const g=dmrLogTgName(n,c.to); return 'TG '+c.to+(g ? ' ('+g+')' : ''); }
+function dmrLogCallRec(n,c){
+  const w=dmrLogWho(n,c.from);
+  return {t:c.t0, src:'DMR', kind:'call-log', radio:c.from, callsign:w?.call, name:w?.name||undefined, to:c.to, tgname:c.type==='group' ? dmrLogTgName(n,c.to)||undefined : undefined, call:c.type, slot:c.slot, cc:c.cc, seconds:+c.dur.toFixed(1), voice:c.voice, alias:c.alias||undefined, flags:c.flags||undefined,
+    text:dmrLogParty(n,c.from,c.alias)+' → '+dmrLogDest(n,c)+' · '+c.dur.toFixed(1)+' s'};
 }
-function dmrLogStationRec(s,t){
-  const r={t, src:'DMR', kind:'station', id:'dmr:'+s.radio, radio:s.radio, alias:s.alias||undefined, label:s.alias||String(s.radio), calls:s.calls, seconds:+s.seconds.toFixed(1), messages:s.msgs, tg:s.tg, slot:s.slot, last:s.last};
+function dmrLogStationRec(n,s,t){
+  const w=dmrLogWho(n,s.radio);
+  const r={t, src:'DMR', kind:'station', id:'dmr:'+s.radio, radio:s.radio, alias:s.alias||undefined, callsign:w?.call, name:w?.name||undefined, place:w?.place||undefined, label:s.alias||w?.call||String(s.radio), calls:s.calls, seconds:+s.seconds.toFixed(1), messages:s.msgs, tg:s.tg, slot:s.slot, last:s.last};
   if(s.lat!=null){ r.lat=s.lat; r.lon=s.lon; }
   return r;
 }
@@ -45,10 +68,12 @@ def({ id:'dmrLog', title:'DMR Call Log', cat:'Output',
           {n:'calls',t:'button',label:'Calls CSV',fn:n=>dl(new Blob(['﻿'+recsToCsv(dmrLogCallRows(n))],{type:'text/csv;charset=utf-8'}),'dmr-calls-'+Date.now()+'.csv')},
           {n:'stations',t:'button',label:'Stations CSV',fn:n=>dl(new Blob(['﻿'+recsToCsv(dmrLogStationRows(n))],{type:'text/csv;charset=utf-8'}),'dmr-stations-'+Date.now()+'.csv')},
           {n:'groups',t:'button',label:'Groups CSV',fn:n=>dl(new Blob(['﻿'+recsToCsv(dmrLogGroupRows(n))],{type:'text/csv;charset=utf-8'}),'dmr-groups-'+Date.now()+'.csv')},
-          {n:'replay',t:'button',label:'Replay stations',fn:n=>{ n.replay=[...n.st.values()].map(s=>dmrLogStationRec(s,s.last)); }},
+          {n:'names',t:'check',d:true,label:'names from RadioID and talkgroup lists (Files → ⇩ offline)'},
+          {n:'replay',t:'button',label:'Replay stations',fn:n=>{ n.replay=[...n.st.values()].map(s=>dmrLogStationRec(n,s,s.last)); }},
           {n:'clr',t:'button',label:'Clear',fn:n=>{ n.st=new Map(); n.tgs=new Map(); n.calls=[]; n.open=new Map(); }}],
-  init:n=>{ n.st=new Map(); n.tgs=new Map(); n.calls=[]; n.open=new Map(); n.replay=null; },
+  init:n=>{ n.st=new Map(); n.tgs=new Map(); n.calls=[]; n.open=new Map(); n.replay=null; n.ld=''; n.ldRetry=0; n.ids=null; n.tgn=null; },
   process(n,I){
+    dmrLogLoad(n);
     const out={calls:[], st:new Set()};
     for(const r of recList(I.rec)){
       if(r.src!=='DMR') continue;
@@ -84,26 +109,26 @@ def({ id:'dmrLog', title:'DMR Call Log', cat:'Output',
         out.st.add(s);
       }
     }
-    let st=[...out.st].map(s=>dmrLogStationRec(s,s.last));
+    let st=[...out.st].map(s=>dmrLogStationRec(n,s,s.last));
     if(n.replay?.length){ st=st.concat(n.replay.splice(0,500)); }
     return {stations:st.length ? st : null, calls:out.calls.length ? out.calls : null, count:n.st.size};
   },
   draw(n){
     const fmt=t=>new Date(t).toLocaleTimeString(), act=[...n.open.values()];
-    const head='stations '+n.st.size+' · groups '+n.tgs.size+' · calls '+n.calls.filter(c=>!c.data).length+' · messages '+n.calls.filter(c=>c.data).length;
-    const now=act.map(c=>'● '+(c.slot ? 'TS'+c.slot+' ' : '')+c.from+(n.st.get(c.from)?.alias ? ' "'+n.st.get(c.from).alias+'"' : '')+' → '+(c.type==='group' ? 'TG ' : '')+c.to);
-    const top=[...n.st.values()].sort((a,b)=>b.last-a.last).slice(0,6).map(s=>s.radio+(s.alias ? ' '+s.alias : '')+'  ×'+s.calls+' · '+s.seconds.toFixed(0)+' s'+(s.msgs ? ' · '+s.msgs+' msg' : '')+(s.lat!=null ? ' · ⌖' : '')+'  '+fmt(s.last));
-    const tail=n.calls.slice(-5).map(c=>fmt(c.t0)+' '+c.from+' → '+(c.type==='group' ? 'TG ' : '')+c.to+' '+(c.data ? (c.type+' '+(c.text||'').slice(0,40)) : c.dur.toFixed(1)+' s'));
+    const head='stations '+n.st.size+' · groups '+n.tgs.size+' · calls '+n.calls.filter(c=>!c.data).length+' · messages '+n.calls.filter(c=>c.data).length+dmrLogNames(n);
+    const now=act.map(c=>'● '+(c.slot ? 'TS'+c.slot+' ' : '')+dmrLogParty(n,c.from,n.st.get(c.from)?.alias)+' → '+dmrLogDest(n,c));
+    const top=[...n.st.values()].sort((a,b)=>b.last-a.last).slice(0,6).map(s=>dmrLogParty(n,s.radio,s.alias)+'  ×'+s.calls+' · '+s.seconds.toFixed(0)+' s'+(s.msgs ? ' · '+s.msgs+' msg' : '')+(s.lat!=null ? ' · ⌖' : '')+'  '+fmt(s.last));
+    const tail=n.calls.slice(-5).map(c=>fmt(c.t0)+' '+dmrLogParty(n,c.from)+' → '+dmrLogDest(n,c)+' '+(c.data ? (c.type+' '+(c.text||'').slice(0,40)) : c.dur.toFixed(1)+' s'));
     n.el.querySelector('.readout').textContent=head+(now.length ? '\n'+now.join('\n') : '')+(top.length ? '\n— stations —\n'+top.join('\n') : '')+(tail.length ? '\n— last —\n'+tail.join('\n') : '');
   }});
 function dmrLogCallRows(n){
-  const row=c=>({start:new Date(c.t0).toISOString(), radio:c.from, to:c.to, type:c.type, slot:c.slot, cc:c.cc, seconds:+(c.dur||0).toFixed(1), voice_bursts:c.voice, alias:c.alias||'', flags:c.flags||'', late_entry:c.late ? 1 : 0, text:c.text||'', open:c.open ? 1 : 0});
+  const row=c=>({start:new Date(c.t0).toISOString(), radio:c.from, callsign:dmrLogWho(n,c.from)?.call||'', to:c.to, to_name:c.type==='group' ? dmrLogTgName(n,c.to)||'' : dmrLogWho(n,c.to)?.call||'', type:c.type, slot:c.slot, cc:c.cc, seconds:+(c.dur||0).toFixed(1), voice_bursts:c.voice, alias:c.alias||'', flags:c.flags||'', late_entry:c.late ? 1 : 0, text:c.text||'', open:c.open ? 1 : 0});
   return n.calls.map(row).concat([...n.open.values()].map(row));
 }
 function dmrLogStationRows(n){
-  return [...n.st.values()].map(s=>({radio:s.radio, alias:s.alias, calls:s.calls, seconds:+s.seconds.toFixed(1), messages:s.msgs, emergency:s.emergency, encrypted:s.encrypted,
+  return [...n.st.values()].map(s=>({radio:s.radio, callsign:dmrLogWho(n,s.radio)?.call||'', name:dmrLogWho(n,s.radio)?.name||'', place:dmrLogWho(n,s.radio)?.place||'', alias:s.alias, calls:s.calls, seconds:+s.seconds.toFixed(1), messages:s.msgs, emergency:s.emergency, encrypted:s.encrypted,
     first:new Date(s.first).toISOString(), last:new Date(s.last).toISOString(), last_group:s.tg, slot:s.slot, lat:s.lat, lon:s.lon}));
 }
 function dmrLogGroupRows(n){
-  return [...n.tgs.values()].map(g=>({group:g.id, calls:g.calls, seconds:+g.seconds.toFixed(1), stations:g.stations.size, last:g.last ? new Date(g.last).toISOString() : ''}));
+  return [...n.tgs.values()].map(g=>({group:g.id, name:dmrLogTgName(n,g.id)||'', calls:g.calls, seconds:+g.seconds.toFixed(1), stations:g.stations.size, last:g.last ? new Date(g.last).toISOString() : ''}));
 }

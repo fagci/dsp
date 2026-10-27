@@ -1,0 +1,23 @@
+// DMR: справочники RadioID и имена групп (dmrIdParse, dmrTgParse). Проверка: node tools/test-dmrid.mjs
+import vm from 'node:vm';
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
+const src=fs.readFileSync(path.join(root,'modules/dmrid-kernels.js'),'utf8');
+const ctx=vm.createContext({Math,Object,Array,Set,Map,Number,String,JSON,Uint8Array,Uint16Array,Uint32Array,Int32Array,Float32Array,Float64Array,Date,console});
+vm.runInContext(src+';globalThis.K={dmrIdParse,dmrTgParse};',ctx);
+const K=ctx.K;
+let bad=0; const eq=(a,b,m)=>{ if(a!==b){ bad++; console.error('FAIL: '+m+' (получено '+JSON.stringify(a)+', ждали '+JSON.stringify(b)+')'); } };
+const csv='RADIO_ID,CALLSIGN,FIRST_NAME,LAST_NAME,CITY,STATE,COUNTRY\r\n2600123,SP1ABC,Jan,Kowalski,Gdansk,Pomorskie,Poland\r\n3100001,W1AW,,,,,\r\nxx,bad\r\n';
+let m=K.dmrIdParse(csv);
+eq(m.size,2,'csv: две станции'); eq(m.get(2600123).call,'SP1ABC','csv: позывной'); eq(m.get(2600123).name,'Jan Kowalski','csv: имя');
+eq(m.get(2600123).place,'Gdansk, Pomorskie, Poland','csv: место'); eq(m.get(3100001).name,'','csv: пустое имя');
+m=K.dmrIdParse(JSON.stringify({users:[{id:2500001,callsign:'R1ABC',fname:'Ivan',name:'Petrov',city:'Moscow',state:'',country:'Russia'}]}));
+eq(m.get(2500001).call,'R1ABC','json: позывной'); eq(m.get(2500001).place,'Moscow, Russia','json: место');
+eq(K.dmrIdParse('{broken').size,0,'битый json');
+let t=K.dmrTgParse('{"91":"World-wide","93":"Europe","x":"no"}');
+eq(t.size,2,'tg json'); eq(t.get(91),'World-wide','tg json: имя');
+t=K.dmrTgParse('id,name\n9,Local\n"250";"Russia"\n2600 Poland\n');
+eq(t.get(9),'Local','tg csv'); eq(t.get(2600),'Poland','tg пробел'); eq(t.size,2,'tg: шапка и кавычки-разделитель не в счёт');
+console.log(bad ? 'FAILED' : 'all ok'); process.exit(bad ? 1 : 0);

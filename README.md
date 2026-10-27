@@ -858,7 +858,9 @@ Both *Digital Voice Decoder* presets have them wired. D-STAR callsigns are taken
 
 **DMR Call Log** (Output) turns the decoder's records into an activity log: who called whom, when and for how long (calls, with the length from the terminator or from the voice-burst count; messages as rows too), counters **per radio ID** (calls, seconds, messages, emergency / encrypted calls, last heard, last group, talker alias, position) and **per talkgroup** (calls, seconds, number of stations). The readout shows the active slots, the latest stations and the last calls. Buttons: *Calls CSV*, *Stations CSV*, *Groups CSV*, *Replay stations*, *Clear*. Outputs: `stations` (one record per changed station, `id` = `dmr:<radio>`, with `lat`/`lon` once it has sent a position — wire it to a *Map*), `calls` (one `call-log` record per finished call), `count`.
 
-Presets: *DMR: Calls, SMS and CSBK (Generator)*, *DMR: Repeater or Direct Mode (USB SDR)*, *DMR: Activity Log and Station Map (Generator)*, *DMR: Activity Log and Station Map (USB SDR)*.
+**Names.** With *names from RadioID and talkgroup lists* on, the log shows the callsign next to a radio ID and the group name next to a talkgroup (log lines, readout, `stations` label, CSV columns `callsign` / `name` / `place` / `to_name`; `calls` records get `callsign`, `name`, `tgname`). The lists are the RadioID `user.csv` (about 25 MB; `users.json` works too) and the BrandMeister talkgroup list; they are not in the app — Files → ⇩ offline fetches them once and keeps them in Offline data (or save the files by hand and choose them there). Without them the log runs on numbers; the first readout line says what is loaded.
+
+Presets: *DMR: Calls, SMS and CSBK (Generator)*, *DMR: Repeater or Direct Mode (USB SDR)*, *DMR: Activity Log and Station Map (Generator)*, *DMR: Activity Log and Station Map (USB SDR)*, *DMR: Callsigns and Talkgroup Names (Generator)*.
 
 ## TETRA
 
