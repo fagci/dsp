@@ -921,9 +921,15 @@ function geoLocCost(M,x,y,o){
       const d=Math.max(Math.hypot(x-m.x,y-m.y),o.dmin), l=10*o.pn*Math.log10(d);
       L.push(l); sumA+=m.s+l; ns++; }
     if(ns>=3){
-      const A=sumA/ns; let k=0;
-      for(const m of M){ if(m.s==null) continue; const r=m.s-A+L[k++]; cs+=r*r; }
-      cs/=o.sdb*o.sdb;
+      // вес замера: ошибка уровня плюс ошибка места самого замера (точность GPS acc, м): сдвиг на acc меняет уровень на 4.34·n·acc/d дБ
+      const W=[], v0=o.sdb*o.sdb; let sw=0, k=0; sumA=0;
+      for(const m of M){ if(m.s==null) continue;
+        let v=v0;
+        if(o.useAcc && m.a>0){ const d=Math.max(Math.hypot(x-m.x,y-m.y),o.dmin), e=4.343*o.pn*m.a/(d*1000); v+=e*e; }
+        const w=v0/v; W.push(w); sw+=w; sumA+=w*(m.s+L[k++]); }
+      k=0; const A=sumA/sw;
+      for(const m of M){ if(m.s==null) continue; const r=m.s-A+L[k]; cs+=W[k]*r*r; k++; }
+      cs/=v0;
     } else cs=0;
   }
   let cb=0;
@@ -943,7 +949,7 @@ function geoLocSolve(g,p){
   const lat0=M.reduce((a,m)=>a+m.lat,0)/M.length, lon0=M[0].lon;
   const P=geoLocLocal(lat0,lon0);
   for(const m of M){ const q=P.fwd(m.lat,m.lon); m.x=q.x; m.y=q.y; }
-  const o={useS, useB, pn:p.pathN, sdb:p.sigmaDb, saz:p.sigmaAz, dmin:0.005};
+  const o={useS, useB, useAcc:p.useAcc!==false, pn:p.pathN, sdb:p.sigmaDb, saz:p.sigmaAz, dmin:0.005};
   // область поиска: вокруг замеров; с пеленгами — ещё и вокруг пересечения лучей (МНК)
   let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
   for(const m of M){ x0=Math.min(x0,m.x); x1=Math.max(x1,m.x); y0=Math.min(y0,m.y); y1=Math.max(y1,m.y); }
@@ -1018,7 +1024,7 @@ function geoLocMeas(n,r,gf){
   let key='';
   if(gf){ const v=r[gf]; if(v==null || v==='') return null; key=String(v); }
   const hz=typeof Horizon!=='undefined' && Horizon.hAt ? Horizon.hAt(pos.lat,pos.lon) : null;
-  const m={lat:pos.lat, lon:pos.lon, s:sv, az:az!=null ? ((az%360)+360)%360 : null, el, alt:recNum(r.alt), h:recNum(r.h)};
+  const m={lat:pos.lat, lon:pos.lon, s:sv, az:az!=null ? ((az%360)+360)%360 : null, el, alt:recNum(r.alt), h:recNum(r.h), a:recNum(r.acc)};
   m.alt3=l3MeasAlt(m,hz);
   return {key,m};
 }
@@ -1029,7 +1035,7 @@ function geoLocRows(n,rows,gf,lf){
   for(const r of rows){
     if(!r || typeof r!=='object') continue;
     const q=geoLocMeas(n,r,gf); if(!q) continue;
-    const m=q.m, sig=[q.key,m.lat,m.lon,m.s,m.az,m.el,m.alt,m.h].join('|');
+    const m=q.m, sig=[q.key,m.lat,m.lon,m.s,m.az,m.el,m.alt,m.h,m.a].join('|');
     const e=next.get(sig);
     if(e) e.c++; else next.set(sig,{c:1,key:q.key,m,label:lf && r[lf]!=null && r[lf]!=='' ? String(r[lf]) : ''});
   }
@@ -1075,6 +1081,7 @@ def({ id:'geoLocate', lazy:'manual', title:'Source Locator', cat:'Geo',
           {n:'pathN',t:'range',min:1.5,max:5,step:0.1,d:2.5,label:'path loss exponent n'},
           {n:'sigmaDb',t:'range',min:1,max:20,step:0.5,d:6,label:'level error, dB'},
           {n:'sigmaAz',t:'range',min:1,max:45,step:1,d:10,label:'bearing error, °'},
+          {n:'useAcc',t:'check',d:true,label:'weigh marks by position accuracy (field acc, m): a mark with a poor GPS fix counts less, most of all close to the source'},
           {n:'minSpread',t:'range',min:0,max:500,step:1,d:0,label:'min spread of level marks, m',adv:true},
           {n:'area',t:'range',min:0,max:1000,step:0.1,d:0,label:'search area, km (0 — auto)',adv:true},
           {n:'max',t:'range',min:3,max:1000,step:1,d:200,label:'keep measurements (per source)',adv:true},
@@ -1107,7 +1114,7 @@ def({ id:'geoLocate', lazy:'manual', title:'Source Locator', cat:'Geo',
       n.lastRows=Array.isArray(I.rows) ? I.rows : null;
       geoLocRows(n,n.lastRows||[],gf,lf);
     }
-    const pkey=[n.p.method,n.p.pathN,n.p.sigmaDb,n.p.sigmaAz,n.p.area,n.p.minSpread].join();
+    const pkey=[n.p.method,n.p.pathN,n.p.sigmaDb,n.p.sigmaAz,n.p.area,n.p.minSpread,n.p.useAcc].join();
     if(pkey!==n.pkey){ n.pkey=pkey; for(const g of n.groups.values()) g.dirty=true; }
     let rec=null, rays=null;
     const now=Date.now();
