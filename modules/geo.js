@@ -1452,6 +1452,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
           {n:'grid',t:'select',opts:['none','lat/lon','maidenhead'],d:'none',label:'grid'},
           {n:'iconScale',t:'range',min:.5,max:3,step:.1,d:1,label:'icon size ×'},
           {n:'labels',t:'check',d:true,label:'labels'},
+          {n:'circles',t:'select',opts:['all','selected','off'],d:'all',label:'radius circles (accuracy, error): all faint, only the selected object, or none'},
           {n:'cluster',t:'check',d:true,label:'cluster'},
           {n:'follow',t:'check',d:false,label:'follow'},
           {n:'net',t:'check',d:true,label:'online'},
@@ -1662,6 +1663,8 @@ function geoMapPan(n,dx,dy){
   const W=n.cv.width, H=n.cv.height, v=geoView(n,W,H);
   n.p.mlon=unmercX(geoWrapX((v.ox+W/2-dx)/v.S));
   n.p.mlat=unmercY(clamp((v.oy+H/2-dy)/v.S,0.001,0.999));
+  n._panT=performance.now();
+  clearTimeout(n._panEnd); n._panEnd=setTimeout(()=>redraw(n),180);   // подписи на время панорамы не рисуем — вернём, когда карта встала
 }
 
 function geoMapWire(n,cv){
@@ -2650,10 +2653,11 @@ function geoDrawObjects(n,cx,v){
       const a=geoProj(v,last.lat+e.grid.h/2,last.lon-e.grid.w/2,s.x), b=geoProj(v,last.lat-e.grid.h/2,last.lon+e.grid.w/2,s.x);
       if(b.x-a.x>6){ cx.strokeStyle=col; cx.lineWidth=1; cx.globalAlpha*=.6; cx.strokeRect(a.x,a.y,b.x-a.x,b.y-a.y); cx.globalAlpha=1-age*0.7; }
     }
-    const rad=recNum(r.radius);
-    if(rad!=null && rad>0){
+    const rad=recNum(r.radius), cm=n.p.circles||'all', csel=e.key===n.selKey;
+    if(rad!=null && rad>0 && (cm==='all' || (cm==='selected' && csel))){
       const rp=rad/mpp(last.lat);
-      if(rp>2 && rp<1e5){ cx.beginPath();
+      // за краем экрана круг не рисуем: сотни больших полупрозрачных заливок — главный тормоз панорамы на телефоне
+      if(rp>2 && rp<1e5 && (rad>300000 || (s.x+rp>0 && s.x-rp<W && s.y+rp>0 && s.y-rp<H))){ cx.beginPath();
         if(rad>300000){                              // большой круг в Меркаторе — не окружность
           let px=null;
           for(let i=0;i<=72;i++){
@@ -2661,10 +2665,11 @@ function geoDrawObjects(n,cx,v){
             if(px==null) cx.moveTo(p.x,p.y); else cx.lineTo(p.x,p.y); px=p.x;
           }
         } else cx.arc(s.x,s.y,rp,0,2*Math.PI);
-        const a0=cx.globalAlpha;                     // тёмная подложка под цветной линией: круг виден и на светлой карте
-        cx.strokeStyle='rgba(0,0,0,.55)'; cx.lineWidth=4; cx.stroke();
-        cx.strokeStyle=col; cx.lineWidth=2; cx.setLineDash([6,4]); cx.stroke(); cx.setLineDash([]);
-        cx.fillStyle=col; cx.globalAlpha=a0*.16; cx.fill(); cx.globalAlpha=a0; }
+        const a0=cx.globalAlpha;                     // все круги — тонкая бледная линия и слабая заливка; выбранный — ярче, пунктиром
+        cx.fillStyle=col; cx.globalAlpha=a0*(csel ? .14 : .06); cx.fill();
+        cx.strokeStyle=col; cx.globalAlpha=a0*(csel ? .9 : .4); cx.lineWidth=csel ? 2 : 1;
+        if(csel) cx.setLineDash([6,4]);
+        cx.stroke(); cx.setLineDash([]); cx.globalAlpha=a0; }
     }
     const rings=geoRings(r.rings);
     if(rings.length){                                // кольца расстояния: км от объекта
@@ -2746,7 +2751,7 @@ function geoDrawObjects(n,cx,v){
       cx.strokeStyle=themeColor('--scr-hi')||'#fff'; cx.lineWidth=1.5;
       cx.beginPath(); cx.arc(m.x,m.y,m.size+5,0,2*Math.PI); cx.stroke();
     }
-    if(n.p.labels && (n.ents.size<=300 || v.z>=7) && m.lab!=null && m.lab!=='')  // тысячи подписей на обзоре — каша
+    if(n.p.labels && performance.now()-(n._panT||0)>150 && (n.ents.size<=300 || v.z>=7) && m.lab!=null && m.lab!=='')  // тысячи подписей на обзоре — каша
       labs.push({t:String(m.lab),x:m.x,y:m.y,size:m.size,col:m.col,a:m.a,pri:(m.sel?1e3:0)+m.size-m.age});
   }
   n.clusters=[];
@@ -2823,7 +2828,7 @@ function geoDrawOverlay(n,cx,v){
 }
 defGroups('geoMap',[
   {n:'Edit', p:'mode tools addName addIcon drawColor'},
-  {n:'Display', p:'ttl tiles overlay ovAlpha iconScale grid labels cluster follow net'},
+  {n:'Display', p:'ttl tiles overlay ovAlpha iconScale grid labels circles cluster follow net'},
   {n:'Data layers', p:'vfile vclr osmKind osmGo'},
   {n:'Tracks', p:'trail maxEnt arrows rayKm', open:false},
   {n:'Export', p:'store csv geojson kml gpx', open:false},
