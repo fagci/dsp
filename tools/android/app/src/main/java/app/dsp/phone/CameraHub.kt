@@ -204,7 +204,10 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
             val workers = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
             pool = Executors.newFixedThreadPool(workers) { r -> Thread(r, "dsp-enc").also { it.isDaemon = true } }
             busy.set(0); frameNo = 0; shownNo = 0; lastPub = 0; emaMs = 0.0; infoT = 0
-            val rd = ImageReader.newInstance(size.width, size.height, fmt, workers + 2)
+            // сессия высокой скорости берёт только «видео» поверхности: приёмнику кадров ставим флаг кодера (Android 10+), иначе камера её отвергает
+            val rd = (if (hsRange != null && Build.VERSION.SDK_INT >= 29) try {
+                ImageReader.newInstance(size.width, size.height, fmt, workers + 2, android.hardware.HardwareBuffer.USAGE_CPU_READ_OFTEN or android.hardware.HardwareBuffer.USAGE_VIDEO_ENCODE)
+            } catch (e: Exception) { null } else null) ?: ImageReader.newInstance(size.width, size.height, fmt, workers + 2)
             rd.setOnImageAvailableListener({ onImage(it, c) }, h)
             reader = rd
             infoBase = "${size.width}×${size.height}" + (hsRange?.let { " · high-speed ${it.upper}" } ?: "") + note; info = infoBase
@@ -258,13 +261,13 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                 }
                 override fun onConfigureFailed(s: CameraCaptureSession) {
                     if (hsRange == null) { fail("camera: could not configure"); return }
-                    hsGiveUp(c)
+                    hsGiveUp(c, "configure failed")
                 }
             }
             val hr = hsRange
             if (hr != null) {
                 // сессия высокой скорости принимает не любую поверхность: ImageReader часто отвергается сразу исключением, а не через onConfigureFailed
-                try { d.createConstrainedHighSpeedCaptureSession(listOf(rd.surface), cb, h) } catch (e: Exception) { hsGiveUp(c) }
+                try { d.createConstrainedHighSpeedCaptureSession(listOf(rd.surface), cb, h) } catch (e: Exception) { hsGiveUp(c, e.message ?: e.javaClass.simpleName) }
                 return
             }
             val ph = phys
@@ -277,9 +280,9 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     }
 
     /** Высокая скорость не принята: запоминаем камеру и открываем заново в обычном режиме (зритель ждёт тот же поток). */
-    private fun hsGiveUp(c: Cfg) {
+    private fun hsGiveUp(c: Cfg, why: String) {
         noHs.add(c.id ?: "f${c.facing}")
-        main.post { synchronized(lock) { if (cfg == c) { stopLocked(); error = ""; note = " · high-speed session refused"; startLocked(c) } } }
+        main.post { synchronized(lock) { if (cfg == c) { stopLocked(); error = ""; note = " · high-speed refused: ${why.take(90)}"; startLocked(c) } } }
     }
 
     /** fps выше предела автоэкспозиции без сессии высокой скорости: выдержка и длительность кадра вручную (предел — минимальная длительность кадра для размера). */
