@@ -253,11 +253,11 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                     try {
                         val hr = hsRange
                         if (hr != null) {
-                            val hs = s as android.hardware.camera2.CameraConstrainedHighSpeedCaptureSession
+                            val hss = s as android.hardware.camera2.CameraConstrainedHighSpeedCaptureSession
                             val rq = d.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
                             rq.addTarget(hs!!.input)
                             rq.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, hr)
-                            hs.setRepeatingBurst(hs.createHighSpeedRequestList(rq.build()), null, h)
+                            hss.setRepeatingBurst(hss.createHighSpeedRequestList(rq.build()), null, h)
                             return
                         }
                         val rq = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
