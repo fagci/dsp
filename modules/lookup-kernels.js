@@ -163,6 +163,11 @@ function luParseWefax(text){
   if(!rows.length) throw new Error('no stations in the file');
   return {cols:['name','callsign','country','city','lat','lon','hz','use','ioc','lpm'],rows};
 }
+// data/bluetooth-uuids.json (tools/bt-uuids.mjs): UUID служб, характеристик и дескрипторов Bluetooth + формат разбора значения
+function luParseBtUuids(text){
+  const o=JSON.parse(String(text).replace(/^\ufeff/,'')); if(!o || !Array.isArray(o.rows)) throw new Error('bluetooth-uuids.json: unexpected format');
+  return {cols:o.cols||['uuid','kind','name','fmt','scale','unit','note'],rows:o.rows};
+}
 // intercept-ids.json (tools/intercept-data.py из data/patterns.py и tscm_frequencies.py): несколько таблиц сразу
 function luParseIds(text){
   const o=JSON.parse(String(text).replace(/^﻿/,'')); if(!o || !Array.isArray(o.tscm)) throw new Error('intercept-ids.json: unexpected format');

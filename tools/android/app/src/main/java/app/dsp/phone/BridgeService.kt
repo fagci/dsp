@@ -34,6 +34,12 @@ class BridgeService : Service() {
     private lateinit var sniffer: SnifferHub
     private lateinit var usb: AndroidUsb
     private lateinit var actions: PhoneActions
+    private lateinit var speech: SpeechHub
+    private lateinit var gatt: GattHub
+    private lateinit var btlink: BtLinkHub
+    private lateinit var adv: AdvertiseHub
+    private lateinit var net: NetHub
+    private lateinit var sys: SysHub
     private val asked = HashSet<String>()      // разрешения, о которых уже спросили в этой жизни сервиса
     private var wake: PowerManager.WakeLock? = null
     private val main = Handler(Looper.getMainLooper())
@@ -55,7 +61,11 @@ class BridgeService : Service() {
         usb = AndroidUsb(this)
         server.usb = usb
         actions = PhoneActions(this, { s, j -> server.emit(s, j) }, { p -> main.post { requestPerms(p) } }, cfg)
-        server.onCommand = { c, j -> actions.exec(c, j) }
+        val needs = Needs(this) { p -> main.post { requestPerms(p) } }
+        val emit: Emit = { s, j -> server.emit(s, j) }
+        speech = SpeechHub(this, emit, needs); gatt = GattHub(this, emit, needs); btlink = BtLinkHub(this, emit, needs); adv = AdvertiseHub(this, needs)
+        net = NetHub(this, cfg, emit); sys = SysHub(this, cfg, emit, needs)
+        server.onCommand = { c, j -> route(c, j) }
         sensors = SensorHub(this) { s, j -> server.emit(s, j) }
         gps = GpsHub(this) { s, j -> server.emit(s, j) }
         wifi = WifiHub(this, gps) { s, j -> server.emit(s, j) }
@@ -81,6 +91,22 @@ class BridgeService : Service() {
 
     override fun onBind(i: Intent?): IBinder? = null
 
+    /** Команда страницы → тот, кто её исполняет. Действия (сеть, соединения, речь, управление телефоном) — только клиенту с правом power. */
+    private fun route(c: BridgeServer.Client, j: org.json.JSONObject) {
+        val n = j.optString("cmd")
+        if (BridgeServer.powerCmd(n) && !c.power) return Reply.done(c, j.opt("id"), n, "not allowed for this page — only the page of the DSP app (or any page, if allowed in the app Settings) may use it", "forbidden")
+        when {
+            n.startsWith("gatt.") -> gatt.exec(c, j)
+            n.startsWith("bt.") -> btlink.exec(c, j)
+            n.startsWith("ble.adv.") -> adv.exec(c, j)
+            n.startsWith("speech.") -> speech.exec(c, j)
+            n.startsWith("tcp.") || n.startsWith("udp.") || n.startsWith("net.") || n.startsWith("raw.") || n == "ping" -> net.exec(c, j)
+            n.startsWith("sys.") || n.startsWith("ui.") || n.startsWith("vol.") || n.startsWith("tts.") || n.startsWith("clip.") || n.startsWith("app.") ||
+                n == "intent" || n == "media" || n == "toast" || n.startsWith("screen.") -> sys.exec(c, j)
+            else -> actions.exec(c, j)
+        }
+    }
+
     /** Остановка по кнопке: снять уведомление и остановить сервис. */
     private fun shutdown() {
         destroyed = true
@@ -92,7 +118,7 @@ class BridgeService : Service() {
     override fun onDestroy() {
         destroyed = true
         server.stop()
-        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close()
+        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close(); speech.close(); gatt.close(); btlink.close(); adv.close(); net.close(); sys.close()
         wake?.takeIf { it.isHeld }?.release()
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(ID)
         super.onDestroy()
@@ -156,7 +182,8 @@ class BridgeService : Service() {
         if (!wifi.update("wifi" in w.subs, w.wifiEvery)) problems.add("wifi: allow Location for the DSP app (Android hides the scan without it)")
         battery.update("battery" in w.subs)
         if (!gnss.update("gnss" in w.subs, "gnssraw" in w.subs, "nmea" in w.subs)) problems.add("gnss: allow Location for the DSP app")
-        if (!ble.update("ble" in w.subs)) problems.add(ble.lastError)
+        if (!ble.update("ble" in w.subs, w.bleOpts)) problems.add(ble.lastError)
+        sys.update("sys" in w.subs)
         if (!bt.update("bt" in w.subs)) problems.add(bt.lastError)
         if (!cell.update("cell" in w.subs, w.cellEvery)) problems.add(cell.lastError)
         if (!mic.update("mic" in w.subs, w.micHz)) problems.add(mic.lastError)
@@ -204,7 +231,7 @@ class BridgeService : Service() {
         val sens = sensors.available()
         return Json.obj(
             "src" to "\"bridge\"", "level" to "\"hello\"", "ver" to "1", "app" to "\"dsp-android\"", "host" to Json.str(Build.MODEL),
-            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "sms", "notify", "torch") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(),
+            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "sms", "notify", "torch", "speech", "gatt", "btlink", "net", "sys") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(),
             "phone" to actions.info(),
         )
     }

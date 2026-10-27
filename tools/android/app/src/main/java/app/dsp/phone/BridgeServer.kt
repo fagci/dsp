@@ -40,6 +40,9 @@ class BridgeServer(
         @Volatile var iface = ""
         @Volatile var filter = ""
         @Volatile var snap = 0
+        @Volatile var bleOpts = ""
+        /** Может ли клиент пользоваться действиями (сеть, Bluetooth-соединения, речь, автоматизация): страница приложения или включено «любая страница» в Settings. */
+        @Volatile var power = false
         /** Страница самого приложения (знает ключ UsbKey): ей можно читать SMS и контакты и слать SMS, чужим сайтам — нет. */
         @Volatile var trusted = false
         @Volatile var dead = false
@@ -50,7 +53,7 @@ class BridgeServer(
     /** Что просят клиенты: источники и их параметры (при нескольких клиентах — самые частые / первые заданные). */
     data class Want(
         val subs: Set<String>, val hz: Int, val wifiEvery: Int,
-        val cellEvery: Int = 5, val micHz: Int = 16000, val iface: String = "any", val filter: String = "", val snap: Int = 256,
+        val cellEvery: Int = 5, val micHz: Int = 16000, val iface: String = "any", val filter: String = "", val snap: Int = 256, val bleOpts: String = "",
     )
 
     private class Req(val method: String, val path: String, val query: Map<String, String>, val headers: Map<String, String>)
@@ -101,7 +104,7 @@ class BridgeServer(
 
     fun wanted(): Want {
         val subs = HashSet<String>()
-        var hz = 0; var wifi = 0; var cell = 0; var mic = 0; var iface = ""; var filter = ""; var snap = 0
+        var hz = 0; var wifi = 0; var cell = 0; var mic = 0; var iface = ""; var filter = ""; var snap = 0; var ble = ""
         for (c in clients) {
             subs.addAll(c.subs)
             if (c.hz > hz) hz = c.hz
@@ -111,9 +114,10 @@ class BridgeServer(
             if (iface.isEmpty()) iface = c.iface
             if (filter.isEmpty()) filter = c.filter
             if (c.snap > snap) snap = c.snap
+            if (ble.isEmpty()) ble = c.bleOpts
         }
         return Want(subs, if (hz > 0) hz.coerceIn(1, 1000) else 20, if (wifi > 0) wifi else 10,
-            if (cell > 0) cell else 5, if (mic > 0) mic else 16000, iface.ifEmpty { "any" }, filter, if (snap > 0) snap else 256)
+            if (cell > 0) cell else 5, if (mic > 0) mic else 16000, iface.ifEmpty { "any" }, filter, if (snap > 0) snap else 256, ble)
     }
 
     /** Запись от источника; уйдёт подписанным клиентам в ближайшей пачке. */
@@ -263,6 +267,7 @@ class BridgeServer(
         if (!handshake(sock, req)) return
         val c = Client(sock)
         c.trusted = sock.inetAddress.isLoopbackAddress && MessageDigest.isEqual((req.query["k"] ?: "").toByteArray(), UsbKey.value.toByteArray())
+        c.power = c.trusted || cfg.openCmds
         c.subs = allowed(c, (req.query["sources"] ?: "").split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet())
         c.hz = req.query["hz"]?.toIntOrNull() ?: 0
         clients.add(c)
@@ -317,8 +322,8 @@ class BridgeServer(
 
     /** Источники, которые клиенту можно: чувствительные (SMS) — только странице приложения. */
     private fun allowed(c: Client, want: Set<String>): Set<String> {
-        val ok = want.filter { it !in SENSITIVE || c.trusted }.toSet()
-        if (ok.size != want.size) c.send(Json.note("error", "${(want - ok).joinToString(",")}: only the page of the DSP app may use it"))
+        val ok = want.filter { (it !in SENSITIVE || c.trusted) && (it !in POWER_SRC || c.power) }.toSet()
+        if (ok.size != want.size) c.send(Json.note("error", "${(want - ok).joinToString(",")}: not allowed for this page — only the page of the DSP app (or any page, if allowed in the app Settings) may use it"))
         return ok
     }
 
@@ -334,6 +339,7 @@ class BridgeServer(
         c.iface = j.optString("iface", "")
         c.filter = j.optString("filter", "")
         c.snap = j.optInt("snap", 0)
+        c.bleOpts = j.optJSONObject("ble")?.toString() ?: ""
         c.send(Json.note("info", "sub: " + c.subs.joinToString(",")))
         onSubs()
     }
@@ -341,6 +347,13 @@ class BridgeServer(
     companion object {
         /** Источники, которые отдают личные данные. */
         val SENSITIVE = setOf("sms")
+
+        /** Источники действий: пользуются тем, что телефон соединён с чем-то (речь, GATT, сеть, события системы). */
+        val POWER_SRC = setOf("speech", "gatt", "btlink", "net", "sys")
+
+        /** Команды действий: сокеты и ping, соединения Bluetooth, речь, управление телефоном. Нужен c.power. */
+        fun powerCmd(name: String) = POWER_PREFIX.any { name.startsWith(it) } || name == "ping"
+        private val POWER_PREFIX = listOf("tcp.", "udp.", "net.", "raw.", "gatt.", "bt.", "ble.adv.", "speech.", "sys.", "ui.", "app.", "intent", "vol.", "tts.", "clip.", "media.", "screen.", "toast")
 
         /** Команды с личными данными или платные (SMS, контакты) — только доверенному клиенту. */
         fun sensitiveCmd(name: String) = name.startsWith("sms.") || name.startsWith("contacts.")

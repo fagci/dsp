@@ -512,6 +512,13 @@ const PRESET_CATS={
   'Phone App: Microphone, Cell and Packets':'Maps & Locating',
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
   'Phone App: USB SDR over OTG (RTL-SDR, HackRF…)':'SDR Receivers',
+  'Phone App: BLE Auto-Discover Devices and Services (GATT)':'Network & IoT',
+  'Phone App: Bluetooth Classic Terminal (RFCOMM / SPP)':'Network & IoT',
+  'Phone App: BLE Beacon (Broadcast Sensor Data)':'Network & IoT',
+  'Phone App: TCP / UDP Server, Client, Ping and DNS':'Network & IoT',
+  'Geofence: Enter / Exit Alerts on the Map':'Maps & Locating',
+  'SMS PDU: Build and Parse (GSM 7-bit / UCS-2, Data SMS)':'Network & IoT',
+  'Phone App: Speech to Text, Text-to-Speech and Automation':'Control & Remote',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
   'TDOA: Path Difference (2 mics)':'Maps & Locating',
@@ -1366,6 +1373,118 @@ ph.size.w=400; ph.size.h=520; applySize(ph);
 const lg=addNode('recLog',780,220,{});
 lg.size.w=380; applySize(lg);
 addEdge(en.id,'raw',ph.id,'ir'); addEdge(ph.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: BLE Auto-Discover Devices and Services (GATT)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'For-each-with-waiting: Phone sensors scans BLE advertisements → Rec Queue keeps one address per device (dedupes by «addr») and releases them one at a time → BLE GATT connects, auto-discovers services and reads every readable characteristic → Rec Queue moves to the next address as soon as discovery finishes («services» record), or after the 15 s timeout if the device never answers (connection failed, out of range, too many devices already connected — up to 7 at once).\n'+
+  'The table looks up characteristic names from «Reference/Bluetooth UUIDs» (Files → ⇩ offline «Bluetooth UUIDs», or it is tiny enough to fetch itself) — wire chr into lookup() the same way as MAC vendors / signal catalogs. Increase the BLE scan filters (name / address / service UUID) in Phone sensors to narrow a crowded room down to one kind of device.'});
+nt.size.w=900; nt.size.h=170; applySize(nt);
+const tx=addNode('termux',40,230,{url:'ws://127.0.0.1:8765',ble:true,bleMode:'low_latency'});
+tx.size.w=360; tx.size.h=420; applySize(tx);
+const rq=addNode('recQueue',440,230,{mode:'wait for ack',key:'addr',timeout:15,max:100});
+rq.size.w=300; applySize(rq);
+const u1=addNode('recUnpack',780,230,{names:'addr'});
+u1.size.w=260; applySize(u1);
+const gl=addNode('gattlink',1080,230,{url:'ws://127.0.0.1:8765',action:'connect',autoRead:true,readMax:20,phy:'1m'});
+gl.size.w=400; gl.size.h=440; applySize(gl);
+const rf=addNode('recFilter',1520,230,{expr:"r.src==='gatt' && r.ev==='services'"});
+rf.size.w=300; applySize(rf);
+const u2=addNode('recUnpack',1520,420,{names:''});
+u2.size.w=300; applySize(u2);
+const tb=addNode('table',440,470,{list:'phone/gatt',maxRows:1000,rev:true,cols:['t','addr','svc','chr','name','hex','props'],
+  schema:{types:{name:{t:'calc',expr:"lookup('Bluetooth UUIDs','uuid',[chr],'name')"}},card:{}}});
+tb.size.w=680; tb.size.h=340; applySize(tb);
+const lg=addNode('recLog',440,830,{});
+lg.size.w=600; applySize(lg);
+addEdge(tx.id,'rec',rq.id,'rec'); addEdge(rq.id,'item',u1.id,'rec'); addEdge(u1.id,'addr',gl.id,'addr'); addEdge(u1.id,'go',gl.id,'go');
+addEdge(gl.id,'rec',rf.id,'rec'); addEdge(rf.id,'rec',u2.id,'rec'); addEdge(u2.id,'go',rq.id,'ack');
+addEdge(gl.id,'rec',tb.id,'rec'); addEdge(gl.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Bluetooth Classic Terminal (RFCOMM / SPP)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Classic Bluetooth (not BLE): a serial-port profile link (RFCOMM / SPP) to a paired device — HC-05/06 modules, OBD-II adapters, thermal printers, old headsets with a data channel. «bonded» lists paired devices (pair it once from the phone\'s own Bluetooth settings first, or use «bond» here); set the address, press Run with «rfcomm connect», then send text or hex on go — replies arrive on rec / text / hex.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const gl=addNode('gattlink',40,210,{url:'ws://127.0.0.1:8765',action:'rfcomm connect',addr:'',data:'AT\r\n',wfmt:'text'});
+gl.size.w=420; gl.size.h=460; applySize(gl);
+const lg=addNode('recLog',500,210,{});
+lg.size.w=420; applySize(lg);
+addEdge(gl.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: BLE Beacon (Broadcast Sensor Data)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The phone as a BLE peripheral instead of a scanner: a non-connectable advertisement with a manufacturer-data payload any BLE scanner nearby can read (another phone running this same workbench with a BLE Advertisements / Phone sensors node, a Raspberry Pi, nRF Connect…). «extended advertising» lifts the 31-byte legacy limit and can use 2M / Coded PHY on chips that support it. Edit «manufacturer data» (id=hex bytes) and press Run → Run with «adv start»; «adv stop» turns it off.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const gl=addNode('gattlink',40,210,{url:'ws://127.0.0.1:8765',action:'adv start',advName:true,advMfr:'FFFF=0102030405',advMode:'low_power',advPower:'high'});
+gl.size.w=420; gl.size.h=460; applySize(gl);
+const lg=addNode('recLog',500,210,{});
+lg.size.w=380; applySize(lg);
+addEdge(gl.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: TCP / UDP Server, Client, Ping and DNS', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The phone\'s own network stack from a patch: Network (DSP app) can be a TCP or UDP server or client, send a real ICMP ping (not an HTTP guess) and run one DNS query over UDP (decoded with the DNS record types A / AAAA / MX / TXT / NS / SRV / PTR…). Switch «action» to try the others: tcp listen opens a port other devices on the LAN can connect to (records arrive with a «conn» number — feed it back into «conn» to reply); tcp/udp connect-and-send need a host; raw send (root) writes one crafted IPv4 packet to the network.\n'+
+  'Here: a ping to a host, and a DNS lookup through the network\'s own resolver (@dns) — both results land in Rec Log and the table below.'});
+nt.size.w=900; nt.size.h=170; applySize(nt);
+const p1=addNode('netlink',40,230,{url:'ws://127.0.0.1:8765',action:'ping',host:'8.8.8.8',count:4});
+p1.size.w=420; p1.size.h=440; applySize(p1);
+const p2=addNode('netlink',500,230,{url:'ws://127.0.0.1:8765',action:'dns',host:'example.com',dnsType:'A',dnsServer:'@dns'});
+p2.size.w=420; p2.size.h=440; applySize(p2);
+const tb=addNode('table',960,230,{list:'phone/dns',maxRows:500,rev:true,cols:['t','q','type','name','data','ttl','rcode']});
+tb.size.w=480; tb.size.h=260; applySize(tb);
+const lg=addNode('recLog',960,510,{});
+lg.size.w=480; applySize(lg);
+addEdge(p1.id,'rec',lg.id,'rec'); addEdge(p2.id,'rec',tb.id,'rec'); addEdge(p2.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Geofence: Enter / Exit Alerts on the Map', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Zones as text (name: circle lat lon radius_m, or name: poly lat,lon lat,lon …) — edit the list in Geofence, or draw them on the Map (mode: circle / polygon) and wire its edit output into Geofence\'s «zones» input to manage them visually instead. Hysteresis and a confirm delay stop the flood of events a GPS fix jittering right on the line would otherwise cause.\n'+
+  'This patch: My Position feeds Geofence; entering a zone pops a phone notification and a short buzz, leaving it logs quietly. The Map shows the zones themselves (from «shapes», colour = inside / outside) plus your own position.'});
+nt.size.w=900; nt.size.h=150; applySize(nt);
+const me=addNode('geoMe',40,220,{src:'gps'});
+me.size.w=300; applySize(me);
+const gf=addNode('geofence',40,420,{zones:'Home: circle 55.7558 37.6173 200\nWork: poly 55.80,37.50 55.80,37.54 55.78,37.54 55.78,37.50',hyst:15,dwell:5});
+gf.size.w=420; gf.size.h=420; applySize(gf);
+const ph=addNode('phone',520,420,{url:'ws://127.0.0.1:8765',action:'notify',title:'Geofence',body:'Entered a zone',notifyEv:false,torchState:false});
+ph.size.w=380; ph.size.h=380; applySize(ph);
+const vb=addNode('phone',520,840,{url:'ws://127.0.0.1:8765',action:'vibrate',vibMs:400,notifyEv:false,torchState:false});
+vb.size.w=380; vb.size.h=380; applySize(vb);
+const map=addNode('geoMap',980,420,{mz:12,labels:true});
+map.size.w=620; map.size.h=420; applySize(map);
+const lg=addNode('recLog',40,880,{});
+lg.size.w=420; applySize(lg);
+addEdge(me.id,'rec',gf.id,'rec'); addEdge(gf.id,'events',lg.id,'rec'); addEdge(gf.id,'shapes',map.id,'rec'); addEdge(me.id,'rec',map.id,'rec');
+addEdge(gf.id,'enter',ph.id,'go'); addEdge(gf.id,'enter',vb.id,'go');
+markWiresDirty();
+});
+preset('SMS PDU: Build and Parse (GSM 7-bit / UCS-2, Data SMS)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'SMS exactly as it travels over the air (3GPP TS 23.040/23.038): SMS PDU (build) turns a number and text into the hex TPDU — cyrillic / emoji switch it to UCS-2 automatically, long text splits into concatenated parts (UDH) you can see in the table below. «data SMS» (ports instead of text) is how M2M devices exchange binary payloads over SMS; Phone Actions\' own «sms.data» action sends one (SmsManager builds its PDU itself — this node is for building / inspecting the bytes, not for sending a hand-crafted PDU, which Android\'s API does not expose).\n'+
+  'SMS PDU (parse) round-trips the hex back to text — wire it from a HEX node, from Bytes, or from an incoming SMS\'s raw «pdu» field (Phone Actions → Table list «phone/records», column pdu) to decode a real message, including concatenated parts (joined automatically by reference + sender).'});
+nt.size.w=900; nt.size.h=170; applySize(nt);
+const b=addNode('smspdu',40,230,{mode:'build',type:'submit (phone → network)',addr:'+15555550123',text:'Hello from a patch — длинный текст склеится на части 📱'});
+b.size.w=420; b.size.h=560; applySize(b);
+const p=addNode('smspdu',500,230,{mode:'parse'});
+p.size.w=420; p.size.h=440; applySize(p);
+const tb=addNode('table',960,230,{list:'phone/sms',maxRows:200,rev:true,cols:['t','kind','from','to','text','part','parts','enc']});
+tb.size.w=480; tb.size.h=260; applySize(tb);
+addEdge(b.id,'hex',p.id,'hex'); addEdge(p.id,'rec',tb.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Speech to Text, Text-to-Speech and Automation', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Phone Control & Automation: Android\'s own speech recognizer, streaming — partial words while you speak (interim), final phrases once you pause (text / rec). Works offline once a language is downloaded (Settings → System → Languages → On-device speech recognition; tick «prefer the on-device model» here too). The same node speaks back with the phone\'s TTS voice, and can tap / swipe / press Back or Home / click a button by its visible text / read the screen — turn «system events» on to see the foreground app, screen on/off, charging and calls go by on «sys» as automation triggers.\n'+
+  'Here: press Run (action «speech start») and talk — the recognized text is echoed back with TTS. Switch «action» to «ui click» / «ui tap» / «vol set» to try the rest.'});
+nt.size.w=900; nt.size.h=170; applySize(nt);
+const pc=addNode('phonectl',40,230,{url:'ws://127.0.0.1:8765',action:'speech start',sysEvents:true,text:'Got it: '});
+pc.size.w=440; pc.size.h=620; applySize(pc);
+const lg=addNode('recLog',540,230,{});
+lg.size.w=420; applySize(lg);
+addEdge(pc.id,'rec',lg.id,'rec'); addEdge(pc.id,'sys',lg.id,'rec');
 markWiresDirty();
 });
 preset('Picture in Picture: Spectrum in a Floating Window', function(){

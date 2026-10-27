@@ -1,6 +1,9 @@
 package app.dsp.phone.recordstest
 
 import app.dsp.phone.Ad
+import app.dsp.phone.Args
+import app.dsp.phone.BridgeServer
+import app.dsp.phone.NetParse
 import app.dsp.phone.Audio
 import app.dsp.phone.Cmd
 import app.dsp.phone.Frame
@@ -133,6 +136,24 @@ fun main() {
         Perms.filter("tcp port 80 and not host 10.0.0.1") == "tcp port 80 and not host 10.0.0.1" && Perms.filter("tcp'; reboot; '") == null && Perms.filter("\$(id)") == null && Perms.filter("`id`") == null)
     ok("sniffer: script has no stray quotes", SnifferHub.script("any", 256, "tcp").contains("-i any -U -n -s 256 -w - 'tcp'"))
     ok("dbfs", Audio.dbfs(32768.0) == 0.0 && Math.abs(Audio.dbfs(3276.8) + 20.0) < 1e-9 && Audio.dbfs(0.0) == -120.0)
+    // --- аргументы команд ---
+    ok("args: hex", Args.hex("48 65:6c,0x6C")?.toList() == listOf<Byte>(0x48, 0x65, 0x6c, 0x6c) && Args.hex("4") == null && Args.hex("zz") == null && Args.hex("00".repeat(10), 5) == null)
+    ok("args: host", Args.host("example.com") == "example.com" && Args.host("10.0.0.1") == "10.0.0.1" && Args.host("fe80::1") == "fe80::1" && Args.host("a b") == null && Args.host("a;reboot") == null && Args.host("-c1") == "-c1")
+    ok("args: mac", Args.mac("aa:bb:cc:dd:ee:ff") == "AA:BB:CC:DD:EE:FF" && Args.mac("aa:bb:cc") == null && Args.mac("aa:bb:cc:dd:ee:f;") == null)
+    ok("args: uuid 16 / 32 / 128 bit", Args.uuid("180d").toString() == "0000180d-0000-1000-8000-00805f9b34fb" && Args.uuid("0x180D") == Args.uuid("180d") &&
+        Args.uuid("6e400001-b5a3-f393-e0a9-e50e24dcca9e") != null && Args.uuid("xyz") == null && Args.uuid("12345") == null)
+    ok("args: short uuid", Args.uuidShort(Args.uuid("180d")!!) == "180d" && Args.uuidShort(Args.uuid("6e400001-b5a3-f393-e0a9-e50e24dcca9e")!!) == "6e400001-b5a3-f393-e0a9-e50e24dcca9e")
+    ok("args: vibration pattern", Args.vibPattern(org.json.JSONArray("[0,200,100,200]"))?.size == 4 && Args.vibPattern(org.json.JSONArray("[0,0]")) == null &&
+        Args.vibPattern(org.json.JSONArray("[0,70000]")) == null && Args.vibPattern(org.json.JSONArray("[]")) == null)
+    ok("args: safe token", Args.safeToken("android.intent.action.VIEW") != null && Args.safeToken("a; reboot") == null && Args.safeToken("\$(id)") == null && Args.safeToken("") == null)
+    ok("args: payload", Args.payload(JSONObject("{\"hex\":\"0102\"}"))?.size == 2 && Args.payload(JSONObject("{\"text\":\"héllo\"}"))?.size == 6 && Args.payload(JSONObject("{}")) == null)
+    val pr = NetParse.reply("64 bytes from 8.8.8.8: icmp_seq=2 ttl=117 time=12.3 ms")
+    ok("ping: reply", pr != null && pr.seq == 2 && pr.ttl == 117 && pr.ms == 12.3 && pr.from == "8.8.8.8" && pr.bytes == 64)
+    ok("ping: summary", NetParse.summary("4 packets transmitted, 3 received, 25% packet loss, time 3004ms") == (4 to 3) && NetParse.rtt("rtt min/avg/max/mdev = 10.1/12.5/15.0/1.2 ms")?.second == 12.5)
+    ok("power commands are told from plain ones", BridgeServer.powerCmd("tcp.connect") && BridgeServer.powerCmd("gatt.write") && BridgeServer.powerCmd("ping") && BridgeServer.powerCmd("ui.tap") &&
+        BridgeServer.powerCmd("sys.input") && BridgeServer.powerCmd("intent") && !BridgeServer.powerCmd("notify") && !BridgeServer.powerCmd("torch") && !BridgeServer.powerCmd("vibrate") && !BridgeServer.powerCmd("sms.send"))
+    ok("perms: speech, sys, gatt", Perms.forSubs(setOf("speech"), 34) == listOf("android.permission.RECORD_AUDIO") && Perms.forSubs(setOf("sys"), 34) == listOf("android.permission.READ_PHONE_STATE") &&
+        Perms.forSubs(setOf("gatt"), 34) == listOf("android.permission.BLUETOOTH_CONNECT") && Perms.forSubs(setOf("gatt"), 29).isEmpty())
     println(if (bad == 0) "all ok" else "$bad FAILED")
     if (bad != 0) System.exit(1)
 }

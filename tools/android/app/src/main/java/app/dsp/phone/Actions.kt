@@ -17,6 +17,9 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.ContactsContract
 import android.provider.Telephony
 import android.telephony.SmsManager
@@ -77,6 +80,8 @@ class PhoneActions(
 
     private val cm = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
     private val ir = ctx.getSystemService(Context.CONSUMER_IR_SERVICE) as? ConsumerIrManager
+    private val vib: Vibrator? = if (Build.VERSION.SDK_INT >= 31) (ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
+        else @Suppress("DEPRECATION") (ctx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator)
     @Volatile private var torchId: String? = null
     @Volatile var torchOn = false; private set
     @Volatile private var torchMax = 1
@@ -100,7 +105,9 @@ class PhoneActions(
             val m = try { Telephony.Sms.Intents.getMessagesFromIntent(i) } catch (e: Exception) { null } ?: return
             if (m.isEmpty()) return
             emit("sms", Json.obj("src" to "\"sms\"", "dir" to "\"in\"", "addr" to Json.str(m[0].originatingAddress),
-                "body" to Json.str(m.joinToString("") { it.messageBody ?: "" }), "t" to m[0].timestampMillis.toString()))
+                "body" to Json.str(m.joinToString("") { it.messageBody ?: "" }), "t" to m[0].timestampMillis.toString(),
+                "pdu" to m[0].pdu?.let { Json.str(Hex.of(it)) }, "parts" to m.size.toString(), "sc" to m[0].serviceCenterAddress?.let { Json.str(it) },
+                "fmt" to i.getStringExtra("format")?.let { Json.str(it) }))
         }
     }
     private var smsOn = false
@@ -145,6 +152,7 @@ class PhoneActions(
     fun info(): String = Json.obj(
         "torch" to if (torchId != null) "true" else "false", "torchMax" to torchMax.toString(),
         "ir" to if (ir?.hasIrEmitter() == true) "true" else "false",
+        "vibrate" to if (vib?.hasVibrator() == true) "true" else "false", "vibAmp" to if (vib?.hasAmplitudeControl() == true) "true" else "false",
         "sms" to if (ctx.packageManager.hasSystemFeature("android.hardware.telephony")) "true" else "false",
     )
 
@@ -160,23 +168,11 @@ class PhoneActions(
         }
     }
 
-    private fun done(c: BridgeServer.Client, id: Any?, cmd: String, err: String?, code: String = "error", vararg extra: Pair<String, String?>) {
-        val kv = ArrayList<Pair<String, String?>>()
-        kv.add("src" to "\"cmd\""); kv.add("cmd" to Json.str(cmd)); if (id != null) kv.add("id" to (if (id is Number) id.toString() else Json.str(id.toString())))
-        kv.add("ok" to if (err == null) "true" else "false")
-        if (err != null) { kv.add("err" to Json.str(code)); kv.add("msg" to Json.str(err)) }
-        kv.addAll(extra)
-        c.send(Json.obj(*kv.toTypedArray()))
-    }
+    private fun done(c: BridgeServer.Client, id: Any?, cmd: String, err: String?, code: String = "error", vararg extra: Pair<String, String?>) =
+        Reply.done(c, id, cmd, err, code, *extra)
 
-    /** Нужные разрешения: нет — просим (окно или уведомление) и отвечаем ошибкой, команду повторят после выдачи. */
-    private fun need(c: BridgeServer.Client, id: Any?, cmd: String, perms: List<String>): Boolean {
-        val miss = perms.filter { !ctx.granted(it) }
-        if (miss.isEmpty()) return true
-        askPerms(miss)
-        done(c, id, cmd, "allow ${miss.joinToString { it.substringAfterLast('.').lowercase().replace('_', ' ') }} in the window (or the notification) and repeat", "permission")
-        return false
-    }
+    private val needs = Needs(ctx, askPerms)
+    private fun need(c: BridgeServer.Client, id: Any?, cmd: String, perms: List<String>) = needs.need(c, id, cmd, perms)
 
     private fun run(c: BridgeServer.Client, id: Any?, cmd: String, j: JSONObject) {
         when (cmd) {
@@ -203,6 +199,43 @@ class PhoneActions(
                 if (!Cmd.irFreqOk(f, irRanges())) return done(c, id, cmd, "carrier $f Hz is outside what the emitter supports")
                 m.transmit(f, p)
                 done(c, id, cmd, null, extra = arrayOf("us" to p.sum().toString()))
+            }
+            "vibrate" -> {
+                val v = vib?.takeIf { it.hasVibrator() } ?: return done(c, id, cmd, "this phone has no vibrator")
+                val amp = j.optInt("amp", 0).let { if (it in 1..255 && v.hasAmplitudeControl()) it else VibrationEffect.DEFAULT_AMPLITUDE }
+                val eff: VibrationEffect = when {
+                    j.has("effect") -> {
+                        if (Build.VERSION.SDK_INT < 29) return done(c, id, cmd, "effects need Android 10+")
+                        VibrationEffect.createPredefined(when (j.optString("effect")) {
+                            "click" -> VibrationEffect.EFFECT_CLICK; "double" -> VibrationEffect.EFFECT_DOUBLE_CLICK
+                            "heavy" -> VibrationEffect.EFFECT_HEAVY_CLICK; "tick" -> VibrationEffect.EFFECT_TICK
+                            else -> return done(c, id, cmd, "effect: click, double, heavy or tick")
+                        })
+                    }
+                    j.has("pattern") -> {
+                        val p = Args.vibPattern(j.optJSONArray("pattern")) ?: return done(c, id, cmd, "pattern: 1…200 durations 0…60000 ms (off, on, off, …), 10 minutes at most")
+                        val rep = j.optInt("repeat", -1)
+                        if (rep >= p.size) return done(c, id, cmd, "repeat: -1 or an index inside the pattern")
+                        if (amp != VibrationEffect.DEFAULT_AMPLITUDE) VibrationEffect.createWaveform(p, IntArray(p.size) { if (it % 2 == 1) amp else 0 }, maxOf(rep, -1))
+                        else VibrationEffect.createWaveform(p, maxOf(rep, -1))
+                    }
+                    else -> VibrationEffect.createOneShot(j.optLong("ms", 200).coerceIn(1, 60_000), amp)
+                }
+                v.vibrate(eff)
+                done(c, id, cmd, null)
+            }
+            "vibrate.stop" -> { vib?.cancel(); done(c, id, cmd, null) }
+            "sms.data" -> {
+                if (!need(c, id, cmd, listOf(Manifest.permission.SEND_SMS))) return
+                val to = Cmd.number(j.optString("to")) ?: return done(c, id, cmd, "bad number")
+                val data = Args.hex(j.optString("hex"), 140)?.takeIf { it.isNotEmpty() } ?: return done(c, id, cmd, "hex: 1…140 bytes")
+                val port = j.optInt("port", 0); if (port !in 0..65535) return done(c, id, cmd, "port: 0…65535")
+                if (!limiter.allow(System.currentTimeMillis())) return done(c, id, cmd, "no more than 5 SMS per minute", "rate")
+                val sm = if (Build.VERSION.SDK_INT >= 31) ctx.getSystemService(SmsManager::class.java) else @Suppress("DEPRECATION") SmsManager.getDefault()
+                val req = reqs.incrementAndGet()
+                sending[req] = Pending(c, id, 1)
+                sm.sendDataMessage(to, null, port.toShort(), data, PendingIntent.getBroadcast(ctx, req * 100,
+                    Intent(ACTION_SMS_SENT).setPackage(ctx.packageName).setData(Uri.parse("dsp://sms/$req/0")).putExtra("req", req), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT), null)
             }
             "crash.last" -> done(c, id, cmd, null, extra = arrayOf("text" to Json.str(try { java.io.File(ctx.filesDir, BridgeService.CRASH_FILE).readText() } catch (e: Exception) { "no crash recorded" })))
             "sms.send" -> {
