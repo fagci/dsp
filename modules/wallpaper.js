@@ -21,25 +21,25 @@ const WP_MAXW=960, WP_Q=.8, WP_MIN_MS=220;             // ~900×900 на дли�
 
 function wallpaperStop(){ const s=wpSt; wpSt=null; if(s){ if(s.n) s.n._wallpaper=false; try{ s.stop(); }catch(e){} } }
 
+// toDataURL — синхронно (в отличие от прежних toBlob+FileReader): кадр уходит сразу этим же вызовом, без лишнего круга
+// по очереди задач, где колбэк могли придержать (в фоне именно это и раздувало промежутки между кадрами куда больше
+// расчётных WP_MIN_MS — следующая попытка видела «прошлый кадр ещё кодируется» и откладывалась снова).
 function wallpaperSend(n,scratch){
-  const c=pipSource(n); if(!c){ scratch.busy=false; return; }
-  const w=c.width, h=c.height; if(!w || !h){ scratch.busy=false; return; }
-  const k=Math.min(1,WP_MAXW/Math.max(w,h));
-  scratch.cv.width=Math.max(1,Math.round(w*k)); scratch.cv.height=Math.max(1,Math.round(h*k));
-  scratch.cx.drawImage(c,0,0,scratch.cv.width,scratch.cv.height);
-  scratch.cv.toBlob(b=>{
-    scratch.busy=false;
-    if(!wpSt || wpSt.n!==n || !b) return;
-    const r=new FileReader();
-    r.onload=()=>{ if(wpSt && wpSt.n===n) try{ DspApp.wallpaper(String(r.result).split(',')[1]||''); }catch(e){} };
-    r.readAsDataURL(b);
-  },'image/jpeg',WP_Q);
+  try{
+    const c=pipSource(n); if(!c) return;
+    const w=c.width, h=c.height; if(!w || !h) return;
+    const k=Math.min(1,WP_MAXW/Math.max(w,h));
+    scratch.cv.width=Math.max(1,Math.round(w*k)); scratch.cv.height=Math.max(1,Math.round(h*k));
+    scratch.cx.drawImage(c,0,0,scratch.cv.width,scratch.cv.height);
+    const url=scratch.cv.toDataURL('image/jpeg',WP_Q);
+    if(wpSt && wpSt.n===n) DspApp.wallpaper(url.split(',')[1]||'');
+  }catch(e){} finally{ scratch.busy=false; }
 }
 
 // дёргается из Eng.tick (core-engine.js, см. комментарий выше) на каждый аудио-такт, и из собственного rAF, пока страница видна —
 // throttle общий (lastDraw), так что какой из двух путей сейчас жив, тот и работает, без двойной отправки
 function wallpaperTick(){
-  if(!wpSt) return;
+  if(!wpSt || wpSt.scratch.busy) return;                 // прошлый кадр ещё кодируется — ждём его, не трогая throttle ниже
   const now=performance.now();
   if(now-wpSt.lastDraw<WP_MIN_MS) return;
   wpSt.lastDraw=now;
@@ -48,7 +48,6 @@ function wallpaperTick(){
     const d=MOD[n.type];
     if(d && d.draw) try{ d.draw(n,n.cv,n.cx); }catch(e){}
   }
-  if(wpSt.scratch.busy) return;
   wpSt.scratch.busy=true;
   wallpaperSend(n,wpSt.scratch);
 }
