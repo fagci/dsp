@@ -143,6 +143,10 @@ class MainActivity : Activity() {
         } else super.onActivityResult(code, result, data)
     }
 
+    // singleTask: клик по уведомлению и возврат из фона onCreate не вызывают — мост, убитый системой, поднимаем здесь
+    override fun onNewIntent(i: Intent) { super.onNewIntent(i); BridgeService.resume(this) }
+    override fun onRestart() { super.onRestart(); BridgeService.resume(this) }
+
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         if (web.canGoBack()) web.goBack() else moveTaskToBack(true)     // мост остаётся работать
