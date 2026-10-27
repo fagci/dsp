@@ -52,7 +52,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     private var phys: String? = null
     private var hsRange: android.util.Range<Int>? = null       // режим высокой скорости (constrained high-speed): fps выше предела автоэкспозиции
     private var note = ""                                    // пометка к статусу камеры: чем закончился запрос высокой скорости
-    private val noHs = HashSet<String>()                       // камеры, на которых сессия высокой скорости не создалась
+    private val noHs = HashMap<String, String>()                // камера → почему сессия высокой скорости не создалась
     private var lastEnc = 0L
     private var pool: ExecutorService? = null                 // кодирование кадров параллельно: один поток упирался в ~25 к/с (YUV → NV21 → поворот → JPEG)
     private val busy = AtomicInteger()
@@ -194,7 +194,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
             var hsWhy = ""                                            // почему высокая скорость не включена, хотя fps выше обычного предела — в статус и на страницу
             if (c.fps > normalMax) {
                 if (phys != null) hsWhy = "not for hidden physical cameras"
-                else if ((c.id ?: "f${c.facing}") in noHs) hsWhy = "the phone refused it earlier"
+                else if ((c.id ?: "f${c.facing}") in noHs) hsWhy = "refused earlier: ${noHs[c.id ?: "f${c.facing}"]}"
                 else try {
                     val rs = map?.highSpeedVideoFpsRanges ?: emptyArray()
                     hsRange = rs.filter { it.upper >= c.fps }.sortedWith(compareBy({ it.upper }, { if (it.lower == it.upper) 0 else 1 })).firstOrNull() ?: rs.maxByOrNull { it.upper }
@@ -272,7 +272,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                 }
                 override fun onConfigureFailed(s: CameraCaptureSession) {
                     if (hsRange == null) { fail("camera: could not configure"); return }
-                    hsGiveUp(c, "configure failed")
+                    hsGiveUp(c, "camera refused the session (${rd.width}×${rd.height} YUV, range ${hsRange})")
                 }
             }
             val hr = hsRange
@@ -292,7 +292,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
 
     /** Высокая скорость не принята: запоминаем камеру и открываем заново в обычном режиме (зритель ждёт тот же поток). */
     private fun hsGiveUp(c: Cfg, why: String) {
-        noHs.add(c.id ?: "f${c.facing}")
+        noHs[c.id ?: "f${c.facing}"] = why.take(120)
         main.post { synchronized(lock) { if (cfg == c) { stopLocked(); error = ""; note = " · high-speed refused: ${why.take(90)}"; onNote?.invoke("camera: high-speed refused: $why"); startLocked(c) } } }
     }
 
