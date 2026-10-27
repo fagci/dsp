@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=148;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=149;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -507,6 +507,7 @@ const PRESET_CATS={
   'Phone App: Orientation and Environment Sensors':'Maps & Locating',
   'Phone App: Microphone, Cell and Packets':'Maps & Locating',
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
+  'Phone App: USB SDR over OTG (RTL-SDR, HackRF…)':'SDR Receivers',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
   'TDOA: Path Difference (2 mics)':'Maps & Locating',
@@ -1322,6 +1323,21 @@ addEdge(tx.id,'rec',fl.id,'rec'); addEdge(tx.id,'rec',me.id,'rec');
 addEdge(fl.id,'rec',tb.id,'rec');
 addEdge(tb.id,'rows',lc.id,'rows');
 addEdge(me.id,'rec',mp.id,'rec'); addEdge(tx.id,'pts',mp.id,'rec'); addEdge(lc.id,'rec',mp.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: USB SDR over OTG (RTL-SDR, HackRF…)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Android app (tools/android): the app WebView has no WebUSB, so the app gives the phone USB to the page itself — navigator.usb is built on the bridge (modules/usb-bridge.js), and every USB module works: RTL-SDR, HackRF, Airspy, RX888, logic analysers, USB serial adapters.\n'+
+  'Plug the SDR with an OTG cable, press Connect in the SDR node and allow the device in the Android dialog (it is asked once per device; tick «use by default» to skip it). Isochronous transfers are not available (no device here needs them).\n'+
+  'The phone keeps the dongle powered from its battery: an RTL-SDR takes about 300 mA.'});
+nt.size.w=720; nt.size.h=150; applySize(nt);
+const rx=addNode('rtlsdr',40,220,{sr:'1024000',auto:false,gainDb:30,demod:'WFM',freq:100000000});
+const sa=addNode('sa',40,560,{auto:true,floor:-90,top:-20,split:.3});
+sa.size.w=520; sa.size.h=300; applySize(sa);
+const dc=addNode('dac',620,220,{vol:.4});
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(sa.id,'f1',rx.id,'tuneFreq');
+addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
 markWiresDirty();
 });
 preset('Quick Sound Level Meter', function(){

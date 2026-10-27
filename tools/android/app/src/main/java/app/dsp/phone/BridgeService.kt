@@ -33,6 +33,7 @@ class BridgeService : Service() {
     private lateinit var cell: CellHub
     private lateinit var mic: MicHub
     private lateinit var sniffer: SnifferHub
+    private lateinit var usb: AndroidUsb
     private val asked = HashSet<String>()      // разрешения, о которых уже спросили в этой жизни сервиса
     private var wake: PowerManager.WakeLock? = null
     private val main = Handler(Looper.getMainLooper())
@@ -46,6 +47,8 @@ class BridgeService : Service() {
         cfg = Config(this)
         camera = CameraHub(this) { main.post { refresh() } }
         server = BridgeServer(cfg, camera, ::helloJson, ::statusText) { refresh() }
+        usb = AndroidUsb(this)
+        server.usb = usb
         sensors = SensorHub(this) { s, j -> server.emit(s, j) }
         gps = GpsHub(this) { s, j -> server.emit(s, j) }
         wifi = WifiHub(this, gps) { s, j -> server.emit(s, j) }
@@ -82,7 +85,7 @@ class BridgeService : Service() {
     override fun onDestroy() {
         destroyed = true
         server.stop(); camera.stop()
-        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close()
+        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close()
         wake?.takeIf { it.isHeld }?.release()
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(ID)
         super.onDestroy()

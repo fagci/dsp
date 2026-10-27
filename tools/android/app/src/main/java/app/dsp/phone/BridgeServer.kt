@@ -55,6 +55,9 @@ class BridgeServer(
 
     private class Req(val method: String, val path: String, val query: Map<String, String>, val headers: Map<String, String>)
 
+    /** USB-бэкенд для /usb; без него путь отвечает 404. */
+    @Volatile var usb: UsbBackend? = null
+
     private val clients = CopyOnWriteArraySet<Client>()
     private val conns = CopyOnWriteArraySet<Socket>()
     private val pending = ArrayList<Pair<String, String>>()
@@ -160,6 +163,7 @@ class BridgeServer(
         if (token.isNotEmpty() && (remote || cfg.strict) && !MessageDigest.isEqual((req.query["token"] ?: "").toByteArray(), token.toByteArray()))
             return respond(sock, 401, "Unauthorized", "text/plain", "token required", origin)
         when {
+            req.path == "/usb" -> serveUsb(sock, req, remote, origin)
             req.headers["upgrade"]?.equals("websocket", true) == true -> serveWs(sock, req)
             req.path == "/camera.mjpg" || req.path == "/camera" || req.path == "/stream" -> serveMjpeg(sock, req, origin)
             req.path == "/snapshot.jpg" || req.path == "/snapshot" -> serveSnapshot(sock, req, origin)
@@ -264,15 +268,36 @@ class BridgeServer(
 
     // ---------- WebSocket ----------
 
-    private fun serveWs(sock: Socket, req: Req) {
+    /** Ответ 101 на запрос WebSocket; false — запрос без ключа (ответ 400 уже отправлен). */
+    private fun handshake(sock: Socket, req: Req): Boolean {
         val key = req.headers["sec-websocket-key"]
-            ?: return respond(sock, 400, "Bad Request", "text/plain", "no Sec-WebSocket-Key", null)
+        if (key == null) { respond(sock, 400, "Bad Request", "text/plain", "no Sec-WebSocket-Key", null); return false }
         val accept = Base64.encodeToString(MessageDigest.getInstance("SHA-1")
             .digest((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").toByteArray()), Base64.NO_WRAP)
         val os = sock.getOutputStream()
         os.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: $accept\r\n\r\n").toByteArray())
         os.flush()
         sock.soTimeout = 0
+        return true
+    }
+
+    /**
+     * USB телефона для страницы приложения. Только с этого телефона и только с ключом (UsbKey), который знает лишь страница
+     * приложения: через /usb идёт чтение и запись в подключённые устройства, открывать его всем сайтам нельзя.
+     */
+    private fun serveUsb(sock: Socket, req: Req, remote: Boolean, origin: String?) {
+        val b = usb
+        val k = req.query["k"] ?: ""
+        if (b == null) return respond(sock, 404, "Not Found", "text/plain", "usb is not available", origin)
+        if (remote || !MessageDigest.isEqual(k.toByteArray(), UsbKey.value.toByteArray()))
+            return respond(sock, 403, "Forbidden", "text/plain", "usb: only the DSP app may use it", origin)
+        if (req.headers["upgrade"]?.equals("websocket", true) != true) return respond(sock, 400, "Bad Request", "text/plain", "websocket only", origin)
+        if (!handshake(sock, req)) return
+        UsbSession(sock, b).run()
+    }
+
+    private fun serveWs(sock: Socket, req: Req) {
+        if (!handshake(sock, req)) return
         val c = Client(sock)
         c.subs = (req.query["sources"] ?: "").split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
         c.hz = req.query["hz"]?.toIntOrNull() ?: 0
