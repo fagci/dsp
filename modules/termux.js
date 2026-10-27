@@ -50,7 +50,7 @@ function termuxFeed(n,r){
   if(n.lineQ.length>2000) n.lineQ.splice(0,n.lineQ.length-2000);
 }
 
-const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','batt','charging','temp','nsat','nused','cn0'];
+const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','prox','atemp','humid','steps','heading','hinge','yaw','pitch','roll','batt','charging','temp','nsat','nused','cn0'];
 def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'termux android app phone camera background bluetooth ble gnss satellites nmea raw measurements gps accelerometer gyroscope magnetometer battery wifi cell sensors',
   ins:[], outs:[{n:'rec',t:'rec'},{n:'line',t:'txt'},{n:'camurl',t:'txt'},{n:'nmeatxt',t:'txt'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
   readout:true, tall:true,
@@ -63,6 +63,20 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'mag',t:'check',d:false,label:'magnetometer'},
     {n:'light',t:'check',d:false,label:'light'},
     {n:'pressure',t:'check',d:false,label:'pressure'},
+    {n:'gravity',t:'check',d:false,label:'gravity (DSP app) → rec'},
+    {n:'linear',t:'check',d:false,label:'linear acceleration, no gravity (DSP app) → rec'},
+    {n:'rotation',t:'check',d:false,label:'rotation vector → yaw / pitch / roll (DSP app)'},
+    {n:'gamerot',t:'check',d:false,label:'game rotation vector, no magnetometer (DSP app) → rec'},
+    {n:'georot',t:'check',d:false,label:'geomagnetic rotation vector (DSP app) → rec'},
+    {n:'accelraw',t:'check',d:false,label:'accelerometer, uncalibrated + bias (DSP app) → rec'},
+    {n:'gyroraw',t:'check',d:false,label:'gyroscope, uncalibrated + drift bias (DSP app) → rec'},
+    {n:'magraw',t:'check',d:false,label:'magnetometer, uncalibrated + bias (DSP app) → rec'},
+    {n:'proximity',t:'check',d:false,label:'proximity, cm (DSP app)'},
+    {n:'ambtemp',t:'check',d:false,label:'ambient temperature, °C (DSP app; few phones have it)'},
+    {n:'humidity',t:'check',d:false,label:'relative humidity, % (DSP app; few phones have it)'},
+    {n:'steps',t:'check',d:false,label:'step counter since boot (DSP app; needs Physical activity permission)'},
+    {n:'heading',t:'check',d:false,label:'compass heading, ° (DSP app; Android 14+)'},
+    {n:'hinge',t:'check',d:false,label:'hinge angle, ° (DSP app; foldables)'},
     {n:'wifi',t:'check',d:false,label:'Wi-Fi scan (with the position; DSP app: channel, width, security, standard, WPS, country)'},
     {n:'wifiEvery',t:'range',min:1,max:600,step:1,d:10,label:'Wi-Fi scan every, s (DSP app; Android limits it)'},
     {n:'ble',t:'check',d:false,label:'Bluetooth LE advertisements (DSP app)'},
@@ -102,6 +116,13 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     if(o.gx!=null) t+='\ngyro  '+f(o.gx,2)+' '+f(o.gy,2)+' '+f(o.gz,2);
     if(o.mx!=null) t+='\nmag   '+f(o.mx,1)+' '+f(o.my,1)+' '+f(o.mz,1);
     if(o.nsat!=null) t+='\nsatellites '+f(o.nused,0)+' used of '+f(o.nsat,0)+(o.cn0!=null ? ', C/N0 '+f(o.cn0,0)+' dB-Hz' : '');
+    if(o.yaw!=null) t+='\norientation yaw '+f(o.yaw,0)+'° pitch '+f(o.pitch,0)+'° roll '+f(o.roll,0)+'°';
+    if(o.heading!=null) t+='\nheading '+f(o.heading,0)+'°';
+    if(o.prox!=null) t+='\nproximity '+f(o.prox,1)+' cm';
+    if(o.atemp!=null) t+='\nambient '+f(o.atemp,1)+' °C';
+    if(o.humid!=null) t+='\nhumidity '+f(o.humid,0)+' %';
+    if(o.steps!=null) t+='\nsteps '+f(o.steps,0);
+    if(o.hinge!=null) t+='\nhinge '+f(o.hinge,0)+'°';
     if(o.light!=null) t+='\nlight '+f(o.light,0)+' lx';
     if(o.press!=null) t+='\npressure '+f(o.press,1)+' hPa';
     if(o.batt!=null) t+='\nbattery '+f(o.batt,0)+'%'+(o.charging ? ' (charging)' : '')+(o.temp!=null ? '  '+f(o.temp,1)+' °C' : '');

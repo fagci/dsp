@@ -75,12 +75,14 @@ br.close(); fs.rmSync(dir,{recursive:true,force:true});
 const kf=path.join(root,'modules/termux-kernels.js');
 if(fs.existsSync(kf)){
   const ctx=vm.createContext({Math,Number,String,Object,Array,isFinite,Date,JSON,URL,URLSearchParams});
-  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxCamUrl};',ctx);
+  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxCamUrl};',ctx);
   const K=ctx.K, o={};
   K.termuxApply(o,{src:'gps',lat:1,lon:2,alt:3,acc:4,speed:5,bearing:6});
   ok('apply gps',o.lat===1 && o.lon===2 && o.alt===3 && o.acc===4 && o.speed===5 && o.hdg===6);
   K.termuxApply(o,{src:'sensor',sensor:'accel',x:1,y:2,z:3}); K.termuxApply(o,{src:'sensor',sensor:'gyro',x:4,y:5,z:6});
   K.termuxApply(o,{src:'sensor',sensor:'mag',x:7,y:8,z:9}); K.termuxApply(o,{src:'sensor',sensor:'light',x:120}); K.termuxApply(o,{src:'sensor',sensor:'pressure',x:1013});
+  K.termuxApply(o,{src:'sensor',sensor:'rotation',x:0,y:0,z:Math.sin(Math.PI/4),w:Math.cos(Math.PI/4)}); K.termuxApply(o,{src:'sensor',sensor:'humidity',x:41}); K.termuxApply(o,{src:'sensor',sensor:'steps',x:1234});
+  ok('apply rotation → yaw −90 (CCW 90° about Z), pitch/roll 0',Math.abs(o.yaw+90)<1e-9 && Math.abs(o.pitch)<1e-9 && Math.abs(o.roll)<1e-9 && o.humid===41 && o.steps===1234,JSON.stringify(o));
   ok('apply sensors',o.ax===1 && o.az===3 && o.gx===4 && o.gz===6 && o.mx===7 && o.mz===9 && o.light===120 && o.press===1013);
   K.termuxApply(o,{src:'battery',pct:50,status:'CHARGING',temp:31});
   ok('apply battery',o.batt===50 && o.charging===1 && o.temp===31);

@@ -41,6 +41,7 @@ class MainActivity : Activity() {
         BridgeService.start(this)
         val need = mutableListOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
         if (Build.VERSION.SDK_INT >= 33) need.add(Manifest.permission.POST_NOTIFICATIONS)
+        if (Build.VERSION.SDK_INT >= 29) need.add(Manifest.permission.ACTIVITY_RECOGNITION)
         if (Build.VERSION.SDK_INT >= 31) { need.add(Manifest.permission.BLUETOOTH_SCAN); need.add(Manifest.permission.BLUETOOTH_CONNECT) }
         val miss = need.filter { !granted(it) }
         if (miss.isNotEmpty()) requestPermissions(miss.toTypedArray(), REQ_MAIN)

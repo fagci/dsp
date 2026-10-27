@@ -1,7 +1,7 @@
 "use strict";
 /* Termux: записи моста tools/termux/bridge.mjs → значения выходов узла. Без DOM — проверяется в tools/test-termux.mjs */
 
-const TERMUX_SUBS=['gps','battery','accel','gyro','mag','light','pressure','wifi','cell','ble','bt','gnss','gnssraw','nmea'];
+const TERMUX_SUBS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','heading','hinge','wifi','cell','ble','bt','gnss','gnssraw','nmea'];
 
 // какие источники просить у моста по чекбоксам узла
 function termuxSub(p){ return TERMUX_SUBS.filter(k=>p[k]); }
@@ -24,6 +24,14 @@ function termuxCamUrl(url,p){
   return (u.protocol==='wss:' ? 'https:' : 'http:')+'//'+u.host+'/camera.mjpg?'+q;
 }
 
+// кватернион Android (x,y,z,w) → азимут, тангаж, крен в градусах (как SensorManager.getOrientation)
+function termuxEuler(r){
+  const {x,y,z,w}=r;
+  if(![x,y,z,w].every(Number.isFinite)) return null;
+  const r1=2*(x*y-z*w), r4=1-2*(x*x+z*z), r6=2*(x*z-y*w), r7=2*(y*z+x*w), r8=1-2*(x*x+y*y), d=180/Math.PI;
+  return [Math.atan2(r1,r4)*d, Math.asin(Math.max(-1,Math.min(1,-r7)))*d, Math.atan2(-r6,r8)*d];
+}
+
 // запись моста → o (последние значения по выходам)
 function termuxApply(o,r){
   if(!r || typeof r!=='object') return;
@@ -40,6 +48,13 @@ function termuxApply(o,r){
       if(k){ set(k[0],r.x); set(k[1],r.y); set(k[2],r.z); }
       else if(r.sensor==='light') set('light',r.x);
       else if(r.sensor==='pressure') set('press',r.x);
+      else if(r.sensor==='proximity') set('prox',r.x);
+      else if(r.sensor==='ambtemp') set('atemp',r.x);
+      else if(r.sensor==='humidity') set('humid',r.x);
+      else if(r.sensor==='steps') set('steps',r.x);
+      else if(r.sensor==='heading') set('heading',r.x);
+      else if(r.sensor==='hinge') set('hinge',r.x);
+      else if(r.sensor==='rotation'){ const e=termuxEuler(r); if(e){ o.yaw=e[0]; o.pitch=e[1]; o.roll=e[2]; } }
       break;
     }
   }

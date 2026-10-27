@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=145;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=146;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -504,6 +504,7 @@ const PRESET_CATS={
   'Termux: Phone Position, Sensors and Battery':'Maps & Locating',
   'Phone App: Camera, Sensors and Wi-Fi in the Background':'Maps & Locating',
   'Phone App: Satellites, Bluetooth and Wi-Fi Scan':'Maps & Locating',
+  'Phone App: Orientation and Environment Sensors':'Maps & Locating',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
   'TDOA: Path Difference (2 mics)':'Maps & Locating',
@@ -1256,6 +1257,25 @@ const log=addNode('recLog',460,570,{});
 log.size.w=380; applySize(log);
 addEdge(tx.id,'nmeatxt',nm.id,'text');
 addEdge(tx.id,'nused',t1.id,'in'); addEdge(tx.id,'cn0',t2.id,'in');
+addEdge(tx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Orientation and Environment Sensors', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Android app (tools/android): all the phone sensors, also with the screen locked. Rotation vector → yaw / pitch / roll (yaw 0 = magnetic north); gyroscope and accelerometer up to 1000 Hz; proximity, ambient temperature, humidity, steps and hinge angle appear if the phone has the sensor.\n'+
+  'The rest (gravity, linear acceleration, game / geomagnetic rotation, uncalibrated accelerometer / gyroscope / magnetometer with their bias) goes out as records on rec — tick them in the node and wire rec to Rec Log. Steps need the Physical activity permission.'});
+nt.size.w=800; nt.size.h=140; applySize(nt);
+const tx=addNode('termux',40,210,{url:'ws://127.0.0.1:8765',gps:false,battery:false,rotation:true,gyro:true,pressure:true,light:true,proximity:true,ambtemp:true,humidity:true,steps:true,hz:'100'});
+tx.size.w=380; tx.size.h=560; applySize(tx);
+const t1=addNode('trend',460,210,{span:20,auto:true});
+t1.size.w=360; t1.size.h=170; applySize(t1);
+const t2=addNode('trend',460,400,{span:20,auto:true});
+t2.size.w=360; t2.size.h=170; applySize(t2);
+const t3=addNode('trend',840,210,{span:120,auto:true});
+t3.size.w=360; t3.size.h=170; applySize(t3);
+const log=addNode('recLog',840,400,{});
+log.size.w=380; applySize(log);
+addEdge(tx.id,'yaw',t1.id,'in'); addEdge(tx.id,'gz',t2.id,'in'); addEdge(tx.id,'press',t3.id,'in');
 addEdge(tx.id,'rec',log.id,'rec');
 markWiresDirty();
 });
