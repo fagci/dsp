@@ -118,7 +118,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'cam',t:'select',opts:n=>termuxCamOpts(n.camInfo,n.p.cam),d:'off',label:'camera stream (DSP app) → output «camurl» → IP Camera; the list shows every camera of the phone after Connect (thermal / IR / depth / external too)'},
     {n:'campal',t:'select',opts:['gray','iron'],d:'gray',label:'thermal / depth cameras: palette'},
     {n:'camw',t:'select',opts:['320','640','1280','1920','3840'],d:'640',label:'camera: width, px'},
-    {n:'camfps',t:'range',min:1,max:120,step:1,d:10,label:'camera: frames per second'},
+    {n:'camfps',t:'range',min:1,max:240,step:1,d:10,label:'camera: frames per second (above the camera\'s normal limit — high-speed mode, lower resolution)'},
     {n:'camq',t:'range',min:10,max:100,step:5,d:70,label:'camera: JPEG quality'},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},
     {n:'connect',t:'button',label:'Connect',fn:n=>termuxStart(n)},
