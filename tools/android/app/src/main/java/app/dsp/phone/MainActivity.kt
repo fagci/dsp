@@ -9,6 +9,8 @@ import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.app.WallpaperManager
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -219,6 +221,26 @@ class MainActivity : Activity() {
         /** Ключ приложения: страница добавляет его к адресу моста (?k=…), и ей открыты SMS и контакты; другие сайты его не знают. */
         @JavascriptInterface
         fun appKey(): String = UsbKey.value
+
+        /** Кадр для живых обоев (modules/wallpaper.js): base64 JPEG → LiveWallpaperService. Декодирование — не в основном потоке: кадры идут несколько раз в секунду. */
+        @JavascriptInterface
+        fun wallpaper(b64: String) {
+            Thread {
+                try {
+                    val b = Base64.decode(b64, Base64.DEFAULT)
+                    val bmp = BitmapFactory.decodeByteArray(b, 0, b.size) ?: return@Thread
+                    LiveWallpaperService.push(bmp)
+                } catch (e: Exception) { /* битый кадр — следующий придёт через доли секунды */ }
+            }.also { it.isDaemon = true }.start()
+        }
+
+        /** Системный выбор «Задать живые обои» на DspLiveWallpaperService; ничего не делает, если обои не поддерживаются. */
+        @JavascriptInterface
+        fun wallpaperPick(): Boolean {
+            val i = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER)
+                .putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT, android.content.ComponentName(this@MainActivity, LiveWallpaperService::class.java))
+            return try { startActivity(i); true } catch (e: Exception) { false }
+        }
 
         @JavascriptInterface
         fun usbUrl(): String {

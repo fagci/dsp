@@ -170,7 +170,7 @@ if(typeof module!=='undefined') module.exports={plGattCmd,plNetCmd,plScanOpts,pl
 // ---------- автоматизация, речь, управление ----------
 const PL_SYS_ACTIONS=['speech start','speech stop','vol get','vol set','vol ringer','tts speak','tts stop','clip set','clip get',
   'media play/pause','media next','media prev','screen wake','toast','app list','app launch','intent broadcast','intent service','intent activity',
-  'ui tap','ui swipe','ui back','ui home','ui recents','ui click','ui text','ui screen'];
+  'ui tap','ui swipe','ui back','ui home','ui recents','ui click','ui text','ui screen','broadcast listen','broadcast stop','shell exec'];
 // I: {text, pkg, x, y, x2, y2} со входов (приоритетнее полей узла)
 function plSysCmd(p,I={}){
   const text=I.text!=null && I.text!=='' ? String(I.text) : String(p.text||'');
@@ -204,6 +204,15 @@ function plSysCmd(p,I={}){
     case 'ui click': return text ? {cmd:'ui.click',text} : {error:'text: the button\'s visible label'};
     case 'ui text': return text ? {cmd:'ui.text',text} : {error:'text'};
     case 'ui screen': return {cmd:'ui.screen'};
+    case 'broadcast listen': {
+      const a=String(p.bcastActions||'').split(/[,\n]+/).map(s=>s.trim()).filter(Boolean);
+      return a.length ? {cmd:'sys.bcast.listen',actions:a} : {error:'actions: one or more intent actions, comma or newline separated'};
+    }
+    case 'broadcast stop': return {cmd:'sys.bcast.stop'};
+    case 'shell exec': {
+      const sh=text||String(p.shellCmd||'').trim();
+      return sh ? {cmd:'sys.shell.exec',script:sh,root:!!p.shellRoot,timeout:+p.shellTimeout||15000} : {error:'script: a shell command line'};
+    }
   }
   return {error:'unknown action'};
 }

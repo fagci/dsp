@@ -1,7 +1,7 @@
 "use strict";
 /* Phone Actions: команды приложения DSP (tools/android) и разбор его записей. Без DOM — проверяется в tools/test-phoneact.mjs */
 
-const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.list','contacts.find','ir.info','crash.last'];
+const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.send_raw','sms.list','contacts.find','ir.info','crash.last'];
 
 // адрес моста; в приложении к адресу этого телефона добавляется ключ приложения (?k=…) — с ним открыты SMS и контакты
 function phoneUrl(url,key){
@@ -38,6 +38,7 @@ function phoneCmd(p,textIn){
     case 'vibrate stop': return {cmd:'vibrate.stop'};
     case 'sms.send': return {cmd:'sms.send', to:String(p.to||'').trim(), text};
     case 'sms.data': return {cmd:'sms.data', to:String(p.to||'').trim(), hex:String(p.dataHex||'').replace(/[^0-9a-f]/ig,'').toLowerCase(), port:+p.dport||2948};
+    case 'sms.send_raw': return {cmd:'sms.send_raw', pdu:String(p.rawPdu||textIn||'').replace(/[^0-9a-f]/ig,'').toLowerCase(), smsc:String(p.rawSmsc||'').replace(/[^0-9a-f]/ig,'').toLowerCase()};
     case 'sms.list': return {cmd:'sms.list', box:p.box||'all', q:String(p.q||''), limit:+p.limit||50};
     case 'contacts.find': return {cmd:'contacts.find', q:String(p.q||''), limit:+p.limit||50};
     case 'ir.info': return {cmd:'ir.info'};

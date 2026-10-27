@@ -1,10 +1,11 @@
 "use strict";
 /* ============================ SMS PDU ============================
    Собирает и разбирает SMS как по воздуху (3GPP TS 23.040/23.038): SMS-SUBMIT / SMS-DELIVER, оба алфавита (GSM 7 бит, UCS-2),
-   заголовок UDH (склейка длинных сообщений, порты — data SMS), срок жизни, флаги. «parse» принимает hex откуда угодно — из
-   HEX Structure (схема sms-pdu, modules/hex-formats.js), из Bytes, из входящего rec Phone Actions (SMS с «pdu» — Android даёт сырой
-   PDU на incoming) или руками; «build» отдаёт hex, который Phone Actions не отправит сам (SmsManager шлёт текст или data SMS —
-   см. phoneact.js), зато годится в HEX Structure / файл / другой канал. Ядро — modules/smspdu-kernels.js (tools/test-smspdu.mjs). */
+   заголовок UDH (склейка длинных сообщений, порты — data SMS), срок жизни, флаги. «parse» принимает hex откуда угодно — из HEX
+   Structure, из Bytes, из входящего rec Phone Actions (SMS несёт «pdu» / «pdus» — Android даёт сырой PDU каждой части на incoming)
+   или руками. «build» отдаёт готовый hex / tpdu — для HEX Structure, файла, другого канала, и для передачи на телефон:
+   выход «tpdu» → Phone Actions, действие «sms.send_raw» (экспериментально — публичного API отправить готовый PDU в Android нет,
+   нужна скрытая телефонная служба, см. tools/android/README.md). Ядро — modules/smspdu-kernels.js (tools/test-smspdu.mjs). */
 
 def({ id:'smspdu', title:'SMS PDU', cat:'Protocols', kw:'sms pdu gsm 7bit ucs2 udh tpdu sms-submit sms-deliver concatenated multipart data sms port 3gpp 23.040 23.038',
   ins:[{n:'hex',t:'txt'},{n:'text',t:'txt'},{n:'go',t:'num'}],
@@ -47,15 +48,17 @@ def({ id:'smspdu', title:'SMS PDU', cat:'Protocols', kw:'sms pdu gsm 7bit ucs2 u
       }
       return {hex:n.hexOut||null, tpdu:n.tpduOut||null, text:n.textOut||null, rec:null, parts:n.partsN, ok:n.ok};
     }
-    // parse
-    const go=(I.go||0)>.5, hexIn=typeof I.hex==='string' ? I.hex : '';
-    const fire=(go && !n.prevGo) || (hexIn && hexIn!==n.lastHexIn); n.prevGo=go;
-    if(fire && hexIn){
-      n.lastHexIn=hexIn;
+    // parse — «hex» принимает и строку, и массив (Phone Actions кладёт «pdus»: все части многосоставного SMS сразу)
+    const go=(I.go||0)>.5;
+    const hexList=Array.isArray(I.hex) ? I.hex.filter(h=>typeof h==='string' && h) : (typeof I.hex==='string' && I.hex ? [I.hex] : []);
+    const sig=hexList.join(',');
+    const fire=(go && !n.prevGo) || (hexList.length && sig!==n.lastHexIn); n.prevGo=go;
+    if(fire && hexList.length){
+      n.lastHexIn=sig;
       const withSmsc=n.p.withSmsc==='with SMSC' ? true : n.p.withSmsc==='TPDU only' ? false : 'auto';
-      const r=smsParse(hexIn,withSmsc);
-      if(r.error){ n.err=r.error; n.ok=0; n.info='error: '+r.error; }
-      else {
+      for(const hexIn of hexList){
+        const r=smsParse(hexIn,withSmsc);
+        if(r.error){ n.err=r.error; n.ok=0; n.info='error: '+r.error; continue; }
         n.ok=1; n.err='';
         const rec=smsRec(r);
         if(n.p.join && r.concat){
@@ -64,8 +67,8 @@ def({ id:'smspdu', title:'SMS PDU', cat:'Protocols', kw:'sms pdu gsm 7bit ucs2 u
           else n.info='part '+r.concat.seq+'/'+r.concat.total+' — waiting for the rest';
         } else { n.textOut=r.text; n.info=(r.from||r.to||'')+': '+r.text.slice(0,60)+(r.text.length>60?'…':''); }
         n.recQ.push({t:Date.now(),...rec});
-        if(n.recQ.length>1000) n.recQ.splice(0,n.recQ.length-1000);
       }
+      if(n.recQ.length>1000) n.recQ.splice(0,n.recQ.length-1000);
     }
     const rec=n.recQ.length ? n.recQ.splice(0) : null;
     return {hex:null, tpdu:null, text:n.textOut||null, rec, parts:n.partsN, ok:n.ok};

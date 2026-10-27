@@ -28,6 +28,7 @@ import android.service.notification.StatusBarNotification
 import android.speech.tts.TextToSpeech
 import android.telephony.TelephonyManager
 import android.view.KeyEvent
+import java.util.concurrent.TimeUnit
 import android.widget.Toast
 import org.json.JSONObject
 import java.util.Locale
@@ -66,6 +67,7 @@ class SysHub(private val ctx: Context, private val cfg: Config, private val emit
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private var bcastRx: BroadcastReceiver? = null
 
     private fun rec(ev: String, vararg kv: Pair<String, String?>) =
         emit("sys", Json.obj("src" to "\"sys\"", "ev" to Json.str(ev), "t" to System.currentTimeMillis().toString(), *kv))
@@ -258,6 +260,50 @@ class SysHub(private val ctx: Context, private val cfg: Config, private val emit
                 val u = UiService.inst ?: return Reply.done(c, id, cmd, "turn the DSP app on in system Settings → Accessibility", "permission")
                 u.exec(c, id, cmd, j)
             }
+            "sys.bcast.listen" -> {
+                val actions = j.optJSONArray("actions")?.let { a -> (0 until a.length()).mapNotNull { k -> a.optString(k).takeIf { it.isNotEmpty() } } } ?: emptyList()
+                if (actions.isEmpty()) return Reply.done(c, id, cmd, "actions: a non-empty list of intent actions, e.g. android.intent.action.AIRPLANE_MODE_CHANGED")
+                if (actions.any { !it.matches(Regex("[A-Za-z0-9_.]{1,150}")) }) return Reply.done(c, id, cmd, "actions: letters, digits, dot and underscore only")
+                bcastRx?.let { try { ctx.unregisterReceiver(it) } catch (e: Exception) {} }
+                val f = IntentFilter(); for (a in actions) f.addAction(a)
+                val r = object : BroadcastReceiver() {
+                    override fun onReceive(cx: Context, i: Intent) {
+                        val kv = ArrayList<Pair<String, String?>>()
+                        kv.add("action" to Json.str(i.action)); kv.add("pkg" to i.`package`?.let { Json.str(it) })
+                        i.extras?.let { ex ->
+                            val rows = ex.keySet().map { k -> Json.obj("k" to Json.str(k), "v" to Json.str(ex.get(k)?.toString())) }
+                            if (rows.isNotEmpty()) kv.add("extras" to Json.rows(rows))
+                        }
+                        rec("broadcast", *kv.toTypedArray())
+                    }
+                }
+                try {
+                    if (Build.VERSION.SDK_INT >= 33) ctx.registerReceiver(r, f, Context.RECEIVER_EXPORTED) else ctx.registerReceiver(r, f)
+                    bcastRx = r
+                    Reply.done(c, id, cmd, null, extra = arrayOf("n" to actions.size.toString()))
+                } catch (e: Exception) { Reply.done(c, id, cmd, "bcast.listen: ${e.message}") }
+            }
+            "sys.bcast.stop" -> { bcastRx?.let { try { ctx.unregisterReceiver(it) } catch (e: Exception) {} }; bcastRx = null; Reply.done(c, id, cmd, null) }
+            "sys.shell.exec" -> {
+                val script = j.optString("script").takeIf { it.isNotEmpty() } ?: return Reply.done(c, id, cmd, "script: a shell command line")
+                val root = j.optBoolean("root", false)
+                val timeout = j.optLong("timeout", 15_000).coerceIn(100, 60_000)
+                if (root && !cfg.sniffer) return Reply.done(c, id, cmd, "root features are off — tick «Allow root features» in the app Settings", "forbidden")
+                Thread({
+                    if (root) {
+                        val (code, out) = RootSh.run(script, timeout)
+                        Reply.done(c, id, cmd, null, extra = arrayOf("code" to code.toString(), "out" to Json.str(out.take(20_000))))
+                    } else try {
+                        val p = ProcessBuilder("sh", "-c", script).redirectErrorStream(true).start()
+                        val out = StringBuilder()
+                        val t = Thread({ try { p.inputStream.bufferedReader().forEachLine { if (out.length < 20_000) out.appendLine(it) } } catch (e: Exception) {} }).also { it.isDaemon = true; it.start() }
+                        val finished = p.waitFor(timeout, TimeUnit.MILLISECONDS)
+                        if (!finished) p.destroy()
+                        t.join(500)
+                        Reply.done(c, id, cmd, null, extra = arrayOf("code" to (if (finished) p.exitValue() else -1).toString(), "out" to Json.str(out.toString().take(20_000) + (if (!finished) "\n(timeout)" else ""))))
+                    } catch (e: Exception) { Reply.done(c, id, cmd, "shell: ${e.message}") }
+                }, "dsp-shell").also { it.isDaemon = true }.start()
+            }
             else -> Reply.done(c, id, cmd, "unknown command", "unknown")
         }
     }
@@ -303,5 +349,5 @@ class SysHub(private val ctx: Context, private val cfg: Config, private val emit
         Reply.done(c, id, cmd, null)
     }
 
-    fun close() { update(false); tts?.shutdown(); tts = null }
+    fun close() { update(false); tts?.shutdown(); tts = null; bcastRx?.let { try { ctx.unregisterReceiver(it) } catch (e: Exception) {} } }
 }

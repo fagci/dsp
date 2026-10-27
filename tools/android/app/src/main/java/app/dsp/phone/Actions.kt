@@ -106,7 +106,8 @@ class PhoneActions(
             if (m.isEmpty()) return
             emit("sms", Json.obj("src" to "\"sms\"", "dir" to "\"in\"", "addr" to Json.str(m[0].originatingAddress),
                 "body" to Json.str(m.joinToString("") { it.messageBody ?: "" }), "t" to m[0].timestampMillis.toString(),
-                "pdu" to m[0].pdu?.let { Json.str(Hex.of(it)) }, "parts" to m.size.toString(), "sc" to m[0].serviceCenterAddress?.let { Json.str(it) },
+                "pdu" to m[0].pdu?.let { Json.str(Hex.of(it)) }, "pdus" to Json.arr(m.mapNotNull { it.pdu?.let { b -> Hex.of(b) } }),
+                "parts" to m.size.toString(), "sc" to m[0].serviceCenterAddress?.let { Json.str(it) },
                 "fmt" to i.getStringExtra("format")?.let { Json.str(it) }))
         }
     }
@@ -251,6 +252,20 @@ class PhoneActions(
                 for (k in 0 until parts.size) pis.add(PendingIntent.getBroadcast(ctx, req * 100 + k,
                     Intent(ACTION_SMS_SENT).setPackage(ctx.packageName).setData(Uri.parse("dsp://sms/$req/$k")).putExtra("req", req), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
                 sm.sendMultipartTextMessage(to, null, parts, pis, null)                 // ответ придёт, когда уйдут все части
+            }
+            "sms.send_raw" -> {
+                if (!need(c, id, cmd, listOf(Manifest.permission.SEND_SMS))) return
+                val pdu = Args.hex(j.optString("pdu"), 300)?.takeIf { it.isNotEmpty() } ?: return done(c, id, cmd, "pdu: hex TPDU, no SMSC prefix — the \u00abtpdu\u00bb output of SMS PDU")
+                val smsc = j.optString("smsc").takeIf { it.isNotEmpty() }?.let { Args.hex(it, 20) }
+                if (!limiter.allow(System.currentTimeMillis())) return done(c, id, cmd, "no more than 5 SMS per minute", "rate")
+                val req = reqs.incrementAndGet()
+                sending[req] = Pending(c, id, 1)
+                val sentPi = PendingIntent.getBroadcast(ctx, req * 100,
+                    Intent(ACTION_SMS_SENT).setPackage(ctx.packageName).setData(Uri.parse("dsp://sms/$req/0")).putExtra("req", req), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                try {
+                    val ok = RawPdu.send(ctx.packageName, smsc, pdu, sentPi)
+                    if (!ok) { sending.remove(req); done(c, id, cmd, "no sendRawPdu on this phone \u2014 blocked by Android's hidden-API policy on this build (there is no public API for it; see tools/android/README.md)") }
+                } catch (e: Exception) { sending.remove(req); done(c, id, cmd, "raw send: ${e.message} \u2014 likely blocked by hidden-API policy on this Android version") }
             }
             "sms.list" -> {
                 if (!need(c, id, cmd, listOf(Manifest.permission.READ_SMS))) return

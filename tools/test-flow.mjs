@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n); };
 const ctx=vm.createContext({Math,Number,String,Object,Array,JSON,Set,Infinity});
-vm.runInContext(fs.readFileSync(new URL('../modules/flow-kernels.js',import.meta.url),'utf8')+';this.K={rqNew,rqPush,rqStep}',ctx);
+vm.runInContext(fs.readFileSync(new URL('../modules/flow-kernels.js',import.meta.url),'utf8')+';this.K={rqNew,rqPush,rqStep,ruleApply}',ctx);
 const K=ctx.K;
 let s=K.rqNew();
 ok('push: key dedupe, max',K.rqPush(s,[{a:1},{a:2},{a:1},{b:3}],'a',10)===2 && s.q.length===2 && K.rqPush(s,[{a:3},{a:4}],'a',3)===1);
@@ -34,4 +34,9 @@ ok('manual: only on next',K.rqStep(s,{},0,om).item===null && K.rqStep(s,{next:tr
 // clear
 s=K.rqNew(); K.rqPush(s,[{k:1},{k:2}],'k',10); K.rqStep(s,{clear:true},0,o);
 ok('clear: empties and forgets the keys',s.q.length===0 && K.rqPush(s,[{k:1}],'k',10)===1);
+
+// шаблон команды Rule
+ok('ruleApply: plain values pass through, $field substitutes',JSON.stringify(K.ruleApply({cmd:'vibrate',ms:'$dur',name:'x'},{dur:500}))===JSON.stringify({cmd:'vibrate',ms:500,name:'x'}));
+ok('ruleApply: missing field or no record keeps the literal string',JSON.stringify(K.ruleApply({a:'$missing'},{b:1}))===JSON.stringify({a:'$missing'}) && JSON.stringify(K.ruleApply({a:'$x'},null))===JSON.stringify({a:'$x'}));
+ok('ruleApply: bare "$" is not touched',K.ruleApply({a:'$'},{'':1}).a==='$');
 console.log(bad?bad+' FAILED':'all ok'); process.exit(bad?1:0);
