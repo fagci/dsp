@@ -279,7 +279,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
             if (hr != null) {
                 // поверхность сессии — вход кодера (HsCodec); отказ приходит и исключением, и через onConfigureFailed
                 try {
-                    val k = HsCodec(rd.width, rd.height, hr.upper, rd.surface) { why -> hsGiveUp(c, "codec: $why") }
+                    val k = HsCodec(rd.width, rd.height, hr.upper, { nv, w, h -> onNv21(nv, w, h, c) }) { why -> hsGiveUp(c, "codec: $why") }
                     k.start(); hs = k
                     d.createConstrainedHighSpeedCaptureSession(listOf(k.input), cb, h)
                 } catch (e: Exception) { hsGiveUp(c, e.message ?: e.javaClass.simpleName) }
@@ -332,11 +332,22 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
         try { p.execute { encode(img, c, no) } } catch (e: Exception) { busy.decrementAndGet(); img.close() }
     }
 
-    private fun encode(img: Image, c: Cfg, no: Long) {
+    /** Кадр NV21 из программного декодера (режим высокой скорости): та же очередь кодирования в JPEG, что и у кадров камеры. */
+    private fun onNv21(nv: ByteArray, w: Int, h: Int, c: Cfg) {
+        val now = SystemClock.elapsedRealtime()
+        val p = pool
+        if (p == null || now - lastEnc < 1000L / c.fps - 5 || busy.get() >= (Runtime.getRuntime().availableProcessors().coerceIn(2, 4))) return
+        lastEnc = now
+        val no = ++frameNo
+        busy.incrementAndGet()
+        try { p.execute { encode(null, c, no, nv, w, h) } } catch (e: Exception) { busy.decrementAndGet() }
+    }
+
+    private fun encode(img: Image?, c: Cfg, no: Long, ready: ByteArray? = null, rw: Int = 0, rh: Int = 0) {
         try {
-            val w = img.width; val h = img.height
+            val w = img?.width ?: rw; val h = img?.height ?: rh
             val rot = ((sensorRot + c.rot) % 360 + 360) % 360
-            val nv = Yuv.rotate(if (img.format == ImageFormat.YUV_420_888) Yuv.toNv21(img) else Yuv.fromGray16(img, c.pal), w, h, rot)
+            val nv = Yuv.rotate(ready ?: if (img!!.format == ImageFormat.YUV_420_888) Yuv.toNv21(img) else Yuv.fromGray16(img, c.pal), w, h, rot)
             val (nw, nh) = if (rot == 90 || rot == 270) h to w else w to h
             val bos = ByteArrayOutputStream(nw * nh / 6)
             YuvImage(nv, ImageFormat.NV21, nw, nh, null).compressToJpeg(Rect(0, 0, nw, nh), c.quality, bos)
@@ -353,7 +364,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
         } catch (e: Exception) {
             error = "encode: ${e.message}"
         } finally {
-            try { img.close() } catch (e: Exception) {}
+            try { img?.close() } catch (e: Exception) {}
             busy.decrementAndGet()
         }
     }

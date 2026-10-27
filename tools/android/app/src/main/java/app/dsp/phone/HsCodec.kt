@@ -8,10 +8,10 @@ import android.view.Surface
 /**
  * Высокая скорость камеры. Сессия constrained high-speed принимает только поверхность предпросмотра или видеокодера (ImageReader она
  * отвергает: «Surface format(35) is not for preview or hardware video encoding»). Поэтому камера пишет в вход аппаратного кодера H.264,
- * а выход кодера сразу декодируется на поверхность приёмника кадров (ImageReader) — дальше кадры идут обычным путём в JPEG.
+ * а выход кодера сразу декодируется ПРОГРАММНЫМ декодером в буферы (без поверхности: декодер → ImageReader валил приложение нативно) — кадр NV21 уходит в onFrame.
  * Каждый кадр ключевой: потеря одного (декодер не успел) не портит следующие.
  */
-class HsCodec(private val w: Int, private val h: Int, private val fps: Int, private val out: Surface, private val onFail: (String) -> Unit) {
+class HsCodec(private val w: Int, private val h: Int, private val fps: Int, private val onFrame: (ByteArray, Int, Int) -> Unit, private val onFail: (String) -> Unit) {
     private var enc: MediaCodec? = null
     @Volatile private var dec: MediaCodec? = null
     @Volatile private var run = false
@@ -43,8 +43,8 @@ class HsCodec(private val w: Int, private val h: Int, private val fps: Int, priv
             while (run) {
                 val i = e.dequeueOutputBuffer(ei, 5000)
                 if (i == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED && dec == null) {
-                    val d = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-                    d.configure(e.outputFormat, out, null, 0)
+                    val d = softDecoder()
+                    d.configure(e.outputFormat, null, null, 0)
                     d.start(); dec = d
                 } else if (i >= 0) {
                     val d = dec
@@ -63,10 +63,23 @@ class HsCodec(private val w: Int, private val h: Int, private val fps: Int, priv
                 val d = dec
                 if (d != null) {
                     var o = d.dequeueOutputBuffer(di, 0)
-                    while (o >= 0) { d.releaseOutputBuffer(o, true); o = d.dequeueOutputBuffer(di, 0) }
+                    while (o >= 0) {
+                        val img = d.getOutputImage(o)
+                        if (img != null) try { onFrame(Yuv.toNv21(img), img.width, img.height) } finally { img.close() }
+                        d.releaseOutputBuffer(o, false); o = d.dequeueOutputBuffer(di, 0)
+                    }
                 }
             }
         } catch (x: Exception) { if (run) onFail(x.message ?: x.javaClass.simpleName) }
+    }
+
+    /** Программный декодер (c2.android / OMX.google): аппаратный на этом чипе отдавал кадры на поверхность с нативным падением. */
+    private fun softDecoder(): MediaCodec {
+        val name = try {
+            android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos
+                .firstOrNull { !it.isEncoder && MediaFormat.MIMETYPE_VIDEO_AVC in it.supportedTypes && (it.name.startsWith("c2.android") || it.name.startsWith("OMX.google")) }?.name
+        } catch (x: Exception) { null }
+        return if (name != null) MediaCodec.createByCodecName(name) else MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
     }
 
     fun stop() {
