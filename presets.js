@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=138;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=139;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -518,6 +518,7 @@ const PRESET_CATS={
   'Studio: Drum Machine → Sampler':'Music: Sequencers & Mixer',
   'Studio: Playlist → Piano Roll → Synth':'Music: Sequencers & Mixer',
   'Studio: Sleep Mixer':'Music: Sequencers & Mixer',
+  'Studio: Arranged Song (one wire per lane)':'Music: Sequencers & Mixer',
   'Synth: Acid Bass (303)':'Music: Synth & Tracker',
   'Winamp':'Music: Player',
   'Winamp: Internet Radio Playlist':'Music: Player',
@@ -682,6 +683,39 @@ preset('Studio: Sleep Mixer', function(){
     '(wire them from Pattern Playlist lanes). Here: a low drone, a fifth that breathes with the LFO, and rain (noise → low-pass).'});
   nt.size.w=620; nt.size.h=130; applySize(nt);
   mx.size.w=780; mx.size.h=540; applySize(mx);
+  markWiresDirty();
+});
+
+// одна проводка с полосы Pattern Playlist (pK) выбирает паттерн у Drum Machine и Piano Roll и сцену у Mixer:
+// нет клипа → pK = -1 → машина и ролл молчат, дорожки со сценами выключаются
+preset('Studio: Arranged Song (one wire per lane)', function(){
+  clearAll();
+  const ck=addNode('clock',40,40,{bpm:118,div:'1/16'});
+  const D=stuDrumDefault(), d2=stAddPattern(D,'Pattern 2',1);                       // второй паттерн ударных — плотнее
+  [[0,'x..x..x...x.x...',116],[1,'....x.......x..x',104],[2,'xxxxxxxxxxxxxxxx',60],[3,'..x...x...x...xx',85]].forEach(([r,str,v])=>{ const ch=D.channels[r]; d2.notes[ch.id]=[]; [...str].forEach((x,i)=>{ if(x==='x') d2.notes[ch.id].push({t:i*ST_STEP,l:ST_STEP,k:60,v}); }); });
+  const R=stuRollDefault(), r2=stAddPattern(R,'Pattern 2',2), rc=R.channels[0].id; r2.notes[rc]=[];
+  [[0,3,57],[3,3,60],[6,2,64],[8,4,67],[16,3,64],[19,3,60],[22,2,57],[24,6,55]].forEach(([st,l,k])=>r2.notes[rc].push({t:st*ST_STEP,l:l*ST_STEP,k:k+12,v:100}));
+  const A=stuArrDefault(); A.patterns.length=0; A.playlist.clips=[]; const pa=stAddPattern(A,'A',4), pb=stAddPattern(A,'B',4);
+  [[pa,0],[pb,4],[pa,8],[pb,14]].forEach(([pt,bar])=>A.playlist.clips.push({id:stNextId(A),kind:'pat',pat:pt.id,tr:0,t:bar*ST_BAR,l:4*ST_BAR}));   // такты 12–14 — пауза
+  A.playlist.loop=[0,18*ST_BAR];
+  const M=stuMixDefault(); M.name='Arranged mix'; M.mixer[1].name='Drums'; M.mixer[2].name='Lead'; M.mixer[2].scenes='2'; M.mixer[2].vol=.6; M.mixer[2].sends[8]=.35;   // «Lead» звучит только в паттерне 2
+  const ar=addNode('stuarr',40,200,{data:JSON.stringify(A)});
+  const dm=addNode('studrum',40,660,{data:JSON.stringify(D),gain:.8});
+  const pr=addNode('stuprl',700,660,{data:JSON.stringify(R)});
+  const sy=addNode('voice',1500,660,{wave1:'saw',level1:.7,wave2:'square',level2:.25,attack:.01,decay:.2,sustain:.5,release:.3});
+  const mx=addNode('stumixer',1500,40,{data:JSON.stringify(M)});
+  const dc=addNode('dac',2300,40,{vol:.5,mode:'stereo'});
+  for(const n of [ar,dm,pr]) addEdge(ck.id,'pulse',n.id,'clk');
+  addEdge(ar.id,'p1',dm.id,'pat'); addEdge(ar.id,'p1',pr.id,'pat'); addEdge(ar.id,'p1',mx.id,'scene');          // одна полоса — три узла
+  addEdge(pr.id,'freq',sy.id,'freq'); addEdge(pr.id,'gate',sy.id,'gate'); addEdge(pr.id,'vel',sy.id,'vel');
+  addEdge(dm.id,'out',mx.id,'in1'); addEdge(sy.id,'out',mx.id,'in2');
+  addEdge(mx.id,'L',dc.id,'L'); addEdge(mx.id,'R',dc.id,'R');
+  const nt=addNode('note',760,40,{text:'One wire per lane: Pattern Playlist p1 → Drum Machine pat, Piano Roll pat and Mixer scene.\n'+
+    'p1 = index of the pattern playing in lane 1 (0 = A, 1 = B), -1 = no clip there (bars 13–14): the machine and the roll\n'+
+    'fall silent. In the Mixer the field under a strip lists the pattern numbers (from 1) where it plays:\n'+
+    'strip 2 «Lead» has "2", so it comes in with pattern B only. Lane gates gK can fade strips too (Mixer gK inputs).'});
+  nt.size.w=620; nt.size.h=130; applySize(nt);
+  ar.size.w=780; ar.size.h=440; applySize(ar); dm.size.w=640; dm.size.h=560; applySize(dm); pr.size.w=780; pr.size.h=540; applySize(pr); mx.size.w=780; mx.size.h=540; applySize(mx);
   markWiresDirty();
 });
 

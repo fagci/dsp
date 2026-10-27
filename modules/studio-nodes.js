@@ -110,6 +110,18 @@ class StuLiteBar extends StuPanel{
 }
 
 /* ---------- общее: шаги, запуск, сброс ---------- */
+// вход pat: номер паттерна (0…) выбирает его; отрицательный — «клипа нет» (так выдаёт полоса Pattern Playlist): узел молчит
+function stuPatIn(n,I){
+  n._mute=false; if(typeof I.pat!=='number') return;
+  const S=n.S, P=S.P; if(I.pat<0){ n._mute=true; return; }
+  const q=P.patterns[Math.max(0,Math.min(P.patterns.length-1,Math.round(I.pat)))];
+  if(q && q.id!==S.cur.pat){ S.cur.pat=q.id; S.refreshPats(); }
+}
+// сцены дорожки микшера: «1,3-4» → множество номеров паттернов (с 1)
+function stuParseScenes(str){
+  const set=new Set(); for(const part of String(str||'').split(',')){ const m=part.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/); if(!m) continue; const a=+m[1], b=m[2]?+m[2]:a; for(let i=a;i<=Math.min(b,a+99);i++) set.add(i); }
+  return set;
+}
 // true в сэмпле начала шага (1/16): внешний clk-вход (импульсы) или свой bpm — как у Piano Roll и Master Clock
 function stuStep(n,I,i,own){
   if(I.reset && I.reset[i]>.5){ n.step=-1; n.samplesLeft=0; n._clkAge=0; }
@@ -162,13 +174,13 @@ def({ id:'studrum', lazy:'manual', title:'Drum Machine (Studio)', cat:'Music', r
     const G=[]; for(let k=0;k<8;k++){ G[k]=buf(n,'g'+(k+1)); G[k].fill(0); }
     if(!S) return {out:O,L,R,step:0}; stuRunFlag(n,I);
     const P=S.P, rows=P.channels.slice(0,8);
-    if(typeof I.pat==='number'){ const q=P.patterns[Math.max(0,Math.min(P.patterns.length-1,Math.round(I.pat)))]; if(q && q.id!==S.cur.pat){ S.cur.pat=q.id; S.refreshPats(); } }
+    stuPatIn(n,I);
     const pat=S.patObj(); if(!pat) return {out:O,L,R,step:n.step};
     const steps=pat.bars*16, own=Math.round(sr*60/p.bpm/4), anySolo=rows.some(c=>c.solo), gl=Math.max(8,Math.round((n.stepLen||own)*p.gate));
     for(let i=0;i<BLOCK;i++){
       if(stuStep(n,I,i,own)){
         const st=((n.step%steps)+steps)%steps, sw=(st&1)?Math.round(p.swing*.33*(n.stepLen||own)):0;
-        rows.forEach((ch,k)=>{ const ns=pat.notes[ch.id]; if(!ns) return; for(const q of ns) if(Math.floor(q.t/ST_STEP)===st) n.pend.push({k,v:q.v,key:q.k,at:i+sw}); });
+        rows.forEach((ch,k)=>{ const ns=pat.notes[ch.id]; if(!ns||n._mute) return; for(const q of ns) if(Math.floor(q.t/ST_STEP)===st) n.pend.push({k,v:q.v,key:q.k,at:i+sw}); });
         n.gStep=st;
       }
       for(let j=n.pend.length-1;j>=0;j--){ const e=n.pend[j]; if(e.at<=i){ n.pend.splice(j,1); const ch=rows[e.k]; if(!ch) continue; n.gl[e.k]=gl;
@@ -224,13 +236,13 @@ def({ id:'stuprl', lazy:'manual', title:'Piano Roll (Studio)', cat:'Music', resi
     const out=()=>{ const o={step:Math.max(0,n.step)}; n.vc.forEach((v,k)=>{ const q=k?k+1:''; o['freq'+q]=v.f; o['gate'+q]=G[k]; o['vel'+q]=v.v; }); return o; };
     if(!S) return out(); stuRunFlag(n,I);
     const P=S.P;
-    if(typeof I.pat==='number'){ const q=P.patterns[Math.max(0,Math.min(P.patterns.length-1,Math.round(I.pat)))]; if(q && q.id!==S.cur.pat){ S.cur.pat=q.id; S.refreshPats(); } }
+    stuPatIn(n,I);
     const pat=S.patObj(), ch=S.chObj(); if(!pat||!ch) return out();
     const steps=pat.bars*16, own=Math.round(sr*60/p.bpm/4), notes=pat.notes[ch.id]||[];
     for(let i=0;i<BLOCK;i++){
       if(stuStep(n,I,i,own)){
         const st=((n.step%steps)+steps)%steps, sl=n.stepLen||own;
-        for(const q of notes) if(Math.floor(q.t/ST_STEP)===st){
+        if(!n._mute) for(const q of notes) if(Math.floor(q.t/ST_STEP)===st){
           let k=n.vc.findIndex(v=>!v.on); if(k<0){ k=0; for(let j=1;j<4;j++) if(n.vc[j].left<n.vc[k].left) k=j; }
           const v=n.vc[k]; v.gap=v.on?24:0; v.on=1; v.left=Math.max(8,Math.round(q.l/ST_STEP*sl*p.gatelen)); v.f=stHz(q.k); v.v=q.v/127; }
       }
@@ -270,7 +282,7 @@ def({ id:'stuarr', lazy:'manual', title:'Pattern Playlist (Studio)', cat:'Music'
   dispose:stuLiteDispose,
   process(n,I){
     const S=n.S, sr=Eng.sr, p=n.p, E=buf(n,'end'); E.fill(0); const G=[]; for(let k=0;k<8;k++){ G[k]=buf(n,'g'+(k+1)); G[k].fill(0); }
-    const o={bar:1,step:0,end:E}; if(!S){ for(let k=0;k<8;k++){ o['g'+(k+1)]=G[k]; o['p'+(k+1)]=0; } return o; }
+    const o={bar:1,step:0,end:E}; if(!S){ for(let k=0;k<8;k++){ o['g'+(k+1)]=G[k]; o['p'+(k+1)]=-1; } return o; }
     stuRunFlag(n,I); const P=S.P, own=Math.round(sr*60/p.bpm/4), lane=new Array(8).fill(null);
     const clips=P.playlist.clips.filter(c=>c.kind==='pat'), end=Math.max(ST_BAR,stSongEnd(P)), lp=p.loop&&P.playlist.loop?P.playlist.loop:null;
     const cur=new Array(8).fill(0);
@@ -284,7 +296,7 @@ def({ id:'stuarr', lazy:'manual', title:'Pattern Playlist (Studio)', cat:'Music'
       }
       const cc=n.cur||cur; for(let k=0;k<8;k++) if(cc[k]) G[k][i]=1;
     }
-    for(let k=0;k<8;k++){ o['g'+(k+1)]=G[k]; o['p'+(k+1)]=(n.cur||cur)[k]-1>=0?(n.cur||cur)[k]-1:0; }
+    for(let k=0;k<8;k++){ o['g'+(k+1)]=G[k]; o['p'+(k+1)]=(n.cur||cur)[k]-1; }
     o.bar=Math.floor(Math.max(0,n.step)/16)+1; o.step=Math.max(0,n.step);
     S.tickHead=n.step<0?null:(n.step*ST_STEP+ST_STEP*(n._pos||0)/Math.max(1,n.stepLen||own)); S.eng.playing=n._run; S.mode='song';
     return o;
@@ -303,7 +315,7 @@ function stuMixDefault(){
 const STU_MIX_INS=[]; for(let k=1;k<=8;k++) STU_MIX_INS.push({n:'in'+k,t:'sig'});
 for(let k=1;k<=8;k++) STU_MIX_INS.push({n:'g'+k,t:'sig'});
 def({ id:'stumixer', lazy:'manual', title:'Mixer (Studio)', cat:'Music', resize:true, w:780, h:540, readout:true,
-  ins:[...STU_MIX_INS,{n:'bpm',t:'num'}],
+  ins:[...STU_MIX_INS,{n:'bpm',t:'num'},{n:'scene',t:'num'}],
   outs:[{n:'L',t:'sig'},{n:'R',t:'sig'},{n:'out',t:'sig'},{n:'left',t:'num'}],
   params:[
     {n:'bpm',t:'range',min:40,max:300,step:1,d:120,label:'bpm (pump / gate / delay)'},
@@ -313,7 +325,7 @@ def({ id:'stumixer', lazy:'manual', title:'Mixer (Studio)', cat:'Music', resize:
     {n:'data',t:'text',d:'',hidden:true}],
   init(n){
     n.tileOff=205; n.onResize=ln=>stuLiteFit(ln);
-    n.S=new StuLite(n,stuMixDefault,{maxMix:8}); n.built=false; n.tile=null; n.fxs=new Map(); n.sv=new Float32Array(9).fill(0); n.acc=[]; n.idle=new Int32Array(9); n.lvv=new Float32Array(9); n._beat=0; n._tl=null;
+    n.S=new StuLite(n,stuMixDefault,{maxMix:8}); n.S.liteKind='mixer'; n.scn=[]; n.built=false; n.tile=null; n.fxs=new Map(); n.sv=new Float32Array(9).fill(0); n.acc=[]; n.idle=new Int32Array(9); n.lvv=new Float32Array(9); n._beat=0; n._tl=null;
     n.S_info=()=>n._tl!=null&&n.p.timer>0?'sleep in '+Math.floor(n._tl/60)+':'+String(Math.floor(n._tl%60)).padStart(2,'0'):'';
   },
   dispose:stuLiteDispose,
@@ -332,7 +344,9 @@ def({ id:'stumixer', lazy:'manual', title:'Mixer (Studio)', cat:'Music', resize:
       if(inp) for(let j=0;j<BLOCK;j++) work[j]=inp[j]+acc[j]; else work.set(acc);
       acc.fill(0);
       for(const f of m.fx) if(f.on){ const pr=fxFor(f,true); if(pr) pr.run(work,null,BLOCK); }
-      const aud=!m.mute&&(!anySolo||m.solo), tg=aud?m.vol:0; let sv=n.sv[i], pk=0;
+      // сцены: дорожка звучит только в указанных паттернах (номер приходит на вход scene, например с полосы Pattern Playlist)
+      let inScene=true; if(typeof I.scene==='number' && m.scenes){ let e=n.scn[i]; if(!e||e.src!==m.scenes) e=n.scn[i]={src:m.scenes,set:stuParseScenes(m.scenes)}; if(e.set.size) inScene=I.scene>=0 && e.set.has(Math.round(I.scene)+1); }
+      const aud=!m.mute&&inScene&&(!anySolo||m.solo), tg=aud?m.vol:0; let sv=n.sv[i], pk=0;
       const pa=(m.pan+1)*Math.PI/4, gl=Math.cos(pa), gr=Math.sin(pa), sends=m.sends;
       for(let j=0;j<BLOCK;j++){ sv+=((gt?tg*(gt[j]>.5?1:gt[j]<0?0:gt[j]):tg)-sv)*.004; const x=work[j]*sv; L[j]+=x*gl; R[j]+=x*gr; const a=Math.abs(x); if(a>pk) pk=a; work[j]=x; }
       n.sv[i]=sv; n.lvv[i]=Math.max(pk,n.lvv[i]*.9);

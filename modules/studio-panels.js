@@ -142,6 +142,10 @@ class StuMixer extends StuPanel{
       so.addEventListener('click',()=>{ m.solo=!m.solo; so.classList.toggle('on',m.solo); A.eng.rig&&A.eng.rig.refresh(); A.commit(); });
       ms.append(mu,so);
       s.append(nm,fxl,cv,pan,ms,stuEl('div','stu-sno',i?String(i):'M'));
+      if(A.liteKind==='mixer' && i){
+        const sc=stuEl('input','stu-scn'); sc.placeholder='all'; sc.value=m.scenes||''; sc.title='Audible only in these pattern numbers of the scene input (e.g. 1,3-4). Empty = always';
+        sc.addEventListener('change',()=>{ m.scenes=sc.value.trim(); if(!m.scenes) delete m.scenes; A.commit(); }); sc.addEventListener('click',ev=>ev.stopPropagation()); s.append(sc);
+      }
       s.addEventListener('click',ev=>{ if(ev.target.closest('canvas,button,.stu-knob')) return; A.cur.ins=i; A.cur.slot=-1; A.refreshMixer(); });
       host.append(s);
     });
