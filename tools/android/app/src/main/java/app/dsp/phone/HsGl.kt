@@ -33,7 +33,9 @@ class HsGl(
     private val onPic: (ByteArray) -> Unit,
     private val onFail: (String) -> Unit,
 ) {
-    private val th = HandlerThread("dsp-hs-gl").also { it.start() }
+    private val th = HandlerThread("dsp-hs-gl", android.os.Process.THREAD_PRIORITY_DISPLAY).also { it.start() }
+    private val pic = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "dsp-hs-jpeg").also { it.isDaemon = true } }
+    @Volatile private var picBusy = false
     private val hd = Handler(th.looper)
     lateinit var surface: Surface
         private set
@@ -208,20 +210,29 @@ class HsGl(
         onLum(v, n, dt)
     }
 
+    /** Картинка для просмотра: рисуется и читается на потоке видеокарты, а поворот и JPEG — на отдельном (иначе они отнимали у яркости десятки кадров). */
     private fun picture() {
+        if (picBusy) return
         draw(1, pw, ph)
         bigBuf.rewind()
         GLES20.glReadPixels(0, 0, pw, ph, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bigBuf)
         bigBuf.rewind()
         val bmp = Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)
         bmp.copyPixelsFromBuffer(bigBuf)
-        val m = Matrix(); m.postRotate(rot.toFloat())
-        val r = Bitmap.createBitmap(bmp, 0, 0, pw, ph, m, false)
-        val bos = ByteArrayOutputStream(pw * ph / 4)
-        r.compress(Bitmap.CompressFormat.JPEG, quality, bos)
-        if (r !== bmp) r.recycle()
-        bmp.recycle()
-        onPic(bos.toByteArray())
+        picBusy = true
+        try {
+            pic.execute {
+                try {
+                    val m = Matrix(); m.postRotate(rot.toFloat())
+                    val r = Bitmap.createBitmap(bmp, 0, 0, pw, ph, m, false)
+                    val bos = ByteArrayOutputStream(pw * ph / 4)
+                    r.compress(Bitmap.CompressFormat.JPEG, quality, bos)
+                    if (r !== bmp) r.recycle()
+                    bmp.recycle()
+                    onPic(bos.toByteArray())
+                } catch (e: Exception) {} finally { picBusy = false }
+            }
+        } catch (e: Exception) { picBusy = false }
     }
 
     private fun release() {
@@ -242,6 +253,7 @@ class HsGl(
         }
         try { done.await(1, TimeUnit.SECONDS) } catch (e: Exception) {}
         th.quitSafely()
+        pic.shutdownNow()
     }
 
     fun stop() = release()

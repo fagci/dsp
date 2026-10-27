@@ -258,6 +258,9 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                             val rq = d.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
                             rq.addTarget(hs!!.surface)
                             rq.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, hr)
+                            // яркость кадров меряет мерцание: автофокус (мотор останавливает кадры) и подавление мерцания сети в экспозиции не нужны
+                            rq.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                            rq.set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_OFF)
                             hss.setRepeatingBurst(hss.createHighSpeedRequestList(rq.build()), null, h)
                             return
                         }
