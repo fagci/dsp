@@ -331,11 +331,12 @@ const d=MOD[n.type];
 const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
 const title=nodeTitle(n);
 el.style.setProperty('--cat',catColor(d.cat)); el.dataset.title=title;
-el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare?'<span class="xpd" title="Expand canvas (hide parameters)">⛶</span>':''}${d.fs?'<span class="fsb" title="Fullscreen (double-click the picture)">⤢</span>':''}<span class="rst" title="Reset all parameters">↺</span><span class="ren" title="Rename">✎</span><span class="x">✕</span></div> <div class="nbody"></div>`;
+el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare?'<span class="xpd" title="Expand canvas (hide parameters)">⛶</span>':''}${d.fs?'<span class="fsb" title="Fullscreen (double-click the picture)">⤢</span>':''}${(d.view||d.fs)&&pipSupported()?'<span class="pipb" title="Picture in picture (floating window)">⧉</span>':''}<span class="rst" title="Reset all parameters">↺</span><span class="ren" title="Rename">✎</span><span class="x">✕</span></div> <div class="nbody"></div>`;
 el.querySelector('.ttl').textContent=title;
 el.querySelector('.ren').addEventListener('click',e=>{ e.stopPropagation(); renameNode(n); });
 el.querySelector('.xpd')?.addEventListener('click',e=>{ e.stopPropagation(); xpandNode(n); });
 el.querySelector('.fsb')?.addEventListener('click',e=>{ e.stopPropagation(); nodeFullscreen(n); });
+el.querySelector('.pipb')?.addEventListener('click',e=>{ e.stopPropagation(); nodePip(n); });
 const rstEl=el.querySelector('.rst');
 if(resettableParams(d).length) rstEl.addEventListener('click',e=>{ e.stopPropagation(); resetNode(n); });
 else rstEl.remove();
@@ -1792,6 +1793,7 @@ function dashRenderLeaf(t){
   }
   if(n) acts.append(dashBtn2('✎','Rename module',()=>renameNode(n)));
   if(n?.cv && MOD[n.type].fs) tools.append(dashBtn2('⤢','Fullscreen (double-click the picture)',()=>nodeFullscreen(n)));
+  if(n?.cv && pipSupported()) tools.append(dashBtn2('⧉','Picture in picture',()=>nodePip(n)));
   if(isGraph){
     acts.append(dashBtn2('⊕','Add module (or double-click the canvas)',e=>dashGraphAdd(e.currentTarget)),
       dashBtn2('⤢','Fit patch',dashGraphFit));
@@ -1900,7 +1902,7 @@ function openModPicker(clientX,clientY,at,from){
     h.querySelector('i').textContent=from.port; box.append(h); }
   box.append(inp,list); document.body.append(box); modPickEl=box; Back.push(modPickBack);
   const t0=performance.now();    // попап открывается на pointerup — следом приходит синтетический click по тому, что оказалось под пальцем
-  const mods=Object.values(MOD).filter(m=>!String(m.id).startsWith('custom:'))
+  const mods=Object.values(MOD).filter(m=>!String(m.id).startsWith('custom:') && !hostcapsHidden(m.id))
     .sort((a,b)=>catRank(a.cat)-catRank(b.cat)||a.title.localeCompare(b.title));
   let items=[], cur=0;
   const pick=m=>{ closeModPicker();
@@ -2228,7 +2230,7 @@ let matches=0;
 const visible=m=>!q || modScore(m,q)>0;
 for(const g of CAT_GROUPS){
 const gcats=cats.filter(c=>g.cats.includes(c) || (g===CAT_GROUPS[CAT_GROUPS.length-1] && !CAT_GROUPS.some(x=>x.cats.includes(c))));
-const byCat=gcats.map(c=>[c,Object.values(MOD).filter(m=>m.cat===c&&visible(m))]).filter(x=>x[1].length);
+const byCat=gcats.map(c=>[c,Object.values(MOD).filter(m=>m.cat===c&&visible(m)&&!hostcapsHidden(m.id))]).filter(x=>x[1].length);
 if(!byCat.length) continue;
 const total=byCat.reduce((n,x)=>n+x[1].length,0);
 const det=makeDetails(g.id,g.id.toUpperCase(),q?true:openCats.has(g.id));     // при поиске раскрыто всегда

@@ -709,6 +709,8 @@ canvas.view{display:block;width:100%;background:var(--screen);
 canvas.view.pick{cursor:crosshair}
 .nhead .fsb{cursor:pointer;color:var(--dim);padding:0 2px;font-size:10px;opacity:.5}
 .nhead .fsb:hover{color:var(--acc);opacity:1}
+.nhead .pipb{cursor:pointer;color:var(--dim);padding:0 2px;font-size:10px;opacity:.5}
+.nhead .pipb:hover{color:var(--acc);opacity:1}
 canvas.view:fullscreen{width:100%!important;height:100%!important;margin:0;border-radius:0;background:#000}
 canvas.view.fs-fb{position:fixed!important;inset:0;width:100vw!important;height:100vh!important;z-index:300;margin:0;border-radius:0;background:#000}
 .readout.tall{font-size:12px;text-align:left;white-space:pre-wrap;word-break:break-word;
