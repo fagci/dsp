@@ -2,6 +2,9 @@ package app.dsp.phone.recordstest
 
 import app.dsp.phone.Ad
 import app.dsp.phone.Audio
+import app.dsp.phone.Cam
+import app.dsp.phone.Cmd
+import app.dsp.phone.Gray16
 import app.dsp.phone.Frame
 import app.dsp.phone.PcapReader
 import app.dsp.phone.Perms
@@ -78,6 +81,30 @@ fun main() {
     ok("usb desc: other-speed configuration (type 7) is parsed", other.configs.length() == 1 && other.speedHint == "high-speed")
     ok("usb desc: no bulk here, bulk 512 in the other speed → full-speed", own.speedHint == "" && UsbDesc.speed(own, other) == "full-speed")
     ok("usb desc: own bulk 512 → high-speed; nothing known → empty", UsbDesc.speed(pd, null) == "high-speed" && UsbDesc.speed(own, null) == "" && UsbDesc.speed(null, null) == "")
+
+
+    // --- камеры: тепловизор / ИК / глубина, 16-битные кадры ---
+    ok("camera kinds by output formats", Cam.kind(setOf(Cam.YUV, Cam.JPEG), false) == "visible" && Cam.kind(setOf(Cam.Y16), false) == "thermal" &&
+        Cam.kind(setOf(Cam.DEPTH16), false) == "depth" && Cam.kind(setOf(Cam.YUV), true) == "ir" && Cam.kind(setOf(Cam.RAW), false) == "other")
+    ok("camera format pick: YUV first, then Y16, DEPTH16", Cam.pick(setOf(Cam.Y16, Cam.YUV)) == Cam.YUV && Cam.pick(setOf(Cam.DEPTH16, Cam.Y16)) == Cam.Y16 && Cam.pick(setOf(Cam.JPEG)) == null)
+    val g = IntArray(16 * 16) { 1000 + (it % 16) * 100 }
+    val (glo, ghi) = Gray16.range(g)
+    ok("gray16 range ignores the extremes", glo in 1000..1200 && ghi in 2300..2500, "$glo $ghi")
+    val gn = Gray16.toNv21(g, 16, 16, "gray")
+    ok("gray16 → NV21 gray: left dark, right bright, chroma neutral", gn.size == 16 * 16 * 3 / 2 && (gn[0].toInt() and 255) < 30 && (gn[15].toInt() and 255) > 225 && (gn[16 * 16].toInt() and 255) == 128)
+    val gi = Gray16.toNv21(g, 16, 16, "iron")
+    ok("gray16 → NV21 iron: chroma follows the heat", (gi[16 * 16].toInt() and 255) != (gi[16 * 16 + 14].toInt() and 255) && (gi[15].toInt() and 255) > 200)
+    ok("gray16: no data stays black, empty frame does not crash", (Gray16.toNv21(IntArray(64), 8, 8, "gray")[0].toInt() and 255) == 0 && Gray16.range(IntArray(4)) == (0 to 1))
+
+    // --- команды: проверка аргументов ---
+    ok("sms number", Cmd.number("+7 (900) 123-45-67") != null && Cmd.number("112") != null && Cmd.number("12") == null && Cmd.number("+7900;rm") == null && Cmd.number("abc") == null)
+    val lim = Cmd.Limiter(3, 1000)
+    ok("sms limiter: 3 per window, then free again", lim.allow(0) && lim.allow(10) && lim.allow(20) && !lim.allow(30) && lim.allow(1100))
+    ok("ir pattern", Cmd.irPattern(org.json.JSONArray("[9000,4500,560,560]"))!!.size == 4 && Cmd.irPattern(org.json.JSONArray("[9000]")) == null &&
+        Cmd.irPattern(org.json.JSONArray("[9000,0]")) == null && Cmd.irPattern(org.json.JSONArray("[9000,-5]")) == null && Cmd.irPattern(null) == null && Cmd.irPattern(org.json.JSONArray("[1,3000000]")) == null)
+    ok("ir carrier must lie in the emitter ranges", Cmd.irFreqOk(38000, listOf(intArrayOf(30000, 60000))) && !Cmd.irFreqOk(20000, listOf(intArrayOf(30000, 60000))) && Cmd.irFreqOk(38000, emptyList()) && !Cmd.irFreqOk(0, emptyList()))
+    ok("limit", Cmd.limit(0, 50, 500) == 50 && Cmd.limit(9999, 50, 500) == 500 && Cmd.limit(7, 50, 500) == 7)
+    ok("perms: incoming SMS", Perms.forSubs(setOf("sms"), 34, false) == listOf("android.permission.RECEIVE_SMS"))
 
     // --- JSON-помощники дают валидный JSON ---
     val j = JSONObject(Json.obj("src" to "\"ble\"", "mfr" to Json.map(mapOf("004c" to "02")), "uuids" to Json.arr(listOf("180f", "a\"b")), "n" to null, "x" to Json.num(1.23456789, 1e4)))

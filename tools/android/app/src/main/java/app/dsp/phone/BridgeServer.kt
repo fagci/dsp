@@ -42,6 +42,8 @@ class BridgeServer(
         @Volatile var iface = ""
         @Volatile var filter = ""
         @Volatile var snap = 0
+        /** Страница самого приложения (знает ключ UsbKey): ей можно читать SMS и контакты и слать SMS, чужим сайтам — нет. */
+        @Volatile var trusted = false
         @Volatile var dead = false
         val out = LinkedBlockingQueue<ByteArray>(4096)
         fun send(text: String) { out.offer(frame(text.toByteArray(Charsets.UTF_8))) }   // переполнена — медленный клиент теряет записи
@@ -54,6 +56,9 @@ class BridgeServer(
     )
 
     private class Req(val method: String, val path: String, val query: Map<String, String>, val headers: Map<String, String>)
+
+    /** Команды клиента: {"cmd":"notify|torch|sms.send|…","id":N,…}; ответ — запись {src:'cmd', id, ok, …} только этому клиенту. */
+    @Volatile var onCommand: ((Client, JSONObject) -> Unit)? = null
 
     /** USB-бэкенд для /usb; без него путь отвечает 404. */
     @Volatile var usb: UsbBackend? = null
@@ -232,10 +237,13 @@ class BridgeServer(
 
     private fun camCfg(q: Map<String, String>): CameraHub.Cfg {
         fun int(k: String, d: Int, lo: Int, hi: Int) = (q[k]?.toIntOrNull() ?: d).coerceIn(lo, hi)
-        val facing = if (q["cam"] == "front") android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT
+        val cam = q["cam"] ?: "back"
+        val facing = if (cam == "front") android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT
             else android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK
+        // cam=back|front или номер камеры из cameraInfo (внешняя, тепловизор, ИК): cam=3
+        val id = cam.takeIf { it != "back" && it != "front" && Regex("[A-Za-z0-9_.:-]{1,32}").matches(it) }
         val rot = (int("rot", 0, 0, 359) / 90 * 90)
-        return CameraHub.Cfg(facing, int("w", 640, 16, 8192), int("fps", 10, 1, 120), int("q", 70, 1, 100), rot)
+        return CameraHub.Cfg(facing, int("w", 640, 16, 8192), int("fps", 10, 1, 120), int("q", 70, 1, 100), rot, id, if (q["pal"] == "iron") "iron" else "gray")
     }
 
     private fun serveMjpeg(sock: Socket, req: Req, origin: String?) {
@@ -299,7 +307,8 @@ class BridgeServer(
     private fun serveWs(sock: Socket, req: Req) {
         if (!handshake(sock, req)) return
         val c = Client(sock)
-        c.subs = (req.query["sources"] ?: "").split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+        c.trusted = sock.inetAddress.isLoopbackAddress && MessageDigest.isEqual((req.query["k"] ?: "").toByteArray(), UsbKey.value.toByteArray())
+        c.subs = allowed(c, (req.query["sources"] ?: "").split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet())
         c.hz = req.query["hz"]?.toIntOrNull() ?: 0
         clients.add(c)
         pool.execute { writeLoop(c) }
@@ -351,10 +360,18 @@ class BridgeServer(
         }
     }
 
+    /** Источники, которые клиенту можно: чувствительные (SMS) — только странице приложения. */
+    private fun allowed(c: Client, want: Set<String>): Set<String> {
+        val ok = want.filter { it !in SENSITIVE || c.trusted }.toSet()
+        if (ok.size != want.size) c.send(Json.note("error", "${(want - ok).joinToString(",")}: only the page of the DSP app may use it"))
+        return ok
+    }
+
     private fun onMessage(c: Client, text: String) {
         val j = try { JSONObject(text) } catch (e: Exception) { return }
+        if (j.has("cmd")) { onCommand?.invoke(c, j); return }
         val sub = j.optJSONArray("sub") ?: return
-        c.subs = (0 until sub.length()).map { sub.optString(it) }.filter { it.isNotEmpty() }.toSet()
+        c.subs = allowed(c, (0 until sub.length()).map { sub.optString(it) }.filter { it.isNotEmpty() }.toSet())
         c.hz = j.optInt("hz", 0)
         c.wifiEvery = j.optInt("wifiEvery", 0)
         c.cellEvery = j.optInt("cellEvery", 0)
@@ -367,6 +384,12 @@ class BridgeServer(
     }
 
     companion object {
+        /** Источники, которые отдают личные данные. */
+        val SENSITIVE = setOf("sms")
+
+        /** Команды с личными данными или платные (SMS, контакты) — только доверенному клиенту. */
+        fun sensitiveCmd(name: String) = name.startsWith("sms.") || name.startsWith("contacts.")
+
         fun frame(payload: ByteArray, op: Int = 1): ByteArray {
             val n = payload.size
             val h = when {

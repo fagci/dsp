@@ -2,6 +2,9 @@ package app.dsp.phone
 
 import android.Manifest
 import android.app.Activity
+import android.app.PictureInPictureParams
+import android.content.res.Configuration
+import android.util.Rational
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -102,6 +105,24 @@ class MainActivity : Activity() {
         web.loadUrl(Config.APP_ORIGIN + "/index.html")
     }
 
+    // ---------- картинка в картинке: окно приложения целиком; страница на это время показывает только зеркало холста ----------
+
+    private var pipArmed = false
+    private var pipRatio = Rational(16, 9)
+
+    private fun enterPip(): Boolean = try {
+        if (!packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)) false
+        else enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(pipRatio).build())
+    } catch (e: Exception) { false }
+
+    /** Кнопка «Домой» при открытом зеркале — тоже уходит в PiP, не сворачивает приложение. */
+    override fun onUserLeaveHint() { if (pipArmed) enterPip() }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        web.evaluateJavascript("window.dspPip&&dspPip($isInPictureInPictureMode)", null)
+    }
+
     override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, res: IntArray) {
         when (code) {
             REQ_MAIN -> BridgeService.start(this)             // типы foreground-сервиса зависят от разрешений
@@ -176,6 +197,26 @@ class MainActivity : Activity() {
 
     inner class Downloads {
         /** Адрес USB-API моста для этой страницы (с ключом, который другие сайты не знают); веб-часть строит из него navigator.usb. */
+        /** Окно приложения в PiP с отношением сторон w:h (Android принимает 1:2.39 … 2.39:1). false — на телефоне PiP нет. */
+        @JavascriptInterface
+        fun pip(w: Int, h: Int): Boolean {
+            if (w <= 0 || h <= 0) return false
+            pipRatio = Rational(w, h); pipArmed = true
+            var ok = false
+            val l = java.util.concurrent.CountDownLatch(1)
+            runOnUiThread { ok = enterPip(); l.countDown() }
+            l.await(1, java.util.concurrent.TimeUnit.SECONDS)
+            return ok
+        }
+
+        /** Зеркало закрыто: «Домой» снова просто сворачивает приложение. */
+        @JavascriptInterface
+        fun pipOff() { pipArmed = false }
+
+        /** Ключ приложения: страница добавляет его к адресу моста (?k=…), и ей открыты SMS и контакты; другие сайты его не знают. */
+        @JavascriptInterface
+        fun appKey(): String = UsbKey.value
+
         @JavascriptInterface
         fun usbUrl(): String {
             val c = Config(this@MainActivity)
