@@ -85,7 +85,7 @@ fun main() {
     val cfg = Config(ctx)
     cfg.port = 0
     val subsChanged = java.util.concurrent.atomic.AtomicInteger()
-    val srv = BridgeServer(cfg, CameraHub(ctx) {}, { Json.obj("src" to "\"bridge\"", "level" to "\"hello\"", "ver" to "1") }, { "status-text" }) { subsChanged.incrementAndGet() }
+    val srv = BridgeServer(cfg, { Json.obj("src" to "\"bridge\"", "level" to "\"hello\"", "ver" to "1") }, { "status-text" }) { subsChanged.incrementAndGet() }
     ok("start", srv.start() == null)
     val port = srv.boundPort
     val http = HttpClient.newHttpClient()
@@ -107,9 +107,8 @@ fun main() {
     ok("app origin allowed", get("/status", Config.APP_ORIGIN).statusCode() == 200)
     ok("localhost origin allowed", get("/status", "http://localhost:8000").statusCode() == 200)
     cfg.checkOrigin = false
-    val pre = get("/camera.mjpg", "https://fagci.github.io", "OPTIONS")
+    val pre = get("/status", "https://fagci.github.io", "OPTIONS")
     ok("preflight 204", pre.statusCode() == 204 && pre.headers().firstValue("access-control-allow-private-network").isPresent)
-    ok("camera without permission: 503 with reason", get("/snapshot.jpg").let { it.statusCode() == 503 && it.body().contains("permission") }, get("/snapshot.jpg").body())
 
     val got = CopyOnWriteArrayList<String>()
     val buf = StringBuilder()
@@ -249,7 +248,7 @@ fun main() {
     val (fake, _) = cmdClient("?k=wrong")
     fake.sendText("""{"cmd":"sms.list"}""", true).get()
     ok("a wrong key is not trusted", until { cmds.count { it.second == "sms.list" } == 2 } && cmds.last() == (false to "sms.list"), cmds.toString())
-    ok("sensitive command names", BridgeServer.sensitiveCmd("sms.send") && BridgeServer.sensitiveCmd("contacts.find") && BridgeServer.sensitiveCmd("cam.root.unhide") && !BridgeServer.sensitiveCmd("cam.list") && !BridgeServer.sensitiveCmd("notify") && !BridgeServer.sensitiveCmd("torch"))
+    ok("sensitive command names", BridgeServer.sensitiveCmd("sms.send") && BridgeServer.sensitiveCmd("contacts.find") && !BridgeServer.sensitiveCmd("notify") && !BridgeServer.sensitiveCmd("torch"))
     guest.abort(); own.abort(); fake.abort()
     srv.stop()
     ok("stopped", !srv.listening)

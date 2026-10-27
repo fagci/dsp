@@ -24,7 +24,6 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
@@ -75,10 +74,10 @@
         <service
             android:name=".BridgeService"
             android:exported="false"
-            android:foregroundServiceType="camera|location|microphone|specialUse">
+            android:foregroundServiceType="location|microphone|specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Local server: phone sensors, camera and Wi-Fi scans for the DSP workbench while the screen is off" />
+                android:value="Local server: phone sensors and Wi-Fi scans for the DSP workbench while the screen is off" />
         </service>
     </application>
 </manifest>

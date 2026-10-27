@@ -41,7 +41,7 @@ class SettingsActivity : Activity() {
         root.addView(strict)
         check = Switch(this).apply { text = "Check the site of browsers (Origin); off — any page may connect"; isChecked = cfg.checkOrigin; setPadding(0, pad, 0, 0) }
         root.addView(check)
-        sniff = Switch(this).apply { text = "Allow root features: packet capture (su + tcpdump), hidden cameras"; isChecked = cfg.sniffer; setPadding(0, pad, 0, 0) }
+        sniff = Switch(this).apply { text = "Allow root features: packet capture (su + tcpdump)"; isChecked = cfg.sniffer; setPadding(0, pad, 0, 0) }
         root.addView(sniff)
         text("Port"); port = edit(cfg.port.toString(), true)
         text("Token (empty — no token, anyone who can reach the port gets in)"); token = edit(cfg.token)
@@ -75,11 +75,11 @@ class SettingsActivity : Activity() {
 
     private fun show() {
         val p = cfg.port
-        val sb = StringBuilder("On this phone:\n  ws://127.0.0.1:$p\n  http://127.0.0.1:$p/camera.mjpg?cam=back&w=640&fps=10\n")
+        val sb = StringBuilder("On this phone:\n  ws://127.0.0.1:$p\n")
         if (cfg.shareLan) {
             val q = if (cfg.token.isEmpty()) "" else "token=${cfg.token}"
             sb.append(if (q.isEmpty()) "\nOn the network (no token — open to everyone on it):\n" else "\nOn the network (the token is part of the address):\n")
-            for (ip in BridgeService.lan()) sb.append("  ws://$ip:$p/" + (if (q.isEmpty()) "" else "?$q") + "\n  http://$ip:$p/camera.mjpg?cam=back" + (if (q.isEmpty()) "" else "&$q") + "\n")
+            for (ip in BridgeService.lan()) sb.append("  ws://$ip:$p/" + (if (q.isEmpty()) "" else "?$q") + "\n")
         }
         info.text = sb.toString()
     }

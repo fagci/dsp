@@ -409,7 +409,6 @@ const PRESET_CATS={
   'IR: Arduino / ESP / Flipper (WebSerial)':'Infrared',
   'Phone App: Phone IR Blaster (NEC from a Patch)':'Infrared',
   'Picture in Picture: Spectrum in a Floating Window':'Start Here',
-  'Phone App: All Cameras — Thermal, IR, Depth and Hidden (Root)':'Images & TV',
   'Phone App: Notification with Buttons, Flashlight, SMS and Contacts':'Maps & Locating',
   'IR: Tasmota Blaster over MQTT':'Infrared',
   'MQTT: Subscribe and Publish':'Network & IoT',
@@ -507,8 +506,7 @@ const PRESET_CATS={
   'KiwiSDR and SpyServer on the Map':'Maps & Locating',
   'Wi-Fi: Locate Access Points (Termux)':'Maps & Locating',
   'Termux: Phone Position, Sensors and Battery':'Maps & Locating',
-  'Phone App: Camera, Sensors and Wi-Fi in the Background':'Maps & Locating',
-  'Phone App: High-Speed Camera — Lamp Flicker':'Images & TV',
+  'Phone App: Sensors and Wi-Fi in the Background':'Maps & Locating',
   'Phone App: Satellites, Bluetooth and Wi-Fi Scan':'Maps & Locating',
   'Phone App: Orientation and Environment Sensors':'Maps & Locating',
   'Phone App: Microphone, Cell and Packets':'Maps & Locating',
@@ -1225,16 +1223,14 @@ log.size.w=340; applySize(log);
 addEdge(tx.id,'rec',map.id,'rec'); addEdge(tx.id,'rec',log.id,'rec');
 markWiresDirty();
 });
-preset('Phone App: Camera, Sensors and Wi-Fi in the Background', function(){
+preset('Phone App: Sensors and Wi-Fi in the Background', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'The Android app (tools/android, APK from the «Android app» workflow) runs a foreground service: sensors up to 200 Hz, GPS, Wi-Fi scan and the camera keep working with the screen locked.\n'+
-  'Open the app once and allow Camera and Location; the page inside it (or this page in Chrome on the same phone) connects to ws://127.0.0.1:8765 — press Connect. For another device: Settings in the app → network access, then ws://PHONE_IP:8765/?token=…\n'+
-  'The camera comes out as an address (camurl) → IP Camera: back / front, width, frames per second and JPEG quality are set on the sensors node. Wi-Fi records carry the phone position — wire rec to the map.'});
+const nt=addNode('note',40,40,{text:'The Android app (tools/android, APK from the «Android app» workflow) runs a foreground service: sensors up to 200 Hz, GPS, Wi-Fi scan keep working with the screen locked.\n'+
+  'Open the app once and allow Location; the page inside it (or this page in Chrome on the same phone) connects to ws://127.0.0.1:8765 — press Connect. For another device: Settings in the app → network access, then ws://PHONE_IP:8765/?token=…\n'+
+  'Wi-Fi records carry the phone position — wire rec to the map.'});
 nt.size.w=800; nt.size.h=150; applySize(nt);
-const tx=addNode('termux',40,220,{url:'ws://127.0.0.1:8765',gps:true,battery:true,accel:true,gyro:true,wifi:true,hz:'100',cam:'back',camw:'640',camfps:10,camq:70});
+const tx=addNode('termux',40,220,{url:'ws://127.0.0.1:8765',gps:true,battery:true,accel:true,gyro:true,wifi:true,hz:'100'});
 tx.size.w=360; tx.size.h=480; applySize(tx);
-const cam=addNode('ipcam',440,220,{maxw:'640'});
-cam.size.w=360; cam.size.h=280; applySize(cam);
 const t1=addNode('trend',840,220,{span:10,auto:true});
 t1.size.w=360; t1.size.h=170; applySize(t1);
 const t2=addNode('trend',840,420,{span:10,auto:true});
@@ -1243,26 +1239,8 @@ const map=addNode('geoMap',440,560,{mz:17,labels:true,trail:2000});
 map.size.w=380; map.size.h=420; applySize(map);
 const log=addNode('recLog',40,740,{});
 log.size.w=340; applySize(log);
-addEdge(tx.id,'camurl',cam.id,'url');
 addEdge(tx.id,'az',t1.id,'in'); addEdge(tx.id,'gz',t2.id,'in');
 addEdge(tx.id,'rec',map.id,'rec'); addEdge(tx.id,'rec',log.id,'rec');
-markWiresDirty();
-});
-preset('Phone App: High-Speed Camera — Lamp Flicker', function(){
-clearAll();
-const nt=addNode('note',40,40,{text:'Lamp flicker (100/120 Hz from mains, PWM of LED lamps) with the phone camera in the Android app. Camera fps above the normal limit (usually 30) switches the camera to high-speed mode: 120 or 240 fps (the camera list shows «hs120» / «hs240» for cameras that can). Point the camera at a lamp or a wall it lights, pick a camera with hs in the list (camera #0 on most phones), set fps to the highest it offers, press Connect, and keep the picture running in IP Camera (the camera works while a viewer is connected).\n'+
-  'In this mode the frames do not go through JPEG: the phone GPU averages every camera frame to one brightness number, so the output «lum» is a signal with one sample per camera frame (up to 120–240 per second; «lumv» is the last value) — it goes to the spectrum and the trend. The picture in IP Camera is only a preview (about 10 per second). The status line in the Phone node shows the real sample rate («brightness N samples/s»). A flicker faster than half of that rate shows up as a slow beat (aliasing), not at its true frequency: 100 Hz at 120 fps appears at 20 Hz. If the phone refuses the high-speed session the camera opens in normal mode (no «lum») and the node says why.'});
-nt.size.w=900; nt.size.h=200; applySize(nt);
-const tx=addNode('termux',40,270,{url:'ws://127.0.0.1:8765',gps:false,battery:false,lum:true,cam:'back',camw:'640',camfps:120,camq:50});
-tx.size.w=360; tx.size.h=420; applySize(tx);
-const cam=addNode('ipcam',440,270,{maxw:'640'});
-cam.size.w=340; cam.size.h=260; applySize(cam);
-const ff=addNode('fft',820,270,{size:'4096'});
-const sa=addNode('sa',820,420,{fmin:0,fmax:120,split:.4});
-sa.size.w=460; sa.size.h=300; applySize(sa);
-const tr=addNode('trend',440,560,{span:2,auto:true});
-tr.size.w=380; tr.size.h=200; applySize(tr);
-addEdge(tx.id,'camurl',cam.id,'url'); addEdge(tx.id,'lum',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec'); addEdge(tx.id,'lumv',tr.id,'in');
 markWiresDirty();
 });
 preset('Phone App: Satellites, Bluetooth and Wi-Fi Scan', function(){
@@ -1365,7 +1343,7 @@ markWiresDirty();
 });
 preset('Phone App: Notification with Buttons, Flashlight, SMS and Contacts', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Android app (tools/android): the patch acts on the phone. Press Run in Phone Actions: a native notification appears with the buttons «Open» and «Flash»; a tap on a button comes back as a record {src:notify, action} on rec (and the id on the text output). Also from this node: flashlight (the torch input and the torch output, brightness on Android 13+), SMS send / list, contacts search, camera list (thermal and IR cameras show their kind).\n'+
+const nt=addNode('note',40,40,{text:'Android app (tools/android): the patch acts on the phone. Press Run in Phone Actions: a native notification appears with the buttons «Open» and «Flash»; a tap on a button comes back as a record {src:notify, action} on rec (and the id on the text output). Also from this node: flashlight (the torch input and the torch output, brightness on Android 13+), SMS send / list, contacts search.\n'+
   'SMS and contacts are open only to the page of the app (it adds its key to the address); the app asks for each permission when the action first needs it. Sending is limited to 5 SMS a minute. Rec Log keeps the records; incoming SMS arrive on rec when «incoming SMS» is ticked.'});
 nt.size.w=820; nt.size.h=170; applySize(nt);
 const ph=addNode('phone',40,230,{url:'ws://127.0.0.1:8765',action:'notify',title:'DSP',body:'Hello from the patch',buttons:'Open, Flash',notifyEv:true,torchState:true,smsIn:false});
@@ -1402,23 +1380,6 @@ const ff=addNode('fft',300,220,{size:'2048'});
 const wf=addNode('sa',560,220,{fmin:0,fmax:6000,split:.4});
 wf.size.w=460; wf.size.h=300; applySize(wf);
 addEdge(lf.id,'out',o.id,'freq'); addEdge(o.id,'out',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
-markWiresDirty();
-});
-preset('Phone App: All Cameras — Thermal, IR, Depth and Hidden (Root)', function(){
-clearAll();
-const nt=addNode('note',40,40,{text:'Android app (tools/android). After Connect the camera list on the phone node shows EVERY camera Android gives to apps: #id, kind (visible / ir / thermal / depth), side (back / front / external) and size — pick one and it appears in IP Camera. 16-bit thermal and depth frames come with auto-contrast; the palette gray / iron is on the node.\n'+
-  'Phones hide more cameras than they list (ultra-wide, macro, ToF, IR). Looking for them, in this order: cam.probe (no root: which ids 0…9 the camera service answers for and whether they open), then with root cam.root.info (Android version, camera properties, capabilities of every camera — SYSTEM_CAMERA / SECURE_IMAGE_DATA explain a hidden one) and cam.root.sysuid (a helper process as the system user lists the cameras a system app sees — if the hidden ones appear there, they are system cameras). With root: tick «Allow root features» in the app Settings, then in Phone Actions run cam.root.info (read-only: what the camera service knows, V4L2 devices, access properties), then cam.root.unhide — it adds the app to the system camera-access properties and restarts the camera service (the list on the phone node grows if the phone supports this; Qualcomm-based phones usually do), cam.root.restore puts everything back. Camera for other apps may blink for a few seconds.\n'+
-  'External UVC / thermal cameras on USB-C show up here only if the phone presents them as a camera; otherwise they are for vendor SDKs.'});
-nt.size.w=900; nt.size.h=210; applySize(nt);
-const tx=addNode('termux',40,280,{url:'ws://127.0.0.1:8765',gps:false,battery:false,cam:'back',camw:'640',camfps:10,camq:70,campal:'iron'});
-tx.size.w=360; tx.size.h=520; applySize(tx);
-const cam=addNode('ipcam',440,280,{maxw:'640'});
-cam.size.w=420; cam.size.h=320; applySize(cam);
-const ph=addNode('phone',900,280,{url:'ws://127.0.0.1:8765',action:'cam.root.info',notifyEv:false,torchState:false});
-ph.size.w=380; ph.size.h=520; applySize(ph);
-const tb=addNode('table',440,620,{list:'phone/cameras',maxRows:200,rev:true,cols:['t','src','cmd','ok','msg','text']});
-tb.size.w=700; tb.size.h=260; applySize(tb);
-addEdge(tx.id,'camurl',cam.id,'url'); addEdge(ph.id,'rec',tb.id,'rec');
 markWiresDirty();
 });
 preset('Quick Sound Level Meter', function(){

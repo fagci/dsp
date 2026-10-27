@@ -63,7 +63,6 @@ class PhoneActions(
     private val ctx: Context,
     private val emit: Emit,
     private val askPerms: (List<String>) -> Unit,
-    private val cameraInfo: () -> String,
     private val cfg: Config,
 ) {
     private val pool = Executors.newCachedThreadPool { r -> Thread(r, "dsp-action").also { it.isDaemon = true } }
@@ -205,10 +204,7 @@ class PhoneActions(
                 m.transmit(f, p)
                 done(c, id, cmd, null, extra = arrayOf("us" to p.sum().toString()))
             }
-            "cam.list" -> done(c, id, cmd, null, extra = arrayOf("cameras" to cameraInfo()))
-            "cam.root.info", "cam.root.unhide", "cam.root.restore", "cam.root.sysuid" -> rootCam(c, id, cmd)
             "crash.last" -> done(c, id, cmd, null, extra = arrayOf("text" to Json.str(try { java.io.File(ctx.filesDir, BridgeService.CRASH_FILE).readText() } catch (e: Exception) { "no crash recorded" })))
-            "cam.probe" -> done(c, id, cmd, null, extra = arrayOf("text" to Json.str(probeCameras())))
             "sms.send" -> {
                 if (!need(c, id, cmd, listOf(Manifest.permission.SEND_SMS))) return
                 val to = Cmd.number(j.optString("to")) ?: return done(c, id, cmd, "bad number")
@@ -257,54 +253,6 @@ class PhoneActions(
             }
             else -> done(c, id, cmd, "unknown command", "unknown")
         }
-    }
-
-    /** Камеры с root; команды только доверенному клиенту (BridgeServer.sensitiveCmd) и только если root-возможности включены в настройках приложения. */
-    private fun rootCam(c: BridgeServer.Client, id: Any?, cmd: String) {
-        if (!cfg.sniffer) return done(c, id, cmd, "root features are off — tick «Allow root features» in the app Settings", "forbidden")
-        fun count() = try { JSONArray(cameraInfo()).length() } catch (e: Exception) { 0 }
-        val before = count()
-        val (code, out) = when (cmd) {
-            "cam.root.info" -> RootSh.run(RootCam.INFO)
-            "cam.root.sysuid" -> RootSh.run(RootCam.sysCamScript(ctx.packageName) ?: return done(c, id, cmd, "bad package name"), 30_000)
-            else -> {
-                val script = (if (cmd == "cam.root.unhide") RootCam.unhideScript(ctx.packageName) else RootCam.restoreScript(ctx.packageName)) ?: return done(c, id, cmd, "bad package name")
-                val r = RootSh.run(script)
-                if (RootCam.done(r.second)) { Thread.sleep(4000); 0 to r.second }       // камерный сервис поднимается заново; перезапуск мог убить и оболочку — код выхода не смотрим
-                else r
-            }
-        }
-        if (code != 0) return done(c, id, cmd, if (code < 0) "no root (su): " + RootCam.clip(out, 200) else "su exit $code: " + RootCam.clip(out, 300))
-        done(c, id, cmd, null, extra = arrayOf("text" to Json.str(RootCam.clip(out, 6000)), "before" to before.toString(), "after" to count().toString(), "cameras" to cameraInfo()))
-    }
-
-    /** Без root: для номеров 0…9 — есть ли в списке, отдаёт ли камерный сервис её характеристики и открывается ли она. */
-    private fun probeCameras(): String {
-        val listed = try { cm.cameraIdList.toSet() } catch (e: Exception) { emptySet() }
-        val sb = StringBuilder("listed: ${listed.sorted().joinToString(",")}\n")
-        val canOpen = ctx.granted(Manifest.permission.CAMERA)
-        for (n in 0..9) {
-            val id = n.toString()
-            val ch = try { cm.getCameraCharacteristics(id) } catch (e: Exception) { sb.append("id $id: no characteristics (${e.javaClass.simpleName})\n"); continue }
-            val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            val ae = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.joinToString(" ") { "${it.lower}-${it.upper}" }
-            val hs = try { map?.highSpeedVideoFpsRanges?.joinToString(" ") { "${it.lower}-${it.upper}" } } catch (e: Exception) { null }
-            sb.append("id $id: ${if (id in listed) "listed" else "NOT listed"}, caps=${SysCam.capNames(ch.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES))}, fps=[$ae]" +
-                (if (!hs.isNullOrEmpty()) " high-speed=[$hs]" else ""))
-            if (!canOpen) { sb.append(", open: no camera permission\n"); continue }
-            val latch = java.util.concurrent.CountDownLatch(1)
-            var res = "timeout"
-            try {
-                cm.openCamera(id, object : android.hardware.camera2.CameraDevice.StateCallback() {
-                    override fun onOpened(d: android.hardware.camera2.CameraDevice) { res = "opens"; d.close(); latch.countDown() }
-                    override fun onDisconnected(d: android.hardware.camera2.CameraDevice) { res = "disconnected"; d.close(); latch.countDown() }
-                    override fun onError(d: android.hardware.camera2.CameraDevice, code: Int) { res = "error $code"; d.close(); latch.countDown() }
-                }, handler)
-                latch.await(2, java.util.concurrent.TimeUnit.SECONDS)
-            } catch (e: Exception) { res = "${e.javaClass.simpleName}: ${e.message?.take(80)}" }
-            sb.append(", open: $res\n")
-        }
-        return sb.toString()
     }
 
     private fun irRanges(): List<IntArray> = try { ir?.carrierFrequencies?.map { intArrayOf(it.minFrequency, it.maxFrequency) } ?: emptyList() } catch (e: Exception) { emptyList() }
