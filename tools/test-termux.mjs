@@ -75,7 +75,7 @@ br.close(); fs.rmSync(dir,{recursive:true,force:true});
 const kf=path.join(root,'modules/termux-kernels.js');
 if(fs.existsSync(kf)){
   const ctx=vm.createContext({atob,Float32Array,Math,Number,String,Object,Array,isFinite,Date,JSON,URL,URLSearchParams});
-  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxPcm,termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxCamUrl};',ctx);
+  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxDev,termuxThin,termuxPoint,termuxPcm,termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxCamUrl};',ctx);
   const K=ctx.K, o={};
   K.termuxApply(o,{src:'gps',lat:1,lon:2,alt:3,acc:4,speed:5,bearing:6});
   ok('apply gps',o.lat===1 && o.lon===2 && o.alt===3 && o.acc===4 && o.speed===5 && o.hdg===6);
@@ -92,6 +92,18 @@ if(fs.existsSync(kf)){
   K.termuxApply(oc,{src:'mic',rms:-30}); K.termuxApply(oc,{src:'sensor',sensor:'stationary',x:1}); K.termuxApply(oc,{src:'sensor',sensor:'devorient',x:1});
   ok('apply cell (serving only), mic, motion',oc.cdbm===-85 && oc.crsrp===-95 && oc.csinr===12 && oc.micdb===-30 && oc.still===1 && oc.orient===1,JSON.stringify(oc));
   ok('lines: cell, pkt, mic',K.termuxLine({src:'pkt',iface:'any',ip:'10.0.0.1',sport:1,dip:'1.1.1.1',dport:53,len:60}).includes('10.0.0.1:1 → 1.1.1.1:53') && K.termuxLine({src:'cell',type:'LTE',reg:1,mcc:'250',mnc:'01',cid:5,dbm:-80}).startsWith('cell LTE *') && K.termuxLine({src:'mic',rms:-20}).includes('-20'));
+  // --- устройства: ключ, прореживание, точка для карты ---
+  ok('dev keys',K.termuxDev({src:'wifi',bssid:'aa:bb',ssid:'Home'}).dev==='wifi:aa:bb' && K.termuxDev({src:'ble',addr:'11:22'}).name==='11:22' && K.termuxDev({src:'bt',addr:'33',name:'Buds'}).dev==='bt:33' && K.termuxDev({src:'gps'})===null && K.termuxDev({src:'wifi'})===null);
+  const cl=K.termuxDev({src:'cell',type:'LTE',mcc:'250',mnc:'01',cid:777,pci:5,reg:1,rsrp:-95,dbm:-90});
+  ok('cell: id and level from RSRP',cl.dev==='cell:LTE:250-01:777' && cl.rssi===-95 && cl.name.endsWith('*'),JSON.stringify(cl));
+  ok('cell: neighbour without cid → pci; no ids → null; own rssi kept',K.termuxDev({src:'cell',type:'NR',pci:9,dbm:-100}).dev==='cell:NR::p9' && K.termuxDev({src:'cell',type:'LTE'})===null && !('rssi' in K.termuxDev({src:'cell',type:'LTE',cid:1,rssi:-70,rsrp:-80})));
+  const st=new Map(), a={dev:'d',lat:50,lon:30};
+  ok('thin: off passes all',K.termuxThin(st,a,0,0,0) && K.termuxThin(st,a,1,0,0) && st.size===0);
+  ok('thin: first passes, repeat within 5 s does not, after 5 s does',K.termuxThin(st,a,1000,5,0) && !K.termuxThin(st,a,3000,5,0) && K.termuxThin(st,a,7000,5,0));
+  const mv=new Map(); K.termuxThin(mv,a,0,0,10);
+  ok('thin: by distance (0.0001° lat ≈ 11 m)',!K.termuxThin(mv,{dev:'d',lat:50.00005,lon:30},1,0,10) && K.termuxThin(mv,{dev:'d',lat:50.0002,lon:30},2,0,10));
+  const pt=K.termuxPoint({src:'ble',lat:1,lon:2,rssi:-70,dev:'ble:x',name:'x'},'m1');
+  ok('map point',pt.id==='m1' && pt.lat===1 && pt.label==='-70 dBm' && pt.color==='#b07cff' && pt.track===0);
   ok('apply sensors',o.ax===1 && o.az===3 && o.gx===4 && o.gz===6 && o.mx===7 && o.mz===9 && o.light===120 && o.press===1013);
   K.termuxApply(o,{src:'battery',pct:50,status:'CHARGING',temp:31});
   ok('apply battery',o.batt===50 && o.charging===1 && o.temp===31);

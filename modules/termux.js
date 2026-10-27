@@ -51,6 +51,12 @@ function termuxFeed(n,r){
   n.msgs++; n.last=termuxLine(r);
   if(r.src==='bridge'){ if(r.level==='error' || r.level==='warn') n.bridgeMsg=r.msg; return; }
   termuxApply(n.vals,r);
+  const d=termuxDev(r);                       // wifi / ble / bt / cell: dev, name, rssi; точка замера — на выход pts
+  if(d){
+    r={...r,...d};
+    if(!termuxThin(n.devSeen,r,Date.now(),+n.p.devEvery,+n.p.devMove)) return;
+    if(typeof r.lat==='number' && typeof r.rssi==='number'){ n.ptQ.push(termuxPoint(r,'m'+(++n.ptSeq))); if(n.ptQ.length>5000) n.ptQ.splice(0,n.ptQ.length-5000); }
+  }
   if(r.src==='mic'){ termuxMic(n,r); return; }
   if(r.src==='nmea'){ if(r.line){ n.nmeaQ.push(r.line); if(n.nmeaQ.length>2000) n.nmeaQ.splice(0,n.nmeaQ.length-2000); } return; }
   n.recQ.push({t:Date.now(), ...r});
@@ -61,7 +67,7 @@ function termuxFeed(n,r){
 
 const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','prox','atemp','humid','steps','heading','hinge','yaw','pitch','roll','orient','still','sigm','cdbm','crsrp','crsrq','csinr','micdb','batt','charging','temp','nsat','nused','cn0'];
 def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'termux android app phone camera background bluetooth ble gnss satellites nmea raw measurements gps accelerometer gyroscope magnetometer battery wifi cell sensors',
-  ins:[], outs:[{n:'rec',t:'rec'},{n:'line',t:'txt'},{n:'camurl',t:'txt'},{n:'nmeatxt',t:'txt'},{n:'mic',t:'sig'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
+  ins:[], outs:[{n:'rec',t:'rec'},{n:'pts',t:'rec'},{n:'line',t:'txt'},{n:'camurl',t:'txt'},{n:'nmeatxt',t:'txt'},{n:'mic',t:'sig'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
   readout:true, tall:true,
   params:[
     {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'bridge: ws://host:8765/?token=…'},
@@ -93,6 +99,8 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'gnss',t:'check',d:false,label:'GNSS: every satellite — system, C/N0, elevation, azimuth, used in fix (DSP app)'},
     {n:'gnssraw',t:'check',d:false,label:'GNSS: raw measurements — pseudorange rate, carrier phase, clock (DSP app)'},
     {n:'nmea',t:'check',d:false,label:'NMEA sentences → output «nmeatxt» → NMEA Parser (DSP app)'},
+    {n:'devEvery',t:'range',min:0,max:60,step:1,d:0,label:'Wi-Fi / BLE / BT / cells: one record per device at most every N s (0 — all)'},
+    {n:'devMove',t:'range',min:0,max:200,step:1,d:0,label:'… and only after moving N m (0 — any)'},
     {n:'cell',t:'check',d:false,label:'cell towers: operator, cell id, band, RSRP / RSRQ / SINR (rec; serving cell → cdbm crsrp crsrq csinr)'},
     {n:'cellEvery',t:'range',min:1,max:120,step:1,d:5,label:'cell poll every, s (DSP app)'},
     {n:'mic',t:'check',d:false,label:'microphone → output «mic» (signal), level in «micdb» (DSP app, also with the screen locked)'},
@@ -115,7 +123,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'connect',t:'button',label:'Connect',fn:n=>termuxStart(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>termuxStop(n)},
   ],
-  init:n=>{ ssInit(n,1); n.sExact=true; n.sLag=.25; n.micT=0; n.micT0=0; n.ws=null; n.want=false; n.timer=null; n.recQ=[]; n.lineQ=[]; n.nmeaQ=[]; n.vals={}; n.last=''; n.msgs=0; n.count=0;
+  init:n=>{ ssInit(n,1); n.sExact=true; n.sLag=.25; n.micT=0; n.micT0=0; n.devSeen=new Map(); n.ptQ=[]; n.ptSeq=0; n.ws=null; n.want=false; n.timer=null; n.recQ=[]; n.lineQ=[]; n.nmeaQ=[]; n.vals={}; n.last=''; n.msgs=0; n.count=0;
             n.status='not connected'; n.warn=''; n.sentSub=null; n.bridgeMsg=''; },
   dispose:n=>termuxStop(n),
   process(n){
@@ -124,7 +132,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     let line=n.lineQ.length ? n.lineQ[n.lineQ.length-1] : n.lastLine||'';
     n.lineQ.length=0; n.lastLine=line;
     const nm=n.nmeaQ.length ? n.nmeaQ.splice(0).join('\n')+'\n' : '';
-    const o={rec, line, camurl:termuxCamUrl(n.p.url,n.p), nmeatxt:nm, go:rec ? 1 : 0};
+    const o={rec, pts:n.ptQ.length ? n.ptQ.splice(0) : null, line, camurl:termuxCamUrl(n.p.url,n.p), nmeatxt:nm, go:rec ? 1 : 0};
     for(const k of TERMUX_OUTS) o[k]=n.vals[k] ?? null;
     if(n.p.mic){ const m=buf(n,'mic'); ssProcess(n,[m]); o.mic=m; }
     else { if(n.micT){ ssInit(n,1); n.micT=0; n.micT0=0; n.sExact=true; n.sLag=.25; } o.mic=buf(n,'mic').fill(0); }
