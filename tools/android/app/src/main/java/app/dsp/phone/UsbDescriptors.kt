@@ -26,7 +26,7 @@ object UsbDesc {
         while (p + 2 <= b.size) {
             val len = u8(b, p)
             if (len < 2 || p + len > b.size) break
-            if (u8(b, p + 1) == 2 && len >= 9) {                         // конфигурация: тело — до wTotalLength
+            if ((u8(b, p + 1) == 2 || u8(b, p + 1) == 7) && len >= 9) {   // конфигурация (или «конфигурация для другой скорости»): тело — до wTotalLength
                 val end = minOf(b.size, p + u16(b, p + 2))
                 val ifs = JSONArray()
                 var cur: JSONObject? = null
@@ -58,5 +58,15 @@ object UsbDesc {
         // размер bulk-пакета выдаёт скорость порта: 512 — high-speed, 64 — full-speed (через хаб или кабель OTG бывает ниже, чем у устройства)
         val hint = when { maxBulk >= 512 -> "high-speed"; maxBulk in 1..64 -> "full-speed"; else -> "" }
         return Parsed(usb, hint, cfgs, Hex.of(b))
+    }
+
+    /**
+     * Скорость порта по двум наборам дескрипторов: у двухскоростного устройства «текущая» конфигурация описывает ту скорость, на которой оно
+     * работает, а OTHER_SPEED_CONFIGURATION — другую. Нет bulk в текущей, но есть 512 в «другой» — устройство работает на full-speed
+     * (порт, кабель или хаб не дали high-speed).
+     */
+    fun speed(own: Parsed?, other: Parsed?): String {
+        own?.speedHint?.takeIf { it.isNotEmpty() }?.let { return it }
+        return when (other?.speedHint) { "high-speed" -> "full-speed"; "full-speed" -> "high-speed"; else -> "" }
     }
 }

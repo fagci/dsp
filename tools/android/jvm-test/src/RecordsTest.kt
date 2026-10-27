@@ -72,6 +72,13 @@ fun main() {
     ok("usb desc: speed from the bulk packet size", pd.speedHint == "high-speed" && UsbDesc.parse(dev + b(9, 2, 25, 0, 1, 1, 0, 0x80, 50) + b(9, 4, 0, 0, 1, 255, 0, 0, 0) + b(7, 5, 0x81, 0x02, 0x40, 0, 0)).speedHint == "full-speed")
     ok("usb desc: truncated or empty input does not crash", UsbDesc.parse(ByteArray(0)).configs.length() == 0 && UsbDesc.parse((dev + cfg).copyOf(40)).usb == "2.00" && UsbDesc.parse(b(1, 1, 1)).configs.length() == 0)
 
+    // скорость: нет bulk в текущей конфигурации, а в «другой» (тип 7) есть bulk 512 → устройство на full-speed
+    val other = UsbDesc.parse(b(9, 7, 25, 0, 1, 1, 0, 0x80, 50) + b(9, 4, 0, 3, 1, 255, 255, 255, 0) + b(7, 5, 0x81, 0x02, 0x00, 0x02, 0))
+    val own = UsbDesc.parse(dev + b(9, 2, 18, 0, 1, 1, 0, 0x80, 200) + b(9, 4, 0, 0, 0, 255, 255, 255, 0))
+    ok("usb desc: other-speed configuration (type 7) is parsed", other.configs.length() == 1 && other.speedHint == "high-speed")
+    ok("usb desc: no bulk here, bulk 512 in the other speed → full-speed", own.speedHint == "" && UsbDesc.speed(own, other) == "full-speed")
+    ok("usb desc: own bulk 512 → high-speed; nothing known → empty", UsbDesc.speed(pd, null) == "high-speed" && UsbDesc.speed(own, null) == "" && UsbDesc.speed(null, null) == "")
+
     // --- JSON-помощники дают валидный JSON ---
     val j = JSONObject(Json.obj("src" to "\"ble\"", "mfr" to Json.map(mapOf("004c" to "02")), "uuids" to Json.arr(listOf("180f", "a\"b")), "n" to null, "x" to Json.num(1.23456789, 1e4)))
     ok("json helpers", j.getJSONObject("mfr").getString("004c") == "02" && j.getJSONArray("uuids").getString(1) == "a\"b" && !j.has("n") && j.getDouble("x") == 1.2346)

@@ -127,7 +127,7 @@ class UsbSession(private val sock: Socket, private val backend: UsbBackend) {
                 "list" -> r.put("devices", backend.list())
                 "perm" -> r.put("granted", backend.permission(dev))
                 "open" -> backend.open(dev)?.let { r.put("configs", it.getJSONArray("configs")).put("usb", it.getString("usb")).put("speed", it.optString("speed"))
-                    .put("raw", it.optString("raw")).put("mbps", it.optInt("mbps")) }
+                    .put("raw", it.optString("raw")).put("other", it.optString("other")).put("mbps", it.optInt("mbps")) }
                 "close" -> backend.close(dev)
                 "config" -> backend.config(dev, h.optInt("value"))
                 "claim" -> backend.claim(dev, h.optInt("num"))
@@ -157,7 +157,7 @@ class UsbSession(private val sock: Socket, private val backend: UsbBackend) {
 /** USB Host API Android: устройства, доступ, передачи. Один UsbDeviceConnection на устройство. */
 class AndroidUsb(private val ctx: Context) : UsbBackend {
     private val um = ctx.getSystemService(Context.USB_SERVICE) as UsbManager
-    private class Conn(val dev: UsbDevice, val c: UsbDeviceConnection, val raw: UsbDesc.Parsed?) { val claimed = HashMap<Int, UsbInterface>() }
+    private class Conn(val dev: UsbDevice, val c: UsbDeviceConnection, val raw: UsbDesc.Parsed?, val other: UsbDesc.Parsed? = null) { val claimed = HashMap<Int, UsbInterface>() }
     private val conns = HashMap<String, Conn>()
     private val listeners = CopyOnWriteArraySet<(String, JSONObject) -> Unit>()
     private val answers = HashMap<String, CountDownLatch>()
@@ -269,19 +269,24 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
     } catch (e: Exception) { 0 }
 
     /** Ответ на open: описание по сырым байтам (если разобралось) и данные для диагностики — скорость порта и сами дескрипторы. */
-    private fun rawJson(r: UsbDesc.Parsed?, name: String): JSONObject =
-        JSONObject().put("configs", r?.configs ?: JSONArray()).put("usb", r?.usb ?: "2.00").put("speed", r?.speedHint ?: "")
-            .put("raw", r?.rawHex ?: "").put("mbps", sysfsMbps(name))
+    private fun rawJson(c: Conn, name: String): JSONObject {
+        val r = c.raw
+        return JSONObject().put("configs", r?.configs ?: JSONArray()).put("usb", r?.usb ?: "2.00").put("speed", UsbDesc.speed(r, c.other))
+            .put("raw", r?.rawHex ?: "").put("other", c.other?.rawHex ?: "").put("mbps", sysfsMbps(name))
+    }
 
     @Synchronized
     override fun open(id: String): JSONObject? {
-        conns[id]?.let { return rawJson(it.raw, id) }
+        conns[id]?.let { return rawJson(it, id) }
         val d = find(id)
         if (!um.hasPermission(d)) throw UsbError("SecurityError", "no access to the device — it was not allowed")
         val c = um.openDevice(d) ?: throw UsbError("NetworkError", "cannot open the device")
         val raw = try { c.rawDescriptors?.let { UsbDesc.parse(it) } } catch (e: Exception) { null }
-        conns[id] = Conn(d, c, raw)
-        return rawJson(raw, id)
+        // GET_DESCRIPTOR(OTHER_SPEED_CONFIGURATION): что устройство отдало бы на другой скорости — по нему видно, что порт не дал high-speed
+        val other = try { val buf = ByteArray(512); val n = c.controlTransfer(0x80, 6, 7 shl 8, 0, buf, buf.size, 1000); if (n > 0) UsbDesc.parse(buf.copyOf(n)) else null } catch (e: Exception) { null }
+        val cn = Conn(d, c, raw, other)
+        conns[id] = cn
+        return rawJson(cn, id)
     }
 
     @Synchronized
