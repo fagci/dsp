@@ -25,10 +25,24 @@ object RootCam {
     private val PKG = Regex("[A-Za-z0-9_.]{1,100}")
     private val VAL = Regex("[A-Za-z0-9_.,-]{0,400}")
 
-    /** Только чтение: камеры по версии камерного сервиса, V4L2 / UVC-устройства, свойства доступа. */
-    const val INFO = "echo '## camera service'; dumpsys media.camera 2>/dev/null | grep -E 'Camera ID|Device [0-9]+ is|Facing|[Hh]idden|Resource cost|Conflicting|Physical|Device version' | head -n 80; " +
-        "echo '## v4l2'; for d in /sys/class/video4linux/video*; do [ -e \"\$d\" ] && echo \"\$(basename \$d): \$(cat \$d/name 2>/dev/null)\"; done; ls /dev/video* 2>/dev/null; " +
-        "echo '## properties'; getprop | grep -iE 'camera.*(aux|privapp|packagelist)'; echo '## end'"
+    /**
+     * Только чтение. Сначала то, что нужно для вывода (версия Android, платформа, свойства камеры), потом камеры по версии камерного
+     * сервиса — с возможностями (SYSTEM_CAMERA / SECURE_IMAGE_DATA / LOGICAL_MULTI_CAMERA…): они объясняют, почему камера скрыта.
+     */
+    const val INFO = "echo '## android'; for K in ro.build.version.release ro.build.version.sdk ro.product.model ro.board.platform ro.hardware ro.vendor.mediatek.platform; do echo \"\$K=\$(getprop \$K)\"; done; " +
+        "echo '## camera properties'; getprop | grep -iE 'camera|[.]cam[.]|mtk_cam' | head -n 60; " +
+        "echo '## camera service'; dumpsys media.camera 2>/dev/null | grep -E 'Camera ID|Device [0-9]+ is|Facing|[Hh]idden|Resource cost|Conflicting|Physical|Device version|ystem [Cc]amera|[Ss]ecure|[Ll]ogical|availableCapabilities|lens.facing' | head -n 120; " +
+        "echo '## v4l2'; for d in /sys/class/video4linux/video*; do [ -e \"\$d\" ] && echo \"\$(basename \$d): \$(cat \$d/name 2>/dev/null)\"; done; ls /dev/video* 2>/dev/null; echo '## end'"
+
+    /**
+     * Запускает SysCam от uid 1000 через app_process: список камер, которые видит системное приложение. Класс берётся из нашего же APK
+     * (CLASSPATH), поэтому ничего не устанавливается и не меняется в системе. null — имя пакета с лишними символами.
+     */
+    fun sysCamScript(pkg: String): String? {
+        if (!PKG.matches(pkg)) return null
+        return tpl("A=§(pm path @PKG@ | head -n 1 | cut -d: -f2); echo \"apk=§A\"; " +
+            "su 1000 -c \"CLASSPATH=§A /system/bin/app_process /system/bin app.dsp.phone.SysCam\" 2>&1", pkg)
+    }
 
     // § в шаблонах — знак доллара оболочки (чтобы не экранировать его в строках Kotlin)
     private fun tpl(t: String, pkg: String) = t.replace("@PKG@", pkg).replace("@PROPS@", PROPS.joinToString(" ")).replace('§', '$')

@@ -6,6 +6,7 @@ import app.dsp.phone.Cam
 import app.dsp.phone.Cmd
 import app.dsp.phone.Gray16
 import app.dsp.phone.RootCam
+import app.dsp.phone.SysCam
 import app.dsp.phone.Frame
 import app.dsp.phone.PcapReader
 import app.dsp.phone.Perms
@@ -125,6 +126,14 @@ fun main() {
         return r.inputStream.bufferedReader().readText().trim().also { r.waitFor() }
     }
     ok("root cam: the removal expression works on real sed", sedPkg("app.dsp.phone") == "" && sedPkg("a.b,app.dsp.phone") == "a.b" && sedPkg("app.dsp.phone,c.d") == "c.d" && sedPkg("a.b,app.dsp.phone,c.d") == "a.b,c.d" && sedPkg("a.b") == "a.b" && sedPkg("") == "")
+
+    // --- камеры от uid 1000 ---
+    val sc = RootCam.sysCamScript("app.dsp.phone")!!
+    ok("sysuid: the script finds our APK and runs SysCam as uid 1000 via app_process", sc.contains("pm path app.dsp.phone") && sc.contains("su 1000 -c") && sc.contains("CLASSPATH=\$A") && sc.contains("app_process /system/bin app.dsp.phone.SysCam") && !sc.contains("§"), sc)
+    ok("sysuid: a package name with extra characters is refused", RootCam.sysCamScript("a;b") == null && RootCam.sysCamScript("") == null)
+    ok("sysuid: the class name in the script is the real class", SysCam::class.java.name == "app.dsp.phone.SysCam")
+    ok("camera capability names", SysCam.capNames(intArrayOf(0, 14, 13, 99)) == "BACKWARD_COMPATIBLE,SYSTEM_CAMERA,SECURE_IMAGE_DATA,cap99" && SysCam.capNames(null) == "?")
+    ok("root cam info: version and properties come first, nothing is written", RootCam.INFO.indexOf("## android") < RootCam.INFO.indexOf("## camera service") && RootCam.INFO.contains("getprop") && RootCam.INFO.contains("ystem [Cc]amera") && !RootCam.INFO.contains("setprop"))
 
     // --- JSON-помощники дают валидный JSON ---
     val j = JSONObject(Json.obj("src" to "\"ble\"", "mfr" to Json.map(mapOf("004c" to "02")), "uuids" to Json.arr(listOf("180f", "a\"b")), "n" to null, "x" to Json.num(1.23456789, 1e4)))
