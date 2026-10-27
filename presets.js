@@ -1250,18 +1250,19 @@ markWiresDirty();
 });
 preset('Phone App: High-Speed Camera — Lamp Flicker', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Lamp flicker (100/120 Hz from mains, PWM of LED lamps) with the phone camera in the Android app. Camera fps above the normal limit (usually 30) switches the camera to high-speed mode: 120 or 240 fps, smaller picture (the camera list shows «hs240» for cameras that can). Point the camera at a lamp or a wall it lights, pick a camera with hs in the list, set fps to the highest it offers.\n'+
-  'Brightness of the zone per frame goes to the trend and the spectrum. Honest limits: the stream is JPEG, the phone may encode fewer frames than the camera shoots — the frame rate the stream really gives is in the camera status; a flicker faster than half of it shows up as a slow beat (aliasing), not at its true frequency. If the phone refuses the high-speed session (it often does for a frame reader), the camera opens in normal mode with manual exposure and frame duration — as many fps as the sensor allows at this size (the status shows «manual N fps»); if the phone has no manual sensor control it stays at the normal limit and says so.'});
-nt.size.w=860; nt.size.h=170; applySize(nt);
-const tx=addNode('termux',40,240,{url:'ws://127.0.0.1:8765',cam:'back',camw:'640',camfps:120,camq:50});
+const nt=addNode('note',40,40,{text:'Lamp flicker (100/120 Hz from mains, PWM of LED lamps) with the phone camera in the Android app. Camera fps above the normal limit (usually 30) switches the camera to high-speed mode: 120 or 240 fps (the camera list shows «hs120» / «hs240» for cameras that can). Point the camera at a lamp or a wall it lights, pick a camera with hs in the list (camera #0 on most phones), set fps to the highest it offers, press Connect, and keep the picture running in IP Camera (the camera works while a viewer is connected).\n'+
+  'In this mode the frames do not go through JPEG: the phone GPU averages every camera frame to one brightness number, so the output «lum» is a signal with one sample per camera frame (up to 120–240 per second; «lumv» is the last value) — it goes to the spectrum and the trend. The picture in IP Camera is only a preview (about 10 per second). The status line in the Phone node shows the real sample rate («brightness N samples/s»). A flicker faster than half of that rate shows up as a slow beat (aliasing), not at its true frequency: 100 Hz at 120 fps appears at 20 Hz. If the phone refuses the high-speed session the camera opens in normal mode (no «lum») and the node says why.'});
+nt.size.w=900; nt.size.h=200; applySize(nt);
+const tx=addNode('termux',40,270,{url:'ws://127.0.0.1:8765',gps:false,battery:false,lum:true,cam:'back',camw:'640',camfps:120,camq:50});
 tx.size.w=360; tx.size.h=420; applySize(tx);
-const cam=addNode('ipcam',440,240,{maxw:'640'});
+const cam=addNode('ipcam',440,270,{maxw:'640'});
 cam.size.w=340; cam.size.h=260; applySize(cam);
-const cs=addNode('colorsp',440,520,{mode:'color',zx:.3,zy:.3,zw:.4,zh:.4,avg:0});
-cs.size.w=340; applySize(cs);
-const tr=addNode('trend',820,240,{span:2,auto:true});
+const ff=addNode('fft',820,270,{size:'4096'});
+const sa=addNode('sa',820,420,{fmin:0,fmax:120,split:.4});
+sa.size.w=460; sa.size.h=300; applySize(sa);
+const tr=addNode('trend',440,560,{span:2,auto:true});
 tr.size.w=380; tr.size.h=200; applySize(tr);
-addEdge(tx.id,'camurl',cam.id,'url'); addEdge(cam.id,'img',cs.id,'img'); addEdge(cs.id,'v',tr.id,'in');
+addEdge(tx.id,'camurl',cam.id,'url'); addEdge(tx.id,'lum',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec'); addEdge(tx.id,'lumv',tr.id,'in');
 markWiresDirty();
 });
 preset('Phone App: Satellites, Bluetooth and Wi-Fi Scan', function(){

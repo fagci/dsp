@@ -1,7 +1,7 @@
 "use strict";
 /* Termux: записи моста tools/termux/bridge.mjs → значения выходов узла. Без DOM — проверяется в tools/test-termux.mjs */
 
-const TERMUX_SUBS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','step','devorient','sigmotion','stationary','motion','heading','hinge','wifi','cell','ble','bt','gnss','gnssraw','nmea','mic','pkt'];
+const TERMUX_SUBS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','step','devorient','sigmotion','stationary','motion','heading','hinge','wifi','cell','ble','bt','gnss','gnssraw','nmea','mic','lum','pkt'];
 
 // какие источники просить у моста по чекбоксам узла
 function termuxSub(p){ return TERMUX_SUBS.filter(k=>p[k]); }
@@ -109,6 +109,7 @@ function termuxApply(o,r){
       break;
     case 'cell': if(r.reg==1 || r.reg===true){ set('cdbm',r.dbm); set('crsrp',r.rsrp); set('crsrq',r.rsrq); set('csinr',r.sinr); } break;
     case 'mic': set('micdb',r.rms); break;
+    case 'lum': if(Array.isArray(r.v) && r.v.length) set('lumv',+r.v[r.v.length-1]); break;
     case 'gnss': if(r.kind==='fix'){ set('nsat',r.n); set('nused',r.used); set('cn0',r.cn0); } break;
     case 'sensor': {
       const k={accel:['ax','ay','az'], gyro:['gx','gy','gz'], mag:['mx','my','mz']}[r.sensor];
@@ -141,6 +142,7 @@ function termuxLine(r){
     case 'cell': return 'cell '+(r.type||'')+(r.reg ? ' *' : '')+' '+(r.mcc!=null ? r.mcc+'-'+r.mnc+' ' : '')+'cid '+(r.cid ?? '—')+(r.pci!=null ? ' pci '+r.pci : '')+(r.dbm!=null ? ' '+r.dbm+' dBm' : '');
     case 'pkt': return 'pkt '+r.iface+' '+(r.ip ? r.ip+(r.sport ? ':'+r.sport : '')+' → '+r.dip+(r.dport ? ':'+r.dport : '') : (r.smac||'')+' → '+(r.dmac||''))+' '+r.len+' B';
     case 'mic': return 'mic '+f(r.rms,0)+' dBFS';
+    case 'lum': return 'lum '+(Array.isArray(r.v) ? r.v.length : 0)+' samples';
     case 'wifi': return 'wifi '+r.bssid+' '+r.rssi+' dBm'+(r.ch ? ' ch '+r.ch : '')+' '+(r.ssid||'');
     case 'wificonn': return 'connected '+(r.ssid||r.bssid)+' '+r.rssi+' dBm '+(r.speed!=null ? r.speed+' Mbit/s' : '');
     case 'ble': return 'ble '+r.addr+' '+r.rssi+' dBm '+(r.name||'');
