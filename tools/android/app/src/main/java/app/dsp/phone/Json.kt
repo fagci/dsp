@@ -7,6 +7,10 @@ object Json {
     fun num(v: Double, scale: Double = 1e4): String =
         if (v.isFinite()) (Math.round(v * scale) / scale).toString() else "null"
 
+    fun arr(l: List<String>): String = l.joinToString(",", "[", "]") { str(it) }
+
+    fun map(m: Map<String, String>): String = m.entries.joinToString(",", "{", "}") { str(it.key) + ":" + str(it.value) }
+
     fun str(s: String?): String = JSONObject.quote(s ?: "")
 
     fun obj(vararg kv: Pair<String, String?>): String {

@@ -43,15 +43,16 @@ function termuxFeed(n,r){
   n.msgs++; n.last=termuxLine(r);
   if(r.src==='bridge'){ if(r.level==='error' || r.level==='warn') n.bridgeMsg=r.msg; return; }
   termuxApply(n.vals,r);
+  if(r.src==='nmea'){ if(r.line){ n.nmeaQ.push(r.line); if(n.nmeaQ.length>2000) n.nmeaQ.splice(0,n.nmeaQ.length-2000); } return; }
   n.recQ.push({t:Date.now(), ...r});
   if(n.recQ.length>20000) n.recQ.splice(0,n.recQ.length-20000);
   n.lineQ.push(n.last);
   if(n.lineQ.length>2000) n.lineQ.splice(0,n.lineQ.length-2000);
 }
 
-const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','batt','charging','temp'];
-def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'termux android app phone camera background gps accelerometer gyroscope magnetometer battery wifi cell sensors',
-  ins:[], outs:[{n:'rec',t:'rec'},{n:'line',t:'txt'},{n:'camurl',t:'txt'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
+const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','batt','charging','temp','nsat','nused','cn0'];
+def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'termux android app phone camera background bluetooth ble gnss satellites nmea raw measurements gps accelerometer gyroscope magnetometer battery wifi cell sensors',
+  ins:[], outs:[{n:'rec',t:'rec'},{n:'line',t:'txt'},{n:'camurl',t:'txt'},{n:'nmeatxt',t:'txt'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
   readout:true, tall:true,
   params:[
     {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'bridge: ws://host:8765/?token=…'},
@@ -62,7 +63,13 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'mag',t:'check',d:false,label:'magnetometer'},
     {n:'light',t:'check',d:false,label:'light'},
     {n:'pressure',t:'check',d:false,label:'pressure'},
-    {n:'wifi',t:'check',d:false,label:'Wi-Fi scan (with the position)'},
+    {n:'wifi',t:'check',d:false,label:'Wi-Fi scan (with the position; DSP app: channel, width, security, standard, WPS, country)'},
+    {n:'wifiEvery',t:'range',min:2,max:120,step:1,d:10,label:'Wi-Fi scan every, s (DSP app; Android limits it)'},
+    {n:'ble',t:'check',d:false,label:'Bluetooth LE advertisements (DSP app)'},
+    {n:'bt',t:'check',d:false,label:'Bluetooth classic discovery (DSP app)'},
+    {n:'gnss',t:'check',d:false,label:'GNSS: every satellite — system, C/N0, elevation, azimuth, used in fix (DSP app)'},
+    {n:'gnssraw',t:'check',d:false,label:'GNSS: raw measurements — pseudorange rate, carrier phase, clock (DSP app)'},
+    {n:'nmea',t:'check',d:false,label:'NMEA sentences → output «nmeatxt» → NMEA Parser (DSP app)'},
     {n:'cell',t:'check',d:false,label:'cell towers'},
     {n:'hz',t:'select',opts:['0','10','50','100','200'],d:'0',label:'sensor rate, Hz (DSP app; 0 — default)'},
     {n:'cam',t:'select',opts:['off','back','front'],d:'off',label:'camera stream (DSP app) → output «camurl» → IP Camera'},
@@ -73,7 +80,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'connect',t:'button',label:'Connect',fn:n=>termuxStart(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>termuxStop(n)},
   ],
-  init:n=>{ n.ws=null; n.want=false; n.timer=null; n.recQ=[]; n.lineQ=[]; n.vals={}; n.last=''; n.msgs=0; n.count=0;
+  init:n=>{ n.ws=null; n.want=false; n.timer=null; n.recQ=[]; n.lineQ=[]; n.nmeaQ=[]; n.vals={}; n.last=''; n.msgs=0; n.count=0;
             n.status='not connected'; n.warn=''; n.sentSub=null; n.bridgeMsg=''; },
   dispose:n=>termuxStop(n),
   process(n){
@@ -81,7 +88,8 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     const rec=n.recQ.length ? n.recQ.splice(0) : null;
     let line=n.lineQ.length ? n.lineQ[n.lineQ.length-1] : n.lastLine||'';
     n.lineQ.length=0; n.lastLine=line;
-    const o={rec, line, camurl:termuxCamUrl(n.p.url,n.p), go:rec ? 1 : 0};
+    const nm=n.nmeaQ.length ? n.nmeaQ.splice(0).join('\n')+'\n' : '';
+    const o={rec, line, camurl:termuxCamUrl(n.p.url,n.p), nmeatxt:nm, go:rec ? 1 : 0};
     for(const k of TERMUX_OUTS) o[k]=n.vals[k] ?? null;
     return o;
   },
@@ -93,6 +101,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     if(o.ax!=null) t+='\naccel '+f(o.ax,2)+' '+f(o.ay,2)+' '+f(o.az,2);
     if(o.gx!=null) t+='\ngyro  '+f(o.gx,2)+' '+f(o.gy,2)+' '+f(o.gz,2);
     if(o.mx!=null) t+='\nmag   '+f(o.mx,1)+' '+f(o.my,1)+' '+f(o.mz,1);
+    if(o.nsat!=null) t+='\nsatellites '+f(o.nused,0)+' used of '+f(o.nsat,0)+(o.cn0!=null ? ', C/N0 '+f(o.cn0,0)+' dB-Hz' : '');
     if(o.light!=null) t+='\nlight '+f(o.light,0)+' lx';
     if(o.press!=null) t+='\npressure '+f(o.press,1)+' hPa';
     if(o.batt!=null) t+='\nbattery '+f(o.batt,0)+'%'+(o.charging ? ' (charging)' : '')+(o.temp!=null ? '  '+f(o.temp,1)+' °C' : '');

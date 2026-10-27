@@ -1,5 +1,5 @@
 // Логика моста (сервер, поворот кадра) на обычной JVM против настоящих классов Android (robolectric android-all):
-//   cd tools/android/jvm-test && gradle runTests
+//   cd tools/android/jvm-test && gradle runTests   (сервер, поворот кадра, разбор BLE / Wi-Fi IE / ГНСС)
 // Камера, датчики и WebView здесь не проверяются — им нужен телефон.
 plugins { kotlin("jvm") version "2.0.21"; application }
 repositories { mavenCentral() }
@@ -13,4 +13,7 @@ tasks.register<JavaExec>("runServerTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.ServerTestKt")
     jvmArgs("-Djdk.httpclient.allowRestrictedHeaders=origin")
 }
-tasks.register("runTests") { dependsOn("runRotTest", "runServerTest") }
+tasks.register<JavaExec>("runRecordsTest") {
+    classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.recordstest.RecordsTestKt")
+}
+tasks.register("runTests") { dependsOn("runRotTest", "runServerTest", "runRecordsTest") }

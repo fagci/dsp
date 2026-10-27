@@ -15,6 +15,7 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
@@ -91,6 +92,9 @@ class GpsHub(private val ctx: Context, private val emit: Emit) : LocationListene
     private val thread = HandlerThread("dsp-gps").also { it.start() }
     private var on = false
     @Volatile var fix: Location? = null
+
+    /** Последнее положение не старше 30 с — для записей Wi-Fi / BLE / BT. */
+    fun recent(): Location? = fix?.takeIf { SystemClock.elapsedRealtime() - it.elapsedRealtimeNanos / 1_000_000 < 30_000 }
 
     /** false — нет разрешения или выключена геолокация. */
     @Synchronized
@@ -171,16 +175,62 @@ class WifiHub(private val ctx: Context, private val gps: GpsHub, private val emi
         val stamp = list.maxOf { it.timestamp }
         if (stamp == lastStamp) return
         lastStamp = stamp
-        val f = gps.fix?.takeIf { SystemClock.elapsedRealtime() - it.elapsedRealtimeNanos / 1_000_000 < 30_000 }
+        val f = gps.recent()
+        val pos = arrayOf(
+            "lat" to f?.let { Json.num(it.latitude, 1e7) }, "lon" to f?.let { Json.num(it.longitude, 1e7) },
+            "acc" to f?.takeIf { it.hasAccuracy() }?.let { Json.num(it.accuracy.toDouble(), 10.0) },
+        )
+        val now = SystemClock.elapsedRealtime()
         for (r in list) {
             @Suppress("DEPRECATION") val ssid = r.SSID
-            emit("wifi", Json.obj(
-                "src" to "\"wifi\"", "bssid" to Json.str(r.BSSID), "ssid" to Json.str(ssid),
-                "rssi" to r.level.toString(), "freq" to r.frequency.toString(),
-                "lat" to f?.let { Json.num(it.latitude, 1e7) }, "lon" to f?.let { Json.num(it.longitude, 1e7) },
-                "acc" to f?.takeIf { it.hasAccuracy() }?.let { Json.num(it.accuracy.toDouble(), 10.0) },
-            ))
+            val ie = if (Build.VERSION.SDK_INT >= 30) try {
+                WifiUtil.ies(r.informationElements.map { e ->
+                    val bb = e.getBytes().duplicate()
+                    Triple(e.id, e.idExt, ByteArray(bb.remaining()).also { bb.get(it) })
+                })
+            } catch (e: Exception) { null } else null
+            val kv = ArrayList<Pair<String, String?>>()
+            kv.add("src" to "\"wifi\""); kv.add("bssid" to Json.str(r.BSSID)); kv.add("ssid" to Json.str(ssid))
+            kv.add("rssi" to r.level.toString()); kv.add("freq" to r.frequency.toString())
+            kv.add("ch" to WifiUtil.channel(r.frequency).toString()); kv.add("band" to Json.str(WifiUtil.band(r.frequency)))
+            kv.add("bw" to WifiUtil.width(r.channelWidth).toString())
+            if (r.centerFreq0 > 0) kv.add("cf0" to r.centerFreq0.toString())
+            if (r.centerFreq1 > 0) kv.add("cf1" to r.centerFreq1.toString())
+            kv.add("caps" to Json.str(r.capabilities))
+            kv.add("age" to ((now * 1000 - r.timestamp) / 1000).toString())
+            if (ssid.isNullOrEmpty()) kv.add("hidden" to "1")
+            if (r.is80211mcResponder) kv.add("mc" to "1")
+            if (r.isPasspointNetwork) kv.add("pass" to "1")
+            r.operatorFriendlyName?.takeIf { it.isNotEmpty() }?.let { kv.add("op" to Json.str(it.toString())) }
+            r.venueName?.takeIf { it.isNotEmpty() }?.let { kv.add("venue" to Json.str(it.toString())) }
+            if (Build.VERSION.SDK_INT >= 30) WifiUtil.standard(r.wifiStandard)?.let { kv.add("std" to Json.str(it)) }
+            if (ie != null) {
+                ie.country?.let { kv.add("country" to Json.str(it)) }
+                if (ie.vendors.isNotEmpty()) kv.add("vendors" to Json.arr(ie.vendors))
+                if (ie.wps) kv.add("wps" to "1")
+                ie.wpsMfr?.let { kv.add("wpsMfr" to Json.str(it)) }
+                ie.wpsModel?.let { kv.add("wpsModel" to Json.str(it)) }
+                ie.wpsName?.let { kv.add("wpsName" to Json.str(it)) }
+            }
+            kv.addAll(pos)
+            emit("wifi", Json.obj(*kv.toTypedArray()))
         }
+        connected()?.let { emit("wifi", it) }
+    }
+
+    /** Сеть, к которой подключён телефон (с тем же ключом подписки wifi). */
+    @Suppress("DEPRECATION")
+    private fun connected(): String? {
+        val ci = try { wm.connectionInfo } catch (e: SecurityException) { return null } ?: return null
+        if (ci.networkId == -1 || ci.bssid == null) return null
+        val ssid = ci.ssid?.trim('"')?.takeIf { it != "<unknown ssid>" }
+        return Json.obj(
+            "src" to "\"wificonn\"", "ssid" to ssid?.let { Json.str(it) }, "bssid" to Json.str(ci.bssid),
+            "rssi" to ci.rssi.toString(), "freq" to ci.frequency.toString(), "speed" to ci.linkSpeed.toString(),
+            "tx" to if (Build.VERSION.SDK_INT >= 29) ci.txLinkSpeedMbps.toString() else null,
+            "rx" to if (Build.VERSION.SDK_INT >= 29) ci.rxLinkSpeedMbps.toString() else null,
+            "std" to if (Build.VERSION.SDK_INT >= 30) WifiUtil.standard(ci.wifiStandard)?.let { Json.str(it) } else null,
+        )
     }
 }
 
