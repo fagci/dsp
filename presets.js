@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=142;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=143;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -500,6 +500,7 @@ const PRESET_CATS={
   'KiwiSDR and SpyServer on the Map':'Maps & Locating',
   'Wi-Fi: Locate Access Points (Termux)':'Maps & Locating',
   'Termux: Phone Position, Sensors and Battery':'Maps & Locating',
+  'Phone App: Camera, Sensors and Wi-Fi in the Background':'Maps & Locating',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
   'TDOA: Path Difference (2 mics)':'Maps & Locating',
@@ -1208,6 +1209,29 @@ const map=addNode('geoMap',420,200,{mz:16,labels:true,trail:2000});
 map.size.w=560; map.size.h=440; applySize(map);
 const log=addNode('recLog',40,540,{});
 log.size.w=340; applySize(log);
+addEdge(tx.id,'rec',map.id,'rec'); addEdge(tx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Camera, Sensors and Wi-Fi in the Background', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The Android app (tools/android, APK from the «Android app» workflow) runs a foreground service: sensors up to 200 Hz, GPS, Wi-Fi scan and the camera keep working with the screen locked.\n'+
+  'Open the app once and allow Camera and Location; the page inside it (or this page in Chrome on the same phone) connects to ws://127.0.0.1:8765 — press Connect. For another device: Settings in the app → network access, then ws://PHONE_IP:8765/?token=…\n'+
+  'The camera comes out as an address (cam) → IP Camera: back / front, width, frames per second and JPEG quality are set on the sensors node. Wi-Fi records carry the phone position — wire rec to the map.'});
+nt.size.w=800; nt.size.h=150; applySize(nt);
+const tx=addNode('termux',40,220,{url:'ws://127.0.0.1:8765',gps:true,battery:true,accel:true,gyro:true,wifi:true,hz:'100',cam:'back',camw:'640',camfps:10,camq:70});
+tx.size.w=360; tx.size.h=480; applySize(tx);
+const cam=addNode('ipcam',440,220,{maxw:'640'});
+cam.size.w=360; cam.size.h=280; applySize(cam);
+const t1=addNode('trend',840,220,{span:10,auto:true});
+t1.size.w=360; t1.size.h=170; applySize(t1);
+const t2=addNode('trend',840,420,{span:10,auto:true});
+t2.size.w=360; t2.size.h=170; applySize(t2);
+const map=addNode('geoMap',440,560,{mz:17,labels:true,trail:2000});
+map.size.w=380; map.size.h=420; applySize(map);
+const log=addNode('recLog',40,740,{});
+log.size.w=340; applySize(log);
+addEdge(tx.id,'cam',cam.id,'url');
+addEdge(tx.id,'az',t1.id,'in'); addEdge(tx.id,'gz',t2.id,'in');
 addEdge(tx.id,'rec',map.id,'rec'); addEdge(tx.id,'rec',log.id,'rec');
 markWiresDirty();
 });

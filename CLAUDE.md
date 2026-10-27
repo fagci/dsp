@@ -30,6 +30,7 @@
 - `modules/*.js` — модули (`def({id,title,cat,ins,outs,params,process,…})`); `*-kernels.js` — чистая логика без DOM (её и тестируют).
 - `presets.js` — встроенные пресеты и патчи (при изменении — `PRESET_VER`, см. выше).
 - `*-worker.js`, `vendor/` (wasm, библиотеки), `data/` — воркеры, внешнее, данные.
+- `tools/android/` — Android-приложение (WebView + foreground-сервис: датчики, камера, Wi-Fi по локальному порту); собирается в Actions (`.github/workflows/android.yml`), логика сервера — `cd tools/android/jvm-test && gradle runTests`. Протокол записей общий с `tools/termux/bridge.mjs`; сторона страницы — `modules/termux*.js`.
 - `README.md` — список возможностей по разделам; новую фичу описывай там же.
 - Поиск: `grep -n "id:'имя'" modules/*.js` — модуль по id; `grep -n "<id=\"…\"" index.html` — кнопка тулбара.
 

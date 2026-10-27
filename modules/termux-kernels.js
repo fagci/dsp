@@ -6,6 +6,23 @@ const TERMUX_SUBS=['gps','battery','accel','gyro','mag','light','pressure','wifi
 // какие источники просить у моста по чекбоксам узла
 function termuxSub(p){ return TERMUX_SUBS.filter(k=>p[k]); }
 
+// сообщение подписки: источники и частота датчиков (hz — только приложению DSP, Termux-мост её не знает)
+function termuxSubMsg(p){
+  const m={sub:termuxSub(p)}, hz=+p.hz;
+  if(hz>0) m.hz=hz;
+  return m;
+}
+
+// адрес камеры приложения DSP на том же порту, что и WebSocket (→ вход url узла IP Camera); null — камера выключена
+function termuxCamUrl(url,p){
+  if(!p.cam || p.cam==='off') return null;
+  let u; try{ u=new URL(String(url||'').trim()); }catch(e){ return null; }
+  if(u.protocol!=='ws:' && u.protocol!=='wss:') return null;
+  const q=new URLSearchParams({cam:p.cam,w:p.camw,fps:p.camfps,q:p.camq}), t=u.searchParams.get('token');
+  if(t) q.set('token',t);
+  return (u.protocol==='wss:' ? 'https:' : 'http:')+'//'+u.host+'/camera.mjpg?'+q;
+}
+
 // запись моста → o (последние значения по выходам)
 function termuxApply(o,r){
   if(!r || typeof r!=='object') return;

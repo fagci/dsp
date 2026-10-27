@@ -74,8 +74,8 @@ br.close(); fs.rmSync(dir,{recursive:true,force:true});
 // --- разбор записей узлом Termux (общие функции в termux-kernels.js) ---
 const kf=path.join(root,'modules/termux-kernels.js');
 if(fs.existsSync(kf)){
-  const ctx=vm.createContext({Math,Number,String,Object,Array,isFinite,Date,JSON});
-  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxApply,termuxSub,termuxLine};',ctx);
+  const ctx=vm.createContext({Math,Number,String,Object,Array,isFinite,Date,JSON,URL,URLSearchParams});
+  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxCamUrl};',ctx);
   const K=ctx.K, o={};
   K.termuxApply(o,{src:'gps',lat:1,lon:2,alt:3,acc:4,speed:5,bearing:6});
   ok('apply gps',o.lat===1 && o.lon===2 && o.alt===3 && o.acc===4 && o.speed===5 && o.hdg===6);
@@ -87,6 +87,14 @@ if(fs.existsSync(kf)){
   K.termuxApply(o,{src:'battery',pct:49,status:'DISCHARGING'}); ok('discharging → 0',o.charging===0);
   ok('apply ignores junk',(K.termuxApply(o,null),K.termuxApply(o,{src:'x'}),true));
   ok('sub from params',K.termuxSub({gps:true,battery:false,accel:true,gyro:true,wifi:true}).join()==='gps,accel,gyro,wifi');
+  const sm=K.termuxSubMsg({gps:true,accel:true,hz:'200'});
+  ok('sub message carries the sensor rate',sm.sub.join()==='gps,accel' && sm.hz===200,JSON.stringify(sm));
+  ok('sub message without rate has no hz (Termux bridge)',!('hz' in K.termuxSubMsg({gps:true,hz:'0'})) && !('hz' in K.termuxSubMsg({gps:true})));
+  const cp={cam:'back',camw:'640',camfps:10,camq:70};
+  const cu=K.termuxCamUrl('ws://127.0.0.1:8765/?token=a b',cp);
+  ok('camera url: same host, http, token kept',cu && cu.startsWith('http://127.0.0.1:8765/camera.mjpg?') && /cam=back/.test(cu) && /w=640/.test(cu) && /fps=10/.test(cu) && /q=70/.test(cu) && /token=a\+b/.test(cu),cu);
+  ok('camera url: wss → https',K.termuxCamUrl('wss://phone.lan:8765',cp).startsWith('https://phone.lan:8765/camera.mjpg?'));
+  ok('camera url: off, bad or http address → null',K.termuxCamUrl('ws://h:1',{...cp,cam:'off'})===null && K.termuxCamUrl('ws://h:1',{})===null && K.termuxCamUrl('nonsense',cp)===null && K.termuxCamUrl('http://h:1',cp)===null);
   ok('line',K.termuxLine({src:'wifi',bssid:'aa',ssid:'H',rssi:-5}).includes('aa'));
 }
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad ? 1 : 0);
