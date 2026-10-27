@@ -95,6 +95,16 @@ if(fs.existsSync(kf)){
   ok('camera url: same host, http, token kept',cu && cu.startsWith('http://127.0.0.1:8765/camera.mjpg?') && /cam=back/.test(cu) && /w=640/.test(cu) && /fps=10/.test(cu) && /q=70/.test(cu) && /token=a\+b/.test(cu),cu);
   ok('camera url: wss → https',K.termuxCamUrl('wss://phone.lan:8765',cp).startsWith('https://phone.lan:8765/camera.mjpg?'));
   ok('camera url: off, bad or http address → null',K.termuxCamUrl('ws://h:1',{...cp,cam:'off'})===null && K.termuxCamUrl('ws://h:1',{})===null && K.termuxCamUrl('nonsense',cp)===null && K.termuxCamUrl('http://h:1',cp)===null);
+  K.termuxApply(o,{src:'gnss',kind:'sat',con:'GPS',svid:5,cn0:38});
+  ok('gnss sat record does not touch the summary',o.nsat===undefined);
+  K.termuxApply(o,{src:'gnss',kind:'fix',n:24,used:11,cn0:34.5});
+  ok('gnss summary → nsat, nused, cn0',o.nsat===24 && o.nused===11 && o.cn0===34.5);
+  ok('sub: bluetooth, gnss, nmea',K.termuxSub({ble:true,bt:true,gnss:true,gnssraw:true,nmea:true,gps:false}).join()==='ble,bt,gnss,gnssraw,nmea');
+  const sw=K.termuxSubMsg({wifi:true,wifiEvery:'20'});
+  ok('wifi scan period goes with the subscription',sw.wifiEvery===20 && !('wifiEvery' in K.termuxSubMsg({wifi:false,wifiEvery:20})),JSON.stringify(sw));
+  ok('line: ble, bt, gnss, nmea, wifi channel',K.termuxLine({src:'ble',addr:'AA',rssi:-60,name:'Tag'}).includes('Tag') && K.termuxLine({src:'bt',addr:'BB',major:'PHONE'}).includes('PHONE') &&
+    K.termuxLine({src:'gnss',kind:'sat',con:'GLONASS',svid:3,cn0:30,el:40,used:1}).includes('GLONASS') && K.termuxLine({src:'gnss',kind:'fix',n:20,used:9,cn0:33}).includes('9/20') &&
+    K.termuxLine({src:'nmea',line:'$GPGGA,1'})==='$GPGGA,1' && K.termuxLine({src:'wifi',bssid:'aa',rssi:-5,ch:6,ssid:'H'}).includes('ch 6'));
   ok('line',K.termuxLine({src:'wifi',bssid:'aa',ssid:'H',rssi:-5}).includes('aa'));
 }
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad ? 1 : 0);

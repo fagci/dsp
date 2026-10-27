@@ -10,11 +10,19 @@ android {
         applicationId = "app.dsp.phone"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = (findProperty("versionCode") as String?)?.toIntOrNull() ?: 1       // в Actions — номер запуска
+        versionName = "1.$versionCode"
+    }
+    // Один ключ на все сборки (лежит в репозитории): обновления ставятся поверх. Это не магазинный ключ — для своей установки.
+    signingConfigs {
+        create("dsp") {
+            storeFile = rootDir.resolve("dsp.keystore")
+            storePassword = "android"; keyAlias = "dsp"; keyPassword = "android"
+        }
     }
     buildTypes {
-        release { isMinifyEnabled = false }
+        release { isMinifyEnabled = false; signingConfig = signingConfigs.getByName("dsp") }
+        debug { signingConfig = signingConfigs.getByName("dsp") }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

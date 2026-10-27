@@ -1,12 +1,17 @@
 name: Android app
 
-# Приложение-обёртка (WebView + мост датчиков и камеры): tools/android. APK — в артефактах запуска.
+# Приложение-обёртка (WebView + мост датчиков, камеры, Wi-Fi, Bluetooth, ГНСС): tools/android.
+# Собирается только при правках приложения; со слияния в main выкладывается релиз с APK.
 on:
   push:
-    paths: ['tools/android/**', 'modules/termux*.js', '.github/workflows/android.yml']
+    branches: [main]
+    paths: ['tools/android/**', '.github/workflows/android.yml']
   pull_request:
     paths: ['tools/android/**', '.github/workflows/android.yml']
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -18,11 +23,23 @@ jobs:
       # Android SDK и лицензии уже есть на раннере ubuntu-latest (ANDROID_HOME)
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.10.2' }
-      - name: Проверки моста на JVM (сервер, поворот кадра)
+      - name: Проверки моста на JVM (сервер, поворот кадра, разбор BLE / Wi-Fi / ГНСС)
         run: gradle -p tools/android/jvm-test runTests
-      - name: Сборка debug-APK
-        run: gradle -p tools/android :app:assembleDebug
+      - name: Сборка подписанного APK
+        run: gradle -p tools/android :app:assembleRelease -PversionCode=${{ github.run_number }}
+      - name: Имя файла с версией
+        run: cp tools/android/app/build/outputs/apk/release/app-release.apk dsp-android-1.${{ github.run_number }}.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: dsp-android-debug
-          path: tools/android/app/build/outputs/apk/debug/app-debug.apk
+          name: dsp-android
+          path: dsp-android-1.${{ github.run_number }}.apk
+      - name: Релиз
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-v1.${{ github.run_number }}
+          name: DSP Android 1.${{ github.run_number }}
+          files: dsp-android-1.${{ github.run_number }}.apk
+          generate_release_notes: true
+          body: |
+            APK подписан постоянным ключом из репозитория — ставится поверх прежней версии. Разрешите приложению камеру, геолокацию и «Устройства поблизости».

@@ -27,6 +27,9 @@ class BridgeService : Service() {
     private lateinit var gps: GpsHub
     private lateinit var wifi: WifiHub
     private lateinit var battery: BatteryHub
+    private lateinit var ble: BleHub
+    private lateinit var bt: BtHub
+    private lateinit var gnss: GnssHub
     private var wake: PowerManager.WakeLock? = null
     private val main = Handler(Looper.getMainLooper())
     private val warned = HashSet<String>()
@@ -42,6 +45,9 @@ class BridgeService : Service() {
         gps = GpsHub(this) { s, j -> server.emit(s, j) }
         wifi = WifiHub(this, gps) { s, j -> server.emit(s, j) }
         battery = BatteryHub(this) { s, j -> server.emit(s, j) }
+        ble = BleHub(this, gps) { s, j -> server.emit(s, j) }
+        bt = BtHub(this, gps) { s, j -> server.emit(s, j) }
+        gnss = GnssHub(this) { s, j -> server.emit(s, j) }
         val ch = NotificationChannel(CH, "DSP bridge", NotificationManager.IMPORTANCE_LOW)
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
     }
@@ -58,7 +64,7 @@ class BridgeService : Service() {
 
     override fun onDestroy() {
         server.stop(); camera.stop()
-        sensors.close(); gps.close(); wifi.close(); battery.close()
+        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close()
         wake?.takeIf { it.isHeld }?.release()
         super.onDestroy()
     }
@@ -116,10 +122,13 @@ class BridgeService : Service() {
         val w = server.wanted()
         val problems = HashSet<String>()
         for (k in sensors.update(w.subs.filter { it in SensorHub.TYPES }.toSet(), w.hz)) problems.add("$k: no such sensor on this phone")
-        val needGps = "gps" in w.subs || "wifi" in w.subs
+        val needGps = w.subs.any { it in POSITION }
         if (!gps.update(needGps)) problems.add("no position: allow Location for the DSP app and turn Location on")
         if (!wifi.update("wifi" in w.subs, w.wifiEvery)) problems.add("wifi: allow Location for the DSP app (Android hides the scan without it)")
         battery.update("battery" in w.subs)
+        if (!gnss.update("gnss" in w.subs, "gnssraw" in w.subs, "nmea" in w.subs)) problems.add("gnss: allow Location for the DSP app")
+        if (!ble.update("ble" in w.subs)) problems.add(ble.lastError)
+        if (!bt.update("bt" in w.subs)) problems.add(bt.lastError)
         for (p in problems) if (warned.add(p)) server.note("error", p)
         warned.retainAll(problems)
 
@@ -139,7 +148,7 @@ class BridgeService : Service() {
         val sens = sensors.available()
         return Json.obj(
             "src" to "\"bridge\"", "level" to "\"hello\"", "ver" to "1", "app" to "\"dsp-android\"", "host" to Json.str(Build.MODEL),
-            "sources" to arr(listOf("gps", "battery", "wifi") + sens), "sensors" to arr(sens), "cameras" to arr(camera.available()),
+            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea") + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "cameras" to arr(camera.available()),
         )
     }
 
@@ -152,6 +161,8 @@ class BridgeService : Service() {
         const val ACTION_RELOAD = "app.dsp.phone.RELOAD"
         private const val CH = "bridge"
         private const val ID = 1
+        // источники, которым нужно включённое определение положения (ГНСС) или последнее положение в записях
+        private val POSITION = setOf("gps", "wifi", "ble", "bt", "gnss", "gnssraw", "nmea")
 
         fun start(ctx: Context, reload: Boolean = false) {
             val i = Intent(ctx, BridgeService::class.java)

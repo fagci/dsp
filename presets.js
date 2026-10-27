@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=144;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=145;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -501,6 +501,7 @@ const PRESET_CATS={
   'Wi-Fi: Locate Access Points (Termux)':'Maps & Locating',
   'Termux: Phone Position, Sensors and Battery':'Maps & Locating',
   'Phone App: Camera, Sensors and Wi-Fi in the Background':'Maps & Locating',
+  'Phone App: Satellites, Bluetooth and Wi-Fi Scan':'Maps & Locating',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
   'TDOA: Path Difference (2 mics)':'Maps & Locating',
@@ -1233,6 +1234,27 @@ log.size.w=340; applySize(log);
 addEdge(tx.id,'camurl',cam.id,'url');
 addEdge(tx.id,'az',t1.id,'in'); addEdge(tx.id,'gz',t2.id,'in');
 addEdge(tx.id,'rec',map.id,'rec'); addEdge(tx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Satellites, Bluetooth and Wi-Fi Scan', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Android app (tools/android): everything the phone hears around it, also with the screen locked.\n'+
+  'GNSS — every satellite (system, C/N0, elevation, azimuth, used in the fix) and the raw measurements; NMEA goes out as text to NMEA Parser (nmeatxt). Bluetooth LE and classic: address, name, RSSI, manufacturer data, services, raw advertisement. Wi-Fi: channel, width, security, standard, WPS, country, the connected network.\n'+
+  'All records carry the phone position when there is one — wire rec to Rec Log (CSV / GeoJSON / KML) or a Source Locator (group by addr or bssid). Allow Location and Nearby devices in the app once.'});
+nt.size.w=800; nt.size.h=160; applySize(nt);
+const tx=addNode('termux',40,230,{url:'ws://127.0.0.1:8765',gps:true,gnss:true,nmea:true,ble:true,bt:true,wifi:true,wifiEvery:10});
+tx.size.w=380; tx.size.h=520; applySize(tx);
+const nm=addNode('nmea',460,230,{});
+nm.size.w=380; nm.size.h=300; applySize(nm);
+const t1=addNode('trend',880,230,{span:60,auto:true});
+t1.size.w=360; t1.size.h=170; applySize(t1);
+const t2=addNode('trend',880,420,{span:60,auto:true});
+t2.size.w=360; t2.size.h=170; applySize(t2);
+const log=addNode('recLog',460,570,{});
+log.size.w=380; applySize(log);
+addEdge(tx.id,'nmeatxt',nm.id,'text');
+addEdge(tx.id,'nused',t1.id,'in'); addEdge(tx.id,'cn0',t2.id,'in');
+addEdge(tx.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('Quick Sound Level Meter', function(){
