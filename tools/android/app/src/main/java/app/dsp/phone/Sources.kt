@@ -37,8 +37,14 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
             "accel" to Sensor.TYPE_ACCELEROMETER, "gyro" to Sensor.TYPE_GYROSCOPE, "mag" to Sensor.TYPE_MAGNETIC_FIELD,
             "light" to Sensor.TYPE_LIGHT, "pressure" to Sensor.TYPE_PRESSURE, "proximity" to Sensor.TYPE_PROXIMITY,
             "gravity" to Sensor.TYPE_GRAVITY, "linear" to Sensor.TYPE_LINEAR_ACCELERATION, "rotation" to Sensor.TYPE_ROTATION_VECTOR,
+            "gamerot" to Sensor.TYPE_GAME_ROTATION_VECTOR, "georot" to Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR,
+            "accelraw" to Sensor.TYPE_ACCELEROMETER_UNCALIBRATED, "gyroraw" to Sensor.TYPE_GYROSCOPE_UNCALIBRATED, "magraw" to Sensor.TYPE_MAGNETIC_FIELD_UNCALIBRATED,
+            "ambtemp" to Sensor.TYPE_AMBIENT_TEMPERATURE, "humidity" to Sensor.TYPE_RELATIVE_HUMIDITY,
+            "steps" to Sensor.TYPE_STEP_COUNTER, "hinge" to Sensor.TYPE_HINGE_ANGLE, "heading" to Sensor.TYPE_HEADING,
         )
-        private val XYZ = setOf("accel", "gyro", "mag", "gravity", "linear", "rotation")
+        private val XYZ = setOf("accel", "gyro", "mag", "gravity", "linear", "rotation", "gamerot", "georot", "accelraw", "gyroraw", "magraw")
+        private val QUAT = setOf("rotation", "gamerot", "georot")      // x, y, z, w — кватернион
+        private val UNCAL = setOf("accelraw", "gyroraw", "magraw")     // x, y, z и смещение bx, by, bz
     }
 
     private val kindOf = TYPES.entries.associate { it.value to it.key }
@@ -79,7 +85,11 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
             "x" to Json.num(v[0].toDouble()),
             "y" to if (xyz) Json.num(v[1].toDouble()) else null,
             "z" to if (xyz) Json.num(v[2].toDouble()) else null,
-            "w" to if (kind == "rotation" && v.size >= 4) Json.num(v[3].toDouble()) else null,
+            "w" to if (kind in QUAT && v.size >= 4) Json.num(v[3].toDouble()) else null,
+            "bx" to if (kind in UNCAL && v.size >= 6) Json.num(v[3].toDouble()) else null,
+            "by" to if (kind in UNCAL && v.size >= 6) Json.num(v[4].toDouble()) else null,
+            "bz" to if (kind in UNCAL && v.size >= 6) Json.num(v[5].toDouble()) else null,
+            "acc" to if (kind == "heading" && v.size >= 2) Json.num(v[1].toDouble()) else null,
         ))
     }
 
