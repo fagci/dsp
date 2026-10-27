@@ -49,7 +49,7 @@ function termuxMic(n,r){
 function termuxFeed(n,r){
   if(!r || typeof r!=='object') return;
   n.msgs++; n.last=termuxLine(r);
-  if(r.src==='bridge'){ if(r.level==='error' || r.level==='warn') n.bridgeMsg=r.msg; return; }
+  if(r.src==='bridge'){ if(r.level==='error' || r.level==='warn') n.bridgeMsg=r.msg; if(r.level==='hello' && Array.isArray(r.cameraInfo)) n.camInfo=r.cameraInfo; return; }
   termuxApply(n.vals,r);
   const d=termuxDev(r);                       // wifi / ble / bt / cell: dev, name, rssi; точка замера — на выход pts
   if(d){
@@ -115,7 +115,8 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'stationary',t:'check',d:false,label:'stationary detect → still=1 (DSP app)'},
     {n:'motion',t:'check',d:false,label:'motion detect → still=0 (DSP app)'},
     {n:'hz',t:'select',opts:['0','10','50','100','200','500','1000'],d:'0',label:'sensor rate, Hz (DSP app; 0 — default; the phone gives what the sensor can)'},
-    {n:'cam',t:'select',opts:['off','back','front'],d:'off',label:'camera stream (DSP app) → output «camurl» → IP Camera'},
+    {n:'cam',t:'select',opts:n=>termuxCamOpts(n.camInfo,n.p.cam),d:'off',label:'camera stream (DSP app) → output «camurl» → IP Camera; the list shows every camera of the phone after Connect (thermal / IR / depth / external too)'},
+    {n:'campal',t:'select',opts:['gray','iron'],d:'gray',label:'thermal / depth cameras: palette'},
     {n:'camw',t:'select',opts:['320','640','1280','1920','3840'],d:'640',label:'camera: width, px'},
     {n:'camfps',t:'range',min:1,max:120,step:1,d:10,label:'camera: frames per second'},
     {n:'camq',t:'range',min:10,max:100,step:5,d:70,label:'camera: JPEG quality'},
@@ -124,7 +125,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>termuxStop(n)},
   ],
   init:n=>{ ssInit(n,1); n.sExact=true; n.sLag=.25; n.micT=0; n.micT0=0; n.devSeen=new Map(); n.ptQ=[]; n.ptSeq=0; n.ws=null; n.want=false; n.timer=null; n.recQ=[]; n.lineQ=[]; n.nmeaQ=[]; n.vals={}; n.last=''; n.msgs=0; n.count=0;
-            n.status='not connected'; n.warn=''; n.sentSub=null; n.bridgeMsg=''; },
+            n.status='not connected'; n.warn=''; n.sentSub=null; n.bridgeMsg=''; n.camInfo=null; },
   dispose:n=>termuxStop(n),
   process(n){
     termuxSendSub(n);

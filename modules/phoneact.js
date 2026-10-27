@@ -50,7 +50,7 @@ function phoneFeed(n,r){
   if(!r || typeof r!=='object') return;
   n.count++; n.last=phoneLine(r);
   if(r.src==='bridge'){ if(r.level==='error' || r.level==='warn') n.bridgeMsg=r.msg; return; }
-  if(r.src==='cmd') n.ok=r.ok ? 1 : 0;
+  if(r.src==='cmd'){ n.ok=r.ok ? 1 : 0; if(r.text){ n.text=String(r.text); n.last+='\n'+String(r.text).slice(0,600); } }     // текст ответа (диагностика root) — на выход text
   if(r.src==='torch') n.torch=r.on ? 1 : 0;
   if(r.src==='sms') n.text=String(r.body||'');
   if(r.src==='notify') n.text=String(r.action||'');

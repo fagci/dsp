@@ -50,7 +50,7 @@ class BridgeService : Service() {
         server = BridgeServer(cfg, camera, ::helloJson, ::statusText) { refresh() }
         usb = AndroidUsb(this)
         server.usb = usb
-        actions = PhoneActions(this, { s, j -> server.emit(s, j) }, { p -> main.post { requestPerms(p) } }, { camera.describe() })
+        actions = PhoneActions(this, { s, j -> server.emit(s, j) }, { p -> main.post { requestPerms(p) } }, { camera.describe() }, cfg)
         server.onCommand = { c, j -> actions.exec(c, j) }
         sensors = SensorHub(this) { s, j -> server.emit(s, j) }
         gps = GpsHub(this) { s, j -> server.emit(s, j) }

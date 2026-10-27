@@ -1,7 +1,7 @@
 "use strict";
 /* Phone Actions: команды приложения DSP (tools/android) и разбор его записей. Без DOM — проверяется в tools/test-phoneact.mjs */
 
-const PHONE_ACTIONS=['notify','torch on','torch off','sms.send','sms.list','contacts.find','ir.info','cam.list'];
+const PHONE_ACTIONS=['notify','torch on','torch off','sms.send','sms.list','contacts.find','ir.info','cam.list','cam.root.info','cam.root.unhide','cam.root.restore'];
 
 // адрес моста; в приложении к адресу этого телефона добавляется ключ приложения (?k=…) — с ним открыты SMS и контакты
 function phoneUrl(url,key){
@@ -39,6 +39,7 @@ function phoneCmd(p,textIn){
     case 'contacts.find': return {cmd:'contacts.find', q:String(p.q||''), limit:+p.limit||50};
     case 'ir.info': return {cmd:'ir.info'};
     case 'cam.list': return {cmd:'cam.list'};
+    case 'cam.root.info': case 'cam.root.unhide': case 'cam.root.restore': return {cmd:p.action};          // root: только приложение и только если включено в его настройках
   }
   return null;
 }
@@ -52,7 +53,7 @@ function phoneIrCmd(raw,parse){
 // запись моста → строка для readout и значения выходов
 function phoneLine(r){
   switch(r.src){
-    case 'cmd': return r.cmd+(r.ok ? ' ok' : ' failed: '+(r.msg||r.err||''))+(r.n!=null ? ' · '+r.n : '')+(r.nid!=null ? ' · nid '+r.nid : '');
+    case 'cmd': return r.cmd+(r.ok ? ' ok' : ' failed: '+(r.msg||r.err||''))+(r.n!=null ? ' · '+r.n : '')+(r.nid!=null ? ' · nid '+r.nid : '')+(r.before!=null ? ' · cameras '+r.before+' → '+r.after : '');
     case 'sms': return 'sms '+(r.dir==='in' ? 'from ' : 'to ')+(r.addr||'?')+': '+String(r.body||'').slice(0,80);
     case 'contact': return 'contact '+(r.name||'?')+' '+((r.phones||[]).join(', '));
     case 'notify': return 'notification '+r.nid+': '+r.action;

@@ -5,6 +5,7 @@ import app.dsp.phone.Audio
 import app.dsp.phone.Cam
 import app.dsp.phone.Cmd
 import app.dsp.phone.Gray16
+import app.dsp.phone.RootCam
 import app.dsp.phone.Frame
 import app.dsp.phone.PcapReader
 import app.dsp.phone.Perms
@@ -105,6 +106,20 @@ fun main() {
     ok("ir carrier must lie in the emitter ranges", Cmd.irFreqOk(38000, listOf(intArrayOf(30000, 60000))) && !Cmd.irFreqOk(20000, listOf(intArrayOf(30000, 60000))) && Cmd.irFreqOk(38000, emptyList()) && !Cmd.irFreqOk(0, emptyList()))
     ok("limit", Cmd.limit(0, 50, 500) == 50 && Cmd.limit(9999, 50, 500) == 500 && Cmd.limit(7, 50, 500) == 7)
     ok("perms: incoming SMS", Perms.forSubs(setOf("sms"), 34, false) == listOf("android.permission.RECEIVE_SMS"))
+
+
+    // --- камеры с root: скрипты и откат ---
+    val us = RootCam.unhideScript("app.dsp.phone")!!
+    ok("root cam: the unhide script names the package and both properties, then restarts the service", us.contains("P='app.dsp.phone'") && us.contains("vendor.camera.aux.packagelist") && us.contains("persist.vendor.camera.privapp.list") && us.contains("killall cameraserver"))
+    ok("root cam: a package name with extra characters is refused", RootCam.unhideScript("a;rm -rf /") == null && RootCam.unhideScript("a b") == null && RootCam.unhideScript("") == null && RootCam.unhideScript("x'y") == null)
+    val old = RootCam.parseOld("junk\nOLD vendor.camera.aux.packagelist=com.a,com.b\nOLD persist.vendor.camera.privapp.list=\nOLD evil.prop=1\nrestarted\n")
+    ok("root cam: the old values come out of the script output, foreign keys are dropped", old == mapOf("vendor.camera.aux.packagelist" to "com.a,com.b", "persist.vendor.camera.privapp.list" to ""), old.toString())
+    val rs = RootCam.restoreScript(old)!!
+    ok("root cam: restore sets the old values back (empty too) and restarts", rs.contains("setprop vendor.camera.aux.packagelist 'com.a,com.b'") && rs.contains("setprop persist.vendor.camera.privapp.list ''") && rs.contains("killall cameraserver"))
+    ok("root cam: nothing or something strange to restore → null", RootCam.restoreScript(emptyMap()) == null && RootCam.restoreScript(mapOf("vendor.camera.aux.packagelist" to "a'; reboot; '")) == null && RootCam.restoreScript(mapOf("ro.secure" to "0")) == null)
+    ok("root cam: state survives JSON, garbage reads as empty", RootCam.fromJson(RootCam.toJson(old)) == old && RootCam.fromJson("not json").isEmpty() && RootCam.fromJson("").isEmpty())
+    ok("root cam: the read-only script does not write anything", !RootCam.INFO.contains("setprop") && !RootCam.INFO.contains("kill") && RootCam.INFO.contains("dumpsys media.camera"))
+    ok("root cam: clip", RootCam.clip("abc", 5) == "abc" && RootCam.clip("abcdef", 3).startsWith("abc\n…"))
 
     // --- JSON-помощники дают валидный JSON ---
     val j = JSONObject(Json.obj("src" to "\"ble\"", "mfr" to Json.map(mapOf("004c" to "02")), "uuids" to Json.arr(listOf("180f", "a\"b")), "n" to null, "x" to Json.num(1.23456789, 1e4)))

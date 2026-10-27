@@ -387,8 +387,8 @@ class BridgeServer(
         /** Источники, которые отдают личные данные. */
         val SENSITIVE = setOf("sms")
 
-        /** Команды с личными данными или платные (SMS, контакты) — только доверенному клиенту. */
-        fun sensitiveCmd(name: String) = name.startsWith("sms.") || name.startsWith("contacts.")
+        /** Команды с личными данными, платные (SMS, контакты) или с root — только доверенному клиенту. */
+        fun sensitiveCmd(name: String) = name.startsWith("sms.") || name.startsWith("contacts.") || name.startsWith("cam.root.")
 
         fun frame(payload: ByteArray, op: Int = 1): ByteArray {
             val n = payload.size
