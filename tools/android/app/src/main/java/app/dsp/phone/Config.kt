@@ -46,6 +46,11 @@ class Config(ctx: Context) {
         get() = sp.getString("token", "") ?: ""
         set(v) { sp.edit().putString("token", v).apply() }
 
+    /** Запускать мост при загрузке телефона (BootReceiver), не дожидаясь, пока откроют приложение. */
+    var autoStart: Boolean
+        get() = sp.getBoolean("autoStart", false)
+        set(v) { sp.edit().putBoolean("autoStart", v).apply() }
+
     fun allowedOrigins(): Set<String> =
         (origins.split(',', ' ', '\n').map { it.trim().trimEnd('/') }.filter { it.isNotEmpty() } + APP_ORIGIN).toSet()
 

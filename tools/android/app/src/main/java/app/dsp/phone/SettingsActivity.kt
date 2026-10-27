@@ -1,6 +1,9 @@
 package app.dsp.phone
 
 import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
 import android.os.Bundle
 import android.text.InputType
 import android.view.ViewGroup
@@ -21,6 +24,8 @@ class SettingsActivity : Activity() {
     private lateinit var check: Switch
     private lateinit var sniff: Switch
     private lateinit var openc: Switch
+    private lateinit var autostart: Switch
+    private lateinit var battery: TextView
     private lateinit var port: EditText
     private lateinit var token: EditText
     private lateinit var origins: EditText
@@ -46,9 +51,20 @@ class SettingsActivity : Activity() {
         root.addView(sniff)
         openc = Switch(this).apply { text = "Let any page use actions (network sockets, Bluetooth connections, speech, phone control); off — only the app's own page"; isChecked = cfg.openCmds; setPadding(0, pad, 0, 0) }
         root.addView(openc)
+        autostart = Switch(this).apply { text = "Start automatically when the phone boots (keeps sensors and radio buffering from boot; you still open the app once to reconnect the patch)"; isChecked = cfg.autoStart; setPadding(0, pad, 0, 0) }
+        root.addView(autostart)
+        battery = text("")
+        root.addView(Button(this).apply {
+            text = "Exclude from battery optimization"
+            setOnClickListener { requestBatteryExemption() }
+        })
         root.addView(Button(this).apply {
             text = "Notification access (automation events)"
-            setOnClickListener { try { startActivity(android.content.Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")) } catch (e: Exception) {} }
+            setOnClickListener { try { startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")) } catch (e: Exception) {} }
+        })
+        root.addView(Button(this).apply {
+            text = "Accessibility (UI automation)"
+            setOnClickListener { try { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) } catch (e: Exception) {} }
         })
         text("Port"); port = edit(cfg.port.toString(), true)
         text("Token (empty — no token, anyone who can reach the port gets in)"); token = edit(cfg.token)
@@ -74,10 +90,29 @@ class SettingsActivity : Activity() {
         if (p == null || p < 1024 || p > 65535) { Toast.makeText(this, "Port: 1024–65535", Toast.LENGTH_SHORT).show(); return }
         val t = token.text.toString().trim()
         cfg.port = p; cfg.token = t; cfg.shareLan = share.isChecked; cfg.strict = strict.isChecked; cfg.checkOrigin = check.isChecked; cfg.sniffer = sniff.isChecked; cfg.openCmds = openc.isChecked
-        cfg.origins = origins.text.toString().trim()
+        cfg.origins = origins.text.toString().trim(); cfg.autoStart = autostart.isChecked
         BridgeService.start(this, reload = true)
         show()
         Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
+    }
+
+    /** Без исключения производители (особенно Xiaomi/Huawei/Samsung) рано или поздно замораживают или убивают процесс в фоне —
+     * тогда и сенсоры, и автоматизация (граф тикает в той же странице) останавливаются, пока телефон не разбудят вручную. */
+    private fun requestBatteryExemption() {
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        if (pm.isIgnoringBatteryOptimizations(packageName)) { showBattery(pm); return }
+        try { startActivity(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))) }
+        catch (e: Exception) { try { startActivity(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) } catch (x: Exception) {} }
+    }
+
+    private fun showBattery(pm: PowerManager) {
+        battery.text = if (pm.isIgnoringBatteryOptimizations(packageName)) "Battery optimization: excluded \u2014 Android should not freeze or kill the bridge for being idle"
+            else "Battery optimization: NOT excluded \u2014 the system may freeze the bridge (sensors, radios, automation) after a while in the background"
+    }
+
+    override fun onResume() {
+        super.onResume()
+        showBattery(getSystemService(POWER_SERVICE) as PowerManager)
     }
 
     private fun show() {
