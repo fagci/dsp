@@ -48,6 +48,10 @@ class SettingsActivity : Activity() {
             setOnClickListener { token.setText(cfg.newToken()) }
         })
         root.addView(Button(this).apply {
+            text = "Stop the bridge"
+            setOnClickListener { BridgeService.stop(this@SettingsActivity); Toast.makeText(this@SettingsActivity, "Stopped. Open the app to start it again.", Toast.LENGTH_SHORT).show() }
+        })
+        root.addView(Button(this).apply {
             text = "Save and restart the bridge"
             setOnClickListener { save() }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
