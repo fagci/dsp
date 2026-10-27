@@ -1,8 +1,8 @@
 "use strict";
-/* ============================ STUDIO: ЯДРО (без DOM и Web Audio) ============================
-   Модель проекта, время в тиках, огибающие, шкалы и аккорды, сбор нот плейлиста, WAV, пресеты, демо-проект.
-   Проект — чистый JSON: каналы (синт / драм / сэмплер), паттерны (ноты по каналам), плейлист (клипы),
-   микшер (мастер + вставки с цепочкой эффектов). Время везде в тиках: 96 на четвертную, шаг 1/16 = 24. */
+/* ============================ STUDIO: ЯДРО (без DOM) ============================
+   Данные узлов Studio (Drum Machine, Piano Roll, Pattern Playlist, Mixer): время в тиках, шкалы и аккорды, параметры эффектов,
+   пресеты инструментов, заготовки композиций. Данные узла — чистый JSON: каналы (синт / драм / сэмплер), паттерны (ноты по каналам),
+   плейлист (клипы), микшер (мастер + дорожки с цепочкой эффектов). Время везде в тиках: 96 на четвертную, шаг 1/16 = 24. */
 
 const ST_PPQ=96, ST_STEP=24, ST_BAR=384, ST_INSERTS=16;
 const ST_NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
@@ -12,9 +12,6 @@ const stHz=k=>440*Math.pow(2,(k-69)/12);
 const stClamp=(v,a,b)=>v<a?a:v>b?b:v;
 const stSec=(ticks,bpm)=>ticks*60/(bpm*ST_PPQ);
 const stTicks=(sec,bpm)=>sec*bpm*ST_PPQ/60;
-// качание: нечётные шестнадцатые сдвигаются вперёд (swing 0..1 → до трети шага)
-const stSwing=(t,sw)=>(sw>0 && Math.floor(t/ST_STEP)%2===1) ? t+Math.round(sw*ST_STEP*.33) : t;
-
 const ST_SCALES={chromatic:[0,1,2,3,4,5,6,7,8,9,10,11],major:[0,2,4,5,7,9,11],minor:[0,2,3,5,7,8,10],
   dorian:[0,2,3,5,7,9,10],phrygian:[0,1,3,5,7,8,10],lydian:[0,2,4,6,7,9,11],mixolydian:[0,2,4,5,7,9,10],
   'harm. minor':[0,2,3,5,7,8,11],'minor pent.':[0,3,5,7,10],'major pent.':[0,2,4,7,9],blues:[0,3,5,6,7,10]};
@@ -22,16 +19,6 @@ const ST_CHORDS={maj:[0,4,7],min:[0,3,7],'7':[0,4,7,10],maj7:[0,4,7,11],min7:[0,
   dim:[0,3,6],aug:[0,4,8],power:[0,7,12],add9:[0,4,7,14],min9:[0,3,7,10,14],oct:[0,12]};
 const stInScale=(k,root,scale)=>(ST_SCALES[scale]||ST_SCALES.chromatic).includes((((k-root)%12)+12)%12);
 const stSnapScale=(k,root,scale)=>{ for(let d=0;d<7;d++){ if(stInScale(k-d,root,scale)) return k-d; if(stInScale(k+d,root,scale)) return k+d; } return k; };
-
-/* ---------- огибающая ADSR: аналитическое значение 0..1 ---------- */
-// a,d,r — секунды, s — уровень; off — момент отпускания (сек от старта) или null, пока нота держится
-function stAdsrAt(t,a,d,s,r,off){
-  a=Math.max(a,.002);
-  const held=u=>u<a ? u/a : s+(1-s)*Math.exp(-(u-a)/Math.max(d/4,.001));
-  if(off==null || t<off) return held(t);
-  return held(off)*Math.exp(-(t-off)/Math.max(r/4,.001));
-}
-const stRelEnd=r=>r*1.1+.04;            // когда после отпускания хвост можно обрывать
 
 /* ---------- параметры инструментов и эффектов: описание для UI, движка и пресетов ---------- */
 const ST_SYNTH=[
@@ -71,10 +58,8 @@ const ST_SAMPLER=[
   {g:'Env',k:'a',min:.002,max:2,log:1,d:.002,label:'A',u:'s'},{g:'Env',k:'r',min:.005,max:4,log:1,d:.08,label:'R',u:'s'},
   {g:'Out',k:'vol',min:0,max:1,step:.01,d:.8,label:'gain'},
   {k:'clip',t:'txt',d:'',hidden:1},{k:'sname',t:'txt',d:'',hidden:1}];
-// внешний генератор: ноты канала уходят на пины узла Studio (freq / gate / vel ×4, как у Piano Roll), звук приходит обратно на вход in…in4
-const ST_EXT=[
-  {g:'Graph pins',k:'slot',min:1,max:4,step:1,d:1,label:'first output'},{g:'Graph pins',k:'voices',min:1,max:4,step:1,d:4,label:'voices'},
-  {g:'Graph pins',k:'ret',min:1,max:4,step:1,d:1,label:'audio in'},{g:'Out',k:'vol',min:0,max:1,step:.01,d:.8,label:'gain'}];
+// строка-триггер Drum Machine: без собственного звука, только ворота на выходе
+const ST_EXT=[{k:'vol',min:0,max:1,step:.01,d:.8,hidden:1}];
 const ST_CHDEF={synth:ST_SYNTH,drum:ST_DRUM,sampler:ST_SAMPLER,ext:ST_EXT};
 
 const ST_FX={
@@ -147,42 +132,6 @@ function stDriveCurve(amount,type,n){
   if(type!=='fold') for(let i=0;i<n;i++) c[i]/=mx;
   return c;
 }
-function stCrushCurve(bits,n){
-  n=n||4096; const c=new Float32Array(n), q=Math.pow(2,bits-1);
-  for(let i=0;i<n;i++){ const x=i/(n-1)*2-1; c[i]=Math.round(x*q)/q; }
-  return c;
-}
-
-/* ---------- импульс ревербератора (детерминированный шум с затуханием и демпфированием) ---------- */
-function stReverbIR(sr,size,damp){
-  const n=Math.max(1,Math.floor(sr*size)), out=[new Float32Array(n),new Float32Array(n)];
-  let seed=1337; const rnd=()=>{ seed=(seed*1664525+1013904223)>>>0; return seed/4294967296*2-1; };
-  const decay=6.9/size;                         // -60 дБ к концу импульса
-  for(let ch=0;ch<2;ch++){
-    let lp=0; const o=out[ch];
-    for(let i=0;i<n;i++){
-      const t=i/sr, env=Math.exp(-decay*t), a=stClamp(1-damp*(.2+.75*Math.min(1,t/size*1.5)),.04,1);
-      lp+=a*(rnd()-lp); o[i]=lp*env*(i<sr*.004?i/(sr*.004):1);
-    }
-  }
-  return out;
-}
-
-/* ---------- WAV ---------- */
-function stWav(L,R,sr,float32){
-  const n=L.length, ch=2, bps=float32?4:2, data=n*ch*bps, buf=new ArrayBuffer(44+data), v=new DataView(buf);
-  const w=(o,s)=>{ for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i)); };
-  w(0,'RIFF'); v.setUint32(4,36+data,true); w(8,'WAVE'); w(12,'fmt '); v.setUint32(16,16,true);
-  v.setUint16(20,float32?3:1,true); v.setUint16(22,ch,true); v.setUint32(24,sr,true); v.setUint32(28,sr*ch*bps,true);
-  v.setUint16(32,ch*bps,true); v.setUint16(34,bps*8,true); w(36,'data'); v.setUint32(40,data,true);
-  let o=44;
-  for(let i=0;i<n;i++) for(const s of [L[i],R[i]]){
-    if(float32){ v.setFloat32(o,s,true); o+=4; }
-    else{ const x=stClamp(s,-1,1); v.setInt16(o,x<0?x*32768:x*32767,true); o+=2; }
-  }
-  return buf;
-}
-
 /* ---------- проект ---------- */
 function stBlankMixer(){
   const m=[];
@@ -234,64 +183,6 @@ function stLoad(json){
   P.channels.forEach(see); P.patterns.forEach(see); P.playlist.clips.forEach(see);
   P.ids=Math.max(P.ids||1,mx+1);
   return P;
-}
-
-/* ---------- сбор нот для планировщика ---------- */
-// view: {mode:'song'} или {mode:'pat', pat:id}. Возвращает ноты со стартом в [a,b) тиков:
-// {t, l, k, v, ch}. В режиме паттерна он повторяется бесконечно.
-function stCollect(P,view,a,b){
-  const out=[], byId=new Map(P.patterns.map(p=>[p.id,p]));
-  const emit=(pat,base,limit,from,to)=>{              // pat на позиции base, обрезка по limit (абс. тик)
-    const L=stPatLen(pat);
-    for(const chId in pat.notes){
-      for(const n of pat.notes[chId]){
-        const rep0=Math.max(0,Math.floor((from-base-n.t)/L)),
-          reps=Math.ceil((limit-base)/L);
-        for(let r=rep0;r<reps;r++){
-          const t=base+r*L+n.t; if(t>=to) break; if(t<from) continue; if(t>=limit) break;
-          out.push({t:stSwing(t,P.swing),l:Math.min(n.l,limit-t,L-n.t),k:n.k,v:n.v,ch:+chId});
-        }
-      }
-    }
-  };
-  if(view.mode==='pat'){
-    const pat=byId.get(view.pat); if(pat) emit(pat,0,Infinity,a,b);
-  }else{
-    for(const c of P.playlist.clips){
-      if(c.kind!=='pat' || c.t+c.l<=a || c.t>=b) continue;
-      const pat=byId.get(c.pat); if(pat) emit(pat,c.t,c.t+c.l,Math.max(a,c.t),b);
-    }
-  }
-  out.sort((x,y)=>x.t-y.t);
-  return out;
-}
-
-/* ---------- автоматизация ---------- */
-// клип auto: {kind:'auto', tr, t, l, target:'mix:3:vol' | 'fx:3:0:cut' | 'ch:5:cut', pts:[[t,v01],…]}, t — от начала клипа
-function stAutoAt(clip,tick){
-  const p=clip.pts, x=tick-clip.t;
-  if(!p.length) return null;
-  if(x<=p[0][0]) return p[0][1];
-  for(let i=1;i<p.length;i++) if(x<=p[i][0]){
-    const a=p[i-1], b=p[i], f=b[0]===a[0]?1:(x-a[0])/(b[0]-a[0]); return a[1]+(b[1]-a[1])*f;
-  }
-  return p[p.length-1][1];
-}
-// последняя в плейлисте автоматизация цели в тике (клип действует только на своём отрезке)
-function stAutoValue(P,target,tick){
-  let best=null;
-  for(const c of P.playlist.clips) if(c.kind==='auto' && c.target===target && tick>=c.t && tick<c.t+c.l){
-    const v=stAutoAt(c,tick); if(v!=null && (!best || c.t>=best.t)) best={t:c.t,v};
-  }
-  return best?best.v:null;
-}
-// определение параметра по адресу цели
-function stTargetDef(P,target){
-  const s=target.split(':');
-  if(s[0]==='mix'){ const d={vol:{k:'vol',min:0,max:1.25,step:.01,d:.8,label:'volume'},pan:{k:'pan',min:-1,max:1,step:.01,d:0,label:'pan'}}[s[2]]; return d||null; }
-  if(s[0]==='fx'){ const f=P.mixer[+s[1]]?.fx[+s[2]]; return f ? ST_FX[f.type].p.find(d=>d.k===s[3])||null : null; }
-  if(s[0]==='ch'){ const c=P.channels.find(c=>c.id===+s[1]); return c ? ST_CHDEF[c.type].find(d=>d.k===s[2])||null : null; }
-  return null;
 }
 
 /* ---------- пресеты синтезатора ---------- */
@@ -524,17 +415,5 @@ function stExAmbient(){
   B.auto(3,0,16,'fx:2:0:depth',[[0,.2],[.5,.9],[1,.3]]);
   return B.loop(16);
 }
-function stExExternal(){
-  const B=stBuilder('External Generator',124), P=B.P;
-  const kick=B.ch('drum','Kick',ST_KITS['Kick 909'],1,.9), clap=B.ch('drum','Clap',ST_KITS.Clap,2,.6), hat=B.ch('drum','Hat',ST_KITS['Closed Hat'],2,.45),
-    ext=B.ch('ext','Graph synth',{slot:1,voices:2,ret:1},3,.8);
-  B.buses({size:2.4,damp:.6},{div:'1/8.',fb:.4}); B.send(3,14,.25); B.send(3,15,.3); B.fx(3,'pump',{depth:.6});
-  const dr=B.pat('Drums',1,[kick,clap,hat]); B.x(dr,kick,'x...x...x...x...',60,115); B.x(dr,clap,'....x.......x...',60,95); B.x(dr,hat,'..x...x...x...x.',60,60);
-  const mp=B.pat('Melody',4,[ext]), roots=[57,53,60,55];
-  for(let c=0;c<4;c++){ const o=c*16; B.n(mp,ext,o,8,roots[c]-12,100); B.n(mp,ext,o+8,6,roots[c]-12,90);
-    for(let i=0;i<16;i++) if(i%2===1||i%4===0) B.n(mp,ext,o+i,1,roots[c]+[0,7,12,16,12,7][i%6],i%4===0?105:80); }
-  B.clip(dr,0,0,16); B.clip(mp,1,2,14);
-  return B.loop(16);
-}
 const ST_EXAMPLES={'Night Drive — techno 126':stDemoProject,'Trance Lift — 138':stExTrance,'Deep House — 122':stExHouse,'Drum & Bass — 174':stExDnb,
-  'Acid Techno — 132':stExAcid,'Dubstep — 140':stExDubstep,'Lo-fi Chill — 80':stExLofi,'Ambient Drift — 70':stExAmbient,'External Generator — graph synth':stExExternal};
+  'Acid Techno — 132':stExAcid,'Dubstep — 140':stExDubstep,'Lo-fi Chill — 80':stExLofi,'Ambient Drift — 70':stExAmbient};

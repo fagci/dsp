@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=139;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=140;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -144,7 +144,7 @@ patchSearchEl.addEventListener('input',e=>{ patchQuery=e.target.value; buildPatc
 // Строит недостающие/устаревшие встроенные пресеты и обновляет версию хранилища.
 // Сами пресеты регистрируются ниже через preset(имя, функция-строитель), см. PRESETS.
 // встроенные пресеты, снятые с поставки: при смене версии стираются из сохранённых
-const PRESETS_GONE=['Aether Pet:'];
+const PRESETS_GONE=['Aether Pet:','Studio: DAW','Studio (tiles)','Studio: Graph Synth'];
 function buildBuiltinPresets(){
 const p=readP(), ver=+(LS.get(VKEY)||0);
 if(ver <PRESET_VER) for(const k of Object.keys(p)) if(PRESETS_GONE.some(g=>k.startsWith(g))) delete p[k];
@@ -177,6 +177,7 @@ const PRESET_CAT_ORDER=['Start Here',
                          'Maps & Locating',
                          'Music: Sequencers & Mixer',
                          'Music: Synth & Tracker',
+                         'Music: Studio Songs',
                          'Music: Visualizers',
                          'Music: Player',
                          'Analysis & Measurement',
@@ -512,12 +513,10 @@ const PRESET_CATS={
   'Arrangement: Intro → Verse → Chorus':'Music: Sequencers & Mixer',
   '12-Channel Mixer: Full Band':'Music: Sequencers & Mixer',
 
-  'Studio: DAW (Piano Roll, Playlist, Mixer)':'Music: Synth & Tracker',
-  'Studio (tiles)':'Music: Synth & Tracker',
-  'Studio: Graph Synth as Instrument':'Music: Synth & Tracker',
   'Studio: Drum Machine → Sampler':'Music: Sequencers & Mixer',
   'Studio: Playlist → Piano Roll → Synth':'Music: Sequencers & Mixer',
   'Studio: Sleep Mixer':'Music: Sequencers & Mixer',
+  'Studio: Effects Chain (Compressor → Delay → Reverb)':'Music: Sequencers & Mixer',
   'Studio: Arranged Song (one wire per lane)':'Music: Sequencers & Mixer',
   'Synth: Acid Bass (303)':'Music: Synth & Tracker',
   'Winamp':'Music: Player',
@@ -568,58 +567,6 @@ if(PRESETS[name]) console.warn('дублирующееся имя пресета
 PRESETS[name]=fn;
 if(!(name in PRESET_CATS)) console.warn('у пресета "'+name+'" нет категории — попадёт в «Разное»');
 }
-preset('Studio: DAW (Piano Roll, Playlist, Mixer)', function(){
-  clearAll();
-  const st=addNode('studio',40,40,{});
-  const nt=addNode('note',40,150,{text:'Studio — a full music workstation (FL Studio style).\n'+
-    '«Open Studio» opens the demo song full-screen: channel rack with a step sequencer, Piano Roll,\n'+
-    'Playlist, Mixer with FX chains and sends, synth / drum / sampler editors. Space — play, Ctrl+Z — undo,\n'+
-    'A W S E D F … — computer keyboard as a piano (Z / X — octave), MIDI keyboards work too.\n'+
-    'Right click a knob → automation clip. Project ☰ → Examples: 8 ready tracks (techno, trance, house, D&B,\nacid, dubstep, lo-fi, ambient) to try everything on; export WAV. The project is saved in the browser.\n'+
-    'Every panel is also its own node (Studio: Transport / Channel Rack / Piano Roll / Playlist / Mixer /\n'+
-    'Instrument): see the preset «Studio (tiles)» and turn on ▦. They need no wires.\n'+
-    'Sampler channel: pick a clip from Files › audio (the same library as the Sampler node) or load a file.\n'+
-    'Your own generator: channel «External generator» → pins freq / gate / vel, audio back to in — see «Studio: Graph Synth as Instrument».\n'+
-    'Outputs: L / R audio into the graph (then the sound goes through it, not straight to the sound card),\n'+
-    'clk (1/16 pulses), bpm / bar / beat / playing. Inputs: play (0→1 start, 1→0 stop), bpm.'});
-  nt.size.w=460; nt.size.h=200; applySize(nt);
-});
-
-// студия из тайлов: транспорт сверху, стойка слева, плейлист и piano roll справа, микшер и инструмент снизу
-preset('Studio (tiles)', function(){
-  clearAll();
-  const st=addNode('studio',40,40,{});
-  const tile={};
-  [['stubar',340,40],['sturack',340,160],['stulist',1000,160],['stuseq',1000,580],['stumix',340,580],['stuinst',1700,160]]
-    .forEach(([t,x,y])=>{ tile[t]=addNode(t,x,y,{}); /* тайлы сами находят Studio в патче */ });
-  const leaf=n=>({t:'leaf',id:dashId(),node:n?n.id:null});
-  const split=(dir,children,sizes)=>({t:'split',id:dashId(),dir,children,sizes});
-  Graph.dashTree=split('col',[
-    leaf(tile.stubar),
-    split('row',[leaf(tile.sturack),split('col',[leaf(tile.stulist),leaf(tile.stuseq)],[50,50])],[40,60]),
-    split('row',[leaf(tile.stumix),leaf(tile.stuinst)],[60,40])],[13,50,37]);
-  markWiresDirty();
-});
-
-// свой генератор из графа играет партию из студии: канал «External generator» отдаёт ноты на freq / gate (2 голоса),
-// звук Synth (4 voices) возвращается на вход in, дальше — обычный канал микшера (громкость, панорама, эффекты, посылы)
-preset('Studio: Graph Synth as Instrument', function(){
-  clearAll();
-  const st=addNode('studio',40,40,{demo:'External Generator — graph synth',latency:90});
-  const sy=addNode('poly4',420,40,{wave:'saw',attack:.01,decay:.2,sustain:.6,release:.25,spread:.6});
-  const dc=addNode('dac',420,360,{vol:.5});
-  addEdge(st.id,'freq',sy.id,'freq'); addEdge(st.id,'gate',sy.id,'gate'); addEdge(st.id,'freq2',sy.id,'freq2'); addEdge(st.id,'gate2',sy.id,'gate2');
-  addEdge(sy.id,'out',st.id,'in');
-  addEdge(st.id,'L',dc.id,'L'); addEdge(st.id,'R',dc.id,'R');
-  const nt=addNode('note',720,40,{text:'Open Studio → Play, then start the engine (▶ in the toolbar).\n'+
-    'The channel «Graph synth» sends its notes to the pins freq / gate (voices 1–2) of the Studio node;\n'+
-    'the Synth (4 voices) plays them and its audio comes back to «in», so it goes through the mixer insert\n'+
-    '(volume, pan, FX, sends). Replace the synth with any generator of yours. «graph latency» compensates\n'+
-    'the round trip through the graph. L / R feed the DAC: while they are wired the sound goes through the graph.'});
-  nt.size.w=420; nt.size.h=180; applySize(nt);
-  markWiresDirty();
-});
-
 // Drum Machine (Studio) как самый простой сэмплер: Master Clock → шаги, ворота строк g1 / g2 → Sampler, свои звуки — прямо на DAC
 preset('Studio: Drum Machine → Sampler', function(){
   clearAll();
@@ -718,6 +665,30 @@ preset('Studio: Arranged Song (one wire per lane)', function(){
   ar.size.w=780; ar.size.h=440; applySize(ar); dm.size.w=640; dm.size.h=560; applySize(dm); pr.size.w=780; pr.size.h=540; applySize(pr); mx.size.w=780; mx.size.h=540; applySize(mx);
   markWiresDirty();
 });
+
+// эффекты студии — обычные узлы: Drum Machine → Compressor → Delay → Reverb → Sound Card (Delay и Reverb: смешивание mix, темп от Master Clock)
+preset('Studio: Effects Chain (Compressor → Delay → Reverb)', function(){
+  clearAll();
+  const ck=addNode('clock',40,40,{bpm:120,div:'1/16'});
+  const dm=addNode('studrum',40,200,{});
+  const cp=addNode('stufx_comp',720,200,{thr:-16,ratio:4,gain:3});
+  const dl=addNode('stufx_delay',720,520,{div:'1/8.',fb:.4,mix:.3,bpm:120});
+  const rv=addNode('stufx_reverb',1000,200,{size:2.4,mix:.25});
+  const dc=addNode('dac',1000,520,{vol:.5,mode:'stereo'});
+  addEdge(ck.id,'pulse',dm.id,'clk'); addEdge(ck.id,'pulse',dl.id,'clk');
+  addEdge(dm.id,'L',cp.id,'L'); addEdge(dm.id,'R',cp.id,'R');
+  addEdge(cp.id,'L',dl.id,'L'); addEdge(cp.id,'R',dl.id,'R');
+  addEdge(dl.id,'L',rv.id,'L'); addEdge(dl.id,'R',rv.id,'R');
+  addEdge(rv.id,'L',dc.id,'L'); addEdge(rv.id,'R',dc.id,'R');
+  const nt=addNode('note',360,40,{text:'Studio effects are ordinary nodes: EQ, Compressor, Filter, Distortion, Bitcrusher, Chorus, Phaser,\n'+
+    'Delay, Reverb, Pump (sidechain), Trance Gate, Stereo Width — input L (and R), output L / R.\n'+
+    'Delay, Pump and Gate follow the tempo: a clk wire (here Master Clock) or the bpm parameter / input.'});
+  nt.size.w=420; nt.size.h=110; applySize(nt);
+  dm.size.w=640; dm.size.h=560; applySize(dm); markWiresDirty();
+});
+
+// готовые композиции из узлов: Song (загрузка / сохранение) → блоки, Master Clock → Pattern Playlist → Drum Machine / Piano Roll → Synth → Mixer → Sound Card
+for(const k of Object.keys(ST_EXAMPLES)){ const nm='Studio Song: '+k; PRESET_CATS[nm]='Music: Studio Songs'; preset(nm,()=>stuCompose(k)); }
 
 /* ---- демо-патч ---- */
 function buildDemo(){

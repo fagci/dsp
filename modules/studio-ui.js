@@ -1,18 +1,6 @@
 "use strict";
 /* ============================ STUDIO: ОБЩИЕ ВИДЖЕТЫ ============================
-   Хранилище проектов (IndexedDB), ручка, список, переключатель, панель параметров по описанию, всплывающее меню. */
-
-const StuDB=(()=>{
-  let dbp=null;
-  const open=()=>dbp||(dbp=new Promise((res,rej)=>{
-    const rq=indexedDB.open('dsp-studio',1);
-    rq.onupgradeneeded=e=>{ const db=e.target.result; if(!db.objectStoreNames.contains('projects')) db.createObjectStore('projects',{keyPath:'id'}); };
-    rq.onsuccess=e=>res(e.target.result); rq.onerror=e=>rej(e.target.error); }));
-  const rp=r=>new Promise((res,rej)=>{ r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); });
-  const st=async m=>(await open()).transaction('projects',m).objectStore('projects');
-  return {get:async id=>rp((await st('readonly')).get(id)), put:async rec=>rp((await st('readwrite')).put(rec)),
-    del:async id=>rp((await st('readwrite')).delete(id)), all:async()=>rp((await st('readonly')).getAll())};
-})();
+   Ручка, список, переключатель, панель параметров по описанию, всплывающее меню, основа панели. */
 
 /* ---------- мелкие виджеты ---------- */
 const stuEl=(tag,cls,html)=>{ const e=document.createElement(tag); if(cls) e.className=cls; if(html!=null) e.innerHTML=html; return e; };
@@ -87,7 +75,6 @@ function stuMenu(x,y,items){
   setTimeout(()=>addEventListener('pointerdown',away,true),0);
   return m;
 }
-const stuDl=(name,blob)=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),4000); };
 const stuPick=(accept)=>new Promise(res=>{ const i=document.createElement('input'); i.type='file'; i.accept=accept; i.onchange=()=>res(i.files[0]||null); i.click(); });
 
 

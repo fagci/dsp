@@ -4,7 +4,7 @@
   --t-sig:#4ec9b0; --t-num:#e0b23c; --t-spec:#c586c0; --t-img:#569cd6;
   --t-txt:#d18ad1; --t-blk:#7fd17f; --t-bands:#5fb8d1; --t-rec:#e0875f; --t-trk:#e07fb0; --t-iq:#b4d455; --t-vid:#e6d36a; --t-rtc:#6fd0c0; --t-bin:#e0b050; --err:#e05c5c;
   /* цвета пинов по типам: 14 разных оттенков, по кругу */
-  --p-rec:#da7a62; --p-val:#daa262; --p-num:#dabe62; --p-vid:#d6da62; --p-iq:#aeda62; --p-blk:#62da66; --p-sig:#62dabe; --p-rtc:#62c2da; --p-img:#6292da; --p-bands:#6262da; --p-spec:#9a62da; --p-txt:#d262da; --p-trk:#da62a2; --p-bin:#da6272;
+  --p-rec:#da7a62; --p-val:#daa262; --p-num:#dabe62; --p-vid:#d6da62; --p-iq:#aeda62; --p-blk:#62da66; --p-sig:#62dabe; --p-rtc:#62c2da; --p-img:#6292da; --p-bands:#6262da; --p-spec:#9a62da; --p-txt:#d262da; --p-trk:#da62a2; --p-song:#e0875f; --p-bin:#da6272;
   /* --grid/--axis — сетка/подписи осей на canvas.view. Тот canvas всегда на тёмном --screen
      (см. ниже — --screen НЕ переопределён в светлой теме, экран прибора тёмный в обеих темах),
      так что и эти двое — не по теме, а константа, как --screen/--screen-fg сами; если сделать
@@ -26,7 +26,7 @@
     --txt:#1c2226; --dim:#5c6670; --acc:#a8720f; --acc2:#0f9488;
     --t-sig:#0f9488; --t-num:#a8720f; --t-spec:#9333ea; --t-img:#2563eb;
     --t-txt:#a83fa8; --t-blk:#2f9e4f; --t-bands:#1b7f96; --t-rec:#b8541f; --t-trk:#b83d7c; --t-iq:#5f8a0e; --t-vid:#8a7a0a; --t-rtc:#1d8a78; --t-bin:#a9770f; --err:#c23b3b;
-    --p-rec:#a33114; --p-val:#a36114; --p-num:#a38214; --p-vid:#9fa314; --p-iq:#6fa314; --p-blk:#14a319; --p-sig:#14a382; --p-rtc:#1487a3; --p-img:#144da3; --p-bands:#1414a3; --p-spec:#5714a3; --p-txt:#9a14a3; --p-trk:#a31461; --p-bin:#a31427;
+    --p-rec:#a33114; --p-val:#a36114; --p-num:#a38214; --p-vid:#9fa314; --p-iq:#6fa314; --p-blk:#14a319; --p-sig:#14a382; --p-rtc:#1487a3; --p-img:#144da3; --p-bands:#1414a3; --p-spec:#5714a3; --p-txt:#9a14a3; --p-trk:#a31461; --p-song:#b8541f; --p-bin:#a31427;
     --hi:#000000; --scrim:#0004;
     --canvas:#d3d9df;
     --screen:#f3f5f7; --screen-fg:#0b7c72; --grid:#dde2e6; --axis:#68737b; --scr-panel:#e4e8eb; --scr-hi:#111111;
@@ -1481,17 +1481,11 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 
 /* ============ Studio (DAW) ============ */
 .stu{color:var(--txt);font-size:12px;user-select:none}
-.stu-full{position:fixed;inset:0;z-index:49;display:flex;flex-direction:column;background:var(--bg);
-  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
 .stu-tile{grid-column:1/-1;width:100%;min-width:0;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
-.stu-tile>.stu-panel{flex:1;min-height:0}
-.stu-tile .stu-x,.stu-full .stu-open{display:none}
-.stu-panel{min-width:0}
-.stu-p-rack{display:flex;flex-direction:column;background:var(--panel);min-height:0}
+.stu-tile>.stu-p-rack{display:flex;flex-direction:column;background:var(--panel);min-height:0}
 .stu-p-roll,.stu-p-list{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0}
 .stu-p-mix{display:flex;flex-direction:row;flex:1;min-height:0}
 .stu-p-inst{display:flex;flex-direction:column;overflow:auto;flex:1;min-height:0}
-.stu-pane>.stu-panel{flex:1;min-height:0}
 .stu-rack>.stu-p-rack{flex:1}
 .stu-tile .stu-top{flex-wrap:wrap;align-content:flex-start;overflow:auto}
 .stu button,.stu select,.stu input{font:inherit;color:inherit}
@@ -1522,11 +1516,6 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 .stu-st.alt{background:#343e45} .stu-st.on{background:var(--c,var(--acc));box-shadow:inset 0 0 0 1px #fff3} .stu-st.cur{outline:2px solid #fff;outline-offset:-2px}
 .stu-st:nth-child(4n+1){margin-left:4px}
 .stu-work{flex:1;display:flex;flex-direction:column;min-width:0}
-.stu-tabs{display:flex;gap:2px;padding:4px 6px 0;background:var(--panel);border-bottom:1px solid var(--line)}
-.stu-tabs button{background:transparent;border:1px solid transparent;border-bottom:none;border-radius:4px 4px 0 0;padding:5px 14px;cursor:pointer;color:var(--dim)}
-.stu-tabs button.on{background:var(--bg);border-color:var(--line);color:var(--txt);font-weight:600}
-.stu-tab-rack{display:none}
-.stu-pane{display:none;flex:1;min-height:0;overflow:hidden} .stu-pane.on{display:flex}
 .stu-rt,.stu-lt{display:flex;align-items:center;gap:8px;padding:5px 8px;background:var(--panel);border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:thin;flex:0 0 auto}
 .stu-lb{flex:1;display:flex;min-height:0}
 .stu-pal{flex:0 0 120px;overflow:auto;background:var(--panel);border-right:1px solid var(--line);padding:6px;display:flex;flex-direction:column;gap:4px}
@@ -1566,11 +1555,6 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 .stu-menu{font:12px/1.3 system-ui,sans-serif;color:var(--txt);position:fixed;z-index:60;background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:3px;box-shadow:0 6px 24px #0008;max-height:70vh;overflow:auto;min-width:170px}
 .stu-menu button{font:inherit;color:inherit;display:block;width:100%;text-align:left;background:transparent;border:none;padding:6px 10px;cursor:pointer;border-radius:3px}
 .stu-menu button:hover{background:var(--panel2)} .stu-menu button:disabled{opacity:.4} .stu-menu .sep{height:1px;background:var(--line);margin:3px 0}
-@media (max-width:900px){
-  .stu-main{position:relative} .stu-rack{position:absolute;inset:0;z-index:5;width:auto;display:none}
-  .stu-full.rackopen .stu-rack{display:flex} .stu-tab-rack{display:block}
-  .stu-fxp{flex-basis:240px}
-}
 
 .stu-knob.sm{width:30px} .stu-knob.sm .stu-kl,.stu-knob.sm .stu-kv{display:none} .stu-knob.sm.on .stu-kv{display:block;position:absolute;margin-top:-14px;background:var(--panel);padding:0 3px;border-radius:3px;z-index:3}
 .stu-knob.sm{position:relative}
@@ -1579,7 +1563,13 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 /* самостоятельные узлы Studio (Drum Machine, Piano Roll, Playlist, Mixer) */
 .stu-lite{display:flex;flex-direction:column;background:var(--bg)}
 .stu-lite .stu-mixsel,.stu-lite .stu-pr{display:none}
-.stu-lite>.stu-panel{min-height:0}
-.stu-lite .stu-p-rack{overflow:auto;flex:1 1 55%}
+.stu-lite>.stu-lite .stu-p-rack{overflow:auto;flex:1 1 55%}
 .stu-lite .stu-p-inst{flex:1 1 45%}
 .stu-scn{width:62px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 4px;font-size:10px;text-align:center}
+
+.stu-song{display:flex;flex-direction:column;background:var(--bg);overflow:auto}
+.stu-sgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;padding:8px}
+.stu-scol{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:6px 8px;min-width:0}
+.stu-scol h4{margin:0 0 4px;font-size:10px;letter-spacing:.06em;color:var(--dim);text-transform:uppercase;font-weight:500}
+.stu-srow{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:1px 0}
+.stu-snote{padding:4px 10px 8px;font-size:11px}
