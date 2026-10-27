@@ -48,7 +48,8 @@ function phoneSend(n,cmd){
 }
 function phoneFeed(n,r){
   if(!r || typeof r!=='object') return;
-  n.count++; n.last=phoneLine(r);
+  n.count++;
+  if(r.src==='torch') n.torchSeen=1; else n.last=phoneLine(r);      // состояние фонаря приходит само и не должно затирать ответ на команду
   if(r.src==='bridge'){ if(r.level==='error' || r.level==='warn') n.bridgeMsg=r.msg; return; }
   if(r.src==='cmd'){ n.ok=r.ok ? 1 : 0; if(r.text){ n.text=String(r.text); n.last+='\n'+String(r.text).slice(0,2500); } }     // текст ответа (диагностика root) — на выход text
   if(r.src==='torch') n.torch=r.on ? 1 : 0;
@@ -85,7 +86,7 @@ def({ id:'phone', title:'Phone Actions (DSP app)', cat:'Output', kw:'android app
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>phoneStop(n)},
   ],
   init:n=>{ n.ws=null; n.want=false; n.timer=null; n.recQ=[]; n.pend=[]; n.seq=0; n.count=0; n.text=''; n.ok=0; n.torch=0; n.fresh=0;
-            n.status='not connected'; n.warn=''; n.sentSub=null; n.bridgeMsg=''; n.last=''; n.prevGo=0; n.prevTorch=null; n.textIn=''; n.ev={}; },
+            n.status='not connected'; n.warn=''; n.sentSub=null; n.torchSeen=0; n.bridgeMsg=''; n.last=''; n.prevGo=0; n.prevTorch=null; n.textIn=''; n.ev={}; },
   dispose:n=>phoneStop(n),
   process(n,I){
     phoneSubSend(n);
@@ -109,5 +110,6 @@ def({ id:'phone', title:'Phone Actions (DSP app)', cat:'Output', kw:'android app
     let t=(n.warn&&!n.ws&&n.status!=='connected' ? '⚠ '+n.warn+'\n' : '')+n.status+' · records '+n.count;
     if(n.bridgeMsg) t+='\n⚠ '+n.bridgeMsg;
     if(n.last) t+='\n'+n.last;
+    if(n.p.torchState && n.torchSeen) t+='\ntorch '+(n.torch ? 'on' : 'off');      // только пока узел подписан на состояние фонаря
     if(r.textContent!==t) r.textContent=t; }
 });

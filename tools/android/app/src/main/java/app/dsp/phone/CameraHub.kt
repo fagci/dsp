@@ -49,6 +49,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     private var fmt = ImageFormat.YUV_420_888
     private var phys: String? = null
     private var hsRange: android.util.Range<Int>? = null       // режим высокой скорости (constrained high-speed): fps выше предела автоэкспозиции
+    private var note = ""                                    // пометка к статусу камеры: чем закончился запрос высокой скорости
     private val noHs = HashSet<String>()                       // камеры, на которых сессия высокой скорости не создалась
     private var lastEnc = 0L
     private var pool: ExecutorService? = null                 // кодирование кадров параллельно: один поток упирался в ~25 к/с (YUV → NV21 → поворот → JPEG)
@@ -158,7 +159,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
 
     fun valid(l: Lease) = synchronized(lock) { l.gen == gen && cfg != null }
 
-    fun stop() { synchronized(lock) { main.removeCallbacks(idleStop); stopLocked() } }
+    fun stop() { synchronized(lock) { main.removeCallbacks(idleStop); note = ""; stopLocked() } }
 
     private fun stopLocked() {
         cfg = null; info = ""
@@ -206,7 +207,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
             val rd = ImageReader.newInstance(size.width, size.height, fmt, workers + 2)
             rd.setOnImageAvailableListener({ onImage(it, c) }, h)
             reader = rd
-            infoBase = "${size.width}×${size.height}" + (hsRange?.let { " · high-speed ${it.upper}" } ?: ""); info = infoBase
+            infoBase = "${size.width}×${size.height}" + (hsRange?.let { " · high-speed ${it.upper}" } ?: "") + note; info = infoBase
             mgr.openCamera(id, object : CameraDevice.StateCallback() {
                 override fun onOpened(d: CameraDevice) {
                     device = d
@@ -247,6 +248,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                         }
                         val rq = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
                         rq.addTarget(rd.surface)
+                        manualRate(ch, rd, c, rq)
                         // диапазон кадров, ближайший сверху к нужному fps: меньше fps — меньше нагрев и батареи
                         val ranges = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
                         ranges?.sortedWith(compareBy<android.util.Range<Int>>({ Math.abs(it.upper - c.fps) }, { -it.lower }))?.firstOrNull()
@@ -256,13 +258,15 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                 }
                 override fun onConfigureFailed(s: CameraCaptureSession) {
                     if (hsRange == null) { fail("camera: could not configure"); return }
-                    // высокая скорость с этим приёмником кадров не принята: запоминаем и открываем заново в обычном режиме (зритель ждёт тот же поток)
-                    noHs.add(c.id ?: "f${c.facing}")
-                    main.post { synchronized(lock) { if (cfg == c) { stopLocked(); error = ""; if (startLocked(c)) info = "$infoBase · high-speed unavailable" } } }
+                    hsGiveUp(c)
                 }
             }
             val hr = hsRange
-            if (hr != null) { d.createConstrainedHighSpeedCaptureSession(listOf(rd.surface), cb, h); return }
+            if (hr != null) {
+                // сессия высокой скорости принимает не любую поверхность: ImageReader часто отвергается сразу исключением, а не через onConfigureFailed
+                try { d.createConstrainedHighSpeedCaptureSession(listOf(rd.surface), cb, h) } catch (e: Exception) { hsGiveUp(c) }
+                return
+            }
             val ph = phys
             if (ph != null && Build.VERSION.SDK_INT >= 28) {
                 val oc = android.hardware.camera2.params.OutputConfiguration(rd.surface)
@@ -270,6 +274,32 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                 d.createCaptureSessionByOutputConfigurations(listOf(oc), cb, h)
             } else d.createCaptureSession(listOf(rd.surface), cb, h)
         } catch (e: Exception) { fail("camera: ${e.message}") }
+    }
+
+    /** Высокая скорость не принята: запоминаем камеру и открываем заново в обычном режиме (зритель ждёт тот же поток). */
+    private fun hsGiveUp(c: Cfg) {
+        noHs.add(c.id ?: "f${c.facing}")
+        main.post { synchronized(lock) { if (cfg == c) { stopLocked(); error = ""; note = " · high-speed session refused"; startLocked(c) } } }
+    }
+
+    /** fps выше предела автоэкспозиции без сессии высокой скорости: выдержка и длительность кадра вручную (предел — минимальная длительность кадра для размера). */
+    private fun manualRate(ch: CameraCharacteristics, rd: ImageReader, c: Cfg, rq: CaptureRequest.Builder) {
+        val normalMax = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.maxOfOrNull { it.upper } ?: 30
+        if (hsRange != null || c.fps <= normalMax) return
+        val caps = ch.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: IntArray(0)
+        if (CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR !in caps) { infoBase += " · fps above $normalMax needs manual sensor control (not supported)"; info = infoBase; return }
+        val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        val minDur = map?.getOutputMinFrameDuration(rd.imageFormat, android.util.Size(rd.width, rd.height)) ?: 0L
+        val fd = maxOf(1_000_000_000L / c.fps, minDur)
+        val er = ch.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
+        val iso = ch.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
+        val exp = (fd * 8 / 10).coerceIn(er?.lower ?: 1L, er?.upper ?: fd)
+        rq.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+        rq.set(CaptureRequest.SENSOR_FRAME_DURATION, fd)
+        rq.set(CaptureRequest.SENSOR_EXPOSURE_TIME, exp)
+        if (iso != null) rq.set(CaptureRequest.SENSOR_SENSITIVITY, minOf(iso.upper, 1600).coerceAtLeast(iso.lower))
+        infoBase += " · manual ${"%.0f".format(1e9 / fd)} fps" + if (fd > 1_000_000_000L / c.fps + 1000) " (the limit of this size)" else ""
+        info = infoBase
     }
 
     private fun onImage(r: ImageReader, c: Cfg) {
