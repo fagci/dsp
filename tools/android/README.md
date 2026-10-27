@@ -9,7 +9,7 @@ sensors up to 200 Hz, GPS, Wi-Fi scans, battery and camera frames.
 - **Server** (`BridgeServer`, one port, default `127.0.0.1:8765`):
   - `ws://host:8765/?token=…` — the protocol of [`tools/termux/bridge.mjs`](../termux/bridge.mjs): send `{"sub":["accel","gyro","gps","wifi","battery",…],"hz":200}`, get JSON records (arrays of them, one batch per ~40 ms). Sensor records are `{src:'sensor', sensor, t, x, y, z}` with `t` in ms (the time of the measurement, not of the delivery). Sensors: `accel gyro mag light pressure proximity gravity linear rotation`.
   - `http://host:8765/camera.mjpg?cam=back|front&w=640&fps=10&q=70&rot=0` — MJPEG (Camera2, YUV → JPEG, turned upright). `/snapshot.jpg` — one frame. `/status` — text.
-- **In the workbench:** the *Phone sensors (Termux / DSP app)* node — *sensor rate*, *camera stream*; its `cam` output is the stream address, wire it to *IP Camera* `url`. Preset *Phone App: Camera, Sensors and Wi-Fi in the Background*.
+- **In the workbench:** the *Phone sensors (Termux / DSP app)* node — *sensor rate*, *camera stream*; its `camurl` output is the stream address, wire it to *IP Camera* `url`. Preset *Phone App: Camera, Sensors and Wi-Fi in the Background*.
 
 ## Security
 
