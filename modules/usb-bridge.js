@@ -92,6 +92,7 @@ function usbBridgeInstall(nav,url,WS,ui){
     async open(){
       if(this.opened) return;
       const r=await rpc('open',{dev:this._id}); this.opened=true;
+      this.mbps=r.h.mbps||undefined; this.rawHex=r.h.raw||undefined;       // для диагностики: скорость порта (sysfs) и сырые дескрипторы
       if(r.h.configs && r.h.configs.length) this._raw(r.h);
       this.configuration=this.configuration||this.configurations[0]||null;
     }

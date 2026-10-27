@@ -9,7 +9,7 @@ import org.json.JSONObject
  * бывает только в них (Mirics: alt 3). Чистая логика без Android-типов — проверяется на JVM.
  */
 object UsbDesc {
-    class Parsed(val usb: String, val speedHint: String, val configs: JSONArray)
+    class Parsed(val usb: String, val speedHint: String, val configs: JSONArray, val rawHex: String = "")
 
     private fun u8(b: ByteArray, o: Int) = b[o].toInt() and 255
     private fun u16(b: ByteArray, o: Int) = u8(b, o) or (u8(b, o + 1) shl 8)
@@ -57,6 +57,6 @@ object UsbDesc {
         }
         // размер bulk-пакета выдаёт скорость порта: 512 — high-speed, 64 — full-speed (через хаб или кабель OTG бывает ниже, чем у устройства)
         val hint = when { maxBulk >= 512 -> "high-speed"; maxBulk in 1..64 -> "full-speed"; else -> "" }
-        return Parsed(usb, hint, cfgs)
+        return Parsed(usb, hint, cfgs, Hex.of(b))
     }
 }
