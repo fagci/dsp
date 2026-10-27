@@ -176,6 +176,10 @@ class MainActivity : Activity() {
 
     inner class Downloads {
         /** Адрес USB-API моста для этой страницы (с ключом, который другие сайты не знают); веб-часть строит из него navigator.usb. */
+        /** Ключ приложения: страница добавляет его к адресу моста (?k=…), и ей открыты SMS и контакты; другие сайты его не знают. */
+        @JavascriptInterface
+        fun appKey(): String = UsbKey.value
+
         @JavascriptInterface
         fun usbUrl(): String {
             val c = Config(this@MainActivity)

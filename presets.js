@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=149;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=150;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -406,6 +406,8 @@ const PRESET_CATS={
   'IR: Remote Codes Loopback (No Hardware)':'Infrared',
   'IR: Learn and Replay (Sound Card)':'Infrared',
   'IR: Arduino / ESP / Flipper (WebSerial)':'Infrared',
+  'Phone App: Phone IR Blaster (NEC from a Patch)':'Infrared',
+  'Phone App: Notification with Buttons, Flashlight, SMS and Contacts':'Maps & Locating',
   'IR: Tasmota Blaster over MQTT':'Infrared',
   'MQTT: Subscribe and Publish':'Network & IoT',
   'Bytes: File over Any Text Channel (Loopback)':'Network & IoT',
@@ -1338,6 +1340,33 @@ const dc=addNode('dac',620,220,{vol:.4});
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(sa.id,'f1',rx.id,'tuneFreq');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
+markWiresDirty();
+});
+preset('Phone App: Notification with Buttons, Flashlight, SMS and Contacts', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Android app (tools/android): the patch acts on the phone. Press Run in Phone Actions: a native notification appears with the buttons «Open» and «Flash»; a tap on a button comes back as a record {src:notify, action} on rec (and the id on the text output). Also from this node: flashlight (the torch input and the torch output, brightness on Android 13+), SMS send / list, contacts search, camera list (thermal and IR cameras show their kind).\n'+
+  'SMS and contacts are open only to the page of the app (it adds its key to the address); the app asks for each permission when the action first needs it. Sending is limited to 5 SMS a minute. Rec Log keeps the records; incoming SMS arrive on rec when «incoming SMS» is ticked.'});
+nt.size.w=820; nt.size.h=170; applySize(nt);
+const ph=addNode('phone',40,230,{url:'ws://127.0.0.1:8765',action:'notify',title:'DSP',body:'Hello from the patch',buttons:'Open, Flash',notifyEv:true,torchState:true,smsIn:false});
+ph.size.w=400; ph.size.h=560; applySize(ph);
+const lg=addNode('recLog',480,230,{});
+lg.size.w=420; applySize(lg);
+const tb=addNode('table',480,460,{list:'phone/records',maxRows:500,rev:true,cols:['t','src','cmd','ok','action','dir','addr','body','name','phones','msg']});
+tb.size.w=520; tb.size.h=320; applySize(tb);
+addEdge(ph.id,'rec',lg.id,'rec'); addEdge(ph.id,'rec',tb.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Phone IR Blaster (NEC from a Patch)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Android app (tools/android): many phones have an infrared emitter (ConsumerIrManager). IR Encode makes the frame (NEC, RC5, RC6, Sony, Samsung, JVC, Panasonic…), Phone Actions sends it from the phone: press Send in IR Encode, aim the phone at the TV. Run with the action «ir.info» shows whether the phone has an emitter and which carriers it supports.\n'+
+  'Receiving IR is not possible: Android has no API for an IR receiver. Frames from other sources (Flipper, Tasmota, Pronto, LIRC) go in the same way — any IR block output into the ir input.'});
+nt.size.w=820; nt.size.h=150; applySize(nt);
+const en=addNode('irEnc',40,220,{proto:'NEC',addr:4,cmd:8});
+const ph=addNode('phone',340,220,{url:'ws://127.0.0.1:8765',action:'ir.info',notifyEv:false,torchState:false});
+ph.size.w=400; ph.size.h=520; applySize(ph);
+const lg=addNode('recLog',780,220,{});
+lg.size.w=380; applySize(lg);
+addEdge(en.id,'raw',ph.id,'ir'); addEdge(ph.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Quick Sound Level Meter', function(){

@@ -221,6 +221,36 @@ fun main() {
     ok("usb event pushed to the page", evr != null && evr.first.getString("ev") == "disconnect" && evr.first.getString("id") == "d1")
     uws.abort()
     ok("usb session unsubscribes on close", until { fu.ls.isEmpty() })
+
+    // --- команды и доверие: SMS и контакты только странице приложения (с ключом) ---
+    val cmds = java.util.concurrent.CopyOnWriteArrayList<Pair<Boolean, String>>()
+    srv.onCommand = { c, j -> cmds.add(c.trusted to j.optString("cmd")); c.send(Json.obj("src" to "\"cmd\"", "cmd" to Json.str(j.optString("cmd")), "ok" to "true")) }
+    fun cmdClient(query: String): Pair<WebSocket, java.util.concurrent.LinkedBlockingQueue<String>> {
+        val q = java.util.concurrent.LinkedBlockingQueue<String>()
+        val l = object : WebSocket.Listener {
+            override fun onOpen(w: WebSocket) { w.request(1) }
+            override fun onText(w: WebSocket, d: CharSequence, last: Boolean): CompletionStage<*>? { q.add(d.toString()); w.request(1); return null }
+        }
+        return HttpClient.newHttpClient().newWebSocketBuilder().buildAsync(URI("ws://127.0.0.1:$port/$query"), l).get() to q
+    }
+    val (guest, gq) = cmdClient("")
+    gq.poll(3, java.util.concurrent.TimeUnit.SECONDS)
+    guest.sendText("""{"sub":["sms","gps"]}""", true).get()
+    val gm = generateSequence { gq.poll(3, java.util.concurrent.TimeUnit.SECONDS) }.take(3).toList()
+    ok("guest: the sensitive source is refused with a note", gm.any { it.contains("only the page of the DSP app") } && until { srv.wanted().subs == setOf("gps") }, srv.wanted().toString())
+    guest.sendText("""{"cmd":"notify","id":1}""", true).get()
+    ok("guest: a command reaches the handler untrusted and is answered", until { cmds.contains(false to "notify") } && gq.poll(3, java.util.concurrent.TimeUnit.SECONDS) != null)
+    val (own, oq) = cmdClient("?k=${UsbKey.value}")
+    oq.poll(3, java.util.concurrent.TimeUnit.SECONDS)
+    own.sendText("""{"sub":["sms"]}""", true).get()
+    ok("the app page: SMS source allowed", until { "sms" in srv.wanted().subs })
+    own.sendText("""{"cmd":"sms.list"}""", true).get()
+    ok("the app page: command arrives trusted", until { cmds.contains(true to "sms.list") })
+    val (fake, _) = cmdClient("?k=wrong")
+    fake.sendText("""{"cmd":"sms.list"}""", true).get()
+    ok("a wrong key is not trusted", until { cmds.count { it.second == "sms.list" } == 2 } && cmds.last() == (false to "sms.list"), cmds.toString())
+    ok("sensitive command names", BridgeServer.sensitiveCmd("sms.send") && BridgeServer.sensitiveCmd("contacts.find") && !BridgeServer.sensitiveCmd("notify") && !BridgeServer.sensitiveCmd("torch"))
+    guest.abort(); own.abort(); fake.abort()
     srv.stop()
     ok("stopped", !srv.listening)
     println(if (bad == 0) "all ok" else "$bad FAILED")

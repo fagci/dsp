@@ -19,7 +19,8 @@ import java.io.ByteArrayOutputStream
 
 /** Камера (Camera2) → кадры JPEG. Открыта, пока есть хотя бы один зритель; работает при погашенном экране (foreground-сервис). */
 class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
-    data class Cfg(val facing: Int, val width: Int, val fps: Int, val quality: Int, val rot: Int)
+    /** id — своя камера по номеру (внешняя, тепловизор, ИК); pal — палитра 16-битных кадров (gray / iron). */
+    data class Cfg(val facing: Int, val width: Int, val fps: Int, val quality: Int, val rot: Int, val id: String? = null, val pal: String = "gray")
     class Lease(val gen: Int)
 
     private val lock = Object()
@@ -38,6 +39,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     private var session: CameraCaptureSession? = null
     private var reader: ImageReader? = null
     private var sensorRot = 0
+    private var fmt = ImageFormat.YUV_420_888
     private var lastEnc = 0L
     private val idleStop = Runnable { synchronized(lock) { if (users == 0) stopLocked() } }
 
@@ -53,6 +55,23 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
             }
         }.distinct()
     } catch (e: Exception) { emptyList() }
+
+    /** Все камеры: номер, сторона, вид (visible / ir / thermal / depth), форматы, наибольший размер. Тепловизоры и ИК — те, где вид не visible. */
+    fun describe(): String = try {
+        val m = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        Json.rows(m.cameraIdList.map { id ->
+            val ch = m.getCameraCharacteristics(id)
+            val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            val fm = map?.outputFormats?.toSet() ?: emptySet()
+            val nir = ch.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT) == 5      // COLOR_FILTER_ARRANGEMENT_NIR
+            val pick = Cam.pick(fm)
+            val big = pick?.let { f -> map?.getOutputSizes(f)?.maxByOrNull { it.width * it.height } }
+            Json.obj("id" to Json.str(id), "facing" to Json.str(when (ch.get(CameraCharacteristics.LENS_FACING)) {
+                CameraCharacteristics.LENS_FACING_BACK -> "back"; CameraCharacteristics.LENS_FACING_FRONT -> "front"; CameraCharacteristics.LENS_FACING_EXTERNAL -> "external"; else -> "unknown" }),
+                "kind" to Json.str(Cam.kind(fm, nir)), "formats" to Json.arr(fm.sorted().map { "0x" + Integer.toHexString(it) }),
+                "w" to big?.width?.toString(), "h" to big?.height?.toString())
+        })
+    } catch (e: Exception) { "[]" }
 
     /** Занимает камеру с настройками c; null — не получилось (причина в error). Другие настройки у нового зрителя перезапускают камеру. */
     fun acquire(c: Cfg): Lease? {
@@ -114,18 +133,22 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     private fun startLocked(c: Cfg): Boolean {
         try {
             val mgr = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-            val id = mgr.cameraIdList.firstOrNull { mgr.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == c.facing }
+            val id = (if (c.id != null) mgr.cameraIdList.firstOrNull { it == c.id }
+                else mgr.cameraIdList.firstOrNull { mgr.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == c.facing })
                 ?: run { error = "no such camera"; return false }
             val ch = mgr.getCameraCharacteristics(id)
-            val sizes = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(ImageFormat.YUV_420_888)
-            if (sizes.isNullOrEmpty()) { error = "camera has no YUV output"; return false }
+            val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            // YUV, а у тепловизоров и камер глубины — 16-битный кадр (Y16 / DEPTH16): он уходит в картинку с автоконтрастом
+            fmt = Cam.pick(map?.outputFormats?.toSet() ?: emptySet()) ?: run { error = "camera has no YUV / Y16 / DEPTH16 output"; return false }
+            val sizes = map?.getOutputSizes(fmt)
+            if (sizes.isNullOrEmpty()) { error = "camera has no output sizes"; return false }
             // ближайшая по ширине к запрошенной (при равенстве — с меньшей площадью)
             val size = sizes.sortedWith(compareBy<android.util.Size>({ Math.abs(it.width - c.width) }, { it.width * it.height })).first()
             sensorRot = ch.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
             val th = HandlerThread("dsp-camera").also { it.start() }
             val h = Handler(th.looper)
             thread = th; handler = h; cfg = c; lastEnc = 0
-            val rd = ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 2)
+            val rd = ImageReader.newInstance(size.width, size.height, fmt, 2)
             rd.setOnImageAvailableListener({ onImage(it, c) }, h)
             reader = rd
             info = "${size.width}×${size.height}"
@@ -178,7 +201,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
             lastEnc = now
             val w = img.width; val h = img.height
             val rot = ((sensorRot + c.rot) % 360 + 360) % 360
-            val nv = Yuv.rotate(Yuv.toNv21(img), w, h, rot)
+            val nv = Yuv.rotate(if (img.format == ImageFormat.YUV_420_888) Yuv.toNv21(img) else Yuv.fromGray16(img, c.pal), w, h, rot)
             val (nw, nh) = if (rot == 90 || rot == 270) h to w else w to h
             val bos = ByteArrayOutputStream(nw * nh / 6)
             YuvImage(nv, ImageFormat.NV21, nw, nh, null).compressToJpeg(Rect(0, 0, nw, nh), c.quality, bos)
@@ -193,6 +216,20 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
 
 /** YUV_420_888 → NV21 и поворот NV21 по часовой стрелке (чётные размеры). */
 object Yuv {
+    /** Y16 / DEPTH16: 16-битные отсчёты (little-endian) → NV21 по автоконтрасту; у DEPTH16 берутся 13 бит дальности, старшие 3 — достоверность. */
+    fun fromGray16(img: Image, pal: String): ByteArray {
+        val w = img.width; val h = img.height
+        val p = img.planes[0]; val b = p.buffer
+        val vals = IntArray(w * h)
+        val depth = img.format == ImageFormat.DEPTH16
+        for (y in 0 until h) for (x in 0 until w) {
+            val o = y * p.rowStride + x * 2
+            val v = (b.get(o).toInt() and 255) or ((b.get(o + 1).toInt() and 255) shl 8)
+            vals[y * w + x] = if (depth) v and 0x1fff else v
+        }
+        return Gray16.toNv21(vals, w, h, pal)
+    }
+
     fun toNv21(img: Image): ByteArray {
         val w = img.width; val h = img.height
         val out = ByteArray(w * h * 3 / 2)

@@ -34,6 +34,7 @@ class BridgeService : Service() {
     private lateinit var mic: MicHub
     private lateinit var sniffer: SnifferHub
     private lateinit var usb: AndroidUsb
+    private lateinit var actions: PhoneActions
     private val asked = HashSet<String>()      // разрешения, о которых уже спросили в этой жизни сервиса
     private var wake: PowerManager.WakeLock? = null
     private val main = Handler(Looper.getMainLooper())
@@ -49,6 +50,8 @@ class BridgeService : Service() {
         server = BridgeServer(cfg, camera, ::helloJson, ::statusText) { refresh() }
         usb = AndroidUsb(this)
         server.usb = usb
+        actions = PhoneActions(this, { s, j -> server.emit(s, j) }, { p -> main.post { requestPerms(p) } }, { camera.describe() })
+        server.onCommand = { c, j -> actions.exec(c, j) }
         sensors = SensorHub(this) { s, j -> server.emit(s, j) }
         gps = GpsHub(this) { s, j -> server.emit(s, j) }
         wifi = WifiHub(this, gps) { s, j -> server.emit(s, j) }
@@ -85,7 +88,7 @@ class BridgeService : Service() {
     override fun onDestroy() {
         destroyed = true
         server.stop(); camera.stop()
-        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close()
+        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close()
         wake?.takeIf { it.isHeld }?.release()
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(ID)
         super.onDestroy()
@@ -156,6 +159,7 @@ class BridgeService : Service() {
         if (!cell.update("cell" in w.subs, w.cellEvery)) problems.add(cell.lastError)
         if (!mic.update("mic" in w.subs, w.micHz)) problems.add(mic.lastError)
         if (!sniffer.update("pkt" in w.subs, w.iface, w.filter, w.snap)) problems.add(sniffer.lastError)
+        if (!actions.update("sms" in w.subs)) problems.add("sms: allow SMS for the DSP app")
         askPermissions(w.subs)
         for (p in problems) if (warned.add(p)) server.note("error", p)
         warned.retainAll(problems)
@@ -176,6 +180,11 @@ class BridgeService : Service() {
      */
     private fun askPermissions(subs: Set<String>) {
         val miss = Perms.forSubs(subs, Build.VERSION.SDK_INT, camera.viewers > 0).filter { !granted(it) && asked.add(it) }
+        if (miss.isNotEmpty()) requestPerms(miss)
+    }
+
+    /** Окно запроса (если приложение на экране) и уведомление «Tap to allow». Команды страницы (SMS, контакты, уведомления) просят так же. */
+    private fun requestPerms(miss: List<String>) {
         if (miss.isEmpty()) return
         val i = Intent(this, PermissionActivity::class.java).putExtra(PermissionActivity.EXTRA, miss.toTypedArray()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         val pi = PendingIntent.getActivity(this, 3, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
@@ -193,7 +202,8 @@ class BridgeService : Service() {
         val sens = sensors.available()
         return Json.obj(
             "src" to "\"bridge\"", "level" to "\"hello\"", "ver" to "1", "app" to "\"dsp-android\"", "host" to Json.str(Build.MODEL),
-            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(), "cameras" to arr(camera.available()),
+            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "sms", "notify", "torch") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(), "cameras" to arr(camera.available()),
+            "cameraInfo" to camera.describe(), "phone" to actions.info(),
         )
     }
 

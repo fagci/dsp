@@ -217,6 +217,63 @@ object Frame {
     }
 }
 
+/** Камеры: вид по набору форматов вывода (тепловизоры и ИК-камеры отдают не YUV, а 16-битные кадры). */
+object Cam {
+    const val YUV = 0x23; const val Y16 = 0x20363159; const val DEPTH16 = 0x44363153; const val JPEG = 0x100; const val RAW = 0x20
+
+    /** visible — обычная; ir — NIR-фильтр; thermal — 16 бит яркости (Y16) без YUV; depth — карта глубины (ToF / структурный свет). */
+    fun kind(formats: Set<Int>, nir: Boolean): String = when {
+        Y16 in formats && YUV !in formats -> "thermal"
+        DEPTH16 in formats && YUV !in formats -> "depth"
+        nir -> "ir"
+        YUV in formats || JPEG in formats -> "visible"
+        else -> "other"
+    }
+
+    /** Формат, в котором читаем кадры: YUV, иначе 16-битный. null — читать нечем. */
+    fun pick(formats: Set<Int>): Int? = listOf(YUV, Y16, DEPTH16).firstOrNull { it in formats }
+}
+
+/** 16-битные кадры (тепловизор, глубина) → NV21 с автоконтрастом и палитрой; чистая логика — на JVM. */
+object Gray16 {
+    // «железо»: чёрный → фиолетовый → красный → жёлтый → белый (RGB)
+    private val IRON = arrayOf(intArrayOf(0, 0, 0), intArrayOf(60, 0, 110), intArrayOf(200, 20, 30), intArrayOf(255, 220, 0), intArrayOf(255, 255, 255))
+
+    /** Y, U, V для уровня t (0..255) по палитре gray / iron (BT.601). */
+    fun yuv(t: Int, pal: String): IntArray {
+        if (pal != "iron") return intArrayOf(t, 128, 128)
+        val x = t / 255.0 * (IRON.size - 1); val i = minOf(x.toInt(), IRON.size - 2); val f = x - i
+        val r = IRON[i][0] + (IRON[i + 1][0] - IRON[i][0]) * f; val g = IRON[i][1] + (IRON[i + 1][1] - IRON[i][1]) * f; val b = IRON[i][2] + (IRON[i + 1][2] - IRON[i][2]) * f
+        return intArrayOf((0.299 * r + 0.587 * g + 0.114 * b).toInt().coerceIn(0, 255), (128 - 0.169 * r - 0.331 * g + 0.5 * b).toInt().coerceIn(0, 255),
+            (128 + 0.5 * r - 0.419 * g - 0.081 * b).toInt().coerceIn(0, 255))
+    }
+
+    /** Границы контраста: 1 и 99 процентили ненулевых значений (ноль — нет данных). */
+    fun range(vals: IntArray): Pair<Int, Int> {
+        val hist = IntArray(65536); var n = 0
+        for (v in vals) if (v != 0) { hist[v and 0xffff]++; n++ }
+        if (n == 0) return 0 to 1
+        var acc = 0; var lo = -1; var hi = 65535
+        for (i in 1..65535) { acc += hist[i]; if (lo < 0 && acc > n / 100) lo = i; if (acc >= n - n / 100) { hi = i; break } }
+        return maxOf(lo, 1) to maxOf(hi, maxOf(lo, 1) + 1)
+    }
+
+    /** vals — w×h (для DEPTH16 — уже только дальность). */
+    fun toNv21(vals: IntArray, w: Int, h: Int, pal: String): ByteArray {
+        val (lo, hi) = range(vals)
+        val span = hi - lo
+        val out = ByteArray(w * h * 3 / 2)
+        val lut = Array(256) { yuv(it, pal) }
+        for (y in 0 until h) for (x in 0 until w) {
+            val v = vals[y * w + x]
+            val c = lut[if (v == 0) 0 else ((v - lo).coerceIn(0, span) * 255L / span).toInt()]
+            out[y * w + x] = c[0].toByte()
+            if ((x and 1) == 0 && (y and 1) == 0) { val o = w * h + (y / 2) * w + x; out[o] = c[2].toByte(); out[o + 1] = c[1].toByte() }   // NV21: V, U
+        }
+        return out
+    }
+}
+
 /** Что просить у системы под каждый источник; проверка строк, которые уходят в оболочку root. */
 object Perms {
     private val LOC = listOf("android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION")
@@ -229,6 +286,7 @@ object Perms {
         if (sdk >= 31 && subs.any { it == "ble" || it == "bt" }) { l.add("android.permission.BLUETOOTH_SCAN"); l.add("android.permission.BLUETOOTH_CONNECT") }
         if (sdk >= 29 && ("steps" in subs || "step" in subs)) l.add("android.permission.ACTIVITY_RECOGNITION")
         if ("mic" in subs) l.add("android.permission.RECORD_AUDIO")
+        if ("sms" in subs) l.add("android.permission.RECEIVE_SMS")
         if (camera) l.add("android.permission.CAMERA")
         return l.toList()
     }
