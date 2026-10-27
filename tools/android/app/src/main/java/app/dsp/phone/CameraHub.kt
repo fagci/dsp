@@ -47,6 +47,8 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     private var device: CameraDevice? = null
     private var session: CameraCaptureSession? = null
     private var reader: ImageReader? = null
+    private var hsEnc: HsEnc? = null                          // кодер → декодер: единственный путь к полной частоте кадров
+    private var hsTarget: android.view.Surface? = null
     private var hs: HsGl? = null                              // режим высокой скорости: кадры камеры → видеокарта → яркость и картинка
     private var sensorRot = 0
     private var fmt = ImageFormat.YUV_420_888
@@ -168,6 +170,8 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     private fun stopLocked() {
         cfg = null; info = ""
         try { session?.close() } catch (e: Exception) {}
+        try { hsEnc?.stop() } catch (e: Exception) {}
+        hsEnc = null; hsTarget = null
         try { hs?.stop() } catch (e: Exception) {}
         hs = null
         try { device?.close() } catch (e: Exception) {}
@@ -256,7 +260,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                         if (hr != null) {
                             val hss = s as android.hardware.camera2.CameraConstrainedHighSpeedCaptureSession
                             val rq = d.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
-                            rq.addTarget(hs!!.surface)
+                            rq.addTarget(hsTarget!!)
                             rq.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, hr)
                             // яркость кадров меряет мерцание: автофокус (мотор останавливает кадры) и подавление мерцания сети в экспозиции не нужны
                             rq.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
@@ -286,7 +290,16 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                     val rot = ((sensorRot + c.rot) % 360 + 360) % 360
                     val k = HsGl(rd.width, rd.height, rot, c.quality, hr.upper, { v, n, dt -> lumIn(v, n, dt) }, { jpg -> publish(jpg) }) { why -> hsGiveUp(c, "gl: $why") }
                     k.start(); hs = k
-                    d.createConstrainedHighSpeedCaptureSession(listOf(k.surface), cb, h)
+                    // кадры в полной частоте получает только поверхность кодера: берём его, пока он не ронял приложение (метки на диске)
+                    val bad = java.io.File(ctx.filesDir, "hs-codec-bad"); val tr = java.io.File(ctx.filesDir, "hs-codec-try")
+                    try { if (tr.exists()) { bad.writeText("1"); tr.delete() } } catch (x: Exception) {}
+                    if (!bad.exists()) {
+                        val e2 = HsEnc(ctx.filesDir, rd.width, rd.height, hr.upper, k.surface) { why -> hsGiveUp(c, "codec: $why") }
+                        e2.start(); hsEnc = e2; hsTarget = e2.input
+                        infoBase += " · via H.264 encoder"
+                    } else { hsTarget = k.surface; infoBase += " · preview surface (≈30 fps)" }
+                    info = infoBase
+                    d.createConstrainedHighSpeedCaptureSession(listOf(hsTarget!!), cb, h)
                 } catch (e: Exception) { hsGiveUp(c, e.message ?: e.javaClass.simpleName) }
                 return
             }
