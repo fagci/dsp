@@ -18,6 +18,7 @@ class SettingsActivity : Activity() {
     private lateinit var info: TextView
     private lateinit var share: Switch
     private lateinit var strict: Switch
+    private lateinit var check: Switch
     private lateinit var port: EditText
     private lateinit var token: EditText
     private lateinit var origins: EditText
@@ -33,13 +34,15 @@ class SettingsActivity : Activity() {
         }.also { root.addView(it) }
 
         info = text("")
-        share = Switch(this).apply { text = "Allow other devices on the network (token required)"; isChecked = cfg.shareLan; setPadding(0, pad, 0, 0) }
+        share = Switch(this).apply { text = "Allow other devices on the network"; isChecked = cfg.shareLan; setPadding(0, pad, 0, 0) }
         root.addView(share)
-        strict = Switch(this).apply { text = "Require the token on this phone too"; isChecked = cfg.strict; setPadding(0, pad, 0, 0) }
+        strict = Switch(this).apply { text = "Require the token on this phone too (if a token is set)"; isChecked = cfg.strict; setPadding(0, pad, 0, 0) }
         root.addView(strict)
+        check = Switch(this).apply { text = "Check the site of browsers (Origin); off — any page may connect"; isChecked = cfg.checkOrigin; setPadding(0, pad, 0, 0) }
+        root.addView(check)
         text("Port"); port = edit(cfg.port.toString(), true)
-        text("Token"); token = edit(cfg.token)
-        text("Sites allowed to connect (origins, comma separated; the app itself and localhost are always allowed)"); origins = edit(cfg.origins)
+        text("Token (empty — no token, anyone who can reach the port gets in)"); token = edit(cfg.token)
+        text("Sites allowed when the Origin check is on (origins, comma separated; the app itself and localhost are always allowed)"); origins = edit(cfg.origins)
         root.addView(Button(this).apply {
             text = "New token"
             setOnClickListener { token.setText(cfg.newToken()) }
@@ -56,8 +59,7 @@ class SettingsActivity : Activity() {
         val p = port.text.toString().toIntOrNull()
         if (p == null || p < 1024 || p > 65535) { Toast.makeText(this, "Port: 1024–65535", Toast.LENGTH_SHORT).show(); return }
         val t = token.text.toString().trim()
-        if (t.length < 8) { Toast.makeText(this, "Token: at least 8 characters", Toast.LENGTH_SHORT).show(); return }
-        cfg.port = p; cfg.token = t; cfg.shareLan = share.isChecked; cfg.strict = strict.isChecked
+        cfg.port = p; cfg.token = t; cfg.shareLan = share.isChecked; cfg.strict = strict.isChecked; cfg.checkOrigin = check.isChecked
         cfg.origins = origins.text.toString().trim()
         BridgeService.start(this, reload = true)
         show()
@@ -68,8 +70,9 @@ class SettingsActivity : Activity() {
         val p = cfg.port
         val sb = StringBuilder("On this phone:\n  ws://127.0.0.1:$p\n  http://127.0.0.1:$p/camera.mjpg?cam=back&w=640&fps=10\n")
         if (cfg.shareLan) {
-            sb.append("\nOn the network (the token is part of the address):\n")
-            for (ip in BridgeService.lan()) sb.append("  ws://$ip:$p/?token=${cfg.token}\n  http://$ip:$p/camera.mjpg?cam=back&token=${cfg.token}\n")
+            val q = if (cfg.token.isEmpty()) "" else "token=${cfg.token}"
+            sb.append(if (q.isEmpty()) "\nOn the network (no token — open to everyone on it):\n" else "\nOn the network (the token is part of the address):\n")
+            for (ip in BridgeService.lan()) sb.append("  ws://$ip:$p/" + (if (q.isEmpty()) "" else "?$q") + "\n  http://$ip:$p/camera.mjpg?cam=back" + (if (q.isEmpty()) "" else "&$q") + "\n")
         }
         info.text = sb.toString()
     }

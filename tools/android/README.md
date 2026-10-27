@@ -15,13 +15,15 @@ sensors up to 200 Hz, GPS and everything the satellites say, Wi-Fi, Bluetooth LE
   - `http://host:8765/camera.mjpg?cam=back|front&w=640&fps=10&q=70&rot=0` — MJPEG (Camera2, YUV → JPEG, turned upright). `/snapshot.jpg` — one frame. `/status` — text.
 - **In the workbench:** the *Phone sensors (Termux / DSP app)* node — *sensor rate*, *camera stream*, *Wi-Fi scan every*, *Bluetooth LE / classic*, *GNSS*, *GNSS raw*, *NMEA*. Outputs: `camurl` (the stream address → *IP Camera* `url`), `nmeatxt` (NMEA sentences → *NMEA Parser* `text`), `nsat`, `nused`, `cn0` (satellites in view / used / mean C/N0 of the used), `rec` for everything else. Presets *Phone App: Camera, Sensors and Wi-Fi in the Background*, *Phone App: Satellites, Bluetooth and Wi-Fi Scan*.
 
-## Security
+## Access
 
-The camera and the position are behind a local port, so:
+The camera and the position are behind a local port, and by request nothing is checked by default:
 
-- only `127.0.0.1` is open by default; other devices need *Settings → Allow other devices* and the token (`?token=…`);
-- browsers are let in by `Origin`: the app itself, `localhost` and `https://fagci.github.io` (more in *Settings*); other sites get 403. Programs without an `Origin` (curl, websocat, other apps on the phone) get through on `127.0.0.1` unless *Require the token on this phone too* is on;
-- a public https page talks to the phone's loopback with Private Network Access headers; Chrome may ask for the *local network* permission.
+- **Any web page may connect** (no `Origin` check; the answers carry `Access-Control-Allow-Origin` and the Private Network Access header, so a page on https can read `127.0.0.1`). *Settings → Check the site of browsers* brings the check back (the app itself, `localhost` and the sites listed there get in, the rest get 403).
+- **The token is optional**: empty — no authorization; a token (*Settings*) is required for other devices (and for this phone too with *Require the token on this phone too*).
+- Only `127.0.0.1` listens until *Allow other devices on the network* is on. With no token that opens the camera and the position to everyone on the network.
+- Consequence of the defaults: any page you open in the phone's browser (and any app) can read the camera, the position and the sensors while the bridge runs. Set a token and tick the Origin check when that matters.
+- Limits are the phone's own: sensors up to 1000 Hz (Android gives 200 Hz without the sensor-rate permission, which the app has), camera up to 8192 px and 120 fps (what the sensor delivers), Wi-Fi scan period from 1 s (Android decides how many scans it runs).
 
 ## Releases and build
 
