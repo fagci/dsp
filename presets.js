@@ -1328,18 +1328,18 @@ markWiresDirty();
 preset('Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Walk around with the phone (DSP app, Allow Location and Nearby devices; the options ask for permissions themselves). Wi-Fi, BLE, classic Bluetooth and cell towers are measured at your GPS position; every device is one key dev (wifi:bssid, ble:addr, bt:addr, cell:type:plmn:cid).\n'+
-  'Measurements go to the Table «field/rssi-by-device» (kept between sessions; wrong rows can be deleted — the estimate is recomputed; clear the list to start over). Source Locator estimates the position of each device from the levels (path-loss model) and draws it with an error radius; the Map shows the phone track, every measurement point (colour = technology: Wi-Fi blue, BLE violet, BT teal, cells orange; the label is the level) and the devices. Click a device to see its probability map.\n'+
+  'Measurements go to the Table «field/rssi-by-device» (kept between sessions; wrong rows can be deleted — the estimate is recomputed; clear the list to start over). Source Locator estimates the position of each device from the levels (path-loss model) and draws it with an error radius; the Map shows the phone track, every measurement point (colour = technology: Wi-Fi blue, BLE violet, BT teal, cells orange; the label is the level) and the devices. Click a device to see its probability map. Positions with a poor GPS fix (acc > 30 m) do not go to the track, and the Locator weighs every mark by its acc (Source Locator «weigh marks by position accuracy»).\n'+
   'One record per device at most every 2 s and only after moving 5 m — change in the Phone node. Walk AROUND the source: marks on one line give no fix, the estimate needs a spread of 15 m (cells: hundreds of metres). Path loss n: 2 open field, 3 town, 4+ indoors. Cell towers are far, so their error is large; the Locator groups cells by cell id.'});
 nt.size.w=900; nt.size.h=190; applySize(nt);
 const tx=addNode('termux',40,260,{url:'ws://127.0.0.1:8765',gps:true,battery:false,wifi:true,wifiEvery:5,ble:true,bt:true,cell:true,cellEvery:5,devEvery:2,devMove:5});
 tx.size.w=380; tx.size.h=600; applySize(tx);
 const fl=addNode('recFilter',440,260,{expr:'r.dev && r.lat != null && r.rssi != null'});
-const me=addNode('recFilter',440,380,{expr:"r.id === 'me'"});
+const me=addNode('recFilter',440,380,{expr:"r.id === 'me' && r.acc <= 30"});
 const tb=addNode('table',440,500,{list:'field/rssi-by-device',maxRows:5000,rev:true,cols:['t','src','dev','name','rssi','lat','lon','acc','ch','band','type']});
 tb.size.w=520; tb.size.h=360; applySize(tb);
 const lc=addNode('geoLocate',1000,260,{field:'rssi',method:'strength',group:'dev',labelField:'name',pathN:3,sigmaDb:6,minSpread:15,max:300,rays:false});
 lc.size.w=360; lc.size.h=420; applySize(lc);
-const mp=addNode('geoMap',1000,700,{mz:17,follow:true,labels:false,cluster:false,trail:2000,maxEnt:20000,store:'trilat-devices'});
+const mp=addNode('geoMap',1000,700,{mz:17,follow:true,labels:true,cluster:false,trail:2000,maxEnt:20000,store:'trilat-devices'});
 mp.size.w=720; mp.size.h=600; applySize(mp);
 addEdge(tx.id,'rec',fl.id,'rec'); addEdge(tx.id,'rec',me.id,'rec');
 addEdge(fl.id,'rec',tb.id,'rec');

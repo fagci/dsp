@@ -318,7 +318,7 @@ class PhoneActions(
             .setStyle(Notification.BigTextStyle().bigText(j.optString("text")))
             .setOngoing(j.optBoolean("ongoing", false)).setDeleteIntent(pi("dismiss"))
         // open: нажатие открывает приложение (событие не приходит — с Android 12 из приёмника окно не открыть); иначе — событие «tap»
-        b.setContentIntent(if (j.optBoolean("open", false)) PendingIntent.getActivity(ctx, n, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE) else pi("tap"))
+        b.setContentIntent(if (j.optBoolean("open", false)) PendingIntent.getActivity(ctx, n, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP), PendingIntent.FLAG_IMMUTABLE) else pi("tap"))
         val a = j.optJSONArray("actions")
         if (a != null) for (i in 0 until minOf(a.length(), 3)) {
             val o = a.optJSONObject(i) ?: continue
