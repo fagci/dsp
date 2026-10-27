@@ -108,18 +108,23 @@ fun main() {
     ok("perms: incoming SMS", Perms.forSubs(setOf("sms"), 34, false) == listOf("android.permission.RECEIVE_SMS"))
 
 
-    // --- камеры с root: скрипты и откат ---
+    // --- камеры с root: скрипты ---
     val us = RootCam.unhideScript("app.dsp.phone")!!
-    ok("root cam: the unhide script names the package and both properties, then restarts the service", us.contains("P='app.dsp.phone'") && us.contains("vendor.camera.aux.packagelist") && us.contains("persist.vendor.camera.privapp.list") && us.contains("killall cameraserver"))
-    ok("root cam: a package name with extra characters is refused", RootCam.unhideScript("a;rm -rf /") == null && RootCam.unhideScript("a b") == null && RootCam.unhideScript("") == null && RootCam.unhideScript("x'y") == null)
-    val old = RootCam.parseOld("junk\nOLD vendor.camera.aux.packagelist=com.a,com.b\nOLD persist.vendor.camera.privapp.list=\nOLD evil.prop=1\nrestarted\n")
-    ok("root cam: the old values come out of the script output, foreign keys are dropped", old == mapOf("vendor.camera.aux.packagelist" to "com.a,com.b", "persist.vendor.camera.privapp.list" to ""), old.toString())
-    val rs = RootCam.restoreScript(old)!!
-    ok("root cam: restore sets the old values back (empty too) and restarts", rs.contains("setprop vendor.camera.aux.packagelist 'com.a,com.b'") && rs.contains("setprop persist.vendor.camera.privapp.list ''") && rs.contains("killall cameraserver"))
-    ok("root cam: nothing or something strange to restore → null", RootCam.restoreScript(emptyMap()) == null && RootCam.restoreScript(mapOf("vendor.camera.aux.packagelist" to "a'; reboot; '")) == null && RootCam.restoreScript(mapOf("ro.secure" to "0")) == null)
-    ok("root cam: state survives JSON, garbage reads as empty", RootCam.fromJson(RootCam.toJson(old)) == old && RootCam.fromJson("not json").isEmpty() && RootCam.fromJson("").isEmpty())
+    ok("root cam: the unhide script names the package and both properties and restarts the service", us.contains("P='app.dsp.phone'") && us.contains("vendor.camera.aux.packagelist") && us.contains("persist.vendor.camera.privapp.list") && us.contains("killall camerahalserver cameraserver"), us)
+    ok("root cam: the pkill pattern does not match the script's own command line (that was the exit 143)", Regex("camera[.]provider").containsMatchIn(us).not() && !us.contains("pkill -f camera.provider") && us.contains("pkill -f 'camera[.]provider'"))
+    ok("root cam: the properties are set (and reported) before the restart can kill the shell", us.indexOf("echo propsset") in 1 until us.indexOf("pkill") && RootCam.done("OLD a=b\npropsset\n") && !RootCam.done("OLD a=b\n"))
+    ok("root cam: shell variables survived the template", us.contains("getprop \$K") && us.contains("\${C:+\$C,}\$P") && !us.contains("§") && !us.contains("@PKG@") && !us.contains("@PROPS@"), us)
+    ok("root cam: a package name with extra characters is refused", RootCam.unhideScript("a;rm -rf /") == null && RootCam.unhideScript("a b") == null && RootCam.unhideScript("") == null && RootCam.unhideScript("x'y") == null && RootCam.restoreScript("a;b") == null)
+    val rs = RootCam.restoreScript("app.dsp.phone")!!
+    ok("root cam: restore takes only our package out of each list and restarts", rs.contains("sed \"s/,\$P,/,/g;s/^,//;s/,\\\$//\"") && rs.contains("setprop \$K \"\$N\"") && rs.contains("echo propsset") && rs.contains("pkill -f 'camera[.]provider'"), rs)
     ok("root cam: the read-only script does not write anything", !RootCam.INFO.contains("setprop") && !RootCam.INFO.contains("kill") && RootCam.INFO.contains("dumpsys media.camera"))
     ok("root cam: clip", RootCam.clip("abc", 5) == "abc" && RootCam.clip("abcdef", 3).startsWith("abc\n…"))
+    // сам sed-скрипт отката: убирает пакет из середины, начала и конца списка и ничего не трогает в остальном
+    fun sedPkg(list: String): String? {
+        val r = ProcessBuilder("sh", "-c", "P='app.dsp.phone'; C='$list'; echo \",\$C,\" | sed \"s/,\$P,/,/g;s/^,//;s/,\\\$//\"").redirectErrorStream(true).start()
+        return r.inputStream.bufferedReader().readText().trim().also { r.waitFor() }
+    }
+    ok("root cam: the removal expression works on real sed", sedPkg("app.dsp.phone") == "" && sedPkg("a.b,app.dsp.phone") == "a.b" && sedPkg("app.dsp.phone,c.d") == "c.d" && sedPkg("a.b,app.dsp.phone,c.d") == "a.b,c.d" && sedPkg("a.b") == "a.b" && sedPkg("") == "")
 
     // --- JSON-помощники дают валидный JSON ---
     val j = JSONObject(Json.obj("src" to "\"ble\"", "mfr" to Json.map(mapOf("004c" to "02")), "uuids" to Json.arr(listOf("180f", "a\"b")), "n" to null, "x" to Json.num(1.23456789, 1e4)))

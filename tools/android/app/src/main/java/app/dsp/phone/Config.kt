@@ -36,11 +36,6 @@ class Config(ctx: Context) {
         get() = sp.getBoolean("sniffer", false)
         set(v) { sp.edit().putBoolean("sniffer", v).apply() }
 
-    /** Прежние значения системных свойств камер до «показать скрытые камеры» (JSON) — для отката. Пусто — не менялось. */
-    var camProps: String
-        get() = sp.getString("camProps", "") ?: ""
-        set(v) { sp.edit().putString("camProps", v).apply() }
-
     /** Пусто — без токена. */
     var token: String
         get() = sp.getString("token", "") ?: ""

@@ -11,6 +11,7 @@ import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
 import android.media.Image
 import android.media.ImageReader
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
@@ -33,6 +34,9 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     @Volatile var error = ""
     @Volatile var info = ""
 
+    /** Зритель пришёл, а разрешения на камеру нет: сервис просит его окном или уведомлением (иначе поток вечно отвечал бы 503). */
+    @Volatile var onNeedPermission: (() -> Unit)? = null
+
     private var thread: HandlerThread? = null
     private var handler: Handler? = null
     private var device: CameraDevice? = null
@@ -40,6 +44,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     private var reader: ImageReader? = null
     private var sensorRot = 0
     private var fmt = ImageFormat.YUV_420_888
+    private var phys: String? = null
     private var lastEnc = 0L
     private val idleStop = Runnable { synchronized(lock) { if (users == 0) stopLocked() } }
 
@@ -59,23 +64,39 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     /** Все камеры: номер, сторона, вид (visible / ir / thermal / depth), форматы, наибольший размер. Тепловизоры и ИК — те, где вид не visible. */
     fun describe(): String = try {
         val m = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        Json.rows(m.cameraIdList.map { id ->
-            val ch = m.getCameraCharacteristics(id)
+        val listed = m.cameraIdList.toSet()
+        val rows = ArrayList<String>()
+        fun row(id: String, ch: CameraCharacteristics, logical: String?) {
             val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             val fm = map?.outputFormats?.toSet() ?: emptySet()
             val nir = ch.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT) == 5      // COLOR_FILTER_ARRANGEMENT_NIR
             val pick = Cam.pick(fm)
             val big = pick?.let { f -> map?.getOutputSizes(f)?.maxByOrNull { it.width * it.height } }
-            Json.obj("id" to Json.str(id), "facing" to Json.str(when (ch.get(CameraCharacteristics.LENS_FACING)) {
+            val fl = ch.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
+            rows.add(Json.obj("id" to Json.str(id), "facing" to Json.str(when (ch.get(CameraCharacteristics.LENS_FACING)) {
                 CameraCharacteristics.LENS_FACING_BACK -> "back"; CameraCharacteristics.LENS_FACING_FRONT -> "front"; CameraCharacteristics.LENS_FACING_EXTERNAL -> "external"; else -> "unknown" }),
                 "kind" to Json.str(Cam.kind(fm, nir)), "formats" to Json.arr(fm.sorted().map { "0x" + Integer.toHexString(it) }),
-                "w" to big?.width?.toString(), "h" to big?.height?.toString())
-        })
+                "w" to big?.width?.toString(), "h" to big?.height?.toString(), "focal" to fl?.let { Json.num(it.toDouble(), 10.0) },
+                "logical" to logical?.let { Json.str(it) }))
+        }
+        for (id in listed) {
+            val ch = m.getCameraCharacteristics(id)
+            row(id, ch, null)
+            // физические камеры логической (ультраширик, телевик…): в списке камер их нет, но открыть их можно через логическую (Android 9+)
+            if (Build.VERSION.SDK_INT >= 28) for (ph in ch.physicalCameraIds) if (ph !in listed) {
+                try { row("$id/$ph", m.getCameraCharacteristics(ph), id) } catch (e: Exception) { rows.add(Json.obj("id" to Json.str("$id/$ph"), "facing" to Json.str("unknown"), "kind" to Json.str("other"), "logical" to Json.str(id))) }
+            }
+        }
+        Json.rows(rows)
     } catch (e: Exception) { "[]" }
 
     /** Занимает камеру с настройками c; null — не получилось (причина в error). Другие настройки у нового зрителя перезапускают камеру. */
     fun acquire(c: Cfg): Lease? {
-        if (!ctx.granted(android.Manifest.permission.CAMERA)) { error = "no camera permission — open the DSP app and allow it"; return null }
+        if (!ctx.granted(android.Manifest.permission.CAMERA)) {
+            error = "camera permission was asked on the phone — allow it and reload the picture"
+            onNeedPermission?.invoke()
+            return null
+        }
         val lease: Lease
         synchronized(lock) {
             main.removeCallbacks(idleStop)
@@ -133,10 +154,12 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     private fun startLocked(c: Cfg): Boolean {
         try {
             val mgr = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-            val id = (if (c.id != null) mgr.cameraIdList.firstOrNull { it == c.id }
+            val want = c.id?.split("/", limit = 2)                    // «0/2»: логическая камера 0, физическая 2 (скрытая от списка камер)
+            val id = (if (want != null) mgr.cameraIdList.firstOrNull { it == want[0] }
                 else mgr.cameraIdList.firstOrNull { mgr.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == c.facing })
                 ?: run { error = "no such camera"; return false }
-            val ch = mgr.getCameraCharacteristics(id)
+            phys = want?.getOrNull(1)?.takeIf { Build.VERSION.SDK_INT >= 28 }
+            val ch = phys?.let { try { mgr.getCameraCharacteristics(it) } catch (e: Exception) { null } } ?: mgr.getCameraCharacteristics(id)
             val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             // YUV, а у тепловизоров и камер глубины — 16-битный кадр (Y16 / DEPTH16): он уходит в картинку с автоконтрастом
             fmt = Cam.pick(map?.outputFormats?.toSet() ?: emptySet()) ?: run { error = "camera has no YUV / Y16 / DEPTH16 output"; return false }
@@ -175,7 +198,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     @Suppress("DEPRECATION")
     private fun openSession(d: CameraDevice, rd: ImageReader, ch: CameraCharacteristics, c: Cfg, h: Handler) {
         try {
-            d.createCaptureSession(listOf(rd.surface), object : CameraCaptureSession.StateCallback() {
+            val cb = object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(s: CameraCaptureSession) {
                     session = s
                     try {
@@ -189,7 +212,13 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                     } catch (e: Exception) { fail("camera: ${e.message}") }
                 }
                 override fun onConfigureFailed(s: CameraCaptureSession) { fail("camera: could not configure") }
-            }, h)
+            }
+            val ph = phys
+            if (ph != null && Build.VERSION.SDK_INT >= 28) {
+                val oc = android.hardware.camera2.params.OutputConfiguration(rd.surface)
+                oc.setPhysicalCameraId(ph)
+                d.createCaptureSessionByOutputConfigurations(listOf(oc), cb, h)
+            } else d.createCaptureSession(listOf(rd.surface), cb, h)
         } catch (e: Exception) { fail("camera: ${e.message}") }
     }
 

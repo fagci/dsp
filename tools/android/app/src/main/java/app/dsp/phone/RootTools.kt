@@ -1,6 +1,5 @@
 package app.dsp.phone
 
-import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /** Оболочка root: `su -c <скрипт>`. Скрипты — только свои, из этого файла; из страницы в них ничего не подставляется. */
@@ -31,31 +30,30 @@ object RootCam {
         "echo '## v4l2'; for d in /sys/class/video4linux/video*; do [ -e \"\$d\" ] && echo \"\$(basename \$d): \$(cat \$d/name 2>/dev/null)\"; done; ls /dev/video* 2>/dev/null; " +
         "echo '## properties'; getprop | grep -iE 'camera.*(aux|privapp|packagelist)'; echo '## end'"
 
-    /** Добавляет пакет в свойства и перезапускает камерный сервис; в выводе — прежние значения (строки OLD ключ=значение). null — пакет с лишними символами. */
+    // § в шаблонах — знак доллара оболочки (чтобы не экранировать его в строках Kotlin)
+    private fun tpl(t: String, pkg: String) = t.replace("@PKG@", pkg).replace("@PROPS@", PROPS.joinToString(" ")).replace('§', '$')
+
+    // Перезапуск камерного сервиса. pkill -f сверяет шаблон с командной строкой процессов, в том числе с самой этой оболочкой
+    // (в её команде есть слово camera.provider), поэтому шаблон — с классом символов: camera[.]provider в тексте скрипта не совпадает с собой.
+    private const val RESTART = "pkill -f 'camera[.]provider' 2>/dev/null; killall camerahalserver cameraserver 2>/dev/null; echo restarted"
+
+    /** Метка в выводе: свойства выставлены (дальше оболочку может убить перезапуск сервиса — код выхода тогда не показатель). */
+    const val DONE = "propsset"
+    fun done(out: String) = DONE in out
+
+    /** Добавляет пакет в оба свойства (если его там нет) и перезапускает камерный сервис. null — пакет с лишними символами. */
     fun unhideScript(pkg: String): String? {
         if (!PKG.matches(pkg)) return null
-        return "P='$pkg'; for K in ${PROPS.joinToString(" ")}; do C=\$(getprop \$K); echo \"OLD \$K=\$C\"; " +
-            "case \",\$C,\" in *\",\$P,\"*) ;; *) setprop \$K \"\${C:+\$C,}\$P\" ;; esac; done; " +
-            "pkill -f camera.provider 2>/dev/null; killall cameraserver 2>/dev/null; echo restarted"
+        return tpl("P='@PKG@'; for K in @PROPS@; do C=§(getprop §K); echo \"OLD §K=§C\"; " +
+            "case \",§C,\" in *\",§P,\"*) ;; *) setprop §K \"§{C:+§C,}§P\" ;; esac; done; echo $DONE; $RESTART", pkg)
     }
 
-    /** Прежние значения свойств из вывода unhideScript. */
-    fun parseOld(out: String): Map<String, String> {
-        val m = LinkedHashMap<String, String>()
-        for (l in out.lines()) {
-            val r = Regex("OLD (\\S+)=(.*)").matchEntire(l.trim()) ?: continue
-            if (r.groupValues[1] in PROPS) m[r.groupValues[1]] = r.groupValues[2].trim()
-        }
-        return m
+    /** Убирает пакет из обоих свойств, остальные пакеты в них остаются; перезапускает камерный сервис. Прежних значений помнить не нужно. */
+    fun restoreScript(pkg: String): String? {
+        if (!PKG.matches(pkg)) return null
+        return tpl("P='@PKG@'; for K in @PROPS@; do C=§(getprop §K); N=§(echo \",§C,\" | sed \"s/,§P,/,/g;s/^,//;s/,\\§//\"); " +
+            "echo \"WAS §K=§C\"; setprop §K \"§N\"; done; echo $DONE; $RESTART", pkg)
     }
 
-    /** Возвращает свойства к прежним значениям. null — в значениях лишнее. */
-    fun restoreScript(old: Map<String, String>): String? {
-        if (old.isEmpty() || old.any { it.key !in PROPS || !VAL.matches(it.value) }) return null
-        return old.entries.joinToString("; ") { "setprop ${it.key} '${it.value}'" } + "; pkill -f camera.provider 2>/dev/null; killall cameraserver 2>/dev/null; echo restarted"
-    }
-
-    fun toJson(m: Map<String, String>) = JSONObject(m as Map<*, *>).toString()
-    fun fromJson(s: String): Map<String, String> = try { val j = JSONObject(s); j.keys().asSequence().associateWith { j.getString(it) } } catch (e: Exception) { emptyMap() }
     fun clip(s: String, n: Int) = if (s.length <= n) s else s.take(n) + "\n… (+${s.length - n} chars)"
 }
