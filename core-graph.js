@@ -2616,6 +2616,10 @@ fpsSel.onchange=()=>{ try{ LS.set('dsp-fps',fpsSel.value); }catch(e){} wakeDraw(
   const btn=document.getElementById('settings'), panel=document.getElementById('setPanel'), px=document.getElementById('proxy');
   if(!btn || !panel) return;
   px.value=LS.get('dsp-proxy')||'';
+  if(window.DspApp){                                     // в приложении Android прокси не нужен: запросы идут через приложение с CORS-заголовками
+    px.closest('label').hidden=true;
+    const pn=document.getElementById('proxyNote'); if(pn) pn.textContent='Android app: CORS and mixed content are handled by the app, no proxy needed.';
+  }
   px.onchange=()=>{ LS.set('dsp-proxy',px.value.trim()); btn.classList.toggle('on',!!px.value.trim()); };
   btn.classList.toggle('on',!!px.value.trim());
   const place=()=>{

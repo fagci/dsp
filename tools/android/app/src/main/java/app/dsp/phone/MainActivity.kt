@@ -57,7 +57,7 @@ class MainActivity : Activity() {
         }
         web.addJavascriptInterface(Downloads(), "DspApp")
         web.webViewClient = object : WebViewClient() {
-            override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? = serve(r.url)
+            override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? = serve(r)
             override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {
                 if (r.url.host == Config.APP_HOST) return false
                 try { startActivity(Intent(Intent.ACTION_VIEW, r.url)) } catch (e: Exception) {}
@@ -66,7 +66,7 @@ class MainActivity : Activity() {
         }
         // страницы и воркеры — из assets; сервис-воркер приложению не нужен (файлы и так локальные)
         ServiceWorkerController.getInstance().setServiceWorkerClient(object : ServiceWorkerClient() {
-            override fun shouldInterceptRequest(r: WebResourceRequest): WebResourceResponse? = serve(r.url)
+            override fun shouldInterceptRequest(r: WebResourceRequest): WebResourceResponse? = serve(r)
         })
         web.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(r: PermissionRequest) {
@@ -137,8 +137,10 @@ class MainActivity : Activity() {
 
     // ---------- файлы приложения ----------
 
-    private fun serve(u: Uri): WebResourceResponse? {
-        if (u.host != Config.APP_HOST) return null
+    private fun serve(r: WebResourceRequest): WebResourceResponse? =
+        if (r.url.host == Config.APP_HOST) asset(r.url) else CorsProxy.handle(r)
+
+    private fun asset(u: Uri): WebResourceResponse? {
         var path = u.path ?: "/"
         if (path == "/") path = "/index.html"
         val h = mapOf("Cross-Origin-Opener-Policy" to "same-origin", "Cross-Origin-Embedder-Policy" to "credentialless",
