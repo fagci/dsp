@@ -12,13 +12,14 @@
      Reference/BLE trackers             company, name, risk, patterns, description
      Reference/DMR radio IDs            id, callsign, name, place         — RadioID (radioid.net, ~300 000): DMR Call Log подставляет позывной по ID
      Reference/DMR talkgroups           id, name                          — группы BrandMeister: DMR Call Log подставляет название
+     Reference/Bluetooth UUIDs          uuid, kind, name, fmt, scale, unit, note  — службы, характеристики, дескрипторы: lookup('…','uuid',[chr],'name'); fmt/scale/unit — как читать значение
    Данные intercept (smittix/intercept, Apache-2.0) лежат в data/ (tools/intercept/build.py) и берутся оттуда; signals и wefax — запасной адрес на GitHub.
    Списки не синхронизируются между устройствами (sync.js, syHidden): на каждом устройстве докачиваются сами. */
 
 const REF_DIR='Reference/', REF_VER='1';
 const REF_OUI=REF_DIR+'MAC vendors (OUI)', REF_SIG=REF_DIR+'Signals (intercept)', REF_WEFAX=REF_DIR+'WEFAX stations', REF_TSCM=REF_DIR+'TSCM bands',
   REF_SSID=REF_DIR+'Wi-Fi SSID patterns', REF_MAC=REF_DIR+'MAC prefixes (drones, trackers, cameras)', REF_BLE=REF_DIR+'BLE trackers', REF_SPY=REF_DIR+'Spy stations',
-  REF_DMRID=REF_DIR+'DMR radio IDs', REF_DMRTG=REF_DIR+'DMR talkgroups';
+  REF_DMRID=REF_DIR+'DMR radio IDs', REF_DMRTG=REF_DIR+'DMR talkgroups', REF_BTUUID=REF_DIR+'Bluetooth UUIDs';
 const REF_RAW='https://raw.githubusercontent.com/smittix/intercept/main/data/';
 
 // id пункта в Offline data; names — списки, которые он создаёт; urls — по порядку; parse(text) → {имя списка: {cols, rows}}
@@ -33,6 +34,8 @@ const REF_SRC=[
     urls:['data/intercept-spy.json'], parse:t=>({[REF_SPY]:luParseSpy(t)})},
   {id:'ids', label:'Drones, trackers, cameras, TSCM bands (intercept)', mb:0.01, names:[REF_TSCM,REF_SSID,REF_MAC,REF_BLE],
     urls:['data/intercept-ids.json'], parse:t=>{ const o=luParseIds(t); return {[REF_TSCM]:o.tscm,[REF_SSID]:o.ssid,[REF_MAC]:o.mac,[REF_BLE]:o.ble}; }},
+  {id:'btuuid', label:'Bluetooth UUIDs: services, characteristics, descriptors (~200)', mb:0.03, names:[REF_BTUUID],
+    urls:['data/bluetooth-uuids.json'], parse:t=>({[REF_BTUUID]:luParseBtUuids(t)})},
   {id:'dmrid', label:'DMR radio IDs (RadioID, ~300 000 callsigns)', mb:25, names:[REF_DMRID],
     urls:['https://radioid.net/static/user.csv'], parse:t=>({[REF_DMRID]:luParseRadioId(t)})},
   {id:'dmrtg', label:'DMR talkgroup names (BrandMeister)', mb:0.2, names:[REF_DMRTG],
