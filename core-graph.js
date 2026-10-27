@@ -2661,7 +2661,7 @@ fpsSel.onchange=()=>{ try{ LS.set('dsp-fps',fpsSel.value); }catch(e){} wakeDraw(
   addEventListener('resize',()=>{ if(!panel.hidden) place(); });
 })();
 let lastStatText='', lastStatTs=0;
-function visible(n){ return n._vis!==false; }       // до первого отчёта — считаем видимым
+function visible(n){ return n._vis!==false || !!n._pip; }       // до первого отчёта — считаем видимым; узел в картинке в картинке рисуется всегда (окно PiP маленькое, узел в нём «за краем»)
 // Простой: движок не обрабатывает блоки и нет ввода — перерисовка раз в IDLE_MS через
 // setTimeout, без rAF на каждый vsync. Асинхронные данные (скриншот tinySA, тайлы и т.п.)
 // всё равно появятся, с задержкой не больше IDLE_MS.

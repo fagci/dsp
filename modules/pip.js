@@ -15,12 +15,13 @@ function pipSupported(){
   }catch(e){ return false; }
 }
 
-function pipStop(){ const s=pipSt; pipSt=null; if(s) try{ s.stop(); }catch(e){} }
+function pipStop(){ const s=pipSt; pipSt=null; if(s){ if(s.n) s.n._pip=false; try{ s.stop(); }catch(e){} } }
 
 async function nodePip(n){
   const c=n && n.cv; if(!c) return;
   if(pipSt && pipSt.n===n){ pipStop(); return; }                // повторное нажатие — закрыть
   pipStop();
+  n._pip=true;                                                  // узел рисуется, даже когда в маленьком окне он за краем видимой области
   if(window.DspApp && typeof DspApp.pip==='function') return pipApp(n,c);
   return pipVideo(n,c);
 }
@@ -37,30 +38,38 @@ async function pipVideo(n,c){
     await v.requestPictureInPicture();
     v.addEventListener('leavepictureinpicture',()=>{ if(pipSt && pipSt.n===n){ pipSt=null; stop(); } },{once:true});
     pipSt={n,stop};
-  }catch(e){ stop(); pipToast('Picture in picture: '+(e.message||e.name)); }
+  }catch(e){ n._pip=false; stop(); pipToast('Picture in picture: '+(e.message||e.name)); }
 }
 
-// приложение: зеркало холста на весь экран + PiP окна приложения; выход из PiP не закрывает зеркало — оно закрывается своей кнопкой
+// приложение: зеркало холста на весь экран + PiP окна приложения; выход из PiP не закрывает зеркало — оно закрывается своей кнопкой.
+// Размер зеркала считается явно по окну (pipFit): окно PiP меняет размер уже после входа, а CSS «contain» у холста в разных WebView ведёт себя по-разному.
 function pipApp(n,c){
+  const app=document.getElementById('app');
   const ov=document.createElement('div');
-  ov.style.cssText='position:fixed;inset:0;z-index:99998;background:#000;display:flex;align-items:center;justify-content:center';
+  ov.style.cssText='position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:99998;background:#000;overflow:hidden';
   const m=document.createElement('canvas');
-  m.style.cssText='max-width:100%;max-height:100%;object-fit:contain';
+  m.style.cssText='position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:block';
   const x=document.createElement('button'); x.textContent='✕'; x.title='Close';
   x.style.cssText='position:absolute;right:8px;top:8px;font-size:18px;padding:4px 10px;opacity:.7';
   ov.append(m,x); document.body.appendChild(ov);
+  if(app) app.style.visibility='hidden';                        // остальная страница под зеркалом не нужна и не просвечивает
   let raf=0, alive=true;
   const g=m.getContext('2d');
   const frame=()=>{
     if(!alive) return;
-    if(c.width && c.height){ if(m.width!==c.width || m.height!==c.height){ m.width=c.width; m.height=c.height; } g.drawImage(c,0,0); }
+    if(c.width && c.height){
+      if(m.width!==c.width || m.height!==c.height){ m.width=c.width; m.height=c.height; }
+      g.drawImage(c,0,0);
+      const f=pipFit(c.width,c.height,ov.clientWidth||innerWidth,ov.clientHeight||innerHeight);
+      if(m._fw!==f[0] || m._fh!==f[1]){ m._fw=f[0]; m._fh=f[1]; m.style.width=f[0]+'px'; m.style.height=f[1]+'px'; }
+    }
     raf=requestAnimationFrame(frame);
   };
   frame();
-  const stop=()=>{ alive=false; cancelAnimationFrame(raf); ov.remove(); try{ DspApp.pipOff(); }catch(e){} window.dspPip=null; };
+  const stop=()=>{ alive=false; cancelAnimationFrame(raf); ov.remove(); if(app) app.style.visibility=''; try{ DspApp.pipOff(); }catch(e){} window.dspPip=null; };
   x.onclick=()=>{ if(pipSt && pipSt.n===n) pipStop(); else stop(); };
   window.dspPip=()=>{};                                                       // приложение сообщает о входе / выходе из PiP; зеркало остаётся до закрытия
   pipSt={n,stop};
   const r=pipRatio(c.width,c.height);
-  try{ if(!DspApp.pip(r[0],r[1])) pipToast('Picture in picture is not available on this phone'); }catch(e){ pipToast('Picture in picture: '+e.message); }
+  try{ if(!DspApp.pip(r[0],r[1])){ pipToast('Picture in picture is not available on this phone'); pipStop(); } }catch(e){ pipToast('Picture in picture: '+e.message); pipStop(); }
 }
