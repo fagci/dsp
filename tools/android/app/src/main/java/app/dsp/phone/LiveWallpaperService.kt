@@ -11,7 +11,7 @@ import android.view.SurfaceHolder
 
 /**
  * Живые обои из кадров, которые присылает страница (DspApp.wallpaper, из modules/wallpaper.js): последний полученный Bitmap
- * рисуется заново на каждое изменение видимости / размера поверхности и каждые 400 мс, пока обои видны. Кадры идут, пока
+ * рисуется заново на каждое изменение видимости / размера поверхности и каждые 200 мс, пока обои видны. Кадры идут, пока
  * приложение на экране (или в плавающем PiP) — иначе страница не рисуется и не шлёт новых, как и с микрофоном / камерой;
  * фон просто остаётся на последнем кадре, не ломается.
  *
@@ -28,7 +28,7 @@ class LiveWallpaperService : WallpaperService() {
         private val handler = Handler(Looper.getMainLooper())
         private var visible = false
         private val tick = object : Runnable {
-            override fun run() { draw(); if (visible) handler.postDelayed(this, 400) }
+            override fun run() { draw(); if (visible) handler.postDelayed(this, 200) }
         }
 
         override fun onVisibilityChanged(v: Boolean) {
