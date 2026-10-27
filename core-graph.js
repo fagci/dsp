@@ -597,7 +597,9 @@ container.append(grp);
 // Группы параметров (p.g, MOD.groups): сворачиваемые секции с заголовком; состояние — n.gOpen, в патче как go
 function gIsOpen(n,name){
 const v=n.gOpen?.[name]; if(v!=null) return !!v;
-return MOD[n.type].groups?.find(g=>g.n===name)?.open!==false;
+if(MOD[n.type].groups?.find(g=>g.n===name)?.open!==false) return true;
+// свёрнутая по умолчанию группа раскрыта, пока в ней есть изменённое значение (иначе включённое из патча осталось бы спрятанным)
+return MOD[n.type].params.some(p=>p.g===name && p.d!==undefined && n.p[p.n]!==undefined && n.p[p.n]!==p.d);
 }
 function renderParamGroups(container,n,params){
 if(!params.length) return;
