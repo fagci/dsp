@@ -126,7 +126,8 @@ class UsbSession(private val sock: Socket, private val backend: UsbBackend) {
             when (h.optString("op")) {
                 "list" -> r.put("devices", backend.list())
                 "perm" -> r.put("granted", backend.permission(dev))
-                "open" -> backend.open(dev)?.let { r.put("configs", it.getJSONArray("configs")).put("usb", it.getString("usb")).put("speed", it.optString("speed")) }
+                "open" -> backend.open(dev)?.let { r.put("configs", it.getJSONArray("configs")).put("usb", it.getString("usb")).put("speed", it.optString("speed"))
+                    .put("raw", it.optString("raw")).put("mbps", it.optInt("mbps")) }
                 "close" -> backend.close(dev)
                 "config" -> backend.config(dev, h.optInt("value"))
                 "claim" -> backend.claim(dev, h.optInt("num"))
@@ -254,18 +255,33 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
         return um.hasPermission(find(id))
     }
 
-    private fun rawJson(r: UsbDesc.Parsed?): JSONObject? =
-        r?.takeIf { it.configs.length() > 0 }?.let { JSONObject().put("configs", it.configs).put("usb", it.usb).put("speed", it.speedHint) }
+    /** Скорость порта по sysfs (Мбит/с; 12 — full-speed, 480 — high-speed); 0 — не удалось прочитать (SELinux, другая версия ядра). */
+    private fun sysfsMbps(deviceName: String): Int = try {
+        val m = Regex("/dev/bus/usb/(\\d+)/(\\d+)").matchEntire(deviceName)
+        val bus = m?.groupValues?.get(1)?.toInt(); val dev = m?.groupValues?.get(2)?.toInt()
+        var out = 0
+        for (d in java.io.File("/sys/bus/usb/devices").listFiles() ?: emptyArray()) {
+            if (java.io.File(d, "busnum").readText().trim().toIntOrNull() == bus && java.io.File(d, "devnum").readText().trim().toIntOrNull() == dev) {
+                out = java.io.File(d, "speed").readText().trim().toDoubleOrNull()?.toInt() ?: 0; break
+            }
+        }
+        out
+    } catch (e: Exception) { 0 }
+
+    /** Ответ на open: описание по сырым байтам (если разобралось) и данные для диагностики — скорость порта и сами дескрипторы. */
+    private fun rawJson(r: UsbDesc.Parsed?, name: String): JSONObject =
+        JSONObject().put("configs", r?.configs ?: JSONArray()).put("usb", r?.usb ?: "2.00").put("speed", r?.speedHint ?: "")
+            .put("raw", r?.rawHex ?: "").put("mbps", sysfsMbps(name))
 
     @Synchronized
     override fun open(id: String): JSONObject? {
-        conns[id]?.let { return rawJson(it.raw) }
+        conns[id]?.let { return rawJson(it.raw, id) }
         val d = find(id)
         if (!um.hasPermission(d)) throw UsbError("SecurityError", "no access to the device — it was not allowed")
         val c = um.openDevice(d) ?: throw UsbError("NetworkError", "cannot open the device")
         val raw = try { c.rawDescriptors?.let { UsbDesc.parse(it) } } catch (e: Exception) { null }
         conns[id] = Conn(d, c, raw)
-        return rawJson(raw)
+        return rawJson(raw, id)
     }
 
     @Synchronized
