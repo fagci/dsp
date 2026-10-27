@@ -279,7 +279,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
             if (hr != null) {
                 // поверхность сессии — вход кодера (HsCodec); отказ приходит и исключением, и через onConfigureFailed
                 try {
-                    val k = HsCodec(ctx.filesDir, rd.width, rd.height, hr.upper, { nv, w, h -> onNv21(nv, w, h, c) }) { why -> hsGiveUp(c, "codec: $why") }
+                    val k = HsCodec(ctx.filesDir, rd.width, rd.height, hr.upper, { hsReady(c) }, { nv, w, h -> onNv21(nv, w, h, c) }) { why -> hsGiveUp(c, "codec: $why") }
                     k.start(); hs = k
                     d.createConstrainedHighSpeedCaptureSession(listOf(k.input), cb, h)
                 } catch (e: Exception) { hsGiveUp(c, e.message ?: e.javaClass.simpleName) }
@@ -333,6 +333,9 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     }
 
     /** Кадр NV21 из программного декодера (режим высокой скорости): та же очередь кодирования в JPEG, что и у кадров камеры. */
+    /** Есть ли смысл преобразовывать очередной кадр: нужный fps выдержан и поток кодирования свободен. */
+    private fun hsReady(c: Cfg) = pool != null && SystemClock.elapsedRealtime() - lastEnc >= 1000L / c.fps - 5 && busy.get() < Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+
     private fun onNv21(nv: ByteArray, w: Int, h: Int, c: Cfg) {
         val now = SystemClock.elapsedRealtime()
         val p = pool

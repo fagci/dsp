@@ -11,7 +11,7 @@ import android.view.Surface
  * а выход кодера сразу декодируется ПРОГРАММНЫМ декодером в буферы (без поверхности: декодер → ImageReader валил приложение нативно) — кадр NV21 уходит в onFrame.
  * Каждый кадр ключевой: потеря одного (декодер не успел) не портит следующие.
  */
-class HsCodec(private val dir: java.io.File, private val w: Int, private val h: Int, private val fps: Int, private val onFrame: (ByteArray, Int, Int) -> Unit, private val onFail: (String) -> Unit) {
+class HsCodec(private val dir: java.io.File, private val w: Int, private val h: Int, private val fps: Int, private val ready: () -> Boolean, private val onFrame: (ByteArray, Int, Int) -> Unit, private val onFail: (String) -> Unit) {
     private var enc: MediaCodec? = null
     @Volatile private var dec: MediaCodec? = null
     @Volatile private var run = false
@@ -40,8 +40,14 @@ class HsCodec(private val dir: java.io.File, private val w: Int, private val h: 
         th = Thread({ loop(e) }, "dsp-hs-codec").also { it.isDaemon = true; it.start() }
     }
 
+    private class Out(val i: Int, val off: Int, val size: Int, val pts: Long, val flags: Int)
+
+    /**
+     * Кодер выдаёт кадров больше, чем успевает декодировать и сжимать телефон: если не отставать, задержка растёт без предела (замечено — десятки секунд).
+     * Поэтому за один проход забирается всё накопленное, декодируется только с последнего ключевого кадра, а из готовых кадров берётся самый свежий.
+     */
     private fun loop(e: MediaCodec) {
-        val ei = MediaCodec.BufferInfo(); val di = MediaCodec.BufferInfo()
+        val ei = MediaCodec.BufferInfo()
         try {
             while (run) {
                 val i = e.dequeueOutputBuffer(ei, 5000)
@@ -52,31 +58,55 @@ class HsCodec(private val dir: java.io.File, private val w: Int, private val h: 
                     d.configure(df, null, null, 0)
                     d.start(); dec = d
                 } else if (i >= 0) {
+                    val q = ArrayList<Out>()
+                    q.add(Out(i, ei.offset, ei.size, ei.presentationTimeUs, ei.flags))
+                    while (q.size < 256) {
+                        val j = e.dequeueOutputBuffer(ei, 0)
+                        if (j < 0) break
+                        q.add(Out(j, ei.offset, ei.size, ei.presentationTimeUs, ei.flags))
+                    }
+                    var from = q.indexOfLast { (it.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0 }
+                    if (from < 0) {                                  // ключевых в накопленном нет (кодер игнорирует интервал 0): просим ключевой, а при большом отставании — берём хвост
+                        if (q.size > 4) try { e.setParameters(android.os.Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0) }) } catch (x: Exception) {}
+                        from = if (q.size > 30) q.size - 1 else 0
+                    }
                     val d = dec
-                    if (d != null && ei.size > 0 && (ei.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
-                        val k = d.dequeueInputBuffer(5000)
-                        val src = e.getOutputBuffer(i)
-                        val dst = if (k >= 0) d.getInputBuffer(k) else null
-                        if (src != null && dst != null) {
-                            src.position(ei.offset); src.limit(ei.offset + ei.size)
-                            dst.clear(); dst.put(src)
-                            d.queueInputBuffer(k, 0, ei.size, ei.presentationTimeUs, ei.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME)
-                        } else if (k >= 0) d.queueInputBuffer(k, 0, 0, 0, 0)
-                    }
-                    e.releaseOutputBuffer(i, false)
-                }
-                val d = dec
-                if (d != null) {
-                    var o = d.dequeueOutputBuffer(di, 0)
-                    while (o >= 0) {
-                        val img = d.getOutputImage(o)
-                        if (img != null) try { onFrame(Yuv.toNv21(img), img.width, img.height) } finally { img.close() }
-                        if (hwTrial && ++decoded >= 200) { hwTrial = false; try { java.io.File(dir, "hs-hw-try").delete() } catch (x: Exception) {} }
-                        d.releaseOutputBuffer(o, false); o = d.dequeueOutputBuffer(di, 0)
+                    for ((n, o) in q.withIndex()) {
+                        if (d != null && n >= from && o.size > 0 && (o.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                            val k = d.dequeueInputBuffer(2000)
+                            val src = e.getOutputBuffer(o.i)
+                            val dst = if (k >= 0) d.getInputBuffer(k) else null
+                            if (src != null && dst != null) {
+                                src.position(o.off); src.limit(o.off + o.size)
+                                dst.clear(); dst.put(src)
+                                d.queueInputBuffer(k, 0, o.size, o.pts, o.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME)
+                            } else if (k >= 0) d.queueInputBuffer(k, 0, 0, 0, 0)
+                        }
+                        e.releaseOutputBuffer(o.i, false)
                     }
                 }
+                drain()
             }
         } catch (x: Exception) { if (run) onFail(x.message ?: x.javaClass.simpleName) }
+    }
+
+    /** Готовые кадры декодера: старые отбрасываются, в JPEG идёт только последний (и только если приёмник не занят). */
+    private fun drain() {
+        val d = dec ?: return
+        val di = MediaCodec.BufferInfo()
+        var last = -1
+        var o = d.dequeueOutputBuffer(di, 0)
+        while (o >= 0) {
+            if (last >= 0) d.releaseOutputBuffer(last, false)
+            last = o; o = d.dequeueOutputBuffer(di, 0)
+        }
+        if (last < 0) return
+        if (ready()) {
+            val img = d.getOutputImage(last)
+            if (img != null) try { onFrame(Yuv.toNv21(img), img.width, img.height) } finally { img.close() }
+        }
+        d.releaseOutputBuffer(last, false)
+        if (hwTrial && ++decoded >= 200) { hwTrial = false; try { java.io.File(dir, "hs-hw-try").delete() } catch (x: Exception) {} }
     }
 
     /**
