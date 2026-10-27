@@ -207,6 +207,7 @@ class PhoneActions(
             }
             "cam.list" -> done(c, id, cmd, null, extra = arrayOf("cameras" to cameraInfo()))
             "cam.root.info", "cam.root.unhide", "cam.root.restore", "cam.root.sysuid" -> rootCam(c, id, cmd)
+            "crash.last" -> done(c, id, cmd, null, extra = arrayOf("text" to Json.str(try { java.io.File(ctx.filesDir, BridgeService.CRASH_FILE).readText() } catch (e: Exception) { "no crash recorded" })))
             "cam.probe" -> done(c, id, cmd, null, extra = arrayOf("text" to Json.str(probeCameras())))
             "sms.send" -> {
                 if (!need(c, id, cmd, listOf(Manifest.permission.SEND_SMS))) return

@@ -1,7 +1,7 @@
 "use strict";
 /* Phone Actions: команды приложения DSP (tools/android) и разбор его записей. Без DOM — проверяется в tools/test-phoneact.mjs */
 
-const PHONE_ACTIONS=['notify','torch on','torch off','sms.send','sms.list','contacts.find','ir.info','cam.list','cam.probe','cam.root.info','cam.root.sysuid','cam.root.unhide','cam.root.restore'];
+const PHONE_ACTIONS=['notify','torch on','torch off','sms.send','sms.list','contacts.find','ir.info','cam.list','cam.probe','crash.last','cam.root.info','cam.root.sysuid','cam.root.unhide','cam.root.restore'];
 
 // адрес моста; в приложении к адресу этого телефона добавляется ключ приложения (?k=…) — с ним открыты SMS и контакты
 function phoneUrl(url,key){
@@ -38,7 +38,7 @@ function phoneCmd(p,textIn){
     case 'sms.list': return {cmd:'sms.list', box:p.box||'all', q:String(p.q||''), limit:+p.limit||50};
     case 'contacts.find': return {cmd:'contacts.find', q:String(p.q||''), limit:+p.limit||50};
     case 'ir.info': return {cmd:'ir.info'};
-    case 'cam.list': case 'cam.probe': return {cmd:p.action};
+    case 'cam.list': case 'cam.probe': case 'crash.last': return {cmd:p.action};
     case 'cam.root.info': case 'cam.root.sysuid': case 'cam.root.unhide': case 'cam.root.restore': return {cmd:p.action};          // root: только приложение и только если включено в его настройках
   }
   return null;
