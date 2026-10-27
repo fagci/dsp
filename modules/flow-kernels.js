@@ -38,3 +38,15 @@ function rqStep(st,e,t,o){
 }
 
 if(typeof module!=='undefined') module.exports={rqNew,rqPush,rqStep};
+
+// шаблон команды для Rule (If → Command): строковое значение "$field" берёт поле из последней подошедшей под условие записи
+function ruleApply(tmpl,r){
+  const out={};
+  for(const k in tmpl){
+    const v=tmpl[k];
+    out[k]=(typeof v==='string' && v[0]==='$' && v.length>1 && r && typeof r==='object' && r[v.slice(1)]!==undefined) ? r[v.slice(1)] : v;
+  }
+  return out;
+}
+
+if(typeof module!=='undefined') Object.assign(module.exports,{ruleApply});

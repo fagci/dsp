@@ -26,3 +26,45 @@ def({ id:'recQueue', title:'Rec Queue', cat:'Control', kw:'queue for each loop s
     const t='queued '+n.st.q.length+' · sent '+n.st.sent+(n.st.busy ? ' · waiting for ack' : '')+(n.st.cur ? '\n→ '+JSON.stringify(n.st.cur).slice(0,200) : '');
     if(r.textContent!==t) r.textContent=t; }
 });
+
+/* ============================ Rule (If → Command) ============================
+   Условие (JS-выражение над последней подошедшей записью r — rec с датчика, геозоны, событий sys…) → при переходе в «истина»
+   (или всё время, пока истина) выдаёт готовую команду («cmd» rec) — её выход годится прямо во вход cmd у BLE GATT / Bluetooth,
+   Network, Phone Control & Automation и Phone Actions (все они принимают записи с полем cmd как есть). Строковое значение "$имя"
+   в команде берёт поле из той же записи r. ruleApply — modules/flow-kernels.js (tools/test-flow.mjs); условие компилируется
+   так же, как у Rec Filter (recFilterCompile, modules/geo.js). */
+def({ id:'rule', title:'Rule (If → Command)', cat:'Control', kw:'automation if then condition trigger rule command action geofence sys event',
+  ins:[{n:'rec',t:'rec'}], outs:[{n:'cmd',t:'rec'},{n:'go',t:'num'}],
+  readout:true,
+  params:[
+    {n:'expr',t:'text',d:"r && r.src==='sys' && r.ev==='screen' && r.on==0",label:'condition (r — last record); true/false'},
+    {n:'fire',t:'select',opts:['becomes true','stays true (repeat)'],d:'becomes true',label:'send the command'},
+    {n:'cooldown',t:'range',min:0,max:3600,step:1,d:0,label:'at least, s between commands (0 — no limit)'},
+    {n:'cmd',t:'code',plain:true,d:'{"cmd":"vibrate","ms":300}',label:'command when true (JSON; a string value "$field" is replaced with that field of r)'},
+  ],
+  init:n=>{ n.was=false; n.lastFire=0; n.sent=0; n.err=''; n.lastR=null; n._tmpl=null; n._tmplSrc=null; n.tmplErr=''; },
+  process(n,I){
+    const recs=recList(I.rec);
+    if(recs.length) n.lastR=recs[recs.length-1];
+    if(!n._fn || n._fn.src!==(n.p.expr||'true')) recFilterCompile(n);
+    let truthy=n.was;
+    if(n._fn.ready) truthy = n._fn.f ? (()=>{ try{ const v=!!n._fn.f(n.lastR); n.err=''; return v; }catch(e){ n.err=e.message; return false; } })() : false;
+    const edge=truthy && !n.was, repeat=truthy && n.p.fire==='stays true (repeat)';
+    n.was=truthy;
+    let cmd=null, go=0;
+    if(edge || repeat){
+      const now=Date.now(), cd=+n.p.cooldown*1000;
+      if(!cd || now-n.lastFire>=cd){
+        n.lastFire=now;
+        if(n._tmplSrc!==n.p.cmd){ n._tmplSrc=n.p.cmd; try{ n._tmpl=JSON.parse(n.p.cmd||'{}'); n.tmplErr=''; }catch(e){ n._tmpl=null; n.tmplErr=e.message; } }
+        if(n._tmpl){ cmd=[ruleApply(n._tmpl,n.lastR)]; go=1; n.sent++; }
+      }
+    }
+    return {cmd, go};
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    let t=(n.was?'true':'false')+' · sent '+n.sent;
+    if(n.err) t+='\n⚠ condition: '+n.err;
+    if(n.tmplErr) t+='\n⚠ command JSON: '+n.tmplErr;
+    if(r.textContent!==t) r.textContent=t; }
+});

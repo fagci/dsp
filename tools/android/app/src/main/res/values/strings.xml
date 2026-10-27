@@ -2,4 +2,5 @@
 <resources>
     <string name="app_name">DSP</string>
     <string name="ui_service_desc">Lets patches of the DSP workbench tap, swipe, press Back / Home, click buttons by their text and read the text on the screen. Only this app\'s own page (or pages you allowed in the app Settings) can send these commands.</string>
+    <string name="wallpaper_desc">Shows the last frame a patch sent it (button next to the picture-in-picture one, on any picture). Lively only while the DSP app is on screen or in its floating PiP window \u2014 otherwise it keeps the last frame, like the microphone or camera.</string>
 </resources>

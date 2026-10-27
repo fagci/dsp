@@ -69,7 +69,7 @@ function netFeed(n,r){
 }
 
 def({ id:'netlink', title:'Network (DSP app)', cat:'Sources', kw:'tcp udp socket server client ping icmp dns traceroute raw packet internet network',
-  ins:[{n:'go',t:'num'},{n:'host',t:'txt'},{n:'data',t:'txt'}],
+  ins:[{n:'go',t:'num'},{n:'host',t:'txt'},{n:'data',t:'txt'},{n:'cmd',t:'rec'}],
   outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'hex',t:'txt'},{n:'ok',t:'num'},{n:'new',t:'num'}],
   readout:true, tall:true,
   groups:[{n:'TCP / UDP'},{n:'Ping'},{n:'DNS'}],
@@ -97,7 +97,7 @@ def({ id:'netlink', title:'Network (DSP app)', cat:'Sources', kw:'tcp udp socket
     {n:'connect',t:'button',label:'Connect',fn:n=>netStart(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>netStop(n)},
   ],
-  init:n=>{ n.ws=null; n.want=false; n.timer=null; n.recQ=[]; n.pend=[]; n.seq=0; n.pendingDns=0; n.count=0; n.ok=0; n.hex=''; n.txt=''; n.fresh=0;
+  init:n=>{ n.ws=null; n.want=false; n.timer=null; n.recQ=[]; n.pend=[]; n.seq=0; n.pendingDns=0; n.lastCmd=null; n.count=0; n.ok=0; n.hex=''; n.txt=''; n.fresh=0;
             n.status='not connected'; n.warn=''; n.sentSub=null; n.bridgeMsg=''; n.last=''; n.prevGo=0; n.hostIn=''; n.dataIn=''; },
   dispose:n=>netStop(n),
   process(n,I){
@@ -106,6 +106,10 @@ def({ id:'netlink', title:'Network (DSP app)', cat:'Sources', kw:'tcp udp socket
     const go=(I.go||0)>.5;
     if(go && !n.prevGo){ const c=plNetCmd(n.p,{host:n.hostIn,data:n.dataIn}); if(c.error) n.last=c.error; else netSend(n,c); }
     n.prevGo=go;
+    if(Array.isArray(I.cmd) && I.cmd!==n.lastCmd){                   // записи с полем cmd уходят как есть (собрать их можно Rec Filter / Fields → Rec)
+      n.lastCmd=I.cmd;
+      for(const r of I.cmd) if(r && typeof r.cmd==='string') netSend(n,r);
+    }
     const rec=n.recQ.length ? n.recQ.splice(0) : null, fresh=n.fresh; n.fresh=0;
     return {rec, text:n.txt||null, hex:n.hex||null, ok:n.ok, new:fresh};
   },

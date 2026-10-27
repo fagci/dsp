@@ -62,16 +62,18 @@ function pcFeed(n,r){
     if(!r.ok && r.msg) n.last=(r.cmd||'')+': '+r.msg;
     if(r.cmd==='clip.get' && typeof r.text==='string') n.clip=r.text;
     if(r.cmd==='app.list') n.last='apps: '+r.n;
+    if(r.cmd==='sys.shell.exec' && typeof r.out==='string'){ n.text=r.out; n.last='shell: exit '+r.code; n.fresh=1; }
+    if(r.cmd==='sys.bcast.listen' && r.ok) n.last='listening: '+r.n+' action(s)';
   }
   if(r.src==='app' || r.src==='uitext') n.sysQ.push({t:Date.now(),...r});
   if(r.src==='sys') n.sysQ.push({t:Date.now(),...r});
   if(n.sysQ.length>2000) n.sysQ.splice(0,n.sysQ.length-2000);
 }
 def({ id:'phonectl', title:'Phone Control & Automation (DSP app)', cat:'Sources', kw:'speech recognition voice dictation stt automation accessibility tap swipe click text to speech tts volume clipboard notification intent launch app sys events screen bluetooth network headset call',
-  ins:[{n:'go',t:'num'},{n:'text',t:'txt'},{n:'x',t:'num'},{n:'y',t:'num'},{n:'x2',t:'num'},{n:'y2',t:'num'},{n:'pkg',t:'txt'}],
+  ins:[{n:'go',t:'num'},{n:'text',t:'txt'},{n:'x',t:'num'},{n:'y',t:'num'},{n:'x2',t:'num'},{n:'y2',t:'num'},{n:'pkg',t:'txt'},{n:'cmd',t:'rec'}],
   outs:[{n:'rec',t:'rec'},{n:'sys',t:'rec'},{n:'text',t:'txt'},{n:'interim',t:'txt'},{n:'ok',t:'num'},{n:'new',t:'num'}],
   readout:true, tall:true,
-  groups:[{n:'Speech'},{n:'Volume / TTS',open:false},{n:'App / intent',open:false},{n:'UI automation',open:false}],
+  groups:[{n:'Speech'},{n:'Volume / TTS',open:false},{n:'App / intent',open:false},{n:'UI automation',open:false},{n:'Broadcasts / shell',open:false}],
   params:[
     {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'bridge of the DSP app'},
     {n:'action',t:'select',opts:PL_SYS_ACTIONS,d:'speech start',label:'action (the Run button, or a rising edge on go)'},
@@ -93,6 +95,10 @@ def({ id:'phonectl', title:'Phone Control & Automation (DSP app)', cat:'Sources'
     {n:'intentAction',t:'text',d:'',label:'intent: action (android.intent.action.VIEW…)',g:'App / intent'},
     {n:'intentData',t:'text',d:'',label:'intent: data URI',g:'App / intent'},
     {n:'root',t:'check',d:false,label:'use root for launch / intent (works from the background; needs «Allow root features» in Settings)',g:'App / intent'},
+    {n:'bcastActions',t:'text',d:'',label:'listen for system broadcasts: actions, comma separated (e.g. android.intent.action.AIRPLANE_MODE_CHANGED) → output «sys»',g:'Broadcasts / shell'},
+    {n:'shellCmd',t:'code',plain:true,d:'',label:'shell command (the «text» input overrides it) → output «text»',g:'Broadcasts / shell'},
+    {n:'shellRoot',t:'check',d:false,label:'as root (needs «Allow root features» in the app Settings)',g:'Broadcasts / shell'},
+    {n:'shellTimeout',t:'range',min:500,max:60000,step:500,d:15000,label:'timeout, ms',g:'Broadcasts / shell'},
     {n:'x',t:'num',d:500,label:'x, px (the «x» input overrides it)',g:'UI automation'},
     {n:'y',t:'num',d:1000,label:'y, px (the «y» input overrides it)',g:'UI automation'},
     {n:'x2',t:'num',d:500,label:'swipe: x2, px',g:'UI automation'},
@@ -103,7 +109,7 @@ def({ id:'phonectl', title:'Phone Control & Automation (DSP app)', cat:'Sources'
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>pcStop(n)},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},
   ],
-  init:n=>{ n.ws=null; n.want=false; n.timer=null; n.pend=[]; n.seq=0; n.count=0; n.ok=0; n.text=''; n.interim=''; n.fresh=0;
+  init:n=>{ n.ws=null; n.want=false; n.timer=null; n.pend=[]; n.seq=0; n.lastCmd=null; n.count=0; n.ok=0; n.text=''; n.interim=''; n.fresh=0;
             n.status='not connected'; n.warn=''; n.sentSub=null; n.bridgeMsg=''; n.last=''; n.prevGo=0; n.clip=''; n.textQ=[]; n.sysQ=[];
             n.textIn=''; n.xIn=0; n.yIn=0; n.x2In=0; n.y2In=0; n.pkgIn=''; },
   dispose:n=>pcStop(n),
@@ -115,6 +121,10 @@ def({ id:'phonectl', title:'Phone Control & Automation (DSP app)', cat:'Sources'
     const go=(I.go||0)>.5;
     if(go && !n.prevGo){ const c=plSysCmd(n.p,{text:n.textIn,x:n.xIn,y:n.yIn,x2:n.x2In,y2:n.y2In,pkg:n.pkgIn}); if(c.error) n.last=c.error; else pcSend(n,c); }
     n.prevGo=go;
+    if(Array.isArray(I.cmd) && I.cmd!==n.lastCmd){                   // записи с полем cmd уходят как есть (собрать их можно Rec Filter / Fields → Rec)
+      n.lastCmd=I.cmd;
+      for(const r of I.cmd) if(r && typeof r.cmd==='string') pcSend(n,r);
+    }
     const rec=n.textQ.length ? n.textQ.splice(0) : null, sys=n.sysQ.length ? n.sysQ.splice(0) : null, fresh=n.fresh; n.fresh=0;
     return {rec, sys, text:n.text||null, interim:n.interim||null, ok:n.ok, new:fresh};
   },

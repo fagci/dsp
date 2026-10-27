@@ -59,7 +59,7 @@ function gattFeed(n,r){
 }
 
 def({ id:'gattlink', title:'BLE GATT / Bluetooth (DSP app)', cat:'Sources', kw:'bluetooth le ble gatt rfcomm spp classic pairing bond uuid characteristic notify write advertise beacon peripheral connect',
-  ins:[{n:'go',t:'num'},{n:'addr',t:'txt'},{n:'svc',t:'txt'},{n:'chr',t:'txt'},{n:'data',t:'txt'}],
+  ins:[{n:'go',t:'num'},{n:'addr',t:'txt'},{n:'svc',t:'txt'},{n:'chr',t:'txt'},{n:'data',t:'txt'},{n:'cmd',t:'rec'}],
   outs:[{n:'rec',t:'rec'},{n:'value',t:'num'},{n:'hex',t:'txt'},{n:'text',t:'txt'},{n:'ok',t:'num'},{n:'new',t:'num'}],
   readout:true, tall:true,
   groups:[{n:'GATT'},{n:'Classic / RFCOMM',open:false},{n:'Advertise (peripheral)',open:false},{n:'Decode value',open:false}],
@@ -97,7 +97,7 @@ def({ id:'gattlink', title:'BLE GATT / Bluetooth (DSP app)', cat:'Sources', kw:'
     {n:'connect',t:'button',label:'Connect',fn:n=>gattStart(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>gattStop(n)},
   ],
-  init:n=>{ n.ws=null; n.want=false; n.timer=null; n.recQ=[]; n.pend=[]; n.seq=0; n.count=0; n.ok=0; n.val=null; n.hex=''; n.txt=''; n.fresh=0;
+  init:n=>{ n.ws=null; n.want=false; n.timer=null; n.recQ=[]; n.pend=[]; n.seq=0; n.lastCmd=null; n.count=0; n.ok=0; n.val=null; n.hex=''; n.txt=''; n.fresh=0;
             n.status='not connected'; n.warn=''; n.sentSub=null; n.bridgeMsg=''; n.last=''; n.prevGo=0; n.addrIn=''; n.svcIn=''; n.chrIn=''; n.dataIn=''; },
   dispose:n=>gattStop(n),
   process(n,I){
@@ -106,6 +106,10 @@ def({ id:'gattlink', title:'BLE GATT / Bluetooth (DSP app)', cat:'Sources', kw:'
     const go=(I.go||0)>.5;
     if(go && !n.prevGo){ const c=plGattCmd(n.p,{addr:n.addrIn,svc:n.svcIn,chr:n.chrIn,data:n.dataIn}); if(c.error) n.last=c.error; else gattSend(n,c); }
     n.prevGo=go;
+    if(Array.isArray(I.cmd) && I.cmd!==n.lastCmd){                   // записи с полем cmd уходят как есть (собрать их можно Rec Filter / Fields → Rec)
+      n.lastCmd=I.cmd;
+      for(const r of I.cmd) if(r && typeof r.cmd==='string') gattSend(n,r);
+    }
     const rec=n.recQ.length ? n.recQ.splice(0) : null, fresh=n.fresh; n.fresh=0;
     return {rec, value:n.val, hex:n.hex||null, text:n.txt||null, ok:n.ok, new:fresh};
   },

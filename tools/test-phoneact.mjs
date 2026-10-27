@@ -21,6 +21,7 @@ ok('the text input overrides the field', K.phoneCmd({ action: 'sms.send', to: ' 
 ok('torch commands', K.phoneCmd({ action: 'torch on', level: 0 }).on === true && K.phoneCmd({ action: 'torch on', level: 3 }).level === 3 && K.phoneCmd({ action: 'torch off' }).on === false && !('level' in K.phoneCmd({ action: 'torch on', level: 0 })));
 ok('vibrate: ms, amplitude only when set', K.phoneCmd({ action: 'vibrate', vibMs: 500 }).ms === 500 && !('amp' in K.phoneCmd({ action: 'vibrate', vibMs: 500, vibAmp: 0 })) && K.phoneCmd({ action: 'vibrate', vibAmp: 200 }).amp === 200 && K.phoneCmd({ action: 'vibrate stop' }).cmd === 'vibrate.stop');
 ok('sms.data: hex cleaned, port', K.phoneCmd({ action: 'sms.data', to: '123', dataHex: 'de:ad BE-EF', dport: 9200 }).hex === 'deadbeef' && K.phoneCmd({ action: 'sms.data', to: '123', dport: 9200 }).port === 9200);
+ok('sms.send_raw: PDU from the field or the text input, SMSC optional', K.phoneCmd({ action: 'sms.send_raw', rawPdu: 'DE:AD BE-EF' }).pdu === 'deadbeef' && K.phoneCmd({ action: 'sms.send_raw' }, 'C0FFEE').pdu === 'c0ffee' && K.phoneCmd({ action: 'sms.send_raw', rawPdu: 'AB', rawSmsc: '07 91 97' }).smsc === '079197');
 ok('list commands', K.phoneCmd({ action: 'sms.list', box: 'inbox', q: 'bank', limit: 20 }).box === 'inbox' && K.phoneCmd({ action: 'contacts.find', q: 'Ann' }).limit === 50 && K.phoneCmd({ action: 'nope' }) === null);
 
 // ИК: кадр кодека → команда излучателю

@@ -77,6 +77,8 @@ def({ id:'phone', title:'Phone Actions (DSP app)', cat:'Output', kw:'android app
     {n:'to',t:'text',d:'',label:'SMS: number'},
     {n:'dataHex',t:'text',d:'',label:'data SMS: payload, hex (binary SMS to an application port — not a raw PDU; build one with the SMS PDU node)'},
     {n:'dport',t:'num',d:2948,label:'data SMS: destination port'},
+    {n:'rawPdu',t:'text',d:'',label:'raw SMS: TPDU hex, no SMSC prefix (the «tpdu» output of SMS PDU, or the «text» input) — experimental, needs a hidden Android API (tools/android/README.md)'},
+    {n:'rawSmsc',t:'text',d:'',label:'raw SMS: SMSC bytes, hex (empty — let the network use its default)'},
     {n:'box',t:'select',opts:['all','inbox','sent'],d:'all',label:'SMS list: folder'},
     {n:'q',t:'text',d:'',label:'SMS list / contacts: search text'},
     {n:'limit',t:'range',min:1,max:500,step:1,d:50,label:'SMS list / contacts: how many'},
