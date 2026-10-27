@@ -30,6 +30,10 @@ class BridgeService : Service() {
     private lateinit var ble: BleHub
     private lateinit var bt: BtHub
     private lateinit var gnss: GnssHub
+    private lateinit var cell: CellHub
+    private lateinit var mic: MicHub
+    private lateinit var sniffer: SnifferHub
+    private val asked = HashSet<String>()      // разрешения, о которых уже спросили в этой жизни сервиса
     private var wake: PowerManager.WakeLock? = null
     private val main = Handler(Looper.getMainLooper())
     private val warned = HashSet<String>()
@@ -49,8 +53,12 @@ class BridgeService : Service() {
         ble = BleHub(this, gps) { s, j -> server.emit(s, j) }
         bt = BtHub(this, gps) { s, j -> server.emit(s, j) }
         gnss = GnssHub(this) { s, j -> server.emit(s, j) }
-        val ch = NotificationChannel(CH, "DSP bridge", NotificationManager.IMPORTANCE_LOW)
-        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
+        cell = CellHub(this, gps) { s, j -> server.emit(s, j) }
+        mic = MicHub(this) { s, j -> server.emit(s, j) }
+        sniffer = SnifferHub(cfg, { s, j -> server.emit(s, j) }) { l, m -> server.note(l, m) }
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        nm.createNotificationChannel(NotificationChannel(CH, "DSP bridge", NotificationManager.IMPORTANCE_LOW))
+        nm.createNotificationChannel(NotificationChannel(CH_PERM, "Permissions", NotificationManager.IMPORTANCE_HIGH))
     }
 
     override fun onStartCommand(i: Intent?, flags: Int, id: Int): Int {
@@ -74,7 +82,7 @@ class BridgeService : Service() {
     override fun onDestroy() {
         destroyed = true
         server.stop(); camera.stop()
-        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close()
+        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close()
         wake?.takeIf { it.isHeld }?.release()
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(ID)
         super.onDestroy()
@@ -89,6 +97,7 @@ class BridgeService : Service() {
         var type = 0
         if (Build.VERSION.SDK_INT >= 30 && granted(android.Manifest.permission.CAMERA)) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
         if (hasLocation()) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        if (Build.VERSION.SDK_INT >= 30 && granted(android.Manifest.permission.RECORD_AUDIO)) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         if (Build.VERSION.SDK_INT >= 34) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         try { startForeground(ID, n, type) }
         catch (e: Exception) {
@@ -133,7 +142,7 @@ class BridgeService : Service() {
         if (destroyed) return
         val w = server.wanted()
         val problems = HashSet<String>()
-        for (k in sensors.update(w.subs.filter { it in SensorHub.TYPES }.toSet(), w.hz)) problems.add("$k: no such sensor on this phone")
+        for (k in sensors.update(w.subs.filter { it in SensorHub.ALL }.toSet(), w.hz)) problems.add("$k: no such sensor on this phone")
         val needGps = w.subs.any { it in POSITION }
         if (!gps.update(needGps)) problems.add("no position: allow Location for the DSP app and turn Location on")
         if (!wifi.update("wifi" in w.subs, w.wifiEvery)) problems.add("wifi: allow Location for the DSP app (Android hides the scan without it)")
@@ -141,6 +150,10 @@ class BridgeService : Service() {
         if (!gnss.update("gnss" in w.subs, "gnssraw" in w.subs, "nmea" in w.subs)) problems.add("gnss: allow Location for the DSP app")
         if (!ble.update("ble" in w.subs)) problems.add(ble.lastError)
         if (!bt.update("bt" in w.subs)) problems.add(bt.lastError)
+        if (!cell.update("cell" in w.subs, w.cellEvery)) problems.add(cell.lastError)
+        if (!mic.update("mic" in w.subs, w.micHz)) problems.add(mic.lastError)
+        if (!sniffer.update("pkt" in w.subs, w.iface, w.filter, w.snap)) problems.add(sniffer.lastError)
+        askPermissions(w.subs)
         for (p in problems) if (warned.add(p)) server.note("error", p)
         warned.retainAll(problems)
 
@@ -154,27 +167,46 @@ class BridgeService : Service() {
         if (text != shownText) (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(ID, notification())
     }
 
+    /**
+     * Спрашивает разрешения для выбранных на странице источников (один раз на разрешение за жизнь сервиса).
+     * Окно открывается сразу, если приложение на экране, иначе — по нажатию на уведомление (из фона Android окно не откроет).
+     */
+    private fun askPermissions(subs: Set<String>) {
+        val miss = Perms.forSubs(subs, Build.VERSION.SDK_INT, camera.viewers > 0).filter { !granted(it) && asked.add(it) }
+        if (miss.isEmpty()) return
+        val i = Intent(this, PermissionActivity::class.java).putExtra(PermissionActivity.EXTRA, miss.toTypedArray()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val pi = PendingIntent.getActivity(this, 3, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val names = miss.map { it.substringAfterLast('.').lowercase().replace('_', ' ') }.joinToString(", ")
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(PERM_ID,
+            Notification.Builder(this, CH_PERM).setSmallIcon(android.R.drawable.ic_menu_compass)
+                .setContentTitle("DSP bridge needs permission").setContentText("Tap to allow: $names")
+                .setContentIntent(pi).setAutoCancel(true).build())
+        try { startActivity(i) } catch (e: Exception) { /* из фона нельзя — останется уведомление */ }
+    }
+
     private fun arr(l: List<String>) = l.joinToString(",", "[", "]") { "\"$it\"" }
 
     private fun helloJson(): String {
         val sens = sensors.available()
         return Json.obj(
             "src" to "\"bridge\"", "level" to "\"hello\"", "ver" to "1", "app" to "\"dsp-android\"", "host" to Json.str(Build.MODEL),
-            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea") + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "cameras" to arr(camera.available()),
+            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(), "cameras" to arr(camera.available()),
         )
     }
 
     private fun statusText(): String =
         "DSP phone bridge\n" + summary() + "\ncamera: " + (camera.info.ifEmpty { "off" }) + (if (camera.error.isNotEmpty()) " (" + camera.error + ")" else "") +
-            "\nsensors: " + sensors.available().joinToString(",") + "\naddresses: " + lan().joinToString(", ") + "\n"
+            "\nsensors: " + sensors.available().joinToString(",") + "\n" + sensors.lines() + "addresses: " + lan().joinToString(", ") + "\n"
 
     companion object {
         const val ACTION_STOP = "app.dsp.phone.STOP"
         const val ACTION_RELOAD = "app.dsp.phone.RELOAD"
         private const val CH = "bridge"
+        private const val CH_PERM = "perm"
         private const val ID = 1
+        const val PERM_ID = 2
         // источники, которым нужно включённое определение положения (ГНСС) или последнее положение в записях
-        private val POSITION = setOf("gps", "wifi", "ble", "bt", "gnss", "gnssraw", "nmea")
+        private val POSITION = setOf("gps", "wifi", "ble", "bt", "gnss", "gnssraw", "nmea", "cell")
 
         /** Остановить мост (то же, что кнопка Stop в уведомлении). */
         fun stop(ctx: Context) {

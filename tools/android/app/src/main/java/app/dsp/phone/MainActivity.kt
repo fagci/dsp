@@ -39,12 +39,8 @@ class MainActivity : Activity() {
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         BridgeService.start(this)
-        val need = mutableListOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
-        if (Build.VERSION.SDK_INT >= 33) need.add(Manifest.permission.POST_NOTIFICATIONS)
-        if (Build.VERSION.SDK_INT >= 29) need.add(Manifest.permission.ACTIVITY_RECOGNITION)
-        if (Build.VERSION.SDK_INT >= 31) { need.add(Manifest.permission.BLUETOOTH_SCAN); need.add(Manifest.permission.BLUETOOTH_CONNECT) }
-        val miss = need.filter { !granted(it) }
-        if (miss.isNotEmpty()) requestPermissions(miss.toTypedArray(), REQ_MAIN)
+        // остальные разрешения (положение, камера, микрофон, Bluetooth, шаги) мост спрашивает сам, когда страница выбирает источник
+        if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_MAIN)
 
         web = WebView(this)
         setContentView(web)

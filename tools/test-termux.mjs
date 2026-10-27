@@ -74,8 +74,8 @@ br.close(); fs.rmSync(dir,{recursive:true,force:true});
 // --- разбор записей узлом Termux (общие функции в termux-kernels.js) ---
 const kf=path.join(root,'modules/termux-kernels.js');
 if(fs.existsSync(kf)){
-  const ctx=vm.createContext({Math,Number,String,Object,Array,isFinite,Date,JSON,URL,URLSearchParams});
-  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxCamUrl};',ctx);
+  const ctx=vm.createContext({atob,Float32Array,Math,Number,String,Object,Array,isFinite,Date,JSON,URL,URLSearchParams});
+  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxPcm,termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxCamUrl};',ctx);
   const K=ctx.K, o={};
   K.termuxApply(o,{src:'gps',lat:1,lon:2,alt:3,acc:4,speed:5,bearing:6});
   ok('apply gps',o.lat===1 && o.lon===2 && o.alt===3 && o.acc===4 && o.speed===5 && o.hdg===6);
@@ -83,6 +83,15 @@ if(fs.existsSync(kf)){
   K.termuxApply(o,{src:'sensor',sensor:'mag',x:7,y:8,z:9}); K.termuxApply(o,{src:'sensor',sensor:'light',x:120}); K.termuxApply(o,{src:'sensor',sensor:'pressure',x:1013});
   K.termuxApply(o,{src:'sensor',sensor:'rotation',x:0,y:0,z:Math.sin(Math.PI/4),w:Math.cos(Math.PI/4)}); K.termuxApply(o,{src:'sensor',sensor:'humidity',x:41}); K.termuxApply(o,{src:'sensor',sensor:'steps',x:1234});
   ok('apply rotation → yaw −90 (CCW 90° about Z), pitch/roll 0',Math.abs(o.yaw+90)<1e-9 && Math.abs(o.pitch)<1e-9 && Math.abs(o.roll)<1e-9 && o.humid===41 && o.steps===1234,JSON.stringify(o));
+  const pcm=K.termuxPcm({pcm:Buffer.from(new Int16Array([0,16384,-32768,32767]).buffer).toString('base64')});
+  ok('mic pcm decode',pcm.length===4 && pcm[1]===.5 && pcm[2]===-1 && Math.abs(pcm[3]-.99997)<1e-4 && K.termuxPcm({})===null && K.termuxPcm({pcm:'!!'})===null);
+  const mm=K.termuxSubMsg({mic:true,micHz:'48000',cell:true,cellEvery:3,pkt:true,iface:' wlan0 ',filter:'tcp port 80',snap:'512',hz:'0'});
+  ok('sub message: mic, cell, capture',mm.micHz===48000 && mm.cellEvery===3 && mm.iface==='wlan0' && mm.filter==='tcp port 80' && mm.snap===512 && mm.sub.join()==='cell,mic,pkt',JSON.stringify(mm));
+  ok('sub message: nothing extra when off',Object.keys(K.termuxSubMsg({gps:true,micHz:'48000',cellEvery:3,iface:'x'})).join()==='sub');
+  const oc={}; K.termuxApply(oc,{src:'cell',reg:0,dbm:-120}); K.termuxApply(oc,{src:'cell',reg:1,type:'LTE',dbm:-85,rsrp:-95,rsrq:-9,sinr:12});
+  K.termuxApply(oc,{src:'mic',rms:-30}); K.termuxApply(oc,{src:'sensor',sensor:'stationary',x:1}); K.termuxApply(oc,{src:'sensor',sensor:'devorient',x:1});
+  ok('apply cell (serving only), mic, motion',oc.cdbm===-85 && oc.crsrp===-95 && oc.csinr===12 && oc.micdb===-30 && oc.still===1 && oc.orient===1,JSON.stringify(oc));
+  ok('lines: cell, pkt, mic',K.termuxLine({src:'pkt',iface:'any',ip:'10.0.0.1',sport:1,dip:'1.1.1.1',dport:53,len:60}).includes('10.0.0.1:1 → 1.1.1.1:53') && K.termuxLine({src:'cell',type:'LTE',reg:1,mcc:'250',mnc:'01',cid:5,dbm:-80}).startsWith('cell LTE *') && K.termuxLine({src:'mic',rms:-20}).includes('-20'));
   ok('apply sensors',o.ax===1 && o.az===3 && o.gx===4 && o.gz===6 && o.mx===7 && o.mz===9 && o.light===120 && o.press===1013);
   K.termuxApply(o,{src:'battery',pct:50,status:'CHARGING',temp:31});
   ok('apply battery',o.batt===50 && o.charging===1 && o.temp===31);

@@ -1,6 +1,11 @@
 package app.dsp.phone.recordstest
 
 import app.dsp.phone.Ad
+import app.dsp.phone.Audio
+import app.dsp.phone.Frame
+import app.dsp.phone.PcapReader
+import app.dsp.phone.Perms
+import app.dsp.phone.SnifferHub
 import app.dsp.phone.Bt
 import app.dsp.phone.Gnss
 import app.dsp.phone.Json
@@ -50,6 +55,41 @@ fun main() {
     // --- JSON-помощники дают валидный JSON ---
     val j = JSONObject(Json.obj("src" to "\"ble\"", "mfr" to Json.map(mapOf("004c" to "02")), "uuids" to Json.arr(listOf("180f", "a\"b")), "n" to null, "x" to Json.num(1.23456789, 1e4)))
     ok("json helpers", j.getJSONObject("mfr").getString("004c") == "02" && j.getJSONArray("uuids").getString(1) == "a\"b" && !j.has("n") && j.getDouble("x") == 1.2346)
+
+    // --- pcap, кадры, разрешения ---
+    fun le32(v: Long) = byteArrayOf(v.toByte(), (v shr 8).toByte(), (v shr 16).toByte(), (v shr 24).toByte())
+    fun pcapHead(link: Long) = le32(0xa1b2c3d4L) + b(2, 0, 4, 0) + le32(0) + le32(0) + le32(65535) + le32(link)
+    fun rec(sec: Long, us: Long, d: ByteArray) = le32(sec) + le32(us) + le32(d.size.toLong()) + le32(d.size.toLong() + 10) + d
+    val tcp = b(0x45, 0, 0, 40, 0, 0, 0, 0, 64, 6, 0, 0, 10, 0, 0, 1, 93, 184, 216, 34, 0x30, 0x39, 0, 80) + ByteArray(16)
+    val eth = b(0xaa, 0xbb, 0xcc, 0, 0, 1, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x08, 0x00) + tcp
+    val got = ArrayList<Triple<Long, Int, ByteArray>>()
+    val rd = PcapReader { ms, link, orig, d -> got.add(Triple(ms, link * 1000 + orig - d.size, d)) }
+    val stream = pcapHead(1) + rec(1700000000, 250000, eth) + rec(1700000001, 0, eth)
+    for (i in stream.indices step 7) rd.feed(stream.copyOfRange(i, minOf(i + 7, stream.size)))     // кусками по 7 байт
+    ok("pcap: two packets from chunked input", got.size == 2 && got[0].first == 1700000000250L && got[1].first == 1700000001000L, got.joinToString { it.first.toString() })
+    ok("pcap: link type and original length", got[0].second == 1010 && got[0].third.contentEquals(eth))
+    val junk = PcapReader { _, _, _, _ -> }; junk.feed(ByteArray(40) { 7 })
+    ok("pcap: garbage is refused", !junk.valid)
+    val h = Frame.parse(1, eth)
+    ok("frame eth+ipv4+tcp", h.link == "eth" && h.dstMac == "aa:bb:cc:00:00:01" && h.srcMac == "11:22:33:44:55:66" && h.ethType == 0x800 &&
+        h.src == "10.0.0.1" && h.dst == "93.184.216.34" && h.proto == 6 && h.sport == 12345 && h.dport == 80, "${h.src} ${h.dst} ${h.sport} ${h.dport}")
+    val raw = Frame.parse(101, tcp)
+    ok("frame raw ip", raw.link == "ip" && raw.src == "10.0.0.1" && raw.dport == 80)
+    val sll = Frame.parse(113, b(0, 0, 0, 1, 0, 6, 1, 2, 3, 4, 5, 6, 0, 0, 0x08, 0x00) + tcp)
+    ok("frame linux cooked", sll.link == "sll" && sll.srcMac == "01:02:03:04:05:06" && sll.dst == "93.184.216.34")
+    val sll2 = Frame.parse(276, b(0x08, 0x00, 0, 0, 0, 0, 0, 3, 0, 1, 0, 6, 9, 8, 7, 6, 5, 4, 0, 0) + tcp)
+    ok("frame linux cooked v2: interface index", sll2.link == "sll2" && sll2.ifIndex == 3 && sll2.srcMac == "09:08:07:06:05:04" && sll2.sport == 12345)
+    val v6 = b(0x60, 0, 0, 0, 0, 8, 17, 64) + ByteArray(15) + b(1) + ByteArray(15) + b(2) + b(0, 53, 0xd4, 0x31, 0, 8, 0, 0)
+    val f6 = Frame.parse(101, v6)
+    ok("frame ipv6+udp", f6.ver == 6 && f6.proto == 17 && f6.sport == 53 && f6.dport == 0xd431 && f6.src == "0:0:0:0:0:0:0:1", "${f6.src} ${f6.sport}")
+    ok("frame short does not crash", Frame.parse(1, b(1, 2, 3)).src == null && Frame.parse(276, ByteArray(0)).src == null)
+    ok("perms: location sources", Perms.forSubs(setOf("gps", "cell"), 34, false).size == 2 && Perms.forSubs(setOf("accel"), 34, false).isEmpty())
+    ok("perms: bluetooth by version", Perms.forSubs(setOf("ble"), 34, false).any { it.endsWith("BLUETOOTH_SCAN") } && Perms.forSubs(setOf("ble"), 29, false).none { it.endsWith("BLUETOOTH_SCAN") })
+    ok("perms: steps, mic, camera", Perms.forSubs(setOf("steps", "mic"), 34, true).map { it.substringAfterLast('.') } == listOf("ACTIVITY_RECOGNITION", "RECORD_AUDIO", "CAMERA"))
+    ok("sniffer: interface and filter checked", Perms.iface("wlan0") == "wlan0" && Perms.iface("") == "any" && Perms.iface("a; reboot") == null && Perms.iface("a b") == null &&
+        Perms.filter("tcp port 80 and not host 10.0.0.1") == "tcp port 80 and not host 10.0.0.1" && Perms.filter("tcp'; reboot; '") == null && Perms.filter("\$(id)") == null && Perms.filter("`id`") == null)
+    ok("sniffer: script has no stray quotes", SnifferHub.script("any", 256, "tcp").contains("-i any -U -n -s 256 -w - 'tcp'"))
+    ok("dbfs", Audio.dbfs(32768.0) == 0.0 && Math.abs(Audio.dbfs(3276.8) + 20.0) < 1e-9 && Audio.dbfs(0.0) == -120.0)
     println(if (bad == 0) "all ok" else "$bad FAILED")
     if (bad != 0) System.exit(1)
 }

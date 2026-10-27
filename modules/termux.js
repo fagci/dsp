@@ -38,11 +38,20 @@ function termuxStart(n){
   };
 }
 function termuxRetry(n){ if(n.want && n.p.reconnect){ clearTimeout(n.timer); n.timer=setTimeout(()=>{ if(n.want) termuxStart(n); },3000); } }
+// PCM микрофона → поток отсчётов с метками (ssPush, sources.js): выдаётся по часам блоков движка, как у датчиков
+function termuxMic(n,r){
+  const a=termuxPcm(r), sr=+r.sr; if(!a || !(sr>0)) return;
+  const wall=performance.now()/1000, dur=a.length/sr;
+  if(!n.micT || Math.abs(n.micT-(wall-dur))>.5){ n.micT=wall-dur; if(n.micT0) ssInit(n,1); n.micT0=1; n.sExact=true; n.sLag=.25; }
+  for(let i=0;i<a.length;i++) ssPush(n,n.micT+i/sr,[a[i]]);
+  n.micT+=dur;
+}
 function termuxFeed(n,r){
   if(!r || typeof r!=='object') return;
   n.msgs++; n.last=termuxLine(r);
   if(r.src==='bridge'){ if(r.level==='error' || r.level==='warn') n.bridgeMsg=r.msg; return; }
   termuxApply(n.vals,r);
+  if(r.src==='mic'){ termuxMic(n,r); return; }
   if(r.src==='nmea'){ if(r.line){ n.nmeaQ.push(r.line); if(n.nmeaQ.length>2000) n.nmeaQ.splice(0,n.nmeaQ.length-2000); } return; }
   n.recQ.push({t:Date.now(), ...r});
   if(n.recQ.length>20000) n.recQ.splice(0,n.recQ.length-20000);
@@ -50,9 +59,9 @@ function termuxFeed(n,r){
   if(n.lineQ.length>2000) n.lineQ.splice(0,n.lineQ.length-2000);
 }
 
-const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','prox','atemp','humid','steps','heading','hinge','yaw','pitch','roll','batt','charging','temp','nsat','nused','cn0'];
+const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','prox','atemp','humid','steps','heading','hinge','yaw','pitch','roll','orient','still','sigm','cdbm','crsrp','crsrq','csinr','micdb','batt','charging','temp','nsat','nused','cn0'];
 def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'termux android app phone camera background bluetooth ble gnss satellites nmea raw measurements gps accelerometer gyroscope magnetometer battery wifi cell sensors',
-  ins:[], outs:[{n:'rec',t:'rec'},{n:'line',t:'txt'},{n:'camurl',t:'txt'},{n:'nmeatxt',t:'txt'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
+  ins:[], outs:[{n:'rec',t:'rec'},{n:'line',t:'txt'},{n:'camurl',t:'txt'},{n:'nmeatxt',t:'txt'},{n:'mic',t:'sig'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
   readout:true, tall:true,
   params:[
     {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'bridge: ws://host:8765/?token=…'},
@@ -84,7 +93,19 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'gnss',t:'check',d:false,label:'GNSS: every satellite — system, C/N0, elevation, azimuth, used in fix (DSP app)'},
     {n:'gnssraw',t:'check',d:false,label:'GNSS: raw measurements — pseudorange rate, carrier phase, clock (DSP app)'},
     {n:'nmea',t:'check',d:false,label:'NMEA sentences → output «nmeatxt» → NMEA Parser (DSP app)'},
-    {n:'cell',t:'check',d:false,label:'cell towers'},
+    {n:'cell',t:'check',d:false,label:'cell towers: operator, cell id, band, RSRP / RSRQ / SINR (rec; serving cell → cdbm crsrp crsrq csinr)'},
+    {n:'cellEvery',t:'range',min:1,max:120,step:1,d:5,label:'cell poll every, s (DSP app)'},
+    {n:'mic',t:'check',d:false,label:'microphone → output «mic» (signal), level in «micdb» (DSP app, also with the screen locked)'},
+    {n:'micHz',t:'select',opts:['8000','16000','22050','44100','48000'],d:'16000',label:'microphone: sample rate, Hz'},
+    {n:'pkt',t:'check',d:false,label:'packet capture, frames in hex → rec (DSP app; root + tcpdump; allow it in the app Settings)'},
+    {n:'iface',t:'text',d:'any',label:'capture: interface (any, wlan0, rmnet_data0…)'},
+    {n:'filter',t:'text',d:'',label:'capture: filter (tcpdump syntax, e.g. tcp port 80)'},
+    {n:'snap',t:'select',opts:['64','128','256','512','1500','65535'],d:'256',label:'capture: bytes per frame'},
+    {n:'step',t:'check',d:false,label:'step detector (DSP app) → rec'},
+    {n:'devorient',t:'check',d:false,label:'screen orientation 0–3 (DSP app; Android 13+)'},
+    {n:'sigmotion',t:'check',d:false,label:'significant motion (DSP app; one-shot trigger)'},
+    {n:'stationary',t:'check',d:false,label:'stationary detect → still=1 (DSP app)'},
+    {n:'motion',t:'check',d:false,label:'motion detect → still=0 (DSP app)'},
     {n:'hz',t:'select',opts:['0','10','50','100','200','500','1000'],d:'0',label:'sensor rate, Hz (DSP app; 0 — default; the phone gives what the sensor can)'},
     {n:'cam',t:'select',opts:['off','back','front'],d:'off',label:'camera stream (DSP app) → output «camurl» → IP Camera'},
     {n:'camw',t:'select',opts:['320','640','1280','1920','3840'],d:'640',label:'camera: width, px'},
@@ -94,7 +115,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'connect',t:'button',label:'Connect',fn:n=>termuxStart(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>termuxStop(n)},
   ],
-  init:n=>{ n.ws=null; n.want=false; n.timer=null; n.recQ=[]; n.lineQ=[]; n.nmeaQ=[]; n.vals={}; n.last=''; n.msgs=0; n.count=0;
+  init:n=>{ ssInit(n,1); n.sExact=true; n.sLag=.25; n.micT=0; n.micT0=0; n.ws=null; n.want=false; n.timer=null; n.recQ=[]; n.lineQ=[]; n.nmeaQ=[]; n.vals={}; n.last=''; n.msgs=0; n.count=0;
             n.status='not connected'; n.warn=''; n.sentSub=null; n.bridgeMsg=''; },
   dispose:n=>termuxStop(n),
   process(n){
@@ -105,6 +126,8 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     const nm=n.nmeaQ.length ? n.nmeaQ.splice(0).join('\n')+'\n' : '';
     const o={rec, line, camurl:termuxCamUrl(n.p.url,n.p), nmeatxt:nm, go:rec ? 1 : 0};
     for(const k of TERMUX_OUTS) o[k]=n.vals[k] ?? null;
+    if(n.p.mic){ const m=buf(n,'mic'); ssProcess(n,[m]); o.mic=m; }
+    else { if(n.micT){ ssInit(n,1); n.micT=0; n.micT0=0; n.sExact=true; n.sLag=.25; } o.mic=buf(n,'mic').fill(0); }
     return o;
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
@@ -123,6 +146,10 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     if(o.humid!=null) t+='\nhumidity '+f(o.humid,0)+' %';
     if(o.steps!=null) t+='\nsteps '+f(o.steps,0);
     if(o.hinge!=null) t+='\nhinge '+f(o.hinge,0)+'°';
+    if(o.cdbm!=null) t+='\ncell '+f(o.cdbm,0)+' dBm'+(o.crsrp!=null ? '  RSRP '+f(o.crsrp,0)+' RSRQ '+f(o.crsrq,0) : '');
+    if(o.micdb!=null) t+='\nmic '+f(o.micdb,0)+' dBFS';
+    if(o.orient!=null) t+='\nscreen orientation '+f(o.orient,0);
+    if(o.still!=null) t+='\n'+(o.still ? 'stationary' : 'moving');
     if(o.light!=null) t+='\nlight '+f(o.light,0)+' lx';
     if(o.press!=null) t+='\npressure '+f(o.press,1)+' hPa';
     if(o.batt!=null) t+='\nbattery '+f(o.batt,0)+'%'+(o.charging ? ' (charging)' : '')+(o.temp!=null ? '  '+f(o.temp,1)+' °C' : '');
