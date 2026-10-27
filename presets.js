@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=151;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=152;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -408,6 +408,7 @@ const PRESET_CATS={
   'IR: Arduino / ESP / Flipper (WebSerial)':'Infrared',
   'Phone App: Phone IR Blaster (NEC from a Patch)':'Infrared',
   'Picture in Picture: Spectrum in a Floating Window':'Start Here',
+  'Phone App: All Cameras — Thermal, IR, Depth and Hidden (Root)':'Images & TV',
   'Phone App: Notification with Buttons, Flashlight, SMS and Contacts':'Maps & Locating',
   'IR: Tasmota Blaster over MQTT':'Infrared',
   'MQTT: Subscribe and Publish':'Network & IoT',
@@ -1382,6 +1383,23 @@ const ff=addNode('fft',300,220,{size:'2048'});
 const wf=addNode('sa',560,220,{fmin:0,fmax:6000,split:.4});
 wf.size.w=460; wf.size.h=300; applySize(wf);
 addEdge(lf.id,'out',o.id,'freq'); addEdge(o.id,'out',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
+markWiresDirty();
+});
+preset('Phone App: All Cameras — Thermal, IR, Depth and Hidden (Root)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Android app (tools/android). After Connect the camera list on the phone node shows EVERY camera Android gives to apps: #id, kind (visible / ir / thermal / depth), side (back / front / external) and size — pick one and it appears in IP Camera. 16-bit thermal and depth frames come with auto-contrast; the palette gray / iron is on the node.\n'+
+  'Phones hide more cameras than they list (ultra-wide, macro, ToF, IR). With root: tick «Allow root features» in the app Settings, then in Phone Actions run cam.root.info (read-only: what the camera service knows, V4L2 devices, access properties), then cam.root.unhide — it adds the app to the system camera-access properties and restarts the camera service (the list on the phone node grows if the phone supports this; Qualcomm-based phones usually do), cam.root.restore puts everything back. Camera for other apps may blink for a few seconds.\n'+
+  'External UVC / thermal cameras on USB-C show up here only if the phone presents them as a camera; otherwise they are for vendor SDKs.'});
+nt.size.w=900; nt.size.h=210; applySize(nt);
+const tx=addNode('termux',40,280,{url:'ws://127.0.0.1:8765',gps:false,battery:false,cam:'back',camw:'640',camfps:10,camq:70,campal:'iron'});
+tx.size.w=360; tx.size.h=520; applySize(tx);
+const cam=addNode('ipcam',440,280,{maxw:'640'});
+cam.size.w=420; cam.size.h=320; applySize(cam);
+const ph=addNode('phone',900,280,{url:'ws://127.0.0.1:8765',action:'cam.root.info',notifyEv:false,torchState:false});
+ph.size.w=380; ph.size.h=520; applySize(ph);
+const tb=addNode('table',440,620,{list:'phone/cameras',maxRows:200,rev:true,cols:['t','src','cmd','ok','msg','text']});
+tb.size.w=700; tb.size.h=260; applySize(tb);
+addEdge(tx.id,'camurl',cam.id,'url'); addEdge(ph.id,'rec',tb.id,'rec');
 markWiresDirty();
 });
 preset('Quick Sound Level Meter', function(){

@@ -75,7 +75,7 @@ br.close(); fs.rmSync(dir,{recursive:true,force:true});
 const kf=path.join(root,'modules/termux-kernels.js');
 if(fs.existsSync(kf)){
   const ctx=vm.createContext({atob,Float32Array,Math,Number,String,Object,Array,isFinite,Date,JSON,URL,URLSearchParams});
-  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxDev,termuxThin,termuxPoint,termuxPcm,termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxCamUrl};',ctx);
+  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxCamOpts,termuxCamId,termuxCamLabel,termuxDev,termuxThin,termuxPoint,termuxPcm,termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxCamUrl};',ctx);
   const K=ctx.K, o={};
   K.termuxApply(o,{src:'gps',lat:1,lon:2,alt:3,acc:4,speed:5,bearing:6});
   ok('apply gps',o.lat===1 && o.lon===2 && o.alt===3 && o.acc===4 && o.speed===5 && o.hdg===6);
@@ -104,6 +104,14 @@ if(fs.existsSync(kf)){
   ok('thin: by distance (0.0001° lat ≈ 11 m)',!K.termuxThin(mv,{dev:'d',lat:50.00005,lon:30},1,0,10) && K.termuxThin(mv,{dev:'d',lat:50.0002,lon:30},2,0,10));
   const pt=K.termuxPoint({src:'ble',lat:1,lon:2,rssi:-70,dev:'ble:x',name:'x'},'m1');
   ok('map point',pt.id==='m1' && pt.lat===1 && pt.label==='-70 dBm' && pt.color==='#b07cff' && pt.track===0);
+  // --- камеры из hello.cameraInfo ---
+  const info=[{id:'0',kind:'visible',facing:'back',w:4000,h:3000},{id:'1',kind:'visible',facing:'front',w:3264,h:2448},{id:'3',kind:'thermal',facing:'external',w:160,h:120},{id:'4',kind:'depth',facing:'back'}];
+  const co=K.termuxCamOpts(info,'off');
+  ok('camera list: off, back, front and every camera of the phone',co.slice(0,3).join()==='off,back,front' && co.length===7 && co[5]==='#3 thermal external 160×120' && co[6]==='#4 depth back',co.join('|'));
+  ok('camera list: the saved choice stays even before the list arrives; no info → three basics',K.termuxCamOpts(null,'#3 thermal external 160×120').includes('#3 thermal external 160×120') && K.termuxCamOpts(undefined,'back').join()==='off,back,front');
+  ok('camera id from the list value',K.termuxCamId('#3 thermal external 160×120')==='3' && K.termuxCamId('#12.a:b x')==='12.a:b' && K.termuxCamId('front')==='front');
+  const cu2=K.termuxCamUrl('ws://10.0.0.2:8765/?token=k',{cam:'#3 thermal external 160×120',camw:'640',camfps:10,camq:70,campal:'iron'});
+  ok('camera url: by id, palette, token',/cam=3&/.test(cu2) && cu2.includes('pal=iron') && cu2.includes('token=k') && !K.termuxCamUrl('ws://h:1',{cam:'front',camw:'640',camfps:10,camq:70,campal:'gray'}).includes('pal='),cu2);
   ok('apply sensors',o.ax===1 && o.az===3 && o.gx===4 && o.gz===6 && o.mx===7 && o.mz===9 && o.light===120 && o.press===1013);
   K.termuxApply(o,{src:'battery',pct:50,status:'CHARGING',temp:31});
   ok('apply battery',o.batt===50 && o.charging===1 && o.temp===31);

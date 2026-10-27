@@ -41,7 +41,7 @@ class SettingsActivity : Activity() {
         root.addView(strict)
         check = Switch(this).apply { text = "Check the site of browsers (Origin); off — any page may connect"; isChecked = cfg.checkOrigin; setPadding(0, pad, 0, 0) }
         root.addView(check)
-        sniff = Switch(this).apply { text = "Allow packet capture (needs root: su + tcpdump)"; isChecked = cfg.sniffer; setPadding(0, pad, 0, 0) }
+        sniff = Switch(this).apply { text = "Allow root features: packet capture (su + tcpdump), hidden cameras"; isChecked = cfg.sniffer; setPadding(0, pad, 0, 0) }
         root.addView(sniff)
         text("Port"); port = edit(cfg.port.toString(), true)
         text("Token (empty — no token, anyone who can reach the port gets in)"); token = edit(cfg.token)

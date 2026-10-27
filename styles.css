@@ -785,7 +785,8 @@ canvas.view.fs-fb{position:fixed!important;inset:0;width:100vw!important;height:
 .modpick .mp-cat{padding:6px 6px 2px;color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.05em}
 .modpick .mp-item{display:flex;align-items:center;gap:6px;width:100%;padding:4px 6px;background:none;border:0;
   border-radius:3px;color:var(--txt);font-size:12px;text-align:left;cursor:pointer}
-.modpick .mp-item b{flex:1 1 auto;font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.modpick .mp-item b{flex:1 1 auto;font-weight:500;min-width:0;overflow:hidden;line-height:1.2;overflow-wrap:anywhere;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2}      /* длинное имя — в две строки, а не обрезается */
 .modpick .mp-item .dot{flex:none;width:7px;height:7px;border-radius:50%}
 .modpick .mp-item .pio{flex:none;display:flex;align-items:center;gap:4px;color:var(--dim)}
 .modpick .mp-item .pio .grp{display:flex;align-items:center;gap:2px;font-size:8px}

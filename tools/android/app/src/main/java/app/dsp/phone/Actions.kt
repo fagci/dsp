@@ -64,6 +64,7 @@ class PhoneActions(
     private val emit: Emit,
     private val askPerms: (List<String>) -> Unit,
     private val cameraInfo: () -> String,
+    private val cfg: Config,
 ) {
     private val pool = Executors.newCachedThreadPool { r -> Thread(r, "dsp-action").also { it.isDaemon = true } }
     private val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -205,6 +206,7 @@ class PhoneActions(
                 done(c, id, cmd, null, extra = arrayOf("us" to p.sum().toString()))
             }
             "cam.list" -> done(c, id, cmd, null, extra = arrayOf("cameras" to cameraInfo()))
+            "cam.root.info", "cam.root.unhide", "cam.root.restore" -> rootCam(c, id, cmd)
             "sms.send" -> {
                 if (!need(c, id, cmd, listOf(Manifest.permission.SEND_SMS))) return
                 val to = Cmd.number(j.optString("to")) ?: return done(c, id, cmd, "bad number")
@@ -253,6 +255,32 @@ class PhoneActions(
             }
             else -> done(c, id, cmd, "unknown command", "unknown")
         }
+    }
+
+    /** Камеры с root; команды только доверенному клиенту (BridgeServer.sensitiveCmd) и только если root-возможности включены в настройках приложения. */
+    private fun rootCam(c: BridgeServer.Client, id: Any?, cmd: String) {
+        if (!cfg.sniffer) return done(c, id, cmd, "root features are off — tick «Allow root features» in the app Settings", "forbidden")
+        fun count() = try { JSONArray(cameraInfo()).length() } catch (e: Exception) { 0 }
+        val before = count()
+        val (code, out) = when (cmd) {
+            "cam.root.info" -> RootSh.run(RootCam.INFO)
+            "cam.root.unhide" -> {
+                val script = RootCam.unhideScript(ctx.packageName) ?: return done(c, id, cmd, "bad package name")
+                val r = RootSh.run(script)
+                // прежние значения запоминаем один раз — по ним откат; повторный запуск их не затирает
+                if (r.first == 0 && cfg.camProps.isEmpty()) cfg.camProps = RootCam.toJson(RootCam.parseOld(r.second))
+                if (r.first == 0) Thread.sleep(4000)                   // камерный сервис поднимается заново
+                r
+            }
+            else -> {
+                val script = RootCam.restoreScript(RootCam.fromJson(cfg.camProps)) ?: return done(c, id, cmd, "nothing to restore (the properties were not changed from here)")
+                val r = RootSh.run(script)
+                if (r.first == 0) { cfg.camProps = ""; Thread.sleep(4000) }
+                r
+            }
+        }
+        if (code != 0) return done(c, id, cmd, if (code < 0) "no root (su): " + RootCam.clip(out, 200) else "su exit $code: " + RootCam.clip(out, 300))
+        done(c, id, cmd, null, extra = arrayOf("text" to Json.str(RootCam.clip(out, 6000)), "before" to before.toString(), "after" to count().toString(), "cameras" to cameraInfo()))
     }
 
     private fun irRanges(): List<IntArray> = try { ir?.carrierFrequencies?.map { intArrayOf(it.minFrequency, it.maxFrequency) } ?: emptyList() } catch (e: Exception) { emptyList() }

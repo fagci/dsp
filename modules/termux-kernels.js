@@ -17,12 +17,24 @@ function termuxSubMsg(p){
   return m;
 }
 
+// камера в списке узла: off, back, front и все камеры телефона из hello.cameraInfo («#3 thermal external 160×120»: номер, вид, сторона, размер)
+function termuxCamLabel(c){ return '#'+c.id+' '+(c.kind||'')+' '+(c.facing||'')+(c.w ? ' '+c.w+'×'+c.h : ''); }
+function termuxCamOpts(info,cur){
+  const o=['off','back','front'];
+  for(const c of Array.isArray(info) ? info : []) if(c && c.id!=null) o.push(termuxCamLabel(c));
+  if(cur && !o.includes(cur)) o.push(cur);                    // выбранная ещё не пришла в списке (после перезагрузки страницы)
+  return o;
+}
+// значение списка → то, что просим у моста: back / front или номер камеры
+function termuxCamId(v){ const m=/^#([A-Za-z0-9_.:-]+)/.exec(String(v||'')); return m ? m[1] : String(v||''); }
+
 // адрес камеры приложения DSP на том же порту, что и WebSocket (→ вход url узла IP Camera); null — камера выключена
 function termuxCamUrl(url,p){
   if(!p.cam || p.cam==='off') return null;
   let u; try{ u=new URL(String(url||'').trim()); }catch(e){ return null; }
   if(u.protocol!=='ws:' && u.protocol!=='wss:') return null;
-  const q=new URLSearchParams({cam:p.cam,w:p.camw,fps:p.camfps,q:p.camq}), t=u.searchParams.get('token');
+  const q=new URLSearchParams({cam:termuxCamId(p.cam),w:p.camw,fps:p.camfps,q:p.camq}), t=u.searchParams.get('token');
+  if(p.campal==='iron') q.set('pal','iron');                    // палитра 16-битных кадров (тепловизор, глубина)
   if(t) q.set('token',t);
   return (u.protocol==='wss:' ? 'https:' : 'http:')+'//'+u.host+'/camera.mjpg?'+q;
 }

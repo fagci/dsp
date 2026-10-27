@@ -249,7 +249,7 @@ fun main() {
     val (fake, _) = cmdClient("?k=wrong")
     fake.sendText("""{"cmd":"sms.list"}""", true).get()
     ok("a wrong key is not trusted", until { cmds.count { it.second == "sms.list" } == 2 } && cmds.last() == (false to "sms.list"), cmds.toString())
-    ok("sensitive command names", BridgeServer.sensitiveCmd("sms.send") && BridgeServer.sensitiveCmd("contacts.find") && !BridgeServer.sensitiveCmd("notify") && !BridgeServer.sensitiveCmd("torch"))
+    ok("sensitive command names", BridgeServer.sensitiveCmd("sms.send") && BridgeServer.sensitiveCmd("contacts.find") && BridgeServer.sensitiveCmd("cam.root.unhide") && !BridgeServer.sensitiveCmd("cam.list") && !BridgeServer.sensitiveCmd("notify") && !BridgeServer.sensitiveCmd("torch"))
     guest.abort(); own.abort(); fake.abort()
     srv.stop()
     ok("stopped", !srv.listening)
