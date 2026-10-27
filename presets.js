@@ -5,7 +5,9 @@ const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VE
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
-const Net={ get proxy(){ return (LS.get('dsp-proxy')||'').trim(); },
+// В приложении Android (DspApp — его JS-мост) запросы к чужим хостам идут через приложение с CORS-заголовками и mixed content разрешён: прокси не нужен
+const Net={ get app(){ return typeof DspApp!=='undefined'; },
+  get proxy(){ return this.app ? '' : (LS.get('dsp-proxy')||'').trim(); },
   url(u){ const p=this.proxy; return !p ? u : p.includes('{url}') ? p.replace('{url}',encodeURIComponent(u)) : p+u; } };
 // Row Player, подключённый к Table проводом rows: проигрывание строк таблицы
 const playRows=(tb,x,y,p)=>{ const pl=addNode('rowplayer',x,y,p); addEdge(tb.id,'rows',pl.id,'rows'); return pl; };

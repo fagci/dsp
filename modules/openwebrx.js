@@ -15,7 +15,7 @@ function owrxWsUrl(a){
     if(!/^[a-z]+:\/\//i.test(u)) u=new URL(u,location.href).href;
     return u.replace(/^http/i,'ws');
   }
-  if(!a.tls && location.protocol==='https:') throw new Error('set a proxy in Settings (https page cannot open ws://)');
+  if(!a.tls && location.protocol==='https:' && !Net.app) throw new Error('set a proxy in Settings (https page cannot open ws://)');
   return `${a.tls?'wss':'ws'}://${a.host}:${a.port}/ws/`;
 }
 const owrxSend=(n,o)=>{ if(n.ws && n.ws.readyState===1) n.ws.send(typeof o==='string' ? o : JSON.stringify(o)); };

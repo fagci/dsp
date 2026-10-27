@@ -15,6 +15,10 @@ sensors up to 200 Hz, GPS and everything the satellites say, Wi-Fi, Bluetooth LE
   - `http://host:8765/camera.mjpg?cam=back|front&w=640&fps=10&q=70&rot=0` — MJPEG (Camera2, YUV → JPEG, turned upright). `/snapshot.jpg` — one frame. `/status` — text.
 - **In the workbench:** the *Phone sensors (Termux / DSP app)* node — *sensor rate*, *camera stream*, *Wi-Fi scan every*, *Bluetooth LE / classic*, *GNSS*, *GNSS raw*, *NMEA*. Outputs: `camurl` (the stream address → *IP Camera* `url`), `nmeatxt` (NMEA sentences → *NMEA Parser* `text`), `nsat`, `nused`, `cn0` (satellites in view / used / mean C/N0 of the used), `rec` for everything else. Presets *Phone App: Camera, Sensors and Wi-Fi in the Background*, *Phone App: Satellites, Bluetooth and Wi-Fi Scan*.
 
+## No CORS proxy
+
+Inside the app the page needs no CORS proxy (*Settings → CORS proxy* is hidden there): requests to other hosts (GET / HEAD / OPTIONS: catalogues, TLE, terrain tiles, station lists, camera snapshots and MJPEG, HLS) are made by the app itself (`CorsProxy`), redirects are followed, gzip is decoded, `Range` is passed on, and the answer gets `Access-Control-Allow-*` headers; `Origin`, `Referer` and cookies are not sent, `Authorization` is. Mixed content is allowed, so `ws://` / `http://` devices on the LAN work from the https page. POST with a body is the one thing the WebView does not let an app intercept: it goes the usual way (and needs the server's CORS headers). Opened in Chrome, the page behaves as before.
+
 ## Access
 
 The camera and the position are behind a local port, and by request nothing is checked by default:
@@ -33,7 +37,7 @@ Locally (no Android SDK in the dev container): JDK 17, Android SDK (platform 35)
 
 ## Checks
 
-`cd tools/android/jvm-test && gradle runTests` — the server (handshake, masking, long frames, batching, `Origin`, preflight with Private Network Access, token) against a real WebSocket / HTTP client, the frame rotation, and the parsers (BLE advertisement, Wi-Fi channel / information elements / WPS, GNSS names and bands), on a plain JVM against the Android 14 classes (`org.robolectric:android-all`). The JS side: `node tools/test-termux.mjs`.
+`cd tools/android/jvm-test && gradle runTests` — the server (handshake, masking, long frames, batching, `Origin`, preflight with Private Network Access, token) against a real WebSocket / HTTP client, the CORS proxy (gzip, redirects, `Range`, headers, errors, preflight) against a local HTTP server, the frame rotation, and the parsers (BLE advertisement, Wi-Fi channel / information elements / WPS, GNSS names and bands), on a plain JVM against the Android 14 classes (`org.robolectric:android-all`). The JS side: `node tools/test-termux.mjs`.
 
 **Not checked on a phone:** Camera2, sensors, Wi-Fi / Bluetooth scans, GNSS callbacks, the foreground service and the WebView were compiled against the Android 14 API and nothing more. Try the camera with the screen locked on your device before relying on it.
 

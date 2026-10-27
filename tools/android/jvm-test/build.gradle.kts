@@ -16,4 +16,7 @@ tasks.register<JavaExec>("runServerTest") {
 tasks.register<JavaExec>("runRecordsTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.recordstest.RecordsTestKt")
 }
-tasks.register("runTests") { dependsOn("runRotTest", "runServerTest", "runRecordsTest") }
+tasks.register<JavaExec>("runProxyTest") {
+    classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.proxytest.ProxyTestKt")
+}
+tasks.register("runTests") { dependsOn("runRotTest", "runServerTest", "runRecordsTest", "runProxyTest") }

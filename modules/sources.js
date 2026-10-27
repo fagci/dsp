@@ -1210,7 +1210,7 @@ def({ id:'webserial', title:'Serial Port (WebSerial)', cat:'Sources',
 // Со страницы, открытой по https, браузер не пускает ws:// и http:// к другим хостам (mixed
 // content) — ошибка случается до сети, обойти из JS нельзя. Исключение — localhost/127.x/::1.
 function netInsecure(url){
-  if(location.protocol!=='https:') return false;
+  if(location.protocol!=='https:' || (typeof Net!=='undefined' && Net.app)) return false;
   let u; try{ u=new URL(url); }catch(e){ return false; }
   if(u.protocol!=='ws:' && u.protocol!=='http:') return false;
   return !/^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/i.test(u.hostname);
@@ -5772,7 +5772,7 @@ function kiwiWsUrl(host,port,path){
     if(!/^[a-z]+:\/\//i.test(u)) u=new URL(u,location.href).href;
     return u.replace(/^http/i,'ws');
   }
-  if(location.protocol==='https:') throw new Error('set a proxy in Settings (https page cannot open ws://)');
+  if(location.protocol==='https:' && !Net.app) throw new Error('set a proxy in Settings (https page cannot open ws://)');
   return `ws://${host}:${port}/${path}`;
 }
 
