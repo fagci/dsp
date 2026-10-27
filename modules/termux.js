@@ -2,7 +2,7 @@
 /* ============================ Termux / приложение DSP ============================
    Телефон как источник (Termux-мост или приложение tools/android): GPS, датчики, батарея, Wi-Fi и соты. Мост tools/termux/bridge.mjs
    или приложение DSP отдаёт JSON-записи по WebSocket; узел сам просит нужные источники ({"sub":[…],"hz":200}).
-   Приложение ещё отдаёт камеру MJPEG на том же порту — адрес на выходе cam (→ url узла IP Camera).
+   Приложение ещё отдаёт камеру MJPEG на том же порту — адрес на выходе camurl (→ url узла IP Camera).
    Разбор записей — в termux-kernels.js, транспорт и mixed-content проверка — как у Text over Network. */
 
 function termuxStop(n){
@@ -51,7 +51,7 @@ function termuxFeed(n,r){
 
 const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','batt','charging','temp'];
 def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'termux android app phone camera background gps accelerometer gyroscope magnetometer battery wifi cell sensors',
-  ins:[], outs:[{n:'rec',t:'rec'},{n:'line',t:'txt'},{n:'cam',t:'txt'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
+  ins:[], outs:[{n:'rec',t:'rec'},{n:'line',t:'txt'},{n:'camurl',t:'txt'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
   readout:true, tall:true,
   params:[
     {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'bridge: ws://host:8765/?token=…'},
@@ -65,7 +65,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'wifi',t:'check',d:false,label:'Wi-Fi scan (with the position)'},
     {n:'cell',t:'check',d:false,label:'cell towers'},
     {n:'hz',t:'select',opts:['0','10','50','100','200'],d:'0',label:'sensor rate, Hz (DSP app; 0 — default)'},
-    {n:'cam',t:'select',opts:['off','back','front'],d:'off',label:'camera stream (DSP app) → output «cam» → IP Camera'},
+    {n:'cam',t:'select',opts:['off','back','front'],d:'off',label:'camera stream (DSP app) → output «camurl» → IP Camera'},
     {n:'camw',t:'select',opts:['320','640','1280','1920'],d:'640',label:'camera: width, px'},
     {n:'camfps',t:'range',min:1,max:30,step:1,d:10,label:'camera: frames per second'},
     {n:'camq',t:'range',min:30,max:95,step:5,d:70,label:'camera: JPEG quality'},
@@ -81,7 +81,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     const rec=n.recQ.length ? n.recQ.splice(0) : null;
     let line=n.lineQ.length ? n.lineQ[n.lineQ.length-1] : n.lastLine||'';
     n.lineQ.length=0; n.lastLine=line;
-    const o={rec, line, cam:termuxCamUrl(n.p.url,n.p), go:rec ? 1 : 0};
+    const o={rec, line, camurl:termuxCamUrl(n.p.url,n.p), go:rec ? 1 : 0};
     for(const k of TERMUX_OUTS) o[k]=n.vals[k] ?? null;
     return o;
   },

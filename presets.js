@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=143;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=144;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -1216,7 +1216,7 @@ preset('Phone App: Camera, Sensors and Wi-Fi in the Background', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'The Android app (tools/android, APK from the «Android app» workflow) runs a foreground service: sensors up to 200 Hz, GPS, Wi-Fi scan and the camera keep working with the screen locked.\n'+
   'Open the app once and allow Camera and Location; the page inside it (or this page in Chrome on the same phone) connects to ws://127.0.0.1:8765 — press Connect. For another device: Settings in the app → network access, then ws://PHONE_IP:8765/?token=…\n'+
-  'The camera comes out as an address (cam) → IP Camera: back / front, width, frames per second and JPEG quality are set on the sensors node. Wi-Fi records carry the phone position — wire rec to the map.'});
+  'The camera comes out as an address (camurl) → IP Camera: back / front, width, frames per second and JPEG quality are set on the sensors node. Wi-Fi records carry the phone position — wire rec to the map.'});
 nt.size.w=800; nt.size.h=150; applySize(nt);
 const tx=addNode('termux',40,220,{url:'ws://127.0.0.1:8765',gps:true,battery:true,accel:true,gyro:true,wifi:true,hz:'100',cam:'back',camw:'640',camfps:10,camq:70});
 tx.size.w=360; tx.size.h=480; applySize(tx);
@@ -1230,7 +1230,7 @@ const map=addNode('geoMap',440,560,{mz:17,labels:true,trail:2000});
 map.size.w=380; map.size.h=420; applySize(map);
 const log=addNode('recLog',40,740,{});
 log.size.w=340; applySize(log);
-addEdge(tx.id,'cam',cam.id,'url');
+addEdge(tx.id,'camurl',cam.id,'url');
 addEdge(tx.id,'az',t1.id,'in'); addEdge(tx.id,'gz',t2.id,'in');
 addEdge(tx.id,'rec',map.id,'rec'); addEdge(tx.id,'rec',log.id,'rec');
 markWiresDirty();
