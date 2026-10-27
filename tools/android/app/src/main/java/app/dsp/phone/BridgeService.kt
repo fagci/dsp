@@ -148,15 +148,21 @@ class BridgeService : Service() {
         val stop = PendingIntent.getService(this, 2, Intent(this, BridgeService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE)
         val text = serverError ?: summary()
         shownText = text
-        return Notification.Builder(this, CH)
+        val b = Notification.Builder(this, CH)
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setContentTitle("DSP phone bridge")
             .setContentText(text)
             .setContentIntent(open)
             .setOngoing(true)
             .addAction(android.R.drawable.ic_menu_preferences, "Settings", set)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stop)
-            .build()
+        // напоминание висит, пока не исключили из оптимизации батареи — иначе прошивка рано или поздно замораживает процесс в фоне
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+            val battery = PendingIntent.getActivity(this, 3,
+                Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, android.net.Uri.parse("package:$packageName")), PendingIntent.FLAG_IMMUTABLE)
+            b.addAction(android.R.drawable.ic_lock_idle_low_battery, "Fix battery optimization", battery)
+        }
+        return b.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stop).build()
     }
 
     private fun summary(): String {
