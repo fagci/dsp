@@ -48,6 +48,37 @@ var bad = 0
 fun ok(name: String, c: Boolean, x: String = "") { if (!c) { bad++; println("FAIL $name $x") } else println("ok   $name") }
 fun until(ms: Long = 4000, f: () -> Boolean): Boolean { val t = System.currentTimeMillis(); while (System.currentTimeMillis() - t < ms) { if (f()) return true; Thread.sleep(20) }; return false }
 
+
+/** Поддельный USB для проверки протокола /usb (без Android). */
+class FakeUsb : UsbBackend {
+    val log = java.util.concurrent.CopyOnWriteArrayList<String>()
+    val ls = java.util.concurrent.CopyOnWriteArraySet<(String, org.json.JSONObject) -> Unit>()
+    override fun list() = org.json.JSONArray().put(org.json.JSONObject().put("id", "d1").put("perm", true).put("vid", 0x0bda).put("pid", 0x2838))
+    override fun permission(id: String) = id == "d1"
+    override fun open(id: String) { if (id != "d1") throw UsbError("NotFoundError", "device is gone"); log.add("open") }
+    override fun close(id: String) { log.add("close") }
+    override fun config(id: String, value: Int) { log.add("config$value") }
+    override fun claim(id: String, num: Int) { log.add("claim$num") }
+    override fun release(id: String, num: Int) {}
+    override fun alt(id: String, num: Int, alt: Int) {}
+    override fun control(id: String, rt: Int, req: Int, value: Int, index: Int, len: Int, data: ByteArray?) =
+        if (rt and 0x80 != 0) ByteArray(len) { (req + it).toByte() } else { log.add("ctl-out:" + (data?.size ?: -1) + ":" + value + ":" + index); ByteArray(0) }
+    override fun bulkIn(id: String, addr: Int, len: Int, alive: () -> Boolean): ByteArray {
+        if (addr == 0x85) { while (alive()) Thread.sleep(10); throw UsbError("NetworkError", "closed") }     // читает, пока сессия жива
+        return ByteArray(len) { it.toByte() }
+    }
+    override fun bulkOut(id: String, addr: Int, data: ByteArray) = data.size
+    override fun clearHalt(id: String, addr: Int) { log.add("clear$addr") }
+    override fun reset(id: String) {}
+    override fun listen(l: (String, org.json.JSONObject) -> Unit) { ls.add(l) }
+    override fun unlisten(l: (String, org.json.JSONObject) -> Unit) { ls.remove(l) }
+}
+
+fun usbMsg(h: org.json.JSONObject, payload: ByteArray = ByteArray(0)): java.nio.ByteBuffer {
+    val hb = h.toString().toByteArray()
+    return java.nio.ByteBuffer.allocate(4 + hb.size + payload.size).putInt(hb.size).put(hb).put(payload).flip()
+}
+
 fun main() {
     val ctx = FakeCtx()
     val cfg = Config(ctx)
@@ -134,6 +165,59 @@ fun main() {
     ok("query sources and hz", until { srv.wanted().subs == setOf("battery", "accel") && srv.wanted().hz == 50 })
     ws2.abort()
     ok("abrupt close removes client", until { srv.clientCount == 0 })
+
+    // --- /usb: общий USB-API для страницы приложения ---
+    val fu = FakeUsb()
+    ok("/usb without a backend: 404", get("/usb?k=${UsbKey.value}").statusCode() == 404)
+    srv.usb = fu
+    ok("/usb without the key: 403", get("/usb").statusCode() == 403)
+    ok("/usb with a wrong key: 403", get("/usb?k=nope").statusCode() == 403)
+    ok("/usb with the key but without WebSocket: 400", get("/usb?k=${UsbKey.value}").statusCode() == 400)
+    val replies = java.util.concurrent.LinkedBlockingQueue<Pair<org.json.JSONObject, ByteArray>>()
+    val ubuf = java.io.ByteArrayOutputStream()
+    val ul = object : WebSocket.Listener {
+        override fun onOpen(w: WebSocket) { w.request(1) }
+        override fun onBinary(w: WebSocket, d: java.nio.ByteBuffer, last: Boolean): CompletionStage<*>? {
+            val a = ByteArray(d.remaining()); d.get(a); ubuf.write(a)
+            if (last) {
+                val m = ubuf.toByteArray(); ubuf.reset()
+                val hl = java.nio.ByteBuffer.wrap(m).int
+                replies.add(org.json.JSONObject(String(m, 4, hl)) to m.copyOfRange(4 + hl, m.size))
+            }
+            w.request(1); return null
+        }
+    }
+    val uws = HttpClient.newHttpClient().newWebSocketBuilder().buildAsync(URI("ws://127.0.0.1:$port/usb?k=${UsbKey.value}"), ul).get()
+    fun call(h: org.json.JSONObject, p: ByteArray = ByteArray(0)): Pair<org.json.JSONObject, ByteArray> {
+        uws.sendBinary(usbMsg(h, p), true).get()
+        return replies.poll(4, java.util.concurrent.TimeUnit.SECONDS) ?: (org.json.JSONObject().put("ok", false).put("err", "timeout") to ByteArray(0))
+    }
+    fun req(id: Int, op: String) = org.json.JSONObject().put("id", id).put("op", op).put("dev", "d1")
+    val l1 = call(req(1, "list"))
+    ok("usb list", l1.first.getBoolean("ok") && l1.first.getInt("id") == 1 && l1.first.getJSONArray("devices").getJSONObject(0).getInt("vid") == 0x0bda)
+    ok("usb permission", call(req(2, "perm")).first.getBoolean("granted"))
+    ok("usb open, config, claim reach the backend", call(req(3, "open")).first.getBoolean("ok") && call(req(4, "config").put("value", 1)).first.getBoolean("ok") &&
+        call(req(5, "claim").put("num", 0)).first.getBoolean("ok") && fu.log.toList() == listOf("open", "config1", "claim0"), fu.log.toString())
+    val ci = call(req(6, "control").put("rt", 0xC0).put("req", 5).put("val", 0).put("idx", 0).put("len", 4))
+    ok("usb control IN returns data", ci.first.getBoolean("ok") && ci.second.toList() == listOf<Byte>(5, 6, 7, 8))
+    val co = call(req(7, "control").put("rt", 0x40).put("req", 1).put("val", 2).put("idx", 3).put("len", 3), byteArrayOf(1, 2, 3))
+    ok("usb control OUT carries the payload", co.first.getBoolean("ok") && fu.log.contains("ctl-out:3:2:3"), fu.log.toString())
+    val bi = call(req(8, "in").put("ep", 0x81).put("len", 70000))
+    ok("usb bulk IN: long payload in one message", bi.first.getBoolean("ok") && bi.second.size == 70000 && bi.second[69999] == 69999.toByte())
+    val bo = call(req(9, "out").put("ep", 2), ByteArray(1000))
+    ok("usb bulk OUT: written", bo.first.getInt("written") == 1000)
+    val er = call(req(10, "open").put("dev", "nope"))
+    ok("usb error mapped to a DOMException name", !er.first.getBoolean("ok") && er.first.getString("err") == "NotFoundError" && er.first.getString("msg") == "device is gone")
+    ok("usb unknown op", call(req(11, "frobnicate")).first.getString("err") == "NotSupportedError")
+    // долгое чтение не блокирует остальное: ответ на следующий запрос приходит, пока чтение висит
+    uws.sendBinary(usbMsg(req(12, "in").put("ep", 0x85).put("len", 16)), true).get()
+    val fast = call(req(13, "list"))
+    ok("usb: a pending read does not block other requests", fast.first.getInt("id") == 13 && fast.first.getBoolean("ok"))
+    for (l in fu.ls) l("disconnect", org.json.JSONObject().put("id", "d1"))
+    val evr = replies.poll(3, java.util.concurrent.TimeUnit.SECONDS)
+    ok("usb event pushed to the page", evr != null && evr.first.getString("ev") == "disconnect" && evr.first.getString("id") == "d1")
+    uws.abort()
+    ok("usb session unsubscribes on close", until { fu.ls.isEmpty() })
     srv.stop()
     ok("stopped", !srv.listening)
     println(if (bad == 0) "all ok" else "$bad FAILED")

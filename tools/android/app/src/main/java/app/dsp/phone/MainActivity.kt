@@ -175,6 +175,13 @@ class MainActivity : Activity() {
             "DspApp.chunk(id,${JSONObject.quote(name)},${JSONObject.quote(mime)},s,o+N>=b.size);if(b.size===0)break;}})()"
 
     inner class Downloads {
+        /** Адрес USB-API моста для этой страницы (с ключом, который другие сайты не знают); веб-часть строит из него navigator.usb. */
+        @JavascriptInterface
+        fun usbUrl(): String {
+            val c = Config(this@MainActivity)
+            return "ws://127.0.0.1:${c.port}/usb?k=${UsbKey.value}" + (if (c.strict && c.token.isNotEmpty()) "&token=${c.token}" else "")
+        }
+
         private var id = ""
         private var out: OutputStream? = null
         private var label = ""

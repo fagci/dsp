@@ -18,6 +18,13 @@ sensors up to 200 Hz, GPS and everything the satellites say, Wi-Fi, Bluetooth LE
   - `http://host:8765/camera.mjpg?cam=back|front&w=640&fps=10&q=70&rot=0` — MJPEG (Camera2, YUV → JPEG, turned upright). `/snapshot.jpg` — one frame. `/status` — text.
 - **In the workbench:** the *Phone sensors (Termux / DSP app)* node — *sensor rate*, *camera stream*, *Wi-Fi scan every*, *Bluetooth LE / classic*, *GNSS*, *GNSS raw*, *NMEA*. Outputs: `camurl` (the stream address → *IP Camera* `url`), `nmeatxt` (NMEA sentences → *NMEA Parser* `text`), `nsat`, `nused`, `cn0` (satellites in view / used / mean C/N0 of the used), `rec` for everything else. Presets *Phone App: Camera, Sensors and Wi-Fi in the Background*, *Phone App: Satellites, Bluetooth and Wi-Fi Scan*.
 
+## USB
+
+The WebView has no WebUSB, so the bridge has a **general USB API** and the workbench builds `navigator.usb` on it (`modules/usb-bridge.js`; it does nothing outside the app). RTL-SDR, HackRF, Airspy, RX888, logic analysers, USB serial adapters and the rest of the USB modules then work in the app as in Chrome. Plug a device with an OTG cable; the first `requestDevice` shows Android's permission dialog (and a small chooser when several devices match). Isochronous transfers are not available (`UsbDeviceConnection` has none); `reset` works where the phone allows it; workers have no `navigator.usb`, so the SDR code opens the dongle on the main thread.
+
+- `ws://127.0.0.1:8765/usb?k=<key>` — **only from this phone and only with the key** that the app hands to its own page (`DspApp.usbUrl()`); other sites and apps do not know it, because this port reads and writes to attached devices. Binary messages `[u32 BE header length][header JSON][payload]`; request `{id, op, dev, …}`, answer `{id, ok:true, …}` or `{id, ok:false, err:<DOMException name>, msg}`, events `{ev:'connect'|'disconnect', …}`.
+- Operations: `list` (devices with `perm`, descriptors: `vid pid cls sub proto ver mfr prod serial configs[{value, ifaces[{num, alt, cls, sub, proto, eps[{num, in, type, size}]}]}]`; names and serial number only after access), `perm` (the Android dialog), `open`, `close`, `config {value}`, `claim {num}` (the kernel driver is detached), `release`, `alt {num, alt}`, `control {rt, req, val, idx, len}` (+ payload for OUT), `in {ep, len}` (waits for data like WebUSB; up to 8 MB, a short packet ends it), `out {ep}` + payload, `clear {ep}`, `reset`.
+
 ## No CORS proxy
 
 Inside the app the page needs no CORS proxy (*Settings → CORS proxy* is hidden there): requests to other hosts (GET / HEAD / OPTIONS: catalogues, TLE, terrain tiles, station lists, camera snapshots and MJPEG, HLS) are made by the app itself (`CorsProxy`), redirects are followed, gzip is decoded, `Range` is passed on, and the answer gets `Access-Control-Allow-*` headers; `Origin`, `Referer` and cookies are not sent, `Authorization` is. Mixed content is allowed, so `ws://` / `http://` devices on the LAN work from the https page. POST with a body is the one thing the WebView does not let an app intercept: it goes the usual way (and needs the server's CORS headers). Opened in Chrome, the page behaves as before.
@@ -46,7 +53,7 @@ Locally (no Android SDK in the dev container): JDK 17, Android SDK (platform 35)
 
 ## Limits
 
-- Android WebView has no WebUSB, WebSerial, WebBluetooth, WebHID or File System Access. For an SDR / serial device open the workbench in Chrome and keep the app only as the bridge (`ws://127.0.0.1:8765`).
+- Android WebView has no WebSerial, WebBluetooth, WebHID or File System Access (WebUSB is built by the app, see **USB** above). For a serial device that is not USB open the workbench in Chrome and keep the app only as the bridge (`ws://127.0.0.1:8765`).
 - The page itself is throttled by Android with the screen off (WebView and Chrome alike). The service keeps capturing and serving; to *process* while the phone is locked, open the workbench on another device (*Allow other devices* → `ws://PHONE_IP:8765/?token=…`).
 - The camera needs the permission granted and the service started while the app is on screen (Android rule for foreground services of the camera type). Open the app once after boot, then lock the screen.
 - Wi-Fi scans are rate-limited by Android (a few per two minutes; *Developer options → Wi-Fi scan throttling* lifts it) and need Location on. Bluetooth needs *Nearby devices* (Android 12+) and Location; classic discovery and BLE scanning take radio time from each other and from Wi-Fi.
