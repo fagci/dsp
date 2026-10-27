@@ -35,6 +35,7 @@ class BridgeService : Service() {
     private val warned = HashSet<String>()
     private var shownText = ""
     @Volatile private var serverError: String? = null
+    @Volatile private var destroyed = false      // после остановки хвосты (обрыв клиентов, колбэки камеры) не должны ничего включать и перепубликовать уведомление
 
     override fun onCreate() {
         super.onCreate()
@@ -53,7 +54,7 @@ class BridgeService : Service() {
     }
 
     override fun onStartCommand(i: Intent?, flags: Int, id: Int): Int {
-        if (i?.action == ACTION_STOP) { stopSelf(); return START_NOT_STICKY }
+        if (i?.action == ACTION_STOP) { shutdown(); return START_NOT_STICKY }
         goForeground()
         if (i?.action == ACTION_RELOAD || !server.listening) serverError = server.start()
         refresh()
@@ -62,10 +63,20 @@ class BridgeService : Service() {
 
     override fun onBind(i: Intent?): IBinder? = null
 
+    /** Остановка по кнопке: снять уведомление и остановить сервис. */
+    private fun shutdown() {
+        destroyed = true
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(ID)
+        stopSelf()
+    }
+
     override fun onDestroy() {
+        destroyed = true
         server.stop(); camera.stop()
         sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close()
         wake?.takeIf { it.isHeld }?.release()
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(ID)
         super.onDestroy()
     }
 
@@ -119,6 +130,7 @@ class BridgeService : Service() {
     /** Включает то, что просят клиенты, остальное гасит. Вызывается при каждой смене подписок. */
     @Synchronized
     private fun refresh() {
+        if (destroyed) return
         val w = server.wanted()
         val problems = HashSet<String>()
         for (k in sensors.update(w.subs.filter { it in SensorHub.TYPES }.toSet(), w.hz)) problems.add("$k: no such sensor on this phone")
@@ -163,6 +175,11 @@ class BridgeService : Service() {
         private const val ID = 1
         // источники, которым нужно включённое определение положения (ГНСС) или последнее положение в записях
         private val POSITION = setOf("gps", "wifi", "ble", "bt", "gnss", "gnssraw", "nmea")
+
+        /** Остановить мост (то же, что кнопка Stop в уведомлении). */
+        fun stop(ctx: Context) {
+            ctx.startService(Intent(ctx, BridgeService::class.java).setAction(ACTION_STOP))
+        }
 
         fun start(ctx: Context, reload: Boolean = false) {
             val i = Intent(ctx, BridgeService::class.java)
