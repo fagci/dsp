@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=140;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=141;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -269,6 +269,7 @@ const PRESET_CATS={
   'DMR: Repeater or Direct Mode (USB SDR)':'Digital Voice & Trunking',
   'DMR: Activity Log and Station Map (Generator)':'Digital Voice & Trunking',
   'DMR: Activity Log and Station Map (USB SDR)':'Digital Voice & Trunking',
+  'DMR: Callsigns and Talkgroup Names (Generator)':'Digital Voice & Trunking',
   'DMR: Voice Only into One IQ File (Generator)':'Digital Voice & Trunking',
   'DMR: Voice Only into One IQ File (USB SDR)':'Digital Voice & Trunking',
   'IQ Files: Play a Saved Recording into the DMR Decoder':'SDR Receivers',
@@ -3102,6 +3103,22 @@ const log=addNode('recLog',860,680,{});
 log.size.w=520; applySize(log);
 addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',lg.id,'rec');
 addEdge(lg.id,'stations',map.id,'rec'); addEdge(lg.id,'calls',log.id,'rec');
+markWiresDirty();
+});
+preset('DMR: Callsigns and Talkgroup Names (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'DMR Call Log shows callsigns (RadioID) and talkgroup names (BrandMeister) instead of bare numbers. The lists are not in the app: open Files → ⇩ offline,\n'+
+  'tick "DMR: RadioID database" and "DMR: talkgroup names" and download (or pick user.csv from radioid.net by hand). After that it works without a network.\n'+
+  'Until then the log runs on numbers and says so in its first line. The generator radio is 2600123: add it to a test user.csv to see the callsign.'});
+nt.size.w=760; nt.size.h=110; applySize(nt);
+const gn=addNode('iqGen',40,240,{sr:'256000',fc:438000000,mode:'DMR',off:2000,lvl:-20,noise:-45});
+const de=addNode('fskRx',340,240,{proto:'dmr'});
+de.size.w=480; de.size.h=300; applySize(de);
+const lg=addNode('dmrLog',340,600,{names:true});
+lg.size.w=480; lg.size.h=300; applySize(lg);
+const log=addNode('recLog',860,240,{});
+log.size.w=520; log.size.h=360; applySize(log);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',lg.id,'rec'); addEdge(lg.id,'calls',log.id,'rec');
 markWiresDirty();
 });
 preset('DMR: Activity Log and Station Map (USB SDR)', function(){
