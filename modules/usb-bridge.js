@@ -77,7 +77,7 @@ function usbBridgeInstall(nav,url,WS,ui){
   class USBDevice{
     constructor(d){ this._id=d.id; this.opened=false; this.configuration=null; this.update(d); }
     update(d){
-      this.usbVersionMajor=2; this.usbVersionMinor=0; this.usbVersionSubminor=0;
+      if(!this._rawv){ this.usbVersionMajor=2; this.usbVersionMinor=0; this.usbVersionSubminor=0; }
       this.deviceClass=d.cls; this.deviceSubclass=d.sub; this.deviceProtocol=d.proto; this.vendorId=d.vid; this.productId=d.pid;
       [this.deviceVersionMajor,this.deviceVersionMinor,this.deviceVersionSubminor]=ver(d.ver);
       this.manufacturerName=d.mfr||undefined; this.productName=d.prod||undefined; this.serialNumber=d.serial||undefined;
@@ -89,7 +89,20 @@ function usbBridgeInstall(nav,url,WS,ui){
       const i=this.configuration && this.configuration.interfaces.find(x=>x.interfaceNumber===n);
       if(!i) throw err('NotFoundError','The interface number '+n+' is not valid.'); return i;
     }
-    async open(){ if(this.opened) return; await rpc('open',{dev:this._id}); this.opened=true; this.configuration=this.configuration||this.configurations[0]||null; }
+    async open(){
+      if(this.opened) return;
+      const r=await rpc('open',{dev:this._id}); this.opened=true;
+      if(r.h.configs && r.h.configs.length) this._raw(r.h);
+      this.configuration=this.configuration||this.configurations[0]||null;
+    }
+    // дескрипторы из сырых байт устройства: модель UsbDevice в Android может не показывать альтернативные настройки (alt 3 у Mirics…)
+    _raw(h){
+      const cur=this.configuration && this.configuration.configurationValue;
+      this.configurations=h.configs.map(c=>new USBConfiguration(c));
+      this.configuration=this.configurations.find(c=>c.configurationValue===cur)||null;
+      [this.usbVersionMajor,this.usbVersionMinor,this.usbVersionSubminor]=ver(h.usb);
+      this.speed=h.speed||undefined; this._rawv=true;
+    }
     async close(){ if(!this.opened) return; await rpc('close',{dev:this._id}); this.opened=false; for(const c of this.configurations) for(const i of c.interfaces) i.claimed=false; }
     async forget(){ await this.close().catch(()=>{}); devs.delete(this._id); }
     async selectConfiguration(v){

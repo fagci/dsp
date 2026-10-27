@@ -55,7 +55,8 @@ class FakeUsb : UsbBackend {
     val ls = java.util.concurrent.CopyOnWriteArraySet<(String, org.json.JSONObject) -> Unit>()
     override fun list() = org.json.JSONArray().put(org.json.JSONObject().put("id", "d1").put("perm", true).put("vid", 0x0bda).put("pid", 0x2838))
     override fun permission(id: String) = id == "d1"
-    override fun open(id: String) { if (id != "d1") throw UsbError("NotFoundError", "device is gone"); log.add("open") }
+    override fun open(id: String): org.json.JSONObject? { if (id != "d1") throw UsbError("NotFoundError", "device is gone"); log.add("open")
+        return org.json.JSONObject().put("usb", "2.00").put("speed", "high-speed").put("configs", org.json.JSONArray().put(org.json.JSONObject().put("value", 1).put("ifaces", org.json.JSONArray()))) }
     override fun close(id: String) { log.add("close") }
     override fun config(id: String, value: Int) { log.add("config$value") }
     override fun claim(id: String, num: Int) { log.add("claim$num") }
@@ -196,7 +197,9 @@ fun main() {
     val l1 = call(req(1, "list"))
     ok("usb list", l1.first.getBoolean("ok") && l1.first.getInt("id") == 1 && l1.first.getJSONArray("devices").getJSONObject(0).getInt("vid") == 0x0bda)
     ok("usb permission", call(req(2, "perm")).first.getBoolean("granted"))
-    ok("usb open, config, claim reach the backend", call(req(3, "open")).first.getBoolean("ok") && call(req(4, "config").put("value", 1)).first.getBoolean("ok") &&
+    val op = call(req(3, "open"))
+    ok("usb open returns descriptors from the raw bytes", op.first.getString("usb") == "2.00" && op.first.getString("speed") == "high-speed" && op.first.getJSONArray("configs").length() == 1)
+    ok("usb open, config, claim reach the backend", op.first.getBoolean("ok") && call(req(4, "config").put("value", 1)).first.getBoolean("ok") &&
         call(req(5, "claim").put("num", 0)).first.getBoolean("ok") && fu.log.toList() == listOf("open", "config1", "claim0"), fu.log.toString())
     val ci = call(req(6, "control").put("rt", 0xC0).put("req", 5).put("val", 0).put("idx", 0).put("len", 4))
     ok("usb control IN returns data", ci.first.getBoolean("ok") && ci.second.toList() == listOf<Byte>(5, 6, 7, 8))

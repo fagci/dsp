@@ -6,6 +6,7 @@ import app.dsp.phone.Frame
 import app.dsp.phone.PcapReader
 import app.dsp.phone.Perms
 import app.dsp.phone.SnifferHub
+import app.dsp.phone.UsbDesc
 import app.dsp.phone.Bt
 import app.dsp.phone.Gnss
 import app.dsp.phone.Json
@@ -51,6 +52,25 @@ fun main() {
     ok("constellations", Gnss.constellation(1) == "GPS" && Gnss.constellation(3) == "GLONASS" && Gnss.constellation(5) == "BEIDOU" && Gnss.constellation(6) == "GALILEO" && Gnss.constellation(99) == "UNKNOWN")
     ok("bands", Gnss.band(1575.42e6) == "L1" && Gnss.band(1176.45e6) == "L5" && Gnss.band(1227.6e6) == "L2" && Gnss.band(1602.5625e6) == "G1" && Gnss.band(1246.0e6) == "G2" && Gnss.band(100e6) == null)
     ok("bt major", Bt.major(0x200) == "PHONE" && Bt.major(0x700) == "WEARABLE" && Bt.major(0x1F00) == "UNCATEGORIZED")
+
+
+    // --- сырые дескрипторы USB ---
+    val dev = b(18, 1, 0x00, 0x02, 0, 0, 0, 64, 0xda, 0x0b, 0x38, 0x28, 0, 1, 1, 2, 3, 1)                       // bcdUSB 2.00
+    val cfgBody = b(9, 4, 0, 0, 0, 255, 255, 255, 0) +                                                                // interface 0 alt 0, без точек
+        b(9, 4, 0, 3, 1, 255, 255, 255, 0) + b(7, 5, 0x81, 0x02, 0x00, 0x02, 0) +                                     // alt 3: bulk IN 1, 512
+        b(9, 4, 1, 0, 2, 255, 0, 0, 0) + b(7, 5, 0x02, 0x01, 0x00, 0x04 or 0x08, 1) + b(7, 5, 0x83, 0x03, 0x40, 0, 8)  // iso OUT 2 (3 транзакции/мкадр), interrupt IN 3
+    val cfg = b(9, 2, 9 + cfgBody.size, 0, 2, 1, 0, 0x80, 250) + cfgBody
+    val pd = UsbDesc.parse(dev + cfg)
+    val c0 = pd.configs.getJSONObject(0)
+    val ifs = c0.getJSONArray("ifaces")
+    ok("usb desc: version, configuration value, each alternate is its own interface", pd.usb == "2.00" && c0.getInt("value") == 1 && ifs.length() == 3 &&
+        ifs.getJSONObject(1).getInt("alt") == 3 && ifs.getJSONObject(0).getJSONArray("eps").length() == 0, pd.configs.toString())
+    val e3 = ifs.getJSONObject(1).getJSONArray("eps").getJSONObject(0)
+    ok("usb desc: bulk endpoint of alt 3", e3.getInt("num") == 1 && e3.getBoolean("in") && e3.getString("type") == "bulk" && e3.getInt("size") == 512)
+    val eIso = ifs.getJSONObject(2).getJSONArray("eps").getJSONObject(0)
+    ok("usb desc: isochronous endpoint, packet size with extra transactions", eIso.getString("type") == "isochronous" && !eIso.getBoolean("in") && eIso.getInt("size") == 1024 * 2 * 0 + 1024 * 2, eIso.toString())
+    ok("usb desc: speed from the bulk packet size", pd.speedHint == "high-speed" && UsbDesc.parse(dev + b(9, 2, 25, 0, 1, 1, 0, 0x80, 50) + b(9, 4, 0, 0, 1, 255, 0, 0, 0) + b(7, 5, 0x81, 0x02, 0x40, 0, 0)).speedHint == "full-speed")
+    ok("usb desc: truncated or empty input does not crash", UsbDesc.parse(ByteArray(0)).configs.length() == 0 && UsbDesc.parse((dev + cfg).copyOf(40)).usb == "2.00" && UsbDesc.parse(b(1, 1, 1)).configs.length() == 0)
 
     // --- JSON-помощники дают валидный JSON ---
     val j = JSONObject(Json.obj("src" to "\"ble\"", "mfr" to Json.map(mapOf("004c" to "02")), "uuids" to Json.arr(listOf("180f", "a\"b")), "n" to null, "x" to Json.num(1.23456789, 1e4)))

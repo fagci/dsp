@@ -37,7 +37,13 @@ class FakeWS {
     if (h.op === 'list') return pack({ id: h.id, ok: true, devices });
     if (h.op === 'perm') { d.perm = true; if (!d.prod) { d.prod = 'HackRF One'; d.serial = 'abc'; } return pack({ id: h.id, ok: true, granted: true }); }
     if (!d) return fail('NotFoundError', 'device is gone');
-    if (h.op === 'open') { state.opened.add(h.dev); return pack({ id: h.id, ok: true }); }
+    if (h.op === 'open') {
+      state.opened.add(h.dev);
+      // сырые дескрипторы: у интерфейса 0 есть alt 3 с bulk IN 1 (в модели Android его не было)
+      return d === devices[0] ? pack({ id: h.id, ok: true, usb: '2.00', speed: 'high-speed', configs: [{ value: 1, name: null, ifaces: [
+        { num: 0, alt: 0, cls: 255, sub: 255, proto: 255, name: null, eps: [] },
+        { num: 0, alt: 3, cls: 255, sub: 255, proto: 255, name: null, eps: [{ num: 1, in: true, type: 'bulk', size: 512 }] }] }] }) : pack({ id: h.id, ok: true });
+    }
     if (!state.opened.has(h.dev)) return fail('InvalidStateError', 'the device must be opened first');
     switch (h.op) {
       case 'close': state.opened.delete(h.dev); return pack({ id: h.id, ok: true });
@@ -78,6 +84,10 @@ ok('InvalidStateError before open', e1 && e1.name === 'InvalidStateError', e1 &&
 
 await d.open();
 ok('open: opened, first configuration selected', d.opened && d.configuration === d.configurations[0]);
+const alts = d.configuration.interfaces[0].alternates;
+ok('open: descriptors replaced by the raw ones (alt 3 with a bulk endpoint appears)', alts.length === 2 && alts[1].alternateSetting === 3 && alts[1].endpoints[0].type === 'bulk' && alts[1].endpoints[0].packetSize === 512 && d.speed === 'high-speed' && d.usbVersionMajor === 2);
+await d.claimInterface(0); await d.selectAlternateInterface(0, 3);
+ok('selectAlternateInterface to the raw-only setting', d.configuration.interfaces[0].alternate.alternateSetting === 3 && state.log.includes('alt'));
 await d.selectConfiguration(1); await d.claimInterface(0);
 ok('claim', d.configuration.interfaces[0].claimed && state.claimed.has(0));
 let e2; try { await d.selectConfiguration(9); } catch (e) { e2 = e; }

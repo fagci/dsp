@@ -42,7 +42,8 @@ interface UsbBackend {
     fun list(): JSONArray
     /** Ждёт ответа пользователя на системный запрос доступа. */
     fun permission(id: String): Boolean
-    fun open(id: String)
+    /** Открывает устройство; возвращает {configs, usb, speed} по сырым дескрипторам (точнее модели Android) или null. */
+    fun open(id: String): JSONObject?
     fun close(id: String)
     fun config(id: String, value: Int)
     fun claim(id: String, num: Int)
@@ -125,7 +126,7 @@ class UsbSession(private val sock: Socket, private val backend: UsbBackend) {
             when (h.optString("op")) {
                 "list" -> r.put("devices", backend.list())
                 "perm" -> r.put("granted", backend.permission(dev))
-                "open" -> backend.open(dev)
+                "open" -> backend.open(dev)?.let { r.put("configs", it.getJSONArray("configs")).put("usb", it.getString("usb")).put("speed", it.optString("speed")) }
                 "close" -> backend.close(dev)
                 "config" -> backend.config(dev, h.optInt("value"))
                 "claim" -> backend.claim(dev, h.optInt("num"))
@@ -155,7 +156,7 @@ class UsbSession(private val sock: Socket, private val backend: UsbBackend) {
 /** USB Host API Android: устройства, доступ, передачи. Один UsbDeviceConnection на устройство. */
 class AndroidUsb(private val ctx: Context) : UsbBackend {
     private val um = ctx.getSystemService(Context.USB_SERVICE) as UsbManager
-    private class Conn(val dev: UsbDevice, val c: UsbDeviceConnection) { val claimed = HashMap<Int, UsbInterface>() }
+    private class Conn(val dev: UsbDevice, val c: UsbDeviceConnection, val raw: UsbDesc.Parsed?) { val claimed = HashMap<Int, UsbInterface>() }
     private val conns = HashMap<String, Conn>()
     private val listeners = CopyOnWriteArraySet<(String, JSONObject) -> Unit>()
     private val answers = HashMap<String, CountDownLatch>()
@@ -253,13 +254,18 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
         return um.hasPermission(find(id))
     }
 
+    private fun rawJson(r: UsbDesc.Parsed?): JSONObject? =
+        r?.takeIf { it.configs.length() > 0 }?.let { JSONObject().put("configs", it.configs).put("usb", it.usb).put("speed", it.speedHint) }
+
     @Synchronized
-    override fun open(id: String) {
-        if (conns.containsKey(id)) return
+    override fun open(id: String): JSONObject? {
+        conns[id]?.let { return rawJson(it.raw) }
         val d = find(id)
         if (!um.hasPermission(d)) throw UsbError("SecurityError", "no access to the device — it was not allowed")
         val c = um.openDevice(d) ?: throw UsbError("NetworkError", "cannot open the device")
-        conns[id] = Conn(d, c)
+        val raw = try { c.rawDescriptors?.let { UsbDesc.parse(it) } } catch (e: Exception) { null }
+        conns[id] = Conn(d, c, raw)
+        return rawJson(raw)
     }
 
     @Synchronized
@@ -278,17 +284,17 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
             throw UsbError("NetworkError", "cannot select the configuration")
     }
 
-    private fun iface(c: Conn, num: Int, alt: Int): UsbInterface {
+    private fun iface(c: Conn, num: Int, alt: Int, any: Boolean = false): UsbInterface {
         for (ci in 0 until c.dev.configurationCount) {
             val cfg = c.dev.getConfiguration(ci)
-            for (ii in 0 until cfg.interfaceCount) { val f = cfg.getInterface(ii); if (f.id == num && f.alternateSetting == alt) return f }
+            for (ii in 0 until cfg.interfaceCount) { val f = cfg.getInterface(ii); if (f.id == num && (any || f.alternateSetting == alt)) return f }
         }
         throw UsbError("NotFoundError", "no interface $num")
     }
 
     override fun claim(id: String, num: Int) {
         val c = conn(id)
-        val f = iface(c, num, 0)
+        val f = iface(c, num, 0, any = true)
         // force = true: отцепить драйвер ядра, если он занял интерфейс
         if (!c.c.claimInterface(f, true)) throw UsbError("NetworkError", "cannot claim the interface $num")
         synchronized(this) { c.claimed[num] = f }
@@ -303,7 +309,10 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
     override fun alt(id: String, num: Int, alt: Int) {
         val c = conn(id)
         if (!c.claimed.containsKey(num)) throw UsbError("InvalidStateError", "interface $num is not claimed")
-        if (!c.c.setInterface(iface(c, num, alt))) throw UsbError("NetworkError", "cannot select the alternate setting")
+        val known = try { iface(c, num, alt) } catch (e: UsbError) { null }
+        // настройки, которых нет в модели Android, переключаем запросом SET_INTERFACE напрямую
+        val ok = if (known != null) c.c.setInterface(known) else c.c.controlTransfer(0x01, 11, alt, num, null, 0, 1000) >= 0
+        if (!ok) throw UsbError("NetworkError", "cannot select the alternate setting")
     }
 
     override fun control(id: String, rt: Int, req: Int, value: Int, index: Int, len: Int, data: ByteArray?): ByteArray {
@@ -320,8 +329,22 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
         // альтернативная настройка могла быть выбрана иначе — ищем по всем интерфейсам
         for (ci in 0 until c.dev.configurationCount) { val cfg = c.dev.getConfiguration(ci)
             for (ii in 0 until cfg.interfaceCount) { val f = cfg.getInterface(ii); for (e in 0 until f.endpointCount) if (f.getEndpoint(e).address == addr) return f.getEndpoint(e) } }
+        // Android не показал точку (альтернативная настройка вне его модели) — собираем её по сырым дескрипторам
+        val raw = c.raw?.configs
+        if (raw != null) for (ci in 0 until raw.length()) { val ifs = raw.getJSONObject(ci).getJSONArray("ifaces")
+            for (ii in 0 until ifs.length()) { val eps = ifs.getJSONObject(ii).getJSONArray("eps")
+                for (ei in 0 until eps.length()) { val e = eps.getJSONObject(ei)
+                    val a = e.getInt("num") or (if (e.getBoolean("in")) 0x80 else 0)
+                    if (a == addr) return makeEndpoint(a, when (e.getString("type")) { "isochronous" -> 1; "bulk" -> 2; "interrupt" -> 3; else -> 0 }, e.getInt("size")) } } }
         throw UsbError("NotFoundError", "no endpoint 0x" + Integer.toHexString(addr))
     }
+
+    /** UsbEndpoint без публичного конструктора: через отражение (на некоторых версиях закрыт). */
+    private fun makeEndpoint(addr: Int, attrs: Int, size: Int): android.hardware.usb.UsbEndpoint = try {
+        val k = android.hardware.usb.UsbEndpoint::class.java.getDeclaredConstructor(Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+        k.isAccessible = true
+        k.newInstance(addr, attrs, size, 0)
+    } catch (e: Exception) { throw UsbError("NotSupportedError", "endpoint 0x" + Integer.toHexString(addr) + " is not in the Android model of the device and cannot be built on this Android version") }
 
     override fun bulkIn(id: String, addr: Int, len: Int, alive: () -> Boolean): ByteArray {
         val c = conn(id)
