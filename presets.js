@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=147;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=148;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -506,6 +506,7 @@ const PRESET_CATS={
   'Phone App: Satellites, Bluetooth and Wi-Fi Scan':'Maps & Locating',
   'Phone App: Orientation and Environment Sensors':'Maps & Locating',
   'Phone App: Microphone, Cell and Packets':'Maps & Locating',
+  'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
   'TDOA: Path Difference (2 mics)':'Maps & Locating',
@@ -1299,6 +1300,28 @@ log.size.w=380; applySize(log);
 addEdge(tx.id,'mic',sc.id,'in1'); addEdge(tx.id,'mic',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
 addEdge(tx.id,'cdbm',t1.id,'in');
 addEdge(tx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Walk around with the phone (DSP app, Allow Location and Nearby devices; the options ask for permissions themselves). Wi-Fi, BLE, classic Bluetooth and cell towers are measured at your GPS position; every device is one key dev (wifi:bssid, ble:addr, bt:addr, cell:type:plmn:cid).\n'+
+  'Measurements go to the Table «field/rssi-by-device» (kept between sessions; wrong rows can be deleted — the estimate is recomputed; clear the list to start over). Source Locator estimates the position of each device from the levels (path-loss model) and draws it with an error radius; the Map shows the phone track, every measurement point (colour = technology: Wi-Fi blue, BLE violet, BT teal, cells orange; the label is the level) and the devices. Click a device to see its probability map.\n'+
+  'One record per device at most every 2 s and only after moving 5 m — change in the Phone node. Walk AROUND the source: marks on one line give no fix, the estimate needs a spread of 15 m (cells: hundreds of metres). Path loss n: 2 open field, 3 town, 4+ indoors. Cell towers are far, so their error is large; the Locator groups cells by cell id.'});
+nt.size.w=900; nt.size.h=190; applySize(nt);
+const tx=addNode('termux',40,260,{url:'ws://127.0.0.1:8765',gps:true,battery:false,wifi:true,wifiEvery:5,ble:true,bt:true,cell:true,cellEvery:5,devEvery:2,devMove:5});
+tx.size.w=380; tx.size.h=600; applySize(tx);
+const fl=addNode('recFilter',440,260,{expr:'r.dev && r.lat != null && r.rssi != null'});
+const me=addNode('recFilter',440,380,{expr:"r.id === 'me'"});
+const tb=addNode('table',440,500,{list:'field/rssi-by-device',maxRows:5000,rev:true,cols:['t','src','dev','name','rssi','lat','lon','acc','ch','band','type']});
+tb.size.w=520; tb.size.h=360; applySize(tb);
+const lc=addNode('geoLocate',1000,260,{field:'rssi',method:'strength',group:'dev',labelField:'name',pathN:3,sigmaDb:6,minSpread:15,max:300,rays:false});
+lc.size.w=360; lc.size.h=420; applySize(lc);
+const mp=addNode('geoMap',1000,700,{mz:17,follow:true,labels:false,cluster:false,trail:2000,maxEnt:20000,store:'trilat-devices'});
+mp.size.w=720; mp.size.h=600; applySize(mp);
+addEdge(tx.id,'rec',fl.id,'rec'); addEdge(tx.id,'rec',me.id,'rec');
+addEdge(fl.id,'rec',tb.id,'rec');
+addEdge(tb.id,'rows',lc.id,'rows');
+addEdge(me.id,'rec',mp.id,'rec'); addEdge(tx.id,'pts',mp.id,'rec'); addEdge(lc.id,'rec',mp.id,'rec');
 markWiresDirty();
 });
 preset('Quick Sound Level Meter', function(){

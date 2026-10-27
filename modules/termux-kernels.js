@@ -35,6 +35,47 @@ function termuxEuler(r){
   return [Math.atan2(r1,r4)*d, Math.asin(Math.max(-1,Math.min(1,-r7)))*d, Math.atan2(-r6,r8)*d];
 }
 
+// Единый ключ устройства для Table / Source Locator: dev (тип + адрес / id соты), name, rssi (у соты — RSRP, иначе dBm)
+function termuxDev(r){
+  if(!r) return null;
+  const num=v=>typeof v==='number' && isFinite(v);
+  switch(r.src){
+    case 'wifi': return r.bssid ? {dev:'wifi:'+r.bssid, name:r.ssid||r.bssid} : null;
+    case 'ble': return r.addr ? {dev:'ble:'+r.addr, name:r.name||r.addr} : null;
+    case 'bt': return r.addr ? {dev:'bt:'+r.addr, name:r.name||r.addr} : null;
+    case 'cell': {
+      const id=r.cid ?? r.bid, plmn=r.mcc!=null ? r.mcc+'-'+r.mnc : '';
+      if(id==null && r.pci==null) return null;
+      const rssi=num(r.rsrp) ? r.rsrp : num(r.dbm) ? r.dbm : null;
+      return {dev:'cell:'+(r.type||'')+':'+plmn+':'+(id!=null ? id : 'p'+r.pci), name:(r.type||'cell')+' '+plmn+' '+(id!=null ? id : 'pci '+r.pci)+(r.reg ? ' *' : ''), ...(r.rssi==null && rssi!=null ? {rssi} : {})};
+    }
+  }
+  return null;
+}
+
+// Прореживание замеров одного устройства: не чаще every с и не ближе move м от прошлого. st — Map dev → {t,lat,lon}
+function termuxThin(st,r,now,every,move){
+  if(!(every>0) && !(move>0)) return true;
+  const L=st.get(r.dev);
+  if(L){
+    if(every>0 && now-L.t<every*1000) return false;
+    if(move>0 && typeof r.lat==='number' && typeof L.lat==='number'){
+      const dy=(r.lat-L.lat)*111320, dx=(r.lon-L.lon)*111320*Math.cos(r.lat*Math.PI/180);
+      if(Math.hypot(dx,dy)<move) return false;
+    }
+  }
+  st.set(r.dev,{t:now,lat:r.lat,lon:r.lon});
+  if(st.size>20000) st.delete(st.keys().next().value);
+  return true;
+}
+
+// точка замера для карты
+const TERMUX_COL={wifi:'#4aa3ff', ble:'#b07cff', bt:'#3fd0c0', cell:'#ffa040'};
+function termuxPoint(r,id){
+  return {id, lat:r.lat, lon:r.lon, icon:'dot', size:3, track:0, color:TERMUX_COL[r.src]||'#aaaaaa', label:r.rssi+' dBm',
+          kind:r.src, dev:r.dev, name:r.name, rssi:r.rssi};
+}
+
 // запись mic: PCM 16 бит little-endian в base64 → Float32Array [-1,1)
 function termuxPcm(r){
   if(!r || typeof r.pcm!=='string') return null;
