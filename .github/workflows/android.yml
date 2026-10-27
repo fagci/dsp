@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }      # вся история и теги — для заметок релиза
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
       # Android SDK и лицензии уже есть на раннере ubuntu-latest (ANDROID_HOME)
@@ -33,6 +34,17 @@ jobs:
         with:
           name: dsp-android
           path: dsp-android-1.${{ github.run_number }}.apk
+      - name: Заметки релиза — коммиты приложения после прошлого релиза
+        run: |
+          prev=$(git tag --list 'android-v*' --sort=-version:refname | head -1)
+          {
+            echo "Изменения приложения${prev:+ после $prev}:"
+            echo
+            git log --no-merges --pretty='- %s (%h)' ${prev:+$prev..HEAD} -- tools/android | head -50
+            echo
+            echo "APK подписан постоянным ключом из репозитория — ставится поверх прежней версии. Разрешите приложению камеру, геолокацию и «Устройства поблизости»."
+          } > notes.md
+          cat notes.md
       - name: Релиз
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
@@ -40,6 +52,4 @@ jobs:
           tag_name: android-v1.${{ github.run_number }}
           name: DSP Android 1.${{ github.run_number }}
           files: dsp-android-1.${{ github.run_number }}.apk
-          generate_release_notes: true
-          body: |
-            APK подписан постоянным ключом из репозитория — ставится поверх прежней версии. Разрешите приложению камеру, геолокацию и «Устройства поблизости».
+          body_path: notes.md
