@@ -47,6 +47,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     private var device: CameraDevice? = null
     private var session: CameraCaptureSession? = null
     private var reader: ImageReader? = null
+    private var hs: HsCodec? = null                           // кодер, через который идёт режим высокой скорости
     private var sensorRot = 0
     private var fmt = ImageFormat.YUV_420_888
     private var phys: String? = null
@@ -166,6 +167,8 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     private fun stopLocked() {
         cfg = null; info = ""
         try { session?.close() } catch (e: Exception) {}
+        try { hs?.stop() } catch (e: Exception) {}
+        hs = null
         try { device?.close() } catch (e: Exception) {}
         try { reader?.close() } catch (e: Exception) {}
         session = null; device = null; reader = null
@@ -215,10 +218,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
             val workers = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
             pool = Executors.newFixedThreadPool(workers) { r -> Thread(r, "dsp-enc").also { it.isDaemon = true } }
             busy.set(0); frameNo = 0; shownNo = 0; lastPub = 0; emaMs = 0.0; infoT = 0
-            // сессия высокой скорости берёт только «видео» поверхности: приёмнику кадров ставим флаг кодера (Android 10+), иначе камера её отвергает
-            val rd = (if (hsRange != null && Build.VERSION.SDK_INT >= 29) try {
-                ImageReader.newInstance(size.width, size.height, fmt, workers + 2, android.hardware.HardwareBuffer.USAGE_CPU_READ_OFTEN or android.hardware.HardwareBuffer.USAGE_VIDEO_ENCODE)
-            } catch (e: Exception) { null } else null) ?: ImageReader.newInstance(size.width, size.height, fmt, workers + 2)
+            val rd = ImageReader.newInstance(size.width, size.height, fmt, workers + 2)
             rd.setOnImageAvailableListener({ onImage(it, c) }, h)
             reader = rd
             infoBase = "${size.width}×${size.height}" + (hsRange?.let { " · high-speed ${it.upper}" } ?: "") + note; info = infoBase
@@ -255,7 +255,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                         if (hr != null) {
                             val hs = s as android.hardware.camera2.CameraConstrainedHighSpeedCaptureSession
                             val rq = d.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
-                            rq.addTarget(rd.surface)
+                            rq.addTarget(hs!!.input)
                             rq.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, hr)
                             hs.setRepeatingBurst(hs.createHighSpeedRequestList(rq.build()), null, h)
                             return
@@ -277,8 +277,12 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
             }
             val hr = hsRange
             if (hr != null) {
-                // сессия высокой скорости принимает не любую поверхность: ImageReader часто отвергается сразу исключением, а не через onConfigureFailed
-                try { d.createConstrainedHighSpeedCaptureSession(listOf(rd.surface), cb, h) } catch (e: Exception) { hsGiveUp(c, e.message ?: e.javaClass.simpleName) }
+                // поверхность сессии — вход кодера (HsCodec); отказ приходит и исключением, и через onConfigureFailed
+                try {
+                    val k = HsCodec(rd.width, rd.height, hr.upper, rd.surface) { why -> hsGiveUp(c, "codec: $why") }
+                    k.start(); hs = k
+                    d.createConstrainedHighSpeedCaptureSession(listOf(k.input), cb, h)
+                } catch (e: Exception) { hsGiveUp(c, e.message ?: e.javaClass.simpleName) }
                 return
             }
             val ph = phys
