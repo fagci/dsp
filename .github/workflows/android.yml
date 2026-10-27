@@ -1,0 +1,28 @@
+name: Android app
+
+# Приложение-обёртка (WebView + мост датчиков и камеры): tools/android. APK — в артефактах запуска.
+on:
+  push:
+    paths: ['tools/android/**', 'modules/termux*.js', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['tools/android/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.10.2' }
+      - name: Проверки моста на JVM (сервер, поворот кадра)
+        run: gradle -p tools/android/jvm-test runTests
+      - name: Сборка debug-APK
+        run: gradle -p tools/android :app:assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsp-android-debug
+          path: tools/android/app/build/outputs/apk/debug/app-debug.apk
