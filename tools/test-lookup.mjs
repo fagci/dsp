@@ -9,7 +9,7 @@ const rd=p=>fs.readFileSync(path.join(root,p),'utf8');
 const ctx=vm.createContext({Math,Object,Array,Set,Map,Number,String,JSON,isFinite,Float64Array,Date,
   hostlistCoerce:v=>{ const s=String(v??'').trim(); return s!=='' && /^-?\d+(\.\d+)?$/.test(s) ? Number(s) : s; },
   parseHzCell:s=>{ const m=/^([\d.]+)\s*([kMG]?)(?:Hz)?$/i.exec(String(s).trim()); return m ? +m[1]*({'':1,k:1e3,m:1e6,g:1e9}[m[2].toLowerCase()]) : NaN; }});
-vm.runInContext(rd('modules/lookup-kernels.js')+rd('modules/table-rules.js')+';globalThis.K={LU,luIndex,luLookup,luBetween,luParseNmapMac,luParseSignals,luParseWefax,luParseIds,luParseSpy,trCompile,luSame};',ctx);
+vm.runInContext(rd('modules/lookup-kernels.js')+rd('modules/table-rules.js')+';globalThis.K={LU,luIndex,luLookup,luBetween,luParseNmapMac,luParseSignals,luParseWefax,luParseIds,luParseSpy,luParseRadioId,luParseTalkgroups,trCompile,luSame};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(c,m)=>{ if(!c){ bad++; console.error('FAIL: '+m); } };
 const eq=(a,b,m)=>ok(a===b,m+' (получено '+JSON.stringify(a)+', ждали '+JSON.stringify(b)+')');
@@ -106,5 +106,19 @@ eq(K.luLookup('SP','hz',4625000,'nickname'),'The Buzzer','spy: 4625 кГц → U
 let e=''; try{ K.luParseNmapMac('# only comments'); }catch(x){ e=x.message; } ok(e,'пустой OUI-файл → ошибка');
 e=''; try{ K.luParseSignals('{}'); }catch(x){ e=x.message; } ok(e,'не тот JSON → ошибка');
 
+// DMR: RadioID и группы → списки Table
+{
+  const csv='RADIO_ID,CALLSIGN,FIRST_NAME,LAST_NAME,CITY,STATE,COUNTRY\r\n2600123,SP1ABC,Jan,Kowalski,Gdansk,Pomorskie,Poland\r\n3100001,W1AW,,,,,\r\nxx,bad\r\n';
+  let t=K.luParseRadioId(csv);
+  eq(t.rows.length,2,'RadioID csv: две станции'); eq(t.rows[0].callsign,'SP1ABC','RadioID: позывной'); eq(t.rows[0].name,'Jan Kowalski','RadioID: имя');
+  eq(t.rows[0].place,'Gdansk, Pomorskie, Poland','RadioID: место'); eq(t.rows[1].name,'','RadioID: пустое имя');
+  t=K.luParseRadioId(JSON.stringify({users:[{id:2500001,callsign:'R1ABC',fname:'Ivan',name:'Petrov',city:'Moscow',state:'',country:'Russia'}]}));
+  eq(t.rows[0].place,'Moscow, Russia','RadioID json: место');
+  let m=''; try{ K.luParseRadioId('nothing'); }catch(e){ m=e.message; } ok(/no DMR IDs/.test(m),'RadioID: пустой файл → ошибка');
+  t=K.luParseTalkgroups('{"91":"World-wide","93":"Europe","x":"no"}'); eq(t.rows.length,2,'группы json'); eq(t.rows[0].name,'World-wide','группы json: имя');
+  t=K.luParseTalkgroups('id,name\n9,Local\n"250";"Russia"\n2600 Poland\n'); eq(t.rows.length,2,'группы csv: шапка и «;» не в счёт'); eq(t.rows[1].name,'Poland','группы csv: пробел');
+  build('Reference/DMR radio IDs','eq','id','',K.luParseRadioId(csv).rows,['id','callsign','name','place']);
+  eq(K.luLookup('Reference/DMR radio IDs','id',2600123,'callsign'),'SP1ABC','lookup по числовому ID');
+}
 if(bad){ console.error(bad+' failed'); process.exit(1); }
 console.log('lookup: ok');

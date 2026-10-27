@@ -178,3 +178,35 @@ function luParseSpy(text){
   const o=JSON.parse(String(text).replace(/^\uFEFF/,'')); if(!Array.isArray(o) || !o.length || !('hz' in o[0])) throw new Error('intercept-spy.json: unexpected format');
   return {cols:['name','nickname','type','country','hz','primary','mode','operator','schedule','description','url'],rows:o};
 }
+// RadioID: user.csv (RADIO_ID,CALLSIGN,FIRST_NAME,LAST_NAME,CITY,STATE,COUNTRY) или users.json ({users:[{id,callsign,fname,name,city,state,country}]})
+function luParseRadioId(text){
+  text=String(text).replace(/^\uFEFF/,'');
+  const rows=[], put=(id,call,first,last,city,state,country)=>{
+    id=+id; if(!(id>0) || !call) return;
+    rows.push({id, callsign:String(call).trim(), name:[first,last].filter(Boolean).join(' ').trim(), place:[city,state,country].filter(Boolean).join(', ')});
+  };
+  if(/^\s*[{[]/.test(text)){
+    const j=JSON.parse(text);
+    for(const u of (Array.isArray(j) ? j : j.users||j.results||[])) put(u.id||u.radio_id,u.callsign,u.fname||u.first_name,u.name||u.surname||u.last_name,u.city,u.state,u.country);
+  } else for(const ln of text.split(/\r?\n/)){
+    const c=ln.split(',');
+    if(c.length>=2 && /^\d+$/.test(c[0].trim())) put(c[0],c[1],c[2],c[3],c[4],c[5],c[6]);
+  }
+  if(!rows.length) throw new Error('no DMR IDs in the file');
+  return {cols:['id','callsign','name','place'],rows};
+}
+// разговорные группы: {"91":"World-wide"} (BrandMeister API), [{id,name}] или строки «id,имя» / «id;имя»
+function luParseTalkgroups(text){
+  text=String(text).replace(/^\uFEFF/,'');
+  const rows=[];
+  if(/^\s*[{[]/.test(text)){
+    const j=JSON.parse(text);
+    if(Array.isArray(j)) for(const g of j){ const id=+(g.id??g.talkgroup??g.tg), nm=g.name||g.label; if(id>=0 && nm) rows.push({id,name:String(nm)}); }
+    else for(const k of Object.keys(j)) if(/^\d+$/.test(k) && j[k]) rows.push({id:+k,name:String(j[k])});
+  } else for(const ln of text.split(/\r?\n/)){
+    const r=/^\s*(\d+)\s*[,;\t ]\s*(.+?)\s*$/.exec(ln);
+    if(r) rows.push({id:+r[1],name:r[2].replace(/^"|"$/g,'')});
+  }
+  if(!rows.length) throw new Error('no talkgroups in the file');
+  return {cols:['id','name'],rows};
+}

@@ -11,24 +11,25 @@ defIQ({ id:'dmrParse', title:'DMR Frame Parser', cat:'Decoders', kw:'dmr frames 
 /* ---- журнал: звонки, станции, разговорные группы ---- */
 // Копит записи DMR (Digital Voice Decoder): кто с кем, когда, сколько; по станциям и группам — счётчики. Станции с позицией (LRRP / NMEA)
 // уходят на карту. Длительность — по записи end (время потока), без неё — по числу голосовых пакетов (60 мс на слот).
-// имена: RadioID (позывной, имя, место) и названия групп; файлы качает OfflineData (Files → ⇩ offline), пока их нет — журнал работает с числами
-const DMR_ID_FILE='radioid-user.csv', DMR_TG_FILE='dmr-talkgroups.json';
-OfflineData.fileItem({id:'dmrids',label:'DMR: RadioID database (callsigns)',mb:25,files:[[DMR_ID_FILE,['https://radioid.net/static/user.csv']]]});
-OfflineData.fileItem({id:'dmrtg',label:'DMR: talkgroup names (BrandMeister)',mb:.2,saveAs:f=>/talk|tg/i.test(f) ? DMR_TG_FILE : null,
-  files:[[DMR_TG_FILE,['https://api.brandmeister.network/v2/talkgroup']]]});
+// имена: списки Table «Reference/DMR radio IDs» и «Reference/DMR talkgroups» (Files → ⇩ offline; индексы общие с lookup() в Table).
+// Пока списка нет, журнал работает с числами; попытка загрузки повторяется не чаще раза в 30 с
+const dmrLogIx=(n,w)=>LU.get(LU.key(w==='id' ? REF_DMRID : REF_DMRTG,'eq','id'));
 function dmrLogLoad(n){
-  if(!n.p.names || n.ld==='load' || n.ld==='ok' || Date.now()<n.ldRetry) return;
-  n.ld='load';
-  const get=(f,u,parse)=>OfflineData.blob(f,u).then(b=>b.text()).then(parse).catch(e=>{ n.ldErr=String(e.message||e); return null; });
-  Promise.all([get(DMR_ID_FILE,['https://radioid.net/static/user.csv'],dmrIdParse), get(DMR_TG_FILE,['https://api.brandmeister.network/v2/talkgroup'],dmrTgParse)]).then(([ids,tg])=>{
-    if(ids) n.ids=ids; if(tg) n.tgn=tg;
-    n.ld=ids&&tg ? 'ok' : ''; n.ldRetry=Date.now()+60000;   // чего нет — повторяем раз в минуту
-  });
+  if(!n.p.names || Date.now()<n.ldRetry) return;
+  n.ldRetry=Date.now()+30000;
+  for(const w of ['id','tg']){
+    const list=w==='id' ? REF_DMRID : REF_DMRTG, k=LU.key(list,'eq','id');
+    if(!LU.get(k)) luLoad(n,k,{list,mode:'eq',c1:'id'});
+  }
 }
-const dmrLogWho=(n,id)=>n.p.names ? n.ids?.get(id) : null;
-const dmrLogTgName=(n,id)=>n.p.names ? n.tgn?.get(id) : null;
-const dmrLogNames=n=>!n.p.names ? '' : n.ld==='load' ? ' · names: loading…' : n.ids||n.tgn ? ' · names: '+(n.ids?n.ids.size+' IDs':'no IDs')+(n.tgn?', '+n.tgn.size+' groups':', no groups')
-  : ' · names: no data'+(n.ldErr ? ' ('+n.ldErr+')' : '')+' — Files → ⇩ offline';
+const dmrLogWho=(n,id)=>n.p.names ? dmrLogIx(n,'id')?.find(id)||null : null;
+const dmrLogTgName=(n,id)=>n.p.names ? dmrLogIx(n,'tg')?.find(id)?.name||null : null;
+function dmrLogNames(n){
+  if(!n.p.names) return '';
+  const a=dmrLogIx(n,'id'), g=dmrLogIx(n,'tg');
+  if(a||g) return ' · names: '+(a ? a.size+' IDs' : 'no IDs')+(g ? ', '+g.size+' groups' : ', no groups');
+  return ' · names: no data — Files → ⇩ offline ("DMR radio IDs")';
+}
 function dmrLogStation(n,id,t){
   let s=n.st.get(id);
   if(!s){ s={radio:id, alias:'', calls:0, seconds:0, msgs:0, emergency:0, encrypted:0, first:t, last:t, tg:null, slot:null}; n.st.set(id,s); }
@@ -47,16 +48,16 @@ function dmrLogClose(n,c,dur,voice,by,out,t){
   out.calls.push(dmrLogCallRec(n,c));
 }
 // участник вызова: «ID ПОЗЫВНОЙ "алиас"»; группа: «TG 91 (название)»
-function dmrLogParty(n,id,alias){ const w=dmrLogWho(n,id); return id+(w ? ' '+w.call : '')+(alias ? ' "'+alias+'"' : ''); }
+function dmrLogParty(n,id,alias){ const w=dmrLogWho(n,id); return id+(w ? ' '+w.callsign : '')+(alias ? ' "'+alias+'"' : ''); }
 function dmrLogDest(n,c){ if(c.type!=='group') return dmrLogParty(n,c.to); const g=dmrLogTgName(n,c.to); return 'TG '+c.to+(g ? ' ('+g+')' : ''); }
 function dmrLogCallRec(n,c){
   const w=dmrLogWho(n,c.from);
-  return {t:c.t0, src:'DMR', kind:'call-log', radio:c.from, callsign:w?.call, name:w?.name||undefined, to:c.to, tgname:c.type==='group' ? dmrLogTgName(n,c.to)||undefined : undefined, call:c.type, slot:c.slot, cc:c.cc, seconds:+c.dur.toFixed(1), voice:c.voice, alias:c.alias||undefined, flags:c.flags||undefined,
+  return {t:c.t0, src:'DMR', kind:'call-log', radio:c.from, callsign:w?.callsign, name:w?.name||undefined, to:c.to, tgname:c.type==='group' ? dmrLogTgName(n,c.to)||undefined : undefined, call:c.type, slot:c.slot, cc:c.cc, seconds:+c.dur.toFixed(1), voice:c.voice, alias:c.alias||undefined, flags:c.flags||undefined,
     text:dmrLogParty(n,c.from,c.alias)+' → '+dmrLogDest(n,c)+' · '+c.dur.toFixed(1)+' s'};
 }
 function dmrLogStationRec(n,s,t){
   const w=dmrLogWho(n,s.radio);
-  const r={t, src:'DMR', kind:'station', id:'dmr:'+s.radio, radio:s.radio, alias:s.alias||undefined, callsign:w?.call, name:w?.name||undefined, place:w?.place||undefined, label:s.alias||w?.call||String(s.radio), calls:s.calls, seconds:+s.seconds.toFixed(1), messages:s.msgs, tg:s.tg, slot:s.slot, last:s.last};
+  const r={t, src:'DMR', kind:'station', id:'dmr:'+s.radio, radio:s.radio, alias:s.alias||undefined, callsign:w?.callsign, name:w?.name||undefined, place:w?.place||undefined, label:s.alias||w?.callsign||String(s.radio), calls:s.calls, seconds:+s.seconds.toFixed(1), messages:s.msgs, tg:s.tg, slot:s.slot, last:s.last};
   if(s.lat!=null){ r.lat=s.lat; r.lon=s.lon; }
   return r;
 }
@@ -71,7 +72,7 @@ def({ id:'dmrLog', title:'DMR Call Log', cat:'Output',
           {n:'names',t:'check',d:true,label:'names from RadioID and talkgroup lists (Files → ⇩ offline)'},
           {n:'replay',t:'button',label:'Replay stations',fn:n=>{ n.replay=[...n.st.values()].map(s=>dmrLogStationRec(n,s,s.last)); }},
           {n:'clr',t:'button',label:'Clear',fn:n=>{ n.st=new Map(); n.tgs=new Map(); n.calls=[]; n.open=new Map(); }}],
-  init:n=>{ n.st=new Map(); n.tgs=new Map(); n.calls=[]; n.open=new Map(); n.replay=null; n.ld=''; n.ldRetry=0; n.ids=null; n.tgn=null; },
+  init:n=>{ n.st=new Map(); n.tgs=new Map(); n.calls=[]; n.open=new Map(); n.replay=null; n.ldRetry=0; },
   process(n,I){
     dmrLogLoad(n);
     const out={calls:[], st:new Set()};
@@ -122,11 +123,11 @@ def({ id:'dmrLog', title:'DMR Call Log', cat:'Output',
     n.el.querySelector('.readout').textContent=head+(now.length ? '\n'+now.join('\n') : '')+(top.length ? '\n— stations —\n'+top.join('\n') : '')+(tail.length ? '\n— last —\n'+tail.join('\n') : '');
   }});
 function dmrLogCallRows(n){
-  const row=c=>({start:new Date(c.t0).toISOString(), radio:c.from, callsign:dmrLogWho(n,c.from)?.call||'', to:c.to, to_name:c.type==='group' ? dmrLogTgName(n,c.to)||'' : dmrLogWho(n,c.to)?.call||'', type:c.type, slot:c.slot, cc:c.cc, seconds:+(c.dur||0).toFixed(1), voice_bursts:c.voice, alias:c.alias||'', flags:c.flags||'', late_entry:c.late ? 1 : 0, text:c.text||'', open:c.open ? 1 : 0});
+  const row=c=>({start:new Date(c.t0).toISOString(), radio:c.from, callsign:dmrLogWho(n,c.from)?.callsign||'', to:c.to, to_name:c.type==='group' ? dmrLogTgName(n,c.to)||'' : dmrLogWho(n,c.to)?.callsign||'', type:c.type, slot:c.slot, cc:c.cc, seconds:+(c.dur||0).toFixed(1), voice_bursts:c.voice, alias:c.alias||'', flags:c.flags||'', late_entry:c.late ? 1 : 0, text:c.text||'', open:c.open ? 1 : 0});
   return n.calls.map(row).concat([...n.open.values()].map(row));
 }
 function dmrLogStationRows(n){
-  return [...n.st.values()].map(s=>({radio:s.radio, callsign:dmrLogWho(n,s.radio)?.call||'', name:dmrLogWho(n,s.radio)?.name||'', place:dmrLogWho(n,s.radio)?.place||'', alias:s.alias, calls:s.calls, seconds:+s.seconds.toFixed(1), messages:s.msgs, emergency:s.emergency, encrypted:s.encrypted,
+  return [...n.st.values()].map(s=>({radio:s.radio, callsign:dmrLogWho(n,s.radio)?.callsign||'', name:dmrLogWho(n,s.radio)?.name||'', place:dmrLogWho(n,s.radio)?.place||'', alias:s.alias, calls:s.calls, seconds:+s.seconds.toFixed(1), messages:s.msgs, emergency:s.emergency, encrypted:s.encrypted,
     first:new Date(s.first).toISOString(), last:new Date(s.last).toISOString(), last_group:s.tg, slot:s.slot, lat:s.lat, lon:s.lon}));
 }
 function dmrLogGroupRows(n){

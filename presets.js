@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=141;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=142;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -3107,9 +3107,9 @@ markWiresDirty();
 });
 preset('DMR: Callsigns and Talkgroup Names (Generator)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'DMR Call Log shows callsigns (RadioID) and talkgroup names (BrandMeister) instead of bare numbers. The lists are not in the app: open Files → ⇩ offline,\n'+
-  'tick "DMR: RadioID database" and "DMR: talkgroup names" and download (or pick user.csv from radioid.net by hand). After that it works without a network.\n'+
-  'Until then the log runs on numbers and says so in its first line. The generator radio is 2600123: add it to a test user.csv to see the callsign.'});
+const nt=addNode('note',40,40,{text:'DMR Call Log shows callsigns (RadioID) and talkgroup names (BrandMeister) instead of bare numbers. The lists are Table lists "Reference/DMR radio IDs" and\n'+
+  '"Reference/DMR talkgroups": download them in Files → ⇩ offline ("DMR radio IDs", ~25 MB, and "DMR talkgroup names") or choose user.csv from radioid.net by hand. After that they work without a network,\n'+
+  'can be browsed and filtered in Table, and feed lookup() there. Until then the log runs on numbers and says so in its first line. The generator radio is 2600123: put it into a test list to see the callsign.'});
 nt.size.w=760; nt.size.h=110; applySize(nt);
 const gn=addNode('iqGen',40,240,{sr:'256000',fc:438000000,mode:'DMR',off:2000,lvl:-20,noise:-45});
 const de=addNode('fskRx',340,240,{proto:'dmr'});
