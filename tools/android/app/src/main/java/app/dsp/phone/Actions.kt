@@ -285,7 +285,11 @@ class PhoneActions(
         for (n in 0..9) {
             val id = n.toString()
             val ch = try { cm.getCameraCharacteristics(id) } catch (e: Exception) { sb.append("id $id: no characteristics (${e.javaClass.simpleName})\n"); continue }
-            sb.append("id $id: ${if (id in listed) "listed" else "NOT listed"}, caps=${SysCam.capNames(ch.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES))}")
+            val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            val ae = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.joinToString(" ") { "${it.lower}-${it.upper}" }
+            val hs = try { map?.highSpeedVideoFpsRanges?.joinToString(" ") { "${it.lower}-${it.upper}" } } catch (e: Exception) { null }
+            sb.append("id $id: ${if (id in listed) "listed" else "NOT listed"}, caps=${SysCam.capNames(ch.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES))}, fps=[$ae]" +
+                (if (!hs.isNullOrEmpty()) " high-speed=[$hs]" else ""))
             if (!canOpen) { sb.append(", open: no camera permission\n"); continue }
             val latch = java.util.concurrent.CountDownLatch(1)
             var res = "timeout"

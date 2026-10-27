@@ -1,0 +1,22 @@
+// План пересборки пресетов: node tools/test-presetplan.mjs
+import fs from 'fs'; import vm from 'vm';
+const ctx={}; vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(new URL('../modules/presetplan-kernels.js',import.meta.url),'utf8')+';this.presetHash=presetHash;this.presetPlan=presetPlan;',ctx);
+const {presetHash,presetPlan}=ctx;
+let bad=0; const ok=(c,m)=>{ if(!c){ console.error('FAIL',m); bad++; } };
+const P={a(){return 1;}, b(){return 2;}};
+let r=presetPlan(P,{},{},0,5);
+ok(r.full && r.todo.length===2,'первый запуск — всё');
+const st={a:1,b:1}, hs={a:presetHash(P.a),b:presetHash(P.b)};
+r=presetPlan(P,st,hs,5,5);
+ok(!r.full && r.todo.length===0 && Object.keys(r.hashes).length===2,'повтор — ничего');
+const P2={a(){return 1;}, b(){return 3;}};
+r=presetPlan(P2,st,hs,5,5);
+ok(r.todo.join()==='b' && r.hashes.a && !r.hashes.b,'правка одного — только он');
+r=presetPlan(P,st,hs,4,5);
+ok(r.full && r.todo.length===2,'рост версии — полная');
+r=presetPlan({...P,c(){}},st,hs,5,5);
+ok(r.todo.join()==='c','новый пресет');
+r=presetPlan(P,{a:1},hs,5,5);
+ok(r.todo.join()==='b','нет сохранённого — пересобрать');
+if(bad) process.exit(1); console.log('presetplan ok');

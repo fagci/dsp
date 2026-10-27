@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=153;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', HKEY='dsp-presets-hash', PRESET_VER=154;   // PRESET_VER — полная пересборка всех пресетов (дефолты модулей, формат патча); правки самих пресетов подхватываются по хэшу
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -149,14 +149,15 @@ patchSearchEl.addEventListener('input',e=>{ patchQuery=e.target.value; buildPatc
 const PRESETS_GONE=['Aether Pet:','Studio: DAW','Studio (tiles)','Studio: Graph Synth'];
 function buildBuiltinPresets(){
 const p=readP(), ver=+(LS.get(VKEY)||0);
-if(ver <PRESET_VER) for(const k of Object.keys(p)) if(PRESETS_GONE.some(g=>k.startsWith(g))) delete p[k];
-for(const [name,fn] of Object.entries(PRESETS)){
-if(ver <PRESET_VER || !p[name]){
-try{ fn(); autoLayout(); p[name]=serialize(); }
-catch(err){ console.error('preset  "'+name+' " failed to build:',err); }
+let old={}; try{ old=JSON.parse(LS.get(HKEY)||'{}')||{}; }catch(e){}
+const plan=presetPlan(PRESETS,p,old,ver,PRESET_VER);            // только изменившиеся / отсутствующие; всё — по PRESET_VER (modules/presetplan-kernels.js)
+if(plan.full) for(const k of Object.keys(p)) if(PRESETS_GONE.some(g=>k.startsWith(g))) delete p[k];
+const hashes=plan.hashes;
+for(const name of plan.todo){
+try{ PRESETS[name](); autoLayout(); p[name]=serialize(); hashes[name]=presetHash(PRESETS[name]); }
+catch(err){ console.error('preset  "'+name+' " failed to build:',err); }               // хэш не запоминаем — при следующем запуске попробуем снова
 }
-}
-writeP(p); LS.set(VKEY,String(PRESET_VER)); buildPatchList();
+writeP(p); LS.set(VKEY,String(PRESET_VER)); LS.set(HKEY,JSON.stringify(hashes)); buildPatchList();
 }
 /* ---- реестр встроенных пресетов ---- */
 // preset(имя, функция) — по аналогии с def(...) у модулей: функция просто строит граф

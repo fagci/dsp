@@ -6,6 +6,12 @@
    Вне поддержки кнопки нет. Ядро (пропорции) — pip-kernels.js. */
 
 const pipToast=m=>{ try{ if(typeof showToast==='function') showToast(m); }catch(e){} };
+// что зеркалить: у узлов-картинок (камера, кадр) — сам кадр, а не холст узла со всеми полями и подписями вокруг него
+const PIP_SRC={ipcam:n=>n.img && n.capCv, camarch:n=>n.capCv, imgview:n=>n.tmp};
+function pipSource(n){
+  try{ const f=PIP_SRC[n.type], s=f && f(n); if(s && s.width && s.height) return s; }catch(e){}
+  return n.cv;
+}
 let pipSt=null;            // {n, stop()} — текущая картинка в картинке
 
 function pipSupported(){
@@ -18,7 +24,7 @@ function pipSupported(){
 function pipStop(){ const s=pipSt; pipSt=null; if(s){ if(s.n) s.n._pip=false; try{ s.stop(); }catch(e){} } }
 
 async function nodePip(n){
-  const c=n && n.cv; if(!c) return;
+  const c=n && pipSource(n); if(!c) return;
   if(pipSt && pipSt.n===n){ pipStop(); return; }                // повторное нажатие — закрыть
   pipStop();
   n._pip=true;                                                  // узел рисуется, даже когда в маленьком окне он за краем видимой области
@@ -43,12 +49,13 @@ async function pipVideo(n,c){
 
 // приложение: зеркало холста на весь экран + PiP окна приложения; выход из PiP не закрывает зеркало — оно закрывается своей кнопкой.
 // Размер зеркала считается явно по окну (pipFit): окно PiP меняет размер уже после входа, а CSS «contain» у холста в разных WebView ведёт себя по-разному.
-function pipApp(n,c){
+function pipApp(n,c0){
   const app=document.getElementById('app');
   const ov=document.createElement('div');
   ov.style.cssText='position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:99998;background:#000;overflow:hidden';
   const m=document.createElement('canvas');
   m.style.cssText='position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:block';
+  // свой крест нужен только на весь экран: в окне PiP есть системный, а наш закрывал бы картинку
   const x=document.createElement('button'); x.textContent='✕'; x.title='Close';
   x.style.cssText='position:absolute;right:8px;top:8px;font-size:18px;padding:4px 10px;opacity:.7';
   ov.append(m,x); document.body.appendChild(ov);
@@ -57,10 +64,14 @@ function pipApp(n,c){
   const g=m.getContext('2d');
   const frame=()=>{
     if(!alive) return;
-    if(c.width && c.height){
+    const c=pipSource(n);                                       // источник может смениться (кадр камеры появляется позже узла)
+    if(c && c.width && c.height){
       if(m.width!==c.width || m.height!==c.height){ m.width=c.width; m.height=c.height; }
       g.drawImage(c,0,0);
-      const f=pipFit(c.width,c.height,ov.clientWidth||innerWidth,ov.clientHeight||innerHeight);
+      // размер окна — по видимой области: окно PiP уменьшается уже после входа, а 100vw / 100vh в WebView догоняют не сразу
+      const vv=window.visualViewport;
+      const W=Math.min(ov.clientWidth||1e9, vv ? vv.width : 1e9, innerWidth), H=Math.min(ov.clientHeight||1e9, vv ? vv.height : 1e9, innerHeight);
+      const f=pipFit(c.width,c.height,W,H);
       if(m._fw!==f[0] || m._fh!==f[1]){ m._fw=f[0]; m._fh=f[1]; m.style.width=f[0]+'px'; m.style.height=f[1]+'px'; }
     }
     raf=requestAnimationFrame(frame);
@@ -68,8 +79,11 @@ function pipApp(n,c){
   frame();
   const stop=()=>{ alive=false; cancelAnimationFrame(raf); ov.remove(); if(app) app.style.visibility=''; try{ DspApp.pipOff(); }catch(e){} window.dspPip=null; };
   x.onclick=()=>{ if(pipSt && pipSt.n===n) pipStop(); else stop(); };
-  window.dspPip=()=>{};                                                       // приложение сообщает о входе / выходе из PiP; зеркало остаётся до закрытия
+  window.dspPip=on=>{ x.style.display=on ? 'none' : ''; };      // приложение сообщает о входе / выходе из PiP; зеркало остаётся до закрытия
   pipSt={n,stop};
-  const r=pipRatio(c.width,c.height);
-  try{ if(!DspApp.pip(r[0],r[1])){ pipToast('Picture in picture is not available on this phone'); pipStop(); } }catch(e){ pipToast('Picture in picture: '+e.message); pipStop(); }
+  const r=pipRatio(c0.width,c0.height);
+  try{
+    if(DspApp.pip(r[0],r[1])) x.style.display='none';
+    else{ pipToast('Picture in picture is not available on this phone'); pipStop(); }
+  }catch(e){ pipToast('Picture in picture: '+e.message); pipStop(); }
 }

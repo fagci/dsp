@@ -18,7 +18,7 @@ function termuxSubMsg(p){
 }
 
 // камера в списке узла: off, back, front и все камеры телефона из hello.cameraInfo («#3 thermal external 160×120»: номер, вид, сторона, размер)
-function termuxCamLabel(c){ return '#'+c.id+' '+(c.kind||'')+' '+(c.facing||'')+(c.w ? ' '+c.w+'×'+c.h : ''); }
+function termuxCamLabel(c){ return '#'+c.id+' '+(c.kind||'')+' '+(c.facing||'')+(c.hidden ? ' hidden' : '')+(c.w ? ' '+c.w+'×'+c.h : '')+(c.fps ? ' ≤'+c.fps+'fps' : ''); }
 function termuxCamOpts(info,cur){
   const o=['off','back','front'];
   for(const c of Array.isArray(info) ? info : []) if(c && c.id!=null) o.push(termuxCamLabel(c));
