@@ -1,7 +1,7 @@
 "use strict";
 /* Termux: записи моста tools/termux/bridge.mjs → значения выходов узла. Без DOM — проверяется в tools/test-termux.mjs */
 
-const TERMUX_SUBS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','step','devorient','sigmotion','stationary','motion','heading','hinge','wifi','cell','ble','bt','gnss','gnssraw','nmea','mic','lum','pkt'];
+const TERMUX_SUBS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','step','devorient','sigmotion','stationary','motion','heading','hinge','wifi','cell','ble','bt','gnss','gnssraw','nmea','mic','pkt'];
 
 // какие источники просить у моста по чекбоксам узла
 function termuxSub(p){ return TERMUX_SUBS.filter(k=>p[k]); }
@@ -15,28 +15,6 @@ function termuxSubMsg(p){
   if(+p.micHz>0 && p.mic) m.micHz=+p.micHz;
   if(p.pkt){ m.iface=String(p.iface||'any').trim(); m.filter=String(p.filter||'').trim(); m.snap=+p.snap||256; }
   return m;
-}
-
-// камера в списке узла: off, back, front и все камеры телефона из hello.cameraInfo («#3 thermal external 160×120»: номер, вид, сторона, размер)
-function termuxCamLabel(c){ return '#'+c.id+' '+(c.kind||'')+' '+(c.facing||'')+(c.hidden ? ' hidden' : '')+(c.w ? ' '+c.w+'×'+c.h : '')+(c.fps ? ' ≤'+c.fps+'fps' : '')+(c.hs && +c.hs>+c.fps ? ' hs'+c.hs : ''); }
-function termuxCamOpts(info,cur){
-  const o=['off','back','front'];
-  for(const c of Array.isArray(info) ? info : []) if(c && c.id!=null) o.push(termuxCamLabel(c));
-  if(cur && !o.includes(cur)) o.push(cur);                    // выбранная ещё не пришла в списке (после перезагрузки страницы)
-  return o;
-}
-// значение списка → то, что просим у моста: back / front или номер камеры
-function termuxCamId(v){ const m=/^#([A-Za-z0-9_.:\/-]+)/.exec(String(v||'')); return m ? m[1] : String(v||''); }
-
-// адрес камеры приложения DSP на том же порту, что и WebSocket (→ вход url узла IP Camera); null — камера выключена
-function termuxCamUrl(url,p){
-  if(!p.cam || p.cam==='off') return null;
-  let u; try{ u=new URL(String(url||'').trim()); }catch(e){ return null; }
-  if(u.protocol!=='ws:' && u.protocol!=='wss:') return null;
-  const q=new URLSearchParams({cam:termuxCamId(p.cam),w:p.camw,fps:p.camfps,q:p.camq}), t=u.searchParams.get('token');
-  if(p.campal==='iron') q.set('pal','iron');                    // палитра 16-битных кадров (тепловизор, глубина)
-  if(t) q.set('token',t);
-  return (u.protocol==='wss:' ? 'https:' : 'http:')+'//'+u.host+'/camera.mjpg?'+q;
 }
 
 // кватернион Android (x,y,z,w) → азимут, тангаж, крен в градусах (как SensorManager.getOrientation)
@@ -109,7 +87,6 @@ function termuxApply(o,r){
       break;
     case 'cell': if(r.reg==1 || r.reg===true){ set('cdbm',r.dbm); set('crsrp',r.rsrp); set('crsrq',r.rsrq); set('csinr',r.sinr); } break;
     case 'mic': set('micdb',r.rms); break;
-    case 'lum': if(Array.isArray(r.v) && r.v.length) set('lumv',+r.v[r.v.length-1]); break;
     case 'gnss': if(r.kind==='fix'){ set('nsat',r.n); set('nused',r.used); set('cn0',r.cn0); } break;
     case 'sensor': {
       const k={accel:['ax','ay','az'], gyro:['gx','gy','gz'], mag:['mx','my','mz']}[r.sensor];
@@ -142,7 +119,6 @@ function termuxLine(r){
     case 'cell': return 'cell '+(r.type||'')+(r.reg ? ' *' : '')+' '+(r.mcc!=null ? r.mcc+'-'+r.mnc+' ' : '')+'cid '+(r.cid ?? '—')+(r.pci!=null ? ' pci '+r.pci : '')+(r.dbm!=null ? ' '+r.dbm+' dBm' : '');
     case 'pkt': return 'pkt '+r.iface+' '+(r.ip ? r.ip+(r.sport ? ':'+r.sport : '')+' → '+r.dip+(r.dport ? ':'+r.dport : '') : (r.smac||'')+' → '+(r.dmac||''))+' '+r.len+' B';
     case 'mic': return 'mic '+f(r.rms,0)+' dBFS';
-    case 'lum': return 'lum '+(Array.isArray(r.v) ? r.v.length : 0)+' samples';
     case 'wifi': return 'wifi '+r.bssid+' '+r.rssi+' dBm'+(r.ch ? ' ch '+r.ch : '')+' '+(r.ssid||'');
     case 'wificonn': return 'connected '+(r.ssid||r.bssid)+' '+r.rssi+' dBm '+(r.speed!=null ? r.speed+' Mbit/s' : '');
     case 'ble': return 'ble '+r.addr+' '+r.rssi+' dBm '+(r.name||'');

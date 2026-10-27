@@ -130,7 +130,6 @@ class MainActivity : Activity() {
                 val r = pendingWeb ?: return
                 pendingWeb = null
                 if (res.isNotEmpty() && res.all { it == PackageManager.PERMISSION_GRANTED }) r.grant(r.resources) else r.deny()
-                if (perms.contains(Manifest.permission.CAMERA)) BridgeService.start(this)
             }
         }
     }

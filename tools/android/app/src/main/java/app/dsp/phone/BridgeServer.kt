@@ -21,14 +21,12 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
- * Локальный сервер: WebSocket с JSON-записями (протокол tools/termux/bridge.mjs) и камера MJPEG на одном порту.
+ * Локальный сервер: WebSocket с JSON-записями (протокол tools/termux/bridge.mjs).
  *   ws://host:port/?token=…            {"sub":["accel","gps",…],"hz":200} → записи (массивами по ~40 мс)
- *   http://host:port/camera.mjpg?cam=back&w=640&fps=10&q=70&rot=0&token=…
- *   http://host:port/snapshot.jpg?…    http://host:port/status
+ *   http://host:port/status
  */
 class BridgeServer(
     private val cfg: Config,
-    private val camera: CameraHub,
     private val hello: () -> String,
     private val status: () -> String,
     private val onSubs: () -> Unit,
@@ -170,8 +168,6 @@ class BridgeServer(
         when {
             req.path == "/usb" -> serveUsb(sock, req, remote, origin)
             req.headers["upgrade"]?.equals("websocket", true) == true -> serveWs(sock, req)
-            req.path == "/camera.mjpg" || req.path == "/camera" || req.path == "/stream" -> serveMjpeg(sock, req, origin)
-            req.path == "/snapshot.jpg" || req.path == "/snapshot" -> serveSnapshot(sock, req, origin)
             req.path == "/" || req.path == "/status" -> respond(sock, 200, "OK", "text/plain; charset=utf-8", status(), origin)
             else -> respond(sock, 404, "Not Found", "text/plain", "not found", origin)
         }
@@ -231,47 +227,6 @@ class BridgeServer(
         val h = "HTTP/1.1 $code $reason\r\n" + cors(origin) + extra + "Content-Type: $ctype\r\nContent-Length: ${body.size}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
         val os = sock.getOutputStream()
         os.write(h.toByteArray()); os.write(body); os.flush()
-    }
-
-    // ---------- камера ----------
-
-    private fun camCfg(q: Map<String, String>): CameraHub.Cfg {
-        fun int(k: String, d: Int, lo: Int, hi: Int) = (q[k]?.toIntOrNull() ?: d).coerceIn(lo, hi)
-        val cam = q["cam"] ?: "back"
-        val facing = if (cam == "front") android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT
-            else android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK
-        // cam=back|front или номер камеры из cameraInfo (внешняя, тепловизор, ИК): cam=3
-        val id = cam.takeIf { it != "back" && it != "front" && Regex("[A-Za-z0-9_.:/-]{1,32}").matches(it) }
-        val rot = (int("rot", 0, 0, 359) / 90 * 90)
-        return CameraHub.Cfg(facing, int("w", 640, 16, 8192), int("fps", 10, 1, 240), int("q", 70, 1, 100), rot, id, if (q["pal"] == "iron") "iron" else "gray")
-    }
-
-    private fun serveMjpeg(sock: Socket, req: Req, origin: String?) {
-        val lease = camera.acquire(camCfg(req.query))
-            ?: return respond(sock, 503, "Service Unavailable", "text/plain", camera.error.ifEmpty { "camera unavailable" }, origin)
-        try {
-            sock.soTimeout = 0
-            val os = BufferedOutputStream(sock.getOutputStream(), 65536)
-            os.write(("HTTP/1.1 200 OK\r\n" + cors(origin) + "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n" +
-                "Cache-Control: no-store\r\nConnection: close\r\n\r\n").toByteArray())
-            var last = 0L
-            while (running && camera.valid(lease)) {
-                val (jpeg, seq) = camera.next(lease, last, 5000) ?: continue
-                last = seq
-                os.write("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.size}\r\n\r\n".toByteArray())
-                os.write(jpeg); os.write("\r\n".toByteArray()); os.flush()
-            }
-        } finally { camera.release() }
-    }
-
-    private fun serveSnapshot(sock: Socket, req: Req, origin: String?) {
-        val lease = camera.acquire(camCfg(req.query))
-            ?: return respond(sock, 503, "Service Unavailable", "text/plain", camera.error.ifEmpty { "camera unavailable" }, origin)
-        try {
-            val f = camera.next(lease, 0, 6000)
-            if (f == null) respond(sock, 504, "Gateway Timeout", "text/plain", camera.error.ifEmpty { "no frame from the camera" }, origin)
-            else respondBytes(sock, 200, "OK", "image/jpeg", f.first, origin)
-        } finally { camera.release() }
     }
 
     // ---------- WebSocket ----------
@@ -387,8 +342,8 @@ class BridgeServer(
         /** Источники, которые отдают личные данные. */
         val SENSITIVE = setOf("sms")
 
-        /** Команды с личными данными, платные (SMS, контакты) или с root — только доверенному клиенту. */
-        fun sensitiveCmd(name: String) = name.startsWith("sms.") || name.startsWith("contacts.") || name.startsWith("cam.root.")
+        /** Команды с личными данными или платные (SMS, контакты) — только доверенному клиенту. */
+        fun sensitiveCmd(name: String) = name.startsWith("sms.") || name.startsWith("contacts.")
 
         fun frame(payload: ByteArray, op: Int = 1): ByteArray {
             val n = payload.size

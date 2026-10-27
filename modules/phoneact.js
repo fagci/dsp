@@ -1,6 +1,6 @@
 "use strict";
 /* ============================ Phone Actions (приложение DSP) ============================
-   Действия телефона из графа: уведомление с кнопками, фонарь, SMS (чтение / отправка / приём), контакты, ИК-передатчик, список камер.
+   Действия телефона из графа: уведомление с кнопками, фонарь, SMS (чтение / отправка / приём), контакты, ИК-передатчик.
    Команды и записи — по WebSocket моста приложения (ядро — phoneact-kernels.js). SMS и контакты открыты только странице самого
    приложения: она добавляет к адресу ключ (DspApp.appKey), чужие сайты его не знают. Телефон без нужного железа ответит ошибкой в rec. */
 
@@ -61,7 +61,7 @@ function phoneFeed(n,r){
   if(n.recQ.length>5000) n.recQ.splice(0,n.recQ.length-5000);
 }
 
-def({ id:'phone', title:'Phone Actions (DSP app)', cat:'Output', kw:'android app phone notification action button flashlight torch sms text message contacts infrared ir blaster camera list',
+def({ id:'phone', title:'Phone Actions (DSP app)', cat:'Output', kw:'android app phone notification action button flashlight torch sms text message contacts infrared ir blaster',
   ins:[{n:'go',t:'num'},{n:'text',t:'txt'},{n:'ir',t:'txt'},{n:'torch',t:'num'},{n:'cmd',t:'rec'}],
   outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'new',t:'num'},{n:'torch',t:'num'},{n:'ok',t:'num'}],
   readout:true, tall:true,

@@ -21,7 +21,6 @@ import java.net.NetworkInterface
  */
 class BridgeService : Service() {
     private lateinit var cfg: Config
-    private lateinit var camera: CameraHub
     private lateinit var server: BridgeServer
     private lateinit var sensors: SensorHub
     private lateinit var gps: GpsHub
@@ -52,18 +51,10 @@ class BridgeService : Service() {
             try { java.io.File(filesDir, CRASH_FILE).writeText("${java.util.Date()} thread ${t.name}\n" + android.util.Log.getStackTraceString(e).take(4000)) } catch (x: Exception) {}
             prev?.uncaughtException(t, e)
         }
-        camera = CameraHub(this) { main.post { refresh() } }
-        camera.onNeedPermission = { main.post { requestPerms(listOf(android.Manifest.permission.CAMERA)) } }
-        server = BridgeServer(cfg, camera, ::helloJson, ::statusText) { refresh() }
-        camera.onNote = { m -> server.note("warn", m) }
-        camera.onLum = { v, n, dt ->
-            val sb = StringBuilder("[")
-            for (i in 0 until n) { if (i > 0) sb.append(','); sb.append(String.format(java.util.Locale.US, "%.3f", v[i])) }
-            server.emit("lum", Json.obj("src" to "\"lum\"", "t" to System.currentTimeMillis().toString(), "dt" to String.format(java.util.Locale.US, "%.3f", dt), "v" to sb.append(']').toString()))
-        }
+        server = BridgeServer(cfg, ::helloJson, ::statusText) { refresh() }
         usb = AndroidUsb(this)
         server.usb = usb
-        actions = PhoneActions(this, { s, j -> server.emit(s, j) }, { p -> main.post { requestPerms(p) } }, { camera.describe() }, cfg)
+        actions = PhoneActions(this, { s, j -> server.emit(s, j) }, { p -> main.post { requestPerms(p) } }, cfg)
         server.onCommand = { c, j -> actions.exec(c, j) }
         sensors = SensorHub(this) { s, j -> server.emit(s, j) }
         gps = GpsHub(this) { s, j -> server.emit(s, j) }
@@ -100,7 +91,7 @@ class BridgeService : Service() {
 
     override fun onDestroy() {
         destroyed = true
-        server.stop(); camera.stop()
+        server.stop()
         sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close()
         wake?.takeIf { it.isHeld }?.release()
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(ID)
@@ -114,7 +105,6 @@ class BridgeService : Service() {
         if (Build.VERSION.SDK_INT < 29) { startForeground(ID, n); return }
         // типы — только те, на которые есть разрешения, иначе startForeground бросит SecurityException
         var type = 0
-        if (Build.VERSION.SDK_INT >= 30 && granted(android.Manifest.permission.CAMERA)) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
         if (hasLocation()) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
         if (Build.VERSION.SDK_INT >= 30 && granted(android.Manifest.permission.RECORD_AUDIO)) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         if (Build.VERSION.SDK_INT >= 34) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
@@ -149,7 +139,6 @@ class BridgeService : Service() {
         parts.add((if (cfg.shareLan) "0.0.0.0" else "127.0.0.1") + ":" + cfg.port)
         parts.add("${server.clientCount} client(s)")
         if (w.subs.isNotEmpty()) parts.add(w.subs.joinToString(","))
-        if (camera.viewers > 0) parts.add("camera ${camera.info}")
         return parts.joinToString(" · ")
     }
 
@@ -177,7 +166,7 @@ class BridgeService : Service() {
         for (p in problems) if (warned.add(p)) server.note("error", p)
         warned.retainAll(problems)
 
-        val active = w.subs.isNotEmpty() || camera.viewers > 0
+        val active = w.subs.isNotEmpty()
         if (active && wake == null) {
             wake = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "dsp:bridge")
         }
@@ -192,7 +181,7 @@ class BridgeService : Service() {
      * Окно открывается сразу, если приложение на экране, иначе — по нажатию на уведомление (из фона Android окно не откроет).
      */
     private fun askPermissions(subs: Set<String>) {
-        val miss = Perms.forSubs(subs, Build.VERSION.SDK_INT, camera.viewers > 0).filter { !granted(it) && asked.add(it) }
+        val miss = Perms.forSubs(subs, Build.VERSION.SDK_INT).filter { !granted(it) && asked.add(it) }
         if (miss.isNotEmpty()) requestPerms(miss)
     }
 
@@ -215,14 +204,13 @@ class BridgeService : Service() {
         val sens = sensors.available()
         return Json.obj(
             "src" to "\"bridge\"", "level" to "\"hello\"", "ver" to "1", "app" to "\"dsp-android\"", "host" to Json.str(Build.MODEL),
-            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "lum", "sms", "notify", "torch") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(), "cameras" to arr(camera.available()),
-            "cameraInfo" to camera.describe(), "phone" to actions.info(),
+            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "sms", "notify", "torch") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(),
+            "phone" to actions.info(),
         )
     }
 
     private fun statusText(): String =
-        "DSP phone bridge\n" + summary() + "\ncamera: " + (camera.info.ifEmpty { "off" }) + (if (camera.error.isNotEmpty()) " (" + camera.error + ")" else "") +
-            "\nsensors: " + sensors.available().joinToString(",") + "\n" + sensors.lines() + "addresses: " + lan().joinToString(", ") + "\n"
+        "DSP phone bridge\n" + summary() + "\nsensors: " + sensors.available().joinToString(",") + "\n" + sensors.lines() + "addresses: " + lan().joinToString(", ") + "\n"
 
     companion object {
         const val ACTION_STOP = "app.dsp.phone.STOP"

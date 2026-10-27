@@ -19,8 +19,7 @@ ok('buttons: ids from labels, unique, at most three', b.length === 3 && b[0].id 
 ok('notify command', JSON.stringify(K.phoneCmd({ action: 'notify', title: 'T', body: 'hello', buttons: 'A', open: false })) === JSON.stringify({ cmd: 'notify', title: 'T', text: 'hello', actions: [{ id: 'a', label: 'A' }], open: false }));
 ok('the text input overrides the field', K.phoneCmd({ action: 'sms.send', to: ' +79001234567 ', body: 'field' }, 'from wire').text === 'from wire' && K.phoneCmd({ action: 'sms.send', to: ' +79001234567 ', body: 'field' }, '').text === 'field' && K.phoneCmd({ action: 'sms.send', to: ' +79001234567 ' }, null).to === '+79001234567');
 ok('torch commands', K.phoneCmd({ action: 'torch on', level: 0 }).on === true && K.phoneCmd({ action: 'torch on', level: 3 }).level === 3 && K.phoneCmd({ action: 'torch off' }).on === false && !('level' in K.phoneCmd({ action: 'torch on', level: 0 })));
-ok('root camera commands go as they are, the readout shows the camera count change', ['cam.probe','cam.root.info','cam.root.sysuid','cam.root.unhide','cam.root.restore'].every(a => K.phoneCmd({ action: a }).cmd === a) && K.phoneLine({ src: 'cmd', cmd: 'cam.root.unhide', ok: true, before: 3, after: 5 }) === 'cam.root.unhide ok · cameras 3 → 5');
-ok('list commands', K.phoneCmd({ action: 'sms.list', box: 'inbox', q: 'bank', limit: 20 }).box === 'inbox' && K.phoneCmd({ action: 'contacts.find', q: 'Ann' }).limit === 50 && K.phoneCmd({ action: 'cam.list' }).cmd === 'cam.list' && K.phoneCmd({ action: 'nope' }) === null);
+ok('list commands', K.phoneCmd({ action: 'sms.list', box: 'inbox', q: 'bank', limit: 20 }).box === 'inbox' && K.phoneCmd({ action: 'contacts.find', q: 'Ann' }).limit === 50 && K.phoneCmd({ action: 'nope' }) === null);
 
 // ИК: кадр кодека → команда излучателю
 const e = K.irEncode('NEC', 4, 8, {});

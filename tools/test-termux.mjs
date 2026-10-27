@@ -75,7 +75,7 @@ br.close(); fs.rmSync(dir,{recursive:true,force:true});
 const kf=path.join(root,'modules/termux-kernels.js');
 if(fs.existsSync(kf)){
   const ctx=vm.createContext({atob,Float32Array,Math,Number,String,Object,Array,isFinite,Date,JSON,URL,URLSearchParams});
-  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxCamOpts,termuxCamId,termuxCamLabel,termuxDev,termuxThin,termuxPoint,termuxPcm,termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxCamUrl};',ctx);
+  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxDev,termuxThin,termuxPoint,termuxPcm,termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg};',ctx);
   const K=ctx.K, o={};
   K.termuxApply(o,{src:'gps',lat:1,lon:2,alt:3,acc:4,speed:5,bearing:6});
   ok('apply gps',o.lat===1 && o.lon===2 && o.alt===3 && o.acc===4 && o.speed===5 && o.hdg===6);
@@ -104,16 +104,6 @@ if(fs.existsSync(kf)){
   ok('thin: by distance (0.0001° lat ≈ 11 m)',!K.termuxThin(mv,{dev:'d',lat:50.00005,lon:30},1,0,10) && K.termuxThin(mv,{dev:'d',lat:50.0002,lon:30},2,0,10));
   const pt=K.termuxPoint({src:'ble',lat:1,lon:2,rssi:-70,dev:'ble:x',name:'x'},'m1');
   ok('map point',pt.id==='m1' && pt.lat===1 && pt.label==='-70 dBm' && pt.color==='#b07cff' && pt.track===0);
-  // --- камеры из hello.cameraInfo ---
-  const info=[{id:'0',kind:'visible',facing:'back',w:4000,h:3000},{id:'1',kind:'visible',facing:'front',w:3264,h:2448},{id:'3',kind:'thermal',facing:'external',w:160,h:120},{id:'4',kind:'depth',facing:'back'}];
-  const co=K.termuxCamOpts(info,'off');
-  ok('camera list: off, back, front and every camera of the phone',co.slice(0,3).join()==='off,back,front' && co.length===7 && co[5]==='#3 thermal external 160×120' && co[6]==='#4 depth back',co.join('|'));
-  ok('camera list: hidden cameras and their frame rate limit',K.termuxCamLabel({id:'2',kind:'visible',facing:'back',hidden:'1',w:4000,h:3000,fps:30})==='#2 visible back hidden 4000×3000 ≤30fps' && K.termuxCamId('#2 visible back hidden 4000×3000 ≤30fps')==='2');
-  ok('camera list: high-speed limit',K.termuxCamLabel({id:'0',kind:'visible',facing:'back',w:4000,h:3000,fps:30,hs:'240'})==='#0 visible back 4000×3000 ≤30fps hs240' && K.termuxCamId('#0 visible back 4000×3000 ≤30fps hs240')==='0');
-  ok('camera list: the saved choice stays even before the list arrives; no info → three basics',K.termuxCamOpts(null,'#3 thermal external 160×120').includes('#3 thermal external 160×120') && K.termuxCamOpts(undefined,'back').join()==='off,back,front');
-  ok('camera id from the list value (a hidden physical camera is logical/physical)',K.termuxCamId('#3 thermal external 160×120')==='3' && K.termuxCamId('#0/2 visible back 4000×3000')==='0/2' && K.termuxCamId('#12.a:b x')==='12.a:b' && K.termuxCamId('front')==='front');
-  const cu2=K.termuxCamUrl('ws://10.0.0.2:8765/?token=k',{cam:'#3 thermal external 160×120',camw:'640',camfps:10,camq:70,campal:'iron'});
-  ok('camera url: by id, palette, token',/cam=3&/.test(cu2) && cu2.includes('pal=iron') && cu2.includes('token=k') && !K.termuxCamUrl('ws://h:1',{cam:'front',camw:'640',camfps:10,camq:70,campal:'gray'}).includes('pal='),cu2);
   ok('apply sensors',o.ax===1 && o.az===3 && o.gx===4 && o.gz===6 && o.mx===7 && o.mz===9 && o.light===120 && o.press===1013);
   K.termuxApply(o,{src:'battery',pct:50,status:'CHARGING',temp:31});
   ok('apply battery',o.batt===50 && o.charging===1 && o.temp===31);
@@ -123,11 +113,6 @@ if(fs.existsSync(kf)){
   const sm=K.termuxSubMsg({gps:true,accel:true,hz:'200'});
   ok('sub message carries the sensor rate',sm.sub.join()==='gps,accel' && sm.hz===200,JSON.stringify(sm));
   ok('sub message without rate has no hz (Termux bridge)',!('hz' in K.termuxSubMsg({gps:true,hz:'0'})) && !('hz' in K.termuxSubMsg({gps:true})));
-  const cp={cam:'back',camw:'640',camfps:10,camq:70};
-  const cu=K.termuxCamUrl('ws://127.0.0.1:8765/?token=a b',cp);
-  ok('camera url: same host, http, token kept',cu && cu.startsWith('http://127.0.0.1:8765/camera.mjpg?') && /cam=back/.test(cu) && /w=640/.test(cu) && /fps=10/.test(cu) && /q=70/.test(cu) && /token=a\+b/.test(cu),cu);
-  ok('camera url: wss → https',K.termuxCamUrl('wss://phone.lan:8765',cp).startsWith('https://phone.lan:8765/camera.mjpg?'));
-  ok('camera url: off, bad or http address → null',K.termuxCamUrl('ws://h:1',{...cp,cam:'off'})===null && K.termuxCamUrl('ws://h:1',{})===null && K.termuxCamUrl('nonsense',cp)===null && K.termuxCamUrl('http://h:1',cp)===null);
   K.termuxApply(o,{src:'gnss',kind:'sat',con:'GPS',svid:5,cn0:38});
   ok('gnss sat record does not touch the summary',o.nsat===undefined);
   K.termuxApply(o,{src:'gnss',kind:'fix',n:24,used:11,cn0:34.5});
@@ -139,7 +124,5 @@ if(fs.existsSync(kf)){
     K.termuxLine({src:'gnss',kind:'sat',con:'GLONASS',svid:3,cn0:30,el:40,used:1}).includes('GLONASS') && K.termuxLine({src:'gnss',kind:'fix',n:20,used:9,cn0:33}).includes('9/20') &&
     K.termuxLine({src:'nmea',line:'$GPGGA,1'})==='$GPGGA,1' && K.termuxLine({src:'wifi',bssid:'aa',rssi:-5,ch:6,ssid:'H'}).includes('ch 6'));
   ok('line',K.termuxLine({src:'wifi',bssid:'aa',ssid:'H',rssi:-5}).includes('aa'));
-  { const o={}; K.termuxApply(o,{src:'lum',dt:8.3,v:[10,20.5,30]});
-    ok('lum: last value → lumv, subscribed only by the lum check, line', o.lumv===30 && K.termuxSub({lum:true}).includes('lum') && !K.termuxSub({}).includes('lum') && K.termuxLine({src:'lum',v:[1,2]})==='lum 2 samples'); }
 }
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad ? 1 : 0);

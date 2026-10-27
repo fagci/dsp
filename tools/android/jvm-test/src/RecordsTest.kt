@@ -2,11 +2,7 @@ package app.dsp.phone.recordstest
 
 import app.dsp.phone.Ad
 import app.dsp.phone.Audio
-import app.dsp.phone.Cam
 import app.dsp.phone.Cmd
-import app.dsp.phone.Gray16
-import app.dsp.phone.RootCam
-import app.dsp.phone.SysCam
 import app.dsp.phone.Frame
 import app.dsp.phone.PcapReader
 import app.dsp.phone.Perms
@@ -85,18 +81,6 @@ fun main() {
     ok("usb desc: own bulk 512 → high-speed; nothing known → empty", UsbDesc.speed(pd, null) == "high-speed" && UsbDesc.speed(own, null) == "" && UsbDesc.speed(null, null) == "")
 
 
-    // --- камеры: тепловизор / ИК / глубина, 16-битные кадры ---
-    ok("camera kinds by output formats", Cam.kind(setOf(Cam.YUV, Cam.JPEG), false) == "visible" && Cam.kind(setOf(Cam.Y16), false) == "thermal" &&
-        Cam.kind(setOf(Cam.DEPTH16), false) == "depth" && Cam.kind(setOf(Cam.YUV), true) == "ir" && Cam.kind(setOf(Cam.RAW), false) == "other")
-    ok("camera format pick: YUV first, then Y16, DEPTH16", Cam.pick(setOf(Cam.Y16, Cam.YUV)) == Cam.YUV && Cam.pick(setOf(Cam.DEPTH16, Cam.Y16)) == Cam.Y16 && Cam.pick(setOf(Cam.JPEG)) == null)
-    val g = IntArray(16 * 16) { 1000 + (it % 16) * 100 }
-    val (glo, ghi) = Gray16.range(g)
-    ok("gray16 range ignores the extremes", glo in 1000..1200 && ghi in 2300..2500, "$glo $ghi")
-    val gn = Gray16.toNv21(g, 16, 16, "gray")
-    ok("gray16 → NV21 gray: left dark, right bright, chroma neutral", gn.size == 16 * 16 * 3 / 2 && (gn[0].toInt() and 255) < 30 && (gn[15].toInt() and 255) > 225 && (gn[16 * 16].toInt() and 255) == 128)
-    val gi = Gray16.toNv21(g, 16, 16, "iron")
-    ok("gray16 → NV21 iron: chroma follows the heat", (gi[16 * 16].toInt() and 255) != (gi[16 * 16 + 14].toInt() and 255) && (gi[15].toInt() and 255) > 200)
-    ok("gray16: no data stays black, empty frame does not crash", (Gray16.toNv21(IntArray(64), 8, 8, "gray")[0].toInt() and 255) == 0 && Gray16.range(IntArray(4)) == (0 to 1))
 
     // --- команды: проверка аргументов ---
     ok("sms number", Cmd.number("+7 (900) 123-45-67") != null && Cmd.number("112") != null && Cmd.number("12") == null && Cmd.number("+7900;rm") == null && Cmd.number("abc") == null)
@@ -106,34 +90,10 @@ fun main() {
         Cmd.irPattern(org.json.JSONArray("[9000,0]")) == null && Cmd.irPattern(org.json.JSONArray("[9000,-5]")) == null && Cmd.irPattern(null) == null && Cmd.irPattern(org.json.JSONArray("[1,3000000]")) == null)
     ok("ir carrier must lie in the emitter ranges", Cmd.irFreqOk(38000, listOf(intArrayOf(30000, 60000))) && !Cmd.irFreqOk(20000, listOf(intArrayOf(30000, 60000))) && Cmd.irFreqOk(38000, emptyList()) && !Cmd.irFreqOk(0, emptyList()))
     ok("limit", Cmd.limit(0, 50, 500) == 50 && Cmd.limit(9999, 50, 500) == 500 && Cmd.limit(7, 50, 500) == 7)
-    ok("perms: incoming SMS", Perms.forSubs(setOf("sms"), 34, false) == listOf("android.permission.RECEIVE_SMS"))
+    ok("perms: incoming SMS", Perms.forSubs(setOf("sms"), 34) == listOf("android.permission.RECEIVE_SMS"))
 
 
-    // --- камеры с root: скрипты ---
-    val us = RootCam.unhideScript("app.dsp.phone")!!
-    ok("root cam: the unhide script names the package and both properties and restarts the service", us.contains("P='app.dsp.phone'") && us.contains("vendor.camera.aux.packagelist") && us.contains("persist.vendor.camera.privapp.list") && us.contains("killall camerahalserver cameraserver"), us)
-    ok("root cam: the pkill pattern does not match the script's own command line (that was the exit 143)", Regex("camera[.]provider").containsMatchIn(us).not() && !us.contains("pkill -f camera.provider") && us.contains("pkill -f 'camera[.]provider'"))
-    ok("root cam: the properties are set (and reported) before the restart can kill the shell", us.indexOf("echo propsset") in 1 until us.indexOf("pkill") && RootCam.done("OLD a=b\npropsset\n") && !RootCam.done("OLD a=b\n"))
-    ok("root cam: shell variables survived the template", us.contains("getprop \$K") && us.contains("\${C:+\$C,}\$P") && !us.contains("§") && !us.contains("@PKG@") && !us.contains("@PROPS@"), us)
-    ok("root cam: a package name with extra characters is refused", RootCam.unhideScript("a;rm -rf /") == null && RootCam.unhideScript("a b") == null && RootCam.unhideScript("") == null && RootCam.unhideScript("x'y") == null && RootCam.restoreScript("a;b") == null)
-    val rs = RootCam.restoreScript("app.dsp.phone")!!
-    ok("root cam: restore takes only our package out of each list and restarts", rs.contains("sed \"s/,\$P,/,/g;s/^,//;s/,\\\$//\"") && rs.contains("setprop \$K \"\$N\"") && rs.contains("echo propsset") && rs.contains("pkill -f 'camera[.]provider'"), rs)
-    ok("root cam: the read-only script does not write anything", !RootCam.INFO.contains("setprop") && !RootCam.INFO.contains("kill") && RootCam.INFO.contains("dumpsys media.camera"))
-    ok("root cam: clip", RootCam.clip("abc", 5) == "abc" && RootCam.clip("abcdef", 3).startsWith("abc\n…"))
-    // сам sed-скрипт отката: убирает пакет из середины, начала и конца списка и ничего не трогает в остальном
-    fun sedPkg(list: String): String? {
-        val r = ProcessBuilder("sh", "-c", "P='app.dsp.phone'; C='$list'; echo \",\$C,\" | sed \"s/,\$P,/,/g;s/^,//;s/,\\\$//\"").redirectErrorStream(true).start()
-        return r.inputStream.bufferedReader().readText().trim().also { r.waitFor() }
-    }
-    ok("root cam: the removal expression works on real sed", sedPkg("app.dsp.phone") == "" && sedPkg("a.b,app.dsp.phone") == "a.b" && sedPkg("app.dsp.phone,c.d") == "c.d" && sedPkg("a.b,app.dsp.phone,c.d") == "a.b,c.d" && sedPkg("a.b") == "a.b" && sedPkg("") == "")
 
-    // --- камеры от uid 1000 ---
-    val sc = RootCam.sysCamScript("app.dsp.phone")!!
-    ok("sysuid: the script finds our APK and runs SysCam as uid 1000 via app_process", sc.contains("pm path app.dsp.phone") && sc.contains("su 1000 -c") && sc.contains("CLASSPATH=\$A") && sc.contains("app_process /system/bin app.dsp.phone.SysCam") && !sc.contains("§"), sc)
-    ok("sysuid: a package name with extra characters is refused", RootCam.sysCamScript("a;b") == null && RootCam.sysCamScript("") == null)
-    ok("sysuid: the class name in the script is the real class", SysCam::class.java.name == "app.dsp.phone.SysCam")
-    ok("camera capability names", SysCam.capNames(intArrayOf(0, 14, 13, 99)) == "BACKWARD_COMPATIBLE,SYSTEM_CAMERA,SECURE_IMAGE_DATA,cap99" && SysCam.capNames(null) == "?")
-    ok("root cam info: version and properties come first, nothing is written", RootCam.INFO.indexOf("## android") < RootCam.INFO.indexOf("## camera service") && RootCam.INFO.contains("getprop") && RootCam.INFO.contains("ystem [Cc]amera") && !RootCam.INFO.contains("setprop"))
 
     // --- JSON-помощники дают валидный JSON ---
     val j = JSONObject(Json.obj("src" to "\"ble\"", "mfr" to Json.map(mapOf("004c" to "02")), "uuids" to Json.arr(listOf("180f", "a\"b")), "n" to null, "x" to Json.num(1.23456789, 1e4)))
@@ -166,9 +126,9 @@ fun main() {
     val f6 = Frame.parse(101, v6)
     ok("frame ipv6+udp", f6.ver == 6 && f6.proto == 17 && f6.sport == 53 && f6.dport == 0xd431 && f6.src == "0:0:0:0:0:0:0:1", "${f6.src} ${f6.sport}")
     ok("frame short does not crash", Frame.parse(1, b(1, 2, 3)).src == null && Frame.parse(276, ByteArray(0)).src == null)
-    ok("perms: location sources", Perms.forSubs(setOf("gps", "cell"), 34, false).size == 2 && Perms.forSubs(setOf("accel"), 34, false).isEmpty())
-    ok("perms: bluetooth by version", Perms.forSubs(setOf("ble"), 34, false).any { it.endsWith("BLUETOOTH_SCAN") } && Perms.forSubs(setOf("ble"), 29, false).none { it.endsWith("BLUETOOTH_SCAN") })
-    ok("perms: steps, mic, camera", Perms.forSubs(setOf("steps", "mic"), 34, true).map { it.substringAfterLast('.') } == listOf("ACTIVITY_RECOGNITION", "RECORD_AUDIO", "CAMERA"))
+    ok("perms: location sources", Perms.forSubs(setOf("gps", "cell"), 34).size == 2 && Perms.forSubs(setOf("accel"), 34).isEmpty())
+    ok("perms: bluetooth by version", Perms.forSubs(setOf("ble"), 34).any { it.endsWith("BLUETOOTH_SCAN") } && Perms.forSubs(setOf("ble"), 29).none { it.endsWith("BLUETOOTH_SCAN") })
+    ok("perms: steps, mic", Perms.forSubs(setOf("steps", "mic"), 34).map { it.substringAfterLast('.') } == listOf("ACTIVITY_RECOGNITION", "RECORD_AUDIO"))
     ok("sniffer: interface and filter checked", Perms.iface("wlan0") == "wlan0" && Perms.iface("") == "any" && Perms.iface("a; reboot") == null && Perms.iface("a b") == null &&
         Perms.filter("tcp port 80 and not host 10.0.0.1") == "tcp port 80 and not host 10.0.0.1" && Perms.filter("tcp'; reboot; '") == null && Perms.filter("\$(id)") == null && Perms.filter("`id`") == null)
     ok("sniffer: script has no stray quotes", SnifferHub.script("any", 256, "tcp").contains("-i any -U -n -s 256 -w - 'tcp'"))
