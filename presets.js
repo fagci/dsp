@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=152;
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', PRESET_VER=153;
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -1388,7 +1388,7 @@ markWiresDirty();
 preset('Phone App: All Cameras — Thermal, IR, Depth and Hidden (Root)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Android app (tools/android). After Connect the camera list on the phone node shows EVERY camera Android gives to apps: #id, kind (visible / ir / thermal / depth), side (back / front / external) and size — pick one and it appears in IP Camera. 16-bit thermal and depth frames come with auto-contrast; the palette gray / iron is on the node.\n'+
-  'Phones hide more cameras than they list (ultra-wide, macro, ToF, IR). With root: tick «Allow root features» in the app Settings, then in Phone Actions run cam.root.info (read-only: what the camera service knows, V4L2 devices, access properties), then cam.root.unhide — it adds the app to the system camera-access properties and restarts the camera service (the list on the phone node grows if the phone supports this; Qualcomm-based phones usually do), cam.root.restore puts everything back. Camera for other apps may blink for a few seconds.\n'+
+  'Phones hide more cameras than they list (ultra-wide, macro, ToF, IR). Looking for them, in this order: cam.probe (no root: which ids 0…9 the camera service answers for and whether they open), then with root cam.root.info (Android version, camera properties, capabilities of every camera — SYSTEM_CAMERA / SECURE_IMAGE_DATA explain a hidden one) and cam.root.sysuid (a helper process as the system user lists the cameras a system app sees — if the hidden ones appear there, they are system cameras). With root: tick «Allow root features» in the app Settings, then in Phone Actions run cam.root.info (read-only: what the camera service knows, V4L2 devices, access properties), then cam.root.unhide — it adds the app to the system camera-access properties and restarts the camera service (the list on the phone node grows if the phone supports this; Qualcomm-based phones usually do), cam.root.restore puts everything back. Camera for other apps may blink for a few seconds.\n'+
   'External UVC / thermal cameras on USB-C show up here only if the phone presents them as a camera; otherwise they are for vendor SDKs.'});
 nt.size.w=900; nt.size.h=210; applySize(nt);
 const tx=addNode('termux',40,280,{url:'ws://127.0.0.1:8765',gps:false,battery:false,cam:'back',camw:'640',camfps:10,camq:70,campal:'iron'});
