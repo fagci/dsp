@@ -139,5 +139,7 @@ if(fs.existsSync(kf)){
     K.termuxLine({src:'gnss',kind:'sat',con:'GLONASS',svid:3,cn0:30,el:40,used:1}).includes('GLONASS') && K.termuxLine({src:'gnss',kind:'fix',n:20,used:9,cn0:33}).includes('9/20') &&
     K.termuxLine({src:'nmea',line:'$GPGGA,1'})==='$GPGGA,1' && K.termuxLine({src:'wifi',bssid:'aa',rssi:-5,ch:6,ssid:'H'}).includes('ch 6'));
   ok('line',K.termuxLine({src:'wifi',bssid:'aa',ssid:'H',rssi:-5}).includes('aa'));
+  { const o={}; K.termuxApply(o,{src:'lum',dt:8.3,v:[10,20.5,30]});
+    ok('lum: last value → lumv, subscribed only by the lum check, line', o.lumv===30 && K.termuxSub({lum:true}).includes('lum') && !K.termuxSub({}).includes('lum') && K.termuxLine({src:'lum',v:[1,2]})==='lum 2 samples'); }
 }
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad ? 1 : 0);

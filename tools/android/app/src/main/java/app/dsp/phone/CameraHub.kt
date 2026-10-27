@@ -47,7 +47,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     private var device: CameraDevice? = null
     private var session: CameraCaptureSession? = null
     private var reader: ImageReader? = null
-    private var hs: HsCodec? = null                           // кодер, через который идёт режим высокой скорости
+    private var hs: HsGl? = null                              // режим высокой скорости: кадры камеры → видеокарта → яркость и картинка
     private var sensorRot = 0
     private var fmt = ImageFormat.YUV_420_888
     private var phys: String? = null
@@ -256,7 +256,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
                         if (hr != null) {
                             val hss = s as android.hardware.camera2.CameraConstrainedHighSpeedCaptureSession
                             val rq = d.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
-                            rq.addTarget(hs!!.input)
+                            rq.addTarget(hs!!.surface)
                             rq.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, hr)
                             hss.setRepeatingBurst(hss.createHighSpeedRequestList(rq.build()), null, h)
                             return
@@ -278,11 +278,12 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
             }
             val hr = hsRange
             if (hr != null) {
-                // поверхность сессии — вход кодера (HsCodec); отказ приходит и исключением, и через onConfigureFailed
+                // поверхность сессии — SurfaceTexture видеокарты (HsGl); отказ приходит и исключением, и через onConfigureFailed
                 try {
-                    val k = HsCodec(ctx.filesDir, rd.width, rd.height, hr.upper, { hsReady(c) }, { nv, w, h -> onNv21(nv, w, h, c) }) { why -> hsGiveUp(c, "codec: $why") }
+                    val rot = ((sensorRot + c.rot) % 360 + 360) % 360
+                    val k = HsGl(rd.width, rd.height, rot, c.quality, hr.upper, { v, n, dt -> lumIn(v, n, dt) }, { jpg -> publish(jpg) }) { why -> hsGiveUp(c, "gl: $why") }
                     k.start(); hs = k
-                    d.createConstrainedHighSpeedCaptureSession(listOf(k.input), cb, h)
+                    d.createConstrainedHighSpeedCaptureSession(listOf(k.surface), cb, h)
                 } catch (e: Exception) { hsGiveUp(c, e.message ?: e.javaClass.simpleName) }
                 return
             }
@@ -297,8 +298,8 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
 
     /** Высокая скорость не принята: запоминаем камеру и открываем заново в обычном режиме (зритель ждёт тот же поток). */
     private fun hsGiveUp(c: Cfg, why: String) {
-        noHs[c.id ?: "f${c.facing}"] = why.take(120)
-        main.post { synchronized(lock) { if (cfg == c) { stopLocked(); error = ""; note = " · high-speed refused: ${why.take(90)}"; onNote?.invoke("camera: high-speed refused: $why"); startLocked(c) } } }
+        if (why.contains("already closed")) return                // камеру закрыли своим же стопом: это не отказ высокой скорости
+        main.post { synchronized(lock) { if (cfg == c) { noHs[c.id ?: "f${c.facing}"] = why.take(120); stopLocked(); error = ""; note = " · high-speed refused: ${why.take(90)}"; onNote?.invoke("camera: high-speed refused: $why"); startLocked(c) } } }
     }
 
     /** fps выше предела автоэкспозиции без сессии высокой скорости: выдержка и длительность кадра вручную (предел — минимальная длительность кадра для размера). */
@@ -334,17 +335,25 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
     }
 
     /** Кадр NV21 из программного декодера (режим высокой скорости): та же очередь кодирования в JPEG, что и у кадров камеры. */
-    /** Есть ли смысл преобразовывать очередной кадр: нужный fps выдержан и поток кодирования свободен. */
-    private fun hsReady(c: Cfg) = pool != null && SystemClock.elapsedRealtime() - lastEnc >= 1000L / c.fps - 5 && busy.get() < Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+    /** Яркости кадров высокой скорости → мост (источник lum). */
+    @Volatile var onLum: ((FloatArray, Int, Double) -> Unit)? = null
+    private var lumN = 0; private var lumT = 0L; private var lumHz = 0
+    private fun lumIn(v: FloatArray, n: Int, dt: Double) {
+        onLum?.invoke(v, n, dt)
+        val t = SystemClock.elapsedRealtime()
+        lumN += n
+        if (lumT == 0L) lumT = t
+        if (t - lumT >= 3000) { lumHz = (lumN * 1000L / (t - lumT)).toInt(); lumN = 0; lumT = t; onNote?.invoke("camera: high-speed ${infoBase} · brightness $lumHz samples/s") }
+    }
 
-    private fun onNv21(nv: ByteArray, w: Int, h: Int, c: Cfg) {
-        val now = SystemClock.elapsedRealtime()
-        val p = pool
-        if (p == null || now - lastEnc < 1000L / c.fps - 5 || busy.get() >= (Runtime.getRuntime().availableProcessors().coerceIn(2, 4))) return
-        lastEnc = now
-        val no = ++frameNo
-        busy.incrementAndGet()
-        try { p.execute { encode(null, c, no, nv, w, h) } } catch (e: Exception) { busy.decrementAndGet() }
+    /** Готовая картинка (из видеокарты, раз в ~100 мс) — в поток MJPEG. */
+    private fun publish(out: ByteArray) {
+        synchronized(lock) {
+            if (cfg == null) return
+            jpeg = out; seq++
+            info = infoBase + " · brightness $lumHz/s"
+            lock.notifyAll()
+        }
     }
 
     private fun encode(img: Image?, c: Cfg, no: Long, ready: ByteArray? = null, rw: Int = 0, rh: Int = 0) {

@@ -46,6 +46,15 @@ function termuxMic(n,r){
   for(let i=0;i<a.length;i++) ssPush(n,n.micT+i/sr,[a[i]]);
   n.micT+=dur;
 }
+// яркость кадра высокоскоростной камеры (DSP app): пачка отсчётов v с шагом dt мс, последний — только что снят → поток отсчётов с метками, как у микрофона
+function termuxLum(n,r){
+  const v=r.v, dt=(+r.dt||0)/1000; if(!Array.isArray(v) || !v.length || !(dt>0)) return;
+  let L=n.lumS; if(!L){ L=n.lumS={}; ssInit(L,1); }
+  const wall=performance.now()/1000, dur=v.length*dt;
+  if(!L.T || Math.abs(L.T-(wall-dur))>.5){ L.T=wall-dur; if(L.T0) ssInit(L,1); L.T0=1; L.sExact=true; L.sLag=.25; }
+  for(let i=0;i<v.length;i++) ssPush(L,L.T+i*dt,[+v[i]||0]);
+  L.T+=dur; n.lumRate=1/dt;
+}
 function termuxFeed(n,r){
   if(!r || typeof r!=='object') return;
   n.msgs++; n.last=termuxLine(r);
@@ -58,6 +67,7 @@ function termuxFeed(n,r){
     if(typeof r.lat==='number' && typeof r.rssi==='number'){ n.ptQ.push(termuxPoint(r,'m'+(++n.ptSeq))); if(n.ptQ.length>5000) n.ptQ.splice(0,n.ptQ.length-5000); }
   }
   if(r.src==='mic'){ termuxMic(n,r); return; }
+  if(r.src==='lum'){ termuxLum(n,r); return; }
   if(r.src==='nmea'){ if(r.line){ n.nmeaQ.push(r.line); if(n.nmeaQ.length>2000) n.nmeaQ.splice(0,n.nmeaQ.length-2000); } return; }
   n.recQ.push({t:Date.now(), ...r});
   if(n.recQ.length>20000) n.recQ.splice(0,n.recQ.length-20000);
@@ -65,9 +75,9 @@ function termuxFeed(n,r){
   if(n.lineQ.length>2000) n.lineQ.splice(0,n.lineQ.length-2000);
 }
 
-const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','prox','atemp','humid','steps','heading','hinge','yaw','pitch','roll','orient','still','sigm','cdbm','crsrp','crsrq','csinr','micdb','batt','charging','temp','nsat','nused','cn0'];
+const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','prox','atemp','humid','steps','heading','hinge','yaw','pitch','roll','orient','still','sigm','cdbm','crsrp','crsrq','csinr','micdb','lumv','batt','charging','temp','nsat','nused','cn0'];
 def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'termux android app phone camera background bluetooth ble gnss satellites nmea raw measurements gps accelerometer gyroscope magnetometer battery wifi cell sensors',
-  ins:[], outs:[{n:'rec',t:'rec'},{n:'pts',t:'rec'},{n:'line',t:'txt'},{n:'camurl',t:'txt'},{n:'nmeatxt',t:'txt'},{n:'mic',t:'sig'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
+  ins:[], outs:[{n:'rec',t:'rec'},{n:'pts',t:'rec'},{n:'line',t:'txt'},{n:'camurl',t:'txt'},{n:'nmeatxt',t:'txt'},{n:'mic',t:'sig'},{n:'lum',t:'sig'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
   readout:true, tall:true,
   params:[
     {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'bridge: ws://host:8765/?token=…'},
@@ -103,6 +113,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'devMove',t:'range',min:0,max:200,step:1,d:0,label:'… and only after moving N m (0 — any)'},
     {n:'cell',t:'check',d:false,label:'cell towers: operator, cell id, band, RSRP / RSRQ / SINR (rec; serving cell → cdbm crsrp crsrq csinr)'},
     {n:'cellEvery',t:'range',min:1,max:120,step:1,d:5,label:'cell poll every, s (DSP app)'},
+    {n:'lum',t:'check',d:false,label:'camera brightness per frame → output «lum» (signal at the camera frame rate) and «lumv» (DSP app; the camera runs while a viewer, e.g. IP Camera on «camurl», is connected; high-speed mode: fps above the camera\'s normal limit)'},
     {n:'mic',t:'check',d:false,label:'microphone → output «mic» (signal), level in «micdb» (DSP app, also with the screen locked)'},
     {n:'micHz',t:'select',opts:['8000','16000','22050','44100','48000'],d:'16000',label:'microphone: sample rate, Hz'},
     {n:'pkt',t:'check',d:false,label:'packet capture, frames in hex → rec (DSP app; root + tcpdump; allow it in the app Settings)'},
@@ -137,6 +148,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     for(const k of TERMUX_OUTS) o[k]=n.vals[k] ?? null;
     if(n.p.mic){ const m=buf(n,'mic'); ssProcess(n,[m]); o.mic=m; }
     else { if(n.micT){ ssInit(n,1); n.micT=0; n.micT0=0; n.sExact=true; n.sLag=.25; } o.mic=buf(n,'mic').fill(0); }
+    if(n.p.lum && n.lumS && n.lumS.sLastT){ const m=buf(n,'lum'); ssProcess(n.lumS,[m]); o.lum=m; } else o.lum=buf(n,'lum').fill(0);
     return o;
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
@@ -156,6 +168,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     if(o.steps!=null) t+='\nsteps '+f(o.steps,0);
     if(o.hinge!=null) t+='\nhinge '+f(o.hinge,0)+'°';
     if(o.cdbm!=null) t+='\ncell '+f(o.cdbm,0)+' dBm'+(o.crsrp!=null ? '  RSRP '+f(o.crsrp,0)+' RSRQ '+f(o.crsrq,0) : '');
+    if(n.p.lum && n.lumRate) t+='\nbrightness stream '+Math.round(n.lumRate)+' Hz';
     if(o.micdb!=null) t+='\nmic '+f(o.micdb,0)+' dBFS';
     if(o.orient!=null) t+='\nscreen orientation '+f(o.orient,0);
     if(o.still!=null) t+='\n'+(o.still ? 'stationary' : 'moving');

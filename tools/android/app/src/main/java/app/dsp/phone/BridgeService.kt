@@ -56,6 +56,11 @@ class BridgeService : Service() {
         camera.onNeedPermission = { main.post { requestPerms(listOf(android.Manifest.permission.CAMERA)) } }
         server = BridgeServer(cfg, camera, ::helloJson, ::statusText) { refresh() }
         camera.onNote = { m -> server.note("warn", m) }
+        camera.onLum = { v, n, dt ->
+            val sb = StringBuilder("[")
+            for (i in 0 until n) { if (i > 0) sb.append(','); sb.append(String.format(java.util.Locale.US, "%.3f", v[i])) }
+            server.emit("lum", Json.obj("src" to "\"lum\"", "t" to System.currentTimeMillis().toString(), "dt" to String.format(java.util.Locale.US, "%.3f", dt), "v" to sb.append(']').toString()))
+        }
         usb = AndroidUsb(this)
         server.usb = usb
         actions = PhoneActions(this, { s, j -> server.emit(s, j) }, { p -> main.post { requestPerms(p) } }, { camera.describe() }, cfg)
@@ -210,7 +215,7 @@ class BridgeService : Service() {
         val sens = sensors.available()
         return Json.obj(
             "src" to "\"bridge\"", "level" to "\"hello\"", "ver" to "1", "app" to "\"dsp-android\"", "host" to Json.str(Build.MODEL),
-            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "sms", "notify", "torch") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(), "cameras" to arr(camera.available()),
+            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "lum", "sms", "notify", "torch") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(), "cameras" to arr(camera.available()),
             "cameraInfo" to camera.describe(), "phone" to actions.info(),
         )
     }
