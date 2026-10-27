@@ -11,10 +11,12 @@ import android.view.Surface
  * а выход кодера сразу декодируется ПРОГРАММНЫМ декодером в буферы (без поверхности: декодер → ImageReader валил приложение нативно) — кадр NV21 уходит в onFrame.
  * Каждый кадр ключевой: потеря одного (декодер не успел) не портит следующие.
  */
-class HsCodec(private val w: Int, private val h: Int, private val fps: Int, private val onFrame: (ByteArray, Int, Int) -> Unit, private val onFail: (String) -> Unit) {
+class HsCodec(private val dir: java.io.File, private val w: Int, private val h: Int, private val fps: Int, private val onFrame: (ByteArray, Int, Int) -> Unit, private val onFail: (String) -> Unit) {
     private var enc: MediaCodec? = null
     @Volatile private var dec: MediaCodec? = null
     @Volatile private var run = false
+    private var hwTrial = false                                      // идёт проба аппаратного декодера (метка на диске: нативное падение её не снимет)
+    private var decoded = 0
     private var th: Thread? = null
     lateinit var input: Surface
         private set
@@ -27,6 +29,7 @@ class HsCodec(private val w: Int, private val h: Int, private val fps: Int, priv
         f.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 0)
         f.setInteger(MediaFormat.KEY_OPERATING_RATE, fps)
         f.setInteger(MediaFormat.KEY_PRIORITY, 0)
+        try { f.setInteger(MediaFormat.KEY_LATENCY, 1) } catch (x: Exception) {}
         val e = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
         try {
             e.configure(f, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
@@ -43,8 +46,10 @@ class HsCodec(private val w: Int, private val h: Int, private val fps: Int, priv
             while (run) {
                 val i = e.dequeueOutputBuffer(ei, 5000)
                 if (i == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED && dec == null) {
-                    val d = softDecoder()
-                    d.configure(e.outputFormat, null, null, 0)
+                    val d = pickDecoder()
+                    val df = e.outputFormat
+                    if (android.os.Build.VERSION.SDK_INT >= 30) df.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+                    d.configure(df, null, null, 0)
                     d.start(); dec = d
                 } else if (i >= 0) {
                     val d = dec
@@ -66,11 +71,27 @@ class HsCodec(private val w: Int, private val h: Int, private val fps: Int, priv
                     while (o >= 0) {
                         val img = d.getOutputImage(o)
                         if (img != null) try { onFrame(Yuv.toNv21(img), img.width, img.height) } finally { img.close() }
+                        if (hwTrial && ++decoded >= 200) { hwTrial = false; try { java.io.File(dir, "hs-hw-try").delete() } catch (x: Exception) {} }
                         d.releaseOutputBuffer(o, false); o = d.dequeueOutputBuffer(di, 0)
                     }
                 }
             }
         } catch (x: Exception) { if (run) onFail(x.message ?: x.javaClass.simpleName) }
+    }
+
+    /**
+     * Аппаратный декодер быстрее, но с поверхностью он на этом телефоне валил приложение нативно. С буферами пробуем его, а перед пробой ставим метку:
+     * не снята (приложение упало) — дальше только программный. Метка снимается после 200 декодированных кадров.
+     */
+    private fun pickDecoder(): MediaCodec {
+        val soft = java.io.File(dir, "hs-soft"); val trial = java.io.File(dir, "hs-hw-try")
+        try {
+            if (!soft.exists()) {
+                if (trial.exists()) { soft.writeText("1"); trial.delete() }
+                else { trial.writeText("1"); hwTrial = true; return MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC) }
+            }
+        } catch (x: Exception) {}
+        return softDecoder()
     }
 
     /** Программный декодер (c2.android / OMX.google): аппаратный на этом чипе отдавал кадры на поверхность с нативным падением. */

@@ -279,7 +279,7 @@ class CameraHub(private val ctx: Context, private val onUsers: () -> Unit) {
             if (hr != null) {
                 // поверхность сессии — вход кодера (HsCodec); отказ приходит и исключением, и через onConfigureFailed
                 try {
-                    val k = HsCodec(rd.width, rd.height, hr.upper, { nv, w, h -> onNv21(nv, w, h, c) }) { why -> hsGiveUp(c, "codec: $why") }
+                    val k = HsCodec(ctx.filesDir, rd.width, rd.height, hr.upper, { nv, w, h -> onNv21(nv, w, h, c) }) { why -> hsGiveUp(c, "codec: $why") }
                     k.start(); hs = k
                     d.createConstrainedHighSpeedCaptureSession(listOf(k.input), cb, h)
                 } catch (e: Exception) { hsGiveUp(c, e.message ?: e.javaClass.simpleName) }
@@ -397,6 +397,10 @@ object Yuv {
         }
         val u = img.planes[1]; val v = img.planes[2]
         var o = w * h
+        if (v.pixelStride == 2 && u.pixelStride == 2 && v.rowStride == w && u.rowStride == w) {            // полуплоская раскладка (VUVU…): хрома — одним куском
+            v.buffer.position(0); val n = minOf(v.buffer.remaining(), w * h / 2)
+            v.buffer.get(out, o, n); return out
+        }
         for (row in 0 until h / 2) for (col in 0 until w / 2) {
             out[o++] = v.buffer.get(row * v.rowStride + col * v.pixelStride)
             out[o++] = u.buffer.get(row * u.rowStride + col * u.pixelStride)
