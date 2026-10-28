@@ -516,6 +516,10 @@ const PRESET_CATS={
   'Phone App: Microphone, Cell and Packets':'Maps & Locating',
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
   'Phone App: Wi-Fi, BLE and Bluetooth as Three Graphs':'Network & IoT',
+  'Network: HTTP Server — Share Files with Any Browser (Phone App)':'Network & IoT',
+  'Network: HTTP Server — Answer Requests from the Graph (Phone App)':'Network & IoT',
+  'Network: FTP Server — Share a Folder (Phone App)':'Network & IoT',
+  'Network: HTTP and FTP — Servers and Clients Test Each Other (Phone App)':'Network & IoT',
   'Phone App: USB SDR over OTG (RTL-SDR, HackRF…)':'SDR Receivers',
   'bitchat Mesh Chat (no app install)':'Network & IoT',
   'Reference: Decode BLE Advertisements (Company ID, Service UUID)':'Network & IoT',
@@ -1522,6 +1526,76 @@ const tb=addNode('table',760,220,{list:'ble/company+service',maxRows:1000,rev:tr
                  svc1:{src:'uuids.0'},serviceName:{t:'calc',expr:"lookup('Bluetooth UUIDs','uuid',[svc1],'name')"}},card:{}}});
 tb.size.w=940; tb.size.h=440; applySize(tb);
 addEdge(tx.id,'rec',rf.id,'rec'); addEdge(rf.id,'rec',tb.id,'rec');
+markWiresDirty();
+});
+preset('Network: HTTP Server — Share Files with Any Browser (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The phone as a web server (DSP app; Start in the node). Any browser on the same Wi-Fi — or on the phone\'s own hotspot (Network: Wi-Fi hotspot) — opens the address below, sees the files of the Files › Share folder, downloads them (with Range, so video / audio seek) and, with «allow upload», sends files back: a form on the page, curl -T, PUT.\n'+
+  'What a File → Bytes node holds goes into the same list at once (the wire «bin»). The QR code is the address: point the other phone at it. «rec» logs every request and upload, «bin» / «name» are the last uploaded file — wire them to Files, a decoder or an Image. Ports below 1024 are closed to apps, so 8080. Login and password are in the advanced options.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const hs=addNode('httpsrv',40,200,{port:8080,lan:true,write:true,folder:'Share'});
+hs.size.w=360; hs.size.h=340; applySize(hs);
+const bf=addNode('binFile',440,200,{});
+bf.size.w=300; bf.size.h=130; applySize(bf);
+const qr=addNode('qrgen',440,360,{ecc:'M',scale:6});
+qr.size.w=240; qr.size.h=260; applySize(qr);
+const lg=addNode('recLog',780,200,{});
+lg.size.w=520; lg.size.h=360; applySize(lg);
+const tk=addNode('ticker',440,660,{});
+tk.size.w=500; tk.size.h=100; applySize(tk);
+addEdge(bf.id,'bin',hs.id,'bin'); addEdge(hs.id,'url',qr.id,'text'); addEdge(hs.id,'url',tk.id,'text'); addEdge(hs.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Network: HTTP Server — Answer Requests from the Graph (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A tiny API on the phone: mode «graph». Every request (method, path, query, headers, body text) comes out of «rec»; the answer goes back on «reply» — a record {id, status, text | json, type}; a plain text on «text» answers the oldest waiting request. No answer within the wait (10 s) — 504.\n'+
+  'Here the Text Source answers every request with its text: open http://phone:8081/anything in a browser, or post data with curl -d. A webhook from another service lands in «rec» → Table / Rec Filter / any node; what the graph computes can go back as JSON. «files, then graph» serves a folder and gives the rest of the paths to the graph.'});
+nt.size.w=900; nt.size.h=120; applySize(nt);
+const ts=addNode('textsrc',40,190,{text:'hello from the graph'});
+ts.size.w=300; ts.size.h=100; applySize(ts);
+const hs=addNode('httpsrv',380,190,{port:8081,lan:true,mode:'graph',write:false});
+hs.size.w=360; hs.size.h=340; applySize(hs);
+const lg=addNode('recLog',780,190,{});
+lg.size.w=520; lg.size.h=360; applySize(lg);
+const tk=addNode('ticker',380,570,{time:true});
+tk.size.w=500; tk.size.h=100; applySize(tk);
+addEdge(ts.id,'text',hs.id,'text'); addEdge(hs.id,'rec',lg.id,'rec'); addEdge(hs.id,'text',tk.id,'text');
+markWiresDirty();
+});
+preset('Network: FTP Server — Share a Folder (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The phone as an FTP server (DSP app; Start in the node): the folder Files › Share for any FTP client — Total Commander, FileZilla, a camera, a printer, curl ftp://phone:2121/. Passive mode on one port (the next after the control port), active mode (PORT) works too. Anonymous unless a login is set; «allow upload» lets clients write, delete, rename and make folders.\n'+
+  'The QR code is the address. «rec» logs every download, upload and delete; «bin» / «name» are the last uploaded file. Ports below 1024 are closed to apps, so 2121 instead of 21.'});
+nt.size.w=900; nt.size.h=110; applySize(nt);
+const fs_=addNode('ftpsrv',40,180,{port:2121,lan:true,write:true,folder:'Share'});
+fs_.size.w=360; fs_.size.h=320; applySize(fs_);
+const qr=addNode('qrgen',440,180,{ecc:'M',scale:6});
+qr.size.w=240; qr.size.h=260; applySize(qr);
+const lg=addNode('recLog',720,180,{});
+lg.size.w=520; lg.size.h=340; applySize(lg);
+addEdge(fs_.id,'url',qr.id,'text'); addEdge(fs_.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Network: HTTP and FTP — Servers and Clients Test Each Other (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Everything on one phone, nothing external: HTTP Server and FTP Server (the folder Files › Share) and the two clients that talk to them over 127.0.0.1. Press Start in both servers, then Send / Run in the clients.\n'+
+  'HTTP Client asks the server for its listing (?json) → text and rec. FTP Client lists the folder (one rec per entry — wire it to a Table), «download» gives the file on «bin», «upload» sends what is on «bin» / «text» (set the action in the node). Point the clients at another device\'s address to talk to a camera, a router, a NAS or a second phone.'});
+nt.size.w=900; nt.size.h=110; applySize(nt);
+const hs=addNode('httpsrv',40,180,{port:8080,lan:true,write:true,folder:'Share'});
+hs.size.w=340; hs.size.h=320; applySize(hs);
+const fs_=addNode('ftpsrv',40,520,{port:2121,lan:true,write:true,folder:'Share'});
+fs_.size.w=340; fs_.size.h=300; applySize(fs_);
+const hc=addNode('httpcli',420,180,{target:'http://127.0.0.1:8080/?json',method:'GET'});
+hc.size.w=340; hc.size.h=260; applySize(hc);
+const tx=addNode('textsrc',420,480,{text:'written by the FTP client'});
+tx.size.w=300; tx.size.h=90; applySize(tx);
+const fc=addNode('ftpcli',420,600,{host:'127.0.0.1',port:2121,action:'upload',path:'/ftp-note.txt'});
+fc.size.w=340; fc.size.h=300; applySize(fc);
+const tk=addNode('ticker',800,180,{});
+tk.size.w=500; tk.size.h=160; applySize(tk);
+const tb=addNode('table',800,360,{list:'@patch',initial:false});
+tb.size.w=500; tb.size.h=300; applySize(tb);
+addEdge(hc.id,'text',tk.id,'text'); addEdge(fc.id,'rec',tb.id,'rec'); addEdge(tx.id,'text',fc.id,'text');
 markWiresDirty();
 });
 preset('Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)', function(){
