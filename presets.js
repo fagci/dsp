@@ -517,6 +517,9 @@ const PRESET_CATS={
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
   'Phone App: Wi-Fi, BLE and Bluetooth as Three Graphs':'Network & IoT',
   'Network: HTTP Server — Share Files with Any Browser (Phone App)':'Network & IoT',
+  'Network: Wake-on-LAN, NTP Clock Check and Syslog (Phone App)':'Network & IoT',
+  'Network: Syslog and TFTP Servers on the Phone (Phone App)':'Network & IoT',
+  'Network: Telnet Terminal and a Mail Alert (Phone App)':'Network & IoT',
   'Network: Scan the LAN — Hosts, Ports and Devices as a Graph (Phone App)':'Network & IoT',
   'Network: Find a Device and Send It a File (Scan → FTP / HTTP)':'Network & IoT',
   'Network: HTTP Server — Answer Requests from the Graph (Phone App)':'Network & IoT',
@@ -1638,6 +1641,62 @@ const fc=addNode('ftpcli',1380,220,{action:'upload',path:'/dsp-hello.txt'});
 fc.size.w=360; fc.size.h=380; applySize(fc);
 addEdge(sc.id,'rec',fl.id,'rec'); addEdge(fl.id,'rec',tb.id,'rec');
 addEdge(tb.id,'ip',fc.id,'host'); addEdge(tx.id,'text',fc.id,'text');
+markWiresDirty();
+});
+preset('Network: Wake-on-LAN, NTP Clock Check and Syslog (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Three one-shot actions of Network Tools (DSP app), each with its own node: press Run, or send a rising edge to «go».\n'+
+  '«Wake-on-LAN»: the magic packet for the MAC goes out as UDP broadcast (ports 9 and 7) to every /24 the phone is in — the target must have it enabled and be on the same network. «NTP»: the offset of the phone\'s clock against a server in milliseconds (output «value», the server time on «text»), the router often serves it too. «Syslog»: one message (RFC 3164 or 5424) to a log collector; here the text comes from a Text Source, so any node that makes text can log through it.'});
+nt.size.w=900; nt.size.h=120; applySize(nt);
+const w=addNode('nettool',40,190,{action:'wake-on-lan',mac:'AA:BB:CC:DD:EE:FF'});
+w.size.w=340; w.size.h=300; applySize(w);
+const t=addNode('nettool',420,190,{action:'ntp time',host:'pool.ntp.org'});
+t.size.w=340; t.size.h=300; applySize(t);
+const ts=addNode('textsrc',800,190,{text:'DSP says hello'});
+ts.size.w=260; ts.size.h=90; applySize(ts);
+const sl=addNode('nettool',800,310,{action:'syslog send',host:'192.168.1.10',severity:'notice'});
+sl.size.w=340; sl.size.h=300; applySize(sl);
+const tk=addNode('ticker',420,520,{});
+tk.size.w=340; tk.size.h=90; applySize(tk);
+const tr=addNode('trend',420,630,{span:120,auto:true});
+tr.size.w=340; tr.size.h=170; applySize(tr);
+addEdge(ts.id,'text',sl.id,'text'); addEdge(t.id,'text',tk.id,'text'); addEdge(t.id,'value',tr.id,'in');
+markWiresDirty();
+});
+preset('Network: Syslog and TFTP Servers on the Phone (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The phone as a log collector and a firmware server. Syslog receiver: point a router, a camera or a Linux box at the phone\'s UDP port 5514 (apps cannot take 514) — every message is a record (facility, severity, host, program, text) in «rec» and the last text on «text»; wire «rec» to Rec Filter / Table / a counter. TFTP server: the Files › Share folder over UDP 6969 (a real TFTP, with the blksize and tsize options), for a router that boots or updates from TFTP; «allow upload» lets devices send their configs and dumps back — they land in the folder and on «bin».\n'+
+  'Try it from another computer: logger -n PHONE_IP -P 5514 hello · tftp PHONE_IP 6969 -c get file.bin · curl tftp://PHONE_IP:6969/file.bin. TFTP has no login: use it on your own network.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const sl=addNode('netlisten',40,200,{mode:'syslog receiver',port:5514});
+sl.size.w=340; sl.size.h=320; applySize(sl);
+const tf=addNode('netlisten',40,560,{mode:'tftp server',port:6969,folder:'Share',write:true});
+tf.size.w=340; tf.size.h=320; applySize(tf);
+const lg=addNode('recLog',420,200,{});
+lg.size.w=520; lg.size.h=300; applySize(lg);
+const tb=addNode('table',420,540,{list:'@patch',initial:false,follow:true});
+tb.size.w=520; tb.size.h=300; applySize(tb);
+const tk=addNode('ticker',980,200,{});
+tk.size.w=420; tk.size.h=120; applySize(tk);
+addEdge(sl.id,'rec',lg.id,'rec'); addEdge(sl.id,'text',tk.id,'text'); addEdge(tf.id,'rec',tb.id,'rec');
+markWiresDirty();
+});
+preset('Network: Telnet Terminal and a Mail Alert (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Telnet / TCP Terminal: a session with a router, a switch, a BBS or any text port (a netcat for the graph). Mode «telnet» answers option negotiation so the server stops asking, «raw tcp» passes bytes untouched. What arrives goes to «text» and «rec»; every new text on the input «text» (or the Send button) is sent as a line. Connect to port 25 of a mail server in raw mode and you can talk SMTP by hand.\n'+
+  'Mail alert: Network Tools «smtp send mail» sends a plain message through a server of your LAN (a router, a mail trap such as MailHog, an internal relay) — there is no TLS, so not to a public provider. The text is the mail body: here a Text Source, in a real patch a trigger or a decoder result.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const tn=addNode('telnet',40,200,{host:'towel.blinkenlights.nl',port:23,mode:'telnet'});
+tn.size.w=420; tn.size.h=420; applySize(tn);
+const cm=addNode('textsrc',500,200,{text:'uptime'});
+cm.size.w=260; cm.size.h=90; applySize(cm);
+const ml=addNode('nettool',500,330,{action:'smtp send mail',host:'192.168.1.10',port:25,from:'dsp@lan',to:'me@lan',subject:'DSP alert'});
+ml.size.w=340; ml.size.h=360; applySize(ml);
+const tx=addNode('textsrc',880,330,{text:'Something happened in the graph.'});
+tx.size.w=260; tx.size.h=90; applySize(tx);
+const lg=addNode('recLog',880,450,{});
+lg.size.w=420; lg.size.h=260; applySize(lg);
+addEdge(cm.id,'text',tn.id,'text'); addEdge(tx.id,'text',ml.id,'text'); addEdge(ml.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)', function(){
