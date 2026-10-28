@@ -516,6 +516,7 @@ const PRESET_CATS={
   'Phone App: Microphone, Cell and Packets':'Maps & Locating',
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
   'Phone App: USB SDR over OTG (RTL-SDR, HackRF…)':'SDR Receivers',
+  'bitchat Mesh Chat (no app install)':'Network & IoT',
   'Phone App: BLE Auto-Discover Devices and Services (GATT)':'Network & IoT',
   'Phone App: Bluetooth Classic Terminal (RFCOMM / SPP)':'Network & IoT',
   'Phone App: BLE Beacon (Broadcast Sensor Data)':'Network & IoT',
@@ -1449,6 +1450,18 @@ lg.size.w=600; applySize(lg);
 addEdge(tx.id,'rec',rq.id,'rec'); addEdge(rq.id,'item',u1.id,'rec'); addEdge(u1.id,'addr',gl.id,'addr'); addEdge(u1.id,'go',gl.id,'go');
 addEdge(gl.id,'rec',rf.id,'rec'); addEdge(rf.id,'rec',u2.id,'rec'); addEdge(u2.id,'go',rq.id,'ack');
 addEdge(gl.id,'rec',tb.id,'rec'); addEdge(gl.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('bitchat Mesh Chat (no app install)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Talks to permissionlesstech/bitchat phones nearby over BLE without installing their app: the node scans for the bitchat service UUID, connects as a GATT client (bitchat itself is the peripheral — a central is all that\'s needed) and exchanges its binary packets (modules/bitchat-kernels.js). Public chat only — bitchat\'s private messages use a Noise handshake this node doesn\'t do, and it only sees peers directly in BLE range (no multi-hop relay).\n'+
+  'Needs a recent Chrome/Chromium (Web Crypto Ed25519/X25519, for the packet signature and peer ID) and the DSP app bridge (tools/android) running on the phone. Press Connect bridge, type a message below and Send — wire «rec» into Chat (modules/chat.js) for a proper chat window: set its «my name» to the same nickname.'});
+nt.size.w=900; nt.size.h=170; applySize(nt);
+const bc=addNode('bitchat',40,230,{url:'ws://127.0.0.1:8765',nickname:'dsp',autoConnect:true});
+bc.size.w=420; bc.size.h=420; applySize(bc);
+const ch=addNode('chat',540,230,{echo:true,me:'dsp'});
+ch.size.w=360; ch.size.h=420; applySize(ch);
+addEdge(bc.id,'rec',ch.id,'rec'); addEdge(ch.id,'text',bc.id,'send');
 markWiresDirty();
 });
 preset('Phone App: Bluetooth Classic Terminal (RFCOMM / SPP)', function(){

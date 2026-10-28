@@ -48,6 +48,8 @@ V('fb005c80-02e7-f387-1cad-8acd2d8df0c8','service','Polar Measurement Data (PMD)
 V('00001623-1212-efde-1623-785feabcd123','service','LEGO Wireless Protocol hub'),V('00001624-1212-efde-1623-785feabcd123','characteristic','LEGO Wireless Protocol data'),
 V('f000aa00-0451-4000-b000-000000000000','service','TI SensorTag IR temperature'),V('f000aa20-0451-4000-b000-000000000000','service','TI SensorTag humidity'),
 V('f000aa40-0451-4000-b000-000000000000','service','TI SensorTag barometer'),V('f000aa80-0451-4000-b000-000000000000','service','TI SensorTag movement (IMU)'),
+V('f47b5e2d-4a9e-4c5a-9b3f-8e1d2c3a4b5c','service','bitchat BLE mesh chat (mainnet)'),V('f47b5e2d-4a9e-4c5a-9b3f-8e1d2c3a4b5a','service','bitchat BLE mesh chat (debug build)'),
+V('a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d','characteristic','bitchat BLE mesh chat (read/write/notify)'),
 ];
 const cols=['uuid','kind','name','fmt','scale','unit','note'];
 const out=rows.map(r=>Object.fromEntries(cols.map((c,i)=>[c,r[i]??''])));
