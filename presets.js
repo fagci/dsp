@@ -1520,18 +1520,16 @@ markWiresDirty();
 });
 preset('Bridge: BLE GATT ↔ Network (Phone App)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'The two phone-bridge transports (BLE GATT and Network, both through the DSP app) don\'t share a byte-stream pin like Serial/BLE UART/Text over Network do — they work by command (go / cmd), so the bridge is two Rec → Cmd nodes translating one side\'s event record into the other\'s command: a GATT notification becomes a tcp.send, incoming TCP data becomes a gatt.write. Fill in the device address + service/characteristic UUIDs on BLE GATT (action «connect», tick auto-notify) below «serviceUUID» / «characteristicUUID», and the same ones into the Rec → Cmd on the right. Network listens on a TCP port — conn:1 assumes a single client (the common case for a point-to-point gateway); for more than one, read conn off the «open» record and map it instead of the fixed 1.'});
+const nt=addNode('note',40,40,{text:'A real tunnel, not a guessed conn:1: the Tunnel node watches Network\'s own open/accept/close records and always sends to whichever client actually connected — a GATT notification becomes tcp.send on that real conn, incoming TCP data becomes gatt.write. Fill in the device address + service/characteristic UUIDs on BLE GATT (action «connect», tick auto-notify) and the same three into Tunnel. Network listens on a TCP port; one GATT device ↔ one network client at a time — a second client replaces the conn Tunnel is bridging to, it doesn\'t add a second leg. «close the network side when the GATT device disconnects» tears the TCP connection down with it, so a stale client isn\'t left hanging.'});
 nt.size.w=940; nt.size.h=170; applySize(nt);
 const gl=addNode('gattlink',40,250,{url:'ws://127.0.0.1:8765',action:'connect',addr:'',svc:'',chr:'',autoNotify:true});
 gl.size.w=380; gl.size.h=440; applySize(gl);
-const rm1=addNode('recMap',460,250,{expr:"r.src==='gatt' && r.ev==='notify'",cmd:'{"cmd":"tcp.send","conn":1,"hex":"$hex"}'});
-rm1.size.w=320; applySize(rm1);
-const net=addNode('netlink',820,250,{action:'tcp listen',port:5000,lan:true});
+const tn=addNode('tunnel',460,250,{addr:'',svc:'',chr:'',mode:'tcp',closeOnDrop:true});
+tn.size.w=360; tn.size.h=260; applySize(tn);
+const net=addNode('netlink',860,250,{action:'tcp listen',port:5000,lan:true});
 net.size.w=380; net.size.h=300; applySize(net);
-const rm2=addNode('recMap',460,560,{expr:"r.src==='net' && r.ev==='data'",cmd:'{"cmd":"gatt.write","addr":"","svc":"","chr":"","hex":"$hex","resp":false}'});
-rm2.size.w=320; applySize(rm2);
-addEdge(gl.id,'rec',rm1.id,'rec'); addEdge(rm1.id,'cmd',net.id,'cmd');
-addEdge(net.id,'rec',rm2.id,'rec'); addEdge(rm2.id,'cmd',gl.id,'cmd');
+addEdge(gl.id,'rec',tn.id,'gattRec'); addEdge(net.id,'rec',tn.id,'netRec');
+addEdge(tn.id,'gattCmd',gl.id,'cmd'); addEdge(tn.id,'netCmd',net.id,'cmd');
 markWiresDirty();
 });
 preset('Phone App: Bluetooth Classic Terminal (RFCOMM / SPP)', function(){
