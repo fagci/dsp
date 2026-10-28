@@ -24,7 +24,7 @@ object PowerPolicy {
 }
 
 /** Питание телефона: заряд, режим экономии, нагрев. Источник power и коэффициент, на который сервис замедляет опрос. */
-class PowerHub(private val ctx: Context, private val cfg: Config, private val emit: Emit, private val onChange: () -> Unit) : BroadcastReceiver() {
+class PowerHub(private val ctx: Context, private val cfg: Config, private val emit: Emit, private val extra: () -> List<Pair<String, String?>>, private val onChange: () -> Unit) : BroadcastReceiver() {
     @Volatile var factor = 1
         private set
     private var pct = -1
@@ -80,6 +80,6 @@ class PowerHub(private val ctx: Context, private val cfg: Config, private val em
     /** Текущее состояние подписчикам power (и при каждой смене подписок: новый клиент сразу получает запись). */
     fun push() {
         emit("power", Json.obj("src" to "\"power\"", "t" to System.currentTimeMillis().toString(), "pct" to pct.toString(), "charging" to if (charging) "1" else "0",
-            "saver" to if (saver) "1" else "0", "thermal" to thermal.toString(), "throttle" to factor.toString()))
+            "saver" to if (saver) "1" else "0", "thermal" to thermal.toString(), "throttle" to factor.toString(), *extra().toTypedArray()))
     }
 }

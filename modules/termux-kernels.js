@@ -76,6 +76,14 @@ function termuxPcm(r){
   return o;
 }
 
+// нагрузка самого моста: процессорное время процесса (мс, растёт) → доля ядра между двумя записями power
+function termuxCpu(o,r){
+  if(typeof r.cpu!=='number') return;
+  const t=typeof r.t==='number' ? r.t : Date.now();
+  if(o._cpu0!=null && t>o._cpu0t){ const v=(r.cpu-o._cpu0)/(t-o._cpu0t)*100; if(isFinite(v) && v>=0) o.cpupct=v; }
+  o._cpu0=r.cpu; o._cpu0t=t;
+}
+
 // запись моста → o (последние значения по выходам)
 function termuxApply(o,r){
   if(!r || typeof r!=='object') return;
@@ -86,7 +94,7 @@ function termuxApply(o,r){
       set('batt',r.pct); set('temp',r.temp);
       if(r.status) o.charging=/^(CHARGING|FULL)$/i.test(r.status) ? 1 : 0;
       break;
-    case 'power': set('therm',r.thermal); set('saver',r.saver); set('thr',r.throttle); set('batt',r.pct); o.charging=r.charging ? 1 : 0; break;
+    case 'power': set('therm',r.thermal); set('saver',r.saver); set('thr',r.throttle); set('batt',r.pct); o.charging=r.charging ? 1 : 0; set('wake',r.wake); set('nclients',r.clients); if(typeof r.held==='string') o.held=r.held; termuxCpu(o,r); break;
     case 'ext': set('extv',r.value); break;
     case 'cell': if(r.reg==1 || r.reg===true){ set('cdbm',r.dbm); set('crsrp',r.rsrp); set('crsrq',r.rsrq); set('csinr',r.sinr); } break;
     case 'mic': set('micdb',r.rms); break;
@@ -121,7 +129,7 @@ function termuxLine(r){
     case 'sensor': return r.sensor+' '+[r.x,r.y,r.z].filter(v=>v!=null).map(v=>f(v,2)).join(' ');
     case 'cell': return 'cell '+(r.type||'')+(r.reg ? ' *' : '')+' '+(r.mcc!=null ? r.mcc+'-'+r.mnc+' ' : '')+'cid '+(r.cid ?? '—')+(r.pci!=null ? ' pci '+r.pci : '')+(r.dbm!=null ? ' '+r.dbm+' dBm' : '');
     case 'pkt': return 'pkt '+r.iface+' '+(r.ip ? r.ip+(r.sport ? ':'+r.sport : '')+' → '+r.dip+(r.dport ? ':'+r.dport : '') : (r.smac||'')+' → '+(r.dmac||''))+' '+r.len+' B';
-    case 'power': return 'power '+r.pct+'%'+(r.charging ? ' charging' : '')+(r.saver ? ' saver' : '')+' thermal '+r.thermal+' · polling ÷'+(r.throttle||1);
+    case 'power': return 'power '+r.pct+'%'+(r.charging ? ' charging' : '')+(r.saver ? ' saver' : '')+' thermal '+r.thermal+' · polling ÷'+(r.throttle||1)+(r.clients!=null ? ' · '+r.clients+' client(s)' : '')+(r.wake ? ' · wake lock' : '')+(r.held ? ' · holding '+r.held : '');
     case 'ext': return 'ext '+(r.name||'')+' '+(r.value!=null ? r.value : (r.text||''));
     case 'mic': return 'mic '+f(r.rms,0)+' dBFS';
     case 'wifi': return 'wifi '+r.bssid+' '+r.rssi+' dBm'+(r.ch ? ' ch '+r.ch : '')+' '+(r.ssid||'');

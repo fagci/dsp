@@ -171,6 +171,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     if(o.light!=null) t+='\nlight '+f(o.light,0)+' lx';
     if(o.press!=null) t+='\npressure '+f(o.press,1)+' hPa';
     if(o.therm!=null) t+='\nthermal '+f(o.therm,0)+(o.saver ? '  power saver' : '')+(o.thr>1 ? '  polling ÷'+f(o.thr,0) : '');
+    if(o.cpupct!=null) t+='\nbridge CPU '+f(o.cpupct,1)+' % of a core'+(o.wake ? ' · wake lock held' : '')+(o.nclients!=null ? ' · '+o.nclients+' client(s)' : '')+(o.held ? '\nholding open: '+o.held : '');
     if(o.extv!=null) t+='\next '+f(o.extv,2);
     if(o.batt!=null) t+='\nbattery '+f(o.batt,0)+'%'+(o.charging ? ' (charging)' : '')+(o.temp!=null ? '  '+f(o.temp,1)+' °C' : '');
     if(r.textContent!==t) r.textContent=t; }
