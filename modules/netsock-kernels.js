@@ -124,9 +124,10 @@ class NetSock{
     s.close=async()=>{ if(!s.open) return; s.open=false; this.servers.delete(s.id); try{ await this.call('tcp.close',{server:s.id}); }catch(e){} };
     return s;
   }
-  async udpOpen(port=0,broadcast=false){
+  // multicast — адрес группы (239.255.255.250 для SSDP): сокет вступает в неё и принимает групповые датаграммы (приложение держит Wi-Fi multicast lock)
+  async udpOpen(port=0,broadcast=false,multicast=''){
     let u=null;
-    const r=await this.call('udp.open',{port,broadcast},15000,r=>{ u=new NsUdp(this,r.conn,r.port); this.udps.set(r.conn,u); });
+    const r=await this.call('udp.open',{port,broadcast,...(multicast ? {multicast} : {})},15000,r=>{ u=new NsUdp(this,r.conn,r.port); this.udps.set(r.conn,u); });
     return u||this.udps.get(r.conn);
   }
   udpSend(host,port,b,o={}){

@@ -7,6 +7,7 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.MulticastSocket
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
@@ -28,6 +29,20 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
     private val tcp = ConcurrentHashMap<Int, TcpConn>()
     private val servers = ConcurrentHashMap<Int, ServerSocket>()
     private val udp = ConcurrentHashMap<Int, DatagramSocket>()
+    private val mcIds = ConcurrentHashMap.newKeySet<Int>()
+    private var mcLock: android.net.wifi.WifiManager.MulticastLock? = null
+
+    private fun mcAcquire() {
+        try {
+            if (mcLock == null) {
+                val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+                mcLock = wm.createMulticastLock("dsp-net").also { it.setReferenceCounted(false) }
+            }
+            mcLock?.acquire()
+        } catch (e: Exception) { /* без lock групповые пакеты на части телефонов не доходят — сокет всё равно откроется */ }
+    }
+    private fun mcRelease() { try { mcLock?.takeIf { it.isHeld }?.release() } catch (e: Exception) {} }
+    private fun mcDrop(n: Int) { if (mcIds.remove(n) && mcIds.isEmpty()) mcRelease() }
 
     private fun rec(ev: String, vararg kv: Pair<String, String?>) =
         emit("net", Json.obj("src" to "\"net\"", "ev" to Json.str(ev), "t" to System.currentTimeMillis().toString(), *kv))
@@ -85,15 +100,28 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
             }
             "tcp.close", "udp.close" -> {
                 val n = if (j.has("server")) j.optInt("server") else j.optInt("conn")
-                tcp.remove(n)?.s?.close(); servers.remove(n)?.close(); udp.remove(n)?.close()
+                tcp.remove(n)?.s?.close(); servers.remove(n)?.close(); udp.remove(n)?.close(); mcDrop(n)
                 Reply.done(c, id, cmd, null)
             }
             "udp.open" -> {
                 val port = j.optInt("port", 0); if (port != 0 && port !in 1024..65535) return Reply.done(c, id, cmd, "port: 0 (any) or 1024…65535")
                 if (udp.size >= 16) return Reply.done(c, id, cmd, "16 sockets at most")
-                val s = DatagramSocket(null); s.reuseAddress = true; s.broadcast = j.optBoolean("broadcast", false)
-                s.bind(InetSocketAddress(port))
-                val n = ids.incrementAndGet(); udp[n] = s
+                // multicast — группа (SSDP: 239.255.255.250): сокет вступает в неё, Wi-Fi держит multicast lock, пока такие сокеты открыты
+                val group = j.optString("multicast").trim()
+                val grp: InetAddress? = if (group.isEmpty()) null
+                    else Args.host(group)?.let { InetAddress.getByName(it) }?.takeIf { it.isMulticastAddress } ?: return Reply.done(c, id, cmd, "multicast: a group address, e.g. 239.255.255.250")
+                val s: DatagramSocket
+                if (grp != null) {
+                    val ms = MulticastSocket(null); ms.reuseAddress = true; ms.bind(InetSocketAddress(port))
+                    mcAcquire()
+                    try { @Suppress("DEPRECATION") ms.joinGroup(grp) } catch (e: Exception) { ms.close(); mcRelease(); return Reply.done(c, id, cmd, "multicast: ${e.message}") }
+                    s = ms
+                } else {
+                    s = DatagramSocket(null); s.reuseAddress = true
+                    s.bind(InetSocketAddress(port))
+                }
+                s.broadcast = j.optBoolean("broadcast", false)
+                val n = ids.incrementAndGet(); udp[n] = s; if (grp != null) mcIds.add(n)
                 Reply.done(c, id, cmd, null, extra = arrayOf("conn" to n.toString(), "port" to s.localPort.toString()))
                 pool.execute {
                     val buf = ByteArray(65535)
@@ -103,7 +131,7 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
                             rec("data", "conn" to n.toString(), "proto" to "\"udp\"", "peer" to Json.str(p.address.hostAddress + ":" + p.port), *dataKv(buf.copyOf(p.length)))
                         }
                     } catch (e: Exception) { /* закрыт */ }
-                    udp.remove(n); rec("close", "conn" to n.toString(), "proto" to "\"udp\"")
+                    udp.remove(n); mcDrop(n); rec("close", "conn" to n.toString(), "proto" to "\"udp\"")
                 }
             }
             "udp.send" -> {
@@ -212,14 +240,14 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
         for (t in tcp.values) try { t.s.close() } catch (e: Exception) {}
         for (s in servers.values) try { s.close() } catch (e: Exception) {}
         for (s in udp.values) try { s.close() } catch (e: Exception) {}
-        tcp.clear(); servers.clear(); udp.clear()
+        tcp.clear(); servers.clear(); udp.clear(); mcIds.clear(); mcRelease()
     }
 
     fun close() {
         for (t in tcp.values) try { t.s.close() } catch (e: Exception) {}
         for (s in servers.values) try { s.close() } catch (e: Exception) {}
         for (s in udp.values) try { s.close() } catch (e: Exception) {}
-        tcp.clear(); servers.clear(); udp.clear(); pool.shutdownNow()
+        tcp.clear(); servers.clear(); udp.clear(); mcIds.clear(); mcRelease(); pool.shutdownNow()
     }
 }
 

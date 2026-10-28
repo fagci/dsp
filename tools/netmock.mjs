@@ -75,7 +75,7 @@ export function mockApp(feed, opt = {}) {
         const s = dgram.createSocket({ type: 'udp4', reuseAddr: true }), n = ++ids;
         s.on('error', (e) => reply(id, cmd, e.message));
         s.on('message', (b, r) => ev({ ev: 'data', conn: n, proto: 'udp', peer: r.address + ':' + r.port, hex: hex(b), n: b.length, text: b.toString() }));
-        s.bind(j.port || 0, () => { if (j.broadcast) s.setBroadcast(true); udp.set(n, s); reply(id, cmd, null, { conn: n, port: s.address().port }); });
+        s.bind(j.port || 0, () => { if (j.broadcast) s.setBroadcast(true); if (j.multicast) { try { s.addMembership(j.multicast); } catch (e) { /* в песочнице группы может не быть */ } } udp.set(n, s); reply(id, cmd, null, { conn: n, port: s.address().port }); });
         return;
       }
       case 'udp.send': {
