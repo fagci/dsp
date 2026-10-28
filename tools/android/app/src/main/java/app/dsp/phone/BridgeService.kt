@@ -154,6 +154,9 @@ class BridgeService : Service() {
         "cpu" to android.os.Process.getElapsedCpuTime().toString(), "wake" to if (wake?.isHeld == true) "1" else "0",
         "clients" to server.clientCount.toString(), "held" to Json.str(holds().joinToString(", ")))
 
+    /** Запись VPN-монитора (DspVpnService — отдельный сервис, тот же процесс) → подписчикам vpn. */
+    fun vpnEmit(json: String) { server.emit("vpn", json) }
+
     /** Событие от другого приложения (ExternalReceiver) → подписчикам ext. */
     fun emitExt(name: String, value: String?, text: String?) {
         val v = value?.toDoubleOrNull()?.takeIf { it.isFinite() }
@@ -181,6 +184,7 @@ class BridgeService : Service() {
             n.startsWith("ble.adv.") -> adv.exec(c, j)
             n.startsWith("speech.") -> speech.exec(c, j)
             n.startsWith("tcp.") || n.startsWith("udp.") || n.startsWith("net.") || n.startsWith("raw.") || n == "ping" -> net.exec(c, j)
+            n.startsWith("vpn.") -> VpnCmds.exec(this, c, j)
             n.startsWith("sys.") || n.startsWith("ui.") || n.startsWith("vol.") || n.startsWith("tts.") || n.startsWith("clip.") || n.startsWith("app.") ||
                 n == "intent" || n == "media" || n == "toast" || n.startsWith("screen.") -> sys.exec(c, j)
             else -> actions.exec(c, j)
@@ -322,7 +326,7 @@ class BridgeService : Service() {
         val sens = sensors.available()
         return Json.obj(
             "src" to "\"bridge\"", "level" to "\"hello\"", "ver" to "1", "app" to "\"dsp-android\"", "host" to Json.str(Build.MODEL),
-            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "sms", "notify", "torch", "speech", "gatt", "gattsrv", "l2cap", "btlink", "net", "sys", "power", "ext", "activity") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(),
+            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "sms", "notify", "torch", "speech", "gatt", "gattsrv", "l2cap", "btlink", "net", "sys", "power", "ext", "activity", "vpn") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(),
             "phone" to actions.info(),
         )
     }

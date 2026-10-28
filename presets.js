@@ -517,6 +517,7 @@ const PRESET_CATS={
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
   'Phone App: Wi-Fi, BLE and Bluetooth as Three Graphs':'Network & IoT',
   'Network: HTTP Server — Share Files with Any Browser (Phone App)':'Network & IoT',
+  'Network: Which App Talks to Where (Phone VPN Monitor)':'Network & IoT',
   'Network: DNS Benchmark — Which Resolver Is Fastest From Here (Phone App)':'Network & IoT',
   'Network: Cast Receiver — the Phone as a DLNA Screen and Speaker (Phone App)':'Network & IoT',
   'Network: Cast to a TV or Speaker — Find the Player, Send a File or a Stream (Phone App)':'Network & IoT',
@@ -1758,6 +1759,24 @@ tk.size.w=360; tk.size.h=90; applySize(tk);
 const tr=addNode('trend',1140,660,{span:60,auto:true});
 tr.size.w=380; tr.size.h=170; applySize(tr);
 addEdge(lst.id,'rows',bn.id,'rows'); addEdge(bn.id,'rec',res.id,'rec'); addEdge(bn.id,'best',tk.id,'text'); addEdge(bn.id,'ms',tr.id,'in');
+markWiresDirty();
+});
+preset('Network: Which App Talks to Where (Phone VPN Monitor)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The phone as its own traffic monitor (DSP app). Press Start: Android itself asks «Connection request» (a VPN) — once accepted, every app\'s connection is mirrored through Network Monitor, not sent anywhere else; the app opens the real connections itself, so nothing slows down or leaves the phone. No root.\n'+
+  'Two tables fill live: Apps (one row per app — package, open / total connections, bytes up / down, the servers it talked to) and Flows (one row per connection — app, protocol, address, port, the server name and how long it stays open). The name comes from DNS answers, the TLS SNI or the HTTP Host header — read, never decrypted: no certificate is swapped, pinned apps work exactly as before, and this build cannot see inside HTTPS. Only IPv4; the per-app owner needs Android 10+ (older phones show «uid N»). «full packets» streams every raw frame as hex — heavy, turn it off when not capturing.\n'+
+  'Click an app in Apps — Flows shows only its connections, and the other way round (a click on a connection\'s app name in Flows filters Apps to it); type a Wireshark-style filter (app contains "Chrome", dport == 443, host contains "google") to find a connection.'});
+nt.size.w=1000; nt.size.h=190; applySize(nt);
+const vm=addNode('vpnmon',40,260,{});
+vm.size.w=380; vm.size.h=380; applySize(vm);
+const apps=addNode('table',460,260,{list:'@patch',key:'id',initial:false,cols:['app','uid','flows','open','up','down','hosts']});
+apps.size.w=620; apps.size.h=380; applySize(apps);
+const flows=addNode('table',460,680,{list:'@patch',key:'id',initial:false,follow:true,cols:['app','proto','dst','dport','host','l7','state','up','down']});
+flows.size.w=620; flows.size.h=380; applySize(flows);
+const tk=addNode('ticker',1120,260,{});
+tk.size.w=420; tk.size.h=120; applySize(tk);
+addEdge(vm.id,'apps',apps.id,'rec'); addEdge(vm.id,'flows',flows.id,'rec'); addEdge(vm.id,'rec',tk.id,'rec');
+addEdge(apps.id,'app',flows.id,'filter'); addEdge(flows.id,'app',apps.id,'filter');
 markWiresDirty();
 });
 preset('Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)', function(){
