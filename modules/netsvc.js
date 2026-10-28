@@ -339,3 +339,93 @@ def({ id:'ftpcli', title:'FTP Client (DSP app)', cat:'Sources', kw:'ftp client l
     const go=(I.go||0)>.5; if(go && !n.prevGo) ftpcliRun(n); n.prevGo=go;
     return nsvClientOut(n); },
   draw:nsvClientDraw });
+
+/* ============================ Сканер сети и поиск устройств ============================
+   Network Scanner: узлы подсети, порты TCP / UDP, таблица ARP; Device Discovery: SSDP / UPnP и mDNS. Ядра — netscan-kernels.js, netdisc-kernels.js. */
+
+const nsvRecId=r=>r.src==='scan' ? (r.kind==='port' ? r.ip+':'+r.port+'/'+r.proto : r.ip) : r.src==='disc' ? r.via+':'+(r.usn||r.location||((r.name||'')+'|'+(r.type||'')+'|'+(r.ip||''))) : '';
+function nsvJobStart(n,run){
+  if(n.job){ n.status='already running — Stop first'; return; }
+  n.job={stop:false}; const job=n.job; n.progress=0; n.found=0; n.status='connecting…'; n.done=0;
+  (async()=>{
+    try{
+      const ns=await nsvLink(n);
+      const info=await ns.call('net.info').catch(()=>null);
+      n.status='scanning…';
+      const r=await run(ns,info,job);
+      n.status=(job.stop ? 'stopped · ' : 'done · ')+r;
+    }catch(e){ n.status='error: '+(e.message||e); }
+    n.job=null; n.progress=1; n.done=2;
+  })();
+}
+function nsvRecOut(n){
+  const rec=n.recQ.length ? n.recQ.splice(0) : null, d=n.done>0 ? 1 : 0; if(n.done>0) n.done--;
+  return {rec,count:n.found|0,progress:n.progress||0,busy:n.job ? 1 : 0,done:d};
+}
+function nsvEmit(n){ return r=>{ r.id=nsvRecId(r); n.found++; nsvPush(n,r); }; }
+
+const NSCAN_MODES=['hosts (who is on the network)','ports TCP','ports UDP','ARP table (root)'];
+function netscanRun(n){
+  const mode=NSCAN_MODES.indexOf(n.p.mode)<0 ? 0 : NSCAN_MODES.indexOf(n.p.mode);
+  nsvJobStart(n,async(ns,info,job)=>{
+    const target=String(n.hostIn||(mode===0 ? n.p.cidr : n.p.host)||'').trim() || (mode===0 ? scanLocalCidr(info&&info.ips) : (info&&info.gateway)||'');
+    if(!target && mode!==3) throw new Error(mode===0 ? 'no private network found: set a network like 192.168.1.0/24' : 'set the host (or a range / network)');
+    n.status='scanning '+(target||'ARP')+'…';
+    const r=await scanRun(ns,{mode:['hosts','ports','udp','arp'][mode],cidr:target,host:target,ports:mode===0 ? n.p.probe : n.p.ports,ping:!!n.p.ping,arp:!!n.p.arp,concurrency:+n.p.conc||24,
+      timeout:+n.p.timeout||undefined,banner:!!n.p.banner,showClosed:!!n.p.closed,showFiltered:!!n.p.filtered,stop:()=>job.stop,onRec:nsvEmit(n),
+      onProgress:(d,t)=>{ n.progress=d/t; n.status='scanning '+target+' · '+d+' / '+t+' · found '+n.found; }});
+    return (r.hosts!=null ? r.hosts+' host(s)' : r.open+' open port(s)')+' in '+(r.ms/1000).toFixed(1)+' s';
+  });
+}
+def({ id:'netscan', title:'Network Scanner (DSP app)', cat:'Sources', kw:'scan network lan hosts ports tcp udp arp ping nmap discover ip find device portscan banner subnet',
+  ins:[{n:'go',t:'num'},{n:'host',t:'txt'}], outs:[{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'progress',t:'num'},{n:'busy',t:'num'},{n:'done',t:'num'}], readout:true, tall:true,
+  params:[
+    {n:'url',t:'text',d:NSV_URL,label:'bridge of the DSP app'},
+    {n:'mode',t:'select',opts:NSCAN_MODES,d:NSCAN_MODES[0],label:'what to scan (Run, or a rising edge on go)'},
+    {n:'cidr',t:'text',d:'',label:'hosts: network 192.168.1.0/24, a range 10.0.0.5-60 or a list (empty — the phone\'s own /24)'},
+    {n:'host',t:'text',d:'',label:'ports: host, range or network (empty — the gateway); the «host» input overrides both'},
+    {n:'ports',t:'text',d:'top',label:'ports: 22,80,8000-8100, top (45 common), all (65535 — slow)'},
+    {n:'ping',t:'check',d:true,label:'hosts: ICMP ping first (a real ping; some devices do not answer it)'},
+    {n:'probe',t:'text',d:'80,443,22,445,62078',label:'hosts: then TCP ports to knock on — open or «refused» means the host is up (empty — only ping)'},
+    {n:'arp',t:'check',d:true,label:'hosts: add MAC addresses from the ARP table afterwards (the app needs «Allow root features»)'},
+    {n:'banner',t:'check',d:true,label:'TCP ports: read the banner / Server header'},
+    {n:'closed',t:'check',d:false,label:'TCP ports: report closed ones too',adv:true},
+    {n:'filtered',t:'check',d:false,label:'UDP ports: report silent ones («open|filtered»)',adv:true},
+    {n:'conc',t:'range',min:1,max:28,step:1,d:24,label:'parallel connections (the app allows 32 sockets)',adv:true},
+    {n:'timeout',t:'range',min:100,max:5000,step:50,d:500,label:'wait for a connection, ms',adv:true},
+    {n:'run',t:'button',label:'Run',fn:n=>netscanRun(n)},
+    {n:'stopBtn',t:'button',label:'Stop',fn:n=>{ if(n.job) n.job.stop=true; }}],
+  init:n=>{ n.nsP=null; n.ns=null; n.ws=null; n.recQ=[]; n.job=null; n.status='idle'; n.found=0; n.progress=0; n.done=0; n.prevGo=0; n.hostIn=''; n.warn=''; },
+  dispose:n=>{ if(n.job) n.job.stop=true; nsvDrop(n); },
+  process(n,I){
+    n.hostIn=typeof I.host==='string' ? I.host : '';
+    const go=(I.go||0)>.5; if(go && !n.prevGo) netscanRun(n); n.prevGo=go;
+    return nsvRecOut(n); },
+  draw:nsvClientDraw });
+
+function netdiscRun(n){
+  nsvJobStart(n,async(ns,info,job)=>{
+    const types=n.p.mdns ? String(n.p.types||'').split(/[\s,;]+/).filter(Boolean) : [];
+    const r=await discRun(ns,{ssdp:!!n.p.ssdp,st:n.p.st||'ssdp:all',wait:+n.p.wait||4000,desc:!!n.p.desc,mdns:types,mdnsWait:+n.p.mdnsWait||2500,stop:()=>job.stop,onRec:nsvEmit(n)});
+    return r.found+' device(s) in '+(r.ms/1000).toFixed(1)+' s';
+  });
+}
+def({ id:'netdisc', title:'Device Discovery (SSDP · mDNS)', cat:'Sources', kw:'discover devices ssdp upnp dlna mdns bonjour zeroconf airplay chromecast cast printer ipp media renderer server tv speaker smart home',
+  ins:[{n:'go',t:'num'}], outs:[{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'progress',t:'num'},{n:'busy',t:'num'},{n:'done',t:'num'}], readout:true, tall:true,
+  params:[
+    {n:'url',t:'text',d:NSV_URL,label:'bridge of the DSP app'},
+    {n:'ssdp',t:'check',d:true,label:'SSDP / UPnP: media servers and players (DLNA), routers, TVs, printers'},
+    {n:'st',t:'text',d:'ssdp:all',label:'SSDP search target (ssdp:all, upnp:rootdevice, urn:schemas-upnp-org:device:MediaRenderer:1…)'},
+    {n:'wait',t:'range',min:1000,max:20000,step:500,d:4000,label:'SSDP: listen for answers, ms'},
+    {n:'desc',t:'check',d:true,label:'SSDP: fetch the device description (name, maker, model, services)'},
+    {n:'mdns',t:'check',d:true,label:'mDNS / DNS-SD: AirPlay, Chromecast, printers (IPP), SMB, SSH… (one type at a time — Android allows only one search)'},
+    {n:'types',t:'text',d:DISC_MDNS.join(', '),label:'mDNS service types'},
+    {n:'mdnsWait',t:'range',min:500,max:15000,step:500,d:2500,label:'mDNS: time per type, ms'},
+    {n:'run',t:'button',label:'Run',fn:n=>netdiscRun(n)},
+    {n:'stopBtn',t:'button',label:'Stop',fn:n=>{ if(n.job) n.job.stop=true; }}],
+  init:n=>{ n.nsP=null; n.ns=null; n.ws=null; n.recQ=[]; n.job=null; n.status='idle'; n.found=0; n.progress=0; n.done=0; n.prevGo=0; n.warn=''; },
+  dispose:n=>{ if(n.job) n.job.stop=true; nsvDrop(n); },
+  process(n,I){
+    const go=(I.go||0)>.5; if(go && !n.prevGo) netdiscRun(n); n.prevGo=go;
+    return nsvRecOut(n); },
+  draw:nsvClientDraw });

@@ -520,7 +520,7 @@ def({ id:'recEnt', title:'Rec → Entities', cat:'Data', kw:'entity entities lin
   readout:true, tall:true,
   params:[{n:'rules',t:'code',plain:true,d:'',label:'rules: [out:] conditions | fields'},
           {n:'apply',t:'button',label:'Apply outputs',fn:n=>{ rebuildNode(n); markTopoDirty(); }},
-          {n:'tpl',t:'select',opts:['—','GSM cells','Digital voice (DMR / P25 / NXDN)','Radio (Wi-Fi / BLE / Zigbee)','Wi-Fi map (nodes · links · packets)','Phone radios (Wi-Fi · BLE · Bluetooth)'],d:'—',label:'insert rules',
+          {n:'tpl',t:'select',opts:['—','GSM cells','Digital voice (DMR / P25 / NXDN)','Radio (Wi-Fi / BLE / Zigbee)','Wi-Fi map (nodes · links · packets)','Phone radios (Wi-Fi · BLE · Bluetooth)','Network scan (hosts · ports · devices)'],d:'—',label:'insert rules',
            fn:n=>{ const t=ENT_TEMPLATES[n.p.tpl]; if(t){ n.p.rules=(n.p.rules?n.p.rules.trimEnd()+'\n':'')+t; } n.p.tpl='—'; rebuildNode(n); markTopoDirty(); }}],
   init:n=>{ n.in=0; n.outN=0; n.err=''; },
   process(n,I){
@@ -599,6 +599,21 @@ gt: src=bt addr rssi | id=Phone>{addr}, from=Phone, to={addr}, label={rssi} dBm
 gt: src=bt addr !rssi | id=Phone>{addr}, from=Phone, to={addr}, label=heard
 gt: src=bt addr major | id=class:{major}, type=class, label={major}, shape=diamond, color=#8a8a8a
 gt: src=bt addr major | id={addr}>class:{major}, from={addr}, to=class:{major}, label=class, dashes=1`,
+  'Network scan (hosts · ports · devices)':
+`# Network Scanner + Device Discovery (приложение DSP): Phone → узлы → порты и службы; одним выходом net узлы и связи вместе (Table key=id)
+net: src=scan kind=host ip | id=Phone, type=me, label=Phone, shape=star, color=#e8a200
+net: src=scan kind=host ip | id={ip}, type=host, label={ip}, shape=dot, color=#2a9df4, mac, how
+net: src=scan kind=host ip | id=Phone>{ip}, from=Phone, to={ip}, label={how}
+net: src=scan kind=port state=open ip port | id={ip}:{port}/{proto}, type=port, label={service|port}, shape=box, color=#8a8a8a, banner
+net: src=scan kind=port state=open ip port | id={ip}>{ip}:{port}/{proto}, from={ip}, to={ip}:{port}/{proto}, label={proto}
+net: src=disc ip | id=Phone, type=me, label=Phone, shape=star, color=#e8a200
+net: src=disc ip | id={ip}, type=host, shape=dot, color=#2a9df4, kind, server
+net: src=disc ip name | id={ip}, label={name}
+net: src=disc ip manufacturer | id={ip}, maker={manufacturer}, model
+net: src=disc ip | id=Phone>{ip}, from=Phone, to={ip}, label={via}
+net: src=disc ip kind | id=kind:{kind}, type=kind, label={kind}, shape=diamond, color=#d6a06b
+net: src=disc ip kind | id={ip}>kind:{kind}, from={ip}, to=kind:{kind}, label=is, dashes=1
+`,
   'Digital voice (DMR / P25 / NXDN)':
 `# абоненты, группы и связи; префикс сети {src} разводит одинаковые id в разных системах
 subscriber: kind=call from | id={src}:{from}, type=subscriber, label={src} {from}, shape=dot
