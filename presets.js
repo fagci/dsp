@@ -517,6 +517,7 @@ const PRESET_CATS={
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
   'Phone App: USB SDR over OTG (RTL-SDR, HackRF…)':'SDR Receivers',
   'bitchat Mesh Chat (no app install)':'Network & IoT',
+  'Reference: Decode BLE Advertisements (Company ID, Service UUID)':'Network & IoT',
   'Phone App: BLE Auto-Discover Devices and Services (GATT)':'Network & IoT',
   'Phone App: Bluetooth Classic Terminal (RFCOMM / SPP)':'Network & IoT',
   'Phone App: BLE Beacon (Broadcast Sensor Data)':'Network & IoT',
@@ -1462,6 +1463,22 @@ bc.size.w=420; bc.size.h=420; applySize(bc);
 const ch=addNode('chat',540,230,{echo:true,me:'dsp'});
 ch.size.w=360; ch.size.h=420; applySize(ch);
 addEdge(bc.id,'rec',ch.id,'rec'); addEdge(ch.id,'text',bc.id,'send');
+markWiresDirty();
+});
+preset('Reference: Decode BLE Advertisements (Company ID, Service UUID)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Tests the two reference lists together: Phone sensors scans BLE advertisements → Rec Filter keeps the «ble» records → Table pulls the manufacturer company id (mfr.companyId) and the first advertised service UUID (uuids.0) as columns, then looks each one up — company by hex code (lookup(\'BLE Company IDs\',\'hex\',[company],\'name\')) exactly as it arrives, no hex-to-decimal conversion needed; service the same way as the GATT preset does.\n'+
+  'Most advertisements carry neither (phones mostly don\'t), but anything with iBeacon / Eddystone / a vendor\'s own service — a headset, a fitness band, an AirTag-like tracker — fills both columns in. Files → ⇩ offline «Bluetooth UUIDs» and «BLE Company IDs» make both work without a network fetch.'});
+nt.size.w=900; nt.size.h=150; applySize(nt);
+const tx=addNode('termux',40,220,{url:'ws://127.0.0.1:8765',ble:true,bleMode:'low_latency'});
+tx.size.w=360; tx.size.h=420; applySize(tx);
+const rf=addNode('recFilter',440,220,{expr:"r.src==='ble'"});
+rf.size.w=280; applySize(rf);
+const tb=addNode('table',760,220,{list:'ble/company+service',maxRows:1000,rev:true,cols:['t','addr','name','rssi','company','companyName','svc1','serviceName'],
+  schema:{types:{company:{src:'mfr.companyId'},companyName:{t:'calc',expr:"lookup('BLE Company IDs','hex',[company],'name')"},
+                 svc1:{src:'uuids.0'},serviceName:{t:'calc',expr:"lookup('Bluetooth UUIDs','uuid',[svc1],'name')"}},card:{}}});
+tb.size.w=940; tb.size.h=440; applySize(tb);
+addEdge(tx.id,'rec',rf.id,'rec'); addEdge(rf.id,'rec',tb.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: Bluetooth Classic Terminal (RFCOMM / SPP)', function(){
