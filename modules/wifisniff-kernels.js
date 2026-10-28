@@ -33,3 +33,8 @@ function wifiRec(frame,now){
   r.text=r.kind+' '+(r.sa||r.da||'')+(r.ssid ? ' "'+r.ssid+'"' : '')+' ch'+frame.chan+' '+frame.rssi+' dBm';
   return r;
 }
+// запись pkt из монитор-режима телефона (поле dot11 — кадр 802.11 без radiotap) → то же, что строка WIFI от ESP32
+function wifiFromPkt(r){
+  if(!r || r.src!=='pkt' || typeof r.dot11!=='string' || !/^([0-9a-f]{2})+$/i.test(r.dot11)) return null;
+  return {chan:+r.ch||0, rssi:+r.rssi||0, bytes:hexFromHex(r.dot11)};
+}

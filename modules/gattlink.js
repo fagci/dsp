@@ -35,7 +35,7 @@ function gattStart(n){
   };
 }
 function gattSub(n){
-  const m=JSON.stringify({sub:['gatt','btlink']});
+  const m=JSON.stringify({sub:['gatt','gattsrv','btlink','l2cap']});
   if(n.ws && n.ws.readyState===1 && m!==n.sentSub){ n.sentSub=m; n.ws.send(m); }
 }
 function gattSend(n,cmd){
@@ -62,7 +62,7 @@ def({ id:'gattlink', title:'BLE GATT / Bluetooth (DSP app)', cat:'Sources', kw:'
   ins:[{n:'go',t:'num'},{n:'addr',t:'txt'},{n:'svc',t:'txt'},{n:'chr',t:'txt'},{n:'data',t:'txt'},{n:'cmd',t:'rec'}],
   outs:[{n:'rec',t:'rec'},{n:'value',t:'num'},{n:'hex',t:'txt'},{n:'text',t:'txt'},{n:'ok',t:'num'},{n:'new',t:'num'}],
   readout:true, tall:true,
-  groups:[{n:'GATT'},{n:'Classic / RFCOMM',open:false},{n:'Advertise (peripheral)',open:false},{n:'Decode value',open:false}],
+  groups:[{n:'GATT'},{n:'GATT server (peripheral)',open:false},{n:'Classic / RFCOMM / L2CAP',open:false},{n:'Advertise (peripheral)',open:false},{n:'Decode value',open:false}],
   params:[
     {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'bridge of the DSP app'},
     {n:'action',t:'select',opts:PL_GATT_ACTIONS,d:'connect',label:'action (the Run button, or a rising edge on go)'},
@@ -79,8 +79,12 @@ def({ id:'gattlink', title:'BLE GATT / Bluetooth (DSP app)', cat:'Sources', kw:'
     {n:'mtu',t:'range',min:0,max:517,step:1,d:0,label:'request MTU (0 — don\'t ask)',g:'GATT'},
     {n:'prio',t:'select',opts:['high','balanced','low'],d:'high',label:'connection priority',g:'GATT'},
     {n:'autoConn',t:'check',d:false,label:'auto-connect (wait for the device instead of a single attempt)',g:'GATT'},
-    {n:'uuid',t:'text',d:'',label:'RFCOMM service UUID (empty — SPP 1101)',g:'Classic / RFCOMM'},
-    {n:'secure',t:'check',d:true,label:'secure RFCOMM (encrypted link)',g:'Classic / RFCOMM'},
+    {n:'uuid',t:'text',d:'',label:'RFCOMM service UUID (empty — SPP 1101)',g:'Classic / RFCOMM / L2CAP'},
+    {n:'secure',t:'check',d:true,label:'secure link (RFCOMM / L2CAP, encrypted)',g:'Classic / RFCOMM / L2CAP'},
+    {n:'psm',t:'range',min:0,max:65535,step:1,d:0,label:'L2CAP PSM (LE: 128…255; the listener gets its own and reports it)',g:'Classic / RFCOMM / L2CAP'},
+    {n:'srvDef',t:'code',plain:true,d:'180d/2a37 read,notify = 0600\n6e400001-b5a3-f393-e0a9-e50e24dcca9e/6e400002-b5a3-f393-e0a9-e50e24dcca9e write,writenr\n6e400001-b5a3-f393-e0a9-e50e24dcca9e/6e400003-b5a3-f393-e0a9-e50e24dcca9e read,notify = "hi"',label:'services: «svc/chr props = value» per line (props: read write writenr notify indicate manual secure; value: hex or "text"). Start advertising with connectable on and the service UUIDs so centrals can find it',g:'GATT server (peripheral)'},
+    {n:'srvReq',t:'num',d:0,label:'respond: the req number of a «manual» read / write record',g:'GATT server (peripheral)'},
+    {n:'srvStatus',t:'num',d:0,label:'respond: ATT status (0 — ok with the data, 3 — write not permitted, 257 — failure)',g:'GATT server (peripheral)'},
     {n:'advName',t:'check',d:false,label:'include the device name',g:'Advertise (peripheral)'},
     {n:'advUuids',t:'text',d:'',label:'service UUIDs, comma separated (180d, fe95…)',g:'Advertise (peripheral)'},
     {n:'advMfr',t:'text',d:'',label:'manufacturer data: id=hex (004C=0215AABBCCDD…), «;» for more',g:'Advertise (peripheral)'},

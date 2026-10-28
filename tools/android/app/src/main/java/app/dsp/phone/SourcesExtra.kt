@@ -221,13 +221,20 @@ class SnifferHub(private val cfg: Config, private val emit: Emit, private val no
     private fun pump(p: Process, iface: String, snap: Int) {
         val rd = PcapReader { ms, link, orig, d ->
             val h = Frame.parse(link, d)
+            val rt = if (link == 127) Radiotap.parse(d) else null                           // кадр из монитор-режима: radiotap + 802.11
+            val body = rt?.let { d.copyOfRange(it.len, d.size - (if (it.fcs && d.size - it.len >= 4) 4 else 0)) }
+            val w = body?.let { Dot11.parse(it) }
             emit("pkt", Json.obj(
                 "src" to "\"pkt\"", "t" to ms.toString(), "iface" to Json.str(iface), "link" to Json.str(h.link), "len" to orig.toString(), "cap" to d.size.toString(),
-                "smac" to h.srcMac?.let { Json.str(it) }, "dmac" to h.dstMac?.let { Json.str(it) },
+                "smac" to (h.srcMac ?: w?.a2)?.let { Json.str(it) }, "dmac" to (h.dstMac ?: w?.a1)?.let { Json.str(it) },
                 "ethtype" to if (h.ethType != 0) Json.str(String.format("%04x", h.ethType)) else null, "if" to if (h.ifIndex != 0) h.ifIndex.toString() else null,
                 "ip" to h.src?.let { Json.str(it) }, "dip" to h.dst?.let { Json.str(it) }, "proto" to if (h.ver != 0) h.proto.toString() else null,
                 "sport" to if (h.sport != 0) h.sport.toString() else null, "dport" to if (h.dport != 0) h.dport.toString() else null,
                 "hex" to Json.str(Hex.of(d)),
+                "freq" to rt?.takeIf { it.freq > 0 }?.freq?.toString(), "ch" to rt?.let { Radiotap.channel(it.freq) }?.takeIf { it > 0 }?.toString(),
+                "rssi" to rt?.signal?.toString(), "rate" to rt?.rateKbps?.let { Json.num(it / 1000.0, 10.0) }, "dot11" to body?.let { Json.str(Hex.of(it)) },
+                "ftype" to w?.let { Json.str(it.typeName) }, "fsub" to w?.subtype?.toString(),
+                "a1" to w?.a1?.let { Json.str(it) }, "a2" to w?.a2?.let { Json.str(it) }, "a3" to w?.a3?.let { Json.str(it) }, "bssid" to w?.bssid?.let { Json.str(it) },
             ))
         }
         val buf = ByteArray(32768)

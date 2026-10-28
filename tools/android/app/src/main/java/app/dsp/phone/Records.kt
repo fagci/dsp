@@ -233,7 +233,7 @@ object Perms {
         if ("sms" in subs) l.add("android.permission.RECEIVE_SMS")
         if ("speech" in subs) l.add("android.permission.RECORD_AUDIO")
         if ("sys" in subs) l.add("android.permission.READ_PHONE_STATE")
-        if (sdk >= 31 && ("gatt" in subs || "btlink" in subs)) l.add("android.permission.BLUETOOTH_CONNECT")
+        if (sdk >= 31 && ("gatt" in subs || "gattsrv" in subs || "l2cap" in subs || "btlink" in subs)) l.add("android.permission.BLUETOOTH_CONNECT")
         return l.toList()
     }
 

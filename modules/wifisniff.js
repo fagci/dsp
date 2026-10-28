@@ -2,7 +2,8 @@
 /* ============================ Wi-Fi Sniffer (ESP32) ============================
    Кадры 802.11 с ESP32 по WebSerial (строки WIFI,<канал>,<rssi>,<hex>); прошивка — tools/wifi-sniffer-esp32.
    Каждый кадр — запись rec (тип, адреса, SSID, канал, безопасность) с полем hex: её можно отдать в HEX Structure
-   (разбор по схеме wifi) или в Table. Без железа узел кормится входом text (те же строки). Ядро — wifisniff-kernels.js. */
+   (разбор по схеме wifi) или в Table. Без железа узел кормится входом text (те же строки) или входом rec — записями pkt из монитор-режима
+   телефона (приложение DSP, root, wifi.monitor; поле dot11). Ядро — wifisniff-kernels.js. */
 
 async function wifiTeardown(n){
   n.connected=false; n.connecting=false;
@@ -45,7 +46,9 @@ async function wifiReadLoop(n){
   }
 }
 function wifiFeed(n,line){
-  const f=wifiLine(line); if(!f) return;
+  const f=wifiLine(line); if(f) wifiPush(n,f);
+}
+function wifiPush(n,f){
   n.frames++;
   let r; try{ r=wifiRec(f); }catch(e){ return; }
   if(n.p.types!=='all' && r.ftype!==n.p.types) return;
@@ -59,8 +62,8 @@ async function wifiSend(n,text){
   try{ await w.write(new TextEncoder().encode(text)); }catch(e){} finally{ w.releaseLock(); }
 }
 
-def({ id:'wifiSniff', lazy:'manual', title:'Wi-Fi Sniffer (ESP32)', cat:'Sources', kw:'wifi 802.11 sniffer esp32 promiscuous beacon probe deauth packets frames monitor',
-  ins:[{n:'text',t:'txt'}], outs:[{n:'rec',t:'rec'},{n:'bin',t:'bin'},{n:'count',t:'num'},{n:'frames',t:'num'}],
+def({ id:'wifiSniff', lazy:'manual', title:'Wi-Fi Sniffer (ESP32 / phone)', cat:'Sources', kw:'wifi 802.11 sniffer esp32 promiscuous beacon probe deauth packets frames monitor radiotap phone root',
+  ins:[{n:'text',t:'txt'},{n:'rec',t:'rec'}], outs:[{n:'rec',t:'rec'},{n:'bin',t:'bin'},{n:'count',t:'num'},{n:'frames',t:'num'}],
   readout:true, tall:true, w:420, resize:true,
   params:[{n:'connect',t:'button',label:'Connect ESP32',fn:n=>wifiConnect(n)},
           {n:'disconnect',t:'button',label:'Disconnect',fn:n=>{ n.status='disconnected'; wifiTeardown(n); }},
@@ -69,13 +72,17 @@ def({ id:'wifiSniff', lazy:'manual', title:'Wi-Fi Sniffer (ESP32)', cat:'Sources
           {n:'snap',t:'range',min:24,max:400,step:8,d:160,label:'bytes kept per frame',fn:n=>wifiSend(n,wifiCfg(n))},
           {n:'baud',t:'num',d:115200,label:'baud (ignored by USB-CDC chips)',adv:true},
           {n:'clr',t:'button',label:'Clear',fn:n=>{ n.pend=[]; n.frames=0; n.sent=0; }}],
-  init:n=>{ n.pend=[]; n.frames=0; n.sent=0; n.lastText=null; n.lastBin=null; n.binId=0; n.binSent=0; n.binOut=null;
+  init:n=>{ n.pend=[]; n.frames=0; n.sent=0; n.lastText=null; n.lastRec=null; n.lastBin=null; n.binId=0; n.binSent=0; n.binOut=null;
     n.port=null; n.reader=null; n.connected=false; n.connecting=false; n.status='not connected'; },
   dispose:n=>{ wifiTeardown(n).catch(e=>console.error('wifi dispose:',e)); },
   process(n,I){
     if(typeof I.text==='string' && I.text!==n.lastText){
       n.lastText=I.text;
       for(const line of I.text.split(/[\r\n;]+/)) wifiFeed(n,line);
+    }
+    if(Array.isArray(I.rec) && I.rec!==n.lastRec){            // pkt из Phone sensors (DSP app, root, wifi.monitor)
+      n.lastRec=I.rec;
+      for(const r of I.rec){ const f=wifiFromPkt(r); if(f) wifiPush(n,f); }
     }
     const recs=n.pend; n.pend=[]; n.sent+=recs.length;
     if(n.binSent!==n.binId){ n.binSent=n.binId; n.binOut=binObj(n.lastBin,'wifi-frame'); }

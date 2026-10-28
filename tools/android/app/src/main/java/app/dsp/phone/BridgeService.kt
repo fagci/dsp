@@ -38,6 +38,10 @@ class BridgeService : Service() {
     private lateinit var gatt: GattHub
     private lateinit var btlink: BtLinkHub
     private lateinit var adv: AdvertiseHub
+    private lateinit var gattsrv: GattServerHub
+    private lateinit var l2cap: L2capHub
+    private lateinit var wlink: WifiLinkHub
+    private lateinit var monitor: MonitorHub
     private lateinit var net: NetHub
     private lateinit var sys: SysHub
     private lateinit var power: PowerHub
@@ -68,7 +72,7 @@ class BridgeService : Service() {
         actions = PhoneActions(this, { s, j -> server.emit(s, j) }, { p -> main.post { requestPerms(p) } }, cfg)
         val needs = Needs(this) { p -> main.post { requestPerms(p) } }
         val emit: Emit = { s, j -> server.emit(s, j) }
-        speech = SpeechHub(this, emit, needs); gatt = GattHub(this, emit, needs); btlink = BtLinkHub(this, emit, needs); adv = AdvertiseHub(this, needs)
+        speech = SpeechHub(this, emit, needs); gatt = GattHub(this, emit, needs); btlink = BtLinkHub(this, emit, needs); adv = AdvertiseHub(this, needs); gattsrv = GattServerHub(this, emit, needs); l2cap = L2capHub(this, emit, needs); wlink = WifiLinkHub(this, emit, needs); monitor = MonitorHub(cfg)
         net = NetHub(this, cfg, emit); sys = SysHub(this, cfg, emit, needs)
         server.onCommand = { c, j -> route(c, j) }
         sensors = SensorHub(this) { s, j -> server.emit(s, j) }
@@ -126,7 +130,7 @@ class BridgeService : Service() {
     private fun holds(): List<String> {
         val l = ArrayList<String>()
         fun add(name: String, n: Int) { if (n > 0) l.add(if (n > 1) "$name×$n" else name) }
-        add("gatt", gatt.held()); add("rfcomm", btlink.held()); add("advertising", adv.held()); add("sockets", net.held()); add("broadcast receiver", sys.held()); add("speech", speech.held())
+        add("gatt", gatt.held()); add("rfcomm", btlink.held()); add("advertising", adv.held()); add("gatt server", gattsrv.held()); add("l2cap", l2cap.held()); add("nsd / aware", wlink.held()); add("wifi monitor mode", monitor.held()); add("sockets", net.held()); add("broadcast receiver", sys.held()); add("speech", speech.held())
         return l
     }
 
@@ -139,7 +143,7 @@ class BridgeService : Service() {
         if (idleSince == 0L) { idleSince = now; return }
         val h = holds()
         if (cfg.idleMin <= 0 || h.isEmpty() || now - idleSince < cfg.idleMin * 60_000L) return
-        gatt.release(); btlink.release(); adv.release(); net.release(); sys.release(); speech.release()
+        gatt.release(); gattsrv.release(); l2cap.release(); wlink.release(); monitor.release(); btlink.release(); adv.release(); net.release(); sys.release(); speech.release()
         idleSince = now
         server.note("info", "no clients for ${cfg.idleMin} min: released ${h.joinToString(", ")}")
     }
@@ -167,6 +171,10 @@ class BridgeService : Service() {
                 Reply.done(c, j.opt("id"), n, null, "error", "n" to rows.size.toString())
             }
             n.startsWith("gatt.") -> gatt.exec(c, j)
+            n.startsWith("gattsrv.") -> gattsrv.exec(c, j)
+            n.startsWith("l2cap.") -> l2cap.exec(c, j)
+            n == "wifi.monitor" || n == "wifi.channel" -> monitor.exec(c, j)
+            n.startsWith("nsd.") || n.startsWith("wifi.") || n.startsWith("aware.") -> wlink.exec(c, j)
             n.startsWith("bt.") -> btlink.exec(c, j)
             n.startsWith("ble.adv.") -> adv.exec(c, j)
             n.startsWith("speech.") -> speech.exec(c, j)
@@ -192,7 +200,7 @@ class BridgeService : Service() {
         inst = null; up = false
         power.close(); activity.close()
         server.stop()
-        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close(); speech.close(); gatt.close(); btlink.close(); adv.close(); net.close(); sys.close()
+        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close(); speech.close(); gatt.close(); gattsrv.close(); l2cap.close(); wlink.close(); monitor.close(); btlink.close(); adv.close(); net.close(); sys.close()
         wake?.takeIf { it.isHeld }?.release()
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(ID)
         super.onDestroy()
@@ -312,7 +320,7 @@ class BridgeService : Service() {
         val sens = sensors.available()
         return Json.obj(
             "src" to "\"bridge\"", "level" to "\"hello\"", "ver" to "1", "app" to "\"dsp-android\"", "host" to Json.str(Build.MODEL),
-            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "sms", "notify", "torch", "speech", "gatt", "btlink", "net", "sys", "power", "ext", "activity") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(),
+            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "sms", "notify", "torch", "speech", "gatt", "gattsrv", "l2cap", "btlink", "net", "sys", "power", "ext", "activity") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(),
             "phone" to actions.info(),
         )
     }
