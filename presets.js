@@ -517,6 +517,7 @@ const PRESET_CATS={
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
   'Phone App: Wi-Fi, BLE and Bluetooth as Three Graphs':'Network & IoT',
   'Network: HTTP Server — Share Files with Any Browser (Phone App)':'Network & IoT',
+  'Network: DNS Benchmark — Which Resolver Is Fastest From Here (Phone App)':'Network & IoT',
   'Network: Cast Receiver — the Phone as a DLNA Screen and Speaker (Phone App)':'Network & IoT',
   'Network: Cast to a TV or Speaker — Find the Player, Send a File or a Stream (Phone App)':'Network & IoT',
   'Network: Wake-on-LAN, NTP Clock Check and Syslog (Phone App)':'Network & IoT',
@@ -1738,6 +1739,25 @@ const cc=addNode('dlnacast',1380,210,{});
 cc.size.w=360; cc.size.h=440; applySize(cc);
 addEdge(dc.id,'rec',fl.id,'rec'); addEdge(fl.id,'rec',tb.id,'rec'); addEdge(tb.id,'location',cc.id,'host');
 addEdge(bf.id,'bin',cc.id,'bin'); addEdge(ts.id,'text',cc.id,'url');
+markWiresDirty();
+});
+preset('Network: DNS Benchmark — Which Resolver Is Fastest From Here (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Measure DNS servers from where you are — the network, the hotspot or the mobile data you are on now. The list is a Table (column «server», optional «name» and «port» — add your router, the provider\'s servers, a Pi-hole). For each server DNS Benchmark asks popular names (after a warm-up query, so this is the resolver\'s cache speed) and random fresh names (the way up to the authoritative server), times every answer in the app (UDP, to the tenth of a millisecond), and counts losses and jitter. The score is 60 % cached + 40 % fresh; «rank» 1 is the fastest.\n'+
+  '«nxdomain»: a fresh random name must come back as NXDOMAIN — «replaced» means the server answers with an address (a provider\'s search / ad page, or a filter). The Table keeps one row per server (key id) and updates it when the ranking arrives; sort it by score. The best server goes to «best» and its time to «ms» — wire them to a Ticker or a Trend. Run it on different networks and compare. DoH and DoT (encrypted DNS) are not measured: this is plain DNS on port 53.'});
+nt.size.w=1000; nt.size.h=150; applySize(nt);
+const lst=addNode('table',40,220,{list:'@patch',initial:true,
+  data:'name,server\nCloudflare,1.1.1.1\nCloudflare 2,1.0.0.1\nGoogle,8.8.8.8\nGoogle 2,8.8.4.4\nQuad9,9.9.9.9\nQuad9 2,149.112.112.112\nOpenDNS,208.67.222.222\nOpenDNS 2,208.67.220.220\nAdGuard,94.140.14.14\nAdGuard 2,94.140.15.15\nCleanBrowsing,185.228.168.9\nControl D,76.76.2.0\nNextDNS,45.90.28.0\nDNS.WATCH,84.200.69.80\nComodo,8.26.56.26\nLevel3,4.2.2.1\nYandex,77.88.8.8\nYandex safe,77.88.8.88\nYandex family,77.88.8.7\nAlternate DNS,76.76.19.19\nMullvad,194.242.2.2\nUncensored (Denmark),91.239.100.100'});
+lst.size.w=300; lst.size.h=460; applySize(lst);
+const bn=addNode('dnsbench',360,220,{mode:'both',rounds:3});
+bn.size.w=360; bn.size.h=420; applySize(bn);
+const res=addNode('table',760,220,{list:'@patch',key:'id',initial:false,cols:['rank','name','server','score','cached_avg','cached_med','cached_p95','fresh_avg','jitter','loss','nxdomain']});
+res.size.w=760; res.size.h=420; applySize(res);
+const tk=addNode('ticker',760,660,{});
+tk.size.w=360; tk.size.h=90; applySize(tk);
+const tr=addNode('trend',1140,660,{span:60,auto:true});
+tr.size.w=380; tr.size.h=170; applySize(tr);
+addEdge(lst.id,'rows',bn.id,'rows'); addEdge(bn.id,'rec',res.id,'rec'); addEdge(bn.id,'best',tk.id,'text'); addEdge(bn.id,'ms',tr.id,'in');
 markWiresDirty();
 });
 preset('Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)', function(){

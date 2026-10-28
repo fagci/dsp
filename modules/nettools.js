@@ -185,3 +185,37 @@ def({ id:'telnet', title:'Telnet / TCP Terminal (DSP app)', cat:'Sources', kw:'t
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     const t=(n.warn&&!n.ns ? '⚠ '+n.warn+'\n' : '')+n.status+'\n'+n.lines.slice(-14).join('\n')+(n.view ? '\n'+n.view : '');
     if(r.textContent!==t) r.textContent=t; } });
+
+/* ---------- DNS Benchmark ---------- */
+function dnsbenchRun(n){
+  nsvJobStart(n,async(ns,info,job)=>{
+    const servers=dnsbServers(n.rowsIn,n.hostIn||n.p.servers);
+    if(!servers.length) throw new Error('no servers: wire a Table with a «server» (or «ip») column to «rows», or list them in «servers» (name=ip per line)');
+    const names=String(n.p.names||'').split(/[\s,;]+/).filter(Boolean);
+    n.best='';
+    const r=await dnsBench(ns,servers,{names,rounds:+n.p.rounds,mode:n.p.mode,domain:n.p.domain,timeout:+n.p.timeout,gap:+n.p.gap,stop:()=>job.stop,
+      onRec:rec=>{ rec.id=rec.id; n.found++; nsvPush(n,rec); if(rec.rank===1){ n.best=rec.id; n.bestMs=rec.score; } },
+      onProgress:(d,t)=>{ n.progress=t ? d/t : 0; n.status='measuring · '+d+' / '+t+' queries'; }});
+    return r.tested+' server(s)'+(r.best ? ' · fastest '+r.best.name+' ('+r.best.server+') '+r.best.score+' ms' : ' · none answered');
+  });
+}
+def({ id:'dnsbench', title:'DNS Benchmark (DSP app)', cat:'Sources', kw:'dns benchmark speed latency response time resolver servers cloudflare google quad9 test fastest rank cache nxdomain hijack',
+  ins:[{n:'go',t:'num'},{n:'rows',t:'bands'},{n:'servers',t:'txt'}], outs:[{n:'rec',t:'rec'},{n:'best',t:'txt'},{n:'ms',t:'num'},{n:'progress',t:'num'},{n:'count',t:'num'},{n:'busy',t:'num'},{n:'done',t:'num'}], readout:true, tall:true,
+  params:[
+    {n:'url',t:'text',d:NSV_URL,label:'bridge of the DSP app'},
+    {n:'servers',t:'text',d:'',label:'servers when nothing is wired to «rows»: name=ip, one per line or comma separated (the «servers» input overrides)'},
+    {n:'mode',t:'select',opts:['both','cached','fresh'],d:'both',label:'cached — popular names the resolver has (after a warm-up), fresh — a random name every time (the way to the authoritative server), both — the score is 60 % cached + 40 % fresh'},
+    {n:'names',t:'text',d:DNSB_NAMES.join(', '),label:'names for the cached test'},
+    {n:'domain',t:'text',d:'example.com',label:'fresh test: random-label.domain (must not exist; the right answer is NXDOMAIN)'},
+    {n:'rounds',t:'range',min:1,max:20,step:1,d:3,label:'queries per name (fresh: twice this many)'},
+    {n:'timeout',t:'range',min:200,max:5000,step:100,d:1500,label:'wait for an answer, ms (silence counts as a loss)'},
+    {n:'gap',t:'range',min:0,max:1000,step:10,d:0,label:'pause between queries, ms (some servers limit the rate)',adv:true},
+    {n:'run',t:'button',label:'Run',fn:n=>dnsbenchRun(n)},
+    {n:'stopBtn',t:'button',label:'Stop',fn:n=>{ if(n.job) n.job.stop=true; }}],
+  init:n=>{ n.nsP=null; n.ns=null; n.ws=null; n.recQ=[]; n.job=null; n.status='idle'; n.found=0; n.progress=0; n.done=0; n.prevGo=0; n.hostIn=''; n.rowsIn=null; n.best=''; n.bestMs=0; n.warn=''; },
+  dispose:n=>{ if(n.job) n.job.stop=true; nsvDrop(n); },
+  process(n,I){
+    n.hostIn=typeof I.servers==='string' ? I.servers : ''; n.rowsIn=Array.isArray(I.rows) ? I.rows : null;
+    const go=(I.go||0)>.5; if(go && !n.prevGo) dnsbenchRun(n); n.prevGo=go;
+    return {...nsvRecOut(n),best:n.best||'',ms:n.bestMs||0}; },
+  draw:nsvClientDraw });
