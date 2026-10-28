@@ -148,8 +148,11 @@ class DspVpnService : VpnService() {
 
     private fun readLoop(fd: ParcelFileDescriptor, eng: VpnEngine) {
         val inp = FileInputStream(fd.fileDescriptor); val buf = ByteArray(MTU + 64)
-        try { while (true) { val n = inp.read(buf); if (n <= 0) break; eng.input(buf, n) } } catch (e: Exception) { }
-        if (engine === eng) h.post { stop(null) }
+        var why: String? = null
+        try {
+            while (true) { val n = inp.read(buf); if (n < 0) { why = "the tunnel closed (another VPN app took over, or the system revoked it)"; break }; if (n > 0) eng.input(buf, n) }
+        } catch (e: Exception) { why = "tunnel read error: ${e.javaClass.simpleName}: ${e.message}" }
+        if (engine === eng) h.post { stop(why) }
     }
 
     private fun writePacket(p: ByteArray) {
@@ -181,6 +184,11 @@ class DspVpnService : VpnService() {
 
         /** Подписки на поток: on — записи с включением/выключением вкл; pkt — целиком каждый пакет (hex), тяжело. */
         fun setPackets(on: Boolean) { inst?.packets = on }
+
+        /** Уже работает (например, запущен системой — Always-on VPN — ещё до того, как страница подписалась) — сразу
+            подтвердить состояние новому клиенту, а не ждать: единственная запись «on:true» могла уйти в пустоту, пока
+            никто не слушал (BridgeServer не шлёт эфир без подписчиков), а следующий «summary» придёт только через SNAP_MS. */
+        fun announce() { inst?.let { it.emit(Json.obj("src" to Json.str("vpn"), "ev" to Json.str("state"), "on" to "true", "t" to System.currentTimeMillis().toString())) } }
     }
 }
 
@@ -191,7 +199,7 @@ object VpnCmds {
         when (cmd) {
             "vpn.start" -> {
                 DspVpnService.setPackets(j.optBoolean("packets", false))
-                if (DspVpnService.running()) { Reply.done(c, id, cmd, null); return }
+                if (DspVpnService.running()) { DspVpnService.announce(); Reply.done(c, id, cmd, null); return }
                 val prep = VpnService.prepare(ctx)
                 if (prep == null) { ctx.startForegroundService(Intent(ctx, DspVpnService::class.java)); Reply.done(c, id, cmd, null) }
                 else { ctx.startActivity(Intent(ctx, VpnConsentActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); Reply.done(c, id, cmd, "allow the VPN connection in the system window and repeat", "permission") }
