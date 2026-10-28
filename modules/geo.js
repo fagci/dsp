@@ -520,7 +520,7 @@ def({ id:'recEnt', title:'Rec → Entities', cat:'Data', kw:'entity entities lin
   readout:true, tall:true,
   params:[{n:'rules',t:'code',plain:true,d:'',label:'rules: [out:] conditions | fields'},
           {n:'apply',t:'button',label:'Apply outputs',fn:n=>{ rebuildNode(n); markTopoDirty(); }},
-          {n:'tpl',t:'select',opts:['—','GSM cells','Digital voice (DMR / P25 / NXDN)','Radio (Wi-Fi / BLE / Zigbee)','Wi-Fi map (nodes · links · packets)'],d:'—',label:'insert rules',
+          {n:'tpl',t:'select',opts:['—','GSM cells','Digital voice (DMR / P25 / NXDN)','Radio (Wi-Fi / BLE / Zigbee)','Wi-Fi map (nodes · links · packets)','Phone radios (Wi-Fi · BLE · Bluetooth)'],d:'—',label:'insert rules',
            fn:n=>{ const t=ENT_TEMPLATES[n.p.tpl]; if(t){ n.p.rules=(n.p.rules?n.p.rules.trimEnd()+'\n':'')+t; } n.p.tpl='—'; rebuildNode(n); markTopoDirty(); }}],
   init:n=>{ n.in=0; n.outN=0; n.err=''; },
   process(n,I){
@@ -550,7 +550,7 @@ link: kind~^GSM-SI plmn | id={id}>PLMN {plmn}, from={id}, to=PLMN {plmn}, label=
 link: kind~^GSM-SI cellArfcns | id={id}>ARFCN {cellArfcns*}, from={id}, to=ARFCN {cellArfcns*}, label=uses`,
   'Radio (Wi-Fi / BLE / Zigbee)':
 `# Wi-Fi: точки доступа и станции по BSSID / MAC, связи «кто кому»; BLE и Zigbee — отдельные узлы
-ap: proto=wifi kind=beacon|probe-resp bssid | id={bssid}, type=ap, label={ssid|bssid}, shape=hexagon, chan, rssi
+ap: proto=wifi kind=beacon|probe-resp bssid | id={bssid}, type=ap, label={bssid}, shape=hexagon, chan, rssi
 station: proto=wifi kind~^(probe-req|assoc-req|reassoc-req)$ src | id={src}, type=station, shape=dot
 station: proto=wifi kind~^(qos-)?data$ tods=1 src | id={src}, type=station, shape=dot, ap={bssid}
 # пакеты: только в порт pkt (таблица кадров со ссылками на точку и клиента), на граф не идут
@@ -575,6 +575,30 @@ node!: proto=wifi dst=ff:ff:ff:ff:ff:ff | id={dst}, type=broadcast, label=broadc
 link!: proto=wifi kind=beacon bssid dst | id={bssid}>{dst}:beacon, from={bssid}, to={dst}, label=beacon, type=beacon, dashes=1, color=#9aa0a6
 link!: proto=wifi kind~^(qos-)?data$ tods=0 fromds=0 src dst~^([0-9a-f][02468ace]:|ff:ff:ff:ff:ff:ff$) | id={src}>{dst}:data, from={src}, to={dst}, label=data, type=data
 pkt!: proto=wifi src | id={t}:{src}:{seq|len}, t, kind, src, dst, ap={bssid}, chan, rssi, len`,
+  'Phone radios (Wi-Fi · BLE · Bluetooth)':
+`# записи приложения DSP (Phone sensors): три выхода — gw (Wi-Fi), gb (BLE), gt (Bluetooth classic); узлы и связи вместе, таблица с key=id. Phone — центр каждого графа
+gw: src=wifi | id=Phone, type=me, label=Phone, shape=star, color=#e8a200
+gw: src=wifi bssid !hidden | id={bssid}, type=ap, label={bssid}, shape=hexagon, color=#2a9df4, rssi, ch, band, caps, std, wpsMfr
+gw: src=wifi bssid hidden=1 | id={bssid}, type=ap, label=hidden {bssid}, shape=hexagon, color=#e05555, rssi, ch, band, caps, std, hidden, wpsMfr
+gw: src=wifi bssid | id=Phone>{bssid}, from=Phone, to={bssid}, label={rssi} dBm
+gw: src=wificonn bssid | id=Phone>{bssid}:conn, from=Phone, to={bssid}, label=connected, color=#2a9df4
+gw: src=wifi ssid | id=net:{ssid}, type=ssid, label={ssid}, shape=box, color=#8a8a8a
+gw: src=wifi bssid ssid | id={bssid}>net:{ssid}, from={bssid}, to=net:{ssid}, label=network, dashes=1
+gw: src=wifi bssid ch | id=ch:{ch}, type=channel, label=ch {ch} {band}, shape=diamond, color=#d6a06b
+gw: src=wifi bssid ch | id={bssid}>ch:{ch}, from={bssid}, to=ch:{ch}, label=channel, dashes=1
+gb: src=ble | id=Phone, type=me, label=Phone, shape=star, color=#e8a200
+gb: src=ble addr | id={addr}, type=ble, label={name|addr}, shape=triangle, color=#9b6bd6, rssi, conn
+gb: src=ble addr rssi | id=Phone>{addr}, from=Phone, to={addr}, label={rssi} dBm
+gb: src=ble addr uuids | id=svc:{uuids*}, type=service, label={uuids*}, code={uuids*}, shape=box, color=#8a8a8a
+gb: src=ble addr uuids | id={addr}>svc:{uuids*}, from={addr}, to=svc:{uuids*}, label=service, dashes=1
+gb: src=ble addr mfrId | id=mfr:{mfrId*}, type=company, label=company {mfrId*}, code={mfrId*}, shape=square, color=#d6a06b
+gb: src=ble addr mfrId | id={addr}>mfr:{mfrId*}, from={addr}, to=mfr:{mfrId*}, label=maker, dashes=1
+gt: src=bt | id=Phone, type=me, label=Phone, shape=star, color=#e8a200
+gt: src=bt addr | id={addr}, type=bt, label={name|addr}, shape=dot, color=#1fb5a0, rssi, major
+gt: src=bt addr rssi | id=Phone>{addr}, from=Phone, to={addr}, label={rssi} dBm
+gt: src=bt addr !rssi | id=Phone>{addr}, from=Phone, to={addr}, label=heard
+gt: src=bt addr major | id=class:{major}, type=class, label={major}, shape=diamond, color=#8a8a8a
+gt: src=bt addr major | id={addr}>class:{major}, from={addr}, to=class:{major}, label=class, dashes=1`,
   'Digital voice (DMR / P25 / NXDN)':
 `# абоненты, группы и связи; префикс сети {src} разводит одинаковые id в разных системах
 subscriber: kind=call from | id={src}:{from}, type=subscriber, label={src} {from}, shape=dot
