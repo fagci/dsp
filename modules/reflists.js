@@ -34,7 +34,7 @@ const REF_SRC=[
     urls:['data/intercept-spy.json'], parse:t=>({[REF_SPY]:luParseSpy(t)})},
   {id:'ids', label:'Drones, trackers, cameras, TSCM bands (intercept)', mb:0.01, names:[REF_TSCM,REF_SSID,REF_MAC,REF_BLE],
     urls:['data/intercept-ids.json'], parse:t=>{ const o=luParseIds(t); return {[REF_TSCM]:o.tscm,[REF_SSID]:o.ssid,[REF_MAC]:o.mac,[REF_BLE]:o.ble}; }},
-  {id:'btuuid', label:'Bluetooth UUIDs: services, characteristics, descriptors (~200)', mb:0.03, names:[REF_BTUUID],
+  {id:'btuuid', label:'Bluetooth UUIDs: services, characteristics, descriptors (~850, full SIG + vendor)', mb:0.1, names:[REF_BTUUID],
     urls:['data/bluetooth-uuids.json'], parse:t=>({[REF_BTUUID]:luParseBtUuids(t)})},
   {id:'dmrid', label:'DMR radio IDs (RadioID, ~300 000 callsigns)', mb:25, names:[REF_DMRID],
     urls:['https://radioid.net/static/user.csv'], parse:t=>({[REF_DMRID]:luParseRadioId(t)})},
