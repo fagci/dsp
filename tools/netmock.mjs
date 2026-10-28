@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 export function loadKernels(files, expose) {
-  const ctx = vm.createContext({ TextEncoder, TextDecoder, console, setTimeout, clearTimeout, setInterval, clearInterval, URL, Math, Date, Promise, atob, btoa });
+  const ctx = vm.createContext({ TextEncoder, TextDecoder, console, setTimeout, clearTimeout, setInterval, clearInterval, URL, Math, Date, Promise, atob, btoa, performance });
   for (const f of files) vm.runInContext(fs.readFileSync(new URL('../modules/' + f, import.meta.url), 'utf8'), ctx, { filename: f });
   vm.runInContext('this.K={' + expose + '}', ctx);
   return ctx.K;
@@ -95,7 +95,7 @@ export function mockApp(feed, opt = {}) {
       }
       case 'net.info': return reply(id, cmd, null, { dns: [], ips: opt.ips || ['127.0.0.1'], iface: 'lo', gateway: '', wifi: true, cell: false, root: !!opt.root });
       default:
-        if (opt.extra) { const r = opt.extra(j, reply); if (r !== false) return; }
+        if (opt.extra) { const r = opt.extra(j, reply, ev); if (r !== false) return; }
         return reply(id, cmd, 'unknown command');
     }
   };

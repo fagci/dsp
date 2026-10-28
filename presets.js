@@ -517,6 +517,8 @@ const PRESET_CATS={
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
   'Phone App: Wi-Fi, BLE and Bluetooth as Three Graphs':'Network & IoT',
   'Network: HTTP Server — Share Files with Any Browser (Phone App)':'Network & IoT',
+  'Network: Scan the LAN — Hosts, Ports and Devices as a Graph (Phone App)':'Network & IoT',
+  'Network: Find a Device and Send It a File (Scan → FTP / HTTP)':'Network & IoT',
   'Network: HTTP Server — Answer Requests from the Graph (Phone App)':'Network & IoT',
   'Network: FTP Server — Share a Folder (Phone App)':'Network & IoT',
   'Network: HTTP and FTP — Servers and Clients Test Each Other (Phone App)':'Network & IoT',
@@ -1596,6 +1598,46 @@ tk.size.w=500; tk.size.h=160; applySize(tk);
 const tb=addNode('table',800,360,{list:'@patch',initial:false});
 tb.size.w=500; tb.size.h=300; applySize(tb);
 addEdge(hc.id,'text',tk.id,'text'); addEdge(fc.id,'rec',tb.id,'rec'); addEdge(tx.id,'text',fc.id,'text');
+markWiresDirty();
+});
+preset('Network: Scan the LAN — Hosts, Ports and Devices as a Graph (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Who is on this network, what they run, what they call themselves. Network Scanner (hosts): the phone\'s own /24 is swept — a real ping first, then TCP knocks (open or «refused» means the host is up), then the MAC addresses come from the ARP table (the app needs «Allow root features» for that one; without it the MAC is simply missing). Device Discovery asks SSDP / UPnP (DLNA media players and servers, routers, TVs) and mDNS (AirPlay, Chromecast, printers, SMB, SSH…) and fetches the device description: name, maker, model, services.\n'+
+  'Press Run in both nodes. Rec → Entities (rules «Network scan») draws Phone → hosts → open ports and device kinds; the Table keeps one row per node or link and the Graph follows it. To see the open ports and banners of one host switch the scanner to «ports TCP» and give it the address (the graph grows). The vendor under a MAC: Files → ⇩ offline «MAC vendors» and a Table lookup() column. Scan only networks you are allowed to.'});
+nt.size.w=1000; nt.size.h=150; applySize(nt);
+const sc=addNode('netscan',40,220,{});
+sc.size.w=360; sc.size.h=420; applySize(sc);
+const dc=addNode('netdisc',40,680,{});
+dc.size.w=360; dc.size.h=360; applySize(dc);
+const ent=addNode('recEnt',440,220,{rules:ENT_TEMPLATES['Network scan (hosts · ports · devices)']});
+ent.size.w=480; ent.size.h=420; applySize(ent);
+const tb=addNode('table',960,220,{list:'@patch',key:'id',initial:false});
+tb.size.w=420; tb.size.h=420; applySize(tb);
+const g=addNode('graphview',1420,220,{directed:false,weights:false});
+g.size.w=620; g.size.h=480; applySize(g);
+const raw=addNode('table',440,680,{list:'@patch',key:'id',initial:false});
+raw.size.w=940; raw.size.h=360; applySize(raw);
+addEdge(sc.id,'rec',ent.id,'rec'); addEdge(dc.id,'rec',ent.id,'rec'); addEdge(ent.id,'net',tb.id,'rec'); addEdge(tb.id,'rows',g.id,'rows');
+addEdge(sc.id,'rec',raw.id,'rec'); addEdge(dc.id,'rec',raw.id,'rec');
+markWiresDirty();
+});
+preset('Network: Find a Device and Send It a File (Scan → FTP / HTTP)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'You have a file for a device whose address you do not know — a camera, a printer, a NAS, a second phone with an FTP server. Network Scanner knocks on the FTP port (21) of every host in the /24; every open one is a row in the Table (ip, port, banner). Click a row: its ip goes to FTP Client, and a rising edge on «go» of FTP Client (or its Run button) lists the folder, uploads what is on «bin» / «text» or downloads — set the action in the node. For a web upload (PUT to a device with an HTTP server) change the scan to port 80 and use HTTP Client.\n'+
+  'The scanner mode is «ports TCP» with ports = 21; the network is set in «host» (empty — the gateway only, so type the network, e.g. 192.168.1.0/24). Anonymous FTP login is the default; the login and password are in the FTP Client node.'});
+nt.size.w=1000; nt.size.h=150; applySize(nt);
+const sc=addNode('netscan',40,220,{mode:'ports TCP',ports:'21',host:''});
+sc.size.w=360; sc.size.h=420; applySize(sc);
+const fl=addNode('recFilter',440,220,{expr:"r.src==='scan' && r.kind==='port' && r.state==='open'"});
+fl.size.w=300; applySize(fl);
+const tb=addNode('table',780,220,{list:'@patch',key:'id',initial:false,cols:['ip','port','service','banner','ms']});
+tb.size.w=560; tb.size.h=340; applySize(tb);
+const tx=addNode('textsrc',780,600,{text:'hello from DSP'});
+tx.size.w=300; tx.size.h=90; applySize(tx);
+const fc=addNode('ftpcli',1380,220,{action:'upload',path:'/dsp-hello.txt'});
+fc.size.w=360; fc.size.h=380; applySize(fc);
+addEdge(sc.id,'rec',fl.id,'rec'); addEdge(fl.id,'rec',tb.id,'rec');
+addEdge(tb.id,'ip',fc.id,'host'); addEdge(tx.id,'text',fc.id,'text');
 markWiresDirty();
 });
 preset('Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)', function(){
