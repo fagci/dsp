@@ -83,6 +83,40 @@ def({ id:'rule', title:'Rule (If → Command)', cat:'Control', kw:'automation if
     if(r.textContent!==t) r.textContent=t; }
 });
 
+/* ============================ Rec → Cmd (Map Fields) ============================
+   Как Rule, но без фронта условия — переводит в команду каждую подошедшую запись (не только последнюю при переходе в «истина»),
+   поэтому годится не для разового триггера, а для сплошного потока: мост между двумя узлами, у которых общего формата нет,
+   но оба принимают записи с полем cmd (BLE GATT / Bluetooth, Network, Phone Control & Automation, Phone Actions — их cmd вход,
+   см. Rule выше). Например: заметка GATT notify (запись {src:'gatt',ev:'notify',hex,…}) → {"cmd":"tcp.send","conn":1,"hex":"$hex"}
+   → вход cmd у Network — то, что приходит по Bluetooth, уходит в сеть, и наоборот. ruleApply — тот же, что у Rule. */
+def({ id:'recMap', title:'Rec → Cmd (Map Fields)', cat:'Control', kw:'bridge gateway relay map fields record command translate between nodes gatt network bluetooth',
+  ins:[{n:'rec',t:'rec'}], outs:[{n:'cmd',t:'rec'},{n:'go',t:'num'}],
+  readout:true,
+  params:[
+    {n:'expr',t:'text',d:'true',label:'condition (r — the record being mapped; true — every one)'},
+    {n:'cmd',t:'code',plain:true,d:'{"cmd":"example","hex":"$hex"}',label:'command for each matching record (JSON; a string value "$field" is replaced with that field of r)'},
+  ],
+  init:n=>{ n.sent=0; n.err=''; n._tmpl=null; n._tmplSrc=null; n.tmplErr=''; },
+  process(n,I){
+    const recs=recList(I.rec);
+    if(!n._fn || n._fn.src!==(n.p.expr||'true')) recFilterCompile(n);
+    if(n._tmplSrc!==n.p.cmd){ n._tmplSrc=n.p.cmd; try{ n._tmpl=JSON.parse(n.p.cmd||'{}'); n.tmplErr=''; }catch(e){ n._tmpl=null; n.tmplErr=e.message; } }
+    const out=[];
+    for(const r of recs){
+      let ok=false;                                       // пока условие компилируется (микротаска) — не пропускаем, как Rule
+      if(n._fn.ready) ok = n._fn.f ? (()=>{ try{ const v=!!n._fn.f(r); n.err=''; return v; }catch(e){ n.err=e.message; return false; } })() : false;
+      if(ok && n._tmpl) out.push(ruleApply(n._tmpl,r));
+    }
+    if(out.length) n.sent+=out.length;
+    return {cmd: out.length ? out : null, go: out.length ? 1 : 0};
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    let t='sent '+n.sent;
+    if(n.err) t+='\n⚠ condition: '+n.err;
+    if(n.tmplErr) t+='\n⚠ command JSON: '+n.tmplErr;
+    if(r.textContent!==t) r.textContent=t; }
+});
+
 /* ============================ Cases (If → Value / Command) ============================
    Несколько состояний вместо одного условия: строка «[имя:] условие => значение => {команда}», выигрывает первая подошедшая, а при
    отсутствии подошедших состояние держится (поэтому события вроде «вошёл в зону» работают как уровни). В условиях: r — последняя запись,
