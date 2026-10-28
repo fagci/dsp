@@ -518,6 +518,9 @@ const PRESET_CATS={
   'Phone App: USB SDR over OTG (RTL-SDR, HackRF…)':'SDR Receivers',
   'bitchat Mesh Chat (no app install)':'Network & IoT',
   'Reference: Decode BLE Advertisements (Company ID, Service UUID)':'Network & IoT',
+  'Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)':'Network & IoT',
+  'Bridge: Serial Port ↔ Network (TCP/WS Gateway)':'Network & IoT',
+  'Bridge: BLE UART ↔ Network (TCP/WS Gateway)':'Network & IoT',
   'Phone App: BLE Auto-Discover Devices and Services (GATT)':'Network & IoT',
   'Phone App: Bluetooth Classic Terminal (RFCOMM / SPP)':'Network & IoT',
   'Phone App: BLE Beacon (Broadcast Sensor Data)':'Network & IoT',
@@ -1479,6 +1482,39 @@ const tb=addNode('table',760,220,{list:'ble/company+service',maxRows:1000,rev:tr
                  svc1:{src:'uuids.0'},serviceName:{t:'calc',expr:"lookup('Bluetooth UUIDs','uuid',[svc1],'name')"}},card:{}}});
 tb.size.w=940; tb.size.h=440; applySize(tb);
 addEdge(tx.id,'rec',rf.id,'rec'); addEdge(rf.id,'rec',tb.id,'rec');
+markWiresDirty();
+});
+preset('Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A bridge between two physical interfaces: whatever arrives as bytes on one side goes out the other, both ways — bin wired straight to bin/send on each node, no framing added (byte for byte). USB-serial radio ↔ a BLE UART device (Nordic UART / HM-10 / ESP32), or two different serial-ish things that otherwise can\'t see each other. Press Connect on both sides.'});
+nt.size.w=760; nt.size.h=110; applySize(nt);
+const ws=addNode('webserial',40,190,{baud:'115200'});
+ws.size.w=380; ws.size.h=300; applySize(ws);
+const bl=addNode('bleUart',560,190,{profile:'Nordic UART'});
+bl.size.w=380; bl.size.h=380; applySize(bl);
+addEdge(ws.id,'bin',bl.id,'bin'); addEdge(bl.id,'bin',ws.id,'send');
+markWiresDirty();
+});
+preset('Bridge: Serial Port ↔ Network (TCP/WS Gateway)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A USB-serial device reachable over the network, byte for byte, both ways — same «bridge» pattern as the Serial ↔ BLE UART preset, just with Text over Network on the other side. Tick «binary» there (raw bytes instead of lines) and point the URL at a WebSocket that is itself bridged to something — websocat -b -s 8765 or a TCP/UDP relay (see Packet Link\'s examples), not a plain text server.'});
+nt.size.w=760; nt.size.h=110; applySize(nt);
+const ws=addNode('webserial',40,190,{baud:'115200'});
+ws.size.w=380; ws.size.h=300; applySize(ws);
+const net=addNode('nettext',560,190,{url:'ws://127.0.0.1:8765',binary:true});
+net.size.w=380; net.size.h=300; applySize(net);
+addEdge(ws.id,'bin',net.id,'sendBin'); addEdge(net.id,'bin',ws.id,'send');
+markWiresDirty();
+});
+preset('Bridge: BLE UART ↔ Network (TCP/WS Gateway)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A BLE UART device (Nordic UART / HM-10 / ESP32) reachable over the network, byte for byte, both ways — same «bridge» pattern as the other two presets. Tick «binary» on Text over Network (raw bytes instead of lines) and point the URL at a WebSocket itself bridged to something (websocat -b -s 8765 …), not a plain text server.'});
+nt.size.w=760; nt.size.h=110; applySize(nt);
+const bl=addNode('bleUart',40,190,{profile:'Nordic UART'});
+bl.size.w=380; bl.size.h=380; applySize(bl);
+const net=addNode('nettext',560,190,{url:'ws://127.0.0.1:8765',binary:true});
+net.size.w=380; net.size.h=300; applySize(net);
+addEdge(bl.id,'bin',net.id,'sendBin'); addEdge(net.id,'bin',bl.id,'bin');
 markWiresDirty();
 });
 preset('Phone App: Bluetooth Classic Terminal (RFCOMM / SPP)', function(){
