@@ -45,14 +45,20 @@ function vpnSend(n,cmd){
   n.ws.send(JSON.stringify({...cmd,id:++n.seq}));
 }
 // подключены — шлём сразу; иначе только просим соединение, «on open» отправит start сама (через wantOn) — без двойной отправки
-function vpnStart(n){ n.wantOn=true; if(n.ws && n.ws.readyState===1) vpnSend(n,vpnCmd('start',n.p)); else if(!n.ws) vpnConnect(n); }
+function vpnStart(n){ n.wantOn=true; if(!n.on) n.status='starting…'; if(n.ws && n.ws.readyState===1) vpnSend(n,vpnCmd('start',n.p)); else if(!n.ws) vpnConnect(n); }
 function vpnStopMon(n){ n.wantOn=false; vpnSend(n,vpnCmd('stop',n.p)); }
 
 function vpnFeed(n,r){
   if(!r || typeof r!=='object') return;
   n.count++; n.last=vpnLine(r);
   if(r.src==='bridge'){ if(r.level==='error' || r.level==='warn') n.bridgeMsg=r.msg; return; }
-  if(r.src==='cmd'){ if(!r.ok && r.msg) n.last=(r.cmd||'')+': '+r.msg; return; }
+  if(r.src==='cmd'){
+    if(!r.ok && r.msg){
+      n.last=(r.cmd||'')+': '+r.msg;
+      if(r.cmd==='vpn.start'){ n.on=false; n.status=r.err==='permission' ? 'waiting for the system VPN window…' : 'stopped ('+r.msg+')'; }
+    }
+    return;
+  }
   if(r.src!=='vpn') return;
   // «on» идёт не только с ev:'state' — запись о потоке может прийти и когда монитор запустила сама система (Always-on
   // VPN) или другая вкладка раньше нашей подписки: единственное «state:true» тогда уже ушло в пустоту (слать было некому)

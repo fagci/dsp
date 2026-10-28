@@ -22,6 +22,7 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Телефон как VPN-монитор своего собственного трафика: что куда ходит, каким приложением, на какой адрес и под каким именем
@@ -111,6 +112,7 @@ class DspVpnService : VpnService() {
         emit(Json.obj("src" to Json.str("vpn"), "ev" to Json.str("state"), "on" to "true", "t" to System.currentTimeMillis().toString()))
         reader = Thread({ readLoop(fd, eng) }, "dsp-vpn-read").apply { isDaemon = true; start() }
         h.postDelayed(snap, SNAP_MS)
+        notifyWaiters(true, null)
     }
 
     private fun resolveOwner(uid: Int): Owner {
@@ -169,6 +171,7 @@ class DspVpnService : VpnService() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         if (inst === this) inst = null
         stopSelf()
+        notifyWaiters(false, reason)
     }
 
     private fun emit(json: String) { BridgeService.inst?.vpnEmit(json) }
@@ -189,6 +192,17 @@ class DspVpnService : VpnService() {
             подтвердить состояние новому клиенту, а не ждать: единственная запись «on:true» могла уйти в пустоту, пока
             никто не слушал (BridgeServer не шлёт эфир без подписчиков), а следующий «summary» придёт только через SNAP_MS. */
         fun announce() { inst?.let { it.emit(Json.obj("src" to Json.str("vpn"), "ev" to Json.str("state"), "on" to "true", "t" to System.currentTimeMillis().toString())) } }
+
+        // «vpn.start» ждёт настоящий исход (установился ли туннель), а не отвечает «ok» заранее — тот же приём, что у tcp.connect:
+        // ответ на саму команду идёт клиенту напрямую (не через подписку на vpn), так что причина отказа не потеряется, даже
+        // если establish() упал раньше, чем страница успела подписаться на эфир.
+        private val waiters = CopyOnWriteArrayList<(Boolean, String?) -> Unit>()
+        fun awaitStart(timeoutMs: Long, cb: (ok: Boolean, reason: String?) -> Unit) {
+            if (inst?.engine != null) { cb(true, null); return }
+            waiters.add(cb)
+            Handler(android.os.Looper.getMainLooper()).postDelayed({ if (waiters.remove(cb)) cb(false, "no answer from the tunnel in ${timeoutMs / 1000} s") }, timeoutMs)
+        }
+        private fun notifyWaiters(ok: Boolean, reason: String?) { for (w in waiters.toList()) { waiters.remove(w); try { w(ok, reason) } catch (e: Exception) { } } }
     }
 }
 
@@ -201,8 +215,10 @@ object VpnCmds {
                 DspVpnService.setPackets(j.optBoolean("packets", false))
                 if (DspVpnService.running()) { DspVpnService.announce(); Reply.done(c, id, cmd, null); return }
                 val prep = VpnService.prepare(ctx)
-                if (prep == null) { ctx.startForegroundService(Intent(ctx, DspVpnService::class.java)); Reply.done(c, id, cmd, null) }
-                else { ctx.startActivity(Intent(ctx, VpnConsentActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); Reply.done(c, id, cmd, "allow the VPN connection in the system window and repeat", "permission") }
+                if (prep == null) {
+                    ctx.startForegroundService(Intent(ctx, DspVpnService::class.java))
+                    DspVpnService.awaitStart(6000) { ok, reason -> if (ok) Reply.done(c, id, cmd, null) else Reply.done(c, id, cmd, reason ?: "could not start", "error") }
+                } else { ctx.startActivity(Intent(ctx, VpnConsentActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); Reply.done(c, id, cmd, "allow the VPN connection in the system window and repeat", "permission") }
             }
             "vpn.stop" -> { ctx.startService(Intent(ctx, DspVpnService::class.java).setAction(DspVpnService.ACTION_STOP)); Reply.done(c, id, cmd, null) }
             "vpn.packets" -> { DspVpnService.setPackets(j.optBoolean("on", false)); Reply.done(c, id, cmd, null) }
