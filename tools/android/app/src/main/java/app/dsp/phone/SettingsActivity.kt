@@ -29,6 +29,7 @@ class SettingsActivity : Activity() {
     private lateinit var port: EditText
     private lateinit var idle: EditText
     private lateinit var throttle: Switch
+    private lateinit var actlog: Switch
     private lateinit var ext: Switch
     private lateinit var extp: Switch
     private lateinit var token: EditText
@@ -59,6 +60,8 @@ class SettingsActivity : Activity() {
         root.addView(autostart)
         throttle = Switch(this).apply { text = "Poll less often when the battery is low, power saving is on or the phone is hot (sensor rate, Wi-Fi and cell scans 2\u00d7 / 4\u00d7 slower)"; isChecked = cfg.autoThrottle; setPadding(0, pad, 0, 0) }
         root.addView(throttle)
+        actlog = Switch(this).apply { text = "Log activity (still / moving / walking, screen locked) to a file even with no page open; read with the command activity.log"; isChecked = cfg.activityLog; setPadding(0, pad, 0, 0) }
+        root.addView(actlog)
         ext = Switch(this).apply { text = "Let other apps control the bridge (Tasker / MacroDroid intent app.dsp.phone.EXT: start, stop, emit events to the patch; the token is required if set)"; isChecked = cfg.extIntents; setPadding(0, pad, 0, 0) }
         root.addView(ext)
         extp = Switch(this).apply { text = "Let other apps open a whole patch from a link (dsp://run?data=\u2026); off \u2014 only patches already saved here, by name"; isChecked = cfg.extPatch; setPadding(0, pad, 0, 0) }
@@ -101,7 +104,7 @@ class SettingsActivity : Activity() {
         if (p == null || p < 1024 || p > 65535) { Toast.makeText(this, "Port: 1024–65535", Toast.LENGTH_SHORT).show(); return }
         val t = token.text.toString().trim()
         cfg.port = p; cfg.token = t; cfg.shareLan = share.isChecked; cfg.strict = strict.isChecked; cfg.checkOrigin = check.isChecked; cfg.sniffer = sniff.isChecked; cfg.openCmds = openc.isChecked
-        cfg.origins = origins.text.toString().trim(); cfg.autoStart = autostart.isChecked; cfg.autoThrottle = throttle.isChecked; cfg.idleMin = idle.text.toString().toIntOrNull() ?: 30; cfg.extIntents = ext.isChecked; cfg.extPatch = extp.isChecked
+        cfg.origins = origins.text.toString().trim(); cfg.autoStart = autostart.isChecked; cfg.autoThrottle = throttle.isChecked; cfg.idleMin = idle.text.toString().toIntOrNull() ?: 30; cfg.extIntents = ext.isChecked; cfg.activityLog = actlog.isChecked; cfg.extPatch = extp.isChecked
         BridgeService.start(this, reload = true)
         show()
         Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()

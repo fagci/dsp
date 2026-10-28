@@ -228,6 +228,7 @@ object Perms {
         if (subs.any { it in POSITION }) l.addAll(LOC)
         if (sdk >= 31 && subs.any { it == "ble" || it == "bt" }) { l.add("android.permission.BLUETOOTH_SCAN"); l.add("android.permission.BLUETOOTH_CONNECT") }
         if (sdk >= 29 && ("steps" in subs || "step" in subs)) l.add("android.permission.ACTIVITY_RECOGNITION")
+        if (sdk >= 29 && "activity" in subs) l.add("android.permission.ACTIVITY_RECOGNITION")
         if ("mic" in subs) l.add("android.permission.RECORD_AUDIO")
         if ("sms" in subs) l.add("android.permission.RECEIVE_SMS")
         if ("speech" in subs) l.add("android.permission.RECORD_AUDIO")

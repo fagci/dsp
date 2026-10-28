@@ -14,6 +14,7 @@ import app.dsp.phone.UsbDesc
 import app.dsp.phone.Bt
 import app.dsp.phone.Gnss
 import app.dsp.phone.Json
+import app.dsp.phone.ActivityModel
 import app.dsp.phone.Launch
 import app.dsp.phone.PowerPolicy
 import app.dsp.phone.WifiUtil
@@ -33,6 +34,26 @@ fun main() {
     ok("power: thermal moderate 2, severe 4 (also on charger)", PowerPolicy.factor(80, true, false, 2) == 2 && PowerPolicy.factor(80, true, false, 3) == 4)
     ok("power: hysteresis (19→22% stays throttled, 23% releases)", PowerPolicy.factor(22, false, false, 0, prev = 2) == 2 && PowerPolicy.factor(23, false, false, 0, prev = 2) == 1)
     ok("power: unknown level (-1) does not throttle", PowerPolicy.factor(-1, false, false, 0) == 1)
+
+    // --- активность: лежит / движется / идёт ---
+    run {
+        val m = ActivityModel(walkSteps = 8, windowMs = 20_000, settleMs = 30_000)
+        ok("activity: starts unknown", m.state == "unknown")
+        ok("activity: stationary → still", m.still() && m.state == "still" && !m.still())
+        ok("activity: motion → moving", m.motion() && m.state == "moving")
+        var t = 1_000_000L; var c = 100f; var changed = false
+        for (i in 0 until 12) { t += 1000; c += 1; if (m.steps(c, t)) changed = true }
+        ok("activity: 12 steps in 12 s → walking", changed && m.state == "walking", m.state)
+        ok("activity: cadence ≈ 60 steps/min", m.cadence() in 55..65, m.cadence().toString())
+        ok("activity: motion does not demote walking", !m.motion() && m.state == "walking")
+        ok("activity: still tick right after steps keeps walking", !m.tick(t + 10_000) && m.state == "walking")
+        ok("activity: no steps for 30 s → moving", m.tick(t + 31_000) && m.state == "moving")
+        ok("activity: then stationary → still", m.still() && m.state == "still")
+        val q = ActivityModel(walkSteps = 8)
+        var tt = 0L
+        for (i in 0 until 5) q.steps(i.toFloat(), tt.also { tt += 4000 })
+        ok("activity: slow steps over the window are not walking", q.state != "walking", q.state)
+    }
 
     // --- запуск патча снаружи: хэш страницы ---
     ok("launch: name → #p=, spaces as %20", Launch.hash("My patch", null, false, false) == "#p=My%20patch")

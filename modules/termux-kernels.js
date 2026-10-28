@@ -1,7 +1,7 @@
 "use strict";
 /* Termux: записи моста tools/termux/bridge.mjs → значения выходов узла. Без DOM — проверяется в tools/test-termux.mjs */
 
-const TERMUX_SUBS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','step','devorient','sigmotion','stationary','motion','heading','hinge','wifi','cell','ble','bt','gnss','gnssraw','nmea','mic','pkt','power','ext'];
+const TERMUX_SUBS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','step','devorient','sigmotion','stationary','motion','heading','hinge','wifi','cell','ble','bt','gnss','gnssraw','nmea','mic','pkt','power','ext','activity','pickup','wakegest','glance','tilt','offbody'];
 
 // какие источники просить у моста по чекбоксам узла
 function termuxSub(p){ return TERMUX_SUBS.filter(k=>p[k]); }
@@ -96,6 +96,12 @@ function termuxApply(o,r){
       break;
     case 'power': set('therm',r.thermal); set('saver',r.saver); set('thr',r.throttle); set('batt',r.pct); o.charging=r.charging ? 1 : 0; set('wake',r.wake); set('nclients',r.clients); if(typeof r.held==='string') o.held=r.held; termuxCpu(o,r); break;
     case 'ext': set('extv',r.value); break;
+    case 'activity': {                       // состояние из датчиков + экран; историю (hist) в «последнее значение» не берём
+      if(r.hist) break;
+      const a={still:0,moving:1,walking:2}[r.state]; if(a!=null) o.act=a;
+      set('cadence',r.cadence); set('locked',r.locked); set('screen',r.screen); set('steps',r.steps);
+      break;
+    }
     case 'cell': if(r.reg==1 || r.reg===true){ set('cdbm',r.dbm); set('crsrp',r.rsrp); set('crsrq',r.rsrq); set('csinr',r.sinr); } break;
     case 'mic': set('micdb',r.rms); break;
     case 'gnss': if(r.kind==='fix'){ set('nsat',r.n); set('nused',r.used); set('cn0',r.cn0); } break;
@@ -110,6 +116,11 @@ function termuxApply(o,r){
       else if(r.sensor==='steps') set('steps',r.x);
       else if(r.sensor==='heading') set('heading',r.x);
       else if(r.sensor==='devorient') set('orient',r.x);
+      else if(r.sensor==='pickup') o.pick=(o.pick||0)+1;
+      else if(r.sensor==='wakegest') o.wakeg=(o.wakeg||0)+1;
+      else if(r.sensor==='glance') o.glanc=(o.glanc||0)+1;
+      else if(r.sensor==='tilt') o.tiltc=(o.tiltc||0)+1;
+      else if(r.sensor==='offbody') set('offb',r.x);
       else if(r.sensor==='stationary') o.still=1;
       else if(r.sensor==='motion') o.still=0;
       else if(r.sensor==='sigmotion') o.sigm=(o.sigm||0)+1;
@@ -130,6 +141,7 @@ function termuxLine(r){
     case 'cell': return 'cell '+(r.type||'')+(r.reg ? ' *' : '')+' '+(r.mcc!=null ? r.mcc+'-'+r.mnc+' ' : '')+'cid '+(r.cid ?? '—')+(r.pci!=null ? ' pci '+r.pci : '')+(r.dbm!=null ? ' '+r.dbm+' dBm' : '');
     case 'pkt': return 'pkt '+r.iface+' '+(r.ip ? r.ip+(r.sport ? ':'+r.sport : '')+' → '+r.dip+(r.dport ? ':'+r.dport : '') : (r.smac||'')+' → '+(r.dmac||''))+' '+r.len+' B';
     case 'power': return 'power '+r.pct+'%'+(r.charging ? ' charging' : '')+(r.saver ? ' saver' : '')+' thermal '+r.thermal+' · polling ÷'+(r.throttle||1)+(r.clients!=null ? ' · '+r.clients+' client(s)' : '')+(r.wake ? ' · wake lock' : '')+(r.held ? ' · holding '+r.held : '');
+    case 'activity': return 'activity '+r.state+(r.locked ? ' (locked)' : '')+(r.cadence ? ' '+r.cadence+' steps/min' : '')+(r.hist ? ' [log]' : '');
     case 'ext': return 'ext '+(r.name||'')+' '+(r.value!=null ? r.value : (r.text||''));
     case 'mic': return 'mic '+f(r.rms,0)+' dBFS';
     case 'wifi': return 'wifi '+r.bssid+' '+r.rssi+' dBm'+(r.ch ? ' ch '+r.ch : '')+' '+(r.ssid||'');
