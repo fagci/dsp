@@ -26,7 +26,7 @@ function plScanOpts(p){
 }
 
 // ---------- GATT / Bluetooth ----------
-const PL_GATT_ACTIONS=['connect','disconnect','discover','read','write','notify on','notify off','mtu','rssi','priority','phy','list','bonded','bond','unbond','uuids','rfcomm connect','rfcomm send','rfcomm close','rfcomm listen','adv start','adv stop','srv start','srv stop','srv set','srv notify','srv respond','srv list','srv disconnect','l2cap connect','l2cap send','l2cap close','l2cap listen'];
+const PL_GATT_ACTIONS=['connect','disconnect','discover','read','write','notify on','notify off','mtu','rssi','priority','phy','list','bonded','bond','unbond','uuids','rfcomm connect','rfcomm send','rfcomm close','rfcomm listen','adv start','adv stop','srv start','srv stop','srv set','srv notify','srv respond','srv list','srv disconnect','l2cap connect','l2cap send','l2cap close','l2cap listen','adv pdata','sync start','sync stop','sync list'];
 // I — значения со входов (приоритетнее полей узла): {addr, svc, chr, data}
 function plGattCmd(p,I={}){
   const addr=plAddr(I.addr||p.addr), svc=String(I.svc||p.svc||'').trim(), chr=String(I.chr||p.chr||'').trim();
@@ -59,6 +59,10 @@ function plGattCmd(p,I={}){
     case 'rfcomm listen': return {cmd:'bt.listen',name:'DSP',...(p.uuid ? {uuid:String(p.uuid).trim()} : {}),secure:!!p.secure};
     case 'adv start': return plAdvCmd(p);
     case 'adv stop': return {cmd:'ble.adv.stop'};
+    case 'adv pdata': { const o=plAdvData(p.advPmfr,p.advPsvc); return o.mfr||o.svc ? {cmd:'ble.adv.pdata',...o} : {error:'periodic data: manufacturer id=hex or service uuid=hex'}; }
+    case 'sync start': return (e=need('addr')) ? {error:e} : {cmd:'ble.sync.start',addr,skip:+p.syncSkip||0,timeout:+p.syncTimeout||10000};
+    case 'sync stop': return {cmd:'ble.sync.stop',...(addr ? {addr} : {})};
+    case 'sync list': return {cmd:'ble.sync.list'};
     case 'srv start': { const d=plSrvDef(p.srvDef); return d.error ? {error:d.error} : {cmd:'gattsrv.start',services:d.services}; }
     case 'srv stop': return {cmd:'gattsrv.stop'};
     case 'srv list': return {cmd:'gattsrv.list'};
@@ -104,11 +108,15 @@ function plSrvDef(text){
   return {services:order};
 }
 // реклама: advName, advUuids «180d, fe95», advMfr «004c=0215…», advSvc «fe95=0102», mode / power / connectable / ext / phy
+// «id=hex; id=hex» → {id:hex}
+function plKv(s){ const o={}; for(const part of String(s||'').split(/[;\n]+/)){ const m=/^\s*([0-9a-f-]+)\s*[=:]\s*([0-9a-f\s]*)$/i.exec(part); if(m && plIsHex(m[2]||'00')) o[m[1].toLowerCase()]=plHex(m[2]); } return Object.keys(o).length ? o : null; }
+function plAdvData(mfr,svc){ const o={}; const m=plKv(mfr), v=plKv(svc); if(m) o.mfr=m; if(v) o.svc=v; return o; }
 function plAdvCmd(p){
   const c={cmd:'ble.adv.start',name:!!p.advName,mode:p.advMode||'balanced',power:p.advPower||'medium',connectable:!!p.advConn,ext:!!p.advExt,phy:p.advExt ? (p.phy||'1m') : '1m',timeout:+p.advTimeout||0};
   const uu=String(p.advUuids||'').split(/[,\s]+/).filter(Boolean); if(uu.length) c.uuids=uu;
   const kv=s=>{ const o={}; for(const part of String(s||'').split(/[;\n]+/)){ const m=/^\s*([0-9a-f-]+)\s*[=:]\s*([0-9a-f\s]*)$/i.exec(part); if(m && plIsHex(m[2]||'00')) o[m[1].toLowerCase()]=plHex(m[2]); } return Object.keys(o).length ? o : null; };
   const mfr=kv(p.advMfr), svc=kv(p.advSvc); if(mfr) c.mfr=mfr; if(svc) c.svc=svc;
+  if(p.advPeriodic){ c.ext=true; c.periodic={interval:Math.max(100,+p.advPint||100),...plAdvData(p.advPmfr,p.advPsvc)}; if(!c.phy) c.phy='1m'; }
   return c;
 }
 
@@ -151,6 +159,7 @@ function plLine(r){
       case 'rssi': return 'rssi '+r.rssi+' dBm';
       default: return 'gatt '+r.ev;
     }
+    case 'blesync': return r.ev==='data' ? 'psync '+(r.addr||'')+' '+r.hex.slice(0,40)+' ('+r.rssi+' dBm)' : 'psync '+r.ev+' '+(r.addr||'')+(r.sid!=null ? ' sid '+r.sid : '');
     case 'gattsrv': switch(r.ev){
       case 'connected': return 'srv: '+r.addr+' connected';
       case 'disconnected': return 'srv: '+r.addr+' disconnected';
@@ -169,6 +178,14 @@ function plLine(r){
       case 'data': return r.proto+' #'+r.conn+' '+(r.peer ? r.peer+' ' : '')+r.n+' B: '+String(r.text||'').replace(/[^\x20-\x7e]/g,'.').slice(0,60);
       case 'close': return r.proto+' closed '+(r.conn!=null ? '#'+r.conn : 'server '+r.server);
       case 'ping': return r.ok ? 'ping '+r.host+' '+f(r.ms,1)+' ms ttl '+(r.ttl??'—')+' seq '+r.seq : 'ping '+r.host+' '+(r.info||'no reply');
+      case 'p2p': switch(r.kind){
+        case 'peer': return 'p2p peer '+r.addr+' '+(r.name||'')+' ('+r.status+(r.go ? ', group owner' : '')+')';
+        case 'group': return r.formed ? 'p2p group '+(r.ssid||'')+(r.pass ? ' / '+r.pass : '')+(r.owner ? ' (we own it)' : ' owner '+(r.ownerAddr||'')) : 'p2p: no group';
+        case 'state': return 'p2p '+(r.on ? 'on' : 'off');
+        default: return 'p2p '+r.kind+' '+(r.name||'');
+      }
+      case 'hotspot': return r.on ? 'hotspot on: '+(r.ssid||'')+' / '+(r.pass||'') : 'hotspot off';
+      case 'wifi': return 'wifi '+r.kind+' '+(r.ssid||'')+(r.kind==='connected' ? (r.bound ? ' (app traffic bound to it)' : '') : '');
       case 'nsd': return 'nsd '+r.kind+' '+(r.name||'')+' '+(r.type||'')+(r.host ? ' '+r.host+':'+r.port : '');
       case 'rtt': return r.ok ? 'rtt '+(r.ssid||r.bssid)+' '+f(r.dist,2)+' m ±'+f(r.std,2)+' ('+r.good+'/'+r.tried+', '+r.rssi+' dBm)' : 'rtt '+(r.bssid||'')+' '+(r.msg||'failed, status '+r.status);
       case 'aware': return 'aware '+r.kind+(r.peer ? ' peer '+r.peer : '')+(r.service ? ' '+r.service : '')+(r.kind==='message' || r.kind==='peer' ? ' '+String(r.text||'').replace(/[^\x20-\x7e]/g,'.').slice(0,60) : '')+(r.kind==='sent' ? (r.ok ? ' ok' : ' failed') : '');
@@ -183,7 +200,7 @@ function plLine(r){
 }
 
 // ---------- сеть ----------
-const PL_NET_ACTIONS=['tcp connect','tcp send','tcp close','tcp listen','udp open','udp send','udp close','udp request','ping','traceroute step','dns','net info','raw send','nsd discover','nsd stop','nsd register','nsd unregister','wifi rtt','aware publish','aware subscribe','aware send','aware stop','monitor on','monitor off','monitor channel'];
+const PL_NET_ACTIONS=['tcp connect','tcp send','tcp close','tcp listen','udp open','udp send','udp close','udp request','ping','traceroute step','dns','net info','raw send','nsd discover','nsd stop','nsd register','nsd unregister','wifi rtt','aware publish','aware subscribe','aware send','aware stop','monitor on','monitor off','monitor channel','p2p discover','p2p stop','p2p connect','p2p disconnect','p2p group create','p2p group remove','p2p info','hotspot start','hotspot stop','suggest add','suggest remove','suggest list','join network','leave network'];
 // DNS: запрос собирает dnsQuery (dnsq-kernels.js) и отправляется UDP-запросом через приложение
 function plNetCmd(p,I={}){
   const host=String(I.host||p.host||'').trim(), port=+(I.port||p.port)||0, conn=+(I.conn||p.conn)||0;
@@ -229,6 +246,31 @@ function plNetCmd(p,I={}){
     }
     case 'aware send': { const peer=+p.awarePeer; const w=payload(); return peer>0 && w ? {cmd:'aware.send',peer,...w} : {error:peer>0 ? 'nothing to send' : 'peer: the number from a «peer» / «message» record'}; }
     case 'aware stop': return {cmd:'aware.stop'};
+    case 'p2p discover': return {cmd:'p2p.discover'};
+    case 'p2p stop': return {cmd:'p2p.stop'};
+    case 'p2p info': return {cmd:'p2p.info'};
+    case 'p2p disconnect': return {cmd:'p2p.disconnect'};
+    case 'p2p group remove': return {cmd:'p2p.group.remove'};
+    case 'p2p connect': { const a=plAddr(I.host||p.p2pAddr); return a ? {cmd:'p2p.connect',addr:a,...(+p.p2pIntent>=0 ? {intent:Math.min(15,+p.p2pIntent)} : {})} : {error:'addr: the device address from a «peer» record'}; }
+    case 'p2p group create': {
+      const name=String(p.p2pName||'').trim(), pass=String(p.p2pPass||'');
+      if(!name && !pass) return {cmd:'p2p.group.create'};
+      if(!/^DIRECT-[A-Za-z0-9]{2}-[ -~]{0,22}$/.test(name)) return {error:'name: DIRECT-xy-… (xy — two letters or digits, at most 32 characters)'};
+      return plWifiPass(pass) ? {cmd:'p2p.group.create',name,pass} : {error:'pass: 8…63 characters'};
+    }
+    case 'hotspot start': return {cmd:'wifi.hotspot.start'};
+    case 'hotspot stop': return {cmd:'wifi.hotspot.stop'};
+    case 'suggest list': return {cmd:'wifi.suggest.list'};
+    case 'suggest remove': return {cmd:'wifi.suggest.remove',...(String(p.wifiSsid||'') ? {ssid:String(p.wifiSsid)} : {})};
+    case 'leave network': return {cmd:'wifi.disconnect'};
+    case 'suggest add': case 'join network': {
+      const ssid=String(I.host||p.wifiSsid||''); if(!ssid || new TextEncoder().encode(ssid).length>32) return {error:'ssid: 1…32 bytes'};
+      const pass=String(p.wifiPass||''); if(pass && !plWifiPass(pass)) return {error:'pass: 8…63 characters'};
+      const bs=String(p.wifiBssid||'').trim(), bssid=bs ? plAddr(bs) : ''; if(bs && !bssid) return {error:'bssid: AA:BB:CC:DD:EE:FF'};
+      const c={cmd:p.action==='suggest add' ? 'wifi.suggest' : 'wifi.connect',ssid,...(pass ? {pass,wpa3:!!p.wifiWpa3} : {}),...(bssid ? {bssid} : {})};
+      if(p.action==='suggest add'){ if(p.wifiHidden) c.hidden=true; if(+p.wifiPriority>0) c.priority=+p.wifiPriority; } else { c.bind=p.wifiBind!==false; c.timeout=Math.max(20000,+p.timeout||0); }
+      return c;
+    }
     case 'monitor on': case 'monitor off': case 'monitor channel': {
       const iface=String(p.monIface||'wlan0').trim(); if(!/^[a-z][a-z0-9]{0,14}$/.test(iface)) return {error:'iface: wlan0, wlan1…'};
       const width=['','NOHT','HT20','HT40+','HT40-','80MHz','160MHz'].includes(p.monWidth||'') ? (p.monWidth||'') : null; if(width===null) return {error:'width'};
@@ -243,6 +285,7 @@ function plNetCmd(p,I={}){
   }
   return {error:'unknown action'};
 }
+const plWifiPass=s=>/^[ -~]{8,63}$/.test(String(s||''));
 const plNsdType=s=>{ const t=String(s||'').trim().replace(/\.$/,'').split(',')[0]; return /^_[A-Za-z0-9][A-Za-z0-9-]{0,14}\._(tcp|udp)$/.test(t) ? t : ''; };
 // ответ на DNS-запрос (запись {src:'cmd', hex}) → строки rec
 function plDnsReply(r,q){
@@ -251,7 +294,7 @@ function plDnsReply(r,q){
   return {parsed:d,rows:dnsRecs(d,r.server).map(x=>({...x,ms:r.ms,src:'dns'}))};
 }
 
-if(typeof module!=='undefined') module.exports={plGattCmd,plNetCmd,plScanOpts,plDecode,plLine,plAdvCmd,plDnsReply,plSrvDef,plNsdType};
+if(typeof module!=='undefined') module.exports={plGattCmd,plNetCmd,plScanOpts,plDecode,plLine,plAdvCmd,plDnsReply,plSrvDef,plNsdType,plAdvData};
 
 // ---------- автоматизация, речь, управление ----------
 const PL_SYS_ACTIONS=['speech start','speech stop','vol get','vol set','vol ringer','tts speak','tts stop','clip set','clip get',

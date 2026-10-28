@@ -5,7 +5,7 @@ let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else
 const ctx=vm.createContext({Math,Number,String,Object,Array,JSON,Map,Set,Uint8Array,DataView,TextDecoder,TextEncoder,parseInt,isFinite,Error,Infinity});
 const load=f=>vm.runInContext(fs.readFileSync(new URL('../modules/'+f,import.meta.url),'utf8'),ctx);
 load('ble-kernels.js'); load('dnsq-kernels.js'); load('phonelink-kernels.js');
-vm.runInContext('this.K={plGattCmd,plNetCmd,plScanOpts,plDecode,plLine,plAdvCmd,plDnsReply,dnsParse,plSysCmd,PL_SYS_ACTIONS,plSrvDef,plNsdType}',ctx);
+vm.runInContext('this.K={plGattCmd,plNetCmd,plScanOpts,plDecode,plLine,plAdvCmd,plDnsReply,dnsParse,plSysCmd,PL_SYS_ACTIONS,plSrvDef,plNsdType,plAdvData}',ctx);
 const K=ctx.K, J=o=>JSON.stringify(o);
 
 // скан
@@ -115,5 +115,30 @@ ok('shell exec: field or wire, root/timeout pass through, command type stays "cm
   ok('monitor on: hop list with dwell floor',(c=>c.hop.join()==='1,6,11' && c.dwell===250)(K.plNetCmd({...m,action:'monitor on',monHop:'1, 6 11',monDwell:100})) && K.plNetCmd({...m,action:'monitor on',monHop:'1,x'}).error && K.plNetCmd({...m,action:'monitor on',monHop:'999'}).error);
   ok('monitor: bad interface / width refused',K.plNetCmd({...m,action:'monitor on',monIface:'wlan0;reboot'}).error && K.plNetCmd({...m,action:'monitor on',monWidth:'HT20; x'}).error);
   ok('monitor off / channel',(c=>c.cmd==='wifi.monitor' && c.on===false)(K.plNetCmd({...m,action:'monitor off'})) && K.plNetCmd({...m,action:'monitor channel'}).cmd==='wifi.channel' && K.plNetCmd({...m,action:'monitor channel',monChannel:0}).error);
+}
+
+// periodic advertising
+{
+  const a=K.plGattCmd({action:'adv start',advPeriodic:true,advPint:50,advPmfr:'ffff=0102',advPsvc:'fe95=aa'});
+  ok('periodic adv: ext forced, interval floor 100 ms, data',a.ext===true && a.periodic.interval===100 && a.periodic.mfr.ffff==='0102' && a.periodic.svc.fe95==='aa' && a.phy==='1m',J(a));
+  ok('periodic adv: plain advertising has no periodic',!('periodic' in K.plGattCmd({action:'adv start'})));
+  ok('adv pdata: needs data',K.plGattCmd({action:'adv pdata'}).error && K.plGattCmd({action:'adv pdata',advPmfr:'ffff=09'}).cmd==='ble.adv.pdata');
+  const sy={addr:'aa:bb:cc:dd:ee:ff',syncSkip:2,syncTimeout:5000};
+  ok('sync start / stop / list',(c=>c.cmd==='ble.sync.start' && c.addr==='AA:BB:CC:DD:EE:FF' && c.skip===2 && c.timeout===5000)(K.plGattCmd({...sy,action:'sync start'})) && K.plGattCmd({...sy,action:'sync start',addr:''}).error && K.plGattCmd({action:'sync stop'}).addr===undefined && K.plGattCmd({action:'sync list'}).cmd==='ble.sync.list');
+  ok('blesync records → lines',/psync AA 0102 \(-60 dBm\)/.test(K.plLine({src:'blesync',ev:'data',addr:'AA',hex:'0102',rssi:-60})) && /established AA sid 3/.test(K.plLine({src:'blesync',ev:'established',addr:'AA',sid:3})));
+}
+// Wi-Fi Direct / точка доступа / подсказки / подключение
+{
+  const w={wifiSsid:'Lab',wifiPass:'',wifiWpa3:false,wifiBssid:'',wifiHidden:false,wifiPriority:0,wifiBind:true,p2pAddr:'',p2pIntent:-1,p2pName:'',p2pPass:'',timeout:30000};
+  ok('p2p discover / stop / info / disconnect / group remove',['discover','stop','info','disconnect'].every(x=>K.plNetCmd({...w,action:'p2p '+x}).cmd==='p2p.'+x) && K.plNetCmd({...w,action:'p2p group remove'}).cmd==='p2p.group.remove');
+  ok('p2p connect: address required, intent optional',K.plNetCmd({...w,action:'p2p connect'}).error && (c=>c.addr==='AA:BB:CC:DD:EE:FF' && !('intent' in c))(K.plNetCmd({...w,action:'p2p connect',p2pAddr:'aa:bb:cc:dd:ee:ff'})) && K.plNetCmd({...w,action:'p2p connect',p2pAddr:'aa:bb:cc:dd:ee:ff',p2pIntent:9}).intent===9 && K.plNetCmd({...w,action:'p2p connect'},{host:'11:22:33:44:55:66'}).addr==='11:22:33:44:55:66');
+  ok('p2p group create: automatic, or a checked name and passphrase',K.plNetCmd({...w,action:'p2p group create'}).cmd==='p2p.group.create' && !('name' in K.plNetCmd({...w,action:'p2p group create'})) && K.plNetCmd({...w,action:'p2p group create',p2pName:'DIRECT-ab-DSP',p2pPass:'12345678'}).name==='DIRECT-ab-DSP' && K.plNetCmd({...w,action:'p2p group create',p2pName:'Home',p2pPass:'12345678'}).error && K.plNetCmd({...w,action:'p2p group create',p2pName:'DIRECT-ab-DSP',p2pPass:'123'}).error);
+  ok('hotspot start / stop',K.plNetCmd({...w,action:'hotspot start'}).cmd==='wifi.hotspot.start' && K.plNetCmd({...w,action:'hotspot stop'}).cmd==='wifi.hotspot.stop');
+  ok('suggest add: open and WPA2 / WPA3, hidden, priority, BSSID',(c=>c.cmd==='wifi.suggest' && c.ssid==='Lab' && !('pass' in c))(K.plNetCmd({...w,action:'suggest add'})) && (c=>c.pass==='secret123' && c.wpa3===true && c.hidden===true && c.priority===5 && c.bssid==='AA:BB:CC:DD:EE:FF')(K.plNetCmd({...w,action:'suggest add',wifiPass:'secret123',wifiWpa3:true,wifiHidden:true,wifiPriority:5,wifiBssid:'aa:bb:cc:dd:ee:ff'})));
+  ok('suggest / join: bad ssid, passphrase, BSSID refused',K.plNetCmd({...w,action:'suggest add',wifiSsid:''}).error && K.plNetCmd({...w,action:'suggest add',wifiSsid:'x'.repeat(33)}).error && K.plNetCmd({...w,action:'join network',wifiPass:'short'}).error && K.plNetCmd({...w,action:'join network',wifiBssid:'zz'}).error);
+  ok('join network: bind and timeout; the host input overrides the SSID',(c=>c.cmd==='wifi.connect' && c.ssid==='Other' && c.bind===true && c.timeout===30000)(K.plNetCmd({...w,action:'join network'},{host:'Other'})) && K.plNetCmd({...w,action:'join network',wifiBind:false}).bind===false && K.plNetCmd({...w,action:'leave network'}).cmd==='wifi.disconnect');
+  ok('suggest remove / list',K.plNetCmd({...w,action:'suggest remove'}).ssid==='Lab' && !('ssid' in K.plNetCmd({...w,action:'suggest remove',wifiSsid:''})) && K.plNetCmd({...w,action:'suggest list'}).cmd==='wifi.suggest.list');
+  ok('p2p / hotspot / wifi records → lines',/p2p peer AA Pixel \(available\)/.test(K.plLine({src:'net',ev:'p2p',kind:'peer',addr:'AA',name:'Pixel',status:'available'})) && /p2p group DIRECT-xy \/ pw1 \(we own it\)/.test(K.plLine({src:'net',ev:'p2p',kind:'group',formed:true,ssid:'DIRECT-xy',pass:'pw1',owner:true})) && K.plLine({src:'net',ev:'p2p',kind:'group',formed:false})==='p2p: no group' &&
+    K.plLine({src:'net',ev:'hotspot',on:true,ssid:'AndroidShare_1',pass:'abc12345'})==='hotspot on: AndroidShare_1 / abc12345' && K.plLine({src:'net',ev:'hotspot',on:false})==='hotspot off' && K.plLine({src:'net',ev:'wifi',kind:'connected',ssid:'Lab',bound:true})==='wifi connected Lab (app traffic bound to it)');
 }
 console.log(bad?bad+' FAILED':'all ok'); process.exit(bad?1:0);

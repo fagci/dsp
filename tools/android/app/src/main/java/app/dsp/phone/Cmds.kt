@@ -52,6 +52,13 @@ object Args {
 
     fun port(v: Int) = v in 1..65535
 
+    /** Интервал периодической рекламы: мс → единицы по 1,25 мс (80…65519, то есть 100 мс … 81,9 с). */
+    fun periodicInterval(ms: Double): Int = Math.round(ms / 1.25).toInt().coerceIn(80, 65519)
+
+    /** Синхронизация с периодической рекламой: пропуск событий 0…499, ожидание потери в мс → единицы по 10 мс (10…16000). */
+    fun syncSkip(v: Int): Int = v.coerceIn(0, 499)
+    fun syncTimeout(ms: Int): Int = (ms / 10).coerceIn(10, 16000)
+
     /** PSM канала L2CAP: стек сам отклонит лишнее, здесь только границы. */
     fun psm(v: Int) = v in 1..65535
 
