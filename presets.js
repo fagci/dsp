@@ -517,6 +517,8 @@ const PRESET_CATS={
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
   'Phone App: Wi-Fi, BLE and Bluetooth as Three Graphs':'Network & IoT',
   'Network: HTTP Server — Share Files with Any Browser (Phone App)':'Network & IoT',
+  'Network: Cast Receiver — the Phone as a DLNA Screen and Speaker (Phone App)':'Network & IoT',
+  'Network: Cast to a TV or Speaker — Find the Player, Send a File or a Stream (Phone App)':'Network & IoT',
   'Network: Wake-on-LAN, NTP Clock Check and Syslog (Phone App)':'Network & IoT',
   'Network: Syslog and TFTP Servers on the Phone (Phone App)':'Network & IoT',
   'Network: Telnet Terminal and a Mail Alert (Phone App)':'Network & IoT',
@@ -1697,6 +1699,45 @@ tx.size.w=260; tx.size.h=90; applySize(tx);
 const lg=addNode('recLog',880,450,{});
 lg.size.w=420; lg.size.h=260; applySize(lg);
 addEdge(cm.id,'text',tn.id,'text'); addEdge(tx.id,'text',ml.id,'text'); addEdge(ml.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Network: Cast Receiver — the Phone as a DLNA Screen and Speaker (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The phone (this page) as an output device: screen and sound. Press Start — it appears as «DSP» in the «cast to device» menu of other phones and apps (BubbleUPnP, VLC, gallery and music apps, Windows «Cast to device», Kodi). Pick it there, and the video or music plays here: the picture in the node (enlarge the node or put it on a dashboard tile), the sound from the phone. Play, pause, seek and volume from the sender work; the sender sees position, duration and state.\n'+
+  'The graph gets everything: «vid» is the video for any picture block, «img» the frames (tick «frames», needs CORS on the media server), «text» the address of what plays, «title», «state», «pos», «dur», «volume», and «rec» logs every command of the sender. The app answers SSDP searches (multicast) and announces itself every 10 minutes; the receiver is the same device between sessions (its id is saved in the node). Chromecast and AirPlay are closed, encrypted protocols — not supported.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const rx=addNode('dlnarx',40,200,{name:'DSP'});
+rx.size.w=420; rx.size.h=420; applySize(rx);
+const tk=addNode('ticker',500,200,{});
+tk.size.w=420; tk.size.h=100; applySize(tk);
+const tk2=addNode('ticker',500,320,{});
+tk2.size.w=420; tk2.size.h=100; applySize(tk2);
+const tr=addNode('trend',500,440,{span:120,auto:true});
+tr.size.w=420; tr.size.h=170; applySize(tr);
+const lg=addNode('recLog',960,200,{});
+lg.size.w=480; lg.size.h=410; applySize(lg);
+addEdge(rx.id,'title',tk.id,'text'); addEdge(rx.id,'state',tk2.id,'text'); addEdge(rx.id,'pos',tr.id,'in'); addEdge(rx.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Network: Cast to a TV or Speaker — Find the Player, Send a File or a Stream (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The phone as a source for a TV, a DLNA speaker or a receiver in the room. Device Discovery asks SSDP for media renderers; each one is a row in the Table (name, maker, model, description address). Click a row — its description address goes to Cast to Screen. Then:\n'+
+  '• a file from the graph: File → Bytes (or any «bin» — a recording, a picture, a decoded video) goes to «bin»; the phone serves it over HTTP itself and tells the player the address;  • an address: type it in «media» or wire a text (an IPTV stream, a radio, a file on your server). Press Run (action «cast»), then play / pause / stop / seek / volume / mute / status in the same node. Several Cast nodes can drive several players at once. The player must speak DLNA / UPnP AV (most TVs, Kodi, VLC, BubbleUPnP, Windows, the Cast Receiver of another DSP phone). Chromecast and AirPlay are not supported.'});
+nt.size.w=1000; nt.size.h=140; applySize(nt);
+const dc=addNode('netdisc',40,210,{ssdp:true,st:'urn:schemas-upnp-org:device:MediaRenderer:1',mdns:false,desc:true});
+dc.size.w=360; dc.size.h=380; applySize(dc);
+const fl=addNode('recFilter',440,210,{expr:"r.via==='upnp' && /renderer|speaker/.test(r.kind||'')"});
+fl.size.w=300; applySize(fl);
+const tb=addNode('table',780,210,{list:'@patch',key:'id',initial:false,cols:['name','ip','manufacturer','model','location']});
+tb.size.w=560; tb.size.h=300; applySize(tb);
+const bf=addNode('binFile',780,540,{});
+bf.size.w=300; bf.size.h=130; applySize(bf);
+const ts=addNode('textsrc',1100,540,{text:''});
+ts.size.w=260; ts.size.h=90; applySize(ts);
+const cc=addNode('dlnacast',1380,210,{});
+cc.size.w=360; cc.size.h=440; applySize(cc);
+addEdge(dc.id,'rec',fl.id,'rec'); addEdge(fl.id,'rec',tb.id,'rec'); addEdge(tb.id,'location',cc.id,'host');
+addEdge(bf.id,'bin',cc.id,'bin'); addEdge(ts.id,'text',cc.id,'url');
 markWiresDirty();
 });
 preset('Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)', function(){
