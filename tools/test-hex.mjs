@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,DataView,ArrayBuffer,TextEncoder,TextDecoder,Array,Map,Set,Error,String,Number,BigInt,Object,Date,JSON,isNaN,parseInt});
 for(const f of ['hex-kernels.js','hex-formats.js','hex-gsm.js','wifisniff-kernels.js','radiobridge-kernels.js','pcap-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
-vm.runInContext('this.H={HexAisAsm,hexAisPayload,pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,radioLine,radioStatus,radioRec,radioStatRec,radioCsiRec,radioTx,radioProbeResp,hexParse,hexBuild,hexToRec,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
+vm.runInContext('this.H={HexAisAsm,hexAisPayload,pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,radioLine,radioStatus,radioRec,radioStatRec,radioCsiRec,radioTx,radioProbeResp,hexParse,hexBuild,hexToRec,wifiFromPkt,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
 const H=ctx.H;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 const hex=s=>H.hexFromHex(s), toHex=b=>H.hexToHex(b);
@@ -300,5 +300,13 @@ const ls={fields:[{n:'n',t:'u8'},{n:'v',t:'list',count:'n',item:{t:'u16'}}]};
 const pls=H.hexParse(ls,hex('03 0001 0002 0003'));
 ok('list item',pls.vals['v[2].v']===3 && pls.len===7,JSON.stringify(pls.vals));
 ok('list build',toHex(H.hexBuild(ls,{n:3,'v[0].v':1,'v[1].v':2,'v[2].v':3}).bytes)==='030001000200 03'.replace(' ','')) ;
+
+// pkt из монитор-режима телефона → кадр для wifiRec
+{
+  const f=H.wifiFromPkt({src:'pkt',ch:6,rssi:-55,dot11:beacon});
+  ok('pkt dot11 → frame with channel and rssi',f && f.chan===6 && f.rssi===-55 && f.bytes.length>20 && H.wifiRec(f,1).kind==='beacon');
+  ok('pkt without dot11 / bad hex / other source ignored',H.wifiFromPkt({src:'pkt',hex:'00'})===null && H.wifiFromPkt({src:'pkt',dot11:'zz'})===null && H.wifiFromPkt({src:'net',dot11:beacon})===null && H.wifiFromPkt(null)===null);
+  ok('pkt without channel / rssi → 0',(g=>g.chan===0 && g.rssi===0)(H.wifiFromPkt({src:'pkt',dot11:beacon})));
+}
 console.log(bad ? bad+' failed' : 'all ok');
 process.exit(bad?1:0);

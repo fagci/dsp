@@ -5,7 +5,7 @@ let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else
 const ctx=vm.createContext({Math,Number,String,Object,Array,JSON,Map,Set,Uint8Array,DataView,TextDecoder,TextEncoder,parseInt,isFinite,Error,Infinity});
 const load=f=>vm.runInContext(fs.readFileSync(new URL('../modules/'+f,import.meta.url),'utf8'),ctx);
 load('ble-kernels.js'); load('dnsq-kernels.js'); load('phonelink-kernels.js');
-vm.runInContext('this.K={plGattCmd,plNetCmd,plScanOpts,plDecode,plLine,plAdvCmd,plDnsReply,dnsParse,plSysCmd,PL_SYS_ACTIONS}',ctx);
+vm.runInContext('this.K={plGattCmd,plNetCmd,plScanOpts,plDecode,plLine,plAdvCmd,plDnsReply,dnsParse,plSysCmd,PL_SYS_ACTIONS,plSrvDef,plNsdType}',ctx);
 const K=ctx.K, J=o=>JSON.stringify(o);
 
 // скан
@@ -67,4 +67,53 @@ ok('intent kinds',K.plSysCmd({action:'intent broadcast',intentAction:'android.in
 ok('ui: tap/swipe use wire coordinates, click/text need text',K.plSysCmd({action:'ui tap',x:1,y:2},{x:10,y:20}).x===10 && K.plSysCmd({action:'ui swipe',x:0,y:0,x2:5,y2:5}).cmd==='ui.swipe' && K.plSysCmd({action:'ui click',text:''}).error && K.plSysCmd({action:'ui back'}).action==='back');
 ok('broadcast listen: actions split, comma or newline',(c=>c.cmd==='sys.bcast.listen' && c.actions.join()==='a.B,c.D')(K.plSysCmd({action:'broadcast listen',bcastActions:'a.B, c.D'})) && K.plSysCmd({action:'broadcast listen',bcastActions:''}).error && K.plSysCmd({action:'broadcast stop'}).cmd==='sys.bcast.stop');
 ok('shell exec: field or wire, root/timeout pass through, command type stays "cmd"',(c=>c.cmd==='sys.shell.exec' && c.script==='ls -la' && c.root===true && c.timeout===5000)(K.plSysCmd({action:'shell exec',shellCmd:'ls -la',shellRoot:true,shellTimeout:5000})) && K.plSysCmd({action:'shell exec',shellCmd:'a'},{text:'b'}).script==='b' && K.plSysCmd({action:'shell exec',shellCmd:''}).error);
+
+// сервер GATT
+{
+  const d=K.plSrvDef('180d/2a37 read,notify = 06 00\n# комментарий\n180d/2a38 write,manual\nfff0/fff1 read,secure = "hi"\n');
+  ok('srv def: lines of one service are grouped, order kept',d.services.length===2 && d.services[0].uuid==='180d' && d.services[0].chars.length===2 && d.services[1].uuid==='fff0',J(d));
+  ok('srv def: props, hex / text value, manual → auto:false, secure',(c=>c.props.join()==='read,notify' && c.hex==='0600')(d.services[0].chars[0]) && d.services[0].chars[1].auto===false && d.services[1].chars[0].text==='hi' && d.services[1].chars[0].secure===true);
+  ok('srv def: errors are named',K.plSrvDef('').error && K.plSrvDef('nonsense').error && /bad property/.test(K.plSrvDef('180d/2a37 fly').error) && /bad value/.test(K.plSrvDef('180d/2a37 read = zz').error));
+  const sv=K.plGattCmd({action:'srv start',srvDef:'180d/2a37 read = 01'});
+  ok('srv start builds gattsrv.start',sv.cmd==='gattsrv.start' && sv.services[0].chars[0].hex==='01' && K.plGattCmd({action:'srv start',srvDef:''}).error);
+  const q={svc:'180d',chr:'2a37',wfmt:'hex',data:'0a ff'};
+  ok('srv set / notify: UUIDs and data, notify may target one address',K.plGattCmd({...q,action:'srv set'}).cmd==='gattsrv.set' && K.plGattCmd({...q,action:'srv notify'}).hex==='0aff' && K.plGattCmd({...q,action:'srv notify',addr:'aa:bb:cc:dd:ee:ff'}).addr==='AA:BB:CC:DD:EE:FF' && K.plGattCmd({...q,action:'srv set',svc:''}).error && K.plGattCmd({...q,action:'srv set',data:''}).error);
+  ok('srv respond: needs req; status without data, else data',K.plGattCmd({action:'srv respond'}).error && K.plGattCmd({action:'srv respond',srvReq:3,srvStatus:3}).status===3 && K.plGattCmd({action:'srv respond',srvReq:3,wfmt:'hex',data:'01'}).hex==='01');
+  ok('srv stop / list / disconnect',K.plGattCmd({action:'srv stop'}).cmd==='gattsrv.stop' && K.plGattCmd({action:'srv list'}).cmd==='gattsrv.list' && K.plGattCmd({action:'srv disconnect'}).error && K.plGattCmd({action:'srv disconnect',addr:'aa:bb:cc:dd:ee:ff'}).cmd==='gattsrv.disconnect');
+  ok('srv records → lines',K.plLine({src:'gattsrv',ev:'write',addr:'A',chr:'2a38',hex:'01',req:4})==='srv: A wrote 2a38 = 01 (req 4)' && /subscribed/.test(K.plLine({src:'gattsrv',ev:'sub',addr:'A',chr:'2a37',mode:'notify'})));
+}
+
+// L2CAP
+{
+  const b={addr:'aa:bb:cc:dd:ee:ff',psm:128,secure:true,wfmt:'hex',data:'0102'};
+  ok('l2cap connect: address and PSM needed',K.plGattCmd({...b,action:'l2cap connect'}).psm===128 && K.plGattCmd({...b,action:'l2cap connect',psm:0}).error && K.plGattCmd({...b,action:'l2cap connect',addr:''}).error);
+  ok('l2cap listen / send / close',K.plGattCmd({action:'l2cap listen',secure:false}).secure===false && K.plGattCmd({...b,action:'l2cap send'}).hex==='0102' && K.plGattCmd({...b,action:'l2cap send',data:''}).error && K.plGattCmd({action:'l2cap close'}).cmd==='l2cap.close');
+  ok('l2cap records → lines',K.plLine({src:'l2cap',ev:'listen',psm:129})==='l2cap listen  psm 129' && /data A/.test(K.plLine({src:'l2cap',ev:'data',addr:'A',hex:'01'})));
+}
+
+// NSD / RTT / Aware
+{
+  const b={port:8080,nsdType:'_http._tcp',nsdName:'DSP',nsdTxt:'',wfmt:'hex',dfmt:'text',data:''};
+  ok('nsd type: normalised, bad refused',K.plNsdType(' _ipp._tcp. ')==='_ipp._tcp' && K.plNsdType('_http._tcp,_x')==='_http._tcp' && K.plNsdType('http')==='' && K.plNsdType('_http._icmp')==='');
+  ok('nsd discover / stop / unregister',(c=>c.cmd==='nsd.discover' && c.type==='_http._tcp' && c.resolve===true)(K.plNetCmd({...b,action:'nsd discover'})) && K.plNetCmd({...b,action:'nsd discover',nsdType:'x'}).error && K.plNetCmd({...b,action:'nsd stop'}).cmd==='nsd.stop' && K.plNetCmd({...b,action:'nsd unregister'}).cmd==='nsd.unregister');
+  ok('nsd register: name, port, TXT',(c=>c.cmd==='nsd.register' && c.port===8080 && c.txt.path==='/x' && c.txt.v==='1' && c.name==='DSP')(K.plNetCmd({...b,action:'nsd register',nsdTxt:'path=/x; v=1; toolongkeyname=2'})) && K.plNetCmd({...b,action:'nsd register',port:0}).error);
+  ok('rtt: list of BSSIDs, rounds clamped, bad one refused',(c=>c.cmd==='wifi.rtt' && c.bssids.join()==='AA:BB:CC:DD:EE:FF,11:22:33:44:55:66' && c.count===50 && c.every===500)(K.plNetCmd({action:'wifi rtt',rttBssids:'aa:bb:cc:dd:ee:ff, 11-22-33-44-55-66',rttCount:99,rttEvery:10})) && K.plNetCmd({action:'wifi rtt',rttBssids:'zz'}).error && !('bssids' in K.plNetCmd({action:'wifi rtt'})));
+  ok('rtt: the host input overrides',K.plNetCmd({action:'wifi rtt',rttBssids:'aa:bb:cc:dd:ee:ff'},{host:'11:22:33:44:55:66'}).bssids[0]==='11:22:33:44:55:66');
+  const aw={awareService:'dsp.chat',dfmt:'hex',data:''};
+  ok('aware publish / subscribe: service name checked, info optional',K.plNetCmd({...aw,action:'aware publish',awareSolicited:true}).solicited===true && K.plNetCmd({...aw,action:'aware subscribe'}).active===true && K.plNetCmd({...aw,action:'aware publish',awareService:'bad name'}).error && K.plNetCmd({...aw,action:'aware publish',data:'0a'}).hex==='0a' && K.plNetCmd({...aw,action:'aware publish',data:'zz'}).error);
+  ok('aware send: peer and data needed',K.plNetCmd({awarePeer:2,dfmt:'text',data:'hi',action:'aware send'}).text==='hi' && K.plNetCmd({awarePeer:0,dfmt:'text',data:'hi',action:'aware send'}).error && K.plNetCmd({awarePeer:2,dfmt:'text',data:'',action:'aware send'}).error && K.plNetCmd({action:'aware stop'}).cmd==='aware.stop');
+  ok('nsd / rtt / aware records → lines',/nsd resolved Printer _ipp._tcp 10\.0\.0\.5:631/.test(K.plLine({src:'net',ev:'nsd',kind:'resolved',name:'Printer',type:'_ipp._tcp',host:'10.0.0.5',port:631})) &&
+    K.plLine({src:'net',ev:'rtt',ok:true,ssid:'Lab',bssid:'A',dist:3.2,std:0.1,good:7,tried:8,rssi:-50})==='rtt Lab 3.20 m ±0.10 (7/8, -50 dBm)' && /failed/.test(K.plLine({src:'net',ev:'rtt',ok:false,bssid:'A',status:1})) &&
+    K.plLine({src:'net',ev:'aware',kind:'message',peer:2,text:'hi'})==='aware message peer 2 hi');
+}
+
+// монитор-режим
+{
+  const m={monIface:'wlan0',monChannel:6,monFreq:0,monWidth:'',monHop:'',monDwell:500};
+  ok('monitor on: channel, no hop',(c=>c.cmd==='wifi.monitor' && c.on===true && c.iface==='wlan0' && c.channel===6 && !('hop' in c))(K.plNetCmd({...m,action:'monitor on'})));
+  ok('monitor on: frequency wins, width passes',(c=>c.freq===5180 && !('channel' in c) && c.width==='80MHz')(K.plNetCmd({...m,action:'monitor on',monFreq:5180,monWidth:'80MHz'})));
+  ok('monitor on: hop list with dwell floor',(c=>c.hop.join()==='1,6,11' && c.dwell===250)(K.plNetCmd({...m,action:'monitor on',monHop:'1, 6 11',monDwell:100})) && K.plNetCmd({...m,action:'monitor on',monHop:'1,x'}).error && K.plNetCmd({...m,action:'monitor on',monHop:'999'}).error);
+  ok('monitor: bad interface / width refused',K.plNetCmd({...m,action:'monitor on',monIface:'wlan0;reboot'}).error && K.plNetCmd({...m,action:'monitor on',monWidth:'HT20; x'}).error);
+  ok('monitor off / channel',(c=>c.cmd==='wifi.monitor' && c.on===false)(K.plNetCmd({...m,action:'monitor off'})) && K.plNetCmd({...m,action:'monitor channel'}).cmd==='wifi.channel' && K.plNetCmd({...m,action:'monitor channel',monChannel:0}).error);
+}
 console.log(bad?bad+' FAILED':'all ok'); process.exit(bad?1:0);

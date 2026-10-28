@@ -1,6 +1,8 @@
 "use strict";
 /* ============================ Network (DSP app) ============================
-   TCP client / server, UDP (incl. broadcast), ping, one-shot UDP request (also used for DNS), network info, raw IPv4 packet (root).
+   TCP client / server, UDP (incl. broadcast), ping, one-shot UDP request (also used for DNS), network info, raw IPv4 packet (root),
+   mDNS / DNS-SD (find and announce services), Wi-Fi RTT (distance to 802.11mc access points), Wi-Fi Aware (peers without an access point: discovery and messages),
+   Wi-Fi monitor mode (root: iw, then frames arrive as pkt records from the Phone sensors node — feed them to Wi-Fi Sniffer).
    Sockets live in the DSP app, not the browser — this is what lets the phone be a TCP/UDP server and ping with real ICMP.
    Needs a trusted client (the app's own page, or «Let any page use actions» in its Settings) — same gate as Phone Actions.
    Commands / records — tools/android/README.md (tcp.*, udp.*, ping, net.info, raw.send). Building and decoding — phonelink-kernels.js
@@ -68,11 +70,11 @@ function netFeed(n,r){
   if(n.recQ.length>5000) n.recQ.splice(0,n.recQ.length-5000);
 }
 
-def({ id:'netlink', title:'Network (DSP app)', cat:'Sources', kw:'tcp udp socket server client ping icmp dns traceroute raw packet internet network',
+def({ id:'netlink', title:'Network (DSP app)', cat:'Sources', kw:'tcp udp socket server client ping icmp dns traceroute raw packet internet network mdns bonjour zeroconf dns-sd nsd rtt ranging distance 802.11mc wifi aware nan',
   ins:[{n:'go',t:'num'},{n:'host',t:'txt'},{n:'data',t:'txt'},{n:'cmd',t:'rec'}],
   outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'hex',t:'txt'},{n:'ok',t:'num'},{n:'new',t:'num'}],
   readout:true, tall:true,
-  groups:[{n:'TCP / UDP'},{n:'Ping'},{n:'DNS'}],
+  groups:[{n:'TCP / UDP'},{n:'Ping'},{n:'DNS'},{n:'mDNS / DNS-SD',open:false},{n:'Wi-Fi RTT / Aware',open:false},{n:'Wi-Fi monitor (root)',open:false}],
   params:[
     {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'bridge of the DSP app'},
     {n:'action',t:'select',opts:PL_NET_ACTIONS,d:'ping',label:'action (the Run button, or a rising edge on go)'},
@@ -92,6 +94,25 @@ def({ id:'netlink', title:'Network (DSP app)', cat:'Sources', kw:'tcp udp socket
     {n:'dnsPort',t:'num',d:53,label:'port',g:'DNS'},
     {n:'dnsEdns',t:'check',d:false,label:'EDNS (1232-byte UDP, needed for DNSSEC / large answers)',g:'DNS'},
     {n:'dnsRd',t:'check',d:true,label:'recursion desired',g:'DNS'},
+    {n:'nsdType',t:'text',d:'_http._tcp',label:'service type (discover: what to look for; register: what to announce)',g:'mDNS / DNS-SD'},
+    {n:'nsdResolve',t:'check',d:true,label:'discover: resolve each found service (host, port, TXT)',g:'mDNS / DNS-SD'},
+    {n:'nsdTimeout',t:'range',min:0,max:600000,step:1000,d:0,label:'discover: stop after, ms (0 — until «nsd stop»)',g:'mDNS / DNS-SD'},
+    {n:'nsdName',t:'text',d:'DSP',label:'register: instance name (the «port» field above is the port)',g:'mDNS / DNS-SD'},
+    {n:'nsdTxt',t:'text',d:'',label:'register: TXT records «key=value; key=value» (keys up to 9 characters)',g:'mDNS / DNS-SD'},
+    {n:'rttBssids',t:'text',d:'',label:'RTT: access points AA:BB:…, comma separated (the «host» input overrides; empty — the strongest 802.11mc ones from the last Wi-Fi scan, so run a Phone sensors node with Wi-Fi on)',g:'Wi-Fi RTT / Aware'},
+    {n:'rttCount',t:'range',min:1,max:50,step:1,d:1,label:'RTT: rounds',g:'Wi-Fi RTT / Aware'},
+    {n:'rttEvery',t:'range',min:500,max:60000,step:500,d:1000,label:'RTT: pause between rounds, ms (Android limits background apps to a few rounds per 10 minutes)',g:'Wi-Fi RTT / Aware'},
+    {n:'rttMax',t:'range',min:1,max:20,step:1,d:10,label:'RTT: at most N access points per round',g:'Wi-Fi RTT / Aware'},
+    {n:'awareService',t:'text',d:'dsp',label:'Aware: service name',g:'Wi-Fi RTT / Aware'},
+    {n:'awareSolicited',t:'check',d:false,label:'publish: solicited (answer only to subscribers\' queries)',g:'Wi-Fi RTT / Aware'},
+    {n:'awareActive',t:'check',d:true,label:'subscribe: active (ask, not only listen)',g:'Wi-Fi RTT / Aware'},
+    {n:'awarePeer',t:'num',d:0,label:'send: peer # (from a «peer» / «message» record); the «data» field is the info for publish / subscribe and the text for send',g:'Wi-Fi RTT / Aware'},
+    {n:'monIface',t:'text',d:'wlan0',label:'interface (needs root, iw and «Allow packet capture» in the app Settings; the phone\'s own Wi-Fi is off while it listens)',g:'Wi-Fi monitor (root)'},
+    {n:'monChannel',t:'range',min:0,max:233,step:1,d:6,label:'channel (0 — not set)',g:'Wi-Fi monitor (root)'},
+    {n:'monFreq',t:'range',min:0,max:7200,step:1,d:0,label:'or frequency, MHz (overrides the channel; 6 GHz channels are ambiguous)',g:'Wi-Fi monitor (root)'},
+    {n:'monWidth',t:'select',opts:['','NOHT','HT20','HT40+','HT40-','80MHz','160MHz'],d:'',label:'width (empty — the driver\'s default)',g:'Wi-Fi monitor (root)'},
+    {n:'monHop',t:'text',d:'',label:'on: hop between channels, e.g. 1,6,11 (empty — stay on one)',g:'Wi-Fi monitor (root)'},
+    {n:'monDwell',t:'range',min:250,max:10000,step:50,d:500,label:'hop: time on each channel, ms',g:'Wi-Fi monitor (root)'},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},
     {n:'run',t:'button',label:'Run',fn:n=>{ const c=plNetCmd(n.p,{host:n.hostIn,data:n.dataIn}); if(c.error) n.last=c.error; else netSend(n,c); }},
     {n:'connect',t:'button',label:'Connect',fn:n=>netStart(n)},

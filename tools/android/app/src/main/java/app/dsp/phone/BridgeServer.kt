@@ -358,11 +358,11 @@ class BridgeServer(
         val SENSITIVE = setOf("sms")
 
         /** Источники действий: пользуются тем, что телефон соединён с чем-то (речь, GATT, сеть, события системы). */
-        val POWER_SRC = setOf("speech", "gatt", "btlink", "net", "sys")
+        val POWER_SRC = setOf("speech", "gatt", "gattsrv", "l2cap", "btlink", "net", "sys")
 
         /** Команды действий: сокеты и ping, соединения Bluetooth, речь, управление телефоном. Нужен c.power. */
         fun powerCmd(name: String) = POWER_PREFIX.any { name.startsWith(it) } || name == "ping"
-        private val POWER_PREFIX = listOf("tcp.", "udp.", "net.", "raw.", "gatt.", "bt.", "ble.adv.", "speech.", "sys.", "activity.", "ui.", "app.", "intent", "vol.", "tts.", "clip.", "media.", "screen.", "toast")
+        private val POWER_PREFIX = listOf("tcp.", "udp.", "net.", "raw.", "gatt.", "gattsrv.", "l2cap.", "nsd.", "wifi.", "aware.", "bt.", "ble.adv.", "speech.", "sys.", "activity.", "ui.", "app.", "intent", "vol.", "tts.", "clip.", "media.", "screen.", "toast")
 
         /** Команды с личными данными или платные (SMS, контакты) — только доверенному клиенту. */
         fun sensitiveCmd(name: String) = name.startsWith("sms.") || name.startsWith("contacts.")

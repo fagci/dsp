@@ -52,6 +52,9 @@ object Args {
 
     fun port(v: Int) = v in 1..65535
 
+    /** PSM канала L2CAP: стек сам отклонит лишнее, здесь только границы. */
+    fun psm(v: Int) = v in 1..65535
+
     /** Имя хоста или IPv4/IPv6-адрес без пробелов и символов оболочки. */
     fun host(s: String?): String? = s?.trim()?.takeIf { HOST.matches(it) || (it.contains(':') && Regex("[0-9A-Fa-f:.]{2,45}").matches(it)) }
 

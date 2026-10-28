@@ -26,7 +26,7 @@ function plScanOpts(p){
 }
 
 // ---------- GATT / Bluetooth ----------
-const PL_GATT_ACTIONS=['connect','disconnect','discover','read','write','notify on','notify off','mtu','rssi','priority','phy','list','bonded','bond','unbond','uuids','rfcomm connect','rfcomm send','rfcomm close','rfcomm listen','adv start','adv stop'];
+const PL_GATT_ACTIONS=['connect','disconnect','discover','read','write','notify on','notify off','mtu','rssi','priority','phy','list','bonded','bond','unbond','uuids','rfcomm connect','rfcomm send','rfcomm close','rfcomm listen','adv start','adv stop','srv start','srv stop','srv set','srv notify','srv respond','srv list','srv disconnect','l2cap connect','l2cap send','l2cap close','l2cap listen'];
 // I — значения со входов (приоритетнее полей узла): {addr, svc, chr, data}
 function plGattCmd(p,I={}){
   const addr=plAddr(I.addr||p.addr), svc=String(I.svc||p.svc||'').trim(), chr=String(I.chr||p.chr||'').trim();
@@ -59,8 +59,49 @@ function plGattCmd(p,I={}){
     case 'rfcomm listen': return {cmd:'bt.listen',name:'DSP',...(p.uuid ? {uuid:String(p.uuid).trim()} : {}),secure:!!p.secure};
     case 'adv start': return plAdvCmd(p);
     case 'adv stop': return {cmd:'ble.adv.stop'};
+    case 'srv start': { const d=plSrvDef(p.srvDef); return d.error ? {error:d.error} : {cmd:'gattsrv.start',services:d.services}; }
+    case 'srv stop': return {cmd:'gattsrv.stop'};
+    case 'srv list': return {cmd:'gattsrv.list'};
+    case 'srv disconnect': return (e=need('addr')) ? {error:e} : {cmd:'gattsrv.disconnect',addr};
+    case 'srv set': case 'srv notify': {
+      if(e=need('uuid')) return {error:e}; const w=payload(); if(!w) return {error:p.wfmt==='text' ? 'nothing to send' : 'data: hex bytes'};
+      return p.action==='srv set' ? {cmd:'gattsrv.set',svc,chr,...w} : {cmd:'gattsrv.notify',svc,chr,...(addr ? {addr} : {}),...w};
+    }
+    case 'srv respond': {
+      const req=+p.srvReq; if(!(req>0)) return {error:'request: the req number from the «read» / «write» record'};
+      const st=+p.srvStatus||0; if(st) return {cmd:'gattsrv.respond',req,status:st};
+      const w=payload(); return w ? {cmd:'gattsrv.respond',req,...w} : {error:'data: hex bytes'};
+    }
+    case 'l2cap connect': return (e=need('addr')) ? {error:e} : (+p.psm>0 ? {cmd:'l2cap.connect',addr,psm:+p.psm,secure:!!p.secure} : {error:'psm: 1…255 (LE dynamic 128…255)'});
+    case 'l2cap listen': return {cmd:'l2cap.listen',secure:!!p.secure};
+    case 'l2cap send': { if(e=need('addr')) return {error:e}; const w=payload(); return w ? {cmd:'l2cap.send',addr,...w} : {error:'nothing to send'}; }
+    case 'l2cap close': return {cmd:'l2cap.close',...(addr ? {addr} : {})};
   }
   return {error:'unknown action'};
+}
+// сервер GATT: по строке «svc/chr props = значение»; props — read, write, writenr, notify, indicate, manual (ответ даёт страница), secure;
+// значение — hex или "текст" в кавычках. Строки с одним svc собираются в службу.
+function plSrvDef(text){
+  const order=[], by={};
+  const lines=String(text||'').split(/\n/).map(l=>l.replace(/#.*$/,'').trim()).filter(Boolean);
+  if(!lines.length) return {error:'services: one line per characteristic — 180d/2a37 read,notify = 0600'};
+  for(const l of lines){
+    const m=/^([0-9a-f-]+)\s*\/\s*([0-9a-f-]+)\s+([a-z,\s]+?)\s*(?:=\s*(.*))?$/i.exec(l);
+    if(!m) return {error:'bad line: '+l+' — svc/chr props = value'};
+    const props=[]; let auto=true, secure=false;
+    for(const w of m[3].toLowerCase().split(/[,\s]+/).filter(Boolean)){
+      if(w==='manual') auto=false; else if(w==='secure') secure=true;
+      else if(['read','write','writenr','notify','indicate'].includes(w)) props.push(w);
+      else return {error:'bad property «'+w+'»: read, write, writenr, notify, indicate, manual, secure'};
+    }
+    if(!props.length) return {error:'no properties in: '+l};
+    const c={uuid:m[2],props}; if(!auto) c.auto=false; if(secure) c.secure=true;
+    const v=(m[4]||'').trim();
+    if(v){ const q=/^"(.*)"$/.exec(v); if(q) c.text=q[1]; else if(plIsHex(v)) c.hex=plHex(v); else return {error:'bad value in: '+l+' — hex or "text"'}; }
+    if(!by[m[1]]){ by[m[1]]={uuid:m[1],chars:[]}; order.push(by[m[1]]); }
+    by[m[1]].chars.push(c);
+  }
+  return {services:order};
 }
 // реклама: advName, advUuids «180d, fe95», advMfr «004c=0215…», advSvc «fe95=0102», mode / power / connectable / ext / phy
 function plAdvCmd(p){
@@ -110,6 +151,17 @@ function plLine(r){
       case 'rssi': return 'rssi '+r.rssi+' dBm';
       default: return 'gatt '+r.ev;
     }
+    case 'gattsrv': switch(r.ev){
+      case 'connected': return 'srv: '+r.addr+' connected';
+      case 'disconnected': return 'srv: '+r.addr+' disconnected';
+      case 'read': return 'srv: '+r.addr+' read '+r.chr+(r.hex!=null ? ' = '+r.hex : '')+(r.req ? ' (req '+r.req+')' : '');
+      case 'write': return 'srv: '+r.addr+' wrote '+r.chr+' = '+r.hex+(r.req ? ' (req '+r.req+')' : '');
+      case 'sub': return 'srv: '+r.addr+' subscribed to '+r.chr+' ('+r.mode+')';
+      case 'unsub': return 'srv: '+r.addr+' unsubscribed from '+r.chr;
+      case 'mtu': return 'srv: '+r.addr+' mtu '+r.mtu;
+      default: return 'srv '+r.ev;
+    }
+    case 'l2cap': return 'l2cap '+r.ev+' '+(r.addr||'')+(r.psm ? ' psm '+r.psm : '')+(r.hex ? ' '+r.hex.slice(0,40) : '');
     case 'btlink': return 'rfcomm '+r.ev+' '+(r.addr||'')+(r.hex ? ' '+r.hex.slice(0,40) : '');
     case 'btdev': return 'paired '+r.addr+' '+(r.name||'')+' ('+r.type+')';
     case 'net': switch(r.ev){
@@ -117,6 +169,9 @@ function plLine(r){
       case 'data': return r.proto+' #'+r.conn+' '+(r.peer ? r.peer+' ' : '')+r.n+' B: '+String(r.text||'').replace(/[^\x20-\x7e]/g,'.').slice(0,60);
       case 'close': return r.proto+' closed '+(r.conn!=null ? '#'+r.conn : 'server '+r.server);
       case 'ping': return r.ok ? 'ping '+r.host+' '+f(r.ms,1)+' ms ttl '+(r.ttl??'—')+' seq '+r.seq : 'ping '+r.host+' '+(r.info||'no reply');
+      case 'nsd': return 'nsd '+r.kind+' '+(r.name||'')+' '+(r.type||'')+(r.host ? ' '+r.host+':'+r.port : '');
+      case 'rtt': return r.ok ? 'rtt '+(r.ssid||r.bssid)+' '+f(r.dist,2)+' m ±'+f(r.std,2)+' ('+r.good+'/'+r.tried+', '+r.rssi+' dBm)' : 'rtt '+(r.bssid||'')+' '+(r.msg||'failed, status '+r.status);
+      case 'aware': return 'aware '+r.kind+(r.peer ? ' peer '+r.peer : '')+(r.service ? ' '+r.service : '')+(r.kind==='message' || r.kind==='peer' ? ' '+String(r.text||'').replace(/[^\x20-\x7e]/g,'.').slice(0,60) : '')+(r.kind==='sent' ? (r.ok ? ' ok' : ' failed') : '');
       default: return 'net '+r.ev;
     }
     case 'speech': return (r.final ? '' : '… ')+r.text;
@@ -128,7 +183,7 @@ function plLine(r){
 }
 
 // ---------- сеть ----------
-const PL_NET_ACTIONS=['tcp connect','tcp send','tcp close','tcp listen','udp open','udp send','udp close','udp request','ping','traceroute step','dns','net info','raw send'];
+const PL_NET_ACTIONS=['tcp connect','tcp send','tcp close','tcp listen','udp open','udp send','udp close','udp request','ping','traceroute step','dns','net info','raw send','nsd discover','nsd stop','nsd register','nsd unregister','wifi rtt','aware publish','aware subscribe','aware send','aware stop','monitor on','monitor off','monitor channel'];
 // DNS: запрос собирает dnsQuery (dnsq-kernels.js) и отправляется UDP-запросом через приложение
 function plNetCmd(p,I={}){
   const host=String(I.host||p.host||'').trim(), port=+(I.port||p.port)||0, conn=+(I.conn||p.conn)||0;
@@ -154,10 +209,41 @@ function plNetCmd(p,I={}){
       return {cmd:'udp.request',host:String(p.dnsServer||'@dns').trim(),port:+p.dnsPort||53,hex:Array.from(q,b=>b.toString(16).padStart(2,'0')).join(''),timeout:+p.timeout||3000,_dns:{name,type:p.dnsType||'A'}};
     }
     case 'net info': return {cmd:'net.info'};
+    case 'nsd discover': { const t=plNsdType(p.nsdType); return t ? {cmd:'nsd.discover',type:t,resolve:p.nsdResolve!==false,timeout:+p.nsdTimeout||0} : {error:'type: _http._tcp'}; }
+    case 'nsd stop': return {cmd:'nsd.stop'};
+    case 'nsd unregister': return {cmd:'nsd.unregister'};
+    case 'nsd register': {
+      const t=plNsdType(p.nsdType); if(!t) return {error:'type: _http._tcp'}; if(!(port>0)) return {error:'port'};
+      const txt={}; for(const kv of String(p.nsdTxt||'').split(/[;\n]+/)){ const m=/^\s*([^=\s]{1,9})\s*=\s*(.*?)\s*$/.exec(kv); if(m) txt[m[1]]=m[2]; }
+      return {cmd:'nsd.register',name:String(p.nsdName||'DSP').trim()||'DSP',type:t,port,...(Object.keys(txt).length ? {txt} : {})};
+    }
+    case 'wifi rtt': {
+      const list=String(I.host||p.rttBssids||'').split(/[,;\s]+/).filter(Boolean), bssids=[];
+      for(const b of list){ const a=plAddr(b.replace(/-/g,':')); if(!a) return {error:'bssids: AA:BB:CC:DD:EE:FF, comma separated (empty — the strongest 802.11mc points)'}; bssids.push(a); }
+      return {cmd:'wifi.rtt',...(bssids.length ? {bssids} : {}),count:Math.max(1,Math.min(50,+p.rttCount||1)),every:Math.max(500,+p.rttEvery||1000),max:Math.max(1,Math.min(20,+p.rttMax||10))};
+    }
+    case 'aware publish': case 'aware subscribe': {
+      const service=String(p.awareService||'').trim(); if(!/^[A-Za-z0-9_.-]{1,255}$/.test(service)) return {error:'service: letters, digits, _ . -'};
+      const w=data ? payload() : null; if(data && !w) return {error:p.dfmt==='text' ? 'info' : 'info: hex bytes'};
+      return p.action==='aware publish' ? {cmd:'aware.publish',service,solicited:!!p.awareSolicited,...(w||{})} : {cmd:'aware.subscribe',service,active:p.awareActive!==false,...(w||{})};
+    }
+    case 'aware send': { const peer=+p.awarePeer; const w=payload(); return peer>0 && w ? {cmd:'aware.send',peer,...w} : {error:peer>0 ? 'nothing to send' : 'peer: the number from a «peer» / «message» record'}; }
+    case 'aware stop': return {cmd:'aware.stop'};
+    case 'monitor on': case 'monitor off': case 'monitor channel': {
+      const iface=String(p.monIface||'wlan0').trim(); if(!/^[a-z][a-z0-9]{0,14}$/.test(iface)) return {error:'iface: wlan0, wlan1…'};
+      const width=['','NOHT','HT20','HT40+','HT40-','80MHz','160MHz'].includes(p.monWidth||'') ? (p.monWidth||'') : null; if(width===null) return {error:'width'};
+      const tune={}; if(+p.monFreq>0) tune.freq=+p.monFreq; else if(+p.monChannel>0) tune.channel=+p.monChannel; if(width) tune.width=width;
+      if(p.action==='monitor off') return {cmd:'wifi.monitor',iface,on:false};
+      if(p.action==='monitor channel') return Object.keys(tune).some(k=>k!=='width') ? {cmd:'wifi.channel',...tune} : {error:'channel or freq'};
+      const hop=String(p.monHop||'').split(/[,\s]+/).filter(Boolean).map(Number);
+      if(hop.some(c=>!(c>=1 && c<=233))) return {error:'hop: channels, comma separated (1…233)'};
+      return {cmd:'wifi.monitor',iface,on:true,...tune,...(hop.length ? {hop,dwell:Math.max(250,+p.monDwell||500)} : {})};
+    }
     case 'raw send': return plIsHex(data) ? {cmd:'raw.send',hex:plHex(data)} : {error:'data: a complete IPv4 packet in hex'};
   }
   return {error:'unknown action'};
 }
+const plNsdType=s=>{ const t=String(s||'').trim().replace(/\.$/,'').split(',')[0]; return /^_[A-Za-z0-9][A-Za-z0-9-]{0,14}\._(tcp|udp)$/.test(t) ? t : ''; };
 // ответ на DNS-запрос (запись {src:'cmd', hex}) → строки rec
 function plDnsReply(r,q){
   const h=plHex(r.hex), b=new Uint8Array(h.length>>1); for(let i=0;i<b.length;i++) b[i]=parseInt(h.substr(i*2,2),16);
@@ -165,7 +251,7 @@ function plDnsReply(r,q){
   return {parsed:d,rows:dnsRecs(d,r.server).map(x=>({...x,ms:r.ms,src:'dns'}))};
 }
 
-if(typeof module!=='undefined') module.exports={plGattCmd,plNetCmd,plScanOpts,plDecode,plLine,plAdvCmd,plDnsReply};
+if(typeof module!=='undefined') module.exports={plGattCmd,plNetCmd,plScanOpts,plDecode,plLine,plAdvCmd,plDnsReply,plSrvDef,plNsdType};
 
 // ---------- автоматизация, речь, управление ----------
 const PL_SYS_ACTIONS=['speech start','speech stop','vol get','vol set','vol ringer','tts speak','tts stop','clip set','clip get',

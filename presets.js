@@ -526,6 +526,12 @@ const PRESET_CATS={
   'Phone App: Bluetooth Classic Terminal (RFCOMM / SPP)':'Network & IoT',
   'Phone App: BLE Beacon (Broadcast Sensor Data)':'Network & IoT',
   'Phone App: TCP / UDP Server, Client, Ping and DNS':'Network & IoT',
+  'Phone App: BLE GATT Server (the Phone as a Peripheral)':'Network & IoT',
+  'Phone App: BLE L2CAP Channel (Fast Stream Without GATT)':'Network & IoT',
+  'Phone App: mDNS / DNS-SD Service Discovery (Bonjour)':'Network & IoT',
+  'Phone App: Wi-Fi RTT Distance to Access Points':'Maps & Locating',
+  'Phone App: Wi-Fi Aware (Talk Without a Router)':'Network & IoT',
+  'Phone App: Wi-Fi Monitor Mode Sniffer (Root)':'Network & IoT',
   'Geofence: Enter / Exit Alerts on the Map':'Maps & Locating',
   'Phone sensors: Scan Wi-Fi / BLE / BT Only Away From Home':'Maps & Locating',
   'Cases: SDR Frequency and Torch by Place and Light':'Maps & Locating',
@@ -1568,6 +1574,87 @@ tb.size.w=480; tb.size.h=260; applySize(tb);
 const lg=addNode('recLog',960,510,{});
 lg.size.w=480; applySize(lg);
 addEdge(p1.id,'rec',lg.id,'rec'); addEdge(p2.id,'rec',tb.id,'rec'); addEdge(p2.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: BLE GATT Server (the Phone as a Peripheral)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The phone as a BLE peripheral with its own services — not only a beacon. Left node: «srv start» opens the GATT server from the text list (one line per characteristic: svc/chr props = value; «manual» in the props makes the page answer each read / write itself). Middle node: «adv start» makes it visible and connectable with the service UUID. A central (nRF Connect, another phone) connects, reads 2a37, writes the UART characteristic and subscribes; every request lands in Rec Log, and «srv notify» (or the data input) pushes a value to subscribers.\n'+
+  'Press Run on the left node first, then on the middle one. Android\'s limit: 8 services, 16 characteristics each; the server closes when the app service stops.'});
+nt.size.w=900; nt.size.h=170; applySize(nt);
+const gs=addNode('gattlink',40,230,{url:'ws://127.0.0.1:8765',action:'srv start'});
+gs.size.w=420; gs.size.h=520; applySize(gs);
+const ga=addNode('gattlink',500,230,{url:'ws://127.0.0.1:8765',action:'adv start',advName:true,advUuids:'180d',advConn:true,advMode:'balanced'});
+ga.size.w=420; ga.size.h=520; applySize(ga);
+const lg=addNode('recLog',960,230,{});
+lg.size.w=420; applySize(lg);
+addEdge(gs.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: BLE L2CAP Channel (Fast Stream Without GATT)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'L2CAP connection-oriented channels (Android 10+): a byte stream to a BLE device without the GATT overhead of 20–512-byte characteristics. «l2cap listen» asks the system for a PSM and reports it (watch Rec Log) — a peer connects to it by address and PSM; «l2cap connect» does the reverse (set the address and the PSM of a device that listens, e.g. an ESP32 or another phone running this patch). «l2cap send» writes bytes to the open channel; incoming data arrives as «l2cap data» records with hex and text.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const gl=addNode('gattlink',40,210,{url:'ws://127.0.0.1:8765',action:'l2cap listen',secure:false,wfmt:'text'});
+gl.size.w=420; gl.size.h=520; applySize(gl);
+const lg=addNode('recLog',500,210,{});
+lg.size.w=420; applySize(lg);
+addEdge(gl.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: mDNS / DNS-SD Service Discovery (Bonjour)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'What announces itself on the local network: printers (_ipp._tcp), Chromecasts (_googlecast._tcp), web servers (_http._tcp), Home Assistant (_home-assistant._tcp), Spotify Connect, AirPlay (_airplay._tcp)… «nsd discover» browses the service type and resolves each answer to host, port and TXT records; change the type for another family. «nsd register» announces the phone itself (name, type, port and TXT in the group below) so other devices find a server started with «tcp listen».\n'+
+  'Records land in the table (found / resolved / lost) and in Rec Log. Needs Wi-Fi; no special permission.'});
+nt.size.w=900; nt.size.h=150; applySize(nt);
+const nl=addNode('netlink',40,230,{url:'ws://127.0.0.1:8765',action:'nsd discover',nsdType:'_http._tcp'});
+nl.size.w=420; nl.size.h=520; applySize(nl);
+const tb=addNode('table',500,230,{list:'phone/nsd',maxRows:300,rev:true,cols:['t','ev','kind','name','type','host','port','txt']});
+tb.size.w=520; tb.size.h=280; applySize(tb);
+const lg=addNode('recLog',500,530,{});
+lg.size.w=520; applySize(lg);
+addEdge(nl.id,'rec',tb.id,'rec'); addEdge(nl.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Wi-Fi RTT Distance to Access Points', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Wi-Fi Round-Trip Time (802.11mc / FTM): the distance to an access point measured by flight time, to about a metre — no signal-strength guessing. Phone sensors scans Wi-Fi (the «mc» flag marks access points that answer ranging); «wifi rtt» then ranges the strongest ones (or the BSSIDs listed in the node) for a number of rounds and reports dist ± std in metres per access point. Needs a phone and an access point that support it (Pixel / Galaxy with Google Nest Wifi, many Wi-Fi 6 routers), Wi-Fi and Location on.\n'+
+  'Android limits background apps to a few rounds per 10 minutes; with the DSP app in front there is no such limit. Run the scan for ~10 s first, then press Run on the Network node.'});
+nt.size.w=900; nt.size.h=170; applySize(nt);
+const tx=addNode('termux',40,250,{url:'ws://127.0.0.1:8765',wifi:true,wifiEvery:10,gps:false});
+tx.size.w=380; tx.size.h=420; applySize(tx);
+const nl=addNode('netlink',460,250,{url:'ws://127.0.0.1:8765',action:'wifi rtt',rttCount:10,rttEvery:1000});
+nl.size.w=420; nl.size.h=520; applySize(nl);
+const tb=addNode('table',920,250,{list:'phone/rtt',maxRows:300,rev:true,cols:['t','ssid','bssid','dist','std','rssi','good','tried']});
+tb.size.w=520; tb.size.h=300; applySize(tb);
+addEdge(nl.id,'rec',tb.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Wi-Fi Aware (Talk Without a Router)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Wi-Fi Aware (NAN): two phones find each other and exchange short messages directly over Wi-Fi, no access point, no internet. One side «aware publish» a service name (the data field is its info bytes), the other «aware subscribe» to the same name: each discovery is a «peer» record with a peer number, and «aware send» (peer + data, up to 255 bytes) delivers a message that arrives on the other phone as a «message» record. Needs two phones with Aware support (most Android 8+ phones); not available while a hotspot or Wi-Fi Direct holds the radio.\n'+
+  'Left node: publish; right node: set the action to subscribe on the other phone (same service name). Reply from a message record with the peer number it came from.'});
+nt.size.w=900; nt.size.h=170; applySize(nt);
+const nl=addNode('netlink',40,250,{url:'ws://127.0.0.1:8765',action:'aware publish',awareService:'dsp',dfmt:'text',data:'hello from DSP'});
+nl.size.w=420; nl.size.h=520; applySize(nl);
+const lg=addNode('recLog',500,250,{});
+lg.size.w=420; applySize(lg);
+addEdge(nl.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Wi-Fi Monitor Mode Sniffer (Root)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Raw 802.11 frames from the phone\'s own Wi-Fi chip — beacons, probe requests, deauths, data headers — when the phone is rooted, has tcpdump and iw (Termux or a Magisk module) and its chip supports monitor mode (Nexmon-patched Broadcom, some Qualcomm / MediaTek; many do not). Allow «packet capture» in the app Settings. Network → «monitor on» switches wlan0 to monitor mode and hops 1, 6, 11 (the phone\'s normal Wi-Fi is off meanwhile; «monitor off» restores it, and so does stopping the app service). Phone sensors with packet capture on (interface wlan0) streams the frames; Wi-Fi Sniffer decodes them with the same schema as the ESP32 version — type, addresses, SSID, security, reason codes.\n'+
+  'Order: Run on the Network node (monitor on), then tick the capture in Phone sensors.'});
+nt.size.w=900; nt.size.h=190; applySize(nt);
+const nl=addNode('netlink',40,270,{url:'ws://127.0.0.1:8765',action:'monitor on',monIface:'wlan0',monChannel:6,monHop:'1,6,11',monDwell:400});
+nl.size.w=420; nl.size.h=520; applySize(nl);
+const tx=addNode('termux',500,270,{url:'ws://127.0.0.1:8765',pkt:true,iface:'wlan0',filter:'',snap:'512'});
+tx.size.w=380; tx.size.h=420; applySize(tx);
+const ws=addNode('wifiSniff',920,270,{types:'mgmt'});
+ws.size.w=420; applySize(ws);
+const tb=addNode('table',920,470,{list:'phone/wifi-frames',maxRows:500,rev:true,cols:['t','kind','sa','da','bssid','ssid','chan','rssi']});
+tb.size.w=520; tb.size.h=300; applySize(tb);
+addEdge(tx.id,'rec',ws.id,'rec'); addEdge(ws.id,'rec',tb.id,'rec');
 markWiresDirty();
 });
 preset('Geofence: Enter / Exit Alerts on the Map', function(){

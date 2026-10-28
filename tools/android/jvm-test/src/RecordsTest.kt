@@ -13,6 +13,12 @@ import app.dsp.phone.SnifferHub
 import app.dsp.phone.UsbDesc
 import app.dsp.phone.Bt
 import app.dsp.phone.Gnss
+import app.dsp.phone.GattSpec
+import app.dsp.phone.WifiArgs
+import app.dsp.phone.Radiotap
+import app.dsp.phone.Dot11
+import app.dsp.phone.MonitorScript
+import org.json.JSONArray
 import app.dsp.phone.Json
 import app.dsp.phone.ActivityModel
 import app.dsp.phone.Launch
@@ -34,6 +40,64 @@ fun main() {
     ok("power: thermal moderate 2, severe 4 (also on charger)", PowerPolicy.factor(80, true, false, 2) == 2 && PowerPolicy.factor(80, true, false, 3) == 4)
     ok("power: hysteresis (19→22% stays throttled, 23% releases)", PowerPolicy.factor(22, false, false, 0, prev = 2) == 2 && PowerPolicy.factor(23, false, false, 0, prev = 2) == 1)
     ok("power: unknown level (-1) does not throttle", PowerPolicy.factor(-1, false, false, 0) == 1)
+
+    // --- GATT-сервер: разбор служб, смещения, CCCD ---
+    run {
+        val p = GattSpec.parse(JSONArray("""[{"uuid":"180d","chars":[{"uuid":"2a37","props":["read","notify"],"hex":"0600"},{"uuid":"2a38","props":["write","writenr"],"auto":false,"secure":true}]}]"""))
+        ok("gattsrv: parse ok", p.err == null && p.svcs.size == 1 && p.svcs[0].chars.size == 2, p.err ?: "")
+        val c0 = p.svcs[0].chars[0]; val c1 = p.svcs[0].chars[1]
+        ok("gattsrv: props / perms from names", c0.props == 0x02 or 0x10 && c0.perms == 0x01 && c1.props == 0x08 or 0x04 && c1.perms == 0x20 && !c1.auto)
+        ok("gattsrv: value hex", c0.value.contentEquals(byteArrayOf(6, 0)))
+        ok("gattsrv: uuid short form → full", p.svcs[0].uuid.toString() == "0000180d-0000-1000-8000-00805f9b34fb")
+        ok("gattsrv: errors", GattSpec.parse(null).err != null && GattSpec.parse(JSONArray("""[{"uuid":"zz"}]""")).err != null &&
+            GattSpec.parse(JSONArray("""[{"uuid":"180d","chars":[{"uuid":"2a37","props":["fly"]}]}]""")).err != null &&
+            GattSpec.parse(JSONArray("""[{"uuid":"180d","chars":[{"uuid":"2a37","props":[]}]}]""")).err != null)
+        ok("gattsrv: limits", GattSpec.parse(JSONArray((1..9).map { """{"uuid":"18$it"}""" }.joinToString(",", "[", "]").let { s -> s })).err != null)
+        ok("gattsrv: slice with offset, invalid offset → null", GattSpec.slice(byteArrayOf(1, 2, 3), 1)!!.contentEquals(byteArrayOf(2, 3)) && GattSpec.slice(byteArrayOf(1), 2) == null && GattSpec.slice(byteArrayOf(1), 1)!!.isEmpty())
+        ok("gattsrv: merge at offset pads with zeros", GattSpec.merge(byteArrayOf(1, 2), 1, byteArrayOf(9, 8, 7)).contentEquals(byteArrayOf(1, 9, 8, 7)) && GattSpec.merge(byteArrayOf(1), 3, byteArrayOf(5)).contentEquals(byteArrayOf(1, 0, 0, 5)))
+        ok("gattsrv: cccd modes", GattSpec.cccdMode(byteArrayOf(1, 0)) == 1 && GattSpec.cccdMode(byteArrayOf(2, 0)) == 2 && GattSpec.cccdMode(null) == 0 && GattSpec.cccdBytes(2).contentEquals(byteArrayOf(2, 0)))
+    }
+
+    ok("l2cap: psm bounds", Args.psm(128) && Args.psm(65535) && !Args.psm(0) && !Args.psm(65536))
+
+    // --- NSD / RTT / Aware: разбор аргументов ---
+    ok("nsd: type normalised, bad ones refused", WifiArgs.nsdType("_http._tcp") == "_http._tcp" && WifiArgs.nsdType(" _ipp._tcp. ") == "_ipp._tcp" && WifiArgs.nsdType("_http._tcp,_printer") == "_http._tcp" &&
+        WifiArgs.nsdType("http.tcp") == null && WifiArgs.nsdType("_http._icmp") == null && WifiArgs.nsdType("_a b._tcp") == null && WifiArgs.nsdType(null) == null)
+    ok("nsd: name 1…63 bytes, no control chars", WifiArgs.nsdName("DSP phone") == "DSP phone" && WifiArgs.nsdName("") == null && WifiArgs.nsdName("a".repeat(64)) == null && WifiArgs.nsdName("a\nb") == null && WifiArgs.nsdName("я".repeat(32)) == null)
+    ok("aware: service name", WifiArgs.awareName("dsp.chat-1") == "dsp.chat-1" && WifiArgs.awareName("bad name") == null && WifiArgs.awareName("") == null)
+    ok("rtt: bssid list", WifiArgs.macList(JSONArray("""["aa:bb:cc:dd:ee:ff","11-22-33-44-55-66"]"""), 4)!!.joinToString() == "AA:BB:CC:DD:EE:FF, 11:22:33:44:55:66" &&
+        WifiArgs.macList(JSONArray("""["zz"]"""), 4) == null && WifiArgs.macList(JSONArray("""["aa:bb:cc:dd:ee:ff","aa:bb:cc:dd:ee:00"]"""), 1) == null && WifiArgs.macList(null, 4)!!.isEmpty())
+    ok("rtt: millimetres → metres", WifiArgs.metres(1234) == 1.234 && WifiArgs.metres(0) == 0.0)
+
+    // --- монитор-режим: radiotap, заголовок 802.11, скрипты root ---
+    run {
+        // radiotap: версия 0, длина 16, present = flags | rate | channel | signal; flags 0x10 — в конце FCS
+        val rt = byteArrayOf(0, 0, 16, 0, 0x2E, 0, 0, 0, 0x10, 0x0C, 0x6C, 0x09, 0xA0.toByte(), 0x00, 0xC8.toByte(), 0)
+        val beacon = byteArrayOf(0x80.toByte(), 0, 0, 0, -1, -1, -1, -1, -1, -1, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0, 0)
+        val r = Radiotap.parse(rt + beacon)!!
+        ok("radiotap: length, frequency, signal, rate, FCS flag", r.len == 16 && r.freq == 2412 && r.signal == -56 && r.rateKbps == 6000 && r.fcs, "${r.len} ${r.freq} ${r.signal} ${r.rateKbps} ${r.fcs}")
+        ok("radiotap: channel numbers", Radiotap.channel(2412) == 1 && Radiotap.channel(2484) == 14 && Radiotap.channel(5180) == 36 && Radiotap.channel(5955) == 1 && Radiotap.channel(1000) == 0)
+        ok("radiotap: junk refused", Radiotap.parse(byteArrayOf(1, 0, 8, 0, 0, 0, 0, 0)) == null && Radiotap.parse(byteArrayOf(0, 0, 40, 0, 0, 0, 0, 0)) == null && Radiotap.parse(ByteArray(3)) == null)
+        // TSFT (8 байт, выравнивание 8) перед остальными полями
+        val withTsft = byteArrayOf(0, 0, 24, 0, 0x2F, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x0C, 0x71, 0x09, 0, 0, 0xC0.toByte(), 0)
+        val t = Radiotap.parse(withTsft)!!
+        ok("radiotap: TSFT is skipped with its alignment", t.freq == 2417 && t.signal == -64 && t.rateKbps == 6000 && !t.fcs, "${t.freq} ${t.signal}")
+        val d = Dot11.parse(beacon)!!
+        ok("dot11: beacon is mgmt/8 with three addresses and BSSID", d.typeName == "mgmt" && d.subtype == 8 && d.a1 == "ff:ff:ff:ff:ff:ff" && d.a2 == "11:22:33:44:55:66" && d.bssid == "11:22:33:44:55:66")
+        val ack = Dot11.parse(byteArrayOf(0xD4.toByte(), 0, 0, 0, 1, 2, 3, 4, 5, 6))!!
+        ok("dot11: ACK has only the receiver address", ack.typeName == "ctrl" && ack.subtype == 13 && ack.a1 == "01:02:03:04:05:06" && ack.a2 == null && ack.bssid == null)
+        val toAp = Dot11.parse(byteArrayOf(0x08, 0x01, 0, 0) + byteArrayOf(0xA, 0xB, 0xC, 0xD, 0xE, 0xF) + ByteArray(6) { 2 } + ByteArray(6) { 3 })!!
+        ok("dot11: data frame to the AP — BSSID is address 1", toAp.typeName == "data" && toAp.bssid == "0a:0b:0c:0d:0e:0f")
+        ok("dot11: empty is null", Dot11.parse(ByteArray(1)) == null)
+    }
+    run {
+        ok("monitor: iface names", MonitorScript.iface("wlan0") == "wlan0" && MonitorScript.iface(" mon0 ") == "mon0" && MonitorScript.iface("wlan0;reboot") == null && MonitorScript.iface("../x") == null && MonitorScript.iface("") == null && MonitorScript.iface("0wlan") == null)
+        ok("monitor: tune", MonitorScript.tune(JSONObject("""{"channel":6,"width":"ht20"}""")) == "channel 6 HT20" && MonitorScript.tune(JSONObject("""{"freq":5180,"width":"80MHz"}""")) == "freq 5180 80MHz" &&
+            MonitorScript.tune(JSONObject("""{"channel":0}""")) == null && MonitorScript.tune(JSONObject("""{"freq":100}""")) == null && MonitorScript.tune(JSONObject("""{"channel":6,"width":"HT20; reboot"}""")) == null && MonitorScript.tune(JSONObject("{}")) == null)
+        val on = MonitorScript.on("wlan0", "channel 6 HT20")
+        ok("monitor: on-script brings the interface down, switches type, up, tunes; restores it on failure", on.contains("ip link set wlan0 down") && on.contains("set type monitor") && on.contains("ip link set wlan0 up") && on.contains("set channel 6 HT20") && on.contains("|| { ip link set wlan0 up;") && on.contains("iw not found"))
+        ok("monitor: off-script returns to managed", MonitorScript.off("wlan0").contains("set type managed") && MonitorScript.channel("wlan1", "freq 2437").endsWith("\$IW dev wlan1 set freq 2437"))
+    }
 
     // --- активность: лежит / движется / идёт ---
     run {
