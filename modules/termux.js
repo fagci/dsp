@@ -136,11 +136,13 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'hz',g:'Motion (accel · gyro · mag)',t:'select',opts:['0','10','50','100','200','500','1000'],d:'0',label:'sensor rate, Hz (DSP app; 0 — default; the phone gives what the sensor can)'},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},
     {n:'connect',t:'button',label:'Connect',fn:n=>termuxStart(n)},
-    {n:'disconnect',t:'button',label:'Disconnect',fn:n=>termuxStop(n)},
+    {n:'disconnect',t:'button',label:'Disconnect',fn:n=>{ n.resume=false; termuxStop(n); }},
   ],
   init:n=>{ ssInit(n,1); n.sExact=true; n.sLag=.25; n.micT=0; n.micT0=0; n.devSeen=new Map(); n.ptQ=[]; n.ptSeq=0; n.ws=null; n.want=false; n.timer=null; n.recQ=[]; n.lineQ=[]; n.nmeaQ=[]; n.vals={}; n.last=''; n.msgs=0; n.count=0;
             n.status='not connected'; n.warn=''; n.sentSub=null; n.bridgeMsg=''; },
   dispose:n=>termuxStop(n),
+  onStop:n=>{ n.resume=n.want; termuxStop(n); },       // стоп движка — отпускаем мост (датчики, микрофон на телефоне)
+  onRun:n=>{ if(n.resume){ n.resume=false; termuxStart(n); } },
   process(n,I){
     for(const k of TERMUX_PINS){ const v=I[k]; if(typeof v==='number' && isFinite(v) && n.p[k]!==(v>=.5)) setMod(n,k,v>=.5); }
     termuxSendSub(n);
