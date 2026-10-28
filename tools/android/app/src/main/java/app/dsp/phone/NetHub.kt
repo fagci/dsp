@@ -205,6 +205,16 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
         else Reply.done(c, id, cmd, if (code == -1) "su: ${out.trim().ifEmpty { "no root" }}" else "raw send failed: ${out.trim().take(200)}")
     }
 
+    fun held(): Int = tcp.size + servers.size + udp.size
+
+    /** Закрывает сокеты, оставленные открытыми; сам пул остаётся — новые команды работают. */
+    fun release() {
+        for (t in tcp.values) try { t.s.close() } catch (e: Exception) {}
+        for (s in servers.values) try { s.close() } catch (e: Exception) {}
+        for (s in udp.values) try { s.close() } catch (e: Exception) {}
+        tcp.clear(); servers.clear(); udp.clear()
+    }
+
     fun close() {
         for (t in tcp.values) try { t.s.close() } catch (e: Exception) {}
         for (s in servers.values) try { s.close() } catch (e: Exception) {}

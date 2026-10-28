@@ -27,6 +27,7 @@ class SettingsActivity : Activity() {
     private lateinit var autostart: Switch
     private lateinit var battery: TextView
     private lateinit var port: EditText
+    private lateinit var idle: EditText
     private lateinit var throttle: Switch
     private lateinit var ext: Switch
     private lateinit var extp: Switch
@@ -62,6 +63,7 @@ class SettingsActivity : Activity() {
         root.addView(ext)
         extp = Switch(this).apply { text = "Let other apps open a whole patch from a link (dsp://run?data=\u2026); off \u2014 only patches already saved here, by name"; isChecked = cfg.extPatch; setPadding(0, pad, 0, 0) }
         root.addView(extp)
+        text("Release connections and listeners left open (GATT, RFCOMM, sockets, advertising) after this many minutes with no client; 0 \u2014 never"); idle = edit(cfg.idleMin.toString(), true)
         battery = text("")
         root.addView(Button(this).apply {
             text = "Exclude from battery optimization"
@@ -99,7 +101,7 @@ class SettingsActivity : Activity() {
         if (p == null || p < 1024 || p > 65535) { Toast.makeText(this, "Port: 1024–65535", Toast.LENGTH_SHORT).show(); return }
         val t = token.text.toString().trim()
         cfg.port = p; cfg.token = t; cfg.shareLan = share.isChecked; cfg.strict = strict.isChecked; cfg.checkOrigin = check.isChecked; cfg.sniffer = sniff.isChecked; cfg.openCmds = openc.isChecked
-        cfg.origins = origins.text.toString().trim(); cfg.autoStart = autostart.isChecked; cfg.autoThrottle = throttle.isChecked; cfg.extIntents = ext.isChecked; cfg.extPatch = extp.isChecked
+        cfg.origins = origins.text.toString().trim(); cfg.autoStart = autostart.isChecked; cfg.autoThrottle = throttle.isChecked; cfg.idleMin = idle.text.toString().toIntOrNull() ?: 30; cfg.extIntents = ext.isChecked; cfg.extPatch = extp.isChecked
         BridgeService.start(this, reload = true)
         show()
         Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()

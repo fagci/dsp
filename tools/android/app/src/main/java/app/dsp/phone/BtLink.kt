@@ -316,6 +316,10 @@ class GattHub(private val ctx: Context, private val emit: Emit, private val need
         }, j.optLong("timeout", 30_000).coerceIn(3_000, 120_000))
     }
 
+    fun held(): Int = conns.size
+
+    fun release() { h.post { for (cn in conns.values) try { cn.gatt?.disconnect(); cn.gatt?.close() } catch (e: Exception) {}; conns.clear() } }
+
     fun close() {
         h.post { for (cn in conns.values) try { cn.gatt?.close() } catch (e: Exception) {}; conns.clear() }
         thread.quitSafely()
@@ -467,6 +471,10 @@ class BtLinkHub(private val ctx: Context, private val emit: Emit, private val ne
         rec("close", addr)
     }
 
+    fun held(): Int = socks.size + (if (server != null) 1 else 0)
+
+    fun release() { try { server?.close() } catch (e: Exception) {}; server = null; for (s in socks.values) try { s.close() } catch (e: Exception) {}; socks.clear() }
+
     fun close() {
         if (rx) try { ctx.unregisterReceiver(bondRx) } catch (e: Exception) {}
         server?.close(); for (s in socks.values) try { s.close() } catch (e: Exception) {}
@@ -550,6 +558,10 @@ class AdvertiseHub(private val ctx: Context, private val needs: Needs) {
         setCb = cb
         adv.startAdvertisingSet(p, data(j, false), null, null, null, cb)
     }
+
+    fun held(): Int = if (on) 1 else 0
+
+    fun release() = stop()
 
     fun close() = stop()
 }

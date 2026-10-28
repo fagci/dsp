@@ -349,5 +349,9 @@ class SysHub(private val ctx: Context, private val cfg: Config, private val emit
         Reply.done(c, id, cmd, null)
     }
 
+    fun held(): Int = if (bcastRx != null) 1 else 0
+
+    fun release() { bcastRx?.let { try { ctx.unregisterReceiver(it) } catch (e: Exception) {} }; bcastRx = null }
+
     fun close() { update(false); tts?.shutdown(); tts = null; bcastRx?.let { try { ctx.unregisterReceiver(it) } catch (e: Exception) {} } }
 }

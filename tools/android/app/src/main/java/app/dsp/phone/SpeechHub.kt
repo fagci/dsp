@@ -123,5 +123,9 @@ class SpeechHub(private val ctx: Context, private val emit: Emit, private val ne
         rec = null
     }
 
+    fun held(): Int = if (rec != null) 1 else 0
+
+    fun release() { main.post { stop() } }
+
     fun close() { main.post { stop() } }
 }

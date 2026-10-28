@@ -66,6 +66,11 @@ class Config(ctx: Context) {
         get() = sp.getBoolean("autoThrottle", true)
         set(v) { sp.edit().putBoolean("autoThrottle", v).apply() }
 
+    /** Через сколько минут без единого клиента закрыть оставленные соединения и слушатели (GATT, RFCOMM, сокеты, реклама). 0 — не закрывать. */
+    var idleMin: Int
+        get() = sp.getInt("idleMin", 30)
+        set(v) { sp.edit().putInt("idleMin", v.coerceIn(0, 1440)).apply() }
+
     fun allowedOrigins(): Set<String> =
         (origins.split(',', ' ', '\n').map { it.trim().trimEnd('/') }.filter { it.isNotEmpty() } + APP_ORIGIN).toSet()
 

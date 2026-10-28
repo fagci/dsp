@@ -110,6 +110,9 @@ if(fs.existsSync(kf)){
   K.termuxApply(o,{src:'battery',pct:49,status:'DISCHARGING'}); ok('discharging → 0',o.charging===0);
   K.termuxApply(o,{src:'power',pct:17,charging:0,saver:1,thermal:2,throttle:2});
   ok('apply power',o.batt===17 && o.charging===0 && o.saver===1 && o.therm===2 && o.thr===2);
+  K.termuxApply(o,{src:'power',t:1000,cpu:5000,pct:50,charging:0,wake:1,clients:0,held:'gatt×2'});
+  K.termuxApply(o,{src:'power',t:11000,cpu:5500,pct:50,charging:0,wake:0,clients:0,held:''});
+  ok('bridge cpu share between two power records',Math.abs(o.cpupct-5)<1e-9 && o.wake===0 && o.nclients===0 && o.held==='');
   K.termuxApply(o,{src:'ext',name:'home',value:1}); K.termuxApply(o,{src:'ext',name:'note',text:'x'});
   ok('apply ext: number kept, text ignored',o.extv===1);
   ok('line power / ext',/thermal 2/.test(K.termuxLine({src:'power',pct:17,thermal:2,throttle:2})) && /ext home 1/.test(K.termuxLine({src:'ext',name:'home',value:1})));

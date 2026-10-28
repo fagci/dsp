@@ -41,6 +41,7 @@ class BridgeService : Service() {
     private lateinit var net: NetHub
     private lateinit var sys: SysHub
     private lateinit var power: PowerHub
+    private val started = android.os.SystemClock.elapsedRealtime()
     private val asked = HashSet<String>()      // разрешения, о которых уже спросили в этой жизни сервиса
     private var wake: PowerManager.WakeLock? = null
     private val main = Handler(Looper.getMainLooper())
@@ -79,7 +80,7 @@ class BridgeService : Service() {
         cell = CellHub(this, gps) { s, j -> server.emit(s, j) }
         mic = MicHub(this) { s, j -> server.emit(s, j) }
         sniffer = SnifferHub(cfg, { s, j -> server.emit(s, j) }) { l, m -> server.note(l, m) }
-        power = PowerHub(this, cfg, emit) { main.post { refresh() } }
+        power = PowerHub(this, cfg, emit, ::diagPairs) { main.post { refresh() } }
         power.start()
         main.postDelayed(tick, TICK_MS)
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -102,6 +103,10 @@ class BridgeService : Service() {
         override fun run() {
             if (destroyed) return
             if (!server.listening) { serverError = server.start(); refresh() } else renewWake()
+            releaseIdle()
+            if ("power" in server.wanted().subs) power.push()
+            val t = serverError ?: summary()
+            if (t != shownText) (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(ID, notification())
             main.postDelayed(this, TICK_MS)
         }
     }
@@ -113,6 +118,33 @@ class BridgeService : Service() {
         if (active && wake == null) wake = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "dsp:bridge").also { it.setReferenceCounted(false) }
         wake?.let { if (active) it.acquire(WAKE_MS) else if (it.isHeld) it.release() }
     }
+
+    /** Что остаётся открытым независимо от подписок: соединения, слушатели, реклама — может тратить заряд при нуле клиентов. */
+    private fun holds(): List<String> {
+        val l = ArrayList<String>()
+        fun add(name: String, n: Int) { if (n > 0) l.add(if (n > 1) "$name×$n" else name) }
+        add("gatt", gatt.held()); add("rfcomm", btlink.held()); add("advertising", adv.held()); add("sockets", net.held()); add("broadcast receiver", sys.held()); add("speech", speech.held())
+        return l
+    }
+
+    private var idleSince = 0L
+
+    /** Нет клиентов дольше idleMin — закрываем то, что они оставили открытым. */
+    private fun releaseIdle() {
+        if (server.clientCount > 0) { idleSince = 0; return }
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (idleSince == 0L) { idleSince = now; return }
+        val h = holds()
+        if (cfg.idleMin <= 0 || h.isEmpty() || now - idleSince < cfg.idleMin * 60_000L) return
+        gatt.release(); btlink.release(); adv.release(); net.release(); sys.release(); speech.release()
+        idleSince = now
+        server.note("info", "no clients for ${cfg.idleMin} min: released ${h.joinToString(", ")}")
+    }
+
+    /** Поля записи power: нагрузка самого моста. cpu — процессорное время процесса, мс (разница за интервал = нагрузка). */
+    private fun diagPairs(): List<Pair<String, String?>> = listOf(
+        "cpu" to android.os.Process.getElapsedCpuTime().toString(), "wake" to if (wake?.isHeld == true) "1" else "0",
+        "clients" to server.clientCount.toString(), "held" to Json.str(holds().joinToString(", ")))
 
     /** Событие от другого приложения (ExternalReceiver) → подписчикам ext. */
     fun emitExt(name: String, value: String?, text: String?) {
@@ -205,6 +237,7 @@ class BridgeService : Service() {
         parts.add((if (cfg.shareLan) "0.0.0.0" else "127.0.0.1") + ":" + cfg.port)
         parts.add("${server.clientCount} client(s)")
         if (w.subs.isNotEmpty()) parts.add(w.subs.joinToString(","))
+        else if (server.clientCount == 0) holds().takeIf { it.isNotEmpty() }?.let { parts.add("holding " + it.joinToString(", ")) }
         return parts.joinToString(" · ")
     }
 
@@ -274,8 +307,18 @@ class BridgeService : Service() {
         )
     }
 
+    /** Что сейчас расходует заряд: подписки, wake lock, оставленные открытыми соединения, коэффициент замедления, CPU процесса. */
+    private fun diag(): String {
+        val w = server.wanted()
+        val cpu = android.os.Process.getElapsedCpuTime() / 1000.0
+        val up = (android.os.SystemClock.elapsedRealtime() - started) / 60000.0
+        return "clients: ${server.clientCount}\nsources on: " + (w.subs.sorted().joinToString(",").ifEmpty { "none" }) + "\nwake lock: " + (if (wake?.isHeld == true) "held" else "free") +
+            "\nheld open: " + (holds().joinToString(", ").ifEmpty { "none" }) + "\npolling slowed: ÷${power.factor}" +
+            "\nprocess CPU: ${"%.1f".format(cpu)} s in ${"%.0f".format(up)} min of service life\n"
+    }
+
     private fun statusText(): String =
-        "DSP phone bridge\n" + summary() + "\nsensors: " + sensors.available().joinToString(",") + "\n" + sensors.lines() + "addresses: " + lan().joinToString(", ") + "\n"
+        "DSP phone bridge\n" + summary() + "\nsensors: " + sensors.available().joinToString(",") + "\n" + sensors.lines() + "addresses: " + lan().joinToString(", ") + "\n" + diag()
 
     companion object {
         @Volatile var inst: BridgeService? = null

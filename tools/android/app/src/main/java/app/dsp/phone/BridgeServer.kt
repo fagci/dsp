@@ -89,7 +89,16 @@ class BridgeServer(
         ss = s
         running = true
         pool.execute { acceptLoop(s) }
-        pool.execute { while (running) { try { Thread.sleep(40) } catch (e: InterruptedException) { return@execute }; flush() } }
+        // ждём записей, а не опрашиваем каждые 40 мс: без подписчиков поток спит и не будит процессор
+        pool.execute {
+            while (running) {
+                try {
+                    synchronized(pending) { while (running && pending.isEmpty()) (pending as java.lang.Object).wait(30_000) }
+                    Thread.sleep(40)                  // накопить пачку
+                } catch (e: InterruptedException) { return@execute }
+                flush()
+            }
+        }
         return null
     }
 
@@ -99,7 +108,7 @@ class BridgeServer(
         ss = null
         for (s in conns) try { s.close() } catch (e: IOException) {}
         conns.clear(); clients.clear()
-        synchronized(pending) { pending.clear() }
+        synchronized(pending) { pending.clear(); (pending as java.lang.Object).notifyAll() }
     }
 
     fun wanted(): Want {
@@ -123,7 +132,7 @@ class BridgeServer(
     /** Запись от источника; уйдёт подписанным клиентам в ближайшей пачке. */
     fun emit(src: String, json: String) {
         if (clients.none { src in it.subs }) return
-        synchronized(pending) { pending.add(src to json) }
+        synchronized(pending) { pending.add(src to json); (pending as java.lang.Object).notify() }
     }
 
     fun note(level: String, msg: String) { val j = Json.note(level, msg); for (c in clients) c.send(j) }
