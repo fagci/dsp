@@ -119,6 +119,11 @@ e=''; try{ K.luParseSignals('{}'); }catch(x){ e=x.message; } ok(e,'не тот J
   t=K.luParseTalkgroups('id,name\n9,Local\n"250";"Russia"\n2600 Poland\n'); eq(t.rows.length,2,'группы csv: шапка и «;» не в счёт'); eq(t.rows[1].name,'Poland','группы csv: пробел');
   t=K.luParseBtUuids(fs.readFileSync(new URL('../data/bluetooth-uuids.json',import.meta.url),'utf8')); eq(t.cols[0],'uuid','Bluetooth UUID: колонки'); eq(t.rows.length>150,true,'Bluetooth UUID: строки');
   { const ix=K.luIndex('eq'); for(const r of t.rows) ix.add(r.uuid,r); eq(ix.find('2a19').fmt,'battery %','Bluetooth UUID: lookup по короткому UUID'); }
+  // BLE Company IDs — тот же формат {cols,rows}, парсер общий (luParseBtUuids)
+  { const tc=K.luParseBtUuids(fs.readFileSync(new URL('../data/bluetooth-companies.json',import.meta.url),'utf8'));
+    eq(tc.cols[0],'code','BLE Company IDs: колонки'); eq(tc.rows.length>4000,true,'BLE Company IDs: строки');
+    const ix=K.luIndex('eq'); for(const r of tc.rows) ix.add(r.code,r); eq(ix.find(76).name,'Apple, Inc.','BLE Company IDs: lookup по коду Apple=76');
+    const ixHex=K.luIndex('eq'); for(const r of tc.rows) ixHex.add(r.hex,r); eq(ixHex.find('004c').name,'Apple, Inc.','BLE Company IDs: lookup по hex (как в mfr.companyId)'); }
   build('Reference/DMR radio IDs','eq','id','',K.luParseRadioId(csv).rows,['id','callsign','name','place']);
   eq(K.luLookup('Reference/DMR radio IDs','id',2600123,'callsign'),'SP1ABC','lookup по числовому ID');
 }
