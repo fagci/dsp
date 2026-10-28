@@ -35,7 +35,7 @@ function gattStart(n){
   };
 }
 function gattSub(n){
-  const m=JSON.stringify({sub:['gatt','gattsrv','btlink','l2cap','blesync']});
+  const m=JSON.stringify({sub:['gatt','gattsrv','btlink','l2cap']});
   if(n.ws && n.ws.readyState===1 && m!==n.sentSub){ n.sentSub=m; n.ws.send(m); }
 }
 function gattSend(n,cmd){
@@ -94,12 +94,10 @@ def({ id:'gattlink', title:'BLE GATT / Bluetooth (DSP app)', cat:'Sources', kw:'
     {n:'advConn',t:'check',d:false,label:'connectable',g:'Advertise (peripheral)'},
     {n:'advExt',t:'check',d:false,label:'extended advertising (2M / Coded PHY, >31 bytes)',g:'Advertise (peripheral)'},
     {n:'advTimeout',t:'range',min:0,max:180000,step:1000,d:0,label:'stop after, ms (0 — until ble.adv.stop)',g:'Advertise (peripheral)'},
-    {n:'advPeriodic',t:'check',d:false,label:'advertise with a periodic train (needs the extended advertising support; not connectable) — receivers sync to it and get every packet',g:'Periodic advertising'},
+    {n:'advPeriodic',t:'check',d:false,label:'advertise with a periodic train (needs LE periodic advertising; not connectable). Android apps cannot receive one — use an ESP32 / nRF / another stack to sync to it',g:'Periodic advertising'},
     {n:'advPint',t:'range',min:100,max:81900,step:50,d:200,label:'periodic interval, ms (100 … 81900)',g:'Periodic advertising'},
     {n:'advPmfr',t:'text',d:'',label:'periodic data: manufacturer id=hex (FFFF=0102…); «adv pdata» replaces it while running',g:'Periodic advertising'},
     {n:'advPsvc',t:'text',d:'',label:'periodic data: service uuid=hex',g:'Periodic advertising'},
-    {n:'syncSkip',t:'range',min:0,max:499,step:1,d:0,label:'receive: skip N events between packets',g:'Periodic advertising'},
-    {n:'syncTimeout',t:'range',min:100,max:160000,step:100,d:10000,label:'receive: sync lost after, ms without a packet (the «addr» above is the transmitter; scan with ble legacy:false first so the phone has seen it)',g:'Periodic advertising'},
     {n:'fmt',t:'select',opts:['auto',...BLE_FORMATS],d:'auto',label:'value format (auto — Reference/Bluetooth UUIDs or hex)',g:'Decode value'},
     {n:'scale',t:'num',d:1,label:'scale',g:'Decode value'},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},

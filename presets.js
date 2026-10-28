@@ -1663,18 +1663,16 @@ markWiresDirty();
 });
 preset('Phone App: BLE Periodic Advertising (Broadcast Stream)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Periodic advertising (Bluetooth 5): a connectionless broadcast train at a fixed interval that any number of receivers can lock onto and read — sensor streams, beacons with a payload longer than a legacy advertisement, audio-sharing announcements. Left node: «adv start» with the periodic train on (interval and manufacturer data below; «adv pdata» swaps the data while it runs). Right: Phone sensors scans extended advertisements only (the record carries «pint» for a periodic one), then «sync start» on the transmitter address (AA:BB:… from that record, on this phone or another one) delivers every packet as a «blesync» record with hex, text and RSSI.\n'+
-  'Needs a phone with LE extended and periodic advertising (most Android 8+ phones with Bluetooth 5). One transmitter at a time; up to 4 syncs on the receiving side.'});
+const nt=addNode('note',40,40,{text:'Periodic advertising (Bluetooth 5): a connectionless broadcast train at a fixed interval that any number of receivers can lock onto and read — sensor streams, beacons with a payload longer than a legacy advertisement. The node starts it with «adv start» (interval and manufacturer data in the Periodic advertising group); «adv pdata» swaps the data while it runs, «adv stop» ends it. Phone sensors on the right scans extended advertisements only, so this phone (or another one) shows up with a «pint» field when it is on the air.\n'+
+  'Needs a phone with LE extended and periodic advertising (most Android 8+ phones with Bluetooth 5). Android apps cannot sync to a periodic train themselves (that API is hidden), so receive it with an ESP32 / nRF board or another stack.'});
 nt.size.w=900; nt.size.h=170; applySize(nt);
 const tx=addNode('gattlink',40,250,{url:'ws://127.0.0.1:8765',action:'adv start',advPeriodic:true,advPint:200,advPmfr:'FFFF=0102030405',advName:false});
 tx.size.w=420; tx.size.h=520; applySize(tx);
 const sc=addNode('termux',500,250,{url:'ws://127.0.0.1:8765',ble:true,bleLegacy:'extended only',gps:false});
 sc.size.w=380; sc.size.h=420; applySize(sc);
-const rx=addNode('gattlink',920,250,{url:'ws://127.0.0.1:8765',action:'sync start',syncTimeout:10000});
-rx.size.w=420; rx.size.h=520; applySize(rx);
-const lg=addNode('recLog',500,690,{});
-lg.size.w=380; applySize(lg);
-addEdge(sc.id,'rec',lg.id,'rec'); addEdge(rx.id,'rec',lg.id,'rec');
+const lg=addNode('recLog',920,250,{});
+lg.size.w=420; applySize(lg);
+addEdge(sc.id,'rec',lg.id,'rec'); addEdge(tx.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: Wi-Fi Direct (Find Peers, Connect, Group)', function(){
