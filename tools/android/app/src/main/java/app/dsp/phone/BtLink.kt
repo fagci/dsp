@@ -18,6 +18,7 @@ import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.AdvertisingSet
 import android.bluetooth.le.AdvertisingSetCallback
 import android.bluetooth.le.AdvertisingSetParameters
+import android.bluetooth.le.PeriodicAdvertisingParameters
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -490,6 +491,7 @@ class BtLinkHub(private val ctx: Context, private val emit: Emit, private val ne
 class AdvertiseHub(private val ctx: Context, private val needs: Needs) {
     private var legacyCb: AdvertiseCallback? = null
     private var setCb: AdvertisingSetCallback? = null
+    private var curSet: AdvertisingSet? = null
     @Volatile var on = false; private set
 
     fun exec(c: BridgeServer.Client, j: JSONObject) {
@@ -504,7 +506,7 @@ class AdvertiseHub(private val ctx: Context, private val needs: Needs) {
         val a = ctx.adapter()?.bluetoothLeAdvertiser
         legacyCb?.let { try { a?.stopAdvertising(it) } catch (e: Exception) {} }
         setCb?.let { try { a?.stopAdvertisingSet(it) } catch (e: Exception) {} }
-        legacyCb = null; setCb = null; on = false
+        legacyCb = null; setCb = null; curSet = null; on = false
     }
 
     private fun data(j: JSONObject, scanResp: Boolean): AdvertiseData {
@@ -521,13 +523,18 @@ class AdvertiseHub(private val ctx: Context, private val needs: Needs) {
 
     private fun run(c: BridgeServer.Client, id: Any?, cmd: String, j: JSONObject) {
         if (cmd == "ble.adv.stop") { stop(); return Reply.done(c, id, cmd, null) }
+        if (cmd == "ble.adv.pdata") {
+            val s = curSet ?: return Reply.done(c, id, cmd, "no periodic advertising running — ble.adv.start with periodic first")
+            s.setPeriodicAdvertisingData(data(j, false)); return Reply.done(c, id, cmd, null)
+        }
         if (cmd != "ble.adv.start") return Reply.done(c, id, cmd, "unknown command", "unknown")
         val ad = ctx.adapter()?.takeIf { it.isEnabled } ?: return Reply.done(c, id, cmd, "Bluetooth is off")
         val adv = ad.bluetoothLeAdvertiser ?: return Reply.done(c, id, cmd, "this phone cannot advertise over BLE")
         stop()
         val conn = j.optBoolean("connectable", false)
         val timeout = j.optInt("timeout", 0).coerceIn(0, 180_000)
-        val ext = j.optBoolean("ext", false) || j.optString("phy", "1m") != "1m"
+        val per = j.optJSONObject("periodic")
+        val ext = j.optBoolean("ext", false) || j.optString("phy", "1m") != "1m" || per != null
         if (!ext) {
             val s = AdvertiseSettings.Builder().setConnectable(conn).setTimeout(timeout)
                 .setAdvertiseMode(when (j.optString("mode", "balanced")) { "low_latency" -> AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY; "low_power" -> AdvertiseSettings.ADVERTISE_MODE_LOW_POWER; else -> AdvertiseSettings.ADVERTISE_MODE_BALANCED })
@@ -545,18 +552,20 @@ class AdvertiseHub(private val ctx: Context, private val needs: Needs) {
         val phy = when (j.optString("phy", "1m")) { "2m" -> BluetoothDevice.PHY_LE_2M; "coded" -> BluetoothDevice.PHY_LE_CODED; else -> BluetoothDevice.PHY_LE_1M }
         if (phy == BluetoothDevice.PHY_LE_CODED && !ad.isLeCodedPhySupported) return Reply.done(c, id, cmd, "this phone has no LE Coded PHY")
         if (phy == BluetoothDevice.PHY_LE_2M && !ad.isLe2MPhySupported) return Reply.done(c, id, cmd, "this phone has no LE 2M PHY")
+        if (per != null && !ad.isLePeriodicAdvertisingSupported) return Reply.done(c, id, cmd, "this phone has no periodic advertising")
+        val pp = per?.let { PeriodicAdvertisingParameters.Builder().setIncludeTxPower(it.optBoolean("txp", false)).setInterval(Args.periodicInterval(it.optDouble("interval", 100.0))).build() }
         val p = AdvertisingSetParameters.Builder().setLegacyMode(false).setConnectable(conn && false).setScannable(false)
             .setPrimaryPhy(if (phy == BluetoothDevice.PHY_LE_CODED) BluetoothDevice.PHY_LE_CODED else BluetoothDevice.PHY_LE_1M).setSecondaryPhy(phy)
             .setInterval(when (j.optString("mode", "balanced")) { "low_latency" -> AdvertisingSetParameters.INTERVAL_LOW; "low_power" -> AdvertisingSetParameters.INTERVAL_HIGH; else -> AdvertisingSetParameters.INTERVAL_MEDIUM })
             .setTxPowerLevel(when (j.optString("power", "medium")) { "ultra_low" -> AdvertisingSetParameters.TX_POWER_ULTRA_LOW; "low" -> AdvertisingSetParameters.TX_POWER_LOW; "high" -> AdvertisingSetParameters.TX_POWER_HIGH; else -> AdvertisingSetParameters.TX_POWER_MEDIUM }).build()
         val cb = object : AdvertisingSetCallback() {
             override fun onAdvertisingSetStarted(s: AdvertisingSet?, tx: Int, status: Int) {
-                if (status == ADVERTISE_SUCCESS) { on = true; Reply.done(c, id, cmd, null, extra = arrayOf("ext" to "true", "tx" to tx.toString())) }
+                if (status == ADVERTISE_SUCCESS) { on = true; curSet = s; Reply.done(c, id, cmd, null, extra = arrayOf("ext" to "true", "tx" to tx.toString())) }
                 else { setCb = null; Reply.done(c, id, cmd, "extended advertising failed (code $status)") }
             }
         }
         setCb = cb
-        adv.startAdvertisingSet(p, data(j, false), null, null, null, cb)
+        adv.startAdvertisingSet(p, data(j, false), null, pp, per?.let { data(it, false) }, cb)
     }
 
     fun held(): Int = if (on) 1 else 0

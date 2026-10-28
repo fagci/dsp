@@ -15,6 +15,7 @@ import app.dsp.phone.Bt
 import app.dsp.phone.Gnss
 import app.dsp.phone.GattSpec
 import app.dsp.phone.WifiArgs
+import app.dsp.phone.WifiNetArgs
 import app.dsp.phone.Radiotap
 import app.dsp.phone.Dot11
 import app.dsp.phone.MonitorScript
@@ -98,6 +99,16 @@ fun main() {
         ok("monitor: on-script brings the interface down, switches type, up, tunes; restores it on failure", on.contains("ip link set wlan0 down") && on.contains("set type monitor") && on.contains("ip link set wlan0 up") && on.contains("set channel 6 HT20") && on.contains("|| { ip link set wlan0 up;") && on.contains("iw not found"))
         ok("monitor: off-script returns to managed", MonitorScript.off("wlan0").contains("set type managed") && MonitorScript.channel("wlan1", "freq 2437").endsWith("\$IW dev wlan1 set freq 2437"))
     }
+
+    // --- периодическая реклама, Wi-Fi Direct, точка доступа, подсказки сетей ---
+    ok("periodic: interval ms → 1.25 ms units, clamped", Args.periodicInterval(100.0) == 80 && Args.periodicInterval(1000.0) == 800 && Args.periodicInterval(1.0) == 80 && Args.periodicInterval(1e9) == 65519)
+    ok("periodic: sync skip / timeout", Args.syncSkip(-5) == 0 && Args.syncSkip(9999) == 499 && Args.syncTimeout(10_000) == 1000 && Args.syncTimeout(1) == 10 && Args.syncTimeout(10_000_000) == 16000)
+    ok("wifi: ssid 1…32 bytes", WifiNetArgs.ssid("Home") == "Home" && WifiNetArgs.ssid("") == null && WifiNetArgs.ssid("a".repeat(33)) == null && WifiNetArgs.ssid("я".repeat(17)) == null)
+    ok("wifi: passphrase 8…63 printable ASCII", WifiNetArgs.pass("12345678") != null && WifiNetArgs.pass("1234567") == null && WifiNetArgs.pass("a".repeat(64)) == null && WifiNetArgs.pass("пароль1234") == null && WifiNetArgs.pass("pass\nword") == null)
+    ok("p2p: group name DIRECT-xy-…", WifiNetArgs.p2pName("DIRECT-ab-DSP") == "DIRECT-ab-DSP" && WifiNetArgs.p2pName("DIRECT-ab-") == "DIRECT-ab-" && WifiNetArgs.p2pName("Home") == null && WifiNetArgs.p2pName("DIRECT-a-x") == null && WifiNetArgs.p2pName("DIRECT-ab-" + "x".repeat(23)) == null)
+    ok("p2p: group owner intent 0…15", WifiNetArgs.p2pIntent(-3) == 0 && WifiNetArgs.p2pIntent(7) == 7 && WifiNetArgs.p2pIntent(99) == 15)
+    ok("wifi: suggestion statuses are explained", WifiNetArgs.suggestStatus(0) == null && WifiNetArgs.suggestStatus(2)!!.contains("approve") && WifiNetArgs.suggestStatus(4)!!.contains("too many") && WifiNetArgs.suggestStatus(77)!!.contains("77"))
+    ok("wifi: hotspot / p2p reasons", WifiNetArgs.hotspotReason(1).contains("channel") && WifiNetArgs.hotspotReason(4).contains("disallowed") && WifiNetArgs.p2pReason(1).contains("not supported") && WifiNetArgs.p2pReason(2).contains("busy"))
 
     // --- активность: лежит / движется / идёт ---
     run {

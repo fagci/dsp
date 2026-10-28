@@ -41,6 +41,12 @@ class BleHub(private val ctx: Context, private val gps: GpsHub, private val emit
     private var cur = ""
     @Volatile var lastError = ""
 
+    /** Расширенные рекламы с периодической рекламой — кандидаты для ble.sync.start (последние 64 адреса). */
+    private val periodic = object : LinkedHashMap<String, ScanResult>() {
+        override fun removeEldestEntry(e: MutableMap.MutableEntry<String, ScanResult>) = size > 64
+    }
+    fun periodicOf(addr: String): ScanResult? = synchronized(periodic) { periodic[addr] }
+
     /**
      * Настройки скана (то, чего нет в Web Bluetooth): mode low_latency | balanced | low_power | opportunistic, legacy (false — и расширенная
      * реклама), phy all | 1m | coded, match aggressive | sticky, delay (мс, пакетная выдача), фильтры name / addr / uuid / mfr (hex id компании).
@@ -103,7 +109,7 @@ class BleHub(private val ctx: Context, private val gps: GpsHub, private val emit
             kv.add("conn" to if (r.isConnectable) "1" else "0"); kv.add("legacy" to if (r.isLegacy) "1" else "0")
             kv.add("pphy" to r.primaryPhy.toString()); kv.add("sphy" to r.secondaryPhy.toString())      // 1 — 1M, 2 — 2M, 3 — Coded, 0 — нет
             if (r.advertisingSid != ScanResult.SID_NOT_PRESENT) kv.add("sid" to r.advertisingSid.toString())
-            if (r.periodicAdvertisingInterval != 0) kv.add("pint" to r.periodicAdvertisingInterval.toString())
+            if (r.periodicAdvertisingInterval != 0) { kv.add("pint" to r.periodicAdvertisingInterval.toString()); synchronized(periodic) { periodic[r.device.address] = r } }
         }
         ad.flags?.let { kv.add("flags" to it.toString()) }
         ad.appearance?.let { kv.add("app" to it.toString()) }

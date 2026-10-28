@@ -226,14 +226,14 @@ object Perms {
     fun forSubs(subs: Set<String>, sdk: Int): List<String> {
         val l = LinkedHashSet<String>()
         if (subs.any { it in POSITION }) l.addAll(LOC)
-        if (sdk >= 31 && subs.any { it == "ble" || it == "bt" }) { l.add("android.permission.BLUETOOTH_SCAN"); l.add("android.permission.BLUETOOTH_CONNECT") }
+        if (sdk >= 31 && subs.any { it == "ble" || it == "bt" || it == "blesync" }) { l.add("android.permission.BLUETOOTH_SCAN"); l.add("android.permission.BLUETOOTH_CONNECT") }
         if (sdk >= 29 && ("steps" in subs || "step" in subs)) l.add("android.permission.ACTIVITY_RECOGNITION")
         if (sdk >= 29 && "activity" in subs) l.add("android.permission.ACTIVITY_RECOGNITION")
         if ("mic" in subs) l.add("android.permission.RECORD_AUDIO")
         if ("sms" in subs) l.add("android.permission.RECEIVE_SMS")
         if ("speech" in subs) l.add("android.permission.RECORD_AUDIO")
         if ("sys" in subs) l.add("android.permission.READ_PHONE_STATE")
-        if (sdk >= 31 && ("gatt" in subs || "gattsrv" in subs || "l2cap" in subs || "btlink" in subs)) l.add("android.permission.BLUETOOTH_CONNECT")
+        if (sdk >= 31 && ("gatt" in subs || "gattsrv" in subs || "l2cap" in subs || "btlink" in subs || "blesync" in subs)) l.add("android.permission.BLUETOOTH_CONNECT")
         return l.toList()
     }
 

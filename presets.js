@@ -532,6 +532,10 @@ const PRESET_CATS={
   'Phone App: Wi-Fi RTT Distance to Access Points':'Maps & Locating',
   'Phone App: Wi-Fi Aware (Talk Without a Router)':'Network & IoT',
   'Phone App: Wi-Fi Monitor Mode Sniffer (Root)':'Network & IoT',
+  'Phone App: BLE Periodic Advertising (Broadcast Stream)':'Network & IoT',
+  'Phone App: Wi-Fi Direct (Find Peers, Connect, Group)':'Network & IoT',
+  'Phone App: Local Hotspot (the Phone as an Access Point)':'Network & IoT',
+  'Phone App: Join a Wi-Fi Network from a Patch (Suggestion / Peer Link)':'Network & IoT',
   'Geofence: Enter / Exit Alerts on the Map':'Maps & Locating',
   'Phone sensors: Scan Wi-Fi / BLE / BT Only Away From Home':'Maps & Locating',
   'Cases: SDR Frequency and Torch by Place and Light':'Maps & Locating',
@@ -1655,6 +1659,62 @@ ws.size.w=420; applySize(ws);
 const tb=addNode('table',920,470,{list:'phone/wifi-frames',maxRows:500,rev:true,cols:['t','kind','sa','da','bssid','ssid','chan','rssi']});
 tb.size.w=520; tb.size.h=300; applySize(tb);
 addEdge(tx.id,'rec',ws.id,'rec'); addEdge(ws.id,'rec',tb.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: BLE Periodic Advertising (Broadcast Stream)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Periodic advertising (Bluetooth 5): a connectionless broadcast train at a fixed interval that any number of receivers can lock onto and read — sensor streams, beacons with a payload longer than a legacy advertisement, audio-sharing announcements. Left node: «adv start» with the periodic train on (interval and manufacturer data below; «adv pdata» swaps the data while it runs). Right: Phone sensors scans extended advertisements only (the record carries «pint» for a periodic one), then «sync start» on the transmitter address (AA:BB:… from that record, on this phone or another one) delivers every packet as a «blesync» record with hex, text and RSSI.\n'+
+  'Needs a phone with LE extended and periodic advertising (most Android 8+ phones with Bluetooth 5). One transmitter at a time; up to 4 syncs on the receiving side.'});
+nt.size.w=900; nt.size.h=170; applySize(nt);
+const tx=addNode('gattlink',40,250,{url:'ws://127.0.0.1:8765',action:'adv start',advPeriodic:true,advPint:200,advPmfr:'FFFF=0102030405',advName:false});
+tx.size.w=420; tx.size.h=520; applySize(tx);
+const sc=addNode('termux',500,250,{url:'ws://127.0.0.1:8765',ble:true,bleLegacy:'extended only',gps:false});
+sc.size.w=380; sc.size.h=420; applySize(sc);
+const rx=addNode('gattlink',920,250,{url:'ws://127.0.0.1:8765',action:'sync start',syncTimeout:10000});
+rx.size.w=420; rx.size.h=520; applySize(rx);
+const lg=addNode('recLog',500,690,{});
+lg.size.w=380; applySize(lg);
+addEdge(sc.id,'rec',lg.id,'rec'); addEdge(rx.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Wi-Fi Direct (Find Peers, Connect, Group)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Wi-Fi Direct (P2P): a direct Wi-Fi link between two devices without a router — cameras, printers, TVs, other phones, an ESP32 in P2P mode. «p2p discover» lists devices in range (name, address, status, whether it owns a group); «p2p connect» with a peer address asks it to join (the other side confirms with a PIN-less push-button prompt) and the result arrives as a «group» record: its SSID, passphrase, who owns it and the owner\'s IP — then use TCP / UDP or ping from the Network node to talk to it. «p2p group create» makes the phone the owner of a group of its own (empty fields — Android names it; on Android 10+ you can set DIRECT-xy-name and the passphrase).\n'+
+  'Needs Wi-Fi on and Nearby devices / Location allowed; Wi-Fi Direct and a hotspot do not run together on most phones.'});
+nt.size.w=900; nt.size.h=190; applySize(nt);
+const nl=addNode('netlink',40,270,{url:'ws://127.0.0.1:8765',action:'p2p discover'});
+nl.size.w=420; nl.size.h=540; applySize(nl);
+const tb=addNode('table',500,270,{list:'phone/p2p',maxRows:300,rev:true,cols:['t','ev','kind','name','addr','status','go','ssid','pass','ownerAddr']});
+tb.size.w=560; tb.size.h=300; applySize(tb);
+const lg=addNode('recLog',500,590,{});
+lg.size.w=560; applySize(lg);
+addEdge(nl.id,'rec',tb.id,'rec'); addEdge(nl.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Local Hotspot (the Phone as an Access Point)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A local-only hotspot: the phone becomes a Wi-Fi access point with a random name and passphrase (printed in Rec Log when it starts) that other devices can join to reach services on the phone — a TCP / UDP server from the Network node, the Text-over-Network bridge, an ESP32 sending sensor data — with no router and no internet sharing. «hotspot stop» (or stopping the app service) closes it.\n'+
+  'Needs Location on and Nearby devices / Location allowed; Android does not let an app pick the SSID here, and the phone\'s own Wi-Fi client link may drop while the hotspot is up on phones that cannot do both.'});
+nt.size.w=900; nt.size.h=150; applySize(nt);
+const nl=addNode('netlink',40,230,{url:'ws://127.0.0.1:8765',action:'hotspot start'});
+nl.size.w=420; nl.size.h=540; applySize(nl);
+const lg=addNode('recLog',500,230,{});
+lg.size.w=420; applySize(lg);
+addEdge(nl.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Join a Wi-Fi Network from a Patch (Suggestion / Peer Link)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Two ways to put the phone on a network from a patch. «suggest add» hands Android a network (name, passphrase, WPA2 / WPA3, optional BSSID and priority) to join on its own whenever it is in range — the first time Android asks you to approve suggestions from the app; «suggest remove» takes it back. «join network» is immediate and temporary: it connects to exactly that network (a hotspot of another phone, an IoT device\'s own access point that has no internet) and, with «bind», sends the app\'s own traffic over it, so the Ping node on the right reaches a device at 192.168.x.x there. Android shows a one-tap confirmation for «join». «leave network» lets go.\n'+
+  'Edit the SSID and passphrase in the left node, press Run, then Run on the Ping node.'});
+nt.size.w=900; nt.size.h=190; applySize(nt);
+const jn=addNode('netlink',40,270,{url:'ws://127.0.0.1:8765',action:'join network',wifiSsid:'MyDevice-AP',wifiPass:'',wifiBind:true});
+jn.size.w=420; jn.size.h=540; applySize(jn);
+const pg=addNode('netlink',500,270,{url:'ws://127.0.0.1:8765',action:'ping',host:'192.168.4.1',count:4});
+pg.size.w=420; pg.size.h=440; applySize(pg);
+const lg=addNode('recLog',960,270,{});
+lg.size.w=420; applySize(lg);
+addEdge(jn.id,'rec',lg.id,'rec'); addEdge(pg.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Geofence: Enter / Exit Alerts on the Map', function(){

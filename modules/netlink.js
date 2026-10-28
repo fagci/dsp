@@ -2,6 +2,7 @@
 /* ============================ Network (DSP app) ============================
    TCP client / server, UDP (incl. broadcast), ping, one-shot UDP request (also used for DNS), network info, raw IPv4 packet (root),
    mDNS / DNS-SD (find and announce services), Wi-Fi RTT (distance to 802.11mc access points), Wi-Fi Aware (peers without an access point: discovery and messages),
+   Wi-Fi Direct (peers, group), a local-only hotspot, network suggestions (auto-join) and joining a given network,
    Wi-Fi monitor mode (root: iw, then frames arrive as pkt records from the Phone sensors node — feed them to Wi-Fi Sniffer).
    Sockets live in the DSP app, not the browser — this is what lets the phone be a TCP/UDP server and ping with real ICMP.
    Needs a trusted client (the app's own page, or «Let any page use actions» in its Settings) — same gate as Phone Actions.
@@ -70,11 +71,11 @@ function netFeed(n,r){
   if(n.recQ.length>5000) n.recQ.splice(0,n.recQ.length-5000);
 }
 
-def({ id:'netlink', title:'Network (DSP app)', cat:'Sources', kw:'tcp udp socket server client ping icmp dns traceroute raw packet internet network mdns bonjour zeroconf dns-sd nsd rtt ranging distance 802.11mc wifi aware nan',
+def({ id:'netlink', title:'Network (DSP app)', cat:'Sources', kw:'wifi direct p2p hotspot access point suggestion join network tcp udp socket server client ping icmp dns traceroute raw packet internet network mdns bonjour zeroconf dns-sd nsd rtt ranging distance 802.11mc wifi aware nan',
   ins:[{n:'go',t:'num'},{n:'host',t:'txt'},{n:'data',t:'txt'},{n:'cmd',t:'rec'}],
   outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'hex',t:'txt'},{n:'ok',t:'num'},{n:'new',t:'num'}],
   readout:true, tall:true,
-  groups:[{n:'TCP / UDP'},{n:'Ping'},{n:'DNS'},{n:'mDNS / DNS-SD',open:false},{n:'Wi-Fi RTT / Aware',open:false},{n:'Wi-Fi monitor (root)',open:false}],
+  groups:[{n:'TCP / UDP'},{n:'Ping'},{n:'DNS'},{n:'mDNS / DNS-SD',open:false},{n:'Wi-Fi RTT / Aware',open:false},{n:'Wi-Fi monitor (root)',open:false},{n:'Wi-Fi Direct / hotspot / join',open:false}],
   params:[
     {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'bridge of the DSP app'},
     {n:'action',t:'select',opts:PL_NET_ACTIONS,d:'ping',label:'action (the Run button, or a rising edge on go)'},
@@ -113,6 +114,17 @@ def({ id:'netlink', title:'Network (DSP app)', cat:'Sources', kw:'tcp udp socket
     {n:'monWidth',t:'select',opts:['','NOHT','HT20','HT40+','HT40-','80MHz','160MHz'],d:'',label:'width (empty — the driver\'s default)',g:'Wi-Fi monitor (root)'},
     {n:'monHop',t:'text',d:'',label:'on: hop between channels, e.g. 1,6,11 (empty — stay on one)',g:'Wi-Fi monitor (root)'},
     {n:'monDwell',t:'range',min:250,max:10000,step:50,d:500,label:'hop: time on each channel, ms',g:'Wi-Fi monitor (root)'},
+    {n:'p2pAddr',t:'text',d:'',label:'Wi-Fi Direct: peer address from a «peer» record (the «host» input overrides)',g:'Wi-Fi Direct / hotspot / join'},
+    {n:'p2pIntent',t:'range',min:-1,max:15,step:1,d:-1,label:'Wi-Fi Direct: wish to own the group, 0…15 (-1 — let Android decide)',g:'Wi-Fi Direct / hotspot / join'},
+    {n:'p2pName',t:'text',d:'',label:'group create: name DIRECT-xy-… (empty both — Android picks name and passphrase; Android 10+ to set them)',g:'Wi-Fi Direct / hotspot / join'},
+    {n:'p2pPass',t:'text',d:'',label:'group create: passphrase, 8…63 characters',g:'Wi-Fi Direct / hotspot / join'},
+    {n:'wifiSsid',t:'text',d:'',label:'suggest / join: network name (the «host» input overrides); suggest remove with it empty removes all',g:'Wi-Fi Direct / hotspot / join'},
+    {n:'wifiPass',t:'text',d:'',label:'suggest / join: passphrase (empty — open network)',g:'Wi-Fi Direct / hotspot / join'},
+    {n:'wifiWpa3',t:'check',d:false,label:'passphrase is WPA3 (SAE), not WPA2',g:'Wi-Fi Direct / hotspot / join'},
+    {n:'wifiBssid',t:'text',d:'',label:'only this access point, AA:BB:… (empty — any with that name)',g:'Wi-Fi Direct / hotspot / join'},
+    {n:'wifiHidden',t:'check',d:false,label:'suggest: the SSID is hidden',g:'Wi-Fi Direct / hotspot / join'},
+    {n:'wifiPriority',t:'range',min:0,max:1000,step:1,d:0,label:'suggest: priority (Android 12+; 0 — default)',g:'Wi-Fi Direct / hotspot / join'},
+    {n:'wifiBind',t:'check',d:true,label:'join: send the app\'s own traffic (tcp / udp / ping) over that network, though it has no internet',g:'Wi-Fi Direct / hotspot / join'},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},
     {n:'run',t:'button',label:'Run',fn:n=>{ const c=plNetCmd(n.p,{host:n.hostIn,data:n.dataIn}); if(c.error) n.last=c.error; else netSend(n,c); }},
     {n:'connect',t:'button',label:'Connect',fn:n=>netStart(n)},
