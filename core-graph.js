@@ -1369,7 +1369,7 @@ activeInteractions++; },
 move(ev){ if(uiLocked()) return;
 const dx=(ev.clientX-ev.clientX0)/view.k, dy=(ev.clientY-ev.clientY0)/view.k;
 if(right||left){
-n.size.w=clamp(Math.round(n.__rw+(left?-dx:dx)),160,1400);
+n.size.w=clamp(Math.round(n.__rw+(left?-dx:dx)),160,4000);
 if(left){ n.x=n.__rx+n.__rw-n.size.w; posNode(n); } }
 const d=MOD[n.type];
 if(bottom){
