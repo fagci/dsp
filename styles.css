@@ -343,10 +343,7 @@ body.noedit #bar .ed{display:none}
 }
 /* ---- мобильный UX: карточки не выходят за ширину экрана ---- */
 @media (max-width:600px){
-  #canvas #content .node{
-    max-width:calc(100vw - 24px);
-    min-width:0;
-  }
+  #canvas #content .node{min-width:0}
   #canvas #content .node .mid{padding-left:7px;padding-right:7px}
 }
 #canvas.grab{cursor:grabbing}

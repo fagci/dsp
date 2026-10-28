@@ -65,8 +65,10 @@ function termuxFeed(n,r){
 }
 
 const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','prox','atemp','humid','steps','heading','hinge','yaw','pitch','roll','orient','still','sigm','cdbm','crsrp','crsrq','csinr','micdb','batt','charging','temp','nsat','nused','cn0'];
-def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'termux android app phone background bluetooth ble gnss satellites nmea raw measurements gps accelerometer gyroscope magnetometer battery wifi cell sensors',
-  ins:[], outs:[{n:'rec',t:'rec'},{n:'pts',t:'rec'},{n:'line',t:'txt'},{n:'nmeatxt',t:'txt'},{n:'mic',t:'sig'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
+// Чекбоксы источников: у каждого есть скрытый вход-пин с тем же именем (число ≥0.5 — включить), появляется при подключении провода.
+const TERMUX_PINS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','heading','hinge','wifi','ble','bt','gnss','gnssraw','nmea','cell','mic','pkt','step','devorient','sigmotion','stationary','motion'];
+def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'termux android app phone background bluetooth ble gnss satellites nmea raw measurements gps accelerometer gyroscope magnetometer battery wifi cell sensors enable gate away from home',
+  ins:TERMUX_PINS.map(k=>({n:k,t:'num'})), outs:[{n:'rec',t:'rec'},{n:'pts',t:'rec'},{n:'line',t:'txt'},{n:'nmeatxt',t:'txt'},{n:'mic',t:'sig'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
   readout:true, tall:true,
   groups:[{n:'Position & battery'},{n:'Motion (accel · gyro · mag)',open:false},{n:'Orientation & activity',open:false},{n:'Environment',open:false},{n:'Wi-Fi',open:false},{n:'Bluetooth LE / classic',open:false},{n:'GNSS',open:false},{n:'Cell & microphone',open:false},{n:'Packet capture (root)',open:false},{n:'Device records',open:false}],
   params:[
@@ -131,7 +133,8 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
   init:n=>{ ssInit(n,1); n.sExact=true; n.sLag=.25; n.micT=0; n.micT0=0; n.devSeen=new Map(); n.ptQ=[]; n.ptSeq=0; n.ws=null; n.want=false; n.timer=null; n.recQ=[]; n.lineQ=[]; n.nmeaQ=[]; n.vals={}; n.last=''; n.msgs=0; n.count=0;
             n.status='not connected'; n.warn=''; n.sentSub=null; n.bridgeMsg=''; },
   dispose:n=>termuxStop(n),
-  process(n){
+  process(n,I){
+    for(const k of TERMUX_PINS){ const v=I[k]; if(typeof v==='number' && isFinite(v) && n.p[k]!==(v>=.5)) setMod(n,k,v>=.5); }
     termuxSendSub(n);
     const rec=n.recQ.length ? n.recQ.splice(0) : null;
     let line=n.lineQ.length ? n.lineQ[n.lineQ.length-1] : n.lastLine||'';

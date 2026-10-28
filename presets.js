@@ -517,6 +517,7 @@ const PRESET_CATS={
   'Phone App: BLE Beacon (Broadcast Sensor Data)':'Network & IoT',
   'Phone App: TCP / UDP Server, Client, Ping and DNS':'Network & IoT',
   'Geofence: Enter / Exit Alerts on the Map':'Maps & Locating',
+  'Phone sensors: Scan Wi-Fi / BLE / BT Only Away From Home':'Maps & Locating',
   'SMS PDU: Build and Parse (GSM 7-bit / UCS-2, Data SMS)':'Network & IoT',
   'Phone App: Speech to Text, Text-to-Speech and Automation':'Control & Remote',
   'Two Microphones':'Maps & Locating',
@@ -1459,6 +1460,22 @@ const lg=addNode('recLog',40,880,{});
 lg.size.w=420; applySize(lg);
 addEdge(me.id,'rec',gf.id,'rec'); addEdge(gf.id,'events',lg.id,'rec'); addEdge(gf.id,'shapes',map.id,'rec'); addEdge(me.id,'rec',map.id,'rec');
 addEdge(gf.id,'enter',ph.id,'go'); addEdge(gf.id,'enter',vb.id,'go');
+markWiresDirty();
+});
+preset('Phone sensors: Scan Wi-Fi / BLE / BT Only Away From Home', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Every checkbox of Phone sensors takes a wire on its row (drop an output onto the checkbox): a number ≥ 0.5 turns it on, below — off, and the checkbox follows the wire. Here Geofence «in» (1 = inside Home) goes through Logic «not», so Wi-Fi, BLE and Bluetooth scanning run only while you are away from home and stop when you come back (saves battery).\n'+
+  'Set the Home circle (lat lon radius_m) in Geofence, press Connect in Phone sensors (DSP app or Termux bridge). Rule shows the other way: «on» is the condition level and can drive the same pins; its «tpl» list fills the command below it from a template (vibrate, notification, speak, torch…).'});
+nt.size.w=900; nt.size.h=150; applySize(nt);
+const ps=addNode('termux',40,220,{url:'ws://127.0.0.1:8765',gps:true,battery:true,wifi:false,ble:false,bt:false});
+ps.size.w=700; ps.size.h=420; applySize(ps);
+const gf=addNode('geofence',800,220,{zones:'Home: circle 55.7558 37.6173 150',hyst:20,dwell:20});
+gf.size.w=380; gf.size.h=300; applySize(gf);
+const lg=addNode('nlogic',800,560,{op:'OR'});
+const lgd=addNode('recLog',1240,220,{});
+lgd.size.w=420; applySize(lgd);
+addEdge(ps.id,'rec',gf.id,'rec'); addEdge(gf.id,'in',lg.id,'in1'); addEdge(gf.id,'events',lgd.id,'rec');
+for(const k of ['wifi','ble','bt']) addEdge(lg.id,'not',ps.id,k);
 markWiresDirty();
 });
 preset('SMS PDU: Build and Parse (GSM 7-bit / UCS-2, Data SMS)', function(){
