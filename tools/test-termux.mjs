@@ -108,6 +108,12 @@ if(fs.existsSync(kf)){
   K.termuxApply(o,{src:'battery',pct:50,status:'CHARGING',temp:31});
   ok('apply battery',o.batt===50 && o.charging===1 && o.temp===31);
   K.termuxApply(o,{src:'battery',pct:49,status:'DISCHARGING'}); ok('discharging → 0',o.charging===0);
+  K.termuxApply(o,{src:'power',pct:17,charging:0,saver:1,thermal:2,throttle:2});
+  ok('apply power',o.batt===17 && o.charging===0 && o.saver===1 && o.therm===2 && o.thr===2);
+  K.termuxApply(o,{src:'ext',name:'home',value:1}); K.termuxApply(o,{src:'ext',name:'note',text:'x'});
+  ok('apply ext: number kept, text ignored',o.extv===1);
+  ok('line power / ext',/thermal 2/.test(K.termuxLine({src:'power',pct:17,thermal:2,throttle:2})) && /ext home 1/.test(K.termuxLine({src:'ext',name:'home',value:1})));
+  ok('sub power / ext',K.termuxSub({power:true,ext:true,gps:false}).join()==='power,ext');
   ok('apply ignores junk',(K.termuxApply(o,null),K.termuxApply(o,{src:'x'}),true));
   ok('sub from params',K.termuxSub({gps:true,battery:false,accel:true,gyro:true,wifi:true}).join()==='gps,accel,gyro,wifi');
   const sm=K.termuxSubMsg({gps:true,accel:true,hz:'200'});

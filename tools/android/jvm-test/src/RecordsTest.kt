@@ -14,6 +14,8 @@ import app.dsp.phone.UsbDesc
 import app.dsp.phone.Bt
 import app.dsp.phone.Gnss
 import app.dsp.phone.Json
+import app.dsp.phone.Launch
+import app.dsp.phone.PowerPolicy
 import app.dsp.phone.WifiUtil
 import org.json.JSONObject
 
@@ -23,6 +25,24 @@ private fun b(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
 private fun ascii(s: String) = s.toByteArray()
 
 fun main() {
+    // --- питание: во сколько раз реже опрашивать ---
+    ok("power: full battery, cool → 1", PowerPolicy.factor(80, false, false, 0) == 1)
+    ok("power: <20% → 2, <10% → 4", PowerPolicy.factor(15, false, false, 0) == 2 && PowerPolicy.factor(5, false, false, 0) == 4)
+    ok("power: charging ignores low level", PowerPolicy.factor(5, true, false, 0) == 1)
+    ok("power: saver → 2, saver on charger → 1", PowerPolicy.factor(80, false, true, 0) == 2 && PowerPolicy.factor(80, true, true, 0) == 1)
+    ok("power: thermal moderate 2, severe 4 (also on charger)", PowerPolicy.factor(80, true, false, 2) == 2 && PowerPolicy.factor(80, true, false, 3) == 4)
+    ok("power: hysteresis (19→22% stays throttled, 23% releases)", PowerPolicy.factor(22, false, false, 0, prev = 2) == 2 && PowerPolicy.factor(23, false, false, 0, prev = 2) == 1)
+    ok("power: unknown level (-1) does not throttle", PowerPolicy.factor(-1, false, false, 0) == 1)
+
+    // --- запуск патча снаружи: хэш страницы ---
+    ok("launch: name → #p=, spaces as %20", Launch.hash("My patch", null, false, false) == "#p=My%20patch")
+    ok("launch: run flag", Launch.hash("a", null, true, false) == "#p=a&run=1")
+    ok("launch: run without a patch does nothing", Launch.hash(null, null, true, false) == "")
+    ok("launch: data refused unless allowed (falls back to the name)", Launch.hash("a", "AbC_-1", false, false) == "#p=a" && Launch.hash(null, "AbC_-1", false, false) == "")
+    ok("launch: data accepted when allowed", Launch.hash("a", "AbC_-1", true, true) == "#d=AbC_-1&run=1")
+    ok("launch: data with junk characters is dropped", Launch.hash(null, "x&run=1<script>", false, true) == "")
+    ok("launch: unicode name is percent-encoded", Launch.hash("Радио", null, false, false) == "#p=%D0%A0%D0%B0%D0%B4%D0%B8%D0%BE")
+
     // --- реклама BLE: флаги, имя, txpower, UUID 16/128, данные производителя и службы ---
     val adv = b(2, 0x01, 0x06) + b(5, 0x09) + ascii("Test") + b(2, 0x0A, 0xF4) +
         b(5, 0x03, 0x0F, 0x18, 0x0A, 0x18) +

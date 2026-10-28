@@ -40,6 +40,7 @@ class BridgeService : Service() {
     private lateinit var adv: AdvertiseHub
     private lateinit var net: NetHub
     private lateinit var sys: SysHub
+    private lateinit var power: PowerHub
     private val asked = HashSet<String>()      // разрешения, о которых уже спросили в этой жизни сервиса
     private var wake: PowerManager.WakeLock? = null
     private val main = Handler(Looper.getMainLooper())
@@ -50,6 +51,8 @@ class BridgeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        inst = this; up = true
+        UsbKey.init(this)
         cfg = Config(this)
         // падение приложения (не нативное): трассировка в файл, команда crash.last в Phone Actions её отдаёт
         val prev = Thread.getDefaultUncaughtExceptionHandler()
@@ -76,6 +79,9 @@ class BridgeService : Service() {
         cell = CellHub(this, gps) { s, j -> server.emit(s, j) }
         mic = MicHub(this) { s, j -> server.emit(s, j) }
         sniffer = SnifferHub(cfg, { s, j -> server.emit(s, j) }) { l, m -> server.note(l, m) }
+        power = PowerHub(this, cfg, emit) { main.post { refresh() } }
+        power.start()
+        main.postDelayed(tick, TICK_MS)
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(NotificationChannel(CH, "DSP bridge", NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel(CH_PERM, "Permissions", NotificationManager.IMPORTANCE_HIGH))
@@ -90,6 +96,30 @@ class BridgeService : Service() {
     }
 
     override fun onBind(i: Intent?): IBinder? = null
+
+    /** Раз в TICK_MS: поднимает сервер, если он упал (порт занят на старте, обрыв), и продлевает wake lock, пока есть подписчики. */
+    private val tick = object : Runnable {
+        override fun run() {
+            if (destroyed) return
+            if (!server.listening) { serverError = server.start(); refresh() } else renewWake()
+            main.postDelayed(this, TICK_MS)
+        }
+    }
+
+    /** Блокировка с таймаутом: зависшая сессия не удержит процессор дольше WAKE_MS, живую продлевает tick. */
+    @Synchronized
+    private fun renewWake() {
+        val active = server.clientCount > 0 && server.wanted().subs.isNotEmpty()
+        if (active && wake == null) wake = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "dsp:bridge").also { it.setReferenceCounted(false) }
+        wake?.let { if (active) it.acquire(WAKE_MS) else if (it.isHeld) it.release() }
+    }
+
+    /** Событие от другого приложения (ExternalReceiver) → подписчикам ext. */
+    fun emitExt(name: String, value: String?, text: String?) {
+        val v = value?.toDoubleOrNull()?.takeIf { it.isFinite() }
+        server.emit("ext", Json.obj("src" to "\"ext\"", "t" to System.currentTimeMillis().toString(), "name" to Json.str(name),
+            "value" to (v?.let { Json.num(it) } ?: Json.str(value).takeIf { value != null }), "text" to text?.let { Json.str(it) }))
+    }
 
     /** Команда страницы → тот, кто её исполняет. Действия (сеть, соединения, речь, управление телефоном) — только клиенту с правом power. */
     private fun route(c: BridgeServer.Client, j: org.json.JSONObject) {
@@ -110,6 +140,7 @@ class BridgeService : Service() {
     /** Остановка по кнопке: снять уведомление и остановить сервис. */
     private fun shutdown() {
         destroyed = true
+        main.removeCallbacks(tick)
         stopForeground(STOP_FOREGROUND_REMOVE)
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(ID)
         stopSelf()
@@ -117,6 +148,9 @@ class BridgeService : Service() {
 
     override fun onDestroy() {
         destroyed = true
+        main.removeCallbacks(tick)
+        inst = null; up = false
+        power.close()
         server.stop()
         sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close(); speech.close(); gatt.close(); btlink.close(); adv.close(); net.close(); sys.close()
         wake?.takeIf { it.isHeld }?.release()
@@ -182,16 +216,17 @@ class BridgeService : Service() {
         if (destroyed) return
         val w = server.wanted()
         val problems = HashSet<String>()
-        for (k in sensors.update(w.subs.filter { it in SensorHub.ALL }.toSet(), w.hz)) problems.add("$k: no such sensor on this phone")
+        val f = power.factor
+        for (k in sensors.update(w.subs.filter { it in SensorHub.ALL }.toSet(), if (f > 1) maxOf(5, w.hz / f) else w.hz)) problems.add("$k: no such sensor on this phone")
         val needGps = w.subs.any { it in POSITION }
         if (!gps.update(needGps)) problems.add("no position: allow Location for the DSP app and turn Location on")
-        if (!wifi.update("wifi" in w.subs, w.wifiEvery)) problems.add("wifi: allow Location for the DSP app (Android hides the scan without it)")
+        if (!wifi.update("wifi" in w.subs, w.wifiEvery * f)) problems.add("wifi: allow Location for the DSP app (Android hides the scan without it)")
         battery.update("battery" in w.subs)
         if (!gnss.update("gnss" in w.subs, "gnssraw" in w.subs, "nmea" in w.subs)) problems.add("gnss: allow Location for the DSP app")
         if (!ble.update("ble" in w.subs, w.bleOpts)) problems.add(ble.lastError)
         sys.update("sys" in w.subs)
         if (!bt.update("bt" in w.subs)) problems.add(bt.lastError)
-        if (!cell.update("cell" in w.subs, w.cellEvery)) problems.add(cell.lastError)
+        if (!cell.update("cell" in w.subs, w.cellEvery * f)) problems.add(cell.lastError)
         if (!mic.update("mic" in w.subs, w.micHz)) problems.add(mic.lastError)
         if (!sniffer.update("pkt" in w.subs, w.iface, w.filter, w.snap)) problems.add(sniffer.lastError)
         if (!actions.update("sms" in w.subs)) problems.add("sms: allow SMS for the DSP app")
@@ -199,11 +234,8 @@ class BridgeService : Service() {
         for (p in problems) if (warned.add(p)) server.note("error", p)
         warned.retainAll(problems)
 
-        val active = w.subs.isNotEmpty()
-        if (active && wake == null) {
-            wake = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "dsp:bridge")
-        }
-        wake?.let { if (active && !it.isHeld) it.acquire() else if (!active && it.isHeld) it.release() }
+        if ("power" in w.subs) power.push()
+        renewWake()
 
         val text = serverError ?: summary()
         if (text != shownText) (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(ID, notification())
@@ -237,7 +269,7 @@ class BridgeService : Service() {
         val sens = sensors.available()
         return Json.obj(
             "src" to "\"bridge\"", "level" to "\"hello\"", "ver" to "1", "app" to "\"dsp-android\"", "host" to Json.str(Build.MODEL),
-            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "sms", "notify", "torch", "speech", "gatt", "btlink", "net", "sys") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(),
+            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "sms", "notify", "torch", "speech", "gatt", "btlink", "net", "sys", "power", "ext") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(),
             "phone" to actions.info(),
         )
     }
@@ -246,6 +278,11 @@ class BridgeService : Service() {
         "DSP phone bridge\n" + summary() + "\nsensors: " + sensors.available().joinToString(",") + "\n" + sensors.lines() + "addresses: " + lan().joinToString(", ") + "\n"
 
     companion object {
+        @Volatile var inst: BridgeService? = null
+        /** Сервис создан и не остановлен (для плитки в шторке). */
+        @Volatile var up = false
+        private const val TICK_MS = 20_000L
+        private const val WAKE_MS = 10 * 60_000L
         const val ACTION_STOP = "app.dsp.phone.STOP"
         const val ACTION_RELOAD = "app.dsp.phone.RELOAD"
         private const val CH = "bridge"

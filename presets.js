@@ -46,12 +46,14 @@ const st=new Blob([b64u.dec(t)]).stream().pipeThrough(new DecompressionStream('d
 return JSON.parse(await new Response(st).text());
 }
 async function loadFromHash(){
-const d=hashParam('d'), n=hashParam('p');
+const d=hashParam('d'), n=hashParam('p'), run=hashParam('run')==='1';
 if(d){
-try{ stashIfDirty(); deserialize(await unpackPatch(d)); currentPatchName=''; graphDirty=false; fitViewWhenReady(); stat.textContent='patch loaded from link'; }
+let ok=false;
+try{ stashIfDirty(); deserialize(await unpackPatch(d)); currentPatchName=''; graphDirty=false; fitViewWhenReady(); stat.textContent='patch loaded from link'; ok=true; }
 catch(e){ stat.textContent='bad link: '+e.message; }
 syncHash(); buildPatchList();
-} else if(n && n!==currentPatchName && readP()[n]) openPatch(n);
+if(run && ok) setTimeout(autoRun,500);
+} else if(n && readP()[n]){ if(n!==currentPatchName) openPatch(n); if(run) setTimeout(autoRun,500); }
 }
 window.addEventListener('hashchange',loadFromHash);
 document.getElementById('plink').onclick=async()=>{
@@ -509,6 +511,7 @@ const PRESET_CATS={
   'Phone App: Sensors and Wi-Fi in the Background':'Maps & Locating',
   'Phone App: Satellites, Bluetooth and Wi-Fi Scan':'Maps & Locating',
   'Phone App: Orientation and Environment Sensors':'Maps & Locating',
+  'Phone App: Power, Heat and Events from Other Apps (Tasker)':'Maps & Locating',
   'Phone App: Microphone, Cell and Packets':'Maps & Locating',
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
   'Phone App: USB SDR over OTG (RTL-SDR, HackRF…)':'SDR Receivers',
@@ -1348,6 +1351,28 @@ const dc=addNode('dac',620,220,{vol:.4});
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(sa.id,'f1',rx.id,'tuneFreq');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
+markWiresDirty();
+});
+preset('Phone App: Power, Heat and Events from Other Apps (Tasker)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Android app (tools/android): the bridge watches the battery, power saver and the heat of the phone (source «power»). When the battery is low (<20%, <10%), power saver is on or the phone is hot, the app polls sensors, Wi-Fi and cell scans 2–4× less often by itself (Settings → «Poll less often…»); «thr» shows by how much.\n'+
+  'The Rule below sends a notification when the phone gets hot (thermal ≥ 2). Events from other apps arrive as records {src:ext, name, value, text} on rec and the number in «extv»: in Tasker / MacroDroid send a broadcast (action app.dsp.phone.EXT, extras cmd=emit, name, value, token) after ticking «Let other apps control the bridge» in the app Settings. The same intent with cmd=start / cmd=stop starts and stops the bridge; the Quick Settings tile does it by hand.\n'+
+  'To open a patch from outside: dsp://run?patch=NAME&run=1 (adb: am start -a android.intent.action.VIEW -d \'dsp://run?patch=NAME&run=1\'); dsp://s1 … s3 open it in a separate window with its own storage — several patches run side by side.'});
+nt.size.w=860; nt.size.h=230; applySize(nt);
+const tx=addNode('termux',40,300,{url:'ws://127.0.0.1:8765',gps:false,battery:false,power:true,ext:true});
+tx.size.w=360; tx.size.h=360; applySize(tx);
+const t1=addNode('trend',440,300,{span:20,auto:true});
+t1.size.w=360; t1.size.h=150; applySize(t1);
+const t2=addNode('trend',440,480,{span:20,auto:true});
+t2.size.w=360; t2.size.h=150; applySize(t2);
+const rl=addNode('rule',840,300,{expr:"r && r.src==='power' && r.thermal>=2",cooldown:300,cmd:'{"cmd":"notify","title":"Phone is hot","text":"Thermal level $thermal; polling slowed"}'});
+rl.size.w=360; rl.size.h=260; applySize(rl);
+const ph=addNode('phone',840,600,{url:'ws://127.0.0.1:8765',action:'notify',notifyEv:false,torchState:false});
+ph.size.w=360; ph.size.h=400; applySize(ph);
+const lg=addNode('recLog',440,660,{});
+lg.size.w=360; applySize(lg);
+addEdge(tx.id,'batt',t1.id,'in'); addEdge(tx.id,'therm',t2.id,'in');
+addEdge(tx.id,'rec',rl.id,'rec'); addEdge(rl.id,'cmd',ph.id,'cmd'); addEdge(tx.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: Notification with Buttons, Flashlight, SMS and Contacts', function(){

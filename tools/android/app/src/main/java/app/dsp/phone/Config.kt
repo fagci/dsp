@@ -51,6 +51,21 @@ class Config(ctx: Context) {
         get() = sp.getBoolean("autoStart", false)
         set(v) { sp.edit().putBoolean("autoStart", v).apply() }
 
+    /** Другие приложения (Tasker, MacroDroid) управляют мостом интентом app.dsp.phone.EXT. */
+    var extIntents: Boolean
+        get() = sp.getBoolean("extIntents", false)
+        set(v) { sp.edit().putBoolean("extIntents", v).apply() }
+
+    /** Ссылка dsp://run?data=… может нести патч целиком (иначе принимаются только имена уже сохранённых патчей). */
+    var extPatch: Boolean
+        get() = sp.getBoolean("extPatch", false)
+        set(v) { sp.edit().putBoolean("extPatch", v).apply() }
+
+    /** Реже опрашивать датчики и радио при разряде, экономии энергии и перегреве (PowerPolicy). */
+    var autoThrottle: Boolean
+        get() = sp.getBoolean("autoThrottle", true)
+        set(v) { sp.edit().putBoolean("autoThrottle", v).apply() }
+
     fun allowedOrigins(): Set<String> =
         (origins.split(',', ' ', '\n').map { it.trim().trimEnd('/') }.filter { it.isNotEmpty() } + APP_ORIGIN).toSet()
 

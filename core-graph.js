@@ -2591,6 +2591,8 @@ if(!(Eng.running&&!Eng.paused)) askPermissions();
 const on=await Eng.toggle();
 if(!on){ stat.textContent='paused'; stat.classList.remove('warn','crit'); }
 };
+// запуск по ссылке (#p=имя&run=1, приложение Android: dsp://run?patch=имя&run=1) — то же, что нажать ▶
+function autoRun(){ if(!(Eng.running&&!Eng.paused)) runBtn.click(); }
 // кнопка источника при остановленном (или на паузе) движке сначала запускает основной контекст
 { let starting=false;
   document.addEventListener('click',e=>{
@@ -2772,7 +2774,7 @@ applyView();
 (function boot(){
 buildBuiltinPresets();
 // приоритет: правки этой вкладки (перезагрузка) → патч из адреса (#p=) → последнее состояние любой вкладки
-const hp=hashParam('p'), tg=SS.get('dsp-tab-graph'), tn=SS.get('dsp-tab-name')||'';
+const hp=hashParam('p'), tg=SS.get('dsp-tab-graph'), tn=SS.get('dsp-tab-name')||'', hrun=hashParam('run')==='1', hdat=hashParam('d');
 const hpd=hp&&readP()[hp];
 let a=null, nm='';
 if(tg && (!hp || hp===tn)){ a=tg; nm=tn; }
@@ -2785,7 +2787,8 @@ fitViewWhenReady();                                 // сразу видно в�
 Undo.stack=[]; Undo.idx=-1; Undo.push();
 graphDirty=false;                                   // старт приложения — не пользовательское изменение
 currentPatchName=nm; syncHash(); buildPatchList();
-if(hashParam('d')) loadFromHash();
+if(hdat){ try{ history.replaceState(null,'',location.pathname+location.search+'#d='+hdat+(hrun?'&run=1':'')); }catch(e){} loadFromHash(); }   // syncHash выше стёр #d
+else if(hrun && hpd) setTimeout(autoRun,500);       // патч найден — запускаем; нет такого — не запускаем то, что осталось от прошлого раза
 })();
 // Совместимость со старым сохранённым DOM: в нём могли остаться нативные range-поля.
 document.querySelectorAll('#content input[type="range"]').forEach(old=>{
