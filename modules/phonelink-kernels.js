@@ -26,7 +26,7 @@ function plScanOpts(p){
 }
 
 // ---------- GATT / Bluetooth ----------
-const PL_GATT_ACTIONS=['connect','disconnect','discover','read','write','notify on','notify off','mtu','rssi','priority','phy','list','bonded','bond','unbond','uuids','rfcomm connect','rfcomm send','rfcomm close','rfcomm listen','adv start','adv stop','srv start','srv stop','srv set','srv notify','srv respond','srv list','srv disconnect','l2cap connect','l2cap send','l2cap close','l2cap listen','adv pdata','sync start','sync stop','sync list'];
+const PL_GATT_ACTIONS=['connect','disconnect','discover','read','write','notify on','notify off','mtu','rssi','priority','phy','list','bonded','bond','unbond','uuids','rfcomm connect','rfcomm send','rfcomm close','rfcomm listen','adv start','adv stop','srv start','srv stop','srv set','srv notify','srv respond','srv list','srv disconnect','l2cap connect','l2cap send','l2cap close','l2cap listen','adv pdata'];
 // I — значения со входов (приоритетнее полей узла): {addr, svc, chr, data}
 function plGattCmd(p,I={}){
   const addr=plAddr(I.addr||p.addr), svc=String(I.svc||p.svc||'').trim(), chr=String(I.chr||p.chr||'').trim();
@@ -60,9 +60,6 @@ function plGattCmd(p,I={}){
     case 'adv start': return plAdvCmd(p);
     case 'adv stop': return {cmd:'ble.adv.stop'};
     case 'adv pdata': { const o=plAdvData(p.advPmfr,p.advPsvc); return o.mfr||o.svc ? {cmd:'ble.adv.pdata',...o} : {error:'periodic data: manufacturer id=hex or service uuid=hex'}; }
-    case 'sync start': return (e=need('addr')) ? {error:e} : {cmd:'ble.sync.start',addr,skip:+p.syncSkip||0,timeout:+p.syncTimeout||10000};
-    case 'sync stop': return {cmd:'ble.sync.stop',...(addr ? {addr} : {})};
-    case 'sync list': return {cmd:'ble.sync.list'};
     case 'srv start': { const d=plSrvDef(p.srvDef); return d.error ? {error:d.error} : {cmd:'gattsrv.start',services:d.services}; }
     case 'srv stop': return {cmd:'gattsrv.stop'};
     case 'srv list': return {cmd:'gattsrv.list'};
@@ -159,7 +156,6 @@ function plLine(r){
       case 'rssi': return 'rssi '+r.rssi+' dBm';
       default: return 'gatt '+r.ev;
     }
-    case 'blesync': return r.ev==='data' ? 'psync '+(r.addr||'')+' '+r.hex.slice(0,40)+' ('+r.rssi+' dBm)' : 'psync '+r.ev+' '+(r.addr||'')+(r.sid!=null ? ' sid '+r.sid : '');
     case 'gattsrv': switch(r.ev){
       case 'connected': return 'srv: '+r.addr+' connected';
       case 'disconnected': return 'srv: '+r.addr+' disconnected';

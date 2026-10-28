@@ -123,9 +123,6 @@ ok('shell exec: field or wire, root/timeout pass through, command type stays "cm
   ok('periodic adv: ext forced, interval floor 100 ms, data',a.ext===true && a.periodic.interval===100 && a.periodic.mfr.ffff==='0102' && a.periodic.svc.fe95==='aa' && a.phy==='1m',J(a));
   ok('periodic adv: plain advertising has no periodic',!('periodic' in K.plGattCmd({action:'adv start'})));
   ok('adv pdata: needs data',K.plGattCmd({action:'adv pdata'}).error && K.plGattCmd({action:'adv pdata',advPmfr:'ffff=09'}).cmd==='ble.adv.pdata');
-  const sy={addr:'aa:bb:cc:dd:ee:ff',syncSkip:2,syncTimeout:5000};
-  ok('sync start / stop / list',(c=>c.cmd==='ble.sync.start' && c.addr==='AA:BB:CC:DD:EE:FF' && c.skip===2 && c.timeout===5000)(K.plGattCmd({...sy,action:'sync start'})) && K.plGattCmd({...sy,action:'sync start',addr:''}).error && K.plGattCmd({action:'sync stop'}).addr===undefined && K.plGattCmd({action:'sync list'}).cmd==='ble.sync.list');
-  ok('blesync records → lines',/psync AA 0102 \(-60 dBm\)/.test(K.plLine({src:'blesync',ev:'data',addr:'AA',hex:'0102',rssi:-60})) && /established AA sid 3/.test(K.plLine({src:'blesync',ev:'established',addr:'AA',sid:3})));
 }
 // Wi-Fi Direct / точка доступа / подсказки / подключение
 {

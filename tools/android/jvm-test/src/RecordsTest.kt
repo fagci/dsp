@@ -102,7 +102,6 @@ fun main() {
 
     // --- периодическая реклама, Wi-Fi Direct, точка доступа, подсказки сетей ---
     ok("periodic: interval ms → 1.25 ms units, clamped", Args.periodicInterval(100.0) == 80 && Args.periodicInterval(1000.0) == 800 && Args.periodicInterval(1.0) == 80 && Args.periodicInterval(1e9) == 65519)
-    ok("periodic: sync skip / timeout", Args.syncSkip(-5) == 0 && Args.syncSkip(9999) == 499 && Args.syncTimeout(10_000) == 1000 && Args.syncTimeout(1) == 10 && Args.syncTimeout(10_000_000) == 16000)
     ok("wifi: ssid 1…32 bytes", WifiNetArgs.ssid("Home") == "Home" && WifiNetArgs.ssid("") == null && WifiNetArgs.ssid("a".repeat(33)) == null && WifiNetArgs.ssid("я".repeat(17)) == null)
     ok("wifi: passphrase 8…63 printable ASCII", WifiNetArgs.pass("12345678") != null && WifiNetArgs.pass("1234567") == null && WifiNetArgs.pass("a".repeat(64)) == null && WifiNetArgs.pass("пароль1234") == null && WifiNetArgs.pass("pass\nword") == null)
     ok("p2p: group name DIRECT-xy-…", WifiNetArgs.p2pName("DIRECT-ab-DSP") == "DIRECT-ab-DSP" && WifiNetArgs.p2pName("DIRECT-ab-") == "DIRECT-ab-" && WifiNetArgs.p2pName("Home") == null && WifiNetArgs.p2pName("DIRECT-a-x") == null && WifiNetArgs.p2pName("DIRECT-ab-" + "x".repeat(23)) == null)
