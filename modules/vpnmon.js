@@ -54,8 +54,10 @@ function vpnFeed(n,r){
   if(r.src==='bridge'){ if(r.level==='error' || r.level==='warn') n.bridgeMsg=r.msg; return; }
   if(r.src==='cmd'){ if(!r.ok && r.msg) n.last=(r.cmd||'')+': '+r.msg; return; }
   if(r.src!=='vpn') return;
-  if(r.ev==='state'){ n.on=!!r.on; n.status=n.on ? 'monitoring' : 'stopped'+(r.msg ? ' ('+r.msg+')' : ''); }
-  else if(r.ev==='summary'){ n.open=r.open|0; n.flows=r.flows|0; n.bytesUp=+r.bytesUp||0; n.bytesDown=+r.bytesDown||0; }
+  // «on» идёт не только с ev:'state' — запись о потоке может прийти и когда монитор запустила сама система (Always-on
+  // VPN) или другая вкладка раньше нашей подписки: единственное «state:true» тогда уже ушло в пустоту (слать было некому)
+  if(r.ev==='state') n.status=(n.on=!!r.on) ? 'monitoring' : 'stopped'+(r.msg ? ' ('+r.msg+')' : '');
+  else { if(!n.on){ n.on=true; n.status='monitoring'; } if(r.ev==='summary'){ n.open=r.open|0; n.flows=r.flows|0; n.bytesUp=+r.bytesUp||0; n.bytesDown=+r.bytesDown||0; } }
   const fr=vpnFlowRow(r); if(fr) n.flowQ.push(fr);
   const ar=vpnAppAgg(n.apps,r); if(ar) n.appQ.push(vpnAppRow(ar));
   n.recQ.push({t:r.t||Date.now(),...r});
