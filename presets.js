@@ -518,6 +518,7 @@ const PRESET_CATS={
   'Phone App: TCP / UDP Server, Client, Ping and DNS':'Network & IoT',
   'Geofence: Enter / Exit Alerts on the Map':'Maps & Locating',
   'Phone sensors: Scan Wi-Fi / BLE / BT Only Away From Home':'Maps & Locating',
+  'Cases: SDR Frequency and Torch by Place and Light':'Maps & Locating',
   'SMS PDU: Build and Parse (GSM 7-bit / UCS-2, Data SMS)':'Network & IoT',
   'Phone App: Speech to Text, Text-to-Speech and Automation':'Control & Remote',
   'Two Microphones':'Maps & Locating',
@@ -1476,6 +1477,26 @@ const lgd=addNode('recLog',1240,220,{});
 lgd.size.w=420; applySize(lgd);
 addEdge(ps.id,'rec',gf.id,'rec'); addEdge(gf.id,'in',lg.id,'in1'); addEdge(gf.id,'events',lgd.id,'rec');
 for(const k of ['wifi','ble','bt']) addEdge(lg.id,'not',ps.id,k);
+markWiresDirty();
+});
+preset('Cases: SDR Frequency and Torch by Place and Light', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Cases is a list of states, one per line: [name:] condition => value => {command}. The first line whose condition holds wins; if none holds the state is kept, so «entered a zone» stays true until «left». In conditions r is the last record, a b c d are the number inputs; a value is a number (433.92M, 2k) or an expression. Outputs: val, state, name, s1…s4 (level of each of the first four lines), cmd (fired when a line is entered), changed.\n'+
+  'Top: Geofence «in» → Cases a → «val» tunes the USB SDR (home 145.5 MHz, away 433.92 MHz); «settle» keeps a GPS jitter from flipping it. Bottom: the phone light sensor → Cases a, dark/bright with a torch command each; the commands go to Phone Actions.'});
+nt.size.w=900; nt.size.h=160; applySize(nt);
+const ps=addNode('termux',40,240,{url:'ws://127.0.0.1:8765',gps:true,battery:false,light:true});
+ps.size.w=560; ps.size.h=300; applySize(ps);
+const gf=addNode('geofence',660,240,{zones:'Home: circle 55.7558 37.6173 150',hyst:20,dwell:10});
+gf.size.w=380; gf.size.h=300; applySize(gf);
+const c1=addNode('cases',1100,240,{cases:'home: a==1 => 145.5M\naway: a==0 => 433.92M',settle:10});
+c1.size.w=420; c1.size.h=260; applySize(c1);
+const sdr=addNode('rtlsdr',1580,240,{});
+const c2=addNode('cases',660,640,{cases:'dark: a<10 => 1 => {"cmd":"torch","on":true}\nbright: a>=10 => 0 => {"cmd":"torch","on":false}',settle:3});
+c2.size.w=420; c2.size.h=260; applySize(c2);
+const ph=addNode('phone',1100,640,{url:'ws://127.0.0.1:8765',action:'notify',notifyEv:false,torchState:false});
+ph.size.w=380; ph.size.h=380; applySize(ph);
+addEdge(ps.id,'rec',gf.id,'rec'); addEdge(gf.id,'in',c1.id,'a'); addEdge(c1.id,'val',sdr.id,'freq');
+addEdge(ps.id,'light',c2.id,'a'); addEdge(c2.id,'cmd',ph.id,'cmd');
 markWiresDirty();
 });
 preset('SMS PDU: Build and Parse (GSM 7-bit / UCS-2, Data SMS)', function(){

@@ -2,8 +2,8 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n); };
-const ctx=vm.createContext({Math,Number,String,Object,Array,JSON,Set,Infinity});
-vm.runInContext(fs.readFileSync(new URL('../modules/flow-kernels.js',import.meta.url),'utf8')+';this.K={rqNew,rqPush,rqStep,ruleApply}',ctx);
+const ctx=vm.createContext({RegExp,Error,Math,Number,String,Object,Array,JSON,Set,Infinity});
+vm.runInContext(fs.readFileSync(new URL('../modules/flow-kernels.js',import.meta.url),'utf8')+';this.K={rqNew,rqPush,rqStep,ruleApply,casesNum,casesParse,casesSource,casesStep}',ctx);
 const K=ctx.K;
 let s=K.rqNew();
 ok('push: key dedupe, max',K.rqPush(s,[{a:1},{a:2},{a:1},{b:3}],'a',10)===2 && s.q.length===2 && K.rqPush(s,[{a:3},{a:4}],'a',3)===1);
@@ -39,4 +39,21 @@ ok('clear: empties and forgets the keys',s.q.length===0 && K.rqPush(s,[{k:1}],'k
 ok('ruleApply: plain values pass through, $field substitutes',JSON.stringify(K.ruleApply({cmd:'vibrate',ms:'$dur',name:'x'},{dur:500}))===JSON.stringify({cmd:'vibrate',ms:500,name:'x'}));
 ok('ruleApply: missing field or no record keeps the literal string',JSON.stringify(K.ruleApply({a:'$missing'},{b:1}))===JSON.stringify({a:'$missing'}) && JSON.stringify(K.ruleApply({a:'$x'},null))===JSON.stringify({a:'$x'}));
 ok('ruleApply: bare "$" is not touched',K.ruleApply({a:'$'},{'':1}).a==='$');
-console.log(bad?bad+' FAILED':'all ok'); process.exit(bad?1:0);
+
+// Cases
+ok('casesNum: suffixes and plain',K.casesNum('433.92M')===433.92e6 && K.casesNum('145.5 MHz')===145.5e6 && K.casesNum('2k')===2000 && K.casesNum('1e3')===1000 && K.casesNum('-3')===-3);
+ok('casesNum: expression is not a number',K.casesNum('a*2')===null && K.casesNum('')===null);
+{ const p=K.casesParse('# c\nhome: a==1 => 145.5M\naway: a==0 => 433.92M => {"cmd":"vibrate"}\nr.x ? 1 : 2 => a*2\nelse: true');
+  ok('casesParse: names, values, commands',p.rows.length===4 && p.rows[0].name==='home' && p.rows[0].val===145.5e6 && p.rows[1].cmd.cmd==='vibrate' && !p.errors.length);
+  ok('casesParse: ternary is not a name, expression value',p.rows[2].name==='case 3' && p.rows[2].cond==='r.x ? 1 : 2' && p.rows[2].valExpr==='a*2');
+  ok('casesParse: no value',p.rows[3].name==='else' && p.rows[3].val===null && p.rows[3].cond==='true');
+  ok('casesParse: bad command JSON is reported with the line',K.casesParse('a => 1 => {oops}').errors[0].startsWith('line 1: command JSON'));
+  ok('casesSource: one pair per row',K.casesSource(p.rows).split('],[').length===4); }
+{ const st={cur:-1,cand:-1,since:0};
+  ok('casesStep: first state is taken at once',K.casesStep(st,1,0,5)===true && st.cur===1);
+  ok('casesStep: no match holds the state',K.casesStep(st,-1,10,5)===false && st.cur===1);
+  ok('casesStep: settle delays a switch',K.casesStep(st,0,100,5)===false && K.casesStep(st,0,3000,5)===false && st.cur===1);
+  ok('casesStep: settle passes',K.casesStep(st,0,5200,5)===true && st.cur===0);
+  K.casesStep(st,1,6000,5); K.casesStep(st,0,7000,5);
+  ok('casesStep: flapping back resets the timer',K.casesStep(st,0,12100,5)===false && st.cur===0); }
+ console.log(bad?bad+' FAILED':'all ok'); process.exit(bad?1:0);
