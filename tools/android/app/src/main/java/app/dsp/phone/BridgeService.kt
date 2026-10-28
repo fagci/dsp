@@ -41,6 +41,7 @@ class BridgeService : Service() {
     private lateinit var net: NetHub
     private lateinit var sys: SysHub
     private lateinit var power: PowerHub
+    private lateinit var activity: ActivityHub
     private val started = android.os.SystemClock.elapsedRealtime()
     private val asked = HashSet<String>()      // разрешения, о которых уже спросили в этой жизни сервиса
     private var wake: PowerManager.WakeLock? = null
@@ -81,6 +82,7 @@ class BridgeService : Service() {
         mic = MicHub(this) { s, j -> server.emit(s, j) }
         sniffer = SnifferHub(cfg, { s, j -> server.emit(s, j) }) { l, m -> server.note(l, m) }
         power = PowerHub(this, cfg, emit, ::diagPairs) { main.post { refresh() } }
+        activity = ActivityHub(this, cfg, emit)
         power.start()
         main.postDelayed(tick, TICK_MS)
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -104,6 +106,7 @@ class BridgeService : Service() {
             if (destroyed) return
             if (!server.listening) { serverError = server.start(); refresh() } else renewWake()
             releaseIdle()
+            activity.tick()
             if ("power" in server.wanted().subs) power.push()
             val t = serverError ?: summary()
             if (t != shownText) (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(ID, notification())
@@ -158,6 +161,11 @@ class BridgeService : Service() {
         val n = j.optString("cmd")
         if (BridgeServer.powerCmd(n) && !c.power) return Reply.done(c, j.opt("id"), n, "not allowed for this page — only the page of the DSP app (or any page, if allowed in the app Settings) may use it", "forbidden")
         when {
+            n == "activity.log" -> {
+                val rows = activity.history(j.optLong("since", 0), j.optInt("limit", 500))
+                if (rows.isNotEmpty()) c.send(rows.joinToString(",", "[", "]"))
+                Reply.done(c, j.opt("id"), n, null, "error", "n" to rows.size.toString())
+            }
             n.startsWith("gatt.") -> gatt.exec(c, j)
             n.startsWith("bt.") -> btlink.exec(c, j)
             n.startsWith("ble.adv.") -> adv.exec(c, j)
@@ -182,7 +190,7 @@ class BridgeService : Service() {
         destroyed = true
         main.removeCallbacks(tick)
         inst = null; up = false
-        power.close()
+        power.close(); activity.close()
         server.stop()
         sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close(); speech.close(); gatt.close(); btlink.close(); adv.close(); net.close(); sys.close()
         wake?.takeIf { it.isHeld }?.release()
@@ -263,10 +271,12 @@ class BridgeService : Service() {
         if (!mic.update("mic" in w.subs, w.micHz)) problems.add(mic.lastError)
         if (!sniffer.update("pkt" in w.subs, w.iface, w.filter, w.snap)) problems.add(sniffer.lastError)
         if (!actions.update("sms" in w.subs)) problems.add("sms: allow SMS for the DSP app")
-        askPermissions(w.subs)
+        askPermissions(if (cfg.activityLog) w.subs + "activity" else w.subs)
         for (p in problems) if (warned.add(p)) server.note("error", p)
         warned.retainAll(problems)
 
+        if (!activity.update("activity" in w.subs || cfg.activityLog)) problems.add("activity: no stationary / motion / step sensors, or the step counter lacks the Physical activity permission")
+        if ("activity" in w.subs) activity.push()
         if ("power" in w.subs) power.push()
         renewWake()
 
@@ -302,7 +312,7 @@ class BridgeService : Service() {
         val sens = sensors.available()
         return Json.obj(
             "src" to "\"bridge\"", "level" to "\"hello\"", "ver" to "1", "app" to "\"dsp-android\"", "host" to Json.str(Build.MODEL),
-            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "sms", "notify", "torch", "speech", "gatt", "btlink", "net", "sys", "power", "ext") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(),
+            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "sms", "notify", "torch", "speech", "gatt", "btlink", "net", "sys", "power", "ext", "activity") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(),
             "phone" to actions.info(),
         )
     }

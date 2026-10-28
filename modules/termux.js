@@ -64,9 +64,9 @@ function termuxFeed(n,r){
   if(n.lineQ.length>2000) n.lineQ.splice(0,n.lineQ.length-2000);
 }
 
-const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','prox','atemp','humid','steps','heading','hinge','yaw','pitch','roll','orient','still','sigm','cdbm','crsrp','crsrq','csinr','micdb','batt','charging','temp','nsat','nused','cn0','therm','saver','thr','extv'];
+const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','prox','atemp','humid','steps','heading','hinge','yaw','pitch','roll','orient','still','sigm','cdbm','crsrp','crsrq','csinr','micdb','batt','charging','temp','nsat','nused','cn0','therm','saver','thr','extv','act','cadence','locked','screen','pick','wakeg','glanc','tiltc','offb'];
 // Чекбоксы источников: у каждого есть скрытый вход-пин с тем же именем (число ≥0.5 — включить), появляется при подключении провода.
-const TERMUX_PINS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','heading','hinge','wifi','ble','bt','gnss','gnssraw','nmea','cell','mic','pkt','step','devorient','sigmotion','stationary','motion','power','ext'];
+const TERMUX_PINS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','heading','hinge','wifi','ble','bt','gnss','gnssraw','nmea','cell','mic','pkt','step','devorient','sigmotion','stationary','motion','power','ext','activity','pickup','wakegest','glance','tilt','offbody'];
 def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'termux android app phone background bluetooth ble gnss satellites nmea raw measurements gps accelerometer gyroscope magnetometer battery wifi cell sensors enable gate away from home',
   ins:TERMUX_PINS.map(k=>({n:k,t:'num'})), outs:[{n:'rec',t:'rec'},{n:'pts',t:'rec'},{n:'line',t:'txt'},{n:'nmeatxt',t:'txt'},{n:'mic',t:'sig'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
   readout:true, tall:true,
@@ -122,6 +122,12 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'iface',g:'Packet capture (root)',t:'text',d:'any',label:'capture: interface (any, wlan0, rmnet_data0…)'},
     {n:'filter',g:'Packet capture (root)',t:'text',d:'',label:'capture: filter (tcpdump syntax, e.g. tcp port 80)'},
     {n:'snap',g:'Packet capture (root)',t:'select',opts:['64','128','256','512','1500','65535'],d:'256',label:'capture: bytes per frame'},
+    {n:'activity',g:'Orientation & activity',t:'check',d:false,label:'activity: still / moving / walking + screen locked → «act» (0 still, 1 moving, 2 walking) «cadence» «locked» «screen»; low power, works with the screen locked (DSP app; log to a file in its Settings)'},
+    {n:'pickup',g:'Orientation & activity',t:'check',d:false,label:'pick-up gesture (phone lifted) → counter «pick»'},
+    {n:'wakegest',g:'Orientation & activity',t:'check',d:false,label:'wake gesture → counter «wakeg»'},
+    {n:'glance',g:'Orientation & activity',t:'check',d:false,label:'glance gesture → counter «glanc»'},
+    {n:'tilt',g:'Orientation & activity',t:'check',d:false,label:'tilt detector → counter «tiltc»'},
+    {n:'offbody',g:'Orientation & activity',t:'check',d:false,label:'off-body detector (watches, bands) → «offb» 1 on the body, 0 taken off'},
     {n:'step',g:'Orientation & activity',t:'check',d:false,label:'step detector (DSP app) → rec'},
     {n:'devorient',g:'Orientation & activity',t:'check',d:false,label:'screen orientation 0–3 (DSP app; Android 13+)'},
     {n:'sigmotion',g:'Orientation & activity',t:'check',d:false,label:'significant motion (DSP app; one-shot trigger)'},
@@ -167,6 +173,8 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     if(o.cdbm!=null) t+='\ncell '+f(o.cdbm,0)+' dBm'+(o.crsrp!=null ? '  RSRP '+f(o.crsrp,0)+' RSRQ '+f(o.crsrq,0) : '');
     if(o.micdb!=null) t+='\nmic '+f(o.micdb,0)+' dBFS';
     if(o.orient!=null) t+='\nscreen orientation '+f(o.orient,0);
+    if(o.act!=null) t+='\nactivity '+['still','moving','walking'][o.act]+(o.cadence ? ' '+f(o.cadence,0)+' steps/min' : '')+(o.locked ? '  (screen locked)' : '');
+    if(o.pick!=null) t+='\npicked up '+f(o.pick,0)+'×';
     if(o.still!=null) t+='\n'+(o.still ? 'stationary' : 'moving');
     if(o.light!=null) t+='\nlight '+f(o.light,0)+' lx';
     if(o.press!=null) t+='\npressure '+f(o.press,1)+' hPa';

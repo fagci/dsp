@@ -71,6 +71,11 @@ class Config(ctx: Context) {
         get() = sp.getInt("idleMin", 30)
         set(v) { sp.edit().putInt("idleMin", v.coerceIn(0, 1440)).apply() }
 
+    /** Писать смены «лежит / идёт / экран заблокирован» в файл без открытой страницы (источник activity). */
+    var activityLog: Boolean
+        get() = sp.getBoolean("activityLog", false)
+        set(v) { sp.edit().putBoolean("activityLog", v).apply() }
+
     fun allowedOrigins(): Set<String> =
         (origins.split(',', ' ', '\n').map { it.trim().trimEnd('/') }.filter { it.isNotEmpty() } + APP_ORIGIN).toSet()
 

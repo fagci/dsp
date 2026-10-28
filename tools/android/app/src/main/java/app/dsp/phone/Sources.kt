@@ -44,10 +44,13 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
             "ambtemp" to Sensor.TYPE_AMBIENT_TEMPERATURE, "humidity" to Sensor.TYPE_RELATIVE_HUMIDITY,
             "steps" to Sensor.TYPE_STEP_COUNTER, "step" to Sensor.TYPE_STEP_DETECTOR, "hinge" to Sensor.TYPE_HINGE_ANGLE, "heading" to Sensor.TYPE_HEADING,
             "devorient" to 27,      // TYPE_DEVICE_ORIENTATION: скрыт в публичном SDK, число из AOSP
+            "tilt" to 22,           // TYPE_TILT_DETECTOR (скрыт): наклон телефона, событие без значений
+            "offbody" to Sensor.TYPE_LOW_LATENCY_OFFBODY_DETECT,     // 1 — на теле, 0 — снят (часы, браслеты)
         )
         /** Одноразовые датчики: срабатывают раз, после чего их надо взводить заново. */
         val TRIGGERS = linkedMapOf(
             "sigmotion" to Sensor.TYPE_SIGNIFICANT_MOTION, "stationary" to Sensor.TYPE_STATIONARY_DETECT, "motion" to Sensor.TYPE_MOTION_DETECT,
+            "wakegest" to 23, "glance" to 24, "pickup" to 25,      // WAKE_GESTURE, GLANCE_GESTURE, PICK_UP_GESTURE (скрыты в SDK): жесты, будят телефон
         )
         val ALL: Set<String> = TYPES.keys + TRIGGERS.keys
         private val XYZ = setOf("accel", "gyro", "mag", "gravity", "linear", "rotation", "gamerot", "georot", "accelraw", "gyroraw", "magraw")
@@ -55,7 +58,7 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
         private val UNCAL = setOf("accelraw", "gyroraw", "magraw")     // x, y, z и смещение bx, by, bz
     }
 
-    private val kindOf = TYPES.entries.associate { it.value to it.key }
+    private val kindOf = (TYPES + TRIGGERS).entries.associate { it.value to it.key }
 
     private val armed = HashSet<String>()
     private val trig = object : TriggerEventListener() {
@@ -70,7 +73,7 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
     }
 
     private fun arm(kind: String): Boolean {
-        val sensor = sm.getDefaultSensor(TRIGGERS[kind] ?: return false) ?: return false
+        val sensor = sm.getDefaultSensor(TRIGGERS[kind] ?: return false, true) ?: sm.getDefaultSensor(TRIGGERS[kind]!!) ?: return false
         if (kind in armed) return true
         if (!sm.requestTriggerSensor(trig, sensor)) return false
         armed.add(kind)
@@ -118,8 +121,18 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
             }
         }
         for (kind in TRIGGERS.keys) {
-            if (kind in want) { if (!arm(kind)) missing.add(kind) }
-            else if (armed.remove(kind)) sm.cancelTriggerSensor(trig, sm.getDefaultSensor(TRIGGERS[kind]!!))
+            val sensor = sm.getDefaultSensor(TRIGGERS[kind]!!, true) ?: sm.getDefaultSensor(TRIGGERS[kind]!!)
+            // не одноразовый (у производителя жест может быть обычным событийным) — слушаем как обычный датчик
+            val oneShot = sensor?.reportingMode == Sensor.REPORTING_MODE_ONE_SHOT
+            if (kind in want) {
+                if (sensor == null) { missing.add(kind); continue }
+                if (oneShot) { if (!arm(kind)) missing.add(kind) }
+                else if (kind !in active && sm.registerListener(this, sensor, SensorManager.SENSOR_DELAY_NORMAL, handler)) active[kind] = -1
+                else if (kind !in active) missing.add(kind)
+            } else {
+                if (armed.remove(kind) && sensor != null) sm.cancelTriggerSensor(trig, sensor)
+                if (active.remove(kind) != null && sensor != null) sm.unregisterListener(this, sensor)
+            }
         }
         return missing
     }
@@ -127,7 +140,7 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
     @Synchronized
     fun stop() {
         sm.unregisterListener(this); active.clear()
-        for (kind in armed) sm.cancelTriggerSensor(trig, sm.getDefaultSensor(TRIGGERS[kind]!!))
+        for (kind in armed) (sm.getDefaultSensor(TRIGGERS[kind]!!, true) ?: sm.getDefaultSensor(TRIGGERS[kind]!!))?.let { sm.cancelTriggerSensor(trig, it) }
         armed.clear()
     }
 
@@ -141,7 +154,7 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
         val xyz = kind in XYZ && v.size >= 3
         emit(kind, Json.obj(
             "src" to "\"sensor\"", "sensor" to "\"$kind\"", "t" to t.toString(),
-            "x" to Json.num(v[0].toDouble()),
+            "x" to Json.num(if (v.isEmpty()) 1.0 else v[0].toDouble()),
             "y" to if (xyz) Json.num(v[1].toDouble()) else null,
             "z" to if (xyz) Json.num(v[2].toDouble()) else null,
             "w" to if (kind in QUAT && v.size >= 4) Json.num(v[3].toDouble()) else null,

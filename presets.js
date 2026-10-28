@@ -512,6 +512,7 @@ const PRESET_CATS={
   'Phone App: Satellites, Bluetooth and Wi-Fi Scan':'Maps & Locating',
   'Phone App: Orientation and Environment Sensors':'Maps & Locating',
   'Phone App: Power, Heat and Events from Other Apps (Tasker)':'Maps & Locating',
+  'Phone App: Activity with the Screen Locked (Still, Walking, Pick-up)':'Maps & Locating',
   'Phone App: Microphone, Cell and Packets':'Maps & Locating',
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
   'Phone App: USB SDR over OTG (RTL-SDR, HackRF…)':'SDR Receivers',
@@ -1373,6 +1374,27 @@ const lg=addNode('recLog',440,660,{});
 lg.size.w=360; applySize(lg);
 addEdge(tx.id,'batt',t1.id,'in'); addEdge(tx.id,'therm',t2.id,'in');
 addEdge(tx.id,'rec',rl.id,'rec'); addEdge(rl.id,'cmd',ph.id,'cmd'); addEdge(tx.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Activity with the Screen Locked (Still, Walking, Pick-up)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Android app (tools/android): what the owner is doing, from the phone\'s low-power sensors — it keeps working with the screen locked. «activity» gives still / moving / walking (stationary + motion detectors, the step counter batched up to 60 s so the CPU is not woken on every step), the step cadence and whether the screen is locked. The gestures «pick-up», «wake», «glance» and the «tilt» detector come as counters; off-body is for watches.\n'+
+  'To record it with no page open tick «Log activity» in the app Settings: the service writes only the changes to a file; read the history with the command activity.log {since, limit} (Phone Actions → type activity.log). The detectors fire once after a change, so after a restart the state stays «unknown» until the first movement or step. Allow Physical activity in the app once.'});
+nt.size.w=860; nt.size.h=200; applySize(nt);
+const tx=addNode('termux',40,270,{url:'ws://127.0.0.1:8765',gps:false,battery:false,activity:true,pickup:true,tilt:true,steps:true});
+tx.size.w=360; tx.size.h=420; applySize(tx);
+const t1=addNode('trend',440,270,{span:60,auto:true});
+t1.size.w=360; t1.size.h=150; applySize(t1);
+const t2=addNode('trend',440,450,{span:60,auto:true});
+t2.size.w=360; t2.size.h=150; applySize(t2);
+const rl=addNode('rule',840,270,{expr:"r && r.src==='sensor' && r.sensor==='pickup'",cooldown:60,cmd:'{"cmd":"vibrate","effect":"click"}'});
+rl.size.w=360; rl.size.h=260; applySize(rl);
+const ph=addNode('phone',840,560,{url:'ws://127.0.0.1:8765',action:'activity.log',notifyEv:false,torchState:false});
+ph.size.w=360; ph.size.h=380; applySize(ph);
+const lg=addNode('recLog',440,640,{});
+lg.size.w=360; applySize(lg);
+addEdge(tx.id,'act',t1.id,'in'); addEdge(tx.id,'cadence',t2.id,'in');
+addEdge(tx.id,'rec',rl.id,'rec'); addEdge(rl.id,'cmd',ph.id,'cmd'); addEdge(tx.id,'rec',lg.id,'rec'); addEdge(ph.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: Notification with Buttons, Flashlight, SMS and Contacts', function(){

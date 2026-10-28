@@ -113,6 +113,13 @@ if(fs.existsSync(kf)){
   K.termuxApply(o,{src:'power',t:1000,cpu:5000,pct:50,charging:0,wake:1,clients:0,held:'gatt×2'});
   K.termuxApply(o,{src:'power',t:11000,cpu:5500,pct:50,charging:0,wake:0,clients:0,held:''});
   ok('bridge cpu share between two power records',Math.abs(o.cpupct-5)<1e-9 && o.wake===0 && o.nclients===0 && o.held==='');
+  K.termuxApply(o,{src:'activity',t:1,state:'walking',cadence:96,locked:1,screen:0,steps:1234});
+  ok('apply activity',o.act===2 && o.cadence===96 && o.locked===1 && o.screen===0 && o.steps===1234);
+  K.termuxApply(o,{src:'activity',hist:1,t:2,state:'still',locked:1,screen:0}); ok('history record does not change the live state',o.act===2);
+  K.termuxApply(o,{src:'sensor',sensor:'pickup',x:1}); K.termuxApply(o,{src:'sensor',sensor:'pickup',x:1}); K.termuxApply(o,{src:'sensor',sensor:'offbody',x:0});
+  ok('gesture counters, offbody',o.pick===2 && o.offb===0);
+  ok('sub activity / gestures',K.termuxSub({activity:true,pickup:true,tilt:true}).sort().join()==='activity,pickup,tilt');
+  ok('line activity',/activity walking.*locked.*96 steps/.test(K.termuxLine({src:'activity',state:'walking',locked:1,cadence:96})));
   K.termuxApply(o,{src:'ext',name:'home',value:1}); K.termuxApply(o,{src:'ext',name:'note',text:'x'});
   ok('apply ext: number kept, text ignored',o.extv===1);
   ok('line power / ext',/thermal 2/.test(K.termuxLine({src:'power',pct:17,thermal:2,throttle:2})) && /ext home 1/.test(K.termuxLine({src:'ext',name:'home',value:1})));
