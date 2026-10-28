@@ -94,6 +94,8 @@ if(fs.existsSync(kf)){
   ok('lines: cell, pkt, mic',K.termuxLine({src:'pkt',iface:'any',ip:'10.0.0.1',sport:1,dip:'1.1.1.1',dport:53,len:60}).includes('10.0.0.1:1 → 1.1.1.1:53') && K.termuxLine({src:'cell',type:'LTE',reg:1,mcc:'250',mnc:'01',cid:5,dbm:-80}).startsWith('cell LTE *') && K.termuxLine({src:'mic',rms:-20}).includes('-20'));
   // --- устройства: ключ, прореживание, точка для карты ---
   ok('dev keys',K.termuxDev({src:'wifi',bssid:'aa:bb',ssid:'Home'}).dev==='wifi:aa:bb' && K.termuxDev({src:'ble',addr:'11:22'}).name==='11:22' && K.termuxDev({src:'bt',addr:'33',name:'Buds'}).dev==='bt:33' && K.termuxDev({src:'gps'})===null && K.termuxDev({src:'wifi'})===null);
+  const mb=K.termuxDev({src:'ble',addr:'11:22',mfr:{'004c':'0215','0075':'aa'}});
+  ok('ble: company ids as array (rules); none → no field',JSON.stringify(mb.mfrId)==='["004c","0075"]' && !('mfrId' in K.termuxDev({src:'ble',addr:'11:22'})),JSON.stringify(mb));
   const cl=K.termuxDev({src:'cell',type:'LTE',mcc:'250',mnc:'01',cid:777,pci:5,reg:1,rsrp:-95,dbm:-90});
   ok('cell: id and level from RSRP',cl.dev==='cell:LTE:250-01:777' && cl.rssi===-95 && cl.name.endsWith('*'),JSON.stringify(cl));
   ok('cell: neighbour without cid → pci; no ids → null; own rssi kept',K.termuxDev({src:'cell',type:'NR',pci:9,dbm:-100}).dev==='cell:NR::p9' && K.termuxDev({src:'cell',type:'LTE'})===null && !('rssi' in K.termuxDev({src:'cell',type:'LTE',cid:1,rssi:-70,rsrp:-80})));

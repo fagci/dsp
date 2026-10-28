@@ -32,7 +32,11 @@ function termuxDev(r){
   const num=v=>typeof v==='number' && isFinite(v);
   switch(r.src){
     case 'wifi': return r.bssid ? {dev:'wifi:'+r.bssid, name:r.ssid||r.bssid} : null;
-    case 'ble': return r.addr ? {dev:'ble:'+r.addr, name:r.name||r.addr} : null;
+    case 'ble': {
+      if(!r.addr) return null;
+      const mf=r.mfr && typeof r.mfr==='object' ? Object.keys(r.mfr) : [];
+      return {dev:'ble:'+r.addr, name:r.name||r.addr, ...(mf.length ? {mfrId:mf} : {})};   // mfrId — id компаний массивом, для правил Rec → Entities
+    }
     case 'bt': return r.addr ? {dev:'bt:'+r.addr, name:r.name||r.addr} : null;
     case 'cell': {
       const id=r.cid ?? r.bid, plmn=r.mcc!=null ? r.mcc+'-'+r.mnc : '';

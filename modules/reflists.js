@@ -26,7 +26,7 @@ const REF_RAW='https://raw.githubusercontent.com/smittix/intercept/main/data/';
 // id пункта в Offline data; names — списки, которые он создаёт; urls — по порядку; parse(text) → {имя списка: {cols, rows}}
 const REF_SRC=[
   {id:'oui', label:'MAC vendors (IEEE OUI, ~52 000 prefixes)', mb:1.4, names:[REF_OUI],
-    urls:['https://raw.githubusercontent.com/nmap/nmap/master/nmap-mac-prefixes'], parse:t=>({[REF_OUI]:luParseNmapMac(t)})},
+    urls:['data/nmap-mac-prefixes','https://raw.githubusercontent.com/nmap/nmap/master/nmap-mac-prefixes'], parse:t=>({[REF_OUI]:luParseNmapMac(t)})},
   {id:'signals', label:'Signal catalog (intercept / sigidwiki, ~1000 ranges)', mb:0.8, names:[REF_SIG],
     urls:['data/intercept-signals.json',REF_RAW+'signals.json'], parse:t=>({[REF_SIG]:luParseSignals(t)})},
   {id:'wefax', label:'WEFAX stations (intercept)', mb:0.03, names:[REF_WEFAX],

@@ -515,6 +515,7 @@ const PRESET_CATS={
   'Phone App: Activity with the Screen Locked (Still, Walking, Pick-up)':'Maps & Locating',
   'Phone App: Microphone, Cell and Packets':'Maps & Locating',
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
+  'Phone App: Wi-Fi, BLE and Bluetooth as Three Graphs':'Network & IoT',
   'Phone App: USB SDR over OTG (RTL-SDR, HackRF…)':'SDR Receivers',
   'bitchat Mesh Chat (no app install)':'Network & IoT',
   'Reference: Decode BLE Advertisements (Company ID, Service UUID)':'Network & IoT',
@@ -1353,6 +1354,34 @@ addEdge(tx.id,'rec',fl.id,'rec'); addEdge(tx.id,'rec',me.id,'rec');
 addEdge(fl.id,'rec',tb.id,'rec');
 addEdge(tb.id,'rows',lc.id,'rows');
 addEdge(me.id,'rec',mp.id,'rec'); addEdge(tx.id,'pts',mp.id,'rec'); addEdge(lc.id,'rec',mp.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Wi-Fi, BLE and Bluetooth as Three Graphs', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Everything the phone hears, as three separate graphs (DSP app; allow Location and Nearby devices once). Phone ★ is the centre of each graph, the line label is the level in dBm.\n'+
+  'Wi-Fi: access points ⬡ (hidden ones are red, shown by BSSID) → their network name ▭ and channel ◆ — APs on one channel or one SSID gather round it. BLE: devices ▲ → advertised service UUID ▭ and manufacturer ■ (company id from manufacturer data). Bluetooth: classic devices ● → device class ◆.\n'+
+  'Under a node: the vendor from the MAC prefix (Wi-Fi, BLE with a public address; a random BLE address has no vendor), the WPS manufacturer, the company name, the service name. They come from the Reference lists — Files → ⇩ offline: «MAC vendors», «BLE Company IDs», «Bluetooth UUIDs». Rec → Entities rules «Phone radios» make the three outputs gw / gb / gt; each Table keeps one row per node and link (key id), so the graph only grows with new devices. Click a node to see it highlighted with its neighbours.'});
+nt.size.w=1000; nt.size.h=170; applySize(nt);
+const tx=addNode('termux',40,250,{url:'ws://127.0.0.1:8765',gps:false,battery:false,wifi:true,wifiEvery:10,ble:true,bleMode:'low_latency',bt:true});
+tx.size.w=380; tx.size.h=520; applySize(tx);
+const ent=addNode('recEnt',460,250,{rules:ENT_TEMPLATES['Phone radios (Wi-Fi · BLE · Bluetooth)']});
+ent.size.w=520; ent.size.h=520; applySize(ent);
+const OUI="lookup('MAC vendors (OUI)','prefix',[id],'vendor','mac')";
+const mk=(out,y,cols,expr,title)=>{
+  const tb=addNode('table',1020,y,{list:'@patch',key:'id',initial:false,cols,schema:{types:{note:{t:'calc',expr}},card:{}}});
+  tb.size.w=420; tb.size.h=340; applySize(tb);
+  const g=addNode('graphview',1480,y,{directed:false,weights:false});
+  g.size.w=620; g.size.h=380; applySize(g);
+  addEdge(ent.id,out,tb.id,'rec'); addEdge(tb.id,'rows',g.id,'rows');
+};
+const base=['id','type','label','shape','color','from','to','rssi'];
+mk('gw',250,[...base,'ch','band','wpsMfr','note'],
+  "[type]=='ap' ? coalesce([wpsMfr],"+OUI+") : ''");
+mk('gb',650,[...base,'code','note'],
+  "[type]=='company' ? lookup('BLE Company IDs','hex',[code],'name') : ([type]=='service' ? lookup('Bluetooth UUIDs','uuid',[code],'name') : ([type]=='ble' ? "+OUI+" : ''))");
+mk('gt',1050,[...base,'major','note'],
+  "[type]=='bt' ? "+OUI+" : ''");
+addEdge(tx.id,'rec',ent.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: USB SDR over OTG (RTL-SDR, HackRF…)', function(){
