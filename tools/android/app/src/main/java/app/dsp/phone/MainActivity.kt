@@ -36,13 +36,17 @@ import java.io.IOException
 import java.io.OutputStream
 
 /** DSP в WebView: страницы из assets/www (работает без сети) + запуск моста датчиков и камеры. */
-class MainActivity : Activity() {
+open class MainActivity : Activity() {
+    /** Пусто — основное окно; s1…s3 — окна-слоты в своих процессах (свой WebView и хранилище, см. Slots.kt). */
+    protected open val slot: String = ""
     private lateinit var web: WebView
     private var chooser: ValueCallback<Array<Uri>>? = null
     private var pendingWeb: PermissionRequest? = null
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
+        UsbKey.init(this)
+        if (slot.isNotEmpty() && Build.VERSION.SDK_INT >= 28) try { WebView.setDataDirectorySuffix(slot) } catch (e: Exception) {}
         BridgeService.start(this)
         // остальные разрешения (положение, камера, микрофон, Bluetooth, шаги) мост спрашивает сам, когда страница выбирает источник
         if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_MAIN)
@@ -104,7 +108,7 @@ class MainActivity : Activity() {
                 try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (e: Exception) {}
             }
         }
-        web.loadUrl(Config.APP_ORIGIN + "/index.html")
+        web.loadUrl(Config.APP_ORIGIN + "/index.html" + Launch.hash(intent, Config(this)))
     }
 
     // ---------- картинка в картинке: окно приложения целиком; страница на это время показывает только зеркало холста ----------
@@ -145,7 +149,12 @@ class MainActivity : Activity() {
     }
 
     // singleTask: клик по уведомлению и возврат из фона onCreate не вызывают — мост, убитый системой, поднимаем здесь
-    override fun onNewIntent(i: Intent) { super.onNewIntent(i); BridgeService.resume(this) }
+    override fun onNewIntent(i: Intent) {
+        super.onNewIntent(i); setIntent(i); BridgeService.resume(this)
+        // окно уже открыто: патч и запуск передаём странице через хэш (hashchange → loadFromHash)
+        val h = Launch.hash(i, Config(this))
+        if (h.isNotEmpty()) web.evaluateJavascript("location.hash=${JSONObject.quote(h)}", null)
+    }
     override fun onRestart() { super.onRestart(); BridgeService.resume(this) }
 
     @Deprecated("Deprecated in Java")

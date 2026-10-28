@@ -66,6 +66,29 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- dsp://run?patch=ИМЯ&run=1 — без BROWSABLE: сайт из браузера открыть такую ссылку не может, только приложение (Tasker, adb) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="dsp" android:host="run" />
+            </intent-filter>
+        </activity>
+
+        <!-- окна-слоты: свой процесс, свой WebView и хранилище — несколько патчей запущены одновременно (dsp://s1?patch=…) -->
+        <activity android:name=".Slot1Activity" android:exported="true" android:label="DSP 1" android:process=":s1" android:taskAffinity="app.dsp.phone.s1"
+            android:supportsPictureInPicture="false" android:launchMode="singleTask" android:documentLaunchMode="never"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode|density" android:windowSoftInputMode="adjustResize">
+            <intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><data android:scheme="dsp" android:host="s1" /></intent-filter>
+        </activity>
+        <activity android:name=".Slot2Activity" android:exported="true" android:label="DSP 2" android:process=":s2" android:taskAffinity="app.dsp.phone.s2"
+            android:supportsPictureInPicture="false" android:launchMode="singleTask" android:documentLaunchMode="never"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode|density" android:windowSoftInputMode="adjustResize">
+            <intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><data android:scheme="dsp" android:host="s2" /></intent-filter>
+        </activity>
+        <activity android:name=".Slot3Activity" android:exported="true" android:label="DSP 3" android:process=":s3" android:taskAffinity="app.dsp.phone.s3"
+            android:supportsPictureInPicture="false" android:launchMode="singleTask" android:documentLaunchMode="never"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode|density" android:windowSoftInputMode="adjustResize">
+            <intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><data android:scheme="dsp" android:host="s3" /></intent-filter>
         </activity>
 
         <activity
@@ -88,6 +111,19 @@
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
+
+        <receiver android:name=".ExternalReceiver" android:exported="true">
+            <intent-filter><action android:name="app.dsp.phone.EXT" /></intent-filter>
+        </receiver>
+
+        <service
+            android:name=".BridgeTile"
+            android:exported="true"
+            android:icon="@android:drawable/ic_menu_compass"
+            android:label="DSP bridge"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
 
         <service
             android:name=".NotifyListener"

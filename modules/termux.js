@@ -64,9 +64,9 @@ function termuxFeed(n,r){
   if(n.lineQ.length>2000) n.lineQ.splice(0,n.lineQ.length-2000);
 }
 
-const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','prox','atemp','humid','steps','heading','hinge','yaw','pitch','roll','orient','still','sigm','cdbm','crsrp','crsrq','csinr','micdb','batt','charging','temp','nsat','nused','cn0'];
+const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','prox','atemp','humid','steps','heading','hinge','yaw','pitch','roll','orient','still','sigm','cdbm','crsrp','crsrq','csinr','micdb','batt','charging','temp','nsat','nused','cn0','therm','saver','thr','extv'];
 // Чекбоксы источников: у каждого есть скрытый вход-пин с тем же именем (число ≥0.5 — включить), появляется при подключении провода.
-const TERMUX_PINS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','heading','hinge','wifi','ble','bt','gnss','gnssraw','nmea','cell','mic','pkt','step','devorient','sigmotion','stationary','motion'];
+const TERMUX_PINS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','heading','hinge','wifi','ble','bt','gnss','gnssraw','nmea','cell','mic','pkt','step','devorient','sigmotion','stationary','motion','power','ext'];
 def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'termux android app phone background bluetooth ble gnss satellites nmea raw measurements gps accelerometer gyroscope magnetometer battery wifi cell sensors enable gate away from home',
   ins:TERMUX_PINS.map(k=>({n:k,t:'num'})), outs:[{n:'rec',t:'rec'},{n:'pts',t:'rec'},{n:'line',t:'txt'},{n:'nmeatxt',t:'txt'},{n:'mic',t:'sig'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
   readout:true, tall:true,
@@ -75,6 +75,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'bridge: ws://host:8765/?token=…'},
     {n:'gps',g:'Position & battery',t:'check',d:true,label:'GPS position'},
     {n:'battery',g:'Position & battery',t:'check',d:true,label:'battery'},
+    {n:'power',g:'Position & battery',t:'check',d:false,label:'power state → «batt» «charging» «therm» (0–6, 3+ = severe) «saver» «thr» (how many times the app slows its polling) (DSP app)'},
     {n:'accel',g:'Motion (accel · gyro · mag)',t:'check',d:false,label:'accelerometer'},
     {n:'gyro',g:'Motion (accel · gyro · mag)',t:'check',d:false,label:'gyroscope'},
     {n:'mag',g:'Motion (accel · gyro · mag)',t:'check',d:false,label:'magnetometer'},
@@ -116,6 +117,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'cellEvery',g:'Cell & microphone',t:'range',min:1,max:120,step:1,d:5,label:'cell poll every, s (DSP app)'},
     {n:'mic',g:'Cell & microphone',t:'check',d:false,label:'microphone → output «mic» (signal), level in «micdb» (DSP app, also with the screen locked)'},
     {n:'micHz',g:'Cell & microphone',t:'select',opts:['8000','16000','22050','44100','48000'],d:'16000',label:'microphone: sample rate, Hz'},
+    {n:'ext',g:'Device records',t:'check',d:false,label:'events from other apps (Tasker / MacroDroid intent app.dsp.phone.EXT) → rec, number in «extv» (DSP app; allow in its Settings)'},
     {n:'pkt',g:'Packet capture (root)',t:'check',d:false,label:'packet capture, frames in hex → rec (DSP app; root + tcpdump; allow it in the app Settings)'},
     {n:'iface',g:'Packet capture (root)',t:'text',d:'any',label:'capture: interface (any, wlan0, rmnet_data0…)'},
     {n:'filter',g:'Packet capture (root)',t:'text',d:'',label:'capture: filter (tcpdump syntax, e.g. tcp port 80)'},
@@ -168,6 +170,8 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     if(o.still!=null) t+='\n'+(o.still ? 'stationary' : 'moving');
     if(o.light!=null) t+='\nlight '+f(o.light,0)+' lx';
     if(o.press!=null) t+='\npressure '+f(o.press,1)+' hPa';
+    if(o.therm!=null) t+='\nthermal '+f(o.therm,0)+(o.saver ? '  power saver' : '')+(o.thr>1 ? '  polling ÷'+f(o.thr,0) : '');
+    if(o.extv!=null) t+='\next '+f(o.extv,2);
     if(o.batt!=null) t+='\nbattery '+f(o.batt,0)+'%'+(o.charging ? ' (charging)' : '')+(o.temp!=null ? '  '+f(o.temp,1)+' °C' : '');
     if(r.textContent!==t) r.textContent=t; }
 });

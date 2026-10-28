@@ -34,7 +34,26 @@ class UsbError(val name: String, msg: String) : Exception(msg)
 
 /** Ключ доступа к /usb: известен только странице приложения (через DspApp), чужие сайты и приложения его не знают. */
 object UsbKey {
-    val value: String by lazy { val r = SecureRandom(); val a = "abcdefghijkmnpqrstuvwxyz23456789"; String(CharArray(24) { a[r.nextInt(a.length)] }) }
+    @Volatile private var dir: java.io.File? = null
+
+    /** Ключ лежит в закрытой папке приложения: окна-слоты (другие процессы) читают тот же. Вызвать до первого value. */
+    fun init(ctx: android.content.Context) { dir = ctx.filesDir }
+
+    val value: String by lazy { load() }
+
+    private fun gen(): String { val r = SecureRandom(); val a = "abcdefghijkmnpqrstuvwxyz23456789"; return String(CharArray(24) { a[r.nextInt(a.length)] }) }
+
+    private fun load(): String {
+        val d = dir ?: return gen()
+        val f = java.io.File(d, "app-key")
+        try {
+            f.takeIf { it.exists() }?.readText()?.trim()?.takeIf { it.length >= 16 }?.let { return it }
+            val k = gen(); val t = java.io.File(d, "app-key." + android.os.Process.myPid())
+            t.writeText(k)
+            try { java.nio.file.Files.createLink(f.toPath(), t.toPath()) } catch (e: java.nio.file.FileAlreadyExistsException) { /* другой процесс успел раньше */ } finally { t.delete() }
+            return f.readText().trim().ifEmpty { k }
+        } catch (e: Exception) { return gen() }
+    }
 }
 
 interface UsbBackend {
