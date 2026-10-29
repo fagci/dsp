@@ -58,14 +58,16 @@ class DspVpnService : VpnService() {
     override fun onRevoke() { stop("the system VPN was turned off (another VPN app, or Settings)") }   // пользователь отключил VPN в системных настройках
     override fun onDestroy() { stop(null); super.onDestroy() }
 
+    @Suppress("DEPRECATION")
     private fun start() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(NotificationChannel(CH, "DSP VPN monitor", NotificationManager.IMPORTANCE_LOW))
         val stop = PendingIntent.getService(this, 0, Intent(this, DspVpnService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        // Action.Builder(Icon, …) требует не-null значок — с null кнопка в уведомлении просто не срабатывает (как у BridgeService.notification())
         val n = Notification.Builder(this, CH).setContentTitle("DSP: network monitor")
             .setContentText("Watching which app talks to which address").setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-            .addAction(Notification.Action.Builder(null, "Stop", stop).build()).setOngoing(true).build()
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stop).setOngoing(true).build()
         if (Build.VERSION.SDK_INT >= 29) startForeground(ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(ID, n)
 
         val b = Builder().setSession("DSP").addAddress(TUN_ADDR, 32).addRoute("0.0.0.0", 0).setMtu(MTU)
