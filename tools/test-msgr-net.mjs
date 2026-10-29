@@ -19,6 +19,9 @@ const rig = (proto, cfg) => {
   return r;
 };
 const servers = [];
+// пароли и токены тестов — случайные на каждый запуск, не литералы (сканеры секретов принимают их за настоящие)
+const rnd = () => Math.random().toString(36).slice(2, 10);
+const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = rnd();
 
 // ---- Nostr: имитация реле ----
 { const subs = new Set();
@@ -83,8 +86,8 @@ const servers = [];
 { const sent = []; const pending = []; let logins = 0, syncs = 0;
   const srv = http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://x'), js = o => { res.writeHead(200, {'content-type': 'application/json'}); res.end(JSON.stringify(o)); };
-    const auth = req.headers.authorization === 'Bearer tok1';
-    if (u.pathname === '/_matrix/client/v3/login') { logins++; const b = JSON.parse(await body(req)); return b.password === 'pw' ? js({access_token: 'tok1', user_id: '@me:hs'}) : (res.writeHead(403), res.end('{"errcode":"M_FORBIDDEN","error":"bad password"}')); }
+    const auth = req.headers.authorization === 'Bearer ' + TOK;
+    if (u.pathname === '/_matrix/client/v3/login') { logins++; const b = JSON.parse(await body(req)); return b.password === PW ? js({access_token: TOK, user_id: '@me:hs'}) : (res.writeHead(403), res.end('{"errcode":"M_FORBIDDEN","error":"bad password"}')); }
     if (!auth) { res.writeHead(401); return res.end('{"errcode":"M_UNKNOWN_TOKEN","error":"nope"}'); }
     if (u.pathname.endsWith('/join/!r%3Ahs') || u.pathname.includes('/join/')) { await body(req); return js({room_id: '!r:hs'}); }
     if (u.pathname.endsWith('/account/whoami')) return js({user_id: '@me:hs'});
@@ -103,7 +106,7 @@ const servers = [];
     res.writeHead(404); res.end('{}');
   }); servers.push(srv);
   const port = await listen(srv), server = 'http://127.0.0.1:' + port, cache = {};
-  const A = rig('matrix', {server, user: 'me', pass: 'pw', channel: '!r:hs', cache});
+  const A = rig('matrix', {server, user: 'me', pass: PW, channel: '!r:hs', cache});
   await until(() => A.state() === 'up');
   ok('matrix login + join', A.state() === 'up' && logins === 1, JSON.stringify(A.st));
   await sleep(100);
@@ -114,9 +117,9 @@ const servers = [];
   await until(() => A.msgs.length === 2);
   ok('matrix own message self', A.msgs[1]?.self === true);
   A.s.close();
-  const B = rig('matrix', {server, user: 'me', pass: 'WRONG', channel: '!r:hs'}); await until(() => B.state() === 'fatal');
+  const B = rig('matrix', {server, user: 'me', pass: BAD, channel: '!r:hs'}); await until(() => B.state() === 'fatal');
   ok('matrix wrong password fatal', B.state() === 'fatal', JSON.stringify(B.st));
-  const C = rig('matrix', {server, pass: 'tok1', channel: '!r:hs'}); await until(() => C.state() === 'up');
+  const C = rig('matrix', {server, pass: TOK, channel: '!r:hs'}); await until(() => C.state() === 'up');
   ok('matrix access token only', C.state() === 'up', JSON.stringify(C.st)); C.s.close();
 }
 
@@ -124,14 +127,14 @@ const servers = [];
 { const queue = []; const sent = [];
   const srv = http.createServer(async (req, res) => {
     const m = /\/bot([^/]+)\/(\w+)/.exec(req.url), js = o => { res.writeHead(200, {'content-type': 'application/json'}); res.end(JSON.stringify(o)); };
-    if (!m || m[1] !== 'T0KEN') { res.writeHead(401); return res.end('{"ok":false,"error_code":401,"description":"Unauthorized"}'); }
+    if (!m || m[1] !== TG) { res.writeHead(401); return res.end('{"ok":false,"error_code":401,"description":"Unauthorized"}'); }
     const b = JSON.parse((await body(req)) || '{}');
     if (m[2] === 'getMe') return js({ok: true, result: {username: 'dsp_bot'}});
     if (m[2] === 'getUpdates') { for (let i = 0; i < 60 && !queue.length; i++) await sleep(20); return js({ok: true, result: queue.splice(0)}); }
     if (m[2] === 'sendMessage') { sent.push(b); return js({ok: true, result: {}}); }
   }); servers.push(srv);
   const port = await listen(srv), server = 'http://127.0.0.1:' + port;
-  const A = rig('telegram', {server, pass: 'T0KEN', nick: 'dspbot'});
+  const A = rig('telegram', {server, pass: TG, nick: 'dspbot'});
   await until(() => A.state() === 'up');
   ok('telegram getMe', A.state() === 'up' && /dsp_bot/.test(A.st.at(-1)[1]), JSON.stringify(A.st));
   ok('send with no chat known is refused', await A.s.send('x') === false);
@@ -141,7 +144,7 @@ const servers = [];
   ok('telegram reply goes to the last chat', await A.s.send('hello human') === true && sent[0].chat_id === 42 && sent[0].text === 'hello human');
   ok('telegram own message echoed locally', A.msgs.at(-1).self === true);
   A.s.close();
-  const B = rig('telegram', {server, pass: 'bad'}); await until(() => B.state() === 'fatal');
+  const B = rig('telegram', {server, pass: BAD}); await until(() => B.state() === 'fatal');
   ok('telegram bad token fatal', B.state() === 'fatal', JSON.stringify(B.st));
 }
 
@@ -156,9 +159,9 @@ const servers = [];
     sock.on('close', () => clients.delete(sock)); sock.on('error', () => {});
   }); servers.push(srv);
   const port = await listen(srv), server = 'irc://127.0.0.1:' + port;
-  const A = rig('irc', {server, channel: 'dsp', nick: 'dspbot', pass: 'sekret'});
+  const A = rig('irc', {server, channel: 'dsp', nick: 'dspbot', pass: IRC_PW});
   await until(() => A.st.some(s => /joined #dsp/.test(s[1])));
-  ok('irc registered and joined (#dsp from "dsp")', got.includes('PASS sekret') && got.includes('JOIN #dsp'), JSON.stringify(got));
+  ok('irc registered and joined (#dsp from "dsp")', got.includes('PASS ' + IRC_PW) && got.includes('JOIN #dsp'), JSON.stringify(got));
   for (const s of clients) s.write(':bob!u@h PRIVMSG #dsp :привет, мир\r\n');
   await until(() => A.msgs.length);
   ok('irc incoming', A.msgs[0]?.text === 'привет, мир' && A.msgs[0].from === 'bob');
@@ -210,10 +213,10 @@ const servers = [];
     sock.once('data', () => {});
   }); servers.push(srv);
   const port = await listen(srv);
-  const refuse = rig('xmpp', {user: 'bob@ex.org', pass: 'p', server: 'xmpp://127.0.0.1:' + port, channel: 'room@conf.ex.org', nick: 'bobby'});
+  const refuse = rig('xmpp', {user: 'bob@ex.org', pass: PW, server: 'xmpp://127.0.0.1:' + port, channel: 'room@conf.ex.org', nick: 'bobby'});
   await until(() => refuse.state() === 'fatal');
   ok('xmpp refuses a plaintext password without STARTTLS', refuse.state() === 'fatal' && /STARTTLS/.test(refuse.st.at(-1)[1]) && !rx.join('').includes('<auth'), JSON.stringify(refuse.st));
-  const A = rig('xmpp', {user: 'bob@ex.org', pass: 'p', server: 'xmpp://127.0.0.1:' + port, channel: 'room@conf.ex.org', nick: 'bobby', insecure: true});
+  const A = rig('xmpp', {user: 'bob@ex.org', pass: PW, server: 'xmpp://127.0.0.1:' + port, channel: 'room@conf.ex.org', nick: 'bobby', insecure: true});
   await until(() => A.state() === 'up');
   ok('xmpp login + bind', A.state() === 'up' && /bob@ex\.org\/dsp/.test(A.st.at(-1)[1]), JSON.stringify(A.st));
   ok('xmpp send to the room', A.s.send('hi & <all>') === true);
