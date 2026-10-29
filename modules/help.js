@@ -159,10 +159,19 @@ function hpModule(b,id){
   b.append(add);
   const bl=hp.bullets && hp.bullets.get(hlpNorm(c.title));
   if(bl && bl.length){
-    const m=hpEl('div','hp-md hp-clamp'); m.innerHTML=bl.map(x=>hlpMd((x.replace(/^\*\*[^*]+\*\*\s*(\([^)]*\))?:?\s*/,'')||x).replace(/^./,c=>c.toUpperCase()))).join(''); hpLinks(m,'README.md');
-    b.append(hpEl('h3','hp-gh','From the manual')); b.append(m);
-    if(m.scrollHeight>360){ const more=hpEl('button','hp-btn','Show all'); more.onclick=()=>{ m.classList.toggle('hp-clamp'); more.textContent=m.classList.contains('hp-clamp') ? 'Show all' : 'Show less'; }; b.append(more); }
-    else m.classList.remove('hp-clamp');
+    b.append(hpEl('h3','hp-gh','From the manual'));
+    let first=true;
+    for(const x of bl){
+      const text=(x.replace(/^\*\*[^*]+\*\*\s*(\([^)]*\))?:?\s*/,'')||x).replace(/^./,c=>c.toUpperCase()), sm=hlpSummary(text,280,3);
+      const head=hpEl('div','hp-md hp-sum',hlpMd(sm.head)); hpLinks(head,'README.md'); b.append(head);
+      if(sm.rest.length){
+        const more=hpEl('div','hp-md hp-more',sm.rest.map(r=>hlpMd(r)).join('')); more.hidden=true; hpLinks(more,'README.md');
+        const btn=hpEl('button','hp-btn','More ('+sm.rest.length+')');
+        btn.onclick=()=>{ more.hidden=!more.hidden; btn.textContent=more.hidden ? 'More ('+sm.rest.length+')' : 'Less'; };
+        b.append(btn,more);
+      }
+      first=false;
+    }
   }
   else b.append(hpEl('p','hp-dim','No description of this module in the manual yet — the pins and parameters below come from the module itself.'));
   if(c.dynamic) b.append(hpEl('p','hp-dim','The pins of this module depend on its settings; the lists show the base set.'));

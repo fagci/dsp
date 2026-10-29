@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const rd=p=>fs.readFileSync(path.join(root,p),'utf8');
 const ctx=vm.createContext({Math,Object,Array,Set,Map,Number,String,JSON,RegExp});
-vm.runInContext(rd('modules/help-kernels.js')+';globalThis.K={fzTokens,fzDist,fzWord,fzScoreWords,hlpMd,hlpSlug,hlpSections,hlpBullets,hlpToc,hlpResolve,hlpModCard,hlpUsage,hlpSearch};',ctx);
+vm.runInContext(rd('modules/help-kernels.js')+';globalThis.K={fzTokens,fzDist,fzWord,fzScoreWords,hlpMd,hlpSlug,hlpSections,hlpBullets,hlpToc,hlpResolve,hlpModCard,hlpUsage,hlpSearch,hlpSentences,hlpSummary};',ctx);
 const K=ctx.K, J=x=>JSON.stringify(x);
 let bad=0; const ok=(c,m)=>{ if(!c){ bad++; console.error('FAIL: '+m); } };
 const eq=(a,b,m)=>ok(J(a)===J(b),m+' (получено '+J(a)+', ждали '+J(b)+')');
@@ -85,5 +85,10 @@ eq(K.hlpSearch(E,'wire')[0].key,'wires','начало слова');
 eq(K.hlpSearch(E,'zzzz'),[],'пусто');
 eq(K.hlpSearch(E,'scan lan')[0].key,'P','несколько слов');
 
+// длинный текст — по предложениям
+eq(K.hlpSentences('One thing. Two things, e.g. this. Three **bold** here. (Four) done.'),['One thing.','Two things, e.g. this.','Three **bold** here.','(Four) done.'],'предложения, «e.g.» не режет');
+const sm=K.hlpSummary('A one. B two. C three. D four. E five.',13,2);
+eq(sm.head,'A one. B two.','резюме — первые предложения до порога'); eq(sm.rest,['C three. D four.','E five.'],'остаток — абзацами');
+eq(K.hlpSummary('Short.',280,3),{head:'Short.',rest:[]},'короткий текст без остатка');
 if(bad){ console.error(bad+' failed'); process.exit(1); }
 console.log('help ok');

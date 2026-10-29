@@ -26,7 +26,6 @@ const data=await pg.evaluate(()=>{
 });
 const readme=fs.readFileSync(path.join(root,'README.md'),'utf8');
 const bullets=await pg.evaluate(t=>{ const m=hlpBullets(t); return Object.fromEntries([...m].map(([k,v])=>[k,v[0]])); },readme);
-await b.close(); srv.close();
 
 const norm=s=>String(s).toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim();
 const clip=(s,n)=>s.length>n ? s.slice(0,n).replace(/\s+\S*$/,'')+' …' : s;
@@ -41,7 +40,7 @@ for(const [cat,list] of [...by].sort((a,b)=>String(a[0]).localeCompare(String(b[
     out+='### '+m.title+'\n\n`'+m.id+'`'+(m.presets ? ' · used in '+m.presets+' preset'+(m.presets>1 ? 's' : '') : '')+'\n\n';
     const t=bullets[norm(m.title)];
     if(t){ const x=t.replace(/^\*\*[^*]+\*\*\s*(\([^)]*\))?:?\s*/,'').split('\n')[0].replace(/!?\[([^\]]*)\]\((?!https?:)[^)]*\)/g,'$1').replace(/^./,c=>c.toUpperCase());   // относительные ссылки README здесь не работают
-      out+=clip(x,420)+'\n\n'; }
+      out+=clip(await pg.evaluate(([t,n])=>hlpSummary(t,n,3).head,[x,300]),420)+'\n\n'; }
     if(m.ins.length) out+='- **In:** '+pins(m.ins)+'\n';
     if(m.outs.length) out+='- **Out:** '+pins(m.outs)+'\n';
     const ps=m.params.filter(p=>!p.adv);
@@ -51,4 +50,5 @@ for(const [cat,list] of [...by].sort((a,b)=>String(a[0]).localeCompare(String(b[
   }
 }
 fs.writeFileSync(path.join(root,'help/modules.md'),out);
+await b.close(); srv.close();
 console.log('help/modules.md: '+data.length+' modules, '+(out.length>>10)+' KB');

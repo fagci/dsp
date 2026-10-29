@@ -163,6 +163,26 @@ function hlpResolve(from,href){
   return out.join('/');
 }
 
+// длинный пункт README читать тяжело: делим на предложения (не после «e.g.», «i.e.», «etc.», «vs.») и собираем в короткие абзацы
+function hlpSentences(md){
+  const t=String(md).replace(/\s+/g,' ').trim(), out=[];
+  let start=0;
+  for(const m of t.matchAll(/[.!?](?=\s+[A-ZА-Я*`(\[«])/g)){
+    const end=m.index+1;
+    if(/\b(e\.g|i\.e|etc|vs|approx|incl)\.$/i.test(t.slice(Math.max(0,end-8),end))) continue;
+    out.push(t.slice(start,end).trim()); start=end;
+  }
+  if(start<t.length) out.push(t.slice(start).trim());
+  return out.filter(Boolean);
+}
+// резюме — первые предложения, пока не набралось chars знаков; rest — остальное абзацами по per предложений
+function hlpSummary(md,chars,per){
+  const S=hlpSentences(md); let n=0, len=0;
+  while(n<S.length && (n===0 || len+S[n].length<=chars)){ len+=S[n].length; n++; }
+  const rest=[]; for(let i=n;i<S.length;i+=per||3) rest.push(S.slice(i,i+(per||3)).join(' '));
+  return {head:S.slice(0,n).join(' '),rest};
+}
+
 // ---- карточка модуля и «где встречается» ----
 function hlpModCard(d){
   const arr=x=>Array.isArray(x) ? x : [];

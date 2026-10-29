@@ -1603,4 +1603,9 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 #helpPanel table{border-collapse:collapse;width:100%;margin:6px 0;font-size:12px}
 #helpPanel td,#helpPanel th{border:1px solid var(--line);padding:3px 6px;vertical-align:top;text-align:left}
 #helpPanel blockquote{margin:6px 0;padding:0 10px;border-left:3px solid var(--line);color:var(--dim)}
-#helpPanel .hp-clamp{max-height:22em;overflow:hidden;-webkit-mask-image:linear-gradient(#000 80%,transparent);mask-image:linear-gradient(#000 80%,transparent)}
+#helpPanel .hp-body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:14px;line-height:1.65}
+#helpPanel .hp-md p{margin:.55em 0} #helpPanel .hp-md li{margin:.3em 0} #helpPanel .hp-md ul,#helpPanel .hp-md ol{padding-left:1.3em}
+#helpPanel code,#helpPanel pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+#helpPanel .hp-more{margin-top:6px;padding-left:10px;border-left:2px solid var(--line)}
+#helpPanel .hp-sum{font-size:14px}
+#helpPanel .hp-btn{margin:4px 0}
