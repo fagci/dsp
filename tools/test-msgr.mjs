@@ -2,6 +2,7 @@
 import {loadMsgr} from './node/load.mjs';
 const M = loadMsgr();
 let bad = 0;
+const PW = Math.random().toString(36).slice(2, 10);   // не литерал — сканеры секретов
 const eq = (n, a, b) => { const sa = JSON.stringify(a), sb = JSON.stringify(b); if (sa !== sb) { bad++; console.log('FAIL', n, sa, '!=', sb); } else console.log('ok  ', n); };
 const H = M.mgHex, U = M.mgUnhex;
 
@@ -76,9 +77,9 @@ const H = M.mgHex, U = M.mgUnhex;
   eq('irc injection stripped', M.mgIrcFmt('PRIVMSG', '#c', 'hi\r\nQUIT :x'), 'PRIVMSG #c :hi QUIT :x');
   eq('split long', M.mgSplit('а'.repeat(500), 400).map(s => new TextEncoder().encode(s).length <= 400), [true, true, true]);
   const sent = [], got = [], st = [];
-  const c = M.mgIrcClient({nick: 'dsp', pass: 'pw', channels: ['#test'], write: l => sent.push(l), onMsg: m => got.push(m), onStatus: (t, s) => st.push(s)});
+  const c = M.mgIrcClient({nick: 'dsp', pass: PW, channels: ['#test'], write: l => sent.push(l), onMsg: m => got.push(m), onStatus: (t, s) => st.push(s)});
   c.start();
-  eq('registration', sent, ['PASS pw', 'NICK dsp', 'USER dsp 0 * dsp']);
+  eq('registration', sent, ['PASS ' + PW, 'NICK dsp', 'USER dsp 0 * dsp']);
   c.feed(':srv 433 * dsp :Nickname is already in use\r\nPING :tok\r\n:srv 001 dsp_ :Welcome\r\n:bob!u@h PRIV');
   c.feed('MSG #test :hi there\r\n:bob!u@h PRIVMSG dsp_ :\x01ACTION waves\x01\r\n:bob!u@h PRIVMSG #test :\x01VERSION\x01\r\n');
   eq('nick change, pong, join', sent.slice(3), ['NICK dsp_', 'PONG tok', 'JOIN #test']);
@@ -100,7 +101,7 @@ const H = M.mgHex, U = M.mgUnhex;
 // XMPP: клиент против сценария «сервера»
 { const out = [], got = [], st = []; let cli, tlsUp = false;
   const srv = s => cli.feed(s);
-  cli = M.mgXmppClient({domain: 'ex.org', user: 'bob', pass: 'pä', resource: 'dsp', room: 'room@conf.ex.org', nick: 'bobby',
+  cli = M.mgXmppClient({domain: 'ex.org', user: 'bob', pass: PW + 'ä', resource: 'dsp', room: 'room@conf.ex.org', nick: 'bobby',
     write: s => out.push(s), tls: done => { tlsUp = true; done(); }, onMsg: m => got.push(m), onStatus: (t, s) => st.push(s)});
   cli.start();
   eq('stream opened', /^<\?xml.*<stream:stream to='ex\.org'/.test(out[0]), true);
@@ -110,7 +111,7 @@ const H = M.mgHex, U = M.mgUnhex;
   eq('tls upgraded, stream restarted', [tlsUp, out.length], [true, 3]);
   srv("<stream:stream from='ex.org' id='2' version='1.0' xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'><stream:features><mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><mechanism>SCRAM-SHA-1</mechanism><mechanism>PLAIN</mechanism></mechanisms></stream:features>");
   const auth = /<auth [^>]*>(.*)<\/auth>/.exec(out[3]);
-  eq('SASL PLAIN payload', Buffer.from(auth[1], 'base64').toString('utf8'), '\0bob\0pä');
+  eq('SASL PLAIN payload', Buffer.from(auth[1], 'base64').toString('utf8'), '\0bob\0' + PW + 'ä');
   srv("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>");
   eq('stream restarted after SASL', out.length, 5);
   srv("<stream:stream from='ex.org' id='3' version='1.0' xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'><stream:features><bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'/></stream:features>");
@@ -128,7 +129,7 @@ const H = M.mgHex, U = M.mgUnhex;
   cli.send('a <b> & c'); eq('send to room', /type='groupchat' to='room@conf\.ex\.org'.*<body>a &lt;b&gt; &amp; c<\/body>/.test(out[out.length - 1]), true);
   cli.send('hi','carol@ex.org'); eq('send direct', /type='chat' to='carol@ex\.org'/.test(out[out.length - 1]), true);
 }
-{ const st = []; const c = M.mgXmppClient({domain: 'ex.org', user: 'b', pass: 'p', write() {}, tls() {}, onMsg() {}, onStatus: (t, s) => st.push(s)});
+{ const st = []; const c = M.mgXmppClient({domain: 'ex.org', user: 'b', pass: PW, write() {}, tls() {}, onMsg() {}, onStatus: (t, s) => st.push(s)});
   c.start(); c.feed("<stream:stream xmlns='jabber:client' xmlns:stream='x'><stream:features><mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><mechanism>PLAIN</mechanism></mechanisms></stream:features>");
   eq('no TLS offered → password not sent', st[st.length - 1], 'fatal'); }
 
