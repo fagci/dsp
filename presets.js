@@ -537,6 +537,7 @@ const PRESET_CATS={
   'Network: HTTP and FTP — Servers and Clients Test Each Other (Phone App)':'Network & IoT',
   'Phone App: USB SDR over OTG (RTL-SDR, HackRF…)':'SDR Receivers',
   'bitchat Mesh Chat (no app install)':'Network & IoT',
+  'Messenger: One Chat for Nostr, ntfy, Matrix, Telegram, IRC and XMPP':'Network & IoT',
   'Reference: Decode BLE Advertisements (Company ID, Service UUID)':'Network & IoT',
   'Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)':'Network & IoT',
   'Bridge: Serial Port ↔ Network (TCP/WS Gateway)':'Network & IoT',
@@ -1525,6 +1526,21 @@ bc.size.w=420; bc.size.h=420; applySize(bc);
 const ch=addNode('chat',540,230,{echo:true,me:'dsp'});
 ch.size.w=360; ch.size.h=420; applySize(ch);
 addEdge(bc.id,'rec',ch.id,'rec'); addEdge(ch.id,'text',bc.id,'send');
+markWiresDirty();
+});
+preset('Messenger: One Chat for Nostr, ntfy, Matrix, Telegram, IRC and XMPP', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'One chat window over several channels at once: whatever you type goes to every connected channel, and what arrives from any of them shows up in the same window. Here two are wired — Nostr (public relays, no account: the channel is a hashtag, the key is made up for the session) and ntfy (a topic on ntfy.sh, no account either). Press Connect on each; on another device open the same hashtag / topic (this page, any Nostr client with the hashtag, the ntfy app) and talk.\n'+
+  'The same node speaks Matrix (homeserver + password or token + room), a Telegram bot (token from @BotFather), IRC (wss://host/path from the page; ircs://host:6697 through the Node bridge) and XMPP (user@domain, room@conference.server; through the bridge): change «channel of communication» and fill the fields. The bridge is node tools/node/bridge.mjs (Node 22+), and the same code runs without a browser: node tools/node/msgr.mjs relay links.json forwards messages between channels of different protocols. Public channels are public — pick a long hashtag/topic nobody guesses.'});
+nt.size.w=900; nt.size.h=210; applySize(nt);
+const a=addNode('messenger',40,280,{proto:'nostr',channel:'dsp-workbench-demo-4f7a',nick:'dsp'});
+a.size.w=420; a.size.h=400; applySize(a);
+const b=addNode('messenger',40,720,{proto:'ntfy',channel:'dsp-workbench-demo-4f7a',nick:'dsp'});
+b.size.w=420; b.size.h=400; applySize(b);
+const ch=addNode('chat',540,280,{echo:false,me:'dsp',time:true});
+ch.size.w=420; ch.size.h=560; applySize(ch);
+addEdge(a.id,'rec',ch.id,'rec'); addEdge(b.id,'rec',ch.id,'rec');
+addEdge(ch.id,'text',a.id,'send'); addEdge(ch.id,'text',b.id,'send');
 markWiresDirty();
 });
 preset('Reference: Decode BLE Advertisements (Company ID, Service UUID)', function(){
