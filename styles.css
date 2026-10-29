@@ -332,7 +332,7 @@ body.noedit #bar .ed{display:none}
   .slidernum input[type=number]{font-size:14px}
   .nhead{padding:8px}
   .nhead .x{padding:0 6px;font-size:14px}
-  .nhead .ren,.nhead .rst,.nhead .xpd{padding:0 6px;font-size:13px}
+  .nhead .ren,.nhead .rst,.nhead .xpd,.nhead .hlp{padding:0 6px;font-size:13px}
   .rz-r,.rz-l{width:14px}
   .rz-r{right:-10px}
   .rz-l{left:-10px}
@@ -436,12 +436,12 @@ body.noedit #bar .ed{display:none}
 .nhead{display:flex;align-items:center;gap:6px;padding:5px 7px;cursor:move;user-select:none;-webkit-user-select:none;
   background:var(--panel);border-radius:3px 3px 0 0;box-shadow:inset 0 2px 0 var(--cat,var(--dim))}
 .nhead .ttl{flex:1;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.nhead .x,.nhead .ren,.nhead .rst,.nhead .xpd{cursor:pointer;color:var(--dim);padding:0 2px}
-.nhead .ren,.nhead .rst,.nhead .xpd{font-size:10px;opacity:.5}
+.nhead .x,.nhead .ren,.nhead .rst,.nhead .xpd,.nhead .hlp{cursor:pointer;color:var(--dim);padding:0 2px}
+.nhead .ren,.nhead .rst,.nhead .xpd,.nhead .hlp{font-size:10px;opacity:.5}
 @media (hover:hover){   /* кнопки шапки — только у наведённого/выделенного узла; на тач-экране остаются */
-  #content .node:not(:hover):not(.sel) .nhead :is(.x,.ren,.rst,.xpd){visibility:hidden}
+  #content .node:not(:hover):not(.sel) .nhead :is(.x,.ren,.rst,.xpd,.hlp){visibility:hidden}
 }
-.nhead .ren:hover,.nhead .rst:hover,.nhead .xpd:hover{color:var(--acc);opacity:1}
+.nhead .ren:hover,.nhead .rst:hover,.nhead .xpd:hover,.nhead .hlp:hover{color:var(--acc);opacity:1}
 .nhead .x:hover{color:#e05c5c}
 .nbody{padding:0}
 .io{display:flex;justify-content:space-between;gap:8px}
@@ -1578,3 +1578,29 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 .stu-scol h4{margin:0 0 4px;font-size:10px;letter-spacing:.06em;color:var(--dim);text-transform:uppercase;font-weight:500}
 .stu-srow{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:1px 0}
 .stu-snote{padding:4px 10px 8px;font-size:11px}
+
+/* справка (modules/help.js) */
+#helpPanel{position:fixed;z-index:70;top:0;right:0;bottom:0;width:min(560px,100vw);display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--line);box-shadow:-6px 0 24px rgba(0,0,0,.25);color:var(--txt);font-size:13px}
+#helpPanel[hidden]{display:none}
+#helpPanel .hp-bar{display:flex;gap:6px;padding:8px;border-bottom:1px solid var(--line);align-items:center}
+#helpPanel .hp-q{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);color:var(--txt);padding:5px 8px;border-radius:4px;font-size:13px}
+#helpPanel .hp-b,#helpPanel .hp-btn{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:4px;cursor:pointer;padding:3px 9px}
+#helpPanel .hp-b:disabled{opacity:.4;cursor:default}
+#helpPanel .hp-body{flex:1;overflow:auto;padding:10px 14px 24px;line-height:1.5;user-select:text;-webkit-user-select:text}
+#helpPanel h2{margin:4px 0 8px;font-size:18px} #helpPanel h3{margin:14px 0 6px;font-size:14px}
+#helpPanel .hp-md h1{font-size:19px;margin:4px 0 10px} #helpPanel .hp-md h2{font-size:16px;margin:16px 0 6px} #helpPanel .hp-md h3{font-size:14px}
+#helpPanel .hp-gh{color:var(--dim);text-transform:uppercase;font-size:11px;letter-spacing:.06em}
+#helpPanel .hp-dim{color:var(--dim)}
+#helpPanel .hp-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;color:var(--dim)}
+#helpPanel .hp-list{display:flex;flex-direction:column;gap:3px}
+#helpPanel .hp-item{display:flex;flex-direction:column;align-items:flex-start;text-align:left;background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:4px;padding:5px 9px;cursor:pointer}
+#helpPanel .hp-item span{color:var(--dim);font-size:11px;font-weight:400}
+#helpPanel .hp-item:hover,#helpPanel .hp-b:hover,#helpPanel .hp-btn:hover{border-color:var(--acc)}
+#helpPanel .hp-sel{margin-bottom:8px;border-color:var(--acc)}
+#helpPanel code{background:var(--bg);padding:0 4px;border-radius:3px;font-size:12px}
+#helpPanel pre{background:var(--bg);padding:8px;border-radius:4px;overflow:auto}
+#helpPanel a{color:var(--acc)}
+#helpPanel table{border-collapse:collapse;width:100%;margin:6px 0;font-size:12px}
+#helpPanel td,#helpPanel th{border:1px solid var(--line);padding:3px 6px;vertical-align:top;text-align:left}
+#helpPanel blockquote{margin:6px 0;padding:0 10px;border-left:3px solid var(--line);color:var(--dim)}
+#helpPanel .hp-clamp{max-height:22em;overflow:hidden;-webkit-mask-image:linear-gradient(#000 80%,transparent);mask-image:linear-gradient(#000 80%,transparent)}
