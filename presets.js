@@ -455,6 +455,7 @@ const PRESET_CATS={
   'Files over WebRTC':'Network & IoT',
   'Call: voice, video, chat and files over WebRTC':'Network & IoT',
   'WebRTC: audio and video of the graph over a connection':'Network & IoT',
+  'WebRTC Tunnel: Any Protocol Between Two Phones':'Network & IoT',
   'Game: Tic-Tac-Toe over WebRTC':'Games',
   'Game: Connect Four over WebRTC':'Games',
   'Game: Battleship over WebRTC':'Games',
@@ -8181,6 +8182,20 @@ addEdge(osc.id,'out',ao.id,'in'); addEdge(r.id,'link',ao.id,'rtc');
 addEdge(vs.id,'vid',vo.id,'vid'); addEdge(r.id,'link',vo.id,'rtc');
 addEdge(r.id,'link',ai.id,'rtc'); addEdge(ai.id,'out',dac.id,'L');
 addEdge(r.id,'link',vi.id,'rtc'); addEdge(vi.id,'img',fr.id,'img');
+markWiresDirty();
+});
+preset('WebRTC Tunnel: Any Protocol Between Two Phones', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'A graph-level tunnel between two phones (or browsers): WebRTC Data makes one encrypted (DTLS) peer-to-peer connection, and WebRTC Tunnel carries any «rec» records across it unchanged — whatever a node on one side produces, the matching node on the other side receives, verbatim. Here it is Phone Sensors (GPS, accelerometer…), shown live in a Table on the far side, but the records can be anything a module speaks: Network (DSP app)\'s socket events, BLE / GATT notifications, MQTT messages — wire that node\'s «rec» into WebRTC Tunnel instead, and the matching command input (e.g. Network\'s «cmd») on the far side\'s tunnel out, to actually act on them there.\n'+
+  'Load the same patch on both phones. Connect WebRTC Data by hand (Create offer / Accept offer / Apply answer) or fill the broker and a shared secret room and tick auto-connect (it also reconnects by itself). Several tunnels can share one connection — give each a different «channel name».'});
+nt.size.w=1150; nt.size.h=170; applySize(nt);
+const r=addNode('rtcdata',40,220,{}); r.size.w=360; r.size.h=380; applySize(r);
+const t=addNode('rtcTunnel',440,220,{label:'tun'}); t.size.w=300; t.size.h=140; applySize(t);
+const sn=addNode('termux',440,400,{url:'ws://127.0.0.1:8765',gps:true,accel:true}); sn.size.w=340; sn.size.h=260; applySize(sn);
+const tb=addNode('table',820,220,{list:'@patch',initial:false,follow:true,cols:['src','lat','lon','ax','ay','az']});
+tb.size.w=520; tb.size.h=380; applySize(tb);
+addEdge(r.id,'link',t.id,'rtc');
+addEdge(sn.id,'rec',t.id,'rec'); addEdge(t.id,'rec',tb.id,'rec');
 markWiresDirty();
 });
 gamePreset('Game: Tic-Tac-Toe over WebRTC','gtictactoe',280,330,false);
