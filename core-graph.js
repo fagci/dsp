@@ -331,9 +331,10 @@ const d=MOD[n.type];
 const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
 const title=nodeTitle(n);
 el.style.setProperty('--cat',catColor(d.cat)); el.dataset.title=title;
-el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare?'<span class="xpd" title="Expand canvas (hide parameters)">⛶</span>':''}${d.fs?'<span class="fsb" title="Fullscreen (double-click the picture)">⤢</span>':''}${(d.view||d.fs)&&pipSupported()?'<span class="pipb" title="Picture in picture (floating window)">⧉</span>':''}${(d.view||d.fs)&&wallpaperSupported()?'<span class="wpb" title="Set as live wallpaper (phone app)">🖼</span>':''}<span class="rst" title="Reset all parameters">↺</span><span class="ren" title="Rename">✎</span><span class="x">✕</span></div> <div class="nbody"></div>`;
+el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare?'<span class="xpd" title="Expand canvas (hide parameters)">⛶</span>':''}${d.fs?'<span class="fsb" title="Fullscreen (double-click the picture)">⤢</span>':''}${(d.view||d.fs)&&pipSupported()?'<span class="pipb" title="Picture in picture (floating window)">⧉</span>':''}${(d.view||d.fs)&&wallpaperSupported()?'<span class="wpb" title="Set as live wallpaper (phone app)">🖼</span>':''}<span class="hlp" title="Help for this module (F1)">?</span><span class="rst" title="Reset all parameters">↺</span><span class="ren" title="Rename">✎</span><span class="x">✕</span></div> <div class="nbody"></div>`;
 el.querySelector('.ttl').textContent=title;
 el.querySelector('.ren').addEventListener('click',e=>{ e.stopPropagation(); renameNode(n); });
+el.querySelector('.hlp').addEventListener('click',e=>{ e.stopPropagation(); hpForNode(n); });
 el.querySelector('.xpd')?.addEventListener('click',e=>{ e.stopPropagation(); xpandNode(n); });
 el.querySelector('.fsb')?.addEventListener('click',e=>{ e.stopPropagation(); nodeFullscreen(n); });
 el.querySelector('.pipb')?.addEventListener('click',e=>{ e.stopPropagation(); nodePip(n); });
@@ -517,7 +518,6 @@ n.el.classList.toggle('folded',n.lod===LOD_CARD);
 n.el.classList.toggle('lod-dot',n.lod===LOD_DOT);
 markWiresDirty();
 }
-function foldNode(n,v){ setLod(n,v ? LOD_CARD : LOD_FULL); }
 function addNodeUI(type,x,y){                         // узел, добавленный пользователем: служебные модули — сразу точкой
 const n=addNode(type,x,y);
 if(n && MOD[type].lod==='dot') setLod(n,LOD_DOT);
@@ -974,20 +974,6 @@ return row;
 }
 const fmt=v=>{ v=+v||0;                              // на случай пропущенного значения — не падать, а показать 0
 return Math.abs(v) >=1000?(v/1000).toFixed(2)+'k':Math.abs(v) >=10?v.toFixed(1):v.toFixed(3); };
-function editVal(span,cur,setV,s){                 // точный ввод по клику на значение
-if(span.querySelector('input')) return;
-const old=span.textContent;
-const i=document.createElement('input'); i.value=cur; i.title=`${s.min} … ${s.max}`;
-span.textContent=''; span.append(i); i.focus(); i.select();
-let finished=false;
-const done=ok=>{ if(finished) return; finished=true;
-const v=parseFloat(String(i.value).replace(',','.').replace(/k$/i,'e3'));
-span.textContent=old; if(ok&&isFinite(v)) setV(v); };
-i.addEventListener('keydown',e=>{ e.stopPropagation();
-if(e.key==='Enter') done(true); if(e.key==='Escape') done(false); });
-i.addEventListener('blur',()=>done(true));
-i.addEventListener('pointerdown',e=>e.stopPropagation());
-}
 /* ---- провода ---- */
 function portPos(n,el,dir){
 if(n.lod && !n.ghost){                             // свёрнутый узел: слева входы, справа выходы
@@ -2165,22 +2151,21 @@ const modSearchInfo=new WeakMap();                  // строки поиска
 function modInfo(m){
 let x=modSearchInfo.get(m);
 if(!x){ const title=m.title.toLocaleLowerCase('ru');
-x={title, tokens:title.split(/[^a-zа-я0-9]+/), rest:`${m.id} ${m.cat} ${m.kw||''}`.toLocaleLowerCase('ru')}; modSearchInfo.set(m,x); }
+x={title, tokens:title.split(/[^a-zа-я0-9]+/), rest:`${m.id} ${m.cat} ${m.kw||''}`.toLocaleLowerCase('ru')}; x.all=fzTokens(x.title+' '+x.rest); modSearchInfo.set(m,x); }
 return x;
 }
 const queryWords=q=>q.trim().toLocaleLowerCase('ru').split(/\s+/).filter(Boolean);
 function modScoreW(m,words){
 if(!words.length) return 1;
-const {title,tokens,rest}=modInfo(m);
+const x=modInfo(m), {title,tokens,rest}=x;
 let sc=0;
 for(const w of words){
 if(tokens.some(t=>t.startsWith(w))) sc+=3;
 else if(title.includes(w)) sc+=2;
 else if(rest.includes(w)) sc+=1;
-else return 0; }
+else { const f=fzWord(w,x.all); if(!f) return 0; sc+=f; } }      // опечатка или сокращение («grph», «wfall»)
 return sc;
 }
-function modScore(m,q){ return modScoreW(m,queryWords(q)); }
 /* Совместимость портов: тот же тип, val (универсальный) или iq ↔ sig через автоадаптер (см. connect) */
 function typeCompat(a,b){ return a===b || a==='val' || b==='val' || (a==='iq' && b==='sig') || (a==='sig' && b==='iq'); }
 // порт модуля m, к которому можно подключить провод, идущий от порта типа t (dir 'o' — провод начат с выхода → ищем вход)

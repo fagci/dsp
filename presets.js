@@ -89,11 +89,13 @@ function buildPatchList(){
 patchListEl.innerHTML='';
 const p=readP();
 const q=patchQuery.trim().toLocaleLowerCase('ru');
-const match=name=>!q || (presetSub(name)+' '+name).toLocaleLowerCase('ru').includes(q);
+const words=fzTokens(q), score=name=>{ const t=presetSub(name)+' '+name; return fzScoreWords(words,fzTokens(t),t.toLocaleLowerCase('ru')); };   // нечётко: опечатки и сокращения
+const match=name=>!q || score(name)>0;
 const custom=Object.keys(p).filter(k=>!(k in PRESETS) &&match(k));
 const temp=custom.filter(k=>k.startsWith(TEMP_PREFIX)).sort().reverse();     // новые сверху
 const own=custom.filter(k=>!k.startsWith(TEMP_PREFIX)).sort();
-const builtin=Object.keys(p).filter(k=>(k in PRESETS) &&match(k) &&!hostcapsPatchHidden(p[k]));      // пресеты на модулях без нужного API не показываем
+const builtin=Object.keys(p).filter(k=>(k in PRESETS) &&match(k) &&!hostcapsPatchHidden(p[k]));
+if(q) builtin.sort((a,b)=>score(b)-score(a));            // лучшие совпадения выше      // пресеты на модулях без нужного API не показываем
 let matches=0;
 const addGroup=(key,label,keys,subs)=>{
 if(!keys.length) return;
@@ -243,6 +245,7 @@ const PRESET_CATS={
   'Measure: SINAD of an FM Receiver (Generator)':'Analysis & Measurement',
   'Measure: IQ Quality — DC and Imbalance (Generator)':'Analysis & Measurement',
   'Meshtastic: Chat and Nodes on the Map':'Network & IoT',
+  'Help: Your First Patch':'Start Here',
   'Demo: Sweep and Waterfall':'Start Here',
   'Quick Audio Recording':'Start Here',
   'Find Sound Source (by Frequency)':'Start Here',
@@ -7844,6 +7847,19 @@ const g2=addNode('graphview',900,180,{directed:true,layout:'LR',edit:true});
 g2.size.w=420; g2.size.h=420; applySize(g2);
 addEdge(tb.id,'rows',g1.id,'rows'); addEdge(tb.id,'rows',g2.id,'rows');
 addEdge(g1.id,'edit',tb.id,'rec'); addEdge(g2.id,'edit',tb.id,'rec');
+markWiresDirty();
+});
+preset('Help: Your First Patch', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'The smallest working patch: an Oscillator makes a tone, the Oscilloscope shows the wave, the FFT turns it into a spectrum for the Spectrum Analyzer. Press ▶ in the toolbar, then change «freq» or «wave» on the Oscillator and watch both pictures. Wires carry one type of data (hover a pin to see it); drag from an output pin to an input pin to connect. Help: the ? button in the toolbar, F1, or the ? in a module header opens the card of a module — its pins, parameters, the manual text and the presets that use it. Search understands typos and abbreviations («grph», «spectrm»). The same pages are in the repository, folder help/.'});
+nt.size.w=900; nt.size.h=140; applySize(nt);
+const o=addNode('osc',40,200,{wave:'sine',freq:440,amp:.4});
+const sc=addNode('scope',320,200); sc.size.w=320; sc.size.h=200; applySize(sc);
+const ff=addNode('fft',320,430,{size:'2048'});
+const sa=addNode('sa',620,430,{fmin:0,fmax:4000,split:.4}); sa.size.w=420; sa.size.h=260; applySize(sa);
+addEdge(o.id,'out',sc.id,'in1');
+addEdge(o.id,'out',ff.id,'in');
+addEdge(ff.id,'spec',sa.id,'spec');
 markWiresDirty();
 });
 preset('Chat: Text In and Out', function(){
