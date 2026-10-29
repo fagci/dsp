@@ -10,6 +10,7 @@ The same pages are shown in the app (the **?** button in the toolbar, or **F1**)
 - [Tables and records](data.md) — `rec` and `rows`, Table, Graph, Map
 - [Dashboard](dashboard.md) — panes and tiles for instrument-like screens
 - [Offline and the phone app](offline.md) — PWA, offline data, the Android bridge
+- [Network tools](network.md) — scanner, traceroute / mtr, discovery and other things only the Android app can do
 - [Keys and gestures](shortcuts.md)
 - [Module reference](modules.md) — every module with its pins and parameters (generated)
 

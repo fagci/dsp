@@ -36,8 +36,8 @@ android {
 // Само приложение (корень репозитория) кладём в assets/www: WebView отдаёт его офлайн
 val copyWeb by tasks.registering(Sync::class) {
     from(rootDir.resolve("../..")) {
-        include("index.html", "manifest.json", "favicon.svg", "styles.css", "*.js")
-        include("icons/**", "modules/**", "vendor/**", "data/**")
+        include("index.html", "manifest.json", "favicon.svg", "styles.css", "*.js", "README.md")   // README.md и help/ — справка в приложении
+        include("icons/**", "modules/**", "vendor/**", "data/**", "help/**")
     }
     into(layout.buildDirectory.dir("generated/web/www"))
 }

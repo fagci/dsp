@@ -264,6 +264,15 @@ fun main() {
     ok("args: payload", Args.payload(JSONObject("{\"hex\":\"0102\"}"))?.size == 2 && Args.payload(JSONObject("{\"text\":\"héllo\"}"))?.size == 6 && Args.payload(JSONObject("{}")) == null)
     val pr = NetParse.reply("64 bytes from 8.8.8.8: icmp_seq=2 ttl=117 time=12.3 ms")
     ok("ping: reply", pr != null && pr.seq == 2 && pr.ttl == 117 && pr.ms == 12.3 && pr.from == "8.8.8.8" && pr.bytes == 64)
+    val pn = NetParse.reply("64 bytes from router.lan (192.168.1.1): icmp_seq=1 ttl=64 time=1.5 ms")
+    ok("ping: reply with a name in front of the address", pn != null && pn.from == "192.168.1.1" && pn.ms == 1.5)
+    ok("trace: Time to live exceeded (iputils and toybox forms)", NetParse.exceeded("From 10.0.0.1 icmp_seq=1 Time to live exceeded") == ("10.0.0.1" to false) &&
+        NetParse.exceeded("From 10.0.0.1: icmp_seq=1 Time to live exceeded") == ("10.0.0.1" to false) &&
+        NetParse.exceeded("From gw.lan (192.168.0.1) icmp_seq=1 Time to live exceeded") == ("192.168.0.1" to false))
+    ok("trace: unreachable ends the path", NetParse.exceeded("From 10.1.1.1 icmp_seq=1 Destination Host Unreachable") == ("10.1.1.1" to true) &&
+        NetParse.exceeded("From 10.1.1.1 icmp_seq=1 Destination Net Unreachable")?.second == true)
+    ok("trace: ordinary lines are not hops", NetParse.exceeded("PING 8.8.8.8 (8.8.8.8) 56(84) bytes of data.") == null && NetParse.exceeded("64 bytes from 8.8.8.8: icmp_seq=1 ttl=117 time=12.3 ms") == null &&
+        NetParse.exceeded("") == null)
     ok("ping: summary", NetParse.summary("4 packets transmitted, 3 received, 25% packet loss, time 3004ms") == (4 to 3) && NetParse.rtt("rtt min/avg/max/mdev = 10.1/12.5/15.0/1.2 ms")?.second == 12.5)
     ok("power commands are told from plain ones", BridgeServer.powerCmd("tcp.connect") && BridgeServer.powerCmd("gatt.write") && BridgeServer.powerCmd("ping") && BridgeServer.powerCmd("ui.tap") &&
         BridgeServer.powerCmd("sys.input") && BridgeServer.powerCmd("intent") && !BridgeServer.powerCmd("notify") && !BridgeServer.powerCmd("torch") && !BridgeServer.powerCmd("vibrate") && !BridgeServer.powerCmd("sms.send"))

@@ -96,7 +96,8 @@ object Args {
 
 /** Разбор вывода системного ping (чистая логика). */
 object NetParse {
-    private val REPLY = Regex("(\\d+) bytes from ([^:\\s]+).*?icmp_seq=(\\d+).*?(?:ttl=(\\d+))?.*?time[=<]([0-9.]+) ms")
+    private val REPLY = Regex("(\\d+) bytes from (?:[^:\\s]+ \\()?([^:\\s)]+)\\)?.*?icmp_seq=(\\d+).*?(?:ttl=(\\d+))?.*?time[=<]([0-9.]+) ms")
+    private val EXCEEDED = Regex("^From\\s+(?:\\S+\\s+\\()?(\\d{1,3}(?:\\.\\d{1,3}){3})\\)?[:\\s].*?(Time to live exceeded|[Uu]nreachable|prohibited|filtered)")
     private val SUMMARY = Regex("(\\d+) packets transmitted, (\\d+) (?:packets )?received")
     private val RTT = Regex("= ([0-9.]+)/([0-9.]+)/([0-9.]+)")
 
@@ -105,6 +106,11 @@ object NetParse {
         val m = REPLY.find(line) ?: return null
         val ttl = Regex("ttl=(\\d+)").find(line)?.groupValues?.get(1)?.toInt()
         return Reply(m.groupValues[1].toInt(), m.groupValues[2], m.groupValues[3].toInt(), ttl, m.groupValues[5].toDouble())
+    }
+    /** Ответ маршрутизатора на пробу с малым TTL: «From 10.0.0.1 icmp_seq=1 Time to live exceeded» → (адрес, конец пути?). «Unreachable» — путь дальше не идёт. */
+    fun exceeded(line: String): Pair<String, Boolean>? {
+        val m = EXCEEDED.find(line.trim()) ?: return null
+        return m.groupValues[1] to !m.groupValues[2].startsWith("Time to live")
     }
     fun summary(line: String): Pair<Int, Int>? = SUMMARY.find(line)?.let { it.groupValues[1].toInt() to it.groupValues[2].toInt() }
     fun rtt(line: String): Triple<Double, Double, Double>? = RTT.find(line)?.let { Triple(it.groupValues[1].toDouble(), it.groupValues[2].toDouble(), it.groupValues[3].toDouble()) }

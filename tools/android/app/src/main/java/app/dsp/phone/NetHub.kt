@@ -161,6 +161,7 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
                 }
             }
             "ping" -> ping(c, id, cmd, j)
+            "net.trace" -> trace(c, id, cmd, j)
             "net.info" -> {
                 val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
                 val lp = cm.activeNetwork?.let { cm.getLinkProperties(it) }
@@ -217,6 +218,49 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
         if (!p.waitFor((count * (wait + 1) + 5).toLong(), TimeUnit.SECONDS)) p.destroy()
         rd.join(1000)
         Reply.done(c, id, cmd, null, extra = arrayOf("host" to Json.str(host), "sent" to sent.toString(), "got" to got.toString(), "avg" to avg?.let { Json.num(it, 100.0) }))
+    }
+
+    private class Hop(val ip: String?, val ms: Double?, val last: Boolean, val unreachable: Boolean, val elapsedMs: Double)
+
+    /** Одна проба traceroute: ping -c 1 -t TTL. Ответ «Time to live exceeded» несёт адрес узла на пути, обычный ответ — конец пути; процесс снимается сразу после ответа. */
+    private fun traceHop(host: String, ttl: Int, wait: Int): Hop {
+        val t0 = System.nanoTime()
+        val p = try { ProcessBuilder("/system/bin/ping", "-c", "1", "-W", wait.toString(), "-t", ttl.toString(), host).redirectErrorStream(true).start() }
+                catch (e: Exception) { return Hop(null, null, false, false, 0.0) }
+        var ip: String? = null; var ms: Double? = null; var fin = false; var unr = false; var tFirst = 0L
+        val rd = Thread { try { p.inputStream.bufferedReader().forEachLine { l ->
+            if (ip == null) {
+                NetParse.reply(l)?.let { r -> ip = r.from; ms = r.ms; fin = true; tFirst = System.nanoTime() }
+                    ?: NetParse.exceeded(l)?.let { e -> ip = e.first; unr = e.second; fin = e.second; tFirst = System.nanoTime() }
+                if (ip != null) p.destroy()
+            }
+        } } catch (e: Exception) {} }.also { it.isDaemon = true; it.start() }
+        if (!p.waitFor((wait + 2).toLong(), TimeUnit.SECONDS)) p.destroy()
+        rd.join(500)
+        return Hop(ip, ms, fin, unr, if (tFirst > 0) (tFirst - t0) / 1e6 else 0.0)
+    }
+
+    /**
+     * traceroute без root: `net.trace {host, max, first, timeout, silent, run}` — пробы ping с растущим TTL; каждый узел на пути — запись
+     * {src:'net', ev:'trace', host, hop, ip, ms, ok, final, run}. Время «пустого» ping (запуск процесса) вычитается: его меряем на 127.0.0.1.
+     * Ответ маршрутизатора приходит без времени — оно считается от запуска пробы, поэтому это оценка с точностью в миллисекунду-две.
+     */
+    private fun trace(c: BridgeServer.Client, id: Any?, cmd: String, j: JSONObject) {
+        val host = Args.host(j.optString("host")) ?: return Reply.done(c, id, cmd, "host")
+        val max = j.optInt("max", 30).coerceIn(1, 64); val first = j.optInt("first", 1).coerceIn(1, max)
+        val wait = j.optInt("timeout", 2).coerceIn(1, 5); val silentMax = j.optInt("silent", 5).coerceIn(1, 64)
+        val run = j.optString("run").takeIf { it.isNotEmpty() && it.length <= 40 && Regex("[A-Za-z0-9_.:-]+").matches(it) }
+        val base = traceHop("127.0.0.1", 64, 1).let { if (it.ip != null) (it.elapsedMs - (it.ms ?: 0.0)).coerceAtLeast(0.0) else 0.0 }
+        var silent = 0; var reached = false; var hops = 0
+        for (ttl in first..max) {
+            val h = traceHop(host, ttl, wait); hops++
+            val ms = if (h.ip == null) null else h.ms ?: (h.elapsedMs - base).coerceAtLeast(0.05)
+            rec("trace", "host" to Json.str(host), "hop" to ttl.toString(), "ip" to h.ip?.let { Json.str(it) }, "ms" to ms?.let { Json.num(it, 100.0) },
+                "ok" to (if (h.ip != null) "1" else "0"), "final" to (if (h.last) "1" else "0"), "unreachable" to (if (h.unreachable) "1" else null), "run" to run?.let { Json.str(it) })
+            if (h.last) { reached = !h.unreachable; break }
+            if (h.ip == null) { if (++silent >= silentMax) break } else silent = 0
+        }
+        Reply.done(c, id, cmd, null, extra = arrayOf("host" to Json.str(host), "hops" to hops.toString(), "reached" to (if (reached) "1" else "0")))
     }
 
     /**

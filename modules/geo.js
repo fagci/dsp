@@ -520,7 +520,7 @@ def({ id:'recEnt', title:'Rec → Entities', cat:'Data', kw:'entity entities lin
   readout:true, tall:true,
   params:[{n:'rules',t:'code',plain:true,d:'',label:'rules: [out:] conditions | fields'},
           {n:'apply',t:'button',label:'Apply outputs',fn:n=>{ rebuildNode(n); markTopoDirty(); }},
-          {n:'tpl',t:'select',opts:['—','GSM cells','Digital voice (DMR / P25 / NXDN)','Radio (Wi-Fi / BLE / Zigbee)','Wi-Fi map (nodes · links · packets)','Phone radios (Wi-Fi · BLE · Bluetooth)','Network scan (hosts · ports · devices)'],d:'—',label:'insert rules',
+          {n:'tpl',t:'select',opts:['—','GSM cells','Digital voice (DMR / P25 / NXDN)','Radio (Wi-Fi / BLE / Zigbee)','Wi-Fi map (nodes · links · packets)','Phone radios (Wi-Fi · BLE · Bluetooth)','Network scan (hosts · ports · devices)','Traceroute (path to a host)'],d:'—',label:'insert rules',
            fn:n=>{ const t=ENT_TEMPLATES[n.p.tpl]; if(t){ n.p.rules=(n.p.rules?n.p.rules.trimEnd()+'\n':'')+t; } n.p.tpl='—'; rebuildNode(n); markTopoDirty(); }}],
   init:n=>{ n.in=0; n.outN=0; n.err=''; },
   process(n,I){
@@ -613,6 +613,13 @@ net: src=disc ip manufacturer | id={ip}, maker={manufacturer}, model
 net: src=disc ip | id=Phone>{ip}, from=Phone, to={ip}, label={via}
 net: src=disc ip kind | id=kind:{kind}, type=kind, label={kind}, shape=diamond, color=#d6a06b
 net: src=disc ip kind | id={ip}>kind:{kind}, from={ip}, to=kind:{kind}, label=is, dashes=1
+`,
+  'Traceroute (path to a host)':
+`# Traceroute / MTR (приложение DSP): Phone → узлы пути → цель; узлы и связи одним выходом net (Table key=id). prev — предыдущий отвечавший узел
+net: src=trace ev=hop ip | id=Phone, type=me, label=Phone, shape=star, color=#e8a200
+net: src=trace ev=hop ip | id={ip}, type=hop, label={ip}, shape=dot, color=#2a9df4, hop, ms
+net: src=trace ev=hop ip final=1 | id={ip}, type=target, shape=diamond, color=#e05555
+net: src=trace ev=hop ip prev | id={prev}>{ip}, from={prev}, to={ip}, label={ms} ms, arrows=to
 `,
   'Digital voice (DMR / P25 / NXDN)':
 `# абоненты, группы и связи; префикс сети {src} разводит одинаковые id в разных системах
