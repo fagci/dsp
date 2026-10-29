@@ -197,6 +197,7 @@ open class MainActivity : Activity() {
         "gif" -> "image/gif"
         "ico" -> "image/x-icon"
         "txt", "csv", "tsv" -> "text/plain"
+        "md" -> "text/markdown"
         "mp3" -> "audio/mpeg"
         "woff2" -> "font/woff2"
         else -> "application/octet-stream"

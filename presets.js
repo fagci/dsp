@@ -530,6 +530,7 @@ const PRESET_CATS={
   'Network: Syslog and TFTP Servers on the Phone (Phone App)':'Network & IoT',
   'Network: Telnet Terminal and a Mail Alert (Phone App)':'Network & IoT',
   'Network: Scan the LAN — Hosts, Ports and Devices as a Graph (Phone App)':'Network & IoT',
+  'Network: Traceroute and MTR — the Path to a Host as a Graph (Phone App)':'Network & IoT',
   'Network: Find a Device and Send It a File (Scan → FTP / HTTP)':'Network & IoT',
   'Network: HTTP Server — Answer Requests from the Graph (Phone App)':'Network & IoT',
   'Network: FTP Server — Share a Folder (Phone App)':'Network & IoT',
@@ -1631,6 +1632,27 @@ const raw=addNode('table',440,680,{list:'@patch',key:'id',initial:false});
 raw.size.w=940; raw.size.h=360; applySize(raw);
 addEdge(sc.id,'rec',ent.id,'rec'); addEdge(dc.id,'rec',ent.id,'rec'); addEdge(ent.id,'net',tb.id,'rec'); addEdge(tb.id,'rows',g.id,'rows');
 addEdge(sc.id,'rec',raw.id,'rec'); addEdge(dc.id,'rec',raw.id,'rec');
+markWiresDirty();
+});
+preset('Network: Traceroute and MTR — the Path to a Host as a Graph (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Which routers stand between this phone and an address, and what each one costs. A browser cannot do this (ICMP and TTL); the DSP app can: Traceroute sends pings with a growing TTL (no root) and every router answers «time to live exceeded» with its own address. Press Run: the path grows hop by hop in the Graph (left to right: Phone → your router → the provider → … → the target, the target is the red diamond; the time is on the link). Raise «rounds» to 10 and it becomes MTR: the second Table keeps one row per hop with loss %, last, average, best and worst — a hop with loss that continues further is a real problem, a hop with loss that does not is only a router that ignores pings. Silent hops (*) are routers that do not answer; the path goes around them.',
+  });
+nt.size.w=1000; nt.size.h=150; applySize(nt);
+const tr=addNode('traceroute',40,220,{host:'8.8.8.8',rounds:3,interval:300});
+tr.size.w=360; tr.size.h=420; applySize(tr);
+const ent=addNode('recEnt',440,220,{rules:ENT_TEMPLATES['Traceroute (path to a host)']});
+ent.size.w=420; ent.size.h=300; applySize(ent);
+const tb=addNode('table',900,220,{list:'@patch',key:'id',initial:false});
+tb.size.w=380; tb.size.h=300; applySize(tb);
+const g=addNode('graphview',1320,220,{directed:true,layout:'LR',edit:true});
+g.size.w=620; g.size.h=420; applySize(g);
+const fl=addNode('recFilter',440,680,{expr:"r.src==='trace' && r.ev==='stat'"});
+fl.size.w=300; applySize(fl);
+const st=addNode('table',780,680,{list:'@patch',key:'id',initial:false,cols:['hop','ip','loss','sent','last','avg','best','worst']});
+st.size.w=700; st.size.h=300; applySize(st);
+addEdge(tr.id,'rec',ent.id,'rec'); addEdge(ent.id,'net',tb.id,'rec'); addEdge(tb.id,'rows',g.id,'rows');
+addEdge(tr.id,'rec',fl.id,'rec'); addEdge(fl.id,'rec',st.id,'rec');
 markWiresDirty();
 });
 preset('Network: Find a Device and Send It a File (Scan → FTP / HTTP)', function(){
