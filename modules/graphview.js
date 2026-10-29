@@ -38,14 +38,14 @@ function gvDelim(n,line){
 // Граф собирается из двух слоёв. Накопление (rec, text, старый csv): записи только добавляют рёбра.
 // Снимок (входы set и nodes, тип bands): весь набор целиком — что пропало из набора, исчезает с графа.
 // Итог = объединение слоёв; на vis уходит только разница (gvSync), без пересборки всего графа.
-const GV_SHAPES=new Set(['dot','circle','square','box','diamond','triangle','triangleDown','star','hexagon','ellipse','database','text']);
+const GV_SHAPES=new Set(['dot','circle','square','box','diamond','triangle','triangleDown','star','hexagon','ellipse','database','text','image','circularImage','icon']);
 GV_NAMES.color=/^(color|colour|цвет)$/i;
 // поля записи ищутся по списку имён в порядке предпочтения (from раньше src: у записей декодеров src — протокол),
 // явное имя колонки из параметров перекрывает автоопределение
 const GV_ALIAS={from:['from','source','src','узел1','от'], to:['to','target','dst','dest','узел2','к'],
-  w:['weight','w','value','count','вес'], label:['label','name','text','метка'], color:['color','colour','цвет'], dash:['dashes','dash','пунктир']};
+  w:['weight','w','value','count','вес'], label:['label','name','text','метка'], color:['color','colour','цвет'], dash:['dashes','dash','пунктир'], arrows:['arrows','arrow','стрелки','стрелка']};
 const GV_NODEA={id:['id','node','name','key','узел'], label:['label','title','text','метка'], shape:['shape','форма'],
-  color:['color','colour','цвет'], size:['size','value','размер'], icon:['icon','значок'], note:['note','comment','notes','комментарий','заметка']};
+  color:['color','colour','цвет'], size:['size','value','размер'], icon:['icon','значок'], group:['group','grp','cluster','группа'], image:['image','img','picture','картинка'], glyph:['glyph','symbol','глиф'], note:['note','comment','notes','комментарий','заметка']};
 // значок карты → форма узла, когда колонки shape нет: один и тот же список рисуется и здесь, и на Map
 const GV_ICON_SHAPE={dot:'dot',square:'square',diamond:'diamond',triangle:'triangle',star:'star',flag:'triangle',antenna:'triangle',tx:'triangle',plane:'triangle',ship:'box',sat:'diamond',balloon:'dot'};
 // у строк одной таблицы набор колонок один и тот же: разбор имён запоминается по форме строки (alias × ovr), строка сверяется ключами
@@ -83,7 +83,7 @@ const gvEdgeOvr=n=>{                                // + toTag: «col=value:пр
   if(m) o.tag={col:m[1].trim().toLowerCase(),val:m[2].trim().toLowerCase(),prefix:m[3]};
   return o;
 };
-const gvNodeOvr=n=>gvOvr(n,{id:'nodeCol',label:'nodeLabelCol'});
+const gvNodeOvr=n=>gvOvr(n,{id:'nodeCol',label:'nodeLabelCol',group:'groupCol',image:'imageCol'});
 const gvKey=(a,b)=>a+'\u0001'+b;
 const GV_ALIASF=['alias','from_label','fromname'], GV_ALIASA={a:GV_ALIASF};
 // подпись отправителя: поле alias записи (и записи, где есть только from — псевдоним абонента)
@@ -108,7 +108,8 @@ function gvEdgeRec(r,ovr){                          // запись → {from,to
   if(tg){ const k=Object.keys(r).find(c=>c.toLowerCase()===tg.col); if(k!==undefined && String(r[k]).toLowerCase()===tg.val) b=tg.prefix+b; }
   const w=f.w!=null && r[f.w]!=='' ? +String(r[f.w]).replace(',','.') : NaN;
   return {from:a,to:b,w:Number.isFinite(w) ? w : NaN,label:f.label!=null ? String(r[f.label]??'') : '',color:f.color!=null ? String(r[f.color]||'') : '',
-          dash:f.dash!=null && /^(1|true|yes|dash|dashed)$/i.test(String(r[f.dash]).trim())};
+          dash:f.dash!=null && /^(1|true|yes|dash|dashed)$/i.test(String(r[f.dash]).trim()),
+          arrows:f.arrows!=null ? String(r[f.arrows]??'').trim() : ''};
 }
 // записи набора rows → узлы и связи: связь — запись с непустыми from и to (или их псевдонимами), остальное — узлы;
 // разбор кэшируется по самому массиву, поэтому ссылки стабильны, пока набор не сменился
@@ -125,12 +126,13 @@ function rowsSplit(rows){
 }
 function gvPut(map,e){                              // без веса повтор пары утолщает ребро
   const key=gvKey(e.from,e.to), c=map.get(key);
-  if(!c) map.set(key,{from:e.from,to:e.to,w:Number.isFinite(e.w) ? e.w : 1,label:e.label,color:e.color,dash:!!e.dash});
-  else { c.w=Number.isFinite(e.w) ? e.w : c.w+1; if(e.label) c.label=e.label; if(e.color) c.color=e.color; c.dash=c.dash && !!e.dash; }   // пара со сплошной связью рисуется сплошной
+  if(!c) map.set(key,{from:e.from,to:e.to,w:Number.isFinite(e.w) ? e.w : 1,label:e.label,color:e.color,dash:!!e.dash,arrows:e.arrows||''});
+  else { c.w=Number.isFinite(e.w) ? e.w : c.w+1; if(e.label) c.label=e.label; if(e.color) c.color=e.color; if(e.arrows) c.arrows=e.arrows; c.dash=c.dash && !!e.dash; }   // пара со сплошной связью рисуется сплошной
 }
-function gvAdd(n,from,to,w,label){
+function gvAdd(n,from,to,w,label,x){             // x — остальные поля связи записи (цвет, пунктир, стрелки)
   const e=gvEdgeRec({from,to,w,label});
   if(!e) return;
+  if(x){ e.color=x.color||''; e.dash=!!x.dash; e.arrows=x.arrows||''; }
   for(const id of [e.from,e.to]) if(!n.aNodes.has(id)){
     if(n.aNodes.size>=Math.max(10,+n.p.max||500)) return;
     n.aNodes.add(id); }
@@ -154,7 +156,7 @@ function gvRecs(n,recs){
   const ovr=gvEdgeOvr(n);
   for(const r of Array.isArray(recs) ? recs : [recs]){
     const al=gvAliasOf(r,ovr); if(al && n.aliasA.get(al.id)!==al.label){ n.aliasA.set(al.id,al.label); n.dirty=true; }
-    const e=gvEdgeRec(r,ovr); if(e) gvAdd(n,e.from,e.to,e.w,e.label);
+    const e=gvEdgeRec(r,ovr); if(e) gvAdd(n,e.from,e.to,e.w,e.label,e);
   }
 }
 function gvNodeRec(r,ovr){                          // запись → {id,a:{label,shape,color,note,size}} или null
@@ -164,6 +166,10 @@ function gvNodeRec(r,ovr){                          // запись → {id,a:{l
   if(f.label!=null && r[f.label]!=='') a.label=String(r[f.label]);
   if(f.shape!=null){ const sh=String(r[f.shape]).trim(); if(GV_SHAPES.has(sh)) a.shape=sh; }
   if(a.shape==null && f.icon!=null){ const sh=GV_ICON_SHAPE[String(r[f.icon]).trim()]; if(sh) a.shape=sh; }
+  if(f.glyph!=null && gvIsGlyph(r[f.glyph])) a.glyph=String(r[f.glyph]).trim();
+  else if(f.icon!=null && !GV_ICON_SHAPE[String(r[f.icon]).trim()] && gvIsGlyph(r[f.icon])) a.glyph=String(r[f.icon]).trim();   // icon=📶 — значок-символ
+  if(f.image!=null && String(r[f.image]).trim()) a.image=String(r[f.image]).trim();
+  if(f.group!=null && String(r[f.group]).trim()) a.group=String(r[f.group]).trim();
   if(f.color!=null && r[f.color]) a.color=String(r[f.color]);
   if(f.note!=null && String(r[f.note]).trim()) a.note=String(r[f.note]).trim();
   if(f.size!=null){ const v=+r[f.size]; if(v>0) a.size=v; }
@@ -174,16 +180,16 @@ function gvNodeRec(r,ovr){                          // запись → {id,a:{l
    неизменные только отмечаются (один проход по Map, без разбора колонок). Рёбра с одной парой from/to складываются:
    вес = сумма строк без своего веса, либо последний заданный; пунктир — пока нет ни одной сплошной. */
 function gvIncNew(){ return {rows:new Map(), edges:new Map(), nodes:new Map(), gen:0}; }
-function gvEdgeOut(E){ return {from:E.from,to:E.to,w:E.exp!=null ? E.exp : Math.max(1,E.cnt),label:E.label,color:E.color,dash:E.solid===0}; }
+function gvEdgeOut(E){ return {from:E.from,to:E.to,w:E.exp!=null ? E.exp : Math.max(1,E.cnt),label:E.label,color:E.color,dash:E.solid===0,arrows:E.arrows}; }
 function gvIncApply(n,inc,info,sign){
   if(info.e){
     const e=info.e, key=gvKey(e.from,e.to);
     let E=inc.edges.get(key);
     if(sign>0){
-      if(!E) inc.edges.set(key,E={from:e.from,to:e.to,cnt:0,exp:null,solid:0,rows:0,label:'',color:''});
+      if(!E) inc.edges.set(key,E={from:e.from,to:e.to,cnt:0,exp:null,solid:0,rows:0,label:'',color:'',arrows:''});
       E.rows++; if(Number.isFinite(e.w)) E.exp=e.w; else E.cnt++;
       if(!e.dash) E.solid++;
-      if(e.label) E.label=e.label; if(e.color) E.color=e.color;
+      if(e.label) E.label=e.label; if(e.color) E.color=e.color; if(e.arrows) E.arrows=e.arrows;
     } else if(E){
       E.rows--; if(!Number.isFinite(e.w)) E.cnt--; if(!e.dash) E.solid--;
       if(E.rows<=0){ inc.edges.delete(key); n.sEdges.delete(key); E=null; }
@@ -249,6 +255,13 @@ function gvBuild(n){
     const nd=Object.assign(touch(id),a);
     if(a.note) nd.label=nd.label+'\n✎ '+a.note;       // комментарий из колонки note — под подписью
   }
+  const ed=n.p.edits;                                // правки на самом графе (панель по щелчку) — поверх всего
+  if(ed) for(const id in ed){
+    const nd=nodes.get(id), a=ed[id]; if(!nd) continue;
+    for(const k in a) if(k!=='note' && a[k]!=='' && a[k]!=null) nd[k]=a[k];
+    const note=a.note || nd.note;
+    if(note){ nd.note=note; nd.label=String(nd.label).replace(/\n✎ [\s\S]*$/,'')+'\n✎ '+note; }
+  }
   n.dN=nodes; n.dE=edges; n.sync=true;
 }
 function gvTheme(n){
@@ -269,15 +282,18 @@ function gvHlCalc(n){
   n.hl=full.size ? {full,all} : null;      // ничего не нашлось — не гасим весь граф
 }
 function gvNodeItem(n,nd,T){
-  const c=nd.color||T.col;
-  const it={id:nd.id,label:nd.label,shape:nd.shape||'dot',color:{background:c,border:c,highlight:{background:T.acc,border:T.acc}},
+  const c=nd.color || (nd.group ? gvGroupColor(nd.group) : T.col), sh=gvNodeShape(nd,GV_SHAPES);
+  const it={id:nd.id,label:nd.label,shape:sh,color:{background:c,border:c,highlight:{background:T.acc,border:T.acc}},
             font:{color:T.txt,size:11}};
+  if(nd.group) it.group=nd.group;
+  if(GV_IMG_SHAPES.has(sh)){ it.image=nd.image; it.imagePadding=2; }
+  else if(sh==='icon') it.icon={face:'sans-serif',code:nd.glyph,size:44,color:c};
   if(nd.note) it.title=nd.note;
   if(n.hl){
     if(!n.hl.all.has(nd.id)){ it.opacity=.15; it.font={color:T.line,size:11}; }
     else if(n.hl.full.has(nd.id)){ it.borderWidth=4; it.color.border=T.acc; }
   }
-  if(nd.size) it.size=nd.size; else it.value=1+nd.deg;
+  if(nd.size) it.size=nd.size; else if(GV_IMG_SHAPES.has(sh)) it.size=22; else it.value=1+nd.deg;   // картинке нужен свой размер: масштаб по степени делает её точкой
   return it;
 }
 function gvEdgeItem(n,key,e,T){
@@ -286,7 +302,7 @@ function gvEdgeItem(n,key,e,T){
   const dim=n.hl && !(n.hl.all.has(e.from) && n.hl.all.has(e.to) && (n.hl.full.has(e.from) || n.hl.full.has(e.to)));
   return {id:key,from:e.from,to:e.to,value:Math.abs(e.w)||1,label:dim ? undefined : [e.label,wl].filter(Boolean).join(' ')||undefined,
           color:{color:c,highlight:T.acc,opacity:dim ? .08 : 1},font:{color:T.txt,size:9,strokeWidth:0},
-          dashes:e.dash ? [6,5] : false, arrows:n.p.directed ? 'to' : undefined};
+          dashes:e.dash ? [6,5] : false, arrows:gvArrowsSpec(e.arrows,n.p.directed)};
 }
 function gvMount(n){
   const box=document.createElement('div'); box.className='graphview';
@@ -298,14 +314,11 @@ function gvMount(n){
     if(!vis){ n.gvErr='vis-network failed to load'; return; }
     if(n.gv!==box || !box.isConnected) return;
     n.vN=new vis.DataSet(); n.vE=new vis.DataSet();
-    n.net=new vis.Network(box,{nodes:n.vN,edges:n.vE},{
-      autoResize:true, interaction:{hover:true,tooltipDelay:200},
-      nodes:{shape:'dot',scaling:{min:5,max:18}}, edges:{scaling:{min:1,max:5},smooth:false,arrows:{to:{scaleFactor:.5}}},
-      physics:{enabled:!!n.p.physics,solver:'forceAtlas2Based',stabilization:{iterations:80}}});
+    n.net=new vis.Network(box,{nodes:n.vN,edges:n.vE},gvNetOpts(n.p));
     // под CSS-масштабом холста клиентские координаты больше / меньше реальных пикселей канвы
     const fix=g=>{ const r=box.getBoundingClientRect(), s=r.width/(box.offsetWidth||1)||1; return {x:(g.x-r.left)/s,y:(g.y-r.top)/s}; };
     n.net.interactionHandler.getPointer=fix; n.net.body.functions.getPointer=fix;
-    n.net.on('click',ev=>{ n.sel=ev.nodes.length ? String(ev.nodes[0]) : ''; });
+    n.net.on('click',ev=>{ n.sel=ev.nodes.length ? String(ev.nodes[0]) : ''; gvEditShow(n); });
     n.sigN.clear(); n.sigE.clear(); n.sync=true; redraw(n);
   });
 }
@@ -336,15 +349,77 @@ function gvRemap(n){                                // другие колонк
   if(n.lastRows){ gvIncReset(n); gvRows(n,n.lastRows); }
   redraw(n);
 }
-function gvRestyle(n){ n.sigN.clear(); n.sigE.clear(); n.sync=true; n.net?.setOptions({physics:{enabled:!!n.p.physics}}); redraw(n); }
+function gvRestyle(n){ n.sigN.clear(); n.sigE.clear(); n.sync=true; n.net?.setOptions({physics:{enabled:n.p.physics!==false}}); redraw(n); }
+function gvRemount(n){                              // раскладка, решатель, изгиб рёбер: сеть строится заново с новыми опциями
+  try{ n.net?.destroy(); }catch(e){}
+  n.net=null; n.gv?.remove(); n.gv=null; n.edBox=null; n.sigN.clear(); n.sigE.clear(); n.sync=true; redraw(n);
+}
+function gvCluster(n,on){                           // свернуть группы в один узел / раскрыть обратно
+  const net=n.net; if(!net) return;
+  if(on){ for(const g of new Set([...n.dN.values()].map(x=>x.group).filter(Boolean))) net.cluster({joinCondition:o=>o.group===g,clusterNodeProperties:{label:g,shape:'database',borderWidth:3}}); }
+  else for(const id of net.body.nodeIndices.slice()) if(net.isCluster(id)) net.openCluster(id);
+}
+/* Правка узла (как на карте): щелчок открывает панель — подпись, комментарий, группа, цвет, форма, картинка, значок. Правка пишется в
+   n.p.edits (видна сразу, лежит в патче) и уходит записью {id,…} на выход edit — в Table (upsert по id), как у карты. */
+const GV_EDIT_F=[['label','label'],['note','comment'],['group','group'],['color','colour #rrggbb'],['shape','shape'],['image','image URL'],['glyph','symbol'],['size','size']];
+function gvPushEdit(n,rec){
+  n.editQ.push(rec);
+  if(typeof Eng!=='undefined' && Eng.running && !Eng.paused) return;
+  const recs=n.editQ.splice(0);
+  for(const e of Graph.edges) if(e.from===n.id && e.fp==='edit'){ const t=Graph.map[e.to]; if(t?.type==='table') tblIngest(t,recs,true); }
+}
+function gvEditHide(n){ n.edBox?.remove(); n.edBox=null; n.edId=''; }
+function gvEditShow(n){
+  gvEditHide(n);
+  if(!n.p.edit || !n.sel || !n.gv) return;
+  const nd=n.dN.get(n.sel); if(!nd) return;
+  const id=n.sel, cur=Object.assign({},n.sNodes.get(id),n.p.edits?.[id]);
+  if(getComputedStyle(n.gv).position==='static') n.gv.style.position='relative';
+  const el=document.createElement('div'); el.className='gv-edit';
+  el.style.cssText='position:absolute;left:4px;right:4px;bottom:4px;max-height:70%;overflow:auto;background:var(--panel);border:1px solid var(--line);color:var(--txt);font-size:11px;padding:4px;border-radius:4px;z-index:3;touch-action:auto;';
+  for(const ev of ['pointerdown','pointerup','wheel','dblclick','keydown']) el.addEventListener(ev,x=>x.stopPropagation());
+  const inp='min-width:0;width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);color:var(--txt);font-size:11px;padding:1px 3px;';
+  const t=document.createElement('div'); t.style.cssText='font-weight:bold;margin-bottom:2px;'; t.textContent=id; el.append(t);
+  const ins={};
+  for(const [k,ph] of GV_EDIT_F){
+    const d=document.createElement('div'); d.style.cssText='display:flex;gap:4px;margin:2px 0;align-items:center;';
+    const l=document.createElement('span'); l.textContent=k; l.style.cssText='width:30%;flex:none;';
+    let i;
+    if(k==='note'){ i=document.createElement('textarea'); i.rows=2; }
+    else if(k==='shape'){ i=document.createElement('select'); for(const v of ['',...GV_SHAPES]){ const o=document.createElement('option'); o.value=o.textContent=v; i.append(o); } }
+    else i=document.createElement('input');
+    i.style.cssText=inp; i.placeholder=ph; i.value=cur[k]==null ? '' : String(cur[k]);
+    ins[k]=i; d.append(l,i); el.append(d);
+  }
+  const bar=document.createElement('div'); bar.style.cssText='display:flex;gap:4px;margin-top:3px;';
+  const btn=(txt,f)=>{ const b=document.createElement('button'); b.textContent=txt; b.style.cssText='background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:1px 6px;border-radius:3px;cursor:pointer;font-size:10px;'; b.onclick=f; bar.append(b); };
+  btn('Save',()=>{
+    const ch={}, ed=Object.assign({},n.p.edits?.[id]);
+    for(const [k] of GV_EDIT_F){
+      let v=ins[k].value.trim(); if(k==='size') v=v!=='' && +v>0 ? +v : '';
+      if(v!==(cur[k]==null ? '' : cur[k])){ ch[k]=v; if(v==='') delete ed[k]; else ed[k]=v; }
+    }
+    if(!Object.keys(ch).length) return gvEditHide(n);
+    n.p.edits=Object.assign({},n.p.edits,{[id]:ed});
+    if(!Object.keys(ed).length) delete n.p.edits[id];
+    gvPushEdit(n,{id,...ch}); n.dirty=true; gvEditHide(n); redraw(n);
+  });
+  btn('Reset',()=>{ if(n.p.edits?.[id]){ delete n.p.edits[id]; n.dirty=true; } gvEditHide(n); redraw(n); });
+  btn('✕',()=>gvEditHide(n));
+  el.append(bar); n.gv.append(el); n.edBox=el; n.edId=id;
+}
 
 def({ id:'graphview', title:'Graph', cat:'Output', kw:'network graph links nodes edges csv vis connections', resize:true, gv:true, readout:true, w:420, h:300,
   ins:[{n:'text',t:'txt'},{n:'rec',t:'rec'},{n:'rows',t:'bands'},{n:'hl',t:'bands'}],
-  outs:[{n:'nodes',t:'num'},{n:'edges',t:'num'},{n:'sel',t:'txt'}],
+  outs:[{n:'nodes',t:'num'},{n:'edges',t:'num'},{n:'sel',t:'txt'},{n:'edit',t:'rec'}],
   params:[{n:'delim',t:'select',opts:['auto',',',';','tab','|'],d:'auto',label:'delimiter',fn:n=>gvClear(n)},
           {n:'directed',t:'check',d:false,label:'arrows',fn:gvRestyle},
           {n:'weights',t:'check',d:false,label:'weights on edges',fn:gvRestyle},
           {n:'physics',t:'check',d:true,label:'physics (layout)',fn:gvRestyle},
+          {n:'layout',t:'select',opts:['free','UD','DU','LR','RL'],d:'free',label:'layout: free, or tree (UD down, DU up, LR →, RL ←)',fn:gvRemount},
+          {n:'solver',t:'select',opts:GV_SOLVERS,d:'forceAtlas2Based',label:'physics solver (free layout)',fn:gvRemount},
+          {n:'smooth',t:'select',opts:GV_SMOOTH,d:'off',label:'edge curve',fn:gvRemount},
+          {n:'edit',t:'check',d:true,label:'edit a node on click (comment, group, colour…) → out edit',fn:n=>{ if(!n.p.edit) gvEditHide(n); }},
           {n:'hlNb',t:'check',d:true,label:'highlight neighbours too (hl input)',fn:gvRestyle},
           {n:'max',t:'num',d:500,label:'max nodes',adv:true},
           {n:'fromCol',t:'text',d:'',label:'edge from col (auto)',adv:true,fn:n=>gvRemap(n)},
@@ -354,11 +429,18 @@ def({ id:'graphview', title:'Graph', cat:'Output', kw:'network graph links nodes
           {n:'toTag',t:'text',d:'',label:'prefix for to: col=value:prefix',adv:true,fn:n=>gvRemap(n)},
           {n:'nodeCol',t:'text',d:'',label:'node id col (auto)',adv:true,fn:n=>gvRemap(n)},
           {n:'nodeLabelCol',t:'text',d:'',label:'node label col (auto)',adv:true,fn:n=>gvRemap(n)},
+          {n:'groupCol',t:'text',d:'',label:'node group col (auto: group; e.g. type)',adv:true,fn:n=>gvRemap(n)},
+          {n:'imageCol',t:'text',d:'',label:'node image col (auto: image)',adv:true,fn:n=>gvRemap(n)},
+          {n:'sort',t:'select',opts:['directed','hubsize'],d:'directed',label:'tree: level order',adv:true,fn:gvRemount},
+          {n:'levelSep',t:'num',d:120,label:'tree: level gap',adv:true,fn:gvRemount},
+          {n:'nodeSpacing',t:'num',d:100,label:'tree: node gap',adv:true,fn:gvRemount},
           {n:'fit',t:'button',label:'Fit',fn:n=>n.net?.fit({animation:true})},
+          {n:'cluster',t:'button',label:'Cluster groups',fn:n=>gvCluster(n,true)},
+          {n:'uncluster',t:'button',label:'Open clusters',fn:n=>gvCluster(n,false)},
           {n:'clear',t:'button',label:'Clear',fn:n=>{ n.p.csv=''; gvClear(n); }}],
   init:n=>{ n.aliasA=new Map(); n.aliasS=new Map(); n.edges=new Map(); n.aNodes=new Set(); n.sEdges=new Map(); n.sNodes=new Map(); n.dN=new Map(); n.dE=new Map();
             n.sigN=new Map(); n.sigE=new Map(); n.hdr={}; n.net=null; n.gv=null; n.lastRows=null; n.inc=null;
-            n.sel=''; n.dirty=true; n.sync=true; n.gvErr=''; n.fresh=true; },
+            n.sel=''; n.dirty=true; n.sync=true; n.gvErr=''; n.fresh=true; n.editQ=[]; n.edBox=null; },
   dispose:n=>{ try{ n.net?.destroy(); }catch(e){} n.net=null; },
   process(n,I){
     if(n.fresh){ n.fresh=false; gvClear(n); }
@@ -370,7 +452,7 @@ def({ id:'graphview', title:'Graph', cat:'Output', kw:'network graph links nodes
     const hl=Array.isArray(I.hl) ? I.hl : null;
     if(hl!==n.hlRows){ n.hlRows=hl; n.sync=true; }
     if(n.dirty) gvBuild(n);
-    return {nodes:n.dN.size, edges:n.dE.size, sel:n.sel||null}; },
+    return {nodes:n.dN.size, edges:n.dE.size, sel:n.sel||null, edit:n.editQ.length ? n.editQ.splice(0) : null}; },
   draw(n){
     if(!n.gv || !n.gv.isConnected){ try{ n.net?.destroy(); }catch(e){} n.net=null; gvMount(n); }
     gvSync(n);

@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', HKEY='dsp-presets-hash', PRESET_VER=154;   // PRESET_VER — полная пересборка всех пресетов (дефолты модулей, формат патча); правки самих пресетов подхватываются по хэшу
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', HKEY='dsp-presets-hash', PRESET_VER=155;   // PRESET_VER — полная пересборка всех пресетов (дефолты модулей, формат патча); правки самих пресетов подхватываются по хэшу
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -432,6 +432,7 @@ const PRESET_CATS={
   'Entities: DMR Subscribers and Talkgroups (USB SDR)':'Digital Voice & Trunking',
   'Entities: GSM Cells and Operators (USB SDR)':'Aircraft, Satellites & Telemetry',
   'Network: Same Nodes and Links as Graph and on the Map':'Maps & Locating',
+  'Graph: Groups, Pictures, Arrows, Tree and Comments':'Network & IoT',
   'Chat: Text In and Out':'Network & IoT',
   'Chat: Group with Avatars and Contact List':'Network & IoT',
   'Sync: Chat Between Your Devices':'Network & IoT',
@@ -7828,6 +7829,21 @@ g.size.w=420; g.size.h=380; applySize(g);
 const m=addNode('geoMap',840,140,{arrows:true});
 m.size.w=480; m.size.h=380; applySize(m);
 addEdge(tn.id,'rows',g.id,'rows'); addEdge(tn.id,'rows',m.id,'rows');
+markWiresDirty();
+});
+preset('Graph: Groups, Pictures, Arrows, Tree and Comments', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'One table, two Graphs. Node rows: `id, label, group, glyph, image, shape, note` — `group` colours nodes (and «Cluster groups» folds a group into one node), `glyph` is a symbol or emoji drawn as the node (`icon=📶` works too), `image` is a picture (a data: URL or a file of the app; the node becomes round), `shape` is any vis shape, `note` is a comment under the label. Link rows: `from, to, arrows` — `to`, `from`, `both`, `middle`, `none` or per end `to:circle,from:bar` (types: arrow, bar, circle, box, diamond, curve, inv_curve, triangle, vee). Left Graph: free layout (physics, solver and edge curve are in its settings); right Graph: the same rows as a tree (layout UD / DU / LR / RL). Click a node: a panel edits its label, comment, group, colour, shape, image and symbol; the change shows at once and goes to the Table through `edit` (upsert by `id`).'});
+nt.size.w=1100; nt.size.h=130; applySize(nt);
+const tb=addNode('table',40,180,{list:'@patch',initial:false,key:'id',
+  data:'id,label,group,glyph,image,shape,note,from,to,arrows\nRouter,Router,core,📡,,,Main router; the comment is typed on the graph (click a node),,,\nSwitch,Switch,core,,,box,,,,\nPhone,Phone,client,📱,,,,,,\nLaptop,Laptop,client,,,,,,,\nCam,Camera,iot,,icons/favicon-32.png,,A picture instead of a dot (image column),,,\nCloud,Cloud,wan,☁,,,,,,\n,,,,,,,Router,Switch,to:circle\n,,,,,,,Switch,Phone,\n,,,,,,,Switch,Laptop,to:bar\n,,,,,,,Switch,Cam,both\n,,,,,,,Router,Cloud,to:vee\n,,,,,,,Phone,Laptop,middle:diamond'});
+tb.size.w=380; tb.size.h=420; applySize(tb);
+const g1=addNode('graphview',460,180,{directed:false,layout:'free',smooth:'dynamic',edit:true});
+g1.size.w=420; g1.size.h=420; applySize(g1);
+const g2=addNode('graphview',900,180,{directed:true,layout:'LR',edit:true});
+g2.size.w=420; g2.size.h=420; applySize(g2);
+addEdge(tb.id,'rows',g1.id,'rows'); addEdge(tb.id,'rows',g2.id,'rows');
+addEdge(g1.id,'edit',tb.id,'rec'); addEdge(g2.id,'edit',tb.id,'rec');
 markWiresDirty();
 });
 preset('Chat: Text In and Out', function(){
