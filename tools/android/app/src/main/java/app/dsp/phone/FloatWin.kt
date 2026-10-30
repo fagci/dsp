@@ -30,6 +30,17 @@ object FloatWin {
     private val wins = HashMap<String, W>()
     private val ui = Handler(Looper.getMainLooper())
     @Volatile var onClosed: ((String) -> Unit)? = null
+    /** Вызывается из основного потока каждые ~150 мс, пока есть окна: MainActivity просит страницу снять кадр (floatTick). */
+    @Volatile var pump: (() -> Unit)? = null
+    private var pumping = false
+    private val pumpRun = object : Runnable {
+        override fun run() {
+            if (wins.isEmpty()) { pumping = false; return }
+            try { pump?.invoke() } catch (e: Exception) { }
+            ui.postDelayed(this, 150)
+        }
+    }
+    private fun ensurePump() { if (!pumping) { pumping = true; ui.postDelayed(pumpRun, 150) } }
 
     fun can(ctx: Context): Boolean = Settings.canDrawOverlays(ctx)
 
@@ -123,6 +134,7 @@ object FloatWin {
         try {
             wm.addView(root, lp)
             wins[id] = W(root, img, lp)
+            ensurePump()
         } catch (e: Exception) {
             Toast.makeText(ctx, "Overlay: ${e.message}", Toast.LENGTH_LONG).show()
             onClosed?.invoke(id)
