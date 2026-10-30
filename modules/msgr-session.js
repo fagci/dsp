@@ -42,7 +42,7 @@ function mgPhoneTcp(ph){
     ws.onopen=()=>{
       ws.send(JSON.stringify({sub:['net']}));
       ns.call('tcp.connect',{host,port,timeout:15000,tls:!!tls,starttls:!tls},25000,r=>{ conn=r.conn; })
-        .then(()=>{ if(!dead && h.open) h.open(); },e=>fail(e.reply && e.reply.err==='forbidden' ? 'only the page of the DSP app may open sockets' : e.message));
+        .then(()=>{ if(!dead && h.open) h.open(); },e=>fail(e.reply && e.reply.err==='forbidden' ? 'the phone app refused the socket: open this page inside the app, or tick «Let any page use actions» in the app Settings' : e.message));
     };
     ws.onmessage=e=>{ let r; try{ r=JSON.parse(String(e.data)); }catch(x){ return; } ns.feed(r); };
     ws.onerror=()=>{};
@@ -404,6 +404,33 @@ function mgOpenSms(cfg,c){
   };
 }
 
+/* ---------- Шлюз TCP: один адрес — и Node-мост, и приложение DSP на телефоне. Тип определяется по приветствию ---------- */
+//   {ev:'hello'} — tools/node/bridge.mjs: протокол целиком живёт на мосте (mgOpenRemote);
+//   {src:'bridge', level:'hello'} — приложение DSP: протокол идёт в странице, а сокеты и TLS даёт телефон (mgPhoneTcp).
+function mgOpenGateway(proto,cfg,c){
+  const io=mgIo({io:cfg.io}), url=String(cfg.bridge||'').trim();
+  if(!/^wss?:\/\//i.test(url)){ c.down('Gateway: the address must start with ws:// or wss://',true); return mgNone; }
+  let probe, inner=null, closed=false;
+  try{ probe=io.ws(url); }catch(e){ c.down('Gateway: '+e.message,false); return mgNone; }
+  const timer=setTimeout(()=>{ if(!inner && !closed) c.down('Gateway '+url+' does not greet — it must be the DSP app (ws://phone:8765) or tools/node/bridge.mjs (ws://host:8777)',false); },6000);
+  const stop=()=>{ probe.onopen=probe.onmessage=probe.onerror=probe.onclose=null; try{ probe.close(); }catch(e){} };
+  probe.onerror=()=>{};
+  probe.onclose=()=>{ if(!inner && !closed){ clearTimeout(timer); c.down('Gateway: connection closed',false); } };
+  probe.onmessage=e=>{
+    if(inner || closed) return;
+    let j; try{ j=JSON.parse(String(e.data)); }catch(x){ return; }
+    const kind=j.ev==='hello' ? 'node' : j.src==='bridge' && j.level==='hello' ? 'phone' : '';
+    if(!kind) return;
+    clearTimeout(timer); stop();
+    if(kind==='node') inner=mgOpenRemote(proto,cfg,c);
+    else { c.status('gateway: DSP app on '+(j.host||'a phone'),'connecting'); inner=MG_OPEN[proto]({...cfg,phone:{url,key:cfg.appKey,io:cfg.io}},c); }
+  };
+  return {
+    send:(text,to)=>inner ? inner.send(text,to) : false,
+    close(){ closed=true; clearTimeout(timer); stop(); if(inner) try{ inner.close(); }catch(e){} },
+  };
+}
+
 /* ---------- сессия на Node-мосте: те же сообщения, но протокол живёт на стороне моста ---------- */
 function mgOpenRemote(proto,cfg,c){
   const io=mgIo(cfg), url=String(cfg.bridge||'').trim();
@@ -432,7 +459,7 @@ const mgNeedsTcp=(proto,cfg)=>proto==='xmpp' || proto==='aprs' || proto==='email
 function mgConnect(proto,cfg,cb){
   // TCP: свой сокет телефона (cfg.phone) главнее моста; via 'bridge' — всё через Node-мост
   const remote=cfg.via==='bridge' || ((cfg.via||'auto')==='auto' && cfg.bridge && !cfg.phone && mgNeedsTcp(proto,cfg));
-  const open=remote ? (cfg2,c)=>mgOpenRemote(proto,cfg2,c) : MG_OPEN[proto];
+  const open=remote ? (cfg2,c)=>mgOpenGateway(proto,cfg2,c) : MG_OPEN[proto];
   let h=null, timer=null, dead=false, gen=0;
   const out={
     send:(text,to)=>h ? h.send(text,to) : false,

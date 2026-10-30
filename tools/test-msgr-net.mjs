@@ -144,6 +144,7 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
   ok('telegram reply goes to the last chat', await A.s.send('hello human') === true && sent[0].chat_id === 42 && sent[0].text === 'hello human');
   ok('telegram own message echoed locally', A.msgs.at(-1).self === true);
   A.s.close();
+  await sleep(1400);                       // долгий опрос закрытого A у имитации ещё висит и забрал бы очередь
   const D = rig('telegram', {server, pass: TG, channel: 'dsp'}); await until(() => D.state() === 'up');
   queue.push({update_id: 6, message: {chat: {id: 43}, from: {username: 'carol'}, text: 'with the default channel word', date: 9}});
   await until(() => D.msgs.length);
@@ -335,6 +336,7 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
     sock.write('HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: ' + wsAccept(req.headers['sec-websocket-key']) + '\r\n\r\n');
     const send = a => { try { sock.write(wsFrame(JSON.stringify(a))); } catch (e) {} };
     const conns = new Map(); let nid = 100;
+    send({src: 'bridge', level: 'hello', app: 'dsp-android', host: 'Pixel'});
     sock.on('data', wsParser({onMsg: t => { const m = JSON.parse(t); if (m.sub) return; cmds.push(m);
       const done = (extra = {}) => send({src: 'cmd', cmd: m.cmd, id: m.id, ok: true, ...extra});
       if (m.cmd === 'tcp.connect') { const s = net.connect(m.port, m.host); const n = ++nid;
@@ -363,6 +365,16 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
   ok('phone TCP: lines arrived in order', JSON.stringify(at) === JSON.stringify(['PRIVMSG #dsp раз', 'PRIVMSG #dsp два', 'PRIVMSG #dsp три']), JSON.stringify(at));
   A.s.close(); await sleep(250);
   ok('phone TCP: tcp.close sent', cmds.some(c => c.cmd === 'tcp.close'));
+  // один адрес «шлюза»: приложение телефона определяется по приветствию, протокол идёт в странице, сокеты — телефона
+  const G = rig('irc', {server: 'irc://127.0.0.1:' + ip, channel: 'gw', nick: 'viagw', bridge: 'ws://127.0.0.1:' + pp, via: 'auto', io: {}});
+  await until(() => G.st.some(s => /joined #gw/.test(s[1])), 5000);
+  ok('gateway: a phone address is detected and its sockets are used', G.st.some(s => /DSP app on Pixel/.test(s[1])) && G.st.some(s => /joined #gw/.test(s[1])), JSON.stringify(G.st)); G.s.close();
+  const N = createMsgrBridge({port: 0}); const np = (await N.listen()).port; servers.push({close: () => N.close()});
+  const G2 = rig('irc', {server: 'irc://127.0.0.1:' + ip, channel: 'gw2', nick: 'vianode', bridge: 'ws://127.0.0.1:' + np, via: 'auto', io: {}});
+  await until(() => G2.st.some(s => /joined #gw2/.test(s[1])), 5000);
+  ok('gateway: the same field also takes the Node bridge', G2.st.some(s => /joined #gw2/.test(s[1])) && !G2.st.some(s => /DSP app/.test(s[1])), JSON.stringify(G2.st)); G2.s.close();
+  const G3 = rig('irc', {server: 'irc://127.0.0.1:' + ip, channel: 'x', bridge: 'ws://127.0.0.1:' + ip, via: 'auto', io: {}});   // порт IRC-сервера: сокет есть, приветствия нет
+  await sleep(300); G3.s.close();
   // TLS-вариант: ircs:// просит у приложения tls:true
   const T = rig('irc', {server: 'ircs://127.0.0.1:' + ip, channel: 'x', phone: phoneCfg, io: {}}); await sleep(400);
   const c1 = cmds.filter(c => c.cmd === 'tcp.connect').at(-1);
