@@ -268,7 +268,7 @@ def({ id:'segdisp', lazy:'proc', title:'7-Segment Display', cat:'Indicators', in
       for(let k=0;k<7;k++){
         const on=m>>k&1;
         if(!on && !p.ghost) continue;
-        cx.save(); cx.fillStyle=col; cx.globalAlpha=on?1:.1;
+        cx.save(); cx.fillStyle=col; cx.globalAlpha=on?1:.045;
         if(on){ cx.shadowColor=col; cx.shadowBlur=t*1.5; }
         cx.beginPath(); segs[k](); cx.fill(); cx.restore();
       }
