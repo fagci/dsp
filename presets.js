@@ -607,6 +607,7 @@ const PRESET_CATS={
   'Cases: SDR Frequency and Torch by Place and Light':'Maps & Locating',
   'SMS PDU: Build and Parse (GSM 7-bit / UCS-2, Data SMS)':'Network & IoT',
   'Phone App: Speech to Text, Text-to-Speech and Automation':'Control & Remote',
+  'Phone App: Alarm Clock — Wake Up to Internet Radio':'Control & Remote',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
   'TDOA: Path Difference (2 mics)':'Maps & Locating',
@@ -2264,6 +2265,24 @@ p.size.w=420; p.size.h=440; applySize(p);
 const tb=addNode('table',960,230,{list:'phone/sms',maxRows:200,rev:true,cols:['t','kind','from','to','text','part','parts','enc']});
 tb.size.w=480; tb.size.h=260; applySize(tb);
 addEdge(b.id,'hex',p.id,'hex'); addEdge(p.id,'rec',tb.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Alarm Clock — Wake Up to Internet Radio', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'An alarm clock that lives in the Android app: the system itself wakes the phone at the time (AlarmManager.setAlarmClock — works in Doze, with the screen off, even if the bridge is not running; it survives a reboot and a time-zone change), plays on the ALARM volume and shows a Snooze / Dismiss screen over the lock screen.\n'+
+  'Sound: the internet radio stream (http/https, .pls / .m3u / HLS). If it does not start within «wait for the stream» seconds, drops, or there is no network — it switches by itself to the fallback sample (a file path / content:// / address; «default» is the phone\'s own alarm tone, «beep» the built-in beeps), and the volume rises gradually.\n'+
+  'Press Connect, then Run on «Set alarm» (it repeats: pressing again replaces the alarm with the same name). «Test now» rings at once with the same radio and fallback — try it with Wi-Fi off to hear the fallback. Days: mon,wed,fri / weekdays / weekend / daily, empty — once. Android 14+: allow «full-screen notifications» for the app if the lock-screen screen does not appear.'});
+nt.size.w=1000; nt.size.h=170; applySize(nt);
+const set=addNode('phone',40,250,{url:'ws://127.0.0.1:8765',action:'alarm.set',alarmName:'wake',alarmTime:'7:00',alarmDays:'weekdays',alarmLabel:'Good morning',
+  alarmUrl:'https://ice1.somafm.com/groovesalad-128-mp3',alarmSample:'default',alarmLoad:12,alarmRamp:30,alarmSnooze:9,alarmMax:15,alarmEv:true,notifyEv:false,torchState:false});
+set.size.w=440; set.size.h=520; applySize(set);
+const test=addNode('phone',520,250,{url:'ws://127.0.0.1:8765',action:'alarm.test',alarmName:'wake',notifyEv:false,torchState:false});
+test.size.w=380; test.size.h=360; applySize(test);
+const stop=addNode('phone',520,640,{url:'ws://127.0.0.1:8765',action:'alarm.list',notifyEv:false,torchState:false});
+stop.size.w=380; stop.size.h=360; applySize(stop);
+const lg=addNode('recLog',940,250,{});
+lg.size.w=460; applySize(lg);
+addEdge(set.id,'rec',lg.id,'rec'); addEdge(stop.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: Speech to Text, Text-to-Speech and Automation', function(){

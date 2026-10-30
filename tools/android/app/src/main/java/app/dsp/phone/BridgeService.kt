@@ -46,6 +46,7 @@ class BridgeService : Service() {
     private lateinit var net: NetHub
     private lateinit var tlsCmds: TlsCmds
     private lateinit var sys: SysHub
+    private lateinit var alarms: AlarmCmds
     private lateinit var power: PowerHub
     private lateinit var activity: ActivityHub
     private val started = android.os.SystemClock.elapsedRealtime()
@@ -75,6 +76,7 @@ class BridgeService : Service() {
         val needs = Needs(this) { p -> main.post { requestPerms(p) } }
         val emit: Emit = { s, j -> server.emit(s, j) }
         speech = SpeechHub(this, emit, needs); gatt = GattHub(this, emit, needs); btlink = BtLinkHub(this, emit, needs); adv = AdvertiseHub(this, needs); gattsrv = GattServerHub(this, emit, needs); l2cap = L2capHub(this, emit, needs); wlink = WifiLinkHub(this, emit, needs); monitor = MonitorHub(cfg); wnet = WifiNetHub(this, emit, needs)
+        alarms = AlarmCmds(this); Alarms.sink = emit
         net = NetHub(this, cfg, emit); sys = SysHub(this, cfg, emit, needs); tlsCmds = TlsCmds(this, server)
         server.onCommand = { c, j -> route(c, j) }
         tlsCmds.start()                                          // сертификат уже стоит — TLS поднимется вместе с сервером
@@ -186,6 +188,7 @@ class BridgeService : Service() {
             n.startsWith("ble.adv.") -> adv.exec(c, j)
             n.startsWith("speech.") -> speech.exec(c, j)
             n.startsWith("tcp.") || n.startsWith("udp.") || n.startsWith("net.") || n.startsWith("raw.") || n == "ping" -> net.exec(c, j)
+            n.startsWith("alarm.") -> alarms.exec(c, j)
             n.startsWith("vpn.") -> VpnCmds.exec(this, c, j)
             n.startsWith("tls.") -> tlsCmds.exec(c, j)
             n.startsWith("sys.") || n.startsWith("gps.mock") || n.startsWith("ui.") || n.startsWith("vol.") || n.startsWith("tts.") || n.startsWith("clip.") || n.startsWith("app.") ||

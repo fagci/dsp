@@ -12,7 +12,9 @@ import android.content.Intent
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, i: Intent) {
-        if (i.action != Intent.ACTION_BOOT_COMPLETED && i.action != "android.intent.action.QUICKBOOT_POWERON") return
-        if (Config(ctx).autoStart) BridgeService.start(ctx)
+        when (i.action) {
+            Intent.ACTION_BOOT_COMPLETED, "android.intent.action.QUICKBOOT_POWERON" -> { Alarms.rescheduleAll(ctx); if (Config(ctx).autoStart) BridgeService.start(ctx) }
+            Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_MY_PACKAGE_REPLACED -> Alarms.rescheduleAll(ctx)    // будильники привязаны к часам и сбрасываются при обновлении
+        }
     }
 }
