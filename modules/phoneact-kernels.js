@@ -1,7 +1,7 @@
 "use strict";
 /* Phone Actions: команды приложения DSP (tools/android) и разбор его записей. Без DOM — проверяется в tools/test-phoneact.mjs */
 
-const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.send_raw','sms.list','contacts.find','ir.info','crash.last'];
+const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.send_raw','sms.list','contacts.find','ir.info','crash.last','alarm.set','alarm.remove','alarm.list','alarm.stop','alarm.snooze','alarm.test'];
 
 // адрес моста; в приложении к адресу этого телефона добавляется ключ приложения (?k=…) — с ним открыты SMS и контакты
 function phoneUrl(url,key){
@@ -13,7 +13,7 @@ function phoneUrl(url,key){
 }
 
 // какие источники просить: входящие SMS, нажатия на уведомления, состояние фонаря
-function phoneSub(p){ return ['sms','notify','torch'].filter(k=>p[{sms:'smsIn',notify:'notifyEv',torch:'torchState'}[k]]); }
+function phoneSub(p){ return ['sms','notify','torch','sys'].filter(k=>p[{sms:'smsIn',notify:'notifyEv',torch:'torchState',sys:'alarmEv'}[k]]); }
 
 // кнопки уведомления «Open, Snooze» → [{id:'open',label:'Open'},…]; id — по подписи, он придёт в записи {src:'notify', action}
 function phoneButtons(s){
@@ -44,6 +44,14 @@ function phoneCmd(p,textIn){
     case 'contacts.find': return {cmd:'contacts.find', q:String(p.q||''), limit:+p.limit||50};
     case 'ir.info': return {cmd:'ir.info'};
     case 'crash.last': return {cmd:p.action};
+    // будильник живёт в приложении (AlarmManager): time «7:30», days «mon,wed» / weekdays / weekend / daily / пусто = один раз;
+    // url — радио (http/https, .pls/.m3u/HLS), sample — запасной звук (путь, content://, адрес; default — системный рингтон, beep — встроенные бипы)
+    case 'alarm.set': { const c={cmd:'alarm.set', name:String(p.alarmName||'').trim(), time:String(p.alarmTime||'7:00').trim(), days:String(p.alarmDays||'').trim(), label:String(p.alarmLabel||''),
+      url:String(p.alarmUrl||'').trim(), sample:String(p.alarmSample||'default').trim()||'default', ramp:+p.alarmRamp||0, loadSec:+p.alarmLoad||12, snoozeMin:+p.alarmSnooze||9, maxMin:+p.alarmMax||15};
+      if(+p.alarmVol>0) c.vol=+p.alarmVol; if(!c.name) delete c.name; return c; }
+    case 'alarm.remove': return String(p.alarmName||'').trim() ? {cmd:'alarm.remove', name:String(p.alarmName).trim()} : {cmd:'alarm.remove', all:true};
+    case 'alarm.list': case 'alarm.stop': case 'alarm.snooze': return {cmd:p.action};
+    case 'alarm.test': return {cmd:'alarm.test', ...(String(p.alarmName||'').trim() ? {name:String(p.alarmName).trim()} : {url:String(p.alarmUrl||'').trim(), sample:String(p.alarmSample||'default').trim()||'default', ramp:3})};
   }
   return null;
 }
@@ -62,6 +70,8 @@ function phoneLine(r){
     case 'contact': return 'contact '+(r.name||'?')+' '+((r.phones||[]).join(', '));
     case 'notify': return 'notification '+r.nid+': '+r.action;
     case 'torch': return 'torch '+(r.on ? 'on' : 'off');
+    case 'alarm': return 'alarm '+r.name+' '+r.time+' '+r.days+(r.enabled ? '' : ' (off)')+(r.label ? ' · '+r.label : '')+(r.url ? ' · radio' : '');
+    case 'sys': return String(r.ev||'').startsWith('alarm.') ? r.ev+(r.id ? ' '+r.id : '')+(r.why ? ' · '+r.why : '')+(r.kind ? ' · '+r.kind : '') : 'sys '+r.ev;
     case 'bridge': return r.level+': '+r.msg;
   }
   return r.src+'';
