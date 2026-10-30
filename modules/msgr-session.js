@@ -3,7 +3,7 @@
    Один интерфейс на все каналы: mgConnect(proto, cfg, cb) → {send(text,to), close()}.
    Работает и в странице, и в Node-мосте (tools/node/bridge.mjs) — транспорт подставляется через cfg.io:
    {ws(url) → WebSocket, fetch, tcp(host,port,tls,h) → {write,upgrade(done),close}}, по умолчанию — глобальные.
-   proto: nostr | ntfy | matrix | telegram | irc | xmpp | aprs | email | sms.
+   proto: nostr | ntfy | matrix | telegram | irc | xmpp | aprs | email | sms | reticulum.
    cfg:   server, channel, user, pass, nick, key (Nostr), token, history (сек), verify, retry, bridge, via, io.
    cb:    msg({from,to,text,t,self,…}), status(text, state), state: connecting | up | down | warn | fatal.
    Свои сообщения приходят обратно тем же msg с self:true (от сервера или, где сервер не возвращает, локально). */
@@ -431,6 +431,44 @@ function mgOpenGateway(proto,cfg,c){
   };
 }
 
+/* ---------- Reticulum + LXMF: узел Reticulum по TCP (TCPServerInterface любого transport-узла), rns://host:port — через io.tcp ---------- */
+// key — приватный ключ личности: 128 hex-знаков (как у RNS: X25519 + Ed25519); channel — получатель по умолчанию (адрес или имя из анонсов);
+// сообщение: «@имя-или-адрес текст». Протокол — rns-kernels.js (проверен против настоящих rnsd и LXMF).
+function mgOpenRns(cfg,c){
+  const io=mgIo(cfg), m=/^(?:rns|reticulum|tcp):\/\/([^/:]+):(\d+)\/?$/i.exec(String(cfg.server||'').trim());
+  if(!m){ c.down('Reticulum: server must be rns://host:port — the TCP server interface of a Reticulum node',true); return mgNone; }
+  if(!io.tcp){ c.down('Reticulum needs TCP: use the DSP app on a phone or the Node bridge (tools/node/bridge.mjs)',true); return mgNone; }
+  let prv=null;
+  const keyHex=String(cfg.key||cfg.pass||'').trim();
+  if(keyHex){ prv=mgUnhex(keyHex); if(!prv || prv.length!==64){ c.down('Reticulum: the identity key is 128 hex digits (64 bytes)',true); return mgNone; } }
+  let closed=false, raw=null, node=null, heardAt=0;
+  const toBin=b=>{ let t=''; for(let i=0;i<b.length;i+=8192) t+=String.fromCharCode.apply(null,b.subarray(i,i+8192)); return t; };
+  try{
+    node=new RnsNode({prv,name:cfg.nick||'dsp',announceMs:cfg.announceMs,pathWaitMs:cfg.pathWaitMs,
+      write:b=>{ try{ raw.write(toBin(b)); }catch(e){} },
+      onMsg:x=>c.msg({from:x.from,to:x.to,text:x.text,t:x.t,id:x.id,unverified:x.unverified}),
+      onStatus:(t,s)=>c.status(t,s),
+      onPeer:()=>{ const n=Date.now(); if(n-heardAt>5000){ heardAt=n; c.status('Reticulum <'+node.destHex+'> · '+node.peers.size+' LXMF address(es) heard','up'); } }});
+  }catch(e){ c.down('Reticulum: '+e.message,true); return mgNone; }
+  raw=io.tcp(m[1],+m[2],false,{
+    open:()=>{ node.start().catch(e=>c.down('Reticulum: '+e.message+(/Web Crypto|X25519|Ed25519|algorithm/i.test(e.message) ? ' (needs a browser with X25519 and Ed25519 in Web Crypto: Chrome 137+, Firefox 130+, Safari 17+)' : ''),true)); },
+    data:s=>{ const b=new Uint8Array(s.length); for(let i=0;i<s.length;i++) b[i]=s.charCodeAt(i)&255; node.feed(b); },
+    close:err=>{ if(!closed) c.down('Reticulum: '+(err || 'connection closed'),false); }},{binary:true});
+  return {
+    async send(text,to){
+      text=String(text||''); const a=/^@(\S+)\s+([\s\S]+)$/.exec(text);
+      if(a){ to=a[1]; text=a[2]; }
+      to=String(to||cfg.channel||'').trim();
+      if(!to){ c.status('Reticulum: address a message as «@name text» or «@<32-digit address> text», or set the default recipient in the channel field','warn'); return false; }
+      if(!node.id){ c.status('Reticulum: still starting','warn'); return false; }
+      const ok=await node.send(text,to);
+      if(ok) c.msg({from:String(cfg.nick||'me'),to,text,t:Date.now(),self:true,local:true});
+      return ok;
+    },
+    close(){ closed=true; if(node) node.stop(); try{ raw.close(); }catch(e){} },
+  };
+}
+
 /* ---------- сессия на Node-мосте: те же сообщения, но протокол живёт на стороне моста ---------- */
 function mgOpenRemote(proto,cfg,c){
   const io=mgIo(cfg), url=String(cfg.bridge||'').trim();
@@ -452,8 +490,8 @@ function mgOpenRemote(proto,cfg,c){
   };
 }
 
-const MG_OPEN={nostr:mgOpenNostr,ntfy:mgOpenNtfy,matrix:mgOpenMatrix,telegram:mgOpenTelegram,irc:mgOpenIrc,xmpp:mgOpenXmpp,aprs:mgOpenAprs,email:mgOpenEmail,sms:mgOpenSms};
-const mgNeedsTcp=(proto,cfg)=>proto==='xmpp' || proto==='aprs' || proto==='email' || (proto==='irc' && !/^wss?:\/\//i.test(String(cfg.server||'').trim()));
+const MG_OPEN={nostr:mgOpenNostr,ntfy:mgOpenNtfy,matrix:mgOpenMatrix,telegram:mgOpenTelegram,irc:mgOpenIrc,xmpp:mgOpenXmpp,aprs:mgOpenAprs,email:mgOpenEmail,sms:mgOpenSms,reticulum:mgOpenRns};
+const mgNeedsTcp=(proto,cfg)=>proto==='xmpp' || proto==='aprs' || proto==='email' || proto==='reticulum' || (proto==='irc' && !/^wss?:\/\//i.test(String(cfg.server||'').trim()));
 
 // cfg.via: 'auto' (мост — только где нужен TCP), 'page' (всё из страницы), 'bridge' (всё через мост); cfg.retry — переподключаться
 function mgConnect(proto,cfg,cb){
