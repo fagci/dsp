@@ -233,6 +233,59 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
   ok('bridge delivers aprs packets', P.msgs[0]?.kind === 'status' && P.msgs[0].comment === 'on air', JSON.stringify(P.msgs)); P.s.close();
 }
 
+// ---- Email: IMAP + SMTP (TCP без TLS, insecure) ----
+{ const mails = [{uid: 4, raw: 'From: Old <old@ex.org>\r\nSubject: old\r\n\r\nold body'}]; const sentMail = [];
+  const imap = net.createServer(sock => {
+    sock.setEncoding('latin1'); let buf = '';
+    sock.write('* OK IMAP mock\r\n');
+    sock.on('data', d => { buf += d; let i; while ((i = buf.indexOf('\r\n')) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 2); const [tag, cmd, ...r] = l.split(' ');
+      if (cmd === 'CAPABILITY') sock.write('* CAPABILITY IMAP4rev1\r\n' + tag + ' OK\r\n');
+      else if (cmd === 'LOGIN') sock.write(r[1] === '"' + PW + '"' ? tag + ' OK ok\r\n' : tag + ' NO [AUTHENTICATIONFAILED] bad\r\n');
+      else if (cmd === 'SELECT') sock.write('* ' + mails.length + ' EXISTS\r\n* OK [UIDNEXT ' + (Math.max(...mails.map(m => m.uid)) + 1) + ']\r\n' + tag + ' OK done\r\n');
+      else if (cmd === 'UID' && r[0] === 'SEARCH') { const from = +/UID (\d+):/.exec(l)[1]; const ids = mails.filter(m => m.uid >= from).map(m => m.uid); sock.write('* SEARCH ' + (ids.length ? ids.join(' ') : mails.at(-1).uid) + '\r\n' + tag + ' OK\r\n'); }
+      else if (cmd === 'UID' && r[0] === 'FETCH') { const m = mails.find(x => x.uid === +r[1]); const bin = Buffer.from(m.raw, 'utf8').toString('latin1'); sock.write('* 1 FETCH (UID ' + m.uid + ' BODY[] {' + bin.length + '}\r\n' + bin + ')\r\n' + tag + ' OK\r\n', 'latin1'); }
+      else if (cmd === 'LOGOUT') sock.end(); } });
+    sock.on('error', () => {});
+  }); servers.push(imap);
+  const smtp = net.createServer(sock => {
+    sock.setEncoding('latin1'); let buf = '', inData = false, data = '';
+    sock.write('220 smtp mock\r\n');
+    sock.on('data', d => { buf += d;
+      if (inData) { if (buf.endsWith('\r\n.\r\n')) { inData = false; sentMail.push(data + buf.slice(0, -5)); buf = ''; data = ''; sock.write('250 queued\r\n'); } return; }
+      let i; while (!inData && (i = buf.indexOf('\r\n')) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 2);
+        if (l.startsWith('EHLO')) sock.write('250-mock\r\n250 AUTH PLAIN\r\n');
+        else if (l.startsWith('AUTH PLAIN')) sock.write(Buffer.from(l.slice(11), 'base64').toString() === '\0me@ex.org\0' + PW ? '235 ok\r\n' : '535 bad\r\n');
+        else if (l.startsWith('MAIL') || l.startsWith('RCPT')) sock.write('250 ok\r\n');
+        else if (l === 'DATA') { sock.write('354 go\r\n'); inData = true; if (buf) { data = ''; } }
+        else if (l === 'QUIT') sock.end(); } });
+    sock.on('error', () => {});
+  }); servers.push(smtp);
+  const ip = await listen(imap), sp = await listen(smtp);
+  const cfg = {server: 'imap://127.0.0.1:' + ip, smtp: 'smtp://127.0.0.1:' + sp, user: 'me@ex.org', pass: PW, insecure: true, pollMs: 100};
+  const refuse = rig('email', {...cfg, insecure: false}); await until(() => refuse.state() === 'fatal');
+  ok('email: no STARTTLS → password not sent', refuse.state() === 'fatal' && /STARTTLS/.test(refuse.st.at(-1)[1]), JSON.stringify(refuse.st)); refuse.s.close();
+  const bad = rig('email', {...cfg, pass: BAD}); await until(() => bad.state() === 'fatal');
+  ok('email: wrong password is fatal', bad.state() === 'fatal' && /login refused/.test(bad.st.at(-1)[1]), JSON.stringify(bad.st)); bad.s.close();
+  const A = rig('email', cfg); await until(() => A.state() === 'up');
+  ok('email: connected, old mail not delivered', A.state() === 'up' && A.msgs.length === 0, JSON.stringify(A.st));
+  mails.push({uid: 5, raw: 'From: =?UTF-8?B?' + Buffer.from('Аня').toString('base64') + '?= <anya@ex.org>\r\nSubject: Привет\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nТело письма 👋'});
+  await until(() => A.msgs.length);
+  ok('email: new mail with non-ASCII bytes in the literal', A.msgs[0]?.from === 'Аня' && A.msgs[0].text === '[Привет] Тело письма 👋', JSON.stringify(A.msgs));
+  await sleep(300); ok('email: not delivered twice', A.msgs.length === 1);
+  ok('email: send', await A.s.send('@you@ex.org Тема письма\nпервая строка\nвторая') === true);
+  ok('email: sent message is what the server got', sentMail.length === 1 && /Subject: =\?UTF-8\?B\?/.test(sentMail[0]) && /To: you@ex\.org/.test(sentMail[0]), sentMail[0]);
+  const got = M.mgMailParse(sentMail[0]);
+  ok('email: subject and body survive', got.subject === 'Тема письма' && got.text === 'первая строка\nвторая', JSON.stringify(got));
+  ok('email: own message echoed locally', A.msgs.at(-1).self === true);
+  ok('email: bad address refused', await A.s.send('hello', 'nobody') === false);
+  A.s.close();
+  const br = createMsgrBridge({port: 0}); const bp = (await br.listen()).port; servers.push({close: () => br.close()});
+  const P = rig('email', {...cfg, bridge: 'ws://127.0.0.1:' + bp, via: 'auto', io: {}}); await until(() => P.state() === 'up', 5000);
+  mails.push({uid: 6, raw: 'From: Bob <bob@ex.org>\r\nSubject: via bridge\r\n\r\nпривет через мост'});
+  await until(() => P.msgs.length, 5000);
+  ok('email through the Node bridge (binary-safe)', P.msgs[0]?.text === '[via bridge] привет через мост', JSON.stringify(P.msgs)); P.s.close();
+}
+
 // ---- XMPP (TCP без TLS, insecure) ----
 { const rx = [];
   const srv = net.createServer(sock => {

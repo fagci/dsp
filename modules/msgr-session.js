@@ -3,7 +3,7 @@
    Один интерфейс на все каналы: mgConnect(proto, cfg, cb) → {send(text,to), close()}.
    Работает и в странице, и в Node-мосте (tools/node/bridge.mjs) — транспорт подставляется через cfg.io:
    {ws(url) → WebSocket, fetch, tcp(host,port,tls,h) → {write,upgrade(done),close}}, по умолчанию — глобальные.
-   proto: nostr | ntfy | matrix | telegram | irc | xmpp | aprs.
+   proto: nostr | ntfy | matrix | telegram | irc | xmpp | aprs | email.
    cfg:   server, channel, user, pass, nick, key (Nostr), token, history (сек), verify, retry, bridge, via, io.
    cb:    msg({from,to,text,t,self,…}), status(text, state), state: connecting | up | down | warn | fatal.
    Свои сообщения приходят обратно тем же msg с self:true (от сервера или, где сервер не возвращает, локально). */
@@ -283,6 +283,48 @@ function mgOpenAprs(cfg,c){
   };
 }
 
+/* ---------- Email: приём по IMAP (опрос раз в pollMs), отправка по SMTP; оба — TCP через io.tcp (imaps:// imap:// smtps:// smtp://) ---------- */
+const mgUrl=(u,defs)=>{ const m=/^(imaps?|smtps?):\/\/([^/:]+)(?::(\d+))?\/?$/i.exec(String(u||'').trim()); if(!m) return null; const sec=/s$/i.test(m[1]); return {host:m[2],port:+m[3] || defs[sec ? 1 : 0],secure:sec}; };
+function mgOpenEmail(cfg,c){
+  const io=mgIo(cfg), imap=cfg.server ? mgUrl(cfg.server,[143,993]) : null, smtp=cfg.smtp ? mgUrl(cfg.smtp,[587,465]) : null;
+  if(cfg.server && (!imap || !/^imap/i.test(cfg.server))){ c.down('Email: server must be imaps://host:993 (or imap://host:143)',true); return mgNone; }
+  if(cfg.smtp && (!smtp || !/^smtp/i.test(cfg.smtp))){ c.down('Email: smtp must be smtps://host:465 (or smtp://host:587, STARTTLS)',true); return mgNone; }
+  if(!imap && !smtp){ c.down('Email: enter the IMAP server (to receive) and/or the SMTP server (to send)',true); return mgNone; }
+  if(!cfg.user || !cfg.pass){ c.down('Email: enter the user and password (an app password for Gmail and the like)',true); return mgNone; }
+  if(!io.tcp){ c.down('Email needs the Node bridge (tools/node/bridge.mjs): set its address',true); return mgNone; }
+  const me=/@/.test(cfg.nick||'') ? cfg.nick : /@/.test(cfg.user) ? cfg.user : '';
+  let closed=false, raw=null, cl=null, timer=null;
+  if(imap){
+    raw=io.tcp(imap.host,imap.port,imap.secure,{
+      open:()=>cl.start(),data:x=>cl.feed(x),close:err=>{ if(!closed) c.down('IMAP: '+(err || 'connection closed'),false); }},{binary:true});
+    cl=mgImapClient({user:cfg.user,pass:cfg.pass,box:cfg.channel||'INBOX',history:cfg.history|0,secure:imap.secure,insecure:!!cfg.insecure,
+      write:x=>{ try{ raw.write(x); }catch(e){} },tls:done=>raw.upgrade(done),onMsg:m=>c.msg(m),
+      onStatus:(t,s)=>{ if(s==='fatal') c.down('IMAP: '+t,true); else c.status(t+(smtp ? '' : ' · receive only'),s); }});
+    timer=setInterval(()=>cl.poll(),Math.max(1000,cfg.pollMs||30000));
+    setTimeout(()=>cl && cl.poll(),1500);
+  } else c.status('send only (no IMAP server)','up');
+  return {
+    send(text,to){
+      text=String(text||''); const a=/^@(\S+@\S+)\s+([\s\S]+)$/.exec(text);
+      if(a){ to=a[1]; text=a[2]; }
+      to=String(to||'').trim();
+      if(!smtp){ c.status('Email: enter the SMTP server to send','warn'); return Promise.resolve(false); }
+      if(!/^[^\s@<>]+@[^\s@<>]+$/.test(to)){ c.status('Email: address a message as «@name@host text» or with the «to» input','warn'); return Promise.resolve(false); }
+      if(!me){ c.status('Email: the sender is unknown — make the user (or nick) an address','warn'); return Promise.resolve(false); }
+      const nl=text.indexOf('\n'), subject=nl>0 ? text.slice(0,nl).trim() : 'DSP message', body=nl>0 ? text.slice(nl+1) : text;
+      return new Promise(res=>{
+        let h=null, cli=null;
+        h=io.tcp(smtp.host,smtp.port,smtp.secure,{
+          open:()=>{},data:x=>cli.feed(x),close:err=>cli.abort()},{binary:true});
+        cli=mgSmtpClient({host:smtp.host,user:cfg.user,pass:cfg.pass,from:me,to,subject,body,secure:smtp.secure,insecure:!!cfg.insecure,
+          write:x=>{ try{ h.write(x); }catch(e){} },tls:done=>h.upgrade(done),
+          done:err=>{ try{ h.close(); }catch(e){} if(err){ c.status('SMTP: '+err,'warn'); res(false); } else { c.msg({from:me,to,subject,text:(nl>0 ? '['+subject+'] ' : '')+body,t:Date.now(),self:true,local:true,kind:'mail'}); res(true); } }});
+      });
+    },
+    close(){ closed=true; clearInterval(timer); if(cl) cl.quit(); try{ raw && raw.close(); }catch(e){} },
+  };
+}
+
 /* ---------- сессия на Node-мосте: те же сообщения, но протокол живёт на стороне моста ---------- */
 function mgOpenRemote(proto,cfg,c){
   const io=mgIo(cfg), url=String(cfg.bridge||'').trim();
@@ -304,8 +346,8 @@ function mgOpenRemote(proto,cfg,c){
   };
 }
 
-const MG_OPEN={nostr:mgOpenNostr,ntfy:mgOpenNtfy,matrix:mgOpenMatrix,telegram:mgOpenTelegram,irc:mgOpenIrc,xmpp:mgOpenXmpp,aprs:mgOpenAprs};
-const mgNeedsTcp=(proto,cfg)=>proto==='xmpp' || proto==='aprs' || (proto==='irc' && !/^wss?:\/\//i.test(String(cfg.server||'').trim()));
+const MG_OPEN={nostr:mgOpenNostr,ntfy:mgOpenNtfy,matrix:mgOpenMatrix,telegram:mgOpenTelegram,irc:mgOpenIrc,xmpp:mgOpenXmpp,aprs:mgOpenAprs,email:mgOpenEmail};
+const mgNeedsTcp=(proto,cfg)=>proto==='xmpp' || proto==='aprs' || proto==='email' || (proto==='irc' && !/^wss?:\/\//i.test(String(cfg.server||'').trim()));
 
 // cfg.via: 'auto' (мост — только где нужен TCP), 'page' (всё из страницы), 'bridge' (всё через мост); cfg.retry — переподключаться
 function mgConnect(proto,cfg,cb){

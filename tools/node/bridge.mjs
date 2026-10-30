@@ -34,11 +34,12 @@ export function nodeIo(allowed = []) {
   return {
     ws: u => { guard(hostOf(u)); if (typeof WebSocket === 'undefined') throw new Error('Node 22+ is required (global WebSocket)'); return new WebSocket(u); },
     fetch: (u, o) => { guard(hostOf(String(u))); return fetch(u, o); },
-    tcp(host, port, useTls, h) {
+    tcp(host, port, useTls, h, o = {}) {                       // o.binary — по символу на байт (latin1): почта, где важны длины литералов
       guard(host);
+      const enc = o.binary ? 'latin1' : 'utf8';
       let sock = useTls ? tls.connect({host, port, servername: host}) : net.connect(port, host);
       const attach = s => {
-        s.setEncoding('utf8');
+        s.setEncoding(enc);
         s.on('data', d => h.data(d));
         s.on('error', e => h.close(e.message));
         s.on('close', () => h.close(''));
@@ -46,7 +47,7 @@ export function nodeIo(allowed = []) {
       sock.once(useTls ? 'secureConnect' : 'connect', () => h.open && h.open());
       attach(sock);
       return {
-        write: s => { sock.write(s); },
+        write: s => { sock.write(s, enc); },
         close: () => { sock.destroy(); },
         upgrade(done) {
           const raw = sock;
@@ -102,7 +103,7 @@ export function createMsgrBridge(opt) {
       onPing: p => { try { sock.write(wsFrame(p.toString(), 10)); } catch (e) { /* закрыт */ } },
     });
     sock.on('data', par); sock.on('close', bye); sock.on('error', bye);
-    send({ev: 'hello', ver: 1, host: os.hostname(), protos: ['nostr', 'ntfy', 'matrix', 'telegram', 'irc', 'xmpp', 'aprs']});
+    send({ev: 'hello', ver: 1, host: os.hostname(), protos: ['nostr', 'ntfy', 'matrix', 'telegram', 'irc', 'xmpp', 'aprs', 'email']});
   });
 
   return {

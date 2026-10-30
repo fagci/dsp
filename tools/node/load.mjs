@@ -8,7 +8,7 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const API = ['mgHex', 'mgUnhex', 'mgUtf8', 'mgB64', 'mgSchnorrPub', 'mgSchnorrSign', 'mgSchnorrVerify', 'mgBechEnc', 'mgBechDec',
   'mgNostrKey', 'mgNostrGenKey', 'mgNpub', 'mgNostrId', 'mgNostrSign', 'mgNostrVerify', 'mgNostrReq', 'mgNostrFrame', 'mgNostrText',
   'mgLines', 'mgNtfyLine', 'mgMatrixSync', 'mgTgUpdates', 'mgIrcParse', 'mgIrcFmt', 'mgSplit', 'mgIrcClient',
-  'mgAprsPass', 'mgAprsParse', 'mgAprsMsg', 'mgAprsAck', 'mgAprsClient', 'mgXmlParser', 'mgXmlEsc', 'mgXmppClient', 'mgConnect'];
+  'mgAprsPass', 'mgAprsParse', 'mgAprsMsg', 'mgAprsAck', 'mgAprsClient', 'mgMailParse', 'mgMailCompose', 'mgImapClient', 'mgImapNext', 'mgSmtpClient', 'mgMimeWords', 'mgXmlParser', 'mgXmlEsc', 'mgXmppClient', 'mgConnect'];
 
 // extra — глобалы, которых нет у vm-контекста по умолчанию (fetch, WebSocket, …); по умолчанию берутся из Node
 export function loadMsgr(extra = {}) {
