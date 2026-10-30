@@ -213,6 +213,9 @@ fun main() {
     val d4 = newDevice(44004, local, deadPort)
     d4.syn()
     ok("TCP: a refused port gets RST, not silence", d4.waitFor(5000) { FakeDevice.tcpFlags(it) and 0x04 != 0 } != null)
+    // событие close приходит из потока движка уже после RST — ждём его, а не читаем список сразу
+    val closeBy = System.currentTimeMillis() + 2000
+    while (System.currentTimeMillis() < closeBy && !events.any { it.first.dport == deadPort && it.second == "close" }) Thread.sleep(20)
     ok("TCP: flow closed after the refusal", events.any { it.first.dport == deadPort && it.second == "close" })
 
     // 5. RST от устройства закрывает поток
