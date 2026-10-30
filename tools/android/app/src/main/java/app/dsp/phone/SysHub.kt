@@ -174,6 +174,14 @@ class SysHub(private val ctx: Context, private val cfg: Config, private val emit
                 am.setStreamVolume(st, lv.coerceIn(0, max), if (j.optBoolean("ui", false)) AudioManager.FLAG_SHOW_UI else 0)
                 Reply.done(c, id, cmd, null, extra = arrayOf("level" to am.getStreamVolume(st).toString(), "max" to max.toString()))
             }
+            "vol.adjust" -> {                       // как кнопки громкости: шаг вверх / вниз / mute, можно несколько шагов сразу
+                val st = stream(j.optString("stream", "music")); val steps = j.optInt("steps", 1).coerceIn(1, 20)
+                val flag = if (j.optBoolean("ui", true)) AudioManager.FLAG_SHOW_UI else 0
+                val dir = when (j.optString("dir")) { "up" -> AudioManager.ADJUST_RAISE; "down" -> AudioManager.ADJUST_LOWER; "mute" -> AudioManager.ADJUST_MUTE
+                    "unmute" -> AudioManager.ADJUST_UNMUTE; "toggle" -> AudioManager.ADJUST_TOGGLE_MUTE; else -> return Reply.done(c, id, cmd, "dir: up, down, mute, unmute or toggle") }
+                repeat(if (dir == AudioManager.ADJUST_RAISE || dir == AudioManager.ADJUST_LOWER) steps else 1) { am.adjustStreamVolume(st, dir, flag) }
+                Reply.done(c, id, cmd, null, extra = arrayOf("level" to am.getStreamVolume(st).toString(), "max" to am.getStreamMaxVolume(st).toString()))
+            }
             "vol.ringer" -> {
                 val m = when (j.optString("mode")) { "normal" -> AudioManager.RINGER_MODE_NORMAL; "vibrate" -> AudioManager.RINGER_MODE_VIBRATE; "silent" -> AudioManager.RINGER_MODE_SILENT; else -> return Reply.done(c, id, cmd, "mode: normal, vibrate or silent") }
                 val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

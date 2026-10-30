@@ -44,6 +44,9 @@ const RULE_TPL={
   'toast on screen':'{"cmd":"toast","text":"Rule fired"}',
   'launch an app':'{"cmd":"app.launch","pkg":"com.android.chrome"}',
   'media: play / pause':'{"cmd":"media","key":"toggle"}',
+  'volume up (like the key)':'{"cmd":"vol.adjust","dir":"up"}',
+  'volume down (like the key)':'{"cmd":"vol.adjust","dir":"down"}',
+  'mute on / off':'{"cmd":"vol.adjust","dir":"toggle"}',
 };
 def({ id:'rule', title:'Rule (If → Command)', cat:'Control', kw:'automation if then condition trigger rule command action geofence sys event',
   ins:[{n:'rec',t:'rec'}], outs:[{n:'cmd',t:'rec'},{n:'go',t:'num'},{n:'on',t:'num'}],

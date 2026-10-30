@@ -533,6 +533,8 @@ const PRESET_CATS={
   'Panels: Radio Displays (Base and Mobile) and a Key Panel':'Analysis & Measurement',
   'Panels: Metal Detector from the Magnetometer and Other Detectors':'Analysis & Measurement',
   'Panels: Needle Meter, Speedometer, Counters, Nixie, D-pad and Spectrum Display':'Analysis & Measurement',
+  'Panels: Phone Volume and Media Keys (Key Panel → Phone Control)':'Maps & Locating',
+  'Panels: Selector, Jog Wheel, DIP, Flip Clock, Character Displays, Goniometer and Thermometer':'Analysis & Measurement',
   'Logic Analyzer: UART Decode':'Analysis & Measurement',
   'Timeline: Periods, Durations and Replies on the Air (Table)':'Analysis & Measurement',
   'Timeline: Clip Arranger (edit with the mouse, mix, markers)':'Analysis & Measurement',
@@ -7043,6 +7045,41 @@ const mx=addNode('mixer',300,1130,{channels:'2'}); const ff=addNode('fft',560,11
 const sd=addNode('specdisp',820,1230,{style:'lab',color:'green'}); sd.size.w=560; sd.size.h=300; applySize(sd);
 const kn=addNode('knob',1300,820,{count:'1',min:-40,max:20,init:-10,labels:'ref dB'}); kn.size.w=120; kn.size.h=90; applySize(kn);
 addEdge(o1.id,'out',mx.id,'a'); addEdge(o2.id,'out',mx.id,'b'); addEdge(mx.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sd.id,'spec'); addEdge(kn.id,'out1',sd.id,'ref');
+markWiresDirty();
+});
+preset('Panels: Phone Volume and Media Keys (Key Panel → Phone Control)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'The «phone» layout of Key Panel gives a ready command on its «cmd» pin when a key is pressed: VOL− / VOL+ / MUTE (command vol.adjust — the same step as the hardware volume keys, with the system volume bar), PREV / PLAY / NEXT (command media). Wire «cmd» to Phone Control & Automation (the DSP Android app, Termux has no such commands) and connect it with Connect.\n'+
+  'The same keys work from other sources: a Rule can send the command on any condition (templates «volume up / down», «mute on / off», «media: play / pause»), and every key also appears as a record {src:\'keys\', key, n, down} on «rec». Add a D-pad or a Jog Wheel («rec» pin, delta) to turn any control into a volume knob.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const kp=addNode('keypanel',40,200,{layout:'phone',mode:'push',style:'rubber',cols:3}); kp.size.w=330; kp.size.h=190; applySize(kp);
+const pc=addNode('phonectl',460,200,{}); 
+addEdge(kp.id,'cmd',pc.id,'cmd');
+const dp=addNode('dpad',40,520,{labels:'BACK,MENU,HOME,MODE'}); dp.size.w=220; dp.size.h=220; applySize(dp);
+markWiresDirty();
+});
+preset('Panels: Selector, Jog Wheel, DIP, Flip Clock, Character Displays, Goniometer and Thermometer', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Rotary Selector: a wafer switch with N positions (click or drag the knob, the wheel steps); outputs pos, an optional value list and the label. Jog Wheel: an endless encoder with a push button (drag in a circle or use the wheel); delta per block, an accumulated pos and rec events. DIP Switch: 4…16 sliders, value and bits. Flip Clock: split-flap cards for the time or for any number. Character Display: 5×7 dot-matrix LCD, VFD or OLED (up to 4 lines, any backlight colour). Goniometer: Lissajous by L / R with a correlation meter. Thermometer: a glass column or a dial, min / max markers (click resets).\n'+
+  'Here the selector label and the DIP bits go to the displays, the jog wheel feeds the flip counter, two oscillators draw a 2:3 figure, and an LFO warms both thermometers.'});
+nt.size.w=1300; nt.size.h=130; applySize(nt);
+const rs=addNode('rotsel',40,200,{labels:'OFF,LSB,USB,CW,AM,FM',values:'0,1,2,3,4,5'}); rs.size.w=240; rs.size.h=200; applySize(rs);
+const jg=addNode('jog',40,620,{detents:24,step:1}); jg.size.w=220; jg.size.h=200; applySize(jg);
+const ds=addNode('dipsw',340,200,{count:'8',state:'10100101'}); ds.size.w=320; ds.size.h=110; applySize(ds);
+const lcd=addNode('dotlcd',340,420,{style:'lcd',cols:'16',rows:'2',hue:90}); lcd.size.w=400; lcd.size.h=110; applySize(lcd);
+const vfd=addNode('dotlcd',340,640,{style:'vfd',cols:'20',rows:'2',color:'#6ff0ff',text:'  VFD DISPLAY  |  ROTARY + DIP'}); vfd.size.w=440; vfd.size.h=110; applySize(vfd);
+const old=addNode('dotlcd',340,860,{style:'oled',cols:'16',rows:'2',text:'OLED 16x2|hello, world'}); old.size.w=400; old.size.h=110; applySize(old);
+addEdge(rs.id,'label',lcd.id,'l1'); addEdge(ds.id,'bits',lcd.id,'l2');
+const fc=addNode('flipclock',820,200,{mode:'clock'}); fc.size.w=380; fc.size.h=130; applySize(fc);
+const fv=addNode('flipclock',820,420,{mode:'value',digits:4}); fv.size.w=300; fv.size.h=130; applySize(fv);
+addEdge(jg.id,'pos',fv.id,'in');
+const o1=addNode('osc',820,640,{freq:440,amp:.5}), o2=addNode('osc',820,900,{freq:660,amp:.5});
+const gn=addNode('gonio',1120,640,{mode:'goniometer',gain:1.5}); gn.size.w=280; gn.size.h=260; applySize(gn);
+addEdge(o1.id,'out',gn.id,'l'); addEdge(o2.id,'out',gn.id,'r');
+const lf=addNode('lfo',1260,200,{freq:.05,min:-10,max:40});
+const t1=addNode('thermo',1500,200,{style:'tube'}); t1.size.w=170; t1.size.h=260; applySize(t1);
+const t2=addNode('thermo',1500,640,{style:'dial',unit:'°F'}); t2.size.w=240; t2.size.h=240; applySize(t2);
+addEdge(lf.id,'out',t1.id,'in'); addEdge(lf.id,'out',t2.id,'in');
 markWiresDirty();
 });
 preset('ADS-B: Radar and Attitude (Generator)', function(){
