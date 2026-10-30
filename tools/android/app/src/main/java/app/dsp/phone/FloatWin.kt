@@ -75,7 +75,7 @@ object FloatWin {
         fun dp(v: Int) = (v * dm.density).toInt()
         val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val through = opts.optBoolean("through", false)
-        val alpha = opts.optDouble("opacity", 1.0).toFloat().coerceIn(0.1f, 1f)
+        val alpha = opts.optDouble("opacity", 0.85).toFloat().coerceIn(0.1f, 1f)
         val old = wins[id]
         if (old != null) {                                      // уже открыто — только новые параметры
             old.root.alpha = alpha
@@ -91,6 +91,7 @@ object FloatWin {
         lp.gravity = Gravity.TOP or Gravity.START
         lp.x = prefs.getInt("$id.x", dp(12)); lp.y = prefs.getInt("$id.y", dp(80) + n * dp(60))
         val root = FrameLayout(ctx)
+        root.setBackgroundColor(0x66000000)                     // полупрозрачная подложка: окно читается на любом фоне
         val img = ImageView(ctx)
         img.adjustViewBounds = true
         img.scaleType = ImageView.ScaleType.FIT_CENTER

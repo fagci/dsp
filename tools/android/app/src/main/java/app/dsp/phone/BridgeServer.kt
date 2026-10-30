@@ -46,6 +46,9 @@ class BridgeServer(
         /** Страница самого приложения (знает ключ UsbKey): ей можно читать SMS и контакты и слать SMS, чужим сайтам — нет. */
         @Volatile var trusted = false
         @Volatile var dead = false
+        /** Кто подключён: адрес, страница (Origin) и подписки — для списка клиентов моста. */
+        @Volatile var origin = ""
+        val since = System.currentTimeMillis()
         val out = LinkedBlockingQueue<ByteArray>(4096)
         fun send(text: String) { out.offer(frame(text.toByteArray(Charsets.UTF_8))) }   // переполнена — медленный клиент теряет записи
     }
@@ -101,6 +104,11 @@ class BridgeServer(
     }
 
     val clientCount: Int get() = clients.size
+    /** Строки «адрес · страница · подписки» по одной на клиента. */
+    fun clientLines(): List<String> = clients.map { c ->
+        val a = c.sock.inetAddress?.hostAddress?.removePrefix("::ffff:") ?: "?"
+        listOf(a, c.origin.removePrefix("https://").removePrefix("http://").ifEmpty { if (c.trusted) "app" else "" }, c.subs.sorted().joinToString(",")).filter { it.isNotEmpty() }.joinToString(" · ")
+    }
     val listening: Boolean get() = running
     val boundPort: Int get() = ss?.localPort ?: 0
 
@@ -308,6 +316,7 @@ class BridgeServer(
         if (!handshake(sock, req)) return
         val c = Client(sock)
         c.trusted = sock.inetAddress.isLoopbackAddress && MessageDigest.isEqual((req.query["k"] ?: "").toByteArray(), UsbKey.value.toByteArray())
+        c.origin = req.headers["origin"] ?: ""
         c.power = c.trusted || cfg.openCmds
         c.subs = allowed(c, (req.query["sources"] ?: "").split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet())
         c.hz = req.query["hz"]?.toIntOrNull() ?: 0
