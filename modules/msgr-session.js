@@ -9,7 +9,7 @@
    Свои сообщения приходят обратно тем же msg с self:true (от сервера или, где сервер не возвращает, локально). */
 
 const MG_RETRY_MS=3000;
-const mgIo=cfg=>({ws:u=>new WebSocket(u),fetch:(...a)=>fetch(...a),tcp:null,...(cfg.io||{})});
+const mgIo=cfg=>({ws:u=>new WebSocket(u),fetch:(...a)=>fetch(...a),tcp:cfg.phone ? mgPhoneTcp(cfg.phone) : null,...(cfg.io||{})});
 const mgAuthHdr=cfg=>{
   if(cfg.token) return {authorization:'Bearer '+cfg.token};
   if(cfg.user && cfg.pass) return {authorization:'Basic '+mgB64(mgUtf8(cfg.user+':'+cfg.pass))};
@@ -17,6 +17,46 @@ const mgAuthHdr=cfg=>{
 };
 const mgTrim=s=>String(s||'').replace(/\/+$/,'');
 const mgNone={send:()=>false,close(){}};
+
+/* ---------- TCP/TLS через приложение DSP на Android (NetHub.kt: tcp.connect {tls|starttls}, tcp.starttls, tcp.send, tcp.close) ----------
+   Даёт сессиям IRC / XMPP / APRS-IS / почты тот же io.tcp, что у Node-моста, — без Node: сокеты открывает телефон, а TLS — системный Android.
+   ph: {url, key, io}. Команды приложение выполняет в пуле потоков, порядок не гарантирован — поэтому tcp.send ждёт ответ на каждый кусок. */
+function mgPhoneTcp(ph){
+  return (host,port,tls,h,o)=>{
+    o=o||{}; const bin=!!o.binary, io=mgIo({io:ph.io});
+    const stub={write(){},close(){},upgrade(){}};
+    let u; try{ u=new URL(String(ph.url||'').trim() || 'ws://127.0.0.1:8765'); }catch(e){ setTimeout(()=>h.close('bad address of the phone app'),0); return stub; }
+    if(ph.key && /^(127\.\d+\.\d+\.\d+|localhost|\[::1\])$/.test(u.hostname) && !u.searchParams.has('k')) u.searchParams.set('k',ph.key);
+    let ws; try{ ws=io.ws(u.toString()); }catch(e){ setTimeout(()=>h.close(e.message),0); return stub; }
+    const ns=new NetSock(x=>ws.send(JSON.stringify(x)));
+    const dec=new TextDecoder();
+    let conn=null, dead=false, chain=Promise.resolve();
+    const fail=err=>{ if(dead) return; dead=true; try{ ws.close(); }catch(e){} h.close(err||''); };
+    ns.hooks.add(r=>{
+      if(conn===null || r.conn!==conn || r.proto==='udp') return;
+      if(r.ev==='data'){
+        if(bin){ let t=''; for(let i=0;i<r.hex.length;i+=2) t+=String.fromCharCode(parseInt(r.hex.substr(i,2),16)); h.data(t); }
+        else h.data(dec.decode(mgUnhex(r.hex),{stream:true}));
+      } else if(r.ev==='close') fail('');
+    });
+    ws.onopen=()=>{
+      ws.send(JSON.stringify({sub:['net']}));
+      ns.call('tcp.connect',{host,port,timeout:15000,tls:!!tls,starttls:!tls},25000,r=>{ conn=r.conn; })
+        .then(()=>{ if(!dead && h.open) h.open(); },e=>fail(e.reply && e.reply.err==='forbidden' ? 'only the page of the DSP app may open sockets' : e.message));
+    };
+    ws.onmessage=e=>{ let r; try{ r=JSON.parse(String(e.data)); }catch(x){ return; } ns.feed(r); };
+    ws.onerror=()=>{};
+    ws.onclose=()=>fail('phone app connection closed');
+    return {
+      write(s){
+        const bytes=bin ? Uint8Array.from(s,c=>c.charCodeAt(0)&255) : mgUtf8(s);
+        chain=chain.then(async()=>{ for(let i=0;i<bytes.length;i+=32768) await ns.call('tcp.send',{conn,hex:mgHex(bytes.subarray(i,i+32768))}); }).catch(e=>fail(e.message));
+      },
+      close(){ dead=true; if(conn!==null) ns.call('tcp.close',{conn}).catch(()=>{}); setTimeout(()=>{ try{ ws.close(); }catch(e){} },150); },
+      upgrade(done){ chain=chain.then(()=>ns.call('tcp.starttls',{conn,sni:host},20000)).then(()=>done(),e=>fail(e.message)); },
+    };
+  };
+}
 
 /* ---------- Nostr: реле по WebSocket, канал = хэштег (тег t) ---------- */
 function mgOpenNostr(cfg,c){
@@ -389,7 +429,8 @@ const mgNeedsTcp=(proto,cfg)=>proto==='xmpp' || proto==='aprs' || proto==='email
 
 // cfg.via: 'auto' (мост — только где нужен TCP), 'page' (всё из страницы), 'bridge' (всё через мост); cfg.retry — переподключаться
 function mgConnect(proto,cfg,cb){
-  const remote=cfg.via==='bridge' || ((cfg.via||'auto')==='auto' && cfg.bridge && mgNeedsTcp(proto,cfg));
+  // TCP: свой сокет телефона (cfg.phone) главнее моста; via 'bridge' — всё через Node-мост
+  const remote=cfg.via==='bridge' || ((cfg.via||'auto')==='auto' && cfg.bridge && !cfg.phone && mgNeedsTcp(proto,cfg));
   const open=remote ? (cfg2,c)=>mgOpenRemote(proto,cfg2,c) : MG_OPEN[proto];
   let h=null, timer=null, dead=false, gen=0;
   const out={

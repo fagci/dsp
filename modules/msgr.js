@@ -25,6 +25,8 @@ function mgNodeStart(n){
   const cfg={server:String(p.server||'').trim() || MG_DEF_SERVER[proto] || '',channel:String(p.channel||'').trim(),user:String(p.user||'').trim(),pass:String(p.pass||''),
     nick:String(p.nick||'dsp').trim() || 'dsp',appKey:(()=>{ try{ return (window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){ return ''; } })(),history:+p.history||0,retry:!!p.reconnect,via:p.via,smtp:String(p.smtp||'').trim(),pollMs:(+p.poll||30)*1000,bridge,insecure:!!p.plain,cache:n.mxCache};
   if(proto==='nostr'){ cfg.key=cfg.pass; if(!cfg.key){ try{ if(!n.eph) n.eph=mgHex(mgNostrGenKey()); cfg.key=n.eph; }catch(e){ n.status='no secure random generator'; return; } } }
+  const inApp=(()=>{ try{ return !!(window.DspApp && DspApp.appKey); }catch(e){ return false; } })();
+  if(p.via==='phone' || (p.via==='auto' && inApp)) cfg.phone={url:String(p.phone||'').trim(),key:cfg.appKey};
   n.warn=netInsecure(cfg.server) || (cfg.bridge && netInsecure(cfg.bridge)) ? NET_INSECURE_MSG : '';
   n.sess=mgConnect(proto,cfg,{
     msg:m=>{ if(m.delay && !cfg.history) return; mgNodeLog(n,m.self ? 'out' : 'in',m); },
@@ -51,7 +53,8 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
     {n:'poll',t:'range',min:5,max:600,step:5,d:30,label:'email: check the mailbox every, s'},
     {n:'nick',t:'text',d:'dsp',label:'nick (shown to others; in Chat set «my name» the same)'},
     {n:'history',t:'range',min:0,max:86400,step:60,d:0,label:'also fetch what was said in the last, s (nostr, ntfy, matrix, xmpp)'},
-    {n:'via',t:'select',opts:['auto','page','bridge'],d:'auto',label:'where the protocol runs: auto — in the page, through the Node bridge only for IRC TCP and XMPP'},
+    {n:'via',t:'select',opts:['auto','page','phone','bridge'],d:'auto',label:'where TCP comes from (IRC ircs://, XMPP, APRS-IS, email): auto — the phone itself inside the DSP app, otherwise the Node bridge; phone — sockets of the DSP app for Android; bridge — everything through the Node bridge'},
+    {n:'phone',t:'text',d:'ws://127.0.0.1:8765',label:'phone app (DSP for Android) socket for TCP/TLS'},
     {n:'bridge',t:'text',d:'ws://127.0.0.1:8777',label:'Node bridge: node tools/node/bridge.mjs'},
     {n:'bridgeToken',t:'text',d:'',label:'bridge token (--token; saved with the patch!)'},
     {n:'plain',t:'check',d:false,label:'xmpp: allow a password without TLS (only for a server on your own network)'},

@@ -1549,7 +1549,7 @@ markWiresDirty();
 preset('APRS-IS: Messages and Stations on the Map', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'APRS over the internet (APRS-IS): stations heard by iGates all over the world come out of the Messenger node as records with lat / lon — they go straight onto the Map — and messages addressed to you show up in the chat. The server filter in «channel» decides what you get: r/lat/lon/km (a circle, here around Berlin), m/km (around your last position), b/CALL* (stations by callsign), g/CALL (messages to a callsign; empty — to you).\n'+
-  'Put your callsign into «user». With no passcode it is receive-only; to send, enter the APRS-IS passcode of YOUR OWN callsign (the owner of a licence only) and type «@K1ABC text» in the chat — the message is acknowledged and retried like on air. A browser cannot open TCP, so run the Node bridge: node tools/node/bridge.mjs (Node 22+).'});
+  'Put your callsign into «user». With no passcode it is receive-only; to send, enter the APRS-IS passcode of YOUR OWN callsign (the owner of a licence only) and type «@K1ABC text» in the chat — the message is acknowledged and retried like on air. A browser cannot open TCP, so either open this page in the DSP app for Android (the sockets and TLS of the phone are used automatically) or run the Node bridge: node tools/node/bridge.mjs (Node 22+).'});
 nt.size.w=900; nt.size.h=190; applySize(nt);
 const ap=addNode('messenger',40,260,{proto:'aprs',server:'',channel:'r/52.52/13.40/100',user:'N0CALL',nick:'N0CALL',bridge:'ws://127.0.0.1:8777'});
 ap.size.w=420; ap.size.h=420; applySize(ap);
@@ -1563,7 +1563,7 @@ markWiresDirty();
 preset('Email: Mailbox as a Chat (IMAP / SMTP)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Email as just another chat channel: new mail in the mailbox comes out of the Messenger node as «[subject] text» (From = the sender), and what you type in the chat goes out as a letter. Fill in the IMAP server (imaps://imap.example.org:993), the SMTP server (smtps://smtp.example.org:465, or smtp://…:587 with STARTTLS), the login and password — Gmail and the like need an app password, not the account one — and put your own address in the nick if the login is not an address.\n'+
-  'Address a letter in the chat as «@friend@example.org Subject line» and, on the next lines, the text; a single line goes out with the subject «DSP message». A browser cannot open TCP, so run the Node bridge: node tools/node/bridge.mjs (Node 22+). Old mail is not delivered (raise «also fetch… last, s» for that); mail is only read, never marked as seen or deleted; a password is never sent without TLS.'});
+  'Address a letter in the chat as «@friend@example.org Subject line» and, on the next lines, the text; a single line goes out with the subject «DSP message». A browser cannot open TCP, so either open this page in the DSP app for Android (the sockets and TLS of the phone are used automatically) or run the Node bridge: node tools/node/bridge.mjs (Node 22+). Old mail is not delivered (raise «also fetch… last, s» for that); mail is only read, never marked as seen or deleted; a password is never sent without TLS.'});
 nt.size.w=900; nt.size.h=190; applySize(nt);
 const em=addNode('messenger',40,260,{proto:'email',server:'imaps://imap.example.org:993',smtp:'smtps://smtp.example.org:465',channel:'INBOX',user:'me@example.org',nick:'me@example.org',bridge:'ws://127.0.0.1:8777'});
 em.size.w=420; em.size.h=460; applySize(em);
