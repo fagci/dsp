@@ -25,7 +25,11 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
     private val pool = Executors.newCachedThreadPool { r -> Thread(r, "dsp-net").also { it.isDaemon = true } }
     private val ids = AtomicInteger(0)
 
-    private class TcpConn(val s: Socket, val server: Int?)
+    // s меняется при STARTTLS: сокет подменяет поток чтения (readTcp) — только он, чтобы никто не прочитал байты рукопожатия
+    private class TcpConn(@Volatile var s: Socket, val server: Int?) {
+        @Volatile var upgradeTo: String? = null
+        @Volatile var upReply: ((String?) -> Unit)? = null
+    }
     private val tcp = ConcurrentHashMap<Int, TcpConn>()
     private val servers = ConcurrentHashMap<Int, ServerSocket>()
     private val udp = ConcurrentHashMap<Int, DatagramSocket>()
@@ -64,13 +68,18 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
                 val host = Args.host(j.optString("host")) ?: return Reply.done(c, id, cmd, "host")
                 val port = j.optInt("port"); if (!Args.port(port)) return Reply.done(c, id, cmd, "port: 1…65535")
                 if (tcp.size >= 32) return Reply.done(c, id, cmd, "32 connections at most")
-                val s = Socket()
-                try { s.connect(InetSocketAddress(host, port), j.optInt("timeout", 5000).coerceIn(200, 60_000)) }
-                catch (e: Exception) { s.close(); return Reply.done(c, id, cmd, "${e.javaClass.simpleName}: ${e.message}") }
+                val raw = Socket()
+                try { raw.connect(InetSocketAddress(host, port), j.optInt("timeout", 5000).coerceIn(200, 60_000)) }
+                catch (e: Exception) { raw.close(); return Reply.done(c, id, cmd, "${e.javaClass.simpleName}: ${e.message}") }
+                // tls:true — сразу TLS (imaps, ircs, xmpps); starttls:true — обычный сокет, который потом можно поднять командой tcp.starttls
+                val s: Socket = if (j.optBoolean("tls")) {
+                    try { Tls.wrap(raw, host) } catch (e: Exception) { raw.close(); return Reply.done(c, id, cmd, "TLS: ${e.message ?: e.javaClass.simpleName}") }
+                } else raw
+                if (j.optBoolean("starttls") && s === raw) raw.soTimeout = 200          // читатель просыпается и смотрит, не просят ли TLS
                 val n = ids.incrementAndGet(); tcp[n] = TcpConn(s, null)
                 rec("open", "conn" to n.toString(), "proto" to "\"tcp\"", "peer" to Json.str("$host:$port"))
                 Reply.done(c, id, cmd, null, extra = arrayOf("conn" to n.toString()))
-                pool.execute { readTcp(n, s) }
+                pool.execute { readTcp(n) }
             }
             "tcp.listen" -> {
                 val port = j.optInt("port"); if (port !in 1024..65535) return Reply.done(c, id, cmd, "port: 1024…65535 (an app cannot take lower ones)")
@@ -86,7 +95,7 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
                             if (tcp.size >= 32) { s.close(); continue }
                             val n = ids.incrementAndGet(); tcp[n] = TcpConn(s, sid)
                             rec("accept", "conn" to n.toString(), "server" to sid.toString(), "proto" to "\"tcp\"", "peer" to Json.str(s.remoteSocketAddress.toString().trimStart('/')))
-                            pool.execute { readTcp(n, s) }
+                            pool.execute { readTcp(n) }
                         }
                     } catch (e: Exception) { /* закрыт */ }
                     servers.remove(sid); rec("close", "server" to sid.toString(), "proto" to "\"tcp\"")
@@ -97,6 +106,14 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
                 val d = Args.payload(j) ?: return Reply.done(c, id, cmd, "hex or text")
                 t.s.getOutputStream().apply { write(d); flush() }
                 Reply.done(c, id, cmd, null, extra = arrayOf("n" to d.size.toString()))
+            }
+            "tcp.starttls" -> {
+                val t = tcp[j.optInt("conn")] ?: return Reply.done(c, id, cmd, "no such connection")
+                if (t.s is javax.net.ssl.SSLSocket) return Reply.done(c, id, cmd, "already TLS")
+                if (t.s.soTimeout == 0) return Reply.done(c, id, cmd, "open the connection with starttls:true")
+                val sni = Args.host(j.optString("sni")) ?: return Reply.done(c, id, cmd, "sni: the server's host name")
+                t.upReply = { err -> Reply.done(c, id, cmd, err) }
+                t.upgradeTo = sni                                     // рукопожатие делает читатель — после отправки нашего ClientHello байты читает уже TLS
             }
             "tcp.close", "udp.close" -> {
                 val n = if (j.has("server")) j.optInt("server") else j.optInt("conn")
@@ -184,16 +201,24 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
         cm.activeNetwork?.let { cm.getLinkProperties(it) }?.dnsServers?.mapNotNull { it.hostAddress } ?: emptyList()
     } catch (e: Exception) { emptyList() }
 
-    private fun readTcp(n: Int, s: Socket) {
+    private fun readTcp(n: Int) {
+        val conn = tcp[n] ?: return
         val buf = ByteArray(8192)
         try {
-            val inp = s.getInputStream()
             while (true) {
-                val k = inp.read(buf); if (k < 0) break
+                val up = conn.upgradeTo
+                if (up != null) {                                     // STARTTLS: сервер ответил «proceed», дальше только TLS
+                    conn.upgradeTo = null
+                    try { conn.s = Tls.wrap(conn.s, up) } catch (e: Exception) { conn.upReply?.invoke("TLS: ${e.message ?: e.javaClass.simpleName}"); break }
+                    conn.upReply?.invoke(null)
+                    continue
+                }
+                val k = try { conn.s.getInputStream().read(buf) } catch (e: SocketTimeoutException) { continue }
+                if (k < 0) break
                 rec("data", "conn" to n.toString(), "proto" to "\"tcp\"", *dataKv(buf.copyOf(k)))
             }
         } catch (e: Exception) { /* обрыв */ }
-        tcp.remove(n); try { s.close() } catch (e: Exception) {}
+        tcp.remove(n); try { conn.s.close() } catch (e: Exception) {}
         rec("close", "conn" to n.toString(), "proto" to "\"tcp\"")
     }
 

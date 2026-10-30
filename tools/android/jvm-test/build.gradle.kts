@@ -19,4 +19,7 @@ tasks.register<JavaExec>("runProxyTest") {
 tasks.register<JavaExec>("runVpnEngineTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.vpntest.VpnEngineTestKt")
 }
-tasks.register("runTests") { dependsOn("runServerTest", "runRecordsTest", "runProxyTest", "runVpnEngineTest") }
+tasks.register<JavaExec>("runTlsTest") {
+    classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.tlstest.TlsTestKt")
+}
+tasks.register("runTests") { dependsOn("runServerTest", "runRecordsTest", "runProxyTest", "runVpnEngineTest", "runTlsTest") }

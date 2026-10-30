@@ -312,6 +312,61 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
   A.s.close();
 }
 
+// ---- TCP через приложение DSP на Android (имитация NetHub: tcp.connect / send / starttls / close) ----
+{ const ircGot = []; const ircClients = new Set();
+  const irc = net.createServer(sock => {
+    ircClients.add(sock); sock.setEncoding('utf8'); let buf = '', nick = '*';
+    sock.on('data', d => { buf += d; let i; while ((i = buf.indexOf('\r\n')) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 2); ircGot.push(l);
+      if (l.startsWith('NICK ')) nick = l.slice(5);
+      if (l.startsWith('USER ')) sock.write(':srv 001 ' + nick + ' :Welcome\r\n');
+      if (l.startsWith('JOIN ')) sock.write(':' + nick + '!u@h JOIN ' + l.slice(5) + '\r\n'); } });
+    sock.on('close', () => ircClients.delete(sock)); sock.on('error', () => {});
+  }); servers.push(irc);
+  const ip = await listen(irc);
+  const cmds = []; let url = '';
+  const phone = http.createServer(); servers.push(phone);
+  phone.on('upgrade', (req, sock) => {
+    url = req.url;
+    sock.write('HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: ' + wsAccept(req.headers['sec-websocket-key']) + '\r\n\r\n');
+    const send = a => { try { sock.write(wsFrame(JSON.stringify(a))); } catch (e) {} };
+    const conns = new Map(); let nid = 100;
+    sock.on('data', wsParser({onMsg: t => { const m = JSON.parse(t); if (m.sub) return; cmds.push(m);
+      const done = (extra = {}) => send({src: 'cmd', cmd: m.cmd, id: m.id, ok: true, ...extra});
+      if (m.cmd === 'tcp.connect') { const s = net.connect(m.port, m.host); const n = ++nid;
+        s.on('connect', () => { conns.set(n, s); send({src: 'net', ev: 'open', conn: n, proto: 'tcp'}); done({conn: n}); });
+        s.on('error', e => send({src: 'cmd', cmd: m.cmd, id: m.id, ok: false, err: 'error', msg: e.message}));
+        s.on('data', d => send({src: 'net', ev: 'data', conn: n, proto: 'tcp', hex: d.toString('hex'), n: d.length}));
+        s.on('close', () => send({src: 'net', ev: 'close', conn: n, proto: 'tcp'})); }
+      else if (m.cmd === 'tcp.send') { conns.get(m.conn).write(Buffer.from(m.hex, 'hex')); done({n: m.hex.length / 2}); }
+      else if (m.cmd === 'tcp.starttls') done();
+      else if (m.cmd === 'tcp.close') { conns.get(m.conn)?.destroy(); done(); } }, onClose() {}, onPing() {}}));
+    sock.on('error', () => {});
+  });
+  const pp = await listen(phone), phoneCfg = {url: 'ws://127.0.0.1:' + pp, key: 'APPKEY' + rnd()};
+  const A = rig('irc', {server: 'irc://127.0.0.1:' + ip, channel: 'dsp', nick: 'phonebot', phone: phoneCfg, io: {}});
+  await until(() => A.st.some(s => /joined #dsp/.test(s[1])), 5000);
+  ok('phone TCP: IRC session over the app\'s sockets', A.st.some(s => /joined #dsp/.test(s[1])), JSON.stringify(A.st));
+  ok('phone TCP: app key goes into the address', url.includes('k=' + phoneCfg.key), url);
+  const c0 = cmds.find(c => c.cmd === 'tcp.connect');
+  ok('phone TCP: plain connection is opened with starttls:true (ready for an upgrade), not tls', c0.starttls === true && c0.tls === false && c0.host === '127.0.0.1', JSON.stringify(c0));
+  for (const s of ircClients) s.write(':bob!u@h PRIVMSG #dsp :привет через телефон\r\n');
+  await until(() => A.msgs.length);
+  ok('phone TCP: incoming text is decoded as UTF-8', A.msgs[0]?.text === 'привет через телефон', JSON.stringify(A.msgs));
+  ok('phone TCP: send keeps the order of lines', A.s.send('раз\nдва\nтри') === true);
+  await until(() => ircGot.includes('PRIVMSG #dsp три'));
+  const at = ircGot.filter(l => /^PRIVMSG #dsp (раз|два|три)$/.test(l));
+  ok('phone TCP: lines arrived in order', JSON.stringify(at) === JSON.stringify(['PRIVMSG #dsp раз', 'PRIVMSG #dsp два', 'PRIVMSG #dsp три']), JSON.stringify(at));
+  A.s.close(); await sleep(250);
+  ok('phone TCP: tcp.close sent', cmds.some(c => c.cmd === 'tcp.close'));
+  // TLS-вариант: ircs:// просит у приложения tls:true
+  const T = rig('irc', {server: 'ircs://127.0.0.1:' + ip, channel: 'x', phone: phoneCfg, io: {}}); await sleep(400);
+  const c1 = cmds.filter(c => c.cmd === 'tcp.connect').at(-1);
+  ok('phone TCP: ircs:// asks the app for tls:true', c1.tls === true && c1.starttls === false, JSON.stringify(c1)); T.s.close();
+  // почта: двоичный режим (hex ↔ байты) через телефон — тот же IMAP-сценарий уже проверен напрямую, здесь только транспорт
+  const B = rig('email', {server: 'imap://127.0.0.1:1', smtp: '', user: 'u@x', pass: PW, insecure: true, phone: phoneCfg, io: {}, pollMs: 100}); await sleep(500);
+  ok('phone TCP: a refused connection is reported', B.st.some(s => /refused|ECONNREFUSED|connect/i.test(s[1])), JSON.stringify(B.st)); B.s.close();
+}
+
 // ---- XMPP (TCP без TLS, insecure) ----
 { const rx = [];
   const srv = net.createServer(sock => {

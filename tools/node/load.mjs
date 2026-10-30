@@ -16,7 +16,7 @@ export function loadMsgr(extra = {}) {
     URL, URLSearchParams, AbortController, btoa, atob, console, crypto: globalThis.crypto, setTimeout, clearTimeout, setInterval, clearInterval,
     fetch: globalThis.fetch, WebSocket: globalThis.WebSocket, encodeURIComponent, ...extra};
   const ctx = vm.createContext(g);
-  for (const f of ['modules/meshcore-kernels.js', 'modules/msgr-kernels.js', 'modules/msgr-session.js']) {
+  for (const f of ['modules/meshcore-kernels.js', 'modules/netsock-kernels.js', 'modules/msgr-kernels.js', 'modules/msgr-session.js']) {
     const p = path.join(root, f);
     if (fs.existsSync(p)) vm.runInContext(fs.readFileSync(p, 'utf8'), ctx, {filename: f});
   }
