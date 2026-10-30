@@ -188,19 +188,20 @@ function mgMatrixSync(j,room,self){                         // → {next,msgs:[{
   }
   return {next:j && j.next_batch,msgs:out};
 }
-function mgTgUpdates(j,chat){                               // → {next,msgs,last:chat_id}
-  const out=[]; let next=0, last=null;
+function mgTgUpdates(j,chat){                               // → {next,msgs,last:chat_id,skipped}
+  const out=[]; let next=0, last=null, skipped=0;
   const want=String(chat||'').trim().toLowerCase();
+  const filter=/^-?\d+$/.test(want) || want[0]==='@';          // «dsp» (значение по умолчанию других каналов) — не чат: фильтр не включаем
   for(const u of (j && j.result) || []){
     next=Math.max(next,(u.update_id|0)+1);
     const m=u.message || u.channel_post; if(!m || typeof m.text!=='string') continue;
     const c=m.chat||{};
-    if(want && String(c.id)!==want && String(c.username||'').toLowerCase()!==want.replace(/^@/,'')) continue;
+    if(filter && String(c.id)!==want && '@'+String(c.username||'').toLowerCase()!==want){ skipped++; continue; }
     const f=m.from||{};
     out.push({id:String(u.update_id),from:f.username||f.first_name||c.title||String(c.id),room:String(c.id),text:m.text,t:(+m.date||0)*1000,chat:c.title||c.username||''});
     last=c.id;
   }
-  return {next,msgs:out,last};
+  return {next,msgs:out,last,skipped};
 }
 
 // ---------- IRC ----------

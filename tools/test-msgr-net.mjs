@@ -144,6 +144,11 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
   ok('telegram reply goes to the last chat', await A.s.send('hello human') === true && sent[0].chat_id === 42 && sent[0].text === 'hello human');
   ok('telegram own message echoed locally', A.msgs.at(-1).self === true);
   A.s.close();
+  const D = rig('telegram', {server, pass: TG, channel: 'dsp'}); await until(() => D.state() === 'up');
+  queue.push({update_id: 6, message: {chat: {id: 43}, from: {username: 'carol'}, text: 'with the default channel word', date: 9}});
+  await until(() => D.msgs.length);
+  ok('telegram: the default channel word «dsp» does not swallow messages', D.msgs[0]?.text === 'with the default channel word', JSON.stringify(D.st.at(-1)));
+  D.s.close();
   const B = rig('telegram', {server, pass: BAD}); await until(() => B.state() === 'fatal');
   ok('telegram bad token fatal', B.state() === 'fatal', JSON.stringify(B.st));
 }
