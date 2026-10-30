@@ -195,6 +195,44 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
   ok('--hosts keeps the bridge from other servers', L.st.some(s => /not in --hosts/.test(s[1])), JSON.stringify(L.st)); L.s.close();
 }
 
+// ---- APRS-IS (TCP) напрямую и через мост ----
+{ const clients = new Set(); const got = [];
+  const srv = net.createServer(sock => {
+    clients.add(sock); sock.setEncoding('utf8'); let buf = '';
+    sock.write('# aprsd mock\r\n');
+    sock.on('data', d => { buf += d; let i; while ((i = buf.indexOf('\r\n')) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 2); got.push(l);
+      const m = /^user (\S+) pass (\S+)/.exec(l);
+      if (m) sock.write('# logresp ' + m[1] + (m[2] === '-1' ? ' unverified' : ' verified') + ', server MOCK\r\n'); } });
+    sock.on('close', () => clients.delete(sock)); sock.on('error', () => {});
+  }); servers.push(srv);
+  const port = await listen(srv), server = 'aprs://127.0.0.1:' + port;
+  const none = rig('aprs', {server, user: 'N0CALL', pass: '13023', io: {...io, tcp: null}});
+  ok('aprs without a TCP transport explains why', none.state() === 'fatal' && /bridge/i.test(none.st.at(-1)[1]));
+  const A = rig('aprs', {server, user: 'n0call-7', pass: '13023', channel: 'r/55/37/100', ackMs: 50});
+  await until(() => A.state() === 'up');
+  ok('aprs login line and filter', got[0] === 'user N0CALL-7 pass 13023 vers DSP 1 filter r/55/37/100', got[0]);
+  for (const s of clients) s.write('K1ABC>APRS,TCPIP*:!5545.35N/03737.07E>Car\r\nK1ABC>APRS,TCPIP*::N0CALL-7 :hello{9\r\n');
+  await until(() => A.msgs.length >= 2);
+  ok('aprs position + message', A.msgs[0]?.lat > 55.7 && A.msgs[0].kind === 'position' && A.msgs[1]?.text === 'hello', JSON.stringify(A.msgs));
+  await until(() => got.some(l => l.endsWith(':ack9')));
+  ok('aprs acknowledges the message', got.some(l => l === 'N0CALL-7>APDSP,TCPIP*::K1ABC    :ack9'), JSON.stringify(got));
+  ok('aprs send with @CALL', A.s.send('@k1abc привет') === true);
+  await until(() => got.some(l => l.includes(':привет{1')));
+  ok('aprs sent line', got.some(l => l === 'N0CALL-7>APDSP,TCPIP*::K1ABC    :привет{1'));
+  ok('aprs own message echoed locally', A.msgs.at(-1).self === true && A.msgs.at(-1).to === 'K1ABC');
+  ok('aprs send without an addressee refused', A.s.send('no one') === false);
+  A.s.close();
+  const R = rig('aprs', {server, user: 'N0CALL', channel: 'm/10'}); await until(() => R.state() === 'up');
+  ok('aprs without a passcode is receive-only', /receive only/.test(R.st.at(-1)[1]) && R.s.send('x', 'K1ABC') === false, JSON.stringify(R.st)); R.s.close();
+  const br = createMsgrBridge({port: 0}); const bp = (await br.listen()).port; servers.push({close: () => br.close()});
+  const P = rig('aprs', {server, user: 'N0CALL', pass: '13023', bridge: 'ws://127.0.0.1:' + bp, via: 'auto', io: {}});
+  await until(() => P.state() === 'up', 5000);
+  ok('aprs through the Node bridge', P.state() === 'up', JSON.stringify(P.st));
+  for (const s of clients) s.write('K1ABC>APRS,TCPIP*:>on air\r\n');
+  await until(() => P.msgs.length);
+  ok('bridge delivers aprs packets', P.msgs[0]?.kind === 'status' && P.msgs[0].comment === 'on air', JSON.stringify(P.msgs)); P.s.close();
+}
+
 // ---- XMPP (TCP без TLS, insecure) ----
 { const rx = [];
   const srv = net.createServer(sock => {

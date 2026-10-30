@@ -133,4 +133,41 @@ const H = M.mgHex, U = M.mgUnhex;
   c.start(); c.feed("<stream:stream xmlns='jabber:client' xmlns:stream='x'><stream:features><mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><mechanism>PLAIN</mechanism></mechanisms></stream:features>");
   eq('no TLS offered → password not sent', st[st.length - 1], 'fatal'); }
 
+// APRS-IS
+{ eq('passcode N0CALL', M.mgAprsPass('N0CALL'), 13023);
+  eq('passcode ignores SSID and case', M.mgAprsPass('n0call-7'), 13023);
+  const pos = M.mgAprsParse('N0CALL-9>APRS,TCPIP*,qAC,T2X:!5545.35N/03737.07E>Car 12V');
+  eq('uncompressed position', [pos.kind, +pos.lat.toFixed(4), +pos.lon.toFixed(4), pos.symbol, pos.text], ['position', 55.7558, 37.6178, '/>', 'Car 12V']);
+  const south = M.mgAprsParse('A>B:=3351.00S/15112.00W-');
+  eq('southern / western hemisphere', [+south.lat.toFixed(3), +south.lon.toFixed(3)], [-33.85, -151.2]);
+  const ts = M.mgAprsParse('A>B:@092345z4903.50N/07201.75W>x');
+  eq('position with timestamp', [+ts.lat.toFixed(4), +ts.lon.toFixed(4)], [49.0583, -72.0292]);
+  const comp = M.mgAprsParse('A>B:!/5L!!<*e7>7P[');             // пример сжатой позиции из спецификации APRS101
+  eq('compressed position', [+comp.lat.toFixed(2), +comp.lon.toFixed(2), comp.symbol], [49.5, -72.75, '/>']);
+  eq('message with id', (({kind, to, text, id}) => ({kind, to, text, id}))(M.mgAprsParse('A-1>APRS,TCPIP*::N0CALL   :hello there{42')), {kind: 'message', to: 'N0CALL', text: 'hello there', id: '42'});
+  eq('ack', (({kind, to, id}) => ({kind, to, id}))(M.mgAprsParse('B>APRS::A-1      :ack42')), {kind: 'ack', to: 'A-1', id: '42'});
+  eq('status', M.mgAprsParse('A>B:>on air').text, 'on air');
+  eq('server comment is not a packet', M.mgAprsParse('# aprsc 2.1'), null);
+  eq('build message', M.mgAprsMsg('N0CALL', 'K1abc-7', 'hi', '7'), 'N0CALL>APDSP,TCPIP*::K1ABC-7  :hi{7');
+  eq('message text cannot inject a line', M.mgAprsMsg('A', 'B', 'x\r\ny', '1').includes('\n'), false);
+  const out = [], got = [], st = [];
+  const c = M.mgAprsClient({call: 'n0call', pass: '13023', filter: 'g/N0CALL', ackMs: 20, tries: 2, write: l => out.push(l), onMsg: m => got.push(m), onStatus: (t, s) => st.push([s, t])});
+  c.start();
+  eq('login line', out[0], 'user N0CALL pass 13023 vers DSP 1 filter g/N0CALL');
+  c.line('# logresp N0CALL verified, server T2TEST'); eq('verified login', st.at(-1)[0], 'up');
+  c.line('K1ABC>APRS,TCPIP*::N0CALL   :ping{5');
+  eq('message to us is acked and delivered', [out[1], got[0].text, got[0].direct], ['N0CALL>APDSP,TCPIP*::K1ABC    :ack5', 'ping', true]);
+  c.line('K1ABC>APRS,TCPIP*::OTHER    :not for us');
+  eq('other people\'s messages pass but are not acked', [got[1].direct, out.length], [false, 2]);
+  c.line('K1ABC>APRS,TCPIP*:!5545.35N/03737.07E>');
+  eq('position delivered with coordinates', [got[2].kind, +got[2].lat.toFixed(2)], ['position', 55.76]);
+  eq('send needs an addressee', c.send('x', ''), false);
+  eq('send', c.send('привет', 'k1abc'), true); eq('sent line', out[2], 'N0CALL>APDSP,TCPIP*::K1ABC    :привет{1');
+  await new Promise(r => setTimeout(r, 30)); eq('retry while unacked', out.filter(l => l.endsWith('{1')).length, 2);
+  c.line('K1ABC>APRS::N0CALL   :ack1'); eq('ack stops retries', st.at(-1)[1], 'message 1 delivered');
+  c.stop();
+  const ro = M.mgAprsClient({call: 'N0CALL', pass: '', write() {}, onMsg() {}, onStatus: (t, s) => st.push([s, t])});
+  eq('no passcode → receive only', ro.send('x', 'K1ABC'), false);
+}
+
 console.log(bad ? 'FAILED ' + bad : 'all ok'); process.exit(bad ? 1 : 0);

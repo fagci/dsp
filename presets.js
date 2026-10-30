@@ -538,6 +538,7 @@ const PRESET_CATS={
   'Phone App: USB SDR over OTG (RTL-SDR, HackRF…)':'SDR Receivers',
   'bitchat Mesh Chat (no app install)':'Network & IoT',
   'Messenger: One Chat for Nostr, ntfy, Matrix, Telegram, IRC and XMPP':'Network & IoT',
+  'APRS-IS: Messages and Stations on the Map':'Network & IoT',
   'Reference: Decode BLE Advertisements (Company ID, Service UUID)':'Network & IoT',
   'Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)':'Network & IoT',
   'Bridge: Serial Port ↔ Network (TCP/WS Gateway)':'Network & IoT',
@@ -1541,6 +1542,20 @@ const ch=addNode('chat',540,280,{echo:false,me:'dsp',time:true});
 ch.size.w=420; ch.size.h=560; applySize(ch);
 addEdge(a.id,'rec',ch.id,'rec'); addEdge(b.id,'rec',ch.id,'rec');
 addEdge(ch.id,'text',a.id,'send'); addEdge(ch.id,'text',b.id,'send');
+markWiresDirty();
+});
+preset('APRS-IS: Messages and Stations on the Map', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'APRS over the internet (APRS-IS): stations heard by iGates all over the world come out of the Messenger node as records with lat / lon — they go straight onto the Map — and messages addressed to you show up in the chat. The server filter in «channel» decides what you get: r/lat/lon/km (a circle, here around Berlin), m/km (around your last position), b/CALL* (stations by callsign), g/CALL (messages to a callsign; empty — to you).\n'+
+  'Put your callsign into «user». With no passcode it is receive-only; to send, enter the APRS-IS passcode of YOUR OWN callsign (the owner of a licence only) and type «@K1ABC text» in the chat — the message is acknowledged and retried like on air. A browser cannot open TCP, so run the Node bridge: node tools/node/bridge.mjs (Node 22+).'});
+nt.size.w=900; nt.size.h=190; applySize(nt);
+const ap=addNode('messenger',40,260,{proto:'aprs',server:'',channel:'r/52.52/13.40/100',user:'N0CALL',nick:'N0CALL',bridge:'ws://127.0.0.1:8777'});
+ap.size.w=420; ap.size.h=420; applySize(ap);
+const ch=addNode('chat',500,260,{echo:false,me:'N0CALL',time:true});
+ch.size.w=380; ch.size.h=420; applySize(ch);
+const mp=addNode('geoMap',920,260,{ttl:120,labels:true});
+mp.size.w=620; mp.size.h=520; applySize(mp);
+addEdge(ap.id,'rec',ch.id,'rec'); addEdge(ch.id,'text',ap.id,'send'); addEdge(ap.id,'rec',mp.id,'rec');
 markWiresDirty();
 });
 preset('Reference: Decode BLE Advertisements (Company ID, Service UUID)', function(){
