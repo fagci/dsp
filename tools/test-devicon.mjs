@@ -1,0 +1,21 @@
+// Значки устройств: node tools/test-devicon.mjs
+import fs from 'node:fs';
+import vm from 'node:vm';
+let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n); };
+const ctx=vm.createContext({Math,Number,String,Object,Array,JSON,Map,Set,isFinite,encodeURIComponent});
+vm.runInContext(fs.readFileSync(new URL('../modules/devicon-kernels.js',import.meta.url),'utf8')+';this.K={dvIconKey,dvIconUri,DV_ICONS,DV_RULES};',ctx);
+const K=ctx.K, k=r=>K.dvIconKey(r);
+ok('explicit icon wins',k({icon:'camera',name:'iPhone'})==='camera');
+ok('router by name',k({name:'MikroTik RB951'})==='router' && k({vendor:'Keenetic'})==='router');
+ok('phone / tablet / laptop',k({name:"Ivan's iPhone"})==='phone' && k({name:'iPad Pro'})==='tablet' && k({name:'MacBook Air'})==='laptop');
+ok('headphones and tags',k({name:'AirPods Pro'})==='headphones' && k({name:'AirTag'})==='tag' && k({name:'Mi Band 7'})==='watch');
+ok('camera / printer / tv / nas',k({name:'Hikvision DS-2CD'})==='camera' && k({name:'HP LaserJet'})==='printer' && k({name:'Samsung Smart TV'})==='tv' && k({vendor:'Synology'})==='nas');
+ok('drone / car / iot',k({name:'DJI Mavic 3'})==='drone' && k({name:'Toyota Camry'})==='car' && k({vendor:'Espressif'})==='iot');
+ok('Bluetooth major class',k({major:'audio'})==='headphones' && k({major:'phone'})==='phone');
+ok('ports guess',k({ports:[554,80]})==='camera' && k({ports:'9100'})==='printer');
+ok('fallbacks by source',k({src:'ble',addr:'aa'})==='bluetooth' && k({src:'wifi',bssid:'aa'})==='ap' && k({foo:1})==='');
+ok('a typed node keeps its type',k({type:'router'})==='router' && k({type:'device'})==='');
+ok('every rule points to a drawn icon',K.DV_RULES.every(([n])=>K.DV_ICONS[n]) && Object.keys(K.DV_ICONS).length>=30);
+const u=K.dvIconUri('router','#334'); ok('data URI svg',u.startsWith('data:image/svg+xml;utf8,%3Csvg') && K.dvIconUri('nope')===K.dvIconUri('device'));
+ok('service banner',k({service:'rtsp',banner:'Hikvision'})==='camera');
+if(bad){ console.log(bad,'failed'); process.exit(1); } else console.log('all ok');

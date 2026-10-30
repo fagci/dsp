@@ -1299,6 +1299,7 @@ select.aed-b{padding:0 6px}
 .tc-bar i{position:absolute;left:0;top:0;bottom:0;background:color-mix(in srgb,var(--txt) 38%,transparent)}
 .tc-bar b{position:relative;display:block;padding:0 3px;font-weight:normal;font-size:10px;text-align:right;overflow:hidden;white-space:nowrap}
 .tbl-c.tbl-bar{padding-top:3px;padding-bottom:3px}
+.tbl-dev{width:15px;height:15px;margin-right:5px;vertical-align:-3px;border-radius:50%;flex-shrink:0}
 .tbl-sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px}
 .tbl-tail{display:flex;justify-content:flex-end}
 .tbl-view{position:absolute;left:0;right:0;top:32px;z-index:13;max-height:80%;overflow-y:auto;border:1px solid var(--acc);border-radius:4px;

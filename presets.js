@@ -602,6 +602,7 @@ const PRESET_CATS={
   'Phone App: Local Hotspot (the Phone as an Access Point)':'Network & IoT',
   'Phone App: Join a Wi-Fi Network from a Patch (Suggestion / Peer Link)':'Network & IoT',
   'Geofence: Enter / Exit Alerts on the Map':'Maps & Locating',
+  'Follow Detector: Is the Same Device Following Me?':'Maps & Locating',
   'Phone sensors: Scan Wi-Fi / BLE / BT Only Away From Home':'Maps & Locating',
   'Cases: SDR Frequency and Torch by Place and Light':'Maps & Locating',
   'SMS PDU: Build and Parse (GSM 7-bit / UCS-2, Data SMS)':'Network & IoT',
@@ -2189,6 +2190,30 @@ const lg=addNode('recLog',40,880,{});
 lg.size.w=420; applySize(lg);
 addEdge(me.id,'rec',gf.id,'rec'); addEdge(gf.id,'events',lg.id,'rec'); addEdge(gf.id,'shapes',map.id,'rec'); addEdge(me.id,'rec',map.id,'rec');
 addEdge(gf.id,'enter',ph.id,'go'); addEdge(gf.id,'enter',vb.id,'go');
+markWiresDirty();
+});
+preset('Follow Detector: Is the Same Device Following Me?', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'«Someone is following me» check. The phone scans Bluetooth LE and classic Bluetooth and reports its GPS fix; Follow Detector remembers where each device (addr) was heard. A device heard in several different places (≥ 3 spots at least 150 m apart), over ≥ 5 minutes while you moved ≥ 300 m away from where it first appeared, is not a passer-by — it travels with you (a tag in a bag or car, a phone, a tracker).\n'+
+  'Alert: phone notification + vibration. The Map shows every place such a device was heard (triangle = where it is now, red = following, amber = being watched); the Table lists all of them with how many places, minutes and metres. Your own devices: «ignore ids» (regex) in Follow Detector. Tune places / separation / minutes / distance there. Press Connect in Phone sensors (DSP app or Termux bridge).'});
+nt.size.w=1000; nt.size.h=180; applySize(nt);
+const ps=addNode('termux',40,260,{url:'ws://127.0.0.1:8765',gps:true,ble:true,bt:true,wifi:false,battery:false});
+ps.size.w=640; ps.size.h=420; applySize(ps);
+const fl=addNode('follow',760,260,{places:3,sep:150,mins:5,dist:300});
+fl.size.w=420; fl.size.h=420; applySize(fl);
+const ph=addNode('phone',1260,260,{url:'ws://127.0.0.1:8765',action:'notify',title:'Follow Detector',body:'A device has been following you',notifyEv:false,torchState:false});
+ph.size.w=380; ph.size.h=380; applySize(ph);
+const vb=addNode('phone',1260,680,{url:'ws://127.0.0.1:8765',action:'vibrate',vibMs:800,notifyEv:false,torchState:false});
+vb.size.w=380; vb.size.h=380; applySize(vb);
+const map=addNode('geoMap',760,720,{mz:15,labels:true});
+map.size.w=460; map.size.h=420; applySize(map);
+const tb=addNode('table',40,720,{list:'@patch'});
+tb.size.w=680; tb.size.h=420; applySize(tb);
+const lg=addNode('recLog',1700,260,{});
+lg.size.w=420; applySize(lg);
+addEdge(ps.id,'rec',fl.id,'rec'); addEdge(ps.id,'rec',fl.id,'pos');
+addEdge(fl.id,'hit',ph.id,'go'); addEdge(fl.id,'hit',vb.id,'go'); addEdge(fl.id,'alert',lg.id,'rec');
+addEdge(fl.id,'map',map.id,'rec'); addEdge(ps.id,'rec',map.id,'rec'); addEdge(fl.id,'rows',tb.id,'rows');
 markWiresDirty();
 });
 preset('Phone sensors: Scan Wi-Fi / BLE / BT Only Away From Home', function(){
