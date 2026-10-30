@@ -534,6 +534,7 @@ const PRESET_CATS={
   'Panels: Metal Detector from the Magnetometer and Other Detectors':'Analysis & Measurement',
   'Panels: Needle Meter, Speedometer, Counters, Nixie, D-pad and Spectrum Display':'Analysis & Measurement',
   'Panels: Phone Volume and Media Keys (Key Panel → Phone Control)':'Maps & Locating',
+  'Packets: Craft, Send and Analyze (SYN sweep, DNS, ping, ARP)':'Maps & Locating',
   'Panels: Selector, Jog Wheel, DIP, Flip Clock, Character Displays, Goniometer and Thermometer':'Analysis & Measurement',
   'Logic Analyzer: UART Decode':'Analysis & Measurement',
   'Timeline: Periods, Durations and Replies on the Air (Table)':'Analysis & Measurement',
@@ -7080,6 +7081,24 @@ const lf=addNode('lfo',1260,200,{freq:.05,min:-10,max:40});
 const t1=addNode('thermo',1500,200,{style:'tube'}); t1.size.w=170; t1.size.h=260; applySize(t1);
 const t2=addNode('thermo',1500,640,{style:'dial',unit:'°F'}); t2.size.w=240; t2.size.h=240; applySize(t2);
 addEdge(lf.id,'out',t1.id,'in'); addEdge(lf.id,'out',t2.id,'in');
+markWiresDirty();
+});
+preset('Packets: Craft, Send and Analyze (SYN sweep, DNS, ping, ARP)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Packet Crafter builds a packet layer by layer (Ethernet / ARP / IPv4 / IPv6 / TCP / UDP / ICMP + payload); lengths and checksums are computed (the two switches on the Payload tab break them on purpose). Templates: ARP, ping, SYN / FIN / Xmas, DNS, mDNS, SSDP, DHCP, Wake-on-LAN, NTP. «Send» tab: how many packets, how fast, which field grows by 1 in every next packet (here the destination port: a SYN sweep).\n'+
+  'Here nothing leaves the phone: the packets only go to Packet Analyzer (summary, display filter, statistics, export to pcap / pcapng / hexdump / xxd / JSON / CSV / C / Python). To really send, set «send with» to raw IPv4 (root, DSP app) or UDP socket and wire «cmd» to Network (DSP app). Send only to hosts you are allowed to test.'});
+nt.size.w=1100; nt.size.h=130; applySize(nt);
+const go=addNode('lfo',40,200,{freq:.1,min:0,max:1,wave:'sq'});
+const c1=addNode('pktcraft',300,200,{tpl:'TCP SYN',ipSrc:'10.0.0.5',ipDst:'10.0.0.1',count:8,rate:4,inc:'dport'});
+const a1=addNode('pktsniff',720,200,{filter:'tcp && ip.addr == 10.0.0.0/8',fmt:'pcapng'}); a1.size.w=520; a1.size.h=260; applySize(a1);
+addEdge(go.id,'out',c1.id,'go'); addEdge(c1.id,'rec',a1.id,'rec');
+const g2=addNode('lfo',40,1000,{freq:.2,min:0,max:1,wave:'sq'});
+const c2=addNode('pktcraft',300,1000,{tpl:'DNS query (A)',ipDst:'192.168.1.1',count:1});
+const a2=addNode('pktsniff',720,1000,{filter:'dns',show:'last packet: fields'}); a2.size.w=520; a2.size.h=260; applySize(a2);
+addEdge(g2.id,'out',c2.id,'go'); addEdge(c2.id,'rec',a2.id,'rec');
+const vm=addNode('vpnmon',300,1800,{packets:true});
+const a3=addNode('pktsniff',720,1800,{filter:'udp || tcp',link:'101 raw IP'}); a3.size.w=520; a3.size.h=260; applySize(a3);
+addEdge(vm.id,'rec',a3.id,'rec');
 markWiresDirty();
 });
 preset('ADS-B: Radar and Attitude (Generator)', function(){
