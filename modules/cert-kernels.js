@@ -107,15 +107,17 @@ async function certLoadCA(certPem,keyPem){
   const key=await cdSub().importKey('pkcs8',kd,{name:'ECDSA',namedCurve:'P-256'},true,['sign']);
   return {der,pem:cdPem('CERTIFICATE',der),key,keyPem:cdPem('PRIVATE KEY',kd),subject,ski:await cdKeyId(spki),constrained:true};
 }
-// Серверный сертификат. o: {cn, dns:[], ips:[], days (365), extractable}
+// Серверный сертификат. o: {cn, dns:[], ips:[], days (365), extractable, spki}
+// spki — DER открытого ключа СЕРВЕРА (его создало само устройство, например приложение Android): тогда ключ не генерируем и закрытого ключа у нас нет
 async function certNewLeaf(ca,o){
-  const s=cdSub(), pair=await cdGen(o.extractable), spki=new Uint8Array(await s.exportKey('spki',pair.publicKey));
+  const s=cdSub(), own=!o.spki, pair=own ? await cdGen(o.extractable) : null, spki=own ? new Uint8Array(await s.exportKey('spki',pair.publicKey)) : o.spki;
   const dns=(o.dns||[]).filter(Boolean), ips=(o.ips||[]).filter(i=>cdIp(i));
   if(!dns.length && !ips.length) throw new Error('give at least one name or IP address');
-  const cn=o.cn||dns[0]||ips[0], subject=cdName(cn,null);
+  // CN у сертификата только с IP не должен быть похож на имя: OpenSSL сверяет такой CN с ограничениями имён центра и отказывает (permitted subtree violation)
+  const cn=o.cn||dns[0]||'DSP device', subject=cdName(cn,null);
   const exts=[cdExt('2.5.29.19',true,cdSeq()),cdExt('2.5.29.15',true,cdBits(Uint8Array.of(0x80),7)),cdExt('2.5.29.37',false,cdSeq(cdOid('1.3.6.1.5.5.7.3.1'),cdOid('1.3.6.1.5.5.7.3.2'))),
     cdExt('2.5.29.17',false,cdSan(dns,ips)),cdExt('2.5.29.14',false,cdOct(await cdKeyId(spki))),cdExt('2.5.29.35',false,cdSeq(cdTLV(0x80,ca.ski)))];
   const der=await cdBuild({serial:cdSerial(),issuer:ca.subject,subject,spki,days:o.days||365,exts,signKey:ca.key});
-  const keyPem=cdPem('PRIVATE KEY',new Uint8Array(await s.exportKey('pkcs8',pair.privateKey)));
+  const keyPem=own ? cdPem('PRIVATE KEY',new Uint8Array(await s.exportKey('pkcs8',pair.privateKey))) : '';
   return {der,pem:cdPem('CERTIFICATE',der),keyPem,chainPem:cdPem('CERTIFICATE',der)+ca.pem,dns,ips,cn};
 }

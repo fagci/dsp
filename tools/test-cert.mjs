@@ -56,15 +56,31 @@ const t2 = await handshake(leaf.chainPem, leaf.keyPem, ca.pem, '192.168.0.5'); o
 const t3 = await handshake(leaf.chainPem, leaf.keyPem, ca.pem, 'evil.example'); ok('TLS: a name that is not in the certificate is refused', t3.err === 'ERR_TLS_CERT_ALTNAME_INVALID', JSON.stringify(t3));
 const other = await M.certNewCA({name: 'Other CA'}); const t4 = await handshake(leaf.chainPem, leaf.keyPem, other.pem, 'pi.lan'); ok('TLS: a client that trusts another CA refuses it', !!t4.err && !t4.ok, JSON.stringify(t4));
 
+// --- сертификат только с IP-адресами (так ставится сертификат на телефон: имени у него нет) ---
+const ipOnly = await M.certNewLeaf(ca, {ips: ['127.0.0.1', '192.168.0.5']});
+ok('an IP-only certificate has no name-like CN (OpenSSL would check it against the name constraints)', !/CN\s*=\s*\d/.test(new X509Certificate(ipOnly.pem).subject) && /DSP device/.test(new X509Certificate(ipOnly.pem).subject), new X509Certificate(ipOnly.pem).subject);
+if (ossl) { fs.writeFileSync(path.join(tmp, 'ip.pem'), ipOnly.pem); const v = spawnSync('openssl', ['verify', '-CAfile', path.join(tmp, 'ca.pem'), '-verify_ip', '192.168.0.5', path.join(tmp, 'ip.pem')], {encoding: 'utf8'}); ok('openssl verify: IP-only certificate under the constrained CA', v.status === 0 && /OK/.test(v.stdout), v.stdout + v.stderr); }
+const tIp = await handshake(ipOnly.chainPem, ipOnly.keyPem, ca.pem, '127.0.0.1'); ok('TLS by IP address with an IP-only certificate', tIp.ok === true, JSON.stringify(tIp));
+
 // --- ограничение имён ---
 const bad1 = await M.certNewLeaf(ca, {dns: ['example.com']}); const t5 = await handshake(bad1.chainPem, bad1.keyPem, ca.pem, 'example.com');
 ok('name constraints: the local CA cannot vouch for a public site (a stolen CA key is not a master key)', !!t5.err && !t5.ok, JSON.stringify(t5));
 const bad2 = await M.certNewLeaf(ca, {ips: ['8.8.8.8']}); const t6 = await handshake(bad2.chainPem, bad2.keyPem, ca.pem, '8.8.8.8');
-ok('name constraints: nor for a public IP address', !!t6.err && !t6.ok, JSON.stringify(t6));
+ok('name constraints: nor for a public IP address (now the refusal comes from the address itself, not from a CN)', !!t6.err && !t6.ok, JSON.stringify(t6));
 const free = await M.certNewCA({name: 'Inspection CA', constrain: false}); const fl = await M.certNewLeaf(free, {dns: ['example.com']});
 const t7 = await handshake(fl.chainPem, fl.keyPem, free.pem, 'example.com'); ok('an unconstrained CA (for inspecting your own traffic) can — and says so: constrained=false', t7.ok === true && free.constrained === false && ca.constrained === true, JSON.stringify(t7));
 ok('the unconstrained CA has no name constraints extension', !/Name Constraints/.test(ossl ? (fs.writeFileSync(path.join(tmp, 'f.pem'), free.pem), spawnSync('openssl', ['x509', '-in', path.join(tmp, 'f.pem'), '-noout', '-text'], {encoding: 'utf8'}).stdout) : ''));
 
+
+// --- сертификат для чужого открытого ключа (ключ создало устройство — закрытого ключа у нас нет) ---
+{ const {generateKeyPairSync} = await import('node:crypto');
+  const kp = generateKeyPairSync('ec', {namedCurve: 'prime256v1'});
+  const spki = new Uint8Array(kp.publicKey.export({type: 'spki', format: 'der'}));
+  const dl = await M.certNewLeaf(ca, {spki, dns: ['phone.lan'], ips: ['127.0.0.1', '192.168.0.101']});
+  const dx = new X509Certificate(dl.pem);
+  ok('device key: the certificate carries exactly the key the device made, signed by our CA, no private key on our side', dl.keyPem === '' && dx.verify(caC.publicKey) && Buffer.from(dx.publicKey.export({type: 'spki', format: 'der'})).equals(Buffer.from(spki)) && dx.checkHost('phone.lan') === 'phone.lan' && !!dx.checkIP('192.168.0.101'));
+  const t = await handshake(dl.chainPem, kp.privateKey.export({type: 'pkcs8', format: 'pem'}), ca.pem, 'phone.lan');
+  ok('device key: TLS with the device\'s own private key and our certificate', t.ok === true, JSON.stringify(t)); }
 // --- перезагрузка центра из PEM и подпись ещё одного сертификата ---
 const reloaded = await M.certLoadCA(ca.pem, ca.keyPem);
 const l2 = await M.certNewLeaf(reloaded, {dns: ['second.lan']}); const l2c = new X509Certificate(l2.pem);

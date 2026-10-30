@@ -44,6 +44,7 @@ class BridgeService : Service() {
     private lateinit var monitor: MonitorHub
     private lateinit var wnet: WifiNetHub
     private lateinit var net: NetHub
+    private lateinit var tlsCmds: TlsCmds
     private lateinit var sys: SysHub
     private lateinit var power: PowerHub
     private lateinit var activity: ActivityHub
@@ -74,8 +75,9 @@ class BridgeService : Service() {
         val needs = Needs(this) { p -> main.post { requestPerms(p) } }
         val emit: Emit = { s, j -> server.emit(s, j) }
         speech = SpeechHub(this, emit, needs); gatt = GattHub(this, emit, needs); btlink = BtLinkHub(this, emit, needs); adv = AdvertiseHub(this, needs); gattsrv = GattServerHub(this, emit, needs); l2cap = L2capHub(this, emit, needs); wlink = WifiLinkHub(this, emit, needs); monitor = MonitorHub(cfg); wnet = WifiNetHub(this, emit, needs)
-        net = NetHub(this, cfg, emit); sys = SysHub(this, cfg, emit, needs)
+        net = NetHub(this, cfg, emit); sys = SysHub(this, cfg, emit, needs); tlsCmds = TlsCmds(this, server)
         server.onCommand = { c, j -> route(c, j) }
+        tlsCmds.start()                                          // сертификат уже стоит — TLS поднимется вместе с сервером
         sensors = SensorHub(this) { s, j -> server.emit(s, j) }
         gps = GpsHub(this) { s, j -> server.emit(s, j) }
         wifi = WifiHub(this, gps) { s, j -> server.emit(s, j) }
@@ -185,6 +187,7 @@ class BridgeService : Service() {
             n.startsWith("speech.") -> speech.exec(c, j)
             n.startsWith("tcp.") || n.startsWith("udp.") || n.startsWith("net.") || n.startsWith("raw.") || n == "ping" -> net.exec(c, j)
             n.startsWith("vpn.") -> VpnCmds.exec(this, c, j)
+            n.startsWith("tls.") -> tlsCmds.exec(c, j)
             n.startsWith("sys.") || n.startsWith("ui.") || n.startsWith("vol.") || n.startsWith("tts.") || n.startsWith("clip.") || n.startsWith("app.") ||
                 n == "intent" || n == "media" || n == "toast" || n.startsWith("screen.") -> sys.exec(c, j)
             else -> actions.exec(c, j)
@@ -328,6 +331,7 @@ class BridgeService : Service() {
             "src" to "\"bridge\"", "level" to "\"hello\"", "ver" to "1", "app" to "\"dsp-android\"", "host" to Json.str(Build.MODEL),
             "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "sms", "notify", "torch", "speech", "gatt", "gattsrv", "l2cap", "btlink", "net", "sys", "power", "ext", "activity", "vpn") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(),
             "phone" to actions.info(),
+            "tls" to server.tlsPort.toString(),                     // порт wss:// / https:// (0 — сертификата нет)
         )
     }
 
