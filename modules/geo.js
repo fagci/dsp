@@ -440,6 +440,7 @@ def({ id:'recFilter', title:'Rec Filter', cat:'Data',
    Условия через пробел, все должны совпасть: field (есть значение), !field, field=a|b, field!=a, field~regex.
    Поля через запятую: name=шаблон, голое name (копия, если поле есть), * (все поля записи). В шаблоне {f} — поле записи,
    {f:x} — число в hex, {a|b} — первое непустое; пусто — правило для записи пропускается.
+   {@icon} — значок устройства по полям записи (router, phone, camera…; нет — поле пропускается). {@n} {@gap} {@span} {@rate} {@hz} — частота появлений сущности (по её id): раз, с. с прошлого, с. с первого, раз/мин, Гц.
    {f*} — поле-массив: по одной записи на элемент. Поле t переходит в результат само. */
 function entSplit(s,sep){                             // делит по sep вне фигурных скобок
   const out=[]; let d=0, cur='';
@@ -473,7 +474,7 @@ function entParse(text){
         const e=f.indexOf('='); if(e<0) return {k:f,tpl:'{'+f+'}',opt:true};
         return {k:f.slice(0,e).trim(),tpl:f.slice(e+1)};
       });
-      rules.push({out,only,conds,fields});
+      rules.push({out,only,conds,fields,stat:fields.some(f=>f.tpl && /\{@(n|gap|span|rate|hz)\}/.test(f.tpl)),icon:fields.some(f=>f.tpl && f.tpl.includes('{@icon}'))});
     }catch(e){ errs.push('line '+(i+1)+': '+e.message); }
   });
   return {rules,errs};
@@ -494,8 +495,23 @@ function entTpl(tpl,r,fan){
   return miss ? {s:null} : {s,arr};
 }
 const entVal=s=>s!=='' && s.length<16 && !/^0\d/.test(s) && isFinite(+s) ? +s : s;
-function entApply(rule,r){
+// частота появлений: {@n} — сколько раз видели сущность (по её id), {@gap} — с. с прошлого раза, {@span} — с. от первого раза,
+// {@rate} — раз в минуту, {@hz} — раз в секунду по сглаженному интервалу; считается по времени прихода записи
+function entStat(rule,r,st){
+  const idf=rule.fields.find(f=>f.k==='id'); if(!idf) return r;
+  const t=entTpl(idf.tpl,r,null); if(t.s==null) return r;
+  const key=rule.out+'|'+t.s, now=Date.now()/1000;
+  let e=st.get(key); if(!e){ if(st.size>20000) st.delete(st.keys().next().value); e={n:0,first:now,last:now,ema:0}; st.set(key,e); }
+  const gap=e.n ? now-e.last : 0;
+  if(e.n && gap>0) e.ema=e.ema ? e.ema*.7+gap*.3 : gap;
+  e.n++; e.last=now;
+  const span=now-e.first, f1=x=>Math.round(x*10)/10;
+  return {...r,'@n':e.n,'@gap':f1(gap),'@span':f1(span),'@rate':e.n>1 && span>0 ? f1((e.n-1)/span*60) : 0,'@hz':e.ema>0 ? Math.round(1/e.ema*100)/100 : 0};
+}
+function entApply(rule,r,st){
   if(!rule.conds.every(f=>f(r))) return [];
+  if(rule.stat && st) r=entStat(rule,r,st);
+  if(rule.icon && typeof dvIconKey==='function'){ const k=dvIconKey(r); r=k ? {...r,'@icon':k} : r; }
   let N=1;
   for(const f of rule.fields) if(f.tpl){ const t=entTpl(f.tpl,r,null); if(t.arr){ N=t.arr.length; break; } }
   const res=[];
@@ -529,7 +545,7 @@ def({ id:'recEnt', title:'Rec → Entities', cat:'Data', kw:'entity entities lin
     if(!recs.length) return {rec:null,count:n.outN};
     const all=[], by={};
     for(const r of recs) for(const rule of n._c.rules){
-      const res=entApply(rule,r); if(!res.length) continue;
+      const res=entApply(rule,r,n.stats||(n.stats=new Map())); if(!res.length) continue;
       if(!rule.only) all.push(...res);
       if(rule.out!=='rec') (by[rule.out]||(by[rule.out]=[])).push(...res);
     }
@@ -611,6 +627,8 @@ net: src=disc ip | id={ip}, type=host, shape=dot, color=#2a9df4, kind, server
 net: src=disc ip name | id={ip}, label={name}
 net: src=disc ip manufacturer | id={ip}, maker={manufacturer}, model
 net: src=disc ip | id=Phone>{ip}, from=Phone, to={ip}, label={via}
+net: src=disc ip | id={ip}, icon={@icon}
+net: src=scan kind=port state=open ip port | id={ip}, icon={@icon}
 net: src=disc ip kind | id=kind:{kind}, type=kind, label={kind}, shape=diamond, color=#d6a06b
 net: src=disc ip kind | id={ip}>kind:{kind}, from={ip}, to=kind:{kind}, label=is, dashes=1
 `,

@@ -169,6 +169,9 @@ function gvNodeRec(r,ovr){                          // запись → {id,a:{l
   if(f.glyph!=null && gvIsGlyph(r[f.glyph])) a.glyph=String(r[f.glyph]).trim();
   else if(f.icon!=null && !GV_ICON_SHAPE[String(r[f.icon]).trim()] && gvIsGlyph(r[f.icon])) a.glyph=String(r[f.icon]).trim();   // icon=📶 — значок-символ
   if(f.image!=null && String(r[f.image]).trim()) a.image=String(r[f.image]).trim();
+  if(!a.image && !a.glyph && !a.shape && typeof dvIconKey==='function'){                     // ни формы, ни картинки: значок устройства по полям (имя, OEM, класс…) или по имени из icon
+    const k=dvIconKey(r); if(k) a.image=dvIconUri(k,r[f.color]&&CSS.supports('color',String(r[f.color])) ? String(r[f.color]) : '');
+  }
   if(f.group!=null && String(r[f.group]).trim()) a.group=String(r[f.group]).trim();
   if(f.color!=null && r[f.color]) a.color=String(r[f.color]);
   if(f.note!=null && String(r[f.note]).trim()) a.note=String(r[f.note]).trim();

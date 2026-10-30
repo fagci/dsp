@@ -507,6 +507,12 @@ async function tblRealIds(n,ids){
   if(ids.some(x=>x<0)) await n._persist;
   return ids.map(x=>x<0 ? (n._idMap?.get(x) ?? null) : x).filter(x=>x!=null);
 }
+// новые записи, прошедшие фильтр узла: выход new (сами записи) и hit (их число, один блок) — «появилось устройство с таким-то OEM»
+function tblNoteNew(n,rows){
+  const f=tblFilterOf(n,{}), hit=f ? rows.filter(r=>{ try{ return f(r); }catch(e){ return false; } }) : rows;
+  if(!hit.length) return;
+  n.newRec=hit.slice(); n.hitN=(n.hitN|0)+hit.length; n.hitPulse=hit.length;
+}
 // добавление записей; новые поля расширяют колонки (и порты — без потери проводов)
 async function tblAdd(n,recs,strict){                  // strict (форма): нарушение правил — исключение; иначе такие записи пропускаются
   if(tblRO(n) || !recs.length) return;
@@ -553,6 +559,7 @@ async function tblAdd(n,recs,strict){                  // strict (форма): �
   }
   if(grown) tblSetCols(n,n.cl.slice(),false);
   tblDerive(n);
+  tblNoteNew(n,rows);
 }
 async function tblUpdate(n,i,rec){
   if(tblRO(n)) return;
@@ -680,6 +687,7 @@ async function tblSync(n,list,onlyNew){
       catch(e){ alert('storage: '+(e.message||e)); return; }
     }
     n.all.push(...rows); if(ids) n.ids.push(...ids);
+    tblNoteNew(n,rows);
   }
   if(db){ if(grown) await tblMetaSet(n.p.list,{cols:n.cl}); }
   else{ n.ids=n.all.map((_,j)=>j); await tblSave(n); }
@@ -864,7 +872,7 @@ function tblSelOut(n,I){
 const tblIns=n=>[{n:'row',t:'val'},{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'rows',t:'bands'},{n:'sigs',t:'bands'},{n:'hits',t:'bands'},{n:'filter',t:'txt'}];
 const tblOuts=n=>{
   const o=[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'row',t:'num'},{n:'count',t:'num'},{n:'next',t:'num'},
-    {n:'list',t:'txt'},{n:'rows',t:'bands'},{n:'all',t:'bands'},{n:'match',t:'bands'}];
+    {n:'list',t:'txt'},{n:'rows',t:'bands'},{n:'all',t:'bands'},{n:'match',t:'bands'},{n:'new',t:'rec'},{n:'hit',t:'num'}];
   if(tblCol(n.p.cols||[],TBL_LO)) o.push({n:'mid',t:'num'},{n:'span',t:'num'});
   return o.concat((n.cols||[]).map(c=>({n:c.port,t:'val'})));
 };
@@ -933,6 +941,8 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     if(n._aA!==n.rowsAllOwn || n._aS!==sigs){ n._aA=n.rowsAllOwn; n._aS=sigs; n._all=sigs ? n.rowsAllOwn.concat(sigs) : n.rowsAllOwn; }
     o.all=n._all;                                          // rows без фильтра: граф не теряет узлы, когда в таблице набран фильтр
     o.match=n._match;
+    o.new=n.newRec||null;                                  // последняя пачка новых записей (с учётом фильтра узла)
+    o.hit=n.hitPulse|0; n.hitPulse=0;                      // сколько их пришло — только в одном блоке: пин для Rule / уведомления
     o.rows=n._merged;                                      // записи всех отмеченных списков с общим фильтром (Graph / Map: set, nodes)
     if(!n.started) for(const c of n.cols) delete o[c.port];   // ничего не выбрано — поля не выдаём (как band plan)
     else if(n.loCol && n.cur){
@@ -1619,6 +1629,15 @@ function tblSummary(n,r){
 }
 // подсказка строки — при наведении, а не на каждую из сотен строк при каждой перерисовке (строки и GC)
 const tblRowTip=(n,r)=>n.cl.filter(c=>r[c]!=='' && r[c]!=null).map(c=>c+': '+(TBL_HZ.test(c)&&isFinite(tblHz(r[c])) ? fmtHz(tblHz(r[c]),4)+'Hz' : recFmt(r[c]))).join('\n');
+// значок устройства по полям строки (имя, производитель, класс, порты…): библиотека modules/devicon-kernels.js; card.icons===false — выключено
+const tblIconMemo=new WeakMap();
+function tblIcon(n,r){
+  if(typeof dvIconKey!=='function' || n.schema?.card?.icons===false) return null;
+  let k=tblIconMemo.get(r); if(k===undefined){ k=dvIconKey(r); tblIconMemo.set(r,k); }
+  if(!k) return null;
+  const im=document.createElement('img'); im.className='tbl-dev'; im.alt=''; im.title=k; im.src=dvIconUri(k,n.colorCol && r[n.colorCol] && CSS.supports('color',String(r[n.colorCol])) ? String(r[n.colorCol]) : '');
+  return im;
+}
 function tblRow(n,i,ro,g){
   const r=n.rows[i];
   const row=document.createElement('div');
@@ -1630,12 +1649,14 @@ function tblRow(n,i,ro,g){
   if(g){
     row.append(Object.assign(document.createElement('span'),{className:'tbl-no',textContent:i+1}));
     g.vc.forEach((x,k)=>row.append(tblCellEl(n,x,r[x.c],g.t[k])));
+    { const ic=tblIcon(n,r), c0=row.children[1]; if(ic && c0) c0.prepend(ic); }      // значок — в первой колонке: сетка колонок не сдвигается
   } else {
     if(n.colorCol){
       const sw=document.createElement('span');
       sw.style.cssText=`width:9px;height:9px;border-radius:2px;flex-shrink:0;background:${escapeHtml(String(r[n.colorCol]||'#c9c9c9'))};`;
       row.append(sw);
     }
+    const ic=tblIcon(n,r); if(ic) row.append(ic);
     const name=document.createElement('span');
     name.textContent=label;
     name.className='tbl-rname';
@@ -2044,6 +2065,11 @@ function tblListSettings(n,box,mk,sel){
     const cb=mk('input'); cb.type='checkbox'; cb.checked=!!c.rev; cb.disabled=ro;
     cb.addEventListener('change',()=>tblSortSet(n,undefined,0,cb.checked));
     const cc=line('order','the last added row on top (the rows output follows this order too)'); cc.append(cb,mk('span','tv-lbl','newest first'));
+  }
+  {
+    const cb=mk('input'); cb.type='checkbox'; cb.checked=c.icons!==false;
+    cb.addEventListener('change',async()=>{ if(cb.checked) delete c.icons; else c.icons=false; await tcSchemaSave(n); n.uiFull=true; n.uiDirty=true; tblRenderView(n); });
+    line('icons','a device icon in the first column, guessed from the row: name, vendor (OEM), class, ports…').append(cb,mk('span','tv-lbl','device icons'));
   }
   box.append(g);
   if(tcView(n)==='cards') tcLayoutPanel(n,box,mk,sel);
