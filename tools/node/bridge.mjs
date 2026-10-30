@@ -7,11 +7,19 @@
 //   node tools/node/bridge.mjs --host 0.0.0.0 --token секрет      для других устройств: ws://IP:8777/?token=секрет
 //   --hosts irc.libera.chat,*.example.org               ограничить, к каким серверам мост вообще ходит
 //
+// Он же — CORS-прокси для всех модулей страницы: в Settings → CORS proxy впиши
+//   http://127.0.0.1:8777/proxy?token=ТОКЕН&url={url}
+// GET / HEAD (с Range) на любой http(s)-адрес, потоком — годятся MJPEG, HLS, радио. Защита: Origin и токен, --hosts, а мост не ходит на
+// loopback / link-local / служебные адреса (--proxy-loopback разрешает loopback, --proxy-no-private запрещает и локальную сеть, --no-proxy выключает).
+//
 // Протокол (JSON-тексты): страница → {op:'open',proto,cfg} | {op:'send',text,to} | {op:'close'};
 //                         мост → {ev:'hello'} | {ev:'status',text,state} | {ev:'msg',m}.
 // Пароль уходит на мост в cfg — держи мост на localhost или за --token. Нужен Node 22+ (глобальные WebSocket и fetch).
 
 import http from 'node:http';
+import https from 'node:https';
+import dns from 'node:dns';
+import crypto from 'node:crypto';
 import net from 'node:net';
 import tls from 'node:tls';
 import os from 'node:os';
@@ -61,15 +69,100 @@ export function nodeIo(allowed = []) {
   };
 }
 
+
+// ---------- HTTP-прокси (CORS) ----------
+export function ipClass(ip) {                                // public | private | loopback | linklocal | unspecified | multicast | invalid
+  let v = net.isIP(ip);
+  if (!v) return 'invalid';
+  if (v === 6) {
+    const l = ip.toLowerCase();
+    let m = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(l);
+    if (!m) { const h = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(l); if (h) { const a = parseInt(h[1], 16), b = parseInt(h[2], 16); m = [null, (a >> 8) + '.' + (a & 255) + '.' + (b >> 8) + '.' + (b & 255)]; } }
+    if (m) { ip = m[1]; v = 4; }
+    else {
+      if (l === '::1') return 'loopback'; if (l === '::') return 'unspecified';
+      if (/^fe[89ab]/.test(l)) return 'linklocal'; if (/^f[cd]/.test(l)) return 'private'; if (/^ff/.test(l)) return 'multicast';
+      return 'public';
+    }
+  }
+  const [a, b] = ip.split('.').map(Number);
+  if (a === 127) return 'loopback';
+  if (a === 0) return 'unspecified';
+  if (a === 169 && b === 254) return 'linklocal';             // в том числе облачные метаданные 169.254.169.254
+  if (a >= 224) return 'multicast';
+  if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)) return 'private';
+  return 'public';
+}
+const PROXY_CORS = {'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, HEAD, OPTIONS', 'access-control-allow-headers': '*',
+  'access-control-allow-private-network': 'true', 'access-control-expose-headers': '*', 'access-control-max-age': '600', vary: 'Origin'};
+const PROXY_PASS_REQ = ['range', 'accept', 'accept-language', 'if-none-match', 'if-modified-since', 'if-range'];
+const PROXY_PASS_RES = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified', 'cache-control', 'content-encoding', 'expires'];
+const sameToken = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
+
+function makeProxy(o) {
+  const classOk = (cls, host) => cls === 'public' || (cls === 'private' && o.proxyPrivate !== false) || (cls === 'loopback' && !!o.proxyLoopback) || (o.hosts.length > 0 && hostOk(host, o.hosts) && cls !== 'invalid');
+  const lookup = (hostname, opts, cb) => dns.lookup(hostname, opts, (err, addr, fam) => {   // проверяем адрес, который будет использован для соединения (без «DNS rebinding»)
+    if (err) return cb(err);
+    const list = Array.isArray(addr) ? addr : [{address: addr}];
+    for (const a of list) if (!classOk(ipClass(a.address), hostname)) return cb(new Error('the address ' + a.address + ' of ' + hostname + ' is not allowed for the proxy'));
+    cb(null, addr, fam);
+  });
+  let busy = 0;
+  const fail = (res, code, msg) => { if (!res.headersSent) res.writeHead(code, {...PROXY_CORS, 'content-type': 'text/plain; charset=utf-8'}); res.end(msg + '\n'); };
+  return function handle(req, res, u) {
+    if (req.method === 'OPTIONS') { res.writeHead(204, PROXY_CORS); return res.end(); }
+    if (!originOk(req.headers.origin, o.origins)) { o.log('proxy: origin refused: ' + req.headers.origin); return fail(res, 403, 'origin not allowed (--origin)'); }
+    if (o.token && !sameToken(u.searchParams.get('token') || '', o.token)) return fail(res, 401, 'token');
+    if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'GET and HEAD only');
+    if (busy >= 32) return fail(res, 429, 'too many proxied requests');
+    // url — последний параметр: и закодированный (…&url=https%3A%2F%2F…), и «как есть» (…&url=https://x/y?a=1&b=2, когда в шаблоне нет {url})
+    const um = /[?&]url=(.*)$/.exec(req.url);
+    let target = ''; if (um) { try { target = /^https?:\/\//i.test(um[1]) ? um[1] : decodeURIComponent(um[1]); } catch (e) { return fail(res, 400, 'bad url'); } }
+    const hdrs = {'user-agent': 'DSP-workbench proxy'};
+    for (const k of PROXY_PASS_REQ) if (req.headers[k]) hdrs[k] = req.headers[k];
+    busy++; let done = false; const release = () => { if (!done) { done = true; busy--; } };
+    res.on('close', release);
+    const go = (urlStr, depth) => {
+      let t; try { t = new URL(urlStr); } catch (e) { return fail(res, 400, 'bad url'); }
+      if (t.protocol !== 'http:' && t.protocol !== 'https:') return fail(res, 400, 'only http and https');
+      const host = t.hostname.replace(/^\[|\]$/g, '');
+      if (!hostOk(host, o.hosts)) return fail(res, 403, 'host ' + host + ' is not in --hosts');
+      if (net.isIP(host) && !classOk(ipClass(host), host)) return fail(res, 403, 'the address ' + host + ' is not allowed for the proxy (' + ipClass(host) + ')');
+      const lib = t.protocol === 'https:' ? https : http;
+      const ureq = lib.request({host, port: t.port || (t.protocol === 'https:' ? 443 : 80), path: t.pathname + t.search, method: req.method, headers: {...hdrs, host: t.host}, lookup, timeout: 30000});
+      res.on('close', () => ureq.destroy());
+      ureq.on('timeout', () => ureq.destroy(new Error('the server does not answer')));
+      ureq.on('error', e => fail(res, 502, 'proxy: ' + (e.message || e.code)));
+      ureq.on('response', ur => {
+        if ([301, 302, 303, 307, 308].includes(ur.statusCode) && ur.headers.location) {
+          ur.resume();
+          if (depth >= 5) return fail(res, 502, 'too many redirects');
+          return go(new URL(ur.headers.location, t).toString(), depth + 1);
+        }
+        const out = {...PROXY_CORS};
+        for (const k of PROXY_PASS_RES) if (ur.headers[k] !== undefined) out[k] = ur.headers[k];
+        res.writeHead(ur.statusCode, out);
+        ur.on('error', () => res.destroy());
+        ur.pipe(res);
+      });
+      ureq.end();
+    };
+    go(target, 0);
+  };
+}
+
 export function createMsgrBridge(opt) {
-  const o = {host: '127.0.0.1', port: 8777, token: '', origins: DEFAULT_ORIGINS, hosts: [], log: () => {}, ...opt};
+  const o = {host: '127.0.0.1', port: 8777, token: '', origins: DEFAULT_ORIGINS, hosts: [], proxy: true, proxyLoopback: false, proxyPrivate: true, log: () => {}, ...opt};
+  const proxy = o.proxy ? makeProxy(o) : null;
   const M = loadMsgr();
   const io = o.io || nodeIo(o.hosts);
   const clients = new Set();
 
   const server = http.createServer((req, res) => {
+    const u = new URL(req.url, 'http://x');
+    if (proxy && u.pathname === '/proxy') return proxy(req, res, u);
     res.writeHead(200, {'content-type': 'text/plain'});
-    res.end('DSP messenger bridge: ' + clients.size + ' client(s)\nconnect with WebSocket\n');
+    res.end('DSP messenger bridge: ' + clients.size + ' client(s)\nconnect with WebSocket' + (proxy ? '; CORS proxy: /proxy?url=…' : '') + '\n');
   });
   server.on('upgrade', (req, sock) => {
     const u = new URL(req.url, 'http://x'), key = req.headers['sec-websocket-key'];
@@ -116,16 +209,16 @@ export function createMsgrBridge(opt) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === fs.realpathSync(process.argv[1])) {
   const {values: a} = parseArgs({options: {
     host: {type: 'string', default: '127.0.0.1'}, port: {type: 'string', default: '8777'}, token: {type: 'string', default: ''},
-    origin: {type: 'string', multiple: true, default: []}, hosts: {type: 'string', default: ''}, help: {type: 'boolean', short: 'h', default: false},
+    origin: {type: 'string', multiple: true, default: []}, 'no-proxy': {type: 'boolean', default: false}, 'proxy-loopback': {type: 'boolean', default: false}, 'proxy-no-private': {type: 'boolean', default: false}, hosts: {type: 'string', default: ''}, help: {type: 'boolean', short: 'h', default: false},
   }});
   if (a.help) {
-    console.log('node tools/node/bridge.mjs [--host 127.0.0.1] [--port 8777] [--token T] [--origin URL]… [--hosts irc.example.org,*.example.net]');
+    console.log('node tools/node/bridge.mjs [--host 127.0.0.1] [--port 8777] [--token T] [--origin URL]… [--hosts irc.example.org,*.example.net] [--no-proxy] [--proxy-loopback] [--proxy-no-private]');
     process.exit(0);
   }
   if (a.host !== '127.0.0.1' && a.host !== 'localhost' && !a.token) console.error('warning: open to the network without --token — anyone on it can use your accounts through this bridge');
   const b = createMsgrBridge({host: a.host, port: +a.port, token: a.token, origins: [...DEFAULT_ORIGINS, ...a.origin],
-    hosts: a.hosts.split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+    hosts: a.hosts.split(',').map(s => s.trim().toLowerCase()).filter(Boolean), proxy: !a['no-proxy'], proxyLoopback: a['proxy-loopback'], proxyPrivate: !a['proxy-no-private'],
     log: m => console.error(new Date().toISOString().slice(11, 19) + ' ' + m)});
-  b.listen().then(ad => console.error('listening on ws://' + ad.address + ':' + ad.port + (a.token ? '/?token=…' : '')), e => { console.error(e.message); process.exit(1); });
+  b.listen().then(ad => console.error('listening on ws://' + ad.address + ':' + ad.port + (a.token ? '/?token=…' : '') + (a['no-proxy'] ? '' : ' · CORS proxy: http://' + ad.address + ':' + ad.port + '/proxy?' + (a.token ? 'token=…&' : '') + 'url={url}')), e => { console.error(e.message); process.exit(1); });
   process.on('SIGINT', () => { b.close(); process.exit(0); });
 }
