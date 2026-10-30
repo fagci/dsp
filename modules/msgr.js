@@ -2,7 +2,7 @@
 /* ============================ Messenger: узел ============================
    Один узел на девять каналов связи — Nostr, ntfy, Matrix, Telegram (бот), IRC, XMPP, APRS-IS, почта (IMAP/SMTP), SMS (приложение DSP на Android). Протоколы — msgr-kernels.js
    и msgr-session.js (те же файлы грузит Node-мост tools/node/bridge.mjs). Из страницы напрямую: Nostr (реле wss://),
-   ntfy, Matrix, Telegram, IRC по WebSocket (wss://). IRC по TCP (ircs://) и XMPP — через Node-мост (поле bridge).
+   ntfy, Matrix, Telegram, IRC по WebSocket (wss://). IRC по TCP (ircs://) и XMPP — через TCP-шлюз (поле bridge: Node-мост или приложение на телефоне).
    rec → Chat: {t, proto, dir, from, to, text}; свои сообщения приходят с from = nick — в Chat «my name» поставь тот же ник. */
 
 const MG_KEEP=300;
@@ -26,7 +26,7 @@ function mgNodeStart(n){
     nick:String(p.nick||'dsp').trim() || 'dsp',appKey:(()=>{ try{ return (window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){ return ''; } })(),history:+p.history||0,retry:!!p.reconnect,via:p.via,smtp:String(p.smtp||'').trim(),pollMs:(+p.poll||30)*1000,bridge,insecure:!!p.plain,cache:n.mxCache};
   if(proto==='nostr'){ cfg.key=cfg.pass; if(!cfg.key){ try{ if(!n.eph) n.eph=mgHex(mgNostrGenKey()); cfg.key=n.eph; }catch(e){ n.status='no secure random generator'; return; } } }
   const inApp=(()=>{ try{ return !!(window.DspApp && DspApp.appKey); }catch(e){ return false; } })();
-  if(p.via==='phone' || (p.via==='auto' && inApp)) cfg.phone={url:String(p.phone||'').trim(),key:cfg.appKey};
+  if(p.via==='auto' && inApp && !cfg.bridge) cfg.phone={url:'ws://127.0.0.1:8765',key:cfg.appKey};   // внутри приложения свои сокеты; чужой шлюз — только по явному адресу
   n.warn=netInsecure(cfg.server) || (cfg.bridge && netInsecure(cfg.bridge)) ? NET_INSECURE_MSG : '';
   n.sess=mgConnect(proto,cfg,{
     msg:m=>{ if(m.delay && !cfg.history) return; mgNodeLog(n,m.self ? 'out' : 'in',m); },
@@ -53,10 +53,9 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
     {n:'poll',t:'range',min:5,max:600,step:5,d:30,label:'email: check the mailbox every, s'},
     {n:'nick',t:'text',d:'dsp',label:'nick (shown to others; in Chat set «my name» the same)'},
     {n:'history',t:'range',min:0,max:86400,step:60,d:0,label:'also fetch what was said in the last, s (nostr, ntfy, matrix, xmpp)'},
-    {n:'via',t:'select',opts:['auto','page','phone','bridge'],d:'auto',label:'where TCP comes from (IRC ircs://, XMPP, APRS-IS, email): auto — the phone itself inside the DSP app, otherwise the Node bridge; phone — sockets of the DSP app for Android; bridge — everything through the Node bridge'},
-    {n:'phone',t:'text',d:'ws://127.0.0.1:8765',label:'phone app (DSP for Android) socket for TCP/TLS'},
-    {n:'bridge',t:'text',d:'ws://127.0.0.1:8777',label:'Node bridge: node tools/node/bridge.mjs'},
-    {n:'bridgeToken',t:'text',d:'',label:'bridge token (--token; saved with the patch!)'},
+    {n:'via',t:'select',opts:['auto','page','bridge'],d:'auto',label:'where TCP comes from (IRC ircs://, XMPP, APRS-IS, email): auto — the phone itself inside the DSP app, else the gateway below; bridge — always the gateway'},
+    {n:'bridge',t:'text',d:'',label:'TCP gateway — one address for either: the DSP app on a phone (ws://192.168.0.5:8765; the app must allow other pages) or the Node bridge (ws://127.0.0.1:8777); the type is detected'},
+    {n:'bridgeToken',t:'text',d:'',label:'gateway token (the app token or --token of the bridge; saved with the patch!)'},
     {n:'plain',t:'check',d:false,label:'xmpp: allow a password without TLS (only for a server on your own network)'},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},
     {n:'autoConnect',t:'check',d:false,label:'connect when the patch starts'},
