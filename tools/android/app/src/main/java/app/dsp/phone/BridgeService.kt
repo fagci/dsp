@@ -154,7 +154,7 @@ class BridgeService : Service() {
     /** Поля записи power: нагрузка самого моста. cpu — процессорное время процесса, мс (разница за интервал = нагрузка). */
     private fun diagPairs(): List<Pair<String, String?>> = listOf(
         "cpu" to android.os.Process.getElapsedCpuTime().toString(), "wake" to if (wake?.isHeld == true) "1" else "0",
-        "clients" to server.clientCount.toString(), "held" to Json.str(holds().joinToString(", ")))
+        "clients" to server.clientCount.toString(), "clientList" to Json.str(server.clientLines().joinToString("; ")), "held" to Json.str(holds().joinToString(", ")))
 
     /** Запись VPN-монитора (DspVpnService — отдельный сервис, тот же процесс) → подписчикам vpn. */
     fun vpnEmit(json: String) { server.emit("vpn", json) }
@@ -261,6 +261,7 @@ class BridgeService : Service() {
         val parts = ArrayList<String>()
         parts.add((if (cfg.shareLan) "0.0.0.0" else "127.0.0.1") + ":" + cfg.port)
         parts.add("${server.clientCount} client(s)")
+        server.clientLines().take(3).forEach { parts.add(it) }
         if (w.subs.isNotEmpty()) parts.add(w.subs.joinToString(","))
         else if (server.clientCount == 0) holds().takeIf { it.isNotEmpty() }?.let { parts.add("holding " + it.joinToString(", ")) }
         return parts.joinToString(" · ")
@@ -340,7 +341,7 @@ class BridgeService : Service() {
         val w = server.wanted()
         val cpu = android.os.Process.getElapsedCpuTime() / 1000.0
         val up = (android.os.SystemClock.elapsedRealtime() - started) / 60000.0
-        return "clients: ${server.clientCount}\nsources on: " + (w.subs.sorted().joinToString(",").ifEmpty { "none" }) + "\nwake lock: " + (if (wake?.isHeld == true) "held" else "free") +
+        return "clients: ${server.clientCount}" + server.clientLines().joinToString("") { "\n  $it" } + "\nsources on: " + (w.subs.sorted().joinToString(",").ifEmpty { "none" }) + "\nwake lock: " + (if (wake?.isHeld == true) "held" else "free") +
             "\nheld open: " + (holds().joinToString(", ").ifEmpty { "none" }) + "\npolling slowed: ÷${power.factor}" +
             "\nprocess CPU: ${"%.1f".format(cpu)} s in ${"%.0f".format(up)} min of service life\n"
     }

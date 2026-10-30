@@ -945,7 +945,7 @@ def({ id:'table', title:'Table', cat:'Sources', kw:'list csv tsv json bookmarks 
     if(!n.initialized && n.el){ tblInit(n); n.initialized=true; }
     const r=n.el.querySelector('.readout');                       // строка узла — только для ошибки
     if(r){
-      const t=n.err ? '⚠ '+n.err : n._saveErr ? '⚠ not saved: '+n._saveErr : n._saving>0 ? 'saving…' : '';
+      const t=n.err ? '⚠ '+n.err : n._saveErr ? '⚠ not saved: '+n._saveErr : '';
       if(r.textContent!==t){ r.textContent=t; r.style.display=t ? '' : 'none'; }
     }
     if(n.ui){
