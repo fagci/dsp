@@ -7,8 +7,38 @@ set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage u
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
 // В приложении Android (DspApp — его JS-мост) запросы к чужим хостам идут через приложение с CORS-заголовками и mixed content разрешён: прокси не нужен
 const Net={ get app(){ return typeof DspApp!=='undefined'; },
-  get proxy(){ if(this.app) return ''; const v=(LS.get('dsp-proxy')||'').trim(); return v[0]==='@' && typeof Gw!=='undefined' ? Gw.proxyTemplate(v) : v; },     // «@имя» — Node-мост из Settings → Devices
-  url(u){ const p=this.proxy; return !p ? u : p.includes('{url}') ? p.replace('{url}',encodeURIComponent(u)) : p+u; } };
+  // режим прокси (Settings): always — всё, что ходит через Net.url, идёт через прокси (как было); auto — сначала напрямую, через прокси только
+  // после отказа браузера (CORS, mixed content), хост запоминается; off — прокси не используется
+  get mode(){ const m=LS.get('dsp-proxy-mode'); return m==='off' || m==='auto' ? m : 'always'; },
+  get proxy(){ if(this.app || this.mode==='off') return ''; const v=(LS.get('dsp-proxy')||'').trim(); return v[0]==='@' && typeof Gw!=='undefined' ? Gw.proxyTemplate(v) : v; },     // «@имя» — Node-мост из Settings → Devices
+  need:new Set(),                                                       // хосты, которым в этой сессии понадобился прокси (режим auto)
+  needs(u){ try{ return this.need.has(new URL(u,location.href).host); }catch(e){ return false; } },
+  // force — адрес для сокета (ws через прокси) и узлы, которые просят прокси явно: в режиме auto прямой попытки у них нет
+  url(u,force){ const p=this.proxy; if(!p) return u; if(this.mode==='auto' && !force && !this.needs(u)) return u; return p.includes('{url}') ? p.replace('{url}',encodeURIComponent(u)) : p+u; } };
+// Режим auto: fetch, который браузер отказался выполнить (TypeError — CORS, mixed content), один раз повторяется через прокси (только GET / HEAD чужого сайта).
+// Если не вышло и через прокси — вернётся исходная ошибка, а не ошибка прокси; хост, которому прокси помог, дальше идёт через него сразу.
+(()=>{
+  const orig=window.fetch.bind(window);
+  const eligible=(input,init)=>{                                         // чужой http(s)-адрес, GET / HEAD, режим auto, прокси задан и это не сам прокси
+    if(Net.mode!=='auto' || (typeof input!=='string' && !(input instanceof URL))) return null;
+    const method=String((init && init.method) || 'GET').toUpperCase(); if(method!=='GET' && method!=='HEAD') return null;
+    let u, px; try{ u=new URL(String(input),location.href); px=Net.proxy; }catch(x){ return null; }
+    if(!px || !/^https?:$/.test(u.protocol) || u.origin===location.origin || (init && init.signal && init.signal.aborted)) return null;
+    try{ if(new URL(px.replace('{url}','x'),location.href).origin===u.origin) return null; }catch(x){}
+    return u;
+  };
+  window.fetch=async function(input,init){
+    const u=eligible(input,init);
+    if(u && Net.needs(u.href)){ try{ return await orig(Net.url(u.href,true),init); }catch(x){} }      // хост уже известен как «нужен прокси»; прокси не отвечает — пробуем напрямую
+    try{ return await orig(input,init); }
+    catch(e){
+      if(!u || !(e instanceof TypeError)) throw e;
+      let r; try{ r=await orig(Net.url(u.href,true),init); }catch(x){ throw e; }                      // не вышло и через прокси — вернётся исходная ошибка
+      if(r.status<500) Net.need.add(u.host);
+      return r;
+    }
+  };
+})();
 // Row Player, подключённый к Table проводом rows: проигрывание строк таблицы
 const playRows=(tb,x,y,p)=>{ const pl=addNode('rowplayer',x,y,p); addEdge(tb.id,'rows',pl.id,'rows'); return pl; };
 const patchListEl=document.getElementById('patchList');

@@ -5768,7 +5768,7 @@ function kiwiSetMod(n){
 // с https-страницы это mixed content, поэтому прокси там обязателен.
 function kiwiWsUrl(host,port,path){
   if(Net.proxy){
-    let u=Net.url(`http://${host}:${port}/${path}`);
+    let u=Net.url(`http://${host}:${port}/${path}`,true);
     if(!/^[a-z]+:\/\//i.test(u)) u=new URL(u,location.href).href;
     return u.replace(/^http/i,'ws');
   }
