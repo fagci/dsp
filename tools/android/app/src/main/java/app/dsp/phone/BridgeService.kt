@@ -188,7 +188,7 @@ class BridgeService : Service() {
             n.startsWith("tcp.") || n.startsWith("udp.") || n.startsWith("net.") || n.startsWith("raw.") || n == "ping" -> net.exec(c, j)
             n.startsWith("vpn.") -> VpnCmds.exec(this, c, j)
             n.startsWith("tls.") -> tlsCmds.exec(c, j)
-            n.startsWith("sys.") || n.startsWith("ui.") || n.startsWith("vol.") || n.startsWith("tts.") || n.startsWith("clip.") || n.startsWith("app.") ||
+            n.startsWith("sys.") || n.startsWith("gps.mock") || n.startsWith("ui.") || n.startsWith("vol.") || n.startsWith("tts.") || n.startsWith("clip.") || n.startsWith("app.") ||
                 n == "intent" || n == "media" || n == "toast" || n.startsWith("screen.") -> sys.exec(c, j)
             else -> actions.exec(c, j)
         }
@@ -207,7 +207,7 @@ class BridgeService : Service() {
         destroyed = true
         main.removeCallbacks(tick)
         inst = null; up = false
-        power.close(); activity.close()
+        power.close(); activity.close(); try { sys.stopMock() } catch (e: Exception) { }; FloatWin.closeAll()
         server.stop()
         sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close(); speech.close(); gatt.close(); gattsrv.close(); l2cap.close(); wlink.close(); monitor.close(); wnet.close(); btlink.close(); adv.close(); net.close(); sys.close()
         wake?.takeIf { it.isHeld }?.release()

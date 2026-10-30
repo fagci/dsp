@@ -244,6 +244,44 @@ open class MainActivity : Activity() {
             }.also { it.isDaemon = true }.start()
         }
 
+        /** Можно ли показывать окна поверх других приложений («Показ поверх других окон»). */
+        @JavascriptInterface
+        fun floatCan(): Boolean = FloatWin.can(this@MainActivity)
+
+        /** Открыть системный экран с этим разрешением; true — экран открыт. */
+        @JavascriptInterface
+        fun floatPerm(): Boolean {
+            runOnUiThread { Toast.makeText(this@MainActivity, "Allow «Display over other apps» for DSP, then press the button again", Toast.LENGTH_LONG).show() }
+            return try { startActivity(FloatWin.permissionIntent(this@MainActivity)); true } catch (e: Exception) { false }
+        }
+
+        /** Окно поверх приложений для узла id (modules/floatwin.js); opts — JSON {opacity, through, w}. false — разрешения нет. */
+        @JavascriptInterface
+        fun floatShow(id: String, opts: String): Boolean {
+            if (!FloatWin.can(this@MainActivity)) return false
+            FloatWin.onClosed = { cid ->
+                runOnUiThread { web.evaluateJavascript("window.floatClosed&&floatClosed(" + JSONObject.quote(cid) + ")", null) }
+            }
+            val o = try { JSONObject(opts) } catch (e: Exception) { JSONObject() }
+            FloatWin.show(this@MainActivity, id, o)
+            return true
+        }
+
+        /** Кадр окна: base64 WebP / JPEG / PNG; декодирование — не в основном потоке. */
+        @JavascriptInterface
+        fun floatFrame(id: String, b64: String) {
+            Thread {
+                try {
+                    val b = Base64.decode(b64, Base64.DEFAULT)
+                    val bmp = BitmapFactory.decodeByteArray(b, 0, b.size) ?: return@Thread
+                    FloatWin.frame(id, bmp)
+                } catch (e: Exception) { /* битый кадр — следующий придёт через доли секунды */ }
+            }.also { it.isDaemon = true }.start()
+        }
+
+        @JavascriptInterface
+        fun floatClose(id: String) { FloatWin.close(id) }
+
         /** Системный выбор «Задать живые обои» на DspLiveWallpaperService; ничего не делает, если обои не поддерживаются. */
         @JavascriptInterface
         fun wallpaperPick(): Boolean {
