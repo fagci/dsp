@@ -19,6 +19,7 @@ const Gw={
   names(){                                                           // подсказки для полей адреса
     let dl=document.getElementById('gwNames'); if(!dl){ dl=document.createElement('datalist'); dl.id='gwNames'; document.body.append(dl); }
     dl.textContent=''; for(const d of this.list()){ const o=document.createElement('option'); o.value='@'+d.name; o.label=d.url; dl.append(o); }
+    window.dispatchEvent(new Event('gw-changed'));                         // выбор устройства в открытых узлах (параметры с dev:true) перерисуется
   },
   // проверка: подключиться и прочитать приветствие → {ok, kind, text}
   probe(d,token){
