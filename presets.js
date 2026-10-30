@@ -540,6 +540,7 @@ const PRESET_CATS={
   'Messenger: One Chat for Nostr, ntfy, Matrix, Telegram, IRC and XMPP':'Network & IoT',
   'APRS-IS: Messages and Stations on the Map':'Network & IoT',
   'Email: Mailbox as a Chat (IMAP / SMTP)':'Network & IoT',
+  'SMS: Texts as a Chat (DSP app on Android)':'Network & IoT',
   'Reference: Decode BLE Advertisements (Company ID, Service UUID)':'Network & IoT',
   'Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)':'Network & IoT',
   'Bridge: Serial Port ↔ Network (TCP/WS Gateway)':'Network & IoT',
@@ -1569,6 +1570,18 @@ em.size.w=420; em.size.h=460; applySize(em);
 const ch=addNode('chat',500,260,{echo:false,me:'me@example.org',time:true});
 ch.size.w=420; ch.size.h=460; applySize(ch);
 addEdge(em.id,'rec',ch.id,'rec'); addEdge(ch.id,'text',em.id,'send');
+markWiresDirty();
+});
+preset('SMS: Texts as a Chat (DSP app on Android)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Text messages as a chat channel: incoming SMS of the phone come out of the Messenger node as «from number: text», and what you type goes out as an SMS from the phone. Type «@+79001234567 text» in the chat (or wire a number into the node\'s «to» input). Works in the page of the DSP app for Android (tools/android): only that page holds the app key, so SMS (personal data and money) are closed to every other site. The first time, Android asks to allow SMS for the app — allow it and repeat the command; the app sends at most 5 SMS a minute.\n'+
+  'Combine it with the other channels of the Messenger node: for example wire «rec» of an SMS node to a Chat shared with Nostr or IRC and you get a gateway — a text from a phone number appears on the mesh/internet side, and an answer from there goes out as a text. (An automatic gateway without a browser: node tools/node/msgr.mjs relay.)'});
+nt.size.w=900; nt.size.h=210; applySize(nt);
+const sm=addNode('messenger',40,280,{proto:'sms',server:'',nick:'me'});
+sm.size.w=420; sm.size.h=400; applySize(sm);
+const ch=addNode('chat',500,280,{echo:false,me:'me',time:true});
+ch.size.w=420; ch.size.h=400; applySize(ch);
+addEdge(sm.id,'rec',ch.id,'rec'); addEdge(ch.id,'text',sm.id,'send');
 markWiresDirty();
 });
 preset('Reference: Decode BLE Advertisements (Company ID, Service UUID)', function(){
