@@ -67,6 +67,10 @@ const H = M.mgHex, U = M.mgUnhex;
     {update_id: 9, message: {chat: {id: 42}, photo: []}}]}, '42');
   eq('telegram next offset', tg.next, 10);
   eq('telegram chat filter', tg.msgs.map(m => [m.from, m.text, m.room]), [['bob', 'hi', '42']]);
+  eq('telegram: skipped are counted', tg.skipped, 1);
+  const upd = {ok: true, result: [{update_id: 1, message: {chat: {id: 7, username: 'Team'}, from: {username: 'a'}, text: 'x', date: 1}}]};
+  eq('telegram: a word that is not a chat id or @name (the default «dsp») filters nothing', M.mgTgUpdates(upd, 'dsp').msgs.length, 1);
+  eq('telegram: @name filter, any case', [M.mgTgUpdates(upd, '@team').msgs.length, M.mgTgUpdates(upd, '@other').msgs.length], [1, 0]);
 }
 
 // IRC

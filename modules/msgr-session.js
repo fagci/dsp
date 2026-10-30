@@ -199,7 +199,7 @@ function mgOpenTelegram(cfg,c){
   const io=mgIo(cfg), token=String(cfg.token || cfg.pass || '').trim(), ac=new AbortController();
   if(!token){ c.down('Telegram: enter the bot token (from @BotFather) in the password field',true); return mgNone; }
   const base=mgTrim(cfg.server && /^https?:/i.test(cfg.server) ? cfg.server : 'https://api.telegram.org')+'/bot'+token+'/';
-  let closed=false, lastChat=null, offset=0;
+  let closed=false, lastChat=null, offset=0, ignored=0, botName='';
   const call=async(m,params)=>{
     const r=await io.fetch(base+m,{method:'POST',signal:ac.signal,headers:{'content-type':'application/json'},body:JSON.stringify(params||{})});
     let j=null; try{ j=await r.json(); }catch(e){}
@@ -209,12 +209,13 @@ function mgOpenTelegram(cfg,c){
     try{
       const me=await call('getMe');
       if(!me.ok){ c.down('Telegram: '+(me.description||'error'),me.error_code===401 || me.error_code===404); return; }
-      c.status('connected as @'+me.result.username,'up');
+      botName=me.result.username; c.status('connected as @'+botName+' — write to the bot','up');
       while(!closed){
         const r=await call('getUpdates',{timeout:25,offset,allowed_updates:['message','channel_post']});
         if(!r.ok){ c.down('Telegram: '+(r.description||'getUpdates failed'),r.error_code===401); return; }
         const u=mgTgUpdates(r,cfg.channel);
         offset=Math.max(offset,u.next); if(u.last!==null) lastChat=u.last;
+        if(u.skipped){ ignored+=u.skipped; c.status('Telegram: @'+botName+' · '+ignored+' message(s) from other chats ignored — the channel «'+cfg.channel+'» is a chat filter, clear it to receive from all chats','up'); }
         for(const m of u.msgs) c.msg(m);
       }
     }catch(e){ if(!closed) c.down('Telegram: '+e.message,false); }
