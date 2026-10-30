@@ -3,7 +3,7 @@
    Один интерфейс на все каналы: mgConnect(proto, cfg, cb) → {send(text,to), close()}.
    Работает и в странице, и в Node-мосте (tools/node/bridge.mjs) — транспорт подставляется через cfg.io:
    {ws(url) → WebSocket, fetch, tcp(host,port,tls,h) → {write,upgrade(done),close}}, по умолчанию — глобальные.
-   proto: nostr | ntfy | matrix | telegram | irc | xmpp | aprs | email | sms | reticulum.
+   proto: nostr | ntfy | matrix | telegram | irc | xmpp | aprs | email | sms | reticulum | mastodon | bluesky.
    cfg:   server, channel, user, pass, nick, key (Nostr), token, history (сек), verify, retry, bridge, via, io.
    cb:    msg({from,to,text,t,self,…}), status(text, state), state: connecting | up | down | warn | fatal.
    Свои сообщения приходят обратно тем же msg с self:true (от сервера или, где сервер не возвращает, локально). */
@@ -469,6 +469,109 @@ function mgOpenRns(cfg,c){
   };
 }
 
+/* ---------- Mastodon / Bluesky: чтение лент опросом. Запись — {kind:'post', from, text, post:{…}} (feed-kernels.js) ---------- */
+function mgFeedLoop(c,tick,ms){
+  let closed=false, timer=null, busy=false;
+  const run=async()=>{
+    if(closed || busy) return; busy=true;
+    try{ await tick(); }catch(e){ if(!closed){ closed=true; c.down(e.message,!!e.fatal); } }
+    busy=false; if(!closed) timer=setTimeout(run,ms);
+  };
+  setTimeout(run,0);
+  return ()=>{ closed=true; clearTimeout(timer); };
+}
+const mgFatal=msg=>Object.assign(new Error(msg),{fatal:true});
+const mgPostMsg=r=>({id:r.id,from:r.from,text:r.text,t:r.t,kind:'post',post:{name:r.name,url:r.url,tags:r.tags,lang:r.lang,avatar:r.avatar,image:r.image,likes:r.likes,boosts:r.boosts,replies:r.replies,cw:r.cw,boost_by:r.boost_by}});
+const mgClock=()=>new Date().toTimeString().slice(0,8);
+function mgFeedStatus(cfg){ return String(cfg.channel||'').trim() || 'public timeline'; }
+
+function mgOpenMastodon(cfg,c){
+  const io=mgIo(cfg), server=mgTrim(cfg.server||'https://mastodon.social'), spec=mgFeedSpec(cfg.channel), ac=new AbortController();
+  if(!/^https?:\/\//i.test(server)){ c.down('Mastodon: enter the instance address https://…',true); return mgNone; }
+  const token=String(cfg.token||cfg.pass||'').trim(), headers={accept:'application/json',...(token ? {authorization:'Bearer '+token} : {})};
+  if(spec.home && !token){ c.down('Mastodon: «home» needs an access token in the password field',true); return mgNone; }
+  const cutoff=Date.now()-Math.max(0,cfg.history|0)*1000, host=new URL(server).host;
+  let since='', first=true;
+  const get=async url=>{
+    const r=await io.fetch(url,{headers,signal:ac.signal});
+    if(r.status===401 || r.status===403) throw mgFatal('Mastodon: '+host+' does not give timelines without a login (HTTP '+r.status+') — put an access token (Preferences → Development → New application, scope read) into the password field');
+    if(r.status===404 || r.status===422) throw mgFatal('Mastodon: '+host+' refused the request (HTTP '+r.status+') — is it a Mastodon instance, is the tag valid?');
+    if(!r.ok) throw new Error('Mastodon: HTTP '+r.status);
+    const j=await r.json(); if(!Array.isArray(j)) throw new Error('Mastodon: unexpected answer');
+    return j;
+  };
+  const stop=mgFeedLoop(c,async()=>{
+    let all=[], maxId='';
+    for(let page=0;page<5;page++){
+      const arr=await get(mgMastoUrl(server,spec,{sinceId:since,maxId,limit:40}));
+      all.push(...arr);
+      if(arr.length<40 || !since) break;                         // без since_id — только свежие 40; со since_id догоняем назад до известного
+      maxId=arr.reduce((m,x)=>mgIdGt(m,x.id) ? x.id : m,arr[0].id);      // следующая страница — старше самого старого из полученных
+    }
+    for(const st of all) if(!since || mgIdGt(st.id,since)) since=String(st.id);
+    const was=first; first=false;
+    if(!(was && !(cfg.history|0))){
+      const posts=all.map(mgMastoPost).filter(Boolean).filter(r=>mgFeedKeep(r,spec) && (!was || r.t>=cutoff)).sort((a,b)=>mgIdGt(a.id,b.id) ? 1 : -1);
+      const seen=new Set(); for(const r of posts){ if(seen.has(r.id)) continue; seen.add(r.id); c.msg(mgPostMsg(r)); }
+    }
+    c.status('Mastodon · '+host+' · '+mgFeedStatus(cfg)+' · read '+mgClock(),'up');
+  },Math.max(5000,cfg.pollMs||30000));
+  return {send(){ c.status('Mastodon: this feed is read-only — posting is not implemented','warn'); return false; },close(){ stop(); try{ ac.abort(); }catch(e){} }};
+}
+
+function mgOpenBluesky(cfg,c){
+  const io=mgIo(cfg), spec=mgFeedSpec(cfg.channel), ac=new AbortController(), cred=!!(cfg.user && cfg.pass);
+  if(!spec.tags.length && !spec.actors.length && !spec.feeds.length){ c.down('Bluesky: enter #tags, @accounts or a feed link in the channel field',true); return mgNone; }
+  const base=mgTrim(cfg.server || (cred ? 'https://bsky.social' : 'https://public.api.bsky.app'));
+  if(!/^https?:\/\//i.test(base)){ c.down('Bluesky: the server address must be https://…',true); return mgNone; }
+  const cutoff=Date.now()-Math.max(0,cfg.history|0)*1000, seen=new Set(), feedUris=new Map(); let jwt='', first=true;
+  const login=async()=>{
+    const r=await io.fetch(base+'/xrpc/com.atproto.server.createSession',{method:'POST',signal:ac.signal,headers:{'content-type':'application/json'},body:JSON.stringify({identifier:cfg.user,password:cfg.pass})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok || !j.accessJwt) throw mgFatal('Bluesky: login refused — '+(j.message||r.status)+' (use an app password: Settings → Privacy and security → App passwords)');
+    jwt=j.accessJwt;
+  };
+  const get=async(url,retry)=>{
+    const r=await io.fetch(url,{signal:ac.signal,headers:{accept:'application/json',...(jwt ? {authorization:'Bearer '+jwt} : {})}});
+    if((r.status===400 || r.status===401) && cred && !retry){ await login(); return get(url,true); }       // токен живёт ~2 часа
+    return r;
+  };
+  const resolveFeed=async f=>{                                   // https://bsky.app/profile/<handle>/feed/<имя> → at://<did>/app.bsky.feed.generator/<имя>
+    if(feedUris.has(f)) return feedUris.get(f);
+    let uri=f; const m=/^https?:\/\/bsky\.app\/profile\/([^/]+)\/feed\/([^/?#]+)/i.exec(f);
+    if(m){
+      let did=m[1];
+      if(!/^did:/.test(did)){ const r=await get(base+'/xrpc/com.atproto.identity.resolveHandle?handle='+encodeURIComponent(did)); const j=await r.json().catch(()=>({})); if(!r.ok || !j.did) throw mgFatal('Bluesky: cannot find the account '+did); did=j.did; }
+      uri='at://'+did+'/app.bsky.feed.generator/'+m[2];
+    }
+    feedUris.set(f,uri); return uri;
+  };
+  const stop=mgFeedLoop(c,async()=>{
+    if(cred && !jwt) await login();
+    const feeds=[]; for(const f of spec.feeds) feeds.push(await resolveFeed(f));
+    const srcs=mgBskyUrls(base,spec,{feeds,limit:30}), got=[]; let fail=0, denied='';
+    for(const s of srcs){
+      const r=await get(s.url);
+      if(r.status===401 || r.status===403){ fail++; denied=s.kind; continue; }
+      if(!r.ok){ fail++; continue; }
+      got.push(...mgBskyPosts(await r.json().catch(()=>null)));
+    }
+    if(fail===srcs.length){
+      throw denied==='search' && !cred ? mgFatal('Bluesky: searching by tag needs a login — enter your handle and an app password (the public server answers 403). Accounts (@name) and feeds are read without one')
+        : mgFatal('Bluesky: the server refused the requests (HTTP 401/403)');
+    }
+    const was=first; first=false;
+    const fresh=got.filter(r=>!seen.has(r.id)); for(const r of fresh) seen.add(r.id);
+    if(seen.size>8000) for(const k of [...seen].slice(0,2000)) seen.delete(k);
+    if(!(was && !(cfg.history|0))){
+      const uniq=new Map(); for(const r of fresh) if(mgFeedKeep(r,spec) && (!was || r.t>=cutoff)) uniq.set(r.id,r);
+      for(const r of [...uniq.values()].sort((a,b)=>a.t-b.t)) c.msg(mgPostMsg(r));
+    }
+    c.status('Bluesky · '+(cred ? cfg.user+' · ' : 'no login · ')+mgFeedStatus(cfg)+(fail ? ' · '+fail+' of '+srcs.length+' source(s) refused' : '')+' · read '+mgClock(),fail ? 'warn' : 'up');
+  },Math.max(5000,cfg.pollMs||30000));
+  return {send(){ c.status('Bluesky: this feed is read-only — posting is not implemented','warn'); return false; },close(){ stop(); try{ ac.abort(); }catch(e){} }};
+}
+
 /* ---------- сессия на Node-мосте: те же сообщения, но протокол живёт на стороне моста ---------- */
 function mgOpenRemote(proto,cfg,c){
   const io=mgIo(cfg), url=String(cfg.bridge||'').trim();
@@ -490,7 +593,7 @@ function mgOpenRemote(proto,cfg,c){
   };
 }
 
-const MG_OPEN={nostr:mgOpenNostr,ntfy:mgOpenNtfy,matrix:mgOpenMatrix,telegram:mgOpenTelegram,irc:mgOpenIrc,xmpp:mgOpenXmpp,aprs:mgOpenAprs,email:mgOpenEmail,sms:mgOpenSms,reticulum:mgOpenRns};
+const MG_OPEN={nostr:mgOpenNostr,ntfy:mgOpenNtfy,matrix:mgOpenMatrix,telegram:mgOpenTelegram,irc:mgOpenIrc,xmpp:mgOpenXmpp,aprs:mgOpenAprs,email:mgOpenEmail,sms:mgOpenSms,reticulum:mgOpenRns,mastodon:mgOpenMastodon,bluesky:mgOpenBluesky};
 const mgNeedsTcp=(proto,cfg)=>proto==='xmpp' || proto==='aprs' || proto==='email' || proto==='reticulum' || (proto==='irc' && !/^wss?:\/\//i.test(String(cfg.server||'').trim()));
 
 // cfg.via: 'auto' (мост — только где нужен TCP), 'page' (всё из страницы), 'bridge' (всё через мост); cfg.retry — переподключаться

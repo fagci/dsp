@@ -8,7 +8,7 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const API = ['mgHex', 'mgUnhex', 'mgUtf8', 'mgB64', 'mgSchnorrPub', 'mgSchnorrSign', 'mgSchnorrVerify', 'mgBechEnc', 'mgBechDec',
   'mgNostrKey', 'mgNostrGenKey', 'mgNpub', 'mgNostrId', 'mgNostrSign', 'mgNostrVerify', 'mgNostrReq', 'mgNostrFrame', 'mgNostrText',
   'mgLines', 'mgNtfyLine', 'mgMatrixSync', 'mgTgUpdates', 'mgIrcParse', 'mgIrcFmt', 'mgSplit', 'mgIrcClient',
-  'mgAprsPass', 'mgAprsParse', 'mgAprsMsg', 'mgAprsAck', 'mgAprsClient', 'mgMailParse', 'mgMailCompose', 'mgImapClient', 'mgImapNext', 'mgSmtpClient', 'mgMimeWords', 'RnsNode', 'RnFloat', 'rnMpPack', 'rnMpUnpack', 'rnHdlc', 'rnDeframer', 'rnPack', 'rnUnpack', 'rnIdentity', 'rnLxmfPack', 'rnLxmfUnpack', 'rnTokenEnc', 'rnTokenDec', 'rnEncryptFor', 'rnDecryptWith', 'rnNameHash', 'rnDestHash', 'mgXmlParser', 'mgXmlEsc', 'mgXmppClient', 'mgConnect'];
+  'mgAprsPass', 'mgAprsParse', 'mgAprsMsg', 'mgAprsAck', 'mgAprsClient', 'mgMailParse', 'mgMailCompose', 'mgImapClient', 'mgImapNext', 'mgSmtpClient', 'mgMimeWords', 'RnsNode', 'RnFloat', 'rnMpPack', 'rnMpUnpack', 'rnHdlc', 'rnDeframer', 'rnPack', 'rnUnpack', 'rnIdentity', 'rnLxmfPack', 'rnLxmfUnpack', 'rnTokenEnc', 'rnTokenDec', 'rnEncryptFor', 'rnDecryptWith', 'rnNameHash', 'rnDestHash', 'mgHtmlText', 'mgFeedSpec', 'mgFeedKeep', 'mgMastoUrl', 'mgMastoPost', 'mgBskyPost', 'mgBskyUrls', 'mgBskyPosts', 'mgIdGt', 'mgXmlParser', 'mgXmlEsc', 'mgXmppClient', 'mgConnect'];
 
 // extra — глобалы, которых нет у vm-контекста по умолчанию (fetch, WebSocket, …); по умолчанию берутся из Node
 export function loadMsgr(extra = {}) {
@@ -16,7 +16,7 @@ export function loadMsgr(extra = {}) {
     URL, URLSearchParams, AbortController, btoa, atob, console, crypto: globalThis.crypto, setTimeout, clearTimeout, setInterval, clearInterval,
     fetch: globalThis.fetch, WebSocket: globalThis.WebSocket, encodeURIComponent, ...extra};
   const ctx = vm.createContext(g);
-  for (const f of ['modules/meshcore-kernels.js', 'modules/netsock-kernels.js', 'modules/msgr-kernels.js', 'modules/rns-kernels.js', 'modules/msgr-session.js']) {
+  for (const f of ['modules/meshcore-kernels.js', 'modules/netsock-kernels.js', 'modules/msgr-kernels.js', 'modules/feed-kernels.js', 'modules/rns-kernels.js', 'modules/msgr-session.js']) {
     const p = path.join(root, f);
     if (fs.existsSync(p)) vm.runInContext(fs.readFileSync(p, 'utf8'), ctx, {filename: f});
   }

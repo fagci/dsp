@@ -9,6 +9,8 @@
 //   node tools/node/msgr.mjs chat aprs --user N0CALL-7 [--pass <passcode>] --channel r/52.5/13.4/100   (сообщения: «@CALL текст»)
 //   node tools/node/msgr.mjs chat email --server imaps://imap.example.org:993 --smtp smtps://smtp.example.org:465 --user me@example.org --pass …   (письмо: «@кому@хост тема⏎текст»)
 //   node tools/node/msgr.mjs chat reticulum --server rns://host:4242 --nick me --pass <128 hex: ключ личности, пусто — новая>   (письмо: «@имя текст»)
+//   node tools/node/msgr.mjs chat mastodon --server https://mastodon.social --channel '#sdr #radio -#spam'   (лента: только чтение, без входа)
+//   node tools/node/msgr.mjs chat bluesky --channel '@alice.bsky.social'   (поиск по #тегу — с --user и --pass: app password)
 //   node tools/node/msgr.mjs chat matrix --server https://matrix.org --user … --pass … --channel '!комната:сервер'
 // chat: входящие — в stdout, каждая строка stdin уходит в канал.
 //
@@ -38,7 +40,7 @@ if (cmd === 'chat') {
     server: {type: 'string', default: ''}, channel: {type: 'string', default: ''}, user: {type: 'string', default: ''},
     pass: {type: 'string', default: ''}, smtp: {type: 'string', default: ''}, nick: {type: 'string', default: 'dsp'}, key: {type: 'string', default: ''},
     history: {type: 'string', default: '0'}, insecure: {type: 'boolean', default: false}}});
-  if (!proto) { console.error('usage: msgr.mjs chat <nostr|ntfy|matrix|telegram|irc|xmpp|aprs|email|reticulum> [--server …] [--channel …] [--user …] [--pass …] [--nick …]'); process.exit(2); }
+  if (!proto) { console.error('usage: msgr.mjs chat <nostr|ntfy|matrix|telegram|irc|xmpp|aprs|email|reticulum|mastodon|bluesky> [--server …] [--channel …] [--user …] [--pass …] [--nick …]'); process.exit(2); }
   const s = open({proto, ...a, history: +a.history || 0}, m => {
     console.log((m.self ? '→ ' : '') + (m.delay ? '(old) ' : '') + (m.from ? m.from + ': ' : '') + m.text);
   });
