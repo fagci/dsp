@@ -539,6 +539,7 @@ const PRESET_CATS={
   'bitchat Mesh Chat (no app install)':'Network & IoT',
   'Messenger: One Chat for Nostr, ntfy, Matrix, Telegram, IRC and XMPP':'Network & IoT',
   'APRS-IS: Messages and Stations on the Map':'Network & IoT',
+  'Email: Mailbox as a Chat (IMAP / SMTP)':'Network & IoT',
   'Reference: Decode BLE Advertisements (Company ID, Service UUID)':'Network & IoT',
   'Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)':'Network & IoT',
   'Bridge: Serial Port ↔ Network (TCP/WS Gateway)':'Network & IoT',
@@ -1556,6 +1557,18 @@ ch.size.w=380; ch.size.h=420; applySize(ch);
 const mp=addNode('geoMap',920,260,{ttl:120,labels:true});
 mp.size.w=620; mp.size.h=520; applySize(mp);
 addEdge(ap.id,'rec',ch.id,'rec'); addEdge(ch.id,'text',ap.id,'send'); addEdge(ap.id,'rec',mp.id,'rec');
+markWiresDirty();
+});
+preset('Email: Mailbox as a Chat (IMAP / SMTP)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Email as just another chat channel: new mail in the mailbox comes out of the Messenger node as «[subject] text» (From = the sender), and what you type in the chat goes out as a letter. Fill in the IMAP server (imaps://imap.example.org:993), the SMTP server (smtps://smtp.example.org:465, or smtp://…:587 with STARTTLS), the login and password — Gmail and the like need an app password, not the account one — and put your own address in the nick if the login is not an address.\n'+
+  'Address a letter in the chat as «@friend@example.org Subject line» and, on the next lines, the text; a single line goes out with the subject «DSP message». A browser cannot open TCP, so run the Node bridge: node tools/node/bridge.mjs (Node 22+). Old mail is not delivered (raise «also fetch… last, s» for that); mail is only read, never marked as seen or deleted; a password is never sent without TLS.'});
+nt.size.w=900; nt.size.h=190; applySize(nt);
+const em=addNode('messenger',40,260,{proto:'email',server:'imaps://imap.example.org:993',smtp:'smtps://smtp.example.org:465',channel:'INBOX',user:'me@example.org',nick:'me@example.org',bridge:'ws://127.0.0.1:8777'});
+em.size.w=420; em.size.h=460; applySize(em);
+const ch=addNode('chat',500,260,{echo:false,me:'me@example.org',time:true});
+ch.size.w=420; ch.size.h=460; applySize(ch);
+addEdge(em.id,'rec',ch.id,'rec'); addEdge(ch.id,'text',em.id,'send');
 markWiresDirty();
 });
 preset('Reference: Decode BLE Advertisements (Company ID, Service UUID)', function(){

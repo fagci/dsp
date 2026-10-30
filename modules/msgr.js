@@ -1,6 +1,6 @@
 "use strict";
 /* ============================ Messenger: узел ============================
-   Один узел на семь каналов связи — Nostr, ntfy, Matrix, Telegram (бот), IRC, XMPP, APRS-IS. Протоколы — msgr-kernels.js
+   Один узел на восемь каналов связи — Nostr, ntfy, Matrix, Telegram (бот), IRC, XMPP, APRS-IS, почта (IMAP/SMTP). Протоколы — msgr-kernels.js
    и msgr-session.js (те же файлы грузит Node-мост tools/node/bridge.mjs). Из страницы напрямую: Nostr (реле wss://),
    ntfy, Matrix, Telegram, IRC по WebSocket (wss://). IRC по TCP (ircs://) и XMPP — через Node-мост (поле bridge).
    rec → Chat: {t, proto, dir, from, to, text}; свои сообщения приходят с from = nick — в Chat «my name» поставь тот же ник. */
@@ -23,7 +23,7 @@ function mgNodeStart(n){
   const p=n.p, proto=p.proto;
   const bridge=String(p.bridge||'').trim() + (p.bridgeToken && /^wss?:/i.test(p.bridge||'') ? '?token='+encodeURIComponent(p.bridgeToken) : '');
   const cfg={server:String(p.server||'').trim() || MG_DEF_SERVER[proto] || '',channel:String(p.channel||'').trim(),user:String(p.user||'').trim(),pass:String(p.pass||''),
-    nick:String(p.nick||'dsp').trim() || 'dsp',history:+p.history||0,retry:!!p.reconnect,via:p.via,bridge,insecure:!!p.plain,cache:n.mxCache};
+    nick:String(p.nick||'dsp').trim() || 'dsp',history:+p.history||0,retry:!!p.reconnect,via:p.via,smtp:String(p.smtp||'').trim(),pollMs:(+p.poll||30)*1000,bridge,insecure:!!p.plain,cache:n.mxCache};
   if(proto==='nostr'){ cfg.key=cfg.pass; if(!cfg.key){ try{ if(!n.eph) n.eph=mgHex(mgNostrGenKey()); cfg.key=n.eph; }catch(e){ n.status='no secure random generator'; return; } } }
   n.warn=netInsecure(cfg.server) || (cfg.bridge && netInsecure(cfg.bridge)) ? NET_INSECURE_MSG : '';
   n.sess=mgConnect(proto,cfg,{
@@ -37,16 +37,18 @@ function mgNodeSend(n,text,to){
   Promise.resolve(n.sess.send(text,to||undefined)).then(ok=>{ if(!ok && n.sess && !/not sent/.test(n.status)) n.status+=' · not sent'; });
 }
 
-def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · IRC · XMPP · APRS)', cat:'Sources',
+def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · IRC · XMPP · APRS · Email)', cat:'Sources',
   kw:'messenger chat nostr ntfy matrix telegram bot irc xmpp jabber relay message channel push notify send receive internet',
   ins:[{n:'send',t:'txt'},{n:'to',t:'txt'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'from',t:'txt'},{n:'new',t:'num'},{n:'ok',t:'num'}],
   readout:true, tall:true,
   params:[
-    {n:'proto',t:'select',opts:['nostr','ntfy','matrix','telegram','irc','xmpp','aprs'],d:'nostr',label:'channel of communication'},
-    {n:'server',t:'text',d:'',label:'server — nostr: relays wss://… (several, space-separated; empty: public ones) · ntfy: https://… (empty: ntfy.sh) · matrix: https://homeserver · irc: wss://host/path, or ircs://host:6697 / irc://… via the bridge · xmpp: xmpp://host:5222, empty — by the domain of the account (bridge) · aprs: aprs://host:14580 (empty — rotate.aprs2.net, bridge)'},
-    {n:'channel',t:'text',d:'dsp',label:'channel — nostr: hashtag · ntfy: topic · matrix: room (!id:server or #alias:server) · telegram: chat id or @name (empty — all chats, reply to the last) · irc: #channels · xmpp: room@conference.server (empty — direct messages only) · aprs: server filter (g/CALL, m/50, r/lat/lon/km, b/CALL*; empty — messages to you)'},
-    {n:'user',t:'text',d:'',label:'user — matrix: login · xmpp: account user@domain · aprs: your callsign (N0CALL-7) · irc / ntfy: optional'},
+    {n:'proto',t:'select',opts:['nostr','ntfy','matrix','telegram','irc','xmpp','aprs','email'],d:'nostr',label:'channel of communication'},
+    {n:'server',t:'text',d:'',label:'server — nostr: relays wss://… (several, space-separated; empty: public ones) · ntfy: https://… (empty: ntfy.sh) · matrix: https://homeserver · irc: wss://host/path, or ircs://host:6697 / irc://… via the bridge · xmpp: xmpp://host:5222, empty — by the domain of the account (bridge) · aprs: aprs://host:14580 (empty — rotate.aprs2.net, bridge) · email: IMAP imaps://host:993 or imap://host:143 (to receive; bridge)'},
+    {n:'channel',t:'text',d:'dsp',label:'channel — nostr: hashtag · ntfy: topic · matrix: room (!id:server or #alias:server) · telegram: chat id or @name (empty — all chats, reply to the last) · irc: #channels · xmpp: room@conference.server (empty — direct messages only) · aprs: server filter (g/CALL, m/50, r/lat/lon/km, b/CALL*; empty — messages to you) · email: mailbox (empty — INBOX)'},
+    {n:'user',t:'text',d:'',label:'user — matrix: login · xmpp: account user@domain · aprs: your callsign (N0CALL-7) · email: login, usually the address · irc / ntfy: optional'},
     {n:'pass',t:'text',d:'',label:'password / token (saved with the patch!) — nostr: nsec or hex key (empty — a new anonymous key each session) · matrix: password or access token · telegram: bot token from @BotFather · ntfy: token'},
+    {n:'smtp',t:'text',d:'',label:'email: SMTP smtps://host:465 or smtp://host:587 (STARTTLS) — to send; a message is «@name@host subject line⏎text» or the «to» input'},
+    {n:'poll',t:'range',min:5,max:600,step:5,d:30,label:'email: check the mailbox every, s'},
     {n:'nick',t:'text',d:'dsp',label:'nick (shown to others; in Chat set «my name» the same)'},
     {n:'history',t:'range',min:0,max:86400,step:60,d:0,label:'also fetch what was said in the last, s (nostr, ntfy, matrix, xmpp)'},
     {n:'via',t:'select',opts:['auto','page','bridge'],d:'auto',label:'where the protocol runs: auto — in the page, through the Node bridge only for IRC TCP and XMPP'},
@@ -74,6 +76,6 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     let t=(n.warn && !n.ok ? '⚠ '+n.warn+'\n' : '')+n.p.proto+' · '+n.status+' · messages '+n.count;
-    for(const row of n.log.slice(-8)) t+='\n'+(row.dir==='out' ? '→ ' : '')+(row.from ? row.from+': ' : '')+(row.kind ? (row.lat!=null ? '📍 '+row.lat.toFixed(4)+','+row.lon.toFixed(4)+' ' : '')+row.comment : row.text).slice(0,200);
+    for(const row of n.log.slice(-8)) t+='\n'+(row.dir==='out' ? '→ ' : '')+(row.from ? row.from+': ' : '')+(row.kind==='position' || row.kind==='status' ? (row.lat!=null ? '📍 '+row.lat.toFixed(4)+','+row.lon.toFixed(4)+' ' : '')+row.comment : row.text).slice(0,200);
     if(r.textContent!==t) r.textContent=t; }
 });

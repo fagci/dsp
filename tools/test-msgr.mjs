@@ -170,4 +170,67 @@ const H = M.mgHex, U = M.mgUnhex;
   eq('no passcode → receive only', ro.send('x', 'K1ABC'), false);
 }
 
+// Почта
+{ const bin = t => Buffer.from(t, 'utf8').toString('latin1');                // как приходит из сокета: байт = символ
+  const b64 = t => Buffer.from(t, 'utf8').toString('base64');
+  const m1 = M.mgMailParse(bin('From: =?UTF-8?B?' + b64('Аня Петрова') + '?= <anya@ex.org>\r\nSubject: =?utf-8?Q?=D0=9F=D1=80=D0=B8=D0=B2=D0=B5=D1=82?=\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n' + b64('Тело письма\nвторая строка') + '\r\n'));
+  eq('mail: RFC 2047 name, subject, base64 body', [m1.from, m1.fromAddr, m1.subject, m1.text], ['Аня Петрова', 'anya@ex.org', 'Привет', 'Тело письма\nвторая строка']);
+  const multi = bin('From: bob@ex.org\r\nSubject: multi\r\nContent-Type: multipart/alternative; boundary="XX"\r\n\r\n--XX\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>html <b>version</b></p>\r\n--XX\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nplain =D0=BF=D1=80=D0=B8=\r\n=D0=B2=D0=B5=D1=82\r\n--XX--\r\n');
+  eq('mail: multipart prefers text/plain, quoted-printable with soft break', M.mgMailParse(multi).text, 'plain привет');
+  eq('mail: html only is stripped', M.mgMailParse(bin('From: a@b\r\nContent-Type: text/html\r\n\r\n<style>p{}</style><div>one<br>two &amp; three</div>')).text, 'one\ntwo & three');
+  eq('mail: latin1 charset', M.mgMailParse('From: a@b\r\nContent-Type: text/plain; charset=iso-8859-1\r\nContent-Transfer-Encoding: 8bit\r\n\r\ncaf\xe9').text, 'café');
+  const composed = M.mgMailCompose({from: 'me@ex.org', to: 'you@ex.org', subject: 'Тема', body: 'Привет\n.точка в начале', date: 0, id: 'x1'});
+  const back = M.mgMailParse(bin(composed));
+  eq('mail: compose → parse round trip', [back.subject, back.text, back.fromAddr], ['Тема', 'Привет\n.точка в начале', 'me@ex.org']);
+  eq('mail: header injection stripped', M.mgMailCompose({from: 'a@b', to: 'c@d\r\nBcc: x@y', subject: 's', body: 'b'}).includes('\r\nBcc:'), false);
+  eq('imap: literal read whole', (r => [r.text, r.lits, r.rest])(M.mgImapNext('* 1 FETCH (BODY[] {5}\r\nab\r\nc)\r\na1 OK')), ['* 1 FETCH (BODY[] \0' + '0\0)', ['ab\r\nc'], 'a1 OK']);
+  eq('imap: incomplete literal waits', M.mgImapNext('* 1 FETCH (BODY[] {50}\r\nab'), null);
+}
+{ // IMAP: сценарий «сервера»
+  const out = [], got = [], st = []; let cli;
+  const srv = s => cli.feed(s);
+  const raw = Buffer.from('From: Bob <bob@ex.org>\r\nSubject: hi\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nпривет', 'utf8').toString('latin1');
+  cli = M.mgImapClient({user: 'me@ex.org', pass: 'pa"ss', box: 'INBOX', write: s => out.push(s), tls: d => { out.push('<tls>'); d(); }, onMsg: m => got.push(m), onStatus: (t, s) => st.push([s, t])});
+  cli.start(); srv('* OK IMAP ready\r\n');
+  eq('capability asked', out[0], 'a1 CAPABILITY\r\n');
+  srv('* CAPABILITY IMAP4rev1 STARTTLS\r\na1 OK done\r\n');
+  eq('starttls', out[1], 'a2 STARTTLS\r\n'); srv('a2 OK go\r\n');
+  eq('tls upgraded, then login with a quoted password', out.slice(2), ['<tls>', 'a3 LOGIN "me@ex.org" "pa\\"ss"\r\n']);
+  srv('a3 OK logged in\r\n'); eq('select', out[4], 'a4 SELECT "INBOX"\r\n');
+  srv('* 3 EXISTS\r\n* OK [UIDNEXT 10] next\r\na4 OK [READ-WRITE] done\r\n');
+  eq('ready', [cli.ready, st.at(-1)[0]], [true, 'up']);
+  cli.poll(); eq('search only for new uids', out[5], 'a5 UID SEARCH UID 10:*\r\n');
+  srv('* SEARCH 9\r\na5 OK done\r\n'); eq('the last old message is not new', got.length, 0);
+  cli.poll(); eq('next poll from the same uid', out[6], 'a6 UID SEARCH UID 10:*\r\n');
+  srv('* SEARCH 10\r\na6 OK done\r\n'); eq('fetch without setting \\Seen', out[7], 'a7 UID FETCH 10 (BODY.PEEK[])\r\n');
+  srv('* 4 FETCH (UID 10 BODY[] {' + raw.length + '}\r\n' + raw + ')\r\na7 OK done\r\n');
+  eq('mail delivered', got.map(m => [m.from, m.fromAddr, m.text, m.kind, m.id]), [['Bob', 'bob@ex.org', '[hi] привет', 'mail', '10']]);
+  cli.poll(); eq('after it, the search starts at 11', out[8], 'a8 UID SEARCH UID 11:*\r\n');
+  srv('* SEARCH\r\na8 OK done\r\n');
+}
+{ const st = []; const cli = M.mgImapClient({user: 'u', pass: 'p', write() {}, tls() {}, onMsg() {}, onStatus: (t, s) => st.push(s)});
+  cli.start(); cli.feed('* OK hi\r\n* CAPABILITY IMAP4rev1\r\na1 OK x\r\n');
+  eq('imap: no STARTTLS → password not sent', st.at(-1), 'fatal'); }
+{ // SMTP
+  const out = [], res = []; let cli, up = false;
+  cli = M.mgSmtpClient({host: 'ex.org', user: 'me@ex.org', pass: 'pw1', from: 'Me <me@ex.org>', to: 'you@ex.org', subject: 'Тема', body: 'тело',
+    write: s => out.push(s), tls: d => { up = true; d(); }, done: e => res.push(e)});
+  cli.feed('220 ex.org ESMTP\r\n'); eq('ehlo', out[0], 'EHLO dsp.local\r\n');
+  cli.feed('250-ex.org\r\n250-STARTTLS\r\n250 AUTH PLAIN LOGIN\r\n'); eq('starttls', out[1], 'STARTTLS\r\n');
+  cli.feed('220 go\r\n'); eq('tls up, ehlo again', [up, out[2]], [true, 'EHLO dsp.local\r\n']);
+  cli.feed('250-ex.org\r\n250 AUTH PLAIN LOGIN\r\n');
+  eq('auth plain', Buffer.from(/AUTH PLAIN (\S+)/.exec(out[3])[1], 'base64').toString(), '\0me@ex.org\0pw1');
+  cli.feed('235 ok\r\n'); eq('mail from (address only)', out[4], 'MAIL FROM:<me@ex.org>\r\n');
+  cli.feed('250 ok\r\n'); eq('rcpt', out[5], 'RCPT TO:<you@ex.org>\r\n');
+  cli.feed('250 ok\r\n'); eq('data', out[6], 'DATA\r\n');
+  cli.feed('354 go\r\n'); eq('message ends with a lone dot', out[7].endsWith('\r\n.\r\n'), true);
+  cli.feed('250 queued\r\n'); eq('done without error', res, [null]);
+}
+{ const res = []; const c = M.mgSmtpClient({host: 'h', user: 'u', pass: 'p', from: 'a@b', to: 'c@d', subject: 's', body: 'b', write() {}, tls() {}, done: e => res.push(e)});
+  c.feed('220 hi\r\n250 plain server\r\n'); eq('smtp: no STARTTLS → password not sent', /STARTTLS/.test(res[0]), true); }
+{ const out = [], res = []; const c = M.mgSmtpClient({host: 'h', user: 'u', pass: 'p', from: 'a@b', to: 'c@d', subject: 's', body: 'b', secure: true, write: s => out.push(s), tls() {}, done: e => res.push(e)});
+  c.feed('220 hi\r\n250 AUTH LOGIN\r\n'); eq('auth login', out[1], 'AUTH LOGIN\r\n');
+  c.feed('334 VXNlcm5hbWU6\r\n'); c.feed('334 UGFzc3dvcmQ6\r\n'); eq('login steps', [out[2], out[3]], ['dQ==\r\n', 'cA==\r\n']);
+  c.feed('535 bad credentials\r\n'); eq('refused credentials reported', res[0], 'SMTP 535 bad credentials'); }
+
 console.log(bad ? 'FAILED ' + bad : 'all ok'); process.exit(bad ? 1 : 0);

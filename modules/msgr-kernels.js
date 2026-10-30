@@ -490,3 +490,206 @@ function mgAprsClient(o){
   };
   return self;
 }
+
+// ---------- Почта: разбор и сборка письма (RFC 5322 / 2045 / 2047) ----------
+// Сырое письмо приходит «бинарной» строкой (по символу на байт), поэтому тексты декодируем из байтов сами.
+const mgBin=s=>Uint8Array.from(s,c=>c.charCodeAt(0)&255);
+function mgDecode(bytes,charset){
+  try{ return new TextDecoder(String(charset||'utf-8').toLowerCase().replace(/^"|"$/g,'')).decode(bytes); }
+  catch(e){ return new TextDecoder('latin1').decode(bytes); }
+}
+function mgFromB64(s){ try{ const b=atob(s.replace(/[^A-Za-z0-9+/=]/g,'')); return mgBin(b); }catch(e){ return new Uint8Array(0); } }
+function mgFromQp(s,hdr){
+  if(hdr) s=s.replace(/_/g,' ');
+  s=s.replace(/=\r?\n/g,'');
+  const out=[]; for(let i=0;i<s.length;i++){ const c=s[i];
+    if(c==='=' && /^[0-9A-Fa-f]{2}$/.test(s.substr(i+1,2))){ out.push(parseInt(s.substr(i+1,2),16)); i+=2; } else out.push(s.charCodeAt(i)&255); }
+  return Uint8Array.from(out);
+}
+// =?utf-8?B?…?= / =?koi8-r?Q?…?= в заголовках
+function mgMimeWords(s){
+  s=String(s);
+  if(/[\x80-\xff]/.test(s)){ try{ s=new TextDecoder('utf-8',{fatal:true}).decode(mgBin(s)); }catch(e){} }    // сырой UTF-8 в заголовке (RFC 6532) или latin1
+  return s.replace(/(=\?[^?]+\?[bBqQ]\?[^?]*\?=)\s+(?==\?)/g,'$1').replace(/=\?([^?]+)\?([bBqQ])\?([^?]*)\?=/g,(_,cs,e,t)=>mgDecode(e.toLowerCase()==='b' ? mgFromB64(t) : mgFromQp(t,true),cs));
+}
+function mgHeaders(block){
+  const h={}; const lines=block.replace(/\r\n/g,'\n').replace(/\n[ \t]+/g,' ').split('\n');
+  for(const l of lines){ const i=l.indexOf(':'); if(i>0){ const k=l.slice(0,i).trim().toLowerCase(); if(!(k in h)) h[k]=l.slice(i+1).trim(); } }
+  return h;
+}
+const mgParam=(v,name)=>{ const m=new RegExp(name+'\\s*=\\s*(?:"([^"]*)"|([^;\\s]+))','i').exec(v||''); return m ? (m[1]!==undefined ? m[1] : m[2]) : ''; };
+function mgPart(raw){
+  const i=raw.search(/\r?\n\r?\n/);
+  const head=i<0 ? raw : raw.slice(0,i);
+  return {h:mgHeaders(head),body:i<0 ? '' : raw.slice(i).replace(/^\r?\n\r?\n/,'')};
+}
+function mgBodyText(raw,depth){
+  const {h,body}=mgPart(raw), ct=(h['content-type']||'text/plain').toLowerCase();
+  if(ct.startsWith('multipart/') && depth<5){
+    const b=mgParam(h['content-type'],'boundary'); if(!b) return '';
+    const parts=body.split('--'+b).slice(1).filter(p=>!p.startsWith('--')).map(p=>p.replace(/^\r?\n/,''));
+    let html='';
+    for(const p of parts){
+      const t=mgBodyText(p,depth+1); if(!t.text) continue;
+      if(t.html) html=html||t.text; else return t;
+    }
+    return html ? {text:html,html:true} : {text:''};
+  }
+  if(!ct.startsWith('text/')) return {text:''};
+  const cte=(h['content-transfer-encoding']||'7bit').toLowerCase();
+  const bytes=cte==='base64' ? mgFromB64(body) : cte==='quoted-printable' ? mgFromQp(body) : mgBin(body);
+  let text=mgDecode(bytes,mgParam(h['content-type'],'charset')||'utf-8');
+  const html=ct.startsWith('text/html');
+  if(html) text=text.replace(/<(script|style)[\s\S]*?<\/\1>/gi,'').replace(/<br\s*\/?>|<\/p>|<\/div>/gi,'\n').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
+  return {text:text.replace(/\r\n/g,'\n').trim(),html};
+}
+function mgMailParse(raw){                                   // → {from,fromAddr,subject,date,text}
+  const {h}=mgPart(raw);
+  const from=mgMimeWords(h.from||''), m=/<([^>]+)>/.exec(from), addr=m ? m[1] : from.trim();
+  const name=from.replace(/<[^>]*>/,'').replace(/^"|"\s*$/g,'').trim();
+  return {from:name||addr,fromAddr:addr,subject:mgMimeWords(h.subject||''),date:h.date||'',text:mgBodyText(raw,0).text};
+}
+const mgAscii=s=>/^[\x20-\x7e]*$/.test(s);
+const mgMimeWord=s=>mgAscii(s) ? s : '=?UTF-8?B?'+mgB64(mgUtf8(s))+'?=';
+function mgMailCompose(o){                                   // → строка письма с CRLF
+  const wrap=s=>s.replace(/.{1,76}/g,'$&\r\n');
+  const hdr=['From: '+mgLine(o.from),'To: '+mgLine(o.to),'Subject: '+mgMimeWord(mgLine(o.subject||'')),
+    'Date: '+new Date(o.date||Date.now()).toUTCString().replace('GMT','+0000'),'Message-ID: <'+(o.id||mgHex(mgRandom(8)))+'@dsp>',
+    'MIME-Version: 1.0','Content-Type: text/plain; charset=utf-8','Content-Transfer-Encoding: base64','X-Mailer: DSP workbench'];
+  return hdr.join('\r\n')+'\r\n\r\n'+wrap(mgB64(mgUtf8(String(o.body||''))));
+}
+
+// ---------- IMAP: клиент с опросом (без IDLE) ----------
+// Ответы читаем целиком вместе с литералами {n}\r\n<n байт>: возвращает {text,lits,rest} или null, если ответ ещё не дошёл
+function mgImapNext(buf){
+  let pos=0, text='', lits=[];
+  for(;;){
+    const i=buf.indexOf('\r\n',pos); if(i<0) return null;
+    const line=buf.slice(pos,i), lit=/\{(\d+)\}$/.exec(line);
+    if(lit){
+      const n=+lit[1], start=i+2; if(buf.length<start+n) return null;
+      text+=line.slice(0,lit.index)+'\0'+lits.length+'\0'; lits.push(buf.slice(start,start+n)); pos=start+n; continue;
+    }
+    return {text:text+line,lits,rest:buf.slice(i+2)};
+  }
+}
+const mgImapQ=s=>'"'+String(s).replace(/[\\"]/g,'\\$&')+'"';
+// o: {user,pass,box,history (сек),secure,insecure,write(str),tls(done),onMsg,onStatus}
+function mgImapClient(o){
+  let buf='', n=0, cur=null, q=[], caps='', tlsDone=!!o.secure, last=0, busy=false, ready=false, greeted=false, dead=false;
+  const box=o.box||'INBOX';
+  function pump(){ if(cur || !q.length || dead) return; cur=q.shift(); cur.tag='a'+(++n); o.write(cur.tag+' '+cur.cmd+'\r\n'); }
+  function cmd(c,cb,cont){ q.push({cmd:c,cb,cont,un:[]}); pump(); }
+  function fail(t){ if(!dead){ dead=true; o.onStatus(t,'fatal'); } }
+  function done(ok,text){ const c=cur; cur=null; if(c.cb) c.cb(ok,c.un,text); pump(); }
+  function resp(r){
+    const t=r.text;
+    if(!greeted && /^\* (OK|PREAUTH)/i.test(t)){ greeted=true; hello(); return; }
+    if(t[0]==='+' && cur && cur.cont){ o.write(cur.cont+'\r\n'); cur.cont=null; return; }
+    if(cur && t.startsWith(cur.tag+' ')){ done(/^\S+ OK/i.test(t),t); return; }
+    if(t[0]==='*' && cur) cur.un.push(r);
+  }
+  function hello(){
+    cmd('CAPABILITY',(ok,un)=>{
+      caps=un.map(x=>x.text).join(' ').toUpperCase();
+      if(!tlsDone){
+        if(caps.includes('STARTTLS')){ cmd('STARTTLS',ok2=>{ if(!ok2) return fail('STARTTLS refused'); o.onStatus('upgrading to TLS…','connecting'); o.tls(()=>{ tlsDone=true; buf=''; hello2(); }); }); return; }
+        if(!o.insecure) return fail('server offers no STARTTLS — the password would travel in clear text');
+      }
+      hello2();
+    });
+  }
+  function hello2(){
+    const user=String(o.user), pass=String(o.pass);
+    const after=(ok,un,text)=>{
+      if(!ok) return fail('login refused'+(/\]|\s/.test(text||'') ? ': '+String(text).replace(/^\S+ (NO|BAD)\s*/i,'').slice(0,80) : ''));
+      cmd('SELECT '+mgImapQ(box),(ok2,un2)=>{
+        if(!ok2) return fail('cannot open mailbox '+box);
+        const nx=un2.map(x=>/\[UIDNEXT (\d+)\]/i.exec(x.text)).find(Boolean);
+        last=nx ? +nx[1]-1 : 0; ready=true; o.onStatus('connected, '+box+(nx ? '' : ''),'up');
+      });
+    };
+    if(mgAscii(user+pass) && !/[\r\n]/.test(user+pass)) cmd('LOGIN '+mgImapQ(user)+' '+mgImapQ(pass),after);
+    else cmd('AUTHENTICATE PLAIN',after,mgB64(mgUtf8('\0'+user+'\0'+pass)));
+  }
+  function fetchOne(uid,cb){
+    cmd('UID FETCH '+uid+' (BODY.PEEK[])',(ok,un)=>{
+      if(ok) for(const r of un){
+        if(!/ FETCH /i.test(r.text) || !r.lits.length) continue;
+        const m=mgMailParse(r.lits[0]);
+        o.onMsg({from:m.from,fromAddr:m.fromAddr,to:o.user,subject:m.subject,text:(m.subject ? '['+m.subject+'] ' : '')+m.text.slice(0,2000),t:Date.now(),id:String(uid),kind:'mail'});
+      }
+      cb();
+    });
+  }
+  return {
+    get ready(){ return ready; },
+    start(){ o.onStatus('waiting for the server…','connecting'); },
+    feed(s){
+      buf+=s;
+      for(;;){ const r=mgImapNext(buf); if(!r) return; buf=r.rest; resp(r); }
+    },
+    poll(){
+      if(!ready || busy || dead) return; busy=true;
+      const first=o.history>0 && !this.sinceDone; this.sinceDone=true;
+      let crit='UID '+(last+1)+':*';
+      if(first){ const d=new Date(Date.now()-o.history*1000); crit='SINCE '+d.getUTCDate()+'-'+['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()]+'-'+d.getUTCFullYear(); }
+      cmd('UID SEARCH '+crit,(ok,un)=>{
+        if(!ok){ busy=false; return; }
+        const ids=un.flatMap(x=>(/^\* SEARCH ?(.*)$/i.exec(x.text)||[,''])[1].split(' ').filter(Boolean).map(Number)).filter(i=>i>last).sort((a,b)=>a-b);
+        const next=()=>{ if(!ids.length){ busy=false; return; } const id=ids.shift(); last=Math.max(last,id); fetchOne(id,next); };
+        next();
+      });
+    },
+    quit(){ dead=true; try{ o.write('a99 LOGOUT\r\n'); }catch(e){} },
+  };
+}
+
+// ---------- SMTP: одно письмо за соединение ----------
+// o: {host,user,pass,from,to,subject,body,secure,insecure,name,write(str),tls(done),done(err|null)}
+function mgSmtpClient(o){
+  let buf='', st='greet', tlsDone=!!o.secure, exts='', ended=false, authStep=0;
+  const w=s=>o.write(s+'\r\n');
+  const end=err=>{ if(!ended){ ended=true; o.done(err); } };
+  const mail=mgMailCompose({from:o.from,to:o.to,subject:o.subject,body:o.body});
+  const addr=a=>(/<([^>]+)>/.exec(a)||[,a])[1];
+  function reply(code,lines){
+    const ok=code<400, text=lines.join(' ').slice(0,100);
+    if(!ok && st!=='quit') return end('SMTP '+code+' '+text);
+    switch(st){
+      case 'greet': st='ehlo'; w('EHLO '+(o.name||'dsp.local')); break;
+      case 'ehlo': exts=lines.join('\n').toUpperCase();
+        if(!tlsDone){
+          if(/STARTTLS/.test(exts)){ st='starttls'; w('STARTTLS'); return; }
+          if(!o.insecure) return end('server offers no STARTTLS — the password would travel in clear text');
+        }
+        auth(); break;
+      case 'starttls': o.tls(()=>{ tlsDone=true; buf=''; st='ehlo'; w('EHLO '+(o.name||'dsp.local')); }); break;
+      case 'auth': if(code===334){ authStep++; w(authStep===1 ? mgB64(mgUtf8(o.user)) : mgB64(mgUtf8(o.pass))); } else { st='from'; w('MAIL FROM:<'+addr(o.from)+'>'); } break;
+      case 'from': st='rcpt'; w('RCPT TO:<'+addr(o.to)+'>'); break;
+      case 'rcpt': st='data'; w('DATA'); break;
+      case 'data': st='body'; o.write(mail.replace(/^\./gm,'..')+'\r\n.\r\n'); break;
+      case 'body': st='quit'; w('QUIT'); end(null); break;
+    }
+  }
+  function auth(){
+    if(!o.user){ st='from'; w('MAIL FROM:<'+addr(o.from)+'>'); return; }
+    st='auth';
+    if(/AUTH[^\n]*PLAIN/.test(exts)) w('AUTH PLAIN '+mgB64(mgUtf8('\0'+o.user+'\0'+o.pass)));
+    else if(/AUTH[^\n]*LOGIN/.test(exts)) w('AUTH LOGIN');
+    else end('server offers no PLAIN / LOGIN authentication');
+  }
+  let lines=[];
+  return {
+    feed(s){
+      buf+=s; let i;
+      while((i=buf.indexOf('\n'))>=0){
+        const l=buf.slice(0,i).replace(/\r$/,''); buf=buf.slice(i+1);
+        const m=/^(\d{3})([ -])(.*)$/.exec(l); if(!m) continue;
+        lines.push(m[3]);
+        if(m[2]===' '){ const ls=lines; lines=[]; reply(+m[1],ls); }
+      }
+    },
+    abort(){ end('connection closed'); },
+  };
+}
