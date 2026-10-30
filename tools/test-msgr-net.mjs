@@ -286,6 +286,32 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
   ok('email through the Node bridge (binary-safe)', P.msgs[0]?.text === '[via bridge] привет через мост', JSON.stringify(P.msgs)); P.s.close();
 }
 
+// ---- SMS через приложение DSP (имитация сокета телефона) ----
+{ const cmds = []; let url = '', phone = null;
+  const srv = http.createServer(); servers.push(srv);
+  srv.on('upgrade', (req, sock) => {
+    url = req.url; phone = sock;
+    sock.write('HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: ' + wsAccept(req.headers['sec-websocket-key']) + '\r\n\r\n');
+    const send = a => sock.write(wsFrame(JSON.stringify(a)));
+    sock.on('data', wsParser({onMsg: t => { const m = JSON.parse(t); cmds.push(m);
+      if (m.cmd === 'sms.send') send({src: 'cmd', cmd: 'sms.send', id: m.id, ...(m.to === '+70000000000' ? {ok: false, err: 'permission'} : {ok: true})}); }, onClose() {}, onPing() {}}));
+    sock.on('error', () => {});
+  });
+  const port = await listen(srv);
+  const A = rig('sms', {server: 'ws://127.0.0.1:' + port, appKey: 'KEY' + rnd(), nick: 'я'});
+  await until(() => A.state() === 'up' && cmds.length);
+  ok('sms: subscribes to incoming SMS', JSON.stringify(cmds[0]) === '{"sub":["sms"]}', JSON.stringify(cmds));
+  ok('sms: app key goes into the address', /^\/\?k=KEY/.test(url), url);
+  phone.write(wsFrame(JSON.stringify({src: 'sms', dir: 'in', addr: '+79001234567', body: 'привет с телефона', t: 5})));
+  await until(() => A.msgs.length);
+  ok('sms: incoming message', A.msgs[0]?.from === '+79001234567' && A.msgs[0].text === 'привет с телефона', JSON.stringify(A.msgs));
+  ok('sms: send with @number', await A.s.send('@+79001234567 ответ') === true && cmds.at(-1).cmd === 'sms.send' && cmds.at(-1).to === '+79001234567' && cmds.at(-1).text === 'ответ', JSON.stringify(cmds.at(-1)));
+  ok('sms: own message echoed after the phone confirms', A.msgs.at(-1).self === true && A.msgs.at(-1).text === 'ответ');
+  ok('sms: permission error is reported and not echoed', await A.s.send('x', '+70000000000') === false && /allow SMS/.test(A.st.at(-1)[1]) && A.msgs.length === 2, JSON.stringify(A.st.at(-1)));
+  ok('sms: bad number refused without asking the phone', await A.s.send('x', 'bob') === false && cmds.length === 3);
+  A.s.close();
+}
+
 // ---- XMPP (TCP без TLS, insecure) ----
 { const rx = [];
   const srv = net.createServer(sock => {

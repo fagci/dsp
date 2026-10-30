@@ -3,7 +3,7 @@
    Один интерфейс на все каналы: mgConnect(proto, cfg, cb) → {send(text,to), close()}.
    Работает и в странице, и в Node-мосте (tools/node/bridge.mjs) — транспорт подставляется через cfg.io:
    {ws(url) → WebSocket, fetch, tcp(host,port,tls,h) → {write,upgrade(done),close}}, по умолчанию — глобальные.
-   proto: nostr | ntfy | matrix | telegram | irc | xmpp | aprs | email.
+   proto: nostr | ntfy | matrix | telegram | irc | xmpp | aprs | email | sms.
    cfg:   server, channel, user, pass, nick, key (Nostr), token, history (сек), verify, retry, bridge, via, io.
    cb:    msg({from,to,text,t,self,…}), status(text, state), state: connecting | up | down | warn | fatal.
    Свои сообщения приходят обратно тем же msg с self:true (от сервера или, где сервер не возвращает, локально). */
@@ -325,6 +325,44 @@ function mgOpenEmail(cfg,c){
   };
 }
 
+/* ---------- SMS: через приложение DSP на Android (tools/android): сокет телефона, подписка sms и команда sms.send ---------- */
+// Работает только со страницы самого приложения: ключ (?k=) знает лишь она. Входящие — записи {src:'sms',dir:'in',addr,body}.
+function mgOpenSms(cfg,c){
+  const io=mgIo(cfg);
+  let u; try{ u=new URL(String(cfg.server||'').trim() || 'ws://127.0.0.1:8765'); }catch(e){ c.down('SMS: bad address of the phone app',true); return mgNone; }
+  if(u.protocol!=='ws:' && u.protocol!=='wss:'){ c.down('SMS: the address must start with ws://',true); return mgNone; }
+  if(cfg.appKey && /^(127\.\d+\.\d+\.\d+|localhost|\[::1\])$/.test(u.hostname) && !u.searchParams.has('k')) u.searchParams.set('k',cfg.appKey);
+  let ws, closed=false, seq=0; const wait=new Map();
+  try{ ws=io.ws(u.toString()); }catch(e){ c.down('SMS: '+e.message,false); return mgNone; }
+  ws.onopen=()=>{ ws.send(JSON.stringify({sub:['sms']})); c.status('connected to the phone app, waiting for SMS','up'); };
+  ws.onerror=()=>{};
+  ws.onclose=()=>{ for(const w of wait.values()){ clearTimeout(w.t); w.res(false); } wait.clear(); if(!closed) c.down('SMS: phone app connection closed',false); };
+  ws.onmessage=e=>{
+    let r; try{ r=JSON.parse(String(e.data)); }catch(x){ return; }
+    if(r.src==='sms' && r.dir==='in') c.msg({from:String(r.addr||'?'),to:'me',text:String(r.body||''),t:+r.t || Date.now(),id:String(r.id||'')});
+    else if(r.src==='cmd' && wait.has(r.id)){
+      const w=wait.get(r.id); wait.delete(r.id); clearTimeout(w.t);
+      if(!r.ok) c.status('SMS: '+(r.err==='permission' ? 'allow SMS for the DSP app on the phone, then repeat' : r.err==='forbidden' ? 'only the page of the DSP app may send SMS' : r.err==='rate' ? 'too many SMS (5 a minute)' : (r.msg || r.err || 'send failed')),'warn');
+      w.res(!!r.ok);
+    } else if(r.src==='bridge' && (r.level==='warn' || r.level==='error')) c.status('phone app: '+r.msg,'warn');
+  };
+  return {
+    send(text,to){
+      text=String(text||''); const a=/^@(\+?[0-9][0-9 ()-]{2,19})\s+([\s\S]+)$/.exec(text);
+      if(a){ to=a[1]; text=a[2]; }
+      to=String(to||'').trim();
+      if(!/^\+?[0-9][0-9 ()-]{2,19}$/.test(to)){ c.status('SMS: address a message as «@+79001234567 text» or with the «to» input','warn'); return Promise.resolve(false); }
+      if(ws.readyState!==1) return Promise.resolve(false);
+      const id=++seq;
+      return new Promise(res=>{
+        wait.set(id,{res:ok=>{ if(ok) c.msg({from:String(cfg.nick||'me'),to,text,t:Date.now(),self:true,local:true}); res(ok); },t:setTimeout(()=>{ wait.delete(id); c.status('SMS: the phone did not answer','warn'); res(false); },30000)});
+        ws.send(JSON.stringify({cmd:'sms.send',id,to,text}));
+      });
+    },
+    close(){ closed=true; for(const w of wait.values()) clearTimeout(w.t); wait.clear(); ws.onopen=ws.onmessage=ws.onerror=ws.onclose=null; try{ ws.close(); }catch(e){} },
+  };
+}
+
 /* ---------- сессия на Node-мосте: те же сообщения, но протокол живёт на стороне моста ---------- */
 function mgOpenRemote(proto,cfg,c){
   const io=mgIo(cfg), url=String(cfg.bridge||'').trim();
@@ -346,7 +384,7 @@ function mgOpenRemote(proto,cfg,c){
   };
 }
 
-const MG_OPEN={nostr:mgOpenNostr,ntfy:mgOpenNtfy,matrix:mgOpenMatrix,telegram:mgOpenTelegram,irc:mgOpenIrc,xmpp:mgOpenXmpp,aprs:mgOpenAprs,email:mgOpenEmail};
+const MG_OPEN={nostr:mgOpenNostr,ntfy:mgOpenNtfy,matrix:mgOpenMatrix,telegram:mgOpenTelegram,irc:mgOpenIrc,xmpp:mgOpenXmpp,aprs:mgOpenAprs,email:mgOpenEmail,sms:mgOpenSms};
 const mgNeedsTcp=(proto,cfg)=>proto==='xmpp' || proto==='aprs' || proto==='email' || (proto==='irc' && !/^wss?:\/\//i.test(String(cfg.server||'').trim()));
 
 // cfg.via: 'auto' (мост — только где нужен TCP), 'page' (всё из страницы), 'bridge' (всё через мост); cfg.retry — переподключаться
