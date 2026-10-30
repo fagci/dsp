@@ -530,6 +530,9 @@ const PRESET_CATS={
   'Indicators: Sky Plot, S-Meter, Text Ticker':'Analysis & Measurement',
   'Indicators: Switches and Attitude':'Analysis & Measurement',
   'Indicators: Knobs, Faders, XY Pad and Tank':'Analysis & Measurement',
+  'Panels: Radio Displays (Base and Mobile) and a Key Panel':'Analysis & Measurement',
+  'Panels: Metal Detector from the Magnetometer and Other Detectors':'Analysis & Measurement',
+  'Panels: Needle Meter, Speedometer, Counters, Nixie, D-pad and Spectrum Display':'Analysis & Measurement',
   'Logic Analyzer: UART Decode':'Analysis & Measurement',
   'Timeline: Periods, Durations and Replies on the Air (Table)':'Analysis & Measurement',
   'Timeline: Clip Arranger (edit with the mouse, mix, markers)':'Analysis & Measurement',
@@ -720,7 +723,7 @@ preset('Studio: Sleep Mixer', function(){
   const o1=addNode('osc',40,40,{wave:'sine',freq:55,amp:.5}), o2=addNode('osc',40,200,{wave:'sine',freq:82.4,amp:.4}), nz=addNode('osc',40,360,{wave:'noise',amp:.5});
   const lf=addNode('lfo',40,520,{freq:.07,min:.2,max:.5});
   const dc=addNode('dac',1340,40,{vol:.5,mode:'stereo'});
-  addEdge(o1.id,'out',mx.id,'in1'); addEdge(o2.id,'out',mx.id,'in2'); addEdge(nz.id,'out',mx.id,'in3');
+  addEdge(o1.id,'out',mx.id,'a'); addEdge(o2.id,'out',mx.id,'b'); addEdge(nz.id,'out',mx.id,'in3');
   addEdge(lf.id,'out',o2.id,'amp');
   addEdge(mx.id,'L',dc.id,'L'); addEdge(mx.id,'R',dc.id,'R');
   const nt=addNode('note',40,640,{text:'Mixer (Studio) mixes any signals: 8 inputs (in1…in8) with level, pan, mute / solo, FX chain per strip,\n'+
@@ -6968,6 +6971,78 @@ addEdge(kb.id,'out1',l1.id,'freq'); addEdge(kb.id,'out2',l2.id,'freq');
 addEdge(l1.id,'out',tk.id,'in'); addEdge(l1.id,'out',tr.id,'in');
 for(let k=1;k<=4;k++) addEdge(fd.id,'out'+k,lp.id,'in'+k);
 addEdge(xy.id,'x',cp.id,'az'); addEdge(xy.id,'y',gg.id,'in');
+markWiresDirty();
+});
+preset('Panels: Radio Displays (Base and Mobile) and a Key Panel', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Radio faceplates are plain displays: they only draw what arrives on the wires (freq, s in dBm, mode, name, tx, sql…). The buttons are a separate Key Panel node, so one panel can drive any display, a real radio control node or a Rule.\n'+
+  'Here PTT (first key) lights TX and SQL (third) lights BUSY on both radios. Base station: big 7-segment frequency, mode badges, S-meter S1…S9+60. Mobile: an LCD with a backlight of ANY colour (hue slider 0–360 or #rrggbb; «positive» is a dark-on-lit panel). Unlit segments are almost invisible.'});
+nt.size.w=1100; nt.size.h=100; applySize(nt);
+const fr=addNode('lfo',40,170,{freq:.03,min:14000000,max:14350000});
+const sg=addNode('lfo',40,320,{freq:.2,min:-120,max:-50});
+const md=addNode('textsrc',40,470,{text:'USB'}); const nm=addNode('textsrc',40,720,{text:'NET 20 m'});
+const ch=addNode('const',40,970,{v:7}); const vl=addNode('const',40,1070,{v:.6}); const bt=addNode('const',40,1170,{v:.8});
+const kp=addNode('keypanel',380,170,{layout:'radio',mode:'push',style:'rubber',cols:4});
+kp.size.w=360; kp.size.h=200; applySize(kp);
+const rb=addNode('radiobase',800,170,{model:'DSP-1000',color:'amber'});
+rb.size.w=520; rb.size.h=190; applySize(rb);
+const rm=addNode('radiomobile',800,520,{model:'DSP-H5',hue:150,style:'negative'});
+rm.size.w=300; rm.size.h=190; applySize(rm);
+const r2=addNode('radiomobile',1180,520,{model:'DSP-M1',hue:200,style:'positive'});
+r2.size.w=300; r2.size.h=190; applySize(r2);
+const r3=addNode('radiomobile',800,960,{model:'DSP-V8',color:'#ff5a8a',style:'negative',decimals:3,digits:7});
+r3.size.w=300; r3.size.h=190; applySize(r3);
+for(const r of [rb,rm,r2,r3]){ addEdge(fr.id,'out',r.id,'freq'); addEdge(sg.id,'out',r.id,'s'); addEdge(md.id,'text',r.id,'mode'); addEdge(nm.id,'text',r.id,'name'); addEdge(kp.id,'k1',r.id,'tx'); addEdge(kp.id,'k3',r.id,'sql'); }
+for(const r of [rm,r2,r3]){ addEdge(ch.id,'out',r.id,'ch'); addEdge(vl.id,'out',r.id,'vol'); addEdge(bt.id,'out',r.id,'batt'); }
+markWiresDirty();
+});
+preset('Panels: Metal Detector from the Magnetometer and Other Detectors', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Detector, «metal» style: a needle and a target ID. The field vector (x, y, z in µT) is compared with a slowly following baseline (auto ground balance), so a static offset disappears and only a change — iron coming close — moves the needle. A click on the display sets the baseline by hand. Target ID is a heuristic: a stronger field than the ground gives high numbers, a weaker one low numbers.\n'+
+  'Top: a simulated magnetometer (LFOs). Bottom left: the real thing — Phone sensors with «magnetometer» ticked (Termux bridge or the DSP app), wave the phone over metal. Other styles: bug (LED ladder), emf (five lamps), geiger (counts per minute → µSv/h). Outputs: level, delta, id, alarm and a tone frequency for an oscillator.'});
+nt.size.w=1200; nt.size.h=130; applySize(nt);
+const X=addNode('lfo',40,190,{freq:.13,min:19,max:30}), Y=addNode('lfo',40,300,{freq:.17,min:4,max:9}), Z=addNode('lfo',40,410,{freq:.11,min:-44,max:-30});
+const d1=addNode('detector',320,190,{style:'metal',full:12,sens:1.5,bal:6});
+d1.size.w=380; d1.size.h=220; applySize(d1);
+addEdge(X.id,'out',d1.id,'x'); addEdge(Y.id,'out',d1.id,'y'); addEdge(Z.id,'out',d1.id,'z');
+const tx=addNode('termux',40,640,{url:'ws://127.0.0.1:8765',mag:true});
+const d2=addNode('detector',320,640,{style:'metal',full:20,sens:1,bal:8});
+d2.size.w=380; d2.size.h=220; applySize(d2);
+addEdge(tx.id,'mx',d2.id,'x'); addEdge(tx.id,'my',d2.id,'y'); addEdge(tx.id,'mz',d2.id,'z');
+const L1=addNode('lfo',760,190,{freq:.15,min:0,max:10}), L2=addNode('lfo',760,560,{freq:.2,min:0,max:5}), L3=addNode('lfo',760,930,{freq:.1,min:0,max:600});
+const d3=addNode('detector',1000,190,{style:'bug',full:10,bal:0,unit:'dBm'}); d3.size.w=380; d3.size.h=170; applySize(d3);
+const d4=addNode('detector',1000,560,{style:'emf',full:5,bal:0,unit:'mG'}); d4.size.w=380; d4.size.h=170; applySize(d4);
+const d5=addNode('detector',1000,930,{style:'geiger'}); d5.size.w=380; d5.size.h=170; applySize(d5);
+addEdge(L1.id,'out',d3.id,'in'); addEdge(L2.id,'out',d4.id,'in'); addEdge(L3.id,'out',d5.id,'in');
+const al=addNode('lamps',320,1060,{count:'2',labels:'metal alarm, field alarm',colors:'red, amber'}); al.size.w=300; al.size.h=80; applySize(al);
+addEdge(d1.id,'alarm',al.id,'in1'); addEdge(d4.id,'alarm',al.id,'in2');
+markWiresDirty();
+});
+preset('Panels: Needle Meter, Speedometer, Counters, Nixie, D-pad and Spectrum Display', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'More faceplates. Needle Meter: a backlit VU-style panel with ballistics, a red zone and a peak lamp (1 or 2 channels, any dial colour). Speedometer: needle plus a mechanical odometer and a trip counter that survive a reload (a click on the drum or a pulse on «reset» zeroes the trip); the wire carries m/s (GPS speed), the dial shows km/h, mph, m/s or knots.\n'+
+  'Counter: mechanical drum or LED, counts rising edges on in / up / down; here the D-pad centre key adds one, the square wave adds too. Nixie tubes show the count. Spectrum Display: a lab CRT with a graticule (or a colour handheld LCD), peak hold and a marker; a Knob on its «ref» pin sets the top of the scale. D-pad: four sides, OK and four corner buttons in a square.'});
+nt.size.w=1300; nt.size.h=130; applySize(nt);
+const a1=addNode('lfo',40,190,{freq:.3,min:-20,max:3}), a2=addNode('lfo',40,350,{freq:.23,min:-20,max:3});
+const vu=addNode('vumeter',300,190,{channels:'2',face:'cream'}); vu.size.w=380; vu.size.h=170; applySize(vu);
+addEdge(a1.id,'out',vu.id,'in'); addEdge(a2.id,'out',vu.id,'in2');
+const sp=addNode('lfo',40,510,{freq:.04,min:0,max:38});
+const so=addNode('speedo',300,600,{}); so.size.w=300; so.size.h=280; applySize(so);
+addEdge(sp.id,'out',so.id,'in');
+const sq=addNode('lfo',700,190,{freq:1.5,min:0,max:1,wave:'sq'});
+const ct=addNode('counter',920,190,{style:'drum',digits:6}); ct.size.w=300; ct.size.h=70; applySize(ct);
+const c2=addNode('counter',920,480,{style:'led',digits:6,color:'red'}); c2.size.w=300; c2.size.h=70; applySize(c2);
+const nx=addNode('nixie',700,480,{digits:6}); nx.size.w=360; nx.size.h=130; applySize(nx);
+addEdge(sq.id,'out',ct.id,'in'); addEdge(ct.id,'count',nx.id,'in');
+const dp=addNode('dpad',700,820,{}); dp.size.w=220; dp.size.h=220; applySize(dp);
+const lp=addNode('lamps',1000,820,{count:'5',labels:'up, down, left, right, ok',colors:'green'}); lp.size.w=330; lp.size.h=90; applySize(lp);
+['up','down','left','right','ok'].forEach((k,i)=>addEdge(dp.id,k,lp.id,'in'+(i+1)));
+addEdge(dp.id,'ok',c2.id,'up');
+const o1=addNode('osc',40,820,{freq:900,amp:.3}), o2=addNode('osc',40,1100,{freq:2400,amp:.1});
+const mx=addNode('mixer',300,1130,{channels:'2'}); const ff=addNode('fft',560,1130,{size:'4096'});
+const sd=addNode('specdisp',820,1230,{style:'lab',color:'green'}); sd.size.w=560; sd.size.h=300; applySize(sd);
+const kn=addNode('knob',1300,820,{count:'1',min:-40,max:20,init:-10,labels:'ref dB'}); kn.size.w=120; kn.size.h=90; applySize(kn);
+addEdge(o1.id,'out',mx.id,'a'); addEdge(o2.id,'out',mx.id,'b'); addEdge(mx.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sd.id,'spec'); addEdge(kn.id,'out1',sd.id,'ref');
 markWiresDirty();
 });
 preset('ADS-B: Radar and Attitude (Generator)', function(){
