@@ -11,7 +11,7 @@ const OWRX_OUT=12000, OWRX_HD=44100;                       // запрошенн
 
 function owrxWsUrl(a){
   if(Net.proxy){
-    let u=Net.url(`http${a.tls?'s':''}://${a.host}:${a.port}/ws/`);
+    let u=Net.url(`http${a.tls?'s':''}://${a.host}:${a.port}/ws/`,true);
     if(!/^[a-z]+:\/\//i.test(u)) u=new URL(u,location.href).href;
     return u.replace(/^http/i,'ws');
   }
