@@ -1142,6 +1142,11 @@ Visual blocks on number wires (Indicators). They draw on a dark screen in both t
   - **Counter**: mechanical drum or LED, counts rising edges on `in` / `up`, `down`, `reset`; **Nixie Tubes**: glowing tubes with the unlit cathode stack behind.
   - **Key Panel**: hardware-style keys (layouts radio, scanner, numeric, transport, tuning or your own list; push or latch; rubber / mechanical / flat / round); outputs `k1…kN`, `last`, `key`, `hit`.
   - **D-pad**: four sides, OK and four corner buttons (`a`…`d`, labels are yours) inside a square; outputs `up down left right ok a b c d`, axes `x` `y`, `key`.
+  - **Rotary Selector**: a wafer switch with 2…12 positions (click / drag the knob, the wheel steps), outputs `pos`, `val` (your value list) and `label`. **Jog Wheel**: an endless encoder with a push button — `delta` per block, accumulated `pos` (step per detent), `dir`, `push`, `rec`.
+  - **DIP Switch**: 4…16 sliders, outputs `b1…bN`, `value` and `bits`. **Flip Clock**: split-flap cards for the time (local / UTC, 12 / 24 h, seconds) or for any number.
+  - **Character Display**: 5×7 dot-matrix text — LCD (dark dots on a lit panel), negative LCD, VFD or OLED, 8…40 columns, 1…4 lines from `l1…l4` / `text`, backlight of any colour.
+  - **Goniometer**: a vectorscope of two `sig` wires (M/S axes at 45° or plain XY) with a correlation meter (`corr`, `bal`). **Thermometer**: a glass column (horizontal on a wide tile) or a dial, °C / °F / K, min / max markers (a click resets).
+  - **Phone volume keys**: Key Panel's layout *phone* puts a ready command on `cmd` (VOL− / VOL+ / MUTE → `vol.adjust`, PREV / PLAY / NEXT → `media`) for Phone Control; Key Panel and D-pad also emit `rec` records, and Rule has templates «volume up / down», «mute on / off».
   - Unlit segments of the 7-Segment Display and of these panels are almost invisible.
 - **Text Ticker**: the latest lines from `text` (a new string is a new line) and `rec` (the *field* is shown, or all fields as `key=value`), as a scrolling log with optional timestamps or as a running line (*marquee*). *Clear* empties it. Good for a decoder's messages next to the other indicators.
 
