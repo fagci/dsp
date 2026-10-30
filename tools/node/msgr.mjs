@@ -6,6 +6,7 @@
 //   node tools/node/msgr.mjs chat xmpp --user me@example.org --pass … --channel room@conference.example.org
 //   node tools/node/msgr.mjs chat ntfy --channel my-topic        (по умолчанию https://ntfy.sh)
 //   node tools/node/msgr.mjs chat telegram --pass <токен бота> [--channel <chat id>]
+//   node tools/node/msgr.mjs chat aprs --user N0CALL-7 [--pass <passcode>] --channel r/52.5/13.4/100   (сообщения: «@CALL текст»)
 //   node tools/node/msgr.mjs chat matrix --server https://matrix.org --user … --pass … --channel '!комната:сервер'
 // chat: входящие — в stdout, каждая строка stdin уходит в канал.
 //
@@ -35,7 +36,7 @@ if (cmd === 'chat') {
     server: {type: 'string', default: ''}, channel: {type: 'string', default: ''}, user: {type: 'string', default: ''},
     pass: {type: 'string', default: ''}, nick: {type: 'string', default: 'dsp'}, key: {type: 'string', default: ''},
     history: {type: 'string', default: '0'}, insecure: {type: 'boolean', default: false}}});
-  if (!proto) { console.error('usage: msgr.mjs chat <nostr|ntfy|matrix|telegram|irc|xmpp> [--server …] [--channel …] [--user …] [--pass …] [--nick …]'); process.exit(2); }
+  if (!proto) { console.error('usage: msgr.mjs chat <nostr|ntfy|matrix|telegram|irc|xmpp|aprs> [--server …] [--channel …] [--user …] [--pass …] [--nick …]'); process.exit(2); }
   const s = open({proto, ...a, history: +a.history || 0}, m => {
     console.log((m.self ? '→ ' : '') + (m.delay ? '(old) ' : '') + (m.from ? m.from + ': ' : '') + m.text);
   });

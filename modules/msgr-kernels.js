@@ -399,3 +399,94 @@ function mgXmppClient(o){
     quit(){ try{ w('</stream:stream>'); }catch(e){} closed=true; },
   };
 }
+
+// ---------- APRS-IS ----------
+// Пароль APRS-IS (passcode) — общеизвестная свёртка позывного. Сами его не подставляем: выход в эфир/сеть под позывным — для его владельца.
+function mgAprsPass(call){
+  call=String(call).toUpperCase().split('-')[0]; let h=0x73e2;
+  for(let i=0;i<call.length;i+=2){ h^=call.charCodeAt(i)<<8; if(i+1<call.length) h^=call.charCodeAt(i+1); }
+  return h&0x7fff;
+}
+const mgB91=s=>{ let v=0; for(const c of s) v=v*91+(c.charCodeAt(0)-33); return v; };
+// 'SRC>DST,PATH:payload' → {src,dst,path,kind,…}; kind: message | ack | rej | position | status | other; null — не пакет (комментарий сервера)
+function mgAprsParse(line){
+  line=String(line).replace(/[\r\n]+$/,'');
+  const i=line.indexOf(':'); if(i<0 || line[0]==='#') return null;
+  const head=line.slice(0,i), pl=line.slice(i+1), g=head.indexOf('>'); if(g<1 || !pl) return null;
+  const parts=head.slice(g+1).split(','), r={src:head.slice(0,g),dst:parts[0],path:parts.slice(1),kind:'other',raw:line};
+  const t=pl[0];
+  if(t===':'){
+    const m=/^:(.{9}):([\s\S]*)$/.exec(pl); if(!m) return r;
+    r.to=m[1].trim(); let text=m[2];
+    const ack=/^(ack|rej)([^\s{]{1,5})\s*$/.exec(text);
+    if(ack){ r.kind=ack[1]; r.id=ack[2]; return r; }
+    const b=/\{([^{]{1,5})$/.exec(text); if(b){ r.id=b[1]; text=text.slice(0,b.index); }
+    r.kind='message'; r.text=text; return r;
+  }
+  if(t==='>'){ r.kind='status'; r.text=pl.slice(1); return r; }
+  if(t==='!' || t==='=' || t==='/' || t==='@'){
+    const body=t==='!' || t==='=' ? pl.slice(1) : pl.slice(8);
+    let m=/^(\d{2})([\d ]{2}\.[\d ]{2})([NS])(.)(\d{3})([\d ]{2}\.[\d ]{2})([EW])(.)([\s\S]*)$/.exec(body);
+    if(m){
+      const f=s=>+s.replace(/ /g,'0');
+      r.lat=(+m[1]+f(m[2])/60)*(m[3]==='S' ? -1 : 1); r.lon=(+m[5]+f(m[6])/60)*(m[7]==='W' ? -1 : 1);
+      r.symbol=m[4]+m[8]; r.text=m[9]; r.kind='position'; return r;
+    }
+    m=/^([\/\\A-Za-j])([!-{]{4})([!-{]{4})(.)([\s\S]{2})([\s\S])([\s\S]*)$/.exec(body);   // сжатый вид
+    if(m){ r.lat=90-mgB91(m[2])/380926; r.lon=-180+mgB91(m[3])/190463; r.symbol=m[1]+m[4]; r.text=m[7]; r.kind='position'; }
+    return r;
+  }
+  return r;
+}
+const mgAprsPad=c=>String(c).toUpperCase().padEnd(9).slice(0,9);
+const mgAprsMsg=(src,to,text,id)=>src+'>APDSP,TCPIP*::'+mgAprsPad(to)+':'+mgLine(text)+(id ? '{'+id : '');
+const mgAprsAck=(src,to,id)=>src+'>APDSP,TCPIP*::'+mgAprsPad(to)+':ack'+id;
+// o: {call,pass (passcode; пусто или -1 — только приём),filter,write(line),onMsg,onStatus,ackMs,tries}
+function mgAprsClient(o){
+  const call=String(o.call||'').trim().toUpperCase();
+  const pass=/^\d+$/.test(String(o.pass||'').trim()) ? String(o.pass).trim() : '-1';
+  let n=0, ready=false; const wait=new Map();
+  const tx=pass!=='-1';
+  const self={
+    get ready(){ return ready; },
+    get canSend(){ return tx; },
+    start(){
+      o.write('user '+mgLine(call)+' pass '+pass+' vers DSP 1'+(o.filter ? ' filter '+mgLine(o.filter) : ''));
+      o.onStatus('logging in as '+call+'…','connecting');
+    },
+    feed(){ },
+    line(l){
+      if(l[0]==='#'){
+        const m=/logresp (\S+) (verified|unverified)/.exec(l);
+        if(m){ ready=true; o.onStatus('logged in as '+m[1]+' ('+m[2]+(m[2]==='unverified' ? ' — receive only' : '')+')'+(o.filter ? ', filter '+o.filter : ''),'up'); }
+        return;
+      }
+      const p=mgAprsParse(l); if(!p) return;
+      if(p.kind==='ack' || p.kind==='rej'){
+        if(p.to===call && wait.has(p.id)){ clearTimeout(wait.get(p.id).t); wait.delete(p.id); o.onStatus('message '+p.id+' '+(p.kind==='ack' ? 'delivered' : 'rejected by '+p.src),'up'); }
+        return;
+      }
+      if(p.kind==='message'){
+        if(p.to===call && p.id) o.write(mgAprsAck(call,p.src,p.id));       // подтверждаем получение
+        o.onMsg({from:p.src,to:p.to,text:p.text,t:Date.now(),id:p.id||'',kind:'message',direct:p.to===call,self:p.src===call});
+      } else if(p.kind==='position') o.onMsg({from:p.src,text:'',comment:p.text,lat:p.lat,lon:p.lon,symbol:p.symbol,t:Date.now(),kind:'position'});
+      else if(p.kind==='status') o.onMsg({from:p.src,text:'',comment:p.text,t:Date.now(),kind:'status'});
+    },
+    send(text,to){
+      if(!tx){ o.onStatus('APRS-IS: receive only — enter the passcode to send','warn'); return false; }
+      to=String(to||'').trim().toUpperCase();
+      if(!/^[A-Z0-9]{1,6}(-\d{1,2})?$/.test(to)){ o.onStatus('APRS-IS: address a message as «@CALL text» or with the «to» input','warn'); return false; }
+      for(const part of mgSplit(text,67)){
+        const id=String(++n%100000);
+        o.write(mgAprsMsg(call,to,part,id));
+        const line=mgAprsMsg(call,to,part,id);
+        const e={left:o.tries||3}; wait.set(id,e);
+        const again=()=>{ if(!wait.has(id)) return; if(--e.left<=0){ wait.delete(id); o.onStatus('message '+id+' to '+to+' not acknowledged','warn'); return; } o.write(line); e.t=setTimeout(again,o.ackMs||30000); };
+        e.t=setTimeout(again,o.ackMs||30000);
+      }
+      return true;
+    },
+    stop(){ for(const e of wait.values()) clearTimeout(e.t); wait.clear(); },
+  };
+  return self;
+}

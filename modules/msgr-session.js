@@ -3,7 +3,7 @@
    Один интерфейс на все каналы: mgConnect(proto, cfg, cb) → {send(text,to), close()}.
    Работает и в странице, и в Node-мосте (tools/node/bridge.mjs) — транспорт подставляется через cfg.io:
    {ws(url) → WebSocket, fetch, tcp(host,port,tls,h) → {write,upgrade(done),close}}, по умолчанию — глобальные.
-   proto: nostr | ntfy | matrix | telegram | irc | xmpp.
+   proto: nostr | ntfy | matrix | telegram | irc | xmpp | aprs.
    cfg:   server, channel, user, pass, nick, key (Nostr), token, history (сек), verify, retry, bridge, via, io.
    cb:    msg({from,to,text,t,self,…}), status(text, state), state: connecting | up | down | warn | fatal.
    Свои сообщения приходят обратно тем же msg с self:true (от сервера или, где сервер не возвращает, локально). */
@@ -257,6 +257,32 @@ function mgOpenXmpp(cfg,c){
   };
 }
 
+/* ---------- APRS-IS: TCP через io.tcp (aprs://host:14580). Сообщения «@CALL текст», позиции станций идут записями с lat/lon ---------- */
+function mgOpenAprs(cfg,c){
+  const io=mgIo(cfg), call=String(cfg.user||cfg.nick||'').trim().toUpperCase();
+  if(!/^[A-Z0-9]{1,6}(-\d{1,2})?$/.test(call)){ c.down('APRS-IS: enter your callsign in the user field (N0CALL-7)',true); return mgNone; }
+  const m=/^(?:aprs:\/\/)?([^/:]+)(?::(\d+))?\/?$/i.exec(String(cfg.server||'').trim() || 'rotate.aprs2.net:14580');
+  if(!m){ c.down('APRS-IS: server must be aprs://host:14580',true); return mgNone; }
+  if(!io.tcp){ c.down('APRS-IS needs the Node bridge (tools/node/bridge.mjs): set its address',true); return mgNone; }
+  const filter=String(cfg.channel||'').trim() || 'g/'+call;
+  let closed=false, raw=null, buf='';
+  const cl=mgAprsClient({call,pass:cfg.pass,filter,ackMs:cfg.ackMs,write:l=>{ try{ raw.write(l+'\r\n'); }catch(e){} },onMsg:x=>c.msg(x),
+    onStatus:(t,s)=>{ if(s==='fatal') c.down(t,true); else c.status(t,s); }});
+  raw=io.tcp(m[1],+m[2] || 14580,false,{
+    open:()=>cl.start(),
+    data:s=>{ buf+=s; let i; while((i=buf.indexOf('\n'))>=0){ const l=buf.slice(0,i).replace(/\r$/,''); buf=buf.slice(i+1); if(l) cl.line(l); } },
+    close:err=>{ if(!closed) c.down('APRS-IS: '+(err || 'connection closed'),false); }});
+  return {
+    send(text,to){
+      text=String(text||''); const a=/^@([A-Za-z0-9-]{1,9})\s+([\s\S]+)$/.exec(text);
+      if(a){ to=a[1]; text=a[2]; }
+      if(!cl.send(text,to)) return false;
+      c.msg({from:call,to:String(to).toUpperCase(),text,t:Date.now(),self:true,local:true,kind:'message'}); return true;
+    },
+    close(){ closed=true; cl.stop(); try{ raw.close(); }catch(e){} },
+  };
+}
+
 /* ---------- сессия на Node-мосте: те же сообщения, но протокол живёт на стороне моста ---------- */
 function mgOpenRemote(proto,cfg,c){
   const io=mgIo(cfg), url=String(cfg.bridge||'').trim();
@@ -278,8 +304,8 @@ function mgOpenRemote(proto,cfg,c){
   };
 }
 
-const MG_OPEN={nostr:mgOpenNostr,ntfy:mgOpenNtfy,matrix:mgOpenMatrix,telegram:mgOpenTelegram,irc:mgOpenIrc,xmpp:mgOpenXmpp};
-const mgNeedsTcp=(proto,cfg)=>proto==='xmpp' || (proto==='irc' && !/^wss?:\/\//i.test(String(cfg.server||'').trim()));
+const MG_OPEN={nostr:mgOpenNostr,ntfy:mgOpenNtfy,matrix:mgOpenMatrix,telegram:mgOpenTelegram,irc:mgOpenIrc,xmpp:mgOpenXmpp,aprs:mgOpenAprs};
+const mgNeedsTcp=(proto,cfg)=>proto==='xmpp' || proto==='aprs' || (proto==='irc' && !/^wss?:\/\//i.test(String(cfg.server||'').trim()));
 
 // cfg.via: 'auto' (мост — только где нужен TCP), 'page' (всё из страницы), 'bridge' (всё через мост); cfg.retry — переподключаться
 function mgConnect(proto,cfg,cb){

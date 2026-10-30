@@ -102,7 +102,7 @@ export function createMsgrBridge(opt) {
       onPing: p => { try { sock.write(wsFrame(p.toString(), 10)); } catch (e) { /* закрыт */ } },
     });
     sock.on('data', par); sock.on('close', bye); sock.on('error', bye);
-    send({ev: 'hello', ver: 1, host: os.hostname(), protos: ['nostr', 'ntfy', 'matrix', 'telegram', 'irc', 'xmpp']});
+    send({ev: 'hello', ver: 1, host: os.hostname(), protos: ['nostr', 'ntfy', 'matrix', 'telegram', 'irc', 'xmpp', 'aprs']});
   });
 
   return {
