@@ -541,6 +541,7 @@ const PRESET_CATS={
   'APRS-IS: Messages and Stations on the Map':'Network & IoT',
   'Email: Mailbox as a Chat (IMAP / SMTP)':'Network & IoT',
   'SMS: Texts as a Chat (DSP app on Android)':'Network & IoT',
+  'Reticulum: LXMF Messages over a Mesh (Sideband / NomadNet compatible)':'Network & IoT',
   'Reference: Decode BLE Advertisements (Company ID, Service UUID)':'Network & IoT',
   'Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)':'Network & IoT',
   'Bridge: Serial Port ↔ Network (TCP/WS Gateway)':'Network & IoT',
@@ -1582,6 +1583,18 @@ sm.size.w=420; sm.size.h=400; applySize(sm);
 const ch=addNode('chat',500,280,{echo:false,me:'me',time:true});
 ch.size.w=420; ch.size.h=400; applySize(ch);
 addEdge(sm.id,'rec',ch.id,'rec'); addEdge(ch.id,'text',sm.id,'send');
+markWiresDirty();
+});
+preset('Reticulum: LXMF Messages over a Mesh (Sideband / NomadNet compatible)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Reticulum is an encrypted mesh network that runs over almost anything (TCP, LoRa, packet radio, serial) with no servers and no accounts; LXMF is its messaging layer — the one Sideband and NomadNet use. This node is a full participant: it makes its own identity and address (shown in the status), announces itself, hears the announces of others, receives messages (one packet or over a Link, as Sideband sends them, signatures checked, delivery confirmed) and sends them (one packet, up to ~240 characters per piece; a longer text goes in several).\n'+
+  'Fill in «server» with the TCP server interface of any Reticulum node: rns://host:port (a node of your own — an rnsd with a TCPServerInterface — or a public one from the community lists). The identity key is made on the first Connect and kept in the «password» field: it is your address AND your private key, keep the patch to yourself. Write «@name text» (a name heard in announces) or «@<32-digit address> text» in the chat; «channel» sets a default recipient. Not supported: long messages and attachments (Resource), propagation nodes, stamps. A browser cannot open TCP: use the DSP app on a phone (the sockets of the phone) or the Node bridge: node tools/node/bridge.mjs; needs X25519 and Ed25519 in Web Crypto (Chrome 137+, Firefox 130+, Safari 17+).'});
+nt.size.w=900; nt.size.h=250; applySize(nt);
+const rn=addNode('messenger',40,330,{proto:'reticulum',server:'rns://127.0.0.1:4242',nick:'dsp',bridge:'ws://127.0.0.1:8777'});
+rn.size.w=420; rn.size.h=460; applySize(rn);
+const ch=addNode('chat',500,330,{echo:false,me:'dsp',time:true});
+ch.size.w=420; ch.size.h=460; applySize(ch);
+addEdge(rn.id,'rec',ch.id,'rec'); addEdge(ch.id,'text',rn.id,'send');
 markWiresDirty();
 });
 preset('Reference: Decode BLE Advertisements (Company ID, Service UUID)', function(){

@@ -1976,7 +1976,7 @@ The carrier as a sine straight to the sound card (**96 kHz or more**: the sample
 
 ### Note
 
-`note` · used in 367 presets
+`note` · used in 368 presets
 
 - **Parameters:** `text`
 
@@ -2386,7 +2386,7 @@ A `go` pulse plays a short tone through its own audio context (independent of th
 
 ### Chat
 
-`chat` · used in 9 presets
+`chat` · used in 10 presets
 
 Incoming text from the `text` wire goes into the log, the field at the bottom sends (Enter or *Send*): `text` holds the last sent message, `go` pulses for one block. A text on the `send` input is sent the same way. Preset *Chat: Text In and Out*.
 
@@ -3921,13 +3921,13 @@ Remote receivers (public list included); **SDR Receivers Directory** (Geo) puts 
 - **Out:** `text` (txt), `from` (txt), `go` (num), `snr` (num), `rec` (rec), `new` (num)
 - **Parameters:** `transport` — link to the node; `dest` — send to: ^all or a node id (!a1b2c3d4); `ch` — send on channel index; `name` — BLE: device name starts with (empty — by service); `any` — BLE: list all devices (ignore the filters); `reconnect` — BLE: reconnect
 
-### Messenger (Nostr · ntfy · Matrix · Telegram · IRC · XMPP · APRS · Email · SMS)
+### Messenger (Nostr · ntfy · Matrix · Telegram · IRC · XMPP · APRS · Email · SMS · Reticulum)
 
-`messenger` · used in 4 presets
+`messenger` · used in 5 presets
 
 - **In:** `send` (txt), `to` (txt)
 - **Out:** `rec` (rec), `text` (txt), `from` (txt), `new` (num), `ok` (num)
-- **Parameters:** `proto` — channel of communication; `server` — server — nostr: relays wss://… (several, space-separated; empty: public ones) · ntfy: https://… (empty: ntfy.sh) · matrix: https://homeserver · irc: wss://host/path, or ircs://host:6697 / irc://… via the bridge · xmpp: xmpp://host:5222, empty — by the domain of the account (bridge) · aprs: aprs://host:14580 (empty — rotate.aprs2.net, bridge) · email: IMAP imaps://host:993 or imap://host:143 (to receive; bridge) · sms: the phone app, empty — ws://127.0.0.1:8765; `channel` — channel — nostr: hashtag · ntfy: topic · matrix: room (!id:server or #alias:server) · telegram: only to receive from ONE chat — its id or @name; leave empty for all chats (replies go to the last one) · irc: #channels · xmpp: room@conference.server (empty — direct messages only) · aprs: server filter (g/CALL, m/50, r/lat/lon/km, b/CALL*; empty — messages to you) · email: mailbox (empty — INBOX); `user` — user — matrix: login · xmpp: account user@domain · aprs: your callsign (N0CALL-7) · email: login, usually the address · irc / ntfy: optional; `pass` — password / token (saved with the patch!) — nostr: nsec or hex key (empty — a new anonymous key each session) · matrix: password or access token · telegram: bot token from @BotFather · ntfy: token; `smtp` — email: SMTP smtps://host:465 or smtp://host:587 (STARTTLS) — to send; a message is «@name@host subject line⏎text» or the «to» input; `poll` — email: check the mailbox every, s; `nick` — nick (shown to others; in Chat set «my name» the same); `history` — also fetch what was said in the last, s (nostr, ntfy, matrix, xmpp); `via` — where TCP comes from (IRC ircs://, XMPP, APRS-IS, email): auto — the phone itself inside the DSP app, else the gateway below; bridge — always the gateway; `bridge` — TCP gateway — one address for either: the DSP app on a phone (ws://192.168.0.5:8765; the app must allow other pages) or the Node bridge (ws://127.0.0.1:8777); the type is detected; `bridgeToken` — gateway token (the app token or --token of the bridge; saved with the patch!); `plain` — xmpp: allow a password without TLS (only for a server on your own network); `reconnect`; `autoConnect` — connect when the patch starts; `text` — message
+- **Parameters:** `proto` — channel of communication; `server` — server — nostr: relays wss://… (several, space-separated; empty: public ones) · ntfy: https://… (empty: ntfy.sh) · matrix: https://homeserver · irc: wss://host/path, or ircs://host:6697 / irc://… via the bridge · xmpp: xmpp://host:5222, empty — by the domain of the account (bridge) · aprs: aprs://host:14580 (empty — rotate.aprs2.net, bridge) · email: IMAP imaps://host:993 or imap://host:143 (to receive; bridge) · sms: the phone app, empty — ws://127.0.0.1:8765 · reticulum: rns://host:port — the TCP server interface of a Reticulum node (needs TCP); `channel` — channel — nostr: hashtag · ntfy: topic · matrix: room (!id:server or #alias:server) · telegram: only to receive from ONE chat — its id or @name; leave empty for all chats (replies go to the last one) · irc: #channels · xmpp: room@conference.server (empty — direct messages only) · aprs: server filter (g/CALL, m/50, r/lat/lon/km, b/CALL*; empty — messages to you) · email: mailbox (empty — INBOX) · reticulum: the default recipient (32-digit address or a name heard in announces); `user` — user — matrix: login · xmpp: account user@domain · aprs: your callsign (N0CALL-7) · email: login, usually the address · irc / ntfy: optional; `pass` — password / token (saved with the patch!) — nostr: nsec or hex key (empty — a new anonymous key each session) · matrix: password or access token · telegram: bot token from @BotFather · ntfy: token; `smtp` — email: SMTP smtps://host:465 or smtp://host:587 (STARTTLS) — to send; a message is «@name@host subject line⏎text» or the «to» input; `poll` — email: check the mailbox every, s; `nick` — nick (shown to others; in Chat set «my name» the same); `history` — also fetch what was said in the last, s (nostr, ntfy, matrix, xmpp); `via` — where TCP comes from (IRC ircs://, XMPP, APRS-IS, email): auto — the phone itself inside the DSP app, else the gateway below; bridge — always the gateway; `bridge` — TCP gateway — one address for either: the DSP app on a phone (ws://192.168.0.5:8765; the app must allow other pages) or the Node bridge (ws://127.0.0.1:8777); the type is detected; `bridgeToken` — gateway token (the app token or --token of the bridge; saved with the patch!); `plain` — xmpp: allow a password without TLS (only for a server on your own network); `reconnect`; `autoConnect` — connect when the patch starts; `text` — message
 
 ### Microphone (A+B)
 
