@@ -22,8 +22,10 @@ function mgNodeStop(n){
 function mgNodeStart(n){
   mgNodeStop(n);
   const p=n.p, proto=p.proto;
-  const bridge=String(p.bridge||'').trim() + (p.bridgeToken && /^wss?:/i.test(p.bridge||'') ? '?token='+encodeURIComponent(p.bridgeToken) : '');
-  const cfg={server:String(p.server||'').trim() || MG_DEF_SERVER[proto] || '',channel:String(p.channel||'').trim(),user:String(p.user||'').trim(),pass:String(p.pass||''),
+  const rawBridge=String(p.bridge||'').trim(), rawServer=String(p.server||'').trim();
+  if((rawBridge[0]==='@' && gwErr(rawBridge)) || (p.proto==='sms' && rawServer[0]==='@' && gwErr(rawServer))){ n.status=gwErr(rawBridge[0]==='@' ? rawBridge : rawServer); return; }
+  const bridge=gwUrl(rawBridge) + (p.bridgeToken && /^wss?:/i.test(rawBridge) ? '?token='+encodeURIComponent(p.bridgeToken) : '');      // bridgeToken — из старых патчей; новый путь — токен в Settings → Devices
+  const cfg={server:(p.proto==='sms' ? gwUrl(rawServer) : rawServer) || MG_DEF_SERVER[proto] || '',channel:String(p.channel||'').trim(),user:String(p.user||'').trim(),pass:String(p.pass||''),
     nick:String(p.nick||'dsp').trim() || 'dsp',appKey:(()=>{ try{ return (window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){ return ''; } })(),history:+p.history||0,retry:!!p.reconnect,via:p.via,proxyUrl:p.proxy && typeof Net!=='undefined' ? u=>Net.url(u) : null,smtp:String(p.smtp||'').trim(),pollMs:(+p.poll||30)*1000,bridge,insecure:!!p.plain,cache:n.mxCache};
   if(proto==='reticulum' && !cfg.pass.trim()){ try{ cfg.pass=mgHex(mgRandom(64)); p.pass=cfg.pass; n.status='new Reticulum identity made — it is kept in the «password» field'; }catch(e){ n.status='no secure random generator'; return; } }
   if(proto==='reticulum') cfg.key=cfg.pass;
@@ -57,8 +59,7 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
     {n:'nick',t:'text',d:'dsp',label:'nick (shown to others; in Chat set «my name» the same)'},
     {n:'history',t:'range',min:0,max:2592000,step:60,d:0,label:'also fetch what was said in the last, s (nostr, ntfy, matrix, xmpp; feeds: how far back the first read goes — 0 shows only what comes later)'},
     {n:'via',t:'select',opts:['auto','page','bridge'],d:'auto',label:'where TCP comes from (IRC ircs://, XMPP, APRS-IS, email): auto — the phone itself inside the DSP app, else the gateway below; bridge — always the gateway'},
-    {n:'bridge',t:'text',d:'',label:'TCP gateway — one address for either: the DSP app on a phone (ws://192.168.0.5:8765; the app must allow other pages) or the Node bridge (ws://127.0.0.1:8777); the type is detected'},
-    {n:'bridgeToken',t:'text',d:'',label:'gateway token (the app token or --token of the bridge; saved with the patch!)'},
+    {n:'bridge',t:'text',d:'',dev:true,label:'TCP gateway — @name from Settings → Devices (the token stays there), or one address for either: the DSP app on a phone (ws://192.168.0.5:8765; the app must allow other pages) or the Node bridge (ws://127.0.0.1:8777); the type is detected'},
     {n:'plain',t:'check',d:false,label:'xmpp: allow a password without TLS (only for a server on your own network)'},
     {n:'proxy',t:'check',d:false,label:'rss: through the CORS proxy from Settings (a Node bridge in the gateway field needs none)'},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},

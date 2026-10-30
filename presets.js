@@ -7,7 +7,7 @@ set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage u
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
 // В приложении Android (DspApp — его JS-мост) запросы к чужим хостам идут через приложение с CORS-заголовками и mixed content разрешён: прокси не нужен
 const Net={ get app(){ return typeof DspApp!=='undefined'; },
-  get proxy(){ return this.app ? '' : (LS.get('dsp-proxy')||'').trim(); },
+  get proxy(){ if(this.app) return ''; const v=(LS.get('dsp-proxy')||'').trim(); return v[0]==='@' && typeof Gw!=='undefined' ? Gw.proxyTemplate(v) : v; },     // «@имя» — Node-мост из Settings → Devices
   url(u){ const p=this.proxy; return !p ? u : p.includes('{url}') ? p.replace('{url}',encodeURIComponent(u)) : p+u; } };
 // Row Player, подключённый к Table проводом rows: проигрывание строк таблицы
 const playRows=(tb,x,y,p)=>{ const pl=addNode('rowplayer',x,y,p); addEdge(tb.id,'rows',pl.id,'rows'); return pl; };

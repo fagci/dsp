@@ -12,7 +12,7 @@ function nsvLink(n){                                  // â†’ Promise<NetSock>; Ð
   n.nsP=new Promise((res,rej)=>{
     let key=''; try{ key=(window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){}
     const url=phoneUrl(n.p.url,key);
-    if(!url){ n.nsP=null; return rej(new Error('URL must start with ws:// or wss://')); }
+    if(!url){ n.nsP=null; return rej(new Error((typeof gwErr==='function' && gwErr(n.p.url))||'URL must start with ws:// or wss://')); }
     n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
     let ws; try{ ws=new WebSocket(url); }catch(e){ n.nsP=null; return rej(e); }
     const ns=new NetSock(m=>{ if(ws.readyState!==1) throw new Error('bridge is not connected'); ws.send(JSON.stringify(m)); });

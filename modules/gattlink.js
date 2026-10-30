@@ -16,7 +16,7 @@ function gattStart(n){
   gattStop(n);
   let key=''; try{ key=(window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){}
   const url=phoneUrl(n.p.url,key);
-  if(!url){ n.status='URL must start with ws:// or wss://'; return; }
+  if(!url){ n.status=(typeof gwErr==='function' && gwErr(n.p.url))||'URL must start with ws:// or wss://'; return; }
   n.want=true; n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
   let ws;
   try{ ws=new WebSocket(url); }catch(e){ n.status='error: '+e.message; return; }
@@ -64,7 +64,7 @@ def({ id:'gattlink', title:'BLE GATT / Bluetooth (DSP app)', cat:'Sources', kw:'
   readout:true, tall:true,
   groups:[{n:'GATT'},{n:'GATT server (peripheral)',open:false},{n:'Classic / RFCOMM / L2CAP',open:false},{n:'Advertise (peripheral)',open:false},{n:'Periodic advertising',open:false},{n:'Decode value',open:false}],
   params:[
-    {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'bridge of the DSP app'},
+    {n:'url',t:'text',d:'ws://127.0.0.1:8765',dev:true,label:'bridge of the DSP app — an address, or @name from Settings → Devices'},
     {n:'action',t:'select',opts:PL_GATT_ACTIONS,d:'connect',label:'action (the Run button, or a rising edge on go)'},
     {n:'addr',t:'text',d:'',label:'device address AA:BB:CC:DD:EE:FF (the «addr» input overrides it)',g:'GATT'},
     {n:'svc',t:'text',d:'',label:'service UUID (16- or 128-bit; name from Reference/Bluetooth UUIDs via lookup() in Table)',g:'GATT'},

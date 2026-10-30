@@ -1252,8 +1252,8 @@ function netTextStop(n){
 }
 function netTextStart(n){
   netTextStop(n);
-  const url=String(n.p.url||'').trim();
-  if(!url){ n.status='enter a URL'; return; }
+  const url=gwUrl(String(n.p.url||'').trim());
+  if(!url){ n.status=gwErr(n.p.url)||'enter a URL'; return; }
   n.want=true;
   if(netInsecure(url)) n.warn=NET_INSECURE_MSG; else n.warn='';
   if(/^wss?:/i.test(url)) netTextWs(n,url);
