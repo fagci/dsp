@@ -3,7 +3,7 @@
    Один интерфейс на все каналы: mgConnect(proto, cfg, cb) → {send(text,to), close()}.
    Работает и в странице, и в Node-мосте (tools/node/bridge.mjs) — транспорт подставляется через cfg.io:
    {ws(url) → WebSocket, fetch, tcp(host,port,tls,h) → {write,upgrade(done),close}}, по умолчанию — глобальные.
-   proto: nostr | ntfy | matrix | telegram | irc | xmpp | aprs | email | sms | reticulum | mastodon | bluesky.
+   proto: nostr | ntfy | matrix | telegram | irc | xmpp | aprs | email | sms | reticulum | mastodon | bluesky | rss.
    cfg:   server, channel, user, pass, nick, key (Nostr), token, history (сек), verify, retry, bridge, via, io.
    cb:    msg({from,to,text,t,self,…}), status(text, state), state: connecting | up | down | warn | fatal.
    Свои сообщения приходят обратно тем же msg с self:true (от сервера или, где сервер не возвращает, локально). */
@@ -481,7 +481,7 @@ function mgFeedLoop(c,tick,ms){
   return ()=>{ closed=true; clearTimeout(timer); };
 }
 const mgFatal=msg=>Object.assign(new Error(msg),{fatal:true});
-const mgPostMsg=r=>({id:r.id,from:r.from,text:r.text,t:r.t,kind:'post',post:{name:r.name,url:r.url,tags:r.tags,lang:r.lang,avatar:r.avatar,image:r.image,likes:r.likes,boosts:r.boosts,replies:r.replies,cw:r.cw,boost_by:r.boost_by}});
+const mgPostMsg=r=>({id:r.id,from:r.from,text:r.text,t:r.t,kind:'post',post:{name:r.name,url:r.url,tags:r.tags,lang:r.lang,avatar:r.avatar,image:r.image,likes:r.likes,boosts:r.boosts,replies:r.replies,cw:r.cw,boost_by:r.boost_by,...(r.summary!==undefined ? {title:r.title,summary:r.summary,feed:r.feed} : {})}});
 const mgClock=()=>new Date().toTimeString().slice(0,8);
 function mgFeedStatus(cfg){ return String(cfg.channel||'').trim() || 'public timeline'; }
 
@@ -572,6 +572,36 @@ function mgOpenBluesky(cfg,c){
   return {send(){ c.status('Bluesky: this feed is read-only — posting is not implemented','warn'); return false; },close(){ stop(); try{ ac.abort(); }catch(e){} }};
 }
 
+/* ---------- RSS / Atom / JSON Feed: опрос лент (server — адреса через пробел), channel — слова: любое из них, -слово исключает ---------- */
+// Большинство лент не отдаёт CORS-заголовки: в приложении Android это решает приложение, в браузере — прокси из Settings (cfg.proxyUrl).
+function mgOpenRss(cfg,c){
+  const io=mgIo(cfg), urls=String(cfg.server||'').split(/[\s,]+/).filter(Boolean), spec=mgFeedSpec(cfg.channel), ac=new AbortController();
+  if(!urls.length || urls.some(u=>!/^https?:\/\//i.test(u))){ c.down('RSS: enter feed addresses https://… in the server field (several — separated by a space)',true); return mgNone; }
+  if(urls.length>20){ c.down('RSS: at most 20 feeds in one node',true); return mgNone; }
+  const cutoff=Date.now()-Math.max(0,cfg.history|0)*1000, seen=new Set(); let first=true;
+  const stop=mgFeedLoop(c,async()=>{
+    const got=[], errs=[];
+    await Promise.all(urls.map(async u=>{
+      try{
+        const r=await io.fetch(cfg.proxyUrl ? cfg.proxyUrl(u) : u,{signal:ac.signal,headers:{accept:'application/rss+xml, application/atom+xml, application/feed+json, application/xml, text/xml, */*;q=0.5',...(typeof document==='undefined' ? {'user-agent':'DSP-workbench feed reader'} : {})}});
+        if(!r.ok){ errs.push(new URL(u).host+': HTTP '+r.status); return; }
+        const text=(await r.text()).slice(0,3000000), f=mgRssParse(text), host=new URL(u).host;
+        for(const it of f.items) got.push({id:it.id||it.url,from:f.title||host,name:it.author||f.title||host,text:it.title||it.summary,title:it.title,summary:it.summary,feed:f.title||host,url:it.url,tags:it.tags,lang:it.lang,avatar:'',image:it.image,likes:0,boosts:0,replies:0,cw:'',boost_by:'',t:it.t});
+      }catch(e){ errs.push(new URL(u).host+': '+(e instanceof TypeError ? 'no CORS headers or no connection — set the TCP gateway to a Node bridge (it fetches the feeds itself), tick «through the CORS proxy» (Settings), or use the Android app' : e.message)); }
+    }));
+    if(errs.length===urls.length) throw mgFatal('RSS: '+errs.slice(0,3).join(' · '));
+    const was=first; first=false;
+    const fresh=got.filter(r=>r.id && !seen.has(r.id)); for(const r of fresh) seen.add(r.id);
+    if(seen.size>20000) for(const k of [...seen].slice(0,5000)) seen.delete(k);
+    if(!(was && !(cfg.history|0))){
+      const keep=fresh.filter(r=>mgRssMatch(r,spec) && (!was || !r.t || r.t>=cutoff)).sort((a,b)=>a.t-b.t);
+      for(const r of keep.slice(-300)) c.msg(mgPostMsg(r));
+    }
+    c.status('RSS · '+urls.length+' feed(s)'+(String(cfg.channel||'').trim() ? ' · '+String(cfg.channel).trim() : '')+(errs.length ? ' · '+errs.length+' failed: '+errs[0] : '')+' · read '+mgClock(),errs.length ? 'warn' : 'up');
+  },Math.max(60000,cfg.pollMs||600000));
+  return {send(){ c.status('RSS: a feed is read-only','warn'); return false; },close(){ stop(); try{ ac.abort(); }catch(e){} }};
+}
+
 /* ---------- сессия на Node-мосте: те же сообщения, но протокол живёт на стороне моста ---------- */
 function mgOpenRemote(proto,cfg,c){
   const io=mgIo(cfg), url=String(cfg.bridge||'').trim();
@@ -593,13 +623,14 @@ function mgOpenRemote(proto,cfg,c){
   };
 }
 
-const MG_OPEN={nostr:mgOpenNostr,ntfy:mgOpenNtfy,matrix:mgOpenMatrix,telegram:mgOpenTelegram,irc:mgOpenIrc,xmpp:mgOpenXmpp,aprs:mgOpenAprs,email:mgOpenEmail,sms:mgOpenSms,reticulum:mgOpenRns,mastodon:mgOpenMastodon,bluesky:mgOpenBluesky};
+const MG_OPEN={nostr:mgOpenNostr,ntfy:mgOpenNtfy,matrix:mgOpenMatrix,telegram:mgOpenTelegram,irc:mgOpenIrc,xmpp:mgOpenXmpp,aprs:mgOpenAprs,email:mgOpenEmail,sms:mgOpenSms,reticulum:mgOpenRns,mastodon:mgOpenMastodon,bluesky:mgOpenBluesky,rss:mgOpenRss};
 const mgNeedsTcp=(proto,cfg)=>proto==='xmpp' || proto==='aprs' || proto==='email' || proto==='reticulum' || (proto==='irc' && !/^wss?:\/\//i.test(String(cfg.server||'').trim()));
 
 // cfg.via: 'auto' (мост — только где нужен TCP), 'page' (всё из страницы), 'bridge' (всё через мост); cfg.retry — переподключаться
 function mgConnect(proto,cfg,cb){
   // TCP: свой сокет телефона (cfg.phone) главнее моста; via 'bridge' — всё через Node-мост
-  const remote=cfg.via==='bridge' || ((cfg.via||'auto')==='auto' && cfg.bridge && !cfg.phone && mgNeedsTcp(proto,cfg));
+  // RSS из браузера упирается в CORS: если задан шлюз — ленты читает Node-мост (у него нет CORS), как и TCP-каналы
+  const remote=cfg.via==='bridge' || ((cfg.via||'auto')==='auto' && cfg.bridge && !cfg.phone && (mgNeedsTcp(proto,cfg) || proto==='rss'));
   const open=remote ? (cfg2,c)=>mgOpenGateway(proto,cfg2,c) : MG_OPEN[proto];
   let h=null, timer=null, dead=false, gen=0;
   const out={

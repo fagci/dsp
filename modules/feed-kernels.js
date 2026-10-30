@@ -83,3 +83,76 @@ function mgBskyUrls(server,spec,o){                           // → [{kind,url}
   return out;
 }
 const mgBskyPosts=j=>(j && (j.feed ? j.feed.map(x=>mgBskyPost(x,x.reason)) : (j.posts||[]).map(x=>mgBskyPost(x)))||[]).filter(Boolean);
+
+// ---------- RSS / Atom / RSS 1.0 (RDF) / JSON Feed ----------
+// Лента — чужой текст: DOMParser нет в Node, поэтому свой терпимый разбор. DTD и пользовательские сущности не раскрываем.
+function mgXmlTree(src){
+  const s=String(src); const root={name:'#root',attrs:{},kids:[],text:''}, stack=[root]; let i=0, nodes=0;
+  const top=()=>stack[stack.length-1];
+  while(i<s.length){
+    const lt=s.indexOf('<',i);
+    if(lt<0){ top().text+=mgXmlUnesc(s.slice(i)); break; }
+    if(lt>i) top().text+=mgXmlUnesc(s.slice(i,lt));
+    if(s.startsWith('<!--',lt)){ const e=s.indexOf('-->',lt+4); i=e<0 ? s.length : e+3; continue; }
+    if(s.startsWith('<![CDATA[',lt)){ const e=s.indexOf(']]>',lt+9); top().text+=s.slice(lt+9,e<0 ? s.length : e); i=e<0 ? s.length : e+3; continue; }
+    if(s[lt+1]==='?'){ const e=s.indexOf('?>',lt); i=e<0 ? s.length : e+2; continue; }
+    if(s[lt+1]==='!'){                                         // <!DOCTYPE … [ … ]> — пропускаем целиком
+      let d=0, k=lt+2; for(;k<s.length;k++){ if(s[k]==='[') d++; else if(s[k]===']') d--; else if(s[k]==='>' && d<=0) break; }
+      i=k+1; continue;
+    }
+    let q='', end=-1;
+    for(let k=lt+1;k<s.length;k++){ const c=s[k]; if(q){ if(c===q) q=''; } else if(c==='"' || c==="'") q=c; else if(c==='>'){ end=k; break; } }
+    if(end<0) break;
+    const tag=s.slice(lt+1,end); i=end+1;
+    if(tag[0]==='/'){                                          // закрывающий: поднимаемся до одноимённого, лишние закрываем (ленты бывают кривыми)
+      const name=tag.slice(1).trim(); let k=stack.length-1; while(k>0 && stack[k].name!==name) k--;
+      if(k>0) while(stack.length>k){ const n=stack.pop(); top().kids.push(n); }
+      continue;
+    }
+    const self=tag.endsWith('/'), body=self ? tag.slice(0,-1) : tag, m=/^([^\s/]+)/.exec(body); if(!m) continue;
+    if(++nodes>60000 || stack.length>120) throw new Error('feed is too complex');
+    const node={name:m[1],attrs:{},kids:[],text:''};
+    for(const a of body.slice(m[1].length).matchAll(/([^\s=]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) node.attrs[a[1]]=mgXmlUnesc(a[2]!==undefined ? a[2] : a[3]);
+    if(self) top().kids.push(node); else stack.push(node);
+  }
+  while(stack.length>1){ const n=stack.pop(); top().kids.push(n); }
+  return root;
+}
+const mgNodeText=n=>(n.text||'')+n.kids.map(mgNodeText).join('');
+const mgKidText=(n,name)=>{ const k=mgKid(n,name); return k ? mgNodeText(k).trim() : ''; };
+const mgFirstImg=h=>{ const m=/<img[^>]+src\s*=\s*["']([^"']+)["']/i.exec(String(h||'')); return m ? mgXmlUnesc(m[1]) : ''; };
+const mgDesc=h=>{ const t=mgHtmlText(h); return t.length>600 ? t.slice(0,597)+'…' : t; };
+
+// → {title, items:[{id,title,summary,url,tags,image,author,t,lang}]}; бросает ошибку, если это не лента
+function mgRssParse(text){
+  text=String(text||'').replace(/^﻿/,'').trimStart();
+  if(text[0]==='{'){                                           // JSON Feed
+    let j; try{ j=JSON.parse(text); }catch(e){ throw new Error('not a feed'); }
+    if(!j || !Array.isArray(j.items)) throw new Error('not a feed');
+    return {title:String(j.title||''),items:j.items.map(it=>({id:String(it.id||it.url||''),title:String(it.title||''),summary:mgDesc(it.summary||it.content_html||it.content_text||''),url:String(it.url||it.external_url||''),
+      tags:(it.tags||[]).join(', '),image:String(it.image||it.banner_image||mgFirstImg(it.content_html)),author:String(((it.authors||[])[0]||it.author||{}).name||''),t:Date.parse(it.date_published||it.date_modified)||0,lang:String(it.language||j.language||'')}))};
+  }
+  const root=mgXmlTree(text), feed=root.kids.find(k=>/^(rss|feed|rdf:rdf|rdf)$/i.test(mgLocal(k.name)) || /^(rss|feed|RDF)$/.test(mgLocal(k.name)));
+  if(!feed) throw new Error('not a feed — the answer is not RSS, Atom or JSON Feed (is it a web page?)');
+  const kind=mgLocal(feed.name).toLowerCase(), chan=kind==='rss' ? mgKid(feed,'channel')||feed : feed;
+  const title=mgKidText(chan,'title'), lang=mgKidText(chan,'language')||feed.attrs['xml:lang']||'';
+  const entries=kind==='feed' ? mgKids(feed,'entry') : (kind==='rss' ? mgKids(chan,'item') : mgKids(feed,'item'));
+  const items=entries.map(e=>{
+    const cats=mgKids(e,'category').map(c=>c.attrs.term||c.attrs.label||mgNodeText(c).trim()).concat(mgKids(e,'subject').map(c=>mgNodeText(c).trim())).filter(Boolean);
+    let url=mgKidText(e,'link');
+    const links=mgKids(e,'link'); if(kind==='feed'){ const alt=links.find(l=>!l.attrs.rel || l.attrs.rel==='alternate') || links[0]; url=alt ? alt.attrs.href||'' : ''; }
+    const html=mgKidText(e,'encoded')||mgKidText(e,'content')||mgKidText(e,'description')||mgKidText(e,'summary');
+    const enc=mgKids(e,'enclosure').find(x=>/^image\//i.test(x.attrs.type||'')), th=mgKid(e,'thumbnail')||mgKid(e,'content'), mt=th && /image|jpe?g|png|webp|gif/i.test((th.attrs.type||'')+(th.attrs.medium||'')+(th.attrs.url||'')) ? th : mgKid(e,'thumbnail');
+    const date=mgKidText(e,'pubDate')||mgKidText(e,'published')||mgKidText(e,'updated')||mgKidText(e,'date');
+    const author=mgKidText(e,'creator')||(kind==='feed' ? mgKidText(mgKid(e,'author')||{kids:[],text:''},'name') : '')||mgKidText(e,'author');
+    return {id:mgKidText(e,'guid')||mgKidText(e,'id')||e.attrs['rdf:about']||url||mgKidText(e,'title'),title:mgHtmlText(mgKidText(e,'title')),summary:mgDesc(mgKidText(e,'summary')||html),url:url.trim(),
+      tags:[...new Set(cats)].join(', '),image:String((enc&&enc.attrs.url)||(mt&&mt.attrs.url)||mgFirstImg(html)||''),author:mgHtmlText(author),t:Date.parse(date)||0,lang:String(e.attrs['xml:lang']||lang)};
+  });
+  return {title:mgHtmlText(title),items};
+}
+// слова канала → подходит ли запись: любое из включаемых слов в заголовке / тексте / рубриках, ни одного из исключаемых
+function mgRssMatch(it,spec){
+  const hay=mgFeedLow(it.title+' '+it.summary+' '+it.tags);
+  if(spec.none.some(w=>hay.includes(w))) return false;
+  return !spec.tags.length || spec.tags.some(w=>hay.includes(w));
+}

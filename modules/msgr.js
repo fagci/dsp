@@ -1,6 +1,6 @@
 "use strict";
 /* ============================ Messenger: узел ============================
-   Один узел на двенадцать каналов связи — Nostr, ntfy, Matrix, Telegram (бот), IRC, XMPP, APRS-IS, почта (IMAP/SMTP), SMS (приложение DSP на Android), Reticulum/LXMF, ленты Mastodon и Bluesky. Протоколы — msgr-kernels.js
+   Один узел на тринадцать каналов связи — Nostr, ntfy, Matrix, Telegram (бот), IRC, XMPP, APRS-IS, почта (IMAP/SMTP), SMS (приложение DSP на Android), Reticulum/LXMF, ленты Mastodon и Bluesky, RSS / Atom. Протоколы — msgr-kernels.js
    и msgr-session.js (те же файлы грузит Node-мост tools/node/bridge.mjs). Из страницы напрямую: Nostr (реле wss://),
    ntfy, Matrix, Telegram, IRC по WebSocket (wss://). IRC по TCP (ircs://) и XMPP — через TCP-шлюз (поле bridge: Node-мост или приложение на телефоне).
    rec → Chat: {t, proto, dir, from, to, text}; свои сообщения приходят с from = nick — в Chat «my name» поставь тот же ник. */
@@ -24,7 +24,7 @@ function mgNodeStart(n){
   const p=n.p, proto=p.proto;
   const bridge=String(p.bridge||'').trim() + (p.bridgeToken && /^wss?:/i.test(p.bridge||'') ? '?token='+encodeURIComponent(p.bridgeToken) : '');
   const cfg={server:String(p.server||'').trim() || MG_DEF_SERVER[proto] || '',channel:String(p.channel||'').trim(),user:String(p.user||'').trim(),pass:String(p.pass||''),
-    nick:String(p.nick||'dsp').trim() || 'dsp',appKey:(()=>{ try{ return (window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){ return ''; } })(),history:+p.history||0,retry:!!p.reconnect,via:p.via,smtp:String(p.smtp||'').trim(),pollMs:(+p.poll||30)*1000,bridge,insecure:!!p.plain,cache:n.mxCache};
+    nick:String(p.nick||'dsp').trim() || 'dsp',appKey:(()=>{ try{ return (window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){ return ''; } })(),history:+p.history||0,retry:!!p.reconnect,via:p.via,proxyUrl:p.proxy && typeof Net!=='undefined' ? u=>Net.url(u) : null,smtp:String(p.smtp||'').trim(),pollMs:(+p.poll||30)*1000,bridge,insecure:!!p.plain,cache:n.mxCache};
   if(proto==='reticulum' && !cfg.pass.trim()){ try{ cfg.pass=mgHex(mgRandom(64)); p.pass=cfg.pass; n.status='new Reticulum identity made — it is kept in the «password» field'; }catch(e){ n.status='no secure random generator'; return; } }
   if(proto==='reticulum') cfg.key=cfg.pass;
   if(proto==='nostr'){ cfg.key=cfg.pass; if(!cfg.key){ try{ if(!n.eph) n.eph=mgHex(mgNostrGenKey()); cfg.key=n.eph; }catch(e){ n.status='no secure random generator'; return; } } }
@@ -42,24 +42,25 @@ function mgNodeSend(n,text,to){
   Promise.resolve(n.sess.send(text,to||undefined)).then(ok=>{ if(!ok && n.sess && !/not sent/.test(n.status)) n.status+=' · not sent'; });
 }
 
-def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · IRC · XMPP · APRS · Email · SMS · Reticulum · Mastodon · Bluesky)', cat:'Sources',
+def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · IRC · XMPP · APRS · Email · SMS · Reticulum · Mastodon · Bluesky · RSS)', cat:'Sources',
   kw:'messenger chat nostr ntfy matrix telegram bot irc xmpp jabber relay message channel push notify send receive internet',
   ins:[{n:'send',t:'txt'},{n:'to',t:'txt'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'from',t:'txt'},{n:'new',t:'num'},{n:'ok',t:'num'}],
   readout:true, tall:true,
   params:[
-    {n:'proto',t:'select',opts:['nostr','ntfy','matrix','telegram','irc','xmpp','aprs','email','sms','reticulum','mastodon','bluesky'],d:'nostr',label:'channel of communication'},
-    {n:'server',t:'text',d:'',label:'server — nostr: relays wss://… (several, space-separated; empty: public ones) · ntfy: https://… (empty: ntfy.sh) · matrix: https://homeserver · irc: wss://host/path, or ircs://host:6697 / irc://… via the bridge · xmpp: xmpp://host:5222, empty — by the domain of the account (bridge) · aprs: aprs://host:14580 (empty — rotate.aprs2.net, bridge) · email: IMAP imaps://host:993 or imap://host:143 (to receive; bridge) · sms: the phone app, empty — ws://127.0.0.1:8765 · reticulum: rns://host:port — the TCP server interface of a Reticulum node (needs TCP) · mastodon: instance https://… (empty — mastodon.social) · bluesky: empty — public.api.bsky.app (bsky.social after a login)'},
-    {n:'channel',t:'text',d:'dsp',label:'channel — nostr: hashtag · ntfy: topic · matrix: room (!id:server or #alias:server) · telegram: only to receive from ONE chat — its id or @name; leave empty for all chats (replies go to the last one) · irc: #channels · xmpp: room@conference.server (empty — direct messages only) · aprs: server filter (g/CALL, m/50, r/lat/lon/km, b/CALL*; empty — messages to you) · email: mailbox (empty — INBOX) · reticulum: the default recipient (32-digit address or a name heard in announces) · mastodon / bluesky: WHAT TO READ — #tags (several: any of them), -#tag drops posts with it, mastodon: «local» / «home» (token), empty — the public timeline; bluesky: @account, a feed link (bsky.app/profile/…/feed/…) or an at:// feed'},
+    {n:'proto',t:'select',opts:['nostr','ntfy','matrix','telegram','irc','xmpp','aprs','email','sms','reticulum','mastodon','bluesky','rss'],d:'nostr',label:'channel of communication'},
+    {n:'server',t:'text',d:'',label:'server — nostr: relays wss://… (several, space-separated; empty: public ones) · ntfy: https://… (empty: ntfy.sh) · matrix: https://homeserver · irc: wss://host/path, or ircs://host:6697 / irc://… via the bridge · xmpp: xmpp://host:5222, empty — by the domain of the account (bridge) · aprs: aprs://host:14580 (empty — rotate.aprs2.net, bridge) · email: IMAP imaps://host:993 or imap://host:143 (to receive; bridge) · sms: the phone app, empty — ws://127.0.0.1:8765 · reticulum: rns://host:port — the TCP server interface of a Reticulum node (needs TCP) · mastodon: instance https://… (empty — mastodon.social) · bluesky: empty — public.api.bsky.app (bsky.social after a login) · rss: feed addresses https://… (RSS, Atom, JSON Feed — several, separated by a space)'},
+    {n:'channel',t:'text',d:'dsp',label:'channel — nostr: hashtag · ntfy: topic · matrix: room (!id:server or #alias:server) · telegram: only to receive from ONE chat — its id or @name; leave empty for all chats (replies go to the last one) · irc: #channels · xmpp: room@conference.server (empty — direct messages only) · aprs: server filter (g/CALL, m/50, r/lat/lon/km, b/CALL*; empty — messages to you) · email: mailbox (empty — INBOX) · reticulum: the default recipient (32-digit address or a name heard in announces) · mastodon / bluesky: WHAT TO READ — #tags (several: any of them), -#tag drops posts with it, mastodon: «local» / «home» (token), empty — the public timeline; bluesky: @account, a feed link (bsky.app/profile/…/feed/…) or an at:// feed · rss: WORDS — any of them in the title / text / categories, -word drops an item; empty — everything'},
     {n:'user',t:'text',d:'',label:'user — bluesky: your handle (needed only for the search by #tag) · matrix: login · xmpp: account user@domain · aprs: your callsign (N0CALL-7) · email: login, usually the address · irc / ntfy: optional'},
     {n:'pass',t:'text',d:'',label:'password / token (saved with the patch!) — nostr: nsec or hex key (empty — a new anonymous key each session) · matrix: password or access token · telegram: bot token from @BotFather · ntfy: token'},
     {n:'smtp',t:'text',d:'',label:'email: SMTP smtps://host:465 or smtp://host:587 (STARTTLS) — to send; a message is «@name@host subject line⏎text» or the «to» input'},
-    {n:'poll',t:'range',min:5,max:600,step:5,d:30,label:'email / mastodon / bluesky: check every, s (feeds: at least 5)'},
+    {n:'poll',t:'range',min:5,max:600,step:5,d:30,label:'email / mastodon / bluesky / rss: check every, s (mastodon, bluesky: at least 5; rss: at least 60)'},
     {n:'nick',t:'text',d:'dsp',label:'nick (shown to others; in Chat set «my name» the same)'},
-    {n:'history',t:'range',min:0,max:86400,step:60,d:0,label:'also fetch what was said in the last, s (nostr, ntfy, matrix, xmpp; feeds: how far back the first read goes — 0 shows only what comes later)'},
+    {n:'history',t:'range',min:0,max:2592000,step:60,d:0,label:'also fetch what was said in the last, s (nostr, ntfy, matrix, xmpp; feeds: how far back the first read goes — 0 shows only what comes later)'},
     {n:'via',t:'select',opts:['auto','page','bridge'],d:'auto',label:'where TCP comes from (IRC ircs://, XMPP, APRS-IS, email): auto — the phone itself inside the DSP app, else the gateway below; bridge — always the gateway'},
     {n:'bridge',t:'text',d:'',label:'TCP gateway — one address for either: the DSP app on a phone (ws://192.168.0.5:8765; the app must allow other pages) or the Node bridge (ws://127.0.0.1:8777); the type is detected'},
     {n:'bridgeToken',t:'text',d:'',label:'gateway token (the app token or --token of the bridge; saved with the patch!)'},
     {n:'plain',t:'check',d:false,label:'xmpp: allow a password without TLS (only for a server on your own network)'},
+    {n:'proxy',t:'check',d:false,label:'rss: through the CORS proxy from Settings (a Node bridge in the gateway field needs none)'},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},
     {n:'autoConnect',t:'check',d:false,label:'connect when the patch starts'},
     {n:'text',t:'text',d:'',label:'message'},

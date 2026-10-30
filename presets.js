@@ -543,6 +543,7 @@ const PRESET_CATS={
   'SMS: Texts as a Chat (DSP app on Android)':'Network & IoT',
   'Reticulum: LXMF Messages over a Mesh (Sideband / NomadNet compatible)':'Network & IoT',
   'Feed: Mastodon and Bluesky by Tags into a Table (cards)':'Network & IoT',
+  'Feed: RSS / Atom News by Keywords into a Table (cards)':'Network & IoT',
   'Reference: Decode BLE Advertisements (Company ID, Service UUID)':'Network & IoT',
   'Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)':'Network & IoT',
   'Bridge: Serial Port ↔ Network (TCP/WS Gateway)':'Network & IoT',
@@ -1615,6 +1616,21 @@ const tb=addNode('table',500,290,{list:'feeds/radio',vmode:'cards',tz:'local',
   vcols:[{c:'t',fmt:'time',w:90},{c:'name'},{c:'from',w:150},{c:'text',w:420},{c:'tags',w:160},{c:'likes',w:50},{c:'url'},...hide]});
 tb.size.w=900; tb.size.h=560; applySize(tb);
 addEdge(ma.id,'rec',tb.id,'rec'); addEdge(bs.id,'rec',tb.id,'rec');
+markWiresDirty();
+});
+preset('Feed: RSS / Atom News by Keywords into a Table (cards)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'News from any RSS / Atom / JSON Feed, filtered by words and kept in a Table. «server» holds the feed addresses (several — separated by a space; here two radio blogs), «channel» the words: any of them in the title, text or categories, -word drops an item; empty keeps everything. New items are kept as records {id, from, name, title, summary, url, tags, image, lang, t}; the Table list feeds/news (browser database: survives a reload, goes into backups and device sync) updates a row by id, so nothing repeats; the newest are on top, the last 3000 stay. Filter there: «tags:antennas», «from:hackaday», «title:rtl».\n'+
+  'Most feeds do not send CORS headers, so a plain page cannot read them: (1) in the DSP app for Android nothing is needed; (2) run the Node bridge (node tools/node/bridge.mjs, Node 22+) and put its address ws://127.0.0.1:8777 into «TCP gateway» — the bridge fetches the feeds itself (its --hosts option can limit which servers); (3) or tick «through the CORS proxy» and set a proxy in Settings. «also fetch…» is how far back the first read goes (here a week); feeds are polled every 15 minutes.'});
+nt.size.w=1360; nt.size.h=200; applySize(nt);
+const rs=addNode('messenger',40,280,{proto:'rss',server:'https://www.rtl-sdr.com/feed/ https://hackaday.com/blog/feed/',channel:'sdr antenna radio -sponsored',history:604800,poll:900,autoConnect:true,bridge:''});
+rs.size.w=420; rs.size.h=440; applySize(rs);
+const hide=['id','count','first','last','proto','dir','to','kind','comment','avatar','image','likes','boosts','replies','cw','boost_by','lang','text','name'].map(c=>({c,hide:true}));
+ListDB.getMeta('feeds/news').then(m=>{ if(!m || !m.card) tblMetaSet('feeds/news',{types:{image:{t:'image'},summary:{t:'longtext'}},card:{key:'id',max:3000,rev:true,show:['from','title','summary','tags','url']}}); });
+const tb=addNode('table',500,280,{list:'feeds/news',vmode:'cards',tz:'local',
+  vcols:[{c:'t',fmt:'time',w:140},{c:'from',w:150},{c:'title',w:380},{c:'summary',w:420},{c:'tags',w:160},{c:'url'},...hide]});
+tb.size.w=900; tb.size.h=560; applySize(tb);
+addEdge(rs.id,'rec',tb.id,'rec');
 markWiresDirty();
 });
 preset('Reference: Decode BLE Advertisements (Company ID, Service UUID)', function(){

@@ -1,7 +1,7 @@
 // Ленты Mastodon и Bluesky (разбор, запросы, опрос против имитаций серверов): node tools/test-feed.mjs
 import http from 'node:http';
 import {loadMsgr} from './node/load.mjs';
-import {nodeIo} from './node/bridge.mjs';
+import {nodeIo, createMsgrBridge} from './node/bridge.mjs';
 const M = loadMsgr(), io = nodeIo();
 let bad = 0;
 const ok = (n, c, extra = '') => { if (!c) { bad++; console.log('FAIL', n, extra); } else console.log('ok  ', n); };
@@ -35,6 +35,34 @@ eq('bluesky repost reason', M.mgBskyPost({post: bv, reason: {$type: 'app.bsky.fe
 eq('bluesky urls', M.mgBskyUrls('https://public.api.bsky.app/', M.mgFeedSpec('#sdr @alice.bsky.social'), {feeds: ['at://did:plc:x/app.bsky.feed.generator/f'], limit: 10}).map(u => u.kind + ' ' + u.url.split('/xrpc/')[1].split('?')[0]),
   ['search app.bsky.feed.searchPosts', 'author app.bsky.feed.getAuthorFeed', 'feed app.bsky.feed.getFeed']);
 ok('none-tags drop a post', !M.mgFeedKeep({tags: 'sdr, Spam'}, M.mgFeedSpec('-#spam')) && M.mgFeedKeep({tags: 'sdr'}, M.mgFeedSpec('-#spam')));
+
+
+// ---- RSS / Atom / JSON Feed ----
+const RSS2 = `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE rss [<!ENTITY xxe "boom">]><rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:media="http://search.yahoo.com/mrss/">
+<channel><title>RTL-SDR &amp; friends</title><language>en-us</language>
+<item><title><![CDATA[New <b>antenna</b> for 433 MHz]]></title><link>https://ex.org/a1</link><guid isPermaLink="false">a1</guid><pubDate>Wed, 29 Oct 2026 10:00:00 +0000</pubDate>
+<dc:creator>Аня</dc:creator><category>SDR</category><category><![CDATA[Antennas]]></category>
+<description>&lt;p&gt;Short &amp;amp; sweet &lt;img src="https://ex.org/i.jpg"&gt;&lt;/p&gt;</description><content:encoded><![CDATA[<p>Full text with <a href="x">link</a> &amp; image <img src="https://ex.org/full.png"> &xxe;</p>]]></content:encoded></item>
+<item><title>Spam item</title><link>https://ex.org/a2</link><guid>a2</guid><pubDate>Thu, 30 Oct 2026 09:00:00 GMT</pubDate><category>spam</category><enclosure url="https://ex.org/pic.jpg" type="image/jpeg" length="1"/></item>
+</channel></rss>`;
+const f1 = M.mgRssParse(RSS2);
+eq('rss2: feed title, count, entities and CDATA', [f1.title, f1.items.length, f1.items[0].title], ['RTL-SDR & friends', 2, 'New antenna for 433 MHz']);
+eq('rss2: fields', [f1.items[0].id, f1.items[0].url, f1.items[0].author, f1.items[0].tags, f1.items[0].t, f1.items[0].lang], ['a1', 'https://ex.org/a1', 'Аня', 'SDR, Antennas', Date.parse('2026-10-29T10:00:00Z'), 'en-us']);
+ok('rss2: content:encoded is stripped to text, the custom entity from the DTD is not expanded', /^Full text with link & image/.test(f1.items[0].summary) && !/boom/.test(f1.items[0].summary), f1.items[0].summary);
+eq('rss2: image from the markup, and from an image enclosure', [f1.items[0].image, f1.items[1].image], ['https://ex.org/full.png', 'https://ex.org/pic.jpg']);
+const ATOM = `<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xml:lang="ru"><title>Лента</title>
+<entry><title type="html">Hello &amp;amp; bye</title><link rel="self" href="https://ex.org/self"/><link rel="alternate" href="https://ex.org/e1"/><id>tag:ex.org,2026:1</id><updated>2026-10-30T08:00:00Z</updated><published>2026-10-29T08:00:00Z</published>
+<author><name>Боб</name></author><category term="linux"/><summary>Кратко</summary><media:thumbnail url="https://ex.org/t.jpg"/></entry></feed>`;
+const f2 = M.mgRssParse(ATOM);
+eq('atom: title, alternate link, id, date (published wins), author, category, thumbnail, language', [f2.items[0].title, f2.items[0].url, f2.items[0].id, f2.items[0].t, f2.items[0].author, f2.items[0].tags, f2.items[0].image, f2.items[0].lang, f2.items[0].summary],
+  ['Hello & bye', 'https://ex.org/e1', 'tag:ex.org,2026:1', Date.parse('2026-10-29T08:00:00Z'), 'Боб', 'linux', 'https://ex.org/t.jpg', 'ru', 'Кратко']);
+const RDF = `<?xml version="1.0"?><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/"><channel><title>Old</title></channel><item rdf:about="https://ex.org/r1"><title>RDF item</title><link>https://ex.org/r1</link><dc:date>2026-10-28T00:00:00Z</dc:date><dc:subject>radio</dc:subject></item></rdf:RDF>`;
+const f3 = M.mgRssParse(RDF); eq('rss 1.0 (RDF): item, date, subject', [f3.items.length, f3.items[0].id, f3.items[0].tags, f3.items[0].t], [1, 'https://ex.org/r1', 'radio', Date.parse('2026-10-28T00:00:00Z')]);
+const f4 = M.mgRssParse(JSON.stringify({version: 'https://jsonfeed.org/version/1.1', title: 'JF', items: [{id: '1', url: 'https://ex.org/j1', title: 'T', content_text: 'body', tags: ['a', 'b'], date_published: '2026-10-30T00:00:00Z', authors: [{name: 'Z'}]}]}));
+eq('json feed', [f4.title, f4.items[0].tags, f4.items[0].author, f4.items[0].summary], ['JF', 'a, b', 'Z', 'body']);
+ok('a web page is not a feed', (() => { try { M.mgRssParse('<html><body>hi</body></html>'); return false; } catch (e) { return /not a feed/.test(e.message); } })());
+ok('a truncated feed is read as far as it goes', M.mgRssParse('<rss><channel><title>T</title><item><title>one</title><link>l</link></item><item><title>two').items.length === 2);
+ok('words: any of them, exclusion wins, categories count', M.mgRssMatch({title: 'New Antenna', summary: '', tags: ''}, M.mgFeedSpec('antenna sdr')) && !M.mgRssMatch({title: 'New Antenna', summary: 'spam inside', tags: ''}, M.mgFeedSpec('antenna -spam')) && M.mgRssMatch({title: 'x', summary: '', tags: 'SDR'}, M.mgFeedSpec('sdr')) && M.mgRssMatch({title: 'anything', summary: '', tags: ''}, M.mgFeedSpec('')));
 
 // ---- опрос против имитаций ----
 const rig = (proto, cfg) => { const r = {msgs: [], st: []}; r.s = M.mgConnect(proto, {retry: false, via: 'page', io, pollMs: 5000, ...cfg}, {msg: m => r.msgs.push(m), status: (t, s) => r.st.push([s, t])}); r.state = () => (r.st.at(-1) || [])[0]; return r; };
@@ -131,6 +159,37 @@ const mkStatus = (id, tags, extra = {}) => ({id: String(id), created_at: new Dat
   const D = rig('bluesky', {server, channel: '#sdr', user: 'me.bsky.social', pass: 'wrong'}); await until(() => D.state() === 'fatal');
   ok('bluesky: a wrong app password is fatal', D.state() === 'fatal' && /login refused/.test(D.st.at(-1)[1]), JSON.stringify(D.st.at(-1)));
   const E = rig('bluesky', {server, channel: ''}); ok('bluesky: nothing to read is explained', E.state() === 'fatal' && /#tags/.test(E.st.at(-1)[1]));
+}
+{ // RSS: опрос нескольких лент, слова, повторы, ошибка одной из лент; через Node-мост (обход CORS)
+  const ft = {a: RSS2, b: ATOM}; let hits = 0; const reqs = [];
+  const srv = http.createServer((req, res) => { reqs.push(req.headers['user-agent'] || ''); hits++;
+    const key = req.url.slice(1);
+    if (key === 'dead') { res.writeHead(404); return res.end(); }
+    if (key === 'html') { res.writeHead(200, {'content-type': 'text/html'}); return res.end('<html>page</html>'); }
+    res.writeHead(200, {'content-type': 'application/xml'}); res.end(ft[key]); }); servers.push(srv);
+  const port = await listen(srv), base = 'http://127.0.0.1:' + port + '/';
+  const A = rig('rss', {server: base + 'a ' + base + 'b ' + base + 'dead', channel: 'antenna linux -spam', history: 86400 * 400, pollMs: 60000});
+  await until(() => A.msgs.length >= 2, 6000);
+  ok('rss: several feeds at once, words filter, the excluded item is dropped, a dead feed is only a warning', A.msgs.length === 2 && A.msgs.every(m => !/Spam/.test(m.text)) && A.state() === 'warn' && /failed/.test(A.st.at(-1)[1]), JSON.stringify(A.st.at(-1)));
+  ok('rss: records for a Table (title, summary, feed, url, tags, image)', A.msgs[0].kind === 'post' && A.msgs[0].post.title && 'summary' in A.msgs[0].post && A.msgs[0].post.feed && A.msgs[0].post.url.startsWith('https://ex.org/'), JSON.stringify(A.msgs[0]));
+  ok('rss: the reader introduces itself (User-Agent)', reqs.every(u => /DSP-workbench/.test(u)));
+  ok('rss: oldest first', A.msgs[0].t <= A.msgs[1].t);
+  A.s.close();
+  const B = rig('rss', {server: base + 'html', channel: ''}); await until(() => B.state() === 'fatal');
+  ok('rss: a page instead of a feed is explained and not retried', B.state() === 'fatal' && /not a feed/.test(B.st.at(-1)[1]), JSON.stringify(B.st.at(-1)));
+  const C = rig('rss', {server: 'ftp://x/feed'}); ok('rss: only http(s) addresses', C.state() === 'fatal');
+  const D = rig('rss', {server: base + 'a', channel: '', history: 0}); await until(() => D.state() === 'up');
+  ok('rss: history 0 shows nothing at first', D.msgs.length === 0); D.s.close();
+  // через Node-мост: CORS у моста нет — он сам берёт ленту
+  const br = createMsgrBridge({port: 0}); const bp = (await br.listen()).port; servers.push({close: () => br.close()});
+  const E = rig('rss', {server: base + 'b', channel: 'linux', history: 86400 * 400, bridge: 'ws://127.0.0.1:' + bp, via: 'auto', io: {}});
+  await until(() => E.msgs.length >= 1, 6000);
+  ok('rss: with a gateway set, the Node bridge fetches the feed (auto)', E.msgs.length === 1 && /Hello/.test(E.msgs[0].text), JSON.stringify(E.st.slice(-2)));
+  E.s.close();
+  const lim = createMsgrBridge({port: 0, hosts: ['feeds.allowed.example']}); const lp = (await lim.listen()).port; servers.push({close: () => lim.close()});
+  const L = rig('rss', {server: base + 'a', bridge: 'ws://127.0.0.1:' + lp, via: 'auto', io: {}});
+  await until(() => L.st.some(s => /not in --hosts/.test(s[1])), 6000);
+  ok('rss: --hosts of the bridge limits which feeds it may fetch', L.st.some(s => /not in --hosts/.test(s[1])), JSON.stringify(L.st)); L.s.close();
 }
 for (const s of servers) try { s.close(); s.closeAllConnections?.(); } catch (e) {}
 console.log(bad ? 'FAILED ' + bad : 'all ok'); process.exit(bad ? 1 : 0);
