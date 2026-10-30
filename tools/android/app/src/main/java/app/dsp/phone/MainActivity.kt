@@ -52,6 +52,8 @@ open class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_MAIN)
 
         web = WebView(this)
+        // процесс страницы остаётся «важным», даже когда окно приложения не на экране: иначе Android в фоне замораживает её, и всё, что она рисует в окна поверх приложений / обои, замирает
+        web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
         setContentView(web)
         web.settings.apply {
             javaScriptEnabled = true
@@ -259,6 +261,8 @@ open class MainActivity : Activity() {
         @JavascriptInterface
         fun floatShow(id: String, opts: String): Boolean {
             if (!FloatWin.can(this@MainActivity)) return false
+            // кадры снимает страница, но её таймеры и rAF в фоне душатся — поэтому окно само дёргает floatTick из нативного потока
+            FloatWin.pump = { web.evaluateJavascript("window.floatTick&&floatTick()", null) }
             FloatWin.onClosed = { cid ->
                 runOnUiThread { web.evaluateJavascript("window.floatClosed&&floatClosed(" + JSONObject.quote(cid) + ")", null) }
             }

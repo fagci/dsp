@@ -4,12 +4,13 @@
    (DspApp.floatFrame → FloatWin.kt, окно двигается пальцем, ◢ меняет ширину, × закрывает). Окон может быть несколько — по одному на узел:
    так собирается «панель наблюдения» — Text Panel с цветным текстом и графиками, Gauge, Tank, спектр, карта, любой холст.
    Кадры берутся как для живых обоев (modules/wallpaper.js): тот же pipSource(n), тот же приём — пока страница скрыта, мы сами
-   вызываем draw() узла из такта движка (Eng.tick), потому что requestAnimationFrame в фоне стоит. Нужно разрешение
+   вызываем draw() узла из такта движка (Eng.tick), потому что requestAnimationFrame в фоне стоит. Кроме того, окно на телефоне само
+   просит страницу снять кадр (FloatWin.pump → floatTick) — таймеры скрытой страницы Android душит, а вызов из нативного кода нет. Нужно разрешение
    «Показ поверх других окон» — при первом нажатии откроется системный экран. */
 
 function floatSupported(){ try{ return !!(window.DspApp && typeof DspApp.floatShow==='function'); }catch(e){ return false; } }
 
-const FL_MAXW=640, FL_MIN_MS=250;
+const FL_MAXW=640, FL_MIN_MS=120;                      // ~8 кадров/с; нативный толкатель (FloatWin.pump) дёргает floatTick каждые ~150 мс, даже когда страница в фоне
 const flSt=new Map();                 // id узла → {n, scratch:{cv,cx,busy}, lastDraw}
 let flRaf=0;
 
