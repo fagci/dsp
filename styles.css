@@ -730,6 +730,10 @@ canvas.view.fs-fb{position:fixed!important;inset:0;width:100vw!important;height:
 #setPanel select:focus-visible,#setPanel input:focus{outline:1px solid var(--acc);outline-offset:-1px}
 #setPanel p{margin:0;color:var(--dim);font-size:11px;line-height:1.4}
 #setPanel code{font:11px var(--mono)}
+/* выбор устройства в параметре узла: список из Settings → Devices или свой адрес */
+.devpick{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
+.devpick select,.devpick input{width:100%;min-width:0;box-sizing:border-box}
+.devpick select.warn{outline:1px solid #d9822b}
 #gwBox{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:8px}
 #gwBox .gwHead{display:flex;align-items:center;justify-content:space-between;color:var(--dim)}
 #gwBox .gwList{display:flex;flex-direction:column;gap:8px}

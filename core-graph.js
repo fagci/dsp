@@ -964,8 +964,38 @@ i.addEventListener('change',()=>n.p[s.n]=+i.value); row.append(i);
 const i=document.createElement('input'); i.type='checkbox'; i.checked=!!n.p[s.n];
 i.addEventListener('change',()=>{ n.p[s.n]=i.checked; s.fn &&s.fn(n); }); row.append(i);
 (n.set||(n.set={}))[s.n]=v=>{ n.p[s.n]=!!v; i.checked=!!v; s.fn &&s.fn(n); };
+} else if(s.dev && typeof Gw!=='undefined'){
+// адрес устройства: выбор из списка Settings → Devices («@имя»; адрес и токен хранятся там, не в патче) или свой адрес
+const box=document.createElement('div'); box.className='devpick';
+const sel=document.createElement('select'), inp=document.createElement('input'); inp.type='text'; inp.spellcheck=false;
+const CUSTOM='\u0000custom';
+const render=()=>{
+const v=String(n.p[s.n]??''), list=Gw.list(), ref=v[0]==='@' ? v : null;
+const hit=ref && list.find(d=>'@'+d.name.toLowerCase()===ref.toLowerCase());
+sel.textContent='';
+const add=(val,txt)=>{ const o=document.createElement('option'); o.value=val; o.textContent=txt; sel.append(o); };
+for(const d of list) add('@'+d.name,'@'+d.name+'  '+d.url.replace(/^wss?:\/\//,'').replace(/[?#].*$/,''));
+if(ref && !hit) add(ref,ref+'  (not in Settings → Devices)');
+add(CUSTOM,'custom address…');
+sel.value=ref ? (hit ? '@'+hit.name : ref) : CUSTOM;
+sel.classList.toggle('warn',!!ref && !hit);
+sel.hidden=!list.length && !ref;                         // устройств нет — просто поле адреса, как раньше
+inp.hidden=!!ref; if(!ref) inp.value=v;
+};
+render();
+sel.addEventListener('change',()=>{
+if(sel.value===CUSTOM){ n.p[s.n]=inp.value||String(s.d??''); inp.value=n.p[s.n]; inp.hidden=false; inp.focus(); }
+else { n.p[s.n]=sel.value; inp.hidden=true; }
+sel.classList.remove('warn'); s.fn && s.fn(n);
+});
+inp.addEventListener('input',()=>n.p[s.n]=inp.value);
+(n.set||(n.set={}))[s.n]=v=>{ n.p[s.n]=v; render(); };
+box._render=render;
+const wr=new WeakRef(box), h=()=>{ const b=wr.deref(); if(!b) window.removeEventListener('gw-changed',h); else b._render(); };
+window.addEventListener('gw-changed',h);                 // список устройств изменили в Settings — выбор в открытых узлах обновляется
+box.append(sel,inp); row.append(box);
 } else {
-const i=document.createElement('input'); i.type='text'; i.value=n.p[s.n]; if(s.dev) i.setAttribute('list','gwNames');      // подсказки «@имя» из Settings → Devices
+const i=document.createElement('input'); i.type='text'; i.value=n.p[s.n];
 i.addEventListener('input',()=>n.p[s.n]=i.value);
 (n.set||(n.set={}))[s.n]=v=>{ n.p[s.n]=v; i.value=v; };
 row.append(i); }
