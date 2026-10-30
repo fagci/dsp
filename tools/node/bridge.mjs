@@ -28,6 +28,7 @@ import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
 import {wsAccept, wsFrame, wsParser, originOk, DEFAULT_ORIGINS} from '../termux/bridge.mjs';
 import {loadMsgr} from './load.mjs';
+import {prepareTls} from './tlsdir.mjs';
 
 export function hostOk(host, allowed) {
   if (!allowed || !allowed.length) return true;
@@ -158,13 +159,18 @@ export function createMsgrBridge(opt) {
   const io = o.io || nodeIo(o.hosts);
   const clients = new Set();
 
-  const server = http.createServer((req, res) => {
+  let tlsInfo = null, tlsSrv = null;
+  const onRequest = (req, res) => {
     const u = new URL(req.url, 'http://x');
     if (proxy && u.pathname === '/proxy') return proxy(req, res, u);
+    if (tlsInfo && tlsInfo.caPem && (u.pathname === '/ca.crt' || u.pathname === '/ca.pem')) {      // сертификат центра — публичный, его и ставят на устройство
+      res.writeHead(200, {'content-type': 'application/x-x509-ca-cert', 'content-disposition': 'attachment; filename="dsp-bridge-ca.crt"', 'access-control-allow-origin': '*'});
+      return res.end(tlsInfo.caPem);
+    }
     res.writeHead(200, {'content-type': 'text/plain'});
-    res.end('DSP messenger bridge: ' + clients.size + ' client(s)\nconnect with WebSocket' + (proxy ? '; CORS proxy: /proxy?url=…' : '') + '\n');
-  });
-  server.on('upgrade', (req, sock) => {
+    res.end('DSP messenger bridge: ' + clients.size + ' client(s)\nconnect with WebSocket' + (tlsInfo ? ' (ws:// and wss:// on this port)' : '') + (proxy ? '; CORS proxy: /proxy?url=…' : '') + (tlsInfo && tlsInfo.caPem ? '\nCA certificate to trust: /ca.crt' : '') + '\n');
+  };
+  const onUpgrade = (req, sock) => {
     const u = new URL(req.url, 'http://x'), key = req.headers['sec-websocket-key'];
     const deny = code => { sock.end('HTTP/1.1 ' + code + '\r\nconnection: close\r\n\r\n'); };
     if (!key || /websocket/i.test(req.headers.upgrade || '') === false) return deny('400 Bad Request');
@@ -197,28 +203,48 @@ export function createMsgrBridge(opt) {
     });
     sock.on('data', par); sock.on('close', bye); sock.on('error', bye);
     send({ev: 'hello', ver: 1, host: os.hostname(), protos: ['nostr', 'ntfy', 'matrix', 'telegram', 'irc', 'xmpp', 'aprs', 'email']});
+  };
+  const httpSrv = http.createServer(onRequest); httpSrv.on('upgrade', onUpgrade);
+  // один порт — и ws:// / http://, и wss:// / https://: по первому байту (0x16 — TLS ClientHello) соединение отдаётся нужному серверу
+  const server = net.createServer(sock => {
+    sock.on('error', () => {}); sock.setTimeout(15000, () => sock.destroy());
+    sock.once('data', d => { sock.setTimeout(0); sock.pause(); sock.unshift(d); (d[0] === 0x16 && tlsSrv ? tlsSrv : httpSrv).emit('connection', sock); process.nextTick(() => sock.resume()); });
   });
 
   return {
-    server, clients,
-    listen: () => new Promise((ok, bad) => { server.once('error', bad); server.listen(o.port, o.host, () => ok(server.address())); }),
-    close: () => { for (const c of clients) { c.dead = true; try { c.ses && c.ses.close(); } catch (e) { /* закрыт */ } c.sock.destroy(); } clients.clear(); server.close(); },
+    server, clients, get tls() { return tlsInfo; },
+    listen: async () => {
+      if (o.tls || o.cert || o.key) {
+        tlsInfo = await prepareTls(o, M, ip => ['private', 'loopback', 'linklocal'].includes(ipClass(ip)));
+        tlsSrv = https.createServer({cert: tlsInfo.cert, key: tlsInfo.key, handshakeTimeout: 10000}, onRequest); tlsSrv.on('upgrade', onUpgrade); tlsSrv.on('tlsClientError', (e, s) => { try { s.destroy(); } catch (x) { /* закрыт */ } });      // с обработчиком Node сам сокет не закрывает
+      }
+      return new Promise((ok, bad) => { server.once('error', bad); server.listen(o.port, o.host, () => ok(server.address())); });
+    },
+    close: () => { for (const c of clients) { c.dead = true; try { c.ses && c.ses.close(); } catch (e) { /* закрыт */ } c.sock.destroy(); } clients.clear(); server.close(); for (const x of [httpSrv, tlsSrv]) { try { x && x.closeAllConnections && x.closeAllConnections(); } catch (e) { /* закрыт */ } } },
   };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === fs.realpathSync(process.argv[1])) {
   const {values: a} = parseArgs({options: {
     host: {type: 'string', default: '127.0.0.1'}, port: {type: 'string', default: '8777'}, token: {type: 'string', default: ''},
-    origin: {type: 'string', multiple: true, default: []}, 'no-proxy': {type: 'boolean', default: false}, 'proxy-loopback': {type: 'boolean', default: false}, 'proxy-no-private': {type: 'boolean', default: false}, hosts: {type: 'string', default: ''}, help: {type: 'boolean', short: 'h', default: false},
+    origin: {type: 'string', multiple: true, default: []}, 'no-proxy': {type: 'boolean', default: false}, tls: {type: 'boolean', default: false}, 'tls-dir': {type: 'string', default: ''}, 'tls-name': {type: 'string', multiple: true, default: []}, cert: {type: 'string', default: ''}, key: {type: 'string', default: ''}, 'proxy-loopback': {type: 'boolean', default: false}, 'proxy-no-private': {type: 'boolean', default: false}, hosts: {type: 'string', default: ''}, help: {type: 'boolean', short: 'h', default: false},
   }});
   if (a.help) {
-    console.log('node tools/node/bridge.mjs [--host 127.0.0.1] [--port 8777] [--token T] [--origin URL]… [--hosts irc.example.org,*.example.net] [--no-proxy] [--proxy-loopback] [--proxy-no-private]');
+    console.log('node tools/node/bridge.mjs [--host 127.0.0.1] [--port 8777] [--token T] [--origin URL]… [--hosts irc.example.org,*.example.net] [--no-proxy] [--proxy-loopback] [--proxy-no-private] [--tls [--tls-dir DIR] [--tls-name name-or-ip]…] [--cert FILE --key FILE]');
     process.exit(0);
   }
   if (a.host !== '127.0.0.1' && a.host !== 'localhost' && !a.token) console.error('warning: open to the network without --token — anyone on it can use your accounts through this bridge');
   const b = createMsgrBridge({host: a.host, port: +a.port, token: a.token, origins: [...DEFAULT_ORIGINS, ...a.origin],
-    hosts: a.hosts.split(',').map(s => s.trim().toLowerCase()).filter(Boolean), proxy: !a['no-proxy'], proxyLoopback: a['proxy-loopback'], proxyPrivate: !a['proxy-no-private'],
+    hosts: a.hosts.split(',').map(s => s.trim().toLowerCase()).filter(Boolean), proxy: !a['no-proxy'], tls: a.tls, tlsDir: a['tls-dir'], tlsNames: a['tls-name'], cert: a.cert, key: a.key, proxyLoopback: a['proxy-loopback'], proxyPrivate: !a['proxy-no-private'],
     log: m => console.error(new Date().toISOString().slice(11, 19) + ' ' + m)});
-  b.listen().then(ad => console.error('listening on ws://' + ad.address + ':' + ad.port + (a.token ? '/?token=…' : '') + (a['no-proxy'] ? '' : ' · CORS proxy: http://' + ad.address + ':' + ad.port + '/proxy?' + (a.token ? 'token=…&' : '') + 'url={url}')), e => { console.error(e.message); process.exit(1); });
+  b.listen().then(ad => {
+    console.error('listening on ws://' + ad.address + ':' + ad.port + (a.token ? '/?token=…' : '') + (b.tls ? '  and  wss://…:' + ad.port : '') + (a['no-proxy'] ? '' : ' · CORS proxy: http' + (b.tls ? '(s)' : '') + '://' + ad.address + ':' + ad.port + '/proxy?' + (a.token ? 'token=…&' : '') + 'url={url}'));
+    const t = b.tls;
+    if (t && t.own) {
+      console.error('TLS: certificate for ' + [...t.dns, ...t.ips].join(', ') + (t.regenerated ? '  (made now)' : '') + '  — files in ' + t.dir);
+      console.error('TLS: trust this CA on every device that opens wss:// / https:// of this bridge (browser, phone):  ' + t.caFile + '   — or download http://<this address>:' + ad.port + '/ca.crt');
+      console.error('TLS: CA SHA-256 fingerprint  ' + t.fingerprint + '   (compare it when you install the CA)');
+    }
+  }, e => { console.error(e.message); process.exit(1); });
   process.on('SIGINT', () => { b.close(); process.exit(0); });
 }

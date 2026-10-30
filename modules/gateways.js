@@ -65,3 +65,41 @@ const gwErr=s=>{ const t=String(s||'').trim(); return t[0]==='@' ? Gw.err(t) : '
   box.querySelector('.gwAdd').onclick=()=>{ let k=rows.length+1; while(rows.some(r=>r.name==='device'+k)) k++; rows.push({name:'device'+k,url:'ws://',token:''}); store(); draw(); };
   load(); draw(); Gw.names();
 })();
+
+// сертификаты: свой центр (ключ — в IndexedDB и не извлекается) и серверные сертификаты для мостов (cert-kernels.js)
+const GwCert={
+  db(){ return new Promise((ok,bad)=>{ const q=indexedDB.open('dsp-certs',1); q.onupgradeneeded=()=>q.result.createObjectStore('kv'); q.onsuccess=()=>ok(q.result); q.onerror=()=>bad(q.error); }); },
+  async get(k){ const d=await this.db(); return new Promise((ok,bad)=>{ const r=d.transaction('kv').objectStore('kv').get(k); r.onsuccess=()=>ok(r.result); r.onerror=()=>bad(r.error); }); },
+  async put(k,v){ const d=await this.db(); return new Promise((ok,bad)=>{ const t=d.transaction('kv','readwrite'); t.objectStore('kv').put(v,k); t.oncomplete=()=>ok(); t.onerror=()=>bad(t.error); }); },
+  async ca(create){                                              // → {der, pem, key, subject, ski} из хранилища, при необходимости — новый (ограниченный локальными именами)
+    const s=await this.get('ca');
+    if(s) return {...s,constrained:true};
+    if(!create) return null;
+    const ca=await certNewCA({name:'DSP workbench CA ('+location.hostname+')',extractable:false});
+    await this.put('ca',{der:ca.der,pem:ca.pem,key:ca.key,subject:ca.subject,ski:ca.ski}); return ca;
+  },
+};
+(()=>{
+  const box=document.querySelector('#gwBox .gwCert'); if(!box) return;
+  const names=box.querySelector('.gwCertNames'), res=box.querySelector('.gwCertRes');
+  const link=(name,text,type)=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([text],{type:type||'application/x-pem-file'})); a.download=name; a.textContent='⬇ '+name; return a; };
+  const say=(t,warn)=>{ res.textContent=''; const d=document.createElement('div'); d.textContent=(warn ? '⚠ ' : '')+t; res.append(d); };
+  box.querySelector('.gwCertMake').onclick=async()=>{
+    const parts=names.value.split(/[\s,;]+/).filter(Boolean), ips=parts.filter(x=>cdIp(x)), dns=parts.filter(x=>!cdIp(x));
+    if(!parts.length){ say('Type the names and IP addresses of the server first (pi.lan 192.168.0.5).',true); return; }
+    const bad=dns.find(d=>!/^[A-Za-z0-9.-]+$/.test(d)); if(bad){ say('«'+bad+'» is not a host name.',true); return; }
+    try{
+      const ca=await GwCert.ca(true), leaf=await certNewLeaf(ca,{dns,ips}), base=(dns[0]||ips[0]).replace(/[^A-Za-z0-9.-]/g,'_');
+      say('Certificate for '+[...dns,...ips].join(', ')+' — valid one year, signed by your CA. Give the two files to the server (for the Node bridge: --cert / --key), trust the CA on this device.');
+      res.append(link(base+'.crt',leaf.chainPem),link(base+'.key',leaf.keyPem),link('dsp-ca.crt',ca.pem,'application/x-x509-ca-cert'));
+      const w=document.createElement('div'); w.textContent='The .key file is the server\'s secret: keep it on the server only.'; res.append(w);
+    }catch(e){ say(e.message,true); }
+  };
+  box.querySelector('.gwCertCa').onclick=async()=>{
+    const ca=await GwCert.ca(false);
+    if(!ca){ say('No CA yet — it is made together with the first certificate.'); return; }
+    say('Your CA (made in this browser; its private key never leaves it and cannot be exported). It may sign only local names (localhost, .local, .lan, .home.arpa, .internal) and private networks, so a leaked CA cannot vouch for a public site. Trust it where wss:// / https:// of your bridges must open: Chrome / Edge → Settings → Privacy and security → Security → Manage certificates → Authorities → Import; Android → Settings → Security → Install a certificate → CA certificate; iOS → install the profile, then Settings → General → About → Certificate Trust Settings; Linux / macOS / Windows — the system keychain / certificate manager.');
+    res.append(link('dsp-ca.crt',ca.pem,'application/x-x509-ca-cert'));
+    const f=document.createElement('button'); f.textContent='Forget this CA'; f.onclick=async()=>{ if(confirm('Forget the CA? Certificates it signed keep working, but new ones will need a new CA that must be trusted again.')){ const d=await GwCert.db(); d.transaction('kv','readwrite').objectStore('kv').delete('ca'); say('The CA is forgotten.'); } }; res.append(f);
+  };
+})();
