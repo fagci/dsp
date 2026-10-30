@@ -71,6 +71,35 @@ class BridgeServer(
     private var ss: ServerSocket? = null
     @Volatile private var running = false
 
+    /** TLS (wss:// и https://): порт на единицу выше обычного (с портом 0 — любой свободный); поднимается, когда есть контекст с сертификатом. */
+    @Volatile private var tlsCtx: javax.net.ssl.SSLContext? = null
+    private var tlsSs: ServerSocket? = null
+    val tlsPort: Int get() = tlsSs?.localPort ?: 0
+
+    /** Меняет сертификат (null — выключает TLS); текст ошибки или null. Обычный порт не трогает. */
+    @Synchronized
+    fun setTls(ctx: javax.net.ssl.SSLContext?): String? {
+        try { tlsSs?.close() } catch (e: IOException) {}
+        tlsSs = null; tlsCtx = ctx
+        return if (ctx != null && running) startTls() else null
+    }
+
+    @Synchronized
+    private fun startTls(): String? {
+        val c = tlsCtx ?: return null
+        val s = c.serverSocketFactory.createServerSocket()
+        try {
+            s.reuseAddress = true
+            s.bind(InetSocketAddress(InetAddress.getByName(if (cfg.shareLan) "0.0.0.0" else "127.0.0.1"), if (cfg.port == 0) 0 else cfg.port + 1))
+        } catch (e: Exception) {
+            try { s.close() } catch (x: IOException) {}
+            return "TLS port ${cfg.port + 1}: ${e.message}"
+        }
+        tlsSs = s
+        pool.execute { acceptLoop(s) }
+        return null
+    }
+
     val clientCount: Int get() = clients.size
     val listening: Boolean get() = running
     val boundPort: Int get() = ss?.localPort ?: 0
@@ -89,6 +118,7 @@ class BridgeServer(
         ss = s
         running = true
         pool.execute { acceptLoop(s) }
+        startTls()
         // ждём записей, а не опрашиваем каждые 40 мс: без подписчиков поток спит и не будит процессор
         pool.execute {
             while (running) {
@@ -106,6 +136,8 @@ class BridgeServer(
         running = false
         try { ss?.close() } catch (e: IOException) {}
         ss = null
+        try { tlsSs?.close() } catch (e: IOException) {}
+        tlsSs = null
         for (s in conns) try { s.close() } catch (e: IOException) {}
         conns.clear(); clients.clear()
         synchronized(pending) { pending.clear(); (pending as java.lang.Object).notifyAll() }
@@ -362,7 +394,7 @@ class BridgeServer(
 
         /** Команды действий: сокеты и ping, соединения Bluetooth, речь, управление телефоном. Нужен c.power. */
         fun powerCmd(name: String) = POWER_PREFIX.any { name.startsWith(it) } || name == "ping"
-        private val POWER_PREFIX = listOf("tcp.", "udp.", "net.", "raw.", "gatt.", "gattsrv.", "l2cap.", "nsd.", "wifi.", "aware.", "p2p.", "bt.", "ble.adv.", "speech.", "sys.", "activity.", "ui.", "app.", "intent", "vol.", "tts.", "clip.", "media.", "screen.", "toast", "vpn.")
+        private val POWER_PREFIX = listOf("tcp.", "udp.", "net.", "raw.", "gatt.", "gattsrv.", "l2cap.", "nsd.", "wifi.", "aware.", "p2p.", "bt.", "ble.adv.", "speech.", "sys.", "activity.", "ui.", "app.", "tls.", "intent", "vol.", "tts.", "clip.", "media.", "screen.", "toast", "vpn.")
 
         /** Команды с личными данными или платные (SMS, контакты) — только доверенному клиенту. */
         fun sensitiveCmd(name: String) = name.startsWith("sms.") || name.startsWith("contacts.")

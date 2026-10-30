@@ -741,6 +741,7 @@ canvas.view.fs-fb{position:fixed!important;inset:0;width:100vw!important;height:
 #gwBox .gwCert{display:flex;flex-direction:column;gap:6px}
 #gwBox .gwCert[open]>*{margin-top:6px}
 #gwBox .gwCert input{max-width:none;width:100%;box-sizing:border-box}
+#gwBox .gwCert select{max-width:none;width:100%;box-sizing:border-box}
 #gwBox .gwCertBtns{display:flex;gap:6px}
 #gwBox .gwCertRes{display:flex;flex-direction:column;gap:3px;font-size:11px;word-break:break-word}
 #gwBox .gwCertRes a{color:var(--acc)}
