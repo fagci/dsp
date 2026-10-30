@@ -535,6 +535,8 @@ const PRESET_CATS={
   'Panels: Needle Meter, Speedometer, Counters, Nixie, D-pad and Spectrum Display':'Analysis & Measurement',
   'Panels: Phone Volume and Media Keys (Key Panel → Phone Control)':'Maps & Locating',
   'Packets: Craft, Send and Analyze (SYN sweep, DNS, ping, ARP)':'Maps & Locating',
+  'Phone: Mock GPS (Developer Option) — Walk a Route':'Maps & Locating',
+  'Phone: Monitor Over Other Apps (Text Panel + 🗔)':'Maps & Locating',
   'Panels: Selector, Jog Wheel, DIP, Flip Clock, Character Displays, Goniometer and Thermometer':'Analysis & Measurement',
   'Logic Analyzer: UART Decode':'Analysis & Measurement',
   'Timeline: Periods, Durations and Replies on the Air (Table)':'Analysis & Measurement',
@@ -7099,6 +7101,31 @@ addEdge(g2.id,'out',c2.id,'go'); addEdge(c2.id,'rec',a2.id,'rec');
 const vm=addNode('vpnmon',300,1800,{packets:true});
 const a3=addNode('pktsniff',720,1800,{filter:'udp || tcp',link:'101 raw IP'}); a3.size.w=520; a3.size.h=260; applySize(a3);
 addEdge(vm.id,'rec',a3.id,'rec');
+markWiresDirty();
+});
+preset('Phone: Mock GPS (Developer Option) — Walk a Route', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Mock GPS replaces the phone position (Android developer feature). Once: Settings → Developer options → «Select mock location app» → DSP. Then tick «send the position» and press Connect in Phone Control: every app on the phone — and the Phone sensors node below — sees the point as the real GPS.\n'+
+  'Sources: route (lines «lat,lon[,alt]», or load a GPX / KML) walked at the given speed — 1.4 m/s on foot, 14 m/s by car; loop, ping-pong or stop at the end — a circle, one fixed point, or the lat / lon pins (wire any numbers: a Geofence test, a track from the Table). «random scatter» adds the noise of a real receiver. Outputs: the position, bearing, progress and the route distance. If the phone answers «permission», the app is not selected as the mock location app yet.'});
+nt.size.w=1100; nt.size.h=130; applySize(nt);
+const mg=addNode('mockgps',40,200,{mode:'route',speed:6,jitter:2,enable:true}); mg.size.w=340; mg.size.h=240; applySize(mg);
+const pc=addNode('phonectl',480,200,{});
+addEdge(mg.id,'cmd',pc.id,'cmd'); addEdge(pc.id,'rec',mg.id,'rec');
+const tx=addNode('termux',480,900,{url:'ws://127.0.0.1:8765',gps:true});
+const tp=addNode('textpanel',900,200,{lines:'# GPS the phone sees\nlat {a:0.00000}\nlon {b:0.00000}\nspeed [red if c>10]{c:0.0}[/] m/s  bearing {d:0}°\n@graph c 60 auto | cyan',size:15}); tp.size.w=330; tp.size.h=240; applySize(tp);
+addEdge(tx.id,'lat',tp.id,'a'); addEdge(tx.id,'lon',tp.id,'b'); addEdge(tx.id,'speed',tp.id,'c'); addEdge(tx.id,'hdg',tp.id,'d');
+markWiresDirty();
+});
+preset('Phone: Monitor Over Other Apps (Text Panel + 🗔)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Press 🗔 in the header of a node (the DSP Android app): its picture floats over every other app — drag it, ◢ resizes, × closes; allow «Display over other apps» the first time. Several nodes can float at once: a Text Panel, a Gauge, a spectrum, a map…\n'+
+  'Text Panel is the simplest universal HUD: lines of text with {a:0.0} values from the pins a…h, colour by condition ([red if a>5]…[/] for a part, «| red if a>100; amber if a>60; green» for the whole line), # headings, @bar bars and @graph charts of the last N seconds. It is drawn on a canvas, so it also works in the dashboard and as the live wallpaper. Here an LFO stands in for the data — wire Phone sensors (speed, light, temperature) instead.'});
+nt.size.w=1100; nt.size.h=130; applySize(nt);
+const l1=addNode('lfo',40,200,{freq:.07,min:0,max:130}), l2=addNode('lfo',40,340,{freq:.02,min:.05,max:1}), l3=addNode('lfo',40,480,{freq:.05,min:30,max:44});
+const tp=addNode('textpanel',380,200,{size:15}); tp.size.w=340; tp.size.h=260; applySize(tp);
+addEdge(l1.id,'out',tp.id,'a'); addEdge(l2.id,'out',tp.id,'b'); addEdge(l3.id,'out',tp.id,'c');
+const gg=addNode('gauge',800,200,{min:0,max:130,warn:60,crit:100,unit:'km/h'}); gg.size.w=260; gg.size.h=200; applySize(gg);
+addEdge(l1.id,'out',gg.id,'in');
 markWiresDirty();
 });
 preset('ADS-B: Radar and Attitude (Generator)', function(){

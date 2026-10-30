@@ -331,7 +331,7 @@ const d=MOD[n.type];
 const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
 const title=nodeTitle(n);
 el.style.setProperty('--cat',catColor(d.cat)); el.dataset.title=title;
-el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare?'<span class="xpd" title="Expand canvas (hide parameters)">⛶</span>':''}${d.fs?'<span class="fsb" title="Fullscreen (double-click the picture)">⤢</span>':''}${(d.view||d.fs)&&pipSupported()?'<span class="pipb" title="Picture in picture (floating window)">⧉</span>':''}${(d.view||d.fs)&&wallpaperSupported()?'<span class="wpb" title="Set as live wallpaper (phone app)">🖼</span>':''}<span class="hlp" title="Help for this module (F1)">?</span><span class="rst" title="Reset all parameters">↺</span><span class="ren" title="Rename">✎</span><span class="x">✕</span></div> <div class="nbody"></div>`;
+el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare?'<span class="xpd" title="Expand canvas (hide parameters)">⛶</span>':''}${d.fs?'<span class="fsb" title="Fullscreen (double-click the picture)">⤢</span>':''}${(d.view||d.fs)&&pipSupported()?'<span class="pipb" title="Picture in picture (floating window)">⧉</span>':''}${(d.view||d.fs)&&wallpaperSupported()?'<span class="wpb" title="Set as live wallpaper (phone app)">🖼</span>':''}${(d.view||d.fs)&&floatSupported()?'<span class="flb" title="Float over other apps (phone app)">🗔</span>':''}<span class="hlp" title="Help for this module (F1)">?</span><span class="rst" title="Reset all parameters">↺</span><span class="ren" title="Rename">✎</span><span class="x">✕</span></div> <div class="nbody"></div>`;
 el.querySelector('.ttl').textContent=title;
 el.querySelector('.ren').addEventListener('click',e=>{ e.stopPropagation(); renameNode(n); });
 el.querySelector('.hlp').addEventListener('click',e=>{ e.stopPropagation(); hpForNode(n); });
@@ -339,6 +339,7 @@ el.querySelector('.xpd')?.addEventListener('click',e=>{ e.stopPropagation(); xpa
 el.querySelector('.fsb')?.addEventListener('click',e=>{ e.stopPropagation(); nodeFullscreen(n); });
 el.querySelector('.pipb')?.addEventListener('click',e=>{ e.stopPropagation(); nodePip(n); });
 el.querySelector('.wpb')?.addEventListener('click',e=>{ e.stopPropagation(); wallpaperToggle(n); });
+el.querySelector('.flb')?.addEventListener('click',e=>{ e.stopPropagation(); floatToggle(n); });
 const rstEl=el.querySelector('.rst');
 if(resettableParams(d).length) rstEl.addEventListener('click',e=>{ e.stopPropagation(); resetNode(n); });
 else rstEl.remove();
@@ -1817,6 +1818,7 @@ function dashRenderLeaf(t){
   if(n?.cv && MOD[n.type].fs) tools.append(dashBtn2('⤢','Fullscreen (double-click the picture)',()=>nodeFullscreen(n)));
   if(n?.cv && pipSupported()) tools.append(dashBtn2('⧉','Picture in picture',()=>nodePip(n)));
   if(n?.cv && wallpaperSupported()) tools.append(dashBtn2('🖼','Set as live wallpaper (phone app)',()=>wallpaperToggle(n)));
+  if(n?.cv && floatSupported()) tools.append(dashBtn2('🗔','Float over other apps (phone app)',()=>floatToggle(n)));
   if(isGraph){
     acts.append(dashBtn2('⊕','Add module (or double-click the canvas)',e=>dashGraphAdd(e.currentTarget)),
       dashBtn2('⤢','Fit patch',dashGraphFit));
@@ -2689,7 +2691,7 @@ fpsSel.onchange=()=>{ try{ LS.set('dsp-fps',fpsSel.value); }catch(e){} wakeDraw(
   addEventListener('resize',()=>{ if(!panel.hidden) place(); });
 })();
 let lastStatText='', lastStatTs=0;
-function visible(n){ return n._vis!==false || !!n._pip || !!n._wallpaper; }       // до первого отчёта — считаем видимым; узел в картинке в картинке и в живых обоях рисуется всегда (может быть «за краем» видимой области)
+function visible(n){ return n._vis!==false || !!n._pip || !!n._wallpaper || !!n._float; }       // до первого отчёта — считаем видимым; узел в картинке в картинке и в живых обоях рисуется всегда (может быть «за краем» видимой области)
 // Простой: движок не обрабатывает блоки и нет ввода — перерисовка раз в IDLE_MS через
 // setTimeout, без rAF на каждый vsync. Асинхронные данные (скриншот tinySA, тайлы и т.п.)
 // всё равно появятся, с задержкой не больше IDLE_MS.
