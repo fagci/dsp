@@ -1424,8 +1424,8 @@ function netOutStop(n){
 }
 function netOutStart(n){
   netOutStop(n);
-  const url=String(n.p.url||'').trim();
-  if(!/^wss?:\/\//i.test(url)){ n.status='URL must start with ws:// or wss://'; return; }
+  const url=gwUrl(String(n.p.url||'').trim());
+  if(!/^wss?:\/\//i.test(url)){ n.status=gwErr(n.p.url)||'URL must start with ws:// or wss://'; return; }
   n.want=true; n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
   netOutOpen(n,url);
 }
@@ -1446,7 +1446,7 @@ function netOutOpen(n,url){
 }
 def({ id:'netout', title:'Network Out', cat:'Output', readout:true,
   ins:[{n:'text',t:'txt'},{n:'a',t:'num'},{n:'b',t:'num'},{n:'c',t:'num'},{n:'d',t:'num'},{n:'audio',t:'sig'}],
-  params:[{n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'ws:// wss://'},
+  params:[{n:'url',t:'text',d:'ws://127.0.0.1:8765',dev:true,label:'ws:// wss:// — or @name from Settings → Devices'},
           {n:'fmt',t:'select',opts:['text','numbers JSON','audio PCM16'],d:'text',label:'send'},
           {n:'period',t:'range',min:.05,max:60,step:.05,d:1,label:'numbers period, s'},
           {n:'reconnect',t:'check',d:true,label:'reconnect'},

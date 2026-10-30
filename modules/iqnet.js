@@ -23,8 +23,8 @@ function iqnStop(n){
 }
 function iqnStart(n){
   iqnStop(n);
-  const url=String(n.p.url||'').trim();
-  if(!/^wss?:\/\//i.test(url)){ n.status='URL must start with ws:// or wss://'; return; }
+  const url=gwUrl(String(n.p.url||'').trim());
+  if(!/^wss?:\/\//i.test(url)){ n.status=gwErr(n.p.url)||'URL must start with ws:// or wss://'; return; }
   n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
   n.want=true; n.bad=false; iqnOpen(n,url);
 }

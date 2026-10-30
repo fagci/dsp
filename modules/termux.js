@@ -16,8 +16,8 @@ function termuxSendSub(n){
 }
 function termuxStart(n){
   termuxStop(n);
-  const url=String(n.p.url||'').trim();
-  if(!/^wss?:/i.test(url)){ n.status='URL must start with ws:// or wss://'; return; }
+  const url=gwUrl(String(n.p.url||'').trim());
+  if(!/^wss?:/i.test(url)){ n.status=gwErr(n.p.url)||'URL must start with ws:// or wss://'; return; }
   n.want=true; n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
   let ws;
   try{ ws=new WebSocket(url); }
@@ -72,7 +72,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
   readout:true, tall:true,
   groups:[{n:'Position & battery'},{n:'Motion (accel · gyro · mag)',open:false},{n:'Orientation & activity',open:false},{n:'Environment',open:false},{n:'Wi-Fi',open:false},{n:'Bluetooth LE / classic',open:false},{n:'GNSS',open:false},{n:'Cell & microphone',open:false},{n:'Packet capture (root)',open:false},{n:'Device records',open:false}],
   params:[
-    {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'bridge: ws://host:8765/?token=…'},
+    {n:'url',t:'text',d:'ws://127.0.0.1:8765',dev:true,label:'bridge: ws://host:8765/?token=… — or @name from Settings → Devices (the token stays there)'},
     {n:'gps',g:'Position & battery',t:'check',d:true,label:'GPS position'},
     {n:'battery',g:'Position & battery',t:'check',d:true,label:'battery'},
     {n:'power',g:'Position & battery',t:'check',d:false,label:'power state → «batt» «charging» «therm» (0–6, 3+ = severe) «saver» «thr» (how many times the app slows its polling) (DSP app)'},

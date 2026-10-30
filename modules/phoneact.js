@@ -18,7 +18,7 @@ function phoneStart(n){
   phoneStop(n);
   let key=''; try{ key=(window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){}
   const url=phoneUrl(n.p.url,key);
-  if(!url){ n.status='URL must start with ws:// or wss://'; return; }
+  if(!url){ n.status=(typeof gwErr==='function' && gwErr(n.p.url))||'URL must start with ws:// or wss://'; return; }
   n.want=true; n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
   let ws;
   try{ ws=new WebSocket(url); }catch(e){ n.status='error: '+e.message; return; }
@@ -66,7 +66,7 @@ def({ id:'phone', title:'Phone Actions (DSP app)', cat:'Output', kw:'android app
   outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'new',t:'num'},{n:'torch',t:'num'},{n:'ok',t:'num'}],
   readout:true, tall:true,
   params:[
-    {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'bridge of the DSP app'},
+    {n:'url',t:'text',d:'ws://127.0.0.1:8765',dev:true,label:'bridge of the DSP app — an address, or @name from Settings → Devices'},
     {n:'action',t:'select',opts:PHONE_ACTIONS,d:'notify',label:'action (the Run button, or a rising edge on go)'},
     {n:'title',t:'text',d:'DSP',label:'notification: title'},
     {n:'body',t:'text',d:'',label:'text of the notification / SMS (the «text» input overrides it)'},

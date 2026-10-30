@@ -86,7 +86,7 @@ async function lkHttp(n,url){
 }
 function lkStart(n){
   lkStop(n);
-  const via=n.p.via, url=String(n.p.url||'').trim();
+  const via=n.p.via, url=gwUrl(String(n.p.url||'').trim());
   n.warn='';
   if(via==='websocket' || via==='http stream'){
     const ok=via==='websocket' ? /^wss?:\/\//i : /^https?:\/\//i;

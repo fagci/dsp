@@ -965,7 +965,7 @@ const i=document.createElement('input'); i.type='checkbox'; i.checked=!!n.p[s.n]
 i.addEventListener('change',()=>{ n.p[s.n]=i.checked; s.fn &&s.fn(n); }); row.append(i);
 (n.set||(n.set={}))[s.n]=v=>{ n.p[s.n]=!!v; i.checked=!!v; s.fn &&s.fn(n); };
 } else {
-const i=document.createElement('input'); i.type='text'; i.value=n.p[s.n];
+const i=document.createElement('input'); i.type='text'; i.value=n.p[s.n]; if(s.dev) i.setAttribute('list','gwNames');      // подсказки «@имя» из Settings → Devices
 i.addEventListener('input',()=>n.p[s.n]=i.value);
 (n.set||(n.set={}))[s.n]=v=>{ n.p[s.n]=v; i.value=v; };
 row.append(i); }

@@ -18,7 +18,7 @@ function vpnConnect(n){
   vpnStop(n);
   let key=''; try{ key=(window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){}
   const url=phoneUrl(n.p.url,key);
-  if(!url){ n.status='URL must start with ws:// or wss://'; return; }
+  if(!url){ n.status=(typeof gwErr==='function' && gwErr(n.p.url))||'URL must start with ws:// or wss://'; return; }
   n.want=true; n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
   let ws; try{ ws=new WebSocket(url); }catch(e){ n.status='error: '+e.message; return; }
   n.ws=ws; n.status='connecting…'; n.sentSub=null;
@@ -78,7 +78,7 @@ def({ id:'vpnmon', title:'Network Monitor (DSP app, VPN)', cat:'Sources', always
   outs:[{n:'rec',t:'rec'},{n:'flows',t:'rec'},{n:'apps',t:'rec'},{n:'count',t:'num'},{n:'bytesUp',t:'num'},{n:'bytesDown',t:'num'},{n:'on',t:'num'}],
   readout:true, tall:true,
   params:[
-    {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'bridge of the DSP app'},
+    {n:'url',t:'text',d:'ws://127.0.0.1:8765',dev:true,label:'bridge of the DSP app — an address, or @name from Settings → Devices'},
     {n:'packets',t:'check',d:false,label:'also stream full packets (hex, outs → rec, ev «pkt») — heavy, for a short capture only'},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},
     {n:'startBtn',t:'button',label:'Start',fn:n=>vpnStart(n)},

@@ -730,6 +730,14 @@ canvas.view.fs-fb{position:fixed!important;inset:0;width:100vw!important;height:
 #setPanel select:focus-visible,#setPanel input:focus{outline:1px solid var(--acc);outline-offset:-1px}
 #setPanel p{margin:0;color:var(--dim);font-size:11px;line-height:1.4}
 #setPanel code{font:11px var(--mono)}
+#gwBox{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:8px}
+#gwBox .gwHead{display:flex;align-items:center;justify-content:space-between;color:var(--dim)}
+#gwBox .gwList{display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow:auto}
+#gwBox .gwRow{display:flex;flex-direction:column;gap:4px;padding:6px;border:1px solid var(--line);border-radius:4px}
+#gwBox .gwTop{display:flex;gap:6px}
+#gwBox .gwTop input{flex:1;max-width:none}
+#gwBox .gwRow>input{max-width:none;width:100%;box-sizing:border-box}
+#gwBox .gwRes{font-size:11px;color:var(--dim);min-height:1em;word-break:break-word}
 
 
 /* ---- аудиоредактор клипов (modules/audioeditor.js) ---- */

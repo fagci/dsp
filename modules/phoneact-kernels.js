@@ -5,6 +5,7 @@ const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','s
 
 // адрес моста; в приложении к адресу этого телефона добавляется ключ приложения (?k=…) — с ним открыты SMS и контакты
 function phoneUrl(url,key){
+  if(typeof gwUrl==='function' && String(url||'').trim()[0]==='@') url=gwUrl(url);          // «@имя» из списка устройств (Settings → Devices)
   let u; try{ u=new URL(String(url||'').trim()); }catch(e){ return ''; }
   if(u.protocol!=='ws:' && u.protocol!=='wss:') return '';
   if(key && /^(127\.\d+\.\d+\.\d+|localhost|\[::1\])$/.test(u.hostname) && !u.searchParams.has('k')) u.searchParams.set('k',key);

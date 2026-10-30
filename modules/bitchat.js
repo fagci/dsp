@@ -39,7 +39,7 @@ function bcStart(n){
   bcStop(n);
   let key=''; try{ key=(window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){}
   const url=phoneUrl(n.p.url,key);
-  if(!url){ n.status='URL must start with ws:// or wss://'; return; }
+  if(!url){ n.status=(typeof gwErr==='function' && gwErr(n.p.url))||'URL must start with ws:// or wss://'; return; }
   n.want=true; n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
   let ws;
   try{ ws=new WebSocket(url); }catch(e){ n.status='error: '+e.message; return; }
@@ -144,7 +144,7 @@ def({ id:'bitchat', title:'bitchat mesh chat (DSP app bridge)', cat:'Sources', k
   ins:[{n:'send',t:'txt'}], outs:[{n:'rec',t:'rec'},{n:'line',t:'txt'},{n:'go',t:'num'},{n:'peers',t:'num'}],
   readout:true, tall:true,
   params:[
-    {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'bridge of the DSP app'},
+    {n:'url',t:'text',d:'ws://127.0.0.1:8765',dev:true,label:'bridge of the DSP app — an address, or @name from Settings → Devices'},
     {n:'nickname',t:'text',d:'dsp',label:'nickname (shown to bitchat peers)'},
     {n:'autoConnect',t:'check',d:true,label:'connect automatically to bitchat peers seen over BLE'},
     {n:'text',t:'text',d:'',label:'message'},

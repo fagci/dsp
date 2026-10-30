@@ -19,7 +19,7 @@ function netStart(n){
   netStop(n);
   let key=''; try{ key=(window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){}
   const url=phoneUrl(n.p.url,key);
-  if(!url){ n.status='URL must start with ws:// or wss://'; return; }
+  if(!url){ n.status=(typeof gwErr==='function' && gwErr(n.p.url))||'URL must start with ws:// or wss://'; return; }
   n.want=true; n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
   let ws;
   try{ ws=new WebSocket(url); }catch(e){ n.status='error: '+e.message; return; }
@@ -77,7 +77,7 @@ def({ id:'netlink', title:'Network (DSP app)', cat:'Sources', kw:'wifi direct p2
   readout:true, tall:true,
   groups:[{n:'TCP / UDP'},{n:'Ping'},{n:'DNS'},{n:'mDNS / DNS-SD',open:false},{n:'Wi-Fi RTT / Aware',open:false},{n:'Wi-Fi monitor (root)',open:false},{n:'Wi-Fi Direct / hotspot / join',open:false}],
   params:[
-    {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'bridge of the DSP app'},
+    {n:'url',t:'text',d:'ws://127.0.0.1:8765',dev:true,label:'bridge of the DSP app — an address, or @name from Settings → Devices'},
     {n:'action',t:'select',opts:PL_NET_ACTIONS,d:'ping',label:'action (the Run button, or a rising edge on go)'},
     {n:'host',t:'text',d:'',label:'host (the «host» input overrides it)'},
     {n:'port',t:'range',min:0,max:65535,step:1,d:80,label:'port',g:'TCP / UDP'},
