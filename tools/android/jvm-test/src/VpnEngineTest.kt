@@ -141,6 +141,9 @@ private class FakeDevice(val my: ByteArray, val myPort: Int, val peer: ByteArray
     }
 }
 
+/** Ждёт условие до 5 с (события движка приходят из его потока; на медленном раннере CI 300 мс не хватало). */
+fun waitUntil(ms: Long = 5000, cond: () -> Boolean) { val end = System.currentTimeMillis() + ms; while (System.currentTimeMillis() < end && !cond()) Thread.sleep(20) }
+
 fun main() {
     val events = CopyOnWriteArrayList<Pair<FlowInfo, String>>()
     val dnsEvents = ConcurrentLinkedQueue<Triple<FlowInfo?, String, List<String>>>()
@@ -214,14 +217,13 @@ fun main() {
     d4.syn()
     ok("TCP: a refused port gets RST, not silence", d4.waitFor(5000) { FakeDevice.tcpFlags(it) and 0x04 != 0 } != null)
     // событие close приходит из потока движка уже после RST — ждём его, а не читаем список сразу
-    val closeBy = System.currentTimeMillis() + 2000
-    while (System.currentTimeMillis() < closeBy && !events.any { it.first.dport == deadPort && it.second == "close" }) Thread.sleep(20)
+    waitUntil { events.any { it.first.dport == deadPort && it.second == "close" } }
     ok("TCP: flow closed after the refusal", events.any { it.first.dport == deadPort && it.second == "close" })
 
     // 5. RST от устройства закрывает поток
     val d5 = newDevice(44005, local, echoPort)
     d5.syn(); d5.handleSynAck(); d5.rst()
-    Thread.sleep(300)
+    waitUntil { events.any { it.first.dport == echoPort && it.first.sport == 44005 && it.second == "close" } }       // событие приходит из потока движка — ждём, а не спим
     ok("TCP: RST from the device closes the flow", events.any { it.first.dport == echoPort && it.first.sport == 44005 && it.second == "close" })
 
     // --- UDP: настоящий эхо-сервер, содержимое и контрольные суммы проверены независимым кодом ---
@@ -270,7 +272,7 @@ fun main() {
     else {
         val d6 = newDevice(44006, local, echoPort)
         d6.syn(); d6.handleSynAck(); d6.write(hello)
-        Thread.sleep(300)
+        waitUntil { events.lastOrNull { it.first.dport == echoPort && it.first.sport == 44006 }?.first?.l7 != null }
         val flow = events.lastOrNull { it.first.dport == echoPort && it.first.sport == 44006 }?.first
         ok("TLS SNI: host recognised from a real ClientHello", flow?.host == "vpn-sni-test.example.org", "host=${flow?.host}")
         ok("TLS SNI: marked as tls", flow?.l7 == "tls")
