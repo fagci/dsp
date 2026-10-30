@@ -542,6 +542,7 @@ const PRESET_CATS={
   'Email: Mailbox as a Chat (IMAP / SMTP)':'Network & IoT',
   'SMS: Texts as a Chat (DSP app on Android)':'Network & IoT',
   'Reticulum: LXMF Messages over a Mesh (Sideband / NomadNet compatible)':'Network & IoT',
+  'Feed: Mastodon and Bluesky by Tags into a Table (cards)':'Network & IoT',
   'Reference: Decode BLE Advertisements (Company ID, Service UUID)':'Network & IoT',
   'Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)':'Network & IoT',
   'Bridge: Serial Port ↔ Network (TCP/WS Gateway)':'Network & IoT',
@@ -1595,6 +1596,25 @@ rn.size.w=420; rn.size.h=460; applySize(rn);
 const ch=addNode('chat',500,330,{echo:false,me:'dsp',time:true});
 ch.size.w=420; ch.size.h=460; applySize(ch);
 addEdge(rn.id,'rec',ch.id,'rec'); addEdge(ch.id,'text',rn.id,'send');
+markWiresDirty();
+});
+preset('Feed: Mastodon and Bluesky by Tags into a Table (cards)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Public posts by hashtag, kept in a Table. Mastodon: the node reads /api/v1/timelines/tag/… of an instance — no account is needed when the instance allows anonymous timelines (mastodon.social does; if yours does not, put an access token with the read scope into «password»). «channel» is what to read: #sdr #radio (any of the tags), -#spam drops posts with a tag, «local» keeps the instance only; empty reads the public timeline. Bluesky: accounts (@name.bsky.social) and feeds (a bsky.app/profile/…/feed/… link) are read without a login; the search by #tag is closed to anonymous callers, so for tags enter your handle in «user» and an APP PASSWORD (Settings → Privacy and security → App passwords) in «password».\n'+
+  'Every post is a record {id, from, name, text, url, tags, lang, avatar, image, likes, boosts, replies, cw, boost_by, t}. The Table keeps them in the browser database (list feeds/radio): rows are updated by id, so a post seen twice is one row; the newest are on top, the last 3000 are kept, the list survives a reload and goes into backups and device sync. Filter in the Table: «sdr» (a word), «tags:antenna», «lang:ru», «from:alice», «-tags:spam», «likes>10»; the view button switches cards / list. The first read goes back as far as «also fetch…» says (here a day); 0 would show only what comes later. Posting is not implemented — the feeds are read-only.'});
+nt.size.w=1360; nt.size.h=210; applySize(nt);
+const ma=addNode('messenger',40,290,{proto:'mastodon',server:'https://mastodon.social',channel:'#sdr #radio -#spam',history:86400,poll:60,autoConnect:true});
+ma.size.w=420; ma.size.h=420; applySize(ma);
+const bs=addNode('messenger',40,740,{proto:'bluesky',channel:'#sdr #radio -#spam',history:86400,poll:60});
+bs.size.w=420; bs.size.h=420; applySize(bs);
+const hide=['id','count','first','last','proto','dir','to','kind','comment','avatar','image','boosts','replies','cw','boost_by','lang'].map(c=>({c,hide:true}));
+// настройки списка (ключ id — повторный пост обновляет строку, 3000 последних, новые сверху, поля карточки) лежат в самом списке в базе браузера;
+// пишем их один раз, если у списка своих ещё нет — правки пользователя потом не затираются
+ListDB.getMeta('feeds/radio').then(m=>{ if(!m || !m.card) tblMetaSet('feeds/radio',{types:{avatar:{t:'image'},image:{t:'image'},text:{t:'longtext'}},card:{key:'id',max:3000,rev:true,show:['from','text','tags','likes','url']}}); });
+const tb=addNode('table',500,290,{list:'feeds/radio',vmode:'cards',tz:'local',
+  vcols:[{c:'t',fmt:'time',w:90},{c:'name'},{c:'from',w:150},{c:'text',w:420},{c:'tags',w:160},{c:'likes',w:50},{c:'url'},...hide]});
+tb.size.w=900; tb.size.h=560; applySize(tb);
+addEdge(ma.id,'rec',tb.id,'rec'); addEdge(bs.id,'rec',tb.id,'rec');
 markWiresDirty();
 });
 preset('Reference: Decode BLE Advertisements (Company ID, Service UUID)', function(){
