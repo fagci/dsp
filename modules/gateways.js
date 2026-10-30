@@ -4,13 +4,15 @@
    (как ключ синхронизации: не входит в бэкап). Логика — gateways-kernels.js. */
 
 const GW_KEY='dsp-gateways', GW_TOK='dsp.gwtok';
+// грузится раньше presets.js (где LS): узлы из автосохранения рисуются при старте и должны сразу видеть список устройств
+const gwLs={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }, set(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
 const Gw={
-  list(){ try{ return gwClean(JSON.parse(LS.get(GW_KEY)||'[]')); }catch(e){ return []; } },
-  tokens(){ try{ const t=JSON.parse(LS.get(GW_TOK)||'{}'); return t && typeof t==='object' ? t : {}; }catch(e){ return {}; } },
+  list(){ try{ return gwClean(JSON.parse(gwLs.get(GW_KEY)||'[]')); }catch(e){ return []; } },
+  tokens(){ try{ const t=JSON.parse(gwLs.get(GW_TOK)||'{}'); return t && typeof t==='object' ? t : {}; }catch(e){ return {}; } },
   save(list,tokens){
-    list=gwClean(list); LS.set(GW_KEY,JSON.stringify(list));
+    list=gwClean(list); gwLs.set(GW_KEY,JSON.stringify(list));
     const tk={}; for(const d of list){ const t=(tokens||{})[d.name.toLowerCase()]; if(t) tk[d.name.toLowerCase()]=t; }
-    LS.set(GW_TOK,JSON.stringify(tk)); Gw.names();
+    gwLs.set(GW_TOK,JSON.stringify(tk)); Gw.names();
   },
   resolve(s){ return gwResolve(this.list(),this.tokens(),s).url; },
   err(s){ return gwResolve(this.list(),this.tokens(),s).err||''; },
@@ -52,7 +54,7 @@ const gwErr=s=>{ const t=String(s||'').trim(); return t[0]==='@' ? Gw.err(t) : '
       const name=mk('input'); name.value=r.name; name.placeholder='name'; name.title='the name nodes use: @'+(r.name||'name'); name.maxLength=24;
       const test=mk('button',null,'Test'), del=mk('button',null,'✕'); del.title='remove'; test.title='connect and read the greeting';
       const url=mk('input'); url.value=r.url; url.placeholder='ws://192.168.0.101:8765   or   ws://host:8777'; url.spellcheck=false;
-      const tok=mk('input'); tok.type='password'; tok.value=r.token; tok.placeholder='token (kept only in this browser)'; tok.autocomplete='off';
+      const tok=mk('input'); tok.type='text'; tok.className='gwTok'; tok.name='dsp-device-token'; tok.setAttribute('data-lpignore','true'); tok.setAttribute('data-1p-ignore','true'); tok.value=r.token; tok.placeholder='token (kept only in this browser)'; tok.autocomplete='off'; tok.spellcheck=false;
       const res=mk('div','gwRes');
       name.onchange=()=>{ r.name=name.value.trim(); if(!GW_NAME.test(r.name)){ res.textContent='⚠ the name: letters, digits, _ . - (up to 24)'; return; } store(); };
       url.onchange=()=>{ r.url=url.value.trim(); store(); };
