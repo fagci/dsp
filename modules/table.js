@@ -687,6 +687,20 @@ async function tblSync(n,list,onlyNew){
   tblDerive(n);
   n.idx=Math.min(n.idx,Math.max(0,n.rows.length-1));
 }
+// замена набора без пустой таблицы: новые строки дописываются, старые уходят следом — выбор, прокрутка и экран не мигают
+// (живой поток, например Stream Check, присылает набор каждые ~0,7 с)
+async function tblReplace(n,recs){
+  const old=new Set(n.all), db=tblKind(n.p.list)==='db';
+  await tblAdd(n,recs);
+  const gone=[], keep=[], keepIds=[];
+  n.all.forEach((r,i)=>{ if(old.has(r)) gone.push(n.ids[i]); else { keep.push(r); keepIds.push(n.ids[i]); } });
+  if(!gone.length) return;
+  n.all=keep; n.ids=db ? keepIds : keep.map((_,j)=>j);
+  if(db) await ListDB.removeMany(await tblRealIds(n,gone)).catch(()=>{});
+  else await tblSave(n);
+  n.idx=Math.min(n.idx,Math.max(0,n.all.length-1));
+  tblDerive(n); n.uiDirty=true;
+}
 async function tblFromRows(n,list){
   if(tblRO(n) || n.loaded!==n.p.list){ n.rowsAgain=list; return; }
   if(n.rowsBusy){ n.rowsAgain=list; return; }
@@ -695,8 +709,10 @@ async function tblFromRows(n,list){
     const mode=n.schema?.card?.rowsIn||'replace';
     if(mode==='sync' || mode==='new only') await tblSync(n,list,mode==='new only');
     else{
-      if(mode!=='add') await tblClear(n);
-      await tblAdd(n,list.filter(r=>r && typeof r==='object'));
+      const recs=list.filter(r=>r && typeof r==='object');
+      if(mode==='add') await tblAdd(n,recs);
+      else if(tblUpKey(n) || !n.all.length) { await tblClear(n); await tblAdd(n,recs); }
+      else await tblReplace(n,recs);
     }
     n.uiDirty=true;
   }catch(e){ console.warn('table rows in:',e); }
