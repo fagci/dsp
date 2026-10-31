@@ -120,7 +120,7 @@ class FileHub(private val ctx: Context, private val needs: Needs) {
 
     private fun exifPos(u: Uri): DoubleArray? = try {
         val src = if (Build.VERSION.SDK_INT >= 29) MediaStore.setRequireOriginal(u) else u
-        ctx.contentResolver.openInputStream(src)?.use { android.media.ExifInterface(it).latLong }
+        ctx.contentResolver.openInputStream(src)?.use { ins -> val ll = FloatArray(2); if (android.media.ExifInterface(ins).getLatLong(ll)) doubleArrayOf(ll[0].toDouble(), ll[1].toDouble()) else null }
     } catch (e: Exception) { null }
 
     @Suppress("NewApi")
