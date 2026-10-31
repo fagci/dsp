@@ -48,6 +48,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <!-- будильник: экран поверх блокировки в момент звонка -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -125,6 +126,14 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- запись экрана: прозрачное окно согласия MediaProjection и служба типа mediaProjection -->
+        <activity
+            android:name=".ScreenConsentActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <service android:name=".ScreenRecService" android:exported="false" android:foregroundServiceType="mediaProjection" />
 
         <!-- системный выбор папки для fs.pick (Storage Access Framework) -->
         <activity

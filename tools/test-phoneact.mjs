@@ -84,5 +84,9 @@ ok('call.dial / end / answer', (c => c.cmd === 'call.dial' && c.number === '+790
   K.phoneCmd({ action: 'call.dial', dialNumber: '112' }).direct === false && K.phoneCmd({ action: 'call.end' }).cmd === 'call.end' && K.phoneCmd({ action: 'call.answer' }).cmd === 'call.answer');
 ok('ussd / sim lines', K.phoneLine({ src: 'ussd', code: '*100#', ok: true, text: 'Balance:\n12.50 RUB' }) === 'USSD *100# → Balance: 12.50 RUB' &&
   K.phoneLine({ src: 'ussd', code: '*100#', ok: false, failure: 'service unavailable' }) === 'USSD *100# failed: service unavailable' && K.phoneLine({ src: 'sim', slot: 0, id: 3, name: 'MTS' }) === 'SIM slot 0 (subscription 3) MTS');
+ok('screenrec.start: only what is set', (c => c.cmd === 'screenrec.start' && c.fps === 24 && c.maxSide === 854 && c.kbps === 3000 && c.audio === true)(K.phoneCmd({ action: 'screenrec.start', screenFps: 24, screenSide: '854', screenKbps: 3000, screenAudio: true })) &&
+  (c => !('fps' in c) && !('maxSide' in c) && !('kbps' in c) && c.audio === false)(K.phoneCmd({ action: 'screenrec.start', screenFps: 0, screenSide: '0', screenKbps: 0 })) && K.phoneCmd({ action: 'screenrec.stop' }).cmd === 'screenrec.stop' && K.phoneCmd({ action: 'screenrec.status' }).cmd === 'screenrec.status');
+ok('screenrec lines', K.phoneLine({ src: 'screenrec', on: true, file: 'screen-1.mp4', sec: 12, w: 576, h: 1280 }) === 'screen recording ON · screen-1.mp4 · 12 s · 576×1280' && K.phoneLine({ src: 'screenrec', on: false }) === 'screen recording off' &&
+  K.phoneLine({ src: 'sys', ev: 'screenrec.stop', file: 'screen-1.mp4' }) === 'screenrec.stop screen-1.mp4');
 console.log(bad ? bad + ' FAILED' : 'all ok');
 process.exit(bad ? 1 : 0);
