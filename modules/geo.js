@@ -977,48 +977,65 @@ function geoLocLocal(lat0,lon0){
   return {fwd:(lat,lon)=>({x:(((lon-lon0+540)%360)-180)*kx, y:(lat-lat0)*ky}),
           inv:(x,y)=>({lat:lat0+y/ky, lon:((lon0+x/kx+540)%360)-180})};
 }
+// Расстояние из записи, м → км. Нет, пусто, не число или ≤ 0 → null (явная проверка: в JS null >= 0 — истина, и пустая ячейка Table стала бы «расстоянием 0 м»).
+function geoLocRangeKm(v){ const m=recNum(v); return m!=null && m>0 ? m/1000 : null; }
 function geoLocCost(M,x,y,o){
-  let cs=0, ns=0, sumA=0;
-  const L=[];
+  // Три вида замеров в одной «стоимости» (минус двойной логарифм правдоподобия): уровень, пеленг, расстояние.
+  // Уровень: s = A − 10·n·lg(d_км) + ошибка; A — уровень на 1 км, неизвестен и подбирается (взвешенное среднее). Если известна
+  // заявленная мощность источника (BLE, поле txp), A0 — готовое значение с разбросом sA, и A подбирается с учётом него (как ещё один замер).
+  let cs=0, ns=0;
   if(o.useS){
+    const L=[], IV=[]; let sw=0, sa=0;
+    const v0=o.sdb*o.sdb;
     for(const m of M){ if(m.s==null) continue;
       const d=Math.max(Math.hypot(x-m.x,y-m.y),o.dmin), l=10*o.pn*Math.log10(d);
-      L.push(l); sumA+=m.s+l; ns++; }
-    if(ns>=3){
-      // вес замера: ошибка уровня плюс ошибка места самого замера (точность GPS acc, м): сдвиг на acc меняет уровень на 4.34·n·acc/d дБ
-      const W=[], v0=o.sdb*o.sdb; let sw=0, k=0; sumA=0;
-      for(const m of M){ if(m.s==null) continue;
-        let v=v0;
-        if(o.useAcc && m.a>0){ const d=Math.max(Math.hypot(x-m.x,y-m.y),o.dmin), e=4.343*o.pn*m.a/(d*1000); v+=e*e; }
-        const w=v0/v; W.push(w); sw+=w; sumA+=w*(m.s+L[k++]); }
-      k=0; const A=sumA/sw;
-      for(const m of M){ if(m.s==null) continue; const r=m.s-A+L[k]; cs+=W[k]*r*r; k++; }
-      cs/=v0;
-    } else cs=0;
+      let v=v0;
+      // вес замера: ошибка уровня плюс ошибка места самого замера (точность GPS acc, м): сдвиг на acc меняет уровень на 4.34·n·a
+      if(o.useAcc && m.a>0){ const e=4.343*o.pn*m.a/(d*1000); v+=e*e; }
+      const iv=1/v; L.push(l); IV.push(iv); sw+=iv; sa+=iv*(m.s+l); ns++; }
+    const iv0=o.A0!=null ? 1/(o.sA*o.sA) : 0;
+    if(ns>=3 || (iv0>0 && ns>=1)){
+      const A=(sa+iv0*(o.A0||0))/(sw+iv0);
+      let k=0;
+      for(const m of M){ if(m.s==null) continue; const r=m.s-A+L[k]; cs+=IV[k]*r*r; k++; }
+      if(iv0>0) cs+=iv0*(A-o.A0)*(A-o.A0);
+    }
   }
   let cb=0;
   if(o.useB) for(const m of M){ if(m.az==null) continue;
     const b=Math.atan2(x-m.x,y-m.y)/D2R;
     let da=((b-m.az)%360+540)%360-180;
     cb+=da*da/(o.saz*o.saz); }
-  return cs+cb;
+  // Расстояние (Wi-Fi RTT, Timing Advance соты): |x − замер| = d, погрешность sd (км) плюс ошибка места замера
+  let cd=0;
+  if(o.useD) for(const m of M){ if(m.d==null) continue;
+    let sd=m.sd>0 ? m.sd : o.sd;
+    if(o.useAcc && m.a>0){ const e=m.a/1000; sd=Math.sqrt(sd*sd+e*e); }
+    const r=(Math.hypot(x-m.x,y-m.y)-m.d)/sd; cd+=r*r; }
+  return cs+cb+cd;
 }
 function geoLocSolve(g,p){
   const M=g.meas;
-  const nS=M.filter(m=>m.s!=null).length, nB=M.filter(m=>m.az!=null).length;
+  const nS=M.filter(m=>m.s!=null).length, nB=M.filter(m=>m.az!=null).length, nD=M.filter(m=>m.d!=null).length;
   const meth=p.method;
-  const useS=(meth!=='bearing') && nS>=3, useB=(meth!=='strength') && nB>=1;
+  // заявленная мощность (txp, дБм) → уровень на 1 м ≈ txp − 41 дБ (потери 2,4 ГГц на метре), на 1 км — ещё минус 30·n: готовое A вместо подбора
+  const txs=p.useTx===false ? [] : M.filter(m=>m.tx!=null).map(m=>m.tx).sort((a,b)=>a-b);
+  const A0=txs.length ? txs[txs.length>>1]-41-30*p.pathN : null;
+  const useS=(meth==='auto' || meth==='strength') && (nS>=3 || (A0!=null && nS>=1));
+  const useB=(meth==='auto' || meth==='bearing') && nB>=1;
+  const useD=(meth==='auto' || meth==='range') && nD>=1;
   g.sol=null;
-  if(!useS && !(useB && nB>=2)){ g.msg='need ≥3 level or ≥2 bearing measurements'; return; }
+  if(!useS && !(useB && nB>=2) && !(useD && nD>=2)){ g.msg='need ≥3 level (or 1 with a known TX power), ≥2 bearing or ≥2 distance measurements'; return; }
   const lat0=M.reduce((a,m)=>a+m.lat,0)/M.length, lon0=M[0].lon;
   const P=geoLocLocal(lat0,lon0);
   for(const m of M){ const q=P.fwd(m.lat,m.lon); m.x=q.x; m.y=q.y; }
-  const o={useS, useB, useAcc:p.useAcc!==false, pn:p.pathN, sdb:p.sigmaDb, saz:p.sigmaAz, dmin:0.005};
+  const o={useS, useB, useD, A0, sA:8, sd:(p.sigmaDist||30)/1000, useAcc:p.useAcc!==false, pn:p.pathN, sdb:p.sigmaDb, saz:p.sigmaAz, dmin:0.005};
   // область поиска: вокруг замеров; с пеленгами — ещё и вокруг пересечения лучей (МНК)
   let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
   for(const m of M){ x0=Math.min(x0,m.x); x1=Math.max(x1,m.x); y0=Math.min(y0,m.y); y1=Math.max(y1,m.y); }
   const spread=Math.hypot(x1-x0,y1-y0)*1000;          // м — по уровню с одного места источник не найти
-  if(useS && !useB && spread<(p.minSpread||0)){ g.msg='move around: measurements spread '+Math.round(spread)+' m'; return; }
+  if(useD){ const dmax=Math.max(...M.filter(m=>m.d!=null).map(m=>m.d)); x0-=dmax; x1+=dmax; y0-=dmax; y1+=dmax; }   // источник может быть на расстоянии d от любого замера
+  if(useS && !useB && !useD && A0==null && spread<(p.minSpread||0)){ g.msg='move around: measurements spread '+Math.round(spread)+' m'; return; }
   if(useB){
     let a11=0,a12=0,a22=0,b1=0,b2=0;
     for(const m of M){ if(m.az==null) continue;
@@ -1061,7 +1078,7 @@ function geoLocSolve(g,p){
   if(useS){ let s=0,k=0; for(const m of M){ if(m.s==null) continue; s+=m.s+10*o.pn*Math.log10(Math.max(Math.hypot(bx-m.x,by-m.y),o.dmin)); k++; } A=s/k; }
   const ll=P.inv(bx,by);
   g.sol={lat:ll.lat, lon:ll.lon, x:bx, y:by, errKm, A, pr, map, P, useS, useB, cost:fine.best};
-  g.msg=(useS?'level ':'')+(useB?'bearings ':'')+'· '+M.length+' meas.';
+  g.msg=(useS?(A0!=null?'level+TX power ':'level '):'')+(useB?'bearings ':'')+(useD?'distance ':'')+'· '+M.length+' meas.';
 }
 // Группировка (group by, например bssid): у каждого значения — свои замеры и своя оценка,
 // так по одному обходу находятся сразу все точки доступа. Пересчёт — порциями по несколько групп.
@@ -1084,11 +1101,14 @@ function geoLocShown(n){
 function geoLocMeas(n,r,gf){
   const pos=geoRecPos(r); if(!pos) return null;
   const sv=recNum(r[n.p.field]), az=recNum(r.azimuth ?? r.bearing), el=recNum(r.elevation);
-  if(sv==null && az==null) return null;
+  // расстояние в метрах (Wi-Fi RTT, Timing Advance соты) и его погрешность; txp — заявленная мощность передатчика, дБм (BLE)
+  const dd=geoLocRangeKm(r.dist), sdd=geoLocRangeKm(r.distSigma), tx=recNum(r.txp);
+  if(sv==null && az==null && dd==null) return null;
   let key='';
   if(gf){ const v=r[gf]; if(v==null || v==='') return null; key=String(v); }
   const hz=typeof Horizon!=='undefined' && Horizon.hAt ? Horizon.hAt(pos.lat,pos.lon) : null;
-  const m={lat:pos.lat, lon:pos.lon, s:sv, az:az!=null ? ((az%360)+360)%360 : null, el, alt:recNum(r.alt), h:recNum(r.h), a:recNum(r.acc)};
+  const m={lat:pos.lat, lon:pos.lon, s:sv, az:az!=null ? ((az%360)+360)%360 : null, el, alt:recNum(r.alt), h:recNum(r.h), a:recNum(r.acc),
+    d:dd, sd:sdd, tx:tx};
   m.alt3=l3MeasAlt(m,hz);
   return {key,m};
 }
@@ -1099,7 +1119,7 @@ function geoLocRows(n,rows,gf,lf){
   for(const r of rows){
     if(!r || typeof r!=='object') continue;
     const q=geoLocMeas(n,r,gf); if(!q) continue;
-    const m=q.m, sig=[q.key,m.lat,m.lon,m.s,m.az,m.el,m.alt,m.h,m.a].join('|');
+    const m=q.m, sig=[q.key,m.lat,m.lon,m.s,m.az,m.el,m.alt,m.h,m.a,m.d,m.sd,m.tx].join('|');
     const e=next.get(sig);
     if(e) e.c++; else next.set(sig,{c:1,key:q.key,m,label:lf && r[lf]!=null && r[lf]!=='' ? String(r[lf]) : ''});
   }
@@ -1139,12 +1159,14 @@ def({ id:'geoLocate', lazy:'manual', title:'Source Locator', cat:'Geo',
   outs:[{n:'rec',t:'rec'},{n:'rays',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'alt',t:'num'},{n:'err',t:'num'},{n:'count',t:'num'}],
   view:{h:260}, resize:true, readout:true,
   params:[{n:'field',t:'select',opts:['rssi','snr','level'],d:'rssi',label:'level field'},
-          {n:'method',t:'select',opts:['auto','strength','bearing'],d:'auto',label:'use'},
+          {n:'method',t:'select',opts:['auto','strength','bearing','range'],d:'auto',label:'use: auto — whatever the records have (level, bearing, distance); range — only distances (Wi-Fi RTT, cell Timing Advance)'},
           {n:'group',t:'text',d:'',label:'group by field (bssid…) — one source per value'},
           {n:'labelField',t:'text',d:'',label:'label field (ssid…)'},
           {n:'pathN',t:'range',min:1.5,max:5,step:0.1,d:2.5,label:'path loss exponent n'},
           {n:'sigmaDb',t:'range',min:1,max:20,step:0.5,d:6,label:'level error, dB'},
           {n:'sigmaAz',t:'range',min:1,max:45,step:1,d:10,label:'bearing error, °'},
+          {n:'sigmaDist',t:'range',min:1,max:300,step:1,d:30,label:'distance error, m (when the record has no distSigma)'},
+          {n:'useTx',t:'check',d:true,label:'use the advertised TX power (field txp, BLE) as the level at 1 m: the unknown power is not fitted'},
           {n:'useAcc',t:'check',d:true,label:'weigh marks by position accuracy (field acc, m): a mark with a poor GPS fix counts less, most of all close to the source'},
           {n:'minSpread',t:'range',min:0,max:500,step:1,d:0,label:'min spread of level marks, m',adv:true},
           {n:'area',t:'range',min:0,max:1000,step:0.1,d:0,label:'search area, km (0 — auto)',adv:true},
@@ -1166,7 +1188,7 @@ def({ id:'geoLocate', lazy:'manual', title:'Source Locator', cat:'Geo',
       const g=geoLocGroup(n,q.key);
       if(lf && r[lf]!=null && r[lf]!=='') g.label=String(r[lf]);
       const last=g.meas[g.meas.length-1], m3=q.m;
-      if(last && last.lat===m3.lat && last.lon===m3.lon && last.s===m3.s && last.az===m3.az) continue;   // повтор того же скана
+      if(last && last.lat===m3.lat && last.lon===m3.lon && last.s===m3.s && last.az===m3.az && last.d===m3.d) continue;   // повтор того же скана
       g.meas.push(m3);
       while(g.meas.length>n.p.max){ const i=g.meas.findIndex(x=>!x.tbl); if(i<0) break; g.meas.splice(i,1); }   // замеры из Table не вытесняются
       g.dirty=true; g.t=Date.now(); n.total++;
@@ -1178,7 +1200,7 @@ def({ id:'geoLocate', lazy:'manual', title:'Source Locator', cat:'Geo',
       n.lastRows=Array.isArray(I.rows) ? I.rows : null;
       geoLocRows(n,n.lastRows||[],gf,lf);
     }
-    const pkey=[n.p.method,n.p.pathN,n.p.sigmaDb,n.p.sigmaAz,n.p.area,n.p.minSpread,n.p.useAcc].join();
+    const pkey=[n.p.method,n.p.pathN,n.p.sigmaDb,n.p.sigmaAz,n.p.area,n.p.minSpread,n.p.useAcc,n.p.sigmaDist,n.p.useTx].join();
     if(pkey!==n.pkey){ n.pkey=pkey; for(const g of n.groups.values()) g.dirty=true; }
     let rec=null, rays=null;
     const now=Date.now();

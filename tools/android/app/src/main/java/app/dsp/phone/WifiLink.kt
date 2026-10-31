@@ -63,7 +63,7 @@ object WifiArgs {
  * Записи идут в источник net: {src:'net', ev:'nsd'|'rtt'|'aware', …}.
  */
 @SuppressLint("MissingPermission")
-class WifiLinkHub(private val ctx: Context, private val emit: Emit, private val needs: Needs) {
+class WifiLinkHub(private val ctx: Context, private val emit: Emit, private val needs: Needs, private val pos: () -> Array<Pair<String, String?>> = { emptyArray() }) {
     private val thread = HandlerThread("dsp-wifilink").also { it.start() }
     private val h = Handler(thread.looper)
     private val appCtx = ctx.applicationContext
@@ -200,8 +200,10 @@ class WifiLinkHub(private val ctx: Context, private val emit: Emit, private val 
                         val mac = (if (r.macAddress != null) r.macAddress.toString() else "").uppercase()
                         val ok = r.status == RangingResult.STATUS_SUCCESS
                         rec("rtt", "bssid" to Json.str(mac), "ssid" to names[mac]?.let { Json.str(it) }, "ok" to ok.toString(), "status" to r.status.toString(),
+                            "dev" to Json.str("wifi:" + mac.lowercase()),            // тот же ключ, что у записей скана Wi-Fi: Source Locator складывает замеры одной точки доступа вместе
                             "dist" to if (ok) Json.num(WifiArgs.metres(r.distanceMm), 1000.0) else null, "std" to if (ok) Json.num(WifiArgs.metres(r.distanceStdDevMm), 1000.0) else null,
-                            "rssi" to if (ok) r.rssi.toString() else null, "tried" to if (ok) r.numAttemptedMeasurements.toString() else null, "good" to if (ok) r.numSuccessfulMeasurements.toString() else null)
+                            "distSigma" to if (ok) Json.num(maxOf(WifiArgs.metres(r.distanceStdDevMm), 0.5), 1000.0) else null,          // погрешность замера-расстояния, м (не меньше полуметра)
+                            "rssi" to if (ok) r.rssi.toString() else null, "tried" to if (ok) r.numAttemptedMeasurements.toString() else null, "good" to if (ok) r.numSuccessfulMeasurements.toString() else null, *pos())
                     }
                     next(left)
                 }

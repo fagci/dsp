@@ -33,6 +33,16 @@ function termuxEuler(r){
   return [Math.atan2(r1,r4)*d, Math.asin(Math.max(-1,Math.min(1,-r7)))*d, Math.atan2(-r6,r8)*d];
 }
 
+// Timing Advance обслуживающей соты → расстояние до станции (поля dist, distSigma, м — их понимает Source Locator как замер-расстояние).
+// LTE: шаг 16·Ts ≈ 78,12 м (расстояние от ta·78 до (ta+1)·78 — берём середину), GSM: шаг 553,5 м. Погрешность — шаг плюс многолучёвость.
+function termuxTaDist(r){
+  if(r.ta==null || r.ta==='') return {};
+  const ta=+r.ta; if(!isFinite(ta) || ta<0) return {};
+  if(r.type==='LTE' && ta<=1282) return {dist:Math.round((ta+.5)*78.12*10)/10, distSigma:50};
+  if(r.type==='GSM' && ta<=63) return {dist:Math.round((ta+.5)*553.5), distSigma:250};
+  return {};
+}
+
 // Единый ключ устройства для Table / Source Locator: dev (тип + адрес / id соты), name, rssi (у соты — RSRP, иначе dBm)
 function termuxDev(r){
   if(!r) return null;
@@ -49,7 +59,7 @@ function termuxDev(r){
       const id=r.cid ?? r.bid, plmn=r.mcc!=null ? r.mcc+'-'+r.mnc : '';
       if(id==null && r.pci==null) return null;
       const rssi=num(r.rsrp) ? r.rsrp : num(r.dbm) ? r.dbm : null;
-      return {dev:'cell:'+(r.type||'')+':'+plmn+':'+(id!=null ? id : 'p'+r.pci), name:(r.type||'cell')+' '+plmn+' '+(id!=null ? id : 'pci '+r.pci)+(r.reg ? ' *' : ''), ...(r.rssi==null && rssi!=null ? {rssi} : {})};
+      return {dev:'cell:'+(r.type||'')+':'+plmn+':'+(id!=null ? id : 'p'+r.pci), name:(r.type||'cell')+' '+plmn+' '+(id!=null ? id : 'pci '+r.pci)+(r.reg ? ' *' : ''), ...(r.rssi==null && rssi!=null ? {rssi} : {}), ...termuxTaDist(r)};
     }
   }
   return null;
