@@ -88,7 +88,7 @@ class RecHub(private val ctx: Context, private val cfg: Config, private val serv
         if (persist) { cfg.recOn = true; cfg.recName = RecArgs.safeName(name); cfg.recSubs = subs.joinToString(","); cfg.recHz = hz; cfg.recWifi = wifiEvery; cfg.recCell = cellEvery }
         failed = null; part = 0; lines = 0
         try { openFile() } catch (e: Exception) { failed = e.message; return "cannot write to " + dir + ": " + e.message }
-        val s = BridgeServer.Sink(subs.toSet(), hz.coerceIn(0, 1000), wifiEvery.coerceIn(0, 600), cellEvery.coerceIn(0, 120)) { l -> write(l) }
+        val s = BridgeServer.Sink(subs.toSet(), hz.coerceIn(0, 1000), wifiEvery.coerceIn(0, 600), cellEvery.coerceIn(0, 120), on = { l -> write(l) })
         sink = s; server.addSink(s)
         handler.postDelayed(flushRun, 2000)
         return null
