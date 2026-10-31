@@ -669,6 +669,7 @@ const PRESET_CATS={
   'Wavelet vs FFT':'Analysis & Measurement',
   'Vibration (Accelerometer)':'Analysis & Measurement',
   'Low-Frequency Sensor Spectrum':'Analysis & Measurement',
+  'Low-Frequency Accelerometer: Long Averaging, 3 Axes + Magnetometer Check':'Analysis & Measurement',
   'Event Capture':'Analysis & Measurement',
   'Band Overview':'Analysis & Measurement',
   'Frequency Response and Chain Delay':'Analysis & Measurement',
@@ -5213,6 +5214,29 @@ const sa=addNode('sa',600,220,{fmin:1,fmax:50,floor:-110,top:-30,split:.45,tol:1
 sa.size.w=640; sa.size.h=360; applySize(sa);
 addEdge(ac.id,'smag',lf.id,'in');
 addEdge(lf.id,'spec',sa.id,'spec');
+markWiresDirty();
+});
+preset('Low-Frequency Accelerometer: Long Averaging, 3 Axes + Magnetometer Check', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Slow vibration spectrum of the phone: accelerometer at 200 Hz (Generic Sensor API: exact timestamps, resampled evenly), DC removed (gravity), then the low-frequency FFT — decimation to 128 Hz, a window of 64 s (Δf ≈ 0.016 Hz), Hann, overlap by the update step, averaging (Welch). X, Y, Z and |xyz| are four traces: a line that is on one axis only is mechanics; one that follows the orientation of the phone is gravity leaking in.\n'+
+  'To see weak lines: let the phone lie still on a soft base, set averaging to «inf» (it accumulates until «Reset average») and wait minutes — a line grows out of the noise as √time. Lines of interest for the Schumann resonances: 7.83, 14.3, 20.8, 27.3, 33.8 Hz.\n'+
+  'CHECK before believing it. An accelerometer measures acceleration, not an electromagnetic field; the real Schumann field is picoteslas, far below a phone\'s magnetometer. A line near these frequencies is far more likely the building / table / the phone\'s own sensor clock. The lower spectrum is the magnetometer on the same frequencies: a real field shows there, a mechanical line does not. Also compare two phones side by side, the same place at another time of day, and the phone on a different surface; and mind the aliases: 50 Hz hum or its vibration folds to |50 − k·rate| (at 60 Hz sampling 50 Hz shows at 10 Hz).\n'+
+  'Browsers cap the sensor rate (Chrome ~60 Hz): look at the readout of the sensor node for the real rate; the Nyquist frequency is half of it. In the DSP app the «Phone sensors» node gives up to 200+ Hz natively.'});
+nt.size.w=1000; nt.size.h=250; applySize(nt);
+const ac=addNode('gsensor',40,330,{type:'Accelerometer',freq:'200'});
+ac.size.w=300; ac.size.h=200; applySize(ac);
+const mk=(chan,y)=>{ const d=addNode('dc',380,y,{freq:1}); const f=addNode('fft',560,y,{band:'low frequency',fs:'128',size:'8192',upd:'1',avg:'inf'}); addEdge(ac.id,chan,d.id,'in'); addEdge(d.id,'out',f.id,'in'); return f; };
+const fx=mk('sx',330), fy=mk('sy',440), fz=mk('sz',550), fm=mk('smag',660);
+const sa=addNode('sa',780,330,{fmin:2,fmax:40,floor:-120,top:-40,split:.45,tol:1});
+sa.size.w=700; sa.size.h=420; applySize(sa);
+addEdge(fx.id,'spec',sa.id,'spec'); addEdge(fy.id,'spec',sa.id,'spec2'); addEdge(fz.id,'spec',sa.id,'spec3'); addEdge(fm.id,'spec',sa.id,'spec4');
+const mg=addNode('gsensor',40,780,{type:'Magnetometer',freq:'100'});
+mg.size.w=300; mg.size.h=200; applySize(mg);
+const dm=addNode('dc',380,780,{freq:1});
+const fb=addNode('fft',560,780,{band:'low frequency',fs:'64',size:'4096',upd:'1',avg:'inf'});
+const sb=addNode('sa',780,780,{fmin:2,fmax:30,floor:-120,top:-40,split:.45,tol:1});
+sb.size.w=700; sb.size.h=340; applySize(sb);
+addEdge(mg.id,'smag',dm.id,'in'); addEdge(dm.id,'out',fb.id,'in'); addEdge(fb.id,'spec',sb.id,'spec');
 markWiresDirty();
 });
 preset('Event Capture', function(){
