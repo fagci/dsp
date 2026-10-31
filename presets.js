@@ -51,6 +51,7 @@ const TEMP_PREFIX='temp:', TEMP_MAX=5;
 // Вместо "несохранённое пропадёт" — тихо откладываем текущий граф в раздел temp и едем дальше.
 function stashIfDirty(){
 if(!graphDirty || !Graph.nodes.length) return;
+try{
 const p=readP();
 const ts=new Date().toISOString().slice(0,19).replace('T',' ');
 const key=TEMP_PREFIX+ts+' — '+(currentPatchName||'untitled');
@@ -58,6 +59,7 @@ p[key]=serialize();
 const temps=Object.keys(p).filter(k=>k.startsWith(TEMP_PREFIX)).sort();
 while(temps.length>TEMP_MAX) delete p[temps.shift()];
 writeP(p);
+}catch(e){ console.error('temp stash failed (opening continues):',e); }     // ошибка в чужом узле не должна блокировать открытие другого патча
 }
 // Имя патча в адресе (#p=имя) — у каждой вкладки свой патч; #d=… — патч целиком в ссылке (только при «Copy link»)
 const hashParam=k=>{ const m=location.hash.match(new RegExp('[#&]'+k+'=([^&]*)')); try{ return m?decodeURIComponent(m[1]):''; }catch(e){ return ''; } };
@@ -154,7 +156,9 @@ patchListEl.classList.toggle('empty',matches===0);
 function openPatch(name){
 stashIfDirty();
 const p=readP(); if(!p[name]) return;
-deserialize(p[name]); currentPatchName=name; graphDirty=false; syncHash();
+try{ deserialize(p[name]); }
+catch(e){ console.error('open "'+name+'" failed:',e); stat.textContent='could not open «'+name+'»: '+(e&&e.message||e); buildPatchList(); return; }
+currentPatchName=name; graphDirty=false; syncHash();
 stat.textContent='opened: '+name;
 buildPatchList(); closeSide();
 }

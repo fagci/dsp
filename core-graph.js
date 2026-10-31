@@ -2503,10 +2503,11 @@ return o;
 function deserialize(o){
 migrate(o);
 const wasBusy=Undo.busy; Undo.busy=true;
+try{
 Sel.clear();
 clearAll();
 let max=1;
-for(const n of o.nodes){ const nn=addNode(n.type,n.x,n.y,n.p,n.id);
+for(const n of o.nodes){ let nn=null; try{ nn=addNode(n.type,n.x,n.y,n.p,n.id); }catch(e){ console.error('deserialize: узел '+n.type+' не создался:',e); }   // один сбойный узел не рвёт загрузку патча
 if(nn &&n.f) setLod(nn,n.f===LOD_DOT ? LOD_DOT : LOD_CARD);
 if(nn &&n.a) setAdvOpen(nn,true);
 if(nn &&n.go) for(const [k,v] of Object.entries(n.go)) setGroupOpen(nn,k,v);
@@ -2527,7 +2528,7 @@ for(const e of o.edges) addEdge(e.from,e.fp,e.to,e.tp);
 if(o.view){ Object.assign(view,o.view); applyView(); }
 markWiresDirty();
 if(dashMode) setDash(true);
-Undo.busy=wasBusy;
+}finally{ Undo.busy=wasBusy; }          // при ошибке не оставлять Undo заблокированным
 if(!wasBusy) Undo.push();
 }
 function clearAll(){
