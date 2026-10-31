@@ -132,12 +132,33 @@ class BridgeService : Service() {
             if (destroyed) return
             if (!server.listening) { serverError = server.start(); refresh() } else renewWake()
             releaseIdle()
+            scanDiag()
             activity.tick()
             if ("power" in server.wanted().subs) power.push()
             val t = serverError ?: summary()
             if (t != shownText) (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(ID, notification())
             main.postDelayed(this, TICK_MS)
         }
+    }
+
+    private var lastDiag = 0L
+
+    /** Скан (Wi-Fi) или GPS просили, а новых данных давно нет: предупреждение клиентам с причинами по состоянию телефона (не чаще раза в 5 минут). */
+    private fun scanDiag() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastDiag < 300_000) return
+        val w = server.wanted()
+        val wifiLast = maxOf(wifi.lastFreshMs, wifi.sinceMs)
+        val wifiBad = "wifi" in w.subs && ScanDiag.wifiStale(now, wifiLast, wifi.everySec)
+        val gpsBad = w.subs.any { it in POSITION } && gps.active && ScanDiag.gpsStale(gps.ageMs())
+        if (!wifiBad && !gpsBad) return
+        lastDiag = now
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        val throttle = try { when (android.provider.Settings.Global.getInt(contentResolver, "wifi_scan_throttle_enabled", -1)) { 1 -> true; 0 -> false; else -> null } } catch (e: Exception) { null }
+        val st = ScanDiag.State(pm.isInteractive, pm.isDeviceIdleMode, pm.isIgnoringBatteryOptimizations(packageName),
+            if (Build.VERSION.SDK_INT >= 29) granted(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) else null, pm.isPowerSaveMode, throttle)
+        if (wifiBad) server.note("warn", "wifi: no fresh scan for ${(now - wifiLast) / 1000} s (asked every ${wifi.everySec} s) — " + ScanDiag.hints(st, "wifi").joinToString("; "))
+        if (gpsBad) server.note("warn", "gps: no fix for ${gps.ageMs() / 1000} s — " + ScanDiag.hints(st, "gps").joinToString("; "))
     }
 
     /** Блокировка с таймаутом: зависшая сессия не удержит процессор дольше WAKE_MS, живую продлевает tick. */

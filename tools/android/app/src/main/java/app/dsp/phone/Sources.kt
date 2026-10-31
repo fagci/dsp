@@ -175,8 +175,12 @@ class GpsHub(private val ctx: Context, private val emit: Emit) : LocationListene
     private var on = false
     @Volatile var fix: Location? = null
 
-    /** Последнее положение не старше 30 с — для записей Wi-Fi / BLE / BT. */
-    fun recent(): Location? = fix?.takeIf { SystemClock.elapsedRealtime() - it.elapsedRealtimeNanos / 1_000_000 < 30_000 }
+    /** Последнее положение не старше 120 с (раньше 30 с: при редких фиксах на заблокированном экране записи теряли положение и отбрасывались) — для записей Wi-Fi / BLE / BT / сот; возраст уходит в запись (fixAge, acc растёт). */
+    fun recent(): Location? = fix?.takeIf { SystemClock.elapsedRealtime() - it.elapsedRealtimeNanos / 1_000_000 < PosArgs.MAX_AGE_MS }
+
+    /** Сколько мс назад пришёл последний фикс (Long.MAX_VALUE — ни одного); для диагностики «GPS молчит». */
+    fun ageMs(): Long = fix?.let { SystemClock.elapsedRealtime() - it.elapsedRealtimeNanos / 1_000_000 } ?: Long.MAX_VALUE
+    val active: Boolean get() = on
 
     /** false — нет разрешения или выключена геолокация. */
     @Synchronized
@@ -222,7 +226,10 @@ class WifiHub(private val ctx: Context, private val gps: GpsHub, private val emi
     private var on = false
     private var every = 10
     private var lastStamp = 0L
-
+    /** Когда пришёл последний новый скан (мс, SystemClock) и когда скан включили — для диагностики: скан просили, а он не приходит. */
+    @Volatile var lastFreshMs = 0L
+    @Volatile var sinceMs = 0L
+    val everySec: Int get() = every
     private val tick = object : Runnable {
         override fun run() {
             if (!on) return
@@ -242,7 +249,7 @@ class WifiHub(private val ctx: Context, private val gps: GpsHub, private val emi
             return true
         }
         if (!ctx.hasLocation()) return false
-        on = true
+        on = true; sinceMs = SystemClock.elapsedRealtime(); lastFreshMs = 0
         ctx.registerReceiver(this, IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION), null, handler)
         handler.post(tick)
         return true
@@ -257,11 +264,8 @@ class WifiHub(private val ctx: Context, private val gps: GpsHub, private val emi
         val stamp = list.maxOf { it.timestamp }
         if (stamp == lastStamp) return
         lastStamp = stamp
-        val f = gps.recent()
-        val pos = arrayOf(
-            "lat" to f?.let { Json.num(it.latitude, 1e7) }, "lon" to f?.let { Json.num(it.longitude, 1e7) },
-            "acc" to f?.takeIf { it.hasAccuracy() }?.let { Json.num(it.accuracy.toDouble(), 10.0) },
-        )
+        lastFreshMs = SystemClock.elapsedRealtime()
+        val pos = posPairs(gps.recent())
         val now = SystemClock.elapsedRealtime()
         for (r in list) {
             @Suppress("DEPRECATION") val ssid = r.SSID
@@ -353,4 +357,18 @@ class BatteryHub(private val ctx: Context, private val emit: Emit) : BroadcastRe
             "temp" to if (temp != Int.MIN_VALUE) Json.num(temp / 10.0, 10.0) else null,
         ))
     }
+}
+
+/**
+ * Положение для записей сканов (Wi-Fi, BLE, BT, соты): lat / lon последнего фикса; acc — с поправкой на возраст (старше 5 с прибавляется уход: возраст × скорость,
+ * не меньше 1 м/с), чтобы Source Locator не доверял старому положению как свежему; fixAge — возраст фикса, с (только когда он старше 5 с).
+ */
+fun posPairs(l: Location?): Array<Pair<String, String?>> {
+    val ageMs = l?.let { (SystemClock.elapsedRealtimeNanos() - it.elapsedRealtimeNanos) / 1_000_000 }
+    val acc = l?.takeIf { it.hasAccuracy() }?.let { PosArgs.accWithAge(it.accuracy.toDouble(), ageMs ?: 0, if (it.hasSpeed()) it.speed.toDouble() else 0.0) }
+    return arrayOf(
+        "lat" to l?.let { Json.num(it.latitude, 1e7) }, "lon" to l?.let { Json.num(it.longitude, 1e7) },
+        "acc" to acc?.let { Json.num(it, 10.0) },
+        "fixAge" to ageMs?.takeIf { it > PosArgs.FRESH_MS }?.let { Json.num(it / 1000.0, 10.0) },
+    )
 }

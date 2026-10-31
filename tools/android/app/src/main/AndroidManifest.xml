@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- «Разрешить всегда»: без этого объявления Android не показывает такой пункт в настройках приложения, и с выключенным экраном положение приходит реже -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <!-- фиктивное местоположение для разработчика: приложение надо ещё выбрать в «Для разработчиков» -->
     <uses-permission android:name="android.permission.ACCESS_MOCK_LOCATION" tools:ignore="MockLocation,ProtectedPermissions" />
     <!-- окна поверх других приложений -->
