@@ -13,7 +13,12 @@ import android.content.Intent
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, i: Intent) {
         when (i.action) {
-            Intent.ACTION_BOOT_COMPLETED, "android.intent.action.QUICKBOOT_POWERON" -> { Alarms.rescheduleAll(ctx); if (Config(ctx).autoStart) BridgeService.start(ctx) }
+            Intent.ACTION_BOOT_COMPLETED, "android.intent.action.QUICKBOOT_POWERON" -> {
+                Alarms.rescheduleAll(ctx)
+                val cfg = Config(ctx)
+                val patches = BootPatches.parse(cfg.bootPatches).isNotEmpty()       // патчи без окна (HeadlessHub) тоже поднимают мост
+                if (cfg.autoStart || patches) BridgeService.start(ctx, boot = patches)
+            }
             Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_MY_PACKAGE_REPLACED -> Alarms.rescheduleAll(ctx)    // будильники привязаны к часам и сбрасываются при обновлении
         }
     }

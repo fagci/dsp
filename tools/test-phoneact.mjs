@@ -4,10 +4,10 @@ import vm from 'node:vm';
 
 let bad = 0;
 const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL', n, x); } else console.log('ok  ', n); };
-const ctx = vm.createContext({ URL, Set, Math, Number, String, Object, Array, JSON });
+const ctx = vm.createContext({ URL, Set, Math, Number, String, Object, Array, JSON, Date, RegExp });
 const load = f => vm.runInContext(fs.readFileSync(new URL('../modules/' + f, import.meta.url), 'utf8'), ctx);
 load('ir-kernels.js'); load('phoneact-kernels.js');
-vm.runInContext('this.K={phoneUrl,phoneSub,phoneButtons,phoneCmd,phoneIrCmd,phoneLine,irParse,irEncode}', ctx);
+vm.runInContext('this.K={phoneWhen,phoneUrl,phoneSub,phoneButtons,phoneCmd,phoneIrCmd,phoneLine,irParse,irEncode}', ctx);
 const K = ctx.K;
 
 ok('url: the app key is added for this phone only', K.phoneUrl('ws://127.0.0.1:8765', 'KEY') === 'ws://127.0.0.1:8765/?k=KEY' && K.phoneUrl('ws://localhost:8765/', 'KEY').includes('k=KEY') &&
@@ -37,5 +37,23 @@ ok('IR: foreign formats (Flipper, Tasmota) and garbage', K.phoneIrCmd('IRsend 36
 ok('lines for readout', K.phoneLine({ src: 'cmd', cmd: 'torch', ok: true }) === 'torch ok' && K.phoneLine({ src: 'cmd', cmd: 'sms.send', ok: false, msg: 'bad number' }) === 'sms.send failed: bad number' &&
   K.phoneLine({ src: 'sms', dir: 'in', addr: '+7900', body: 'hi' }) === 'sms from +7900: hi' && K.phoneLine({ src: 'notify', nid: 5, action: 'open' }) === 'notification 5: open' && K.phoneLine({ src: 'torch', on: 1 }) === 'torch on' &&
   K.phoneLine({ src: 'contact', name: 'Ann', phones: ['1', '2'] }) === 'contact Ann 1, 2' && K.phoneLine({ src: 'cmd', cmd: 'sms.list', ok: true, n: 3 }) === 'sms.list ok · 3');
+ok('boot.set / run / stop / list',
+  K.phoneCmd({ action: 'boot.set', bootPatches: ' A; B ' }).patches === 'A; B' &&
+  K.phoneCmd({ action: 'boot.run', bootPatches: '' }).name === undefined && K.phoneCmd({ action: 'boot.run', bootPatches: 'A' }).name === 'A' &&
+  K.phoneCmd({ action: 'boot.stop', bootPatches: '' }).cmd === 'boot.stop' && K.phoneCmd({ action: 'boot.list' }).cmd === 'boot.list');
+ok('boot lines read well', K.phoneLine({ src: 'boot', name: 'A', boot: true, running: true }) === 'patch A · on boot · running' &&
+  K.phoneLine({ src: 'sys', ev: 'boot.started', name: 'A' }) === 'boot.started A');
+const base = new Date(2026, 9, 31, 10, 0, 0).getTime();      // 31 октября 2026, 10:00 по часам машины
+ok('when: date and time', K.phoneWhen('2026-11-02 09:30') === new Date(2026, 10, 2, 9, 30).getTime() && K.phoneWhen('2026-11-02') === new Date(2026, 10, 2).getTime());
+ok('when: today, tomorrow, relative', K.phoneWhen('9:30', base) === new Date(2026, 9, 31, 9, 30).getTime() && K.phoneWhen('tomorrow 9:00', base) === new Date(2026, 10, 1, 9, 0).getTime() &&
+  K.phoneWhen('+90m', base) === base + 90 * 60000 && K.phoneWhen('+2h', base) === base + 2 * 3600000 && K.phoneWhen('+1d', base) === base + 86400000 && K.phoneWhen('now', base) === base);
+ok('when: ms and garbage', K.phoneWhen('1793431994293') === 1793431994293 && K.phoneWhen('') === null && K.phoneWhen('25:00', base) === null && K.phoneWhen('2026-02-30') === null && K.phoneWhen('soon') === null);
+ok('cal.add: start, end from the start, reminders', (c => c.cmd === 'cal.add' && c.title === 'Dentist' && c.start === new Date(2026, 10, 2, 9, 30).getTime() && c.end === c.start + 3600000 && c.remind === '10, 60' && !c.allDay)(
+  K.phoneCmd({ action: 'cal.add', calTitle: ' Dentist ', calStart: '2026-11-02 09:30', calEnd: '+1h', calRemind: '10, 60' })));
+ok('cal.add: no start — left out (the app answers)', !('start' in K.phoneCmd({ action: 'cal.add', calTitle: 'x', calStart: 'soon' })));
+ok('cal.list / remove / calendars', (c => c.cmd === 'cal.list' && c.to - c.from === 3 * 86400000 && c.q === 'tea' && c.calendar === 2)(K.phoneCmd({ action: 'cal.list', calDays: 3, calQuery: 'tea', calId: '2' })) &&
+  K.phoneCmd({ action: 'cal.remove', calEvent: '17' }).event === 17 && K.phoneCmd({ action: 'cal.calendars' }).cmd === 'cal.calendars');
+ok('cal lines', K.phoneLine({ src: 'cal', kind: 'calendar', id: 3, name: 'Home', account: 'me@x', writable: false }) === 'calendar 3 Home (me@x) · read only' &&
+  K.phoneLine({ src: 'cal', kind: 'event', id: 9, start: Date.UTC(2026, 10, 2), allDay: true, title: 'Trip', where: 'Berlin' }) === 'event 9 2026-11-02 all day · Trip @ Berlin');
 console.log(bad ? bad + ' FAILED' : 'all ok');
 process.exit(bad ? 1 : 0);

@@ -47,6 +47,8 @@ class BridgeService : Service() {
     private lateinit var tlsCmds: TlsCmds
     private lateinit var sys: SysHub
     private lateinit var alarms: AlarmCmds
+    private lateinit var headless: HeadlessHub
+    private lateinit var cal: CalendarHub
     private lateinit var power: PowerHub
     private lateinit var activity: ActivityHub
     private val started = android.os.SystemClock.elapsedRealtime()
@@ -77,6 +79,8 @@ class BridgeService : Service() {
         val emit: Emit = { s, j -> server.emit(s, j) }
         speech = SpeechHub(this, emit, needs); gatt = GattHub(this, emit, needs); btlink = BtLinkHub(this, emit, needs); adv = AdvertiseHub(this, needs); gattsrv = GattServerHub(this, emit, needs); l2cap = L2capHub(this, emit, needs); wlink = WifiLinkHub(this, emit, needs); monitor = MonitorHub(cfg); wnet = WifiNetHub(this, emit, needs)
         alarms = AlarmCmds(this); Alarms.sink = emit
+        headless = HeadlessHub(this, cfg, emit)
+        cal = CalendarHub(this, needs)
         net = NetHub(this, cfg, emit); sys = SysHub(this, cfg, emit, needs); tlsCmds = TlsCmds(this, server)
         server.onCommand = { c, j -> route(c, j) }
         tlsCmds.start()                                          // сертификат уже стоит — TLS поднимется вместе с сервером
@@ -103,6 +107,7 @@ class BridgeService : Service() {
         if (i?.action == ACTION_STOP) { shutdown(); return START_NOT_STICKY }
         goForeground()
         if (i?.action == ACTION_RELOAD || !server.listening) serverError = server.start()
+        if (i?.getBooleanExtra(EXTRA_BOOT, false) == true) main.postDelayed({ if (!destroyed) headless.startAll() }, BOOT_DELAY_MS)   // патчи без окна — после загрузки, когда мост и сеть уже подняты
         refresh()
         return START_STICKY
     }
@@ -189,6 +194,8 @@ class BridgeService : Service() {
             n.startsWith("speech.") -> speech.exec(c, j)
             n.startsWith("tcp.") || n.startsWith("udp.") || n.startsWith("net.") || n.startsWith("raw.") || n == "ping" -> net.exec(c, j)
             n.startsWith("alarm.") -> alarms.exec(c, j)
+            n.startsWith("boot.") -> headless.exec(c, j)
+            n.startsWith("cal.") -> cal.exec(c, j)
             n.startsWith("vpn.") -> VpnCmds.exec(this, c, j)
             n.startsWith("tls.") -> tlsCmds.exec(c, j)
             n.startsWith("sys.") || n.startsWith("gps.mock") || n.startsWith("ui.") || n.startsWith("vol.") || n.startsWith("tts.") || n.startsWith("clip.") || n.startsWith("app.") ||
@@ -210,7 +217,7 @@ class BridgeService : Service() {
         destroyed = true
         main.removeCallbacks(tick)
         inst = null; up = false
-        power.close(); activity.close(); try { sys.stopMock() } catch (e: Exception) { }; FloatWin.closeAll()
+        power.close(); activity.close(); try { sys.stopMock() } catch (e: Exception) { }; FloatWin.closeAll(); headless.shutdown()
         server.stop()
         sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close(); speech.close(); gatt.close(); gattsrv.close(); l2cap.close(); wlink.close(); monitor.close(); wnet.close(); btlink.close(); adv.close(); net.close(); sys.close()
         wake?.takeIf { it.isHeld }?.release()
@@ -360,6 +367,8 @@ class BridgeService : Service() {
         private const val WAKE_MS = 10 * 60_000L
         const val ACTION_STOP = "app.dsp.phone.STOP"
         const val ACTION_RELOAD = "app.dsp.phone.RELOAD"
+        const val EXTRA_BOOT = "bootPatches"
+        private const val BOOT_DELAY_MS = 8000L
         private const val CH = "bridge"
         const val CRASH_FILE = "last-crash.txt"
         private const val CH_PERM = "perm"
@@ -380,10 +389,11 @@ class BridgeService : Service() {
         /** Окно вернулось на экран (singleTask: onCreate заново не зовётся). Сервис, которого система убила, поднимаем снова; запущенному это не мешает. */
         fun resume(ctx: Context) { if (!userStopped) try { ctx.startForegroundService(Intent(ctx, BridgeService::class.java)) } catch (e: Exception) {} }
 
-        fun start(ctx: Context, reload: Boolean = false) {
+        fun start(ctx: Context, reload: Boolean = false, boot: Boolean = false) {
             userStopped = false
             val i = Intent(ctx, BridgeService::class.java)
             if (reload) i.action = ACTION_RELOAD
+            if (boot) i.putExtra(EXTRA_BOOT, true)
             ctx.startForegroundService(i)
         }
 

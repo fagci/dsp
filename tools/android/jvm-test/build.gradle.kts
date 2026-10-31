@@ -28,4 +28,10 @@ tasks.register<JavaExec>("runTlsStoreTest") {
 tasks.register<JavaExec>("runAlarmTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.alarmtest.AlarmTestKt")
 }
-tasks.register("runTests") { dependsOn("runServerTest", "runRecordsTest", "runAlarmTest", "runProxyTest", "runVpnEngineTest", "runTlsTest", "runTlsStoreTest") }
+tasks.register<JavaExec>("runBootTest") {
+    classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.boottest.BootTestKt")
+}
+tasks.register<JavaExec>("runCalTest") {
+    classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.caltest.CalTestKt")
+}
+tasks.register("runTests") { dependsOn("runServerTest", "runRecordsTest", "runAlarmTest", "runBootTest", "runCalTest", "runProxyTest", "runVpnEngineTest", "runTlsTest", "runTlsStoreTest") }

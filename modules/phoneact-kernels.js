@@ -1,7 +1,7 @@
 "use strict";
 /* Phone Actions: команды приложения DSP (tools/android) и разбор его записей. Без DOM — проверяется в tools/test-phoneact.mjs */
 
-const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.send_raw','sms.list','contacts.find','ir.info','crash.last','alarm.set','alarm.remove','alarm.list','alarm.stop','alarm.snooze','alarm.test'];
+const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.send_raw','sms.list','contacts.find','ir.info','crash.last','alarm.set','alarm.remove','alarm.list','alarm.stop','alarm.snooze','alarm.test','boot.set','boot.list','boot.run','boot.stop','cal.calendars','cal.list','cal.add','cal.remove'];
 
 // адрес моста; в приложении к адресу этого телефона добавляется ключ приложения (?k=…) — с ним открыты SMS и контакты
 function phoneUrl(url,key){
@@ -28,6 +28,23 @@ function phoneButtons(s){
   return out;
 }
 
+// Время для календаря → мс; null — не время. «2026-11-02 09:30», «2026-11-02» (с полуночи), «9:30» / «tomorrow 9:30» (по часам телефона),
+// «now», «+90m» / «+2h» / «+3d» (от base — от начала события для конца), число из 11+ цифр — уже мс.
+function phoneWhen(s,base){
+  s=String(s==null ? '' : s).trim().toLowerCase(); if(!s) return null;
+  if(!(base>0)) base=Date.now();
+  if(s==='now') return base;
+  let m=/^\+(\d+(?:\.\d+)?)\s*(m|min|h|d)$/.exec(s);
+  if(m) return base+Math.round(+m[1]*({m:6e4,min:6e4,h:36e5,d:864e5})[m[2]]);
+  if(/^\d{11,}$/.test(s)) return +s;
+  m=/^(today|tomorrow)?\s*(\d{1,2}):(\d{2})$/.exec(s);
+  if(m){ if(+m[2]>23 || +m[3]>59) return null; const t=new Date(base); if(m[1]==='tomorrow') t.setDate(t.getDate()+1); t.setHours(+m[2],+m[3],0,0); return t.getTime(); }
+  m=/^(\d{4})-(\d{2})-(\d{2})(?:[ t]+(\d{1,2}):(\d{2}))?$/.exec(s);
+  if(m){ const y=+m[1], mo=+m[2]-1, d=+m[3], h=+(m[4]||0), mi=+(m[5]||0); if(h>23 || mi>59) return null;
+    const t=new Date(y,mo,d,h,mi,0,0); return t.getFullYear()===y && t.getMonth()===mo && t.getDate()===d ? t.getTime() : null; }
+  return null;
+}
+
 // команда по параметрам узла; textIn — текст с входа text (если подключён) вместо поля body
 function phoneCmd(p,textIn){
   const text=textIn!=null && textIn!=='' ? String(textIn) : String(p.body||'');
@@ -51,6 +68,17 @@ function phoneCmd(p,textIn){
       if(+p.alarmVol>0) c.vol=+p.alarmVol; if(!c.name) delete c.name; return c; }
     case 'alarm.remove': return String(p.alarmName||'').trim() ? {cmd:'alarm.remove', name:String(p.alarmName).trim()} : {cmd:'alarm.remove', all:true};
     case 'alarm.list': case 'alarm.stop': case 'alarm.snooze': return {cmd:p.action};
+    // патчи без окна после перезагрузки (приложение держит страницу в окне 1×1 пиксель): bootPatches — имена через «;»
+    case 'boot.set': return {cmd:'boot.set', patches:String(p.bootPatches||'').trim()};
+    case 'boot.run': case 'boot.stop': return String(p.bootPatches||'').trim() ? {cmd:p.action, name:String(p.bootPatches).trim()} : {cmd:p.action};
+    case 'boot.list': return {cmd:'boot.list'};
+    // календарь телефона (CalendarContract): calStart / calEnd — см. phoneWhen; calRemind — минуты до начала через запятую; calDays — окно списка от «сейчас»
+    case 'cal.calendars': return {cmd:'cal.calendars'};
+    case 'cal.list': { const now=Date.now(); return {cmd:'cal.list', from:now, to:now+(+p.calDays>0 ? +p.calDays : 7)*864e5, q:String(p.calQuery||'').trim(), limit:+p.limit||50, ...(+p.calId>0 ? {calendar:+p.calId} : {})}; }
+    case 'cal.add': { const st=phoneWhen(p.calStart), en=phoneWhen(p.calEnd,st||undefined);
+      const c={cmd:'cal.add', title:String(p.calTitle||'').trim(), allDay:!!p.calAllDay, where:String(p.calWhere||''), note:String(p.calNote||''), remind:String(p.calRemind||'').trim()};
+      if(st) c.start=st; if(en && st && en>st) c.end=en; if(+p.calId>0) c.calendar=+p.calId; return c; }
+    case 'cal.remove': return {cmd:'cal.remove', event:+p.calEvent||-1};
     case 'alarm.test': return {cmd:'alarm.test', ...(String(p.alarmName||'').trim() ? {name:String(p.alarmName).trim()} : {url:String(p.alarmUrl||'').trim(), sample:String(p.alarmSample||'default').trim()||'default', ramp:3})};
   }
   return null;
@@ -71,7 +99,10 @@ function phoneLine(r){
     case 'notify': return 'notification '+r.nid+': '+r.action;
     case 'torch': return 'torch '+(r.on ? 'on' : 'off');
     case 'alarm': return 'alarm '+r.name+' '+r.time+' '+r.days+(r.enabled ? '' : ' (off)')+(r.label ? ' · '+r.label : '')+(r.url ? ' · radio' : '');
-    case 'sys': return String(r.ev||'').startsWith('alarm.') ? r.ev+(r.id ? ' '+r.id : '')+(r.why ? ' · '+r.why : '')+(r.kind ? ' · '+r.kind : '') : 'sys '+r.ev;
+    case 'cal': return r.kind==='calendar' ? 'calendar '+r.id+' '+r.name+(r.account ? ' ('+r.account+')' : '')+(r.writable ? '' : ' · read only')
+      : 'event '+r.id+' '+(r.allDay ? new Date(+r.start).toISOString().slice(0,10)+' all day' : new Date(+r.start).toLocaleString())+' · '+(r.title||'(no title)')+(r.where ? ' @ '+r.where : '');
+    case 'boot': return 'patch '+r.name+(r.boot ? ' · on boot' : '')+(r.running ? ' · running' : ' · stopped');
+    case 'sys': return String(r.ev||'').startsWith('alarm.') || String(r.ev||'').startsWith('boot.') ? r.ev+(r.id||r.name ? ' '+(r.id||r.name) : '')+(r.why ? ' · '+r.why : '')+(r.kind ? ' · '+r.kind : '') : 'sys '+r.ev;
     case 'bridge': return r.level+': '+r.msg;
   }
   return r.src+'';
