@@ -49,6 +49,7 @@ class BridgeService : Service() {
     private lateinit var alarms: AlarmCmds
     private lateinit var headless: HeadlessHub
     private lateinit var cal: CalendarHub
+    private lateinit var recorder: RecHub
     private lateinit var power: PowerHub
     private lateinit var activity: ActivityHub
     private val started = android.os.SystemClock.elapsedRealtime()
@@ -81,6 +82,7 @@ class BridgeService : Service() {
         alarms = AlarmCmds(this); Alarms.sink = emit
         headless = HeadlessHub(this, cfg, emit)
         cal = CalendarHub(this, needs)
+        recorder = RecHub(this, cfg, server)
         net = NetHub(this, cfg, emit); sys = SysHub(this, cfg, emit, needs); tlsCmds = TlsCmds(this, server)
         server.onCommand = { c, j -> route(c, j) }
         tlsCmds.start()                                          // сертификат уже стоит — TLS поднимется вместе с сервером
@@ -107,6 +109,7 @@ class BridgeService : Service() {
         if (i?.action == ACTION_STOP) { shutdown(); return START_NOT_STICKY }
         goForeground()
         if (i?.action == ACTION_RELOAD || !server.listening) serverError = server.start()
+        recorder.resume()                                   // запись на диск, включённая раньше, идёт дальше без страницы
         if (i?.getBooleanExtra(EXTRA_BOOT, false) == true) main.postDelayed({ if (!destroyed) headless.startAll() }, BOOT_DELAY_MS)   // патчи без окна — после загрузки, когда мост и сеть уже подняты
         refresh()
         return START_STICKY
@@ -131,7 +134,7 @@ class BridgeService : Service() {
     /** Блокировка с таймаутом: зависшая сессия не удержит процессор дольше WAKE_MS, живую продлевает tick. */
     @Synchronized
     private fun renewWake() {
-        val active = server.clientCount > 0 && server.wanted().subs.isNotEmpty()
+        val active = (server.clientCount > 0 || server.sinkCount > 0) && server.wanted().subs.isNotEmpty()
         if (active && wake == null) wake = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "dsp:bridge").also { it.setReferenceCounted(false) }
         wake?.let { if (active) it.acquire(WAKE_MS) else if (it.isHeld) it.release() }
     }
@@ -196,6 +199,7 @@ class BridgeService : Service() {
             n.startsWith("alarm.") -> alarms.exec(c, j)
             n.startsWith("boot.") -> headless.exec(c, j)
             n.startsWith("cal.") -> cal.exec(c, j)
+            n.startsWith("rec.") -> recorder.exec(c, j)
             n.startsWith("vpn.") -> VpnCmds.exec(this, c, j)
             n.startsWith("tls.") -> tlsCmds.exec(c, j)
             n.startsWith("sys.") || n.startsWith("gps.mock") || n.startsWith("ui.") || n.startsWith("vol.") || n.startsWith("tts.") || n.startsWith("clip.") || n.startsWith("app.") ||
@@ -217,7 +221,7 @@ class BridgeService : Service() {
         destroyed = true
         main.removeCallbacks(tick)
         inst = null; up = false
-        power.close(); activity.close(); try { sys.stopMock() } catch (e: Exception) { }; FloatWin.closeAll(); headless.shutdown()
+        power.close(); activity.close(); try { sys.stopMock() } catch (e: Exception) { }; FloatWin.closeAll(); headless.shutdown(); recorder.close()
         server.stop()
         sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close(); speech.close(); gatt.close(); gattsrv.close(); l2cap.close(); wlink.close(); monitor.close(); wnet.close(); btlink.close(); adv.close(); net.close(); sys.close()
         wake?.takeIf { it.isHeld }?.release()

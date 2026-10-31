@@ -56,6 +56,32 @@ class Config(ctx: Context) {
         get() = sp.getString("bootPatches", "") ?: ""
         set(v) { sp.edit().putString("bootPatches", v).apply() }
 
+    /** Запись из службы на диск (RecHub): включена ли (возобновляется при запуске службы), имя, источники через запятую, частоты, размер файла и общий лимит. */
+    var recOn: Boolean
+        get() = sp.getBoolean("recOn", false)
+        set(v) { sp.edit().putBoolean("recOn", v).apply() }
+    var recName: String
+        get() = sp.getString("recName", "rec") ?: "rec"
+        set(v) { sp.edit().putString("recName", v).apply() }
+    var recSubs: String
+        get() = sp.getString("recSubs", "") ?: ""
+        set(v) { sp.edit().putString("recSubs", v).apply() }
+    var recHz: Int
+        get() = sp.getInt("recHz", 0)
+        set(v) { sp.edit().putInt("recHz", v).apply() }
+    var recWifi: Int
+        get() = sp.getInt("recWifi", 0)
+        set(v) { sp.edit().putInt("recWifi", v).apply() }
+    var recCell: Int
+        get() = sp.getInt("recCell", 0)
+        set(v) { sp.edit().putInt("recCell", v).apply() }
+    var recMaxMb: Int
+        get() = sp.getInt("recMaxMb", 20)
+        set(v) { sp.edit().putInt("recMaxMb", v.coerceIn(1, 200)).apply() }
+    var recTotalMb: Int
+        get() = sp.getInt("recTotalMb", 300)
+        set(v) { sp.edit().putInt("recTotalMb", v.coerceIn(10, 5000)).apply() }
+
     /** Другие приложения (Tasker, MacroDroid) управляют мостом интентом app.dsp.phone.EXT. */
     var extIntents: Boolean
         get() = sp.getBoolean("extIntents", false)

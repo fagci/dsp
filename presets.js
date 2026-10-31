@@ -624,6 +624,7 @@ const PRESET_CATS={
   'Phone App: Alarm Clock Node — List of Alarms, Set, Snooze, Stop':'Control & Remote',
   'Phone App: Boot Patches — Automation Without a Window After Reboot':'Control & Remote',
   'Phone App: Calendar — Events, Reminders and Free Time':'Control & Remote',
+  'Phone App: Record to Disk in the Background (Service, no Page)':'Control & Remote',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
   'TDOA: Path Difference (2 mics)':'Maps & Locating',
@@ -2343,6 +2344,25 @@ const lg=addNode('recLog',960,690,{});
 lg.size.w=560; applySize(lg);
 for(const n of [cals,lst,add,rm]) addEdge(n.id,'rec',lg.id,'rec');
 addEdge(cals.id,'rec',tb.id,'rec'); addEdge(lst.id,'rec',tb.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Record to Disk in the Background (Service, no Page)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The app\'s service records what the phone hears and senses to a file by itself — with the page closed, the screen off, even after a reboot (the recording is resumed when the service starts). Press Connect, then Run on «Start recording»: the sources in «recording: sources» (gps, wifi, ble, bt, cell, accel… — sms, mic and pkt are never recorded) go to a JSON Lines file in the app folder, one record per line with the time of arrival in _t; a new file starts every 20 MB, the oldest are deleted over 300 MB in total.\n'+
+  '«Status» shows the file and the number of lines, «Files» lists the recordings. «Read» sends a file back to rec (set the file name from the list; «from byte» continues after the answer\'s next — until eof): the Table below fills with the records as if they were coming live, so a Source Locator or a Map can replay a walk. «Export» copies the file to Downloads/DSP; «Delete» removes it (stop the recording first). Only the page of the app may use these commands.'});
+nt.size.w=1000; nt.size.h=190; applySize(nt);
+const mk=(x,y,action,extra)=>{ const n=addNode('phone',x,y,Object.assign({url:'ws://127.0.0.1:8765',action,notifyEv:false,torchState:false},extra)); n.size.w=400; n.size.h=330; applySize(n); return n; };
+const st=mk(40,270,'rec.start',{recName:'walk',recSubs:'gps,wifi,ble,bt,cell',recWifi:5});
+const sp=mk(40,620,'rec.stop',{});
+const ss=mk(480,270,'rec.status',{});
+const ls=mk(480,620,'rec.list',{});
+const rd=mk(920,270,'rec.read',{recFile:'',recOffset:'0'});
+const tb=addNode('table',920,620,{list:'@patch',cols:['_t','src','dev','name','rssi','lat','lon','acc','kind','file','bytes','lines','on']});
+tb.size.w=560; tb.size.h=360; applySize(tb);
+const lg=addNode('recLog',1360,270,{});
+lg.size.w=420; applySize(lg);
+for(const n of [st,sp,ss,ls,rd]) addEdge(n.id,'rec',lg.id,'rec');
+addEdge(ls.id,'rec',tb.id,'rec'); addEdge(rd.id,'rec',tb.id,'rec'); addEdge(ss.id,'rec',tb.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: Speech to Text, Text-to-Speech and Automation', function(){
