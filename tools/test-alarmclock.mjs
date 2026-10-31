@@ -7,7 +7,7 @@ const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL', n, x); } els
 const ctx = vm.createContext({ Math, Number, String, Object, Array, JSON, RegExp });
 const load = f => vm.runInContext(fs.readFileSync(new URL('../modules/' + f, import.meta.url), 'utf8'), ctx);
 load('alarmclock-kernels.js');
-vm.runInContext('this.K={AL_DAYS_OPTS,alDays,alTime,alSetCmd,alToggleCmd,alRow,alLine,alSort,alInText,alNextText}', ctx);
+vm.runInContext('this.K={AL_DAYS_OPTS,alDays,alTime,alSetCmd,alToggleCmd,alRow,alLine,alSort,alInText,alNextText,alOptimistic}', ctx);
 const K = ctx.K;
 
 ok('days: select as is, once — empty', K.alDays({ days: 'weekdays' }) === 'weekdays' && K.alDays({ days: 'once' }) === '' && K.alDays({}) === 'weekdays');
@@ -51,5 +51,12 @@ ok('next: nearest enabled, off/zero skipped', K.alNextText([
   { name: 'near', time: '7:00', days: 'once', enabled: true, next: now + 3600000 },
 ], now) === '7:00 · near · in 1 h' && K.alNextText([{ name: 'x', enabled: false, next: 0 }], now) === '');
 
+{
+  const rows = [{ name: 'wake', time: '07:00', enabled: true }, { name: 'gym', time: '18:00', enabled: false }];
+  const off = K.alOptimistic(rows, K.alToggleCmd(rows[0])), on = K.alOptimistic(rows, K.alToggleCmd(rows[1]));
+  ok('optimistic: toggle flips only that row, the original is untouched', off[0].enabled === false && off[1].enabled === false && on[1].enabled === true && on[0].enabled === true && rows[0].enabled === true);
+  ok('optimistic: remove drops the row; all drops everything', K.alOptimistic(rows, { cmd: 'alarm.remove', name: 'wake' }).map(a => a.name).join() === 'gym' && K.alOptimistic(rows, { cmd: 'alarm.remove', all: true }).length === 0);
+  ok('optimistic: other commands and full set leave the list alone', K.alOptimistic(rows, { cmd: 'alarm.test', name: 'wake' }) === rows && K.alOptimistic(rows, { cmd: 'alarm.set', name: 'wake', time: '8:00', enabled: true }) === rows && K.alOptimistic(rows, null) === rows);
+}
 console.log(bad ? bad + ' FAILED' : 'all ok');
 process.exit(bad ? 1 : 0);

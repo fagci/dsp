@@ -4,6 +4,15 @@
    с колонками (＋ → шаблон) или получает недостающие колонки шаблона (⊞), данные остаются. Имена колонок — те, что понимают остальные
    узлы (карта, Video Overlay, Mark Point, Radio Reach, Signal Paths, секвенсор). Проверяется tools/test-tabletemplates.mjs. */
 
+// Имя списка для Table, которую пользователь только что добавил: table_ГГГГММДД_ЧЧММСС (местное время). Раньше у всех новых таблиц было одно имя «table» —
+// они делили хранилище и затирали друг друга; taken — имена списков, уже занятые таблицами графа: при совпадении (две за секунду) — _2, _3…
+function tblNewName(now,taken){
+  const p=v=>String(v).padStart(2,'0'), t=now||new Date(), used=new Set(taken||[]);
+  const base='table_'+t.getFullYear()+p(t.getMonth()+1)+p(t.getDate())+'_'+p(t.getHours())+p(t.getMinutes())+p(t.getSeconds());
+  let name=base, i=2; while(used.has(name)) name=base+'_'+(i++);
+  return name;
+}
+
 const TBL_TEMPLATES=[
   {id:'points', title:'Map points', dir:'points', cols:['name','lat','lon','alt','h','icon','color','note','photo','audio'],
    desc:'Points on the Map and in the 3D overlay (Video Overlay → own points). h — height above the ground, m; alt — above sea level.'},

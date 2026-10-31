@@ -520,7 +520,9 @@ n.el.classList.toggle('lod-dot',n.lod===LOD_DOT);
 markWiresDirty();
 }
 function addNodeUI(type,x,y){                         // узел, добавленный пользователем: служебные модули — сразу точкой
-const n=addNode(type,x,y);
+// новая Table получает своё имя списка (table_ГГГГММДД_ЧЧММСС), а не общее «table»: иначе временные таблицы затирают друг друга
+const params=type==='table' && typeof tblNewName==='function' ? {list:tblNewName(new Date(),Graph.nodes.filter(m=>m.type==='table').map(m=>m.p.list))} : undefined;
+const n=addNode(type,x,y,params);
 if(n && MOD[type].lod==='dot') setLod(n,LOD_DOT);
 return n;
 }

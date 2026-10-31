@@ -5,7 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/table-templates.js'),'utf8')+';this.K={TBL_TEMPLATES,tblTemplateCols};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/table-templates.js'),'utf8')+';this.K={TBL_TEMPLATES,tblTemplateCols,tblNewName};',ctx);
 const K=ctx.K;
 // порты, которые Table занимает сам (колонка с таким именем получает «_»): из исходников
 const seq=fs.readFileSync(path.join(root,'modules/sequencer.js'),'utf8'), tbl=fs.readFileSync(path.join(root,'modules/table.js'),'utf8');
@@ -33,4 +33,7 @@ ok('track: what the sequencer needs',has('track',['id','lat','lon']));
 ok('apply: only the missing columns, in order, nothing removed',JSON.stringify(K.tblTemplateCols(['name','lat','foo'],T.find(t=>t.id==='points')))===JSON.stringify(['name','lat','foo','lon','alt','h','icon','color','note','photo','audio']));
 ok('apply to an empty list gives the template',JSON.stringify(K.tblTemplateCols([],T[0]))===JSON.stringify(T[0].cols));
 ok('apply twice changes nothing',JSON.stringify(K.tblTemplateCols(K.tblTemplateCols(['x'],T[1]),T[1]))===JSON.stringify(K.tblTemplateCols(['x'],T[1])));
+ok('new table name: table_date_time, local time',K.tblNewName(new Date(2026,9,31,9,5,3),[])==='table_20261031_090503');
+ok('new table name: two in one second get _2, _3',K.tblNewName(new Date(2026,9,31,9,5,3),['table_20261031_090503'])==='table_20261031_090503_2' && K.tblNewName(new Date(2026,9,31,9,5,3),['table_20261031_090503','table_20261031_090503_2'])==='table_20261031_090503_3');
+ok('new table name: other names do not collide, no arguments works',K.tblNewName(new Date(2026,0,2,3,4,5),['table','x'])==='table_20260102_030405' && /^table_\d{8}_\d{6}$/.test(K.tblNewName()));
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad?1:0);

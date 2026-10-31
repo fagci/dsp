@@ -65,7 +65,7 @@ function acFeed(n,r){
   if(r.src==='cmd'){
     n.ok=r.ok?1:0;
     if(r.cmd==='alarm.list' && r.ok){ n.alarms=alSort(n.rowsBuf.splice(0)); n.listSig=''; }
-    else if(r.ok && /^(alarm\.(set|remove|snooze|stop))$/.test(r.cmd||'')) acList(n,true);   // состав поменялся — показать свежий
+    else if(/^alarm\./.test(r.cmd||'') && r.cmd!=='alarm.list') acList(n,true);   // состав поменялся (или команда не прошла — список на странице устарел): показать свежий
   }
   if(r.src==='alarm') n.rowsBuf.push(alRow(r));
   if(r.src==='sys' && String(r.ev||'').startsWith('alarm.')){
@@ -77,6 +77,8 @@ function acFeed(n,r){
   n.recQ.push({t:Date.now(),...r});
   if(n.recQ.length>2000) n.recQ.splice(0,n.recQ.length-2000);
 }
+// команда из строки списка: сразу показать результат на странице, потом приложение подтвердит (или список поправится сам)
+function acDo(n,cmd){ n.alarms=alOptimistic(n.alarms,cmd); n.listSig=''; acSend(n,cmd); }
 // будильник из строки списка → в поля редактора
 function acEdit(n,a){
   n.p.name=a.name; n.p.time=a.time;
@@ -98,12 +100,13 @@ function acRowEl(n,a){
   info.title=info.textContent+(a.url ? '\n'+a.url : '');
   info.style.cssText='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim)';
   const mk=(txt,title,fn)=>{ const b=document.createElement('button'); b.className='alm-b'; b.textContent=txt; b.title=title;
-    b.style.cssText='flex:none;min-width:26px;padding:1px 5px;font-size:10px;cursor:pointer';
+    b.style.cssText='flex:none;min-width:26px;padding:1px 6px;font:10px var(--mono);cursor:pointer;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:3px';
     b.addEventListener('click',e=>{ e.stopPropagation(); fn(); }); return b; };
   row.append(t,info,
-    mk(a.enabled?'on':'off','enable / disable (the alarm stays in the phone)',()=>acSend(n,alToggleCmd(a))),
+    mk(a.enabled?'on':'off','enable / disable (the alarm stays in the phone)',()=>acDo(n,alToggleCmd(a))),
     mk('▶','ring it now',()=>acSend(n,{cmd:'alarm.test',name:a.name})),
-    mk('✕','remove',()=>acSend(n,{cmd:'alarm.remove',name:a.name})));
+    mk('✕','remove',()=>acDo(n,{cmd:'alarm.remove',name:a.name})));
+  const sw=row.querySelector('.alm-b'); if(sw && a.enabled){ sw.style.color='var(--acc2)'; sw.style.borderColor='var(--acc2)'; }
   return row;
 }
 function acRenderList(n){
