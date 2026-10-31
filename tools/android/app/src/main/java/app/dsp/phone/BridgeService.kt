@@ -90,7 +90,7 @@ class BridgeService : Service() {
         callrec = CallRec(this, cfg, server, needs, { recorder.dir }, emit)
         files = FileHub(this, needs)
         dial = DialHub(this, needs)
-        screenrec = ScreenRecHub(this) { recorder.dir }; ScreenEvents.sink = emit
+        screenrec = ScreenRecHub(this) { recorder.dir }; ScreenEvents.sink = emit; ScreenEvents.backlog = { server.backlog() }
         net = NetHub(this, cfg, emit); sys = SysHub(this, cfg, emit, needs); tlsCmds = TlsCmds(this, server)
         server.onCommand = { c, j -> route(c, j) }
         tlsCmds.start()                                          // сертификат уже стоит — TLS поднимется вместе с сервером

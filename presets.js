@@ -8698,7 +8698,8 @@ markWiresDirty();
 });
 preset('Screen: Live Pixel Color + Video Recording', function(){
 clearAll();
-const nt=addNode('note',40,20,{text:'Screen (video) shares a screen, a window or a browser tab (press Share…, the browser asks which). Click the preview: the circle is a pixel read LIVE from the shared picture — `r` `g` `b` `hex` `name` follow it while the screen changes (a game, a video, an indicator light of another program). The browser Eyedropper button picks one pixel anywhere on the screen, but only once — it has no live colour. Right: Color / Spectrometer averages a zone of the same picture (its colour temperature in K), Record Video saves the screen as webm / mp4. Tip: share another window, not this one, or the picture looks into itself.'});
+const nt=addNode('note',40,20,{text:'Screen (video) shares a screen, a window or a browser tab (press Share…, the browser asks which). Click the preview: the circle is a pixel read LIVE from the shared picture — `r` `g` `b` `hex` `name` follow it while the screen changes (a game, a video, an indicator light of another program). The browser Eyedropper button picks one pixel anywhere on the screen, but only once — it has no live colour. Right: Color / Spectrometer averages a zone of the same picture (its colour temperature in K), Record Video saves the screen as webm / mp4. Tip: share another window, not this one, or the picture looks into itself.'+
+  ' In the DSP app (Android) the screen is taken by the app itself — Android asks for permission every time, the picture comes ≈8 frames a second without sound: good for the pixel colour, watching and recording, not for smooth video.'});
 nt.size.w=1000; nt.size.h=100; applySize(nt);
 const sc=addNode('screen',40,150,{w:'320',fps:'15'}); sc.size.w=340; sc.size.h=280; applySize(sc);
 const tk=addNode('ticker',420,150,{time:true}); tk.size.w=260; tk.size.h=130; applySize(tk);

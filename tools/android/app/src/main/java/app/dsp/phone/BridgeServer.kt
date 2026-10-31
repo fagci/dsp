@@ -115,6 +115,8 @@ class BridgeServer(
     }
 
     val clientCount: Int get() = clients.size
+    /** Сколько записей ждёт отправки у самого медленного клиента — по нему тяжёлые источники (кадры экрана) пропускают кадры, а не копят их в памяти. */
+    fun backlog(): Int = clients.maxOfOrNull { it.out.size } ?: 0
     /** Строки «адрес · страница · подписки» по одной на клиента. */
     fun clientLines(): List<String> = clients.map { c ->
         val a = c.sock.inetAddress?.hostAddress?.removePrefix("::ffff:") ?: "?"
@@ -435,10 +437,10 @@ class BridgeServer(
 
     companion object {
         /** Источники, которые отдают личные данные. */
-        val SENSITIVE = setOf("sms")
+        val SENSITIVE = setOf("sms", "screen")
 
         /** Источники действий: пользуются тем, что телефон соединён с чем-то (речь, GATT, сеть, события системы). */
-        val POWER_SRC = setOf("speech", "gatt", "gattsrv", "l2cap", "btlink", "net", "sys", "vpn")
+        val POWER_SRC = setOf("speech", "gatt", "gattsrv", "l2cap", "btlink", "net", "sys", "vpn", "screen")
 
         /** Команды действий: сокеты и ping, соединения Bluetooth, речь, управление телефоном. Нужен c.power. */
         fun powerCmd(name: String) = POWER_PREFIX.any { name.startsWith(it) } || name == "ping"
