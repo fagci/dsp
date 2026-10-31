@@ -66,5 +66,17 @@ ok('callrec.set / status / stop', (c => c.cmd === 'callrec.set' && c.mode === 'a
   K.phoneCmd({ action: 'callrec.set', callMode: 'off' }).mode === 'off' && K.phoneCmd({ action: 'callrec.status' }).cmd === 'callrec.status' && K.phoneCmd({ action: 'callrec.stop' }).cmd === 'callrec.stop');
 ok('callrec lines', K.phoneLine({ src: 'callrec', mode: 'auto', source: 'voice_call', rate: 16000, root: true, active: true, file: 'call-1.wav', minSec: 3 }) === 'call recording on · voice_call 16000 Hz (root) · RECORDING call-1.wav · drops under 3 s' &&
   K.phoneLine({ src: 'sys', ev: 'callrec.stop', file: 'call-1.wav' }) === 'callrec.stop call-1.wav');
+ok('media.list: window, EXIF, thumbs', (c => c.cmd === 'media.list' && c.kind === 'video' && c.q === 'trip' && c.exif === true && c.thumbs === true && c.thumbSize === 96 && c.from > 0 && c.limit === 50)(
+  K.phoneCmd({ action: 'media.list', mediaKind: 'video', mediaQuery: ' trip ', mediaExif: true, mediaThumbs: true, mediaThumb: 96, mediaDays: 7 })) && !('from' in K.phoneCmd({ action: 'media.list', mediaDays: 0 })));
+ok('media.read / thumb / save', (c => c.cmd === 'media.read' && c.media === 42 && c.offset === 100 && c.text === true)(K.phoneCmd({ action: 'media.read', mediaId: '42', fileOffset: '100', fileText: true })) &&
+  K.phoneCmd({ action: 'media.thumb', mediaId: '7' }).media === 7 && K.phoneCmd({ action: 'media.save', fileName: 'a.csv', fileMime: 'text/csv', mediaFolder: 'walks' }, 'x,y').text === 'x,y' &&
+  K.phoneCmd({ action: 'media.save', fileName: 'a.png', fileData: ' QUJD \n' }).data === 'QUJD');
+ok('fs.*: grant, path, read, write', K.phoneCmd({ action: 'fs.pick' }).cmd === 'fs.pick' && K.phoneCmd({ action: 'fs.list', fsGrant: ' g1 ', fsPath: 'a/b' }).path === 'a/b' &&
+  (c => c.grant === 'g1' && c.text === true && c.offset === 5)(K.phoneCmd({ action: 'fs.read', fsGrant: 'g1', fsPath: 'x.txt', fileText: true, fileOffset: '5' })) &&
+  (c => c.append === true && c.text === 'hi' && c.mime === 'text/plain')(K.phoneCmd({ action: 'fs.write', fsGrant: 'g1', fsPath: 'x.txt', fileAppend: true, fileMime: 'text/plain' }, 'hi')) &&
+  K.phoneCmd({ action: 'fs.delete', fsGrant: 'g1', fsPath: 'x.txt' }).cmd === 'fs.delete' && K.phoneCmd({ action: 'fs.mkdir', fsGrant: 'g1', fsPath: 'd' }).path === 'd' && K.phoneCmd({ action: 'fs.revoke', fsGrant: 'g1' }).grant === 'g1');
+ok('media / fs lines', K.phoneLine({ src: 'media', kind: 'images', id: 5, name: 'a.jpg', size: 2048, lat: 52.5, lon: 13.4 }) === 'images 5 a.jpg · 2 kB · 52.5, 13.4' &&
+  K.phoneLine({ src: 'fs', kind: 'grant', grant: 'g1', name: 'DSP' }) === 'folder g1 DSP' && K.phoneLine({ src: 'fs', kind: 'dir', path: 'a' }) === 'dir a' && K.phoneLine({ src: 'fs', kind: 'file', path: 'a/b.txt', size: 1024 }) === 'file a/b.txt · 1 kB' &&
+  K.phoneLine({ src: 'fs', kind: 'data', id: 'a', n: 10, offset: 0, eof: true }) === 'file a · 10 bytes from 0 · end');
 console.log(bad ? bad + ' FAILED' : 'all ok');
 process.exit(bad ? 1 : 0);

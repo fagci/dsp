@@ -1,7 +1,7 @@
 "use strict";
 /* Phone Actions: команды приложения DSP (tools/android) и разбор его записей. Без DOM — проверяется в tools/test-phoneact.mjs */
 
-const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.send_raw','sms.list','contacts.find','ir.info','crash.last','alarm.set','alarm.remove','alarm.list','alarm.stop','alarm.snooze','alarm.test','boot.set','boot.list','boot.run','boot.stop','cal.calendars','cal.list','cal.add','cal.remove','rec.start','rec.stop','rec.status','rec.list','rec.read','rec.delete','rec.export','callrec.set','callrec.status','callrec.stop'];
+const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.send_raw','sms.list','contacts.find','ir.info','crash.last','alarm.set','alarm.remove','alarm.list','alarm.stop','alarm.snooze','alarm.test','boot.set','boot.list','boot.run','boot.stop','cal.calendars','cal.list','cal.add','cal.remove','rec.start','rec.stop','rec.status','rec.list','rec.read','rec.delete','rec.export','callrec.set','callrec.status','callrec.stop','media.list','media.thumb','media.read','media.save','fs.pick','fs.grants','fs.list','fs.read','fs.write','fs.mkdir','fs.delete','fs.revoke'];
 
 // адрес моста; в приложении к адресу этого телефона добавляется ключ приложения (?k=…) — с ним открыты SMS и контакты
 function phoneUrl(url,key){
@@ -81,6 +81,18 @@ function phoneCmd(p,textIn){
     // запись звонков службой (WAV в папке записей): callMode auto / off; callSrc — auto (с root voice_call, иначе микрофон), voice_call / downlink / uplink (root), mic …
     case 'callrec.set': return {cmd:'callrec.set', mode:p.callMode==='off' ? 'off' : 'auto', ...(p.callSrc ? {src:String(p.callSrc)} : {}), ...(+p.callRate>0 ? {rate:+p.callRate} : {}), minSec:Math.max(0,+p.callMin||0)};
     case 'callrec.status': case 'callrec.stop': return {cmd:p.action};
+    // галерея (MediaStore): mediaKind images / video / audio / files; mediaDays — за последние N дней (0 — все); exif — положение снимка (lat, lon); thumbs — миниатюра data-URI в поле thumb
+    case 'media.list': { const now=Date.now(); return {cmd:'media.list', kind:p.mediaKind||'images', q:String(p.mediaQuery||'').trim(), limit:+p.limit||50, exif:!!p.mediaExif, thumbs:!!p.mediaThumbs, thumbSize:+p.mediaThumb||128, ...(+p.mediaDays>0 ? {from:now-(+p.mediaDays)*864e5} : {})}; }
+    case 'media.thumb': return {cmd:'media.thumb', kind:p.mediaKind||'images', media:+p.mediaId||-1, size:+p.mediaThumb||256};
+    case 'media.read': return {cmd:'media.read', kind:p.mediaKind||'images', media:+p.mediaId||-1, offset:+p.fileOffset||0, limit:+p.fileLimit||0, text:!!p.fileText};
+    case 'media.save': return {cmd:'media.save', kind:p.mediaKind||'images', name:String(p.fileName||'').trim(), mime:String(p.fileMime||'').trim(), folder:String(p.mediaFolder||'').trim(), ...(String(p.fileData||'').trim() ? {data:String(p.fileData).replace(/\s/g,'')} : {text})};
+    // папки (SAF): fs.pick — системный выбор папки, доступ запоминается (grant); пути внутри папки — через «/»
+    case 'fs.pick': case 'fs.grants': return {cmd:p.action};
+    case 'fs.revoke': return {cmd:'fs.revoke', grant:String(p.fsGrant||'').trim()};
+    case 'fs.list': return {cmd:'fs.list', grant:String(p.fsGrant||'').trim(), path:String(p.fsPath||'').trim(), limit:+p.limit||200};
+    case 'fs.read': return {cmd:'fs.read', grant:String(p.fsGrant||'').trim(), path:String(p.fsPath||'').trim(), offset:+p.fileOffset||0, limit:+p.fileLimit||0, text:!!p.fileText};
+    case 'fs.write': return {cmd:'fs.write', grant:String(p.fsGrant||'').trim(), path:String(p.fsPath||'').trim(), mime:String(p.fileMime||'').trim(), append:!!p.fileAppend, ...(String(p.fileData||'').trim() ? {data:String(p.fileData).replace(/\s/g,'')} : {text})};
+    case 'fs.mkdir': case 'fs.delete': return {cmd:p.action, grant:String(p.fsGrant||'').trim(), path:String(p.fsPath||'').trim()};
     // календарь телефона (CalendarContract): calStart / calEnd — см. phoneWhen; calRemind — минуты до начала через запятую; calDays — окно списка от «сейчас»
     case 'cal.calendars': return {cmd:'cal.calendars'};
     case 'cal.list': { const now=Date.now(); return {cmd:'cal.list', from:now, to:now+(+p.calDays>0 ? +p.calDays : 7)*864e5, q:String(p.calQuery||'').trim(), limit:+p.limit||50, ...(+p.calId>0 ? {calendar:+p.calId} : {})}; }
@@ -113,6 +125,10 @@ function phoneLine(r){
     case 'recording': return r.kind==='file' ? 'file '+r.file+' · '+Math.round((r.bytes||0)/1024)+' kB'+(r.live ? ' · recording' : '')
       : 'recording '+(r.on ? 'ON' : 'off')+(r.file ? ' · '+r.file : '')+' · '+(r.lines||0)+' lines, '+Math.round((r.bytes||0)/1024)+' kB'+(r.err ? ' · '+r.err : '');
     case 'callrec': return 'call recording '+(r.mode==='off' ? 'off' : 'on · '+r.source+' '+r.rate+' Hz'+(r.root ? ' (root)' : ''))+(r.active ? ' · RECORDING '+(r.file||'') : '')+' · drops under '+r.minSec+' s';
+    case 'media': return r.kind==='thumb' ? 'thumbnail '+r.id : r.kind==='data' ? 'media '+r.id+' · '+r.n+' bytes from '+r.offset+(r.eof ? ' · end' : '')
+      : r.kind+' '+r.id+' '+(r.name||'')+' · '+Math.round((r.size||0)/1024)+' kB'+(r.lat!=null ? ' · '+r.lat+', '+r.lon : '');
+    case 'fs': return r.kind==='grant' ? 'folder '+r.grant+' '+(r.name||'') : r.kind==='data' ? 'file '+r.id+' · '+r.n+' bytes from '+r.offset+(r.eof ? ' · end' : '')
+      : (r.kind==='dir' ? 'dir ' : 'file ')+r.path+(r.kind==='dir' ? '' : ' · '+Math.round((r.size||0)/1024)+' kB');
     case 'boot': return 'patch '+r.name+(r.boot ? ' · on boot' : '')+(r.running ? ' · running' : ' · stopped');
     case 'sys': return String(r.ev||'').startsWith('alarm.') || String(r.ev||'').startsWith('boot.') || String(r.ev||'').startsWith('callrec.') ? r.ev+(r.id||r.name||r.file ? ' '+(r.id||r.name||r.file) : '')+(r.why ? ' · '+r.why : '')+(r.kind ? ' · '+r.kind : '') : 'sys '+r.ev;
     case 'bridge': return r.level+': '+r.msg;
