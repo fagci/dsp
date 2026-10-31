@@ -242,7 +242,7 @@ class AlarmService : Service() {
 
     /** ev: snooze / dismiss; null — тихая остановка перед новым звонком. */
     private fun finish(ev: String?, why: String? = null) {
-        val a = alarm ?: return
+        val a = alarm ?: run { if (ev != null) { current = null; stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }; return }   // звонка уже нет (повторное «выключить» / служба перезапущена) — не висеть вхолостую
         releasePlayer(); stop?.let { h.removeCallbacks(it) }; stop = null
         val am = getSystemService(AudioManager::class.java)
         focus?.let { am.abandonAudioFocusRequest(it) }; focus = null

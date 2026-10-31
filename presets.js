@@ -730,7 +730,7 @@ preset('Studio: Sleep Mixer', function(){
   const o1=addNode('osc',40,40,{wave:'sine',freq:55,amp:.5}), o2=addNode('osc',40,200,{wave:'sine',freq:82.4,amp:.4}), nz=addNode('osc',40,360,{wave:'noise',amp:.5});
   const lf=addNode('lfo',40,520,{freq:.07,min:.2,max:.5});
   const dc=addNode('dac',1340,40,{vol:.5,mode:'stereo'});
-  addEdge(o1.id,'out',mx.id,'a'); addEdge(o2.id,'out',mx.id,'b'); addEdge(nz.id,'out',mx.id,'in3');
+  addEdge(o1.id,'out',mx.id,'in1'); addEdge(o2.id,'out',mx.id,'in2'); addEdge(nz.id,'out',mx.id,'in3');
   addEdge(lf.id,'out',o2.id,'amp');
   addEdge(mx.id,'L',dc.id,'L'); addEdge(mx.id,'R',dc.id,'R');
   const nt=addNode('note',40,640,{text:'Mixer (Studio) mixes any signals: 8 inputs (in1…in8) with level, pan, mute / solo, FX chain per strip,\n'+
@@ -934,7 +934,7 @@ const nt=addNode('note',40,40,{text:'Row Player holds each CSV row of the Table 
 nt.size.w=460; nt.size.h=90; applySize(nt);
 const sq=addNode('table',40,160,{list:'@patch',data:'freq,dwell\n300,1\n600,1\n1200,0.5\n2400,0.5\n800,2'});
 sq.size.w=260; sq.size.h=300; applySize(sq);
-const pl=playRows(sq,40,820,{advance:'dwell',loop:true});
+const pl=playRows(sq,40,820,{advance:'dwell',loop:true,cols:['freq','dwell']});
 const o=addNode('osc',340,160,{amp:.3});
 const sc=addNode('scope',560,160);
 const dc=addNode('dac',560,360,{vol:.2});
@@ -5616,7 +5616,7 @@ preset('Tiles: Modular Rack', function(){
   const mx=addNode('mixer',820,40,{ka:.7,kb:.6});
   const sc=addNode('scope',1080,40,{});
   const dc=addNode('dac',1080,300,{vol:.4,mode:'mono'});
-  addEdge(ck.id,'clk',sq.id,'clk'); addEdge(ck.id,'clk',dr.id,'clk');
+  addEdge(ck.id,'pulse',sq.id,'clk'); addEdge(ck.id,'pulse',dr.id,'clk');
   addEdge(sq.id,'freq',sy.id,'freq'); addEdge(sq.id,'gate',sy.id,'gate');
   addEdge(sy.id,'out',mx.id,'a'); addEdge(dr.id,'out',mx.id,'b');
   addEdge(mx.id,'out',sc.id,'in1'); addEdge(mx.id,'out',dc.id,'L');
@@ -5668,7 +5668,7 @@ preset('Tiles: Beat Grid', function(){
   const sy=addNode('poly4',760,360,{wave:'saw'});
   const mx=addNode('mixer',1020,200,{ka:.8,kb:.5});
   const dc=addNode('dac',1280,200,{vol:.4,mode:'mono'});
-  addEdge(ck.id,'clk',dr.id,'clk'); addEdge(ck.id,'clk',pr.id,'clk');
+  addEdge(ck.id,'pulse',dr.id,'clk'); addEdge(ck.id,'pulse',pr.id,'clk');
   addEdge(pr.id,'freq',sy.id,'freq'); addEdge(pr.id,'gate',sy.id,'gate');
   addEdge(dr.id,'out',mx.id,'a'); addEdge(sy.id,'out',mx.id,'b'); addEdge(mx.id,'out',dc.id,'L');
   Graph.dashTree=tileSplit('row',[
@@ -5702,7 +5702,7 @@ preset('Tiles: Digital Modes Desk', function(){
   const sa=addNode('sa',560,40,{fmin:0,fmax:3000,split:.4});
   const rx=addNode('ft8Rx',300,320,{});
   const mp=addNode('geoMap',820,40,{});
-  addEdge(mic.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec'); addEdge(mic.id,'out',rx.id,'in');
+  addEdge(mic.id,'a',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec'); addEdge(mic.id,'a',rx.id,'in');
   Graph.dashTree=tileSplit('row',[
     tileSplit('col',[tileLeaf(sa,true),tileLeaf(rx)],[45,55]),tileLeaf(mp,true)],[55,45]);
   markWiresDirty();
@@ -7267,7 +7267,7 @@ gv.size.w=240; gv.size.h=150; applySize(gv);
 const cp=addNode('compass',720,460,{});
 cp.size.w=200; cp.size.h=170; applySize(cp);
 addEdge(tx.id,'text',tl.id,'text'); addEdge(tl.id,'rec',map.id,'rec');
-addEdge(tl.id,'volts',gv.id,'in'); addEdge(tl.id,'az',cp.id,'in');
+addEdge(tl.id,'volts',gv.id,'in'); addEdge(tl.id,'az',cp.id,'az');
 markWiresDirty();
 });
 preset('Telemetry: HUD over Video → Record', function(){
