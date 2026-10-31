@@ -55,5 +55,12 @@ ok('cal.list / remove / calendars', (c => c.cmd === 'cal.list' && c.to - c.from 
   K.phoneCmd({ action: 'cal.remove', calEvent: '17' }).event === 17 && K.phoneCmd({ action: 'cal.calendars' }).cmd === 'cal.calendars');
 ok('cal lines', K.phoneLine({ src: 'cal', kind: 'calendar', id: 3, name: 'Home', account: 'me@x', writable: false }) === 'calendar 3 Home (me@x) · read only' &&
   K.phoneLine({ src: 'cal', kind: 'event', id: 9, start: Date.UTC(2026, 10, 2), allDay: true, title: 'Trip', where: 'Berlin' }) === 'event 9 2026-11-02 all day · Trip @ Berlin');
+ok('rec.start: sources, rates, size', (c => c.cmd === 'rec.start' && c.name === 'walk' && c.subs === 'gps,wifi' && c.hz === 50 && c.wifiEvery === 5 && c.maxMb === 10 && !('cellEvery' in c))(
+  K.phoneCmd({ action: 'rec.start', recName: ' walk ', recSubs: 'gps,wifi', recHz: 50, recWifi: 5, recMax: 10 })));
+ok('rec.read / delete / export / stop / list', (c => c.cmd === 'rec.read' && c.file === 'a.jsonl' && c.offset === 100 && c.limit === 500)(K.phoneCmd({ action: 'rec.read', recFile: ' a.jsonl ', recOffset: '100' })) &&
+  K.phoneCmd({ action: 'rec.delete', recFile: 'a.jsonl' }).file === 'a.jsonl' && K.phoneCmd({ action: 'rec.export', recFile: 'a.jsonl' }).cmd === 'rec.export' &&
+  K.phoneCmd({ action: 'rec.stop' }).cmd === 'rec.stop' && K.phoneCmd({ action: 'rec.list' }).cmd === 'rec.list' && K.phoneCmd({ action: 'rec.status' }).cmd === 'rec.status');
+ok('recording lines', K.phoneLine({ src: 'recording', kind: 'status', on: true, file: 'w.jsonl', lines: 12, bytes: 4096 }) === 'recording ON · w.jsonl · 12 lines, 4 kB' &&
+  K.phoneLine({ src: 'recording', kind: 'file', file: 'w.jsonl', bytes: 2048, live: true }) === 'file w.jsonl · 2 kB · recording');
 console.log(bad ? bad + ' FAILED' : 'all ok');
 process.exit(bad ? 1 : 0);

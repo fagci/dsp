@@ -68,6 +68,13 @@ class BridgeServer(
     @Volatile var usb: UsbBackend? = null
 
     private val clients = CopyOnWriteArraySet<Client>()
+
+    /** Внутренний получатель записей (запись на диск, RecHub): подписки и частоты учитываются в wanted() как у клиента, а записи идут в on, не в сокет. */
+    class Sink(val subs: Set<String>, val hz: Int = 0, val wifiEvery: Int = 0, val cellEvery: Int = 0, val on: (List<String>) -> Unit)
+    private val sinks = CopyOnWriteArraySet<Sink>()
+    fun addSink(s: Sink) { sinks.add(s); onSubs() }
+    fun removeSink(s: Sink) { if (sinks.remove(s)) onSubs() }
+    val sinkCount: Int get() = sinks.size
     private val conns = CopyOnWriteArraySet<Socket>()
     private val pending = ArrayList<Pair<String, String>>()
     private val pool = Executors.newCachedThreadPool { r -> Thread(r, "dsp-conn").also { it.isDaemon = true } }
@@ -154,6 +161,12 @@ class BridgeServer(
     fun wanted(): Want {
         val subs = HashSet<String>()
         var hz = 0; var wifi = 0; var cell = 0; var mic = 0; var iface = ""; var filter = ""; var snap = 0; var ble = ""
+        for (k in sinks) {
+            subs.addAll(k.subs)
+            if (k.hz > hz) hz = k.hz
+            if (k.wifiEvery > 0 && (wifi == 0 || k.wifiEvery < wifi)) wifi = k.wifiEvery
+            if (k.cellEvery > 0 && (cell == 0 || k.cellEvery < cell)) cell = k.cellEvery
+        }
         for (c in clients) {
             subs.addAll(c.subs)
             if (c.hz > hz) hz = c.hz
@@ -171,7 +184,7 @@ class BridgeServer(
 
     /** Запись от источника; уйдёт подписанным клиентам в ближайшей пачке. */
     fun emit(src: String, json: String) {
-        if (clients.none { src in it.subs }) return
+        if (clients.none { src in it.subs } && sinks.none { src in it.subs }) return
         synchronized(pending) { pending.add(src to json); (pending as java.lang.Object).notify() }
     }
 
@@ -187,6 +200,10 @@ class BridgeServer(
             var n = 0
             for ((src, j) in batch) if (src in c.subs) { sb.append(if (n++ == 0) '[' else ','); sb.append(j) }
             if (n > 0) c.send(sb.append(']').toString())
+        }
+        for (k in sinks) {
+            val l = batch.filter { it.first in k.subs }.map { it.second }
+            if (l.isNotEmpty()) try { k.on(l) } catch (e: Exception) { }
         }
     }
 
@@ -403,7 +420,7 @@ class BridgeServer(
 
         /** Команды действий: сокеты и ping, соединения Bluetooth, речь, управление телефоном. Нужен c.power. */
         fun powerCmd(name: String) = POWER_PREFIX.any { name.startsWith(it) } || name == "ping"
-        private val POWER_PREFIX = listOf("tcp.", "udp.", "net.", "raw.", "gatt.", "gattsrv.", "l2cap.", "nsd.", "wifi.", "aware.", "p2p.", "bt.", "ble.adv.", "speech.", "alarm.", "boot.", "cal.", "sys.", "activity.", "ui.", "app.", "tls.", "intent", "vol.", "gps.mock", "tts.", "clip.", "media.", "screen.", "toast", "vpn.")
+        private val POWER_PREFIX = listOf("tcp.", "udp.", "net.", "raw.", "gatt.", "gattsrv.", "l2cap.", "nsd.", "wifi.", "aware.", "p2p.", "bt.", "ble.adv.", "speech.", "alarm.", "boot.", "cal.", "rec.", "sys.", "activity.", "ui.", "app.", "tls.", "intent", "vol.", "gps.mock", "tts.", "clip.", "media.", "screen.", "toast", "vpn.")
 
         /** Команды с личными данными или платные (SMS, контакты) — только доверенному клиенту. */
         fun sensitiveCmd(name: String) = name.startsWith("sms.") || name.startsWith("contacts.") || name.startsWith("boot.") || name.startsWith("cal.")
