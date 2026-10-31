@@ -570,6 +570,7 @@ const PRESET_CATS={
   'Phone App: Power, Heat and Events from Other Apps (Tasker)':'Maps & Locating',
   'Phone App: Activity with the Screen Locked (Still, Walking, Pick-up)':'Maps & Locating',
   'Phone App: Microphone, Cell and Packets':'Maps & Locating',
+  'Phone App: Wideband Microphone — Raw Source, up to 192 kHz, USB, Call Audio (root)':'Maps & Locating',
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
   'Phone App: Wi-Fi, BLE and Bluetooth as Three Graphs':'Network & IoT',
   'Network: HTTP Server — Share Files with Any Browser (Phone App)':'Network & IoT',
@@ -1414,6 +1415,25 @@ const log=addNode('recLog',460,670,{});
 log.size.w=380; applySize(log);
 addEdge(tx.id,'mic',sc.id,'in1'); addEdge(tx.id,'mic',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
 addEdge(tx.id,'cdbm',t1.id,'in');
+addEdge(tx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Wideband Microphone — Raw Source, up to 192 kHz, USB, Call Audio (root)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The microphone straight from Android (DSP app), not through the browser engine: the page microphone (getUserMedia) goes through the WebView / Chrome audio chain, which on some phones leaves a gap in the spectrum (for instance 8–14 kHz) and resamples; here the app opens AudioRecord itself. Microphone → output mic.\n'+
+  '«microphone: source» — auto (the raw UNPROCESSED input when the phone has one, else mic), camcorder, voice_recognition… Noise suppression, AGC and echo cancellation are switched off in any case. «sample rate» up to 192 kHz: a phone mic usually gives 48 kHz (a USB microphone or sound card — 96 / 192; the real rate is in the record, sr); for ultrasound or the band above 8 kHz take 44100+ and set the spectrum to the full range. «preferred input» picks a USB / wired / Bluetooth / built-in one.\n'+
+  'With root («Allow root features» in the app Settings) there are sources closed to apps: voice_call (both sides of a call), downlink (the other side), uplink (your voice), submix (what the phone plays). A helper runs under su and opens them; whether it works depends on the phone\'s audio HAL — if not, the reason is shown in the status. The microphone stays on with the screen locked.'});
+nt.size.w=1000; nt.size.h=190; applySize(nt);
+const tx=addNode('termux',40,250,{url:'ws://127.0.0.1:8765',gps:false,battery:false,mic:true,micHz:'48000',micSrc:'auto',micDev:'auto'});
+tx.size.w=380; tx.size.h=520; applySize(tx);
+const sc=addNode('scope',460,250,{});
+sc.size.w=420; sc.size.h=180; applySize(sc);
+const ff=addNode('fft',460,450,{size:'4096'});
+const wf=addNode('sa',720,450,{fmin:0,fmax:24000,split:.4});
+wf.size.w=520; wf.size.h=300; applySize(wf);
+const log=addNode('recLog',920,250,{});
+log.size.w=320; applySize(log);
+addEdge(tx.id,'mic',sc.id,'in1'); addEdge(tx.id,'mic',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
 addEdge(tx.id,'rec',log.id,'rec');
 markWiresDirty();
 });

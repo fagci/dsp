@@ -87,6 +87,11 @@ if(fs.existsSync(kf)){
   ok('mic pcm decode',pcm.length===4 && pcm[1]===.5 && pcm[2]===-1 && Math.abs(pcm[3]-.99997)<1e-4 && K.termuxPcm({})===null && K.termuxPcm({pcm:'!!'})===null);
   const mm=K.termuxSubMsg({mic:true,micHz:'48000',cell:true,cellEvery:3,pkt:true,iface:' wlan0 ',filter:'tcp port 80',snap:'512',hz:'0'});
   ok('sub message: mic, cell, capture',mm.micHz===48000 && mm.cellEvery===3 && mm.iface==='wlan0' && mm.filter==='tcp port 80' && mm.snap===512 && mm.sub.join()==='cell,mic,pkt',JSON.stringify(mm));
+  const ms=K.termuxSubMsg({mic:true,micHz:'96000',micSrc:'unprocessed',micDev:'usb'});
+  ok('sub message: microphone source and device',ms.micHz===96000 && ms.micSrc==='unprocessed' && ms.micDev==='usb' && ms.sub.join()==='mic',JSON.stringify(ms))
+  const md=K.termuxSubMsg({mic:true,micSrc:'auto',micDev:'auto'});
+  ok('sub message: auto source and device are not sent',!('micSrc' in md) && !('micDev' in md))
+  ok('sub message: source only with the microphone on',!('micSrc' in K.termuxSubMsg({gps:true,micSrc:'downlink'})))
   ok('sub message: nothing extra when off',Object.keys(K.termuxSubMsg({gps:true,micHz:'48000',cellEvery:3,iface:'x'})).join()==='sub');
   const oc={}; K.termuxApply(oc,{src:'cell',reg:0,dbm:-120}); K.termuxApply(oc,{src:'cell',reg:1,type:'LTE',dbm:-85,rsrp:-95,rsrq:-9,sinr:12});
   K.termuxApply(oc,{src:'mic',rms:-30}); K.termuxApply(oc,{src:'sensor',sensor:'stationary',x:1}); K.termuxApply(oc,{src:'sensor',sensor:'devorient',x:1});

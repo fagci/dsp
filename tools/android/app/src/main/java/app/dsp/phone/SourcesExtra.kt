@@ -111,60 +111,141 @@ class CellHub(private val ctx: Context, private val gps: GpsHub, private val emi
     }
 }
 
-/** Микрофон: PCM 16 бит моно кусками по 20 мс. Запись: {sr, rms, peak (dBFS), pcm (base64, little-endian)}. */
-class MicHub(private val ctx: Context, private val emit: Emit) {
+/**
+ * Микрофон: PCM 16 бит моно кусками по 20 мс. Запись: {sr, ms (источник), dev (устройство), rms, peak (dBFS), pcm (base64, little-endian)}.
+ * Источник (micSrc): auto (unprocessed, если телефон умеет, иначе mic) / unprocessed / mic / camcorder / voice_recognition / voice_comm / performance;
+ * с root («Allow root features») ещё voice_call / downlink / uplink / submix — их открывает помощник RootAudio от root. Частота до 192 кГц
+ * (что звуковая подсистема не откроет — ближайшая стандартная, в записи sr — реальная); шумодав / АРУ / эхоподавитель принудительно выключаются;
+ * micDev — предпочтительное устройство (usb / wired / bluetooth / builtin). Это обходит обработку звука в WebView / Chrome (getUserMedia).
+ */
+class MicHub(private val ctx: Context, private val cfg: Config, private val emit: Emit, private val onFail: () -> Unit = {}) {
     private var thread: Thread? = null
-    private var rate = 0
+    private var key = ""
+    @Volatile private var deadKey = ""
+    private var proc: Process? = null
+    private val fx = ArrayList<android.media.audiofx.AudioEffect>()
     @Volatile private var run = false
     @Volatile var lastError = ""
 
     @Synchronized
-    fun update(want: Boolean, hz: Int): Boolean {
-        val r = hz.coerceIn(8000, 48000)
-        if (!want) { stopLocked(); return true }
-        if (thread != null && rate == r) return true
+    fun update(want: Boolean, hz: Int, srcName: String = "", devName: String = ""): Boolean {
+        if (!want) { stopLocked(); deadKey = ""; return true }
+        val r = MicArgs.rate(hz); val k = "$r|$srcName|$devName"
+        if (key == k && deadKey == k) return false                  // уже не открылось — ждём, пока параметры сменятся
+        if (thread != null && key == k) return true
         stopLocked()
+        key = k; deadKey = ""
+        val src = MicArgs.source(srcName)
+        return if (MicArgs.rootOnly(srcName)) startRoot(r, src ?: 4, k) else startNative(r, src, devName, k)
+    }
+
+    private fun startNative(want: Int, src: Int?, devName: String, k: String): Boolean {
         if (!ctx.granted(android.Manifest.permission.RECORD_AUDIO)) { lastError = "mic: allow Microphone for the DSP app"; return false }
-        val min = AudioRecord.getMinBufferSize(r, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        if (min <= 0) { lastError = "mic: $r Hz is not supported"; return false }
         val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        // «сырой» вход без шумодава и АРУ, если телефон умеет
+        // auto: «сырой» вход без шумодава и АРУ, если телефон умеет
         val raw = am.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED) == "true"
-        val chunk = r / 50
-        val rec = try {
-            AudioRecord(if (raw) MediaRecorder.AudioSource.UNPROCESSED else MediaRecorder.AudioSource.MIC, r,
-                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, chunk * 2 * 8))
-        } catch (e: Exception) { lastError = "mic: ${e.message}"; return false }
-        if (rec.state != AudioRecord.STATE_INITIALIZED) { rec.release(); lastError = "mic: cannot open the microphone (busy or not allowed in the background)"; return false }
-        rate = r; run = true
-        thread = Thread({ loop(rec, r, chunk) }, "dsp-mic").also { it.isDaemon = true; it.start() }
+        val first = src ?: if (raw) 9 else 1
+        var rec: AudioRecord? = null; var used = want; var usedSrc = first
+        search@ for (s in listOf(first, 1).distinct()) for (rr in MicArgs.fallbackRates(want)) {
+            rec = open(rr, s)
+            if (rec != null) { used = rr; usedSrc = s; break@search }
+        }
+        val r = rec ?: run { lastError = "mic: cannot open the microphone (busy, not allowed in the background, or no source for $want Hz)"; return false }
+        effectsOff(r)
+        val types = MicArgs.deviceTypes(devName)
+        var devNote = ""
+        if (types.isNotEmpty()) {
+            val devs = am.getDevices(AudioManager.GET_DEVICES_INPUTS)
+            val d = types.firstNotNullOfOrNull { t -> devs.firstOrNull { it.type == t } }
+            if (d != null) r.setPreferredDevice(d) else devNote = "mic: no $devName input found — the default one is used"
+        }
+        lastError = (if (usedSrc != first) "mic: ${MicArgs.sourceName(first)} is not available, using mic. " else "") + devNote
+        run = true
+        thread = Thread({ loop(r, used, MicArgs.chunk(used), MicArgs.sourceName(usedSrc)) }, "dsp-mic").also { it.isDaemon = true; it.start() }
         return true
     }
 
-    private fun stopLocked() { run = false; thread?.join(500); thread = null; rate = 0 }
+    private fun open(rate: Int, source: Int): AudioRecord? {
+        val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        if (min <= 0) return null
+        return try {
+            val rec = AudioRecord.Builder().setAudioSource(source)
+                .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
+                .setBufferSizeInBytes(maxOf(min, MicArgs.chunk(rate) * 2 * 8)).build()
+            if (rec.state != AudioRecord.STATE_INITIALIZED) { rec.release(); null } else rec
+        } catch (e: Exception) { null }
+    }
+
+    /** Шумодав, АРУ и эхоподавитель на входе — выключить (на части телефонов они включены по умолчанию даже для MIC). */
+    private fun effectsOff(rec: AudioRecord) {
+        val id = rec.audioSessionId
+        try { if (android.media.audiofx.NoiseSuppressor.isAvailable()) android.media.audiofx.NoiseSuppressor.create(id)?.let { it.enabled = false; fx.add(it) } } catch (e: Exception) { }
+        try { if (android.media.audiofx.AutomaticGainControl.isAvailable()) android.media.audiofx.AutomaticGainControl.create(id)?.let { it.enabled = false; fx.add(it) } } catch (e: Exception) { }
+        try { if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) android.media.audiofx.AcousticEchoCanceler.create(id)?.let { it.enabled = false; fx.add(it) } } catch (e: Exception) { }
+    }
+
+    private fun startRoot(r: Int, src: Int, k: String): Boolean {
+        if (!cfg.sniffer) { lastError = "mic: the source ${MicArgs.sourceName(src)} needs root — turn on «Allow root features» in the app Settings"; return false }
+        val p = try { ProcessBuilder("su", "-c", "CLASSPATH=${ctx.applicationInfo.sourceDir} app_process /system/bin app.dsp.phone.RootAudio $src $r").start() }
+        catch (e: Exception) { lastError = "mic: su: ${e.message}"; return false }
+        proc = p; run = true; lastError = ""
+        val name = MicArgs.sourceName(src)
+        Thread({ try { p.errorStream.bufferedReader().forEachLine { if (it.startsWith("ERR")) fail(k, "mic (root, $name): " + it.removePrefix("ERR:").trim()) } } catch (e: Exception) { } }, "dsp-mic-err").also { it.isDaemon = true; it.start() }
+        thread = Thread({ pump(p.inputStream, r, MicArgs.chunk(r), name, "root", k) }, "dsp-mic").also { it.isDaemon = true; it.start() }
+        return true
+    }
+
+    private fun fail(k: String, msg: String) { lastError = msg; deadKey = k; run = false; onFail() }
+
+    private fun stopLocked() {
+        run = false
+        proc?.let { p -> try { p.destroy() } catch (e: Exception) { }; Thread { RootSh.run("pkill -f app.dsp.phone.RootAudio", 3000) }.also { it.isDaemon = true; it.start() } }
+        proc = null
+        thread?.join(500); thread = null; key = ""
+        for (e in fx) try { e.release() } catch (x: Exception) { }
+        fx.clear()
+    }
 
     fun close() = update(false, 0).let { }
 
-    private fun loop(rec: AudioRecord, sr: Int, chunk: Int) {
-        val s = ShortArray(chunk)
+    /** Порции PCM 16 бит из потока (root-помощник) → записи mic. */
+    private fun pump(ins: InputStream, sr: Int, chunk: Int, name: String, dev: String, k: String) {
+        val b = ByteArray(chunk * 2)
+        try {
+            while (run) {
+                var n = 0
+                while (n < b.size && run) { val c = ins.read(b, n, b.size - n); if (c < 0) { if (run) fail(k, lastError.ifEmpty { "mic (root): the helper stopped" }); return }; n += c }
+                if (n < b.size) break
+                emitChunk(b, chunk, sr, name, dev)
+            }
+        } catch (e: Exception) { if (run) fail(k, "mic: ${e.message}") }
+    }
+
+    private fun emitChunk(b: ByteArray, chunk: Int, sr: Int, name: String, dev: String) {
+        var sum = 0.0; var peak = 0
+        for (i in 0 until chunk) {
+            val v = ((b[2 * i + 1].toInt() shl 8) or (b[2 * i].toInt() and 0xff)).toShort().toInt()
+            sum += v.toDouble() * v; if (Math.abs(v) > peak) peak = Math.abs(v)
+        }
+        val t = System.currentTimeMillis() - chunk * 1000L / sr
+        emit("mic", Json.obj(
+            "src" to "\"mic\"", "t" to t.toString(), "sr" to sr.toString(), "ms" to Json.str(name), "dev" to Json.str(dev),
+            "rms" to Json.num(Audio.dbfs(Math.sqrt(sum / chunk)), 100.0), "peak" to Json.num(Audio.dbfs(peak.toDouble()), 100.0),
+            "pcm" to "\"" + Base64.encodeToString(b, Base64.NO_WRAP) + "\"",
+        ))
+    }
+
+    private fun loop(rec: AudioRecord, sr: Int, chunk: Int, name: String) {
+        val s = ShortArray(chunk); val b = ByteArray(chunk * 2)
         try {
             rec.startRecording()
+            val dev = rec.routedDevice?.let { "${it.productName}".ifEmpty { "type${it.type}" } } ?: ""
             while (run) {
                 var n = 0
                 while (n < chunk && run) { val k = rec.read(s, n, chunk - n); if (k <= 0) { lastError = "mic: read error ($k)"; return }; n += k }
                 if (n < chunk) break
-                var sum = 0.0; var peak = 0
-                val b = ByteArray(chunk * 2)
-                for (i in 0 until chunk) {
-                    val v = s[i].toInt(); sum += v.toDouble() * v; if (Math.abs(v) > peak) peak = Math.abs(v)
-                    b[2 * i] = v.toByte(); b[2 * i + 1] = (v shr 8).toByte()
-                }
-                val t = System.currentTimeMillis() - chunk * 1000L / sr
-                emit("mic", Json.obj(
-                    "src" to "\"mic\"", "t" to t.toString(), "sr" to sr.toString(),
-                    "rms" to Json.num(Audio.dbfs(Math.sqrt(sum / chunk)), 100.0), "peak" to Json.num(Audio.dbfs(peak.toDouble()), 100.0),
-                    "pcm" to "\"" + Base64.encodeToString(b, Base64.NO_WRAP) + "\"",
-                ))
+                for (i in 0 until chunk) { val v = s[i].toInt(); b[2 * i] = v.toByte(); b[2 * i + 1] = (v shr 8).toByte() }
+                emitChunk(b, chunk, sr, name, dev)
             }
         } catch (e: Exception) { lastError = "mic: ${e.message}" }
         finally { try { rec.stop() } catch (e: Exception) {}; rec.release() }
