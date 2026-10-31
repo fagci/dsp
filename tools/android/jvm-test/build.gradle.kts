@@ -55,4 +55,7 @@ tasks.register<JavaExec>("runScreenTest") {
 tasks.register<JavaExec>("runShortcutTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.shortcuttest.ShortcutTestKt")
 }
-tasks.register("runTests") { dependsOn("runShortcutTest", "runScreenTest", "runDialTest", "runFsTest", "runCallTest", "runMicTest", "runServerTest", "runRecordsTest", "runAlarmTest", "runBootTest", "runCalTest", "runRecTest", "runProxyTest", "runVpnEngineTest", "runTlsTest", "runTlsStoreTest") }
+tasks.register<JavaExec>("runScanDiagTest") {
+    classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.scandiagtest.ScanDiagTestKt")
+}
+tasks.register("runTests") { dependsOn("runScanDiagTest", "runShortcutTest", "runScreenTest", "runDialTest", "runFsTest", "runCallTest", "runMicTest", "runServerTest", "runRecordsTest", "runAlarmTest", "runBootTest", "runCalTest", "runRecTest", "runProxyTest", "runVpnEngineTest", "runTlsTest", "runTlsStoreTest") }

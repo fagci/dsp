@@ -64,11 +64,7 @@ class CellHub(private val ctx: Context, private val gps: GpsHub, private val emi
     fun close() { update(false, every); thread.quitSafely() }
 
     private fun report(list: List<CellInfo>) {
-        val f = gps.recent()
-        val pos = arrayOf(
-            "lat" to f?.let { Json.num(it.latitude, 1e7) }, "lon" to f?.let { Json.num(it.longitude, 1e7) },
-            "acc" to f?.takeIf { it.hasAccuracy() }?.let { Json.num(it.accuracy.toDouble(), 10.0) },
-        )
+        val pos = posPairs(gps.recent())
         for (c in list) record(c)?.let { emit("cell", Json.obj(*(it + pos))) }
     }
 

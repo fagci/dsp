@@ -30,10 +30,7 @@ fun Context.hasBluetooth() = btAdapter() != null
 /** С Android 12 сканированию нужно BLUETOOTH_SCAN (и геолокация, раз положение берём в записи), раньше — геолокация. */
 fun Context.canScanBt() = if (Build.VERSION.SDK_INT >= 31) granted(Manifest.permission.BLUETOOTH_SCAN) && hasLocation() else hasLocation()
 
-private fun lat(l: android.location.Location?) = arrayOf(
-    "lat" to l?.let { Json.num(it.latitude, 1e7) }, "lon" to l?.let { Json.num(it.longitude, 1e7) },
-    "acc" to l?.takeIf { it.hasAccuracy() }?.let { Json.num(it.accuracy.toDouble(), 10.0) },
-)
+private fun lat(l: android.location.Location?) = posPairs(l)
 
 /** BLE: каждая реклама — запись (адрес, имя, RSSI, данные производителя, службы, сырые байты) с последним положением. */
 class BleHub(private val ctx: Context, private val gps: GpsHub, private val emit: Emit) : ScanCallback() {

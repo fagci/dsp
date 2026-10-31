@@ -1492,7 +1492,7 @@ const nt=addNode('note',40,40,{text:'Walk around with the phone (DSP app, Allow 
 nt.size.w=900; nt.size.h=190; applySize(nt);
 const tx=addNode('termux',40,260,{url:'ws://127.0.0.1:8765',gps:true,battery:false,wifi:true,wifiEvery:5,ble:true,bt:true,cell:true,cellEvery:5,devEvery:2,devMove:5});
 tx.size.w=380; tx.size.h=600; applySize(tx);
-const fl=addNode('recFilter',440,260,{expr:'r.dev && r.lat != null && r.rssi != null'});
+const fl=addNode('recFilter',440,260,{expr:'r.dev && r.lat != null && r.rssi != null && (r.age == null || r.age < 20000)'});
 const me=addNode('recFilter',440,380,{expr:"r.id === 'me' && r.acc <= 30"});
 const tb=addNode('table',440,500,{list:'field/rssi-by-device',maxRows:5000,rev:true,cols:['t','src','dev','name','rssi','lat','lon','acc','ch','band','type']});
 tb.size.w=520; tb.size.h=360; applySize(tb);
