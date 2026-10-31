@@ -94,7 +94,7 @@ class BridgeService : Service() {
         bt = BtHub(this, gps) { s, j -> server.emit(s, j) }
         gnss = GnssHub(this) { s, j -> server.emit(s, j) }
         cell = CellHub(this, gps) { s, j -> server.emit(s, j) }
-        mic = MicHub(this) { s, j -> server.emit(s, j) }
+        mic = MicHub(this, cfg, { s, j -> server.emit(s, j) }, { main.post { refresh() } })
         sniffer = SnifferHub(cfg, { s, j -> server.emit(s, j) }) { l, m -> server.note(l, m) }
         power = PowerHub(this, cfg, emit, ::diagPairs) { main.post { refresh() } }
         activity = ActivityHub(this, cfg, emit)
@@ -300,7 +300,7 @@ class BridgeService : Service() {
         sys.update("sys" in w.subs)
         if (!bt.update("bt" in w.subs)) problems.add(bt.lastError)
         if (!cell.update("cell" in w.subs, w.cellEvery * f)) problems.add(cell.lastError)
-        if (!mic.update("mic" in w.subs, w.micHz)) problems.add(mic.lastError)
+        if (!mic.update("mic" in w.subs, w.micHz, w.micSrc, w.micDev)) problems.add(mic.lastError)
         if (!sniffer.update("pkt" in w.subs, w.iface, w.filter, w.snap)) problems.add(sniffer.lastError)
         if (!actions.update("sms" in w.subs)) problems.add("sms: allow SMS for the DSP app")
         askPermissions(if (cfg.activityLog) w.subs + "activity" else w.subs)

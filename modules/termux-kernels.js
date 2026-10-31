@@ -14,6 +14,8 @@ function termuxSubMsg(p){
   if(+p.cellEvery>0 && p.cell) m.cellEvery=+p.cellEvery;
   if(p.ble && typeof plScanOpts==='function'){ const bo=plScanOpts(p); if(bo) m.ble=bo; }
   if(+p.micHz>0 && p.mic) m.micHz=+p.micHz;
+  if(p.mic && p.micSrc && p.micSrc!=='auto') m.micSrc=String(p.micSrc);          // источник: unprocessed / mic / camcorder / … (voice_call, downlink, uplink, submix — с root)
+  if(p.mic && p.micDev && p.micDev!=='auto') m.micDev=String(p.micDev);          // устройство: usb / wired / bluetooth / builtin
   if(p.pkt){ m.iface=String(p.iface||'any').trim(); m.filter=String(p.filter||'').trim(); m.snap=+p.snap||256; }
   return m;
 }
