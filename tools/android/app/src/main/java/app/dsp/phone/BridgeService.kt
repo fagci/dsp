@@ -307,7 +307,7 @@ class BridgeService : Service() {
         sys.update("sys" in w.subs)
         if (!bt.update("bt" in w.subs)) problems.add(bt.lastError)
         if (!cell.update("cell" in w.subs, w.cellEvery * f)) problems.add(cell.lastError)
-        if (!mic.update("mic" in w.subs, w.micHz, w.micSrc, w.micDev)) problems.add(mic.lastError)
+        if (!mic.update("mic" in w.subs, w.micHz, w.micSrc, w.micDev, w.micLow)) problems.add(mic.lastError)
         if (!sniffer.update("pkt" in w.subs, w.iface, w.filter, w.snap)) problems.add(sniffer.lastError)
         if (!actions.update("sms" in w.subs)) problems.add("sms: allow SMS for the DSP app")
         askPermissions(if (cfg.activityLog) w.subs + "activity" else w.subs)

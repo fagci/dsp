@@ -75,7 +75,7 @@ br.close(); fs.rmSync(dir,{recursive:true,force:true});
 const kf=path.join(root,'modules/termux-kernels.js');
 if(fs.existsSync(kf)){
   const ctx=vm.createContext({atob,Float32Array,Math,Number,String,Object,Array,isFinite,Date,JSON,URL,URLSearchParams});
-  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxDev,termuxThin,termuxPoint,termuxPcm,termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg};',ctx);
+  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxDev,termuxThin,termuxPoint,termuxPcm,termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxMicLag};',ctx);
   const K=ctx.K, o={};
   K.termuxApply(o,{src:'gps',lat:1,lon:2,alt:3,acc:4,speed:5,bearing:6});
   ok('apply gps',o.lat===1 && o.lon===2 && o.alt===3 && o.acc===4 && o.speed===5 && o.hdg===6);
@@ -92,6 +92,8 @@ if(fs.existsSync(kf)){
   const md=K.termuxSubMsg({mic:true,micSrc:'auto',micDev:'auto'});
   ok('sub message: auto source and device are not sent',!('micSrc' in md) && !('micDev' in md))
   ok('sub message: source only with the microphone on',!('micSrc' in K.termuxSubMsg({gps:true,micSrc:'downlink'})))
+  ok('sub message: low latency only with the microphone on',K.termuxSubMsg({mic:true,micLow:true}).micLow===true && !('micLow' in K.termuxSubMsg({gps:true,micLow:true})) && !('micLow' in K.termuxSubMsg({mic:true})))
+  ok('mic lag: 250 ms normally, micLag in low latency (20…300)',K.termuxMicLag({mic:true})===.25 && K.termuxMicLag({micLow:true})===.06 && K.termuxMicLag({micLow:true,micLag:40})===.04 && K.termuxMicLag({micLow:true,micLag:1})===.02 && K.termuxMicLag({micLow:true,micLag:9999})===.3 && K.termuxMicLag(null)===.25)
   ok('sub message: nothing extra when off',Object.keys(K.termuxSubMsg({gps:true,micHz:'48000',cellEvery:3,iface:'x'})).join()==='sub');
   const oc={}; K.termuxApply(oc,{src:'cell',reg:0,dbm:-120}); K.termuxApply(oc,{src:'cell',reg:1,type:'LTE',dbm:-85,rsrp:-95,rsrq:-9,sinr:12});
   K.termuxApply(oc,{src:'mic',rms:-30}); K.termuxApply(oc,{src:'sensor',sensor:'stationary',x:1}); K.termuxApply(oc,{src:'sensor',sensor:'devorient',x:1});

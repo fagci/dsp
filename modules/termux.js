@@ -41,7 +41,7 @@ function termuxRetry(n){ if(n.want && n.p.reconnect){ clearTimeout(n.timer); n.t
 function termuxMic(n,r){
   const a=termuxPcm(r), sr=+r.sr; if(!a || !(sr>0)) return;
   const wall=performance.now()/1000, dur=a.length/sr;
-  if(!n.micT || Math.abs(n.micT-(wall-dur))>.5){ n.micT=wall-dur; if(n.micT0) ssInit(n,1); n.micT0=1; n.sExact=true; n.sLag=.25; }
+  if(!n.micT || Math.abs(n.micT-(wall-dur))>.5){ n.micT=wall-dur; if(n.micT0) ssInit(n,1); n.micT0=1; n.sExact=true; n.sLag=termuxMicLag(n.p); }
   for(let i=0;i<a.length;i++) ssPush(n,n.micT+i/sr,[a[i]]);
   n.micT+=dur;
 }
@@ -118,6 +118,8 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'mic',g:'Cell & microphone',t:'check',d:false,label:'microphone → output «mic» (signal), level in «micdb» (DSP app, also with the screen locked)'},
     {n:'micHz',g:'Cell & microphone',t:'select',opts:['8000','16000','22050','44100','48000','96000','192000'],d:'16000',label:'microphone: sample rate, Hz (the DSP app tries the nearest standard one if the phone cannot open it; the real one is in the record, sr). Above 8 kHz of signal needs 22050 and more'},
     {n:'micSrc',g:'Cell & microphone',t:'select',opts:['auto','unprocessed','mic','camcorder','voice_recognition','voice_comm','performance','voice_call','downlink','uplink','submix'],d:'auto',label:'microphone: source in the DSP app — auto = unprocessed (no noise suppression / AGC) if the phone has it, else mic; voice_call / downlink (the other side) / uplink (your voice) / submix (what the phone plays) need root («Allow root features» in the app Settings) and the phone\'s audio HAL to give them'},
+    {n:'micLow',g:'Cell & microphone',t:'check',d:false,label:'microphone: low latency (DSP app) — pieces of 10 ms, the bridge sends them at once, a small buffer on the phone and a short smoothing reserve here (below). Costs more CPU and risks gaps on a busy phone; for the least delay also set Block size 128 in the toolbar'},
+    {n:'micLag',g:'Cell & microphone',t:'range',min:20,max:300,step:5,d:60,label:'microphone: smoothing reserve in low latency, ms (less — shorter delay, but gaps if the pieces come unevenly)',if:n=>n.p.micLow},
     {n:'micDev',g:'Cell & microphone',t:'select',opts:['auto','usb','wired','bluetooth','builtin'],d:'auto',label:'microphone: preferred input in the DSP app (a USB microphone / headset, wired, Bluetooth, built-in); noise suppression, AGC and echo cancellation are switched off anyway'},
     {n:'ext',g:'Device records',t:'check',d:false,label:'events from other apps (Tasker / MacroDroid intent app.dsp.phone.EXT) → rec, number in «extv» (DSP app; allow in its Settings)'},
     {n:'pkt',g:'Packet capture (root)',t:'check',d:false,label:'packet capture, frames in hex → rec (DSP app; root + tcpdump; allow it in the app Settings)'},
@@ -154,7 +156,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     const nm=n.nmeaQ.length ? n.nmeaQ.splice(0).join('\n')+'\n' : '';
     const o={rec, pts:n.ptQ.length ? n.ptQ.splice(0) : null, line, nmeatxt:nm, go:rec ? 1 : 0};
     for(const k of TERMUX_OUTS) o[k]=n.vals[k] ?? null;
-    if(n.p.mic){ const m=buf(n,'mic'); ssProcess(n,[m]); o.mic=m; }
+    if(n.p.mic){ n.sLag=termuxMicLag(n.p); const m=buf(n,'mic'); ssProcess(n,[m]); o.mic=m; }
     else { if(n.micT){ ssInit(n,1); n.micT=0; n.micT0=0; n.sExact=true; n.sLag=.25; } o.mic=buf(n,'mic').fill(0); }
     return o;
   },
@@ -176,6 +178,8 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     if(o.hinge!=null) t+='\nhinge '+f(o.hinge,0)+'°';
     if(o.cdbm!=null) t+='\ncell '+f(o.cdbm,0)+' dBm'+(o.crsrp!=null ? '  RSRP '+f(o.crsrp,0)+' RSRQ '+f(o.crsrq,0) : '');
     if(o.micdb!=null) t+='\nmic '+f(o.micdb,0)+' dBFS';
+    if(n.p.mic && o.micdb!=null){ const l=typeof Eng!=='undefined' && Eng.latencyMs ? Eng.latencyMs() : null, buf=Math.max(n.sLag||0,3*(n.sDt||0))*1000;
+      t+='\nmic → output ≈ '+Math.round(buf+(l ? l.totalMs : 0))+' ms (smoothing '+Math.round(buf)+(l ? ' + engine '+Math.round(l.queueMs)+' + device '+Math.round(l.hardwareMs) : '')+')'; }
     if(o.orient!=null) t+='\nscreen orientation '+f(o.orient,0);
     if(o.act!=null) t+='\nactivity '+['still','moving','walking'][o.act]+(o.cadence ? ' '+f(o.cadence,0)+' steps/min' : '')+(o.locked ? '  (screen locked)' : '');
     if(o.pick!=null) t+='\npicked up '+f(o.pick,0)+'×';

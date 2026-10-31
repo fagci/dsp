@@ -128,18 +128,18 @@ class MicHub(private val ctx: Context, private val cfg: Config, private val emit
     @Volatile var lastError = ""
 
     @Synchronized
-    fun update(want: Boolean, hz: Int, srcName: String = "", devName: String = ""): Boolean {
+    fun update(want: Boolean, hz: Int, srcName: String = "", devName: String = "", low: Boolean = false): Boolean {
         if (!want) { stopLocked(); deadKey = ""; return true }
-        val r = MicArgs.rate(hz); val k = "$r|$srcName|$devName"
+        val r = MicArgs.rate(hz); val k = "$r|$srcName|$devName|$low"
         if (key == k && deadKey == k) return false                  // уже не открылось — ждём, пока параметры сменятся
         if (thread != null && key == k) return true
         stopLocked()
         key = k; deadKey = ""
         val src = MicArgs.source(srcName)
-        return if (MicArgs.rootOnly(srcName)) startRoot(r, src ?: 4, k) else startNative(r, src, devName, k)
+        return if (MicArgs.rootOnly(srcName)) startRoot(r, src ?: 4, k) else startNative(r, src, devName, k, low)
     }
 
-    private fun startNative(want: Int, src: Int?, devName: String, k: String): Boolean {
+    private fun startNative(want: Int, src: Int?, devName: String, k: String, low: Boolean): Boolean {
         if (!ctx.granted(android.Manifest.permission.RECORD_AUDIO)) { lastError = "mic: allow Microphone for the DSP app"; return false }
         val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         // auto: «сырой» вход без шумодава и АРУ, если телефон умеет
@@ -147,7 +147,7 @@ class MicHub(private val ctx: Context, private val cfg: Config, private val emit
         val first = src ?: if (raw) 9 else 1
         var rec: AudioRecord? = null; var used = want; var usedSrc = first
         search@ for (s in listOf(first, 1).distinct()) for (rr in MicArgs.fallbackRates(want)) {
-            rec = open(rr, s)
+            rec = open(rr, s, low)
             if (rec != null) { used = rr; usedSrc = s; break@search }
         }
         val r = rec ?: run { lastError = "mic: cannot open the microphone (busy, not allowed in the background, or no source for $want Hz)"; return false }
@@ -161,17 +161,17 @@ class MicHub(private val ctx: Context, private val cfg: Config, private val emit
         }
         lastError = (if (usedSrc != first) "mic: ${MicArgs.sourceName(first)} is not available, using mic. " else "") + devNote
         run = true
-        thread = Thread({ loop(r, used, MicArgs.chunk(used), MicArgs.sourceName(usedSrc)) }, "dsp-mic").also { it.isDaemon = true; it.start() }
+        thread = Thread({ loop(r, used, MicArgs.chunk(used, low), MicArgs.sourceName(usedSrc)) }, "dsp-mic").also { it.isDaemon = true; it.start() }
         return true
     }
 
-    private fun open(rate: Int, source: Int): AudioRecord? {
+    private fun open(rate: Int, source: Int, low: Boolean): AudioRecord? {
         val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (min <= 0) return null
         return try {
             val rec = AudioRecord.Builder().setAudioSource(source)
                 .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
-                .setBufferSizeInBytes(maxOf(min, MicArgs.chunk(rate) * 2 * 8)).build()
+                .setBufferSizeInBytes(MicArgs.bufferBytes(min, MicArgs.chunk(rate, low), low)).build()
             if (rec.state != AudioRecord.STATE_INITIALIZED) { rec.release(); null } else rec
         } catch (e: Exception) { null }
     }
