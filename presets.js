@@ -629,6 +629,7 @@ const PRESET_CATS={
   'Phone App: Record to Disk in the Background (Service, no Page)':'Control & Remote',
   'Phone App: Call Recorder — Service Records Calls to WAV (root: both sides)':'Control & Remote',
   'Phone App: Photo Gallery on the Map, Folders and Files (MediaStore, SAF)':'Maps & Locating',
+  'Phone App: USSD Codes and Dialing — Balance, SIM Slots, Call, Hang Up':'Control & Remote',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
   'TDOA: Path Difference (2 mics)':'Maps & Locating',
@@ -2437,6 +2438,21 @@ const lg=addNode('recLog',1560,290,{});
 lg.size.w=380; applySize(lg);
 addEdge(ls.id,'rec',tb.id,'rec'); addEdge(ls.id,'rec',mp.id,'rec');
 for(const n of [ls,sv,pk,fl]) addEdge(n.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: USSD Codes and Dialing — Balance, SIM Slots, Call, Hang Up', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'USSD and calls from a patch (DSP app; allow Phone once). «USSD» sends a code like *100# (balance, tariff, short menus) through the system API and the answer of the network comes back on rec as a record ussd with the text — a Rule or a Table can read the balance from it. One request is one answer: Android does not continue a USSD menu through this API, so a deeper menu is a new request (e.g. *100*1#). «SIMs» lists the SIM slots (slot 0, 1…) — put the number into «SIM slot» to choose one; empty is the default SIM.\n'+
+  '«Dial» opens the dialer with the number (you press call) — or calls at once when «call at once» is ticked; «Answer» and «Hang up» take or end the current call (Android 9+). It all can cost money and is limited to 5 requests a minute; service codes that wipe data or open engineering menus (*2767*3855#, *#*#…#*#*) are refused. Only the page of the app may use it.'});
+nt.size.w=1000; nt.size.h=190; applySize(nt);
+const mk=(x,y,action,extra)=>{ const n=addNode('phone',x,y,Object.assign({url:'ws://127.0.0.1:8765',action,notifyEv:false,torchState:false},extra)); n.size.w=400; n.size.h=330; applySize(n); return n; };
+const sims=mk(40,270,'ussd.sims',{});
+const bal=mk(40,620,'ussd.send',{ussdCode:'*100#',ussdSim:''});
+const dial=mk(480,270,'call.dial',{dialNumber:'112',dialDirect:false});
+const hang=mk(480,620,'call.end',{});
+const lg=addNode('recLog',920,270,{});
+lg.size.w=480; applySize(lg);
+for(const n of [sims,bal,dial,hang]) addEdge(n.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: Speech to Text, Text-to-Speech and Automation', function(){
