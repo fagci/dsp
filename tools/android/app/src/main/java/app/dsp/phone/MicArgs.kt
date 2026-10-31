@@ -43,6 +43,9 @@ object MicArgs {
         else -> emptyList()
     }
 
-    /** Размер порции — 20 мс. */
-    fun chunk(rate: Int): Int = rate / 50
+    /** Размер порции — 20 мс; в режиме низкой задержки — 10 мс (порций вдвое больше, зато каждая уходит на страницу раньше). */
+    fun chunk(rate: Int, low: Boolean = false): Int = if (low) rate / 100 else rate / 50
+
+    /** Буфер AudioRecord: запас на 8 порций (устойчиво к задержкам чтения) или, в режиме низкой задержки, на 2 — по размеру близко к минимуму, который просит звуковая подсистема (так открывается быстрый путь без лишней буферизации). */
+    fun bufferBytes(min: Int, chunk: Int, low: Boolean): Int = maxOf(min, chunk * 2 * (if (low) 2 else 8))
 }

@@ -15,10 +15,15 @@ function termuxSubMsg(p){
   if(p.ble && typeof plScanOpts==='function'){ const bo=plScanOpts(p); if(bo) m.ble=bo; }
   if(+p.micHz>0 && p.mic) m.micHz=+p.micHz;
   if(p.mic && p.micSrc && p.micSrc!=='auto') m.micSrc=String(p.micSrc);          // источник: unprocessed / mic / camcorder / … (voice_call, downlink, uplink, submix — с root)
-  if(p.mic && p.micDev && p.micDev!=='auto') m.micDev=String(p.micDev);          // устройство: usb / wired / bluetooth / builtin
+  if(p.mic && p.micDev && p.micDev!=='auto') m.micDev=String(p.micDev);
+  if(p.mic && p.micLow) m.micLow=true;                                              // порции по 10 мс и немедленная отправка моста          // устройство: usb / wired / bluetooth / builtin
   if(p.pkt){ m.iface=String(p.iface||'any').trim(); m.filter=String(p.filter||'').trim(); m.snap=+p.snap||256; }
   return m;
 }
+
+// Запас сглаживания микрофона на странице, с: обычный 250 мс (неровный приход порций); в режиме низкой задержки — micLag мс (20…300, по умолчанию 60).
+// Реальный запас не меньше трёх интервалов между порциями (ssProcess, sources.js), так что при порциях по 10 мс пол — 30 мс.
+function termuxMicLag(p){ return p && p.micLow ? Math.min(300,Math.max(20,+p.micLag||60))/1000 : .25; }
 
 // кватернион Android (x,y,z,w) → азимут, тангаж, крен в градусах (как SensorManager.getOrientation)
 function termuxEuler(r){

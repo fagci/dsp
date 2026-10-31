@@ -39,6 +39,7 @@ class BridgeServer(
         @Volatile var micHz = 0
         @Volatile var micSrc = ""
         @Volatile var micDev = ""
+        @Volatile var micLow = false
         @Volatile var iface = ""
         @Volatile var filter = ""
         @Volatile var snap = 0
@@ -58,7 +59,7 @@ class BridgeServer(
     /** Что просят клиенты: источники и их параметры (при нескольких клиентах — самые частые / первые заданные). */
     data class Want(
         val subs: Set<String>, val hz: Int, val wifiEvery: Int,
-        val cellEvery: Int = 5, val micHz: Int = 16000, val micSrc: String = "", val micDev: String = "", val iface: String = "any", val filter: String = "", val snap: Int = 256, val bleOpts: String = "",
+        val cellEvery: Int = 5, val micHz: Int = 16000, val micSrc: String = "", val micDev: String = "", val micLow: Boolean = false, val iface: String = "any", val filter: String = "", val snap: Int = 256, val bleOpts: String = "",
     )
 
     private class Req(val method: String, val path: String, val query: Map<String, String>, val headers: Map<String, String>)
@@ -142,7 +143,7 @@ class BridgeServer(
             while (running) {
                 try {
                     synchronized(pending) { while (running && pending.isEmpty()) (pending as java.lang.Object).wait(30_000) }
-                    Thread.sleep(40)                  // накопить пачку
+                    Thread.sleep(if (urgentMic()) 8 else 40)        // накопить пачку; микрофон в режиме низкой задержки — почти сразу
                 } catch (e: InterruptedException) { return@execute }
                 flush()
             }
@@ -163,7 +164,7 @@ class BridgeServer(
 
     fun wanted(): Want {
         val subs = HashSet<String>()
-        var msrc = ""; var mdev = ""
+        var msrc = ""; var mdev = ""; var mlow = false
         var hz = 0; var wifi = 0; var cell = 0; var mic = 0; var iface = ""; var filter = ""; var snap = 0; var ble = ""
         for (k in sinks) {
             subs.addAll(k.subs)
@@ -182,13 +183,14 @@ class BridgeServer(
             if (c.micHz > mic) mic = c.micHz
             if (msrc.isEmpty()) msrc = c.micSrc
             if (mdev.isEmpty()) mdev = c.micDev
+            if (c.micLow) mlow = true
             if (iface.isEmpty()) iface = c.iface
             if (filter.isEmpty()) filter = c.filter
             if (c.snap > snap) snap = c.snap
             if (ble.isEmpty()) ble = c.bleOpts
         }
         return Want(subs, if (hz > 0) hz.coerceIn(1, 1000) else 20, if (wifi > 0) wifi else 10,
-            if (cell > 0) cell else 5, if (mic > 0) mic else 16000, msrc, mdev, iface.ifEmpty { "any" }, filter, if (snap > 0) snap else 256, ble)
+            if (cell > 0) cell else 5, if (mic > 0) mic else 16000, msrc, mdev, mlow, iface.ifEmpty { "any" }, filter, if (snap > 0) snap else 256, ble)
     }
 
     /** Запись от источника; уйдёт подписанным клиентам в ближайшей пачке. */
@@ -198,6 +200,9 @@ class BridgeServer(
     }
 
     fun note(level: String, msg: String) { val j = Json.note(level, msg); for (c in clients) c.send(j) }
+
+    /** Есть клиент с микрофоном в режиме низкой задержки и запись mic уже ждёт отправки. */
+    private fun urgentMic(): Boolean = clients.any { it.micLow && "mic" in it.subs } && synchronized(pending) { pending.any { it.first == "mic" } }
 
     private fun flush() {
         val batch = synchronized(pending) {
@@ -414,6 +419,7 @@ class BridgeServer(
         c.micHz = j.optInt("micHz", 0)
         c.micSrc = j.optString("micSrc", "").take(24)
         c.micDev = j.optString("micDev", "").take(24)
+        c.micLow = j.optBoolean("micLow", false)
         c.iface = j.optString("iface", "")
         c.filter = j.optString("filter", "")
         c.snap = j.optInt("snap", 0)

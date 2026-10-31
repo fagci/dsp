@@ -571,6 +571,7 @@ const PRESET_CATS={
   'Phone App: Activity with the Screen Locked (Still, Walking, Pick-up)':'Maps & Locating',
   'Phone App: Microphone, Cell and Packets':'Maps & Locating',
   'Phone App: Wideband Microphone — Raw Source, up to 192 kHz, USB, Call Audio (root)':'Maps & Locating',
+  'Phone App: Low-Latency Microphone — Monitor in Headphones, Delay Readout':'Maps & Locating',
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
   'Phone App: Wi-Fi, BLE and Bluetooth as Three Graphs':'Network & IoT',
   'Network: HTTP Server — Share Files with Any Browser (Phone App)':'Network & IoT',
@@ -1453,6 +1454,20 @@ const ls=mk(500,640,'rec.list',{});
 const lg=addNode('recLog',960,290,{});
 lg.size.w=480; applySize(lg);
 for(const n of [on,off,st,ls]) addEdge(n.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Low-Latency Microphone — Monitor in Headphones, Delay Readout', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The microphone of the phone to the headphones with as little delay as the app allows. WEAR HEADPHONES — through the speaker it will howl (feedback).\n'+
+  'Where the delay comes from (the Phone sensors node shows the sum: «mic → output ≈ N ms»): the phone\'s microphone buffer and the bridge → the smoothing reserve on the page («microphone: smoothing reserve», 250 ms normally, 40 ms here) → the engine queue (Block size in the toolbar: 128 is the shortest) → the audio output of the device. «microphone: low latency» switches the pieces to 10 ms, the bridge sends them at once and the buffer on the phone is small. The rate of 48 kHz is the native one on most phones — no resampling. A wired headset or USB sound card has less output delay than Bluetooth (100+ ms). Too short a reserve gives clicks: raise «smoothing reserve» until they go.\n'+
+  'Not below what the phone\'s own audio path gives (usually 20–40 ms out + 10–20 ms in); for a pure pass-through without the graph a native monitor would be needed.'});
+nt.size.w=1000; nt.size.h=200; applySize(nt);
+const tx=addNode('termux',40,280,{url:'ws://127.0.0.1:8765',gps:false,battery:false,mic:true,micHz:'48000',micSrc:'auto',micLow:true,micLag:40});
+tx.size.w=380; tx.size.h=540; applySize(tx);
+const dc=addNode('dac',460,280,{vol:.5,mode:'mono'});
+const sc=addNode('scope',460,440,{});
+sc.size.w=420; sc.size.h=200; applySize(sc);
+addEdge(tx.id,'mic',dc.id,'L'); addEdge(tx.id,'mic',sc.id,'in1');
 markWiresDirty();
 });
 preset('Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)', function(){
