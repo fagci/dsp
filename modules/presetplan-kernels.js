@@ -22,3 +22,18 @@ function presetPlan(presets,stored,hashes,ver,cur){
   }
   return {todo, hashes:keep, full};
 }
+
+// Избранные пресеты (звезда в списке; в приложении Android первые становятся ярлыками при долгом нажатии на иконку).
+// Список имён: новая звезда — в начало, повторное нажатие снимает; без дублей, не длиннее max.
+function favToggle(list,name,max){
+  const l=(Array.isArray(list) ? list : []).filter(x=>typeof x==='string' && x);
+  const i=l.indexOf(name);
+  if(i>=0){ l.splice(i,1); return l; }
+  l.unshift(name);
+  return l.slice(0,max||50);
+}
+// Убрать из списка то, чего больше нет (удалённый патч), и повторы; exists(имя) → есть ли такой патч.
+function favClean(list,exists){
+  const seen=new Set();
+  return (Array.isArray(list) ? list : []).filter(n=>typeof n==='string' && n && exists(n) && !seen.has(n) && (seen.add(n),true));
+}

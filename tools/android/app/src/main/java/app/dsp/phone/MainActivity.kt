@@ -198,6 +198,10 @@ open class MainActivity : Activity() {
         @JavascriptInterface
         fun pipOff() { pipArmed = false }
 
+        /** Избранные патчи страницы (JSON-массив имён, новые первыми) → ярлыки по долгому нажатию на иконку. Окна-слоты свои избранные не публикуют: у них отдельное хранилище. */
+        @JavascriptInterface
+        fun setShortcuts(json: String): Int = if (slot.isNotEmpty()) 0 else Shortcuts.set(this@MainActivity, ShortcutArgs.parse(json))
+
         /** Ключ приложения: страница добавляет его к адресу моста (?k=…), и ей открыты SMS и контакты; другие сайты его не знают. */
         @JavascriptInterface
         fun appKey(): String = UsbKey.value
