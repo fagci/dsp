@@ -1948,8 +1948,8 @@ function openModPicker(clientX,clientY,at,from){
     // с поиском — плоский список по релевантности, без — по категориям
     // порт того же типа — выше, чем через автоадаптер (iq ↔ sig)
     const exact=m=>!from || compatPort(m,from.type,from.dir)?.t===from.type;
-    let shown=mods.filter(m=>(!from || compatPort(m,from.type,from.dir)) && (!q || modScoreW(m,words)>0));
-    if(q) shown=shown.map(m=>[m,modScoreW(m,words)+(exact(m)?10:0)]).sort((a,b)=>b[1]-a[1]).map(x=>x[0]);
+    let shown=mods.filter(m=>!from || compatPort(m,from.type,from.dir));
+    if(q){ const rk=modRank(shown,words); shown=rk.filter(exact).concat(rk.filter(m=>!exact(m))); }
     else if(from) shown=[...shown.filter(exact),...shown.filter(m=>!exact(m))];
     const total=shown.length;
     if(q && total>MAXSHOW) shown=shown.slice(0,MAXSHOW);
@@ -2185,8 +2185,8 @@ const cats=[...new Set(Object.values(MOD).map(m=>m.cat))].sort((a,b)=>catRank(a)
 const modSearchInfo=new WeakMap();                  // строки поиска модуля (нижний регистр, слова названия) — считаются один раз, а не на каждую букву запроса
 function modInfo(m){
 let x=modSearchInfo.get(m);
-if(!x){ const title=m.title.toLocaleLowerCase('ru');
-x={title, tokens:title.split(/[^a-zа-я0-9]+/), rest:`${m.id} ${m.cat} ${m.kw||''}`.toLocaleLowerCase('ru')}; x.all=fzTokens(x.title+' '+x.rest); modSearchInfo.set(m,x); }
+if(!x){ const title=m.title.toLocaleLowerCase('ru');     // «Wi-Fi» находится и по «wifi»: в строку названия добавлен вариант без дефисов
+x={title:title+(/[-_]/.test(title) ? ' '+title.replace(/[-_]/g,'') : ''), idl:m.id.toLocaleLowerCase('ru'), tokens:title.replace(/[-_]/g,'').split(/[^a-zа-яё0-9]+/), rest:`${m.id} ${m.cat} ${m.kw||''}`.toLocaleLowerCase('ru')}; x.all=fzTokens(x.title+' '+x.rest); modSearchInfo.set(m,x); }
 return x;
 }
 const queryWords=q=>q.trim().toLocaleLowerCase('ru').split(/\s+/).filter(Boolean);
@@ -2195,11 +2195,19 @@ if(!words.length) return 1;
 const x=modInfo(m), {title,tokens,rest}=x;
 let sc=0;
 for(const w of words){
-if(tokens.some(t=>t.startsWith(w))) sc+=3;
+if(tokens.some(t=>t.startsWith(w))) sc+=3+(tokens[0].startsWith(w)||tokens.some(t=>t===w) ? .3 : 0)+(x.idl.startsWith(w) ? .2 : 0)+(title===w||x.idl===w ? 1 : 0)-title.length*.002;     // слово названия целиком / первое / начало id / всё название — выше; при прочих равных — короче
+else if(x.idl.startsWith(w)) sc+=2.5;                           // начало id («alarmclock» → alarmclock)
 else if(title.includes(w)) sc+=2;
-else if(rest.includes(w)) sc+=1;
-else { const f=fzWord(w,x.all); if(!f) return 0; sc+=f; } }      // опечатка или сокращение («grph», «wfall»)
+else if(rest.includes(w)) sc+=1.5;                              // id / категория / ключевые слова
+else { const f=fzWord(w,x.all); if(!f) return 0; sc+=f; } }      // опечатка или сокращение («grph», «wfall»): <1.5 за слово
 return sc;
+}
+// Подходящие модули по убыванию релевантности. Есть точные совпадения (каждое слово — в названии / id / ключевых словах) —
+// нечёткие («alrm» → всё, где буквы идут по порядку) не показываются; нет точных — только тогда нечёткие.
+function modRank(mods,words){
+const th=1.5*words.length, sc=[]; let strong=false;
+for(const m of mods){ const s=modScoreW(m,words); if(s>0){ sc.push([m,s]); if(s>=th) strong=true; } }
+return (strong ? sc.filter(x=>x[1]>=th) : sc).sort((a,b)=>b[1]-a[1]||a[0].title.localeCompare(b[0].title)).map(x=>x[0]);
 }
 /* Совместимость портов: тот же тип, val (универсальный) или iq ↔ sig через автоадаптер (см. connect) */
 function typeCompat(a,b){ return a===b || a==='val' || b==='val' || (a==='iq' && b==='sig') || (a==='sig' && b==='iq'); }
@@ -2272,7 +2280,19 @@ function buildPalette(){
 pal.innerHTML='';
 const q=paletteQuery.trim().toLocaleLowerCase('ru');
 let matches=0;
-const words=queryWords(q), visible=m=>!q || modScoreW(m,words)>0;
+const words=queryWords(q);
+if(q){                                                // с поиском — один список по релевантности (лучшее совпадение первым, а не по группам)
+const list=modRank(Object.values(MOD).filter(m=>!hostcapsHidden(m.id)),words);
+if(list.length){
+const det=makeDetails('search','SEARCH',true); det.style.setProperty('--c','#8aa');
+det.querySelector('summary').insertAdjacentHTML('beforeend',`<span class="cnt">${list.length}</span>`);
+for(const m of list.slice(0,120)){ matches++; det.append(makeCatItem(m)); }
+pal.append(det);
+}
+pal.classList.toggle('empty',matches===0);
+return;
+}
+const visible=m=>true;
 for(const g of CAT_GROUPS){
 const gcats=cats.filter(c=>g.cats.includes(c) || (g===CAT_GROUPS[CAT_GROUPS.length-1] && !CAT_GROUPS.some(x=>x.cats.includes(c))));
 const byCat=gcats.map(c=>[c,Object.values(MOD).filter(m=>m.cat===c&&visible(m)&&!hostcapsHidden(m.id))]).filter(x=>x[1].length);
