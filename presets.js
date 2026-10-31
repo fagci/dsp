@@ -627,6 +627,7 @@ const PRESET_CATS={
   'Phone App: Calendar — Events, Reminders and Free Time':'Control & Remote',
   'Phone App: Record to Disk in the Background (Service, no Page)':'Control & Remote',
   'Phone App: Call Recorder — Service Records Calls to WAV (root: both sides)':'Control & Remote',
+  'Phone App: Photo Gallery on the Map, Folders and Files (MediaStore, SAF)':'Maps & Locating',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
   'TDOA: Path Difference (2 mics)':'Maps & Locating',
@@ -2400,6 +2401,26 @@ const lg=addNode('recLog',1360,270,{});
 lg.size.w=420; applySize(lg);
 for(const n of [st,sp,ss,ls,rd]) addEdge(n.id,'rec',lg.id,'rec');
 addEdge(ls.id,'rec',tb.id,'rec'); addEdge(rd.id,'rec',tb.id,'rec'); addEdge(ss.id,'rec',tb.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Photo Gallery on the Map, Folders and Files (MediaStore, SAF)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Files and the gallery of the phone from a patch (DSP app; Android asks for access to photos once). «gallery: list» takes the photos of the last N days from the system gallery (MediaStore): name, size, time and — with «position from EXIF» — lat, lon of every shot (asks for «media location»), with «thumbnails» a small picture in the field thumb. The rows go to a Table (cards with pictures) and to the Map: the places where you shot. «media.read» pulls the bytes of one item (id from the list, repeat from next until eof), «media.save» puts a file into Pictures / Movies / Music / Download under DSP (Android 10+, no permission).\n'+
+  'Folders (Storage Access Framework): «fs.pick» opens the system picker once — you choose a folder and the patch may use it (grant, kept between runs, no storage permission). Then fs.list / fs.read / fs.write (text or base64, append) / fs.mkdir / fs.delete work by the path inside that folder; fs.revoke gives the access back. Only the page of the app may use all of it (personal data).'});
+nt.size.w=1000; nt.size.h=210; applySize(nt);
+const mk=(x,y,action,extra)=>{ const n=addNode('phone',x,y,Object.assign({url:'ws://127.0.0.1:8765',action,notifyEv:false,torchState:false},extra)); n.size.w=420; n.size.h=340; applySize(n); return n; };
+const ls=mk(40,290,'media.list',{mediaKind:'images',mediaDays:30,mediaExif:true,mediaThumbs:true,mediaThumb:128,limit:60});
+const sv=mk(40,650,'media.save',{mediaKind:'images',fileName:'note.txt',fileMime:'text/plain',mediaFolder:'DSP'});
+const pk=mk(500,290,'fs.pick',{});
+const fl=mk(500,650,'fs.list',{fsGrant:'',fsPath:''});
+const tb=addNode('table',960,290,{list:'@patch',key:'id',cols:['thumb','name','t','lat','lon','size','mime'],schema:{types:{thumb:{t:'image'}},card:{}}});
+tb.size.w=560; tb.size.h=420; applySize(tb);
+const mp=addNode('geoMap',960,730,{mz:12,labels:true,follow:false});
+mp.size.w=560; mp.size.h=420; applySize(mp);
+const lg=addNode('recLog',1560,290,{});
+lg.size.w=380; applySize(lg);
+addEdge(ls.id,'rec',tb.id,'rec'); addEdge(ls.id,'rec',mp.id,'rec');
+for(const n of [ls,sv,pk,fl]) addEdge(n.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: Speech to Text, Text-to-Speech and Automation', function(){

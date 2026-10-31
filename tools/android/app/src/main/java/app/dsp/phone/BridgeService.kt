@@ -51,6 +51,7 @@ class BridgeService : Service() {
     private lateinit var cal: CalendarHub
     private lateinit var recorder: RecHub
     private lateinit var callrec: CallRec
+    private lateinit var files: FileHub
     private lateinit var power: PowerHub
     private lateinit var activity: ActivityHub
     private val started = android.os.SystemClock.elapsedRealtime()
@@ -85,6 +86,7 @@ class BridgeService : Service() {
         cal = CalendarHub(this, needs)
         recorder = RecHub(this, cfg, server)
         callrec = CallRec(this, cfg, server, needs, { recorder.dir }, emit)
+        files = FileHub(this, needs)
         net = NetHub(this, cfg, emit); sys = SysHub(this, cfg, emit, needs); tlsCmds = TlsCmds(this, server)
         server.onCommand = { c, j -> route(c, j) }
         tlsCmds.start()                                          // сертификат уже стоит — TLS поднимется вместе с сервером
@@ -204,6 +206,7 @@ class BridgeService : Service() {
             n.startsWith("cal.") -> cal.exec(c, j)
             n.startsWith("rec.") -> recorder.exec(c, j)
             n.startsWith("callrec.") -> callrec.exec(c, j)
+            n.startsWith("media.") || n.startsWith("fs.") -> files.exec(c, j)
             n.startsWith("vpn.") -> VpnCmds.exec(this, c, j)
             n.startsWith("tls.") -> tlsCmds.exec(c, j)
             n.startsWith("sys.") || n.startsWith("gps.mock") || n.startsWith("ui.") || n.startsWith("vol.") || n.startsWith("tts.") || n.startsWith("clip.") || n.startsWith("app.") ||
@@ -379,7 +382,7 @@ class BridgeService : Service() {
         private const val BOOT_DELAY_MS = 8000L
         private const val CH = "bridge"
         const val CRASH_FILE = "last-crash.txt"
-        private const val CH_PERM = "perm"
+        const val CH_PERM = "perm"
         private const val ID = 1
         const val PERM_ID = 2
         // источники, которым нужно включённое определение положения (ГНСС) или последнее положение в записях
