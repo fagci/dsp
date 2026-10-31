@@ -155,6 +155,7 @@ class HeadlessApp(private val ctx: Context) {
         val c = Config(ctx)
         return "ws://127.0.0.1:${c.port}/usb?k=${UsbKey.value}" + (if (c.strict && c.token.isNotEmpty()) "&token=${c.token}" else "")
     }
+    @JavascriptInterface fun setShortcuts(json: String): Int = 0          // страница без окна ярлыки не трогает: ими владеет окно приложения
     @JavascriptInterface fun pip(w: Int, h: Int): Boolean = false
     @JavascriptInterface fun pipOff() {}
     @JavascriptInterface fun floatCan(): Boolean = false

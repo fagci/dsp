@@ -47,8 +47,17 @@ const readP=()=>{ try{ return JSON.parse(LS.get(PKEY))||{}; }catch(e){ return {}
 const writeP=o=>LS.set(PKEY,JSON.stringify(o));
 // Страница без окна (приложение Android, автозапуск патчей: #…&hl=1): автосохранение и temp-копии не пишет — ими владеет окно приложения
 const HEADLESS=/[#&]hl=1(&|$)/.test(location.hash);
+// Избранное (звезда ★ в строке патча): список имён, новое — первым. В приложении Android первые становятся ярлыками при долгом нажатии на иконку (DspApp.setShortcuts).
+const FAVKEY='dsp-fav', SHORTCUTS_MAX=8;
+let favNow=new Set();                                   // звёзды на момент последней перестройки списка — чтобы строки не читали хранилище каждая
+function favRaw(){ try{ const l=JSON.parse(LS.get(FAVKEY)||'[]'); return Array.isArray(l) ? l : []; }catch(e){ return []; } }
+function favSave(l){ LS.set(FAVKEY,JSON.stringify(l)); syncShortcuts(); }
+function syncShortcuts(){
+  try{ if(typeof DspApp!=='undefined' && typeof DspApp.setShortcuts==='function'){
+    const p=readP(); DspApp.setShortcuts(JSON.stringify(favClean(favRaw(),n=>n in p).slice(0,SHORTCUTS_MAX))); } }catch(e){}
+}
 let currentPatchName='', patchQuery='';
-const openPatchCats=new Set(['own','temp']);          // свои патчи и temp раскрыты сразу, встроенные — свёрнуты
+const openPatchCats=new Set(['fav','own','temp']);          // свои патчи и temp раскрыты сразу, встроенные — свёрнуты
 const TEMP_PREFIX='temp:', TEMP_MAX=5;
 // Вместо "несохранённое пропадёт" — тихо откладываем текущий граф в раздел temp и едем дальше.
 function stashIfDirty(){
@@ -100,14 +109,14 @@ catch(e){ prompt('Copy link',url); }
 function makePatchItem(name,count,label){
 const b=document.createElement('button'); b.className='pitem'+(name===currentPatchName?' on':'');
 b.title=name+' · '+count+' nodes';
-b.innerHTML= `<span class="ptxt"><b>${(label||name).replace(/[&<>"]/g,c=>'&#'+c.charCodeAt(0)+';')}</b></span><span class="pins" title="Insert into the current graph">＋</span><span class="pdel" title="Delete patch">✕</span>` ;
+b.innerHTML= `<span class="ptxt"><b>${(label||name).replace(/[&<>"]/g,c=>'&#'+c.charCodeAt(0)+';')}</b></span><span class="pstar${favNow.has(name) ? ' on' : ''}" title="${favNow.has(name) ? 'Favorite — click to remove' : 'Add to favorites'}${favNow.has(name) ? '' : ' (in the Android app the first ones appear on a long press of the app icon)'}">${favNow.has(name) ? '★' : '☆'}</span><span class="pins" title="Insert into the current graph">＋</span><span class="pdel" title="Delete patch">✕</span>` ;
 b.draggable=true;
 b.addEventListener('dragstart',e=>{ e.dataTransfer.setData('text/x-dsp-patch',name); e.dataTransfer.effectAllowed='copy'; });
 const doDelete=e=>{ e.preventDefault(); e.stopPropagation();
 if(confirm('Delete patch «'+name+'»?')){ const p=readP(); delete p[name]; writeP(p);
 if(currentPatchName===name){ currentPatchName=''; syncHash(); }
-buildPatchList(); stat.textContent='patch deleted'; } };
-b.addEventListener('click',e=>{ if(e.target.closest('.pdel')) return; if(e.target.closest('.pins')){ insertPatch(name); return; } openPatch(name); });
+buildPatchList(); syncShortcuts(); stat.textContent='patch deleted'; } };
+b.addEventListener('click',e=>{ if(e.target.closest('.pdel')) return; if(e.target.closest('.pstar')){ e.stopPropagation(); favSave(favToggle(favRaw(),name,50)); buildPatchList(); return; } if(e.target.closest('.pins')){ insertPatch(name); return; } openPatch(name); });
 b.querySelector('.pdel').addEventListener('click',doDelete);      // тап/клик по крестику — работает и на мобиле
 b.addEventListener('contextmenu',doDelete);                       // на десктопе правый клик — тоже как раньше
 return b;
@@ -122,6 +131,7 @@ return det;
 function buildPatchList(){
 patchListEl.innerHTML='';
 const p=readP();
+const favList=favClean(favRaw(),n=>n in p); favNow=new Set(favList);
 const q=patchQuery.trim().toLocaleLowerCase('ru');
 const words=fzTokens(q), score=name=>{ let t=presetSub(name)+' '+name; if(/[-_]/.test(t)) t+=' '+t.replace(/[-_]/g,''); return fzScoreWords(words,fzTokens(t),t.toLocaleLowerCase('ru')); };   // нечётко: опечатки и сокращения
 const th=2*words.length; let strongAny=false;            // есть точные совпадения (слово — в начале слова / внутри имени) — нечёткие не показываем
@@ -148,6 +158,7 @@ for(const name of list) add(name,sub);
 }
 patchListEl.append(det);
 };
+if(!q) addGroup('fav','★ FAVORITES',favList.filter(n=>!hostcapsPatchHidden(p[n])));
 if(q){                                                 // поиск — один список по релевантности, а не по категориям
 addGroup('search','SEARCH',[...own,...temp,...builtin].sort((a,b)=>score(b)-score(a)||a.localeCompare(b)));
 patchListEl.classList.toggle('empty',matches===0);
@@ -204,7 +215,7 @@ for(const name of plan.todo){
 try{ PRESETS[name](); autoLayout(); p[name]=serialize(); hashes[name]=presetHash(PRESETS[name]); }
 catch(err){ console.error('preset  "'+name+' " failed to build:',err); }               // хэш не запоминаем — при следующем запуске попробуем снова
 }
-writeP(p); LS.set(VKEY,String(PRESET_VER)); LS.set(HKEY,JSON.stringify(hashes)); buildPatchList();
+writeP(p); LS.set(VKEY,String(PRESET_VER)); LS.set(HKEY,JSON.stringify(hashes)); buildPatchList(); syncShortcuts();
 }
 /* ---- реестр встроенных пресетов ---- */
 // preset(имя, функция) — по аналогии с def(...) у модулей: функция просто строит граф

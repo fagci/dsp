@@ -1,8 +1,8 @@
 // План пересборки пресетов: node tools/test-presetplan.mjs
 import fs from 'fs'; import vm from 'vm';
 const ctx={}; vm.createContext(ctx);
-vm.runInContext(fs.readFileSync(new URL('../modules/presetplan-kernels.js',import.meta.url),'utf8')+';this.presetHash=presetHash;this.presetPlan=presetPlan;',ctx);
-const {presetHash,presetPlan}=ctx;
+vm.runInContext(fs.readFileSync(new URL('../modules/presetplan-kernels.js',import.meta.url),'utf8')+';this.presetHash=presetHash;this.presetPlan=presetPlan;this.favToggle=favToggle;this.favClean=favClean;',ctx);
+const {presetHash,presetPlan,favToggle,favClean}=ctx;
 let bad=0; const ok=(c,m)=>{ if(!c){ console.error('FAIL',m); bad++; } };
 const P={a(){return 1;}, b(){return 2;}};
 let r=presetPlan(P,{},{},0,5);
@@ -19,4 +19,11 @@ r=presetPlan({...P,c(){}},st,hs,5,5);
 ok(r.todo.join()==='c','новый пресет');
 r=presetPlan(P,{a:1},hs,5,5);
 ok(r.todo.join()==='b','нет сохранённого — пересобрать');
+ok(favToggle([],'A').join()==='A' && favToggle(['A'],'B').join()==='B,A','star: a new one goes first');
+ok(favToggle(['B','A'],'B').join()==='A' && favToggle(['A'],'A').length===0,'star: pressing again takes it off');
+ok(favToggle(['A','A','',5,'B'],'C').join()==='C,A,A,B','star: junk entries are dropped (duplicates are left to favClean)');
+ok(favToggle(['1','2','3'],'4',3).join()==='4,1,2','star: at most max');
+ok(favToggle(null,'A').join()==='A' && favToggle(undefined,'A',0).join()==='A','star: no list is fine');
+ok(favClean(['A','B','A','C',7,''],n=>n!=='B').join()==='A,C','favClean: dropped patches and duplicates go');
+ok(favClean(null,()=>true).length===0,'favClean: no list');
 if(bad) process.exit(1); console.log('presetplan ok');
