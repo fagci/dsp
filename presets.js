@@ -630,6 +630,7 @@ const PRESET_CATS={
   'Phone App: Call Recorder — Service Records Calls to WAV (root: both sides)':'Control & Remote',
   'Phone App: Photo Gallery on the Map, Folders and Files (MediaStore, SAF)':'Maps & Locating',
   'Phone App: USSD Codes and Dialing — Balance, SIM Slots, Call, Hang Up':'Control & Remote',
+  'Phone App: Screen Recording to MP4 by the Service (Start, Stop, Export)':'Control & Remote',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
   'TDOA: Path Difference (2 mics)':'Maps & Locating',
@@ -2453,6 +2454,22 @@ const hang=mk(480,620,'call.end',{});
 const lg=addNode('recLog',920,270,{});
 lg.size.w=480; applySize(lg);
 for(const n of [sims,bal,dial,hang]) addEdge(n.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Screen Recording to MP4 by the Service (Start, Stop, Export)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The app\'s service records the screen of the phone to an MP4 file (H.264, with the microphone if ticked). Press Connect and Run on «Start screen recording»: Android shows its own request «Start recording?» — you must allow it every time (a rule of the system; if the request does not appear, tap the notification «DSP: screen recording»). After that the recording goes on with the page closed; the notification has a Stop button, and «Stop» here ends it. The file screen-DATE-TIME.mp4 lies next to the other recordings: «Files» lists it, «Export» copies it to Downloads/DSP, «Delete» removes it (stop first).\n'+
+  'The picture is scaled so its long side is at most «long side» (1280 by default, never above the screen); frames per second and the bitrate are set, 0 means automatic. The sound of other apps is not recorded (Android allows that only with a separate capture of the playback) — only the microphone. A screen with protected content (some banking apps, video with DRM) is recorded black. Only the page of the app may use these commands.'});
+nt.size.w=1000; nt.size.h=200; applySize(nt);
+const mk=(x,y,action,extra)=>{ const n=addNode('phone',x,y,Object.assign({url:'ws://127.0.0.1:8765',action,notifyEv:false,torchState:false},extra)); n.size.w=400; n.size.h=330; applySize(n); return n; };
+const st=mk(40,280,'screenrec.start',{screenFps:30,screenSide:'1280',screenKbps:0,screenAudio:false,alarmEv:true});
+const sp=mk(40,630,'screenrec.stop',{});
+const ss=mk(480,280,'screenrec.status',{});
+const ls=mk(480,630,'rec.list',{});
+const ex=mk(920,280,'rec.export',{recFile:''});
+const lg=addNode('recLog',920,630,{});
+lg.size.w=480; applySize(lg);
+for(const n of [st,sp,ss,ls,ex]) addEdge(n.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: Speech to Text, Text-to-Speech and Automation', function(){

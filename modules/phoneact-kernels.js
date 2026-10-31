@@ -1,7 +1,7 @@
 "use strict";
 /* Phone Actions: команды приложения DSP (tools/android) и разбор его записей. Без DOM — проверяется в tools/test-phoneact.mjs */
 
-const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.send_raw','sms.list','contacts.find','ir.info','crash.last','alarm.set','alarm.remove','alarm.list','alarm.stop','alarm.snooze','alarm.test','boot.set','boot.list','boot.run','boot.stop','cal.calendars','cal.list','cal.add','cal.remove','rec.start','rec.stop','rec.status','rec.list','rec.read','rec.delete','rec.export','callrec.set','callrec.status','callrec.stop','media.list','media.thumb','media.read','media.save','fs.pick','fs.grants','fs.list','fs.read','fs.write','fs.mkdir','fs.delete','fs.revoke','ussd.send','ussd.sims','call.dial','call.end','call.answer'];
+const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.send_raw','sms.list','contacts.find','ir.info','crash.last','alarm.set','alarm.remove','alarm.list','alarm.stop','alarm.snooze','alarm.test','boot.set','boot.list','boot.run','boot.stop','cal.calendars','cal.list','cal.add','cal.remove','rec.start','rec.stop','rec.status','rec.list','rec.read','rec.delete','rec.export','callrec.set','callrec.status','callrec.stop','media.list','media.thumb','media.read','media.save','fs.pick','fs.grants','fs.list','fs.read','fs.write','fs.mkdir','fs.delete','fs.revoke','ussd.send','ussd.sims','call.dial','call.end','call.answer','screenrec.start','screenrec.stop','screenrec.status'];
 
 // адрес моста; в приложении к адресу этого телефона добавляется ключ приложения (?k=…) — с ним открыты SMS и контакты
 function phoneUrl(url,key){
@@ -98,6 +98,9 @@ function phoneCmd(p,textIn){
     case 'ussd.sims': case 'call.end': case 'call.answer': return {cmd:p.action};
     // набор номера: dialDirect — звонить сразу (иначе откроется набиратель с номером)
     case 'call.dial': return {cmd:'call.dial', number:String(p.dialNumber||'').trim(), direct:!!p.dialDirect};
+    // запись экрана службой в mp4 (рядом с записями rec.*): Android спросит согласие на каждую запись; screenFps / screenSide (длинная сторона, px) / screenKbps (0 — по размеру), screenAudio — микрофон
+    case 'screenrec.start': return {cmd:'screenrec.start', ...(+p.screenFps>0 ? {fps:+p.screenFps} : {}), ...(+p.screenSide>0 ? {maxSide:+p.screenSide} : {}), ...(+p.screenKbps>0 ? {kbps:+p.screenKbps} : {}), audio:!!p.screenAudio};
+    case 'screenrec.stop': case 'screenrec.status': return {cmd:p.action};
     // календарь телефона (CalendarContract): calStart / calEnd — см. phoneWhen; calRemind — минуты до начала через запятую; calDays — окно списка от «сейчас»
     case 'cal.calendars': return {cmd:'cal.calendars'};
     case 'cal.list': { const now=Date.now(); return {cmd:'cal.list', from:now, to:now+(+p.calDays>0 ? +p.calDays : 7)*864e5, q:String(p.calQuery||'').trim(), limit:+p.limit||50, ...(+p.calId>0 ? {calendar:+p.calId} : {})}; }
@@ -136,8 +139,9 @@ function phoneLine(r){
       : (r.kind==='dir' ? 'dir ' : 'file ')+r.path+(r.kind==='dir' ? '' : ' · '+Math.round((r.size||0)/1024)+' kB');
     case 'ussd': return 'USSD '+r.code+(r.ok ? ' → '+String(r.text||'').replace(/\s+/g,' ').slice(0,160) : ' failed: '+(r.failure||'?'));
     case 'sim': return 'SIM slot '+r.slot+' (subscription '+r.id+') '+(r.name||'');
+    case 'screenrec': return 'screen recording '+(r.on ? 'ON · '+(r.file||'')+' · '+(r.sec||0)+' s · '+r.w+'×'+r.h : 'off');
     case 'boot': return 'patch '+r.name+(r.boot ? ' · on boot' : '')+(r.running ? ' · running' : ' · stopped');
-    case 'sys': return String(r.ev||'').startsWith('alarm.') || String(r.ev||'').startsWith('boot.') || String(r.ev||'').startsWith('callrec.') ? r.ev+(r.id||r.name||r.file ? ' '+(r.id||r.name||r.file) : '')+(r.why ? ' · '+r.why : '')+(r.kind ? ' · '+r.kind : '') : 'sys '+r.ev;
+    case 'sys': return String(r.ev||'').startsWith('alarm.') || String(r.ev||'').startsWith('boot.') || String(r.ev||'').startsWith('callrec.') || String(r.ev||'').startsWith('screenrec.') ? r.ev+(r.id||r.name||r.file ? ' '+(r.id||r.name||r.file) : '')+(r.why ? ' · '+r.why : '')+(r.kind ? ' · '+r.kind : '') : 'sys '+r.ev;
     case 'bridge': return r.level+': '+r.msg;
   }
   return r.src+'';

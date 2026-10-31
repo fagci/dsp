@@ -53,6 +53,7 @@ class BridgeService : Service() {
     private lateinit var callrec: CallRec
     private lateinit var files: FileHub
     private lateinit var dial: DialHub
+    private lateinit var screenrec: ScreenRecHub
     private lateinit var power: PowerHub
     private lateinit var activity: ActivityHub
     private val started = android.os.SystemClock.elapsedRealtime()
@@ -89,6 +90,7 @@ class BridgeService : Service() {
         callrec = CallRec(this, cfg, server, needs, { recorder.dir }, emit)
         files = FileHub(this, needs)
         dial = DialHub(this, needs)
+        screenrec = ScreenRecHub(this) { recorder.dir }; ScreenEvents.sink = emit
         net = NetHub(this, cfg, emit); sys = SysHub(this, cfg, emit, needs); tlsCmds = TlsCmds(this, server)
         server.onCommand = { c, j -> route(c, j) }
         tlsCmds.start()                                          // сертификат уже стоит — TLS поднимется вместе с сервером
@@ -210,6 +212,7 @@ class BridgeService : Service() {
             n.startsWith("callrec.") -> callrec.exec(c, j)
             n.startsWith("media.") || n.startsWith("fs.") -> files.exec(c, j)
             n.startsWith("ussd.") || n.startsWith("call.") -> dial.exec(c, j)
+            n.startsWith("screenrec.") -> screenrec.exec(c, j)
             n.startsWith("vpn.") -> VpnCmds.exec(this, c, j)
             n.startsWith("tls.") -> tlsCmds.exec(c, j)
             n.startsWith("sys.") || n.startsWith("gps.mock") || n.startsWith("ui.") || n.startsWith("vol.") || n.startsWith("tts.") || n.startsWith("clip.") || n.startsWith("app.") ||
@@ -381,6 +384,9 @@ class BridgeService : Service() {
         private const val WAKE_MS = 10 * 60_000L
         const val ACTION_STOP = "app.dsp.phone.STOP"
         const val ACTION_RELOAD = "app.dsp.phone.RELOAD"
+
+        /** Ответ системного запроса записи экрана (ScreenConsentActivity) → хаб. */
+        fun screenConsent(rid: Int, res: Int, data: Intent?) { inst?.screenrec?.consented(rid, res, data) }
         const val EXTRA_BOOT = "bootPatches"
         private const val BOOT_DELAY_MS = 8000L
         private const val CH = "bridge"
