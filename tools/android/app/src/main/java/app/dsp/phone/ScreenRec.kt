@@ -9,17 +9,24 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.ImageReader
 import android.media.MediaRecorder
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
+import android.os.HandlerThread
+import android.os.SystemClock
+import android.util.Base64
 import android.os.IBinder
 import android.os.Looper
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.time.Instant
 import java.time.ZoneId
@@ -38,6 +45,12 @@ object ScreenArgs {
 
     fun fps(v: Int): Int = if (v <= 0) 30 else v.coerceIn(5, 60)
 
+    /** Кадров в секунду для потока JPEG на страницу (screenrec.stream): по умолчанию 8, не больше 15 — кадр целиком идёт через WebSocket. */
+    fun streamFps(v: Int): Int = if (v <= 0) 8 else v.coerceIn(1, 15)
+
+    /** Качество JPEG потока, 20…95 (по умолчанию 60). */
+    fun quality(v: Int): Int = if (v <= 0) 60 else v.coerceIn(20, 95)
+
     /** Битрейт, бит/с: заданный в кбит/с (200 … 40000) или по размеру кадра и частоте (≈0,07 бит на пиксель). */
     fun bitrate(w: Int, h: Int, fps: Int, kbps: Int): Int =
         if (kbps > 0) kbps.coerceIn(200, 40_000) * 1000 else (w.toLong() * h * fps * 0.07).toInt().coerceIn(500_000, 20_000_000)
@@ -48,6 +61,9 @@ object ScreenArgs {
 /** События записи экрана в sys: screenrec.start / stop (file, why). */
 object ScreenEvents {
     @Volatile var sink: Emit? = null
+    /** Сколько записей ждёт отправки у самого медленного клиента (BridgeServer.backlog): кадры потока пропускаются, пока страница не разгребёт очередь. */
+    @Volatile var backlog: (() -> Int)? = null
+    fun frame(json: String) { sink?.invoke("screen", json) }
     fun note(ev: String, file: String, why: String? = null) {
         sink?.invoke("sys", Json.obj("src" to "\"sys\"", "ev" to Json.str("screenrec.$ev"), "t" to System.currentTimeMillis().toString(), "file" to Json.str(file), "why" to why?.let { Json.str(it) }))
     }
@@ -72,8 +88,8 @@ class ScreenRecHub(private val ctx: Context, private val recDir: () -> File) {
         val cmd = j.optString("cmd"); val id = j.opt("id")
         if (!c.trusted) return Reply.done(c, id, cmd, "only the page of the DSP app may use it", "forbidden")
         when (cmd) {
-            "screenrec.start" -> {
-                if (ScreenRecService.current != null) return Reply.done(c, id, cmd, "already recording — screenrec.stop first", "state")
+            "screenrec.start", "screenrec.stream" -> {
+                if (ScreenRecService.current != null) return Reply.done(c, id, cmd, "already recording or streaming — screenrec.stop first", "state")
                 val rid = ScreenPick.register(c, id, j)
                 val i = Intent(ctx, ScreenConsentActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra(ScreenConsentActivity.EXTRA, rid)
                 val pi = PendingIntent.getActivity(ctx, 6, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
@@ -101,12 +117,12 @@ class ScreenRecHub(private val ctx: Context, private val recDir: () -> File) {
     /** Согласие получено (ScreenConsentActivity): запустить службу записи и ответить на screenrec.start. */
     fun consented(rid: Int, resultCode: Int, data: Intent?) {
         val p = ScreenPick.take(rid) ?: return
-        val cmd = "screenrec.start"
+        val cmd = p.opts.optString("cmd", "screenrec.start")
         if (resultCode != Activity.RESULT_OK || data == null) return Reply.done(p.c, p.id, cmd, "the screen recording was not allowed", "cancelled")
         val o = p.opts
         val i = Intent(ctx, ScreenRecService::class.java).putExtra("rc", resultCode).putExtra("data", data)
             .putExtra("fps", o.optInt("fps")).putExtra("maxSide", o.optInt("maxSide")).putExtra("kbps", o.optInt("kbps")).putExtra("audio", o.optBoolean("audio", false))
-            .putExtra("dir", recDir().absolutePath)
+            .putExtra("dir", recDir().absolutePath).putExtra("mode", if (cmd == "screenrec.stream") "stream" else "file").putExtra("quality", o.optInt("quality"))
         ScreenRecService.onStarted = { file, w, h, err ->
             if (err != null) Reply.done(p.c, p.id, cmd, err, "error") else Reply.done(p.c, p.id, cmd, null, extra = arrayOf("file" to Json.str(file), "w" to w.toString(), "h" to h.toString()))
         }
@@ -170,6 +186,7 @@ class ScreenRecService : Service() {
         val rc = i.getIntExtra("rc", 0); val data: Intent = (if (Build.VERSION.SDK_INT >= 33) i.getParcelableExtra("data", Intent::class.java) else i.getParcelableExtra<Intent>("data")) ?: throw IllegalStateException("no consent")
         val m = resources.displayMetrics
         val (sw, sh) = ScreenArgs.size(m.widthPixels, m.heightPixels, i.getIntExtra("maxSide", 0)); w = sw; h = sh
+        if (i.getStringExtra("mode") == "stream") { beginStream(rc, data, sw, sh, m.densityDpi, ScreenArgs.streamFps(i.getIntExtra("fps", 0)), ScreenArgs.quality(i.getIntExtra("quality", 0))); return }
         val fps = ScreenArgs.fps(i.getIntExtra("fps", 0)); val bps = ScreenArgs.bitrate(sw, sh, fps, i.getIntExtra("kbps", 0))
         val dir = File(i.getStringExtra("dir") ?: filesDir.absolutePath).also { it.mkdirs() }
         val f = File(dir, ScreenArgs.fileName(System.currentTimeMillis(), ZoneId.systemDefault())); file = f; fileName = f.name
@@ -190,6 +207,38 @@ class ScreenRecService : Service() {
         onStarted?.invoke(fileName, sw, sh, null); onStarted = null
     }
 
+    private var reader: ImageReader? = null
+    private var readerThread: HandlerThread? = null
+
+    /** Поток кадров экрана на страницу (screenrec.stream): ImageReader → JPEG → запись {src:'screen', w, h, jpg} по мосту. Страница собирает из них MediaStream (getDisplayMedia в приложении). */
+    private fun beginStream(rc: Int, data: Intent, sw: Int, sh: Int, dpi: Int, fps: Int, quality: Int) {
+        fileName = ""
+        val proj = (getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager).getMediaProjection(rc, data); mp = proj
+        proj.registerCallback(object : MediaProjection.Callback() { override fun onStop() { ui.post { stopRec("the system stopped the projection") } } }, ui)
+        val th = HandlerThread("dsp-screen").also { it.start() }; readerThread = th
+        val rd = ImageReader.newInstance(sw, sh, PixelFormat.RGBA_8888, 2); reader = rd
+        val gap = 1000L / fps; var last = 0L
+        rd.setOnImageAvailableListener({ r ->
+            val img = try { r.acquireLatestImage() } catch (e: Exception) { null }
+            if (img != null) try {
+                val now = SystemClock.elapsedRealtime()
+                if (now - last >= gap && (ScreenEvents.backlog?.invoke() ?: 0) <= 6) {            // не чаще fps и не быстрее, чем страница успевает забирать
+                    last = now
+                    val pl = img.planes[0]; val rowPx = pl.rowStride / pl.pixelStride
+                    val bmp = Bitmap.createBitmap(rowPx, img.height, Bitmap.Config.ARGB_8888); bmp.copyPixelsFromBuffer(pl.buffer)
+                    val crop = if (rowPx != img.width) Bitmap.createBitmap(bmp, 0, 0, img.width, img.height) else bmp
+                    val o = ByteArrayOutputStream(); crop.compress(Bitmap.CompressFormat.JPEG, quality, o)
+                    ScreenEvents.frame(Json.obj("src" to "\"screen\"", "t" to System.currentTimeMillis().toString(), "w" to img.width.toString(), "h" to img.height.toString(),
+                        "jpg" to Json.str(Base64.encodeToString(o.toByteArray(), Base64.NO_WRAP))))
+                }
+            } catch (e: Exception) { } finally { img.close() }
+        }, Handler(th.looper))
+        vd = proj.createVirtualDisplay("dsp-screen-stream", sw, sh, dpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, rd.surface, null, null)
+        t0 = System.currentTimeMillis()
+        ScreenEvents.note("start", "", "stream")
+        onStarted?.invoke("", sw, sh, null); onStarted = null
+    }
+
     /** Остановить запись; возвращает имя файла (или пусто, если кадров не было и файл удалён). */
     @Synchronized
     fun stopRec(why: String): String {
@@ -208,6 +257,8 @@ class ScreenRecService : Service() {
         try { rec?.release() } catch (e: Exception) { }; rec = null
         try { vd?.release() } catch (e: Exception) { }; vd = null
         try { mp?.stop() } catch (e: Exception) { }; mp = null
+        try { reader?.close() } catch (e: Exception) { }; reader = null
+        try { readerThread?.quitSafely() } catch (e: Exception) { }; readerThread = null
         if (!ok) try { file?.delete() } catch (e: Exception) { }
         return ok
     }
