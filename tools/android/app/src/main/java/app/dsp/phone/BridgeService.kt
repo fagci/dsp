@@ -82,7 +82,7 @@ class BridgeService : Service() {
         actions = PhoneActions(this, { s, j -> server.emit(s, j) }, { p -> main.post { requestPerms(p) } }, cfg)
         val needs = Needs(this) { p -> main.post { requestPerms(p) } }
         val emit: Emit = { s, j -> server.emit(s, j) }
-        speech = SpeechHub(this, emit, needs); gatt = GattHub(this, emit, needs); btlink = BtLinkHub(this, emit, needs); adv = AdvertiseHub(this, needs); gattsrv = GattServerHub(this, emit, needs); l2cap = L2capHub(this, emit, needs); wlink = WifiLinkHub(this, emit, needs); monitor = MonitorHub(cfg); wnet = WifiNetHub(this, emit, needs)
+        speech = SpeechHub(this, emit, needs); gatt = GattHub(this, emit, needs); btlink = BtLinkHub(this, emit, needs); adv = AdvertiseHub(this, needs); gattsrv = GattServerHub(this, emit, needs); l2cap = L2capHub(this, emit, needs); wlink = WifiLinkHub(this, emit, needs) { posPairs(gps.recent()) }; monitor = MonitorHub(cfg); wnet = WifiNetHub(this, emit, needs)
         alarms = AlarmCmds(this); Alarms.sink = emit
         headless = HeadlessHub(this, cfg, emit)
         cal = CalendarHub(this, needs)

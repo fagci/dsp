@@ -75,7 +75,7 @@ br.close(); fs.rmSync(dir,{recursive:true,force:true});
 const kf=path.join(root,'modules/termux-kernels.js');
 if(fs.existsSync(kf)){
   const ctx=vm.createContext({atob,Float32Array,Math,Number,String,Object,Array,isFinite,Date,JSON,URL,URLSearchParams});
-  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxDev,termuxThin,termuxPoint,termuxPcm,termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxMicLag};',ctx);
+  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxDev,termuxThin,termuxPoint,termuxPcm,termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxMicLag,termuxTaDist};',ctx);
   const K=ctx.K, o={};
   K.termuxApply(o,{src:'gps',lat:1,lon:2,alt:3,acc:4,speed:5,bearing:6});
   ok('apply gps',o.lat===1 && o.lon===2 && o.alt===3 && o.acc===4 && o.speed===5 && o.hdg===6);
@@ -92,6 +92,12 @@ if(fs.existsSync(kf)){
   const md=K.termuxSubMsg({mic:true,micSrc:'auto',micDev:'auto'});
   ok('sub message: auto source and device are not sent',!('micSrc' in md) && !('micDev' in md))
   ok('sub message: source only with the microphone on',!('micSrc' in K.termuxSubMsg({gps:true,micSrc:'downlink'})))
+  ok('cell Timing Advance → distance (LTE 78 m step, GSM 553 m step)',(c=>c.dist===351.5 && c.distSigma===50)(K.termuxTaDist({type:'LTE',ta:4})) && (c=>c.dist===39.1)(K.termuxTaDist({type:'LTE',ta:0})) &&
+    (c=>c.dist===1384 && c.distSigma===250)(K.termuxTaDist({type:'GSM',ta:2})));
+  ok('cell Timing Advance: no value, junk, wrong technology → nothing',Object.keys(K.termuxTaDist({type:'LTE'})).length===0 && Object.keys(K.termuxTaDist({type:'LTE',ta:''})).length===0 && Object.keys(K.termuxTaDist({type:'LTE',ta:-1})).length===0 &&
+    Object.keys(K.termuxTaDist({type:'LTE',ta:5000})).length===0 && Object.keys(K.termuxTaDist({type:'NR',ta:3})).length===0 && Object.keys(K.termuxTaDist({type:'GSM',ta:99})).length===0);
+  const cd=K.termuxDev({src:'cell',type:'LTE',mcc:250,mnc:2,cid:5,ta:3,reg:1,rsrp:-90});
+  ok('the cell device record carries dist and distSigma',cd.dist===273.4 && cd.distSigma===50 && cd.dev==='cell:LTE:250-2:5',JSON.stringify(cd));
   ok('sub message: low latency only with the microphone on',K.termuxSubMsg({mic:true,micLow:true}).micLow===true && !('micLow' in K.termuxSubMsg({gps:true,micLow:true})) && !('micLow' in K.termuxSubMsg({mic:true})))
   ok('mic lag: 250 ms normally, micLag in low latency (20…300)',K.termuxMicLag({mic:true})===.25 && K.termuxMicLag({micLow:true})===.06 && K.termuxMicLag({micLow:true,micLag:40})===.04 && K.termuxMicLag({micLow:true,micLag:1})===.02 && K.termuxMicLag({micLow:true,micLag:9999})===.3 && K.termuxMicLag(null)===.25)
   ok('sub message: nothing extra when off',Object.keys(K.termuxSubMsg({gps:true,micHz:'48000',cellEvery:3,iface:'x'})).join()==='sub');
