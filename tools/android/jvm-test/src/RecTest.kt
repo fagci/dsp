@@ -19,7 +19,7 @@ fun main() {
     val z = ZoneId.of("Europe/Moscow")
     val t = ZonedDateTime.parse("2026-10-31T09:05:03+03:00[Europe/Moscow]").toInstant().toEpochMilli()
     ok("fileName: name, time, part", RecArgs.fileName("walk", t, 0, z) == "walk-20261031-090503.jsonl" && RecArgs.fileName("walk", t, 2, z) == "walk-20261031-090503-2.jsonl")
-    ok("validFile: ours only", RecArgs.validFile("walk-20261031-090503.jsonl") != null && RecArgs.validFile("../x.jsonl") == null && RecArgs.validFile("a/b.jsonl") == null && RecArgs.validFile("x.txt") == null && RecArgs.validFile(null) == null && RecArgs.validFile("a..b.jsonl") == null)
+    ok("validFile: ours only", RecArgs.validFile("walk-20261031-090503.jsonl") != null && RecArgs.validFile("../x.jsonl") == null && RecArgs.validFile("a/b.jsonl") == null && RecArgs.validFile("x.txt") == null && RecArgs.validFile("call-1.wav") != null && RecArgs.validFile(null) == null && RecArgs.validFile("a..b.jsonl") == null)
     val fs = listOf("a.jsonl" to 100L, "b.jsonl" to 100L, "c.jsonl" to 100L)
     ok("overflow: oldest go first", RecArgs.overflow(fs, 150, "c.jsonl") == listOf("a.jsonl", "b.jsonl") && RecArgs.overflow(fs, 300, null).isEmpty() && RecArgs.overflow(fs, 250, null) == listOf("a.jsonl"))
     ok("overflow: the live file is kept", RecArgs.overflow(fs, 50, "a.jsonl") == listOf("b.jsonl", "c.jsonl"))

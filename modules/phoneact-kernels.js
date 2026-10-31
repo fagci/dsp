@@ -1,7 +1,7 @@
 "use strict";
 /* Phone Actions: команды приложения DSP (tools/android) и разбор его записей. Без DOM — проверяется в tools/test-phoneact.mjs */
 
-const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.send_raw','sms.list','contacts.find','ir.info','crash.last','alarm.set','alarm.remove','alarm.list','alarm.stop','alarm.snooze','alarm.test','boot.set','boot.list','boot.run','boot.stop','cal.calendars','cal.list','cal.add','cal.remove','rec.start','rec.stop','rec.status','rec.list','rec.read','rec.delete','rec.export'];
+const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.send_raw','sms.list','contacts.find','ir.info','crash.last','alarm.set','alarm.remove','alarm.list','alarm.stop','alarm.snooze','alarm.test','boot.set','boot.list','boot.run','boot.stop','cal.calendars','cal.list','cal.add','cal.remove','rec.start','rec.stop','rec.status','rec.list','rec.read','rec.delete','rec.export','callrec.set','callrec.status','callrec.stop'];
 
 // адрес моста; в приложении к адресу этого телефона добавляется ключ приложения (?k=…) — с ним открыты SMS и контакты
 function phoneUrl(url,key){
@@ -78,6 +78,9 @@ function phoneCmd(p,textIn){
     case 'rec.stop': case 'rec.status': case 'rec.list': return {cmd:p.action};
     case 'rec.read': return {cmd:'rec.read', file:String(p.recFile||'').trim(), offset:+p.recOffset||0, limit:+p.limit||500};
     case 'rec.delete': case 'rec.export': return {cmd:p.action, file:String(p.recFile||'').trim()};
+    // запись звонков службой (WAV в папке записей): callMode auto / off; callSrc — auto (с root voice_call, иначе микрофон), voice_call / downlink / uplink (root), mic …
+    case 'callrec.set': return {cmd:'callrec.set', mode:p.callMode==='off' ? 'off' : 'auto', ...(p.callSrc ? {src:String(p.callSrc)} : {}), ...(+p.callRate>0 ? {rate:+p.callRate} : {}), minSec:Math.max(0,+p.callMin||0)};
+    case 'callrec.status': case 'callrec.stop': return {cmd:p.action};
     // календарь телефона (CalendarContract): calStart / calEnd — см. phoneWhen; calRemind — минуты до начала через запятую; calDays — окно списка от «сейчас»
     case 'cal.calendars': return {cmd:'cal.calendars'};
     case 'cal.list': { const now=Date.now(); return {cmd:'cal.list', from:now, to:now+(+p.calDays>0 ? +p.calDays : 7)*864e5, q:String(p.calQuery||'').trim(), limit:+p.limit||50, ...(+p.calId>0 ? {calendar:+p.calId} : {})}; }
@@ -109,8 +112,9 @@ function phoneLine(r){
       : 'event '+r.id+' '+(r.allDay ? new Date(+r.start).toISOString().slice(0,10)+' all day' : new Date(+r.start).toLocaleString())+' · '+(r.title||'(no title)')+(r.where ? ' @ '+r.where : '');
     case 'recording': return r.kind==='file' ? 'file '+r.file+' · '+Math.round((r.bytes||0)/1024)+' kB'+(r.live ? ' · recording' : '')
       : 'recording '+(r.on ? 'ON' : 'off')+(r.file ? ' · '+r.file : '')+' · '+(r.lines||0)+' lines, '+Math.round((r.bytes||0)/1024)+' kB'+(r.err ? ' · '+r.err : '');
+    case 'callrec': return 'call recording '+(r.mode==='off' ? 'off' : 'on · '+r.source+' '+r.rate+' Hz'+(r.root ? ' (root)' : ''))+(r.active ? ' · RECORDING '+(r.file||'') : '')+' · drops under '+r.minSec+' s';
     case 'boot': return 'patch '+r.name+(r.boot ? ' · on boot' : '')+(r.running ? ' · running' : ' · stopped');
-    case 'sys': return String(r.ev||'').startsWith('alarm.') || String(r.ev||'').startsWith('boot.') ? r.ev+(r.id||r.name ? ' '+(r.id||r.name) : '')+(r.why ? ' · '+r.why : '')+(r.kind ? ' · '+r.kind : '') : 'sys '+r.ev;
+    case 'sys': return String(r.ev||'').startsWith('alarm.') || String(r.ev||'').startsWith('boot.') || String(r.ev||'').startsWith('callrec.') ? r.ev+(r.id||r.name||r.file ? ' '+(r.id||r.name||r.file) : '')+(r.why ? ' · '+r.why : '')+(r.kind ? ' · '+r.kind : '') : 'sys '+r.ev;
     case 'bridge': return r.level+': '+r.msg;
   }
   return r.src+'';

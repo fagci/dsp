@@ -62,5 +62,9 @@ ok('rec.read / delete / export / stop / list', (c => c.cmd === 'rec.read' && c.f
   K.phoneCmd({ action: 'rec.stop' }).cmd === 'rec.stop' && K.phoneCmd({ action: 'rec.list' }).cmd === 'rec.list' && K.phoneCmd({ action: 'rec.status' }).cmd === 'rec.status');
 ok('recording lines', K.phoneLine({ src: 'recording', kind: 'status', on: true, file: 'w.jsonl', lines: 12, bytes: 4096 }) === 'recording ON · w.jsonl · 12 lines, 4 kB' &&
   K.phoneLine({ src: 'recording', kind: 'file', file: 'w.jsonl', bytes: 2048, live: true }) === 'file w.jsonl · 2 kB · recording');
+ok('callrec.set / status / stop', (c => c.cmd === 'callrec.set' && c.mode === 'auto' && c.src === 'downlink' && c.rate === 48000 && c.minSec === 5)(K.phoneCmd({ action: 'callrec.set', callMode: 'auto', callSrc: 'downlink', callRate: '48000', callMin: 5 })) &&
+  K.phoneCmd({ action: 'callrec.set', callMode: 'off' }).mode === 'off' && K.phoneCmd({ action: 'callrec.status' }).cmd === 'callrec.status' && K.phoneCmd({ action: 'callrec.stop' }).cmd === 'callrec.stop');
+ok('callrec lines', K.phoneLine({ src: 'callrec', mode: 'auto', source: 'voice_call', rate: 16000, root: true, active: true, file: 'call-1.wav', minSec: 3 }) === 'call recording on · voice_call 16000 Hz (root) · RECORDING call-1.wav · drops under 3 s' &&
+  K.phoneLine({ src: 'sys', ev: 'callrec.stop', file: 'call-1.wav' }) === 'callrec.stop call-1.wav');
 console.log(bad ? bad + ' FAILED' : 'all ok');
 process.exit(bad ? 1 : 0);

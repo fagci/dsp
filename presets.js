@@ -626,6 +626,7 @@ const PRESET_CATS={
   'Phone App: Boot Patches — Automation Without a Window After Reboot':'Control & Remote',
   'Phone App: Calendar — Events, Reminders and Free Time':'Control & Remote',
   'Phone App: Record to Disk in the Background (Service, no Page)':'Control & Remote',
+  'Phone App: Call Recorder — Service Records Calls to WAV (root: both sides)':'Control & Remote',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
   'TDOA: Path Difference (2 mics)':'Maps & Locating',
@@ -1435,6 +1436,22 @@ const log=addNode('recLog',920,250,{});
 log.size.w=320; applySize(log);
 addEdge(tx.id,'mic',sc.id,'in1'); addEdge(tx.id,'mic',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
 addEdge(tx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Call Recorder — Service Records Calls to WAV (root: both sides)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The app\'s service records phone calls by itself (the page may be closed, the screen off, it survives a reboot). Press Connect and Run on «Call recording: on» (allow Phone once). During a call it takes the sound as the microphone source and writes call-DATE-TIME-source.wav (16 bit mono) next to the other recordings (Files list / Export copies it to Downloads/DSP); a recording shorter than «delete shorter than» seconds (a rejected or missed call) is removed.\n'+
+  'Which sound: with root («Allow root features» in the app Settings) auto = voice_call, both sides of the call; downlink — only the other person, uplink — only you. Without root it is the microphone: the other person is heard when the call is on the speaker, and new Android versions may mute the app\'s microphone during a call. Whether voice_call opens depends on the phone\'s audio HAL; if it does not, the reason is in the events (callrec.error).\n'+
+  'Only the page of the app may use these commands. Many countries require telling the other person that the call is recorded — check the law before you use it.'});
+nt.size.w=1000; nt.size.h=210; applySize(nt);
+const mk=(x,y,action,extra)=>{ const n=addNode('phone',x,y,Object.assign({url:'ws://127.0.0.1:8765',action,notifyEv:false,torchState:false},extra)); n.size.w=420; n.size.h=330; applySize(n); return n; };
+const on=mk(40,290,'callrec.set',{callMode:'auto',callSrc:'auto',callRate:'16000',callMin:3,alarmEv:true});
+const off=mk(40,640,'callrec.set',{callMode:'off'});
+const st=mk(500,290,'callrec.status',{});
+const ls=mk(500,640,'rec.list',{});
+const lg=addNode('recLog',960,290,{});
+lg.size.w=480; applySize(lg);
+for(const n of [on,off,st,ls]) addEdge(n.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)', function(){
